@@ -22,6 +22,7 @@
 #include "live_network_search.h"
 #include "tray_compare_metadata.h"
 #include "frame_pump.h"
+#include "ui_timer_pacer.h"
 #include <deque>
 #include <atomic>
 #include <memory>
@@ -270,6 +271,10 @@ struct AppState : AppCoreOwner {
     std::wstring window_start_path;
     std::optional<app::ClosedWindow> window_restore;  // tabs a reopened window starts with (M4c)
     bool first_present_reported = false;  // test instances: first frame timed once (Render, M4f)
+    // This window's kTimerUi period (M4f). One shared pacer handed a period
+    // change to whichever window ticked first, so another could keep the fast
+    // period while idle, or the active window poll at the idle period.
+    app::UiTimerPacer uiTimerPacer;
     ui::BloomAccentPicker bloom_accent;
     std::shared_ptr<ContentSelectionAction> contentSelectionAction;
     uint64_t dup_view_epoch = 0;

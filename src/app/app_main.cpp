@@ -547,14 +547,13 @@ static void TickSessionAutosave(AppState& s, HWND hwnd, ULONGLONG now) {
     SaveWindowSession(s, hwnd, false);
 }
 
-// kTimerUi drives animations and light polling. The pacer keeps the display
-// rate while anything changes and polls gently once the window is quiet,
-// minimized or hidden to the tray (see ui_timer_pacer.h).
-static app::UiTimerPacer g_uiTimerPacer;
-
-static void SyncUiTimerRate(HWND hwnd, bool visible) {
+// kTimerUi drives animations and light polling. Each window's pacer
+// (AppState::uiTimerPacer) keeps the display rate while anything changes and
+// polls gently once that window is quiet, minimized or hidden to the tray
+// (see ui_timer_pacer.h).
+static void SyncUiTimerRate(AppState& s, HWND hwnd, bool visible) {
     UINT period = 0;
-    if (g_uiTimerPacer.Update(visible, GetTickCount64(), period))
+    if (s.uiTimerPacer.Update(visible, GetTickCount64(), period))
         SetTimer(hwnd, kTimerUi, period, nullptr);
 }
 
@@ -570,9 +569,9 @@ static bool IsUiActivityMessage(UINT msg) {
            msg == WM_SIZE || msg == WM_CAPTURECHANGED || msg == WM_DPICHANGED;
 }
 
-static void NoteUiActivity(HWND hwnd, bool visible) {
-    g_uiTimerPacer.NoteActivity(GetTickCount64());
-    SyncUiTimerRate(hwnd, visible);
+static void NoteUiActivity(AppState& s, HWND hwnd, bool visible) {
+    s.uiTimerPacer.NoteActivity(GetTickCount64());
+    SyncUiTimerRate(s, hwnd, visible);
 }
 
 // A second launch or the Explorer tag verb reached the host window (the
@@ -602,7 +601,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     AppState* s = GetAppState(hwnd);
     if (s && msg != 0 && msg == app::UpdateShutdownMessage())
         return CloseForUpdate(*s);
-    if (s && IsUiActivityMessage(msg)) NoteUiActivity(hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
+    if (s && IsUiActivityMessage(msg)) NoteUiActivity(*s, hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
     if (s && s->notification_toast.HandleMessage(hwnd, msg, wParam, lParam)) return 0;
     if (s && GroupWheelMessage(*s, hwnd, msg, wParam, lParam)) return 0;
     // Explorer restarted or came up late. The broadcast reaches every
@@ -1062,7 +1061,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         s->lastFrameTime = std::chrono::steady_clock::now();
         s->renderer.SetDetailsPanelVisible(s->showDetailsPanel);
         s->renderer.SetDetailsPanelWidth(s->detailsPanelWidth);
-        SetTimer(hwnd, kTimerUi, g_uiTimerPacer.Current(), nullptr);
+        SetTimer(hwnd, kTimerUi, s->uiTimerPacer.Current(), nullptr);
         s->framePump.Start(hwnd, WM_FRAME_PUMP);
         SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER |
@@ -1244,7 +1243,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_SHOWWINDOW:
         // Sent before the window becomes visible; restore full rate right away.
-        if (s && wParam && !IsIconic(hwnd)) NoteUiActivity(hwnd, true);
+        if (s && wParam && !IsIconic(hwnd)) NoteUiActivity(*s, hwnd, true);
         break;
 
     case WM_ACTIVATE:
@@ -1289,7 +1288,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s) {
             s->compositor.Resize(LOWORD(lParam), HIWORD(lParam));
             s->maximized = (wParam == SIZE_MAXIMIZED);
-            if (wParam != SIZE_MINIMIZED && IsWindowVisible(hwnd)) NoteUiActivity(hwnd, true);
+            if (wParam != SIZE_MINIMIZED && IsWindowVisible(hwnd)) NoteUiActivity(*s, hwnd, true);
             if (s->addressEditing) LayoutAddressEditor(*s);
             if (s->filterEditing && !s->filterFocusPending) LayoutFilterEditor(*s);
             if (!s->tagRenameId.empty()) LayoutTagRenameOverlay(*s);
@@ -1376,7 +1375,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
         if (s && wParam == kTimerUi) {
-            SyncUiTimerRate(hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
+            SyncUiTimerRate(*s, hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
             bool dirty = false;
             if (TickChangeTracking(*s)) dirty = true;
             static bool folderSizeResortWaiting = false;
@@ -1488,7 +1487,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             s->sidebarScrollbarFade.SetHot(s->sidebarScrollbarHot ||
                 (s->scrollbarDragging && s->scrollbarSidebar), now);
             if (s->sidebarScrollbarFade.Tick(now)) dirty = true;
-            if (s->sidebarScrollbarFade.Moving(now)) g_uiTimerPacer.NoteActivity(now);
+            if (s->sidebarScrollbarFade.Moving(now)) s->uiTimerPacer.NoteActivity(now);
             // Scroll positions advance at paint time, once per displayed frame.
             if (s->scrollAnimating) {
                 if (s->framePump.Running()) s->framePump.Arm();
@@ -1539,7 +1538,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             QueueVisibleTagDiscovery(*s);
             UpdateOperationWindow(*s, false);
             if (dirty) {
-                g_uiTimerPacer.NoteActivity(GetTickCount64());
+                s->uiTimerPacer.NoteActivity(GetTickCount64());
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
         }
