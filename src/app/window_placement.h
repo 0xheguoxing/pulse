@@ -3,6 +3,8 @@
 
 #include <windows.h>
 
+#include <vector>
+
 namespace pulse::app {
 
 // GetWindowPlacement reports rcNormalPosition in workspace coordinates: they
@@ -21,5 +23,16 @@ RECT RestoredWindowRect(const RECT& workspace);
 // area of its monitor. `offset` pixels down and right; when that leaves the
 // work area, the work area's top-left. The size is kept, shrunk to fit.
 RECT CascadeWindowRect(const RECT& opener, const RECT& work, int offset);
+
+// Where a window of a restored session opens (multi-window M4d, plan §7).
+// `saved` is its screen rectangle (RestoredWindowRect), `on_monitor` whether
+// that still overlaps a monitor, `work` the work area it opens in (its
+// monitor's, or the primary monitor's when that monitor is gone) and `taken`
+// the rectangles of the windows restored before it. A window whose monitor is
+// gone opens at the work area's top-left, its size kept but shrunk to fit; a
+// window with the same top-left as one in `taken` moves on by `offset`
+// (CascadeWindowRect) until it no longer has.
+RECT PlaceSessionWindow(const RECT& saved, bool on_monitor, const RECT& work,
+                        const std::vector<RECT>& taken, int offset);
 
 } // namespace pulse::app

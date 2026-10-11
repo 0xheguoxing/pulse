@@ -30,9 +30,19 @@ struct WindowInit {
 };
 
 // Creates and shows a window on `from`'s core at `init.path`, next to `from`
-// and with its per-window layout (sidebar, details pane). Returns the new
-// window, or nullptr when it could not be created.
+// and with its per-window layout (sidebar, details pane; a restored window's
+// own when it has one). Returns the new window, or nullptr when it could not
+// be created.
 HWND OpenPulseWindow(AppState& from, const WindowInit& init);
+// A window's sidebar and details pane, for the session and closed windows (M4d).
+app::WindowLayoutSnapshot CaptureWindowLayout(const AppState& s);
+void ApplyWindowLayout(AppState& s, const app::WindowLayoutSnapshot& layout);
+// Session v8 (M4d, plan §7): opens core.pending_session_windows next to the
+// first window, back to front so the stacking order comes back, then brings
+// `first` (the focused window of the session) to the front. A window whose
+// monitor is gone opens on the primary monitor; windows at the same spot are
+// cascaded (PlaceSessionWindow).
+void OpenSessionWindows(AppState& first);
 
 // WM_NCDESTROY: hands the state of a window opened by OpenPulseWindow over for
 // release. False for the first window, whose state WinMain owns.

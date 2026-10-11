@@ -21,6 +21,9 @@ struct ClosedWindow {
     std::vector<LayoutTabSnapshot> layout_tabs;
     std::vector<GroupSessionSnapshot> tab_groups;
     int active_layout_tab = 0;
+    // Its own sidebar and details pane (M4d); without one the window takes
+    // the layout of the window that opens it.
+    std::optional<WindowLayoutSnapshot> layout;
 };
 
 // Most recently closed last. Holds at most kCapacity windows; the oldest go.

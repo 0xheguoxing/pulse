@@ -207,6 +207,11 @@ struct AppCore {
     // Ctrl+Shift+T (M4c); ExitPulse sets `exiting` so its closes are not kept.
     app::ClosedWindowStack closed_windows;
     bool exiting = false;
+    // Session v8 (M4d): the windows of the last session other than the focused
+    // one (which the first window restores), most recent first. The first
+    // window opens them once it has been shown (WM_OPEN_SESSION_WINDOWS); until
+    // then session saves keep them, so a launch into the tray loses nothing.
+    std::vector<app::WindowSessionSnapshot> pending_session_windows;
 
     // Hidden process window (host_window.h): single-instance endpoint today,
     // tray/hotkey/service callbacks as M2 continues. Last member, so it is

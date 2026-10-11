@@ -36,6 +36,30 @@ struct LayoutTabSnapshot {
     std::vector<PaneFolderSnapshot> panes;
 };
 
+// The layout around one window's tabs (sidebar and details panel). Session
+// version 8 keeps one per window; field meanings as in SessionSnapshot.
+struct WindowLayoutSnapshot {
+    int sidebar_collapsed = 0;
+    int sidebar_hidden = 0;
+    std::vector<int> sidebar_order;
+    int quick_access_hidden = 0;
+    bool starred_expanded = true;
+    bool details_panel = false;
+    int details_panel_width = 340;
+    bool details_preview_only = false;
+    bool details_preview = true;
+};
+
+// One window of a version-8 session.
+struct WindowSessionSnapshot {
+    RECT window_rect = {};  // rcNormalPosition: workspace coordinates
+    bool maximized = false;
+    WindowLayoutSnapshot layout;
+    std::vector<LayoutTabSnapshot> layout_tabs;
+    std::vector<GroupSessionSnapshot> tab_groups;
+    int active_layout_tab = 0;
+};
+
 struct SessionSnapshot {
     RECT window_rect = {};
     bool maximized = false;
@@ -56,6 +80,13 @@ struct SessionSnapshot {
     std::vector<LayoutTabSnapshot> layout_tabs;
     std::vector<GroupSessionSnapshot> tab_groups;
     int active_layout_tab = 0;
+    // Version 8: every window, most recently used first, and the index of the
+    // focused one. The single-window fields above mirror windows[focused_window]
+    // (the writer fills both), so versions that read one window restore that
+    // one. ParseSessionJson turns a file without windows[] into windows[0];
+    // SessionToJson leaves windows[] out when it is empty.
+    std::vector<WindowSessionSnapshot> windows;
+    int focused_window = 0;
 };
 
 std::wstring GetPulseDataDir();

@@ -1,8 +1,9 @@
 // session_window_test.cpp - Multi-window M0 baseline: the single-window session
 // (window rect, maximized, layout tabs, tab groups, active tab) round-trips
 // through SessionToJson / ParseSessionJson, and a frozen version-7 file keeps
-// parsing to the same window. Session v8 (several windows) must keep these
-// passing: old files migrate to one window, legacy fields mirror the focused one.
+// parsing to the same window. Session v8 (M4d, several windows) keeps these
+// passing: old files migrate to windows[0], and the single-window fields that
+// older versions read stay ahead of windows[] in the file.
 #include "../app/session.h"
 
 #include <cstdio>
@@ -88,6 +89,66 @@ void ExpectSampleWindow(const SessionSnapshot& got, const char* label) {
     check(got.active_layout_tab == 1, "active layout tab");
 }
 
+// A file without windows[] becomes one window holding the single-window fields.
+void ExpectMigratedWindow(const SessionSnapshot& got, const char* label) {
+    std::string prefix = std::string(label) + ": ";
+    auto check = [&](bool ok, const char* what) { Check(ok, (prefix + what).c_str()); };
+    check(got.windows.size() == 1 && got.focused_window == 0, "migrates to one window");
+    if (got.windows.size() != 1) return;
+    const WindowSessionSnapshot& w = got.windows[0];
+    check(SameRect(w.window_rect, got.window_rect) && w.maximized == got.maximized,
+          "window[0] rect and maximized");
+    check(w.layout.details_panel == got.details_panel &&
+              w.layout.details_panel_width == got.details_panel_width &&
+              w.layout.sidebar_order == got.sidebar_order,
+          "window[0] layout");
+    check(w.layout_tabs.size() == got.layout_tabs.size() &&
+              w.tab_groups.size() == got.tab_groups.size() &&
+              w.active_layout_tab == got.active_layout_tab,
+          "window[0] tabs, groups, active tab");
+}
+
+WindowSessionSnapshot WindowOf(const SessionSnapshot& s) {
+    WindowSessionSnapshot w;
+    w.window_rect = s.window_rect;
+    w.maximized = s.maximized;
+    w.layout.details_panel = s.details_panel;
+    w.layout.details_panel_width = s.details_panel_width;
+    w.layout_tabs = s.layout_tabs;
+    w.tab_groups = s.tab_groups;
+    w.active_layout_tab = s.active_layout_tab;
+    return w;
+}
+
+// Three windows; the focused one (index 1) is SampleSession() and the
+// single-window fields mirror it, as the app writes them. windows[0] differs
+// in every checked field, so a top-level lookup that hit it would show.
+SessionSnapshot SampleThreeWindows() {
+    SessionSnapshot s = SampleSession();
+    WindowSessionSnapshot recent;
+    recent.window_rect = {2100, 140, 3300, 980};  // on a monitor right of the primary
+    recent.layout.sidebar_hidden = 4;
+    recent.layout.quick_access_hidden = 3;
+    recent.layout.starred_expanded = false;
+    recent.layout.details_panel_width = 400;
+    LayoutTabSnapshot downloads;
+    downloads.title = L"下载";
+    PaneFolderSnapshot pane;
+    pane.path = L"E:\\Downloads";
+    downloads.panes = {pane};
+    recent.layout_tabs = {downloads};
+    WindowSessionSnapshot third;
+    third.window_rect = {300, 200, 1800, 1100};
+    third.maximized = true;
+    third.layout.details_panel = true;
+    third.layout.details_preview = false;
+    third.layout_tabs = {downloads, downloads};
+    third.active_layout_tab = 1;
+    s.windows = {recent, WindowOf(s), third};
+    s.focused_window = 1;
+    return s;
+}
+
 // ASCII-only C++ wide literal of `text` (one L"..." chunk per line), used to
 // regenerate session_window_v7_fixture.inc with PULSE_SESSION_DUMP=1.
 std::string ToWideLiteral(const std::wstring& text) {
@@ -131,14 +192,18 @@ int main() {
         return 0;
     }
 
-    Check(json.find(L"\"version\":7") != std::wstring::npos, "writer emits session version 7");
+    Check(json.find(L"\"version\":8") != std::wstring::npos, "writer emits session version 8");
+    Check(json.find(L"\"windows\"") == std::wstring::npos,
+          "writer leaves windows[] out when the snapshot has none");
     SessionSnapshot parsed;
     Check(ParseSessionJson(json, parsed), "round-trip JSON parses");
     ExpectSampleWindow(parsed, "round-trip");
+    ExpectMigratedWindow(parsed, "round-trip");
 
     SessionSnapshot frozen;
     Check(ParseSessionJson(kFrozenV7, frozen), "frozen v7 file parses");
     ExpectSampleWindow(frozen, "frozen v7");
+    ExpectMigratedWindow(frozen, "frozen v7");
     // The parser normalizes defaults (an empty sidebarOrder becomes the default
     // order), so compare the rewritten forms rather than the raw writer output.
     Check(SessionToJson(frozen) == SessionToJson(parsed),
@@ -148,6 +213,74 @@ int main() {
     Check(ParseSessionJson(SessionToJson(SessionSnapshot{}), empty) && empty.layout_tabs.empty() &&
               !empty.maximized,
           "empty session round-trips as an empty window");
+
+    // Version 8: several windows.
+    const std::wstring multi = SessionToJson(SampleThreeWindows());
+    const size_t windows_at = multi.find(L"\"windows\"");
+    Check(windows_at != std::wstring::npos && multi.find(L"\"layoutTabs\"") < windows_at &&
+              multi.find(L"\"left\"") < windows_at && multi.find(L"\"activeTab\"") < windows_at,
+          "v8: single-window fields come before windows[]");
+    SessionSnapshot three;
+    Check(ParseSessionJson(multi, three), "v8: three-window JSON parses");
+    ExpectSampleWindow(three, "v8 single-window fields");
+    Check(three.windows.size() == 3 && three.focused_window == 1, "v8: three windows, focused index 1");
+    if (three.windows.size() == 3) {
+        const WindowSessionSnapshot& a = three.windows[0];
+        const WindowSessionSnapshot& c = three.windows[2];
+        Check(SameRect(a.window_rect, RECT{2100, 140, 3300, 980}) && !a.maximized,
+              "v8: window 0 rect on the second monitor");
+        Check(a.layout.sidebar_hidden == 4 && a.layout.quick_access_hidden == 3 &&
+                  !a.layout.starred_expanded && a.layout.details_panel_width == 400,
+              "v8: window 0 layout");
+        Check(a.layout_tabs.size() == 1 && a.layout_tabs[0].title == L"下载" &&
+                  a.layout_tabs[0].panes.size() == 1 &&
+                  a.layout_tabs[0].panes[0].path == L"E:\\Downloads",
+              "v8: window 0 tab and pane path");
+        const WindowSessionSnapshot& b = three.windows[1];
+        Check(SameRect(b.window_rect, RECT{120, 80, 1720, 1040}) && b.maximized &&
+                  b.layout.details_panel && b.layout.details_panel_width == 360 &&
+                  b.layout_tabs.size() == 2 && b.layout_tabs[1].panes.size() == 2 &&
+                  b.layout_tabs[1].panes[1].path == L"\\\\nas\\share\\交付" &&
+                  b.tab_groups.size() == 1 && b.active_layout_tab == 1,
+              "v8: focused window 1 round-trips");
+        Check(SameRect(c.window_rect, RECT{300, 200, 1800, 1100}) && c.maximized &&
+                  c.layout.details_panel && !c.layout.details_preview &&
+                  c.layout_tabs.size() == 2 && c.active_layout_tab == 1,
+              "v8: window 2 maximized, layout, two tabs, active tab");
+    }
+    // The parser normalizes defaults (empty sidebarOrder), so compare after one pass.
+    SessionSnapshot again;
+    Check(ParseSessionJson(SessionToJson(three), again) && SessionToJson(again) == SessionToJson(three),
+          "v8: parse and write again gives the same file");
+
+    // What a version-7 reader (1.0.53) gets from a v8 file: it ignores
+    // windows[], so it sees the single-window fields, i.e. the focused window.
+    SessionSnapshot old_reader;
+    const size_t tail = multi.find(L",\n  \"focusedWindow\"");
+    Check(tail != std::wstring::npos &&
+              ParseSessionJson(multi.substr(0, tail) + L"\n}\n", old_reader),
+          "v8 without windows[] still parses");
+    ExpectSampleWindow(old_reader, "v8 read as v7");
+
+    // quickAccessHidden keeps its version-7 gate (not "current version").
+    SessionSnapshot qa7, qa6;
+    Check(ParseSessionJson(L"{\"version\":7,\"quickAccessHidden\":5}", qa7) &&
+              qa7.quick_access_hidden == 5 && qa7.windows.size() == 1 &&
+              qa7.windows[0].layout.quick_access_hidden == 5,
+          "v7 quick-access mask survives the v8 upgrade");
+    Check(ParseSessionJson(L"{\"version\":6,\"quickAccessHidden\":5}", qa6) &&
+              qa6.quick_access_hidden == 0,
+          "v6 quick-access mask is still dropped");
+
+    SessionSnapshot bad_windows;
+    Check(ParseSessionJson(L"{\"version\":8,\"left\":10,\"right\":20,\"windows\":[1,2]}", bad_windows) &&
+              bad_windows.windows.size() == 1 && bad_windows.windows[0].window_rect.right == 20,
+          "windows[] without objects falls back to the single window");
+    SessionSnapshot wide;
+    Check(ParseSessionJson(L"{\"version\":8,\"windows\":[{\"left\":1,\"detailsPanelWidth\":9999}]}", wide) &&
+              wide.windows.size() == 1 && wide.windows[0].layout.details_panel_width == 340 &&
+              wide.windows[0].layout.details_preview && wide.windows[0].layout.starred_expanded,
+          "window with an out-of-range width or missing keys gets the defaults");
 
     std::printf("session_window_test: %d failure(s)\n", g_failures);
     return g_failures == 0 ? 0 : 1;

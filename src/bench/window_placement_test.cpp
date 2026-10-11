@@ -82,6 +82,26 @@ int main() {
           "cascade: a window larger than the work area is shrunk to fit");
     Check(Same(CascadeWindowRect({0, 40, 800, 640}, {0, 40, 1920, 1080}, 32), {32, 72, 832, 672}),
           "cascade: a top taskbar work area is respected");
+    // Session restore (M4d): monitor gone -> primary work area, same spot -> cascade.
+    Check(Same(PlaceSessionWindow({300, 200, 1100, 800}, true, desk, {}, 32), {300, 200, 1100, 800}),
+          "session window on a monitor keeps its rectangle");
+    Check(Same(PlaceSessionWindow({2100, 140, 3300, 980}, false, desk, {}, 32), {0, 0, 1200, 840}),
+          "session window whose monitor is gone opens at the primary work area's top-left, same size");
+    Check(Same(PlaceSessionWindow({2000, 0, 4560, 1440}, false, desk, {}, 32), {0, 0, 1920, 1040}),
+          "session window larger than the primary work area shrinks to fit");
+    Check(Same(PlaceSessionWindow({100, 100, 900, 700}, true, desk, {{100, 100, 900, 700}}, 32),
+               {132, 132, 932, 732}),
+          "session window at the same spot as an earlier one moves 32 down and right");
+    Check(Same(PlaceSessionWindow({100, 100, 900, 700}, true, desk,
+                                  {{100, 100, 900, 700}, {132, 132, 932, 732}}, 32),
+               {164, 164, 964, 764}),
+          "session window keeps cascading past every taken spot");
+    Check(Same(PlaceSessionWindow({2100, 140, 3300, 980}, false, desk, {{0, 0, 1200, 840}}, 32),
+               {32, 32, 1232, 872}),
+          "second window from a gone monitor does not cover the first");
+    Check(Same(PlaceSessionWindow({100, 100, 900, 700}, true, desk, {{100, 100, 500, 400}}, 32),
+               {132, 132, 932, 732}),
+          "same top-left with a different size still counts as the same spot");
     Check(Same(CascadeWindowRect({10, 10, 810, 610}, RECT{}, 32), {42, 42, 842, 642}),
           "cascade: without a work area only the offset applies");
 

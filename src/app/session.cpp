@@ -20,7 +20,13 @@ namespace {
 // migrates (or discards) values written by older versions.
 //   6 -> 7: BuiltinQuickAccess lost its reserved "starred" bit, so the stored
 //           quick-access mask is dropped for files written before 7.
-constexpr int kSessionVersion = 7;
+//   7 -> 8: windows[] holds every window (multi-window). The single-window
+//           fields stay and mirror the focused window, so version 7 readers
+//           (which accept any version) still restore that window. windows[]
+//           is written last: the readers find keys by their first occurrence.
+constexpr int kSessionVersion = 8;
+// First version whose quickAccessHidden uses the current bit positions.
+constexpr int kQuickAccessBitsVersion = 7;
 
 // Folder-view column widths: modified, type, size[, created, accessed].
 // The two date columns are only written when set, so the value stays the
@@ -119,6 +125,71 @@ std::vector<float> ParseDipList(const std::wstring& value) {
     }
     while (!out.empty() && out.back() <= 0.0f) out.pop_back();
     return out;
+}
+
+// Section order travels as "0,1,2,6,3,4,5"; anything malformed falls back to
+// the default order (NormalizeSidebarOrder rebuilds a full permutation).
+std::vector<int> ParseSidebarOrder(const std::wstring& order_text) {
+    std::vector<int> order;
+    size_t start = 0;
+    while (start < order_text.size()) {
+        size_t end = order_text.find(L',', start);
+        if (end == std::wstring::npos) end = order_text.size();
+        int value = 0;
+        bool digits = end > start;
+        for (size_t i = start; i < end && digits; ++i) {
+            const wchar_t c = order_text[i];
+            if (c < L'0' || c > L'9') { digits = false; break; }
+            value = value * 10 + static_cast<int>(c - L'0');
+        }
+        if (digits && value < kSidebarSectionCount) order.push_back(value);
+        start = end + 1;
+    }
+    // Sessions written before the starred section existed lack its id; put it
+    // where the default order has it instead of appending it at the very end.
+    const int starred_id = static_cast<int>(SidebarSectionId::Starred);
+    if (!order.empty() && std::find(order.begin(), order.end(), starred_id) == order.end()) {
+        const auto cloud = std::find(order.begin(), order.end(),
+                                     static_cast<int>(SidebarSectionId::Cloud));
+        order.insert(cloud == order.end() ? order.begin() : cloud + 1, starred_id);
+    }
+    return NormalizeSidebarOrder(order);
+}
+
+std::wstring FormatSidebarOrder(const std::vector<int>& order) {
+    std::wstring out;
+    for (size_t i = 0; i < order.size(); ++i) {
+        if (i != 0) out += L",";
+        out += std::to_wstring(order[i]);
+    }
+    return out;
+}
+
+int ClampDetailsPanelWidth(int width) {
+    return std::clamp(width, static_cast<int>(ui::kDetailsMinWidthDip),
+                      static_cast<int>(ui::kPanelWidthMaxDip));
+}
+
+// One windows[] element; same key names as the single-window fields.
+std::wstring WindowToJson(const WindowSessionSnapshot& w) {
+    const WindowLayoutSnapshot& l = w.layout;
+    std::wostringstream f;
+    f << L"    {\"left\":" << w.window_rect.left << L",\"top\":" << w.window_rect.top
+      << L",\"right\":" << w.window_rect.right << L",\"bottom\":" << w.window_rect.bottom
+      << L",\"maximized\":" << (w.maximized ? L"true" : L"false") << L",\n";
+    f << L"     \"sidebarCollapsed\":" << l.sidebar_collapsed
+      << L",\"sidebarHidden\":" << l.sidebar_hidden
+      << L",\"sidebarOrder\":\"" << FormatSidebarOrder(l.sidebar_order) << L"\""
+      << L",\"quickAccessHidden\":" << l.quick_access_hidden
+      << L",\"starredExpanded\":" << (l.starred_expanded ? L"true" : L"false") << L",\n";
+    f << L"     \"detailsPanel\":" << (l.details_panel ? 1 : 0)
+      << L",\"detailsPanelWidth\":" << ClampDetailsPanelWidth(l.details_panel_width)
+      << L",\"detailsPreviewOnly\":" << (l.details_preview_only ? L"true" : L"false")
+      << L",\"detailsPreview\":" << (l.details_preview ? L"true" : L"false") << L",\n";
+    f << L"     \"activeTab\":" << w.active_layout_tab << L",\n";
+    f << L"     \"tabGroups\":" << TabGroupsToJson(w.tab_groups) << L",\n";
+    f << L"     \"layoutTabs\":" << LayoutTabsToJson(w.layout_tabs) << L"}";
+    return f.str();
 }
 
 } // namespace
@@ -327,8 +398,16 @@ std::wstring SessionToJson(const SessionSnapshot& snap) {
     f << L"  \"undo\":" << (snap.undo_json.empty() ? L"[]" : snap.undo_json) << L",\n";
     f << L"  \"activeTab\":" << snap.active_layout_tab << L",\n";
     f << L"  \"tabGroups\":" << TabGroupsToJson(snap.tab_groups) << L",\n";
-    f << L"  \"layoutTabs\":" << LayoutTabsToJson(snap.layout_tabs) << L"\n";
-    f << L"}\n";
+    f << L"  \"layoutTabs\":" << LayoutTabsToJson(snap.layout_tabs);
+    if (!snap.windows.empty()) {
+        f << L",\n  \"focusedWindow\":"
+          << std::clamp(snap.focused_window, 0, static_cast<int>(snap.windows.size()) - 1);
+        f << L",\n  \"windows\":[\n";
+        for (size_t i = 0; i < snap.windows.size(); ++i)
+            f << (i ? L",\n" : L"") << WindowToJson(snap.windows[i]);
+        f << L"\n  ]";
+    }
+    f << L"\n}\n";
     return f.str();
 }
 
@@ -361,42 +440,10 @@ bool ParseSessionJson(const std::wstring& json, SessionSnapshot& snap) {
     snap.active_path = pulse::json::ExtractString(json, L"path");
     snap.sidebar_collapsed = pulse::json::ExtractInt(json, L"sidebarCollapsed");
     snap.sidebar_hidden = pulse::json::ExtractInt(json, L"sidebarHidden");
-    // Section order travels as "0,1,2,6,3,4,5"; anything malformed falls back to
-    // the default order (NormalizeSidebarOrder rebuilds a full permutation).
-    snap.sidebar_order.clear();
-    {
-        const std::wstring order_text = pulse::json::ExtractString(json, L"sidebarOrder");
-        size_t start = 0;
-        while (start < order_text.size()) {
-            size_t end = order_text.find(L',', start);
-            if (end == std::wstring::npos) end = order_text.size();
-            int value = 0;
-            bool digits = end > start;
-            for (size_t i = start; i < end && digits; ++i) {
-                const wchar_t c = order_text[i];
-                if (c < L'0' || c > L'9') { digits = false; break; }
-                value = value * 10 + static_cast<int>(c - L'0');
-            }
-            if (digits && value < kSidebarSectionCount) snap.sidebar_order.push_back(value);
-            start = end + 1;
-        }
-        // Sessions written before the starred section existed lack its id; put it
-        // where the default order has it instead of appending it at the very end.
-        const int starred_id = static_cast<int>(SidebarSectionId::Starred);
-        if (!snap.sidebar_order.empty() &&
-            std::find(snap.sidebar_order.begin(), snap.sidebar_order.end(), starred_id) ==
-                snap.sidebar_order.end()) {
-            const auto cloud = std::find(snap.sidebar_order.begin(), snap.sidebar_order.end(),
-                                         static_cast<int>(SidebarSectionId::Cloud));
-            snap.sidebar_order.insert(
-                cloud == snap.sidebar_order.end() ? snap.sidebar_order.begin() : cloud + 1,
-                starred_id);
-        }
-        snap.sidebar_order = NormalizeSidebarOrder(snap.sidebar_order);
-    }
+    snap.sidebar_order = ParseSidebarOrder(pulse::json::ExtractString(json, L"sidebarOrder"));
     // Bit positions changed in version 7 (the reserved starred bit is gone), so
     // anything older restarts with every built-in link visible.
-    snap.quick_access_hidden = pulse::json::ExtractInt(json, L"version") >= kSessionVersion
+    snap.quick_access_hidden = pulse::json::ExtractInt(json, L"version") >= kQuickAccessBitsVersion
         ? pulse::json::ExtractInt(json, L"quickAccessHidden") : 0;
     snap.starred_expanded = json.find(L"\"starredExpanded\"") == std::wstring::npos
         ? true : pulse::json::ExtractBool(json, L"starredExpanded");
@@ -442,6 +489,56 @@ bool ParseSessionJson(const std::wstring& json, SessionSnapshot& snap) {
         std::vector<LayoutTabSnapshot> parsed;
         if (ParseLayoutTabs(L"[" + layoutBody + L"]", parsed))
             snap.layout_tabs = std::move(parsed);
+    }
+
+    // Version 8: windows[] (written after every single-window field, so the
+    // lookups above found the top-level keys). Each element uses the same
+    // key names; elements that do not parse are skipped.
+    snap.windows.clear();
+    std::wstring windowsBody;
+    std::vector<std::wstring> windowObjs;
+    if (ExtractJsonArray(json, L"windows", windowsBody) &&
+        SplitTopLevelObjects(windowsBody, windowObjs)) {
+        for (const std::wstring& wj : windowObjs) {
+            WindowSessionSnapshot w;
+            w.window_rect = {pulse::json::ExtractInt(wj, L"left"), pulse::json::ExtractInt(wj, L"top"),
+                             pulse::json::ExtractInt(wj, L"right"), pulse::json::ExtractInt(wj, L"bottom")};
+            w.maximized = pulse::json::ExtractBool(wj, L"maximized");
+            WindowLayoutSnapshot& l = w.layout;
+            l.sidebar_collapsed = pulse::json::ExtractInt(wj, L"sidebarCollapsed");
+            l.sidebar_hidden = pulse::json::ExtractInt(wj, L"sidebarHidden");
+            l.sidebar_order = ParseSidebarOrder(pulse::json::ExtractString(wj, L"sidebarOrder"));
+            l.quick_access_hidden = pulse::json::ExtractInt(wj, L"quickAccessHidden");
+            l.starred_expanded = pulse::json::ExtractBool(wj, L"starredExpanded", true);
+            l.details_panel = pulse::json::ExtractInt(wj, L"detailsPanel") != 0;
+            l.details_panel_width = pulse::json::ExtractInt(wj, L"detailsPanelWidth");
+            if (l.details_panel_width != ClampDetailsPanelWidth(l.details_panel_width))
+                l.details_panel_width = 340;
+            l.details_preview_only = pulse::json::ExtractBool(wj, L"detailsPreviewOnly", false);
+            l.details_preview = pulse::json::ExtractBool(wj, L"detailsPreview", true);
+            w.active_layout_tab = pulse::json::ExtractInt(wj, L"activeTab");
+            std::wstring body;
+            if (ExtractJsonArray(wj, L"tabGroups", body)) ParseTabGroups(L"[" + body + L"]", w.tab_groups);
+            if (ExtractJsonArray(wj, L"layoutTabs", body)) ParseLayoutTabs(L"[" + body + L"]", w.layout_tabs);
+            snap.windows.push_back(std::move(w));
+        }
+    }
+    if (snap.windows.empty()) {
+        // Version 7 and older (or an unreadable windows[]): the single window.
+        WindowSessionSnapshot w;
+        w.window_rect = snap.window_rect;
+        w.maximized = snap.maximized;
+        w.layout = {snap.sidebar_collapsed, snap.sidebar_hidden, snap.sidebar_order,
+                    snap.quick_access_hidden, snap.starred_expanded, snap.details_panel,
+                    snap.details_panel_width, snap.details_preview_only, snap.details_preview};
+        w.layout_tabs = snap.layout_tabs;
+        w.tab_groups = snap.tab_groups;
+        w.active_layout_tab = snap.active_layout_tab;
+        snap.windows.push_back(std::move(w));
+        snap.focused_window = 0;
+    } else {
+        snap.focused_window = std::clamp(pulse::json::ExtractInt(json, L"focusedWindow"), 0,
+                                         static_cast<int>(snap.windows.size()) - 1);
     }
     return true;
 }

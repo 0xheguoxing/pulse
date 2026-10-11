@@ -55,4 +55,27 @@ RECT CascadeWindowRect(const RECT& opener, const RECT& work, int offset) {
     return r;
 }
 
+RECT PlaceSessionWindow(const RECT& saved, bool on_monitor, const RECT& work,
+                        const std::vector<RECT>& taken, int offset) {
+    RECT r = saved;
+    if (!on_monitor) {
+        LONG w = saved.right - saved.left;
+        LONG h = saved.bottom - saved.top;
+        if (work.right > work.left && work.bottom > work.top) {
+            w = (std::min)(w, work.right - work.left);
+            h = (std::min)(h, work.bottom - work.top);
+        }
+        r = {work.left, work.top, work.left + w, work.top + h};
+    }
+    const auto clashes = [&taken](const RECT& c) {
+        return std::any_of(taken.begin(), taken.end(),
+                           [&c](const RECT& t) { return t.left == c.left && t.top == c.top; });
+    };
+    // Each step lands on a new position or wraps to the top-left, so
+    // taken.size() + 1 steps are enough unless every position is taken.
+    for (size_t step = 0; step <= taken.size() && clashes(r); ++step)
+        r = CascadeWindowRect(r, work, offset);
+    return r;
+}
+
 } // namespace pulse::app

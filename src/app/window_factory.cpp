@@ -34,6 +34,16 @@ void InheritWindowLayout(const AppState& from, AppState& to) {
     to.forceStatusPerformance = from.forceStatusPerformance;
 }
 
+// Normal-state screen rectangle of a window (empty when it has none).
+RECT NormalScreenRect(HWND hwnd) {
+    WINDOWPLACEMENT placement{sizeof(placement)};
+    MONITORINFO monitor{sizeof(monitor)};
+    if (!hwnd || !GetWindowPlacement(hwnd, &placement) ||
+        !GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &monitor))
+        return RECT{};
+    return app::WorkspaceToScreenRect(placement.rcNormalPosition, monitor.rcMonitor, monitor.rcWork);
+}
+
 // Normal-state screen rectangle of `from`, cascaded by 32 DIP within its
 // monitor's work area (CascadeWindowRect). A maximized opener does not pass
 // its maximized state on.
@@ -60,6 +70,7 @@ HWND OpenPulseWindow(AppState& from, const WindowInit& init) {
     auto owned = std::make_unique<AppState>(from.core);
     AppState* const state = owned.get();
     InheritWindowLayout(from, *state);
+    if (init.restore && init.restore->layout) ApplyWindowLayout(*state, *init.restore->layout);
     state->has_window_start = true;
     state->window_start_path = init.path;
     state->window_restore = init.restore;
@@ -89,6 +100,78 @@ HWND OpenPulseWindow(AppState& from, const WindowInit& init) {
     }
     ShowWindow(hwnd, maximize ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL);
     return hwnd;
+}
+
+app::WindowLayoutSnapshot CaptureWindowLayout(const AppState& s) {
+    app::WindowLayoutSnapshot layout;
+    layout.sidebar_collapsed = static_cast<int>(s.sidebarCollapsedMask);
+    layout.sidebar_hidden = static_cast<int>(s.sidebarHiddenMask);
+    layout.sidebar_order = app::NormalizeSidebarOrder(s.sidebarOrder);
+    layout.quick_access_hidden = static_cast<int>(s.sidebarQuickAccessHiddenMask);
+    layout.starred_expanded = s.starredExpanded;
+    layout.details_panel = s.showDetailsPanel;
+    layout.details_panel_width = static_cast<int>(std::lround(s.detailsPanelWidth));
+    layout.details_preview_only = s.detailsPreviewOnly;
+    layout.details_preview = s.detailsPreviewEnabled;
+    return layout;
+}
+
+// Mirrors WinMain's restore of the first window's layout from the session.
+void ApplyWindowLayout(AppState& s, const app::WindowLayoutSnapshot& layout) {
+    s.sidebarCollapsedMask = static_cast<uint32_t>(layout.sidebar_collapsed);
+    s.sidebarHiddenMask = static_cast<uint32_t>(layout.sidebar_hidden);
+    s.sidebarOrder = layout.sidebar_order.empty() ? app::DefaultSidebarOrder() : layout.sidebar_order;
+    s.sidebarQuickAccessHiddenMask = static_cast<uint32_t>(layout.quick_access_hidden);
+    s.starredExpanded = layout.starred_expanded;
+    s.showDetailsPanel = layout.details_panel;
+    s.detailsPreviewOnly = layout.details_preview_only;
+    s.detailsPreviewEnabled = layout.details_preview;
+    s.detailsPreviewExpansion = layout.details_preview_only ? 1.0f : 0.0f;
+    s.detailsPanelWidth = static_cast<float>(layout.details_panel_width);
+    s.renderer.SetDetailsPanelWidth(s.detailsPanelWidth);
+}
+
+void OpenSessionWindows(AppState& first) {
+    std::vector<app::WindowSessionSnapshot> pending;
+    pending.swap(first.core.pending_session_windows);
+    if (pending.empty() || !first.hwnd) return;
+    MONITORINFO primary{sizeof(primary)};
+    GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &primary);
+    const int offset = static_cast<int>(std::lround(32.0f * (first.scale > 0.0f ? first.scale : 1.0f)));
+    std::vector<RECT> taken;
+    if (const RECT own = NormalScreenRect(first.hwnd); own.right > own.left) taken.push_back(own);
+    // Most recent first in the session: open the least recent first, so each
+    // later one stacks above it.
+    for (auto it = pending.rbegin(); it != pending.rend(); ++it) {
+        app::WindowSessionSnapshot& saved = *it;
+        if (saved.layout_tabs.empty()) continue;
+        RECT rect{};
+        bool on_monitor = false;
+        if (saved.window_rect.right > saved.window_rect.left && saved.window_rect.bottom > saved.window_rect.top) {
+            rect = app::RestoredWindowRect(saved.window_rect);
+            on_monitor = MonitorFromRect(&rect, MONITOR_DEFAULTTONULL) != nullptr;
+        } else if (!taken.empty()) {
+            rect = taken.front();  // no saved place: cascade from the first window
+            on_monitor = true;
+        }
+        MONITORINFO monitor{sizeof(monitor)};
+        const RECT work = on_monitor && GetMonitorInfoW(MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST), &monitor)
+            ? monitor.rcWork : primary.rcWork;
+        if (rect.right > rect.left) rect = app::PlaceSessionWindow(rect, on_monitor, work, taken, offset);
+        taken.push_back(rect);
+
+        app::ClosedWindow restore;
+        restore.rect = rect;
+        restore.maximized = saved.maximized;
+        restore.layout_tabs = std::move(saved.layout_tabs);
+        restore.tab_groups = std::move(saved.tab_groups);
+        restore.active_layout_tab = saved.active_layout_tab;
+        restore.layout = std::move(saved.layout);
+        WindowInit init;
+        init.restore = std::move(restore);
+        OpenPulseWindow(first, init);
+    }
+    if (IsWindowVisible(first.hwnd)) SetForegroundWindow(first.hwnd);
 }
 
 bool RetireWindowState(AppState& s) {

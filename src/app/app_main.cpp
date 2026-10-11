@@ -304,7 +304,29 @@ static bool SessionWritable(const AppState& s) {
         !ShellTagHeadlessLaunch();
 }
 
-static app::SessionSnapshot CaptureWindowSession(AppState& s, HWND hwnd) {
+// One window of the session (v8, M4d).
+static app::WindowSessionSnapshot CaptureSessionWindow(AppState& w) {
+    app::WindowSessionSnapshot snap;
+    WINDOWPLACEMENT wp{ sizeof(wp) };
+    if (GetWindowPlacement(w.hwnd, &wp)) {
+        snap.window_rect = wp.rcNormalPosition;
+        snap.maximized = (wp.showCmd == SW_SHOWMAXIMIZED);
+    }
+    snap.layout = CaptureWindowLayout(w);
+    RememberLayoutFocus(w);
+    snap.active_layout_tab = static_cast<int>(w.window_tabs.active);
+    for (const auto& group : w.window_tabs.tab_groups)
+        snap.tab_groups.push_back({group.id, group.name, group.color_rgb, group.collapsed});
+    for (const auto& layout : w.window_tabs.items)
+        if (layout) snap.layout_tabs.push_back(app::CaptureLayoutTab(*layout));
+    return snap;
+}
+
+// The single-window fields describe the most recently used window, which is
+// also windows[0]: versions that read one window restore that one.
+static app::SessionSnapshot CaptureWindowSession(AppState& requested, HWND requested_hwnd) {
+    AppState& s = app::CurrentWindow(requested);
+    const HWND hwnd = &s == &requested || !s.hwnd ? requested_hwnd : s.hwnd;
     app::SessionSnapshot snap;
     WINDOWPLACEMENT wp{ sizeof(wp) };
     if (GetWindowPlacement(hwnd, &wp)) {
@@ -331,10 +353,22 @@ static app::SessionSnapshot CaptureWindowSession(AppState& s, HWND hwnd) {
     snap.details_preview_only = s.detailsPreviewOnly;
     snap.details_preview = s.detailsPreviewEnabled;
     snap.details_panel_width = static_cast<int>(std::lround(s.detailsPanelWidth));
+    // Session v8 (M4d): every window, most recent first, then the windows of
+    // the last session that have not been opened yet (a launch into the tray).
+    snap.windows.push_back(CaptureSessionWindow(s));
+    snap.windows.front().window_rect = snap.window_rect;
+    snap.windows.front().maximized = snap.maximized;
+    app::ForEachWindowSharingCore(s, [&](AppState& window) {
+        if (&window != &s && window.hwnd && !window.window_tabs.items.empty())
+            snap.windows.push_back(CaptureSessionWindow(window));
+    });
+    for (const auto& pending : s.core.pending_session_windows) snap.windows.push_back(pending);
+    snap.focused_window = 0;
     return snap;
 }
 
-// What reopening a closed window brings back (M4c): its tabs, groups and place.
+// What reopening a closed window brings back (M4c): its tabs, groups and place
+// (M4d: and its sidebar and details pane).
 static app::ClosedWindow CaptureClosedWindow(AppState& s, HWND hwnd) {
     app::ClosedWindow closed;
     WINDOWPLACEMENT wp{ sizeof(wp) };
@@ -350,6 +384,7 @@ static app::ClosedWindow CaptureClosedWindow(AppState& s, HWND hwnd) {
         if (layout) closed.layout_tabs.push_back(app::CaptureLayoutTab(*layout));
     if (s.window_tabs.active < s.window_tabs.items.size() && s.window_tabs.items[s.window_tabs.active])
         closed.name = app::LayoutTabTitle(*s.window_tabs.items[s.window_tabs.active]);
+    closed.layout = CaptureWindowLayout(s);
     return closed;
 }
 
@@ -420,10 +455,12 @@ static void CloseMainWindow(AppState& s) {
     else DestroyWindow(hwnd);
 }
 
-// Tray "Exit" and the palette's "Exit Pulse": every window closes, the most
-// recent one last so its WM_DESTROY stops the services and saves the session.
+// Tray "Exit" and the palette's "Exit Pulse": the session is saved while every
+// window is still open (v8, M4d), then every window closes, the most recent
+// one last so its WM_DESTROY stops the services (it skips the session write).
 // `s` may be gone once its window is destroyed; only the snapshot is used.
 static void ExitPulse(AppState& s) {
+    if (!s.updateSessionPrepared) SaveWindowSession(s, s.hwnd, true);
     s.core.exiting = true;  // these closes are not undoable (closed_windows)
     const HWND self = s.hwnd;
     for (HWND window : s.core.windows.ExitOrder())
@@ -449,8 +486,7 @@ static LRESULT HandleSystemBroadcast(AppState& s, app::SystemBroadcast kind, WPA
         return 0;
     case app::SystemBroadcast::QueryEndSession:
         // Shutdown/logoff ends the process without WM_DESTROY; store the layout
-        // now. session.json holds one window, so it is saved once, from `s`
-        // (the most recent window when the host handles the broadcast).
+        // now. session.json holds every window (v8), so it is saved once.
         SaveWindowSession(s, s.hwnd, true);
         return TRUE;
     case app::SystemBroadcast::EndSession:
@@ -932,6 +968,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 s->session_active_layout_tab = 0;
                 s->session_path.clear();
             }
+            // The session's other windows (M4d) come back only with its tabs.
+            if (open_default_location || s->session_layout_tabs.empty() || s->menushot ||
+                s->colorpickshot || s->colorpickdialog)
+                s->core.pending_session_windows.clear();
             if (!s->shot.active && !s->session_layout_tabs.empty()) {
                 RestoreTabsFromSnapshots(*s, s->session_layout_tabs, s->session_tab_groups,
                                          s->session_active_layout_tab);
@@ -1178,6 +1218,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_ACTIVATE:
         if (s && LOWORD(wParam) != WA_INACTIVE) {
             s->core.windows.Touch(hwnd);
+            // The session's other windows open once the first one is on screen
+            // (M4d): at launch, or when a launch into the tray is revealed.
+            if (!s->core.pending_session_windows.empty() && s->startupComplete)
+                PostMessageW(hwnd, WM_OPEN_SESSION_WINDOWS, 0, 0);
             // File operation progress follows the window used last (M4c).
             if (AppState* ui = GetAppState(s->ops.UiWindow()); ui && ui != s) MoveOperationUi(*ui, *s);
         }
@@ -1253,6 +1297,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_REOPEN_CLOSED_WINDOW:
         if (s) ReopenClosedWindow(*s);
+        return 0;
+
+    case WM_OPEN_SESSION_WINDOWS:
+        if (s) OpenSessionWindows(*s);
         return 0;
 
     case WM_SHELL_SELECT: {
@@ -2246,7 +2294,9 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 if (s->startupComplete && !s->shot.active && !s->menushot && !s->isolatedTest) {
                     // A hidden tag-only launch must not overwrite the real
                     // window/tab session (SessionWritable); tags and places still save below.
-                    if (!s->updateSessionPrepared) SaveWindowSession(*s, hwnd, true);
+                    // ExitPulse saved every window before closing them (M4d);
+                    // by now this is the only one left.
+                    if (!s->updateSessionPrepared && !s->core.exiting) SaveWindowSession(*s, hwnd, true);
                     s->places.Save();
                     s->ctxMenuPrefs.Save();
                     if (!s->updateSessionPrepared) s->appPrefs.Save();
@@ -2705,6 +2755,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         state.session_layout_tabs = std::move(session.layout_tabs);
         state.session_tab_groups = std::move(session.tab_groups);
         state.session_active_layout_tab = session.active_layout_tab;
+        // Session v8 (M4d): the single-window fields above are the focused
+        // window; the others open after the first window is shown.
+        for (size_t i = 0; i < session.windows.size(); ++i)
+            if (static_cast<int>(i) != session.focused_window)
+                state.core.pending_session_windows.push_back(std::move(session.windows[i]));
         state.tray = session.tray;
         state.darkMode = session.dark;
         state.sidebarCollapsedMask = static_cast<uint32_t>(session.sidebar_collapsed);
@@ -2906,7 +2961,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     int x = CW_USEDEFAULT, y = CW_USEDEFAULT, w = (int)(1600 * state.scale), h = (int)(960 * state.scale);
     if (session.window_rect.right > session.window_rect.left) {
         // Saved from rcNormalPosition: workspace coordinates (window_placement.h).
-        const RECT restored = app::RestoredWindowRect(session.window_rect);
+        RECT restored = app::RestoredWindowRect(session.window_rect);
+        // Its monitor is gone (M4d): the primary monitor's work area.
+        if (!MonitorFromRect(&restored, MONITOR_DEFAULTTONULL)) {
+            MONITORINFO primary{sizeof(primary)};
+            if (GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &primary))
+                restored = app::PlaceSessionWindow(restored, false, primary.rcWork, {}, 0);
+        }
         x = restored.left;
         y = restored.top;
         w = restored.right - restored.left;
