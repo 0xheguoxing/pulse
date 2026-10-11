@@ -807,6 +807,37 @@ void DeliverIndexSearchResult(AppState& s, uint32_t id,
     });
 }
 
+// Both match what DeliverIndexSearchResult / ApplyContentSearchUpdate accept:
+// index request ids and content generations are separate counters.
+AppState& SearchResultWindow(AppState& s, uint32_t id) {
+    if (id == 0) return s;
+    return app::FindWindowSharingCore(s, [id](AppState& window) {
+        if (window.advancedCountId == id || window.paletteSearchId == id) return true;
+        bool waiting = false;
+        ForEachPane(window, [&](app::Pane& pane) {
+            const app::Tab* tab = pane.ActiveTab();
+            waiting = waiting || (tab && (tab->pending_generation == id || tab->filename_live_generation == id));
+        });
+        return waiting;
+    });
+}
+
+AppState& ContentSearchWindow(AppState& s, uint64_t generation) {
+    if (generation == 0) return s;
+    return app::FindWindowSharingCore(s, [generation](AppState& window) {
+        bool waiting = false;
+        ForEachPane(window, [&](app::Pane& pane) {
+            const app::Tab* tab = pane.ActiveTab();
+            std::wstring kind;
+            waiting = waiting || (tab && (tab->pending_generation == generation ||
+                tab->search_live_generation == generation) &&
+                app::ParsePulsePath(tab->current_path, &kind, nullptr) &&
+                (kind == L"search" || kind == L"saved-search"));
+        });
+        return waiting;
+    });
+}
+
 void AcceptIndexProviderResult(AppState& s, uint32_t id,
                                       index::SearchResult&& result, bool network,
                                       bool network_final) {

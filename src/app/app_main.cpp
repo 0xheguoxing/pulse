@@ -2052,7 +2052,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         const uint32_t id = static_cast<uint32_t>(wParam);
         index::SearchResult result;
         if (!s->index.TakeResult(id, result)) return 0;
-        AcceptIndexProviderResult(*s, id, std::move(result), false);
+        AcceptIndexProviderResult(SearchResultWindow(*s, id), id, std::move(result), false);
         return 0;
     }
 
@@ -2061,13 +2061,14 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         const uint32_t id = static_cast<uint32_t>(wParam);
         index::SearchResult result;
         if (!s->networkIndex.TakeResult(id, result)) return 0;
-        AcceptIndexProviderResult(*s, id, std::move(result), true);
+        AcceptIndexProviderResult(SearchResultWindow(*s, id), id, std::move(result), true);
         return 0;
     }
 
     case WM_NETWORK_LIVE_SEARCH: {
         auto* live = reinterpret_cast<std::shared_ptr<LiveNetworkSearch>*>(lParam);
-        if (s && live) AcceptLiveNetworkProgress(*s, *live);
+        if (s && live && *live)
+            AcceptLiveNetworkProgress(SearchResultWindow(*s, (*live)->latest_id.load()), *live);
         delete live;
         return 0;
     }
@@ -2094,10 +2095,16 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     case WM_CONTENT_SEARCH: {
         if (!s) return 0;
+        // Each update goes to the window whose tab runs that search (M5a).
+        std::vector<AppState*> updated{s};
         index::ContentSearchUpdate update;
-        while (s->contentSearch.TakeUpdate(update))
-            ApplyContentSearchUpdate(*s, std::move(update));
-        RefreshContentResults(*s);
+        while (s->contentSearch.TakeUpdate(update)) {
+            AppState& owner = ContentSearchWindow(*s, update.progress.generation);
+            ApplyContentSearchUpdate(owner, std::move(update));
+            if (std::find(updated.begin(), updated.end(), &owner) == updated.end())
+                updated.push_back(&owner);
+        }
+        for (AppState* window : updated) RefreshContentResults(*window);
         return 0;
     }
 

@@ -26,6 +26,13 @@ void RequestSavedSearch(AppState& s, app::Tab& tab, size_t saved_index);
 void ApplyContentSearchUpdate(AppState& s, index::ContentSearchUpdate update);
 void DeliverIndexSearchResult(AppState& s, uint32_t id,
                                       index::SearchResult&& result, bool network_snapshot = false);
+// The window a shared search result is for: the one whose tab, palette or
+// advanced-search count waits for request `id`, else `s`. The search services
+// are shared and the host hands their results to the most recent window,
+// which need not be the one that searched (M5a).
+AppState& SearchResultWindow(AppState& s, uint32_t id);
+// The same for a content search update (its own generation counter).
+AppState& ContentSearchWindow(AppState& s, uint64_t generation);
 void AcceptIndexProviderResult(AppState& s, uint32_t id,
                                       index::SearchResult&& result, bool network,
                                       bool network_final = true);

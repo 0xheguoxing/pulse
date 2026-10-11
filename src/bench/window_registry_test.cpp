@@ -4,7 +4,8 @@
 // window of the core, or only the caller when it is not registered. M3f:
 // closing windows stops the process services exactly once, with the last one.
 // M4a: the next window takes over from a closing one; callbacks bound by the
-// first window act for the current one.
+// first window act for the current one. M5a: a shared result finds the
+// window it is for, whichever window received it.
 #include "../app/window_registry.h"
 
 #include <cstdio>
@@ -139,6 +140,30 @@ int main() {
     shared.windows.Remove(first.hwnd);
     shared.windows.Add(second.hwnd, &second);
     Check(&pulse::app::CurrentWindow(first) == &second, "after the first window closed, its callbacks reach a live window");
+
+    {
+        FakeCore routed;
+        FakeAppWindow older{H(51), routed, 1}, recent{H(52), routed, 2}, stray{H(53), routed, 3};
+        const auto is = [](int id) { return [id](FakeAppWindow& w) { return w.id == id; }; };
+        Check(&pulse::app::FindWindowSharingCore(recent, is(1)) == &recent,
+              "an unregistered window only finds itself");
+        routed.windows.Add(older.hwnd, &older);
+        routed.windows.Add(recent.hwnd, &recent);
+        Check(&pulse::app::FindWindowSharingCore(recent, is(1)) == &older,
+              "a result received by the most recent window finds the older window it is for");
+        Check(&pulse::app::FindWindowSharingCore(recent, is(9)) == &recent,
+              "a result no window claims stays with the window that received it");
+        int calls = 0;
+        pulse::app::FindWindowSharingCore(recent, [&](FakeAppWindow&) { ++calls; return true; });
+        Check(calls == 1 && &pulse::app::FindWindowSharingCore(older, [](FakeAppWindow&) { return true; }) == &recent,
+              "the most recent matching window wins and the search stops there");
+        routed.windows.Add(stray.hwnd, &older);
+        Check(&pulse::app::FindWindowSharingCore(stray, is(1)) == &stray,
+              "a window whose handle is registered under another state does not search the core");
+        routed.windows.Remove(stray.hwnd);
+        routed.windows.Remove(older.hwnd);
+        routed.windows.Remove(recent.hwnd);
+    }
 
     std::printf("window_registry_test: %d failure(s)\n", g_failures);
     return g_failures == 0 ? 0 : 1;

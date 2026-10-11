@@ -97,6 +97,20 @@ void ForEachWindowSharingCore(Window& window, F&& f) {
     window.core.windows.ForEach([&](HWND, Window& other) { f(other); });
 }
 
+// The first window sharing `window`'s core, most recent first, for which
+// `pred` holds, or `window` itself when none does (or it is not registered).
+// A shared service hands its result to one window; this finds the window that
+// shows what the result is for (M5a: a search in a window that is no longer
+// the most recent one).
+template <class Window, class P>
+Window& FindWindowSharingCore(Window& window, P&& pred) {
+    Window* found = nullptr;
+    ForEachWindowSharingCore(window, [&](Window& other) {
+        if (!found && pred(other)) found = &other;
+    });
+    return found ? *found : window;
+}
+
 // The window a process-level callback acts for (settings page dialogs and
 // effects, toasts). Such callbacks are bound once, by the first window, which
 // may have closed since: the most recent window, or `bound` when none is

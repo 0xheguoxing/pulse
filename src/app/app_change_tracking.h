@@ -28,6 +28,9 @@ struct ChangeTrackingUi {
 };
 void StartChangeTracking(AppState& s);
 bool TickChangeTracking(AppState& s);
+// The window whose change view waits for detail request `request`, else `s`:
+// the host hands results to the most recent window (M5a).
+AppState& ChangeResultWindow(AppState& s, uint32_t request);
 void ReceiveChangeTracking(AppState& s, uint32_t request, bool details);
 void ApplyChangeSummaries(AppState& s, uint32_t request, const index::ChangeResponse& result);
 void ApplyChangeDetails(AppState& s, uint32_t request, const index::ChangeResponse& result);

@@ -269,17 +269,33 @@ void ApplyChangeSummaries(AppState& s, uint32_t request, const index::ChangeResp
     }
 }
 
+AppState& ChangeResultWindow(AppState& s, uint32_t request) {
+    const auto pending = s.changes.details.find(request);
+    if (pending == s.changes.details.end()) return s;
+    const app::Tab* wanted = pending->second.tab;
+    return app::FindWindowSharingCore(s, [wanted](AppState& window) {
+        bool shows = false;
+        ForEachPane(window, [&](app::Pane& pane) { shows = shows || pane.ActiveTab() == wanted; });
+        return shows;
+    });
+}
+
 void ReceiveChangeTracking(AppState& s, uint32_t request, bool details) {
     index::ChangeResponse result;
     auto& state = s.changes;
     if (!details) {
         if (!state.client.TakeSummary(request, result)) return;
         ApplyChangeSummaries(s, request, result);
-    } else {
-        if (!state.client.TakeDetails(request, result)) return;
-        ApplyChangeDetails(s, request, result);
+        // The summaries are shared; any window may show their badges (M5a).
+        app::ForEachWindowSharingCore(s, [](AppState& window) {
+            InvalidateRect(window.hwnd, nullptr, FALSE);
+        });
+        return;
     }
-    InvalidateRect(s.hwnd, nullptr, FALSE);
+    if (!state.client.TakeDetails(request, result)) return;
+    AppState& owner = ChangeResultWindow(s, request);
+    ApplyChangeDetails(owner, request, result);
+    InvalidateRect(owner.hwnd, nullptr, FALSE);
 }
 
 void FillChangePane(AppState& s, app::Tab& tab, ui::PaneViewModel& pane, const D2D1_RECT_F& bounds) {
