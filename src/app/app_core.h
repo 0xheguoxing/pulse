@@ -13,6 +13,7 @@
 #include "../index/network_agent_client.h"
 #include "../ops/ops_manager.h"
 #include "../ui/FluentTokens.h"
+#include "../ui/render_caches.h"
 #include "app_change_tracking.h"
 #include "app_model.h"
 #include "app_prefs.h"
@@ -189,6 +190,9 @@ struct AppCore {
     uint64_t trayClipboardBatchId = 0;
     std::vector<std::wstring> pendingCutClipboardPaths;
     std::vector<std::wstring> completedCutClipboardPaths;
+
+    // Icon and thumbnail caches every window's renderer draws from.
+    ui::RenderCaches render_caches;
 
     // Hidden process window (host_window.h): single-instance endpoint today,
     // tray/hotkey/service callbacks as M2 continues. Last member, so it is

@@ -13,6 +13,7 @@
 #include "toolbar_layout.h"
 #include "thumbnail_cache.h"
 #include "folder_thumbnail_cache.h"
+#include "render_caches.h"
 #include "archive_preview.h"
 #include "name_highlight.h"
 #include "preview_handler_host.h"
@@ -1036,6 +1037,11 @@ class MainRenderer {
     friend struct UiModuleAuditTest;
 public:
     MainRenderer();
+    // Draws from caches shared with other windows (AppCore::render_caches).
+    explicit MainRenderer(RenderCaches& caches);
+    MainRenderer(const MainRenderer&) = delete;
+    MainRenderer& operator=(const MainRenderer&) = delete;
+    RenderCaches& Caches() noexcept { return caches_; }
 
     void SetScale(float scale);
     void SetCompositor(Compositor* comp);
@@ -1572,16 +1578,17 @@ private:
     WindowMaterial material_;
     Compositor* compositor_ = nullptr;
     fluent::Painter painter_;
-    ShellIconCache icon_cache_;
-    OpenWithIconCache open_with_icons_;
+    // Icon and thumbnail caches (render_caches.h): shared through AppCore, or
+    // owned when the renderer stands alone. The member names alias into them.
+    std::unique_ptr<RenderCaches> owned_caches_;
+    RenderCaches& caches_;
+    ShellIconCache& icon_cache_ = caches_.icons;
+    OpenWithIconCache& open_with_icons_ = caches_.open_with_icons;
     std::unordered_map<ID2D1Bitmap*, ComPtr<ID2D1Effect>> tray_shadows_;
-    // Grid/list thumbnails and the details-pane preview decode through
-    // separate hosts and budgets: a 2048 px selection preview (up to 16 MB)
-    // must neither evict the visible grid nor queue ahead of it.
-    ThumbnailCache thumbnail_cache_{96ull * 1024ull * 1024ull, 1024};
-    FolderThumbnailCache folder_thumbnail_cache_;
+    ThumbnailCache& thumbnail_cache_ = caches_.thumbnails;
+    FolderThumbnailCache& folder_thumbnail_cache_ = caches_.folder_thumbnails;
     bool folder_thumbnails_enabled_ = true;
-    ThumbnailCache details_cache_{48ull * 1024ull * 1024ull, 24};
+    ThumbnailCache& details_cache_ = caches_.details;
     PreviewHandlerHost preview_handler_;
     HWND notify_hwnd_ = nullptr;
     bool embedded_ = false;

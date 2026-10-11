@@ -234,7 +234,7 @@ struct AppState : AppCoreOwner {
     HWND hwnd = nullptr;
     ui::Compositor compositor;
     ui::NotificationToast notification_toast;
-    ui::MainRenderer renderer;
+    ui::MainRenderer renderer{core.render_caches};
     // Vsync-paced frames while highlight glides / list shifts run (frame_pump.h).
     app::FramePump framePump;
     ui::QuickPreviewWindow quickPreview;

@@ -22,7 +22,10 @@
 #include <string_view>
 
 namespace pulse::ui {
-MainRenderer::MainRenderer() = default;
+MainRenderer::MainRenderer()
+    : owned_caches_(std::make_unique<RenderCaches>()), caches_(*owned_caches_) {}
+
+MainRenderer::MainRenderer(RenderCaches& caches) : caches_(caches) {}
 
 void MainRenderer::SetCompositor(Compositor* comp) {
     paneHeaderStroke_.reset();

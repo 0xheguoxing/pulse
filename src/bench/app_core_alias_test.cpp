@@ -68,6 +68,21 @@ static_assert(!std::is_copy_constructible_v<AppState> && !std::is_copy_assignabl
 static_assert(!std::is_copy_constructible_v<AppCore> && !std::is_copy_assignable_v<AppCore>,
               "the process core is unique");
 
+// Multi-window M2: icon and thumbnail caches are process-wide (render_caches.h);
+// each window's renderer binds to AppCore's instance instead of owning one.
+static_assert(std::is_same_v<decltype(AppCore::render_caches), pulse::ui::RenderCaches>,
+              "AppCore owns the shared render caches");
+static_assert(std::is_constructible_v<pulse::ui::MainRenderer, pulse::ui::RenderCaches&>,
+              "a window renderer binds to shared caches");
+static_assert(!std::is_convertible_v<pulse::ui::RenderCaches&, pulse::ui::MainRenderer>,
+              "binding a renderer to caches is explicit");
+static_assert(std::is_default_constructible_v<pulse::ui::MainRenderer>,
+              "stand-alone renderers (folder picker, tests) own their caches");
+static_assert(std::is_same_v<decltype(std::declval<pulse::ui::MainRenderer&>().Caches()), pulse::ui::RenderCaches&>,
+              "a renderer exposes the caches it draws from");
+static_assert(!std::is_copy_constructible_v<pulse::ui::RenderCaches> && !std::is_copy_constructible_v<pulse::ui::MainRenderer>,
+              "copying would split or alias a cache silently");
+
 #define PULSE_NAME(name) #name,
 constexpr const char* kAliases[] = {PULSE_APP_CORE_ALIASES(PULSE_NAME)};
 constexpr const char* kWindowMembers[] = {PULSE_WINDOW_MEMBERS(PULSE_NAME)};
