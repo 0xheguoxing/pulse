@@ -683,8 +683,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         s->renderer.SetScale(s->scale);
         s->renderer.SetIconNotifyWindow(hwnd);
         if (init_core) RegisterAssocChangeNotify(ServiceWindow(*s));
-        s->quickPreview.Initialize(hwnd, WM_QUICK_PREVIEW_NAVIGATE,
-                                   WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND);
+        // Later windows build Quick Look on first use (ToggleQuickPreview):
+        // each one is a hidden window that cost every Ctrl+N about 25 ms.
+        if (init_core)
+            s->quickPreview.Initialize(hwnd, WM_QUICK_PREVIEW_NAVIGATE,
+                                       WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND);
 
         s->window_tabs.EnsureDefault();
         BindCurrentLayout(*s);
@@ -940,31 +943,9 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             });
             if (!s->pending_undo_json.empty()) s->ops.UndoFromJson(s->pending_undo_json);
         }
-        s->operationWindow = std::make_unique<ui::FileOperationWindow>();
-        ui::FileOperationCallbacks operation_callbacks;
-        operation_callbacks.cancel = [hwnd] {
-            if (AppState* state = GetAppState(hwnd)) state->ops.CancelCurrent();
-        };
-        operation_callbacks.pause = [hwnd] {
-            if (AppState* state = GetAppState(hwnd)) state->ops.PauseCurrent();
-        };
-        operation_callbacks.resume = [hwnd] {
-            if (AppState* state = GetAppState(hwnd)) state->ops.ResumeCurrent();
-        };
-        operation_callbacks.retry_authorization = [hwnd](uint64_t task_id) {
-            if (AppState* state = GetAppState(hwnd)) state->ops.ResolveAuthorization(task_id, true);
-        };
-        operation_callbacks.skip_authorization = [hwnd](uint64_t task_id) {
-            if (AppState* state = GetAppState(hwnd)) state->ops.ResolveAuthorization(task_id, false);
-        };
-        operation_callbacks.dismiss = [hwnd] {
-            if (AppState* state = GetAppState(hwnd)) {
-                state->operationDismissedTaskId = state->ops.Status().task_id;
-                state->operationPinnedByUser = false;
-            }
-        };
-        s->operationWindow->Create(hwnd, std::move(operation_callbacks));
-        s->operationWindow->SetTheme(s->darkMode, s->accentColor);
+        // Later windows build the operations window when they first show it
+        // (EnsureOperationWindow); the first window owns operations at launch.
+        if (init_core) EnsureOperationWindow(*s);
 
         // OLE drop target: list rows, pane headers, breadcrumbs, sidebar, tray.
         {

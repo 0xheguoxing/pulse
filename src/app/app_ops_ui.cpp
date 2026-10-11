@@ -381,6 +381,53 @@ void CollectPathsToTray(AppState& s, const std::vector<std::wstring>& paths, boo
         InvalidateRect(s.hwnd, nullptr, FALSE);
     }
 }
+bool EnsureOperationWindow(AppState& s) {
+    if (s.operationWindow) return true;
+    const HWND hwnd = s.hwnd;
+    if (!hwnd || !IsWindow(hwnd)) return false;
+    ui::FileOperationCallbacks operation_callbacks;
+    operation_callbacks.cancel = [hwnd] {
+        if (AppState* state = GetAppState(hwnd)) state->ops.CancelCurrent();
+    };
+    operation_callbacks.pause = [hwnd] {
+        if (AppState* state = GetAppState(hwnd)) state->ops.PauseCurrent();
+    };
+    operation_callbacks.resume = [hwnd] {
+        if (AppState* state = GetAppState(hwnd)) state->ops.ResumeCurrent();
+    };
+    operation_callbacks.retry_authorization = [hwnd](uint64_t task_id) {
+        if (AppState* state = GetAppState(hwnd)) state->ops.ResolveAuthorization(task_id, true);
+    };
+    operation_callbacks.skip_authorization = [hwnd](uint64_t task_id) {
+        if (AppState* state = GetAppState(hwnd)) state->ops.ResolveAuthorization(task_id, false);
+    };
+    operation_callbacks.dismiss = [hwnd] {
+        if (AppState* state = GetAppState(hwnd)) {
+            state->operationDismissedTaskId = state->ops.Status().task_id;
+            state->operationPinnedByUser = false;
+        }
+    };
+    s.operationWindow = std::make_unique<ui::FileOperationWindow>();
+    s.operationWindow->Create(hwnd, std::move(operation_callbacks));
+    s.operationWindow->SetTheme(s.darkMode, s.accentColor);
+    return true;
+}
+
+static bool OperationWindowVisible(const AppState& s) {
+    return s.operationWindow && s.operationWindow->IsVisible();
+}
+
+static void HideOperationWindow(AppState& s) {
+    if (OperationWindowVisible(s)) s.operationWindow->Hide();
+}
+
+static void ShowOperationWindow(AppState& s, const ops::OpStatus& status, bool activate) {
+    const bool created = !s.operationWindow;
+    if (!EnsureOperationWindow(s)) return;
+    if (created) s.operationWindow->Update(status);
+    s.operationWindow->Show(activate);
+}
+
 void MoveOperationUi(AppState& from, AppState& to) {
     if (&from == &to || !to.hwnd) return;
     to.operationUiTaskId = from.operationUiTaskId;
@@ -391,10 +438,10 @@ void MoveOperationUi(AppState& from, AppState& to) {
     to.operationPinnedByUser = from.operationPinnedByUser;
     to.operationStartedAt = from.operationStartedAt;
     to.operationFinishedAt = from.operationFinishedAt;
-    const bool shown = from.operationWindow && from.operationWindow->IsVisible();
+    const bool shown = OperationWindowVisible(from);
     if (shown) from.operationWindow->Hide();
     to.ops.SetUiWindow(to.hwnd);
-    if (shown && to.operationWindow) {
+    if (shown && EnsureOperationWindow(to)) {
         to.operationWindow->Update(to.ops.Status());
         to.operationWindow->Show(false);
     }
@@ -402,9 +449,9 @@ void MoveOperationUi(AppState& from, AppState& to) {
 
 void PinAndShowOperationWindow(AppState& s) {
     if (AppState* ui = GetAppState(s.ops.UiWindow()); ui && ui != &s) MoveOperationUi(*ui, s);
-    if (!s.operationWindow) return;
     const ops::OpStatus status = s.ops.Status();
     if (!status.active && status.summary.empty() && status.last_error.empty()) return;
+    if (!EnsureOperationWindow(s)) return;
     s.operationDismissedTaskId = 0;
     s.operationPinnedByUser = true;
     s.operationAutoShown = true;
@@ -453,10 +500,10 @@ void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog) {
         UpdateOperationWindow(*ui, allow_conflict_dialog);
         return;
     }
-    if (!s.operationWindow) return;
+    // Built on first show (EnsureOperationWindow): most windows never need one.
     const auto now = std::chrono::steady_clock::now();
     const ops::OpStatus status = s.ops.Status();
-    s.operationWindow->Update(status);
+    if (s.operationWindow) s.operationWindow->Update(status);
 
     if (status.active && status.task_id != s.operationUiTaskId) {
         s.operationUiTaskId = status.task_id;
@@ -484,20 +531,20 @@ void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog) {
         s.lockPromptTaskId = status.task_id;
         s.operationDismissedTaskId = status.task_id;
         s.operationPinnedByUser = false;
-        if (s.operationWindow->IsVisible()) s.operationWindow->Hide();
+        HideOperationWindow(s);
         PromptLockedItem(s, status);
         return;
     }
 
     if (status.task_id != 0 && status.task_id == s.operationDismissedTaskId &&
         !s.operationPinnedByUser) {
-        if (s.operationWindow->IsVisible()) s.operationWindow->Hide();
+        HideOperationWindow(s);
         return;
     }
 
     if (status.active && status.authorization != ops::AuthorizationState::None) {
         // Keep the existing operation window visible without stealing focus from UAC.
-        if (!s.operationWindow->IsVisible()) s.operationWindow->Show(false);
+        if (!OperationWindowVisible(s)) ShowOperationWindow(s, status, false);
         return;
     }
 
@@ -510,18 +557,18 @@ void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog) {
     if (s.operationPinnedByUser) return;
 
     if (status.phase == ops::OpPhase::Completed) {
-        if (s.operationWindow->IsVisible()) {
+        if (OperationWindowVisible(s)) {
             if (s.operationFinishedAt.time_since_epoch().count() == 0)
                 s.operationFinishedAt = now;
             if (now - s.operationFinishedAt >= std::chrono::milliseconds(600))
-                s.operationWindow->Hide();
+                HideOperationWindow(s);
         }
     } else if (status.phase == ops::OpPhase::Failed) {
         // The ops notification shows the locked-item prompt; a timer tick
         // that sees the failure first must not open the failure window.
         if (locked_failure) return;
         if (ErrorIs(status.last_error, L"已取消", L"Canceled")) {
-            s.operationWindow->Hide();
+            HideOperationWindow(s);
             return;
         }
         const bool simple = status.type == ops::OpType::CreateFolder
@@ -529,7 +576,7 @@ void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog) {
                          || status.type == ops::OpType::Rename
                          || status.type == ops::OpType::BatchRename;
         if (simple) {
-            if (s.operationWindow->IsVisible()) s.operationWindow->Hide();
+            HideOperationWindow(s);
             if (status.task_id == 0 || status.task_id == s.operationDismissedTaskId)
                 return;
             s.operationDismissedTaskId = status.task_id;
@@ -562,7 +609,7 @@ void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog) {
             s.notification_toast.ShowError(s.hwnd, title, std::move(message));
             return;
         }
-        if (!s.operationWindow->IsVisible()) s.operationWindow->Show(true);
+        if (!OperationWindowVisible(s)) ShowOperationWindow(s, status, true);
     }
 }
 

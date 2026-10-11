@@ -2291,6 +2291,8 @@ void ToggleQuickPreview(AppState& s) {
                 }
             }
         }
+        s.quickPreview.Initialize(s.hwnd, WM_QUICK_PREVIEW_NAVIGATE,
+                                  WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND);
         s.quickPreview.Show(item, s.darkMode, effect, s.safeMode, zoom_from);
         s.quickPreviewSelection.Reset(item.path);
     }

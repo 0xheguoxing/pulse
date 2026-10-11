@@ -66,8 +66,8 @@ bool RunOperationToastTest() {
         tab->SetSnapshot(std::make_shared<std::vector<fs::DirEntry>>(1, entry));
         tab->selected_index = 0;
         tab->loading = false;
-        state->operationWindow = std::make_unique<ui::FileOperationWindow>();
-        check(state->operationWindow->Create(hwnd, {}), "operation window initialized");
+        // The operations window is built on first show (M4f), not with the window.
+        check(!state->operationWindow, "a new window has no operations window yet");
         state->ops.Start([] {});
         struct Variant { const wchar_t* name; const wchar_t* language; bool dark; float scale; int width; int height; };
         for (const auto& variant : { Variant{L"light", L"zh-CN", false, 1.0f, 1000, 700},
@@ -101,7 +101,7 @@ bool RunOperationToastTest() {
             const HWND focus = GetFocus();
             UpdateOperationWindow(*state, false);
             check(state->notification_toast.IsVisible() && IsWindowEnabled(hwnd) && GetFocus() == focus &&
-                !state->operationWindow->IsVisible(), "rename error shows a toast without a modal window or focus change");
+                !state->operationWindow, "rename error shows a toast without a modal window or focus change");
             auto* dc = state->compositor.Dc();
             dc->BeginDraw();
             dc->Clear(D2D1::ColorF(0, 0.0f));
@@ -127,6 +127,13 @@ bool RunOperationToastTest() {
             Sleep(10);
         }
         check(!state->notification_toast.IsVisible(), "error toast dismisses automatically after six seconds");
+        check(!state->operationWindow, "status updates alone never build the operations window");
+        PinAndShowOperationWindow(*state);
+        const ui::FileOperationWindow* built = state->operationWindow.get();
+        check(built && built->IsVisible(), "opening the operation details builds and shows the window on demand");
+        check(EnsureOperationWindow(*state) && state->operationWindow.get() == built,
+            "the operations window is built once and then reused");
+        if (built) state->operationWindow->Hide();
         state->ops.Stop();
         check(std::filesystem::exists(source) && std::filesystem::exists(target) &&
             std::filesystem::file_size(source) == 6 && std::filesystem::file_size(target) == 8,

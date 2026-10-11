@@ -25,6 +25,8 @@ void RememberTrayDest(AppState& s, const std::wstring& dir);
 void SendTrayToDest(AppState& s, const std::wstring& dir, bool move);
 // Batch rename an explicit path list (staging tray); tray entries follow.
 void ShowBatchRenamePaths(AppState& s, const std::vector<std::wstring>& paths);
+// Builds this window's operations window the first time it has to show it.
+bool EnsureOperationWindow(AppState& s);
 void PinAndShowOperationWindow(AppState& s);
 void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog);
 // Makes `to` the window that shows file operations (multi-window M4c, plan
