@@ -485,6 +485,9 @@ bool TestExplorerShortcuts() {
     passed &= Report("explorer keys: Ctrl+N new window, Ctrl+Shift+W closes the window (multi-window M4b)",
         is(L'N', true, false, false, A::NewWindow) && is(L'W', true, true, false, A::CloseWindow) &&
         is(L'N', true, false, true, A::None) && is(L'N', false, false, false, A::None));
+    passed &= Report("explorer keys: Ctrl+Shift+M moves the tab to a new window, Ctrl+M and Ctrl+Alt+Shift+M do not (M4e)",
+        is(L'M', true, true, false, A::MoveTabToNewWindow) && is(L'M', true, false, false, A::None) &&
+        is(L'M', true, true, true, A::None) && is(L'M', false, true, false, A::None));
     passed &= Report("explorer keys: Ctrl+W (the tab) and Ctrl+Alt+Shift+W are not window keys",
         is(L'W', true, false, false, A::None) && is(L'W', true, true, true, A::None));
     passed &= Report("explorer keys: Ctrl+1..9 tabs, Ctrl+Alt+1..4 layouts, Ctrl+Alt+5 nothing",

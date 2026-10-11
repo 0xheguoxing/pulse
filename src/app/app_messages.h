@@ -48,5 +48,6 @@ constexpr UINT WM_RELEASE_WINDOW_STATES = WM_APP + 76;  // host: free retired wi
 constexpr UINT WM_NEW_WINDOW = WM_APP + 77;  // open another window at this window's folder (M4a)
 constexpr UINT WM_REOPEN_CLOSED_WINDOW = WM_APP + 78;  // reopen the last closed window (M4c toast, Ctrl+Shift+T)
 constexpr UINT WM_OPEN_SESSION_WINDOWS = WM_APP + 79;  // first window shown: open the session's other windows (M4d)
+constexpr UINT WM_MOVE_TAB_TO_NEW_WINDOW = WM_APP + 80;  // Ctrl+Shift+M: the active tab moves to a new window (M4e)
 
 }  // namespace pulse

@@ -409,6 +409,27 @@ static void RestoreTabsFromSnapshots(AppState& s, const std::vector<app::LayoutT
     BindCurrentLayout(s);
 }
 
+// Ctrl+Shift+M (M4e, plan §8.4): the active tab, with its panes, splits and
+// pin, moves to a new window next to this one (it leaves its group). Its
+// folders load again there; scroll position and selection do not travel. A
+// window with one tab keeps it: moving it would only replace the window.
+static void MoveTabToNewWindow(AppState& s) {
+    auto& tabs = s.window_tabs;
+    const size_t index = tabs.active;
+    if (tabs.items.size() < 2 || index >= tabs.items.size() || !tabs.items[index]) return;
+    RememberLayoutFocus(s);
+    app::LayoutTabSnapshot moved = app::CaptureLayoutTab(*tabs.items[index]);
+    moved.group = 0;
+    app::ClosedWindow init_tabs;  // no place: OpenPulseWindow cascades from `s`
+    init_tabs.layout_tabs.push_back(std::move(moved));
+    WindowInit init;
+    init.restore = std::move(init_tabs);
+    if (!OpenPulseWindow(s, init)) return;
+    // CloseTab keeps pinned tabs; this one lives on in the new window.
+    if (index < tabs.items.size() && tabs.items[index]) tabs.items[index]->pinned = false;
+    CloseLayoutTab(s, index);
+}
+
 // Reopens the most recently closed window next to `from` (M4c).
 static void ReopenClosedWindow(AppState& from) {
     auto closed = from.core.closed_windows.TakeLatest();
@@ -1301,6 +1322,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_OPEN_SESSION_WINDOWS:
         if (s) OpenSessionWindows(*s);
+        return 0;
+
+    case WM_MOVE_TAB_TO_NEW_WINDOW:
+        if (s) MoveTabToNewWindow(*s);
         return 0;
 
     case WM_SHELL_SELECT: {

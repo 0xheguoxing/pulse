@@ -4025,6 +4025,7 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             // Posted: the window must not be created or destroyed under this handler.
             case A::NewWindow: PostMessageW(hwnd, WM_NEW_WINDOW, 0, 0); break;
             case A::CloseWindow: PostMessageW(hwnd, WM_CLOSE, 0, 0); break;
+            case A::MoveTabToNewWindow: PostMessageW(hwnd, WM_MOVE_TAB_TO_NEW_WINDOW, 0, 0); break;
             case A::None: break;
             }
         } else if (ctrl && !shift && !alt && wParam == L'B') {

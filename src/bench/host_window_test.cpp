@@ -187,7 +187,7 @@ int wmain(int argc, wchar_t** argv) {
     for (UINT m : {WM_FRAME_PUMP, WM_QUICK_PREVIEW_NAVIGATE, WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND,
                    WM_DETAILS_META, WM_SHOW_RELEASE_NOTES, WM_CONTENT_SELECTION,
                    WM_UPDATE_INSTALL, WM_SEARCH_HISTORY, WM_SHELL_SELECT, WM_NEW_WINDOW,
-                   WM_REOPEN_CLOSED_WINDOW, WM_OPEN_SESSION_WINDOWS})
+                   WM_REOPEN_CLOSED_WINDOW, WM_OPEN_SESSION_WINDOWS, WM_MOVE_TAB_TO_NEW_WINDOW})
         window_local = window_local && !app::IsHostRoutedMessage(m);
     Check(window_local, "window-level messages are not routed through the host");
     bool broadcasts_local = true;

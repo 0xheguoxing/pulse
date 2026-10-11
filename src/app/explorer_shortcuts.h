@@ -16,6 +16,7 @@
 //   F11                  maximize / restore
 //   Ctrl+N               new window at the current folder (multi-window M4b)
 //   Ctrl+Shift+W         close this window (Ctrl+W, without Shift, closes the tab)
+//   Ctrl+Shift+M         move the current tab to a new window (multi-window M4e)
 
 #include <windows.h>
 
@@ -27,7 +28,7 @@ namespace pulse::app {
 
 enum class ExplorerKeyAction {
     None, Delete, MarkTarget, NewFolder, Search, TabNumber, Layout, ViewMode, Tag, Back,
-    ContextMenu, Maximize, NewWindow, CloseWindow
+    ContextMenu, Maximize, NewWindow, CloseWindow, MoveTabToNewWindow
 };
 
 struct ExplorerKeyCommand {
@@ -45,6 +46,7 @@ inline ExplorerKeyCommand ExplorerShortcut(UINT key, bool ctrl, bool shift, bool
     if (ctrl && shift && !alt && key == L'N') return {A::NewFolder};
     if (ctrl && !shift && !alt && key == L'N') return {A::NewWindow};
     if (ctrl && shift && !alt && key == L'W') return {A::CloseWindow};
+    if (ctrl && shift && !alt && key == L'M') return {A::MoveTabToNewWindow};
     if ((ctrl && !shift && !alt && key == L'E') || (!ctrl && !shift && !alt && key == VK_F3))
         return {A::Search};
     if (digit && ctrl && !shift && !alt) return {A::TabNumber, number};
