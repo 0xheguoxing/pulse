@@ -64,10 +64,10 @@ bool VolumeAccessible(const std::wstring& root) {
     return accessible;
 }
 
-void WaitForUnlock(HWND hwnd, UINT msg, std::wstring root) {
+void WaitForUnlock(HWND owner, HWND notify, UINT msg, std::wstring root) {
     const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     bool launched = UnlockPromptOpen();
-    HANDLE process = launched ? nullptr : LaunchPrompt(hwnd, root, launched);
+    HANDLE process = launched ? nullptr : LaunchPrompt(IsWindow(owner) ? owner : nullptr, root, launched);
     bool unlocked = false;
     const ULONGLONG deadline = GetTickCount64() + kMaxWaitMs;
     ULONGLONG closed_since = 0;
@@ -88,12 +88,12 @@ void WaitForUnlock(HWND hwnd, UINT msg, std::wstring root) {
         g_pending.erase(root);
     }
     auto* result = new BitLockerUnlockResult{std::move(root), unlocked};
-    if (!IsWindow(hwnd) || !PostMessageW(hwnd, msg, 0, reinterpret_cast<LPARAM>(result))) delete result;
+    if (!IsWindow(notify) || !PostMessageW(notify, msg, 0, reinterpret_cast<LPARAM>(result))) delete result;
 }
 
 } // namespace
 
-bool StartBitLockerUnlock(HWND hwnd, UINT msg, const std::wstring& path) {
+bool StartBitLockerUnlock(HWND owner, HWND notify, UINT msg, const std::wstring& path) {
     const std::wstring root = fs::DriveRootOf(path);
     if (root.empty()) return false;
     {
@@ -101,7 +101,7 @@ bool StartBitLockerUnlock(HWND hwnd, UINT msg, const std::wstring& path) {
         if (!g_pending.insert(root).second) return false;
     }
     try {
-        std::thread(WaitForUnlock, hwnd, msg, root).detach();
+        std::thread(WaitForUnlock, owner, notify, msg, root).detach();
     } catch (...) {
         std::lock_guard lock(g_mutex);
         g_pending.erase(root);

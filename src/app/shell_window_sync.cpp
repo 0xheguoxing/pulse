@@ -40,7 +40,8 @@ bool ExplorerTakeoverEnabled(const AppState& s) {
 void SyncExplorerTakeover(AppState& s) {
     const bool enabled = ExplorerTakeoverEnabled(s);
     if (enabled && !s.explorer_takeover) {
-        s.explorer_takeover = std::make_unique<app::ExplorerWindowTakeover>(s.hwnd, WM_EXPLORER_TAKEOVER);
+        // Requests reach the most recent window through the host.
+        s.explorer_takeover = std::make_unique<app::ExplorerWindowTakeover>(ServiceWindow(s), WM_EXPLORER_TAKEOVER);
     } else if (!enabled && s.explorer_takeover) {
         s.explorer_takeover->Stop();
         s.explorer_takeover.reset();
@@ -122,7 +123,7 @@ void StopShellWindows(AppState& s) {
     // Stop synchronizes with posting; release requests which the destroyed
     // target window will no longer dispatch.
     MSG pending{};
-    while (PeekMessageW(&pending, s.hwnd, WM_EXPLORER_TAKEOVER, WM_EXPLORER_TAKEOVER, PM_REMOVE)) {
+    while (PeekMessageW(&pending, ServiceWindow(s), WM_EXPLORER_TAKEOVER, WM_EXPLORER_TAKEOVER, PM_REMOVE)) {
         std::unique_ptr<app::ExplorerTakeoverRequest> request(
             reinterpret_cast<app::ExplorerTakeoverRequest*>(pending.lParam));
         if (request && request->handoff) request->handoff->Cancel();

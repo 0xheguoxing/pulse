@@ -1592,7 +1592,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_BITLOCKER_UNLOCK: {
         std::unique_ptr<app::BitLockerUnlockResult> result(
             reinterpret_cast<app::BitLockerUnlockResult*>(lParam));
-        if (s && result) ApplyBitLockerUnlock(*s, result->root, result->unlocked);
+        // Every window showing the drive reloads or updates its banner.
+        if (s && result)
+            app::ForEachWindowSharingCore(*s, [&](AppState& window) {
+                ApplyBitLockerUnlock(window, result->root, result->unlocked);
+            });
         return 0;
     }
 
@@ -1986,29 +1990,29 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 return 0;
             }
             s->places.SetNetworkStatus(result->unc, result->status, result->rtt_ms);
-            if (result->status == fs::NetStatus::Offline) {
-                ForEachPane(*s, [&](app::Pane& pane) {
+            // The status is shared; every window showing the share updates.
+            const bool offline = result->status == fs::NetStatus::Offline;
+            app::ForEachWindowSharingCore(*s, [&](AppState& window) {
+                ForEachPane(window, [&](app::Pane& pane) {
                     app::Tab* tab = pane.ActiveTab();
                     if (!tab || tab->current_path != result->unc) return;
-                    if (tab->snapshot) {
-                        tab->net_readonly = true;
-                        tab->banner_title = l10n::Get(l10n::StringId::Offline);
-                        tab->banner_message = l10n::Get(l10n::StringId::OfflineSnapshot);
+                    if (offline) {
+                        if (tab->snapshot) {
+                            tab->net_readonly = true;
+                            tab->banner_title = l10n::Get(l10n::StringId::Offline);
+                            tab->banner_message = l10n::Get(l10n::StringId::OfflineSnapshot);
+                        }
+                        return;
                     }
-                });
-            } else {
-                ForEachPane(*s, [&](app::Pane& pane) {
-                    app::Tab* tab = pane.ActiveTab();
-                    if (!tab || tab->current_path != result->unc) return;
                     tab->net_readonly = false;
                     if (tab->banner_title == l10n::Get(l10n::StringId::Offline)) {
                         tab->banner_title.clear();
                         tab->banner_message.clear();
                     }
                 });
-            }
+                InvalidateRect(window.hwnd, nullptr, FALSE);
+            });
             PumpUncProbe(*s);
-            InvalidateRect(hwnd, nullptr, FALSE);
         }
         delete result;
         return 0;

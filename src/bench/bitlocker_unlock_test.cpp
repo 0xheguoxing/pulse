@@ -65,15 +65,18 @@ bool WaitForPrompt(DWORD ms) {
     return false;
 }
 
-// Pumps until the result arrives; nullptr on timeout.
-std::unique_ptr<pulse::app::BitLockerUnlockResult> WaitForResult(DWORD ms) {
+// Pumps until the result arrives; nullptr on timeout. `target` gets the
+// window the result was posted to.
+std::unique_ptr<pulse::app::BitLockerUnlockResult> WaitForResult(DWORD ms, HWND* target = nullptr) {
     const ULONGLONG deadline = GetTickCount64() + ms;
     while (GetTickCount64() < deadline) {
         MSG msg{};
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            if (msg.message == kResultMessage)
+            if (msg.message == kResultMessage) {
+                if (target) *target = msg.hwnd;
                 return std::unique_ptr<pulse::app::BitLockerUnlockResult>(
                     reinterpret_cast<pulse::app::BitLockerUnlockResult*>(msg.lParam));
+            }
             DispatchMessageW(&msg);
         }
         MsgWaitForMultipleObjects(0, nullptr, FALSE, 100, QS_ALLINPUT);
@@ -113,15 +116,23 @@ int main() {
 
     Check(!pulse::app::StartBitLockerUnlock(hwnd, kResultMessage, L"\\\\server\\share"),
           "no prompt for paths without a drive");
-    // 1. The user closes the prompt without unlocking.
-    Check(pulse::app::StartBitLockerUnlock(hwnd, kResultMessage, root + L"folder\\file.txt"), "unlock wait starts");
+    // 1. The user closes the prompt without unlocking. Multi-window M3e: the
+    // prompt's owner (the waiting window) and the result's receiver (the host)
+    // are different windows.
+    HWND owner = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, nullptr,
+                                 nullptr);
+    Check(pulse::app::StartBitLockerUnlock(owner, hwnd, kResultMessage, root + L"folder\\file.txt"),
+          "unlock wait starts");
     Check(!pulse::app::StartBitLockerUnlock(hwnd, kResultMessage, root), "second request for the same drive is merged");
     Check(WaitForPrompt(8000), "system unlock prompt (bdeunlock) is shown");
     Pump(500);
     PromptCount(true);
-    auto cancelled = WaitForResult(10000);
+    HWND receiver = nullptr;
+    auto cancelled = WaitForResult(10000, &receiver);
     Check(cancelled && cancelled->root == root && !cancelled->unlocked && pulse::fs::IsBitLockerLocked(root),
           "closing the prompt reports the drive as still locked");
+    Check(receiver == hwnd, "the result goes to the notify window, not the prompt's owner");
+    if (owner) DestroyWindow(owner);
 
     // 2. The user enters the password (elevated Unlock-BitLocker stands in).
     Check(pulse::app::StartBitLockerUnlock(hwnd, kResultMessage, root), "unlock wait restarts after a cancel");

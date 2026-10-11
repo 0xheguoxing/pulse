@@ -97,7 +97,8 @@ void PumpUncProbe(AppState& s) {
     }
     const std::wstring& next = s.probeQueue.front();
     const fs::UncProbeId probe_id = s.probe_scheduler.Begin(next);
-    if (!fs::StartUncProbe(s.hwnd, WM_NET_PROBE, next, probe_id)) {
+    // The scheduler is shared; its result must not die with one window.
+    if (!fs::StartUncProbe(ServiceWindow(s), WM_NET_PROBE, next, probe_id)) {
         s.probe_scheduler.Cancel(next, probe_id);
         SetTimer(s.hwnd, kTimerUncProbeRetry, 1000, nullptr);
         return;
@@ -1396,9 +1397,11 @@ void ApplyWorkerResult(AppState& s, app::WorkResult& res) {
     });
     // As File Explorer does for a locked drive: ask for the password, then open
     // it (ApplyBitLockerUnlock). One prompt, owned by the window that waits for
-    // the drive (or the caller when none does). One wait per drive at a time.
+    // the drive (or the caller when none does); the result goes to the host and
+    // reaches every window. One wait per drive at a time.
     if (res.error && res.bitlocker_locked) {
-        app::StartBitLockerUnlock((awaiting ? awaiting : &s)->hwnd, WM_BITLOCKER_UNLOCK, res.path);
+        app::StartBitLockerUnlock((awaiting ? awaiting : &s)->hwnd, ServiceWindow(s), WM_BITLOCKER_UNLOCK,
+                                  res.path);
     }
 }
 
