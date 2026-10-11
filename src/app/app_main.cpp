@@ -456,6 +456,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         s = reinterpret_cast<AppState*>(cs->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(s));
         s->hwnd = hwnd;
+        s->core.windows.Add(hwnd, s);
         s->tray_controller.Attach(hwnd, cs->hInstance, ServiceWindow(*s));
         InstallTrayRevealHook(*s);
 
@@ -1059,6 +1060,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         break;
 
     case WM_ACTIVATE:
+        if (s && LOWORD(wParam) != WA_INACTIVE) s->core.windows.Touch(hwnd);
         if (s) s->renderer.NotifyPreviewActivate(LOWORD(wParam) != WA_INACTIVE);
         if (s && LOWORD(wParam) != WA_INACTIVE) {
             std::wstring kind, page;
@@ -2095,6 +2097,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             s->renderer.SetIconNotifyWindow(nullptr);
             s->renderer.SetCompositor(nullptr);
             s->compositor.Shutdown();
+            s->core.windows.Remove(hwnd);
             s->hwnd = nullptr;
         }
         PostQuitMessage(0);
@@ -2746,19 +2749,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
                   "keep the system animations without DWM's duplicate caption buttons");
     // Hidden process window (host_window.h), created before the main window
     // so WM_CREATE can point services at it. It owns the single-instance
-    // endpoint (the main window no longer accepts WM_COPYDATA) and forwards
-    // the process-level notifications in host_routing.h to the main window.
+    // endpoint (Pulse windows do not accept WM_COPYDATA) and forwards the
+    // process-level notifications in host_routing.h to the most recently
+    // active window (WindowRegistry).
     const bool host_created = state.core.host.Create(hInstance,
         [&state](HWND host, UINT message, WPARAM wParam, LPARAM lParam) -> std::optional<LRESULT> {
+            AppState* const target = state.core.windows.MostRecent();
             if (app::IsHostRoutedMessage(message))
-                return state.hwnd ? SendMessageW(state.hwnd, message, wParam, lParam) : 0;
+                return target ? SendMessageW(target->hwnd, message, wParam, lParam) : 0;
             if (message != 0 && message == app::TrayController::TaskbarCreatedMessage()) {
                 state.tray_controller.HandleTaskbarCreated();  // the icon lives on the host
                 return 0;
             }
             if (message != WM_COPYDATA) return std::nullopt;
-            if (!state.hwnd || !state.single_instance.OwnsEndpoint(host)) return FALSE;
-            return HandleInstanceCopyData(state, reinterpret_cast<COPYDATASTRUCT*>(lParam));
+            if (!target || !state.single_instance.OwnsEndpoint(host)) return FALSE;
+            return HandleInstanceCopyData(*target, reinterpret_cast<COPYDATASTRUCT*>(lParam));
         });
     if (!host_created) return 1;
     HWND hwnd = CreateWindowExW(

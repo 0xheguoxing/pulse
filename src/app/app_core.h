@@ -26,6 +26,7 @@
 #include "global_search_hotkey.h"
 #include "global_search_window.h"
 #include "host_window.h"
+#include "window_registry.h"
 #include "live_network_search.h"
 #include "places.h"
 #include "saved_search.h"
@@ -52,6 +53,8 @@ namespace pulse {
 
 struct SidebarRefreshLoad;
 struct NetworkLocationLoad;
+
+struct AppState;
 
 struct AppCore {
     AppCore() = default;
@@ -193,6 +196,9 @@ struct AppCore {
 
     // Icon and thumbnail caches every window's renderer draws from.
     ui::RenderCaches render_caches;
+
+    // Every Pulse window of the process, most recently activated first.
+    app::BasicWindowRegistry<AppState> windows;
 
     // Hidden process window (host_window.h): single-instance endpoint today,
     // tray/hotkey/service callbacks as M2 continues. Last member, so it is
