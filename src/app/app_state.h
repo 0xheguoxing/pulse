@@ -58,6 +58,7 @@
 #include "../index/content_search_client.h"
 #include "../ops/ops_manager.h"
 #include "app_core.h"
+#include "app_messages.h"
 #include <windows.h>
 #include <atomic>
 #include <chrono>
@@ -73,47 +74,9 @@
 
 namespace pulse {
 
-constexpr UINT WM_WORKER_RESULT = WM_APP + 1;
-constexpr UINT WM_OPS_NOTIFY = WM_APP + 2;
-constexpr UINT WM_INDEX_NOTIFY = WM_APP + 40;
-constexpr UINT WM_INDEX_SEARCH = WM_APP + 42;
-constexpr UINT WM_NET_PROBE = WM_APP + 41;
-constexpr UINT WM_TAG_ADS_WARNING = WM_APP + 43;
-constexpr UINT WM_TAG_ADS_DISCOVERED = WM_APP + 44;
-// Explorer context-menu integration (优化.md §7). lParam owns a heap payload.
-constexpr UINT WM_SHELLCTX_ITEMS = WM_APP + 45;  // ShellCtxItemsPayload*
-constexpr UINT WM_SHELL_VERBS = WM_APP + 46;     // ShellVerbsResult*
-constexpr UINT WM_DETAILS_META = WM_APP + 47;    // DetailsMetaResult*
-constexpr UINT WM_SETTINGS_TASK_RESULT = WM_APP + 48;
-constexpr UINT WM_SHELL_CACHE_INVALIDATE = WM_APP + 49;
-constexpr UINT WM_NETWORK_INDEX_NOTIFY = WM_APP + 51;
-constexpr UINT WM_NETWORK_INDEX_SEARCH = WM_APP + 52;
-constexpr UINT WM_CONTENT_SEARCH = WM_APP + 53;
-constexpr UINT WM_CONTENT_SELECTION = WM_APP + 64;
-constexpr UINT WM_DUPLICATE_SCAN = WM_APP + 58;
-constexpr UINT WM_QUICK_PREVIEW_NAVIGATE = WM_APP + 54;
-constexpr UINT WM_QUICK_PREVIEW_OPEN = WM_APP + 55;
-constexpr UINT WM_QUICK_PREVIEW_COMMAND = WM_APP + 65;  // lParam: immutable command token
-constexpr UINT WM_SHOW_RELEASE_NOTES = WM_APP + 66;  // "updated" toast clicked
-constexpr UINT WM_UPDATE_RESULT = WM_APP + 56;
-constexpr UINT WM_RECYCLE_INFO = WM_APP + 57;
-constexpr UINT WM_DUP_VOLUMES = WM_APP + 59;
-constexpr UINT WM_UPDATE_DOWNLOADED = WM_APP + 60;
-constexpr UINT WM_UPDATE_INSTALL = WM_APP + 61;
-constexpr UINT WM_SEARCH_HISTORY = WM_APP + 62;
-constexpr UINT WM_CHANGE_TRACKING = WM_APP + 63;
-constexpr UINT WM_FRAME_PUMP = WM_APP + 67;  // app::FramePump: one display frame of motion
-constexpr UINT WM_SHELL_SELECT = WM_APP + 68;  // app::ShellSelectRequest* (shell_window_sync.h)
-constexpr UINT WM_EXPLORER_TAKEOVER = WM_APP + 69;  // app::ExplorerTakeoverRequest* (shell_window_sync.h)
-constexpr UINT WM_NETWORK_LIVE_SEARCH = WM_APP + 71;  // shared_ptr<LiveNetworkSearch>* (#74 live walk progressed)
-constexpr UINT WM_SHELL_VERB_SEED = WM_APP + 70;
-constexpr UINT WM_EXIT_PULSE = WM_APP + 72;  // palette "Exit Pulse" (#57)  // ShellVerbSeed* (machine verb cache read off the UI thread)
 constexpr UINT kTimerUi = 1;
 // Scrolls the list while a marquee is dragged past its edge.
 constexpr UINT_PTR kTimerMarqueeScroll = 0x4D51;
-constexpr UINT WM_NETWORK_LOCATIONS = WM_APP + 73;
-constexpr UINT WM_ASSOC_CHANGED = WM_APP + 74;  // SHCNE_ASSOCCHANGED: default programs changed
-constexpr UINT WM_BITLOCKER_UNLOCK = WM_APP + 75;  // app::BitLockerUnlockResult* (bitlocker_unlock.h)
 
 enum class OmnibarMode { Path, Mixed, Command, Project };
 
@@ -770,6 +733,12 @@ struct AppState : AppCoreOwner {
     // After a "new folder/file" op lands, select it and start renaming.
 
 };
+
+// Where process-level notifications go (multi-window M2): the hidden host
+// window, or the state's own window when there is no host (tests, probes).
+inline HWND ServiceWindow(const AppState& s) {
+    return s.core.host.Hwnd() ? s.core.host.Hwnd() : s.hwnd;
+}
 
 // WM_SHELL_VERBS heap payload (posted by the registry enumeration thread).
 struct ShellVerbsResult {

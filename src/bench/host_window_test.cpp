@@ -2,12 +2,17 @@
 // single-instance endpoint. A second process forwards an open request through
 // the real SingleInstanceCoordinator to the host; the host stays hidden, out of
 // the taskbar, survives WM_CLOSE, and (unlike a message-only window) receives
-// broadcasts such as TaskbarCreated.
+// broadcasts such as TaskbarCreated. The routing table forwards only
+// process-level notifications, and forwarding keeps the posting order.
+#include "../app/host_routing.h"
 #include "../app/host_window.h"
 #include "../app/single_instance_coordinator.h"
 
 #include <cstdio>
 #include <string>
+#include <iterator>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -62,6 +67,14 @@ bool WaitChild(HANDLE process) {
 
 UINT g_broadcast = 0;
 int g_message_only_broadcasts = 0;
+std::vector<UINT> g_window_order;
+LRESULT CALLBACK OrderWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message >= WM_APP && message < 0xC000) {
+        g_window_order.push_back(message);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, message, wparam, lparam);
+}
 LRESULT CALLBACK MessageOnlyProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     if (message == g_broadcast) ++g_message_only_broadcasts;
     return DefWindowProcW(hwnd, message, wparam, lparam);
@@ -147,6 +160,63 @@ int wmain(int argc, wchar_t** argv) {
     Check(Coordinator::FindPrimaryWindow(endpoint) == nullptr, "a destroyed host no longer resolves as the endpoint");
     Check(!WaitChild(Spawn(L"--sender " + endpoint + L" \"" + folder + L"\"")) && opens == 1,
           "forwarding fails after the host is gone (no stray delivery)");
+
+    // Routing table (host_routing.h).
+    using namespace pulse;
+    bool unique = true;
+    for (size_t i = 0; i < std::size(app::kHostRoutedMessages); ++i)
+        for (size_t j = i + 1; j < std::size(app::kHostRoutedMessages); ++j)
+            unique = unique && app::kHostRoutedMessages[i] != app::kHostRoutedMessages[j];
+    Check(unique, "routing table has no duplicate ids");
+    bool services = true;
+    for (UINT m : {WM_WORKER_RESULT, WM_OPS_NOTIFY, WM_INDEX_NOTIFY, WM_INDEX_SEARCH, WM_NETWORK_INDEX_NOTIFY,
+                   WM_NETWORK_INDEX_SEARCH, WM_CONTENT_SEARCH, WM_DUPLICATE_SCAN, WM_ASSOC_CHANGED,
+                   WM_SHELL_CACHE_INVALIDATE, WM_SHELL_VERB_SEED, WM_SHELL_VERBS})
+        services = services && app::IsHostRoutedMessage(m);
+    Check(services, "service notifications retargeted in M2b are routed");
+    bool window_local = true;
+    for (UINT m : {WM_FRAME_PUMP, WM_QUICK_PREVIEW_NAVIGATE, WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND,
+                   WM_DETAILS_META, WM_SHELLCTX_ITEMS, WM_SHOW_RELEASE_NOTES, WM_CONTENT_SELECTION})
+        window_local = window_local && !app::IsHostRoutedMessage(m);
+    Check(window_local, "window-level messages are not routed through the host");
+    bool broadcasts_local = true;
+    for (UINT m : {UINT(WM_SETTINGCHANGE), UINT(WM_DEVICECHANGE), UINT(WM_ENDSESSION), UINT(WM_QUERYENDSESSION),
+                   UINT(WM_DISPLAYCHANGE), UINT(WM_COPYDATA), UINT(WM_CLOSE)})
+        broadcasts_local = broadcasts_local && !app::IsHostRoutedMessage(m);
+    Check(broadcasts_local, "system broadcasts are not forwarded (no double handling)");
+
+    // Forwarding keeps order: one thread queue serves both windows, so posts
+    // from a worker reach the window in posting order whichever window they
+    // were addressed to.
+    WNDCLASSW order_cls{};
+    order_cls.lpfnWndProc = OrderWindowProc;
+    order_cls.hInstance = GetModuleHandleW(nullptr);
+    order_cls.lpszClassName = L"PulseHostWindowTestOrder";
+    RegisterClassW(&order_cls);
+    const HWND window = CreateWindowW(order_cls.lpszClassName, L"", WS_POPUP, 0, 0, 0, 0, nullptr,
+                                      nullptr, order_cls.hInstance, nullptr);
+    HostWindow router;
+    router.Create(GetModuleHandleW(nullptr),
+        [window](HWND, UINT message, WPARAM wparam, LPARAM lparam) -> std::optional<LRESULT> {
+            if (!app::IsHostRoutedMessage(message)) return std::nullopt;
+            return SendMessageW(window, message, wparam, lparam);
+        });
+    const HWND router_hwnd = router.Hwnd();
+    std::thread([router_hwnd, window] {
+        PostMessageW(router_hwnd, WM_INDEX_NOTIFY, 0, 0);
+        PostMessageW(window, WM_FRAME_PUMP, 0, 0);
+        PostMessageW(router_hwnd, WM_WORKER_RESULT, 0, 0);
+        PostMessageW(window, WM_DETAILS_META, 0, 0);
+        PostMessageW(router_hwnd, WM_OPS_NOTIFY, 0, 0);
+        PostMessageW(router_hwnd, WM_FRAME_PUMP, 0, 0);  // not routed: never reaches the window
+    }).join();
+    Pump(100);
+    const std::vector<UINT> expected_order{WM_INDEX_NOTIFY, WM_FRAME_PUMP, WM_WORKER_RESULT, WM_DETAILS_META,
+                                           WM_OPS_NOTIFY};
+    Check(window && router_hwnd && g_window_order == expected_order,
+          "routed and direct posts arrive in posting order; unrouted ids stay on the host");
+    router.Destroy();
+    if (window) DestroyWindow(window);
 
     std::printf("host_window_test: %d failure(s)\n", g_failures);
     return g_failures == 0 ? 0 : 1;

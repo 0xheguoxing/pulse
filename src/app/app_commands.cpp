@@ -1134,7 +1134,7 @@ std::wstring StaticVerbKey(const app::Tab& tab, const std::vector<int>& indices)
 // the reader posts WM_SHELL_VERBS back when done.
 void PrefetchStaticVerbs(AppState& s, const std::wstring& ext) {
     if (!s.context_menu.RequestStaticPrefetch(ext)) return;
-    HWND hwnd = s.hwnd;
+    HWND hwnd = ServiceWindow(s);
     const uint32_t cache_generation = s.context_menu.cache_generation();
     std::thread([hwnd, ext, cache_generation] {
         auto* result = new ShellVerbsResult{ ext, app::EnumerateStaticVerbs(ext), cache_generation };
@@ -1218,7 +1218,7 @@ void StopShellRegistryWatch() {
 }
 
 void SeedShellVerbCache(AppState& s) {
-    HWND hwnd = s.hwnd;
+    HWND hwnd = ServiceWindow(s);
     // A newer seed supersedes this one; stop instead of piling up readers.
     const uint32_t generation = ++g_shell_seed_generation;
     const uint32_t cache_generation = s.context_menu.cache_generation();
@@ -1294,8 +1294,10 @@ void MaybePrefetchHoverCtxMenu(AppState& s) {
 // then swap in this session's live ids when RSP_CTX_ITEMS lands.
 void PumpShellMenuMessages(AppState& s) {
     MSG msg{};
+    // Static verb reads report to the host window (host_routing.h).
+    const HWND verbs_window = ServiceWindow(s);
     while (PeekMessageW(&msg, s.hwnd, WM_SHELLCTX_ITEMS, WM_SHELLCTX_ITEMS, PM_REMOVE) ||
-           PeekMessageW(&msg, s.hwnd, WM_SHELL_VERBS, WM_SHELL_VERBS, PM_REMOVE)) {
+           PeekMessageW(&msg, verbs_window, WM_SHELL_VERBS, WM_SHELL_VERBS, PM_REMOVE)) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }

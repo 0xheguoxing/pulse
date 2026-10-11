@@ -314,7 +314,7 @@ void PostWorkerResult(AppState& s, app::WorkResult res) {
         std::lock_guard<std::mutex> lock(s.resultMutex);
         s.results.push(std::move(res));
     }
-    PostMessageW(s.hwnd, WM_WORKER_RESULT, 0, 0);
+    PostMessageW(ServiceWindow(s), WM_WORKER_RESULT, 0, 0);
 }
 D2D1_RECT_F FocusedPaneRect(const AppState& s) {
     D2D1_RECT_F content = s.renderer.ContentRect(

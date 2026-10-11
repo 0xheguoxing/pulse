@@ -147,6 +147,7 @@ void UnregisterAssocChangeNotify() {
 #include "default_file_manager.h"
 #include "shell_window_sync.h"
 #include "host_window.h"
+#include "host_routing.h"
 #include <commctrl.h>
 #include <dbt.h> // WM_DEVICECHANGE / DEV_BROADCAST_HDR
 
@@ -491,7 +492,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         s->renderer.SetCompositor(&s->compositor);
         s->renderer.SetScale(s->scale);
         s->renderer.SetIconNotifyWindow(hwnd);
-        RegisterAssocChangeNotify(hwnd);
+        RegisterAssocChangeNotify(ServiceWindow(*s));
         s->quickPreview.Initialize(hwnd, WM_QUICK_PREVIEW_NAVIGATE,
                                    WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND);
 
@@ -593,7 +594,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             s->appPrefs.background_image.clear();
         } else {
             SeedShellVerbCache(*s);
-            StartShellRegistryWatch(hwnd);
+            StartShellRegistryWatch(ServiceWindow(*s));
         }
         s->renderer.SetRowHeightDip(static_cast<float>(
             app::EffectiveRowHeightDip(s->appPrefs.row_height, s->appPrefs.ui_font_scale)));
@@ -622,11 +623,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
              wcscmp(fixture_scope, L"layout") == 0);
 #endif
         if (!selection_fixture) {
-            s->index.Start(hwnd, WM_INDEX_NOTIFY, WM_INDEX_SEARCH);
+            const HWND service_window = ServiceWindow(*s);
+            s->index.Start(service_window, WM_INDEX_NOTIFY, WM_INDEX_SEARCH);
             StartChangeTracking(*s);
-            s->networkIndex.Start(hwnd, WM_NETWORK_INDEX_NOTIFY, WM_NETWORK_INDEX_SEARCH);
-            s->contentSearch.Start(hwnd, WM_CONTENT_SEARCH, s->contentIndexObserver ? index::ContentAgentMode::Observer : index::ContentAgentMode::Instant);
-            s->duplicateSearch.Start(hwnd, WM_DUPLICATE_SCAN, false);
+            s->networkIndex.Start(service_window, WM_NETWORK_INDEX_NOTIFY, WM_NETWORK_INDEX_SEARCH);
+            s->contentSearch.Start(service_window, WM_CONTENT_SEARCH, s->contentIndexObserver ? index::ContentAgentMode::Observer : index::ContentAgentMode::Instant);
+            s->duplicateSearch.Start(service_window, WM_DUPLICATE_SCAN, false);
         }
         s->settings.SetServiceInstalled(s->index.ServiceInstalled());
         app::SettingsController::UiCallbacks settings_callbacks;
@@ -690,7 +692,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         s->ops.SetVerifyCopies(s->appPrefs.verify_copies);
         // Shell dialogs (打开方式…/属性) must be owned by the Pulse window.
         s->ops.SetUiWindow(hwnd);
-        s->ops.Start([hwnd] { PostMessageW(hwnd, WM_OPS_NOTIFY, 0, 0); });
+        s->ops.Start([notify = ServiceWindow(*s)] { PostMessageW(notify, WM_OPS_NOTIFY, 0, 0); });
         // Drop stages of Pulse processes that are gone (#55).
         app::SweepDropStages(app::DropStageRoot(), false);
         const ops::RecoverySnapshot recovery = s->isolatedTest
@@ -2739,6 +2741,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     static_assert((kMainWindowStyle & WS_CAPTION) == WS_CAPTION &&
                   (kMainWindowStyle & WS_SYSMENU) == 0,
                   "keep the system animations without DWM's duplicate caption buttons");
+    // Hidden process window (host_window.h), created before the main window
+    // so WM_CREATE can point services at it. It owns the single-instance
+    // endpoint (the main window no longer accepts WM_COPYDATA) and forwards
+    // the process-level notifications in host_routing.h to the main window.
+    const bool host_created = state.core.host.Create(hInstance,
+        [&state](HWND host, UINT message, WPARAM wParam, LPARAM lParam) -> std::optional<LRESULT> {
+            if (app::IsHostRoutedMessage(message))
+                return state.hwnd ? SendMessageW(state.hwnd, message, wParam, lParam) : 0;
+            if (message != WM_COPYDATA) return std::nullopt;
+            if (!state.hwnd || !state.single_instance.OwnsEndpoint(host)) return FALSE;
+            return HandleInstanceCopyData(state, reinterpret_cast<COPYDATASTRUCT*>(lParam));
+        });
+    if (!host_created) return 1;
     HWND hwnd = CreateWindowExW(
         WS_EX_NOREDIRECTIONBITMAP,
         wc.lpszClassName,
@@ -2756,19 +2771,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         nullptr, nullptr, hInstance, &state);
 
     if (!hwnd) return 1;
-    // The endpoint lives on the hidden host window, so second launches reach
-    // the process rather than one particular Pulse window. The main window no
-    // longer accepts WM_COPYDATA itself.
-    const bool host_created = state.core.host.Create(hInstance,
-        [&state](HWND host, UINT message, WPARAM, LPARAM lParam) -> std::optional<LRESULT> {
-            if (message != WM_COPYDATA) return std::nullopt;
-            if (!state.hwnd || !state.single_instance.OwnsEndpoint(host)) return FALSE;
-            return HandleInstanceCopyData(state, reinterpret_cast<COPYDATASTRUCT*>(lParam));
-        });
-    if (!host_created) {
-        DestroyWindow(hwnd);
-        return 1;
-    }
     if (!SkipSingletonFromArgv() && !state.single_instance.PublishEndpoint(state.core.host.Hwnd())) {
         DestroyWindow(hwnd);
         return 1;
