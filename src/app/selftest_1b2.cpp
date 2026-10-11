@@ -102,7 +102,7 @@ bool RunDialogRecoveryTest();
 bool RunTagColorCommandTest();
 bool RunPreviewDeadlineTest();
 bool RunTagDeleteViewTest();
-namespace pulse::app { bool RunSearchRoutingTest(); }
+namespace pulse::app { bool RunSearchRoutingTest(); bool RunTabTransferTest(); }
 
 namespace pulse::ui {
 struct FluentMenuTestPeer {
@@ -7494,6 +7494,12 @@ int RunSelfTest1B2() {
     if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
         wcscmp(test_case, L"search-routing") == 0) {
         const bool passed = pulse::app::RunSearchRoutingTest();
+        if (g_log) { fclose(g_log); g_log = nullptr; }
+        return passed ? 0 : 1;
+    }
+    if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
+        wcscmp(test_case, L"tab-transfer") == 0) {
+        const bool passed = pulse::app::RunTabTransferTest();
         if (g_log) { fclose(g_log); g_log = nullptr; }
         return passed ? 0 : 1;
     }

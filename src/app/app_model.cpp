@@ -653,6 +653,38 @@ void WindowTabs::CloseTab(size_t idx) {
     else if (idx < active) --active;
 }
 
+std::unique_ptr<LayoutTab> WindowTabs::TakeTab(size_t idx) {
+    if (idx >= items.size() || items.size() <= 1 || !items[idx]) return nullptr;
+    std::unique_ptr<LayoutTab> tab = std::move(items[idx]);
+    items.erase(items.begin() + static_cast<ptrdiff_t>(idx));
+    if (active >= items.size()) active = items.size() - 1;
+    else if (idx < active) --active;
+    const int group = tab->tab_group;
+    tab->tab_group = 0;
+    if (group && std::none_of(items.begin(), items.end(),
+                              [group](const auto& other) { return other->tab_group == group; })) {
+        tab_groups.erase(std::remove_if(tab_groups.begin(), tab_groups.end(),
+                                        [group](const TabGroup& g) { return g.id == group; }),
+                         tab_groups.end());
+    }
+    return tab;
+}
+
+size_t WindowTabs::InsertTab(std::unique_ptr<LayoutTab> tab, size_t index) {
+    if (!tab) return active;
+    tab->tab_group = 0;
+    size_t first_unpinned = 0;
+    while (first_unpinned < items.size() && items[first_unpinned]->pinned) ++first_unpinned;
+    index = tab->pinned ? (std::min)(index, first_unpinned)
+                        : std::clamp(index, first_unpinned, items.size());
+    while (index > 0 && index < items.size() && items[index - 1]->tab_group != 0 &&
+           items[index - 1]->tab_group == items[index]->tab_group)
+        ++index;
+    items.insert(items.begin() + static_cast<ptrdiff_t>(index), std::move(tab));
+    active = index;
+    return index;
+}
+
 void WindowTabs::SwitchTab(size_t idx) {
     if (idx < items.size()) active = idx;
 }
