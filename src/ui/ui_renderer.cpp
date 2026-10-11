@@ -45,11 +45,8 @@ void MainRenderer::SetCompositor(Compositor* comp) {
     material_.SetCompositor(comp);
     painter_.SetCompositor(comp);
     if (!comp) {
-        icon_cache_.Reset();
-        open_with_icons_.Reset();
-        thumbnail_cache_.Reset();
-        folder_thumbnail_cache_.Reset();
-        details_cache_.Reset();
+        // Closing one window must not empty the caches the others draw from.
+        if (owned_caches_) ResetRenderCaches(*owned_caches_);
         preview_handler_.Reset();
         preview_mono_format_.reset();
     }

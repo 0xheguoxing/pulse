@@ -355,6 +355,31 @@ bool pulse::PrepareSessionForUpdate(AppState& s) {
 // System broadcasts (host_routing.h, multi-window M3c), handled once for the
 // process: the shared part runs once, the window part for every window that
 // shares `s`'s core (only `s` when it is not registered).
+// Close button, Alt+F4, WM_CLOSE (plan §8.1). One of several windows is
+// destroyed and takes only its own state along; the last window hides to the
+// tray when Pulse keeps running in the background, otherwise it exits.
+static void CloseMainWindow(AppState& s) {
+    const HWND hwnd = s.hwnd;
+    if (!s.core.windows.IsLastWindow(hwnd)) {
+        DestroyWindow(hwnd);
+        return;
+    }
+    SuspendContentSearches(s);
+    s.globalSearchWindow.Hide();
+    if (s.appPrefs.KeepsRunningInBackground()) HideMainWindowToTray(s);
+    else DestroyWindow(hwnd);
+}
+
+// Tray "Exit" and the palette's "Exit Pulse": every window closes, the most
+// recent one last so its WM_DESTROY stops the services and saves the session.
+// `s` may be gone once its window is destroyed; only the snapshot is used.
+static void ExitPulse(AppState& s) {
+    const HWND self = s.hwnd;
+    for (HWND window : s.core.windows.ExitOrder())
+        if (window != self && IsWindow(window)) DestroyWindow(window);
+    if (self && IsWindow(self)) DestroyWindow(self);
+}
+
 static LRESULT HandleSystemBroadcast(AppState& s, app::SystemBroadcast kind, WPARAM wParam) {
     switch (kind) {
     case app::SystemBroadcast::Theme:
@@ -1012,36 +1037,30 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
         if (wParam == HTCLOSE) {
-            SuspendContentSearches(*s);
-            s->globalSearchWindow.Hide();
-            if (s->appPrefs.KeepsRunningInBackground()) HideMainWindowToTray(*s);
-            else DestroyWindow(hwnd);
+            CloseMainWindow(*s);
             return 0;
         }
         break;
     }
 
-    case WM_CLOSE: {
-        if (s) { SuspendContentSearches(*s); s->globalSearchWindow.Hide(); }
-        if (s && s->appPrefs.KeepsRunningInBackground()) {
-            HideMainWindowToTray(*s);
-            return 0;
-        }
-        break;
-    }
+    case WM_CLOSE:
+        if (!s) break;
+        CloseMainWindow(*s);
+        return 0;
 
     case app::TrayController::kCallbackMessage: {
         if (!s) return 0;
         const auto result = s->tray_controller.HandleCallback(lParam);
         if (result == app::TrayController::CallbackResult::ExitRequested)
-            DestroyWindow(hwnd);
+            ExitPulse(*s);
         return 0;
     }
 
     case WM_EXIT_PULSE:
         // Palette "Exit Pulse" (#57): the tray menu's full exit, reachable
         // when the icon is hidden. Posted so the palette unwinds first.
-        DestroyWindow(hwnd);
+        if (s) ExitPulse(*s);
+        else DestroyWindow(hwnd);
         return 0;
 
     case WM_DPICHANGED: {
@@ -2040,33 +2059,38 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_DESTROY: {
-        app::shell_tags::RevokeCommandServer();
+        // Closing one of several windows (M3f) tears down what the window
+        // owns; services, saved state and the shared caches go with the last.
+        const bool last_window = !s || s->core.windows.IsLastWindow(hwnd);
+        if (last_window) app::shell_tags::RevokeCommandServer();
         if (s) {
-            s->probe_scheduler.Clear();
-            s->probeQueue.clear();
-            s->probeUnc.clear();
-#ifdef PULSE_WITH_SELFTEST
-            extern void RecordP1StartupRollback(const AppState&);
-            RecordP1StartupRollback(*s);
-#endif
             s->framePump.Stop();
-            StopShellWindows(*s);
-            ShutdownGlobalSearch(*s);
-            StopShellRegistryWatch();
-            s->watches.Stop();
-            s->folderSizes.Stop();
-            s->settings.ResetUi();
-            s->settings.Stop();
-            s->update_checker.Stop();
-            s->update_installer.Stop();
-            s->contentSearch.Stop();
-            s->duplicateSearch.Stop();
-            s->networkIndex.Stop();
-            s->changes.client.Stop();
-            s->index.Stop();
-            CancelNetworkLocations(*s);
-            CancelSidebarRefresh(*s);
-            s->worker.Stop();
+            if (last_window) {
+                s->probe_scheduler.Clear();
+                s->probeQueue.clear();
+                s->probeUnc.clear();
+#ifdef PULSE_WITH_SELFTEST
+                extern void RecordP1StartupRollback(const AppState&);
+                RecordP1StartupRollback(*s);
+#endif
+                StopShellWindows(*s);
+                ShutdownGlobalSearch(*s);
+                StopShellRegistryWatch();
+                s->watches.Stop();
+                s->folderSizes.Stop();
+                s->settings.ResetUi();
+                s->settings.Stop();
+                s->update_checker.Stop();
+                s->update_installer.Stop();
+                s->contentSearch.Stop();
+                s->duplicateSearch.Stop();
+                s->networkIndex.Stop();
+                s->changes.client.Stop();
+                s->index.Stop();
+                CancelNetworkLocations(*s);
+                CancelSidebarRefresh(*s);
+                s->worker.Stop();
+            }
             ShutdownDetailsSizeWalk(*s);
 
             if (s->dropTarget) {
@@ -2100,31 +2124,34 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 DeleteObject(s->editBrush);
                 s->editBrush = nullptr;
             }
-            // Visual-regression runs must never overwrite the user's real
-            // window, path, tray, or undo session.
-            if (s->startupComplete && !s->shot.active && !s->menushot && !s->isolatedTest) {
-                // A hidden tag-only launch must not overwrite the real
-                // window/tab session (SessionWritable); tags and places still save below.
-                if (!s->updateSessionPrepared) SaveWindowSession(*s, hwnd, true);
-                s->places.Save();
-                s->ctxMenuPrefs.Save();
-                if (!s->updateSessionPrepared) s->appPrefs.Save();
+            if (last_window) {
+                // Visual-regression runs must never overwrite the user's real
+                // window, path, tray, or undo session.
+                if (s->startupComplete && !s->shot.active && !s->menushot && !s->isolatedTest) {
+                    // A hidden tag-only launch must not overwrite the real
+                    // window/tab session (SessionWritable); tags and places still save below.
+                    if (!s->updateSessionPrepared) SaveWindowSession(*s, hwnd, true);
+                    s->places.Save();
+                    s->ctxMenuPrefs.Save();
+                    if (!s->updateSessionPrepared) s->appPrefs.Save();
+                }
+
+                s->tray_controller.Detach();
+                s->ops.Stop();
+                ops::ShutdownElevatedTransferHelper();
+                app::SweepDropStages(app::DropStageRoot(), true);
+                s->single_instance.Release();
+
+                UnregisterAssocChangeNotify();
             }
-
-            s->tray_controller.Detach();
-            s->ops.Stop();
-            ops::ShutdownElevatedTransferHelper();
-            app::SweepDropStages(app::DropStageRoot(), true);
-            s->single_instance.Release();
-
-            UnregisterAssocChangeNotify();
             s->renderer.SetIconNotifyWindow(nullptr);
             s->renderer.SetCompositor(nullptr);
+            if (last_window) ui::ResetRenderCaches(s->core.render_caches);
             s->compositor.Shutdown();
             s->core.windows.Remove(hwnd);
             s->hwnd = nullptr;
         }
-        PostQuitMessage(0);
+        if (last_window) PostQuitMessage(0);
         return 0;
     }
     }

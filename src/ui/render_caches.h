@@ -29,4 +29,15 @@ struct RenderCaches {
     ThumbnailCache details{48ull * 1024ull * 1024ull, 24};
 };
 
+// Stops the decode threads and drops every bitmap. Shared caches outlive any
+// one window: the last window resets them (multi-window M3f); a renderer that
+// owns its caches resets them when it detaches.
+inline void ResetRenderCaches(RenderCaches& caches) {
+    caches.icons.Reset();
+    caches.open_with_icons.Reset();
+    caches.thumbnails.Reset();
+    caches.folder_thumbnails.Reset();
+    caches.details.Reset();
+}
+
 }  // namespace pulse::ui

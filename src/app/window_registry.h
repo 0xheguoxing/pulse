@@ -4,6 +4,7 @@
 // on WM_DESTROY. Order is most recently activated first, which is where the
 // host window routes process-level notifications and second launches until
 // the open policy (M4) picks a window per request. Single UI thread: no locks.
+// Closing a window tears down only what it owns until IsLastWindow (M3f).
 #pragma once
 #include <windows.h>
 
@@ -48,6 +49,20 @@ public:
     HWND MostRecentHwnd() const { return entries_.empty() ? nullptr : entries_.front().hwnd; }
     std::size_t Count() const noexcept { return entries_.size(); }
     bool Empty() const noexcept { return entries_.empty(); }
+    // True when no other window is registered, so closing `hwnd` ends the
+    // process (or hides it to the tray). An unregistered window - tests,
+    // probes, a failed WM_CREATE - is alone too.
+    bool IsLastWindow(HWND hwnd) const {
+        return std::none_of(entries_.begin(), entries_.end(), [hwnd](const Entry& e) { return e.hwnd != hwnd; });
+    }
+    // Full exit (tray Exit, "Exit Pulse"): least recent first, so the most
+    // recent window closes last and its WM_DESTROY does the process teardown.
+    std::vector<HWND> ExitOrder() const {
+        std::vector<HWND> order;
+        order.reserve(entries_.size());
+        for (auto it = entries_.rbegin(); it != entries_.rend(); ++it) order.push_back(it->hwnd);
+        return order;
+    }
     // Most recent first. The callback must not add or remove windows.
     template <class F>
     void ForEach(F&& f) const {
