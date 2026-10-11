@@ -160,8 +160,9 @@ OpenWithIconCache::~OpenWithIconCache() {
 }
 
 void OpenWithIconCache::SetDeviceContext(ID2D1DeviceContext* dc) {
-    if (dc_ == dc) return;
-    dc_ = dc;
+    // Another window's context on the same device keeps every icon.
+    if (!device_binding_.Bind(dc)) return;
+    dc_ = device_binding_.Dc();
     entries_.clear();
 }
 
@@ -176,6 +177,7 @@ void OpenWithIconCache::Reset() {
     cv_.notify_all();
     if (worker_.joinable()) worker_.join();
     entries_.clear();
+    device_binding_.Bind(nullptr);
     dc_ = nullptr;
 }
 
@@ -278,7 +280,7 @@ void OpenWithIconCache::WorkerLoop() {
             pending_.erase(request.key);
             ready_[request.key] = std::move(pixels);
         }
-        if (const HWND hwnd = hwnd_.load()) InvalidateRect(hwnd, nullptr, FALSE);
+        repaint_.InvalidateAll();
     }
     wic.reset();
     if (SUCCEEDED(com_hr)) CoUninitialize();

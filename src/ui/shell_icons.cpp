@@ -86,8 +86,9 @@ ShellIconCache::~ShellIconCache() {
 }
 
 void ShellIconCache::SetDeviceContext(ID2D1DeviceContext* dc) {
-    if (dc_ == dc) return;
-    dc_ = dc;
+    // Another window's context on the same device keeps every bitmap.
+    if (!device_binding_.Bind(dc)) return;
+    dc_ = device_binding_.Dc();
     bitmaps_.clear();
     artwork_bounds_.clear();
 }
@@ -98,12 +99,18 @@ void ShellIconCache::SetScale(float scale) {
 }
 
 void ShellIconCache::SetNotifyWindow(HWND hwnd) {
-    hwnd_ = hwnd;
-    if (hwnd) {
-        GenericIndex(L"", true, FILE_ATTRIBUTE_DIRECTORY);
-        GenericIndex(L"", false, FILE_ATTRIBUTE_NORMAL);
-    }
+    repaint_.Set(nullptr);
+    AddNotifyWindow(hwnd);
 }
+
+void ShellIconCache::AddNotifyWindow(HWND hwnd) {
+    if (!hwnd) return;
+    repaint_.Add(hwnd);
+    GenericIndex(L"", true, FILE_ATTRIBUTE_DIRECTORY);
+    GenericIndex(L"", false, FILE_ATTRIBUTE_NORMAL);
+}
+
+void ShellIconCache::RemoveNotifyWindow(HWND hwnd) { repaint_.Remove(hwnd); }
 
 void ShellIconCache::Reset() {
     {
@@ -119,6 +126,7 @@ void ShellIconCache::Reset() {
         if (list) list->Release();
     image_lists_.clear();
     wic_.reset();
+    device_binding_.Bind(nullptr);
     dc_ = nullptr;
     std::lock_guard<std::mutex> lock(mutex_);
     exact_index_.clear();
@@ -241,9 +249,7 @@ void ShellIconCache::WorkerLoop() {
                     ready_pixels_[convert_key] = std::move(pixels);
                 }
             }
-            if (ok) {
-                if (const HWND hwnd = hwnd_.load()) InvalidateRect(hwnd, nullptr, FALSE);
-            }
+            if (ok) repaint_.InvalidateAll();
             continue;
         }
         SHFILEINFOW info{};
@@ -296,7 +302,7 @@ void ShellIconCache::WorkerLoop() {
                 retry_after_[path] = GetTickCount64() + 2000;
             }
         }
-        if (const HWND hwnd = hwnd_.load()) InvalidateRect(hwnd, nullptr, FALSE);
+        repaint_.InvalidateAll();
     }
     for (auto& [_, list] : worker_lists)
         if (list) list->Release();

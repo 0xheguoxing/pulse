@@ -3,6 +3,8 @@
 // video frame no longer looks like a photo.
 #pragma once
 #include "ui_compositor.h"
+#include "d2d_device_binding.h"
+#include "repaint_targets.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -24,7 +26,9 @@ public:
     OpenWithIconCache& operator=(const OpenWithIconCache&) = delete;
 
     void SetDeviceContext(ID2D1DeviceContext* dc);
-    void SetNotifyWindow(HWND hwnd) { hwnd_ = hwnd; }
+    void SetNotifyWindow(HWND hwnd) { repaint_.Set(hwnd); }
+    void AddNotifyWindow(HWND hwnd) { repaint_.Add(hwnd); }
+    void RemoveNotifyWindow(HWND hwnd) { repaint_.Remove(hwnd); }
     // Stops the worker and drops every icon (device loss, shutdown).
     void Reset();
     // Resolve every type again, retaining displayed icons until results arrive.
@@ -63,8 +67,9 @@ private:
     void StartWorkerLocked();
     void WorkerLoop();
 
-    ID2D1DeviceContext* dc_ = nullptr;
-    std::atomic<HWND> hwnd_{nullptr};
+    D2DDeviceBinding device_binding_;
+    ID2D1DeviceContext* dc_ = nullptr;  // device_binding_'s private context
+    RepaintTargets repaint_;
     std::unordered_map<std::wstring, Entry> entries_;  // UI thread only
 
     std::mutex mutex_;

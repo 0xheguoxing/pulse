@@ -1209,7 +1209,14 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             const ULONGLONG now = GetTickCount64();
             TickUpdates(*s, now);
             TickQuickPreviewSelection(*s, now);
-            if (TickSidebarRefresh(*s, now)) dirty = true;
+            if (TickSidebarRefresh(*s, now)) {
+                // The sidebar model is shared: whichever window's timer picks
+                // up the new drives, every window shows them.
+                dirty = true;
+                app::ForEachWindowSharingCore(*s, [s](AppState& window) {
+                    if (&window != s) InvalidateRect(window.hwnd, nullptr, FALSE);
+                });
+            }
             TickSessionAutosave(*s, hwnd, now);
             if (s->renderer.TickDetailsPreview(now)) dirty = true;
             if (s->renderer.TickMotion(now)) {

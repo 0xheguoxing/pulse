@@ -81,8 +81,10 @@ ThumbnailCache::ThumbnailCache(size_t budget_bytes, size_t max_items)
 
 ThumbnailCache::~ThumbnailCache() { Reset(); }
 void ThumbnailCache::SetDeviceContext(ID2D1DeviceContext* dc) {
-    if (dc_ == dc) return;
-    std::lock_guard lock(mutex_); dc_ = dc;
+    // Another window's context on the same device keeps every bitmap.
+    std::lock_guard lock(mutex_);
+    if (!device_binding_.Bind(dc)) return;
+    dc_ = device_binding_.Dc();
     for (auto& [_, item] : items_) item.bitmap.reset();
 }
 std::wstring ThumbnailCache::Key(const std::wstring& path, uint32_t pixels,
@@ -102,7 +104,7 @@ void ThumbnailCache::Reset() {
     StopChild();
     std::lock_guard lock(mutex_); queue_.clear(); pending_.clear(); items_.clear(); lru_.clear(); folder_requests_.clear();
     still_by_identity_.clear(); transient_failures_.clear(); retry_interest_.clear();
-    cache_bytes_ = 0; dc_ = nullptr; latest_details_identity_.clear();
+    cache_bytes_ = 0; device_binding_.Bind(nullptr); dc_ = nullptr; latest_details_identity_.clear();
     draw_retry_deadline_ = 0;
     epoch_.fetch_add(1, std::memory_order_relaxed);
 }
@@ -830,8 +832,7 @@ void ThumbnailCache::Worker() {
         const bool stored = StoreResult(req, std::move(result));
         mark("stored", stored, response.status);
         if (!stored) LogFailure(req, request_start, 12, ERROR_CANCELLED, true);
-        if (const HWND hwnd = hwnd_.load(); stored && hwnd)
-            InvalidateRect(hwnd, nullptr, FALSE);
+        if (stored) repaint_.InvalidateAll();
         if (!ok) StopChild();
     }
 }

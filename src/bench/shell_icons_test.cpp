@@ -160,8 +160,38 @@ struct ShellIconCacheTestAccess {
                       cache.artwork_bounds_.size() == cache.bitmaps_.size(),
                       "converted icon caches valid normalized artwork bounds");
             }
+            // Multi-window M3d: a second window's context on the same device
+            // keeps every bitmap, and the first window's context may go away.
+            ComPtr<ID2D1DeviceContext> second;
+            ComPtr<ID2D1Bitmap1> second_target;
+            const auto target_props = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+            const bool second_ok =
+                SUCCEEDED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &second)) &&
+                SUCCEEDED(second->CreateBitmap(D2D1::SizeU(64, 64), nullptr, 0, &target_props, &second_target));
+            check(second_ok, "second window context on the same device");
+            if (second_ok) {
+                second->SetTarget(second_target.get());
+                auto* const before = cache.BitmapFor(L"", L"", true, FILE_ATTRIBUTE_DIRECTORY, 32);
+                // Held so a flushed cache cannot free it or hand its address to a new bitmap.
+                ComPtr<ID2D1Bitmap> held;
+                if (before) { before->AddRef(); held.p = before; }
+                const size_t cached = cache.bitmaps_.size();
+                cache.SetDeviceContext(second.get());
+                check(cache.bitmaps_.size() == cached &&
+                          cache.BitmapFor(L"", L"", true, FILE_ATTRIBUTE_DIRECTORY, 32) == before,
+                      "another window on the same device keeps the cached bitmaps");
+                second->BeginDraw();
+                if (held.get()) second->DrawBitmap(held.get(), D2D1::RectF(0, 0, 32, 32));
+                check(before && SUCCEEDED(second->EndDraw()), "a cached icon draws in the other window");
+                context.reset();
+                check(cache.BitmapFor(L"", L"", true, FILE_ATTRIBUTE_DIRECTORY, 20) != nullptr,
+                      "icons still convert after the first window's context is released");
+                cache.SetDeviceContext(second.get());
+            }
             cache.SetDeviceContext(nullptr);
             check(cache.artwork_bounds_.empty(), "device replacement clears artwork metadata");
+            if (!context.get()) context = std::move(second);
             cache.SetDeviceContext(context.get());
             check(cache.BitmapFor(L"", L"", true, FILE_ATTRIBUTE_DIRECTORY, 32) != nullptr,
                   "device recreation preserves native indices and rebuilds bitmap");

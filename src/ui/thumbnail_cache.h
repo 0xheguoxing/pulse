@@ -1,5 +1,7 @@
 #pragma once
 #include "ui_compositor.h"
+#include "d2d_device_binding.h"
+#include "repaint_targets.h"
 #include "preview_viewport.h"
 #include "icon_artwork_bounds.h"
 #include "cover_palette.h"
@@ -40,7 +42,9 @@ public:
                             size_t max_items = kDefaultMaxItems);
     ~ThumbnailCache();
     void SetDeviceContext(ID2D1DeviceContext* dc);
-    void SetNotifyWindow(HWND hwnd) { hwnd_ = hwnd; }
+    void SetNotifyWindow(HWND hwnd) { repaint_.Set(hwnd); }
+    void AddNotifyWindow(HWND hwnd) { repaint_.Add(hwnd); }
+    void RemoveNotifyWindow(HWND hwnd) { repaint_.Remove(hwnd); }
     // Quick Look's cache: folders come as contents listings and Markdown as
     // rendered documents.
     void SetQuickLookContent(bool on) { quick_look_content_ = on; }
@@ -160,8 +164,9 @@ private:
     void StopChild();
     std::wstring Key(const std::wstring& path, uint32_t pixels, uint64_t modified,
                      uint64_t size, uint32_t frame_index = 0) const;
-    ID2D1DeviceContext* dc_ = nullptr;
-    std::atomic<HWND> hwnd_{nullptr};
+    D2DDeviceBinding device_binding_;
+    ID2D1DeviceContext* dc_ = nullptr;  // device_binding_'s private context
+    RepaintTargets repaint_;
     std::atomic<bool> quick_look_content_{false};
     std::atomic<bool> folder_thumbnail_{false};
     std::unordered_map<std::wstring, uint32_t> folder_requests_;

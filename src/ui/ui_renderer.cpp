@@ -71,12 +71,23 @@ void MainRenderer::InvalidateTypography() {
     painter_.InvalidateTypography();
 }
 void MainRenderer::SetIconNotifyWindow(HWND hwnd) {
+    // The caches may be shared by every Pulse window (RenderCaches): each
+    // renderer registers its own window and leaves the others in place.
+    if (notify_hwnd_ && notify_hwnd_ != hwnd) {
+        icon_cache_.RemoveNotifyWindow(notify_hwnd_);
+        open_with_icons_.RemoveNotifyWindow(notify_hwnd_);
+        thumbnail_cache_.RemoveNotifyWindow(notify_hwnd_);
+        folder_thumbnail_cache_.RemoveNotifyWindow(notify_hwnd_);
+        details_cache_.RemoveNotifyWindow(notify_hwnd_);
+    }
     notify_hwnd_ = hwnd;
-    icon_cache_.SetNotifyWindow(hwnd);
-    open_with_icons_.SetNotifyWindow(hwnd);
-    thumbnail_cache_.SetNotifyWindow(hwnd);
-    folder_thumbnail_cache_.SetNotifyWindow(hwnd);
-    details_cache_.SetNotifyWindow(hwnd);
+    if (hwnd) {
+        icon_cache_.AddNotifyWindow(hwnd);
+        open_with_icons_.AddNotifyWindow(hwnd);
+        thumbnail_cache_.AddNotifyWindow(hwnd);
+        folder_thumbnail_cache_.AddNotifyWindow(hwnd);
+        details_cache_.AddNotifyWindow(hwnd);
+    }
     preview_handler_.SetNotifyWindow(hwnd);
 }
 

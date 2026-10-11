@@ -1,7 +1,9 @@
 // shell_icons.h — Windows Shell image-list icons for file rows.
 #pragma once
 #include "ui_compositor.h"
+#include "d2d_device_binding.h"
 #include "icon_artwork_bounds.h"
+#include "repaint_targets.h"
 
 #include <string>
 #include <unordered_map>
@@ -29,7 +31,11 @@ public:
 
     void SetDeviceContext(ID2D1DeviceContext* dc);
     void SetScale(float scale);
+    // Set replaces every window that repaints when icons land; Add/Remove let
+    // the windows sharing this cache (RenderCaches) register independently.
     void SetNotifyWindow(HWND hwnd);
+    void AddNotifyWindow(HWND hwnd);
+    void RemoveNotifyWindow(HWND hwnd);
     void Reset();
 
     // Returns false while native icons are loading or the device is unavailable.
@@ -84,8 +90,9 @@ private:
     static bool NeedsExactIcon(const std::wstring& name, bool is_dir,
                                const std::wstring& path);
 
-    ID2D1DeviceContext* dc_ = nullptr;
-    std::atomic<HWND> hwnd_{nullptr};
+    D2DDeviceBinding device_binding_;
+    ID2D1DeviceContext* dc_ = nullptr;  // device_binding_'s private context
+    RepaintTargets repaint_;
     float scale_ = 1.0f;
     std::unordered_map<int, IImageList*> image_lists_;
     ComPtr<IWICImagingFactory> wic_;

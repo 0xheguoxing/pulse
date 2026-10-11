@@ -16,6 +16,8 @@ public:
     FolderThumbnailCache();
     void SetDeviceContext(ID2D1DeviceContext* dc) { cache_.SetDeviceContext(dc); }
     void SetNotifyWindow(HWND hwnd) { cache_.SetNotifyWindow(hwnd); }
+    void AddNotifyWindow(HWND hwnd) { cache_.AddNotifyWindow(hwnd); }
+    void RemoveNotifyWindow(HWND hwnd) { cache_.RemoveNotifyWindow(hwnd); }
     void Reset();
     void Refresh();
     void BeginFrame();
