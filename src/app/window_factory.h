@@ -27,6 +27,10 @@ struct WindowInit {
     // A reopened window (M4c): its tabs, and its place unless that monitor
     // is gone. `path` is not used then.
     std::optional<app::ClosedWindow> restore;
+    // Ctrl+Shift+M (M5c): tab `adopt_index` of this window moves in alive
+    // instead of a first tab opening; `path` is the fallback if it cannot.
+    AppState* adopt_from = nullptr;
+    size_t adopt_index = 0;
 };
 
 // Creates and shows a window on `from`'s core at `init.path`, next to `from`

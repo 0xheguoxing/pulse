@@ -56,6 +56,7 @@
 #include "settings_controller.h"
 #include "single_instance_coordinator.h"
 #include "window_factory.h"
+#include "tab_transfer.h"
 #include "tray_controller.h"
 #include "global_search_controller.h"
 #include "tab_controller.h"
@@ -420,25 +421,36 @@ static void RestoreTabsFromSnapshots(AppState& s, const std::vector<app::LayoutT
     BindCurrentLayout(s);
 }
 
-// Ctrl+Shift+M (M4e, plan §8.4): the active tab, with its panes, splits and
-// pin, moves to a new window next to this one (it leaves its group). Its
-// folders load again there; scroll position and selection do not travel. A
+// Ctrl+Shift+M (M4e, plan §8.4; M5c): the active tab itself moves to a new
+// window next to this one, keeping its panes, splits, pin, history, selection
+// and scroll position (it leaves its group); its folders show at once. A
 // window with one tab keeps it: moving it would only replace the window.
 static void MoveTabToNewWindow(AppState& s) {
     auto& tabs = s.window_tabs;
     const size_t index = tabs.active;
     if (tabs.items.size() < 2 || index >= tabs.items.size() || !tabs.items[index]) return;
-    RememberLayoutFocus(s);
-    app::LayoutTabSnapshot moved = app::CaptureLayoutTab(*tabs.items[index]);
-    moved.group = 0;
-    app::ClosedWindow init_tabs;  // no place: OpenPulseWindow cascades from `s`
-    init_tabs.layout_tabs.push_back(std::move(moved));
-    WindowInit init;
-    init.restore = std::move(init_tabs);
-    if (!OpenPulseWindow(s, init)) return;
-    // CloseTab keeps pinned tabs; this one lives on in the new window.
-    if (index < tabs.items.size() && tabs.items[index]) tabs.items[index]->pinned = false;
-    CloseLayoutTab(s, index);
+    WindowInit init;  // no place: OpenPulseWindow cascades from `s`
+    if (const app::Tab* view = ActiveTab(s)) init.path = view->current_path;
+    init.adopt_from = &s;
+    init.adopt_index = index;
+    OpenPulseWindow(s, init);
+}
+
+// WM_CREATE of a window opened by MoveTabToNewWindow: the tab moves in and
+// replaces the placeholder tab, which has loaded nothing. False leaves the
+// window to open its start folder instead.
+static bool AdoptMovedTab(AppState& s) {
+    AppState* const from = s.window_adopt_from;
+    s.window_adopt_from = nullptr;
+    const app::LayoutTab* placeholder = s.window_tabs.Active();
+    if (!from || !placeholder || !MoveLayoutTab(*from, s.window_adopt_index, s, 0)) return false;
+    for (size_t i = 0; i < s.window_tabs.items.size(); ++i) {
+        if (s.window_tabs.items[i].get() != placeholder) continue;
+        s.window_tabs.CloseTab(i);
+        break;
+    }
+    BindCurrentLayout(s);
+    return true;
 }
 
 // Reopens the most recently closed window next to `from` (M4c).
@@ -1026,6 +1038,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             s->window_restore.reset();
             RestoreTabsFromSnapshots(*s, restore.layout_tabs, restore.tab_groups, restore.active_layout_tab);
             if (app::Tab* t = ActiveTab(*s)) RememberPath(*s, t->current_path);
+        } else if (s->window_adopt_from && AdoptMovedTab(*s)) {
+            // Ctrl+Shift+M (M5c): the moved tab arrived alive; nothing to load.
         } else {
             // A later window opens one tab at its start folder (OpenPulseWindow).
             const std::wstring start = s->window_start_path;
