@@ -222,10 +222,18 @@ std::vector<std::wstring> VisibleFolderPaths(const AppState& s) {
 }
 
 void SyncVisibleWatches(AppState& s) {
-    s.watches.Sync(VisibleFolderPaths(s), [&s](const std::wstring& path, bool overflow,
-                                              std::vector<fs::DirNotifyEvent> events) {
-        std::lock_guard<std::mutex> lock(s.notify_mu);
-        app::QueueDirNotify(s.notify_queue, path, overflow, std::move(events));
+    // The watches are shared: they cover what every window shows (M6e), and
+    // report to the shared queue, not to a window that may close first.
+    std::vector<std::wstring> paths;
+    app::ForEachWindowSharingCore(s, [&](AppState& window) {
+        for (std::wstring& path : VisibleFolderPaths(window)) paths.push_back(std::move(path));
+    });
+    std::sort(paths.begin(), paths.end());
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    AppCore& core = s.core;
+    s.watches.Sync(paths, [&core](const std::wstring& path, bool overflow, std::vector<fs::DirNotifyEvent> events) {
+        std::lock_guard<std::mutex> lock(core.notify_mu);
+        app::QueueDirNotify(core.notify_queue, path, overflow, std::move(events));
     });
 }
 

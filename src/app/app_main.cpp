@@ -2387,7 +2387,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 MSG pending{};
                 while (PeekMessageW(&pending, hwnd, WM_SHELL_SELECT, WM_SHELL_SELECT, PM_REMOVE))
                     delete reinterpret_cast<app::ShellSelectRequest*>(pending.lParam);
-                if (AppState* next = s->core.windows.MostRecent()) SyncShellWindows(*next);
+                if (AppState* next = s->core.windows.MostRecent()) {
+                    SyncShellWindows(*next);
+                    SyncVisibleWatches(*next);  // stop watching what only this window showed
+                }
             }
         }
         if (last_window) PostQuitMessage(0);

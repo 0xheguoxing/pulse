@@ -1719,35 +1719,48 @@ static T& GroupFor(std::vector<std::pair<std::wstring, T>>& groups, const std::w
     return groups.back().second;
 }
 
-void DrainDirNotifies(AppState& s) {
-    std::vector<AppState::DirNotifyBatch> batch;
-    {
-        std::lock_guard<std::mutex> lock(s.notify_mu);
-        batch.swap(s.notify_queue);
-    }
+static bool WindowShowsFolder(AppState& s, const std::wstring& path) {
+    bool shows = false;
+    ForEachPane(s, [&](app::Pane& pane) {
+        const app::Tab* tab = pane.ActiveTab();
+        if (tab && tab->current_path == path) shows = true;
+    });
+    return shows;
+}
+
+// One window's share of a drain: the events go to the folders it shows (a
+// folder may be shown in several windows; multi-window M6e). `shown`
+// collects the folders some window showed; DrainDirNotifies handles the rest
+// once.
+static void ApplyDirNotifiesToWindow(AppState& s, const std::vector<AppState::DirNotifyBatch>& batch,
+                                     const std::vector<AppState::CoalescedSizePatch>& due, bool poll_unc,
+                                     ULONGLONG now, std::vector<std::wstring>& shown) {
     bool changed = false;
-    const ULONGLONG now = GetTickCount64();
     // The watcher queues one batch per notification buffer; during a slow bulk
     // copy that is one or two events each, so thousands can pile up behind a
     // single tick. Group the whole drain per folder and patch each folder once.
     std::vector<std::pair<std::wstring, std::vector<fs::DirNotifyEvent>>> structural_by_path;
     std::vector<std::pair<std::wstring, std::vector<std::wstring>>> modified_by_path;
-    for (auto& item : batch) {
+    for (const auto& item : batch) {
         const std::wstring path = fs::NormalizePath(item.path);
         if (item.overflow) {
-            DropSizePatches(s, path);
-            s.store.MarkDirty(path);
-            // A scan already in flight (a newly armed watch reports one overflow
-            // while the folder is still loading) finishes and is shown first; the
-            // dirty mark then runs one more pass instead of discarding its work.
-            if (!PathHasPendingRefresh(s, path)) RefreshPath(s, path);
+            if (WindowShowsFolder(s, path)) {
+                shown.push_back(path);
+                DropSizePatches(s, path);
+                s.store.MarkDirty(path);
+                // A scan already in flight (a newly armed watch reports one overflow
+                // while the folder is still loading) finishes and is shown first; the
+                // dirty mark then runs one more pass instead of discarding its work.
+                if (!PathHasPendingRefresh(s, path)) RefreshPath(s, path);
+                changed = true;
+            }
             // The refresh re-enumerates; this drain's earlier events are moot.
             GroupFor(structural_by_path, path).clear();
             GroupFor(modified_by_path, path).clear();
-            changed = true;
             continue;
         }
         if (PathHasPendingRefresh(s, path)) {
+            shown.push_back(path);
             s.store.MarkDirty(path);
             continue;
         }
@@ -1761,7 +1774,8 @@ void DrainDirNotifies(AppState& s) {
     for (const auto& [folder, names] : modified_by_path)
         QueueSizePatches(s, folder, names, now + 100);
     for (const auto& [folder, events] : structural_by_path) {
-        if (events.empty()) continue;
+        if (events.empty() || !WindowShowsFolder(s, folder)) continue;
+        shown.push_back(folder);
         if (!ApplyNotifiesToVisible(s, folder, events)) {
             DropSizePatches(s, folder);
             s.store.MarkDirty(folder);
@@ -1770,18 +1784,11 @@ void DrainDirNotifies(AppState& s) {
         changed = true;
     }
 
-    std::vector<AppState::CoalescedSizePatch> due;
-    std::vector<AppState::CoalescedSizePatch> keep;
-    due.reserve(s.size_patches.size());
-    keep.reserve(s.size_patches.size());
-    for (auto& patch : s.size_patches) {
-        if (patch.due <= now) due.push_back(std::move(patch));
-        else keep.push_back(std::move(patch));
-    }
-    s.size_patches = std::move(keep);
     // One snapshot copy per folder, not per modified file.
     std::vector<std::pair<std::wstring, std::vector<fs::DirNotifyEvent>>> due_by_path;
     for (const auto& patch : due) {
+        if (!WindowShowsFolder(s, patch.path)) continue;
+        shown.push_back(patch.path);
         if (PathHasPendingRefresh(s, patch.path)) {
             s.store.MarkDirty(patch.path);
             continue;
@@ -1803,8 +1810,7 @@ void DrainDirNotifies(AppState& s) {
         changed = true;
     }
 
-    if (now - s.last_unc_poll >= 1000) {
-        s.last_unc_poll = now;
+    if (poll_unc) {
         for (const auto& path : VisibleFolderPaths(s)) {
             if (!fs::IsUncPath(path)) continue;
             if (s.watches.Armed(path) || PathHasPendingRefresh(s, path)) continue;
@@ -1813,6 +1819,49 @@ void DrainDirNotifies(AppState& s) {
         }
     }
     if (changed && s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void DrainDirNotifies(AppState& s) {
+    // The watches, their queue and the size patches are shared by every
+    // window: take them once and hand them to each window.
+    std::vector<AppState::DirNotifyBatch> batch;
+    {
+        std::lock_guard<std::mutex> lock(s.notify_mu);
+        batch.swap(s.notify_queue);
+    }
+    const ULONGLONG now = GetTickCount64();
+    std::vector<AppState::CoalescedSizePatch> due;
+    std::vector<AppState::CoalescedSizePatch> keep;
+    due.reserve(s.size_patches.size());
+    keep.reserve(s.size_patches.size());
+    for (auto& patch : s.size_patches) {
+        if (patch.due <= now) due.push_back(std::move(patch));
+        else keep.push_back(std::move(patch));
+    }
+    s.size_patches = std::move(keep);
+    const bool poll_unc = now - s.last_unc_poll >= 1000;
+    if (poll_unc) s.last_unc_poll = now;
+    std::vector<std::wstring> shown;
+    app::ForEachWindowSharingCore(s, [&](AppState& window) {
+        ApplyDirNotifiesToWindow(window, batch, due, poll_unc, now, shown);
+    });
+    // Folders no window shows (a background tab's cached listing) are only
+    // marked stale, once.
+    const auto was_shown = [&](const std::wstring& path) {
+        return std::find(shown.begin(), shown.end(), path) != shown.end();
+    };
+    for (const auto& item : batch) {
+        const std::wstring path = fs::NormalizePath(item.path);
+        if (was_shown(path)) continue;
+        if (item.overflow || std::any_of(item.events.begin(), item.events.end(), [](const fs::DirNotifyEvent& event) {
+                return event.action != FILE_ACTION_MODIFIED;
+            })) {
+            DropSizePatches(s, path);
+            s.store.MarkDirty(path);
+        }
+    }
+    for (const auto& patch : due)
+        if (!was_shown(patch.path)) s.store.MarkDirty(patch.path);
 }
 
 void RestoreNavigationReturnSelection(AppState& s, app::Tab& tab,

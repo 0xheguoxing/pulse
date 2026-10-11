@@ -4,6 +4,7 @@
 #include "app_internal.h"
 #include "tab_detach.h"
 #include "pane_drop.h"
+#include "dir_notify_queue.h"
 #include "tab_transfer.h"
 #include "window_merge.h"
 #include <filesystem>
@@ -400,6 +401,48 @@ bool RunTabTransferTest() {
             back->hwnd = nullptr;
         }
         back.reset();
+
+        // --- M6e: the shared folder watches serve every window ------------
+        {
+            const auto make_dir = [&](const wchar_t* name) {
+                const auto dir = output / name;
+                std::filesystem::remove_all(dir);
+                std::filesystem::create_directories(dir);
+                return fs::NormalizePath(dir.wstring());
+            };
+            const std::wstring watch_left = make_dir(L"watch-left");
+            const std::wstring watch_right = make_dir(L"watch-right");
+            { std::ofstream(std::filesystem::path(watch_right) / L"added.txt") << "x"; }
+            Seed(src->window_tabs, 1);
+            src->window_tabs.items[0]->ActiveFolder()->current_path = watch_left;
+            BindCurrentLayout(*src);
+            Seed(dst->window_tabs, 1);
+            app::Tab* const right_view = dst->window_tabs.items[0]->ActiveFolder();
+            right_view->current_path = watch_right;
+            right_view->pending_generation = 0;
+            right_view->SetSnapshot(std::make_shared<std::vector<fs::DirEntry>>());
+            BindCurrentLayout(*dst);
+            SyncVisibleWatches(*src);  // the window bound last no longer decides alone
+            for (int i = 0; i < 100 && !(core->watches.Armed(watch_left) && core->watches.Armed(watch_right)); ++i) Sleep(20);
+            check(core->watches.Armed(watch_left) && core->watches.Armed(watch_right),
+                  "the shared folder watches cover the folders every window shows, not only one window's");
+            fs::DirNotifyEvent added;
+            added.action = FILE_ACTION_ADDED;
+            added.name = L"added.txt";
+            {
+                std::lock_guard<std::mutex> lock(core->notify_mu);
+                core->notify_queue.clear();
+                QueueDirNotify(core->notify_queue, watch_right, false, std::vector<fs::DirNotifyEvent>{added});
+            }
+            DrainDirNotifies(*src);  // the change is drained by the window that does not show the folder
+            bool listed = false;
+            for (size_t i = 0; right_view->snapshot && i < right_view->EntryCount(); ++i)
+                listed = listed || right_view->EntryAt(i).name == L"added.txt";
+            check(listed, "a folder change drained by one window reaches the other window that lists the folder");
+            core->watches.Sync({}, nullptr);
+            std::lock_guard<std::mutex> lock(core->notify_mu);
+            core->notify_queue.clear();
+        }
 
         core->windows.Remove(dst->hwnd);
         core->windows.Remove(src->hwnd);
