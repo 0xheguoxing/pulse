@@ -589,6 +589,8 @@ enum class StringId : UINT {
     DriveLockedTitle = IDS_DRIVE_LOCKED_TITLE,
     DriveLockedMessage = IDS_DRIVE_LOCKED_MESSAGE,
     DriveLockedCancelled = IDS_DRIVE_LOCKED_CANCELLED,
+    WindowClosedTitle = IDS_WINDOW_CLOSED_TITLE,
+    WindowClosedRestore = IDS_WINDOW_CLOSED_RESTORE,
     LockedItemTitle = IDS_LOCKED_ITEM_TITLE,
     LockedItemMessage = IDS_LOCKED_ITEM_MESSAGE,
     LockedItemEndHint = IDS_LOCKED_ITEM_END_HINT,

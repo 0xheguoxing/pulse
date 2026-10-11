@@ -381,7 +381,27 @@ void CollectPathsToTray(AppState& s, const std::vector<std::wstring>& paths, boo
         InvalidateRect(s.hwnd, nullptr, FALSE);
     }
 }
+void MoveOperationUi(AppState& from, AppState& to) {
+    if (&from == &to || !to.hwnd) return;
+    to.operationUiTaskId = from.operationUiTaskId;
+    to.operationDismissedTaskId = from.operationDismissedTaskId;
+    to.conflictUiToken = from.conflictUiToken;
+    to.lockPromptTaskId = from.lockPromptTaskId;
+    to.operationAutoShown = from.operationAutoShown;
+    to.operationPinnedByUser = from.operationPinnedByUser;
+    to.operationStartedAt = from.operationStartedAt;
+    to.operationFinishedAt = from.operationFinishedAt;
+    const bool shown = from.operationWindow && from.operationWindow->IsVisible();
+    if (shown) from.operationWindow->Hide();
+    to.ops.SetUiWindow(to.hwnd);
+    if (shown && to.operationWindow) {
+        to.operationWindow->Update(to.ops.Status());
+        to.operationWindow->Show(false);
+    }
+}
+
 void PinAndShowOperationWindow(AppState& s) {
+    if (AppState* ui = GetAppState(s.ops.UiWindow()); ui && ui != &s) MoveOperationUi(*ui, s);
     if (!s.operationWindow) return;
     const ops::OpStatus status = s.ops.Status();
     if (!status.active && status.summary.empty() && status.last_error.empty()) return;
@@ -427,6 +447,12 @@ void ShowBatchRenamePaths(AppState& s, const std::vector<std::wstring>& paths) {
 }
 
 void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog) {
+    // A notification queued for the previous operations window (M4c) goes on
+    // to the window that shows operations now.
+    if (AppState* ui = GetAppState(s.ops.UiWindow()); ui && ui != &s) {
+        UpdateOperationWindow(*ui, allow_conflict_dialog);
+        return;
+    }
     if (!s.operationWindow) return;
     const auto now = std::chrono::steady_clock::now();
     const ops::OpStatus status = s.ops.Status();

@@ -268,6 +268,7 @@ struct AppState : AppCoreOwner {
     // here ("" = This PC) instead of the saved session or launch path.
     bool has_window_start = false;
     std::wstring window_start_path;
+    std::optional<app::ClosedWindow> window_restore;  // tabs a reopened window starts with (M4c)
     ui::BloomAccentPicker bloom_accent;
     std::shared_ptr<ContentSelectionAction> contentSelectionAction;
     uint64_t dup_view_epoch = 0;

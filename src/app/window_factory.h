@@ -9,6 +9,9 @@
 #pragma once
 #include <windows.h>
 
+#include "closed_windows.h"
+
+#include <optional>
 #include <string>
 
 namespace pulse {
@@ -21,6 +24,9 @@ constexpr DWORD kMainWindowStyle = WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_MI
 
 struct WindowInit {
     std::wstring path;  // folder of the first tab ("" = This PC)
+    // A reopened window (M4c): its tabs, and its place unless that monitor
+    // is gone. `path` is not used then.
+    std::optional<app::ClosedWindow> restore;
 };
 
 // Creates and shows a window on `from`'s core at `init.path`, next to `from`

@@ -1479,6 +1479,8 @@ BEGIN
   IDS_DRIVE_LOCKED_TITLE "磁碟機已鎖定"
   IDS_DRIVE_LOCKED_MESSAGE "此磁碟機受 BitLocker 保護。請在跳出的視窗中輸入密碼或修復金鑰，解鎖後會自動開啟。"
   IDS_DRIVE_LOCKED_CANCELLED "磁碟機仍處於鎖定狀態。按 F5 可再次解鎖。"
+  IDS_WINDOW_CLOSED_TITLE "已關閉視窗"
+  IDS_WINDOW_CLOSED_RESTORE "按一下還原（Ctrl+Shift+T）"
   IDS_NEW_TAB_OPEN_CURRENT "目前資料夾"
   IDS_COLUMN_CREATED "建立日期"
   IDS_COLUMN_ACCESSED "存取日期"

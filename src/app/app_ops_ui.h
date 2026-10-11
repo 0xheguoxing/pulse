@@ -27,4 +27,8 @@ void SendTrayToDest(AppState& s, const std::wstring& dir, bool move);
 void ShowBatchRenamePaths(AppState& s, const std::vector<std::wstring>& paths);
 void PinAndShowOperationWindow(AppState& s);
 void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog);
+// Makes `to` the window that shows file operations (multi-window M4c, plan
+// §8.1): ops notifications and shell dialogs go to it, and the progress
+// window's state moves along, shown there without focus if it was showing.
+void MoveOperationUi(AppState& from, AppState& to);
 } // namespace pulse

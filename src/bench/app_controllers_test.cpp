@@ -11,6 +11,7 @@
 #include "../app/default_file_manager.h"
 #include "../app/shell_window_plan.h"
 #include "../app/explorer_shortcuts.h"
+#include "../app/closed_windows.h"
 #include "../app/last_tab_close.h"
 #include "../app/startup_launch.h"
 #include "../app/unc_probe_scheduler.h"
@@ -507,6 +508,36 @@ bool TestExplorerShortcuts() {
     passed &= Report("explorer keys: Ctrl+N picks the Nth visible tab, Ctrl+9 the last",
         NthVisibleTab(visible, 0) == size_t{0} && NthVisibleTab(visible, 1) == size_t{2} &&
         !NthVisibleTab(visible, 5) && NthVisibleTab(visible, 8) == size_t{3} && !NthVisibleTab({}, 8));
+    return passed;
+}
+
+bool TestClosedWindowStack() {
+    using pulse::app::ClosedWindow;
+    using pulse::app::ClosedWindowStack;
+    auto window = [](const std::wstring& name, size_t tabs) {
+        ClosedWindow closed;
+        closed.name = name;
+        closed.layout_tabs.resize(tabs);
+        return closed;
+    };
+    bool passed = true;
+    ClosedWindowStack stack;
+    stack.Push(window(L"empty", 0));
+    passed &= Report("closed windows (M4c): a window without tabs is not kept", stack.Empty() && !stack.TakeLatest());
+    stack.Push(window(L"A", 1));
+    stack.Push(window(L"B", 2));
+    const auto latest = stack.TakeLatest();
+    passed &= Report("closed windows (M4c): the most recently closed comes back first, with its tabs",
+        latest && latest->name == L"B" && latest->layout_tabs.size() == 2 && stack.Size() == 1 &&
+        stack.Latest() && stack.Latest()->name == L"A");
+    for (int i = 0; i < 12; ++i) stack.Push(window(std::to_wstring(i), 1));
+    bool order = stack.Size() == ClosedWindowStack::kCapacity;
+    for (int i = 11; i >= 2; --i) {
+        const auto next = stack.TakeLatest();
+        order = order && next && next->name == std::to_wstring(i);
+    }
+    passed &= Report("closed windows (M4c): at most 10 are kept, the oldest dropped first",
+        order && stack.Empty() && !stack.TakeLatest());
     return passed;
 }
 
@@ -2184,6 +2215,7 @@ int wmain(int argc, wchar_t** argv) {
         lifecycle_completed);
 
     passed &= TestExplorerShortcuts();
+    passed &= TestClosedWindowStack();
     passed &= TestAddressBarCommands();
     passed &= TestAddressShortcuts();
     passed &= TestSelectionTokens();

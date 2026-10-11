@@ -18,6 +18,7 @@
 #include "app_model.h"
 #include "app_prefs.h"
 #include "app_worker.h"
+#include "closed_windows.h"
 #include "context_menu_controller.h"
 #include "context_menu_prefs.h"
 #include "duplicate_scan.h"
@@ -202,6 +203,10 @@ struct AppCore {
     // The first window's WM_CREATE set up the process (services, saved state,
     // tray, ops); later windows only set up themselves (M4a).
     bool started = false;
+    // Windows closed while others stayed open, for the restore toast and
+    // Ctrl+Shift+T (M4c); ExitPulse sets `exiting` so its closes are not kept.
+    app::ClosedWindowStack closed_windows;
+    bool exiting = false;
 
     // Hidden process window (host_window.h): single-instance endpoint today,
     // tray/hotkey/service callbacks as M2 continues. Last member, so it is

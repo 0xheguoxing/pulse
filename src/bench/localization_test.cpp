@@ -66,10 +66,10 @@ int main(int argc, char** argv) {
     bool latest_ids = true;
     for (const auto language : {L"zh-CN", L"zh-TW", L"en-US"}) {
         SetLanguage(language);
-        for (UINT id = IDS_SETTINGS_CLOSE_TAB_DOUBLE_CLICK_DESC; id <= IDS_DRIVE_LOCKED_CANCELLED; ++id)
+        for (UINT id = IDS_SETTINGS_CLOSE_TAB_DOUBLE_CLICK_DESC; id <= IDS_WINDOW_CLOSED_RESTORE; ++id)
             latest_ids &= !Get(static_cast<StringId>(id)).empty();
     }
-    passed &= Report("newest strings (Recycle Bin, BitLocker) load in every language", latest_ids);
+    passed &= Report("newest strings (Recycle Bin, BitLocker, closed window) load in every language", latest_ids);
     for (const auto language : {L"zh-CN", L"en-US"}) {
         SetLanguage(language);
         bool complete = true;

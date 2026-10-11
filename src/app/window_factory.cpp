@@ -62,9 +62,17 @@ HWND OpenPulseWindow(AppState& from, const WindowInit& init) {
     InheritWindowLayout(from, *state);
     state->has_window_start = true;
     state->window_start_path = init.path;
+    state->window_restore = init.restore;
     g_windows.push_back(std::move(owned));
 
-    const RECT rect = CascadedRect(from);
+    RECT rect = CascadedRect(from);
+    bool maximize = false;
+    if (init.restore) {
+        const RECT& back = init.restore->rect;
+        if (back.right > back.left && back.bottom > back.top && MonitorFromRect(&back, MONITOR_DEFAULTTONULL))
+            rect = back;
+        maximize = init.restore->maximized;
+    }
     const bool placed = rect.right > rect.left;
     const HWND hwnd = CreateWindowExW(
         WS_EX_NOREDIRECTIONBITMAP, app::SingleInstanceCoordinator::WindowClassName(), L"Pulse", kMainWindowStyle,
@@ -79,7 +87,7 @@ HWND OpenPulseWindow(AppState& from, const WindowInit& init) {
         if (it != g_windows.end()) g_windows.erase(it);
         return nullptr;
     }
-    ShowWindow(hwnd, SW_SHOWNORMAL);
+    ShowWindow(hwnd, maximize ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL);
     return hwnd;
 }
 

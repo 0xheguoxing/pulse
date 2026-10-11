@@ -4029,6 +4029,8 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             }
         } else if (ctrl && !shift && !alt && wParam == L'B') {
             ToggleSidebarCollapsed(*s);
+        } else if (ctrl && shift && !alt && wParam == L'T' && !s->core.closed_windows.Empty()) {
+            PostMessageW(hwnd, WM_REOPEN_CLOSED_WINDOW, 0, 0);  // reopen the last closed window (M4c)
         } else if (ctrl && wParam == L'T') {
             OpenNewTab(*s);
         } else if (ctrl && wParam == L'K') {

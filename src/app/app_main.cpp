@@ -334,6 +334,55 @@ static app::SessionSnapshot CaptureWindowSession(AppState& s, HWND hwnd) {
     return snap;
 }
 
+// What reopening a closed window brings back (M4c): its tabs, groups and place.
+static app::ClosedWindow CaptureClosedWindow(AppState& s, HWND hwnd) {
+    app::ClosedWindow closed;
+    WINDOWPLACEMENT wp{ sizeof(wp) };
+    if (GetWindowPlacement(hwnd, &wp)) {
+        closed.rect = app::RestoredWindowRect(wp.rcNormalPosition);
+        closed.maximized = wp.showCmd == SW_SHOWMAXIMIZED || IsZoomed(hwnd);
+    }
+    RememberLayoutFocus(s);
+    closed.active_layout_tab = static_cast<int>(s.window_tabs.active);
+    for (const auto& group : s.window_tabs.tab_groups)
+        closed.tab_groups.push_back({group.id, group.name, group.color_rgb, group.collapsed});
+    for (const auto& layout : s.window_tabs.items)
+        if (layout) closed.layout_tabs.push_back(app::CaptureLayoutTab(*layout));
+    if (s.window_tabs.active < s.window_tabs.items.size() && s.window_tabs.items[s.window_tabs.active])
+        closed.name = app::LayoutTabTitle(*s.window_tabs.items[s.window_tabs.active]);
+    return closed;
+}
+
+// Rebuilds the window's tabs from snapshots: session restore, and a reopened
+// window (M4c).
+static void RestoreTabsFromSnapshots(AppState& s, const std::vector<app::LayoutTabSnapshot>& layout_tabs,
+                                     const std::vector<app::GroupSessionSnapshot>& groups, int active) {
+    s.pane = nullptr;
+    s.targetPane = nullptr;
+    AppState* const state = &s;
+    app::RestoreWindowTabs(
+        s.window_tabs, layout_tabs, groups, active,
+        [state](app::Tab& tab, const std::wstring& path) {
+            WarmupUnc(*state, path);
+            StartLoadingPath(*state, tab, path, PathLoadReason::RestoreSession);
+        });
+    for (size_t i = 0; i < s.window_tabs.items.size(); ++i) {
+        app::RebuildLayoutRoot(*s.window_tabs.items[i]);
+        if (i < layout_tabs.size() && s.window_tabs.items[i]->root && !layout_tabs[i].split_ratios.empty())
+            app::ApplySplitRatios(*s.window_tabs.items[i]->root, layout_tabs[i].split_ratios);
+    }
+    BindCurrentLayout(s);
+}
+
+// Reopens the most recently closed window next to `from` (M4c).
+static void ReopenClosedWindow(AppState& from) {
+    auto closed = from.core.closed_windows.TakeLatest();
+    if (!closed) return;
+    WindowInit init;
+    init.restore = std::move(closed);
+    OpenPulseWindow(from, init);
+}
+
 // Writes session.json and app.json when they differ from the last write (or always
 // when forced). Both writes are atomic, so a kill mid-save keeps the old file.
 static bool SaveWindowSession(AppState& s, HWND hwnd, bool force) {
@@ -375,6 +424,7 @@ static void CloseMainWindow(AppState& s) {
 // recent one last so its WM_DESTROY stops the services and saves the session.
 // `s` may be gone once its window is destroyed; only the snapshot is used.
 static void ExitPulse(AppState& s) {
+    s.core.exiting = true;  // these closes are not undoable (closed_windows)
     const HWND self = s.hwnd;
     for (HWND window : s.core.windows.ExitOrder())
         if (window != self && IsWindow(window)) DestroyWindow(window);
@@ -883,25 +933,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 s->session_path.clear();
             }
             if (!s->shot.active && !s->session_layout_tabs.empty()) {
-                s->pane = nullptr;
-                s->targetPane = nullptr;
-                app::RestoreWindowTabs(
-                    s->window_tabs, s->session_layout_tabs, s->session_tab_groups,
-                    s->session_active_layout_tab,
-                    [s](app::Tab& tab, const std::wstring& path) {
-                        WarmupUnc(*s, path);
-                        StartLoadingPath(*s, tab, path, PathLoadReason::RestoreSession);
-                    });
-                for (size_t i = 0; i < s->window_tabs.items.size(); ++i) {
-                    app::RebuildLayoutRoot(*s->window_tabs.items[i]);
-                    if (i < s->session_layout_tabs.size() &&
-                        s->window_tabs.items[i]->root &&
-                        !s->session_layout_tabs[i].split_ratios.empty()) {
-                        app::ApplySplitRatios(*s->window_tabs.items[i]->root,
-                                              s->session_layout_tabs[i].split_ratios);
-                    }
-                }
-                BindCurrentLayout(*s);
+                RestoreTabsFromSnapshots(*s, s->session_layout_tabs, s->session_tab_groups,
+                                         s->session_active_layout_tab);
                 if (!s->session_path.empty())
                     RememberPath(*s, s->session_path);
                 else if (app::Tab* t = ActiveTab(*s))
@@ -935,6 +968,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     NewTab(*s, open_path);
                 if (!open_path.empty()) SelectLaunchedFile(*s, s->open_path);
             }
+        } else if (s->window_restore && !s->window_restore->layout_tabs.empty()) {
+            // A reopened window (M4c) gets its tabs back, as session restore does.
+            const app::ClosedWindow restore = std::move(*s->window_restore);
+            s->window_restore.reset();
+            RestoreTabsFromSnapshots(*s, restore.layout_tabs, restore.tab_groups, restore.active_layout_tab);
+            if (app::Tab* t = ActiveTab(*s)) RememberPath(*s, t->current_path);
         } else {
             // A later window opens one tab at its start folder (OpenPulseWindow).
             const std::wstring start = s->window_start_path;
@@ -1077,6 +1116,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case app::TrayController::kCallbackMessage: {
         if (!s) return 0;
+        // The host hands tray clicks to the most recent window; "Show Pulse"
+        // brings that one back (M4c), not whichever window the tray had.
+        if (s->tray_controller.Window() != hwnd) {
+            s->tray_controller.Retarget(hwnd);
+            InstallTrayRevealHook(*s);
+        }
         const auto result = s->tray_controller.HandleCallback(lParam);
         if (result == app::TrayController::CallbackResult::ExitRequested)
             ExitPulse(*s);
@@ -1131,7 +1176,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         break;
 
     case WM_ACTIVATE:
-        if (s && LOWORD(wParam) != WA_INACTIVE) s->core.windows.Touch(hwnd);
+        if (s && LOWORD(wParam) != WA_INACTIVE) {
+            s->core.windows.Touch(hwnd);
+            // File operation progress follows the window used last (M4c).
+            if (AppState* ui = GetAppState(s->ops.UiWindow()); ui && ui != s) MoveOperationUi(*ui, *s);
+        }
         if (s) s->renderer.NotifyPreviewActivate(LOWORD(wParam) != WA_INACTIVE);
         if (s && LOWORD(wParam) != WA_INACTIVE) {
             std::wstring kind, page;
@@ -1201,6 +1250,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s && request) HandleExplorerTakeover(*s, *request);
         return 0;
     }
+
+    case WM_REOPEN_CLOSED_WINDOW:
+        if (s) ReopenClosedWindow(*s);
+        return 0;
 
     case WM_SHELL_SELECT: {
         std::unique_ptr<app::ShellSelectRequest> request(reinterpret_cast<app::ShellSelectRequest*>(lParam));
@@ -2138,7 +2191,21 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     s->tray_controller.Retarget(next->hwnd);
                     InstallTrayRevealHook(*next);
                 }
-                s->ops.SetUiWindow(next->hwnd);
+                // File operation progress moves along (M4c).
+                if (s->ops.UiWindow() == hwnd) MoveOperationUi(*s, *next);
+                // Closing is undoable (plan §8.1): keep the tabs and offer
+                // them back in the window used next.
+                if (!s->core.exiting) {
+                    app::ClosedWindow closed = CaptureClosedWindow(*s, hwnd);
+                    if (!closed.layout_tabs.empty()) {
+                        std::wstring message = closed.name.empty() ? std::wstring()
+                                                                   : closed.name + L" \u00B7 ";
+                        message += l10n::Get(l10n::StringId::WindowClosedRestore);
+                        s->core.closed_windows.Push(std::move(closed));
+                        next->notification_toast.Show(next->hwnd, l10n::Get(l10n::StringId::WindowClosedTitle),
+                                                      std::move(message), false, WM_REOPEN_CLOSED_WINDOW);
+                    }
+                }
             }
             ShutdownDetailsSizeWalk(*s);
 
