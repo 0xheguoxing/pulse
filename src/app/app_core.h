@@ -24,6 +24,7 @@
 #include "folder_sizes.h"
 #include "global_search_hotkey.h"
 #include "global_search_window.h"
+#include "host_window.h"
 #include "live_network_search.h"
 #include "places.h"
 #include "saved_search.h"
@@ -188,6 +189,11 @@ struct AppCore {
     uint64_t trayClipboardBatchId = 0;
     std::vector<std::wstring> pendingCutClipboardPaths;
     std::vector<std::wstring> completedCutClipboardPaths;
+
+    // Hidden process window (host_window.h): single-instance endpoint today,
+    // tray/hotkey/service callbacks as M2 continues. Last member, so it is
+    // destroyed first and never outlives the state its handler reads.
+    app::HostWindow host;
 };
 
 // Owns the AppCore of a stand-alone AppState. A base class, so the core exists

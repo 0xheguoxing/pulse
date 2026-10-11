@@ -146,6 +146,7 @@ void UnregisterAssocChangeNotify() {
 #include "tray_reveal.h"
 #include "default_file_manager.h"
 #include "shell_window_sync.h"
+#include "host_window.h"
 #include <commctrl.h>
 #include <dbt.h> // WM_DEVICECHANGE / DEV_BROADCAST_HDR
 
@@ -389,6 +390,29 @@ static bool IsUiActivityMessage(UINT msg) {
 static void NoteUiActivity(HWND hwnd, bool visible) {
     g_uiTimerPacer.NoteActivity(GetTickCount64());
     SyncUiTimerRate(hwnd, visible);
+}
+
+// A second launch or the Explorer tag verb reached the host window (the
+// single-instance endpoint, host_window.h); `s` is the window that handles it.
+static BOOL HandleInstanceCopyData(AppState& s, COPYDATASTRUCT* cds) {
+    if (app::ShellTagRequest tag_request; app::DecodeShellTagRequest(cds, tag_request)) {
+        // Explorer "Pulse tags" verb: tag in place, never raise the window.
+        QueueShellTagRequest(s, std::move(tag_request), false);
+        return TRUE;
+    }
+    if (cds && cds->dwData == app::SingleInstanceCoordinator::OpenRequestMessageId()) {
+        app::SingleInstanceCoordinator::OpenRequest request;
+        if (!app::SingleInstanceCoordinator::DecodeOpenRequest(cds, request)) return FALSE;
+        const auto accepted = s.single_instance.AcceptOpenRequest(request, GetTickCount64());
+        if (accepted == app::SingleInstanceCoordinator::OpenAcceptance::Invalid) return FALSE;
+        if (accepted == app::SingleInstanceCoordinator::OpenAcceptance::New)
+            OpenFolderInNewTab(s, request.path);
+        return TRUE; // acceptance, not a claim that asynchronous enumeration succeeded
+    }
+    std::wstring path;
+    if (!app::SingleInstanceCoordinator::DecodeOpenPath(cds, path)) return FALSE;
+    OpenFolderInNewTab(s, path);
+    return TRUE;
 }
 
 LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -960,29 +984,6 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             return 0;
         }
         break;
-    }
-
-    case WM_COPYDATA: {
-        if (!s || !s->single_instance.OwnsEndpoint(hwnd)) return FALSE;
-        auto* cds = reinterpret_cast<COPYDATASTRUCT*>(lParam);
-        if (app::ShellTagRequest tag_request; s && app::DecodeShellTagRequest(cds, tag_request)) {
-            // Explorer "Pulse tags" verb: tag in place, never raise the window.
-            QueueShellTagRequest(*s, std::move(tag_request), false);
-            return TRUE;
-        }
-        if (cds && cds->dwData == app::SingleInstanceCoordinator::OpenRequestMessageId()) {
-            app::SingleInstanceCoordinator::OpenRequest request;
-            if (!s || !app::SingleInstanceCoordinator::DecodeOpenRequest(cds, request)) return FALSE;
-            const auto accepted = s->single_instance.AcceptOpenRequest(request, GetTickCount64());
-            if (accepted == app::SingleInstanceCoordinator::OpenAcceptance::Invalid) return FALSE;
-            if (accepted == app::SingleInstanceCoordinator::OpenAcceptance::New)
-                OpenFolderInNewTab(*s, request.path);
-            return TRUE; // acceptance, not a claim that asynchronous enumeration succeeded
-        }
-        std::wstring path;
-        if (!s || !app::SingleInstanceCoordinator::DecodeOpenPath(cds, path)) return FALSE;
-        OpenFolderInNewTab(*s, path);
-        return TRUE;
     }
 
     case app::TrayController::kCallbackMessage: {
@@ -2755,7 +2756,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         nullptr, nullptr, hInstance, &state);
 
     if (!hwnd) return 1;
-    if (!SkipSingletonFromArgv() && !state.single_instance.PublishEndpoint(hwnd)) {
+    // The endpoint lives on the hidden host window, so second launches reach
+    // the process rather than one particular Pulse window. The main window no
+    // longer accepts WM_COPYDATA itself.
+    const bool host_created = state.core.host.Create(hInstance,
+        [&state](HWND host, UINT message, WPARAM, LPARAM lParam) -> std::optional<LRESULT> {
+            if (message != WM_COPYDATA) return std::nullopt;
+            if (!state.hwnd || !state.single_instance.OwnsEndpoint(host)) return FALSE;
+            return HandleInstanceCopyData(state, reinterpret_cast<COPYDATASTRUCT*>(lParam));
+        });
+    if (!host_created) {
+        DestroyWindow(hwnd);
+        return 1;
+    }
+    if (!SkipSingletonFromArgv() && !state.single_instance.PublishEndpoint(state.core.host.Hwnd())) {
         DestroyWindow(hwnd);
         return 1;
     }
