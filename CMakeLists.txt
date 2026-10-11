@@ -787,6 +787,9 @@ add_executable(pulse_session_window_test src/bench/session_window_test.cpp
     src/index/content_result_store.cpp src/fs/fs_enum.cpp src/ui/view_layout.cpp)
 target_link_libraries(pulse_session_window_test PRIVATE
     user32 shell32 ole32 uuid advapi32 shlwapi netapi32 secur32 pulse_localization pulse_runtime_log pulse_sqlite)
+# Multi-window M1: AppState's process-wide members alias one AppCore (compile-time checks).
+add_executable(pulse_app_core_alias_test src/bench/app_core_alias_test.cpp)
+target_include_directories(pulse_app_core_alias_test PRIVATE "${CMAKE_BINARY_DIR}/generated")
 add_executable(pulse_preview_handler_stale_test src/bench/preview_handler_stale_test.cpp
     src/ui/preview_handler_host.cpp)
 target_compile_definitions(pulse_preview_handler_stale_test PRIVATE PULSE_PREVIEW_HANDLER_TESTING=1)

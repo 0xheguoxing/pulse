@@ -57,6 +57,7 @@
 #include "../index/network_agent_client.h"
 #include "../index/content_search_client.h"
 #include "../ops/ops_manager.h"
+#include "app_core.h"
 #include <windows.h>
 #include <atomic>
 #include <chrono>
@@ -167,7 +168,106 @@ struct TrayTextProbe {
 };
 
 struct SidebarRefreshLoad;
-struct AppState {
+struct AppState : AppCoreOwner {
+    // Stand-alone window state with its own AppCore (tests and selftest probes).
+    AppState() : AppCoreOwner(std::make_unique<AppCore>()), core(*owned_core) {}
+    // A window of the running process; `shared` must outlive this state.
+    explicit AppState(AppCore& shared) : core(shared) {}
+    AppState(const AppState&) = delete;
+    AppState& operator=(const AppState&) = delete;
+
+    // Process-wide services and data (app_core.h). The references below are
+    // transitional aliases so existing `s.store` call sites keep compiling;
+    // new code should write `s.core.store`.
+    AppCore& core;
+    using DirNotifyBatch = AppCore::DirNotifyBatch;
+    using CoalescedSizePatch = AppCore::CoalescedSizePatch;
+    using PendingIndexSearch = AppCore::PendingIndexSearch;
+    decltype(AppCore::store)& store = core.store;
+    decltype(AppCore::worker)& worker = core.worker;
+    decltype(AppCore::watches)& watches = core.watches;
+    decltype(AppCore::notify_mu)& notify_mu = core.notify_mu;
+    decltype(AppCore::notify_queue)& notify_queue = core.notify_queue;
+    decltype(AppCore::size_patches)& size_patches = core.size_patches;
+    decltype(AppCore::last_unc_poll)& last_unc_poll = core.last_unc_poll;
+    decltype(AppCore::sidebar)& sidebar = core.sidebar;
+    decltype(AppCore::sidebarRefresh)& sidebarRefresh = core.sidebarRefresh;
+    decltype(AppCore::networkLocations)& networkLocations = core.networkLocations;
+    decltype(AppCore::recycle_info)& recycle_info = core.recycle_info;
+    decltype(AppCore::recycle_refresh_at)& recycle_refresh_at = core.recycle_refresh_at;
+    decltype(AppCore::recycle_refresh_left)& recycle_refresh_left = core.recycle_refresh_left;
+    decltype(AppCore::recycle_ignore_items)& recycle_ignore_items = core.recycle_ignore_items;
+    decltype(AppCore::recycle_info_guard)& recycle_info_guard = core.recycle_info_guard;
+    decltype(AppCore::tray)& tray = core.tray;
+    decltype(AppCore::places)& places = core.places;
+    decltype(AppCore::ctxMenuPrefs)& ctxMenuPrefs = core.ctxMenuPrefs;
+    decltype(AppCore::context_menu)& context_menu = core.context_menu;
+    decltype(AppCore::appPrefs)& appPrefs = core.appPrefs;
+    decltype(AppCore::searchHistory)& searchHistory = core.searchHistory;
+    decltype(AppCore::searchHistoryWriter)& searchHistoryWriter = core.searchHistoryWriter;
+    decltype(AppCore::settings)& settings = core.settings;
+    decltype(AppCore::update_checker)& update_checker = core.update_checker;
+    decltype(AppCore::update_result)& update_result = core.update_result;
+    decltype(AppCore::update_result_ready)& update_result_ready = core.update_result_ready;
+    decltype(AppCore::update_installer)& update_installer = core.update_installer;
+    decltype(AppCore::update_install_error)& update_install_error = core.update_install_error;
+    decltype(AppCore::next_update_progress_paint)& next_update_progress_paint = core.next_update_progress_paint;
+    decltype(AppCore::next_update_check)& next_update_check = core.next_update_check;
+    decltype(AppCore::notified_update_version)& notified_update_version = core.notified_update_version;
+    decltype(AppCore::whatsNewVersion)& whatsNewVersion = core.whatsNewVersion;
+    decltype(AppCore::whatsNewAt)& whatsNewAt = core.whatsNewAt;
+    decltype(AppCore::tray_controller)& tray_controller = core.tray_controller;
+    decltype(AppCore::globalSearchHotkey)& globalSearchHotkey = core.globalSearchHotkey;
+    decltype(AppCore::globalSearchWindow)& globalSearchWindow = core.globalSearchWindow;
+    decltype(AppCore::single_instance)& single_instance = core.single_instance;
+    decltype(AppCore::tagAdsResultRevision)& tagAdsResultRevision = core.tagAdsResultRevision;
+    decltype(AppCore::tagAdsDiscoveryQueued)& tagAdsDiscoveryQueued = core.tagAdsDiscoveryQueued;
+    decltype(AppCore::tagAdsDiscoveryChecked)& tagAdsDiscoveryChecked = core.tagAdsDiscoveryChecked;
+    decltype(AppCore::index)& index = core.index;
+    decltype(AppCore::folderSizes)& folderSizes = core.folderSizes;
+    decltype(AppCore::changes)& changes = core.changes;
+    decltype(AppCore::networkIndex)& networkIndex = core.networkIndex;
+    decltype(AppCore::contentSearch)& contentSearch = core.contentSearch;
+    decltype(AppCore::duplicateSearch)& duplicateSearch = core.duplicateSearch;
+    decltype(AppCore::duplicateScan)& duplicateScan = core.duplicateScan;
+    decltype(AppCore::dup_volume_cache)& dup_volume_cache = core.dup_volume_cache;
+    decltype(AppCore::dup_volume_cache_tick)& dup_volume_cache_tick = core.dup_volume_cache_tick;
+    decltype(AppCore::dup_volume_cache_pending)& dup_volume_cache_pending = core.dup_volume_cache_pending;
+    decltype(AppCore::savedSearches)& savedSearches = core.savedSearches;
+    decltype(AppCore::pendingIndexSearches)& pendingIndexSearches = core.pendingIndexSearches;
+    decltype(AppCore::liveNetworkSearches)& liveNetworkSearches = core.liveNetworkSearches;
+    decltype(AppCore::sessionSavedJson)& sessionSavedJson = core.sessionSavedJson;
+    decltype(AppCore::updateSessionPrepared)& updateSessionPrepared = core.updateSessionPrepared;
+    decltype(AppCore::restoreUpdateSession)& restoreUpdateSession = core.restoreUpdateSession;
+    decltype(AppCore::prefsSavedJson)& prefsSavedJson = core.prefsSavedJson;
+    decltype(AppCore::sessionAutosaveCheck)& sessionAutosaveCheck = core.sessionAutosaveCheck;
+    decltype(AppCore::nextIndexReq)& nextIndexReq = core.nextIndexReq;
+    decltype(AppCore::probe_scheduler)& probe_scheduler = core.probe_scheduler;
+    decltype(AppCore::probeUnc)& probeUnc = core.probeUnc;
+    decltype(AppCore::probeQueue)& probeQueue = core.probeQueue;
+    decltype(AppCore::darkMode)& darkMode = core.darkMode;
+    decltype(AppCore::themeOverride)& themeOverride = core.themeOverride;
+    decltype(AppCore::safeMode)& safeMode = core.safeMode;
+    decltype(AppCore::startupComplete)& startupComplete = core.startupComplete;
+    decltype(AppCore::isolatedTest)& isolatedTest = core.isolatedTest;
+    decltype(AppCore::isolatedTestPersist)& isolatedTestPersist = core.isolatedTestPersist;
+    decltype(AppCore::contentIndexObserver)& contentIndexObserver = core.contentIndexObserver;
+    decltype(AppCore::accentColor)& accentColor = core.accentColor;
+    decltype(AppCore::session_path)& session_path = core.session_path;
+    decltype(AppCore::gitRoots)& gitRoots = core.gitRoots;
+    decltype(AppCore::resultMutex)& resultMutex = core.resultMutex;
+    decltype(AppCore::results)& results = core.results;
+    decltype(AppCore::ops)& ops = core.ops;
+    decltype(AppCore::shell_windows)& shell_windows = core.shell_windows;
+    decltype(AppCore::shell_windows_published)& shell_windows_published = core.shell_windows_published;
+    decltype(AppCore::explorer_takeover)& explorer_takeover = core.explorer_takeover;
+    decltype(AppCore::cutPaths)& cutPaths = core.cutPaths;
+    decltype(AppCore::pendingCutClipboardSequence)& pendingCutClipboardSequence = core.pendingCutClipboardSequence;
+    decltype(AppCore::trayClipboardSequence)& trayClipboardSequence = core.trayClipboardSequence;
+    decltype(AppCore::trayClipboardBatchId)& trayClipboardBatchId = core.trayClipboardBatchId;
+    decltype(AppCore::pendingCutClipboardPaths)& pendingCutClipboardPaths = core.pendingCutClipboardPaths;
+    decltype(AppCore::completedCutClipboardPaths)& completedCutClipboardPaths = core.completedCutClipboardPaths;
+
     HWND hwnd = nullptr;
     ui::Compositor compositor;
     ui::NotificationToast notification_toast;
@@ -188,35 +288,6 @@ struct AppState {
     app::Pane* pane = nullptr;          // focused leaf of the current layout tab
     app::Pane* targetPane = nullptr;    // Ctrl+Alt+D marked destination
 
-    fs::SnapshotStore store;
-    app::WorkerPool worker;
-    fs::DirWatchSet watches;
-    struct DirNotifyBatch {
-        std::wstring path;
-        bool overflow = false;
-        std::vector<fs::DirNotifyEvent> events;
-    };
-    std::mutex notify_mu;
-    std::vector<DirNotifyBatch> notify_queue;
-    struct CoalescedSizePatch {
-        std::wstring path;
-        std::wstring name;
-        ULONGLONG due = 0;
-    };
-    std::vector<CoalescedSizePatch> size_patches;
-    ULONGLONG last_unc_poll = 0;
-
-    app::SidebarModel sidebar;
-    std::shared_ptr<SidebarRefreshLoad> sidebarRefresh;
-    std::shared_ptr<NetworkLocationLoad> networkLocations;
-    fs::RecycleBinInfo recycle_info;
-    // SHQueryRecycleBin and $I files lag IFileOperation; retry occupancy/list
-    // after recycle mutations and ignore occupancy that still matches the
-    // pre-mutation count while an optimistic update is showing.
-    ULONGLONG recycle_refresh_at = 0;
-    int recycle_refresh_left = 0;
-    uint64_t recycle_ignore_items = 0;
-    bool recycle_info_guard = false;
     uint32_t sidebarCollapsedMask = 0;
     ULONGLONG sidebarPeekArmAt = 0;     // rail hover start; 0 = not armed
     uint32_t sidebarHiddenMask = 0;  // Section menu: hidden groups are not drawn.
@@ -227,63 +298,14 @@ struct AppState {
     uint32_t sidebarQuickAccessHiddenMask = 0;
     bool starredExpanded = true;
     float sidebarScroll = 0.0f;
-    app::StagingTray tray;
-    app::PlacesCatalog places;
-    app::ContextMenuPrefs ctxMenuPrefs;
-    // Explorer COM/static menu session, caches, and delayed refresh state.
-    app::ContextMenuController context_menu;
-    app::AppPrefs appPrefs;
-    app::SearchHistory searchHistory;
-    app::SearchHistoryWriter searchHistoryWriter;
-    app::SettingsController settings;
-    app::UpdateChecker update_checker;
-    app::UpdateResult update_result;
-    bool update_result_ready = false;
-    app::UpdateInstaller update_installer;
-    DWORD update_install_error = ERROR_SUCCESS;
-    ULONGLONG next_update_progress_paint = 0;
-    ULONGLONG next_update_check = GetTickCount64() + 15000;
-    std::wstring notified_update_version;
     int settingsReleaseExpanded = 0;   // Settings > About release-note row that is open, -1 none
-    std::wstring whatsNewVersion;      // set once after an upgrade; toast shown at whatsNewAt
-    ULONGLONG whatsNewAt = 0;
     app::TabController tabs;
-    app::TrayController tray_controller;
     bool hidden_to_tray = false;       // the close button hid the window (tray_reveal.h)
-    GlobalSearchHotkey globalSearchHotkey;
-    GlobalSearchWindow globalSearchWindow;
-    app::SingleInstanceCoordinator single_instance;
     ui::BloomAccentPicker bloom_accent;
-    uint64_t tagAdsResultRevision = 0;
-    std::unordered_set<std::wstring> tagAdsDiscoveryQueued;
-    std::unordered_set<std::wstring> tagAdsDiscoveryChecked;
-    index::IndexClient index;
-    app::FolderSizes folderSizes;
-    ChangeTrackingUi changes;
-    index::NetworkAgentClient networkIndex;
-    index::ContentSearchClient contentSearch;
     std::shared_ptr<ContentSelectionAction> contentSelectionAction;
-    index::ContentSearchClient duplicateSearch;
-    app::DuplicateScanSession duplicateScan;
     uint64_t dup_view_epoch = 0;
     std::wstring dup_view_language;
     std::vector<ui::DuplicateGroupView> dup_view_cache;
-    std::vector<index::VolumeInfo> dup_volume_cache;
-    ULONGLONG dup_volume_cache_tick = 0;
-    bool dup_volume_cache_pending = false;
-    app::SavedSearchStore savedSearches;
-    struct PendingIndexSearch {
-        index::Query query;
-        index::SearchResult local;
-        index::SearchResult network;
-        bool local_ready = false;
-        bool network_ready = false;
-        bool network_snapshot = false; // Captured for this request, not global root configuration.
-        bool network_expected = true;  // Network roots or a live walk exist; else its failure is ignored.
-        std::wstring live_network_root;  // #74: scope walked live instead of the network index
-    };
-    std::unordered_map<uint32_t, PendingIndexSearch> pendingIndexSearches;
-    LiveNetworkSearchSessions liveNetworkSearches;
     std::vector<index::Hit> paletteHits;
     size_t paletteTotal = 0;
     std::wstring paletteQuery;
@@ -294,28 +316,9 @@ struct AppState {
     // Live match count for the open advanced-search dialog.
     uint32_t advancedCountId = 0;
     HWND advancedCountHwnd = nullptr;
-    // Session autosave: last written JSON, so unchanged state is never rewritten.
-    std::wstring sessionSavedJson;
-    // Shutdown messages can arrive while WM_CREATE is rolling back.
-    bool updateSessionPrepared = false;
-    bool restoreUpdateSession = false;
-    std::wstring prefsSavedJson;
-    ULONGLONG sessionAutosaveCheck = 0;
-    uint32_t nextIndexReq = 1;
     bool paletteSearching = false;
-    app::UncProbeScheduler probe_scheduler;
-    std::wstring probeUnc;
-    std::vector<std::wstring> probeQueue;
 
-    bool darkMode = false;
     unsigned settingsExpanded = ui::kSettingsDefaultExpandedMask;
-    ui::ThemeMode themeOverride = ui::ThemeMode::Auto;
-    bool safeMode = false;
-    bool startupComplete = false; // WM_CREATE committed loaded/restored state; rollback must not save.
-    bool isolatedTest = false;
-    bool isolatedTestPersist = false; // selftest builds: test instance saves into PULSE_TEST_DATA_DIR
-    bool contentIndexObserver = false;
-    D2D1_COLOR_F accentColor;
     float scale = 1.0f;
     bool maximized = false;
     bool backdropActive = true;
@@ -416,11 +419,9 @@ struct AppState {
     ShotRequest shot;
     std::wstring open_path;   // folder to open as a new tab after session restore
     Timing timing;
-    std::wstring session_path;
     std::vector<app::LayoutTabSnapshot> session_layout_tabs;
     std::vector<app::GroupSessionSnapshot> session_tab_groups;
     int session_active_layout_tab = 0;
-    std::unordered_map<std::wstring, std::wstring> gitRoots;
 
     // 1B-2 GUI verification: render the context menu to a PNG, no interaction.
     bool menushot = false;
@@ -452,9 +453,6 @@ struct AppState {
     bool shot_details_multi = false;
     float shot_scale_override = 0.0f;
     bool shot_high_contrast = false;
-
-    std::mutex resultMutex;
-    std::queue<app::WorkResult> results;
 
     HWND hwndAddressEdit = nullptr;
     bool addressEditing = false;
@@ -496,8 +494,6 @@ struct AppState {
     std::wstring filterSelectRestore;
     std::wstring filterCue;
 
-    // Stage 1B-1: ops layer (queue + undo), inline rename overlay.
-    ops::OpsManager ops;
     std::wstring pending_undo_json; // loaded from session, imported in WM_CREATE
     uint64_t opsCompleted = 0;
     std::unique_ptr<ui::FileOperationWindow> operationWindow;
@@ -557,10 +553,6 @@ struct AppState {
     std::shared_ptr<TrayCompareJob> trayCmpJob; // on-demand byte comparison
     std::shared_ptr<TrayTextProbe> trayTextProbe; // text/binary probe for "view diff"
     std::unique_ptr<ui::TextDiffWindow> textDiff; // stand-alone text compare window
-    // Panes as shell windows for "open file location" (shell_window_sync.h).
-    std::unique_ptr<app::ShellWindowRegistry> shell_windows;
-    std::vector<app::ShellWindowEntry> shell_windows_published;
-    std::unique_ptr<app::ExplorerWindowTakeover> explorer_takeover;   // experimental (B站 #1 2b)
     // One-time teaching bubbles (tips_seen bits in appPrefs).
     int teachTip = -1;                 // visible tip, -1 = none
     int teachCandidate = -1;           // trigger currently holding
@@ -774,15 +766,6 @@ struct AppState {
     // Pointer moved since the band was last applied; Render applies it once
     // per frame instead of once per mouse message.
     bool marqueeSelectionDirty = false;
-
-    // Cut state mirrored into list rows (ui.md §5.2 rule 6: 55% opacity).
-    std::vector<std::wstring> cutPaths;
-    DWORD pendingCutClipboardSequence = 0;
-    // Clipboard value CollectPathsToTray wrote for tray batch trayClipboardBatchId.
-    DWORD trayClipboardSequence = 0;
-    uint64_t trayClipboardBatchId = 0;
-    std::vector<std::wstring> pendingCutClipboardPaths;
-    std::vector<std::wstring> completedCutClipboardPaths;
 
     // After a "new folder/file" op lands, select it and start renaming.
 
