@@ -285,6 +285,10 @@ struct AppState : AppCoreOwner {
     size_t window_adopt_index = 0;
     std::optional<WindowMergeUndo> window_merge_undo;  // M6c
     int tabDropIndex = -1;  // a tab dragged from another window would land here (M6b)
+    // A tab dragged over the content area (M6d): where it would go, client px.
+    bool contentDrop = false;
+    bool contentDropAsTab = false;  // a new tab; otherwise one more pane
+    D2D1_RECT_F contentDropRect{};
     bool first_present_reported = false;  // test instances: first frame timed once (Render, M4f)
     // This window's kTimerUi period (M4f). One shared pacer handed a period
     // change to whichever window ticked first, so another could keep the fast

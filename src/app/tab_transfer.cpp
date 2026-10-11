@@ -67,4 +67,30 @@ bool MoveLayoutTab(AppState& src, size_t index, AppState& dst, size_t insert_at,
     InvalidateRect(dst.hwnd, nullptr, FALSE);
     return true;
 }
+
+bool MoveTabIntoPane(AppState& src, size_t index, AppState& dst, app::ContentDrop edge, TransferSource source) {
+    auto& from = src.window_tabs;
+    const bool closing = source == TransferSource::Closing;
+    app::LayoutTab* const into = dst.window_tabs.Active();
+    if (&src == &dst || index >= from.items.size() || (from.items.size() < 2 && !closing) ||
+        !from.items[index] || !into || !app::CanAddPane(*into, *from.items[index], edge))
+        return false;
+    ReleaseLeavingTab(src, *from.items[index], index == from.active);
+    RememberLayoutFocus(src);
+    std::unique_ptr<app::LayoutTab> tab = from.TakeTab(index, closing);
+    if (!tab) return false;
+    BindCurrentLayout(src);
+    if (!from.items.empty()) {
+        RevalidateVisibleFolders(src);
+        InvalidateRect(src.hwnd, nullptr, FALSE);
+    }
+
+    if (dst.addressSearching) HideAddressEditor(dst, false);
+    RememberLayoutFocus(dst);
+    app::AddPaneFromTab(*into, std::move(tab), edge);
+    BindCurrentLayout(dst);  // the dropped pane is focused, with its scroll position
+    RevalidateVisibleFolders(dst);
+    InvalidateRect(dst.hwnd, nullptr, FALSE);
+    return true;
+}
 }  // namespace pulse

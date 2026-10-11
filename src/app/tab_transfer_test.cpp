@@ -3,6 +3,7 @@
 // MoveLayoutTab move a live tab between two windows sharing one core.
 #include "app_internal.h"
 #include "tab_detach.h"
+#include "pane_drop.h"
 #include "tab_transfer.h"
 #include "window_merge.h"
 #include <filesystem>
@@ -118,6 +119,62 @@ bool RunTabTransferTest() {
               "off the strip (above, below, left of the tabs, on the caption buttons, no visible tab) nothing is marked");
     }
 
+    // --- M6d: content-area drop zones and panes -----------------------------
+    {
+        const D2D1_RECT_F content{0.0f, 0.0f, 1000.0f, 800.0f};
+        const auto zone = [&](LONG x, LONG y) { return ContentDropZone(content, POINT{x, y}, 0.25f); };
+        check(zone(500, 400) == ContentDrop::Center && zone(100, 400) == ContentDrop::Left &&
+                  zone(900, 400) == ContentDrop::Right && zone(500, 50) == ContentDrop::Top &&
+                  zone(500, 790) == ContentDrop::Bottom,
+              "the outer quarter of each side splits there, the middle opens a tab");
+        check(zone(100, 100) == ContentDrop::Left && zone(200, 30) == ContentDrop::Top &&
+                  zone(1000, 400) == ContentDrop::None && zone(-1, 400) == ContentDrop::None,
+              "a corner goes to the relatively nearer edge; outside the content nothing");
+        check(GrownPreset(1, ContentDrop::Left) == LayoutPreset::TwoVertical &&
+                  GrownPreset(1, ContentDrop::Bottom) == LayoutPreset::TwoHorizontal &&
+                  GrownPreset(2, ContentDrop::Top) == LayoutPreset::Three &&
+                  GrownPreset(3, ContentDrop::Right) == LayoutPreset::FourGrid &&
+                  GrownPreset(4, ContentDrop::Left) == LayoutPreset::Single &&
+                  GrownPreset(1, ContentDrop::Center) == LayoutPreset::Single,
+              "one more pane: 1 -> 2 side by side or stacked, 2 -> 3, 3 -> 4, never a fifth");
+
+        auto tab = MakeSingleLayoutTab(L"");
+        Pane* const first = tab->panes[0].get();
+        check(PaneDropRect(*tab, ContentDrop::Left, content, 1.0f).right <= 500.0f &&
+                  PaneDropRect(*tab, ContentDrop::Left, content, 1.0f).left == 0.0f &&
+                  PaneDropRect(*tab, ContentDrop::Bottom, content, 1.0f).top >= 400.0f,
+              "the preview is where the pane will be: the left half, the bottom half");
+        auto one = MakeSingleLayoutTab(L"");
+        Pane* const left = one->panes[0].get();
+        check(AddPaneFromTab(*tab, std::move(one), ContentDrop::Left) && tab->layout == LayoutPreset::TwoVertical &&
+                  tab->panes.size() == 2 && tab->panes[0].get() == left && tab->panes[1].get() == first &&
+                  tab->focused_index == 0 && left->focused && !first->focused,
+              "dropped on the left edge the pane comes first and is focused");
+        tab->target_index = 1;  // `first` is the copy/move target
+        auto two = MakeSingleLayoutTab(L"");
+        Pane* const right = two->panes[0].get();
+        const bool added_right = AddPaneFromTab(*tab, std::move(two), ContentDrop::Right);
+        const std::vector<Pane*> three = tab->VisiblePanes();
+        check(added_right && tab->layout == LayoutPreset::Three && three.size() == 3 && three[0] == left &&
+                  three[1] == first && three[2] == right && tab->panes[2].get() == right &&
+                  tab->panes[static_cast<size_t>(tab->target_index)].get() == first,
+              "on the right edge it comes last; the panes are stored in screen order and the target stays");
+        auto four = MakeSingleLayoutTab(L"");
+        check(AddPaneFromTab(*tab, std::move(four), ContentDrop::Bottom) && tab->layout == LayoutPreset::FourGrid &&
+                  tab->VisiblePanes().size() == 4,
+              "a fourth pane makes the grid");
+        auto fifth = MakeSingleLayoutTab(L"");
+        const LayoutTab* const fifth_raw = fifth.get();
+        check(!CanAddPane(*tab, *fifth, ContentDrop::Left) && fifth_raw->panes.size() == 1 &&
+                  tab->VisiblePanes().size() == 4,
+              "a tab with four panes takes no fifth");
+        auto split = MakeSingleLayoutTab(L"");
+        split->panes.push_back(std::make_unique<Pane>());
+        auto single = MakeSingleLayoutTab(L"");
+        check(!CanAddPane(*single, *split, ContentDrop::Left),
+              "a dragged tab with more than one pane can only become a tab, not a pane");
+    }
+
     // --- MoveLayoutTab between two windows --------------------------------
     WNDCLASSW wc{};
     wc.hInstance = GetModuleHandleW(nullptr);
@@ -194,6 +251,22 @@ bool RunTabTransferTest() {
                   !src->pane && dst->window_tabs.items.size() == 4 && dst->window_tabs.items[1].get() == only &&
                   dst->window_tabs.Active() == only,
               "a closing window hands over its last tab, which lands at the requested place (Esc after a drag-out)");
+
+        // --- M6d: a dragged tab becomes one more pane of another window -----
+        Seed(src->window_tabs, 2);
+        BindCurrentLayout(*src);
+        Seed(dst->window_tabs, 1);
+        BindCurrentLayout(*dst);
+        LayoutTab* const dropped = src->window_tabs.items[1].get();
+        Pane* const dropped_pane = dropped->panes[0].get();
+        dropped_pane->ActiveTab()->selected_index = 2;
+        check(MoveTabIntoPane(*src, 1, *dst, ContentDrop::Right) && src->window_tabs.items.size() == 1 &&
+                  dst->window_tabs.items.size() == 1 && dst->window_tabs.Active()->VisiblePanes().size() == 2 &&
+                  dst->window_tabs.Active()->VisiblePanes()[1] == dropped_pane && dst->pane == dropped_pane &&
+                  dropped_pane->ActiveTab()->selected_index == 2,
+              "a tab dropped on the right edge becomes the focused right pane, its selection kept");
+        check(!MoveTabIntoPane(*src, 0, *dst, ContentDrop::Left) && src->window_tabs.items.size() == 1,
+              "a window's only tab does not leave unless the window is closing");
 
         // --- M6c: a whole window merges into another and comes back -------
         app::WindowTabs& st = src->window_tabs;

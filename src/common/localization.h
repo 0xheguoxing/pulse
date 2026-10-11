@@ -593,6 +593,8 @@ enum class StringId : UINT {
     WindowClosedRestore = IDS_WINDOW_CLOSED_RESTORE,
     WindowMergedTitle = IDS_WINDOW_MERGED_TITLE,
     WindowMergedUndo = IDS_WINDOW_MERGED_UNDO,
+    DropAsNewTab = IDS_DROP_AS_NEW_TAB,
+    DropSplitHere = IDS_DROP_SPLIT_HERE,
     LockedItemTitle = IDS_LOCKED_ITEM_TITLE,
     LockedItemMessage = IDS_LOCKED_ITEM_MESSAGE,
     LockedItemEndHint = IDS_LOCKED_ITEM_END_HINT,

@@ -4,6 +4,8 @@
 // position, selection and pin (it leaves its group).
 #include <cstddef>
 
+#include "pane_drop.h"
+
 namespace pulse {
 struct AppState;
 
@@ -22,4 +24,9 @@ enum class TransferSource {
 // without a tab. The caller owns any tab-strip drag state.
 bool MoveLayoutTab(AppState& src, size_t index, AppState& dst, size_t insert_at,
                    TransferSource source = TransferSource::KeepsTabs);
+// Moves the only pane of tab `index` of `src` into the active tab of `dst` as
+// one more pane at `edge` (M6d), focused. Refuses (false, nothing changes)
+// where MoveLayoutTab would, and when app::CanAddPane says no.
+bool MoveTabIntoPane(AppState& src, size_t index, AppState& dst, app::ContentDrop edge,
+                     TransferSource source = TransferSource::KeepsTabs);
 }  // namespace pulse

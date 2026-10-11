@@ -620,6 +620,37 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
         if (!embedded_) DrawStatusBar(vm, rect, theme);
     }
 
+    // A tab dragged from another window over the content (multi-window M6d):
+    // the area it would take, and what the drop does.
+    if (vm.content_drop) {
+        const D2D1_RECT_F area = vm.content_drop_rect;
+        const float radius = 8.0f * scale_;
+        D2D1_COLOR_F tint = theme.accent;
+        tint.a = 0.16f;
+        MakeBrush(dc, tint, brAccent_);
+        dc->FillRoundedRectangle(D2D1::RoundedRect(area, radius, radius), brAccent_.get());
+        MakeBrush(dc, theme.accent, brAccent_);
+        const float inset = 1.0f * scale_;
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(area.left + inset, area.top + inset,
+                                                               area.right - inset, area.bottom - inset),
+                                                   radius, radius),
+                                 brAccent_.get(), 2.0f * scale_);
+        const std::wstring label = pulse::l10n::Get(vm.content_drop_as_tab ? pulse::l10n::StringId::DropAsNewTab
+                                                                           : pulse::l10n::StringId::DropSplitHere);
+        IDWriteTextFormat* fmt = compositor_->TextFormat();
+        const float tw = MeasureLayoutText(compositor_, compositor_->DwriteFactory(), fmt, label);
+        const float pw = tw + 28.0f * scale_, ph = 32.0f * scale_;
+        const float px = std::round((area.left + area.right - pw) * 0.5f);
+        const float py = std::round((area.top + area.bottom - ph) * 0.5f);
+        MakeBrush(dc, theme.surface_flyout, brFillHover_);
+        FillRoundedRect(dc, brFillHover_.get(), px, py, pw, ph, ph * 0.5f);
+        MakeBrush(dc, theme.accent, brText_);
+        const D2D1_COLOR_F saved_bg = text_background_;
+        text_background_ = BlendOver(theme.surface_flyout, theme.bg);
+        DrawTextRect(dc, fmt, brText_.get(), label, px + 14.0f * scale_, py, tw, ph);
+        text_background_ = saved_bg;
+    }
+
     // Drag action badge (ui.md §7.8): tooltip-style flyout near the cursor.
     if (!vm.drag_badge.empty()) {
         IDWriteTextFormat* fmt = compositor_->SmallFormat();

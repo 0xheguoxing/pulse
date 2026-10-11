@@ -628,6 +628,9 @@ struct WindowViewModel {
     int breadcrumb_drop = -1;     // placed segment under a drag
     int sidebar_drop_index = -1;  // sidebar item under a drag
     int tab_drop_index = -1;      // a tab dragged from another window lands before this tab (M6b)
+    bool content_drop = false;    // a tab dragged over the content area lands in content_drop_rect (M6d)
+    bool content_drop_as_tab = false;
+    D2D1_RECT_F content_drop_rect{};
     // Tag drag-reorder gesture (group/item = dragged tag, tag_drag_y = cursor).
     int tag_drag_group = -1;
     int tag_drag_item = -1;
