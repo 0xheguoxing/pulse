@@ -3,6 +3,8 @@
 // and empties when the last window leaves. M3b: a shared result reaches every
 // window of the core, or only the caller when it is not registered. M3f:
 // closing windows stops the process services exactly once, with the last one.
+// M4a: the next window takes over from a closing one; callbacks bound by the
+// first window act for the current one.
 #include "../app/window_registry.h"
 
 #include <cstdio>
@@ -117,6 +119,26 @@ int main() {
     Check(life.IsLastWindow(H(1)), "the remaining window becomes the last one");
     Check(life.ExitOrder() == std::vector<HWND>{H(1)} && pulse::app::BasicWindowRegistry<FakeWindow>{}.ExitOrder().empty(),
           "exit order of one window, and of none");
+
+    // M4a hand-over and current window.
+    pulse::app::BasicWindowRegistry<FakeWindow> over;
+    Check(over.MostRecentExcept(H(1)) == nullptr, "no window takes over in an empty registry");
+    over.Add(H(1), &a);
+    Check(over.MostRecentExcept(H(1)) == nullptr, "the last window has nobody to hand over to");
+    over.Add(H(2), &b);
+    over.Add(H(3), &c);
+    Check(over.MostRecentExcept(H(3)) == &b && over.MostRecentExcept(H(1)) == &c,
+          "the most recent other window takes over");
+    FakeCore shared;
+    FakeAppWindow first{H(21), shared, 1}, second{H(22), shared, 2};
+    Check(&pulse::app::CurrentWindow(first) == &first, "without registered windows a callback acts for its own window");
+    shared.windows.Add(first.hwnd, &first);
+    shared.windows.Add(second.hwnd, &second);
+    Check(&pulse::app::CurrentWindow(first) == &second, "a callback bound by the first window acts for the most recent one");
+    shared.windows.Remove(second.hwnd);
+    shared.windows.Remove(first.hwnd);
+    shared.windows.Add(second.hwnd, &second);
+    Check(&pulse::app::CurrentWindow(first) == &second, "after the first window closed, its callbacks reach a live window");
 
     std::printf("window_registry_test: %d failure(s)\n", g_failures);
     return g_failures == 0 ? 0 : 1;

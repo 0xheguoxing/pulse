@@ -48,6 +48,7 @@ inline constexpr UINT kHostRoutedMessages[] = {
     WM_NET_PROBE,              // UNC probe scheduler (shared queue)
     WM_BITLOCKER_UNLOCK,       // unlock wait (the prompt stays owned by the waiting window)
     WM_EXPLORER_TAKEOVER,      // Explorer window takeover (opens in the most recent window)
+    WM_SHELLCTX_ITEMS,         // shell context menu rows (M4a: the menu is open in the active window)
     TrayController::kCallbackMessage,  // notification icon (owned by the host)
     WM_HOTKEY,                 // global search hotkey (registered on the host)
 };

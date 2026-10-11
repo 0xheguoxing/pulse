@@ -180,12 +180,13 @@ int wmain(int argc, wchar_t** argv) {
     Check(app::IsHostRoutedMessage(WM_NET_PROBE) && app::IsHostRoutedMessage(WM_BITLOCKER_UNLOCK) &&
               app::IsHostRoutedMessage(WM_EXPLORER_TAKEOVER),
           "shared navigation results (M3e) are routed");
+    Check(app::IsHostRoutedMessage(WM_SHELLCTX_ITEMS), "shell context menu rows reach the active window (M4a)");
     Check(!app::IsHostRoutedMessage(WM_NETWORK_LIVE_SEARCH) && !app::IsHostRoutedMessage(WM_DUP_VOLUMES),
           "per-tab and per-dialog results stay on their window");
     bool window_local = true;
     for (UINT m : {WM_FRAME_PUMP, WM_QUICK_PREVIEW_NAVIGATE, WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND,
-                   WM_DETAILS_META, WM_SHELLCTX_ITEMS, WM_SHOW_RELEASE_NOTES, WM_CONTENT_SELECTION,
-                   WM_UPDATE_INSTALL, WM_SEARCH_HISTORY, WM_SHELL_SELECT})
+                   WM_DETAILS_META, WM_SHOW_RELEASE_NOTES, WM_CONTENT_SELECTION,
+                   WM_UPDATE_INSTALL, WM_SEARCH_HISTORY, WM_SHELL_SELECT, WM_NEW_WINDOW})
         window_local = window_local && !app::IsHostRoutedMessage(m);
     Check(window_local, "window-level messages are not routed through the host");
     bool broadcasts_local = true;

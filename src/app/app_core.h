@@ -199,6 +199,9 @@ struct AppCore {
 
     // Every Pulse window of the process, most recently activated first.
     app::BasicWindowRegistry<AppState> windows;
+    // The first window's WM_CREATE set up the process (services, saved state,
+    // tray, ops); later windows only set up themselves (M4a).
+    bool started = false;
 
     // Hidden process window (host_window.h): single-instance endpoint today,
     // tray/hotkey/service callbacks as M2 continues. Last member, so it is

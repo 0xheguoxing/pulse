@@ -47,6 +47,12 @@ public:
     }
     Window* MostRecent() const { return entries_.empty() ? nullptr : entries_.front().window; }
     HWND MostRecentHwnd() const { return entries_.empty() ? nullptr : entries_.front().hwnd; }
+    // The window that takes over from a closing one: the most recent other window.
+    Window* MostRecentExcept(HWND hwnd) const {
+        for (const Entry& e : entries_)
+            if (e.hwnd != hwnd) return e.window;
+        return nullptr;
+    }
     std::size_t Count() const noexcept { return entries_.size(); }
     bool Empty() const noexcept { return entries_.empty(); }
     // True when no other window is registered, so closing `hwnd` ends the
@@ -89,6 +95,16 @@ void ForEachWindowSharingCore(Window& window, F&& f) {
         return;
     }
     window.core.windows.ForEach([&](HWND, Window& other) { f(other); });
+}
+
+// The window a process-level callback acts for (settings page dialogs and
+// effects, toasts). Such callbacks are bound once, by the first window, which
+// may have closed since: the most recent window, or `bound` when none is
+// registered (tests, probes). M4a.
+template <class Window>
+Window& CurrentWindow(Window& bound) {
+    Window* const recent = bound.core.windows.MostRecent();
+    return recent ? *recent : bound;
 }
 
 }  // namespace pulse::app

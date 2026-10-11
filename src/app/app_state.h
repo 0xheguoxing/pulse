@@ -264,6 +264,10 @@ struct AppState : AppCoreOwner {
     int settingsReleaseExpanded = 0;   // Settings > About release-note row that is open, -1 none
     app::TabController tabs;
     bool hidden_to_tray = false;       // the close button hid the window (tray_reveal.h)
+    // A window opened by OpenPulseWindow (window_factory.h) starts with one tab
+    // here ("" = This PC) instead of the saved session or launch path.
+    bool has_window_start = false;
+    std::wstring window_start_path;
     ui::BloomAccentPicker bloom_accent;
     std::shared_ptr<ContentSelectionAction> contentSelectionAction;
     uint64_t dup_view_epoch = 0;

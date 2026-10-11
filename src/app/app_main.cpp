@@ -55,6 +55,7 @@
 #include "search_query.h"
 #include "settings_controller.h"
 #include "single_instance_coordinator.h"
+#include "window_factory.h"
 #include "tray_controller.h"
 #include "global_search_controller.h"
 #include "tab_controller.h"
@@ -520,8 +521,13 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(s));
         s->hwnd = hwnd;
         s->core.windows.Add(hwnd, s);
-        s->tray_controller.Attach(hwnd, cs->hInstance, ServiceWindow(*s));
-        InstallTrayRevealHook(*s);
+        // Later windows (M4a) skip the process-level setup below: services,
+        // saved state and the tray already belong to the first window.
+        const bool init_core = !s->core.started;
+        if (init_core) {
+            s->tray_controller.Attach(hwnd, cs->hInstance, ServiceWindow(*s));
+            InstallTrayRevealHook(*s);
+        }
 
         s->scale = s->shot_scale_override > 0.0f
             ? s->shot_scale_override : (float)pulse::compat::WindowDpi(hwnd) / 96.0f;
@@ -559,7 +565,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         s->renderer.SetCompositor(&s->compositor);
         s->renderer.SetScale(s->scale);
         s->renderer.SetIconNotifyWindow(hwnd);
-        RegisterAssocChangeNotify(ServiceWindow(*s));
+        if (init_core) RegisterAssocChangeNotify(ServiceWindow(*s));
         s->quickPreview.Initialize(hwnd, WM_QUICK_PREVIEW_NAVIGATE,
                                    WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND);
 
@@ -581,87 +587,91 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             [s] { return s->appPrefs.close_window_with_last_tab; },
             [hwnd] { PostMessageW(hwnd, WM_CLOSE, 0, 0); },
         });
-        if (s->isolatedTest) {
-            s->places.persist = false;
-            s->appPrefs.persist = s->isolatedTestPersist; // only into PULSE_TEST_DATA_DIR
-            s->ctxMenuPrefs.persist = s->isolatedTestPersist;
-        }
-        s->savedSearches.Load();
-        SyncSavedSearchSidebar(*s);
-        s->places.Load();
-        ProbePinnedNetworks(*s);
-        s->ctxMenuPrefs.Load();
-        if (s->isolatedTest) {
-            // GUI verification of the menu settings with a given hidden mask
-            // (decimal), without touching the user's context_menu.json.
-            wchar_t mask[16]{};
-            if (GetEnvironmentVariableW(L"PULSE_TEST_BUILTIN_HIDDEN", mask, ARRAYSIZE(mask)) > 0) {
-                s->ctxMenuPrefs.builtin_hidden = static_cast<uint32_t>(wcstoul(mask, nullptr, 10));
-                s->ctxMenuPrefs.persist = false;
+        if (init_core) {
+            if (s->isolatedTest) {
+                s->places.persist = false;
+                s->appPrefs.persist = s->isolatedTestPersist; // only into PULSE_TEST_DATA_DIR
+                s->ctxMenuPrefs.persist = s->isolatedTestPersist;
             }
-            // PULSE_TEST_BUILTIN_ORDER0/1/2: comma-joined row keys per surface.
-            for (int surface = 0; surface < static_cast<int>(app::BuiltinMenuSurface::Count); ++surface) {
-                wchar_t name[32]{};
-                swprintf_s(name, L"PULSE_TEST_BUILTIN_ORDER%d", surface);
-                wchar_t keys[512]{};
-                if (GetEnvironmentVariableW(name, keys, ARRAYSIZE(keys)) == 0) continue;
-                app::BuiltinMenuOrder order;
-                wchar_t* next = nullptr;
-                for (wchar_t* key = wcstok_s(keys, L",", &next); key; key = wcstok_s(nullptr, L",", &next))
-                    for (int i = 0; i < app::kBuiltinMenuItemCount; ++i)
-                        if (app::BuiltinMenuKey(static_cast<app::BuiltinMenuItem>(i)) == key)
-                            order.push_back(static_cast<app::BuiltinMenuItem>(i));
-                s->ctxMenuPrefs.SetBuiltinOrder(static_cast<app::BuiltinMenuSurface>(surface), order);
-                s->ctxMenuPrefs.persist = false;
+            s->savedSearches.Load();
+            SyncSavedSearchSidebar(*s);
+            s->places.Load();
+            ProbePinnedNetworks(*s);
+            s->ctxMenuPrefs.Load();
+            if (s->isolatedTest) {
+                // GUI verification of the menu settings with a given hidden mask
+                // (decimal), without touching the user's context_menu.json.
+                wchar_t mask[16]{};
+                if (GetEnvironmentVariableW(L"PULSE_TEST_BUILTIN_HIDDEN", mask, ARRAYSIZE(mask)) > 0) {
+                    s->ctxMenuPrefs.builtin_hidden = static_cast<uint32_t>(wcstoul(mask, nullptr, 10));
+                    s->ctxMenuPrefs.persist = false;
+                }
+                // PULSE_TEST_BUILTIN_ORDER0/1/2: comma-joined row keys per surface.
+                for (int surface = 0; surface < static_cast<int>(app::BuiltinMenuSurface::Count); ++surface) {
+                    wchar_t name[32]{};
+                    swprintf_s(name, L"PULSE_TEST_BUILTIN_ORDER%d", surface);
+                    wchar_t keys[512]{};
+                    if (GetEnvironmentVariableW(name, keys, ARRAYSIZE(keys)) == 0) continue;
+                    app::BuiltinMenuOrder order;
+                    wchar_t* next = nullptr;
+                    for (wchar_t* key = wcstok_s(keys, L",", &next); key; key = wcstok_s(nullptr, L",", &next))
+                        for (int i = 0; i < app::kBuiltinMenuItemCount; ++i)
+                            if (app::BuiltinMenuKey(static_cast<app::BuiltinMenuItem>(i)) == key)
+                                order.push_back(static_cast<app::BuiltinMenuItem>(i));
+                    s->ctxMenuPrefs.SetBuiltinOrder(static_cast<app::BuiltinMenuSurface>(surface), order);
+                    s->ctxMenuPrefs.persist = false;
+                }
             }
-        }
-        s->appPrefs.Load();
-        NoteRunningVersion(*s);
-        if (!s->shot.active && s->appPrefs.theme_mode >= 0) {
-            s->themeOverride = s->appPrefs.theme_mode == 1 ? ui::ThemeMode::Light :
-                s->appPrefs.theme_mode == 2 ? ui::ThemeMode::Dark : ui::ThemeMode::Auto;
-            s->darkMode = ui::ShouldUseDarkMode(s->themeOverride);
-        }
-        s->searchHistory.persist = !s->shot.active && !s->menushot && !s->isolatedTest;
-        if (s->searchHistory.persist) s->searchHistory.Load();
-        s->showFps = s->forceStatusPerformance || s->appPrefs.show_status_performance;
-        s->duplicateScan.scope = static_cast<app::DuplicateScanScope>(
-            std::clamp(s->appPrefs.duplicate_scan_scope, 0, 2));
-        s->duplicateScan.folder_path = s->appPrefs.duplicate_scan_folder;
-        s->duplicateScan.drive_root =
-            app::DuplicateScanSession::NormalizeDriveRoot(s->appPrefs.duplicate_scan_drive);
-        s->duplicateScan.minimum_file_bytes =
-            app::DuplicateScanSession::DefaultMinimumBytes(s->duplicateScan.scope);
-        if (s->shot.active && l10n::IsLanguageId(s->shot.language) &&
-            s->shot.language != L"system")
-            s->appPrefs.language = s->shot.language;
-        if (s->shot.active) {
-            // GUI verification of hidden / protected item styling (never persisted).
-            wchar_t show_hidden[2]{};
-            if (GetEnvironmentVariableW(L"PULSE_TEST_SHOW_HIDDEN", show_hidden, 2) == 1 &&
-                show_hidden[0] == L'1') {
-                s->appPrefs.show_hidden_files = true;
-                s->appPrefs.show_protected_os_files = true;
+            s->appPrefs.Load();
+            NoteRunningVersion(*s);
+            if (!s->shot.active && s->appPrefs.theme_mode >= 0) {
+                s->themeOverride = s->appPrefs.theme_mode == 1 ? ui::ThemeMode::Light :
+                    s->appPrefs.theme_mode == 2 ? ui::ThemeMode::Dark : ui::ThemeMode::Auto;
+                s->darkMode = ui::ShouldUseDarkMode(s->themeOverride);
             }
+            s->searchHistory.persist = !s->shot.active && !s->menushot && !s->isolatedTest;
+            if (s->searchHistory.persist) s->searchHistory.Load();
+            s->showFps = s->forceStatusPerformance || s->appPrefs.show_status_performance;
+            s->duplicateScan.scope = static_cast<app::DuplicateScanScope>(
+                std::clamp(s->appPrefs.duplicate_scan_scope, 0, 2));
+            s->duplicateScan.folder_path = s->appPrefs.duplicate_scan_folder;
+            s->duplicateScan.drive_root =
+                app::DuplicateScanSession::NormalizeDriveRoot(s->appPrefs.duplicate_scan_drive);
+            s->duplicateScan.minimum_file_bytes =
+                app::DuplicateScanSession::DefaultMinimumBytes(s->duplicateScan.scope);
+            if (s->shot.active && l10n::IsLanguageId(s->shot.language) &&
+                s->shot.language != L"system")
+                s->appPrefs.language = s->shot.language;
+            if (s->shot.active) {
+                // GUI verification of hidden / protected item styling (never persisted).
+                wchar_t show_hidden[2]{};
+                if (GetEnvironmentVariableW(L"PULSE_TEST_SHOW_HIDDEN", show_hidden, 2) == 1 &&
+                    show_hidden[0] == L'1') {
+                    s->appPrefs.show_hidden_files = true;
+                    s->appPrefs.show_protected_os_files = true;
+                }
+            }
+            l10n::Initialize(cs->hInstance, s->appPrefs.language);
+            if (s->shot.update_available) {
+                s->update_result_ready = true;
+                s->update_result.update_available = true;
+                s->update_result.version = L"9.8.7";
+                s->update_result.download_page = L"https://updates.example.test/pulse";
+                s->update_result.installer_sha256 =
+                    L"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+            }
+            ui::typography::SetUiFontScale(s->appPrefs.ui_font_scale);
+            ui::typography::InvalidateCaches();
         }
-        l10n::Initialize(cs->hInstance, s->appPrefs.language);
-        if (s->shot.update_available) {
-            s->update_result_ready = true;
-            s->update_result.update_available = true;
-            s->update_result.version = L"9.8.7";
-            s->update_result.download_page = L"https://updates.example.test/pulse";
-            s->update_result.installer_sha256 =
-                L"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        }
-        ui::typography::SetUiFontScale(s->appPrefs.ui_font_scale);
-        ui::typography::InvalidateCaches();
         s->compositor.RecreateTextFormats(s->scale);
-        if (s->safeMode) {
-            s->appPrefs.window_effect = L"none";
-            s->appPrefs.background_image.clear();
-        } else {
-            SeedShellVerbCache(*s);
-            StartShellRegistryWatch(ServiceWindow(*s));
+        if (init_core) {
+            if (s->safeMode) {
+                s->appPrefs.window_effect = L"none";
+                s->appPrefs.background_image.clear();
+            } else {
+                SeedShellVerbCache(*s);
+                StartShellRegistryWatch(ServiceWindow(*s));
+            }
         }
         s->renderer.SetRowHeightDip(static_cast<float>(
             app::EffectiveRowHeightDip(s->appPrefs.row_height, s->appPrefs.ui_font_scale)));
@@ -681,131 +691,138 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         s->renderer.SetTrayIconDip(static_cast<float>(s->appPrefs.tray_icon_size));
         ApplyAccentFromPrefs(*s, true);
         ApplyAppWindowChrome(*s);
-        bool selection_fixture = false;
+        if (init_core) {
+            bool selection_fixture = false;
 #ifdef PULSE_WITH_SELFTEST
-        wchar_t fixture_scope[32]{};
-        selection_fixture = s->isolatedTest && GetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", nullptr, 0) &&
-            GetEnvironmentVariableW(L"PULSE_TEST_P1_SCOPE", fixture_scope, ARRAYSIZE(fixture_scope)) &&
-            (wcscmp(fixture_scope, L"selection") == 0 || wcscmp(fixture_scope, L"menu") == 0 ||
-             wcscmp(fixture_scope, L"layout") == 0);
+            wchar_t fixture_scope[32]{};
+            selection_fixture = s->isolatedTest && GetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", nullptr, 0) &&
+                GetEnvironmentVariableW(L"PULSE_TEST_P1_SCOPE", fixture_scope, ARRAYSIZE(fixture_scope)) &&
+                (wcscmp(fixture_scope, L"selection") == 0 || wcscmp(fixture_scope, L"menu") == 0 ||
+                 wcscmp(fixture_scope, L"layout") == 0);
 #endif
-        if (!selection_fixture) {
-            const HWND service_window = ServiceWindow(*s);
-            s->index.Start(service_window, WM_INDEX_NOTIFY, WM_INDEX_SEARCH);
-            StartChangeTracking(*s);
-            s->networkIndex.Start(service_window, WM_NETWORK_INDEX_NOTIFY, WM_NETWORK_INDEX_SEARCH);
-            s->contentSearch.Start(service_window, WM_CONTENT_SEARCH, s->contentIndexObserver ? index::ContentAgentMode::Observer : index::ContentAgentMode::Instant);
-            s->duplicateSearch.Start(service_window, WM_DUPLICATE_SCAN, false);
-        }
-        s->settings.SetServiceInstalled(s->index.ServiceInstalled());
-        app::SettingsController::UiCallbacks settings_callbacks;
-        settings_callbacks.pick_image = [s](std::wstring& path) {
-            return PickImageFile(*s, path);
-        };
-        settings_callbacks.pick_folder = [s](std::wstring& path, std::wstring_view title) {
-            const std::wstring owned_title(title);
-            return PickFolder(*s, path, owned_title.c_str());
-        };
-        settings_callbacks.apply_effects = [s](app::SettingsEffect effects) {
-            ApplySettingsEffects(*s, effects);
-        };
-        settings_callbacks.integration_changing = [s] { StopShellWindows(*s); };
-        settings_callbacks.show_error = [s](const std::wstring& message) {
-            s->notification_toast.Show(s->hwnd, l10n::Get(l10n::StringId::SettingsGeneral), message);
-        };
-        if (s->appPrefs.load_failed) {
-            settings_callbacks.show_error(l10n::HantText(l10n::Pick(
-                L"原设置未能读取，已阻止覆盖。请关闭后重试打开 Pulse。",
-                L"The original settings could not be read. Saving is blocked to protect them. Restart Pulse to retry.")));
-        }
-        settings_callbacks.integration_changed = [s] { SyncShellWindows(*s); };
-        settings_callbacks.task_completion = SettingsCompletion(ServiceWindow(*s));
-        settings_callbacks.open_path = [hwnd](const std::wstring& path) {
-            ShellExecuteW(hwnd, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-        };
-        settings_callbacks.open_diagnostics = [hwnd] {
-            const std::wstring path = app::GetPulseDataDir() + L"\\Diagnostics";
-            CreateDirectoryW((app::GetPulseDataDir() + L"\\Diagnostics").c_str(), nullptr);
-            CreateDirectoryW(path.c_str(), nullptr);
-            ShellExecuteW(hwnd, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-        };
-        settings_callbacks.clear_diagnostics = [s](std::wstring& error) {
-            if (!ConfirmClearDiagnostics(*s)) return true;
-            if (diagnostics::ClearCrashReports(app::GetPulseDataDir(), &error)) return true;
-            error = l10n::Get(l10n::StringId::DiagnosticsClearFailed);
-            return false;
-        };
-        settings_callbacks.prepare_diagnostics_export =
-            [s](std::wstring& destination, bool& include_service, bool& include_dumps) {
-            if (!ConfirmDiagnosticsExport(*s, include_service, include_dumps)) return false;
-            return PickFolder(*s, destination,
-                l10n::Get(l10n::StringId::DiagnosticsExportLocation).c_str());
-        };
-        settings_callbacks.export_diagnostics = ExportAppDiagnostics;
-        s->settings.BindUi(s->appPrefs, s->ctxMenuPrefs, s->index,
-                           s->networkIndex, std::move(settings_callbacks));
-        ApplyGlobalSearchSettings(*s);
+            if (!selection_fixture) {
+                const HWND service_window = ServiceWindow(*s);
+                s->index.Start(service_window, WM_INDEX_NOTIFY, WM_INDEX_SEARCH);
+                StartChangeTracking(*s);
+                s->networkIndex.Start(service_window, WM_NETWORK_INDEX_NOTIFY, WM_NETWORK_INDEX_SEARCH);
+                s->contentSearch.Start(service_window, WM_CONTENT_SEARCH, s->contentIndexObserver ? index::ContentAgentMode::Observer : index::ContentAgentMode::Instant);
+                s->duplicateSearch.Start(service_window, WM_DUPLICATE_SCAN, false);
+            }
+            s->settings.SetServiceInstalled(s->index.ServiceInstalled());
+            app::SettingsController::UiCallbacks settings_callbacks;
+            settings_callbacks.pick_image = [s](std::wstring& path) {
+                return PickImageFile(app::CurrentWindow(*s), path);
+            };
+            settings_callbacks.pick_folder = [s](std::wstring& path, std::wstring_view title) {
+                const std::wstring owned_title(title);
+                return PickFolder(app::CurrentWindow(*s), path, owned_title.c_str());
+            };
+            settings_callbacks.apply_effects = [s](app::SettingsEffect effects) {
+                // Every window shows the changed setting.
+                app::ForEachWindowSharingCore(app::CurrentWindow(*s), [&](AppState& window) {
+                    ApplySettingsEffects(window, effects);
+                });
+            };
+            settings_callbacks.integration_changing = [s] { StopShellWindows(*s); };
+            settings_callbacks.show_error = [s](const std::wstring& message) {
+                AppState& window = app::CurrentWindow(*s);
+                window.notification_toast.Show(window.hwnd, l10n::Get(l10n::StringId::SettingsGeneral), message);
+            };
+            if (s->appPrefs.load_failed) {
+                settings_callbacks.show_error(l10n::HantText(l10n::Pick(
+                    L"原设置未能读取，已阻止覆盖。请关闭后重试打开 Pulse。",
+                    L"The original settings could not be read. Saving is blocked to protect them. Restart Pulse to retry.")));
+            }
+            settings_callbacks.integration_changed = [s] { SyncShellWindows(app::CurrentWindow(*s)); };
+            settings_callbacks.task_completion = SettingsCompletion(ServiceWindow(*s));
+            settings_callbacks.open_path = [s](const std::wstring& path) {
+                ShellExecuteW(app::CurrentWindow(*s).hwnd, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            };
+            settings_callbacks.open_diagnostics = [s] {
+                const std::wstring path = app::GetPulseDataDir() + L"\\Diagnostics";
+                CreateDirectoryW((app::GetPulseDataDir() + L"\\Diagnostics").c_str(), nullptr);
+                CreateDirectoryW(path.c_str(), nullptr);
+                ShellExecuteW(app::CurrentWindow(*s).hwnd, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            };
+            settings_callbacks.clear_diagnostics = [s](std::wstring& error) {
+                if (!ConfirmClearDiagnostics(app::CurrentWindow(*s))) return true;
+                if (diagnostics::ClearCrashReports(app::GetPulseDataDir(), &error)) return true;
+                error = l10n::Get(l10n::StringId::DiagnosticsClearFailed);
+                return false;
+            };
+            settings_callbacks.prepare_diagnostics_export =
+                [s](std::wstring& destination, bool& include_service, bool& include_dumps) {
+                AppState& window = app::CurrentWindow(*s);
+                if (!ConfirmDiagnosticsExport(window, include_service, include_dumps)) return false;
+                return PickFolder(window, destination,
+                    l10n::Get(l10n::StringId::DiagnosticsExportLocation).c_str());
+            };
+            settings_callbacks.export_diagnostics = ExportAppDiagnostics;
+            s->settings.BindUi(s->appPrefs, s->ctxMenuPrefs, s->index,
+                               s->networkIndex, std::move(settings_callbacks));
+            ApplyGlobalSearchSettings(*s);
 
-        s->worker.Start([s](app::WorkResult res) { PostWorkerResult(*s, std::move(res)); });
-        RefreshSidebarModel(*s);
-        if (s->appPrefs.persist) QueueTagAds(*s, {});
-        RequestRecycleOccupancy(*s);
-        RequestNetworkLocations(*s);
+            s->worker.Start([s](app::WorkResult res) { PostWorkerResult(*s, std::move(res)); });
+            RefreshSidebarModel(*s);
+            if (s->appPrefs.persist) QueueTagAds(*s, {});
+            RequestRecycleOccupancy(*s);
+            RequestNetworkLocations(*s);
 
-        // Ops layer: queue worker + shell host IPC; notify repaints the status bar.
-        const std::wstring data_dir = app::GetPulseDataDir();
-        if (!s->isolatedTest && !data_dir.empty())
-            s->ops.SetJournalPath(data_dir + L"\\operations.json");
-        s->ops.SetVerifyCopies(s->appPrefs.verify_copies);
-        // Shell dialogs (打开方式…/属性) must be owned by the Pulse window.
-        s->ops.SetUiWindow(hwnd);
-        s->ops.Start([notify = ServiceWindow(*s)] { PostMessageW(notify, WM_OPS_NOTIFY, 0, 0); });
-        // Drop stages of Pulse processes that are gone (#55).
-        app::SweepDropStages(app::DropStageRoot(), false);
-        const ops::RecoverySnapshot recovery = s->isolatedTest
-            ? ops::RecoverySnapshot{} : s->ops.PendingRecovery();
-        if (!recovery.entries.empty()) {
-            const bool duplicate_cleanup = std::any_of(recovery.entries.begin(), recovery.entries.end(),
-                [](const ops::RecoveryEntry& entry) { return entry.request.duplicate_cleanup; });
-            if (AskRetryRecovery(*s, recovery.entries.size(), recovery.has_uncertain_destructive, duplicate_cleanup))
-                s->ops.RetryRecovery();
-            else
-                s->ops.DiscardRecovery();
+            // Ops layer: queue worker + shell host IPC; notify repaints the status bar.
+            const std::wstring data_dir = app::GetPulseDataDir();
+            if (!s->isolatedTest && !data_dir.empty())
+                s->ops.SetJournalPath(data_dir + L"\\operations.json");
+            s->ops.SetVerifyCopies(s->appPrefs.verify_copies);
+            // Shell dialogs (打开方式…/属性) must be owned by the Pulse window.
+            s->ops.SetUiWindow(hwnd);
+            s->ops.Start([notify = ServiceWindow(*s)] { PostMessageW(notify, WM_OPS_NOTIFY, 0, 0); });
+            // Drop stages of Pulse processes that are gone (#55).
+            app::SweepDropStages(app::DropStageRoot(), false);
+            const ops::RecoverySnapshot recovery = s->isolatedTest
+                ? ops::RecoverySnapshot{} : s->ops.PendingRecovery();
+            if (!recovery.entries.empty()) {
+                const bool duplicate_cleanup = std::any_of(recovery.entries.begin(), recovery.entries.end(),
+                    [](const ops::RecoveryEntry& entry) { return entry.request.duplicate_cleanup; });
+                if (AskRetryRecovery(*s, recovery.entries.size(), recovery.has_uncertain_destructive, duplicate_cleanup))
+                    s->ops.RetryRecovery();
+                else
+                    s->ops.DiscardRecovery();
+            }
+            s->context_menu.SetShellOperations({
+                [s](std::vector<std::wstring> paths, HWND owner, bool background, bool extended,
+                    std::vector<std::wstring> disabled) {
+                    if (s->safeMode) return uint32_t{0};
+                    return s->ops.QueryShellMenu(std::move(paths), owner, background, extended,
+                                                 std::move(disabled));
+                },
+                [s](uint32_t token) { s->ops.CloseShellMenu(token); },
+                [s](uint32_t token, uint32_t command, std::wstring verb, std::wstring text) {
+                    s->ops.InvokeShellMenu(token, command, std::move(verb), std::move(text));
+                },
+                [s](const std::wstring& path, const std::wstring& verb) {
+                    s->ops.ExecuteVerb(path, verb);
+                },
+                [s](const std::wstring& app_path, const std::wstring& path) {
+                    s->ops.OpenWithApp(app_path, path);
+                },
+                [s](const std::wstring& command, const std::wstring& path) {
+                    s->ops.ExecuteCommand(command, path);
+                },
+            });
+            // Explorer verbs arrive on the shell client's reader thread; hop to
+            // the UI thread with an owned payload (freed by the WM handler).
+            s->ops.SetShellMenuCallback([notify = ServiceWindow(*s)](uint32_t token,
+                                               std::vector<ops::ShellMenuItem> items,
+                                               bool partial,
+                                               std::vector<std::wstring> slow_clsids) {
+                auto* payload = new ShellCtxItemsPayload{
+                    std::move(items), partial, std::move(slow_clsids) };
+                if (!PostMessageW(notify, WM_SHELLCTX_ITEMS, token,
+                                  reinterpret_cast<LPARAM>(payload)))
+                    delete payload;
+            });
+            if (!s->pending_undo_json.empty()) s->ops.UndoFromJson(s->pending_undo_json);
         }
-        s->context_menu.SetShellOperations({
-            [s](std::vector<std::wstring> paths, HWND owner, bool background, bool extended,
-                std::vector<std::wstring> disabled) {
-                if (s->safeMode) return uint32_t{0};
-                return s->ops.QueryShellMenu(std::move(paths), owner, background, extended,
-                                             std::move(disabled));
-            },
-            [s](uint32_t token) { s->ops.CloseShellMenu(token); },
-            [s](uint32_t token, uint32_t command, std::wstring verb, std::wstring text) {
-                s->ops.InvokeShellMenu(token, command, std::move(verb), std::move(text));
-            },
-            [s](const std::wstring& path, const std::wstring& verb) {
-                s->ops.ExecuteVerb(path, verb);
-            },
-            [s](const std::wstring& app_path, const std::wstring& path) {
-                s->ops.OpenWithApp(app_path, path);
-            },
-            [s](const std::wstring& command, const std::wstring& path) {
-                s->ops.ExecuteCommand(command, path);
-            },
-        });
-        // Explorer verbs arrive on the shell client's reader thread; hop to
-        // the UI thread with an owned payload (freed by the WM handler).
-        s->ops.SetShellMenuCallback([hwnd](uint32_t token,
-                                           std::vector<ops::ShellMenuItem> items,
-                                           bool partial,
-                                           std::vector<std::wstring> slow_clsids) {
-            auto* payload = new ShellCtxItemsPayload{
-                std::move(items), partial, std::move(slow_clsids) };
-            if (!PostMessageW(hwnd, WM_SHELLCTX_ITEMS, token,
-                              reinterpret_cast<LPARAM>(payload)))
-                delete payload;
-        });
-        if (!s->pending_undo_json.empty()) s->ops.UndoFromJson(s->pending_undo_json);
         s->operationWindow = std::make_unique<ui::FileOperationWindow>();
         ui::FileOperationCallbacks operation_callbacks;
         operation_callbacks.cancel = [hwnd] {
@@ -854,73 +871,82 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             RegisterDragDrop(hwnd, s->dropTarget);
         }
 
-        // "Open the default location" drops only the saved tabs; the rest of the
-        // session (sidebar, details pane, window state) still applies.
-        const bool open_default_location =
-            !s->shot.active && !app::RestoresLastTabs(s->appPrefs, s->restoreUpdateSession);
-        if (open_default_location) {
-            s->session_layout_tabs.clear();
-            s->session_tab_groups.clear();
-            s->session_active_layout_tab = 0;
-            s->session_path.clear();
-        }
-        if (!s->shot.active && !s->session_layout_tabs.empty()) {
-            s->pane = nullptr;
-            s->targetPane = nullptr;
-            app::RestoreWindowTabs(
-                s->window_tabs, s->session_layout_tabs, s->session_tab_groups,
-                s->session_active_layout_tab,
-                [s](app::Tab& tab, const std::wstring& path) {
-                    WarmupUnc(*s, path);
-                    StartLoadingPath(*s, tab, path, PathLoadReason::RestoreSession);
-                });
-            for (size_t i = 0; i < s->window_tabs.items.size(); ++i) {
-                app::RebuildLayoutRoot(*s->window_tabs.items[i]);
-                if (i < s->session_layout_tabs.size() &&
-                    s->window_tabs.items[i]->root &&
-                    !s->session_layout_tabs[i].split_ratios.empty()) {
-                    app::ApplySplitRatios(*s->window_tabs.items[i]->root,
-                                          s->session_layout_tabs[i].split_ratios);
-                }
+        if (init_core) {
+            // "Open the default location" drops only the saved tabs; the rest of the
+            // session (sidebar, details pane, window state) still applies.
+            const bool open_default_location =
+                !s->shot.active && !app::RestoresLastTabs(s->appPrefs, s->restoreUpdateSession);
+            if (open_default_location) {
+                s->session_layout_tabs.clear();
+                s->session_tab_groups.clear();
+                s->session_active_layout_tab = 0;
+                s->session_path.clear();
             }
-            BindCurrentLayout(*s);
-            if (!s->session_path.empty())
-                RememberPath(*s, s->session_path);
-            else if (app::Tab* t = ActiveTab(*s))
-                RememberPath(*s, t->current_path);
-        } else {
-        // Shots accept the This PC arguments too (GUI checks of the drive view).
-        std::wstring startPath = !s->shot.active ? L"C:\\"
-            : app::IsThisPcArgument(s->shot.path) ? std::wstring() : s->shot.path;
-        if (!s->shot.active && !s->session_path.empty()) startPath = s->session_path;
-        else if (!s->shot.active && !s->open_path.empty())
-            startPath = app::IsThisPcArgument(s->open_path) ? std::wstring()
-                                                            : ResolveOpenFolderPath(s->open_path);
-        else if (open_default_location)
-            startPath = app::DefaultLocation(s->appPrefs); // empty = This PC
-        s->pane->NewTab(startPath);
-        if (s->shot.active) s->pane->ActiveTab()->view_mode = s->shot.view_mode;
-        StartLoadingPath(*s, *s->pane->ActiveTab(), startPath,
-            !s->shot.active && !s->session_path.empty()
-                ? PathLoadReason::RestoreSession : PathLoadReason::Navigate);
-        RememberPath(*s, startPath);
-        if (!s->shot.active && s->session_path.empty() && !s->open_path.empty())
-            SelectLaunchedFile(*s, s->open_path);
-        }
+            if (!s->shot.active && !s->session_layout_tabs.empty()) {
+                s->pane = nullptr;
+                s->targetPane = nullptr;
+                app::RestoreWindowTabs(
+                    s->window_tabs, s->session_layout_tabs, s->session_tab_groups,
+                    s->session_active_layout_tab,
+                    [s](app::Tab& tab, const std::wstring& path) {
+                        WarmupUnc(*s, path);
+                        StartLoadingPath(*s, tab, path, PathLoadReason::RestoreSession);
+                    });
+                for (size_t i = 0; i < s->window_tabs.items.size(); ++i) {
+                    app::RebuildLayoutRoot(*s->window_tabs.items[i]);
+                    if (i < s->session_layout_tabs.size() &&
+                        s->window_tabs.items[i]->root &&
+                        !s->session_layout_tabs[i].split_ratios.empty()) {
+                        app::ApplySplitRatios(*s->window_tabs.items[i]->root,
+                                              s->session_layout_tabs[i].split_ratios);
+                    }
+                }
+                BindCurrentLayout(*s);
+                if (!s->session_path.empty())
+                    RememberPath(*s, s->session_path);
+                else if (app::Tab* t = ActiveTab(*s))
+                    RememberPath(*s, t->current_path);
+            } else {
+            // Shots accept the This PC arguments too (GUI checks of the drive view).
+            std::wstring startPath = !s->shot.active ? L"C:\\"
+                : app::IsThisPcArgument(s->shot.path) ? std::wstring() : s->shot.path;
+            if (!s->shot.active && !s->session_path.empty()) startPath = s->session_path;
+            else if (!s->shot.active && !s->open_path.empty())
+                startPath = app::IsThisPcArgument(s->open_path) ? std::wstring()
+                                                                : ResolveOpenFolderPath(s->open_path);
+            else if (open_default_location)
+                startPath = app::DefaultLocation(s->appPrefs); // empty = This PC
+            s->pane->NewTab(startPath);
+            if (s->shot.active) s->pane->ActiveTab()->view_mode = s->shot.view_mode;
+            StartLoadingPath(*s, *s->pane->ActiveTab(), startPath,
+                !s->shot.active && !s->session_path.empty()
+                    ? PathLoadReason::RestoreSession : PathLoadReason::Navigate);
+            RememberPath(*s, startPath);
+            if (!s->shot.active && s->session_path.empty() && !s->open_path.empty())
+                SelectLaunchedFile(*s, s->open_path);
+            }
 
-        if (!s->shot.active && !s->open_path.empty() &&
-            (!s->session_layout_tabs.empty() || !s->session_path.empty())) {
-            const bool this_pc = app::IsThisPcArgument(s->open_path);
-            const std::wstring open_path = this_pc ? std::wstring() : ResolveOpenFolderPath(s->open_path);
-            if (this_pc) OpenTabAt(*s, open_path);  // NewTab would open C: for ""
-            else if (!open_path.empty() && !ActivateExistingFolderTab(*s, open_path))
-                NewTab(*s, open_path);
-            if (!open_path.empty()) SelectLaunchedFile(*s, s->open_path);
+            if (!s->shot.active && !s->open_path.empty() &&
+                (!s->session_layout_tabs.empty() || !s->session_path.empty())) {
+                const bool this_pc = app::IsThisPcArgument(s->open_path);
+                const std::wstring open_path = this_pc ? std::wstring() : ResolveOpenFolderPath(s->open_path);
+                if (this_pc) OpenTabAt(*s, open_path);  // NewTab would open C: for ""
+                else if (!open_path.empty() && !ActivateExistingFolderTab(*s, open_path))
+                    NewTab(*s, open_path);
+                if (!open_path.empty()) SelectLaunchedFile(*s, s->open_path);
+            }
+        } else {
+            // A later window opens one tab at its start folder (OpenPulseWindow).
+            const std::wstring start = s->window_start_path;
+            s->pane->NewTab(start);
+            StartLoadingPath(*s, *s->pane->ActiveTab(), start, PathLoadReason::Navigate);
+            RememberPath(*s, start);
         }
 
         // Settings have been loaded (or their own load_failed guard is set),
         // and the saved layouts/undo are now represented by live models.
-        if (!s->isolatedTest && !s->shot.active && !s->menushot) app::CleanupAbandonedUpdateStagesAsync();
+        if (init_core && !s->isolatedTest && !s->shot.active && !s->menushot)
+            app::CleanupAbandonedUpdateStagesAsync();
         s->startupComplete = true;
         s->lastFrameTime = std::chrono::steady_clock::now();
         s->renderer.SetDetailsPanelVisible(s->showDetailsPanel);
@@ -930,6 +956,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER |
             SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        s->core.started = true;
         return 0;
     }
 
@@ -2058,6 +2085,20 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
 
+    case WM_NEW_WINDOW:
+        // Another window at this window's current folder (M4a; Ctrl+N in M4b).
+        if (s && s->startupComplete && !s->shot.active && !s->menushot) {
+            const app::Tab* tab = ActiveTab(*s);
+            OpenPulseWindow(*s, WindowInit{tab ? tab->current_path : std::wstring()});
+        }
+        return 0;
+
+    case WM_NCDESTROY:
+        // A window opened by OpenPulseWindow owns its state: retired here and
+        // freed on the host's next message, after this window is gone.
+        if (s && RetireWindowState(*s)) SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+        break;
+
     case WM_DESTROY: {
         // Closing one of several windows (M3f) tears down what the window
         // owns; services, saved state and the shared caches go with the last.
@@ -2090,6 +2131,14 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 CancelNetworkLocations(*s);
                 CancelSidebarRefresh(*s);
                 s->worker.Stop();
+            } else if (AppState* next = s->core.windows.MostRecentExcept(hwnd)) {
+                // Hand the process bindings this window held to the next one
+                // (M4a): tray hide/restore and the owner of shell dialogs.
+                if (s->tray_controller.Window() == hwnd) {
+                    s->tray_controller.Retarget(next->hwnd);
+                    InstallTrayRevealHook(*next);
+                }
+                s->ops.SetUiWindow(next->hwnd);
             }
             ShutdownDetailsSizeWalk(*s);
 
@@ -2793,8 +2842,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         h = state.shot.height;
     }
 
-    constexpr DWORD kMainWindowStyle =
-        WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+    // kMainWindowStyle (window_factory.h) is shared with later windows.
     static_assert((kMainWindowStyle & WS_CAPTION) == WS_CAPTION &&
                   (kMainWindowStyle & WS_SYSMENU) == 0,
                   "keep the system animations without DWM's duplicate caption buttons");
@@ -2815,6 +2863,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             }
             if (message != 0 && message == app::TrayController::TaskbarCreatedMessage()) {
                 state.tray_controller.HandleTaskbarCreated();  // the icon lives on the host
+                return 0;
+            }
+            if (message == WM_RELEASE_WINDOW_STATES) {
+                ReleaseRetiredWindowStates();
                 return 0;
             }
             if (message != WM_COPYDATA) return std::nullopt;
@@ -3105,6 +3157,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    // Later windows' states hold references into the core `state` owns.
+    ReleaseWindowStatesAtExit();
     pulse::app::hang::Stop();
     OleUninitialize();
     return (int)msg.wParam;

@@ -31,6 +31,14 @@ public:
     // it the UI window owns the icon too.
     void Attach(HWND window, HINSTANCE instance, HWND icon_window = nullptr);
     HWND IconWindow() const noexcept { return icon_window_; }
+    HWND Window() const noexcept { return hwnd_; }
+    // Multi-window (M4a): the closing window hands hide/restore over to the
+    // next one. The icon, its visibility and its owner stay as they are.
+    void Retarget(HWND window) noexcept {
+        if (!hwnd_ || !window) return;
+        hwnd_ = window;
+        restore_maximized_ = false;
+    }
     void Detach();
     bool SetVisible(bool visible);
     // `show_icon` false (icon set to never): hide without an icon; a second

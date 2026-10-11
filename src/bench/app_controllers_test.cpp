@@ -1476,6 +1476,23 @@ int wmain(int argc, wchar_t** argv) {
     passed &= Report("tray restore shows the UI window, never the icon host",
         ui_window && IsWindowVisible(ui_window) && !IsWindowVisible(icon_host));
     ShowWindow(ui_window, SW_HIDE);
+    // Multi-window M4a: a closing window hands hide/restore to the next one.
+    HWND next_window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC",
+        L"Pulse tray next window test", WS_POPUP, -32000, -32000, 100, 100,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    hosted.Retarget(next_window);
+    passed &= Report("tray retarget moves hide/restore and keeps the icon owner",
+        next_window && hosted.Window() == next_window && hosted.IconWindow() == icon_host);
+    hosted.RestoreWindow();
+    passed &= Report("after retarget the tray restores the next window",
+        next_window && IsWindowVisible(next_window) && !IsWindowVisible(ui_window));
+    ShowWindow(next_window, SW_HIDE);
+    hosted.Retarget(nullptr);
+    passed &= Report("retarget to no window is ignored", hosted.Window() == next_window);
+    TrayController detached;
+    detached.Retarget(next_window);
+    passed &= Report("retarget does not attach a detached tray", detached.Window() == nullptr);
+    if (next_window) DestroyWindow(next_window);
     hosted.Detach();
     passed &= Report("tray detach releases the icon window", hosted.IconWindow() == nullptr);
     TrayController unhosted;
