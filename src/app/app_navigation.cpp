@@ -1211,14 +1211,32 @@ void StartLoadingPath(AppState& s, app::Tab& tab, const std::wstring& path, Path
     if (fs::IsUncPath(normalized)) RequestUncProbe(s, normalized);
 }
 
-void ApplyWorkerResult(AppState& s, app::WorkResult& res) {
-    if (Panes(s).empty()) return;
+// Data layer of a worker result (multi-window M3b): the snapshot store and Git
+// roots are process-wide, so they change once per result, before any window
+// applies it. Returns whether the folder changed again while it was listed.
+static bool ApplyWorkerResultData(AppCore& core, const app::WorkResult& res) {
+    if (res.error) return false;
+    const bool again = res.snapshot && !fs::IsVirtualPath(res.path) &&
+                       core.store.IsDirty(res.path);
+    if (res.snapshot && !fs::IsVirtualPath(res.path)) {
+        core.store.Update(res.path, res.generation, res.snapshot, res.identity);
+    }
+    if (!fs::IsVirtualPath(res.path)) core.gitRoots[res.path] = res.git_root;
+    return again;
+}
+
+// Window layer: the panes of one window that wait for this listing. Returns
+// whether a failed listing was awaited here (that window owns the unlock prompt).
+static bool ApplyWorkerResultToWindow(AppState& s, app::WorkResult& res, bool again) {
+    if (Panes(s).empty()) return false;
     NoteColumnStripResult(s, res);
     if (res.error) {
+        bool awaited = false;
         ForEachPane(s, [&](app::Pane& pane) {
             app::Tab* tab = pane.ActiveTab();
             if (!tab || tab->current_path != res.path) return;
             if (tab->pending_generation != res.generation) return;
+            awaited = true;
             tab->loading = false;
             tab->pending_generation = 0;
             tab->net_readonly = fs::IsUncPath(res.path);
@@ -1233,18 +1251,9 @@ void ApplyWorkerResult(AppState& s, app::WorkResult& res) {
                 tab->banner_message = l10n::Get(l10n::StringId::DriveLockedMessage);
             }
         });
-        // As File Explorer does for a locked drive: ask for the password, then
-        // open it (ApplyBitLockerUnlock). One wait per drive at a time.
-        if (res.bitlocker_locked) app::StartBitLockerUnlock(s.hwnd, WM_BITLOCKER_UNLOCK, res.path);
         InvalidateRect(s.hwnd, nullptr, FALSE);
-        return;
+        return awaited;
     }
-    const bool again = res.snapshot && !fs::IsVirtualPath(res.path) &&
-                       s.store.IsDirty(res.path);
-    if (res.snapshot && !fs::IsVirtualPath(res.path)) {
-        s.store.Update(res.path, res.generation, res.snapshot, res.identity);
-    }
-    if (!fs::IsVirtualPath(res.path)) s.gitRoots[res.path] = res.git_root;
     bool any = false;
     ForEachPane(s, [&](app::Pane& pane) {
         app::Tab* tab = pane.ActiveTab();
@@ -1363,7 +1372,7 @@ void ApplyWorkerResult(AppState& s, app::WorkResult& res) {
             CompleteExplorerNavigation(*tab, res.generation, !res.cancelled && res.snapshot != nullptr);
     });
     if (again) RefreshPath(s, res.path);
-    if (!any) return;
+    if (!any) return false;
     SyncQuickPreview(s);
 
     s.timing.enum_ms = res.enum_ms;
@@ -1371,6 +1380,26 @@ void ApplyWorkerResult(AppState& s, app::WorkResult& res) {
     s.timing.sort_done_ms = res.enum_ms + res.sort_ms;
 
     if (s.shot.active) InvalidateRect(s.hwnd, nullptr, FALSE);
+    return false;
+}
+
+void ApplyWorkerResult(AppState& s, app::WorkResult& res) {
+    // A listing may be on screen in any window: update the shared data once,
+    // then let every window that shares the core pick it up.
+    bool has_panes = false;
+    app::ForEachWindowSharingCore(s, [&](AppState& window) { has_panes = has_panes || !Panes(window).empty(); });
+    if (!has_panes) return;
+    const bool again = ApplyWorkerResultData(s.core, res);
+    AppState* awaiting = nullptr;
+    app::ForEachWindowSharingCore(s, [&](AppState& window) {
+        if (ApplyWorkerResultToWindow(window, res, again) && !awaiting) awaiting = &window;
+    });
+    // As File Explorer does for a locked drive: ask for the password, then open
+    // it (ApplyBitLockerUnlock). One prompt, owned by the window that waits for
+    // the drive (or the caller when none does). One wait per drive at a time.
+    if (res.error && res.bitlocker_locked) {
+        app::StartBitLockerUnlock((awaiting ? awaiting : &s)->hwnd, WM_BITLOCKER_UNLOCK, res.path);
+    }
 }
 
 void ProcessPendingResults(AppState& s) {

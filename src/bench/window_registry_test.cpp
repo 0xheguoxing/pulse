@@ -1,6 +1,7 @@
 // window_registry_test.cpp - Multi-window M3a: the per-process window registry
 // keeps most-recently-activated order, survives unknown and repeated calls,
-// and empties when the last window leaves.
+// and empties when the last window leaves. M3b: a shared result reaches every
+// window of the core, or only the caller when it is not registered.
 #include "../app/window_registry.h"
 
 #include <cstdio>
@@ -12,6 +13,18 @@ int g_failures = 0;
 void Check(bool ok, const char* what) {
     std::printf("[%s] %s\n", ok ? "PASS" : "FAIL", what);
     if (!ok) ++g_failures;
+}
+struct FakeCore;
+struct FakeAppWindow {
+    HWND hwnd = nullptr;
+    FakeCore& core;
+    int id = 0;
+};
+struct FakeCore { pulse::app::BasicWindowRegistry<FakeAppWindow> windows; };
+std::vector<int> Visited(FakeAppWindow& from) {
+    std::vector<int> ids;
+    pulse::app::ForEachWindowSharingCore(from, [&](FakeAppWindow& w) { ids.push_back(w.id); });
+    return ids;
 }
 HWND H(int n) { return reinterpret_cast<HWND>(static_cast<INT_PTR>(0x1000 + n)); }
 std::vector<int> Order(const pulse::app::BasicWindowRegistry<FakeWindow>& r) {
@@ -56,6 +69,19 @@ int main() {
 
     Check(registry.Remove(H(1)) && registry.Remove(H(3)) && registry.Empty() && !registry.MostRecent(),
           "the registry is empty after the last window leaves");
+
+    FakeCore core;
+    FakeAppWindow w1{H(11), core, 1}, w2{H(12), core, 2}, loose{nullptr, core, 9};
+    Check((Visited(w1) == std::vector<int>{1}), "an unregistered window gets the result alone");
+    core.windows.Add(w1.hwnd, &w1);
+    core.windows.Add(w2.hwnd, &w2);
+    Check((Visited(w1) == std::vector<int>{2, 1}) && (Visited(w2) == std::vector<int>{2, 1}),
+          "a registered window shares the result with every window, most recent first");
+    Check((Visited(loose) == std::vector<int>{9}), "a window without a handle (tests, probes) stays alone");
+    FakeAppWindow impostor{H(12), core, 7};
+    Check((Visited(impostor) == std::vector<int>{7}), "a handle registered to another state does not fan out");
+    core.windows.Remove(w2.hwnd);
+    Check((Visited(w1) == std::vector<int>{1}), "a closed window no longer receives results");
 
     std::printf("window_registry_test: %d failure(s)\n", g_failures);
     return g_failures == 0 ? 0 : 1;

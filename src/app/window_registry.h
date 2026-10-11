@@ -63,4 +63,17 @@ private:
     std::vector<Entry> entries_;
 };
 
+// Visits every window that shares `window`'s core, most recent first, or only
+// `window` when it is not registered there (tests, probes, a window still in
+// WM_CREATE). `Window` exposes `hwnd` and `core.windows`. Process-wide results
+// are applied to shared data once, then handed to each window through this.
+template <class Window, class F>
+void ForEachWindowSharingCore(Window& window, F&& f) {
+    if (!window.hwnd || window.core.windows.Lookup(window.hwnd) != &window) {
+        f(window);
+        return;
+    }
+    window.core.windows.ForEach([&](HWND, Window& other) { f(other); });
+}
+
 }  // namespace pulse::app
