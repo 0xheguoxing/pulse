@@ -57,6 +57,7 @@
 #include "single_instance_coordinator.h"
 #include "window_factory.h"
 #include "tab_transfer.h"
+#include "tab_detach.h"
 #include "tray_controller.h"
 #include "global_search_controller.h"
 #include "tab_controller.h"
@@ -1331,6 +1332,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_MOVE_TAB_TO_NEW_WINDOW:
         if (s) MoveTabToNewWindow(*s);
+        return 0;
+
+    case WM_BEGIN_TAB_DETACH:
+        // May destroy this window (Esc puts the tab back): touch nothing after.
+        if (s) RunDetachedTabMove(*s, reinterpret_cast<HWND>(wParam), static_cast<size_t>(lParam));
         return 0;
 
     case WM_SHELL_SELECT: {

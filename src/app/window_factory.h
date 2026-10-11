@@ -31,6 +31,8 @@ struct WindowInit {
     // instead of a first tab opening; `path` is the fallback if it cannot.
     AppState* adopt_from = nullptr;
     size_t adopt_index = 0;
+    // A tab dragged off the strip (M6a): the window opens here, unmaximized.
+    std::optional<RECT> rect;
 };
 
 // Creates and shows a window on `from`'s core at `init.path`, next to `from`

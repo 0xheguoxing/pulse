@@ -49,5 +49,6 @@ constexpr UINT WM_NEW_WINDOW = WM_APP + 77;  // open another window at this wind
 constexpr UINT WM_REOPEN_CLOSED_WINDOW = WM_APP + 78;  // reopen the last closed window (M4c toast, Ctrl+Shift+T)
 constexpr UINT WM_OPEN_SESSION_WINDOWS = WM_APP + 79;  // first window shown: open the session's other windows (M4d)
 constexpr UINT WM_MOVE_TAB_TO_NEW_WINDOW = WM_APP + 80;  // Ctrl+Shift+M: the active tab moves to a new window (M4e)
+constexpr UINT WM_BEGIN_TAB_DETACH = WM_APP + 81;  // a tab dragged off the strip: start the system move loop (M6a)
 
 }  // namespace pulse

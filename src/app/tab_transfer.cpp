@@ -42,17 +42,22 @@ void ReleaseLeavingTab(AppState& s, const app::LayoutTab& tab, bool active) {
 }
 }  // namespace
 
-bool MoveLayoutTab(AppState& src, size_t index, AppState& dst, size_t insert_at) {
+bool MoveLayoutTab(AppState& src, size_t index, AppState& dst, size_t insert_at,
+                   TransferSource source) {
     auto& from = src.window_tabs;
-    if (&src == &dst || index >= from.items.size() || from.items.size() < 2 || !from.items[index])
+    const bool closing = source == TransferSource::Closing;
+    if (&src == &dst || index >= from.items.size() || (from.items.size() < 2 && !closing) ||
+        !from.items[index])
         return false;
     ReleaseLeavingTab(src, *from.items[index], index == from.active);
     RememberLayoutFocus(src);  // the tab carries its focused and target pane
-    std::unique_ptr<app::LayoutTab> tab = from.TakeTab(index);
+    std::unique_ptr<app::LayoutTab> tab = from.TakeTab(index, closing);
     if (!tab) return false;
-    BindCurrentLayout(src);
-    RevalidateVisibleFolders(src);
-    InvalidateRect(src.hwnd, nullptr, FALSE);
+    BindCurrentLayout(src);  // no tab left: no pane, no watches
+    if (!from.items.empty()) {
+        RevalidateVisibleFolders(src);
+        InvalidateRect(src.hwnd, nullptr, FALSE);
+    }
 
     if (dst.addressSearching) HideAddressEditor(dst, false);
     RememberLayoutFocus(dst);

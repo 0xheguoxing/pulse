@@ -424,10 +424,11 @@ struct WindowTabs {
     void SwitchTab(size_t idx);
     void MoveTab(size_t from, size_t to);
     // Moving a tab between windows (M5b). TakeTab removes tab `idx` with its
-    // panes intact; it refuses the last tab (a window keeps one) but lets a
-    // pinned tab go. The tab leaves its group, and a group it leaves empty is
-    // dropped; `active` follows as in CloseTab.
-    std::unique_ptr<LayoutTab> TakeTab(size_t idx);
+    // panes intact; it refuses the last tab (a window keeps one) unless
+    // `allow_last` (the window is about to close, M6a), but lets a pinned tab
+    // go. The tab leaves its group, and a group it leaves empty is dropped;
+    // `active` follows as in CloseTab.
+    std::unique_ptr<LayoutTab> TakeTab(size_t idx, bool allow_last = false);
     // InsertTab places such a tab at `index`, clamped to its region (pinned
     // tabs first) and moved past a group run it would split, and makes it
     // active. Returns the index it landed at.

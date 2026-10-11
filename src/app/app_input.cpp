@@ -3,6 +3,7 @@
 #include "quick_access.h"
 #include "app_prompts.h"
 #include "vertical_tabs.h"
+#include "tab_detach.h"
 #include "tab_shortcuts.h"
 #include "explorer_shortcuts.h"
 #include "app_updates.h"
@@ -1328,6 +1329,8 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 s->tabDragSlots = 1.0f;
                 s->tabOrder.clear();
                 if (GetCapture() == hwnd) ReleaseCapture();
+            } else if (TryDetachDraggedTab(*s, mx, my)) {
+                return 0;  // off the strip: the tab is a window now (M6a)
             } else if (s->tabDragging ||
                        (s->pane && s->window_tabs.items.size() >= 2 &&
                         std::abs(mx - s->tabDragStartPt.x) >= 2)) {

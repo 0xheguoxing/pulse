@@ -78,7 +78,7 @@ HWND OpenPulseWindow(AppState& from, const WindowInit& init) {
     state->window_adopt_index = init.adopt_index;
     g_windows.push_back(std::move(owned));
 
-    RECT rect = CascadedRect(from);
+    RECT rect = init.rect ? *init.rect : CascadedRect(from);
     bool maximize = false;
     if (init.restore) {
         const RECT& back = init.restore->rect;

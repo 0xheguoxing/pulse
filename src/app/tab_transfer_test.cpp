@@ -2,6 +2,7 @@
 // tab_transfer_test.cpp - Multi-window M5b: WindowTabs::TakeTab/InsertTab and
 // MoveLayoutTab move a live tab between two windows sharing one core.
 #include "app_internal.h"
+#include "tab_detach.h"
 #include "tab_transfer.h"
 #include <filesystem>
 #include <fstream>
@@ -52,6 +53,10 @@ bool RunTabTransferTest() {
         WindowTabs one;
         Seed(one, 1);
         check(!one.TakeTab(0) && one.items.size() == 1, "the last tab of a window cannot be taken");
+        LayoutTab* last = one.items[0].get();
+        std::unique_ptr<LayoutTab> taken_last = one.TakeTab(0, true);
+        check(taken_last.get() == last && one.items.empty() && one.active == 0 && !one.Active(),
+              "a closing window may give up its last tab (M6a)");
 
         WindowTabs src;
         Seed(src, 4);
@@ -88,6 +93,17 @@ bool RunTabTransferTest() {
         at = dst.InsertTab(std::move(loose), 5);  // between the two members of group 9
         check(at == 6 && dst.items[6].get() == loose_raw && GroupRunsContiguous(dst),
               "a tab that would split a group run lands after the run");
+    }
+
+    // --- Drag-out geometry (M6a) ------------------------------------------
+    {
+        const RECT r = DetachedWindowRect(SIZE{1200, 750}, POINT{900, 300}, POINT{150, 20}, POINT{8, 0});
+        check(r.left == 742 && r.top == 280 && r.right == 1942 && r.bottom == 1030,
+              "the detached window keeps the source size and the cursor keeps its grab point on the tab");
+        check(!TabDetachDistanceReached(POINT{100, 20}, POINT{400, 55}, 1.5f) &&
+                  TabDetachDistanceReached(POINT{100, 20}, POINT{100, 56}, 1.5f) &&
+                  TabDetachDistanceReached(POINT{100, 40}, POINT{100, 16}, 1.0f),
+              "a tab leaves the strip after 24 DIP up or down; sideways travel alone reorders");
     }
 
     // --- MoveLayoutTab between two windows --------------------------------
@@ -161,6 +177,11 @@ bool RunTabTransferTest() {
         check(!MoveLayoutTab(*src, 0, *dst, 0) && src->window_tabs.items.size() == 1 &&
                   dst->window_tabs.items.size() == 3,
               "a window's only tab stays (the move is refused, nothing changes)");
+        LayoutTab* only = src->window_tabs.items[0].get();
+        check(MoveLayoutTab(*src, 0, *dst, 1, TransferSource::Closing) && src->window_tabs.items.empty() &&
+                  !src->pane && dst->window_tabs.items.size() == 4 && dst->window_tabs.items[1].get() == only &&
+                  dst->window_tabs.Active() == only,
+              "a closing window hands over its last tab, which lands at the requested place (Esc after a drag-out)");
 
         core->windows.Remove(dst->hwnd);
         core->windows.Remove(src->hwnd);

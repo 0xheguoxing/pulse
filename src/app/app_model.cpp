@@ -653,11 +653,12 @@ void WindowTabs::CloseTab(size_t idx) {
     else if (idx < active) --active;
 }
 
-std::unique_ptr<LayoutTab> WindowTabs::TakeTab(size_t idx) {
-    if (idx >= items.size() || items.size() <= 1 || !items[idx]) return nullptr;
+std::unique_ptr<LayoutTab> WindowTabs::TakeTab(size_t idx, bool allow_last) {
+    if (idx >= items.size() || (items.size() <= 1 && !allow_last) || !items[idx]) return nullptr;
     std::unique_ptr<LayoutTab> tab = std::move(items[idx]);
     items.erase(items.begin() + static_cast<ptrdiff_t>(idx));
-    if (active >= items.size()) active = items.size() - 1;
+    if (items.empty()) active = 0;
+    else if (active >= items.size()) active = items.size() - 1;
     else if (idx < active) --active;
     const int group = tab->tab_group;
     tab->tab_group = 0;
