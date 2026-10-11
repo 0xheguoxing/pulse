@@ -125,7 +125,7 @@ void CreateNewItem(AppState& s, bool folder) {
 }
 
 void QueueTagAds(AppState& s, std::vector<app::TagAdsUpdate> updates) {
-    const HWND notify = s.hwnd;
+    const HWND notify = ServiceWindow(s);
     app::QueueTagAdsDrain(std::move(updates), [&worker = s.worker](std::function<void()> task) {
         worker.EnqueueSerialIo(std::move(task));
     }, [notify](std::vector<app::TagAdsFailure> failures) {

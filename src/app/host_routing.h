@@ -5,7 +5,11 @@
 // host (ServiceWindow). Until the data/window split of M3, the host forwards
 // each one unchanged to the main window with SendMessage, so the existing
 // handlers run as before. Window-level messages (frame pump, quick preview,
-// details probe, menus, toasts) still go to their window directly. System
+// details probe, menus, toasts, the search box's own history refresh, the
+// IShellWindows registration) still go to their window directly. Navigation
+// results that will need a target window (UNC probe, BitLocker unlock, whose
+// prompt is owned by the UI window, live network search, Explorer takeover)
+// move with the M3 data/window split. System
 // broadcasts are not listed: every top-level window already receives them,
 // and forwarding would handle them twice; the host handles TaskbarCreated
 // itself because it owns the notification icon.
@@ -28,6 +32,14 @@ inline constexpr UINT kHostRoutedMessages[] = {
     WM_SHELL_CACHE_INVALIDATE, // shell registry watch
     WM_SHELL_VERB_SEED,        // machine verb cache seed
     WM_SHELL_VERBS,            // static verb reads (process-wide cache)
+    WM_RECYCLE_INFO,           // Recycle Bin occupancy query
+    WM_NETWORK_LOCATIONS,      // network locations read
+    WM_UPDATE_RESULT,          // update check
+    WM_UPDATE_DOWNLOADED,      // update download
+    WM_CHANGE_TRACKING,        // change tracking client
+    WM_TAG_ADS_WARNING,        // tag ADS write failures
+    WM_TAG_ADS_DISCOVERED,     // tag ADS discovery
+    WM_SETTINGS_TASK_RESULT,   // settings background tasks
     TrayController::kCallbackMessage,  // notification icon (owned by the host)
     WM_HOTKEY,                 // global search hotkey (registered on the host)
 };

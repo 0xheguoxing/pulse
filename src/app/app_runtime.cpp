@@ -1024,7 +1024,7 @@ void ApplyRecycleOccupancy(AppState& s) {
 }
 
 void RequestRecycleOccupancy(AppState& s) {
-    const HWND hwnd = s.hwnd;
+    const HWND hwnd = ServiceWindow(s);
     s.worker.EnqueueIo([hwnd] {
         auto* info = new fs::RecycleBinInfo{};
         fs::QueryRecycleBinInfo(*info);
@@ -2841,7 +2841,7 @@ void QueueVisibleTagDiscovery(AppState& s) {
     }
     if (paths.empty()) return;
 
-    const HWND notify = s.hwnd;
+    const HWND notify = ServiceWindow(s);
     s.worker.EnqueueIo([paths = std::move(paths), notify] {
         auto discoveries = std::make_unique<std::vector<TagAdsDiscovery>>();
         discoveries->reserve(paths.size());

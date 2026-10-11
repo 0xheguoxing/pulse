@@ -30,7 +30,7 @@ void RequestNetworkLocations(AppState& state) {
     const auto load = state.networkLocations;
     if (load->pending || load->cancelled) return;
     load->pending = true;
-    const HWND hwnd = state.hwnd;
+    const HWND hwnd = ServiceWindow(state);
     std::wstring fixture;
     if (state.isolatedTest) {
         wchar_t path[32768]{};

@@ -655,7 +655,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 L"The original settings could not be read. Saving is blocked to protect them. Restart Pulse to retry.")));
         }
         settings_callbacks.integration_changed = [s] { SyncShellWindows(*s); };
-        settings_callbacks.task_completion = SettingsCompletion(hwnd);
+        settings_callbacks.task_completion = SettingsCompletion(ServiceWindow(*s));
         settings_callbacks.open_path = [hwnd](const std::wstring& path) {
             ShellExecuteW(hwnd, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         };

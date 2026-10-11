@@ -36,7 +36,7 @@ void LaunchReadyUpdate(AppState& state) {
 
 void CheckForUpdates(AppState& state) {
     if (state.update_installer.Progress().active()) return;
-    if (state.update_checker.CheckAsync(state.hwnd, WM_UPDATE_RESULT)) {
+    if (state.update_checker.CheckAsync(ServiceWindow(state), WM_UPDATE_RESULT)) {
         state.update_result_ready = false;
         state.update_install_error = ERROR_SUCCESS;
         state.next_update_check = GetTickCount64() + kCheckInterval;
@@ -133,7 +133,7 @@ void InstallUpdate(AppState& state) {
         state.update_install_error = ERROR_CANCELLED;
     } else if (state.update_result_ready && state.update_result.update_available) {
         state.update_install_error = ERROR_SUCCESS;
-        if (!state.update_installer.Start(state.update_result, state.hwnd, WM_UPDATE_DOWNLOADED))
+        if (!state.update_installer.Start(state.update_result, ServiceWindow(state), WM_UPDATE_DOWNLOADED))
             state.update_install_error = ERROR_GEN_FAILURE;
     }
     InvalidateRect(state.hwnd, nullptr, FALSE);

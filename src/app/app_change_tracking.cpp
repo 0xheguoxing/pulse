@@ -84,7 +84,7 @@ void StartChangeTracking(AppState& s) {
     s.changes.enabled = s.appPrefs.change_tracking_enabled;
     s.changes.days = s.appPrefs.change_tracking_days;
     if (s.isolatedTest || s.shot.active) return;
-    s.changes.client.Start(s.hwnd, WM_CHANGE_TRACKING);
+    s.changes.client.Start(ServiceWindow(s), WM_CHANGE_TRACKING);
     s.changes.client.SetEnabled(s.changes.enabled);
 }
 
