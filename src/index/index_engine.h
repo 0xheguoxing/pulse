@@ -430,6 +430,8 @@ private:
     void PublishExcludedPaths(const IndexConfig& config,
                               const std::function<void()>& locked_action = {});
     bool ShouldSkipName(std::wstring_view name) const;
+    // ShouldSkipName plus the NTFS metadata files directly below a volume root.
+    bool ShouldSkipChild(bool parent_is_root, std::wstring_view name) const;
     void RefreshSubtreeVisibilityLocked(int32_t root, DeltaLog* delta);
     void PingNotify(bool force = false);
 

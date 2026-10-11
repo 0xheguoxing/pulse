@@ -1064,6 +1064,134 @@ struct EngineTestAccess {
         return (e.NodeAt(e.vols_.front().root_idx).flags & Engine::kFlagHidden) != 0;
     }
 
+    // Volume-level system folders are hidden whatever their case, and the NTFS
+    // metadata files are hidden only directly below the volume root. The rule
+    // must hold for MFT builds, USN creates and later visibility refreshes.
+    static bool SystemNamesFixture() {
+        bool ok = true;
+        auto check = [&](bool value, const char* name) {
+            std::cout << (value ? "[PASS] " : "[FAIL] ") << name << '\n'; ok &= value;
+        };
+        Engine e;
+        e.running_ = true;
+        Engine::VolState volume;
+        volume.letter = L'C';
+        volume.kind = VolumeKind::Removable;
+        volume.volume_id = L"system-names-volume";
+        std::vector<Engine::FrnNode> nodes;
+        auto add = [&](uint64_t id, uint64_t parent, const wchar_t* name, bool dir) {
+            Engine::FrnNode node;
+            node.frn = id; node.parent = parent; node.name = name; node.is_dir = dir; node.size = 1;
+            nodes.push_back(std::move(node));
+        };
+        add(0, 5, L"$MFT", false);
+        add(2, 5, L"$LogFile", false);
+        add(11, 5, L"$Extend", true);
+        add(25, 11, L"$UsnJrnl", false);
+        add(30, 5, L"$RECYCLE.BIN", true);
+        add(31, 30, L"S-1-5-21-1", true);
+        add(32, 31, L"$RSAMPLE.txt", false);
+        add(40, 5, L"system volume information", true);
+        add(41, 40, L"tracking.log", false);
+        add(50, 5, L"Work", true);
+        add(51, 50, L"$Extend", true);
+        add(52, 50, L"$MFT", false);
+        const bool built = e.BuildMftTree(std::move(volume), 5, std::move(nodes));
+        e.live_ = std::move(e.build_);
+        e.vols_ = std::move(e.build_vols_);
+        e.RebuildChildMapLocked();
+        e.ready_ = true;
+        auto found = [&](const wchar_t* needle, const wchar_t* path) {
+            Query q; q.needle = needle; q.limit = 100;
+            const auto result = e.Search(q);
+            return std::any_of(result.hits.begin(), result.hits.end(), [&](const Hit& hit) { return hit.path == path; });
+        };
+        auto expect = [&](const char* phase) {
+            const std::string suffix = std::string(" (") + phase + ")";
+            check(!found(L"MFT", L"C:\\$MFT") && !found(L"LogFile", L"C:\\$LogFile") &&
+                  !found(L"Extend", L"C:\\$Extend") && !found(L"UsnJrnl", L"C:\\$Extend\\$UsnJrnl"),
+                  ("NTFS metadata files below the volume root are hidden" + suffix).c_str());
+            check(found(L"Extend", L"C:\\Work\\$Extend") && found(L"MFT", L"C:\\Work\\$MFT"),
+                  ("metadata names below ordinary folders stay searchable" + suffix).c_str());
+            check(!found(L"RSAMPLE", L"C:\\$RECYCLE.BIN\\S-1-5-21-1\\$RSAMPLE.txt"),
+                  ("upper-case $RECYCLE.BIN content is hidden" + suffix).c_str());
+            check(!found(L"tracking", L"C:\\system volume information\\tracking.log"),
+                  ("System Volume Information is hidden in any case" + suffix).c_str());
+        };
+        check(built, "system name fixture builds");
+        expect("MFT build");
+        e.RefreshSubtreeVisibilityLocked(e.vols_.front().root_idx, nullptr);
+        e.InvalidateFilterLocked();
+        expect("visibility refresh");
+        Usn(e, 3, 5, L"$Volume", USN_REASON_FILE_CREATE);
+        Usn(e, 70, 50, L"$Recycle.Bin", USN_REASON_FILE_CREATE);
+        Usn(e, 71, 70, L"inside-recycle", USN_REASON_FILE_CREATE);
+        Usn(e, 72, 50, L"$Volume", USN_REASON_FILE_CREATE);
+        check(!found(L"Volume", L"C:\\$Volume") && found(L"Volume", L"C:\\Work\\$Volume"),
+              "USN create hides root metadata names only at the root");
+        check(!found(L"inside-recycle", L"C:\\Work\\$Recycle.Bin\\inside-recycle"),
+              "USN create below a recycle folder stays hidden");
+        return ok;
+    }
+
+    // Reused MFT slots can give a deep folder a lower FRN than its ancestors,
+    // so the build meets the leaf first and must walk the whole parent chain.
+    static bool DeepChainBuildFixture() {
+        bool ok = true;
+        auto check = [&](bool value, const char* name) {
+            std::cout << (value ? "[PASS] " : "[FAIL] ") << name << '\n'; ok &= value;
+        };
+        constexpr int kDepth = 140;
+        Engine e;
+        e.running_ = true;
+        Engine::VolState volume;
+        volume.letter = L'C';
+        volume.kind = VolumeKind::Removable;
+        volume.volume_id = L"deep-chain-volume";
+        std::vector<Engine::FrnNode> nodes;
+        auto add = [&](uint64_t id, uint64_t parent, const wchar_t* name, bool dir) {
+            Engine::FrnNode node;
+            node.frn = id; node.parent = parent; node.name = name; node.is_dir = dir; node.size = 1;
+            nodes.push_back(std::move(node));
+        };
+        add(5000, 5, L"deep", true);
+        uint64_t parent = 5000;
+        std::wstring path = L"C:\\deep";
+        for (int depth = 1; depth <= kDepth; ++depth) {
+            const uint64_t id = 4000 - static_cast<uint64_t>(depth);   // deeper = lower FRN
+            add(id, parent, L"d", true);
+            parent = id;
+            path += L"\\d";
+        }
+        add(100, parent, L"value.bin", false);
+        const bool built = e.BuildMftTree(std::move(volume), 5, std::move(nodes));
+        e.live_ = std::move(e.build_);
+        e.vols_ = std::move(e.build_vols_);
+        e.RebuildChildMapLocked();
+        e.ready_ = true;
+        check(built, "deep chain fixture builds");
+        const int32_t leaf = e.ResolvePathLocked(path + L"\\value.bin");
+        check(leaf >= 0 && e.BuildPathLocked(leaf) == path + L"\\value.bin",
+              "leaf met before 140 unresolved ancestors keeps its full path");
+        check(e.ResolvePathLocked(L"C:\\d") < 0, "deep chain is never re-rooted below the volume root");
+        // A damaged MFT can hold a parent cycle longer than the checked depth.
+        Engine cyclic;
+        cyclic.running_ = true;
+        Engine::VolState cycle_volume;
+        cycle_volume.letter = L'C';
+        cycle_volume.kind = VolumeKind::Removable;
+        cycle_volume.volume_id = L"cycle-volume";
+        nodes.clear();
+        for (uint64_t i = 0; i < 100; ++i) add(7000 + i, 7000 + (i + 1) % 100, L"loop", true);
+        add(6000, 7050, L"inside-loop.txt", false);
+        const auto started = GetTickCount64();
+        const bool cycle_built = cyclic.BuildMftTree(std::move(cycle_volume), 5, std::move(nodes));
+        check(GetTickCount64() - started < 5000 && cyclic.build_.nodes.size() <= 1 + 101,
+              "parent cycle deeper than the checked depth terminates without duplicates");
+        (void)cycle_built;
+        return ok;
+    }
+
     static bool RecycleFixture() {
         Engine engine; if (!Build(engine)) return false;
         Usn(engine, 200, 5, L"$Recycle.Bin", USN_REASON_FILE_CREATE);
@@ -1246,6 +1374,8 @@ int wmain(int argc, wchar_t** argv) {
     if (argc > 2 && std::wstring_view(argv[1]) == L"--idle-seconds") return EngineTestAccess::IdleFixture(static_cast<unsigned>(wcstoul(argv[2], nullptr, 10))) ? 0 : 1;
     if (argc > 1 && std::wstring_view(argv[1]) == L"--parent-cycle-only") return EngineTestAccess::ParentCycleFixture() ? 0 : 1;
     if (argc > 1 && std::wstring_view(argv[1]) == L"--recycle-only") return EngineTestAccess::RecycleFixture() ? 0 : 1;
+    if (argc > 1 && std::wstring_view(argv[1]) == L"--system-names-only") return EngineTestAccess::SystemNamesFixture() ? 0 : 1;
+    if (argc > 1 && std::wstring_view(argv[1]) == L"--deep-chain-only") return EngineTestAccess::DeepChainBuildFixture() ? 0 : 1;
     if (argc > 1 && std::wstring_view(argv[1]) == L"--coverage-only") return EngineTestAccess::CoverageBenchmark() ? 0 : 1;
     if (argc > 1 && std::wstring_view(argv[1]) == L"--hardlink-only")
         return EngineTestAccess::HardLinkBuildFixture() && EngineTestAccess::HardLinkUsnFixture() ? 0 : 1;
@@ -1255,6 +1385,8 @@ int wmain(int argc, wchar_t** argv) {
     CheckSearch(engine);
     Check(EngineTestAccess::HardLinkBuildFixture(), "hard link MFT build fixture");
     Check(EngineTestAccess::HardLinkUsnFixture(), "hard link USN fixture");
+    Check(EngineTestAccess::SystemNamesFixture(), "system name visibility fixture");
+    Check(EngineTestAccess::DeepChainBuildFixture(), "deep chain MFT build fixture");
     const auto dir = std::filesystem::absolute(std::filesystem::path(L"bench_data") /
         (L"index_engine_test_" + std::to_wstring(GetCurrentProcessId()) + L"_" + std::to_wstring(GetTickCount64())));
     std::filesystem::create_directories(dir);

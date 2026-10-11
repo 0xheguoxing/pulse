@@ -3,13 +3,37 @@
 
 namespace pulse::index {
 
+namespace {
+bool EqualsNoCase(std::wstring_view a, std::wstring_view b) {
+    return a.size() == b.size() &&
+        CompareStringOrdinal(a.data(), static_cast<int>(a.size()), b.data(),
+                             static_cast<int>(b.size()), TRUE) == CSTR_EQUAL;
+}
+
+// Reserved NTFS metadata files. Only the volume root holds them, and users
+// cannot create these names there, so a root-level name match is exact.
+bool IsNtfsRootMetafileName(std::wstring_view name) {
+    static constexpr std::wstring_view kNames[] = {
+        L"$MFT", L"$MFTMirr", L"$LogFile", L"$Volume", L"$AttrDef", L"$Bitmap",
+        L"$Boot", L"$BadClus", L"$Secure", L"$UpCase", L"$Extend"};
+    if (name.empty() || name.front() != L'$') return false;
+    return std::any_of(std::begin(kNames), std::end(kNames),
+                       [&](std::wstring_view reserved) { return EqualsNoCase(name, reserved); });
+}
+} // namespace
+
 bool Engine::ShouldSkipName(std::wstring_view name) const {
     // node_modules is the optional "node_modules" system group; the rest are
-    // always kept out of search.
+    // always kept out of search. Volume-level folders differ in case between
+    // drives ("$Recycle.Bin" on the system drive, "$RECYCLE.BIN" elsewhere).
     return name == L"." || name == L".." ||
-           name == L"$Recycle.Bin" || name == L"System Volume Information" ||
+           EqualsNoCase(name, L"$Recycle.Bin") || EqualsNoCase(name, L"System Volume Information") ||
            name == L"WinSxS" || name == L"servicing" ||
            (hide_node_modules_ && name.size() == 12 && _wcsnicmp(name.data(), L"node_modules", 12) == 0);
+}
+
+bool Engine::ShouldSkipChild(bool parent_is_root, std::wstring_view name) const {
+    return ShouldSkipName(name) || (parent_is_root && IsNtfsRootMetafileName(name));
 }
 
 void Engine::RefreshSubtreeVisibilityLocked(int32_t root, DeltaLog* delta) {
@@ -35,7 +59,7 @@ void Engine::RefreshSubtreeVisibilityLocked(int32_t root, DeltaLog* delta) {
             if (node.parent != parent) return;
             uint8_t flags = node.flags & static_cast<uint8_t>(~kFlagHidden);
             if ((parent_node.parent >= 0 && (parent_node.flags & kFlagHidden)) ||
-                ShouldSkipName(NameOf(id)) || IsExcludedPath(BuildPathLocked(id)))
+                ShouldSkipChild(parent_node.parent < 0, NameOf(id)) || IsExcludedPath(BuildPathLocked(id)))
                 flags |= kFlagHidden;
             if (flags != node.flags) {
                 if (id >= BaseCount()) {

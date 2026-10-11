@@ -120,5 +120,32 @@ int main() {
         check(m.links.size() == 1 && m.links[0].name == L"m2" && m.links[0].parent == 9 && m.size == 5,
               "hard link names in extension records are attached to their base file");
     }
+    // Large directories can keep their Win32 FILE_NAME in an extension record
+    // while the base record only has the DOS alias (Downloads -> DOWNLO~1).
+    for (int order = 0; order < 2; ++order) {
+        geometry.MftValidDataLength.QuadPart = 3 * 512;
+        std::map<std::wstring, MftFile> dirs;
+        unsigned reads = 0;
+        std::atomic<bool> running{true};
+        const bool complete = EnumerateMftRecords(geometry, [&](uint64_t, void* bytes, DWORD size) {
+            memset(bytes, 0, size);
+            if (++reads != 2 || size < 3 * 512) return true;
+            BYTE* base = static_cast<BYTE*>(bytes);
+            const int dir = order == 0 ? 0 : 1, extension = order == 0 ? 1 : 0;
+            Writer d{base + dir * 512}; d.header(0); d.u16(22, 3); d.resident(0x20, std::vector<BYTE>(8, 0));
+            d.name(L"DOWNLO~1", 0, 5, 2); d.finish();
+            Writer x{base + extension * 512}; x.header((1ull << 48) | static_cast<uint64_t>(dir));
+            x.name(L"Downloads", 0, 5, 1); x.finish();
+            Writer a{base + 2 * 512}; a.header(0); a.u16(22, 3); a.resident(0x20, std::vector<BYTE>(8, 0));
+            a.name(L"ALIASO~1", 0, 5, 2); a.finish();
+            return true;
+        }, &running, {}, [&](MftFile&& file) { std::wstring key = file.name; dirs[key] = std::move(file); return true; });
+        check(complete && dirs.count(L"Downloads") && dirs[L"Downloads"].is_dir && !dirs.count(L"DOWNLO~1") &&
+              dirs[L"Downloads"].parent == 5 && dirs[L"Downloads"].links.empty(),
+              order == 0 ? "directory Win32 name in a later extension record replaces its DOS alias" :
+                           "directory Win32 name in an earlier extension record replaces its DOS alias");
+        check(dirs.count(L"ALIASO~1") && dirs[L"ALIASO~1"].is_dir,
+              "directory whose only name is a DOS alias is still indexed");
+    }
     return failures ? 1 : 0;
 }

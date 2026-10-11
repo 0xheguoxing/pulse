@@ -2255,7 +2255,7 @@ void Engine::PreserveOfflineVolumesLocked(const std::vector<VolumeInfo>& active,
             const bool excluded_parent = source.parent >= 0 && source.parent != old.root_idx &&
                 (build_.nodes[static_cast<size_t>(node.parent)].flags & kFlagHidden) != 0;
             node.flags &= static_cast<uint8_t>(~kFlagHidden);
-            if (i == old.root_idx || excluded_parent || ShouldSkipName(name) ||
+            if (i == old.root_idx || excluded_parent || ShouldSkipChild(source.parent == old.root_idx, name) ||
                 IsExcludedPath(BuildPathLocked(i))) node.flags |= kFlagHidden;
             build_.pool.insert(build_.pool.end(), name.begin(), name.begin() + node.len);
             remap[static_cast<size_t>(i)] = static_cast<int32_t>(build_.nodes.size());
@@ -3101,7 +3101,7 @@ Engine::UsnApply Engine::ApplyUsnLocked(VolState& v, const USN_RECORD_V2* rec) {
     uint8_t flags = is_dir ? kFlagDir : 0;
     // A root fallback is not a real indexed location for an unresolved parent.
     if ((reason & USN_REASON_RENAME_NEW_NAME) && FindByFrnLocked(v, rec->ParentFileReferenceNumber) < 0) flags |= kFlagHidden;
-    if (ShouldSkipName(name)) flags |= kFlagHidden;
+    if (ShouldSkipChild(parent == v.root_idx, name)) flags |= kFlagHidden;
     std::wstring parent_path = BuildPathLocked(parent);
     if (!parent_path.empty() && parent_path.back() != L'\\') parent_path += L'\\';
     if (IsExcludedPath((resolved_parent.empty() ? parent_path : resolved_parent + L"\\") + std::wstring(name))) flags |= kFlagHidden;
@@ -3498,6 +3498,7 @@ bool Engine::BuildMftTree(VolState vol, uint64_t root_frn, std::vector<FrnNode> 
     }
 
     std::vector<FrnNode*> stack;
+    std::unordered_set<uint64_t> seen;  // only for walks deeper than kCheckedHops
     auto build_name = [&](int32_t id) -> std::wstring_view {
         const Node& node = build_.nodes[static_cast<size_t>(id)];
         return std::wstring_view(build_.pool.data() + node.off, node.len);
@@ -3512,9 +3513,15 @@ bool Engine::BuildMftTree(VolState vol, uint64_t root_frn, std::vector<FrnNode> 
         if (!running_ || added >= kIndexCap) break;
         if (node.index >= 0) continue;
         stack.clear();
+        if (!seen.empty()) seen.clear();
         uint64_t cur = node.frn;
         int32_t parent_idx = vol.root_idx;
-        for (int hop = 0; hop < 48; ++hop) {
+        // Walk to the nearest placed ancestor. Reused MFT slots can give a deep
+        // folder a lower FRN than its ancestors, so this is not depth-limited
+        // (a limit re-rooted the rest of the chain below the volume root); only
+        // a parent cycle in a damaged MFT stops the walk early.
+        constexpr size_t kCheckedHops = 64;
+        for (;;) {
             if (index_dir_frn_ && cur == index_dir_frn_ && letter == index_dir_letter_) {
                 stack.clear();
                 break;
@@ -3523,6 +3530,11 @@ bool Engine::BuildMftTree(VolState vol, uint64_t root_frn, std::vector<FrnNode> 
             FrnNode* current = find_node(cur);
             if (!current || current->name.empty()) break;
             if (current->index >= 0) { parent_idx = current->index; break; }
+            if (stack.size() >= kCheckedHops) {
+                if (seen.empty())
+                    for (const FrnNode* walked : stack) seen.insert(walked->frn);
+                if (!seen.insert(current->frn).second) break;
+            }
             stack.push_back(current);
             if (current->parent == cur) break;
             cur = current->parent;
@@ -3538,7 +3550,7 @@ bool Engine::BuildMftTree(VolState vol, uint64_t root_frn, std::vector<FrnNode> 
             if (!candidate.empty() && candidate.back() != L'\\') candidate += L'\\';
             candidate += n.name;
             if (candidate.size() > 32766) return false;
-            if (hidden_parent || ShouldSkipName(n.name) || IsExcludedPath(candidate))
+            if (hidden_parent || ShouldSkipChild(parent_idx == vol.root_idx, n.name) || IsExcludedPath(candidate))
                 flags |= kFlagHidden;
             parent_idx = AddNodeLocked(build_, parent_idx, n.name, flags, n.frn, n.size, n.mtime);
             n.index = parent_idx;
@@ -3574,7 +3586,7 @@ bool Engine::BuildMftTree(VolState vol, uint64_t root_frn, std::vector<FrnNode> 
         if (path.size() > 32766) continue;
         const bool hidden_parent = parent_idx != vol.root_idx &&
             (build_.nodes[static_cast<size_t>(parent_idx)].flags & kFlagHidden) != 0;
-        const uint8_t flags = hidden_parent || ShouldSkipName(link.name) || IsExcludedPath(path)
+        const uint8_t flags = hidden_parent || ShouldSkipChild(parent_idx == vol.root_idx, link.name) || IsExcludedPath(path)
             ? kFlagHidden : 0;
         const int32_t idx = AddNodeLocked(build_, parent_idx, link.name, flags, link.frn, link.size, link.mtime);
         vol.frn_build.emplace_back(link.frn, idx);

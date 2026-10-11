@@ -160,7 +160,9 @@ const BYTE* AttrValue(const BYTE* attr, uint32_t& len) {
 // record listed by $ATTRIBUTE_LIST. Their FILE_NAME size is only a creation-
 // time copy (often 0), so the base record is held until the extension's size
 // is known. Files with many hard links also keep FILE_NAMEs in extension
-// records, so every base record with an attribute list is held until the end.
+// records, and large directories can keep their Win32 FILE_NAME there while the
+// base record holds only the DOS alias, so every base record with an attribute
+// list (file or directory) is held until the end.
 struct OwnedName {
     uint64_t parent = 0;
     std::wstring name;
@@ -334,7 +336,7 @@ bool ParseRecord(BYTE* rec, uint32_t rec_size, uint32_t sector, uint64_t index,
         if (a->length == 0) break;
     }
     if (have_data) best.size = data_size;
-    if (extensions && have_list && !best.is_dir) {
+    if (extensions && have_list) {
         HeldFile held;
         held.have_data = have_data;
         held.names.reserve(names.size());
