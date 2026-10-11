@@ -14,6 +14,8 @@
 //   Backspace            back (Alt+Up stays "up one level")
 //   Shift+F10, Apps key  context menu
 //   F11                  maximize / restore
+//   Ctrl+N               new window at the current folder (multi-window M4b)
+//   Ctrl+Shift+W         close this window (Ctrl+W, without Shift, closes the tab)
 
 #include <windows.h>
 
@@ -25,7 +27,7 @@ namespace pulse::app {
 
 enum class ExplorerKeyAction {
     None, Delete, MarkTarget, NewFolder, Search, TabNumber, Layout, ViewMode, Tag, Back,
-    ContextMenu, Maximize
+    ContextMenu, Maximize, NewWindow, CloseWindow
 };
 
 struct ExplorerKeyCommand {
@@ -41,6 +43,8 @@ inline ExplorerKeyCommand ExplorerShortcut(UINT key, bool ctrl, bool shift, bool
     if (ctrl && alt && !shift && key == L'D') return {A::MarkTarget};
     if (ctrl && !alt && key == L'D') return {A::Delete, 0, shift};
     if (ctrl && shift && !alt && key == L'N') return {A::NewFolder};
+    if (ctrl && !shift && !alt && key == L'N') return {A::NewWindow};
+    if (ctrl && shift && !alt && key == L'W') return {A::CloseWindow};
     if ((ctrl && !shift && !alt && key == L'E') || (!ctrl && !shift && !alt && key == VK_F3))
         return {A::Search};
     if (digit && ctrl && !shift && !alt) return {A::TabNumber, number};

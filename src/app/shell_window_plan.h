@@ -6,6 +6,8 @@
 // showing the folder and asks it to select the item. ShellWindowRegistry
 // registers each pane there; this header holds the pure planning part.
 #pragma once
+#include <windows.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -15,6 +17,11 @@ namespace pulse::app {
 struct ShellWindowEntry {
     uint64_t key = 0;      // pane identity
     std::wstring path;     // folder shown; empty = This PC
+    // The Pulse window showing the pane (multi-window M4b): the shell
+    // activates it and it receives the select message. Null = the
+    // registry's own window. Fixed per key: SyncShellWindows mixes the
+    // window into the key, so a pane that moves is revoked and re-registered.
+    HWND window = nullptr;
     bool operator==(const ShellWindowEntry&) const = default;
 };
 

@@ -68,6 +68,23 @@ int main() {
     r = WorkspaceToScreenRect({-1800, 100, -1000, 700}, {-2560, -200, 0, 1240}, {-2560, -160, 0, 1240});
     Check(Same(r, {-1800, 140, -1000, 740}), "secondary monitor with a top bar keeps its own offset");
 
+    // Multi-window M4b: a new window cascades from its opener.
+    const RECT desk{0, 0, 1920, 1040};
+    Check(Same(CascadeWindowRect({100, 100, 900, 700}, desk, 32), {132, 132, 932, 732}),
+          "cascade: a new window opens 32 px down and right of its opener");
+    Check(Same(CascadeWindowRect({1100, 100, 1900, 700}, desk, 32), {0, 0, 800, 600}),
+          "cascade: past the right edge it wraps to the work area's top-left");
+    Check(Same(CascadeWindowRect({100, 430, 900, 1030}, desk, 32), {0, 0, 800, 600}),
+          "cascade: past the bottom edge it wraps to the top-left");
+    Check(Same(CascadeWindowRect({-1800, 100, -1000, 700}, {-1920, 0, 0, 1040}, 32), {-1768, 132, -968, 732}),
+          "cascade: stays on the opener's (left, negative) monitor");
+    Check(Same(CascadeWindowRect({0, 0, 2500, 1500}, desk, 32), {0, 0, 1920, 1040}),
+          "cascade: a window larger than the work area is shrunk to fit");
+    Check(Same(CascadeWindowRect({0, 40, 800, 640}, {0, 40, 1920, 1080}, 32), {32, 72, 832, 672}),
+          "cascade: a top taskbar work area is respected");
+    Check(Same(CascadeWindowRect({10, 10, 810, 610}, RECT{}, 32), {42, 42, 842, 642}),
+          "cascade: without a work area only the offset applies");
+
     // Live: dock a temporary app bar at the top of the primary monitor so the
     // work area really starts below the monitor top, then relaunch twice.
     HINSTANCE inst = GetModuleHandleW(nullptr);

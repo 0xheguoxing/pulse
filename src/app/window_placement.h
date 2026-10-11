@@ -16,4 +16,10 @@ RECT WorkspaceToScreenRect(const RECT& workspace, const RECT& monitor, const REC
 // Screen rectangle for a saved rcNormalPosition, using the monitor it lies on.
 RECT RestoredWindowRect(const RECT& workspace);
 
+// Where a new window opens next to its opener (multi-window M4b, plan §5 P1).
+// `opener` is the opener's normal-state screen rectangle, `work` the work
+// area of its monitor. `offset` pixels down and right; when that leaves the
+// work area, the work area's top-left. The size is kept, shrunk to fit.
+RECT CascadeWindowRect(const RECT& opener, const RECT& work, int offset);
+
 } // namespace pulse::app

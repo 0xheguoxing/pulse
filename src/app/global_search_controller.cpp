@@ -58,11 +58,13 @@ void ToggleGlobalSearch(AppState& s) {
     s.globalSearchWindow.SetAppearance(s.darkMode, ui::WindowEffectFromId(s.appPrefs.window_effect),
         s.appPrefs.background_image, s.accentColor);
     if (const auto* tab = ActiveTab(s); tab && !fs::IsVirtualPath(tab->current_path)) folder = tab->current_path;
-    s.globalSearchWindow.SetHandoffHandler([&s](const GlobalSearchHandoff& request) {
-        ContinueGlobalSearchInMain(s, request);
+    // The search window is process-wide and outlives the window that opened
+    // it (M4b): continue in the most recent window when the handoff happens.
+    s.globalSearchWindow.SetHandoffHandler([core = &s.core](const GlobalSearchHandoff& request) {
+        if (AppState* window = core->windows.MostRecent()) ContinueGlobalSearchInMain(*window, request);
     });
     if (!s.globalSearchWindow.Show(s.hwnd, s.darkMode, s.scale, folder, s.appPrefs.search_pinyin)) {
-        s.tray_controller.RestoreWindow();
+        RevealWindow(s);
         s.notification_toast.ShowError(s.hwnd, l10n::Get(l10n::StringId::GlobalSearch),
             l10n::Get(l10n::StringId::GlobalSearchOpenFailed));
     }

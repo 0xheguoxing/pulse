@@ -4022,6 +4022,9 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             case A::Back: GoBack(*s); break;
             case A::ContextMenu: ShowKeyboardContextMenu(*s); break;
             case A::Maximize: ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE); break;
+            // Posted: the window must not be created or destroyed under this handler.
+            case A::NewWindow: PostMessageW(hwnd, WM_NEW_WINDOW, 0, 0); break;
+            case A::CloseWindow: PostMessageW(hwnd, WM_CLOSE, 0, 0); break;
             case A::None: break;
             }
         } else if (ctrl && !shift && !alt && wParam == L'B') {
@@ -4044,8 +4047,8 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             TransferToTarget(*s, false);
         } else if (ctrl && alt && wParam == L'X') {
             TransferToTarget(*s, true);
-        } else if (ctrl && wParam == L'W') {
-            CloseActiveTab(*s);
+        } else if (ctrl && !shift && wParam == L'W') {
+            CloseActiveTab(*s);  // Ctrl+Shift+W closes the window (ExplorerShortcut)
         } else if (ctrl && wParam == L'L') {
             ShowOmnibar(*s, OmnibarMode::Path);
         } else if (wParam == VK_F4) {

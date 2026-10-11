@@ -15,6 +15,7 @@ struct State {
     std::atomic<int> starts{0}, inits{0}, creates{0}, pendings{0}, binds{0}, navigates{0}, revokes{0};
     std::mutex mutex;
     std::set<long> cookies;
+    std::multiset<long> register_windows;  // Register's HWND argument
     std::vector<pulse::app::ShellWindowEntry> acknowledged;
     std::wstring last_navigate;
     long next_cookie = 1;
@@ -61,10 +62,11 @@ public:
     HRESULT STDMETHODCALLTYPE get_Count(long*) override { return E_NOTIMPL; }
     HRESULT STDMETHODCALLTYPE Item(VARIANT, IDispatch**) override { return E_NOTIMPL; }
     HRESULT STDMETHODCALLTYPE _NewEnum(IUnknown**) override { return E_NOTIMPL; }
-    HRESULT STDMETHODCALLTYPE Register(IDispatch*, long, int, long* cookie) override {
+    HRESULT STDMETHODCALLTYPE Register(IDispatch*, long window, int, long* cookie) override {
         state.Thread(); ++state.binds;
         if (Fail(state.bind_fail)) return E_FAIL;
         std::lock_guard<std::mutex> lock(state.mutex);
+        state.register_windows.insert(window);
         *cookie = state.next_cookie++; state.cookies.insert(*cookie); return S_OK;
     }
     HRESULT STDMETHODCALLTYPE RegisterPending(long, VARIANT*, VARIANT*, int, long* cookie) override {
@@ -185,6 +187,38 @@ int main() {
     const int stopped_calls = state.navigates;
     Sleep(350); registry.EnsureRunning();
     Check(state.navigates == stopped_calls, "stopped registry performs no delayed retry or restart");
+
+    // Multi-window M4b: each entry registers with the window showing its pane;
+    // an entry without one falls back to the registry's (host) window.
+    {
+        const auto fake = [](uintptr_t value) { return reinterpret_cast<HWND>(value); };
+        const HWND host = fake(0x1110), first = fake(0x2220), second = fake(0x3330);
+        state.block_nav = false;  // left set by the stop scenario above
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            state.register_windows.clear();
+            state.acknowledged.clear();
+        }
+        const std::vector<ShellWindowEntry> wanted{
+            {11, L"C:\\window-1", first}, {12, L"C:\\window-2", second}, {13, L"C:\\no-window", nullptr}};
+        ShellWindowRegistry multi(host, WM_APP + 17);
+        multi.Publish(wanted);
+        const bool acked = Wait([&] {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            return state.acknowledged == wanted;
+        }, &multi);
+        std::multiset<long> windows;
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            windows = state.register_windows;
+        }
+        Check(acked, "multi-window: entries of two windows are acknowledged with their windows");
+        Check(windows == std::multiset<long>{HandleToLong(first), HandleToLong(second), HandleToLong(host)},
+              "multi-window: Register gets each pane's window, the host only for an entry without one");
+        multi.Publish({});
+        Check(Wait([] { return Cookies() == 0; }, &multi), "multi-window: revoking every window's entries releases all cookies");
+        multi.Stop();
+    }
     Check(!state.wrong_thread, "all injected COM calls occur off the UI thread");
     return failures ? 1 : 0;
 }

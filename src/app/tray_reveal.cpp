@@ -10,6 +10,16 @@ void HideMainWindowToTray(AppState& s) {
     s.tray_controller.HideWindow(WantsTrayIcon(s, true));
 }
 
+void RevealWindow(AppState& s) {
+    const HWND tray_window = s.tray_controller.Window();
+    if (!tray_window || tray_window == s.hwnd || !s.hwnd) {
+        s.tray_controller.RestoreWindow();
+        return;
+    }
+    ShowWindow(s.hwnd, IsIconic(s.hwnd) ? SW_RESTORE : SW_SHOW);
+    SetForegroundWindow(s.hwnd);
+}
+
 bool WantsTrayIcon(const AppState& s, bool window_hidden) {
     return app::TrayIconWanted(s.appPrefs.KeepsRunningInBackground(),
                                s.appPrefs.notify_icon_mode, window_hidden);

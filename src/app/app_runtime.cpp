@@ -294,14 +294,14 @@ void OpenFolderInNewTab(AppState& s, const std::wstring& raw) {
         // skips it, so each request opens a tab, as Explorer opens a window.
         if (!IsWindowVisible(s.hwnd) && TakeFreshStart(s)) StartFreshAt(s, L"");
         else OpenTabAt(s, L"");
-        s.tray_controller.RestoreWindow();
+        RevealWindow(s);
         return;
     }
     const std::wstring path = ResolveOpenFolderPath(raw);
     // Back from the tray with "open the default location" at startup: an
     // explicit folder starts over on its own, as launching with it would.
     if (!path.empty() && !IsWindowVisible(s.hwnd) && TakeFreshStart(s)) StartFreshAt(s, path);
-    s.tray_controller.RestoreWindow();
+    RevealWindow(s);
     if (!path.empty() && !ActivateExistingFolderTab(s, path)) NewTab(s, path);
     else InvalidateRect(s.hwnd, nullptr, FALSE);
     // A file (Pulse as a file's default app, a launcher's "open containing

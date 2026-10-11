@@ -5,6 +5,7 @@
 #include "app_navigation.h"
 #include "app_runtime.h"
 #include "app_state.h"
+#include "tray_reveal.h"
 #include "../common/path_utils.h"
 
 #include <shlobj.h>
@@ -61,7 +62,11 @@ void BringToFront(HWND hwnd) {
     if (attached) AttachThreadInput(self, other, FALSE);
 }
 
-uint64_t PaneKey(const app::Pane& pane) { return reinterpret_cast<uint64_t>(&pane); }
+// A pane in a given window. The window is mixed in (M4b) so that a pane
+// moved to another window becomes a new shell entry with that window's HWND.
+uint64_t PaneKey(const app::Pane& pane, HWND window) {
+    return reinterpret_cast<uint64_t>(&pane) ^ (reinterpret_cast<uint64_t>(window) * 0x9E3779B97F4A7C15ull);
+}
 
 bool SameFolder(const std::wstring& a, const std::wstring& b) {
     return path::EqualInsensitive(path::StripExtendedPathPrefix(fs::NormalizePath(a)),
@@ -93,12 +98,21 @@ void SyncShellWindows(AppState& s) {
     SyncExplorerTakeover(s);
     std::vector<app::ShellWindowEntry> wanted;
     if (ShellWindowsEnabled(s)) {
-        ForEachPane(s, [&](app::Pane& pane) {
-            const app::Tab* tab = pane.ActiveTab();
-            if (!tab) return;
-            // The fs layer's \\?\ paths mean nothing to the shell.
-            std::wstring folder = path::StripExtendedPathPrefix(tab->current_path);
-            if (app::IsShellWindowPath(folder)) wanted.push_back({PaneKey(pane), std::move(folder)});
+        // Every window's panes (M4b), each registered with its own window.
+        app::ForEachWindowSharingCore(s, [&](AppState& window) {
+            ForEachPane(window, [&](app::Pane& pane) {
+                const app::Tab* tab = pane.ActiveTab();
+                if (!tab) return;
+                // The fs layer's \\?\ paths mean nothing to the shell.
+                std::wstring folder = path::StripExtendedPathPrefix(tab->current_path);
+                if (app::IsShellWindowPath(folder))
+                    wanted.push_back({PaneKey(pane, window.hwnd), std::move(folder), window.hwnd});
+            });
+        });
+        // Windows are visited most recent first; a stable order keeps
+        // switching windows from republishing an unchanged set.
+        std::stable_sort(wanted.begin(), wanted.end(), [](const auto& a, const auto& b) {
+            return reinterpret_cast<uintptr_t>(a.window) < reinterpret_cast<uintptr_t>(b.window);
         });
     }
     if (wanted == s.shell_windows_published) {
@@ -111,7 +125,8 @@ void SyncShellWindows(AppState& s) {
                            wanted.size(), wanted.empty() ? L"" : wanted.front().path.c_str());
     if (!s.shell_windows) {
         if (wanted.empty()) return;
-        s.shell_windows = std::make_unique<app::ShellWindowRegistry>(s.hwnd, WM_SHELL_SELECT);
+        // Entries name their own windows; the host outlives every one of them.
+        s.shell_windows = std::make_unique<app::ShellWindowRegistry>(ServiceWindow(s), WM_SHELL_SELECT);
     }
     s.shell_windows->Publish(wanted);
     s.shell_windows_published = std::move(wanted);
@@ -139,7 +154,7 @@ void HandleShellSelect(AppState& s, const app::ShellSelectRequest& request) {
     for (size_t i = 0; i < s.window_tabs.items.size() && !target; ++i) {
         if (!s.window_tabs.items[i]) continue;
         for (auto& pane : s.window_tabs.items[i]->panes) {
-            if (pane && PaneKey(*pane) == request.key) {
+            if (pane && PaneKey(*pane, s.hwnd) == request.key) {
                 layout_index = i;
                 target = pane.get();
                 break;
@@ -151,7 +166,7 @@ void HandleShellSelect(AppState& s, const app::ShellSelectRequest& request) {
                            target ? 1 : 0);
     if (!target) return;   // pane closed after the shell looked it up
 
-    s.tray_controller.RestoreWindow();
+    RevealWindow(s);
     if (layout_index != s.window_tabs.active) SwitchTab(s, layout_index);
     FocusPane(s, target);
     app::Tab* tab = ActiveTab(s);
@@ -205,7 +220,7 @@ void HandleExplorerTakeover(AppState& s, const app::ExplorerTakeoverRequest& req
     // Pulse may be closed to the tray or minimized; Explorer's window is about
     // to close, so the folder must open where it can be seen. Restore first:
     // a fresh start from the tray resets the tabs before showing the window.
-    s.tray_controller.RestoreWindow();
+    RevealWindow(s);
     // This PC travels as its parsing name, which OpenFolderInNewTab knows.
     OpenFolderInNewTab(s, request.folder.empty() ? std::wstring(L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}")
                                                  : request.folder);

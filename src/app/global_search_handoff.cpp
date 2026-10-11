@@ -24,7 +24,7 @@ void ContinueGlobalSearchInMain(AppState& s, const GlobalSearchHandoff& request)
     } else if (fresh) {
         StartFreshAt(s, app::DefaultLocation(s.appPrefs));
     }
-    s.tray_controller.RestoreWindow();
+    RevealWindow(s);
     if (path.empty()) ShowAddressSearch(s);
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }

@@ -441,7 +441,7 @@ public:
             }
             if (!Disconnected(failure)) for (const auto& wanted : wanted_) {
                 if (shared_.stopping) return;
-                const auto hr = Advance(wanted.key, wanted.path);
+                const auto hr = Advance(wanted.key, wanted.path, wanted.window);
                 if (FAILED(hr)) failure = hr;
                 if (Disconnected(hr)) break;
             }
@@ -473,7 +473,7 @@ public:
 #ifdef PULSE_SHELL_WINDOW_REGISTRY_TEST
         std::vector<ShellWindowEntry> acknowledged;
         for (const auto& [key, entry] : registered_)
-            if (entry.ready) acknowledged.push_back({key, entry.path});
+            if (entry.ready) acknowledged.push_back({key, entry.path, entry.window});
         ShellRegistryTestApplied(acknowledged);
 #endif
     }
@@ -487,10 +487,12 @@ private:
         long cookie = 0, window_cookie = 0;
         bool pending = false, bound = false, ready = false, revoking = false;
         std::wstring path;
+        HWND window = nullptr;  // as published (ShellWindowEntry::window)
         ComPtr<FolderView> view;
         ComPtr<BrowserApp> app;
     };
-    HRESULT Advance(uint64_t key, const std::wstring& path) {
+    HRESULT Advance(uint64_t key, const std::wstring& path, HWND pane_window) {
+        const HWND window = pane_window ? pane_window : shared_.window;
         auto& entry = registered_[key];
         if (entry.revoking) return E_PENDING;
         if (entry.ready && _wcsicmp(entry.path.c_str(), path.c_str()) == 0) return S_OK;
@@ -508,13 +510,13 @@ private:
         }
         if (SUCCEEDED(hr) && !entry.bound && !shared_.stopping) {
             if (!entry.view) {
-                entry.view.Attach(new FolderView(key, shared_.window, shared_.select_message));
+                entry.view.Attach(new FolderView(key, window, shared_.select_message));
                 entry.view->SetFolder(UniquePidl(ILCloneFull(folder.get())));
                 ComPtr<FolderDocument> document;
                 document.Attach(new FolderDocument(entry.view.Get()));
-                entry.app.Attach(new BrowserApp(shared_.window, document.Get(), entry.view.Get()));
+                entry.app.Attach(new BrowserApp(window, document.Get(), entry.view.Get()));
             }
-            hr = windows_->Register(entry.app.Get(), HandleToLong(shared_.window), SWC_BROWSER, &entry.window_cookie);
+            hr = windows_->Register(entry.app.Get(), HandleToLong(window), SWC_BROWSER, &entry.window_cookie);
             entry.bound = SUCCEEDED(hr);
         }
         if (SUCCEEDED(hr) && !shared_.stopping) {
@@ -522,6 +524,7 @@ private:
             if (SUCCEEDED(hr)) {
                 entry.view->SetFolder(std::move(folder));
                 entry.path = path;
+                entry.window = pane_window;
                 entry.ready = true;
             }
         }

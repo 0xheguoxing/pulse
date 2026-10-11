@@ -3,6 +3,7 @@
 #include "app_messages.h"
 #include "app_state.h"
 #include "single_instance_coordinator.h"
+#include "window_placement.h"
 
 #include <algorithm>
 #include <cmath>
@@ -33,19 +34,23 @@ void InheritWindowLayout(const AppState& from, AppState& to) {
     to.forceStatusPerformance = from.forceStatusPerformance;
 }
 
-// Normal-state rectangle of `from`, moved down and right by 32 DIP.
+// Normal-state screen rectangle of `from`, cascaded by 32 DIP within its
+// monitor's work area (CascadeWindowRect). A maximized opener does not pass
+// its maximized state on.
 RECT CascadedRect(const AppState& from) {
-    RECT rect{};
+    MONITORINFO monitor{sizeof(monitor)};
+    if (!GetMonitorInfoW(MonitorFromWindow(from.hwnd, MONITOR_DEFAULTTONEAREST), &monitor)) return RECT{};
+    RECT normal{};
     WINDOWPLACEMENT placement{sizeof(placement)};
     if (IsIconic(from.hwnd) || IsZoomed(from.hwnd)) {
-        if (GetWindowPlacement(from.hwnd, &placement)) rect = placement.rcNormalPosition;
-    } else {
-        GetWindowRect(from.hwnd, &rect);
+        if (!GetWindowPlacement(from.hwnd, &placement)) return RECT{};
+        normal = app::WorkspaceToScreenRect(placement.rcNormalPosition, monitor.rcMonitor, monitor.rcWork);
+    } else if (!GetWindowRect(from.hwnd, &normal)) {
+        return RECT{};
     }
-    if (rect.right <= rect.left || rect.bottom <= rect.top) return RECT{};
+    if (normal.right <= normal.left || normal.bottom <= normal.top) return RECT{};
     const int offset = static_cast<int>(std::lround(32.0f * (from.scale > 0.0f ? from.scale : 1.0f)));
-    OffsetRect(&rect, offset, offset);
-    return rect;
+    return app::CascadeWindowRect(normal, monitor.rcWork, offset);
 }
 
 }  // namespace

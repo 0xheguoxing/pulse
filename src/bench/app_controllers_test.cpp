@@ -478,9 +478,14 @@ bool TestExplorerShortcuts() {
     passed &= Report("explorer keys: Ctrl+D deletes, Ctrl+Shift+D permanently, Ctrl+Alt+D marks the target",
         is(L'D', true, false, false, A::Delete) && !ExplorerShortcut(L'D', true, false, false).shift &&
         ExplorerShortcut(L'D', true, true, false).shift && is(L'D', true, false, true, A::MarkTarget));
-    passed &= Report("explorer keys: Ctrl+Shift+N new folder, Ctrl+E / F3 search, Ctrl+N untouched",
+    passed &= Report("explorer keys: Ctrl+Shift+N new folder, Ctrl+E / F3 search",
         is(L'N', true, true, false, A::NewFolder) && is(L'E', true, false, false, A::Search) &&
-        is(VK_F3, false, false, false, A::Search) && is(L'N', true, false, false, A::None));
+        is(VK_F3, false, false, false, A::Search));
+    passed &= Report("explorer keys: Ctrl+N new window, Ctrl+Shift+W closes the window (multi-window M4b)",
+        is(L'N', true, false, false, A::NewWindow) && is(L'W', true, true, false, A::CloseWindow) &&
+        is(L'N', true, false, true, A::None) && is(L'N', false, false, false, A::None));
+    passed &= Report("explorer keys: Ctrl+W (the tab) and Ctrl+Alt+Shift+W are not window keys",
+        is(L'W', true, false, false, A::None) && is(L'W', true, true, true, A::None));
     passed &= Report("explorer keys: Ctrl+1..9 tabs, Ctrl+Alt+1..4 layouts, Ctrl+Alt+5 nothing",
         is(L'1', true, false, false, A::TabNumber, 0) && is(L'9', true, false, false, A::TabNumber, 8) &&
         is(L'1', true, false, true, A::Layout, 0) && is(L'4', true, false, true, A::Layout, 3) &&
