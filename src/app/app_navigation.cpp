@@ -2200,6 +2200,39 @@ void TransferToTarget(AppState& s, bool move) {
     SubmitWithConflictResolution(s, std::move(req));
 }
 
+std::vector<std::wstring> WindowTransferFolders(AppState& s) {
+    std::vector<std::wstring> folders;
+    const app::Tab* source = ActiveTab(s);
+    const std::wstring here = source ? source->current_path : std::wstring{};
+    app::ForEachWindowSharingCore(s, [&](AppState& window) {
+        if (&window == &s) return;
+        std::vector<const app::Tab*> shown{ActiveTab(window)};  // its focused pane first, then the others
+        for (app::Pane* pane : VisiblePanes(window)) shown.push_back(pane ? pane->ActiveTab() : nullptr);
+        for (const app::Tab* tab : shown) {
+            if (folders.size() >= app::kMaxWindowTransferTargets) return;
+            if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path) || tab->net_readonly) continue;
+            const auto same = [&](const std::wstring& path) { return _wcsicmp(path.c_str(), tab->current_path.c_str()) == 0; };
+            if (same(here) || std::any_of(folders.begin(), folders.end(), same)) continue;
+            folders.push_back(tab->current_path);
+        }
+    });
+    return folders;
+}
+
+void TransferSelectionToFolder(AppState& s, const std::wstring& folder, bool move) {
+    if (DeferContentSelection(s, [=](AppState& v) { TransferSelectionToFolder(v, folder, move); })) return;
+    app::Tab* src = ActiveTab(s);
+    if (!src || folder.empty() || fs::IsVirtualPath(folder)) return;
+    std::vector<std::wstring> paths = SelectedFullPaths(*src);
+    if (paths.empty()) return;
+    ops::OpRequest req;
+    req.type = move ? ops::OpType::Move : ops::OpType::Copy;
+    req.dest_dir = folder;
+    req.sources = std::move(paths);
+    if (move) s.cutPaths.clear();
+    SubmitWithConflictResolution(s, std::move(req));
+}
+
 void CycleFocus(AppState& s) {
     if (!Root(s)) return;
     std::vector<app::Pane*> vis;

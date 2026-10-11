@@ -1356,8 +1356,14 @@ void ShowItemContextMenu(AppState& s, POINT screen_pt) {
     std::wstring undoLabel = s.ops.UndoLabel();
     const auto quick_paths = QuickAccessTargets(tab, false);
     auto base_items = BuildFinderItemMenu(s, s.ops.CanUndo(), undoLabel);
-    if (!IsRecycleTab(tab)) app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs, app::BuiltinMenuSurface::Item);
-    else app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs);
+    std::vector<std::wstring> window_folders;
+    if (!IsRecycleTab(tab)) {
+        app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs, app::BuiltinMenuSurface::Item);
+        if (!paths.empty()) window_folders = WindowTransferFolders(s);
+        app::AppendWindowTransferCommands(base_items, window_folders, tab && !tab->net_readonly);
+    } else {
+        app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs);
+    }
     s.context_menu.OpenMenu(base_items);
     auto display = IsRecycleTab(tab) ? std::move(base_items)
                                      : ExplorerMenu(s, s.context_menu.base_items());
@@ -1367,7 +1373,14 @@ void ShowItemContextMenu(AppState& s, POINT screen_pt) {
     s.context_menu.CloseMenu();
     if (HandleShellMenuCommand(s, cmd)) return;
     if (HandleQuickAccessCommand(s, cmd, quick_paths)) return;
-    if (cmd == app::CmdTags) ShowTagPicker(s, screen_pt);
+    const auto window_folder = [&](int base) {
+        const int index = cmd - base;
+        return index >= 0 && index < static_cast<int>(window_folders.size()) ? &window_folders[static_cast<size_t>(index)]
+                                                                              : nullptr;
+    };
+    if (const std::wstring* folder = window_folder(app::CmdCopyToWindowBase)) TransferSelectionToFolder(s, *folder, false);
+    else if (const std::wstring* moved_to = window_folder(app::CmdMoveToWindowBase)) TransferSelectionToFolder(s, *moved_to, true);
+    else if (cmd == app::CmdTags) ShowTagPicker(s, screen_pt);
     else if (cmd >= app::CmdTagBase && cmd < app::CmdTagBase + quick_count)
         ToggleTagForSelection(s, s.places.tags[static_cast<size_t>(cmd - app::CmdTagBase)].id, paths);
     else if (cmd != app::CmdNone) DispatchMenuCommand(s, cmd);

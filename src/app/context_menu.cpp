@@ -216,6 +216,38 @@ void ApplyBuiltinMenuPrefs(std::vector<ui::FluentMenuItem>& items,
     items = std::move(kept);
 }
 
+void AppendWindowTransferCommands(std::vector<ui::FluentMenuItem>& items,
+                                  const std::vector<std::wstring>& folders, bool can_move) {
+    if (folders.empty()) return;
+    const auto flyout = [&](int base, l10n::StringId label, const wchar_t* glyph) {
+        ui::FluentMenuItem header = Item(CmdNone, l10n::Get(label).c_str(), glyph);
+        for (size_t i = 0; i < folders.size() && i < kMaxWindowTransferTargets; ++i) {
+            const std::wstring shown = path::FriendlyPathText(folders[i]);
+            const size_t slash = shown.find_last_of(L'\\');
+            const std::wstring name = slash == std::wstring::npos || slash + 1 >= shown.size()
+                ? shown : shown.substr(slash + 1);
+            auto row = Item(base + static_cast<int>(i), name.c_str(), kGlyphFolder);
+            row.shortcut = shown;
+            row.shortcut_inline = true;
+            row.tooltip = shown;  // the inline path is elided when long
+            header.children.push_back(std::move(row));
+        }
+        return header;
+    };
+    auto copy = flyout(CmdCopyToWindowBase, l10n::StringId::CopyToWindow, kGlyphCopy);
+    auto move = flyout(CmdMoveToWindowBase, l10n::StringId::MoveToWindow, kGlyphCut);
+    move.enabled = can_move;
+    auto at = std::find_if(items.begin(), items.end(), [](const ui::FluentMenuItem& row) {
+        return row.command == CmdCopyPath;
+    });
+    if (at == items.end())
+        at = std::find_if(items.begin(), items.end(), [](const ui::FluentMenuItem& row) {
+            return row.command == CmdProperties || row.command == CmdUndo;
+        });
+    at = items.insert(at, std::move(copy));
+    items.insert(at + 1, std::move(move));
+}
+
 std::wstring RecentChangesMenuPath(const Tab& tab, bool background) {
     auto filesystem = [](const std::wstring& path) { return !path.empty() && !fs::IsVirtualPath(path); };
     if (background) return filesystem(tab.current_path) ? tab.current_path : std::wstring{};

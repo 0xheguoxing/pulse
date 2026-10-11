@@ -9,6 +9,8 @@
 #include "tab_spring.h"
 #include "tab_transfer.h"
 #include "window_merge.h"
+#include "context_menu.h"
+#include "../common/localization.h"
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -530,6 +532,84 @@ bool RunTabTransferTest() {
         } catch (const std::exception& error) {
             log << "follow: exception " << error.what() << std::endl;
             check(false, "following a moved folder runs without an exception");
+        }
+
+        // --- M6e: 复制到窗口 / 移动到窗口 in the item menu ------------------
+        {
+            auto third = std::make_unique<AppState>(*core);
+            third->hwnd = make_window();
+            if (check(third->hwnd != nullptr, "a third hidden window offers its folder as well")) {
+                core->windows.Add(third->hwnd, third.get());
+                Seed(third->window_tabs, 1);
+                BindCurrentLayout(*third);
+                BindCurrentLayout(*dst);
+                BindCurrentLayout(*src);
+                Tab* const here = ActiveTab(*src);
+                Tab* const there = ActiveTab(*dst);
+                Tab* const third_tab = ActiveTab(*third);
+                const std::wstring folder_a = L"C:\\PulseTest\\a", folder_b = L"C:\\PulseTest\\b", folder_c = L"C:\\PulseTest\\c";
+                here->current_path = folder_a;
+                there->current_path = folder_b;
+                third_tab->current_path = folder_c;
+                core->windows.Touch(dst->hwnd);
+                core->windows.Touch(third->hwnd);
+                check(WindowTransferFolders(*src) == std::vector<std::wstring>{folder_c, folder_b},
+                      "the other windows' folders are offered, the window used last first, the own window not");
+                core->windows.Touch(dst->hwnd);
+                check(WindowTransferFolders(*src) == std::vector<std::wstring>{folder_b, folder_c},
+                      "the order follows which window was used last");
+                there->current_path = L"c:\\pulsetest\\C";
+                check(WindowTransferFolders(*src) == std::vector<std::wstring>{L"c:\\pulsetest\\C"},
+                      "two windows that show one folder offer it once");
+                there->current_path = L"C:\\PULSETEST\\A";
+                check(WindowTransferFolders(*src) == std::vector<std::wstring>{folder_c},
+                      "a window that shows the folder the selection is in is not offered");
+                there->current_path = L"pulse:recent";
+                third_tab->net_readonly = true;
+                check(WindowTransferFolders(*src).empty(), "a virtual or a read-only folder is not offered");
+                third_tab->net_readonly = false;
+                there->current_path = folder_b;
+                auto split_off = MakeSingleLayoutTab(L"");
+                Tab* const extra_tab = split_off->panes[0]->ActiveTab();
+                extra_tab->current_path = L"C:\\PulseTest\\d";
+                if (check(AddPaneFromTab(*third->window_tabs.Active(), std::move(split_off), ContentDrop::Right),
+                          "the third window is split, its new right pane focused")) {
+                    BindCurrentLayout(*third);
+                    core->windows.Touch(third->hwnd);
+                    check(WindowTransferFolders(*src) == std::vector<std::wstring>{L"C:\\PulseTest\\d", folder_c, folder_b},
+                          "every pane of a split window is offered, its focused pane first");
+                }
+
+                auto menu = BuildItemMenu(false, L"");
+                const size_t plain = menu.size();
+                AppendWindowTransferCommands(menu, {}, true);
+                check(menu.size() == plain, "without another window the item menu has no window flyouts");
+                AppendWindowTransferCommands(menu, {folder_c, L"\\\\?\\D:\\"}, false);
+                const auto copy_path = std::find_if(menu.begin(), menu.end(), [](const ui::FluentMenuItem& row) {
+                    return row.command == CmdCopyPath;
+                });
+                const size_t at = static_cast<size_t>(copy_path - menu.begin());
+                if (check(menu.size() == plain + 2 && copy_path != menu.end() && at >= 2,
+                          "the two flyouts come right before 复制路径")) {
+                    const ui::FluentMenuItem& copy = menu[at - 2];
+                    const ui::FluentMenuItem& move = menu[at - 1];
+                    check(copy.command == CmdNone && copy.enabled && copy.text == l10n::Get(l10n::StringId::CopyToWindow) &&
+                              copy.children.size() == 2 && copy.children[0].command == CmdCopyToWindowBase &&
+                              copy.children[1].command == CmdCopyToWindowBase + 1,
+                          "复制到窗口 lists one row per folder");
+                    check(copy.children[0].text == L"c" && copy.children[0].shortcut == folder_c &&
+                              copy.children[1].text == L"D:\\" && copy.children[1].shortcut == L"D:\\" &&
+                              copy.children[0].tooltip == folder_c,
+                          "a row shows the folder name and its full path (a drive by its root)");
+                    check(move.text == l10n::Get(l10n::StringId::MoveToWindow) && !move.enabled &&
+                              move.children.size() == 2 && move.children[1].command == CmdMoveToWindowBase + 1,
+                          "移动到窗口 is there but disabled when the selection cannot move");
+                }
+                core->windows.Remove(third->hwnd);
+                DestroyWindow(third->hwnd);
+                third->hwnd = nullptr;
+            }
+            third.reset();
         }
 
         core->windows.Remove(dst->hwnd);

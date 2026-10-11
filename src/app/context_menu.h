@@ -117,6 +117,9 @@ enum MenuCmd : int {
     // Explorer integration (优化.md §7): registry static verbs bound to the
     // current selection (+index into the StaticVerb list) and pulse_shell
     // IContextMenu session items (+host menu id, up to 0x7FFF).
+    // Item menu "复制到窗口 / 移动到窗口" (M6e): + index into the other windows listed.
+    CmdCopyToWindowBase = 5000,
+    CmdMoveToWindowBase = 5032,
     CmdShellStaticBase = 6000,
     CmdShellComBase = 8000,
 };
@@ -194,6 +197,16 @@ void AppendShellSection(std::vector<ui::FluentMenuItem>& items,
 // Host still returns the full list; call this in the UI process.
 std::vector<ShellMenuEntry> ApplyExplorerPrefs(const ContextMenuPrefs& prefs,
                                                const std::vector<ShellMenuEntry>& entries);
+
+// Other windows' shown folders, most recently used window first (M6e).
+inline constexpr size_t kMaxWindowTransferTargets = 32;
+static_assert(CmdCopyToWindowBase + kMaxWindowTransferTargets <= CmdMoveToWindowBase &&
+              CmdMoveToWindowBase + kMaxWindowTransferTargets <= CmdShellStaticBase);
+// Two flyouts, "复制到窗口" and "移动到窗口", one row per folder (its name, then
+// the full path, also its tooltip), right before 复制路径. Nothing without targets; 移动到窗口
+// stays visible but disabled when the selection cannot move.
+void AppendWindowTransferCommands(std::vector<ui::FluentMenuItem>& items,
+                                  const std::vector<std::wstring>& folders, bool can_move);
 
 // Context menu for empty list space (creation / paste / terminal / undo).
 std::vector<ui::FluentMenuItem> BuildBackgroundMenu(bool can_paste, bool can_undo,

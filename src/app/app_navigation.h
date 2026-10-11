@@ -86,6 +86,12 @@ bool FolderCompareAvailable(AppState& s);
 std::vector<std::wstring> SideBySideFolders(const app::Tab& tab);
 void OpenFoldersSideBySide(AppState& s);
 void TransferToTarget(AppState& s, bool move);
+// Item menu "复制到窗口 / 移动到窗口" (M6e): the writable real folders the
+// panes of the other windows show, the window used last first and in each
+// window its focused pane first, without repeats or the folder the selection
+// is in; and sending the selection to one of them.
+std::vector<std::wstring> WindowTransferFolders(AppState& s);
+void TransferSelectionToFolder(AppState& s, const std::wstring& folder, bool move);
 void CycleFocus(AppState& s);
 void MarkTargetPane(AppState& s);
 void SortBy(AppState& s, ui::SortColumn col);
