@@ -56,6 +56,10 @@ bool PathHasPendingRefresh(AppState& s, const std::wstring& path);
 enum class RefreshReason { Explicit, Background, ShellNotification, OperationCompleted, FileChange };
 void RefreshPath(AppState& s, const std::wstring& path, RefreshReason reason = RefreshReason::Background);
 void RevalidateVisibleFolders(AppState& s);
+// A folder was moved or renamed (M6e): every tab in every window showing it,
+// or a folder inside it, follows to the new path with its rows, selection and
+// history, then re-lists in the background.
+void FollowMovedFolder(AppState& s, const std::wstring& from, const std::wstring& to);
 void RefreshActiveTab(AppState& s, RefreshReason reason = RefreshReason::Explicit);
 // A BitLocker unlock prompt finished: reload the tabs on that drive and This PC.
 void ApplyBitLockerUnlock(AppState& s, const std::wstring& root, bool unlocked);

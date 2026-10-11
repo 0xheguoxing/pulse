@@ -5,6 +5,7 @@
 #include "tab_detach.h"
 #include "pane_drop.h"
 #include "dir_notify_queue.h"
+#include "folder_move_remap.h"
 #include "tab_spring.h"
 #include "tab_transfer.h"
 #include "window_merge.h"
@@ -239,6 +240,32 @@ bool RunTabTransferTest() {
               "the active tab and the space off the tabs never spring");
     }
 
+    // --- M6e: paths follow a moved or renamed folder -----------------------
+    {
+        const FolderMove move(L"\\\\?\\C:\\work\\proj", L"\\\\?\\D:\\archive\\proj-2025\\");
+        check(move.Valid() && move.Remap(L"\\\\?\\C:\\work\\proj") == L"\\\\?\\D:\\archive\\proj-2025" &&
+                  move.Remap(L"\\\\?\\c:\\WORK\\Proj\\src\\ui") == L"\\\\?\\D:\\archive\\proj-2025\\src\\ui",
+              "the moved folder and the folders inside it map to the new place, ignoring case");
+        check(!move.Remap(L"\\\\?\\C:\\work\\project") && !move.Remap(L"\\\\?\\C:\\work") &&
+                  !move.Remap(L"pulse:search:proj") && !move.Remap(L""),
+              "a sibling sharing the name prefix, the parent, virtual views and This PC stay put");
+        const FolderMove unc(L"\\\\?\\UNC\\nas\\team\\docs", L"\\\\?\\UNC\\nas\\team\\Docs");
+        check(unc.Valid() && unc.Remap(L"\\\\?\\UNC\\nas\\team\\docs\\a") == L"\\\\?\\UNC\\nas\\team\\Docs\\a",
+              "a share folder renamed only in case follows too");
+        check(!FolderMove(L"\\\\?\\C:\\", L"\\\\?\\D:\\x").Valid() &&
+                  !FolderMove(L"\\\\?\\UNC\\nas\\team", L"\\\\?\\UNC\\nas\\other\\x").Valid() &&
+                  !FolderMove(L"pulse:tag:1", L"\\\\?\\C:\\x").Valid() &&
+                  !FolderMove(L"\\\\?\\C:\\x", L"\\\\?\\C:\\x").Valid(),
+              "drive and share roots, virtual paths and a move onto itself remap nothing");
+        std::stack<std::wstring> history;
+        for (const wchar_t* entry : {L"\\\\?\\C:\\a", L"\\\\?\\C:\\work\\proj\\src", L"\\\\?\\C:\\b"}) history.push(entry);
+        const bool changed = move.RemapHistory(history);
+        std::vector<std::wstring> order;
+        while (!history.empty()) { order.push_back(history.top()); history.pop(); }
+        check(changed && order == std::vector<std::wstring>{L"\\\\?\\C:\\b", L"\\\\?\\D:\\archive\\proj-2025\\src", L"\\\\?\\C:\\a"},
+              "history entries inside the folder follow it and keep their order");
+    }
+
     // --- MoveLayoutTab between two windows --------------------------------
     WNDCLASSW wc{};
     wc.hInstance = GetModuleHandleW(nullptr);
@@ -460,6 +487,49 @@ bool RunTabTransferTest() {
             core->watches.Sync({}, nullptr);
             std::lock_guard<std::mutex> lock(core->notify_mu);
             core->notify_queue.clear();
+        }
+
+        // --- M6e: tabs in every window follow a moved folder ---------------
+        try {
+            const auto base = output / L"follow";
+            std::error_code fs_error;
+            std::filesystem::remove_all(base, fs_error);
+            std::filesystem::create_directories(base / L"old" / L"sub", fs_error);
+            std::filesystem::create_directories(base / L"elsewhere", fs_error);
+            const std::wstring old_root = fs::NormalizePath((base / L"old").wstring());
+            const std::wstring new_root = fs::NormalizePath((base / L"new").wstring());
+            const std::wstring elsewhere = fs::NormalizePath((base / L"elsewhere").wstring());
+            Seed(src->window_tabs, 2);  // the tab added last is the one shown
+            Tab* const background = src->window_tabs.items[0]->ActiveFolder();
+            Tab* const shown = src->window_tabs.items[1]->ActiveFolder();
+            background->current_path = old_root;
+            shown->current_path = old_root + L"\\sub";
+            shown->SetSnapshot(std::make_shared<std::vector<fs::DirEntry>>(1));
+            BindCurrentLayout(*src);
+            Seed(dst->window_tabs, 1);
+            Tab* const other = dst->window_tabs.items[0]->ActiveFolder();
+            other->current_path = elsewhere;
+            other->back_stack.push(old_root + L"\\sub");
+            BindCurrentLayout(*dst);
+            const std::wstring shown_before = old_root + L"\\sub";
+            for (int i = 0; i < 100 && !core->watches.Armed(shown_before); ++i) Sleep(20);
+            check(core->watches.Armed(shown_before), "the folder shown inside is watched before the move");
+            std::filesystem::rename(base / L"old", base / L"new", fs_error);  // the shown folder is old\sub
+            check(!fs_error, "a folder moves while a window shows a folder inside it (the watch steps aside)");
+            FollowMovedFolder(*dst, old_root, new_root);  // the move finished in the other window
+            check(shown->current_path == new_root + L"\\sub" && background->current_path == new_root,
+                  "after a folder move, the shown and the background tab of another window follow it");
+            check(shown->snapshot && shown->EntryCount() == 1,
+                  "a tab that follows keeps its rows on screen while it re-lists");
+            check(other->current_path == elsewhere && other->back_stack.top() == new_root + L"\\sub",
+                  "a tab elsewhere stays, and its history follows the folder");
+            const std::wstring shown_now = new_root + L"\\sub";
+            for (int i = 0; i < 100 && !core->watches.Armed(shown_now); ++i) Sleep(20);
+            check(core->watches.Armed(shown_now), "the shown folder is watched at its new place");
+            core->watches.Sync({}, nullptr);
+        } catch (const std::exception& error) {
+            log << "follow: exception " << error.what() << std::endl;
+            check(false, "following a moved folder runs without an exception");
         }
 
         core->windows.Remove(dst->hwnd);

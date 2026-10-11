@@ -38,6 +38,7 @@
 #include "link_resolve.h"
 #include "startup_location.h"
 #include "last_tab_close.h"
+#include "folder_move_remap.h"
 #include "resource.h"
 #include "../ops/clipboard.h"
 #include "../ipc/ctx_menu_util.h"
@@ -1541,6 +1542,35 @@ void RevalidateVisibleFolders(AppState& s) {
         if (empty) StartLoadingPath(s, *empty, path);
         else RefreshPath(s, path);
     }
+}
+
+void FollowMovedFolder(AppState& s, const std::wstring& from, const std::wstring& to) {
+    const app::FolderMove move(fs::NormalizePath(from), fs::NormalizePath(to));
+    if (!move.Valid()) return;
+    bool moved_any = false;
+    app::ForEachWindowSharingCore(s, [&](AppState& window) {
+        std::vector<std::wstring> moved;
+        ForEachPane(window, [&](app::Pane& pane) {
+            app::Tab& tab = pane.view;
+            move.RemapHistory(tab.back_stack);
+            move.RemapHistory(tab.forward_stack);
+            const auto path = move.Remap(tab.current_path);
+            if (!path || *path == tab.current_path) return;
+            // Rows name entries relative to the folder, so they stay valid;
+            // a listing still on its way was read from the old path.
+            tab.current_path = *path;
+            tab.pending_generation = 0;
+            moved.push_back(*path);
+        });
+        if (moved.empty()) return;
+        moved_any = true;
+        std::sort(moved.begin(), moved.end());
+        moved.erase(std::unique(moved.begin(), moved.end()), moved.end());
+        for (const std::wstring& path : moved) RefreshPath(window, path);
+        SyncTaskbarWindowTitle(window);
+        InvalidateRect(window.hwnd, nullptr, FALSE);
+    });
+    if (moved_any) SyncVisibleWatches(s);
 }
 
 void ApplyBitLockerUnlock(AppState& s, const std::wstring& root, bool unlocked) {

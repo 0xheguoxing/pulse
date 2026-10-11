@@ -1866,6 +1866,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                                            i < completed.destinations.size(); ++i) {
                             s->places.RemapPaths(completed.sources[i],
                                                  completed.destinations[i]);
+                            FollowMovedFolder(*s, completed.sources[i], completed.destinations[i]);
                             // Only the items that really moved / were renamed:
                             // every rename entry (list, tray) leaves the tray
                             // to this, so failed or cancelled items keep their names.
