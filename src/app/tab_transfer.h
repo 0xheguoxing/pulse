@@ -3,6 +3,7 @@
 // another sharing the same core, keeping its panes, splits, history, scroll
 // position, selection and pin (it leaves its group).
 #include <cstddef>
+#include <optional>
 
 #include "pane_drop.h"
 
@@ -29,4 +30,15 @@ bool MoveLayoutTab(AppState& src, size_t index, AppState& dst, size_t insert_at,
 // where MoveLayoutTab would, and when app::CanAddPane says no.
 bool MoveTabIntoPane(AppState& src, size_t index, AppState& dst, app::ContentDrop edge,
                      TransferSource source = TransferSource::KeepsTabs);
+// Takes visible `pane` out of the split shown by `s`'s active tab into a tab
+// of its own right after it, made active (M6d: dragging a pane header out).
+// `origin` records where the pane was. Nothing (and no change) for a settings
+// tab or when `pane` is not one of at least two visible panes.
+std::optional<size_t> SplitPaneIntoTab(AppState& s, app::Pane* pane, app::PaneOrigin& origin);
+// Moves the only pane of tab `index` of `src` back into `into`, a tab of
+// `dst`, where `origin` says, and makes `into` active there (Esc after a
+// pane drag-out). Refuses (false, nothing changes) where MoveLayoutTab would,
+// when `into` is no longer a tab of `dst`, and when app::CanPutPaneBack says no.
+bool ReturnTabAsPane(AppState& src, size_t index, AppState& dst, const app::LayoutTab* into,
+                     const app::PaneOrigin& origin, TransferSource source = TransferSource::KeepsTabs);
 }  // namespace pulse

@@ -40,6 +40,21 @@ void ReleaseLeavingTab(AppState& s, const app::LayoutTab& tab, bool active) {
     if (s.tabFlashKey == &tab) s.tabFlashKey = nullptr;
     for (const auto& pane : tab.panes) CancelContentSelection(s, *pane->ActiveTab());
 }
+
+// Takes tab `index` out of `src` for a move into a pane of another window.
+std::unique_ptr<app::LayoutTab> TakeLeavingTab(AppState& src, size_t index, bool closing) {
+    auto& from = src.window_tabs;
+    ReleaseLeavingTab(src, *from.items[index], index == from.active);
+    RememberLayoutFocus(src);
+    std::unique_ptr<app::LayoutTab> tab = from.TakeTab(index, closing);
+    if (!tab) return nullptr;
+    BindCurrentLayout(src);
+    if (!from.items.empty()) {
+        RevalidateVisibleFolders(src);
+        InvalidateRect(src.hwnd, nullptr, FALSE);
+    }
+    return tab;
+}
 }  // namespace
 
 bool MoveLayoutTab(AppState& src, size_t index, AppState& dst, size_t insert_at,
@@ -75,20 +90,51 @@ bool MoveTabIntoPane(AppState& src, size_t index, AppState& dst, app::ContentDro
     if (&src == &dst || index >= from.items.size() || (from.items.size() < 2 && !closing) ||
         !from.items[index] || !into || !app::CanAddPane(*into, *from.items[index], edge))
         return false;
-    ReleaseLeavingTab(src, *from.items[index], index == from.active);
-    RememberLayoutFocus(src);
-    std::unique_ptr<app::LayoutTab> tab = from.TakeTab(index, closing);
+    std::unique_ptr<app::LayoutTab> tab = TakeLeavingTab(src, index, closing);
     if (!tab) return false;
-    BindCurrentLayout(src);
-    if (!from.items.empty()) {
-        RevalidateVisibleFolders(src);
-        InvalidateRect(src.hwnd, nullptr, FALSE);
-    }
 
     if (dst.addressSearching) HideAddressEditor(dst, false);
     RememberLayoutFocus(dst);
     app::AddPaneFromTab(*into, std::move(tab), edge);
     BindCurrentLayout(dst);  // the dropped pane is focused, with its scroll position
+    RevalidateVisibleFolders(dst);
+    InvalidateRect(dst.hwnd, nullptr, FALSE);
+    return true;
+}
+
+std::optional<size_t> SplitPaneIntoTab(AppState& s, app::Pane* pane, app::PaneOrigin& origin) {
+    app::LayoutTab* const tab = s.window_tabs.Active();
+    if (!tab || !pane || IsSettingsTab(ActiveTab(s)) || IsSettingsTab(pane->ActiveTab())) return std::nullopt;
+    if (s.addressSearching) HideAddressEditor(s, false);
+    RememberLayoutFocus(s);  // the remaining panes keep their focus and target
+    std::unique_ptr<app::LayoutTab> own = app::TakePaneAsTab(*tab, pane, origin);
+    if (!own) return std::nullopt;
+    const size_t index = s.window_tabs.InsertTab(std::move(own), s.window_tabs.active + 1);
+    BindCurrentLayout(s);  // the new tab is active, its pane focused
+    RevalidateVisibleFolders(s);
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+    return index;
+}
+
+bool ReturnTabAsPane(AppState& src, size_t index, AppState& dst, const app::LayoutTab* into,
+                     const app::PaneOrigin& origin, TransferSource source) {
+    auto& from = src.window_tabs;
+    const bool closing = source == TransferSource::Closing;
+    size_t at = dst.window_tabs.items.size();
+    for (size_t i = 0; i < dst.window_tabs.items.size(); ++i)
+        if (dst.window_tabs.items[i].get() == into) at = i;
+    if (&src == &dst || index >= from.items.size() || (from.items.size() < 2 && !closing) ||
+        !from.items[index] || at == dst.window_tabs.items.size() ||
+        !app::CanPutPaneBack(*dst.window_tabs.items[at], *from.items[index], origin))
+        return false;
+    std::unique_ptr<app::LayoutTab> tab = TakeLeavingTab(src, index, closing);
+    if (!tab) return false;
+
+    if (dst.addressSearching) HideAddressEditor(dst, false);
+    RememberLayoutFocus(dst);
+    dst.window_tabs.SwitchTab(at);
+    app::PutPaneBack(*dst.window_tabs.items[at], std::move(tab), origin);
+    BindCurrentLayout(dst);
     RevalidateVisibleFolders(dst);
     InvalidateRect(dst.hwnd, nullptr, FALSE);
     return true;

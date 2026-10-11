@@ -1317,6 +1317,7 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             }
         }
 
+        if (TryDetachDraggedPane(*s, mx, my)) return 0;  // the pane is a window now (M6d)
         if (s->tabDragPending) {
             if ((GetKeyState(VK_LBUTTON) & 0x8000) == 0) {
                 s->tabDragPending = false;
@@ -2241,6 +2242,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         if (hit.pane_index >= 0) {
             if (app::Pane* p = PaneAtSlot(*s, hit.pane_index)) FocusPane(*s, p);
         }
+        ArmPaneDrag(*s, hit, mx, my);  // the press still does what it did; a drag takes the pane out (M6d)
         if (HandleChangeClick(*s, hit, POINT{mx, my})) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -3173,6 +3175,7 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         (void)msg;
         (void)wParam;
         if (s) {
+            s->paneDragPending = false;
             if (s->settings.slider_drag() >= 0) {
                 s->settings.EndSlider();
                 if (GetCapture() == hwnd) ReleaseCapture();

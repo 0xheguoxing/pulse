@@ -173,6 +173,51 @@ bool RunTabTransferTest() {
         auto single = MakeSingleLayoutTab(L"");
         check(!CanAddPane(*single, *split, ContentDrop::Left),
               "a dragged tab with more than one pane can only become a tab, not a pane");
+
+        // A pane dragged out by its header, and Esc putting it back.
+        const std::vector<Pane*> grid = tab->VisiblePanes();
+        std::vector<float> ratios;
+        CollectSplitRatios(*tab->root, ratios);
+        for (size_t i = 0; i < ratios.size(); ++i) ratios[i] = 0.3f + 0.1f * static_cast<float>(i);
+        ApplySplitRatios(*tab->root, ratios);
+        tab->target_index = 1;  // grid[1], the pane dragged out, is the copy/move target
+        grid[1]->target = true;
+        PaneOrigin origin;
+        auto taken = TakePaneAsTab(*tab, grid[1], origin);
+        const std::vector<Pane*> rest = tab->VisiblePanes();
+        check(taken && taken->panes.size() == 1 && taken->panes[0].get() == grid[1] && taken->FocusedPane() == grid[1] &&
+                  taken->layout == LayoutPreset::Single && !grid[1]->target,
+              "a pane dragged out by its header becomes a focused single-pane tab");
+        check(tab->layout == LayoutPreset::Three && rest.size() == 3 && rest[0] == grid[0] && rest[1] == grid[2] &&
+                  rest[2] == grid[3] && tab->FocusedPane() == grid[3] && tab->target_index == -1 &&
+                  origin.position == 1 && origin.layout == LayoutPreset::FourGrid && origin.target,
+              "the grid keeps three panes in screen order, the focused one still focused");
+        std::vector<float> restored;
+        check(CanPutPaneBack(*tab, *taken, origin) && PutPaneBack(*tab, std::move(taken), origin) &&
+                  tab->layout == LayoutPreset::FourGrid && tab->VisiblePanes() == grid && tab->FocusedPane() == grid[1] &&
+                  tab->target_index >= 0 && tab->panes[static_cast<size_t>(tab->target_index)].get() == grid[1],
+              "Esc puts it back in its place in the grid, focused and still the target");
+        CollectSplitRatios(*tab->root, restored);
+        check(restored == ratios, "the grid gets its split ratios back");
+        auto pair = MakeSingleLayoutTab(L"");
+        Pane* const kept = pair->panes[0].get();
+        AddPaneFromTab(*pair, MakeSingleLayoutTab(L""), ContentDrop::Right);
+        Pane* const leaving = pair->VisiblePanes()[1];
+        PaneOrigin pair_origin;
+        auto lone = TakePaneAsTab(*pair, leaving, pair_origin);
+        check(lone && pair->layout == LayoutPreset::Single && pair->VisiblePanes().size() == 1 &&
+                  pair->VisiblePanes()[0] == kept && kept->focused,
+              "out of two panes, the other one fills the tab");
+        PaneOrigin none;
+        check(!TakePaneAsTab(*pair, kept, none) && !TakePaneAsTab(*tab, leaving, none) && pair->panes.size() == 1,
+              "a tab's only pane, or a pane of another tab, is not taken");
+        auto three_tab = MakeSingleLayoutTab(L"");
+        AddPaneFromTab(*three_tab, MakeSingleLayoutTab(L""), ContentDrop::Right);
+        AddPaneFromTab(*three_tab, MakeSingleLayoutTab(L""), ContentDrop::Right);
+        PaneOrigin three_origin;
+        check(TakePaneAsTab(*three_tab, three_tab->VisiblePanes()[0], three_origin) &&
+                  three_tab->layout == LayoutPreset::TwoVertical && three_tab->VisiblePanes().size() == 2,
+              "out of three panes, two stay side by side");
     }
 
     // --- MoveLayoutTab between two windows --------------------------------
@@ -267,6 +312,32 @@ bool RunTabTransferTest() {
               "a tab dropped on the right edge becomes the focused right pane, its selection kept");
         check(!MoveTabIntoPane(*src, 0, *dst, ContentDrop::Left) && src->window_tabs.items.size() == 1,
               "a window's only tab does not leave unless the window is closing");
+
+        // --- M6d: a pane dragged out of a split, and Esc ------------------
+        Seed(src->window_tabs, 1);
+        LayoutTab* const split_tab = src->window_tabs.items[0].get();
+        AddPaneFromTab(*split_tab, MakeSingleLayoutTab(L""), ContentDrop::Right);
+        BindCurrentLayout(*src);
+        Pane* const out_pane = split_tab->VisiblePanes()[1];
+        out_pane->ActiveTab()->selected_index = 4;
+        PaneOrigin pane_origin;
+        const std::optional<size_t> out_at = SplitPaneIntoTab(*src, out_pane, pane_origin);
+        check(out_at && *out_at == 1 && src->window_tabs.items.size() == 2 && src->window_tabs.active == 1 &&
+                  src->pane == out_pane && split_tab->layout == LayoutPreset::Single &&
+                  split_tab->VisiblePanes().size() == 1,
+              "a pane dragged out becomes the active tab right after its split, which keeps one pane");
+        const size_t dst_tabs = dst->window_tabs.items.size();
+        check(MoveLayoutTab(*src, 1, *dst, 99) && src->window_tabs.items.size() == 1 &&
+                  dst->window_tabs.items.size() == dst_tabs + 1 && dst->pane == out_pane,
+              "its tab moves to the new window like a tab pulled off the strip");
+        check(!ReturnTabAsPane(*dst, dst_tabs, *src, dst->window_tabs.items[0].get(), pane_origin) &&
+                  dst->window_tabs.items.size() == dst_tabs + 1,
+              "a pane only goes back into a tab of the window it came from");
+        check(ReturnTabAsPane(*dst, dst_tabs, *src, split_tab, pane_origin) && src->window_tabs.items.size() == 1 &&
+                  dst->window_tabs.items.size() == dst_tabs && split_tab->layout == LayoutPreset::TwoVertical &&
+                  split_tab->VisiblePanes()[1] == out_pane && src->pane == out_pane &&
+                  out_pane->ActiveTab()->selected_index == 4,
+              "Esc: the pane goes back to its split, focused, its selection kept");
 
         // --- M6c: a whole window merges into another and comes back -------
         app::WindowTabs& st = src->window_tabs;

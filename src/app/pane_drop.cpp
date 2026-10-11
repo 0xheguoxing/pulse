@@ -17,6 +17,50 @@ bool IsEdge(ContentDrop edge) {
 
 bool Leading(ContentDrop edge) { return edge == ContentDrop::Left || edge == ContentDrop::Top; }
 
+// Stores `tab`'s panes with `order` (its visible panes) first, then the
+// hidden ones; focuses `focus` (or keeps the focused pane) and remaps the
+// target. `extra`, when set, is a pane joining `tab` and placed in `order`.
+void StorePanes(LayoutTab& tab, const std::vector<Pane*>& order, std::unique_ptr<Pane> extra, const Pane* focus) {
+    const auto pane_at = [&](int index) -> const Pane* {
+        return index >= 0 && static_cast<size_t>(index) < tab.panes.size() ? tab.panes[static_cast<size_t>(index)].get()
+                                                                          : nullptr;
+    };
+    const Pane* const target = pane_at(tab.target_index);
+    if (!focus) focus = pane_at(tab.focused_index);
+    std::vector<std::unique_ptr<Pane>> panes;
+    panes.reserve(tab.panes.size() + 1);
+    for (Pane* pane : order) {
+        if (extra && pane == extra.get()) {
+            panes.push_back(std::move(extra));
+            continue;
+        }
+        for (auto& owned : tab.panes)
+            if (owned.get() == pane) panes.push_back(std::move(owned));
+    }
+    for (auto& owned : tab.panes)
+        if (owned) panes.push_back(std::move(owned));  // hidden panes keep their order after the visible ones
+    tab.panes = std::move(panes);
+    tab.focused_index = 0;
+    tab.target_index = -1;
+    for (size_t i = 0; i < tab.panes.size(); ++i) {
+        if (tab.panes[i].get() == focus) tab.focused_index = static_cast<int>(i);
+        if (tab.panes[i].get() == target) tab.target_index = static_cast<int>(i);
+    }
+    for (size_t i = 0; i < tab.panes.size(); ++i) tab.panes[i]->focused = static_cast<int>(i) == tab.focused_index;
+    if (tab.layout != LayoutPreset::TwoVertical && tab.layout != LayoutPreset::TwoHorizontal) {
+        tab.compare = false;
+        tab.compare_diff_only = false;
+    }
+}
+
+LayoutPreset ShrunkPreset(size_t visible) {
+    switch (visible) {
+    case 3: return LayoutPreset::TwoVertical;
+    case 4: return LayoutPreset::Three;
+    default: return LayoutPreset::Single;
+    }
+}
+
 // The visible panes of `tab` with `added` in front or at the back.
 std::vector<Pane*> GrownOrder(const LayoutTab& tab, Pane* added, ContentDrop edge) {
     std::vector<Pane*> order = tab.VisiblePanes();
@@ -77,36 +121,65 @@ bool AddPaneFromTab(LayoutTab& tab, std::unique_ptr<LayoutTab> incoming, Content
     incoming->root.reset();
     Pane* const added = moved.get();
     const std::vector<Pane*> order = GrownOrder(tab, added, edge);
-    const Pane* const target = tab.target_index >= 0 && static_cast<size_t>(tab.target_index) < tab.panes.size()
-                                   ? tab.panes[static_cast<size_t>(tab.target_index)].get()
-                                   : nullptr;
-
-    std::vector<std::unique_ptr<Pane>> panes;
-    panes.reserve(tab.panes.size() + 1);
-    for (Pane* pane : order) {
-        if (pane == added) {
-            panes.push_back(std::move(moved));
-            continue;
-        }
-        for (auto& owned : tab.panes)
-            if (owned.get() == pane) panes.push_back(std::move(owned));
-    }
-    for (auto& owned : tab.panes)
-        if (owned) panes.push_back(std::move(owned));  // hidden panes keep their order after the visible ones
-    tab.panes = std::move(panes);
     tab.layout = grown;
     tab.root = MakePresetTree(grown, order);
-    if (grown != LayoutPreset::TwoVertical && grown != LayoutPreset::TwoHorizontal) {
-        tab.compare = false;
-        tab.compare_diff_only = false;
-    }
-    tab.target_index = -1;  // indices follow the new order
-    for (size_t i = 0; i < tab.panes.size(); ++i) {
-        tab.panes[i]->focused = tab.panes[i].get() == added;
-        if (tab.panes[i].get() == added) tab.focused_index = static_cast<int>(i);
-        if (tab.panes[i].get() == target) tab.target_index = static_cast<int>(i);
-    }
+    StorePanes(tab, order, std::move(moved), added);
     added->target = false;
+    return true;
+}
+
+std::unique_ptr<LayoutTab> TakePaneAsTab(LayoutTab& tab, Pane* pane, PaneOrigin& origin) {
+    std::vector<Pane*> order = tab.VisiblePanes();
+    const auto it = std::find(order.begin(), order.end(), pane);
+    if (!pane || order.size() < 2 || it == order.end()) return nullptr;
+    const size_t visible = order.size();
+    origin = PaneOrigin{static_cast<size_t>(it - order.begin()), tab.layout, {}, false};
+    origin.target = tab.target_index >= 0 && static_cast<size_t>(tab.target_index) < tab.panes.size() &&
+                    tab.panes[static_cast<size_t>(tab.target_index)].get() == pane;
+    if (tab.root) CollectSplitRatios(*tab.root, origin.ratios);
+    const Pane* focus = tab.FocusedPane() == pane ? nullptr : tab.FocusedPane();
+    order.erase(it);
+
+    auto own = std::make_unique<LayoutTab>();
+    for (auto& owned : tab.panes) {
+        if (owned.get() == pane) {
+            own->panes.push_back(std::move(owned));
+            break;
+        }
+    }
+    if (!focus) focus = order.front();
+    tab.layout = ShrunkPreset(visible);
+    tab.root = MakePresetTree(tab.layout, order);
+    StorePanes(tab, order, nullptr, focus);
+
+    own->root = SplitContainer::CreateLeaf(pane);
+    own->layout = LayoutPreset::Single;
+    own->focused_index = 0;
+    pane->focused = true;
+    pane->target = false;
+    return own;
+}
+
+bool CanPutPaneBack(const LayoutTab& tab, const LayoutTab& incoming, const PaneOrigin& origin) {
+    return incoming.panes.size() == 1 && incoming.panes[0] &&
+           tab.VisiblePanes().size() + 1 == LayoutPresetCount(origin.layout);
+}
+
+bool PutPaneBack(LayoutTab& tab, std::unique_ptr<LayoutTab> incoming, const PaneOrigin& origin) {
+    if (!incoming || !CanPutPaneBack(tab, *incoming, origin)) return false;
+    std::unique_ptr<Pane> moved = std::move(incoming->panes[0]);
+    incoming->panes.clear();
+    incoming->root.reset();
+    Pane* const added = moved.get();
+    std::vector<Pane*> order = tab.VisiblePanes();
+    order.insert(order.begin() + static_cast<ptrdiff_t>((std::min)(origin.position, order.size())), added);
+    tab.layout = origin.layout;
+    tab.root = MakePresetTree(origin.layout, order);
+    if (tab.root) ApplySplitRatios(*tab.root, origin.ratios);
+    StorePanes(tab, order, std::move(moved), added);
+    added->target = origin.target;
+    for (size_t i = 0; origin.target && i < tab.panes.size(); ++i)
+        if (tab.panes[i].get() == added) tab.target_index = static_cast<int>(i);
     return true;
 }
 }  // namespace pulse::app

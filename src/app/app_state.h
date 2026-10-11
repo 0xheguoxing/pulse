@@ -373,6 +373,11 @@ struct AppState : AppCoreOwner {
     bool tabDragging = false;
     int tabDragIndex = -1;               // window_tabs.items index of the dragged tab
     POINT tabDragStartPt{};
+    // A press on the header of one of several panes (M6d): dragged far
+    // enough, that pane leaves the split as a window (TryDetachDraggedPane).
+    bool paneDragPending = false;
+    app::Pane* paneDragPane = nullptr;
+    POINT paneDragStartPt{};
     // Double-click close (pulse::HandleTabDoubleClick): the tab the last press
     // landed on (strip tab or vertical tab row, never a close button) and when.
     const void* tabPressTab = nullptr;

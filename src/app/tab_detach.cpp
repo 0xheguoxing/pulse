@@ -60,6 +60,13 @@ Dwell g_dwell;
 // A title-bar drag (M6c): the system runs a move loop we did not start. The
 // placement from before the drag is what an undo of the merge restores.
 bool g_caption_move = false;
+// A pane dragged out of a split (M6d): after Esc it goes back there.
+struct PaneBack {
+    HWND from = nullptr;
+    const app::LayoutTab* into = nullptr;
+    app::PaneOrigin origin;
+};
+PaneBack g_pane_back;
 WINDOWPLACEMENT g_before{sizeof(WINDOWPLACEMENT)};
 
 AppState* WindowOf(AppState& any, HWND hwnd) {
@@ -231,6 +238,47 @@ void EndStripDrag(AppState& s) {
     if (GetCapture() == s.hwnd) ReleaseCapture();
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
+// Opens tab `index` of `s` as a window of the size of `s` whose client point
+// `grab` (where the cursor holds its tab) is under the cursor, and starts its
+// move loop.
+HWND OpenDetachedWindow(AppState& s, size_t index, POINT grab) {
+    RECT window{};
+    GetWindowRect(s.hwnd, &window);
+    POINT origin{0, 0};
+    ClientToScreen(s.hwnd, &origin);
+    POINT offset{origin.x - window.left, origin.y - window.top};
+    SIZE size{window.right - window.left, window.bottom - window.top};
+    if (IsZoomed(s.hwnd)) {
+        WINDOWPLACEMENT placement{sizeof(placement)};
+        if (GetWindowPlacement(s.hwnd, &placement)) {
+            size = SIZE{placement.rcNormalPosition.right - placement.rcNormalPosition.left,
+                        placement.rcNormalPosition.bottom - placement.rcNormalPosition.top};
+        }
+        offset = POINT{0, 0};
+    }
+    POINT cursor{};
+    GetCursorPos(&cursor);
+
+    WindowInit init;
+    if (const app::Tab* view = s.window_tabs.items[index]->ActiveFolder()) init.path = view->current_path;
+    init.adopt_from = &s;
+    init.adopt_index = index;
+    init.rect = DetachedWindowRect(size, cursor, grab, offset);
+    const HWND hwnd = OpenPulseWindow(s, init);
+    if (hwnd) {
+        g_grab = Grab{hwnd, POINT{cursor.x - init.rect->left, cursor.y - init.rect->top}};
+        PostMessageW(hwnd, WM_BEGIN_TAB_DETACH, reinterpret_cast<WPARAM>(s.hwnd), static_cast<LPARAM>(index));
+    }
+    return hwnd;
+}
+
+// The first visible tab of `s`'s strip, client px.
+bool FirstTabRect(AppState& s, const ui::WindowViewModel& vm, D2D1_RECT_F* rect) {
+    const float width = static_cast<float>(s.compositor.Width());
+    for (int i = 0; i < static_cast<int>(vm.tabs.size()); ++i)
+        if (s.renderer.TabItemRect(vm, width, i, rect)) return true;
+    return false;
+}
 }  // namespace
 
 bool TabDetachDistanceReached(POINT press, POINT now, float scale) {
@@ -331,42 +379,63 @@ bool TryDetachDraggedTab(AppState& s, int mx, int my) {
     const ui::WindowViewModel vm = BuildVm(s, false);
     const float width = static_cast<float>(s.compositor.Width());
     D2D1_RECT_F first{}, self{};
-    bool have_first = false;
-    for (int i = 0; i < static_cast<int>(vm.tabs.size()) && !have_first; ++i)
-        have_first = s.renderer.TabItemRect(vm, width, i, &first);
-    if (!have_first || !s.renderer.TabItemRect(vm, width, index, &self)) return false;
+    if (!FirstTabRect(s, vm, &first) || !s.renderer.TabItemRect(vm, width, index, &self)) return false;
     const POINT grab{static_cast<LONG>(std::lround(first.left)) + (s.tabDragStartPt.x -
                                                                      static_cast<LONG>(std::lround(self.left))),
                      s.tabDragStartPt.y};
-    RECT window{};
-    GetWindowRect(s.hwnd, &window);
-    POINT origin{0, 0};
-    ClientToScreen(s.hwnd, &origin);
-    POINT offset{origin.x - window.left, origin.y - window.top};
-    SIZE size{window.right - window.left, window.bottom - window.top};
-    if (IsZoomed(s.hwnd)) {
-        WINDOWPLACEMENT placement{sizeof(placement)};
-        if (GetWindowPlacement(s.hwnd, &placement)) {
-            size = SIZE{placement.rcNormalPosition.right - placement.rcNormalPosition.left,
-                        placement.rcNormalPosition.bottom - placement.rcNormalPosition.top};
-        }
-        offset = POINT{0, 0};
-    }
-    POINT cursor{};
-    GetCursorPos(&cursor);
-
-    WindowInit init;
-    if (const app::Tab* view = s.window_tabs.items[static_cast<size_t>(index)]->ActiveFolder())
-        init.path = view->current_path;
-    init.adopt_from = &s;
-    init.adopt_index = static_cast<size_t>(index);
-    init.rect = DetachedWindowRect(size, cursor, grab, offset);
     EndStripDrag(s);
-    if (const HWND hwnd = OpenPulseWindow(s, init)) {
-        g_grab = Grab{hwnd, POINT{cursor.x - init.rect->left, cursor.y - init.rect->top}};
-        PostMessageW(hwnd, WM_BEGIN_TAB_DETACH, reinterpret_cast<WPARAM>(s.hwnd),
-                     static_cast<LPARAM>(index));
+    OpenDetachedWindow(s, static_cast<size_t>(index), grab);
+    return true;
+}
+
+void ArmPaneDrag(AppState& s, const ui::HitTestResult& hit, int mx, int my) {
+    s.paneDragPending = false;
+    if (hit.region != ui::HitTestResult::PaneHeader || hit.pane_index < 0) return;
+    const app::LayoutTab* const tab = s.window_tabs.Active();
+    app::Pane* const pane = PaneAtSlot(s, hit.pane_index);
+    if (!tab || !pane || tab->VisiblePanes().size() < 2) return;
+    s.paneDragPending = true;
+    s.paneDragPane = pane;
+    s.paneDragStartPt = POINT{mx, my};
+}
+
+bool TryDetachDraggedPane(AppState& s, int mx, int my) {
+    if (!s.paneDragPending) return false;
+    if ((GetKeyState(VK_LBUTTON) & 0x8000) == 0) {
+        s.paneDragPending = false;
+        return false;
     }
+    if (std::abs(mx - s.paneDragStartPt.x) < GetSystemMetrics(SM_CXDRAG) &&
+        std::abs(my - s.paneDragStartPt.y) < GetSystemMetrics(SM_CYDRAG))
+        return false;
+    s.paneDragPending = false;
+
+    // The cursor holds the new window's tab as far into it as it held the
+    // pane header, within the tab.
+    const ui::WindowViewModel vm = BuildVm(s, false);
+    D2D1_RECT_F first{};
+    const app::LayoutTab* const into = s.window_tabs.Active();
+    const size_t back_to = s.window_tabs.active;
+    LONG header_left = 0;
+    for (size_t i = 0; i < vm.pane_slots.size(); ++i)
+        if (PaneAtSlot(s, static_cast<int>(i)) == s.paneDragPane)
+            header_left = static_cast<LONG>(std::lround(vm.pane_slots[i].rect.left));
+    if (!into || !FirstTabRect(s, vm, &first)) return false;
+    const LONG edge = static_cast<LONG>(std::lround(12.0f * s.scale));
+    const LONG tab_left = static_cast<LONG>(std::lround(first.left));
+    const LONG tab_width = (std::max)(static_cast<LONG>(std::lround(first.right - first.left)), 2 * edge + 1);
+    const POINT grab{tab_left + std::clamp(s.paneDragStartPt.x - header_left, edge, tab_width - edge),
+                     static_cast<LONG>(std::lround((first.top + first.bottom) / 2.0f))};
+
+    app::PaneOrigin origin;
+    const std::optional<size_t> index = SplitPaneIntoTab(s, s.paneDragPane, origin);
+    s.paneDragPane = nullptr;
+    if (!index) return false;
+    if (GetCapture() == s.hwnd) ReleaseCapture();
+    if (OpenDetachedWindow(s, *index, grab)) g_pane_back = PaneBack{s.hwnd, into, std::move(origin)};
+    // The split, one pane fewer, stays in front here (if no window opened,
+    // the pane is left as a tab of its own).
+    SwitchTab(s, back_to);
     return true;
 }
 
@@ -374,6 +443,8 @@ void RunDetachedTabMove(AppState& s, HWND from, size_t index) {
     const HWND hwnd = s.hwnd;
     const Grab grab = g_grab;
     g_grab = Grab{};
+    PaneBack pane_back = std::move(g_pane_back);
+    g_pane_back = PaneBack{};
     // Released before the loop could start: the window stays where it opened.
     if (!PrimaryButtonDown() || g_escape_hook) return;
     POINT cursor{};
@@ -424,11 +495,14 @@ void RunDetachedTabMove(AppState& s, HWND from, size_t index) {
     }
     if (!from || !g_escape_pressed) return;
 
-    // Esc: the tab goes back to its place and the new window goes away.
+    // Esc: the tab goes back to its place (a pane to its split) and the new
+    // window goes away.
     AppState& source = app::FindWindowSharingCore(s, [from](const AppState& w) { return w.hwnd == from; });
     if (&source == &s || s.window_tabs.items.size() != 1) return;
     ShowWindow(hwnd, SW_HIDE);
-    if (!MoveLayoutTab(s, 0, source, index, TransferSource::Closing)) {
+    const bool back = pane_back.from == from &&
+                      ReturnTabAsPane(s, 0, source, pane_back.into, pane_back.origin, TransferSource::Closing);
+    if (!back && !MoveLayoutTab(s, 0, source, index, TransferSource::Closing)) {
         ShowWindow(hwnd, SW_SHOWNORMAL);
         return;
     }

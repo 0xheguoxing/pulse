@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include <memory>
+#include <vector>
 
 namespace pulse::app {
 enum class ContentDrop { None, Center, Left, Top, Right, Bottom };
@@ -32,4 +33,27 @@ D2D1_RECT_F PaneDropRect(const LayoutTab& tab, ContentDrop edge, const D2D1_RECT
 // focuses it. The panes are reordered so the visible ones come first in
 // their on-screen order: layout presets and session restore follow it.
 bool AddPaneFromTab(LayoutTab& tab, std::unique_ptr<LayoutTab> incoming, ContentDrop edge);
+
+// Where a pane dragged out of a split was: its place among the visible
+// panes, and the layout and split ratios it was part of.
+struct PaneOrigin {
+    size_t position = 0;
+    LayoutPreset layout = LayoutPreset::Single;
+    std::vector<float> ratios;
+    bool target = false;  // it was the copy/move target pane
+};
+
+// Takes visible `pane` out of `tab` (which must show at least two) into a
+// tab of its own, focused. `tab` keeps the rest in their order with one pane
+// fewer (3 -> two side by side, 4 -> three); `origin` records how to put it
+// back. Null when `pane` is not one of at least two visible panes.
+std::unique_ptr<LayoutTab> TakePaneAsTab(LayoutTab& tab, Pane* pane, PaneOrigin& origin);
+
+// True when the only pane of `incoming` can go back into `tab` at `origin`
+// (`tab` still shows one pane fewer than that layout).
+bool CanPutPaneBack(const LayoutTab& tab, const LayoutTab& incoming, const PaneOrigin& origin);
+
+// Puts the only pane of `incoming` back where `origin` says, with the old
+// layout and split ratios, focused.
+bool PutPaneBack(LayoutTab& tab, std::unique_ptr<LayoutTab> incoming, const PaneOrigin& origin);
 }  // namespace pulse::app

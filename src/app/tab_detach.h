@@ -8,6 +8,9 @@
 
 namespace pulse {
 struct AppState;
+namespace ui {
+struct HitTestResult;
+}
 
 // Vertical distance from the press, in DIP, that pulls a tab off the strip.
 constexpr float kTabDetachDistanceDip = 24.0f;
@@ -25,6 +28,14 @@ RECT DetachedWindowRect(SIZE size, POINT cursor, POINT grab_client, POINT client
 // any drag moves the window instead. Returns true when the strip drag ended
 // here (the caller stops handling the move).
 bool TryDetachDraggedTab(AppState& s, int mx, int my);
+// WM_LBUTTONDOWN (after the pane under the press is focused): a press on the
+// header of one of at least two visible panes may drag that pane out (M6d).
+void ArmPaneDrag(AppState& s, const ui::HitTestResult& hit, int mx, int my);
+// WM_MOUSEMOVE: once a drag from an armed pane header passes the system drag
+// distance, the pane becomes a tab of its own (the split keeps the rest)
+// that opens as a window under the cursor, exactly like a tab pulled off the
+// strip; Esc puts the pane back into its split. True when that happened.
+bool TryDetachDraggedPane(AppState& s, int mx, int my);
 
 // A visible tab of a strip, in strip order: its window_tabs index and rect.
 struct TabSpan {
