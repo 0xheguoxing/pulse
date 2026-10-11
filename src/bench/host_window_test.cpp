@@ -189,6 +189,43 @@ int wmain(int argc, wchar_t** argv) {
         broadcasts_local = broadcasts_local && !app::IsHostRoutedMessage(m);
     Check(broadcasts_local, "system broadcasts are not forwarded (no double handling)");
 
+    // M3c: the host handles these broadcasts once for every window.
+    using app::SystemBroadcast;
+    using app::ClassifySystemBroadcast;
+    const auto settings = [](const wchar_t* area) {
+        return ClassifySystemBroadcast(WM_SETTINGCHANGE, 0, reinterpret_cast<LPARAM>(area));
+    };
+    Check(settings(nullptr) == SystemBroadcast::Theme && settings(L"ImmersiveColorSet") == SystemBroadcast::Theme &&
+              settings(L"HighContrast") == SystemBroadcast::Theme,
+          "theme setting changes are host broadcasts");
+    Check(settings(L"Environment") == SystemBroadcast::None && settings(L"intl") == SystemBroadcast::None,
+          "other setting changes are ignored");
+    DEV_BROADCAST_HDR volume{};
+    volume.dbch_size = sizeof(volume);
+    volume.dbch_devicetype = DBT_DEVTYP_VOLUME;
+    DEV_BROADCAST_HDR device_interface = volume;
+    device_interface.dbch_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+    const auto device = [](WPARAM event, const DEV_BROADCAST_HDR* header) {
+        return ClassifySystemBroadcast(WM_DEVICECHANGE, event, reinterpret_cast<LPARAM>(header));
+    };
+    Check(device(DBT_DEVICEARRIVAL, &volume) == SystemBroadcast::Volumes &&
+              device(DBT_DEVICEREMOVECOMPLETE, &volume) == SystemBroadcast::Volumes &&
+              device(DBT_DEVICEARRIVAL, nullptr) == SystemBroadcast::Volumes,
+          "volume arrival and removal rebuild the drive list");
+    Check(device(DBT_DEVICEARRIVAL, &device_interface) == SystemBroadcast::None &&
+              device(DBT_DEVICEQUERYREMOVE, &volume) == SystemBroadcast::None &&
+              device(DBT_DEVNODES_CHANGED, nullptr) == SystemBroadcast::None,
+          "other device events are ignored");
+    Check(ClassifySystemBroadcast(WM_QUERYENDSESSION, 0, 0) == SystemBroadcast::QueryEndSession &&
+              ClassifySystemBroadcast(WM_ENDSESSION, TRUE, 0) == SystemBroadcast::EndSession,
+          "session end is a host broadcast (saved once)");
+    bool disjoint = true;
+    for (const UINT routed : app::kHostRoutedMessages)
+        disjoint = disjoint && ClassifySystemBroadcast(routed, 0, 0) == SystemBroadcast::None;
+    disjoint = disjoint && ClassifySystemBroadcast(WM_DISPLAYCHANGE, 0, 0) == SystemBroadcast::None &&
+               ClassifySystemBroadcast(WM_COPYDATA, 0, 0) == SystemBroadcast::None;
+    Check(disjoint, "forwarded notifications and host broadcasts do not overlap");
+
     // Forwarding keeps order: one thread queue serves both windows, so posts
     // from a worker reach the window in posting order whichever window they
     // were addressed to.

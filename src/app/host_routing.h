@@ -10,10 +10,14 @@
 // results that will need a target window (UNC probe, BitLocker unlock, whose
 // prompt is owned by the UI window, live network search, Explorer takeover)
 // move with the M3 data/window split. System
-// broadcasts are not listed: every top-level window already receives them,
-// and forwarding would handle them twice; the host handles TaskbarCreated
-// itself because it owns the notification icon.
+// broadcasts are not forwarded: every top-level window already receives them.
+// The host handles TaskbarCreated itself because it owns the notification
+// icon, and since M3c the broadcasts in ClassifySystemBroadcast once for all
+// windows; Pulse windows only handle those when there is no host.
 #pragma once
+#include <windows.h>
+#include <dbt.h>
+#include <cwchar>
 #include "app_messages.h"
 #include "tray_controller.h"
 
@@ -48,6 +52,32 @@ constexpr bool IsHostRoutedMessage(UINT message) noexcept {
     for (const UINT routed : kHostRoutedMessages)
         if (routed == message) return true;
     return false;
+}
+
+// System broadcasts with a Pulse handler (M3c). The shared part (theme flag,
+// drive list, places) runs once; the per-window part (accent, DWM chrome,
+// repaint) runs for every window.
+enum class SystemBroadcast { None, Theme, Volumes, QueryEndSession, EndSession };
+
+inline SystemBroadcast ClassifySystemBroadcast(UINT message, WPARAM wparam, LPARAM lparam) noexcept {
+    switch (message) {
+    case WM_SETTINGCHANGE: {
+        const auto* area = reinterpret_cast<const wchar_t*>(lparam);
+        if (!area || wcscmp(area, L"ImmersiveColorSet") == 0 || wcscmp(area, L"HighContrast") == 0)
+            return SystemBroadcast::Theme;
+        return SystemBroadcast::None;
+    }
+    case WM_DEVICECHANGE: {
+        // A USB stick, a mounted image, or any new volume changes the drive list.
+        if (wparam != DBT_DEVICEARRIVAL && wparam != DBT_DEVICEREMOVECOMPLETE) return SystemBroadcast::None;
+        const auto* header = reinterpret_cast<const DEV_BROADCAST_HDR*>(lparam);
+        return !header || header->dbch_devicetype == DBT_DEVTYP_VOLUME ? SystemBroadcast::Volumes
+                                                                       : SystemBroadcast::None;
+    }
+    case WM_QUERYENDSESSION: return SystemBroadcast::QueryEndSession;
+    case WM_ENDSESSION: return SystemBroadcast::EndSession;
+    default: return SystemBroadcast::None;
+    }
 }
 
 }  // namespace pulse::app

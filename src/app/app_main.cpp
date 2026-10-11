@@ -352,6 +352,44 @@ bool pulse::PrepareSessionForUpdate(AppState& s) {
     return s.updateSessionPrepared;
 }
 
+// System broadcasts (host_routing.h, multi-window M3c), handled once for the
+// process: the shared part runs once, the window part for every window that
+// shares `s`'s core (only `s` when it is not registered).
+static LRESULT HandleSystemBroadcast(AppState& s, app::SystemBroadcast kind, WPARAM wParam) {
+    switch (kind) {
+    case app::SystemBroadcast::Theme:
+        if (s.themeOverride == ui::ThemeMode::Auto) s.darkMode = ui::ShouldUseDarkMode(s.themeOverride);
+        app::ForEachWindowSharingCore(s, [](AppState& window) {
+            if (window.appPrefs.accent_rgb.empty()) ApplyAccentFromPrefs(window, true);
+            ApplyAppWindowChrome(window);
+            InvalidateRect(window.hwnd, nullptr, FALSE);
+        });
+        return 0;
+    case app::SystemBroadcast::Volumes:
+        // The sidebar model is built once, so rebuild it here instead of
+        // waiting for a language switch or a restart.
+        RefreshSidebarModel(s);
+        app::ForEachWindowSharingCore(s, [](AppState& window) { InvalidateRect(window.hwnd, nullptr, FALSE); });
+        return 0;
+    case app::SystemBroadcast::QueryEndSession:
+        // Shutdown/logoff ends the process without WM_DESTROY; store the layout
+        // now. session.json holds one window, so it is saved once, from `s`
+        // (the most recent window when the host handles the broadcast).
+        SaveWindowSession(s, s.hwnd, true);
+        return TRUE;
+    case app::SystemBroadcast::EndSession:
+        if (s.startupComplete && wParam && !s.shot.active && !s.menushot && !s.isolatedTest) {
+            SaveWindowSession(s, s.hwnd, true);
+            s.places.Save();
+            s.ctxMenuPrefs.Save();
+        }
+        return 0;
+    case app::SystemBroadcast::None:
+        break;
+    }
+    return 0;
+}
+
 // Checked from the UI timer; skipped while a mouse drag (splitter, sidebar,
 // column, window move) is in progress so a half-finished resize is not stored.
 constexpr ULONGLONG kSessionAutosaveMs = 3000;
@@ -1029,30 +1067,17 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_SETTINGCHANGE:
-        if (s && (lParam == 0 ||
-                  wcscmp(reinterpret_cast<const wchar_t*>(lParam), L"ImmersiveColorSet") == 0 ||
-                  wcscmp(reinterpret_cast<const wchar_t*>(lParam), L"HighContrast") == 0)) {
-            if (s->themeOverride == ui::ThemeMode::Auto)
-                s->darkMode = ui::ShouldUseDarkMode(s->themeOverride);
-            if (s->appPrefs.accent_rgb.empty())
-                ApplyAccentFromPrefs(*s, true);
-            ApplyAppWindowChrome(*s);
-            InvalidateRect(hwnd, nullptr, FALSE);
-        }
-        return 0;
-
     case WM_DEVICECHANGE:
-        // A USB stick, a mounted image, or any new volume changes the drive
-        // list. The sidebar model is built once, so rebuild it here instead of
-        // waiting for a language switch or a restart.
-        if (s && (wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE)) {
-            const auto* header = reinterpret_cast<const DEV_BROADCAST_HDR*>(lParam);
-            if (!header || header->dbch_devicetype == DBT_DEVTYP_VOLUME) {
-                RefreshSidebarModel(*s);
-                InvalidateRect(hwnd, nullptr, FALSE);
-            }
-        }
-        return 0;
+    case WM_QUERYENDSESSION:
+    case WM_ENDSESSION: {
+        // Every top-level window receives these; the host handles them once
+        // for all windows (HandleSystemBroadcast). Only without a host (tests,
+        // probes) does the window handle them itself.
+        const auto kind = app::ClassifySystemBroadcast(msg, wParam, lParam);
+        if (s && kind != app::SystemBroadcast::None && ServiceWindow(*s) == hwnd)
+            return HandleSystemBroadcast(*s, kind, wParam);
+        return msg == WM_QUERYENDSESSION ? TRUE : 0;
+    }
 
     case WM_SHOWWINDOW:
         // Sent before the window becomes visible; restore full rate right away.
@@ -2003,18 +2028,6 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
 
-    case WM_QUERYENDSESSION:
-        // Shutdown/logoff ends the process without WM_DESTROY; store the layout now.
-        if (s) SaveWindowSession(*s, hwnd, true);
-        return TRUE;
-    case WM_ENDSESSION:
-        if (s && s->startupComplete && wParam && !s->shot.active && !s->menushot && !s->isolatedTest) {
-            SaveWindowSession(*s, hwnd, true);
-            s->places.Save();
-            s->ctxMenuPrefs.Save();
-        }
-        return 0;
-
     case WM_DESTROY: {
         app::shell_tags::RevokeCommandServer();
         if (s) {
@@ -2757,6 +2770,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             AppState* const target = state.core.windows.MostRecent();
             if (app::IsHostRoutedMessage(message))
                 return target ? SendMessageW(target->hwnd, message, wParam, lParam) : 0;
+            if (const auto kind = app::ClassifySystemBroadcast(message, wParam, lParam);
+                kind != app::SystemBroadcast::None) {
+                if (target) return HandleSystemBroadcast(*target, kind, wParam);
+                return message == WM_QUERYENDSESSION ? TRUE : 0;
+            }
             if (message != 0 && message == app::TrayController::TaskbarCreatedMessage()) {
                 state.tray_controller.HandleTaskbarCreated();  // the icon lives on the host
                 return 0;
