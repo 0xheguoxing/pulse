@@ -1088,6 +1088,30 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
                                  brAccent_.get());
     }
 
+    // A file drag resting on a tab (multi-window M6e): the tab lights up and
+    // an underline fills while the spring timer runs; when full, it opens.
+    D2D1_RECT_F fileDropTab{};
+    if (vm.tab_file_drop >= 0 && TabItemRect(vm, rect.right, vm.tab_file_drop, &fileDropTab)) {
+        const float inset = 3.0f * scale_;
+        const float radius = 6.0f * scale_;
+        MakeBrush(dc, WithAlpha(theme.accent, theme.accent.a * 0.16f), brAccent_);
+        dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(fileDropTab.left + inset, fileDropTab.top + inset,
+                                                               fileDropTab.right - inset, fileDropTab.bottom - inset),
+                                                   radius, radius),
+                                 brAccent_.get());
+        const float progress = (std::clamp)(vm.tab_file_drop_progress, 0.0f, 1.0f);
+        const float lineH = 2.5f * scale_;
+        const float lineL = fileDropTab.left + 3.0f * inset;
+        const float lineR = lineL + (fileDropTab.right - fileDropTab.left - 6.0f * inset) * progress;
+        if (lineR > lineL) {
+            MakeBrush(dc, theme.accent, brAccent_);
+            dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(lineL, fileDropTab.bottom - inset - lineH,
+                                                                   lineR, fileDropTab.bottom - inset),
+                                                       lineH * 0.5f, lineH * 0.5f),
+                                     brAccent_.get());
+        }
+    }
+
     // The tab and sheet form one surface; a straight rule here breaks the shoulders.
 
     if (tabLayer) dc->PopLayer();

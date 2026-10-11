@@ -2,6 +2,7 @@
 #include "app_window_title.h"
 #include "app_internal.h"
 #include "pane_layout.h"
+#include "tab_spring.h"
 #include "vertical_tabs.h"
 #include "app_column_view.h"
 #include "folder_sizes_ui.h"
@@ -2071,6 +2072,10 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.breadcrumb_drop = s.dropBreadcrumb;
     vm.sidebar_drop_index = s.dropSidebar;
     vm.tab_drop_index = s.tabDropIndex;
+    vm.tab_file_drop = s.springTab;
+    if (s.springTab >= 0)
+        vm.tab_file_drop_progress =
+            static_cast<float>(GetTickCount64() - s.springTabStart) / static_cast<float>(app::kTabSpringMs);
     vm.content_drop = s.contentDrop;
     vm.content_drop_as_tab = s.contentDropAsTab;
     vm.content_drop_rect = s.contentDropRect;

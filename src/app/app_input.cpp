@@ -4,6 +4,7 @@
 #include "app_prompts.h"
 #include "vertical_tabs.h"
 #include "tab_detach.h"
+#include "tab_spring.h"
 #include "tab_shortcuts.h"
 #include "explorer_shortcuts.h"
 #include "app_updates.h"
@@ -99,6 +100,8 @@ void ClearDropFeedback(AppState& s) {
     s.dropDestDir.clear();
     s.springRow = -1;
     s.springStart = 0;
+    s.springTab = -1;
+    s.springTabStart = 0;
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
@@ -193,6 +196,14 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
     D2D1_RECT_F rect = D2D1::RectF(0, 0, (float)s.compositor.Width(), (float)s.compositor.Height());
     ui::HitTestResult hit = s.renderer.HitTest(vm, rect, (float)pt.x, (float)pt.y);
 
+    // Resting on a tab of the strip opens it (M6e); the tab takes the drop
+    // into the folder it shows.
+    const bool on_strip_tab = hit.region == ui::HitTestResult::Tab && hit.index >= 0 &&
+                              hit.index < static_cast<int>(s.window_tabs.items.size());
+    if (app::AdvanceTabSpring(s.springTab, s.springTabStart, on_strip_tab ? hit.index : -1, s.window_tabs.active,
+                              GetTickCount64()))
+        SwitchTab(s, static_cast<size_t>(hit.index));
+
     app::Pane* hitPane = PaneAtSlot(s, hit.pane_index);
     app::Tab* tab = hitPane ? hitPane->ActiveTab() : ActiveTab(s);
     if (!tab) return DROPEFFECT_NONE;
@@ -252,6 +263,13 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
         s.dropBadgeY = (float)pt.y;
         InvalidateRect(s.hwnd, nullptr, FALSE);
         return effect;
+    } else if (on_strip_tab) {
+        s.springRow = -1;
+        const app::Tab* view = s.window_tabs.items[static_cast<size_t>(hit.index)]->ActiveFolder();
+        if (view && !view->current_path.empty() && !fs::IsVirtualPath(view->current_path)) {
+            s.dropDestDir = view->current_path;
+            destName = BaseName(view->current_path);
+        }
     } else if (hit.region == ui::HitTestResult::BreadcrumbSegment && !hit.path.empty()) {
         s.dropDestDir = hit.path;
         s.dropBreadcrumb = hit.index;

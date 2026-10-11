@@ -628,6 +628,8 @@ struct WindowViewModel {
     int breadcrumb_drop = -1;     // placed segment under a drag
     int sidebar_drop_index = -1;  // sidebar item under a drag
     int tab_drop_index = -1;      // a tab dragged from another window lands before this tab (M6b)
+    int tab_file_drop = -1;       // a file drag rests on this tab; it opens when the progress is full (M6e)
+    float tab_file_drop_progress = 0.0f;
     bool content_drop = false;    // a tab dragged over the content area lands in content_drop_rect (M6d)
     bool content_drop_as_tab = false;
     D2D1_RECT_F content_drop_rect{};

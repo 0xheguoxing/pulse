@@ -564,6 +564,10 @@ struct AppState : AppCoreOwner {
     int springRow = -1;
     ULONGLONG springStart = 0;
     bool springEntered = false;
+    // A file drag resting on another tab of the strip (M6e): after
+    // app::kTabSpringMs that tab opens (tab_spring.h), in any window.
+    int springTab = -1;
+    ULONGLONG springTabStart = 0;
 
     // Drag-out bookkeeping.
     bool dragPending = false;

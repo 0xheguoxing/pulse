@@ -5,6 +5,7 @@
 #include "tab_detach.h"
 #include "pane_drop.h"
 #include "dir_notify_queue.h"
+#include "tab_spring.h"
 #include "tab_transfer.h"
 #include "window_merge.h"
 #include <filesystem>
@@ -219,6 +220,23 @@ bool RunTabTransferTest() {
         check(TakePaneAsTab(*three_tab, three_tab->VisiblePanes()[0], three_origin) &&
                   three_tab->layout == LayoutPreset::TwoVertical && three_tab->VisiblePanes().size() == 2,
               "out of three panes, two stay side by side");
+    }
+
+    // --- M6e: a file drag resting on a tab opens it -------------------------
+    {
+        int spring = -1;
+        uint64_t since = 0;
+        check(!AdvanceTabSpring(spring, since, 2, 0, 1000) && spring == 2 && since == 1000 &&
+                  !AdvanceTabSpring(spring, since, 2, 0, 1000 + kTabSpringMs - 1),
+              "resting on another tab starts the spring timer, and it does not open early");
+        check(AdvanceTabSpring(spring, since, 2, 0, 1000 + kTabSpringMs) && spring == -1,
+              "after 650 ms on the same tab it opens, and the rest starts over");
+        check(!AdvanceTabSpring(spring, since, 1, 0, 3000) && !AdvanceTabSpring(spring, since, 3, 0, 3000 + kTabSpringMs) &&
+                  spring == 3 && since == 3000 + kTabSpringMs,
+              "moving to another tab restarts the timer");
+        check(!AdvanceTabSpring(spring, since, 0, 0, 9000) && spring == -1 &&
+                  !AdvanceTabSpring(spring, since, -1, 0, 9999) && spring == -1,
+              "the active tab and the space off the tabs never spring");
     }
 
     // --- MoveLayoutTab between two windows --------------------------------
