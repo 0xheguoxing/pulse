@@ -4,6 +4,7 @@
 #include "app_internal.h"
 #include "tab_detach.h"
 #include "tab_transfer.h"
+#include "window_merge.h"
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -193,6 +194,68 @@ bool RunTabTransferTest() {
                   !src->pane && dst->window_tabs.items.size() == 4 && dst->window_tabs.items[1].get() == only &&
                   dst->window_tabs.Active() == only,
               "a closing window hands over its last tab, which lands at the requested place (Esc after a drag-out)");
+
+        // --- M6c: a whole window merges into another and comes back -------
+        app::WindowTabs& st = src->window_tabs;
+        app::WindowTabs& dt = dst->window_tabs;
+        Seed(st, 4);
+        st.items[0]->pinned = true;
+        st.tab_groups.push_back(TabGroup{5, L"work", 0x3366CC, false});
+        st.items[1]->tab_group = 5;
+        st.items[2]->tab_group = 5;
+        st.next_tab_group_id = 6;
+        st.SwitchTab(2);
+        BindCurrentLayout(*src);
+        Seed(dt, 3);
+        dt.items[0]->pinned = true;
+        dt.tab_groups.push_back(TabGroup{1, L"docs", 0xCC6633, false});
+        dt.items[1]->tab_group = 1;
+        dt.items[2]->tab_group = 1;
+        dt.next_tab_group_id = 2;
+        BindCurrentLayout(*dst);
+        std::vector<const LayoutTab*> old_src, old_dst;
+        for (const auto& tab : st.items) old_src.push_back(tab.get());
+        for (const auto& tab : dt.items) old_dst.push_back(tab.get());
+
+        const WindowMergeUndo undo = MergeTabsInto(*src, *dst, 2);  // between the two "docs" tabs
+        const auto in_dst = [&](size_t i) { return i < dt.items.size() ? dt.items[i].get() : nullptr; };
+        check(st.items.empty() && dt.items.size() == 7 && in_dst(0) == old_dst[0] && in_dst(1) == old_src[0] &&
+                  in_dst(2) == old_dst[1] && in_dst(3) == old_dst[2] && in_dst(4) == old_src[1] &&
+                  in_dst(5) == old_src[2] && in_dst(6) == old_src[3],
+              "a merged window's tabs keep their order: the pinned one joins the pinned tabs, the rest land at "
+              "the drop spot, moved past the group run it would split");
+        const int merged_group = dt.items.size() == 7 ? dt.items[4]->tab_group : 0;
+        bool group_copied = false;
+        for (const auto& group : dt.tab_groups)
+            group_copied |= group.id == merged_group && group.name == L"work" && group.color_rgb == 0x3366CC;
+        check(merged_group != 0 && merged_group != 1 && group_copied && dt.items.size() == 7 &&
+                  dt.items[5]->tab_group == merged_group && dt.items[6]->tab_group == 0 &&
+                  dt.items[2]->tab_group == 1 && dt.tab_groups.size() == 2 && GroupRunsContiguous(dt) &&
+                  dt.Active() == old_src[2],
+              "its group comes along under a new id with its name and color, and its active tab is active");
+
+        auto back = std::make_unique<AppState>(*core);
+        back->hwnd = make_window();
+        if (check(back->hwnd != nullptr, "a third hidden window takes the merged tabs back")) {
+            core->windows.Add(back->hwnd, back.get());
+            const size_t restored = RestoreMergedTabs(*dst, *back, undo);
+            const app::WindowTabs& bt = back->window_tabs;
+            bool same_order = bt.items.size() == old_src.size();
+            for (size_t i = 0; same_order && i < old_src.size(); ++i) same_order = bt.items[i].get() == old_src[i];
+            check(restored == 4 && same_order && bt.items[0]->pinned && bt.items[1]->tab_group == 5 &&
+                      bt.items[2]->tab_group == 5 && bt.items[3]->tab_group == 0 && HasGroup(bt, 5) &&
+                      bt.tab_groups.size() == 1 && bt.tab_groups[0].name == L"work" && bt.Active() == old_src[2],
+                  "undo puts the same tabs back in their order, with their group and their active tab");
+            bool dst_same = dt.items.size() == old_dst.size();
+            for (size_t i = 0; dst_same && i < old_dst.size(); ++i) dst_same = dt.items[i].get() == old_dst[i];
+            check(dst_same && dt.tab_groups.size() == 1 && HasGroup(dt, 1) && dt.items[1]->tab_group == 1 &&
+                      dt.items[2]->tab_group == 1,
+                  "the window merged into is as it was before");
+            core->windows.Remove(back->hwnd);
+            DestroyWindow(back->hwnd);
+            back->hwnd = nullptr;
+        }
+        back.reset();
 
         core->windows.Remove(dst->hwnd);
         core->windows.Remove(src->hwnd);

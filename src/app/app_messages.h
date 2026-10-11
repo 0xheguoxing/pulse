@@ -50,5 +50,7 @@ constexpr UINT WM_REOPEN_CLOSED_WINDOW = WM_APP + 78;  // reopen the last closed
 constexpr UINT WM_OPEN_SESSION_WINDOWS = WM_APP + 79;  // first window shown: open the session's other windows (M4d)
 constexpr UINT WM_MOVE_TAB_TO_NEW_WINDOW = WM_APP + 80;  // Ctrl+Shift+M: the active tab moves to a new window (M4e)
 constexpr UINT WM_BEGIN_TAB_DETACH = WM_APP + 81;  // a tab dragged off the strip: start the system move loop (M6a)
+constexpr UINT WM_UNDO_WINDOW_MERGE = WM_APP + 82;  // the merge toast was clicked: open the merged window again (M6c)
+constexpr UINT WM_MERGE_WINDOW = WM_APP + 83;  // released on a tab strip after a title-bar drag; wParam target hwnd, lParam index (M6c)
 
 }  // namespace pulse

@@ -6,6 +6,7 @@
 #include "app_messages.h"
 #include "tab_transfer.h"
 #include "window_factory.h"
+#include "window_merge.h"
 #include "window_registry.h"
 
 #include <dwmapi.h>
@@ -37,6 +38,10 @@ struct Drop {
     size_t index = 0;
 };
 Drop g_drop;
+// A title-bar drag (M6c): the system runs a move loop we did not start. The
+// placement from before the drag is what an undo of the merge restores.
+bool g_caption_move = false;
+WINDOWPLACEMENT g_before{sizeof(WINDOWPLACEMENT)};
 
 AppState* WindowOf(AppState& any, HWND hwnd) {
     if (!hwnd) return nullptr;
@@ -169,8 +174,39 @@ void TrackTabDrop(AppState& s) {
     if (g_moving != s.hwnd) return;
     POINT cursor{};
     GetCursorPos(&cursor);
-    ShowDrop(s, s.window_tabs.items.size() == 1 ? FindDrop(s, cursor) : Drop{});
+    ShowDrop(s, s.window_tabs.items.empty() ? Drop{} : FindDrop(s, cursor));
     SeeThrough(s.hwnd, g_drop.window != nullptr);
+}
+
+void BeginWindowMove(AppState& s) {
+    if (g_moving || s.window_tabs.items.empty()) return;  // our own loop ends itself (M6a, M6b)
+    g_moving = s.hwnd;
+    g_caption_move = true;
+    g_drop = Drop{};
+    g_before = WINDOWPLACEMENT{sizeof(WINDOWPLACEMENT)};
+    GetWindowPlacement(s.hwnd, &g_before);
+    g_escape_pressed = false;
+    if (!g_escape_hook) g_escape_hook = SetWindowsHookExW(WH_KEYBOARD, EscapeHook, nullptr, GetCurrentThreadId());
+}
+
+void EndWindowMove(AppState& s) {
+    if (!g_caption_move || g_moving != s.hwnd) return;
+    g_caption_move = false;
+    g_moving = nullptr;
+    if (g_escape_hook) UnhookWindowsHookEx(g_escape_hook);
+    g_escape_hook = nullptr;
+    const Drop drop = g_escape_pressed ? Drop{} : g_drop;
+    ShowDrop(s, Drop{});
+    SeeThrough(s.hwnd, false);
+    // The move loop is still unwinding: merge once it has returned.
+    if (drop.window)
+        PostMessageW(s.hwnd, WM_MERGE_WINDOW, reinterpret_cast<WPARAM>(drop.window), static_cast<LPARAM>(drop.index));
+}
+
+void FinishWindowMerge(AppState& s, HWND target, size_t index) {
+    AppState* const dst = WindowOf(s, target);
+    if (!dst || dst == &s || !IsWindowVisible(target)) return;
+    MergeWindowInto(s, *dst, index, g_before);
 }
 
 bool TryDetachDraggedTab(AppState& s, int mx, int my) {

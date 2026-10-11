@@ -46,7 +46,14 @@ int TabDropIndex(const TabSpan* spans, size_t span_count, size_t count, POINT pt
 // window's tab strip, a window with one tab merges into it there (M6b).
 void RunDetachedTabMove(AppState& s, HWND from, size_t index);
 
-// WM_MOVING: while `s` is in that move loop, marks where its tab would land
-// on the tab strip of the Pulse window under the cursor (M6b).
+// WM_MOVING: while `s` is in a move loop, marks where its tabs would land on
+// the tab strip of the Pulse window under the cursor (M6b, M6c).
 void TrackTabDrop(AppState& s);
+// WM_ENTERSIZEMOVE / WM_EXITSIZEMOVE of a title-bar drag (M6c). Released on
+// another window's tab strip (not after Esc), EndWindowMove posts
+// WM_MERGE_WINDOW, whose FinishWindowMerge merges `s` into that window with
+// an undo toast; `s` may be gone afterwards.
+void BeginWindowMove(AppState& s);
+void EndWindowMove(AppState& s);
+void FinishWindowMerge(AppState& s, HWND target, size_t index);
 }  // namespace pulse

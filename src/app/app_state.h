@@ -132,6 +132,17 @@ struct TrayTextProbe {
 };
 
 struct SidebarRefreshLoad;
+// The last window merged into this one (M6c), for the toast's undo: the
+// merged tabs in their old order with their old groups, the active one, and
+// the window's place and layout (`place` has no tab snapshots).
+struct WindowMergeUndo {
+    std::vector<const app::LayoutTab*> tabs;
+    std::vector<int> groups;  // each tab's old group id (0: none)
+    std::vector<app::TabGroup> tab_groups;
+    size_t active = 0;  // index into `tabs`
+    app::ClosedWindow place;
+};
+
 struct AppState : AppCoreOwner {
     // Stand-alone window state with its own AppCore (tests and selftest probes).
     AppState() : AppCoreOwner(std::make_unique<AppCore>()), core(*owned_core) {}
@@ -272,6 +283,7 @@ struct AppState : AppCoreOwner {
     std::optional<app::ClosedWindow> window_restore;  // tabs a reopened window starts with (M4c)
     AppState* window_adopt_from = nullptr;  // Ctrl+Shift+M: the window whose tab moves in (M5c)
     size_t window_adopt_index = 0;
+    std::optional<WindowMergeUndo> window_merge_undo;  // M6c
     int tabDropIndex = -1;  // a tab dragged from another window would land here (M6b)
     bool first_present_reported = false;  // test instances: first frame timed once (Render, M4f)
     // This window's kTimerUi period (M4f). One shared pacer handed a period

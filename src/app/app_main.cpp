@@ -58,6 +58,7 @@
 #include "window_factory.h"
 #include "tab_transfer.h"
 #include "tab_detach.h"
+#include "window_merge.h"
 #include "tray_controller.h"
 #include "global_search_controller.h"
 #include "tab_controller.h"
@@ -1334,9 +1335,26 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s) MoveTabToNewWindow(*s);
         return 0;
 
-    case WM_MOVING:
-        if (s) TrackTabDrop(*s);  // a dragged-out tab over another window's strip (M6b)
+    case WM_ENTERSIZEMOVE:
+        if (s) BeginWindowMove(*s);  // a title-bar drag may end on another window's strip (M6c)
         break;
+
+    case WM_MOVING:
+        if (s) TrackTabDrop(*s);  // a dragged window over another window's strip (M6b, M6c)
+        break;
+
+    case WM_EXITSIZEMOVE:
+        if (s) EndWindowMove(*s);
+        break;
+
+    case WM_MERGE_WINDOW:
+        // Destroys this window when the merge happens: touch nothing after.
+        if (s) FinishWindowMerge(*s, reinterpret_cast<HWND>(wParam), static_cast<size_t>(lParam));
+        return 0;
+
+    case WM_UNDO_WINDOW_MERGE:
+        if (s) UndoWindowMerge(*s);
+        return 0;
 
     case WM_BEGIN_TAB_DETACH:
         // May destroy this window (Esc puts the tab back): touch nothing after.
