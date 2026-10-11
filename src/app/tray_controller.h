@@ -25,7 +25,12 @@ public:
     TrayController(const TrayController&) = delete;
     TrayController& operator=(const TrayController&) = delete;
 
-    void Attach(HWND hwnd, HINSTANCE instance);
+    // `window` is the UI window hidden and restored. `icon_window` owns the
+    // notification icon, its callback message and menu (Pulse passes its
+    // hidden host window, so the icon outlives any one UI window); without
+    // it the UI window owns the icon too.
+    void Attach(HWND window, HINSTANCE instance, HWND icon_window = nullptr);
+    HWND IconWindow() const noexcept { return icon_window_; }
     void Detach();
     bool SetVisible(bool visible);
     // `show_icon` false (icon set to never): hide without an icon; a second
@@ -53,6 +58,7 @@ private:
     NOTIFYICONDATAW IconData(UINT flags = 0) const;
 
     HWND hwnd_ = nullptr;
+    HWND icon_window_ = nullptr;
     HINSTANCE instance_ = nullptr;
     bool icon_added_ = false;
     bool wanted_visible_ = false;   // last SetVisible request, for TaskbarCreated

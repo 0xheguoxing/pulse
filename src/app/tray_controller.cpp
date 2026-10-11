@@ -10,10 +10,12 @@ TrayController::~TrayController() {
     Detach();
 }
 
-void TrayController::Attach(HWND hwnd, HINSTANCE instance) {
-    if (hwnd_ == hwnd && instance_ == instance) return;
+void TrayController::Attach(HWND window, HINSTANCE instance, HWND icon_window) {
+    if (!icon_window) icon_window = window;
+    if (hwnd_ == window && icon_window_ == icon_window && instance_ == instance) return;
     Detach();
-    hwnd_ = hwnd;
+    hwnd_ = window;
+    icon_window_ = window ? icon_window : nullptr;
     instance_ = instance;
 }
 
@@ -21,13 +23,14 @@ void TrayController::Detach() {
     SetVisible(false);
     restore_maximized_ = false;
     hwnd_ = nullptr;
+    icon_window_ = nullptr;
     instance_ = nullptr;
 }
 
 NOTIFYICONDATAW TrayController::IconData(UINT flags) const {
     NOTIFYICONDATAW data{};
     data.cbSize = sizeof(data);
-    data.hWnd = hwnd_;
+    data.hWnd = icon_window_;
     data.uID = 1;
     data.uFlags = flags;
     data.uCallbackMessage = kCallbackMessage;
@@ -103,12 +106,14 @@ TrayController::CallbackResult TrayController::HandleCallback(LPARAM event) {
         if (!menu) return CallbackResult::Handled;
         AppendMenuW(menu, MF_STRING, 1, l10n::Get(l10n::StringId::Open).c_str());
         AppendMenuW(menu, MF_STRING, 2, l10n::Get(l10n::StringId::TrayExit).c_str());
-        SetForegroundWindow(hwnd_);
+        // The menu owner must be foreground or the menu will not dismiss
+        // (KB135788); the icon window owns it even while the UI is hidden.
+        SetForegroundWindow(icon_window_);
         const int command = TrackPopupMenu(
             menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
-            point.x, point.y, 0, hwnd_, nullptr);
+            point.x, point.y, 0, icon_window_, nullptr);
         DestroyMenu(menu);
-        PostMessageW(hwnd_, WM_NULL, 0, 0);
+        PostMessageW(icon_window_, WM_NULL, 0, 0);
         if (command == 1) RestoreWindow();
         return command == 2 ? CallbackResult::ExitRequested : CallbackResult::Handled;
     }

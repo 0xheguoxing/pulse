@@ -1460,6 +1460,32 @@ int wmain(int argc, wchar_t** argv) {
     tray.Detach();
     if (hwnd) DestroyWindow(hwnd);
 
+    // Multi-window M2: the icon lives on the hidden host window, the UI window
+    // is what hides and restores. (No SetVisible(true): it would add a real
+    // icon to the notification area.)
+    HWND icon_host = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Pulse tray icon host test",
+        WS_POPUP, -32000, -32000, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    HWND ui_window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC",
+        L"Pulse tray UI window test", WS_POPUP, -32000, -32000, 100, 100,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    TrayController hosted;
+    hosted.Attach(ui_window, GetModuleHandleW(nullptr), icon_host);
+    passed &= Report("tray icon can be owned by a separate host window",
+        icon_host && hosted.IconWindow() == icon_host);
+    hosted.RestoreWindow();
+    passed &= Report("tray restore shows the UI window, never the icon host",
+        ui_window && IsWindowVisible(ui_window) && !IsWindowVisible(icon_host));
+    ShowWindow(ui_window, SW_HIDE);
+    hosted.Detach();
+    passed &= Report("tray detach releases the icon window", hosted.IconWindow() == nullptr);
+    TrayController unhosted;
+    unhosted.Attach(ui_window, GetModuleHandleW(nullptr));
+    passed &= Report("without a host window the UI window owns the tray icon",
+        unhosted.IconWindow() == ui_window);
+    unhosted.Detach();
+    if (ui_window) DestroyWindow(ui_window);
+    if (icon_host) DestroyWindow(icon_host);
+
     pulse::app::AppPrefs prefs;
     passed &= Report("pinned tab names are shown by default", prefs.show_pinned_tab_names);
     pulse::app::ContextMenuPrefs context;

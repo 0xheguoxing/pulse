@@ -22,7 +22,7 @@ bool HotkeyAllowed(const AppState& s) {
 void ApplyGlobalSearchSettings(AppState& s) {
     if (!HotkeyAllowed(s)) return;
     const bool enabled = s.appPrefs.global_search_enabled;
-    const bool ok = s.globalSearchHotkey.Update(s.hwnd, enabled,
+    const bool ok = s.globalSearchHotkey.Update(ServiceWindow(s), enabled,
         s.appPrefs.global_search_modifiers, s.appPrefs.global_search_key);
     s.settings.SetGlobalSearchError(ok ? std::wstring{} : l10n::Get(
         s.globalSearchHotkey.Error() == ERROR_HOTKEY_ALREADY_REGISTERED

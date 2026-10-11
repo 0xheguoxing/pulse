@@ -7,9 +7,11 @@
 // handlers run as before. Window-level messages (frame pump, quick preview,
 // details probe, menus, toasts) still go to their window directly. System
 // broadcasts are not listed: every top-level window already receives them,
-// and forwarding would handle them twice.
+// and forwarding would handle them twice; the host handles TaskbarCreated
+// itself because it owns the notification icon.
 #pragma once
 #include "app_messages.h"
+#include "tray_controller.h"
 
 namespace pulse::app {
 
@@ -26,6 +28,8 @@ inline constexpr UINT kHostRoutedMessages[] = {
     WM_SHELL_CACHE_INVALIDATE, // shell registry watch
     WM_SHELL_VERB_SEED,        // machine verb cache seed
     WM_SHELL_VERBS,            // static verb reads (process-wide cache)
+    TrayController::kCallbackMessage,  // notification icon (owned by the host)
+    WM_HOTKEY,                 // global search hotkey (registered on the host)
 };
 
 constexpr bool IsHostRoutedMessage(UINT message) noexcept {

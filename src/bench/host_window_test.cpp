@@ -171,9 +171,10 @@ int wmain(int argc, wchar_t** argv) {
     bool services = true;
     for (UINT m : {WM_WORKER_RESULT, WM_OPS_NOTIFY, WM_INDEX_NOTIFY, WM_INDEX_SEARCH, WM_NETWORK_INDEX_NOTIFY,
                    WM_NETWORK_INDEX_SEARCH, WM_CONTENT_SEARCH, WM_DUPLICATE_SCAN, WM_ASSOC_CHANGED,
-                   WM_SHELL_CACHE_INVALIDATE, WM_SHELL_VERB_SEED, WM_SHELL_VERBS})
+                   WM_SHELL_CACHE_INVALIDATE, WM_SHELL_VERB_SEED, WM_SHELL_VERBS,
+                   app::TrayController::kCallbackMessage, UINT(WM_HOTKEY)})
         services = services && app::IsHostRoutedMessage(m);
-    Check(services, "service notifications retargeted in M2b are routed");
+    Check(services, "service, tray and hotkey notifications retargeted in M2b are routed");
     bool window_local = true;
     for (UINT m : {WM_FRAME_PUMP, WM_QUICK_PREVIEW_NAVIGATE, WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND,
                    WM_DETAILS_META, WM_SHELLCTX_ITEMS, WM_SHOW_RELEASE_NOTES, WM_CONTENT_SELECTION})

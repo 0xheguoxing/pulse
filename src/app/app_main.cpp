@@ -423,8 +423,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     if (s && IsUiActivityMessage(msg)) NoteUiActivity(hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
     if (s && s->notification_toast.HandleMessage(hwnd, msg, wParam, lParam)) return 0;
     if (s && GroupWheelMessage(*s, hwnd, msg, wParam, lParam)) return 0;
-    if (s && msg == app::TrayController::TaskbarCreatedMessage() && msg != 0) {
-        s->tray_controller.HandleTaskbarCreated();   // Explorer restarted or came up late
+    // Explorer restarted or came up late. The broadcast reaches every
+    // top-level window; the host window handles it, unless there is none.
+    if (s && msg == app::TrayController::TaskbarCreatedMessage() && msg != 0 &&
+        ServiceWindow(*s) == hwnd) {
+        s->tray_controller.HandleTaskbarCreated();
         return 0;
     }
 
@@ -453,7 +456,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         s = reinterpret_cast<AppState*>(cs->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(s));
         s->hwnd = hwnd;
-        s->tray_controller.Attach(hwnd, cs->hInstance);
+        s->tray_controller.Attach(hwnd, cs->hInstance, ServiceWindow(*s));
         InstallTrayRevealHook(*s);
 
         s->scale = s->shot_scale_override > 0.0f
@@ -2749,6 +2752,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         [&state](HWND host, UINT message, WPARAM wParam, LPARAM lParam) -> std::optional<LRESULT> {
             if (app::IsHostRoutedMessage(message))
                 return state.hwnd ? SendMessageW(state.hwnd, message, wParam, lParam) : 0;
+            if (message != 0 && message == app::TrayController::TaskbarCreatedMessage()) {
+                state.tray_controller.HandleTaskbarCreated();  // the icon lives on the host
+                return 0;
+            }
             if (message != WM_COPYDATA) return std::nullopt;
             if (!state.hwnd || !state.single_instance.OwnsEndpoint(host)) return FALSE;
             return HandleInstanceCopyData(state, reinterpret_cast<COPYDATASTRUCT*>(lParam));
