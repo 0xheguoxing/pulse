@@ -1,6 +1,7 @@
 // fs_watch.cpp
 #include "fs_watch.h"
 #include "fs_enum.h"
+#include <winioctl.h>
 #include <algorithm>
 
 namespace pulse::fs {
@@ -59,16 +60,29 @@ struct DirWatch::State {
     bool identity_valid_ = false;
     std::wstring pending_rename_old_;
     DWORD buffer_[64 * 1024 / sizeof(DWORD)]{};
+    // Handle lease (an RH oplock) on hDir_. Without it the open handle made
+    // renaming or moving this folder's parents fail with ERROR_ACCESS_DENIED,
+    // for Pulse's own operations and for every other program. Whoever needs
+    // the handle gone breaks the lease and waits; the watch closes it, steps
+    // aside and looks again. Volumes that grant no lease are watched as before.
+    HANDLE lease_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    OVERLAPPED lease_overlapped_{};
+    REQUEST_OPLOCK_OUTPUT_BUFFER lease_output_{};
+    bool lease_pending_ = false;
     ~State() {
         const HANDLE directory = hDir_.load();
         if (directory != INVALID_HANDLE_VALUE) CloseHandle(directory);
         if (hStop_) CloseHandle(hStop_);
+        if (lease_event_) CloseHandle(lease_event_);
         --active_watchers;
     }
     static HANDLE OpenDirectory(const std::wstring& path);
     static bool ReadIdentity(HANDLE handle, BY_HANDLE_FILE_INFORMATION& identity);
     bool WatchedPathReplaced() const;
     bool ReopenDirectory();
+    void RequestLease(HANDLE directory, DWORD level, DWORD flags);
+    void DropLease(HANDLE directory);
+    bool LeaseBreakWantsHandle(HANDLE directory);
     void Notify(bool overflow, std::vector<DirNotifyEvent> events);
     void WorkerThread();
 };
@@ -145,6 +159,7 @@ bool DirWatch::State::WatchedPathReplaced() const {
 bool DirWatch::State::ReopenDirectory() {
     armed_ = false;
     const HANDLE old = hDir_.exchange(INVALID_HANDLE_VALUE, std::memory_order_acq_rel);
+    DropLease(old);
     if (old != INVALID_HANDLE_VALUE) CloseHandle(old);
     identity_valid_ = false;
 
@@ -156,12 +171,60 @@ bool DirWatch::State::ReopenDirectory() {
                 identity_ = identity;
                 identity_valid_ = true;
                 hDir_.store(directory, std::memory_order_release);
+                RequestLease(directory, OPLOCK_LEVEL_CACHE_READ | OPLOCK_LEVEL_CACHE_HANDLE,
+                             REQUEST_OPLOCK_INPUT_FLAG_REQUEST);
                 return true;
             }
             CloseHandle(directory);
         }
         if (WaitForSingleObject(hStop_, 1000) == WAIT_OBJECT_0) break;
     }
+    return false;
+}
+
+void DirWatch::State::RequestLease(HANDLE directory, DWORD level, DWORD flags) {
+    lease_pending_ = false;
+    // A share keeps its handle semantics on the server.
+    if (!lease_event_ || directory == INVALID_HANDLE_VALUE || path_.starts_with(L"\\\\?\\UNC\\") ||
+        !path_.starts_with(L"\\\\?\\"))
+        return;
+    REQUEST_OPLOCK_INPUT_BUFFER input{};
+    input.StructureVersion = REQUEST_OPLOCK_CURRENT_VERSION;
+    input.StructureLength = sizeof(input);
+    input.RequestedOplockLevel = level;
+    input.Flags = flags;
+    lease_output_ = {};
+    ZeroMemory(&lease_overlapped_, sizeof(lease_overlapped_));
+    lease_overlapped_.hEvent = lease_event_;
+    ResetEvent(lease_event_);
+    const BOOL done = DeviceIoControl(directory, FSCTL_REQUEST_OPLOCK, &input, sizeof(input), &lease_output_,
+                                      sizeof(lease_output_), nullptr, &lease_overlapped_);
+    // Pending is the granted state: the request completes when the lease breaks.
+    lease_pending_ = !done && GetLastError() == ERROR_IO_PENDING;
+}
+
+void DirWatch::State::DropLease(HANDLE directory) {
+    if (!lease_pending_) return;
+    lease_pending_ = false;
+    CancelIoEx(directory, &lease_overlapped_);
+    WaitForSingleObject(lease_event_, INFINITE);  // the kernel is done with the OVERLAPPED
+}
+
+// The lease broke. A break that keeps read caching and takes the handle away
+// means a rename or move of this folder or a folder above it, or an open that
+// conflicts with ours, is waiting for the handle. A folder's contents changing
+// breaks the whole lease instead: keep the handle and its pending read, renew.
+bool DirWatch::State::LeaseBreakWantsHandle(HANDLE directory) {
+    lease_pending_ = false;
+    if (lease_overlapped_.Internal != 0) return false;  // refused or cancelled: watch without one
+    const DWORD level = lease_output_.NewOplockLevel;
+    if ((level & OPLOCK_LEVEL_CACHE_READ) && !(level & OPLOCK_LEVEL_CACHE_HANDLE)) return true;
+    if (lease_output_.Flags & REQUEST_OPLOCK_OUTPUT_FLAG_ACK_REQUIRED) {
+        // An acknowledgment to a level above none stays pending for the next break.
+        RequestLease(directory, level, REQUEST_OPLOCK_INPUT_FLAG_ACK);
+        if (lease_pending_) return false;
+    }
+    RequestLease(directory, OPLOCK_LEVEL_CACHE_READ | OPLOCK_LEVEL_CACHE_HANDLE, REQUEST_OPLOCK_INPUT_FLAG_REQUEST);
     return false;
 }
 
@@ -203,7 +266,7 @@ void DirWatch::State::WorkerThread() {
         ZeroMemory(&overlapped_, sizeof(overlapped_));
         overlapped_.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (!overlapped_.hEvent) break;
-        HANDLE events[2] = { hStop_, overlapped_.hEvent };
+        HANDLE events[3] = { hStop_, overlapped_.hEvent, lease_event_ };
         const HANDLE directory = hDir_.load(std::memory_order_acquire);
         if (directory == INVALID_HANDLE_VALUE) {
             CloseHandle(overlapped_.hEvent);
@@ -244,8 +307,16 @@ void DirWatch::State::WorkerThread() {
 
         bool replaced = false;
         bool stopped = false;
+        bool stepped_aside = false;
         for (;;) {
-            const DWORD wait = WaitForMultipleObjects(2, events, FALSE, 500);
+            const DWORD wait = WaitForMultipleObjects(lease_pending_ ? 3 : 2, events, FALSE, 500);
+            if (wait == WAIT_OBJECT_0 + 2) {
+                if (!LeaseBreakWantsHandle(directory)) continue;
+                CancelIoEx(directory, &overlapped_);
+                WaitForSingleObject(overlapped_.hEvent, INFINITE);
+                stepped_aside = true;
+                break;
+            }
             if (wait == WAIT_TIMEOUT) {
                 if (!WatchedPathReplaced()) {
                     recovered(); // A pending read survived its first identity check.
@@ -277,6 +348,20 @@ void DirWatch::State::WorkerThread() {
 
         if (stopped || !running_) break;
 
+        if (stepped_aside) {
+            // Close now so the waiting rename or move goes ahead, and let it
+            // finish before opening the path again.
+            armed_ = false;
+            pending_rename_old_.clear();
+            const HANDLE old = hDir_.exchange(INVALID_HANDLE_VALUE, std::memory_order_acq_rel);
+            if (old != INVALID_HANDLE_VALUE) CloseHandle(old);
+            if (WaitForSingleObject(hStop_, 300) != WAIT_TIMEOUT || !running_) break;
+            Notify(true, {});
+            if (!ReopenDirectory()) break;
+            newly_armed = true;
+            continue;
+        }
+
         if (replaced) {
             pending_rename_old_.clear();
             Notify(true, {});
@@ -301,6 +386,7 @@ void DirWatch::State::WorkerThread() {
                                         pending_rename_old_, subtree_));
     }
     armed_ = false;
+    DropLease(hDir_.load(std::memory_order_acquire));
 }
 
 void DirWatchSet::Sync(const std::vector<std::wstring>& paths, Callback cb) {
