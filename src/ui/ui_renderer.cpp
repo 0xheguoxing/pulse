@@ -1038,6 +1038,25 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         }
     }
 
+    // A tab dragged from another window lands here (multi-window M6b): a bar
+    // in the gap before the visible tab at the index, or after the last tab.
+    if (vm.tab_drop_index >= 0) {
+        float barX = strip.end_x;
+        for (size_t i = static_cast<size_t>(vm.tab_drop_index); i < vm.tabs.size(); ++i) {
+            if (vm.tabs[i].hidden) continue;
+            const float extra = i < strip.extra.size() ? strip.extra[i] : 0.0f;
+            barX = strip.x0 + (static_cast<float>(i) + vm.tabs[i].x_offset) * strip.pitch + extra -
+                   (std::max)(0.0f, strip.pitch - strip.w) * 0.5f;
+            break;
+        }
+        const float half = 1.5f * scale_;
+        MakeBrush(dc, theme.accent, brAccent_);
+        dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(barX - half, tabY + tabH * 0.18f,
+                                                               barX + half, tabY + tabH * 0.82f),
+                                                   half, half),
+                                 brAccent_.get());
+    }
+
     // The tab and sheet form one surface; a straight rule here breaks the shoulders.
 
     if (tabLayer) dc->PopLayer();

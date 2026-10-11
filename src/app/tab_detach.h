@@ -26,9 +26,27 @@ RECT DetachedWindowRect(SIZE size, POINT cursor, POINT grab_client, POINT client
 // here (the caller stops handling the move).
 bool TryDetachDraggedTab(AppState& s, int mx, int my);
 
+// A visible tab of a strip, in strip order: its window_tabs index and rect.
+struct TabSpan {
+    size_t index = 0;
+    RECT rect{};
+};
+// Where a tab dropped at `pt` (client px) lands among `spans`: before the
+// first tab whose middle is right of `pt`, else at `count` (the end). The
+// whole tab row counts, as in browsers: -1 only when `pt` is more than
+// `slack` px above or below the tabs or left of the first one, or right of
+// `strip_right` (where the caption buttons start).
+int TabDropIndex(const TabSpan* spans, size_t span_count, size_t count, POINT pt, LONG slack,
+                 LONG strip_right);
+
 // WM_BEGIN_TAB_DETACH: runs the system move loop for `s` while the button is
 // still down. `from` is the window the tab came from and `index` its old
 // position (nullptr: the whole window was dragged by its only tab). After Esc
-// the tab goes back and `s` is destroyed.
+// the tab goes back and `s` is destroyed. Released over another Pulse
+// window's tab strip, a window with one tab merges into it there (M6b).
 void RunDetachedTabMove(AppState& s, HWND from, size_t index);
+
+// WM_MOVING: while `s` is in that move loop, marks where its tab would land
+// on the tab strip of the Pulse window under the cursor (M6b).
+void TrackTabDrop(AppState& s);
 }  // namespace pulse

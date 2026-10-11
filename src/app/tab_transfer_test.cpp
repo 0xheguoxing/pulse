@@ -104,6 +104,17 @@ bool RunTabTransferTest() {
                   TabDetachDistanceReached(POINT{100, 20}, POINT{100, 56}, 1.5f) &&
                   TabDetachDistanceReached(POINT{100, 40}, POINT{100, 16}, 1.0f),
               "a tab leaves the strip after 24 DIP up or down; sideways travel alone reorders");
+        // M6b: tabs 0, 1 and 3 visible (2 is in a collapsed group), 4 in all.
+        const TabSpan spans[] = {{0, RECT{100, 10, 300, 50}}, {1, RECT{304, 10, 504, 50}},
+                                 {3, RECT{508, 10, 708, 50}}};
+        const auto drop = [&](LONG x, LONG y) { return TabDropIndex(spans, 3, 4, POINT{x, y}, 12, 900); };
+        check(drop(150, 30) == 0 && drop(250, 30) == 1 && drop(450, 30) == 3 && drop(650, 30) == 4,
+              "a dropped tab lands before the first tab whose middle is right of the cursor, else at the end");
+        check(drop(760, 30) == 4 && drop(900, 30) == 4,
+              "the empty strip right of the tabs, up to the caption buttons, drops at the end");
+        check(drop(901, 30) == -1 && drop(150, 62) == 0 && drop(150, 63) == -1 && drop(87, 30) == -1 &&
+                  TabDropIndex(spans, 0, 4, POINT{150, 30}, 12, 900) == -1,
+              "off the strip (above, below, left of the tabs, on the caption buttons, no visible tab) nothing is marked");
     }
 
     // --- MoveLayoutTab between two windows --------------------------------

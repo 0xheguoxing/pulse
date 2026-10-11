@@ -272,6 +272,7 @@ struct AppState : AppCoreOwner {
     std::optional<app::ClosedWindow> window_restore;  // tabs a reopened window starts with (M4c)
     AppState* window_adopt_from = nullptr;  // Ctrl+Shift+M: the window whose tab moves in (M5c)
     size_t window_adopt_index = 0;
+    int tabDropIndex = -1;  // a tab dragged from another window would land here (M6b)
     bool first_present_reported = false;  // test instances: first frame timed once (Render, M4f)
     // This window's kTimerUi period (M4f). One shared pacer handed a period
     // change to whichever window ticked first, so another could keep the fast

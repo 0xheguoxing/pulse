@@ -627,6 +627,7 @@ struct WindowViewModel {
     int breadcrumb_hover = -1;    // placed segment under the mouse
     int breadcrumb_drop = -1;     // placed segment under a drag
     int sidebar_drop_index = -1;  // sidebar item under a drag
+    int tab_drop_index = -1;      // a tab dragged from another window lands before this tab (M6b)
     // Tag drag-reorder gesture (group/item = dragged tag, tag_drag_y = cursor).
     int tag_drag_group = -1;
     int tag_drag_item = -1;

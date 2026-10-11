@@ -2062,6 +2062,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.breadcrumb_hover = s.breadcrumbHover;
     vm.breadcrumb_drop = s.dropBreadcrumb;
     vm.sidebar_drop_index = s.dropSidebar;
+    vm.tab_drop_index = s.tabDropIndex;
     // Sidebar tag reorder: emit the tags group in the tentative drag order and
     // feed each tag its current slide offset (slot units).
     int tagsGroup = -1;

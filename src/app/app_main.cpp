@@ -1334,6 +1334,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s) MoveTabToNewWindow(*s);
         return 0;
 
+    case WM_MOVING:
+        if (s) TrackTabDrop(*s);  // a dragged-out tab over another window's strip (M6b)
+        break;
+
     case WM_BEGIN_TAB_DETACH:
         // May destroy this window (Esc puts the tab back): touch nothing after.
         if (s) RunDetachedTabMove(*s, reinterpret_cast<HWND>(wParam), static_cast<size_t>(lParam));

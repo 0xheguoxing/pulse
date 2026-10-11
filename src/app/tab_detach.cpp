@@ -8,8 +8,12 @@
 #include "window_factory.h"
 #include "window_registry.h"
 
+#include <dwmapi.h>
+
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <vector>
 
 namespace pulse {
 namespace {
@@ -25,6 +29,82 @@ struct Grab {
     POINT offset{};
 };
 Grab g_grab;
+// The window in our move loop, and the strip spot its tab would drop on
+// (windows are looked up by handle: one may close during the loop).
+HWND g_moving = nullptr;
+struct Drop {
+    HWND window = nullptr;
+    size_t index = 0;
+};
+Drop g_drop;
+
+AppState* WindowOf(AppState& any, HWND hwnd) {
+    if (!hwnd) return nullptr;
+    AppState& found = app::FindWindowSharingCore(any, [hwnd](const AppState& w) { return w.hwnd == hwnd; });
+    return found.hwnd == hwnd ? &found : nullptr;
+}
+
+void ShowDrop(AppState& any, const Drop& next) {
+    if (g_drop.window == next.window && g_drop.index == next.index) return;
+    if (AppState* old = WindowOf(any, g_drop.window)) {
+        old->tabDropIndex = -1;
+        InvalidateRect(old->hwnd, nullptr, FALSE);
+    }
+    g_drop = next;
+    if (AppState* target = WindowOf(any, next.window)) {
+        target->tabDropIndex = static_cast<int>(next.index);
+        InvalidateRect(target->hwnd, nullptr, FALSE);
+    }
+}
+
+// Over a strip the dragged window would hide the drop bar under its own
+// tab: it turns see-through until it leaves the strip or the loop ends.
+void SeeThrough(HWND hwnd, bool on) {
+    const LONG_PTR ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+    if (on == ((ex & WS_EX_LAYERED) != 0)) return;
+    if (on) {
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+        SetLayeredWindowAttributes(hwnd, 0, 140, LWA_ALPHA);
+    } else {
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex & ~static_cast<LONG_PTR>(WS_EX_LAYERED));
+    }
+}
+
+bool Cloaked(HWND hwnd) {
+    DWORD cloaked = 0;
+    return SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked != 0;
+}
+
+// The tab strip spot under `cursor` (screen px) in the topmost window below
+// `moving`, when that window is another Pulse window on the same core.
+Drop FindDrop(AppState& moving, POINT cursor) {
+    for (HWND below = GetWindow(moving.hwnd, GW_HWNDNEXT); below; below = GetWindow(below, GW_HWNDNEXT)) {
+        if (!IsWindowVisible(below) || IsIconic(below) || Cloaked(below)) continue;
+        RECT bounds{};
+        if (!GetWindowRect(below, &bounds) || !PtInRect(&bounds, cursor)) continue;
+        AppState* target = WindowOf(moving, below);
+        if (!target || target == &moving) return {};  // another program covers the spot
+        const ui::WindowViewModel vm = BuildVm(*target, false);
+        const float width = static_cast<float>(target->compositor.Width());
+        std::vector<TabSpan> spans;
+        for (int i = 0; i < static_cast<int>(vm.tabs.size()); ++i) {
+            D2D1_RECT_F rc{};
+            if (!target->renderer.TabItemRect(vm, width, i, &rc)) continue;
+            spans.push_back(TabSpan{static_cast<size_t>(i),
+                                    RECT{std::lround(rc.left), std::lround(rc.top), std::lround(rc.right),
+                                         std::lround(rc.bottom)}});
+        }
+        POINT client = cursor;
+        ScreenToClient(below, &client);
+        const float scale = target->scale > 0.0f ? target->scale : 1.0f;
+        const LONG caption_buttons = std::lround(3.0f * 46.0f * scale);  // minimize, maximize, close
+        const int index = TabDropIndex(spans.data(), spans.size(), target->window_tabs.items.size(), client,
+                                       std::lround(12.0f * scale), std::lround(width) - caption_buttons);
+        if (index < 0) return {};
+        return Drop{below, static_cast<size_t>(index)};
+    }
+    return {};
+}
 
 LRESULT CALLBACK EscapeHook(int code, WPARAM wparam, LPARAM lparam) {
     if (code == HC_ACTION && wparam == VK_ESCAPE && (lparam & 0x80000000) == 0)
@@ -66,6 +146,31 @@ RECT DetachedWindowRect(SIZE size, POINT cursor, POINT grab_client, POINT client
     const LONG left = cursor.x - grab_client.x - client_offset.x;
     const LONG top = cursor.y - grab_client.y - client_offset.y;
     return RECT{left, top, left + size.cx, top + size.cy};
+}
+
+int TabDropIndex(const TabSpan* spans, size_t span_count, size_t count, POINT pt, LONG slack,
+                 LONG strip_right) {
+    if (!spans || span_count == 0) return -1;
+    LONG top = spans[0].rect.top, bottom = spans[0].rect.bottom;
+    LONG left = spans[0].rect.left;
+    for (size_t i = 1; i < span_count; ++i) {
+        top = (std::min)(top, spans[i].rect.top);
+        bottom = (std::max)(bottom, spans[i].rect.bottom);
+        left = (std::min)(left, spans[i].rect.left);
+    }
+    if (pt.y < top - slack || pt.y > bottom + slack || pt.x < left - slack || pt.x > strip_right) return -1;
+    for (size_t i = 0; i < span_count; ++i) {
+        if (pt.x < (spans[i].rect.left + spans[i].rect.right) / 2) return static_cast<int>(spans[i].index);
+    }
+    return static_cast<int>(count);
+}
+
+void TrackTabDrop(AppState& s) {
+    if (g_moving != s.hwnd) return;
+    POINT cursor{};
+    GetCursorPos(&cursor);
+    ShowDrop(s, s.window_tabs.items.size() == 1 ? FindDrop(s, cursor) : Drop{});
+    SeeThrough(s.hwnd, g_drop.window != nullptr);
 }
 
 bool TryDetachDraggedTab(AppState& s, int mx, int my) {
@@ -146,6 +251,8 @@ void RunDetachedTabMove(AppState& s, HWND from, size_t index) {
     }
     g_escape_pressed = false;
     g_escape_hook = SetWindowsHookExW(WH_KEYBOARD, EscapeHook, nullptr, GetCurrentThreadId());
+    g_moving = hwnd;
+    g_drop = Drop{};
     if (from) {
         SendMessageW(hwnd, WM_SYSCOMMAND, SC_MOVE | HTCAPTION, MAKELPARAM(cursor.x, cursor.y));
     } else {
@@ -155,7 +262,25 @@ void RunDetachedTabMove(AppState& s, HWND from, size_t index) {
     }
     if (g_escape_hook) UnhookWindowsHookEx(g_escape_hook);
     g_escape_hook = nullptr;
-    if (!from || !g_escape_pressed || !IsWindow(hwnd)) return;
+    g_moving = nullptr;
+    const HWND drop_window = g_drop.window;
+    const size_t drop_index = g_drop.index;
+    ShowDrop(s, Drop{});
+    if (!IsWindow(hwnd)) return;
+    SeeThrough(hwnd, false);
+
+    // Released on another window's tab strip: the tab joins it there (M6b).
+    AppState* const target = g_escape_pressed ? nullptr : WindowOf(s, drop_window);
+    if (target && target != &s && s.window_tabs.items.size() == 1) {
+        ShowWindow(hwnd, SW_HIDE);
+        if (MoveLayoutTab(s, 0, *target, drop_index, TransferSource::Closing)) {
+            DestroyWindow(hwnd);
+            SetForegroundWindow(target->hwnd);
+            return;
+        }
+        ShowWindow(hwnd, SW_SHOWNORMAL);
+    }
+    if (!from || !g_escape_pressed) return;
 
     // Esc: the tab goes back to its place and the new window goes away.
     AppState& source = app::FindWindowSharingCore(s, [from](const AppState& w) { return w.hwnd == from; });
