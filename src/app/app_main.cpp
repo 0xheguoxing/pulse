@@ -256,6 +256,17 @@ void Render(AppState& s) {
     // An occluded flip chain advances to an unpainted buffer after Present.
     if (!hidden_capture) s.compositor.Present();
     const auto present_end = std::chrono::steady_clock::now();
+    // Test instances report each window's first presented frame to the
+    // debugger output on the QPC clock, so a harness can time Ctrl+N to the
+    // new window's first frame (multi-window M4f).
+    if (s.isolatedTest && !s.first_present_reported && !hidden_capture) {
+        s.first_present_reported = true;
+        LARGE_INTEGER qpc{};
+        QueryPerformanceCounter(&qpc);
+        wchar_t line[96]{};
+        swprintf_s(line, L"PulseFirstPresent hwnd=%p qpc=%lld\n", static_cast<void*>(s.hwnd), qpc.QuadPart);
+        OutputDebugStringW(line);
+    }
     s.timing.present_ms = std::chrono::duration<double, std::milli>(present_end - present_start).count();
 
     if (s.renameIndex >= 0) LayoutRenameOverlay(s);

@@ -269,6 +269,7 @@ struct AppState : AppCoreOwner {
     bool has_window_start = false;
     std::wstring window_start_path;
     std::optional<app::ClosedWindow> window_restore;  // tabs a reopened window starts with (M4c)
+    bool first_present_reported = false;  // test instances: first frame timed once (Render, M4f)
     ui::BloomAccentPicker bloom_accent;
     std::shared_ptr<ContentSelectionAction> contentSelectionAction;
     uint64_t dup_view_epoch = 0;
