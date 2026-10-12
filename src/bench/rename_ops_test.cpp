@@ -19,6 +19,9 @@ bool Wait(OpsManager& ops, uint64_t before) {
     }
     return false;
 }
+bool Has(const std::wstring& text, const wchar_t* part) { return text.find(part) != std::wstring::npos; }
+// Failure text is for people: a reason, never a bare error number.
+bool Friendly(const std::wstring& text) { return !text.empty() && !Has(text, L"错误 ") && !Has(text, L"error "); }
 bool Exact(const std::filesystem::path& path) {
     WIN32_FIND_DATAW data{};
     HANDLE find = FindFirstFileW(path.c_str(), &data);
@@ -146,6 +149,15 @@ int main(int argc, char** argv) {
         rename(L"stay.txt", name);
         Check(Exact(root / L"stay.txt") && ops.Status().phase == OpPhase::Failed, "invalid filename rejected");
     }
+    const struct { const wchar_t* name; const wchar_t* reason; } reasons[] = {
+        {L"bad:name", L"不能包含以下字符"}, {L"bad?name", L"不能包含以下字符"}, {L"trailing.", L"空格或句点结尾"},
+        {L"trailing ", L"空格或句点结尾"}, {L"CON.txt", L"Windows 保留的名称"}, {L"LPT1", L"Windows 保留的名称"},
+        {L"", L"不能为空"}};
+    for (const auto& item : reasons) {
+        rename(L"stay.txt", item.name);
+        Check(Exact(root / L"stay.txt") && Has(ops.Status().last_error, item.reason) &&
+            Friendly(ops.Status().last_error), "invalid filename says why");
+    }
     make(L"first.txt"); make(L"second.txt"); make(L"third.txt");
     OpRequest batch; batch.type = OpType::BatchRename;
     batch.sources = {(root / L"first.txt").wstring(), (root / L"second.txt").wstring(), (root / L"third.txt").wstring()};
@@ -171,6 +183,7 @@ int main(int argc, char** argv) {
     Check(Exact(root / L"conflict-source.txt") && Exact(root / L"conflict-target.txt") &&
         ops.Status().phase == OpPhase::Failed && ops.Status().last_error != L"操作层未启动",
         "existing target rejected without replacing either file");
+    Check(ops.Status().last_error == L"目标名称已存在", "existing target keeps the message the UI localizes");
     make(L"locked.txt");
     HANDLE locked = CreateFileW((root / L"locked.txt").c_str(), GENERIC_READ, FILE_SHARE_READ,
         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -179,6 +192,17 @@ int main(int argc, char** argv) {
     Check(Exact(root / L"locked.txt") && !std::filesystem::exists(root / L"locked-renamed.txt") &&
         ops.Status().phase == OpPhase::Failed && ops.Status().last_error != L"操作层未启动",
         "sharing violation reports failure without changing file");
+    {
+        const auto status = ops.Status();
+        Check(Has(status.last_error, L"正被其他程序使用") && Friendly(status.last_error),
+            "sharing violation says another program is using the file");
+        bool self = false;
+        for (const auto& owner : status.lock_owners) self = self || owner.pid == GetCurrentProcessId();
+        std::printf("[INFO] locked rename owners=%zu path_matches=%d\n", status.lock_owners.size(),
+            status.locked_path == (root / L"locked.txt").wstring());
+        Check(self && status.locked_path == (root / L"locked.txt").wstring(),
+            "locked rename names the program holding the file");
+    }
     if (locked != INVALID_HANDLE_VALUE) CloseHandle(locked);
     ops.Stop();
     // This absolute directory was created by this process under bench_data.

@@ -242,11 +242,95 @@ bool IsRenameComponent(const std::wstring& name) {
     return IsRenameFilename(name);
 }
 
+std::wstring Win32Message(DWORD code);
+
+// Says why a name is refused instead of only "invalid".
+std::wstring RenameNameText(const std::wstring& name) {
+    switch (RenameFilenameProblem(name)) {
+    case RenameFilenameIssue::Empty:
+        return l10n::Pick(L"名称不能为空。", L"The name can't be empty.");
+    case RenameFilenameIssue::InvalidCharacter:
+        return l10n::Pick(L"名称不能包含以下字符：\\ / : * ? \" < > |",
+                          L"A name can't contain any of these characters: \\ / : * ? \" < > |");
+    case RenameFilenameIssue::TrailingDotOrSpace:
+        return l10n::Pick(L"名称不能以空格或句点结尾。", L"A name can't end with a space or a period.");
+    case RenameFilenameIssue::Reserved:
+        return l10n::Pick(L"这是 Windows 保留的名称（如 CON、NUL、COM1），请换一个名称。",
+                          L"Windows reserves this name (like CON, NUL or COM1). Choose a different name.");
+    case RenameFilenameIssue::None:
+        break;
+    }
+    return l10n::Pick(L"名称无效", L"Invalid name");
+}
+
+// The reason a rename failed, in the user's words; never a bare error number.
+// "目标名称已存在" stays the key the UI maps to its own localized text.
+std::wstring RenameFailureText(DWORD code) {
+    switch (code) {
+    case ERROR_ACCESS_DENIED:
+    case ERROR_PRIVILEGE_NOT_HELD:
+    case ERROR_ELEVATION_REQUIRED:
+        return l10n::Pick(L"可能需要管理员权限，或此项（或其中的文件）正被其他程序使用。",
+                          L"You may need administrator permission, or another program may be using this item or a file inside it.");
+    case ERROR_SHARING_VIOLATION:
+    case ERROR_LOCK_VIOLATION:
+        return l10n::Pick(L"该项目正被其他程序使用。关闭相关程序后重试。",
+                          L"The item is in use by another program. Close it and try again.");
+    case ERROR_FILE_NOT_FOUND:
+    case ERROR_PATH_NOT_FOUND:
+        return l10n::Pick(L"找不到此项，它可能已被移动、重命名或删除。请刷新后重试。",
+                          L"The item can't be found. It may have been moved, renamed or deleted. Refresh and try again.");
+    case ERROR_ALREADY_EXISTS:
+    case ERROR_FILE_EXISTS:
+        return l10n::Pick(L"目标名称已存在", L"The target name already exists");
+    case ERROR_INVALID_NAME:
+    case ERROR_BAD_PATHNAME:
+    case ERROR_DIRECTORY:
+        return l10n::Pick(L"此位置不接受这个名称，请换一个名称。",
+                          L"This location doesn't accept that name. Choose a different name.");
+    case ERROR_FILENAME_EXCED_RANGE:
+        return l10n::Pick(L"名称太长，或完整路径超出了系统限制。请缩短名称后重试。",
+                          L"The name is too long, or the full path exceeds the system limit. Use a shorter name.");
+    case ERROR_WRITE_PROTECT:
+        return l10n::Pick(L"该磁盘处于写保护状态，无法修改。", L"The disk is write-protected.");
+    case ERROR_NOT_READY:
+    case ERROR_DEV_NOT_EXIST:
+    case ERROR_BAD_NETPATH:
+    case ERROR_NETNAME_DELETED:
+    case ERROR_UNEXP_NET_ERR:
+    case ERROR_NETWORK_UNREACHABLE:
+        return l10n::Pick(L"该位置当前不可用，设备可能已断开或网络连接已中断。",
+                          L"This location isn't available. The device may be disconnected or the network connection lost.");
+    case ERROR_DISK_FULL:
+    case ERROR_HANDLE_DISK_FULL:
+        return l10n::Pick(L"磁盘空间不足。", L"There isn't enough disk space.");
+    case ERROR_NOT_SUPPORTED:
+    case ERROR_INVALID_FUNCTION:
+        return l10n::Pick(L"此位置不支持重命名。", L"This location doesn't support renaming.");
+    case ERROR_CANT_ACCESS_FILE:
+#ifdef ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING
+    case ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING:
+#endif
+#ifdef ERROR_CLOUD_FILE_IN_USE
+    case ERROR_CLOUD_FILE_IN_USE:
+#endif
+#ifdef ERROR_CLOUD_FILE_UNSUCCESSFUL
+    case ERROR_CLOUD_FILE_UNSUCCESSFUL:
+#endif
+        return l10n::Pick(L"云同步文件暂时无法修改。请确认同步客户端正在运行，等同步完成后重试。",
+                          L"This cloud file can't be changed right now. Make sure the sync app is running and try again after it syncs.");
+    default:
+        // The system's own sentence, in the system language, without the number.
+        return Win32Message(code);
+    }
+}
+
 enum class RenameResult { Completed, Rejected };
 RenameResult RenameInProcess(const std::wstring& source, const std::wstring& new_name,
-                     std::wstring* error) {
+                     std::wstring* error, DWORD* code = nullptr) {
+    if (code) *code = ERROR_SUCCESS;
     if (source.empty() || !IsRenameComponent(new_name)) {
-        if (error) *error = l10n::Pick(L"名称无效", L"Invalid name");
+        if (error) *error = source.empty() ? l10n::Pick(L"名称无效", L"Invalid name") : RenameNameText(new_name);
         return RenameResult::Rejected;
     }
     const std::wstring target = JoinPath(ParentOf(source), new_name);
@@ -262,8 +346,9 @@ RenameResult RenameInProcess(const std::wstring& source, const std::wstring& new
         return RenameResult::Rejected;
     }
     if (!MoveFileW(source.c_str(), target.c_str())) {
-        const DWORD code = GetLastError();
-        if (error) *error = l10n::Pick(L"重命名失败（错误 ", L"Rename failed (error ") + std::to_wstring(code) + l10n::Pick(L"）", L")");
+        const DWORD failure = GetLastError();
+        if (code) *code = failure;
+        if (error) *error = RenameFailureText(failure);
         return RenameResult::Rejected;
     }
     return RenameResult::Completed;
@@ -1014,7 +1099,8 @@ LockReport OpsManager::ProbeLock(const OpRequest& req, uint64_t task_id, HRESULT
                                  const std::wstring& error) {
     LockReport report;
     const bool lockable = req.type == OpType::Copy || req.type == OpType::Move
-        || req.type == OpType::RecycleDelete || req.type == OpType::RealDelete;
+        || req.type == OpType::RecycleDelete || req.type == OpType::RealDelete
+        || req.type == OpType::Rename;
     if (lockable) {
         report = ProbeLockFailure(hr, error, req.sources, CurrentModuleDirectory());
     }
@@ -2805,14 +2891,18 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
 
     if (req.type == OpType::Rename || req.type == OpType::BatchRename) {
         bool valid = !req.sources.empty() && (req.type != OpType::Rename || req.sources.size() == 1);
+        std::wstring invalid_reason;
         for (size_t i = 0; i < req.sources.size(); ++i) {
             const auto& name = req.type == OpType::BatchRename && i < req.new_names.size() ? req.new_names[i] : req.new_name;
+            if (valid && !req.sources[i].empty() && !IsRenameComponent(name)) invalid_reason = RenameNameText(name);
             valid = valid && !req.sources[i].empty() && IsRenameComponent(name);
         }
         if (!valid || shell_cancel_requested_.load() || stopping_.load()) {
             SetStatus([&](OpStatus& st) {
                 st.active = false; st.phase = OpPhase::Failed; st.percent = -1.0f;
-                ++st.completed_ops; st.last_error = valid ? l10n::Pick(L"已取消", L"Canceled") : l10n::Pick(L"名称无效", L"Invalid name");
+                ++st.completed_ops;
+                st.last_error = valid ? l10n::Pick(L"已取消", L"Canceled")
+                    : !invalid_reason.empty() ? invalid_reason : l10n::Pick(L"名称无效", L"Invalid name");
             });
             return;
         }
@@ -2878,11 +2968,18 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
     // A single rename shares the batch path's validation and no-overwrite rules.
     if (req.type == OpType::Rename && req.sources.size() == 1) {
         std::wstring local_error;
-        const auto local = RenameInProcess(req.sources.front(), req.new_name, &local_error);
+        DWORD local_code = ERROR_SUCCESS;
+        const auto local = RenameInProcess(req.sources.front(), req.new_name, &local_error, &local_code);
         if (local == RenameResult::Rejected) {
+            // A handle held elsewhere: name the program and offer the retry,
+            // like delete and move (the folder case probes files inside it).
+            const LockReport lock_report = local_code != ERROR_SUCCESS
+                ? ProbeLock(req, task_id, HRESULT_FROM_WIN32(local_code), local_error) : LockReport{};
             SetStatus([&](OpStatus& st) {
                 st.active = false; st.phase = OpPhase::Failed; st.percent = -1.0f;
                 ++st.completed_ops; st.last_error = local_error;
+                st.locked_path = lock_report.path;
+                st.lock_owners = lock_report.owners;
             });
             return;
         }
