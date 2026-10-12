@@ -325,6 +325,50 @@ std::wstring RenameFailureText(DWORD code) {
     }
 }
 
+// Why a new folder or text file could not be created. "没有权限" is the key
+// the UI maps to its write-permission message.
+std::wstring CreateFailureText(DWORD code) {
+    switch (code) {
+    case ERROR_ACCESS_DENIED:
+    case ERROR_PRIVILEGE_NOT_HELD:
+    case ERROR_ELEVATION_REQUIRED:
+        return l10n::Pick(L"没有权限在此位置新建", L"You don't have permission to create items here.");
+    case ERROR_FILE_NOT_FOUND:
+    case ERROR_PATH_NOT_FOUND:
+        return l10n::Pick(L"当前文件夹已不存在，它可能已被移动或删除。请刷新后重试。",
+                          L"This folder no longer exists. It may have been moved or deleted. Refresh and try again.");
+    case ERROR_ALREADY_EXISTS:
+    case ERROR_FILE_EXISTS:
+        return l10n::Pick(L"已存在同名项目", L"An item with this name already exists");
+    case ERROR_NOT_SUPPORTED:
+    case ERROR_INVALID_FUNCTION:
+        return l10n::Pick(L"此位置不支持新建。", L"This location doesn't support creating items.");
+    default:
+        return RenameFailureText(code);
+    }
+}
+
+// New folder / new text file: the same plain Win32 creation the Shell host
+// ran, done here so a busy, restarting or unreachable host can never leave a
+// new folder waiting with no progress. The UI already picked a unique name.
+bool CreateInProcess(OpType type, const std::wstring& path, std::wstring* error) {
+    DWORD code = ERROR_SUCCESS;
+    if (path.empty()) {
+        code = ERROR_INVALID_NAME;
+    } else if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        code = ERROR_FILE_EXISTS;
+    } else if (type == OpType::CreateFolder) {
+        if (!CreateDirectoryW(path.c_str(), nullptr)) code = GetLastError();
+    } else {
+        HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
+                                  CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) code = GetLastError();
+        else CloseHandle(file);
+    }
+    if (code != ERROR_SUCCESS && error) *error = CreateFailureText(code);
+    return code == ERROR_SUCCESS;
+}
+
 enum class RenameResult { Completed, Rejected };
 RenameResult RenameInProcess(const std::wstring& source, const std::wstring& new_name,
                      std::wstring* error, DWORD* code = nullptr) {
@@ -2997,6 +3041,27 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
         }
     }
 
+    if (req.type == OpType::CreateFolder || req.type == OpType::CreateTextFile) {
+        std::wstring local_error;
+        const bool created = CreateInProcess(req.type,
+            req.sources.empty() ? std::wstring{} : req.sources.front(), &local_error);
+        if (created) PushUndo(req, task_id);
+        SetStatus([&](OpStatus& st) {
+            st.active = false;
+            st.percent = -1.0f;
+            st.completed_ops++;
+            if (created) {
+                st.completed_items = st.total_items;
+                st.phase = OpPhase::Completed;
+                st.summary = Describe(req) + l10n::Pick(L" 完成", L" completed");
+            } else {
+                st.phase = OpPhase::Failed;
+                st.last_error = local_error;
+            }
+        });
+        return;
+    }
+
     const auto accepted = [this](uint32_t request) { RegisterShellRequest(request); };
     uint32_t id = 0;
     switch (req.type) {
@@ -3009,11 +3074,8 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
     case OpType::RealDelete: id = client.RealDelete(req.sources, accepted); break;
     case OpType::Rename: // Handled above; never send rename to the Shell host.
         break;
-    case OpType::CreateFolder:
-        if (!req.sources.empty()) id = client.CreateFolder(req.sources.front(), accepted);
-        break;
+    case OpType::CreateFolder:   // Handled above, in process.
     case OpType::CreateTextFile:
-        if (!req.sources.empty()) id = client.CreateNewFile(req.sources.front(), accepted);
         break;
     case OpType::RestoreRecycle:
         id = client.RestoreRecycle(req.sources, accepted);
