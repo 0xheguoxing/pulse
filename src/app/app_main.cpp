@@ -144,6 +144,7 @@ void UnregisterAssocChangeNotify() {
 }
 } // namespace
 #include "group_wheel_ui.h"
+#include "window_overview_ui.h"
 #include "window_switcher_ui.h"
 #include "duplicate_scan.h"
 #include "shell_tag_menu.h"
@@ -623,6 +624,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     if (s && IsUiActivityMessage(msg)) NoteUiActivity(*s, hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
     if (s && s->notification_toast.HandleMessage(hwnd, msg, wParam, lParam)) return 0;
     if (s && WindowSwitcherMessage(*s, hwnd, msg, wParam, lParam)) return 0;  // M7d
+    if (LRESULT overview_result = 0; s && WindowOverviewMessage(*s, hwnd, msg, wParam, lParam, overview_result))
+        return overview_result;  // M7e
     if (s && GroupWheelMessage(*s, hwnd, msg, wParam, lParam)) return 0;
     // Explorer restarted or came up late. The broadcast reaches every
     // top-level window; the host window handles it, unless there is none.

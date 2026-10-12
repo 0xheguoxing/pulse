@@ -20,6 +20,7 @@
 #include "../fs/fs_watch.h"
 #include "app_model.h"
 #include "window_identity.h"
+#include "window_overview.h"
 #include "window_switcher.h"
 #include "live_network_search.h"
 #include "tray_compare_metadata.h"
@@ -285,13 +286,16 @@ struct AppState : AppCoreOwner {
     std::optional<app::ClosedWindow> window_restore;  // tabs a reopened window starts with (M4c)
     AppState* window_adopt_from = nullptr;  // Ctrl+Shift+M: the window whose tab moves in (M5c)
     size_t window_adopt_index = 0;
-    std::optional<WindowMergeUndo> window_merge_undo;  // M6c
+    // M6c; M7e: every window of one "merge all", undone together.
+    std::vector<WindowMergeUndo> window_merge_undo;
     // Its name and color (M7c, window_identity_ui.h) and the taskbar dot
     // drawn from them.
     app::WindowIdentity identity;
     HICON identity_overlay = nullptr;
     // The Ctrl+` switcher while this window shows it (M7d, window_switcher_ui.h).
     app::WindowSwitcherState switcher;
+    // The Ctrl+Shift+O overview while this window shows it (M7e, window_overview_ui.h).
+    app::WindowOverviewState overview;
     int tabDropIndex = -1;  // a tab dragged from another window would land here (M6b)
     // A tab dragged over the content area (M6d): where it would go, client px.
     bool contentDrop = false;

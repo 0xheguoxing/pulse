@@ -11,6 +11,7 @@
 #include "window_registry.h"
 
 #include <algorithm>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -112,8 +113,12 @@ size_t RestoreMergedTabs(AppState& from, AppState& back, const WindowMergeUndo& 
     return restored;
 }
 
-bool MergeWindowInto(AppState& src, AppState& dst, size_t insert_at, const WINDOWPLACEMENT& before) {
-    if (&src == &dst || src.window_tabs.items.empty()) return false;
+namespace {
+
+// Merges `src` into `dst` and destroys it; the undo remembers where it was.
+// Nothing when it could not give up all its tabs.
+std::optional<WindowMergeUndo> MergeOne(AppState& src, AppState& dst, size_t insert_at, const WINDOWPLACEMENT& before) {
+    if (&src == &dst || src.window_tabs.items.empty()) return std::nullopt;
     app::ClosedWindow place;
     place.rect = app::RestoredWindowRect(before.rcNormalPosition);
     place.maximized = before.showCmd == SW_SHOWMAXIMIZED;
@@ -127,27 +132,36 @@ bool MergeWindowInto(AppState& src, AppState& dst, size_t insert_at, const WINDO
     if (!src.window_tabs.items.empty()) {
         RestoreMergedTabs(dst, src, undo);
         ShowWindow(hwnd, SW_SHOWNORMAL);
-        return false;
+        return std::nullopt;
     }
-    std::wstring message = place.name.empty() ? std::wstring() : place.name + L" \u00B7 ";
-    message += l10n::Get(l10n::StringId::WindowMergedUndo);
     undo.place = std::move(place);
-    dst.window_merge_undo = std::move(undo);
     DestroyWindow(hwnd);
-    dst.notification_toast.Show(dst.hwnd, l10n::Get(l10n::StringId::WindowMergedTitle), std::move(message), false,
-                                WM_UNDO_WINDOW_MERGE);
-    SetForegroundWindow(dst.hwnd);
-    return true;
+    return undo;
 }
 
-void UndoWindowMerge(AppState& dst) {
-    if (!dst.window_merge_undo) return;
-    const WindowMergeUndo undo = std::move(*dst.window_merge_undo);
-    dst.window_merge_undo.reset();
+void OfferMergeUndo(AppState& dst, std::vector<WindowMergeUndo> batch) {
+    std::wstring message;
+    if (batch.size() == 1) {
+        const std::wstring& name = batch.front().place.name;
+        message = name.empty() ? std::wstring() : name + L" \u00B7 ";
+        message += l10n::Get(l10n::StringId::WindowMergedUndo);
+    } else {
+        wchar_t buf[160]{};
+        swprintf_s(buf, l10n::Get(l10n::StringId::WindowsMergedUndo).c_str(), static_cast<int>(batch.size()));
+        message = buf;
+    }
+    dst.window_merge_undo = std::move(batch);
+    dst.notification_toast.Show(dst.hwnd, l10n::Get(l10n::StringId::WindowMergedTitle), std::move(message), false,
+                                WM_UNDO_WINDOW_MERGE);
+}
+
+// Opens one merged window again at its old place, with the tabs of it that
+// are still in `dst`. Returns it, or nullptr.
+HWND UndoOne(AppState& dst, const WindowMergeUndo& undo) {
     int first = -1;
     for (const app::LayoutTab* tab : undo.tabs)
         if ((first = IndexOf(dst.window_tabs, tab)) >= 0) break;
-    if (first < 0 || dst.window_tabs.items.size() < 2) return;
+    if (first < 0 || dst.window_tabs.items.size() < 2) return nullptr;
 
     // The window opens at its old place with its layout, adopting the first
     // merged tab still here (M5c); the others follow alive.
@@ -158,10 +172,49 @@ void UndoWindowMerge(AppState& dst) {
     init.adopt_from = &dst;
     init.adopt_index = static_cast<size_t>(first);
     const HWND hwnd = OpenPulseWindow(dst, init);
-    if (!hwnd) return;
+    if (!hwnd) return nullptr;
     AppState& back = app::FindWindowSharingCore(dst, [hwnd](const AppState& w) { return w.hwnd == hwnd; });
-    if (back.hwnd != hwnd) return;
+    if (back.hwnd != hwnd) return nullptr;
     RestoreMergedTabs(dst, back, undo);
-    SetForegroundWindow(hwnd);
+    return hwnd;
+}
+
+}  // namespace
+
+bool MergeWindowInto(AppState& src, AppState& dst, size_t insert_at, const WINDOWPLACEMENT& before) {
+    std::optional<WindowMergeUndo> undo = MergeOne(src, dst, insert_at, before);
+    if (!undo) return false;
+    std::vector<WindowMergeUndo> batch;
+    batch.push_back(std::move(*undo));
+    OfferMergeUndo(dst, std::move(batch));
+    SetForegroundWindow(dst.hwnd);
+    return true;
+}
+
+size_t MergeWindowsInto(const std::vector<HWND>& sources, AppState& dst) {
+    std::vector<WindowMergeUndo> batch;
+    for (HWND hwnd : sources) {
+        AppState* src = dst.core.windows.Lookup(hwnd);
+        if (!src || src == &dst) continue;
+        WINDOWPLACEMENT before{sizeof(before)};
+        GetWindowPlacement(hwnd, &before);
+        if (std::optional<WindowMergeUndo> undo = MergeOne(*src, dst, dst.window_tabs.items.size(), before))
+            batch.push_back(std::move(*undo));
+    }
+    const size_t merged = batch.size();
+    if (merged) OfferMergeUndo(dst, std::move(batch));
+    return merged;
+}
+
+void UndoWindowMerge(AppState& dst) {
+    if (dst.window_merge_undo.empty()) return;
+    const std::vector<WindowMergeUndo> batch = std::move(dst.window_merge_undo);
+    dst.window_merge_undo.clear();
+    // Last merged first, so each window finds its tabs and the stacking
+    // order comes back; the first merged ends up in front.
+    HWND front = nullptr;
+    for (auto it = batch.rbegin(); it != batch.rend(); ++it)
+        if (const HWND hwnd = UndoOne(dst, *it)) front = hwnd;
+    if (front) SetForegroundWindow(front);
 }
 }  // namespace pulse

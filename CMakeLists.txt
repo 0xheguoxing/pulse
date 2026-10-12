@@ -1538,6 +1538,8 @@ add_executable(pulse_external_open_test src/bench/external_open_test.cpp src/app
 add_executable(pulse_window_identity_test src/bench/window_identity_test.cpp src/app/window_identity.cpp)
 # Multi-window M7d: the Ctrl+` window switcher (plan section 8, P3).
 add_executable(pulse_window_switcher_test src/bench/window_switcher_test.cpp src/app/window_switcher.cpp)
+# Multi-window M7e: the Ctrl+Shift+O window overview (plan section 8, P3).
+add_executable(pulse_window_overview_test src/bench/window_overview_test.cpp src/app/window_overview.cpp)
 add_executable(pulse_render_cache_sharing_test src/bench/render_cache_sharing_test.cpp)
 target_link_libraries(pulse_render_cache_sharing_test PRIVATE user32 d3d11 d2d1)
 add_executable(pulse_shell_window_registry_retry_test src/bench/shell_window_registry_retry_test.cpp

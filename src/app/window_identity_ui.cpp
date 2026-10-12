@@ -7,6 +7,7 @@
 #include "../ui/fluent_menu.h"
 #include "app_window_title.h"
 #include "window_identity.h"
+#include "window_overview_ui.h"
 #include "window_registry.h"
 
 #include <shobjidl.h>
@@ -21,6 +22,7 @@ namespace {
 
 // Commands of the editor menu (its own popup; no other verbs share it).
 constexpr int kCmdAutoName = 1;
+constexpr int kCmdOverview = 2;
 constexpr int kCmdColorBase = 10;
 
 // A round dot in `rgb` with a light rim, so it reads on any taskbar.
@@ -190,12 +192,22 @@ void ShowWindowIdentityMenu(AppState& s, POINT screen) {
         automatic.glyph = L"\uE72C";  // Refresh
         automatic.enabled = typed_name;
         items.push_back(std::move(automatic));
+        ui::FluentMenuItem overview;  // M7e: every window at once
+        overview.command = kCmdOverview;
+        overview.text = l10n::Get(l10n::StringId::WindowOverviewTitle);
+        overview.glyph = L"\uE8A9";  // ViewAll
+        overview.shortcut = L"Ctrl+Shift+O";
+        items.push_back(std::move(overview));
         return items;
     };
     const int command = menu.TrackPopup(screen, build(before), build);
     menu.SetFilterPlaceholder(l10n::Get(l10n::StringId::TabMenuSearch));
     const std::wstring typed = menu.LastFilterQuery();
 
+    if (command == kCmdOverview) {
+        ToggleWindowOverview(s);
+        return;
+    }
     app::WindowIdentity next = s.identity;
     if (command == kCmdAutoName) {
         next.name.clear();

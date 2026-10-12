@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <cstddef>
+#include <vector>
 
 namespace pulse {
 struct AppState;
@@ -27,7 +28,12 @@ size_t RestoreMergedTabs(AppState& from, AppState& back, const WindowMergeUndo& 
 // Touch nothing of `src` afterwards.
 bool MergeWindowInto(AppState& src, AppState& dst, size_t insert_at, const WINDOWPLACEMENT& before);
 
-// WM_UNDO_WINDOW_MERGE: the last window merged into `dst` opens again where
-// it was, with its layout and its tabs, groups and active tab.
+// "Merge all windows" (M7e): merges each of `sources` that is another window
+// of dst's core into `dst`, in order, at the end of its tabs, and offers one
+// undo for all of them. Returns how many were merged.
+size_t MergeWindowsInto(const std::vector<HWND>& sources, AppState& dst);
+
+// WM_UNDO_WINDOW_MERGE: the windows of the last merge into `dst` open again
+// where they were, with their layouts and their tabs, groups and active tabs.
 void UndoWindowMerge(AppState& dst);
 }  // namespace pulse

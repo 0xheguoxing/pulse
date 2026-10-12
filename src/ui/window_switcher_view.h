@@ -31,6 +31,12 @@ struct WindowSwitcherData {
     std::wstring hint;
 };
 
+// Shared with the window overview (window_overview_view.h).
+float MeasureTextWidth(IDWriteFactory* dwrite, IDWriteTextFormat* f, const std::wstring& s);
+// `path` cut to `width` from the front (".../Pulse/src" with Windows
+// separators), keeping whole folder names while it can.
+std::wstring FitPathTail(IDWriteFactory* dwrite, IDWriteTextFormat* f, const std::wstring& path, float width);
+
 class WindowSwitcherView {
 public:
     ~WindowSwitcherView();

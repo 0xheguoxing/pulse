@@ -36,7 +36,13 @@ D2D1_COLOR_F Opaque(const D2D1_COLOR_F& top, const D2D1_COLOR_F& under) {
                         top.b * a + under.b * (1.0f - a), 1.0f);
 }
 
-float Measure(IDWriteFactory* dwrite, IDWriteTextFormat* f, const std::wstring& s) {
+bool In(const D2D1_RECT_F& r, float x, float y) {
+    return r.right > r.left && x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+}
+
+}  // namespace
+
+float MeasureTextWidth(IDWriteFactory* dwrite, IDWriteTextFormat* f, const std::wstring& s) {
     if (!dwrite || !f || s.empty()) return 0.0f;
     IDWriteTextLayout* layout = nullptr;
     float w = 0.0f;
@@ -51,20 +57,14 @@ float Measure(IDWriteFactory* dwrite, IDWriteTextFormat* f, const std::wstring& 
 
 // A long folder path keeps its end, where the folder is: "...\Work\Pulse\src".
 std::wstring FitPathTail(IDWriteFactory* dwrite, IDWriteTextFormat* f, const std::wstring& path, float width) {
-    if (Measure(dwrite, f, path) <= width) return path;
+    if (MeasureTextWidth(dwrite, f, path) <= width) return path;
     std::wstring tail;
     for (size_t sep = path.find(L'\\', 1); sep != std::wstring::npos; sep = path.find(L'\\', sep + 1)) {
         tail = L"\x2026" + path.substr(sep);
-        if (Measure(dwrite, f, tail) <= width) return tail;
+        if (MeasureTextWidth(dwrite, f, tail) <= width) return tail;
     }
     return tail.empty() ? path : tail;  // even the last folder is too long: the end gets trimmed
 }
-
-bool In(const D2D1_RECT_F& r, float x, float y) {
-    return r.right > r.left && x >= r.left && x < r.right && y >= r.top && y < r.bottom;
-}
-
-}  // namespace
 
 WindowSwitcherView::~WindowSwitcherView() { ReleaseFormats(); }
 
