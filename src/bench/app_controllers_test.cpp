@@ -1721,23 +1721,23 @@ int wmain(int argc, wchar_t** argv) {
         pulse::l10n::Get(pulse::l10n::StringId::SettingsCloseLastTab) ==
             L"\u5173\u95ED\u6700\u540E\u4E00\u4E2A\u6807\u7B7E\u9875\u65F6\u5173\u95ED\u7A97\u53E3" &&
         !pulse::l10n::Get(pulse::l10n::StringId::SettingsCloseLastTabDesc).empty());
-    passed &= Report("closing the last tab keeps the window by default",
-        !prefs.close_window_with_last_tab);
-    settings_ui.ToggleUi(26);
-    passed &= Report("closing the last tab closes the window when enabled and persisted",
-        prefs.close_window_with_last_tab && parsed_prefs.FromJson(prefs.ToJson()) &&
-        parsed_prefs.close_window_with_last_tab);
+    passed &= Report("closing the last tab closes the window by default, like File Explorer",
+        prefs.close_window_with_last_tab);
     settings_ui.ToggleUi(26);
     passed &= Report("closing the last tab setting disables and persists",
         !prefs.close_window_with_last_tab && parsed_prefs.FromJson(prefs.ToJson()) &&
         !parsed_prefs.close_window_with_last_tab);
+    settings_ui.ToggleUi(26);
+    passed &= Report("closing the last tab closes the window when enabled and persisted",
+        prefs.close_window_with_last_tab && parsed_prefs.FromJson(prefs.ToJson()) &&
+        parsed_prefs.close_window_with_last_tab);
     parsed_prefs.close_window_with_last_tab = true;
     passed &= Report("legacy preferences keep the window on the last tab close",
         parsed_prefs.FromJson(L"{}") && !parsed_prefs.close_window_with_last_tab);
-    parsed_prefs.close_window_with_last_tab = true;
+    parsed_prefs.close_window_with_last_tab = false;
     parsed_prefs.ResetToDefaults();
-    passed &= Report("reset keeps the window on the last tab close",
-        !parsed_prefs.close_window_with_last_tab);
+    passed &= Report("reset closes the window with the last tab, like a new install",
+        parsed_prefs.close_window_with_last_tab);
     passed &= Report("double-click tab close setting has localized text",
         pulse::l10n::Get(pulse::l10n::StringId::SettingsCloseTabDoubleClick) ==
             L"\u53CC\u51FB\u6807\u7B7E\u9875\u5173\u95ED" &&

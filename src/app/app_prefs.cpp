@@ -75,7 +75,7 @@ void AppPrefs::ResetToDefaults() {
     startup_open = 0;
     new_tab_open = 0;
     external_open = 0;
-    close_window_with_last_tab = false;
+    close_window_with_last_tab = true;
     close_tab_on_double_click = false;
     confirm_recycle_delete = false;
     start_in_tray = false;
@@ -328,6 +328,7 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     new_tab_open = pulse::json::ExtractInt(json, L"new_tab_open", 0) == 1 ? 1 : 0;
     external_open = pulse::json::ExtractInt(json, L"external_open", 0);
     if (external_open < 0 || external_open > 2) external_open = 0;
+    // Missing key = preferences saved before the setting existed: keep their behavior.
     close_window_with_last_tab = pulse::json::ExtractBool(json, L"close_window_with_last_tab", false);
     close_tab_on_double_click = pulse::json::ExtractBool(json, L"close_tab_on_double_click", false);
     confirm_recycle_delete = pulse::json::ExtractBool(json, L"confirm_recycle_delete", false);
