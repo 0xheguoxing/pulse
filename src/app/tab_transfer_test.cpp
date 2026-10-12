@@ -646,6 +646,22 @@ bool RunTabTransferTest() {
             dst->scale = dst_scale;
         }
 
+        // --- M6f: results still on their way find a moved tab -------------
+        {
+            Seed(src->window_tabs, 2);
+            BindCurrentLayout(*src);
+            BindCurrentLayout(*dst);
+            Tab* const searching = src->window_tabs.items[1]->panes[0]->ActiveTab();  // shown
+            searching->filename_live_generation = 0x6F01;  // a live network walk
+            searching->pending_generation = 0x6F02;        // an index search page
+            check(&SearchResultWindow(*dst, 0x6F01) == src.get(),
+                  "before a move, search results go to the window that shows the searching tab");
+            check(MoveLayoutTab(*src, 1, *dst, 0) && &SearchResultWindow(*src, 0x6F01) == dst.get() &&
+                      &SearchResultWindow(*src, 0x6F02) == dst.get(),
+                  "after the move, live network progress and index results go to the tab's new window");
+            searching->filename_live_generation = 0;
+            searching->pending_generation = 0;
+        }
 
         core->windows.Remove(dst->hwnd);
         core->windows.Remove(src->hwnd);

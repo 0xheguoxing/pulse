@@ -6,8 +6,9 @@
 // each one unchanged to the main window with SendMessage, so the existing
 // handlers run as before. Window-level messages (frame pump, quick preview,
 // details probe, menus, toasts, the search box's own history refresh, the
-// IShellWindows registration, a tab's live network search, the duplicate
-// scan's volume list) still go to their window directly. Results of shared
+// IShellWindows registration, the duplicate scan's volume list) still go to
+// their window directly. A tab's live network search reports here too since
+// M6f: the tab can move to another window, and its window can close (merge). Results of shared
 // navigation services (M3e: UNC probe scheduler, BitLocker unlock wait,
 // Explorer takeover) come here so they survive the window that started them;
 // their handlers update every window. System
@@ -49,6 +50,7 @@ inline constexpr UINT kHostRoutedMessages[] = {
     WM_BITLOCKER_UNLOCK,       // unlock wait (the prompt stays owned by the waiting window)
     WM_EXPLORER_TAKEOVER,      // Explorer window takeover (opens in the most recent window)
     WM_SHELLCTX_ITEMS,         // shell context menu rows (M4a: the menu is open in the active window)
+    WM_NETWORK_LIVE_SEARCH,    // a tab's live network walk (M6f: the tab may have moved to another window)
     TrayController::kCallbackMessage,  // notification icon (owned by the host)
     WM_HOTKEY,                 // global search hotkey (registered on the host)
 };

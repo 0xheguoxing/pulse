@@ -263,7 +263,7 @@ static void StartLiveNetworkSearch(AppState& s, const index::Query& query, uint3
         // Same query and ordering (next page): answer from the walk so far; a
         // running walk keeps posting progress for the newest request.
         live->latest_id = id;
-        PostLiveNetworkProgress(s.hwnd, live);
+        PostLiveNetworkProgress(ServiceWindow(s), live);
         return;
     }
     DropLiveNetworkSearch(s, query.session_id);
@@ -274,7 +274,9 @@ static void StartLiveNetworkSearch(AppState& s, const index::Query& query, uint3
     live->folder = query.path_prefix;
     live->latest_id = id;
     s.liveNetworkSearches.Set(live);
-    std::thread([hwnd = s.hwnd, live, query] {
+    // To the host (M6f): the tab may move to another window, and the window
+    // that started the walk may close; SearchResultWindow finds the tab.
+    std::thread([hwnd = ServiceWindow(s), live, query] {
         index::LiveNetworkWalk(live->query, live->matches, live->mutex,
             [&live] { return live->cancel.load(); },
             [&] { PostLiveNetworkProgress(hwnd, live); });

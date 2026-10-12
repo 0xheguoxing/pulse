@@ -181,8 +181,9 @@ int wmain(int argc, wchar_t** argv) {
               app::IsHostRoutedMessage(WM_EXPLORER_TAKEOVER),
           "shared navigation results (M3e) are routed");
     Check(app::IsHostRoutedMessage(WM_SHELLCTX_ITEMS), "shell context menu rows reach the active window (M4a)");
-    Check(!app::IsHostRoutedMessage(WM_NETWORK_LIVE_SEARCH) && !app::IsHostRoutedMessage(WM_DUP_VOLUMES),
-          "per-tab and per-dialog results stay on their window");
+    Check(app::IsHostRoutedMessage(WM_NETWORK_LIVE_SEARCH),
+          "a tab's live network search is routed: the tab may move to another window (M6f)");
+    Check(!app::IsHostRoutedMessage(WM_DUP_VOLUMES), "per-dialog results stay on their window");
     bool window_local = true;
     for (UINT m : {WM_FRAME_PUMP, WM_QUICK_PREVIEW_NAVIGATE, WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND,
                    WM_DETAILS_META, WM_SHOW_RELEASE_NOTES, WM_CONTENT_SELECTION,
