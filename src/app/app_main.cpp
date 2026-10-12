@@ -2358,13 +2358,13 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 if (!s->core.exiting) {
                     app::ClosedWindow closed = CaptureClosedWindow(*s, hwnd);
                     if (!closed.layout_tabs.empty()) {
-                        std::wstring message = closed.name.empty() ? std::wstring()
-                                                                   : closed.name + L" \u00B7 ";
-                        message += l10n::Get(l10n::StringId::WindowClosedRestore);
+                        std::wstring name = closed.name;
                         closed.closed_seq = ++s->core.close_seq;  // M7f: one timeline with closed tabs
                         s->core.closed_windows.Push(std::move(closed));
-                        next->notification_toast.Show(next->hwnd, l10n::Get(l10n::StringId::WindowClosedTitle),
-                                                      std::move(message), false, WM_REOPEN_CLOSED_WINDOW);
+                        next->notification_toast.ShowSnack(
+                            next->hwnd, ui::SnackIcon::Undo, l10n::Get(l10n::StringId::WindowClosedTitle),
+                            std::move(name), {{l10n::Get(l10n::StringId::SnackRestore), WM_REOPEN_CLOSED_WINDOW}},
+                            L"Ctrl+Shift+T");
                     }
                 }
             }

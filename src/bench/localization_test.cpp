@@ -66,10 +66,10 @@ int main(int argc, char** argv) {
     bool latest_ids = true;
     for (const auto language : {L"zh-CN", L"zh-TW", L"en-US"}) {
         SetLanguage(language);
-        for (UINT id = IDS_SETTINGS_CLOSE_TAB_DOUBLE_CLICK_DESC; id <= IDS_DROP_PANE_COUNT; ++id)
+        for (UINT id = IDS_SETTINGS_CLOSE_TAB_DOUBLE_CLICK_DESC; id <= IDS_WINDOWS_MERGED_TITLE; ++id)
             latest_ids &= !Get(static_cast<StringId>(id)).empty();
     }
-    passed &= Report("newest strings (Recycle Bin, BitLocker, closed window, drop hints) load in every language",
+    passed &= Report("newest strings (Recycle Bin, BitLocker, closed window, drop hints, snackbar) load in every language",
                      latest_ids);
     // Drop hints are filled in by hand (M7h): every language keeps its slots.
     bool drop_slots = true;
@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
         drop_slots &= has(StringId::DropHintStrip, L"%1") && has(StringId::DropHintStrip, L"%2") &&
                       has(StringId::DropHintSplit, L"%1") && has(StringId::DropHintSplit, L"%2") &&
                       has(StringId::DropHintTab, L"%1") && has(StringId::DropHintRest, L"%1") &&
-                      has(StringId::DropPaneCount, L"%d");
+                      has(StringId::DropPaneCount, L"%d") && has(StringId::WindowsMergedTitle, L"%d");
     }
     passed &= Report("drop hints keep their %1/%2 slots in every language", drop_slots);
     for (const auto language : {L"zh-CN", L"en-US"}) {

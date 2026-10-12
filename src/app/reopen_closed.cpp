@@ -101,8 +101,8 @@ void RememberClosingTabs(AppState& s, const std::vector<size_t>& indices) {
     if (count < 2 || !s.hwnd) return;
     wchar_t title[96]{};
     swprintf_s(title, l10n::Get(l10n::StringId::TabsClosedTitle).c_str(), static_cast<int>(count));
-    s.notification_toast.Show(s.hwnd, title, l10n::Get(l10n::StringId::WindowClosedRestore), false,
-                              WM_REOPEN_CLOSED_TABS);
+    s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Undo, title, {},
+                                   {{l10n::Get(l10n::StringId::SnackRestore), WM_REOPEN_CLOSED_TABS}}, L"Ctrl+Shift+T");
 }
 
 void ReopenClosedTabs(AppState& s) {

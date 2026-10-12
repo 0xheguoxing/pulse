@@ -611,6 +611,8 @@ struct DragGhostView {
     std::wstring title;        // the tab's title
     int panes = 1;             // its visible panes ("2 panes" on the pill)
     std::wstring hint;         // what letting go does
+    size_t em_start = 0;       // the part of `hint` in the accent color (M7i)
+    size_t em_length = 0;
     std::wstring detail;       // a smaller note after it (may be empty)
 };
 

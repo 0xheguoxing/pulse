@@ -46,8 +46,9 @@ enum class NoSplit { None, Full, Never };
 struct Drop {
     HWND window = nullptr;
     size_t index = 0;
-    app::ContentDrop zone = app::ContentDrop::None;
-    std::vector<D2D1_RECT_F> rects;  // the content-area preview, client px
+    app::ContentDrop zone = app::ContentDrop::None;  // an edge: the side of the pane aimed at (M7i)
+    app::PanePlacement placement;                   // where the panes go when it splits (M7i)
+    std::vector<D2D1_RECT_F> rects;                 // the content-area preview, client px
     NoSplit no_split = NoSplit::None;
     // The Pulse window under the cursor, with or without a drop spot, and
     // whether the cursor is on its content waiting to rest (M7h).
@@ -102,7 +103,7 @@ bool SameRects(const std::vector<D2D1_RECT_F>& a, const std::vector<D2D1_RECT_F>
 
 void ShowDrop(AppState& any, const Drop& next) {
     if (g_drop.window == next.window && g_drop.index == next.index && g_drop.zone == next.zone &&
-        SameRects(g_drop.rects, next.rects)) {
+        g_drop.placement == next.placement && SameRects(g_drop.rects, next.rects)) {
         g_drop = next;  // the window under the cursor and the hint may still change
         return;
     }
@@ -178,12 +179,53 @@ std::wstring Fill(std::wstring text, std::wstring_view slot, const std::wstring&
 
 std::wstring DropText(l10n::StringId id) { return l10n::Get(id); }
 
+// Fills %1 with `name` and %2 with `value`, and marks where `value` went:
+// the hint draws it in the accent color (M7i).
+void FillHint(ui::DragGhostView& ghost, l10n::StringId id, const std::wstring& name, const std::wstring& value) {
+    const std::wstring text = Fill(DropText(id), L"%1", name);
+    const size_t at = text.find(L"%2");
+    ghost.hint = Fill(text, L"%2", value);
+    ghost.em_start = at == std::wstring::npos ? 0 : at;
+    ghost.em_length = at == std::wstring::npos ? 0 : value.size();
+}
+
+// Where the new panes end up in the content, in words: a half (left, top...)
+// or a quarter (top left...) of it (M7i).
+l10n::StringId PlaceWord(const std::vector<D2D1_RECT_F>& rects, const D2D1_RECT_F& content, app::ContentDrop side) {
+    if (rects.empty()) return l10n::StringId::DropSideLeft;
+    D2D1_RECT_F all = rects.front();
+    for (const D2D1_RECT_F& r : rects) {
+        all.left = (std::min)(all.left, r.left);
+        all.top = (std::min)(all.top, r.top);
+        all.right = (std::max)(all.right, r.right);
+        all.bottom = (std::max)(all.bottom, r.bottom);
+    }
+    const float tx = (content.right - content.left) * 0.04f, ty = (content.bottom - content.top) * 0.04f;
+    const bool l = all.left - content.left <= tx, r = content.right - all.right <= tx;
+    const bool t = all.top - content.top <= ty, b = content.bottom - all.bottom <= ty;
+    const int h = l && !r ? -1 : r && !l ? 1 : 0;
+    const int v = t && !b ? -1 : b && !t ? 1 : 0;
+    if (h < 0 && v < 0) return l10n::StringId::DropSideTopLeft;
+    if (h > 0 && v < 0) return l10n::StringId::DropSideTopRight;
+    if (h < 0 && v > 0) return l10n::StringId::DropSideBottomLeft;
+    if (h > 0 && v > 0) return l10n::StringId::DropSideBottomRight;
+    if (h < 0) return l10n::StringId::DropSideLeft;
+    if (h > 0) return l10n::StringId::DropSideRight;
+    if (v < 0) return l10n::StringId::DropSideTop;
+    if (v > 0) return l10n::StringId::DropSideBottom;
+    return side == app::ContentDrop::Left    ? l10n::StringId::DropSideLeft
+           : side == app::ContentDrop::Right ? l10n::StringId::DropSideRight
+           : side == app::ContentDrop::Top   ? l10n::StringId::DropSideTop
+                                             : l10n::StringId::DropSideBottom;
+}
+
 // What letting go of the dragged tab does, as the prototype words it: the
-// window by name, the spot on its strip, the side of the split.
+// window by name, the spot on its strip, where the panes go.
 void DescribeDrop(AppState& moving, const Drop& drop, ui::DragGhostView& ghost) {
     AppState* const target = WindowOf(moving, drop.window ? drop.window : drop.over);
     const std::wstring name = target ? WindowDisplayName(*target) : std::wstring();
     ghost.detail.clear();
+    ghost.em_start = ghost.em_length = 0;
     if (!drop.window) {
         ghost.hint = DropText(l10n::StringId::DropHintNewWindow);
         if (drop.resting) ghost.detail = Fill(DropText(l10n::StringId::DropHintRest), L"%1", name);
@@ -191,20 +233,19 @@ void DescribeDrop(AppState& moving, const Drop& drop, ui::DragGhostView& ghost) 
     }
     switch (drop.zone) {
     case app::ContentDrop::None:
-        ghost.hint = Fill(Fill(DropText(l10n::StringId::DropHintStrip), L"%1", name), L"%2", std::to_wstring(drop.index + 1));
+        FillHint(ghost, l10n::StringId::DropHintStrip, name, std::to_wstring(drop.index + 1));
         return;
     case app::ContentDrop::Center:
         ghost.hint = Fill(DropText(l10n::StringId::DropHintTab), L"%1", name);
         ghost.detail = DropText(drop.no_split == NoSplit::Full    ? l10n::StringId::DropHintFull
-                            : drop.no_split == NoSplit::Never ? l10n::StringId::DropHintNoSplit
-                                                              : l10n::StringId::DropHintEdges);
+                                : drop.no_split == NoSplit::Never ? l10n::StringId::DropHintNoSplit
+                                                                  : l10n::StringId::DropHintEdges);
         return;
     default: {
-        const l10n::StringId side = drop.zone == app::ContentDrop::Left    ? l10n::StringId::DropSideLeft
-                                    : drop.zone == app::ContentDrop::Right ? l10n::StringId::DropSideRight
-                                    : drop.zone == app::ContentDrop::Top   ? l10n::StringId::DropSideTop
-                                                                           : l10n::StringId::DropSideBottom;
-        ghost.hint = Fill(Fill(DropText(l10n::StringId::DropHintSplit), L"%1", name), L"%2", DropText(side));
+        const D2D1_RECT_F content = target ? target->renderer.ContentRect(static_cast<float>(target->compositor.Width()),
+                                                                          static_cast<float>(target->compositor.Height()))
+                                           : D2D1_RECT_F{};
+        FillHint(ghost, l10n::StringId::DropHintSplit, name, DropText(PlaceWord(drop.rects, content, drop.zone)));
         return;
     }
     }
@@ -256,26 +297,32 @@ bool Cloaked(HWND hwnd) {
 }
 
 // The content-area drop at `client` in `target` for the only tab of
-// `moving`: its panes at an edge where the layout has room for them (up to
-// four in all, M7h), else a tab.
+// `moving`: its panes split the pane under the cursor at the edge it is near
+// (M7i), where the layout has room for them (up to four in all, M7h), else a
+// tab.
 Drop ContentDropAt(AppState& moving, AppState& target, POINT client, float width) {
     const D2D1_RECT_F content =
         target.renderer.ContentRect(width, static_cast<float>(target.compositor.Height()));
-    app::ContentDrop zone = app::ContentDropZone(content, client, kContentDropBand);
-    if (zone == app::ContentDrop::None || moving.window_tabs.items.size() != 1) return {};
+    if (app::ContentDropZone(content, client, kContentDropBand) == app::ContentDrop::None ||
+        moving.window_tabs.items.size() != 1)
+        return {};
     const app::LayoutTab* incoming = moving.window_tabs.items[0].get();
     const app::LayoutTab* active = target.window_tabs.Active();
     if (!active || !incoming) return {};
-    Drop drop{target.hwnd, target.window_tabs.active + 1, zone, {content}};
+    Drop drop{target.hwnd, target.window_tabs.active + 1, app::ContentDrop::Center, {}, {content}};
     const bool settings = IsSettingsTab(ActiveTab(target)) ||
                           std::any_of(incoming->panes.begin(), incoming->panes.end(),
                                       [](const std::unique_ptr<app::Pane>& pane) { return IsSettingsPane(pane.get()); });
     if (settings || app::DropPaneCount(*incoming) == 0) drop.no_split = NoSplit::Never;
     else if (!app::HasRoomForPanes(*active, *incoming)) drop.no_split = NoSplit::Full;
-    if (zone != app::ContentDrop::Center && (drop.no_split != NoSplit::None || !app::CanAddPane(*active, *incoming, zone)))
-        drop.zone = app::ContentDrop::Center;
-    if (drop.zone != app::ContentDrop::Center)
-        drop.rects = app::PaneDropRects(*active, app::DropPaneCount(*incoming), drop.zone, content, target.scale);
+    if (drop.no_split != NoSplit::None) return drop;
+    app::ContentDrop side = app::ContentDrop::Center;
+    const app::PanePlacement placement = app::AimPaneDrop(*active, app::DropPaneCount(*incoming), content, target.scale,
+                                                          client, kContentDropBand, &side);
+    if (!placement.Splits() || !app::CanPlacePanes(*active, *incoming, placement)) return drop;
+    drop.zone = side;
+    drop.placement = placement;
+    drop.rects = app::PlacementRects(*active, placement, content, target.scale);
     return drop;
 }
 
@@ -607,6 +654,7 @@ void RunDetachedTabMove(AppState& s, HWND from, size_t index) {
     const HWND drop_window = g_drop.window;
     const size_t drop_index = g_drop.index;
     const app::ContentDrop drop_zone = g_drop.zone;
+    const app::PanePlacement drop_placement = g_drop.placement;
     ShowDrop(s, Drop{});
     HideGhost(s);
     if (!IsWindow(hwnd)) return;
@@ -621,7 +669,7 @@ void RunDetachedTabMove(AppState& s, HWND from, size_t index) {
     SetMovingAlpha(hwnd, 255);
     if (joining) {
         const bool pane = drop_zone != app::ContentDrop::None && drop_zone != app::ContentDrop::Center;
-        if (pane ? MoveTabIntoPane(s, 0, *target, drop_zone, TransferSource::Closing)
+        if (pane ? MoveTabIntoPane(s, 0, *target, drop_placement, TransferSource::Closing)
                  : MoveLayoutTab(s, 0, *target, drop_index, TransferSource::Closing)) {
             DestroyWindow(hwnd);
             SetForegroundWindow(target->hwnd);

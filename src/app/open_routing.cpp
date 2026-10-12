@@ -45,15 +45,15 @@ app::ExternalOpenPolicy OpenPolicy(const AppState& s) {
 }
 
 // Rule 7: says where the folder went and offers the other way (one click,
-// WM_CONVERT_EXTERNAL_OPEN). A toast in the window that shows it.
+// WM_CONVERT_EXTERNAL_OPEN). A capsule in the window that shows it (M7i).
 void ShowOpenToast(AppState& s, app::OpenConversion offer) {
     const app::LayoutTab* active = s.window_tabs.Active();
-    std::wstring message = active ? app::LayoutTabTitle(*active) : std::wstring();
-    if (!message.empty()) message += L" \u00B7 ";
     const bool to_tab = offer == app::OpenConversion::ToTab;
-    message += l10n::Get(to_tab ? l10n::StringId::OpenConvertToTab : l10n::StringId::OpenConvertToWindow);
-    s.notification_toast.Show(s.hwnd, l10n::Get(to_tab ? l10n::StringId::OpenedInNewWindow : l10n::StringId::OpenedInTab),
-                              std::move(message), false, WM_CONVERT_EXTERNAL_OPEN);
+    s.notification_toast.ShowSnack(
+        s.hwnd, to_tab ? ui::SnackIcon::Window : ui::SnackIcon::Tab,
+        l10n::Get(to_tab ? l10n::StringId::OpenedInNewWindow : l10n::StringId::OpenedInTab),
+        active ? app::LayoutTabTitle(*active) : std::wstring(),
+        {{l10n::Get(to_tab ? l10n::StringId::SnackToTab : l10n::StringId::SnackToWindow), WM_CONVERT_EXTERNAL_OPEN}});
 }
 
 void ForgetOpenToast(AppCore& core) {
@@ -235,10 +235,12 @@ void ConvertExternalOpen(AppState& s) {
     // be the default (WM_ADOPT_OPEN_POLICY). Never changed unasked.
     if (!app::NoteOpenConversion(core.open_convert_streak, offer)) return;
     core.open_suggested = app::SuggestedOpenPolicy(offer);
-    shown->notification_toast.Show(
-        shown->hwnd,
+    shown->notification_toast.ShowSnack(
+        shown->hwnd, ui::SnackIcon::Suggest,
         l10n::Get(offer == app::OpenConversion::ToTab ? l10n::StringId::OpenSuggestTab : l10n::StringId::OpenSuggestWindow),
-        l10n::Get(l10n::StringId::OpenSuggestClick), false, WM_ADOPT_OPEN_POLICY);
+        l10n::Get(l10n::StringId::SnackStreak),
+        {{l10n::Get(l10n::StringId::SnackSetDefault), WM_ADOPT_OPEN_POLICY}, {l10n::Get(l10n::StringId::SnackNotNow), 0}},
+        {}, 9000);
 }
 
 void AdoptSuggestedOpenPolicy(AppState& s) {

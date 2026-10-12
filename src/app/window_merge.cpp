@@ -140,19 +140,17 @@ std::optional<WindowMergeUndo> MergeOne(AppState& src, AppState& dst, size_t ins
 }
 
 void OfferMergeUndo(AppState& dst, std::vector<WindowMergeUndo> batch) {
-    std::wstring message;
+    std::wstring title = l10n::Get(l10n::StringId::WindowMergedTitle), detail;
     if (batch.size() == 1) {
-        const std::wstring& name = batch.front().place.name;
-        message = name.empty() ? std::wstring() : name + L" \u00B7 ";
-        message += l10n::Get(l10n::StringId::WindowMergedUndo);
+        detail = batch.front().place.name;
     } else {
         wchar_t buf[160]{};
-        swprintf_s(buf, l10n::Get(l10n::StringId::WindowsMergedUndo).c_str(), static_cast<int>(batch.size()));
-        message = buf;
+        swprintf_s(buf, l10n::Get(l10n::StringId::WindowsMergedTitle).c_str(), static_cast<int>(batch.size()));
+        title = buf;
     }
     dst.window_merge_undo = std::move(batch);
-    dst.notification_toast.Show(dst.hwnd, l10n::Get(l10n::StringId::WindowMergedTitle), std::move(message), false,
-                                WM_UNDO_WINDOW_MERGE);
+    dst.notification_toast.ShowSnack(dst.hwnd, ui::SnackIcon::Merge, std::move(title), std::move(detail),
+                                     {{l10n::Get(l10n::StringId::SnackUndo), WM_UNDO_WINDOW_MERGE}});
 }
 
 // Opens one merged window again at its old place, with the tabs of it that

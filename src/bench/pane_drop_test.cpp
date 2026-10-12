@@ -1,6 +1,8 @@
 // pane_drop_test.cpp - Multi-window M7h: a tab split in panes dropped on an
 // edge of another window's content brings all its panes, up to four in all
 // (the prototype's addSplit), in their order, with a preview per pane.
+// M7i: the pane under the cursor splits at its own edge, as the closest
+// layout a tab can keep.
 #include "../app/pane_drop.h"
 
 #include <cstdio>
@@ -161,6 +163,76 @@ int main() {
                   PaneDropRects(*host, 1, ContentDrop::Center, content, 1.0f).size() == 1 &&
                   PaneDropRects(*host, 1, ContentDrop::Center, content, 1.0f)[0].right == 1000.0f,
               "one pane still previews its half; no split previews the whole content");
+    }
+
+    // M7i: aim at the pane under the cursor.
+    {
+        auto host = SplitTab(3);  // Three: a big left pane, two stacked on the right
+        const std::vector<Pane*> before = host->VisiblePanes();
+        ContentDrop side = ContentDrop::None;
+        const PanePlacement low = AimPaneDrop(*host, 1, content, 1.0f, POINT{250, 700}, 0.25f, &side);
+        const std::vector<D2D1_RECT_F> rects = PlacementRects(*host, low, content, 1.0f);
+        Check(side == ContentDrop::Bottom && low.layout == LayoutPreset::FourGrid && low.slots == std::vector<size_t>{2} &&
+                  rects.size() == 1 && LeftHalf(rects[0]) && BottomHalf(rects[0]),
+              "3 panes: the lower part of the left pane splits it, the new pane goes under it (bottom left)");
+        auto incoming = MakeSingleLayoutTab(L"");
+        Pane* const dropped = incoming->panes[0].get();
+        Check(AddPaneFromTab(*host, std::move(incoming), low) && host->layout == LayoutPreset::FourGrid &&
+                  host->VisiblePanes() == std::vector<Pane*>{before[0], before[1], dropped, before[2]} &&
+                  host->FocusedPane() == dropped,
+              "the other panes stay put: left on top left, the right ones on top right and bottom right");
+    }
+    {
+        auto host = SplitTab(3);
+        ContentDrop side = ContentDrop::None;
+        const PanePlacement high = AimPaneDrop(*host, 1, content, 1.0f, POINT{250, 60}, 0.25f, &side);
+        const std::vector<D2D1_RECT_F> top = PlacementRects(*host, high, content, 1.0f);
+        const PanePlacement middle = AimPaneDrop(*host, 1, content, 1.0f, POINT{250, 400}, 0.25f, &side);
+        Check(high.layout == LayoutPreset::FourGrid && top.size() == 1 && LeftHalf(top[0]) && TopHalf(top[0]) &&
+                  !middle.Splits() && side == ContentDrop::Center,
+              "the top of the left pane puts the new pane above it; its middle is a new tab");
+        {
+            auto copy = SplitTab(3);
+            const std::vector<Pane*> was = copy->VisiblePanes();
+            auto incoming = MakeSingleLayoutTab(L"");
+            Pane* const dropped = incoming->panes[0].get();
+            Check(AddPaneFromTab(*copy, std::move(incoming), AimPaneDrop(*copy, 1, content, 1.0f, POINT{250, 60}, 0.25f)) &&
+                      copy->VisiblePanes() == std::vector<Pane*>{dropped, was[1], was[0], was[2]},
+                  "the left pane moves down under the new one; the right ones stay where they were");
+        }
+        const PanePlacement low_right = AimPaneDrop(*host, 1, content, 1.0f, POINT{750, 780}, 0.25f, &side);
+        const std::vector<D2D1_RECT_F> rects = PlacementRects(*host, low_right, content, 1.0f);
+        Check(side == ContentDrop::Bottom && low_right.slots == std::vector<size_t>{3} && rects.size() == 1 &&
+                  RightHalf(rects[0]) && BottomHalf(rects[0]),
+              "the bottom of the lower right pane puts the new pane bottom right");
+        const PanePlacement gap = AimPaneDrop(*host, 1, content, 1.0f, POINT{500, 700}, 0.25f, &side);
+        Check(gap.Splits() || side == ContentDrop::Center, "a cursor on a splitter aims at the nearest pane");
+        PanePlacement bad{LayoutPreset::FourGrid, {1, 2}};
+        Check(!CanPlacePanes(*host, *MakeSingleLayoutTab(L""), bad) &&
+                  !AddPaneFromTab(*host, MakeSingleLayoutTab(L""), bad) && host->VisiblePanes().size() == 3,
+              "a placement that does not fit the dropped panes changes nothing");
+    }
+    {
+        auto host = MakeSingleLayoutTab(L"");
+        Check(AimPaneDrop(*host, 1, content, 1.0f, POINT{100, 400}, 0.25f) == EdgePlacement(*host, 1, ContentDrop::Left) &&
+                  AimPaneDrop(*host, 1, content, 1.0f, POINT{500, 790}, 0.25f) ==
+                      EdgePlacement(*host, 1, ContentDrop::Bottom) &&
+                  AimPaneDrop(*host, 2, content, 1.0f, POINT{900, 400}, 0.25f) ==
+                      EdgePlacement(*host, 2, ContentDrop::Right),
+              "one pane splits as before at the content edges");
+        ContentDrop side = ContentDrop::Center;
+        Check(!AimPaneDrop(*host, 1, content, 1.0f, POINT{1200, 400}, 0.25f, &side).Splits() && side == ContentDrop::None,
+              "outside the content there is no drop");
+    }
+    {
+        auto host = SplitTab(2);  // left | right
+        const PanePlacement low = AimPaneDrop(*host, 1, content, 1.0f, POINT{750, 760}, 0.25f);
+        const std::vector<D2D1_RECT_F> rects = PlacementRects(*host, low, content, 1.0f);
+        Check(low.layout == LayoutPreset::Three && low.slots == std::vector<size_t>{2} && rects.size() == 1 &&
+                  RightHalf(rects[0]) && BottomHalf(rects[0]),
+              "2 panes: the bottom of the right pane goes under it");
+        Check(!AimPaneDrop(*SplitTab(4), 1, content, 1.0f, POINT{100, 100}, 0.25f).Splits(),
+              "a tab with four panes has no room to aim at");
     }
 
     std::printf("pane_drop_test: %d failure(s)\n", g_failures);

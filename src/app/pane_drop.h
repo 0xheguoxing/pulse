@@ -44,6 +44,40 @@ D2D1_RECT_F PaneDropRect(const LayoutTab& tab, ContentDrop edge, const D2D1_RECT
 // reordered so the visible ones come first in their on-screen order: layout
 // presets and session restore follow it.
 bool AddPaneFromTab(LayoutTab& tab, std::unique_ptr<LayoutTab> incoming, ContentDrop edge);
+
+// M7i: where dropped panes go, as one of the layouts a tab can keep (session
+// restore stores a preset and its split ratios, not a free tree): the grown
+// preset, the places of the added panes in its order (ascending), and the
+// order the panes already there take in the other places (indexes into the
+// visible panes; empty keeps their order).
+struct PanePlacement {
+    LayoutPreset layout = LayoutPreset::Single;  // Single: no split
+    std::vector<size_t> slots;
+    std::vector<size_t> kept;
+    bool Splits() const noexcept { return layout != LayoutPreset::Single && !slots.empty(); }
+    bool operator==(const PanePlacement&) const = default;
+};
+// What a drop at the content edge `edge` did before M7i: the added panes in
+// front (left, top) or at the back (right, bottom); two joining two at the
+// left or right take one column.
+PanePlacement EdgePlacement(const LayoutTab& tab, size_t added, ContentDrop edge);
+// Where letting go at `pt` (client px, `content` as PaneDropRects) puts
+// `added` panes: the visible pane under the cursor splits at the edge of it
+// the cursor is near (within `band` of that pane, as ContentDropZone), and
+// of the layouts with room for all of them the one whose new panes best cover
+// that half of the pane wins, moving the other panes the least.
+// `side` gets the pane edge (Center in the middle of a pane, None outside
+// `content`). No split (Single) in the middle of a pane or without room.
+PanePlacement AimPaneDrop(const LayoutTab& tab, size_t added, const D2D1_RECT_F& content, float scale, POINT pt,
+                          float band, ContentDrop* side = nullptr);
+// Where the added panes of `placement` would be in `content`, in their order;
+// just `content` when it does not split.
+std::vector<D2D1_RECT_F> PlacementRects(const LayoutTab& tab, const PanePlacement& placement,
+                                        const D2D1_RECT_F& content, float scale);
+// True when `tab` can take the panes of `incoming` as `placement` says.
+bool CanPlacePanes(const LayoutTab& tab, const LayoutTab& incoming, const PanePlacement& placement);
+// AddPaneFromTab with the panes going where `placement` says.
+bool AddPaneFromTab(LayoutTab& tab, std::unique_ptr<LayoutTab> incoming, const PanePlacement& placement);
 // Where a pane dragged out of a split was: its place among the visible
 // panes, and the layout and split ratios it was part of.
 struct PaneOrigin {

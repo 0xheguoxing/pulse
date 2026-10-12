@@ -119,6 +119,53 @@ bool RunOperationToastTest() {
             SendMessageW(hwnd, WM_KEYDOWN, VK_ESCAPE, 0);
             UpdateOperationWindow(*state, false);
             check(!state->notification_toast.IsVisible(), "Escape dismisses error and repeated status does not reopen it");
+
+            // Multi-window M7i: the capsule (toast redesign A) at the bottom
+            // center; only its buttons act.
+            constexpr UINT kSnackAction = WM_APP + 0x177;
+            const auto show_snack = [&](bool settled = false) {
+                state->notification_toast.ShowSnack(hwnd, ui::SnackIcon::Undo, l10n::Get(l10n::StringId::WindowClosedTitle),
+                                                    L"files", {{l10n::Get(l10n::StringId::SnackRestore), kSnackAction}},
+                                                    L"Ctrl+Shift+T");
+                if (settled) Sleep(240);  // past the 180 ms slide-in
+                dc->BeginDraw();
+                dc->Clear(D2D1::ColorF(0, 0.0f));
+                state->renderer.Render(BuildVm(*state, false),
+                    D2D1::RectF(0, 0, static_cast<float>(variant.width), static_cast<float>(variant.height)), theme);
+                state->notification_toast.Draw(state->compositor, theme, variant.scale, false);
+                return SUCCEEDED(dc->EndDraw());
+            };
+            check(show_snack(true) && state->compositor.SaveSnapshot((output / (L"snack-" + std::wstring(variant.name) + L".png")).c_str()),
+                "capsule screenshot saved");
+            const auto snack = state->notification_toast.Bounds();
+            check(std::abs(snack.left + snack.right - variant.width) < 2.0f && snack.left >= 16 * variant.scale &&
+                      snack.bottom <= variant.height - 40 * variant.scale && snack.bottom >= variant.height - 64 * variant.scale &&
+                      std::abs(snack.bottom - snack.top - 36 * variant.scale) < 1.0f,
+                  "capsule sits at the bottom center, one line high, and fits the window");
+            const LPARAM body = MAKELPARAM(static_cast<int>(snack.left + 30 * variant.scale),
+                                           static_cast<int>((snack.top + snack.bottom) * 0.5f));
+            SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, body);
+            SendMessageW(hwnd, WM_LBUTTONUP, 0, body);
+            MSG posted{};
+            check(state->notification_toast.IsVisible() && !PeekMessageW(&posted, hwnd, kSnackAction, kSnackAction, PM_REMOVE),
+                  "clicking the capsule's text does nothing");
+            // Walk across it: a click either does nothing, runs the button
+            // (posts its message and closes), or closes at the close button.
+            bool acted = false, closed_at_right = false, stray = false;
+            const int mid = static_cast<int>((snack.top + snack.bottom) * 0.5f);
+            for (int x = static_cast<int>(snack.left) + 2; x < static_cast<int>(snack.right) - 1; x += 3) {
+                if (!state->notification_toast.IsVisible()) show_snack();
+                SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, mid));
+                SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(x, mid));
+                if (state->notification_toast.IsVisible()) continue;
+                if (PeekMessageW(&posted, hwnd, kSnackAction, kSnackAction, PM_REMOVE)) acted = true;
+                else if (x >= snack.right - 32 * variant.scale) closed_at_right = true;
+                else stray = true;
+            }
+            check(acted && closed_at_right && !stray, "only the button acts and the close button closes");
+            if (!state->notification_toast.IsVisible()) show_snack();
+            state->notification_toast.DismissFor(hwnd, kSnackAction);
+            check(!state->notification_toast.IsVisible(), "a capsule goes when what its button offers is done another way");
         }
         state->notification_toast.ShowError(hwnd, L"Error", L"Transient error");
         const auto start = GetTickCount64();
@@ -127,6 +174,14 @@ bool RunOperationToastTest() {
             Sleep(10);
         }
         check(!state->notification_toast.IsVisible(), "error toast dismisses automatically after six seconds");
+        state->notification_toast.ShowSnack(hwnd, ui::SnackIcon::Merge, L"merged", {}, {}, {}, 1500);
+        const auto snack_start = GetTickCount64();
+        while (state->notification_toast.IsVisible() && GetTickCount64() - snack_start < 4000) {
+            PumpToast();
+            Sleep(10);
+        }
+        check(!state->notification_toast.IsVisible() && GetTickCount64() - snack_start >= 1400,
+              "a capsule goes by itself after its time");
         check(!state->operationWindow, "status updates alone never build the operations window");
         PinAndShowOperationWindow(*state);
         const ui::FileOperationWindow* built = state->operationWindow.get();

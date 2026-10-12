@@ -100,18 +100,28 @@ bool MoveLayoutTab(AppState& src, size_t index, AppState& dst, size_t insert_at,
 }
 
 bool MoveTabIntoPane(AppState& src, size_t index, AppState& dst, app::ContentDrop edge, TransferSource source) {
+    const app::LayoutTab* const into = dst.window_tabs.Active();
+    const auto& from = src.window_tabs;
+    if (!into || index >= from.items.size() || !from.items[index] || !app::CanAddPane(*into, *from.items[index], edge))
+        return false;
+    return MoveTabIntoPane(src, index, dst, app::EdgePlacement(*into, app::DropPaneCount(*from.items[index]), edge),
+                           source);
+}
+
+bool MoveTabIntoPane(AppState& src, size_t index, AppState& dst, const app::PanePlacement& placement,
+                     TransferSource source) {
     auto& from = src.window_tabs;
     const bool closing = source == TransferSource::Closing;
     app::LayoutTab* const into = dst.window_tabs.Active();
     if (&src == &dst || index >= from.items.size() || (from.items.size() < 2 && !closing) ||
-        !from.items[index] || !into || !app::CanAddPane(*into, *from.items[index], edge))
+        !from.items[index] || !into || !app::CanPlacePanes(*into, *from.items[index], placement))
         return false;
     std::unique_ptr<app::LayoutTab> tab = TakeLeavingTab(src, index, closing, dst);
     if (!tab) return false;
 
     if (dst.addressSearching) HideAddressEditor(dst, false);
     RememberLayoutFocus(dst);
-    app::AddPaneFromTab(*into, std::move(tab), edge);
+    app::AddPaneFromTab(*into, std::move(tab), placement);
     BindCurrentLayout(dst);  // the dropped pane is focused, with its scroll position
     RevalidateVisibleFolders(dst);
     InvalidateRect(dst.hwnd, nullptr, FALSE);

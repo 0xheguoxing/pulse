@@ -30,6 +30,10 @@ bool MoveLayoutTab(AppState& src, size_t index, AppState& dst, size_t insert_at,
 // where MoveLayoutTab would, and when app::CanAddPane says no.
 bool MoveTabIntoPane(AppState& src, size_t index, AppState& dst, app::ContentDrop edge,
                      TransferSource source = TransferSource::KeepsTabs);
+// MoveTabIntoPane with the panes going where `placement` says (M7i: the pane
+// under the cursor splits); refuses when app::CanPlacePanes says no.
+bool MoveTabIntoPane(AppState& src, size_t index, AppState& dst, const app::PanePlacement& placement,
+                     TransferSource source = TransferSource::KeepsTabs);
 // Takes visible `pane` out of the split shown by `s`'s active tab into a tab
 // of its own right after it, made active (M6d: dragging a pane header out).
 // `origin` records where the pane was. Nothing (and no change) for a settings
