@@ -66,10 +66,14 @@ int main(int argc, char** argv) {
     bool latest_ids = true;
     for (const auto language : {L"zh-CN", L"zh-TW", L"en-US"}) {
         SetLanguage(language);
-        for (UINT id = IDS_SETTINGS_CLOSE_TAB_DOUBLE_CLICK_DESC; id <= IDS_WINDOWS_MERGED_TITLE; ++id)
+        for (UINT id = IDS_SETTINGS_CLOSE_TAB_DOUBLE_CLICK_DESC; id <= IDS_HELP_WINDOW_OVERVIEW; ++id)
             latest_ids &= !Get(static_cast<StringId>(id)).empty();
     }
-    passed &= Report("newest strings (Recycle Bin, BitLocker, closed window, drop hints, snackbar) load in every language",
+    SetLanguage(L"zh-CN");
+    latest_ids &= Get(StringId::HelpGroupWindows) == L"\u7A97\u53E3";  // 窗口
+    SetLanguage(L"en-US");
+    latest_ids &= Get(StringId::HelpWindowOverview) == L"Window overview";
+    passed &= Report("newest strings (Recycle Bin, BitLocker, closed window, drop hints, snackbar, window shortcuts) load in every language",
                      latest_ids);
     // Drop hints are filled in by hand (M7h): every language keeps its slots.
     bool drop_slots = true;

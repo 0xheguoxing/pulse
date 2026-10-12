@@ -10,7 +10,7 @@ namespace {
 
 constexpr UINT kFirstString = IDS_SETTINGS;
 // Must stay on the highest allocated string id, otherwise Get() returns empty.
-constexpr UINT kLastString = IDS_WINDOWS_MERGED_TITLE;
+constexpr UINT kLastString = IDS_HELP_WINDOW_OVERVIEW;
 static_assert(static_cast<UINT>(StringId::SettingsRecycleBinDesc) <= kLastString);
 static_assert(static_cast<UINT>(StringId::HelpContextMenu) <= kLastString);
 static_assert(static_cast<UINT>(StringId::UiFontLarger) <= kLastString);

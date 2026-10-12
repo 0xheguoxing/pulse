@@ -111,9 +111,13 @@ struct PaneHeaderIconTest {
         {
             const auto roomy=LayoutShortcutHelp(884,945,1);
             check(roomy.max_scroll==0 && !roomy.narrow &&
-                  roomy.card.bottom-roomy.card.top<760 &&
+                  roomy.card.bottom-roomy.card.top<850 &&
                   roomy.card.right-roomy.card.left<=820,
                   "shortcut help card hugs its content in a normal window");
+            // The window group (multi-window) must not push a common window into scrolling.
+            const auto common=LayoutShortcutHelp(1600,900,1);
+            check(common.max_scroll==0 && !common.narrow,
+                  "shortcut help shows every group, windows included, at 1600x900");
             const auto narrow=LayoutShortcutHelp(560,900,1);
             check(narrow.narrow && narrow.max_scroll>0,
                   "shortcut help stacks into one scrolling column when narrow");

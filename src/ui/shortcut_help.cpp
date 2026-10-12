@@ -14,10 +14,21 @@ using Id = l10n::StringId;
 struct HelpRow { Id label; std::wstring keys; };
 struct HelpGroup { Id title; std::vector<HelpRow> rows; };
 
+// What the key below Esc types on this keyboard layout; the same label the
+// window switcher hint shows (app/window_switcher_ui.cpp SwitcherKeyLabel).
+std::wstring SwitcherKey() {
+    const UINT vk = MapVirtualKeyW(0x29, MAPVK_VSC_TO_VK);
+    const UINT ch = vk ? (MapVirtualKeyW(vk, MAPVK_VK_TO_CHAR) & 0x7FFFFFFFu) : 0;  // high bit: dead key
+    if (ch >= 0x20) return std::wstring(1, static_cast<wchar_t>(ch));
+    wchar_t name[32]{};
+    if (GetKeyNameTextW(0x29 << 16, name, 32) > 0) return name;
+    return L"`";
+}
+
 // Every shortcut HandleKeyDown (app_input.cpp) and WM_SYSKEYDOWN (app_main.cpp)
 // handle, grouped. In the two-column layout the first kLeftGroups groups fill
-// the left column.
-constexpr size_t kLeftGroups = 2;
+// the left column; tabs and windows stay side by side on the right.
+constexpr size_t kLeftGroups = 3;
 std::vector<HelpGroup> HelpGroups() {
     return {
         {Id::HelpGroupNav, {
@@ -42,18 +53,18 @@ std::vector<HelpGroup> HelpGroups() {
             {Id::HelpContextMenu, L"Shift F10"},
             {Id::HelpToggleTag, L"Ctrl Alt Shift 1–7"},
         }},
+        {Id::HelpGroupSelect, {
+            {Id::SelectAll, L"Ctrl A"},
+            {Id::InvertSelection, L"Ctrl I"},
+            {Id::HelpSelectPattern, L"Ctrl Shift A"},
+            {Id::SelectionHint, l10n::Get(Id::SelectionKeys)},
+        }},
         {Id::HelpGroupSearch, {
             {Id::Search, L"Ctrl K"},
             {Id::HelpCommandBar, L"Ctrl Shift K"},
             {Id::HelpProject, L"Ctrl P"},
             {Id::HelpFilter, L"Ctrl F / Ctrl E / F3"},
             {Id::AdvancedSearch, L"Ctrl Shift F"},
-        }},
-        {Id::HelpGroupSelect, {
-            {Id::SelectAll, L"Ctrl A"},
-            {Id::InvertSelection, L"Ctrl I"},
-            {Id::HelpSelectPattern, L"Ctrl Shift A"},
-            {Id::SelectionHint, l10n::Get(Id::SelectionKeys)},
         }},
         {Id::HelpGroupTabs, {
             {Id::TooltipNewTab, L"Ctrl T"},
@@ -66,6 +77,14 @@ std::vector<HelpGroup> HelpGroups() {
             {Id::HelpTransferTarget, L"Ctrl Alt C / X"},
             {Id::HelpSidebar, L"Ctrl B"},
             {Id::Maximize, L"F11"},
+        }},
+        {Id::HelpGroupWindows, {
+            {Id::HelpNewWindow, L"Ctrl N"},
+            {Id::HelpCloseWindow, L"Ctrl Shift W / Alt F4"},
+            {Id::HelpTabToWindow, L"Ctrl Shift M"},
+            {Id::HelpReopenClosed, L"Ctrl Shift T"},
+            {Id::HelpSwitchWindow, L"Ctrl " + SwitcherKey()},
+            {Id::HelpWindowOverview, L"Ctrl Shift O"},
         }},
     };
 }
@@ -307,4 +326,3 @@ void ShowShortcutHelp(HWND owner,bool dark,D2D1_COLOR_F accent) {
     if (status==0) PostQuitMessage(static_cast<int>(msg.wParam));
 }
 }
-
