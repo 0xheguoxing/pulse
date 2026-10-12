@@ -36,6 +36,7 @@
 #include "pulse_version.h"
 #include "tray_reveal.h"
 #include "default_file_manager.h"
+#include "window_identity_ui.h"
 #include "../ops/clipboard.h"
 #include "../ipc/ctx_menu_util.h"
 #include <windows.h>
@@ -1933,6 +1934,11 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
         s.sidebarHiddenMask, s.starredExpanded, &s.sidebarOrder,
         s.sidebarQuickAccessHiddenMask);
     app::FillWindowTabStrip(vm, s.window_tabs);
+    if (WindowIdentityShown(s) && app::ValidWindowColor(s.identity.color)) {  // M7c
+        vm.window_identity = true;
+        vm.window_identity_name = WindowDisplayName(s);
+        vm.window_identity_rgb = app::kWindowColors[s.identity.color];
+    }
     vm.show_pinned_tab_names = s.appPrefs.show_pinned_tab_names;
     vm.settings_list_smart_date = s.appPrefs.list_smart_date;
     vm.settings_list_zebra_rows = s.appPrefs.list_zebra_rows;
@@ -2666,6 +2672,7 @@ std::wstring TooltipForHover(AppState& s) {
     case R::RowMore: return text(I::MoreActions);
     case R::SidebarItemAction:
         return text(IsVerticalTabPath(s.hoverPath) ? I::TooltipCloseTab : I::Unpin);
+    case R::WindowIdentity: return text(I::WindowIdentityTip);
     case R::SidebarToggle:
         // The extra line only describes collapsing; an expanded-from-rail state keeps the plain name.
         return text(s.appPrefs.show_hints && !s.appPrefs.sidebar_collapsed ? I::TipxSidebar : I::ToggleSidebar);

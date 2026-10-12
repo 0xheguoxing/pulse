@@ -1,6 +1,7 @@
 // session.h — Window/session snapshot save/load.
 #pragma once
 #include "app_model.h"
+#include "window_identity.h"
 #include <array>
 #include <functional>
 #include <string>
@@ -58,6 +59,7 @@ struct WindowSessionSnapshot {
     std::vector<LayoutTabSnapshot> layout_tabs;
     std::vector<GroupSessionSnapshot> tab_groups;
     int active_layout_tab = 0;
+    WindowIdentity identity;  // M7c: its name and color
 };
 
 struct SessionSnapshot {

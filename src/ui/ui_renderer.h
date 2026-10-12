@@ -602,6 +602,11 @@ enum class PackAction : int {
 
 struct WindowViewModel {
     std::wstring window_title;
+    // Multi-window M7c: with two or more windows the title bar shows this
+    // window's color dot and name in place of the product name.
+    bool window_identity = false;
+    std::wstring window_identity_name;
+    uint32_t window_identity_rgb = 0;
     std::vector<TabView> tabs;
     std::vector<TabGroupView> tab_groups;
     int active_tab = 0;
@@ -1003,6 +1008,7 @@ struct HitTestResult {
         SettingsWallpaperLook,
         SettingsWallpaperBlur,
         SidebarToggle,       // title-bar sidebar collapse button
+        WindowIdentity,      // title-bar window color dot and name (M7c)
         StatusHintAction,    // clickable action at the end of the status-bar hint
         SearchEmptyAction,   // suggestion button on an empty search result page; path = new query
         TeachPrimary,        // teaching bubble: Got it / Try it
@@ -1107,6 +1113,17 @@ public:
     std::wstring ToolbarGroupLabel() const;   // "Group: Date" text of the active chip
     float SearchBarMinWidth() const { return search_min_dip_; }
     D2D1_RECT_F SidebarToggleRect(float w) const;
+    // The window's dot and name in the title bar (M7c). Without room for the
+    // name (the icon rail) only a dot on the corner of the mark or of the
+    // sidebar toggle shows; `hit` is then the mark, or the dot itself.
+    struct WindowIdentityGeometry {
+        D2D1_RECT_F hit{};  // empty: not shown
+        D2D1_POINT_2F dot{};
+        float dot_radius = 0.0f;
+        bool compact = false;
+    };
+    WindowIdentityGeometry WindowIdentityLayout(const WindowViewModel& vm, float w) const;
+    D2D1_RECT_F WindowIdentityRect(const WindowViewModel& vm, float w) const { return WindowIdentityLayout(vm, w).hit; }
     float PaneHeaderHeight() const { return pane_header_height_; }
     float ColumnHeaderHeight() const { return column_header_height_; }
     float RowHeight() const { return row_height_; }

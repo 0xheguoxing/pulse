@@ -127,6 +127,11 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
     if (y < title_bar_height_ && !titleToolbar) {
         const float ctrlW = 46.0f * scale_;
         const TitleChrome chrome = MakeTitleChrome(rect.right, scale_, title_bar_height_);
+        // Before the toggle: on the rail the window dot sits on its corner (M7c).
+        if (ContainsPt(WindowIdentityRect(vm, rect.right), x, y)) {
+            r.region = HitTestResult::WindowIdentity;
+            return r;
+        }
         if (ContainsPt(SidebarToggleRect(rect.right), x, y)) {
             r.region = HitTestResult::SidebarToggle;
             return r;

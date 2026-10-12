@@ -57,6 +57,7 @@
 #include "single_instance_coordinator.h"
 #include "window_factory.h"
 #include "open_routing.h"
+#include "window_identity_ui.h"
 #include "tab_transfer.h"
 #include "tab_detach.h"
 #include "window_merge.h"
@@ -334,6 +335,7 @@ static app::WindowSessionSnapshot CaptureSessionWindow(AppState& w) {
         snap.tab_groups.push_back({group.id, group.name, group.color_rgb, group.collapsed});
     for (const auto& layout : w.window_tabs.items)
         if (layout) snap.layout_tabs.push_back(app::CaptureLayoutTab(*layout));
+    snap.identity = w.identity;
     return snap;
 }
 
@@ -400,6 +402,7 @@ static app::ClosedWindow CaptureClosedWindow(AppState& s, HWND hwnd) {
     if (s.window_tabs.active < s.window_tabs.items.size() && s.window_tabs.items[s.window_tabs.active])
         closed.name = app::LayoutTabTitle(*s.window_tabs.items[s.window_tabs.active]);
     closed.layout = CaptureWindowLayout(s);
+    closed.identity = s.identity;
     return closed;
 }
 
@@ -624,6 +627,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     if (s && msg == app::TrayController::TaskbarCreatedMessage() && msg != 0 &&
         ServiceWindow(*s) == hwnd) {
         s->tray_controller.HandleTaskbarCreated();
+        return 0;
+    }
+    // M7c: this window's taskbar button exists (again); give it its dot.
+    if (s && msg != 0 && msg == TaskbarButtonCreatedMessage()) {
+        SyncWindowOverlay(*s);
         return 0;
     }
 
@@ -1065,6 +1073,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER |
             SWP_NOACTIVATE | SWP_FRAMECHANGED);
         s->core.started = true;
+        // M7c: a color for it; with a second window every window shows its name.
+        SyncWindowIdentities(*s);
         return 0;
     }
 
@@ -2401,6 +2411,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             s->renderer.SetCompositor(nullptr);
             if (last_window) ui::ResetRenderCaches(s->core.render_caches);
             s->compositor.Shutdown();
+            ReleaseWindowOverlay(*s);
             s->core.windows.Remove(hwnd);
             s->hwnd = nullptr;
             if (!last_window) {
@@ -2412,6 +2423,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 if (AppState* next = s->core.windows.MostRecent()) {
                     SyncShellWindows(*next);
                     SyncVisibleWatches(*next);  // stop watching what only this window showed
+                    SyncWindowIdentities(*next);  // M7c: down to one, names and dots go
                 }
             }
         }
@@ -2847,6 +2859,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         state.session_active_layout_tab = session.active_layout_tab;
         // Session v8 (M4d): the single-window fields above are the focused
         // window; the others open after the first window is shown.
+        if (session.focused_window >= 0 && session.focused_window < static_cast<int>(session.windows.size()))
+            state.identity = session.windows[static_cast<size_t>(session.focused_window)].identity;  // M7c
         for (size_t i = 0; i < session.windows.size(); ++i)
             if (static_cast<int>(i) != session.focused_window)
                 state.core.pending_session_windows.push_back(std::move(session.windows[i]));

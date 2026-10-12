@@ -19,6 +19,7 @@
 #include "../fs/fs_snapshot.h"
 #include "../fs/fs_watch.h"
 #include "app_model.h"
+#include "window_identity.h"
 #include "live_network_search.h"
 #include "tray_compare_metadata.h"
 #include "frame_pump.h"
@@ -284,6 +285,10 @@ struct AppState : AppCoreOwner {
     AppState* window_adopt_from = nullptr;  // Ctrl+Shift+M: the window whose tab moves in (M5c)
     size_t window_adopt_index = 0;
     std::optional<WindowMergeUndo> window_merge_undo;  // M6c
+    // Its name and color (M7c, window_identity_ui.h) and the taskbar dot
+    // drawn from them.
+    app::WindowIdentity identity;
+    HICON identity_overlay = nullptr;
     int tabDropIndex = -1;  // a tab dragged from another window would land here (M6b)
     // A tab dragged over the content area (M6d): where it would go, client px.
     bool contentDrop = false;

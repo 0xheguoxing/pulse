@@ -24,6 +24,7 @@ struct ClosedWindow {
     // Its own sidebar and details pane (M4d); without one the window takes
     // the layout of the window that opens it.
     std::optional<WindowLayoutSnapshot> layout;
+    WindowIdentity identity;  // M7c: comes back with its name and color
 };
 
 // Most recently closed last. Holds at most kCapacity windows; the oldest go.

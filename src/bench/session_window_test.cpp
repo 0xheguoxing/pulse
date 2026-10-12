@@ -137,6 +137,7 @@ SessionSnapshot SampleThreeWindows() {
     pane.path = L"E:\\Downloads";
     downloads.panes = {pane};
     recent.layout_tabs = {downloads};
+    recent.identity = {L"\u8BBE\u8BA1 \"\u7A3F\" \\ v2", 3};  // M7c: a typed name that needs escaping
     WindowSessionSnapshot third;
     third.window_rect = {300, 200, 1800, 1100};
     third.maximized = true;
@@ -247,6 +248,10 @@ int main() {
                   c.layout.details_panel && !c.layout.details_preview &&
                   c.layout_tabs.size() == 2 && c.active_layout_tab == 1,
               "v8: window 2 maximized, layout, two tabs, active tab");
+        Check(a.identity.name == L"\u8BBE\u8BA1 \"\u7A3F\" \\ v2" && a.identity.color == 3,
+              "v8: a typed window name (quotes, backslash) and its color round-trip");
+        Check(b.identity == WindowIdentity{} && c.identity == WindowIdentity{},
+              "v8: an automatic name and no color yet round-trip as such");
     }
     // The parser normalizes defaults (empty sidebarOrder), so compare after one pass.
     SessionSnapshot again;
@@ -281,6 +286,14 @@ int main() {
               wide.windows.size() == 1 && wide.windows[0].layout.details_panel_width == 340 &&
               wide.windows[0].layout.details_preview && wide.windows[0].layout.starred_expanded,
           "window with an out-of-range width or missing keys gets the defaults");
+    Check(wide.windows.size() == 1 && wide.windows[0].identity == WindowIdentity{},
+          "M7c: a window saved before names and colors gets an automatic name and a fresh color");
+    SessionSnapshot odd;
+    Check(ParseSessionJson(L"{\"version\":8,\"windows\":[{\"windowName\":\"  Work\\t \",\"windowColor\":9,"
+                           L"\"tabGroups\":[{\"id\":1,\"name\":\"g\",\"color\":2}]}]}", odd) &&
+              odd.windows.size() == 1 && odd.windows[0].identity.name == L"Work" &&
+              odd.windows[0].identity.color == -1 && odd.windows[0].tab_groups.size() == 1,
+          "M7c: a saved name is trimmed, an unknown color dropped, groups untouched");
 
     std::printf("session_window_test: %d failure(s)\n", g_failures);
     return g_failures == 0 ? 0 : 1;

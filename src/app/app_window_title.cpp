@@ -1,5 +1,6 @@
 #include "app_window_title.h"
 #include "app_runtime.h"
+#include "window_identity_ui.h"
 
 namespace pulse {
 std::wstring TaskbarWindowTitle(const app::Tab* tab) {
@@ -11,7 +12,9 @@ std::wstring TaskbarWindowTitle(const app::Tab* tab) {
 
 bool SyncTaskbarWindowTitle(AppState& s) {
     if (!s.hwnd) return false;
-    const auto title = TaskbarWindowTitle(ActiveTab(s));
+    // M7c: with two or more windows each is called by its name, so Alt+Tab
+    // and the taskbar tell them apart.
+    const auto title = WindowIdentityShown(s) ? WindowDisplayName(s) + L" \u2014 Pulse" : TaskbarWindowTitle(ActiveTab(s));
     const int length = GetWindowTextLengthW(s.hwnd);
     if (length == static_cast<int>(title.size())) {
         std::wstring current(static_cast<size_t>(length) + 1, L'\0');

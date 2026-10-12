@@ -780,7 +780,7 @@ target_link_libraries(pulse_persistence_test PRIVATE
     user32 shell32 ole32 uuid advapi32 shlwapi netapi32 pulse_localization)
 # Multi-window M0: single-window session baseline (session v8 must keep it).
 add_executable(pulse_session_window_test src/bench/session_window_test.cpp
-    src/app/session.cpp src/app/session_tab_model.cpp src/app/tab_group_model.cpp
+    src/app/session.cpp src/app/session_tab_model.cpp src/app/tab_group_model.cpp src/app/window_identity.cpp
     src/app/app_model.cpp src/app/places.cpp src/app/entry_group.cpp src/app/tag_ads_sync.cpp
     src/app/pane_layout.cpp src/app/column_view_model.cpp src/app/search_query.cpp
     src/app/search_query_rewrite.cpp src/index/index_query.cpp src/index/search_kinds.cpp
@@ -1534,6 +1534,8 @@ target_link_libraries(pulse_host_window_test PRIVATE user32 advapi32 ole32)
 add_executable(pulse_window_registry_test src/bench/window_registry_test.cpp)
 # Multi-window M7a: where folders opened from outside Pulse go (plan §6).
 add_executable(pulse_external_open_test src/bench/external_open_test.cpp src/app/external_open.cpp)
+# Multi-window M7c: window names and colors (plan §8.3).
+add_executable(pulse_window_identity_test src/bench/window_identity_test.cpp src/app/window_identity.cpp)
 add_executable(pulse_render_cache_sharing_test src/bench/render_cache_sharing_test.cpp)
 target_link_libraries(pulse_render_cache_sharing_test PRIVATE user32 d3d11 d2d1)
 add_executable(pulse_shell_window_registry_retry_test src/bench/shell_window_registry_retry_test.cpp

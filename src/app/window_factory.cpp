@@ -74,6 +74,7 @@ HWND OpenPulseWindow(AppState& from, const WindowInit& init) {
     state->has_window_start = true;
     state->window_start_path = init.path;
     state->window_restore = init.restore;
+    if (init.restore) state->identity = init.restore->identity;  // M7c
     state->window_adopt_from = init.adopt_from;
     state->window_adopt_index = init.adopt_index;
     g_windows.push_back(std::move(owned));
@@ -177,6 +178,7 @@ void OpenSessionWindows(AppState& first) {
         restore.tab_groups = std::move(saved.tab_groups);
         restore.active_layout_tab = saved.active_layout_tab;
         restore.layout = std::move(saved.layout);
+        restore.identity = std::move(saved.identity);
         WindowInit init;
         init.restore = std::move(restore);
         OpenPulseWindow(first, init);

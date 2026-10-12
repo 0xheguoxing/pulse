@@ -118,6 +118,7 @@ bool MergeWindowInto(AppState& src, AppState& dst, size_t insert_at, const WINDO
     place.rect = app::RestoredWindowRect(before.rcNormalPosition);
     place.maximized = before.showCmd == SW_SHOWMAXIMIZED;
     place.layout = CaptureWindowLayout(src);
+    place.identity = src.identity;  // M7c: undo brings back its name and color
     if (const app::LayoutTab* active = src.window_tabs.Active()) place.name = app::LayoutTabTitle(*active);
 
     const HWND hwnd = src.hwnd;

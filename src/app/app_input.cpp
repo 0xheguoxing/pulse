@@ -36,6 +36,7 @@
 #include "resource.h"
 #include "../ops/clipboard.h"
 #include "../ipc/ctx_menu_util.h"
+#include "window_identity_ui.h"
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -2265,6 +2266,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
+        if (HandleWindowIdentityPress(*s, hit, POINT{mx, my})) return 0;  // M7c
         if (hit.region == ui::HitTestResult::TrayCard && hit.index == 0) {
             const auto top = TrayDeckEntries(s->tray, static_cast<size_t>(TrayStackTop(*s)), 1);
             if (!top.empty()) {
@@ -3132,6 +3134,7 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
             {"column_layout", double_tab && double_tab->column_layout},
             {"has_index", hit.index >= 0},
             {"item_index", hit.index >= 0 ? static_cast<uint64_t>(hit.index) : 0}});
+        if (HandleWindowIdentityDoubleClick(*s, hit, POINT{mx, my})) return 0;  // M7c: rename, recolor
         if (pulse::HandleTabDoubleClick(*s, hit)) return 0;
         if ((hit.region == ui::HitTestResult::Pane || hit.region == ui::HitTestResult::None) &&
             PointInList(*s, mx, my) &&
@@ -3703,7 +3706,10 @@ LRESULT HandleRButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         POINT sp{ mx, my };
         ClientToScreen(hwnd, &sp);
         bool shown = false;
-        if (hit.region == ui::HitTestResult::TabGroup && hit.index >= 0 &&
+        if (hit.region == ui::HitTestResult::WindowIdentity) {
+            ShowWindowIdentityMenu(*s, sp);  // M7c
+            shown = true;
+        } else if (hit.region == ui::HitTestResult::TabGroup && hit.index >= 0 &&
             hit.index < static_cast<int>(vm.tab_groups.size())) {
             // Group chip right-click: the Edge-style editor bubble.
             if (s->pane && EnsureMenu(*s)) {

@@ -264,6 +264,49 @@ D2D1_RECT_F MainRenderer::SidebarToggleRect(float w) const {
     return D2D1::RectF(right - size, top, right, top + size);
 }
 
+// Dot and name sit where the product name is, after the mark: 6 dip padding,
+// a 10 dip dot, 6 dip gap, the name, 6 dip padding; never under the sidebar
+// toggle. Without room for that (the icon rail, a narrow sidebar) a dot sits
+// on the lower right corner of the mark, or of the toggle where the toggle
+// stands in for the mark.
+MainRenderer::WindowIdentityGeometry MainRenderer::WindowIdentityLayout(const WindowViewModel& vm, float w) const {
+    WindowIdentityGeometry g;
+    if (!vm.window_identity || vm.window_identity_name.empty() || !compositor_) return g;
+    const D2D1_RECT_F toggle = SidebarToggleRect(w);
+    const bool has_toggle = toggle.right > toggle.left;
+    if (!(has_toggle && sidebar_collapsed_)) {
+        const float left = (12.0f + 24.0f + 4.0f) * scale_;
+        float limit = EffectiveSidebarWidth(w) - 8.0f * scale_;
+        if (has_toggle) limit = (std::min)(limit, toggle.left - 4.0f * scale_);
+        const float text = MeasureLayoutText(compositor_, compositor_->DwriteFactory(), compositor_->HeaderFormat(),
+                                             vm.window_identity_name);
+        const float width = (std::min)(limit - left, 28.0f * scale_ + text);
+        if (width >= 40.0f * scale_) {
+            const float height = 28.0f * scale_;
+            const float top = (title_bar_height_ - height) * 0.5f;
+            g.hit = D2D1::RectF(left, top, left + width, top + height);
+            g.dot_radius = 5.0f * scale_;
+            g.dot = D2D1::Point2F(left + 6.0f * scale_ + g.dot_radius, top + height * 0.5f);
+            return g;
+        }
+    }
+    g.compact = true;
+    g.dot_radius = 4.0f * scale_;
+    if (has_toggle && sidebar_collapsed_) {
+        g.dot = D2D1::Point2F(toggle.right - 3.0f * scale_, toggle.bottom - 3.0f * scale_);
+        const float reach = g.dot_radius + 3.0f * scale_;
+        g.hit = D2D1::RectF(g.dot.x - reach, g.dot.y - reach, g.dot.x + reach, g.dot.y + reach);
+    } else {
+        const float mark = 24.0f * scale_;
+        const float left = 12.0f * scale_;
+        const float top = (title_bar_height_ - mark) * 0.5f;
+        g.dot = D2D1::Point2F(left + mark - 2.0f * scale_, top + mark - 2.0f * scale_);
+        const float pad = 4.0f * scale_;
+        g.hit = D2D1::RectF(left - pad, top - pad, left + mark + pad, top + mark + pad);
+    }
+    return g;
+}
+
 D2D1_RECT_F MainRenderer::ToolbarRect(float w) const {
     return D2D1::RectF(EffectiveSidebarWidth(w), title_bar_height_, w, title_bar_height_ + toolbar_height_);
 }
@@ -843,7 +886,21 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
     const float brandRight = EffectiveSidebarWidth(right) - 12.0f * scale_;
     const float nameWidth = MeasureLayoutText(compositor_, compositor_->DwriteFactory(),
         compositor_->HeaderFormat(), L"Pulse");
-    if (x + nameWidth <= brandRight) {
+    const WindowIdentityGeometry identity = WindowIdentityLayout(vm, right);
+    if (identity.hit.right > identity.hit.left && !identity.compact) {
+        // Multi-window M7c: this window's dot and name instead of the product name.
+        if (IsHovered(vm, HitTestResult::WindowIdentity)) {
+            MakeBrush(dc, theme.fill_hover, brFillHover_);
+            const float radius = theme.radius_control * scale_;
+            dc->FillRoundedRectangle(D2D1::RoundedRect(identity.hit, radius, radius), brFillHover_.get());
+        }
+        MakeBrush(dc, HexColor(vm.window_identity_rgb), brAccent_);
+        dc->FillEllipse(D2D1::Ellipse(identity.dot, identity.dot_radius, identity.dot_radius), brAccent_.get());
+        const float text_x = identity.hit.left + 22.0f * scale_;
+        MakeBrush(dc, theme.text, brText_);
+        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), compositor_->HeaderFormat(), brText_.get(),
+                            vm.window_identity_name, text_x, 0.0f, identity.hit.right - 6.0f * scale_ - text_x, h);
+    } else if (x + nameWidth <= brandRight) {
         MakeBrush(dc, theme.text, brText_);
         DrawTextRect(dc, compositor_->HeaderFormat(), brText_.get(), L"Pulse",
             x, 0.0f, nameWidth + 1.0f * scale_, h);
@@ -858,6 +915,15 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         }
     }
 
+    if (identity.compact && identity.hit.right > identity.hit.left) {
+        // M7c on the rail: the window's dot on the corner of the mark (or of
+        // the toggle), ringed in the title bar's color so it stands apart.
+        MakeBrush(dc, theme.surface_title, brAccent_);
+        dc->FillEllipse(D2D1::Ellipse(identity.dot, identity.dot_radius + 1.5f * scale_,
+                                      identity.dot_radius + 1.5f * scale_), brAccent_.get());
+        MakeBrush(dc, HexColor(vm.window_identity_rgb), brAccent_);
+        dc->FillEllipse(D2D1::Ellipse(identity.dot, identity.dot_radius, identity.dot_radius), brAccent_.get());
+    }
     const float ctrlW = 46.0f * scale_;
     const TitleChrome chrome = MakeTitleChrome(right, scale_, h);
 

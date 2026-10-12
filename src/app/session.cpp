@@ -186,6 +186,11 @@ std::wstring WindowToJson(const WindowSessionSnapshot& w) {
       << L",\"detailsPanelWidth\":" << ClampDetailsPanelWidth(l.details_panel_width)
       << L",\"detailsPreviewOnly\":" << (l.details_preview_only ? L"true" : L"false")
       << L",\"detailsPreview\":" << (l.details_preview ? L"true" : L"false") << L",\n";
+    // M7c: "windowName" "" = named after its folders; unique keys, since
+    // the lookups below also see the nested groups' "name" and "color".
+    std::wstring name;
+    pulse::json::Escape(w.identity.name, name);
+    f << L"     \"windowName\":\"" << name << L"\",\"windowColor\":" << w.identity.color << L",\n";
     f << L"     \"activeTab\":" << w.active_layout_tab << L",\n";
     f << L"     \"tabGroups\":" << TabGroupsToJson(w.tab_groups) << L",\n";
     f << L"     \"layoutTabs\":" << LayoutTabsToJson(w.layout_tabs) << L"}";
@@ -517,6 +522,9 @@ bool ParseSessionJson(const std::wstring& json, SessionSnapshot& snap) {
             l.details_preview_only = pulse::json::ExtractBool(wj, L"detailsPreviewOnly", false);
             l.details_preview = pulse::json::ExtractBool(wj, L"detailsPreview", true);
             w.active_layout_tab = pulse::json::ExtractInt(wj, L"activeTab");
+            w.identity.name = NormalizeWindowName(pulse::json::ExtractString(wj, L"windowName"));
+            w.identity.color = pulse::json::ExtractInt(wj, L"windowColor", -1);
+            if (!ValidWindowColor(w.identity.color)) w.identity.color = -1;
             std::wstring body;
             if (ExtractJsonArray(wj, L"tabGroups", body)) ParseTabGroups(L"[" + body + L"]", w.tab_groups);
             if (ExtractJsonArray(wj, L"layoutTabs", body)) ParseLayoutTabs(L"[" + body + L"]", w.layout_tabs);
