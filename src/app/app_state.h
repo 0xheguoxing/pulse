@@ -505,6 +505,10 @@ struct AppState : AppCoreOwner {
     std::chrono::steady_clock::time_point operationFinishedAt{};
     HWND hwndRenameEdit = nullptr;
     int renameIndex = -1;
+    // Last key press, click or wheel turn in this window, any of its child
+    // controls included (GetTickCount64; the message loop, NoteUserInput).
+    // External opens avoid interrupting a window in use (M7a, plan §6).
+    uint64_t last_input_tick = 0;
     bool renameIgnoreKillFocus = false;
     bool renameClickCandidate = false;
     app::Pane* renameClickPane = nullptr;

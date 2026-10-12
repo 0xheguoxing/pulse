@@ -56,6 +56,7 @@
 #include "settings_controller.h"
 #include "single_instance_coordinator.h"
 #include "window_factory.h"
+#include "open_routing.h"
 #include "tab_transfer.h"
 #include "tab_detach.h"
 #include "window_merge.h"
@@ -602,12 +603,12 @@ static BOOL HandleInstanceCopyData(AppState& s, COPYDATASTRUCT* cds) {
         const auto accepted = s.single_instance.AcceptOpenRequest(request, GetTickCount64());
         if (accepted == app::SingleInstanceCoordinator::OpenAcceptance::Invalid) return FALSE;
         if (accepted == app::SingleInstanceCoordinator::OpenAcceptance::New)
-            OpenFolderInNewTab(s, request.path);
+            OpenExternalFolder(s, request.path);  // plan §6: tab, window or the open one
         return TRUE; // acceptance, not a claim that asynchronous enumeration succeeded
     }
     std::wstring path;
     if (!app::SingleInstanceCoordinator::DecodeOpenPath(cds, path)) return FALSE;
-    OpenFolderInNewTab(s, path);
+    OpenExternalFolder(s, path);
     return TRUE;
 }
 
@@ -3086,7 +3087,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
                 return 0;
             }
             if (message != WM_COPYDATA) return std::nullopt;
-            if (!target || !state.single_instance.OwnsEndpoint(host)) return FALSE;
+            // A --test-instance publishes no endpoint (a second launch would
+            // reach the user's own Pulse), so test scripts send the open
+            // message straight to its host window (M7a end-to-end checks).
+            if (!target || (!state.single_instance.OwnsEndpoint(host) && !state.isolatedTest)) return FALSE;
             return HandleInstanceCopyData(*target, reinterpret_cast<COPYDATASTRUCT*>(lParam));
         });
     if (!host_created) return 1;
@@ -3370,6 +3374,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     BOOL ret;
     while ((ret = GetMessageW(&msg, nullptr, 0, 0)) != 0) {
         if (ret == -1) break;
+        NoteUserInput(state, msg);
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }

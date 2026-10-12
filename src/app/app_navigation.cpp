@@ -2677,4 +2677,6 @@ bool ActivateExistingFolderTab(AppState& s, const std::wstring& path) {
     return true;
 }
 
+bool ShowsFolder(AppState& s, const std::wstring& path) { return FindFolderTab(s, path, nullptr) >= 0; }
+
 } // namespace pulse

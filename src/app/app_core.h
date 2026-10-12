@@ -23,6 +23,7 @@
 #include "context_menu_prefs.h"
 #include "duplicate_scan.h"
 #include "explorer_window_takeover.h"
+#include "external_open.h"
 #include "folder_sizes.h"
 #include "global_search_hotkey.h"
 #include "global_search_window.h"
@@ -212,6 +213,12 @@ struct AppCore {
     // window opens them once it has been shown (WM_OPEN_SESSION_WINDOWS); until
     // then session saves keep them, so a launch into the tray loses nothing.
     std::vector<app::WindowSessionSnapshot> pending_session_windows;
+    // Folders opened from outside Pulse (M7a, open_routing.h): the batch the
+    // last ones formed, its window and, while it is an existing window, the
+    // tab the batch's first folder opened in there.
+    app::ExternalOpenBatch open_batch;
+    HWND open_batch_window = nullptr;
+    const void* open_batch_tab = nullptr;  // app::LayoutTab*, compared only
 
     // Hidden process window (host_window.h): single-instance endpoint today,
     // tray/hotkey/service callbacks as M2 continues. Last member, so it is

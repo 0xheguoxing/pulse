@@ -118,6 +118,9 @@ void CloseLayoutTab(AppState& s, size_t idx);
 void CloseActiveTab(AppState& s);
 void SwitchTab(AppState& s, size_t idx);
 bool ActivateExistingFolderTab(AppState& s, const std::wstring& path);
+// Whether a visible pane of one of the window's tabs shows `path` (what
+// ActivateExistingFolderTab would bring forward).
+bool ShowsFolder(AppState& s, const std::wstring& path);
 // "Open in new tab": switches to (and pulses) a tab already showing `path`
 // instead of duplicating it.
 void OpenFolderTab(AppState& s, const std::wstring& path);

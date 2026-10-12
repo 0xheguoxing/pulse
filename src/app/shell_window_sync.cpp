@@ -5,7 +5,9 @@
 #include "app_navigation.h"
 #include "app_runtime.h"
 #include "app_state.h"
+#include "open_routing.h"
 #include "tray_reveal.h"
+#include "window_registry.h"
 #include "../common/path_utils.h"
 
 #include <shlobj.h>
@@ -193,8 +195,14 @@ void HandleShellSelect(AppState& s, const app::ShellSelectRequest& request) {
 
 // A /select that applied in the hidden source after its folder was handed
 // over: select those names in the tab opened for it, if it still shows it.
-static void SelectTakenOverNames(AppState& s, const app::ExplorerTakeoverRequest& request) {
-    if (!ExplorerTakeoverEnabled(s) || request.names.empty()) return;
+static void SelectTakenOverNames(AppState& mru, const app::ExplorerTakeoverRequest& request) {
+    if (!ExplorerTakeoverEnabled(mru) || request.names.empty()) return;
+    // The folder may have opened in any window (M7a): the most recent one
+    // whose active tab shows it.
+    AppState& s = app::FindWindowSharingCore(mru, [&request](AppState& w) {
+        const app::Tab* active = ActiveTab(w);
+        return active && SameFolder(active->current_path, request.folder);
+    });
     app::Tab* tab = ActiveTab(s);
     if (!tab || !SameFolder(tab->current_path, request.folder)) return;
     app::TraceShellWindows(L"takeover late selection folder=[%s] names=%zu", request.folder.c_str(),
@@ -204,26 +212,27 @@ static void SelectTakenOverNames(AppState& s, const app::ExplorerTakeoverRequest
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
-void HandleExplorerTakeover(AppState& s, const app::ExplorerTakeoverRequest& request) {
+void HandleExplorerTakeover(AppState& mru, const app::ExplorerTakeoverRequest& request) {
     if (request.select_only) {
-        SelectTakenOverNames(s, request);
+        SelectTakenOverNames(mru, request);
         return;
     }
     if (!request.handoff) return;
-    if (!ExplorerTakeoverEnabled(s) || GetTickCount64() >= request.handoff->deadline_tick) {
+    if (!ExplorerTakeoverEnabled(mru) || GetTickCount64() >= request.handoff->deadline_tick) {
         request.handoff->Cancel();
         return;
     }
     if (request.handoff->state != app::HandoffState::Pending) return;
     if (!request.handoff->Receive(GetTickCount64())) return;
     app::TraceShellWindows(L"takeover request folder=[%s] names=%zu", request.folder.c_str(), request.names.size());
-    // Pulse may be closed to the tray or minimized; Explorer's window is about
-    // to close, so the folder must open where it can be seen. Restore first:
-    // a fresh start from the tray resets the tabs before showing the window.
-    RevealWindow(s);
-    // This PC travels as its parsing name, which OpenFolderInNewTab knows.
-    OpenFolderInNewTab(s, request.folder.empty() ? std::wstring(L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}")
-                                                 : request.folder);
+    // Explorer's window is about to close, so the folder must open where it
+    // can be seen: plan §6 picks the window (M7a); a window minimized or in
+    // the tray is restored (a fresh start from the tray included) when the
+    // folder goes there. This PC travels as its parsing name, which
+    // OpenExternalFolder knows.
+    AppState& s = OpenExternalFolder(mru, request.folder.empty()
+                                              ? std::wstring(L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}")
+                                              : request.folder);
     BringToFront(s.hwnd);
     app::Tab* tab = ActiveTab(s);
     if (!tab || !SameFolder(tab->current_path, request.folder)) {

@@ -79,6 +79,14 @@ HWND OpenPulseWindow(AppState& from, const WindowInit& init) {
     g_windows.push_back(std::move(owned));
 
     RECT rect = init.rect ? *init.rect : CascadedRect(from);
+    const HMONITOR from_monitor = MonitorFromWindow(from.hwnd, MONITOR_DEFAULTTONEAREST);
+    if (!init.rect && !init.restore && init.monitor && init.monitor != from_monitor) {
+        MONITORINFO there{sizeof(there)};
+        MONITORINFO here{sizeof(here)};
+        const RECT normal = NormalScreenRect(from.hwnd);
+        if (normal.right > normal.left && GetMonitorInfoW(init.monitor, &there) && GetMonitorInfoW(from_monitor, &here))
+            rect = app::MoveToWorkArea(normal, here.rcWork, there.rcWork);
+    }
     bool maximize = false;
     if (init.restore) {
         const RECT& back = init.restore->rect;

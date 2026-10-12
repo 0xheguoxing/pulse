@@ -24,6 +24,12 @@ RECT RestoredWindowRect(const RECT& workspace);
 // work area, the work area's top-left. The size is kept, shrunk to fit.
 RECT CascadeWindowRect(const RECT& opener, const RECT& work, int offset);
 
+// Where a folder opened from another monitor gets its new window (M7a, plan
+// §6 rule 6): `rect` (the opener's normal rectangle, on `from_work`) keeps its
+// place relative to the work area's top-left on `to_work`, its size shrunk to
+// fit and its position pulled back inside. Without a target work area, `rect`.
+RECT MoveToWorkArea(const RECT& rect, const RECT& from_work, const RECT& to_work);
+
 // Where a window of a restored session opens (multi-window M4d, plan §7).
 // `saved` is its screen rectangle (RestoredWindowRect), `on_monitor` whether
 // that still overlaps a monitor, `work` the work area it opens in (its

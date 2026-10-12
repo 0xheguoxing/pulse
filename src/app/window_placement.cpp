@@ -55,6 +55,19 @@ RECT CascadeWindowRect(const RECT& opener, const RECT& work, int offset) {
     return r;
 }
 
+RECT MoveToWorkArea(const RECT& rect, const RECT& from_work, const RECT& to_work) {
+    const LONG work_w = to_work.right - to_work.left;
+    const LONG work_h = to_work.bottom - to_work.top;
+    if (work_w <= 0 || work_h <= 0) return rect;
+    const LONG w = (std::min)(rect.right - rect.left, work_w);
+    const LONG h = (std::min)(rect.bottom - rect.top, work_h);
+    LONG left = to_work.left + (rect.left - from_work.left);
+    LONG top = to_work.top + (rect.top - from_work.top);
+    left = (std::max)(to_work.left, (std::min)(left, to_work.right - w));
+    top = (std::max)(to_work.top, (std::min)(top, to_work.bottom - h));
+    return RECT{left, top, left + w, top + h};
+}
+
 RECT PlaceSessionWindow(const RECT& saved, bool on_monitor, const RECT& work,
                         const std::vector<RECT>& taken, int offset) {
     RECT r = saved;

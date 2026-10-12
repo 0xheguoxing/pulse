@@ -82,6 +82,16 @@ int main() {
           "cascade: a window larger than the work area is shrunk to fit");
     Check(Same(CascadeWindowRect({0, 40, 800, 640}, {0, 40, 1920, 1080}, 32), {32, 72, 832, 672}),
           "cascade: a top taskbar work area is respected");
+    // External open on another monitor (M7a): same spot relative to its work area.
+    const RECT right_mon{1920, 0, 4480, 1400};
+    Check(Same(MoveToWorkArea({100, 80, 900, 680}, desk, right_mon), {2020, 80, 2820, 680}),
+          "other monitor: keeps its offset from the work area's top-left");
+    Check(Same(MoveToWorkArea({1500, 600, 1900, 1000}, desk, {-1280, 0, 0, 984}), {-400, 584, 0, 984}),
+          "other monitor: pulled back inside a smaller (left) work area");
+    Check(Same(MoveToWorkArea({0, 0, 1900, 1040}, desk, {-1280, 0, 0, 984}), {-1280, 0, 0, 984}),
+          "other monitor: shrunk to a smaller work area");
+    Check(Same(MoveToWorkArea({100, 80, 900, 680}, desk, RECT{}), {100, 80, 900, 680}),
+          "other monitor: without a work area the rectangle stays");
     // Session restore (M4d): monitor gone -> primary work area, same spot -> cascade.
     Check(Same(PlaceSessionWindow({300, 200, 1100, 800}, true, desk, {}, 32), {300, 200, 1100, 800}),
           "session window on a monitor keeps its rectangle");

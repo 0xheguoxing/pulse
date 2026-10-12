@@ -33,6 +33,10 @@ struct WindowInit {
     size_t adopt_index = 0;
     // A tab dragged off the strip (M6a): the window opens here, unmaximized.
     std::optional<RECT> rect;
+    // A folder opened from outside Pulse (M7a, plan §6 rule 6): the monitor
+    // the request came from (its foreground window's). On another monitor
+    // than `from`'s the window keeps its spot relative to the work area there.
+    HMONITOR monitor = nullptr;
 };
 
 // Creates and shows a window on `from`'s core at `init.path`, next to `from`
