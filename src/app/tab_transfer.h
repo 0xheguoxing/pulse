@@ -41,4 +41,9 @@ std::optional<size_t> SplitPaneIntoTab(AppState& s, app::Pane* pane, app::PaneOr
 // when `into` is no longer a tab of `dst`, and when app::CanPutPaneBack says no.
 bool ReturnTabAsPane(AppState& src, size_t index, AppState& dst, const app::LayoutTab* into,
                      const app::PaneOrigin& origin, TransferSource source = TransferSource::KeepsTabs);
+// Scroll positions are kept in pixels. A tab that moves to a window at
+// another DPI (M6f: a window on another monitor), or whose window changes
+// DPI, scales them by `ratio` (new scale / old scale) so the same rows stay
+// in view. The moves above do this themselves.
+void RescaleLayoutTabScroll(app::LayoutTab& tab, float ratio);
 }  // namespace pulse

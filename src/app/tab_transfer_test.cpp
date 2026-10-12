@@ -11,6 +11,7 @@
 #include "window_merge.h"
 #include "context_menu.h"
 #include "../common/localization.h"
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -611,6 +612,40 @@ bool RunTabTransferTest() {
             }
             third.reset();
         }
+
+        // --- M6f: a tab moved to a window at another DPI keeps its rows ------
+        {
+            const float src_scale = src->scale;
+            const float dst_scale = dst->scale;
+            src->scale = 1.0f;
+            dst->scale = 1.5f;
+            Seed(src->window_tabs, 2);  // replaces its tabs; the second one, shown, moves
+            BindCurrentLayout(*src);
+            const size_t moving = 1;
+            LayoutTab* const carried = src->window_tabs.items[moving].get();
+            Tab* const carried_view = carried->panes[0]->ActiveTab();
+            carried_view->scroll_y = 300.0f;
+            carried_view->scroll_x = 20.0f;
+            check(MoveLayoutTab(*src, moving, *dst, 0) && carried_view->scroll_y == 450.0f &&
+                      carried_view->scroll_x == 30.0f,
+                  "a tab moved from a window at 100% to one at 150% scrolls 1.5 times as far (the same rows in view)");
+            size_t home = dst->window_tabs.items.size();
+            for (size_t i = 0; i < dst->window_tabs.items.size(); ++i)
+                if (dst->window_tabs.items[i].get() == carried) home = i;
+            check(home < dst->window_tabs.items.size() &&
+                      MoveLayoutTab(*dst, home, *src, src->window_tabs.items.size()) &&
+                      std::abs(carried_view->scroll_y - 300.0f) < 0.01f && std::abs(carried_view->scroll_x - 20.0f) < 0.01f,
+                  "moved back, its scroll position is what it was");
+            RescaleLayoutTabScroll(*carried, 0.0f);
+            RescaleLayoutTabScroll(*carried, 1.0f);
+            check(std::abs(carried_view->scroll_y - 300.0f) < 0.01f, "a ratio of 0 or 1 leaves the scroll position alone");
+            RescaleLayoutTabScroll(*carried, 2.0f);
+            check(std::abs(carried_view->scroll_y - 600.0f) < 0.01f && std::abs(carried_view->scroll_x - 40.0f) < 0.01f,
+                  "a window that goes from 100% to 200% doubles its tabs' scroll positions");
+            src->scale = src_scale;
+            dst->scale = dst_scale;
+        }
+
 
         core->windows.Remove(dst->hwnd);
         core->windows.Remove(src->hwnd);

@@ -1204,7 +1204,18 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_DPICHANGED: {
+        const float old_scale = s->scale;
         s->scale = (float)HIWORD(wParam) / 96.0f;
+        if (old_scale > 0.0f && s->scale != old_scale) {
+            // Moved to a monitor at another DPI (M6f): pixel scroll positions
+            // follow, so every tab keeps the same rows in view.
+            const float ratio = s->scale / old_scale;
+            for (auto& item : s->window_tabs.items)
+                if (item) RescaleLayoutTabScroll(*item, ratio);
+            s->scrollTargetX *= ratio;
+            s->scrollTargetY *= ratio;
+            s->detailsScroll *= ratio;
+        }
         RECT* rc = reinterpret_cast<RECT*>(lParam);
         SetWindowPos(hwnd, nullptr, rc->left, rc->top,
             rc->right - rc->left, rc->bottom - rc->top,

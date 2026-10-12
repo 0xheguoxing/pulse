@@ -41,14 +41,19 @@ void ReleaseLeavingTab(AppState& s, const app::LayoutTab& tab, bool active) {
     for (const auto& pane : tab.panes) CancelContentSelection(s, *pane->ActiveTab());
 }
 
+float ScaleRatio(const AppState& src, const AppState& dst) {
+    return src.scale > 0.0f && dst.scale > 0.0f ? dst.scale / src.scale : 1.0f;
+}
+
 // Takes tab `index` out of `src` for a move into a pane of another window.
-std::unique_ptr<app::LayoutTab> TakeLeavingTab(AppState& src, size_t index, bool closing) {
+std::unique_ptr<app::LayoutTab> TakeLeavingTab(AppState& src, size_t index, bool closing, const AppState& dst) {
     auto& from = src.window_tabs;
     ReleaseLeavingTab(src, *from.items[index], index == from.active);
     RememberLayoutFocus(src);
     std::unique_ptr<app::LayoutTab> tab = from.TakeTab(index, closing);
     if (!tab) return nullptr;
     BindCurrentLayout(src);
+    RescaleLayoutTabScroll(*tab, ScaleRatio(src, dst));
     if (!from.items.empty()) {
         RevalidateVisibleFolders(src);
         InvalidateRect(src.hwnd, nullptr, FALSE);
@@ -56,6 +61,16 @@ std::unique_ptr<app::LayoutTab> TakeLeavingTab(AppState& src, size_t index, bool
     return tab;
 }
 }  // namespace
+
+void RescaleLayoutTabScroll(app::LayoutTab& tab, float ratio) {
+    if (!(ratio > 0.0f) || ratio == 1.0f) return;
+    for (auto& pane : tab.panes) {
+        if (!pane) continue;
+        app::Tab& view = *pane->ActiveTab();
+        view.scroll_x *= ratio;
+        view.scroll_y *= ratio;
+    }
+}
 
 bool MoveLayoutTab(AppState& src, size_t index, AppState& dst, size_t insert_at,
                    TransferSource source) {
@@ -69,6 +84,7 @@ bool MoveLayoutTab(AppState& src, size_t index, AppState& dst, size_t insert_at,
     std::unique_ptr<app::LayoutTab> tab = from.TakeTab(index, closing);
     if (!tab) return false;
     BindCurrentLayout(src);  // no tab left: no pane, no watches
+    RescaleLayoutTabScroll(*tab, ScaleRatio(src, dst));
     if (!from.items.empty()) {
         RevalidateVisibleFolders(src);
         InvalidateRect(src.hwnd, nullptr, FALSE);
@@ -90,7 +106,7 @@ bool MoveTabIntoPane(AppState& src, size_t index, AppState& dst, app::ContentDro
     if (&src == &dst || index >= from.items.size() || (from.items.size() < 2 && !closing) ||
         !from.items[index] || !into || !app::CanAddPane(*into, *from.items[index], edge))
         return false;
-    std::unique_ptr<app::LayoutTab> tab = TakeLeavingTab(src, index, closing);
+    std::unique_ptr<app::LayoutTab> tab = TakeLeavingTab(src, index, closing, dst);
     if (!tab) return false;
 
     if (dst.addressSearching) HideAddressEditor(dst, false);
@@ -127,7 +143,7 @@ bool ReturnTabAsPane(AppState& src, size_t index, AppState& dst, const app::Layo
         !from.items[index] || at == dst.window_tabs.items.size() ||
         !app::CanPutPaneBack(*dst.window_tabs.items[at], *from.items[index], origin))
         return false;
-    std::unique_ptr<app::LayoutTab> tab = TakeLeavingTab(src, index, closing);
+    std::unique_ptr<app::LayoutTab> tab = TakeLeavingTab(src, index, closing, dst);
     if (!tab) return false;
 
     if (dst.addressSearching) HideAddressEditor(dst, false);
