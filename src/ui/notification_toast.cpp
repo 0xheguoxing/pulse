@@ -340,8 +340,7 @@ void NotificationToast::DrawSnack(Compositor& compositor, const Theme& theme, fl
         const float share = static_cast<float>(remaining_) / static_cast<float>(duration_);
         const float inset = radius * 0.75f;
         const float span = (card_.right - card_.left - 2.0f * inset) * (std::clamp)(share, 0.0f, 1.0f);
-        D2D1_COLOR_F line = pal.accent;
-        line.a = 0.6f;
+        const D2D1_COLOR_F line = pal.progress;  // the theme color, as set in Settings
         if (span > 0.0f)
             painter_.FillRoundedRect(D2D1::RectF(card_.left + inset, card_.bottom - px(2.5f), card_.left + inset + span,
                                                  card_.bottom - px(1.0f)),

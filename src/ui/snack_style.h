@@ -21,6 +21,7 @@ struct SnackPalette {
     D2D1_COLOR_F stroke;          // the hairline edge
     D2D1_COLOR_F shadow_key;      // the wide, offset shadow
     D2D1_COLOR_F shadow_ambient;  // the tight one around the edge
+    D2D1_COLOR_F progress;        // the time line: the theme's accent as it is
 };
 
 inline float SnackLuma(const D2D1_COLOR_F& c) noexcept { return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b; }
@@ -42,9 +43,11 @@ inline SnackPalette MakeSnackPalette(const Theme& theme, bool high_contrast) noe
     if (high_contrast)
         return {dark,          theme.surface_flyout, clear,             theme.text,
                 theme.text_secondary, theme.accent,  clear,             theme.stroke_card,
-                theme.fill_hover,     theme.text,    clear,             clear};
+                theme.fill_hover,     theme.text,    clear,             clear,
+                theme.accent};
     D2D1_COLOR_F accent = theme.accent;
     accent.a = 1.0f;
+    const D2D1_COLOR_F progress = accent;
     // Mix the accent toward the text tone until it reads on the plate.
     const D2D1_COLOR_F toward = dark ? D2D1::ColorF(0xFFFFFF) : D2D1::ColorF(0x000000);
     for (int step = 0; step < 8; ++step) {
@@ -64,7 +67,8 @@ inline SnackPalette MakeSnackPalette(const Theme& theme, bool high_contrast) noe
                 D2D1::ColorF(0x000000, 0.05f),
                 D2D1::ColorF(0x000000, 0.08f),
                 D2D1::ColorF(0x000000, 0.16f),
-                D2D1::ColorF(0x000000, 0.10f)};
+                D2D1::ColorF(0x000000, 0.10f),
+                progress};
     return {true,
             D2D1::ColorF(0x2C2C2C),
             D2D1::ColorF(0x2C2C2C, 0.28f),
@@ -76,7 +80,8 @@ inline SnackPalette MakeSnackPalette(const Theme& theme, bool high_contrast) noe
             D2D1::ColorF(0xFFFFFF, 0.07f),
             D2D1::ColorF(0xFFFFFF, 0.10f),
             D2D1::ColorF(0x000000, 0.36f),
-            D2D1::ColorF(0x000000, 0.22f)};
+            D2D1::ColorF(0x000000, 0.22f),
+            progress};
 }
 
 // Paints the plate: the shadow, then acrylic sampled from what the frame
