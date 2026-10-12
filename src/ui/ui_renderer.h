@@ -1578,6 +1578,10 @@ private:
                       ID2D1SolidColorBrush* brush, std::wstring_view text,
                       float x, float y, float width, float height,
                       D2D1_DRAW_TEXT_OPTIONS options = D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    // The extension inside a type chip, centered in its box in every text
+    // rendering mode (Auto draws with LumaText, Sharp / Smooth with DirectWrite).
+    void DrawTypeChipLabel(ID2D1DeviceContext* dc, const std::wstring& chip, const D2D1_RECT_F& box,
+                           const D2D1_COLOR_F& ink, const D2D1_COLOR_F& background);
     void DrawFolderIcon(float x, float y, float size, const Theme& theme,
                         float opacity = 1.0f);
     // Slate-gray folder for a folder with nothing to show (same silhouette as

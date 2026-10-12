@@ -426,6 +426,30 @@ float MainRenderer::TypeChipWidthDip(const std::wstring& chip) const {
     return w + 2.0f * kTypeChipPadDip + kTypeChipGapDip;
 }
 
+void MainRenderer::DrawTypeChipLabel(ID2D1DeviceContext* dc, const std::wstring& chip,
+                                     const D2D1_RECT_F& box, const D2D1_COLOR_F& ink,
+                                     const D2D1_COLOR_F& background) {
+    if (!dc || !compositor_ || chip.empty()) return;
+    IDWriteTextFormat* format = compositor_->SmallFormat();
+    if (compositor_->DrawLumaText(chip, format, box, ink, background, DWRITE_TEXT_ALIGNMENT_CENTER)) return;
+    // DirectWrite path (Text rendering: Sharp / Smooth, or a LumaText fallback).
+    // The small format is leading-aligned, so center explicitly; drawing it
+    // as-is left the label against the chip's left edge.
+    if (!format || !compositor_->DwriteFactory()) return;
+    const D2D1_RECT_F rc = typography::SnapVerticalBounds(box);
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(compositor_->DwriteFactory()->CreateTextLayout(chip.c_str(), static_cast<UINT32>(chip.size()),
+            format, std::max(1.0f, rc.right - rc.left), std::max(1.0f, rc.bottom - rc.top), &layout)) ||
+        !layout.get()) {
+        return;
+    }
+    layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    MakeBrush(dc, ink, brTagDot_);
+    dc->DrawTextLayout(D2D1::Point2F(rc.left, rc.top), layout.get(), brTagDot_.get(),
+                       D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+
 float MainRenderer::CellTextWidth(const std::wstring& text, bool small_text) const {
     if (text.empty() || !compositor_) return 0.0f;
     // Details metadata shares the filename's size so a row reads as one line.
@@ -2829,13 +2853,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                                 chipRadius - 0.5f, chipRadius - 0.5f);
                             dc->DrawRoundedRectangle(chipEdge, brTagDot_.get(), 1.0f);
                             const auto chipRc = D2D1::RectF(left, chipTop, left + chipBoxW, chipTop + chipH);
-                            if (!compositor_->DrawLumaText(chip, compositor_->SmallFormat(), chipRc,
-                                                           WithAlpha(ink, ink.a * (cut ? 0.55f : 1.0f)), theme.bg,
-                                                           DWRITE_TEXT_ALIGNMENT_CENTER)) {
-                                MakeBrush(dc, ink, brTagDot_);
-                                DrawTextRect(dc, compositor_->SmallFormat(), brTagDot_.get(), chip,
-                                             chipRc.left, chipRc.top, chipBoxW, chipH);
-                            }
+                            DrawTypeChipLabel(dc, chip, chipRc, WithAlpha(ink, ink.a * (cut ? 0.55f : 1.0f)), theme.bg);
                             typeLeft += chipW;
                         }
                         if (deleted_change) MakeBrush(dc, HexColor(0xC58A38), brTextSecondary_);

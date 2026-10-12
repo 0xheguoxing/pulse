@@ -1,6 +1,9 @@
 #ifdef PULSE_WITH_SELFTEST
 #include "../ui/ui_renderer_internal.h"
 #include "../common/windows_compat.h"
+#include <algorithm>
+#include <climits>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 
@@ -101,6 +104,81 @@ struct ColumnResizeUiTest {
                     const auto shot = root / (L"typography-" + std::to_wstring(font) + L"-" +
                         std::to_wstring(static_cast<int>(scale * 100)) + (dark ? L"-dark.png" : L"-light.png"));
                     check(compositor.SaveSnapshot(shot.c_str()), "save real typography layout screenshot");
+                }
+            }
+            // Type chip labels sit centered in every text rendering mode. User report:
+            // with Text rendering set to Sharp / Smooth (DirectWrite) the extension was
+            // drawn against the chip's left edge; Auto (LumaText) centered it.
+            {
+                typography::SetUiFontScale(100);
+                for (float scale : {1.0f, 1.5f}) {
+                    float auto_cy = -1.0f;
+                    for (const auto mode : {typography::TextRenderMode::Auto, typography::TextRenderMode::Sharp,
+                                            typography::TextRenderMode::Smooth}) {
+                        typography::SetTextRenderMode(mode);
+                        renderer.SetScale(scale); compositor.RecreateTextFormats(scale);
+                        renderer.InvalidateTypography();
+                        compositor.Resize(static_cast<UINT>(200 * scale), static_cast<UINT>(100 * scale));
+                        const auto theme = MakeTheme(false, HexColor(0x0078D4));
+                        renderer.UpdateBrushes(theme); renderer.text_background_ = theme.bg;
+                        const std::wstring chip = L"DWG";
+                        const float origin = std::round(40.0f * scale);
+                        const auto box = D2D1::RectF(origin, origin,
+                            origin + (renderer.TypeChipWidthDip(chip) - kTypeChipGapDip) * scale,
+                            origin + 17.0f * scale);
+                        auto* dc = compositor.Dc(); dc->BeginDraw(); dc->Clear(theme.bg);
+                        renderer.DrawTypeChipLabel(dc, chip, box, HexColor(0x202020), theme.bg);
+                        check(SUCCEEDED(dc->EndDraw()), "draw a type chip label");
+                        ComPtr<ID2D1Image> image;
+                        dc->GetTarget(&image);
+                        ComPtr<ID2D1Bitmap1> target, readback;
+                        HRESULT hr = image->QueryInterface(__uuidof(ID2D1Bitmap1), reinterpret_cast<void**>(&target.p));
+                        if (SUCCEEDED(hr)) {
+                            auto props = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                                target->GetPixelFormat(), 96, 96);
+                            hr = dc->CreateBitmap(target->GetPixelSize(), nullptr, 0, &props, &readback);
+                        }
+                        if (SUCCEEDED(hr)) hr = readback->CopyFromBitmap(nullptr, target.get(), nullptr);
+                        D2D1_MAPPED_RECT mapped{};
+                        if (SUCCEEDED(hr)) hr = readback->Map(D2D1_MAP_OPTIONS_READ, &mapped);
+                        check(SUCCEEDED(hr), "read type chip label pixels");
+                        if (FAILED(hr)) continue;
+                        // Ink = anything that is not the cleared background, searched a few
+                        // pixels beyond the box so a label outside it would still be seen.
+                        const uint32_t bg = reinterpret_cast<const uint32_t*>(mapped.bits)[0];
+                        // Blended backgrounds may round by a step or two; only real ink counts.
+                        const auto differs = [](uint32_t a, uint32_t b) {
+                            for (int shift = 0; shift < 24; shift += 8) {
+                                const int ca = static_cast<int>((a >> shift) & 0xFF), cb = static_cast<int>((b >> shift) & 0xFF);
+                                if (std::abs(ca - cb) > 24) return true;
+                            }
+                            return false;
+                        };
+                        int min_x = INT_MAX, max_x = -1, min_y = INT_MAX, max_y = -1;
+                        const int x0 = static_cast<int>(box.left - 6 * scale), x1 = static_cast<int>(box.right + 6 * scale);
+                        const int y0 = static_cast<int>(box.top - 6 * scale), y1 = static_cast<int>(box.bottom + 6 * scale);
+                        for (int y = y0; y < y1; ++y) {
+                            const auto* row = reinterpret_cast<const uint32_t*>(mapped.bits + static_cast<size_t>(y) * mapped.pitch);
+                            for (int x = x0; x < x1; ++x) {
+                                if (!differs(row[x], bg)) continue;
+                                min_x = std::min(min_x, x); max_x = std::max(max_x, x);
+                                min_y = std::min(min_y, y); max_y = std::max(max_y, y);
+                            }
+                        }
+                        readback->Unmap();
+                        const bool found = max_x >= 0;
+                        const float ink_cx = (static_cast<float>(min_x) + static_cast<float>(max_x) + 1.0f) * 0.5f;
+                        const float ink_cy = (static_cast<float>(min_y) + static_cast<float>(max_y) + 1.0f) * 0.5f;
+                        const float box_cx = (box.left + box.right) * 0.5f;
+                        log << "[INFO] chip mode=" << static_cast<int>(mode) << " scale=" << scale
+                            << " ink_x=" << min_x << ".." << max_x << " ink_y=" << min_y << ".." << max_y
+                            << " box_x=" << box.left << ".." << box.right << std::endl;
+                        check(found && std::abs(ink_cx - box_cx) <= 1.5f * scale,
+                              "type chip label is centered horizontally in every text rendering mode");
+                        if (mode == typography::TextRenderMode::Auto) auto_cy = found ? ink_cy : -1.0f;
+                        else check(found && auto_cy >= 0.0f && std::abs(ink_cy - auto_cy) <= 1.5f * scale,
+                                   "type chip label sits at the same height as with LumaText");
+                    }
                 }
             }
             typography::SetUiFontScale(old_font); typography::SetTextRenderMode(old_mode);
