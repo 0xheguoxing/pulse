@@ -11,9 +11,11 @@
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <mutex>
 #include <type_traits>
+#include <utility>
 #include <algorithm>
 #ifdef PULSE_SHELL_WINDOW_REGISTRY_TEST
 #include "shell_window_registry_test.h"
@@ -90,16 +92,40 @@ struct PidlDeleter {
 };
 using UniquePidl = std::unique_ptr<std::remove_pointer_t<PIDLIST_ABSOLUTE>, PidlDeleter>;
 
-UniquePidl FolderPidl(const std::wstring& path) {
+// A folder's location as FindWindowSW matches it: byte for byte, without
+// canonicalizing. File Explorer registers its windows under the path form
+// (This PC\C:\Users\…, ILCreateFromPath); SHParseDisplayName gives the
+// known-folder form (Desktop\…, Downloads) for folders below a known folder.
+// Callers use both — Chromium and Electron ("show in folder") parse through
+// the desktop folder, others call ILCreateFromPath — so a pane registers
+// under the second form too when it differs (`alias`).
+struct FolderPidls {
+    UniquePidl primary;
+    UniquePidl alias;
+};
+
+bool SamePidlBytes(PCIDLIST_ABSOLUTE a, PCIDLIST_ABSOLUTE b) {
+    const UINT size = ILGetSize(a);
+    return size == ILGetSize(b) && memcmp(a, b, size) == 0;
+}
+
+FolderPidls FolderPidlsFor(const std::wstring& path) {
+    FolderPidls pidls;
 #ifdef PULSE_SHELL_WINDOW_REGISTRY_TEST
-    return UniquePidl(ShellRegistryTestFolder(path));
+    pidls.primary.reset(ShellRegistryTestFolder(path));
+    pidls.alias.reset(ShellRegistryTestFolderAlias(path));
 #else
     PIDLIST_ABSOLUTE pidl = nullptr;
-    const HRESULT hr = path.empty()
-        ? SHGetKnownFolderIDList(FOLDERID_ComputerFolder, 0, nullptr, &pidl)
-        : SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr);
-    return SUCCEEDED(hr) ? UniquePidl(pidl) : UniquePidl();
+    if (path.empty()) {
+        if (SUCCEEDED(SHGetKnownFolderIDList(FOLDERID_ComputerFolder, 0, nullptr, &pidl))) pidls.primary.reset(pidl);
+        return pidls;
+    }
+    pidls.primary.reset(ILCreateFromPathW(path.c_str()));
+    if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr))) pidls.alias.reset(pidl);
 #endif
+    if (!pidls.primary) pidls.primary = std::move(pidls.alias);
+    if (pidls.primary && pidls.alias && SamePidlBytes(pidls.primary.get(), pidls.alias.get())) pidls.alias.reset();
+    return pidls;
 }
 
 std::wstring PidlName(PCIDLIST_ABSOLUTE pidl, SIGDN kind) {
@@ -428,14 +454,14 @@ public:
             }
         }
         if (SUCCEEDED(failure)) {
-            std::vector<uint64_t> removed;
-            for (const auto& [key, entry] : registered_) {
+            std::vector<Slot> removed;
+            for (const auto& [slot, entry] : registered_) {
                 if (entry.revoking || std::none_of(wanted_.begin(), wanted_.end(),
-                    [&](const auto& value) { return value.key == key; })) removed.push_back(key);
+                    [&](const auto& value) { return value.key == slot.first; })) removed.push_back(slot);
             }
-            for (const auto key : removed) {
+            for (const auto& slot : removed) {
                 if (shared_.stopping) return;
-                const auto hr = Revoke(key);
+                const auto hr = Revoke(slot);
                 if (FAILED(hr)) failure = hr;
                 if (Disconnected(hr)) break;
             }
@@ -472,8 +498,8 @@ public:
         }
 #ifdef PULSE_SHELL_WINDOW_REGISTRY_TEST
         std::vector<ShellWindowEntry> acknowledged;
-        for (const auto& [key, entry] : registered_)
-            if (entry.ready) acknowledged.push_back({key, entry.path, entry.window});
+        for (const auto& [slot, entry] : registered_)
+            if (entry.ready && slot.second == kPrimaryForm) acknowledged.push_back({slot.first, entry.path, entry.window});
         ShellRegistryTestApplied(acknowledged);
 #endif
     }
@@ -483,6 +509,10 @@ public:
         return now >= due_ ? 0 : static_cast<DWORD>((std::min)(due_ - now, ULONGLONG(kRetryMaxMs)));
     }
 private:
+    // A pane's registration under one location form (FolderPidls).
+    static constexpr int kPrimaryForm = 0;
+    static constexpr int kAliasForm = 1;
+    using Slot = std::pair<uint64_t, int>;   // pane key, form
     struct Registered {
         long cookie = 0, window_cookie = 0;
         bool pending = false, bound = false, ready = false, revoking = false;
@@ -491,13 +521,29 @@ private:
         ComPtr<FolderView> view;
         ComPtr<BrowserApp> app;
     };
+    bool Settled(const Slot& slot, const std::wstring& path) const {
+        const auto found = registered_.find(slot);
+        return found != registered_.end() && found->second.ready &&
+            _wcsicmp(found->second.path.c_str(), path.c_str()) == 0;
+    }
     HRESULT Advance(uint64_t key, const std::wstring& path, HWND pane_window) {
+        const auto primary = registered_.find({key, kPrimaryForm});
+        if (primary != registered_.end() && primary->second.revoking) return E_PENDING;
+        // An alias slot exists while the path needs one (a failed one is retried).
+        if (Settled({key, kPrimaryForm}, path) &&
+            (!registered_.count({key, kAliasForm}) || Settled({key, kAliasForm}, path))) return S_OK;
+        FolderPidls pidls = FolderPidlsFor(path);
+        if (!pidls.primary) return HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND);
+        HRESULT hr = AdvanceSlot({key, kPrimaryForm}, path, pane_window, std::move(pidls.primary));
+        if (FAILED(hr)) return hr;
+        return pidls.alias ? AdvanceSlot({key, kAliasForm}, path, pane_window, std::move(pidls.alias))
+                           : Revoke({key, kAliasForm});
+    }
+    HRESULT AdvanceSlot(const Slot& slot, const std::wstring& path, HWND pane_window, UniquePidl folder) {
         const HWND window = pane_window ? pane_window : shared_.window;
-        auto& entry = registered_[key];
+        auto& entry = registered_[slot];
         if (entry.revoking) return E_PENDING;
         if (entry.ready && _wcsicmp(entry.path.c_str(), path.c_str()) == 0) return S_OK;
-        UniquePidl folder = FolderPidl(path);
-        if (!folder) return HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND);
         VARIANT location;
         VariantInit(&location);
         HRESULT hr = InitVariantFromBuffer(folder.get(), ILGetSize(folder.get()), &location);
@@ -510,7 +556,7 @@ private:
         }
         if (SUCCEEDED(hr) && !entry.bound && !shared_.stopping) {
             if (!entry.view) {
-                entry.view.Attach(new FolderView(key, window, shared_.select_message));
+                entry.view.Attach(new FolderView(slot.first, window, shared_.select_message));
                 entry.view->SetFolder(UniquePidl(ILCloneFull(folder.get())));
                 ComPtr<FolderDocument> document;
                 document.Attach(new FolderDocument(entry.view.Get()));
@@ -531,8 +577,8 @@ private:
         VariantClear(&location);
         return hr;
     }
-    HRESULT Revoke(uint64_t key) {
-        const auto found = registered_.find(key);
+    HRESULT Revoke(const Slot& slot) {
+        const auto found = registered_.find(slot);
         if (found == registered_.end()) return S_OK;
         auto& entry = found->second;
         entry.revoking = true;
@@ -554,7 +600,7 @@ private:
     }
     ShellWindowRegistry::Shared& shared_;
     ComPtr<IShellWindows> windows_;
-    std::map<uint64_t, Registered> registered_;
+    std::map<Slot, Registered> registered_;
     std::vector<ShellWindowEntry> wanted_;
     uint64_t revision_ = 0;
     bool dirty_ = false;

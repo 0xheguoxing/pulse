@@ -18,6 +18,7 @@ struct State {
     std::multiset<long> register_windows;  // Register's HWND argument
     std::vector<pulse::app::ShellWindowEntry> acknowledged;
     std::wstring last_navigate;
+    std::multiset<std::wstring> navigated;   // every location OnNavigate received
     long next_cookie = 1;
     void Thread() { if (GetCurrentThreadId() == ui) wrong_thread = true; }
 } state;
@@ -95,6 +96,7 @@ public:
         {
             std::lock_guard<std::mutex> lock(state.mutex);
             state.last_navigate = reinterpret_cast<const wchar_t*>(static_cast<const BYTE*>(data) + sizeof(USHORT));
+            state.navigated.insert(state.last_navigate);
         }
         SafeArrayUnaccessData(location->parray);
         return S_OK;
@@ -131,6 +133,12 @@ PIDLIST_ABSOLUTE ShellRegistryTestFolder(const std::wstring& path) {
     memcpy(bytes + sizeof(cb), path.c_str(), (path.size() + 1) * sizeof(wchar_t));
     memset(bytes + item_size, 0, sizeof(USHORT));
     return reinterpret_cast<PIDLIST_ABSOLUTE>(bytes);
+}
+PIDLIST_ABSOLUTE ShellRegistryTestFolderAlias(const std::wstring& path) {
+    // C:\known\…: a second form that differs; C:\same\…: one byte-identical to the first.
+    if (path.rfind(L"C:\\known\\", 0) == 0) return ShellRegistryTestFolder(path + L"#known-folder");
+    if (path.rfind(L"C:\\same\\", 0) == 0) return ShellRegistryTestFolder(path);
+    return nullptr;
 }
 void ShellRegistryTestApplied(const std::vector<ShellWindowEntry>& acknowledged) {
     std::lock_guard<std::mutex> lock(state.mutex); state.acknowledged = acknowledged;
@@ -218,6 +226,58 @@ int main() {
         multi.Publish({});
         Check(Wait([] { return Cookies() == 0; }, &multi), "multi-window: revoking every window's entries releases all cookies");
         multi.Stop();
+    }
+    // Reveal from other programs: FindWindowSW compares ID lists byte for byte,
+    // and File Explorer's path form differs from SHParseDisplayName's
+    // known-folder form below Desktop, Downloads…; a pane registers under both.
+    {
+        const auto fake = [](uintptr_t value) { return reinterpret_cast<HWND>(value); };
+        const HWND window = fake(0x4440);
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            state.register_windows.clear();
+            state.navigated.clear();
+            state.acknowledged.clear();
+        }
+        const auto acked = [](const std::vector<ShellWindowEntry>& want) {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            return state.acknowledged == want;
+        };
+        ShellWindowRegistry forms(fake(0x1110), WM_APP + 17);
+        const std::vector<ShellWindowEntry> known{{21, L"C:\\known\\Downloads", window}};
+        forms.Publish(known);
+        const bool known_acked = Wait([&] { return acked(known) && Cookies() == 4; }, &forms);
+        bool both_forms = false;
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            both_forms = state.register_windows == std::multiset<long>{HandleToLong(window), HandleToLong(window)} &&
+                state.navigated.count(L"C:\\known\\Downloads") == 1 &&
+                state.navigated.count(L"C:\\known\\Downloads#known-folder") == 1;
+        }
+        Check(known_acked && both_forms,
+              "reveal: a folder below a known folder registers its pane under both forms, with the pane's window");
+        const std::vector<ShellWindowEntry> plain{{21, L"C:\\plain", window}};
+        forms.Publish(plain);
+        Check(Wait([&] { return acked(plain) && Cookies() == 2; }, &forms),
+              "reveal: navigating to a folder with one form revokes the second registration");
+        const std::vector<ShellWindowEntry> same{{21, L"C:\\same\\x", window}};
+        forms.Publish(same);
+        Check(Wait([&] { return acked(same) && Cookies() == 2; }, &forms),
+              "reveal: byte-identical forms register once");
+        const std::vector<ShellWindowEntry> back{{21, L"C:\\known\\Desktop", window}};
+        forms.Publish(back);
+        Check(Wait([&] { return acked(back) && Cookies() == 4; }, &forms),
+              "reveal: navigating back below a known folder registers the second form again");
+        // Another pane opening re-applies the set: the settled pane with both
+        // forms must not navigate again (only the new pane's one form does).
+        const int before_other = state.navigates;
+        const std::vector<ShellWindowEntry> two{back.front(), {22, L"C:\\other", window}};
+        forms.Publish(two);
+        Check(Wait([&] { return acked(two) && Cookies() == 6; }, &forms) && state.navigates == before_other + 1,
+              "reveal: a pane settled under both forms is left alone when another pane registers");
+        forms.Publish({});
+        Check(Wait([] { return Cookies() == 0; }, &forms), "reveal: closing the pane releases both forms' cookies");
+        forms.Stop();
     }
     Check(!state.wrong_thread, "all injected COM calls occur off the UI thread");
     return failures ? 1 : 0;

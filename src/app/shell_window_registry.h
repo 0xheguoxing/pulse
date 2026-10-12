@@ -7,6 +7,8 @@
 // as a ShellSelectRequest. When no pane shows the folder, the shell runs the
 // folder's open verb (Pulse, with the takeover on) and waits for a window
 // registered as pending for that folder — so a new pane registers at once.
+// The shell matches the folder's ID list byte for byte, so a folder below a
+// known folder (Desktop, Downloads…) is registered under both of its forms.
 //
 // Every call into Explorer runs on the registry's own STA thread; the UI
 // thread only publishes the wanted set and never blocks on the shell.
