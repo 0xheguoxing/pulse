@@ -20,6 +20,7 @@
 #include "../fs/fs_watch.h"
 #include "app_model.h"
 #include "window_identity.h"
+#include "window_switcher.h"
 #include "live_network_search.h"
 #include "tray_compare_metadata.h"
 #include "frame_pump.h"
@@ -289,6 +290,8 @@ struct AppState : AppCoreOwner {
     // drawn from them.
     app::WindowIdentity identity;
     HICON identity_overlay = nullptr;
+    // The Ctrl+` switcher while this window shows it (M7d, window_switcher_ui.h).
+    app::WindowSwitcherState switcher;
     int tabDropIndex = -1;  // a tab dragged from another window would land here (M6b)
     // A tab dragged over the content area (M6d): where it would go, client px.
     bool contentDrop = false;

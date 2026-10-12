@@ -37,6 +37,7 @@
 #include "../ops/clipboard.h"
 #include "../ipc/ctx_menu_util.h"
 #include "window_identity_ui.h"
+#include "window_switcher_ui.h"
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -3996,6 +3997,7 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
+        if (HandleWindowSwitcherKey(*s, lParam)) return 0;  // M7d: Ctrl+`
         s->blankClickTab = nullptr;
         CancelRenameClick(*s);
         app::Tab* tab = ActiveTab(*s);

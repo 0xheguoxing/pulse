@@ -21,6 +21,7 @@
 #include "link_pill.h"
 #include "ui_view_morph.h"
 #include "group_wheel.h"
+#include "window_switcher_view.h"
 #include "../app/builtin_menu_items.h"
 #include "details_column_set.h"
 #include "../fs/fs_enum.h"
@@ -1109,6 +1110,8 @@ public:
     int ToolbarGroup() const { return toolbar_group_; }
     // Drum "Group by" picker drawn over everything (app/group_wheel_ui.cpp).
     GroupWheel& GroupWheelPicker() { return group_wheel_; }
+    // Ctrl+` window switcher drawn over everything (app/window_switcher_ui.cpp, M7d).
+    WindowSwitcherView& WindowSwitcher() { return window_switcher_; }
     float ToolbarGroupWidth(float w) const;
     std::wstring ToolbarGroupLabel() const;   // "Group: Date" text of the active chip
     float SearchBarMinWidth() const { return search_min_dip_; }
@@ -1632,6 +1635,7 @@ private:
     bool sidebar_peek_ = false;
     bool collapse_anim_ = false;
     GroupWheel group_wheel_;
+    WindowSwitcherView window_switcher_;
     float collapse_value_ = 0.0f;  // 0 expanded .. 1 rail (frame-stable)
     float collapse_from_ = 0.0f;
     uint64_t collapse_start_ = 0;  // motion::NowMs()

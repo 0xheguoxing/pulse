@@ -744,7 +744,7 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
     }
     if (vm.teach.visible && vm.drag_badge.empty()) DrawTeachBubble(vm, rect, theme);
     if (!vm.change_popover.visible && vm.drag_badge.empty() && !vm.tooltip_text.empty() &&
-        !group_wheel_.Visible()) {
+        !group_wheel_.Visible() && !window_switcher_.IsOpen()) {
         IDWriteTextFormat* fmt = compositor_->SmallFormat();
         // Multi-line tooltips ("\n"): one row per line, widest line sets the width.
         std::vector<std::wstring> tip_lines;
@@ -791,6 +791,8 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
     }
     if (group_wheel_.Visible())
         group_wheel_.Draw(dc, compositor_->DwriteFactory(), compositor_->TextFormat(), theme);
+    if (window_switcher_.IsOpen())
+        window_switcher_.Draw(dc, compositor_->DwriteFactory(), compositor_->TextFormat(), theme);
 
 }
 
