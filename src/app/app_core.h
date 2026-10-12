@@ -219,6 +219,16 @@ struct AppCore {
     app::ExternalOpenBatch open_batch;
     HWND open_batch_window = nullptr;
     const void* open_batch_tab = nullptr;  // app::LayoutTab*, compared only
+    // The toast after the last such open (M7b): what it offers, the window it
+    // shows in, the tab it is about and, for "make it a tab", where the tabs
+    // go back to. The streak of conversions, and the default the "make it
+    // the default" toast proposes.
+    app::OpenConversion open_convert = app::OpenConversion::None;
+    HWND open_convert_window = nullptr;
+    const void* open_convert_tab = nullptr;  // app::LayoutTab*, compared only
+    HWND open_convert_into = nullptr;
+    app::OpenConversionStreak open_convert_streak;
+    app::ExternalOpenPolicy open_suggested = app::ExternalOpenPolicy::Smart;
 
     // Hidden process window (host_window.h): single-instance endpoint today,
     // tray/hotkey/service callbacks as M2 continues. Last member, so it is

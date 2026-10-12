@@ -1368,6 +1368,15 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s) UndoWindowMerge(*s);
         return 0;
 
+    case WM_CONVERT_EXTERNAL_OPEN:
+        // May destroy this window ("make it a tab"): touch nothing after.
+        if (s) ConvertExternalOpen(*s);
+        return 0;
+
+    case WM_ADOPT_OPEN_POLICY:
+        if (s) AdoptSuggestedOpenPolicy(*s);
+        return 0;
+
     case WM_BEGIN_TAB_DETACH:
         // May destroy this window (Esc puts the tab back): touch nothing after.
         if (s) RunDetachedTabMove(*s, reinterpret_cast<HWND>(wParam), static_cast<size_t>(lParam));

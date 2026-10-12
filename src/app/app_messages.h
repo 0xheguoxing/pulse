@@ -52,5 +52,7 @@ constexpr UINT WM_MOVE_TAB_TO_NEW_WINDOW = WM_APP + 80;  // Ctrl+Shift+M: the ac
 constexpr UINT WM_BEGIN_TAB_DETACH = WM_APP + 81;  // a tab dragged off the strip: start the system move loop (M6a)
 constexpr UINT WM_UNDO_WINDOW_MERGE = WM_APP + 82;  // the merge toast was clicked: open the merged window again (M6c)
 constexpr UINT WM_MERGE_WINDOW = WM_APP + 83;  // released on a tab strip after a title-bar drag; wParam target hwnd, lParam index (M6c)
+constexpr UINT WM_CONVERT_EXTERNAL_OPEN = WM_APP + 84;  // the open toast was clicked: tab <-> new window (M7b)
+constexpr UINT WM_ADOPT_OPEN_POLICY = WM_APP + 85;  // the "make it the default" toast was clicked (M7b)
 
 }  // namespace pulse

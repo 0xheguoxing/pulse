@@ -192,6 +192,36 @@ int main() {
         Check(failed.count == 0, "batch: an open that failed starts nothing");
     }
 
+    // Rule 7 (M7b): what the toast offers, and the prompt after 3 conversions.
+    {
+        using C = OpenConversion;
+        const ExternalOpenDecision tab{A::Tab, R::Idle, 0, false};
+        const ExternalOpenDecision window{A::NewWindow, R::RecentInput, 0, false};
+        const ExternalOpenDecision dup{A::Activate, R::Duplicate, 0, false};
+        Check(OfferedConversion(window, P::Smart, true, false) == C::ToTab, "toast: a new window offers \"make it a tab\"");
+        Check(OfferedConversion(tab, P::Smart, false, true) == C::ToWindow, "toast: a tab offers \"new window\"");
+        Check(OfferedConversion(tab, P::Smart, false, false) == C::None,
+              "toast: a window's only tab offers nothing (it cannot leave)");
+        Check(OfferedConversion(dup, P::Smart, false, true) == C::None, "toast: an already open folder offers nothing");
+        Check(OfferedConversion({A::JoinBatch, R::Batch, 0, false}, P::Smart, true, true) == C::ToTab,
+              "toast: a batch in its new window offers \"make it a tab\"");
+        Check(OfferedConversion(tab, P::AlwaysTab, false, true) == C::None &&
+                  OfferedConversion(window, P::AlwaysWindow, true, false) == C::None,
+              "toast: a fixed policy (the user's choice) offers nothing");
+        OpenConversionStreak streak;
+        const bool p1 = NoteOpenConversion(streak, C::ToTab);
+        const bool p2 = NoteOpenConversion(streak, C::ToTab);
+        const bool p3 = NoteOpenConversion(streak, C::ToTab);
+        Check(!p1 && !p2 && p3, "streak: the third conversion the same way prompts");
+        Check(!NoteOpenConversion(streak, C::ToTab) && streak.count == 1, "streak: after the prompt it counts again from 1");
+        NoteOpenConversion(streak, C::ToTab);
+        Check(!NoteOpenConversion(streak, C::ToWindow) && streak.direction == C::ToWindow && streak.count == 1,
+              "streak: the other direction starts over");
+        Check(!NoteOpenConversion(streak, C::None) && streak.count == 1, "streak: no conversion changes nothing");
+        Check(SuggestedOpenPolicy(C::ToTab) == P::AlwaysTab && SuggestedOpenPolicy(C::ToWindow) == P::AlwaysWindow,
+              "streak: the prompt proposes the direction the user kept choosing");
+    }
+
     std::printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

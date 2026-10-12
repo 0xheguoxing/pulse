@@ -56,6 +56,9 @@ struct AppPrefs {
     // new_tab_open: 0 the current folder, 1 the default location.
     int startup_open = 0;
     int new_tab_open = 0;
+    // external_open: where a folder opened from another program goes
+    // (multi-window M7, plan §6): 0 smart, 1 always a tab, 2 always a new window.
+    int external_open = 0;
     // Closing the only tab closes the window (app/last_tab_close.h).
     bool close_window_with_last_tab = false;
     // Double-clicking a tab closes it, like its close button (app/last_tab_close.h).

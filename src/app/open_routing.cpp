@@ -2,12 +2,16 @@
 #include "open_routing.h"
 
 #include "app_internal.h"
+#include "../common/localization.h"
+#include "app_messages.h"
 #include "default_file_manager.h"
 #include "external_open.h"
 #include "tray_reveal.h"
 #include "window_factory.h"
+#include "window_merge.h"
 #include "window_registry.h"
 
+#include <algorithm>
 #include <vector>
 
 namespace pulse {
@@ -35,9 +39,28 @@ const void* ActiveLayoutTab(const AppState& s) {
                                                              : nullptr;
 }
 
-app::ExternalOpenPolicy OpenPolicy(const AppState&) {
-    // The setting arrives with M7b; until then the plan's default.
-    return app::ExternalOpenPolicy::Smart;
+app::ExternalOpenPolicy OpenPolicy(const AppState& s) {
+    const int value = s.appPrefs.external_open;
+    return value >= 0 && value <= 2 ? static_cast<app::ExternalOpenPolicy>(value) : app::ExternalOpenPolicy::Smart;
+}
+
+// Rule 7: says where the folder went and offers the other way (one click,
+// WM_CONVERT_EXTERNAL_OPEN). A toast in the window that shows it.
+void ShowOpenToast(AppState& s, app::OpenConversion offer) {
+    const app::LayoutTab* active = s.window_tabs.Active();
+    std::wstring message = active ? app::LayoutTabTitle(*active) : std::wstring();
+    if (!message.empty()) message += L" \u00B7 ";
+    const bool to_tab = offer == app::OpenConversion::ToTab;
+    message += l10n::Get(to_tab ? l10n::StringId::OpenConvertToTab : l10n::StringId::OpenConvertToWindow);
+    s.notification_toast.Show(s.hwnd, l10n::Get(to_tab ? l10n::StringId::OpenedInNewWindow : l10n::StringId::OpenedInTab),
+                              std::move(message), false, WM_CONVERT_EXTERNAL_OPEN);
+}
+
+void ForgetOpenToast(AppCore& core) {
+    core.open_convert = app::OpenConversion::None;
+    core.open_convert_window = nullptr;
+    core.open_convert_tab = nullptr;
+    core.open_convert_into = nullptr;
 }
 
 }  // namespace
@@ -80,13 +103,15 @@ AppState& OpenExternalFolder(AppState& mru, const std::wstring& raw) {
     // The first tab can only move out while it is still there and not alone.
     batch.tab_movable = batch.tab_movable && batch_tab_movable;
 
+    const app::ExternalOpenPolicy policy = OpenPolicy(mru);
     app::ExternalOpenRequest request;
     request.can_dedupe = !this_pc;
     request.tick = now;
-    const app::ExternalOpenDecision decision = app::DecideOpenTarget(request, snapshot, batch, OpenPolicy(mru));
+    const app::ExternalOpenDecision decision = app::DecideOpenTarget(request, snapshot, batch, policy);
 
     AppState* target = nullptr;
     bool opened = false;
+    HWND into = nullptr;  // where "make it a tab" sends the tabs back
     const auto open_window = [&](AppState& from, AppState* adopt_from, size_t adopt_index) -> AppState* {
         WindowInit init;
         init.path = path;
@@ -109,6 +134,7 @@ AppState& OpenExternalFolder(AppState& mru, const std::wstring& raw) {
     case app::ExternalOpenAction::NewWindow:
         if ((target = open_window(mru, nullptr, 0)) != nullptr) {
             opened = true;
+            into = windows.front()->hwnd;
             if (!this_pc) SelectLaunchedFile(*target, raw);
             RevealWindow(*target);
         }
@@ -120,6 +146,7 @@ AppState& OpenExternalFolder(AppState& mru, const std::wstring& raw) {
         // does), then this folder opens next to it.
         if (index >= 0 && (target = open_window(from, &from, static_cast<size_t>(index))) != nullptr) {
             opened = true;
+            into = from.hwnd;
             OpenFolderInNewTab(*target, raw);
         }
         break;
@@ -132,6 +159,12 @@ AppState& OpenExternalFolder(AppState& mru, const std::wstring& raw) {
     }
 
     const bool tab_movable = decision.action == app::ExternalOpenAction::Tab && target->window_tabs.items.size() >= 2;
+    // Whether the folder sits in a window opened for it or for its batch.
+    const bool in_new_window = decision.action == app::ExternalOpenAction::NewWindow ||
+                               decision.action == app::ExternalOpenAction::PromoteBatch ||
+                               (decision.action == app::ExternalOpenAction::JoinBatch && batch.window_is_new);
+    if (decision.action == app::ExternalOpenAction::JoinBatch && target->hwnd == core.open_convert_window)
+        into = core.open_convert_into;  // the batch's toast already knew where it came from
     core.open_batch = app::NextOpenBatch(batch, request, decision, opened, tab_movable);
     if (opened) {
         core.open_batch_window = target->hwnd;
@@ -140,7 +173,80 @@ AppState& OpenExternalFolder(AppState& mru, const std::wstring& raw) {
         core.open_batch_window = nullptr;
         core.open_batch_tab = nullptr;
     }
+    const app::OpenConversion offer =
+        opened ? app::OfferedConversion(decision, policy, in_new_window, target->window_tabs.items.size() >= 2)
+               : app::OpenConversion::None;
+    // "Make it a tab" needs a window to go back to.
+    if (offer == app::OpenConversion::None || (offer == app::OpenConversion::ToTab && !into)) {
+        if (opened) ForgetOpenToast(core);
+        return *target;
+    }
+    core.open_convert = offer;
+    core.open_convert_window = target->hwnd;
+    core.open_convert_tab = ActiveLayoutTab(*target);
+    core.open_convert_into = into;
+    ShowOpenToast(*target, offer);
     return *target;
+}
+
+void ConvertExternalOpen(AppState& s) {
+    AppCore& core = s.core;
+    const app::OpenConversion offer = core.open_convert;
+    if (offer == app::OpenConversion::None || core.open_convert_window != s.hwnd) return;  // an older toast
+    const void* const tab = core.open_convert_tab;
+    const HWND into_hwnd = core.open_convert_into;
+    ForgetOpenToast(core);
+    core.open_batch = {};  // its window or its tab is about to change
+    core.open_batch_window = nullptr;
+    core.open_batch_tab = nullptr;
+
+    AppState* shown = nullptr;
+    if (offer == app::OpenConversion::ToTab) {
+        // Every tab of the window opened for the folder (its batch, or tabs
+        // added since) goes back after the active tab of the window it would
+        // otherwise have opened in; this window closes.
+        AppState* into = into_hwnd && into_hwnd != s.hwnd ? core.windows.Lookup(into_hwnd) : nullptr;
+        if (!into) into = core.windows.MostRecentExcept(s.hwnd);
+        if (!into || s.window_tabs.items.empty()) return;
+        const size_t insert_at = into->window_tabs.active + 1;
+        const HWND hwnd = s.hwnd;
+        ShowWindow(hwnd, SW_HIDE);  // it must not paint while its tabs leave
+        (void)MergeTabsInto(s, *into, (std::min)(insert_at, into->window_tabs.items.size()));
+        if (!s.window_tabs.items.empty()) {
+            ShowWindow(hwnd, SW_SHOWNORMAL);
+            return;
+        }
+        DestroyWindow(hwnd);  // `s` is gone from here on
+        shown = into;
+        RevealWindow(*shown);
+    } else {
+        const int index = LayoutTabIndex(s, tab);
+        if (index < 0 || s.window_tabs.items.size() < 2) return;
+        WindowInit init;
+        if (const app::Tab* view = s.window_tabs.items[static_cast<size_t>(index)]->ActiveFolder())
+            init.path = view->current_path;
+        init.adopt_from = &s;
+        init.adopt_index = static_cast<size_t>(index);
+        const HWND hwnd = OpenPulseWindow(s, init);
+        if (!hwnd || !(shown = core.windows.Lookup(hwnd))) return;
+        SetForegroundWindow(hwnd);
+    }
+    // Rule 7: the same way 3 times in a row -> ask once whether that should
+    // be the default (WM_ADOPT_OPEN_POLICY). Never changed unasked.
+    if (!app::NoteOpenConversion(core.open_convert_streak, offer)) return;
+    core.open_suggested = app::SuggestedOpenPolicy(offer);
+    shown->notification_toast.Show(
+        shown->hwnd,
+        l10n::Get(offer == app::OpenConversion::ToTab ? l10n::StringId::OpenSuggestTab : l10n::StringId::OpenSuggestWindow),
+        l10n::Get(l10n::StringId::OpenSuggestClick), false, WM_ADOPT_OPEN_POLICY);
+}
+
+void AdoptSuggestedOpenPolicy(AppState& s) {
+    const app::ExternalOpenPolicy policy = s.core.open_suggested;
+    if (policy == app::ExternalOpenPolicy::Smart) return;
+    s.core.open_suggested = app::ExternalOpenPolicy::Smart;
+    s.settings.ExternalOpen(static_cast<int>(policy));  // saves, as the settings page does
+    app::ForEachWindowSharingCore(s, [](AppState& w) { InvalidateRect(w.hwnd, nullptr, FALSE); });
 }
 
 void NoteUserInput(AppState& any, const MSG& msg) {

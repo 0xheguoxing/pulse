@@ -1947,6 +1947,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.settings_startup_open = s.appPrefs.startup_open;
     vm.settings_notify_icon = s.appPrefs.notify_icon_mode;
     vm.settings_new_tab_open = s.appPrefs.new_tab_open;
+    vm.settings_external_open = s.appPrefs.external_open;
     vm.settings_close_last_tab = s.appPrefs.close_window_with_last_tab;
     vm.settings_close_tab_double_click = s.appPrefs.close_tab_on_double_click;
     vm.settings_confirm_delete = s.appPrefs.confirm_recycle_delete;
@@ -2578,6 +2579,7 @@ std::wstring TooltipForHover(AppState& s) {
     case R::SettingsStartupOpen: return text(I::SettingsStartupOpen);
     case R::SettingsNotifyIcon: return text(I::SettingsNotifyIcon);
     case R::SettingsNewTabOpen: return text(I::SettingsNewTabOpen);
+    case R::SettingsExternalOpen: return text(I::SettingsExternalOpen);
     case R::SettingsBlankClick: return text(I::SettingsBlankClickBack);
     case R::SettingsHomeFolder:
         return text(s.hoverControlIndex == 1 ? I::ThisPc : I::SettingsHomeFolderPick);

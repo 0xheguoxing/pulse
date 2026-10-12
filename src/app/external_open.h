@@ -96,4 +96,34 @@ ExternalOpenBatch NextOpenBatch(const ExternalOpenBatch& batch, const ExternalOp
 bool ContinuesOpenBatch(const ExternalOpenBatch& batch, const ExternalOpenRequest& request,
                         const ExternalOpenTuning& tuning = {});
 
+// Plan §6 rule 7 (M7b): the toast after an open offers the other way.
+enum class OpenConversion : uint8_t {
+    None,      // no toast
+    ToTab,     // opened in a new window: "make it a tab" (its tabs go back)
+    ToWindow,  // opened in a tab: "move it to a new window"
+};
+
+// What the toast offers for `decision`. Only the smart policy guesses, so
+// only it offers anything; an already open folder offers nothing.
+// `in_new_window`: the folder ended up in a window opened for it (or its
+// batch); `tab_movable`: its window has another tab, so the tab can leave.
+OpenConversion OfferedConversion(const ExternalOpenDecision& decision, ExternalOpenPolicy policy,
+                                 bool in_new_window, bool tab_movable);
+
+// Consecutive conversions the same way (rule 7: after 3, ask once whether
+// that should be the default; never change it unasked).
+struct OpenConversionStreak {
+    OpenConversion direction = OpenConversion::None;
+    int count = 0;
+};
+constexpr int kOpenConversionPromptAfter = 3;
+
+// Records a conversion; true when the prompt is due, which starts the count
+// over. The other direction starts a new streak.
+bool NoteOpenConversion(OpenConversionStreak& streak, OpenConversion direction,
+                        int prompt_after = kOpenConversionPromptAfter);
+
+// The default the prompt proposes after a streak of `direction`.
+ExternalOpenPolicy SuggestedOpenPolicy(OpenConversion direction);
+
 }  // namespace pulse::app

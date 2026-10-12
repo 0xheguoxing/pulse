@@ -2034,6 +2034,8 @@ struct SettingsLayout {
     D2D1_RECT_F notify_icon_row[3]{};
     D2D1_RECT_F new_tab_open_card{};
     D2D1_RECT_F new_tab_open_row[2]{};
+    D2D1_RECT_F external_open_card{};
+    D2D1_RECT_F external_open_row[3]{};
     D2D1_RECT_F close_last_tab_row{};
     D2D1_RECT_F close_tab_double_click_row{};
     D2D1_RECT_F confirm_delete_row{};

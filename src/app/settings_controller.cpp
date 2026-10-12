@@ -739,6 +739,12 @@ void SettingsController::NewTabOpen(int index) {
         SaveAndApply(SettingsEffect::None);
 }
 
+void SettingsController::ExternalOpen(int index) {
+    static constexpr int values[] = {0, 1, 2};
+    if (prefs_ && SelectValue(index, values, prefs_->external_open))
+        SaveAndApply(SettingsEffect::None);
+}
+
 void SettingsController::BlankClick(int index) {
     static constexpr int values[] = {kBlankClickOff, kBlankClickBack, kBlankClickUp};
     if (prefs_ && SelectValue(index, values, prefs_->blank_click_action))

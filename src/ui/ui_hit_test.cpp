@@ -305,6 +305,11 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                         r.index = i;
                         return r;
                     }
+                    if (ContainsPt(lay.external_open_row[i], x, y)) {
+                        r.region = HitTestResult::SettingsExternalOpen;
+                        r.index = i;
+                        return r;
+                    }
                 }
                 for (int i = 0; i < 2; ++i) {
                     if (ContainsPt(lay.startup_open_row[i], x, y)) {

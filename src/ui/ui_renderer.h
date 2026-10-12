@@ -759,6 +759,7 @@ struct WindowViewModel {
     int settings_startup_open = 0; // 0 last tabs, 1 default location
     int settings_notify_icon = 0;  // 0 always, 1 in the background, 2 never (#57)
     int settings_new_tab_open = 0; // 0 current folder, 1 default location
+    int settings_external_open = 0; // 0 smart, 1 tab, 2 new window (multi-window M7b)
     bool settings_close_last_tab = false;
     bool settings_close_tab_double_click = false;
     bool settings_confirm_delete = false;
@@ -964,6 +965,7 @@ struct HitTestResult {
         SettingsStartupOpen,
         SettingsNotifyIcon,
         SettingsNewTabOpen,
+        SettingsExternalOpen,
         SettingsBlankClick,
         SettingsHomeFolder,
         SettingsTextRender,

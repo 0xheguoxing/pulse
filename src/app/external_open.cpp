@@ -122,4 +122,24 @@ ExternalOpenBatch NextOpenBatch(const ExternalOpenBatch& batch, const ExternalOp
     return ContinuesOpenBatch(batch, request, tuning) ? batch : ExternalOpenBatch{};
 }
 
+OpenConversion OfferedConversion(const ExternalOpenDecision& decision, ExternalOpenPolicy policy,
+                                 bool in_new_window, bool tab_movable) {
+    if (policy != ExternalOpenPolicy::Smart || decision.action == ExternalOpenAction::Activate)
+        return OpenConversion::None;
+    if (in_new_window) return OpenConversion::ToTab;
+    return tab_movable ? OpenConversion::ToWindow : OpenConversion::None;
+}
+
+bool NoteOpenConversion(OpenConversionStreak& streak, OpenConversion direction, int prompt_after) {
+    if (direction == OpenConversion::None) return false;
+    if (streak.direction != direction) streak = {direction, 0};
+    if (++streak.count < prompt_after) return false;
+    streak.count = 0;
+    return true;
+}
+
+ExternalOpenPolicy SuggestedOpenPolicy(OpenConversion direction) {
+    return direction == OpenConversion::ToWindow ? ExternalOpenPolicy::AlwaysWindow : ExternalOpenPolicy::AlwaysTab;
+}
+
 }  // namespace pulse::app
