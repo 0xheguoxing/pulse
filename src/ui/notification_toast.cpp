@@ -272,19 +272,8 @@ void NotificationToast::DrawSnack(Compositor& compositor, const Theme& theme, fl
         cy = static_cast<float>(cursor.y);
     }
 
-    // Plate with a soft shadow.
-    if (!high_contrast) {
-        D2D1_COLOR_F shade = pal.shadow;
-        for (int ring = 3; ring >= 1; --ring) {
-            const float grow = px(static_cast<float>(ring) * 1.5f);
-            shade.a = pal.shadow.a / static_cast<float>(ring * 2);
-            painter_.FillRoundedRect(D2D1::RectF(card_.left - grow, card_.top - grow + px(4.0f), card_.right + grow,
-                                                 card_.bottom + grow + px(4.0f)),
-                                     radius + grow, shade);
-        }
-    }
-    painter_.FillRoundedRect(card_, radius, pal.plate);
-    if (high_contrast) painter_.StrokeRoundedRect(card_, radius, pal.divider);
+    // Acrylic plate in the window's theme, with the flyout shadow.
+    DrawSnackPlate(dc, card_, radius, pal, scale, high_contrast);
 
     ComPtr<ID2D1SolidColorBrush> brush;
     if (FAILED(dc->CreateSolidColorBrush(pal.text, &brush))) return;
@@ -316,9 +305,14 @@ void NotificationToast::DrawSnack(Compositor& compositor, const Theme& theme, fl
         const float label_w = LineWidth(labels[i].get());
         const D2D1_RECT_F button = D2D1::RectF(x, mid - px(13.0f), x + label_w + px(16.0f), mid + px(13.0f));
         action_rects_[i] = button;
-        const bool hot = Contains(button, cx, cy);
-        if (hot || pressed_action_ == static_cast<int>(i))
+        const bool hot = Contains(button, cx, cy) || pressed_action_ == static_cast<int>(i);
+        if (i == 0 && !high_contrast) {
+            // The first button reads as one: a wash of the accent, deeper under the cursor.
+            painter_.FillRoundedRect(button, px(13.0f), hot ? SnackAlpha(pal.accent_wash, pal.accent_wash.a * 1.8f)
+                                                            : pal.accent_wash);
+        } else if (hot) {
             painter_.FillRoundedRect(button, px(13.0f), pal.hover);
+        }
         draw(labels[i].get(), x + px(8.0f), label_w + 1.0f, height, top, i == 0 ? pal.accent : pal.text_secondary);
         x = button.right;
     }

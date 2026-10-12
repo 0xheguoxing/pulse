@@ -684,7 +684,7 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
     // The dragged tab (multi-window M7h): its window is hidden while it is
     // over this one, so it follows the cursor as a pill, and a hint below
     // says what letting go does. Both are capsules in the notification style
-    // (M7i, toast redesign A): a plate in the window's opposite tone.
+    // (M7i, toast redesign A): acrylic in the window's own theme.
     if (vm.drag_ghost.on) {
         const DragGhostView& ghost = vm.drag_ghost;
         IDWriteFactory2* const factory = compositor_->DwriteFactory();
@@ -692,16 +692,11 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
         IDWriteTextFormat* const fmt = compositor_->TextFormat();
         IDWriteTextFormat* const smallFmt = compositor_->SmallFormat();
         const SnackPalette pal = MakeSnackPalette(theme, IsHighContrast());
-        const D2D1_COLOR_F plate = BlendOver(pal.plate, theme.bg);
+        const bool high_contrast = IsHighContrast();
         const D2D1_COLOR_F saved_bg = text_background_;
-        text_background_ = plate;
-        const auto shadow = [&](float x, float y, float w, float h, float r) {
-            for (int ring = 3; ring >= 1; --ring) {
-                const float grow = static_cast<float>(ring) * 1.5f * scale_;
-                MakeBrush(dc, WithAlpha(pal.shadow, pal.shadow.a / static_cast<float>(ring * 2)), brFillPressed_);
-                FillRoundedRect(dc, brFillPressed_.get(), x - grow, y - grow + 4.0f * scale_, w + 2.0f * grow,
-                                h + 2.0f * grow, r + grow);
-            }
+        text_background_ = pal.plate;
+        const auto plate = [&](float x, float y, float w, float h, float r) {
+            DrawSnackPlate(dc, D2D1::RectF(x, y, x + w, y + h), r, pal, scale_, high_contrast);
         };
 
         std::wstring panes;
@@ -717,9 +712,7 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
         const float pillW = 30.0f * scale_ + titleW + (chipW > 0.0f ? 7.0f * scale_ + chipW : 0.0f) + 13.0f * scale_;
         const float px = std::round((std::clamp)(ghost.x - 28.0f * scale_, rect.left, (std::max)(rect.left, rect.right - pillW)));
         const float py = std::round((std::clamp)(ghost.y - 14.0f * scale_, rect.top, (std::max)(rect.top, rect.bottom - pillH)));
-        shadow(px, py, pillW, pillH, pillR);
-        MakeBrush(dc, plate, brFillHover_);
-        FillRoundedRect(dc, brFillHover_.get(), px, py, pillW, pillH, pillR);
+        plate(px, py, pillW, pillH, pillR);
         DrawIconText(px + 10.0f * scale_, py, 16.0f * scale_, pillH, kIconFolder, L"[]", theme.icon_folder, 0.95f);
         MakeBrush(dc, pal.text, brText_);
         DrawTabTitle(dc, factory, tabFmt, brText_.get(), ghost.title, px + 30.0f * scale_, py, titleW, pillH, scale_);
@@ -744,23 +737,16 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
             const float hintW = beforeW + emW + afterW;
             const float detailW = ghost.detail.empty() ? 0.0f : MeasureLayoutText(compositor_, factory, smallFmt, ghost.detail);
             const float divider = ghost.detail.empty() ? 0.0f : 17.0f * scale_;  // gap, 1 px line, gap
-            const float bw = 22.0f * scale_ + hintW + divider + detailW;
+            const float bw = 28.0f * scale_ + hintW + divider + detailW;
             const float bh = 28.0f * scale_;
-            const float br = 8.0f * scale_;
+            const float br = bh * 0.5f;
             float bx = ghost.x + 14.0f * scale_, by = ghost.y + 22.0f * scale_;
             if (bx + bw > rect.right - 6.0f * scale_) bx = ghost.x - bw - 10.0f * scale_;
             if (by + bh > rect.bottom - 6.0f * scale_) by = ghost.y - bh - 22.0f * scale_;
             bx = std::round((std::max)(rect.left + 6.0f * scale_, bx));
             by = std::round((std::max)(rect.top + 6.0f * scale_, by));
-            shadow(bx, by, bw, bh, br);
-            MakeBrush(dc, plate, brFillHover_);
-            FillRoundedRect(dc, brFillHover_.get(), bx, by, bw, bh, br);
-            if (IsHighContrast()) {
-                MakeBrush(dc, pal.divider, brStrokeCard_);
-                dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx + 0.5f, by + 0.5f, bx + bw - 0.5f, by + bh - 0.5f), br, br),
-                                         brStrokeCard_.get(), 1.0f);
-            }
-            float tx = bx + 11.0f * scale_;
+            plate(bx, by, bw, bh, br);
+            float tx = bx + 14.0f * scale_;
             if (!before.empty()) {
                 MakeBrush(dc, pal.text, brText_);
                 DrawTextRect(dc, fmt, brText_.get(), before, tx, by, beforeW + 1.0f, bh);

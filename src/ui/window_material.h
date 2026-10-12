@@ -24,6 +24,21 @@ WindowEffect WindowEffectFromId(std::wstring_view id) noexcept;
 bool WindowEffectUsesBackdrop(WindowEffect effect) noexcept;
 bool ApplyWindowEffect(HWND hwnd, WindowEffect effect, bool dark) noexcept;
 
+// In-window acrylic (multi-window M7i capsules). SampleTarget copies what the
+// current frame already holds under `rect` (plus `margin` for the blur) out of
+// the device context's target bitmap; it fails on targets that are not
+// bitmaps or under a scaling transform, and the caller then paints a solid
+// plate. DrawAcrylicSample blurs that copy through the same graph as the
+// window material with the WinUI in-app acrylic recipe and paints it clipped
+// to the rounded rect.
+struct TargetSample {
+    ComPtr<ID2D1Bitmap1> bitmap;
+    D2D1_POINT_2F origin{};
+};
+bool SampleTarget(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float margin, TargetSample& sample) noexcept;
+bool DrawAcrylicSample(ID2D1DeviceContext* dc, const TargetSample& sample, const D2D1_RECT_F& rect, float radius,
+                       bool dark, float blur_std) noexcept;
+
 int RunMaterialSelfTest();
 void LogWindowMaterial(const char* fmt, ...);
 

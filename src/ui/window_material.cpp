@@ -387,6 +387,64 @@ WindowEffect WindowEffectFromId(std::wstring_view id) noexcept {
     return WindowEffect::MicaAlt;
 }
 
+bool SampleTarget(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float margin, TargetSample& sample) noexcept {
+    sample = TargetSample{};
+    if (!dc || !(rect.right > rect.left) || !(rect.bottom > rect.top)) return false;
+    ComPtr<ID2D1Image> target;
+    dc->GetTarget(&target);
+    ComPtr<ID2D1Bitmap1> canvas;
+    if (!target.get() || FAILED(target->QueryInterface(IID_PPV_ARGS(&canvas))) || !canvas.get()) return false;
+    D2D1_MATRIX_3X2_F transform{};
+    dc->GetTransform(&transform);
+    if (transform._11 != 1.0f || transform._22 != 1.0f || transform._12 != 0.0f || transform._21 != 0.0f) return false;
+    float dpi_x = 0.0f, dpi_y = 0.0f;
+    dc->GetDpi(&dpi_x, &dpi_y);
+    if (dpi_x != 96.0f || dpi_y != 96.0f) return false;  // the target is in pixels (Compositor)
+    const D2D1_SIZE_U size = canvas->GetPixelSize();
+    const auto clamp_to = [](float value, UINT limit) noexcept {
+        return static_cast<UINT>((std::clamp)(value, 0.0f, static_cast<float>(limit)));
+    };
+    const UINT left = clamp_to(std::floor(rect.left + transform._31 - margin), size.width);
+    const UINT top = clamp_to(std::floor(rect.top + transform._32 - margin), size.height);
+    const UINT right = clamp_to(std::ceil(rect.right + transform._31 + margin), size.width);
+    const UINT bottom = clamp_to(std::ceil(rect.bottom + transform._32 + margin), size.height);
+    if (right <= left || bottom <= top) return false;
+    const D2D1_BITMAP_PROPERTIES1 props =
+        D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE, canvas->GetPixelFormat(), 96.0f, 96.0f);
+    ComPtr<ID2D1Bitmap1> bitmap;
+    if (FAILED(dc->CreateBitmap(D2D1::SizeU(right - left, bottom - top), nullptr, 0, &props, &bitmap))) return false;
+    if (FAILED(dc->Flush())) return false;  // the copy reads what has been drawn so far
+    const D2D1_POINT_2U at = D2D1::Point2U(0, 0);
+    const D2D1_RECT_U from = D2D1::RectU(left, top, right, bottom);
+    if (FAILED(bitmap->CopyFromBitmap(&at, canvas.get(), &from))) return false;
+    sample.bitmap = std::move(bitmap);
+    sample.origin = D2D1::Point2F(static_cast<float>(left) - transform._31, static_cast<float>(top) - transform._32);
+    return true;
+}
+
+bool DrawAcrylicSample(ID2D1DeviceContext* dc, const TargetSample& sample, const D2D1_RECT_F& rect, float radius,
+                       bool dark, float blur_std) noexcept {
+    if (!dc || !sample.bitmap.get()) return false;
+    // WinUI AcrylicInAppFillColorDefaultBrush: tint #FCFCFC / #2C2C2C, tint
+    // opacity 0 / 0.15, luminosity opacity 0.85 / 0.96.
+    MaterialGraph graph;
+    if (FAILED(BuildMaterialGraph(dc, sample.bitmap.get(), dark ? HexColor(0x2C2C2C) : HexColor(0xFCFCFC), blur_std,
+                                  dark ? 0.96f : 0.85f, dark ? 0.15f : 0.0f, graph)))
+        return false;
+    ComPtr<ID2D1Factory> factory;
+    dc->GetFactory(&factory);
+    ComPtr<ID2D1RoundedRectangleGeometry> shape;
+    if (!factory.get() || FAILED(factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(rect, radius, radius), &shape)))
+        return false;
+    ComPtr<ID2D1Image> image;
+    graph.color_blend->GetOutput(&image);
+    if (!image.get()) return false;
+    dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), shape.get(), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE), nullptr);
+    dc->DrawImage(image.get(), sample.origin, D2D1_INTERPOLATION_MODE_LINEAR);
+    dc->PopLayer();
+    return true;
+}
+
 bool WindowEffectUsesBackdrop(WindowEffect effect) noexcept {
     return effect != WindowEffect::None;
 }
