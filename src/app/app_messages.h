@@ -54,5 +54,6 @@ constexpr UINT WM_UNDO_WINDOW_MERGE = WM_APP + 82;  // the merge toast was click
 constexpr UINT WM_MERGE_WINDOW = WM_APP + 83;  // released on a tab strip after a title-bar drag; wParam target hwnd, lParam index (M6c)
 constexpr UINT WM_CONVERT_EXTERNAL_OPEN = WM_APP + 84;  // the open toast was clicked: tab <-> new window (M7b)
 constexpr UINT WM_ADOPT_OPEN_POLICY = WM_APP + 85;  // the "make it the default" toast was clicked (M7b)
+constexpr UINT WM_REOPEN_CLOSED_TABS = WM_APP + 86;  // the "N tabs closed" toast was clicked (M7f)
 
 }  // namespace pulse

@@ -61,6 +61,7 @@
 #include "tab_transfer.h"
 #include "tab_detach.h"
 #include "window_merge.h"
+#include "reopen_closed.h"
 #include "tray_controller.h"
 #include "global_search_controller.h"
 #include "tab_controller.h"
@@ -383,6 +384,9 @@ static app::SessionSnapshot CaptureWindowSession(AppState& requested, HWND reque
     });
     for (const auto& pending : s.core.pending_session_windows) snap.windows.push_back(pending);
     snap.focused_window = 0;
+    // M7f: closed windows survive a restart (the writer keeps the newest).
+    for (const auto& closed : s.core.closed_windows.Items())
+        snap.closed_windows.push_back(app::ClosedWindowToSession(closed));
     return snap;
 }
 
@@ -465,6 +469,7 @@ static bool AdoptMovedTab(AppState& s) {
 static void ReopenClosedWindow(AppState& from) {
     auto closed = from.core.closed_windows.TakeLatest();
     if (!closed) return;
+    DismissReopenToasts(from, WM_REOPEN_CLOSED_WINDOW);  // M7f: it came back
     WindowInit init;
     init.restore = std::move(closed);
     OpenPulseWindow(from, init);
@@ -734,6 +739,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             },
             [s] { return s->appPrefs.close_window_with_last_tab; },
             [hwnd] { PostMessageW(hwnd, WM_CLOSE, 0, 0); },
+            [s](const std::vector<size_t>& indices) { RememberClosingTabs(*s, indices); },
         });
         if (init_core) {
             if (s->isolatedTest) {
@@ -1352,6 +1358,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_REOPEN_CLOSED_WINDOW:
         if (s) ReopenClosedWindow(*s);
+        return 0;
+
+    case WM_REOPEN_CLOSED_TABS:
+        if (s) ReopenClosedTabs(*s);
         return 0;
 
     case WM_OPEN_SESSION_WINDOWS:
@@ -2351,6 +2361,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                         std::wstring message = closed.name.empty() ? std::wstring()
                                                                    : closed.name + L" \u00B7 ";
                         message += l10n::Get(l10n::StringId::WindowClosedRestore);
+                        closed.closed_seq = ++s->core.close_seq;  // M7f: one timeline with closed tabs
                         s->core.closed_windows.Push(std::move(closed));
                         next->notification_toast.Show(next->hwnd, l10n::Get(l10n::StringId::WindowClosedTitle),
                                                       std::move(message), false, WM_REOPEN_CLOSED_WINDOW);
@@ -2869,6 +2880,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         for (size_t i = 0; i < session.windows.size(); ++i)
             if (static_cast<int>(i) != session.focused_window)
                 state.core.pending_session_windows.push_back(std::move(session.windows[i]));
+        // M7f: Ctrl+Shift+T and the overview can still bring these back.
+        for (const auto& closed : session.closed_windows)
+            state.core.closed_windows.Push(app::ClosedWindowFromSession(closed, ++state.core.close_seq));
         state.tray = session.tray;
         state.darkMode = session.dark;
         state.sidebarCollapsedMask = static_cast<uint32_t>(session.sidebar_collapsed);

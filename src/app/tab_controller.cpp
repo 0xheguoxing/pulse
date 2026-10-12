@@ -5,6 +5,7 @@
 #include "../common/localization.h"
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 
 namespace pulse::app {
@@ -187,6 +188,10 @@ void TabController::ShowGroupMenu(WindowTabs& tabs, int group_id, POINT screen_p
         RemoveGroup(tabs, id);
     } else if (command == CmdTabGroupClose) {
         WillChangeLayout();
+        std::vector<size_t> members;
+        for (size_t i = 0; i < tabs.items.size(); ++i)
+            if (tabs.items[i]->tab_group == id) members.push_back(i);
+        ClosingTabs(tabs, members);
         for (int i = static_cast<int>(tabs.items.size()) - 1; i >= 0; --i) {
             if (tabs.items[static_cast<size_t>(i)]->tab_group == id) {
                 tabs.CloseTab(static_cast<size_t>(i));
@@ -217,8 +222,28 @@ void TabController::PruneEmptyGroups(WindowTabs& tabs) const {
         }), tabs.tab_groups.end());
 }
 
+// Tells closing_tabs which of `indices` WindowTabs::CloseTab (highest index
+// first) will really close: not pinned tabs, and never the last tab.
+void TabController::ClosingTabs(const WindowTabs& tabs, std::vector<size_t> indices) const {
+    if (!callbacks_.closing_tabs) return;
+    std::sort(indices.begin(), indices.end(), std::greater<size_t>());
+    std::vector<size_t> closing;
+    size_t remaining = tabs.items.size();
+    for (size_t index : indices) {
+        if (remaining <= 1) break;
+        if (index >= tabs.items.size() || tabs.items[index]->pinned) continue;
+        closing.push_back(index);
+        --remaining;
+    }
+    if (!closing.empty()) callbacks_.closing_tabs(closing);
+}
+
 void TabController::CloseTabs(WindowTabs& tabs, int first, int last, int except) const {
     WillChangeLayout();
+    std::vector<size_t> closing;
+    for (int i = last; i >= first; --i)
+        if (i != except && i >= 0) closing.push_back(static_cast<size_t>(i));
+    ClosingTabs(tabs, std::move(closing));
     for (int i = last; i >= first; --i) {
         if (i != except) tabs.CloseTab(static_cast<size_t>(i));
     }

@@ -18,6 +18,7 @@
 #include "app_model.h"
 #include "app_prefs.h"
 #include "app_worker.h"
+#include "closed_tabs.h"
 #include "closed_windows.h"
 #include "context_menu_controller.h"
 #include "context_menu_prefs.h"
@@ -207,6 +208,10 @@ struct AppCore {
     // Windows closed while others stayed open, for the restore toast and
     // Ctrl+Shift+T (M4c); ExitPulse sets `exiting` so its closes are not kept.
     app::ClosedWindowStack closed_windows;
+    // Tabs closed by hand (M7f), and the number of the last close of a tab
+    // or window, which orders the two for Ctrl+Shift+T.
+    app::ClosedTabStack closed_tabs;
+    uint64_t close_seq = 0;
     bool exiting = false;
     // Session v8 (M4d): the windows of the last session other than the focused
     // one (which the first window restores), most recent first. The first

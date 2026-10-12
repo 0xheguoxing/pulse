@@ -295,6 +295,73 @@ int main() {
               odd.windows[0].identity.color == -1 && odd.windows[0].tab_groups.size() == 1,
           "M7c: a saved name is trimmed, an unknown color dropped, groups untouched");
 
+    // M7f: closed windows survive a restart (plan §7, at most kSessionClosedWindows).
+    {
+        SessionSnapshot with_closed = SampleSession();
+        WindowSessionSnapshot open_window;
+        open_window.window_rect = {5, 6, 705, 506};
+        open_window.layout_tabs = with_closed.layout_tabs;
+        with_closed.windows.push_back(open_window);
+        for (int i = 0; i < 7; ++i) {
+            ClosedWindowSessionSnapshot closed;
+            closed.name = L"窗口 \"" + std::to_wstring(i) + L"\"";
+            closed.window.window_rect = {-1900 + i, 100, -900 + i, 800};  // a screen rect, left monitor
+            closed.window.maximized = i == 6;
+            closed.window.layout.details_panel = true;
+            closed.window.layout.details_panel_width = 300 + i;
+            closed.window.layout_tabs = with_closed.layout_tabs;
+            closed.window.layout_tabs.resize(1 + static_cast<size_t>(i % 2));
+            closed.window.tab_groups = with_closed.tab_groups;
+            closed.window.active_layout_tab = i % 2;
+            closed.window.identity = {L"Work " + std::to_wstring(i), i % 6};
+            with_closed.closed_windows.push_back(closed);
+        }
+        const std::wstring closed_json = SessionToJson(with_closed);
+        Check(closed_json.find(L"\"closedWindows\"") > closed_json.find(L"\"windows\""),
+              "M7f: closedWindows[] is written after windows[]");
+        SessionSnapshot back;
+        Check(ParseSessionJson(closed_json, back), "M7f: a session with closed windows parses");
+        Check(back.closed_windows.size() == kSessionClosedWindows,
+              "M7f: only the newest five closed windows are kept");
+        bool same = back.closed_windows.size() == kSessionClosedWindows;
+        for (size_t k = 0; same && k < back.closed_windows.size(); ++k) {
+            const ClosedWindowSessionSnapshot& want = with_closed.closed_windows[k + 2];
+            const ClosedWindowSessionSnapshot& got = back.closed_windows[k];
+            same = got.name == want.name && SameRect(got.window.window_rect, want.window.window_rect) &&
+                   got.window.maximized == want.window.maximized &&
+                   got.window.layout.details_panel_width == want.window.layout.details_panel_width &&
+                   got.window.layout_tabs.size() == want.window.layout_tabs.size() &&
+                   got.window.layout_tabs[0].title == want.window.layout_tabs[0].title &&
+                   got.window.tab_groups.size() == want.window.tab_groups.size() &&
+                   got.window.active_layout_tab == want.window.active_layout_tab &&
+                   got.window.identity == want.window.identity;
+        }
+        Check(same, "M7f: each closed window keeps its name, screen rect, layout, tabs, groups and identity, oldest first");
+        Check(back.windows.size() == 1 && SameRect(back.windows[0].window_rect, open_window.window_rect) &&
+                  back.windows[0].layout_tabs.size() == open_window.layout_tabs.size(),
+              "M7f: windows[] is unaffected by closedWindows[]");
+        ExpectSampleWindow(back, "with closedWindows");
+
+        SessionSnapshot no_closed;
+        const size_t cut = closed_json.find(L",\n  \"closedWindows\"");
+        Check(cut != std::wstring::npos && ParseSessionJson(closed_json.substr(0, cut) + L"\n}\n", no_closed) &&
+                  no_closed.closed_windows.empty() && no_closed.windows.size() == 1,
+              "M7f: a session without closedWindows[] has no closed windows");
+        SessionSnapshot v7;
+        Check(ParseSessionJson(kFrozenV7, v7) && v7.closed_windows.empty(),
+              "M7f: the frozen v7 file has no closed windows");
+
+        SessionSnapshot empty_tabs;
+        Check(ParseSessionJson(L"{\"version\":8,\"closedWindows\":[{\"left\":1,\"closedName\":\"x\"},"
+                               L"{\"left\":2,\"closedName\":\"y\",\"layoutTabs\":[{\"title\":\"t\",\"layout\":0,"
+                               L"\"panes\":[{\"path\":\"C:\\\\\"}]}]}]}", empty_tabs) &&
+                  empty_tabs.closed_windows.size() == 1 && empty_tabs.closed_windows[0].name == L"y" &&
+                  empty_tabs.closed_windows[0].window.window_rect.left == 2,
+              "M7f: a closed window without tabs is dropped");
+        Check(SessionToJson(SampleSession()).find(L"closedWindows") == std::wstring::npos,
+              "M7f: no closedWindows[] when nothing was closed");
+    }
+
     std::printf("session_window_test: %d failure(s)\n", g_failures);
     return g_failures == 0 ? 0 : 1;
 }

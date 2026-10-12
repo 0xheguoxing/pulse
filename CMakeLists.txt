@@ -1540,6 +1540,9 @@ add_executable(pulse_window_identity_test src/bench/window_identity_test.cpp src
 add_executable(pulse_window_switcher_test src/bench/window_switcher_test.cpp src/app/window_switcher.cpp)
 # Multi-window M7e: the Ctrl+Shift+O window overview (plan section 8, P3).
 add_executable(pulse_window_overview_test src/bench/window_overview_test.cpp src/app/window_overview.cpp)
+# Multi-window M7f: one Ctrl+Shift+T timeline of closed tabs and windows (plan section 8.4).
+add_executable(pulse_closed_timeline_test src/bench/closed_timeline_test.cpp)
+target_include_directories(pulse_closed_timeline_test PRIVATE "${CMAKE_BINARY_DIR}/generated")
 add_executable(pulse_render_cache_sharing_test src/bench/render_cache_sharing_test.cpp)
 target_link_libraries(pulse_render_cache_sharing_test PRIVATE user32 d3d11 d2d1)
 add_executable(pulse_shell_window_registry_retry_test src/bench/shell_window_registry_retry_test.cpp

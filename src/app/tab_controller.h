@@ -4,6 +4,7 @@
 #include "../ui/fluent_menu.h"
 
 #include <functional>
+#include <vector>
 
 namespace pulse::app {
 
@@ -19,6 +20,9 @@ public:
         // Closing the only tab closes the window when this returns true.
         std::function<bool()> last_tab_closes_window;
         std::function<void()> close_window;
+        // Right before the tabs at these indices are closed by hand (M7f:
+        // Ctrl+Shift+T brings them back). Only the tabs that will close.
+        std::function<void(const std::vector<size_t>&)> closing_tabs;
     };
 
     explicit TabController(Callbacks callbacks = {}) : callbacks_(std::move(callbacks)) {}
@@ -39,6 +43,7 @@ private:
     void CreateGroupAndEdit(WindowTabs& tabs, int tab_index, POINT screen_pt,
                             ui::FluentMenu& menu);
     void RemoveGroup(WindowTabs& tabs, int group_id) const;
+    void ClosingTabs(const WindowTabs& tabs, std::vector<size_t> indices) const;
     void PruneEmptyGroups(WindowTabs& tabs) const;
     void CloseTabs(WindowTabs& tabs, int first, int last, int except = -1) const;
     void TogglePin(WindowTabs& tabs, int index);

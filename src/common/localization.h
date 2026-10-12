@@ -626,6 +626,7 @@ enum class StringId : UINT {
     WindowOverviewAlone = IDS_WINDOW_OVERVIEW_ALONE,
     WindowOverviewMore = IDS_WINDOW_OVERVIEW_MORE,
     WindowsMergedUndo = IDS_WINDOWS_MERGED_UNDO,
+    TabsClosedTitle = IDS_TABS_CLOSED_TITLE,
     LockedItemTitle = IDS_LOCKED_ITEM_TITLE,
     LockedItemMessage = IDS_LOCKED_ITEM_MESSAGE,
     LockedItemEndHint = IDS_LOCKED_ITEM_END_HINT,

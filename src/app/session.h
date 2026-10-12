@@ -62,6 +62,16 @@ struct WindowSessionSnapshot {
     WindowIdentity identity;  // M7c: its name and color
 };
 
+// A window closed while others stayed open (M7f, plan §7): Ctrl+Shift+T
+// reopens it after a restart too. Here `window.window_rect` is the screen
+// rectangle it had (app::ClosedWindow::rect), not workspace coordinates.
+struct ClosedWindowSessionSnapshot {
+    WindowSessionSnapshot window;
+    std::wstring name;  // its active tab's title, for the toast
+};
+// How many closed windows the session keeps (the newest).
+constexpr size_t kSessionClosedWindows = 5;
+
 struct SessionSnapshot {
     RECT window_rect = {};
     bool maximized = false;
@@ -89,6 +99,9 @@ struct SessionSnapshot {
     // SessionToJson leaves windows[] out when it is empty.
     std::vector<WindowSessionSnapshot> windows;
     int focused_window = 0;
+    // M7f: windows closed while others stayed open, oldest first. Written
+    // after windows[] (the newest kSessionClosedWindows) as "closedWindows".
+    std::vector<ClosedWindowSessionSnapshot> closed_windows;
 };
 
 std::wstring GetPulseDataDir();

@@ -1,3 +1,4 @@
+#include "reopen_closed.h"
 #include "pane_column_input.h"
 // app_input.cpp — extracted from app_main.cpp.
 #include "quick_access.h"
@@ -4064,9 +4065,9 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             }
         } else if (ctrl && !shift && !alt && wParam == L'B') {
             ToggleSidebarCollapsed(*s);
-        } else if (ctrl && shift && !alt && wParam == L'T' && !s->core.closed_windows.Empty()) {
-            PostMessageW(hwnd, WM_REOPEN_CLOSED_WINDOW, 0, 0);  // reopen the last closed window (M4c)
-        } else if (ctrl && wParam == L'T') {
+        } else if (ctrl && shift && !alt && wParam == L'T') {
+            ReopenLastClosed(*s);  // the tabs or window closed last (M4c, M7f)
+        } else if (ctrl && !shift && wParam == L'T') {
             OpenNewTab(*s);
         } else if (ctrl && wParam == L'K') {
             if (shift) ShowOmnibar(*s, OmnibarMode::Mixed);

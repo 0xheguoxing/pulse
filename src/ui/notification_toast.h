@@ -10,6 +10,11 @@ public:
     void Draw(Compositor& compositor, const Theme& theme, float scale, bool high_contrast);
     bool IsVisible() const noexcept { return visible_; }
     D2D1_RECT_F Bounds() const noexcept { return card_; }
+    // Hides the toast when clicking it would post `action_message`: what it
+    // offers was done another way or no longer applies.
+    void DismissFor(HWND owner, UINT action_message) {
+        if (visible_ && action_message && action_message_ == action_message) Dismiss(owner);
+    }
 private:
     void Dismiss(HWND owner);
     static constexpr UINT_PTR timer = 0x50554C54;

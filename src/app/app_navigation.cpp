@@ -26,6 +26,7 @@
 #include "../common/diagnostics_exporter.h"
 #include "snapshot_patch.h"
 #include "entry_group.h"
+#include "reopen_closed.h"
 #include "entry_order_hold.h"
 #include "session.h"
 #include "layout_pane_selection.h"
@@ -2643,6 +2644,7 @@ void CloseLayoutTab(AppState& s, size_t idx) {
     }
     RememberLayoutFocus(s);
     if (s.window_tabs.items.size() > 1 && !s.window_tabs.items[idx]->pinned) {
+        RememberClosingTabs(s, {idx});  // Ctrl+Shift+T brings it back (M7f)
         for (const auto& pane : s.window_tabs.items[idx]->panes)
             DropLiveNetworkSearch(s, pane->view.search_session_id);
     }
