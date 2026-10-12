@@ -139,6 +139,25 @@ LRESULT CALLBACK OwnerProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
+// A typed-name menu like the window identity and new-tag menus: a swatch
+// strip with no command of its own, then one command row.
+std::vector<FluentMenuItem> NamingMenu() {
+    std::vector<FluentMenuItem> items;
+    FluentMenuItem colors;
+    for (int i = 0; i < 3; ++i) {
+        FluentMenuSwatch swatch;
+        swatch.command = 10 + i;
+        swatch.color = D2D1::ColorF(0.2f * static_cast<float>(i), 0.5f, 0.8f);
+        colors.quick_swatches.push_back(swatch);
+    }
+    items.push_back(std::move(colors));
+    FluentMenuItem automatic;
+    automatic.command = 1;
+    automatic.text = L"Automatic";
+    items.push_back(std::move(automatic));
+    return items;
+}
+
 // Posts the keys, then runs the real modal menu; returns the invoked command.
 int Press(FluentMenu& menu, POINT at, std::initializer_list<std::pair<UINT, WPARAM>> keys) {
     g_owner_keys = 0;
@@ -194,6 +213,27 @@ void GuiChecks() {
               "disabled row's key does nothing");
         Check(Press(menu, at, { { WM_KEYDOWN, 'Z' }, { WM_KEYDOWN, VK_ESCAPE } }) == 0 && g_owner_keys == 0,
               "letters never leak to the window behind the menu");
+
+        // A filter menu opens with its first row highlighted; when that is a
+        // swatch strip, Enter after typing a name used to do nothing at all.
+        const auto naming = [](const std::wstring&) { return NamingMenu(); };
+        menu.SetInitialFilterText(L"Review");
+        PostMessageW(g_owner, WM_KEYDOWN, VK_RETURN, 0);
+        SetTimer(g_owner, kWatchdog, 3000, nullptr);
+        int command = menu.TrackPopup(at, NamingMenu(), naming);
+        KillTimer(g_owner, kWatchdog);
+        Check(command == 0 && menu.LastFilterCommitted() && menu.LastFilterQuery() == L"Review",
+              "Enter on a highlighted swatch strip commits the typed name");
+        menu.SetInitialFilterText(L"Review");
+        PostMessageW(g_owner, WM_KEYDOWN, VK_DOWN, 0);
+        PostMessageW(g_owner, WM_KEYDOWN, VK_RETURN, 0);
+        SetTimer(g_owner, kWatchdog, 3000, nullptr);
+        command = menu.TrackPopup(at, NamingMenu(), naming);
+        KillTimer(g_owner, kWatchdog);
+        Check(command == 1 && !menu.LastFilterCommitted(), "Enter on a highlighted command row still invokes it");
+        MSG left{};
+        while (PeekMessageW(&left, g_owner, WM_KEYFIRST, WM_KEYLAST, PM_REMOVE)) {}
+        while (PeekMessageW(&left, g_owner, WM_TIMER, WM_TIMER, PM_REMOVE)) {}
 
         // Chinese/Japanese IME: while a command menu is open the focused
         // window behind it has no input context, so a letter is an access key

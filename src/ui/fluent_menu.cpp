@@ -1476,14 +1476,23 @@ bool FluentMenu::HandleFilterKey(UINT msg, WPARAM wParam) {
         return true;
     }
     if (wParam == VK_RETURN) {
+        int cmd = 0;
         if (hover_row_ >= 0) {
-            int cmd = InvokeRow(hover_row_);
-            if (cmd != 0) { result_ = cmd; Dismiss(); }
+            const FluentMenuItem* it = model_.At(hover_row_);
+            cmd = it && it->enabled && hover_swatch_ >= 0 &&
+                          static_cast<size_t>(hover_swatch_) < it->quick_swatches.size()
+                      ? it->quick_swatches[static_cast<size_t>(hover_swatch_)].command
+                      : InvokeRow(hover_row_);
+        }
+        // A highlighted row without a command of its own (a swatch strip
+        // under the resting pointer) must not swallow Enter: commit the text.
+        if (cmd != 0) {
+            result_ = cmd;
         } else {
             filter_committed_ = true;
             result_ = 0;
-            Dismiss();
         }
+        Dismiss();
         return true;
     }
     if (wParam == VK_BACK) {
