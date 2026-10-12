@@ -602,6 +602,18 @@ enum class PackAction : int {
     ArchiveInstall, ArchiveRemove, ArchiveEnable,
 };
 
+// A tab dragged out of another window, over this one (multi-window M7h): the
+// dragged window hides and this window draws the tab as a pill at the cursor,
+// with what letting go does beside it.
+struct DragGhostView {
+    bool on = false;
+    float x = 0.0f, y = 0.0f;  // the cursor, client px
+    std::wstring title;        // the tab's title
+    int panes = 1;             // its visible panes ("2 panes" on the pill)
+    std::wstring hint;         // what letting go does
+    std::wstring detail;       // a smaller note after it (may be empty)
+};
+
 struct WindowViewModel {
     std::wstring window_title;
     // Multi-window M7c: with two or more windows the title bar shows this
@@ -637,9 +649,10 @@ struct WindowViewModel {
     int tab_drop_index = -1;      // a tab dragged from another window lands before this tab (M6b)
     int tab_file_drop = -1;       // a file drag rests on this tab; it opens when the progress is full (M6e)
     float tab_file_drop_progress = 0.0f;
-    bool content_drop = false;    // a tab dragged over the content area lands in content_drop_rect (M6d)
+    bool content_drop = false;    // a tab dragged over the content area lands in content_drop_rects (M6d)
     bool content_drop_as_tab = false;
-    D2D1_RECT_F content_drop_rect{};
+    std::vector<D2D1_RECT_F> content_drop_rects;  // one per pane it brings (M7h)
+    DragGhostView drag_ghost;     // the dragged tab itself (M7h)
     // Tag drag-reorder gesture (group/item = dragged tag, tag_drag_y = cursor).
     int tag_drag_group = -1;
     int tag_drag_item = -1;

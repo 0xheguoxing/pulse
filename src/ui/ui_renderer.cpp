@@ -664,33 +664,97 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
     }
 
     // A tab dragged from another window over the content (multi-window M6d):
-    // the area it would take, and what the drop does.
+    // the area each of its panes would take. What the drop does is in the
+    // hint beside the dragged tab (M7h).
     if (vm.content_drop) {
-        const D2D1_RECT_F area = vm.content_drop_rect;
         const float radius = 8.0f * scale_;
-        D2D1_COLOR_F tint = theme.accent;
-        tint.a = 0.16f;
-        MakeBrush(dc, tint, brAccent_);
-        dc->FillRoundedRectangle(D2D1::RoundedRect(area, radius, radius), brAccent_.get());
-        MakeBrush(dc, theme.accent, brAccent_);
         const float inset = 1.0f * scale_;
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(area.left + inset, area.top + inset,
-                                                               area.right - inset, area.bottom - inset),
-                                                   radius, radius),
-                                 brAccent_.get(), 2.0f * scale_);
-        const std::wstring label = pulse::l10n::Get(vm.content_drop_as_tab ? pulse::l10n::StringId::DropAsNewTab
-                                                                           : pulse::l10n::StringId::DropSplitHere);
-        IDWriteTextFormat* fmt = compositor_->TextFormat();
-        const float tw = MeasureLayoutText(compositor_, compositor_->DwriteFactory(), fmt, label);
-        const float pw = tw + 28.0f * scale_, ph = 32.0f * scale_;
-        const float px = std::round((area.left + area.right - pw) * 0.5f);
-        const float py = std::round((area.top + area.bottom - ph) * 0.5f);
-        MakeBrush(dc, theme.surface_flyout, brFillHover_);
-        FillRoundedRect(dc, brFillHover_.get(), px, py, pw, ph, ph * 0.5f);
-        MakeBrush(dc, theme.accent, brText_);
+        for (const D2D1_RECT_F& area : vm.content_drop_rects) {
+            MakeBrush(dc, WithAlpha(theme.accent, 0.16f), brAccent_);
+            dc->FillRoundedRectangle(D2D1::RoundedRect(area, radius, radius), brAccent_.get());
+            MakeBrush(dc, theme.accent, brAccent_);
+            dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(area.left + inset, area.top + inset,
+                                                                   area.right - inset, area.bottom - inset),
+                                                       radius, radius),
+                                     brAccent_.get(), 2.0f * scale_);
+        }
+    }
+
+    // The dragged tab (multi-window M7h): its window is hidden while it is
+    // over this one, so it follows the cursor as a pill, and a hint below
+    // says what letting go does.
+    if (vm.drag_ghost.on) {
+        const DragGhostView& ghost = vm.drag_ghost;
+        IDWriteFactory2* const factory = compositor_->DwriteFactory();
+        IDWriteTextFormat* const tabFmt = compositor_->TabFormat();
+        IDWriteTextFormat* const fmt = compositor_->TextFormat();
+        IDWriteTextFormat* const smallFmt = compositor_->SmallFormat();
+        const D2D1_COLOR_F plate = BlendOver(theme.surface_flyout, theme.bg);
         const D2D1_COLOR_F saved_bg = text_background_;
-        text_background_ = BlendOver(theme.surface_flyout, theme.bg);
-        DrawTextRect(dc, fmt, brText_.get(), label, px + 14.0f * scale_, py, tw, ph);
+        text_background_ = plate;
+
+        std::wstring panes;
+        if (ghost.panes > 1) {
+            wchar_t buffer[64]{};
+            swprintf_s(buffer, pulse::l10n::Get(pulse::l10n::StringId::DropPaneCount).c_str(), ghost.panes);
+            panes = buffer;
+        }
+        const float titleW = (std::min)(MeasureLayoutText(compositor_, factory, tabFmt, ghost.title), 220.0f * scale_);
+        const float chipW = panes.empty() ? 0.0f : MeasureLayoutText(compositor_, factory, smallFmt, panes) + 12.0f * scale_;
+        const float pillH = 30.0f * scale_;
+        const float pillW = 32.0f * scale_ + titleW + (chipW > 0.0f ? 8.0f * scale_ + chipW : 0.0f) + 12.0f * scale_;
+        const float px = std::round((std::clamp)(ghost.x - 30.0f * scale_, rect.left, (std::max)(rect.left, rect.right - pillW)));
+        const float py = std::round((std::clamp)(ghost.y - 16.0f * scale_, rect.top, (std::max)(rect.top, rect.bottom - pillH)));
+        const float pillR = 7.0f * scale_;
+        MakeBrush(dc, D2D1::ColorF(0.0f, 0.0f, 0.0f, vm.dark ? 0.30f : 0.16f), brFillPressed_);
+        FillRoundedRect(dc, brFillPressed_.get(), px - 1.0f * scale_, py + 3.0f * scale_, pillW + 2.0f * scale_,
+                        pillH + 3.0f * scale_, pillR + 1.0f * scale_);
+        MakeBrush(dc, plate, brFillHover_);
+        FillRoundedRect(dc, brFillHover_.get(), px, py, pillW, pillH, pillR);
+        MakeBrush(dc, theme.accent, brAccent_);
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(px + 0.5f, py + 0.5f, px + pillW - 0.5f, py + pillH - 0.5f),
+                                                   pillR, pillR),
+                                 brAccent_.get(), 1.0f * scale_);
+        DrawIconText(px + 10.0f * scale_, py, 16.0f * scale_, pillH, kIconFolder, L"[]", theme.icon_folder, 0.85f);
+        MakeBrush(dc, theme.text, brText_);
+        DrawTabTitle(dc, factory, tabFmt, brText_.get(), ghost.title, px + 32.0f * scale_, py, titleW, pillH, scale_);
+        if (chipW > 0.0f) {
+            const float cx = px + 32.0f * scale_ + titleW + 8.0f * scale_;
+            const float ch = 18.0f * scale_;
+            const float cy = py + (pillH - ch) * 0.5f;
+            MakeBrush(dc, WithAlpha(theme.accent, 0.18f), brFillPressed_);
+            FillRoundedRect(dc, brFillPressed_.get(), cx, cy, chipW, ch, 4.0f * scale_);
+            MakeBrush(dc, theme.accent, brText_);
+            DrawTextRect(dc, smallFmt, brText_.get(), panes, cx + 6.0f * scale_, cy, chipW - 12.0f * scale_, ch);
+        }
+
+        if (!ghost.hint.empty()) {
+            const float hintW = MeasureLayoutText(compositor_, factory, fmt, ghost.hint);
+            const float detailW = ghost.detail.empty() ? 0.0f : MeasureLayoutText(compositor_, factory, smallFmt, ghost.detail);
+            const float gap = ghost.detail.empty() ? 0.0f : 8.0f * scale_;
+            const float bw = 20.0f * scale_ + hintW + gap + detailW;
+            const float bh = 28.0f * scale_;
+            float bx = ghost.x + 16.0f * scale_, by = ghost.y + 24.0f * scale_;
+            if (bx + bw > rect.right - 6.0f * scale_) bx = ghost.x - bw - 12.0f * scale_;
+            if (by + bh > rect.bottom - 6.0f * scale_) by = ghost.y - bh - 22.0f * scale_;
+            bx = std::round((std::max)(rect.left + 6.0f * scale_, bx));
+            by = std::round((std::max)(rect.top + 6.0f * scale_, by));
+            MakeBrush(dc, D2D1::ColorF(0.0f, 0.0f, 0.0f, vm.dark ? 0.26f : 0.12f), brFillPressed_);
+            FillRoundedRect(dc, brFillPressed_.get(), bx, by + 2.0f * scale_, bw, bh, 6.0f * scale_);
+            MakeBrush(dc, plate, brFillHover_);
+            FillRoundedRect(dc, brFillHover_.get(), bx, by, bw, bh, 6.0f * scale_);
+            MakeBrush(dc, WithAlpha(theme.text, 0.16f), brStrokeCard_);
+            dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx + 0.5f, by + 0.5f, bx + bw - 0.5f, by + bh - 0.5f),
+                                                       6.0f * scale_, 6.0f * scale_),
+                                     brStrokeCard_.get(), 1.0f);
+            MakeBrush(dc, theme.text, brText_);
+            DrawTextRect(dc, fmt, brText_.get(), ghost.hint, bx + 10.0f * scale_, by, hintW + 1.0f, bh);
+            if (!ghost.detail.empty()) {
+                MakeBrush(dc, theme.text_secondary, brText_);
+                DrawTextRect(dc, smallFmt, brText_.get(), ghost.detail, bx + 10.0f * scale_ + hintW + gap, by,
+                             detailW + 1.0f, bh);
+            }
+        }
         text_background_ = saved_bg;
     }
 

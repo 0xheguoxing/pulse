@@ -299,8 +299,9 @@ struct AppState : AppCoreOwner {
     int tabDropIndex = -1;  // a tab dragged from another window would land here (M6b)
     // A tab dragged over the content area (M6d): where it would go, client px.
     bool contentDrop = false;
-    bool contentDropAsTab = false;  // a new tab; otherwise one more pane
-    D2D1_RECT_F contentDropRect{};
+    bool contentDropAsTab = false;  // a new tab; otherwise one or more panes
+    std::vector<D2D1_RECT_F> contentDropRects;  // where each pane it brings goes (M7h)
+    ui::DragGhostView dragGhost;    // the dragged tab, drawn here while its window hides (M7h)
     bool first_present_reported = false;  // test instances: first frame timed once (Render, M4f)
     // This window's kTimerUi period (M4f). One shared pacer handed a period
     // change to whichever window ticked first, so another could keep the fast

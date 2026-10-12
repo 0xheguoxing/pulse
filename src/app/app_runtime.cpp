@@ -2085,7 +2085,8 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
             static_cast<float>(GetTickCount64() - s.springTabStart) / static_cast<float>(app::kTabSpringMs);
     vm.content_drop = s.contentDrop;
     vm.content_drop_as_tab = s.contentDropAsTab;
-    vm.content_drop_rect = s.contentDropRect;
+    vm.content_drop_rects = s.contentDropRects;
+    vm.drag_ghost = s.dragGhost;
     // Sidebar tag reorder: emit the tags group in the tentative drag order and
     // feed each tag its current slide offset (slot units).
     int tagsGroup = -1;

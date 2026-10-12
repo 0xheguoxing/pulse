@@ -787,6 +787,15 @@ add_executable(pulse_session_window_test src/bench/session_window_test.cpp
     src/index/content_result_store.cpp src/fs/fs_enum.cpp src/ui/view_layout.cpp)
 target_link_libraries(pulse_session_window_test PRIVATE
     user32 shell32 ole32 uuid advapi32 shlwapi netapi32 secur32 pulse_localization pulse_runtime_log pulse_sqlite)
+# Multi-window M7h: a split tab dropped on a window's edge brings all its panes.
+add_executable(pulse_pane_drop_test src/bench/pane_drop_test.cpp src/app/pane_drop.cpp
+    src/app/session.cpp src/app/session_tab_model.cpp src/app/window_identity.cpp
+    src/app/app_model.cpp src/app/places.cpp src/app/entry_group.cpp src/app/tag_ads_sync.cpp
+    src/app/tab_group_model.cpp src/app/pane_layout.cpp src/app/column_view_model.cpp src/app/search_query.cpp
+    src/app/search_query_rewrite.cpp src/index/index_query.cpp src/index/search_kinds.cpp
+    src/index/content_result_store.cpp src/fs/fs_enum.cpp src/ui/view_layout.cpp)
+target_link_libraries(pulse_pane_drop_test PRIVATE
+    user32 shell32 ole32 uuid advapi32 shlwapi netapi32 secur32 pulse_localization pulse_runtime_log pulse_sqlite)
 # Multi-window M1: AppState's process-wide members alias one AppCore (compile-time checks).
 add_executable(pulse_app_core_alias_test src/bench/app_core_alias_test.cpp)
 target_include_directories(pulse_app_core_alias_test PRIVATE "${CMAKE_BINARY_DIR}/generated")

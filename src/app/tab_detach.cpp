@@ -3,10 +3,12 @@
 #include "tab_detach.h"
 
 #include "app_internal.h"
+#include "../common/localization.h"
 #include "app_messages.h"
 #include "pane_drop.h"
 #include "tab_transfer.h"
 #include "window_factory.h"
+#include "window_identity_ui.h"
 #include "window_merge.h"
 #include "window_registry.h"
 
@@ -15,6 +17,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace pulse {
@@ -37,17 +41,25 @@ HWND g_moving = nullptr;
 AppState* g_moving_state = nullptr;
 // zone None: on the tab strip before `index`. Center: a new tab at `index`
 // (after the active one). An edge: one more pane of the active tab (M6d).
+// Why a content drop is a new tab rather than a split (the hint says so, M7h).
+enum class NoSplit { None, Full, Never };
 struct Drop {
     HWND window = nullptr;
     size_t index = 0;
     app::ContentDrop zone = app::ContentDrop::None;
-    D2D1_RECT_F rect{};  // the content-area preview, client px
+    std::vector<D2D1_RECT_F> rects;  // the content-area preview, client px
+    NoSplit no_split = NoSplit::None;
+    // The Pulse window under the cursor, with or without a drop spot, and
+    // whether the cursor is on its content waiting to rest (M7h).
+    HWND over = nullptr;
+    bool resting = false;
 };
 Drop g_drop;
 // A drag out of a maximized window is over its own content all the way, so
 // content drops only arm once the cursor rests on one window's content; a
-// quick drag still makes a window (M6d).
-constexpr UINT kContentDropDwellMs = 400;
+// quick drag still makes a window (M6d). Short enough to feel immediate when
+// aiming at a pane (M7h: 400 -> 150 ms, the prototype has no wait at all).
+constexpr UINT kContentDropDwellMs = 150;
 constexpr UINT_PTR kContentDropTimer = 0x4D36;
 constexpr float kContentDropBand = 0.25f;
 struct Dwell {
@@ -57,6 +69,11 @@ struct Dwell {
     bool armed = false;
 };
 Dwell g_dwell;
+// A dragged tab over a Pulse window (M7h): that window draws it at the cursor.
+HWND g_ghost = nullptr;
+// A title-bar drag over a strip shows the window see-through (M6c), as the
+// prototype's .38 opacity.
+constexpr BYTE kSeeThroughAlpha = 97;
 // A title-bar drag (M6c): the system runs a move loop we did not start. The
 // placement from before the drag is what an undo of the merge restores.
 bool g_caption_move = false;
@@ -79,13 +96,20 @@ bool SameRect(const D2D1_RECT_F& a, const D2D1_RECT_F& b) {
     return a.left == b.left && a.top == b.top && a.right == b.right && a.bottom == b.bottom;
 }
 
+bool SameRects(const std::vector<D2D1_RECT_F>& a, const std::vector<D2D1_RECT_F>& b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), SameRect);
+}
+
 void ShowDrop(AppState& any, const Drop& next) {
     if (g_drop.window == next.window && g_drop.index == next.index && g_drop.zone == next.zone &&
-        SameRect(g_drop.rect, next.rect))
+        SameRects(g_drop.rects, next.rects)) {
+        g_drop = next;  // the window under the cursor and the hint may still change
         return;
+    }
     if (AppState* old = WindowOf(any, g_drop.window)) {
         old->tabDropIndex = -1;
         old->contentDrop = false;
+        old->contentDropRects.clear();
         InvalidateRect(old->hwnd, nullptr, FALSE);
     }
     g_drop = next;
@@ -95,7 +119,7 @@ void ShowDrop(AppState& any, const Drop& next) {
         } else {
             target->contentDrop = true;
             target->contentDropAsTab = next.zone == app::ContentDrop::Center;
-            target->contentDropRect = next.rect;
+            target->contentDropRects = next.rects;
         }
         InvalidateRect(target->hwnd, nullptr, FALSE);
     }
@@ -126,18 +150,105 @@ bool ContentDropArmed(HWND window, POINT cursor) {
     return g_dwell.armed;
 }
 
-// Over a strip the dragged window would hide the drop bar under its own
-// tab: it turns see-through until it leaves the strip or the loop ends.
-void SeeThrough(HWND hwnd, bool on) {
+// Over another window the dragged window would hide the drop preview: a
+// dragged tab's window hides while that window draws the tab (M7h, alpha 0);
+// a window dragged by its title bar turns see-through over a strip (M6c).
+// 255 makes it opaque again.
+void SetMovingAlpha(HWND hwnd, BYTE alpha) {
     const LONG_PTR ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-    if (on == ((ex & WS_EX_LAYERED) != 0)) return;
-    if (on) {
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
-        SetLayeredWindowAttributes(hwnd, 0, 140, LWA_ALPHA);
-    } else {
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex & ~static_cast<LONG_PTR>(WS_EX_LAYERED));
+    const bool layered = (ex & WS_EX_LAYERED) != 0;
+    if (alpha == 255) {
+        if (layered) SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex & ~static_cast<LONG_PTR>(WS_EX_LAYERED));
+        return;
+    }
+    BYTE current = 255;
+    DWORD flags = 0;
+    if (layered && GetLayeredWindowAttributes(hwnd, nullptr, &current, &flags) && (flags & LWA_ALPHA) &&
+        current == alpha)
+        return;
+    if (!layered) SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+    SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
+}
+
+std::wstring Fill(std::wstring text, std::wstring_view slot, const std::wstring& value) {
+    for (size_t at = text.find(slot); at != std::wstring::npos; at = text.find(slot, at + value.size()))
+        text.replace(at, slot.size(), value);
+    return text;
+}
+
+std::wstring DropText(l10n::StringId id) { return l10n::Get(id); }
+
+// What letting go of the dragged tab does, as the prototype words it: the
+// window by name, the spot on its strip, the side of the split.
+void DescribeDrop(AppState& moving, const Drop& drop, ui::DragGhostView& ghost) {
+    AppState* const target = WindowOf(moving, drop.window ? drop.window : drop.over);
+    const std::wstring name = target ? WindowDisplayName(*target) : std::wstring();
+    ghost.detail.clear();
+    if (!drop.window) {
+        ghost.hint = DropText(l10n::StringId::DropHintNewWindow);
+        if (drop.resting) ghost.detail = Fill(DropText(l10n::StringId::DropHintRest), L"%1", name);
+        return;
+    }
+    switch (drop.zone) {
+    case app::ContentDrop::None:
+        ghost.hint = Fill(Fill(DropText(l10n::StringId::DropHintStrip), L"%1", name), L"%2", std::to_wstring(drop.index + 1));
+        return;
+    case app::ContentDrop::Center:
+        ghost.hint = Fill(DropText(l10n::StringId::DropHintTab), L"%1", name);
+        ghost.detail = DropText(drop.no_split == NoSplit::Full    ? l10n::StringId::DropHintFull
+                            : drop.no_split == NoSplit::Never ? l10n::StringId::DropHintNoSplit
+                                                              : l10n::StringId::DropHintEdges);
+        return;
+    default: {
+        const l10n::StringId side = drop.zone == app::ContentDrop::Left    ? l10n::StringId::DropSideLeft
+                                    : drop.zone == app::ContentDrop::Right ? l10n::StringId::DropSideRight
+                                    : drop.zone == app::ContentDrop::Top   ? l10n::StringId::DropSideTop
+                                                                           : l10n::StringId::DropSideBottom;
+        ghost.hint = Fill(Fill(DropText(l10n::StringId::DropHintSplit), L"%1", name), L"%2", DropText(side));
+        return;
+    }
     }
 }
+
+// Moves the drawn tab to the window under the cursor (`drop.over`), or clears
+// it when there is none.
+void ShowGhost(AppState& moving, const Drop& drop, POINT cursor) {
+    AppState* const target = drop.over ? WindowOf(moving, drop.over) : nullptr;
+    if (g_ghost && (!target || target->hwnd != g_ghost)) {
+        if (AppState* old = WindowOf(moving, g_ghost)) {
+            old->dragGhost = ui::DragGhostView{};
+            InvalidateRect(old->hwnd, nullptr, FALSE);
+        }
+    }
+    g_ghost = target ? target->hwnd : nullptr;
+    if (!target || moving.window_tabs.items.empty() || !moving.window_tabs.items[0]) return;
+    const app::LayoutTab& tab = *moving.window_tabs.items[0];
+    ui::DragGhostView& ghost = target->dragGhost;
+    POINT client = cursor;
+    ScreenToClient(target->hwnd, &client);
+    ghost.on = true;
+    ghost.x = static_cast<float>(client.x);
+    ghost.y = static_cast<float>(client.y);
+    // The folder by name: the pill counts the panes itself ("2 panes"), where
+    // the strip title says "name · 2".
+    const app::Tab* const view = tab.ActiveFolder();
+    ghost.title = !tab.title.empty() || !view ? app::LayoutTabTitle(tab)
+                  : view->virtual_title.empty() ? app::TabTitle(view->current_path)
+                                                : view->virtual_title;
+    ghost.panes = static_cast<int>((std::max)(size_t{1}, tab.VisiblePanes().size()));
+    DescribeDrop(moving, drop, ghost);
+    InvalidateRect(target->hwnd, nullptr, FALSE);
+}
+
+void HideGhost(AppState& any) {
+    if (AppState* old = WindowOf(any, g_ghost)) {
+        old->dragGhost = ui::DragGhostView{};
+        InvalidateRect(old->hwnd, nullptr, FALSE);
+    }
+    g_ghost = nullptr;
+}
+
+bool IsSettingsPane(const app::Pane* pane) { return pane && IsSettingsTab(pane->ActiveTab()); }
 
 bool Cloaked(HWND hwnd) {
     DWORD cloaked = 0;
@@ -145,7 +256,8 @@ bool Cloaked(HWND hwnd) {
 }
 
 // The content-area drop at `client` in `target` for the only tab of
-// `moving`: a pane at an edge where the layout can take one, else a tab.
+// `moving`: its panes at an edge where the layout has room for them (up to
+// four in all, M7h), else a tab.
 Drop ContentDropAt(AppState& moving, AppState& target, POINT client, float width) {
     const D2D1_RECT_F content =
         target.renderer.ContentRect(width, static_cast<float>(target.compositor.Height()));
@@ -154,13 +266,16 @@ Drop ContentDropAt(AppState& moving, AppState& target, POINT client, float width
     const app::LayoutTab* incoming = moving.window_tabs.items[0].get();
     const app::LayoutTab* active = target.window_tabs.Active();
     if (!active || !incoming) return {};
-    if (zone != app::ContentDrop::Center &&
-        (IsSettingsTab(ActiveTab(target)) || IsSettingsTab(incoming->panes.empty() ? nullptr
-                                                                                   : incoming->panes[0]->ActiveTab()) ||
-         !app::CanAddPane(*active, *incoming, zone)))
-        zone = app::ContentDrop::Center;
-    Drop drop{target.hwnd, target.window_tabs.active + 1, zone, content};
-    if (zone != app::ContentDrop::Center) drop.rect = app::PaneDropRect(*active, zone, content, target.scale);
+    Drop drop{target.hwnd, target.window_tabs.active + 1, zone, {content}};
+    const bool settings = IsSettingsTab(ActiveTab(target)) ||
+                          std::any_of(incoming->panes.begin(), incoming->panes.end(),
+                                      [](const std::unique_ptr<app::Pane>& pane) { return IsSettingsPane(pane.get()); });
+    if (settings || app::DropPaneCount(*incoming) == 0) drop.no_split = NoSplit::Never;
+    else if (!app::HasRoomForPanes(*active, *incoming)) drop.no_split = NoSplit::Full;
+    if (zone != app::ContentDrop::Center && (drop.no_split != NoSplit::None || !app::CanAddPane(*active, *incoming, zone)))
+        drop.zone = app::ContentDrop::Center;
+    if (drop.zone != app::ContentDrop::Center)
+        drop.rects = app::PaneDropRects(*active, app::DropPaneCount(*incoming), drop.zone, content, target.scale);
     return drop;
 }
 
@@ -193,17 +308,24 @@ Drop FindDrop(AppState& moving, POINT cursor, bool content) {
         const LONG caption_buttons = std::lround(3.0f * 46.0f * scale);  // minimize, maximize, close
         const int index = TabDropIndex(spans.data(), spans.size(), target->window_tabs.items.size(), client,
                                        std::lround(12.0f * scale), std::lround(width) - caption_buttons);
+        Drop over;
+        over.over = below;
         if (index >= 0) {
             ForgetDwell();
-            return Drop{below, static_cast<size_t>(index)};
+            over.window = below;
+            over.index = static_cast<size_t>(index);
+            return over;
         }
-        if (!content) return {};
+        if (!content) return over;
         Drop drop = ContentDropAt(moving, *target, client, width);
+        drop.over = below;
         if (!drop.window) {
             ForgetDwell();
-            return {};
+            return over;  // on its toolbar, sidebar or status bar: a new window
         }
-        return ContentDropArmed(below, cursor) ? drop : Drop{};
+        if (ContentDropArmed(below, cursor)) return drop;
+        over.resting = true;
+        return over;
     }
     ForgetDwell();
     return {};
@@ -315,9 +437,18 @@ void TrackTabDrop(AppState& s) {
     GetCursorPos(&cursor);
     // Content drops are for a dragged tab, never for a window moved by its
     // title bar (M6c merges at the strip only).
-    const bool content = !g_caption_move && s.window_tabs.items.size() == 1;
-    ShowDrop(s, s.window_tabs.items.empty() ? Drop{} : FindDrop(s, cursor, content));
-    SeeThrough(s.hwnd, g_drop.window != nullptr);
+    const bool tab_drag = !g_caption_move && s.window_tabs.items.size() == 1;
+    const Drop drop = s.window_tabs.items.empty() ? Drop{} : FindDrop(s, cursor, tab_drag);
+    ShowDrop(s, drop);
+    if (!tab_drag) {
+        SetMovingAlpha(s.hwnd, drop.window ? kSeeThroughAlpha : 255);
+        return;
+    }
+    // A dragged tab over a Pulse window (M7h): the window under the cursor
+    // draws it as a pill with a hint, and its own window hides so the drop
+    // preview is never covered. Elsewhere it is a window again.
+    ShowGhost(s, drop, cursor);
+    SetMovingAlpha(s.hwnd, drop.over ? 0 : 255);
 }
 
 void BeginWindowMove(AppState& s) {
@@ -342,7 +473,8 @@ void EndWindowMove(AppState& s) {
     g_escape_hook = nullptr;
     const Drop drop = g_escape_pressed ? Drop{} : g_drop;
     ShowDrop(s, Drop{});
-    SeeThrough(s.hwnd, false);
+    HideGhost(s);
+    SetMovingAlpha(s.hwnd, 255);
     // The move loop is still unwinding: merge once it has returned.
     if (drop.window)
         PostMessageW(s.hwnd, WM_MERGE_WINDOW, reinterpret_cast<WPARAM>(drop.window), static_cast<LPARAM>(drop.index));
@@ -476,14 +608,18 @@ void RunDetachedTabMove(AppState& s, HWND from, size_t index) {
     const size_t drop_index = g_drop.index;
     const app::ContentDrop drop_zone = g_drop.zone;
     ShowDrop(s, Drop{});
+    HideGhost(s);
     if (!IsWindow(hwnd)) return;
-    SeeThrough(hwnd, false);
 
     // Released on another window's tab strip: the tab joins it there (M6b);
-    // on its content: a new tab, or one more pane at an edge (M6d).
+    // on its content: a new tab, or its panes at an edge (M6d, M7h). The
+    // window, hidden over the target (M7h), stays hidden on the way out.
     AppState* const target = g_escape_pressed ? nullptr : WindowOf(s, drop_window);
-    if (target && target != &s && s.window_tabs.items.size() == 1) {
-        ShowWindow(hwnd, SW_HIDE);
+    const bool joining = target && target != &s && s.window_tabs.items.size() == 1;
+    const bool going_back = from && g_escape_pressed && s.window_tabs.items.size() == 1;
+    if (joining || going_back) ShowWindow(hwnd, SW_HIDE);
+    SetMovingAlpha(hwnd, 255);
+    if (joining) {
         const bool pane = drop_zone != app::ContentDrop::None && drop_zone != app::ContentDrop::Center;
         if (pane ? MoveTabIntoPane(s, 0, *target, drop_zone, TransferSource::Closing)
                  : MoveLayoutTab(s, 0, *target, drop_index, TransferSource::Closing)) {
@@ -498,8 +634,10 @@ void RunDetachedTabMove(AppState& s, HWND from, size_t index) {
     // Esc: the tab goes back to its place (a pane to its split) and the new
     // window goes away.
     AppState& source = app::FindWindowSharingCore(s, [from](const AppState& w) { return w.hwnd == from; });
-    if (&source == &s || s.window_tabs.items.size() != 1) return;
-    ShowWindow(hwnd, SW_HIDE);
+    if (&source == &s || s.window_tabs.items.size() != 1) {
+        ShowWindow(hwnd, SW_SHOWNORMAL);
+        return;
+    }
     const bool back = pane_back.from == from &&
                       ReturnTabAsPane(s, 0, source, pane_back.into, pane_back.origin, TransferSource::Closing);
     if (!back && !MoveLayoutTab(s, 0, source, index, TransferSource::Closing)) {

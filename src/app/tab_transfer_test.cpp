@@ -178,7 +178,7 @@ bool RunTabTransferTest() {
         split->panes.push_back(std::make_unique<Pane>());
         auto single = MakeSingleLayoutTab(L"");
         check(!CanAddPane(*single, *split, ContentDrop::Left),
-              "a dragged tab with more than one pane can only become a tab, not a pane");
+              "a dragged tab that keeps hidden panes can only become a tab, not panes (M7h: visible ones may)");
 
         // A pane dragged out by its header, and Esc putting it back.
         const std::vector<Pane*> grid = tab->VisiblePanes();
