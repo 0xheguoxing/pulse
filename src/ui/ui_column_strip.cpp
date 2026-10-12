@@ -223,7 +223,11 @@ void MainRenderer::DrawColumnStripColumn(const WindowViewModel& vm, const PaneVi
         const std::wstring full = JoinDirName(column.path, entry.name);
         const D2D1_RECT_F dest = D2D1::RectF(ix, iy, ix + icon, iy + icon);
         const float hidden_alpha = HiddenEntryAlpha(entry.attrs);
-        if (!icon_cache_.Draw(dc, dest, full, entry.name, entry.is_dir, entry.attrs, hidden_alpha)) {
+        // Nothing to open into: the empty-folder icon, and no chevron below.
+        const bool empty_folder = entry.is_dir && column.empty_sources.contains(source);
+        if (empty_folder) {
+            DrawEmptyFolderIcon(ix, iy, icon, theme, hidden_alpha);
+        } else if (!icon_cache_.Draw(dc, dest, full, entry.name, entry.is_dir, entry.attrs, hidden_alpha)) {
             if (entry.is_dir) DrawFolderIcon(ix, iy, icon, theme, hidden_alpha);
             else DrawFileIcon(ix, iy, icon, theme, hidden_alpha);
         }
@@ -234,11 +238,11 @@ void MainRenderer::DrawColumnStripColumn(const WindowViewModel& vm, const PaneVi
         MakeBrush(dc, IsHighContrast() ? theme.text
                                        : HiddenEntryNameColor(entry.attrs, theme, theme.text), brText_);
         const float tx = ix + icon + 8.0f * scale_;
-        const float chevron_w = entry.is_dir ? 18.0f * scale_ : 0.0f;
+        const float chevron_w = entry.is_dir && !empty_folder ? 18.0f * scale_ : 0.0f;
         DrawTextEndEllipsis(dc, factory, compositor_->FileNameFormat(), brText_.get(), entry.name,
                             tx, top, std::max(0.0f, cell.right - tx - chevron_w - 4.0f * scale_),
                             row_height_);
-        if (entry.is_dir) {
+        if (entry.is_dir && !empty_folder) {
             DrawIconText(cell.right - chevron_w - 2.0f * scale_, top, chevron_w, row_height_,
                          kIconChevronRight, L">", theme.text_secondary, 0.55f);
         }

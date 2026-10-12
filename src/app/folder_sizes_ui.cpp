@@ -18,9 +18,17 @@ constexpr size_t kSortRequestLimit = 2048;
 // Live re-sorts copy the listing on the window thread: keep them small and paced.
 constexpr size_t kLiveResortLimit = 20000;
 constexpr uint64_t kResortIntervalMs = 750;
+// Column view rows probed for emptiness, around the row on the navigation path.
+constexpr int kColumnProbeRows = 128;
 
 std::wstring ChildPath(const std::wstring& parent, const std::wstring& name) {
     return !parent.empty() && parent.back() == L'\\' ? parent + name : parent + L"\\" + name;
+}
+
+// Drive rows keep their drive icon; virtual and network places are never probed.
+bool ProbesEmptiness(const std::wstring& path) {
+    return !path.empty() && !fs::IsVirtualPath(path) && !fs::IsUncPath(path) &&
+        !(path.size() <= 3 && path.size() >= 2 && path[1] == L':');
 }
 
 bool SortsByFolderSize(const ui::PaneViewModel& pane) {
@@ -31,9 +39,30 @@ bool SortsByFolderSize(const ui::PaneViewModel& pane) {
 
 void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
     struct Row { ui::PaneViewModel* pane; int index; std::wstring path; };
-    std::vector<Row> rows;
+    struct ColumnRow { ui::ColumnStripColumnView* column; int source; std::wstring path; };
+    std::vector<Row> rows, probe_rows;
+    std::vector<ColumnRow> column_rows;
     std::vector<app::FolderSizeRequest> requests;
     std::vector<std::wstring> roots;
+    // Column view: every column is a listing of its own; probe the rows near
+    // the navigation path (or the scrolled-to rows) without size work.
+    const auto probe_column = [&](ui::ColumnStripColumnView& column) {
+        column.empty_sources.clear();
+        if (column.loading || column.error || !column.snapshot || !column.rows || !ProbesEmptiness(column.path)) return;
+        const auto& order = *column.rows;
+        const int count = static_cast<int>(order.size());
+        const int anchor = column.auto_scroll && column.highlight_row >= 0
+            ? column.highlight_row - kColumnProbeRows / 2
+            : static_cast<int>(column.scroll_dip / 28.0f) - kColumnProbeRows / 4;
+        const int begin = std::clamp(anchor, 0, std::max(0, count - kColumnProbeRows));
+        for (int r = begin; r < std::min(count, begin + kColumnProbeRows); ++r) {
+            const int source = order[static_cast<size_t>(r)];
+            if (source < 0 || static_cast<size_t>(source) >= column.snapshot->size()) continue;
+            const auto& entry = (*column.snapshot)[static_cast<size_t>(source)];
+            if (!entry.is_dir || entry.drive_type != 0) continue;
+            column_rows.push_back({&column, source, ChildPath(column.path, entry.name)});
+        }
+    };
     for (auto& slot : vm.pane_slots) {
         auto& pane = slot.pane;
         pane.folder_size_labels.clear();
@@ -42,18 +71,26 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
         pane.folder_size_running.clear();
         pane.folder_size_pending.clear();
         pane.folder_size_idle.clear();
+        pane.empty_folders.clear();
+        for (auto& column : pane.column_strip.ancestors) column.empty_sources.clear();
+        pane.column_strip.child.empty_sources.clear();
+        if (pane.column_strip.enabled && pane.column_strip.eligible) {
+            for (auto& column : pane.column_strip.ancestors) probe_column(column);
+            if (pane.column_strip.has_child) probe_column(pane.column_strip.child);
+        }
         // Content hits are files held in a separate paged store, not snapshot/entries.
         if (pane.loading || pane.content_results ||
             (!pane.is_file_system && !pane.is_search) || pane.is_recycle) continue;
         const bool labels = ui::ShowsFolderSize(pane.view_mode);
         const bool sorted = SortsByFolderSize(pane);
-        if (!labels && !sorted) continue;
         std::unordered_set<int> shown;
         const auto list = s.renderer.PaneListRect(pane, slot.rect);
         ui::ViewLayout layout(pane.view_mode, list, pane.EntryCount(), pane.scroll_x, pane.scroll_y, s.scale,
                               s.renderer.ListRowHeightDip(pane, list), pane.Groups());
         const auto [first, last] = layout.VisibleRange();
-        for (int i = std::max(0, first); labels && i <= last; ++i) {
+        const size_t probed_before = probe_rows.size();
+        // Every view probes its visible folders for emptiness; label views also want sizes.
+        for (int i = std::max(0, first); i <= last; ++i) {
             const int source = pane.SourceIndex(i);
             if (source < 0) continue;
             std::wstring path;
@@ -69,6 +106,8 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
                 path = entry.path;
             }
             if (path.empty() || fs::IsVirtualPath(path)) continue;
+            if (ProbesEmptiness(path)) probe_rows.push_back({&pane, source, path});
+            if (!labels) continue;
             rows.push_back({&pane, source, path});
             requests.push_back({path, !fs::IsUncPath(path)});
             shown.insert(source);
@@ -85,7 +124,9 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
                 ++count;
             }
         }
-        if (!pane.path.empty() && !fs::IsVirtualPath(pane.path)) roots.push_back(pane.path);
+        // The watch also keeps emptiness current, so List and Small icons watch too.
+        if ((labels || sorted || probe_rows.size() > probed_before) && !pane.path.empty() && !fs::IsVirtualPath(pane.path))
+            roots.push_back(pane.path);
     }
     if (!s.isolatedTest && !s.shot.active)
         s.folderSizes.SetCachePath([] {
@@ -102,7 +143,30 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
         GetEnvironmentVariableW(L"PULSE_TEST_FOLDER_INDEX", nullptr, 0) > 0;
     s.folderSizes.SetIndexEnabled((!s.isolatedTest && !s.shot.active) || probe_index);
     s.folderSizes.Sync(std::move(requests), std::move(roots));
+    // Same visibility rule as the listing: a folder holding only entries the
+    // current settings hide looks empty, like the listing inside it.
+    const bool show_hidden = s.appPrefs.show_hidden_files;
+    const bool show_protected = s.appPrefs.show_protected_os_files;
+    std::vector<std::wstring> probes;
+    probes.reserve(probe_rows.size() + column_rows.size());
+    for (const auto& row : probe_rows) {
+        if (app::FolderLooksEmpty(s.folderSizes.Content(row.path), show_hidden, show_protected))
+            row.pane->empty_folders.insert(row.index);
+        probes.push_back(row.path);
+    }
+    for (const auto& row : column_rows) {
+        if (app::FolderLooksEmpty(s.folderSizes.Content(row.path), show_hidden, show_protected))
+            row.column->empty_sources.insert(row.source);
+        probes.push_back(row.path);
+    }
+    s.folderSizes.Probe(std::move(probes));
     for (const auto& row : rows) {
+        // An empty folder says so instead of a size; it has nothing to calculate.
+        if (row.pane->empty_folders.contains(row.index)) {
+            row.pane->folder_size_muted.insert(row.index);
+            row.pane->folder_size_labels.emplace(row.index, l10n::Pick(L"空", L"Empty"));
+            continue;
+        }
         const auto value = s.folderSizes.Get(row.path);
         const auto work = s.folderSizes.GetWork(row.path);
         // Without a value: an answer that is on its way (index reply, queue,
@@ -134,6 +198,13 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
         vm.pane.folder_size_running = slot.pane.folder_size_running;
         vm.pane.folder_size_pending = slot.pane.folder_size_pending;
         vm.pane.folder_size_idle = slot.pane.folder_size_idle;
+        vm.pane.empty_folders = slot.pane.empty_folders;
+        auto& ancestors = vm.pane.column_strip.ancestors;
+        const auto& source = slot.pane.column_strip.ancestors;
+        for (size_t i = 0; i < ancestors.size() && i < source.size(); ++i)
+            if (ancestors[i].path == source[i].path) ancestors[i].empty_sources = source[i].empty_sources;
+        if (vm.pane.column_strip.child.path == slot.pane.column_strip.child.path)
+            vm.pane.column_strip.child.empty_sources = slot.pane.column_strip.child.empty_sources;
     }
 }
 

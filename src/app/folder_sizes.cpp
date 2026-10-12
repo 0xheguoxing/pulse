@@ -49,6 +49,18 @@ bool VolumeRoot(const std::wstring& key) {
     return p.size() == 3 && p[1] == L':';
 }
 constexpr size_t kWatchLimit = 16;
+// Emptiness probes: a bounded read of the first entries of visible folders.
+constexpr size_t kProbeLimit = 768;        // paths the UI may ask for at once
+constexpr size_t kProbeBatch = 48;         // probes per worker pass, I/O outside the lock
+constexpr size_t kProbeCacheLimit = 4096;  // results kept for folders no longer shown
+constexpr unsigned kProbeEntryCap = 64;    // hidden entries read before giving up
+constexpr uint64_t kProbeFreshMs = 10000;  // unwatched folders are re-read this often
+#ifndef FILE_ATTRIBUTE_RECALL_ON_OPEN
+#define FILE_ATTRIBUTE_RECALL_ON_OPEN 0x00040000
+#endif
+#ifndef FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+#define FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS 0x00400000
+#endif
 bool NetworkPath(const std::wstring& path) {
     return fs::IsUncPath(path) || path.starts_with(L"\\\\?\\unc\\");
 }
@@ -70,6 +82,11 @@ std::vector<std::wstring> MergeRoots(std::vector<std::wstring> roots) {
 }
 }
 struct FolderSizes::Impl {
+    struct ProbeResult {
+        uint8_t bits = 0;
+        uint64_t at = 0, generation = 0;
+        bool stale = false;
+    };
     struct Watch {
         std::shared_ptr<fs::DirWatch> handle;
         uint64_t instance = 0, generation = 0;
@@ -87,6 +104,9 @@ struct FolderSizes::Impl {
     std::map<std::wstring, Watch> watches;
     std::map<std::wstring, uint64_t> watch_used;
     std::map<std::wstring, UINT> drive_types;
+    std::map<std::wstring, ProbeResult> probes;
+    std::vector<std::wstring> probe_wanted;
+    uint64_t probe_events = 0;
     std::function<std::wstring()> cache_path;
     std::thread worker, index_worker;
     std::atomic<bool> stopping{false}, changed{false};
@@ -114,6 +134,82 @@ struct FolderSizes::Impl {
     static bool IndexCurrent(const folder_size::Store::Entry& entry) {
         return entry.index_current && entry.value.has_value && !entry.value.partial &&
             entry.value.source == FolderSizeSource::Index;
+    }
+    // A watched result stays current until its watch reports a change; others age out.
+    bool ProbeFresh(const std::wstring& key, const ProbeResult& probe, uint64_t now) const {
+        if (probe.stale) return false;
+        if (probe.generation != 0 && Coverage(key) == probe.generation) return true;
+        return now - probe.at < kProbeFreshMs;
+    }
+    void StaleProbeLocked(const std::wstring& key) {
+        // A change to an entry changes what its parent contains.
+        for (const auto& path : {key, key.substr(0, key.find_last_of(L'\\'))}) {
+            const auto found = probes.find(path);
+            if (found != probes.end()) found->second.stale = true;
+        }
+        ++probe_events;
+    }
+    // Reads at most kProbeEntryCap entries; anything uncertain stays unknown (0).
+    uint8_t ProbeFolder(const std::wstring& key) {
+        const auto type = DriveType(key);
+        if (type != DRIVE_FIXED && type != DRIVE_RAMDISK) return 0;
+        constexpr DWORD kSkip = FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE |
+            FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS;
+        const DWORD attrs = GetFileAttributesW(key.c_str());
+        if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY) || (attrs & kSkip)) return 0;
+        WIN32_FIND_DATAW data{};
+        const HANDLE find = FindFirstFileExW(ChildPath(key, L"*").c_str(), FindExInfoBasic,
+                                             &data, FindExSearchNameMatch, nullptr, 0);
+        if (find == INVALID_HANDLE_VALUE)
+            return GetLastError() == ERROR_FILE_NOT_FOUND ? FolderContentKnown : 0; // root without . entries
+        uint8_t bits = 0;
+        unsigned hidden = 0;
+        bool complete = false;
+        for (;;) {
+            const wchar_t* name = data.cFileName;
+            const bool dots = name[0] == L'.' && (name[1] == 0 || (name[1] == L'.' && name[2] == 0));
+            if (!dots) {
+                if (!(data.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN)) { bits |= FolderContentVisible; complete = true; break; }
+                bits |= (data.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM) ? FolderContentSystem : FolderContentHidden;
+                if (++hidden == kProbeEntryCap) break;
+            }
+            if (!FindNextFileW(find, &data)) { complete = GetLastError() == ERROR_NO_MORE_FILES; break; }
+        }
+        FindClose(find);
+        return complete ? static_cast<uint8_t>(bits | FolderContentKnown) : 0;
+    }
+    // Returns true when it did work, so the loop checks again without sleeping.
+    bool RunProbes() {
+        std::vector<std::wstring> batch;
+        uint64_t events = 0;
+        {
+            std::lock_guard lock(mutex);
+            const auto now = GetTickCount64();
+            for (const auto& key : probe_wanted) {
+                const auto found = probes.find(key);
+                if (found != probes.end() && ProbeFresh(key, found->second, now)) continue;
+                batch.push_back(key);
+                if (batch.size() == kProbeBatch) break;
+            }
+            events = probe_events;
+        }
+        if (batch.empty()) return false;
+        std::vector<uint8_t> bits;
+        bits.reserve(batch.size());
+        for (const auto& key : batch) {
+            if (stopping) return false;
+            bits.push_back(ProbeFolder(key));
+        }
+        std::lock_guard lock(mutex);
+        const auto now = GetTickCount64();
+        for (size_t i = 0; i < batch.size(); ++i) {
+            auto& probe = probes[batch[i]];
+            if (probe.at == 0 || probe.bits != bits[i]) changed = true;
+            probe.bits = bits[i]; probe.at = now; probe.generation = Coverage(batch[i]);
+            // A change reported while reading may not be in this result: read again.
+            probe.stale = probe_events != events;
+        }
+        return true;
     }
     void InvalidateLocked(const std::wstring& key, uint64_t delay = 200, bool known_only = false) {
         if (key.empty()) return;
@@ -199,6 +295,8 @@ struct FolderSizes::Impl {
                         // Rows still waiting for their first result have nothing
                         // to reconcile: keep their in-flight index answer.
                         InvalidateLocked(root, initial ? 0 : 200, initial);
+                        for (auto& [path, probe] : probes) if (Within(path, root)) probe.stale = true;
+                        ++probe_events;
                     } else {
                         std::set<std::wstring> paths;
                         for (const auto& event : events) {
@@ -207,7 +305,7 @@ struct FolderSizes::Impl {
                             paths.insert(path);
                             if (!event.old_name.empty()) paths.insert(Key(ChildPath(root, event.old_name)));
                         }
-                        for (const auto& path : paths) InvalidateLocked(path);
+                        for (const auto& path : paths) { InvalidateLocked(path); StaleProbeLocked(path); }
                     }
                 }
                 wake.notify_all();
@@ -368,6 +466,7 @@ struct FolderSizes::Impl {
         bool manual_turn = true;
         while (!stopping) {
             UpdateWatches(cache_key);
+            const bool probing = RunProbes();
             std::vector<std::wstring> classify;
             {
                 std::lock_guard lock(mutex);
@@ -443,7 +542,7 @@ struct FolderSizes::Impl {
                     });
                     if (urgent != jobs.end()) std::rotate(jobs.begin(), urgent, std::next(urgent));
                 }
-                if (jobs.empty()) wake.wait_for(lock, std::chrono::milliseconds(100));
+                if (jobs.empty() && !probing) wake.wait_for(lock, std::chrono::milliseconds(100));
             }
             if (!jobs.empty() && !stopping) {
                 manual_turn = !manual_turn;
@@ -601,9 +700,11 @@ void FolderSizes::Sync(std::vector<FolderSizeRequest> visible, std::vector<std::
     state.protected_paths = std::move(protected_paths);
     state.wanted = std::move(wanted); state.order = std::move(order); ++state.scope;
     // Visibility changes do not cancel a useful in-flight metadata read.
-    if (!state.worker.joinable() && !state.wanted.empty()) {
-        state.worker = std::thread([&state] { state.Run(); });
-        if (state.index_enabled) state.index_worker = std::thread([&state] { state.RunIndex(); });
+    // The worker may already run for emptiness probes; the index starts with size work.
+    if (!state.wanted.empty()) {
+        if (!state.worker.joinable()) state.worker = std::thread([&state] { state.Run(); });
+        if (state.index_enabled && !state.index_worker.joinable())
+            state.index_worker = std::thread([&state] { state.RunIndex(); });
     }
     (void)cancelled; // Worker rejects obsolete auto jobs between bounded slices.
     state.wake.notify_all();
@@ -684,6 +785,41 @@ std::unordered_map<std::wstring, uint64_t> FolderSizes::KnownChildren(const std:
     return children;
 }
 void FolderSizes::Invalidate(const std::wstring& path) { impl_->Invalidate(path); }
+void FolderSizes::Probe(std::vector<std::wstring> paths) {
+    std::vector<std::wstring> keys;
+    std::set<std::wstring> seen;
+    for (const auto& path : paths) {
+        if (keys.size() == kProbeLimit) break;
+        if (path.empty() || NetworkPath(path)) continue;
+        auto key = Key(path);
+        if (seen.insert(key).second) keys.push_back(std::move(key));
+    }
+    auto& state = *impl_;
+    std::lock_guard lock(state.mutex);
+    if (state.stopping) return;
+    const auto now = GetTickCount64();
+    const bool work = std::any_of(keys.begin(), keys.end(), [&](const auto& key) {
+        const auto found = state.probes.find(key);
+        return found == state.probes.end() || !state.ProbeFresh(key, found->second, now);
+    });
+    state.probe_wanted = std::move(keys);
+    if (state.probes.size() > kProbeCacheLimit)
+        std::erase_if(state.probes, [&](const auto& item) { return !seen.contains(item.first); });
+    if (!work) return;
+    if (!state.worker.joinable()) state.worker = std::thread([&state] { state.Run(); });
+    state.wake.notify_all();
+}
+uint8_t FolderSizes::Content(const std::wstring& path) const {
+    const auto key = Key(path);
+    std::lock_guard lock(impl_->mutex);
+    const auto found = impl_->probes.find(key);
+    return found == impl_->probes.end() ? 0 : found->second.bits;
+}
+bool FolderLooksEmpty(uint8_t content, bool show_hidden, bool show_protected) {
+    if (!(content & FolderContentKnown) || (content & FolderContentVisible)) return false;
+    if (show_hidden && (content & FolderContentHidden)) return false;
+    return !(show_hidden && show_protected && (content & FolderContentSystem));
+}
 bool FolderSizes::TakeChanged() { return impl_->changed.exchange(false); }
 FolderSizeStats FolderSizes::ReadStats() const {
     std::lock_guard lock(impl_->mutex);

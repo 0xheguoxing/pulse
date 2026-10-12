@@ -156,6 +156,65 @@ void FailureAndPersistence(const fs::path& root) {
     Check(Wait([&] { return Exact(restored, path, 108); }), "explicit retry can replace partial cached result with complete metadata scan");
     restored.Stop(); SetFileAttributesW(offline.c_str(), FILE_ATTRIBUTE_DIRECTORY);
 }
+void Attributes(const fs::path& path, DWORD attrs) {
+    if (!SetFileAttributesW(path.c_str(), attrs)) throw std::runtime_error("attribute fixture failed");
+}
+void EmptinessProbe(const fs::path& root) {
+    // Same rule as Tab::AllowsAttributes; unknown never claims emptiness.
+    const uint8_t K = FolderContentKnown, V = FolderContentVisible, H = FolderContentHidden, S = FolderContentSystem;
+    Check(!FolderLooksEmpty(0, false, false) && !FolderLooksEmpty(H, false, false), "unknown content never looks empty");
+    Check(FolderLooksEmpty(K, false, false) && FolderLooksEmpty(K, true, true), "probed folder without entries looks empty");
+    Check(!FolderLooksEmpty(K | V, false, false) && !FolderLooksEmpty(K | V | H | S, false, false),
+          "a visible child is never empty");
+    Check(FolderLooksEmpty(K | H, false, false) && !FolderLooksEmpty(K | H, true, false) && !FolderLooksEmpty(K | H, true, true),
+          "hidden-only folder follows show hidden files");
+    Check(FolderLooksEmpty(K | S, false, false) && FolderLooksEmpty(K | S, true, false) && !FolderLooksEmpty(K | S, true, true),
+          "hidden system-only folder also needs protected OS files");
+    Check(!FolderLooksEmpty(K | H | S, true, false), "hidden child shows even when system children stay hidden");
+
+    const auto base = root / L"probe";
+    const auto empty = base / L"empty", hidden = base / L"hidden_only", system = base / L"system_only";
+    const auto visible = base / L"visible", nested = base / L"nested", crowded = base / L"crowded";
+    for (const auto& dir : {empty, hidden, system, visible, nested / L"child", crowded}) fs::create_directories(dir);
+    File(hidden / L"desktop.ini", 4); Attributes(hidden / L"desktop.ini", FILE_ATTRIBUTE_HIDDEN);
+    File(system / L"thumbs.db", 4); Attributes(system / L"thumbs.db", FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
+    File(visible / L"note.txt", 4);
+    for (int i = 0; i < 70; ++i) {
+        const auto file = crowded / (L"h" + std::to_wstring(i));
+        File(file, 1); Attributes(file, FILE_ATTRIBUTE_HIDDEN);
+    }
+    FolderSizes sizes; sizes.SetIndexEnabled(false);
+    const std::vector<fs::path> dirs = {empty, hidden, system, visible, nested, crowded};
+    const auto request = [&] {
+        std::vector<std::wstring> paths;
+        for (const auto& dir : dirs) paths.push_back(dir.wstring());
+        paths.push_back(L"\\\\server\\share\\folder");
+        sizes.Probe(std::move(paths));
+    };
+    const auto content = [&](const fs::path& dir) { return sizes.Content(dir.wstring()); };
+    request();
+    Check(Wait([&] {
+        return std::all_of(dirs.begin(), dirs.end() - 1, [&](const auto& dir) { return content(dir) & K; });
+    }), "visible folders are probed without a size request");
+    Check(content(empty) == K, "empty folder probes as known with no children");
+    Check(content(hidden) == (K | H), "hidden-only folder reports a hidden child");
+    Check(content(system) == (K | S), "hidden system-only folder reports a system child");
+    Check((content(visible) & V) && (content(nested) & V), "visible file or subfolder reports visible content");
+    Sleep(200);
+    Check(content(crowded) == 0, "folder past the hidden-entry cap stays unknown");
+    Check(sizes.Content(L"\\\\server\\share\\folder") == 0, "network folder is never probed");
+    Check(sizes.ReadStats().jobs_started == 0, "emptiness probes start no size scans");
+
+    // Watched: a change inside a probed folder updates it without waiting for expiry.
+    sizes.Sync({}, {base.wstring()});
+    Sleep(500);
+    request();
+    File(empty / L"new.txt", 1);
+    Check(Wait([&] { return (content(empty) & V) != 0; }, 3000), "file created in empty folder clears empty state");
+    fs::remove(empty / L"new.txt");
+    Check(Wait([&] { return content(empty) == K; }, 3000), "deleting the last file restores empty state");
+    sizes.Stop();
+}
 std::vector<FolderSizeRequest> Children(const std::wstring& path) {
     std::vector<FolderSizeRequest> rows;
     WIN32_FIND_DATAW data{};
@@ -254,10 +313,12 @@ int wmain(int argc,wchar_t** argv) {
         else {
             const auto root=fs::current_path()/L"bench_data"/(L"folder_experience_"+std::to_wstring(GetCurrentProcessId())+L"_"+std::to_wstring(GetTickCount64()));
             fs::create_directories(root);
-            if (argc == 2 && std::wstring(argv[1]) == L"--persistence-only") {
+            if (argc == 2 && std::wstring(argv[1]) == L"--probe-only") {
+                EmptinessProbe(root);
+            } else if (argc == 2 && std::wstring(argv[1]) == L"--persistence-only") {
                 for (unsigned i = 0; i < 30; ++i) FailureAndPersistence(root / std::to_wstring(i));
             } else {
-                Navigation(root); StableManualAndBudget(root); FailureAndPersistence(root);
+                Navigation(root); StableManualAndBudget(root); FailureAndPersistence(root); EmptinessProbe(root);
             }
             std::wprintf(L"[FIXTURE] %ls\n",root.c_str());
         }

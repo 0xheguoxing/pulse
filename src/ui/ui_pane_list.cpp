@@ -728,6 +728,133 @@ void MainRenderer::DrawFolderIcon(float x, float y, float size, const Theme& the
                          L"", L"", true, FILE_ATTRIBUTE_DIRECTORY, opacity);
 }
 
+void MainRenderer::DrawEmptyFolderIcon(float x, float y, float size, const Theme& theme,
+                                       float opacity) {
+    auto* dc = compositor_ ? compositor_->Dc() : nullptr;
+    if (!dc || size <= 0.0f || opacity <= 0.0f) return;
+    // Brush and geometry belong to one device context; rebuild after a change.
+    if (empty_folder_dc_ != dc) {
+        for (auto& geometry : empty_folder_geometry_) geometry.reset();
+        brEmptyFolder_.reset();
+        empty_folder_dc_ = dc;
+    }
+    if (!empty_folder_geometry_[0].get()) {
+        ComPtr<ID2D1Factory> factory;
+        dc->GetFactory(&factory);
+        if (!factory.get()) return;
+        const auto arc = [](ID2D1GeometrySink* sink, D2D1_POINT_2F to, float r) {
+            sink->AddArc(D2D1::ArcSegment(to, D2D1::SizeF(r, r), 0.0f,
+                                          D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
+        };
+        const auto build = [&](ComPtr<ID2D1PathGeometry>& out, auto&& shape) {
+            ComPtr<ID2D1PathGeometry> geometry;
+            ComPtr<ID2D1GeometrySink> sink;
+            if (FAILED(factory->CreatePathGeometry(&geometry)) || FAILED(geometry->Open(&sink))) return false;
+            shape(sink.get());
+            if (FAILED(sink->Close())) return false;
+            out = std::move(geometry);
+            return true;
+        };
+        // Back and front leaves of the shell folder silhouette, in a 24-unit box
+        // (16-32 px rows) and a 96-unit box with softer corners (icon grids).
+        const bool built =
+            build(empty_folder_geometry_[0], [&](ID2D1GeometrySink* k) {
+                k->BeginFigure({2.0f, 6.6f}, D2D1_FIGURE_BEGIN_FILLED);
+                arc(k, {4.6f, 4.0f}, 2.6f);
+                k->AddLine({8.8f, 4.0f});
+                k->AddBezier(D2D1::BezierSegment({9.5f, 4.0f}, {10.1f, 4.3f}, {10.6f, 4.8f}));
+                k->AddLine({12.0f, 6.0f});
+                k->AddLine({19.4f, 6.0f});
+                arc(k, {22.0f, 8.6f}, 2.6f);
+                k->AddLine({22.0f, 17.4f});
+                arc(k, {19.4f, 20.0f}, 2.6f);
+                k->AddLine({4.6f, 20.0f});
+                arc(k, {2.0f, 17.4f}, 2.6f);
+                k->EndFigure(D2D1_FIGURE_END_CLOSED);
+            }) &&
+            build(empty_folder_geometry_[1], [&](ID2D1GeometrySink* k) {
+                k->BeginFigure({2.0f, 10.4f}, D2D1_FIGURE_BEGIN_FILLED);
+                k->AddBezier(D2D1::BezierSegment({2.0f, 9.4f}, {2.8f, 8.6f}, {3.8f, 8.6f}));
+                k->AddLine({20.2f, 8.6f});
+                k->AddBezier(D2D1::BezierSegment({21.2f, 8.6f}, {22.0f, 9.4f}, {22.0f, 10.4f}));
+                k->AddLine({22.0f, 17.4f});
+                arc(k, {19.4f, 20.0f}, 2.6f);
+                k->AddLine({4.6f, 20.0f});
+                arc(k, {2.0f, 17.4f}, 2.6f);
+                k->EndFigure(D2D1_FIGURE_END_CLOSED);
+            }) &&
+            build(empty_folder_geometry_[2], [&](ID2D1GeometrySink* k) {
+                k->BeginFigure({8.0f, 24.0f}, D2D1_FIGURE_BEGIN_FILLED);
+                arc(k, {16.0f, 16.0f}, 8.0f);
+                k->AddLine({34.0f, 16.0f});
+                k->AddBezier(D2D1::BezierSegment({36.6f, 16.0f}, {38.6f, 17.0f}, {40.4f, 18.8f}));
+                k->AddLine({46.0f, 24.0f});
+                k->AddLine({80.0f, 24.0f});
+                arc(k, {88.0f, 32.0f}, 8.0f);
+                k->AddLine({88.0f, 72.0f});
+                arc(k, {80.0f, 80.0f}, 8.0f);
+                k->AddLine({16.0f, 80.0f});
+                arc(k, {8.0f, 72.0f}, 8.0f);
+                k->EndFigure(D2D1_FIGURE_END_CLOSED);
+            }) &&
+            build(empty_folder_geometry_[3], [&](ID2D1GeometrySink* k) {
+                k->BeginFigure({8.0f, 40.0f}, D2D1_FIGURE_BEGIN_FILLED);
+                arc(k, {14.0f, 34.0f}, 6.0f);
+                k->AddLine({82.0f, 34.0f});
+                arc(k, {88.0f, 40.0f}, 6.0f);
+                k->AddLine({88.0f, 72.0f});
+                arc(k, {80.0f, 80.0f}, 8.0f);
+                k->AddLine({16.0f, 80.0f});
+                arc(k, {8.0f, 72.0f}, 8.0f);
+                k->EndFigure(D2D1_FIGURE_END_CLOSED);
+            });
+        if (!built) {
+            for (auto& geometry : empty_folder_geometry_) geometry.reset();
+            return;
+        }
+    }
+    const bool large = size >= 47.5f * scale_;
+    const float unit = large ? 96.0f : 24.0f;
+    ID2D1PathGeometry* back = empty_folder_geometry_[large ? 2 : 0].get();
+    ID2D1PathGeometry* front = empty_folder_geometry_[large ? 3 : 1].get();
+    // Theme has no dark flag: light text means a dark surface.
+    const auto& ink = theme.text;
+    const bool dark = 0.2126f * ink.r + 0.7152f * ink.g + 0.0722f * ink.b > 0.5f;
+    const bool contrast = IsHighContrast();
+    D2D1_MATRIX_3X2_F previous;
+    dc->GetTransform(&previous);
+    dc->SetTransform(D2D1::Matrix3x2F::Scale(size / unit, size / unit) *
+                     D2D1::Matrix3x2F::Translation(x, y) * previous);
+    // One layer keeps the overlap of the two leaves from showing through when faded.
+    const bool layered = opacity < 0.999f;
+    if (layered)
+        dc->PushLayer(D2D1::LayerParameters1(D2D1::RectF(-2.0f, -2.0f, unit + 2.0f, unit + 2.0f), nullptr,
+                                             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                             D2D1::IdentityMatrix(), opacity, nullptr,
+                                             D2D1_LAYER_OPTIONS1_NONE), nullptr);
+    if (contrast) {
+        // High contrast: system colors only, outline in the text color.
+        const float stroke = std::max(1.0f, scale_) * unit / size;
+        MakeBrush(dc, ink, brEmptyFolder_);
+        dc->DrawGeometry(back, brEmptyFolder_.get(), stroke);
+        MakeBrush(dc, theme.bg, brEmptyFolder_);
+        dc->FillGeometry(front, brEmptyFolder_.get());
+        MakeBrush(dc, ink, brEmptyFolder_);
+        dc->DrawGeometry(front, brEmptyFolder_.get(), stroke);
+    } else {
+        MakeBrush(dc, D2D1::ColorF(dark ? 0x5F6E88 : 0x7F8DA6), brEmptyFolder_);
+        dc->FillGeometry(back, brEmptyFolder_.get());
+        MakeBrush(dc, D2D1::ColorF(dark ? 0x8090AB : 0xA3AFC3), brEmptyFolder_);
+        dc->FillGeometry(front, brEmptyFolder_.get());
+        if (large) {
+            MakeBrush(dc, D2D1::ColorF(dark ? 0x9AA8C0 : 0xC3CCDA, 0.7f), brEmptyFolder_);
+            dc->DrawLine({13.0f, 37.2f}, {83.0f, 37.2f}, brEmptyFolder_.get(), 1.6f);
+        }
+    }
+    if (layered) dc->PopLayer();
+    dc->SetTransform(previous);
+}
+
 PreviewDrawResult MainRenderer::DrawEntryThumbnail(ID2D1DeviceContext* dc,
     const D2D1_RECT_F& dest, const ListEntryView& entry, ViewMode mode,
     uint64_t generation, uint32_t pixels, float opacity, bool align_bottom,
@@ -2360,7 +2487,18 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 const float iconY = iconRect.top;
                 const float renderedIconSize = std::min(snappedIconW, snappedIconH);
                 uint32_t media_duration_ms = 0;
-                const bool drewThumbnail = !e.record_only && UsesThumbnails(vm.view_mode) &&
+                // A folder probed empty: neither a contents thumbnail nor the shell icon.
+                const bool empty_folder = e.is_dir && !e.record_only && vm.empty_folders.contains(src);
+                if (empty_folder) {
+                    // Both forms put their ink at x 1/12..11/12, y 1/6..5/6: rest it
+                    // on the name baseline like the shell artwork below.
+                    const float align_bottom = iconGrid ? renderedIconSize / 6.0f : 0.0f;
+                    if (iconGrid)
+                        artwork = {iconX + renderedIconSize / 12.0f, iconY + renderedIconSize / 6.0f + align_bottom,
+                                   iconX + renderedIconSize * 11.0f / 12.0f, iconRect.bottom};
+                    DrawEmptyFolderIcon(iconX, iconY + align_bottom, renderedIconSize, theme, hidden_alpha);
+                }
+                const bool drewThumbnail = !empty_folder && !e.record_only && UsesThumbnails(vm.view_mode) &&
                     DrawEntryThumbnail(dc, iconRect, e, vm.view_mode, vm.view_generation,
                         ThumbnailRequestPixels(vm.view_mode, renderedIconSize), hidden_alpha, iconGrid, &artwork,
                         &media_duration_ms)
@@ -2369,7 +2507,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 // opens the file, and how long a video plays (like Explorer).
                 if (drewThumbnail && thumbnail_badges_ && iconGrid && !e.is_dir && !e.is_link)
                     DrawThumbnailBadges(e, artwork, renderedIconSize, media_duration_ms, theme);
-                if (!drewThumbnail) {
+                if (!drewThumbnail && !empty_folder) {
                     ID2D1Bitmap* grid_bitmap = iconGrid && !morphing && !e.record_only
                         ? icon_cache_.BitmapFor(e.path, e.name, e.is_dir, e.attrs, renderedIconSize) : nullptr;
                     float align_bottom = 0.0f;

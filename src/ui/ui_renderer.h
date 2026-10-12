@@ -149,6 +149,9 @@ struct ColumnStripColumnView {
     bool auto_scroll = true;      // keep highlight_row centered until the user scrolls
     bool loading = false;
     bool error = false;
+    // Source indices of folders probed empty under the current hidden-file
+    // settings; drawn with the empty-folder icon and no chevron.
+    std::unordered_set<int> empty_sources;
 };
 
 // Column view of a folder pane: ancestors on the left, the regular list in
@@ -188,6 +191,10 @@ struct PaneViewModel {
     // as the calculate action while the row is hovered.
     std::unordered_set<int> folder_size_pending;
     std::unordered_set<int> folder_size_idle;
+    // Visible folders (source indices) probed empty under the current
+    // hidden-file settings. Kept out of ListEntryView: that is cached per
+    // snapshot, while emptiness changes without a new listing.
+    std::unordered_set<int> empty_folders;
     ChangeBadge title_change_badge;
     bool is_changes = false;
     std::wstring change_empty_text, change_status_text;
@@ -1573,6 +1580,10 @@ private:
                       D2D1_DRAW_TEXT_OPTIONS options = D2D1_DRAW_TEXT_OPTIONS_CLIP);
     void DrawFolderIcon(float x, float y, float size, const Theme& theme,
                         float opacity = 1.0f);
+    // Slate-gray folder for a folder with nothing to show (same silhouette as
+    // the shell folder, no paper). Fills [x, x+size] like DrawFolderIcon.
+    void DrawEmptyFolderIcon(float x, float y, float size, const Theme& theme,
+                             float opacity = 1.0f);
     PreviewDrawResult DrawEntryThumbnail(ID2D1DeviceContext* dc, const D2D1_RECT_F& dest,
         const ListEntryView& entry, ViewMode mode, uint64_t generation, uint32_t pixels,
         float opacity, bool align_bottom, D2D1_RECT_F* artwork, uint32_t* duration = nullptr);
@@ -1752,6 +1763,10 @@ private:
     ComPtr<ID2D1StrokeStyle> paneHeaderStroke_;
     ComPtr<ID2D1PathGeometry> link_arrow_geometry_;
     ComPtr<ID2D1PathGeometry> play_triangle_geometry_;
+    // Empty-folder icon: back/front in a 24-unit box, and a 96-unit large form.
+    ComPtr<ID2D1PathGeometry> empty_folder_geometry_[4];
+    mutable ComPtr<ID2D1SolidColorBrush> brEmptyFolder_;
+    ID2D1DeviceContext* empty_folder_dc_ = nullptr; // owner of the two above
     mutable ComPtr<ID2D1SolidColorBrush> brFpsBg_;
     mutable ComPtr<ID2D1SolidColorBrush> brFpsText_;
 

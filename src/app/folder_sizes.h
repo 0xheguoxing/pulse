@@ -38,6 +38,17 @@ struct FolderSizeRequest {
     bool automatic = true;
     bool visible = true;
 };
+// What a cheap first-entries probe saw inside a folder, for the empty-folder look.
+// It never scans subtrees and is kept apart from size results.
+enum FolderContentBits : uint8_t {
+    FolderContentKnown = 1,    // probe completed; without it nothing is claimed
+    FolderContentVisible = 2,  // a child without FILE_ATTRIBUTE_HIDDEN
+    FolderContentHidden = 4,   // a hidden, non-system child
+    FolderContentSystem = 8,   // a hidden + system child
+};
+// True only for a probed folder whose children are all filtered out by the
+// listing's visibility rule (Tab::AllowsAttributes). Unknown never looks empty.
+bool FolderLooksEmpty(uint8_t content, bool show_hidden, bool show_protected);
 struct FolderSizeStats {
     uint64_t jobs_started = 0, jobs_completed = 0, jobs_cancelled = 0;
     uint64_t entries_scanned = 0, subtree_hits = 0, index_queries = 0;
@@ -64,6 +75,10 @@ public:
     // name: what a Size sort of that folder can use right now (#58).
     std::unordered_map<std::wstring, uint64_t> KnownChildren(const std::wstring& parent) const;
     void Invalidate(const std::wstring& path);
+    // Replaces the folders whose emptiness the UI wants (visible rows only).
+    // Network, removable, offline, cloud and reparse folders stay unknown.
+    void Probe(std::vector<std::wstring> paths);
+    uint8_t Content(const std::wstring& path) const; // FolderContentBits, 0 = unknown
     bool TakeChanged();
     FolderSizeStats ReadStats() const;
     void Stop();
