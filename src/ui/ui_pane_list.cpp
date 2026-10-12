@@ -923,7 +923,13 @@ void MainRenderer::DrawLinkOverlay(float x, float y, float size, const Theme& th
         if (FAILED(sink->Close())) return;
         link_arrow_geometry_ = std::move(geometry);
     }
-    const float edge = std::min(size, std::clamp(size * 0.30f, 11.0f * scale_, 22.0f * scale_));
+    // Row icons (16-24 dip) keep most of the app icon visible, like the shell's
+    // half-size overlay; grid icons keep the larger pill. The inline pill passes
+    // diameter / 0.30, which always lands in the grid branch.
+    const bool row_icon = size < 32.0f * scale_;
+    const float edge = row_icon
+        ? std::min(size, std::round(std::clamp(size * 0.5f, 7.0f * scale_, 11.0f * scale_)))
+        : std::min(size, std::clamp(size * 0.30f, 11.0f * scale_, 22.0f * scale_));
     const auto ink = artwork ? *artwork : D2D1::RectF(x, y, x + size, y + size);
     const float label_width = label.empty() ? 0.0f :
         MeasureLayoutText(compositor_, compositor_->DwriteFactory(), compositor_->SmallFormat(), label) + 8.0f * scale_;
@@ -937,7 +943,7 @@ void MainRenderer::DrawLinkOverlay(float x, float y, float size, const Theme& th
     const auto previous_fill = had_fill ? brFillInput_->GetColor() : theme.fill_input;
     const auto plate = D2D1::RoundedRect(bounds, edge * 0.5f, edge * 0.5f);
     MakeBrush(dc, WithAlpha(theme.bg, opacity), brFillInput_);
-    dc->DrawRoundedRectangle(plate, brFillInput_.get(), 2.0f * scale_);
+    dc->DrawRoundedRectangle(plate, brFillInput_.get(), (row_icon ? 1.0f : 2.0f) * scale_);
     MakeBrush(dc, WithAlpha(background, opacity), brFillInput_);
     dc->FillRoundedRectangle(plate, brFillInput_.get());
     D2D1_MATRIX_3X2_F previous_transform;
