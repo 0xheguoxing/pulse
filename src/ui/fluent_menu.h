@@ -114,6 +114,11 @@ public:
     // states and flyouts may differ): the height stays, the width is kept and
     // a longer label ellipsizes. False, changing nothing, for any other shape.
     bool PatchInPlace(std::vector<FluentMenuItem> src, IDWriteFactory2* dwrite);
+    // Takes src when it is the shown rows (same separators, except that the
+    // last may gain one) with more rows after them: every shown row keeps its
+    // place, the menu grows downwards and widens only for a longer new label.
+    // False, changing nothing, for any other shape.
+    bool PatchGrow(std::vector<FluentMenuItem> src, IDWriteFactory2* dwrite);
     // Content y (px) of row i's top edge.
     float RowTopPx(int i) const;
     int HitTestRow(float y_px) const;                 // -1 = not on a row
@@ -171,9 +176,11 @@ public:
     void RequestFilterRefresh();
     // Patches the open menu in place: same rows and separators, while labels,
     // states and flyouts may change (the context menu maps late rows onto the
-    // shown ones first, ReconcileCtxDisplay). Never grows, shrinks or widens
-    // an open menu. False, changing nothing, for another shape or when a
-    // visible flyout's rows would change.
+    // shown ones first, ReconcileCtxDisplay), or the shown rows plus rows
+    // appended below them (PatchGrow). No shown row ever moves, unless the
+    // grown menu no longer fits below its top edge and is lifted to stay on
+    // screen. Never shrinks an open menu. False, changing nothing, for another
+    // shape or when a visible flyout's rows would change.
     bool ReplaceItems(std::vector<FluentMenuItem> items);
     void SetFilterPlaceholder(std::wstring text) { filter_placeholder_ = std::move(text); }
     const std::wstring& LastFilterQuery() const { return filter_query_; }

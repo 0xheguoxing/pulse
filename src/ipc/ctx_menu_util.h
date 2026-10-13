@@ -122,11 +122,6 @@ inline constexpr int kMaxSubmenuChildren = 16;
 // Stays inside CmdShellStaticBase..CmdShellComBase (2000 slots).
 inline constexpr int kStaticVerbStride = kMaxSubmenuChildren + 1;
 inline constexpr int kMaxStaticVerbParents = 2000 / kStaticVerbStride;
-// Explorer itself has no cap; 48 is our hard ceiling (AppendShellSection also
-// stops there), so the default keeps the whole shell verb list visible instead
-// of truncating it early.
-inline constexpr int kDefaultExplorerCap = 48;
-
 inline constexpr wchar_t kFolderVerbKey[] = L":folder";
 inline constexpr wchar_t kDriveVerbKey[] = L":drive";
 inline constexpr wchar_t kBackgroundVerbKey[] = L":bg";

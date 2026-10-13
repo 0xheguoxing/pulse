@@ -18,28 +18,24 @@ namespace pulse::app {
 
 // What one reconciliation did to an open menu (ReconcileCtxDisplay).
 struct CtxReconcileStats {
-    uint32_t late = 0;     // rows nobody predicted, now in the 更多扩展 flyout
-    uint32_t greyed = 0;   // shown rows the answer no longer has, greyed in place
-    uint32_t dropped = 0;  // late rows with no 更多扩展 row to go to (next menu has them)
+    uint32_t late = 0;      // rows nobody predicted, appended below the shown ones
+    uint32_t greyed = 0;    // shown rows the answer no longer has, greyed in place
+    uint32_t withheld = 0;  // late rows held back for one growth step (append_late off)
 };
 
-// The fixed 「更多扩展」 row: "更多扩展…" while rows may still arrive,
-// "更多扩展 (n)" with the late rows as its flyout, and a blank row of the same
-// height once everything arrived and nothing was late.
-ui::FluentMenuItem CtxSlotRow(std::vector<ui::FluentMenuItem> late, size_t late_count,
-                              bool complete);
-
-// Maps a freshly built display onto the rows on screen, so an open menu keeps
-// its height (右键菜单优化方案 §4.1 L3). Rows match by label (first unused,
-// case-insensitive): a match takes the fresh command, state and flyout; a shown
-// row without one stays where it is, greyed; fresh rows nobody showed go into
-// the flyout of shown[slot_row] (a fresh flyout is flattened into a grey header
-// plus its rows, since flyouts do not nest), and are dropped without that row:
-// the stored layout puts them in place next time. Row count and separators are
-// always those of `shown`.
+// Maps a freshly built display onto the rows on screen, so no row of an open
+// menu ever moves (右键菜单优化方案 §4.1 L3). Rows match by label (first
+// unused, case-insensitive): a match takes the fresh command, state and
+// flyout; a shown row without one stays where it is, greyed. Fresh rows nobody
+// showed are appended, flat and with their own flyouts, as a last section
+// below everything shown: the menu only grows downwards, and the stored
+// layout puts them in place next time. No 「更多」 flyout: hiding rows is the
+// user's call (管理右键项). The shown rows keep their separators, except that
+// the last one gains one before appended rows. With `append_late` off the
+// late rows are only counted (withheld) and the shown rows just patched.
 std::vector<ui::FluentMenuItem> ReconcileCtxDisplay(
     const std::vector<ui::FluentMenuItem>& shown, const std::vector<ui::FluentMenuItem>& fresh,
-    int slot_row, bool complete, CtxReconcileStats* stats = nullptr);
+    CtxReconcileStats* stats = nullptr, bool append_late = true);
 
 class ContextMenuController {
 public:
@@ -74,23 +70,26 @@ public:
                         uint32_t timeout_ms = 15000);
     std::vector<ui::FluentMenuItem> BuildDisplay(ContextMenuPrefs& prefs,
         const std::vector<ui::FluentMenuItem>& base_items, bool& prefs_changed) const;
-    // First frame of a menu: BuildDisplay, plus the 「更多扩展」 row when rows
-    // may still arrive that no cache predicted (see MayGrowAfterOpen). Keeps
-    // what is on screen; while the menu is open, updates go through
-    // ReconcileDisplay so its height never changes.
+    // First frame of a menu: BuildDisplay. Keeps what is on screen; while the
+    // menu is open, updates go through ReconcileDisplay so no row moves.
     std::vector<ui::FluentMenuItem> BuildOpenDisplay(ContextMenuPrefs& prefs,
         const std::vector<ui::FluentMenuItem>& base_items, bool& prefs_changed);
     // The current rows mapped onto the open menu (ReconcileCtxDisplay). Pass
-    // the result to CommitDisplay once the menu took it.
-    std::vector<ui::FluentMenuItem> ReconcileDisplay(ContextMenuPrefs& prefs, bool& prefs_changed);
+    // the result to CommitDisplay once the menu took it. Late rows wait for
+    // the complete answer or kLateBatchMs after the first of them, so a cold
+    // menu grows in one step rather than once per partial answer.
+    static constexpr uint64_t kLateBatchMs = 350;
+    std::vector<ui::FluentMenuItem> ReconcileDisplay(ContextMenuPrefs& prefs, bool& prefs_changed,
+                                                     uint64_t now);
     void CommitDisplay(std::vector<ui::FluentMenuItem> shown);
     // True while shell rows can still arrive that the first frame could not
     // predict: no stored layout for the key, a handler that never finished
-    // under it, or static verbs still being read for the first time.
+    // under it, or static verbs still being read for the first time. Such
+    // rows are appended at the bottom (the timing record's may_grow).
     bool MayGrowAfterOpen() const;
-    // Everything this menu waits for has arrived (the 更多扩展 row settles).
+    // Everything this menu waits for has arrived.
     bool AnswersComplete() const;
-    int slot_row() const noexcept { return slot_row_; }
+    bool may_grow_at_open() const noexcept { return may_grow_at_open_; }
     const CtxReconcileStats& reconcile_stats() const noexcept { return reconcile_stats_; }
     bool ExecuteShellCommand(int command,
         const std::function<void()>& wait_until_ready,
@@ -160,7 +159,7 @@ public:
     void CloseMenu() noexcept {
         menu_open_ = false;
         shown_.clear();
-        slot_row_ = -1;
+        may_grow_at_open_ = false;
     }
     bool menu_open() const noexcept { return menu_open_; }
     const std::vector<ui::FluentMenuItem>& base_items() const noexcept {
@@ -201,8 +200,9 @@ private:
     std::wstring extension_;
     std::vector<ui::FluentMenuItem> base_items_;
     std::vector<ui::FluentMenuItem> shown_;  // rows on screen (BuildOpenDisplay)
-    int slot_row_ = -1;                      // 更多扩展 row in shown_, -1 = none
-    CtxReconcileStats reconcile_stats_;      // last committed reconciliation
+    bool may_grow_at_open_ = false;          // MayGrowAfterOpen at the first frame
+    uint64_t late_since_ = 0;                // first withheld late row (0 = none)
+    CtxReconcileStats reconcile_stats_;      // committed: late rows so far, greyed now
     CtxReconcileStats pending_stats_;        // ReconcileDisplay result awaiting commit
     std::unordered_map<std::wstring, std::vector<StaticVerb>> static_cache_;
     // Extensions whose rows came from the on-disk cache: they still re-enumerate

@@ -100,7 +100,6 @@ ShellMenuEntry ComEntry(const ops::ShellMenuItem& item, int command = 0) {
 void AppendShellSection(std::vector<ui::FluentMenuItem>& items,
                         const std::vector<ShellMenuEntry>& entries) {
     if (entries.empty()) return;
-    constexpr size_t kSectionCap = 48;
     auto lower = [](std::wstring s) {
         for (auto& c : s) c = static_cast<wchar_t>(std::towlower(c));
         return s;
@@ -111,7 +110,6 @@ void AppendShellSection(std::vector<ui::FluentMenuItem>& items,
 
     size_t added = 0;
     for (const auto& e : entries) {
-        if (added >= kSectionCap) break;
         const bool header = !e.children.empty();
         if (e.text.empty() || (e.command == 0 && !header)) continue;
         const std::wstring key = lower(e.text);
@@ -138,29 +136,9 @@ void AppendShellSection(std::vector<ui::FluentMenuItem>& items,
     }
 }
 
-ui::FluentMenuItem CtxSlotRow(std::vector<ui::FluentMenuItem> late, size_t late_count,
-                              bool complete) {
-    ui::FluentMenuItem row;
-    row.enabled = false;
-    if (!late.empty()) {
-        wchar_t text[128]{};
-        swprintf_s(text, pulse::l10n::Get(pulse::l10n::StringId::CtxMoreExtensionsCount).c_str(),
-                   static_cast<unsigned>(late_count));
-        row.text = text;
-        row.glyph = L"\xEA86";  // Puzzle
-        row.enabled = true;
-        row.children = std::move(late);
-    } else if (!complete) {
-        row.text = pulse::l10n::Get(pulse::l10n::StringId::CtxMoreExtensionsLoading);
-        row.glyph = L"\xEA86";
-    }
-    // complete with nothing late: an empty, disabled row keeps the height.
-    return row;
-}
-
 std::vector<ui::FluentMenuItem> ReconcileCtxDisplay(
     const std::vector<ui::FluentMenuItem>& shown, const std::vector<ui::FluentMenuItem>& fresh,
-    int slot_row, bool complete, CtxReconcileStats* stats) {
+    CtxReconcileStats* stats, bool append_late) {
     auto lower = [](const std::wstring& text) {
         std::wstring out = text;
         for (auto& c : out) c = static_cast<wchar_t>(std::towlower(c));
@@ -173,7 +151,6 @@ std::vector<ui::FluentMenuItem> ReconcileCtxDisplay(
     CtxReconcileStats result;
     std::vector<ui::FluentMenuItem> out = shown;
     for (size_t i = 0; i < out.size(); ++i) {
-        if (static_cast<int>(i) == slot_row) continue;
         const bool separator = shown[i].separator_after;
         const std::wstring key = lower(shown[i].text);
         size_t match = fresh.size();
@@ -193,35 +170,18 @@ std::vector<ui::FluentMenuItem> ReconcileCtxDisplay(
         }
         out[i].separator_after = separator;
     }
-    std::vector<ui::FluentMenuItem> late;
-    size_t late_count = 0;
+    const size_t shown_count = out.size();
     for (size_t j = 0; j < fresh.size(); ++j) {
         if (used[j] || fresh[j].text.empty()) continue;
-        ++late_count;
-        ui::FluentMenuItem row = fresh[j];
-        row.separator_after = false;
-        if (row.children.empty()) {
-            late.push_back(std::move(row));
+        if (!append_late) {
+            ++result.withheld;
             continue;
         }
-        std::vector<ui::FluentMenuItem> children = std::move(row.children);
-        row.children.clear();
-        row.command = 0;
-        row.enabled = false;
-        late.push_back(std::move(row));
-        for (auto& child : children) {
-            child.separator_after = false;
-            child.children.clear();
-            late.push_back(std::move(child));
-        }
-    }
-    if (slot_row >= 0 && static_cast<size_t>(slot_row) < out.size()) {
-        const bool separator = shown[static_cast<size_t>(slot_row)].separator_after;
-        out[static_cast<size_t>(slot_row)] = CtxSlotRow(std::move(late), late_count, complete);
-        out[static_cast<size_t>(slot_row)].separator_after = separator;
-        result.late = static_cast<uint32_t>(late_count);
-    } else {
-        result.dropped = static_cast<uint32_t>(late_count);
+        ui::FluentMenuItem row = fresh[j];
+        row.separator_after = false;
+        if (result.late == 0 && shown_count > 0) out[shown_count - 1].separator_after = true;
+        out.push_back(std::move(row));
+        ++result.late;
     }
     if (stats) *stats = result;
     return out;
@@ -301,13 +261,11 @@ std::vector<ShellMenuEntry> ApplyExplorerPrefs(const ContextMenuPrefs& prefs,
     std::stable_sort(kept.begin(), kept.end(),
                      [](const Ranked& a, const Ranked& b) { return a.rank < b.rank; });
 
+    // No row cap: a long menu is shortened by hiding rows (管理右键项), never
+    // by cutting or folding them into a 「更多」 flyout.
     std::vector<ShellMenuEntry> out;
-    const size_t cap = static_cast<size_t>((std::max)(1, prefs.explorer_cap));
-    out.reserve((std::min)(kept.size(), cap));
-    for (auto& row : kept) {
-        if (out.size() >= cap) break;
-        out.push_back(std::move(row.entry));
-    }
+    out.reserve(kept.size());
+    for (auto& row : kept) out.push_back(std::move(row.entry));
     return out;
 }
 
@@ -447,39 +405,47 @@ std::vector<ui::FluentMenuItem> ContextMenuController::BuildOpenDisplay(
     ContextMenuPrefs& prefs, const std::vector<ui::FluentMenuItem>& base_items,
     bool& prefs_changed) {
     auto display = BuildDisplay(prefs, base_items, prefs_changed);
-    slot_row_ = -1;
     reconcile_stats_ = {};
     pending_stats_ = {};
-    // BuildDisplay ends with 管理右键项 behind a separator; the slot is the
-    // last shell row, or a section of its own when there are none yet.
-    if (MayGrowAfterOpen() && display.size() >= 2) {
-        const size_t at = display.size() - 1;
-        const bool shell_rows = display.size() > base_items.size() + 1;
-        ui::FluentMenuItem slot = CtxSlotRow({}, 0, false);
-        slot.separator_after = true;
-        if (shell_rows) display[at - 1].separator_after = false;
-        display.insert(display.begin() + static_cast<std::ptrdiff_t>(at), std::move(slot));
-        slot_row_ = static_cast<int>(at);
-    }
+    may_grow_at_open_ = MayGrowAfterOpen();
+    late_since_ = 0;
     shown_ = display;
     return display;
 }
 
 std::vector<ui::FluentMenuItem> ContextMenuController::ReconcileDisplay(
-    ContextMenuPrefs& prefs, bool& prefs_changed) {
+    ContextMenuPrefs& prefs, bool& prefs_changed, uint64_t now) {
     if (shown_.empty()) return {};  // not a menu BuildOpenDisplay made
     const auto fresh = BuildDisplay(prefs, base_items_, prefs_changed);
-    return ReconcileCtxDisplay(shown_, fresh, slot_row_, AnswersComplete(), &pending_stats_);
+    auto out = ReconcileCtxDisplay(shown_, fresh, &pending_stats_);
+    if (pending_stats_.late == 0 || AnswersComplete()) {
+        late_since_ = 0;
+        return out;
+    }
+    if (late_since_ == 0) late_since_ = now;
+    if (now - late_since_ >= kLateBatchMs) {
+        late_since_ = 0;
+        return out;
+    }
+    // More answers are coming: patch the shown rows, keep the late ones for
+    // a single growth step.
+    return ReconcileCtxDisplay(shown_, fresh, &pending_stats_, false);
 }
 
 void ContextMenuController::CommitDisplay(std::vector<ui::FluentMenuItem> shown) {
     shown_ = std::move(shown);
-    reconcile_stats_ = pending_stats_;
+    // Appended rows are shown rows from now on: late adds up, greyed is the
+    // current state.
+    reconcile_stats_.late += pending_stats_.late;
+    reconcile_stats_.greyed = pending_stats_.greyed;
+    // Still waiting for their growth step: dropped if the menu closes first.
+    const uint32_t withheld = pending_stats_.withheld;
+    pending_stats_ = {};
+    pending_stats_.withheld = withheld;
     NotePatchedDisplay();
     if (timing_active_) {
         timing_.late = reconcile_stats_.late;
         timing_.greyed = reconcile_stats_.greyed;
-        timing_.dropped = reconcile_stats_.dropped;
     }
 }
 
@@ -891,7 +857,7 @@ void ContextMenuController::BeginTiming(uint32_t input_to_open_ms, size_t rows,
     timing_.rows_open = static_cast<uint32_t>(rows);
     timing_.seeded = seeded;
     timing_.live_at_open = com_ready_;
-    timing_.slot = slot_row_ >= 0;
+    timing_.may_grow = may_grow_at_open_;
     display_rows_ = rows;
     opened_at_ = now;
     timing_active_ = true;
@@ -914,6 +880,9 @@ bool ContextMenuController::TakeTiming(bool shell_command, CtxMenuTiming& out) {
     if (!timing_active_) return false;
     timing_active_ = false;
     timing_.rows_final = static_cast<uint32_t>(display_rows_);
+    // Late rows of an answer the open menu could not take (a visible flyout
+    // was changing): the stored layout has them for the next menu.
+    timing_.dropped = pending_stats_.late + pending_stats_.withheld;
     timing_.shell_command = shell_command;
     out = std::move(timing_);
     timing_ = {};

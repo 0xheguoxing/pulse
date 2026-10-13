@@ -50,7 +50,6 @@ struct ContextMenuPrefs {
     bool system_extra = false;
     bool print = true;
 
-    int explorer_cap = ipc::kDefaultExplorerCap;
     int open_with_mru = 2;
 
     std::unordered_map<std::wstring, bool> item_enabled;

@@ -2366,14 +2366,15 @@ void TestShellMenuMerge() {
     AppendShellSection(no_fly, { empty_group });
     Check(no_fly.size() == no_fly_base, L"shellmenu: 无子项的分组行被丢弃");
 
-    // Cap: never more than 48 Explorer rows.
+    // No cap: a long menu keeps every Explorer row, flat (hiding is the
+    // user's call in 管理右键项).
     std::vector<ShellMenuEntry> many;
     for (int i = 0; i < 60; ++i)
         many.push_back({ CmdShellComBase + 100 + i, L"动词 " + std::to_wstring(i), true });
-    auto capped = BuildItemMenu(false, L"");
-    const size_t cap_base = capped.size();
-    AppendShellSection(capped, many);
-    Check(capped.size() == cap_base + 48, L"shellmenu: section capped at 48 rows");
+    auto long_menu = BuildItemMenu(false, L"");
+    const size_t long_base = long_menu.size();
+    AppendShellSection(long_menu, many);
+    Check(long_menu.size() == long_base + 60, L"shellmenu: a long section keeps every row");
 
     // DedupeStaticVerbs mirrors the same rules for the registry side.
     std::vector<StaticVerb> verbs{
@@ -2632,7 +2633,7 @@ void TestContextMenuPrefs() {
     Check(loaded.FromJson(json) &&
           !loaded.item_enabled[ipc::CatalogKey(L"发送到", true)] &&
           loaded.seen.size() == 1 && loaded.seen[0].from_com &&
-          loaded.explorer_cap == ipc::kDefaultExplorerCap && !loaded.share && loaded.print,
+          !loaded.share && loaded.print,
           L"prefs: JSON round-trip keeps override, seen, and defaults");
 
     Check(prefs.RecordComTiming(L".dwg", 800) && prefs.ComDeferred(L".dwg") == false, L"prefs: one slow COM hit does not defer");
@@ -2654,9 +2655,11 @@ void TestContextMenuPrefs() {
     loaded.ResetToDefaults();
     Check(loaded.seen.empty() && loaded.item_enabled.empty() && !loaded.share,
           L"prefs: restore defaults clears seen and overrides");
-    Check(ContextMenuPrefs{}.explorer_cap == ipc::kDefaultExplorerCap &&
-          loaded.explorer_cap == ipc::kDefaultExplorerCap,
-          L"prefs: factory Explorer cap keeps the whole shell list");
+    ContextMenuPrefs old_cap;
+    old_cap.persist = false;
+    Check(old_cap.FromJson(L"{\"version\":1,\"explorer_cap\":12}") &&
+              old_cap.ToJson().find(L"explorer_cap") == std::wstring::npos,
+          L"prefs: an old explorer_cap is read without error and not written back");
 
     // Pulse's own commands (#41, #44-⑩): hide, persist, filter, restore.
     {
@@ -2788,9 +2791,8 @@ void TestContextMenuPrefs() {
     std::vector<ShellMenuEntry> many;
     for (int i = 0; i < 20; ++i)
         many.push_back({ CmdShellComBase + 200 + i, L"动词 " + std::to_wstring(i), true, {}, L"", true });
-    prefs.explorer_cap = 12;
-    auto capped = ApplyExplorerPrefs(prefs, many);
-    Check(capped.size() == 12, L"prefs: Explorer section respects explorer_cap");
+    auto uncapped = ApplyExplorerPrefs(prefs, many);
+    Check(uncapped.size() == many.size(), L"prefs: the Explorer section has no row cap");
 
     // Rows seeded from the on-disk cache still need one live pass: that cache is
     // written at install time, and a build without resources shipped an empty

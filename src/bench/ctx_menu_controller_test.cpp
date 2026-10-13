@@ -563,59 +563,54 @@ int wmain() {
               "selection size does not change the fingerprinted type");
     }
     {
-        // R3: the shown rows keep their places; late rows go to 更多扩展.
+        // The shown rows keep their places; late rows are appended, flat.
         using app::CmdShellComBase;
         const int predicted = static_cast<int>(CmdShellComBase + 0x7F00);
-        const std::vector<ui::FluentMenuItem> shown = {
+        std::vector<ui::FluentMenuItem> shown_rows = {
             MenuRow(1, L"Open"), MenuRow(2, L"Copy", true), MenuRow(predicted, L"Scan"),
-            MenuFlyout(L"Zip", { predicted + 1 }), app::CtxSlotRow({}, 0, false), MenuRow(3, L"Manage") };
-        std::vector<ui::FluentMenuItem> shown_rows = shown;
-        shown_rows[3].separator_after = false;
-        shown_rows[4].separator_after = true;
-        const int slot = 4;
+            MenuFlyout(L"Zip", { predicted + 1 }), MenuRow(3, L"Manage") };
+        shown_rows[3].separator_after = true;
         ui::FluentMenuItem late_flyout = MenuFlyout(L"Git", { 8100, 8101 });
         const std::vector<ui::FluentMenuItem> fresh = {
             MenuRow(1, L"Open"), MenuRow(2, L"Copy", true),
             MenuFlyout(L"zip", { 8020, 8021 }), MenuRow(8040, L"Late"), late_flyout,
             MenuRow(3, L"Manage") };
         app::CtxReconcileStats stats;
-        const auto out = app::ReconcileCtxDisplay(shown_rows, fresh, slot, false, &stats);
-        Check(SameShape(out, shown_rows), "a reconciled menu keeps its rows and separators");
+        const auto out = app::ReconcileCtxDisplay(shown_rows, fresh, &stats);
+        bool kept = out.size() == shown_rows.size() + 2;
+        for (size_t i = 0; kept && i + 1 < shown_rows.size(); ++i)
+            kept = out[i].separator_after == shown_rows[i].separator_after;
+        Check(kept, "a reconciled menu keeps every shown row and separator");
         Check(out[2].text == L"Scan" && !out[2].enabled && out[2].command == predicted,
               "a predicted row the answer lacks stays in place, greyed");
         Check(out[3].children.size() == 2 && out[3].children[0].command == 8020 && out[3].enabled,
               "a matched row takes the live flyout (labels match case-insensitively)");
-        Check(out[slot].enabled && out[slot].children.size() == 4 &&
-                  out[slot].children[0].command == 8040 && out[slot].children[1].text == L"Git" &&
-                  !out[slot].children[1].enabled && out[slot].children[1].children.empty() &&
-                  out[slot].children[2].command == 8100 && out[slot].children[3].command == 8101,
-              "late rows fill 更多扩展; a late flyout becomes a grey header plus its rows");
-        Check(stats.late == 2 && stats.greyed == 1 && stats.dropped == 0,
+        Check(out[4].command == 3 && out[4].separator_after && out[0].command == 1,
+              "built-in rows stay where they were; the last gains a separator");
+        Check(out[5].command == 8040 && out[5].enabled && out[6].text == L"Git" &&
+                  out[6].children.size() == 2 && out[6].children[1].command == 8101 &&
+                  !out[6].separator_after,
+              "late rows are appended flat below, a late flyout stays its own flyout");
+        Check(stats.late == 2 && stats.greyed == 1,
               "the reconciliation counts late and greyed rows");
-        Check(out[5].command == 3 && out[0].command == 1, "built-in rows stay as they were");
 
         const std::vector<ui::FluentMenuItem> matched = {
             MenuRow(1, L"Open"), MenuRow(2, L"Copy", true), MenuRow(8031, L"Scan"),
             MenuFlyout(L"Zip", { 8020 }), MenuRow(3, L"Manage") };
-        auto settled = app::ReconcileCtxDisplay(shown_rows, matched, slot, true, &stats);
-        Check(SameShape(settled, shown_rows) && settled[slot].text.empty() &&
-                  !settled[slot].enabled && settled[slot].children.empty() &&
-                  settled[slot].glyph.empty() && stats.late == 0 && stats.greyed == 0,
-              "everything arrived and nothing was late: 更多扩展 turns into a blank row");
-        auto waiting = app::ReconcileCtxDisplay(shown_rows, matched, slot, false, &stats);
-        Check(!waiting[slot].enabled && !waiting[slot].glyph.empty() && waiting[slot].children.empty(),
-              "while answers are outstanding 更多扩展 stays a grey placeholder");
-        Check(settled[2].command == 8031 && settled[2].enabled,
-              "a predicted row is patched to the live command");
-        auto none = app::ReconcileCtxDisplay(shown_rows, fresh, -1, true, &stats);
-        Check(SameShape(none, shown_rows) && stats.dropped == 2 && stats.late == 0,
-              "without 更多扩展 late rows wait for the next menu instead of growing this one");
+        auto settled = app::ReconcileCtxDisplay(shown_rows, matched, &stats);
+        Check(SameShape(settled, shown_rows) && stats.late == 0 && stats.greyed == 0 &&
+                  settled[2].command == 8031 && settled[2].enabled,
+              "nothing late: the menu keeps its exact shape, predicted rows go live");
+        // Rows appended once are shown rows: the next answer matches them.
+        auto again = app::ReconcileCtxDisplay(out, fresh, &stats);
+        Check(SameShape(again, out) && stats.late == 0,
+              "rows appended once are not appended again");
 
         // Any partial order of arrivals: every subset of the shell rows.
         const std::vector<ui::FluentMenuItem> pool = {
             MenuRow(8031, L"Scan"), MenuFlyout(L"Zip", { 8020 }), MenuRow(8040, L"Late"),
             late_flyout, MenuRow(8050, L"Send") };
-        bool constant = true;
+        bool prefix = true;
         bool counted = true;
         for (unsigned mask = 0; mask < (1u << pool.size()); ++mask) {
             std::vector<ui::FluentMenuItem> part = { MenuRow(1, L"Open"), MenuRow(2, L"Copy", true) };
@@ -627,16 +622,18 @@ int wmain() {
             }
             part.back().separator_after = true;
             part.push_back(MenuRow(3, L"Manage"));
-            auto step = app::ReconcileCtxDisplay(shown_rows, part, slot, mask == 31, &stats);
-            constant &= SameShape(step, shown_rows);
-            counted &= stats.late == unpredicted && (unpredicted == 0) == step[slot].children.empty();
+            auto step = app::ReconcileCtxDisplay(shown_rows, part, &stats);
+            for (size_t i = 0; i < shown_rows.size(); ++i)
+                prefix &= step[i].text == shown_rows[i].text &&
+                          (i + 1 == shown_rows.size() || step[i].separator_after == shown_rows[i].separator_after);
+            counted &= stats.late == unpredicted && step.size() == shown_rows.size() + unpredicted;
         }
-        Check(constant, "the menu's shape is the same under every partial answer");
-        Check(counted, "更多扩展 holds exactly the rows the first frame did not predict");
+        Check(prefix, "under every partial answer the shown rows stay first, in place");
+        Check(counted, "exactly the rows the first frame did not predict are appended");
     }
 
     {
-        // R3: when the first frame reserves 更多扩展.
+        // A cold type: rows arrive below the first frame, then sit in place.
         uint32_t token = 40;
         uint32_t invoked = 0;
         app::ContextMenuController::ShellOperations operations;
@@ -652,52 +649,93 @@ int wmain() {
         controller.OpenMenu(base);
         const auto cold = controller.BuildOpenDisplay(prefs, controller.base_items(), changed);
         controller.BeginTiming(3, cold.size(), false, 1000);
-        Check(controller.MayGrowAfterOpen() && controller.slot_row() == 2 && cold.size() == 4 &&
-                  cold[1].separator_after && cold[2].separator_after,
-              "a type with no stored layout opens with 更多扩展 as its own section");
+        bool no_more_row = true;
+        for (const auto& row : cold) no_more_row &= row.children.empty() || row.enabled;
+        Check(controller.MayGrowAfterOpen() && controller.may_grow_at_open() && cold.size() == 3 &&
+                  no_more_row,
+              "a type with no stored layout opens without any 更多 row");
         controller.CompleteComQuery(token, { Row(70, L"{P}", L"", L"Photoshop"),
                                              Row(71, L"{Q}", L"", L"Scan") },
                                     1100, false, { Handler(L"{P}", true, 40, 1),
                                                    Handler(L"{Q}", true, 90, 1) });
         Check(controller.AnswersComplete(), "the complete answer settles the menu");
-        auto update = controller.ReconcileDisplay(prefs, changed);
-        Check(SameShape(update, cold) && update[2].children.size() == 2 && update[2].enabled,
-              "rows of a cold type arrive in 更多扩展, the menu does not grow");
+        auto update = controller.ReconcileDisplay(prefs, changed, 1100);
+        Check(update.size() == cold.size() + 2 && update[0].text == cold[0].text &&
+                  update[2].text == cold[2].text && update[2].separator_after &&
+                  update[3].text == L"Photoshop" && update[4].text == L"Scan",
+              "rows of a cold type are appended below the first frame");
         controller.CommitDisplay(update);
         controller.NoteDisplayUpdate(update.size(), 1100);
-        Check(controller.reconcile_stats().late == 2, "the committed reconciliation is kept");
-        controller.ExecuteShellCommand(update[2].children[1].command, {}, {});
-        Check(invoked == 71, "a row picked from 更多扩展 runs its live command");
+        Check(controller.reconcile_stats().late == 2, "the committed late rows add up");
+        auto repeat = controller.ReconcileDisplay(prefs, changed, 1100);
+        controller.CommitDisplay(repeat);
+        Check(repeat.size() == update.size() && controller.reconcile_stats().late == 2,
+              "a later answer with the same rows appends nothing");
+        controller.ExecuteShellCommand(update[4].command, {}, {});
+        Check(invoked == 71, "an appended row runs its live command");
         controller.CloseMenu();
         app::CtxMenuTiming timing;
-        Check(controller.TakeTiming(true, timing) && timing.slot && timing.late == 2 &&
-                  timing.grew == 0 && timing.dropped == 0,
-              "the timing record says 更多扩展 was used and the menu never grew");
+        Check(controller.TakeTiming(true, timing) && timing.may_grow && timing.late == 2 &&
+                  timing.grew == 1 && timing.dropped == 0,
+              "the timing record says the menu grew once, by the late rows");
 
         controller.StartQuery(prefs, nullptr, { L"C:\\f\\b.psd" }, false, L".psd", false, {}, {});
         controller.OpenMenu(base);
         const auto warm = controller.BuildOpenDisplay(prefs, controller.base_items(), changed);
         Check(controller.com_predicted() && !controller.MayGrowAfterOpen() &&
-                  controller.slot_row() == -1 && RowIndex(warm, L"Photoshop") == 2 &&
-                  RowIndex(warm, L"Scan") == 3,
-              "the next menu of the type has the rows in place and no 更多扩展");
+                  RowIndex(warm, L"Photoshop") == 2 && RowIndex(warm, L"Scan") == 3,
+              "the next menu of the type has the rows in place");
         controller.CompleteComQuery(token, { Row(80, L"{P}", L"", L"Photoshop") }, 1200, false,
                                     { Handler(L"{P}", true, 40, 1), Handler(L"{Q}", true, 90, 0) });
-        auto gone = controller.ReconcileDisplay(prefs, changed);
+        auto gone = controller.ReconcileDisplay(prefs, changed, 1100);
         Check(SameShape(gone, warm) && gone[2].command == static_cast<int>(app::CmdShellComBase + 80) &&
                   !gone[3].enabled && gone[3].text == L"Scan",
               "a stored row this selection lacks is greyed, not removed");
         controller.CloseMenu();
 
-        controller.StartQuery(prefs, nullptr, { L"C:\\f\\a.ai" }, false, L".ai", false, {}, {});
-        controller.CompleteComQuery(token, { Row(90, L"{P}", L"", L"Illustrator") }, 1300, false,
-                                    { Handler(L"{P}", true, 40, 1), Handler(L"{S}", false, 5000) });
-        controller.StartQuery(prefs, nullptr, { L"C:\\f\\b.ai" }, false, L".ai", false, {}, {});
+        // Partial answers of a cold type: one growth step, not one per answer.
+        controller.StartQuery(prefs, nullptr, { L"C:\\f\\a.cdr" }, false, L".cdr", false, {}, {});
         controller.OpenMenu(base);
-        controller.BuildOpenDisplay(prefs, controller.base_items(), changed);
-        Check(controller.com_predicted() && controller.slot_row() >= 0,
-              "a handler that never finished under the type keeps 更多扩展 reserved");
+        const auto cdr = controller.BuildOpenDisplay(prefs, controller.base_items(), changed);
+        controller.BeginTiming(1, cdr.size(), false, 3000);
+        controller.CompleteComQuery(token, { Row(60, L"{P}", L"", L"CorelDRAW") }, 3050, true,
+                                    { Handler(L"{P}", true, 40, 1), Handler(L"{Q}", false, 50) });
+        auto held = controller.ReconcileDisplay(prefs, changed, 3050);
+        controller.CommitDisplay(held);
+        controller.NoteDisplayUpdate(held.size(), 3050);
+        controller.CompleteComQuery(token, { Row(60, L"{P}", L"", L"CorelDRAW"),
+                                             Row(61, L"{Q}", L"", L"Trace") }, 3200, true,
+                                    { Handler(L"{P}", true, 40, 1), Handler(L"{Q}", true, 150, 1),
+                                      Handler(L"{R}", false, 150) });
+        auto still_held = controller.ReconcileDisplay(prefs, changed, 3200);
+        controller.CommitDisplay(still_held);
+        controller.NoteDisplayUpdate(still_held.size(), 3200);
+        Check(!controller.AnswersComplete() && held.size() == cdr.size() &&
+                  still_held.size() == cdr.size(),
+              "late rows of partial answers wait instead of growing the menu each time");
+        auto batch = controller.ReconcileDisplay(prefs, changed, 3050 + app::ContextMenuController::kLateBatchMs);
+        controller.CommitDisplay(batch);
+        controller.NoteDisplayUpdate(batch.size(), 3400);
+        Check(batch.size() == cdr.size() + 2 && RowIndex(batch, L"CorelDRAW") >= static_cast<int>(cdr.size()) &&
+                  RowIndex(batch, L"Trace") >= static_cast<int>(cdr.size()),
+              "after the batch time every late row arrives in one step");
         controller.CloseMenu();
+        Check(controller.TakeTiming(false, timing) && timing.late == 2 && timing.grew == 1 &&
+                  timing.dropped == 0,
+              "a cold menu with several partial answers grows once");
+
+        // An answer the open menu never took: its late rows count as dropped.
+        controller.StartQuery(prefs, nullptr, { L"C:\\f\\a.ai" }, false, L".ai", false, {}, {});
+        controller.OpenMenu(base);
+        const auto ai = controller.BuildOpenDisplay(prefs, controller.base_items(), changed);
+        controller.BeginTiming(1, ai.size(), false, 2000);
+        controller.CompleteComQuery(token, { Row(90, L"{P}", L"", L"Illustrator") }, 2100, false,
+                                    { Handler(L"{P}", true, 40, 1) });
+        controller.ReconcileDisplay(prefs, changed, 1100);  // refused by the menu: not committed
+        controller.CloseMenu();
+        Check(controller.TakeTiming(false, timing) && timing.late == 0 && timing.dropped == 1 &&
+                  timing.grew == 0,
+              "late rows of an answer the menu refused are reported as dropped");
     }
     std::printf("%s\n", failures ? "FAILED" : "ALL PASSED");
     return failures ? 1 : 0;

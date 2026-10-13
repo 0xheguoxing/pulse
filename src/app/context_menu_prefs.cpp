@@ -42,7 +42,6 @@ void ContextMenuPrefs::ResetToDefaults() {
     open_with_com = false;
     system_extra = false;
     print = true;
-    explorer_cap = ipc::kDefaultExplorerCap;
     open_with_mru = 2;
     item_enabled.clear();
     seen.clear();
@@ -220,9 +219,7 @@ std::wstring ContextMenuPrefs::ToJson() const {
     out += L"{\n  \"version\":";
     out += std::to_wstring(kPrefsVersion);
     out += L",\n";
-    out += L"  \"explorer_cap\":";
-    out += std::to_wstring(explorer_cap);
-    out += L",\n  \"open_with_mru\":";
+    out += L"  \"open_with_mru\":";
     out += std::to_wstring(open_with_mru);
     out += L",\n  \"categories\":{\n";
     auto cat = [&](const wchar_t* name, bool v, bool last) {
@@ -329,8 +326,7 @@ std::wstring ContextMenuPrefs::ToJson() const {
 
 bool ContextMenuPrefs::FromJson(const std::wstring& json) {
     if (!pulse::json::ValidConfigObject(json)) return false;
-    explorer_cap = ClampCap(pulse::json::ExtractInt(json, L"explorer_cap", ipc::kDefaultExplorerCap),
-                            1, 48, ipc::kDefaultExplorerCap);
+    // "explorer_cap" of older files is ignored: the menu has no row cap.
     open_with_mru = ClampCap(pulse::json::ExtractInt(json, L"open_with_mru", 2), 0, 8, 2);
 
     const std::wstring cats = ExtractObject(json, L"categories");

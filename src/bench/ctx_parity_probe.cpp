@@ -20,9 +20,9 @@
 // --display [--prefs <context_menu.json>] also runs the rows through the menu
 // Pulse would paint (ContextMenuController::BuildDisplay with the given or the
 // default settings) and sorts every sourced Explorer row into SHOWN,
-// SHOWN-LABEL (painted with another label or access key: info only), CAPPED
-// (cut by the row cap: [FAIL]), HIDDEN-PREF (a settings switch: info only) or
-// DISPLAY-DROPPED (lost while composing: [FAIL]).
+// SHOWN-LABEL (painted with another label or access key: info only),
+// HIDDEN-PREF (a settings switch: info only) or DISPLAY-DROPPED (lost while
+// composing: [FAIL]). The menu has no row cap.
 #include "../shell_host/ctx_handlers.h"
 #include "../app/shell_verbs.h"
 #include "../ipc/ctx_menu_util.h"
@@ -372,11 +372,11 @@ void DumpAssociation(const std::wstring& ext) {
     for (const auto& cls : classes) DumpClassKey(cls);
 }
 
-// The menu Pulse paints for these rows. `cap` > 0 overrides the row cap;
-// `all_on` turns every group and row on (what Pulse could show at all).
+// The menu Pulse paints for these rows. `all_on` turns every group and row
+// on (what Pulse could show at all).
 std::vector<Row> DisplayRows(const std::wstring& path, const std::wstring& verb_key,
                              bool extended, const std::vector<pulse::ops::ShellMenuItem>& items,
-                             const std::vector<pulse::app::StaticVerb>& verbs, int cap,
+                             const std::vector<pulse::app::StaticVerb>& verbs,
                              bool all_on, size_t* top_level = nullptr) {
     pulse::app::ContextMenuPrefs prefs = g_prefs;
     prefs.persist = false;
@@ -389,7 +389,6 @@ std::vector<Row> DisplayRows(const std::wstring& path, const std::wstring& verb_
         prefs.item_enabled.clear();
         prefs.slow_ext.clear();
     }
-    if (cap > 0) prefs.explorer_cap = cap;
     pulse::app::ContextMenuController controller;
     pulse::app::ContextMenuController::ShellOperations operations;
     operations.query = [](std::vector<std::wstring>, HWND, bool, bool, std::vector<std::wstring>) {
@@ -639,18 +638,15 @@ void ProbePath(const std::wstring& path, bool extended) {
     collect_extra(kept);
 
     // What the painted menu keeps of the sourced rows.
-    std::vector<std::wstring> capped, display_dropped, label_differs;
+    std::vector<std::wstring> display_dropped, label_differs;
     size_t hidden_by_prefs = 0;
     if (g_display) {
-        size_t shown_top = 0, uncapped_top = 0;
-        const auto shown = DisplayRows(path, verb_key, extended, kept_items, static_verbs, 0,
+        size_t shown_top = 0;
+        const auto shown = DisplayRows(path, verb_key, extended, kept_items, static_verbs,
                                        false, &shown_top);
-        const auto uncapped = DisplayRows(path, verb_key, extended, kept_items, static_verbs,
-                                          100000, false, &uncapped_top);
         const auto possible = DisplayRows(path, verb_key, extended, kept_items, static_verbs,
-                                          100000, true);
-        Out(L"\n## Pulse display (cap %d): %zu top-level shell rows, %zu without the cap\n",
-            g_prefs.explorer_cap, shown_top, uncapped_top);
+                                          true);
+        Out(L"\n## Pulse display: %zu top-level shell rows\n", shown_top);
         PrintRows(shown);
         Out(L"\n## Sourced Explorer rows -> painted menu\n");
         for (const auto& row : sourced) {
@@ -660,9 +656,6 @@ void ProbePath(const std::wstring& path, bool extended) {
                     status = L"SHOWN-LABEL";
                     label_differs.push_back(row.text + L" -> " + painted->text);
                 }
-            } else if (FindRow(uncapped, row)) {
-                status = L"CAPPED";
-                capped.push_back(row.text);
             } else if (FindRow(possible, row)) {
                 status = L"HIDDEN-PREF";
                 ++hidden_by_prefs;
@@ -678,8 +671,8 @@ void ProbePath(const std::wstring& path, bool extended) {
     Out(L"\n  summary: native=%zu missing=%zu extra=%zu extensions=%zu over80ms=%d hung=%d\n",
         native.size(), missing.size(), extra.size(), workers.size(), over_budget, hung);
     if (g_display)
-        Out(L"  display: capped=%zu dropped=%zu hidden_by_prefs=%zu label_differs=%zu\n",
-            capped.size(), display_dropped.size(), hidden_by_prefs, label_differs.size());
+        Out(L"  display: dropped=%zu hidden_by_prefs=%zu label_differs=%zu\n",
+            display_dropped.size(), hidden_by_prefs, label_differs.size());
     Info(L"%ls: Explorer %zu rows (QCM %llu ms); %zu extensions, %d over 80 ms, slowest %ls %llu ms, %d hung\n",
          path.c_str(), native.size(), native_ms, workers.size(), over_budget, slowest_name.c_str(), slowest, hung);
     for (const auto& text : missing) Info(L"  missing: %ls\n", text.c_str());
@@ -687,10 +680,8 @@ void ProbePath(const std::wstring& path, bool extended) {
     Check(missing.empty(), path + L": every Explorer row has a Pulse source");
     Check(extra.empty(), path + L": Pulse adds no row Explorer does not show");
     if (g_display) {
-        for (const auto& text : capped) Info(L"  capped:  %ls\n", text.c_str());
         for (const auto& text : display_dropped) Info(L"  dropped: %ls\n", text.c_str());
         for (const auto& text : label_differs) Info(L"  label:   %ls\n", text.c_str());
-        Check(capped.empty(), path + L": the row cap cuts no Explorer row");
         Check(display_dropped.empty(), path + L": composing the menu loses no Explorer row");
     }
 }

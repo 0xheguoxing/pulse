@@ -1387,7 +1387,7 @@ void ScheduleFolderRefresh(AppState& s) {
 // Static verbs first (they were in the first frame), then COM items. A COM
 // has_children header plus its following child rows become one nested entry
 // (one-level flyout in the menu).
-// First frame: may add the fixed 更多扩展 row (BuildOpenDisplay).
+// First frame (BuildOpenDisplay): every predicted row, flat.
 std::vector<ui::FluentMenuItem> ExplorerMenu(
     AppState& s, const std::vector<ui::FluentMenuItem>& base) {
     bool changed = false;
@@ -1396,13 +1396,14 @@ std::vector<ui::FluentMenuItem> ExplorerMenu(
     return display;
 }
 
-// Later answers are mapped onto the rows on screen, so the open menu keeps
-// its height; ReplaceItems refuses anything else (a visible flyout whose rows
-// changed), and the next answer or the next menu catches up.
+// Later answers are mapped onto the rows on screen, so no shown row moves;
+// rows nobody predicted are appended at the bottom. ReplaceItems refuses
+// anything else (a visible flyout whose rows changed), and the next answer or
+// the next menu catches up.
 void RefreshOpenCtxMenu(AppState& s) {
     if (!s.context_menu.menu_open() || !s.menu || !s.menu->IsOpen()) return;
     bool changed = false;
-    auto display = s.context_menu.ReconcileDisplay(s.ctxMenuPrefs, changed);
+    auto display = s.context_menu.ReconcileDisplay(s.ctxMenuPrefs, changed, GetTickCount64());
     if (changed) s.ctxMenuPrefs.Save();
     const size_t rows = display.size();
     auto shown = display;

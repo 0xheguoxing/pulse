@@ -151,6 +151,18 @@ bool FluentMenuModel::PatchInPlace(std::vector<FluentMenuItem> src, IDWriteFacto
     return height_ == height;
 }
 
+bool FluentMenuModel::PatchGrow(std::vector<FluentMenuItem> src, IDWriteFactory2* dwrite) {
+    const size_t shown = items_.size();
+    if (shown == 0 || src.size() <= shown) return false;
+    for (size_t i = 0; i + 1 < shown; ++i)
+        if (src[i].separator_after != items_[i].separator_after) return false;
+    if (items_[shown - 1].separator_after && !src[shown - 1].separator_after) return false;
+    const float width = static_cast<float>(width_);
+    items_ = std::move(src);
+    Layout(dwrite, scale_, width);  // never narrower than shown
+    return true;
+}
+
 void FluentMenuModel::SetRowHeightDip(float dip) {
     row_dip_ = std::clamp(dip, kMinRowDip, kMaxRowDip);
 }
@@ -1985,9 +1997,19 @@ bool FluentMenu::ReplaceItems(std::vector<FluentMenuItem> items) {
     }
     if (model_.PatchCommands(items)) return true;
     // Same shape, other contents: late rows already mapped onto the shown
-    // ones. The old in-place rebuild (#73) grew the menu under the cursor;
-    // rows the first frame could not place now go into a fixed row instead.
-    if (!model_.PatchInPlace(std::move(items), compositor_->DwriteFactory())) return false;
+    // ones. The old in-place rebuild (#73) moved rows under the cursor; rows
+    // the first frame could not place are now appended below the shown ones.
+    if (items.size() == static_cast<size_t>(model_.Count())) {
+        if (!model_.PatchInPlace(std::move(items), compositor_->DwriteFactory())) return false;
+    } else {
+        if (!model_.PatchGrow(std::move(items), compositor_->DwriteFactory())) return false;
+        // The same placement as at open: the top edge stays unless the taller
+        // menu would leave the work area (then it lifts, or scrolls).
+        const int top = base_y_;
+        const int left = base_x_;
+        LayoutWindow(popup_pt_);
+        if ((base_y_ != top || base_x_ != left) && sub_parent_row_ >= 0) HideSubWindow();
+    }
     if (const FluentMenuItem* it = model_.At(hover_row_); it && !it->enabled &&
         hover_row_ != sub_parent_row_)
         hover_row_ = -1;
@@ -1995,8 +2017,9 @@ bool FluentMenu::ReplaceItems(std::vector<FluentMenuItem> items) {
         const FluentMenuItem* pending = model_.At(sub_pending_row_);
         if (!pending || pending->children.empty() || !pending->enabled) sub_pending_row_ = -1;
     }
-    // The pointer rests on a row that just got its flyout (更多扩展 (n)):
-    // open it after the usual dwell, as if the pointer had just arrived.
+    // The pointer rests on a row that just got its flyout (a predicted row
+    // whose live answer arrived): open it after the usual dwell, as if the
+    // pointer had just arrived.
     if (const FluentMenuItem* it = model_.At(hover_row_);
         it && it->enabled && !it->children.empty() && sub_parent_row_ < 0 &&
         sub_pending_row_ != hover_row_) {
