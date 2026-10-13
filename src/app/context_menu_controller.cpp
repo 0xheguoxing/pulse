@@ -492,10 +492,15 @@ bool ContextMenuController::SeedComItemsFromCache() {
 
 void ContextMenuController::StoreLayout(const std::wstring& key,
                                         const std::vector<ops::ShellMenuItem>& items,
-                                        const CtxNames& names) {
+                                        const CtxNames& names,
+                                        const std::vector<ops::ShellMenuHandlerStatus>& handlers) {
     std::vector<ops::ShellMenuItem> rows = items;
     for (auto& row : rows) row.text = TemplateCtxLabel(row.text, names);
     auto& stored = com_cache_[key];
+    if (!handlers.empty()) {
+        rows = MergeCtxHandlerShards(stored.rows, rows, handlers);
+        if (MergeCtxHandlerStats(stored.handlers, handlers)) com_layout_dirty_ = true;
+    }
     if (!SameLayoutRows(stored.rows, rows)) {
         stored.rows = std::move(rows);
         com_layout_dirty_ = true;
@@ -505,9 +510,9 @@ void ContextMenuController::StoreLayout(const std::wstring& key,
 
 size_t ContextMenuController::MergeComLayout(CtxLayoutMap layout) {
     size_t added = 0;
-    for (auto& [key, rows] : layout) {
-        if (rows.empty() || com_cache_.contains(key)) continue;
-        com_cache_.emplace(key, ComLayout{ std::move(rows), 0 });
+    for (auto& [key, entry] : layout) {
+        if (entry.rows.empty() || com_cache_.contains(key)) continue;
+        com_cache_.emplace(key, ComLayout{ std::move(entry.rows), 0, std::move(entry.handlers) });
         ++added;
     }
     com_layout_loaded_ = true;
@@ -527,39 +532,57 @@ CtxLayoutMap ContextMenuController::ComLayoutSnapshot() const {
     if (order.size() > kCtxLayoutMaxKeys) order.resize(kCtxLayoutMaxKeys);
     CtxLayoutMap out;
     out.reserve(order.size());
-    for (const auto& entry : order) out.emplace(*entry.second, com_cache_.at(*entry.second).rows);
+    for (const auto& entry : order) {
+        const auto& layout = com_cache_.at(*entry.second);
+        out.emplace(*entry.second, CtxLayoutEntry{ layout.rows, layout.handlers });
+    }
     return out;
+}
+
+const CtxHandlerStats* ContextMenuController::ComHandlerStats(const std::wstring& key) const {
+    const auto found = com_cache_.find(key);
+    return found == com_cache_.end() ? nullptr : &found->second.handlers;
 }
 
 ContextMenuController::QueryCompletion ContextMenuController::CompleteComQuery(
     uint32_t token, std::vector<ops::ShellMenuItem> items, uint64_t completed_at,
-    bool partial) {
+    bool partial, std::vector<ops::ShellMenuHandlerStatus> handlers) {
     QueryCompletion result;
     if (token != 0 && token == draining_.token && token != token_) {
         if (!partial) {
             if (draining_.generation == cache_generation_)
-                StoreLayout(draining_.key, items, draining_.names);
+                StoreLayout(draining_.key, items, draining_.names, handlers);
             draining_ = {};
         }
         return result;
     }
     if (token == 0 || token != token_) return result;
-    if (partial && com_predicted_) {
+    result.accepted = true;
+    result.partial = partial;
+    result.cache_key = CacheKey(background_, extension_, paths_.size() > 1);
+    // Without handler states a partial snapshot only holds the handlers that
+    // finished inside the host's fast budget, so it must feed this session
+    // and nothing else: caching an incomplete list made packaged verbs
+    // (WinRAR and friends) show up on one right-click and vanish on the next.
+    // With them the unfinished handlers keep their stored rows, so partial
+    // answers are stored too.
+    const bool shards = !handlers.empty();
+    if (shards) {
+        StoreLayout(result.cache_key, items, names_, handlers);
+        if (partial) {
+            com_items_ = MergeCtxHandlerShards(com_items_, items, handlers);
+        } else {
+            com_items_ = std::move(items);
+            com_predicted_ = false;
+        }
+    } else if (partial && com_predicted_) {
         com_items_ = OverlayLiveRows(std::move(com_items_), items);
     } else {
         com_items_ = std::move(items);
         com_predicted_ = false;
     }
-    result.accepted = true;
-    result.partial = partial;
-    result.cache_key = CacheKey(background_, extension_, paths_.size() > 1);
-    // A partial snapshot only holds the handlers that finished inside the
-    // host's fast budget, so it must feed this session and nothing else: the
-    // next right-click of the same type paints from com_cache_ before the live
-    // answer arrives, and caching an incomplete list made packaged verbs
-    // (WinRAR and friends) show up on one right-click and vanish on the next.
     if (!partial) {
-        StoreLayout(result.cache_key, com_items_, names_);
+        if (!shards) StoreLayout(result.cache_key, com_items_, names_);
         com_ready_ = true;
         if (timing_active_ && menu_open_ && completed_at >= opened_at_) {
             timing_.live_after_open_ms = static_cast<int32_t>(std::min<uint64_t>(

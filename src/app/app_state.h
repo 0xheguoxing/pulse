@@ -845,7 +845,7 @@ struct CtxLayoutSeed {
 struct ShellCtxItemsPayload {
     std::vector<ops::ShellMenuItem> items;
     bool partial = false;
-    std::vector<std::wstring> slow_clsids;
+    ops::ShellMenuAnswer answer;
 };
 
 

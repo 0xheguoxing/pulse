@@ -101,9 +101,16 @@ public:
     bool com_predicted() const noexcept { return com_predicted_; }
     // Also takes the complete answer of a closed menu's session (accepted =
     // false: the caller closes that session; the rows only feed the layout).
+    // `handlers` (host order, C4b): with them a partial answer replaces the
+    // rows of the handlers that finished and keeps the others' rows, on screen
+    // and in the layout; a complete answer keeps a stuck handler's last rows
+    // in the layout only (its session is gone, so they could not be invoked).
     QueryCompletion CompleteComQuery(uint32_t token,
                                      std::vector<ops::ShellMenuItem> items,
-                                     uint64_t completed_at, bool partial = false);
+                                     uint64_t completed_at, bool partial = false,
+                                     std::vector<ops::ShellMenuHandlerStatus> handlers = {});
+    // Per-handler times and row counts stored for a key (nullptr: none).
+    const CtxHandlerStats* ComHandlerStats(const std::wstring& key) const;
 
     void OpenMenu(std::vector<ui::FluentMenuItem> base_items);
     void NotePatchedDisplay() { menu_com_items_ = com_items_; menu_static_verbs_ = static_verbs_; }
@@ -153,6 +160,7 @@ private:
     struct ComLayout {
         std::vector<ops::ShellMenuItem> rows;  // labels templated (CtxNames)
         uint64_t used = 0;                     // com_use_clock_ at last seed/store
+        CtxHandlerStats handlers;              // menu order
     };
     std::unordered_map<std::wstring, ComLayout> com_cache_;
     uint64_t com_use_clock_ = 0;
@@ -173,7 +181,8 @@ private:
     };
     Draining draining_;
     void StoreLayout(const std::wstring& key, const std::vector<ops::ShellMenuItem>& items,
-                     const CtxNames& names);
+                     const CtxNames& names,
+                     const std::vector<ops::ShellMenuHandlerStatus>& handlers = {});
     std::unordered_set<std::wstring> static_pending_;
     std::unordered_map<std::wstring, uint64_t> static_read_at_; // last enumeration request
     uint32_t cache_generation_ = 0;  // bumped by InvalidateCaches()

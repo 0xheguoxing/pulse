@@ -796,7 +796,8 @@ using pulse::shell::CtxItemOut;
 
 void SendCtxItems(uint32_t session_id, const std::vector<CtxItemOut>& items,
                   uint32_t flags = 0,
-                  const std::vector<std::wstring>& slow_clsids = {}) {
+                  const std::vector<std::wstring>& slow_clsids = {},
+                  const std::vector<pulse::ipc::CtxHandlerStatus>& handlers = {}) {
     PayloadWriter w;
     w.PutU32(session_id);
     w.PutU32(flags);
@@ -816,6 +817,7 @@ void SendCtxItems(uint32_t session_id, const std::vector<CtxItemOut>& items,
         w.PutString(it.handler);
     }
     w.PutStringArray(slow_clsids);
+    pulse::ipc::PutCtxHandlerStatuses(w, handlers);
     SendMsg(RSP_CTX_ITEMS, session_id, w.data());
 }
 
@@ -1144,6 +1146,7 @@ DWORD CtxSessionThreadImpl(LPVOID param, const CtxSessionApi& api = {}) {
 
     std::vector<std::unique_ptr<HandlerWorker>> workers;
     std::vector<CtxItemOut> items;
+    std::vector<pulse::ipc::CtxHandlerStatus> statuses;
     IContextMenu* fallback_menu = nullptr;
     HMENU fallback_hmenu = nullptr;
     std::unique_ptr<CtxInvokeMsg> pending_invoke;
@@ -1202,20 +1205,35 @@ DWORD CtxSessionThreadImpl(LPVOID param, const CtxSessionApi& api = {}) {
         for (const auto& item : items)
             if (!item.has_children && !item.text.empty()) out.push_back(item.text);
     };
-    auto collect_items = [&] {
+    // `statuses` gets every worker in menu order: the app keeps the previous
+    // rows of the handlers that have not finished (C4b shard merge).
+    auto collect_items = [&](std::vector<pulse::ipc::CtxHandlerStatus>& statuses) {
         std::vector<std::wstring> classic_rows;
         for (const auto& w : workers)
             if (w && worker_done(*w) && !w->desc.explorer_command)
                 invokable_texts(w->items, classic_rows);
+        const uint32_t so_far = static_cast<uint32_t>(GetTickCount64() - started);
+        statuses.clear();
         std::vector<CtxItemOut> out;
         for (const auto& w : workers) {
-            if (!w || !worker_done(*w)) continue;
-            if (w->desc.explorer_command) {
+            if (!w) continue;
+            pulse::ipc::CtxHandlerStatus status;
+            status.clsid = w->desc.clsid_text;
+            const bool done = worker_done(*w);
+            status.elapsed_ms = done ? w->elapsed_ms : so_far;
+            if (done) {
+                status.flags |= pulse::ipc::CTX_HANDLER_DONE;
                 std::vector<std::wstring> rows;
-                invokable_texts(w->items, rows);
-                if (pulse::shell::PackagedRowsDuplicate(rows, classic_rows)) continue;
+                if (w->desc.explorer_command) invokable_texts(w->items, rows);
+                if (w->desc.explorer_command &&
+                    pulse::shell::PackagedRowsDuplicate(rows, classic_rows)) {
+                    status.flags |= pulse::ipc::CTX_HANDLER_DUPLICATE;
+                } else {
+                    out.insert(out.end(), w->items.begin(), w->items.end());
+                    status.rows = static_cast<uint32_t>(w->items.size());
+                }
             }
-            out.insert(out.end(), w->items.begin(), w->items.end());
+            statuses.push_back(std::move(status));
         }
         return out;
     };
@@ -1277,8 +1295,8 @@ DWORD CtxSessionThreadImpl(LPVOID param, const CtxSessionApi& api = {}) {
                 const size_t done = done_count();
                 if (!sent_partial ||
                     (done != partial_done && elapsed - partial_at >= kPartialGapMs)) {
-                    items = collect_items();
-                    SendCtxItems(sid, items, CTX_ITEMS_PARTIAL);
+                    items = collect_items(statuses);
+                    SendCtxItems(sid, items, CTX_ITEMS_PARTIAL, {}, statuses);
                     sent_partial = true;
                     partial_done = done;
                     partial_at = elapsed;
@@ -1303,7 +1321,7 @@ DWORD CtxSessionThreadImpl(LPVOID param, const CtxSessionApi& api = {}) {
                                       FALSE, timeout, QS_ALLINPUT);
         }
         pump_session_messages();
-        items = collect_items();
+        items = collect_items(statuses);
     } else {
         api.fallback(*data, &fallback_menu, &fallback_hmenu, items);
     }
@@ -1319,7 +1337,14 @@ DWORD CtxSessionThreadImpl(LPVOID param, const CtxSessionApi& api = {}) {
                    data->paths.empty() ? L"" : data->paths.front().c_str());
         api.log(slow);
     }
-    SendCtxItems(sid, items, 0, collect_hung());
+    for (const auto& status : statuses) {
+        if (status.elapsed_ms < 300) continue;
+        wchar_t line[160];
+        swprintf_s(line, L"handler %ls %ums rows=%u%ls", status.clsid.c_str(), status.elapsed_ms,
+                   status.rows, (status.flags & CTX_HANDLER_DONE) ? L"" : L" unfinished");
+        api.log(line);
+    }
+    SendCtxItems(sid, items, 0, collect_hung(), statuses);
 
     auto dispatch_invoke = [&](std::unique_ptr<CtxInvokeMsg> inv) {
         if (!inv) return;

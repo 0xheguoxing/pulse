@@ -175,6 +175,23 @@ struct ShellMenuItem {
     wchar_t mnemonic = 0;        // access key from the Explorer label, 0 = none
 };
 
+// One handler of a context-menu answer, in menu order (ipc::CtxHandlerStatus).
+struct ShellMenuHandlerStatus {
+    std::wstring clsid;
+    bool done = false;       // finished; its rows (maybe none) are in the answer
+    bool duplicate = false;  // finished, rows dropped as copies of classic rows
+    uint32_t elapsed_ms = 0; // finished: its own query time; else time so far
+    uint32_t rows = 0;
+};
+
+// What an answer carries besides its rows.
+struct ShellMenuAnswer {
+    // Complete answers only: the handler provably hung on its own.
+    std::vector<std::wstring> slow_clsids;
+    // Empty from an older host or the no-handler fallback menu.
+    std::vector<ShellMenuHandlerStatus> handlers;
+};
+
 class OpsManager {
 #ifdef PULSE_ELEVATED_TEST_CLIENT
     friend struct OpsManagerReviewTestAccess;
@@ -251,7 +268,7 @@ public:
     // shell client's reader thread; PostMessage from it, do not paint.
     using ShellMenuCallback =
         std::function<void(uint32_t token, std::vector<ShellMenuItem> items, bool partial,
-                           std::vector<std::wstring> slow_clsids)>;
+                           ShellMenuAnswer answer)>;
     void SetShellMenuCallback(ShellMenuCallback cb);
     // Returns a token identifying the session (0 when the manager is stopped).
     uint32_t QueryShellMenu(std::vector<std::wstring> paths, void* owner_hwnd,
@@ -339,7 +356,7 @@ private:
     bool ConsumeCtxQueryDone(uint32_t id);
     bool ConsumeCtxInvokeDone(uint32_t id);   // true = RSP_DONE was a menu invoke
     void OnCtxItems(uint32_t client_id, std::vector<ShellMenuItem> items, bool partial,
-                    std::vector<std::wstring> slow_clsids);
+                    ShellMenuAnswer answer);
 
     std::function<void()> notify_;
 

@@ -55,6 +55,22 @@ bool NameAt(const std::wstring& text, size_t at, const std::wstring& name) {
     return Opens(before) || ClosesOrExtends(after);
 }
 
+bool SameClsid(const std::wstring& a, const std::wstring& b) {
+    return a.size() == b.size() &&
+           CompareStringOrdinal(a.c_str(), static_cast<int>(a.size()), b.c_str(),
+                                static_cast<int>(b.size()), TRUE) == CSTR_EQUAL;
+}
+
+int TimeBucket(uint32_t ms) {
+    constexpr uint32_t kEdges[] = { 50, 100, 200, 500, 1000, 2000 };
+    int bucket = 0;
+    for (const uint32_t edge : kEdges) {
+        if (ms < edge) break;
+        ++bucket;
+    }
+    return bucket;
+}
+
 void PutU32(std::vector<uint8_t>& out, uint32_t v) {
     const auto* p = reinterpret_cast<const uint8_t*>(&v);
     out.insert(out.end(), p, p + 4);
@@ -216,6 +232,72 @@ std::wstring CtxLayoutBaseKey(const std::wstring& key) {
     return bar == std::wstring::npos ? key : key.substr(0, bar);
 }
 
+CtxLayoutRows MergeCtxHandlerShards(const CtxLayoutRows& previous, const CtxLayoutRows& live,
+                                    const std::vector<ops::ShellMenuHandlerStatus>& handlers) {
+    CtxLayoutRows out;
+    out.reserve(previous.size() + live.size());
+    std::vector<const std::wstring*> listed;
+    listed.reserve(handlers.size());
+    const auto is_listed = [&](const std::wstring& clsid) {
+        return std::any_of(listed.begin(), listed.end(),
+                           [&](const std::wstring* c) { return SameClsid(*c, clsid); });
+    };
+    for (const auto& handler : handlers) {
+        if (handler.clsid.empty() || is_listed(handler.clsid)) continue;
+        listed.push_back(&handler.clsid);
+        const CtxLayoutRows& from = handler.done ? live : previous;
+        for (const auto& row : from)
+            if (SameClsid(row.clsid, handler.clsid)) out.push_back(row);
+    }
+    for (const auto& row : live)
+        if (!is_listed(row.clsid)) out.push_back(row);
+    return out;
+}
+
+bool MergeCtxHandlerStats(CtxHandlerStats& stats,
+                          const std::vector<ops::ShellMenuHandlerStatus>& handlers) {
+    CtxHandlerStats next;
+    next.reserve(handlers.size());
+    bool changed = false;
+    for (const auto& handler : handlers) {
+        if (handler.clsid.empty() ||
+            std::any_of(next.begin(), next.end(),
+                        [&](const CtxHandlerStat& s) { return SameClsid(s.clsid, handler.clsid); }))
+            continue;
+        const auto old = std::find_if(stats.begin(), stats.end(), [&](const CtxHandlerStat& s) {
+            return SameClsid(s.clsid, handler.clsid);
+        });
+        CtxHandlerStat stat;
+        stat.clsid = handler.clsid;
+        if (handler.done) {
+            stat.done = true;
+            stat.rows = handler.rows;
+            stat.elapsed_ms = handler.elapsed_ms;
+            if (old == stats.end() || !old->done || old->rows != stat.rows ||
+                TimeBucket(old->elapsed_ms) != TimeBucket(stat.elapsed_ms))
+                changed = true;
+        } else if (old != stats.end()) {
+            // Still running: what it gave last time stands. A handler never
+            // seen finishing records the longest wait.
+            stat = *old;
+            stat.clsid = handler.clsid;
+            if (!stat.done && handler.elapsed_ms > stat.elapsed_ms) {
+                if (TimeBucket(handler.elapsed_ms) != TimeBucket(stat.elapsed_ms)) changed = true;
+                stat.elapsed_ms = handler.elapsed_ms;
+            }
+        } else {
+            stat.elapsed_ms = handler.elapsed_ms;
+            changed = true;
+        }
+        next.push_back(std::move(stat));
+    }
+    if (next.size() != stats.size()) changed = true;
+    for (size_t i = 0; !changed && i < next.size(); ++i)
+        changed = !SameClsid(next[i].clsid, stats[i].clsid);
+    stats = std::move(next);
+    return changed;
+}
+
 std::vector<uint8_t> SerializeCtxLayout(const CtxLayoutRecords& records, std::wstring_view build) {
     std::vector<uint8_t> out;
     out.insert(out.end(), { 'P', 'C', 'L', 'C' });
@@ -248,12 +330,20 @@ std::vector<uint8_t> SerializeCtxLayout(const CtxLayoutRecords& records, std::ws
             PutW(out, row.clsid);
             PutW(out, row.handler);
         }
+        PutU32(out, static_cast<uint32_t>(record.handlers.size()));
+        for (const auto& stat : record.handlers) {
+            PutW(out, stat.clsid);
+            PutU32(out, stat.elapsed_ms);
+            PutU32(out, stat.rows);
+            PutU32(out, stat.done ? 1u : 0u);
+        }
     }
     return out;
 }
 
 bool ParseCtxLayout(const uint8_t* data, size_t size, std::wstring_view build,
                     CtxLayoutRecords& out) {
+    constexpr uint32_t kMaxHandlerStats = 256;  // ipc::kMaxCtxHandlerStatuses
     out.clear();
     if (!data || size < 12 || std::memcmp(data, "PCLC", 4) != 0) return false;
     Reader r{ data + 4, data + size };
@@ -282,6 +372,18 @@ bool ParseCtxLayout(const uint8_t* data, size_t size, std::wstring_view build,
             row.child = (flags & kRowChild) != 0;
             row.mnemonic = static_cast<wchar_t>(mnemonic);
             record.rows.push_back(std::move(row));
+        }
+        uint32_t stats = 0;
+        if (!r.U32(stats) || stats > kMaxHandlerStats) return false;
+        record.handlers.reserve(stats);
+        for (uint32_t j = 0; j < stats; ++j) {
+            CtxHandlerStat stat;
+            uint32_t done = 0;
+            if (!r.W(stat.clsid) || !r.U32(stat.elapsed_ms) || !r.U32(stat.rows) ||
+                !r.U32(done) || done > 1)
+                return false;
+            stat.done = done != 0;
+            record.handlers.push_back(std::move(stat));
         }
         parsed[std::move(key)] = std::move(record);
     }
@@ -376,7 +478,7 @@ bool LoadCtxLayoutFile(const std::wstring& path, std::wstring_view build,
         if (found == now.end())
             found = now.emplace(base, fingerprint ? fingerprint(base) : 0).first;
         if (found->second != record.fingerprint) continue;
-        out.emplace(key, std::move(record.rows));
+        out.emplace(key, CtxLayoutEntry{ std::move(record.rows), std::move(record.handlers) });
     }
     return true;
 }
@@ -387,12 +489,12 @@ bool SaveCtxLayoutFile(const std::wstring& path, std::wstring_view build,
     if (path.empty()) return false;
     CtxLayoutRecords records;
     std::unordered_map<std::wstring, uint64_t> now;
-    for (const auto& [key, rows] : layout) {
+    for (const auto& [key, entry] : layout) {
         const std::wstring base = CtxLayoutBaseKey(key);
         auto found = now.find(base);
         if (found == now.end())
             found = now.emplace(base, fingerprint ? fingerprint(base) : 0).first;
-        records[key] = CtxLayoutRecord{ found->second, rows };
+        records[key] = CtxLayoutRecord{ found->second, entry.rows, entry.handlers };
     }
     const auto bytes = SerializeCtxLayout(records, build);
     const std::wstring tmp = path + L".tmp";

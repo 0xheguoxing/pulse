@@ -551,7 +551,7 @@ void Pipe() {
     static PipeResult result;
     pulse::ipc::ShellClient::Callbacks callbacks;
     callbacks.ctx_items = [](uint32_t id, std::vector<pulse::ipc::CtxMenuItem> items, bool partial,
-                             std::vector<std::wstring>) {
+                             pulse::ipc::CtxItemsExtra) {
         std::lock_guard<std::mutex> lock(result.mutex);
         if (id != result.id) return;
         result.items = std::move(items);

@@ -1678,7 +1678,7 @@ void OpsManager::ConfigureShellCallbacks() {
         RecordShellDone(id, hr, cancelled, std::move(error));
     };
     cb.ctx_items = [this](uint32_t id, std::vector<ipc::CtxMenuItem> items, bool partial,
-                          std::vector<std::wstring> slow_clsids) {
+                          ipc::CtxItemsExtra extra) {
         std::vector<ShellMenuItem> out;
         out.reserve(items.size());
         for (auto& it : items) {
@@ -1695,7 +1695,19 @@ void OpsManager::ConfigureShellCallbacks() {
             m.mnemonic = it.mnemonic;
             out.push_back(std::move(m));
         }
-        OnCtxItems(id, std::move(out), partial, std::move(slow_clsids));
+        ShellMenuAnswer answer;
+        answer.slow_clsids = std::move(extra.slow_clsids);
+        answer.handlers.reserve(extra.handlers.size());
+        for (auto& h : extra.handlers) {
+            ShellMenuHandlerStatus status;
+            status.clsid = std::move(h.clsid);
+            status.done = (h.flags & ipc::CTX_HANDLER_DONE) != 0;
+            status.duplicate = (h.flags & ipc::CTX_HANDLER_DUPLICATE) != 0;
+            status.elapsed_ms = h.elapsed_ms;
+            status.rows = h.rows;
+            answer.handlers.push_back(std::move(status));
+        }
+        OnCtxItems(id, std::move(out), partial, std::move(answer));
     };
 #ifdef PULSE_ELEVATED_TEST_CLIENT
     ObserveShellCallbacksForReview(cb);
@@ -1870,7 +1882,7 @@ bool OpsManager::TakeCtxInvokeDone() {
 }
 
 void OpsManager::OnCtxItems(uint32_t client_id, std::vector<ShellMenuItem> items,
-                            bool partial, std::vector<std::wstring> slow_clsids) {
+                            bool partial, ShellMenuAnswer answer) {
     ShellMenuCallback cb;
     uint32_t token = 0;
     {
@@ -1883,7 +1895,7 @@ void OpsManager::OnCtxItems(uint32_t client_id, std::vector<ShellMenuItem> items
             // Keep token mapping until close/invoke; partial must not drop it.
         }
     }
-    if (cb) cb(token, std::move(items), partial, std::move(slow_clsids));
+    if (cb) cb(token, std::move(items), partial, std::move(answer));
 }
 
 void OpsManager::DispatchMenuJob(const MenuJob& job) {

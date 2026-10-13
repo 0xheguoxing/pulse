@@ -5748,7 +5748,7 @@ void TestOpsThroughShell() {
         uint32_t got_token = 0;
         std::vector<ops::ShellMenuItem> got_items;
         g_ops.SetShellMenuCallback([&](uint32_t token, std::vector<ops::ShellMenuItem> items,
-                                       bool partial, std::vector<std::wstring>) {
+                                       bool partial, ops::ShellMenuAnswer) {
             std::lock_guard<std::mutex> lk(m);
             got_token = token;
             got_items = std::move(items);

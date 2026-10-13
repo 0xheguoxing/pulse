@@ -53,7 +53,10 @@
 //                              clsid(string) + handler(string) +
 //                              slow_clsids(string array, optional; final payload
 //                              only: the one handler provably hung on its own
-//                              at the stuck limit, see collect_hung)
+//                              at the stuck limit, see collect_hung) +
+//                              handlers(optional; count(u32) + per handler in
+//                              menu order: clsid(string) + flags(u32,
+//                              CTX_HANDLER_*) + elapsed_ms(u32) + rows(u32))
 #pragma once
 #include <windows.h>
 #include <cstdint>
@@ -115,6 +118,20 @@ inline wchar_t UnpackCtxItemMnemonic(uint32_t flags) {
 enum CtxItemsMsgFlags : uint32_t {
     CTX_ITEMS_PARTIAL = 1,  // more handlers still running; keep the session pending
 };
+
+// State of each handler the host queried for one RSP_CTX_ITEMS payload, so a
+// partial answer tells "finished with no rows" from "not finished yet".
+enum CtxHandlerFlags : uint32_t {
+    CTX_HANDLER_DONE = 1,       // finished; its rows (maybe none) are in the payload
+    CTX_HANDLER_DUPLICATE = 2,  // finished, rows dropped as copies of classic rows
+};
+struct CtxHandlerStatus {
+    std::wstring clsid;
+    uint32_t flags = 0;
+    uint32_t elapsed_ms = 0;  // finished: its own query time; else time so far
+    uint32_t rows = 0;        // rows it put in this payload
+};
+constexpr uint32_t kMaxCtxHandlerStatuses = 256;
 
 struct MsgHeader {
     uint32_t magic = kMagic;
@@ -213,6 +230,36 @@ private:
     size_t size_ = 0;
     size_t off_ = 0;
 };
+
+inline void PutCtxHandlerStatuses(PayloadWriter& w, const std::vector<CtxHandlerStatus>& v) {
+    w.PutU32(static_cast<uint32_t>(v.size()));
+    for (const auto& h : v) {
+        w.PutString(h.clsid);
+        w.PutU32(h.flags);
+        w.PutU32(h.elapsed_ms);
+        w.PutU32(h.rows);
+    }
+}
+
+// Optional trailing field: absent (older host) reads as an empty list; a
+// damaged one is rejected without touching the rows read before it.
+inline bool TryCtxHandlerStatuses(PayloadReader& r, std::vector<CtxHandlerStatus>& v) {
+    v.clear();
+    if (r.remaining() == 0) return true;
+    uint32_t n = 0;
+    if (!r.GetU32(n) || n > kMaxCtxHandlerStatuses) return false;
+    std::vector<CtxHandlerStatus> out;
+    out.reserve(n);
+    for (uint32_t i = 0; i < n; ++i) {
+        CtxHandlerStatus h;
+        if (!r.GetString(h.clsid) || !r.GetU32(h.flags) || !r.GetU32(h.elapsed_ms) ||
+            !r.GetU32(h.rows))
+            return false;
+        out.push_back(std::move(h));
+    }
+    v = std::move(out);
+    return true;
+}
 
 inline std::wstring PipeNameFor(uint32_t ui_pid) {
     return L"\\\\.\\pipe\\pulse_shell_" + std::to_wstring(ui_pid);

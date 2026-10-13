@@ -33,6 +33,7 @@ struct Session {
     bool final = false;
     size_t items = 0;
     std::vector<std::wstring> slow;
+    std::vector<pulse::ipc::CtxHandlerStatus> handlers;
 };
 
 std::mutex g_mutex;
@@ -88,12 +89,16 @@ int wmain() {
 
     pulse::ipc::ShellClient::Callbacks callbacks;
     callbacks.ctx_items = [](uint32_t id, std::vector<pulse::ipc::CtxMenuItem> items, bool partial,
-                             std::vector<std::wstring> slow) {
+                             pulse::ipc::CtxItemsExtra extra) {
         std::lock_guard<std::mutex> lock(g_mutex);
         Session& s = g_sessions[id];
         s.items = items.size();
         if (partial) s.partial = true;
-        else { s.final = true; s.slow = std::move(slow); }
+        else {
+            s.final = true;
+            s.slow = std::move(extra.slow_clsids);
+            s.handlers = std::move(extra.handlers);
+        }
         g_cv.notify_all();
     };
     callbacks.done = [](uint32_t, uint32_t, bool, std::wstring) {};
@@ -118,6 +123,16 @@ int wmain() {
     bool reported = false;
     for (const auto& clsid : settled.slow) reported |= clsid == kStuckHandler;
     Check(reported, "the hung handler is reported as timed out");
+    bool stuck_unfinished = false;
+    size_t listed_rows = 0;
+    for (const auto& h : settled.handlers) {
+        if (h.clsid == kStuckHandler)
+            stuck_unfinished = !(h.flags & pulse::ipc::CTX_HANDLER_DONE) && h.elapsed_ms >= 4000;
+        listed_rows += h.rows;
+    }
+    std::printf("  %zu handler states, %zu rows listed\n", settled.handlers.size(), listed_rows);
+    Check(stuck_unfinished && listed_rows == settled.items,
+          "the answer names the hung handler as unfinished and accounts for every row");
     Check(host && WaitForSingleObject(host, 0) == WAIT_TIMEOUT,
           "the host keeps serving while the menu is open");
 

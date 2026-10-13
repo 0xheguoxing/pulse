@@ -978,9 +978,9 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             s->ops.SetShellMenuCallback([notify = ServiceWindow(*s)](uint32_t token,
                                                std::vector<ops::ShellMenuItem> items,
                                                bool partial,
-                                               std::vector<std::wstring> slow_clsids) {
+                                               ops::ShellMenuAnswer answer) {
                 auto* payload = new ShellCtxItemsPayload{
-                    std::move(items), partial, std::move(slow_clsids) };
+                    std::move(items), partial, std::move(answer) };
                 if (!PostMessageW(notify, WM_SHELLCTX_ITEMS, token,
                                   reinterpret_cast<LPARAM>(payload)))
                     delete payload;
@@ -2002,7 +2002,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         const uint32_t token = static_cast<uint32_t>(wParam);
         if (s && payload) {
             const auto completed = s->context_menu.CompleteComQuery(
-                token, std::move(payload->items), GetTickCount64(), payload->partial);
+                token, std::move(payload->items), GetTickCount64(), payload->partial,
+                std::move(payload->answer.handlers));
             if (completed.accepted) {
                 bool prefs_changed = false;
                 if (!completed.partial) {
@@ -2010,7 +2011,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     // at its stuck limit (collect_hung); three such hangs
                     // disable it. Slow-but-finished handlers are not reported:
                     // the menu streams rows as they arrive and never waits.
-                    for (const auto& clsid : payload->slow_clsids) {
+                    for (const auto& clsid : payload->answer.slow_clsids) {
                         // SendTo is exempt from the auto-disable (#77): it
                         // serializes the whole default menu.
                         if (ipc::IsSendToHandlerClsid(clsid)) continue;
@@ -2020,7 +2021,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     }
                 }
                 if (prefs_changed) s->ctxMenuPrefs.Save();
-                if (!completed.partial) SaveCtxLayoutIfDirty(*s);
+                // Partial answers with handler states update the layout too.
+                SaveCtxLayoutIfDirty(*s);
                 RefreshOpenCtxMenu(*s);
             } else if (!payload->partial) {
                 // Late answers of closed menus still feed the layout.

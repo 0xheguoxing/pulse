@@ -36,6 +36,12 @@ struct CtxMenuItem {
     wchar_t mnemonic = 0;         // access key ("&X" of the raw label), 0 = none
 };
 
+// The optional tail of an RSP_CTX_ITEMS payload.
+struct CtxItemsExtra {
+    std::vector<std::wstring> slow_clsids;
+    std::vector<CtxHandlerStatus> handlers;  // menu order; empty from an older host
+};
+
 class ShellClient {
 public:
     struct Callbacks {
@@ -44,7 +50,7 @@ public:
         std::function<void(uint32_t id, uint32_t hr, bool cancelled, std::wstring error)> done;
         // RSP_CTX_ITEMS for a REQ_CTX_QUERY; id is the query id (== session id).
         std::function<void(uint32_t id, std::vector<CtxMenuItem> items, bool partial,
-                           std::vector<std::wstring> slow_clsids)> ctx_items;
+                           CtxItemsExtra extra)> ctx_items;
     };
 
     // Invoked once after ID allocation, before any send or completion callback.

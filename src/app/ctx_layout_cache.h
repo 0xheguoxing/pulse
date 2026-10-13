@@ -12,6 +12,11 @@
 // load. Parsing and templating are pure; only the *File / Fingerprint
 // functions touch the disk or the registry and they never run on the UI
 // thread.
+//
+// C4b: rows are grouped by the handler (CLSID) that gave them. An answer
+// that carries handler states replaces the rows of the handlers that
+// finished and keeps the rows of the ones still running, so partial answers
+// update the layout too, and each key remembers how long each handler took.
 
 #include "../ops/ops_manager.h"
 
@@ -51,15 +56,43 @@ std::wstring ExpandCtxLabel(const std::wstring& text, const CtxNames& names);
 std::wstring CtxLayoutBaseKey(const std::wstring& key);
 
 using CtxLayoutRows = std::vector<ops::ShellMenuItem>;
-using CtxLayoutMap = std::unordered_map<std::wstring, CtxLayoutRows>;
+
+// Last known state of one handler under one key, in menu order.
+struct CtxHandlerStat {
+    std::wstring clsid;
+    uint32_t elapsed_ms = 0;  // last finished query; for one never seen finishing, time waited
+    uint32_t rows = 0;        // rows it gave when it last finished
+    bool done = false;        // it finished at least once: its rows are known
+};
+using CtxHandlerStats = std::vector<CtxHandlerStat>;
+
+struct CtxLayoutEntry {
+    CtxLayoutRows rows;
+    CtxHandlerStats handlers;
+};
+using CtxLayoutMap = std::unordered_map<std::wstring, CtxLayoutEntry>;
 using CtxFingerprintFn = std::function<uint64_t(const std::wstring& base_key)>;
 
-inline constexpr uint32_t kCtxLayoutVersion = 1;
+// Shard merge: walks `handlers` (menu order) and takes each finished
+// handler's rows from `live` and each unfinished one's from `previous`. Rows
+// of handlers the list does not name are dropped from `previous` (no longer
+// queried) and kept from `live`. With every handler finished the result is
+// `live` itself.
+CtxLayoutRows MergeCtxHandlerShards(const CtxLayoutRows& previous, const CtxLayoutRows& live,
+                                    const std::vector<ops::ShellMenuHandlerStatus>& handlers);
+// Updates `stats` to the handler list of an answer. True when something worth
+// saving changed: the handler set, a finished handler's row count, or its time
+// moving to another bucket (<50, <100, <200, <500, <1000, <2000 ms, more).
+bool MergeCtxHandlerStats(CtxHandlerStats& stats,
+                          const std::vector<ops::ShellMenuHandlerStatus>& handlers);
+
+inline constexpr uint32_t kCtxLayoutVersion = 2;
 inline constexpr size_t kCtxLayoutMaxKeys = 512;
 
 struct CtxLayoutRecord {
     uint64_t fingerprint = 0;
     CtxLayoutRows rows;
+    CtxHandlerStats handlers;
 };
 using CtxLayoutRecords = std::unordered_map<std::wstring, CtxLayoutRecord>;
 

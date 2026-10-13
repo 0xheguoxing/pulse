@@ -448,8 +448,10 @@ void ShellClient::ReaderThread() {
                     it.mnemonic = UnpackCtxItemMnemonic(flags);
                     if (ok) items.push_back(std::move(it));
                 }
-                std::vector<std::wstring> slow_clsids;
-                if (ok) r.TryStringArray(slow_clsids);
+                CtxItemsExtra extra;
+                if (ok && r.TryStringArray(extra.slow_clsids) &&
+                    !TryCtxHandlerStatuses(r, extra.handlers))
+                    extra.handlers.clear();
                 if (ok) {
                     bool pending = false;
                     {
@@ -462,7 +464,7 @@ void ShellClient::ReaderThread() {
                     }
                     if (pending && cb_.ctx_items)
                         cb_.ctx_items(h.request_id, std::move(items), partial,
-                                      std::move(slow_clsids));
+                                      std::move(extra));
                 }
             } else if (h.type == RSP_PONG) {
                 std::lock_guard<std::mutex> lock(pending_mutex_);

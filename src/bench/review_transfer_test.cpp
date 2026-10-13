@@ -856,7 +856,7 @@ int RunReviewRoutingTests() {
     {
         RoutingFixture f;
         unsigned callbacks = 0; uint32_t received_token = 0;
-        f.manager.SetShellMenuCallback([&](uint32_t token, std::vector<ops::ShellMenuItem> items, bool partial, std::vector<std::wstring>) {
+        f.manager.SetShellMenuCallback([&](uint32_t token, std::vector<ops::ShellMenuItem> items, bool partial, ops::ShellMenuAnswer) {
             if (!partial && items.size() == 1) { ++callbacks; received_token = token; }
         });
         ipc::review_submit = [&](ipc::ShellClient& client, uint32_t type, uint32_t id) {
@@ -878,7 +878,7 @@ int RunReviewRoutingTests() {
     {
         RoutingFixture f;
         unsigned terminal = 0; uint32_t token_seen = 0;
-        f.manager.SetShellMenuCallback([&](uint32_t token, std::vector<ops::ShellMenuItem> items, bool partial, std::vector<std::wstring>) {
+        f.manager.SetShellMenuCallback([&](uint32_t token, std::vector<ops::ShellMenuItem> items, bool partial, ops::ShellMenuAnswer) {
             if (!partial && items.empty()) { ++terminal; token_seen = token; }
         });
         ipc::review_submit = [&](ipc::ShellClient& client, uint32_t, uint32_t id) {
@@ -891,7 +891,7 @@ int RunReviewRoutingTests() {
     {
         RoutingFixture f;
         unsigned terminal = 0;
-        f.manager.SetShellMenuCallback([&](uint32_t token, std::vector<ops::ShellMenuItem> items, bool partial, std::vector<std::wstring>) {
+        f.manager.SetShellMenuCallback([&](uint32_t token, std::vector<ops::ShellMenuItem> items, bool partial, ops::ShellMenuAnswer) {
             if (token == 103 && !partial && items.empty()) ++terminal;
         });
         C::NotRunning(f.client);
@@ -963,7 +963,7 @@ int RunReviewRoutingTests() {
     {
         RoutingFixture f;
         unsigned partials = 0, finals = 0; uint32_t session = 0;
-        f.manager.SetShellMenuCallback([&](uint32_t token, std::vector<ops::ShellMenuItem>, bool partial, std::vector<std::wstring>) {
+        f.manager.SetShellMenuCallback([&](uint32_t token, std::vector<ops::ShellMenuItem>, bool partial, ops::ShellMenuAnswer) {
             if (token == 201) { if (partial) ++partials; else ++finals; }
         });
         ipc::review_submit = [&](ipc::ShellClient& client, uint32_t, uint32_t id) {

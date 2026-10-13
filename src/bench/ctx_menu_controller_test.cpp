@@ -1,7 +1,8 @@
 // ctx_menu_controller_test.cpp - ContextMenuController bookkeeping: the
 // per-menu timing record (ctx_menu_timing.h), static-verb re-reads, rows
 // painted from the cache while the live answer arrives in parts, and the
-// persistent layout with templated names (ctx_layout_cache.h).
+// persistent layout with templated names (ctx_layout_cache.h), and the
+// per-handler shard merge driven by the host's handler states (C4b).
 #include "../app/context_menu_controller.h"
 #include "../app/ctx_layout_cache.h"
 #include "../app/ctx_menu_timing.h"
@@ -45,6 +46,22 @@ const pulse::ops::ShellMenuItem* RowNamed(const std::vector<pulse::ops::ShellMen
     for (const auto& item : items)
         if (item.text == text) return &item;
     return nullptr;
+}
+
+pulse::ops::ShellMenuHandlerStatus Handler(const wchar_t* clsid, bool done, uint32_t ms,
+                                           uint32_t rows = 0) {
+    pulse::ops::ShellMenuHandlerStatus status;
+    status.clsid = clsid;
+    status.done = done;
+    status.elapsed_ms = ms;
+    status.rows = rows;
+    return status;
+}
+
+std::wstring Texts(const std::vector<pulse::ops::ShellMenuItem>& items) {
+    std::wstring out;
+    for (const auto& item : items) out += item.text + L"|";
+    return out;
 }
 
 bool Predicted(uint32_t id) {
@@ -305,7 +322,7 @@ int wmain() {
         controller.CompleteComQuery(token, { Row(5, L"{B}", L"scan", L"Scan") }, 300, false);
         const auto snapshot = controller.ComLayoutSnapshot();
         Check(snapshot.size() == 2 && snapshot.contains(L".dwg") && snapshot.contains(L".dwg|m") &&
-                  snapshot.at(L".dwg")[1].text == std::wstring(L"to ") + app::kCtxNameStem + L".zip",
+                  snapshot.at(L".dwg").rows[1].text == std::wstring(L"to ") + app::kCtxNameStem + L".zip",
               "the snapshot holds both keys with templated labels");
 
         app::ContextMenuController loaded;
@@ -317,7 +334,7 @@ int wmain() {
         loaded.StartQuery(prefs, nullptr, { L"C:\\f\\e.zip" }, false, L".zip", false, {}, {});
         loaded.CompleteComQuery(loaded_token, { Row(2, L"{Z}", L"", L"Fresh") }, 50, false);
         auto from_disk = snapshot;
-        from_disk[L".zip"] = { Row(1, L"{Z}", L"", L"Stale") };
+        from_disk[L".zip"] = { { Row(1, L"{Z}", L"", L"Stale") } };
         loaded.StartQuery(prefs, nullptr, { L"C:\\f\\g.dwg" }, false, L".dwg", false, {}, {});
         Check(!loaded.com_predicted(), "nothing to paint before the layout is read");
         Check(loaded.MergeComLayout(from_disk) == 2 && loaded.com_layout_loaded(),
@@ -372,19 +389,105 @@ int wmain() {
               "an answer read before the flush is not stored");
     }
     {
+        // C4b shard merge, pure: finished handlers take their live rows,
+        // unfinished ones keep the previous rows, menu order is the host's.
+        const std::vector<ops::ShellMenuItem> previous = {
+            Row(1, L"{A}", L"", L"Zip", true), Row(2, L"{A}", L"", L"to a.zip", false, true),
+            Row(3, L"{B}", L"scan", L"Scan"), Row(4, L"{C}", L"", L"Gone soon"),
+            Row(5, L"{X}", L"", L"Not queried any more") };
+        const std::vector<ops::ShellMenuItem> live = {
+            Row(11, L"{A}", L"", L"Zip", true), Row(12, L"{A}", L"", L"to b.zip", false, true),
+            Row(13, L"{A}", L"", L"to b.7z", false, true), Row(14, L"{D}", L"", L"New") };
+        const auto merged = app::MergeCtxHandlerShards(previous, live,
+            { Handler(L"{A}", true, 20, 3), Handler(L"{B}", false, 80), Handler(L"{C}", true, 30),
+              Handler(L"{D}", true, 40, 1) });
+        Check(Texts(merged) == L"Zip|to b.zip|to b.7z|Scan|New|" && merged[3].id == 3 &&
+                  merged[0].id == 11,
+              "finished handlers bring their live rows, a running one keeps its rows in place");
+        const auto all_done = app::MergeCtxHandlerShards(previous, live,
+            { Handler(L"{A}", true, 20, 3), Handler(L"{B}", true, 90), Handler(L"{D}", true, 40, 1) });
+        Check(Texts(all_done) == Texts(live), "with every handler finished the merge is the live answer");
+        const auto lower = app::MergeCtxHandlerShards(previous, { Row(21, L"{Q}", L"", L"Unlisted") },
+            { Handler(L"{b}", false, 80) });
+        Check(Texts(lower) == L"Scan|Unlisted|", "CLSIDs match regardless of case; unlisted live rows stay");
+
+        app::CtxHandlerStats stats;
+        Check(app::MergeCtxHandlerStats(stats, { Handler(L"{A}", true, 30, 2), Handler(L"{B}", false, 80) }) &&
+                  stats.size() == 2 && stats[0].done && stats[0].rows == 2 && !stats[1].done &&
+                  stats[1].elapsed_ms == 80,
+              "handler states are recorded in menu order");
+        Check(!app::MergeCtxHandlerStats(stats, { Handler(L"{A}", true, 45, 2), Handler(L"{B}", false, 90) }) &&
+                  stats[0].elapsed_ms == 45,
+              "a time inside the same bucket is kept but does not ask for a save");
+        Check(app::MergeCtxHandlerStats(stats, { Handler(L"{A}", true, 130, 2), Handler(L"{B}", false, 95) }),
+              "a time in another bucket asks for a save");
+        Check(app::MergeCtxHandlerStats(stats, { Handler(L"{A}", false, 60), Handler(L"{B}", true, 700, 1) }) &&
+                  stats[0].done && stats[0].elapsed_ms == 130 && stats[0].rows == 2 &&
+                  stats[1].done && stats[1].rows == 1,
+              "a handler still running keeps what it gave last time");
+        Check(app::MergeCtxHandlerStats(stats, { Handler(L"{B}", true, 700, 1) }) && stats.size() == 1,
+              "a handler no longer queried is forgotten");
+    }
+    {
+        // C4b in the controller: partial answers with handler states.
+        app::ContextMenuController controller;
+        uint32_t token = 110;
+        app::ContextMenuController::ShellOperations operations;
+        operations.query = [&](std::vector<std::wstring>, HWND, bool, bool,
+                               std::vector<std::wstring>) { return ++token; };
+        controller.SetShellOperations(std::move(operations));
+        controller.StartQuery(prefs, nullptr, { L"C:\\f\\a.dwg" }, false, L".dwg", false, {}, {});
+        controller.CompleteComQuery(token, { Row(3, L"{A}", L"", L"Zip a.zip"), Row(9, L"{B}", L"scan", L"Scan") },
+                                    100, false,
+                                    { Handler(L"{A}", true, 30, 1), Handler(L"{B}", true, 400, 1) });
+        controller.TakeComLayoutDirty();
+        controller.StartQuery(prefs, nullptr, { L"C:\\f\\b.dwg" }, false, L".dwg", false, {}, {});
+        const auto partial = controller.CompleteComQuery(
+            token, { Row(30, L"{A}", L"", L"Zip b.zip"), Row(31, L"{A}", L"", L"Unzip b.zip") }, 150, true,
+            { Handler(L"{A}", true, 25, 2), Handler(L"{B}", false, 80) });
+        const auto& shown = controller.com_items();
+        Check(partial.accepted && Texts(shown) == L"Zip b.zip|Unzip b.zip|Scan|" && shown[1].id == 31 &&
+                  Predicted(shown[2].id),
+              "a partial answer shows the finished handler's new rows and keeps the running one's");
+        auto snapshot = controller.ComLayoutSnapshot();
+        Check(controller.TakeComLayoutDirty() && snapshot.at(L".dwg").rows.size() == 3,
+              "a partial answer with handler states updates the stored layout");
+        controller.CompleteComQuery(token, { Row(30, L"{A}", L"", L"Zip b.zip"),
+                                             Row(31, L"{A}", L"", L"Unzip b.zip") }, 5100, false,
+                                    { Handler(L"{A}", true, 25, 2), Handler(L"{B}", false, 5000) });
+        snapshot = controller.ComLayoutSnapshot();
+        const auto* stats = controller.ComHandlerStats(L".dwg");
+        Check(controller.com_items().size() == 2 && snapshot.at(L".dwg").rows.size() == 3 &&
+                  snapshot.at(L".dwg").rows[2].text == L"Scan",
+              "a stuck handler leaves the menu on screen but keeps its rows for the next one");
+        Check(stats && stats->size() == 2 && (*stats)[1].done && (*stats)[1].elapsed_ms == 400 &&
+                  (*stats)[0].elapsed_ms == 25,
+              "per-handler times are kept with the layout");
+        controller.StartQuery(prefs, nullptr, { L"C:\\f\\c.dwg" }, false, L".dwg", false, {}, {});
+        Check(Texts(controller.com_items()) == L"Zip c.zip|Unzip c.zip|Scan|",
+              "the next menu paints every handler's last rows with its own name");
+        controller.CompleteComQuery(token, { Row(41, L"{A}", L"", L"Zip c.zip") }, 160, true);
+        Check(Texts(controller.com_items()) == L"Zip c.zip|Unzip c.zip|Scan|",
+              "an answer without handler states keeps the old overlay rules");
+    }
+    {
         // ctx_layout.bin: bytes, build stamp, fingerprints, abandoned writes.
         app::CtxLayoutRecords records;
         records[L".dwg"] = { 11, { Row(4, L"{A}", L"", (std::wstring(L"to ") + app::kCtxNameStem).c_str()) } };
         records[L".dwg"].rows[0].mnemonic = L'Z';
         records[L".dwg"].rows[0].child = true;
+        records[L".dwg"].handlers = { { L"{A}", 75, 2, true }, { L"{S}", 5000, 0, false } };
         records[L":bg"] = { 12, {} };
         const auto bytes = app::SerializeCtxLayout(records, L"1.0+test");
         app::CtxLayoutRecords parsed;
         Check(app::ParseCtxLayout(bytes.data(), bytes.size(), L"1.0+test", parsed) &&
                   parsed.size() == 2 && parsed[L".dwg"].fingerprint == 11 &&
                   parsed[L".dwg"].rows[0].text == records[L".dwg"].rows[0].text &&
-                  parsed[L".dwg"].rows[0].mnemonic == L'Z' && parsed[L".dwg"].rows[0].child,
-              "the layout survives a round trip");
+                  parsed[L".dwg"].rows[0].mnemonic == L'Z' && parsed[L".dwg"].rows[0].child &&
+                  parsed[L".dwg"].handlers.size() == 2 && parsed[L".dwg"].handlers[0].rows == 2 &&
+                  parsed[L".dwg"].handlers[1].clsid == L"{S}" && !parsed[L".dwg"].handlers[1].done &&
+                  parsed[L".dwg"].handlers[1].elapsed_ms == 5000,
+              "the layout survives a round trip with its handler times");
         Check(!app::ParseCtxLayout(bytes.data(), bytes.size(), L"1.1+other", parsed) &&
                   parsed.empty(),
               "a file written by another build is ignored");
@@ -397,20 +500,22 @@ int wmain() {
         path = path.substr(0, path.find_last_of(L'\\') + 1) + L"ctx_layout_test.bin";
         DeleteFileW(path.c_str());
         app::CtxLayoutMap layout;
-        layout[L".dwg"] = { Row(4, L"{A}", L"", L"one") };
-        layout[L".dwg|m"] = { Row(5, L"{A}", L"", L"two") };
-        layout[L":bg"] = { Row(6, L"{B}", L"", L"three") };
+        layout[L".dwg"] = { { Row(4, L"{A}", L"", L"one") }, { { L"{A}", 140, 1, true } } };
+        layout[L".dwg|m"] = { { Row(5, L"{A}", L"", L"two") } };
+        layout[L":bg"] = { { Row(6, L"{B}", L"", L"three") } };
         auto written = [](const std::wstring& key) -> uint64_t { return key == L":bg" ? 2 : 1; };
         auto changed = [](const std::wstring& key) -> uint64_t { return key == L":bg" ? 3 : 1; };
         Check(app::SaveCtxLayoutFile(path, L"b", layout, written), "the layout is written");
         app::CtxLayoutMap back;
-        Check(app::LoadCtxLayoutFile(path, L"b", written, back) && back.size() == 3,
-              "an unchanged registry keeps every key");
+        Check(app::LoadCtxLayoutFile(path, L"b", written, back) && back.size() == 3 &&
+                  back[L".dwg"].handlers.size() == 1 && back[L".dwg"].handlers[0].elapsed_ms == 140 &&
+                  back[L".dwg"].handlers[0].done,
+              "an unchanged registry keeps every key with its handler times");
         Check(app::LoadCtxLayoutFile(path, L"b", changed, back) && back.size() == 2 &&
                   back.contains(L".dwg") && back.contains(L".dwg|m") && !back.contains(L":bg"),
               "a changed fingerprint drops only its keys (both selection sizes)");
         app::CtxLayoutMap newer;
-        newer[L".txt"] = { Row(7, L"{C}", L"", L"four") };
+        newer[L".txt"] = { { Row(7, L"{C}", L"", L"four") } };
         Check(!app::SaveCtxLayoutFile(path, L"b", newer, written, [] { return false; }) &&
                   app::LoadCtxLayoutFile(path, L"b", written, back) && back.size() == 3,
               "an abandoned write leaves the file as it was");
