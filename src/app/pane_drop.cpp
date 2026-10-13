@@ -147,6 +147,18 @@ void Combinations(size_t total, size_t count, size_t from, std::vector<size_t>& 
         pick.pop_back();
     }
 }
+
+// The edge of `pane` nearest to `pt`, as a share of its width (left, right)
+// or height (top, bottom): the diagonals cut the pane into four sides (M7j).
+ContentDrop NearestPaneEdge(const D2D1_RECT_F& pane, D2D1_POINT_2F pt) {
+    const float w = (std::max)(1.0f, pane.right - pane.left), h = (std::max)(1.0f, pane.bottom - pane.top);
+    const float left = (pt.x - pane.left) / w, right = (pane.right - pt.x) / w;
+    const float top = (pt.y - pane.top) / h, bottom = (pane.bottom - pt.y) / h;
+    const float nearest = (std::min)({left, right, top, bottom});
+    if (nearest == left) return ContentDrop::Left;
+    if (nearest == right) return ContentDrop::Right;
+    return nearest == top ? ContentDrop::Top : ContentDrop::Bottom;
+}
 }  // namespace
 
 ContentDrop ContentDropZone(const D2D1_RECT_F& content, POINT pt, float band) {
@@ -234,8 +246,9 @@ D2D1_RECT_F PaneDropRect(const LayoutTab& tab, ContentDrop edge, const D2D1_RECT
 }
 
 PanePlacement AimPaneDrop(const LayoutTab& tab, size_t added, const D2D1_RECT_F& content, float scale, POINT pt,
-                          float band, ContentDrop* side) {
-    const bool outside = ContentDropZone(content, pt, band) == ContentDrop::None;
+                          ContentDrop* side) {
+    const float x = static_cast<float>(pt.x), y = static_cast<float>(pt.y);
+    const bool outside = x < content.left || x >= content.right || y < content.top || y >= content.bottom;
     if (side) *side = outside ? ContentDrop::None : ContentDrop::Center;
     const std::vector<Pane*> visible = tab.VisiblePanes();
     const size_t total = visible.size() + added;
@@ -250,9 +263,10 @@ PanePlacement AimPaneDrop(const LayoutTab& tab, size_t added, const D2D1_RECT_F&
     const D2D1_RECT_F pane = under->second;
     const D2D1_POINT_2F nearest{(std::clamp)(static_cast<float>(pt.x), pane.left, pane.right - 1.0f),
                                 (std::clamp)(static_cast<float>(pt.y), pane.top, pane.bottom - 1.0f)};
-    const ContentDrop edge = ContentDropZone(pane, POINT{std::lround(nearest.x), std::lround(nearest.y)}, band);
+    // No middle that would be a new tab: a cursor on a pane means that pane
+    // (M7j; a new tab is a drop on the strip).
+    const ContentDrop edge = NearestPaneEdge(pane, nearest);
     if (side) *side = edge;
-    if (!IsEdge(edge)) return {};
     const D2D1_RECT_F want = HalfAt(pane, edge);
     const float want_area = (std::max)(1.0f, Area(want));
     const float diagonal = (std::max)(1.0f, std::hypot(content.right - content.left, content.bottom - content.top));

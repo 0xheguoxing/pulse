@@ -63,13 +63,13 @@ struct PanePlacement {
 PanePlacement EdgePlacement(const LayoutTab& tab, size_t added, ContentDrop edge);
 // Where letting go at `pt` (client px, `content` as PaneDropRects) puts
 // `added` panes: the visible pane under the cursor splits at the edge of it
-// the cursor is near (within `band` of that pane, as ContentDropZone), and
-// of the layouts with room for all of them the one whose new panes best cover
-// that half of the pane wins, moving the other panes the least.
-// `side` gets the pane edge (Center in the middle of a pane, None outside
-// `content`). No split (Single) in the middle of a pane or without room.
+// the cursor is nearest (its diagonals cut it into four sides, so anywhere on
+// a pane aims at one, M7j), and of the layouts with room for all of them the
+// one whose new panes best cover that half of the pane wins, moving the other
+// panes the least. `side` gets the pane edge (None outside `content`, Center
+// without room). No split (Single) outside `content` or without room.
 PanePlacement AimPaneDrop(const LayoutTab& tab, size_t added, const D2D1_RECT_F& content, float scale, POINT pt,
-                          float band, ContentDrop* side = nullptr);
+                          ContentDrop* side = nullptr);
 // Where the added panes of `placement` would be in `content`, in their order;
 // just `content` when it does not split.
 std::vector<D2D1_RECT_F> PlacementRects(const LayoutTab& tab, const PanePlacement& placement,

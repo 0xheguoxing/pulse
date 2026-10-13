@@ -39,6 +39,8 @@ Grab g_grab;
 // (windows are looked up by handle: one may close during the loop).
 HWND g_moving = nullptr;
 AppState* g_moving_state = nullptr;
+// The window the dragged tab or pane came from (none for a window's only tab).
+HWND g_source = nullptr;
 // zone None: on the tab strip before `index`. Center: a new tab at `index`
 // (after the active one). An edge: one more pane of the active tab (M6d).
 // Why a content drop is a new tab rather than a split (the hint says so, M7h).
@@ -57,9 +59,9 @@ struct Drop {
 };
 Drop g_drop;
 // A drag out of a maximized window is over its own content all the way, so
-// content drops only arm once the cursor rests on one window's content; a
-// quick drag still makes a window (M6d). Short enough to feel immediate when
-// aiming at a pane (M7h: 400 -> 150 ms, the prototype has no wait at all).
+// on the window the tab came from content drops only arm once the cursor
+// rests there; a quick drag still makes a window (M6d; M7h: 400 -> 150 ms).
+// Any other window shows its drop at once, as the prototype (M7j).
 constexpr UINT kContentDropDwellMs = 150;
 constexpr UINT_PTR kContentDropTimer = 0x4D36;
 constexpr float kContentDropBand = 0.25f;
@@ -281,6 +283,12 @@ void ShowGhost(AppState& moving, const Drop& drop, POINT cursor) {
     InvalidateRect(target->hwnd, nullptr, FALSE);
 }
 
+// Paints the windows showing the drop and the dragged tab now.
+void PaintDropNow() {
+    if (g_drop.window) UpdateWindow(g_drop.window);
+    if (g_ghost && g_ghost != g_drop.window) UpdateWindow(g_ghost);
+}
+
 void HideGhost(AppState& any) {
     if (AppState* old = WindowOf(any, g_ghost)) {
         old->dragGhost = ui::DragGhostView{};
@@ -297,9 +305,9 @@ bool Cloaked(HWND hwnd) {
 }
 
 // The content-area drop at `client` in `target` for the only tab of
-// `moving`: its panes split the pane under the cursor at the edge it is near
-// (M7i), where the layout has room for them (up to four in all, M7h), else a
-// tab.
+// `moving`: its panes split the pane under the cursor at the side it is
+// nearest (M7i, anywhere on the pane M7j), where the layout has room for them
+// (up to four in all, M7h), else a tab.
 Drop ContentDropAt(AppState& moving, AppState& target, POINT client, float width) {
     const D2D1_RECT_F content =
         target.renderer.ContentRect(width, static_cast<float>(target.compositor.Height()));
@@ -317,8 +325,8 @@ Drop ContentDropAt(AppState& moving, AppState& target, POINT client, float width
     else if (!app::HasRoomForPanes(*active, *incoming)) drop.no_split = NoSplit::Full;
     if (drop.no_split != NoSplit::None) return drop;
     app::ContentDrop side = app::ContentDrop::Center;
-    const app::PanePlacement placement = app::AimPaneDrop(*active, app::DropPaneCount(*incoming), content, target.scale,
-                                                          client, kContentDropBand, &side);
+    const app::PanePlacement placement =
+        app::AimPaneDrop(*active, app::DropPaneCount(*incoming), content, target.scale, client, &side);
     if (!placement.Splits() || !app::CanPlacePanes(*active, *incoming, placement)) return drop;
     drop.zone = side;
     drop.placement = placement;
@@ -328,7 +336,8 @@ Drop ContentDropAt(AppState& moving, AppState& target, POINT client, float width
 
 // The drop spot under `cursor` (screen px) in the topmost window below
 // `moving`, when that window is another Pulse window on the same core: its
-// tab strip, or (`content`, after a rest) its content area.
+// tab strip, or (`content`) its content area, on the window the tab came from
+// after a rest.
 Drop FindDrop(AppState& moving, POINT cursor, bool content) {
     for (HWND below = GetWindow(moving.hwnd, GW_HWNDNEXT); below; below = GetWindow(below, GW_HWNDNEXT)) {
         if (!IsWindowVisible(below) || IsIconic(below) || Cloaked(below)) continue;
@@ -369,6 +378,10 @@ Drop FindDrop(AppState& moving, POINT cursor, bool content) {
         if (!drop.window) {
             ForgetDwell();
             return over;  // on its toolbar, sidebar or status bar: a new window
+        }
+        if (below != g_source) {
+            ForgetDwell();
+            return drop;
         }
         if (ContentDropArmed(below, cursor)) return drop;
         over.resting = true;
@@ -636,8 +649,15 @@ void RunDetachedTabMove(AppState& s, HWND from, size_t index) {
     g_escape_hook = SetWindowsHookExW(WH_KEYBOARD, EscapeHook, nullptr, GetCurrentThreadId());
     g_moving = hwnd;
     g_moving_state = &s;
+    g_source = from;
     g_drop = Drop{};
     g_dwell = Dwell{};
+    // The window takes a moment to open while the hand keeps going, so the
+    // cursor may already rest on a drop spot: look once now. Drops are only
+    // tracked on WM_MOVING, and until the first mouse move the loop below
+    // dispatches nothing, not even WM_PAINT, so paint the drop right away.
+    TrackTabDrop(s);
+    PaintDropNow();
     if (from) {
         SendMessageW(hwnd, WM_SYSCOMMAND, SC_MOVE | HTCAPTION, MAKELPARAM(cursor.x, cursor.y));
     } else {
@@ -651,6 +671,7 @@ void RunDetachedTabMove(AppState& s, HWND from, size_t index) {
     g_dwell = Dwell{};
     g_moving = nullptr;
     g_moving_state = nullptr;
+    g_source = nullptr;
     const HWND drop_window = g_drop.window;
     const size_t drop_index = g_drop.index;
     const app::ContentDrop drop_zone = g_drop.zone;
