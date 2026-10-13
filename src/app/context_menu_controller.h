@@ -51,10 +51,16 @@ public:
         const std::function<void()>& refresh_folder);
 
     bool RequestStaticPrefetch(const std::wstring& extension);
+    // A cached type is read again at most every kStaticRevalidateMs: verbs a
+    // ProgID defines itself are outside the registry watch. True = enumerate
+    // now and pass the result to CompleteStaticVerbs as usual.
+    static constexpr uint64_t kStaticRevalidateMs = 5000;
+    bool RequestStaticRevalidate(const std::wstring& extension, uint64_t now);
     void MergeStaticCache(
         std::unordered_map<std::wstring, std::vector<StaticVerb>> entries);
     // `generation` is cache_generation() when the enumeration started; results
-    // that predate InvalidateCaches() are dropped.
+    // that predate InvalidateCaches() are dropped. True when the current menu's
+    // rows changed (a re-read that found the same verbs changes nothing).
     bool CompleteStaticVerbs(const std::wstring& extension,
                              std::vector<StaticVerb> verbs, uint32_t generation);
     void InvalidateCaches();
@@ -114,6 +120,7 @@ private:
     std::unordered_set<std::wstring> static_seeded_;
     std::unordered_map<std::wstring, std::vector<ops::ShellMenuItem>> com_cache_;
     std::unordered_set<std::wstring> static_pending_;
+    std::unordered_map<std::wstring, uint64_t> static_read_at_; // last enumeration request
     uint32_t cache_generation_ = 0;  // bumped by InvalidateCaches()
     uint64_t query_started_at_ = 0;
     CtxMenuTiming timing_;

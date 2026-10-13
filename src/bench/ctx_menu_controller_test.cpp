@@ -1,5 +1,5 @@
 // ctx_menu_controller_test.cpp - ContextMenuController bookkeeping: the
-// per-menu timing record (ctx_menu_timing.h).
+// per-menu timing record (ctx_menu_timing.h) and static-verb re-reads.
 #include "../app/context_menu_controller.h"
 #include "../app/ctx_menu_timing.h"
 
@@ -93,6 +93,42 @@ int wmain() {
         app::CtxMenuTiming timing;
         Check(controller.TakeTiming(false, timing) && timing.live_after_open_ms == -1,
               "a partial snapshot is not the final answer");
+    }
+    {
+        // Re-reading a cached type: throttled, and a re-read that finds the same
+        // verbs must not touch an open menu.
+        app::ContextMenuController controller;
+        start(controller);
+        const app::StaticVerb edit{ L"edit", L"Edit", L"", L"", {}, 0 };
+        const app::StaticVerb print{ L"print", L"Print", L"", L"", {}, 0 };
+        Check(!controller.RequestStaticRevalidate(L".dwg", 0),
+              "an uncached type is fetched, not re-read");
+        Check(controller.RequestStaticPrefetch(L".dwg"), "first fetch is requested");
+        Check(!controller.RequestStaticRevalidate(L".dwg", 0), "no re-read while a read runs");
+        Check(controller.CompleteStaticVerbs(L".dwg", { edit }, controller.cache_generation()),
+              "first rows change the menu");
+        Check(!controller.RequestStaticPrefetch(L".dwg"), "a cached type is not fetched again");
+        Check(controller.RequestStaticRevalidate(L".dwg", 10000), "a cached type is re-read");
+        Check(!controller.CompleteStaticVerbs(L".dwg", { edit }, controller.cache_generation()),
+              "a re-read with the same verbs changes nothing");
+        Check(!controller.RequestStaticRevalidate(
+                  L".dwg", 10000 + app::ContextMenuController::kStaticRevalidateMs - 1),
+              "re-reads are throttled");
+        Check(controller.RequestStaticRevalidate(
+                  L".dwg", 10000 + app::ContextMenuController::kStaticRevalidateMs),
+              "the next re-read is allowed after the interval");
+        Check(controller.CompleteStaticVerbs(L".dwg", { edit, print },
+                                             controller.cache_generation()) &&
+                  controller.HasCachedStaticVerbs(L".dwg"),
+              "a re-read that finds a new verb updates the menu and the cache");
+        const uint32_t before = controller.cache_generation();
+        Check(controller.RequestStaticRevalidate(L".dwg", 100000), "re-read before a flush");
+        controller.InvalidateCaches();
+        Check(!controller.CompleteStaticVerbs(L".dwg", { edit }, before) &&
+                  !controller.HasCachedStaticVerbs(L".dwg"),
+              "a re-read from before a registry flush is dropped");
+        Check(!controller.RequestStaticRevalidate(L".dwg", 100001),
+              "after a flush the type is fetched afresh, not re-read");
     }
     {
         app::CtxMenuTiming timing;

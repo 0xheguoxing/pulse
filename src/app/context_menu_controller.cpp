@@ -12,6 +12,17 @@ namespace pulse::app {
 
 namespace {
 
+bool SameStaticVerbs(const std::vector<StaticVerb>& a, const std::vector<StaticVerb>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (a[i].verb != b[i].verb || a[i].display != b[i].display ||
+            a[i].app_path != b[i].app_path || a[i].command != b[i].command ||
+            a[i].mnemonic != b[i].mnemonic || !SameStaticVerbs(a[i].children, b[i].children))
+            return false;
+    }
+    return true;
+}
+
 ShellMenuEntry ComEntry(const ops::ShellMenuItem& item, int command = 0) {
     ShellMenuEntry entry;
     entry.command = command;
@@ -326,6 +337,17 @@ bool ContextMenuController::RequestStaticPrefetch(const std::wstring& extension)
     return true;
 }
 
+bool ContextMenuController::RequestStaticRevalidate(const std::wstring& extension, uint64_t now) {
+    if (extension.empty() || static_pending_.contains(extension) ||
+        !static_cache_.contains(extension))
+        return false;
+    const auto read = static_read_at_.find(extension);
+    if (read != static_read_at_.end() && now - read->second < kStaticRevalidateMs) return false;
+    static_read_at_[extension] = now;
+    static_pending_.insert(extension);
+    return true;
+}
+
 void ContextMenuController::MergeStaticCache(
     std::unordered_map<std::wstring, std::vector<StaticVerb>> entries) {
     for (auto& [extension, verbs] : entries) {
@@ -349,9 +371,12 @@ bool ContextMenuController::CompleteStaticVerbs(const std::wstring& extension,
     if (generation != cache_generation_) return false;
     static_pending_.erase(extension);
     static_seeded_.erase(extension);
-    static_cache_[extension] = std::move(verbs);
+    auto& cached = static_cache_[extension];
+    const bool same = SameStaticVerbs(cached, verbs);
+    if (!same) cached = std::move(verbs);
     if (extension_ != extension) return false;
-    static_verbs_ = static_cache_[extension];
+    if (same && SameStaticVerbs(static_verbs_, cached)) return false;
+    static_verbs_ = cached;
     return true;
 }
 
@@ -361,6 +386,7 @@ void ContextMenuController::InvalidateCaches() {
     static_seeded_.clear();
     com_cache_.clear();
     static_pending_.clear();
+    static_read_at_.clear();
 }
 
 bool ContextMenuController::SeedComItemsFromCache() {

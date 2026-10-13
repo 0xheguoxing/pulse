@@ -49,7 +49,6 @@ std::wstring CommonExtension(const app::Tab& tab,
 // Registry/COM cache key for the selection: ".ext", ":folder", ":drive", or "".
 std::wstring StaticVerbKey(const app::Tab& tab, const std::vector<int>& indices);
 void PrefetchStaticVerbs(AppState& s, const std::wstring& ext);
-DWORD WINAPI ShellRegistryWatch(LPVOID param);
 void StartShellRegistryWatch(HWND hwnd);
 void StopShellRegistryWatch();
 void SeedShellVerbCache(AppState& s);

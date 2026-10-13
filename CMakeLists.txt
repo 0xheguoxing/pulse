@@ -1526,6 +1526,10 @@ add_executable(pulse_ctx_menu_controller_test src/bench/ctx_menu_controller_test
     src/app/context_menu_prefs.cpp src/app/builtin_menu_items.cpp)
 target_link_libraries(pulse_ctx_menu_controller_test PRIVATE pulse_localization shell32 shlwapi advapi32 ole32)
 
+add_executable(pulse_shell_registry_watch_test src/bench/shell_registry_watch_test.cpp
+    src/app/shell_registry_watch.cpp)
+target_link_libraries(pulse_shell_registry_watch_test PRIVATE advapi32)
+
 add_executable(pulse_places_save_order_test src/bench/places_save_order_test.cpp
     src/app/places.cpp src/app/tag_ads_sync.cpp src/fs/fs_enum.cpp src/ui/view_layout.cpp)
 target_compile_definitions(pulse_places_save_order_test PRIVATE PULSE_PLACES_SAVE_TEST=1)

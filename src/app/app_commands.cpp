@@ -38,7 +38,7 @@
 #include "resource.h"
 #include "../ops/clipboard.h"
 #include "../ipc/ctx_menu_util.h"
-#include "shell_registry_debounce.h"
+#include "shell_registry_watch.h"
 #include "search_refresh_log.h"
 #include <windows.h>
 #include <windowsx.h>
@@ -60,8 +60,7 @@
 using namespace pulse;
 
 namespace pulse {
-HANDLE g_shell_watch_stop = nullptr;
-HANDLE g_shell_watch_thread = nullptr;
+app::ShellRegistryWatcher g_shell_watcher;
 std::atomic<uint32_t> g_shell_seed_generation{0};
 
 namespace {
@@ -1134,7 +1133,11 @@ std::wstring StaticVerbKey(const app::Tab& tab, const std::vector<int>& indices)
 // Registry static verbs are read off the UI thread and cached per extension;
 // the reader posts WM_SHELL_VERBS back when done.
 void PrefetchStaticVerbs(AppState& s, const std::wstring& ext) {
-    if (!s.context_menu.RequestStaticPrefetch(ext)) return;
+    // A cached type is read again now and then: verbs under its own ProgID are
+    // outside the registry watch (ShellMenuWatchKeys).
+    if (!s.context_menu.RequestStaticPrefetch(ext) &&
+        !s.context_menu.RequestStaticRevalidate(ext, GetTickCount64()))
+        return;
     HWND hwnd = ServiceWindow(s);
     const uint32_t cache_generation = s.context_menu.cache_generation();
     std::thread([hwnd, ext, cache_generation] {
@@ -1144,79 +1147,14 @@ void PrefetchStaticVerbs(AppState& s, const std::wstring& ext) {
     }).detach();
 }
 
-DWORD WINAPI ShellRegistryWatch(LPVOID param) {
-    HWND hwnd = static_cast<HWND>(param);
-    HANDLE stop = g_shell_watch_stop;
-    if (!stop) return 0;
-    struct Watch {
-        HKEY key = nullptr;
-        HANDLE event = nullptr;
-    };
-    Watch watches[3]{};
-    auto open = [](HKEY root, const wchar_t* sub, Watch& w) {
-        if (RegOpenKeyExW(root, sub, 0, KEY_NOTIFY, &w.key) != ERROR_SUCCESS) return;
-        w.event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-        if (w.event)
-            RegNotifyChangeKeyValue(w.key, TRUE, REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET,
-                                    w.event, TRUE);
-    };
-    open(HKEY_CURRENT_USER, L"Software\\Classes", watches[0]);
-    open(HKEY_LOCAL_MACHINE, L"Software\\Classes", watches[1]);
-    open(HKEY_CURRENT_USER,
-         L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts", watches[2]);
-    HANDLE wait[4]{ stop, nullptr, nullptr, nullptr };
-    int watch_of[4]{ -1, -1, -1, -1 };
-    DWORD count = 1;
-    for (int i = 0; i < 3; ++i) {
-        if (!watches[i].event) continue;
-        watch_of[count] = i;
-        wait[count++] = watches[i].event;
-    }
-    // A registry cleaner fires these thousands of times in a row; flush once
-    // per burst instead of re-seeding the verb cache on every change (#127).
-    app::ShellRegistryDebounce debounce;
-    for (;;) {
-        const DWORD r = WaitForMultipleObjects(count, wait, FALSE,
-                                               debounce.WaitMs(GetTickCount64()));
-        if (r == WAIT_OBJECT_0 || r == WAIT_FAILED || !IsWindow(hwnd)) break;
-        if (r > WAIT_OBJECT_0 && r < WAIT_OBJECT_0 + count) {
-            // Re-arm only the key that fired: the others are still armed, and
-            // re-registering them would stack notifications on the key.
-            const Watch& w = watches[watch_of[r - WAIT_OBJECT_0]];
-            RegNotifyChangeKeyValue(w.key, TRUE, REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET,
-                                    w.event, TRUE);
-            debounce.Note(GetTickCount64());
-        }
-        // Checked after every wake: during a steady stream the events never
-        // let the wait time out, and the max delay must still flush.
-        if (debounce.TakeDue(GetTickCount64()))
-            PostMessageW(hwnd, WM_SHELL_CACHE_INVALIDATE, 0, 0);
-    }
-    for (auto& w : watches) {
-        if (w.event) CloseHandle(w.event);
-        if (w.key) RegCloseKey(w.key);
-    }
-    return 0;
-}
-
 void StartShellRegistryWatch(HWND hwnd) {
-    if (g_shell_watch_thread) return;
-    g_shell_watch_stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    g_shell_watch_thread = CreateThread(nullptr, 0, ShellRegistryWatch, hwnd, 0, nullptr);
+    if (g_shell_watcher.running()) return;
+    g_shell_watcher.Start(app::ShellMenuWatchKeys(), [hwnd] {
+        PostMessageW(hwnd, WM_SHELL_CACHE_INVALIDATE, 0, 0);
+    });
 }
 
-void StopShellRegistryWatch() {
-    if (g_shell_watch_stop) SetEvent(g_shell_watch_stop);
-    if (g_shell_watch_thread) {
-        WaitForSingleObject(g_shell_watch_thread, 2000);
-        CloseHandle(g_shell_watch_thread);
-        g_shell_watch_thread = nullptr;
-    }
-    if (g_shell_watch_stop) {
-        CloseHandle(g_shell_watch_stop);
-        g_shell_watch_stop = nullptr;
-    }
-}
+void StopShellRegistryWatch() { g_shell_watcher.Stop(); }
 
 void SeedShellVerbCache(AppState& s) {
     HWND hwnd = ServiceWindow(s);
