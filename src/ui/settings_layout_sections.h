@@ -32,8 +32,9 @@ inline std::wstring IntegrationHint(const WindowViewModel& vm) {
     if(!vm.settings_integration_enabled) return l10n::Get(I::IntegrationInactiveHint);
     if(IntegrationSelectedCount(vm)==0) return l10n::Get(I::IntegrationNoneHint);
     if(!vm.settings_integration_experimental) return {};
-    // Taking over keeps Pulse in the tray on close by itself
-    // (AppPrefs::KeepsRunningInBackground); only sign-in is left to ask for.
+    // Taking over works only while Pulse runs, and closing the window ends
+    // Pulse unless it keeps running (AppPrefs::KeepsRunningInBackground).
+    if(!vm.settings_keep_running) return l10n::Get(I::IntegrationHintKeep);
     if(!vm.settings_launch_on_startup) return l10n::Get(I::IntegrationHintLaunch);
     return {};
 }

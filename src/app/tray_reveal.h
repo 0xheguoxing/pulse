@@ -1,7 +1,7 @@
 // tray_reveal.h — Closing to the tray and coming back.
 //
-// With "keep running after close", global search or Explorer window takeover
-// on (AppPrefs::KeepsRunningInBackground), the close button only hides the
+// With "keep running after close" on (AppPrefs::KeepsRunningInBackground,
+// the only switch that decides it), the close button only hides the
 // window. When startup is set to open the default location, the
 // window starts over there when it is shown again, as a fresh launch would;
 // with "restore last tabs" it comes back unchanged. Pinned tabs stay.

@@ -34,6 +34,8 @@ int wmain(int argc, wchar_t** argv) {
     if (restore || win_e) ok = apply(ShellIntegrationKind::WinE) && ok;
     if (restore || this_pc) ok = apply(ShellIntegrationKind::ThisPc) && ok;
     if (restore || recycle_bin) ok = apply(ShellIntegrationKind::RecycleBin) && ok;
+    // Uninstall: overrides an old Pulse left without its command go too.
+    if (restore && HasLegacyShellIntegrationResidue()) ok = RepairLegacyShellIntegrationResidue() && ok;
     if (directory) ok = apply(ShellIntegrationKind::Directory) && ok;
     if (drive) ok = apply(ShellIntegrationKind::Drive) && ok;
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);

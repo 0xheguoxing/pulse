@@ -541,6 +541,40 @@ bool TestClosedWindowStack() {
     }
     passed &= Report("closed windows (M4c): at most 10 are kept, the oldest dropped first",
         order && stack.Empty() && !stack.TakeLatest());
+
+    // Closing the last window takes along the windows closed since its last use.
+    auto at = [&](const std::wstring& name, uint64_t tick) {
+        ClosedWindow closed = window(name, 1);
+        closed.closed_tick = tick;
+        return closed;
+    };
+    stack.Push(at(L"session", 0));
+    stack.Push(at(L"early", 1000));
+    stack.Push(at(L"B", 5000));
+    stack.Push(at(L"C", 6000));
+    const auto along = stack.TakeClosedSince(5000);
+    passed &= Report("closed windows: the last window takes along those closed since its last use, oldest first",
+        along.size() == 2 && along[0].name == L"B" && along[1].name == L"C" && stack.Size() == 2 &&
+        stack.Latest() && stack.Latest()->name == L"early");
+    passed &= Report("closed windows: windows from the saved session are never taken along",
+        stack.TakeClosedSince(0).size() == 1 && stack.Size() == 1 && stack.Latest()->name == L"session");
+
+    using pulse::app::LastUseBeforeClose;
+    using pulse::app::PreviousUseTick;
+    using pulse::app::kCloseInputBurstMs;
+    // Used at 1000, then the close button clicked at 9000 (one input).
+    uint64_t previous = PreviousUseTick(0, 0, 1000), last = 1000;
+    previous = PreviousUseTick(previous, last, 9000); last = 9000;
+    passed &= Report("closed windows: the click that closes the window is not a use of it",
+        LastUseBeforeClose(last, previous, 9050) == 1000);
+    // Alt+F4: two key presses in one burst.
+    previous = PreviousUseTick(previous, last, 20000); last = 20000;
+    previous = PreviousUseTick(previous, last, 20200); last = 20200;
+    passed &= Report("closed windows: Alt+F4 is one closing burst",
+        LastUseBeforeClose(last, previous, 20250) == 9000);
+    passed &= Report("closed windows: WM_CLOSE without input (taskbar) uses the last input",
+        LastUseBeforeClose(last, previous, 20200 + kCloseInputBurstMs + 1) == 20200 &&
+        LastUseBeforeClose(0, 0, 5000) == 0);
     return passed;
 }
 

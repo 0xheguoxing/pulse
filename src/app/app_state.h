@@ -547,6 +547,9 @@ struct AppState : AppCoreOwner {
     // controls included (GetTickCount64; the message loop, NoteUserInput).
     // External opens avoid interrupting a window in use (M7a, plan §6).
     uint64_t last_input_tick = 0;
+    // The input before the current burst of it (closed_windows.h): closing
+    // the last window takes along the windows closed since then.
+    uint64_t previous_use_tick = 0;
     bool renameIgnoreKillFocus = false;
     bool renameClickCandidate = false;
     app::Pane* renameClickPane = nullptr;

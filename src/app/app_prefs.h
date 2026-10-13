@@ -158,13 +158,12 @@ struct AppPrefs {
     bool StoreBackgroundImage(const std::wstring& source_path);
     void ClearBackgroundImage();
 
-    // Features that only work while Pulse runs: closing the window then hides
-    // it to the tray instead of exiting. Explorer window takeover is one: the
-    // watcher lives in this process, and "Open file location" from another
-    // program (explorer /select) never goes through a folder association.
+    // Closing the last window hides it to the tray instead of exiting. Only
+    // "keep running after close" decides this: features that need a running
+    // Pulse (global search, Explorer window takeover) work while it runs and
+    // stop with it, so turning the switch off really ends Pulse on close.
     bool KeepsRunningInBackground() const {
-        return keep_running_on_close || global_search_enabled ||
-               (integration_enabled && take_over_explorer_windows);
+        return keep_running_on_close;
     }
 };
 

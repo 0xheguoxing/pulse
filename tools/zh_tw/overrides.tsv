@@ -5,7 +5,7 @@ IDS_SETTINGS_UI_1904	選擇應用程式的外觀主題
 IDS_OP_SOURCE_SHORT	來源
 IDS_TRAY_EXIT	結束
 IDS_COMPARE_EXIT	離開比較
-IDS_GLOBAL_SEARCH_DESC	啟用後關閉視窗仍可叫出；在系統匣選擇「結束」即可完全關閉
+IDS_GLOBAL_SEARCH_DESC	關閉視窗後仍要叫出，需開啟「關閉後繼續執行」
 IDS_ABOUT_HOMEPAGE	專案首頁
 IDS_SORT_WHEEL_SAMPLES	照片|專案資料|報告.pdf|旅行照片.jpg|預算.xlsx|會議記錄.docx|音樂.mp3
 IDS_SETTINGS_CONTEXT_MENU	右鍵選單

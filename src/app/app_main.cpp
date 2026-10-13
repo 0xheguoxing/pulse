@@ -503,6 +503,21 @@ bool pulse::PrepareSessionForUpdate(AppState& s) {
 // System broadcasts (host_routing.h, multi-window M3c), handled once for the
 // process: the shared part runs once, the window part for every window that
 // shares `s`'s core (only `s` when it is not registered).
+// The windows closed since the last one was last used close along with it
+// (closed_windows.h): with "restore last tabs" they come back with it, from
+// the tray (WM_ACTIVATE opens pending_session_windows) or at the next launch
+// (CaptureWindowSession saves them as open windows).
+static void KeepWindowsClosedAlong(AppState& s) {
+    if (!app::RestoresLastTabs(s.appPrefs)) return;
+    const uint64_t since = app::LastUseBeforeClose(s.last_input_tick, s.previous_use_tick, GetTickCount64());
+    auto along = s.core.closed_windows.TakeClosedSince(since);
+    if (along.empty()) return;
+    DismissReopenToasts(s, WM_REOPEN_CLOSED_WINDOW);
+    // Most recently closed first, like the session's windows.
+    for (auto it = along.rbegin(); it != along.rend(); ++it)
+        s.core.pending_session_windows.push_back(app::ClosedWindowToSession(*it).window);
+}
+
 // Close button, Alt+F4, WM_CLOSE (plan §8.1). One of several windows is
 // destroyed and takes only its own state along; the last window hides to the
 // tray when Pulse keeps running in the background, otherwise it exits.
@@ -514,6 +529,7 @@ static void CloseMainWindow(AppState& s) {
     }
     SuspendContentSearches(s);
     s.globalSearchWindow.Hide();
+    KeepWindowsClosedAlong(s);
     if (s.appPrefs.KeepsRunningInBackground()) HideMainWindowToTray(s);
     else DestroyWindow(hwnd);
 }
@@ -2384,6 +2400,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     if (!closed.layout_tabs.empty()) {
                         std::wstring name = closed.name;
                         closed.closed_seq = ++s->core.close_seq;  // M7f: one timeline with closed tabs
+                        closed.closed_tick = GetTickCount64();
                         s->core.closed_windows.Push(std::move(closed));
                         next->notification_toast.ShowSnack(
                             next->hwnd, ui::SnackIcon::Undo, l10n::Get(l10n::StringId::WindowClosedTitle),

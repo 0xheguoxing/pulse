@@ -523,13 +523,14 @@ int RunSettingsIntegrationUiTest(AppState& s, const wchar_t* output) {
                         bar_fits &= !nonempty(l.integration_bar) && !nonempty(l.integration_retry) && !nonempty(l.integration_restore);
                     }
                     const auto hint = l10n::Get(!vm.settings_integration_enabled ? I::IntegrationInactiveHint
-                        : state == 4 ? I::IntegrationNoneHint : I::IntegrationHintLaunch);
+                        : state == 4 ? I::IntegrationNoneHint : I::IntegrationHintKeep);
                     const auto h = l.integration_hint;
                     hints &= nonempty(h) && h.top >= experimental.bottom && h.bottom <= l.integration_card.bottom &&
                         h.top+4*scale+painter.MeasureWrappedCaptionHeight(hint, h.right-16*scale-(h.left+78*scale)) <= h.bottom+0.5f;
                     if (state == 1) {
                         // Every background prerequisite met: no hint row at all.
-                        auto ready = vm; ready.settings_launch_on_startup = true;   // close-to-tray follows takeover
+                        auto ready = vm;
+                        ready.settings_launch_on_startup = ready.settings_keep_running = true;
                         const auto rl = ui::MakeSettingsLayout(ready, window, scale, s.renderer.TitleBarHeight(), 28*scale, &painter);
                         hints &= !nonempty(rl.integration_hint) && rl.integration_card.bottom < l.integration_card.bottom;
                     }

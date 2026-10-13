@@ -2072,7 +2072,7 @@ LANGUAGE 0x04, 0x02
 STRINGTABLE
 BEGIN
  IDS_GLOBAL_SEARCH "全局搜索"
- IDS_GLOBAL_SEARCH_DESC "启用后关闭窗口仍可呼出；从托盘退出可结束"
+ IDS_GLOBAL_SEARCH_DESC "关闭窗口后仍要呼出，需打开「关闭后继续运行」"
  IDS_GLOBAL_SEARCH_HOTKEY "呼出快捷键"
  IDS_GLOBAL_SEARCH_HOTKEY_DESC "点击录入组合键；Esc 取消"
  IDS_GLOBAL_SEARCH_RECORDING "请按组合键…"
@@ -2096,7 +2096,7 @@ LANGUAGE 0x09, 0x01
 STRINGTABLE
 BEGIN
  IDS_GLOBAL_SEARCH "Global search"
- IDS_GLOBAL_SEARCH_DESC "Available after closing the window; exit from the tray to stop"
+ IDS_GLOBAL_SEARCH_DESC "To use it after closing the window, turn on Keep running after close"
  IDS_GLOBAL_SEARCH_HOTKEY "Activation shortcut"
  IDS_GLOBAL_SEARCH_HOTKEY_DESC "Click to record a shortcut; Esc cancels"
  IDS_GLOBAL_SEARCH_RECORDING "Press shortcut…"
@@ -3231,7 +3231,7 @@ BEGIN
     IDS_INTEGRATION_FOLDERS "文件夹和磁盘"
     IDS_INTEGRATION_FOLDERS_DESC "在桌面等位置双击文件夹或磁盘时"
     IDS_INTEGRATION_EXPERIMENTAL "其他软件打开的文件夹"
-    IDS_INTEGRATION_EXPERIMENTAL_DESC "比如下载完成后点“在文件夹中显示”。开启后关闭窗口会留在托盘，从托盘退出才停止接管。"
+    IDS_INTEGRATION_EXPERIMENTAL_DESC "比如下载完成后点“在文件夹中显示”。只在 Pulse 运行时接管。"
     IDS_INTEGRATION_OFF "未开启"
     IDS_INTEGRATION_ON "已开启"
     IDS_INTEGRATION_PARTIAL "与选择不一致"
@@ -3302,7 +3302,7 @@ BEGIN
     IDS_INTEGRATION_FOLDERS "Folders and drives"
     IDS_INTEGRATION_FOLDERS_DESC "When you double-click a folder or drive, for example on the desktop"
     IDS_INTEGRATION_EXPERIMENTAL "Folders opened by other apps"
-    IDS_INTEGRATION_EXPERIMENTAL_DESC "For example “Show in folder” after a download. While on, closing the window keeps Pulse in the tray; exit from the tray to stop."
+    IDS_INTEGRATION_EXPERIMENTAL_DESC "For example “Show in folder” after a download. Works only while Pulse is running."
     IDS_INTEGRATION_OFF "Off"
     IDS_INTEGRATION_ON "On"
     IDS_INTEGRATION_PARTIAL "Out of sync"

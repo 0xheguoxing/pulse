@@ -4,6 +4,7 @@
 #include "app_internal.h"
 #include "../common/localization.h"
 #include "app_messages.h"
+#include "closed_windows.h"
 #include "default_file_manager.h"
 #include "external_open.h"
 #include "tray_reveal.h"
@@ -263,7 +264,11 @@ void NoteUserInput(AppState& any, const MSG& msg) {
         return;
     }
     if (!msg.hwnd) return;
-    if (AppState* w = any.core.windows.Lookup(GetAncestor(msg.hwnd, GA_ROOT))) w->last_input_tick = GetTickCount64();
+    if (AppState* w = any.core.windows.Lookup(GetAncestor(msg.hwnd, GA_ROOT))) {
+        const uint64_t now = GetTickCount64();
+        w->previous_use_tick = app::PreviousUseTick(w->previous_use_tick, w->last_input_tick, now);
+        w->last_input_tick = now;
+    }
 }
 
 }  // namespace pulse

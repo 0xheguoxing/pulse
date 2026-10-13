@@ -244,6 +244,13 @@ UninstallResult RunUninstall(const UninstallRequest& req, const UninstallCallbac
                                   L"--restore --exe " + Quote(app + L"\\pulse.exe"), true);
         result.restore_result = r.started ? static_cast<int>(r.exit_code) : 3;
         Log(L"Integration restore: " + std::to_wstring(result.restore_result));
+        // Everything was given back: the backups of the original values are
+        // done with. After a failure they stay, so a later restore can finish.
+        if (result.restore_result == 0) {
+            RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\Pulse\\ShellIntegration");
+            RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\Pulse\\ShellIntegration");
+            RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\Pulse");  // only when nothing else is left in it
+        }
     }
 
     // 4. Installed files, then the directories they leave empty.

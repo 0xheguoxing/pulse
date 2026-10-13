@@ -1058,7 +1058,7 @@ LANGUAGE 0x04, 0x01
 STRINGTABLE
 BEGIN
  IDS_GLOBAL_SEARCH "全域搜尋"
- IDS_GLOBAL_SEARCH_DESC "啟用後關閉視窗仍可叫出；在系統匣選擇「結束」即可完全關閉"
+ IDS_GLOBAL_SEARCH_DESC "關閉視窗後仍要叫出，需開啟「關閉後繼續執行」"
  IDS_GLOBAL_SEARCH_HOTKEY "叫出快速鍵"
  IDS_GLOBAL_SEARCH_HOTKEY_DESC "點選錄製組合鍵；Esc 取消"
  IDS_GLOBAL_SEARCH_RECORDING "請按組合鍵…"
@@ -1643,7 +1643,7 @@ BEGIN
     IDS_INTEGRATION_FOLDERS "資料夾和磁碟"
     IDS_INTEGRATION_FOLDERS_DESC "在桌面等位置按兩下資料夾或磁碟時"
     IDS_INTEGRATION_EXPERIMENTAL "其他軟體開啟的資料夾"
-    IDS_INTEGRATION_EXPERIMENTAL_DESC "比如下載完成後點「在資料夾中顯示」。開啟後關閉視窗會留在系統匣，在系統匣選擇「結束」才停止接管。"
+    IDS_INTEGRATION_EXPERIMENTAL_DESC "比如下載完成後點「在資料夾中顯示」。只在 Pulse 執行時接管。"
     IDS_INTEGRATION_OFF "未開啟"
     IDS_INTEGRATION_ON "已開啟"
     IDS_INTEGRATION_PARTIAL "與選擇不一致"

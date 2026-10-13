@@ -1012,8 +1012,6 @@ void SettingsController::IntegrationAction(int index) {
     }
     integration_save_failed_ = !p.Save();
     if (ui_.integration_changed) ui_.integration_changed();
-    // Explorer window takeover keeps Pulse in the tray on close (KeepsRunningInBackground).
-    Apply(SettingsEffect::TrayVisibility);
 }
 
 void SettingsController::ToggleUi(int index) {

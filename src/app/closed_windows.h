@@ -29,7 +29,25 @@ struct ClosedWindow {
     std::optional<WindowLayoutSnapshot> layout;
     WindowIdentity identity;  // M7c: comes back with its name and color
     uint64_t closed_seq = 0;  // M7f: when, among closed tabs and windows (AppCore::close_seq)
+    uint64_t closed_tick = 0;  // GetTickCount64() when closed in this run; 0 = from the session
 };
+
+// Closing the last window takes along the windows closed since it was last
+// used ("close everything"): they come back with it from the tray or at the
+// next launch instead of staying behind in the closed-window list. Inputs
+// closer together than this are one burst; the burst that closes the window
+// (a click on its close button, Alt+F4) is not a use of it.
+inline constexpr uint64_t kCloseInputBurstMs = 1500;
+
+// NoteUserInput: the window's last input before the current burst.
+inline uint64_t PreviousUseTick(uint64_t previous_use, uint64_t last_input, uint64_t now) noexcept {
+    return last_input == 0 || now - last_input > kCloseInputBurstMs ? last_input : previous_use;
+}
+
+// When the window being closed was last used, not counting the closing input.
+inline uint64_t LastUseBeforeClose(uint64_t last_input, uint64_t previous_use, uint64_t now) noexcept {
+    return last_input != 0 && now - last_input <= kCloseInputBurstMs ? previous_use : last_input;
+}
 
 // Most recently closed last. Holds at most kCapacity windows; the oldest go.
 class ClosedWindowStack {
@@ -50,6 +68,20 @@ public:
     }
     const ClosedWindow* Latest() const noexcept { return items_.empty() ? nullptr : &items_.back(); }
     uint64_t LatestSeq() const noexcept { return items_.empty() ? 0 : items_.back().closed_seq; }
+    // The windows closed in this run at or after `tick`, oldest first; the
+    // others stay (LastUseBeforeClose).
+    std::vector<ClosedWindow> TakeClosedSince(uint64_t tick) {
+        std::vector<ClosedWindow> taken;
+        for (auto it = items_.begin(); it != items_.end();) {
+            if (it->closed_tick != 0 && it->closed_tick >= tick) {
+                taken.push_back(std::move(*it));
+                it = items_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        return taken;
+    }
     // Oldest first (the session keeps the newest, M7f).
     const std::deque<ClosedWindow>& Items() const noexcept { return items_; }
     size_t Size() const noexcept { return items_.size(); }

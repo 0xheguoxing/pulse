@@ -300,6 +300,30 @@ int wmain() {
           Read(command) == rollback_command && Read(command, L"DelegateExecute") == rollback_delegate,
           "retry after failed enable compensation restores original command and delegate");
 #endif
+    // Another copy of Pulse (an older install folder, a portable or development
+    // build) registered: this copy's switches and its uninstaller give back
+    // what was there before, instead of leaving folders opening in Pulse.
+    Clear();
+    Set(command, L"", L"%OTHER%\\manager.exe %1", REG_EXPAND_SZ);
+    const auto before_copies = Read(command);
+    const std::wstring copy = L"E:\\Portable\\Pulse\\pulse.exe";
+    const std::wstring drive_command = L"Software\\Classes\\Drive\\shell\\open\\command";
+    ApplyShellIntegration(ShellIntegrationKind::Folders, copy, true);
+    Check(HasShellIntegrationOwnership(ShellIntegrationKind::Folders, exe) &&
+          !ReadShellIntegration(ShellIntegrationKind::Folders, exe),
+          "another Pulse copy's registration is left for this copy to restore");
+    Check(ApplyShellIntegration(ShellIntegrationKind::Folders, exe, false) && Read(command) == before_copies &&
+          !Read(drive_command).exists && !HasShellIntegrationOwnership(ShellIntegrationKind::Folders, exe),
+          "turning off restores the values from before another Pulse copy registered");
+    ApplyShellIntegration(ShellIntegrationKind::Folders, copy, true);
+    Check(ApplyShellIntegration(ShellIntegrationKind::Folders, exe, true) &&
+          ApplyShellIntegration(ShellIntegrationKind::Folders, exe, false) &&
+          Read(command) == before_copies && !Read(drive_command).exists,
+          "turning on over another Pulse copy keeps the original values, not that copy's command");
+    Set(command, L"", L"\"C:\\Other\\manager.exe\" %1");
+    Check(ApplyShellIntegration(ShellIntegrationKind::Folders, exe, false) &&
+          Read(command).bytes.size() > 0 && !HasShellIntegrationOwnership(ShellIntegrationKind::Folders, exe),
+          "a third-party command is still never taken for Pulse's");
     RegOverridePredefKey(HKEY_CURRENT_USER,nullptr); RegCloseKey(root);
     const LONG cleanup=RegDeleteTreeW(HKEY_CURRENT_USER,sandbox.c_str());
     Check(cleanup==ERROR_SUCCESS, "isolated registry fixture removed");

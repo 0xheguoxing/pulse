@@ -425,7 +425,11 @@ bool ApplyGroup(const std::wstring& group, const std::wstring& exe, bool on) {
     Snapshot previous;
     const bool valid = Decode(stored, bindings.size(), previous);
     const bool command_ours = ShellCommandTargetsExecutable(Text(current[0]), exe);
-    const bool owned = valid && command_ours && SameValue(current[0], previous.written[0]);
+    // The snapshot proves Pulse wrote the command in place, possibly another
+    // copy of it (an older install folder, a portable or development build):
+    // turning off or uninstalling this copy gives that back too, and turning on
+    // keeps the original values instead of recording the other copy's command.
+    const bool owned = valid && current[0].exists && SameValue(current[0], previous.written[0]);
     // Older restores removed the command before clearing the other overrides.
     // Only a matching snapshot can prove ownership once that anchor is absent.
     const bool removed_anchor = valid && !current[0].exists && !previous.before[0].exists &&
@@ -474,7 +478,7 @@ bool ApplyGroup(const std::wstring& group, const std::wstring& exe, bool on) {
         return true;
     }
 
-    if (!command_ours && !removed_anchor) return true; // no evidence that these values belong to Pulse
+    if (!command_ours && !owned && !removed_anchor) return true; // no evidence that these values belong to Pulse
     if (!valid) {
         // Migrate available legacy text through the same ownership checks.
         previous.before.resize(bindings.size());
@@ -603,11 +607,16 @@ bool HasShellIntegrationOwnership(ShellIntegrationKind kind, const std::wstring&
         Value actual;
         if (!Read(binding.key, binding.name, actual)) continue;
         if (ShellCommandTargetsExecutable(Text(actual), exe)) return true;
-        if (actual.exists) continue;
         Value stored;
         Snapshot snapshot;
-        if (!Read(std::wstring(kBackupRoot) + group, L"Snapshot", stored) ||
-            !Decode(stored, bindings.size(), snapshot) || snapshot.before[0].exists ||
+        const bool proven = Read(std::wstring(kBackupRoot) + group, L"Snapshot", stored) &&
+            Decode(stored, bindings.size(), snapshot);
+        // Another copy of Pulse wrote it (ApplyGroup): this copy restores it.
+        if (actual.exists) {
+            if (proven && SameValue(actual, snapshot.written[0])) return true;
+            continue;
+        }
+        if (!proven || snapshot.before[0].exists ||
             !ShellCommandTargetsExecutable(Text(snapshot.written[0]), exe)) continue;
         // A previous restore may have removed the command first. Keep repair
         // available while a snapshot-proven override still masks Explorer.
