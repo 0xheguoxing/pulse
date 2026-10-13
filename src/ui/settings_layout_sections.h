@@ -262,6 +262,16 @@ inline const wchar_t* DelayChoice(int i) {
     if (i == 1) return l10n::Pick(L"0.5 秒", L"0.5 s");
     return l10n::Pick(L"0.8 秒", L"0.8 s");
 }
+inline const wchar_t* SizeTitle() { return l10n::Pick(L"卡片尺寸", L"Card size"); }
+inline const wchar_t* SizeDesc() {
+    return l10n::Pick(L"卡片随内容变形；按住 Ctrl 临时放大",
+                      L"Follows the content's shape; hold Ctrl to enlarge");
+}
+inline const wchar_t* SizeChoice(int i) {
+    if (i == 0) return l10n::Pick(L"小", L"Small");
+    if (i == 1) return l10n::Pick(L"中", L"Medium");
+    return l10n::Pick(L"大", L"Large");
+}
 inline const wchar_t* PacksSection() { return l10n::Pick(L"预览增强包", L"Preview packs"); }
 inline const wchar_t* FormatsSection() { return l10n::Pick(L"格式", L"Formats"); }
 inline std::wstring FormatsSummary(const WindowViewModel& vm) {
@@ -461,6 +471,9 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
             y += 8*scale;
             l.hover_delay_row = row(h);
             segments(l.hover_delay_row, l.hover_delay_choice, 3, 240*font);
+            y += 8*scale;
+            l.hover_size_row = row(h);
+            segments(l.hover_size_row, l.hover_size_choice, 3, 240*font);
         }
         y += 24*scale;
     }

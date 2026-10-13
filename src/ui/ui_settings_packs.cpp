@@ -129,6 +129,9 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
     const int delay = vm.settings_hover_delay_ms == 300 ? 0 : vm.settings_hover_delay_ms == 800 ? 2 : 1;
     choice_row(lay.hover_delay_row, lay.hover_delay_choice, 3, delay, PackAction::HoverDelayShort, L"\xE916",
                pack_text::DelayTitle(), pack_text::DelayDesc(), &pack_text::DelayChoice);
+    const int card_size = vm.settings_hover_card_size == 0 ? 0 : vm.settings_hover_card_size == 2 ? 2 : 1;
+    choice_row(lay.hover_size_row, lay.hover_size_choice, 3, card_size, PackAction::HoverSizeSmall, L"\xE740",
+               pack_text::SizeTitle(), pack_text::SizeDesc(), &pack_text::SizeChoice);
 
     text(pack_text::FormatsSection(), lay.preview_section);
     card(lay.preview_group);

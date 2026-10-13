@@ -179,6 +179,10 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
         case ui::PackAction::HoverDelayMedium:
         case ui::PackAction::HoverDelayLong:
             s.settings.HoverPreviewDelay(hit.index-static_cast<int>(ui::PackAction::HoverDelayShort));break;
+        case ui::PackAction::HoverSizeSmall:
+        case ui::PackAction::HoverSizeMedium:
+        case ui::PackAction::HoverSizeLarge:
+            s.settings.HoverCardSize(hit.index-static_cast<int>(ui::PackAction::HoverSizeSmall));break;
         case ui::PackAction::Browse: {
             ui::FolderPickerSpec spec;spec.mode=ui::PickerMode::File;
             spec.title=l10n::Pick(L"选择 ffmpeg.exe",L"Choose ffmpeg.exe");

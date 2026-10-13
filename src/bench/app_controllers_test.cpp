@@ -1751,6 +1751,25 @@ int wmain(int argc, wchar_t** argv) {
         parsed_prefs.ResetToDefaults();
         passed &= Report("reset restores hover preview",
             parsed_prefs.preview_trigger == kPreviewTriggerHover && parsed_prefs.hover_preview_delay_ms == 500);
+        using pulse::app::kHoverCardLarge;
+        using pulse::app::kHoverCardMedium;
+        using pulse::app::kHoverCardSmall;
+        passed &= Report("hover card size defaults to medium", prefs.hover_card_size == kHoverCardMedium &&
+            parsed_prefs.FromJson(L"{}") && parsed_prefs.hover_card_size == kHoverCardMedium);
+        settings_ui.HoverCardSize(2);
+        passed &= Report("large hover card persists", prefs.hover_card_size == kHoverCardLarge &&
+            parsed_prefs.FromJson(prefs.ToJson()) && parsed_prefs.hover_card_size == kHoverCardLarge);
+        settings_ui.HoverCardSize(0);
+        passed &= Report("small hover card persists", prefs.hover_card_size == kHoverCardSmall &&
+            parsed_prefs.FromJson(prefs.ToJson()) && parsed_prefs.hover_card_size == kHoverCardSmall);
+        settings_ui.HoverCardSize(9);
+        passed &= Report("hover card size ignores an out-of-range choice", prefs.hover_card_size == kHoverCardSmall);
+        passed &= Report("an unknown hover card size falls back to medium",
+            parsed_prefs.FromJson(L"{\"hover_card_size\":-3}") && parsed_prefs.hover_card_size == kHoverCardMedium);
+        settings_ui.HoverCardSize(1);
+        parsed_prefs.hover_card_size = kHoverCardLarge;
+        parsed_prefs.ResetToDefaults();
+        passed &= Report("reset restores the medium hover card", parsed_prefs.hover_card_size == kHoverCardMedium);
     }
     passed &= Report("closing the last tab setting has localized text",
         pulse::l10n::Get(pulse::l10n::StringId::SettingsCloseLastTab) ==

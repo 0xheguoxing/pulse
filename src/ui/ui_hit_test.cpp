@@ -608,6 +608,9 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     {&lay.hover_delay_choice[0], PackAction::HoverDelayShort},
                     {&lay.hover_delay_choice[1], PackAction::HoverDelayMedium},
                     {&lay.hover_delay_choice[2], PackAction::HoverDelayLong},
+                    {&lay.hover_size_choice[0], PackAction::HoverSizeSmall},
+                    {&lay.hover_size_choice[1], PackAction::HoverSizeMedium},
+                    {&lay.hover_size_choice[2], PackAction::HoverSizeLarge},
                 };
                 for (const auto& [bounds, action] : pack_targets) {
                     if (action == PackAction::Install && !pack_text::PrimaryEnabled(vm.settings_pack_media_available,

@@ -763,6 +763,12 @@ void SettingsController::HoverPreviewDelay(int index) {
         SaveAndApply(SettingsEffect::None);
 }
 
+void SettingsController::HoverCardSize(int index) {
+    static constexpr int values[] = {kHoverCardSmall, kHoverCardMedium, kHoverCardLarge};
+    if (prefs_ && SelectValue(index, values, prefs_->hover_card_size))
+        SaveAndApply(SettingsEffect::None);
+}
+
 void SettingsController::HomeFolder(int action) {
     if (!prefs_) return;
     if (action == 0) {

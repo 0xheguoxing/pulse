@@ -525,6 +525,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             vm.settings_blank_click_action = s.appPrefs.blank_click_action;
             vm.settings_preview_trigger = s.appPrefs.preview_trigger;
             vm.settings_hover_delay_ms = s.appPrefs.hover_preview_delay_ms;
+            vm.settings_hover_card_size = s.appPrefs.hover_card_size;
             vm.settings_change_tracking = s.appPrefs.change_tracking_enabled;
             vm.settings_change_days = s.appPrefs.change_tracking_days;
             vm.settings_row_height = s.appPrefs.row_height;

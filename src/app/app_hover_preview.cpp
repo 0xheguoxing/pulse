@@ -223,8 +223,13 @@ bool HoverPreviewMessage(AppState& s, HWND hwnd, UINT msg, WPARAM wparam, LPARAM
             }
         }
         return false;
+    case WM_KEYUP:
+        // Ctrl enlarges the card while held (FillHoverPreviewView reads it).
+        if (wparam == VK_CONTROL && card.visible) InvalidateRect(hwnd, nullptr, FALSE);
+        return false;
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
+        if (wparam == VK_CONTROL && card.visible && !(lparam & (1 << 30))) InvalidateRect(hwnd, nullptr, FALSE);
         if (wparam == VK_SHIFT || wparam == VK_CONTROL || wparam == VK_MENU) return false;
         // Space with a card up opens it in quick look (app_input.cpp).
         if (msg == WM_KEYDOWN && wparam == VK_SPACE && card.visible) return false;
@@ -398,6 +403,14 @@ void FillHoverPreviewView(AppState& s, const ui::WindowViewModel& vm, ui::HoverP
     view.slow = card.slow;
     view.owner = s.hwnd;
     view.shown_ms = card.shown_at;
+    view.size_step = app::NormalizeHoverCardSize(s.appPrefs.hover_card_size);
+    view.instant = staged;
+    if (staged) {
+        wchar_t zoom[4]{};
+        view.zoom = GetEnvironmentVariableW(L"PULSE_TEST_HOVER_ZOOM", zoom, 4) > 0 && zoom[0] == L'1';
+    } else {
+        view.zoom = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    }
 }
 
 void WriteHoverVideoProbe(AppState& s, const std::wstring& shot_output) {

@@ -209,6 +209,7 @@ public:
     void BlankClick(int index);   // 0 nothing, 1 back, 2 up
     void PreviewTrigger(int index);    // 0 hover card, 1 Space only
     void HoverPreviewDelay(int index); // 0.3 / 0.5 / 0.8 s
+    void HoverCardSize(int index);     // 0 small, 1 medium, 2 large
     // 0 picks the default location's folder, 1 resets it to This PC.
     void HomeFolder(int action);
     void TextRendering(int index);

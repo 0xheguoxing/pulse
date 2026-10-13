@@ -90,6 +90,9 @@ struct AppPrefs {
     // full preview; 1 only Space previews. See kPreviewTrigger*.
     int preview_trigger = 0;
     int hover_preview_delay_ms = 500; // 300 / 500 / 800
+    // The card's size step: 0 small, 1 medium, 2 large (kHoverCardSize*). The
+    // card takes the content's shape within it; Ctrl enlarges it while held.
+    int hover_card_size = 1;
     bool change_tracking_enabled = false;
     int change_tracking_days = 7;
     // system / zh-CN / en-US
@@ -170,6 +173,12 @@ inline int NormalizePreviewTrigger(int value) noexcept {
 }
 inline int NormalizeHoverPreviewDelay(int ms) noexcept {
     return ms == 300 || ms == 800 ? ms : 500;
+}
+constexpr int kHoverCardSmall = 0;
+constexpr int kHoverCardMedium = 1;
+constexpr int kHoverCardLarge = 2;
+inline int NormalizeHoverCardSize(int value) noexcept {
+    return value == kHoverCardSmall || value == kHoverCardLarge ? value : kHoverCardMedium;
 }
 
 std::wstring FolderOpenCommandLine(const std::wstring& exe);

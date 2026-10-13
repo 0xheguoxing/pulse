@@ -616,6 +616,12 @@ struct HoverPreviewView {
     bool dwell = false;
     D2D1_RECT_F dwell_row{};
     float dwell_progress = 0.0f;  // 0..1
+    // The card takes the content's shape (wide pictures and clips, tall
+    // pages and portraits, text, or only the info for files without a
+    // preview), sized by the 卡片尺寸 step and capped by the window.
+    int size_step = 1;            // 0 small, 1 medium, 2 large
+    bool zoom = false;            // Ctrl held: much larger, for a closer look
+    bool instant = false;         // --shot: no size easing between frames
 };
 
 // HitTestResult::SettingsPackAction indices (Settings > 预览增强包).
@@ -635,6 +641,7 @@ enum class PackAction : int {
     ArchiveInstall, ArchiveRemove, ArchiveEnable,
     TriggerHover, TriggerSpace,                         // 预览方式: hover card / Space only
     HoverDelayShort, HoverDelayMedium, HoverDelayLong,  // 悬停延迟: 0.3 / 0.5 / 0.8 s
+    HoverSizeSmall, HoverSizeMedium, HoverSizeLarge,    // 卡片尺寸: 小 / 中 / 大
 };
 
 // A tab dragged out of another window, over this one (multi-window M7h): the
@@ -845,6 +852,7 @@ struct WindowViewModel {
     int settings_blank_click_action = 0;   // app/blank_pane_click.h
     int settings_preview_trigger = 0;      // app::kPreviewTrigger*
     int settings_hover_delay_ms = 500;     // 300 / 500 / 800
+    int settings_hover_card_size = 1;      // 0 small, 1 medium, 2 large
     bool settings_change_tracking = false;
     int settings_change_days = 3;
     int settings_row_height = 34; // current row-height pref (DIPs) for density radios
@@ -1826,6 +1834,13 @@ private:
     uint64_t hover_frame_serial_ = ~0ull;
     unsigned hover_frame_ms_ = 0;
     bool hover_video_failed_ = false;          // this path cannot play: keep the poster
+    // The card's shape (ui_hover_preview.cpp): what earlier frames learned of
+    // this path's preview, and the size easing toward it (px, 0 = closed).
+    std::wstring hover_shape_path_;
+    int hover_shape_kind_ = 0;
+    float hover_shape_aspect_ = 0.0f;
+    float hover_card_w_ = 0.0f, hover_well_h_ = 0.0f;
+    unsigned long long hover_ease_ms_ = 0;
     ComPtr<IDWriteTextLayout> details_text_layout_;
     std::wstring details_layout_text_;
     float details_layout_scale_ = 0;

@@ -18,15 +18,27 @@ namespace pulse::ui {
 namespace {
 
 // Card geometry in DIPs.
-constexpr float kCardWidth = 320.0f;
 constexpr float kRadius = 10.0f;
 constexpr float kInset = 6.0f;        // around the preview well
-constexpr float kWellHeight = 180.0f;
 constexpr float kTile = 40.0f;        // icon tile
 constexpr float kGap = 10.0f;
 constexpr float kStatsHeight = 46.0f;
 constexpr float kBottom = 12.0f;
-constexpr float kCardHeight = kInset + kWellHeight + kGap + kTile + kGap + kStatsHeight + kBottom;
+constexpr float kInfoHeight = kGap + kTile + kGap + kStatsHeight + kBottom;  // under the well
+constexpr float kBareTop = 14.0f;     // no preview: the tile starts the card
+constexpr float kMinCardWidth = 320.0f;  // the name, the type line and the three facts
+constexpr float kMinWellHeight = 96.0f;
+// 卡片尺寸 小 / 中 / 大: the base edge the shape is measured from.
+constexpr float kBaseEdge[3] = {280.0f, 380.0f, 500.0f};
+constexpr float kZoom = 1.75f;        // Ctrl held
+
+// What the card shows, and so its shape.
+enum HoverShape : int {
+    kShapeGuess = 0,    // nothing decoded yet: a shape from the extension
+    kShapePicture = 1,  // a bitmap (photo, page sketch, poster, video)
+    kShapeText = 2,     // the first lines of a text file
+    kShapeBare = 3,     // no preview: the icon tile, name and facts only
+};
 
 struct Fact {
     std::wstring label, value;
@@ -69,6 +81,36 @@ std::vector<Fact> Facts(const HoverPreviewView& view, const std::vector<PreviewP
     return facts;
 }
 
+// Word / Excel / PowerPoint / WPS / OpenDocument, by extension.
+bool OfficeDocument(const std::wstring& name) {
+    const size_t dot = name.find_last_of(L'.');
+    if (dot == std::wstring::npos) return false;
+    std::wstring ext = name.substr(dot);
+    for (auto& c : ext) c = static_cast<wchar_t>(towlower(c));
+    for (const wchar_t* known : {L".doc", L".docx", L".docm", L".dotx", L".rtf", L".wps", L".xls", L".xlsx",
+                                 L".xlsm", L".et", L".ppt", L".pptx", L".pptm", L".pps", L".ppsx", L".dps",
+                                 L".odt", L".ods", L".odp", L".odg"})
+        if (ext == known) return true;
+    return false;
+}
+
+// The first guess at a file's proportions, before its preview is decoded:
+// pages are A4 portrait, slides and clips 16:9, sheets 4:3.
+float GuessAspect(const std::wstring& name, bool video) {
+    if (video) return 16.0f / 9.0f;
+    const size_t dot = name.find_last_of(L'.');
+    std::wstring ext = dot == std::wstring::npos ? std::wstring() : name.substr(dot);
+    for (auto& c : ext) c = static_cast<wchar_t>(towlower(c));
+    for (const wchar_t* page : {L".doc", L".docx", L".docm", L".dotx", L".rtf", L".wps", L".odt", L".pdf",
+                                L".epub", L".xps", L".oxps", L".djvu"})
+        if (ext == page) return 210.0f / 297.0f;
+    for (const wchar_t* slide : {L".ppt", L".pptx", L".pptm", L".pps", L".ppsx", L".dps", L".odp"})
+        if (ext == slide) return 16.0f / 9.0f;
+    for (const wchar_t* sheet : {L".xls", L".xlsx", L".xlsm", L".et", L".ods"})
+        if (ext == sheet) return 4.0f / 3.0f;
+    return 16.0f / 10.0f;
+}
+
 // The first lines of a text preview, tabs as four spaces: enough to fill
 // the well, never a whole file through DirectWrite every frame.
 std::wstring Excerpt(const std::wstring& text, int max_lines) {
@@ -106,6 +148,7 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
     const float s = scale_;
     if (!view.visible) {
         stop_video();
+        hover_card_w_ = hover_well_h_ = 0.0f;  // the next card opens at its size
         // The dwell on a slow format: an accent line fills the row's foot
         // until the card opens.
         if (view.dwell && view.dwell_row.right - view.dwell_row.left > 24.0f * s) {
@@ -127,9 +170,82 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
         return;
     }
     const float margin = 8.0f * s;
-    const float width = (std::min)(kCardWidth * s, client.right - client.left - 2.0f * margin);
-    const float height = kCardHeight * s;
-    if (width < 240.0f * s || height > client.bottom - client.top - 2.0f * margin) {
+    const float client_w = client.right - client.left, client_h = client.bottom - client.top;
+
+    // The shape: what earlier frames learned of this file's preview, else a
+    // guess from its extension.
+    if (hover_shape_path_ != view.path) {
+        hover_shape_path_ = view.path;
+        hover_shape_kind_ = kShapeGuess;
+        hover_shape_aspect_ = GuessAspect(view.name, view.video);
+        hover_card_w_ = hover_well_h_ = 0.0f;
+    }
+    if (view.video && hover_shape_kind_ == kShapeBare) hover_shape_kind_ = kShapeGuess;  // the loop still plays
+    const bool bare = hover_shape_kind_ == kShapeBare;
+    const bool textual_shape = hover_shape_kind_ == kShapeText;
+    const int laid_kind = hover_shape_kind_;
+    const float laid_aspect = hover_shape_aspect_;
+
+    // Its size: the 小/中/大 base edge (much larger while Ctrl is held),
+    // never more than 45% of the window's width and 80% of its height.
+    float base = kBaseEdge[std::clamp(view.size_step, 0, 2)] * s;
+    float max_w = client_w * 0.45f, max_h = client_h * 0.8f;
+    if (view.zoom) {
+        base *= kZoom;
+        max_w = client_w * 0.7f;
+        max_h = client_h * 0.92f;
+    }
+    const float min_w = (std::min)(kMinCardWidth * s, client_w - 2.0f * margin);
+    max_w = (std::max)(max_w, min_w);
+    const float pad = 2.0f * kInset * s;
+    const float max_well_h = max_h - (kInset + kInfoHeight) * s;
+    float target_w = min_w, target_h = 0.0f;
+    if (!bare) {
+        float ww = 0.0f, wh = 0.0f;
+        const float a = (std::max)(hover_shape_aspect_, 0.2f);
+        if (textual_shape) {
+            ww = (std::min)(base * 1.1f, max_w) - pad;
+            wh = (std::min)(base * 0.66f, max_well_h);
+        } else if (a >= 1.15f) {          // landscape: as wide as the step allows
+            ww = (std::min)(base * 1.25f, max_w) - pad;
+            wh = (std::min)(ww / a, max_well_h);
+        } else if (a <= 0.87f) {          // portrait: as tall as the step allows
+            wh = (std::min)(base * 0.95f, max_well_h);
+            ww = wh * a;
+            if (ww > max_w - pad) {
+                ww = max_w - pad;
+                wh = ww / a;
+            }
+        } else {                          // about square
+            ww = (std::min)(base, max_w) - pad;
+            wh = (std::min)(ww / a, max_well_h);
+        }
+        target_w = std::clamp(ww + pad, min_w, max_w);
+        target_h = (std::max)(wh, kMinWellHeight * s);
+    }
+
+    // Eased toward a new shape (the preview arrived, Ctrl went down or up);
+    // a new card opens at its size.
+    const unsigned long long now = GetTickCount64();
+    if (view.instant || hover_card_w_ <= 0.0f) {
+        hover_card_w_ = target_w;
+        hover_well_h_ = target_h;
+    } else {
+        const float dt = static_cast<float>((std::min)(now - hover_ease_ms_, 100ull));
+        const float k = 1.0f - std::exp(-dt / 45.0f);
+        hover_card_w_ += (target_w - hover_card_w_) * k;
+        hover_well_h_ += (target_h - hover_well_h_) * k;
+        if (std::fabs(target_w - hover_card_w_) < 0.5f) hover_card_w_ = target_w;
+        if (std::fabs(target_h - hover_well_h_) < 0.5f) hover_well_h_ = target_h;
+    }
+    hover_ease_ms_ = now;
+    const bool easing = hover_card_w_ != target_w || hover_well_h_ != target_h;
+    const float width = std::round(hover_card_w_);
+    const float well_h = std::round(hover_well_h_);
+    const bool show_well = well_h >= 1.0f;
+    const float height = show_well ? kInset * s + well_h + kInfoHeight * s
+                                   : (kBareTop + kTile + kGap + kStatsHeight + kBottom) * s;
+    if (width < 240.0f * s || height > client_h - 2.0f * margin) {
         stop_video();
         return;
     }
@@ -166,19 +282,46 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
     };
 
     // The preview well: the picture, the first lines of text, or the icon.
-    const D2D1_RECT_F well = D2D1::RectF(card.left + kInset * s, card.top + kInset * s,
-                                         card.right - kInset * s, card.top + (kInset + kWellHeight) * s);
-    fill(well, (kRadius - kInset * 0.5f) * s, palette.hover);
+    // A file without a preview has none; the cache is still asked (unseen)
+    // so a late picture can grow the card.
+    const D2D1_RECT_F well = show_well
+        ? D2D1::RectF(card.left + kInset * s, card.top + kInset * s, card.right - kInset * s,
+                      card.top + kInset * s + well_h)
+        : D2D1::RectF(card.left + kInset * s, card.top, card.right - kInset * s, card.top);
+    if (show_well) fill(well, (kRadius - kInset * 0.5f) * s, palette.hover);
     std::vector<PreviewProperty> properties;
     hover_cache_.Properties(view.path, view.attrs, 1, view.modified, view.size, properties);
-    const D2D1_RECT_F content = D2D1::RectF(well.left + 4.0f * s, well.top + 4.0f * s,
-                                            well.right - 4.0f * s, well.bottom - 4.0f * s);
+    const D2D1_RECT_F content = show_well
+        ? D2D1::RectF(well.left + 4.0f * s, well.top + 4.0f * s, well.right - 4.0f * s, well.bottom - 4.0f * s)
+        : D2D1::RectF(card.left, card.top, card.left + 1.0f, card.top + 1.0f);
+    uint32_t decoded_w = 0, decoded_h = 0;
     std::wstring preview_text;
+    // Office documents ask for the thumbnail kind of preview: the embedded
+    // or shell thumbnail, else the first-page sketch. The details kind only
+    // tries the shell provider and leaves the icon when there is none (.doc
+    // without Office); Quick Look shows those through the preview handler,
+    // too slow and focus-hungry for a card.
     const PreviewDrawResult result = hover_cache_.Draw(dc, content, view.path, view.attrs, 1024u, 1,
-        view.modified, view.size, 1.0f, &preview_text, nullptr, nullptr, true);
+        view.modified, view.size, show_well ? 1.0f : 0.0f, &preview_text, nullptr, nullptr,
+        !OfficeDocument(view.name), nullptr, nullptr, nullptr, nullptr, nullptr, 0, nullptr, nullptr, nullptr,
+        &decoded_w, &decoded_h);
     const bool textual = result == PreviewDrawResult::Text || result == PreviewDrawResult::Hex ||
                          result == PreviewDrawResult::Markdown;
-    if (textual) {
+    // What this frame learned of the shape; the next frame eases to it.
+    if (result == PreviewDrawResult::Bitmap && decoded_w && decoded_h) {
+        hover_shape_kind_ = kShapePicture;
+        if (!view.video || hover_shape_aspect_ <= 0.0f)
+            hover_shape_aspect_ = static_cast<float>(decoded_w) / static_cast<float>(decoded_h);
+    } else if (textual && result != PreviewDrawResult::Hex) {
+        hover_shape_kind_ = kShapeText;
+    } else if (result != PreviewDrawResult::Pending && !view.video) {
+        // A hex dump (exe, dll, unknown binaries) tells nothing at a glance:
+        // the compact card, like files with no preview at all.
+        hover_shape_kind_ = kShapeBare;
+    }
+    if (!show_well) {
+        // nothing to draw in a well that is not there
+    } else if (textual) {
         if (!preview_mono_format_.get() && compositor_->DwriteFactory()) {
             typography::CreateTextFormat(compositor_->DwriteFactory(),
                 {typography::FontRole::Monospace, 11.0f * s}, &preview_mono_format_);
@@ -192,7 +335,9 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
         if (preview_text.empty()) {
             text(l10n::Get(l10n::StringId::EmptyFile), lines, compositor_->SmallFormat(), palette.text_secondary);
         } else if (preview_mono_format_.get()) {
-            const std::wstring excerpt = Excerpt(preview_text, 14);
+            const float line_h = 11.0f * s * 1.34f;
+            const int max_lines = std::clamp(static_cast<int>((lines.bottom - lines.top) / line_h) + 1, 4, 80);
+            const std::wstring excerpt = Excerpt(preview_text, max_lines);
             brush->SetColor(palette.text);
             dc->PushAxisAlignedClip(content, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             dc->DrawText(excerpt.data(), static_cast<UINT32>(excerpt.size()), preview_mono_format_.get(),
@@ -237,6 +382,13 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
             hover_video_->Reset();
         }
         if (!hover_video_failed_ && video.ended) hover_video_->Play(true);  // loop
+        if (video.width && video.height) {
+            const float a = static_cast<float>(video.width) / static_cast<float>(video.height);
+            if (std::fabs(a - hover_shape_aspect_) > 0.01f || hover_shape_kind_ != kShapePicture) {
+                hover_shape_aspect_ = a;
+                hover_shape_kind_ = kShapePicture;
+            }
+        }
         D2D1_RECT_F frame = content;
         if (video.width && video.height) {
             const float bw = content.right - content.left, bh = content.bottom - content.top;
@@ -309,8 +461,12 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
         hover_frame_ms_ = 33;
     }
 
+    // Still easing, or this frame learned a new shape: another frame soon.
+    if (easing || laid_kind != hover_shape_kind_ || std::fabs(laid_aspect - hover_shape_aspect_) > 0.01f)
+        hover_frame_ms_ = hover_frame_ms_ ? (std::min)(hover_frame_ms_, 16u) : 16u;
+
     // Icon tile, name and type line.
-    const float info_top = well.bottom + kGap * s;
+    const float info_top = show_well ? well.bottom + kGap * s : card.top + kBareTop * s;
     const D2D1_RECT_F tile = D2D1::RectF(card.left + 14.0f * s, info_top,
                                          card.left + (14.0f + kTile) * s, info_top + kTile * s);
     fill(tile, 9.0f * s, palette.hover);
