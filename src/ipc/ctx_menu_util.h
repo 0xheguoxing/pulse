@@ -325,6 +325,14 @@ inline bool IsSendToHandlerClsid(std::wstring_view clsid) {
 inline std::wstring SendToHandlerCatalogKey() {
     return HandlerCatalogKey(kSendToHandlerClsid);
 }
+// Pulse's native 发送到 (右键菜单优化方案 C5), listed beside the SendTo slot
+// as a handler of its own: disabling it in 管理右键项 goes back to the
+// extension's list alone.
+inline constexpr wchar_t kNativeSendToClsid[] =
+    L"{50554c53-4500-4d41-4e47-0053454e4454}";
+inline bool IsNativeSendToClsid(std::wstring_view clsid) {
+    return ToLowerVerb(clsid) == ToLowerVerb(kNativeSendToClsid);
+}
 inline bool IsDisabledHandler(std::wstring_view clsid,
                               const std::vector<std::wstring>& disabled) {
     const std::wstring c = ToLowerVerb(clsid);

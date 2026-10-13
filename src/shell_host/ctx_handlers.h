@@ -106,4 +106,49 @@ void CollectHandlerItems(const CtxHandlerSlot& slot, bool background,
 uint32_t FindItemId(const std::vector<CtxItemOut>& items, uint32_t id,
                     const std::wstring& verb, const std::wstring& text);
 
+// Native 发送到 (右键菜单优化方案 C5): the SendTo folder plus removable and
+// optical drives, listed without the default Shell menu the SendTo slot has
+// to build. That slot still runs: it supplies the default menu's own rows
+// (创建快捷方式, ...) and checks the native list (MergeNativeSendTo).
+struct SendToTarget {
+    std::wstring text;
+    PIDLIST_ABSOLUTE pidl = nullptr;
+};
+// shell32's own 发送到(&N) (string 30312, in the system language), cleaned like
+// a menu label; empty when the string is missing (no native list then).
+std::wstring NativeSendToTitle(wchar_t* mnemonic = nullptr);
+// The folder's entries in its own order, then removable drives with media and
+// optical drives. Free with FreeSendToTargets.
+std::vector<SendToTarget> EnumerateSendToTargets();
+void FreeSendToTargets(std::vector<SendToTarget>& targets) noexcept;
+// The 发送到 header (id 0) and one child per target, ids id_first + 1 + index.
+// Nothing without a title or a target.
+void NativeSendToItems(const std::vector<SendToTarget>& targets, const std::wstring& title,
+                       wchar_t mnemonic, UINT id_first, UINT id_last,
+                       std::vector<CtxItemOut>& out);
+// What SendTo does with a destination: drop the selection on it.
+HRESULT DropOnSendToTarget(PCIDLIST_ABSOLUTE target, IDataObject* data);
+// SendTo copies; Shift moves and Ctrl+Shift links (Ctrl alone still copies).
+// The drag keys that ask a drop target for that, and the effect itself.
+inline DWORD SendToDropKeys(bool shift, bool ctrl) {
+    if (shift && ctrl) return MK_LBUTTON | MK_SHIFT | MK_CONTROL;
+    if (shift) return MK_LBUTTON | MK_SHIFT;
+    return MK_LBUTTON | MK_CONTROL;
+}
+inline DWORD SendToDropEffect(DWORD keys) {
+    if ((keys & MK_SHIFT) && (keys & MK_CONTROL)) return DROPEFFECT_LINK;
+    if (keys & MK_SHIFT) return DROPEFFECT_MOVE;
+    return DROPEFFECT_COPY;
+}
+// The SendTo slot's rows next to a native list: its 发送到 row and the
+// destinations the native list has are dropped; destinations only the slot
+// found come first, so they extend the native flyout right before it; the
+// default menu's own rows stay. The differences go to `slot_only` /
+// `native_only` (the latter only when the slot's flyout was filled). Without
+// native destinations the rows come back unchanged.
+std::vector<CtxItemOut> MergeNativeSendTo(const std::vector<CtxItemOut>& native,
+                                          const std::vector<CtxItemOut>& slot_rows,
+                                          std::vector<std::wstring>* slot_only = nullptr,
+                                          std::vector<std::wstring>* native_only = nullptr);
+
 } // namespace pulse::shell

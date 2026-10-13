@@ -963,6 +963,7 @@ struct HandlerWorker {
     UINT qcm_flags = 0;
     pulse::shell::CtxHandlerSlot slot;
     std::vector<CtxItemOut> items;
+    std::vector<pulse::shell::SendToTarget> send_to;   // native 发送到 only
     HANDLE done_event = nullptr;
     HANDLE exit_event = nullptr;
     HANDLE thread = nullptr;
@@ -973,6 +974,18 @@ struct HandlerWorker {
     // can be blamed while another thread may hold the loader lock.
     std::atomic<int> phase{0};
 };
+
+// A native 发送到 row (C5): child k of the flyout is send_to[k].
+void InvokeNativeSendTo(const HandlerWorker& w, uint32_t invoke_req_id, uint32_t item_id) {
+    HRESULT hr = E_INVALIDARG;
+    if (item_id > w.id_first && item_id - w.id_first - 1 < w.send_to.size()) {
+        pulse::shell::CtxBind bind;
+        hr = pulse::shell::BindCtxSelection(w.paths, false, bind) && bind.data
+            ? pulse::shell::DropOnSendToTarget(w.send_to[item_id - w.id_first - 1].pidl, bind.data)
+            : E_FAIL;
+    }
+    SendDone(invoke_req_id, hr, false, FAILED(hr) ? L"send to failed" : L"");
+}
 
 DWORD HandlerWorkerThreadImpl(LPVOID param) {
     auto* w = static_cast<HandlerWorker*>(param);
@@ -987,7 +1000,14 @@ DWORD HandlerWorkerThreadImpl(LPVOID param) {
     const ULONGLONG t0 = GetTickCount64();
     if (w->desc.clsid_text == kTestStuckHandler) Sleep(INFINITE);
     pulse::shell::CtxBind bind;
-    if (pulse::shell::BindCtxSelection(w->paths, w->background, bind)) {
+    if (IsNativeSendToClsid(w->desc.clsid_text)) {
+        w->phase = 1;
+        w->send_to = pulse::shell::EnumerateSendToTargets();
+        wchar_t mnemonic = 0;
+        const std::wstring title = pulse::shell::NativeSendToTitle(&mnemonic);
+        pulse::shell::NativeSendToItems(w->send_to, title, mnemonic, w->id_first, w->id_last,
+                                        w->items);
+    } else if (pulse::shell::BindCtxSelection(w->paths, w->background, bind)) {
         const HRESULT hr = pulse::shell::QueryOneHandler(
             w->desc, bind, w->owner, w->id_first, w->id_last, w->qcm_flags, w->slot, &w->phase);
         if (SUCCEEDED(hr) && w->slot.menu)
@@ -1013,7 +1033,9 @@ DWORD HandlerWorkerThreadImpl(LPVOID param) {
                 d.owner = w->owner;
                 d.paths = w->paths;
                 d.background = w->background;
-                if (w->slot.menu && inv->item_id >= w->id_first)
+                if (IsNativeSendToClsid(w->desc.clsid_text))
+                    InvokeNativeSendTo(*w, inv->invoke_req_id, inv->item_id);
+                else if (w->slot.menu && inv->item_id >= w->id_first)
                     CtxInvoke(d, w->slot.menu, w->id_first, inv->invoke_req_id, inv->item_id);
                 else
                     SendDone(inv->invoke_req_id, E_INVALIDARG, false,
@@ -1029,6 +1051,7 @@ DWORD HandlerWorkerThreadImpl(LPVOID param) {
         if (invoked || exiting) break;
     }
     pulse::shell::ReleaseHandlerSlot(w->slot);
+    pulse::shell::FreeSendToTargets(w->send_to);
     CoUninitialize();
     return 0;
 }
@@ -1171,6 +1194,21 @@ DWORD CtxSessionThreadImpl(LPVOID param, const CtxSessionApi& api = {}) {
         stuck.clsid_text = kTestStuckHandler;
         handlers.insert(handlers.begin(), std::move(stuck));
     }
+    // Native 发送到 (C5) right before the SendTo slot, in its menu position.
+    // The slot still runs for the default menu's own rows and as the check;
+    // the user hiding 发送到 (the slot disabled) hides both.
+    if (!data->background &&
+        !IsDisabledHandler(kNativeSendToClsid, data->disabled_clsids)) {
+        const auto slot = std::find_if(handlers.begin(), handlers.end(),
+            [](const pulse::shell::CtxHandlerDesc& h) {
+                return IsSendToHandlerClsid(h.clsid_text) && !h.default_menu_only;
+            });
+        if (slot != handlers.end()) {
+            pulse::shell::CtxHandlerDesc native;
+            native.clsid_text = kNativeSendToClsid;
+            handlers.insert(slot, std::move(native));
+        }
+    }
     if (handlers.size() > MAXIMUM_WAIT_OBJECTS)
         handlers.resize(MAXIMUM_WAIT_OBJECTS);
 
@@ -1207,7 +1245,25 @@ DWORD CtxSessionThreadImpl(LPVOID param, const CtxSessionApi& api = {}) {
     };
     // `statuses` gets every worker in menu order: the app keeps the previous
     // rows of the handlers that have not finished (C4b shard merge).
+    // Logged once per session: where the native 发送到 and the slot's differ.
+    bool send_to_checked = false;
+    auto check_send_to = [&](const std::vector<std::wstring>& slot_only,
+                             const std::vector<std::wstring>& native_only) {
+        if (send_to_checked) return;
+        send_to_checked = true;
+        if (slot_only.empty() && native_only.empty()) return;
+        std::wstring line = L"Native send-to differs; slot only:";
+        for (const auto& t : slot_only) line += L" [" + t + L"]";
+        line += L" native only:";
+        for (const auto& t : native_only) line += L" [" + t + L"]";
+        HostLog(line.c_str());
+    };
     auto collect_items = [&](std::vector<pulse::ipc::CtxHandlerStatus>& statuses) {
+        const HandlerWorker* native_send_to = nullptr;
+        for (const auto& w : workers)
+            if (w && IsNativeSendToClsid(w->desc.clsid_text) && worker_done(*w) &&
+                !w->items.empty())
+                native_send_to = w.get();
         std::vector<std::wstring> classic_rows;
         for (const auto& w : workers)
             if (w && worker_done(*w) && !w->desc.explorer_command)
@@ -1228,6 +1284,14 @@ DWORD CtxSessionThreadImpl(LPVOID param, const CtxSessionApi& api = {}) {
                 if (w->desc.explorer_command &&
                     pulse::shell::PackagedRowsDuplicate(rows, classic_rows)) {
                     status.flags |= pulse::ipc::CTX_HANDLER_DUPLICATE;
+                } else if (native_send_to && IsSendToHandlerClsid(w->desc.clsid_text)) {
+                    std::vector<std::wstring> slot_only;
+                    std::vector<std::wstring> native_only;
+                    const auto merged = pulse::shell::MergeNativeSendTo(
+                        native_send_to->items, w->items, &slot_only, &native_only);
+                    check_send_to(slot_only, native_only);
+                    out.insert(out.end(), merged.begin(), merged.end());
+                    status.rows = static_cast<uint32_t>(merged.size());
                 } else {
                     out.insert(out.end(), w->items.begin(), w->items.end());
                     status.rows = static_cast<uint32_t>(w->items.size());

@@ -2,6 +2,7 @@
 #include "../ipc/ctx_menu_util.h"
 
 #include <cstdio>
+#include <string>
 #include <cwchar>
 #include <vector>
 
@@ -602,6 +603,153 @@ void TestConditionalShellVerbsRegistry() {
     Check(verbs.size() == 1 && verbs[0] == L"conditional",
           "only AppliesTo verbs are left to the default menu");
 }
+pulse::shell::CtxItemOut Row(const wchar_t* text, bool child = false, const wchar_t* verb = L"",
+                             bool has_children = false) {
+    pulse::shell::CtxItemOut item;
+    item.text = text;
+    item.child = child;
+    item.verb = verb;
+    item.has_children = has_children;
+    return item;
+}
+
+void TestNativeSendToItems() {
+    std::vector<pulse::shell::SendToTarget> targets(2);
+    targets[0].text = L"Documents";
+    targets[1].text = L"USB (H:)";
+    std::vector<pulse::shell::CtxItemOut> out;
+    pulse::shell::NativeSendToItems(targets, L"Send to", L'N', 257, 512, out);
+    Check(out.size() == 3 && out[0].has_children && out[0].verb == L"sendto" &&
+          out[0].text == L"Send to" && out[0].mnemonic == L'N' && !out[0].child,
+          "native send-to: the header is the 发送到 flyout");
+    Check(out.size() == 3 && out[1].child && out[1].id == 258 && out[1].text == L"Documents" &&
+          out[2].child && out[2].id == 259 && out[2].text == L"USB (H:)",
+          "native send-to: child k is id_first + 1 + k");
+    Check(out.size() == 3 && pulse::ipc::IsNativeSendToClsid(out[0].clsid) &&
+          pulse::ipc::IsNativeSendToClsid(out[2].clsid) && !out[1].handler.empty(),
+          "native send-to: rows name the native handler");
+    std::vector<pulse::shell::CtxItemOut> capped;
+    pulse::shell::NativeSendToItems(targets, L"Send to", 0, 257, 258, capped);
+    Check(capped.size() == 2, "native send-to: ids stay inside the handler's range");
+    std::vector<pulse::shell::CtxItemOut> none;
+    pulse::shell::NativeSendToItems(targets, L"", 0, 257, 512, none);
+    pulse::shell::NativeSendToItems({}, L"Send to", 0, 257, 512, none);
+    Check(none.empty(), "native send-to: no title or no target, no rows");
+}
+
+void TestNativeSendToMerge() {
+    const std::vector<pulse::shell::CtxItemOut> native = {
+        Row(L"Send to", false, L"sendto", true), Row(L"Zip", true), Row(L"Mail", true),
+        Row(L"DVD (E:)", true)};
+    const std::vector<pulse::shell::CtxItemOut> slot = {
+        Row(L"Create shortcut", false, L"link"), Row(L"Send to", false, L"sendto", true),
+        Row(L"Zip", true), Row(L"Mail", true), Row(L"Fax", true),
+        Row(L"Rotate right", false, L"rotate90")};
+    std::vector<std::wstring> slot_only;
+    std::vector<std::wstring> native_only;
+    const auto merged = pulse::shell::MergeNativeSendTo(native, slot, &slot_only, &native_only);
+    Check(merged.size() == 3 && merged[0].text == L"Fax" && merged[0].child &&
+          merged[1].text == L"Create shortcut" && merged[2].text == L"Rotate right",
+          "native send-to merge: the slot keeps its own rows, only-found destinations lead");
+    Check(slot_only == std::vector<std::wstring>{L"Fax"} &&
+          native_only == std::vector<std::wstring>{L"DVD (E:)"},
+          "native send-to merge: both differences are reported");
+
+    const std::vector<pulse::shell::CtxItemOut> same = {
+        Row(L"Send to", false, L"sendto", true), Row(L"Zip", true), Row(L"Mail", true),
+        Row(L"DVD (E:)", true), Row(L"Create shortcut", false, L"link")};
+    slot_only.clear();
+    native_only.clear();
+    const auto quiet = pulse::shell::MergeNativeSendTo(native, same, &slot_only, &native_only);
+    Check(quiet.size() == 1 && quiet[0].text == L"Create shortcut" && slot_only.empty() &&
+          native_only.empty(), "native send-to merge: an equal flyout leaves only the extras");
+
+    // The slot's flyout did not fill in time: an inert 发送到 row.
+    const std::vector<pulse::shell::CtxItemOut> empty_flyout = {
+        Row(L"Send to", false, L"sendto"), Row(L"Create shortcut", false, L"link")};
+    slot_only.clear();
+    native_only.clear();
+    const auto unfilled =
+        pulse::shell::MergeNativeSendTo(native, empty_flyout, &slot_only, &native_only);
+    Check(unfilled.size() == 1 && unfilled[0].text == L"Create shortcut" && native_only.empty(),
+          "native send-to merge: an unfilled slot flyout is not a difference");
+
+    const auto alone = pulse::shell::MergeNativeSendTo({}, slot);
+    Check(alone.size() == slot.size() && alone[1].verb == L"sendto",
+          "native send-to merge: without a native list the slot is unchanged");
+}
+
+void TestSendToDropKeys() {
+    using pulse::shell::SendToDropEffect;
+    using pulse::shell::SendToDropKeys;
+    Check(SendToDropEffect(SendToDropKeys(false, false)) == DROPEFFECT_COPY &&
+          (SendToDropKeys(false, false) & MK_CONTROL),
+          "send-to drop: plain click copies (Ctrl drag)");
+    Check(SendToDropEffect(SendToDropKeys(true, false)) == DROPEFFECT_MOVE &&
+          SendToDropEffect(SendToDropKeys(true, true)) == DROPEFFECT_LINK &&
+          SendToDropEffect(SendToDropKeys(false, true)) == DROPEFFECT_COPY,
+          "send-to drop: Shift moves, Ctrl+Shift links, Ctrl copies");
+}
+
+void TestNativeSendToLive() {
+    wchar_t mnemonic = 0;
+    const std::wstring title = pulse::shell::NativeSendToTitle(&mnemonic);
+    Check(!title.empty() && title.find(L'&') == std::wstring::npos,
+          "native send-to: shell32 provides the 发送到 title");
+    auto targets = pulse::shell::EnumerateSendToTargets();
+    bool valid = true;
+    for (const auto& t : targets) valid = valid && t.pidl && !t.text.empty();
+    std::printf("  native send-to: %zu destinations\n", targets.size());
+    Check(valid, "native send-to: every destination has a name and an item");
+    pulse::shell::FreeSendToTargets(targets);
+    Check(targets.empty(), "native send-to: targets are freed");
+}
+
+// The drop itself, on a plain folder: SendTo copies.
+void TestNativeSendToDrop() {
+    wchar_t temp[MAX_PATH] = {};
+    GetTempPathW(MAX_PATH, temp);
+    const std::wstring root = std::wstring(temp) + L"pulse_sendto_test_" +
+                              std::to_wstring(GetCurrentProcessId());
+    const std::wstring source = root + L"\\a.txt";
+    const std::wstring dest_dir = root + L"\\dest";
+    const std::wstring copied = dest_dir + L"\\a.txt";
+    CreateDirectoryW(root.c_str(), nullptr);
+    CreateDirectoryW(dest_dir.c_str(), nullptr);
+    HANDLE file = CreateFileW(source.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file != INVALID_HANDLE_VALUE) {
+        DWORD written = 0;
+        WriteFile(file, "pulse", 5, &written, nullptr);
+        CloseHandle(file);
+    }
+    HRESULT hr = E_FAIL;
+    {
+        pulse::shell::CtxBind bind;
+        PIDLIST_ABSOLUTE target = nullptr;
+        if (pulse::shell::BindCtxSelection({source}, false, bind) && bind.data &&
+            SUCCEEDED(SHParseDisplayName(dest_dir.c_str(), nullptr, &target, 0, nullptr))) {
+            hr = pulse::shell::DropOnSendToTarget(target, bind.data);
+        }
+        if (target) CoTaskMemFree(target);
+        // The copy may run on the Shell's own thread.
+        const ULONGLONG until = GetTickCount64() + 10000;
+        while (GetFileAttributesW(copied.c_str()) == INVALID_FILE_ATTRIBUTES &&
+               GetTickCount64() < until) {
+            MSG msg;
+            while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&msg);
+            Sleep(20);
+        }
+    }
+    Check(SUCCEEDED(hr) && GetFileAttributesW(copied.c_str()) != INVALID_FILE_ATTRIBUTES &&
+          GetFileAttributesW(source.c_str()) != INVALID_FILE_ATTRIBUTES,
+          "native send-to: dropping on a folder copies the file");
+    DeleteFileW(copied.c_str());
+    DeleteFileW(source.c_str());
+    RemoveDirectoryW(dest_dir.c_str());
+    RemoveDirectoryW(root.c_str());
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -624,6 +772,11 @@ int wmain(int argc, wchar_t** argv) {
     TestOpenWithForPrograms();
     TestDefaultMenuConditionalVerbs();
     TestConditionalShellVerbsRegistry();
+    TestNativeSendToItems();
+    TestNativeSendToMerge();
+    TestSendToDropKeys();
+    TestNativeSendToLive();
+    TestNativeSendToDrop();
     if (argc > 1 && wcscmp(argv[1], L"--sendto") == 0) TestInstalledSendTo(argc > 2 ? argv[2] : nullptr);
     CoUninitialize();
     return passed ? 0 : 1;

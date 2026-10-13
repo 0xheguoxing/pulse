@@ -469,6 +469,17 @@ void ProbePath(const std::wstring& path, bool extended) {
         WaitForSingleObject(worker->done, elapsed >= kWaitMs ? 0 : static_cast<DWORD>(kWaitMs - elapsed));
     }
 
+    // The host's native 发送到 (C5), shown right before the SendTo slot, which
+    // then keeps only what the native list lacks.
+    std::vector<pulse::shell::CtxItemOut> native_send_to;
+    {
+        auto targets = pulse::shell::EnumerateSendToTargets();
+        wchar_t mnemonic = 0;
+        const std::wstring title = pulse::shell::NativeSendToTitle(&mnemonic);
+        pulse::shell::NativeSendToItems(targets, title, mnemonic, 0x0F00, 0x0FFF, native_send_to);
+        pulse::shell::FreeSendToTargets(targets);
+    }
+
     std::vector<Row> kept;
     std::vector<pulse::ops::ShellMenuItem> kept_items; // host-shaped, for --display
     std::vector<Row> exposed;
@@ -493,7 +504,21 @@ void ProbePath(const std::wstring& path, bool extended) {
         Out(L"  %ls %ls%ls  hr=0x%08X  %llu ms  kept=%zu built=%zu\n", worker->desc.name.c_str(),
             worker->desc.clsid_text.c_str(), worker->desc.explorer_command ? L" (IExplorerCommand)" : L"",
             static_cast<unsigned>(worker->hr), worker->total_ms, worker->kept.size(), worker->full.size());
-        for (const auto& item : worker->kept) {
+        std::vector<pulse::shell::CtxItemOut> rows = worker->kept;
+        if (pulse::ipc::IsSendToHandlerClsid(worker->desc.clsid_text) &&
+            !worker->desc.default_menu_only && !native_send_to.empty()) {
+            std::vector<std::wstring> slot_only;
+            std::vector<std::wstring> native_only;
+            const auto merged = pulse::shell::MergeNativeSendTo(native_send_to, worker->kept,
+                                                                &slot_only, &native_only);
+            rows = native_send_to;
+            rows.insert(rows.end(), merged.begin(), merged.end());
+            Out(L"  native send-to: %zu destinations, slot only %zu, native only %zu\n",
+                native_send_to.size() - 1, slot_only.size(), native_only.size());
+            for (const auto& text : slot_only) Out(L"    slot only: %ls\n", text.c_str());
+            for (const auto& text : native_only) Out(L"    native only: %ls\n", text.c_str());
+        }
+        for (const auto& item : rows) {
             pulse::ops::ShellMenuItem shell_item;
             shell_item.id = item.id;
             shell_item.enabled = item.enabled;
@@ -512,7 +537,8 @@ void ProbePath(const std::wstring& path, bool extended) {
             row.verb = item.verb;
             row.disabled = !item.enabled;
             row.submenu = item.has_children;
-            row.source = worker->desc.name;
+            row.source = pulse::ipc::IsNativeSendToClsid(item.clsid) ? std::wstring(L"native send-to")
+                                                                    : worker->desc.name;
             kept.push_back(row);
         }
         // The SendTo slot holds the whole default Shell menu; a row found only
@@ -544,6 +570,28 @@ void ProbePath(const std::wstring& path, bool extended) {
     }
     Out(L"\n## Pulse registry verbs (%ls): %zu\n", verb_key.c_str(), statics.size());
     PrintRows(statics);
+
+    // The native 发送到 lists Explorer's destinations in Explorer's order.
+    if (!native_send_to.empty()) {
+        std::vector<std::wstring> explorer_order;
+        for (size_t i = 0; i < native.size(); ++i) {
+            if (native[i].depth != 0 || native[i].text != native_send_to.front().text) continue;
+            for (size_t j = i + 1; j < native.size() && native[j].depth > 0; ++j)
+                if (native[j].depth == 1) explorer_order.push_back(native[j].text);
+            break;
+        }
+        std::vector<std::wstring> native_order;
+        for (const auto& item : native_send_to)
+            if (item.child) native_order.push_back(item.text);
+        if (!explorer_order.empty()) {
+            Check(native_order == explorer_order,
+                  path + L": the native 发送到 matches Explorer's destinations and order");
+            if (native_order != explorer_order) {
+                for (const auto& text : explorer_order) Info(L"  explorer send-to: %ls\n", text.c_str());
+                for (const auto& text : native_order) Info(L"  native send-to:   %ls\n", text.c_str());
+            }
+        }
+    }
 
     // Native -> Pulse.
     Out(L"\n## Explorer rows -> Pulse source\n");

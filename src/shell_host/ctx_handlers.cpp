@@ -8,6 +8,7 @@
 #include <shlwapi.h>
 #include <shobjidl.h>
 
+#include <algorithm>
 #include <cwctype>
 #include <unordered_set>
 #include <vector>
@@ -873,6 +874,193 @@ uint32_t FindItemId(const std::vector<CtxItemOut>& items, uint32_t id,
             if (!item.has_children && item.id != 0 && item.text == text) return item.id;
     }
     return 0;
+}
+
+std::wstring NativeSendToTitle(wchar_t* mnemonic) {
+    HMODULE shell32 = GetModuleHandleW(L"shell32.dll");
+    if (!shell32) return {};
+    const wchar_t* raw = nullptr;
+    const int length = LoadStringW(shell32, 30312, reinterpret_cast<LPWSTR>(&raw), 0);
+    if (length <= 0 || !raw) return {};
+    const std::wstring text(raw, static_cast<size_t>(length));
+    if (mnemonic) *mnemonic = MenuMnemonic(text);
+    return CleanMenuText(text);
+}
+
+std::vector<SendToTarget> EnumerateSendToTargets() {
+    std::vector<SendToTarget> out;
+    PIDLIST_ABSOLUTE root = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderIDList(FOLDERID_SendTo, 0, nullptr, &root)) && root) {
+        IShellFolder* folder = nullptr;
+        if (SUCCEEDED(SHBindToObject(nullptr, root, nullptr, IID_PPV_ARGS(&folder))) && folder) {
+            std::vector<PITEMID_CHILD> children;
+            IEnumIDList* items = nullptr;
+            // Hidden entries (desktop.ini) are not destinations.
+            if (folder->EnumObjects(nullptr, SHCONTF_FOLDERS | SHCONTF_NONFOLDERS, &items) == S_OK &&
+                items) {
+                PITEMID_CHILD child = nullptr;
+                while (items->Next(1, &child, nullptr) == S_OK) children.push_back(child);
+                items->Release();
+            }
+            std::stable_sort(children.begin(), children.end(),
+                [folder](PCUITEMID_CHILD a, PCUITEMID_CHILD b) {
+                    const HRESULT hr = folder->CompareIDs(0, a, b);
+                    return SUCCEEDED(hr) && static_cast<short>(HRESULT_CODE(hr)) < 0;
+                });
+            for (PITEMID_CHILD child : children) {
+                STRRET name{};
+                wchar_t* text = nullptr;
+                if (SUCCEEDED(folder->GetDisplayNameOf(child, SHGDN_NORMAL, &name)) &&
+                    SUCCEEDED(StrRetToStrW(&name, child, &text)) && text) {
+                    SendToTarget target;
+                    target.text = CleanMenuText(text);
+                    target.pidl = ILCombine(root, child);
+                    CoTaskMemFree(text);
+                    if (target.pidl && !target.text.empty()) out.push_back(std::move(target));
+                    else if (target.pidl) CoTaskMemFree(target.pidl);
+                }
+                CoTaskMemFree(child);
+            }
+            folder->Release();
+        }
+        CoTaskMemFree(root);
+    }
+    // No "insert a disk" prompt for an empty card reader.
+    DWORD old_mode = 0;
+    SetThreadErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX, &old_mode);
+    const DWORD drives = GetLogicalDrives();
+    for (int i = 0; i < 26; ++i) {
+        if (!(drives & (1u << i))) continue;
+        wchar_t drive_root[] = L"A:\\";
+        drive_root[0] = static_cast<wchar_t>(L'A' + i);
+        const UINT type = GetDriveTypeW(drive_root);
+        if (type != DRIVE_REMOVABLE && type != DRIVE_CDROM) continue;
+        // Explorer hides empty removable drives; optical drives are listed
+        // without media (and are not spun up here).
+        if (type == DRIVE_REMOVABLE &&
+            !GetVolumeInformationW(drive_root, nullptr, 0, nullptr, nullptr, nullptr, nullptr, 0))
+            continue;
+        PIDLIST_ABSOLUTE pidl = nullptr;
+        if (FAILED(SHParseDisplayName(drive_root, nullptr, &pidl, 0, nullptr)) || !pidl) continue;
+        wchar_t* name = nullptr;
+        if (SUCCEEDED(SHGetNameFromIDList(pidl, SIGDN_NORMALDISPLAY, &name)) && name) {
+            SendToTarget target;
+            target.text = CleanMenuText(name);
+            target.pidl = pidl;
+            pidl = nullptr;
+            CoTaskMemFree(name);
+            if (!target.text.empty()) out.push_back(std::move(target));
+            else CoTaskMemFree(target.pidl);
+        }
+        if (pidl) CoTaskMemFree(pidl);
+    }
+    SetThreadErrorMode(old_mode, nullptr);
+    return out;
+}
+
+void FreeSendToTargets(std::vector<SendToTarget>& targets) noexcept {
+    for (auto& target : targets) {
+        if (target.pidl) CoTaskMemFree(target.pidl);
+        target.pidl = nullptr;
+    }
+    targets.clear();
+}
+
+void NativeSendToItems(const std::vector<SendToTarget>& targets, const std::wstring& title,
+                       wchar_t mnemonic, UINT id_first, UINT id_last,
+                       std::vector<CtxItemOut>& out) {
+    if (title.empty() || targets.empty()) return;
+    const std::wstring handler = title + L" (Pulse)";
+    CtxItemOut header;
+    header.has_children = true;
+    header.verb = L"sendto";
+    header.text = title;
+    header.mnemonic = mnemonic;
+    header.clsid = pulse::ipc::kNativeSendToClsid;
+    header.handler = handler;
+    out.push_back(std::move(header));
+    UINT id = id_first + 1;
+    for (const auto& target : targets) {
+        if (id > id_last) break;
+        CtxItemOut child;
+        child.id = id++;
+        child.child = true;
+        child.text = target.text;
+        child.clsid = pulse::ipc::kNativeSendToClsid;
+        child.handler = handler;
+        out.push_back(std::move(child));
+    }
+}
+
+HRESULT DropOnSendToTarget(PCIDLIST_ABSOLUTE target, IDataObject* data) {
+    if (!target || !data) return E_INVALIDARG;
+    IShellFolder* parent = nullptr;
+    PCUITEMID_CHILD child = nullptr;
+    HRESULT hr = SHBindToParent(target, IID_PPV_ARGS(&parent), &child);
+    if (FAILED(hr) || !parent) return FAILED(hr) ? hr : E_FAIL;
+    IDropTarget* drop = nullptr;
+    hr = parent->GetUIObjectOf(nullptr, 1, &child, IID_IDropTarget, nullptr,
+                               reinterpret_cast<void**>(&drop));
+    parent->Release();
+    if (FAILED(hr) || !drop) return FAILED(hr) ? hr : E_FAIL;
+    // As the SendTo extension does: copy, Shift moves, Ctrl+Shift links —
+    // told to the target as the matching drag keys.
+    const DWORD keys = SendToDropKeys(GetAsyncKeyState(VK_SHIFT) < 0,
+                                      GetAsyncKeyState(VK_CONTROL) < 0);
+    POINTL point{};
+    DWORD effect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+    hr = drop->DragEnter(data, keys, point, &effect);
+    if (SUCCEEDED(hr) && effect != DROPEFFECT_NONE) {
+        effect = SendToDropEffect(keys);
+        hr = drop->Drop(data, keys, point, &effect);
+    } else {
+        drop->DragLeave();
+        if (SUCCEEDED(hr)) hr = HRESULT_FROM_WIN32(ERROR_CANCELLED);
+    }
+    drop->Release();
+    return hr;
+}
+
+std::vector<CtxItemOut> MergeNativeSendTo(const std::vector<CtxItemOut>& native,
+                                          const std::vector<CtxItemOut>& slot_rows,
+                                          std::vector<std::wstring>* slot_only,
+                                          std::vector<std::wstring>* native_only) {
+    std::unordered_set<std::wstring> native_texts;
+    for (const auto& item : native)
+        if (item.child) native_texts.insert(item.text);
+    if (native_texts.empty()) return slot_rows;
+    std::vector<CtxItemOut> extra;
+    std::vector<CtxItemOut> rest;
+    std::unordered_set<std::wstring> slot_texts;
+    bool in_send_to = false;
+    bool filled = false;
+    for (const auto& item : slot_rows) {
+        if (!item.child) {
+            const bool send_to = pulse::ipc::ToLowerVerb(item.verb) == L"sendto";
+            in_send_to = send_to && item.has_children;
+            // The flyout header, or the inert row of an empty flyout.
+            if (send_to) continue;
+            rest.push_back(item);
+            continue;
+        }
+        if (!in_send_to) {
+            rest.push_back(item);
+            continue;
+        }
+        filled = true;
+        slot_texts.insert(item.text);
+        if (native_texts.contains(item.text)) continue;
+        if (slot_only) slot_only->push_back(item.text);
+        CtxItemOut row = item;
+        row.separator_after = false;
+        extra.push_back(std::move(row));
+    }
+    if (native_only && filled) {
+        for (const auto& item : native)
+            if (item.child && !slot_texts.contains(item.text)) native_only->push_back(item.text);
+    }
+    extra.insert(extra.end(), rest.begin(), rest.end());
+    return extra;
 }
 
 } // namespace pulse::shell
