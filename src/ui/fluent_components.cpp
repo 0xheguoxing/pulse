@@ -245,6 +245,7 @@ void Painter::SetCompositor(Compositor* compositor) noexcept {
     small_icon_format_.reset();
     micro_icon_format_.reset();
     ellipsis_sign_.reset();
+    nav_ellipsis_sign_.reset();
     format_scale_ = 0.0f;
 }
 
@@ -260,6 +261,7 @@ void Painter::SetScale(float scale) noexcept {
         small_icon_format_.reset();
         micro_icon_format_.reset();
         ellipsis_sign_.reset();
+        nav_ellipsis_sign_.reset();
         format_scale_ = 0.0f;
     }
 }
@@ -324,6 +326,7 @@ void Painter::EnsureTextFormats() {
     small_icon_format_.reset();
     micro_icon_format_.reset();
     ellipsis_sign_.reset();
+    nav_ellipsis_sign_.reset();
     auto create = [this](float size, DWRITE_FONT_WEIGHT weight,
                          ComPtr<IDWriteTextFormat>& format) {
         typography::CreateTextFormat(compositor_->DwriteFactory(),
@@ -352,6 +355,9 @@ void Painter::EnsureTextFormats() {
     if (body_format_.get())
         compositor_->DwriteFactory()->CreateEllipsisTrimmingSign(
             body_format_.get(), &ellipsis_sign_);
+    if (nav_format_.get())
+        compositor_->DwriteFactory()->CreateEllipsisTrimmingSign(
+            nav_format_.get(), &nav_ellipsis_sign_);
     format_scale_ = scale_;
 }
 
@@ -1451,8 +1457,11 @@ void Painter::DrawMenuItem(const MenuItemSpec& spec) {
         content.right = label_right;
     }
     // Long undo labels / Explorer verbs must ellipsize inside the fixed menu
-    // width — they must never stretch the flyout.
-    IDWriteTextFormat* body = BodyFormat();
+    // width — they must never stretch the flyout. Labels use the 13 DIP
+    // nav format, the size the file list draws names in.
+    IDWriteTextFormat* body = NavFormat();
+    IDWriteInlineObject* sign = nav_ellipsis_sign_.get() ? nav_ellipsis_sign_.get()
+                                                         : ellipsis_sign_.get();
     DWRITE_WORD_WRAPPING old_wrap = DWRITE_WORD_WRAPPING_WRAP;
     DWRITE_TRIMMING old_trim{};
     ComPtr<IDWriteInlineObject> old_sign;
@@ -1461,7 +1470,7 @@ void Painter::DrawMenuItem(const MenuItemSpec& spec) {
         body->GetTrimming(&old_trim, &old_sign);
         body->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         DWRITE_TRIMMING trim{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
-        body->SetTrimming(&trim, ellipsis_sign_.get());
+        body->SetTrimming(&trim, sign);
     }
     DrawText(spec.text, content, body, foreground);
     if (body) {
@@ -2093,6 +2102,7 @@ void Painter::InvalidateTypography() noexcept {
     small_icon_format_.reset();
     micro_icon_format_.reset();
     ellipsis_sign_.reset();
+    nav_ellipsis_sign_.reset();
     format_scale_ = 0.0f;
 }
 

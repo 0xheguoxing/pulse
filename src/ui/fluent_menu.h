@@ -92,7 +92,9 @@ public:
     // Row height in DIPs (clamped to kMinRowDip..kMaxRowDip); applies on the next Layout.
     void SetRowHeightDip(float dip);
     static constexpr float kDefaultRowDip = 36.0f;
-    static constexpr float kMinRowDip = 28.0f;
+    static constexpr float kMinRowDip = 26.0f;
+    // Label size; matches Painter::NavFormat() and the file list's names.
+    static constexpr float kLabelDip = 13.0f;
     static constexpr float kMaxRowDip = 40.0f;
     // Measures text; dwrite may be nullptr (falls back to an estimate).
     void Layout(IDWriteFactory2* dwrite, float scale, float min_width_px = 0);

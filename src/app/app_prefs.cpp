@@ -560,7 +560,8 @@ bool AppPrefs::ApplyWinE(bool on) {
     return ok && take_over_win_e == on;
 }
 int MenuRowHeightDip(int list_row_height) noexcept {
-    return std::clamp(list_row_height + 2, 28, 40);
+    // Menus sit a step tighter than the list they open from.
+    return std::clamp(list_row_height - 4, 26, 36);
 }
 int NormalizeUiFontScale(int percent) noexcept {
     return percent == 90 || percent == 112 || percent == 125 ? percent : 100;

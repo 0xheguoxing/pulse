@@ -523,6 +523,7 @@ private:
     ComPtr<IDWriteTextFormat> small_icon_format_;
     ComPtr<IDWriteTextFormat> micro_icon_format_;
     ComPtr<IDWriteInlineObject> ellipsis_sign_;
+    ComPtr<IDWriteInlineObject> nav_ellipsis_sign_;  // menu labels
 };
 
 } // namespace pulse::ui::fluent

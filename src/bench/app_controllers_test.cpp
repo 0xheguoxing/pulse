@@ -2280,10 +2280,10 @@ int wmain(int argc, wchar_t** argv) {
     passed &= TestDefaultFileManager();
     passed &= TestShellWindowPlan();
     passed &= TestThisPc();
-    passed &= Report("menu row height follows list density (28/34/40 -> 30/36/40, clamped)",
-        pulse::app::MenuRowHeightDip(28) == 30 && pulse::app::MenuRowHeightDip(34) == 36 &&
-        pulse::app::MenuRowHeightDip(40) == 40 && pulse::app::MenuRowHeightDip(24) == 28 &&
-        pulse::app::MenuRowHeightDip(48) == 40);
+    passed &= Report("menu row height sits 4 DIP under list density (28/34/40 -> 26/30/36, clamped)",
+        pulse::app::MenuRowHeightDip(28) == 26 && pulse::app::MenuRowHeightDip(34) == 30 &&
+        pulse::app::MenuRowHeightDip(40) == 36 && pulse::app::MenuRowHeightDip(24) == 26 &&
+        pulse::app::MenuRowHeightDip(48) == 36);
 
     std::printf("\n== app controller tests: %s ==\n", passed ? "PASS" : "FAIL");
     return passed ? 0 : 1;

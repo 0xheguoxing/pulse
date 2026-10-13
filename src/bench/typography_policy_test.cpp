@@ -10,6 +10,7 @@
 namespace pulse::ui::fluent {
 struct PainterTestPeer {
     static IDWriteTextFormat* Body(const Painter& painter) { return painter.BodyFormat(); }
+    static IDWriteTextFormat* Nav(const Painter& painter) { return painter.NavFormat(); }
 };
 }
 
@@ -96,6 +97,12 @@ int wmain(int argc, wchar_t** argv) {
         pulse::l10n::SetLanguage(L"zh-CN");
         typography::InvalidateCaches();
         Check(painter.BeginFrame(theme), "warm painter frame initializes its own font cache");
+        compositor.RecreateTextFormats(1.0f);
+        Check(compositor.FileNameFormat() && fluent::PainterTestPeer::Nav(painter) &&
+            std::abs(fluent::PainterTestPeer::Nav(painter)->GetFontSize() -
+                     compositor.FileNameFormat()->GetFontSize()) < 0.01f &&
+            std::abs(compositor.FileNameFormat()->GetFontSize() - FluentMenuModel::kLabelDip) < 0.01f,
+            "menu labels use the file list name size");
         const float original_size = fluent::PainterTestPeer::Body(painter)->GetFontSize();
         model.Layout(compositor.DwriteFactory(), 1.0f);
         const int original_width = model.WidthPx();

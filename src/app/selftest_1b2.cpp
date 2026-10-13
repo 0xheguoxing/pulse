@@ -2111,7 +2111,8 @@ void TestMenuModel() {
         en_model.Layout(dwrite.get(), 1.0f);
         ui::ComPtr<IDWriteTextFormat> fmt;
         ui::typography::CreateTextFormat(dwrite.get(),
-            {ui::typography::FontRole::Text, 14.0f, DWRITE_FONT_WEIGHT_NORMAL}, &fmt);
+            {ui::typography::FontRole::Text, ui::FluentMenuModel::kLabelDip,
+             DWRITE_FONT_WEIGHT_NORMAL}, &fmt);
         float text_w = 0.0f;
         if (fmt.get()) {
             ui::ComPtr<IDWriteTextLayout> layout;
@@ -2133,22 +2134,22 @@ void TestMenuModel() {
     int expect_h = (int)(4 * 2 + 36.0f * (int)items.size() + 5 * seps + 0.5f);
     Check(model.HeightPx() == expect_h, L"menu: layout height = rows*36 + separators");
     {
-        // #27: the compact list density gives 30 DIP menu rows; out-of-range values clamp.
+        // #27: the compact list density gives 26 DIP menu rows; out-of-range values clamp.
         ui::FluentMenuModel compact;
         compact.SetItems(items);
         compact.SetRowHeightDip(static_cast<float>(app::MenuRowHeightDip(28)));
         compact.Layout(dwrite.get(), 1.0f);
-        const int compact_h = (int)(4 * 2 + 30.0f * (int)items.size() + 5 * seps + 0.5f);
-        Check(compact.HeightPx() == compact_h && compact.RowHeightPx() == 30.0f &&
-              compact.HitTestRow(4.0f + 30.0f * 1.5f + (items[0].separator_after ? 5.0f : 0.0f)) == 1,
-              L"menu: compact density uses 30 DIP rows for layout and hit-testing");
+        const int compact_h = (int)(4 * 2 + 26.0f * (int)items.size() + 5 * seps + 0.5f);
+        Check(compact.HeightPx() == compact_h && compact.RowHeightPx() == 26.0f &&
+              compact.HitTestRow(4.0f + 26.0f * 1.5f + (items[0].separator_after ? 5.0f : 0.0f)) == 1,
+              L"menu: compact density uses 26 DIP rows for layout and hit-testing");
         compact.SetRowHeightDip(10.0f);
         compact.Layout(dwrite.get(), 1.0f);
         const float min_row = compact.RowHeightPx();
         compact.SetRowHeightDip(80.0f);
         compact.Layout(dwrite.get(), 2.0f);
-        Check(min_row == 28.0f && compact.RowHeightPx() == 80.0f,
-              L"menu: row height clamps to 28..40 DIP and scales with DPI");
+        Check(min_row == 26.0f && compact.RowHeightPx() == 80.0f,
+              L"menu: row height clamps to 26..40 DIP and scales with DPI");
     }
     Check(model.WidthPx() >= 160 && model.WidthPx() <= 320, L"menu: width within clamp");
 

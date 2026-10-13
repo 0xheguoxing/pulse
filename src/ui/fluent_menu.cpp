@@ -135,7 +135,7 @@ void FluentMenuModel::Layout(IDWriteFactory2* dwrite, float scale, float min_wid
     pad_v_ = 4.0f * scale_;
     sep_h_ = 5.0f * scale_;
 
-    auto body = MakeFormat(dwrite, 14.0f * scale_);
+    auto body = MakeFormat(dwrite, kLabelDip * scale_);
     auto caption = MakeFormat(dwrite, 12.0f * scale_);
 
     // Must match DrawMenuItem: inset 6, content pad 10, icon 20, gap 8, pad 10, inset 6.
