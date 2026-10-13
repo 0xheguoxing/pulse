@@ -831,6 +831,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 s->appPrefs.background_image.clear();
             } else {
                 SeedShellVerbCache(*s);
+                SeedCtxLayout(*s);
                 StartShellRegistryWatch(ServiceWindow(*s));
             }
         }
@@ -2019,9 +2020,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     }
                 }
                 if (prefs_changed) s->ctxMenuPrefs.Save();
+                if (!completed.partial) SaveCtxLayoutIfDirty(*s);
                 RefreshOpenCtxMenu(*s);
             } else if (!payload->partial) {
+                // Late answers of closed menus still feed the layout.
                 s->ops.CloseShellMenu(token);
+                SaveCtxLayoutIfDirty(*s);
             }
         }
         delete payload;
@@ -2040,6 +2044,13 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
 
+    case WM_CTX_LAYOUT_SEED: {
+        auto* seed = reinterpret_cast<CtxLayoutSeed*>(lParam);
+        if (s && seed) ApplyCtxLayoutSeed(*s, *seed);
+        delete seed;
+        return 0;
+    }
+
     case WM_SHELL_VERB_SEED: {
         auto* seed = reinterpret_cast<ShellVerbSeed*>(lParam);
         if (s && seed) ApplyShellVerbSeed(*s, *seed);
@@ -2050,7 +2061,9 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_SHELL_CACHE_INVALIDATE: {
         if (s) {
             s->context_menu.InvalidateCaches();
+            DiscardCtxLayoutSave();
             SeedShellVerbCache(*s);
+            SeedCtxLayout(*s);
             // Broad Classes registry changes also include unrelated shell verbs.
             // Application badges refresh on SHCNE_ASSOCCHANGED instead.
             InvalidateRect(hwnd, nullptr, FALSE);

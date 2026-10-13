@@ -52,10 +52,14 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <condition_variable>
 #include <cwctype>
 #include <cstring>
+#include <mutex>
 #include <thread>
 #include <unordered_set>
+
+#include "pulse_version.h"
 
 using namespace pulse;
 
@@ -1190,6 +1194,128 @@ void ApplyShellVerbSeed(AppState& s, ShellVerbSeed& seed) {
     if (seed.generation != g_shell_seed_generation.load()) return;
     s.context_menu.MergeStaticCache(std::move(seed.machine));
 }
+
+namespace {
+
+std::wstring CtxLayoutBuild() {
+    return std::wstring(PULSE_VERSION_STRING) + L"+" + PULSE_BUILD_ID;
+}
+
+// Writes ctx_layout.bin off the UI thread, 1.5 s after the last change, so a
+// burst of right-clicks costs one write. Discard() drops a pending snapshot
+// and abandons a write in progress: the registry changed and its rows may be
+// stale (they are read again from the file, where fingerprints sort them out).
+class CtxLayoutSaver {
+public:
+    ~CtxLayoutSaver() {
+        {
+            std::lock_guard lock(mutex_);
+            stopping_ = true;
+        }
+        wake_.notify_one();
+        if (worker_.joinable()) worker_.join();
+    }
+    void Schedule(app::CtxLayoutMap layout) {
+        {
+            std::lock_guard lock(mutex_);
+            pending_ = std::move(layout);
+            has_pending_ = true;
+            due_ = GetTickCount64() + kDelayMs;
+            if (!worker_.joinable()) worker_ = std::thread([this] { Run(); });
+        }
+        wake_.notify_one();
+    }
+    void Discard() {
+        std::lock_guard lock(mutex_);
+        has_pending_ = false;
+        pending_.clear();
+        ++epoch_;
+    }
+private:
+    static constexpr uint64_t kDelayMs = 1500;
+    void Run() noexcept {
+        try {
+            std::unique_lock lock(mutex_);
+            for (;;) {
+                if (!has_pending_ && !stopping_) {
+                    wake_.wait(lock);
+                    continue;
+                }
+                if (!has_pending_) return;
+                const uint64_t now = GetTickCount64();
+                // At exit the last snapshot is written at once.
+                if (!stopping_ && now < due_) {
+                    wake_.wait_for(lock, std::chrono::milliseconds(due_ - now));
+                    continue;
+                }
+                app::CtxLayoutMap layout = std::move(pending_);
+                pending_.clear();
+                has_pending_ = false;
+                const uint64_t epoch = epoch_;
+                lock.unlock();
+                app::SaveCtxLayoutFile(app::CtxLayoutCachePath(), CtxLayoutBuild(), layout,
+                    app::CtxLayoutFingerprint, [this, epoch] {
+                        std::lock_guard guard(mutex_);
+                        return epoch == epoch_;
+                    });
+                lock.lock();
+            }
+        } catch (...) {
+        }
+    }
+    std::mutex mutex_;
+    std::condition_variable wake_;
+    std::thread worker_;
+    app::CtxLayoutMap pending_;
+    bool has_pending_ = false;
+    bool stopping_ = false;
+    uint64_t due_ = 0;
+    uint64_t epoch_ = 0;
+};
+
+CtxLayoutSaver g_ctx_layout_saver;
+
+} // namespace
+
+// A test instance keeps out of the user's profile: it reads and writes the
+// layout only when its persistence is redirected (selftest builds) or
+// PULSE_CTX_LAYOUT_PATH names a file.
+static bool CtxLayoutPersists(const AppState& s) {
+    if (!s.isolatedTest || s.isolatedTestPersist) return true;
+    return GetEnvironmentVariableW(L"PULSE_CTX_LAYOUT_PATH", nullptr, 0) > 0;
+}
+
+void SeedCtxLayout(AppState& s) {
+    // Without a loaded layout nothing is ever saved either.
+    if (!CtxLayoutPersists(s)) return;
+    HWND hwnd = ServiceWindow(s);
+    const uint32_t generation = s.context_menu.cache_generation();
+    std::thread([hwnd, generation] {
+        // File read and ~30 registry queries per type: never on the UI thread.
+        // An empty seed is posted too: it tells the UI the layout is loaded
+        // and may be saved.
+        auto seed = std::make_unique<CtxLayoutSeed>();
+        seed->generation = generation;
+        app::LoadCtxLayoutFile(app::CtxLayoutCachePath(), CtxLayoutBuild(),
+                               app::CtxLayoutFingerprint, seed->layout);
+        if (PostMessageW(hwnd, WM_CTX_LAYOUT_SEED, 0, reinterpret_cast<LPARAM>(seed.get())))
+            seed.release();
+    }).detach();
+}
+
+void ApplyCtxLayoutSeed(AppState& s, CtxLayoutSeed& seed) {
+    // Read before a registry change: the reload that change started follows.
+    if (seed.generation != s.context_menu.cache_generation()) return;
+    s.context_menu.MergeComLayout(std::move(seed.layout));
+    SaveCtxLayoutIfDirty(s);
+}
+
+void SaveCtxLayoutIfDirty(AppState& s) {
+    if (!s.context_menu.com_layout_loaded() || !s.context_menu.TakeComLayoutDirty()) return;
+    g_ctx_layout_saver.Schedule(s.context_menu.ComLayoutSnapshot());
+}
+
+void DiscardCtxLayoutSave() { g_ctx_layout_saver.Discard(); }
 
 // Fired on WM_RBUTTONDOWN (prefetch) and again on menu open (no-op when the
 // target is unchanged): pulse_shell starts building the COM menu while the

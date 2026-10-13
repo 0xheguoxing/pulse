@@ -37,6 +37,7 @@ inline constexpr UINT kHostRoutedMessages[] = {
     WM_ASSOC_CHANGED,          // SHCNE_ASSOCCHANGED registration
     WM_SHELL_CACHE_INVALIDATE, // shell registry watch
     WM_SHELL_VERB_SEED,        // machine verb cache seed
+    WM_CTX_LAYOUT_SEED,        // persistent context menu layout read (C4)
     WM_SHELL_VERBS,            // static verb reads (process-wide cache)
     WM_RECYCLE_INFO,           // Recycle Bin occupancy query
     WM_NETWORK_LOCATIONS,      // network locations read

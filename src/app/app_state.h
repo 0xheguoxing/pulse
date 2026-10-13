@@ -835,6 +835,13 @@ struct ShellVerbSeed {
     std::unordered_map<std::wstring, std::vector<app::StaticVerb>> machine;
 };
 
+// WM_CTX_LAYOUT_SEED heap payload: the persistent menu layout, read and
+// fingerprint-checked on the seeding thread.
+struct CtxLayoutSeed {
+    uint32_t generation = 0;  // ContextMenuController::cache_generation() at read time
+    app::CtxLayoutMap layout;
+};
+
 struct ShellCtxItemsPayload {
     std::vector<ops::ShellMenuItem> items;
     bool partial = false;

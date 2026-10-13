@@ -65,6 +65,22 @@ bool SameStaticVerbs(const std::vector<StaticVerb>& a, const std::vector<StaticV
     return true;
 }
 
+// Stored rows against a new answer: host ids differ every session and do not
+// count, everything painted does.
+bool SameLayoutRows(const std::vector<ops::ShellMenuItem>& a,
+                    const std::vector<ops::ShellMenuItem>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if ((a[i].id == 0) != (b[i].id == 0) || a[i].enabled != b[i].enabled ||
+            a[i].separator_after != b[i].separator_after ||
+            a[i].has_children != b[i].has_children || a[i].child != b[i].child ||
+            a[i].mnemonic != b[i].mnemonic || a[i].verb != b[i].verb ||
+            a[i].text != b[i].text || a[i].clsid != b[i].clsid || a[i].handler != b[i].handler)
+            return false;
+    }
+    return true;
+}
+
 ShellMenuEntry ComEntry(const ops::ShellMenuItem& item, int command = 0) {
     ShellMenuEntry entry;
     entry.command = command;
@@ -206,9 +222,11 @@ std::vector<ShellMenuEntry> ApplyExplorerPrefs(const ContextMenuPrefs& prefs,
 }
 
 std::wstring ContextMenuController::CacheKey(bool background,
-                                             const std::wstring& extension) {
+                                             const std::wstring& extension, bool multi) {
     if (background) return L":bg";
-    return extension.empty() ? L":file" : extension;
+    std::wstring key = extension.empty() ? L":file" : extension;
+    if (multi) key += L"|m";
+    return key;
 }
 
 void ContextMenuController::StartQuery(
@@ -229,6 +247,11 @@ void ContextMenuController::StartQuery(
         return;
     }
     Close();
+    if (draining_.token != 0 && draining_.token != token_ &&
+        GetTickCount64() - draining_.since > kDrainMs) {
+        if (operations_.close) operations_.close(draining_.token);
+        draining_ = {};
+    }
     uint32_t token = 0;
     if (operations_.query)
         token = operations_.query(paths, hwnd, background, extended,
@@ -239,6 +262,7 @@ void ContextMenuController::StartQuery(
     disabled_handlers_ = std::move(disabled_handlers);
     extension_ = std::move(extension);
     if (background && extension_.empty()) extension_ = ipc::kBackgroundVerbKey;
+    names_ = CtxNamesFor(paths_, background_);
     token_ = token;
     com_ready_ = false;
     com_predicted_ = false;
@@ -253,6 +277,12 @@ void ContextMenuController::StartQuery(
 
 void ContextMenuController::Close() {
     const uint32_t live = token_;
+    const bool drain = live != 0 && !com_ready_ && query_started_at_ != 0;
+    Draining next;
+    if (drain) {
+        next = { live, CacheKey(background_, extension_, paths_.size() > 1), names_,
+                 cache_generation_, GetTickCount64() };
+    }
     display_snapshot_valid_ = false;
     menu_com_items_.clear();
     menu_static_verbs_.clear();
@@ -266,7 +296,13 @@ void ContextMenuController::Close() {
     com_items_.clear();
     static_verbs_.clear();
     extension_.clear();
+    names_ = {};
     query_started_at_ = 0;
+    if (drain) {
+        if (draining_.token != 0 && operations_.close) operations_.close(draining_.token);
+        draining_ = std::move(next);
+        return;
+    }
     if (live && operations_.close) operations_.close(live);
 }
 
@@ -427,20 +463,26 @@ bool ContextMenuController::CompleteStaticVerbs(const std::wstring& extension,
 
 void ContextMenuController::InvalidateCaches() {
     ++cache_generation_;
+    if (draining_.token != 0 && operations_.close) operations_.close(draining_.token);
+    draining_ = {};
     static_cache_.clear();
     static_seeded_.clear();
     com_cache_.clear();
+    com_layout_loaded_ = false;
+    com_layout_dirty_ = false;
     static_pending_.clear();
     static_read_at_.clear();
 }
 
 bool ContextMenuController::SeedComItemsFromCache() {
     if (com_ready_ || !com_items_.empty()) return false;
-    const auto found = com_cache_.find(CacheKey(background_, extension_));
-    if (found == com_cache_.end() || found->second.empty()) return false;
-    com_items_ = found->second;
+    const auto found = com_cache_.find(CacheKey(background_, extension_, paths_.size() > 1));
+    if (found == com_cache_.end() || found->second.rows.empty()) return false;
+    found->second.used = ++com_use_clock_;
+    com_items_ = found->second.rows;
     uint32_t next = kPredictedIdFirst;
     for (auto& item : com_items_) {
+        item.text = ExpandCtxLabel(item.text, names_);
         if (item.id == 0) continue;
         item.id = next <= kPredictedIdLast ? next++ : 0;
     }
@@ -448,10 +490,59 @@ bool ContextMenuController::SeedComItemsFromCache() {
     return true;
 }
 
+void ContextMenuController::StoreLayout(const std::wstring& key,
+                                        const std::vector<ops::ShellMenuItem>& items,
+                                        const CtxNames& names) {
+    std::vector<ops::ShellMenuItem> rows = items;
+    for (auto& row : rows) row.text = TemplateCtxLabel(row.text, names);
+    auto& stored = com_cache_[key];
+    if (!SameLayoutRows(stored.rows, rows)) {
+        stored.rows = std::move(rows);
+        com_layout_dirty_ = true;
+    }
+    stored.used = ++com_use_clock_;
+}
+
+size_t ContextMenuController::MergeComLayout(CtxLayoutMap layout) {
+    size_t added = 0;
+    for (auto& [key, rows] : layout) {
+        if (rows.empty() || com_cache_.contains(key)) continue;
+        com_cache_.emplace(key, ComLayout{ std::move(rows), 0 });
+        ++added;
+    }
+    com_layout_loaded_ = true;
+    // The query already running when the layout landed may paint from it.
+    if (token_ != 0 && !com_ready_ && com_items_.empty() && !menu_open_)
+        SeedComItemsFromCache();
+    return added;
+}
+
+CtxLayoutMap ContextMenuController::ComLayoutSnapshot() const {
+    std::vector<std::pair<uint64_t, const std::wstring*>> order;
+    order.reserve(com_cache_.size());
+    for (const auto& [key, layout] : com_cache_)
+        if (!layout.rows.empty()) order.emplace_back(layout.used, &key);
+    std::sort(order.begin(), order.end(),
+              [](const auto& a, const auto& b) { return a.first > b.first; });
+    if (order.size() > kCtxLayoutMaxKeys) order.resize(kCtxLayoutMaxKeys);
+    CtxLayoutMap out;
+    out.reserve(order.size());
+    for (const auto& entry : order) out.emplace(*entry.second, com_cache_.at(*entry.second).rows);
+    return out;
+}
+
 ContextMenuController::QueryCompletion ContextMenuController::CompleteComQuery(
     uint32_t token, std::vector<ops::ShellMenuItem> items, uint64_t completed_at,
     bool partial) {
     QueryCompletion result;
+    if (token != 0 && token == draining_.token && token != token_) {
+        if (!partial) {
+            if (draining_.generation == cache_generation_)
+                StoreLayout(draining_.key, items, draining_.names);
+            draining_ = {};
+        }
+        return result;
+    }
     if (token == 0 || token != token_) return result;
     if (partial && com_predicted_) {
         com_items_ = OverlayLiveRows(std::move(com_items_), items);
@@ -461,14 +552,14 @@ ContextMenuController::QueryCompletion ContextMenuController::CompleteComQuery(
     }
     result.accepted = true;
     result.partial = partial;
-    result.cache_key = CacheKey(background_, extension_);
+    result.cache_key = CacheKey(background_, extension_, paths_.size() > 1);
     // A partial snapshot only holds the handlers that finished inside the
     // host's fast budget, so it must feed this session and nothing else: the
     // next right-click of the same type paints from com_cache_ before the live
     // answer arrives, and caching an incomplete list made packaged verbs
     // (WinRAR and friends) show up on one right-click and vanish on the next.
     if (!partial) {
-        com_cache_[result.cache_key] = com_items_;
+        StoreLayout(result.cache_key, com_items_, names_);
         com_ready_ = true;
         if (timing_active_ && menu_open_ && completed_at >= opened_at_) {
             timing_.live_after_open_ms = static_cast<int32_t>(std::min<uint64_t>(

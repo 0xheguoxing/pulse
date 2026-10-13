@@ -2,6 +2,7 @@
 
 #include "context_menu.h"
 #include "context_menu_prefs.h"
+#include "ctx_layout_cache.h"
 #include "ctx_menu_timing.h"
 #include "shell_verbs.h"
 #include "../ops/ops_manager.h"
@@ -33,7 +34,9 @@ public:
         std::wstring cache_key;
     };
 
-    static std::wstring CacheKey(bool background, const std::wstring& extension);
+    // ".docx", ":folder", ...; several selected items add "|m".
+    static std::wstring CacheKey(bool background, const std::wstring& extension,
+                                 bool multi = false);
 
     void SetShellOperations(ShellOperations operations) { operations_ = std::move(operations); }
     void StartQuery(ContextMenuPrefs& prefs, HWND hwnd,
@@ -78,8 +81,26 @@ public:
     static constexpr uint32_t kPredictedIdFirst = 0x7F00;
     static constexpr uint32_t kPredictedIdLast = 0x7FFF;
     bool SeedComItemsFromCache();
+
+    // Persistent layout (ctx_layout_cache.h). Rows are kept with the item
+    // names templated; SeedComItemsFromCache fills in the current names.
+    // MergeComLayout adds keys read from disk that this session has not
+    // answered yet and marks the layout loaded: only a loaded layout is saved,
+    // so a save never drops the keys still being read after a flush.
+    size_t MergeComLayout(CtxLayoutMap layout);
+    bool com_layout_loaded() const noexcept { return com_layout_loaded_; }
+    // True once after a complete answer changed the stored rows.
+    bool TakeComLayoutDirty() noexcept {
+        const bool dirty = com_layout_dirty_;
+        com_layout_dirty_ = false;
+        return dirty;
+    }
+    // The most recently used keys, at most kCtxLayoutMaxKeys.
+    CtxLayoutMap ComLayoutSnapshot() const;
     const std::vector<ops::ShellMenuItem>& com_items() const noexcept { return com_items_; }
     bool com_predicted() const noexcept { return com_predicted_; }
+    // Also takes the complete answer of a closed menu's session (accepted =
+    // false: the caller closes that session; the rows only feed the layout).
     QueryCompletion CompleteComQuery(uint32_t token,
                                      std::vector<ops::ShellMenuItem> items,
                                      uint64_t completed_at, bool partial = false);
@@ -129,7 +150,30 @@ private:
     // Extensions whose rows came from the on-disk cache: they still re-enumerate
     // once, so a cache written by an older build heals itself.
     std::unordered_set<std::wstring> static_seeded_;
-    std::unordered_map<std::wstring, std::vector<ops::ShellMenuItem>> com_cache_;
+    struct ComLayout {
+        std::vector<ops::ShellMenuItem> rows;  // labels templated (CtxNames)
+        uint64_t used = 0;                     // com_use_clock_ at last seed/store
+    };
+    std::unordered_map<std::wstring, ComLayout> com_cache_;
+    uint64_t com_use_clock_ = 0;
+    bool com_layout_loaded_ = false;
+    bool com_layout_dirty_ = false;
+    CtxNames names_;  // names of the items the current query is for
+    // A menu closed before its complete answer leaves the host session running
+    // until that answer arrives (it is only stored, never shown), so a slow
+    // machine still learns the layout. One at a time; the next one, a registry
+    // flush or kDrainMs closes it.
+    static constexpr uint64_t kDrainMs = 15000;
+    struct Draining {
+        uint32_t token = 0;
+        std::wstring key;
+        CtxNames names;
+        uint32_t generation = 0;
+        uint64_t since = 0;
+    };
+    Draining draining_;
+    void StoreLayout(const std::wstring& key, const std::vector<ops::ShellMenuItem>& items,
+                     const CtxNames& names);
     std::unordered_set<std::wstring> static_pending_;
     std::unordered_map<std::wstring, uint64_t> static_read_at_; // last enumeration request
     uint32_t cache_generation_ = 0;  // bumped by InvalidateCaches()

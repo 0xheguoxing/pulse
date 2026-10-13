@@ -54,6 +54,13 @@ void StopShellRegistryWatch();
 void SeedShellVerbCache(AppState& s);
 // WM_SHELL_VERB_SEED: merges the parsed machine cache unless a newer seed started.
 void ApplyShellVerbSeed(AppState& s, ShellVerbSeed& seed);
+// Persistent menu layout (ctx_layout_cache.h): read on a worker thread and
+// merged on WM_CTX_LAYOUT_SEED; changed rows are written 1.5 s later off the
+// UI thread. A registry flush discards the pending write and reads again.
+void SeedCtxLayout(AppState& s);
+void ApplyCtxLayoutSeed(AppState& s, CtxLayoutSeed& seed);
+void SaveCtxLayoutIfDirty(AppState& s);
+void DiscardCtxLayoutSave();
 void StartCtxQuery(AppState& s, std::vector<std::wstring> paths,
                           bool background, const std::wstring& ext);
 void MaybePrefetchHoverCtxMenu(AppState& s);

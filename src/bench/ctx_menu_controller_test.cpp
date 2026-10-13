@@ -1,7 +1,9 @@
 // ctx_menu_controller_test.cpp - ContextMenuController bookkeeping: the
-// per-menu timing record (ctx_menu_timing.h), static-verb re-reads and rows
-// painted from the cache while the live answer arrives in parts.
+// per-menu timing record (ctx_menu_timing.h), static-verb re-reads, rows
+// painted from the cache while the live answer arrives in parts, and the
+// persistent layout with templated names (ctx_layout_cache.h).
 #include "../app/context_menu_controller.h"
+#include "../app/ctx_layout_cache.h"
 #include "../app/ctx_menu_timing.h"
 
 #include <windows.h>
@@ -238,6 +240,191 @@ int wmain() {
               "record carries the counters");
         Check(Contains(line, "\"key\":\".d\\u0022w\\u005cg\\u4e2d\""),
               "quotes, backslashes and non-ASCII in the key stay valid JSON");
+    }
+    {
+        // {name}: labels keep the item's names as markers.
+        const auto single = app::CtxNamesFor({ L"C:\\f\\a.dwg" }, false);
+        Check(single.file == L"a.dwg" && single.stem == L"a" && single.folder.empty(),
+              "one item: file name and stem");
+        const auto report = app::CtxNamesFor({ L"\\\\?\\D:\\docs\\report.txt" }, false);
+        const std::wstring zip = app::TemplateCtxLabel(L"\x538B\x7F29\x5230 \"a.zip\"", single);
+        Check(zip.find(app::kCtxNameStem) != std::wstring::npos &&
+                  app::ExpandCtxLabel(zip, report) == L"\x538B\x7F29\x5230 \"report.zip\"",
+              "a quoted stem becomes a marker and takes the next item's name");
+        Check(app::TemplateCtxLabel(L"Bandizip", single) == L"Bandizip" &&
+                  app::TemplateCtxLabel(L"Scan with a tool", single) == L"Scan with a tool" &&
+                  app::TemplateCtxLabel(L"to a.zip", single).find(app::kCtxNameStem) == 3,
+              "a name inside a word or a sentence stays; before an extension it is templated");
+        const auto git = app::CtxNamesFor({ L"C:\\src\\Git" }, true);
+        Check(git.file == L"Git" && git.stem == L"Git" &&
+                  app::TemplateCtxLabel(L"Git Bash Here", git) == L"Git Bash Here" &&
+                  app::TemplateCtxLabel(L"Open \"Git\" in Code", git).find(app::kCtxNameFile) == 6,
+              "background menus template the folder only where it is quoted");
+        const auto tar = app::CtxNamesFor({ L"C:\\f\\a.tar.gz" }, false);
+        const std::wstring extract = app::TemplateCtxLabel(L"Extract to \"a.tar\\\"", tar);
+        Check(extract == std::wstring(L"Extract to \"") + app::kCtxNameStem + L"\\\"",
+              "the longest matching name wins");
+        const auto multi = app::CtxNamesFor({ L"C:\\work\\x.txt", L"C:\\work\\y.txt" }, false);
+        const auto other = app::CtxNamesFor({ L"C:\\other\\p.txt", L"C:\\other\\q.txt" }, false);
+        Check(multi.file.empty() && multi.folder == L"work" &&
+                  app::ExpandCtxLabel(app::TemplateCtxLabel(L"Add to \"work.zip\"", multi), other) ==
+                      L"Add to \"other.zip\"",
+              "several items: the folder they are in");
+        const auto drive = app::CtxNamesFor({ L"C:\\" }, false);
+        Check(drive.file.empty() && drive.stem.empty() &&
+                  app::TemplateCtxLabel(L"C: \"C:\"", drive) == L"C: \"C:\"",
+              "a drive root has no name to template");
+    }
+    {
+        // Seeds take the current names; single and multi selections are apart.
+        app::ContextMenuController controller;
+        uint32_t token = 60;
+        app::ContextMenuController::ShellOperations operations;
+        operations.query = [&](std::vector<std::wstring>, HWND, bool, bool,
+                               std::vector<std::wstring>) { return ++token; };
+        controller.SetShellOperations(std::move(operations));
+        const std::vector<ops::ShellMenuItem> rows = {
+            Row(3, L"{A}", L"", L"Zip", true), Row(4, L"{A}", L"", L"to a.zip", false, true),
+            Row(9, L"{B}", L"scan", L"Scan") };
+        controller.StartQuery(prefs, nullptr, { L"C:\\f\\a.dwg" }, false, L".dwg", false, {}, {});
+        controller.CompleteComQuery(token, rows, 100, false);
+        Check(!controller.com_layout_loaded() && controller.TakeComLayoutDirty() &&
+                  !controller.TakeComLayoutDirty(),
+              "a new layout is dirty once (and waits until the stored one is loaded)");
+        controller.StartQuery(prefs, nullptr, { L"C:\\f\\b.dwg" }, false, L".dwg", false, {}, {});
+        Check(controller.com_predicted() && RowNamed(controller.com_items(), L"to b.zip") &&
+                  !RowNamed(controller.com_items(), L"to a.zip"),
+              "painted rows carry the clicked item's name, not the last one's");
+        controller.CompleteComQuery(token, { Row(13, L"{A}", L"", L"Zip", true),
+                                             Row(14, L"{A}", L"", L"to b.zip", false, true),
+                                             Row(19, L"{B}", L"scan", L"Scan") }, 200, false);
+        Check(!controller.TakeComLayoutDirty(), "the same layout for another name is not dirty");
+        controller.StartQuery(prefs, nullptr, { L"C:\\f\\c.dwg", L"C:\\f\\d.dwg" }, false,
+                              L".dwg", false, {}, {});
+        Check(!controller.com_predicted(), "several selected items do not reuse the single layout");
+        controller.CompleteComQuery(token, { Row(5, L"{B}", L"scan", L"Scan") }, 300, false);
+        const auto snapshot = controller.ComLayoutSnapshot();
+        Check(snapshot.size() == 2 && snapshot.contains(L".dwg") && snapshot.contains(L".dwg|m") &&
+                  snapshot.at(L".dwg")[1].text == std::wstring(L"to ") + app::kCtxNameStem + L".zip",
+              "the snapshot holds both keys with templated labels");
+
+        app::ContextMenuController loaded;
+        uint32_t loaded_token = 80;
+        app::ContextMenuController::ShellOperations loaded_ops;
+        loaded_ops.query = [&](std::vector<std::wstring>, HWND, bool, bool,
+                               std::vector<std::wstring>) { return ++loaded_token; };
+        loaded.SetShellOperations(std::move(loaded_ops));
+        loaded.StartQuery(prefs, nullptr, { L"C:\\f\\e.zip" }, false, L".zip", false, {}, {});
+        loaded.CompleteComQuery(loaded_token, { Row(2, L"{Z}", L"", L"Fresh") }, 50, false);
+        auto from_disk = snapshot;
+        from_disk[L".zip"] = { Row(1, L"{Z}", L"", L"Stale") };
+        loaded.StartQuery(prefs, nullptr, { L"C:\\f\\g.dwg" }, false, L".dwg", false, {}, {});
+        Check(!loaded.com_predicted(), "nothing to paint before the layout is read");
+        Check(loaded.MergeComLayout(from_disk) == 2 && loaded.com_layout_loaded(),
+              "merging adds the keys this session has not answered");
+        Check(loaded.com_predicted() && RowNamed(loaded.com_items(), L"to g.zip"),
+              "the query waiting for the popup paints from the merged layout");
+        loaded.StartQuery(prefs, nullptr, { L"C:\\f\\h.zip" }, false, L".zip", false, {}, {});
+        Check(RowNamed(loaded.com_items(), L"Fresh") && !RowNamed(loaded.com_items(), L"Stale"),
+              "a key answered this session is newer than the file");
+        loaded.InvalidateCaches();
+        Check(!loaded.com_layout_loaded() && loaded.ComLayoutSnapshot().empty(),
+              "a registry flush empties the layout until it is read again");
+    }
+    {
+        // A menu closed before the complete answer still learns the layout.
+        app::ContextMenuController controller;
+        uint32_t token = 90;
+        std::vector<uint32_t> closed;
+        app::ContextMenuController::ShellOperations operations;
+        operations.query = [&](std::vector<std::wstring>, HWND, bool, bool,
+                               std::vector<std::wstring>) { return ++token; };
+        operations.close = [&](uint32_t id) { closed.push_back(id); };
+        controller.SetShellOperations(std::move(operations));
+        controller.StartQuery(prefs, nullptr, { L"C:\\f\\a.png" }, false, L".png", false, {}, {});
+        const uint32_t first = token;
+        controller.Close();
+        Check(closed.empty(), "closing before the answer keeps the host session running");
+        const auto late = controller.CompleteComQuery(first, { Row(3, L"{P}", L"", L"Print a.png") },
+                                                      100, true);
+        Check(!late.accepted && controller.ComLayoutSnapshot().empty(),
+              "a closed menu's partial answer is dropped");
+        const auto done = controller.CompleteComQuery(
+            first, { Row(3, L"{P}", L"", L"Print \"a.png\""), Row(4, L"{Q}", L"", L"Rotate") }, 200, false);
+        Check(!done.accepted && controller.TakeComLayoutDirty(),
+              "its complete answer is stored (the caller closes the session)");
+        controller.StartQuery(prefs, nullptr, { L"C:\\f\\b.png" }, false, L".png", false, {}, {});
+        Check(controller.com_predicted() && RowNamed(controller.com_items(), L"Print \"b.png\"") &&
+                  controller.com_items().size() == 2,
+              "the next menu of the type paints the late answer with its own name");
+        const uint32_t second = token;
+        controller.Close();
+        controller.StartQuery(prefs, nullptr, { L"C:\\f\\c.txt" }, false, L".txt", false, {}, {});
+        const uint32_t third = token;
+        controller.Close();
+        Check(closed.size() == 1 && closed[0] == second,
+              "one session drains at a time: the next one closes the previous");
+        controller.InvalidateCaches();
+        Check(closed.size() == 2 && closed[1] == third,
+              "a registry flush closes the draining session");
+        Check(!controller.CompleteComQuery(third, { Row(5, L"{T}", L"", L"Edit") }, 300, false).accepted &&
+                  controller.ComLayoutSnapshot().empty(),
+              "an answer read before the flush is not stored");
+    }
+    {
+        // ctx_layout.bin: bytes, build stamp, fingerprints, abandoned writes.
+        app::CtxLayoutRecords records;
+        records[L".dwg"] = { 11, { Row(4, L"{A}", L"", (std::wstring(L"to ") + app::kCtxNameStem).c_str()) } };
+        records[L".dwg"].rows[0].mnemonic = L'Z';
+        records[L".dwg"].rows[0].child = true;
+        records[L":bg"] = { 12, {} };
+        const auto bytes = app::SerializeCtxLayout(records, L"1.0+test");
+        app::CtxLayoutRecords parsed;
+        Check(app::ParseCtxLayout(bytes.data(), bytes.size(), L"1.0+test", parsed) &&
+                  parsed.size() == 2 && parsed[L".dwg"].fingerprint == 11 &&
+                  parsed[L".dwg"].rows[0].text == records[L".dwg"].rows[0].text &&
+                  parsed[L".dwg"].rows[0].mnemonic == L'Z' && parsed[L".dwg"].rows[0].child,
+              "the layout survives a round trip");
+        Check(!app::ParseCtxLayout(bytes.data(), bytes.size(), L"1.1+other", parsed) &&
+                  parsed.empty(),
+              "a file written by another build is ignored");
+        Check(!app::ParseCtxLayout(bytes.data(), bytes.size() - 3, L"1.0+test", parsed),
+              "a truncated file is rejected");
+
+        wchar_t exe[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        std::wstring path = exe;
+        path = path.substr(0, path.find_last_of(L'\\') + 1) + L"ctx_layout_test.bin";
+        DeleteFileW(path.c_str());
+        app::CtxLayoutMap layout;
+        layout[L".dwg"] = { Row(4, L"{A}", L"", L"one") };
+        layout[L".dwg|m"] = { Row(5, L"{A}", L"", L"two") };
+        layout[L":bg"] = { Row(6, L"{B}", L"", L"three") };
+        auto written = [](const std::wstring& key) -> uint64_t { return key == L":bg" ? 2 : 1; };
+        auto changed = [](const std::wstring& key) -> uint64_t { return key == L":bg" ? 3 : 1; };
+        Check(app::SaveCtxLayoutFile(path, L"b", layout, written), "the layout is written");
+        app::CtxLayoutMap back;
+        Check(app::LoadCtxLayoutFile(path, L"b", written, back) && back.size() == 3,
+              "an unchanged registry keeps every key");
+        Check(app::LoadCtxLayoutFile(path, L"b", changed, back) && back.size() == 2 &&
+                  back.contains(L".dwg") && back.contains(L".dwg|m") && !back.contains(L":bg"),
+              "a changed fingerprint drops only its keys (both selection sizes)");
+        app::CtxLayoutMap newer;
+        newer[L".txt"] = { Row(7, L"{C}", L"", L"four") };
+        Check(!app::SaveCtxLayoutFile(path, L"b", newer, written, [] { return false; }) &&
+                  app::LoadCtxLayoutFile(path, L"b", written, back) && back.size() == 3,
+              "an abandoned write leaves the file as it was");
+        DeleteFileW(path.c_str());
+        Check(!app::LoadCtxLayoutFile(path, L"b", written, back) && back.empty(),
+              "no file, no layout");
+
+        const uint64_t txt = app::CtxLayoutFingerprint(L".txt");
+        Check(txt != 0 && txt == app::CtxLayoutFingerprint(L".txt") &&
+                  txt != app::CtxLayoutFingerprint(L".dwg") &&
+                  app::CtxLayoutFingerprint(L":bg") == app::CtxLayoutFingerprint(L":bg"),
+              "registry fingerprints are stable and per type");
+        Check(app::CtxLayoutBaseKey(L".dwg|m") == L".dwg" && app::CtxLayoutBaseKey(L":bg") == L":bg",
+              "selection size does not change the fingerprinted type");
     }
     std::printf("%s\n", failures ? "FAILED" : "ALL PASSED");
     return failures ? 1 : 0;
