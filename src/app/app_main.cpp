@@ -834,6 +834,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 StartShellRegistryWatch(ServiceWindow(*s));
             }
         }
+        // Process wide: every window's menus and frame copies follow it.
+        ui::FluentMenu::SetAcrylicEnabled(s->appPrefs.menu_acrylic && !s->safeMode);
         s->renderer.SetRowHeightDip(static_cast<float>(
             app::EffectiveRowHeightDip(s->appPrefs.row_height, s->appPrefs.ui_font_scale)));
         s->renderer.SetListStyle(s->appPrefs.list_smart_date, s->appPrefs.list_zebra_rows,

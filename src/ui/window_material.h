@@ -39,6 +39,10 @@ bool SampleTarget(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float margin,
 bool DrawAcrylicSample(ID2D1DeviceContext* dc, const TargetSample& sample, const D2D1_RECT_F& rect, float radius,
                        bool dark, float blur_std) noexcept;
 
+// Popup acrylic (menus) follows the system: off under high contrast, when
+// Windows "Transparency effects" is off, and while battery saver is on.
+bool SystemAllowsPopupAcrylic() noexcept;
+
 int RunMaterialSelfTest();
 void LogWindowMaterial(const char* fmt, ...);
 

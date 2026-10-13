@@ -197,6 +197,13 @@ public:
     // modal loop cannot otherwise observe. Sticky until changed.
     void SetTopmost(bool topmost) { topmost_ = topmost; }
 
+    // Acrylic menus (process wide, Settings > menu acrylic). Turning it on also
+    // makes every Compositor keep a GPU copy of its last frame: menus blur what
+    // the owner window shows under them, baked once per open. High contrast,
+    // Windows "Transparency effects" off and battery saver keep the solid plate.
+    static void SetAcrylicEnabled(bool enabled) noexcept;
+    static bool AcrylicEnabled() noexcept;
+
     static constexpr int kShadowMargin = 20; // px of transparent border around the card
 
 private:
@@ -207,6 +214,10 @@ private:
         void* bits = nullptr;
         int w = 0;
         int h = 0;
+        // Acrylic plate for the card, keyed by its screen rect and theme.
+        ComPtr<ID2D1Bitmap1> plate;
+        RECT plate_key{};
+        bool plate_dark = false;
     };
 
     bool EnsureWindow();
@@ -218,6 +229,9 @@ private:
     bool RenderSurface(const FluentMenuModel& model, int hover_row, int hover_swatch,
                        float header_px, bool draw_filter_field, Surface& s);
     bool Render();                 // model_ -> dib_ (pixels), current hover state
+    // Bakes s.plate for `card` (bitmap px) of a window at screen `origin` from
+    // the owner compositor's frame copy; false keeps the solid plate.
+    bool EnsurePlate(Surface& s, const D2D1_RECT_F& card, POINT origin, ID2D1Image* target);
     void Present(BYTE alpha, int y_offset_px);
     // One-level flyout for FluentMenuItem::children.
     bool EnsureSubWindow();
@@ -289,6 +303,7 @@ private:
     POINT popup_pt_{};
     bool top_center_ = false;
     bool topmost_ = false;
+    bool acrylic_active_ = false;  // decided when a popup opens
     HWND external_edit_ = nullptr; // borrowed; never moved, hidden or destroyed
     HWND edit_ = nullptr;
     HFONT edit_font_ = nullptr;

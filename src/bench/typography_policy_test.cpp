@@ -63,6 +63,84 @@ struct FluentMenuTestPeer {
         menu.EnsureFilterEdit();
         Show(menu);
     }
+    // A pixel of the card's top padding (no row content) as {R, G, B}; the DIB
+    // is premultiplied BGRA and the card is opaque.
+    static void CardCenter(const FluentMenu& menu, int rgb[3]) {
+        const int x = menu.surf_.w / 2;
+        const int y = FluentMenu::kShadowMargin + 3;
+        const auto* px = static_cast<const unsigned char*>(menu.surf_.bits) +
+                         (static_cast<size_t>(y) * menu.surf_.w + x) * 4;
+        rgb[0] = px[2]; rgb[1] = px[1]; rgb[2] = px[0];
+    }
+    // Acrylic menus blur the owner's last presented frame under the card and
+    // fall back to the solid plate where there is nothing to sample.
+    static int CheckAcrylicPlate(int (*check)(bool, const char*)) {
+        int fails = 0;
+        HWND host = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, L"STATIC", L"",
+            WS_POPUP | WS_VISIBLE, -30000, -30000, 600, 400, nullptr, nullptr,
+            GetModuleHandleW(nullptr), nullptr);
+        {
+            FluentMenu::SetAcrylicEnabled(true);
+            Compositor compositor;
+            if (!host || !compositor.Init(host)) {
+                fails += check(false, "create acrylic test window");
+                FluentMenu::SetAcrylicEnabled(false);
+                if (host) DestroyWindow(host);
+                return fails;
+            }
+            ID2D1DeviceContext* dc = compositor.Dc();
+            dc->BeginDraw();
+            dc->Clear(D2D1::ColorF(0.85f, 0.10f, 0.10f, 1.0f));
+            dc->EndDraw();
+            compositor.Present();
+            fails += check(compositor.FrameCopy() != nullptr, "present keeps a frame copy while menu acrylic is on");
+
+            FluentMenu menu;
+            fails += check(menu.Create(host, &compositor, 1.0f), "create acrylic test menu");
+            menu.SetTheme(false, D2D1::ColorF(0.2f, 0.4f, 0.8f));
+            menu.model_.SetItems({{1, L"Open"}, {2, L"Copy path"}, {3, L"Properties"}});
+            menu.model_.Layout(compositor.DwriteFactory(), 1.0f);
+            POINT client{0, 0};
+            ClientToScreen(host, &client);
+            menu.base_x_ = client.x + 40;
+            menu.base_y_ = client.y + 30;
+
+            menu.acrylic_active_ = false;
+            int solid[3]{};
+            const bool solid_ok = menu.Render();
+            if (solid_ok) CardCenter(menu, solid);
+            menu.acrylic_active_ = true;
+            int glass[3]{};
+            const bool glass_ok = menu.Render();
+            if (glass_ok) CardCenter(menu, glass);
+            std::printf("acrylic values: solid %d,%d,%d glass %d,%d,%d\n",
+                solid[0], solid[1], solid[2], glass[0], glass[1], glass[2]);
+            fails += check(solid_ok && std::abs(solid[0] - solid[2]) <= 2,
+                "solid menu plate stays neutral");
+            fails += check(glass_ok && menu.surf_.plate.get() != nullptr && glass[0] - glass[2] >= 12,
+                "acrylic menu plate carries the colour of the window under it");
+            ID2D1Bitmap1* baked = menu.surf_.plate.get();
+            menu.hover_row_ = 1;
+            fails += check(menu.Render() && menu.surf_.plate.get() == baked,
+                "hover redraws reuse the baked acrylic plate");
+
+            // Nowhere near the window: nothing to sample, so the solid plate.
+            menu.base_x_ = client.x + 5000;
+            menu.base_y_ = client.y + 5000;
+            int away[3]{};
+            const bool away_ok = menu.Render();
+            if (away_ok) CardCenter(menu, away);
+            fails += check(away_ok && menu.surf_.plate.get() == nullptr &&
+                std::abs(away[0] - solid[0]) <= 2 && std::abs(away[2] - solid[2]) <= 2,
+                "a menu outside the window keeps the solid plate");
+
+            FluentMenu::SetAcrylicEnabled(false);
+            compositor.Present();
+            fails += check(compositor.FrameCopy() == nullptr, "turning menu acrylic off drops the frame copy");
+        }
+        DestroyWindow(host);
+        return fails;
+    }
 };
 }
 
@@ -180,6 +258,10 @@ int wmain(int argc, wchar_t** argv) {
         typography::SetUiFontScale(100);
     }
     DestroyWindow(owner);
+    FluentMenuTestPeer::CheckAcrylicPlate([](bool ok, const char* label) {
+        Check(ok, label);
+        return ok ? 0 : 1;
+    });
     Check(GetForegroundWindow() == foreground, "typography tests preserve foreground window");
     CoUninitialize();
     return failures ? 1 : 0;

@@ -94,6 +94,13 @@ public:
     int Height() const { return height_; }
     bool UsesTransparentComposition() const { return transparentComposition_; }
 
+    // Menu acrylic samples what the window last showed. When enabled (process
+    // wide), Present() first copies the finished frame into a GPU bitmap on the
+    // same device; FrameCopy() is null until a frame has been presented.
+    static void SetFrameCopyEnabled(bool enabled) noexcept;
+    static bool FrameCopyEnabled() noexcept;
+    ID2D1Bitmap1* FrameCopy() const { return frameCopy_.get(); }
+
     // Whole-window zoom on the DirectComposition root visual (runs on the
     // compositor thread, so no frames are pumped). origin is in client pixels.
     // HideContent() makes the visual transparent until PlayZoom starts, so a
@@ -108,6 +115,7 @@ private:
     std::wstring initialization_error_;
     bool InitD3D();
     bool CreateSwapChain();
+    void CopyFrame();
     void ResizeSwapChain();
     static bool IsDeviceLost(HRESULT hr);
 
@@ -125,6 +133,7 @@ private:
     ComPtr<ID2D1Device> d2dDevice_;
     ComPtr<ID2D1DeviceContext> dc_;
     ComPtr<ID2D1Bitmap1> targetBitmap_;
+    ComPtr<ID2D1Bitmap1> frameCopy_;
     ComPtr<IDWriteFactory2> dwriteFactory_;
     ComPtr<IDWriteRenderingParams2> textRenderingParams_;
     ComPtr<IDWriteTextFormat> textFormat_;

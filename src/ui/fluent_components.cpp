@@ -1295,7 +1295,7 @@ void Painter::DrawTab(const TabSpec& spec) {
     }
 }
 
-void Painter::DrawMenuSurface(const D2D1_RECT_F& bounds) {
+void Painter::DrawMenuSurface(const D2D1_RECT_F& bounds, bool plate_drawn) {
     if (!theme_) {
         return;
     }
@@ -1305,7 +1305,7 @@ void Painter::DrawMenuSurface(const D2D1_RECT_F& bounds) {
                                 : dark_ ? RgbaF(0xFFFFFF, 0.055f)
                                         : RgbaF(0x000000, 0.055f);
     const float radius = Px(theme_->radius_flyout);
-    FillRoundedRect(bounds, radius, fill);
+    if (!plate_drawn || high_contrast_) FillRoundedRect(bounds, radius, fill);
     StrokeRoundedRect(bounds, radius, border);
 }
 

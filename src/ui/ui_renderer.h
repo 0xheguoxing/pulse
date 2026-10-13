@@ -812,6 +812,7 @@ struct WindowViewModel {
     bool show_pinned_tab_names = true;
     bool settings_list_smart_date = true;
     bool settings_list_zebra_rows = true;
+    bool settings_menu_acrylic = true;
     bool settings_list_size_bar = false;
     bool settings_list_tag_names = false;
     bool settings_list_selection_outline = false;

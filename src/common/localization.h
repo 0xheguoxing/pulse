@@ -659,6 +659,8 @@ enum class StringId : UINT {
     HelpReopenClosed = IDS_HELP_REOPEN_CLOSED,
     HelpSwitchWindow = IDS_HELP_SWITCH_WINDOW,
     HelpWindowOverview = IDS_HELP_WINDOW_OVERVIEW,
+    MenuAcrylic = IDS_MENU_ACRYLIC,
+    MenuAcrylicDesc = IDS_MENU_ACRYLIC_DESC,
     LockedItemTitle = IDS_LOCKED_ITEM_TITLE,
     LockedItemMessage = IDS_LOCKED_ITEM_MESSAGE,
     LockedItemEndHint = IDS_LOCKED_ITEM_END_HINT,

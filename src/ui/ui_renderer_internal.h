@@ -2023,6 +2023,7 @@ struct SettingsLayout {
     D2D1_RECT_F accent_picker{};
     D2D1_RECT_F effect_card{};
     D2D1_RECT_F effect_row[kWindowEffectCount]{};
+    D2D1_RECT_F menu_acrylic_row{};
     D2D1_RECT_F density_card{};
     D2D1_RECT_F list_style_row[6]{};
     D2D1_RECT_F density_row[3]{};

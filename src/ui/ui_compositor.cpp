@@ -10,6 +10,7 @@
 #include <shellscalingapi.h>
 #include <shlobj.h>
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 
 namespace pulse::ui {
@@ -94,6 +95,7 @@ void Compositor::Shutdown() {
         delete shared;
     }
     if (lumaText_) lumaText_->Shutdown();
+    frameCopy_.reset();
     targetBitmap_.reset();
     if (dc_.get()) dc_->SetTarget(nullptr);
     if (compositionTarget_.get()) compositionTarget_->SetRoot(nullptr);
@@ -318,6 +320,7 @@ bool Compositor::CreateSwapChain() {
 
 void Compositor::ResizeSwapChain() {
     if (!swapChain_.get() || width_ <= 0 || height_ <= 0) return;
+    frameCopy_.reset();
     targetBitmap_.reset();
     dc_->SetTarget(nullptr);
     HRESULT hr = swapChain_->ResizeBuffers(0, (UINT)width_, (UINT)height_,
@@ -442,10 +445,43 @@ void Compositor::ClearZoom() {
     compositionDevice_->Commit();
 }
 
+namespace {
+std::atomic<bool> g_frame_copy_enabled{false};
+}
+
+void Compositor::SetFrameCopyEnabled(bool enabled) noexcept {
+    g_frame_copy_enabled.store(enabled, std::memory_order_relaxed);
+}
+
+bool Compositor::FrameCopyEnabled() noexcept {
+    return g_frame_copy_enabled.load(std::memory_order_relaxed);
+}
+
+void Compositor::CopyFrame() {
+    if (!FrameCopyEnabled() || !dc_.get() || !targetBitmap_.get()) {
+        frameCopy_.reset();
+        return;
+    }
+    const D2D1_SIZE_U size = targetBitmap_->GetPixelSize();
+    if (frameCopy_.get()) {
+        const D2D1_SIZE_U have = frameCopy_->GetPixelSize();
+        if (have.width != size.width || have.height != size.height) frameCopy_.reset();
+    }
+    if (!frameCopy_.get()) {
+        const auto props = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+            targetBitmap_->GetPixelFormat(), 96.0f, 96.0f);
+        if (FAILED(dc_->CreateBitmap(size, nullptr, 0, &props, &frameCopy_))) return;
+    }
+    // GPU to GPU; the frame's drawing has already ended.
+    if (FAILED(frameCopy_->CopyFromBitmap(nullptr, targetBitmap_.get(), nullptr)))
+        frameCopy_.reset();
+}
+
 void Compositor::Present() {
     if (device_lost_) return;
     if (hwnd_) UpdateTextRenderingParams(
         MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST));
+    CopyFrame();
     HRESULT hr = S_OK;
     if (swapChain_.get()) hr = swapChain_->Present(1, 0);
     if (FAILED(hr)) {

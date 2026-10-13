@@ -2284,6 +2284,19 @@ int wmain(int argc, wchar_t** argv) {
         pulse::app::MenuRowHeightDip(28) == 26 && pulse::app::MenuRowHeightDip(34) == 30 &&
         pulse::app::MenuRowHeightDip(40) == 36 && pulse::app::MenuRowHeightDip(24) == 26 &&
         pulse::app::MenuRowHeightDip(48) == 36);
+    {
+        pulse::app::AppPrefs on;
+        on.persist = false;
+        pulse::app::AppPrefs off;
+        off.persist = false;
+        off.menu_acrylic = false;
+        pulse::app::AppPrefs reloaded;
+        reloaded.persist = false;
+        const bool kept_off = reloaded.FromJson(off.ToJson()) && !reloaded.menu_acrylic;
+        const bool old_file_on = reloaded.FromJson(L"{}") && reloaded.menu_acrylic;
+        passed &= Report("menu acrylic is on by default, saved when off, on for older files",
+            on.menu_acrylic && kept_off && old_file_on);
+    }
 
     std::printf("\n== app controller tests: %s ==\n", passed ? "PASS" : "FAIL");
     return passed ? 0 : 1;

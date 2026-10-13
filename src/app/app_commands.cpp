@@ -2381,6 +2381,8 @@ void ApplySettingsEffects(AppState& s, app::SettingsEffect effects) {
         s.renderer.InvalidateWallpaper();
         ApplyAppWindowChrome(s);
     }
+    if (app::HasEffect(effects, app::SettingsEffect::MenuMaterial))
+        ui::FluentMenu::SetAcrylicEnabled(s.appPrefs.menu_acrylic && !s.safeMode);
     if (app::HasEffect(effects, app::SettingsEffect::UiFontSize)) {
         ui::typography::SetUiFontScale(s.appPrefs.ui_font_scale);
         // Formats and cached widths carry the previous size.

@@ -100,6 +100,8 @@ struct AppPrefs {
     std::wstring language = L"system";
     // none / acrylic-material / mica / mica-alt  (legacy dwm-blur → acrylic)
     std::wstring window_effect = L"mica-alt";
+    // Menus blur the window under them (WinUI in-app acrylic); see FluentMenu.
+    bool menu_acrylic = true;
     std::wstring background_image;
     // Interface transparency 0..90 (json panel_transparency). 25/50/75 match the
     // former subtle/balanced/vivid levels; applies to image, Acrylic and Mica.

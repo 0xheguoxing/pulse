@@ -1255,7 +1255,8 @@ add_dependencies(pulse_transfer_audit_test pulse_elevated_test_host)
 
 add_executable(pulse_typography_policy_test src/bench/typography_policy_test.cpp src/bench/child_edit_test.rc
     src/ui/typography.cpp src/ui/ui_compositor.cpp src/ui/edit_host.cpp
-    src/ui/fluent_components.cpp src/ui/fluent_menu.cpp src/ui/tab_shape.cpp)
+    src/ui/fluent_components.cpp src/ui/fluent_menu.cpp src/ui/tab_shape.cpp
+    src/ui/window_material.cpp)
 target_compile_definitions(pulse_typography_policy_test PRIVATE PULSE_TEST_LUMATEXT_PRESENT_FAILURE=1)
 target_link_options(pulse_typography_policy_test PRIVATE /MANIFEST:NO)
 target_link_libraries(pulse_typography_policy_test PRIVATE d3d11 d2d1 dwrite dxgi dcomp dwmapi
@@ -1265,7 +1266,8 @@ pulse_enable_lumatext(pulse_typography_policy_test)
 # Context-menu access keys: pure matching rules plus the real Fluent modal loop.
 add_executable(pulse_menu_mnemonic_test src/bench/menu_mnemonic_test.cpp src/bench/child_edit_test.rc
     src/ui/typography.cpp src/ui/ui_compositor.cpp src/ui/edit_host.cpp
-    src/ui/fluent_components.cpp src/ui/fluent_menu.cpp src/ui/tab_shape.cpp)
+    src/ui/fluent_components.cpp src/ui/fluent_menu.cpp src/ui/tab_shape.cpp
+    src/ui/window_material.cpp)
 target_include_directories(pulse_menu_mnemonic_test PRIVATE "${CMAKE_BINARY_DIR}/generated")
 target_link_options(pulse_menu_mnemonic_test PRIVATE /MANIFEST:NO)
 target_link_libraries(pulse_menu_mnemonic_test PRIVATE d3d11 d2d1 dwrite dxgi dcomp dwmapi

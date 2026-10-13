@@ -387,7 +387,8 @@ public:
     void DrawTitleBarButton(const D2D1_RECT_F& bounds, TitleBarButtonRole role,
                             std::wstring_view custom_glyph, const ControlState& state);
     void DrawTab(const TabSpec& spec);
-    void DrawMenuSurface(const D2D1_RECT_F& bounds);
+    // plate_drawn: an acrylic plate is already under bounds; only the border is drawn.
+    void DrawMenuSurface(const D2D1_RECT_F& bounds, bool plate_drawn = false);
     void DrawMenuItem(const MenuItemSpec& spec);
     void DrawTooltip(const D2D1_RECT_F& bounds, std::wstring_view text);
     void DrawListRowBackground(const ListRowSpec& spec);

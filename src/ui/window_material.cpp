@@ -445,6 +445,20 @@ bool DrawAcrylicSample(ID2D1DeviceContext* dc, const TargetSample& sample, const
     return true;
 }
 
+bool SystemAllowsPopupAcrylic() noexcept {
+    if (IsHighContrast()) return false;
+    DWORD transparency = 1;
+    DWORD size = sizeof(transparency);
+    if (RegGetValueW(HKEY_CURRENT_USER,
+                     L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                     L"EnableTransparency", RRF_RT_REG_DWORD, nullptr, &transparency,
+                     &size) == ERROR_SUCCESS && transparency == 0)
+        return false;
+    SYSTEM_POWER_STATUS power{};
+    if (GetSystemPowerStatus(&power) && power.SystemStatusFlag == 1) return false;
+    return true;
+}
+
 bool WindowEffectUsesBackdrop(WindowEffect effect) noexcept {
     return effect != WindowEffect::None;
 }

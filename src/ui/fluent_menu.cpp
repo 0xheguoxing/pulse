@@ -5,6 +5,7 @@
 #include "FluentTokens.h"
 #include "lumatext_renderer.h"
 #include "typography.h"
+#include "window_material.h"
 
 #include <windowsx.h>
 #include <commctrl.h>
@@ -13,6 +14,7 @@
 #include <wincodec.h>
 #include <d2d1effects.h>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <cwctype>
@@ -599,6 +601,76 @@ void FluentMenu::LayoutWindow(POINT screen_pt) {
                  (filter_fn_ && !external_edit_) ? SWP_SHOWWINDOW : (SWP_NOACTIVATE | SWP_SHOWWINDOW));
 }
 
+namespace {
+std::atomic<bool> g_menu_acrylic{false};
+}
+
+void FluentMenu::SetAcrylicEnabled(bool enabled) noexcept {
+    g_menu_acrylic.store(enabled, std::memory_order_relaxed);
+    Compositor::SetFrameCopyEnabled(enabled);
+}
+
+bool FluentMenu::AcrylicEnabled() noexcept {
+    return g_menu_acrylic.load(std::memory_order_relaxed);
+}
+
+bool FluentMenu::EnsurePlate(Surface& s, const D2D1_RECT_F& card, POINT origin,
+                             ID2D1Image* target) {
+    ID2D1DeviceContext* dc = compositor_ ? compositor_->Dc() : nullptr;
+    const int pw = static_cast<int>(std::ceil(card.right - card.left));
+    const int ph = static_cast<int>(std::ceil(card.bottom - card.top));
+    if (!dc || pw <= 0 || ph <= 0) return false;
+    const RECT key{ origin.x + static_cast<LONG>(std::floor(card.left)),
+                    origin.y + static_cast<LONG>(std::floor(card.top)), pw, ph };
+    if (s.plate.get() && EqualRect(&s.plate_key, &key) && s.plate_dark == dark_) return true;
+    s.plate.reset();
+
+    // The owner window must be on screen and under the card; a tray menu over
+    // the taskbar would otherwise blur a frame nobody can see.
+    ID2D1Bitmap1* frame = compositor_->FrameCopy();
+    const HWND host = compositor_->Hwnd();
+    if (!frame || !host || !IsWindowVisible(host) || IsIconic(host)) return false;
+    POINT client{ 0, 0 };
+    if (!ClientToScreen(host, &client)) return false;
+    const D2D1_SIZE_U fs = frame->GetPixelSize();
+    const float blur = 16.0f * scale_;  // the capsule recipe (snack_style.cpp)
+    const int margin = static_cast<int>(std::ceil(2.0f * blur));
+    const int sw = pw + margin * 2;
+    const int sh = ph + margin * 2;
+    const float fl = static_cast<float>(key.left - margin - client.x);
+    const float ft = static_cast<float>(key.top - margin - client.y);
+    const D2D1_RECT_F src{ (std::max)(fl, 0.0f), (std::max)(ft, 0.0f),
+                           (std::min)(fl + sw, static_cast<float>(fs.width)),
+                           (std::min)(ft + sh, static_cast<float>(fs.height)) };
+    if (!(src.right > src.left) || !(src.bottom > src.top)) return false;
+
+    const auto props = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
+    ComPtr<ID2D1Bitmap1> sample;
+    ComPtr<ID2D1Bitmap1> plate;
+    if (FAILED(dc->CreateBitmap(D2D1::SizeU(sw, sh), nullptr, 0, props, &sample)) ||
+        FAILED(dc->CreateBitmap(D2D1::SizeU(pw, ph), nullptr, 0, props, &plate)))
+        return false;
+    // Outside the window the blur fades into the solid menu colour.
+    dc->SetTarget(sample.get());
+    dc->Clear(dark_ ? HexColor(0x2B2B2B) : HexColor(0xF9F9F9));
+    dc->DrawBitmap(frame, D2D1::RectF(src.left - fl, src.top - ft, src.right - fl, src.bottom - ft),
+                   1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &src);
+    dc->SetTarget(plate.get());
+    dc->Clear(D2D1::ColorF(0, 0, 0, 0));
+    TargetSample ts;
+    ts.bitmap = std::move(sample);
+    ts.origin = D2D1::Point2F(static_cast<float>(-margin), static_cast<float>(-margin));
+    const bool ok = DrawAcrylicSample(dc, ts, D2D1::RectF(0.0f, 0.0f, static_cast<float>(pw),
+                                      static_cast<float>(ph)), 0.0f, dark_, blur);
+    dc->SetTarget(target);
+    if (!ok) return false;
+    s.plate = std::move(plate);
+    s.plate_key = key;
+    s.plate_dark = dark_;
+    return true;
+}
+
 bool FluentMenu::Render() {
     // While the flyout is open its header row stays visually active even if
     // the pointer moved into the flyout window.
@@ -670,9 +742,28 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
         }
     }
 
+    bool plate = false;
+    if (acrylic_active_ && !IsHighContrast() && drop.right > drop.left && drop.bottom > drop.top) {
+        const POINT origin = main ? POINT{ base_x_, base_y_ } : POINT{ sub_x_, sub_y_ };
+        plate = EnsurePlate(s, drop, origin, bmp.get());
+        ComPtr<ID2D1Factory> factory;
+        dc->GetFactory(&factory);
+        ComPtr<ID2D1RoundedRectangleGeometry> shape;
+        if (plate && factory.get() &&
+            SUCCEEDED(factory->CreateRoundedRectangleGeometry(
+                D2D1::RoundedRect(drop, radius, radius), &shape))) {
+            dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), shape.get(),
+                                                 D2D1_ANTIALIAS_MODE_PER_PRIMITIVE), nullptr);
+            dc->DrawImage(s.plate.get(), D2D1::Point2F(std::floor(drop.left), std::floor(drop.top)));
+            dc->PopLayer();
+        } else {
+            plate = false;
+        }
+    }
+
     if (painter_.BeginFrame(theme, IsHighContrast())) {
         if (drop.right > drop.left && drop.bottom > drop.top)
-            painter_.DrawMenuSurface(drop);
+            painter_.DrawMenuSurface(drop, plate);
         if (anchor_to_rect_ && header > 0) {
             fluent::ControlState bar;
             bar.focused = true;
@@ -915,6 +1006,7 @@ void FluentMenu::OpenSubmenu(int row) {
     if (y < mi.rcWork.top - kShadowMargin) y = mi.rcWork.top - kShadowMargin;
     sub_x_ = x;
     sub_y_ = y;
+    sub_surf_.plate.reset();
     SetWindowPos(sub_hwnd_, topmost_ ? HWND_TOPMOST : HWND_TOP, x, y, w, h,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
     if (RenderSub()) PresentSub(255);
@@ -1714,6 +1806,11 @@ int FluentMenu::TrackPopup(POINT screen_pt, std::vector<FluentMenuItem> items,
         return 0;
     }
     HideSubWindow(); // stale flyout state from the previous invocation
+    // Acrylic is baked from what the window shows now; never reuse a plate.
+    acrylic_active_ = AcrylicEnabled() && compositor_ && compositor_->FrameCopy() &&
+                      SystemAllowsPopupAcrylic();
+    surf_.plate.reset();
+    sub_surf_.plate.reset();
     filter_fn_ = std::move(filter);
     filter_query_ = initial_filter_text_;
     filter_committed_ = false;
@@ -1871,6 +1968,7 @@ void FluentMenu::Dismiss() {
 bool FluentMenu::SaveDebugSnapshot(const wchar_t* png_path,
                                    std::vector<FluentMenuItem> items, int hover_row) {
     if (!compositor_ || items.empty()) return false;
+    acrylic_active_ = false;  // snapshots are not on screen: keep them solid
     model_.SetItems(std::move(items));
     model_.Layout(compositor_->DwriteFactory(), scale_, dropdown_
         ? static_cast<float>(dropdown_rect_.right - dropdown_rect_.left) : filter_min_width_ * scale_);

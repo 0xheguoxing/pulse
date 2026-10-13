@@ -1079,6 +1079,9 @@ void SettingsController::ToggleUi(int index) {
     } else if (index == 34) {
         prefs_->list_thumbnail_badges = !prefs_->list_thumbnail_badges;
         SaveAndApply(SettingsEffect::ListStyle);
+    } else if (index == 36) {
+        prefs_->menu_acrylic = !prefs_->menu_acrylic;
+        SaveAndApply(SettingsEffect::MenuMaterial);
     } else if (index == 23) {
         prefs_->vertical_tabs = !prefs_->vertical_tabs;
         SaveAndApply(SettingsEffect::None);

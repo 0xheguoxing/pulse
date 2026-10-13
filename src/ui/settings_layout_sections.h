@@ -78,6 +78,7 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
         const float tile_y=l.effect_card.top+effect_top*scale+(i/effect_columns)*82*scale;
         l.effect_row[i]=D2D1::RectF(tile_x,tile_y,tile_x+effect_width,tile_y+74*scale);
     }
+    l.menu_acrylic_row=row(64);
     l.language_card=row(narrow ? 98.0f : 64.0f); l.language_choice=choice(l.language_card,176);
     l.text_render_card=row(narrow ? 98.0f : 64.0f); segments(l.text_render_card,l.text_render_row,3,282);
     l.ui_font_size_card=row(narrow ? 98.0f : 64.0f); segments(l.ui_font_size_card,l.ui_font_size_row,4,340);

@@ -100,6 +100,7 @@ void AppPrefs::ResetToDefaults() {
     theme_mode = -1;
     language = L"system";
     window_effect = L"mica-alt";
+    menu_acrylic = true;
     background_image.clear();
     wallpaper_look = 50;
     wallpaper_blur = 14;
@@ -226,7 +227,9 @@ std::wstring AppPrefs::ToJson() const {
     out += L"\"";
     out += L",\n  \"window_effect\":\"";
     out += escaped_effect;
-    out += L"\",\n  \"background_image\":\"";
+    out += L"\",\n  \"menu_acrylic\":";
+    out += menu_acrylic ? L"true" : L"false";
+    out += L",\n  \"background_image\":\"";
     out += escaped_image;
     out += L"\",\n  \"row_height\":";
     out += std::to_wstring(row_height);
@@ -373,6 +376,7 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     window_effect = pulse::json::ExtractString(json, L"window_effect", L"mica-alt");
     if (window_effect == L"dwm-blur") window_effect = L"acrylic-material";
     else if (window_effect.empty()) window_effect = L"mica-alt";
+    menu_acrylic = pulse::json::ExtractBool(json, L"menu_acrylic", true);
     background_image = pulse::json::ExtractString(json, L"background_image");
     row_height = pulse::json::ExtractInt(json, L"row_height", 34);
     sidebar_width = pulse::json::ExtractInt(json, L"sidebar_width", 224);
