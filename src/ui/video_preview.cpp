@@ -172,6 +172,7 @@ struct VideoPreview::Shared {
     std::atomic<bool> finished{false};
     std::atomic<bool> repaint{true};
     HWND child = nullptr;
+    bool card = false;        // set before the player thread starts (Open)
     bool playing = true;
     bool seek_pending = false;
     double seek_fraction = 0;
@@ -235,6 +236,9 @@ LRESULT CALLBACK VideoPreview::VideoProc(HWND hwnd, UINT message, WPARAM wparam,
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
         delete holder;
     }
+    // The hover card's video never takes the pointer: the list under it
+    // keeps tracking hover and clicks.
+    if (message == WM_NCHITTEST && holder && (*holder)->card) return HTTRANSPARENT;
     switch (message) {
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: {
@@ -254,7 +258,7 @@ LRESULT CALLBACK VideoPreview::VideoProc(HWND hwnd, UINT message, WPARAM wparam,
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
-void VideoPreview::Open(HWND owner, const std::wstring& path) {
+void VideoPreview::Open(HWND owner, const std::wstring& path, bool card) {
     Reset();
     static std::once_flag registered;
     std::call_once(registered, [] {
@@ -270,6 +274,8 @@ void VideoPreview::Open(HWND owner, const std::wstring& path) {
         0, 0, 1, 1, owner, nullptr, GetModuleHandleW(nullptr), nullptr);
     state_ = std::make_shared<Shared>();
     state_->child = child_;
+    state_->card = card;
+    if (card) state_->snapshot.muted = true;
     if (!child_) { state_->snapshot.error = HRESULT_FROM_WIN32(GetLastError()); return; }
     SetWindowLongPtrW(child_, GWLP_USERDATA,
         reinterpret_cast<LONG_PTR>(new std::shared_ptr<Shared>(state_)));
@@ -648,6 +654,7 @@ bool VideoPreview::RunFfmpeg(const std::shared_ptr<Shared>& state, const std::ws
     // Frames are scaled for the Quick Look's client area (the video child may
     // not be laid out yet); a much larger window later restarts the decoder.
     auto box = [&] {
+        if (state->card) return SIZE{640, 360};  // the card's well, 2x for high DPI
         RECT client{};
         GetClientRect(GetParent(state->child), &client);
         return SIZE{(std::max)(client.right - client.left, 320L), (std::max)(client.bottom - client.top, 180L)};

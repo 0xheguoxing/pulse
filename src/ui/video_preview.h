@@ -49,7 +49,9 @@ public:
     // waveform).
     static bool Supports(const std::wstring& path);
     static bool IsAudio(const std::wstring& path);
-    void Open(HWND owner, const std::wstring& path);
+    // card: the hover preview card's silent loop. Starts muted, lets the
+    // pointer through to the owner, and decodes FFmpeg frames at card size.
+    void Open(HWND owner, const std::wstring& path, bool card = false);
     void Reset();
     // corner_radius > 0 clips the video window to a rounded rectangle.
     void Layout(const RECT& bounds, bool visible, int corner_radius = 0);

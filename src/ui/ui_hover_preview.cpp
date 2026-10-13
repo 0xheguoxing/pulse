@@ -3,6 +3,7 @@
 // the name and type, and a strip of three key facts.
 #include "ui_renderer.h"
 #include "ui_renderer_internal.h"
+#include "ffmpeg_playback.h"
 #include "snack_style.h"
 #include "typography.h"
 #include "../common/localization.h"
@@ -84,15 +85,54 @@ std::wstring Excerpt(const std::wstring& text, int max_lines) {
 
 }  // namespace
 
+VideoPreview::State MainRenderer::HoverVideoState() const {
+    return hover_video_ ? hover_video_->Snapshot() : VideoPreview::State{};
+}
+
 void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_RECT_F& client,
                                     const Theme& theme, bool high_contrast) {
-    if (!view.visible || !compositor_ || !compositor_->Dc()) return;
+    hover_frame_ms_ = 0;
+    const auto stop_video = [&] {
+        if (hover_video_ && hover_video_->active()) hover_video_->Reset();
+        hover_video_path_.clear();
+        hover_video_failed_ = false;
+        hover_frame_serial_ = ~0ull;
+    };
+    if (!compositor_ || !compositor_->Dc()) {
+        stop_video();
+        return;
+    }
     ID2D1DeviceContext* dc = compositor_->Dc();
     const float s = scale_;
+    if (!view.visible) {
+        stop_video();
+        // The dwell on a slow format: an accent line fills the row's foot
+        // until the card opens.
+        if (view.dwell && view.dwell_row.right - view.dwell_row.left > 24.0f * s) {
+            const SnackPalette palette = MakeSnackPalette(theme, high_contrast);
+            ComPtr<ID2D1SolidColorBrush> line;
+            if (SUCCEEDED(dc->CreateSolidColorBrush(palette.accent, &line)) && line.get()) {
+                const D2D1_RECT_F row = view.dwell_row;
+                const float left = row.left + 6.0f * s, right = row.right - 6.0f * s;
+                const float p = std::clamp(view.dwell_progress, 0.0f, 1.0f);
+                if (p > 0.0f) {
+                    line->SetOpacity(0.9f);
+                    const D2D1_RECT_F r = D2D1::RectF(left, row.bottom - 2.5f * s, left + (right - left) * p,
+                                                      row.bottom - 0.5f * s);
+                    dc->FillRoundedRectangle(D2D1::RoundedRect(r, 1.0f * s, 1.0f * s), line.get());
+                }
+            }
+            hover_frame_ms_ = 16;
+        }
+        return;
+    }
     const float margin = 8.0f * s;
     const float width = (std::min)(kCardWidth * s, client.right - client.left - 2.0f * margin);
     const float height = kCardHeight * s;
-    if (width < 240.0f * s || height > client.bottom - client.top - 2.0f * margin) return;
+    if (width < 240.0f * s || height > client.bottom - client.top - 2.0f * margin) {
+        stop_video();
+        return;
+    }
 
     // Beside the pointer on wide rows (details, list), beside the cell in
     // icon grids; flipped to the other side when it would leave the window.
@@ -166,6 +206,107 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
         icon_cache_.Draw(dc, D2D1::RectF(cx - icon * 0.5f, cy - icon * 0.5f, cx + icon * 0.5f, cy + icon * 0.5f),
                          view.path, view.name, false, view.attrs,
                          result == PreviewDrawResult::Pending ? 0.45f : 1.0f);
+    }
+
+    // Videos: the poster above stays until the silent loop has a picture.
+    bool loading = view.slow && result == PreviewDrawResult::Pending;
+    const D2D1_RECT_F track = D2D1::RectF(well.left + 12.0f * s, well.bottom - 3.0f * s,
+                                          well.right - 12.0f * s, well.bottom - 1.0f * s);
+    if (view.video && view.owner) {
+        // Opened only once the card has settled: browsing down a column of
+        // clips must not spin up a player per row.
+        const bool settled = GetTickCount64() - view.shown_ms >= 220;
+        if (hover_video_path_ != view.path) {
+            if (hover_video_ && hover_video_->active()) hover_video_->Reset();
+            hover_video_path_.clear();
+            hover_video_failed_ = false;
+            hover_frame_serial_ = ~0ull;
+            if (settled) {
+                if (!hover_video_) hover_video_ = std::make_shared<VideoPreview>();
+                hover_video_->Open(view.owner, view.path, true);
+                hover_video_path_ = view.path;
+            }
+        }
+        VideoPreview::State video;
+        if (hover_video_ && hover_video_path_ == view.path) video = hover_video_->Snapshot();
+        // No picture to show: an error, or Media Foundation would only play
+        // the (muted) sound because the video decoder is missing.
+        if (!hover_video_failed_ && hover_video_path_ == view.path &&
+            (FAILED(video.error) || (video.ready && video.missing_decoder && !video.ffmpeg))) {
+            hover_video_failed_ = true;
+            hover_video_->Reset();
+        }
+        if (!hover_video_failed_ && video.ended) hover_video_->Play(true);  // loop
+        D2D1_RECT_F frame = content;
+        if (video.width && video.height) {
+            const float bw = content.right - content.left, bh = content.bottom - content.top;
+            const float k = (std::min)(bw / static_cast<float>(video.width), bh / static_cast<float>(video.height));
+            const float w = static_cast<float>(video.width) * k, h = static_cast<float>(video.height) * k;
+            const float cx = (content.left + content.right) * 0.5f, cy = (content.top + content.bottom) * 0.5f;
+            frame = D2D1::RectF(std::round(cx - w * 0.5f), std::round(cy - h * 0.5f),
+                                std::round(cx + w * 0.5f), std::round(cy + h * 0.5f));
+        }
+        uint64_t serial = 0;
+        std::shared_ptr<const FfmpegFrame> picture;
+        if (video.ffmpeg && hover_video_) picture = hover_video_->Frame(serial);
+        const bool showing = !hover_video_failed_ && video.ready && SUCCEEDED(video.error) &&
+            (video.ffmpeg ? picture && picture->width && picture->height : video.position > 0);
+        if (hover_video_ && hover_video_->active()) {
+            const RECT bounds{std::lround(frame.left), std::lround(frame.top), std::lround(frame.right),
+                              std::lround(frame.bottom)};
+            hover_video_->Layout(bounds, showing && !video.ffmpeg, static_cast<int>(std::lround(5.0f * s)));
+        }
+        if (showing && video.ffmpeg) {
+            ComPtr<ID2D1Device> device;
+            dc->GetDevice(&device);
+            const D2D1_SIZE_U size = D2D1::SizeU(picture->width, picture->height);
+            bool upload = serial != hover_frame_serial_;
+            if (!hover_frame_bitmap_.get() || hover_frame_device_.get() != device.get() ||
+                hover_frame_bitmap_->GetPixelSize().width != size.width ||
+                hover_frame_bitmap_->GetPixelSize().height != size.height) {
+                hover_frame_bitmap_.reset();
+                const auto props = D2D1::BitmapProperties(
+                    D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE));
+                if (SUCCEEDED(dc->CreateBitmap(size, nullptr, 0, props, &hover_frame_bitmap_)))
+                    hover_frame_device_ = std::move(device);
+                upload = true;
+            }
+            if (hover_frame_bitmap_.get()) {
+                if (upload) {
+                    hover_frame_bitmap_->CopyFromMemory(nullptr, picture->pixels.data(), picture->width * 4);
+                    hover_frame_serial_ = serial;
+                }
+                dc->DrawBitmap(hover_frame_bitmap_.get(), frame, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            }
+        }
+        if (showing) {
+            // Where the loop is, in a hairline under the picture.
+            const double fraction = video.duration > 0
+                ? std::clamp(static_cast<double>(video.position) / static_cast<double>(video.duration), 0.0, 1.0)
+                : 0.0;
+            fill(track, 1.0f * s, palette.divider);
+            if (fraction > 0.0) {
+                fill(D2D1::RectF(track.left, track.top,
+                                 track.left + (track.right - track.left) * static_cast<float>(fraction), track.bottom),
+                     1.0f * s, palette.accent);
+            }
+            hover_frame_ms_ = 200;  // progress, and the loop's restart
+        } else if (!hover_video_failed_) {
+            loading = true;
+        }
+    } else if (hover_video_path_.size() || (hover_video_ && hover_video_->active())) {
+        stop_video();
+    }
+    if (loading) {
+        // Still decoding: a short accent segment sweeps the track.
+        fill(track, 1.0f * s, palette.divider);
+        const float span = track.right - track.left, seg = span * 0.3f;
+        const float t = static_cast<float>(GetTickCount64() % 1200ull) / 1200.0f;
+        const float head = track.left - seg + (span + seg) * t;
+        dc->PushAxisAlignedClip(track, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        fill(D2D1::RectF(head, track.top, head + seg, track.bottom), 1.0f * s, palette.accent);
+        dc->PopAxisAlignedClip();
+        hover_frame_ms_ = 33;
     }
 
     // Icon tile, name and type line.

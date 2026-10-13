@@ -3,12 +3,14 @@
 // its preview and key facts; Space opens that file in quick look.
 #pragma once
 #include <windows.h>
+#include <string>
 
 namespace pulse {
 struct AppState;
 namespace ui { struct WindowViewModel; struct HoverPreviewView; }
 
-constexpr UINT_PTR kTimerHoverPreview = 0x4850;  // 'HP': the dwell before the card
+constexpr UINT_PTR kTimerHoverPreview = 0x4850;       // 'HP': the dwell before the card
+constexpr UINT_PTR kTimerHoverPreviewFrame = 0x4851;  // repaints while the card animates
 
 // The hovered row changed (app_hover.cpp): hides the card and starts the
 // dwell for the new row, sooner when moving on from a card that was shown.
@@ -26,5 +28,12 @@ bool OpenHoverPreviewInQuickLook(AppState& s);
 // GUI verification (--shot-hover-preview N): shows the card over the Nth file
 // (0-based, folders skipped) of the focused pane, pointer at the name.
 bool StageHoverPreviewShot(AppState& s, int nth_file);
+// --shot-hover-dwell N: the dwell line on that row, 60% through.
+bool StageHoverDwellShot(AppState& s, int nth_file);
+// Next to a --shot-hover-preview image: <shot>.video.txt with the card
+// video's state (its child window is not in the composed snapshot).
+void WriteHoverVideoProbe(AppState& s, const std::wstring& shot_output);
 void FillHoverPreviewView(AppState& s, const ui::WindowViewModel& vm, ui::HoverPreviewView& view);
+// After the card was drawn: keeps or stops the repaint timer it asked for.
+void AfterHoverPreviewDraw(AppState& s);
 } // namespace pulse

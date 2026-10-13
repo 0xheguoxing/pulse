@@ -358,6 +358,14 @@ struct AppState : AppCoreOwner {
         int quiet_row = -1, quiet_pane = -1; // clicked row: no card until the pointer leaves it
         bool wait_move = false;         // keys/wheel: no card until the pointer moves
         POINT quiet_point{};
+        bool video = false;             // loops silently in the card (VideoPreview)
+        bool slow = false;              // slow to decode: dwell line and loading sweep
+        ULONGLONG shown_at = 0;
+        // The dwell on a slow format, drawn as a line filling the row.
+        int dwell_row = -1, dwell_pane = -1;
+        ULONGLONG dwell_start = 0;
+        UINT dwell_ms = 0;
+        UINT frame_ms = 0;              // kTimerHoverPreviewFrame interval, 0 when off
     } hoverPreview;
     int dropPaneIndex = -1;
     bool dropHeader = false;            // drop on pane title bar → open folder
@@ -476,6 +484,7 @@ struct AppState : AppCoreOwner {
     // GUI verification for the details panel: open it with a pre-selection.
     bool shot_details = false;
     int shot_hover_preview = -1; // --shot-hover-preview N: hover card over the Nth file
+    int shot_hover_dwell = -1;   // --shot-hover-dwell N: dwell line on the Nth file
     int shot_group = 0;   // --shot-group N: group the shot folder (1 name .. 6 location)
     bool shot_details_multi = false;
     float shot_scale_override = 0.0f;

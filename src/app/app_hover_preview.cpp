@@ -2,8 +2,11 @@
 #include "app_hover_preview.h"
 #include "app_internal.h"
 #include "../common/localization.h"
+#include "../common/preview_extensions.h"
+#include "../ui/video_preview.h"
 #include <windowsx.h>
 #include <shellapi.h>
+#include <cstdio>
 #include <cstdlib>
 #include <cwctype>
 #include <string>
@@ -61,12 +64,57 @@ app::Tab* TabAtSlot(AppState& s, int slot) {
     return pane ? pane->ActiveTab() : nullptr;
 }
 
+std::wstring LowerExtension(const std::wstring& name) {
+    const size_t dot = name.find_last_of(L'.');
+    std::wstring ext = dot == std::wstring::npos || dot == 0 ? std::wstring() : name.substr(dot);
+    for (auto& c : ext) c = static_cast<wchar_t>(towlower(c));
+    return ext;
+}
+
+// Plays (silently) in the card: video Media Foundation or the FFmpeg pack
+// can open; audio-only files keep their cover art or icon.
+bool CardVideo(const std::wstring& path) {
+    return ui::VideoPreview::Supports(path) && !ui::VideoPreview::IsAudio(path);
+}
+
+// Takes the preview host or a player a noticeable moment: these show the
+// dwell line on the row and a loading sweep in the card.
+bool SlowToDecode(const fs::DirEntry& entry, const std::wstring& path) {
+    if (entry.size >= 48ull * 1024 * 1024) return true;
+    const std::wstring ext = LowerExtension(entry.name);
+    if (preview::IsVideoExtension(ext) || CardVideo(path) || preview::IsPdfRasterExtension(ext) ||
+        preview::IsArchiveExtension(ext) || preview::IsPsdExtension(ext) ||
+        preview::IsFamilyExtension(preview::PreviewFamily::Raw, ext))
+        return true;
+    return preview::IsOneOf(ext, {L".docx", L".pptx", L".xlsx", L".xlsm", L".epub", L".ipynb", L".dwg",
+                                  L".heic", L".heif", L".hif", L".avif"});
+}
+
+// Repaints for the card's animations (dwell line, loading sweep, video
+// progress); 0 stops them.
+void SetFrameTimer(AppState& s, UINT ms) {
+    auto& card = s.hoverPreview;
+    if (!s.hwnd || ms == card.frame_ms) return;
+    card.frame_ms = ms;
+    if (ms) SetTimer(s.hwnd, kTimerHoverPreviewFrame, ms, nullptr);
+    else KillTimer(s.hwnd, kTimerHoverPreviewFrame);
+}
+
+void ClearDwell(AppState& s) {
+    auto& card = s.hoverPreview;
+    if (card.dwell_row < 0) return;
+    card.dwell_row = card.dwell_pane = -1;
+    card.dwell_start = 0;
+    if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
 // Starts the dwell for the hovered row: the chosen delay, or a short one
 // when the pointer just left a card (browsing a column of files).
 void Arm(AppState& s) {
     auto& card = s.hoverPreview;
     if (!s.hwnd) return;
     KillTimer(s.hwnd, kTimerHoverPreview);
+    ClearDwell(s);
     if (!HoverPreviewOn(s) || s.hoverRow < 0 || card.wait_move) return;
     if (s.hoverRow == card.quiet_row && s.hoverPaneIndex == card.quiet_pane) return;
     card.quiet_row = card.quiet_pane = -1;
@@ -74,6 +122,18 @@ void Arm(AppState& s) {
     const bool browsing = card.hidden_at != 0 && now - card.hidden_at < 450;
     const int delay = browsing ? 60 : app::NormalizeHoverPreviewDelay(s.appPrefs.hover_preview_delay_ms);
     SetTimer(s.hwnd, kTimerHoverPreview, static_cast<UINT>(delay), nullptr);
+    if (browsing) return;
+    app::Tab* tab = TabAtSlot(s, s.hoverPaneIndex);
+    if (!tab || !tab->snapshot || tab->loading || s.hoverRow >= static_cast<int>(tab->EntryCount())) return;
+    const fs::DirEntry& entry = tab->EntryAt(static_cast<size_t>(s.hoverRow));
+    if (entry.is_dir || entry.change_record_only || !SlowToDecode(entry, EntryFullPath(*tab, s.hoverRow)))
+        return;
+    card.dwell_row = s.hoverRow;
+    card.dwell_pane = s.hoverPaneIndex;
+    card.dwell_start = now;
+    card.dwell_ms = static_cast<UINT>(delay);
+    SetFrameTimer(s, 16);
+    InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
 void Show(AppState& s) {
@@ -99,6 +159,11 @@ void Show(AppState& s) {
     card.type_text = TypeName(card.name);
     card.point = s.hoverPoint;
     card.hidden_at = 0;
+    card.video = CardVideo(card.path);
+    card.slow = SlowToDecode(entry, card.path);
+    card.shown_at = GetTickCount64();
+    ClearDwell(s);
+    SetFrameTimer(s, 33);  // the first frames settle the loading sweep / video
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
@@ -123,6 +188,7 @@ void Quiet(AppState& s, bool this_row) {
 void HideHoverPreview(AppState& s) {
     auto& card = s.hoverPreview;
     if (s.hwnd) KillTimer(s.hwnd, kTimerHoverPreview);
+    ClearDwell(s);
     if (!card.visible) return;
     card.visible = false;
     card.hidden_at = GetTickCount64();
@@ -139,6 +205,11 @@ bool HoverPreviewMessage(AppState& s, HWND hwnd, UINT msg, WPARAM wparam, LPARAM
     auto& card = s.hoverPreview;
     switch (msg) {
     case WM_TIMER:
+        if (wparam == kTimerHoverPreviewFrame) {
+            if (!card.visible && card.dwell_row < 0) SetFrameTimer(s, 0);
+            else InvalidateRect(hwnd, nullptr, FALSE);
+            return true;
+        }
         if (wparam != kTimerHoverPreview) return false;
         KillTimer(hwnd, kTimerHoverPreview);
         Show(s);
@@ -206,6 +277,17 @@ bool OpenHoverPreviewInQuickLook(AppState& s) {
     return true;
 }
 
+bool StageHoverDwellShot(AppState& s, int nth_file) {
+    if (!StageHoverPreviewShot(s, nth_file)) return false;
+    auto& card = s.hoverPreview;
+    card.visible = false;
+    card.dwell_row = card.row;
+    card.dwell_pane = card.pane;
+    card.dwell_ms = 500;
+    card.dwell_start = GetTickCount64() - 300;  // 60% through the dwell
+    return true;
+}
+
 bool StageHoverPreviewShot(AppState& s, int nth_file) {
     app::Tab* tab = s.pane ? s.pane->ActiveTab() : nullptr;
     if (!tab || !tab->snapshot) return false;
@@ -239,6 +321,9 @@ bool StageHoverPreviewShot(AppState& s, int nth_file) {
         card.modified = item.modified;
         card.type_text = TypeName(card.name);
         card.point = s.hoverPoint;
+        card.video = CardVideo(card.path);
+        card.slow = SlowToDecode(entry, card.path);
+        card.shown_at = GetTickCount64() - 1000;  // settled: a video opens at once
         return true;
     }
     return false;
@@ -247,7 +332,37 @@ bool StageHoverPreviewShot(AppState& s, int nth_file) {
 void FillHoverPreviewView(AppState& s, const ui::WindowViewModel& vm, ui::HoverPreviewView& view) {
     view = {};
     auto& card = s.hoverPreview;
-    if (!card.visible) return;
+    // The row's cell in this frame's layout; false when it is gone or
+    // scrolled out of the list.
+    const auto cell_of = [&](int slot, int row, D2D1_RECT_F& cell) {
+        const ui::PaneViewModel* pane = &vm.pane;
+        D2D1_RECT_F bounds = FocusedPaneRect(s);
+        if (slot >= 0 && slot < static_cast<int>(vm.pane_slots.size())) {
+            pane = &vm.pane_slots[static_cast<size_t>(slot)].pane;
+            bounds = vm.pane_slots[static_cast<size_t>(slot)].rect;
+        }
+        const int index = pane->ViewIndex(row);
+        if (index < 0) return false;
+        cell = s.renderer.ItemRectInPane(*pane, bounds, index);
+        const D2D1_RECT_F list = s.renderer.PaneListRect(*pane, bounds);
+        const float cy = (cell.top + cell.bottom) * 0.5f;
+        return cy >= list.top && cy <= list.bottom;
+    };
+    if (!card.visible) {
+        if (card.dwell_row < 0) return;
+        if (card.dwell_row != s.hoverRow || card.dwell_pane != s.hoverPaneIndex || !HoverPreviewOn(s) ||
+            !card.dwell_ms) {
+            card.dwell_row = card.dwell_pane = -1;
+            return;
+        }
+        D2D1_RECT_F cell{};
+        if (!cell_of(card.dwell_pane, card.dwell_row, cell)) return;
+        view.dwell = true;
+        view.dwell_row = cell;
+        view.dwell_progress = (std::min)(1.0f,
+            static_cast<float>(GetTickCount64() - card.dwell_start) / static_cast<float>(card.dwell_ms));
+        return;
+    }
     const auto drop = [&] {
         card.visible = false;
         card.hidden_at = 0;
@@ -265,21 +380,8 @@ void FillHoverPreviewView(AppState& s, const ui::WindowViewModel& vm, ui::HoverP
         drop();
         return;
     }
-    const ui::PaneViewModel* pane = &vm.pane;
-    D2D1_RECT_F bounds = FocusedPaneRect(s);
-    if (card.pane >= 0 && card.pane < static_cast<int>(vm.pane_slots.size())) {
-        pane = &vm.pane_slots[static_cast<size_t>(card.pane)].pane;
-        bounds = vm.pane_slots[static_cast<size_t>(card.pane)].rect;
-    }
-    const int index = pane->ViewIndex(card.row);
-    if (index < 0) {
-        drop();
-        return;
-    }
-    const D2D1_RECT_F cell = s.renderer.ItemRectInPane(*pane, bounds, index);
-    const D2D1_RECT_F list = s.renderer.PaneListRect(*pane, bounds);
-    const float cy = (cell.top + cell.bottom) * 0.5f;
-    if (cy < list.top || cy > list.bottom) {
+    D2D1_RECT_F cell{};
+    if (!cell_of(card.pane, card.row, cell)) {
         drop();
         return;
     }
@@ -292,6 +394,39 @@ void FillHoverPreviewView(AppState& s, const ui::WindowViewModel& vm, ui::HoverP
     view.attrs = card.attrs;
     view.size = card.size;
     view.modified = card.modified;
+    view.video = card.video;
+    view.slow = card.slow;
+    view.owner = s.hwnd;
+    view.shown_ms = card.shown_at;
+}
+
+void WriteHoverVideoProbe(AppState& s, const std::wstring& shot_output) {
+    std::wstring path = shot_output;
+    if (const size_t dot = path.find_last_of(L'.'); dot != std::wstring::npos) path.resize(dot);
+    path += L".video.txt";
+    const auto video = s.renderer.HoverVideoState();
+    char text[512];
+    const int n = snprintf(text, sizeof(text),
+        "card_video=%d\nready=%d\nplaying=%d\nmuted=%d\nffmpeg=%d\nposition_ms=%lld\nduration_ms=%lld\n"
+        "size=%ux%u\nerror=0x%08lX\nvisible=%d dwell_row=%d dwell_pane=%d hover_row=%d hover_pane=%d frame_ms=%u\n",
+        s.hoverPreview.video ? 1 : 0, video.ready ? 1 : 0, video.playing ? 1 : 0, video.muted ? 1 : 0,
+        video.ffmpeg ? 1 : 0, static_cast<long long>(video.position / 10000),
+        static_cast<long long>(video.duration / 10000), video.width, video.height,
+        static_cast<unsigned long>(video.error), s.hoverPreview.visible ? 1 : 0, s.hoverPreview.dwell_row,
+        s.hoverPreview.dwell_pane, s.hoverRow, s.hoverPaneIndex, s.renderer.HoverPreviewFrameMs());
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0;
+    if (n > 0) WriteFile(file, text, static_cast<DWORD>(n), &written, nullptr);
+    CloseHandle(file);
+}
+
+void AfterHoverPreviewDraw(AppState& s) {
+    auto& card = s.hoverPreview;
+    UINT ms = s.renderer.HoverPreviewFrameMs();
+    // A card whose video is still opening keeps polling until it plays.
+    if (!ms && card.visible && card.video && GetTickCount64() - card.shown_at < 1000) ms = 33;
+    SetFrameTimer(s, ms);
 }
 
 } // namespace pulse

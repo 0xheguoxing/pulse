@@ -17,6 +17,7 @@
 #include "archive_preview.h"
 #include "name_highlight.h"
 #include "preview_handler_host.h"
+#include "video_preview.h"
 #include "ui_motion.h"
 #include "link_pill.h"
 #include "ui_view_morph.h"
@@ -603,6 +604,18 @@ struct HoverPreviewView {
     DWORD attrs = 0;
     uint64_t size = 0;
     uint64_t modified = 0;       // FILETIME as uint64 (thumbnail cache key part)
+    // Videos loop silently in the well once the card has been up for a
+    // moment (owner: the window the player's child goes into).
+    bool video = false;
+    HWND owner = nullptr;
+    unsigned long long shown_ms = 0;  // GetTickCount64 when the card opened
+    // Formats that take a while to decode (video, PDF, RAW, archives ...):
+    // the hovered row fills an accent line over the dwell (no card yet),
+    // and the well sweeps a thin bar until the content arrives.
+    bool slow = false;
+    bool dwell = false;
+    D2D1_RECT_F dwell_row{};
+    float dwell_progress = 0.0f;  // 0..1
 };
 
 // HitTestResult::SettingsPackAction indices (Settings > 预览增强包).
@@ -1105,8 +1118,14 @@ public:
     void NotifyPreviewActivate(bool active) { preview_handler_.NotifyAppActivate(active); }
     void NotifyPreviewOwnerMoved() { preview_handler_.Reposition(); }
     // The hover preview card, over everything Render drew (ui_hover_preview.cpp).
+    // Also stops the card's video when the view is no longer visible.
     void DrawHoverPreview(const HoverPreviewView& view, const D2D1_RECT_F& client,
                           const Theme& theme, bool high_contrast);
+    // Repaint interval the last drawn card asked for: 0 none, short while
+    // something animates (dwell line, loading sweep), longer for a playing
+    // video's progress line.
+    unsigned HoverPreviewFrameMs() const noexcept { return hover_frame_ms_; }
+    VideoPreview::State HoverVideoState() const;
 
     // Layout metrics (DIPs).
     float TitleBarHeight() const { return title_bar_height_; }
@@ -1797,6 +1816,16 @@ private:
 
     ComPtr<ID2D1Bitmap> logo_bitmap_;
     ComPtr<IDWriteTextFormat> preview_mono_format_;
+    // The hover card's silent video (ui_hover_preview.cpp).
+    // shared_ptr: created in ui_hover_preview.cpp, so targets that build the
+    // renderer without the card never need the player.
+    std::shared_ptr<VideoPreview> hover_video_;
+    std::wstring hover_video_path_;
+    ComPtr<ID2D1Bitmap> hover_frame_bitmap_;   // FFmpeg frames, reused while the size stays
+    ComPtr<ID2D1Device> hover_frame_device_;
+    uint64_t hover_frame_serial_ = ~0ull;
+    unsigned hover_frame_ms_ = 0;
+    bool hover_video_failed_ = false;          // this path cannot play: keep the poster
     ComPtr<IDWriteTextLayout> details_text_layout_;
     std::wstring details_layout_text_;
     float details_layout_scale_ = 0;

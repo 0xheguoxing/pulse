@@ -250,7 +250,8 @@ void Render(AppState& s) {
     FillHoverPreviewView(s, vm, hover_card);
     if (hover_card.visible) vm.tooltip_text.clear();  // the card already names the file
     s.renderer.Render(vm, rect, theme);
-    if (hover_card.visible) s.renderer.DrawHoverPreview(hover_card, rect, theme, hc);
+    s.renderer.DrawHoverPreview(hover_card, rect, theme, hc);  // also the dwell line, and stops a video
+    AfterHoverPreviewDraw(s);
     s.notification_toast.Draw(s.compositor, theme, s.scale, hc);
 
     const HRESULT end_hr = dc->EndDraw();
@@ -2696,9 +2697,15 @@ int ShotModeMain(AppState& state, HWND hwnd) {
             state.hoverPoint = POINT{ 60, 320 };
             state.tooltipText = state.hoverLabel;
         }
+        if (state.shot_hover_dwell >= 0 && StageHoverDwellShot(state, state.shot_hover_dwell)) {
+            for (int i = 0; i < 2; ++i) {
+                Render(state);
+                Sleep(20);
+            }
+        }
         if (state.shot_hover_preview >= 0 && StageHoverPreviewShot(state, state.shot_hover_preview)) {
             // Let the card's thumbnail or text excerpt decode before the shot.
-            for (int i = 0; i < 15; ++i) {
+            for (int i = 0; i < (state.hoverPreview.video ? 40 : 15); ++i) {
                 Render(state);
                 while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
                     TranslateMessage(&msg);
@@ -2712,6 +2719,7 @@ int ShotModeMain(AppState& state, HWND hwnd) {
     } __except (pulse::crash::ReportFatal(GetExceptionInformation(), "shot")) {
         return 2;
     }
+    if (ok && (state.shot_hover_preview >= 0 || state.shot_hover_dwell >= 0)) WriteHoverVideoProbe(state, state.shot.output);
     if (ok) {
         // Drop timing numbers next to the shot for the phase report.
         wchar_t timingPath[MAX_PATH]{};
@@ -2965,6 +2973,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         } else if (wcscmp(__wargv[i], L"--shot-hover-preview") == 0 && i + 1 < __argc) {
             // GUI verification for the hover card: over the Nth file (0-based).
             state.shot_hover_preview = std::max(0, _wtoi(__wargv[++i]));
+        } else if (wcscmp(__wargv[i], L"--shot-hover-dwell") == 0 && i + 1 < __argc) {
+            state.shot_hover_dwell = std::max(0, _wtoi(__wargv[++i]));
         } else if (wcscmp(__wargv[i], L"--shot-details") == 0) {
             state.shot_details = true;
         } else if (wcscmp(__wargv[i], L"--shot-group") == 0 && i + 1 < __argc) {
