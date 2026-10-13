@@ -34,6 +34,9 @@ struct LayoutTabSnapshot {
     int focused = 0;
     int target = -1;
     std::vector<float> split_ratios;
+    // M7k: SplitTreeShape of a custom split tree (then `layout` holds the
+    // preset with as many panes, for older versions); empty for a preset.
+    std::wstring split_tree;
     std::vector<PaneFolderSnapshot> panes;
 };
 

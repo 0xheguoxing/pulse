@@ -611,6 +611,18 @@ std::unique_ptr<LayoutTab> MakeSingleLayoutTab(const std::wstring& path, const T
 }
 
 void RebuildLayoutRoot(LayoutTab& tab) {
+    if (tab.layout == LayoutPreset::Custom) {
+        // A free tree has no preset to be rebuilt from (M7k): it stays while
+        // every leaf is a pane of the tab, else the tab takes a preset.
+        std::vector<Pane*> leaves;
+        if (tab.root) tab.root->CollectPanes(leaves);
+        const bool owned = !leaves.empty() && std::all_of(leaves.begin(), leaves.end(), [&](const Pane* leaf) {
+            return std::any_of(tab.panes.begin(), tab.panes.end(),
+                               [&](const std::unique_ptr<Pane>& pane) { return pane.get() == leaf; });
+        });
+        if (owned) return;
+        tab.layout = PresetForPaneCount(tab.panes.size());
+    }
     const size_t n = LayoutPresetCount(tab.layout);
     std::vector<Pane*> visible;
     if (tab.root) tab.root->CollectPanes(visible);
@@ -749,6 +761,7 @@ size_t LayoutPresetCount(LayoutPreset preset) {
     case LayoutPreset::TwoHorizontal: return 2;
     case LayoutPreset::Three: return 3;
     case LayoutPreset::FourGrid: return 4;
+    case LayoutPreset::Custom: return 0;  // its tree's leaves
     }
     return 1;
 }
@@ -810,6 +823,76 @@ static void ApplySplitRatiosAt(SplitContainer& node, const std::vector<float>& r
 void ApplySplitRatios(SplitContainer& node, const std::vector<float>& ratios) {
     size_t index = 0;
     ApplySplitRatiosAt(node, ratios, index);
+}
+
+static void AppendTreeShape(const SplitContainer& node, std::wstring& out) {
+    if (node.is_leaf) {
+        out += L'P';
+        return;
+    }
+    out += node.orientation == SplitOrientation::Vertical ? L'V' : L'H';
+    if (node.first) AppendTreeShape(*node.first, out);
+    if (node.second) AppendTreeShape(*node.second, out);
+}
+
+std::wstring SplitTreeShape(const SplitContainer& root) {
+    std::wstring shape;
+    AppendTreeShape(root, shape);
+    return shape;
+}
+
+size_t ShapePaneCount(std::wstring_view shape) {
+    size_t open = 1, panes = 0;  // subtrees still to read
+    for (const wchar_t c : shape) {
+        if (open == 0) return 0;
+        if (c == L'P') {
+            --open;
+            ++panes;
+        } else if (c == L'V' || c == L'H') {
+            ++open;
+        } else {
+            return 0;
+        }
+    }
+    return open == 0 ? panes : 0;
+}
+
+static std::unique_ptr<SplitContainer> ReadShapedTree(std::wstring_view shape, size_t& at,
+                                                      const std::vector<Pane*>& panes, size_t& next) {
+    if (at >= shape.size()) return nullptr;
+    const wchar_t c = shape[at++];
+    if (c == L'P') return next < panes.size() ? SplitContainer::CreateLeaf(panes[next++]) : nullptr;
+    auto first = ReadShapedTree(shape, at, panes, next);
+    auto second = first ? ReadShapedTree(shape, at, panes, next) : nullptr;
+    if (!second) return nullptr;
+    return SplitContainer::Join(c == L'V' ? SplitOrientation::Vertical : SplitOrientation::Horizontal, 0.5f,
+                                std::move(first), std::move(second));
+}
+
+std::unique_ptr<SplitContainer> MakeShapedTree(std::wstring_view shape, const std::vector<Pane*>& panes) {
+    if (panes.empty() || ShapePaneCount(shape) != panes.size()) return nullptr;
+    size_t at = 0, next = 0;
+    return ReadShapedTree(shape, at, panes, next);
+}
+
+LayoutPreset PresetOfTree(const SplitContainer& root) {
+    const std::wstring shape = SplitTreeShape(root);
+    const std::vector<Pane*> stand_ins(4, nullptr);
+    for (const LayoutPreset preset : {LayoutPreset::Single, LayoutPreset::TwoVertical, LayoutPreset::TwoHorizontal,
+                                      LayoutPreset::Three, LayoutPreset::FourGrid}) {
+        if (SplitTreeShape(*MakePresetTree(preset, stand_ins)) == shape) return preset;
+    }
+    return LayoutPreset::Custom;
+}
+
+LayoutPreset PresetForPaneCount(size_t count) {
+    switch (count) {
+    case 0:
+    case 1: return LayoutPreset::Single;
+    case 2: return LayoutPreset::TwoVertical;
+    case 3: return LayoutPreset::Three;
+    default: return LayoutPreset::FourGrid;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1859,7 +1942,7 @@ std::wstring LayoutTabTitle(const LayoutTab& tab) {
     if (!view) return {};
     std::wstring name = view->virtual_title.empty()
         ? TabTitle(view->current_path) : view->virtual_title;
-    const size_t n = LayoutPresetCount(tab.layout);
+    const size_t n = tab.layout == LayoutPreset::Custom ? tab.VisiblePanes().size() : LayoutPresetCount(tab.layout);
     if (n > 1) {
         name += L" · ";
         name += std::to_wstring(n);

@@ -34,6 +34,13 @@ inline app::LayoutPreset& LayoutOf(AppState& s) {
     return LiveLayout(s).layout;
 }
 
+// The preset a pinned workspace keeps for the active tab, which knows no
+// free split tree: a custom one (M7k) as the preset with as many panes.
+inline app::LayoutPreset WorkspaceLayoutOf(AppState& s) {
+    const app::LayoutTab& tab = LiveLayout(s);
+    return tab.layout == app::LayoutPreset::Custom ? app::PresetForPaneCount(tab.VisiblePanes().size()) : tab.layout;
+}
+
 template<typename Fn>
 inline void ForEachPane(AppState& s, Fn&& fn) {
     for (auto& owned : s.window_tabs.items) {

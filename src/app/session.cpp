@@ -217,6 +217,10 @@ std::wstring LayoutTabsToJson(const std::vector<LayoutTabSnapshot>& tabs) {
         out += L",\"target\":" + std::to_wstring(tab.target);
         out += L",\"splitRatios\":\"";
         out += FormatScaledList(tab.split_ratios);
+        if (!tab.split_tree.empty()) {
+            out += L"\",\"splitTree\":\"";
+            out += tab.split_tree;  // only P, V and H: nothing to escape
+        }
         out += L"\",\"panes\":[";
         for (size_t p = 0; p < tab.panes.size(); ++p) {
             if (p) out += L",";
@@ -325,6 +329,8 @@ bool ParseLayoutTabs(const std::wstring& array_json,
         if (tabJson.find(L"\"target\"") == std::wstring::npos) tab.target = -1;
         tab.split_ratios = ParseScaledList(
             pulse::json::ExtractString(tabJson, L"splitRatios"));
+        tab.split_tree = pulse::json::ExtractString(tabJson, L"splitTree");
+        if (ShapePaneCount(tab.split_tree) == 0) tab.split_tree.clear();
 
         std::wstring panesBody;
         if (ExtractJsonArray(tabJson, L"panes", panesBody)) {

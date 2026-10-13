@@ -325,6 +325,9 @@ enum class LayoutPreset : int {
     TwoHorizontal = 2,
     Three = 3,
     FourGrid = 4,
+    // M7k: a free split tree (a dropped tab split one pane in half) that is
+    // none of the shapes above. Its pane count is its leaves.
+    Custom = 5,
 };
 
 struct SplitContainer {
@@ -361,6 +364,20 @@ void ApplySplitRatio(SplitContainer& node, const D2D1_RECT_F& parent_bounds, flo
                      float pointer_x, float pointer_y);
 void CollectSplitRatios(const SplitContainer& node, std::vector<float>& out);
 void ApplySplitRatios(SplitContainer& node, const std::vector<float>& ratios);
+// M7k: the shape of a split tree in the order CollectPanes and
+// CollectSplitRatios walk it: 'P' a pane, 'V' (left | right) or 'H' (top over
+// bottom) a split followed by its two halves; "VPHPP" is LayoutPreset::Three.
+std::wstring SplitTreeShape(const SplitContainer& root);
+// How many panes `shape` holds; 0 when it is malformed.
+size_t ShapePaneCount(std::wstring_view shape);
+// The tree `shape` describes with `panes` at its leaves in order and every
+// ratio 0.5; null when `shape` is malformed or holds another pane count.
+std::unique_ptr<SplitContainer> MakeShapedTree(std::wstring_view shape, const std::vector<Pane*>& panes);
+// The preset whose tree has the shape of `root`, else Custom.
+LayoutPreset PresetOfTree(const SplitContainer& root);
+// The preset with `count` panes (2 side by side, 3, 4): what a custom tree
+// is saved as where only presets are known (pinned workspaces, older Pulse).
+LayoutPreset PresetForPaneCount(size_t count);
 
 // Browse-level folder compare: top level only, names matched case-insensitively,
 // files compared by modified time (2 s tolerance) and then size.

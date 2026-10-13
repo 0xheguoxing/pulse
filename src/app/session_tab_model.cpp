@@ -48,6 +48,10 @@ LayoutTabSnapshot CaptureLayoutTab(const LayoutTab& tab) {
     if (tab.root) {
         CollectTreeRatios(*tab.root, snapshot.split_ratios);
         CollectTreePanes(*tab.root, vis);
+        if (tab.layout == LayoutPreset::Custom) {
+            snapshot.split_tree = SplitTreeShape(*tab.root);
+            snapshot.layout = static_cast<int>(PresetForPaneCount(vis.size()));
+        }
     } else {
         vis.reserve(tab.panes.size());
         for (const auto& pane : tab.panes) vis.push_back(pane.get());
@@ -103,7 +107,16 @@ void RestoreLayoutTab(LayoutTab& tab, const LayoutTabSnapshot& snapshot,
         tab.panes.push_back(std::move(pane));
         if (load_tab) load_tab(*tab.panes.front()->ActiveTab(), L"C:\\");
     }
-    const size_t need = SnapshotPresetCount(tab.layout);
+    // A custom tree (M7k) comes back in its shape, its panes in tree order;
+    // a shape that does not fit them leaves the preset saved with it.
+    if (!snapshot.split_tree.empty() && ShapePaneCount(snapshot.split_tree) == tab.panes.size()) {
+        std::vector<Pane*> order;
+        for (const auto& pane : tab.panes) order.push_back(pane.get());
+        tab.root = MakeShapedTree(snapshot.split_tree, order);
+        if (tab.root) tab.layout = PresetOfTree(*tab.root);
+        if (tab.layout != LayoutPreset::Custom) tab.root.reset();  // a preset is rebuilt from its panes
+    }
+    const size_t need = tab.layout == LayoutPreset::Custom ? 0 : SnapshotPresetCount(tab.layout);
     while (tab.panes.size() < need) {
         auto pane = std::make_unique<Pane>();
         const Tab& source = *tab.panes.front()->ActiveTab();
