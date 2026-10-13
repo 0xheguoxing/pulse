@@ -651,11 +651,30 @@ bool FluentMenu::EnsurePlate(Surface& s, const D2D1_RECT_F& card, POINT origin,
     if (FAILED(dc->CreateBitmap(D2D1::SizeU(sw, sh), nullptr, 0, props, &sample)) ||
         FAILED(dc->CreateBitmap(D2D1::SizeU(pw, ph), nullptr, 0, props, &plate)))
         return false;
-    // Outside the window the blur fades into the solid menu colour.
     dc->SetTarget(sample.get());
     dc->Clear(dark_ ? HexColor(0x2B2B2B) : HexColor(0xF9F9F9));
-    dc->DrawBitmap(frame, D2D1::RectF(src.left - fl, src.top - ft, src.right - fl, src.bottom - ft),
-                   1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &src);
+    const D2D1_RECT_F in{ src.left - fl, src.top - ft, src.right - fl, src.bottom - ft };
+    dc->DrawBitmap(frame, in, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &src);
+    // Menus often hang past the window edge. Stretch the edge pixels of the
+    // frame over the part outside so the blur reads as one material instead
+    // of window acrylic next to a flat plate; capturing the desktop there
+    // costs 23-90 ms per menu.
+    const float sw_f = static_cast<float>(sw), sh_f = static_cast<float>(sh);
+    const float xs[3][2]{ { 0.0f, in.left }, { in.left, in.right }, { in.right, sw_f } };
+    const float ys[3][2]{ { 0.0f, in.top }, { in.top, in.bottom }, { in.bottom, sh_f } };
+    const float sx[3][2]{ { src.left, src.left + 1.0f }, { src.left, src.right },
+                          { src.right - 1.0f, src.right } };
+    const float sy[3][2]{ { src.top, src.top + 1.0f }, { src.top, src.bottom },
+                          { src.bottom - 1.0f, src.bottom } };
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            if (row == 1 && col == 1) continue;
+            if (!(xs[col][1] > xs[col][0]) || !(ys[row][1] > ys[row][0])) continue;
+            const D2D1_RECT_F from{ sx[col][0], sy[row][0], sx[col][1], sy[row][1] };
+            dc->DrawBitmap(frame, D2D1::RectF(xs[col][0], ys[row][0], xs[col][1], ys[row][1]),
+                           1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &from);
+        }
+    }
     dc->SetTarget(plate.get());
     dc->Clear(D2D1::ColorF(0, 0, 0, 0));
     TargetSample ts;

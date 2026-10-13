@@ -399,6 +399,10 @@ IDWriteTextFormat* Painter::SmallIconFormat() const noexcept {
                                     : compositor_ ? compositor_->IconFormat() : nullptr;
 }
 
+IDWriteTextFormat* Painter::MenuChevronFormat() const noexcept {
+    return SmallIconFormat();
+}
+
 IDWriteTextFormat* Painter::MicroIconFormat() const noexcept {
     return micro_icon_format_.get() ? micro_icon_format_.get()
                                     : SmallIconFormat();
@@ -1400,13 +1404,14 @@ void Painter::DrawMenuItem(const MenuItemSpec& spec) {
     }
     content.left += icon_width + Px(8.0f);
     if (spec.has_submenu) {
-        // 16px Fluent chevron in a 22px column — the old shortcut-column "›"
-        // was caption-sized and looked like a punctuation mark.
+        // Fluent chevron in a 22px column — the old shortcut-column "›" was
+        // caption-sized and looked like a punctuation mark. 12px like WinUI's
+        // MenuFlyoutSubItem, in step with the 13px labels.
         const float chevron = Px(22.0f);
-        DrawGlyph(kChevronRight,
-                  D2D1::RectF(content.right - chevron, content.top,
-                             content.right, content.bottom),
-                  foreground);
+        DrawGlyphWithFormat(kChevronRight,
+                            D2D1::RectF(content.right - chevron, content.top,
+                                        content.right, content.bottom),
+                            foreground, MenuChevronFormat());
         content.right -= chevron + Px(4.0f);
     } else if (!spec.badge_text.empty()) {
         const float text_w = MeasureTextWidth(

@@ -503,6 +503,7 @@ private:
     IDWriteTextFormat* NavFormat() const noexcept;     // sidebar rows: 13px
     IDWriteTextFormat* SectionFormat() const noexcept; // sidebar group headers: 13px semibold
     IDWriteTextFormat* SmallIconFormat() const noexcept;
+    IDWriteTextFormat* MenuChevronFormat() const noexcept; // submenu ">" : 12px
     IDWriteTextFormat* MicroIconFormat() const noexcept;
     float Px(float dips) const noexcept;
 

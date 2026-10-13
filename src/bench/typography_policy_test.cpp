@@ -11,6 +11,7 @@ namespace pulse::ui::fluent {
 struct PainterTestPeer {
     static IDWriteTextFormat* Body(const Painter& painter) { return painter.BodyFormat(); }
     static IDWriteTextFormat* Nav(const Painter& painter) { return painter.NavFormat(); }
+    static IDWriteTextFormat* MenuChevron(const Painter& painter) { return painter.MenuChevronFormat(); }
 };
 }
 
@@ -66,8 +67,9 @@ struct FluentMenuTestPeer {
     // A pixel of the card's top padding (no row content) as {R, G, B}; the DIB
     // is premultiplied BGRA and the card is opaque.
     static void CardCenter(const FluentMenu& menu, int rgb[3]) {
-        const int x = menu.surf_.w / 2;
-        const int y = FluentMenu::kShadowMargin + 3;
+        CardPixel(menu, menu.surf_.w / 2, FluentMenu::kShadowMargin + 3, rgb);
+    }
+    static void CardPixel(const FluentMenu& menu, int x, int y, int rgb[3]) {
         const auto* px = static_cast<const unsigned char*>(menu.surf_.bits) +
                          (static_cast<size_t>(y) * menu.surf_.w + x) * 4;
         rgb[0] = px[2]; rgb[1] = px[1]; rgb[2] = px[0];
@@ -133,6 +135,24 @@ struct FluentMenuTestPeer {
             fails += check(away_ok && menu.surf_.plate.get() == nullptr &&
                 std::abs(away[0] - solid[0]) <= 2 && std::abs(away[2] - solid[2]) <= 2,
                 "a menu outside the window keeps the solid plate");
+
+            // Hanging past the bottom-right corner: the part outside the
+            // window continues the same material instead of a flat plate.
+            menu.base_x_ = client.x + 560 - FluentMenu::kShadowMargin;
+            menu.base_y_ = client.y + 370 - FluentMenu::kShadowMargin;
+            int inside[3]{}, outside[3]{};
+            const bool edge_ok = menu.Render() && menu.surf_.plate.get() != nullptr;
+            if (edge_ok) {
+                const int m = FluentMenu::kShadowMargin;
+                CardPixel(menu, m + 10, m + 3, inside);
+                CardPixel(menu, menu.surf_.w - m - 12, menu.surf_.h - m - 4, outside);
+            }
+            std::printf("acrylic edge: inside %d,%d,%d outside %d,%d,%d\n", inside[0], inside[1],
+                inside[2], outside[0], outside[1], outside[2]);
+            fails += check(edge_ok && outside[0] - outside[2] >= 12 &&
+                std::abs(outside[0] - inside[0]) <= 4 && std::abs(outside[1] - inside[1]) <= 4 &&
+                std::abs(outside[2] - inside[2]) <= 4,
+                "a menu hanging past the window edge stays one acrylic material");
 
             // Worst cases for body text: a dark menu over white, a light menu
             // over black. Text is #FFFFFF (dark) and #303B50 (light).
@@ -219,6 +239,11 @@ int wmain(int argc, wchar_t** argv) {
                      compositor.FileNameFormat()->GetFontSize()) < 0.01f &&
             std::abs(compositor.FileNameFormat()->GetFontSize() - FluentMenuModel::kLabelDip) < 0.01f,
             "menu labels use the file list name size");
+        IDWriteTextFormat* chevron = fluent::PainterTestPeer::MenuChevron(painter);
+        Check(chevron && compositor.IconFormat() &&
+            chevron->GetFontSize() <= FluentMenuModel::kLabelDip &&
+            chevron->GetFontSize() < compositor.IconFormat()->GetFontSize(),
+            "submenu chevron is no larger than the menu labels");
         const float original_size = fluent::PainterTestPeer::Body(painter)->GetFontSize();
         model.Layout(compositor.DwriteFactory(), 1.0f);
         const int original_width = model.WidthPx();
