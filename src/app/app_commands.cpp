@@ -1312,7 +1312,8 @@ void ShowItemContextMenu(AppState& s, POINT screen_pt) {
         tab ? SelectedFullPaths(*tab) : std::vector<std::wstring>{};
     if (tab && !paths.empty() && !IsRecycleTab(tab))
         StartCtxQuery(s, paths, false, StaticVerbKey(*tab, tab->SelectedIndices()));
-    const bool seeded = s.context_menu.SeedComItemsFromCache();
+    s.context_menu.SeedComItemsFromCache();
+    const bool seeded = s.context_menu.com_predicted();
 
     std::wstring undoLabel = s.ops.UndoLabel();
     const auto quick_paths = QuickAccessTargets(tab, false);
@@ -1383,7 +1384,8 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     }
     if (tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path))
         StartCtxQuery(s, { tab->current_path }, true, ipc::kBackgroundVerbKey);
-    const bool seeded = s.context_menu.SeedComItemsFromCache();
+    s.context_menu.SeedComItemsFromCache();
+    const bool seeded = s.context_menu.com_predicted();
 
     std::wstring undoLabel = s.ops.UndoLabel();
     bool canPaste = !s.tray.batches().empty() || ClipboardHasFiles();

@@ -12,6 +12,48 @@ namespace pulse::app {
 
 namespace {
 
+// The submenu each row sits in: children follow their parent row.
+std::vector<std::wstring> ParentKeys(const std::vector<ops::ShellMenuItem>& items) {
+    std::vector<std::wstring> parents(items.size());
+    std::wstring current;
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (!items[i].child) current = items[i].clsid + L'\x1F' + items[i].text;
+        else parents[i] = current;
+    }
+    return parents;
+}
+
+// A cached row and a live row are the same command: same handler, same
+// submenu, and the same verb (or, without one, the same label).
+bool SameComCommand(const ops::ShellMenuItem& cached, const ops::ShellMenuItem& live) {
+    if (cached.child != live.child || cached.has_children != live.has_children ||
+        cached.clsid != live.clsid)
+        return false;
+    if (!cached.verb.empty() || !live.verb.empty()) return cached.verb == live.verb;
+    return cached.text == live.text;
+}
+
+// A partial answer laid over rows painted from the cache: matched rows take
+// the live row (its host id, label, state), the others stay as painted, and
+// live rows the cache did not have wait for the complete answer.
+std::vector<ops::ShellMenuItem> OverlayLiveRows(std::vector<ops::ShellMenuItem> predicted,
+                                                const std::vector<ops::ShellMenuItem>& live) {
+    const auto predicted_parents = ParentKeys(predicted);
+    const auto live_parents = ParentKeys(live);
+    std::vector<bool> used(live.size(), false);
+    for (size_t i = 0; i < predicted.size(); ++i) {
+        for (size_t j = 0; j < live.size(); ++j) {
+            if (used[j] || live_parents[j] != predicted_parents[i] ||
+                !SameComCommand(predicted[i], live[j]))
+                continue;
+            used[j] = true;
+            predicted[i] = live[j];
+            break;
+        }
+    }
+    return predicted;
+}
+
 bool SameStaticVerbs(const std::vector<StaticVerb>& a, const std::vector<StaticVerb>& b) {
     if (a.size() != b.size()) return false;
     for (size_t i = 0; i < a.size(); ++i) {
@@ -199,11 +241,13 @@ void ContextMenuController::StartQuery(
     if (background && extension_.empty()) extension_ = ipc::kBackgroundVerbKey;
     token_ = token;
     com_ready_ = false;
+    com_predicted_ = false;
     com_items_.clear();
     query_started_at_ = token == 0 ? 0 : GetTickCount64();
     static_verbs_.clear();
     if (const auto found = static_cache_.find(extension_); found != static_cache_.end())
         static_verbs_ = found->second;
+    if (token_ != 0) SeedComItemsFromCache();
     if (prefetch_static) prefetch_static(extension_);
 }
 
@@ -218,6 +262,7 @@ void ContextMenuController::Close() {
     extended_ = false;
     disabled_handlers_.clear();
     com_ready_ = false;
+    com_predicted_ = false;
     com_items_.clear();
     static_verbs_.clear();
     extension_.clear();
@@ -394,6 +439,12 @@ bool ContextMenuController::SeedComItemsFromCache() {
     const auto found = com_cache_.find(CacheKey(background_, extension_));
     if (found == com_cache_.end() || found->second.empty()) return false;
     com_items_ = found->second;
+    uint32_t next = kPredictedIdFirst;
+    for (auto& item : com_items_) {
+        if (item.id == 0) continue;
+        item.id = next <= kPredictedIdLast ? next++ : 0;
+    }
+    com_predicted_ = true;
     return true;
 }
 
@@ -402,7 +453,12 @@ ContextMenuController::QueryCompletion ContextMenuController::CompleteComQuery(
     bool partial) {
     QueryCompletion result;
     if (token == 0 || token != token_) return result;
-    com_items_ = std::move(items);
+    if (partial && com_predicted_) {
+        com_items_ = OverlayLiveRows(std::move(com_items_), items);
+    } else {
+        com_items_ = std::move(items);
+        com_predicted_ = false;
+    }
     result.accepted = true;
     result.partial = partial;
     result.cache_key = CacheKey(background_, extension_);
@@ -540,14 +596,19 @@ uint32_t ContextMenuController::FindLiveComId(const std::wstring& text) const {
 
 uint32_t ContextMenuController::FindLiveComId(const std::wstring& verb,
                                               const std::wstring& text) const {
+    // A row still painted from the cache has no host id yet.
+    const auto live_id = [&](const ops::ShellMenuItem& item) {
+        return !item.has_children && item.id != 0 &&
+               !(com_predicted_ && item.id >= kPredictedIdFirst && item.id <= kPredictedIdLast);
+    };
     if (!verb.empty()) {
         for (const auto& item : com_items_) {
-            if (!item.has_children && item.id != 0 && item.verb == verb) return item.id;
+            if (live_id(item) && item.verb == verb) return item.id;
         }
     }
     if (text.empty()) return 0;
     for (const auto& item : com_items_) {
-        if (!item.has_children && item.id != 0 && item.text == text) return item.id;
+        if (live_id(item) && item.text == text) return item.id;
     }
     return 0;
 }

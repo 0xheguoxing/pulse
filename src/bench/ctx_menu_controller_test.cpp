@@ -1,5 +1,6 @@
 // ctx_menu_controller_test.cpp - ContextMenuController bookkeeping: the
-// per-menu timing record (ctx_menu_timing.h) and static-verb re-reads.
+// per-menu timing record (ctx_menu_timing.h), static-verb re-reads and rows
+// painted from the cache while the live answer arrives in parts.
 #include "../app/context_menu_controller.h"
 #include "../app/ctx_menu_timing.h"
 
@@ -23,6 +24,30 @@ pulse::ops::ShellMenuItem Item(uint32_t id, const wchar_t* text) {
     item.id = id;
     item.text = text;
     return item;
+}
+
+pulse::ops::ShellMenuItem Row(uint32_t id, const wchar_t* clsid, const wchar_t* verb,
+                              const wchar_t* text, bool parent = false, bool child = false) {
+    pulse::ops::ShellMenuItem item;
+    item.id = id;
+    item.clsid = clsid;
+    item.verb = verb;
+    item.text = text;
+    item.has_children = parent;
+    item.child = child;
+    return item;
+}
+
+const pulse::ops::ShellMenuItem* RowNamed(const std::vector<pulse::ops::ShellMenuItem>& items,
+                                          const wchar_t* text) {
+    for (const auto& item : items)
+        if (item.text == text) return &item;
+    return nullptr;
+}
+
+bool Predicted(uint32_t id) {
+    return id >= pulse::app::ContextMenuController::kPredictedIdFirst &&
+           id <= pulse::app::ContextMenuController::kPredictedIdLast;
 }
 
 bool Contains(const std::string& haystack, const char* needle) {
@@ -129,6 +154,74 @@ int wmain() {
               "a re-read from before a registry flush is dropped");
         Check(!controller.RequestStaticRevalidate(L".dwg", 100001),
               "after a flush the type is fetched afresh, not re-read");
+    }
+    {
+        // Painted from the cache, then the live answer in parts.
+        app::ContextMenuController controller;
+        uint32_t token = 10;
+        uint32_t invoked = 0;
+        app::ContextMenuController::ShellOperations operations;
+        operations.query = [&](std::vector<std::wstring>, HWND, bool, bool,
+                               std::vector<std::wstring>) { return ++token; };
+        operations.invoke = [&](uint32_t, uint32_t id, std::wstring, std::wstring) {
+            invoked = id;
+        };
+        controller.SetShellOperations(std::move(operations));
+        const std::vector<ops::ShellMenuItem> complete = {
+            Row(3, L"{A}", L"", L"Zip", true), Row(4, L"{A}", L"", L"to a.zip", false, true),
+            Row(5, L"{A}", L"", L"to a.7z", false, true), Row(9, L"{B}", L"scan", L"Scan"),
+            Row(12, L"{C}", L"", L"Send") };
+        controller.StartQuery(prefs, nullptr, { L"C:\\f\\a.dwg" }, false, L".dwg", false, {}, {});
+        controller.CompleteComQuery(token, complete, 100, false);
+        controller.StartQuery(prefs, nullptr, { L"C:\\f\\b.dwg" }, false, L".dwg", false, {}, {});
+        Check(controller.com_predicted() && controller.com_items().size() == complete.size(),
+              "the next query of the type starts from the last complete answer");
+        Check(!controller.SeedComItemsFromCache(), "seeding again at popup time changes nothing");
+        bool synthetic = true;
+        for (size_t i = 0; i < controller.com_items().size(); ++i) {
+            const uint32_t id = controller.com_items()[i].id;
+            synthetic &= Predicted(id) && (i == 0 || id != controller.com_items()[i - 1].id);
+        }
+        Check(synthetic, "painted rows carry their own ids, never the last menu's host ids");
+
+        controller.CompleteComQuery(token, { Row(31, L"{B}", L"scan", L"Scan"),
+                                             Row(40, L"{D}", L"", L"Late handler") }, 150, true);
+        const auto& first = controller.com_items();
+        Check(first.size() == complete.size() && RowNamed(first, L"Scan") &&
+                  RowNamed(first, L"Scan")->id == 31 && Predicted(RowNamed(first, L"Send")->id),
+              "a partial answer patches the rows it names and keeps the others");
+        Check(!RowNamed(first, L"Late handler"), "rows the cache lacks wait for the full answer");
+
+        controller.CompleteComQuery(token, { Row(20, L"{A}", L"", L"Zip", true),
+                                             Row(21, L"{A}", L"", L"to b.zip", false, true),
+                                             Row(31, L"{B}", L"scan", L"Scan") }, 200, true);
+        Check(controller.com_items().size() == complete.size() &&
+                  RowNamed(controller.com_items(), L"Zip")->id == 20,
+              "a later partial keeps the row count too");
+
+        const uint32_t send = RowNamed(controller.com_items(), L"Send")->id;
+        const std::vector<ops::ShellMenuItem> final_rows = {
+            Row(20, L"{A}", L"", L"Zip", true), Row(21, L"{A}", L"", L"to b.zip", false, true),
+            Row(22, L"{A}", L"", L"to b.7z", false, true), Row(31, L"{B}", L"scan", L"Scan"),
+            Row(50, L"{C}", L"", L"Send") };
+        controller.ExecuteShellCommand(
+            static_cast<int>(app::CmdShellComBase + send),
+            [&] { controller.CompleteComQuery(token, final_rows, 300, false); }, {});
+        Check(invoked == 50, "a painted row clicked before the answer runs the live command");
+
+        controller.StartQuery(prefs, nullptr, { L"C:\\f\\c.dwg" }, false, L".dwg", false, {}, {});
+        controller.CompleteComQuery(token, final_rows, 400, false);
+        Check(controller.com_items().size() == final_rows.size() &&
+                  RowNamed(controller.com_items(), L"to b.7z")->id == 22 &&
+                  !Predicted(RowNamed(controller.com_items(), L"Send")->id),
+              "the full answer replaces the painted rows");
+
+        controller.StartQuery(prefs, nullptr, { L"C:\\f\\d.zip" }, false, L".zip", false, {}, {});
+        Check(!controller.com_predicted() && !controller.SeedComItemsFromCache(),
+              "an unseen type has nothing to paint");
+        controller.CompleteComQuery(token, { Row(7, L"{B}", L"scan", L"Scan") }, 500, true);
+        Check(controller.com_items().size() == 1 && controller.com_items()[0].id == 7,
+              "without cached rows a partial answer is shown as it is");
     }
     {
         app::CtxMenuTiming timing;

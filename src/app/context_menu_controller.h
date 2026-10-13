@@ -69,7 +69,17 @@ public:
         return static_cache_.contains(extension);
     }
 
+    // Rows of the last complete answer for this type, painted before the live
+    // one arrives; StartQuery seeds them at once, so a partial answer that beats
+    // the popup lands on them too. They get ids from kPredictedIdFirst up (never a host id:
+    // those come from the previous menu), and partial answers only patch them
+    // (see CompleteComQuery), so a menu painted from the cache never shrinks
+    // to a partial list and grows back.
+    static constexpr uint32_t kPredictedIdFirst = 0x7F00;
+    static constexpr uint32_t kPredictedIdLast = 0x7FFF;
     bool SeedComItemsFromCache();
+    const std::vector<ops::ShellMenuItem>& com_items() const noexcept { return com_items_; }
+    bool com_predicted() const noexcept { return com_predicted_; }
     QueryCompletion CompleteComQuery(uint32_t token,
                                      std::vector<ops::ShellMenuItem> items,
                                      uint64_t completed_at, bool partial = false);
@@ -107,6 +117,7 @@ private:
     std::vector<std::wstring> disabled_handlers_;
     bool menu_open_ = false;
     bool com_ready_ = false;
+    bool com_predicted_ = false;  // com_items_ were seeded from com_cache_
     std::vector<ops::ShellMenuItem> com_items_;
     std::vector<ops::ShellMenuItem> menu_com_items_;
     std::vector<StaticVerb> static_verbs_;
