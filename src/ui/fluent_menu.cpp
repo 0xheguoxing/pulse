@@ -83,6 +83,18 @@ void FluentMenuModel::SetItems(std::vector<FluentMenuItem> items) {
 
 namespace {
 
+// The row of a visible flyout: same label, state and children (with IDs).
+bool SameFlyoutRow(const FluentMenuItem& a, const FluentMenuItem& b) {
+    if (a.text != b.text || a.enabled != b.enabled || a.children.size() != b.children.size())
+        return false;
+    for (size_t i = 0; i < a.children.size(); ++i) {
+        const auto& x = a.children[i];
+        const auto& y = b.children[i];
+        if (x.command != y.command || x.text != y.text || x.enabled != y.enabled) return false;
+    }
+    return true;
+}
+
 bool DisplayEqualItem(const FluentMenuItem& a, const FluentMenuItem& b) {
     if (a.text != b.text || a.enabled != b.enabled ||
         a.toggle != b.toggle || a.secondary != b.secondary || a.checked != b.checked ||
@@ -125,6 +137,18 @@ bool FluentMenuModel::PatchCommands(const std::vector<FluentMenuItem>& src) {
     for (size_t i = 0; i < items_.size(); ++i)
         PatchItemCommands(items_[i], src[i]);
     return true;
+}
+
+bool FluentMenuModel::PatchInPlace(std::vector<FluentMenuItem> src, IDWriteFactory2* dwrite) {
+    if (src.size() != items_.size()) return false;
+    for (size_t i = 0; i < src.size(); ++i)
+        if (src[i].separator_after != items_[i].separator_after) return false;
+    const int height = height_;
+    items_ = std::move(src);
+    locked_width_ = width_;
+    Layout(dwrite, scale_, 0.0f);
+    locked_width_ = 0;
+    return height_ == height;
 }
 
 void FluentMenuModel::SetRowHeightDip(float dip) {
@@ -177,7 +201,9 @@ void FluentMenuModel::Layout(IDWriteFactory2* dwrite, float scale, float min_wid
     // Context menus stay compact; a long undo/file name ellipsizes instead of
     // stretching the flyout. Command palette passes a larger min_width_px.
     const float max_w = (std::max)(min_width_px, 320.0f * scale_);
-    width_ = (int)std::ceil((std::max)(min_width_px, (std::min)(content_w, max_w)));
+    width_ = locked_width_ > 0
+        ? locked_width_
+        : (int)std::ceil((std::max)(min_width_px, (std::min)(content_w, max_w)));
     truncated_.assign(items_.size(), 0);
     for (size_t i = 0; i < row_w.size(); ++i)
         truncated_[i] = row_w[i] > static_cast<float>(width_) + 0.5f ? 1 : 0;
@@ -1948,33 +1974,36 @@ void FluentMenu::RequestFilterRefresh() {
 
 bool FluentMenu::ReplaceItems(std::vector<FluentMenuItem> items) {
     if (!open_ || animating_out_ || filter_fn_ || !compositor_ || items.empty()) return false;
-    // A flyout owns a copy of the displayed command IDs. Keep both that copy
-    // and the controller's display snapshot until it closes; IDs are session-local.
-    if (sub_parent_row_ >= 0) return false;
-    if (model_.PatchCommands(items)) return true;
-    // The rows changed shape: a context menu opened before the shell host
-    // answered (no cached layout for this type yet) only had Pulse's own rows,
-    // and the Explorer section (New, archivers, ...) arrives afterwards. Rebuild
-    // in place so those rows show up in this menu instead of the next one
-    // (#73). Shell rows are appended after the built-in ones, so the rows under
-    // the cursor keep their place. A visible flyout would be yanked away by the
-    // relayout, so that case keeps the current rows.
-    if (dropdown_ || sub_parent_row_ >= 0) return false;
-    std::wstring hover_text;
-    if (const FluentMenuItem* it = model_.At(hover_row_)) hover_text = it->text;
-    model_.SetItems(std::move(items));
-    model_.Layout(compositor_->DwriteFactory(), scale_, 0.0f);
-    hover_row_ = -1;
-    if (!hover_text.empty()) {
-        for (int i = 0; i < model_.Count(); ++i) {
-            const FluentMenuItem* it = model_.At(i);
-            if (it && it->enabled && it->text == hover_text) { hover_row_ = i; break; }
-        }
+    // A flyout owns a copy of its parent row's children (and the controller
+    // keeps the display snapshot their IDs come from): while one is visible,
+    // that row must stay exactly as shown.
+    if (sub_parent_row_ >= 0) {
+        const FluentMenuItem* parent = model_.At(sub_parent_row_);
+        if (!parent || sub_parent_row_ >= static_cast<int>(items.size()) ||
+            !SameFlyoutRow(*parent, items[static_cast<size_t>(sub_parent_row_)]))
+            return false;
     }
-    hover_swatch_ = -1;
-    sub_pending_row_ = -1;
+    if (model_.PatchCommands(items)) return true;
+    // Same shape, other contents: late rows already mapped onto the shown
+    // ones. The old in-place rebuild (#73) grew the menu under the cursor;
+    // rows the first frame could not place now go into a fixed row instead.
+    if (!model_.PatchInPlace(std::move(items), compositor_->DwriteFactory())) return false;
+    if (const FluentMenuItem* it = model_.At(hover_row_); it && !it->enabled &&
+        hover_row_ != sub_parent_row_)
+        hover_row_ = -1;
+    if (sub_pending_row_ >= 0) {
+        const FluentMenuItem* pending = model_.At(sub_pending_row_);
+        if (!pending || pending->children.empty() || !pending->enabled) sub_pending_row_ = -1;
+    }
+    // The pointer rests on a row that just got its flyout (更多扩展 (n)):
+    // open it after the usual dwell, as if the pointer had just arrived.
+    if (const FluentMenuItem* it = model_.At(hover_row_);
+        it && it->enabled && !it->children.empty() && sub_parent_row_ < 0 &&
+        sub_pending_row_ != hover_row_) {
+        sub_pending_row_ = hover_row_;
+        sub_pending_since_ = std::chrono::steady_clock::now();
+    }
     UpdateTooltip(-1);
-    LayoutWindow(popup_pt_);
     // The modal loop presents every frame (and owns the open fade).
     Render();
     return true;

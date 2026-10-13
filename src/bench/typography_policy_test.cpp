@@ -244,6 +244,45 @@ int wmain(int argc, wchar_t** argv) {
             chevron->GetFontSize() <= FluentMenuModel::kLabelDip &&
             chevron->GetFontSize() < compositor.IconFormat()->GetFontSize(),
             "submenu chevron is no larger than the menu labels");
+        {
+            // R3: an open context menu only patches in place (右键菜单优化方案 §4.1).
+            FluentMenuModel menu;
+            FluentMenuItem slot{0, L"更多扩展…"};
+            slot.enabled = false;
+            std::vector<FluentMenuItem> shown = {{1, L"打开"}, {2, L"复制"},
+                {3, L"Scan with Defender"}, slot, {4, L"管理右键项…"}};
+            shown[1].separator_after = true;
+            shown[3].separator_after = true;
+            menu.SetItems(shown);
+            menu.Layout(compositor.DwriteFactory(), 1.0f);
+            const int height = menu.HeightPx();
+            const int width = menu.WidthPx();
+            auto late = shown;
+            late[2].enabled = false;
+            late[3].text = L"更多扩展 (3) with a label much longer than the menu is wide";
+            late[3].enabled = true;
+            late[3].children = {{8100, L"Git GUI"}, {8101, L"Git Bash"}, {8102, L"Open with Code"}};
+            Check(menu.PatchInPlace(late, compositor.DwriteFactory()) && menu.HeightPx() == height &&
+                menu.WidthPx() == width && menu.At(3)->children.size() == 3 && menu.Truncated(3),
+                "a patched open menu keeps its height and width; a longer label ellipsizes");
+            Check(menu.HitTestRow(menu.RowTopPx(2) + menu.RowHeightPx() / 2) == 2 &&
+                !menu.At(2)->enabled, "a greyed row stays in its place and is still hit");
+            auto grown = late;
+            grown.push_back({9, L"Late"});
+            auto moved = late;
+            moved[0].separator_after = true;
+            Check(!menu.PatchInPlace(grown, compositor.DwriteFactory()) &&
+                !menu.PatchInPlace(moved, compositor.DwriteFactory()) &&
+                menu.HeightPx() == height && menu.Count() == 5 && menu.At(3)->children.size() == 3,
+                "another shape is refused and changes nothing");
+            auto settled = shown;
+            settled[3] = FluentMenuItem{};
+            settled[3].enabled = false;
+            settled[3].separator_after = true;
+            Check(menu.PatchInPlace(settled, compositor.DwriteFactory()) && menu.HeightPx() == height &&
+                menu.WidthPx() == width && menu.At(3)->text.empty(),
+                "a settled 更多扩展 row keeps its height as a blank row");
+        }
         const float original_size = fluent::PainterTestPeer::Body(painter)->GetFontSize();
         model.Layout(compositor.DwriteFactory(), 1.0f);
         const int original_width = model.WidthPx();

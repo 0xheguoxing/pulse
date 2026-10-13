@@ -1551,6 +1551,8 @@ BEGIN
   IDS_HELP_WINDOW_OVERVIEW "視窗總覽"
   IDS_MENU_ACRYLIC "選單壓克力材質"
   IDS_MENU_ACRYLIC_DESC "選單透出下方視窗的模糊色彩；系統關閉透明效果、高對比或省電模式時自動改用純色"
+  IDS_CTX_MORE_LOADING "更多擴充功能…"
+  IDS_CTX_MORE_COUNT "更多擴充功能 (%u)"
   IDS_NEW_TAB_OPEN_CURRENT "目前資料夾"
   IDS_COLUMN_CREATED "建立日期"
   IDS_COLUMN_ACCESSED "存取日期"

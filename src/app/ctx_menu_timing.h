@@ -4,7 +4,9 @@
 // `grew` counts display rebuilds that changed the row count while the menu was
 // on screen, either way: the visible "menu gets longer" the user reported, and
 // a cached menu that shrinks to a partial answer and grows back. It must stay
-// 0. `trace` lists every rebuild as ms-since-open:rows.
+// 0. `trace` lists every rebuild as ms-since-open:rows. Since the open menu
+// only patches (ReconcileCtxDisplay) the row count cannot change; `slot`,
+// `late`, `greyed` and `dropped` say how far the first frame was off.
 #pragma once
 #include <cstdint>
 #include <string>
@@ -22,6 +24,10 @@ struct CtxMenuTiming {
     uint32_t refreshes = 0;          // display updates applied while open
     uint32_t grew = 0;               // updates that changed the row count
     std::string trace;               // "120:17 240:23" (capped, ASCII)
+    bool slot = false;               // the first frame reserved 更多扩展
+    uint32_t late = 0;               // rows that went into 更多扩展
+    uint32_t greyed = 0;             // predicted rows greyed in place
+    uint32_t dropped = 0;            // late rows without a 更多扩展 row
     uint32_t rows_final = 0;
     bool shell_command = false;      // the chosen row was an Explorer row
 };
@@ -64,6 +70,10 @@ inline std::string FormatCtxMenuTiming(const CtxMenuTiming& t, uint64_t tick_ms)
         ",\"grew\":" + std::to_string(t.grew) +
         ",\"rows_final\":" + std::to_string(t.rows_final) +
         ",\"trace\":\"" + t.trace + "\"" +
+        ",\"slot\":" + flag(t.slot) +
+        ",\"late\":" + std::to_string(t.late) +
+        ",\"greyed\":" + std::to_string(t.greyed) +
+        ",\"dropped\":" + std::to_string(t.dropped) +
         ",\"shell_command\":" + flag(t.shell_command) + "}\n";
 }
 

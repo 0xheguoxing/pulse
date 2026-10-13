@@ -110,6 +110,10 @@ public:
     bool Truncated(int i) const;
     // Copy command ids from src when display text/structure matches. No layout.
     bool PatchCommands(const std::vector<FluentMenuItem>& src);
+    // Takes src when it has as many rows with the same separators (labels,
+    // states and flyouts may differ): the height stays, the width is kept and
+    // a longer label ellipsizes. False, changing nothing, for any other shape.
+    bool PatchInPlace(std::vector<FluentMenuItem> src, IDWriteFactory2* dwrite);
     // Content y (px) of row i's top edge.
     float RowTopPx(int i) const;
     int HitTestRow(float y_px) const;                 // -1 = not on a row
@@ -125,6 +129,7 @@ private:
     float sep_h_ = 5.0f;      // separator slot height (line + gaps)
     float inline_label_width_ = 0.0f;
     int width_ = 0;
+    int locked_width_ = 0;    // PatchInPlace: Layout keeps this width
     std::vector<unsigned char> truncated_;
     int height_ = 0;
 };
@@ -164,9 +169,11 @@ public:
     // Safe from the owner window while TrackPopup's modal loop is running
     // (e.g. async index hits arrived). No-op if the menu is closed.
     void RequestFilterRefresh();
-    // Swap command ids while the menu is open if the visible structure matches.
-    // Never grows or shrinks an open menu (Explorer COM arriving late must not
-    // restyle the popup). Returns true when ids were patched.
+    // Patches the open menu in place: same rows and separators, while labels,
+    // states and flyouts may change (the context menu maps late rows onto the
+    // shown ones first, ReconcileCtxDisplay). Never grows, shrinks or widens
+    // an open menu. False, changing nothing, for another shape or when a
+    // visible flyout's rows would change.
     bool ReplaceItems(std::vector<FluentMenuItem> items);
     void SetFilterPlaceholder(std::wstring text) { filter_placeholder_ = std::move(text); }
     const std::wstring& LastFilterQuery() const { return filter_query_; }

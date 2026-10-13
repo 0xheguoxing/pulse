@@ -4,6 +4,7 @@
 #include "../ipc/ctx_menu_util.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cwctype>
 #include <unordered_set>
 #include <windows.h>
@@ -135,6 +136,95 @@ void AppendShellSection(std::vector<ui::FluentMenuItem>& items,
         items.push_back(std::move(row));
         ++added;
     }
+}
+
+ui::FluentMenuItem CtxSlotRow(std::vector<ui::FluentMenuItem> late, size_t late_count,
+                              bool complete) {
+    ui::FluentMenuItem row;
+    row.enabled = false;
+    if (!late.empty()) {
+        wchar_t text[128]{};
+        swprintf_s(text, pulse::l10n::Get(pulse::l10n::StringId::CtxMoreExtensionsCount).c_str(),
+                   static_cast<unsigned>(late_count));
+        row.text = text;
+        row.glyph = L"\xEA86";  // Puzzle
+        row.enabled = true;
+        row.children = std::move(late);
+    } else if (!complete) {
+        row.text = pulse::l10n::Get(pulse::l10n::StringId::CtxMoreExtensionsLoading);
+        row.glyph = L"\xEA86";
+    }
+    // complete with nothing late: an empty, disabled row keeps the height.
+    return row;
+}
+
+std::vector<ui::FluentMenuItem> ReconcileCtxDisplay(
+    const std::vector<ui::FluentMenuItem>& shown, const std::vector<ui::FluentMenuItem>& fresh,
+    int slot_row, bool complete, CtxReconcileStats* stats) {
+    auto lower = [](const std::wstring& text) {
+        std::wstring out = text;
+        for (auto& c : out) c = static_cast<wchar_t>(std::towlower(c));
+        return out;
+    };
+    std::vector<std::wstring> fresh_keys;
+    fresh_keys.reserve(fresh.size());
+    for (const auto& row : fresh) fresh_keys.push_back(lower(row.text));
+    std::vector<char> used(fresh.size(), 0);
+    CtxReconcileStats result;
+    std::vector<ui::FluentMenuItem> out = shown;
+    for (size_t i = 0; i < out.size(); ++i) {
+        if (static_cast<int>(i) == slot_row) continue;
+        const bool separator = shown[i].separator_after;
+        const std::wstring key = lower(shown[i].text);
+        size_t match = fresh.size();
+        if (!key.empty()) {
+            for (size_t j = 0; j < fresh.size(); ++j) {
+                if (!used[j] && fresh_keys[j] == key) { match = j; break; }
+            }
+        }
+        if (match < fresh.size()) {
+            used[match] = 1;
+            out[i] = fresh[match];
+        } else if (!key.empty()) {
+            // Predicted, but this selection does not have it: keep the place.
+            out[i].enabled = false;
+            for (auto& child : out[i].children) child.enabled = false;
+            ++result.greyed;
+        }
+        out[i].separator_after = separator;
+    }
+    std::vector<ui::FluentMenuItem> late;
+    size_t late_count = 0;
+    for (size_t j = 0; j < fresh.size(); ++j) {
+        if (used[j] || fresh[j].text.empty()) continue;
+        ++late_count;
+        ui::FluentMenuItem row = fresh[j];
+        row.separator_after = false;
+        if (row.children.empty()) {
+            late.push_back(std::move(row));
+            continue;
+        }
+        std::vector<ui::FluentMenuItem> children = std::move(row.children);
+        row.children.clear();
+        row.command = 0;
+        row.enabled = false;
+        late.push_back(std::move(row));
+        for (auto& child : children) {
+            child.separator_after = false;
+            child.children.clear();
+            late.push_back(std::move(child));
+        }
+    }
+    if (slot_row >= 0 && static_cast<size_t>(slot_row) < out.size()) {
+        const bool separator = shown[static_cast<size_t>(slot_row)].separator_after;
+        out[static_cast<size_t>(slot_row)] = CtxSlotRow(std::move(late), late_count, complete);
+        out[static_cast<size_t>(slot_row)].separator_after = separator;
+        result.late = static_cast<uint32_t>(late_count);
+    } else {
+        result.dropped = static_cast<uint32_t>(late_count);
+    }
+    if (stats) *stats = result;
+    return out;
 }
 
 std::vector<ShellMenuEntry> ApplyExplorerPrefs(const ContextMenuPrefs& prefs,
@@ -334,6 +424,63 @@ std::vector<ui::FluentMenuItem> ContextMenuController::BuildDisplay(
     if (!display.empty()) display.back().separator_after = true;
     display.push_back(std::move(manage));
     return display;
+}
+
+bool ContextMenuController::AnswersComplete() const {
+    const bool com_late = token_ != 0 && !com_ready_;
+    const bool static_late = static_pending_.contains(extension_) &&
+                             !static_cache_.contains(extension_);
+    return !com_late && !static_late;
+}
+
+bool ContextMenuController::MayGrowAfterOpen() const {
+    if (static_pending_.contains(extension_) && !static_cache_.contains(extension_)) return true;
+    if (token_ == 0 || com_ready_) return false;
+    if (!com_predicted_) return true;
+    const CtxHandlerStats* stats = ComHandlerStats(CacheKey(background_, extension_, paths_.size() > 1));
+    if (!stats || stats->empty()) return true;
+    return std::any_of(stats->begin(), stats->end(),
+                       [](const CtxHandlerStat& stat) { return !stat.done; });
+}
+
+std::vector<ui::FluentMenuItem> ContextMenuController::BuildOpenDisplay(
+    ContextMenuPrefs& prefs, const std::vector<ui::FluentMenuItem>& base_items,
+    bool& prefs_changed) {
+    auto display = BuildDisplay(prefs, base_items, prefs_changed);
+    slot_row_ = -1;
+    reconcile_stats_ = {};
+    pending_stats_ = {};
+    // BuildDisplay ends with 管理右键项 behind a separator; the slot is the
+    // last shell row, or a section of its own when there are none yet.
+    if (MayGrowAfterOpen() && display.size() >= 2) {
+        const size_t at = display.size() - 1;
+        const bool shell_rows = display.size() > base_items.size() + 1;
+        ui::FluentMenuItem slot = CtxSlotRow({}, 0, false);
+        slot.separator_after = true;
+        if (shell_rows) display[at - 1].separator_after = false;
+        display.insert(display.begin() + static_cast<std::ptrdiff_t>(at), std::move(slot));
+        slot_row_ = static_cast<int>(at);
+    }
+    shown_ = display;
+    return display;
+}
+
+std::vector<ui::FluentMenuItem> ContextMenuController::ReconcileDisplay(
+    ContextMenuPrefs& prefs, bool& prefs_changed) {
+    if (shown_.empty()) return {};  // not a menu BuildOpenDisplay made
+    const auto fresh = BuildDisplay(prefs, base_items_, prefs_changed);
+    return ReconcileCtxDisplay(shown_, fresh, slot_row_, AnswersComplete(), &pending_stats_);
+}
+
+void ContextMenuController::CommitDisplay(std::vector<ui::FluentMenuItem> shown) {
+    shown_ = std::move(shown);
+    reconcile_stats_ = pending_stats_;
+    NotePatchedDisplay();
+    if (timing_active_) {
+        timing_.late = reconcile_stats_.late;
+        timing_.greyed = reconcile_stats_.greyed;
+        timing_.dropped = reconcile_stats_.dropped;
+    }
 }
 
 bool ContextMenuController::ExecuteShellCommand(
@@ -744,6 +891,7 @@ void ContextMenuController::BeginTiming(uint32_t input_to_open_ms, size_t rows,
     timing_.rows_open = static_cast<uint32_t>(rows);
     timing_.seeded = seeded;
     timing_.live_at_open = com_ready_;
+    timing_.slot = slot_row_ >= 0;
     display_rows_ = rows;
     opened_at_ = now;
     timing_active_ = true;
