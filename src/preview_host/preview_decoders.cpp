@@ -34,13 +34,26 @@
 #include <shlwapi.h>
 #include <thumbcache.h>
 #include <wincodec.h>
+// The Media Foundation headers of this SDK do not build at the project's
+// NTDDI_WIN10_NI (MFVideoSphericalFormat); audio_waveform.cpp sets 8.1 too.
+#pragma push_macro("NTDDI_VERSION")
+#undef NTDDI_VERSION
+#define NTDDI_VERSION 0x06030000
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+#pragma pop_macro("NTDDI_VERSION")
 #include <wrl/client.h>
 #include <algorithm>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+
+// Media Foundation's GUIDs only; its DLLs are loaded on first use (see Mf()).
+#pragma comment(lib, "mfuuid.lib")
 
 using namespace pulse;
 using Microsoft::WRL::ComPtr;
@@ -838,6 +851,83 @@ static std::wstring MissingImageCodec(const std::wstring& path, const std::wstri
 
 // Image preview pack (HEIC / AVIF / JPEG XL without the Store extensions,
 // OpenEXR, Radiance HDR, QOI). False without the pack.
+// ---- HEIF embedded thumbnail -------------------------------------------------
+// Phones store a small picture next to the photo (iPhone: 320 x 240, as an
+// item the 'thmb' reference points at). WIC hands it out through
+// GetThumbnail in about 60 ms, where decoding the 12 MP photo itself took
+// 1.7 s and a 48 MP one over 4 s. GetThumbnail on a file without one decodes
+// the whole photo, so the reference is looked for first.
+constexpr UINT kHeifThumbnailEdge = 320;
+
+static bool IsHeifExtension(std::wstring_view extension) {
+    return IsOneOf(extension, {L".heic", L".heif", L".hif", L".avif"});
+}
+
+// The children of a box held in `bytes`: calls `visit(type, payload, end)`
+// until it returns true.
+template <typename Visit>
+static bool EachBox(const std::vector<uint8_t>& bytes, size_t pos, size_t limit, Visit visit) {
+    for (int boxes = 0; boxes < 1024 && pos + 8 <= limit; ++boxes) {
+        uint64_t size = (uint64_t(bytes[pos]) << 24) | (uint64_t(bytes[pos + 1]) << 16) |
+                        (uint64_t(bytes[pos + 2]) << 8) | bytes[pos + 3];
+        size_t payload = pos + 8;
+        if (size == 1) {
+            if (pos + 16 > limit) return false;
+            size = 0;
+            for (int i = 0; i < 8; ++i) size = (size << 8) | bytes[pos + 8 + i];
+            payload = pos + 16;
+        } else if (size == 0) {
+            size = limit - pos;
+        }
+        if (size < payload - pos) return false;
+        const size_t end = size > limit - pos ? limit : pos + static_cast<size_t>(size);
+        if (visit(reinterpret_cast<const char*>(&bytes[pos + 4]), payload, end)) return true;
+        if (size > limit - pos) return false;
+        pos = end;
+    }
+    return false;
+}
+
+static bool HeifHasThumbnail(const std::wstring& path) {
+    std::vector<uint8_t> bytes;
+    uint64_t file_size = 0;
+    if (!ReadPrefix(path, 256u * 1024u, bytes, file_size)) return false;
+    return EachBox(bytes, 0, bytes.size(), [&](const char* type, size_t payload, size_t end) {
+        if (memcmp(type, "meta", 4) != 0) return false;
+        return EachBox(bytes, payload + 4, end, [&](const char* child, size_t iref, size_t iref_end) {
+            if (memcmp(child, "iref", 4) != 0) return false;
+            return EachBox(bytes, iref + 4, iref_end, [](const char* reference, size_t, size_t) {
+                return memcmp(reference, "thmb", 4) == 0;
+            });
+        });
+    });
+}
+
+static bool HeifThumbnailInto(const DecodeRequest& q, UINT cap, DecodeResult& r) {
+    if (!HeifHasThumbnail(q.path)) return false;
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IWICBitmapDecoder> decoder;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICBitmapSource> thumbnail;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
+        FAILED(factory->CreateDecoderFromFilename(q.path.c_str(), nullptr, GENERIC_READ,
+                                                   WICDecodeMetadataCacheOnDemand, &decoder)) ||
+        FAILED(decoder->GetFrame(0, &frame)) || FAILED(frame->GetThumbnail(&thumbnail)))
+        return false;
+    std::vector<uint8_t> canvas;
+    UINT width = 0, height = 0, full_w = 0, full_h = 0;
+    if (!FramePixels(factory.Get(), thumbnail.Get(), canvas, width, height) || width > 1024 || height > 1024)
+        return false;
+    ClearBitmap(r);
+    if (!FitCanvas(factory.Get(), canvas, width, height, cap, r.pixels, r.width, r.height, r.stride)) {
+        ClearBitmap(r);
+        return false;
+    }
+    // The photo's own size (already turned upright by the decoder) for the facts.
+    if (SUCCEEDED(frame->GetSize(&full_w, &full_h))) { r.source_width = full_w; r.source_height = full_h; }
+    return true;
+}
+
 static bool ImagePackInto(const DecodeRequest& q, UINT cap, DecodeResult& r) {
     if (!preview::IsImagePackExtension(q.extension) || !preview::ImagePackAvailable()) return false;
     preview::ImagePackFrame frame;
@@ -858,6 +948,17 @@ static DecodeStep RunImage(const DecodeRequest& q, DecodeResult& r) {
     const bool gif = q.extension == L".gif";
     const UINT cap = ipc::ClampPreviewPixelSize(q.request.pixel_size, gif);
     bool made = false;
+    if (!q.offline && cap <= kHeifThumbnailEdge && IsHeifExtension(q.extension)) {
+        // Grid thumbnails and the hover card's first picture: the embedded
+        // thumbnail. The card asks for the full photo next, so a file
+        // without one answers at once instead of decoding it twice.
+        if (HeifThumbnailInto(q, cap, r)) return MadeBitmap(r);
+        ClearBitmap(r);
+        if (q.request.flags & ipc::kPreviewRequestFlagCard) {
+            r.error = L"heif-no-thumbnail";
+            return DecodeStep::Failed;
+        }
+    }
     if (!q.offline && (q.extension == L".tif" || q.extension == L".tiff")) {
         made = DecodeImage(q.path, q.request.attrs, cap, r.pixels, r.width, r.height,
             r.stride, r.source_width, r.source_height, nullptr, q.request.frame_index, &frame_count);
@@ -1157,6 +1258,529 @@ static DecodeStep RunMediaPack(const DecodeRequest& q, DecodeResult& r) {
         r.error = L"provider-failed";
         return DecodeStep::Failed;
     }
+    return DecodeStep::Next;
+}
+
+// ---- Audio cover art ----------------------------------------------------------
+// The picture a tagger embedded, read straight from the file: ID3v2 APIC/PIC
+// (MP3, ADTS AAC, WAV / AIFF "id3 " chunks), MP4 covr atoms (M4A) and FLAC
+// PICTURE blocks. Measured on real music folders this takes a few ms, where
+// the shell provider took 250-450 ms to report a file without a cover.
+
+static bool ReadAt(HANDLE file, uint64_t offset, void* buffer, DWORD bytes) {
+    LARGE_INTEGER at{};
+    at.QuadPart = static_cast<LONGLONG>(offset);
+    DWORD got = 0;
+    return SetFilePointerEx(file, at, nullptr, FILE_BEGIN) &&
+        ReadFile(file, buffer, bytes, &got, nullptr) && got == bytes;
+}
+static uint32_t Be32(const uint8_t* p) {
+    return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
+}
+static uint32_t Le32(const uint8_t* p) {
+    return (uint32_t(p[3]) << 24) | (uint32_t(p[2]) << 16) | (uint32_t(p[1]) << 8) | p[0];
+}
+static uint32_t Syncsafe(const uint8_t* p) {
+    return (uint32_t(p[0] & 0x7F) << 21) | (uint32_t(p[1] & 0x7F) << 14) |
+           (uint32_t(p[2] & 0x7F) << 7) | (p[3] & 0x7F);
+}
+// ID3 unsynchronisation: every FF 00 stands for FF.
+static void Resync(std::vector<uint8_t>& bytes) {
+    size_t out = 0;
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        bytes[out++] = bytes[i];
+        if (bytes[i] == 0xFF && i + 1 < bytes.size() && bytes[i + 1] == 0x00) ++i;
+    }
+    bytes.resize(out);
+}
+constexpr uint32_t kMaxCoverBytes = 32u * 1024u * 1024u;
+
+// APIC / PIC body -> picture bytes; rank 2 for the front cover, 1 otherwise.
+static bool Id3Picture(const std::vector<uint8_t>& body, int version,
+                       std::vector<unsigned char>& picture, int& rank) {
+    if (body.size() < 4) return false;
+    const uint8_t encoding = body[0];
+    size_t pos = 1;
+    if (version == 2) {
+        pos += 3;                                     // "JPG" / "PNG"
+    } else {
+        const size_t start = pos;
+        while (pos < body.size() && body[pos]) ++pos; // MIME type
+        if (pos - start == 3 && memcmp(&body[start], "-->", 3) == 0) return false;  // a link
+        ++pos;
+    }
+    if (pos >= body.size()) return false;
+    const uint8_t type = body[pos++];
+    if (encoding == 1 || encoding == 2) {             // UTF-16 description, 00 00 ended
+        while (pos + 1 < body.size() && (body[pos] || body[pos + 1])) pos += 2;
+        pos += 2;
+    } else {
+        while (pos < body.size() && body[pos]) ++pos;
+        ++pos;
+    }
+    if (pos >= body.size()) return false;
+    picture.assign(body.begin() + static_cast<ptrdiff_t>(pos), body.end());
+    rank = type == 3 ? 2 : 1;
+    return picture.size() >= 16;
+}
+
+static bool Id3Cover(HANDLE file, uint64_t offset, std::vector<unsigned char>& out) {
+    uint8_t header[10];
+    if (!ReadAt(file, offset, header, sizeof(header)) || memcmp(header, "ID3", 3) != 0) return false;
+    const int version = header[3];
+    const uint8_t flags = header[5];
+    const uint32_t size = Syncsafe(header + 6);
+    if (version < 2 || version > 4 || !size || size > kMaxCoverBytes + 65536u) return false;
+    std::vector<uint8_t> tag(size);
+    if (!ReadAt(file, offset + 10, tag.data(), size)) return false;
+    if ((flags & 0x80) && version < 4) Resync(tag);   // v2.4 marks it per frame
+    size_t pos = 0;
+    if ((flags & 0x40) && version >= 3 && tag.size() >= 4)
+        pos = version == 3 ? 4 + Be32(tag.data()) : Syncsafe(tag.data());
+    const size_t frame_header = version == 2 ? 6 : 10;
+    int best = 0;
+    while (pos + frame_header <= tag.size()) {
+        const uint8_t* frame = &tag[pos];
+        if (!frame[0]) break;                          // padding
+        uint32_t frame_size = 0;
+        uint16_t frame_flags = 0;
+        if (version == 2) {
+            frame_size = (uint32_t(frame[3]) << 16) | (uint32_t(frame[4]) << 8) | frame[5];
+        } else {
+            frame_size = version == 4 ? Syncsafe(frame + 4) : Be32(frame + 4);
+            frame_flags = static_cast<uint16_t>((frame[8] << 8) | frame[9]);
+        }
+        if (frame_size > tag.size() - pos - frame_header) break;
+        const bool picture = version == 2 ? memcmp(frame, "PIC", 3) == 0 : memcmp(frame, "APIC", 4) == 0;
+        // Compressed or encrypted frames are skipped (v2.3: 0x80 / 0x40, v2.4: 0x08 / 0x04).
+        const bool sealed = version == 3 ? (frame_flags & 0x00C0) != 0 :
+                            version == 4 ? (frame_flags & 0x000C) != 0 : false;
+        if (picture && !sealed) {
+            std::vector<uint8_t> body(frame + frame_header, frame + frame_header + frame_size);
+            if (version == 4 && (frame_flags & 0x0001) && body.size() >= 4)
+                body.erase(body.begin(), body.begin() + 4);   // data length indicator
+            if (version == 4 && (frame_flags & 0x0002)) Resync(body);
+            std::vector<unsigned char> art;
+            int rank = 0;
+            if (Id3Picture(body, version, art, rank) && rank > best) {
+                out = std::move(art);
+                best = rank;
+                if (rank == 2) break;
+            }
+        }
+        pos += frame_header + frame_size;
+    }
+    return best > 0;
+}
+
+// RIFF (WAV, little-endian sizes) or FORM (AIFF, big-endian) "id3 " chunk.
+static bool ChunkedId3Cover(HANDLE file, uint64_t file_size, bool big_endian,
+                            std::vector<unsigned char>& out) {
+    uint64_t pos = 12;
+    for (int chunks = 0; chunks < 256 && pos + 8 <= file_size; ++chunks) {
+        uint8_t header[8];
+        if (!ReadAt(file, pos, header, sizeof(header))) return false;
+        const uint32_t size = big_endian ? Be32(header + 4) : Le32(header + 4);
+        if (_strnicmp(reinterpret_cast<const char*>(header), "id3 ", 4) == 0)
+            return Id3Cover(file, pos + 8, out);
+        pos += 8 + uint64_t(size) + (size & 1);
+    }
+    return false;
+}
+
+// The FLAC PICTURE structure (also base64'd into Ogg METADATA_BLOCK_PICTURE).
+static bool FlacPicture(const uint8_t* block, size_t length, std::vector<unsigned char>& out) {
+    if (length < 32) return false;
+    size_t at = 4;                                                 // picture type
+    const uint32_t mime = Be32(block + at); at += 4;
+    if (mime > length - at - 4) return false;
+    at += mime;
+    const uint32_t description = Be32(block + at); at += 4;
+    if (length - at < 20 || description > length - at - 20) return false;
+    at += description + 16;                                        // width, height, depth, colours
+    const uint32_t bytes = Be32(block + at); at += 4;
+    if (bytes < 16 || bytes > length - at) return false;
+    out.assign(block + at, block + at + bytes);
+    return true;
+}
+
+static bool Base64Decode(std::string_view text, std::vector<uint8_t>& out) {
+    out.clear();
+    out.reserve(text.size() / 4 * 3);
+    uint32_t bits = 0;
+    int count = 0;
+    for (const char c : text) {
+        int v = -1;
+        if (c >= 'A' && c <= 'Z') v = c - 'A';
+        else if (c >= 'a' && c <= 'z') v = c - 'a' + 26;
+        else if (c >= '0' && c <= '9') v = c - '0' + 52;
+        else if (c == '+' || c == '-') v = 62;
+        else if (c == '/' || c == '_') v = 63;
+        else if (c == '=') break;
+        else continue;                                             // line breaks
+        bits = (bits << 6) | static_cast<uint32_t>(v);
+        if (++count == 4) {
+            out.push_back(static_cast<uint8_t>(bits >> 16));
+            out.push_back(static_cast<uint8_t>(bits >> 8));
+            out.push_back(static_cast<uint8_t>(bits));
+            bits = 0; count = 0;
+        }
+    }
+    if (count == 3) { out.push_back(static_cast<uint8_t>(bits >> 10)); out.push_back(static_cast<uint8_t>(bits >> 2)); }
+    else if (count == 2) out.push_back(static_cast<uint8_t>(bits >> 4));
+    return !out.empty();
+}
+
+// Ogg Vorbis / Opus: the comment packet (the stream's second) and its
+// METADATA_BLOCK_PICTURE, or the older COVERART field.
+static bool OggCover(HANDLE file, uint64_t file_size, std::vector<unsigned char>& out,
+                     DWORD window = 256u * 1024u) {
+    const DWORD limit = static_cast<DWORD>((std::min<uint64_t>)(file_size, window));
+    std::vector<uint8_t> bytes(limit);
+    if (!ReadAt(file, 0, bytes.data(), limit)) return false;
+    std::vector<uint8_t> packet;
+    int packets = 0;
+    uint32_t serial = 0;
+    bool first = true;
+    size_t pos = 0;
+    while (packets < 2 && pos + 27 <= bytes.size() && memcmp(&bytes[pos], "OggS", 4) == 0) {
+        const uint32_t page_serial = Le32(&bytes[pos + 14]);
+        const uint8_t segments = bytes[pos + 26];
+        if (pos + 27 + segments > bytes.size()) break;            // cut by the window
+        const uint8_t* table = &bytes[pos + 27];
+        size_t data = pos + 27 + segments;
+        if (first) { serial = page_serial; first = false; }
+        bool cut = false;
+        for (uint8_t s = 0; s < segments && packets < 2; ++s) {
+            if (data + table[s] > bytes.size()) { cut = true; break; }
+            if (page_serial == serial) {
+                if (packets == 1) packet.insert(packet.end(), &bytes[data], &bytes[data] + table[s]);
+                if (table[s] < 255) ++packets;                     // a packet ends here
+            }
+            data += table[s];
+        }
+        if (cut) break;
+        size_t page_bytes = 27 + segments;
+        for (uint8_t s = 0; s < segments; ++s) page_bytes += table[s];
+        pos += page_bytes;
+    }
+    if (packets < 2) {
+        // A large cover spreads the comment packet over many pages: read on.
+        const DWORD more = kMaxCoverBytes + 65536u;
+        return limit < file_size && window < more && OggCover(file, file_size, out, more);
+    }
+    size_t at = 0;
+    if (packet.size() >= 7 && packet[0] == 3 && memcmp(&packet[1], "vorbis", 6) == 0) at = 7;
+    else if (packet.size() >= 8 && memcmp(packet.data(), "OpusTags", 8) == 0) at = 8;
+    else return false;
+    if (at + 4 > packet.size()) return false;
+    at += 4 + Le32(&packet[at]);                                   // vendor string
+    if (at + 4 > packet.size()) return false;
+    const uint32_t count = Le32(&packet[at]); at += 4;
+    for (uint32_t i = 0; i < count && at + 4 <= packet.size(); ++i) {
+        const uint32_t length = Le32(&packet[at]); at += 4;
+        if (length > packet.size() - at) return false;
+        const std::string_view field(reinterpret_cast<const char*>(&packet[at]), length);
+        at += length;
+        const size_t equals = field.find('=');
+        if (equals == std::string_view::npos) continue;
+        const std::string_view key = field.substr(0, equals);
+        const bool block = _strnicmp(key.data(), "METADATA_BLOCK_PICTURE", key.size()) == 0 && key.size() == 22;
+        const bool legacy = _strnicmp(key.data(), "COVERART", key.size()) == 0 && key.size() == 8;
+        if (!block && !legacy) continue;
+        std::vector<uint8_t> decoded;
+        if (!Base64Decode(field.substr(equals + 1), decoded)) continue;
+        if (legacy) { out.assign(decoded.begin(), decoded.end()); return out.size() >= 16; }
+        if (FlacPicture(decoded.data(), decoded.size(), out)) return true;
+    }
+    return false;
+}
+
+static bool FlacCover(HANDLE file, uint64_t offset, std::vector<unsigned char>& out) {
+    uint8_t magic[4];
+    if (!ReadAt(file, offset, magic, 4) || memcmp(magic, "fLaC", 4) != 0) return false;
+    uint64_t pos = offset + 4;
+    for (int blocks = 0; blocks < 128; ++blocks) {
+        uint8_t header[4];
+        if (!ReadAt(file, pos, header, 4)) return false;
+        const bool last = (header[0] & 0x80) != 0;
+        const uint32_t length = (uint32_t(header[1]) << 16) | (uint32_t(header[2]) << 8) | header[3];
+        if ((header[0] & 0x7F) == 6 && length >= 32 && length <= kMaxCoverBytes) {
+            std::vector<uint8_t> block(length);
+            if (!ReadAt(file, pos + 4, block.data(), length)) return false;
+            return FlacPicture(block.data(), block.size(), out);
+        }
+        pos += 4 + length;
+        if (last) break;
+    }
+    return false;
+}
+
+// One MP4 atom header at `pos`: its type, the payload start and the end.
+static bool Mp4Atom(HANDLE file, uint64_t pos, uint64_t limit, char type[4],
+                    uint64_t& payload, uint64_t& end) {
+    if (pos + 8 > limit) return false;
+    uint8_t header[16];
+    if (!ReadAt(file, pos, header, 8)) return false;
+    uint64_t size = Be32(header);
+    memcpy(type, header + 4, 4);
+    payload = pos + 8;
+    if (size == 1) {
+        if (pos + 16 > limit || !ReadAt(file, pos + 8, header + 8, 8)) return false;
+        size = (uint64_t(Be32(header + 8)) << 32) | Be32(header + 12);
+        payload = pos + 16;
+    } else if (size == 0) {
+        size = limit - pos;
+    }
+    if (size < payload - pos || pos + size > limit) return false;
+    end = pos + size;
+    return true;
+}
+static bool Mp4Child(HANDLE file, uint64_t start, uint64_t limit, const char* wanted,
+                     uint64_t& payload, uint64_t& end) {
+    uint64_t pos = start;
+    for (int atoms = 0; atoms < 4096 && pos < limit; ++atoms) {
+        char type[4];
+        if (!Mp4Atom(file, pos, limit, type, payload, end)) return false;
+        if (memcmp(type, wanted, 4) == 0) return true;
+        pos = end;
+    }
+    return false;
+}
+static bool Mp4Cover(HANDLE file, uint64_t file_size, std::vector<unsigned char>& out) {
+    uint64_t moov = 0, moov_end = 0, udta = 0, udta_end = 0, meta = 0, meta_end = 0;
+    uint64_t ilst = 0, ilst_end = 0, covr = 0, covr_end = 0, data = 0, data_end = 0;
+    if (!Mp4Child(file, 0, file_size, "moov", moov, moov_end) ||
+        !Mp4Child(file, moov, moov_end, "udta", udta, udta_end) ||
+        !Mp4Child(file, udta, udta_end, "meta", meta, meta_end)) return false;
+    // iTunes writes meta as a full box (4 bytes of version / flags); QuickTime
+    // files put the hdlr child right away.
+    uint8_t peek[8];
+    if (meta + 8 <= meta_end && ReadAt(file, meta, peek, 8) && memcmp(peek + 4, "hdlr", 4) != 0) meta += 4;
+    if (!Mp4Child(file, meta, meta_end, "ilst", ilst, ilst_end) ||
+        !Mp4Child(file, ilst, ilst_end, "covr", covr, covr_end) ||
+        !Mp4Child(file, covr, covr_end, "data", data, data_end)) return false;
+    // data: 4 bytes type indicator (13 JPEG, 14 PNG, 27 BMP), 4 bytes locale.
+    if (data_end < data + 8 + 16 || data_end - data - 8 > kMaxCoverBytes) return false;
+    out.resize(static_cast<size_t>(data_end - data - 8));
+    return ReadAt(file, data + 8, out.data(), static_cast<DWORD>(out.size()));
+}
+
+// true: the container was understood (`parsed`) and had a picture.
+static bool ReadAudioCover(const std::wstring& path, const std::wstring& extension,
+                           std::vector<unsigned char>& out, bool& parsed) {
+    parsed = false;
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    struct Closer { HANDLE h; ~Closer() { CloseHandle(h); } } closer{file};
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file, &size) || size.QuadPart < 16) return false;
+    const uint64_t file_size = static_cast<uint64_t>(size.QuadPart);
+    uint8_t head[12];
+    if (!ReadAt(file, 0, head, sizeof(head))) return false;
+    if (memcmp(head, "ID3", 3) == 0) {
+        parsed = true;
+        if (Id3Cover(file, 0, out)) return true;
+        // FLAC (and the odd MP4) behind a stray ID3 tag.
+        const uint64_t after = 10 + uint64_t(Syncsafe(head + 6)) + ((head[5] & 0x10) ? 10 : 0);
+        return FlacCover(file, after, out);
+    }
+    if (memcmp(head, "fLaC", 4) == 0) { parsed = true; return FlacCover(file, 0, out); }
+    if (memcmp(head, "RIFF", 4) == 0 && memcmp(head + 8, "WAVE", 4) == 0) {
+        parsed = true;
+        return ChunkedId3Cover(file, file_size, false, out);
+    }
+    if (memcmp(head, "FORM", 4) == 0 && (memcmp(head + 8, "AIFF", 4) == 0 || memcmp(head + 8, "AIFC", 4) == 0)) {
+        parsed = true;
+        return ChunkedId3Cover(file, file_size, true, out);
+    }
+    if (memcmp(head + 4, "ftyp", 4) == 0) { parsed = true; return Mp4Cover(file, file_size, out); }
+    if (memcmp(head, "OggS", 4) == 0) { parsed = true; return OggCover(file, file_size, out); }
+    // Plain MPEG / ADTS frames without a tag have no picture to find.
+    if (head[0] == 0xFF && (head[1] & 0xE0) == 0xE0 && (extension == L".mp3" || extension == L".aac"))
+        parsed = true;
+    return false;
+}
+
+static bool AcceptsAudioCover(const DecodeRequest& q) {
+    return !q.is_directory && !q.offline && !q.grid && preview::IsAudioExtension(q.extension);
+}
+static DecodeStep RunAudioCover(const DecodeRequest& q, DecodeResult& r) {
+    std::vector<unsigned char> art;
+    bool parsed = false;
+    if (ReadAudioCover(q.path, q.extension, art, parsed)) {
+        ClearBitmap(r);
+        if (DecodeImage(q.path, q.request.attrs, q.cap, r.pixels, r.width, r.height, r.stride,
+                        r.source_width, r.source_height, &art)) return MadeBitmap(r);
+        ClearBitmap(r);
+    }
+    // Quick Look keeps the old chain (shell thumbnail, then the hex view).
+    if (!(q.request.flags & ipc::kPreviewRequestFlagCard)) return DecodeStep::Next;
+    // The card: a container this parser does not read (WMA, Ogg) may still
+    // carry art the shell can extract; one that was read has none.
+    if (!parsed && ShellThumbnailInto(q, r)) return MadeBitmap(r);
+    ClearBitmap(r);
+    r.error = L"audio-no-cover";
+    return DecodeStep::Failed;
+}
+
+// ---- Video poster through Media Foundation -----------------------------------
+// Explorer's video thumbnail provider took 0.5-2.8 s per uncached file on the
+// test machine; a source reader opens the file, seeks to a key frame and
+// decodes that one frame in a fraction of that. Media Foundation is loaded on
+// first use: Windows N editions ship without it, and grid thumbnails (cached
+// by the shell) never need it.
+struct MfApi {
+    using Startup = HRESULT (WINAPI*)(ULONG, DWORD);
+    using CreateAttributes = HRESULT (WINAPI*)(IMFAttributes**, UINT32);
+    using CreateType = HRESULT (WINAPI*)(IMFMediaType**);
+    using CreateReader = HRESULT (WINAPI*)(LPCWSTR, IMFAttributes*, IMFSourceReader**);
+    CreateAttributes create_attributes = nullptr;
+    CreateType create_type = nullptr;
+    CreateReader create_reader = nullptr;
+    bool ready = false;
+};
+static const MfApi& Mf() {
+    static MfApi api;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        HMODULE plat = LoadLibraryExW(L"mfplat.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        HMODULE readwrite = LoadLibraryExW(L"mfreadwrite.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (!plat || !readwrite) return;   // kept loaded for the host's lifetime
+        const auto startup = reinterpret_cast<MfApi::Startup>(GetProcAddress(plat, "MFStartup"));
+        api.create_attributes = reinterpret_cast<MfApi::CreateAttributes>(GetProcAddress(plat, "MFCreateAttributes"));
+        api.create_type = reinterpret_cast<MfApi::CreateType>(GetProcAddress(plat, "MFCreateMediaType"));
+        api.create_reader = reinterpret_cast<MfApi::CreateReader>(
+            GetProcAddress(readwrite, "MFCreateSourceReaderFromURL"));
+        api.ready = startup && api.create_attributes && api.create_type && api.create_reader &&
+            SUCCEEDED(startup(MF_VERSION, MFSTARTUP_LITE));
+    });
+    return api;
+}
+
+static bool MfVideoFrameInto(const DecodeRequest& q, DecodeResult& r) {
+    const MfApi& mf = Mf();
+    if (!mf.ready) return false;
+    std::wstring url = q.path;
+    if (url.rfind(L"\\\\?\\UNC\\", 0) == 0) url = L"\\\\" + url.substr(8);
+    else if (url.rfind(L"\\\\?\\", 0) == 0) url = url.substr(4);
+    ComPtr<IMFAttributes> attributes;
+    if (FAILED(mf.create_attributes(&attributes, 1))) return false;
+    attributes->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE);
+    ComPtr<IMFSourceReader> reader;
+    if (FAILED(mf.create_reader(url.c_str(), attributes.Get(), &reader))) return false;
+    const DWORD video = static_cast<DWORD>(MF_SOURCE_READER_FIRST_VIDEO_STREAM);
+    reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE);
+    ComPtr<IMFMediaType> wanted;
+    if (FAILED(reader->SetStreamSelection(video, TRUE)) || FAILED(mf.create_type(&wanted)) ||
+        FAILED(wanted->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video)) ||
+        FAILED(wanted->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32)) ||
+        FAILED(reader->SetCurrentMediaType(video, nullptr, wanted.Get()))) return false;
+    PROPVARIANT value;
+    PropVariantInit(&value);
+    uint64_t duration = 0;
+    if (SUCCEEDED(reader->GetPresentationAttribute(static_cast<DWORD>(MF_SOURCE_READER_MEDIASOURCE),
+                                                   MF_PD_DURATION, &value)) && value.vt == VT_UI8)
+        duration = value.uhVal.QuadPart;
+    PropVariantClear(&value);
+    // Past the fade-in most clips open with: a tenth in, at most 5 s. The
+    // reader lands on the key frame before it, so this costs one GOP at most.
+    if (duration >= 20000000ull) {
+        PROPVARIANT position;
+        PropVariantInit(&position);
+        position.vt = VT_I8;
+        position.hVal.QuadPart = static_cast<LONGLONG>((std::min)(duration / 10, 50000000ull));
+        reader->SetCurrentPosition(GUID_NULL, position);
+    }
+    ComPtr<IMFSample> sample;
+    for (int tries = 0; tries < 16 && !sample; ++tries) {
+        DWORD index = 0, flags = 0;
+        LONGLONG timestamp = 0;
+        if (FAILED(reader->ReadSample(video, 0, &index, &flags, &timestamp, &sample))) return false;
+        if (flags & (MF_SOURCE_READERF_ENDOFSTREAM | MF_SOURCE_READERF_ERROR)) break;
+    }
+    ComPtr<IMFMediaType> actual;
+    if (!sample || FAILED(reader->GetCurrentMediaType(video, &actual))) return false;
+    UINT32 width = 0, height = 0;
+    if (FAILED(MFGetAttributeSize(actual.Get(), MF_MT_FRAME_SIZE, &width, &height)) ||
+        !width || !height || width > 16384 || height > 16384) return false;
+    UINT32 left = 0, top = 0, shown_w = width, shown_h = height;
+    MFVideoArea area{};
+    if (SUCCEEDED(actual->GetBlob(MF_MT_MINIMUM_DISPLAY_APERTURE, reinterpret_cast<UINT8*>(&area),
+                                  sizeof(area), nullptr)) &&
+        area.Area.cx > 0 && area.Area.cy > 0 && area.OffsetX.value >= 0 && area.OffsetY.value >= 0 &&
+        UINT32(area.OffsetX.value + area.Area.cx) <= width && UINT32(area.OffsetY.value + area.Area.cy) <= height) {
+        left = static_cast<UINT32>(area.OffsetX.value); top = static_cast<UINT32>(area.OffsetY.value);
+        shown_w = static_cast<UINT32>(area.Area.cx); shown_h = static_cast<UINT32>(area.Area.cy);
+    }
+    ComPtr<IMFMediaBuffer> buffer;
+    if (FAILED(sample->ConvertToContiguousBuffer(&buffer))) return false;
+    std::vector<uint8_t> canvas(static_cast<size_t>(shown_w) * shown_h * 4);
+    ComPtr<IMF2DBuffer> planar;
+    BYTE* scan0 = nullptr;
+    LONG pitch = 0;
+    bool locked2d = SUCCEEDED(buffer.As(&planar)) && SUCCEEDED(planar->Lock2D(&scan0, &pitch));
+    BYTE* data = nullptr;
+    DWORD length = 0;
+    if (!locked2d) {
+        if (FAILED(buffer->Lock(&data, nullptr, &length))) return false;
+        pitch = static_cast<LONG>(MFGetAttributeUINT32(actual.Get(), MF_MT_DEFAULT_STRIDE, width * 4));
+        scan0 = pitch < 0 ? data + static_cast<size_t>(-pitch) * (height - 1) : data;
+        if (static_cast<uint64_t>(pitch < 0 ? -pitch : pitch) * height > length) { buffer->Unlock(); return false; }
+    }
+    for (UINT32 y = 0; y < shown_h; ++y) {
+        const BYTE* row = scan0 + static_cast<ptrdiff_t>(pitch) * static_cast<ptrdiff_t>(top + y) + left * 4;
+        uint8_t* dst = canvas.data() + static_cast<size_t>(y) * shown_w * 4;
+        memcpy(dst, row, static_cast<size_t>(shown_w) * 4);
+        for (UINT32 x = 0; x < shown_w; ++x) dst[x * 4 + 3] = 0xFF;   // RGB32's X byte is not alpha
+    }
+    if (locked2d) planar->Unlock2D(); else buffer->Unlock();
+    // Anamorphic video (DV, some broadcast captures): the display shape.
+    UINT32 par_n = 1, par_d = 1;
+    MFGetAttributeRatio(actual.Get(), MF_MT_PIXEL_ASPECT_RATIO, &par_n, &par_d);
+    UINT32 display_w = shown_w;
+    if (par_n && par_d && par_n != par_d)
+        display_w = (std::max)(1u, static_cast<UINT32>(static_cast<uint64_t>(shown_w) * par_n / par_d));
+    ComPtr<IWICImagingFactory> factory;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))))
+        return false;
+    ClearBitmap(r);
+    if (display_w != shown_w) {
+        // Stretch to the display width first, then fit the cap.
+        ComPtr<IWICBitmap> bitmap;
+        ComPtr<IWICBitmapScaler> scaler;
+        std::vector<uint8_t> wide(static_cast<size_t>(display_w) * shown_h * 4);
+        if (FAILED(factory->CreateBitmapFromMemory(shown_w, shown_h, GUID_WICPixelFormat32bppPBGRA, shown_w * 4,
+                static_cast<UINT>(canvas.size()), canvas.data(), &bitmap)) ||
+            FAILED(factory->CreateBitmapScaler(&scaler)) ||
+            FAILED(scaler->Initialize(bitmap.Get(), display_w, shown_h, WICBitmapInterpolationModeFant)) ||
+            FAILED(scaler->CopyPixels(nullptr, display_w * 4, static_cast<UINT>(wide.size()), wide.data())))
+            return false;
+        canvas.swap(wide);
+        shown_w = display_w;
+    }
+    if (!FitCanvas(factory.Get(), canvas, shown_w, shown_h, q.cap, r.pixels, r.width, r.height, r.stride)) {
+        ClearBitmap(r);
+        return false;
+    }
+    r.source_width = shown_w;
+    r.source_height = shown_h;
+    r.duration_ms = static_cast<uint32_t>(duration / 10000);
+    return true;
+}
+
+// Details pane, Quick Look and the hover card: Explorer's cached thumbnail if
+// there is one (instant), else the frame from Media Foundation. Formats it
+// cannot read continue to the media pack and the shell provider as before.
+static bool AcceptsVideoFrame(const DecodeRequest& q) {
+    return !q.is_directory && !q.offline && !q.grid && preview::IsVideoExtension(q.extension);
+}
+static DecodeStep RunVideoFrame(const DecodeRequest& q, DecodeResult& r) {
+    if (CachedShellThumbnailInto(q, r)) return MadeBitmap(r);
+    ClearBitmap(r);
+    if (MfVideoFrameInto(q, r)) return MadeBitmap(r);
+    ClearBitmap(r);
     return DecodeStep::Next;
 }
 
@@ -1491,6 +2115,8 @@ static const preview::DecoderEntry kDecoders[] = {
     { "psd",             AcceptsPsd,          RunPsd },
     { "font",            AcceptsFont,         RunFont },
     { "rtf",             AcceptsRtf,          RunRtf },
+    { "audio-cover",     AcceptsAudioCover,   RunAudioCover },
+    { "video-frame",     AcceptsVideoFrame,   RunVideoFrame },
     { "media-pack",      AcceptsMediaPack,    RunMediaPack },
     { "shell-preview",   AcceptsShellPreview, RunShellPreview },
     { "content-sniff",   AcceptsSniffed,      RunSniffed },

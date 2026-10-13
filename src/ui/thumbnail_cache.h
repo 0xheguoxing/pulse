@@ -49,6 +49,13 @@ public:
     // rendered documents.
     void SetQuickLookContent(bool on) { quick_look_content_ = on; }
     void SetFolderThumbnail(bool on) { folder_thumbnail_ = on; }
+    // Extra ipc::kPreviewRequestFlag* bits sent with every request of this
+    // cache (the hover card's kPreviewRequestFlagCard).
+    void SetRequestFlags(uint32_t flags) { extra_flags_ = flags; }
+    // Non-zero: a request still unanswered after this long is given up as
+    // soon as a request for another file is waiting - the host is restarted
+    // rather than finishing a decode nobody is looking at any more.
+    void SetAbandonStaleMs(uint32_t ms) { abandon_stale_ms_ = ms; }
     void Reset();
     void Evict();
     void BeginFrame();
@@ -169,6 +176,8 @@ private:
     RepaintTargets repaint_;
     std::atomic<bool> quick_look_content_{false};
     std::atomic<bool> folder_thumbnail_{false};
+    std::atomic<uint32_t> extra_flags_{0};
+    std::atomic<uint32_t> abandon_stale_ms_{0};
     std::unordered_map<std::wstring, uint32_t> folder_requests_;
     HANDLE pipe_ = INVALID_HANDLE_VALUE;
     PROCESS_INFORMATION child_{};

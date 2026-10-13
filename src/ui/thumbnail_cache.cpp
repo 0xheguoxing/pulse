@@ -123,7 +123,14 @@ std::wstring ThumbnailCache::Key(const std::wstring& path, uint32_t pixels,
 }
 void ThumbnailCache::StopChild() {
     if (pipe_ != INVALID_HANDLE_VALUE) { CancelIoEx(pipe_, nullptr); CloseHandle(pipe_); pipe_ = INVALID_HANDLE_VALUE; }
-    if (child_.hProcess) { TerminateProcess(child_.hProcess, 0); CloseHandle(child_.hProcess); CloseHandle(child_.hThread); child_ = {}; }
+    if (child_.hProcess) {
+        TerminateProcess(child_.hProcess, 0);
+        // Termination is asynchronous: until the old host is gone its pipe
+        // instance exists, the next host's CreateNamedPipe (first instance
+        // only) fails, and the request after a restart cost a 1 s retry.
+        WaitForSingleObject(child_.hProcess, 2000);
+        CloseHandle(child_.hProcess); CloseHandle(child_.hThread); child_ = {};
+    }
 }
 void ThumbnailCache::Reset() {
     running_ = false; cv_.notify_all();
@@ -697,7 +704,7 @@ void ThumbnailCache::Worker() {
         ipc::PreviewRequest wire; wire.request_id=req.id; wire.generation=req.generation;
         wire.kind=req.kind; wire.pixel_size=req.pixels; wire.attrs=req.attrs;
         wire.frame_index = req.frame_index;
-        wire.flags |= req.flags;
+        wire.flags |= req.flags | extra_flags_.load(std::memory_order_relaxed);
         if (!req.details) wire.flags |= ipc::kPreviewRequestFlagGrid;
         else if (quick_look_content_)
             wire.flags |= (req.attrs & FILE_ATTRIBUTE_DIRECTORY) ? ipc::kPreviewRequestFlagFolderListing
@@ -708,6 +715,19 @@ void ThumbnailCache::Worker() {
         if (connected && !ok) fail(3, GetLastError());
         mark("sent", ok);
         ipc::PreviewResponse response{};
+        // A slow decode (48 MP HEIC, a video poster through the shell) is not
+        // finished once the pointer has moved on to another file: restarting
+        // the host costs far less than the rest of the decode would.
+        const uint32_t abandon_ms = abandon_stale_ms_.load(std::memory_order_relaxed);
+        // Facts (Properties) are left to finish: they rarely take long, and a
+        // restart would also drop the codecs the host has warmed up.
+        const auto superseded = [&] {
+            if (!abandon_ms || req.kind != ipc::PreviewRequestKind::Content ||
+                GetTickCount64() - request_start < abandon_ms) return false;
+            std::lock_guard lock(mutex_);
+            return !queue_.empty() && queue_.front().path != req.path;
+        };
+        bool abandoned = false;
         if (ok) {
             const ULONGLONG deadline = GetTickCount64() + (req.timeout_ms ? req.timeout_ms : 1000);
             ULONGLONG last_trace = GetTickCount64();
@@ -716,6 +736,7 @@ void ThumbnailCache::Worker() {
                 if (!FolderRequestCurrent(req)) { fail(13, ERROR_CANCELLED); ok = false; break; }
                 if (!PeekNamedPipe(pipe_, nullptr, 0, nullptr, &available, nullptr)) { fail(4, GetLastError()); ok=false; break; }
                 if (available >= sizeof(response)) break;
+                if (superseded()) { abandoned = true; fail(13, ERROR_CANCELLED); ok = false; break; }
                 if (child_.hProcess && WaitForSingleObject(child_.hProcess, 0) == WAIT_OBJECT_0) { fail(6, ERROR_PROCESS_ABORTED); ok=false; break; }
                 if (trace && GetTickCount64() - last_trace >= 250) {
                     mark("waiting", true);
@@ -729,6 +750,14 @@ void ThumbnailCache::Worker() {
             }
         }
         mark("header-ready", ok);
+        if (abandoned) {
+            // Nothing is remembered about the file: coming back to it asks
+            // again at once, without the transient-failure back-off.
+            { std::lock_guard lock(mutex_); pending_.erase(req.key); }
+            LogFailure(req, request_start, failure_stage, failure_error, true);
+            StopChild();
+            continue;
+        }
         const auto read = [&](void* data, DWORD bytes) {
             if (ipc::ReadAll(pipe_, data, bytes)) return true;
             fail(7, GetLastError());

@@ -1143,6 +1143,7 @@ public:
         double content_ms = 0.0;       // request to drawable content
         double properties_ms = -1.0;   // to the facts strip; -1 not by then
         double upload_ms = 0.0;        // the Draw that uploaded the bitmap
+        double first_ms = -1.0;        // HEIF: its embedded thumbnail on screen; -1 none
         uint32_t width = 0, height = 0;
     };
     HoverBenchSample BenchHoverPreview(const std::wstring& path, DWORD attrs, uint64_t size,
@@ -1154,7 +1155,10 @@ public:
     void SetHoverBench(bool on) noexcept { hover_bench_ = on; }
     // The pointer settled on a file (app_hover_preview.cpp): its card preview
     // is asked for now, so the dwell covers the decode. Outside a frame.
-    int PrefetchHoverPreview(const std::wstring& path, DWORD attrs, uint64_t size, uint64_t modified);
+    // photo_first false: a HEIF photo is asked for at full size straight
+    // away, without its thumbnail (the bench's decoy request).
+    int PrefetchHoverPreview(const std::wstring& path, DWORD attrs, uint64_t size, uint64_t modified,
+                             bool photo_first = true);
 
     // Layout metrics (DIPs).
     float TitleBarHeight() const { return title_bar_height_; }

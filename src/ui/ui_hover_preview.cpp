@@ -94,6 +94,17 @@ bool OfficeDocument(const std::wstring& name) {
     return false;
 }
 
+// HEIF photos carry a small thumbnail the host returns in about 60 ms; the
+// card asks for it first (kHeifQuickEdge) and for the photo once it is in.
+constexpr uint32_t kHeifQuickEdge = 320;
+bool HeifPhoto(const std::wstring& name) {
+    const size_t dot = name.find_last_of(L'.');
+    if (dot == std::wstring::npos) return false;
+    std::wstring ext = name.substr(dot);
+    for (auto& c : ext) c = static_cast<wchar_t>(towlower(c));
+    return ext == L".heic" || ext == L".heif" || ext == L".hif" || ext == L".avif";
+}
+
 // The first guess at a file's proportions, before its preview is decoded:
 // pages are A4 portrait, slides and clips 16:9, sheets 4:3.
 float GuessAspect(const std::wstring& name, bool video) {
@@ -112,8 +123,8 @@ float GuessAspect(const std::wstring& name, bool video) {
 }
 
 // Files whose preview is only ever a hex dump or a listing (programs,
-// archives) or rarely a picture (audio cover art): the compact card from the
-// first frame, rather than a picture-shaped card that shrinks once the
+// archives) or only sometimes a picture (audio cover art, which grows the
+// card when it arrives): the compact card from the first frame, rather than a picture-shaped card that shrinks once the
 // answer arrives (browsing opens cards before the host has answered).
 bool GuessBare(const std::wstring& path, const std::wstring& name) {
     if (VideoPreview::IsAudio(path)) return true;
@@ -315,12 +326,15 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
     // tries the shell provider and leaves the icon when there is none (.doc
     // without Office); Quick Look shows those through the preview handler,
     // too slow and focus-hungry for a card.
-    // Audio: no content request. Measured on real files the host spent
-    // 250-450 ms per recording on cover art that is almost never there and
-    // ended in a hex dump, and the facts (duration, bitrate) queued behind
-    // it; they are the whole card for a sound file.
-    const bool facts_only = !view.video && VideoPreview::IsAudio(view.path);
-    const PreviewDrawResult result = facts_only ? PreviewDrawResult::Failed :
+    // Audio asks as well: the host reads the cover from the tags in a few ms
+    // and, for the card (kPreviewRequestFlagCard), fails at once when there
+    // is none instead of trying the shell and a hex dump.
+    // HEIF: the embedded thumbnail first, then the photo; while the photo
+    // decodes the cache keeps drawing the thumbnail (a stale size).
+    const bool heif_wait = HeifPhoto(view.name) &&
+        hover_cache_.Draw(dc, content, view.path, view.attrs, kHeifQuickEdge, 1, view.modified, view.size, 0.0f,
+            nullptr, nullptr, nullptr, true) == PreviewDrawResult::Pending;
+    const PreviewDrawResult result = heif_wait ? PreviewDrawResult::Pending :
         hover_cache_.Draw(dc, content, view.path, view.attrs, 1024u, 1,
         view.modified, view.size, show_well ? 1.0f : 0.0f, &preview_text, nullptr, nullptr,
         !OfficeDocument(view.name), nullptr, nullptr, nullptr, nullptr, nullptr, 0, nullptr, nullptr, nullptr,
@@ -571,15 +585,22 @@ MainRenderer::HoverBenchSample MainRenderer::BenchHoverPreview(const std::wstrin
     if (warm_run) hover_cache_.Evict();
     std::vector<PreviewProperty> properties;
     const BenchClock clock;
-    if (VideoPreview::IsAudio(path)) {
-        // As the card: facts only, the facts are the content.
-        while (!hover_cache_.Properties(path, attrs, 1, modified, size, properties) &&
-               clock.Ms() <= static_cast<double>(timeout_ms))
+    // HEIF, as the card: the embedded thumbnail, timed on its own.
+    if (!warm_run && HeifPhoto(name)) {
+        for (;;) {
+            dc->SetTarget(target.get());
+            dc->BeginDraw();
+            const PreviewDrawResult quick = hover_cache_.Draw(dc, D2D1::RectF(4.0f, 4.0f, 380.0f, 380.0f), path,
+                attrs, kHeifQuickEdge, 1, modified, size, 1.0f, nullptr, nullptr, nullptr, true);
+            dc->EndDraw();
+            dc->SetTarget(previous.get());
+            if (quick != PreviewDrawResult::Pending) {
+                if (quick == PreviewDrawResult::Bitmap) sample.first_ms = clock.Ms();
+                break;
+            }
+            if (clock.Ms() > static_cast<double>(timeout_ms)) break;
             MsgWaitForMultipleObjects(0, nullptr, FALSE, 1, QS_ALLINPUT);
-        sample.properties_ms = sample.content_ms = clock.Ms();
-        sample.result = static_cast<int>(PreviewDrawResult::Failed);
-        dc->SetTarget(previous.get());
-        return sample;
+        }
     }
     for (;;) {
         if (properties_first && sample.properties_ms < 0.0 &&
@@ -595,10 +616,13 @@ MainRenderer::HoverBenchSample MainRenderer::BenchHoverPreview(const std::wstrin
             nullptr, 0, nullptr, nullptr, nullptr, &w, &h);
         dc->EndDraw();
         dc->SetTarget(previous.get());
+        // The thumbnail drawn in the photo's place is not the photo.
+        const bool stand_in = sample.first_ms >= 0.0 && result == PreviewDrawResult::Bitmap &&
+                              (std::max)(w, h) <= kHeifQuickEdge && pixel_size > kHeifQuickEdge;
         if (!properties_first && sample.properties_ms < 0.0 &&
             hover_cache_.Properties(path, attrs, 1, modified, size, properties))
             sample.properties_ms = clock.Ms();
-        if (result != PreviewDrawResult::Pending) {
+        if (result != PreviewDrawResult::Pending && !stand_in) {
             sample.content_ms = clock.Ms();
             sample.upload_ms = sample.content_ms - before;
             sample.result = static_cast<int>(result);
@@ -620,14 +644,9 @@ MainRenderer::HoverBenchSample MainRenderer::BenchHoverPreview(const std::wstrin
     return sample;
 }
 
-int MainRenderer::PrefetchHoverPreview(const std::wstring& path, DWORD attrs, uint64_t size, uint64_t modified) {
+int MainRenderer::PrefetchHoverPreview(const std::wstring& path, DWORD attrs, uint64_t size, uint64_t modified,
+                                       bool photo_first) {
     if (path.empty() || !compositor_ || !compositor_->Dc()) return -1;
-    if (VideoPreview::IsAudio(path)) {
-        // The card shows only the facts of a sound file: those go first.
-        std::vector<PreviewProperty> properties;
-        hover_cache_.Properties(path, attrs, 1, modified, size, properties);
-        return static_cast<int>(PreviewDrawResult::Pending);
-    }
     ID2D1DeviceContext* dc = compositor_->Dc();
     // The same request the card makes (size, kind), queued through a draw
     // into a throwaway target; a cached picture is drawn there unseen.
@@ -641,8 +660,15 @@ int MainRenderer::PrefetchHoverPreview(const std::wstring& path, DWORD attrs, ui
     const std::wstring name = slash == std::wstring::npos ? path : path.substr(slash + 1);
     dc->SetTarget(target.get());
     dc->BeginDraw();
-    const PreviewDrawResult result = hover_cache_.Draw(dc, D2D1::RectF(0.0f, 0.0f, 1.0f, 1.0f), path, attrs, 1024u,
-        1, modified, size, 0.0f, nullptr, nullptr, nullptr, !OfficeDocument(name));
+    // HEIF: the thumbnail first, as the card does; the photo follows once
+    // the card (or a second prefetch) sees the thumbnail in.
+    PreviewDrawResult result = photo_first && HeifPhoto(name)
+        ? hover_cache_.Draw(dc, D2D1::RectF(0.0f, 0.0f, 1.0f, 1.0f), path, attrs, kHeifQuickEdge,
+            1, modified, size, 0.0f, nullptr, nullptr, nullptr, true)
+        : PreviewDrawResult::Failed;
+    if (result != PreviewDrawResult::Pending)
+        result = hover_cache_.Draw(dc, D2D1::RectF(0.0f, 0.0f, 1.0f, 1.0f), path, attrs, 1024u,
+            1, modified, size, 0.0f, nullptr, nullptr, nullptr, !OfficeDocument(name));
     dc->EndDraw();
     dc->SetTarget(previous.get());
     return static_cast<int>(result);

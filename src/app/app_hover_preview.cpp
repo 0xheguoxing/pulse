@@ -549,6 +549,11 @@ bool RunHoverBench(AppState& s) {
     const DWORD prefetch_ms = prefetch_text.empty() ? 0u : static_cast<DWORD>(_wtoi(prefetch_text.c_str()));
     const int prefetch_mode = _wtoi(BenchEnv(L"PULSE_BENCH_HOVER_PREFETCH_MODE").c_str());
     const std::vector<std::wstring> files = BenchList(list_path);
+    // PULSE_BENCH_HOVER_DECOY: a file whose decode is left in flight before
+    // each sample, PULSE_BENCH_HOVER_DECOY_MS (default 450) earlier.
+    const std::wstring decoy = BenchEnv(L"PULSE_BENCH_HOVER_DECOY");
+    const std::wstring decoy_text = BenchEnv(L"PULSE_BENCH_HOVER_DECOY_MS");
+    const DWORD decoy_ms = decoy_text.empty() ? 450u : static_cast<DWORD>(_wtoi(decoy_text.c_str()));
     HANDLE out = CreateFileW(out_path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
                              FILE_ATTRIBUTE_NORMAL, nullptr);
     if (out == INVALID_HANDLE_VALUE) return true;
@@ -557,7 +562,7 @@ bool RunHoverBench(AppState& s) {
         WriteFile(out, line.data(), static_cast<DWORD>(line.size()), &written, nullptr);
         FlushFileBuffers(out);
     };
-    write("path\text\tbytes\tresult\twidth\theight\tcold_ms\tprops_ms\tupload_ms\twarm_ms\tvideo_ready_ms\tvideo_frame_ms\n");
+    write("path\text\tbytes\tresult\twidth\theight\tcold_ms\tprops_ms\tupload_ms\twarm_ms\tvideo_ready_ms\tvideo_frame_ms\tpf_first\tpf_after\tfirst_ms\n");
     s.renderer.SetHoverBench(true);
     timeBeginPeriod(1);  // 1 ms polls: the numbers are not rounded to the 15.6 ms tick
     // The hover cache's preview host starts with the first request: timed
@@ -593,6 +598,20 @@ bool RunHoverBench(AppState& s) {
         const uint64_t modified = (static_cast<uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32) |
                                   data.ftLastWriteTime.dwLowDateTime;
         int pf_first = -9, pf_after = -9;
+        if (!decoy.empty()) {
+            // The pointer passing over a slow file first: its decode is in
+            // flight when this one is asked for (the abandon path).
+            WIN32_FILE_ATTRIBUTE_DATA other{};
+            if (GetFileAttributesExW(decoy.c_str(), GetFileExInfoStandard, &other)) {
+                s.renderer.EvictThumbnails();
+                s.renderer.PrefetchHoverPreview(decoy, other.dwFileAttributes,
+                    (static_cast<uint64_t>(other.nFileSizeHigh) << 32) | other.nFileSizeLow,
+                    (static_cast<uint64_t>(other.ftLastWriteTime.dwHighDateTime) << 32) |
+                        other.ftLastWriteTime.dwLowDateTime, false);
+                const ULONGLONG until = GetTickCount64() + decoy_ms;
+                while (GetTickCount64() < until) Sleep(1);
+            }
+        }
         if (prefetch_ms) {
             if (!(prefetch_mode & 2)) s.renderer.EvictThumbnails();
             pf_first = s.renderer.PrefetchHoverPreview(path, data.dwFileAttributes, size, modified);
@@ -614,10 +633,10 @@ bool RunHoverBench(AppState& s) {
         double video_ready = -1.0, video_frame = -1.0;
         if (CardVideo(path)) video_frame = s.renderer.BenchHoverVideo(s.hwnd, path, 10000, &video_ready);
         char numbers[512];
-        snprintf(numbers, sizeof(numbers), "\t%llu\t%s\t%u\t%u\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%d\t%d\n",
+        snprintf(numbers, sizeof(numbers), "\t%llu\t%s\t%u\t%u\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%d\t%d\t%.1f\n",
                  static_cast<unsigned long long>(size), BenchResultName(cold.result), cold.width, cold.height,
                  cold.content_ms, cold.properties_ms, cold.upload_ms, warm.content_ms, video_ready, video_frame,
-                 pf_first, pf_after);
+                 pf_first, pf_after, cold.first_ms);
         write(BenchUtf8(path) + numbers);
     }
     write("#done\n");

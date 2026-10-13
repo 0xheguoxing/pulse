@@ -58,6 +58,10 @@ void MainRenderer::SetCompositor(Compositor* comp) {
         folder_thumbnail_cache_.SetDeviceContext(comp->Dc());
         details_cache_.SetDeviceContext(comp->Dc());
         hover_cache_.SetDeviceContext(comp->Dc());
+        // The hover card: cheap pictures first, and a decode left behind by
+        // the pointer is given up after 400 ms when another file waits.
+        hover_cache_.SetRequestFlags(ipc::kPreviewRequestFlagCard);
+        hover_cache_.SetAbandonStaleMs(400);
     }
 }
 

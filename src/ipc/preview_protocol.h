@@ -50,6 +50,10 @@ constexpr uint32_t kPreviewRequestFlagFolderRefresh = 1u << 4;
 constexpr uint32_t kPreviewRequestFlagFolderSingle = 1u << 5;
 // Resolve document image metadata inside the cancellable preview host.
 constexpr uint32_t kPreviewRequestFlagDocumentImage = 1u << 6;
+// The hover card: a glance, not an inspection. Decoders may answer with a
+// cheaper picture (embedded cover or thumbnail) or fail fast where the full
+// path would spend seconds on something the card cannot use.
+constexpr uint32_t kPreviewRequestFlagCard = 1u << 7;
 constexpr uint32_t kPreviewMaxTextChars = 32768;
 constexpr uint32_t kPreviewMaxArchiveChars = 512u * 1024u;
 constexpr uint32_t kPreviewMaxTableChars = 2u * 1024u * 1024u;
