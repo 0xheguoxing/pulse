@@ -1089,6 +1089,7 @@ struct HitTestResult {
         SettingsPreviewStore,  // Settings > Quick Look formats: get a missing system extension (index = row)
         SettingsPackAction,    // Settings > 预览增强包: index = PackAction
         TabScroll,             // overflowing tab strip arrows: index -1 = left, 1 = right
+        NewButtonArrow,        // chevron segment of the split New button: open the New menu
     } region = None;
     SidebarAddAction sidebar_action = SidebarAddAction::None;
     int index = -1;          // tab/row/sidebar item/tray batch/tray item.
@@ -1475,10 +1476,14 @@ public:
     D2D1_RECT_F AddressBarRect(float w) const;
     D2D1_RECT_F SearchBarRect(float w) const;
     D2D1_RECT_F NewCommandRect(float w) const;
+    // Chevron segment of the split New button (opens the New menu); the rest creates a folder.
+    D2D1_RECT_F NewArrowRect(float w) const;
     D2D1_RECT_F SplitCommandRect(float w) const;
     D2D1_RECT_F AddressSearchButtonRect(float w) const;
     void DrawAddressSearchChrome(const WindowViewModel& vm, float w, const Theme& theme);
     float NewButtonWidthPx(bool compact) const;
+    D2D1_RECT_F NewArrowSegment(const D2D1_RECT_F& create, bool compact) const;
+    static constexpr const wchar_t* kNewFolderGlyph = L"\xE8F4";
 
     // One placed breadcrumb segment (after left-truncation to fit the bar).
     struct BreadcrumbPlaced {

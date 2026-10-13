@@ -676,6 +676,12 @@ int RunToolbarLayoutTest(AppState& s, const wchar_t* output) {
             check(create.top > address.bottom && split.right < w &&
                   region(create) == ui::HitTestResult::NewButton && region(split) == ui::HitTestResult::SplitButton,
                 "second toolbar row and popup anchors match hit targets");
+            const auto new_arrow = s.renderer.NewArrowRect(w);
+            check(new_arrow.left > create.left && new_arrow.right == create.right &&
+                  region(new_arrow) == ui::HitTestResult::NewButtonArrow &&
+                  region(D2D1::RectF(create.left, create.top, new_arrow.left, create.bottom)) ==
+                      ui::HitTestResult::NewButton,
+                "split New button: chevron opens the menu, main part creates a folder");
             // Sort and Group drop-downs are sized to their labels, so each chevron
             // sits the same distance after its text; hit targets follow.
             const auto row = s.renderer.ToolbarLayoutAt(w, create.right - create.left);

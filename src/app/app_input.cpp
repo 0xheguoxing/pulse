@@ -2636,8 +2636,12 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             GoUp(*s);
         } else if (hit.region == ui::HitTestResult::NavRefresh) {
             RefreshActiveTab(*s);
-        } else if (hit.region == ui::HitTestResult::NewButton) {
-            ShowNewDropdown(*s);
+        } else if (hit.region == ui::HitTestResult::NewButton ||
+                   hit.region == ui::HitTestResult::NewButtonArrow) {
+            // Split New button: main part creates a folder (inline rename), chevron opens the menu.
+            // One branch on purpose: this else-if chain is at MSVC's nesting limit (C1061).
+            if (hit.region == ui::HitTestResult::NewButton) CreateNewItem(*s, true);
+            else ShowNewDropdown(*s);
         } else if (hit.region == ui::HitTestResult::BreadcrumbSegment) {
             // The trailing search segment edits the query instead of reloading it.
             const app::Tab* active = ActiveTab(*s);

@@ -335,10 +335,23 @@ D2D1_RECT_F MainRenderer::NewCommandRect(float w) const {
 D2D1_RECT_F MainRenderer::SplitCommandRect(float w) const {
     return ToolbarLayoutAt(w,NewButtonWidthPx(w-EffectiveSidebarWidth(w)<600*scale_)).commands[5];
 }
+D2D1_RECT_F MainRenderer::NewArrowRect(float w) const {
+    return NewArrowSegment(NewCommandRect(w), w-EffectiveSidebarWidth(w)<600*scale_);
+}
+// Split New button: the chevron segment is a fixed width at the right edge,
+// centred on the chevron that Painter::DrawButton places 8 DIP from the edge.
+D2D1_RECT_F MainRenderer::NewArrowSegment(const D2D1_RECT_F& create, bool compact) const {
+    if (create.right <= create.left) return create;
+    const float arrow = (compact ? 28.0f : 32.0f) * scale_;
+    return D2D1::RectF(std::max(create.left, create.right - arrow), create.top, create.right, create.bottom);
+}
 float MainRenderer::NewButtonWidthPx(bool compact) const {
-    if (compact) return kCommandIconButtonDip * scale_;
-    return painter_.MeasureButtonWidth(
-        pulse::l10n::Get(pulse::l10n::StringId::New), kIconAdd, true);
+    // Compact: icon button + chevron segment at a fixed width, as before no text
+    // measuring. The full button labels the folder action and adds a gap so the
+    // label never runs into the segment divider.
+    if (compact) return (kCommandIconButtonDip + 28.0f) * scale_;
+    return painter_.MeasureButtonWidth(pulse::l10n::Get(pulse::l10n::StringId::NewFolder),
+        kNewFolderGlyph, true) + 12.0f * scale_;
 }
 
 std::vector<BreadcrumbSegment> SplitBreadcrumb(const std::wstring& path) {

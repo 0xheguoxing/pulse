@@ -752,7 +752,12 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 ? HitTestResult::FilterClear : HitTestResult::FilterBox;
             return r;
         }
-        if (ContainsPt(toolbar.create,x,y)) {r.region=HitTestResult::NewButton; return r;}
+        if (ContainsPt(toolbar.create,x,y)) {
+            const bool compactNew=rect.right-EffectiveSidebarWidth(rect.right) < 600 * scale_;
+            r.region=ContainsPt(NewArrowSegment(toolbar.create,compactNew),x,y)
+                ? HitTestResult::NewButtonArrow : HitTestResult::NewButton;
+            return r;
+        }
         const HitTestResult::Region commands[]={HitTestResult::Cut,HitTestResult::Copy,HitTestResult::Paste,
             HitTestResult::Rename,HitTestResult::Delete,HitTestResult::SplitButton,HitTestResult::DetailsToggle,HitTestResult::PaneColumnLayout};
         for(int i=0;i<8;++i) if(ContainsPt(toolbar.commands[i],x,y)) {r.region=commands[i]; return r;}

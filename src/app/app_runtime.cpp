@@ -2625,7 +2625,8 @@ std::wstring TooltipForHover(AppState& s) {
     case R::NavForward: return text(I::Forward);
     case R::NavUp: return text(I::Up);
     case R::NavRefresh: return text(I::Refresh);
-    case R::NewButton: return text(I::New);
+    case R::NewButton: return text(I::NewFolder) + L" (Ctrl+Shift+N)";
+    case R::NewButtonArrow: return text(I::New);
     case R::Cut: return text(I::CutShortcut);
     case R::Copy: return text(I::CopyShortcut);
     case R::Paste: return text(I::PasteShortcut);

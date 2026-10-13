@@ -83,13 +83,33 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     FillRect(dc,brStrokeDivider_.get(),left+margin_,title_bar_height_+44*scale_,rect.right-left-2*margin_,scale_);
     // Embedded hosts (the file picker) keep the address row only.
     if (embedded_) return;
-    const std::wstring label=l10n::Get(l10n::StringId::New);
+    // Split New button: the main part creates a folder (Ctrl+Shift+N), the
+    // chevron segment opens the New menu. Each segment gets its own hover.
+    const std::wstring& label=l10n::Get(l10n::StringId::NewFolder);
+    const D2D1_RECT_F newArrow=NewArrowSegment(layout.create,compact);
     fluent::ButtonSpec create;
     create.bounds=layout.create; create.text=compact ? std::wstring_view{} : std::wstring_view{label};
-    create.glyph=kIconAdd; create.kind=fluent::ButtonKind::Primary;
-    create.icon_only=compact; create.drop_down=!compact;
-    create.state.hovered=IsHovered(vm,HitTestResult::NewButton);
+    create.glyph=kNewFolderGlyph; create.kind=fluent::ButtonKind::Primary;
+    create.drop_down=true;
     painter_.DrawButton(create);
+    const bool newMainHot=IsHovered(vm,HitTestResult::NewButton);
+    const bool newArrowHot=IsHovered(vm,HitTestResult::NewButtonArrow);
+    if (newMainHot || newArrowHot) {
+        D2D1_RECT_F hot=layout.create;
+        if (newArrowHot) hot.left=newArrow.left; else hot.right=newArrow.left;
+        dc->PushAxisAlignedClip(hot,D2D1_ANTIALIAS_MODE_ALIASED);
+        create.state.hovered=true;
+        painter_.DrawButton(create);
+        dc->PopAxisAlignedClip();
+    }
+    if (newArrow.right > newArrow.left && newArrow.left > layout.create.left) {
+        auto divider=theme.accent_text;
+        divider.a*=0.35f;
+        ComPtr<ID2D1SolidColorBrush> divider_brush;
+        dc->CreateSolidColorBrush(divider,&divider_brush);
+        if (divider_brush.get()) FillRect(dc,divider_brush.get(),newArrow.left-0.5f*scale_,newArrow.top+7*scale_,
+            scale_,newArrow.bottom-newArrow.top-14*scale_);
+    }
     const wchar_t* glyphs[]={kIconCut,kIconCopy,kIconPaste,kIconRename,kIconDelete,kIconSplit,
         vm.details_visible ? kIconDetailsClose : kIconDetailsOpen,L""};
     const HitTestResult::Region hits[]={HitTestResult::Cut,HitTestResult::Copy,HitTestResult::Paste,
