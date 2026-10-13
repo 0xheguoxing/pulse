@@ -111,6 +111,21 @@ float GuessAspect(const std::wstring& name, bool video) {
     return 16.0f / 10.0f;
 }
 
+// Files whose preview is only ever a hex dump or a listing (programs,
+// archives) or rarely a picture (audio cover art): the compact card from the
+// first frame, rather than a picture-shaped card that shrinks once the
+// answer arrives (browsing opens cards before the host has answered).
+bool GuessBare(const std::wstring& path, const std::wstring& name) {
+    if (VideoPreview::IsAudio(path)) return true;
+    const size_t dot = name.find_last_of(L'.');
+    std::wstring ext = dot == std::wstring::npos ? std::wstring() : name.substr(dot);
+    for (auto& c : ext) c = static_cast<wchar_t>(towlower(c));
+    for (const wchar_t* bare : {L".exe", L".dll", L".msi", L".sys", L".zip", L".rar", L".7z", L".cab",
+                                L".iso", L".tar", L".gz", L".tgz", L".bz2", L".xz", L".zst"})
+        if (ext == bare) return true;
+    return false;
+}
+
 // The first lines of a text preview, tabs as four spaces: enough to fill
 // the well, never a whole file through DirectWrite every frame.
 std::wstring Excerpt(const std::wstring& text, int max_lines) {
@@ -144,6 +159,7 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
         stop_video();
         return;
     }
+    if (hover_bench_) return;
     ID2D1DeviceContext* dc = compositor_->Dc();
     const float s = scale_;
     if (!view.visible) {
@@ -176,7 +192,7 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
     // guess from its extension.
     if (hover_shape_path_ != view.path) {
         hover_shape_path_ = view.path;
-        hover_shape_kind_ = kShapeGuess;
+        hover_shape_kind_ = !view.video && GuessBare(view.path, view.name) ? kShapeBare : kShapeGuess;
         hover_shape_aspect_ = GuessAspect(view.name, view.video);
         hover_card_w_ = hover_well_h_ = 0.0f;
     }
@@ -289,8 +305,6 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
                       card.top + kInset * s + well_h)
         : D2D1::RectF(card.left + kInset * s, card.top, card.right - kInset * s, card.top);
     if (show_well) fill(well, (kRadius - kInset * 0.5f) * s, palette.hover);
-    std::vector<PreviewProperty> properties;
-    hover_cache_.Properties(view.path, view.attrs, 1, view.modified, view.size, properties);
     const D2D1_RECT_F content = show_well
         ? D2D1::RectF(well.left + 4.0f * s, well.top + 4.0f * s, well.right - 4.0f * s, well.bottom - 4.0f * s)
         : D2D1::RectF(card.left, card.top, card.left + 1.0f, card.top + 1.0f);
@@ -301,12 +315,23 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
     // tries the shell provider and leaves the icon when there is none (.doc
     // without Office); Quick Look shows those through the preview handler,
     // too slow and focus-hungry for a card.
-    const PreviewDrawResult result = hover_cache_.Draw(dc, content, view.path, view.attrs, 1024u, 1,
+    // Audio: no content request. Measured on real files the host spent
+    // 250-450 ms per recording on cover art that is almost never there and
+    // ended in a hex dump, and the facts (duration, bitrate) queued behind
+    // it; they are the whole card for a sound file.
+    const bool facts_only = !view.video && VideoPreview::IsAudio(view.path);
+    const PreviewDrawResult result = facts_only ? PreviewDrawResult::Failed :
+        hover_cache_.Draw(dc, content, view.path, view.attrs, 1024u, 1,
         view.modified, view.size, show_well ? 1.0f : 0.0f, &preview_text, nullptr, nullptr,
         !OfficeDocument(view.name), nullptr, nullptr, nullptr, nullptr, nullptr, 0, nullptr, nullptr, nullptr,
         &decoded_w, &decoded_h);
     const bool textual = result == PreviewDrawResult::Text || result == PreviewDrawResult::Hex ||
                          result == PreviewDrawResult::Markdown;
+    // The facts after the preview: the host works one request at a time, and
+    // a slow property read (video duration, HEIC metadata) asked for first
+    // used to hold the picture back.
+    std::vector<PreviewProperty> properties;
+    hover_cache_.Properties(view.path, view.attrs, 1, view.modified, view.size, properties);
     // What this frame learned of the shape; the next frame eases to it.
     if (result == PreviewDrawResult::Bitmap && decoded_w && decoded_h) {
         hover_shape_kind_ = kShapePicture;
@@ -509,6 +534,159 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
                                          strip.bottom - 2.0f * s),
              compositor_->TextFormat(), palette.text);
     }
+}
+
+namespace {
+struct BenchClock {
+    LARGE_INTEGER frequency{}, start{};
+    BenchClock() {
+        QueryPerformanceFrequency(&frequency);
+        QueryPerformanceCounter(&start);
+    }
+    double Ms() const {
+        LARGE_INTEGER now{};
+        QueryPerformanceCounter(&now);
+        return static_cast<double>(now.QuadPart - start.QuadPart) * 1000.0 / static_cast<double>(frequency.QuadPart);
+    }
+};
+}  // namespace
+
+MainRenderer::HoverBenchSample MainRenderer::BenchHoverPreview(const std::wstring& path, DWORD attrs,
+        uint64_t size, uint64_t modified, uint32_t pixel_size, uint32_t timeout_ms, bool properties_first) {
+    HoverBenchSample sample;
+    if (!compositor_ || !compositor_->Dc()) return sample;
+    ID2D1DeviceContext* dc = compositor_->Dc();
+    ComPtr<ID2D1Bitmap1> target;
+    const auto props = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    if (FAILED(dc->CreateBitmap(D2D1::SizeU(512, 512), nullptr, 0, props, &target)) || !target.get()) return sample;
+    ComPtr<ID2D1Image> previous;
+    dc->GetTarget(&previous);
+    const size_t slash = path.find_last_of(L"\\/");
+    const std::wstring name = slash == std::wstring::npos ? path : path.substr(slash + 1);
+    const bool direct = !OfficeDocument(name);
+    // The card asks at 1024 px; any other size is the warm run: the cache
+    // is dropped first so the file is decoded again by the running host.
+    const bool warm_run = pixel_size != 1024u;
+    if (warm_run) hover_cache_.Evict();
+    std::vector<PreviewProperty> properties;
+    const BenchClock clock;
+    if (VideoPreview::IsAudio(path)) {
+        // As the card: facts only, the facts are the content.
+        while (!hover_cache_.Properties(path, attrs, 1, modified, size, properties) &&
+               clock.Ms() <= static_cast<double>(timeout_ms))
+            MsgWaitForMultipleObjects(0, nullptr, FALSE, 1, QS_ALLINPUT);
+        sample.properties_ms = sample.content_ms = clock.Ms();
+        sample.result = static_cast<int>(PreviewDrawResult::Failed);
+        dc->SetTarget(previous.get());
+        return sample;
+    }
+    for (;;) {
+        if (properties_first && sample.properties_ms < 0.0 &&
+            hover_cache_.Properties(path, attrs, 1, modified, size, properties))
+            sample.properties_ms = clock.Ms();
+        dc->SetTarget(target.get());
+        dc->BeginDraw();
+        std::wstring text;
+        uint32_t w = 0, h = 0;
+        const double before = clock.Ms();
+        const PreviewDrawResult result = hover_cache_.Draw(dc, D2D1::RectF(4.0f, 4.0f, 380.0f, 380.0f), path, attrs,
+            pixel_size, 1, modified, size, 1.0f, &text, nullptr, nullptr, direct, nullptr, nullptr, nullptr, nullptr,
+            nullptr, 0, nullptr, nullptr, nullptr, &w, &h);
+        dc->EndDraw();
+        dc->SetTarget(previous.get());
+        if (!properties_first && sample.properties_ms < 0.0 &&
+            hover_cache_.Properties(path, attrs, 1, modified, size, properties))
+            sample.properties_ms = clock.Ms();
+        if (result != PreviewDrawResult::Pending) {
+            sample.content_ms = clock.Ms();
+            sample.upload_ms = sample.content_ms - before;
+            sample.result = static_cast<int>(result);
+            sample.width = w;
+            sample.height = h;
+            break;
+        }
+        if (clock.Ms() > static_cast<double>(timeout_ms)) {
+            sample.content_ms = clock.Ms();
+            break;
+        }
+        MsgWaitForMultipleObjects(0, nullptr, FALSE, 1, QS_ALLINPUT);
+    }
+    // The facts strip may fill after the picture: how much later (2 s cap).
+    while (!warm_run && sample.properties_ms < 0.0 && clock.Ms() < sample.content_ms + 2000.0) {
+        if (hover_cache_.Properties(path, attrs, 1, modified, size, properties)) sample.properties_ms = clock.Ms();
+        else MsgWaitForMultipleObjects(0, nullptr, FALSE, 2, QS_ALLINPUT);
+    }
+    return sample;
+}
+
+int MainRenderer::PrefetchHoverPreview(const std::wstring& path, DWORD attrs, uint64_t size, uint64_t modified) {
+    if (path.empty() || !compositor_ || !compositor_->Dc()) return -1;
+    if (VideoPreview::IsAudio(path)) {
+        // The card shows only the facts of a sound file: those go first.
+        std::vector<PreviewProperty> properties;
+        hover_cache_.Properties(path, attrs, 1, modified, size, properties);
+        return static_cast<int>(PreviewDrawResult::Pending);
+    }
+    ID2D1DeviceContext* dc = compositor_->Dc();
+    // The same request the card makes (size, kind), queued through a draw
+    // into a throwaway target; a cached picture is drawn there unseen.
+    ComPtr<ID2D1Bitmap1> target;
+    const auto props = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    if (FAILED(dc->CreateBitmap(D2D1::SizeU(1, 1), nullptr, 0, props, &target)) || !target.get()) return -2;
+    ComPtr<ID2D1Image> previous;
+    dc->GetTarget(&previous);
+    const size_t slash = path.find_last_of(L"\\/");
+    const std::wstring name = slash == std::wstring::npos ? path : path.substr(slash + 1);
+    dc->SetTarget(target.get());
+    dc->BeginDraw();
+    const PreviewDrawResult result = hover_cache_.Draw(dc, D2D1::RectF(0.0f, 0.0f, 1.0f, 1.0f), path, attrs, 1024u,
+        1, modified, size, 0.0f, nullptr, nullptr, nullptr, !OfficeDocument(name));
+    dc->EndDraw();
+    dc->SetTarget(previous.get());
+    return static_cast<int>(result);
+}
+
+double MainRenderer::BenchHoverVideo(HWND owner, const std::wstring& path, uint32_t timeout_ms, double* ready_ms) {
+    if (ready_ms) *ready_ms = -1.0;
+    if (!hover_video_) hover_video_ = std::make_shared<VideoPreview>();
+    if (hover_video_->active()) hover_video_->Reset();
+    const BenchClock clock;
+    hover_video_->Open(owner, path, true);
+    double first = -1.0;
+    bool laid_out = false;
+    for (;;) {
+        MSG msg{};
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        const VideoPreview::State state = hover_video_->Snapshot();
+        if (ready_ms && *ready_ms < 0.0 && state.ready) *ready_ms = clock.Ms();
+        if (!laid_out && hover_video_->active()) {
+            hover_video_->Layout(RECT{16, 16, 656, 376}, false, 5);
+            laid_out = true;
+        }
+        if (FAILED(state.error) || (state.ready && state.missing_decoder && !state.ffmpeg)) break;
+        bool picture = false;
+        if (state.ffmpeg) {
+            uint64_t serial = 0;
+            const auto frame = hover_video_->Frame(serial);
+            picture = frame && frame->width && frame->height;
+        } else {
+            picture = state.ready && state.position > 0;
+        }
+        if (picture) {
+            first = clock.Ms();
+            break;
+        }
+        if (clock.Ms() > static_cast<double>(timeout_ms)) break;
+        Sleep(2);
+    }
+    hover_video_->Reset();
+    hover_video_path_.clear();
+    return first;
 }
 
 }  // namespace pulse::ui

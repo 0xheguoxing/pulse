@@ -50,6 +50,34 @@ void DrawContained(ID2D1DeviceContext* dc, ID2D1Bitmap* bitmap, uint32_t w, uint
 // Shell thumbnail providers (Office, CAD, video) routinely need a few seconds
 // on a cold start; direct decoders answer well inside the short budget. A
 // timeout restarts the host, so the heavy formats get room to finish.
+namespace {
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+
+// One poll step while the host works on a request. Sleep(10) really sleeps
+// a whole 15.6 ms scheduler tick, which put a floor under every preview (a
+// text file took ~22 ms, most of it this wait). The first 250 ms - when
+// nearly every answer arrives - poll each millisecond through a
+// high-resolution timer; slow decodes then back off to the old step.
+struct HostWaitTimer {
+    HANDLE handle = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                           TIMER_ALL_ACCESS);
+    ~HostWaitTimer() { if (handle) CloseHandle(handle); }
+};
+
+void WaitForHost(ULONGLONG waited_ms) {
+    if (waited_ms >= 250) { Sleep(10); return; }
+    thread_local HostWaitTimer timer;
+    LARGE_INTEGER due{};
+    due.QuadPart = -10000;  // 1 ms
+    if (timer.handle && SetWaitableTimer(timer.handle, &due, 0, nullptr, nullptr, FALSE))
+        WaitForSingleObject(timer.handle, 20);
+    else
+        Sleep(1);
+}
+}  // namespace
+
 uint32_t ThumbnailCache::ResponseTimeoutMs(const std::wstring& path,
                                            ipc::PreviewRequestKind kind) {
     if (kind == ipc::PreviewRequestKind::Properties) return 4000;
@@ -693,7 +721,7 @@ void ThumbnailCache::Worker() {
                     mark("waiting", true);
                     last_trace = GetTickCount64();
                 }
-                Sleep(10);
+                WaitForHost(GetTickCount64() - request_start);
             }
             if (available < sizeof(response)) {
                 fail(running_ ? 5 : 13, running_ ? ERROR_TIMEOUT : ERROR_CANCELLED);

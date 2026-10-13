@@ -11,6 +11,7 @@ namespace ui { struct WindowViewModel; struct HoverPreviewView; }
 
 constexpr UINT_PTR kTimerHoverPreview = 0x4850;       // 'HP': the dwell before the card
 constexpr UINT_PTR kTimerHoverPreviewFrame = 0x4851;  // repaints while the card animates
+constexpr UINT_PTR kTimerHoverPrefetch = 0x4852;      // the pointer settled: start decoding
 
 // The hovered row changed (app_hover.cpp): hides the card and starts the
 // dwell for the new row, sooner when moving on from a card that was shown.
@@ -33,6 +34,9 @@ bool StageHoverDwellShot(AppState& s, int nth_file);
 // Next to a --shot-hover-preview image: <shot>.video.txt with the card
 // video's state (its child window is not in the composed snapshot).
 void WriteHoverVideoProbe(AppState& s, const std::wstring& shot_output);
+// --bench-hover (env PULSE_BENCH_HOVER_LIST / _OUT): times each listed file's
+// card content and video start; false when not asked for.
+bool RunHoverBench(AppState& s);
 void FillHoverPreviewView(AppState& s, const ui::WindowViewModel& vm, ui::HoverPreviewView& view);
 // After the card was drawn: keeps or stops the repaint timer it asked for.
 void AfterHoverPreviewDraw(AppState& s);

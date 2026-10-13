@@ -2697,6 +2697,7 @@ int ShotModeMain(AppState& state, HWND hwnd) {
             state.hoverPoint = POINT{ 60, 320 };
             state.tooltipText = state.hoverLabel;
         }
+        RunHoverBench(state);  // --bench-hover: env PULSE_BENCH_HOVER_LIST / _OUT
         if (state.shot_hover_dwell >= 0 && StageHoverDwellShot(state, state.shot_hover_dwell)) {
             for (int i = 0; i < 2; ++i) {
                 Render(state);

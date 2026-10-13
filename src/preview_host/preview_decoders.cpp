@@ -279,11 +279,11 @@ static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
     if (FAILED(frame->GetSize(&sourceWidth, &sourceHeight)) ||
         sourceWidth == 0 || sourceHeight == 0) return false;
     IWICBitmapSource* source = frame.Get();
+    unsigned orientation = 1;
     GUID container{};
     if (SUCCEEDED(decoder->GetContainerFormat(&container)) &&
         (IsEqualGUID(container, GUID_ContainerFormatJpeg) || IsEqualGUID(container, GUID_ContainerFormatTiff))) {
         ComPtr<IWICMetadataQueryReader> metadata;
-        unsigned orientation = 1;
         if (SUCCEEDED(frame->GetMetadataQueryReader(&metadata))) {
             PROPVARIANT value{};
             const auto key = IsEqualGUID(container, GUID_ContainerFormatJpeg)
@@ -292,30 +292,15 @@ static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
                 value.uiVal >= 1 && value.uiVal <= 8) orientation = value.uiVal;
             PropVariantClear(&value);
         }
-        WICBitmapTransformOptions transform = WICBitmapTransformRotate0;
-        switch (orientation) {
-        case 2: transform = WICBitmapTransformFlipHorizontal; break;
-        case 3: transform = WICBitmapTransformRotate180; break;
-        case 4: transform = WICBitmapTransformFlipVertical; break;
-        case 5: case 6: case 7: transform = WICBitmapTransformRotate90; break;
-        case 8: transform = WICBitmapTransformRotate270; break;
-        }
-        if (orientation != 1) {
-            if (FAILED(factory->CreateBitmapFlipRotator(&rotation)) ||
-                FAILED(rotation->Initialize(source, transform))) return false;
-            source = rotation.Get();
-            // Make transform order explicit for the two diagonal reflections.
-            if (orientation == 5 || orientation == 7) {
-                if (FAILED(factory->CreateBitmapFlipRotator(&reflection)) ||
-                    FAILED(reflection->Initialize(source, orientation == 5
-                        ? WICBitmapTransformFlipHorizontal : WICBitmapTransformFlipVertical))) return false;
-                source = reflection.Get();
-            }
-            if (FAILED(source->GetSize(&sourceWidth, &sourceHeight))) return false;
-        }
     }
-    source_width = sourceWidth;
-    source_height = sourceHeight;
+    // Scale first, straight off the frame: the JPEG decoder then decodes at
+    // 1/2, 1/4 or 1/8 (IWICBitmapSourceTransform) instead of full size. A
+    // flip-rotator in front of the scaler made every scaler pass re-decode
+    // the whole frame, so a 12 MP portrait phone photo (Exif orientation 6)
+    // took over 30 s and held up every preview queued behind it.
+    const bool quarter_turn = orientation >= 5;
+    source_width = quarter_turn ? sourceHeight : sourceWidth;
+    source_height = quarter_turn ? sourceWidth : sourceHeight;
     const UINT longest = (std::max)(sourceWidth, sourceHeight);
     if (longest > pixels) {
         const double ratio = static_cast<double>(pixels) / longest;
@@ -325,6 +310,30 @@ static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
             FAILED(scaler->Initialize(source, scaledWidth, scaledHeight,
                                       WICBitmapInterpolationModeFant))) return false;
         source = scaler.Get();
+    }
+    ComPtr<IWICBitmap> upright;
+    if (orientation != 1) {
+        // Turned in memory, on the already small picture.
+        WICBitmapTransformOptions transform = WICBitmapTransformRotate0;
+        switch (orientation) {
+        case 2: transform = WICBitmapTransformFlipHorizontal; break;
+        case 3: transform = WICBitmapTransformRotate180; break;
+        case 4: transform = WICBitmapTransformFlipVertical; break;
+        case 5: case 6: case 7: transform = WICBitmapTransformRotate90; break;
+        case 8: transform = WICBitmapTransformRotate270; break;
+        }
+        if (FAILED(factory->CreateBitmapFromSource(source, WICBitmapCacheOnLoad, &upright))) return false;
+        source = upright.Get();
+        if (FAILED(factory->CreateBitmapFlipRotator(&rotation)) ||
+            FAILED(rotation->Initialize(source, transform))) return false;
+        source = rotation.Get();
+        // Make transform order explicit for the two diagonal reflections.
+        if (orientation == 5 || orientation == 7) {
+            if (FAILED(factory->CreateBitmapFlipRotator(&reflection)) ||
+                FAILED(reflection->Initialize(source, orientation == 5
+                    ? WICBitmapTransformFlipHorizontal : WICBitmapTransformFlipVertical))) return false;
+            source = reflection.Get();
+        }
     }
     if (FAILED(factory->CreateFormatConverter(&converter)) ||
         FAILED(converter->Initialize(source, GUID_WICPixelFormat32bppPBGRA,
@@ -862,10 +871,18 @@ static DecodeStep RunImage(const DecodeRequest& q, DecodeResult& r) {
         if (q.offline) { r.error = L"gif-offline"; return DecodeStep::Failed; }
         preview::GifFrame frame;
         made = preview::DecodeGifCached(q.path, cap, q.request.frame_index, frame);
-        if (!made) { r.error = frame.error; return DecodeStep::Failed; }
-        r.pixels = std::move(frame.pixels); r.width = frame.width; r.height = frame.height; r.stride = frame.stride;
-        r.source_width = frame.source_width; r.source_height = frame.source_height;
-        frame_count = frame.count; frame_delay = frame.delay; loop_count = frame.loops;
+        if (made) {
+            r.pixels = std::move(frame.pixels); r.width = frame.width; r.height = frame.height; r.stride = frame.stride;
+            r.source_width = frame.source_width; r.source_height = frame.source_height;
+            frame_count = frame.count; frame_delay = frame.delay; loop_count = frame.loops;
+        } else {
+            // Over the animation budget (a 37 MB screen recording, say): show
+            // the first frame as a still instead of an empty preview.
+            ClearBitmap(r);
+            made = DecodeImage(q.path, q.request.attrs, cap, r.pixels, r.width, r.height,
+                               r.stride, r.source_width, r.source_height);
+            if (!made) { r.error = frame.error; return DecodeStep::Failed; }
+        }
     } else if (!q.offline && !q.grid && q.extension == L".webp" &&
                DecodeWebpFrame(q.path, ipc::ClampPreviewPixelSize(q.request.pixel_size, true),
                                q.request.frame_index, r, frame_count, frame_delay, loop_count)) {

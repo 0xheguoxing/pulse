@@ -1134,6 +1134,26 @@ public:
     // video's progress line.
     unsigned HoverPreviewFrameMs() const noexcept { return hover_frame_ms_; }
     VideoPreview::State HoverVideoState() const;
+    // --bench-hover (app_hover_preview.cpp): one card's content asked for
+    // exactly as the card asks (facts, then the preview at pixel_size),
+    // timed until it can be drawn. The card itself stays down meanwhile.
+    struct HoverBenchSample {
+        int result = -1;               // PreviewDrawResult; -1 timed out
+        double content_ms = 0.0;       // request to drawable content
+        double properties_ms = -1.0;   // to the facts strip; -1 not by then
+        double upload_ms = 0.0;        // the Draw that uploaded the bitmap
+        uint32_t width = 0, height = 0;
+    };
+    HoverBenchSample BenchHoverPreview(const std::wstring& path, DWORD attrs, uint64_t size,
+                                       uint64_t modified, uint32_t pixel_size, uint32_t timeout_ms,
+                                       bool properties_first);
+    // The silent loop: Open to the first picture in ms (-1 never); ready_ms
+    // gets Open to the player being ready.
+    double BenchHoverVideo(HWND owner, const std::wstring& path, uint32_t timeout_ms, double* ready_ms);
+    void SetHoverBench(bool on) noexcept { hover_bench_ = on; }
+    // The pointer settled on a file (app_hover_preview.cpp): its card preview
+    // is asked for now, so the dwell covers the decode. Outside a frame.
+    int PrefetchHoverPreview(const std::wstring& path, DWORD attrs, uint64_t size, uint64_t modified);
 
     // Layout metrics (DIPs).
     float TitleBarHeight() const { return title_bar_height_; }
@@ -1841,6 +1861,7 @@ private:
     float hover_shape_aspect_ = 0.0f;
     float hover_card_w_ = 0.0f, hover_well_h_ = 0.0f;
     unsigned long long hover_ease_ms_ = 0;
+    bool hover_bench_ = false;                 // --bench-hover owns the cache and player
     ComPtr<IDWriteTextLayout> details_text_layout_;
     std::wstring details_layout_text_;
     float details_layout_scale_ = 0;
