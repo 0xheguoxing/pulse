@@ -746,8 +746,11 @@ target_include_directories(pulse_ctx_parity_probe PRIVATE "${CMAKE_BINARY_DIR}/g
 target_link_libraries(pulse_ctx_parity_probe PRIVATE ole32 oleaut32 shell32 uuid shlwapi advapi32
     version user32 pulse_localization)
 
-add_executable(pulse_integration src/integration_host/main.cpp src/app/shell_integration_registry.cpp)
-target_link_libraries(pulse_integration PRIVATE advapi32 shell32 shlwapi)
+add_executable(pulse_integration src/integration_host/main.cpp src/app/shell_integration_registry.cpp
+    src/app/system_ctx_registry.cpp)
+target_link_libraries(pulse_integration PRIVATE advapi32 shell32 shlwapi ole32)
+add_executable(pulse_system_ctx_test src/bench/system_ctx_test.cpp src/app/system_ctx_registry.cpp)
+target_link_libraries(pulse_system_ctx_test PRIVATE advapi32 shell32 shlwapi ole32)
 
 add_executable(pulse_open_handoff_test src/bench/open_handoff_test.cpp src/app/single_instance_coordinator.cpp src/app/this_pc_argument.cpp)
 target_link_libraries(pulse_open_handoff_test PRIVATE user32 ole32 advapi32)

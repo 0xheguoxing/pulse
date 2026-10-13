@@ -1,10 +1,16 @@
 #include "../app/shell_integration_registry.h"
+#include "../app/system_ctx_registry.h"
 
 #include <shlobj.h>
 #include <cstdio>
 #include <cwchar>
 
 int wmain(int argc, wchar_t** argv) {
+    // Machine-wide context menu changes from Settings, one UAC per batch.
+    if (argc >= 2 && wcscmp(argv[1], L"--system-ctx-apply") == 0) {
+        if (argc != 5 || wcscmp(argv[3], L"--result") != 0) return 2;
+        return pulse::app::sysctx::RunElevatedBatch(argv[2], argv[4]);
+    }
     bool restore = false, prepare = false, folders = false, win_e = false, this_pc = false, directory = false, drive = false,
         recycle_bin = false;
     std::wstring exe, previous_exe;
