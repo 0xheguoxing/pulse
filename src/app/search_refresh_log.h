@@ -9,9 +9,13 @@
 
 namespace pulse {
 // UI refreshes enqueue fixed metadata only. A bounded background sink owns disk IO.
+// `stem` names the per-process file under the logs folder; `dir_env` redirects
+// that folder (tests).
 class SearchRefreshLog {
 public:
-    SearchRefreshLog() : worker_([this] { Run(); }) {}
+    SearchRefreshLog() : SearchRefreshLog(L"content-session-", L"PULSE_CONTENT_TIMING_DIR") {}
+    SearchRefreshLog(std::wstring stem, std::wstring dir_env)
+        : stem_(std::move(stem)), dir_env_(std::move(dir_env)), worker_([this] { Run(); }) {}
     ~SearchRefreshLog() {
         { std::lock_guard lock(mutex_); stopping_ = true; }
         wake_.notify_one();
@@ -54,7 +58,7 @@ private:
     void Run() noexcept {
         std::wstring path;
         try {
-            auto directory = Environment(L"PULSE_CONTENT_TIMING_DIR");
+            auto directory = Environment(dir_env_.c_str());
             if (directory.empty()) {
                 directory = Environment(L"LOCALAPPDATA");
                 if (!directory.empty()) directory += L"\\Pulse\\logs";
@@ -63,7 +67,7 @@ private:
                 std::error_code error;
                 std::filesystem::create_directories(directory, error);
                 if (!error) path = (std::filesystem::path(directory) /
-                    (L"content-session-" + std::to_wstring(GetCurrentProcessId()) + L".jsonl")).wstring();
+                    (stem_ + std::to_wstring(GetCurrentProcessId()) + L".jsonl")).wstring();
             }
         } catch (...) {}
         for (;;) {
@@ -78,6 +82,8 @@ private:
             try { Write(path, record); } catch (...) {}
         }
     }
+    const std::wstring stem_;
+    const std::wstring dir_env_;
     std::mutex mutex_;
     std::condition_variable wake_;
     std::deque<std::string> records_;

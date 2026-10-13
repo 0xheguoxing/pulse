@@ -39,6 +39,7 @@
 #include "../ops/clipboard.h"
 #include "../ipc/ctx_menu_util.h"
 #include "shell_registry_debounce.h"
+#include "search_refresh_log.h"
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -1332,8 +1333,30 @@ std::vector<ui::FluentMenuItem> ExplorerMenu(
 
 void RefreshOpenCtxMenu(AppState& s) {
     if (!s.context_menu.menu_open() || !s.menu || !s.menu->IsOpen()) return;
-    if (s.menu->ReplaceItems(ExplorerMenu(s, s.context_menu.base_items())))
+    auto display = ExplorerMenu(s, s.context_menu.base_items());
+    const size_t rows = display.size();
+    if (s.menu->ReplaceItems(std::move(display))) {
         s.context_menu.NotePatchedDisplay();
+        s.context_menu.NoteDisplayUpdate(rows, GetTickCount64());
+    }
+}
+
+// Right before TrackPopup: the input message that asked for the menu is the
+// last one retrieved, so its time stamp starts the click-to-popup interval.
+static void BeginCtxTiming(AppState& s, size_t rows, bool seeded) {
+    const DWORD input = static_cast<DWORD>(GetMessageTime());
+    s.context_menu.BeginTiming(static_cast<uint32_t>(GetTickCount() - input), rows, seeded,
+                               GetTickCount64());
+}
+
+static void LogCtxTiming(AppState& s, int cmd) {
+    app::CtxMenuTiming timing;
+    if (!s.context_menu.TakeTiming(cmd >= app::CmdShellStaticBase, timing)) return;
+    try {
+        // %LOCALAPPDATA%\Pulse\logs\ctx-menu-<pid>.jsonl, written off the UI thread.
+        static SearchRefreshLog sink(L"ctx-menu-", L"PULSE_CTX_TIMING_DIR");
+        sink.Push(app::FormatCtxMenuTiming(timing, GetTickCount64()));
+    } catch (...) {}
 }
 
 // Dispatch for the merged Explorer rows. Returns true when cmd was a shell
@@ -1351,7 +1374,7 @@ void ShowItemContextMenu(AppState& s, POINT screen_pt) {
         tab ? SelectedFullPaths(*tab) : std::vector<std::wstring>{};
     if (tab && !paths.empty() && !IsRecycleTab(tab))
         StartCtxQuery(s, paths, false, StaticVerbKey(*tab, tab->SelectedIndices()));
-    s.context_menu.SeedComItemsFromCache();
+    const bool seeded = s.context_menu.SeedComItemsFromCache();
 
     std::wstring undoLabel = s.ops.UndoLabel();
     const auto quick_paths = QuickAccessTargets(tab, false);
@@ -1369,8 +1392,10 @@ void ShowItemContextMenu(AppState& s, POINT screen_pt) {
                                      : ExplorerMenu(s, s.context_menu.base_items());
     const int quick_count = std::min(7, static_cast<int>(s.places.tags.size()));
 
+    if (!IsRecycleTab(tab)) BeginCtxTiming(s, display.size(), seeded);
     const int cmd = s.menu->TrackPopup(screen_pt, std::move(display));
     s.context_menu.CloseMenu();
+    LogCtxTiming(s, cmd);
     if (HandleShellMenuCommand(s, cmd)) return;
     if (HandleQuickAccessCommand(s, cmd, quick_paths)) return;
     const auto window_folder = [&](int base) {
@@ -1420,7 +1445,7 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     }
     if (tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path))
         StartCtxQuery(s, { tab->current_path }, true, ipc::kBackgroundVerbKey);
-    s.context_menu.SeedComItemsFromCache();
+    const bool seeded = s.context_menu.SeedComItemsFromCache();
 
     std::wstring undoLabel = s.ops.UndoLabel();
     bool canPaste = !s.tray.batches().empty() || ClipboardHasFiles();
@@ -1435,8 +1460,10 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     s.context_menu.OpenMenu(std::move(base_items));
     auto display = ExplorerMenu(s, s.context_menu.base_items());
 
+    BeginCtxTiming(s, display.size(), seeded);
     const int cmd = s.menu->TrackPopup(screen_pt, std::move(display));
     s.context_menu.CloseMenu();
+    LogCtxTiming(s, cmd);
     if (HandleShellMenuCommand(s, cmd)) return;
     if (HandleQuickAccessCommand(s, cmd, quick_paths)) return;
     if (cmd == app::CmdViewRecentChanges) { OpenChangeView(s, recent_changes_path); return; }

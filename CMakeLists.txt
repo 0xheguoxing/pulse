@@ -737,7 +737,12 @@ target_link_libraries(pulse_ctx_handlers_test PRIVATE ole32 shell32 uuid shlwapi
 
 # Explorer parity diagnosis: native menu vs Pulse pipeline on the real machine.
 add_executable(pulse_ctx_parity_probe src/bench/ctx_parity_probe.cpp
-    src/shell_host/ctx_handlers.cpp src/shell_host/packaged_ctx_handlers.cpp src/app/shell_verbs.cpp)
+    src/shell_host/ctx_handlers.cpp src/shell_host/packaged_ctx_handlers.cpp src/app/shell_verbs.cpp
+    src/app/context_menu_controller.cpp src/app/context_menu_prefs.cpp src/app/builtin_menu_items.cpp
+    src/bench/localization_test.rc)
+# The localized string table: registry verbs without a label (print, runas,
+# 打开方式) take Pulse's text, as in the app.
+target_include_directories(pulse_ctx_parity_probe PRIVATE "${CMAKE_BINARY_DIR}/generated")
 target_link_libraries(pulse_ctx_parity_probe PRIVATE ole32 oleaut32 shell32 uuid shlwapi advapi32
     version user32 pulse_localization)
 
@@ -1515,6 +1520,11 @@ target_link_libraries(pulse_content_stream_work_test PRIVATE pulse_sqlite ole32 
 add_executable(pulse_context_menu_identity_test src/bench/context_menu_identity_test.cpp
     src/app/context_menu_prefs.cpp src/app/builtin_menu_items.cpp)
 target_link_libraries(pulse_context_menu_identity_test PRIVATE pulse_localization shell32 advapi32)
+
+add_executable(pulse_ctx_menu_controller_test src/bench/ctx_menu_controller_test.cpp
+    src/app/context_menu_controller.cpp
+    src/app/context_menu_prefs.cpp src/app/builtin_menu_items.cpp)
+target_link_libraries(pulse_ctx_menu_controller_test PRIVATE pulse_localization shell32 shlwapi advapi32 ole32)
 
 add_executable(pulse_places_save_order_test src/bench/places_save_order_test.cpp
     src/app/places.cpp src/app/tag_ads_sync.cpp src/fs/fs_enum.cpp src/ui/view_layout.cpp)

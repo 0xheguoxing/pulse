@@ -388,6 +388,10 @@ ContextMenuController::QueryCompletion ContextMenuController::CompleteComQuery(
     if (!partial) {
         com_cache_[result.cache_key] = com_items_;
         com_ready_ = true;
+        if (timing_active_ && menu_open_ && completed_at >= opened_at_) {
+            timing_.live_after_open_ms = static_cast<int32_t>(std::min<uint64_t>(
+                completed_at - opened_at_, INT32_MAX));
+        }
         if (query_started_at_ != 0 && completed_at >= query_started_at_) {
             result.elapsed_ms = static_cast<uint32_t>(std::min<uint64_t>(
                 completed_at - query_started_at_, UINT32_MAX));
@@ -528,6 +532,43 @@ void ContextMenuController::OpenMenu(std::vector<ui::FluentMenuItem> base_items)
     menu_static_verbs_ = static_verbs_;
     display_snapshot_valid_ = true;
     menu_open_ = true;
+}
+
+void ContextMenuController::BeginTiming(uint32_t input_to_open_ms, size_t rows,
+                                        bool seeded, uint64_t now) {
+    timing_ = {};
+    timing_.key = extension_;
+    timing_.background = background_;
+    timing_.input_to_open_ms = input_to_open_ms;
+    timing_.rows_open = static_cast<uint32_t>(rows);
+    timing_.seeded = seeded;
+    timing_.live_at_open = com_ready_;
+    display_rows_ = rows;
+    opened_at_ = now;
+    timing_active_ = true;
+}
+
+void ContextMenuController::NoteDisplayUpdate(size_t rows, uint64_t now) {
+    if (!timing_active_) return;
+    ++timing_.refreshes;
+    if (rows != display_rows_) ++timing_.grew;
+    display_rows_ = rows;
+    constexpr uint32_t kTraceEntries = 24;
+    if (timing_.refreshes <= kTraceEntries) {
+        if (!timing_.trace.empty()) timing_.trace += ' ';
+        timing_.trace += std::to_string(now >= opened_at_ ? now - opened_at_ : 0) + ':' +
+                         std::to_string(rows);
+    }
+}
+
+bool ContextMenuController::TakeTiming(bool shell_command, CtxMenuTiming& out) {
+    if (!timing_active_) return false;
+    timing_active_ = false;
+    timing_.rows_final = static_cast<uint32_t>(display_rows_);
+    timing_.shell_command = shell_command;
+    out = std::move(timing_);
+    timing_ = {};
+    return true;
 }
 
 void ContextMenuController::ScheduleFolderRefresh(uint64_t now) noexcept {

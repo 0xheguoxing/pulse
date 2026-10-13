@@ -16,9 +16,20 @@
 // / diagnosis tool to run on a configured desktop, not a hermetic unit test.
 // --report writes the evidence: association, registry keys, both menus,
 // per-extension timings and the row-by-row diff.
+//
+// --display [--prefs <context_menu.json>] also runs the rows through the menu
+// Pulse would paint (ContextMenuController::BuildDisplay with the given or the
+// default settings) and sorts every sourced Explorer row into SHOWN,
+// SHOWN-LABEL (painted with another label or access key: info only), CAPPED
+// (cut by the row cap: [FAIL]), HIDDEN-PREF (a settings switch: info only) or
+// DISPLAY-DROPPED (lost while composing: [FAIL]).
 #include "../shell_host/ctx_handlers.h"
 #include "../app/shell_verbs.h"
 #include "../ipc/ctx_menu_util.h"
+#include "../app/context_menu_controller.h"
+#include "../app/context_menu_prefs.h"
+#include "../common/utf8_file.h"
+#include "../common/localization.h"
 
 #include <windows.h>
 #include <shlobj.h>
@@ -34,10 +45,16 @@
 #include <string>
 #include <vector>
 
+// The settings object never saves here (persist=false); it still links the
+// data-folder lookup.
+namespace pulse::app { std::wstring GetPulseDataDir() { return {}; } }
+
 namespace {
 
 int failures = 0;
 FILE* g_report = nullptr;
+bool g_display = false;
+pulse::app::ContextMenuPrefs g_prefs;
 
 void Check(bool ok, const std::wstring& label) {
     wprintf(L"[%ls] %ls\n", ok ? L"PASS" : L"FAIL", label.c_str());
@@ -65,14 +82,25 @@ std::wstring Lower(std::wstring text) {
     return text;
 }
 
-// Row identity across the two menus: cleaned text without ellipsis / spaces.
-std::wstring MatchKey(const std::wstring& text) {
+// Cleaned text without ellipsis / spaces, lower case.
+std::wstring LabelKey(const std::wstring& text) {
     const std::wstring clean = pulse::ipc::CleanMenuText(text);
     std::wstring key;
     for (wchar_t ch : clean) {
         if (ch == L'.' || ch == 0x2026 || ch == L' ' || ch == L'\t') continue;
         key += static_cast<wchar_t>(towlower(ch));
     }
+    return key;
+}
+
+// Row identity across the two menus: the label without a trailing access-key
+// group, so Explorer's 以管理员身份运行(A) is the row Pulse paints from its own
+// string 以管理员身份运行. The difference itself is reported as LABEL.
+std::wstring MatchKey(const std::wstring& text) {
+    std::wstring key = LabelKey(text);
+    if (key.size() > 3 && key[key.size() - 3] == L'(' && key.back() == L')' &&
+        iswalnum(key[key.size() - 2]))
+        key.resize(key.size() - 3);
     return key;
 }
 
@@ -344,6 +372,57 @@ void DumpAssociation(const std::wstring& ext) {
     for (const auto& cls : classes) DumpClassKey(cls);
 }
 
+// The menu Pulse paints for these rows. `cap` > 0 overrides the row cap;
+// `all_on` turns every group and row on (what Pulse could show at all).
+std::vector<Row> DisplayRows(const std::wstring& path, const std::wstring& verb_key,
+                             bool extended, const std::vector<pulse::ops::ShellMenuItem>& items,
+                             const std::vector<pulse::app::StaticVerb>& verbs, int cap,
+                             bool all_on, size_t* top_level = nullptr) {
+    pulse::app::ContextMenuPrefs prefs = g_prefs;
+    prefs.persist = false;
+    if (all_on) {
+        for (auto group : { pulse::ipc::CtxMenuGroup::Software, pulse::ipc::CtxMenuGroup::OpenWith,
+                            pulse::ipc::CtxMenuGroup::Share, pulse::ipc::CtxMenuGroup::System,
+                            pulse::ipc::CtxMenuGroup::Print })
+            prefs.SetGroupEnabled(group, true);
+        prefs.open_with_com = true;
+        prefs.item_enabled.clear();
+        prefs.slow_ext.clear();
+    }
+    if (cap > 0) prefs.explorer_cap = cap;
+    pulse::app::ContextMenuController controller;
+    pulse::app::ContextMenuController::ShellOperations operations;
+    operations.query = [](std::vector<std::wstring>, HWND, bool, bool, std::vector<std::wstring>) {
+        return 1u;
+    };
+    controller.SetShellOperations(std::move(operations));
+    controller.StartQuery(prefs, nullptr, { path }, false, verb_key, extended, {}, {});
+    controller.CompleteStaticVerbs(verb_key, verbs, controller.cache_generation());
+    controller.CompleteComQuery(1, items, GetTickCount64(), false);
+    bool changed = false;
+    const auto display = controller.BuildDisplay(prefs, {}, changed);
+    std::vector<Row> rows;
+    size_t shell_top = 0;
+    for (const auto& item : display) {
+        if (item.command == pulse::app::CmdSettingsContextMenu) continue;
+        ++shell_top;
+        Row row;
+        row.text = pulse::ipc::CleanMenuText(item.text);
+        row.submenu = !item.children.empty();
+        row.source = L"display";
+        rows.push_back(row);
+        for (const auto& child : item.children) {
+            Row sub;
+            sub.depth = 1;
+            sub.text = pulse::ipc::CleanMenuText(child.text);
+            sub.source = L"display";
+            rows.push_back(sub);
+        }
+    }
+    if (top_level) *top_level = shell_top;
+    return rows;
+}
+
 void ProbePath(const std::wstring& path, bool extended) {
     const DWORD attributes = GetFileAttributesW(path.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES) {
@@ -391,6 +470,7 @@ void ProbePath(const std::wstring& path, bool extended) {
     }
 
     std::vector<Row> kept;
+    std::vector<pulse::ops::ShellMenuItem> kept_items; // host-shaped, for --display
     std::vector<Row> exposed;
     int over_budget = 0;
     int hung = 0;
@@ -414,6 +494,18 @@ void ProbePath(const std::wstring& path, bool extended) {
             worker->desc.clsid_text.c_str(), worker->desc.explorer_command ? L" (IExplorerCommand)" : L"",
             static_cast<unsigned>(worker->hr), worker->total_ms, worker->kept.size(), worker->full.size());
         for (const auto& item : worker->kept) {
+            pulse::ops::ShellMenuItem shell_item;
+            shell_item.id = item.id;
+            shell_item.enabled = item.enabled;
+            shell_item.separator_after = item.separator_after;
+            shell_item.has_children = item.has_children;
+            shell_item.child = item.child;
+            shell_item.verb = item.verb;
+            shell_item.text = item.text;
+            shell_item.clsid = item.clsid;
+            shell_item.handler = item.handler;
+            shell_item.mnemonic = item.mnemonic;
+            kept_items.push_back(std::move(shell_item));
             Row row;
             row.depth = item.child ? 1 : 0;
             row.text = item.text;
@@ -434,7 +526,8 @@ void ProbePath(const std::wstring& path, bool extended) {
     }
 
     std::vector<Row> statics;
-    for (const auto& verb : pulse::app::EnumerateStaticVerbs(verb_key)) {
+    const auto static_verbs = pulse::app::EnumerateStaticVerbs(verb_key);
+    for (const auto& verb : static_verbs) {
         Row row;
         row.text = verb.display;
         row.verb = verb.verb;
@@ -455,6 +548,7 @@ void ProbePath(const std::wstring& path, bool extended) {
     // Native -> Pulse.
     Out(L"\n## Explorer rows -> Pulse source\n");
     std::vector<std::wstring> missing;
+    std::vector<Row> sourced; // native rows Pulse has a source for
     for (const auto& row : native) {
         if (row.text.empty()) continue;
         const wchar_t* status = nullptr;
@@ -462,9 +556,11 @@ void ProbePath(const std::wstring& path, bool extended) {
         if (const Row* hit = FindRow(statics, row)) {
             status = L"OK-static";
             source = hit->source;
+            sourced.push_back(row);
         } else if (const Row* com = FindRow(kept, row)) {
             status = L"OK-com";
             source = com->source;
+            sourced.push_back(row);
         } else if (pulse::ipc::IsBuiltinContextVerb(row.verb, false)) {
             status = L"BUILTIN";
         } else if (const Row* dropped = FindExposed(exposed, row)) {
@@ -494,14 +590,61 @@ void ProbePath(const std::wstring& path, bool extended) {
     collect_extra(statics);
     collect_extra(kept);
 
+    // What the painted menu keeps of the sourced rows.
+    std::vector<std::wstring> capped, display_dropped, label_differs;
+    size_t hidden_by_prefs = 0;
+    if (g_display) {
+        size_t shown_top = 0, uncapped_top = 0;
+        const auto shown = DisplayRows(path, verb_key, extended, kept_items, static_verbs, 0,
+                                       false, &shown_top);
+        const auto uncapped = DisplayRows(path, verb_key, extended, kept_items, static_verbs,
+                                          100000, false, &uncapped_top);
+        const auto possible = DisplayRows(path, verb_key, extended, kept_items, static_verbs,
+                                          100000, true);
+        Out(L"\n## Pulse display (cap %d): %zu top-level shell rows, %zu without the cap\n",
+            g_prefs.explorer_cap, shown_top, uncapped_top);
+        PrintRows(shown);
+        Out(L"\n## Sourced Explorer rows -> painted menu\n");
+        for (const auto& row : sourced) {
+            const wchar_t* status = L"SHOWN";
+            if (const Row* painted = FindRow(shown, row)) {
+                if (LabelKey(painted->text) != LabelKey(row.text)) {
+                    status = L"SHOWN-LABEL";
+                    label_differs.push_back(row.text + L" -> " + painted->text);
+                }
+            } else if (FindRow(uncapped, row)) {
+                status = L"CAPPED";
+                capped.push_back(row.text);
+            } else if (FindRow(possible, row)) {
+                status = L"HIDDEN-PREF";
+                ++hidden_by_prefs;
+            } else {
+                status = L"DISPLAY-DROPPED";
+                display_dropped.push_back(row.text);
+            }
+            Out(L"  %-16ls %ls%ls\n", status,
+                std::wstring(static_cast<size_t>(row.depth) * 4, L' ').c_str(), row.text.c_str());
+        }
+    }
+
     Out(L"\n  summary: native=%zu missing=%zu extra=%zu extensions=%zu over80ms=%d hung=%d\n",
         native.size(), missing.size(), extra.size(), workers.size(), over_budget, hung);
+    if (g_display)
+        Out(L"  display: capped=%zu dropped=%zu hidden_by_prefs=%zu label_differs=%zu\n",
+            capped.size(), display_dropped.size(), hidden_by_prefs, label_differs.size());
     Info(L"%ls: Explorer %zu rows (QCM %llu ms); %zu extensions, %d over 80 ms, slowest %ls %llu ms, %d hung\n",
          path.c_str(), native.size(), native_ms, workers.size(), over_budget, slowest_name.c_str(), slowest, hung);
     for (const auto& text : missing) Info(L"  missing: %ls\n", text.c_str());
     for (const auto& text : extra) Info(L"  extra:   %ls\n", text.c_str());
     Check(missing.empty(), path + L": every Explorer row has a Pulse source");
     Check(extra.empty(), path + L": Pulse adds no row Explorer does not show");
+    if (g_display) {
+        for (const auto& text : capped) Info(L"  capped:  %ls\n", text.c_str());
+        for (const auto& text : display_dropped) Info(L"  dropped: %ls\n", text.c_str());
+        for (const auto& text : label_differs) Info(L"  label:   %ls\n", text.c_str());
+        Check(capped.empty(), path + L": the row cap cuts no Explorer row");
+        Check(display_dropped.empty(), path + L": composing the menu loses no Explorer row");
+    }
 }
 
 } // namespace
@@ -511,15 +654,31 @@ int wmain(int argc, wchar_t** argv) {
     bool extended = false;
     std::wstring report;
     std::vector<std::wstring> paths;
+    std::wstring prefs_path;
     for (int i = 1; i < argc; ++i) {
         const std::wstring arg = argv[i];
         if (arg == L"--extended") extended = true;
         else if (arg == L"--report" && i + 1 < argc) report = argv[++i];
+        else if (arg == L"--display") g_display = true;
+        else if (arg == L"--prefs" && i + 1 < argc) prefs_path = argv[++i];
         else paths.push_back(arg);
     }
     if (paths.empty()) {
-        fwprintf(stderr, L"usage: pulse_ctx_parity_probe [--extended] [--report <file>] <path>...\n");
+        fwprintf(stderr, L"usage: pulse_ctx_parity_probe [--extended] [--report <file>] "
+                         L"[--display [--prefs <context_menu.json>]] <path>...\n");
         return 2;
+    }
+    // The app's string table in the system language: labels Pulse supplies
+    // itself (打印, 以管理员身份运行, 打开方式 for verbs without one).
+    pulse::l10n::Initialize(GetModuleHandleW(nullptr), L"system");
+    g_prefs.persist = false;
+    if (!prefs_path.empty()) {
+        std::wstring json;
+        if (!pulse::ReadUtf8File(prefs_path, json) || !g_prefs.FromJson(json)) {
+            fwprintf(stderr, L"cannot read settings %ls\n", prefs_path.c_str());
+            return 2;
+        }
+        g_prefs.persist = false;
     }
     if (!report.empty() && (_wfopen_s(&g_report, report.c_str(), L"w, ccs=UTF-8") != 0 || !g_report)) {
         fwprintf(stderr, L"cannot write %ls\n", report.c_str());

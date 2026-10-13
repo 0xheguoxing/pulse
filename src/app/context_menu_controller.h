@@ -2,6 +2,7 @@
 
 #include "context_menu.h"
 #include "context_menu_prefs.h"
+#include "ctx_menu_timing.h"
 #include "shell_verbs.h"
 #include "../ops/ops_manager.h"
 
@@ -75,6 +76,12 @@ public:
         return base_items_;
     }
 
+    // Timing record of the menu on screen (ctx_menu_timing.h): begun right
+    // before the popup is tracked, taken once it closed.
+    void BeginTiming(uint32_t input_to_open_ms, size_t rows, bool seeded, uint64_t now);
+    void NoteDisplayUpdate(size_t rows, uint64_t now);
+    bool TakeTiming(bool shell_command, CtxMenuTiming& out);
+
     void ScheduleFolderRefresh(uint64_t now) noexcept;
     int ConsumeDueRefreshes(uint64_t now) noexcept;
 
@@ -109,6 +116,10 @@ private:
     std::unordered_set<std::wstring> static_pending_;
     uint32_t cache_generation_ = 0;  // bumped by InvalidateCaches()
     uint64_t query_started_at_ = 0;
+    CtxMenuTiming timing_;
+    bool timing_active_ = false;
+    uint64_t opened_at_ = 0;
+    size_t display_rows_ = 0;
     uint64_t refresh_at_ = 0;
     uint64_t refresh_again_at_ = 0;
     ShellOperations operations_;
