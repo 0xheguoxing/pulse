@@ -1717,6 +1717,41 @@ int wmain(int argc, wchar_t** argv) {
             pulse::l10n::Get(pulse::l10n::StringId::SettingsBlankClickOff) == L"\u4E0D\u64CD\u4F5C" &&
             !pulse::l10n::Get(pulse::l10n::StringId::SettingsBlankClickBack).empty());
     }
+    {
+        using pulse::app::kPreviewTriggerHover;
+        using pulse::app::kPreviewTriggerSpace;
+        passed &= Report("preview trigger defaults to the hover card after 0.5 s",
+            prefs.preview_trigger == kPreviewTriggerHover && prefs.hover_preview_delay_ms == 500);
+        settings_ui.PreviewTrigger(1);
+        passed &= Report("Space-only preview persists",
+            prefs.preview_trigger == kPreviewTriggerSpace && parsed_prefs.FromJson(prefs.ToJson()) &&
+            parsed_prefs.preview_trigger == kPreviewTriggerSpace);
+        settings_ui.PreviewTrigger(5);
+        passed &= Report("preview trigger ignores an out-of-range choice",
+            prefs.preview_trigger == kPreviewTriggerSpace);
+        settings_ui.PreviewTrigger(0);
+        settings_ui.HoverPreviewDelay(2);
+        passed &= Report("hover preview and its delay persist",
+            prefs.preview_trigger == kPreviewTriggerHover && prefs.hover_preview_delay_ms == 800 &&
+            parsed_prefs.FromJson(prefs.ToJson()) && parsed_prefs.preview_trigger == kPreviewTriggerHover &&
+            parsed_prefs.hover_preview_delay_ms == 800);
+        settings_ui.HoverPreviewDelay(0);
+        passed &= Report("short hover delay persists",
+            prefs.hover_preview_delay_ms == 300 && parsed_prefs.FromJson(prefs.ToJson()) &&
+            parsed_prefs.hover_preview_delay_ms == 300);
+        settings_ui.HoverPreviewDelay(1);
+        passed &= Report("preferences without the keys preview on hover after 0.5 s",
+            parsed_prefs.FromJson(L"{}") && parsed_prefs.preview_trigger == kPreviewTriggerHover &&
+            parsed_prefs.hover_preview_delay_ms == 500);
+        passed &= Report("unknown trigger and delay values fall back to the defaults",
+            parsed_prefs.FromJson(L"{\"preview_trigger\":7,\"hover_preview_delay_ms\":42}") &&
+            parsed_prefs.preview_trigger == kPreviewTriggerHover && parsed_prefs.hover_preview_delay_ms == 500);
+        parsed_prefs.preview_trigger = kPreviewTriggerSpace;
+        parsed_prefs.hover_preview_delay_ms = 800;
+        parsed_prefs.ResetToDefaults();
+        passed &= Report("reset restores hover preview",
+            parsed_prefs.preview_trigger == kPreviewTriggerHover && parsed_prefs.hover_preview_delay_ms == 500);
+    }
     passed &= Report("closing the last tab setting has localized text",
         pulse::l10n::Get(pulse::l10n::StringId::SettingsCloseLastTab) ==
             L"\u5173\u95ED\u6700\u540E\u4E00\u4E2A\u6807\u7B7E\u9875\u65F6\u5173\u95ED\u7A97\u53E3" &&

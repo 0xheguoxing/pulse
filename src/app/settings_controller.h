@@ -207,6 +207,8 @@ public:
     void NewTabOpen(int index);
     void ExternalOpen(int index);  // plan §6 policy (multi-window M7b)
     void BlankClick(int index);   // 0 nothing, 1 back, 2 up
+    void PreviewTrigger(int index);    // 0 hover card, 1 Space only
+    void HoverPreviewDelay(int index); // 0.3 / 0.5 / 0.8 s
     // 0 picks the default location's folder, 1 resets it to This PC.
     void HomeFolder(int action);
     void TextRendering(int index);

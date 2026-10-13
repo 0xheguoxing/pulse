@@ -57,6 +57,7 @@ void MainRenderer::SetCompositor(Compositor* comp) {
         thumbnail_cache_.SetDeviceContext(comp->Dc());
         folder_thumbnail_cache_.SetDeviceContext(comp->Dc());
         details_cache_.SetDeviceContext(comp->Dc());
+        hover_cache_.SetDeviceContext(comp->Dc());
     }
 }
 
@@ -77,6 +78,7 @@ void MainRenderer::SetIconNotifyWindow(HWND hwnd) {
         thumbnail_cache_.RemoveNotifyWindow(notify_hwnd_);
         folder_thumbnail_cache_.RemoveNotifyWindow(notify_hwnd_);
         details_cache_.RemoveNotifyWindow(notify_hwnd_);
+        hover_cache_.RemoveNotifyWindow(notify_hwnd_);
     }
     notify_hwnd_ = hwnd;
     if (hwnd) {
@@ -85,6 +87,7 @@ void MainRenderer::SetIconNotifyWindow(HWND hwnd) {
         thumbnail_cache_.AddNotifyWindow(hwnd);
         folder_thumbnail_cache_.AddNotifyWindow(hwnd);
         details_cache_.AddNotifyWindow(hwnd);
+        hover_cache_.AddNotifyWindow(hwnd);
     }
     preview_handler_.SetNotifyWindow(hwnd);
 }

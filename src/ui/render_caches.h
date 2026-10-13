@@ -27,6 +27,9 @@ struct RenderCaches {
     ThumbnailCache thumbnails{96ull * 1024ull * 1024ull, 1024};
     FolderThumbnailCache folder_thumbnails;
     ThumbnailCache details{48ull * 1024ull * 1024ull, 24};
+    // The hover preview card: its own host, so resting on a file never
+    // displaces the details-pane preview of the selection.
+    ThumbnailCache hover{32ull * 1024ull * 1024ull, 24};
 };
 
 // Stops the decode threads and drops every bitmap. Shared caches outlive any
@@ -38,6 +41,7 @@ inline void ResetRenderCaches(RenderCaches& caches) {
     caches.thumbnails.Reset();
     caches.folder_thumbnails.Reset();
     caches.details.Reset();
+    caches.hover.Reset();
 }
 
 }  // namespace pulse::ui

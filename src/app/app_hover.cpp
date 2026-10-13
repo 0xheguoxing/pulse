@@ -1,6 +1,7 @@
 #include "app_hover.h"
 #include "app_runtime.h"
 #include "app_change_tracking.h"
+#include "app_hover_preview.h"
 
 namespace pulse {
 bool UpdatePointerHover(AppState& s, const ui::HitTestResult& hit, POINT point) {
@@ -25,6 +26,7 @@ bool UpdatePointerHover(AppState& s, const ui::HitTestResult& hit, POINT point) 
         s.hoverPaneIndex = hit.pane_index;
         s.ctxHoverSince = row >= 0 ? GetTickCount64() : 0;
         if (row < 0) s.ctxHoverPrefetched.clear();
+        NoteHoverPreviewRow(s);
     }
     s.sidebarScrollbarHot = sidebar_hot;
     s.breadcrumbHover = crumb;

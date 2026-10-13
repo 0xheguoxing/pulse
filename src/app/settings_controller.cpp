@@ -751,6 +751,18 @@ void SettingsController::BlankClick(int index) {
         SaveAndApply(SettingsEffect::None);
 }
 
+void SettingsController::PreviewTrigger(int index) {
+    static constexpr int values[] = {kPreviewTriggerHover, kPreviewTriggerSpace};
+    if (prefs_ && SelectValue(index, values, prefs_->preview_trigger))
+        SaveAndApply(SettingsEffect::None);
+}
+
+void SettingsController::HoverPreviewDelay(int index) {
+    static constexpr int values[] = {300, 500, 800};
+    if (prefs_ && SelectValue(index, values, prefs_->hover_preview_delay_ms))
+        SaveAndApply(SettingsEffect::None);
+}
+
 void SettingsController::HomeFolder(int action) {
     if (!prefs_) return;
     if (action == 0) {

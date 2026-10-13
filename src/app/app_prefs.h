@@ -85,6 +85,11 @@ struct AppPrefs {
     bool show_protected_os_files = false;
     // Double click on empty list space: 0 nothing, 1 back, 2 up (blank_pane_click.h).
     int blank_click_action = 0;
+    // Quick look trigger (Settings > 快速预览): 0 a card appears after the
+    // pointer rests on a file (hover_preview_delay_ms), Space still opens the
+    // full preview; 1 only Space previews. See kPreviewTrigger*.
+    int preview_trigger = 0;
+    int hover_preview_delay_ms = 500; // 300 / 500 / 800
     bool change_tracking_enabled = false;
     int change_tracking_days = 7;
     // system / zh-CN / en-US
@@ -157,6 +162,15 @@ struct AppPrefs {
                (integration_enabled && take_over_explorer_windows);
     }
 };
+
+constexpr int kPreviewTriggerHover = 0;
+constexpr int kPreviewTriggerSpace = 1;
+inline int NormalizePreviewTrigger(int value) noexcept {
+    return value == kPreviewTriggerSpace ? kPreviewTriggerSpace : kPreviewTriggerHover;
+}
+inline int NormalizeHoverPreviewDelay(int ms) noexcept {
+    return ms == 300 || ms == 800 ? ms : 500;
+}
 
 std::wstring FolderOpenCommandLine(const std::wstring& exe);
 bool FolderOpenCommandIsOurs(const std::wstring& command, const std::wstring& exe);

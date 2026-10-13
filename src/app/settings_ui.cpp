@@ -2,6 +2,7 @@
 #include "../common/windows_compat.h"
 #include "../common/localization.h"
 #include "about_info.h"
+#include "app_hover_preview.h"
 #include "../ui/preview_format_catalog.h"
 #include "../ui/folder_picker_dialog.h"
 #include "../common/preview_packs.h"
@@ -169,6 +170,15 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
         case ui::PackAction::UseCustom: refresh=s.settings.ToggleCustomFfmpeg();break;
         case ui::PackAction::UseDetected: refresh=s.settings.UseDetectedFfmpeg();break;
         case ui::PackAction::RemoveOnUninstall: s.settings.ToggleRemovePacksOnUninstall();break;
+        case ui::PackAction::TriggerHover:
+        case ui::PackAction::TriggerSpace:
+            s.settings.PreviewTrigger(hit.index-static_cast<int>(ui::PackAction::TriggerHover));
+            if(s.appPrefs.preview_trigger!=app::kPreviewTriggerHover) HideHoverPreview(s);
+            break;
+        case ui::PackAction::HoverDelayShort:
+        case ui::PackAction::HoverDelayMedium:
+        case ui::PackAction::HoverDelayLong:
+            s.settings.HoverPreviewDelay(hit.index-static_cast<int>(ui::PackAction::HoverDelayShort));break;
         case ui::PackAction::Browse: {
             ui::FolderPickerSpec spec;spec.mode=ui::PickerMode::File;
             spec.title=l10n::Pick(L"选择 ffmpeg.exe",L"Choose ffmpeg.exe");

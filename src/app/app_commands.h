@@ -111,6 +111,9 @@ bool PickFolder(AppState& s, std::wstring& path, const wchar_t* title);
 D2D1_COLOR_F ResolveAccentColor(const app::AppPrefs& prefs, bool dark = false);
 void ApplyAccentFromPrefs(AppState& s, bool snap_picker);
 bool SelectedQuickPreviewItem(AppState& s, ui::QuickPreviewItem& item);
+// The quick preview item for row `index` (source order) of `tab`; false for
+// rows quick look does not open (drives, recycle bin and virtual folders).
+bool QuickPreviewItemForRow(AppState& s, const app::Tab& tab, int index, ui::QuickPreviewItem& item);
 void ToggleQuickPreview(AppState& s);
 void NavigateQuickPreview(AppState& s, int direction);
 // File verb requested from inside the quick preview (WM_QUICK_PREVIEW_COMMAND).

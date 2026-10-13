@@ -592,6 +592,19 @@ struct DuplicateDriveView {
     bool selected = false;
 };
 
+// The hover preview card (Settings > 快速预览 > 预览方式 = 悬停预览): drawn
+// over the window for the file under the pointer. Never hit-tested; the app
+// hides it on click, wheel, keys and focus loss (app_hover_preview.cpp).
+struct HoverPreviewView {
+    bool visible = false;
+    D2D1_RECT_F anchor{};        // the hovered item, client px
+    D2D1_POINT_2F pointer{};     // the pointer when the card opened, client px
+    std::wstring path, name, type_text;
+    DWORD attrs = 0;
+    uint64_t size = 0;
+    uint64_t modified = 0;       // FILETIME as uint64 (thumbnail cache key part)
+};
+
 // HitTestResult::SettingsPackAction indices (Settings > 预览增强包).
 enum class PackAction : int {
     Install = 0,        // FFmpeg pack: download and install
@@ -607,6 +620,8 @@ enum class PackAction : int {
     ImagesEnable,       // image pack: on / off
     RawInstall, RawRemove, RawEnable,
     ArchiveInstall, ArchiveRemove, ArchiveEnable,
+    TriggerHover, TriggerSpace,                         // 预览方式: hover card / Space only
+    HoverDelayShort, HoverDelayMedium, HoverDelayLong,  // 悬停延迟: 0.3 / 0.5 / 0.8 s
 };
 
 // A tab dragged out of another window, over this one (multi-window M7h): the
@@ -815,6 +830,8 @@ struct WindowViewModel {
     bool settings_integration_can_restore = false;
     bool settings_shell_tags = false;
     int settings_blank_click_action = 0;   // app/blank_pane_click.h
+    int settings_preview_trigger = 0;      // app::kPreviewTrigger*
+    int settings_hover_delay_ms = 500;     // 300 / 500 / 800
     bool settings_change_tracking = false;
     int settings_change_days = 3;
     int settings_row_height = 34; // current row-height pref (DIPs) for density radios
@@ -1087,6 +1104,9 @@ public:
     void SetIconNotifyWindow(HWND hwnd);
     void NotifyPreviewActivate(bool active) { preview_handler_.NotifyAppActivate(active); }
     void NotifyPreviewOwnerMoved() { preview_handler_.Reposition(); }
+    // The hover preview card, over everything Render drew (ui_hover_preview.cpp).
+    void DrawHoverPreview(const HoverPreviewView& view, const D2D1_RECT_F& client,
+                          const Theme& theme, bool high_contrast);
 
     // Layout metrics (DIPs).
     float TitleBarHeight() const { return title_bar_height_; }
@@ -1263,7 +1283,7 @@ public:
     void RefreshFolderThumbnails() { folder_thumbnail_cache_.Refresh(); }
     // A preview pack was installed, removed or switched: files that had no
     // thumbnail may have one now, so cached results are dropped.
-    void EvictThumbnails() { thumbnail_cache_.Evict(); }
+    void EvictThumbnails() { thumbnail_cache_.Evict(); hover_cache_.Evict(); }
     auto FolderThumbnailDebugStats() { return folder_thumbnail_cache_.ReadDebugStats(); }
     void SetFolderThumbnailsEnabled(bool enabled) { folder_thumbnails_enabled_ = enabled; }
     // region = HitTestResult region of the button that copied, index its index.
@@ -1650,6 +1670,7 @@ private:
     FolderThumbnailCache& folder_thumbnail_cache_ = caches_.folder_thumbnails;
     bool folder_thumbnails_enabled_ = true;
     ThumbnailCache& details_cache_ = caches_.details;
+    ThumbnailCache& hover_cache_ = caches_.hover;
     PreviewHandlerHost preview_handler_;
     HWND notify_hwnd_ = nullptr;
     bool embedded_ = false;

@@ -2264,6 +2264,10 @@ int QuickPreviewEntryIndex(const app::Tab& tab, const ui::QuickPreviewItem& item
 
 } // namespace
 
+bool QuickPreviewItemForRow(AppState& s, const app::Tab& tab, int index, ui::QuickPreviewItem& item) {
+    return QuickPreviewItemAt(s, tab, index, item);
+}
+
 bool SelectedQuickPreviewItem(AppState& s, ui::QuickPreviewItem& item) {
     app::Tab* tab = ActiveTab(s);
     return tab && QuickPreviewItemAt(s, *tab, tab->selected_index, item);

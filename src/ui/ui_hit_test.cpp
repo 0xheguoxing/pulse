@@ -603,6 +603,11 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     {&lay.pack_browse, PackAction::Browse},
                     {&lay.pack_custom_row, PackAction::UseCustom},
                     {&lay.pack_remove_row, PackAction::RemoveOnUninstall},
+                    {&lay.trigger_choice[0], PackAction::TriggerHover},
+                    {&lay.trigger_choice[1], PackAction::TriggerSpace},
+                    {&lay.hover_delay_choice[0], PackAction::HoverDelayShort},
+                    {&lay.hover_delay_choice[1], PackAction::HoverDelayMedium},
+                    {&lay.hover_delay_choice[2], PackAction::HoverDelayLong},
                 };
                 for (const auto& [bounds, action] : pack_targets) {
                     if (action == PackAction::Install && !pack_text::PrimaryEnabled(vm.settings_pack_media_available,

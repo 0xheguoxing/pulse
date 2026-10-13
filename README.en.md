@@ -59,6 +59,8 @@ Select a file and press Space to preview it without opening another app:
 - DOCX, EPUB and Office documents can be read without the original software; archives show a browsable, searchable tree.
 - Videos play with seeking and frame stepping, animated WebP / APNG play back, and SVG, PSD, AI, DWG thumbnails, fonts and more are supported.
 
+Rest the pointer on a file (0.5 s by default) to get a hover card with its thumbnail or a text excerpt, its type and key facts; press Space while the card shows to open the full preview. Settings → Quick Look → Preview trigger switches to Space only or changes the hover delay.
+
 Settings → Supported formats lists every previewable format and checks whether the HEIF / HEVC / AV1 / WebP system extensions are installed.
 
 ![Markdown Quick Look in Pulse](docs/images/quicklook.png)

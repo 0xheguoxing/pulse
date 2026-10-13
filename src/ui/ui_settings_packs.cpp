@@ -96,6 +96,40 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
         }
         painter_.DrawText(label, bounds, compositor_->SmallFormat(), color, fluent::HorizontalAlignment::Center);
     };
+    // 预览方式: hover card or Space only, then the hover delay.
+    auto choice_row = [&](D2D1_RECT_F r, const D2D1_RECT_F* choices, int count, int checked,
+                          PackAction first, const wchar_t* icon, std::wstring_view title,
+                          std::wstring_view desc, const wchar_t* (*label)(int)) {
+        if (r.bottom <= r.top) return;
+        card(r);
+        const bool stacked = choices[0].left < r.left + 100*s;
+        const float right = stacked ? r.right - 16*s : choices[0].left - 12*s;
+        DrawIconText(r.left + 16*s, r.top + 20*s, 24*s, 24*s, icon, L"", theme.text_secondary, 0.85f);
+        text(title, D2D1::RectF(r.left + 54*s, r.top + 10*s, right, r.top + 34*s));
+        painter_.DrawWrappedCaption(desc, D2D1::Point2F(r.left + 54*s, r.top + 35*s),
+                                    right - r.left - 54*s, theme.text_secondary);
+        painter_.DrawSegmentedTrack(D2D1::RectF(choices[0].left, choices[0].top,
+                                                choices[count - 1].right, choices[count - 1].bottom));
+        for (int i = 0; i < count; ++i) {
+            fluent::SegmentedItemSpec item{};
+            item.bounds = choices[i];
+            item.text = label(i);
+            item.state.checked = i == checked;
+            item.state.hovered = hovered(static_cast<PackAction>(static_cast<int>(first) + i));
+            item.shared_track = true;
+            item.position = i == 0 ? fluent::SegmentPosition::First
+                : i == count - 1 ? fluent::SegmentPosition::Last : fluent::SegmentPosition::Middle;
+            painter_.DrawSegmentedItem(item);
+        }
+    };
+    text(pack_text::TriggerSection(), lay.trigger_section);
+    const int trigger = vm.settings_preview_trigger == 1 ? 1 : 0;
+    choice_row(lay.trigger_row, lay.trigger_choice, 2, trigger, PackAction::TriggerHover, L"\xE890",
+               pack_text::TriggerTitle(), pack_text::TriggerDesc(trigger), &pack_text::TriggerChoice);
+    const int delay = vm.settings_hover_delay_ms == 300 ? 0 : vm.settings_hover_delay_ms == 800 ? 2 : 1;
+    choice_row(lay.hover_delay_row, lay.hover_delay_choice, 3, delay, PackAction::HoverDelayShort, L"\xE916",
+               pack_text::DelayTitle(), pack_text::DelayDesc(), &pack_text::DelayChoice);
+
     text(pack_text::FormatsSection(), lay.preview_section);
     card(lay.preview_group);
     const auto header = lay.disclosure[2];

@@ -344,6 +344,21 @@ struct AppState : AppCoreOwner {
     int hoverPaneIndex = -1;
     ULONGLONG ctxHoverSince = 0;
     std::wstring ctxHoverPrefetched;
+    // The hover preview card (app_hover_preview.cpp): the file it shows, and
+    // what keeps it away after a click, key or wheel until the pointer moves.
+    struct HoverPreviewCard {
+        bool visible = false;
+        int row = -1;                   // source index in the pane's active tab
+        int pane = -1;                  // pane slot (hoverPaneIndex)
+        std::wstring path, name, type_text;
+        DWORD attrs = 0;
+        uint64_t size = 0, modified = 0;
+        POINT point{};                  // pointer when it opened, client px
+        ULONGLONG hidden_at = 0;        // moving on from a shown card: show the next one sooner
+        int quiet_row = -1, quiet_pane = -1; // clicked row: no card until the pointer leaves it
+        bool wait_move = false;         // keys/wheel: no card until the pointer moves
+        POINT quiet_point{};
+    } hoverPreview;
     int dropPaneIndex = -1;
     bool dropHeader = false;            // drop on pane title bar → open folder
     bool scrollbarHovered = false;
@@ -460,6 +475,7 @@ struct AppState : AppCoreOwner {
     bool shot_tooltip = false;
     // GUI verification for the details panel: open it with a pre-selection.
     bool shot_details = false;
+    int shot_hover_preview = -1; // --shot-hover-preview N: hover card over the Nth file
     int shot_group = 0;   // --shot-group N: group the shot folder (1 name .. 6 location)
     bool shot_details_multi = false;
     float shot_scale_override = 0.0f;

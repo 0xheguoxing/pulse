@@ -1992,6 +1992,8 @@ struct SettingsLayout {
     D2D1_RECT_F integration_section{}, integration_badge{}, integration_bar{}, integration_list_head{};
     D2D1_RECT_F integration_chip[4]{};
     float integration_text_right = 0.0f;
+    // Quick Look page: 预览方式 (hover card or Space) and the hover delay.
+    D2D1_RECT_F trigger_section{}, trigger_row{}, trigger_choice[2]{}, hover_delay_row{}, hover_delay_choice[3]{};
     // Quick Look page: formats, source legend and system extensions.
     D2D1_RECT_F preview_section{}, preview_group{}, preview_formats{}, preview_legend{}, preview_legend_note{};
     D2D1_RECT_F preview_header_title{}, preview_header_summary{};

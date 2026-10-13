@@ -92,6 +92,8 @@ void AppPrefs::ResetToDefaults() {
     show_hidden_files = false;
     show_protected_os_files = false;
     blank_click_action = kBlankClickOff;
+    preview_trigger = kPreviewTriggerHover;
+    hover_preview_delay_ms = 500;
     change_tracking_enabled = false;
     change_tracking_days = 7;
     theme_mode = -1;
@@ -209,6 +211,8 @@ std::wstring AppPrefs::ToJson() const {
     // Kept for older builds, which only know on/off.
     out += L",\n  \"blank_click_go_back\":";
     out += blank_click_action != kBlankClickOff ? L"true" : L"false";
+    out += L",\n  \"preview_trigger\":" + std::to_wstring(NormalizePreviewTrigger(preview_trigger));
+    out += L",\n  \"hover_preview_delay_ms\":" + std::to_wstring(NormalizeHoverPreviewDelay(hover_preview_delay_ms));
     out += L",\n  \"change_tracking_enabled\":";
     out += change_tracking_enabled ? L"true" : L"false";
     out += L",\n  \"change_tracking_days\":";
@@ -348,6 +352,10 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     // Files from before blank_click_action carry only the on/off flag (= back).
     blank_click_action = NormalizeBlankClickAction(pulse::json::ExtractInt(json, L"blank_click_action",
         pulse::json::ExtractBool(json, L"blank_click_go_back", false) ? kBlankClickBack : kBlankClickOff));
+    preview_trigger = NormalizePreviewTrigger(
+        pulse::json::ExtractInt(json, L"preview_trigger", kPreviewTriggerHover));
+    hover_preview_delay_ms = NormalizeHoverPreviewDelay(
+        pulse::json::ExtractInt(json, L"hover_preview_delay_ms", 500));
     change_tracking_enabled = pulse::json::ExtractBool(json, L"change_tracking_enabled", false);
     change_tracking_days = pulse::json::ExtractInt(json, L"change_tracking_days", 7);
     if (change_tracking_days != 1 && change_tracking_days != 3 && change_tracking_days != 7)

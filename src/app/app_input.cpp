@@ -12,6 +12,7 @@
 #include "app_internal.h"
 #include "app_input.h"
 #include "app_hover.h"
+#include "app_hover_preview.h"
 #include "app_column_view.h"
 #include "details_column_menu.h"
 #include "../ui/lumatext_renderer.h"
@@ -4128,7 +4129,8 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             s->appPrefs.Save();
             InvalidateRect(hwnd, nullptr, FALSE);
         } else if (wParam == VK_SPACE) {
-            ToggleQuickPreview(*s);
+            // A hover card up: Space opens its file, not the selection.
+            if (!OpenHoverPreviewInQuickLook(*s)) ToggleQuickPreview(*s);
         } else if (ctrl && shift && wParam == L'A') {
             DispatchMenuCommand(*s, app::CmdSelectWildcard);
         } else if (ctrl && wParam == L'A') {

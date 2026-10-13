@@ -2,6 +2,7 @@
 #include "../common/windows_compat.h"
 #include "../ui/FluentTokens.h"
 #include "quick_access.h"
+#include "app_hover_preview.h"
 #include "update_stage.h"
 #include "tag_ads_sync.h"
 #include "app_prompts.h"
@@ -245,7 +246,11 @@ void Render(AppState& s) {
     vm.pane.hover_index = s.hoverRow;
 
     D2D1_RECT_F rect = D2D1::RectF(0, 0, (float)s.compositor.Width(), (float)s.compositor.Height());
+    ui::HoverPreviewView hover_card;
+    FillHoverPreviewView(s, vm, hover_card);
+    if (hover_card.visible) vm.tooltip_text.clear();  // the card already names the file
     s.renderer.Render(vm, rect, theme);
+    if (hover_card.visible) s.renderer.DrawHoverPreview(hover_card, rect, theme, hc);
     s.notification_toast.Draw(s.compositor, theme, s.scale, hc);
 
     const HRESULT end_hr = dc->EndDraw();
@@ -628,6 +633,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return CloseForUpdate(*s);
     if (s && IsUiActivityMessage(msg)) NoteUiActivity(*s, hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
     if (s && s->notification_toast.HandleMessage(hwnd, msg, wParam, lParam)) return 0;
+    if (s && HoverPreviewMessage(*s, hwnd, msg, wParam, lParam)) return 0;
     if (s && WindowSwitcherMessage(*s, hwnd, msg, wParam, lParam)) return 0;  // M7d
     if (LRESULT overview_result = 0; s && WindowOverviewMessage(*s, hwnd, msg, wParam, lParam, overview_result))
         return overview_result;  // M7e
@@ -2690,6 +2696,17 @@ int ShotModeMain(AppState& state, HWND hwnd) {
             state.hoverPoint = POINT{ 60, 320 };
             state.tooltipText = state.hoverLabel;
         }
+        if (state.shot_hover_preview >= 0 && StageHoverPreviewShot(state, state.shot_hover_preview)) {
+            // Let the card's thumbnail or text excerpt decode before the shot.
+            for (int i = 0; i < 15; ++i) {
+                Render(state);
+                while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+                Sleep(60);
+            }
+        }
         Render(state);
         ok = state.compositor.SaveSnapshot(state.shot.output.c_str());
     } __except (pulse::crash::ReportFatal(GetExceptionInformation(), "shot")) {
@@ -2945,6 +2962,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             state.hoverLabel = L"Project";
             state.hoverPoint = POINT{ 60, 320 };
             state.tooltipText = state.hoverLabel;
+        } else if (wcscmp(__wargv[i], L"--shot-hover-preview") == 0 && i + 1 < __argc) {
+            // GUI verification for the hover card: over the Nth file (0-based).
+            state.shot_hover_preview = std::max(0, _wtoi(__wargv[++i]));
         } else if (wcscmp(__wargv[i], L"--shot-details") == 0) {
             state.shot_details = true;
         } else if (wcscmp(__wargv[i], L"--shot-group") == 0 && i + 1 < __argc) {
