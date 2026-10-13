@@ -202,7 +202,12 @@ void FluentMenuModel::Layout(IDWriteFactory2* dwrite, float scale, float min_wid
         } else if (!it.badge_text.empty()) {
             w += shortcut_gap + MeasureWidth(dwrite, caption.get(), it.badge_text) + 14.0f * scale_;
         } else if (!it.shortcut.empty()) {
-            w += shortcut_gap + MeasureWidth(dwrite, caption.get(), it.shortcut);
+            // DrawMenuItem keeps >= 80dip for the label plus an 8dip gap before
+            // the shortcut column; reserve the same here, or a short label
+            // ("文件夹") makes the card too narrow and "Ctrl+Shift+N" ellipsizes.
+            // The 8dip slack covers LumaText ink running past the DWrite advance.
+            w += (std::max)(shortcut_gap, 88.0f * scale_ - text_w) +
+                 MeasureWidth(dwrite, caption.get(), it.shortcut) + 8.0f * scale_;
         }
         if (!it.quick_swatches.empty())
             w = (std::max)(w, (32.0f + SwatchSpacingDip(it) *

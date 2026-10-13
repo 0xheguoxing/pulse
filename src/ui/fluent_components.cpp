@@ -1427,8 +1427,9 @@ void Painter::DrawMenuItem(const MenuItemSpec& spec) {
         content.right -= badge_width + Px(8.0f);
     } else if (!spec.shortcut.empty()) {
         IDWriteTextFormat* cap = CaptionFormat();
-        const float measured = MeasureTextWidth(
-            compositor_->DwriteFactory(), cap, spec.shortcut) + Px(4.0f);
+        // Measure the way DrawText renders: LumaText glyphs run wider than
+        // the plain DWrite advance, which ellipsized "Ctrl+Shift+N".
+        const float measured = MeasureTextWidth(compositor_, cap, spec.shortcut) + Px(4.0f);
         const float min_label = Px(80.0f);
         const float max_shortcut = std::max(Px(24.0f), Width(content) - min_label - Px(8.0f));
         const float shortcut_width = std::clamp(measured, Px(24.0f), max_shortcut);
