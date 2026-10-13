@@ -3,6 +3,7 @@
 #include "pane_drop.h"
 
 #include "pane_layout.h"
+#include "split_tree_shape.h"
 
 #include <algorithm>
 #include <cmath>
@@ -52,14 +53,6 @@ void StorePanes(LayoutTab& tab, const std::vector<Pane*>& order, std::vector<std
     }
 }
 
-LayoutPreset ShrunkPreset(size_t visible) {
-    switch (visible) {
-    case 3: return LayoutPreset::TwoVertical;
-    case 4: return LayoutPreset::Three;
-    default: return LayoutPreset::Single;
-    }
-}
-
 // The visible panes in `placement`'s order with `added` at its slots.
 std::vector<Pane*> PlacedOrder(const std::vector<Pane*>& visible, const std::vector<Pane*>& added,
                                const PanePlacement& placement) {
@@ -103,49 +96,62 @@ std::vector<std::pair<Pane*, D2D1_RECT_F>> LayOut(const std::vector<Pane*>& visi
     return laid;
 }
 
-float Area(const D2D1_RECT_F& r) { return (std::max)(0.0f, r.right - r.left) * (std::max)(0.0f, r.bottom - r.top); }
-
-float Overlap(const D2D1_RECT_F& a, const D2D1_RECT_F& b) {
-    return Area(D2D1::RectF((std::max)(a.left, b.left), (std::max)(a.top, b.top), (std::min)(a.right, b.right),
-                            (std::min)(a.bottom, b.bottom)));
-}
-
-bool Inside(const D2D1_RECT_F& r, POINT pt) {
-    const float x = static_cast<float>(pt.x), y = static_cast<float>(pt.y);
-    return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
-}
-
 float Distance(const D2D1_RECT_F& r, POINT pt) {
     const float x = static_cast<float>(pt.x), y = static_cast<float>(pt.y);
     const float dx = (std::max)({r.left - x, 0.0f, x - r.right}), dy = (std::max)({r.top - y, 0.0f, y - r.bottom});
     return std::sqrt(dx * dx + dy * dy);
 }
 
-D2D1_POINT_2F Center(const D2D1_RECT_F& r) { return {(r.left + r.right) * 0.5f, (r.top + r.bottom) * 0.5f}; }
-
-// The half of `pane` at `side`: where the user means the new panes to go.
-D2D1_RECT_F HalfAt(const D2D1_RECT_F& pane, ContentDrop side) {
-    const float mx = (pane.left + pane.right) * 0.5f, my = (pane.top + pane.bottom) * 0.5f;
-    switch (side) {
-    case ContentDrop::Left: return D2D1::RectF(pane.left, pane.top, mx, pane.bottom);
-    case ContentDrop::Right: return D2D1::RectF(mx, pane.top, pane.right, pane.bottom);
-    case ContentDrop::Top: return D2D1::RectF(pane.left, pane.top, pane.right, my);
-    default: return D2D1::RectF(pane.left, my, pane.right, pane.bottom);
-    }
+// M7k: the owner of the leaf showing `pane` in the tree under `node`.
+std::unique_ptr<SplitContainer>* LeafOf(std::unique_ptr<SplitContainer>& node, const Pane* pane) {
+    if (!node) return nullptr;
+    if (node->is_leaf) return node->pane == pane ? &node : nullptr;
+    if (auto* found = LeafOf(node->first, pane)) return found;
+    return LeafOf(node->second, pane);
 }
 
-// Every way to choose `count` ascending places out of `total`.
-void Combinations(size_t total, size_t count, size_t from, std::vector<size_t>& pick,
-                  std::vector<std::vector<size_t>>& out) {
-    if (pick.size() == count) {
-        out.push_back(pick);
-        return;
+std::unique_ptr<SplitContainer> CopyTree(const SplitContainer& node) {
+    if (node.is_leaf) return SplitContainer::CreateLeaf(node.pane);
+    return SplitContainer::Join(node.orientation, node.ratio, node.first ? CopyTree(*node.first) : nullptr,
+                                node.second ? CopyTree(*node.second) : nullptr);
+}
+
+// Splits the leaf of `pane` in half at `side`; `half` takes that half.
+bool SplitLeaf(std::unique_ptr<SplitContainer>& root, const Pane* pane, ContentDrop side,
+               std::unique_ptr<SplitContainer> half) {
+    std::unique_ptr<SplitContainer>* const leaf = LeafOf(root, pane);
+    if (!leaf || !half || !IsEdge(side)) return false;
+    const SplitOrientation orientation =
+        side == ContentDrop::Left || side == ContentDrop::Right ? SplitOrientation::Vertical : SplitOrientation::Horizontal;
+    std::unique_ptr<SplitContainer> kept = std::move(*leaf);
+    *leaf = Leading(side) ? SplitContainer::Join(orientation, 0.5f, std::move(half), std::move(kept))
+                          : SplitContainer::Join(orientation, 0.5f, std::move(kept), std::move(half));
+    return true;
+}
+
+// Takes the leaf of `pane` out of the tree under `node`: its sibling takes
+// the place of the split they shared.
+bool DropLeaf(std::unique_ptr<SplitContainer>& node, const Pane* pane) {
+    if (!node || node->is_leaf) return false;
+    const auto is_pane = [&](const std::unique_ptr<SplitContainer>& child) {
+        return child && child->is_leaf && child->pane == pane;
+    };
+    if (is_pane(node->first) || is_pane(node->second)) {
+        std::unique_ptr<SplitContainer>& sibling = is_pane(node->first) ? node->second : node->first;
+        if (!sibling) return false;
+        std::unique_ptr<SplitContainer> kept = std::move(sibling);
+        node = std::move(kept);
+        return true;
     }
-    for (size_t at = from; at < total; ++at) {
-        pick.push_back(at);
-        Combinations(total, count, at + 1, pick, out);
-        pick.pop_back();
-    }
+    return DropLeaf(node->first, pane) || DropLeaf(node->second, pane);
+}
+
+// True when the pane split of `placement` fits `tab` with `added` panes.
+bool ValidSplit(const LayoutTab& tab, const PanePlacement& placement, size_t added) {
+    if (!placement.pane || !placement.Splits() || !tab.root || added == 0) return false;
+    const std::vector<Pane*> visible = tab.VisiblePanes();
+    return visible.size() + added <= kMaxTabPanes &&
+           std::find(visible.begin(), visible.end(), placement.pane) != visible.end();
 }
 
 // The edge of `pane` nearest to `pt`, as a share of its width (left, right)
@@ -221,7 +227,26 @@ PanePlacement EdgePlacement(const LayoutTab& tab, size_t added, ContentDrop edge
 }
 
 std::vector<D2D1_RECT_F> PlacementRects(const LayoutTab& tab, const PanePlacement& placement,
-                                        const D2D1_RECT_F& content, float scale) {
+                                        const D2D1_RECT_F& content, float scale, const LayoutTab* incoming_tab) {
+    if (placement.pane) {
+        // The tree as it will be, with the incoming panes (or one stand-in
+        // for all of them) in the half they take.
+        const bool own = incoming_tab && incoming_tab->root && DropPaneCount(*incoming_tab) > 0;
+        Pane stand_in;
+        const std::vector<Pane*> want = own ? incoming_tab->VisiblePanes() : std::vector<Pane*>{&stand_in};
+        if (!ValidSplit(tab, placement, want.size())) return {content};
+        std::unique_ptr<SplitContainer> tree = CopyTree(*tab.root);
+        if (!SplitLeaf(tree, placement.pane, placement.side,
+                       own ? CopyTree(*incoming_tab->root) : SplitContainer::CreateLeaf(&stand_in)))
+            return {content};
+        std::vector<std::pair<Pane*, D2D1_RECT_F>> laid;
+        LayoutWindowPanes(*tree, content, scale, laid);
+        std::vector<D2D1_RECT_F> rects;
+        for (const Pane* pane : want)
+            for (const auto& [placed, rect] : laid)
+                if (placed == pane) rects.push_back(rect);
+        return rects.size() == want.size() ? rects : std::vector<D2D1_RECT_F>{content};
+    }
     const std::vector<Pane*> visible = tab.VisiblePanes();
     const size_t added = placement.slots.size();
     if (!ValidPlacement(placement, visible.size(), added)) return {content};
@@ -267,70 +292,18 @@ PanePlacement AimPaneDrop(const LayoutTab& tab, size_t added, const D2D1_RECT_F&
     // (M7j; a new tab is a drop on the strip).
     const ContentDrop edge = NearestPaneEdge(pane, nearest);
     if (side) *side = edge;
-    const D2D1_RECT_F want = HalfAt(pane, edge);
-    const float want_area = (std::max)(1.0f, Area(want));
-    const float diagonal = (std::max)(1.0f, std::hypot(content.right - content.left, content.bottom - content.top));
-
-    std::vector<LayoutPreset> presets;
-    if (total == 2) presets = {LayoutPreset::TwoVertical, LayoutPreset::TwoHorizontal};
-    else if (total == 3) presets = {LayoutPreset::Three};
-    else presets = {LayoutPreset::FourGrid};
-    std::vector<std::vector<size_t>> choices;
-    std::vector<size_t> pick;
-    Combinations(total, added, 0, pick, choices);
-
-    std::vector<Pane> placeholders(added);
-    std::vector<Pane*> incoming;
-    for (Pane& p : placeholders) incoming.push_back(&p);
-    // The panes already there may trade places (at most 3! orders): the top
-    // of a big left pane takes its place and pushes it down, say.
-    std::vector<std::vector<size_t>> orders;
-    std::vector<size_t> order(visible.size());
-    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
-    do {
-        orders.push_back(order);
-    } while (std::next_permutation(order.begin(), order.end()));
-    orders.front().clear();  // the first is their own order
-
-    PanePlacement best;
-    float best_score = -1e9f;
-    for (const LayoutPreset preset : presets) {
-        for (const std::vector<size_t>& slots : choices) {
-            for (const std::vector<size_t>& kept : orders) {
-                const PanePlacement candidate{preset, slots, kept};
-                const auto laid = LayOut(visible, incoming, candidate, content, scale);
-                float covered = 0.0f, new_area = 0.0f, moved = 0.0f;
-                bool cursor = false;
-                for (const auto& [p, rect] : laid) {
-                    if (std::find(incoming.begin(), incoming.end(), p) != incoming.end()) {
-                        covered += Overlap(rect, want);
-                        new_area += Area(rect);
-                        cursor = cursor || Inside(rect, pt);
-                        continue;
-                    }
-                    for (const auto& [old_pane, old_rect] : now) {
-                        if (old_pane != p) continue;
-                        const D2D1_POINT_2F a = Center(old_rect), b = Center(rect);
-                        moved += std::hypot(a.x - b.x, a.y - b.y) / diagonal;
-                    }
-                }
-                // Fill the meant half, without spilling far past it, under the
-                // cursor; then keep the other panes where they were.
-                const float score = covered / want_area + 0.5f * (covered / (std::max)(1.0f, new_area)) +
-                                    (cursor ? 0.5f : 0.0f) - 0.5f * moved;
-                if (score > best_score + 1e-4f) {
-                    best_score = score;
-                    best = candidate;
-                }
-            }
-        }
-    }
-    return best;
+    // Exactly that pane splits in half there; the others stay put (M7k).
+    PanePlacement placement;
+    placement.layout = LayoutPreset::Custom;
+    placement.pane = under->first;
+    placement.side = edge;
+    return placement;
 }
 
 bool CanPlacePanes(const LayoutTab& tab, const LayoutTab& incoming, const PanePlacement& placement) {
-    return HasRoomForPanes(tab, incoming) &&
-           ValidPlacement(placement, tab.VisiblePanes().size(), DropPaneCount(incoming));
+    if (!HasRoomForPanes(tab, incoming)) return false;
+    return placement.pane ? ValidSplit(tab, placement, DropPaneCount(incoming))
+                          : ValidPlacement(placement, tab.VisiblePanes().size(), DropPaneCount(incoming));
 }
 
 bool AddPaneFromTab(LayoutTab& tab, std::unique_ptr<LayoutTab> incoming, const PanePlacement& placement) {
@@ -340,7 +313,16 @@ bool AddPaneFromTab(LayoutTab& tab, std::unique_ptr<LayoutTab> incoming, const P
     if (!focus || std::find(added.begin(), added.end(), focus) == added.end()) focus = added.front();
     std::vector<std::unique_ptr<Pane>> moved = std::move(incoming->panes);
     incoming->panes.clear();
-    incoming->root.reset();
+    std::unique_ptr<SplitContainer> half = std::move(incoming->root);
+    if (placement.pane) {
+        // They keep their own arrangement in the half of the pane (M7k); a
+        // tree that came out as a preset after all is named so.
+        SplitLeaf(tab.root, placement.pane, placement.side, std::move(half));
+        tab.layout = PresetOfTree(*tab.root);
+        StorePanes(tab, tab.VisiblePanes(), std::move(moved), focus);
+        for (Pane* pane : added) pane->target = false;
+        return true;
+    }
     const std::vector<Pane*> order = PlacedOrder(tab.VisiblePanes(), added, placement);
     tab.layout = placement.layout;
     tab.root = MakePresetTree(placement.layout, order);
@@ -358,14 +340,16 @@ bool AddPaneFromTab(LayoutTab& tab, std::unique_ptr<LayoutTab> incoming, Content
 std::unique_ptr<LayoutTab> TakePaneAsTab(LayoutTab& tab, Pane* pane, PaneOrigin& origin) {
     std::vector<Pane*> order = tab.VisiblePanes();
     const auto it = std::find(order.begin(), order.end(), pane);
-    if (!pane || order.size() < 2 || it == order.end()) return nullptr;
-    const size_t visible = order.size();
+    if (!pane || order.size() < 2 || it == order.end() || !tab.root) return nullptr;
     origin = PaneOrigin{static_cast<size_t>(it - order.begin()), tab.layout, {}, false};
+    origin.shape = SplitTreeShape(*tab.root);
     origin.target = tab.target_index >= 0 && static_cast<size_t>(tab.target_index) < tab.panes.size() &&
                     tab.panes[static_cast<size_t>(tab.target_index)].get() == pane;
     if (tab.root) CollectSplitRatios(*tab.root, origin.ratios);
     const Pane* focus = tab.FocusedPane() == pane ? nullptr : tab.FocusedPane();
-    order.erase(it);
+    // Its sibling closes up over the place they shared (M7k).
+    if (!DropLeaf(tab.root, pane)) return nullptr;
+    order = tab.VisiblePanes();
 
     auto own = std::make_unique<LayoutTab>();
     for (auto& owned : tab.panes) {
@@ -375,8 +359,7 @@ std::unique_ptr<LayoutTab> TakePaneAsTab(LayoutTab& tab, Pane* pane, PaneOrigin&
         }
     }
     if (!focus) focus = order.front();
-    tab.layout = ShrunkPreset(visible);
-    tab.root = MakePresetTree(tab.layout, order);
+    tab.layout = PresetOfTree(*tab.root);
     StorePanes(tab, order, {}, focus);
 
     own->root = SplitContainer::CreateLeaf(pane);
@@ -389,20 +372,22 @@ std::unique_ptr<LayoutTab> TakePaneAsTab(LayoutTab& tab, Pane* pane, PaneOrigin&
 
 bool CanPutPaneBack(const LayoutTab& tab, const LayoutTab& incoming, const PaneOrigin& origin) {
     return incoming.panes.size() == 1 && incoming.panes[0] &&
-           tab.VisiblePanes().size() + 1 == LayoutPresetCount(origin.layout);
+           tab.VisiblePanes().size() + 1 == ShapePaneCount(origin.shape);
 }
 
 bool PutPaneBack(LayoutTab& tab, std::unique_ptr<LayoutTab> incoming, const PaneOrigin& origin) {
     if (!incoming || !CanPutPaneBack(tab, *incoming, origin)) return false;
+    Pane* const added = incoming->panes[0].get();
+    std::vector<Pane*> order = tab.VisiblePanes();
+    order.insert(order.begin() + static_cast<ptrdiff_t>((std::min)(origin.position, order.size())), added);
+    std::unique_ptr<SplitContainer> root = MakeShapedTree(origin.shape, order);
+    if (!root) return false;
     std::unique_ptr<Pane> moved = std::move(incoming->panes[0]);
     incoming->panes.clear();
     incoming->root.reset();
-    Pane* const added = moved.get();
-    std::vector<Pane*> order = tab.VisiblePanes();
-    order.insert(order.begin() + static_cast<ptrdiff_t>((std::min)(origin.position, order.size())), added);
-    tab.layout = origin.layout;
-    tab.root = MakePresetTree(origin.layout, order);
-    if (tab.root) ApplySplitRatios(*tab.root, origin.ratios);
+    ApplySplitRatios(*root, origin.ratios);
+    tab.root = std::move(root);
+    tab.layout = PresetOfTree(*tab.root);
     std::vector<std::unique_ptr<Pane>> extras;
     extras.push_back(std::move(moved));
     StorePanes(tab, order, std::move(extras), added);

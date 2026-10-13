@@ -330,7 +330,7 @@ Drop ContentDropAt(AppState& moving, AppState& target, POINT client, float width
     if (!placement.Splits() || !app::CanPlacePanes(*active, *incoming, placement)) return drop;
     drop.zone = side;
     drop.placement = placement;
-    drop.rects = app::PlacementRects(*active, placement, content, target.scale);
+    drop.rects = app::PlacementRects(*active, placement, content, target.scale, incoming);
     return drop;
 }
 

@@ -1,6 +1,7 @@
 // app_runtime.h — Shared layout accessors and window-model helpers.
 #pragma once
 #include "app_state.h"
+#include "split_tree_shape.h"
 
 namespace pulse {
 
@@ -32,6 +33,13 @@ inline const std::unique_ptr<app::SplitContainer>& Root(const AppState& s) {
 
 inline app::LayoutPreset& LayoutOf(AppState& s) {
     return LiveLayout(s).layout;
+}
+
+// The preset a pinned workspace keeps for the active tab, which knows no
+// free split tree: a custom one (M7k) as the preset with as many panes.
+inline app::LayoutPreset WorkspaceLayoutOf(AppState& s) {
+    const app::LayoutTab& tab = LiveLayout(s);
+    return tab.layout == app::LayoutPreset::Custom ? app::PresetForPaneCount(tab.VisiblePanes().size()) : tab.layout;
 }
 
 template<typename Fn>

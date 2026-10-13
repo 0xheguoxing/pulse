@@ -325,6 +325,9 @@ enum class LayoutPreset : int {
     TwoHorizontal = 2,
     Three = 3,
     FourGrid = 4,
+    // M7k: a free split tree (a dropped tab split one pane in half) that is
+    // none of the shapes above. Its pane count is its leaves.
+    Custom = 5,
 };
 
 struct SplitContainer {

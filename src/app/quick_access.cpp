@@ -140,7 +140,7 @@ void ShowWorkspaceMenu(AppState& s, int index, POINT point) {
     } else if (command == kUpdate) {
         // The snapshot was only taken when pinning; this is the one way to
         // refresh it without unpinning (which would drop frequent folders).
-        s.places.UpdateWorkspaceSnapshot(index, static_cast<int>(LayoutOf(s)),
+        s.places.UpdateWorkspaceSnapshot(index, static_cast<int>(WorkspaceLayoutOf(s)),
                                          CollectPanePaths(s), CollectPaneViews(s));
         s.places.active_workspace = index;
         s.places.Save();

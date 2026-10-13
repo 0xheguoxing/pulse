@@ -939,7 +939,7 @@ void DispatchMenuCommand(AppState& s, int cmd) {
             if (s.places.FindWorkspace(root) >= 0) {
                 s.places.UnpinWorkspace(root);
             } else {
-                s.places.PinWorkspace(root, L"", static_cast<int>(LayoutOf(s)), CollectPanePaths(s),
+                s.places.PinWorkspace(root, L"", static_cast<int>(WorkspaceLayoutOf(s)), CollectPanePaths(s),
                                       CollectPaneViews(s));
             }
         }

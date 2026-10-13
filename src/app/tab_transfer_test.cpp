@@ -4,6 +4,7 @@
 #include "app_internal.h"
 #include "tab_detach.h"
 #include "pane_drop.h"
+#include "split_tree_shape.h"
 #include "dir_notify_queue.h"
 #include "folder_move_remap.h"
 #include "tab_spring.h"
@@ -194,10 +195,15 @@ bool RunTabTransferTest() {
         check(taken && taken->panes.size() == 1 && taken->panes[0].get() == grid[1] && taken->FocusedPane() == grid[1] &&
                   taken->layout == LayoutPreset::Single && !grid[1]->target,
               "a pane dragged out by its header becomes a focused single-pane tab");
-        check(tab->layout == LayoutPreset::Three && rest.size() == 3 && rest[0] == grid[0] && rest[1] == grid[2] &&
-                  rest[2] == grid[3] && tab->FocusedPane() == grid[3] && tab->target_index == -1 &&
-                  origin.position == 1 && origin.layout == LayoutPreset::FourGrid && origin.target,
+        check(rest.size() == 3 && rest[0] == grid[0] && rest[1] == grid[2] && rest[2] == grid[3] &&
+                  tab->FocusedPane() == grid[3] && tab->target_index == -1 && origin.position == 1 &&
+                  origin.layout == LayoutPreset::FourGrid && origin.shape == L"HVPPVPP" && origin.target,
               "the grid keeps three panes in screen order, the focused one still focused");
+        std::vector<float> rest_ratios;
+        CollectSplitRatios(*tab->root, rest_ratios);
+        check(tab->layout == LayoutPreset::Custom && SplitTreeShape(*tab->root) == L"HPVPP" &&
+                  rest_ratios == std::vector<float>{ratios[0], ratios[2]},
+              "M7k: the top left pane closes up over the top row; the bottom row stays where it was");
         std::vector<float> restored;
         check(CanPutPaneBack(*tab, *taken, origin) && PutPaneBack(*tab, std::move(taken), origin) &&
                   tab->layout == LayoutPreset::FourGrid && tab->VisiblePanes() == grid && tab->FocusedPane() == grid[1] &&
@@ -221,9 +227,23 @@ bool RunTabTransferTest() {
         AddPaneFromTab(*three_tab, MakeSingleLayoutTab(L""), ContentDrop::Right);
         AddPaneFromTab(*three_tab, MakeSingleLayoutTab(L""), ContentDrop::Right);
         PaneOrigin three_origin;
-        check(TakePaneAsTab(*three_tab, three_tab->VisiblePanes()[0], three_origin) &&
-                  three_tab->layout == LayoutPreset::TwoVertical && three_tab->VisiblePanes().size() == 2,
-              "out of three panes, two stay side by side");
+        const std::vector<Pane*> trio = three_tab->VisiblePanes();
+        check(TakePaneAsTab(*three_tab, trio[0], three_origin) &&
+                  three_tab->layout == LayoutPreset::TwoHorizontal && three_tab->VisiblePanes() ==
+                      std::vector<Pane*>{trio[1], trio[2]},
+              "M7k: out of three panes, the big left one leaves and the stacked right ones fill the tab");
+        auto other_three = MakeSingleLayoutTab(L"");
+        AddPaneFromTab(*other_three, MakeSingleLayoutTab(L""), ContentDrop::Right);
+        AddPaneFromTab(*other_three, MakeSingleLayoutTab(L""), ContentDrop::Right);
+        const std::vector<Pane*> trio2 = other_three->VisiblePanes();
+        PaneOrigin top_origin;
+        auto top = TakePaneAsTab(*other_three, trio2[1], top_origin);
+        check(top && other_three->layout == LayoutPreset::TwoVertical &&
+                  other_three->VisiblePanes() == std::vector<Pane*>{trio2[0], trio2[2]},
+              "M7k: the top right one leaves and the lower right one takes the right column");
+        check(PutPaneBack(*other_three, std::move(top), top_origin) && other_three->layout == LayoutPreset::Three &&
+                  other_three->VisiblePanes() == trio2,
+              "and Esc puts it back in its place");
     }
 
     // --- M6e: a file drag resting on a tab opens it -------------------------

@@ -1,5 +1,6 @@
 // app_model.cpp
 #include "app_model.h"
+#include "split_tree_shape.h"
 #include "layout_pane_selection.h"
 #include "network_sidebar.h"
 #include "../common/config_json.h"
@@ -611,6 +612,18 @@ std::unique_ptr<LayoutTab> MakeSingleLayoutTab(const std::wstring& path, const T
 }
 
 void RebuildLayoutRoot(LayoutTab& tab) {
+    if (tab.layout == LayoutPreset::Custom) {
+        // A free tree has no preset to be rebuilt from (M7k): it stays while
+        // every leaf is a pane of the tab, else the tab takes a preset.
+        std::vector<Pane*> leaves;
+        if (tab.root) tab.root->CollectPanes(leaves);
+        const bool owned = !leaves.empty() && std::all_of(leaves.begin(), leaves.end(), [&](const Pane* leaf) {
+            return std::any_of(tab.panes.begin(), tab.panes.end(),
+                               [&](const std::unique_ptr<Pane>& pane) { return pane.get() == leaf; });
+        });
+        if (owned) return;
+        tab.layout = PresetForPaneCount(tab.panes.size());
+    }
     const size_t n = LayoutPresetCount(tab.layout);
     std::vector<Pane*> visible;
     if (tab.root) tab.root->CollectPanes(visible);
@@ -749,6 +762,7 @@ size_t LayoutPresetCount(LayoutPreset preset) {
     case LayoutPreset::TwoHorizontal: return 2;
     case LayoutPreset::Three: return 3;
     case LayoutPreset::FourGrid: return 4;
+    case LayoutPreset::Custom: return 0;  // its tree's leaves
     }
     return 1;
 }
@@ -1859,7 +1873,7 @@ std::wstring LayoutTabTitle(const LayoutTab& tab) {
     if (!view) return {};
     std::wstring name = view->virtual_title.empty()
         ? TabTitle(view->current_path) : view->virtual_title;
-    const size_t n = LayoutPresetCount(tab.layout);
+    const size_t n = tab.layout == LayoutPreset::Custom ? tab.VisiblePanes().size() : LayoutPresetCount(tab.layout);
     if (n > 1) {
         name += L" · ";
         name += std::to_wstring(n);
