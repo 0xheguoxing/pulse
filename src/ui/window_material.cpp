@@ -424,12 +424,18 @@ bool SampleTarget(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float margin,
 
 bool DrawAcrylicSample(ID2D1DeviceContext* dc, const TargetSample& sample, const D2D1_RECT_F& rect, float radius,
                        bool dark, float blur_std) noexcept {
-    if (!dc || !sample.bitmap.get()) return false;
     // WinUI AcrylicInAppFillColorDefaultBrush: tint #FCFCFC / #2C2C2C, tint
     // opacity 0 / 0.15, luminosity opacity 0.85 / 0.96.
+    return DrawAcrylicSample(dc, sample, rect, radius, dark, blur_std,
+                             dark ? 0.96f : 0.85f, dark ? 0.15f : 0.0f);
+}
+
+bool DrawAcrylicSample(ID2D1DeviceContext* dc, const TargetSample& sample, const D2D1_RECT_F& rect, float radius,
+                       bool dark, float blur_std, float luminosity_opacity, float tint_opacity) noexcept {
+    if (!dc || !sample.bitmap.get()) return false;
     MaterialGraph graph;
     if (FAILED(BuildMaterialGraph(dc, sample.bitmap.get(), dark ? HexColor(0x2C2C2C) : HexColor(0xFCFCFC), blur_std,
-                                  dark ? 0.96f : 0.85f, dark ? 0.15f : 0.0f, graph)))
+                                  luminosity_opacity, tint_opacity, graph)))
         return false;
     ComPtr<ID2D1Factory> factory;
     dc->GetFactory(&factory);

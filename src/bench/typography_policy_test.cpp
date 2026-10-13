@@ -134,6 +134,44 @@ struct FluentMenuTestPeer {
                 std::abs(away[0] - solid[0]) <= 2 && std::abs(away[2] - solid[2]) <= 2,
                 "a menu outside the window keeps the solid plate");
 
+            // Worst cases for body text: a dark menu over white, a light menu
+            // over black. Text is #FFFFFF (dark) and #303B50 (light).
+            const auto luminance = [](const int rgb[3]) {
+                double l[3]{};
+                for (int i = 0; i < 3; ++i) {
+                    const double c = rgb[i] / 255.0;
+                    l[i] = c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+                }
+                return 0.2126 * l[0] + 0.7152 * l[1] + 0.0722 * l[2];
+            };
+            const auto contrast = [&](const int a[3], const int b[3]) {
+                const double la = luminance(a), lb = luminance(b);
+                return ((std::max)(la, lb) + 0.05) / ((std::min)(la, lb) + 0.05);
+            };
+            const struct { bool dark; float back; int text[3]; const char* label; } worst[] = {
+                {true, 1.0f, {255, 255, 255}, "dark acrylic menu over white keeps body text at 4.5:1"},
+                {false, 0.0f, {0x30, 0x3B, 0x50}, "light acrylic menu over black keeps body text at 4.5:1"},
+            };
+            for (const auto& w : worst) {
+                FluentMenu::SetAcrylicEnabled(true);
+                dc->BeginDraw();
+                dc->Clear(D2D1::ColorF(w.back, w.back, w.back, 1.0f));
+                dc->EndDraw();
+                compositor.Present();
+                menu.SetTheme(w.dark, D2D1::ColorF(0.2f, 0.4f, 0.8f));
+                menu.base_x_ = client.x + 40;
+                menu.base_y_ = client.y + 30;
+                menu.surf_.plate.reset();
+                menu.acrylic_active_ = true;
+                int plate_rgb[3]{};
+                const bool ok = menu.Render() && menu.surf_.plate.get() != nullptr;
+                if (ok) CardCenter(menu, plate_rgb);
+                const double ratio = ok ? contrast(plate_rgb, w.text) : 0.0;
+                std::printf("acrylic contrast: plate %d,%d,%d ratio %.2f\n",
+                    plate_rgb[0], plate_rgb[1], plate_rgb[2], ratio);
+                fails += check(ok && ratio >= 4.5, w.label);
+            }
+
             FluentMenu::SetAcrylicEnabled(false);
             compositor.Present();
             fails += check(compositor.FrameCopy() == nullptr, "turning menu acrylic off drops the frame copy");

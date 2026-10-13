@@ -38,6 +38,9 @@ struct TargetSample {
 bool SampleTarget(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float margin, TargetSample& sample) noexcept;
 bool DrawAcrylicSample(ID2D1DeviceContext* dc, const TargetSample& sample, const D2D1_RECT_F& rect, float radius,
                        bool dark, float blur_std) noexcept;
+// Same graph with explicit opacities (menus use a clearer plate than capsules).
+bool DrawAcrylicSample(ID2D1DeviceContext* dc, const TargetSample& sample, const D2D1_RECT_F& rect, float radius,
+                       bool dark, float blur_std, float luminosity_opacity, float tint_opacity) noexcept;
 
 // Popup acrylic (menus) follows the system: off under high contrast, when
 // Windows "Transparency effects" is off, and while battery saver is on.

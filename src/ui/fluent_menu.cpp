@@ -661,8 +661,13 @@ bool FluentMenu::EnsurePlate(Surface& s, const D2D1_RECT_F& card, POINT origin,
     TargetSample ts;
     ts.bitmap = std::move(sample);
     ts.origin = D2D1::Point2F(static_cast<float>(-margin), static_cast<float>(-margin));
+    // Clearer than the capsule recipe (0.96 / 0.85) so the window shows
+    // through; typography_policy_test keeps body text at 4.5:1 or better
+    // over white (dark menus) and black (light menus).
+    const float luminosity = dark_ ? 0.80f : 0.72f;
+    const float tint = dark_ ? 0.20f : 0.05f;
     const bool ok = DrawAcrylicSample(dc, ts, D2D1::RectF(0.0f, 0.0f, static_cast<float>(pw),
-                                      static_cast<float>(ph)), 0.0f, dark_, blur);
+                                      static_cast<float>(ph)), 0.0f, dark_, blur, luminosity, tint);
     dc->SetTarget(target);
     if (!ok) return false;
     s.plate = std::move(plate);
