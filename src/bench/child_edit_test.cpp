@@ -156,6 +156,21 @@ void CheckSelectionSync(pulse::ui::Compositor& compositor, HWND edit) {
     wchar_t content[128]{};
     GetWindowTextW(edit, content, ARRAYSIZE(content));
     Check(std::wstring(content) == L"Xabcdef", "typing replaces the visibly selected current range");
+    // #116: an IME composition starts from a caret, never from a selection.
+    set_text(L"a.txt");
+    SendMessageW(edit, EM_SETSEL, 0, 1);
+    SendMessageW(edit, WM_IME_STARTCOMPOSITION, 0, 0);
+    GetWindowTextW(edit, content, ARRAYSIZE(content));
+    Check(std::wstring(content) == L".txt" && selection() == std::pair<DWORD, DWORD>{0, 0},
+        "IME composition deletes the selected stem before it starts");
+    SendMessageW(edit, WM_IME_ENDCOMPOSITION, 0, 0);
+    set_text(L"a.txt");
+    SendMessageW(edit, EM_SETSEL, 1, 1);
+    SendMessageW(edit, WM_IME_STARTCOMPOSITION, 0, 0);
+    GetWindowTextW(edit, content, ARRAYSIZE(content));
+    Check(std::wstring(content) == L"a.txt" && selection() == std::pair<DWORD, DWORD>{1, 1},
+        "IME composition at a caret leaves the text alone");
+    SendMessageW(edit, WM_IME_ENDCOMPOSITION, 0, 0);
     set_text(text);
     SendMessageW(edit, EM_SETSEL, 8, 3);
     click(5, true);
