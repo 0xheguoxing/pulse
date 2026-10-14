@@ -1547,6 +1547,9 @@ void MainRenderer::DrawPaneEmptyState(const WindowViewModel& vm, const PaneViewM
         return;
     }
 
+    // No listing ever arrived (the folder could not be opened): the banner
+    // says why; "this folder is empty" would be wrong.
+    if (!pane.snapshot && !pane.banner_title.empty()) return;
     const PaneEmptyLayout layout = MakePaneEmptyLayout(bounds, scale_, pane.can_create);
     const float svgOpacity = theme.bg.r > 0.5f ? 0.68f : 1.0f;
     if (!DrawEmptyStateSvg(layout.art, svgOpacity)) {
