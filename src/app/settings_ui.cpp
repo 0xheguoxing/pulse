@@ -6,7 +6,9 @@
 #include "../ui/preview_format_catalog.h"
 #include "../ui/folder_picker_dialog.h"
 #include "../common/preview_packs.h"
+#include "system_ctx_model.h"
 #include <shellapi.h>
+#include <shlobj.h>
 #include <algorithm>
 #include <cwctype>
 #include <cmath>
@@ -113,6 +115,111 @@ void ContentOptions(AppState& s) {
     for (auto& root : config.roots) root.encoding=static_cast<text::Encoding>(command-1);
     s.contentSearch.Configure(config);
 }
+// 系统右键菜单 "只在 Pulse 隐藏": ContextMenuPrefs only, Windows is unchanged.
+// The same switch as the Pulse menu's own rows (SettingsController::ToggleUi).
+void SysCtxTogglePulse(AppState& s,int row) {
+    const std::wstring key=s.settings.SystemCtx().RowPulseKey(row);
+    if(key.empty()) return;
+    s.ctxMenuPrefs.SetItemEnabled(key,!s.ctxMenuPrefs.CatalogItemVisible(key));
+    s.ctxMenuPrefs.Save();
+    InvalidateRect(s.hwnd,nullptr,FALSE);
+}
+// 系统右键菜单 row "…": copy the registry path, open the program's folder,
+// hide it in Pulse only. row -1: the selected entry (details panel).
+void SysCtxRowMenu(AppState& s,int row) {
+    auto& model=s.settings.SystemCtx();
+    const std::wstring key=model.RowRegistryPath(row),file=model.RowFile(row);
+    const std::wstring pulse_key=model.RowPulseKey(row);
+    std::vector<ui::FluentMenuItem> items;
+    auto add=[&](int command,const wchar_t* text,bool enabled) {
+        ui::FluentMenuItem item;item.command=command;item.text=text;item.enabled=enabled;items.push_back(std::move(item));
+    };
+    const size_t slash=file.find_last_of(L"\\/");
+    const std::wstring folder=slash==std::wstring::npos ? std::wstring() : file.substr(0,slash);
+    add(1,l10n::Pick(L"复制注册表路径",L"Copy registry path"),!key.empty());
+    add(2,l10n::Pick(L"复制程序路径",L"Copy program path"),!file.empty());
+    add(3,l10n::Pick(L"在新标签页打开所在文件夹",L"Open its folder in a new tab"),!folder.empty());
+    if(!pulse_key.empty()) {
+        items.back().separator_after=true;
+        add(4,l10n::Pick(L"只在 Pulse 右键菜单中隐藏",L"Hide in Pulse's menu only"),true);
+        items.back().checked=!s.ctxMenuPrefs.CatalogItemVisible(pulse_key);
+    }
+    const int command=Popup(s,std::move(items));
+    if(command==1) app::CopyTextToClipboard(s.hwnd,key);
+    else if(command==2) app::CopyTextToClipboard(s.hwnd,file);
+    else if(command==3 && GetFileAttributesW(folder.c_str())!=INVALID_FILE_ATTRIBUTES) NewTab(s,folder);
+    else if(command==4) SysCtxTogglePulse(s,row);
+}
+void SysCtxOpenFolder(AppState& s,const std::wstring& file) {
+    const size_t slash=file.find_last_of(L"\\/");
+    if(slash==std::wstring::npos) return;
+    const std::wstring folder=file.substr(0,slash);
+    if(GetFileAttributesW(folder.c_str())!=INVALID_FILE_ATTRIBUTES) NewTab(s,folder);
+}
+// 全部还原…: confirm in a menu first; it may need one UAC.
+void SysCtxRestoreAll(AppState& s) {
+    std::vector<ui::FluentMenuItem> items;
+    ui::FluentMenuItem item;item.command=1;
+    item.text=l10n::Pick(L"撤销这次打开 Pulse 以来的全部改动",L"Undo every change made since Pulse started");
+    items.push_back(std::move(item));
+    ui::FluentMenuItem cancel;cancel.command=0;cancel.text=l10n::Pick(L"取消",L"Cancel");items.push_back(std::move(cancel));
+    if(Popup(s,std::move(items))==1) s.settings.SystemCtx().RestoreAll();
+}
+void SysCtxAction(AppState& s,int index) {
+    auto& model=s.settings.SystemCtx();
+    if(index==ui::kSysCtxLocalLayer) {OpenSettingsTab(s,2);return;}
+    if(index==ui::kSysCtxDetailPulse) {SysCtxTogglePulse(s,-1);return;}
+    if(index==ui::kSysCtxLog) {
+        const std::wstring dir=model.DataDirectory();
+        if(!dir.empty() && SHCreateDirectoryExW(nullptr,dir.c_str(),nullptr)<=ERROR_ALREADY_EXISTS) NewTab(s,dir);
+        return;
+    }
+    if(index>=ui::kSysCtxSlowSkipBase) {
+        // 概览 buttons. Pulse 跳过 only stops Pulse loading the handler; Windows is unchanged.
+        if(index>=ui::kSysCtxMarkRestoreBase) model.RestoreMarkRow(index-ui::kSysCtxMarkRestoreBase);
+        else if(index>=ui::kSysCtxSlowToggleBase) model.ToggleSlowRow(index-ui::kSysCtxSlowToggleBase);
+        else {
+            const std::wstring clsid=model.SlowRowClsid(index-ui::kSysCtxSlowSkipBase);
+            if(!clsid.empty()) {s.ctxMenuPrefs.SetComDisabled(ipc::HandlerCatalogKey(clsid),true);s.ctxMenuPrefs.Save();}
+        }
+        InvalidateRect(s.hwnd,nullptr,FALSE);
+        return;
+    }
+    if(index>=ui::kSysCtxPreviewBase) {
+        // Live preview item: arm a drag; a release without moving selects it.
+        const int item=index-ui::kSysCtxPreviewBase;
+        const auto vm=BuildVm(s,false);
+        const auto rect=D2D1::RectF(0,0,static_cast<float>(s.compositor.Width()),static_cast<float>(s.compositor.Height()));
+        POINT pt{};GetCursorPos(&pt);ScreenToClient(s.hwnd,&pt);
+        const float top=s.renderer.SysCtxPreviewItemTop(vm,rect,item);
+        if(std::isnan(top)) return;
+        model.BeginPreviewDrag(item,static_cast<float>(pt.y),static_cast<float>(pt.y)-top);
+        SetCapture(s.hwnd);
+        InvalidateRect(s.hwnd,nullptr,FALSE);
+        return;
+    }
+    if(index>=ui::kSysCtxMoreBase) {SysCtxRowMenu(s,index-ui::kSysCtxMoreBase);return;}
+    if(index==ui::kSysCtxDetailCopy) {app::CopyTextToClipboard(s.hwnd,model.RowRegistryPath(-1));return;}
+    if(index==ui::kSysCtxDetailFolder) {SysCtxOpenFolder(s,model.RowFile(-1));return;}
+    if(index==ui::kSysCtxRestoreAll) SysCtxRestoreAll(s);
+    else if(index==ui::kSysCtxRefresh) model.Refresh();
+    else if(index==ui::kSysCtxApply) model.ApplyPending();
+    else if(index==ui::kSysCtxDiscard) model.DiscardPending();
+    else if(index==ui::kSysCtxUndo) model.Undo();
+    else if(index==ui::kSysCtxTabPreview || index==ui::kSysCtxTabDetail) model.SetSideTab(index==ui::kSysCtxTabDetail ? 1 : 0);
+    else if(index==ui::kSysCtxDetailSwitch) model.ToggleRow(-1);
+    else if(index==ui::kSysCtxOverview) model.ShowOverview();
+    else if(index>=ui::kSysCtxSelectBase) model.SelectRow(index-ui::kSysCtxSelectBase);
+    else if(index>=ui::kSysCtxRowBase) model.ToggleRow(index-ui::kSysCtxRowBase);
+    else if(index>=ui::kSysCtxSceneBase) model.SelectScene(index-ui::kSysCtxSceneBase);
+    else if(index>=ui::kSysCtxSubBase) model.SelectSub(index-ui::kSysCtxSubBase);
+    else if(index>=ui::kSysCtxFilterBase) model.SetFilter(index-ui::kSysCtxFilterBase);
+    // Scenes, filters and details change the page height.
+    auto vm=BuildVm(s,false);
+    const float maximum=s.renderer.SettingsMaxScroll(vm,static_cast<float>(s.compositor.Width()),static_cast<float>(s.compositor.Height()));
+    s.settings.SetScroll(s.settings.scroll(),maximum);
+    InvalidateRect(s.hwnd,nullptr,FALSE);
+}
 }
 
 #ifdef PULSE_WITH_SELFTEST
@@ -152,6 +259,7 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
     }
     case H::SettingsIntegration: s.settings.IntegrationAction(hit.index);break;
     case H::SettingsPreviewStore: ui::OpenPreviewCodecStore(s.hwnd,hit.index);break;
+    case H::SettingsSysCtx: SysCtxAction(s,hit.index);break;
     case H::SettingsPackAction: {
         bool refresh=false;
         switch(static_cast<ui::PackAction>(hit.index)) {
@@ -250,5 +358,49 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
     default: return false;
     }
     InvalidateRect(s.hwnd,nullptr,FALSE);return true;
+}
+// 系统右键菜单 live preview drag, from app_input (pointer captured on press).
+bool SysCtxPreviewDragMove(AppState& s,int x,int y,WPARAM buttons) {
+    (void)x;
+    auto& model=s.settings.SystemCtx();
+    if(model.PreviewDragItem()<0) return false;
+    if(!(buttons&MK_LBUTTON)) {  // capture lost without WM_LBUTTONUP
+        model.EndPreviewDrag();
+        if(GetCapture()==s.hwnd) ReleaseCapture();
+        InvalidateRect(s.hwnd,nullptr,FALSE);
+        return true;
+    }
+    if(model.PreviewDragMove(static_cast<float>(y))) InvalidateRect(s.hwnd,nullptr,FALSE);
+    // Captured: no WM_SETCURSOR arrives, so set the drag cursor here.
+    if(model.PreviewDragLive()) SetCursor(LoadCursorW(nullptr,IDC_SIZENS));
+    return true;
+}
+
+bool SysCtxPreviewDragEnd(AppState& s,int x,int y) {
+    auto& model=s.settings.SystemCtx();
+    const int item=model.PreviewDragItem();
+    if(item<0) return false;
+    if(model.PreviewDragLive()) {
+        const auto vm=BuildVm(s,false);
+        const auto rect=D2D1::RectF(0,0,static_cast<float>(s.compositor.Width()),static_cast<float>(s.compositor.Height()));
+        const int zone=s.renderer.SysCtxDropZone(vm,rect,static_cast<float>(x),static_cast<float>(y));
+        model.EndPreviewDrag();
+        if(zone!=ui::kSysCtxZoneNone) model.DropPreview(item,zone);
+    } else {
+        model.EndPreviewDrag();
+        model.SelectPreview(item);
+    }
+    if(GetCapture()==s.hwnd) ReleaseCapture();
+    InvalidateRect(s.hwnd,nullptr,FALSE);
+    return true;
+}
+
+bool SysCtxPreviewDragCancel(AppState& s) {
+    auto& model=s.settings.SystemCtx();
+    if(model.PreviewDragItem()<0) return false;
+    model.EndPreviewDrag();
+    if(GetCapture()==s.hwnd) ReleaseCapture();
+    InvalidateRect(s.hwnd,nullptr,FALSE);
+    return true;
 }
 } // namespace pulse

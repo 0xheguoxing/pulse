@@ -16,6 +16,7 @@
 // self-test drives it directly with a standalone DWrite factory.
 #pragma once
 #include "fluent_components.h"
+#include "../common/menu_icon.h"
 
 #include <dwrite_3.h>
 #include <chrono>
@@ -65,6 +66,9 @@ struct FluentMenuItem {
     // Keyboard access key like a native menu's "&X" (case-insensitive). 0 falls
     // back to a trailing "(X)" in text, which Explorer's CJK labels keep.
     wchar_t mnemonic = 0;
+    // App icon of an Explorer row (handler bitmap / registry verb icon), drawn
+    // in place of the glyph like Explorer does. Does not affect layout.
+    common::MenuIconRef icon;
 };
 
 // Access key of a row: explicit mnemonic, else trailing "(X)" / "（X）" in text
@@ -242,6 +246,9 @@ private:
     bool IsPaletteHwnd(HWND hwnd) const;
     bool RenderSurface(const FluentMenuModel& model, int hover_row, int hover_swatch,
                        float header_px, bool draw_filter_field, Surface& s);
+    // Device bitmap for a row's app icon, created on first use and kept for
+    // the popup's lifetime (reset by TrackPopup along with the plates).
+    ID2D1Bitmap* IconBitmapFor(const common::MenuIconRef& pixels, ID2D1DeviceContext* dc);
     bool Render();                 // model_ -> dib_ (pixels), current hover state
     // Bakes s.plate for `card` (bitmap px) of a window at screen `origin` from
     // the owner compositor's frame copy; false keeps the solid plate.
@@ -346,6 +353,11 @@ private:
     std::chrono::steady_clock::time_point anim_start_;
 
     Surface surf_;                 // main menu staging
+    struct IconBitmap {
+        common::MenuIconRef pixels;
+        ComPtr<ID2D1Bitmap> bitmap;
+    };
+    std::vector<IconBitmap> icon_bitmaps_;  // a menu holds a few dozen rows at most
 
     // Flyout (one level, FluentMenuItem::children).
     HWND sub_hwnd_ = nullptr;

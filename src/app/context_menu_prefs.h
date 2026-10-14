@@ -74,6 +74,11 @@ struct ContextMenuPrefs {
     bool RowEnabled(const std::wstring& key, ipc::CtxMenuCategory c, bool from_com) const;
     void SetItemEnabled(const std::wstring& key, bool on);
     bool HandlerEnabled(const std::wstring& clsid) const;
+    // Settings > 系统右键菜单 (只在 Pulse 隐藏): whether Pulse shows the entry with
+    // catalog key `key`. Seen rows follow RowEnabled; unseen ones show unless
+    // switched off. HiddenCatalogKeys: every key that is off, sorted.
+    bool CatalogItemVisible(const std::wstring& key) const;
+    std::vector<std::wstring> HiddenCatalogKeys() const;
     std::vector<std::wstring> DisabledHandlerClsids() const;
     bool RecordSeen(const std::wstring& key, const std::wstring& text, bool flyout,
                     ipc::CtxMenuCategory category, bool from_com = false);

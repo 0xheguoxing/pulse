@@ -693,12 +693,15 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
                     l10n::SetLanguage(L"zh-CN");
                 }
                 if(page==2) {
-                    bool headers=true;
-                    for(int g=0;g<5;++g) {
-                        auto h=hit(layout.context_header[g]);headers &= h.region==H::SettingsDisclosure && h.index==g+8;
-                        h=hit(layout.context_toggle[g]);headers &= h.region==H::SettingsToggle && h.index==g+10;
-                    }
-                    check(headers,"context disclosure and group toggle have distinct hit targets");
+                    // No pivot: the 系统右键菜单 layer card and the hint below the
+                    // Pulse card both open page 6; the Pulse card is the page itself.
+                    auto layer=hit(layout.ctx_layer[1]),hint=hit(layout.context_system_hint),own=hit(layout.ctx_layer[0]);
+                    check(layer.region==H::SettingsCtxPivot && layer.index==6 &&
+                          hint.region==H::SettingsNav && hint.index==6 &&
+                          own.region!=H::SettingsCtxPivot && own.region!=H::SettingsNav &&
+                          layout.ctx_layer[0].top>=layout.ctx_intro.bottom && layout.pulse_card.top>=layout.ctx_layer[0].bottom &&
+                          layout.context_system_hint.top>=layout.pulse_card.bottom,
+                          "context page: layer cards above the Pulse card, hint below it, both open the system page");
                     bool hidden=true;for(const auto& r:layout.context_rows) hidden &= r.bottom==0;
                     check(hidden,"collapsed context entries do not receive clicks");
                 }

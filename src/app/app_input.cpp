@@ -1168,6 +1168,9 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             }
         }
 
+        // 系统右键菜单 preview item held: follow the pointer.
+        if (SysCtxPreviewDragMove(*s, mx, my, wParam)) return 0;
+
         // Pulse menu preview row held on the 右键菜单 page: follow the pointer.
         if (s->settings.menu_drag_item() >= 0) {
             if (!(wParam & MK_LBUTTON)) {
@@ -2485,7 +2488,8 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             ToggleTheme(*s);
         } else if (hit.region == ui::HitTestResult::SettingsButton) {
             OpenSettingsTab(*s, 0);
-        } else if (hit.region == ui::HitTestResult::SettingsNav) {
+        } else if (hit.region == ui::HitTestResult::SettingsNav ||
+                   hit.region == ui::HitTestResult::SettingsCtxPivot) {
             OpenSettingsTab(*s, hit.index);
         } else if (HandleSettingsControl(*s, hit)) {
         } else if (hit.region == ui::HitTestResult::SettingsToggle) {
@@ -3212,6 +3216,7 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
+            if (SysCtxPreviewDragEnd(*s, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;
             if (s->settings.menu_drag_item() >= 0) {
                 if (s->settings.menu_drag_live()) {
                     const ui::WindowViewModel vm = BuildVm(*s, false);
@@ -3996,6 +4001,7 @@ void ShowKeyboardContextMenu(AppState& s) {
 
 LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (!s) return DefWindowProcW(hwnd, msg, wParam, lParam);
+        if (wParam == VK_ESCAPE && SysCtxPreviewDragCancel(*s)) return 0;
         if (wParam == VK_ESCAPE && s->settings.menu_drag_item() >= 0) {
             // Esc puts a dragged Pulse menu preview row back.
             s->settings.EndMenuDrag();

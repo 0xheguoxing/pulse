@@ -1,6 +1,7 @@
 // app_runtime.cpp — extracted from app_main.cpp.
 #include "app_window_title.h"
 #include "app_internal.h"
+#include "system_ctx_model.h"
 #include "pane_layout.h"
 #include "tab_spring.h"
 #include "vertical_tabs.h"
@@ -425,6 +426,25 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             vm.settings_content_status = ContentIndexStatusText(s);
             vm.settings_expanded = s.settingsExpanded;
             if (vm.settings_page == 5) vm.settings_preview_codecs = ui::DetectPreviewCodecs(false, s.hwnd);
+            if (vm.settings_page == 6) {
+                // 系统右键菜单: the first visit starts a background scan.
+                auto& sysctx = s.settings.SystemCtx();
+                sysctx.SetNotifyWindow(s.hwnd);
+                sysctx.EnsureLoaded();
+                // 概览: Pulse's own handler timings, with the ones it skips.
+                std::vector<ui::SysCtxHandlerTiming> timings;
+                for (auto& [clsid, ms] : s.context_menu.ComHandlerTimes()) {
+                    ui::SysCtxHandlerTiming timing;
+                    timing.pulse_skipped = s.ctxMenuPrefs.ComDisabled(ipc::HandlerCatalogKey(clsid));
+                    timing.clsid = std::move(clsid);
+                    timing.ms = ms;
+                    timings.push_back(std::move(timing));
+                }
+                sysctx.SetHandlerTimings(std::move(timings));
+                // 只在 Pulse 隐藏: the rows' Pulse switch reads ContextMenuPrefs.
+                sysctx.SetPulseHidden(s.ctxMenuPrefs.HiddenCatalogKeys());
+                vm.settings_sysctx = sysctx.View();
+            }
             if (vm.settings_page == 5) {
                 // Cached in the controller: the disk is read at most every 2 s.
                 const auto& packs = s.settings.Packs();
@@ -2567,6 +2587,7 @@ std::wstring TooltipForHover(AppState& s) {
     case R::SettingsFind: return text(I::SettingsFind);
     case R::SettingsNav: {
         if (s.hoverControlIndex == 5) return l10n::Pick(L"快速预览", L"Quick Look");
+        if (s.hoverControlIndex == 2) return l10n::Pick(L"右键菜单", L"Context menu");  // one entry for both pages
         const I names[]={I::SettingsGeneral,I::SettingsSearchIndex,I::SettingsContextMenu,I::SettingsAboutDiagnostics,I::SettingsDuplicates};
         return s.hoverControlIndex>=0 && s.hoverControlIndex<5 ? text(names[s.hoverControlIndex]) : L"";
     }

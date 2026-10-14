@@ -59,6 +59,16 @@ DWORD GetDword(const std::wstring& rel, const wchar_t* name) {
     return v;
 }
 
+std::wstring GetString(const std::wstring& rel, const wchar_t* name) {
+    HKEY k = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, (g_base + L"\\" + rel).c_str(), 0, KEY_READ, &k) != ERROR_SUCCESS) return {};
+    wchar_t buf[256] = {};
+    DWORD type = 0, size = sizeof(buf) - sizeof(wchar_t);
+    const LSTATUS st = RegQueryValueExW(k, name, nullptr, &type, reinterpret_cast<BYTE*>(buf), &size);
+    RegCloseKey(k);
+    return st == ERROR_SUCCESS && type == REG_SZ ? std::wstring(buf) : std::wstring();
+}
+
 bool KeyExists(const std::wstring& rel) {
     HKEY k = nullptr;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, (g_base + L"\\" + rel).c_str(), 0, KEY_READ, &k) != ERROR_SUCCESS)
@@ -186,6 +196,18 @@ int wmain(int argc, wchar_t** argv) {
     SetString(L"Machine\\Pulse.Doc.12", nullptr, L"Pulse document");
     SetString(L"FileExts\\.pulsedoc\\UserChoice", L"ProgId", L"Pulse.Doc.12");
     SetString(L"Machine\\Applications\\Some.ProgId.cpp\\shell\\open\\command", nullptr, L"x.exe");
+    // Pulse's 新建 menu: Data bytes, an absolute template, a COM-only creator,
+    // a disabled entry.
+    SetString(L"Machine\\.pulsedata\\ShellNew", L"Data", L"AB");
+    SetString(L"Machine\\.pulsedata\\ShellNew", L"ItemName", L"A data file");
+    const std::wstring template_path = std::wstring(tmp) + L"pulse_sysctx_template_" +
+                                       std::to_wstring(GetCurrentProcessId()) + L".bin";
+    CloseHandle(CreateFileW(template_path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr));
+    SetString(L"Machine\\.pulsetpl\\ShellNew", L"FileName", template_path);
+    SetString(L"Machine\\.pulsetpl\\ShellNew", L"ItemName", L"B template file");
+    SetString(L"Machine\\.pulselib\\ShellNew", L"Handler", L"{11111111-2222-3333-4444-555555555555}");
+    SetString(L"Machine\\.pulselib\\ShellNew", L"NullFile", L"");
+    SetString(L"Machine\\.pulseoff\\-ShellNew", L"NullFile", L"");
     CreateDirectoryW(roots.sendto_dir.c_str(), nullptr);
     const std::wstring hidden_link = roots.sendto_dir + L"\\Hidden target.lnk";
     CloseHandle(CreateFileW(hidden_link.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_HIDDEN, nullptr));
@@ -235,6 +257,30 @@ int wmain(int argc, wchar_t** argv) {
     Check(doc && doc->display == L"Pulse document", "shell new: ProgID from the user's choice when there is no default");
     const Item* nf = Find(news, L"Folder");
     Check(nf && nf->is_protected, "shell new: Folder is listed and protected");
+    {
+        const auto templates = ListNewTemplates(roots);
+        const auto find = [&](const wchar_t* ext) -> const NewTemplate* {
+            for (const auto& t : templates) if (t.ext == ext) return &t;
+            return nullptr;
+        };
+        const NewTemplate* data = find(L".pulsedata");
+        const NewTemplate* tpl = find(L".pulsetpl");
+        const NewTemplate* test = find(L".pulsetest");
+        Check(data && data->display == L"A data file" && data->data == std::vector<BYTE>{'A', 'B'},
+              "new menu: string Data is written as ANSI bytes");
+        Check(tpl && tpl->template_file == template_path, "new menu: absolute FileName resolves to the template");
+        Check(test && test->null_file && test->display == L"Pulse test file", "new menu: NullFile entry with the ProgID name");
+        Check(!find(L".pulselib") && !find(L".pulseoff") && !find(L".pulseinert") && !find(L"Folder"),
+              "new menu: COM-only, disabled, inert entries and Folder are left out");
+        Check(!find(L".pulsescoped") && !find(L".pulsedoc"), "new menu: templates that resolve to nothing are left out");
+        Check(data && tpl && test && data < tpl && tpl < test, "new menu: sorted by menu text");
+        NewTemplate lnk;
+        lnk.ext = L".lnk";
+        lnk.display = L"Shortcut";
+        lnk.handler = true;
+        Check(CanCreateNewTemplate(lnk), "new menu: .lnk keeps its handler entry (shortcut wizard)");
+        DeleteFileW(template_path.c_str());
+    }
     Check(Find(apps, L"Some.ProgId.cpp") == nullptr, "open with: only Applications\\*.exe");
     const Scene png = ExtensionScene(roots, L".pulsepng");
     Check(png.class_keys.size() == 3 && png.class_keys[1] == L"PulsePng.Choice" && png.class_keys[2] == L"PulsePng.File",
@@ -286,6 +332,31 @@ int wmain(int argc, wchar_t** argv) {
           "Folder opennewwindow is disabled without LegacyDisable");
     if (onw) Apply(roots, MakeOp(*onw, Action::Enable));
 
+    // Position = Top / Bottom for static verbs; undo restores the old placement.
+    {
+        const std::wstring snap = Snapshot(roots);
+        const auto items = Enumerate(roots, file);
+        const Item* verb = Find(items, L"FooVerb");
+        Op top = verb ? MakePositionOp(*verb, Place::Top) : Op{};
+        PlanOp(roots, top);
+        const bool wrote = verb && Apply(roots, top) == OpResult::Ok &&
+                           GetString(L"User\\*\\shell\\FooVerb", L"Position") == L"Top";
+        const auto moved = Enumerate(roots, file);
+        const bool seen = Find(moved, L"FooVerb") && Find(moved, L"FooVerb")->position == Place::Top &&
+                          Find(moved, L"FooVerb")->enabled;
+        Op bottom = MakePositionOp(*Find(moved, L"FooVerb"), Place::Bottom);
+        PlanOp(roots, bottom);
+        const bool second = Apply(roots, bottom) == OpResult::Ok &&
+                            GetString(L"User\\*\\shell\\FooVerb", L"Position") == L"Bottom";
+        const bool undone = Apply(roots, Inverse(bottom)) == OpResult::Ok && Apply(roots, Inverse(top)) == OpResult::Ok;
+        Check(wrote && seen && second && undone && Snapshot(roots) == snap,
+              "position: Top / Bottom written, enumerated, and undone byte for byte");
+        Op shellex_pos{Action::Position, Kind::ShellEx, Root::Machine, L"*\\shellex\\ContextMenuHandlers\\Baz"};
+        shellex_pos.place = Place::Top;
+        Check(Apply(roots, shellex_pos) == OpResult::Unsupported && Snapshot(roots) == snap,
+              "position: refused for shellex handlers");
+    }
+
     // Conflict: both ContextMenuHandlers\\X and -ContextMenuHandlers\\X exist.
     SetString(L"Machine\\*\\shellex\\ContextMenuHandlers\\Clash", nullptr, L"{11111111-2222-3333-4444-555555555555}");
     SetString(L"Machine\\*\\shellex\\-ContextMenuHandlers\\Clash", nullptr, L"{11111111-2222-3333-4444-555555555555}");
@@ -298,7 +369,12 @@ int wmain(int argc, wchar_t** argv) {
     // ---- batches for the elevated helper ------------------------------------
     std::vector<Op> batch = {Op{Action::Disable, Kind::Verb, Root::Machine, L"Directory\\Background\\shell\\git_gui", true, 7},
                              Op{Action::Enable, Kind::ShellEx, Root::Machine, L"*\\shellex\\-ContextMenuHandlers\\Qux"}};
+    Op place_op{Action::Position, Kind::Verb, Root::Machine, L"Directory\\shell\\git_shell"};
+    place_op.place = Place::Bottom;
     std::vector<Op> parsed;
+    Check(ParseBatch(SerializeBatch({place_op}), parsed) && parsed.size() == 1 &&
+              parsed[0].action == Action::Position && parsed[0].place == Place::Bottom && !parsed[0].planned,
+          "batch round trip keeps a position op");
     Check(ParseBatch(SerializeBatch(batch), parsed) && parsed.size() == 2 && parsed[0].key_path == batch[0].key_path &&
               parsed[0].planned && parsed[0].mask == 7 && parsed[1].kind == Kind::ShellEx &&
               parsed[1].action == Action::Enable && !parsed[1].planned,
@@ -314,6 +390,9 @@ int wmain(int argc, wchar_t** argv) {
         L"disable\tverb\tmachine\t*\\shell\\y\n",
         L"PULSE-SYSCTX 1\ndisable\tverb\tmachine\t*\\shell\\y\t99\n",
         L"PULSE-SYSCTX 1\ndisable\tshellex\tmachine\t*\\shellex\\ContextMenuHandlers\\y\t3\n",
+        L"PULSE-SYSCTX 1\nposition\tshellex\tmachine\t*\\shellex\\ContextMenuHandlers\\y\ttop\n",
+        L"PULSE-SYSCTX 1\nposition\tverb\tmachine\t*\\shell\\y\tleft\n",
+        L"PULSE-SYSCTX 1\nposition\tverb\tmachine\t*\\shell\\y\n",
     };
     bool all_rejected = true;
     for (const auto* b : bad) all_rejected = !ParseBatch(b, parsed) && all_rejected;

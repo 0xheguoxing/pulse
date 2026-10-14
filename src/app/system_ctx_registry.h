@@ -28,6 +28,10 @@ struct Roots {
     bool check_owner = true;     // TrustedInstaller lookups (slow on big scans)
 };
 
+// Static verbs accept Position = Top / Bottom; Explorer orders everything
+// else itself, so this is the only placement a verb can be given.
+enum class Place { Default, Top, Bottom };
+
 enum class SceneMode { Menu, DragDrop, ShellNew, SendTo, OpenWith };
 
 struct Scene {
@@ -61,6 +65,7 @@ struct Item {
     bool command_flags_hidden = false;
     bool no_open_with = false;
     bool extended = false;         // Shift only
+    Place position = Place::Default;  // verbs: Position = Top / Bottom
     bool is_protected = false;
     bool trusted_installer = false;
     bool missing = false;          // command/handler points at a file that is gone
@@ -68,9 +73,29 @@ struct Item {
 
 std::vector<Item> Enumerate(const Roots& roots, const Scene& scene);
 
+// ---- Pulse's own 新建 menu (toolbar New split button) ----------------------
+// The enabled entries of Explorer's 新建 menu (the shellnew scene, so items
+// switched off on the system page stay off here too), with how each file is
+// made. Folder is left out: Pulse's own 新建文件夹 covers it.
+struct NewTemplate {
+    std::wstring ext;            // ".docx"
+    std::wstring display;        // menu text, e.g. "Microsoft Word 文档"
+    std::wstring template_file;  // FileName, resolved to an existing file
+    std::wstring missing_file;   // FileName that resolved to nothing
+    std::vector<BYTE> data;      // Data value
+    std::wstring command;        // Command value; %1 = the new file's path
+    bool null_file = false;
+    bool handler = false;        // Handler value: a COM creator
+};
+std::vector<NewTemplate> ListNewTemplates(const Roots& roots);
+// Pure: entries Pulse can make itself. Handler-only creators (libraries,
+// contacts' COM handler) are skipped, except .lnk, whose creator is the
+// classic shortcut wizard.
+bool CanCreateNewTemplate(const NewTemplate& t);
+
 // ---- S2: enable / disable -------------------------------------------------
 
-enum class Action { Disable, Enable };
+enum class Action { Disable, Enable, Position };  // Position: verbs only
 
 // Verb markers an op adds (Disable) or removes (Enable). PlanOp records the
 // exact set so Inverse() undoes a change byte for byte.
@@ -88,11 +113,14 @@ struct Op {
     std::wstring key_path;  // as reported by Item::key_path
     bool planned = false;
     unsigned mask = 0;      // verbs only, valid when planned
+    Place place = Place::Default;       // Position: the placement to write
+    Place prev_place = Place::Default;  // Position: what PlanOp found (Inverse writes it back)
 };
 
 enum class OpResult { Ok, NotFound, Conflict, AccessDenied, Unsupported, Failed };
 
 Op MakeOp(const Item& item, Action action);
+Op MakePositionOp(const Item& item, Place place);
 // Reads the current verb values and fixes op.mask (no-op for other kinds).
 void PlanOp(const Roots& roots, Op& op);
 // Location of the item after `op` ran (shellex keys move between

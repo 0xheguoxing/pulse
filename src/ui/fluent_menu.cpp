@@ -114,6 +114,9 @@ void PatchItemCommands(FluentMenuItem& dest, const FluentMenuItem& src) {
     dest.command = src.command;
     dest.trailing_command = src.trailing_command;
     dest.mnemonic = src.mnemonic;
+    // A predicted row gets its app icon when the live answer arrives; the
+    // icon does not move anything, so it is patched like the command.
+    if (src.icon) dest.icon = src.icon;
     const size_t n = (std::min)(dest.children.size(), src.children.size());
     for (size_t i = 0; i < n; ++i)
         PatchItemCommands(dest.children[i], src.children[i]);
@@ -176,10 +179,10 @@ void FluentMenuModel::Layout(IDWriteFactory2* dwrite, float scale, float min_wid
     auto body = MakeFormat(dwrite, kLabelDip * scale_);
     auto caption = MakeFormat(dwrite, 12.0f * scale_);
 
-    // Must match DrawMenuItem: inset 6, content pad 10, icon 20, gap 8, pad 10, inset 6.
+    // Must match DrawMenuItem: inset 6, content pad 10, icon 16, gap 8, pad 10, inset 6.
     const float inset = 6.0f * scale_;
     const float content_pad = 10.0f * scale_;
-    const float icon_w = 20.0f * scale_;
+    const float icon_w = 16.0f * scale_;
     const float icon_gap = 8.0f * scale_;
     const float left_chrome = inset + content_pad + icon_w + icon_gap;
     const float right_chrome = content_pad + inset;
@@ -738,6 +741,22 @@ bool FluentMenu::EnsurePlate(Surface& s, const D2D1_RECT_F& card, POINT origin,
     return true;
 }
 
+ID2D1Bitmap* FluentMenu::IconBitmapFor(const common::MenuIconRef& pixels,
+                                       ID2D1DeviceContext* dc) {
+    if (!pixels || !pixels->Valid() || !dc) return nullptr;
+    for (const auto& entry : icon_bitmaps_)
+        if (entry.pixels == pixels) return entry.bitmap.get();
+    IconBitmap entry;
+    entry.pixels = pixels;
+    const auto props = D2D1::BitmapProperties(
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    if (FAILED(dc->CreateBitmap(D2D1::SizeU(pixels->width, pixels->height), pixels->bgra.data(),
+                                pixels->width * 4u, props, &entry.bitmap)))
+        entry.bitmap.reset();  // remembered as missing: no retry every frame
+    icon_bitmaps_.push_back(std::move(entry));
+    return icon_bitmaps_.back().bitmap.get();
+}
+
 bool FluentMenu::Render() {
     // While the flyout is open its header row stays visually active even if
     // the pointer moved into the flyout window.
@@ -883,6 +902,7 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
             spec.radio_group = it->radio_group;
             spec.pictogram = it->pictogram;
             spec.swatch_color = it->swatch_color;
+            if (it->icon) spec.icon_bitmap = IconBitmapFor(it->icon, dc);
             if (it->trailing_command) spec.bounds.right -= 32.0f * scale_;
             painter_.DrawMenuItem(spec);
             if (it->trailing_command && i == hover_row && it->enabled) {
@@ -1878,6 +1898,7 @@ int FluentMenu::TrackPopup(POINT screen_pt, std::vector<FluentMenuItem> items,
                       SystemAllowsPopupAcrylic();
     surf_.plate.reset();
     sub_surf_.plate.reset();
+    icon_bitmaps_.clear();
     filter_fn_ = std::move(filter);
     filter_query_ = initial_filter_text_;
     filter_committed_ = false;
@@ -2000,7 +2021,14 @@ bool FluentMenu::ReplaceItems(std::vector<FluentMenuItem> items) {
             !SameFlyoutRow(*parent, items[static_cast<size_t>(sub_parent_row_)]))
             return false;
     }
-    if (model_.PatchCommands(items)) return true;
+    if (model_.PatchCommands(items)) {
+        // Commands alone change nothing visible; icons that came with the
+        // live answer do.
+        bool icons = false;
+        for (const auto& it : items) icons = icons || it.icon != nullptr;
+        if (icons) Render();
+        return true;
+    }
     // Same shape, other contents: late rows already mapped onto the shown
     // ones. The old in-place rebuild (#73) moved rows under the cursor; rows
     // the first frame could not place are now appended below the shown ones.

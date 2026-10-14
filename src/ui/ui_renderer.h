@@ -7,6 +7,7 @@
 #include "release_note_view.h"
 #include "shell_icons.h"
 #include "open_with_icons.h"
+#include "sysctx_view.h"
 #include "view_layout.h"
 #include "column_strip_layout.h"
 #include "panel_metrics.h"
@@ -802,7 +803,9 @@ struct WindowViewModel {
     std::wstring settings_pack_archive_version, settings_pack_archive_notice;
     int settings_theme = 0; // system, light, dark
     bool settings_open = false;
-    int settings_page = 0; // 0 general, 1 search/index, 2 context menu, 3 about, 4 duplicates
+    int settings_page = 0; // 0 general, 1 search/index, 2 context menu, 3 about, 4 duplicates, 5 quick look, 6 system menu
+    // Settings > 系统右键菜单 (page 6): the model's last published view.
+    std::shared_ptr<const SysCtxView> settings_sysctx;
     float settings_scroll = 0.0f;
     bool settings_launch_on_startup = false;
     bool settings_start_in_tray = false;
@@ -1090,6 +1093,8 @@ struct HitTestResult {
         SettingsPackAction,    // Settings > 预览增强包: index = PackAction
         TabScroll,             // overflowing tab strip arrows: index -1 = left, 1 = right
         NewButtonArrow,        // chevron segment of the split New button: open the New menu
+        SettingsSysCtx,        // Settings > 系统右键菜单: index = SysCtxHit
+        SettingsCtxPivot,      // Settings > 右键菜单 layer card 系统右键菜单: index = page (6)
     } region = None;
     SidebarAddAction sidebar_action = SidebarAddAction::None;
     int index = -1;          // tab/row/sidebar item/tray batch/tray item.
@@ -1507,6 +1512,9 @@ public:
     // (NaN when it is not in the preview), and the order a drop at (x, y)
     // gives (empty when the pointer is too far outside the preview).
     float SettingsMenuRowStart(const WindowViewModel& vm, const D2D1_RECT_F& rect, int item);
+    // 系统右键菜单 live preview: resting top of an item, and where a drag released at (x, y) lands.
+    float SysCtxPreviewItemTop(const WindowViewModel& vm, const D2D1_RECT_F& rect, int item);
+    int SysCtxDropZone(const WindowViewModel& vm, const D2D1_RECT_F& rect, float x, float y);
     app::BuiltinMenuOrder SettingsMenuDropOrder(const WindowViewModel& vm, const D2D1_RECT_F& rect, float x, float y);
     int SettingsSliderValueAt(const WindowViewModel& vm, const D2D1_RECT_F& rect,
                               int which, float x) const;
@@ -1626,6 +1634,11 @@ private:
     void DrawSettingsPulseMenu(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
+    void DrawSettingsSysCtx(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
+    // 右键菜单 layer cards, the same on pages 2 and 6: Pulse 右键菜单 | 系统右键菜单.
+    void DrawCtxLayerCards(const D2D1_RECT_F& pulse, const D2D1_RECT_F& system, bool system_current,
+                           bool other_hovered, const Theme& theme);
+    IDWriteTextFormat* SysCtxTitleFormat();  // 13 dip semibold (creates the 系统右键菜单 formats)
 
     void DrawList(const PaneViewModel& vm, float x, float y, float w, float h, const Theme& theme,
                   int hover_region = 0, int hover_control_index = -1, bool pane_focused = true,
@@ -1804,6 +1817,10 @@ private:
     mutable ComPtr<IDWriteTextFormat> tray_name_format_;
     mutable ComPtr<IDWriteTextFormat> tray_folder_format_;
     mutable float tray_formats_scale_ = 0.0f;
+    // 系统右键菜单 card titles: 13 px semibold (Painter keeps its own private).
+    mutable ComPtr<IDWriteTextFormat> sysctx_title_format_;
+    mutable ComPtr<IDWriteTextFormat> sysctx_stat_format_;  // 概览 stat numbers: 22 px semibold
+    mutable float sysctx_title_scale_ = 0.0f;
     float margin_ = 4.0f;
     float control_gap_ = 4.0f;
     D2D1_COLOR_F text_background_{};

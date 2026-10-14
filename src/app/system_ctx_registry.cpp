@@ -1,6 +1,7 @@
 #include "system_ctx_registry.h"
 
 #include <aclapi.h>
+#include <shellapi.h>
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <sddl.h>
@@ -62,6 +63,15 @@ bool ReadString(HKEY key, const wchar_t* name, std::wstring& out) {
     }
     out = std::move(buf);
     return true;
+}
+
+// Unknown Position strings count as the default placement, as in Explorer.
+Place ReadPlace(HKEY v) {
+    std::wstring text;
+    if (!ReadString(v, L"Position", text)) return Place::Default;
+    if (IEquals(text, L"Top")) return Place::Top;
+    if (IEquals(text, L"Bottom")) return Place::Bottom;
+    return Place::Default;
 }
 
 bool HasValue(HKEY key, const wchar_t* name) {
@@ -305,6 +315,7 @@ void ScanVerbs(const Roots& roots, const Scene& scene, const std::wstring& cls, 
         if (it.file.empty() && !it.icon.empty()) it.file = ResolveFile(RawPath(it.icon));
         it.missing = PointsAtMissingFile(it.command) || PointsAtMissingFile(it.icon);
         it.extended = HasValue(v.h, L"Extended");
+        it.position = ReadPlace(v.h);
         it.legacy_disable = HasValue(v.h, L"LegacyDisable");
         it.programmatic_only = HasValue(v.h, L"ProgrammaticAccessOnly");
         DWORD velocity = 0, flags = 0;
@@ -499,6 +510,21 @@ bool SkipsLegacyDisable(const std::wstring& key_path) {
     return IEquals(key_path, L"Folder\\shell\\opennewwindow");
 }
 
+const wchar_t* PlaceToken(Place place) {
+    return place == Place::Top ? L"top" : place == Place::Bottom ? L"bottom" : L"default";
+}
+
+OpResult ApplyPlace(HKEY v, Place place) {
+    if (place == Place::Default) {
+        const LSTATUS d = RegDeleteValueW(v, L"Position");
+        return d == ERROR_SUCCESS || d == ERROR_FILE_NOT_FOUND ? OpResult::Ok : FromStatus(d);
+    }
+    const wchar_t* text = place == Place::Top ? L"Top" : L"Bottom";
+    const DWORD bytes = static_cast<DWORD>((wcslen(text) + 1) * sizeof(wchar_t));
+    const LSTATUS w = RegSetValueExW(v, L"Position", 0, REG_SZ, reinterpret_cast<const BYTE*>(text), bytes);
+    return w == ERROR_SUCCESS ? OpResult::Ok : FromStatus(w);
+}
+
 unsigned PlanVerb(HKEY v, const Op& op) {
     const bool velocity = HasValue(v, L"HideBasedOnVelocityId");
     const bool legacy = HasValue(v, L"LegacyDisable");
@@ -524,6 +550,7 @@ OpResult ApplyVerb(const Roots& roots, const Op& op) {
     const LSTATUS st = Open(RootKey(roots, op.root), FullPath(roots, op.root, op.key_path),
                             KEY_QUERY_VALUE | KEY_SET_VALUE, v);
     if (st != ERROR_SUCCESS) return FromStatus(st);
+    if (op.action == Action::Position) return ApplyPlace(v.h, op.place);
     const unsigned mask = op.planned ? op.mask : PlanVerb(v.h, op);
     const wchar_t empty[] = L"";
     LSTATUS w = ERROR_SUCCESS;
@@ -808,6 +835,102 @@ std::vector<Item> Enumerate(const Roots& roots, const Scene& scene) {
     return out;
 }
 
+namespace {
+// FileName: absolute (after %VAR% expansion), else looked up the way
+// Explorer does: the user's Templates, the common Templates, %WINDIR%\ShellNew.
+std::wstring ResolveTemplateFile(const std::wstring& raw) {
+    if (raw.empty()) return {};
+    wchar_t expanded[MAX_PATH * 2]{};
+    const DWORD n = ExpandEnvironmentStringsW(raw.c_str(), expanded, ARRAYSIZE(expanded));
+    std::wstring name = n > 0 && n <= ARRAYSIZE(expanded) ? expanded : raw;
+    if (!PathIsRelativeW(name.c_str())) return FileExists(name) ? name : std::wstring();
+    std::vector<std::wstring> dirs;
+    for (const KNOWNFOLDERID* id : {&FOLDERID_Templates, &FOLDERID_CommonTemplates}) {
+        PWSTR dir = nullptr;
+        if (SUCCEEDED(SHGetKnownFolderPath(*id, KF_FLAG_DONT_VERIFY, nullptr, &dir)) && dir) dirs.emplace_back(dir);
+        CoTaskMemFree(dir);
+    }
+    wchar_t windows[MAX_PATH]{};
+    if (GetWindowsDirectoryW(windows, ARRAYSIZE(windows))) dirs.push_back(std::wstring(windows) + L"\\ShellNew");
+    for (const auto& dir : dirs) {
+        const std::wstring candidate = dir + L"\\" + name;
+        if (FileExists(candidate)) return candidate;
+    }
+    return {};
+}
+
+std::vector<BYTE> ReadData(HKEY key) {
+    DWORD type = 0, bytes = 0;
+    if (RegQueryValueExW(key, L"Data", nullptr, &type, nullptr, &bytes) != ERROR_SUCCESS || bytes == 0) return {};
+    std::vector<BYTE> raw(bytes);
+    if (RegQueryValueExW(key, L"Data", nullptr, &type, raw.data(), &bytes) != ERROR_SUCCESS) return {};
+    raw.resize(bytes);
+    if (type != REG_SZ && type != REG_EXPAND_SZ) return raw;
+    // A string Data value is written as ANSI text, without the terminator.
+    std::wstring text(reinterpret_cast<const wchar_t*>(raw.data()), raw.size() / sizeof(wchar_t));
+    text.resize(wcsnlen(text.c_str(), text.size()));
+    if (text.empty()) return {};
+    const int size = WideCharToMultiByte(CP_ACP, 0, text.c_str(), static_cast<int>(text.size()),
+                                         nullptr, 0, nullptr, nullptr);
+    std::vector<BYTE> out(static_cast<size_t>(std::max(size, 0)));
+    if (size > 0)
+        WideCharToMultiByte(CP_ACP, 0, text.c_str(), static_cast<int>(text.size()),
+                            reinterpret_cast<char*>(out.data()), size, nullptr, nullptr);
+    return out;
+}
+} // namespace
+
+bool CanCreateNewTemplate(const NewTemplate& t) {
+    if (t.ext.size() < 2 || t.ext[0] != L'.' || t.display.empty()) return false;
+    if (IEquals(t.ext, L".lnk")) return true;
+    if (t.handler) return false;
+    if (!t.missing_file.empty() && t.data.empty() && !t.null_file && t.command.empty()) return false;
+    return !t.template_file.empty() || !t.data.empty() || t.null_file || !t.command.empty();
+}
+
+std::vector<NewTemplate> ListNewTemplates(const Roots& roots) {
+    Scene scene;
+    scene.id = L"shellnew";
+    scene.mode = SceneMode::ShellNew;
+    std::vector<NewTemplate> out;
+    std::set<std::wstring> seen;
+    for (const Item& it : Enumerate(roots, scene)) {
+        if (it.kind != Kind::ShellNew || !it.enabled || it.dash_marker) continue;
+        if (it.class_key.empty() || it.class_key[0] != L'.') continue;   // Folder
+        if (it.missing) continue;                                         // Command exe is gone
+        if (!seen.insert(Lower(it.class_key)).second) continue;           // user layer first
+        Key sn;
+        if (Open(RootKey(roots, it.root), FullPath(roots, it.root, it.key_path), KEY_READ, sn) != ERROR_SUCCESS)
+            continue;
+        NewTemplate t;
+        t.ext = it.class_key;
+        t.display = StripMnemonic(it.display);
+        if (IEquals(t.display, t.ext) && roots.resolve_strings) {
+            // No ItemName / type name in the registry: Explorer shows the
+            // shell's type text ("MXG 文件").
+            SHFILEINFOW info{};
+            if (SHGetFileInfoW(t.ext.c_str(), FILE_ATTRIBUTE_NORMAL, &info, sizeof(info),
+                               SHGFI_USEFILEATTRIBUTES | SHGFI_TYPENAME) && info.szTypeName[0])
+                t.display = info.szTypeName;
+        }
+        t.command = it.command;
+        t.null_file = HasValue(sn.h, L"NullFile");
+        t.handler = HasValue(sn.h, L"Handler");
+        t.data = ReadData(sn.h);
+        std::wstring file;
+        if (ReadString(sn.h, L"FileName", file) && !file.empty()) {
+            t.template_file = ResolveTemplateFile(file);
+            if (t.template_file.empty()) t.missing_file = file;
+        }
+        if (CanCreateNewTemplate(t)) out.push_back(std::move(t));
+    }
+    std::sort(out.begin(), out.end(), [](const NewTemplate& a, const NewTemplate& b) {
+        return CompareStringEx(LOCALE_NAME_USER_DEFAULT, NORM_IGNORECASE | SORT_DIGITSASNUMBERS,
+                               a.display.c_str(), -1, b.display.c_str(), -1, nullptr, nullptr, 0) == CSTR_LESS_THAN;
+    });
+    return out;
+}
+
 Op MakeOp(const Item& item, Action action) {
     Op op;
     op.action = action;
@@ -817,11 +940,23 @@ Op MakeOp(const Item& item, Action action) {
     return op;
 }
 
+Op MakePositionOp(const Item& item, Place place) {
+    Op op = MakeOp(item, Action::Position);
+    op.place = place;
+    op.prev_place = item.position;
+    return op;
+}
+
 void PlanOp(const Roots& roots, Op& op) {
     if (op.kind != Kind::Verb || op.root == Root::File) return;
     Key v;
     if (Open(RootKey(roots, op.root), FullPath(roots, op.root, op.key_path), KEY_READ, v) != ERROR_SUCCESS) return;
-    op.mask = PlanVerb(v.h, op);
+    if (op.action == Action::Position) {
+        op.prev_place = ReadPlace(v.h);
+        op.mask = 0;
+    } else {
+        op.mask = PlanVerb(v.h, op);
+    }
     op.planned = true;
 }
 
@@ -836,6 +971,11 @@ std::wstring KeyPathAfter(const Op& op) {
 
 Op Inverse(const Op& op) {
     Op inv = op;
+    if (op.action == Action::Position) {
+        inv.place = op.prev_place;
+        inv.prev_place = op.place;
+        return inv;
+    }
     inv.action = op.action == Action::Disable ? Action::Enable : Action::Disable;
     inv.key_path = KeyPathAfter(op);
     return inv;
@@ -846,6 +986,7 @@ bool CanWriteWithoutElevation(const Op& op) { return op.root != Root::Machine; }
 OpResult Apply(const Roots& roots, const Op& op) {
     if (op.root == Root::File) return OpResult::Unsupported;
     if (!IsAllowedKeyPath(op.kind, op.key_path)) return OpResult::Unsupported;
+    if (op.action == Action::Position && op.kind != Kind::Verb) return OpResult::Unsupported;
     switch (op.kind) {
     case Kind::Verb: return ApplyVerb(roots, op);
     case Kind::ShellEx:
@@ -883,11 +1024,12 @@ bool IsAllowedKeyPath(Kind kind, std::wstring_view key_path) {
 std::wstring SerializeBatch(const std::vector<Op>& ops) {
     std::wstring out = std::wstring(kBatchHeader) + L"\n";
     for (const auto& op : ops) {
-        out += op.action == Action::Disable ? L"disable\t" : L"enable\t";
+        out += op.action == Action::Disable ? L"disable\t" : op.action == Action::Enable ? L"enable\t" : L"position\t";
         out += KindToken(op.kind);
         out += op.root == Root::Machine ? L"\tmachine\t" : L"\tuser\t";
         out += op.key_path;
-        if (op.kind == Kind::Verb && op.planned) out += L"\t" + std::to_wstring(op.mask & 0xF);
+        if (op.action == Action::Position) out += std::wstring(L"\t") + PlaceToken(op.place);
+        else if (op.kind == Kind::Verb && op.planned) out += L"\t" + std::to_wstring(op.mask & 0xF);
         out += L"\n";
     }
     return out;
@@ -927,6 +1069,15 @@ bool ParseBatch(std::wstring_view text, std::vector<Op>& ops) {
         }
         f.emplace_back(rest);
         Op op;
+        if (f[0] == L"position") {
+            // position <kind> <root> <key> <top|bottom|default>; verbs only.
+            op.action = Action::Position;
+            if (mask_field == L"top") op.place = Place::Top;
+            else if (mask_field == L"bottom") op.place = Place::Bottom;
+            else if (mask_field == L"default") op.place = Place::Default;
+            else return false;
+            mask_field = {};
+        }
         if (!mask_field.empty()) {
             if (mask_field.size() > 2) return false;
             unsigned m = 0;
@@ -940,7 +1091,7 @@ bool ParseBatch(std::wstring_view text, std::vector<Op>& ops) {
         }
         if (f[0] == L"disable") op.action = Action::Disable;
         else if (f[0] == L"enable") op.action = Action::Enable;
-        else return false;
+        else if (f[0] != L"position") return false;
         if (f[1] == L"verb") op.kind = Kind::Verb;
         else if (f[1] == L"shellex") op.kind = Kind::ShellEx;
         else if (f[1] == L"dragdrop") op.kind = Kind::DragDrop;
@@ -951,6 +1102,7 @@ bool ParseBatch(std::wstring_view text, std::vector<Op>& ops) {
         op.key_path = f[3];
         if (!IsAllowedKeyPath(op.kind, op.key_path)) return false;
         if (op.planned && op.kind != Kind::Verb) return false;
+        if (op.action == Action::Position && op.kind != Kind::Verb) return false;
         ops.push_back(std::move(op));
     }
     return header && ops.size() <= 256;

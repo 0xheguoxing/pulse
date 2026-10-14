@@ -36,6 +36,9 @@ struct CtxItemOut {
     std::wstring clsid;
     std::wstring handler;
     wchar_t mnemonic = 0;   // access key from the raw label ("&X"), 0 = none
+    // The row's MIIM_BITMAP as premultiplied BGRA (what Explorer paints next
+    // to the label); null when the handler set none.
+    common::MenuIconRef icon;
 };
 
 struct CtxHandlerSlot {

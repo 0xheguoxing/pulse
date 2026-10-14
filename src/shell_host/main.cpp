@@ -818,6 +818,7 @@ void SendCtxItems(uint32_t session_id, const std::vector<CtxItemOut>& items,
     }
     w.PutStringArray(slow_clsids);
     pulse::ipc::PutCtxHandlerStatuses(w, handlers);
+    pulse::ipc::PutCtxItemIcons(w, items);
     SendMsg(RSP_CTX_ITEMS, session_id, w.data());
 }
 

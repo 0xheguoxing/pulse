@@ -202,6 +202,60 @@ std::wstring CtxVerbOf(IContextMenu* menu, UINT id, UINT id_first) {
     return {};
 }
 
+// The row's MIIM_BITMAP as premultiplied BGRA, the way Explorer paints it
+// next to the label. Handlers hand out 32bpp ARGB bitmaps (premultiplied per
+// the Vista menu guidance; straight alpha is premultiplied here), older ones
+// opaque DDBs. HBMMENU_* stock ids and owner-draw callbacks carry no pixels.
+pulse::common::MenuIconRef MenuItemIcon(HMENU menu, UINT pos) {
+    MENUITEMINFOW mii{ sizeof(mii) };
+    mii.fMask = MIIM_BITMAP;
+    if (!GetMenuItemInfoW(menu, pos, TRUE, &mii) || !mii.hbmpItem ||
+        mii.hbmpItem == HBMMENU_CALLBACK ||
+        reinterpret_cast<ULONG_PTR>(mii.hbmpItem) <=
+            reinterpret_cast<ULONG_PTR>(HBMMENU_POPUP_MINIMIZE))
+        return nullptr;
+    BITMAP info{};
+    if (!GetObjectW(mii.hbmpItem, sizeof(info), &info) || info.bmWidth <= 0 ||
+        info.bmHeight <= 0 ||
+        info.bmWidth > static_cast<LONG>(pulse::common::kMaxMenuIconEdge) ||
+        info.bmHeight > static_cast<LONG>(pulse::common::kMaxMenuIconEdge))
+        return nullptr;
+    auto pixels = std::make_shared<pulse::common::MenuIconPixels>();
+    pixels->width = static_cast<uint32_t>(info.bmWidth);
+    pixels->height = static_cast<uint32_t>(info.bmHeight);
+    pixels->bgra.resize(static_cast<size_t>(pixels->width) * pixels->height * 4u);
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = info.bmWidth;
+    bi.bmiHeader.biHeight = -info.bmHeight;  // top-down
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    HDC dc = CreateCompatibleDC(nullptr);
+    if (!dc) return nullptr;
+    const int lines = GetDIBits(dc, mii.hbmpItem, 0, static_cast<UINT>(info.bmHeight),
+                                pixels->bgra.data(), &bi, DIB_RGB_COLORS);
+    DeleteDC(dc);
+    if (lines != info.bmHeight) return nullptr;
+    auto& bgra = pixels->bgra;
+    bool any_alpha = false, straight = false;
+    for (size_t i = 0; i + 3 < bgra.size(); i += 4) {
+        const uint8_t a = bgra[i + 3];
+        if (a) any_alpha = true;
+        if (bgra[i] > a || bgra[i + 1] > a || bgra[i + 2] > a) straight = true;
+    }
+    if (info.bmBitsPixel != 32 || !any_alpha) {
+        for (size_t i = 3; i < bgra.size(); i += 4) bgra[i] = 255;
+    } else if (straight) {
+        for (size_t i = 0; i + 3 < bgra.size(); i += 4) {
+            const uint32_t a = bgra[i + 3];
+            for (size_t c = 0; c < 3; ++c)
+                bgra[i + c] = static_cast<uint8_t>((bgra[i + c] * a + 127u) / 255u);
+        }
+    }
+    return pixels;
+}
+
 // Visible row text; the raw label's access key ("&X") goes to *mnemonic.
 std::wstring MenuItemText(HMENU menu, UINT pos, wchar_t* mnemonic = nullptr) {
     if (mnemonic) *mnemonic = 0;
@@ -393,6 +447,7 @@ void CollectSubmenuLeaves(IContextMenu* menu, IContextMenu2* menu2, IContextMenu
         if (!open_with && IsBuiltinContextVerb(item.verb, background)) continue;
         item.text = child_text;
         item.mnemonic = child_mnemonic;
+        item.icon = MenuItemIcon(submenu, static_cast<UINT>(j));
         kids.push_back(std::move(item));
     }
 }
@@ -828,6 +883,7 @@ void CollectHandlerItems(const CtxHandlerSlot& slot, bool background,
                 item.verb = parent_verb;
                 item.text = parent_text;
                 item.mnemonic = title_mnemonic;
+                item.icon = MenuItemIcon(slot.hmenu, static_cast<UINT>(i));
                 push(std::move(item));
                 continue;
             }
@@ -838,6 +894,7 @@ void CollectHandlerItems(const CtxHandlerSlot& slot, bool background,
             header.verb = parent_verb;
             header.text = parent_text;
             header.mnemonic = title_mnemonic;
+            header.icon = MenuItemIcon(slot.hmenu, static_cast<UINT>(i));
             push(std::move(header));
             for (auto& k : kids) {
                 k.clsid = slot.clsid;
@@ -855,6 +912,7 @@ void CollectHandlerItems(const CtxHandlerSlot& slot, bool background,
         item.enabled = enabled && (slot.send_to_title.empty() || default_extra);
         item.verb = verb;
         item.text = MenuItemText(slot.hmenu, static_cast<UINT>(i), &item.mnemonic);
+        item.icon = MenuItemIcon(slot.hmenu, static_cast<UINT>(i));
         push(std::move(item));
     }
 }

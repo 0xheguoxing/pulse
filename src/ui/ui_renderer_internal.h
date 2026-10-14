@@ -1818,7 +1818,7 @@ TitleChrome MakeTitleChrome(float window_w, float scale, float title_h) {
 }
 
 constexpr float kSettingsNavW = 200.0f;
-constexpr int kSettingsNavCount = 6;  // 5: 预览增强包
+constexpr int kSettingsNavCount = 7;  // 5: 预览增强包, 6: 系统右键菜单
 
 // System folder groups shown under Settings > Exclusions: 0-4 follow
 // index::kSystemExclusionGroups, 5-6 are always skipped by the index.
@@ -1973,16 +1973,15 @@ inline PulsePreviewLayout LayoutPulsePreview(const WindowViewModel& vm, const D2
 }
 
 struct SettingsLayout {
-    // Cards 0-4: Explorer groups (with a master switch). Card 5: Pulse's own
-    // commands, rows only (context_toggle[5] stays empty).
-    static constexpr int kContextCards = 6;
-    D2D1_RECT_F context_cards[kContextCards]{}, context_header[kContextCards]{}, context_toggle[kContextCards]{},
-        context_empty[kContextCards]{}, context_restore{};
+    // Rows of vm.settings_items; only Pulse's own commands (group 5) are laid
+    // out. Windows and other software are managed on 系统右键菜单 (page 6).
     std::vector<D2D1_RECT_F> context_rows;
     // Pulse menu card (first on the page): presets (3 = 自定义, display
     // only), surface tabs, fixed rows of the current tab, live preview.
     D2D1_RECT_F pulse_card{}, pulse_restore{}, pulse_preset[4]{}, pulse_tabs{}, pulse_tab[3]{},
-        pulse_fixed[2]{}, pulse_preview{}, pulse_order_reset{}, context_other{};
+        pulse_fixed[2]{}, pulse_preview{}, pulse_order_reset{};
+    // Below it: where the entries of Windows and other software went (opens page 6).
+    D2D1_RECT_F context_system_hint{};
     D2D1_RECT_F duplicate_options{};
     D2D1_RECT_F section[4]{}, group[3]{}, footer{};
     D2D1_RECT_F theme_row{}, theme_tile[3]{}, effect_choice{}, language_choice{};
@@ -2019,6 +2018,10 @@ struct SettingsLayout {
     D2D1_RECT_F nav{};
     D2D1_RECT_F content{};
     D2D1_RECT_F nav_row[kSettingsNavCount]{};
+    // 右键菜单 (page 2): intro and the layer cards, 0 = Pulse 右键菜单 (current),
+    // 1 = 系统右键菜单; page 6 has its own (sysctx.local_card / system_card).
+    D2D1_RECT_F ctx_intro{}, ctx_layer[2]{};
+    SysCtxLayout sysctx;  // page 6, see LayoutSettingsSysCtx
     D2D1_RECT_F accent_card{};
     D2D1_RECT_F accent_picker{};
     D2D1_RECT_F effect_card{};
@@ -2165,6 +2168,7 @@ float ReleaseLineHeight(const fluent::Painter* painter, const std::wstring& line
 }
 
 #include "settings_layout_sections.h"
+#include "settings_sysctx_layout.h"
 
 
 SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& rect,
@@ -2177,6 +2181,9 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
     l.nav = D2D1::RectF(l.body.left, l.body.top, l.body.left + nav_width, l.body.bottom);
     l.content = D2D1::RectF(l.nav.right, l.body.top, l.body.right, l.body.bottom);
     for (int i = 0; i < kSettingsNavCount; ++i) {
+        // 系统右键菜单 (6) has no row of its own: the 右键菜单 (2) layer cards
+        // switch between the two, see ctx_layer. 关于 (3) stays at the bottom.
+        if (i == 6) { l.nav_row[i] = {}; continue; }
         const int position = i == 4 ? 3 : i == 5 ? 4 : i;
         const float top = i == 3 ? l.nav.bottom - 92*scale : l.nav.top + (20 + position*46)*scale;
         l.nav_row[i] = D2D1::RectF(l.nav.left + 8*scale, top, l.nav.right - 8*scale, top + 40*scale);
@@ -2332,7 +2339,18 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
         }
         y = LayoutSettingsContent(l, vm, scale, y, painter);
     } else if (vm.settings_page == 2) {
-        y += 30*scale;
+        {
+            // Intro, then the layer cards placed as LayoutSettingsSysCtx places them.
+            const float cl=l.content.left+pad,cr=l.content.right-pad;
+            const auto& intro=l10n::Get(l10n::StringId::ContextMenuDesc);
+            const float intro_h=painter ? (std::max)(18*scale,painter->MeasureWrappedCaptionHeight(intro,cr-cl)) : 18*scale;
+            l.ctx_intro=D2D1::RectF(cl,y,cr,y+intro_h);
+            y+=(std::max)(intro_h,32*scale)+14*scale;
+            const float gap=10*scale,card_w=(cr-cl-gap)*0.5f;
+            l.ctx_layer[0]=D2D1::RectF(cl,y,cl+card_w,y+58*scale);
+            l.ctx_layer[1]=D2D1::RectF(cl+card_w+gap,y,cr,y+58*scale);
+            y+=58*scale+12*scale;
+        }
         l.context_rows.resize(vm.settings_items.size());
         {
             // Pulse menu card: header, presets, surface tabs, then the
@@ -2390,30 +2408,10 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
             y=bottom+16*scale;
             l.pulse_card=D2D1::RectF(left,top,right,y);
             y+=20*scale;
-            l.context_other=D2D1::RectF(left,y,right,y+20*scale);
-            y+=30*scale;
+            l.context_system_hint=D2D1::RectF(left,y,right,y+64*scale);
+            y+=64*scale;
         }
-        for(int g=0;g<5;++g) {
-            const float top=y;
-            l.context_header[g]=D2D1::RectF(l.content.left+pad,y,l.content.right-pad,y+76*scale);
-            l.context_toggle[g]=D2D1::RectF(l.content.right-pad-100*scale,y+20*scale,l.content.right-pad-56*scale,y+52*scale);
-            y+=76*scale;
-            if(vm.settings_expanded & (1u<<(g+8))) {
-                for(size_t i=0;i<vm.settings_items.size();++i) if(vm.settings_items[i].group==g) {
-                    l.context_rows[i]=D2D1::RectF(l.content.left+pad+12*scale,y,l.content.right-pad-12*scale,y+40*scale);
-                    y+=40*scale;
-                }
-                if(y==l.context_header[g].bottom) {
-                    l.context_empty[g]=D2D1::RectF(l.content.left+pad+16*scale,y,l.content.right-pad-16*scale,y+44*scale);
-                    y+=44*scale;
-                }
-                y+=8*scale;
-            }
-            l.context_cards[g]=D2D1::RectF(l.content.left+pad,top,l.content.right-pad,y);
-            y+=12*scale;
-        }
-        l.context_restore=D2D1::RectF(l.content.left+pad,y,l.content.left+pad+label_btn_w(l10n::Get(l10n::StringId::RestoreDefaults)),y+32*scale);
-        y+=56*scale;
+        y+=24*scale;
     } else if (vm.settings_page == 3) {
         const float card_left = l.content.left + pad;
         const float card_right = l.content.right - pad;
@@ -2534,6 +2532,8 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
         y = l.release_card.bottom + 24.0f * scale;
     } else if (vm.settings_page == 5) {
         y = LayoutSettingsPacks(l, vm, scale, y, painter);
+    } else if (vm.settings_page == 6) {
+        y = LayoutSettingsSysCtx(l, vm, scale, y, painter);
     } else if (vm.settings_page == 4) {
         const float card_left = l.content.left + pad;
         const float card_right = l.content.right - pad;

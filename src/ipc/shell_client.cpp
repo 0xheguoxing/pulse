@@ -449,9 +449,12 @@ void ShellClient::ReaderThread() {
                     if (ok) items.push_back(std::move(it));
                 }
                 CtxItemsExtra extra;
-                if (ok && r.TryStringArray(extra.slow_clsids) &&
-                    !TryCtxHandlerStatuses(r, extra.handlers))
-                    extra.handlers.clear();
+                if (ok && r.TryStringArray(extra.slow_clsids)) {
+                    if (!TryCtxHandlerStatuses(r, extra.handlers))
+                        extra.handlers.clear();
+                    else
+                        TryCtxItemIcons(r, items);  // optional; rows stay icon-less otherwise
+                }
                 if (ok) {
                     bool pending = false;
                     {

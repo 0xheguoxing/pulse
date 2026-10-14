@@ -48,20 +48,25 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
         pulse::l10n::StringId::SettingsDuplicates,
     };
     static constexpr const wchar_t* kNavIcon[] = {
-        kIconHome, kIconSearch, kIconSettings, kIconInfo, kIconCopy, L"\xE890"  // Quick Look
+        // 右键菜单 (2): the list glyph of its Pulse 右键菜单 card, not the gear.
+        kIconHome, kIconSearch, L"\xE8FD", kIconInfo, kIconCopy, L"\xE890",  // Quick Look
+        L"\xE71D",  // 系统右键菜单
     };
     static_assert(std::size(kNavIcon) == kSettingsNavCount);
-    // Page 5 (快速预览) has no string-table entry; see pack_text.
+    // Page 5 (快速预览) has no string-table entry; see pack_text. Page 2 is
+    // the single 右键菜单 entry; page 6 shares its row (layer cards on both pages).
     auto nav_label = [](int page) -> std::wstring {
+        if (page == 2 || page == 6) return std::wstring(sysctx_text::PageTitle());
         return page == 5 ? std::wstring(pack_text::Title()) : pulse::l10n::Get(kNav[page]);
     };
+    const int nav_page = vm.settings_page == 6 ? 2 : vm.settings_page;
     // Hover plate and selection pill glide between rows (ui_motion.h); the
     // accent bar travels with the pill.
     {
         const uint64_t now = motion_now_;
         int hovered_row = -1;
         for (int i = 0; i < kSettingsNavCount; ++i)
-            if (i != vm.settings_page && IsHovered(vm, HitTestResult::SettingsNav, i)) hovered_row = i;
+            if (i != nav_page && IsHovered(vm, HitTestResult::SettingsNav, i)) hovered_row = i;
         if (hovered_row >= 0) {
             const D2D1_RECT_F rc = settings_nav_hover_.Update(
                 1, hovered_row, lay.nav_row[hovered_row], motion_frame_, now, 120);
@@ -69,9 +74,9 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
             FillRoundedRect(dc, brFillSelected_.get(), rc.left, rc.top,
                             rc.right - rc.left, rc.bottom - rc.top, 6.0f * scale_);
         }
-        if (vm.settings_page >= 0 && vm.settings_page < kSettingsNavCount) {
+        if (nav_page >= 0 && nav_page < kSettingsNavCount) {
             const D2D1_RECT_F rc = settings_nav_pill_.Update(
-                1, vm.settings_page, lay.nav_row[vm.settings_page], motion_frame_, now, 200);
+                1, nav_page, lay.nav_row[nav_page], motion_frame_, now, 200);
             MakeBrush(dc, theme.fill_selected, brFillSelected_);
             FillRoundedRect(dc, brFillSelected_.get(), rc.left, rc.top,
                             rc.right - rc.left, rc.bottom - rc.top, 6.0f * scale_);
@@ -80,7 +85,8 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
         }
     }
     for (int i = 0; i < kSettingsNavCount; ++i) {
-        const bool active = vm.settings_page == i;
+        if (i == 6) continue;  // no row: reached through the 右键菜单 layer cards
+        const bool active = nav_page == i;
         const auto& rc = lay.nav_row[i];
         DrawIconText(rc.left + (compact_nav ? 13.0f : 12.0f) * scale_, rc.top, 22.0f * scale_, rc.bottom - rc.top,
                      kNavIcon[i], L"*", active ? theme.accent : theme.text_secondary, 0.85f);
@@ -103,7 +109,8 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
         : vm.settings_page == 4 ? pulse::l10n::StringId::SettingsDuplicates
                                 : pulse::l10n::StringId::SettingsAboutDiagnostics;
     MakeBrush(dc, theme.text, brText_);
-    const std::wstring title = vm.settings_page == 5 ? std::wstring(pack_text::Title()) : l10n::Get(page_title_id);
+    const std::wstring title = vm.settings_page == 2 || vm.settings_page == 6 ? std::wstring(sysctx_text::PageTitle())
+        : vm.settings_page == 5 ? std::wstring(pack_text::Title()) : l10n::Get(page_title_id);
     ComPtr<IDWriteTextLayout> title_layout;
     compositor_->DwriteFactory()->CreateTextLayout(title.c_str(), static_cast<UINT32>(title.size()),
         compositor_->HeaderFormat(), lay.content.right-lay.content.left-pad*2, 40*scale_, &title_layout);
@@ -828,6 +835,8 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
         }
     } else if (vm.settings_page == 5) {
         DrawSettingsPacks(vm, rect, theme);
+    } else if (vm.settings_page == 6) {
+        DrawSettingsSysCtx(vm, rect, theme);
     } else if (vm.settings_page == 4) {
         auto draw_card = [&](const D2D1_RECT_F& card) {
             if (card.right <= card.left || card.bottom <= card.top) return;

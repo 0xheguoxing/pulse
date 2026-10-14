@@ -30,6 +30,8 @@
 #include "entry_sort.h"
 #include "session.h"
 #include "context_menu.h"
+#include "system_ctx_registry.h"
+#include "shell_verbs.h"
 #include "app_change_tracking.h"
 #include "batch_rename.h"
 #include "search_query.h"
@@ -1145,7 +1147,9 @@ void PrefetchStaticVerbs(AppState& s, const std::wstring& ext) {
     HWND hwnd = ServiceWindow(s);
     const uint32_t cache_generation = s.context_menu.cache_generation();
     std::thread([hwnd, ext, cache_generation] {
-        auto* result = new ShellVerbsResult{ ext, app::EnumerateStaticVerbs(ext), cache_generation };
+        auto verbs = app::EnumerateStaticVerbs(ext);
+        app::ResolveStaticVerbIcons(verbs);
+        auto* result = new ShellVerbsResult{ ext, std::move(verbs), cache_generation };
         if (!PostMessageW(hwnd, WM_SHELL_VERBS, 0, reinterpret_cast<LPARAM>(result)))
             delete result;
     }).detach();
@@ -1182,7 +1186,9 @@ void SeedShellVerbCache(AppState& s) {
         size_t n = 0;
         for (const auto& ext : extensions) {
             if (n++ > 400 || g_shell_seed_generation.load() != generation) break;
-            auto* result = new ShellVerbsResult{ ext, app::EnumerateStaticVerbs(ext), cache_generation };
+            auto verbs = app::EnumerateStaticVerbs(ext);
+            app::ResolveStaticVerbIcons(verbs);
+            auto* result = new ShellVerbsResult{ ext, std::move(verbs), cache_generation };
             if (!PostMessageW(hwnd, WM_SHELL_VERBS, 0, reinterpret_cast<LPARAM>(result)))
                 delete result;
         }

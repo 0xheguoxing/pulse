@@ -16,6 +16,7 @@
 #include <windows.h>
 #include "file_lock_owner.h"
 #include "duplicate_cleanup_guard.h"
+#include "../common/menu_icon.h"
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -173,6 +174,7 @@ struct ShellMenuItem {
     std::wstring clsid;
     std::wstring handler;
     wchar_t mnemonic = 0;        // access key from the Explorer label, 0 = none
+    common::MenuIconRef icon;    // the row's app icon, as Explorer shows it
 };
 
 // One handler of a context-menu answer, in menu order (ipc::CtxHandlerStatus).

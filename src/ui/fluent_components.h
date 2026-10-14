@@ -118,6 +118,9 @@ struct MenuItemSpec {
     float glyph_scale = 1.0f;
     bool shortcut_inline = false;
     float inline_label_width = 0.0f;
+    // Explorer-style app icon (premultiplied, same device as the painter's
+    // context); wins over glyph/pictogram and is drawn 16 DIP like Explorer's.
+    ID2D1Bitmap* icon_bitmap = nullptr;
 };
 
 struct ScrollbarSpec {
@@ -504,6 +507,7 @@ private:
     IDWriteTextFormat* SectionFormat() const noexcept; // sidebar group headers: 13px semibold
     IDWriteTextFormat* SmallIconFormat() const noexcept;
     IDWriteTextFormat* MenuChevronFormat() const noexcept; // submenu ">" : 12px
+    IDWriteTextFormat* MenuIconFormat() const noexcept;    // menu row glyphs: 14px
     IDWriteTextFormat* MicroIconFormat() const noexcept;
     float Px(float dips) const noexcept;
 
@@ -523,6 +527,7 @@ private:
     ComPtr<IDWriteTextFormat> section_format_;
     ComPtr<IDWriteTextFormat> caption_format_;
     ComPtr<IDWriteTextFormat> small_icon_format_;
+    ComPtr<IDWriteTextFormat> menu_icon_format_;
     ComPtr<IDWriteTextFormat> micro_icon_format_;
     ComPtr<IDWriteInlineObject> ellipsis_sign_;
     ComPtr<IDWriteInlineObject> nav_ellipsis_sign_;  // menu labels

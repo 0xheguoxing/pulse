@@ -8,6 +8,8 @@
 // EnumerateStaticVerbs does registry reads plus version-info lookups for
 // friendly app names: call it off the UI thread and cache per extension.
 #pragma once
+#include "../common/menu_icon.h"
+
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -21,6 +23,11 @@ struct StaticVerb {
     std::wstring command;   // raw HKCR command template; CommandStore children need this
     std::vector<StaticVerb> children; // cascade flyout (SubCommands / ExtendedSubCommandsKey)
     wchar_t mnemonic = 0;   // access key from the registry label ("&Edit"), 0 = none
+    // Explorer's row icon: the verb key's Icon value ("file,index"), or the
+    // program itself for open-with entries. Not part of the machine cache;
+    // the live pass fills it.
+    std::wstring icon;
+    common::MenuIconRef icon_pixels;  // ResolveStaticVerbIcons' result for `icon`
 };
 
 // ext is ".dwg" (file), or a location key ":folder" / ":drive" / ":bg".
@@ -28,11 +35,21 @@ struct StaticVerb {
 // return Directory/Folder/Drive/Background shell verbs, including cascades.
 std::vector<StaticVerb> EnumerateStaticVerbs(const std::wstring& ext);
 
+// Loads StaticVerb::icon (and children's) into icon_pixels at the system
+// DPI's 16 DIP, through a process-wide cache keyed by the icon reference.
+// Icon extraction touches the program files: call it off the UI thread, right
+// after EnumerateStaticVerbs.
+void ResolveStaticVerbIcons(std::vector<StaticVerb>& verbs);
+
 // Pure helper (self-tested): dedupes by display text, drops entries matching
 // any built-in row text, caps the list.
 std::vector<StaticVerb> DedupeStaticVerbs(std::vector<StaticVerb> verbs,
                                           const std::vector<std::wstring>& builtin_texts,
                                           size_t cap);
+
+// The shell's small icon for a file type (".docx"), as the 新建 menu shows
+// it. Process-wide cache by extension; misses are remembered.
+common::MenuIconRef FileTypeMenuIcon(const std::wstring& ext);
 
 std::wstring MachineStaticVerbCachePath();
 bool LoadMachineStaticVerbCache(std::unordered_map<std::wstring, std::vector<StaticVerb>>& out);

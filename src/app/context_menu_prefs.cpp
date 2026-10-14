@@ -130,6 +130,26 @@ void ContextMenuPrefs::SetItemEnabled(const std::wstring& key, bool on) {
     if (on) SetComDisabled(key, false);
 }
 
+bool ContextMenuPrefs::CatalogItemVisible(const std::wstring& key) const {
+    for (const auto& item : seen)
+        if (item.key == key) return RowEnabled(item.key, item.category, item.from_com);
+    const auto it = item_enabled.find(key);
+    return (it == item_enabled.end() || it->second) && !ComDisabled(key);
+}
+
+std::vector<std::wstring> ContextMenuPrefs::HiddenCatalogKeys() const {
+    std::vector<std::wstring> keys;
+    for (const auto& item : seen)
+        if (!RowEnabled(item.key, item.category, item.from_com)) keys.push_back(item.key);
+    for (const auto& [key, on] : item_enabled)
+        if (!on) keys.push_back(key);
+    for (const auto& [key, state] : slow_ext)
+        if (state.disabled) keys.push_back(key);
+    std::sort(keys.begin(), keys.end());
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+    return keys;
+}
+
 bool ContextMenuPrefs::HandlerEnabled(const std::wstring& clsid) const {
     if (clsid.empty()) return true;
     const std::wstring key = ipc::HandlerCatalogKey(clsid);

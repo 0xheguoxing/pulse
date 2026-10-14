@@ -20,6 +20,8 @@ namespace pulse::index { class IndexClient; class NetworkAgentClient; }
 
 namespace pulse::app {
 
+class SystemCtxModel;
+
 enum class SettingsEffect : uint32_t {
     None = 0,
     Accent = 1u << 0,
@@ -227,6 +229,8 @@ public:
     void ToggleUi(int index);
     // 本地右键菜单 › Pulse 菜单 tab: 0 on a file, 1 blank area, 2 row buttons.
     int ContextTab() const { return context_tab_; }
+    // 系统右键菜单 (page 6): created on first use, scans on a worker thread.
+    SystemCtxModel& SystemCtx();
     // Pulse menu preview: a row pressed for dragging (BuiltinMenuItem), live
     // once the pointer moved 3 px along the tab's axis. EndMenuDrag drops
     // the drag; SetMenuOrder saves the order for the current tab.
@@ -265,6 +269,7 @@ public:
 
 private:
     int context_tab_ = 0;
+    std::shared_ptr<SystemCtxModel> sysctx_;  // shared_ptr: fine with the forward declaration
     friend struct SettingsControllerTestPeer;
 
     struct TaskState {

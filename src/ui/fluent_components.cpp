@@ -243,6 +243,7 @@ void Painter::SetCompositor(Compositor* compositor) noexcept {
     section_format_.reset();
     caption_format_.reset();
     small_icon_format_.reset();
+    menu_icon_format_.reset();
     micro_icon_format_.reset();
     ellipsis_sign_.reset();
     nav_ellipsis_sign_.reset();
@@ -259,6 +260,7 @@ void Painter::SetScale(float scale) noexcept {
         section_format_.reset();
         caption_format_.reset();
         small_icon_format_.reset();
+        menu_icon_format_.reset();
         micro_icon_format_.reset();
         ellipsis_sign_.reset();
         nav_ellipsis_sign_.reset();
@@ -311,7 +313,7 @@ bool Painter::BeginFrame(const Theme& theme, bool high_contrast) {
 void Painter::EnsureTextFormats() {
     if (!compositor_ || !compositor_->DwriteFactory() ||
         (body_format_.get() && caption_format_.get() &&
-         small_icon_format_.get() && micro_icon_format_.get() &&
+         small_icon_format_.get() && menu_icon_format_.get() && micro_icon_format_.get() &&
          std::abs(format_scale_ - scale_) <= 0.001f &&
          format_generation_ == typography::Generation())) {
         return;
@@ -324,6 +326,7 @@ void Painter::EnsureTextFormats() {
     section_format_.reset();
     caption_format_.reset();
     small_icon_format_.reset();
+    menu_icon_format_.reset();
     micro_icon_format_.reset();
     ellipsis_sign_.reset();
     nav_ellipsis_sign_.reset();
@@ -351,6 +354,7 @@ void Painter::EnsureTextFormats() {
     create(13.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, section_format_);
     create(12.0f, DWRITE_FONT_WEIGHT_NORMAL, caption_format_);
     create_icon(12.0f, small_icon_format_);
+    create_icon(14.0f, menu_icon_format_);
     create_icon(10.0f, micro_icon_format_);
     if (body_format_.get())
         compositor_->DwriteFactory()->CreateEllipsisTrimmingSign(
@@ -401,6 +405,11 @@ IDWriteTextFormat* Painter::SmallIconFormat() const noexcept {
 
 IDWriteTextFormat* Painter::MenuChevronFormat() const noexcept {
     return SmallIconFormat();
+}
+
+IDWriteTextFormat* Painter::MenuIconFormat() const noexcept {
+    return menu_icon_format_.get() ? menu_icon_format_.get()
+                                   : compositor_ ? compositor_->IconFormat() : nullptr;
 }
 
 IDWriteTextFormat* Painter::MicroIconFormat() const noexcept {
@@ -1362,17 +1371,20 @@ void Painter::DrawMenuItem(const MenuItemSpec& spec) {
         }
         content.left += radio_col;
     }
-    const float icon_width = Px(20.0f);
+    // 16 DIP icon column with 14 DIP glyphs: Explorer's icon-to-label ratio
+    // (16 px icons, 14 px labels) carried over to the 13 DIP menu labels. The
+    // old 20 DIP slot with 16 DIP glyphs read as oversized next to the text.
+    const float icon_width = Px(16.0f);
     const auto icon_bounds = D2D1::RectF(content.left, content.top,
                                          content.left + icon_width, content.bottom);
     auto draw_glyph = [&]() {
         const float glyph_scale = std::clamp(spec.glyph_scale, 0.6f, 1.2f);
+        IDWriteTextFormat* iconFormat = MenuIconFormat();
         if (std::abs(glyph_scale - 1.0f) < 0.001f || spec.glyph.empty()) {
-            DrawGlyph(spec.glyph, icon_bounds, foreground);
+            DrawGlyphWithFormat(spec.glyph, icon_bounds, foreground, iconFormat);
             return;
         }
         ComPtr<IDWriteTextLayout> glyphLayout;
-        IDWriteTextFormat* iconFormat = compositor_->IconFormat();
         const UINT32 length = static_cast<UINT32>(spec.glyph.size());
         if (iconFormat && SUCCEEDED(compositor_->DwriteFactory()->CreateTextLayout(
                 spec.glyph.data(), length, iconFormat,
@@ -1386,10 +1398,19 @@ void Painter::DrawMenuItem(const MenuItemSpec& spec) {
                                 glyphLayout.get(), ScratchBrush(foreground),
                                 D2D1_DRAW_TEXT_OPTIONS_CLIP);
         } else {
-            DrawGlyph(spec.glyph, icon_bounds, foreground);
+            DrawGlyphWithFormat(spec.glyph, icon_bounds, foreground, iconFormat);
         }
     };
-    if (spec.has_swatch) {
+    if (spec.icon_bitmap) {
+        // App icon like Explorer's rows: a 16 DIP square centered in the
+        // column, dimmed with the label when the row is disabled.
+        const float side = (std::min)(icon_width, content.bottom - content.top);
+        const float left = std::round(icon_bounds.left + (icon_width - side) * 0.5f);
+        const float top = std::round((content.top + content.bottom - side) * 0.5f);
+        const auto dest = D2D1::RectF(left, top, left + side, top + side);
+        dc_->DrawBitmap(spec.icon_bitmap, &dest, spec.state.enabled ? 1.0f : 0.45f,
+                        D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, nullptr, nullptr);
+    } else if (spec.has_swatch) {
         const auto center = D2D1::Point2F((icon_bounds.left + icon_bounds.right) * 0.5f,
                                          (icon_bounds.top + icon_bounds.bottom) * 0.5f);
         DrawTagDotState(center, 5.0f, spec.swatch_color, spec.checked, spec.mixed);
@@ -2106,6 +2127,7 @@ void Painter::InvalidateTypography() noexcept {
     section_format_.reset();
     caption_format_.reset();
     small_icon_format_.reset();
+    menu_icon_format_.reset();
     micro_icon_format_.reset();
     ellipsis_sign_.reset();
     nav_ellipsis_sign_.reset();

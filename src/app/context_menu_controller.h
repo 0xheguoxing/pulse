@@ -153,6 +153,10 @@ public:
                                      std::vector<ops::ShellMenuHandlerStatus> handlers = {});
     // Per-handler times and row counts stored for a key (nullptr: none).
     const CtxHandlerStats* ComHandlerStats(const std::wstring& key) const;
+    // Every handler the stored layouts measured, each CLSID once with its
+    // slowest time (one never seen finishing: the longest wait). Feeds the
+    // 概览 of Settings > 系统右键菜单.
+    std::vector<std::pair<std::wstring, uint32_t>> ComHandlerTimes() const;
 
     void OpenMenu(std::vector<ui::FluentMenuItem> base_items);
     void NotePatchedDisplay() { menu_com_items_ = com_items_; menu_static_verbs_ = static_verbs_; }

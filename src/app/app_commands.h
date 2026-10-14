@@ -132,5 +132,9 @@ void ApplySettingsEffects(AppState& s, app::SettingsEffect effects);
 app::SettingsTaskCompletion SettingsCompletion(HWND hwnd);
 void SetThemeMode(AppState& s, int mode);
 bool HandleSettingsControl(AppState& s, const ui::HitTestResult& hit);
+// 系统右键菜单 live preview drag (settings_ui.cpp): true when it handled the message.
+bool SysCtxPreviewDragMove(AppState& s, int x, int y, WPARAM buttons);
+bool SysCtxPreviewDragEnd(AppState& s, int x, int y);
+bool SysCtxPreviewDragCancel(AppState& s);
 void ToggleTheme(AppState& s);
 } // namespace pulse

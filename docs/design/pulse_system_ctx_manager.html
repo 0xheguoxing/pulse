@@ -1,0 +1,1308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pulse · 系统右键菜单（效果原型）</title>
+<style>
+:root{
+  --accent:#6474c7; --accent-hi:#8592ee; --accent-soft:rgba(120,134,232,.16); --accent-line:rgba(133,146,238,.55);
+  --text:#e8eae7; --text-2:#a9aea8; --text-3:#7b807b;
+  --panel:rgba(30,33,32,.74); --panel-2:rgba(42,46,45,.80); --panel-3:rgba(52,57,55,.86);
+  --line:rgba(255,255,255,.075); --line-2:rgba(255,255,255,.12);
+  --hover:rgba(255,255,255,.06); --press:rgba(255,255,255,.10);
+  --ok:#5cc489; --warn:#e8b04a; --bad:#e6716b; --shield:#e8b04a;
+  --r:8px;
+  --font:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+  --mono:"Cascadia Mono",Consolas,"SFMono-Regular",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden}
+body{font:13px/1.45 var(--font);color:var(--text);background:#151816;-webkit-font-smoothing:antialiased;user-select:none}
+button{font:inherit;color:inherit}
+input,select{font:inherit;color:inherit}
+svg{display:block}
+.scene-bg{position:fixed;inset:0;z-index:0;
+  background:
+   radial-gradient(1200px 700px at 72% 18%,rgba(86,112,74,.32),transparent 60%),
+   radial-gradient(900px 600px at 20% 85%,rgba(60,88,70,.30),transparent 60%),
+   radial-gradient(700px 500px at 92% 92%,rgba(120,70,70,.20),transparent 60%),
+   linear-gradient(160deg,#1a1f1b 0%,#141815 45%,#181b19 100%);}
+.scene-bg::after{content:"";position:absolute;inset:0;background:
+  repeating-radial-gradient(circle at 30% 40%,rgba(255,255,255,.012) 0 2px,transparent 2px 7px);}
+
+/* ---------- window chrome ---------- */
+.app{position:relative;z-index:1;display:grid;grid-template-rows:46px 1fr 26px;height:100vh}
+.titlebar{display:flex;align-items:center;gap:10px;padding:0 0 0 14px}
+.logo{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,#7c8af0,#4d5bb8);display:grid;place-items:center;font-weight:700;font-size:12px}
+.brand{font-weight:600;font-size:14px}
+.brand small{font-weight:400;color:var(--text-2);font-size:12px;margin-left:8px}
+.tabs{display:flex;align-items:flex-end;height:100%;margin-left:56px;gap:2px}
+.tab{display:flex;align-items:center;gap:8px;padding:0 14px;height:34px;border-radius:8px 8px 0 0;color:var(--text-2)}
+.tab.active{color:var(--text);position:relative}
+.tab.active::after{content:"";position:absolute;left:14px;width:20px;bottom:0;height:3px;border-radius:2px;background:var(--accent-hi)}
+.tb-spacer{flex:1}
+.proto-tools{display:flex;gap:6px;margin-right:12px}
+.chip-btn{height:28px;padding:0 10px;border-radius:7px;border:1px solid var(--line-2);background:rgba(255,255,255,.04);display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text-2)}
+.chip-btn:hover{background:var(--hover);color:var(--text)}
+.chip-btn.on{border-color:var(--accent-line);background:var(--accent-soft);color:var(--text)}
+.winbtns{display:flex}
+.winbtns span{width:46px;height:46px;display:grid;place-items:center;color:var(--text-2)}
+
+.body{display:grid;grid-template-columns:212px 1fr;min-height:0}
+.statusbar{display:flex;align-items:center;gap:18px;padding:0 14px;color:var(--text-2);font-size:12px;border-top:1px solid var(--line)}
+.statusbar .path{font-family:var(--mono);font-size:11.5px;color:var(--text-3);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex:1}
+
+/* settings nav */
+.snav{padding:8px 8px 12px;display:flex;flex-direction:column;gap:2px;background:rgba(18,21,19,.42);border-right:1px solid var(--line)}
+.snav a{display:flex;align-items:center;gap:12px;height:36px;padding:0 12px;border-radius:7px;color:var(--text);text-decoration:none;position:relative;cursor:pointer}
+.snav a:hover{background:var(--hover)}
+.snav a.active{background:var(--press)}
+.snav a.active::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:2px;background:var(--accent-hi)}
+.snav a .new{margin-left:auto;font-size:10.5px;padding:1px 6px;border-radius:9px;background:var(--accent-soft);color:#c3c9ff;border:1px solid var(--accent-line)}
+.snav .grow{flex:1}
+.snav .ver{color:var(--text-3);font-size:12px;padding:6px 12px}
+
+/* page */
+.page{min-width:0;min-height:0;display:flex;flex-direction:column;padding:18px 22px 0 22px}
+.ph{display:flex;align-items:flex-end;gap:16px}
+.ph h1{margin:0;font-size:24px;font-weight:650;letter-spacing:.2px}
+.ph p{margin:4px 0 0;color:var(--text-2);font-size:12.5px}
+.ph .actions{margin-left:auto;display:flex;gap:8px;padding-bottom:2px}
+.btn{height:32px;padding:0 12px;border-radius:7px;border:1px solid var(--line-2);background:var(--panel-2);display:inline-flex;align-items:center;gap:7px;cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--panel-3)}
+.btn:active{background:var(--press)}
+.btn.primary{background:var(--accent);border-color:rgba(255,255,255,.14);color:#fff}
+.btn.primary:hover{background:#7080d4}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--text-2)}
+.btn.ghost:hover{background:var(--hover);color:var(--text)}
+.btn.sm{height:26px;padding:0 9px;font-size:12px;border-radius:6px}
+.btn:disabled{opacity:.45;cursor:default}
+
+.layer-switch{display:flex;gap:10px;margin:14px 0 12px}
+.layer{flex:1;display:flex;gap:12px;align-items:center;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:var(--panel);cursor:pointer}
+.layer .ico{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;background:rgba(255,255,255,.06)}
+.layer b{font-weight:600}
+.layer span{display:block;color:var(--text-2);font-size:12px}
+.layer.cur{border-color:var(--accent-line);background:linear-gradient(0deg,var(--accent-soft),var(--accent-soft)),var(--panel)}
+.layer .tag{margin-left:auto;font-size:11px;color:var(--text-3)}
+
+.work{flex:1;min-height:0;display:grid;grid-template-columns:200px minmax(0,1fr) 330px;gap:12px;padding-bottom:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;min-height:0;backdrop-filter:blur(18px)}
+
+/* scenes */
+.scenes{overflow:auto;padding:8px 6px}
+.sg{padding:10px 10px 4px;color:var(--text-3);font-size:11.5px;letter-spacing:.3px}
+.sc{display:flex;align-items:center;gap:10px;height:32px;padding:0 10px;border-radius:6px;cursor:pointer;color:var(--text);position:relative}
+.sc:hover{background:var(--hover)}
+.sc.active{background:var(--press)}
+.sc.active::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:2px;background:var(--accent-hi)}
+.sc .ic{width:16px;height:16px;color:var(--text-2)}
+.sc .n{margin-left:auto;font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.sc .n .off{color:var(--warn)}
+.sc .dot{width:6px;height:6px;border-radius:50%;background:var(--accent-hi);margin-left:4px}
+
+/* list */
+.list{display:flex;flex-direction:column;overflow:hidden}
+.lh{display:flex;align-items:center;gap:10px;padding:12px 14px 10px;border-bottom:1px solid var(--line)}
+.lh h2{margin:0;font-size:15px;font-weight:600;white-space:nowrap}
+.lh .key{font-family:var(--mono);font-size:11.5px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.search{margin-left:auto;display:flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:7px;background:rgba(0,0,0,.22);border:1px solid var(--line);width:220px;flex:none}
+.search:focus-within{border-color:var(--accent-line)}
+.search input{flex:1;min-width:0;background:none;border:0;outline:0}
+.search kbd{font:11px var(--font);color:var(--text-3);border:1px solid var(--line-2);border-radius:4px;padding:0 4px}
+.fbar{display:flex;align-items:center;gap:6px;padding:8px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.fchip{height:24px;padding:0 10px;border-radius:12px;border:1px solid var(--line-2);background:transparent;cursor:pointer;font-size:12px;color:var(--text-2);display:flex;align-items:center;gap:5px}
+.fchip:hover{background:var(--hover)}
+.fchip.on{background:var(--accent-soft);border-color:var(--accent-line);color:var(--text)}
+.fchip .c{font-variant-numeric:tabular-nums;color:var(--text-3)}
+.fbar .sp{flex:1}
+.subpick{display:flex;gap:6px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.subpick .lbl{color:var(--text-2);font-size:12px;margin-right:4px}
+.extchip{height:24px;padding:0 9px;border-radius:6px;border:1px solid var(--line-2);font-family:var(--mono);font-size:12px;cursor:pointer;background:transparent;color:var(--text-2)}
+.extchip.on{border-color:var(--accent-line);background:var(--accent-soft);color:var(--text)}
+.extinput{height:24px;width:90px;border-radius:6px;border:1px dashed var(--line-2);background:transparent;padding:0 8px;font-family:var(--mono);font-size:12px;outline:0}
+
+.rows{flex:1;overflow:auto;padding:6px 6px 84px}
+.rgroup{display:flex;align-items:center;gap:8px;padding:10px 10px 4px;color:var(--text-3);font-size:11.5px;cursor:pointer}
+.rgroup svg{transition:transform .15s}
+.rgroup.closed svg{transform:rotate(-90deg)}
+.row{display:grid;grid-template-columns:30px minmax(0,1fr) auto 44px 28px;align-items:center;gap:10px;min-height:52px;padding:6px 8px 6px 10px;border-radius:8px;cursor:pointer;position:relative}
+.row:hover{background:var(--hover)}
+.row.sel{background:var(--press);box-shadow:inset 0 0 0 1px var(--line-2)}
+.row.off .nm,.row.off .ai{opacity:.5}
+.row.pend::before{content:"";position:absolute;left:2px;top:12px;bottom:12px;width:3px;border-radius:2px;background:var(--warn)}
+.row.flash{animation:flash 1.6s ease 2}
+@keyframes flash{0%,100%{background:transparent}40%{background:rgba(133,146,238,.22)}}
+.ai{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;font-weight:700;font-size:11px;color:#fff;letter-spacing:-.3px}
+.ai.sys{background:rgba(255,255,255,.08);color:var(--text-2)}
+.nm{min-width:0}
+.nm .t{display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden}
+.nm .t b{font-weight:500;overflow:hidden;text-overflow:ellipsis}
+.nm .s{font-size:11.5px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.badges{display:flex;gap:5px;align-items:center;justify-content:flex-end}
+.bd{height:20px;padding:0 7px;border-radius:5px;font-size:11px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;border:1px solid transparent}
+.bd.adm{color:#f1cd85;background:rgba(232,176,74,.12);border-color:rgba(232,176,74,.28)}
+.bd.cu{color:#9fd8b6;background:rgba(92,196,137,.10);border-color:rgba(92,196,137,.25)}
+.bd.cmm{color:#c9b8ff;background:rgba(160,130,255,.12);border-color:rgba(160,130,255,.3)}
+.bd.slow{color:#ffb4ac;background:rgba(230,113,107,.12);border-color:rgba(230,113,107,.3)}
+.bd.ms{color:var(--text-3);border-color:var(--line-2)}
+.bd.lock{color:var(--text-2);background:rgba(255,255,255,.05)}
+.bd.shift{color:var(--text-2);border-color:var(--line-2)}
+.bd.pend{color:#f3cf86;background:rgba(232,176,74,.10)}
+.bd.pulse{color:#b9c1ff;border-color:var(--accent-line)}
+.tg{width:40px;height:20px;border-radius:10px;border:1.5px solid #9aa09a;position:relative;cursor:pointer;background:transparent;transition:background .15s,border-color .15s;padding:0}
+.tg::after{content:"";position:absolute;top:2.5px;left:3px;width:12px;height:12px;border-radius:50%;background:#c9cdc8;transition:left .15s,background .15s,width .15s}
+.tg.on{background:var(--accent-hi);border-color:var(--accent-hi)}
+.tg.on::after{left:22px;background:#fff}
+.tg:disabled{opacity:.35;cursor:not-allowed}
+.tg:not(:disabled):active::after{width:15px}
+.more{width:28px;height:28px;border-radius:6px;border:0;background:transparent;color:var(--text-2);cursor:pointer;display:grid;place-items:center}
+.more:hover{background:var(--hover);color:var(--text)}
+.empty{padding:40px 20px;text-align:center;color:var(--text-3)}
+.addrow{display:flex;align-items:center;gap:10px;margin:4px 0 2px;padding:10px;border-radius:8px;border:1px dashed var(--line-2);color:var(--text-2);cursor:pointer}
+.addrow:hover{background:var(--hover);color:var(--text)}
+.addrow .ai{background:transparent;border:1px dashed var(--line-2);color:var(--text-2)}
+.hint-ti{font-size:11.5px;color:var(--text-3)}
+
+/* overview */
+.ov{flex:1;overflow:auto;padding:14px 14px 84px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-content:start}
+.ovc{background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:14px}
+.ovc h3{margin:0 0 2px;font-size:13.5px;font-weight:600}
+.ovc .d{color:var(--text-3);font-size:12px;margin-bottom:10px}
+.ovc.wide{grid-column:1/-1}
+.stats{display:flex;gap:10px}
+.stat{flex:1;background:rgba(0,0,0,.18);border-radius:8px;padding:10px 12px}
+.stat b{display:block;font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
+.stat span{color:var(--text-2);font-size:12px}
+.rank{display:grid;grid-template-columns:28px minmax(110px,1fr) minmax(50px,120px) 52px auto;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--line)}
+.rank:first-of-type{border-top:0}
+.bar{height:6px;border-radius:3px;background:rgba(255,255,255,.07);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#e8b04a,#e6716b)}
+.rank .v{font-variant-numeric:tabular-nums;color:var(--text-2);font-size:12px;text-align:right}
+.mini{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line)}
+.mini:first-of-type{border-top:0}
+.mini .grow{flex:1;min-width:0}
+.mini .s{font-size:11.5px;color:var(--text-3);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* side panel */
+.side{display:flex;flex-direction:column;overflow:hidden}
+.stabs{display:flex;gap:4px;padding:8px;border-bottom:1px solid var(--line)}
+.stab{flex:1;height:28px;border-radius:6px;border:0;background:transparent;color:var(--text-2);cursor:pointer}
+.stab.on{background:var(--press);color:var(--text)}
+.sbody{flex:1;overflow:auto;padding:14px}
+.pv-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.seg{display:flex;padding:2px;border-radius:7px;background:rgba(0,0,0,.25);border:1px solid var(--line)}
+.seg button{height:24px;padding:0 10px;border:0;border-radius:5px;background:transparent;color:var(--text-2);cursor:pointer;font-size:12px}
+.seg button.on{background:var(--panel-3);color:var(--text)}
+.pv-sub{color:var(--text-3);font-size:11.5px;margin:0 0 12px}
+.shiftk{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-2);cursor:pointer}
+.shiftk kbd{font:11px var(--font);border:1px solid var(--line-2);border-bottom-width:2px;border-radius:4px;padding:1px 6px;background:rgba(255,255,255,.04)}
+.shiftk.on kbd{background:var(--accent-soft);border-color:var(--accent-line);color:#fff}
+.fakefile{display:flex;align-items:center;gap:8px;margin:0 0 6px 4px;color:var(--text-2);font-size:12px}
+.fakefile .fi{width:18px;height:22px;border-radius:2px;background:linear-gradient(#eef0f3,#cfd4da);position:relative}
+.fakefile .fi::after{content:"";position:absolute;right:0;top:0;border:4px solid;border-color:#9aa3ad #151816 #151816 #9aa3ad}
+
+.cm{width:100%;max-width:290px;background:rgba(44,46,48,.96);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:4px;box-shadow:0 16px 40px rgba(0,0,0,.45);font-size:12.5px}
+.cm.exp{background:#2b2b2b;border-radius:6px}
+.cmi{display:flex;align-items:center;gap:10px;height:30px;padding:0 10px;border-radius:5px;position:relative;white-space:nowrap;overflow:hidden;transition:height .25s,opacity .25s,background .2s}
+.cmi .ci{width:16px;height:16px;flex:none;border-radius:4px;display:grid;place-items:center;font-size:8.5px;font-weight:700;color:#fff}
+.cmi .ci.sys{color:var(--text-2)}
+.cmi .lb{flex:1;overflow:hidden;text-overflow:ellipsis}
+.cmi .k{color:var(--text-3);font-size:11px}
+.cmi .arr{color:var(--text-3)}
+.cmi.bold .lb{font-weight:600}
+.cmi.going{background:rgba(230,113,107,.10)}
+.cmi.going .lb{text-decoration:line-through;color:#d79a95}
+.cmi.going::after{content:"将隐藏";position:absolute;right:8px;font-size:10.5px;color:#e6716b}
+.cmi.coming{background:rgba(92,196,137,.10)}
+.cmi.coming::after{content:"将显示";position:absolute;right:8px;font-size:10.5px;color:var(--ok)}
+.cmi.hl{box-shadow:inset 0 0 0 1px var(--accent-line);background:var(--accent-soft)}
+.cmi.ext .lb::after{content:" ⇧";color:var(--text-3);font-size:10.5px}
+.cmsep{height:1px;background:rgba(255,255,255,.09);margin:4px 6px}
+.cmrow{display:flex;gap:2px;padding:2px 6px 4px}
+.cmrow span{flex:1;height:30px;border-radius:5px;display:grid;place-items:center;color:var(--text-2)}
+.cmrow span:hover{background:var(--hover)}
+.cmi.manage{color:#b9c1ff}
+.pv-legend{display:flex;gap:12px;margin-top:12px;font-size:11.5px;color:var(--text-3);flex-wrap:wrap}
+.pv-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:0}
+
+.dt h3{margin:0;font-size:15px;font-weight:600;display:flex;align-items:center;gap:10px}
+.dt .sub{color:var(--text-3);font-size:12px;margin:4px 0 12px}
+.kv{display:grid;grid-template-columns:64px 1fr;gap:6px 10px;font-size:12px;margin-bottom:14px}
+.kv dt{color:var(--text-3)}
+.kv dd{margin:0;word-break:break-all;font-family:var(--mono);font-size:11.5px;color:var(--text-2);user-select:text}
+.kv dd.plain{font-family:var(--font);font-size:12px}
+.sect{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
+.sect h4{margin:0 0 8px;font-size:12px;color:var(--text-2);font-weight:600}
+.method{font-size:11.5px;line-height:1.55;background:rgba(0,0,0,.2);border-radius:7px;padding:8px 10px;color:var(--text-2)}
+.method code{font-family:var(--mono);color:#cdd2ff;font-size:11px}
+.optrow{display:flex;align-items:center;gap:10px;min-height:34px}
+.optrow .grow{flex:1}
+.optrow .s{display:block;font-size:11.5px;color:var(--text-3)}
+.field{width:100%;height:30px;border-radius:6px;border:1px solid var(--line-2);background:rgba(0,0,0,.22);padding:0 9px;outline:0}
+.field:focus{border-color:var(--accent-line)}
+.btnrow{display:flex;gap:6px;flex-wrap:wrap}
+.warnbox{display:flex;gap:8px;font-size:12px;color:#ead2a0;background:rgba(232,176,74,.08);border:1px solid rgba(232,176,74,.22);border-radius:8px;padding:8px 10px;margin-bottom:12px}
+.infobox{display:flex;gap:8px;font-size:12px;color:#cfd4ff;background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:8px;padding:8px 10px;margin-bottom:12px}
+
+/* pending bar */
+.pending{position:fixed;left:50%;bottom:40px;transform:translate(-50%,140%);z-index:30;display:flex;align-items:center;gap:14px;padding:10px 10px 10px 16px;border-radius:12px;background:rgba(40,43,42,.97);border:1px solid var(--line-2);box-shadow:0 18px 50px rgba(0,0,0,.5);transition:transform .25s cubic-bezier(.2,.9,.3,1.2);min-width:520px}
+.pending.show{transform:translate(-50%,0)}
+.pending .pi{width:30px;height:30px;border-radius:8px;background:rgba(232,176,74,.14);color:var(--warn);display:grid;place-items:center}
+.pending b{font-weight:600}
+.pending .s{display:block;color:var(--text-2);font-size:12px}
+.pending .grow{flex:1}
+
+/* overlays */
+.ovl{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.42);display:none;align-items:center;justify-content:center}
+.ovl.show{display:flex;animation:fade .15s}
+@keyframes fade{from{opacity:0}}
+.dlg{width:520px;max-width:calc(100vw - 40px);max-height:calc(100vh - 60px);overflow:auto;background:rgba(40,43,42,.98);border:1px solid var(--line-2);border-radius:12px;box-shadow:0 30px 80px rgba(0,0,0,.6);animation:pop .18s cubic-bezier(.2,.9,.3,1.2)}
+@keyframes pop{from{transform:scale(.96);opacity:0}}
+.dlg .hd{padding:18px 20px 6px;font-size:16px;font-weight:600}
+.dlg .bd2{padding:6px 20px 14px}
+.dlg .ft{display:flex;gap:8px;justify-content:flex-end;padding:14px 20px;background:rgba(0,0,0,.18);border-top:1px solid var(--line);border-radius:0 0 12px 12px}
+.tpls{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.tpl{display:flex;gap:10px;align-items:center;padding:10px;border-radius:8px;border:1px solid var(--line-2);cursor:pointer}
+.tpl:hover{background:var(--hover)}
+.tpl.on{border-color:var(--accent-line);background:var(--accent-soft)}
+.tpl small{display:block;color:var(--text-3);font-size:11px}
+.frm{display:grid;grid-template-columns:72px 1fr;gap:10px;align-items:center;font-size:12.5px}
+.frm label{color:var(--text-2)}
+.radios{display:flex;gap:6px}
+.radio{flex:1;padding:8px 10px;border-radius:7px;border:1px solid var(--line-2);cursor:pointer;font-size:12px}
+.radio.on{border-color:var(--accent-line);background:var(--accent-soft)}
+.radio small{display:block;color:var(--text-3);font-size:11px}
+
+/* UAC */
+.uacwrap{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:rgba(10,14,22,.72);backdrop-filter:blur(3px)}
+.uacwrap.show{display:flex;animation:fade .2s}
+.uac{width:456px;background:#2b2b2b;border:1px solid #3d3d3d;box-shadow:0 30px 80px rgba(0,0,0,.6);font-family:"Segoe UI",var(--font);animation:pop .2s}
+.uac .top{background:#1f1f1f;padding:16px 20px 18px}
+.uac .q{font-size:19px;line-height:1.3;margin:8px 0 0}
+.uac .mid{padding:16px 20px}
+.uac .app2{display:flex;gap:12px;align-items:center;margin-bottom:12px}
+.uac .app2 .logo{width:36px;height:36px;border-radius:9px;font-size:16px}
+.uac .meta{font-size:12.5px;color:#cfcfcf;line-height:1.6}
+.uac .det{font-size:12px;color:#9fb8ff;margin-top:6px;cursor:pointer}
+.uac .detl{font-family:var(--mono);font-size:11px;color:#bbb;background:#222;padding:8px;margin-top:6px;display:none;max-height:120px;overflow:auto;white-space:pre}
+.uac .detl.show{display:block}
+.uac .btns{display:flex;gap:8px;padding:0 20px 18px}
+.uac .btns button{flex:1;height:32px;border:1px solid #555;background:#3a3a3a;cursor:pointer;border-radius:4px}
+.uac .btns button.y{background:#3d6fd1;border-color:#3d6fd1}
+
+/* ctx demo */
+.democm{position:fixed;z-index:55;display:none}
+.democm.show{display:block;animation:pop .12s}
+.democlick{position:fixed;inset:0;z-index:54;display:none}
+.democlick.show{display:block}
+
+/* toast */
+.toast{position:fixed;right:24px;bottom:40px;z-index:70;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.tst{display:flex;align-items:center;gap:12px;padding:10px 12px 10px 14px;border-radius:10px;background:rgba(44,48,46,.98);border:1px solid var(--line-2);box-shadow:0 14px 40px rgba(0,0,0,.45);max-width:460px;animation:slide .25s cubic-bezier(.2,.9,.3,1.2)}
+@keyframes slide{from{transform:translateY(16px);opacity:0}}
+.tst .ok{width:22px;height:22px;border-radius:50%;background:rgba(92,196,137,.18);color:var(--ok);display:grid;place-items:center;flex:none}
+.tst .s{display:block;font-size:11.5px;color:var(--text-3);font-family:var(--mono)}
+
+/* menu popup */
+.pop{position:fixed;z-index:58;display:none;min-width:200px;background:rgba(44,46,48,.98);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:4px;box-shadow:0 16px 40px rgba(0,0,0,.45)}
+.pop.show{display:block;animation:pop .12s}
+.pop div{display:flex;align-items:center;gap:10px;height:30px;padding:0 10px;border-radius:5px;cursor:pointer;font-size:12.5px}
+.pop div:hover{background:var(--hover)}
+.pop hr{border:0;height:1px;background:rgba(255,255,255,.09);margin:4px 6px}
+.pop .k{margin-left:auto;color:var(--text-3);font-size:11px}
+
+/* log sheet */
+.sheet{position:fixed;top:0;right:0;bottom:0;width:440px;z-index:52;background:rgba(34,37,36,.98);border-left:1px solid var(--line-2);box-shadow:-20px 0 60px rgba(0,0,0,.45);transform:translateX(105%);transition:transform .25s cubic-bezier(.2,.9,.3,1);display:flex;flex-direction:column}
+.sheet.show{transform:none}
+.sheet .hd{display:flex;align-items:center;padding:16px 18px;border-bottom:1px solid var(--line)}
+.sheet .hd b{font-size:15px}
+.sheet .bdy{flex:1;overflow:auto;padding:12px 18px}
+.lg{position:relative;padding:0 0 16px 22px}
+.lg::before{content:"";position:absolute;left:6px;top:16px;bottom:0;width:1px;background:var(--line-2)}
+.lg:last-child::before{display:none}
+.lg .o{position:absolute;left:0;top:4px;width:13px;height:13px;border-radius:50%;border:2px solid var(--accent-hi);background:#222}
+.lg.undone .o{border-color:var(--text-3)}
+.lg.undone .tt{text-decoration:line-through;color:var(--text-3)}
+.lg .tt{font-weight:500}
+.lg .tm{color:var(--text-3);font-size:11.5px}
+.lg ul{margin:6px 0;padding-left:16px;color:var(--text-2);font-size:12px}
+.lg .f{font-family:var(--mono);font-size:11px;color:var(--text-3)}
+.sheet .ft{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px}
+
+/* annotations */
+.notes-on [data-note]{position:relative}
+.notes-on [data-note]::after{content:attr(data-note);position:absolute;top:-8px;right:-8px;z-index:20;width:20px;height:20px;border-radius:50%;background:#f2c14e;color:#1b1b1b;font:700 11px/20px var(--font);text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.5);pointer-events:none}
+.notepanel{position:fixed;left:236px;bottom:36px;z-index:40;width:380px;max-height:60vh;overflow:auto;background:rgba(36,39,38,.98);border:1px solid rgba(242,193,78,.4);border-radius:12px;padding:12px 14px;box-shadow:0 20px 60px rgba(0,0,0,.5);display:none}
+.notes-on .notepanel{display:block}
+.notepanel h4{margin:0 0 8px;font-size:13px;display:flex;align-items:center}
+.notepanel ol{margin:0;padding-left:0;list-style:none;font-size:12px;color:var(--text-2)}
+.notepanel li{display:flex;gap:8px;padding:5px 0;border-top:1px solid var(--line)}
+.notepanel li:first-child{border-top:0}
+.notepanel li i{flex:none;width:18px;height:18px;border-radius:50%;background:#f2c14e;color:#1b1b1b;font:700 10.5px/18px var(--font);text-align:center;font-style:normal}
+.notepanel li b{color:var(--text);font-weight:600}
+
+.restart{display:none;align-items:center;gap:10px;margin:0 0 10px;padding:8px 12px;border-radius:9px;background:var(--accent-soft);border:1px solid var(--accent-line);font-size:12.5px}
+.restart.show{display:flex}
+.restart .grow{flex:1}
+
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:6px;border:3px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.2);background-clip:padding-box;border:3px solid transparent}
+
+@media (max-width:1320px){ .work{grid-template-columns:180px minmax(0,1fr) 290px} .search{width:170px} }
+@media (max-width:1140px){ .work{grid-template-columns:170px minmax(0,1fr)} .side{display:none} .layer .tag{display:none} }
+</style>
+</head>
+<body>
+<div class="scene-bg"></div>
+<div class="app" id="app">
+  <div class="titlebar">
+    <div class="logo">P</div><div class="brand">Pulse<small>文件管理器</small></div>
+    <div class="tabs">
+      <div class="tab"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#e8b04a" stroke-width="1.3"><path d="M1.5 4.5h4l1.5 1.5h7.5v7.5h-13z"/></svg>项目</div>
+      <div class="tab active"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#e8b04a" stroke-width="1.3"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg>设置</div>
+    </div>
+    <div class="tb-spacer"></div>
+    <div class="proto-tools">
+      <button class="chip-btn" id="btnDemo" title="模拟：在文件上右键 → 管理此菜单">▶ 演示：从右键进入</button>
+      <button class="chip-btn" id="btnNotes">设计说明</button>
+      <button class="chip-btn" id="btnReset" title="把原型恢复到初始状态">重置原型</button>
+    </div>
+    <div class="winbtns"><span>—</span><span>☐</span><span>✕</span></div>
+  </div>
+
+  <div class="body">
+    <nav class="snav">
+      <a><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 7.5 8 2.5l6 5V14H10v-4H6v4H2z"/></svg>通用</a>
+      <a><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg>搜索与索引</a>
+      <a><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="3" y="2" width="10" height="12" rx="2"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/></svg>本地右键菜单</a>
+      <a class="active" data-note="1"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="13" height="9" rx="1.5"/><path d="M5.5 14h5M8 11.5V14"/><path d="M6 6h5M6 8h3"/></svg>系统右键菜单<span class="new">新</span></a>
+      <a><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="2" y="4" width="8" height="10" rx="1.5"/><path d="M6 2h6.5A1.5 1.5 0 0 1 14 3.5V11"/></svg>重复文件</a>
+      <a><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>快速预览</a>
+      <div class="grow"></div>
+      <a><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="6"/><path d="M8 7.2V11M8 5v.2"/></svg>关于与诊断</a>
+      <div class="ver">Pulse 版本 1.0.53</div>
+    </nav>
+
+    <main class="page" id="page">
+      <div class="ph">
+        <div>
+          <h1>系统右键菜单</h1>
+          <p>改动作用于资源管理器和所有应用的右键菜单。每次应用前自动导出 .reg 备份，随时可以撤销或全部还原。</p>
+        </div>
+        <div class="actions">
+          <button class="btn" id="btnLog" data-note="9"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg>操作日志 <span id="logCount" style="color:var(--text-3)"></span></button>
+          <button class="btn" id="btnRestoreAll"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2.5 8a5.5 5.5 0 1 0 1.7-4M2.5 2.5v3h3"/></svg>全部还原…</button>
+        </div>
+      </div>
+
+      <div class="layer-switch">
+        <div class="layer" id="layerPulse" title="切换到「本地右键菜单」页">
+          <div class="ico"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="3" y="2" width="10" height="12" rx="2"/><path d="M5.5 5.5h5M5.5 8h5"/></svg></div>
+          <div><b>本地右键菜单</b><span>只影响 Pulse · 不需要权限 · 随时恢复</span></div><div class="tag">切换 →</div>
+        </div>
+        <div class="layer cur" data-note="2">
+          <div class="ico" style="background:var(--accent-soft)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#c3c9ff" stroke-width="1.3"><rect x="1.5" y="2.5" width="13" height="9" rx="1.5"/><path d="M5.5 14h5M8 11.5V14"/></svg></div>
+          <div><b>系统右键菜单</b><span>影响资源管理器和所有应用 · HKCU 直接改，HKLM 一批改动只需一次 UAC</span></div><div class="tag">当前</div>
+        </div>
+      </div>
+
+      <div class="restart" id="restartBar">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#c3c9ff" stroke-width="1.4"><path d="M13.5 8A5.5 5.5 0 1 1 11.6 3.8M13.5 2.5v3h-3"/></svg>
+        <div class="grow"><b>资源管理器已经加载了 <span id="restartWhat"></span></b>，重启资源管理器后完全生效。Pulse 不受影响，下次右键即生效。</div>
+        <button class="btn sm" id="btnRestartExp">重启资源管理器</button>
+        <button class="btn sm ghost" id="btnRestartLater">稍后</button>
+      </div>
+
+      <div class="work">
+        <div class="card scenes" id="scenes" data-note="3"></div>
+        <div class="card list" id="list"></div>
+        <div class="card side" id="side"></div>
+      </div>
+    </main>
+  </div>
+
+  <div class="statusbar">
+    <span id="sbLeft">就绪</span>
+    <span class="path" id="sbPath">将鼠标悬停在条目上，这里会显示它的注册表位置</span>
+    <span>系统右键菜单</span>
+  </div>
+</div>
+
+<!-- pending batch -->
+<div class="pending" id="pending" data-note="7">
+  <div class="pi"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 4.5V8l2 1.5"/><circle cx="8" cy="8" r="6"/></svg></div>
+  <div class="grow"><b id="pendTitle"></b><span class="s" id="pendSub"></span></div>
+  <button class="btn ghost" id="btnDiscard">放弃</button>
+  <button class="btn primary" id="btnApply"></button>
+</div>
+
+<!-- UAC mock -->
+<div class="uacwrap" id="uac">
+  <div class="uac">
+    <div class="top"><div style="font-size:12px;color:#bbb">用户帐户控制</div><div class="q">你要允许此应用对你的设备进行更改吗？</div></div>
+    <div class="mid">
+      <div class="app2"><div class="logo">P</div><div><div style="font-size:15px">Pulse 注册表助手</div></div></div>
+      <div class="meta">已验证的发布者: Pulse<br>文件源: 此计算机上的硬盘驱动器<br><span id="uacWhat"></span></div>
+      <div class="det" id="uacDetT">显示更多详细信息</div>
+      <div class="detl" id="uacDet"></div>
+    </div>
+    <div class="btns"><button class="y" id="uacYes">是</button><button id="uacNo">否</button></div>
+  </div>
+</div>
+
+<!-- dialogs -->
+<div class="ovl" id="ovlNew"><div class="dlg">
+  <div class="hd">新建右键命令</div>
+  <div class="bd2">
+    <div class="tpls" id="tpls"></div>
+    <div class="frm">
+      <label>名称</label><input class="field" id="nName">
+      <label>命令</label><input class="field" id="nCmd" style="font-family:var(--mono);font-size:12px">
+      <label>出现在</label><div class="radios" id="nScope"></div>
+      <label>写入到</label><div class="radios" id="nRoot"></div>
+      <label>选项</label><div style="display:flex;gap:16px;align-items:center;font-size:12px"><label style="display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" id="nShift">仅按住 Shift 时显示</label><label style="display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" id="nTop">置顶</label></div>
+    </div>
+  </div>
+  <div class="ft"><button class="btn ghost" data-close>取消</button><button class="btn primary" id="nOk">加入待应用</button></div>
+</div></div>
+
+<div class="ovl" id="ovlRestore"><div class="dlg">
+  <div class="hd">全部还原</div>
+  <div class="bd2">
+    <p style="margin:0 0 10px;color:var(--text-2)">选择要还原到的时间点。还原本身也会先备份，所以这一步同样可以撤销。</p>
+    <div id="restoreList"></div>
+  </div>
+  <div class="ft"><button class="btn ghost" data-close>取消</button><button class="btn primary" id="restoreOk">还原</button></div>
+</div></div>
+
+<div class="sheet" id="sheet">
+  <div class="hd"><b>操作日志</b><span style="margin-left:8px;color:var(--text-3);font-size:12px">%LOCALAPPDATA%\Pulse\ContextMenu\ops.jsonl</span><div style="flex:1"></div><button class="more" id="sheetClose">✕</button></div>
+  <div class="bdy" id="logBody"></div>
+  <div class="ft"><button class="btn sm" id="btnOpenBackups">打开备份文件夹</button><div style="flex:1"></div><button class="btn sm" id="btnUndoLast">撤销最近一步</button></div>
+</div>
+
+<div class="pop" id="pop"></div>
+<div class="democlick" id="democlick"></div>
+<div class="democm" id="democm"></div>
+<div class="toast" id="toast"></div>
+
+<div class="notepanel" id="notepanel">
+  <h4>设计说明<span style="flex:1"></span><button class="more" id="notesClose">✕</button></h4>
+  <ol>
+    <li><i>1</i><div><b>与「本地右键菜单」并列成一页</b>，不塞进原页面。两层的影响范围不同，分开放就不会把「只在 Pulse 隐藏」和「改系统」混在一起。</div></li>
+    <li><i>2</i><div><b>页面顶部始终标明当前在哪一层</b>，点另一张卡片即可切换。改系统的那一层会说清权限和影响范围。</div></li>
+    <li><i>3</i><div><b>场景分组和 CMM 一致</b>：基本对象、特定类型、专门菜单，CMM 用户上手没有门槛。数字表示「条目数 · 已禁用数」，橙点表示该场景有待应用的改动。</div></li>
+    <li><i>4</i><div><b>比 CMM 多的信息</b>：每行都显示来源（HKCU 或 HKLM）、是否需要管理员、对右键速度的影响（毫秒），以及是否由 ContextMenuManager 禁用。</div></li>
+    <li><i>5</i><div><b>受保护的项和 TrustedInstaller 拥有的项</b>开关置灰并说明原因，只提供「定位」，不夺取所有权。</div></li>
+    <li><i>6</i><div><b>实时预览</b>：开关一动，右侧菜单立即显示「将隐藏 / 将显示」，按住 Shift 可以预览扩展项。可切换成资源管理器样式或 Pulse 样式。</div></li>
+    <li><i>7</i><div><b>改动先进待应用，再一次性提交</b>：HKCU 的项不弹窗；含 HKLM 的项一批只弹一次 UAC。应用前自动导出 .reg 备份。</div></li>
+    <li><i>8</i><div><b>详情页写明禁用方式</b>，和 CMM 的写法一模一样（HideBasedOnVelocityId、LegacyDisable、-ContextMenuHandlers 等），所以两个工具可以互相识别、互相还原。</div></li>
+    <li><i>9</i><div><b>操作日志</b>：可以逐步撤销，也可以全部还原到某个时间点。每一步都对应一个 .reg 备份文件。</div></li>
+    <li><i>10</i><div><b>概览页里的慢扩展排行</b>：数据来自 Pulse 实际右键时测得的耗时，可以一键禁用，或「只在 Pulse 跳过」。</div></li>
+  </ol>
+</div>
+
+<script>
+/* =========================================================================
+   数据
+   ========================================================================= */
+const APPICON = {
+  vscode:{bg:'#2378c9',t:'VS'}, sevenz:{bg:'#1e1e1e',t:'7z'}, rar:{bg:'#7a3fa0',t:'R'}, npp:{bg:'#5b9b3a',t:'N++'},
+  baidu:{bg:'#2f7cf6',t:'百'}, qq:{bg:'#18a5e8',t:'QQ'}, hr:{bg:'#e5791b',t:'火'}, git:{bg:'#e2552f',t:'git'},
+  vs:{bg:'#7c4bc4',t:'VS'}, vlc:{bg:'#ef7d00',t:'▲'}, term:{bg:'#2d2d2d',t:'>_'}, nv:{bg:'#6fae20',t:'nv'},
+  intel:{bg:'#1a6fc4',t:'in'}, defender:{bg:'#2b6cb0',t:'盾'}, clip:{bg:'#7b4fd8',t:'C'}, copilot:{bg:'linear-gradient(135deg,#2f7cf6,#c64ad8)',t:'✦'},
+  photos:{bg:'#1f8fd8',t:'照'}, designer:{bg:'linear-gradient(135deg,#7b4fd8,#e05a9b)',t:'D'}, pt:{bg:'#3a3a3a',t:'PT'},
+  ps:{bg:'#0a2a4a',t:'Ps'}, irfan:{bg:'#c8202a',t:'If'}, paint:{bg:'#2d8fd8',t:'画'}, notepad:{bg:'#3f86c9',t:'记'},
+  word:{bg:'#2b579a',t:'W'}, excel:{bg:'#217346',t:'X'}, ppt:{bg:'#c43e1c',t:'P'}, zip:{bg:'#c99a2e',t:'zip'},
+  bt:{bg:'#1e64c8',t:'ᛒ'}, mail:{bg:'#3a7bd5',t:'@'}, desk:{bg:'#3e8ed0',t:'▭'}, doc:{bg:'#5a6b7d',t:'文'}, fax:{bg:'#6b6b6b',t:'传'},
+  sys:{bg:null,t:'⚙'}, share:{bg:null,t:'⇪'}, pin:{bg:null,t:'📌'}, lib:{bg:null,t:'▤'}, bit:{bg:null,t:'🔒'},
+  rot:{bg:null,t:'↻'}, wall:{bg:null,t:'▣'}, p3d:{bg:'#5a3fd0',t:'3D'}, contact:{bg:null,t:'☺'}, bmp:{bg:'#3a9a7a',t:'▦'}, rtf:{bg:'#4a6fa5',t:'RT'},
+  txt:{bg:'#7a8a99',t:'txt'}, comp:{bg:null,t:'⚑'}, usb:{bg:'#555',t:'⏏'}, start:{bg:null,t:'⊞'}, mgmt:{bg:null,t:'⚙'}, net:{bg:null,t:'⇄'},
+  print:{bg:null,t:'⎙'}, pw:{bg:'#3a3a3a',t:'PR'}, ir:{bg:'#3a3a3a',t:'IR'}, fl:{bg:'#3a3a3a',t:'FL'}, honey:{bg:'#47a447',t:'H'}
+};
+
+/* kind: verb | shellex | packaged | shellnew | sendto | openwith | dragdrop
+   root: HKCU | HKLM | FILE | PKG
+   state 字段：on（当前系统状态）、by（禁用者：'cmm' | 'pulse' | null）
+   prot：受保护；ti：TrustedInstaller 拥有；ms：最近一次实测耗时；ext：Extended */
+const SCENES = [
+ {id:'overview', g:'', name:'概览', ic:'home'},
+ {id:'file', g:'基本对象', name:'文件', ic:'file', key:'HKCR\\*', file:'报价单_v3.dwg', items:[
+   {id:'f_vsc', name:'通过 Code 打开', ai:'vscode', kind:'verb', root:'HKCU', path:'HKCU\\Software\\Classes\\*\\shell\\VSCode', file:'C:\\Users\\SS\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe', pub:'Microsoft Corporation', on:true},
+   {id:'f_7z', name:'7-Zip', ai:'sevenz', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\*\\shellex\\ContextMenuHandlers\\7-Zip', clsid:'{23170F69-40C1-278A-1000-000100020000}', file:'C:\\Program Files\\7-Zip\\7-zip.dll', pub:'Igor Pavlov', ms:38, sub:true, on:true},
+   {id:'f_rar', name:'WinRAR', ai:'rar', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\*\\shellex\\ContextMenuHandlers\\WinRAR', clsid:'{B41DB860-64E4-11D2-9906-E49FADC173CA}', file:'C:\\Program Files\\WinRAR\\RarExt.dll', pub:'win.rar GmbH', ms:22, sub:true, on:true},
+   {id:'f_npp', name:'Edit with Notepad++', ai:'npp', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\*\\shellex\\ContextMenuHandlers\\ANotepad++64', clsid:'{B298D29A-A6ED-11DE-BA8C-A68E55D89593}', file:'C:\\Program Files\\Notepad++\\contextMenu\\NppShell.dll', pub:'Notepad++', ms:14, on:true},
+   {id:'f_bd', name:'上传到百度网盘', ai:'baidu', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\*\\shellex\\ContextMenuHandlers\\YunShellExt', clsid:'{0D45D530-764B-11E5-B4F1-0050569B2E25}', file:'C:\\Users\\SS\\AppData\\Roaming\\baidu\\BaiduNetdisk\\YunShellExt64.dll', pub:'Beijing Duyou Science and Technology Co., Ltd.', ms:412, on:true},
+   {id:'f_qq', name:'通过 QQ 发送到', ai:'qq', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\*\\shellex\\-ContextMenuHandlers\\QQShellExt', clsid:'{53D2405C-48AB-4C8A-8F59-CE0610F13BBC}', file:'C:\\Program Files\\Tencent\\QQNT\\resources\\app\\QQShellExt64.dll', pub:'Tencent Technology (Shenzhen) Company Limited', ms:268, on:false, by:'cmm'},
+   {id:'f_hr', name:'使用火绒安全进行杀毒', ai:'hr', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\*\\shellex\\ContextMenuHandlers\\HipsShellExt', clsid:'{5D5BF7A0-6A36-4A65-B4B1-EB2A7E1A9C51}', file:'C:\\Program Files\\Huorong\\Sysdiag\\bin\\HRShellExt64.dll', pub:'Beijing Huorong Network Technology Co., Ltd.', ms:96, on:true},
+   {id:'f_def', name:'使用 Microsoft Defender 扫描', ai:'defender', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\*\\shellex\\ContextMenuHandlers\\EPP', clsid:'{09A47860-11B0-4DA5-AFA5-26D86198A780}', file:'C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.25080.5-0\\shellext.dll', pub:'Microsoft Windows', ms:31, on:true},
+   {id:'f_honey', name:'用 Honeyview 打开', ai:'honey', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\*\\shell\\Honeyview', file:'C:\\Program Files\\Honeyview\\Honeyview.exe', pub:'Bandisoft International Inc.', on:true},
+   {id:'f_path', name:'复制文件地址', ai:'sys', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\AllFilesystemObjects\\shell\\copyaspath', file:'windows.storage.dll', pub:'Microsoft Windows', ext:true, on:true, ti:true},
+   {id:'f_share', name:'共享', ai:'share', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\*\\shellex\\ContextMenuHandlers\\ModernSharing', clsid:'{E2BF9676-5F8F-435C-97EB-11607A5BEDF7}', file:'C:\\Windows\\System32\\shwebsvc.dll', pub:'Microsoft Windows', ms:9, on:true, ti:true},
+   {id:'f_open', name:'打开', ai:'sys', kind:'verb', root:'HKLM', path:'（由文件类型决定）', pub:'Microsoft Windows', on:true, prot:true},
+   {id:'f_openwith', name:'打开方式', ai:'sys', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\*\\shellex\\ContextMenuHandlers\\Open With', clsid:'{09799AFB-AD67-11D1-ABCD-00C04FC30936}', file:'C:\\Windows\\System32\\shell32.dll', pub:'Microsoft Windows', on:true, prot:true},
+   {id:'f_prop', name:'属性', ai:'sys', kind:'verb', root:'HKLM', path:'（Shell 内置）', pub:'Microsoft Windows', on:true, prot:true},
+ ]},
+ {id:'allobj', g:'基本对象', name:'所有对象', ic:'stack', key:'HKCR\\AllFilesystemObjects', file:'任意文件或文件夹', items:[
+   {id:'a_lock', name:'解除占用（File Locksmith）', ai:'fl', kind:'packaged', root:'PKG', path:'Microsoft.PowerToys.FileLocksmithContextMenu_8wekyb3d8bbwe', clsid:'{84D68575-E186-46AD-B0CB-BAEB45EE29C0}', file:'C:\\Program Files\\PowerToys\\WinUI3Apps\\PowerToys.FileLocksmithContextMenu.dll', pub:'Microsoft Corporation', ms:44, on:true},
+   {id:'a_pr', name:'使用 PowerRename 重命名', ai:'pw', kind:'packaged', root:'PKG', path:'Microsoft.PowerToys.PowerRenameContextMenu_8wekyb3d8bbwe', clsid:'{1861E28B-A1F0-4EF4-A1FE-4C8CA88E2174}', file:'C:\\Program Files\\PowerToys\\WinUI3Apps\\PowerToys.PowerRenameContextMenu.dll', pub:'Microsoft Corporation', ms:27, on:true},
+   {id:'a_cut', name:'剪切 · 复制 · 删除 · 重命名', ai:'sys', kind:'verb', root:'HKLM', path:'（Shell 内置）', pub:'Microsoft Windows', on:true, prot:true},
+ ]},
+ {id:'folder', g:'基本对象', name:'文件夹', ic:'folder', key:'HKCR\\Folder', file:'项目资料', items:[
+   {id:'d_term', name:'在终端中打开', ai:'term', kind:'packaged', root:'PKG', path:'Microsoft.WindowsTerminal_8wekyb3d8bbwe', clsid:'{9F156763-7844-4DC4-B2B1-901F640F5155}', file:'C:\\Program Files\\WindowsApps\\Microsoft.WindowsTerminal_1.22\\WindowsTerminal.exe', pub:'Microsoft Corporation', ms:12, on:true},
+   {id:'d_vsc', name:'通过 Code 打开', ai:'vscode', kind:'verb', root:'HKCU', path:'HKCU\\Software\\Classes\\Directory\\shell\\VSCode', file:'C:\\Users\\SS\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe', pub:'Microsoft Corporation', on:true},
+   {id:'d_gitbash', name:'Open Git Bash here', ai:'git', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\Directory\\shell\\git_shell', file:'C:\\Program Files\\Git\\git-bash.exe', pub:'Johannes Schindelin', on:true},
+   {id:'d_gitgui', name:'Open Git GUI here', ai:'git', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\Directory\\shell\\git_gui', file:'C:\\Program Files\\Git\\cmd\\git-gui.exe', pub:'Johannes Schindelin', on:true},
+   {id:'d_vs', name:'使用 Visual Studio 打开', ai:'vs', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\Directory\\shell\\AnyCode', file:'C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\IDE\\devenv.exe', pub:'Microsoft Corporation', on:true},
+   {id:'d_vlc', name:'添加到 VLC 播放列表', ai:'vlc', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\Directory\\shell\\AddToPlaylistVLC', file:'C:\\Program Files\\VideoLAN\\VLC\\vlc.exe', pub:'VideoLAN', on:false, by:'pulse'},
+   {id:'d_vlc2', name:'使用 VLC 播放', ai:'vlc', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\Directory\\shell\\PlayWithVLC', file:'C:\\Program Files\\VideoLAN\\VLC\\vlc.exe', pub:'VideoLAN', on:true},
+   {id:'d_7z', name:'7-Zip', ai:'sevenz', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\Directory\\shellex\\ContextMenuHandlers\\7-Zip', clsid:'{23170F69-40C1-278A-1000-000100020000}', file:'C:\\Program Files\\7-Zip\\7-zip.dll', pub:'Igor Pavlov', ms:41, sub:true, on:true},
+   {id:'d_bd', name:'上传到百度网盘', ai:'baidu', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\Directory\\shellex\\ContextMenuHandlers\\YunShellExt', clsid:'{0D45D530-764B-11E5-B4F1-0050569B2E25}', file:'C:\\Users\\SS\\AppData\\Roaming\\baidu\\BaiduNetdisk\\YunShellExt64.dll', pub:'Beijing Duyou Science and Technology Co., Ltd.', ms:388, on:true},
+   {id:'d_lib', name:'包含到库中', ai:'lib', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\Folder\\shellex\\ContextMenuHandlers\\Library Location', clsid:'{3DAD6C5D-2167-4CAE-9914-F99E41C12CFA}', file:'C:\\Windows\\System32\\shell32.dll', pub:'Microsoft Windows', ms:6, on:true, ti:true},
+   {id:'d_pin', name:'固定到"快速访问"', ai:'pin', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\Folder\\shell\\pintohome', file:'shell32.dll', pub:'Microsoft Windows', on:true, ti:true},
+   {id:'d_open', name:'打开 · 在新窗口中打开', ai:'sys', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\Folder\\shell\\opennewwindow', pub:'Microsoft Windows', on:true, prot:true},
+ ]},
+ {id:'dirbg', g:'基本对象', name:'目录背景', ic:'bg', key:'HKCR\\Directory\\Background', file:'文件夹空白处', bg:true, items:[
+   {id:'b_term', name:'在终端中打开', ai:'term', kind:'packaged', root:'PKG', path:'Microsoft.WindowsTerminal_8wekyb3d8bbwe', clsid:'{9F156763-7844-4DC4-B2B1-901F640F5155}', file:'WindowsTerminal.exe', pub:'Microsoft Corporation', ms:12, on:true},
+   {id:'b_vsc', name:'通过 Code 打开', ai:'vscode', kind:'verb', root:'HKCU', path:'HKCU\\Software\\Classes\\Directory\\Background\\shell\\VSCode', file:'Code.exe', pub:'Microsoft Corporation', on:true},
+   {id:'b_gitbash', name:'Open Git Bash here', ai:'git', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\Directory\\Background\\shell\\git_shell', file:'C:\\Program Files\\Git\\git-bash.exe', pub:'Johannes Schindelin', on:true},
+   {id:'b_gitgui', name:'Open Git GUI here', ai:'git', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\Directory\\Background\\shell\\git_gui', file:'C:\\Program Files\\Git\\cmd\\git-gui.exe', pub:'Johannes Schindelin', on:true},
+   {id:'b_vs', name:'使用 Visual Studio 打开', ai:'vs', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\Directory\\Background\\shell\\AnyCode', file:'devenv.exe', pub:'Microsoft Corporation', on:true},
+   {id:'b_new', name:'新建', ai:'sys', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\Directory\\Background\\shellex\\ContextMenuHandlers\\New', clsid:'{D969A300-E7FF-11d0-A93B-00A0C90F2719}', pub:'Microsoft Windows', on:true, prot:true},
+ ]},
+ {id:'desk', g:'基本对象', name:'桌面背景', ic:'desk', key:'HKCR\\DesktopBackground', file:'桌面空白处', bg:true, items:[
+   {id:'k_nv', name:'NVIDIA 控制面板', ai:'nv', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\Directory\\Background\\shellex\\ContextMenuHandlers\\NvCplDesktopContext', clsid:'{3D1975AF-48C6-4F8E-A182-BE0E08FA86A9}', file:'C:\\Windows\\System32\\DriverStore\\FileRepository\\nv_dispi.inf_amd64\\nvshext.dll', pub:'NVIDIA Corporation', ms:184, on:true},
+   {id:'k_intel', name:'英特尔® 显卡设置', ai:'intel', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\Directory\\Background\\shellex\\-ContextMenuHandlers\\igfxcui', clsid:'{3AB1675A-CCFF-11D2-8B20-00A0C93CB1F4}', file:'C:\\Windows\\System32\\igfxpph.dll', pub:'Intel Corporation', ms:122, on:false, by:'cmm'},
+   {id:'k_disp', name:'显示设置', ai:'sys', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\DesktopBackground\\Shell\\Display', pub:'Microsoft Windows', on:true, ti:true},
+   {id:'k_pers', name:'个性化', ai:'sys', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\DesktopBackground\\Shell\\Personalize', pub:'Microsoft Windows', on:true, ti:true},
+ ]},
+ {id:'drive', g:'基本对象', name:'磁盘', ic:'drive', key:'HKCR\\Drive', file:'本地磁盘 (D:)', items:[
+   {id:'v_bit', name:'启用 BitLocker', ai:'bit', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\Drive\\shell\\encrypt-bde-elev', pub:'Microsoft Windows', on:true, ti:true},
+   {id:'v_7z', name:'7-Zip', ai:'sevenz', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\Drive\\shellex\\ContextMenuHandlers\\7-Zip', clsid:'{23170F69-40C1-278A-1000-000100020000}', file:'C:\\Program Files\\7-Zip\\7-zip.dll', pub:'Igor Pavlov', ms:35, sub:true, on:true},
+   {id:'v_hr', name:'使用火绒安全进行杀毒', ai:'hr', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\Drive\\shellex\\ContextMenuHandlers\\HipsShellExt', clsid:'{5D5BF7A0-6A36-4A65-B4B1-EB2A7E1A9C51}', file:'HRShellExt64.dll', pub:'Beijing Huorong Network Technology Co., Ltd.', ms:90, on:true},
+   {id:'v_fmt', name:'格式化…', ai:'sys', kind:'verb', root:'HKLM', path:'（Shell 内置）', pub:'Microsoft Windows', on:true, prot:true},
+ ]},
+ {id:'pc', g:'基本对象', name:'此电脑', ic:'pc', key:'HKCR\\CLSID\\{20D04FE0-…}', file:'此电脑', items:[
+   {id:'p_mgmt', name:'管理', ai:'mgmt', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\CLSID\\{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\shell\\Manage', pub:'Microsoft Windows', on:true, ti:true},
+   {id:'p_map', name:'映射网络驱动器…', ai:'net', kind:'verb', root:'HKLM', path:'（Shell 内置）', pub:'Microsoft Windows', on:true, prot:true},
+ ]},
+ {id:'bin', g:'基本对象', name:'回收站', ic:'bin', key:'HKCR\\CLSID\\{645FF040-…}', file:'回收站', items:[
+   {id:'r_empty', name:'清空回收站', ai:'sys', kind:'verb', root:'HKLM', path:'（Shell 内置）', pub:'Microsoft Windows', on:true, prot:true},
+ ]},
+ {id:'lnk', g:'特定类型', name:'快捷方式 .lnk', ic:'link', key:'HKCR\\lnkfile', file:'微信.lnk', items:[
+   {id:'l_loc', name:'打开文件所在的位置', ai:'sys', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\lnkfile\\shellex\\ContextMenuHandlers\\OpenContainingFolderMenu', pub:'Microsoft Windows', on:true, prot:true},
+   {id:'l_task', name:'固定到任务栏', ai:'pin', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\*\\shellex\\ContextMenuHandlers\\{90AA3A4E-1CBA-4233-B8BB-535773D48449}', clsid:'{90AA3A4E-1CBA-4233-B8BB-535773D48449}', file:'shell32.dll', pub:'Microsoft Windows', ms:5, on:true, ti:true},
+   {id:'l_start', name:'固定到"开始"', ai:'start', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\lnkfile\\shellex\\ContextMenuHandlers\\PintoStartScreen', clsid:'{470C0EBD-5D73-4D58-9CED-E91E22E23282}', file:'shell32.dll', pub:'Microsoft Windows', ms:4, on:true},
+ ]},
+ {id:'exe', g:'特定类型', name:'程序 .exe', ic:'app', key:'HKCR\\exefile', file:'setup.exe', items:[
+   {id:'e_admin', name:'以管理员身份运行', ai:'sys', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\exefile\\shell\\runas', pub:'Microsoft Windows', on:true, prot:true},
+   {id:'e_comp', name:'兼容性疑难解答', ai:'comp', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\exefile\\shellex\\ContextMenuHandlers\\Compatibility', clsid:'{1d27f844-3a1f-4410-85ac-14651078412d}', file:'C:\\Windows\\System32\\acppage.dll', pub:'Microsoft Windows', ms:11, on:true},
+   {id:'e_hr', name:'火绒安全 · 信任此程序', ai:'hr', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\exefile\\shell\\HipsTrust', file:'HipsMain.exe', pub:'Beijing Huorong Network Technology Co., Ltd.', on:true},
+ ]},
+ {id:'ext', g:'特定类型', name:'按扩展名', ic:'tag', key:'HKCR\\SystemFileAssociations\\.png', file:'截图.png', ext:true, items:[
+   {id:'x_wall', name:'设置为桌面背景', ai:'wall', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\SystemFileAssociations\\.png\\Shell\\setdesktopwallpaper', pub:'Microsoft Windows', on:true, ti:true},
+   {id:'x_rot', name:'向右旋转 · 向左旋转', ai:'rot', kind:'shellex', root:'HKLM', path:'HKLM\\Software\\Classes\\SystemFileAssociations\\image\\ShellEx\\ContextMenuHandlers\\ShellImagePreview', clsid:'{FFE2A43C-56B9-4bf5-9A79-CC6D4285608A}', file:'C:\\Windows\\System32\\shimgvw.dll', pub:'Microsoft Windows', ms:7, on:true},
+   {id:'x_3d', name:'使用画图 3D 进行编辑', ai:'p3d', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\SystemFileAssociations\\.png\\Shell\\3D Edit', file:'mspaint.exe /ForceBootstrapPaint3D', pub:'Microsoft Windows', on:false, by:'cmm', velocity:true},
+   {id:'x_ps', name:'用 Photoshop 编辑', ai:'ps', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\SystemFileAssociations\\.png\\shell\\EditInPhotoshop', file:'C:\\Program Files\\Adobe\\Adobe Photoshop 2025\\Photoshop.exe', pub:'Adobe Inc.', on:true},
+   {id:'x_ir', name:'使用 Image Resizer 调整大小', ai:'ir', kind:'packaged', root:'PKG', path:'Microsoft.PowerToys.ImageResizerContextMenu_8wekyb3d8bbwe', clsid:'{8F491918-259F-451A-950F-8C3EBF4864AF}', file:'PowerToys.ImageResizerContextMenu.dll', pub:'Microsoft Corporation', ms:19, on:true},
+ ]},
+ {id:'perc', g:'特定类型', name:'按感知类型', ic:'eye', key:'HKCR\\SystemFileAssociations\\image', file:'照片.jpg', perc:true, items:[
+   {id:'c_print', name:'打印', ai:'print', kind:'verb', root:'HKLM', path:'HKLM\\Software\\Classes\\SystemFileAssociations\\image\\shell\\print', pub:'Microsoft Windows', on:true},
+   {id:'c_clip', name:'使用 Clipchamp 创建视频', ai:'clip', kind:'packaged', root:'PKG', path:'Clipchamp.Clipchamp_yxz26nhyzhsrt', clsid:'{8AB635F8-9A67-4698-AB99-784AD929F512}', pub:'Microsoft Corporation', ms:63, on:true},
+   {id:'c_photos', name:'使用照片编辑', ai:'photos', kind:'packaged', root:'PKG', path:'Microsoft.Windows.Photos_8wekyb3d8bbwe', clsid:'{BFE0E2A4-C70C-4AD7-AC3D-10D1ECEBB5B4}', pub:'Microsoft Corporation', ms:21, on:true},
+   {id:'c_designer', name:'使用 Designer 设计', ai:'designer', kind:'packaged', root:'PKG', path:'Microsoft.Windows.Photos_8wekyb3d8bbwe · Designer', clsid:'{7A53B94A-4E6E-4826-B48E-535020B264E5}', pub:'Microsoft Corporation', ms:58, on:true},
+ ]},
+ {id:'shellnew', g:'专门菜单', name:'新建', ic:'plus', key:'HKCR\\.ext\\ShellNew', file:'「新建」子菜单', special:'shellnew', items:[
+   {id:'n_folder', name:'文件夹', ai:'sys', kind:'shellnew', root:'HKLM', path:'HKLM\\Software\\Classes\\Folder\\ShellNew', pub:'Microsoft Windows', on:true, prot:true},
+   {id:'n_lnk', name:'快捷方式', ai:'sys', kind:'shellnew', root:'HKLM', path:'HKLM\\Software\\Classes\\.lnk\\ShellNew', pub:'Microsoft Windows', on:true, prot:true},
+   {id:'n_bmp', name:'BMP 图像', ai:'bmp', kind:'shellnew', root:'HKLM', path:'HKLM\\Software\\Classes\\.bmp\\ShellNew', pub:'Microsoft Windows', on:true},
+   {id:'n_contact', name:'联系人', ai:'contact', kind:'shellnew', root:'HKLM', path:'HKLM\\Software\\Classes\\.contact\\ShellNew', pub:'Microsoft Windows', on:false, by:'pulse'},
+   {id:'n_docx', name:'Microsoft Word 文档', ai:'word', kind:'shellnew', root:'HKLM', path:'HKLM\\Software\\Classes\\.docx\\Word.Document.12\\ShellNew', pub:'Microsoft Corporation', on:true},
+   {id:'n_pptx', name:'Microsoft PowerPoint 演示文稿', ai:'ppt', kind:'shellnew', root:'HKLM', path:'HKLM\\Software\\Classes\\.pptx\\PowerPoint.Show.12\\ShellNew', pub:'Microsoft Corporation', on:true},
+   {id:'n_xlsx', name:'Microsoft Excel 工作表', ai:'excel', kind:'shellnew', root:'HKLM', path:'HKLM\\Software\\Classes\\.xlsx\\Excel.Sheet.12\\ShellNew', pub:'Microsoft Corporation', on:true},
+   {id:'n_rtf', name:'RTF 文档', ai:'rtf', kind:'shellnew', root:'HKLM', path:'HKLM\\Software\\Classes\\.rtf\\-ShellNew', pub:'Microsoft Windows', on:false, by:'cmm'},
+   {id:'n_rar', name:'WinRAR 压缩文件', ai:'rar', kind:'shellnew', root:'HKLM', path:'HKLM\\Software\\Classes\\.rar\\ShellNew', pub:'win.rar GmbH', on:true},
+   {id:'n_txt', name:'文本文档', ai:'txt', kind:'shellnew', root:'HKLM', path:'HKLM\\Software\\Classes\\.txt\\ShellNew', pub:'Microsoft Windows', on:true},
+   {id:'n_zip', name:'压缩(zipped)文件夹', ai:'zip', kind:'shellnew', root:'HKLM', path:'HKLM\\Software\\Classes\\.zip\\CompressedFolder\\ShellNew', pub:'Microsoft Windows', on:true},
+ ]},
+ {id:'sendto', g:'专门菜单', name:'发送到', ic:'send', key:'%APPDATA%\\Microsoft\\Windows\\SendTo', file:'「发送到」子菜单', special:'sendto', items:[
+   {id:'s_bt', name:'蓝牙设备', ai:'bt', kind:'sendto', root:'FILE', path:'%APPDATA%\\Microsoft\\Windows\\SendTo\\Bluetooth File Transfer.LNK', pub:'Microsoft Windows', on:true},
+   {id:'s_fax', name:'传真收件人', ai:'fax', kind:'sendto', root:'FILE', path:'%APPDATA%\\Microsoft\\Windows\\SendTo\\Fax Recipient.lnk', pub:'Microsoft Windows', on:false, by:'cmm'},
+   {id:'s_doc', name:'文档', ai:'doc', kind:'sendto', root:'FILE', path:'%APPDATA%\\Microsoft\\Windows\\SendTo\\Documents.mydocs', pub:'Microsoft Windows', on:true},
+   {id:'s_mail', name:'邮件收件人', ai:'mail', kind:'sendto', root:'FILE', path:'%APPDATA%\\Microsoft\\Windows\\SendTo\\Mail Recipient.MAPIMail', pub:'Microsoft Windows', on:true},
+   {id:'s_desk', name:'桌面快捷方式', ai:'desk', kind:'sendto', root:'FILE', path:'%APPDATA%\\Microsoft\\Windows\\SendTo\\Desktop (create shortcut).DeskLink', pub:'Microsoft Windows', on:true},
+   {id:'s_zip', name:'压缩(zipped)文件夹', ai:'zip', kind:'sendto', root:'FILE', path:'%APPDATA%\\Microsoft\\Windows\\SendTo\\Compressed (zipped) Folder.ZFSendToTarget', pub:'Microsoft Windows', on:true},
+   {id:'s_bd', name:'百度网盘', ai:'baidu', kind:'sendto', root:'FILE', path:'%APPDATA%\\Microsoft\\Windows\\SendTo\\百度网盘.lnk', pub:'Beijing Duyou Science and Technology Co., Ltd.', on:true},
+   {id:'s_usb', name:'U 盘 (E:)', ai:'usb', kind:'sendto', root:'FILE', path:'（可移动盘，由系统自动列出）', pub:'Microsoft Windows', on:true, auto:true},
+ ]},
+ {id:'openwith', g:'专门菜单', name:'打开方式', ic:'openwith', key:'HKCR\\Applications', file:'「打开方式」子菜单', special:'openwith', items:[
+   {id:'o_npp', name:'Notepad++', ai:'npp', kind:'openwith', root:'HKLM', path:'HKLM\\Software\\Classes\\Applications\\notepad++.exe', file:'C:\\Program Files\\Notepad++\\notepad++.exe', pub:'Notepad++', on:true},
+   {id:'o_vsc', name:'Visual Studio Code', ai:'vscode', kind:'openwith', root:'HKCU', path:'HKCU\\Software\\Classes\\Applications\\Code.exe', file:'Code.exe', pub:'Microsoft Corporation', on:true},
+   {id:'o_ps', name:'Adobe Photoshop 2025', ai:'ps', kind:'openwith', root:'HKLM', path:'HKLM\\Software\\Classes\\Applications\\Photoshop.exe', file:'Photoshop.exe', pub:'Adobe Inc.', on:true},
+   {id:'o_irfan', name:'IrfanView', ai:'irfan', kind:'openwith', root:'HKLM', path:'HKLM\\Software\\Classes\\Applications\\i_view64.exe', file:'C:\\Program Files\\IrfanView\\i_view64.exe', pub:'Irfan Skiljan', on:false, by:'cmm'},
+   {id:'o_paint', name:'画图', ai:'paint', kind:'openwith', root:'PKG', path:'Microsoft.Paint_8wekyb3d8bbwe', pub:'Microsoft Corporation', on:true, prot:true},
+   {id:'o_notepad', name:'记事本', ai:'notepad', kind:'openwith', root:'PKG', path:'Microsoft.WindowsNotepad_8wekyb3d8bbwe', pub:'Microsoft Corporation', on:true, prot:true},
+ ]},
+ {id:'pkg', g:'专门菜单', name:'Win11 打包扩展', ic:'pkg', key:'HKCU\\…\\Shell Extensions\\Blocked', file:'Win11 新式菜单', special:'pkg', items:[
+   {id:'k_term', name:'在终端中打开', ai:'term', kind:'packaged', root:'PKG', path:'Microsoft.WindowsTerminal_8wekyb3d8bbwe', clsid:'{9F156763-7844-4DC4-B2B1-901F640F5155}', pub:'Microsoft Corporation', ms:12, on:true},
+   {id:'k_copilot', name:'询问 Copilot', ai:'copilot', kind:'packaged', root:'PKG', path:'Microsoft.Copilot_8wekyb3d8bbwe', clsid:'{CB3B0003-8088-4EDE-8769-8B354AB2FF8C}', pub:'Microsoft Corporation', ms:74, on:false, by:'pulse'},
+   {id:'k_clip', name:'使用 Clipchamp 创建视频', ai:'clip', kind:'packaged', root:'PKG', path:'Clipchamp.Clipchamp_yxz26nhyzhsrt', clsid:'{8AB635F8-9A67-4698-AB99-784AD929F512}', pub:'Microsoft Corporation', ms:63, on:true},
+   {id:'k_designer', name:'使用 Designer 设计', ai:'designer', kind:'packaged', root:'PKG', path:'Microsoft.Windows.Photos_8wekyb3d8bbwe · Designer', clsid:'{7A53B94A-4E6E-4826-B48E-535020B264E5}', pub:'Microsoft Corporation', ms:58, on:true},
+   {id:'k_lock', name:'解除占用（File Locksmith）', ai:'fl', kind:'packaged', root:'PKG', path:'Microsoft.PowerToys.FileLocksmithContextMenu_8wekyb3d8bbwe', clsid:'{84D68575-E186-46AD-B0CB-BAEB45EE29C0}', pub:'Microsoft Corporation', ms:44, on:true},
+ ]},
+ {id:'dragdrop', g:'专门菜单', name:'拖放菜单', ic:'drag', key:'HKCR\\Directory\\shellex\\DragDropHandlers', file:'右键拖放后的菜单', special:'drag', items:[
+   {id:'g_7z', name:'7-Zip', ai:'sevenz', kind:'dragdrop', root:'HKLM', path:'HKLM\\Software\\Classes\\Directory\\shellex\\DragDropHandlers\\7-Zip', clsid:'{23170F69-40C1-278A-1000-000100020000}', file:'7-zip.dll', pub:'Igor Pavlov', ms:18, on:true},
+   {id:'g_rar', name:'WinRAR', ai:'rar', kind:'dragdrop', root:'HKLM', path:'HKLM\\Software\\Classes\\Directory\\shellex\\DragDropHandlers\\WinRAR', clsid:'{B41DB860-8EE4-11D2-9906-E49FADC173CA}', file:'RarExt.dll', pub:'win.rar GmbH', ms:15, on:true},
+ ]},
+];
+
+const EXTS = ['.png','.jpg','.pdf','.dwg','.txt','.zip','.mp4'];
+const PERCS = [['image','图片'],['video','视频'],['audio','音频'],['text','文本'],['document','文档'],['compressed','压缩包']];
+const TEMPLATES = [
+  {id:'vsc', name:'用 VS Code 打开', ai:'vscode', cmd:'"%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe" "%V"', d:'文件、文件夹、背景'},
+  {id:'term', name:'在此处打开终端', ai:'term', cmd:'wt.exe -d "%V"', d:'文件夹、背景'},
+  {id:'path', name:'复制完整路径', ai:'sys', cmd:'cmd /c echo|set /p="%1"|clip', d:'文件、文件夹'},
+  {id:'custom', name:'自定义命令', ai:'sys', cmd:'', d:'自己填写程序和参数'},
+];
+
+/* =========================================================================
+   状态
+   ========================================================================= */
+const INIT = JSON.parse(JSON.stringify(SCENES));
+let S = {
+  scene:'overview', filter:'all', q:'', sel:null, sideTab:'preview', pvMode:'explorer', shift:false,
+  ext:'.png', perc:'image', pending:{}, edits:{}, log:[], notes:false, highlight:null, closed:{}, restartFor:[]
+};
+const byId = {};
+function indexItems(){ for(const k in byId) delete byId[k]; SCENES.forEach(sc=>(sc.items||[]).forEach(it=>{ it.scene=sc.id; byId[it.id]=it; })); }
+indexItems();
+
+/* =========================================================================
+   小工具
+   ========================================================================= */
+const $ = s=>document.querySelector(s);
+const esc = s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function icon(name,sz=16){
+  const p = {
+    home:'<path d="M2 7.5 8 2.5l6 5V14H10v-4H6v4H2z"/>',
+    file:'<path d="M4 1.5h5l3.5 3.5v9.5h-8.5z"/><path d="M9 1.5V5h3.5"/>',
+    stack:'<rect x="2" y="2" width="8" height="8" rx="1"/><rect x="6" y="6" width="8" height="8" rx="1"/>',
+    folder:'<path d="M1.5 4h4.5l1.5 1.5h7v8h-13z"/>',
+    bg:'<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M5 9.5l2-2 2 2 2-2.5"/>',
+    desk:'<rect x="1.5" y="2.5" width="13" height="9" rx="1.5"/><path d="M5.5 14h5M8 11.5V14"/>',
+    drive:'<rect x="1.5" y="5" width="13" height="6" rx="1.5"/><circle cx="11.5" cy="8" r=".6" fill="currentColor"/>',
+    pc:'<rect x="2" y="2.5" width="12" height="8" rx="1"/><path d="M4 13.5h8"/>',
+    bin:'<path d="M3 4.5h10M6 4.5V3h4v1.5M4.5 4.5l.7 9h5.6l.7-9"/>',
+    link:'<path d="M6.5 9.5l3-3M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M9 11.5l-1 1a2.5 2.5 0 0 1-3.5-3.5l1-1"/>',
+    app:'<rect x="2" y="2" width="12" height="12" rx="2"/><path d="M2 5.5h12"/>',
+    tag:'<path d="M2 2h6l6 6-6 6-6-6z"/><circle cx="5" cy="5" r="1"/>',
+    eye:'<path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
+    plus:'<path d="M8 3v10M3 8h10"/>',
+    send:'<path d="M2 8l11-5-4 11-2-4.5z"/>',
+    openwith:'<rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><path d="M11.5 9v5M9 11.5h5"/>',
+    pkg:'<path d="M8 1.5l6 3v7l-6 3-6-3v-7z"/><path d="M2 4.5l6 3 6-3M8 7.5v7"/>',
+    drag:'<path d="M5 2v8M5 10l-2-2M5 10l2-2"/><rect x="8" y="7" width="6" height="7" rx="1"/>',
+    more:'<circle cx="3.5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12.5" cy="8" r="1" fill="currentColor"/>',
+    shield:'<path d="M8 1.5l5 2v4c0 3.5-2.3 5.8-5 7-2.7-1.2-5-3.5-5-7v-4z"/>',
+    lock:'<rect x="3.5" y="7" width="9" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>',
+    chev:'<path d="M4 6l4 4 4-4"/>',
+    search:'<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/>',
+    reg:'<path d="M2 3h12v10H2z"/><path d="M2 6h12M5 6v7"/>',
+    folderopen:'<path d="M1.5 4h4.5l1.5 1.5h6v2"/><path d="M1.5 13.5l2-6h11l-2 6z"/>',
+    export:'<path d="M8 2v8M5 7l3 3 3-3"/><path d="M2.5 11v2.5h11V11"/>',
+    copy:'<rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/>',
+    edit:'<path d="M10.5 2.5l3 3-8 8H2.5v-3z"/>',
+    trash:'<path d="M3 4.5h10M6 4.5V3h4v1.5M4.5 4.5l.7 9h5.6l.7-9"/>',
+    check:'<path d="M3 8.5l3 3 7-7"/>',
+    undo:'<path d="M2.5 8a5.5 5.5 0 1 0 1.7-4M2.5 2.5v3h3"/>',
+    cut:'<circle cx="4" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><path d="M5.5 10.5 12 2M10.5 10.5 4 2"/>',
+    ren:'<path d="M2 5h8M2 11h8M12.5 3v10M11 3h3M11 13h3"/>',
+    prop:'<circle cx="8" cy="8" r="6"/><path d="M8 7.2V11M8 5v.2"/>',
+    gauge:'<path d="M2.5 11a5.5 5.5 0 1 1 11 0"/><path d="M8 11l3-4"/>',
+  }[name] || '';
+  return `<svg width="${sz}" height="${sz}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+}
+function appIcon(key,cls='ai'){
+  const a = APPICON[key]||APPICON.sys;
+  if(!a.bg) return `<div class="${cls} ${cls==='ai'?'sys':'sys'}" style="${cls!=='ai'?'':''}">${esc(a.t)}</div>`;
+  return `<div class="${cls}" style="background:${a.bg}">${esc(a.t)}</div>`;
+}
+function effOn(it){ return (it.id in S.pending) ? S.pending[it.id] : it.on; }
+function isPending(it){ return (it.id in S.pending) || !!S.edits[it.id]; }
+function needsAdmin(it){ return it.root==='HKLM'; }
+function locked(it){ return it.prot || it.ti || it.auto; }
+function sceneOf(id){ return SCENES.find(s=>s.id===id); }
+function kindLabel(it){ return {verb:'静态动词',shellex:'Shell 扩展',packaged:'打包扩展',shellnew:'新建项',sendto:'发送到',openwith:'打开方式',dragdrop:'拖放扩展'}[it.kind]; }
+function rootLabel(it){ return {HKCU:'当前用户',HKLM:'所有用户',FILE:'文件',PKG:'打包'}[it.root]; }
+
+function methodText(it, toOn){
+  const p = esc(it.path);
+  switch(it.kind){
+    case 'verb':
+      return toOn===false
+        ? `在 <code>${p}</code> 写入<br><code>HideBasedOnVelocityId = 0x639bc8</code>、<code>LegacyDisable</code>、<code>ProgrammaticAccessOnly</code>（与 ContextMenuManager 完全相同）`
+        : `删除 <code>HideBasedOnVelocityId</code> / <code>LegacyDisable</code> / <code>ProgrammaticAccessOnly</code>，以及 CommandFlags 的隐藏位`;
+    case 'shellex': case 'dragdrop':{
+      const a = it.kind==='dragdrop'?'DragDropHandlers':'ContextMenuHandlers';
+      return toOn===false
+        ? `把键从 <code>${a}</code> 移到同级的 <code>-${a}</code>（与 ContextMenuManager 相同，两边可以互相还原）`
+        : `把键从 <code>-${a}</code> 移回 <code>${a}</code>`;
+    }
+    case 'packaged':
+      return toOn===false
+        ? `在 <code>HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Blocked</code> 写入 <code>${esc(it.clsid)}</code>（只影响当前用户，不需要管理员）`
+        : `从 <code>Shell Extensions\\Blocked</code> 删除 <code>${esc(it.clsid)}</code>`;
+    case 'shellnew':
+      return toOn===false ? `把 <code>ShellNew</code> 改名为 <code>-ShellNew</code>（与 ContextMenuManager 相同）` : `把 <code>-ShellNew</code> 改回 <code>ShellNew</code>`;
+    case 'sendto':
+      return toOn===false ? `给 SendTo 目录里的对应文件加上「隐藏」属性，不删除文件` : `去掉对应文件的「隐藏」属性`;
+    case 'openwith':
+      return toOn===false ? `在 <code>${p}</code> 写入 <code>NoOpenWith</code>` : `删除 <code>NoOpenWith</code>`;
+  }
+  return '';
+}
+
+/* =========================================================================
+   渲染：场景
+   ========================================================================= */
+function renderScenes(){
+  let h='', lastG=null;
+  for(const sc of SCENES){
+    if(sc.g!==lastG){ if(sc.g) h+=`<div class="sg">${sc.g}</div>`; lastG=sc.g; }
+    let n='';
+    if(sc.items){
+      const off = sc.items.filter(it=>!effOn(it)).length;
+      const pend = sc.items.some(isPending);
+      n = `<span class="n">${sc.items.length}${off?` · <span class="off">${off}</span>`:''}</span>${pend?'<span class="dot"></span>':''}`;
+    } else {
+      const totalOff = Object.values(byId).filter(it=>!effOn(it)).length;
+      n = `<span class="n"><span class="off">${totalOff}</span> 已禁用</span>`;
+    }
+    h+=`<div class="sc ${S.scene===sc.id?'active':''}" data-scene="${sc.id}"><span class="ic">${icon(sc.ic)}</span>${sc.name}${n}</div>`;
+  }
+  $('#scenes').innerHTML = h;
+}
+
+/* =========================================================================
+   渲染：列表
+   ========================================================================= */
+function itemMatches(it){
+  const on = effOn(it);
+  if(S.filter==='off' && on) return false;
+  if(S.filter==='admin' && !needsAdmin(it)) return false;
+  if(S.filter==='third' && /Microsoft/.test(it.pub)) return false;
+  if(S.filter==='slow' && !(it.ms>=150)) return false;
+  if(S.filter==='cmm' && it.by!=='cmm') return false;
+  if(S.q){
+    const q=S.q.toLowerCase();
+    if(![it.name,it.path,it.pub,it.file,it.clsid].some(v=>v && String(v).toLowerCase().includes(q))) return false;
+  }
+  return true;
+}
+function rowHtml(it, showScene){
+  const on = effOn(it), pend=isPending(it);
+  const e = S.edits[it.id]||{};
+  const name = e.name || it.name;
+  const b=[];
+  if(pend) b.push(`<span class="bd pend">待应用</span>`);
+  if(it.by==='cmm' && !on && !(it.id in S.pending)) b.push(`<span class="bd cmm" title="这一项由 ContextMenuManager 禁用，Pulse 能识别并还原">CMM 已禁用</span>`);
+  if(it.ms>=150) b.push(`<span class="bd slow" title="Pulse 实测：这个扩展让右键慢了 ${it.ms} ms">+${it.ms} ms</span>`);
+  else if(it.ms) b.push(`<span class="bd ms" title="Pulse 实测加载耗时">${it.ms} ms</span>`);
+  if((e.ext ?? it.ext)) b.push(`<span class="bd shift" title="仅按住 Shift 右键时显示">⇧ Shift</span>`);
+  if(it.prot) b.push(`<span class="bd lock">${icon('lock',11)}受保护</span>`);
+  else if(it.ti) b.push(`<span class="bd lock" title="由 TrustedInstaller 拥有，Pulse 不夺取所有权">${icon('lock',11)}TrustedInstaller</span>`);
+  else if(it.auto) b.push(`<span class="bd lock">系统自动</span>`);
+  else if(it.root==='HKLM') b.push(`<span class="bd adm" title="写入 HKLM，需要管理员（一批改动只弹一次 UAC）">${icon('shield',11)}管理员</span>`);
+  else if(it.root==='HKCU' || it.root==='PKG' || it.root==='FILE') b.push(`<span class="bd cu" title="只改当前用户，不需要管理员">无需管理员</span>`);
+  const src = showScene ? `${sceneOf(it.scene).name} · ${it.path}` : (it.file ? `${it.pub} · ${it.file.split('\\').pop()}` : `${it.pub} · ${kindLabel(it)}`);
+  const cls = ['row', on?'':'off', pend?'pend':'', S.sel===it.id?'sel':'', S.highlight&&S.highlight.includes(it.id)?'flash':''].join(' ');
+  const tgTitle = it.prot?'关键项受保护，不能禁用':it.ti?'由 TrustedInstaller 拥有：Pulse 不夺取所有权，可「定位到注册表」手动处理':it.auto?'可移动盘由系统自动列出，无法单独隐藏':(on?'禁用':'启用');
+  return `<div class="${cls}" data-item="${it.id}" data-path="${esc(it.path)}">
+    ${appIcon(it.ai)}
+    <div class="nm"><div class="t"><b>${esc(name)}</b></div><div class="s">${esc(src)}</div></div>
+    <div class="badges">${b.join('')}</div>
+    <button class="tg ${on?'on':''}" data-toggle="${it.id}" ${locked(it)?'disabled':''} title="${tgTitle}" aria-label="${tgTitle}"></button>
+    <button class="more" data-more="${it.id}" title="更多">${icon('more')}</button>
+  </div>`;
+}
+function renderList(){
+  const sc = sceneOf(S.scene);
+  if(S.scene==='overview' && !S.q){ renderOverview(); return; }
+  let items, title, key, showScene=false;
+  if(S.q){ items=Object.values(byId); title='搜索结果'; key='在所有场景中搜索 · 清空搜索框回到「'+sc.name+'」'; showScene=true; }
+  else { items=sc.items; title=sc.name; key = sc.ext?`HKCR\\SystemFileAssociations\\${S.ext}`: sc.perc?`HKCR\\SystemFileAssociations\\${S.perc}`: sc.key; }
+  const cnt = f=>{ const old=S.filter; S.filter=f; const qq=S.q; const n=items.filter(itemMatches).length; S.filter=old; return n; };
+  const filters=[['all','全部'],['off','已禁用'],['admin','需要管理员'],['third','第三方'],['slow','拖慢右键'],['cmm','CMM 标记']];
+  let h = `<div class="lh"><h2>${esc(title)}</h2><span class="key" title="${esc(key)}">${esc(key)}</span>
+    <label class="search">${icon('search',14)}<input id="q" placeholder="在所有场景中搜索…" value="${esc(S.q)}"><kbd>Ctrl F</kbd></label></div>`;
+  h += `<div class="fbar">${filters.map(([k,l])=>`<button class="fchip ${S.filter===k?'on':''}" data-filter="${k}">${l}<span class="c">${cnt(k)}</span></button>`).join('')}<span class="sp"></span>
+    ${(!sc||!sc.special||sc.special==='shellnew')&&!showScene?`<button class="btn sm" id="btnNew">${icon('plus',13)}新建命令</button>`:''}</div>`;
+  if(sc && sc.ext && !showScene){
+    h+=`<div class="subpick"><span class="lbl">扩展名</span>${EXTS.map(e=>`<button class="extchip ${S.ext===e?'on':''}" data-ext="${e}">${e}</button>`).join('')}<input class="extinput" id="extIn" placeholder="+ 其他…"></div>`;
+  }
+  if(sc && sc.perc && !showScene){
+    h+=`<div class="subpick"><span class="lbl">感知类型</span>${PERCS.map(([k,l])=>`<button class="extchip ${S.perc===k?'on':''}" data-perc="${k}" style="font-family:var(--font)">${l}</button>`).join('')}</div>`;
+  }
+  if(sc && sc.special==='pkg' && !showScene){
+    h+=`<div class="subpick" style="color:var(--text-2);font-size:12px">${icon('prop',14)}<span>Win11 打包扩展只能用 <code style="font-family:var(--mono);color:#cdd2ff">Shell Extensions\\Blocked</code> 屏蔽。写在 HKCU 下，不需要管理员；新式菜单和「显示更多选项」里都会消失。</span></div>`;
+  }
+  h += `<div class="rows" id="rows">`;
+  const shown = items.filter(itemMatches);
+  const normal = shown.filter(it=>!locked(it));
+  const lockedL = shown.filter(it=>locked(it));
+  if(!shown.length) h+=`<div class="empty">没有符合条件的条目</div>`;
+  h += normal.map(it=>rowHtml(it,showScene)).join('');
+  if(lockedL.length){
+    const closed = S.closed[S.scene+'_lock'];
+    h += `<div class="rgroup ${closed?'closed':''}" data-group="${S.scene}_lock" data-note="5">${icon('chev',12)}受保护或系统拥有（${lockedL.length}）<span style="flex:1"></span><span class="hint-ti">只能查看和定位</span></div>`;
+    if(!closed) h += lockedL.map(it=>rowHtml(it,showScene)).join('');
+  }
+  h += `</div>`;
+  $('#list').innerHTML = h;
+  const first = $('#rows .row'); if(first && S.notes){ first.setAttribute('data-note','4'); }
+}
+
+function renderOverview(){
+  const all = Object.values(byId);
+  const off = all.filter(it=>!effOn(it));
+  const cmm = all.filter(it=>it.by==='cmm' && !effOn(it));
+  const slow = all.filter(it=>it.ms).sort((a,b)=>b.ms-a.ms);
+  const uniq=[]; const seen=new Set(); for(const it of slow){ const k=it.clsid||it.name; if(seen.has(k)) continue; seen.add(k); uniq.push(it); }
+  const top = uniq.slice(0,6); const max = top[0]?.ms||1;
+  let h = `<div class="lh"><h2>概览</h2><span class="key">共 ${all.length} 个条目 · ${SCENES.length-1} 个场景</span>
+    <label class="search">${icon('search',14)}<input id="q" placeholder="在所有场景中搜索…" value="${esc(S.q)}"><kbd>Ctrl F</kbd></label></div><div class="ov">`;
+  h += `<div class="ovc wide"><div class="stats">
+    <div class="stat"><b>${off.length}</b><span>已禁用</span></div>
+    <div class="stat"><b style="color:#c9b8ff">${cmm.length}</b><span>由 ContextMenuManager 禁用</span></div>
+    <div class="stat"><b style="color:#ffb4ac">${uniq.filter(i=>i.ms>=150).length}</b><span>拖慢右键 ≥150 ms 的扩展</span></div>
+    <div class="stat"><b>${S.log.filter(l=>!l.undone).length}</b><span>Pulse 做过的改动</span></div>
+  </div></div>`;
+  h += `<div class="ovc wide" data-note="10"><h3>慢扩展排行</h3><div class="d">来自 Pulse 最近 100 次右键的实测数据。禁用后，资源管理器和 Pulse 的右键都会变快。</div>`;
+  top.forEach((it,i)=>{
+    const on=effOn(it);
+    h+=`<div class="rank">${appIcon(it.ai)}<div class="nm"><div class="t"><b>${esc(it.name)}</b></div><div class="s">${esc(it.pub)}</div></div>
+      <div class="bar"><i style="width:${Math.round(it.ms/max*100)}%"></i></div><div class="v">${it.ms} ms</div>
+      <div style="display:flex;gap:6px">${on?`<button class="btn sm" data-pulseskip="${it.id}" title="只在 Pulse 里不加载它，系统不变">Pulse 跳过</button><button class="btn sm" data-toggle="${it.id}" title="在系统里禁用（资源管理器和所有应用）">禁用</button>`:`<span class="bd ${it.by==='cmm'?'cmm':'pend'}">${it.id in S.pending?'待应用':'已禁用'}</span>`}</div></div>`;
+  });
+  h += `</div>`;
+  h += `<div class="ovc"><h3>来自其他工具的禁用标记</h3><div class="d">识别 ContextMenuManager 写下的标记，显示在对应场景里，也可以在这里一键还原。</div>`;
+  cmm.forEach(it=>{ h+=`<div class="mini">${appIcon(it.ai)}<div class="grow"><div>${esc(it.name)}</div><div class="s">${esc(it.path)}</div></div><button class="btn sm" data-toggle="${it.id}">还原</button></div>`; });
+  if(!cmm.length) h+=`<div class="d">没有了 ✓</div>`;
+  h += `</div>`;
+  h += `<div class="ovc"><h3>最近的改动</h3><div class="d">每次应用都有对应的 .reg 备份，可以逐步撤销。</div>`;
+  const recent = S.log.slice(-4).reverse();
+  if(!recent.length) h+=`<div class="d" style="margin:0">还没有改动。在左侧选择一个场景开始。</div>`;
+  recent.forEach(l=>{ h+=`<div class="mini"><div class="grow"><div style="${l.undone?'text-decoration:line-through;color:var(--text-3)':''}">${esc(l.title)}</div><div class="s">${l.time} · ${esc(l.backup)}</div></div></div>`; });
+  h += `</div></div>`;
+  $('#list').innerHTML = h;
+}
+
+/* =========================================================================
+   渲染：右栏（预览 / 详情）
+   ========================================================================= */
+function renderSide(){
+  const sc = sceneOf(S.scene);
+  let h = `<div class="stabs"><button class="stab ${S.sideTab==='preview'?'on':''}" data-stab="preview">实时预览</button><button class="stab ${S.sideTab==='detail'?'on':''}" data-stab="detail">详情${S.sel?'':' '}</button></div><div class="sbody">`;
+  if(S.sideTab==='preview') h += previewHtml(sc);
+  else h += detailHtml();
+  h += `</div>`;
+  $('#side').innerHTML = h;
+}
+function previewHtml(sc){
+  if(!sc || !sc.items){
+    return `<div class="pv-sub" style="margin-top:4px">在左侧选择一个场景，这里会显示它的右键菜单，并实时反映你的改动。</div>
+    <div class="infobox">${icon('prop',14)}<div>概览页的数据来自 Pulse 实际右键时的测量，不需要额外运行任何东西。</div></div>`;
+  }
+  const items = sc.items.filter(it=>!it.auto);
+  const showExt = S.shift;
+  let rows = [];
+  const pulse = S.pvMode==='pulse';
+  const fixedTop = sc.bg ? [] : (sc.special ? [] : [['打开','sys',true]]);
+  for(const it of items){
+    if(it.prot && !sc.special) continue; // 受保护的系统项已经在固定区里
+    const e=S.edits[it.id]||{};
+    const ext = e.ext ?? it.ext;
+    if(ext && !showExt) continue;
+    const now = it.on, next = effOn(it);
+    if(!now && !next) continue;
+    if(pulse && e.pulseHidden) continue;
+    let cls = '';
+    if(now && !next) cls='going'; else if(!now && next) cls='coming';
+    if(S.highlight && S.highlight.includes(it.id)) cls+=' hl';
+    if(ext) cls+=' ext';
+    rows.push({it, cls, name:e.name||it.name, top:e.pos==='top'});
+  }
+  rows.sort((a,b)=>(b.top?1:0)-(a.top?1:0));
+  const ci = it => { const a=APPICON[it.ai]||APPICON.sys; return a.bg?`<span class="ci" style="background:${a.bg}">${esc(a.t.slice(0,2))}</span>`:`<span class="ci sys">${esc(a.t)}</span>`; };
+  let m = `<div class="cm ${pulse?'':'exp'}">`;
+  if(sc.special){
+    const label = {shellnew:'新建',sendto:'发送到',openwith:'打开方式',pkg:'Win11 新式菜单',drag:'右键拖放'}[sc.special];
+    m += `<div class="cmi" style="color:var(--text-3);font-size:11.5px;height:24px">${label}</div>`;
+    if(sc.special==='shellnew') m += `<div class="cmi"><span class="ci sys">▤</span><span class="lb">文件夹</span></div><div class="cmi"><span class="ci sys">↗</span><span class="lb">快捷方式</span></div><div class="cmsep"></div>`;
+    if(sc.special==='drag') m += `<div class="cmi bold"><span class="ci sys"></span><span class="lb">复制到当前位置</span></div><div class="cmi"><span class="ci sys"></span><span class="lb">移动到当前位置</span></div><div class="cmi"><span class="ci sys"></span><span class="lb">在当前位置创建快捷方式</span></div><div class="cmsep"></div>`;
+    rows.filter(r=>!(sc.special==='shellnew' && r.it.prot)).forEach(r=>{ m+=`<div class="cmi ${r.cls}" data-pvitem="${r.it.id}">${ci(r.it)}<span class="lb">${esc(r.name)}</span></div>`; });
+    if(sc.special==='sendto') m += `<div class="cmi"><span class="ci" style="background:#555">⏏</span><span class="lb">U 盘 (E:)</span></div>`;
+    if(sc.special==='openwith') m += `<div class="cmsep"></div><div class="cmi"><span class="ci sys"></span><span class="lb">选择其他应用</span></div>`;
+    if(sc.special==='drag') m += `<div class="cmsep"></div><div class="cmi"><span class="ci sys"></span><span class="lb">取消</span></div>`;
+  } else {
+    if(pulse) m += `<div class="cmrow"><span>${icon('cut',14)}</span><span>${icon('copy',14)}</span><span>${icon('ren',14)}</span><span>${icon('trash',14)}</span></div><div class="cmsep"></div>`;
+    fixedTop.forEach(([l])=>{ m+=`<div class="cmi bold"><span class="ci sys"></span><span class="lb">${l}</span><span class="k">${pulse?'Enter':''}</span></div>`; });
+    if(sc.id==='file'||sc.id==='ext'||sc.id==='perc'||sc.id==='exe'||sc.id==='lnk'){
+      if(sc.id==='exe') m+=`<div class="cmi"><span class="ci sys">⛨</span><span class="lb">以管理员身份运行</span></div>`;
+      if(sc.id==='lnk') m+=`<div class="cmi"><span class="ci sys">▤</span><span class="lb">打开文件所在的位置</span></div>`;
+      m+=`<div class="cmi"><span class="ci sys">▦</span><span class="lb">打开方式</span><span class="arr">›</span></div>`;
+    }
+    if(rows.length) m += `<div class="cmsep"></div>`;
+    rows.forEach(r=>{ m+=`<div class="cmi ${r.cls}" data-pvitem="${r.it.id}">${ci(r.it)}<span class="lb">${esc(r.name)}</span>${r.it.sub&&!r.cls.includes('going')&&!r.cls.includes('coming')?'<span class="arr">›</span>':''}</div>`; });
+    m += `<div class="cmsep"></div>`;
+    if(sc.bg){
+      m += `<div class="cmi"><span class="ci sys">⊞</span><span class="lb">查看</span><span class="arr">›</span></div><div class="cmi"><span class="ci sys">⇅</span><span class="lb">排序方式</span><span class="arr">›</span></div><div class="cmi"><span class="ci sys">＋</span><span class="lb">新建</span><span class="arr">›</span></div>`;
+    } else if(!pulse){
+      m += `<div class="cmi"><span class="ci sys">⇢</span><span class="lb">发送到</span><span class="arr">›</span></div><div class="cmsep"></div><div class="cmi"><span class="ci sys"></span><span class="lb">剪切</span></div><div class="cmi"><span class="ci sys"></span><span class="lb">复制</span></div><div class="cmsep"></div><div class="cmi"><span class="ci sys"></span><span class="lb">删除</span></div><div class="cmi"><span class="ci sys"></span><span class="lb">重命名</span></div>`;
+    } else {
+      m += `<div class="cmi"><span class="ci sys">⇢</span><span class="lb">发送到</span><span class="arr">›</span></div>`;
+    }
+    m += `<div class="cmsep"></div><div class="cmi"><span class="ci sys">ⓘ</span><span class="lb">属性</span><span class="k">Alt+Enter</span></div>`;
+    if(pulse) m += `<div class="cmsep"></div><div class="cmi manage"><span class="ci sys">⚙</span><span class="lb">管理此菜单…</span></div>`;
+  }
+  m += `</div>`;
+  const nGo = rows.filter(r=>r.cls.includes('going')).length, nCome = rows.filter(r=>r.cls.includes('coming')).length;
+  return `<div class="pv-head" data-note="6"><div class="seg"><button class="${!pulse?'on':''}" data-pv="explorer">资源管理器</button><button class="${pulse?'on':''}" data-pv="pulse">Pulse</button></div>
+      <label class="shiftk ${S.shift?'on':''}" id="shiftK" title="预览按住 Shift 右键时出现的扩展项"><kbd>Shift</kbd>扩展项</label></div>
+    <p class="pv-sub">${pulse?'Pulse 的右键菜单：系统层的改动加上「仅在 Pulse 隐藏」的设置':'资源管理器「显示更多选项」的经典菜单'}${nGo||nCome?` · <span style="color:var(--warn)">${nGo?`${nGo} 项将隐藏`:''}${nGo&&nCome?'，':''}${nCome?`${nCome} 项将显示`:''}</span>`:''}</p>
+    <div class="fakefile">${sc.bg?icon('bg',16):'<span class="fi"></span>'}<span>右键：${esc(sc.ext?('截图'+S.ext):sc.file)}</span></div>
+    ${m}
+    <div class="pv-legend"><span><i style="background:rgba(230,113,107,.5)"></i>将隐藏</span><span><i style="background:rgba(92,196,137,.5)"></i>将显示</span><span>⇧ 仅 Shift</span></div>`;
+}
+function detailHtml(){
+  const it = S.sel && byId[S.sel];
+  if(!it) return `<div class="pv-sub" style="margin-top:4px">点击列表里的任意一行，查看它的来源、禁用方式和可编辑的属性。</div>`;
+  const on=effOn(it); const e=S.edits[it.id]||{};
+  let h = `<div class="dt" data-note="8"><h3>${appIcon(it.ai)}<span>${esc(e.name||it.name)}</span></h3>
+    <div class="sub">${kindLabel(it)} · ${rootLabel(it)}${it.ms?` · 实测 ${it.ms} ms`:''}</div>`;
+  if(it.by==='cmm' && !on) h+=`<div class="infobox">${icon('prop',14)}<div>这一项由 <b>ContextMenuManager</b> 禁用。Pulse 用的是同一套标记，在这里启用之后，CMM 里也会显示为已启用。</div></div>`;
+  if(it.ti) h+=`<div class="warnbox">${icon('lock',14)}<div>这个键由 <b>TrustedInstaller</b> 拥有。修改它需要夺取所有权，有一定风险，所以 Pulse 不做。可以「定位到注册表」后手动处理。</div></div>`;
+  if(it.prot) h+=`<div class="warnbox">${icon('lock',14)}<div>关键项受保护，不能禁用，以免右键菜单失去基本功能。</div></div>`;
+  if(it.ms>=150) h+=`<div class="warnbox">${icon('gauge',14)}<div>这个扩展平均让右键慢了 <b>${it.ms} ms</b>。如果只是不想在 Pulse 里等它，可以用下面的「只在 Pulse 跳过」，系统菜单不变。</div></div>`;
+  h += `<dl class="kv"><dt>注册表</dt><dd>${esc(it.path)}</dd>${it.clsid?`<dt>CLSID</dt><dd>${esc(it.clsid)}</dd>`:''}${it.file?`<dt>文件</dt><dd>${esc(it.file)}</dd>`:''}<dt>发布者</dt><dd class="plain">${esc(it.pub)} ${/Microsoft|Adobe|NVIDIA|Intel|Tencent|Igor|win\.rar|Huorong|Duyou|Bandisoft|Johannes|VideoLAN|Notepad\+\+/.test(it.pub)?'<span style="color:var(--ok)">✓ 已签名</span>':'<span style="color:var(--text-3)">未签名</span>'}</dd>${it.root==='HKLM'?`<dt>权限</dt><dd class="plain">${icon('shield',12).replace('<svg','<svg style="display:inline;vertical-align:-2px;color:var(--shield)"')} 需要管理员 · 一批改动只弹一次 UAC</dd>`:''}</dl>`;
+  if(!locked(it)){
+    h += `<div class="sect"><h4>启用状态</h4>
+      <div class="optrow"><div class="grow">在系统里${on?'启用':'禁用'}<span class="s">资源管理器和所有应用</span></div><button class="tg ${on?'on':''}" data-toggle="${it.id}"></button></div>
+      ${it.kind==='shellex'||it.kind==='packaged'?`<div class="optrow"><div class="grow">仅在 Pulse 隐藏<span class="s">系统不变，Pulse 也不加载这个扩展</span></div><button class="tg ${e.pulseHidden?'on':''}" data-pulsehide="${it.id}"></button></div>`:''}
+      <div class="method" style="margin-top:8px"><b style="color:var(--text)">${on?'禁用':'启用'}时 Pulse 会：</b><br>${methodText(it, !on)}</div></div>`;
+  }
+  if(it.kind==='verb' && !locked(it)){
+    h += `<div class="sect"><h4>编辑（写入同一个键）</h4>
+      <div class="optrow" style="gap:8px"><input class="field" id="edName" value="${esc(e.name||it.name)}" title="写入 MUIVerb"><button class="btn sm" id="edNameOk">改名</button></div>
+      <div class="optrow"><div class="grow">仅按住 Shift 时显示<span class="s">Extended</span></div><button class="tg ${(e.ext??it.ext)?'on':''}" data-edit="ext"></button></div>
+      <div class="optrow"><div class="grow">位置<span class="s">Position</span></div><div class="seg"><button class="${!e.pos?'on':''}" data-pos="">默认</button><button class="${e.pos==='top'?'on':''}" data-pos="top">置顶</button><button class="${e.pos==='bottom'?'on':''}" data-pos="bottom">置底</button></div></div>
+      <div class="optrow"><div class="grow">从不作为默认操作<span class="s">NeverDefault</span></div><button class="tg ${e.nd?'on':''}" data-edit="nd"></button></div>
+      <div class="optrow"><div class="grow">仅在资源管理器窗口中显示<span class="s">OnlyInBrowserWindow</span></div><button class="tg ${e.oib?'on':''}" data-edit="oib"></button></div></div>`;
+  }
+  h += `<div class="sect"><h4>定位与备份</h4><div class="btnrow">
+      <button class="btn sm" data-act="reg" data-id="${it.id}">${icon('reg',13)}定位到注册表</button>
+      ${it.file?`<button class="btn sm" data-act="file" data-id="${it.id}">${icon('folderopen',13)}定位文件</button>`:''}
+      <button class="btn sm" data-act="export" data-id="${it.id}">${icon('export',13)}导出 .reg</button>
+      <button class="btn sm" data-act="copy" data-id="${it.id}">${icon('copy',13)}复制路径</button></div></div></div>`;
+  return h;
+}
+
+/* =========================================================================
+   待应用
+   ========================================================================= */
+function pendingList(){
+  const ids = new Set([...Object.keys(S.pending), ...Object.keys(S.edits)]);
+  return [...ids].map(id=>byId[id]).filter(Boolean);
+}
+function renderPending(){
+  const list = pendingList();
+  const bar = $('#pending');
+  if(!list.length){ bar.classList.remove('show'); return; }
+  const adm = list.filter(needsAdmin).length;
+  const off = list.filter(it=>(it.id in S.pending) && !S.pending[it.id]).length;
+  const onN = list.filter(it=>(it.id in S.pending) && S.pending[it.id]).length;
+  const ed = list.filter(it=>S.edits[it.id] && !(it.id in S.pending)).length;
+  $('#pendTitle').textContent = `待应用 ${list.length} 项改动`;
+  $('#pendSub').textContent = [off?`禁用 ${off}`:'', onN?`启用 ${onN}`:'', ed?`编辑 ${ed}`:''].filter(Boolean).join(' · ') + (adm?` · 其中 ${adm} 项在 HKLM，需要一次 UAC`:' · 都在当前用户下，不需要管理员');
+  $('#btnApply').innerHTML = adm ? `${icon('shield',14)}应用（一次 UAC）` : `${icon('check',14)}应用`;
+  bar.classList.add('show');
+}
+function setPending(it, val){
+  if(locked(it)) return;
+  if(val===it.on) delete S.pending[it.id]; else S.pending[it.id]=val;
+  render();
+}
+function toggleItem(id){ const it=byId[id]; if(!it) return; setPending(it, !effOn(it)); }
+
+function nowStr(){ const d=new Date(); const p=n=>String(n).padStart(2,'0'); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
+function stamp(){ const d=new Date(); const p=n=>String(n).padStart(2,'0'); return `2026-10-14_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; }
+
+function apply(){
+  const list = pendingList();
+  if(!list.length) return;
+  const adm = list.filter(needsAdmin);
+  if(adm.length){
+    $('#uacWhat').textContent = `将修改 ${adm.length} 个 HKLM 注册表项（其余 ${list.length-adm.length} 项写入当前用户）`;
+    $('#uacDet').textContent = adm.map(it=>`${(it.id in S.pending)?(S.pending[it.id]?'启用':'禁用'):'编辑'}  ${it.path}`).join('\n');
+    $('#uacDet').classList.remove('show');
+    $('#uac').classList.add('show');
+  } else commit();
+}
+function commit(){
+  const list = pendingList();
+  const changes = list.map(it=>({id:it.id, from:it.on, to:(it.id in S.pending)?S.pending[it.id]:it.on, edit:S.edits[it.id]?{...S.edits[it.id]}:null, prevEdit:it.applied?{...it.applied}:null}));
+  const shellexLoaded = [];
+  list.forEach(it=>{
+    if(it.id in S.pending){ it.on = S.pending[it.id]; if(!it.on){ it.by='pulse'; } else { it.by=null; }
+      if(it.kind==='shellex' && it.path.includes('\\-ContextMenuHandlers\\') && it.on) it.path=it.path.replace('\\-ContextMenuHandlers\\','\\ContextMenuHandlers\\');
+      else if(it.kind==='shellex' && !it.on) it.path=it.path.replace('\\ContextMenuHandlers\\','\\-ContextMenuHandlers\\');
+      if(it.kind==='shellnew') it.path = it.on? it.path.replace('\\-ShellNew','\\ShellNew') : it.path.replace(/\\ShellNew$/,'\\-ShellNew');
+      if((it.kind==='shellex') && !it.on && it.file) shellexLoaded.push(it.name);
+    }
+    if(S.edits[it.id]){ it.applied = {...(it.applied||{}), ...S.edits[it.id]}; if(S.edits[it.id].name) it.name=S.edits[it.id].name; if('ext' in S.edits[it.id]) it.ext=S.edits[it.id].ext; }
+  });
+  const backup = `${stamp()}.reg`;
+  const adm = list.filter(needsAdmin).length;
+  const title = summarize(changes);
+  S.log.push({time:nowStr(), title, backup, changes, adm, undone:false});
+  S.pending={}; 
+  // 保留 pulseHidden 之类的 Pulse 层设置，其余编辑已经写入
+  for(const id in S.edits){ const e=S.edits[id]; const keep={}; if(e.pulseHidden) keep.pulseHidden=true; if(Object.keys(keep).length) S.edits[id]=keep; else delete S.edits[id]; }
+  if(shellexLoaded.length){ S.restartFor=[...new Set([...S.restartFor, ...shellexLoaded])]; }
+  render();
+  toast(`已应用：${title}`, `备份 → ContextMenu\\Backups\\${backup}${adm?` · 已提权 ${adm} 项`:''}`, true);
+}
+function summarize(ch){
+  const off=ch.filter(c=>c.from&&!c.to).map(c=>byId[c.id].name), on=ch.filter(c=>!c.from&&c.to).map(c=>byId[c.id].name), ed=ch.filter(c=>c.from===c.to&&c.edit);
+  const parts=[];
+  if(off.length) parts.push(`禁用 ${off.slice(0,2).join('、')}${off.length>2?` 等 ${off.length} 项`:''}`);
+  if(on.length) parts.push(`启用 ${on.slice(0,2).join('、')}${on.length>2?` 等 ${on.length} 项`:''}`);
+  if(ed.length) parts.push(`编辑 ${ed.length} 项`);
+  return parts.join('；')||'无变化';
+}
+function undoEntry(entry){
+  if(!entry || entry.undone) return;
+  entry.changes.forEach(c=>{
+    const it=byId[c.id]; if(!it) return;
+    it.on = c.from;
+    if(c.from===false && c.to===true){ it.by='pulse'; if(it.kind==='shellex') it.path=it.path.replace('\\ContextMenuHandlers\\','\\-ContextMenuHandlers\\'); }
+    if(c.from===true && c.to===false){ it.by=null; if(it.kind==='shellex') it.path=it.path.replace('\\-ContextMenuHandlers\\','\\ContextMenuHandlers\\'); if(it.kind==='shellnew') it.path=it.path.replace('\\-ShellNew','\\ShellNew'); }
+    if(c.edit){ const orig = INIT.flatMap(s=>s.items||[]).find(x=>x.id===c.id); if(orig){ it.name=orig.name; it.ext=orig.ext; it.applied=null; } }
+  });
+  entry.undone=true;
+  render();
+  toast(`已撤销：${entry.title}`, `从 ${entry.backup} 导回`, false);
+}
+
+/* =========================================================================
+   全局 render
+   ========================================================================= */
+function render(){
+  const qFocus = document.activeElement && document.activeElement.id==='q';
+  const caret = qFocus ? document.activeElement.selectionStart : 0;
+  renderScenes(); renderList(); renderSide(); renderPending();
+  $('#logCount').textContent = S.log.length?`· ${S.log.length}`:'';
+  $('#restartBar').classList.toggle('show', S.restartFor.length>0);
+  $('#restartWhat').textContent = S.restartFor.slice(0,2).join('、') + (S.restartFor.length>2?` 等 ${S.restartFor.length} 个扩展`:' 扩展');
+  if(qFocus){ const q=$('#q'); if(q){ q.focus(); q.setSelectionRange(caret,caret);} }
+}
+
+/* =========================================================================
+   toast / pop
+   ========================================================================= */
+function toast(t, s, undo){
+  const el=document.createElement('div'); el.className='tst';
+  el.innerHTML = `<div class="ok">${icon('check',13)}</div><div style="flex:1;min-width:0"><div>${esc(t)}</div>${s?`<span class="s">${esc(s)}</span>`:''}</div>${undo?'<button class="btn sm">撤销</button>':''}`;
+  if(undo) el.querySelector('button').onclick=()=>{ undoEntry(S.log[S.log.length-1]); el.remove(); };
+  $('#toast').appendChild(el);
+  setTimeout(()=>{ el.style.transition='opacity .3s'; el.style.opacity='0'; setTimeout(()=>el.remove(),300); }, undo?6000:3200);
+}
+function showPop(x,y,html){
+  const p=$('#pop'); p.innerHTML=html; p.classList.add('show');
+  const r=p.getBoundingClientRect();
+  p.style.left = Math.min(x, innerWidth-r.width-8)+'px';
+  p.style.top = Math.min(y, innerHeight-r.height-8)+'px';
+}
+function hidePop(){ $('#pop').classList.remove('show'); }
+
+function itemAction(act,id){
+  const it=byId[id]; if(!it) return;
+  if(act==='reg') toast('（原型）在注册表编辑器中定位', it.path);
+  if(act==='file') toast('（原型）在 Pulse 新标签页中定位文件', it.file||'');
+  if(act==='export') toast('已导出 .reg', `ContextMenu\\Exports\\${it.name.replace(/[\\/:*?"<>|\s]+/g,'_')}.reg`);
+  if(act==='copy') toast('已复制注册表路径', it.path);
+  if(act==='detail'){ S.sel=id; S.sideTab='detail'; render(); }
+  if(act==='pulsehide'){ const e=S.edits[id]||{}; e.pulseHidden=!e.pulseHidden; S.edits[id]=e; if(!e.pulseHidden){ delete e.pulseHidden; if(!Object.keys(e).length) delete S.edits[id]; } toast(e.pulseHidden?'已设为只在 Pulse 跳过':'已取消只在 Pulse 跳过', '本地设置，立即生效，不需要应用'); delete S.edits[id]?.__; render(); }
+}
+
+/* =========================================================================
+   事件
+   ========================================================================= */
+document.addEventListener('click', e=>{
+  const t=e.target;
+  if(!t.closest('#pop') && !t.closest('[data-more]')) hidePop();
+  const sc=t.closest('[data-scene]'); if(sc){ S.scene=sc.dataset.scene; S.q=''; S.filter='all'; S.highlight=null; if(S.sideTab==='detail' && S.sel && byId[S.sel]?.scene!==S.scene){ S.sideTab='preview'; } render(); return; }
+  const tg=t.closest('[data-toggle]'); if(tg){ e.stopPropagation(); toggleItem(tg.dataset.toggle); return; }
+  const ph=t.closest('[data-pulsehide]'); if(ph){ const id=ph.dataset.pulsehide; const ed=S.edits[id]||{}; ed.pulseHidden=!ed.pulseHidden; if(!ed.pulseHidden) delete ed.pulseHidden; if(Object.keys(ed).length) S.edits[id]=ed; else delete S.edits[id]; renderSide(); renderList(); toast(ed.pulseHidden?'只在 Pulse 隐藏：已开启':'只在 Pulse 隐藏：已关闭','Pulse 本地设置，立即生效'); pulseOnlyFix(id); return; }
+  const ps=t.closest('[data-pulseskip]'); if(ps){ const id=ps.dataset.pulseskip; const ed=S.edits[id]||{}; ed.pulseHidden=true; S.edits[id]=ed; pulseOnlyFix(id); toast(`Pulse 将跳过「${byId[id].name}」`,'只影响 Pulse，立即生效'); render(); return; }
+  const mo=t.closest('[data-more]'); if(mo){ e.stopPropagation(); const id=mo.dataset.more; const it=byId[id]; const r=mo.getBoundingClientRect();
+    showPop(r.right-210, r.bottom+4, `<div data-pa="detail" data-id="${id}">${icon('prop',14)}详情</div><div data-pa="reg" data-id="${id}">${icon('reg',14)}定位到注册表</div>${it.file?`<div data-pa="file" data-id="${id}">${icon('folderopen',14)}定位文件</div>`:''}<div data-pa="export" data-id="${id}">${icon('export',14)}导出 .reg</div><div data-pa="copy" data-id="${id}">${icon('copy',14)}复制路径</div>${(it.kind==='shellex'||it.kind==='packaged')?`<hr><div data-pa="pulsehide" data-id="${id}">${icon('eye',14)}${(S.edits[id]||{}).pulseHidden?'取消只在 Pulse 隐藏':'只在 Pulse 隐藏'}</div>`:''}`); return; }
+  const pa=t.closest('[data-pa]'); if(pa){ hidePop(); itemAction(pa.dataset.pa, pa.dataset.id); return; }
+  const act=t.closest('[data-act]'); if(act){ itemAction(act.dataset.act, act.dataset.id); return; }
+  const row=t.closest('[data-item]'); if(row){ S.sel=row.dataset.item; S.sideTab='detail'; render(); return; }
+  const f=t.closest('[data-filter]'); if(f){ S.filter=f.dataset.filter; render(); return; }
+  const ex=t.closest('[data-ext]'); if(ex){ S.ext=ex.dataset.ext; render(); return; }
+  const pc=t.closest('[data-perc]'); if(pc){ S.perc=pc.dataset.perc; render(); return; }
+  const st=t.closest('[data-stab]'); if(st){ S.sideTab=st.dataset.stab; renderSide(); return; }
+  const pv=t.closest('[data-pv]'); if(pv){ S.pvMode=pv.dataset.pv; renderSide(); return; }
+  if(t.closest('#shiftK')){ S.shift=!S.shift; renderSide(); return; }
+  const pvi=t.closest('[data-pvitem]'); if(pvi){ S.sel=pvi.dataset.pvitem; const r=document.querySelector(`[data-item="${S.sel}"]`); if(r){ r.scrollIntoView({block:'center',behavior:'smooth'}); } renderList(); return; }
+  const g=t.closest('[data-group]'); if(g){ S.closed[g.dataset.group]=!S.closed[g.dataset.group]; renderList(); return; }
+  const ed=t.closest('[data-edit]'); if(ed){ const it=byId[S.sel]; const k=ed.dataset.edit; const cur=S.edits[it.id]||{}; const base = k==='ext'?(cur.ext??it.ext??false):!!cur[k]; cur[k]=!base; if(k==='ext' && cur.ext===!!it.ext) delete cur.ext; if(k!=='ext' && !cur[k]) delete cur[k]; if(Object.keys(cur).length) S.edits[it.id]=cur; else delete S.edits[it.id]; render(); return; }
+  const pos=t.closest('[data-pos]'); if(pos){ const it=byId[S.sel]; const cur=S.edits[it.id]||{}; if(pos.dataset.pos) cur.pos=pos.dataset.pos; else delete cur.pos; if(Object.keys(cur).length) S.edits[it.id]=cur; else delete S.edits[it.id]; render(); return; }
+  if(t.closest('#edNameOk')){ const it=byId[S.sel]; const v=$('#edName').value.trim(); const cur=S.edits[it.id]||{}; if(v && v!==it.name) cur.name=v; else delete cur.name; if(Object.keys(cur).length) S.edits[it.id]=cur; else delete S.edits[it.id]; render(); return; }
+  if(t.closest('#btnNew')){ openNew(); return; }
+  const tp=t.closest('[data-tpl]'); if(tp){ pickTpl(tp.dataset.tpl); return; }
+  const rs=t.closest('[data-nscope]'); if(rs){ NEW.scope=rs.dataset.nscope; drawNewRadios(); return; }
+  const rr=t.closest('[data-nroot]'); if(rr){ NEW.root=rr.dataset.nroot; drawNewRadios(); return; }
+  const rp=t.closest('[data-restore]'); if(rp){ document.querySelectorAll('[data-restore]').forEach(x=>x.classList.remove('on')); rp.classList.add('on'); return; }
+  if(t.closest('[data-close]')){ t.closest('.ovl').classList.remove('show'); return; }
+  if(t.closest('.cmi.manage')){ demoJump(); return; }
+});
+function pulseOnlyFix(id){ /* Pulse 层设置即时生效，不进入系统待应用队列 */ const e=S.edits[id]; if(e){ const sys={...e}; delete sys.pulseHidden; } renderPending(); }
+
+// pendingList 需要忽略只含 pulseHidden 的编辑
+const _pl = pendingList;
+pendingList = function(){ return _pl().filter(it=> (it.id in S.pending) || Object.keys(S.edits[it.id]||{}).some(k=>k!=='pulseHidden')); };
+const _isP = isPending;
+isPending = function(it){ return (it.id in S.pending) || Object.keys(S.edits[it.id]||{}).some(k=>k!=='pulseHidden'); };
+
+document.addEventListener('input', e=>{
+  if(e.target.id==='q'){ S.q=e.target.value; if(S.q && S.scene!=='overview'){ /* 场景内搜索 */ } renderList(); renderScenes(); const q=$('#q'); q.focus(); q.setSelectionRange(q.value.length,q.value.length); }
+});
+document.addEventListener('keydown', e=>{
+  if(e.target.id==='extIn' && e.key==='Enter'){ let v=e.target.value.trim().toLowerCase(); if(v){ if(!v.startsWith('.')) v='.'+v; if(!EXTS.includes(v)) EXTS.push(v); S.ext=v; render(); } }
+  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='f'){ e.preventDefault(); const q=$('#q'); if(q){ q.focus(); q.select(); } }
+  if(e.key==='Escape'){ hidePop(); document.querySelectorAll('.ovl.show').forEach(o=>o.classList.remove('show')); $('#sheet').classList.remove('show'); hideDemo(); }
+  if(e.key==='Shift' && !e.repeat && e.target.tagName!=='INPUT'){ S.shift=true; renderSide(); }
+});
+document.addEventListener('keyup', e=>{ if(e.key==='Shift' && e.target.tagName!=='INPUT'){ S.shift=false; renderSide(); } });
+document.addEventListener('mouseover', e=>{
+  const r=e.target.closest('[data-path]');
+  $('#sbPath').textContent = r ? r.dataset.path : '将鼠标悬停在条目上，这里会显示它的注册表位置';
+});
+
+$('#btnApply').onclick = apply;
+$('#btnDiscard').onclick = ()=>{ S.pending={}; for(const id in S.edits){ const e=S.edits[id]; if(e.pulseHidden) S.edits[id]={pulseHidden:true}; else delete S.edits[id]; } render(); toast('已放弃待应用的改动','系统没有任何变化'); };
+$('#uacYes').onclick = ()=>{ $('#uac').classList.remove('show'); commit(); };
+$('#uacNo').onclick = ()=>{ $('#uac').classList.remove('show'); toast('已取消应用','改动仍在待应用队列里'); };
+$('#uacDetT').onclick = ()=>$('#uacDet').classList.toggle('show');
+$('#btnLog').onclick = ()=>{ drawLog(); $('#sheet').classList.add('show'); };
+$('#sheetClose').onclick = ()=>$('#sheet').classList.remove('show');
+$('#btnUndoLast').onclick = ()=>{ const last=[...S.log].reverse().find(l=>!l.undone); if(last){ undoEntry(last); drawLog(); } else toast('没有可以撤销的改动',''); };
+$('#btnOpenBackups').onclick = ()=>toast('（原型）打开备份文件夹','%LOCALAPPDATA%\\Pulse\\ContextMenu\\Backups');
+$('#btnRestoreAll').onclick = ()=>{ drawRestore(); $('#ovlRestore').classList.add('show'); };
+$('#restoreOk').onclick = ()=>{
+  const sel=document.querySelector('[data-restore].on'); $('#ovlRestore').classList.remove('show');
+  if(!sel) return;
+  const idx = +sel.dataset.restore;
+  const todo = S.log.slice(idx).filter(l=>!l.undone).reverse();
+  if(!todo.length){ toast('已经是这个时间点的状态',''); return; }
+  todo.forEach(l=>undoEntry(l));
+  if(idx===-1){ /* 还原 CMM 也一起 */ }
+  toast(`已还原 ${todo.length} 步改动`, `还原前已备份 → ${stamp()}_before-restore.reg`);
+};
+$('#btnRestartExp').onclick = ()=>{ S.restartFor=[]; render(); toast('资源管理器已重启','桌面和任务栏会闪一下，打开的资源管理器窗口会恢复'); };
+$('#btnRestartLater').onclick = ()=>{ S.restartFor=[]; render(); };
+$('#layerPulse').onclick = ()=>toast('（原型）切换到「本地右键菜单」页','两页共享左侧导航，这里只演示系统层');
+$('#btnNotes').onclick = ()=>{ S.notes=!S.notes; document.body.classList.toggle('notes-on',S.notes); $('#btnNotes').classList.toggle('on',S.notes); render(); };
+$('#notesClose').onclick = ()=>$('#btnNotes').click();
+$('#btnReset').onclick = ()=>{ location.reload(); };
+
+/* ---------- 日志 & 还原 ---------- */
+function drawLog(){
+  const b=$('#logBody');
+  if(!S.log.length){ b.innerHTML=`<div class="empty">还没有改动。<br>应用过的每一批改动都会出现在这里，每一步都可以单独撤销。</div>`; return; }
+  b.innerHTML = [...S.log].map((l,i)=>({l,i})).reverse().map(({l,i})=>`<div class="lg ${l.undone?'undone':''}"><span class="o"></span>
+    <div class="tt">${esc(l.title)}</div><div class="tm">今天 ${l.time}${l.adm?` · 提权 ${l.adm} 项`:''}${l.undone?' · 已撤销':''}</div>
+    <ul>${l.changes.map(c=>`<li>${c.from!==c.to?(c.to?'启用':'禁用'):'编辑'} ${esc(byId[c.id].name)} <span class="f">${esc(byId[c.id].root)}</span></li>`).join('')}</ul>
+    <div style="display:flex;gap:6px;align-items:center"><span class="f">${esc(l.backup)}</span><span style="flex:1"></span>${l.undone?'':`<button class="btn sm" data-undo="${i}">${icon('undo',12)}撤销这一步</button>`}</div></div>`).join('');
+  b.querySelectorAll('[data-undo]').forEach(x=>x.onclick=()=>{ undoEntry(S.log[+x.dataset.undo]); drawLog(); });
+}
+function drawRestore(){
+  const pts = [{i:0, t:'使用 Pulse 改动之前', s:'撤销 Pulse 做过的全部改动（不影响 CMM 写下的标记）'}];
+  S.log.forEach((l,i)=>{ if(!l.undone) pts.push({i:i+1, t:`今天 ${l.time} 之后`, s:`保留到「${l.title}」为止`}); });
+  $('#restoreList').innerHTML = pts.map((p,k)=>`<div class="radio ${k===0?'on':''}" data-restore="${p.i}" style="margin-bottom:6px"><b>${esc(p.t)}</b><small>${esc(p.s)}</small></div>`).join('') +
+   (S.log.filter(l=>!l.undone).length?'':`<p style="color:var(--text-3);font-size:12px;margin:8px 0 0">目前没有 Pulse 做过的改动，所以没有可以还原的内容。</p>`);
+}
+
+/* ---------- 新建命令 ---------- */
+let NEW = {tpl:'vsc', scope:'file', root:'HKCU'};
+function openNew(){
+  NEW = {tpl:'vsc', scope: ['file','folder','dirbg','desk','drive'].includes(S.scene)?S.scene:'file', root:'HKCU'};
+  $('#tpls').innerHTML = TEMPLATES.map(t=>`<div class="tpl" data-tpl="${t.id}">${appIcon(t.ai)}<div><div>${t.name}</div><small>${t.d}</small></div></div>`).join('');
+  pickTpl('vsc'); drawNewRadios();
+  $('#ovlNew').classList.add('show');
+}
+function pickTpl(id){
+  NEW.tpl=id; const t=TEMPLATES.find(x=>x.id===id);
+  document.querySelectorAll('[data-tpl]').forEach(x=>x.classList.toggle('on',x.dataset.tpl===id));
+  $('#nName').value = id==='custom'?'':t.name; $('#nCmd').value = t.cmd;
+  if(id==='custom') $('#nName').focus();
+}
+function drawNewRadios(){
+  const sc=[['file','文件'],['folder','文件夹'],['dirbg','目录背景'],['desk','桌面']];
+  $('#nScope').innerHTML = sc.map(([k,l])=>`<div class="radio ${NEW.scope===k?'on':''}" data-nscope="${k}">${l}</div>`).join('');
+  $('#nRoot').innerHTML = `<div class="radio ${NEW.root==='HKCU'?'on':''}" data-nroot="HKCU">当前用户<small>不需要管理员</small></div><div class="radio ${NEW.root==='HKLM'?'on':''}" data-nroot="HKLM">所有用户<small>需要一次 UAC</small></div>`;
+}
+$('#nOk').onclick = ()=>{
+  const name=$('#nName').value.trim()||'新命令'; const cmd=$('#nCmd').value.trim();
+  const t=TEMPLATES.find(x=>x.id===NEW.tpl);
+  const sc=sceneOf(NEW.scope);
+  const keyBase = {file:'*',folder:'Directory',dirbg:'Directory\\Background',desk:'DesktopBackground'}[NEW.scope];
+  const id='u_'+Date.now();
+  const it={id, name, ai:t.ai, kind:'verb', root:NEW.root, path:`${NEW.root}\\Software\\Classes\\${keyBase}\\shell\\Pulse.${name.replace(/\s+/g,'')}`, file:cmd, pub:'由 Pulse 创建', on:false, ext:$('#nShift').checked, created:true};
+  sc.items.unshift(it); byId[id]=it; it.scene=sc.id;
+  S.pending[id]=true;
+  if($('#nTop').checked) S.edits[id]={pos:'top'};
+  $('#ovlNew').classList.remove('show');
+  S.scene=sc.id; S.sel=id; S.sideTab='preview'; S.highlight=[id];
+  render();
+  setTimeout(()=>{ S.highlight=null; }, 3400);
+};
+
+/* ---------- 演示：从右键进入 ---------- */
+function showDemo(){
+  const b=$('#btnDemo').getBoundingClientRect();
+  const sc=sceneOf('file');
+  const vis = sc.items.filter(it=>effOn(it) && !it.ext && !(it.prot && /打开$|属性/.test(it.name)));
+  const ci = it => { const a=APPICON[it.ai]||APPICON.sys; return a.bg?`<span class="ci" style="background:${a.bg}">${esc(a.t.slice(0,2))}</span>`:`<span class="ci sys">${esc(a.t)}</span>`; };
+  let m=`<div class="fakefile" style="margin:0 0 6px 2px"><span class="fi"></span><span>报价单_v3.dwg</span></div><div class="cm" style="width:280px;max-width:none">
+    <div class="cmrow"><span>${icon('cut',14)}</span><span>${icon('copy',14)}</span><span>${icon('ren',14)}</span><span>${icon('trash',14)}</span></div><div class="cmsep"></div>
+    <div class="cmi bold"><span class="ci sys"></span><span class="lb">打开</span><span class="k">Enter</span></div><div class="cmi"><span class="ci sys">▦</span><span class="lb">打开方式</span><span class="arr">›</span></div><div class="cmsep"></div>`;
+  vis.slice(0,7).forEach(it=>{ m+=`<div class="cmi">${ci(it)}<span class="lb">${esc(it.name)}</span>${it.ms>=150?`<span class="k" style="color:#ffb4ac">${it.ms} ms</span>`:''}</div>`; });
+  m+=`<div class="cmsep"></div><div class="cmi"><span class="ci sys">ⓘ</span><span class="lb">属性</span><span class="k">Alt+Enter</span></div><div class="cmsep"></div>
+    <div class="cmi manage" style="cursor:pointer;background:var(--accent-soft)"><span class="ci sys">⚙</span><span class="lb">管理此菜单…</span><span class="k">点我</span></div></div>`;
+  const d=$('#democm'); d.innerHTML=m; d.style.left=(b.left-150)+'px'; d.style.top=(b.bottom+8)+'px';
+  d.classList.add('show'); $('#democlick').classList.add('show');
+}
+function hideDemo(){ $('#democm').classList.remove('show'); $('#democlick').classList.remove('show'); }
+function demoJump(){
+  hideDemo();
+  const sc=sceneOf('file');
+  S.scene='file'; S.q=''; S.filter='all'; S.sideTab='preview'; S.pvMode='pulse';
+  S.highlight = sc.items.filter(it=>effOn(it)&&!it.ext&&!it.prot).slice(0,7).map(it=>it.id);
+  render();
+  toast('已定位到刚才那份菜单','「文件」场景 · 高亮的是刚才菜单里出现的行，带实测耗时');
+  setTimeout(()=>{ S.highlight=null; renderSide(); }, 3600);
+}
+$('#btnDemo').onclick = showDemo;
+$('#democlick').onclick = hideDemo;
+
+render();
+</script>
+<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a4a1e2390ee16364',t:'MTc5MTkzMTYyMQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>

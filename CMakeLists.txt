@@ -834,6 +834,8 @@ add_executable(pulse_app_controllers_test
     src/bench/app_controllers_test.cpp
     src/bench/localization_test.rc
     src/app/settings_controller.cpp
+    src/app/system_ctx_model.cpp
+    src/app/system_ctx_registry.cpp
     src/app/pack_installer.cpp
     src/app/update_installer.cpp
     src/app/update_transport.cpp
@@ -862,7 +864,7 @@ add_executable(pulse_app_controllers_test
     src/index/network_agent_client.cpp)
 target_include_directories(pulse_app_controllers_test PRIVATE "${CMAKE_BINARY_DIR}/generated")
 target_link_libraries(pulse_app_controllers_test PRIVATE
-    user32 shell32 ole32 uuid advapi32 shlwapi pulse_localization pulse_runtime_log bcrypt winhttp)
+    user32 shell32 ole32 uuid advapi32 shlwapi version pulse_localization pulse_runtime_log bcrypt winhttp)
 
 # Shell-only operations (recycle bin, Explorer verbs) go through pulse_shell.exe.
 # Copy/move use the in-process scheduler plus CopyFile2.

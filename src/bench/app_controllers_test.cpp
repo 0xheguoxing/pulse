@@ -1021,6 +1021,35 @@ bool TestHungPrefsMigration() {
     return ok;
 }
 
+// Settings > 系统右键菜单 "只在 Pulse 隐藏": the rows read CatalogItemVisible and
+// the view gets HiddenCatalogKeys; an explicit switch beats the group default.
+bool TestPulseOnlyVisibility() {
+    using namespace pulse::app;
+    ContextMenuPrefs prefs;
+    prefs.persist = false;
+    const std::wstring tool = pulse::ipc::HandlerCatalogKey(L"{11111111-2222-3333-4444-555555555555}");
+    const std::wstring share = pulse::ipc::CatalogKey(L"Share", false);
+    const std::wstring unseen = pulse::ipc::CatalogKey(L"Unseen verb", false);
+    prefs.RecordSeen(tool, L"Tool", false, pulse::ipc::CtxMenuCategory::Software, true);
+    prefs.RecordSeen(share, L"Share", false, pulse::ipc::CtxMenuCategory::Share);
+    bool ok = prefs.CatalogItemVisible(tool) && !prefs.CatalogItemVisible(share) && prefs.CatalogItemVisible(unseen) &&
+              prefs.HiddenCatalogKeys() == std::vector<std::wstring>{share};
+    prefs.SetItemEnabled(tool, false);
+    prefs.SetItemEnabled(share, true);
+    prefs.SetItemEnabled(unseen, false);
+    std::vector<std::wstring> expected{tool, unseen};
+    std::sort(expected.begin(), expected.end());
+    ok &= !prefs.CatalogItemVisible(tool) && prefs.CatalogItemVisible(share) && !prefs.CatalogItemVisible(unseen) &&
+          prefs.HiddenCatalogKeys() == expected && prefs.share == false;
+    // Pulse 跳过 (slow handler) also hides it; switching it on again clears that.
+    prefs.SetItemEnabled(tool, true);
+    prefs.SetComDisabled(tool, true);
+    ok &= !prefs.CatalogItemVisible(tool);
+    prefs.SetItemEnabled(tool, true);
+    ok &= prefs.CatalogItemVisible(tool) && !prefs.ComDisabled(tool);
+    return Report("系统右键菜单: hide in Pulse only follows the item switch over the group default", ok);
+}
+
 bool TestComMenuIdentity() {
     using namespace pulse::app;
     bool ok = true;
@@ -2305,6 +2334,7 @@ int wmain(int argc, wchar_t** argv) {
     passed &= Report("settings controller joins tasks during destruction",
         lifecycle_completed);
 
+    passed &= TestPulseOnlyVisibility();
     passed &= TestExplorerShortcuts();
     passed &= TestClosedWindowStack();
     passed &= TestAddressBarCommands();

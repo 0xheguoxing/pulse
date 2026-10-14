@@ -163,7 +163,7 @@ BEGIN
     IDS_SETTINGS                    "設定"
     IDS_SETTINGS_GENERAL            "通用"
     IDS_SETTINGS_SEARCH_INDEX       "搜尋與索引"
-    IDS_SETTINGS_CONTEXT_MENU       "右鍵選單"
+    IDS_SETTINGS_CONTEXT_MENU       "Pulse 右鍵選單"
     IDS_SETTINGS_APPEARANCE         "外觀"
     IDS_SETTINGS_THEME_COLOR        "主題色"
     IDS_SETTINGS_THEME_COLOR_DESC   "點選色點；中間白點跟隨 Windows"

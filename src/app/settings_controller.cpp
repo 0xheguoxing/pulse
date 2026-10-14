@@ -8,6 +8,7 @@
 #include "../index/index_config.h"
 #include "../index/network_agent_client.h"
 #include "../common/preview_packs.h"
+#include "system_ctx_model.h"
 #include "pack_catalog.h"
 #include "../ui/quick_preview_command.h"
 
@@ -103,12 +104,18 @@ SettingsController::~SettingsController() {
     Stop();
 }
 
+SystemCtxModel& SettingsController::SystemCtx() {
+    if (!sysctx_) sysctx_ = std::make_shared<SystemCtxModel>();
+    return *sysctx_;
+}
+
 int SettingsController::PageFromName(std::wstring_view name) noexcept {
     if (name == L"index") return 1;
     if (name == L"context") return 2;
     if (name == L"about") return 3;
     if (name == L"duplicates") return 4;
     if (name == L"packs") return 5;
+    if (name == L"system-menu") return 6;
     return 0;
 }
 
@@ -118,12 +125,13 @@ const wchar_t* SettingsController::PageName(int page) noexcept {
     if (page == 3) return L"about";
     if (page == 4) return L"duplicates";
     if (page == 5) return L"packs";
+    if (page == 6) return L"system-menu";
     return L"general";
 }
 
 void SettingsController::SelectPage(int page) noexcept {
     CancelGlobalSearchHotkeyCapture();
-    page_ = std::clamp(page, 0, 5);
+    page_ = std::clamp(page, 0, 6);
     scroll_ = 0.0f;
     packs_checked_ = 0;  // re-read the packs when their page opens
 }

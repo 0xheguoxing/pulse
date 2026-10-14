@@ -56,11 +56,18 @@
 //                              at the stuck limit, see collect_hung) +
 //                              handlers(optional; count(u32) + per handler in
 //                              menu order: clsid(string) + flags(u32,
-//                              CTX_HANDLER_*) + elapsed_ms(u32) + rows(u32))
+//                              CTX_HANDLER_*) + elapsed_ms(u32) + rows(u32)) +
+//                              icons(optional, after handlers; count(u32) +
+//                              per icon: row(u32, index into this payload's
+//                              items) + width(u32) + height(u32) +
+//                              premultiplied BGRA bytes, see menu_icon.h)
 #pragma once
+#include "../common/menu_icon.h"
+
 #include <windows.h>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -171,6 +178,11 @@ public:
         PutU32((uint32_t)v.size());
         for (const auto& s : v) PutString(s);
     }
+    void PutBytes(const uint8_t* bytes, size_t size) {
+        size_t off = buf_.size();
+        buf_.resize(off + size);
+        if (size) std::memcpy(buf_.data() + off, bytes, size);
+    }
     const std::vector<uint8_t>& data() const { return buf_; }
 private:
     std::vector<uint8_t> buf_;
@@ -224,6 +236,12 @@ public:
         }
         return GetStringArray(v);
     }
+    bool GetBytes(std::vector<uint8_t>& v, size_t size) {
+        if (size > size_ - off_) return false;
+        v.assign(data_ + off_, data_ + off_ + size);
+        off_ += size;
+        return true;
+    }
     size_t remaining() const { return off_ < size_ ? size_ - off_ : 0; }
 private:
     const uint8_t* data_ = nullptr;
@@ -258,6 +276,49 @@ inline bool TryCtxHandlerStatuses(PayloadReader& r, std::vector<CtxHandlerStatus
         out.push_back(std::move(h));
     }
     v = std::move(out);
+    return true;
+}
+
+// Optional trailing field after the handler statuses: the app icons Explorer
+// shows next to handler rows (MIIM_BITMAP pixels). Item is CtxItemOut on the
+// host and CtxMenuItem on the client; both carry `common::MenuIconRef icon`.
+constexpr uint32_t kMaxCtxItemIcons = 512;
+
+template <typename Item>
+inline void PutCtxItemIcons(PayloadWriter& w, const std::vector<Item>& items) {
+    uint32_t count = 0;
+    for (const auto& it : items)
+        if (it.icon && it.icon->Valid()) ++count;
+    w.PutU32(count);
+    for (size_t i = 0; i < items.size(); ++i) {
+        const auto& icon = items[i].icon;
+        if (!icon || !icon->Valid()) continue;
+        w.PutU32(static_cast<uint32_t>(i));
+        w.PutU32(icon->width);
+        w.PutU32(icon->height);
+        w.PutBytes(icon->bgra.data(), icon->bgra.size());
+    }
+}
+
+// Absent (older host) leaves the rows without icons; a damaged field stops
+// there, rows read before it keep theirs.
+template <typename Item>
+inline bool TryCtxItemIcons(PayloadReader& r, std::vector<Item>& items) {
+    if (r.remaining() == 0) return true;
+    uint32_t n = 0;
+    if (!r.GetU32(n) || n > kMaxCtxItemIcons) return false;
+    for (uint32_t i = 0; i < n; ++i) {
+        uint32_t row = 0, width = 0, height = 0;
+        if (!r.GetU32(row) || !r.GetU32(width) || !r.GetU32(height)) return false;
+        if (width == 0 || height == 0 || width > common::kMaxMenuIconEdge ||
+            height > common::kMaxMenuIconEdge)
+            return false;
+        auto pixels = std::make_shared<common::MenuIconPixels>();
+        pixels->width = width;
+        pixels->height = height;
+        if (!r.GetBytes(pixels->bgra, static_cast<size_t>(width) * height * 4u)) return false;
+        if (row < items.size()) items[row].icon = std::move(pixels);
+    }
     return true;
 }
 

@@ -235,6 +235,14 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             }
         }
         if (ContainsPt(lay.content, x, y)) {
+            // 右键菜单 layer card 系统右键菜单 (the Pulse card is the current page).
+            if (ContainsPt(lay.ctx_layer[1], x, y)) {
+                r.region = HitTestResult::SettingsCtxPivot; r.index = 6; return r;
+            }
+            // The hint where Windows and other software went: also page 6, hovered on its own.
+            if (ContainsPt(lay.context_system_hint, x, y)) {
+                r.region = HitTestResult::SettingsNav; r.index = 6; return r;
+            }
             for(int i=0;i<4;++i) if(ContainsPt(lay.disclosure[i],x,y)) {
                 r.region=HitTestResult::SettingsDisclosure;r.index=i;return r;
             }
@@ -527,14 +535,9 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     for(const auto& row:LayoutPulsePreview(still,PulsePreviewBox(lay.pulse_preview,scale_),scale_).rows)
                         if(ContainsPt(row.rect,x,y)) {r.region=HitTestResult::SettingsToggle;r.index=PulseMenuRowHit(row.row);return r;}
                 }
-                for(int g=0;g<SettingsLayout::kContextCards;++g) {
-                    if(g<5 && ContainsPt(lay.context_toggle[g],x,y)) {r.region=HitTestResult::SettingsToggle;r.index=10+g;return r;}
-                    if(ContainsPt(lay.context_header[g],x,y)) {r.region=HitTestResult::SettingsDisclosure;r.index=8+g;return r;}
-                }
                 for(size_t i=0;i<lay.context_rows.size();++i) if(ContainsPt(lay.context_rows[i],x,y)) {
                     r.region=HitTestResult::SettingsToggle;r.index=100+static_cast<int>(i);return r;
                 }
-                if(ContainsPt(lay.context_restore,x,y)) {r.region=HitTestResult::SettingsRestore;return r;}
             } else if (vm.settings_page == 3) {
                 for (int i = 0; i < 3; ++i) {
                     if (ContainsPt(i < 2 ? lay.about_action[i] : lay.release_all, x, y)) {
@@ -627,6 +630,13 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                         r.index = static_cast<int>(action);
                         return r;
                     }
+                }
+            } else if (vm.settings_page == 6) {
+                const int target = HitTestSettingsSysCtx(lay, vm, x, y);
+                if (target >= 0) {
+                    r.region = HitTestResult::SettingsSysCtx;
+                    r.index = target;
+                    return r;
                 }
             } else if (vm.settings_page == 4) {
                 for (int i = 0; i < 3; ++i) {

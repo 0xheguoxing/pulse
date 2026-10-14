@@ -58,9 +58,12 @@ std::vector<ops::ShellMenuItem> OverlayLiveRows(std::vector<ops::ShellMenuItem> 
 bool SameStaticVerbs(const std::vector<StaticVerb>& a, const std::vector<StaticVerb>& b) {
     if (a.size() != b.size()) return false;
     for (size_t i = 0; i < a.size(); ++i) {
+        // Icons resolve on the live pass only (seeded rows have none), so a
+        // row that just got its icon counts as changed and repaints.
         if (a[i].verb != b[i].verb || a[i].display != b[i].display ||
             a[i].app_path != b[i].app_path || a[i].command != b[i].command ||
-            a[i].mnemonic != b[i].mnemonic || !SameStaticVerbs(a[i].children, b[i].children))
+            a[i].mnemonic != b[i].mnemonic || a[i].icon_pixels != b[i].icon_pixels ||
+            !SameStaticVerbs(a[i].children, b[i].children))
             return false;
     }
     return true;
@@ -92,6 +95,7 @@ ShellMenuEntry ComEntry(const ops::ShellMenuItem& item, int command = 0) {
     entry.from_com = true;
     entry.clsid = item.clsid;
     entry.handler = item.handler;
+    entry.icon = item.icon;
     return entry;
 }
 
@@ -120,6 +124,7 @@ void AppendShellSection(std::vector<ui::FluentMenuItem>& items,
         row.text = e.text;
         row.mnemonic = e.mnemonic;
         row.enabled = e.enabled;
+        row.icon = e.icon;
         // Software-owned submenu: keep the hierarchy as a one-level flyout.
         for (const auto& c : e.children) {
             if (c.text.empty() || c.command == 0) continue;
@@ -128,6 +133,7 @@ void AppendShellSection(std::vector<ui::FluentMenuItem>& items,
             child.text = c.text;
             child.mnemonic = c.mnemonic;
             child.enabled = c.enabled;
+            child.icon = c.icon;
             row.children.push_back(std::move(child));
         }
         if (header && row.children.empty()) continue;
@@ -657,6 +663,24 @@ const CtxHandlerStats* ContextMenuController::ComHandlerStats(const std::wstring
     return found == com_cache_.end() ? nullptr : &found->second.handlers;
 }
 
+std::vector<std::pair<std::wstring, uint32_t>> ContextMenuController::ComHandlerTimes() const {
+    std::vector<std::pair<std::wstring, uint32_t>> out;
+    for (const auto& [key, layout] : com_cache_) {
+        for (const CtxHandlerStat& stat : layout.handlers) {
+            if (stat.clsid.empty()) continue;
+            const auto found = std::find_if(out.begin(), out.end(), [&](const auto& timed) {
+                return timed.first.size() == stat.clsid.size() &&
+                       CompareStringOrdinal(timed.first.c_str(), static_cast<int>(timed.first.size()),
+                                            stat.clsid.c_str(), static_cast<int>(stat.clsid.size()),
+                                            TRUE) == CSTR_EQUAL;
+            });
+            if (found == out.end()) out.emplace_back(stat.clsid, stat.elapsed_ms);
+            else found->second = (std::max)(found->second, stat.elapsed_ms);
+        }
+    }
+    return out;
+}
+
 ContextMenuController::QueryCompletion ContextMenuController::CompleteComQuery(
     uint32_t token, std::vector<ops::ShellMenuItem> items, uint64_t completed_at,
     bool partial, std::vector<ops::ShellMenuHandlerStatus> handlers) {
@@ -730,6 +754,7 @@ std::vector<ShellMenuEntry> ContextMenuController::ComposeEntries(
         entry.text = verb.display;
         entry.mnemonic = verb.mnemonic;
         entry.verb = verb.verb;
+        entry.icon = verb.icon_pixels;
         if (!verb.children.empty()) {
             entry.command = 0;
             const size_t n = (std::min)(verb.children.size(),
@@ -741,6 +766,7 @@ std::vector<ShellMenuEntry> ContextMenuController::ComposeEntries(
                 child.text = verb.children[j].display;
                 child.mnemonic = verb.children[j].mnemonic;
                 child.verb = verb.children[j].verb;
+                child.icon = verb.children[j].icon_pixels;
                 entry.children.push_back(std::move(child));
             }
         } else {
