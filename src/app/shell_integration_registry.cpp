@@ -235,6 +235,45 @@ bool Flush(const std::wstring& key, bool missing_ok = false) {
     return result == ERROR_SUCCESS;
 }
 
+// Menu cleanup tools hide a verb with these values (Pulse's 系统右键菜单 page
+// writes the same ones but never on open). On the open verb that Pulse makes
+// the Directory/Drive default they hide Pulse itself, and Explorer then runs
+// the first other verb instead - Visual Studio's AnyCode in #228. Stock
+// Windows has no Directory\shell\open or Drive\shell\open, so there they
+// only ever hide Pulse's command: taking over removes them, and while one is
+// present the takeover is not in effect. Kept out of Bindings(): the
+// snapshot format is fixed by its count.
+constexpr const wchar_t* kHideMarkers[] = {L"HideBasedOnVelocityId", L"LegacyDisable", L"ProgrammaticAccessOnly"};
+
+bool HasDefaultOpenVerb(const std::wstring& group) { return group == L"Directory" || group == L"Drive"; }
+
+std::wstring DefaultOpenVerbKey(const std::wstring& group) {
+    return L"Software\\Classes\\" + group + L"\\shell\\open";
+}
+
+bool DefaultOpenVerbHidden(const std::wstring& group) {
+    if (!HasDefaultOpenVerb(group)) return false;
+    for (const auto* name : kHideMarkers) {
+        Value value;
+        if (!Read(DefaultOpenVerbKey(group), name, value) || value.exists) return true;
+    }
+    return false;
+}
+
+bool UnhideDefaultOpenVerb(const std::wstring& group) {
+    if (!HasDefaultOpenVerb(group)) return true;
+    const std::wstring key = DefaultOpenVerbKey(group);
+    bool changed = false;
+    for (const auto* name : kHideMarkers) {
+        Value value;
+        if (!Read(key, name, value)) return false;
+        if (!value.exists) continue;
+        if (!Write(key, name, Value{})) return false;
+        changed = true;
+    }
+    return !changed || Flush(key, true);
+}
+
 bool WriteDurable(const std::wstring& key, const std::wstring& name, const Value& value) {
     return Write(key, name, value) && Flush(key);
 }
@@ -555,7 +594,7 @@ bool ApplyShellIntegration(ShellIntegrationKind kind, const std::wstring& exe, b
     } recording;
     bool ok = true;
     for (const auto& group : Groups(kind)) {
-        const bool applied = ApplyGroup(group, exe, on);
+        const bool applied = ApplyGroup(group, exe, on) && (!on || UnhideDefaultOpenVerb(group));
         if (!applied && t_failure.kind == ShellIntegrationFailureKind::None) {
             t_failure.kind = ShellIntegrationFailureKind::Unknown;
             t_failure.key = std::wstring(kBackupRoot) + group;
@@ -591,6 +630,7 @@ bool ReadShellIntegration(ShellIntegrationKind kind, const std::wstring& exe) {
             Value actual;
             if (!Read(binding.key, binding.name, actual) || !SameValue(actual, binding.desired)) return false;
         }
+        if (DefaultOpenVerbHidden(group)) return false;
     }
     return true;
 }

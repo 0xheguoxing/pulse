@@ -40,6 +40,12 @@ bool Set(const std::wstring& path, const wchar_t* name, const std::wstring& text
     const bool ok = RegSetValueExW(key, name, 0, type, reinterpret_cast<const BYTE*>(text.c_str()), static_cast<DWORD>((text.size()+1)*sizeof(wchar_t))) == ERROR_SUCCESS;
     RegCloseKey(key); return ok;
 }
+bool SetDword(const std::wstring& path, const wchar_t* name, DWORD number) {
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &key, nullptr) != ERROR_SUCCESS) return false;
+    const bool ok = RegSetValueExW(key, name, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&number), sizeof(number)) == ERROR_SUCCESS;
+    RegCloseKey(key); return ok;
+}
 void Clear() { RegDeleteTreeW(HKEY_CURRENT_USER, L"Software"); }
 bool KeyExists(const std::wstring& path) {
     HKEY key = nullptr;
@@ -324,6 +330,29 @@ int wmain() {
     Check(ApplyShellIntegration(ShellIntegrationKind::Folders, exe, false) &&
           Read(command).bytes.size() > 0 && !HasShellIntegrationOwnership(ShellIntegrationKind::Folders, exe),
           "a third-party command is still never taken for Pulse's");
+    // #228: a menu cleanup tool hid the open verb Pulse makes the default, so
+    // Explorer ran the next verb (Visual Studio). Taking over unhides it, and a
+    // hidden one reads as not in effect while Pulse still owns it.
+    Clear();
+    const std::wstring open_verb = shell + L"\\open", drive_open = L"Software\\Classes\\Drive\\shell\\open";
+    Set(open_verb, L"LegacyDisable", L"");
+    Set(open_verb, L"ProgrammaticAccessOnly", L"");
+    SetDword(open_verb, L"HideBasedOnVelocityId", 0x639bc8);
+    Check(ApplyShellIntegration(ShellIntegrationKind::Folders, exe, true) &&
+          ReadShellIntegration(ShellIntegrationKind::Folders, exe) &&
+          !Read(open_verb, L"LegacyDisable").exists && !Read(open_verb, L"ProgrammaticAccessOnly").exists &&
+          !Read(open_verb, L"HideBasedOnVelocityId").exists,
+          "taking over unhides the open verb Pulse makes the default (#228)");
+    Set(drive_open, L"LegacyDisable", L"");
+    Check(!ReadShellIntegration(ShellIntegrationKind::Folders, exe) &&
+          HasShellIntegrationOwnership(ShellIntegrationKind::Folders, exe),
+          "a hidden open verb reads as not in effect, still owned by Pulse");
+    Check(ApplyShellIntegration(ShellIntegrationKind::Folders, exe, true) &&
+          ReadShellIntegration(ShellIntegrationKind::Folders, exe) && !Read(drive_open, L"LegacyDisable").exists,
+          "enabling again unhides it");
+    Check(ApplyShellIntegration(ShellIntegrationKind::Folders, exe, false) && !KeyExists(shell) &&
+          !KeyExists(L"Software\\Classes\\Drive\\shell"),
+          "turning off then leaves no open verb behind");
     RegOverridePredefKey(HKEY_CURRENT_USER,nullptr); RegCloseKey(root);
     const LONG cleanup=RegDeleteTreeW(HKEY_CURRENT_USER,sandbox.c_str());
     Check(cleanup==ERROR_SUCCESS, "isolated registry fixture removed");
