@@ -1,6 +1,8 @@
 // app_runtime.cpp — extracted from app_main.cpp.
 #include "app_window_title.h"
 #include "app_internal.h"
+#include <memory>
+#include <thread>
 #include "system_ctx_model.h"
 #include "pane_layout.h"
 #include "tab_spring.h"
@@ -270,13 +272,43 @@ void BindCurrentLayout(AppState& s) {
     SyncVisibleWatches(s);
     SyncTaskbarWindowTitle(s);
 }
+// Whether a launch argument names a file, without stalling the UI thread on
+// a share (or mapped drive) that does not answer: GetFileAttributes on an unreachable server
+// blocks for ~13 s, and startup asked twice (ResolveOpenFolderPath, then
+// SelectLaunchedFile), so the window took ~27 s to appear. A share gets a
+// second; past that the path opens as a folder and the listing says why.
+static DWORD LaunchArgumentAttributes(const std::wstring& path) {
+    if (path.empty()) return INVALID_FILE_ATTRIBUTES;
+    const bool remote = fs::IsUncPath(path) || (path.size() >= 2 && path[1] == L':' &&
+        GetDriveTypeW((path.substr(0, 2) + L"\\").c_str()) == DRIVE_REMOTE);
+    if (!remote) return GetFileAttributesW(path.c_str());
+    struct Query {
+        std::wstring path;
+        DWORD attrs = INVALID_FILE_ATTRIBUTES;
+        HANDLE done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        ~Query() { if (done) CloseHandle(done); }
+    };
+    auto query = std::make_shared<Query>();
+    query->path = path;
+    if (!query->done) return INVALID_FILE_ATTRIBUTES;
+    try {
+        std::thread([query] {
+            query->attrs = GetFileAttributesW(query->path.c_str());
+            SetEvent(query->done);
+        }).detach();
+    } catch (...) {
+        return INVALID_FILE_ATTRIBUTES;
+    }
+    return WaitForSingleObject(query->done, 1000) == WAIT_OBJECT_0 ? query->attrs : INVALID_FILE_ATTRIBUTES;
+}
+
 std::wstring ResolveOpenFolderPath(std::wstring path) {
     while (!path.empty() && (path.front() == L'"' || path.back() == L'"')) {
         if (path.front() == L'"') path.erase(path.begin());
         if (!path.empty() && path.back() == L'"') path.pop_back();
     }
     if (path.empty()) return {};
-    const DWORD attrs = GetFileAttributesW(path.c_str());
+    const DWORD attrs = LaunchArgumentAttributes(path);
     if (attrs != INVALID_FILE_ATTRIBUTES &&
         (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) {
         path = fs::ParentPath(path);
@@ -290,7 +322,7 @@ void SelectLaunchedFile(AppState& s, const std::wstring& raw) {
         if (path.front() == L'"') path.erase(path.begin());
         if (!path.empty() && path.back() == L'"') path.pop_back();
     }
-    const DWORD attrs = path.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(path.c_str());
+    const DWORD attrs = LaunchArgumentAttributes(path);
     if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0) return;
     const size_t slash = path.find_last_of(L"\\/");
     const std::wstring leaf = slash == std::wstring::npos ? path : path.substr(slash + 1);
