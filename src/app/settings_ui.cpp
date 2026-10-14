@@ -116,16 +116,26 @@ void ContentOptions(AppState& s) {
     s.contentSearch.Configure(config);
 }
 // 系统右键菜单 "只在 Pulse 隐藏": ContextMenuPrefs only, Windows is unchanged.
-// The same switch as the Pulse menu's own rows (SettingsController::ToggleUi).
+// Queued with the registry switches; SysCtxApply saves it.
 void SysCtxTogglePulse(AppState& s,int row) {
-    const std::wstring key=s.settings.SystemCtx().RowPulseKey(row);
-    if(key.empty()) return;
-    s.ctxMenuPrefs.SetItemEnabled(key,!s.ctxMenuPrefs.CatalogItemVisible(key));
-    s.ctxMenuPrefs.Save();
+    s.settings.SystemCtx().TogglePulseRow(row);
     InvalidateRect(s.hwnd,nullptr,FALSE);
 }
+// 应用更改: Pulse's own switches go to ContextMenuPrefs (the same calls as the
+// Pulse menu's rows, SettingsController::ToggleUi), the registry ones to the job.
+void SysCtxApply(AppState& s) {
+    auto& model=s.settings.SystemCtx();
+    const auto pulse=model.TakePulseChanges();
+    if(!pulse.empty()) {
+        for(const auto& [key,hidden]:pulse.hidden) s.ctxMenuPrefs.SetItemEnabled(key,!hidden);
+        for(const auto& clsid:pulse.skipped) s.ctxMenuPrefs.SetComDisabled(ipc::HandlerCatalogKey(clsid),true);
+        s.ctxMenuPrefs.Save();
+    }
+    model.ApplyPending();
+}
 // 系统右键菜单 row "…": copy the registry path, open the program's folder,
-// hide it in Pulse only. row -1: the selected entry (details panel).
+// hide it in Pulse only, delete a leftover (queued like the switches).
+// row -1: the selected entry (details panel).
 void SysCtxRowMenu(AppState& s,int row) {
     auto& model=s.settings.SystemCtx();
     const std::wstring key=model.RowRegistryPath(row),file=model.RowFile(row);
@@ -142,13 +152,20 @@ void SysCtxRowMenu(AppState& s,int row) {
     if(!pulse_key.empty()) {
         items.back().separator_after=true;
         add(4,l10n::Pick(L"只在 Pulse 右键菜单中隐藏",L"Hide in Pulse's menu only"),true);
-        items.back().checked=!s.ctxMenuPrefs.CatalogItemVisible(pulse_key);
+        items.back().checked=model.RowPulseHidden(row);
+    }
+    if(model.RowDeletable(row)) {
+        items.back().separator_after=true;
+        const bool deleting=model.RowDeleting(row);
+        add(5,deleting ? l10n::Pick(L"取消删除",L"Keep it")
+                       : l10n::Pick(L"删除残留项（点“应用更改”后生效）",L"Delete leftover (on Apply changes)"),true);
     }
     const int command=Popup(s,std::move(items));
     if(command==1) app::CopyTextToClipboard(s.hwnd,key);
     else if(command==2) app::CopyTextToClipboard(s.hwnd,file);
     else if(command==3 && GetFileAttributesW(folder.c_str())!=INVALID_FILE_ATTRIBUTES) NewTab(s,folder);
     else if(command==4) SysCtxTogglePulse(s,row);
+    else if(command==5) {model.DeleteRow(row);InvalidateRect(s.hwnd,nullptr,FALSE);}
 }
 void SysCtxOpenFolder(AppState& s,const std::wstring& file) {
     const size_t slash=file.find_last_of(L"\\/");
@@ -174,14 +191,17 @@ void SysCtxAction(AppState& s,int index) {
         if(!dir.empty() && SHCreateDirectoryExW(nullptr,dir.c_str(),nullptr)<=ERROR_ALREADY_EXISTS) NewTab(s,dir);
         return;
     }
+    if(index>=ui::kSysCtxRemoveBase) {
+        // A leftover row's own 删除 / 撤回 button: queued like its switch.
+        model.DeleteRow(index-ui::kSysCtxRemoveBase);
+        InvalidateRect(s.hwnd,nullptr,FALSE);
+        return;
+    }
     if(index>=ui::kSysCtxSlowSkipBase) {
         // 概览 buttons. Pulse 跳过 only stops Pulse loading the handler; Windows is unchanged.
         if(index>=ui::kSysCtxMarkRestoreBase) model.RestoreMarkRow(index-ui::kSysCtxMarkRestoreBase);
         else if(index>=ui::kSysCtxSlowToggleBase) model.ToggleSlowRow(index-ui::kSysCtxSlowToggleBase);
-        else {
-            const std::wstring clsid=model.SlowRowClsid(index-ui::kSysCtxSlowSkipBase);
-            if(!clsid.empty()) {s.ctxMenuPrefs.SetComDisabled(ipc::HandlerCatalogKey(clsid),true);s.ctxMenuPrefs.Save();}
-        }
+        else model.QueueSlowSkip(index-ui::kSysCtxSlowSkipBase);  // saved by 应用更改
         InvalidateRect(s.hwnd,nullptr,FALSE);
         return;
     }
@@ -201,9 +221,11 @@ void SysCtxAction(AppState& s,int index) {
     if(index>=ui::kSysCtxMoreBase) {SysCtxRowMenu(s,index-ui::kSysCtxMoreBase);return;}
     if(index==ui::kSysCtxDetailCopy) {app::CopyTextToClipboard(s.hwnd,model.RowRegistryPath(-1));return;}
     if(index==ui::kSysCtxDetailFolder) {SysCtxOpenFolder(s,model.RowFile(-1));return;}
-    if(index==ui::kSysCtxRestoreAll) SysCtxRestoreAll(s);
+    if(index==ui::kSysCtxDetailDelete) model.DeleteRow(-1);
+    else if(index==ui::kSysCtxClean) model.DeleteSceneLeftovers();
+    else if(index==ui::kSysCtxRestoreAll) SysCtxRestoreAll(s);
     else if(index==ui::kSysCtxRefresh) model.Refresh();
-    else if(index==ui::kSysCtxApply) model.ApplyPending();
+    else if(index==ui::kSysCtxApply) SysCtxApply(s);
     else if(index==ui::kSysCtxDiscard) model.DiscardPending();
     else if(index==ui::kSysCtxUndo) model.Undo();
     else if(index==ui::kSysCtxTabPreview || index==ui::kSysCtxTabDetail) model.SetSideTab(index==ui::kSysCtxTabDetail ? 1 : 0);

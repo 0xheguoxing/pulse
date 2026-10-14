@@ -441,6 +441,8 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
                     timings.push_back(std::move(timing));
                 }
                 sysctx.SetHandlerTimings(std::move(timings));
+                // What each extension adds, so its row reads as menu text.
+                sysctx.SetHandlerLabels(s.context_menu.ComHandlerLabels());
                 // 只在 Pulse 隐藏: the rows' Pulse switch reads ContextMenuPrefs.
                 sysctx.SetPulseHidden(s.ctxMenuPrefs.HiddenCatalogKeys());
                 vm.settings_sysctx = sysctx.View();

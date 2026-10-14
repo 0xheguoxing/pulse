@@ -604,11 +604,9 @@ bool IsEmptyKey(HKEY base, const std::wstring& path) {
     return subkeys == 0 && values == 0;
 }
 
-// Moves <parent>\\<from>\\<name> to <parent>\\<to>\\<name>, keeping values and subkeys.
-OpResult MoveKey(const Roots& roots, Root root, const std::wstring& src_rel, const std::wstring& dst_rel) {
-    HKEY base = RootKey(roots, root);
-    const std::wstring src = FullPath(roots, root, src_rel);
-    const std::wstring dst = FullPath(roots, root, dst_rel);
+// Moves the key `src` to `dst` (full paths under `base`), keeping values and
+// subkeys. `dst` must not exist yet.
+OpResult MoveTree(HKEY base, const std::wstring& src, const std::wstring& dst) {
     Key s;
     LSTATUS st = Open(base, src, KEY_READ, s);
     if (st != ERROR_SUCCESS) return FromStatus(st);
@@ -644,11 +642,64 @@ OpResult MoveKey(const Roots& roots, Root root, const std::wstring& src_rel, con
         if (restored) RegDeleteTreeW(base, dst.c_str());
         return FromStatus(st);
     }
+    return OpResult::Ok;
+}
+
+// Removes the empty parents of `path` up to (not including) `stop`.
+void PruneEmptyParents(HKEY base, std::wstring path, const std::wstring& stop) {
+    for (;;) {
+        const size_t slash = path.rfind(L'\\');
+        if (slash == std::wstring::npos) return;
+        path.resize(slash);
+        if (path.size() <= stop.size() || !IsEmptyKey(base, path)) return;
+        if (RegDeleteKeyW(base, path.c_str()) != ERROR_SUCCESS) return;
+    }
+}
+
+// Moves <parent>\\<from>\\<name> to <parent>\\<to>\\<name>, keeping values and subkeys.
+OpResult MoveKey(const Roots& roots, Root root, const std::wstring& src_rel, const std::wstring& dst_rel) {
+    HKEY base = RootKey(roots, root);
+    const std::wstring src = FullPath(roots, root, src_rel);
+    const OpResult moved = MoveTree(base, src, FullPath(roots, root, dst_rel));
+    if (moved != OpResult::Ok) return moved;
     // An emptied (-)ContextMenuHandlers group goes too, so a round trip leaves
     // no trace.
     const std::wstring group = src.substr(0, src.rfind(L'\\'));
     if (IsEmptyKey(base, group)) RegDeleteKeyW(base, group.c_str());
     return OpResult::Ok;
+}
+
+const std::wstring& TrashBase(const Roots& r, Root root) {
+    return root == Root::Machine ? r.machine_trash : r.user_trash;
+}
+
+// 删除残留项 and its undo. The trash path comes from the checked key path
+// only; nothing from outside names it.
+OpResult ApplyTrash(const Roots& roots, const Op& op) {
+    HKEY base = RootKey(roots, op.root);
+    const std::wstring& trash_base = TrashBase(roots, op.root);
+    if (trash_base.empty()) return OpResult::Unsupported;
+    const std::wstring live = FullPath(roots, op.root, op.key_path);
+    const std::wstring trash = Join(trash_base, op.key_path);
+    if (op.action == Action::Delete) {
+        // An older copy of the same key (deleted, put back, deleted again)
+        // gives way; its .reg backup is still in the Backups folder.
+        {
+            Key live_key;
+            const LSTATUS st = Open(base, live, KEY_READ, live_key);
+            if (st != ERROR_SUCCESS) return FromStatus(st);
+        }
+        RegDeleteTreeW(base, trash.c_str());
+        const OpResult moved = MoveTree(base, live, trash);
+        if (moved != OpResult::Ok) return moved;
+        // Like MoveKey: an emptied shell / ContextMenuHandlers group goes too.
+        const std::wstring group = live.substr(0, live.rfind(L'\\'));
+        if (IsEmptyKey(base, group)) RegDeleteKeyW(base, group.c_str());
+        return OpResult::Ok;
+    }
+    const OpResult moved = MoveTree(base, trash, live);
+    if (moved == OpResult::Ok) PruneEmptyParents(base, trash, trash_base);
+    return moved;
 }
 
 std::vector<std::wstring> Split(std::wstring_view path) {
@@ -949,6 +1000,7 @@ Op MakePositionOp(const Item& item, Place place) {
 
 void PlanOp(const Roots& roots, Op& op) {
     if (op.kind != Kind::Verb || op.root == Root::File) return;
+    if (op.action == Action::Delete || op.action == Action::Restore) return;  // moves the whole key
     Key v;
     if (Open(RootKey(roots, op.root), FullPath(roots, op.root, op.key_path), KEY_READ, v) != ERROR_SUCCESS) return;
     if (op.action == Action::Position) {
@@ -962,6 +1014,7 @@ void PlanOp(const Roots& roots, Op& op) {
 
 std::wstring KeyPathAfter(const Op& op) {
     if (op.kind != Kind::ShellEx && op.kind != Kind::DragDrop) return op.key_path;
+    if (op.action != Action::Disable && op.action != Action::Enable) return op.key_path;
     const std::wstring group = GroupName(op.kind);
     const std::wstring dashed = L"-" + group;
     const std::wstring moved = op.action == Action::Disable ? ReplaceSegment(op.key_path, group, dashed)
@@ -976,6 +1029,10 @@ Op Inverse(const Op& op) {
         inv.prev_place = op.place;
         return inv;
     }
+    if (op.action == Action::Delete || op.action == Action::Restore) {
+        inv.action = op.action == Action::Delete ? Action::Restore : Action::Delete;
+        return inv;
+    }
     inv.action = op.action == Action::Disable ? Action::Enable : Action::Disable;
     inv.key_path = KeyPathAfter(op);
     return inv;
@@ -987,6 +1044,10 @@ OpResult Apply(const Roots& roots, const Op& op) {
     if (op.root == Root::File) return OpResult::Unsupported;
     if (!IsAllowedKeyPath(op.kind, op.key_path)) return OpResult::Unsupported;
     if (op.action == Action::Position && op.kind != Kind::Verb) return OpResult::Unsupported;
+    if (op.action == Action::Delete || op.action == Action::Restore) {
+        if (op.kind != Kind::Verb && op.kind != Kind::ShellEx && op.kind != Kind::DragDrop) return OpResult::Unsupported;
+        return ApplyTrash(roots, op);
+    }
     switch (op.kind) {
     case Kind::Verb: return ApplyVerb(roots, op);
     case Kind::ShellEx:
@@ -1024,12 +1085,17 @@ bool IsAllowedKeyPath(Kind kind, std::wstring_view key_path) {
 std::wstring SerializeBatch(const std::vector<Op>& ops) {
     std::wstring out = std::wstring(kBatchHeader) + L"\n";
     for (const auto& op : ops) {
-        out += op.action == Action::Disable ? L"disable\t" : op.action == Action::Enable ? L"enable\t" : L"position\t";
+        out += op.action == Action::Disable   ? L"disable\t"
+               : op.action == Action::Enable  ? L"enable\t"
+               : op.action == Action::Delete  ? L"delete\t"
+               : op.action == Action::Restore ? L"restore\t"
+                                              : L"position\t";
         out += KindToken(op.kind);
         out += op.root == Root::Machine ? L"\tmachine\t" : L"\tuser\t";
         out += op.key_path;
         if (op.action == Action::Position) out += std::wstring(L"\t") + PlaceToken(op.place);
-        else if (op.kind == Kind::Verb && op.planned) out += L"\t" + std::to_wstring(op.mask & 0xF);
+        else if (op.kind == Kind::Verb && op.planned && (op.action == Action::Disable || op.action == Action::Enable))
+            out += L"\t" + std::to_wstring(op.mask & 0xF);
         out += L"\n";
     }
     return out;
@@ -1091,6 +1157,8 @@ bool ParseBatch(std::wstring_view text, std::vector<Op>& ops) {
         }
         if (f[0] == L"disable") op.action = Action::Disable;
         else if (f[0] == L"enable") op.action = Action::Enable;
+        else if (f[0] == L"delete") op.action = Action::Delete;
+        else if (f[0] == L"restore") op.action = Action::Restore;
         else if (f[0] != L"position") return false;
         if (f[1] == L"verb") op.kind = Kind::Verb;
         else if (f[1] == L"shellex") op.kind = Kind::ShellEx;
@@ -1103,6 +1171,7 @@ bool ParseBatch(std::wstring_view text, std::vector<Op>& ops) {
         if (!IsAllowedKeyPath(op.kind, op.key_path)) return false;
         if (op.planned && op.kind != Kind::Verb) return false;
         if (op.action == Action::Position && op.kind != Kind::Verb) return false;
+        if (op.planned && (op.action == Action::Delete || op.action == Action::Restore)) return false;
         ops.push_back(std::move(op));
     }
     return header && ops.size() <= 256;
@@ -1112,7 +1181,10 @@ std::wstring ExportReg(const Roots& roots, const std::vector<Op>& ops) {
     std::wstring out = L"Windows Registry Editor Version 5.00\r\n\r\n";
     for (const auto& op : ops) {
         if (op.root == Root::File) continue;
-        ExportKey(RootKey(roots, op.root), FullPath(roots, op.root, op.key_path), out);
+        // Restore: the key sits in the trash until the op runs.
+        const std::wstring path = op.action == Action::Restore ? Join(TrashBase(roots, op.root), op.key_path)
+                                                               : FullPath(roots, op.root, op.key_path);
+        ExportKey(RootKey(roots, op.root), path, out);
     }
     return out;
 }

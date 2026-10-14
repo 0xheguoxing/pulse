@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -157,6 +158,10 @@ public:
     // slowest time (one never seen finishing: the longest wait). Feeds the
     // 概览 of Settings > 系统右键菜单.
     std::vector<std::pair<std::wstring, uint32_t>> ComHandlerTimes() const;
+    // The top-level rows each handler (CLSID) gave the stored layouts, names
+    // shown as "…" (压缩到 "….zip"): Settings > 系统右键菜单 names a shell
+    // extension by what it adds.
+    std::map<std::wstring, std::vector<std::wstring>> ComHandlerLabels() const;
 
     void OpenMenu(std::vector<ui::FluentMenuItem> base_items);
     void NotePatchedDisplay() { menu_com_items_ = com_items_; menu_static_verbs_ = static_verbs_; }

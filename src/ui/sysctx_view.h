@@ -14,7 +14,7 @@ namespace pulse::ui {
 // HitTestResult::SettingsSysCtx indices.
 enum SysCtxHit : int {
     kSysCtxRefresh = 0,
-    kSysCtxApply = 1,        // run the queued machine-wide changes (one UAC)
+    kSysCtxApply = 1,        // write the queued changes (machine-wide ones: one UAC)
     kSysCtxDiscard = 2,      // drop the queue
     kSysCtxUndo = 3,         // reverse the last applied batch
     kSysCtxLog = 4,          // open the folder with ops.jsonl and the .reg backups
@@ -34,9 +34,12 @@ enum SysCtxHit : int {
     kSysCtxPreviewBase = 7000,// + preview item: press to drag (menu zones / 已隐藏 shelf)
     kSysCtxOverview = 12,     // scene list: the 概览 row
     kSysCtxDetailPulse = 13,  // detail panel: 在 Pulse 右键菜单中显示 (ContextMenuPrefs)
+    kSysCtxDetailDelete = 14, // detail panel: 删除残留项 (queued)
+    kSysCtxClean = 15,        // list head: 清理残留 (every leftover of the scene, queued)
     kSysCtxSlowSkipBase = 9000,    // + 概览 slow row: Pulse 跳过 (ContextMenuPrefs)
     kSysCtxSlowToggleBase = 9200,  // + 概览 slow row: 禁用 in Windows
     kSysCtxMarkRestoreBase = 9400, // + 概览 mark row: 还原 a ContextMenuManager mark
+    kSysCtxRemoveBase = 11000,     // + row index: a leftover's own 删除 / 撤回 button (queued)
 };
 
 // Where a preview item can be dropped. Explorer orders the menu itself; a
@@ -74,7 +77,7 @@ struct SysCtxRowView {
     std::wstring icon_path;  // .exe/.ico for the shell icon cache; empty: glyph
     const wchar_t* glyph = L"\xE8A5";
     bool on = true;          // state after the queued change, if any
-    bool pending = false;    // queued machine-wide change, not written yet
+    bool pending = false;    // queued change, not written yet
     bool machine = false;    // HKLM (all users) rather than HKCU
     bool missing = false;    // its program/DLL is gone
     bool locked = false;     // protected (打开, 属性…) or owned by TrustedInstaller
@@ -84,6 +87,8 @@ struct SysCtxRowView {
     bool default_hidden = false; // Windows ships it switched off
     bool third_party = false;
     bool selected = false;
+    bool deletable = false;  // leftover whose key Pulse can delete
+    bool deleting = false;   // its delete is queued
     int place = 0;           // effective SysCtxZone (Top / Default / Bottom), verbs only
     // Pulse's own menu (ContextMenuPrefs, Windows unchanged): 0 no Pulse row
     // for this kind, 1 shown in Pulse, 2 hidden in Pulse only.
@@ -167,7 +172,10 @@ struct SysCtxView {
     float drag_y = 0.0f, drag_grab = 0.0f;  // pointer y and its offset inside the item
     int side_tab = 0;                   // 0 实时预览, 1 详情
     int total = 0, disabled = 0, missing = 0;  // across every scene
-    int pending = 0;                    // queued machine-wide changes
+    int pending = 0;                    // queued changes
+    int pending_admin = 0;              // of them: machine-wide (one UAC)
+    int pending_pulse = 0;              // of them: Pulse's own menu only (ContextMenuPrefs)
+    int leftovers = 0;                  // deletable leftovers in the scene, not queued yet
     int undo_steps = 0;
     std::wstring message;
     bool message_error = false;
@@ -178,6 +186,7 @@ struct SysCtxView {
 // LayoutSettingsSysCtx in settings_sysctx_layout.h.
 struct SysCtxDetailLayout {
     D2D1_RECT_F bounds{}, head{}, switch_row{}, toggle{}, pulse_row{}, pulse_toggle{}, method{}, copy{}, folder{};
+    D2D1_RECT_F remove{};               // 删除残留项 / 取消删除
     std::array<D2D1_RECT_F, 4> kv{};    // 注册表, 文件, 发布者, 权限
 };
 
@@ -212,10 +221,11 @@ struct SysCtxLayout {
     std::vector<D2D1_RECT_F> scenes;
     D2D1_RECT_F overview_row{};         // 概览, above the groups
     std::array<D2D1_RECT_F, 3> groups{};  // group captions
-    D2D1_RECT_F list_card{}, list_head{}, refresh{};
+    D2D1_RECT_F list_card{}, list_head{}, refresh{}, clean{};
     std::vector<D2D1_RECT_F> filters, subs;
     D2D1_RECT_F rows_top{}, empty{};
     std::vector<D2D1_RECT_F> rows, switches, more;
+    std::vector<D2D1_RECT_F> removes;   // per row: 删除 / 撤回 in the switch's place (leftovers only)
     SysCtxOverviewLayout overview;      // when SysCtxView::overview.shown (rows stay empty)
     D2D1_RECT_F side_card{}, tab_preview{}, tab_detail{}, side_body{};
     SysCtxDetailLayout detail;          // side panel (wide) or under the selected row

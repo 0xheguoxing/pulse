@@ -15,9 +15,9 @@ inline const wchar_t* Title() { return l10n::Pick(L"系统右键菜单", L"Syste
 // switch between Pulse's own menu (page 2) and the system handlers (page 6).
 inline const wchar_t* PageTitle() { return l10n::Pick(L"右键菜单", L"Context menu"); }
 inline const wchar_t* Intro() { return l10n::Pick(
-    L"改动作用于资源管理器和所有应用的右键菜单。每次应用前自动导出 .reg 备份，随时可以撤销或全部还原。",
-    L"Changes apply to the context menu in File Explorer and every app. A .reg backup is exported before "
-    L"each change; undo or restore everything at any time."); }
+    L"改动作用于资源管理器和所有应用的右键菜单。开关先记下，点“应用更改”才写入注册表；写入前自动导出 .reg 备份，随时可以撤销或全部还原。",
+    L"Changes apply to the context menu in File Explorer and every app. Switches are only noted until you choose "
+    L"Apply changes; a .reg backup is exported first, and you can undo or restore everything at any time."); }
 inline const wchar_t* Undo() { return l10n::Pick(L"撤销", L"Undo"); }
 inline const wchar_t* Log() { return l10n::Pick(L"操作日志", L"Activity log"); }
 inline const wchar_t* RestoreAll() { return l10n::Pick(L"全部还原…", L"Restore all…"); }
@@ -27,8 +27,8 @@ inline const wchar_t* LocalCaption() { return l10n::Pick(L"只影响 Pulse · �
 inline const wchar_t* LocalTag() { return l10n::Pick(L"切换 →", L"Switch →"); }
 inline const wchar_t* SystemTitle() { return l10n::Pick(L"系统右键菜单", L"System context menu"); }
 inline const wchar_t* SystemCaption() { return l10n::Pick(
-    L"影响资源管理器和所有应用 · 当前用户直接改，所有用户一批改动只需一次 UAC",
-    L"File Explorer and every app · your entries change at once; all-user changes need one UAC per batch"); }
+    L"影响资源管理器和所有应用 · 点“应用更改”后写入，涉及所有用户时只需确认一次管理员权限",
+    L"File Explorer and every app · written when you apply; all-user changes need one admin confirmation"); }
 inline const wchar_t* Current() { return l10n::Pick(L"当前", L"Current"); }
 inline const wchar_t* Group(int g) {
     return g == 0 ? l10n::Pick(L"基本对象", L"Basic objects")
@@ -55,9 +55,16 @@ inline const wchar_t* Loading() { return l10n::Pick(L"正在读取注册表…",
 inline std::wstring PendingTitle(int n) {
     return l10n::Pick(L"", L"") + std::to_wstring(n) + l10n::Pick(L" 项更改待应用", L" change(s) waiting");
 }
-inline const wchar_t* PendingCaption() { return l10n::Pick(
-    L"涉及所有用户的条目 · 先导出 .reg 备份，只确认一次管理员权限",
-    L"All-user entries · a .reg backup first, then one administrator confirmation"); }
+inline std::wstring PendingCaption(const SysCtxView& v) {
+    if (v.pending_pulse == v.pending)  // nothing for the registry: no backup, no admin
+        return l10n::Pick(L"只改 Pulse 自己的右键菜单，Windows 不变", L"Pulse's own menu only; Windows is unchanged");
+    if (v.pending_admin > 0)
+        return l10n::Pick(L"其中 ", L"") + std::to_wstring(v.pending_admin) +
+               l10n::Pick(L" 项涉及所有用户，需确认一次管理员权限 · 写入前先导出 .reg 备份",
+                          L" affect all users: one administrator confirmation · a .reg backup first");
+    return l10n::Pick(L"只改当前用户，无需管理员权限 · 写入前先导出 .reg 备份，可以撤销",
+                      L"Your user only, no admin needed · a .reg backup first; undo any time");
+}
 inline const wchar_t* Applying() { return l10n::Pick(L"正在应用… 如有管理员权限提示，请确认。",
                                                      L"Applying… confirm the administrator prompt if one appears."); }
 inline const wchar_t* Apply() { return l10n::Pick(L"应用更改", L"Apply changes"); }
@@ -66,8 +73,16 @@ inline const wchar_t* Empty(bool filtered) {
     return filtered ? l10n::Pick(L"没有符合这个筛选的条目。", L"Nothing matches this filter.")
                     : l10n::Pick(L"这里没有条目。", L"No entries here.");
 }
-inline const wchar_t* Admin() { return l10n::Pick(L"管理员", L"Admin"); }
-inline const wchar_t* NoAdmin() { return l10n::Pick(L"无需管理员", L"No admin"); }
+inline const wchar_t* Admin() { return l10n::Pick(L"所有用户", L"All users"); }
+inline const wchar_t* NoAdmin() { return l10n::Pick(L"当前用户", L"Your user"); }
+inline const wchar_t* WillDelete() { return l10n::Pick(L"将删除", L"To delete"); }
+inline const wchar_t* RowDelete() { return l10n::Pick(L"删除", L"Delete"); }
+inline const wchar_t* RowKeep() { return l10n::Pick(L"撤回", L"Keep"); }
+inline const wchar_t* DeleteLeftover() { return l10n::Pick(L"删除残留项", L"Delete leftover"); }
+inline const wchar_t* KeepLeftover() { return l10n::Pick(L"取消删除", L"Keep it"); }
+inline std::wstring Clean(int n) {
+    return l10n::Pick(L"清理残留 ", L"Clean up ") + std::to_wstring(n);
+}
 inline const wchar_t* Missing() { return l10n::Pick(L"残留 · 程序已卸载", L"Leftover · uninstalled"); }
 inline const wchar_t* DefaultHidden() { return l10n::Pick(L"系统默认隐藏", L"Hidden by Windows"); }
 inline const wchar_t* Queued() { return l10n::Pick(L"待应用", L"Pending"); }
@@ -84,8 +99,8 @@ inline const wchar_t* Key(int i) {
                   : l10n::Pick(L"权限", L"Permission");
 }
 inline std::wstring Permission(const SysCtxRowView& r) {
-    return r.machine ? l10n::Pick(L"需要管理员 · 一批改动只弹一次 UAC", L"Needs admin · one UAC per batch")
-                     : l10n::Pick(L"无需管理员 · 立即生效", L"No admin · applies at once");
+    return r.machine ? l10n::Pick(L"所有用户 · 应用时确认一次管理员权限", L"All users · one admin confirmation when applied")
+                     : l10n::Pick(L"只影响当前用户 · 无需管理员权限", L"Your user only · no admin needed");
 }
 inline const wchar_t* EnabledTitle() { return l10n::Pick(L"在系统里启用", L"Enabled in Windows"); }
 inline const wchar_t* EnabledCaption() { return l10n::Pick(L"资源管理器和所有应用", L"File Explorer and every app"); }
@@ -191,6 +206,20 @@ inline bool SysCtxContains(const D2D1_RECT_F& r, float x, float y) {
 
 inline bool SysCtxSwitchable(const SysCtxRowView& row) { return !row.locked && !row.read_only; }
 
+// 撤销 / 操作日志 / 全部还原: caption text after a 12 px glyph.
+inline constexpr float kSysCtxHeaderButtonDip = 26.0f;
+inline float SysCtxHeaderButtonWidth(const fluent::Painter* painter, std::wstring_view text, float s) {
+    // MeasureTagWidth: caption text + 14 px; the glyph and its gap add 18.
+    const float text_w = painter ? painter->MeasureTagWidth(text) : static_cast<float>(text.size()) * 12.0f * s + 14.0f * s;
+    return text_w + 18.0f * s;
+}
+
+// A leftover's 删除 / 撤回 button in the switch's place: right-aligned with it.
+inline float SysCtxRowRemoveWidth(const fluent::Painter* painter, const SysCtxRowView& row, float s) {
+    const std::wstring_view text = row.deleting ? sysctx_text::RowKeep() : sysctx_text::RowDelete();
+    return painter ? painter->MeasureButtonWidth(text, L"\xE74D") : 72.0f * s;
+}
+
 inline float SysCtxTextWidth(const fluent::Painter* painter, std::wstring_view text, float s) {
     // Badge metrics: caption-sized text plus a little padding.
     return painter ? painter->MeasureBadgeWidth(text) : static_cast<float>(text.size()) * 8.0f * s + 14.0f * s;
@@ -242,6 +271,17 @@ inline float LayoutSysCtxDetail(SysCtxDetailLayout& d, const SysCtxRowView& row,
     const float fx = d.copy.right > d.copy.left ? d.copy.right + 8 * s : left;
     if (!row.file.empty() && !row.missing && fx + fw <= right + 1)
         d.folder = D2D1::RectF(fx, y, fx + fw, y + bh);
+    if (row.deletable) {
+        // 删除残留项 sits where 打开所在文件夹 would (the folder is gone).
+        const wchar_t* text = row.deleting ? sysctx_text::KeepLeftover() : sysctx_text::DeleteLeftover();
+        const float dw = painter ? painter->MeasureButtonWidth(text, L"\xE74D") : 120 * s;
+        const float dx = d.folder.right > d.folder.left ? d.folder.right + 8 * s : fx;
+        if (dx + dw <= right + 1) d.remove = D2D1::RectF(dx, y, dx + dw, y + bh);
+        else {  // narrow: its own line
+            y += bh + 6 * s;
+            d.remove = D2D1::RectF(left, y, (std::min)(right, left + dw), y + bh);
+        }
+    }
     y += bh;
     d.bounds = D2D1::RectF(left, top, right, y);
     return y;
@@ -509,12 +549,13 @@ inline float LayoutSettingsSysCtx(SettingsLayout& l, const WindowViewModel& vm, 
     };
     const float bh = 32 * s;
 
-    // Intro on the left, page commands on the right.
+    // Intro on the left, page commands on the right: small caption-sized
+    // text buttons (12 px glyph), not the 32 px ones of the panels.
     float x = right;
-    auto place = [&](D2D1_RECT_F& r, std::wstring_view text, std::wstring_view glyph) {
-        const float w = button_w(text, glyph);
-        r = D2D1::RectF(x - w, y, x, y + bh);
-        x -= w + 8 * s;
+    auto place = [&](D2D1_RECT_F& r, std::wstring_view text, std::wstring_view) {
+        const float w = SysCtxHeaderButtonWidth(painter, text, s);
+        r = D2D1::RectF(x - w, y + 2 * s, x, y + 2 * s + kSysCtxHeaderButtonDip * s);
+        x -= w + 2 * s;
     };
     place(o.restore, sysctx_text::RestoreAll(), L"\xE777");
     place(o.log, sysctx_text::Log(), L"\xE81C");
@@ -566,6 +607,10 @@ inline float LayoutSettingsSysCtx(SettingsLayout& l, const WindowViewModel& vm, 
     float ly = work_top;
     o.list_head = D2D1::RectF(list_left, ly, list_right, ly + 48 * s);
     o.refresh = D2D1::RectF(list_right - 40 * s, ly + 9 * s, list_right - 10 * s, ly + 39 * s);
+    if (v->leftovers > 0 && !v->overview.shown) {
+        const float cw = button_w(sysctx_text::Clean(v->leftovers), L"\xE74D");
+        o.clean = D2D1::RectF(o.refresh.left - 6 * s - cw, ly + 10 * s, o.refresh.left - 6 * s, ly + 38 * s);
+    }
     ly = o.list_head.bottom + 8 * s;
     float cx = list_left + 12 * s;
     const float ch = 26 * s;
@@ -610,6 +655,14 @@ inline float LayoutSettingsSysCtx(SettingsLayout& l, const WindowViewModel& vm, 
             o.rows.push_back(r);
             o.more.push_back(D2D1::RectF(row_right - 36 * s, mid - 14 * s, row_right - 8 * s, mid + 14 * s));
             o.switches.push_back(D2D1::RectF(row_right - 88 * s, mid - 11 * s, row_right - 44 * s, mid + 11 * s));
+            // Leftovers: switching a dead entry on or off means little; the row
+            // offers to delete it instead (the switch stays in 详情).
+            if (v->rows[i].deletable) {
+                const float w = SysCtxRowRemoveWidth(painter, v->rows[i], s);
+                o.removes.push_back(D2D1::RectF(row_right - 44 * s - w, mid - 14 * s, row_right - 44 * s, mid + 14 * s));
+            } else {
+                o.removes.push_back({});
+            }
             ly = bottom + 2 * s;
         }
     }
@@ -622,6 +675,7 @@ inline float LayoutSettingsSysCtx(SettingsLayout& l, const WindowViewModel& vm, 
         o.rows.clear();
         o.switches.clear();
         o.more.clear();
+        o.removes.clear();
         o.empty = {};
         o.detail = {};
         ly = o.list_head.bottom;
@@ -715,6 +769,7 @@ inline int HitTestSettingsSysCtx(const SettingsLayout& l, const WindowViewModel&
         if (SysCtxContains(o.detail.pulse_toggle, x, y)) return kSysCtxDetailPulse;
         if (SysCtxContains(o.detail.copy, x, y)) return kSysCtxDetailCopy;
         if (SysCtxContains(o.detail.folder, x, y)) return kSysCtxDetailFolder;
+        if (SysCtxContains(o.detail.remove, x, y)) return v && v->state == SysCtxView::State::Ready ? kSysCtxDetailDelete : -1;
         return -1;
     };
     if (SysCtxContains(o.side_card, x, y)) {
@@ -729,6 +784,7 @@ inline int HitTestSettingsSysCtx(const SettingsLayout& l, const WindowViewModel&
         return -1;
     }
     if (SysCtxContains(o.refresh, x, y)) return kSysCtxRefresh;
+    if (SysCtxContains(o.clean, x, y)) return v && v->state == SysCtxView::State::Ready ? kSysCtxClean : -1;
     if (v->overview.shown) {
         const SysCtxOverviewLayout& ov = o.overview;
         for (size_t i = 0; i < ov.slow_skip.size() && i < ov.slow_toggle.size(); ++i) {
@@ -747,7 +803,10 @@ inline int HitTestSettingsSysCtx(const SettingsLayout& l, const WindowViewModel&
     for (size_t i = 0; i < o.rows.size() && i < v->rows.size(); ++i) {
         if (!SysCtxContains(o.rows[i], x, y)) continue;
         if (SysCtxContains(o.more[i], x, y)) return kSysCtxMoreBase + static_cast<int>(i);
-        if (SysCtxContains(o.switches[i], x, y) && SysCtxSwitchable(v->rows[i])) return kSysCtxRowBase + static_cast<int>(i);
+        if (i < o.removes.size() && SysCtxContains(o.removes[i], x, y))
+            return v->state == SysCtxView::State::Ready ? kSysCtxRemoveBase + static_cast<int>(i) : -1;
+        if (SysCtxContains(o.switches[i], x, y) && SysCtxSwitchable(v->rows[i]) && !v->rows[i].deletable)
+            return kSysCtxRowBase + static_cast<int>(i);
         if (y < o.rows[i].top + kSysCtxRowDip * s) return kSysCtxSelectBase + static_cast<int>(i);
         return !o.wide && static_cast<int>(i) == v->selected ? detail_hit() : -1;
     }

@@ -43,7 +43,15 @@ public:
     void SelectRow(int row);
     void SetSideTab(int tab);
     // Flips the entry behind `row` of the current view; -1: the selected row.
+    // Every registry change waits in the queue until ApplyPending (应用更改).
     void ToggleRow(int row);
+    // 删除残留项: queues (again: withdraws) deleting the leftover behind `row`
+    // (-1: the selected row). Applied with the rest; undo puts the key back.
+    void DeleteRow(int row);
+    // 清理残留: queues every leftover of the current scene; the count queued.
+    int DeleteSceneLeftovers();
+    bool RowDeletable(int row);   // a leftover Pulse can delete
+    bool RowDeleting(int row);    // its delete is queued
     void ApplyPending();
     void DiscardPending();
     void Undo();
@@ -54,13 +62,27 @@ public:
     // Pulse's own measurements of the handlers (fed while the page is open);
     // the 概览 ranks them. Cheap when nothing changed.
     void SetHandlerTimings(std::vector<ui::SysCtxHandlerTiming> timings);
+    // The top-level rows each handler (CLSID) gave Pulse's own menu, from the
+    // stored layouts: rows name a shell extension by what it adds.
+    void SetHandlerLabels(std::map<std::wstring, std::vector<std::wstring>> labels);
     // 概览 buttons; `index` into the view's slow_rows / mark_rows.
     void ToggleSlowRow(int index);         // 禁用: like the row switch
     void RestoreMarkRow(int index);        // 还原: switches the marked entry on
-    std::wstring SlowRowClsid(int index);  // Pulse 跳过 (the prefs live with the caller)
     // ContextMenuPrefs catalog keys Pulse hides in its own menu (sorted); rows
     // show 在 Pulse 中隐藏. Cheap when nothing changed.
     void SetPulseHidden(std::vector<std::wstring> keys);
+    // Pulse's own switches (只在 Pulse 隐藏, 概览 Pulse 跳过) wait in the
+    // same queue as the registry ones: 应用更改 hands them to the caller
+    // (TakePulseChanges, ContextMenuPrefs lives there), 放弃 drops them.
+    void TogglePulseRow(int row);          // -1: the selected row
+    bool RowPulseHidden(int row);          // after the queued change
+    void QueueSlowSkip(int index);         // 概览 slow row: Pulse 跳过 (again: withdraws)
+    struct PulseChanges {
+        std::vector<std::pair<std::wstring, bool>> hidden;  // catalog key -> hide in Pulse
+        std::vector<std::wstring> skipped;                  // CLSIDs Pulse stops loading
+        bool empty() const { return hidden.empty() && skipped.empty(); }
+    };
+    PulseChanges TakePulseChanges();
 
     // Live preview drag (UI thread): a press arms it, moves past 3 px make the
     // ghost follow the pointer, the drop goes through DropPreview.
@@ -71,8 +93,8 @@ public:
     void EndPreviewDrag();
     // Puts preview item `item` into a SysCtxZone: the 已隐藏 shelf switches it
     // off, a menu zone switches it on and (static verbs) sets Position. Queued
-    // like the switches: per-user entries change at once, machine-wide ones
-    // wait for 应用. Dropping an entry back where it was cancels its queue.
+    // like the switches until 应用. Dropping an entry back where it was
+    // cancels its queue.
     void DropPreview(int item, int zone);
     // A press without dragging selects the entry (list row and preview).
     void SelectPreview(int item);
@@ -95,6 +117,7 @@ private:
         std::wstring icon;         // resolved .exe/.ico, checked on the worker
         std::wstring publisher;    // CompanyName of the program/DLL
         std::wstring description;  // FileDescription (names bare handler keys)
+        std::wstring product;      // ProductName, unless it is just "Windows"
     };
     struct Batch {
         std::vector<sysctx::Op> ops;
@@ -128,9 +151,12 @@ private:
     void AppendLog(const std::vector<sysctx::Op>& ops, const std::vector<sysctx::OpResult>& results) const;
     const Entry* RowEntryLocked(int row) const;
     int CurrentSceneLocked() const;
-    // Flips `e` like the row switch (lock held): a per-user entry gives an op
-    // to run now (true); a machine entry queues; a queued one leaves the queue.
-    bool ToggleEntryLocked(const Entry& e, sysctx::Op& op);
+    // Flips `e` like the row switch (lock held): queues the change, or drops
+    // it from the queue (a queued delete goes first).
+    void ToggleEntryLocked(const Entry& e);
+    void DeleteEntryLocked(const Entry& e);
+    // The row title: what the entry adds to the menu, in words a user knows.
+    std::wstring TitleLocked(const Entry& e) const;
     void ToggleMapped(const std::vector<std::pair<int, size_t>>& map, int index);
     std::wstring ChangeTitleLocked(const std::vector<sysctx::Op>& ops) const;
 
@@ -164,7 +190,10 @@ private:
     std::vector<std::pair<int, size_t>> preview_map_;  // preview item -> (scene, entry)
     bool overview_ = true;                             // 概览 shown; the first visit starts there
     std::vector<ui::SysCtxHandlerTiming> timings_;
+    std::map<std::wstring, std::vector<std::wstring>> labels_;  // upper-case CLSID -> menu rows
     std::vector<std::wstring> pulse_hidden_;  // sorted
+    std::map<std::wstring, bool> pending_pulse_;  // catalog key -> hide in Pulse (queued)
+    std::vector<std::wstring> pending_skip_;      // upper-case CLSIDs: Pulse 跳过 (queued)
     std::vector<std::pair<int, size_t>> slow_map_, mark_map_;  // 概览 rows -> (scene, entry); scene -1: not scanned
     int drag_item_ = -1;
     bool drag_live_ = false;

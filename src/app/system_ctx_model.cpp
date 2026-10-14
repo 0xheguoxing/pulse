@@ -38,6 +38,10 @@ bool Toggleable(const Item& item) {
            !item.is_protected && !item.trusted_installer && item.root != Root::File;
 }
 
+// 删除残留项: the program behind the entry is gone and its key is one Pulse
+// may write (the switch's own rules).
+bool Deletable(const Item& item) { return item.missing && Toggleable(item); }
+
 std::wstring Expand(const std::wstring& s) {
     if (s.find(L'%') == std::wstring::npos) return s;
     wchar_t buffer[MAX_PATH * 2];
@@ -147,7 +151,8 @@ std::wstring VersionString(const std::vector<BYTE>& block, const wchar_t* name) 
     return {};
 }
 
-void ReadVersionInfo(const std::wstring& path, std::wstring& company, std::wstring& description) {
+void ReadVersionInfo(const std::wstring& path, std::wstring& company, std::wstring& description,
+                     std::wstring& product) {
     DWORD unused = 0;
     const DWORD size = GetFileVersionInfoSizeW(path.c_str(), &unused);
     if (size == 0) return;
@@ -155,6 +160,7 @@ void ReadVersionInfo(const std::wstring& path, std::wstring& company, std::wstri
     if (!GetFileVersionInfoW(path.c_str(), 0, size, block.data())) return;
     company = VersionString(block, L"CompanyName");
     description = VersionString(block, L"FileDescription");
+    product = VersionString(block, L"ProductName");
 }
 
 bool ContainsNoCase(const std::wstring& text, std::wstring_view needle) {
@@ -184,33 +190,280 @@ bool IsMicrosoft(const std::wstring& publisher, const std::wstring& file) {
 
 const wchar_t* KindLabel(Kind kind) {
     switch (kind) {
-    case Kind::ShellEx: return l10n::Pick(L"Shell 扩展", L"Shell extension");
-    case Kind::DragDrop: return l10n::Pick(L"拖放扩展", L"Drag-and-drop handler");
+    case Kind::ShellEx: return l10n::Pick(L"右键扩展", L"Shell extension");
+    case Kind::DragDrop: return l10n::Pick(L"拖放扩展", L"Drag-and-drop extension");
     case Kind::ShellNew: return l10n::Pick(L"新建模板", L"New item template");
     case Kind::SendTo: return l10n::Pick(L"发送到目标", L"Send to target");
     case Kind::OpenWith: return l10n::Pick(L"打开方式程序", L"Open with program");
-    default: return l10n::Pick(L"静态动词", L"Static verb");
+    default: return l10n::Pick(L"菜单命令", L"Menu command");
     }
+}
+
+struct KnownName {
+    const wchar_t* key;
+    const wchar_t* zh;
+    const wchar_t* en;
+};
+
+// Windows' own verbs carry no menu text in the registry (Explorer names them
+// from shell32), so the key name ("removeproperties") is all a scan finds.
+constexpr KnownName kVerbNames[] = {
+    {L"open", L"打开", L"Open"},
+    {L"opennew", L"打开", L"Open"},
+    {L"edit", L"编辑", L"Edit"},
+    {L"print", L"打印", L"Print"},
+    {L"printto", L"打印到", L"Print to"},
+    {L"runas", L"以管理员身份运行", L"Run as administrator"},
+    {L"runasuser", L"以其他用户身份运行", L"Run as a different user"},
+    {L"opennewwindow", L"在新窗口中打开", L"Open in new window"},
+    {L"opennewprocess", L"在新进程中打开", L"Open in new process"},
+    {L"opennewtab", L"在新标签页中打开", L"Open in new tab"},
+    {L"explore", L"在资源管理器中浏览", L"Explore"},
+    {L"find", L"搜索", L"Search"},
+    {L"cmd", L"在此处打开命令窗口", L"Open command window here"},
+    {L"powershell", L"在此处打开 PowerShell 窗口", L"Open PowerShell window here"},
+    {L"pintohome", L"固定到快速访问", L"Pin to Quick access"},
+    {L"pintostartscreen", L"固定到“开始”屏幕", L"Pin to Start"},
+    {L"removeproperties", L"删除属性和个人信息", L"Remove properties and personal information"},
+    {L"properties", L"属性", L"Properties"},
+    {L"play", L"播放", L"Play"},
+    {L"enqueue", L"添加到播放列表", L"Add to playlist"},
+    {L"preview", L"预览", L"Preview"},
+    {L"setdesktopwallpaper", L"设置为桌面背景", L"Set as desktop background"},
+    {L"rotateleft", L"向左旋转", L"Rotate left"},
+    {L"rotateright", L"向右旋转", L"Rotate right"},
+    {L"openas", L"打开方式", L"Open with"},
+    {L"install", L"安装", L"Install"},
+    {L"mount", L"装载", L"Mount"},
+    {L"burn", L"刻录光盘映像", L"Burn disc image"},
+    {L"3d edit", L"使用画图 3D 进行编辑", L"Edit with Paint 3D"},
+    {L"3d print", L"3D 打印", L"3D print"},
+    {L"wsl", L"在此处打开 Linux shell", L"Open Linux shell here"},
+};
+
+// Windows' own shell extensions, by handler key name: the menu rows they add.
+constexpr KnownName kHandlerNames[] = {
+    {L"EPP", L"使用 Microsoft Defender 扫描", L"Scan with Microsoft Defender"},
+    {L"Sharing", L"授予访问权限", L"Give access to"},
+    {L"ModernSharing", L"共享", L"Share"},
+    {L"Open With", L"打开方式", L"Open with"},
+    {L"Open With EncryptionMenu", L"打开方式（加密文件）", L"Open with (encrypted files)"},
+    {L"OpenWith", L"打开方式", L"Open with"},
+    {L"PintoStartScreen", L"固定到“开始”屏幕", L"Pin to Start"},
+    {L"Library Location", L"包含到库中", L"Include in library"},
+    {L"SendTo", L"发送到", L"Send to"},
+    {L"Offline Files", L"始终脱机可用", L"Always available offline"},
+    {L"WorkFolders", L"工作文件夹", L"Work Folders"},
+    {L"Compatibility", L"兼容性疑难解答", L"Troubleshoot compatibility"},
+    {L"CopyAsPathMenu", L"复制文件地址", L"Copy as path"},
+    {L"{596AB062-B4D2-4215-9F74-E9109B0A8153}", L"还原以前的版本", L"Restore previous versions"},
+    {L"{90AA3A4E-1CBA-4233-B8BB-535773D48449}", L"固定到任务栏", L"Pin to taskbar"},
+    {L"{a2a9545d-a0c2-42b4-9708-a0b2badd77c8}", L"固定到“开始”菜单", L"Pin to Start menu"},
+    {L"{7AD84985-87B4-4a16-BE58-8B72A5B390F7}", L"投送到设备", L"Cast to Device"},
+};
+
+const wchar_t* LookUpName(const KnownName* names, size_t count, const std::wstring& key) {
+    if (key.empty()) return nullptr;
+    for (size_t i = 0; i < count; ++i)
+        if (_wcsicmp(names[i].key, key.c_str()) == 0) return l10n::Pick(names[i].zh, names[i].en);
+    return nullptr;
+}
+
+std::wstring UpperClsid(const std::wstring& clsid) {
+    std::wstring out = clsid;
+    for (auto& c : out) c = static_cast<wchar_t>(std::towupper(c));
+    return out;
+}
+
+// Menu text as a title: no "&", no trailing access key ("全部解压缩(&T)..."
+// -> "全部解压缩..."; "Extract(E)" -> "Extract").
+std::wstring StripAccessKey(std::wstring text) {
+    text.erase(std::remove(text.begin(), text.end(), L'&'), text.end());
+    size_t end = text.size();
+    while (end > 0 && (text[end - 1] == L'.' || text[end - 1] == L'\u2026')) --end;
+    if (end >= 3 && text[end - 1] == L')' && text[end - 3] == L'(' && std::iswalnum(text[end - 2]) && text[end - 2] < 0x80) {
+        size_t cut = end - 3;
+        while (cut > 0 && text[cut - 1] == L' ') --cut;
+        if (cut > 0) text.erase(cut, 3 + (end - 3 - cut));
+    }
+    return text;
+}
+
+bool HasNonAscii(const std::wstring& text) {
+    return std::any_of(text.begin(), text.end(), [](wchar_t c) { return c >= 0x80; });
+}
+
+void TrimSpaces(std::wstring& text) {
+    const auto blank = [](wchar_t c) { return c == L' ' || c == L'\t' || c == L'\u3000'; };
+    while (!text.empty() && blank(text.back())) text.pop_back();
+    size_t lead = 0;
+    while (lead < text.size() && blank(text[lead])) ++lead;
+    text.erase(0, lead);
+}
+
+// ComHandlerLabels shows the item's name as "…" (压缩为 "… (2).zip"). A
+// trailing "…" is the menu's own ellipsis (添加到压缩文件…); any other one
+// stands for the file name.
+bool TemplatedLabel(const std::wstring& text) {
+    const size_t at = text.find(L'\u2026');
+    return at != std::wstring::npos && at + 1 < text.size();
+}
+
+// The command without the file name it was built for: 压缩为 "… (2).zip" ->
+// 压缩为…, 解压到 …\ -> 解压到…
+std::wstring UntemplateLabel(std::wstring text) {
+    if (!TemplatedLabel(text)) return text;
+    static constexpr std::pair<wchar_t, wchar_t> kQuotes[] = {
+        {L'"', L'"'}, {L'\u201C', L'\u201D'}, {L'\u300C', L'\u300D'}, {L'\'', L'\''}, {L'\u2018', L'\u2019'}};
+    for (const auto& [open, close] : kQuotes) {
+        size_t start = 0;
+        while ((start = text.find(open, start)) != std::wstring::npos) {
+            const size_t end = text.find(close, start + 1);
+            if (end == std::wstring::npos) break;
+            const size_t mark = text.find(L'\u2026', start);
+            if (mark < end) text.erase(start, end - start + 1);
+            else start = end + 1;
+        }
+    }
+    // Unquoted: the word holding the name goes from the placeholder on.
+    const size_t mark = text.find(L'\u2026');
+    if (mark != std::wstring::npos) {
+        size_t word = text.find_last_of(L' ', mark);
+        word = word == std::wstring::npos ? 0 : word + 1;
+        text.erase(word == mark ? word : mark);
+    }
+    TrimSpaces(text);
+    while (!text.empty() && (text.back() == L':' || text.back() == L'\uFF1A' || text.back() == L'(' ||
+                             text.back() == L'\uFF08' || text.back() == L'-'))
+        text.pop_back();
+    TrimSpaces(text);
+    if (!text.empty()) text += L'\u2026';
+    return text;
+}
+
+// "新建压缩包 (Bandizip)...." / "Add to archive..." -> one "…".
+std::wstring TidyEllipsis(std::wstring text) {
+    size_t end = text.size();
+    while (end > 0 && (text[end - 1] == L'.' || text[end - 1] == L'\u2026')) --end;
+    if (end < text.size() && end > 0) {
+        text.erase(end);
+        TrimSpaces(text);
+        text += L'\u2026';
+    }
+    return text;
+}
+
+// Programs whose English names say little to a Chinese reader.
+struct Brand {
+    const wchar_t* match;  // case-insensitive, inside the program's names
+    const wchar_t* zh;
+};
+constexpr Brand kBrands[] = {
+    {L"Quark", L"夸克"},           {L"Fantai", L"泛泰快传"},    {L"BaiduNetdisk", L"百度网盘"},
+    {L"Baidu Netdisk", L"百度网盘"}, {L"Huorong", L"火绒"},       {L"WeChat", L"微信"},
+    {L"WeiXin", L"微信"},          {L"TencentDocs", L"腾讯文档"}, {L"Xunlei", L"迅雷"},
+    {L"Youdao", L"有道"},          {L"AliyunDrive", L"阿里云盘"}, {L"DingTalk", L"钉钉"},
+    {L"Feishu", L"飞书"},          {L"Sogou", L"搜狗"},
+    // ProductName "BdzShell": the DLL's name, not the program's.
+    {L"Bdz", L"Bandizip"},         {L"HaoZip", L"好压"},        {L"360zip", L"360压缩"},
+    {L"KuaiZip", L"快压"},
+};
+
+// "Bandizip shell menu dll" / "QuarkAI.ContextMenu" / "IconExtract Module":
+// the program name with the plumbing words taken out.
+std::wstring StripPlumbing(std::wstring text) {
+    static constexpr const wchar_t* kWords[] = {
+        L"context menu handler", L"contextmenuhandler", L"context menu", L"contextmenu", L"shell extension handler",
+        L"shell extensions", L"shell extension", L"shellextension", L"shell menu", L"shellmenu", L"shell ext",
+        L"shellext", L"extension", L"handler", L"module", L"library", L"dll", L"com server", L"x64", L"64-bit",
+        L"32-bit"};
+    for (const wchar_t* word : kWords) {
+        const size_t n = wcslen(word);
+        for (size_t at = 0; at + n <= text.size();) {
+            if (_wcsnicmp(text.c_str() + at, word, n) == 0) text.erase(at, n);
+            else ++at;
+        }
+    }
+    for (auto& c : text)
+        if (c == L'.' || c == L'_') c = L' ';
+    std::wstring out;
+    for (wchar_t c : text)
+        if (!(c == L' ' && (out.empty() || out.back() == L' '))) out += c;
+    TrimSpaces(out);
+    while (!out.empty() && (out.back() == L'-' || out.back() == L',')) out.pop_back();
+    TrimSpaces(out);
+    return out;
+}
+
+// Which program a third-party handler belongs to, for "<程序> 的右键菜单":
+// a known Chinese name, else ProductName, else the DLL's description, the
+// CLSID's name, the handler key or the file, each without the plumbing words.
+// "夸克的右键菜单", "Bandizip 的右键菜单": a space only after a Latin name.
+std::wstring Possessive(const std::wstring& program, const wchar_t* zh_tail, const wchar_t* en_tail) {
+    const bool chinese = std::wstring_view(l10n::Pick(L"zh", L"en")) == L"zh";
+    if (!chinese) return program + L" " + en_tail;
+    return program + (!program.empty() && program.back() >= 0x2E80 ? L"" : L" ") + zh_tail;
+}
+
+std::wstring ProgramName(const std::wstring& product, const std::wstring& description, const std::wstring& display,
+                         const std::wstring& key_name, const std::wstring& file) {
+    const std::wstring stem = [&] {
+        std::wstring name = FileName(file);
+        const size_t dot = name.find_last_of(L'.');
+        return dot == std::wstring::npos ? name : name.substr(0, dot);
+    }();
+    for (const Brand& brand : kBrands)
+        for (const std::wstring* name : {&product, &description, &display, &key_name, &stem})
+            if (ContainsNoCase(*name, brand.match)) return brand.zh;
+    // ProductName is sometimes just the DLL's own name ("BdzShell"): a name
+    // that repeats the handler key or the file stem waits for the second pass.
+    const auto internal = [&](const std::wstring& text) {
+        return _wcsicmp(text.c_str(), key_name.c_str()) == 0 || _wcsicmp(text.c_str(), stem.c_str()) == 0;
+    };
+    for (int pass = 0; pass < 2; ++pass) {
+        for (const std::wstring* name : {&product, &description, &display, &key_name, &stem}) {
+            if (name->empty() || name->front() == L'{') continue;
+            if (pass == 0 && internal(*name)) continue;
+            std::wstring text = StripPlumbing(*name);
+            if (text.size() >= 2) return text;
+        }
+    }
+    return {};
+}
+
+// ProductName says which program a DLL belongs to, unless it is Windows itself.
+bool GenericProduct(const std::wstring& product) {
+    return product.empty() || ContainsNoCase(product, L"Operating System") || ContainsNoCase(product, L"操作系统") ||
+           product.front() == L'{';
 }
 
 std::wstring MethodText(const Item& item, bool toggleable) {
     if (item.trusted_installer)
-        return l10n::Pick(L"这个键归 TrustedInstaller 所有，Pulse 不会去改它。",
-                          L"This key is owned by TrustedInstaller; Pulse leaves it alone.");
+        return l10n::Pick(L"这一项由 Windows 自己管理（TrustedInstaller），Pulse 不会去改它。",
+                          L"Windows manages this entry itself (TrustedInstaller); Pulse leaves it alone.");
     if (item.is_protected)
         return l10n::Pick(L"这是 Windows 的基础命令，关掉会让资源管理器不好用，所以不提供开关。",
                           L"A basic Windows command; switching it off breaks File Explorer, so there is no switch.");
     if (!toggleable)
         return l10n::Pick(L"新建、发送到、打开方式的开关会在后续版本提供，现在可以查看和定位。",
                           L"Switches for New, Send to and Open with come in a later version; for now you can inspect them.");
-    if (item.kind == Kind::Verb)
-        return l10n::Pick(L"关闭时 Pulse 会在这个键里写入 HideBasedOnVelocityId = 0x639bc8、LegacyDisable、"
-                          L"ProgrammaticAccessOnly（与 ContextMenuManager 相同），打开时删掉这些值。",
-                          L"Switching it off writes HideBasedOnVelocityId = 0x639bc8, LegacyDisable and "
-                          L"ProgrammaticAccessOnly into this key (like ContextMenuManager); switching it on removes them.");
-    return l10n::Pick(L"关闭时 Pulse 把这个键移到同级的 “-” 分组下（与 ContextMenuManager 相同），打开时移回来。",
-                      L"Switching it off moves this key under the sibling \"-\" group (like ContextMenuManager); "
-                      L"switching it on moves it back.");
+    std::wstring text = item.kind == Kind::Verb
+        ? l10n::Pick(L"关闭后，这个命令不再出现在右键菜单里。Pulse 只给它加上隐藏标记（和 ContextMenuManager 的做法相同），"
+                     L"重新打开就去掉标记，原有设置不会丢。",
+                     L"Switched off, the command leaves the context menu. Pulse only adds hide markers (as "
+                     L"ContextMenuManager does); switching it on removes them and nothing else changes.")
+        : l10n::Pick(L"关闭后，Windows 不再加载这个扩展，它添加的菜单项也随之消失。Pulse 只是把它的注册表项挪到旁边的"
+                     L"“-”分组（和 ContextMenuManager 的做法相同），重新打开就挪回来。",
+                     L"Switched off, Windows stops loading the extension and its rows leave the menu. Pulse moves its key "
+                     L"to the sibling \"-\" group (as ContextMenuManager does); switching it on moves it back.");
+    if (Deletable(item))
+        text += l10n::Pick(L"\n它指向的程序已经不存在（多半是卸载时没清理干净），可以直接删除这个残留项。删除前会导出 .reg 备份，"
+                           L"之后也能撤销。",
+                           L"\nIts program is gone (usually left behind by an uninstaller), so the entry can be deleted. "
+                           L"A .reg backup is exported first and the delete can be undone.");
+    text += l10n::Pick(L"\n所有改动点“应用更改”后才会写入注册表。",
+                       L"\nNothing is written until you choose Apply changes.");
+    return text;
 }
 
 std::wstring SceneKeys(const sysctx::Scene& scene) {
@@ -319,6 +572,7 @@ std::wstring SystemCtxModel::OpKey(Root root, Kind kind, const std::wstring& key
 std::wstring SystemCtxModel::PendingKey(const Op& op) {
     std::wstring key = OpKey(op.root, op.kind, op.key_path);
     if (op.action == Action::Position) key += L"|pos";
+    else if (op.action == Action::Delete || op.action == Action::Restore) key += L"|del";
     return key;
 }
 
@@ -351,7 +605,10 @@ SystemCtxModel::ScanResult SystemCtxModel::Scan() const {
     ScanResult out;
     out.entries.resize(scene_ids_.size());
     out.keys.resize(scene_ids_.size());
-    std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> versions;  // file -> company, description
+    struct VersionInfo {
+        std::wstring company, description, product;
+    };
+    std::unordered_map<std::wstring, VersionInfo> versions;  // file -> its version strings
     for (size_t i = 0; i < scene_ids_.size(); ++i) {
         const std::wstring& id = scene_ids_[i];
         sysctx::Scene scene;
@@ -371,12 +628,14 @@ SystemCtxModel::ScanResult SystemCtxModel::Scan() const {
             if (!item.file.empty() && !item.missing) {
                 auto it = versions.find(item.file);
                 if (it == versions.end()) {
-                    std::pair<std::wstring, std::wstring> v;
-                    ReadVersionInfo(item.file, v.first, v.second);
+                    VersionInfo v;
+                    ReadVersionInfo(item.file, v.company, v.description, v.product);
+                    if (GenericProduct(v.product)) v.product.clear();
                     it = versions.emplace(item.file, std::move(v)).first;
                 }
-                e.publisher = it->second.first;
-                e.description = it->second.second;
+                e.publisher = it->second.company;
+                e.description = it->second.description;
+                e.product = it->second.product;
             }
             e.item = std::move(item);
             out.entries[i].push_back(std::move(e));
@@ -410,6 +669,8 @@ void SystemCtxModel::AppendLog(const std::vector<Op>& ops, const std::vector<OpR
         lines += L"{\"time\":\"" + time + L"\",\"action\":\"" +
                  (op.action == Action::Disable  ? L"disable"
                   : op.action == Action::Enable ? L"enable"
+                  : op.action == Action::Delete ? L"delete"
+                  : op.action == Action::Restore ? L"restore"
                   : op.place == sysctx::Place::Top    ? L"position-top"
                   : op.place == sysctx::Place::Bottom ? L"position-bottom"
                                                       : L"position-default") +
@@ -493,6 +754,11 @@ void SystemCtxModel::RunJob(std::vector<Op> ops, size_t pop_undo, bool record_un
     std::vector<Op> done;
     std::wstring backup;  // 概览 · 最近的改动 names the .reg file
     bool cancelled = false;
+    std::wstring title;   // named from the scan before the batch: a deleted entry leaves the next one
+    if (record_undo && !ops.empty()) {
+        std::lock_guard lock(mutex_);
+        title = ChangeTitleLocked(ops);
+    }
     if (!ops.empty()) {
         const sysctx::Roots roots;
         // Undo steps arrive planned (Inverse keeps the recorded markers);
@@ -551,7 +817,7 @@ void SystemCtxModel::RunJob(std::vector<Op> ops, size_t pop_undo, bool record_un
                 undo_.push_back({done});
                 const std::wstring time = Timestamp(false);  // yyyy-mm-ddThh:mm:ss
                 Change change;
-                change.title = ChangeTitleLocked(done);
+                change.title = done.size() == ops.size() && !title.empty() ? title : ChangeTitleLocked(done);
                 change.caption = time.size() >= 16 ? time.substr(11, 5) : time;
                 if (!backup.empty()) change.caption += L" · " + backup;
                 changes_.push_back(std::move(change));
@@ -596,16 +862,25 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
     view->undo_steps = static_cast<int>(undo_.size());
     view->message = message_;
     view->message_error = message_error_;
-    for (const auto& [key, op] : pending_) if (op.root == Root::Machine) ++view->pending;
+    for (const auto& [key, op] : pending_) {
+        ++view->pending;
+        if (op.root == Root::Machine) ++view->pending_admin;
+    }
+    view->pending_pulse = static_cast<int>(pending_pulse_.size() + pending_skip_.size());
+    view->pending += view->pending_pulse;
     auto pending_op = [&](const Item& item) -> const Op* {
         const auto it = pending_.find(OpKey(item.root, item.kind, item.key_path));
         return it == pending_.end() ? nullptr : &it->second;
+    };
+    auto pending_delete = [&](const Item& item) {
+        return pending_.count(OpKey(item.root, item.kind, item.key_path) + L"|del") != 0;
     };
     auto pending_pos = [&](const Item& item) -> const Op* {
         const auto it = pending_.find(OpKey(item.root, item.kind, item.key_path) + L"|pos");
         return it == pending_.end() ? nullptr : &it->second;
     };
     auto effective_on = [&](const Item& item) {
+        if (pending_delete(item)) return false;
         const Op* op = pending_op(item);
         return op ? op->action == Action::Enable : item.enabled;
     };
@@ -631,7 +906,7 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
     std::vector<bool> scene_pending(scene_ids_.size(), false);
     for (size_t s = 0; s < entries_.size(); ++s)
         for (const Entry& e : entries_[s])
-            if (pending_op(e.item) || pending_pos(e.item)) scene_pending[s] = true;
+            if (pending_op(e.item) || pending_pos(e.item) || pending_delete(e.item)) scene_pending[s] = true;
     for (const Nav& nav : nav_) {
         ui::SysCtxSceneView scene;
         scene.label = l10n::Pick(nav.zh, nav.en);
@@ -641,7 +916,7 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
             if (s >= static_cast<int>(entries_.size())) continue;
             for (const Entry& e : entries_[static_cast<size_t>(s)]) {
                 ++scene.count;
-                if (!effective_on(e.item)) ++scene.disabled;
+                if (!e.item.enabled) ++scene.disabled;  // applied state: the queue shows on the rows
             }
             scene.pending = scene.pending || scene_pending[static_cast<size_t>(s)];
         }
@@ -651,7 +926,7 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
     for (const auto& list : entries_) {
         for (const Entry& e : list) {
             ++view->total;
-            view->disabled += effective_on(e.item) ? 0 : 1;
+            view->disabled += e.item.enabled ? 0 : 1;
             view->missing += e.item.missing ? 1 : 0;
         }
     }
@@ -678,22 +953,20 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
             const Op* toggle = pending_op(item);
             const Op* moving = pending_pos(item);
             const Op* pending = toggle ? toggle : moving;
+            const bool deleting = pending_delete(item);
+            if (Deletable(item) && !deleting) ++view->leftovers;
             const bool on = effective_on(item);
             const int zone = effective_zone(item);
             const bool hidden_by_default = default_hidden(e);
             const bool third = third_party(e);
-            const bool matches[ui::kSysCtxFilterCount] = {true, !on, item.root == Root::Machine, third, item.missing,
-                                                          hidden_by_default};
+            // 已禁用 counts what Windows has now: a queued switch must not look
+            // applied, and the row stays in the filter it was found under.
+            const bool matches[ui::kSysCtxFilterCount] = {true, !item.enabled, item.root == Root::Machine, third,
+                                                          item.missing, hidden_by_default};
             for (int f = 0; f < ui::kSysCtxFilterCount; ++f) view->filter_counts[static_cast<size_t>(f)] += matches[f] ? 1 : 0;
             const std::wstring key = OpKey(item.root, item.kind, item.key_path);
 
-            std::wstring title = item.display.empty() ? item.key_name : item.display;
-            // A bare handler key ("AABdzCtx") says less than the DLL's own description.
-            if ((item.kind == Kind::ShellEx || item.kind == Kind::DragDrop) && !e.description.empty() &&
-                (title == item.key_name || (!title.empty() && title[0] == L'{')))
-                title = e.description;
-            // Keyboard accelerators ("在此处打开命令窗口(&W)") are noise here.
-            title.erase(std::remove(title.begin(), title.end(), L'&'), title.end());
+            std::wstring title = TitleLocked(e);
 
             // Live preview: the menu after the queued changes; what is off
             // sits on the 已隐藏 shelf under it.
@@ -702,14 +975,14 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
                 p.title = title;
                 p.icon_path = e.icon;
                 p.glyph = KindGlyph(item.kind);
-                p.change = toggle ? (on ? 2 : 1) : 0;
+                p.change = deleting ? 1 : toggle ? (on ? 2 : 1) : 0;
                 p.extended = item.extended;
                 p.selected = key == selected_;
                 p.hidden = !on;
                 p.zone = zone;
                 p.rank = item.kind != Kind::Verb ? 2 : zone == ui::kSysCtxZoneTop ? 0 : zone == ui::kSysCtxZoneBottom ? 3 : 1;
                 p.moved = moving ? 1 + zone : 0;
-                p.draggable = Toggleable(item) && state_ == ui::SysCtxView::State::Ready;
+                p.draggable = Toggleable(item) && !deleting && state_ == ui::SysCtxView::State::Ready;
                 p.movable = p.draggable && item.kind == Kind::Verb;
                 view->preview.push_back(std::move(p));
                 preview_map_.emplace_back(s, i);
@@ -719,24 +992,42 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
             ui::SysCtxRowView row;
             row.title = std::move(title);
             const std::wstring target = !item.file.empty() ? item.file : !item.command.empty() ? item.command : item.clsid;
+            const bool handler = item.kind == Kind::ShellEx || item.kind == Kind::DragDrop;
             if (item.missing) {
-                row.subtitle = l10n::Pick(L"程序不存在 · ", L"Program missing · ") +
+                row.subtitle = l10n::Pick(L"程序已不存在（多半已卸载） · ", L"Program gone (probably uninstalled) · ") +
                                (!item.command.empty() ? item.command : target);
+            } else if (handler) {
+                // Named by its menu rows: "Bandizip 的右键扩展 · Bandisoft"; named
+                // by its program: "右键扩展 · Bandisoft". The DLL is in 详情.
+                const bool by_labels = labels_.count(UpperClsid(item.clsid)) != 0;
+                const std::wstring program =
+                    by_labels && !IsMicrosoft(e.publisher, item.file)
+                        ? ProgramName(e.product, e.description, item.display, item.key_name, item.file)
+                        : std::wstring();
+                row.subtitle = program.empty() ? std::wstring(KindLabel(item.kind))
+                               : item.kind == Kind::DragDrop ? Possessive(program, L"的拖放扩展", L"drag-and-drop extension")
+                                                             : Possessive(program, L"的右键扩展", L"shell extension");
+                const std::wstring who = !e.publisher.empty() ? e.publisher : e.product;
+                if (!who.empty() && who != program) row.subtitle += L" · " + who;
+                else if (who.empty() && !item.file.empty() && program.empty()) row.subtitle += L" · " + FileName(item.file);
             } else if (!e.publisher.empty() && !item.file.empty()) {
                 row.subtitle = e.publisher + L" · " + FileName(item.file);
             } else if (!item.file.empty()) {
                 row.subtitle = FileName(item.file);
             } else if (item.kind == Kind::SendTo) {
                 row.subtitle = FileName(item.key_path);
+            } else if (item.kind == Kind::Verb) {
+                row.subtitle = item.command.empty() ? std::wstring(l10n::Pick(L"Windows 自带的命令", L"Built into Windows"))
+                                                    : l10n::Pick(L"运行 ", L"Runs ") + item.command;
             } else {
                 row.subtitle = KindLabel(item.kind);
-                if (!item.clsid.empty()) row.subtitle += L" · " + item.clsid;
             }
-            if (item.kind == Kind::ShellEx && item.key_name != row.title) row.subtitle = item.key_name + L" · " + row.subtitle;
             row.icon_path = e.icon;
             row.glyph = KindGlyph(item.kind);
             row.on = on;
-            row.pending = pending != nullptr;
+            row.pending = pending != nullptr || deleting;
+            row.deletable = Deletable(item);
+            row.deleting = deleting;
             row.machine = item.root == Root::Machine;
             row.missing = item.missing;
             row.locked = item.is_protected || item.trusted_installer;
@@ -747,8 +1038,14 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
             row.third_party = third;
             row.selected = key == selected_;
             row.place = zone;
-            if (const std::wstring pulse_key = PulseKey(item); !pulse_key.empty())
-                row.pulse = std::binary_search(pulse_hidden_.begin(), pulse_hidden_.end(), pulse_key) ? 2 : 1;
+            if (const std::wstring pulse_key = PulseKey(item); !pulse_key.empty()) {
+                const auto queued = pending_pulse_.find(pulse_key);
+                const bool hidden = queued != pending_pulse_.end()
+                                        ? queued->second
+                                        : std::binary_search(pulse_hidden_.begin(), pulse_hidden_.end(), pulse_key);
+                row.pulse = hidden ? 2 : 1;
+                if (queued != pending_pulse_.end()) row.pending = true;
+            }
             row.kind_label = std::wstring(KindLabel(item.kind)) + L" · " +
                              (item.root == Root::File ? l10n::Pick(L"当前用户的文件夹", L"your SendTo folder")
                               : row.machine          ? l10n::Pick(L"所有用户", L"all users")
@@ -758,6 +1055,15 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
             row.file = !item.file.empty() ? item.file : !item.command.empty() ? item.command : item.clsid;
             row.publisher = e.publisher;
             row.method = MethodText(item, Toggleable(item));
+            if (handler) {
+                // What the extension adds, when Pulse's own menu has seen it.
+                const auto labels = labels_.find(UpperClsid(item.clsid));
+                if (labels != labels_.end() && !labels->second.empty()) {
+                    std::wstring added;
+                    for (const auto& label : labels->second) added += (added.empty() ? L"" : l10n::Pick(L"、", L", ")) + label;
+                    row.method = l10n::Pick(L"它在菜单里添加：", L"It adds: ") + added + L"\n" + row.method;
+                }
+            }
             if (row.selected) {
                 selected_row_ = static_cast<int>(view->rows.size());
                 view->selected = selected_row_;
@@ -768,14 +1074,7 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
     }
 
     // 概览: ContextMenuManager marks, Pulse's handler timings, this session's changes.
-    auto entry_title = [](const Entry& e) {
-        std::wstring title = e.item.display.empty() ? e.item.key_name : e.item.display;
-        if ((e.item.kind == Kind::ShellEx || e.item.kind == Kind::DragDrop) && !e.description.empty() &&
-            (title == e.item.key_name || (!title.empty() && title[0] == L'{')))
-            title = e.description;
-        title.erase(std::remove(title.begin(), title.end(), L'&'), title.end());
-        return title;
-    };
+    auto entry_title = [this](const Entry& e) { return TitleLocked(e); };
     ui::SysCtxOverview& ov = view->overview;
     ov.shown = overview_;
     mark_map_.clear();
@@ -809,7 +1108,9 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
         r.row.title = timing.clsid;
         r.row.glyph = KindGlyph(Kind::ShellEx);
         r.row.ms = timing.ms;
-        r.row.pulse_skipped = timing.pulse_skipped;
+        const bool skip_queued = std::find(pending_skip_.begin(), pending_skip_.end(), UpperClsid(timing.clsid)) !=
+                                 pending_skip_.end();
+        r.row.pulse_skipped = timing.pulse_skipped || skip_queued;
         for (size_t sc = 0; sc < entries_.size() && r.entry.first < 0; ++sc) {
             for (size_t i = 0; i < entries_[sc].size(); ++i) {
                 const Entry& e = entries_[sc][i];
@@ -820,7 +1121,7 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
                 r.row.icon_path = e.icon;
                 r.row.glyph = KindGlyph(e.item.kind);
                 r.row.on = effective_on(e.item);
-                r.row.pending = pending_op(e.item) != nullptr;
+                r.row.pending = pending_op(e.item) != nullptr || skip_queued;
                 r.row.cmm = e.item.dash_marker;
                 r.row.switchable = Toggleable(e.item) && state_ == ui::SysCtxView::State::Ready;
                 break;
@@ -937,7 +1238,6 @@ void SystemCtxModel::SelectPreview(int item) {
 }
 
 void SystemCtxModel::DropPreview(int index, int zone) {
-    std::vector<Op> run_now;
     {
         std::lock_guard lock(mutex_);
         if (state_ != ui::SysCtxView::State::Ready) return;
@@ -948,18 +1248,14 @@ void SystemCtxModel::DropPreview(int index, int zone) {
         const Item item = entries_[static_cast<size_t>(s)][i].item;
         if (!Toggleable(item)) return;
         const std::wstring key = OpKey(item.root, item.kind, item.key_path);
+        pending_.erase(key + L"|del");  // dragged back into use: no longer deleted
         const auto toggle = pending_.find(key);
         const bool on = toggle != pending_.end() ? toggle->second.action == Action::Enable : item.enabled;
         // `restores`: the op only returns the entry to its scanned state, so
-        // the queued op is dropped instead (per-user entries never queue).
+        // the queued op is dropped instead.
         auto queue = [&](const std::wstring& k, const Op& op, bool restores) {
-            if (restores) {
-                pending_.erase(k);
-            } else if (op.root == Root::Machine) {
-                pending_[k] = op;
-            } else {
-                run_now.push_back(op);
-            }
+            if (restores) pending_.erase(k);
+            else pending_[k] = op;
         };
         if (zone == ui::kSysCtxZoneHidden) {
             if (on) queue(key, sysctx::MakeOp(item, Action::Disable), !item.enabled);
@@ -977,7 +1273,6 @@ void SystemCtxModel::DropPreview(int index, int zone) {
         message_.clear();
         dirty_ = true;
     }
-    if (!run_now.empty()) StartJob(ui::SysCtxView::State::Applying, std::move(run_now), 0, true);
 }
 
 const SystemCtxModel::Entry* SystemCtxModel::RowEntryLocked(int row) const {
@@ -988,53 +1283,123 @@ const SystemCtxModel::Entry* SystemCtxModel::RowEntryLocked(int row) const {
     return &entries_[static_cast<size_t>(s)][i];
 }
 
-bool SystemCtxModel::ToggleEntryLocked(const Entry& e, Op& op) {
-    if (state_ != ui::SysCtxView::State::Ready || !Toggleable(e.item)) return false;
+void SystemCtxModel::ToggleEntryLocked(const Entry& e) {
+    if (state_ != ui::SysCtxView::State::Ready || !Toggleable(e.item)) return;
     const std::wstring key = OpKey(e.item.root, e.item.kind, e.item.key_path);
-    if (pending_.erase(key)) {
-        dirty_ = true;
-        return false;  // flipped back before it was applied
-    }
-    op = sysctx::MakeOp(e.item, e.item.enabled ? Action::Disable : Action::Enable);
-    if (op.root == Root::Machine) {
-        pending_[key] = op;
-        message_.clear();
-        dirty_ = true;
-        return false;
-    }
-    return true;
+    message_.clear();
+    dirty_ = true;
+    if (pending_.erase(key + L"|del")) return;  // the switch takes a queued delete back first
+    if (pending_.erase(key)) return;            // flipped back before it was applied
+    pending_[key] = sysctx::MakeOp(e.item, e.item.enabled ? Action::Disable : Action::Enable);
+}
+
+void SystemCtxModel::DeleteEntryLocked(const Entry& e) {
+    if (state_ != ui::SysCtxView::State::Ready || !Deletable(e.item)) return;
+    const std::wstring key = OpKey(e.item.root, e.item.kind, e.item.key_path);
+    message_.clear();
+    dirty_ = true;
+    if (pending_.erase(key + L"|del")) return;
+    // The key goes as a whole: a queued switch or move would only fail after it.
+    pending_.erase(key);
+    pending_.erase(key + L"|pos");
+    pending_[key + L"|del"] = sysctx::MakeOp(e.item, Action::Delete);
 }
 
 void SystemCtxModel::ToggleRow(int row) {
-    Op op;
-    {
-        std::lock_guard lock(mutex_);
-        const Entry* e = RowEntryLocked(row);
-        if (!e || !ToggleEntryLocked(*e, op)) return;
+    std::lock_guard lock(mutex_);
+    if (const Entry* e = RowEntryLocked(row)) ToggleEntryLocked(*e);
+}
+
+void SystemCtxModel::DeleteRow(int row) {
+    std::lock_guard lock(mutex_);
+    if (const Entry* e = RowEntryLocked(row)) DeleteEntryLocked(*e);
+}
+
+int SystemCtxModel::DeleteSceneLeftovers() {
+    std::lock_guard lock(mutex_);
+    if (state_ != ui::SysCtxView::State::Ready) return 0;
+    const int s = CurrentSceneLocked();
+    if (s < 0 || s >= static_cast<int>(entries_.size())) return 0;
+    int queued = 0;
+    for (const Entry& e : entries_[static_cast<size_t>(s)]) {
+        if (!Deletable(e.item)) continue;
+        const std::wstring key = OpKey(e.item.root, e.item.kind, e.item.key_path);
+        if (pending_.count(key + L"|del")) continue;
+        DeleteEntryLocked(e);
+        ++queued;
     }
-    StartJob(ui::SysCtxView::State::Applying, {op}, 0, true);
+    return queued;
+}
+
+bool SystemCtxModel::RowDeletable(int row) {
+    std::lock_guard lock(mutex_);
+    const Entry* e = RowEntryLocked(row);
+    return e && Deletable(e->item) && state_ == ui::SysCtxView::State::Ready;
+}
+
+bool SystemCtxModel::RowDeleting(int row) {
+    std::lock_guard lock(mutex_);
+    const Entry* e = RowEntryLocked(row);
+    return e && pending_.count(OpKey(e->item.root, e->item.kind, e->item.key_path) + L"|del") != 0;
 }
 
 void SystemCtxModel::ToggleMapped(const std::vector<std::pair<int, size_t>>& map, int index) {
-    Op op;
-    {
-        std::lock_guard lock(mutex_);
-        if (index < 0 || index >= static_cast<int>(map.size())) return;
-        const auto [s, i] = map[static_cast<size_t>(index)];
-        if (s < 0 || s >= static_cast<int>(entries_.size()) || i >= entries_[static_cast<size_t>(s)].size()) return;
-        if (!ToggleEntryLocked(entries_[static_cast<size_t>(s)][i], op)) return;
-    }
-    StartJob(ui::SysCtxView::State::Applying, {op}, 0, true);
+    std::lock_guard lock(mutex_);
+    if (index < 0 || index >= static_cast<int>(map.size())) return;
+    const auto [s, i] = map[static_cast<size_t>(index)];
+    if (s < 0 || s >= static_cast<int>(entries_.size()) || i >= entries_[static_cast<size_t>(s)].size()) return;
+    ToggleEntryLocked(entries_[static_cast<size_t>(s)][i]);
 }
 
 void SystemCtxModel::ToggleSlowRow(int index) { ToggleMapped(slow_map_, index); }
 
 void SystemCtxModel::RestoreMarkRow(int index) { ToggleMapped(mark_map_, index); }
 
-std::wstring SystemCtxModel::SlowRowClsid(int index) {
+void SystemCtxModel::QueueSlowSkip(int index) {
     std::lock_guard lock(mutex_);
-    if (!view_ || index < 0 || index >= static_cast<int>(view_->overview.slow_rows.size())) return {};
-    return view_->overview.slow_rows[static_cast<size_t>(index)].clsid;
+    if (!view_ || index < 0 || index >= static_cast<int>(view_->overview.slow_rows.size())) return;
+    const std::wstring clsid = UpperClsid(view_->overview.slow_rows[static_cast<size_t>(index)].clsid);
+    if (clsid.empty()) return;
+    const auto found = std::find(pending_skip_.begin(), pending_skip_.end(), clsid);
+    if (found != pending_skip_.end()) pending_skip_.erase(found);
+    else pending_skip_.push_back(clsid);
+    message_.clear();
+    dirty_ = true;
+}
+
+void SystemCtxModel::TogglePulseRow(int row) {
+    std::lock_guard lock(mutex_);
+    const Entry* e = RowEntryLocked(row);
+    if (!e) return;
+    const std::wstring key = PulseKey(e->item);
+    if (key.empty()) return;
+    // Flipped back before 应用: nothing left to do.
+    if (pending_pulse_.erase(key) == 0)
+        pending_pulse_[key] = !std::binary_search(pulse_hidden_.begin(), pulse_hidden_.end(), key);
+    message_.clear();
+    dirty_ = true;
+}
+
+bool SystemCtxModel::RowPulseHidden(int row) {
+    std::lock_guard lock(mutex_);
+    const Entry* e = RowEntryLocked(row);
+    if (!e) return false;
+    const std::wstring key = PulseKey(e->item);
+    const auto queued = pending_pulse_.find(key);
+    if (queued != pending_pulse_.end()) return queued->second;
+    return std::binary_search(pulse_hidden_.begin(), pulse_hidden_.end(), key);
+}
+
+SystemCtxModel::PulseChanges SystemCtxModel::TakePulseChanges() {
+    std::lock_guard lock(mutex_);
+    PulseChanges out;
+    if (state_ != ui::SysCtxView::State::Ready) return out;
+    for (auto& [key, hidden] : pending_pulse_) out.hidden.emplace_back(key, hidden);
+    out.skipped = std::move(pending_skip_);
+    pending_pulse_.clear();
+    pending_skip_.clear();
+    dirty_ = true;
+    return out;
 }
 
 void SystemCtxModel::ShowOverview() {
@@ -1052,6 +1417,74 @@ void SystemCtxModel::SetHandlerTimings(std::vector<ui::SysCtxHandlerTiming> timi
         return;
     timings_ = std::move(timings);
     dirty_ = true;
+}
+
+void SystemCtxModel::SetHandlerLabels(std::map<std::wstring, std::vector<std::wstring>> labels) {
+    std::map<std::wstring, std::vector<std::wstring>> upper;
+    for (auto& [clsid, rows] : labels) {
+        auto& list = upper[UpperClsid(clsid)];
+        // Rows made for one file name (压缩为 "… (2).zip") come after the
+        // plain ones and lose the name: 压缩为…
+        std::stable_partition(rows.begin(), rows.end(), [](const std::wstring& row) { return !TemplatedLabel(row); });
+        for (auto& row : rows) {
+            std::wstring text = TidyEllipsis(UntemplateLabel(StripAccessKey(std::move(row))));
+            if (!text.empty() && std::find(list.begin(), list.end(), text) == list.end()) list.push_back(std::move(text));
+        }
+    }
+    std::lock_guard lock(mutex_);
+    // Merged, never dropped: a registry change empties Pulse's menu caches
+    // until the next right-click, and the rows should keep their names.
+    bool changed = false;
+    for (auto& [clsid, rows] : upper) {
+        if (rows.empty()) continue;
+        auto& known = labels_[clsid];
+        if (known == rows) continue;
+        known = std::move(rows);
+        changed = true;
+    }
+    if (changed) dirty_ = true;
+}
+
+std::wstring SystemCtxModel::TitleLocked(const Entry& e) const {
+    const Item& item = e.item;
+    std::wstring title = item.display.empty() ? item.key_name : item.display;
+    if (item.kind == Kind::Verb) {
+        // No menu text of its own: Windows' name for the verb.
+        if (_wcsicmp(title.c_str(), item.key_name.c_str()) == 0)
+            if (const wchar_t* known = LookUpName(kVerbNames, std::size(kVerbNames), item.key_name)) title = known;
+    } else if (item.kind == Kind::ShellEx || item.kind == Kind::DragDrop) {
+        // What it adds to the menu, as Pulse's own menu saw it; else Windows'
+        // known handlers; else the program it belongs to. The CLSID's own
+        // name ("Bandizip shell menu dll") is the last resort.
+        const auto labels = labels_.find(UpperClsid(item.clsid));
+        if (labels != labels_.end() && !labels->second.empty()) {
+            const auto& rows = labels->second;
+            title.clear();
+            const bool chinese = std::wstring_view(l10n::Pick(L"zh", L"en")) == L"zh";
+            // Two fit a row; with more, one name and a count keep the count visible:
+            // 解压到当前文件夹 等 4 项 / Extract here + 3 more
+            const size_t shown = rows.size() > 2 ? 1 : rows.size();
+            for (size_t n = 0; n < shown; ++n) title += (n ? (chinese ? L"、" : L", ") : L"") + rows[n];
+            if (rows.size() > shown)
+                title += chinese ? L" 等 " + std::to_wstring(rows.size()) + L" 项"
+                                 : L" + " + std::to_wstring(rows.size() - shown) + L" more";
+        } else if (const wchar_t* known = LookUpName(kHandlerNames, std::size(kHandlerNames), item.key_name)) {
+            title = known;
+        } else if (const wchar_t* by_clsid = LookUpName(kHandlerNames, std::size(kHandlerNames), item.clsid)) {
+            title = by_clsid;
+        } else if (!IsMicrosoft(e.publisher, item.file)) {
+            // "Bandizip shell menu dll" / "QuarkAI.ContextMenu" mean nothing to
+            // most readers: name the program and what it is.
+            const std::wstring program = ProgramName(e.product, e.description, item.display, item.key_name, item.file);
+            if (!program.empty())
+                title = item.kind == Kind::DragDrop ? Possessive(program, L"的拖放菜单", L"drag-and-drop menu")
+                                                    : Possessive(program, L"的右键菜单", L"context menu");
+        } else if (!e.description.empty() && (title == item.key_name || (!title.empty() && title[0] == L'{'))) {
+            title = e.description;  // a bare handler key ("AABdzCtx") says less than the DLL's description
+        }
+    }
+    // Keyboard accelerators ("在此处打开命令窗口(&W)") are noise here.
+    return StripAccessKey(std::move(title));
 }
 
 void SystemCtxModel::SetPulseHidden(std::vector<std::wstring> keys) {
@@ -1072,16 +1505,18 @@ std::wstring SystemCtxModel::ChangeTitleLocked(const std::vector<Op>& ops) const
             if (e.item.root != first.root || e.item.kind != first.kind ||
                 (e.item.key_path != after && e.item.key_path != first.key_path))
                 continue;
-            name = e.item.display.empty() ? e.item.key_name : e.item.display;
+            name = TitleLocked(e);
             break;
         }
         if (!name.empty()) break;
     }
     if (name.empty()) name = FileName(first.key_path);
     name.erase(std::remove(name.begin(), name.end(), L'&'), name.end());
-    std::wstring title = first.action == Action::Disable ? l10n::Pick(L"禁用", L"Turned off ")
-                         : first.action == Action::Enable ? l10n::Pick(L"启用", L"Turned on ")
-                                                          : l10n::Pick(L"移动", L"Moved ");
+    std::wstring title = first.action == Action::Disable   ? l10n::Pick(L"禁用", L"Turned off ")
+                         : first.action == Action::Enable  ? l10n::Pick(L"启用", L"Turned on ")
+                         : first.action == Action::Delete  ? l10n::Pick(L"删除残留", L"Deleted leftover ")
+                         : first.action == Action::Restore ? l10n::Pick(L"恢复", L"Put back ")
+                                                           : l10n::Pick(L"移动", L"Moved ");
     title += l10n::Pick(L"「", L"\"") + name + l10n::Pick(L"」", L"\"");
     if (ops.size() > 1) {
         const bool chinese = std::wstring_view(l10n::Pick(L"zh", L"en")) == L"zh";
@@ -1104,6 +1539,8 @@ void SystemCtxModel::ApplyPending() {
 void SystemCtxModel::DiscardPending() {
     std::lock_guard lock(mutex_);
     pending_.clear();
+    pending_pulse_.clear();
+    pending_skip_.clear();
     dirty_ = true;
 }
 

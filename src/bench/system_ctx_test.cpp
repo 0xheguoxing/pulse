@@ -146,6 +146,8 @@ int wmain(int argc, wchar_t** argv) {
     roots.machine = HKEY_CURRENT_USER;
     roots.machine_classes = g_base + L"\\Machine";
     roots.file_exts = g_base + L"\\FileExts";
+    roots.user_trash = g_base + L"\\TrashUser";
+    roots.machine_trash = g_base + L"\\TrashMachine";
     roots.check_owner = false;
     roots.resolve_strings = false;
     wchar_t tmp[MAX_PATH];
@@ -357,6 +359,36 @@ int wmain(int argc, wchar_t** argv) {
               "position: refused for shellex handlers");
     }
 
+    // 删除残留项: the key moves into the trash whole; Restore puts it back.
+    {
+        const std::wstring snap = Snapshot(roots);
+        const auto items = Enumerate(roots, file);
+        const Item* leftover = Find(items, L"FooVerb");  // its command points at a missing exe
+        const bool missing = leftover && leftover->missing;
+        Op del = leftover ? MakeOp(*leftover, Action::Delete) : Op{};
+        PlanOp(roots, del);
+        const bool deleted = leftover && Apply(roots, del) == OpResult::Ok && !KeyExists(L"User\\*\\shell\\FooVerb") &&
+                             KeyExists(L"TrashUser\\*\\shell\\FooVerb\\command");
+        const bool gone_from_scan = !Find(Enumerate(roots, file), L"FooVerb");
+        const bool restored = Apply(roots, Inverse(del)) == OpResult::Ok &&
+                              KeyExists(L"User\\*\\shell\\FooVerb\\command") && !KeyExists(L"TrashUser\\*");
+        Check(missing && deleted && gone_from_scan && restored && Snapshot(roots) == snap,
+              "delete leftover verb: into the trash, gone from the scan, restored byte for byte");
+        const Item* handler = Find(items, L"Baz");
+        Op hdel = handler ? MakeOp(*handler, Action::Delete) : Op{};
+        const bool handler_deleted = handler && Apply(roots, hdel) == OpResult::Ok &&
+                                     !KeyExists(L"Machine\\*\\shellex\\ContextMenuHandlers\\Baz") &&
+                                     KeyExists(L"TrashMachine\\*\\shellex\\ContextMenuHandlers\\Baz\\Nested");
+        const bool handler_back = Apply(roots, Inverse(hdel)) == OpResult::Ok;
+        Check(handler_deleted && handler_back && Snapshot(roots) == snap && !KeyExists(L"TrashMachine\\*"),
+              "delete shellex key with subkeys and put it back");
+        Op stray{Action::Restore, Kind::Verb, Root::User, L"*\\shell\\NotInTrash"};
+        Op stray_new{Action::Delete, Kind::ShellNew, Root::User, L".pulsetest\\ShellNew"};
+        Check(Apply(roots, stray) == OpResult::NotFound && Apply(roots, stray_new) == OpResult::Unsupported &&
+                  Snapshot(roots) == snap,
+              "restore without a trashed copy reports NotFound; other kinds are refused");
+    }
+
     // Conflict: both ContextMenuHandlers\\X and -ContextMenuHandlers\\X exist.
     SetString(L"Machine\\*\\shellex\\ContextMenuHandlers\\Clash", nullptr, L"{11111111-2222-3333-4444-555555555555}");
     SetString(L"Machine\\*\\shellex\\-ContextMenuHandlers\\Clash", nullptr, L"{11111111-2222-3333-4444-555555555555}");
@@ -385,7 +417,7 @@ int wmain(int argc, wchar_t** argv) {
         L"PULSE-SYSCTX 1\ndisable\tverb\tmachine\t\\*\\shell\\y\n",
         L"PULSE-SYSCTX 1\ndisable\tverb\tmachine\t*\\shellex\\y\n",
         L"PULSE-SYSCTX 1\ndisable\tshellex\tmachine\t*\\shell\\ContextMenuHandlers\\y\n",
-        L"PULSE-SYSCTX 1\ndelete\tverb\tmachine\t*\\shell\\y\n",
+        L"PULSE-SYSCTX 1\nremove\tverb\tmachine\t*\\shell\\y\n",  // delete / restore are real ops now
         L"PULSE-SYSCTX 1\ndisable\tshellnew\tmachine\t.txt\\ShellNew\n",
         L"disable\tverb\tmachine\t*\\shell\\y\n",
         L"PULSE-SYSCTX 1\ndisable\tverb\tmachine\t*\\shell\\y\t99\n",
@@ -398,6 +430,18 @@ int wmain(int argc, wchar_t** argv) {
     for (const auto* b : bad) all_rejected = !ParseBatch(b, parsed) && all_rejected;
     Check(all_rejected, "batch parser rejects traversal, absolute paths, wrong layouts and unknown ops");
 
+    {
+        const std::vector<Op> trash_ops = {
+            Op{Action::Delete, Kind::ShellEx, Root::Machine, L"*\\shellex\\ContextMenuHandlers\\Gone"},
+            Op{Action::Restore, Kind::Verb, Root::Machine, L"*\\shell\\Gone"}};
+        std::vector<Op> back;
+        const bool round_trip = ParseBatch(SerializeBatch(trash_ops), back) && back.size() == 2 &&
+                                back[0].action == Action::Delete && back[1].action == Action::Restore &&
+                                back[0].key_path == trash_ops[0].key_path;
+        Check(round_trip && !ParseBatch(L"PULSE-SYSCTX 1\ndelete\tverb\tmachine\t*\\shell\\x\t3\n", back) &&
+                  !ParseBatch(L"PULSE-SYSCTX 1\ndelete\tverb\tmachine\t..\\shell\\x\n", back),
+              "batch: delete / restore round trip; masks and traversal refused");
+    }
     std::vector<OpResult> results;
     Check(ParseResults(SerializeResults({OpResult::Ok, OpResult::Conflict, OpResult::AccessDenied}), results) &&
               results.size() == 3 && results[1] == OpResult::Conflict && results[2] == OpResult::AccessDenied &&

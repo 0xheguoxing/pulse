@@ -24,6 +24,9 @@ struct Roots {
     std::wstring sendto_dir;     // empty: FOLDERID_SendTo
     // Under `user`; holds <.ext>\UserChoice. Empty: ignore user choices.
     std::wstring file_exts = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts";
+    // Under `user` / `machine`: where 删除残留项 moves a key, so undo can put it back.
+    std::wstring user_trash = L"Software\\Pulse\\SystemContextMenu\\Deleted";
+    std::wstring machine_trash = L"Software\\Pulse\\SystemContextMenu\\Deleted";
     bool resolve_strings = true; // SHLoadIndirectString / CLSID names
     bool check_owner = true;     // TrustedInstaller lookups (slow on big scans)
 };
@@ -95,7 +98,9 @@ bool CanCreateNewTemplate(const NewTemplate& t);
 
 // ---- S2: enable / disable -------------------------------------------------
 
-enum class Action { Disable, Enable, Position };  // Position: verbs only
+// Position: verbs only. Delete moves a leftover key (its program is gone)
+// into Roots::*_trash under the same path; Restore moves it back.
+enum class Action { Disable, Enable, Position, Delete, Restore };
 
 // Verb markers an op adds (Disable) or removes (Enable). PlanOp records the
 // exact set so Inverse() undoes a change byte for byte.

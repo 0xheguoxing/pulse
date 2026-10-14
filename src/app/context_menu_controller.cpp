@@ -702,6 +702,26 @@ std::vector<std::pair<std::wstring, uint32_t>> ContextMenuController::ComHandler
     return out;
 }
 
+std::map<std::wstring, std::vector<std::wstring>> ContextMenuController::ComHandlerLabels() const {
+    std::map<std::wstring, std::vector<std::wstring>> out;
+    // Sorted keys keep the order of the rows stable between calls.
+    std::vector<const std::wstring*> keys;
+    for (const auto& [key, layout] : com_cache_) keys.push_back(&key);
+    std::sort(keys.begin(), keys.end(), [](const std::wstring* a, const std::wstring* b) { return *a < *b; });
+    const CtxNames placeholder{L"\u2026", L"\u2026", L"\u2026"};
+    for (const std::wstring* key : keys) {
+        for (const ops::ShellMenuItem& row : com_cache_.at(*key).rows) {
+            if (row.child || row.clsid.empty() || row.text.empty()) continue;
+            std::wstring text = ExpandCtxLabel(row.text, placeholder);
+            text.erase(std::remove(text.begin(), text.end(), L'&'), text.end());
+            if (text.empty()) continue;
+            auto& list = out[row.clsid];
+            if (std::find(list.begin(), list.end(), text) == list.end()) list.push_back(std::move(text));
+        }
+    }
+    return out;
+}
+
 ContextMenuController::QueryCompletion ContextMenuController::CompleteComQuery(
     uint32_t token, std::vector<ops::ShellMenuItem> items, uint64_t completed_at,
     bool partial, std::vector<ops::ShellMenuHandlerStatus> handlers) {

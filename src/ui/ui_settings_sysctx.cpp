@@ -91,7 +91,17 @@ void MainRenderer::DrawSettingsSysCtx(const WindowViewModel& vm, const D2D1_RECT
         fluent::ControlState state{};
         state.enabled = enabled;
         state.hovered = enabled && hovered(hit);
-        painter_.DrawButton({r, text, glyph, kind, state});
+        // The stock button glyph is 20 px beside 14 px text; on this page's
+        // text buttons it is drawn text-sized in the same slot instead.
+        const bool small_glyph = !glyph.empty() && !text.empty() && kind == fluent::ButtonKind::Standard;
+        fluent::ButtonSpec spec{r, text, glyph, kind, state};
+        spec.skip_glyph = small_glyph;
+        painter_.DrawButton(spec);
+        if (small_glyph) {
+            const float mid = (r.top + r.bottom) * 0.5f;
+            DrawIconText(r.left + 8 * s, mid - 10 * s, 20 * s, 20 * s, std::wstring(glyph), L"",
+                         enabled ? theme.text : theme.text_disabled, 0.72f);
+        }
     };
     auto card = [&](const D2D1_RECT_F& r, float radius = 10.0f) {
         painter_.FillRoundedRect(r, radius * s, theme.fill_input);
@@ -119,9 +129,19 @@ void MainRenderer::DrawSettingsSysCtx(const WindowViewModel& vm, const D2D1_RECT
     // ---- header -------------------------------------------------------------
     painter_.DrawWrappedCaption(sysctx_text::Intro(), D2D1::Point2F(o.intro.left, o.intro.top + 6 * s),
                                 o.intro.right - o.intro.left, theme.text_secondary);
-    button(o.undo, sysctx_text::Undo(), L"\xE7A7", kSysCtxUndo, ready && v->undo_steps > 0);
-    button(o.log, sysctx_text::Log(), L"\xE81C", kSysCtxLog, true);
-    button(o.restore, sysctx_text::RestoreAll(), L"\xE777", kSysCtxRestoreAll, ready && v->undo_steps > 0);
+    // Page commands: quiet caption-sized buttons, a fill only under the pointer.
+    auto head_button = [&](const D2D1_RECT_F& r, std::wstring_view text, const wchar_t* glyph, int hit, bool enabled) {
+        if (r.right <= r.left) return;
+        if (enabled && hovered(hit)) painter_.FillRoundedRect(r, 6 * s, theme.fill_hover);
+        const D2D1_COLOR_F color = enabled ? theme.text_secondary : theme.text_disabled;
+        const float mid = (r.top + r.bottom) * 0.5f;
+        DrawIconText(r.left + 6 * s, mid - 8 * s, 16 * s, 16 * s, glyph, L"", color, 0.62f);
+        painter_.DrawText(text, D2D1::RectF(r.left + 24 * s, r.top, r.right - 4 * s, r.bottom), compositor_->SmallFormat(),
+                          color);
+    };
+    head_button(o.undo, sysctx_text::Undo(), L"\xE7A7", kSysCtxUndo, ready && v->undo_steps > 0);
+    head_button(o.log, sysctx_text::Log(), L"\xE81C", kSysCtxLog, true);
+    head_button(o.restore, sysctx_text::RestoreAll(), L"\xE777", kSysCtxRestoreAll, ready && v->undo_steps > 0);
 
     // ---- layer cards ----------------------------------------------------------
     DrawCtxLayerCards(o.local_card, o.system_card, true, hovered(kSysCtxLocalLayer), theme);
@@ -203,6 +223,8 @@ void MainRenderer::DrawSettingsSysCtx(const WindowViewModel& vm, const D2D1_RECT
                                     d.method.right - d.method.left - 20 * s, theme.text_secondary);
         button(d.copy, sysctx_text::CopyKey(), L"\xE8C8", kSysCtxDetailCopy, true);
         button(d.folder, sysctx_text::OpenFolder(), L"\xE838", kSysCtxDetailFolder, true);
+        button(d.remove, row.deleting ? sysctx_text::KeepLeftover() : sysctx_text::DeleteLeftover(),
+               row.deleting ? L"\xE7A7" : L"\xE74D", kSysCtxDetailDelete, ready);
     };
 
     // ---- scene list ------------------------------------------------------------
@@ -271,8 +293,10 @@ void MainRenderer::DrawSettingsSysCtx(const WindowViewModel& vm, const D2D1_RECT
         const float title_w = CellTextWidth(head_title, false) * 1.08f + 4 * s;
         painter_.DrawText(head_title, D2D1::RectF(h.left + 14 * s, h.top, h.left + 14 * s + title_w, h.bottom),
                           title_format, theme.text);
-        painter_.DrawText(head_keys, D2D1::RectF(h.left + 24 * s + title_w, h.top, o.refresh.left - 8 * s, h.bottom),
+        const float keys_right = (o.clean.right > o.clean.left ? o.clean.left : o.refresh.left) - 8 * s;
+        painter_.DrawText(head_keys, D2D1::RectF(h.left + 24 * s + title_w, h.top, keys_right, h.bottom),
                           compositor_->SmallFormat(), theme.text_secondary);
+        button(o.clean, sysctx_text::Clean(v->leftovers), L"\xE74D", kSysCtxClean, ready);
         {
             fluent::ControlState state{};
             state.enabled = ready;
@@ -454,7 +478,7 @@ void MainRenderer::DrawSettingsSysCtx(const WindowViewModel& vm, const D2D1_RECT
                 painter_.FillRoundedRect(r, 8 * s, theme.fill_selected);
                 painter_.StrokeRoundedRect(r, 8 * s, theme.stroke_card, 1);
             } else if (hovered(kSysCtxSelectBase + static_cast<int>(i)) || hovered(kSysCtxRowBase + static_cast<int>(i)) ||
-                       hovered(kSysCtxMoreBase + static_cast<int>(i))) {
+                       hovered(kSysCtxMoreBase + static_cast<int>(i)) || hovered(kSysCtxRemoveBase + static_cast<int>(i))) {
                 painter_.FillRoundedRect(r, 8 * s, theme.fill_hover);
             }
             if (row.pending)
@@ -470,7 +494,23 @@ void MainRenderer::DrawSettingsSysCtx(const WindowViewModel& vm, const D2D1_RECT
                 painter_.DrawButton({o.more[i], {}, L"\xE712", fluent::ButtonKind::Transparent, state, true});
             }
             float badge_right = o.switches[i].left - 10 * s;
-            if (SysCtxSwitchable(row)) {
+            if (row.deletable && i < o.removes.size()) {
+                // Leftover: 删除 (red) in the switch's place; 撤回 once queued.
+                const D2D1_RECT_F& b = o.removes[i];
+                fluent::ControlState state{};
+                state.enabled = ready;
+                state.hovered = ready && hovered(kSysCtxRemoveBase + static_cast<int>(i));
+                fluent::ButtonSpec spec{b, row.deleting ? sysctx_text::RowKeep() : sysctx_text::RowDelete(),
+                                        row.deleting ? L"\xE7A7" : L"\xE74D",
+                                        row.deleting ? fluent::ButtonKind::Standard : fluent::ButtonKind::Danger, state};
+                spec.skip_glyph = true;
+                painter_.DrawButton(spec);
+                const float bm = (b.top + b.bottom) * 0.5f;
+                DrawIconText(b.left + 8 * s, bm - 10 * s, 20 * s, 20 * s, row.deleting ? L"\xE7A7" : L"\xE74D", L"",
+                             !ready ? theme.text_disabled : row.deleting ? theme.text : D2D1::ColorF(D2D1::ColorF::White),
+                             0.62f);
+                badge_right = b.left - 10 * s;
+            } else if (SysCtxSwitchable(row)) {
                 fluent::ControlState state{};
                 state.checked = row.on;
                 state.enabled = ready;
@@ -500,17 +540,27 @@ void MainRenderer::DrawSettingsSysCtx(const WindowViewModel& vm, const D2D1_RECT
             };
             if (row.machine) badge(sysctx_text::Admin(), fluent::BadgeKind::Warning);
             else if (SysCtxSwitchable(row)) badge(sysctx_text::NoAdmin(), fluent::BadgeKind::Success);
+            // Queued state first: it must not be the badge that runs out of room.
+            if (row.deleting) badge(sysctx_text::WillDelete(), fluent::BadgeKind::Danger);
+            else if (row.pending) badge(sysctx_text::Queued(), fluent::BadgeKind::Accent);
             if (row.extended) badge(sysctx_text::Shift(), fluent::BadgeKind::Keycap);
             if (row.place != kSysCtxZoneDefault) badge(sysctx_text::Zone(row.place), fluent::BadgeKind::Neutral);
             if (row.default_hidden) badge(sysctx_text::DefaultHidden(), fluent::BadgeKind::Neutral);
             if (row.pulse == 2) badge(sysctx_text::PulseHidden(), fluent::BadgeKind::Neutral);
-            if (row.missing) badge(sysctx_text::Missing(), fluent::BadgeKind::Danger);
-            if (row.pending) badge(sysctx_text::Queued(), fluent::BadgeKind::Accent);
+            if (row.missing && !row.deleting) badge(sysctx_text::Missing(), fluent::BadgeKind::Danger);
 
             const float text_right = (std::max)(text_left + 40 * s, badge_right - 6 * s);
-            const D2D1_COLOR_F title_color = row.missing ? red : row.on ? theme.text : theme.text_secondary;
+            const D2D1_COLOR_F title_color = row.deleting ? theme.text_secondary : row.missing ? red
+                                           : row.on ? theme.text : theme.text_secondary;
             painter_.DrawText(row.title, D2D1::RectF(text_left, r.top + 7 * s, text_right, mid + 2 * s),
                               compositor_->TextFormat(), title_color);
+            if (row.deleting) {
+                // Struck through until 应用更改 removes it.
+                const float tw = (std::min)(CellTextWidth(row.title, false), text_right - text_left);
+                const float ty = r.top + 7 * s + (mid + 2 * s - r.top - 7 * s) * 0.5f;
+                painter_.FillRoundedRect(D2D1::RectF(text_left, ty - 0.5f * s, text_left + tw, ty + 0.5f * s), 0,
+                                         theme.text_secondary);
+            }
             painter_.DrawText(row.subtitle, D2D1::RectF(text_left, mid + 1 * s, text_right, r.top + rh - 6 * s),
                               compositor_->SmallFormat(), theme.text_secondary);
             if (!o.wide && static_cast<int>(i) == v->selected) {
@@ -699,7 +749,7 @@ void MainRenderer::DrawSettingsSysCtx(const WindowViewModel& vm, const D2D1_RECT
         } else {
             painter_.DrawText(sysctx_text::PendingTitle(v->pending), D2D1::RectF(box.right + 12 * s, mid - 19 * s, text_right, mid + 1 * s),
                               title_format, theme.text);
-            painter_.DrawText(sysctx_text::PendingCaption(), D2D1::RectF(box.right + 12 * s, mid + 1 * s, text_right, mid + 19 * s),
+            painter_.DrawText(sysctx_text::PendingCaption(*v), D2D1::RectF(box.right + 12 * s, mid + 1 * s, text_right, mid + 19 * s),
                               compositor_->SmallFormat(), theme.text_secondary);
         }
         button(o.discard, sysctx_text::Discard(), {}, kSysCtxDiscard, ready);
