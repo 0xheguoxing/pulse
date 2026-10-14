@@ -1047,7 +1047,7 @@ void DispatchMenuCommand(AppState& s, int cmd) {
 }
 
 bool ClipboardHasFiles() {
-    return IsClipboardFormatAvailable(CF_HDROP) != 0;
+    return ops::ClipboardHasPasteableFiles();
 }
 
 void ApplyWorkspacePinLabel(std::vector<ui::FluentMenuItem>& items, AppState& s) {

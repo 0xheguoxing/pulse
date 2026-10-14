@@ -1,5 +1,6 @@
 // clipboard.cpp — CF_HDROP + CFSTR_PREFERREDDROPEFFECT interop.
 #include "clipboard.h"
+#include "../common/path_utils.h"
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -146,6 +147,45 @@ bool ReadClipboard(ClipboardData& out) {
     }
     CloseClipboard();
     if (ok) out.sequence = GetClipboardSequenceNumber();
+    return ok;
+}
+
+bool PasteShellClipboard(const std::wstring& dir) {
+    IDataObject* data = nullptr;
+    if (FAILED(OleGetClipboard(&data)) || !data) return false;
+    IDropTarget* drop = nullptr;
+    IShellItem* folder = nullptr;
+    // The shell does not parse Pulse's \\?\ form.
+    if (SUCCEEDED(SHCreateItemFromParsingName(path::StripExtendedPathPrefix(dir).c_str(), nullptr,
+                                              IID_PPV_ARGS(&folder)))) {
+        folder->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&drop));
+        folder->Release();
+    }
+    bool ok = false;
+    if (drop) {
+        // A cut moves, as in Explorer; anything else copies.
+        DWORD effect = DROPEFFECT_COPY;
+        FORMATETC fmt{ static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT)),
+                       nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+        STGMEDIUM medium{};
+        if (SUCCEEDED(data->GetData(&fmt, &medium))) {
+            if (const DWORD* preferred = static_cast<const DWORD*>(GlobalLock(medium.hGlobal))) {
+                if (PreferredEffectIsCut(*preferred)) effect = DROPEFFECT_MOVE;
+                GlobalUnlock(medium.hGlobal);
+            }
+            ReleaseStgMedium(&medium);
+        }
+        const DWORD wanted = effect;
+        POINTL pt{ 0, 0 };
+        if (SUCCEEDED(drop->DragEnter(data, MK_LBUTTON, pt, &effect)) && (effect & wanted)) {
+            effect = wanted;
+            ok = SUCCEEDED(drop->Drop(data, MK_LBUTTON, pt, &effect));
+        } else {
+            drop->DragLeave();
+        }
+        drop->Release();
+    }
+    data->Release();
     return ok;
 }
 

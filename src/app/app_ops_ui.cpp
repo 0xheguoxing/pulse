@@ -199,6 +199,9 @@ void PasteIntoCurrent(AppState& s) {
     if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path) || tab->net_readonly) return;
     ops::ClipboardData cb;
     const bool clipboard_files = ops::ReadClipboard(cb);
+    // Virtual files (Remote Desktop, a zip, Outlook) are a newer copy too and
+    // beat the tray batch like any other clipboard files (#109).
+    const bool shell_files = !clipboard_files && ops::ClipboardHasShellFiles();
     if (!s.tray.batches().empty()) {
         const size_t idx = s.tray.batches().size() - 1;
         const app::TrayBatch& newest = s.tray.batches()[idx];
@@ -208,7 +211,7 @@ void PasteIntoCurrent(AppState& s) {
         app::PasteChoiceInput choice;
         choice.batch_paths = &batch_paths;
         choice.batch_move = newest.move_intent;
-        choice.clipboard_has_files = clipboard_files;
+        choice.clipboard_has_files = clipboard_files || shell_files;
         choice.clipboard_paths = &cb.paths;
         choice.clipboard_cut = cb.cut;
         choice.clipboard_written_for_batch = clipboard_files && s.trayClipboardSequence != 0 &&
@@ -225,6 +228,8 @@ void PasteIntoCurrent(AppState& s) {
         req.dest_dir = tab->current_path;
         for (auto& p : cb.paths) req.sources.push_back(fs::NormalizePath(p));
         if (SubmitWithConflictResolution(s, std::move(req)) && cb.cut) TrackCutClipboard(s, cb);
+    } else if (shell_files) {
+        ops::PasteShellClipboard(tab->current_path);
     }
 }
 

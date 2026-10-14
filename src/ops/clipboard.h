@@ -1,5 +1,6 @@
 // clipboard.h — System clipboard interop with Explorer (CF_HDROP + drop effect).
 #pragma once
+#include <windows.h>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -27,6 +28,25 @@ bool WriteClipboardText(const std::wstring& text);
 
 // Reads an Explorer copy/cut (CF_HDROP). Returns false if no files present.
 bool ReadClipboard(ClipboardData& out);
+
+// Files with no path to read: copied out of a zip, a Remote Desktop session,
+// Outlook... They come as Shell IDList Array / FileGroupDescriptorW (virtual
+// files) without CF_HDROP, so ReadClipboard sees nothing (#109). Inline:
+// the view model reads it in targets that do not link this file.
+inline bool ClipboardHasShellFiles() {
+    return IsClipboardFormatAvailable(RegisterClipboardFormatW(L"Shell IDList Array")) ||
+           IsClipboardFormatAvailable(RegisterClipboardFormatW(L"FileGroupDescriptorW"));
+}
+
+// Ctrl+V has something to paste: paths, or the shell formats above.
+inline bool ClipboardHasPasteableFiles() {
+    return IsClipboardFormatAvailable(CF_HDROP) || ClipboardHasShellFiles();
+}
+
+// Pastes the clipboard into `dir` the way Explorer does: a simulated drop on
+// the folder's shell drop target, which writes virtual files out and shows
+// its own progress. For what ReadClipboard cannot read. UI thread (OLE).
+bool PasteShellClipboard(const std::wstring& dir);
 
 // Clears a completed cut only if the clipboard still contains the exact cut
 // captured by ReadClipboard. This never clears a newer clipboard value.

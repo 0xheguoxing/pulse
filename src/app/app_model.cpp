@@ -11,6 +11,7 @@
 #include "../common/path_utils.h"
 #include "../common/display_path.h"
 #include "../common/text_format.h"
+#include "../ops/clipboard.h"
 #include <commctrl.h>
 #include <prsht.h>
 #include <shlobj.h>
@@ -1951,7 +1952,7 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
     vm.can_go_back = tab->CanGoBack();
     vm.can_go_forward = tab->CanGoForward();
     vm.paste_target = !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path) && !tab->net_readonly;
-    vm.clipboard_files = IsClipboardFormatAvailable(CF_HDROP) != 0;
+    vm.clipboard_files = ops::ClipboardHasPasteableFiles();
 
     FillPaneViewModel(vm.pane, pane, places);
     vm.pane.focused = focused;
