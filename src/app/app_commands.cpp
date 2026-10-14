@@ -18,6 +18,7 @@
 #include "../ui/file_operation_dialog.h"
 #include "../ui/folder_picker_dialog.h"
 #include "../ui/batch_rename_dialog.h"
+#include "../ui/toolbar_customize_dialog.h"
 #include "../ui/advanced_search_dialog.h"
 #include "../ui/quick_preview_window.h"
 #include "../ui/typography.h"
@@ -114,6 +115,11 @@ void CopySelectedPath(AppState& s) {
 void CreateNewItem(AppState& s, bool folder) {
     app::Tab* tab = ActiveTab(s);
     if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path) || tab->net_readonly) return;
+    // 自定义工具栏 "remember the last type": the New button follows what was made last.
+    if (s.appPrefs.toolbar_last_new != (folder ? 0 : 1)) {
+        s.appPrefs.toolbar_last_new = folder ? 0 : 1;
+        if (!s.isolatedTest) s.appPrefs.Save();
+    }
     std::wstring name = folder
         ? app::UniqueChildName(tab->current_path,
             l10n::Get(l10n::StringId::NewFolder), L"")
@@ -128,6 +134,38 @@ void CreateNewItem(AppState& s, bool folder) {
     const auto task_id = s.ops.Submit(std::move(req));
     app::QueueCreateRenameIntent(tab->create_rename_intents, task_id,
         tab->current_path, tab->view_generation);
+}
+
+namespace {
+bool CanCreateHere(const app::Tab* tab) {
+    return tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path) && !tab->net_readonly;
+}
+
+std::wstring JoinChild(std::wstring dir, const std::wstring& name) {
+    if (!dir.ends_with(L"\\")) dir += L"\\";
+    return dir + name;
+}
+} // namespace
+
+// "新建 <type>.<ext>" from a template / data / nothing, then rename in place —
+// the same ops path and rename intent as 新建文本文档.
+void CreateNewFileItem(AppState& s, const std::wstring& stem, const std::wstring& ext,
+                       std::wstring template_file, std::vector<uint8_t> data) {
+    app::Tab* tab = ActiveTab(s);
+    if (!CanCreateHere(tab)) return;
+    ops::OpRequest req;
+    req.type = ops::OpType::CreateTextFile;
+    req.sources.push_back(JoinChild(tab->current_path, app::UniqueChildName(tab->current_path, stem, ext)));
+    req.template_file = std::move(template_file);
+    req.template_data = std::move(data);
+    const auto task_id = s.ops.Submit(std::move(req));
+    app::QueueCreateRenameIntent(tab->create_rename_intents, task_id,
+        tab->current_path, tab->view_generation);
+}
+
+void CreateNewMarkdown(AppState& s) {
+    CreateNewFileItem(s, TagLabel(l10n::StringId::NewItemNamed, l10n::Get(l10n::StringId::MarkdownDocument)),
+                      L".md", {}, {});
 }
 
 void QueueTagAds(AppState& s, std::vector<app::TagAdsUpdate> updates) {
@@ -916,12 +954,16 @@ void DispatchMenuCommand(AppState& s, int cmd) {
         break;
     case app::CmdNewFolder: CreateNewItem(s, true); break;
     case app::CmdNewTextFile: CreateNewItem(s, false); break;
+    case app::CmdNewMarkdownFile: CreateNewMarkdown(s); break;
     case app::CmdTags: {
         POINT point{};
         GetCursorPos(&point);
         ShowTagPicker(s, point);
         break;
     }
+    case app::CmdCustomizeToolbar:
+        ShowToolbarCustomize(s);
+        break;
     case app::CmdShortcutHelp:
         ui::ShowShortcutHelp(s.hwnd, s.darkMode, s.accentColor);
         break;
@@ -1490,6 +1532,14 @@ void ShowItemContextMenu(AppState& s, POINT screen_pt) {
     else if (cmd != app::CmdNone) DispatchMenuCommand(s, cmd);
 }
 
+namespace {
+// The 新建 entries, shared with the toolbar New menu (defined below).
+std::vector<app::sysctx::NewTemplate> NewTemplatesForMenu(AppState& s, bool wait = true);
+bool RunShellNewCommand(AppState& s, int cmd, const std::vector<app::sysctx::NewTemplate>& templates);
+void AppendBackgroundNewMenu(std::vector<ui::FluentMenuItem>& items,
+                             const std::vector<app::sysctx::NewTemplate>& templates);
+} // namespace
+
 void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     if (!EnsureMenu(s)) return;
     app::Tab* tab = ActiveTab(s);
@@ -1537,6 +1587,10 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     const auto quick_paths = QuickAccessTargets(tab, true);
     AppendQuickAccessCommand(s, base_items, quick_paths);
     app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs, app::BuiltinMenuSurface::Background);
+    const bool can_create_here = CanCreateHere(tab);
+    const auto new_templates = can_create_here ? NewTemplatesForMenu(s, false)
+                                               : std::vector<app::sysctx::NewTemplate>{};
+    if (can_create_here) AppendBackgroundNewMenu(base_items, new_templates);
     s.context_menu.OpenMenu(std::move(base_items));
     auto display = ExplorerMenu(s, s.context_menu.base_items());
 
@@ -1546,15 +1600,217 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     LogCtxTiming(s, cmd);
     if (HandleShellMenuCommand(s, cmd)) return;
     if (HandleQuickAccessCommand(s, cmd, quick_paths)) return;
+    if (RunShellNewCommand(s, cmd, new_templates)) return;
     if (cmd == app::CmdViewRecentChanges) { OpenChangeView(s, recent_changes_path); return; }
     if (cmd != app::CmdNone) DispatchMenuCommand(s, cmd);
 }
+
+namespace {
+struct ToolbarPinDef {
+    int command;
+    const wchar_t* glyph;
+    l10n::StringId label;
+    const wchar_t* shortcut;
+};
+// Bit i of AppPrefs::toolbar_pins pins kToolbarPins[i] (prototype PINNABLE;
+// 新建文件夹 is the New button itself and always shown).
+constexpr ToolbarPinDef kToolbarPins[] = {
+    {app::CmdNewTextFile, L"\xE8A5", l10n::StringId::NewTextDocument, L""},
+    {app::CmdCopyPath, L"\xE71B", l10n::StringId::CopyPath, L"Ctrl+Shift+C"},
+    {app::CmdOpenTerminal, L"\xE756", l10n::StringId::OpenInTerminal, L""},
+    {app::CmdProperties, L"\xE946", l10n::StringId::Properties, L"Alt+Enter"},
+    {app::CmdUndo, L"\xE7A7", l10n::StringId::Undo, L"Ctrl+Z"},
+};
+ui::FluentMenuItem CustomizeToolbarItem() {
+    ui::FluentMenuItem item;
+    item.command = app::CmdCustomizeToolbar;
+    item.text = l10n::Get(l10n::StringId::CustomizeToolbarMenu);
+    item.glyph = L"\xE9E9";   // Sliders: arrange the toolbar (not the pin of 固定)
+    return item;
+}
+} // namespace
+
+namespace {
+// Explorer's 新建 entries for the New menu. A full HKCR walk takes a moment,
+// so the first menu waits for it once; later menus show the last list and
+// refresh it in the background (installs / the system page show up next time).
+struct NewTemplateCache {
+    std::mutex mutex;
+    std::vector<app::sysctx::NewTemplate> list;
+    bool loaded = false;
+    std::atomic<bool> refreshing{false};
+};
+NewTemplateCache& NewTemplates() {
+    static NewTemplateCache cache;
+    return cache;
+}
+
+std::vector<app::sysctx::NewTemplate> LoadNewTemplates() {
+    app::sysctx::Roots roots;
+    roots.check_owner = false;
+    return app::sysctx::ListNewTemplates(roots);
+}
+
+// wait=false (the background menu, which must open at once): before the first
+// load has finished, no system rows this time and the load runs in the back.
+std::vector<app::sysctx::NewTemplate> NewTemplatesForMenu(AppState& s, bool wait) {
+    NewTemplateCache& cache = NewTemplates();
+    {
+        std::lock_guard<std::mutex> lock(cache.mutex);
+        if (cache.loaded || !wait) {
+            if (!cache.refreshing.exchange(true)) {
+                s.worker.EnqueueIo([] {
+                    const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+                    auto fresh = LoadNewTemplates();
+                    for (const auto& t : fresh) app::FileTypeMenuIcon(t.ext);
+                    NewTemplateCache& c = NewTemplates();
+                    {
+                        std::lock_guard<std::mutex> l(c.mutex);
+                        c.list = std::move(fresh);
+                        c.loaded = true;
+                    }
+                    c.refreshing = false;
+                    if (SUCCEEDED(com)) CoUninitialize();
+                });
+            }
+            return cache.list;
+        }
+    }
+    auto list = LoadNewTemplates();
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    cache.list = list;
+    cache.loaded = true;
+    return list;
+}
+
+void LaunchNewCommand(const std::wstring& command_line, const std::wstring& dir) {
+    wchar_t expanded[2048]{};
+    const DWORD n = ExpandEnvironmentStringsW(command_line.c_str(), expanded, ARRAYSIZE(expanded));
+    std::wstring line = n > 0 && n <= ARRAYSIZE(expanded) ? expanded : command_line;
+    STARTUPINFOW si{sizeof(si)};
+    PROCESS_INFORMATION pi{};
+    if (CreateProcessW(nullptr, line.data(), nullptr, nullptr, FALSE, 0, nullptr,
+                       dir.empty() ? nullptr : dir.c_str(), &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+}
+
+// One 新建 entry, the way Explorer makes it.
+void CreateFromNewTemplate(AppState& s, const app::sysctx::NewTemplate& t) {
+    app::Tab* tab = ActiveTab(s);
+    if (!CanCreateHere(tab)) return;
+    const std::wstring dir = tab->current_path;
+    const std::wstring stem = TagLabel(l10n::StringId::NewItemNamed, t.display);
+    if (_wcsicmp(t.ext.c_str(), L".lnk") == 0) {
+        // Explorer's shortcut creator: an empty .lnk (Explorer's 新建快捷方式
+        // name) handed to the classic wizard, which renames it on 完成 and
+        // removes it on 取消.
+        const std::wstring lnk_stem = l10n::Get(l10n::StringId::NewShortcutName);
+        const std::wstring full = JoinChild(dir, app::UniqueChildName(dir, lnk_stem, t.ext));
+        HANDLE file = CreateFileW(full.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return;
+        CloseHandle(file);
+        wchar_t system[MAX_PATH]{};
+        GetSystemDirectoryW(system, ARRAYSIZE(system));
+        LaunchNewCommand(L"\"" + std::wstring(system) + L"\\rundll32.exe\" appwiz.cpl,NewLinkHere " + full, dir);
+        return;
+    }
+    if (!t.command.empty() && t.template_file.empty() && t.data.empty() && !t.null_file) {
+        // Command-only entries (联系人 …) create the file themselves.
+        const std::wstring full = JoinChild(dir, app::UniqueChildName(dir, stem, t.ext));
+        std::wstring line = t.command;
+        const size_t at = line.find(L"%1");
+        if (at != std::wstring::npos) line.replace(at, 2, full);
+        else line += L" \"" + full + L"\"";
+        LaunchNewCommand(line, dir);
+        return;
+    }
+    CreateNewFileItem(s, stem, t.ext, t.template_file, t.data);
+}
+
+// Explorer's 新建 entries as menu rows: 快捷方式… joins Pulse's own rows, the
+// file types (with the icons Explorer shows) follow after a separator.
+void AppendShellNewRows(std::vector<ui::FluentMenuItem>& items,
+                        const std::vector<app::sysctx::NewTemplate>& templates, bool can_create) {
+    std::vector<ui::FluentMenuItem> system_rows;
+    for (size_t i = 0; i < templates.size() && i < static_cast<size_t>(app::kMaxShellNewItems); ++i) {
+        const auto& t = templates[i];
+        // Pulse's own rows already cover these.
+        if (_wcsicmp(t.ext.c_str(), L".txt") == 0 || _wcsicmp(t.ext.c_str(), L".md") == 0) continue;
+        ui::FluentMenuItem row;
+        row.command = app::CmdShellNewBase + static_cast<int>(i);
+        row.enabled = can_create;
+        if (_wcsicmp(t.ext.c_str(), L".lnk") == 0) {
+            row.text = t.display + L"\u2026";
+            row.glyph = L"\xE71B";
+            items.push_back(std::move(row));
+            continue;
+        }
+        row.text = t.display;
+        row.icon = app::FileTypeMenuIcon(t.ext);
+        row.glyph = L"\xE8A5";
+        system_rows.push_back(std::move(row));
+    }
+    if (!system_rows.empty()) {
+        if (!items.empty()) items.back().separator_after = true;
+        for (auto& row : system_rows) items.push_back(std::move(row));
+    }
+}
+
+bool RunShellNewCommand(AppState& s, int cmd, const std::vector<app::sysctx::NewTemplate>& templates) {
+    if (cmd < app::CmdShellNewBase || cmd >= app::CmdShellNewBase + app::kMaxShellNewItems) return false;
+    const size_t index = static_cast<size_t>(cmd - app::CmdShellNewBase);
+    if (index < templates.size()) CreateFromNewTemplate(s, templates[index]);
+    return true;
+}
+
+// The background menu's 新建 flyout: the toolbar New menu's rows, minus the
+// flat 新建文件夹 / 新建文本文档 rows the menu already shows (those stay
+// separately configurable on the 右键菜单 page), right after them.
+void AppendBackgroundNewMenu(std::vector<ui::FluentMenuItem>& items,
+                             const std::vector<app::sysctx::NewTemplate>& templates) {
+    bool has_folder = false, has_text = false;
+    size_t at = 0;
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (items[i].command == app::CmdNewFolder) { has_folder = true; at = i + 1; }
+        if (items[i].command == app::CmdNewTextFile) { has_text = true; at = i + 1; }
+    }
+    ui::FluentMenuItem header;
+    header.command = app::CmdNone;
+    header.text = l10n::Get(l10n::StringId::New);
+    header.glyph = L"\xE710";
+    for (auto& row : app::BuildNewMenu()) {
+        if ((row.command == app::CmdNewFolder && has_folder) || (row.command == app::CmdNewTextFile && has_text))
+            continue;
+        header.children.push_back(std::move(row));
+    }
+    AppendShellNewRows(header.children, templates, true);
+    if (header.children.empty()) return;
+    header.children.back().separator_after = false;
+    if (at > 0) {
+        header.separator_after = items[at - 1].separator_after;
+        items[at - 1].separator_after = false;
+    }
+    items.insert(items.begin() + static_cast<std::ptrdiff_t>(at), std::move(header));
+}
+} // namespace
 
 void ShowNewDropdown(AppState& s) {
     if (!EnsureMenu(s)) return;
     const auto anchor = s.renderer.NewCommandRect((float)s.compositor.Width()); POINT pt{(LONG)anchor.left, (LONG)anchor.bottom};
     ClientToScreen(s.hwnd, &pt);
-    int cmd = s.menu->TrackPopup(pt, app::BuildNewMenu());
+    auto items = app::BuildNewMenu();
+    // Prototype: Pulse's types, 快捷方式…, then what the system 新建 menu
+    // offers (with the file type icons Explorer shows), then 自定义工具栏.
+    const auto templates = NewTemplatesForMenu(s);
+    const bool can_create = CanCreateHere(ActiveTab(s));
+    for (auto& item : items) item.enabled = can_create;
+    AppendShellNewRows(items, templates, can_create);
+    items.back().separator_after = true;
+    items.push_back(CustomizeToolbarItem());
+    int cmd = s.menu->TrackPopup(pt, std::move(items));
+    if (RunShellNewCommand(s, cmd, templates)) return;
     if (cmd != app::CmdNone) DispatchMenuCommand(s, cmd);
 }
 
@@ -1956,48 +2212,289 @@ void ShowGroupDropdown(AppState& s) {
     }
 }
 
+std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
+    // Rebuilt only when the selection or the Pulse menu settings change: the
+    // item menu reads tag states and Quick Access targets of the selection.
+    struct Cache {
+        const AppState* state = nullptr;
+        const app::Tab* tab = nullptr;
+        std::wstring path;
+        std::vector<int> selected;   // the folder items depend on the whole selection
+        uint32_t hidden = 0;
+        uint32_t pins = 0;
+        app::BuiltinMenuOrder order;
+        std::vector<ui::SelectionChipAction> actions;
+    };
+    static Cache cache;
+    app::Tab* tab = ActiveTab(s);
+    if (!tab || tab->SelectedCount() == 0) return {};
+    std::vector<int> selected = tab->SelectedIndices();
+    app::BuiltinMenuOrder order = s.ctxMenuPrefs.BuiltinOrder(app::BuiltinMenuSurface::Item);
+    if (cache.state == &s && cache.tab == tab && cache.path == tab->current_path &&
+        cache.selected == selected && cache.hidden == s.ctxMenuPrefs.builtin_hidden && cache.order == order &&
+        cache.pins == s.appPrefs.toolbar_pins)
+        return cache.actions;
+    cache.state = &s;
+    cache.tab = tab;
+    cache.path = tab->current_path;
+    cache.selected = std::move(selected);
+    cache.hidden = s.ctxMenuPrefs.builtin_hidden;
+    cache.pins = s.appPrefs.toolbar_pins;
+    cache.order = std::move(order);
+    cache.actions.clear();
+    // The chip is its own surface: rows hidden from the right-click menu
+    // (Settings > Pulse menu) still belong here, so it reads the full item menu.
+    auto items = BuildFinderItemMenu(s, false, L"");
+    for (const auto& item : items) {
+        if (!item.enabled || item.command == app::CmdNone || !item.children.empty() ||
+            !item.quick_swatches.empty() || item.glyph.empty())
+            continue;
+        const app::BuiltinMenuItem builtin = app::BuiltinItemForCommand(item.command);
+        // Selection-only rows the item menu adds on its own (2+ items, two
+        // folders, search results) are not in the builtin catalog but belong here.
+        const bool selection_row = item.command == app::CmdBatchRename ||
+            item.command == app::CmdCompareSideBySide || item.command == app::CmdOpenPath;
+        if ((builtin == app::BuiltinMenuItem::Count && !selection_row) ||
+            builtin == app::BuiltinMenuItem::Undo || builtin == app::BuiltinMenuItem::SelectCommands)
+            continue;
+        // Already pinned to the toolbar (自定义工具栏): not twice in one row.
+        bool pinned = false;
+        for (size_t i = 0; i < std::size(kToolbarPins); ++i)
+            pinned = pinned || ((cache.pins & (1u << i)) && kToolbarPins[i].command == item.command);
+        if (pinned) continue;
+        ui::SelectionChipAction action;
+        action.command = item.command;
+        action.glyph = item.glyph;
+        action.label = item.text;
+        for (const wchar_t* tail : {L"...", L"\u2026"}) {
+            const std::wstring_view t{tail};
+            if (action.label.size() > t.size() && std::wstring_view{action.label}.ends_with(t))
+                action.label.resize(action.label.size() - t.size());
+        }
+        if (!item.shortcut.empty()) action.label += L" (" + item.shortcut + L")";
+        cache.actions.push_back(std::move(action));
+    }
+    // Prototype order (标签, 复制路径 first), the selection-only rows ahead of
+    // them; cut / copy / rename / delete already sit on the toolbar. Narrow
+    // windows drop actions from the end.
+    const auto rank = [](int command) {
+        static constexpr int kOrder[] = {
+            app::CmdBatchRename, app::CmdCompareSideBySide, app::CmdTags, app::CmdCopyPath,
+            app::CmdOpenInNewTab, app::CmdOpenPath, app::CmdPinQuickAccess, app::CmdUnpinQuickAccess,
+            app::CmdProperties, app::CmdOpenTerminal, app::CmdViewRecentChanges,
+            app::CmdPinWorkspace, app::CmdPinNetwork,
+        };
+        for (size_t i = 0; i < std::size(kOrder); ++i)
+            if (kOrder[i] == command) return static_cast<int>(i);
+        return static_cast<int>(std::size(kOrder));
+    };
+    std::stable_sort(cache.actions.begin(), cache.actions.end(),
+                     [&](const ui::SelectionChipAction& a, const ui::SelectionChipAction& b) {
+                         return rank(a.command) < rank(b.command);
+                     });
+    if (cache.actions.size() > static_cast<size_t>(ui::kSelChipMaxActions))
+        cache.actions.resize(static_cast<size_t>(ui::kSelChipMaxActions));
+    return cache.actions;
+}
+
+void RunToolbarSelectionAction(AppState& s, int action) {
+    app::Tab* tab = ActiveTab(s);
+    if (!tab || tab->SelectedCount() == 0 || action < 0) return;
+    if (action == ui::kSelChipClear) {
+        // Same as Esc in the list.
+        tab->ClearSelection();
+        s.clickCollapseIndex = -1;
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        return;
+    }
+    // Menus and pickers open under the clicked chip button.
+    const float width = static_cast<float>(s.compositor.Width());
+    const auto layout = s.renderer.ToolbarLayoutAt(width, s.renderer.NewButtonWidthPx(width - s.renderer.EffectiveSidebarWidth(width) < 600 * s.scale));
+    const auto actions = SelectionChipActions(s);
+    const auto chip = s.renderer.SelectionChipAt(layout, width, static_cast<int>(tab->SelectedCount()),
+                                                 static_cast<int>(actions.size()));
+    const D2D1_RECT_F button = chip.buttons[static_cast<size_t>(std::min(action, ui::kSelChipClear))];
+    POINT anchor{static_cast<LONG>(button.left), static_cast<LONG>(button.bottom)};
+    ClientToScreen(s.hwnd, &anchor);
+    if (action == ui::kSelChipMore) {
+        ShowItemContextMenu(s, anchor);
+        return;
+    }
+    if (action >= static_cast<int>(actions.size())) return;
+    const int cmd = actions[static_cast<size_t>(action)].command;
+    if (HandleQuickAccessCommand(s, cmd, QuickAccessTargets(tab, false))) return;
+    if (cmd == app::CmdTags) ShowTagPicker(s, anchor);
+    else DispatchMenuCommand(s, cmd);
+}
+
 void ShowToolbarMore(AppState& s) {
     if (!EnsureMenu(s)) return;
     auto* tab=ActiveTab(s);
     if (!tab) return;
-    std::vector<ui::FluentMenuItem> items;
-    const int commands[]={app::CmdCut,app::CmdCopy,app::CmdPaste,app::CmdRename,app::CmdDelete};
-    const l10n::StringId labels[]={l10n::StringId::Cut,l10n::StringId::Copy,l10n::StringId::Paste,
-        l10n::StringId::Rename,l10n::StringId::Delete};
-    const wchar_t* glyphs[]={L"\xE8C6",L"\xE8C8",L"\xE77F",L"\xE8AC",L"\xE74D"};
-    const wchar_t* shortcuts[]={L"Ctrl+X",L"Ctrl+C",L"Ctrl+V",L"F2",L"Delete"};
-    for (int i=0;i<5;++i) {
-        ui::FluentMenuItem item;
-        item.command=commands[i]; item.text=l10n::Get(labels[i]); item.glyph=glyphs[i];
-        item.shortcut=shortcuts[i];
-        item.enabled=i==2 || tab->SelectedCount()>0;
-        items.push_back(std::move(item));
-    }
-    items.back().separator_after=true;
-    ui::FluentMenuItem split;
-    split.text=l10n::Get(l10n::StringId::SplitLayout);
-    split.children=app::BuildSplitMenu(-1);
-    items.push_back(std::move(split));
-    ui::FluentMenuItem preview;
-    preview.command=app::CmdDetailsPanel;
-    preview.text=l10n::Get(l10n::StringId::DetailsPane);
-    preview.checked=s.showDetailsPanel;
-    items.push_back(std::move(preview));
-    ui::FluentMenuItem column;
-    column.command=app::CmdColumnLayout;
-    column.text=l10n::Get(l10n::StringId::ColumnLayout);
-    column.checked=tab->column_layout;
-    column.separator_after=true;
-    items.push_back(std::move(column));
-    items.push_back(app::BuildShortcutHints());
     const float width=static_cast<float>(s.compositor.Width());
     const float left=s.renderer.EffectiveSidebarWidth(width);
-    const auto layout=s.renderer.ToolbarLayoutAt(width,s.renderer.NewButtonWidthPx(true));
-    (void)left;
+    const auto layout=s.renderer.ToolbarLayoutAt(width,s.renderer.NewButtonWidthPx(width-left < 600*s.scale));
+    // More is always there (prototype note 5). Narrow windows also fold the
+    // file commands, the pinned commands and the pane buttons in here.
+    const bool narrow=layout.commands[0].right <= layout.commands[0].left;
+    const bool real_folder=!tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path);
+    std::vector<ui::FluentMenuItem> items;
+    if (narrow) {
+        const int commands[]={app::CmdCut,app::CmdCopy,app::CmdPaste,app::CmdRename,app::CmdDelete};
+        const l10n::StringId labels[]={l10n::StringId::Cut,l10n::StringId::Copy,l10n::StringId::Paste,
+            l10n::StringId::Rename,l10n::StringId::Delete};
+        const wchar_t* glyphs[]={L"\xE8C6",L"\xE8C8",L"\xE77F",L"\xE8AC",L"\xE74D"};
+        const wchar_t* shortcuts[]={L"Ctrl+X",L"Ctrl+C",L"Ctrl+V",L"F2",L"Delete"};
+        // Same rules as the toolbar buttons (ui_toolbar.cpp).
+        const bool can_paste=real_folder && !tab->net_readonly && (!s.tray.batches().empty() || ClipboardHasFiles());
+        for (int i=0;i<5;++i) {
+            ui::FluentMenuItem item;
+            item.command=commands[i]; item.text=l10n::Get(labels[i]); item.glyph=glyphs[i];
+            item.shortcut=shortcuts[i];
+            item.enabled=i==2 ? can_paste : i==3 ? tab->SelectedCount()==1 : tab->SelectedCount()>0;
+            items.push_back(std::move(item));
+        }
+    }
+    // Pinned commands without room on the toolbar (all of them when narrow).
+    const auto pins=ToolbarPinActions(s);
+    size_t pin=0;
+    for (size_t i=0;i<std::size(kToolbarPins) && pin<pins.size();++i) {
+        if (!(s.appPrefs.toolbar_pins & (1u<<i))) continue;
+        const size_t slot=pin++;
+        if (slot<layout.pins.size() && layout.pins[slot].right>layout.pins[slot].left) continue;
+        ui::FluentMenuItem item;
+        item.command=kToolbarPins[i].command; item.text=l10n::Get(kToolbarPins[i].label);
+        item.glyph=kToolbarPins[i].glyph; item.shortcut=kToolbarPins[i].shortcut;
+        item.enabled=pins[slot].enabled;
+        items.push_back(std::move(item));
+    }
+    if (!items.empty()) items.back().separator_after=true;
+    if (narrow) {
+        ui::FluentMenuItem split;
+        split.text=l10n::Get(l10n::StringId::SplitLayout);
+        split.children=app::BuildSplitMenu(-1);
+        items.push_back(std::move(split));
+        ui::FluentMenuItem preview;
+        preview.command=app::CmdDetailsPanel;
+        preview.text=l10n::Get(l10n::StringId::DetailsPane);
+        preview.checked=s.showDetailsPanel;
+        items.push_back(std::move(preview));
+        ui::FluentMenuItem column;
+        column.command=app::CmdColumnLayout;
+        column.text=l10n::Get(l10n::StringId::ColumnLayout);
+        column.checked=tab->column_layout;
+        column.separator_after=true;
+        items.push_back(std::move(column));
+    }
+    ui::FluentMenuItem select_all;
+    select_all.command=app::CmdSelectAll; select_all.text=l10n::Get(l10n::StringId::SelectAll);
+    select_all.glyph=L"\xE8B3"; select_all.shortcut=L"Ctrl+A";
+    select_all.enabled=tab->snapshot && tab->EntryCount()>0;
+    items.push_back(std::move(select_all));
+    ui::FluentMenuItem terminal;
+    terminal.command=app::CmdOpenTerminal; terminal.text=l10n::Get(l10n::StringId::OpenInTerminal);
+    terminal.glyph=L"\xE756"; terminal.enabled=real_folder;
+    items.push_back(std::move(terminal));
+    ui::FluentMenuItem properties;
+    properties.command=app::CmdProperties; properties.text=l10n::Get(l10n::StringId::Properties);
+    properties.glyph=L"\xE946"; properties.shortcut=L"Alt+Enter";
+    properties.enabled=tab->SelectedCount()>0;
+    properties.separator_after=true;
+    items.push_back(std::move(properties));
+    items.push_back(CustomizeToolbarItem());
+    items.push_back(app::BuildShortcutHints());
     POINT anchor{static_cast<LONG>(layout.overflow.left),static_cast<LONG>(layout.overflow.bottom)};
     ClientToScreen(s.hwnd,&anchor);
     const int cmd=s.menu->TrackPopup(anchor,items);
     if (cmd!=app::CmdNone) DispatchMenuCommand(s,cmd);
+}
+
+std::vector<ui::SelectionChipAction> ToolbarPinActions(AppState& s) {
+    std::vector<ui::SelectionChipAction> out;
+    const uint32_t pins = s.appPrefs.toolbar_pins;
+    const app::Tab* tab = ActiveTab(s);
+    if (!pins || !tab) return out;
+    const bool real_folder = !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path);
+    const bool has_selection = tab->SelectedCount() > 0;
+    for (size_t i = 0; i < std::size(kToolbarPins); ++i) {
+        if (!(pins & (1u << i))) continue;
+        const ToolbarPinDef& def = kToolbarPins[i];
+        ui::SelectionChipAction action;
+        action.command = def.command;
+        action.glyph = def.glyph;
+        action.label = l10n::Get(def.label);
+        if (*def.shortcut) action.label += std::wstring(L" (") + def.shortcut + L")";
+        switch (def.command) {
+        case app::CmdNewTextFile: action.enabled = real_folder && !tab->net_readonly; break;
+        case app::CmdCopyPath: action.enabled = has_selection || !tab->current_path.empty(); break;
+        case app::CmdOpenTerminal: action.enabled = real_folder; break;
+        case app::CmdProperties: action.enabled = has_selection; break;
+        default: action.enabled = s.ops.CanUndo(); break;
+        }
+        out.push_back(std::move(action));
+    }
+    return out;
+}
+
+void RunToolbarAction(AppState& s, bool pin, int index) {
+    if (!pin) {
+        RunToolbarSelectionAction(s, index);
+        return;
+    }
+    const auto pins = ToolbarPinActions(s);
+    if (index < 0 || index >= static_cast<int>(pins.size())) return;
+    const ui::SelectionChipAction& action = pins[static_cast<size_t>(index)];
+    if (action.enabled) DispatchMenuCommand(s, action.command);
+}
+
+bool ToolbarNewCreatesFolder(const AppState& s) {
+    return !(s.appPrefs.toolbar_new_primary == 1 && s.appPrefs.toolbar_last_new == 1);
+}
+
+void ShowToolbarCustomize(AppState& s) {
+    ui::ToolbarCustomizeSpec spec;
+    spec.title = l10n::Get(l10n::StringId::CustomizeToolbar);
+    spec.intro = l10n::Get(l10n::StringId::CustomizeToolbarIntro);
+    spec.primary_heading = l10n::Get(l10n::StringId::NewButtonPrimary);
+    spec.pin_heading = l10n::Get(l10n::StringId::PinToToolbar);
+    spec.done_text = l10n::Get(l10n::StringId::ToolbarDone);
+    spec.cancel_text = l10n::Get(l10n::StringId::Cancel);
+    const l10n::StringId primary[] = {l10n::StringId::NewPrimaryFolder, l10n::StringId::NewPrimaryLast,
+                                      l10n::StringId::NewPrimaryMenu};
+    for (int i = 0; i < 3; ++i) {
+        ui::ToolbarCustomizeRow row;
+        row.label = l10n::Get(primary[i]);
+        if (i == 0) row.caption = L"Ctrl+Shift+N";
+        row.checked = s.appPrefs.toolbar_new_primary == i;
+        spec.primary.push_back(std::move(row));
+    }
+    ui::ToolbarCustomizeRow folder;
+    folder.glyph = L"\xE8F4";
+    folder.label = l10n::Get(l10n::StringId::NewFolder);
+    folder.caption = l10n::Get(l10n::StringId::AlwaysShown);
+    folder.locked = true;
+    spec.pins.push_back(std::move(folder));
+    for (size_t i = 0; i < std::size(kToolbarPins); ++i) {
+        ui::ToolbarCustomizeRow row;
+        row.glyph = kToolbarPins[i].glyph;
+        row.label = l10n::Get(kToolbarPins[i].label);
+        row.caption = kToolbarPins[i].shortcut;
+        row.checked = (s.appPrefs.toolbar_pins & (1u << i)) != 0;
+        spec.pins.push_back(std::move(row));
+    }
+    if (!ui::ShowToolbarCustomizeDialog(s.hwnd, spec, s.darkMode, s.accentColor)) return;
+    int new_primary = 0;
+    for (size_t i = 0; i < spec.primary.size(); ++i)
+        if (spec.primary[i].checked) new_primary = static_cast<int>(i);
+    uint32_t pins = 0;
+    for (size_t i = 0; i < std::size(kToolbarPins) && i + 1 < spec.pins.size(); ++i)
+        if (spec.pins[i + 1].checked) pins |= 1u << i;
+    if (new_primary != s.appPrefs.toolbar_new_primary || pins != s.appPrefs.toolbar_pins) {
+        s.appPrefs.toolbar_new_primary = new_primary;
+        s.appPrefs.toolbar_pins = pins;
+        if (!s.isolatedTest) s.appPrefs.Save();
+    }
+    InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
 void ShowAdvancedSearch(AppState& s, bool require_scope) {

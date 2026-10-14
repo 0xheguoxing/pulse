@@ -913,6 +913,57 @@ int wmain(int argc, wchar_t** argv) {
         Check(collisionCopies >= 2, L"collision policy: keep both with automatic rename");
     }
 
+    // --- 新建 from a ShellNew entry (template file / data bytes) -------------
+    {
+        const auto ticks = [](const FILETIME& f) {
+            return (static_cast<uint64_t>(f.dwHighDateTime) << 32) | f.dwLowDateTime;
+        };
+        // An old, read-only template, like the ones under Program Files.
+        const std::wstring tpl = srcDir + L"\\shellnew-template.docx";
+        MakeFile(tpl, payload, sizeof(payload) - 1);
+        SYSTEMTIME old_time{2020, 1, 0, 1, 0, 0, 0, 0};
+        FILETIME old_file_time{};
+        SystemTimeToFileTime(&old_time, &old_file_time);
+        HANDLE tpl_handle = CreateFileW(tpl.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                        nullptr, OPEN_EXISTING, 0, nullptr);
+        if (tpl_handle != INVALID_HANDLE_VALUE) {
+            SetFileTime(tpl_handle, &old_file_time, &old_file_time, &old_file_time);
+            CloseHandle(tpl_handle);
+        }
+        SetFileAttributesW(tpl.c_str(), FILE_ATTRIBUTE_READONLY);
+
+        const std::wstring made = srcDir + L"\\new-from-template.docx";
+        ops::OpRequest req;
+        req.type = ops::OpType::CreateTextFile;
+        req.sources = { made };
+        req.template_file = tpl;
+        const auto created = RunOp(req);
+        WIN32_FILE_ATTRIBUTE_DATA info{};
+        const bool got = GetFileAttributesExW(made.c_str(), GetFileExInfoStandard, &info) != FALSE;
+        FILETIME now{};
+        GetSystemTimeAsFileTime(&now);
+        Check(got && created.last_error.empty(), L"新建 from a template creates the file");
+        Check(got && info.nFileSizeLow == sizeof(payload) - 1, L"template copy keeps the template bytes");
+        Check(got && !(info.dwFileAttributes & FILE_ATTRIBUTE_READONLY), L"template copy is not read-only");
+        Check(got && ticks(now) - ticks(info.ftLastWriteTime) < 10ull * 60 * 10000000,
+              L"template copy is dated now, not with the template's date");
+
+        const std::wstring made_data = srcDir + L"\\new-from-data.zip";
+        ops::OpRequest data_req;
+        data_req.type = ops::OpType::CreateTextFile;
+        data_req.sources = { made_data };
+        data_req.template_data = { 'P', 'K', 5, 6 };
+        RunOp(data_req);
+        WIN32_FILE_ATTRIBUTE_DATA data_info{};
+        Check(GetFileAttributesExW(made_data.c_str(), GetFileExInfoStandard, &data_info) &&
+              data_info.nFileSizeLow == 4, L"新建 from data bytes writes them");
+
+        SetFileAttributesW(tpl.c_str(), FILE_ATTRIBUTE_NORMAL);
+        DeleteFileW(tpl.c_str());
+        DeleteFileW(made.c_str());
+        DeleteFileW(made_data.c_str());
+    }
+
     // --- 4. Move ------------------------------------------------------------
     {
         RunOp(SimpleOp(ops::OpType::Move, { (srcDir + L"\\b.txt").c_str() }, dstDir.c_str()));

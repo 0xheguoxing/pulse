@@ -93,6 +93,21 @@ void ShowSortDropdown(AppState& s);
 // Toolbar "Group" button: the group-by choices on their own.
 void ShowGroupDropdown(AppState& s);
 void ShowToolbarMore(AppState& s);
+// Toolbar selection chip, linked to the Pulse item menu: the first plain
+// built-in commands of the item menu as the user configured it (order and
+// visibility from Settings > Pulse menu), cached per selection.
+std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s);
+// 0-2 quick action, ui::kSelChipMore the full item menu, ui::kSelChipClear clear.
+void RunToolbarSelectionAction(AppState& s, int action);
+// One entry for the click chain: a pinned command (pin) or a chip button.
+void RunToolbarAction(AppState& s, bool pin, int index);
+// Pinned toolbar commands (自定义工具栏) in toolbar order, enabled per state.
+std::vector<ui::SelectionChipAction> ToolbarPinActions(AppState& s);
+// The New button's main part makes a folder, unless "remember the last
+// type" last saw a text document.
+bool ToolbarNewCreatesFolder(const AppState& s);
+// The 自定义工具栏 sheet; Done saves app.json.
+void ShowToolbarCustomize(AppState& s);
 void ShowOmnibar(AppState& s, OmnibarMode mode);
 void ShowAdvancedSearch(AppState& s, bool require_scope = false);
 void ShowSearchFilterMenu(AppState& s, int chip, RECT control_rect);

@@ -3,6 +3,24 @@
 #include "pane_header_icons.h"
 
 namespace pulse::ui {
+namespace {
+std::wstring SelectionChipLabel(int count) {
+    wchar_t buf[64]{};
+    swprintf_s(buf,l10n::Get(l10n::StringId::SelectedCountFormat).c_str(),count);
+    return buf;
+}
+}
+float MainRenderer::SelectionChipLabelWidth(float width, int selected) const {
+    // Narrow windows show the buttons only, as in the prototype.
+    if (selected <= 0 || width-EffectiveSidebarWidth(width) < 700*scale_ || !compositor_ || !compositor_->SmallFormat())
+        return 0.0f;
+    return std::ceil(typography::MeasureLine(compositor_,compositor_->SmallFormat(),SelectionChipLabel(selected)));
+}
+ToolbarSelectionChip MainRenderer::SelectionChipAt(const ToolbarLayout& layout, float width, int selected,
+                                                   int action_count) const {
+    if (selected <= 0 || embedded_) return {};
+    return MakeToolbarSelectionChip(layout,scale_,SelectionChipLabelWidth(width,selected),action_count);
+}
 void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme) {
     auto* dc = compositor_->Dc();
     const float left = EffectiveSidebarWidth(rect.right);
@@ -85,11 +103,11 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     if (embedded_) return;
     // Split New button: the main part creates a folder (Ctrl+Shift+N), the
     // chevron segment opens the New menu. Each segment gets its own hover.
-    const std::wstring& label=l10n::Get(l10n::StringId::NewFolder);
+    const std::wstring label=NewButtonLabel();
     const D2D1_RECT_F newArrow=NewArrowSegment(layout.create,compact);
     fluent::ButtonSpec create;
     create.bounds=layout.create; create.text=compact ? std::wstring_view{} : std::wstring_view{label};
-    create.glyph=kNewFolderGlyph; create.kind=fluent::ButtonKind::Primary;
+    create.glyph=NewButtonGlyph(); create.kind=fluent::ButtonKind::Primary;
     create.drop_down=true;
     painter_.DrawButton(create);
     const bool newMainHot=IsHovered(vm,HitTestResult::NewButton);
@@ -116,7 +134,11 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         HitTestResult::Rename,HitTestResult::Delete,HitTestResult::SplitButton,HitTestResult::DetailsToggle,HitTestResult::PaneColumnLayout};
     for(int i=0;i<8;++i) {
         if (layout.commands[i].right <= layout.commands[i].left) continue;
-        const bool enabled=i==2 || i>=5 || vm.pane.selected_count>0;
+        // Prototype rules: cut / copy / delete need a selection, rename exactly
+        // one item, paste something to paste (clipboard files or a tray batch)
+        // and a folder that takes it.
+        const bool can_paste=vm.paste_target && (vm.clipboard_files || vm.tray_deck.batch_count>0);
+        const bool enabled=i>=5 || (i==2 ? can_paste : i==3 ? vm.pane.selected_count==1 : vm.pane.selected_count>0);
         const bool selected=(i==5 && vm.pane_slots.size()>1) || (i==6 && vm.details_visible) ||
             (i==7 && vm.pane.column_strip.enabled);
         DrawButton(layout.commands[i],theme,enabled && IsHovered(vm,hits[i]) ? theme.fill_hover :
@@ -144,6 +166,18 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         DrawButton(layout.overflow,theme,IsHovered(vm,HitTestResult::ToolbarMore) ? theme.fill_hover : kTransparent,
             L"\xE712",L"",theme.text_secondary,true,true);
     }
+    // Pinned commands (自定义工具栏), after a divider.
+    for (size_t i=0;i<layout.pins.size() && i<vm.toolbar_pins.size();++i) {
+        const D2D1_RECT_F b=layout.pins[i];
+        if (b.right <= b.left) continue;
+        const SelectionChipAction& pin=vm.toolbar_pins[i];
+        if (i==0) {
+            MakeBrush(dc,theme.stroke_divider,brStrokeDivider_);
+            FillRect(dc,brStrokeDivider_.get(),b.left-7*scale_,b.top+7*scale_,scale_,18*scale_);
+        }
+        DrawButton(b,theme,pin.enabled && IsHovered(vm,HitTestResult::ToolbarPin,static_cast<int>(i)) ? theme.fill_hover : kTransparent,
+            pin.glyph,L"",pin.enabled ? theme.text_secondary : theme.text_disabled,true,true);
+    }
     const auto command = [&](D2D1_RECT_F bounds, const wchar_t* glyph, l10n::StringId label,
                              HitTestResult::Region region, bool dropdown, float turn = 0.0f) {
         fluent::ButtonSpec button;
@@ -158,8 +192,16 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         button.state.hovered=IsHovered(vm,region);
         painter_.DrawButton(button);
     };
+    // Group dividers as in the prototype: after 新建, and between the view
+    // commands and the pane layout buttons.
     MakeBrush(dc,theme.stroke_divider,brStrokeDivider_);
-    FillRect(dc,brStrokeDivider_.get(),layout.sort.left-6*scale_,layout.sort.top+7*scale_,scale_,18*scale_);
+    if (layout.commands[0].right > layout.commands[0].left)
+        FillRect(dc,brStrokeDivider_.get(),layout.create.right+6*scale_,layout.create.top+7*scale_,scale_,18*scale_);
+    const D2D1_RECT_F view_tail=layout.group.right > layout.group.left ? layout.group : layout.filter;
+    const float pane_left=layout.commands[5].right > layout.commands[5].left ? layout.commands[5].left
+                        : layout.overflow.right > layout.overflow.left ? layout.overflow.left : 0.0f;
+    if (pane_left > view_tail.right+8*scale_)
+        FillRect(dc,brStrokeDivider_.get(),pane_left-7*scale_,layout.sort.top+7*scale_,scale_,18*scale_);
     // The shared drum picker turns the chevron of the button that opened it,
     // in step with its open/close fade.
     const float picker_open=group_wheel_.OpenAmount();
@@ -217,6 +259,44 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                     [&](const std::wstring& t){ return MeasureTextWidth(f,compositor_->TextFormat(),t); });
             }
             painter_.DrawText(group_label,text_rc,compositor_->TextFormat(),theme.accent);
+        }
+    }
+    // Selection context (prototype note 4): shows up after the file commands
+    // while something is selected and folds away with the selection.
+    const ToolbarSelectionChip sel=SelectionChipAt(layout,rect.right,vm.pane.selected_count,
+        static_cast<int>(vm.selection_actions.size()));
+    if (sel.chip.right > sel.chip.left) {
+        FillRect(dc,brStrokeDivider_.get(),sel.chip.left-7*scale_,sel.chip.top+7*scale_,scale_,18*scale_);
+        D2D1_COLOR_F fill=theme.accent;
+        fill.a*=0.10f;
+        painter_.FillRoundedRect(sel.chip,7*scale_,fill);
+        D2D1_COLOR_F edge=theme.accent;
+        edge.a*=0.28f;
+        ComPtr<ID2D1SolidColorBrush> edge_brush;
+        dc->CreateSolidColorBrush(edge,&edge_brush);
+        if (edge_brush.get()) {
+            const float h=0.5f*scale_;
+            dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(sel.chip.left+h,sel.chip.top+h,
+                sel.chip.right-h,sel.chip.bottom-h),7*scale_,7*scale_),edge_brush.get(),scale_);
+        }
+        if (sel.label.right > sel.label.left)
+            painter_.DrawText(SelectionChipLabel(vm.pane.selected_count),sel.label,compositor_->SmallFormat(),theme.accent);
+        D2D1_COLOR_F hot=theme.accent;
+        hot.a*=0.22f;
+        int last_action=-1;
+        for (int i=0;i<kSelChipSlots;++i) {
+            const D2D1_RECT_F b=sel.buttons[static_cast<size_t>(i)];
+            if (b.right <= b.left) continue;
+            if (i < kSelChipMore) last_action=i;
+            const std::wstring glyph=i==kSelChipMore ? std::wstring(L"\xE712")
+                : i==kSelChipClear ? std::wstring(kIconCloseSmall) : vm.selection_actions[static_cast<size_t>(i)].glyph;
+            DrawButton(b,theme,IsHovered(vm,HitTestResult::ToolbarSelAction,i) ? hot : kTransparent,
+                glyph,L"",theme.accent,true,true,i==kSelChipClear ? 0.6f : 0.85f);
+        }
+        if (last_action >= 0) {
+            // Quick actions | more and clear.
+            const D2D1_RECT_F b=sel.buttons[static_cast<size_t>(last_action)];
+            FillRect(dc,brStrokeDivider_.get(),b.right+4.5f*scale_,b.top+7*scale_,scale_,b.bottom-b.top-14*scale_);
         }
     }
 }

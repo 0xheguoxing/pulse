@@ -76,6 +76,10 @@ struct OpRequest {
     std::wstring dest_dir;    // Copy / Move
     std::wstring new_name;    // Rename, or explicit leaf name for a single-root Move
     std::vector<std::wstring> new_names; // BatchRename, parallel to sources
+    // CreateTextFile from a 新建 (ShellNew) entry: copy this template file, or
+    // write these bytes; neither = an empty file.
+    std::wstring template_file;
+    std::vector<uint8_t> template_data;
     CollisionPolicy collision_policy = CollisionPolicy::System; // Copy / Move
     bool is_undo = false;     // undo-originated ops do not re-enter the stack
     // Lock retry only: end these processes first (never journaled, so a

@@ -215,6 +215,14 @@ std::wstring LowerFirst(std::wstring text) {
 
 std::wstring Describe(const OpRequest& r) {
     std::wstring s = OpVerb(r.type);
+    // 新建 entries other than a text document: "新建 新建 Word 文档.docx" would
+    // repeat itself, and "新建文本文档" would be wrong.
+    if (r.type == OpType::CreateTextFile && !r.sources.empty()) {
+        const std::wstring name = FileName(r.sources.front());
+        const size_t dot = name.find_last_of(L'.');
+        if (dot == std::wstring::npos || _wcsicmp(name.c_str() + dot, L".txt") != 0)
+            s = l10n::Pick(L"创建", L"Create");
+    }
     if (r.type == OpType::EmptyRecycle) return s;
     s += L" ";
     if (!r.sources.empty()) s += FileName(r.sources.front());
@@ -351,19 +359,50 @@ std::wstring CreateFailureText(DWORD code) {
 // New folder / new text file: the same plain Win32 creation the Shell host
 // ran, done here so a busy, restarting or unreachable host can never leave a
 // new folder waiting with no progress. The UI already picked a unique name.
-bool CreateInProcess(OpType type, const std::wstring& path, std::wstring* error) {
+// 新建 entries (ShellNew) reuse the text-file path: a template file is copied
+// (CopyFile fails rather than overwrite), Data bytes are written, else the
+// file stays empty like NullFile.
+bool CreateInProcess(const OpRequest& req, std::wstring* error) {
+    const std::wstring path = req.sources.empty() ? std::wstring{} : req.sources.front();
     DWORD code = ERROR_SUCCESS;
     if (path.empty()) {
         code = ERROR_INVALID_NAME;
     } else if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
         code = ERROR_FILE_EXISTS;
-    } else if (type == OpType::CreateFolder) {
+    } else if (req.type == OpType::CreateFolder) {
         if (!CreateDirectoryW(path.c_str(), nullptr)) code = GetLastError();
+    } else if (!req.template_file.empty()) {
+        if (!CopyFileW(req.template_file.c_str(), path.c_str(), TRUE)) {
+            code = GetLastError();
+        } else {
+            // Templates under Program Files are often read-only, and CopyFile
+            // keeps the template's date; a new file is read-write and new.
+            const DWORD attrs = GetFileAttributesW(path.c_str());
+            if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_READONLY))
+                SetFileAttributesW(path.c_str(), attrs & ~FILE_ATTRIBUTE_READONLY);
+            HANDLE file = CreateFileW(path.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                      nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+            if (file != INVALID_HANDLE_VALUE) {
+                FILETIME now{};
+                GetSystemTimeAsFileTime(&now);
+                SetFileTime(file, &now, &now, &now);
+                CloseHandle(file);
+            }
+        }
     } else {
         HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
                                   CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (file == INVALID_HANDLE_VALUE) code = GetLastError();
-        else CloseHandle(file);
+        if (file == INVALID_HANDLE_VALUE) {
+            code = GetLastError();
+        } else {
+            DWORD written = 0;
+            const bool ok = req.template_data.empty() ||
+                (WriteFile(file, req.template_data.data(), static_cast<DWORD>(req.template_data.size()),
+                           &written, nullptr) && written == req.template_data.size());
+            if (!ok) code = GetLastError() ? GetLastError() : ERROR_WRITE_FAULT;
+            CloseHandle(file);
+            if (!ok) DeleteFileW(path.c_str());
+        }
     }
     if (code != ERROR_SUCCESS && error) *error = CreateFailureText(code);
     return code == ERROR_SUCCESS;
@@ -3056,8 +3095,7 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
 
     if (req.type == OpType::CreateFolder || req.type == OpType::CreateTextFile) {
         std::wstring local_error;
-        const bool created = CreateInProcess(req.type,
-            req.sources.empty() ? std::wstring{} : req.sources.front(), &local_error);
+        const bool created = CreateInProcess(req, &local_error);
         if (created) PushUndo(req, task_id);
         SetStatus([&](OpStatus& st) {
             st.active = false;

@@ -242,14 +242,17 @@ ToolbarLayout MainRenderer::ToolbarLayoutAt(float w, float create_width, float f
                                                  L"\xE8CB", true, scale_, 88.0f);
     const float filter_width = ToolbarCommandWidth(painter_, format, l10n::StringId::ToolbarFilter,
                                                    kIconFilter, false, scale_, 88.0f);
+    const float selection_span = selection_count_ > 0 && !embedded_
+        ? SelectionChipSpan(scale_, SelectionChipLabelWidth(w, selection_count_), selection_actions_) : 0.0f;
     if (!vertical_tabs_)
         return MakeToolbarLayout(w, scale_, title_bar_height_, margin_, create_width, left, filter_expand,
-                                 search_min_dip_, group_width, sort_width, filter_width);
+                                 search_min_dip_, group_width, sort_width, filter_width, pin_count_,
+                                 selection_span);
     // Command row directly under the title bar; address row centered in it,
     // stopping short of the settings button.
     ToolbarLayout out = MakeToolbarLayout(w, scale_, title_bar_height_ - 46.0f * scale_, margin_,
                                           create_width, left, filter_expand, 0.0f, group_width, sort_width,
-                                          filter_width);
+                                          filter_width, pin_count_, selection_span);
     const TitleChrome chrome = MakeTitleChrome(w, scale_, title_bar_height_);
     const float row_top = (title_bar_height_ - 36.0f * scale_) * 0.5f - 4.0f * scale_;
     const ToolbarLayout row = MakeToolbarLayout(chrome.settings_left - 4.0f * scale_, scale_, row_top,
@@ -342,6 +345,7 @@ D2D1_RECT_F MainRenderer::NewArrowRect(float w) const {
 // centred on the chevron that Painter::DrawButton places 8 DIP from the edge.
 D2D1_RECT_F MainRenderer::NewArrowSegment(const D2D1_RECT_F& create, bool compact) const {
     if (create.right <= create.left) return create;
+    if (new_primary_ == 2) return create;   // menu-only New: the whole button opens the menu
     const float arrow = (compact ? 28.0f : 32.0f) * scale_;
     return D2D1::RectF(std::max(create.left, create.right - arrow), create.top, create.right, create.bottom);
 }
@@ -350,8 +354,17 @@ float MainRenderer::NewButtonWidthPx(bool compact) const {
     // measuring. The full button labels the folder action and adds a gap so the
     // label never runs into the segment divider.
     if (compact) return (kCommandIconButtonDip + 28.0f) * scale_;
-    return painter_.MeasureButtonWidth(pulse::l10n::Get(pulse::l10n::StringId::NewFolder),
-        kNewFolderGlyph, true) + 12.0f * scale_;
+    return painter_.MeasureButtonWidth(NewButtonLabel(), NewButtonGlyph(), true) + 12.0f * scale_;
+}
+std::wstring MainRenderer::NewButtonLabel() const {
+    if (new_primary_ == 2) return pulse::l10n::Get(pulse::l10n::StringId::New);
+    if (new_primary_ == 1 && new_last_text_) return pulse::l10n::Get(pulse::l10n::StringId::NewTextDocument);
+    return pulse::l10n::Get(pulse::l10n::StringId::NewFolder);
+}
+const wchar_t* MainRenderer::NewButtonGlyph() const {
+    if (new_primary_ == 2) return L"\xE710";                       // Add
+    if (new_primary_ == 1 && new_last_text_) return L"\xE8A5";     // Document
+    return kNewFolderGlyph;
 }
 
 std::vector<BreadcrumbSegment> SplitBreadcrumb(const std::wstring& path) {

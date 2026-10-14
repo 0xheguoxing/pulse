@@ -2510,6 +2510,11 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
         }
         s.renderer.SetToolbarGroup(toolbar_group);
     }
+    if (vm.pane.selected_count > 0) vm.selection_actions = SelectionChipActions(s);
+    s.renderer.SetToolbarSelection(vm.pane.selected_count, static_cast<int>(vm.selection_actions.size()));
+    vm.toolbar_pins = ToolbarPinActions(s);
+    s.renderer.SetToolbarPrefs(s.appPrefs.toolbar_new_primary, s.appPrefs.toolbar_last_new == 1,
+                               static_cast<int>(vm.toolbar_pins.size()));
     return vm;
 }
 
@@ -2646,7 +2651,8 @@ std::wstring TooltipForHover(AppState& s) {
     case R::NavForward: return text(I::Forward);
     case R::NavUp: return text(I::Up);
     case R::NavRefresh: return text(I::Refresh);
-    case R::NewButton: return text(I::NewFolder) + L" (Ctrl+Shift+N)";
+    case R::NewButton:
+        return ToolbarNewCreatesFolder(s) ? text(I::NewFolder) + L" (Ctrl+Shift+N)" : text(I::NewTextDocument);
     case R::NewButtonArrow: return text(I::New);
     case R::Cut: return text(I::CutShortcut);
     case R::Copy: return text(I::CopyShortcut);
@@ -2660,7 +2666,20 @@ std::wstring TooltipForHover(AppState& s) {
     case R::ToolbarSort: return text(I::SortBy);
     case R::ToolbarGroup: return text(I::GroupBy);
     case R::ToolbarGroupClear: return text(I::GroupClear);
-    case R::ToolbarMore: return text(I::More);
+    case R::ToolbarMore: return text(I::MoreCustomizeToolbar);
+    case R::ToolbarPin: {
+        const auto pins = ToolbarPinActions(s);
+        return s.hoverControlIndex >= 0 && s.hoverControlIndex < static_cast<int>(pins.size())
+            ? pins[static_cast<size_t>(s.hoverControlIndex)].label : std::wstring{};
+    }
+    case R::ToolbarSelAction: {
+        if (s.hoverControlIndex == ui::kSelChipMore) return text(I::MoreActions);
+        if (s.hoverControlIndex == ui::kSelChipClear) return text(I::ClearSelectionEsc);
+        if (s.hoverControlIndex < 0) return L"";
+        const auto actions = SelectionChipActions(s);
+        return s.hoverControlIndex < static_cast<int>(actions.size())
+            ? actions[static_cast<size_t>(s.hoverControlIndex)].label : std::wstring{};
+    }
     case R::PaneColumnLayout: return text(I::ColumnLayout);
     case R::PaneViewButton: return text(I::More);
     case R::FilterBox: return text(s.appPrefs.show_hints ? I::TipxFilter : I::FilterCurrent);

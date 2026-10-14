@@ -672,6 +672,12 @@ struct WindowViewModel {
 
     bool can_go_back = false;
     bool can_go_forward = false;
+    bool paste_target = false;      // current folder is real and writable (toolbar paste)
+    bool clipboard_files = false;   // CF_HDROP on the clipboard (refreshed on WM_CLIPBOARDUPDATE)
+    // Toolbar selection chip: leading commands of the Pulse item menu.
+    std::vector<SelectionChipAction> selection_actions;
+    // Pinned toolbar commands (自定义工具栏), enabled per the current state.
+    std::vector<SelectionChipAction> toolbar_pins;
 
     PaneViewModel pane;
     std::vector<PaneSlotView> pane_slots;
@@ -954,6 +960,8 @@ struct HitTestResult {
         PaneDetails,
         ToolbarSort,
         ToolbarMore,
+        ToolbarSelAction,   // selection chip: quick actions, kSelChipMore, kSelChipClear, -1 chip body
+        ToolbarPin,         // pinned command (自定义工具栏): index into vm.toolbar_pins
         AddressBar,
         AddressSearch,
         AddressSearchInput,
@@ -1204,10 +1212,29 @@ public:
     float SidebarFullWidth(float window_width) const;
     // Toolbar geometry honoring the vertical-tabs split (row 1 in the title bar).
     ToolbarLayout ToolbarLayoutAt(float w, float create_width, float filter_expand = 0.0f) const;
+    // Selection chip of the toolbar (empty while nothing is selected).
+    ToolbarSelectionChip SelectionChipAt(const ToolbarLayout& layout, float width, int selected,
+                                         int action_count) const;
     // 0 = default width; otherwise the minimum search field width in DIP.
     void SetSearchBarMinWidth(float dip) { search_min_dip_ = dip; }
     // Toolbar "Group" button: -1 hidden, 0 not grouped, 1..4 app::GroupBy value.
     void SetToolbarGroup(int group_by) { toolbar_group_ = group_by; }
+    // 自定义工具栏: the New button's main action (0 folder, 1 the type made
+    // last, 2 menu only), whether that last type was a text document, and how
+    // many commands are pinned.
+    void SetToolbarPrefs(int new_primary, bool last_text, int pin_count) {
+        new_primary_ = new_primary;
+        new_last_text_ = last_text;
+        pin_count_ = pin_count;
+    }
+    // Selection chip input for the toolbar layout (the row reserves its room).
+    void SetToolbarSelection(int selected, int action_count) {
+        selection_count_ = selected;
+        selection_actions_ = action_count;
+    }
+    float SelectionChipLabelWidth(float width, int selected) const;
+    std::wstring NewButtonLabel() const;
+    const wchar_t* NewButtonGlyph() const;
     int ToolbarGroup() const { return toolbar_group_; }
     // Drum "Group by" picker drawn over everything (app/group_wheel_ui.cpp).
     GroupWheel& GroupWheelPicker() { return group_wheel_; }
@@ -1755,6 +1782,11 @@ private:
     bool vertical_tabs_ = false;
     float search_min_dip_ = 0.0f;
     int toolbar_group_ = -1;
+    int new_primary_ = 0;
+    bool new_last_text_ = false;
+    int pin_count_ = 0;
+    int selection_count_ = 0;
+    int selection_actions_ = 0;
     bool sidebar_collapsed_ = false;
     bool sidebar_peek_ = false;
     bool collapse_anim_ = false;

@@ -375,12 +375,33 @@ void ContextMenuController::WaitUntilReady(
     }
 }
 
+namespace {
+// Pulse's own 新建 flyout (the toolbar New menu's rows) is in the base menu.
+bool HasPulseNewMenu(const std::vector<ui::FluentMenuItem>& base_items) {
+    for (const auto& row : base_items) {
+        for (const auto& child : row.children) {
+            if (child.command == CmdNewMarkdownFile ||
+                (child.command >= CmdShellNewBase && child.command < CmdShellNewBase + kMaxShellNewItems))
+                return true;
+        }
+    }
+    return false;
+}
+
+// Explorer's 新建 submenu (Directory\Background\shellex\ContextMenuHandlers\New).
+bool IsNativeNewEntry(const ShellMenuEntry& entry) {
+    return _wcsicmp(entry.clsid.c_str(), L"{D969A300-E7FF-11d0-A93B-00A0C90F2719}") == 0;
+}
+} // namespace
+
 std::vector<ui::FluentMenuItem> ContextMenuController::BuildDisplay(
     ContextMenuPrefs& prefs, const std::vector<ui::FluentMenuItem>& base_items,
     bool& prefs_changed) const {
     std::vector<ui::FluentMenuItem> display = base_items;
-    AppendShellSection(display, ApplyExplorerPrefs(
-        prefs, ComposeEntries(prefs, prefs_changed)));
+    auto entries = ComposeEntries(prefs, prefs_changed);
+    // The same entries already sit in Pulse's 新建 flyout; one 新建 is enough.
+    if (HasPulseNewMenu(base_items)) std::erase_if(entries, IsNativeNewEntry);
+    AppendShellSection(display, ApplyExplorerPrefs(prefs, std::move(entries)));
     ui::FluentMenuItem manage;
     manage.command = CmdSettingsContextMenu;
     manage.text = pulse::l10n::Get(pulse::l10n::StringId::ManageContext);

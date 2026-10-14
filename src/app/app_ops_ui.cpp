@@ -583,7 +583,7 @@ void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog) {
             const bool folder = status.type == ops::OpType::CreateFolder;
             const bool file = status.type == ops::OpType::CreateTextFile;
             const std::wstring title = l10n::Get(folder ? l10n::StringId::CannotCreateFolder
-                : file ? l10n::StringId::CannotCreateTextFile : l10n::StringId::CannotRename);
+                : file ? l10n::StringId::CannotCreateFile : l10n::StringId::CannotRename);
             std::wstring message;
             const std::wstring& err = status.last_error;
             const bool no_access = ErrorHas(err, L"没有权限")

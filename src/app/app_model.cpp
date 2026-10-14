@@ -1950,6 +1950,8 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
     vm.dark = dark;
     vm.can_go_back = tab->CanGoBack();
     vm.can_go_forward = tab->CanGoForward();
+    vm.paste_target = !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path) && !tab->net_readonly;
+    vm.clipboard_files = IsClipboardFormatAvailable(CF_HDROP) != 0;
 
     FillPaneViewModel(vm.pane, pane, places);
     vm.pane.focused = focused;

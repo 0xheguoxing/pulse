@@ -2644,7 +2644,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
                    hit.region == ui::HitTestResult::NewButtonArrow) {
             // Split New button: main part creates a folder (inline rename), chevron opens the menu.
             // One branch on purpose: this else-if chain is at MSVC's nesting limit (C1061).
-            if (hit.region == ui::HitTestResult::NewButton) CreateNewItem(*s, true);
+            if (hit.region == ui::HitTestResult::NewButton) CreateNewItem(*s, ToolbarNewCreatesFolder(*s));
             else ShowNewDropdown(*s);
         } else if (hit.region == ui::HitTestResult::BreadcrumbSegment) {
             // The trailing search segment edits the query instead of reloading it.
@@ -2652,8 +2652,12 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             if (active && hit.path == active->current_path && IsAddressSearchResults(active)) ShowAddressSearch(*s);
             // Empty path is the This PC segment; NavigateTo handles it.
             else NavigateTo(*s, hit.path);
-        } else if (hit.region == ui::HitTestResult::Copy) {
-            CollectToTray(*s, false);
+        } else if (hit.region == ui::HitTestResult::Copy ||
+                   hit.region == ui::HitTestResult::ToolbarSelAction ||
+                   hit.region == ui::HitTestResult::ToolbarPin) {
+            // One branch on purpose: this else-if chain is at MSVC's nesting limit (C1061).
+            if (hit.region == ui::HitTestResult::Copy) CollectToTray(*s, false);
+            else RunToolbarAction(*s, hit.region == ui::HitTestResult::ToolbarPin, hit.index);
         } else if (hit.region == ui::HitTestResult::Cut) {
             CollectToTray(*s, true);
         } else if (hit.region == ui::HitTestResult::Paste) {
@@ -3717,6 +3721,11 @@ LRESULT HandleRButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         }
         POINT sp{ mx, my };
         ClientToScreen(hwnd, &sp);
+        // Toolbar selection chip: the same Pulse item menu as a right-clicked row.
+        if (hit.region == ui::HitTestResult::ToolbarSelAction) {
+            ShowItemContextMenu(*s, sp);
+            return 0;
+        }
         bool shown = false;
         if (hit.region == ui::HitTestResult::WindowIdentity) {
             ShowWindowIdentityMenu(*s, sp);  // M7c
@@ -4076,6 +4085,8 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             }
         } else if (ctrl && !shift && !alt && wParam == L'B') {
             ToggleSidebarCollapsed(*s);
+        } else if (ctrl && !shift && !alt && wParam == VK_OEM_2) {
+            DispatchMenuCommand(*s, app::CmdShortcutHelp);  // 键盘快捷键 (toolbar More)
         } else if (ctrl && shift && !alt && wParam == L'T') {
             ReopenLastClosed(*s);  // the tabs or window closed last (M4c, M7f)
         } else if (ctrl && !shift && wParam == L'T') {

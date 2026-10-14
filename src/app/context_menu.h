@@ -111,6 +111,8 @@ enum MenuCmd : int {
     CmdRestoreAllRecycle = 193, // recycle background: restore every listed item
     CmdApplyViewToAllFolders = 194, // view menu: this view + sort become every folder's default
     CmdApplyGroupToAllFolders = 195, // group menu: this grouping becomes every folder's default (#75)
+    CmdCustomizeToolbar = 197,  // toolbar More / New menu: 自定义工具栏 sheet
+    CmdNewMarkdownFile = 198,   // New menu: 新建 Markdown 文档
     CmdExitPulse = 196,         // palette: quit even when closing keeps Pulse running (#57)
     CmdRecentBase = 200,
     CmdIndexBase = 1000,
@@ -118,6 +120,8 @@ enum MenuCmd : int {
     // current selection (+index into the StaticVerb list) and pulse_shell
     // IContextMenu session items (+host menu id, up to 0x7FFF).
     // Item menu "复制到窗口 / 移动到窗口" (M6e): + index into the other windows listed.
+    // Toolbar New menu: + index into the 新建 (ShellNew) entries listed.
+    CmdShellNewBase = 4000,
     CmdCopyToWindowBase = 5000,
     CmdMoveToWindowBase = 5032,
     CmdShellStaticBase = 6000,
@@ -198,6 +202,9 @@ void AppendShellSection(std::vector<ui::FluentMenuItem>& items,
 // Host still returns the full list; call this in the UI process.
 std::vector<ShellMenuEntry> ApplyExplorerPrefs(const ContextMenuPrefs& prefs,
                                                const std::vector<ShellMenuEntry>& entries);
+
+inline constexpr int kMaxShellNewItems = 64;
+static_assert(CmdIndexBase + 48 <= CmdShellNewBase && CmdShellNewBase + kMaxShellNewItems <= CmdCopyToWindowBase);
 
 // Other windows' shown folders, most recently used window first (M6e).
 inline constexpr size_t kMaxWindowTransferTargets = 32;

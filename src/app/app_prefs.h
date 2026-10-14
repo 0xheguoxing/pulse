@@ -117,6 +117,13 @@ struct AppPrefs {
     // Background update checks and their "update available" toasts (Settings > About).
     bool auto_check_updates = true;
     uint32_t tips_seen = 0; // bit per app::TeachTip already shown or dismissed
+    // 自定义工具栏 (toolbar redesign note 5): the New button's main part makes
+    // 0 a folder, 1 the type made last (toolbar_last_new: 0 folder, 1 text
+    // document), 2 nothing: the whole button opens the New menu. toolbar_pins
+    // has a bit per pinnable command (kToolbarPins in app_commands.cpp).
+    int toolbar_new_primary = 0;
+    int toolbar_last_new = 0;
+    uint32_t toolbar_pins = 0;
     // Empty = theme default, or Windows when explicitly selected.
     std::wstring accent_rgb;
     bool accent_follow_system = false;

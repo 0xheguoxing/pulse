@@ -408,7 +408,9 @@ std::vector<ui::FluentMenuItem> BuildSortMenu(const BackgroundViewOptions& optio
 }
 
 ui::FluentMenuItem BuildShortcutHints() {
-    return Item(CmdShortcutHelp, l10n::Get(l10n::StringId::ShortcutHints).c_str(), L"\xE946");
+    auto item = Item(CmdShortcutHelp, l10n::Get(l10n::StringId::ShortcutHints).c_str(), L"\xE765");  // keyboard
+    item.shortcut = L"Ctrl+/";  // app_input: Ctrl+/ opens the same dialog
+    return item;
 }
 
 ui::FluentMenuItem BuildGroupMenu(const BackgroundViewOptions& options) {
@@ -467,6 +469,7 @@ std::vector<ui::FluentMenuItem> BuildNewMenu() {
     std::vector<ui::FluentMenuItem> items;
     items.push_back(Item(CmdNewFolder, l10n::Get(l10n::StringId::Folder).c_str(), kGlyphNewFolder, L"Ctrl+Shift+N"));
     items.push_back(Item(CmdNewTextFile, l10n::Get(l10n::StringId::TextDocument).c_str(), kGlyphNewFile));
+    items.push_back(Item(CmdNewMarkdownFile, l10n::Get(l10n::StringId::MarkdownDocument).c_str(), kGlyphNewFile));
     return items;
 }
 

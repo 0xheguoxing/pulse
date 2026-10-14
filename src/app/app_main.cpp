@@ -1028,6 +1028,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             s->dropTarget = new ui::WindowDropTarget(hwnd, std::move(dcb));
             RegisterDragDrop(hwnd, s->dropTarget);
         }
+        // The toolbar's paste button follows the clipboard (WM_CLIPBOARDUPDATE).
+        AddClipboardFormatListener(hwnd);
 
         if (init_core) {
             // "Open the default location" drops only the saved tabs; the rest of the
@@ -1283,6 +1285,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
+
+    case WM_CLIPBOARDUPDATE:
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
 
     case WM_SETTINGCHANGE:
     case WM_DEVICECHANGE:

@@ -768,6 +768,19 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 ? HitTestResult::NewButtonArrow : HitTestResult::NewButton;
             return r;
         }
+        if (vm.pane.selected_count > 0) {
+            const ToolbarSelectionChip sel=SelectionChipAt(toolbar,rect.right,vm.pane.selected_count,
+                static_cast<int>(vm.selection_actions.size()));
+            if (ContainsPt(sel.chip,x,y)) {
+                // The chip body (-1) takes the right-click menu too.
+                r.region=HitTestResult::ToolbarSelAction; r.index=-1;
+                for (int i=0;i<kSelChipSlots;++i) if (ContainsPt(sel.buttons[static_cast<size_t>(i)],x,y)) r.index=i;
+                return r;
+            }
+        }
+        for (size_t i=0;i<toolbar.pins.size();++i) if (ContainsPt(toolbar.pins[i],x,y)) {
+            r.region=HitTestResult::ToolbarPin; r.index=static_cast<int>(i); return r;
+        }
         const HitTestResult::Region commands[]={HitTestResult::Cut,HitTestResult::Copy,HitTestResult::Paste,
             HitTestResult::Rename,HitTestResult::Delete,HitTestResult::SplitButton,HitTestResult::DetailsToggle,HitTestResult::PaneColumnLayout};
         for(int i=0;i<8;++i) if(ContainsPt(toolbar.commands[i],x,y)) {r.region=commands[i]; return r;}
