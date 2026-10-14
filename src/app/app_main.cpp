@@ -2866,6 +2866,19 @@ bool SkipSingletonFromArgv() {
     return false;
 }
 
+// A switch, not a folder: Pulse's own options, and the OLE ones COM passes
+// to a local server (-Embedding, /Automation, ...). The last argument used to
+// be taken as the folder whatever it was, so `pulse.exe -Embedding` opened
+// <current directory>\-Embedding (#248, #250).
+static bool IsLaunchSwitch(const wchar_t* arg) {
+    if (!arg || !*arg) return true;
+    if (arg[0] == L'-') return true;
+    if (arg[0] != L'/') return false;
+    for (const wchar_t* name : {L"/Embedding", L"/Automation", L"/RegServer", L"/UnregServer"})
+        if (_wcsicmp(arg, name) == 0) return true;
+    return false;
+}
+
 int RunFilePickerDialogTest(int argc, wchar_t** argv);
 int RunFilePickerOperationsTest();
 #ifdef PULSE_WITH_SELFTEST
@@ -3079,9 +3092,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
                 state.shot.width = std::max(320, requestedWidth);
                 state.shot.height = std::max(240, requestedHeight);
             }
-        } else if (i == __argc - 1) {
+        } else if (i == __argc - 1 && !IsLaunchSwitch(__wargv[i])) {
             state.shot.path = __wargv[i];
-        } else if (__wargv[i][0] != L'-' && state.shot.path.empty()) {
+        } else if (!IsLaunchSwitch(__wargv[i]) && state.shot.path.empty()) {
             state.shot.path = __wargv[i]; // tolerate path not being the last argument
         }
     }
