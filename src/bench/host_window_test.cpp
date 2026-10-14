@@ -178,7 +178,7 @@ int wmain(int argc, wchar_t** argv) {
         services = services && app::IsHostRoutedMessage(m);
     Check(services, "service, tray and hotkey notifications retargeted in M2b are routed");
     Check(app::IsHostRoutedMessage(WM_NET_PROBE) && app::IsHostRoutedMessage(WM_BITLOCKER_UNLOCK) &&
-              app::IsHostRoutedMessage(WM_EXPLORER_TAKEOVER),
+              app::IsHostRoutedMessage(WM_EXPLORER_TAKEOVER) && app::IsHostRoutedMessage(WM_NETWORK_CONNECT),
           "shared navigation results (M3e) are routed");
     Check(app::IsHostRoutedMessage(WM_SHELLCTX_ITEMS), "shell context menu rows reach the active window (M4a)");
     Check(app::IsHostRoutedMessage(WM_NETWORK_LIVE_SEARCH),

@@ -40,6 +40,7 @@
 #include "session_save.h"
 #include "window_placement.h"
 #include "bitlocker_unlock.h"
+#include "network_connect.h"
 #include "context_menu.h"
 #include "context_menu_controller.h"
 #include "shell_verbs.h"
@@ -1879,6 +1880,16 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s && result)
             app::ForEachWindowSharingCore(*s, [&](AppState& window) {
                 ApplyBitLockerUnlock(window, result->root, result->unlocked);
+            });
+        return 0;
+    }
+
+    case WM_NETWORK_CONNECT: {
+        std::unique_ptr<app::NetworkConnectResult> result(
+            reinterpret_cast<app::NetworkConnectResult*>(lParam));
+        if (s && result)
+            app::ForEachWindowSharingCore(*s, [&](AppState& window) {
+                ApplyNetworkConnect(window, result->share, result->error);
             });
         return 0;
     }

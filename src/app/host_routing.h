@@ -49,6 +49,7 @@ inline constexpr UINT kHostRoutedMessages[] = {
     WM_SETTINGS_TASK_RESULT,   // settings background tasks
     WM_NET_PROBE,              // UNC probe scheduler (shared queue)
     WM_BITLOCKER_UNLOCK,       // unlock wait (the prompt stays owned by the waiting window)
+    WM_NETWORK_CONNECT,        // share logon (the credential prompt stays owned by the waiting window)
     WM_EXPLORER_TAKEOVER,      // Explorer window takeover (opens in the most recent window)
     WM_SHELLCTX_ITEMS,         // shell context menu rows (M4a: the menu is open in the active window)
     WM_NETWORK_LIVE_SEARCH,    // a tab's live network walk (M6f: the tab may have moved to another window)

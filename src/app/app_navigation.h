@@ -63,6 +63,8 @@ void FollowMovedFolder(AppState& s, const std::wstring& from, const std::wstring
 void RefreshActiveTab(AppState& s, RefreshReason reason = RefreshReason::Explicit);
 // A BitLocker unlock prompt finished: reload the tabs on that drive and This PC.
 void ApplyBitLockerUnlock(AppState& s, const std::wstring& root, bool unlocked);
+// A share logon (StartNetworkConnect) ended: reload its folders, or say why not.
+void ApplyNetworkConnect(AppState& s, const std::wstring& share, DWORD error);
 void QueueSnapshotValidation(AppState& s, app::Tab& tab);
 bool ApplyNotifyToVisible(AppState& s, const std::wstring& path,
                                  const fs::DirNotifyEvent& event);

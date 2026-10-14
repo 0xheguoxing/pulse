@@ -3,6 +3,7 @@
 // app_navigation.cpp — extracted from app_main.cpp.
 #include "app_internal.h"
 #include "bitlocker_unlock.h"
+#include "network_connect.h"
 #include "../fs/bitlocker_volume.h"
 #include "shell_window_sync.h"
 #include "app_column_view.h"
@@ -1438,6 +1439,23 @@ void ApplyWorkerResult(AppState& s, app::WorkResult& res) {
         app::StartBitLockerUnlock((awaiting ? awaiting : &s)->hwnd, ServiceWindow(s), WM_BITLOCKER_UNLOCK,
                                   res.path);
     }
+    // Likewise for a share that refused the listing: log on as Explorer does
+    // (saved credentials first, the system credential prompt when the server
+    // asks), then reload (ApplyNetworkConnect). Only for a listing a window
+    // waits for, so a background refresh never pops up a prompt.
+    if (res.error && !res.bitlocker_locked && awaiting && fs::IsUncPath(res.path) &&
+        app::StartNetworkConnect(awaiting->hwnd, ServiceWindow(s), WM_NETWORK_CONNECT, res.path)) {
+        app::ForEachWindowSharingCore(s, [&](AppState& window) {
+            ForEachPane(window, [&](app::Pane& pane) {
+                app::Tab* tab = pane.ActiveTab();
+                if (!tab || tab->current_path != res.path || tab->loading) return;
+                tab->banner_title = l10n::Pick(L"正在连接", L"Connecting");
+                tab->banner_message = l10n::Pick(L"如果服务器要求登录，请在弹出的窗口中输入用户名和密码。",
+                                                 L"If the server asks you to sign in, enter the user name and password in the window that opens.");
+            });
+            InvalidateRect(window.hwnd, nullptr, FALSE);
+        });
+    }
 }
 
 void ProcessPendingResults(AppState& s) {
@@ -1589,6 +1607,38 @@ void ApplyBitLockerUnlock(AppState& s, const std::wstring& root, bool unlocked) 
         if (unlocked) paths.push_back(tab->current_path);
         else if (tab->banner_title == l10n::Get(l10n::StringId::DriveLockedTitle))
             tab->banner_message = l10n::Get(l10n::StringId::DriveLockedCancelled);
+    });
+    std::sort(paths.begin(), paths.end());
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    for (const std::wstring& path : paths) {
+        app::Tab* idle = nullptr;
+        ForEachPane(s, [&](app::Pane& pane) {
+            app::Tab* tab = pane.ActiveTab();
+            if (!idle && tab && tab->current_path == path && !tab->loading) idle = tab;
+        });
+        if (idle) StartLoadingPath(s, *idle, path);
+        else RefreshPath(s, path, RefreshReason::Explicit);
+    }
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void ApplyNetworkConnect(AppState& s, const std::wstring& share, DWORD error) {
+    std::vector<std::wstring> paths;
+    ForEachPane(s, [&](app::Pane& pane) {
+        app::Tab* tab = pane.ActiveTab();
+        if (!tab || tab->loading || !tab->net_readonly) return;
+        if (_wcsicmp(app::UncShareRoot(tab->current_path).c_str(), share.c_str()) != 0) return;
+        if (error == NO_ERROR) {
+            paths.push_back(tab->current_path);
+            return;
+        }
+        // The listing failed before the logon; keep its banner, say why.
+        tab->banner_title = l10n::Get(app::NetworkConnectUnreachable(error)
+            ? l10n::StringId::Offline : l10n::StringId::CannotOpen);
+        const std::wstring why = app::NetworkConnectErrorText(error);
+        tab->banner_message = !why.empty() ? why
+            : tab->snapshot ? l10n::Get(l10n::StringId::CachedReadOnly)
+            : l10n::Pick(L"未登录到此共享。按 F5 重新连接。", L"Not signed in to this share. Press F5 to connect again.");
     });
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
