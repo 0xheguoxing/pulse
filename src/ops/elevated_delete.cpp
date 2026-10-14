@@ -6,6 +6,7 @@
 #include <sherrors.h>
 #include <wrl/client.h>
 #include <new>
+#include <vector>
 
 namespace pulse::ops {
 namespace {
@@ -199,26 +200,34 @@ private:
     ComPtr<IUnknown> root_identity_;
 };
 }
+bool RecycleBinAvailable(const std::wstring& path, DWORD* volume_error) {
+    if (volume_error) *volume_error = 0;
+    if (path::StripExtendedPathPrefix(path).starts_with(L"\\\\")) return false;
+    std::vector<wchar_t> volume(32768);
+    if (!GetVolumePathNameW(path.c_str(), volume.data(), static_cast<DWORD>(volume.size()))) {
+        if (volume_error) *volume_error = GetLastError();
+        return false;
+    }
+    return GetDriveTypeW(volume.data()) == DRIVE_FIXED;
+}
+
 ShellTransferResult DeleteWithCurrentToken(const std::vector<std::wstring>& sources,
     bool permanent, HWND owner, std::atomic<bool>& cancel, ShellTransferProgress progress) {
     ShellTransferResult result;
     for (const auto& source : sources) {
         if (cancel.load()) { result.hr = kCancelled; result.cancelled = true; break; }
         if (!permanent) {
-            const auto plain = path::StripExtendedPathPrefix(source);
-            wchar_t volume[32768]{};
-            if (plain.starts_with(L"\\\\")) {
-                result.hr = COPYENGINE_E_RECYCLE_BIN_NOT_FOUND;
-                result.error = L"This location cannot be safely sent to the Recycle Bin. The item was not deleted.";
-                break;
-            }
-            if (!GetVolumePathNameW(source.c_str(), volume, 32768)) {
-                result.hr = HRESULT_FROM_WIN32(GetLastError());
-                break;
-            }
-            if (GetDriveTypeW(volume) != DRIVE_FIXED) {
-                result.hr = COPYENGINE_E_RECYCLE_BIN_NOT_FOUND;
-                result.error = L"This location cannot be safely sent to the Recycle Bin. The item was not deleted.";
+            // The UI sends such items as permanent deletes after asking
+            // (DeletePaths); a recycle request for them is refused, never
+            // turned into a silent permanent delete.
+            DWORD volume_error = 0;
+            if (!RecycleBinAvailable(source, &volume_error)) {
+                if (volume_error) {
+                    result.hr = HRESULT_FROM_WIN32(volume_error);
+                } else {
+                    result.hr = COPYENGINE_E_RECYCLE_BIN_NOT_FOUND;
+                    result.error = L"This location cannot be safely sent to the Recycle Bin. The item was not deleted.";
+                }
                 break;
             }
             result.hr = RecycleOnly(source, cancel, result, progress);

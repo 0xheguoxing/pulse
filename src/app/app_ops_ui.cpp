@@ -21,6 +21,7 @@
 #include "paste_source.h"
 #include "resource.h"
 #include "../ops/clipboard.h"
+#include "../ops/elevated_delete.h"
 #include "../ipc/ctx_menu_util.h"
 #include <windows.h>
 #include <windowsx.h>
@@ -281,24 +282,56 @@ void DeleteSelected(AppState& s, bool permanent) {
     DeletePaths(s, std::move(paths), permanent);
 }
 
+namespace {
+// `no_recycle_bin`: the items were meant for the Recycle Bin but live where
+// there is none, so say why the delete is permanent (Explorer asks the same).
+bool ConfirmPermanentDelete(AppState& s, const std::vector<std::wstring>& paths,
+                            bool no_recycle_bin) {
+    ui::ConfirmDialogSpec confirm;
+    confirm.title = l10n::Get(l10n::StringId::PermanentDelete);
+    if (no_recycle_bin)
+        confirm.message = l10n::Pick(L"网络位置和移动设备上没有回收站。",
+                                     L"Network locations and removable drives have no Recycle Bin. ");
+    if (paths.size() == 1) {
+        confirm.message += l10n::Get(l10n::StringId::PermanentDeleteOne);
+    } else {
+        wchar_t buf[256]{};
+        swprintf_s(buf, l10n::Get(l10n::StringId::PermanentDeleteManyFormat).c_str(),
+                   paths.size());
+        confirm.message += buf;
+    }
+    // The dialog shows the first few and collapses the rest.
+    for (const std::wstring& path : paths) confirm.items.push_back(ClipboardPath(path));
+    confirm.confirm_text = l10n::Get(l10n::StringId::PermanentDelete);
+    confirm.danger = true;
+    return ui::ShowConfirmDialog(s.hwnd, confirm, s.darkMode, s.accentColor);
+}
+}
+
 void DeletePaths(AppState& s, std::vector<std::wstring> paths, bool permanent) {
     if (paths.empty()) return;
-    if (permanent) {
-        ui::ConfirmDialogSpec confirm;
-        confirm.title = l10n::Get(l10n::StringId::PermanentDelete);
-        if (paths.size() == 1) {
-            confirm.message = l10n::Get(l10n::StringId::PermanentDeleteOne);
-        } else {
-            wchar_t buf[256]{};
-            swprintf_s(buf, l10n::Get(l10n::StringId::PermanentDeleteManyFormat).c_str(),
-                       paths.size());
-            confirm.message = buf;
+    if (!permanent) {
+        // Shares and removable drives have no Recycle Bin; the ops layer
+        // refuses to recycle there. Like Explorer, offer a permanent delete
+        // for those items; the rest still go to the Recycle Bin.
+        std::vector<std::wstring> direct;
+        std::erase_if(paths, [&](const std::wstring& path) {
+            DWORD volume_error = 0;
+            if (ops::RecycleBinAvailable(path, &volume_error) || volume_error) return false;
+            direct.push_back(path);
+            return true;
+        });
+        if (!direct.empty()) {
+            if (!ConfirmPermanentDelete(s, direct, true)) return;
+            ops::OpRequest req;
+            req.type = ops::OpType::RealDelete;
+            req.sources = std::move(direct);
+            s.ops.Submit(std::move(req));
+            if (paths.empty()) return;
         }
-        // The dialog shows the first few and collapses the rest.
-        for (const std::wstring& path : paths) confirm.items.push_back(ClipboardPath(path));
-        confirm.confirm_text = l10n::Get(l10n::StringId::PermanentDelete);
-        confirm.danger = true;
-        if (!ui::ShowConfirmDialog(s.hwnd, confirm, s.darkMode, s.accentColor)) return;
+    }
+    if (permanent) {
+        if (!ConfirmPermanentDelete(s, paths, false)) return;
     } else if (s.appPrefs.confirm_recycle_delete) {
         const ui::ConfirmDialogSpec confirm = BuildRecycleDeleteConfirm(paths);
         if (!ui::ShowConfirmDialog(s.hwnd, confirm, s.darkMode, s.accentColor)) return;
