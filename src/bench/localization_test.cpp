@@ -13,6 +13,18 @@ bool Report(const char* name, bool passed) {
     return passed;
 }
 
+// Raw English entry straight from the string table, or empty.
+std::wstring EnglishResource(UINT id) {
+    const HMODULE module = GetModuleHandleW(nullptr);
+    const HRSRC resource = FindResourceExW(module, RT_STRING, MAKEINTRESOURCEW(id / 16 + 1),
+                                           MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US));
+    if (!resource) return {};
+    const auto* cursor = static_cast<const wchar_t*>(LockResource(LoadResource(module, resource)));
+    if (!cursor) return {};
+    for (UINT i = 0; i < id % 16; ++i) cursor += 1 + static_cast<UINT>(*cursor);
+    return std::wstring(cursor + 1, static_cast<UINT>(*cursor));
+}
+
 bool CheckSystemLanguage() {
     using namespace pulse::l10n;
     struct Case { LANGID id; Language expected; const char* name; };
@@ -48,6 +60,23 @@ int main(int argc, char** argv) {
             return CheckSystemLanguage() ? 0 : 1;
         return 2;
     }
+    {
+        // Every string the resources carry is served, however high its id: a
+        // fixed cache range once blanked every label added past its end.
+        SetLanguage(L"en-US");
+        size_t served = 0, missing = 0;
+        for (UINT id = 1; id < 0x10000; ++id) {
+            if (EnglishResource(id).empty()) continue;
+            if (Get(static_cast<StringId>(id)).empty()) {
+                if (++missing <= 5) std::printf("[INFO] id %u has a resource but Get() is empty\n", id);
+            } else {
+                ++served;
+            }
+        }
+        std::printf("[INFO] resource strings served=%zu missing=%zu\n", served, missing);
+        passed &= Report("every resource string id is served", served > 1000 && missing == 0);
+        SetLanguage(L"zh-CN");
+    }
     const auto& held_chinese = Get(StringId::TabRename);
     SetLanguage(L"en-US");
     passed &= Report("language switch preserves strings held by worker tasks",
@@ -62,7 +91,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 100; ++i) SetLanguage(i % 2 ? L"en-US" : L"zh-CN");
     reader.join();
     passed &= Report("worker localization remains valid during language switches", worker_ok.load());
-    // The cache only covers ids up to kLastString; the newest ids must still load.
+    // The newest ids must load in every language.
     bool latest_ids = true;
     for (const auto language : {L"zh-CN", L"zh-TW", L"en-US"}) {
         SetLanguage(language);
@@ -157,7 +186,7 @@ int main(int argc, char** argv) {
             !Get(StringId::UpdateBusy).empty() && !Get(StringId::UpdateInstallFailed).empty());
     }
     {
-        // Ids above the last one Get() serves come back empty: keep kLastString current.
+        // Recently added ids load in every language.
         bool newest = true;
         for (const auto language : {L"zh-CN", L"zh-TW", L"en-US"}) {
             SetLanguage(language);

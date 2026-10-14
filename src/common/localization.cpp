@@ -4,51 +4,10 @@
 #include <atomic>
 #include <cwchar>
 #include <mutex>
+#include <unordered_map>
 
 namespace pulse::l10n {
 namespace {
-
-constexpr UINT kFirstString = IDS_SETTINGS;
-// Must stay on the highest allocated string id, otherwise Get() returns empty.
-constexpr UINT kLastString = IDS_MENU_ACRYLIC_DESC;
-static_assert(static_cast<UINT>(StringId::SettingsRecycleBinDesc) <= kLastString);
-static_assert(static_cast<UINT>(StringId::HelpContextMenu) <= kLastString);
-static_assert(static_cast<UINT>(StringId::UiFontLarger) <= kLastString);
-static_assert(static_cast<UINT>(StringId::OpAuthorizationNotGranted) <= kLastString);
-static_assert(static_cast<UINT>(StringId::ListThumbnailBadgesDesc) <= kLastString);
-static_assert(static_cast<UINT>(StringId::SystemGroupNodeModules) <= kLastString);
-static_assert(static_cast<UINT>(StringId::UpdateWaitingOperations) <= kLastString);
-static_assert(static_cast<UINT>(StringId::SidebarShowHidden) <= kLastString);
-static_assert(static_cast<UINT>(StringId::ApplyGroupNoneMessage) <= kLastString);
-static_assert(static_cast<UINT>(StringId::ExitPulse) <= kLastString);
-static_assert(static_cast<UINT>(StringId::RecycleConfirmManyFormat) <= kLastString);
-static_assert(static_cast<UINT>(StringId::NetworkLiveAddFailed) <= kLastString);
-static_assert(static_cast<UINT>(StringId::IntegrationReapply) <= kLastString);
-static_assert(static_cast<UINT>(StringId::UpdateDescManual) <= kLastString);
-static_assert(static_cast<UINT>(StringId::Downloads) <= kLastString);
-static_assert(static_cast<UINT>(StringId::OpItemsPerSecond) <= kLastString);
-static_assert(static_cast<UINT>(StringId::SettingsChangeTracking) >= kFirstString &&
-              static_cast<UINT>(StringId::ChangeDisabled) <= kLastString &&
-              static_cast<UINT>(StringId::FolderSortMixed) <= kLastString &&
-              static_cast<UINT>(StringId::WallpaperBlurStrong) <= kLastString &&
-              static_cast<UINT>(StringId::TextRenderSmooth) <= kLastString &&
-              static_cast<UINT>(StringId::TipTrayReleaseMove) <= kLastString &&
-              static_cast<UINT>(StringId::CompareDiffers) <= kLastString &&
-              static_cast<UINT>(StringId::CompareChipDiffers) <= kLastString &&
-              static_cast<UINT>(StringId::AdvSumKeywordNeeded) <= kLastString &&
-              static_cast<UINT>(StringId::HintsResetDone) <= kLastString &&
-              static_cast<UINT>(StringId::ApplyViewAllConfirm) <= kLastString &&
-              static_cast<UINT>(StringId::NewTabOpenCurrent) <= kLastString &&
-              static_cast<UINT>(StringId::HelpMoveFocus) <= kLastString &&
-              static_cast<UINT>(StringId::ContextRowMore) <= kLastString &&
-              static_cast<UINT>(StringId::GlobalSearchTruncatedShort) <= kLastString);
-static_assert(static_cast<UINT>(StringId::SettingsCloseLastTabDesc) <= kLastString);
-static_assert(static_cast<UINT>(StringId::SettingsCloseTabDoubleClickDesc) <= kLastString);
-static_assert(static_cast<UINT>(StringId::LockedItemTitle) <= kLastString &&
-              static_cast<UINT>(StringId::LockedItemRetry) <= kLastString);
-static_assert(static_cast<UINT>(StringId::LanguageZhTW) <= kLastString &&
-              static_cast<UINT>(StringId::SettingsAutoUpdate) <= kLastString &&
-              static_cast<UINT>(StringId::UpdateDescManual) <= kLastString);
 
 HINSTANCE g_module = nullptr;
 std::atomic<Language> g_preference{Language::System};
@@ -57,8 +16,10 @@ std::mutex g_mutex;
 // Published strings stay immutable when the UI language changes. Workers may
 // still hold references to the previous language while finishing an operation.
 constexpr size_t kLocaleCount = 3;
-std::array<std::array<std::wstring, kLastString - kFirstString + 1>, kLocaleCount> g_cache;
-std::array<std::array<bool, kLastString - kFirstString + 1>, kLocaleCount> g_loaded{};
+// Keyed by id, so a newly added string never falls outside a fixed range
+// (that once left every new label blank). Entries are never erased, and an
+// unordered_map keeps element references valid across inserts.
+std::array<std::unordered_map<UINT, std::wstring>, kLocaleCount> g_cache;
 const std::wstring g_empty;
 
 Language SystemLanguage() noexcept {
@@ -163,23 +124,19 @@ const wchar_t* LocaleName() noexcept {
 
 const std::wstring& Get(StringId id) {
     const UINT value = static_cast<UINT>(id);
-    if (value < kFirstString || value > kLastString) return g_empty;
-    const size_t index = value - kFirstString;
+    if (value == 0) return g_empty;
     std::lock_guard lock(g_mutex);
     if (!g_module) return g_empty;
     const Language language = g_effective.load();
-    const size_t locale = LocaleSlot(language);
-    if (!g_loaded[locale][index]) {
-        auto& text = g_cache[locale][index];
-        text = LoadStringResource(value, ResourceLanguage(language));
-        // Traditional readers prefer Simplified over English for a missing entry.
-        if (text.empty() && language == Language::ZhTW)
-            text = LoadStringResource(value, ResourceLanguage(Language::ZhCN));
-        if (text.empty() && language != Language::EnUS)
-            text = LoadStringResource(value, ResourceLanguage(Language::EnUS));
-        g_loaded[locale][index] = true;
-    }
-    return g_cache[locale][index];
+    auto& cache = g_cache[LocaleSlot(language)];
+    if (const auto found = cache.find(value); found != cache.end()) return found->second;
+    std::wstring text = LoadStringResource(value, ResourceLanguage(language));
+    // Traditional readers prefer Simplified over English for a missing entry.
+    if (text.empty() && language == Language::ZhTW)
+        text = LoadStringResource(value, ResourceLanguage(Language::ZhCN));
+    if (text.empty() && language != Language::EnUS)
+        text = LoadStringResource(value, ResourceLanguage(Language::EnUS));
+    return cache.emplace(value, std::move(text)).first->second;
 }
 
 } // namespace pulse::l10n
