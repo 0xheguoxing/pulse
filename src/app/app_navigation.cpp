@@ -2468,9 +2468,14 @@ void GoUp(AppState& s) {
         if (tab->CanGoBack()) GoBack(s);
         return;
     }
+    // This PC is the top: nothing is above it. ParentPath throws for the empty
+    // path (and for one that does not normalize), which ended the process when
+    // Up, Alt+Up or a blank double-click reached here from This PC (#146).
+    if (tab->current_path.empty()) return;
     // ParentPath answers in normalized form; compare like with like so an
     // unnormalized C:\ is still seen as a root (#68).
     const std::wstring current = fs::NormalizePath(tab->current_path);
+    if (current.empty()) return;
     const std::wstring up = fs::ParentPath(current);
     if (_wcsicmp(up.c_str(), current.c_str()) != 0) NavigateTo(s, up);
     else if (!current.empty()) NavigateTo(s, L""); // drive root -> This PC
