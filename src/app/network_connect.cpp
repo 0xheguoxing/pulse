@@ -78,6 +78,13 @@ bool StartNetworkConnect(HWND owner, HWND notify, UINT msg, const std::wstring& 
     return true;
 }
 
+bool NetworkConnectPending(const std::wstring& path) {
+    const std::wstring share = UncShareRoot(path);
+    if (share.empty()) return false;
+    std::lock_guard lock(g_mutex);
+    return g_pending.count(Key(share)) != 0;
+}
+
 bool NetworkConnectUnreachable(DWORD error) {
     switch (error) {
     case ERROR_BAD_NETPATH:

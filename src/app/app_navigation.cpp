@@ -1262,6 +1262,12 @@ static bool ApplyWorkerResultData(AppCore& core, const app::WorkResult& res) {
     return again;
 }
 
+static void ShowConnectingBanner(app::Tab& tab) {
+    tab.banner_title = l10n::Pick(L"正在连接", L"Connecting");
+    tab.banner_message = l10n::Pick(L"如果服务器要求登录，请在弹出的窗口中输入用户名和密码。",
+                                    L"If the server asks you to sign in, enter the user name and password in the window that opens.");
+}
+
 // Window layer: the panes of one window that wait for this listing. Returns
 // whether a failed listing was awaited here (that window owns the unlock prompt).
 static bool ApplyWorkerResultToWindow(AppState& s, app::WorkResult& res, bool again) {
@@ -1286,6 +1292,9 @@ static bool ApplyWorkerResultToWindow(AppState& s, app::WorkResult& res, bool ag
             if (res.bitlocker_locked) {
                 tab->banner_title = l10n::Get(l10n::StringId::DriveLockedTitle);
                 tab->banner_message = l10n::Get(l10n::StringId::DriveLockedMessage);
+            } else if (tab->net_readonly && app::NetworkConnectPending(res.path)) {
+                // A second listing failed while the logon runs; ApplyNetworkConnect says how it went.
+                ShowConnectingBanner(*tab);
             }
         });
         InvalidateRect(s.hwnd, nullptr, FALSE);
@@ -1449,9 +1458,7 @@ void ApplyWorkerResult(AppState& s, app::WorkResult& res) {
             ForEachPane(window, [&](app::Pane& pane) {
                 app::Tab* tab = pane.ActiveTab();
                 if (!tab || tab->current_path != res.path || tab->loading) return;
-                tab->banner_title = l10n::Pick(L"正在连接", L"Connecting");
-                tab->banner_message = l10n::Pick(L"如果服务器要求登录，请在弹出的窗口中输入用户名和密码。",
-                                                 L"If the server asks you to sign in, enter the user name and password in the window that opens.");
+                ShowConnectingBanner(*tab);
             });
             InvalidateRect(window.hwnd, nullptr, FALSE);
         });
@@ -1813,6 +1820,19 @@ static bool WindowShowsFolder(AppState& s, const std::wstring& path) {
 
 // One window's share of a drain: the events go to the folders it shows (a
 // folder may be shown in several windows; multi-window M6e). `shown`
+// A share whose listing failed (or that went offline) has no rows to keep
+// fresh. Polling it each second re-ran the listing and the logon: the banner
+// and the empty-folder art flickered, and a closed sign-in prompt came back.
+// F5, navigating or switching tabs opens it again.
+static bool ShowsUnavailableShare(AppState& s, const std::wstring& path) {
+    bool unavailable = false;
+    ForEachPane(s, [&](app::Pane& pane) {
+        const app::Tab* tab = pane.ActiveTab();
+        if (tab && tab->current_path == path && (tab->net_readonly || !tab->snapshot)) unavailable = true;
+    });
+    return unavailable;
+}
+
 // collects the folders some window showed; DrainDirNotifies handles the rest
 // once.
 static void ApplyDirNotifiesToWindow(AppState& s, const std::vector<AppState::DirNotifyBatch>& batch,
@@ -1896,7 +1916,7 @@ static void ApplyDirNotifiesToWindow(AppState& s, const std::vector<AppState::Di
     if (poll_unc) {
         for (const auto& path : VisibleFolderPaths(s)) {
             if (!fs::IsUncPath(path)) continue;
-            if (s.watches.Armed(path) || PathHasPendingRefresh(s, path)) continue;
+            if (s.watches.Armed(path) || PathHasPendingRefresh(s, path) || ShowsUnavailableShare(s, path)) continue;
             RefreshPath(s, path);
             changed = true;
         }

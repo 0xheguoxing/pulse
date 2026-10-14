@@ -24,6 +24,8 @@ std::wstring UncShareRoot(const std::wstring& path);
 // when path has no share, a connection to it is running, or one just
 // succeeded (the listing that failed after it must not prompt again).
 bool StartNetworkConnect(HWND owner, HWND notify, UINT msg, const std::wstring& path);
+// Whether a connection to the share of path is running.
+bool NetworkConnectPending(const std::wstring& path);
 
 // Banner text for a failed connection; empty for ERROR_CANCELLED.
 std::wstring NetworkConnectErrorText(DWORD error);
