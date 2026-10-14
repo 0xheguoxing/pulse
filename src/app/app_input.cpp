@@ -2753,10 +2753,19 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             InvalidateRect(hwnd, nullptr, FALSE);
         } else if (hit.region == ui::HitTestResult::RowFolderSize && hit.index >= 0) {
             if (app::Tab* tab = ActiveTab(*s)) {
+                // The label is part of the item (tiles, icons): the press
+                // selects it too, and a second press opens it (DblClk).
+                const bool modifier = (GetKeyState(VK_CONTROL) & 0x8000) != 0 || (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+                if (!modifier && !tab->IsSelected(hit.index)) tab->SelectOnly(hit.index);
                 const auto path = EntryFullPath(*tab, hit.index);
                 const auto work = s->folderSizes.GetWork(path);
+                s->folderSizeClickPath.clear();
                 if (work.manual && work.Running()) s->folderSizes.Cancel(path);
-                else s->folderSizes.Calculate(path);
+                else {
+                    s->folderSizes.Calculate(path);
+                    s->folderSizeClickPath = path;
+                    s->folderSizeClickTime = GetMessageTime();
+                }
                 s->tooltipText.clear();
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
@@ -3230,8 +3239,18 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
             std::wstring kind, rest;
             app::ParsePulsePath(hit.path, &kind, &rest);
             ShowTagRenameOverlay(*s, s->places.ResolveTagRef(rest));
-        } else if (hit.region == ui::HitTestResult::Row && hit.index >= 0) {
+        } else if ((hit.region == ui::HitTestResult::Row || hit.region == ui::HitTestResult::RowFolderSize) &&
+                   hit.index >= 0) {
             app::Tab* tab = ActiveTab(*s);
+            if (tab && hit.region == ui::HitTestResult::RowFolderSize) {
+                // The first press on the size label started a calculation;
+                // the folder is being opened instead, so the old result stays.
+                const auto path = EntryFullPath(*tab, hit.index);
+                if (!path.empty() && path == s->folderSizeClickPath &&
+                    static_cast<DWORD>(GetMessageTime() - s->folderSizeClickTime) <= GetDoubleClickTime())
+                    s->folderSizes.Cancel(path);
+            }
+            s->folderSizeClickPath.clear();
             if (tab) tab->SelectOnly(hit.index);
             OpenSelected(*s);
         } else if (hit.region == ui::HitTestResult::AddressBar ||

@@ -558,6 +558,10 @@ struct AppState : AppCoreOwner {
     ULONGLONG renameClickDue = 0;
     ULONGLONG renameClickStarted = 0;
     std::wstring renameClickPath;
+    // A click on a folder's size label that started a calculation; the
+    // double-click it turns into opens the folder and stops that calculation.
+    std::wstring folderSizeClickPath;
+    LONG folderSizeClickTime = 0;
     HWND hwndTagRenameEdit = nullptr;
     app::TagId tagRenameId;
     bool tagRenameIgnoreKillFocus = false;
