@@ -115,6 +115,7 @@ void AppPrefs::ResetToDefaults() {
     toolbar_new_primary = 0;
     toolbar_last_new = 0;
     toolbar_pins = 0;
+    toolbar_apps.clear();
     accent_rgb.clear();
     accent_follow_system = false;
     custom_tag_colors.clear();
@@ -249,6 +250,14 @@ std::wstring AppPrefs::ToJson() const {
     out += L",\n  \"toolbar_new_primary\":" + std::to_wstring(toolbar_new_primary);
     out += L",\n  \"toolbar_last_new\":" + std::to_wstring(toolbar_last_new);
     out += L",\n  \"toolbar_pins\":" + std::to_wstring(toolbar_pins);
+    out += L",\n  \"toolbar_apps\":[";
+    for (size_t i = 0; i < toolbar_apps.size(); ++i) {
+        std::wstring escaped_app;
+        pulse::json::Escape(toolbar_apps[i], escaped_app);
+        if (i > 0) out += L",";
+        out += L"\"" + escaped_app + L"\"";
+    }
+    out += L"]";
     // Legacy three-level keys stay for older builds reading the same app.json.
     out += L",\n  \"wallpaper_look\":";
     out += std::to_wstring(wallpaper_look < 38 ? 0 : (wallpaper_look < 63 ? 1 : 2));
@@ -402,6 +411,13 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     toolbar_last_new = pulse::json::ExtractInt(json, L"toolbar_last_new", 0) == 1 ? 1 : 0;
     const int pins = pulse::json::ExtractInt(json, L"toolbar_pins", 0);
     toolbar_pins = pins > 0 ? static_cast<uint32_t>(pins) & 0x1Fu : 0u;
+    toolbar_apps.clear();
+    for (auto& app : pulse::json::ExtractStringArray(json, L"toolbar_apps")) {
+        if (app.empty() || toolbar_apps.size() >= 8) continue;   // app::kMaxToolbarApps
+        bool pinned = false;
+        for (const auto& kept : toolbar_apps) pinned = pinned || _wcsicmp(kept.c_str(), app.c_str()) == 0;
+        if (!pinned) toolbar_apps.push_back(std::move(app));
+    }
     if (tray_icon_size < 32 || tray_icon_size > 64) tray_icon_size = 48;
     {
         // Continuous values; migrate the former 0/1/2 levels when absent.

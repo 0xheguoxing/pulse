@@ -42,6 +42,8 @@ void MainRenderer::SetCompositor(Compositor* comp) {
     fluent_svgs_.clear();
     fluent_svg_failed_.clear();
     empty_state_svg_dc_.reset();
+    app_icon_bitmaps_.clear();
+    app_icon_dc_ = nullptr;
     compositor_ = comp;
     material_.SetCompositor(comp);
     painter_.SetCompositor(comp);
@@ -242,17 +244,21 @@ ToolbarLayout MainRenderer::ToolbarLayoutAt(float w, float create_width, float f
                                                  L"\xE8CB", true, scale_, 88.0f);
     const float filter_width = ToolbarCommandWidth(painter_, format, l10n::StringId::ToolbarFilter,
                                                    kIconFilter, false, scale_, 88.0f);
-    const float selection_span = selection_count_ > 0 && !embedded_
+    const float selection_span = selection_count_ > 0 && !embedded_ && !pin_drop_mode_
         ? SelectionChipSpan(scale_, SelectionChipLabelWidth(w, selection_count_), selection_actions_) : 0.0f;
+    ToolbarPinOptions pins;
+    pins.app_from = pin_app_from_;
+    pins.drop_mode = pin_drop_mode_ && !embedded_;
+    pins.label_width = pins.drop_mode ? ToolbarPinLabelWidth() : 0.0f;
     if (!vertical_tabs_)
         return MakeToolbarLayout(w, scale_, title_bar_height_, margin_, create_width, left, filter_expand,
                                  search_min_dip_, group_width, sort_width, filter_width, pin_count_,
-                                 selection_span);
+                                 selection_span, pins);
     // Command row directly under the title bar; address row centered in it,
     // stopping short of the settings button.
     ToolbarLayout out = MakeToolbarLayout(w, scale_, title_bar_height_ - 46.0f * scale_, margin_,
                                           create_width, left, filter_expand, 0.0f, group_width, sort_width,
-                                          filter_width, pin_count_, selection_span);
+                                          filter_width, pin_count_, selection_span, pins);
     const TitleChrome chrome = MakeTitleChrome(w, scale_, title_bar_height_);
     const float row_top = (title_bar_height_ - 36.0f * scale_) * 0.5f - 4.0f * scale_;
     const ToolbarLayout row = MakeToolbarLayout(chrome.settings_left - 4.0f * scale_, scale_, row_top,
@@ -261,6 +267,34 @@ ToolbarLayout MainRenderer::ToolbarLayoutAt(float w, float create_width, float f
     out.address = row.address;
     out.search = row.search;
     return out;
+}
+
+// Drop-mode label ahead of the pinned apps: 10 + glyph 16 + 6 + text + 10 DIP.
+float MainRenderer::ToolbarPinLabelWidth() const {
+    if (pin_drop_label_.empty() || !compositor_ || !compositor_->SmallFormat()) return 0.0f;
+    const float text = std::ceil(typography::MeasureLine(compositor_, compositor_->SmallFormat(), pin_drop_label_));
+    return text + 42.0f * scale_;
+}
+
+ID2D1Bitmap* MainRenderer::AppIconBitmap(const common::MenuIconRef& pixels) {
+    ID2D1DeviceContext* dc = compositor_ ? compositor_->Dc() : nullptr;
+    if (!pixels || !pixels->Valid() || !dc) return nullptr;
+    if (dc != app_icon_dc_) {   // new device: the old bitmaps belong to the lost one
+        app_icon_bitmaps_.clear();
+        app_icon_dc_ = dc;
+    }
+    for (const auto& entry : app_icon_bitmaps_)
+        if (entry.pixels == pixels) return entry.bitmap.get();
+    if (app_icon_bitmaps_.size() >= 32) app_icon_bitmaps_.clear();
+    AppIconEntry entry;
+    entry.pixels = pixels;
+    const auto props = D2D1::BitmapProperties(
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    if (FAILED(dc->CreateBitmap(D2D1::SizeU(pixels->width, pixels->height), pixels->bgra.data(),
+                                pixels->width * 4u, props, &entry.bitmap)))
+        entry.bitmap.reset();  // remembered as missing: no retry every frame
+    app_icon_bitmaps_.push_back(std::move(entry));
+    return app_icon_bitmaps_.back().bitmap.get();
 }
 
 D2D1_RECT_F MainRenderer::SidebarToggleRect(float w) const {

@@ -11,13 +11,23 @@ inline float NavigationStep(float available, float scale) {
 inline D2D1_RECT_F NavigationButtonAt(float x, float y, float scale, float step) {
     return {x, y, x + step - 4 * scale, y + 32 * scale};
 }
+// Toolbar pins: the pinned commands (自定义工具栏), then the pinned apps.
+constexpr int kToolbarCommandPins = 5;
+constexpr int kToolbarAppPins = 8;
+constexpr int kToolbarPinSlots = kToolbarCommandPins + kToolbarAppPins;
+struct ToolbarPinOptions {
+    int app_from = -1;          // index of the first app pin (a short gap goes before it)
+    bool drop_mode = false;     // a file drag is over the window: pins also in the narrow tier
+    float label_width = 0.0f;   // drop mode: "拖到软件上打开" / "固定到工具栏" ahead of the pins
+};
 struct ToolbarLayout {
     std::array<D2D1_RECT_F, 4> navigation{};
     D2D1_RECT_F address{}, search{}, create{};
     D2D1_RECT_F sort{}, filter{}, overflow{};
     D2D1_RECT_F group{};   // "Group" button / active chip (empty when not offered)
     std::array<D2D1_RECT_F, 8> commands{};
-    std::array<D2D1_RECT_F, 5> pins{};   // pinned commands (自定义工具栏)
+    std::array<D2D1_RECT_F, kToolbarPinSlots> pins{};   // pinned commands, then pinned apps
+    D2D1_RECT_F pin_label{};   // drop mode only (ToolbarPinOptions::label_width)
 };
 
 // search_min_dip widens the search field while a search is active or being
@@ -26,7 +36,7 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
                                       float left, float filter_expand = 0.0f, float search_min_dip = 0.0f,
                                       float group_width = 0.0f, float sort_width = 0.0f,
                                       float filter_width = 0.0f, int pin_count = 0,
-                                      float selection_span = 0.0f) {
+                                      float selection_span = 0.0f, const ToolbarPinOptions& pin_options = {}) {
     ToolbarLayout out;
     const float available = width - left;
     const float nav_step = NavigationStep(available, scale);
@@ -74,14 +84,30 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
         }
     }
     const float view_end = overflow ? out.overflow.left-8*scale : out.commands[5].left-13*scale;
-    // Pinned commands (自定义工具栏) follow the file commands after a divider,
-    // as many as leave the view group its icon-only minimum. The rest, and all
-    // of them in the narrow tier, wait in the More menu.
-    if (!overflow && pin_count > 0) {
+    // Pinned commands and apps (自定义工具栏) follow the file commands after a
+    // divider, as many as leave the view group its icon-only minimum. The rest,
+    // and all of them in the narrow tier, wait in the More menu. While files are
+    // dragged over the window the toolbar holds drop targets only (the caller
+    // passes the apps alone): they show in the narrow tier too, after a label
+    // when it fits together with every one of them.
+    const bool drop_mode = pin_options.drop_mode;
+    if ((!overflow || drop_mode) && (pin_count > 0 || (drop_mode && pin_options.label_width > 0.0f))) {
         const float view_min = 70*scale + (group_width > 0.0f ? 38*scale : 0.0f);
-        float px = x + 9*scale;   // 13 DIP after the last command, like the selection chip
-        for (int i=0;i<std::min(pin_count,5);++i) {
-            if (px+30*scale+8*scale+view_min > view_end) break;
+        const int count = std::min(pin_count, kToolbarPinSlots);
+        const bool gap = pin_options.app_from > 0 && pin_options.app_from < count;
+        float px = x + (overflow ? 13.0f : 9.0f)*scale;   // 13 DIP after the last command, like the selection chip
+        if (drop_mode && pin_options.label_width > 0.0f) {
+            const float all = pin_options.label_width + 4*scale + static_cast<float>(count)*34*scale;
+            if (px+all+8*scale+view_min <= view_end) {
+                out.pin_label = {px,top+50*scale,px+pin_options.label_width,top+82*scale};
+                px = out.pin_label.right + 4*scale;
+                left_end = px + 4*scale;
+            }
+        }
+        for (int i=0;i<count;++i) {
+            const float lead = gap && i == pin_options.app_from ? 9*scale : 0.0f;
+            if (px+lead+30*scale+8*scale+view_min > view_end) break;
+            px += lead;
             out.pins[i] = {px,top+50*scale,px+30*scale,top+82*scale};
             px += 34*scale;
             left_end = px + 8*scale;

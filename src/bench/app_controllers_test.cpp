@@ -22,6 +22,9 @@
 #include "../index/index_client.h"
 #include "../index/network_agent_client.h"
 #include "../app/entry_sort.h"
+#include "../app/toolbar_apps.h"
+#include "../app/app_prefs.h"
+#include "../ui/toolbar_layout.h"
 
 #include <shlwapi.h>
 #include <shlobj.h>
@@ -697,6 +700,81 @@ bool TestSelectionTokens() {
 } // namespace
 
 // This PC: the view mode is remembered on its own and drives keep letter order.
+// Pinned apps on the toolbar (toolbar_apps.h, AppPrefs::toolbar_apps and the
+// toolbar layout's app slots / drop mode).
+bool TestToolbarApps() {
+    using namespace pulse::app;
+    bool ok = true;
+    ok &= Report("toolbar apps: a file's type is its lower-case extension",
+        ToolbarFileExt(L"C:\\a\\Plan.DWG") == L".dwg" && ToolbarFileExt(L"C:\\a.b\\noext").empty() &&
+        ToolbarFileExt(L"C:\\a\\.gitignore").empty() && ToolbarFileExt(L"C:\\a\\x.").empty());
+    ok &= Report("toolbar apps: a type's program matches by path or by file name",
+        ProgramListHas({L"C:\\Program Files\\Autodesk\\acad.exe"}, L"\\\\?\\c:\\program files\\autodesk\\ACAD.exe") &&
+        ProgramListHas({L"acad.exe"}, L"D:\\CAD\\acad.exe") &&
+        !ProgramListHas({L"C:\\x\\code.exe"}, L"C:\\x\\acad.exe") && !ProgramListHas({L"C:\\x\\code.exe"}, L""));
+    std::vector<std::wstring> apps;
+    const bool added = AddToolbarAppPath(apps, L"C:\\A\\code.exe") && !AddToolbarAppPath(apps, L"c:\\a\\CODE.exe") &&
+        !AddToolbarAppPath(apps, L"");
+    for (int i = 0; i < 10; ++i) AddToolbarAppPath(apps, L"C:\\p\\" + std::to_wstring(i) + L".exe");
+    ok &= Report("toolbar apps: no duplicates, at most 8, in pin order",
+        added && apps.size() == kMaxToolbarApps && apps.front() == L"C:\\A\\code.exe");
+    ok &= Report("toolbar apps: unknown items never dim an app; rejects make it some or none",
+        AppFitFromCounts(0, 0, 0) == AppFit::Neutral && AppFitFromCounts(0, 0, 3) == AppFit::Neutral &&
+        AppFitFromCounts(2, 0, 1) == AppFit::All && AppFitFromCounts(1, 1, 0) == AppFit::Some &&
+        AppFitFromCounts(0, 2, 1) == AppFit::Some && AppFitFromCounts(0, 2, 0) == AppFit::None);
+
+    AppPrefs prefs;
+    prefs.persist = false;
+    prefs.toolbar_apps = {L"C:\\Program Files\\Microsoft VS Code\\Code.exe",
+                          L"C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\AutoCAD \"2024\".lnk"};
+    AppPrefs reloaded;
+    reloaded.persist = false;
+    const bool round = reloaded.FromJson(prefs.ToJson()) && reloaded.toolbar_apps == prefs.toolbar_apps;
+    AppPrefs dup;
+    dup.persist = false;
+    const bool cleaned = dup.FromJson(L"{\"toolbar_apps\":[\"C:\\\\a.exe\",\"c:\\\\A.exe\",\"\",\"C:\\\\b.exe\"]}") &&
+        dup.toolbar_apps == std::vector<std::wstring>{L"C:\\a.exe", L"C:\\b.exe"};
+    AppPrefs old;
+    old.persist = false;
+    const bool none = old.FromJson(L"{}") && old.toolbar_apps.empty();
+    ok &= Report("toolbar apps: saved in app.json (escaped, duplicates dropped, none in older files)",
+        round && cleaned && none);
+
+    using pulse::ui::MakeToolbarLayout;
+    using pulse::ui::ToolbarPinOptions;
+    ToolbarPinOptions mixed;
+    mixed.app_from = 2;
+    const auto wide = MakeToolbarLayout(1300, 1, 46, 8, 96, 224, 0, 0, 0, 88, 88, 5, 0, mixed);
+    const bool spaced = wide.pins[0].right > wide.pins[0].left && wide.pins[4].right > wide.pins[4].left &&
+        std::abs(wide.pins[1].left - wide.pins[0].left - 34) < 0.01f &&
+        std::abs(wide.pins[2].left - wide.pins[1].left - 43) < 0.01f &&   // 9 DIP gap before the apps
+        std::abs(wide.pins[3].left - wide.pins[2].left - 34) < 0.01f;
+    ok &= Report("toolbar apps: pinned after the commands, a short gap between the two", spaced);
+    ToolbarPinOptions drop;
+    drop.app_from = 0;
+    drop.drop_mode = true;
+    drop.label_width = 110;
+    const auto narrow_idle = MakeToolbarLayout(740, 1, 46, 8, 40, 224, 0, 0, 0, 34, 34, 3, 0, mixed);
+    const auto narrow_drag = MakeToolbarLayout(740, 1, 46, 8, 40, 224, 0, 0, 0, 34, 34, 3, 0, drop);
+    const bool idle_folded = narrow_idle.pins[0].right <= narrow_idle.pins[0].left &&
+        narrow_idle.commands[0].right <= narrow_idle.commands[0].left;
+    const bool drag_shown = narrow_drag.pins[0].right > narrow_drag.pins[0].left &&
+        narrow_drag.pins[2].right > narrow_drag.pins[2].left &&
+        narrow_drag.pin_label.right > narrow_drag.pin_label.left &&
+        std::abs(narrow_drag.pins[0].left - narrow_drag.pin_label.right - 4) < 0.01f;
+    if (!drag_shown)
+        std::printf("    narrow drag: label %.1f-%.1f pins %.1f-%.1f %.1f-%.1f\n", narrow_drag.pin_label.left,
+                    narrow_drag.pin_label.right, narrow_drag.pins[0].left, narrow_drag.pins[0].right,
+                    narrow_drag.pins[2].left, narrow_drag.pins[2].right);
+    ok &= Report("toolbar apps: a narrow window folds them, a file drag shows them behind the label",
+        idle_folded && drag_shown);
+    const auto no_room = MakeToolbarLayout(740, 1, 46, 8, 40, 224, 0, 0, 0, 34, 34, 3, 0,
+                                           ToolbarPinOptions{0, true, 400});
+    ok &= Report("toolbar apps: the drop label gives way before an app does",
+        no_room.pin_label.right <= no_room.pin_label.left && no_room.pins[0].right > no_room.pins[0].left);
+    return ok;
+}
+
 bool TestThisPc() {
     using pulse::ui::SortColumn;
     using pulse::ui::SortDirection;
@@ -2344,6 +2422,7 @@ int wmain(int argc, wchar_t** argv) {
     passed &= TestDefaultFileManager();
     passed &= TestShellWindowPlan();
     passed &= TestThisPc();
+    passed &= TestToolbarApps();
     passed &= Report("menu row height sits 4 DIP under list density (28/34/40 -> 26/30/36, clamped)",
         pulse::app::MenuRowHeightDip(28) == 26 && pulse::app::MenuRowHeightDip(34) == 30 &&
         pulse::app::MenuRowHeightDip(40) == 36 && pulse::app::MenuRowHeightDip(24) == 26 &&

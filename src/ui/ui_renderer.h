@@ -12,6 +12,7 @@
 #include "column_strip_layout.h"
 #include "panel_metrics.h"
 #include "toolbar_layout.h"
+#include "../common/menu_icon.h"
 #include "thumbnail_cache.h"
 #include "folder_thumbnail_cache.h"
 #include "render_caches.h"
@@ -678,6 +679,22 @@ struct WindowViewModel {
     std::vector<SelectionChipAction> selection_actions;
     // Pinned toolbar commands (自定义工具栏), enabled per the current state.
     std::vector<SelectionChipAction> toolbar_pins;
+    // Pinned apps after them (layout.pins[toolbar_pins.size() + i]).
+    struct ToolbarAppPin {
+        std::wstring name;
+        common::MenuIconRef icon;
+        // Against the selection, or the dragged items in drop mode:
+        // 0 neutral, 1 opens all, 2 some, 3 none (app::AppFit).
+        int fit = 0;
+    };
+    std::vector<ToolbarAppPin> toolbar_apps;
+    // A file drag is over the window: the selection chip and the pinned
+    // commands give way, the apps (drop targets) stay (prototype note 6).
+    bool toolbar_drop_mode = false;
+    int toolbar_drop_app = -1;            // app under the drag, index into toolbar_apps
+    bool toolbar_drop_force = false;      // Shift: opening a type the app does not list
+    bool toolbar_drop_pin = false;        // a dragged program goes onto the pins
+    std::wstring toolbar_drop_label;      // "拖到软件上打开" / "固定到工具栏" (layout.pin_label)
 
     PaneViewModel pane;
     std::vector<PaneSlotView> pane_slots;
@@ -961,7 +978,8 @@ struct HitTestResult {
         ToolbarSort,
         ToolbarMore,
         ToolbarSelAction,   // selection chip: quick actions, kSelChipMore, kSelChipClear, -1 chip body
-        ToolbarPin,         // pinned command (自定义工具栏): index into vm.toolbar_pins
+        ToolbarPin,         // pinned command or app (自定义工具栏): index into layout.pins
+        ToolbarPinLabel,    // drop mode: the label ahead of the pinned apps
         AddressBar,
         AddressSearch,
         AddressSearchInput,
@@ -1227,6 +1245,13 @@ public:
         new_last_text_ = last_text;
         pin_count_ = pin_count;
     }
+    // Pinned apps: where they start among the pins, and drop mode with its label.
+    void SetToolbarApps(int app_from, bool drop_mode, std::wstring drop_label) {
+        pin_app_from_ = app_from;
+        pin_drop_mode_ = drop_mode;
+        pin_drop_label_ = std::move(drop_label);
+    }
+    float ToolbarPinLabelWidth() const;
     // Selection chip input for the toolbar layout (the row reserves its room).
     void SetToolbarSelection(int selected, int action_count) {
         selection_count_ = selected;
@@ -1635,6 +1660,7 @@ private:
     TabStripMetrics ComputeTabStrip(const WindowViewModel& vm, float window_w) const;
     void DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
+    void DrawToolbarApps(const WindowViewModel& vm, const ToolbarLayout& layout, const Theme& theme);
     void DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawPane(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
@@ -1785,6 +1811,17 @@ private:
     int new_primary_ = 0;
     bool new_last_text_ = false;
     int pin_count_ = 0;
+    int pin_app_from_ = -1;
+    bool pin_drop_mode_ = false;
+    std::wstring pin_drop_label_;
+    // Device bitmaps of the pinned apps' icons, keyed by their pixel buffers.
+    struct AppIconEntry {
+        common::MenuIconRef pixels;
+        ComPtr<ID2D1Bitmap> bitmap;
+    };
+    std::vector<AppIconEntry> app_icon_bitmaps_;
+    ID2D1DeviceContext* app_icon_dc_ = nullptr;
+    ID2D1Bitmap* AppIconBitmap(const common::MenuIconRef& pixels);
     int selection_count_ = 0;
     int selection_actions_ = 0;
     bool sidebar_collapsed_ = false;

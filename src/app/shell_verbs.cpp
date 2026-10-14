@@ -219,11 +219,16 @@ std::wstring CommandExePath(const std::wstring& command) {
 }
 
 // FileDescription from the exe's version resource ("AutoCAD Application" …).
-std::wstring ExeFriendlyName(const std::wstring& exe_path) {
-    const DWORD size = GetFileVersionInfoSizeW(exe_path.c_str(), nullptr);
+// localized: the MUI resource of the UI language (记事本, as Explorer shows).
+std::wstring ExeFriendlyName(const std::wstring& exe_path, bool localized = false) {
+    DWORD ignored = 0;
+    const DWORD size = localized ? GetFileVersionInfoSizeExW(FILE_VER_GET_LOCALISED, exe_path.c_str(), &ignored)
+                                 : GetFileVersionInfoSizeW(exe_path.c_str(), nullptr);
     if (size == 0) return {};
     std::vector<uint8_t> data(size);
-    if (!GetFileVersionInfoW(exe_path.c_str(), 0, size, data.data())) return {};
+    if (localized ? !GetFileVersionInfoExW(FILE_VER_GET_LOCALISED, exe_path.c_str(), 0, size, data.data())
+                  : !GetFileVersionInfoW(exe_path.c_str(), 0, size, data.data()))
+        return {};
     struct LangCp { WORD lang; WORD cp; };
     LangCp* translations = nullptr;
     UINT bytes = 0;
@@ -708,6 +713,25 @@ common::MenuIconRef FileTypeMenuIcon(const std::wstring& ext) {
     if (cache.size() >= 256) cache.clear();
     cache.emplace(key, pixels);
     return pixels;
+}
+
+std::wstring ProgramFriendlyName(const std::wstring& exe_path) {
+    if (exe_path.empty()) return {};
+    const size_t slash = exe_path.find_last_of(L"\\/");
+    const std::wstring file = slash == std::wstring::npos ? exe_path : exe_path.substr(slash + 1);
+    // Same order as the open-with rows (the registered name, the version
+    // resource, the file name), but the version resource in the UI language:
+    // the name Explorer's 打开方式 shows — 记事本, not "Notepad".
+    std::wstring friendly = ResolveIndirect(RegReadString(
+        HKEY_CLASSES_ROOT, L"Applications\\" + file, L"FriendlyAppName"));
+    if (friendly.empty()) friendly = ExeFriendlyName(exe_path, true);
+    if (friendly.empty()) friendly = ExeFriendlyName(exe_path);
+    if (friendly.empty()) friendly = ExeBaseName(file);
+    return friendly;
+}
+
+common::MenuIconRef ProgramMenuIcon(const std::wstring& reference) {
+    return reference.empty() ? nullptr : CachedMenuIcon(reference);
 }
 
 } // namespace pulse::app

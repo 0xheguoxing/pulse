@@ -604,6 +604,14 @@ struct AppState : AppCoreOwner {
     bool teachShownThisSession = false; // at most one tip per launch
     std::wstring dropDestDir;                 // resolved drop destination ("" = none/tray)
     std::wstring dropLaunchProgram;           // program row that opens the dropped items
+    // Toolbar drop mode (app_toolbar_apps.cpp): while files are dragged over
+    // the window the toolbar holds the pinned apps only.
+    bool toolbarDropMode = false;
+    std::vector<std::wstring> toolbarDropSources;   // the dragged items (fit hints)
+    std::wstring toolbarDropProgram;                // a single unpinned program among them
+    int dropToolbarApp = -1;                        // app under the drag (index into toolbar_apps)
+    bool dropToolbarForce = false;                  // Shift: also types the app does not list
+    bool dropToolbarPin = false;                    // over the label: pin toolbarDropProgram
 
     // Spring-loaded folder enter during drag-over (ui.md §7.8).
     int springRow = -1;

@@ -124,6 +124,9 @@ struct AppPrefs {
     int toolbar_new_primary = 0;
     int toolbar_last_new = 0;
     uint32_t toolbar_pins = 0;
+    // Programs pinned to the toolbar (自定义工具栏 → 固定的软件), in toolbar
+    // order: .exe paths or shortcuts to them, at most app::kMaxToolbarApps.
+    std::vector<std::wstring> toolbar_apps;
     // Empty = theme default, or Windows when explicitly selected.
     std::wstring accent_rgb;
     bool accent_follow_system = false;

@@ -33,6 +33,7 @@
 #include "context_menu.h"
 #include "system_ctx_registry.h"
 #include "shell_verbs.h"
+#include "toolbar_apps.h"
 #include "app_change_tracking.h"
 #include "batch_rename.h"
 #include "search_query.h"
@@ -1486,8 +1487,8 @@ bool HandleShellMenuCommand(AppState& s, int cmd) {
         [&s] { WaitForShellMenuReady(s); }, [&s] { ScheduleFolderRefresh(s); });
 }
 
-void ShowItemContextMenu(AppState& s, POINT screen_pt) {
-    if(DeferContentSelection(s,[=](AppState& v){ShowItemContextMenu(v,screen_pt);})) return;
+void ShowItemContextMenu(AppState& s, POINT screen_pt, bool from_chip) {
+    if(DeferContentSelection(s,[=](AppState& v){ShowItemContextMenu(v,screen_pt,from_chip);})) return;
     if (!EnsureMenu(s)) return;
     app::Tab* tab = ActiveTab(s);
     const std::vector<std::wstring> paths =
@@ -1511,12 +1512,23 @@ void ShowItemContextMenu(AppState& s, POINT screen_pt) {
     s.context_menu.OpenMenu(base_items);
     auto display = IsRecycleTab(tab) ? std::move(base_items)
                                      : ExplorerMenu(s, s.context_menu.base_items());
+    if (from_chip && !IsRecycleTab(tab)) {
+        // Chip ⋯ (prototype app_pins.html): 用 <pinned app> 打开 and
+        // 固定到工具栏 ▸ lead the item menu.
+        auto apps = ToolbarAppMenuItems(s);
+        if (!apps.empty()) {
+            apps.back().separator_after = true;
+            display.insert(display.begin(), std::make_move_iterator(apps.begin()),
+                           std::make_move_iterator(apps.end()));
+        }
+    }
     const int quick_count = std::min(7, static_cast<int>(s.places.tags.size()));
 
     if (!IsRecycleTab(tab)) BeginCtxTiming(s, display.size(), seeded);
     const int cmd = s.menu->TrackPopup(screen_pt, std::move(display));
     s.context_menu.CloseMenu();
     LogCtxTiming(s, cmd);
+    if (from_chip && RunToolbarAppMenuCommand(s, cmd)) return;
     if (HandleShellMenuCommand(s, cmd)) return;
     if (HandleQuickAccessCommand(s, cmd, quick_paths)) return;
     const auto window_folder = [&](int base) {
@@ -2317,7 +2329,7 @@ void RunToolbarSelectionAction(AppState& s, int action) {
     POINT anchor{static_cast<LONG>(button.left), static_cast<LONG>(button.bottom)};
     ClientToScreen(s.hwnd, &anchor);
     if (action == ui::kSelChipMore) {
-        ShowItemContextMenu(s, anchor);
+        ShowItemContextMenu(s, anchor, true);
         return;
     }
     if (action >= static_cast<int>(actions.size())) return;
@@ -2368,6 +2380,19 @@ void ShowToolbarMore(AppState& s) {
         item.enabled=pins[slot].enabled;
         items.push_back(std::move(item));
     }
+    // Pinned apps without room, after the commands (the toolbar order).
+    const auto apps=ToolbarAppPins(s);
+    for (size_t i=0;i<apps.size();++i) {
+        const size_t slot=pins.size()+i;
+        if (slot<layout.pins.size() && layout.pins[slot].right>layout.pins[slot].left) continue;
+        ui::FluentMenuItem item;
+        item.command=app::CmdToolbarAppBase+static_cast<int>(i);
+        item.text=apps[i].name;
+        item.icon=apps[i].icon;
+        // Like the dimmed toolbar icon: still starts the program (RunToolbarApp
+        // then passes none of the selected items).
+        items.push_back(std::move(item));
+    }
     if (!items.empty()) items.back().separator_after=true;
     if (narrow) {
         ui::FluentMenuItem split;
@@ -2406,6 +2431,7 @@ void ShowToolbarMore(AppState& s) {
     POINT anchor{static_cast<LONG>(layout.overflow.left),static_cast<LONG>(layout.overflow.bottom)};
     ClientToScreen(s.hwnd,&anchor);
     const int cmd=s.menu->TrackPopup(anchor,items);
+    if (RunToolbarAppMenuCommand(s,cmd)) return;
     if (cmd!=app::CmdNone) DispatchMenuCommand(s,cmd);
 }
 
@@ -2442,7 +2468,11 @@ void RunToolbarAction(AppState& s, bool pin, int index) {
         return;
     }
     const auto pins = ToolbarPinActions(s);
-    if (index < 0 || index >= static_cast<int>(pins.size())) return;
+    if (index >= static_cast<int>(pins.size())) {   // pinned apps follow the commands
+        RunToolbarApp(s, static_cast<size_t>(index - static_cast<int>(pins.size())));
+        return;
+    }
+    if (index < 0) return;
     const ui::SelectionChipAction& action = pins[static_cast<size_t>(index)];
     if (action.enabled) DispatchMenuCommand(s, action.command);
 }
@@ -2482,6 +2512,7 @@ void ShowToolbarCustomize(AppState& s) {
         row.checked = (s.appPrefs.toolbar_pins & (1u << i)) != 0;
         spec.pins.push_back(std::move(row));
     }
+    FillToolbarAppRows(s, spec);
     if (!ui::ShowToolbarCustomizeDialog(s.hwnd, spec, s.darkMode, s.accentColor)) return;
     int new_primary = 0;
     for (size_t i = 0; i < spec.primary.size(); ++i)
@@ -2489,7 +2520,8 @@ void ShowToolbarCustomize(AppState& s) {
     uint32_t pins = 0;
     for (size_t i = 0; i < std::size(kToolbarPins) && i + 1 < spec.pins.size(); ++i)
         if (spec.pins[i + 1].checked) pins |= 1u << i;
-    if (new_primary != s.appPrefs.toolbar_new_primary || pins != s.appPrefs.toolbar_pins) {
+    const bool apps_changed = ApplyToolbarAppRows(s, spec);
+    if (apps_changed || new_primary != s.appPrefs.toolbar_new_primary || pins != s.appPrefs.toolbar_pins) {
         s.appPrefs.toolbar_new_primary = new_primary;
         s.appPrefs.toolbar_pins = pins;
         if (!s.isolatedTest) s.appPrefs.Save();
@@ -2802,6 +2834,20 @@ static ui::FolderPickerSpec MakePickerSpec(const AppState& s, ui::PickerMode mod
 bool PickImageFile(AppState& s, std::wstring& path) {
     ui::FolderPickerSpec spec = MakePickerSpec(s, ui::PickerMode::Image);
     return ui::ShowFolderPicker(s.hwnd, spec, s.darkMode, s.accentColor, path);
+}
+
+bool PickToolbarAppFile(AppState& s, HWND owner, std::wstring& path) {
+    ui::FolderPickerSpec spec = MakePickerSpec(s, ui::PickerMode::File);
+    spec.title = l10n::Get(l10n::StringId::ToolbarAppPickerTitle);
+    spec.filters = {{l10n::Get(l10n::StringId::ToolbarAppPickerFilter) + L" (*.exe; *.lnk)", L"*.exe;*.lnk"}};
+    wchar_t programs[MAX_PATH]{};
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_COMMON_PROGRAMS, nullptr, 0, programs)))
+        spec.initial_path = programs;
+    ui::FilePickerResult result;
+    if (!ui::ShowFilePicker(owner ? owner : s.hwnd, spec, s.darkMode, s.accentColor, result) || result.paths.empty())
+        return false;
+    path = result.paths.front();
+    return true;
 }
 
 bool PickFolder(AppState& s, std::wstring& path, const wchar_t* title) {

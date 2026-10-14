@@ -35,6 +35,7 @@
 #include "blank_pane_click.h"
 #include "drop_staging.h"
 #include "link_resolve.h"
+#include "toolbar_apps.h"
 #include "resource.h"
 #include "../ops/clipboard.h"
 #include "../ipc/ctx_menu_util.h"
@@ -92,6 +93,12 @@ bool UpdateSplitterDrag(AppState& s, int mx, int my) {
 }
 void ClearDropFeedback(AppState& s) {
     s.dropLaunchProgram.clear();
+    s.toolbarDropMode = false;
+    s.toolbarDropSources.clear();
+    s.toolbarDropProgram.clear();
+    s.dropToolbarApp = -1;
+    s.dropToolbarForce = false;
+    s.dropToolbarPin = false;
     s.dropRow = -1;
     s.dropPaneIndex = -1;
     s.dropHeader = false;
@@ -196,9 +203,17 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
         return DROPEFFECT_NONE;
     }
 
+    // The toolbar holds the pinned apps while files are dragged over the
+    // window; the layout (and so the hit test) depends on it.
+    UpdateToolbarDropMode(s, sources);
     ui::WindowViewModel vm = BuildVm(s);
     D2D1_RECT_F rect = D2D1::RectF(0, 0, (float)s.compositor.Width(), (float)s.compositor.Height());
     ui::HitTestResult hit = s.renderer.HitTest(vm, rect, (float)pt.x, (float)pt.y);
+    DWORD toolbar_effect = DROPEFFECT_NONE;
+    if (ResolveToolbarAppDrop(s, vm, hit, sources, pt, key_state, allowed, toolbar_effect)) {
+        s.springRow = -1;
+        return toolbar_effect;
+    }
 
     // Resting on a tab of the strip opens it (M6e); the tab takes the drop
     // into the folder it shows.
@@ -434,9 +449,26 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
     const bool header = s.dropHeader;
     const int header_pane = s.dropPaneIndex;
     const bool pin_quick_access = s.dropQuickAccess;
+    const int toolbar_app = s.dropToolbarApp;
+    const bool toolbar_pin = s.dropToolbarPin;
+    const std::wstring toolbar_program = s.toolbarDropProgram;
     ClearDropFeedback(s);
     s.springEntered = false;
     if (effect == DROPEFFECT_NONE || !(effect & allowed)) return DROPEFFECT_NONE;
+
+    if (toolbar_pin) {
+        // A program dropped on the label joins the pinned apps; a shortcut
+        // only when it starts a program.
+        const app::ToolbarAppInfo info = app::DescribeToolbarAppNow(toolbar_program);
+        if (info.exe.empty() || !ui::IsDropLaunchProgram(info.exe)) return DROPEFFECT_NONE;
+        PinToolbarApp(s, toolbar_program);
+        return effect;   // nothing is copied; the source keeps its file
+    }
+    if (toolbar_app >= 0) {
+        // Shift hands over every item, also types the app does not list.
+        OpenWithToolbarApp(s, static_cast<size_t>(toolbar_app), sources, (key_state & MK_SHIFT) != 0);
+        return effect;
+    }
 
     if (!launch_program.empty()) {
         // Launched on the ops open thread, in the program's own folder.

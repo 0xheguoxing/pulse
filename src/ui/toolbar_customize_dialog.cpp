@@ -8,6 +8,7 @@
 #include <windowsx.h>
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace pulse::ui {
 namespace {
@@ -25,7 +26,8 @@ constexpr float kButtonGap = 8.0f;
 constexpr float kFooterPadY = 18.0f;
 
 // Control ids: footer and close, then one id per row.
-enum : int { kNone = 0, kDone = 1, kCancel = 2, kClose = 3, kPrimaryBase = 100, kPinBase = 200 };
+enum : int { kNone = 0, kDone = 1, kCancel = 2, kClose = 3, kAddApp = 4,
+             kPrimaryBase = 100, kPinBase = 200, kAppBase = 300 };
 
 float Dip(float scale, float value) { return value * scale; }
 
@@ -53,8 +55,9 @@ struct Layout {
     float width = 0.0f;
     float height = 0.0f;
     float title_bar = 0.0f;
-    D2D1_RECT_F close{}, title{}, intro{}, primary_heading{}, pin_heading{};
-    std::vector<D2D1_RECT_F> primary, pins;
+    D2D1_RECT_F close{}, title{}, intro{}, primary_heading{}, pin_heading{}, app_heading{};
+    std::vector<D2D1_RECT_F> primary, pins, apps;
+    D2D1_RECT_F add_app{}, app_footnote{};
     D2D1_RECT_F footer{}, done{}, cancel{};
 };
 
@@ -70,11 +73,15 @@ float Wrapped(IDWriteFactory2* factory, IDWriteTextFormat* format, std::wstring_
     return std::ceil(typography::MeasureWrapped(factory, format, text, width));
 }
 
+// One column, or two (the apps on the right) when one column would not fit in
+// max_height (a short screen: commands and apps together are long).
 Layout LayoutDialog(const ToolbarCustomizeSpec& spec, const fluent::Painter& painter,
-                    IDWriteFactory2* factory, const Formats& formats, float scale) {
+                    IDWriteFactory2* factory, const Formats& formats, float scale,
+                    float max_height = 0.0f, bool two_columns = false) {
     Layout l;
     const float pad = Dip(scale, kPad);
-    const float width = std::ceil(Dip(scale, kWidth));
+    const float column = std::ceil(Dip(scale, kWidth));
+    const float width = two_columns ? column * 2.0f - pad : column;
     const float text_w = width - pad * 2.0f;
     l.title_bar = Dip(scale, kTitleBar);
     l.close = D2D1::RectF(width - Dip(scale, kCloseW), 0, width, l.title_bar);
@@ -86,18 +93,37 @@ Layout LayoutDialog(const ToolbarCustomizeSpec& spec, const fluent::Painter& pai
     l.intro = D2D1::RectF(pad, y, width - pad, y + intro_h);
     y = l.intro.bottom + Dip(scale, 14.0f);
 
+    const float columns_top = y;
+    float x0 = 0.0f;   // left edge of the current column
     const auto rows = [&](D2D1_RECT_F& heading, std::vector<D2D1_RECT_F>& out, size_t count) {
-        heading = D2D1::RectF(pad, y, width - pad, y + Dip(scale, kHeadingH));
+        heading = D2D1::RectF(x0 + pad, y, x0 + column - pad, y + Dip(scale, kHeadingH));
         y = heading.bottom;
         for (size_t i = 0; i < count; ++i) {
-            out.push_back(D2D1::RectF(pad - Dip(scale, kRowInset), y, width - pad + Dip(scale, kRowInset),
-                                      y + Dip(scale, kRowH)));
+            out.push_back(D2D1::RectF(x0 + pad - Dip(scale, kRowInset), y,
+                                      x0 + column - pad + Dip(scale, kRowInset), y + Dip(scale, kRowH)));
             y += Dip(scale, kRowH);
         }
     };
     rows(l.primary_heading, l.primary, spec.primary.size());
     y += Dip(scale, 10.0f);
     rows(l.pin_heading, l.pins, spec.pins.size());
+    if (!spec.app_heading.empty()) {
+        const float left_bottom = y;
+        if (two_columns) {
+            x0 = column - pad;
+            y = columns_top;
+        } else {
+            y += Dip(scale, 10.0f);
+        }
+        rows(l.app_heading, l.apps, spec.apps.size());
+        l.add_app = D2D1::RectF(x0 + pad - Dip(scale, kRowInset), y, x0 + column - pad + Dip(scale, kRowInset),
+                                y + Dip(scale, kRowH));
+        y = l.add_app.bottom + Dip(scale, 4.0f);
+        const float note_w = column - pad * 2.0f;
+        const float note_h = Wrapped(factory, formats.intro.get(), spec.app_footnote, note_w);
+        l.app_footnote = D2D1::RectF(x0 + pad, y, x0 + pad + note_w, y + note_h);
+        y = std::max(left_bottom, l.app_footnote.bottom);
+    }
     y += Dip(scale, 20.0f);
 
     const float btn_h = painter.MeasureButtonHeight();
@@ -110,6 +136,8 @@ Layout LayoutDialog(const ToolbarCustomizeSpec& spec, const fluent::Painter& pai
                            l.done.left - Dip(scale, kButtonGap), by + btn_h);
     l.width = width;
     l.height = std::ceil(l.footer.bottom);
+    if (!two_columns && max_height > 0.0f && l.height > max_height && !spec.app_heading.empty())
+        return LayoutDialog(spec, painter, factory, formats, scale, max_height, true);
     return l;
 }
 
@@ -123,12 +151,35 @@ int HitTest(const Layout& l, const ToolbarCustomizeSpec& spec, float x, float y)
         if (ContainsRect(l.pins[i], x, y))
             return spec.pins[i].locked ? kNone : kPinBase + static_cast<int>(i);
     }
+    for (size_t i = 0; i < l.apps.size(); ++i)
+        if (ContainsRect(l.apps[i], x, y)) return kAppBase + static_cast<int>(i);
+    if (spec.add_app && ContainsRect(l.add_app, x, y)) return kAddApp;
     return kNone;
 }
 
+// Device bitmaps of the app rows' icons; dropped with the device.
+struct IconBitmaps {
+    ID2D1DeviceContext* dc = nullptr;
+    std::vector<std::pair<common::MenuIconRef, ComPtr<ID2D1Bitmap>>> list;
+    ID2D1Bitmap* For(ID2D1DeviceContext* target, const common::MenuIconRef& pixels) {
+        if (!target || !pixels || !pixels->Valid()) return nullptr;
+        if (target != dc) { list.clear(); dc = target; }
+        for (const auto& [key, bitmap] : list)
+            if (key == pixels) return bitmap.get();
+        ComPtr<ID2D1Bitmap> bitmap;
+        const auto props = D2D1::BitmapProperties(
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        if (FAILED(target->CreateBitmap(D2D1::SizeU(pixels->width, pixels->height), pixels->bgra.data(),
+                                        pixels->width * 4u, props, &bitmap)))
+            bitmap.reset();
+        list.emplace_back(pixels, std::move(bitmap));
+        return list.back().second.get();
+    }
+};
+
 void DrawRows(Compositor& compositor, fluent::Painter& painter, const Theme& theme,
               const std::vector<ToolbarCustomizeRow>& rows, const std::vector<D2D1_RECT_F>& rects,
-              int base, bool radio, const Visual& visual) {
+              int base, bool radio, const Visual& visual, IconBitmaps* icons = nullptr) {
     const float scale = painter.Scale();
     for (size_t i = 0; i < rows.size() && i < rects.size(); ++i) {
         const ToolbarCustomizeRow& row = rows[i];
@@ -147,7 +198,19 @@ void DrawRows(Compositor& compositor, fluent::Painter& painter, const Theme& the
         if (radio) painter.DrawRadioButton(indicator, L"", state);
         else painter.DrawCheckBox(indicator, L"", state);
         float x = indicator.right + Dip(scale, 12.0f);
-        if (!row.glyph.empty()) {
+        if (icons) {   // app rows: the program icon, or a generic one until it is read
+            const float half = Dip(scale, 8.0f);
+            const float cx = std::round(x + Dip(scale, 10.0f));
+            const float cy = std::round((r.top + r.bottom) * 0.5f);
+            if (ID2D1Bitmap* bitmap = icons->For(compositor.Dc(), row.icon)) {
+                compositor.Dc()->DrawBitmap(bitmap, D2D1::RectF(cx - half, cy - half, cx + half, cy + half), 1.0f,
+                                            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            } else {
+                painter.DrawGlyph(L"\xECAA", D2D1::RectF(x, r.top, x + Dip(scale, 20.0f), r.bottom),
+                                  theme.text_secondary);
+            }
+            x += Dip(scale, 28.0f);
+        } else if (!row.glyph.empty()) {
             painter.DrawGlyph(row.glyph, D2D1::RectF(x, r.top, x + Dip(scale, 20.0f), r.bottom),
                               theme.text_secondary);
             x += Dip(scale, 28.0f);
@@ -160,14 +223,32 @@ void DrawRows(Compositor& compositor, fluent::Painter& painter, const Theme& the
                              compositor.SmallFormat(), theme.text_secondary, fluent::HorizontalAlignment::Right);
             caption_left -= Dip(scale, 12.0f);
         }
-        painter.DrawText(row.label, D2D1::RectF(x, r.top, std::max(x, caption_left), r.bottom),
+        float label_right = std::max(x, caption_left);
+        if (!row.badge.empty() && compositor.SmallFormat()) {
+            // Accent tag right after the name, as in the prototype's sheet.
+            const float label_w = std::ceil(typography::MeasureLine(&compositor, compositor.TextFormat(), row.label));
+            const float badge_w = std::ceil(typography::MeasureLine(&compositor, compositor.SmallFormat(), row.badge)) +
+                                  Dip(scale, 12.0f);
+            const float bx = std::min(x + label_w + Dip(scale, 8.0f), label_right - badge_w);
+            if (bx > x + Dip(scale, 40.0f)) {
+                const float cy = (r.top + r.bottom) * 0.5f;
+                const D2D1_RECT_F tag = D2D1::RectF(bx, cy - Dip(scale, 9.0f), bx + badge_w, cy + Dip(scale, 9.0f));
+                D2D1_COLOR_F fill = theme.accent;
+                fill.a *= 0.14f;
+                painter.FillRoundedRect(tag, Dip(scale, 4.0f), fill);
+                painter.DrawText(row.badge, tag, compositor.SmallFormat(), theme.accent,
+                                 fluent::HorizontalAlignment::Center);
+                label_right = bx - Dip(scale, 6.0f);
+            }
+        }
+        painter.DrawText(row.label, D2D1::RectF(x, r.top, label_right, r.bottom),
                          compositor.TextFormat(), row.locked ? theme.text_secondary : theme.text);
     }
 }
 
 void DrawDialog(Compositor& compositor, fluent::Painter& painter, const Theme& theme,
                 const ToolbarCustomizeSpec& spec, const Layout& l, const Formats& formats,
-                const Visual& visual, bool high_contrast) {
+                const Visual& visual, bool high_contrast, IconBitmaps& icons) {
     const float scale = painter.Scale();
     fluent::ControlState close_state{};
     close_state.hovered = visual.hover == kClose;
@@ -183,6 +264,42 @@ void DrawDialog(Compositor& compositor, fluent::Painter& painter, const Theme& t
     }
     DrawRows(compositor, painter, theme, spec.primary, l.primary, kPrimaryBase, true, visual);
     DrawRows(compositor, painter, theme, spec.pins, l.pins, kPinBase, false, visual);
+    if (!spec.app_heading.empty()) {
+        if (compositor.SmallFormat()) {
+            painter.DrawText(spec.app_heading, l.app_heading, compositor.SmallFormat(), theme.text_secondary);
+            if (!spec.app_hint.empty()) {
+                const float w = std::ceil(typography::MeasureLine(&compositor, compositor.SmallFormat(), spec.app_heading));
+                D2D1_RECT_F hint = l.app_heading;
+                hint.left += w + Dip(scale, 8.0f);
+                D2D1_COLOR_F c = theme.text_secondary;
+                c.a *= 0.75f;
+                if (hint.right > hint.left) painter.DrawText(spec.app_hint, hint, compositor.SmallFormat(), c);
+            }
+        }
+        DrawRows(compositor, painter, theme, spec.apps, l.apps, kAppBase, false, visual, &icons);
+        if (spec.add_app && l.add_app.right > l.add_app.left) {
+            const D2D1_RECT_F& r = l.add_app;
+            if (visual.hover == kAddApp || visual.pressed == kAddApp)
+                painter.FillRoundedRect(r, Dip(scale, 7.0f), theme.fill_hover);
+            if (visual.show_focus && visual.focus == kAddApp) painter.DrawFocusRing(r, Dip(scale, 7.0f));
+            const float x = r.left + Dip(scale, kRowInset);
+            painter.DrawGlyph(L"\xE710", D2D1::RectF(x, r.top, x + Dip(scale, 20.0f), r.bottom), theme.accent);
+            float caption_left = r.right - Dip(scale, kRowInset);
+            if (!spec.add_app_caption.empty() && compositor.SmallFormat()) {
+                const float w = std::ceil(typography::MeasureLine(&compositor, compositor.SmallFormat(), spec.add_app_caption));
+                caption_left -= w;
+                painter.DrawText(spec.add_app_caption, D2D1::RectF(caption_left, r.top, r.right - Dip(scale, kRowInset), r.bottom),
+                                 compositor.SmallFormat(), theme.text_secondary, fluent::HorizontalAlignment::Right);
+                caption_left -= Dip(scale, 12.0f);
+            }
+            const float tx = x + Dip(scale, 32.0f);
+            painter.DrawText(spec.add_app_text, D2D1::RectF(tx, r.top, std::max(tx, caption_left), r.bottom),
+                             compositor.TextFormat(), theme.accent);
+        }
+        if (l.app_footnote.bottom > l.app_footnote.top)
+            DrawDialogParagraph(compositor, formats.intro.get(), l.app_footnote, spec.app_footnote,
+                                high_contrast ? theme.text : theme.text_secondary);
+    }
 
     // Footer band, as in the confirm dialog.
     painter.FillRoundedRect(l.footer, 0, theme.surface_sheet);
@@ -265,7 +382,11 @@ private:
     void SizeToContent() {
         if (!hwnd_ || !compositor_.DwriteFactory()) return;
         formats_.Create(compositor_.DwriteFactory(), scale_);
-        layout_ = LayoutDialog(spec_, painter_, compositor_.DwriteFactory(), formats_, scale_);
+        MONITORINFO monitor{ sizeof(monitor) };
+        float max_height = 0.0f;
+        if (GetMonitorInfoW(MonitorFromWindow(owner_ ? owner_ : hwnd_, MONITOR_DEFAULTTONEAREST), &monitor))
+            max_height = static_cast<float>(monitor.rcWork.bottom - monitor.rcWork.top) - 48.0f * scale_;
+        layout_ = LayoutDialog(spec_, painter_, compositor_.DwriteFactory(), formats_, scale_, max_height);
         const int width = static_cast<int>(std::ceil(layout_.width));
         const int height = static_cast<int>(std::ceil(layout_.height));
         sizing_ = true;
@@ -283,7 +404,17 @@ private:
     void Activate(int id) {
         if (id == kDone) { Complete(true); return; }
         if (id == kCancel || id == kClose) { Complete(false); return; }
-        if (id >= kPinBase) {
+        if (id == kAddApp) {
+            AddApp();
+            return;
+        }
+        if (id >= kAppBase) {
+            const size_t i = static_cast<size_t>(id - kAppBase);
+            if (i < spec_.apps.size()) {
+                if (!spec_.apps[i].checked && CheckedApps() >= spec_.max_apps) { MessageBeep(MB_OK); return; }
+                spec_.apps[i].checked = !spec_.apps[i].checked;
+            }
+        } else if (id >= kPinBase) {
             const size_t i = static_cast<size_t>(id - kPinBase);
             if (i < spec_.pins.size() && !spec_.pins[i].locked) spec_.pins[i].checked = !spec_.pins[i].checked;
         } else if (id >= kPrimaryBase) {
@@ -293,12 +424,38 @@ private:
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
-    // Keyboard order: the option rows, the changeable pin rows, Cancel, Done.
+    size_t CheckedApps() const {
+        size_t n = 0;
+        for (const auto& row : spec_.apps) n += row.checked ? 1u : 0u;
+        return n;
+    }
+
+    void AddApp() {
+        if (!spec_.add_app) return;
+        ToolbarCustomizeRow row;
+        if (!spec_.add_app(hwnd_, row) || row.value.empty() || !hwnd_) return;
+        for (auto& existing : spec_.apps) {
+            if (_wcsicmp(existing.value.c_str(), row.value.c_str()) == 0) {
+                if (!existing.checked && CheckedApps() < spec_.max_apps) existing.checked = true;
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+        }
+        row.checked = CheckedApps() < spec_.max_apps;
+        spec_.apps.push_back(std::move(row));
+        SizeToContent();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    // Keyboard order: the option rows, the changeable pin rows, the app rows
+    // and 添加软件…, Cancel, Done.
     std::vector<int> FocusOrder() const {
         std::vector<int> order;
         for (size_t i = 0; i < spec_.primary.size(); ++i) order.push_back(kPrimaryBase + static_cast<int>(i));
         for (size_t i = 0; i < spec_.pins.size(); ++i)
             if (!spec_.pins[i].locked) order.push_back(kPinBase + static_cast<int>(i));
+        for (size_t i = 0; i < spec_.apps.size(); ++i) order.push_back(kAppBase + static_cast<int>(i));
+        if (spec_.add_app) order.push_back(kAddApp);
         order.push_back(kCancel);
         order.push_back(kDone);
         return order;
@@ -318,6 +475,7 @@ private:
     void Render() {
         if (compositor_.NeedsRecovery()) {
             if (!compositor_.Recover()) return;
+            icons_ = IconBitmaps{};
             compositor_.RecreateTextFormats(scale_);
             painter_.SetCompositor(&compositor_);
             painter_.SetScale(scale_);
@@ -326,7 +484,7 @@ private:
         const bool high_contrast = IsHighContrast();
         const Theme theme = high_contrast ? MakeHighContrastTheme() : MakeTheme(dark_, accent_);
         BeginSurface(compositor_, painter_, theme, dark_, high_contrast, backdrop_enabled_, scale_);
-        DrawDialog(compositor_, painter_, theme, spec_, layout_, formats_, visual_, high_contrast);
+        DrawDialog(compositor_, painter_, theme, spec_, layout_, formats_, visual_, high_contrast, icons_);
         EndSurface(compositor_);
     }
 
@@ -443,6 +601,7 @@ private:
     Formats formats_;
     Layout layout_;
     Visual visual_;
+    IconBitmaps icons_;
     ToolbarCustomizeSpec spec_;
     D2D1_COLOR_F accent_ = HexColor(0x0078D4);
     float scale_ = 1.0f;

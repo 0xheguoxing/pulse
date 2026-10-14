@@ -2510,11 +2510,33 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
         }
         s.renderer.SetToolbarGroup(toolbar_group);
     }
-    if (vm.pane.selected_count > 0) vm.selection_actions = SelectionChipActions(s);
-    s.renderer.SetToolbarSelection(vm.pane.selected_count, static_cast<int>(vm.selection_actions.size()));
-    vm.toolbar_pins = ToolbarPinActions(s);
+    // Toolbar follows the pointer: a file drag over the window swaps the
+    // selection chip and the pinned commands for the pinned apps.
+    const bool drop_mode = s.toolbarDropMode;
+    if (vm.pane.selected_count > 0 && !drop_mode) vm.selection_actions = SelectionChipActions(s);
+    s.renderer.SetToolbarSelection(drop_mode ? 0 : vm.pane.selected_count,
+                                   static_cast<int>(vm.selection_actions.size()));
+    if (!drop_mode) vm.toolbar_pins = ToolbarPinActions(s);
+    vm.toolbar_apps = ToolbarAppPins(s);
+    vm.toolbar_drop_mode = drop_mode;
+    if (drop_mode) {
+        vm.toolbar_drop_app = s.dropToolbarApp;
+        vm.toolbar_drop_force = s.dropToolbarForce;
+        vm.toolbar_drop_pin = s.dropToolbarPin;
+        if (!s.toolbarDropProgram.empty()) {
+            vm.toolbar_drop_label = l10n::Get(l10n::StringId::ToolbarPinApp);
+            const size_t at = vm.toolbar_drop_label.find(L"{app}");
+            const size_t slash = s.toolbarDropProgram.find_last_of(L"\\/");
+            if (at != std::wstring::npos)
+                vm.toolbar_drop_label.replace(at, 5, fs::StripLnkSuffix(
+                    slash == std::wstring::npos ? s.toolbarDropProgram : s.toolbarDropProgram.substr(slash + 1)));
+        } else if (!vm.toolbar_apps.empty()) {
+            vm.toolbar_drop_label = l10n::Get(l10n::StringId::ToolbarDropToOpen);
+        }
+    }
     s.renderer.SetToolbarPrefs(s.appPrefs.toolbar_new_primary, s.appPrefs.toolbar_last_new == 1,
-                               static_cast<int>(vm.toolbar_pins.size()));
+                               static_cast<int>(vm.toolbar_pins.size() + vm.toolbar_apps.size()));
+    s.renderer.SetToolbarApps(static_cast<int>(vm.toolbar_pins.size()), drop_mode, vm.toolbar_drop_label);
     return vm;
 }
 
@@ -2669,8 +2691,9 @@ std::wstring TooltipForHover(AppState& s) {
     case R::ToolbarMore: return text(I::MoreCustomizeToolbar);
     case R::ToolbarPin: {
         const auto pins = ToolbarPinActions(s);
-        return s.hoverControlIndex >= 0 && s.hoverControlIndex < static_cast<int>(pins.size())
-            ? pins[static_cast<size_t>(s.hoverControlIndex)].label : std::wstring{};
+        if (s.hoverControlIndex >= static_cast<int>(pins.size()))
+            return ToolbarAppTooltip(s, static_cast<size_t>(s.hoverControlIndex - static_cast<int>(pins.size())));
+        return s.hoverControlIndex >= 0 ? pins[static_cast<size_t>(s.hoverControlIndex)].label : std::wstring{};
     }
     case R::ToolbarSelAction: {
         if (s.hoverControlIndex == ui::kSelChipMore) return text(I::MoreActions);

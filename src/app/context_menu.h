@@ -124,6 +124,10 @@ enum MenuCmd : int {
     CmdShellNewBase = 4000,
     CmdCopyToWindowBase = 5000,
     CmdMoveToWindowBase = 5032,
+    // Selection chip ⋯: 用 <pinned app> 打开 (+ index into AppPrefs::toolbar_apps)
+    // and 固定到工具栏 ▸ <suggested app> (+ index into the suggestions listed).
+    CmdToolbarAppBase = 5100,
+    CmdToolbarPinAppBase = 5120,
     CmdShellStaticBase = 6000,
     CmdShellComBase = 8000,
 };

@@ -51,6 +51,13 @@ std::vector<StaticVerb> DedupeStaticVerbs(std::vector<StaticVerb> verbs,
 // it. Process-wide cache by extension; misses are remembered.
 common::MenuIconRef FileTypeMenuIcon(const std::wstring& ext);
 
+// A program's display name: Applications\<exe>\FriendlyAppName, else the
+// version resource's FileDescription, else the file name. Reads the file.
+std::wstring ProgramFriendlyName(const std::wstring& exe_path);
+// Icon pixels for "file[,index]" at the menu's 16 DIP, through the same
+// process-wide cache as the open-with rows. Touches the file: worker threads.
+common::MenuIconRef ProgramMenuIcon(const std::wstring& reference);
+
 std::wstring MachineStaticVerbCachePath();
 bool LoadMachineStaticVerbCache(std::unordered_map<std::wstring, std::vector<StaticVerb>>& out);
 bool SaveMachineStaticVerbCache(
