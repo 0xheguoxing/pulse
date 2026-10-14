@@ -1555,6 +1555,7 @@ target_link_libraries(pulse_config_capacity_test PRIVATE user32 shell32 ole32 uu
 add_executable(pulse_virtual_worker_consumers_test src/bench/virtual_worker_consumers_test.cpp)
 
 target_sources(pulse_persistence_test PRIVATE src/app/this_pc_argument.cpp)
+target_sources(pulse_single_instance_audit_test PRIVATE src/app/this_pc_argument.cpp)
 target_sources(pulse_app_controllers_test PRIVATE src/app/this_pc_argument.cpp src/app/update_download_cleanup.cpp)
 target_link_libraries(pulse_app_controllers_test PRIVATE crypt32)
 add_executable(pulse_single_instance_endpoint_test src/bench/single_instance_endpoint_test.cpp
@@ -1678,6 +1679,8 @@ endif()
 
 # M18-002: durable, identity-bound update package recovery across process exits.
 target_sources(pulse_update_installer_test PRIVATE src/app/update_download_cleanup.cpp)
+target_sources(pulse_pack_installer_test PRIVATE src/app/update_download_cleanup.cpp)
+target_link_libraries(pulse_pack_installer_test PRIVATE crypt32 advapi32)
 target_link_libraries(pulse_update_installer_test PRIVATE crypt32 advapi32)
 add_executable(pulse_update_download_cleanup_test src/bench/update_download_cleanup_test.cpp
     src/app/update_download_cleanup.cpp)
@@ -1685,7 +1688,8 @@ target_link_libraries(pulse_update_download_cleanup_test PRIVATE bcrypt crypt32 
 
 add_executable(pulse_places_json_roundtrip_test src/bench/places_json_roundtrip_test.cpp
     src/app/places.cpp src/app/tag_ads_sync.cpp src/fs/fs_enum.cpp src/ui/view_layout.cpp)
-target_link_libraries(pulse_places_json_roundtrip_test PRIVATE user32 shell32 ole32 uuid advapi32 shlwapi netapi32 pulse_localization)
+target_link_libraries(pulse_places_json_roundtrip_test PRIVATE user32 shell32 ole32 uuid advapi32 shlwapi netapi32 pulse_localization
+    pulse_runtime_log)
 
 add_executable(pulse_index_exclusion_concurrency_test src/bench/index_exclusion_concurrency_test.cpp ${query_narrow_sources})
 target_include_directories(pulse_index_exclusion_concurrency_test PRIVATE "${CMAKE_BINARY_DIR}/generated")

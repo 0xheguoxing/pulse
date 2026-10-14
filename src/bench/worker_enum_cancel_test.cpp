@@ -30,7 +30,7 @@ void SortEntries(std::vector<fs::DirEntry>& entries, ui::SortColumn col, ui::Sor
 }
 }
 namespace pulse::diagnostics::runtime {
-void Event(const char*, std::initializer_list<Field>) noexcept {}
+void Event(const char*, std::initializer_list<Field>, Level) noexcept {}
 }
 static int failures = 0;
 static void Check(bool ok, const char* label) { printf("[%s] %s\n", ok ? "PASS" : "FAIL", label); failures += !ok; }
