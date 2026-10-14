@@ -576,7 +576,11 @@ DWORD DoFileDragDrop(const std::vector<std::wstring>& paths, DWORD allowed_effec
     auto* source = new ListDropSource();
     source->SetEscHook(std::move(esc_consumed));
     DWORD effect = DROPEFFECT_NONE;
-    ::DoDragDrop(data, source, allowed_effects, &effect);
+    // Explorer's file drags also allow LINK. Apps that open a dropped file
+    // often answer LINK, and without it they show the no-drop cursor (#235).
+    // Preferred DropEffect above keeps only the caller's copy/move, so drop
+    // targets that pick a default (Explorer, Pulse) still copy or move.
+    ::DoDragDrop(data, source, allowed_effects | DROPEFFECT_LINK, &effect);
     if (effect == DROPEFFECT_NONE) {
         if (fallback && fallback->PerformedEffect() != 0) {
             effect = fallback->PerformedEffect();
