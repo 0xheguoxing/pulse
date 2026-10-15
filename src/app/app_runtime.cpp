@@ -531,12 +531,14 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
                 vm.settings_pack_notice = packs.notice;
                 vm.settings_pack_installing = packs.installing;
                 vm.settings_pack_progress = packs.progress;
+                vm.settings_pack_update_version = packs.update_version;
                 vm.settings_pack_images_installed = packs.images_installed;
                 vm.settings_pack_images_enabled = packs.images_enabled;
                 vm.settings_pack_images_version = packs.images_version;
                 vm.settings_pack_images_notice = packs.images_notice;
                 vm.settings_pack_images_installing = packs.images_installing;
                 vm.settings_pack_images_progress = packs.images_progress;
+                vm.settings_pack_images_update_version = packs.images_update_version;
                 vm.settings_pack_raw_available = packs.raw_available;
                 vm.settings_pack_raw_installed = packs.raw_installed;
                 vm.settings_pack_raw_enabled = packs.raw_enabled;
@@ -544,6 +546,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
                 vm.settings_pack_raw_notice = packs.raw_notice;
                 vm.settings_pack_raw_installing = packs.raw_installing;
                 vm.settings_pack_raw_progress = packs.raw_progress;
+                vm.settings_pack_raw_update_version = packs.raw_update_version;
                 vm.settings_pack_archive_available = packs.archive_available;
                 vm.settings_pack_archive_installed = packs.archive_installed;
                 vm.settings_pack_archive_enabled = packs.archive_enabled;
@@ -551,6 +554,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
                 vm.settings_pack_archive_notice = packs.archive_notice;
                 vm.settings_pack_archive_installing = packs.archive_installing;
                 vm.settings_pack_archive_progress = packs.archive_progress;
+                vm.settings_pack_archive_update_version = packs.archive_update_version;
                 // Screenshot fixture for the downloading state (percent).
                 wchar_t fake_progress[8]{};
                 if (s.shot.active && s.isolatedTest &&

@@ -235,6 +235,9 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
         std::wstring_view primary_label;
         PackAction enable_action, install_action, remove_action;
         const std::wstring& notice;
+        D2D1_RECT_F update;           // 更新到, empty unless a newer release is offered
+        std::wstring update_label;
+        PackAction update_action;
     };
     auto draw_card = [&](const CardSpec& c) {
         const auto& r = c.card;
@@ -253,7 +256,8 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
         const float desc_top = stacked ? c.badge.bottom + 12*s : r.top + 40*s;
         painter_.DrawWrappedCaption(c.desc, D2D1::Point2F(text_left, desc_top),
                                     inner_right - text_left, theme.text_secondary);
-        const float meta_right = c.primary.left - 12*s;
+        const bool updatable = c.update.right > c.update.left;
+        const float meta_right = (updatable ? c.update.left : c.primary.left) - 12*s;
         if (c.installing) {
             // Status above a thin bar, both centred on the button's row.
             const float cy = (c.primary.top + c.primary.bottom) * 0.5f;
@@ -269,6 +273,7 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
         button(c.primary, c.primary_label, installed ? c.remove_action : c.install_action,
                installed || c.installing || !c.available ? fluent::ButtonKind::Standard : fluent::ButtonKind::Primary,
                pack_text::PrimaryEnabled(c.available, c.installed, c.installing));
+        if (updatable) button(c.update, c.update_label, c.update_action, fluent::ButtonKind::Primary);
         if (c.notice_box.bottom > c.notice_box.top) {
             const auto& n = c.notice_box;
             MakeBrush(dc, theme.fill_hover, brFillHover_);
@@ -286,7 +291,8 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
                pack_text::MediaTitle(), pack_text::MediaDesc(), pack_text::MediaMeta(), pack_text::MediaBadge(vm),
                false, vm.settings_pack_ffmpeg_enabled, vm.settings_pack_media_installed,
                vm.settings_pack_installing, vm.settings_pack_media_available, vm.settings_pack_progress, pack_text::Primary(vm),
-               PackAction::Enable, PackAction::Install, PackAction::Remove, vm.settings_pack_notice});
+               PackAction::Enable, PackAction::Install, PackAction::Remove, vm.settings_pack_notice,
+               lay.pack_update, pack_text::MediaUpdate(vm), PackAction::Update});
 
     // Images: the image pack.
     text(pack_text::Images(), lay.pack_images_section);
@@ -296,7 +302,7 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
                pack_text::ShowsImagesEnable(vm), vm.settings_pack_images_enabled, vm.settings_pack_images_installed,
                vm.settings_pack_images_installing, vm.settings_pack_images_available, vm.settings_pack_images_progress, pack_text::ImagesPrimary(vm),
                PackAction::ImagesEnable, PackAction::ImagesInstall, PackAction::ImagesRemove,
-               vm.settings_pack_images_notice});
+               vm.settings_pack_images_notice, lay.pack_images_update, pack_text::ImagesUpdate(vm), PackAction::ImagesUpdate});
 
     // RAW camera photos.
     draw_card({lay.pack_raw_card, lay.pack_raw_badge, lay.pack_raw_enable, lay.pack_raw_primary,
@@ -305,7 +311,7 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
                pack_text::ShowsRawEnable(vm), vm.settings_pack_raw_enabled, vm.settings_pack_raw_installed,
                vm.settings_pack_raw_installing, vm.settings_pack_raw_available, vm.settings_pack_raw_progress, pack_text::RawPrimary(vm),
                PackAction::RawEnable, PackAction::RawInstall, PackAction::RawRemove,
-               vm.settings_pack_raw_notice});
+               vm.settings_pack_raw_notice, lay.pack_raw_update, pack_text::RawUpdate(vm), PackAction::RawUpdate});
 
     // 7-Zip archive contents.
     text(pack_text::Archive(), lay.pack_archive_section);
@@ -315,7 +321,7 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
                pack_text::ShowsArchiveEnable(vm), vm.settings_pack_archive_enabled, vm.settings_pack_archive_installed,
                vm.settings_pack_archive_installing, vm.settings_pack_archive_available, vm.settings_pack_archive_progress, pack_text::ArchivePrimary(vm),
                PackAction::ArchiveEnable, PackAction::ArchiveInstall, PackAction::ArchiveRemove,
-               vm.settings_pack_archive_notice});
+               vm.settings_pack_archive_notice, lay.pack_archive_update, pack_text::ArchiveUpdate(vm), PackAction::ArchiveUpdate});
 
     card(lay.pack_source_group);
     const bool source_switch = pack_text::ShowsEnable(vm);

@@ -149,22 +149,65 @@ struct InstalledPack {
     std::wstring directory;   // absolute directory holding the pack's files
 };
 
+// The version directory <base>\installed.json names (base is <root>\<key>),
+// and its version; empty when there is none.
+inline std::wstring InstalledPackDirectory(const std::wstring& base, std::wstring* version = nullptr) {
+    std::wstring text;
+    if (base.empty() || !ReadUtf8File(base + L"\\installed.json", text)) return {};
+    const std::wstring dir = json::ExtractString(text, L"dir");
+    // A version directory name, never a path: installed.json is user-writable.
+    if (dir.empty() || dir.find_first_of(L"\\/:") != std::wstring::npos || dir == L"." || dir == L"..")
+        return {};
+    if (version) *version = json::ExtractString(text, L"version");
+    return base + L"\\" + dir;
+}
+
 // Reads <root>\<key>\installed.json and checks the main tool is there.
 inline InstalledPack ReadInstalledPack(PackId id) {
     InstalledPack pack;
     const std::wstring root = PacksRoot();
     if (root.empty()) return pack;
-    const std::wstring base = root + L"\\" + PackKey(id);
-    std::wstring text;
-    if (!ReadUtf8File(base + L"\\installed.json", text)) return pack;
-    const std::wstring dir = json::ExtractString(text, L"dir");
-    // A version directory name, never a path: installed.json is user-writable.
-    if (dir.empty() || dir.find_first_of(L"\\/:") != std::wstring::npos || dir == L"." || dir == L"..")
-        return pack;
-    pack.version = json::ExtractString(text, L"version");
-    pack.directory = base + L"\\" + dir;
-    pack.present = IsRegularFile(pack.directory + L"\\" + PackMainTool(id));
+    pack.directory = InstalledPackDirectory(root + L"\\" + PackKey(id), &pack.version);
+    pack.present = !pack.directory.empty() && IsRegularFile(pack.directory + L"\\" + PackMainTool(id));
     return pack;
+}
+
+namespace detail {
+// "1.0.2" as numbers; false for anything but one to eight dotted decimal
+// parts (installed.json is user-writable).
+inline bool PackVersionParts(std::wstring_view text, uint32_t (&parts)[8], size_t& count) {
+    count = 0;
+    size_t at = 0;
+    while (count < 8) {
+        uint64_t value = 0;
+        const size_t start = at;
+        for (; at < text.size() && text[at] >= L'0' && text[at] <= L'9'; ++at) {
+            value = value * 10 + static_cast<uint64_t>(text[at] - L'0');
+            if (value > 0xFFFFFFFFull) return false;
+        }
+        if (at == start) return false;
+        parts[count++] = static_cast<uint32_t>(value);
+        if (at == text.size()) return true;
+        if (text[at++] != L'.') return false;
+    }
+    return false;
+}
+} // namespace detail
+
+// Whether the catalog's release replaces the installed one. Dotted numbers
+// compare part by part ("1.0.10" > "1.0.9", "1.0" == "1.0.0"). An installed
+// version that is no such number (hand-edited, or a test build) is replaced
+// too; a catalog version that is none is never offered.
+inline bool PackUpdateAvailable(std::wstring_view installed, std::wstring_view catalog) {
+    uint32_t want[8]{}, have[8]{};
+    size_t want_count = 0, have_count = 0;
+    if (!detail::PackVersionParts(catalog, want, want_count)) return false;
+    if (!detail::PackVersionParts(installed, have, have_count)) return true;
+    for (size_t i = 0; i < 8; ++i) {
+        const uint32_t a = i < have_count ? have[i] : 0, b = i < want_count ? want[i] : 0;
+        if (a != b) return b > a;
+    }
+    return false;
 }
 
 // Where a pack's tools come from right now.

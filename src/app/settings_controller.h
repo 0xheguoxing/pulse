@@ -134,21 +134,23 @@ public:
         uint32_t installed = 0;
         uint64_t bytes = 0;
         std::wstring version, custom_path, detected_path, root, notice;
+        // The catalog's newer release of an installed pack; empty when current.
+        std::wstring update_version;
         bool installing = false;          // a download is running
         float progress = 0.0f;            // 0..1 while installing
         // The image pack (现代图像格式): its own card, download and message.
         bool images_installed = false, images_enabled = true;
         bool images_installing = false;
         float images_progress = 0.0f;
-        std::wstring images_version, images_notice;
+        std::wstring images_version, images_notice, images_update_version;
         bool raw_installed = false, raw_enabled = true, raw_installing = false;
         bool raw_available = false;
         float raw_progress = 0.0f;
-        std::wstring raw_version, raw_notice;
+        std::wstring raw_version, raw_notice, raw_update_version;
         bool archive_installed = false, archive_enabled = true, archive_installing = false;
         bool archive_available = false;
         float archive_progress = 0.0f;
-        std::wstring archive_version, archive_notice;
+        std::wstring archive_version, archive_notice, archive_update_version;
     };
     const PackState& Packs();
     // Each returns true when thumbnails have to be decoded again.
@@ -175,6 +177,9 @@ public:
     bool TakeArchivePackResult();
     bool RemoveArchivePack();
     bool ToggleArchivePack();
+    // Installs the catalog's newer release over an installed pack, copying
+    // its unchanged files; the pack's switches stay as they are.
+    bool UpdatePack(packs::PackId id, HWND notify);
     bool ToggleCustomFfmpeg();
     bool SetCustomFfmpeg(const std::wstring& path);
     bool UseDetectedFfmpeg();
@@ -307,6 +312,7 @@ private:
     bool InstallPack(packs::PackId id, HWND notify);
     bool TakePackResult(packs::PackId id);
     bool RemovePack(packs::PackId id);
+    bool updating_[4] = {};   // per packs::PackId: the running job replaces an installed pack
     std::shared_ptr<TaskState> task_state_ = std::make_shared<TaskState>();
     std::mutex workers_mutex_;
     std::vector<std::thread> workers_;

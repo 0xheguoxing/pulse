@@ -95,6 +95,16 @@ struct Fixture {
         release = {L"ffmpeg", version.c_str(), L"https://packs.example.invalid/v/", files.data(), files.size()};
     }
 
+    // File i gets new contents, as in a later release.
+    void Change(size_t i, const std::string& text) {
+        plain[i].assign(text.begin(), text.end());
+        packed[i] = Lzms(plain[i]);
+        sha[i] = Sha256Hex(plain[i]);
+        packed_sha[i] = Sha256Hex(packed[i]);
+        files[i] = {names[i].c_str(), plain[i].size(), sha[i].c_str(), packed[i].size(), packed_sha[i].c_str()};
+        server[L"https://packs.example.invalid/v/" + names[i] + L".lzms"] = packed[i];
+    }
+
     UpdateResponseReader Reader(size_t chunk = 7000, std::atomic<bool>* cancel_after_first = nullptr) {
         return [this, chunk, cancel_after_first](std::wstring_view url, uint64_t maximum,
                    const std::atomic<bool>& cancelled, const std::function<bool(const void*, DWORD)>& consume,
@@ -391,6 +401,109 @@ int wmain(int argc, wchar_t** argv) {
         PackRelease empty{L"ffmpeg", L"9.0", L"https://x.invalid/", nullptr, 0};
         Check(InstallPack(empty, root, progress, error) == PackInstallOutcome::Failed, "unpublished pack rejected");
         Check(!Exists(base + L"\\8.0") && !Exists(base + L"\\8.1"), "rejected releases create nothing");
+    }
+
+    {   // Catalog versions are dotted numbers, compared part by part.
+        using packs::PackUpdateAvailable;
+        Check(PackUpdateAvailable(L"1.0.1", L"1.0.2") && PackUpdateAvailable(L"1.0.9", L"1.0.10") &&
+              PackUpdateAvailable(L"1.9", L"1.10"), "newer catalog release is an update");
+        Check(!PackUpdateAvailable(L"1.0.2", L"1.0.2") && !PackUpdateAvailable(L"1.0", L"1.0.0") &&
+              !PackUpdateAvailable(L"1.0.10", L"1.0.9") && !PackUpdateAvailable(L"2.0", L"1.9.9"),
+              "same or older catalog release is no update");
+        Check(PackUpdateAvailable(L"", L"1.0.2") && PackUpdateAvailable(L"test", L"1.0.2") &&
+              PackUpdateAvailable(L"1.0.", L"1.0.2"), "unreadable installed version is replaced");
+        Check(!PackUpdateAvailable(L"1.0.1", L"") && !PackUpdateAvailable(L"1.0.1", L"1.0.2-beta") &&
+              !PackUpdateAvailable(L"1.0.1", L"4294967296.0") && !PackUpdateAvailable(L"", L"1.2.3.4.5.6.7.8.9"),
+              "unreadable catalog version is never offered");
+        bool parses = true;
+        for (const PackRelease* release : {&kMediaPackRelease, &kImagePackRelease, &kRawPackRelease, &kArchivePackRelease})
+            parses &= !release->file_count || PackUpdateAvailable(L"", release->version);
+        Check(parses, "published catalog versions can be offered as updates");
+    }
+
+    {   // installed.json names a directory inside its pack, nothing else.
+        const std::wstring probe = root + L"\\probe";
+        Check(packs::CreateDirectoryChain(probe), "probe pack folder created");
+        std::wstring version;
+        WriteUtf8FileAtomic(probe + L"\\installed.json", L"{\"version\":\"1.0.1\",\"dir\":\"1.0.1\"}");
+        Check(packs::InstalledPackDirectory(probe, &version) == probe + L"\\1.0.1" && version == L"1.0.1",
+              "installed directory and version read back");
+        bool contained = true;
+        for (const wchar_t* dir : {L"..", L".", L"../other", L"C:other", L""}) {
+            WriteUtf8FileAtomic(probe + L"\\installed.json",
+                                L"{\"version\":\"1.0.1\",\"dir\":\"" + std::wstring(dir) + L"\"}");
+            contained &= packs::InstalledPackDirectory(probe).empty();
+        }
+        Check(contained, "installed.json cannot point outside its pack");
+    }
+
+    {   // An update copies what the installed version already has, verified,
+        // and downloads only what changed.
+        const std::wstring isolated = root + L"\\update-test";
+        const std::wstring media = isolated + L"\\ffmpeg";
+        std::vector<std::wstring> requested;
+        auto counting = [&requested](UpdateResponseReader inner) -> UpdateResponseReader {
+            return [&requested, inner](std::wstring_view url, uint64_t maximum, const std::atomic<bool>& cancelled,
+                                       const std::function<bool(const void*, DWORD)>& consume,
+                                       UpdateError& category, DWORD& error) {
+                requested.emplace_back(url);
+                return inner(url, maximum, cancelled, consume, category, error);
+            };
+        };
+        auto fetched = [&requested](const wchar_t* name) {
+            for (const auto& url : requested) if (url.find(name) != std::wstring::npos) return true;
+            return false;
+        };
+        DWORD error = 0;
+        Fixture old_release(L"1.0.1");
+        PackInstallProgress first;
+        Check(InstallPack(old_release.release, isolated, first, error, counting(old_release.Reader()), true) ==
+              PackInstallOutcome::Installed && fetched(L"ffmpeg.exe") && fetched(L"SOURCE.txt"),
+              "first install with reuse on downloads every file");
+
+        const std::string changed = "Pulse FFmpeg preview pack 1.0.2\r\nLicense: LGPL-2.1\r\n";
+        Fixture fx(L"1.0.2");
+        fx.Change(1, changed);
+        requested.clear();
+        PackInstallProgress progress;
+        Check(InstallPack(fx.release, isolated, progress, error, counting(fx.Reader()), true) ==
+              PackInstallOutcome::Installed && error == ERROR_SUCCESS, "update installs");
+        Check(!fetched(L"ffmpeg.exe") && fetched(L"SOURCE.txt"), "update downloads only the changed file");
+        Check(ReadAll(media + L"\\1.0.2\\ffmpeg.exe") == fx.plain[0] &&
+              ReadAll(media + L"\\1.0.2\\SOURCE.txt") == fx.plain[1], "updated pack has the new release's bytes");
+        Check(!Exists(media + L"\\1.0.1") && !Exists(media + L"\\1.0.2.partial"), "update replaces the old version");
+        std::wstring version;
+        Check(packs::InstalledPackDirectory(media, &version) == media + L"\\1.0.2" && version == L"1.0.2",
+              "installed.json names the update");
+        Check(progress.total.load() == fx.packed[0].size() + fx.packed[1].size() &&
+              progress.received.load() == progress.total.load(), "copied files count towards progress");
+
+        // An installed file with the right size but other bytes is downloaded again.
+        const std::wstring damaged_path = media + L"\\1.0.2\\ffmpeg.exe";
+        auto damaged = ReadAll(damaged_path);
+        FILE* out = nullptr;
+        if (!damaged.empty() && !_wfopen_s(&out, damaged_path.c_str(), L"wb") && out) {
+            damaged[damaged.size() / 2] ^= 0x5a;
+            fwrite(damaged.data(), 1, damaged.size(), out);
+            fclose(out);
+        }
+        Check(ReadAll(damaged_path).size() == fx.plain[0].size() && ReadAll(damaged_path) != fx.plain[0],
+              "installed file damaged for the test");
+        Fixture repair(L"1.0.3");
+        repair.Change(1, changed);
+        requested.clear();
+        PackInstallProgress again;
+        Check(InstallPack(repair.release, isolated, again, error, counting(repair.Reader()), true) ==
+              PackInstallOutcome::Installed, "update over a damaged file installs");
+        Check(fetched(L"ffmpeg.exe") && !fetched(L"SOURCE.txt"), "a file failing its hash is downloaded, a matching one copied");
+        Check(ReadAll(media + L"\\1.0.3\\ffmpeg.exe") == repair.plain[0], "damaged file replaced by verified bytes");
+
+        // Without reuse every file is downloaded, which the failure cases above rely on.
+        Fixture fresh(L"1.0.4");
+        requested.clear();
+        PackInstallProgress full;
+        Check(InstallPack(fresh.release, isolated, full, error, counting(fresh.Reader())) == PackInstallOutcome::Installed &&
+              fetched(L"ffmpeg.exe") && fetched(L"SOURCE.txt"), "reusing installed files is opt-in");
     }
 
     {   // Async wrapper: one outcome, taken once.

@@ -404,8 +404,15 @@ inline const wchar_t* PrimaryLabel(bool available, bool installed, bool installi
 inline bool PrimaryEnabled(bool available, bool installed, bool installing) {
     return available || installed || installing;
 }
+// "更新到 1.0.2" beside 卸载 while an installed pack is older than the
+// catalog; empty (no button) while it downloads or when it is current.
+inline std::wstring UpdateLabel(bool installed, bool installing, const std::wstring& version) {
+    if (!installed || installing || version.empty()) return {};
+    return std::wstring(l10n::Pick(L"更新到 ", L"Update to ")) + version;
+}
 inline Badge PackBadge(bool available, bool installed, bool installing, bool enabled, const std::wstring& version) {
-    if (installing) return {l10n::Pick(L"正在安装", L"Installing"), fluent::BadgeKind::Accent};
+    if (installing) return {installed ? l10n::Pick(L"正在更新", L"Updating") : l10n::Pick(L"正在安装", L"Installing"),
+                            fluent::BadgeKind::Accent};
     if (!installed) return {l10n::Pick(available ? L"未安装" : L"尚未发布", available ? L"Not installed" : L"Not published"), fluent::BadgeKind::Neutral};
     if (!enabled) return {l10n::Pick(L"已停用", L"Off"), fluent::BadgeKind::Neutral};
     std::wstring text = l10n::Pick(L"已安装", L"Installed");
@@ -418,6 +425,9 @@ inline Badge MediaBadge(const WindowViewModel& vm) {
 }
 inline const wchar_t* Primary(const WindowViewModel& vm) {
     return PrimaryLabel(vm.settings_pack_media_available, vm.settings_pack_media_installed, vm.settings_pack_installing);
+}
+inline std::wstring MediaUpdate(const WindowViewModel& vm) {
+    return UpdateLabel(vm.settings_pack_media_installed, vm.settings_pack_installing, vm.settings_pack_update_version);
 }
 inline const wchar_t* SourceTitle() { return l10n::Pick(L"启用媒体增强", L"Enable media enhancement"); }
 inline const wchar_t* SourceStatus(const WindowViewModel& vm) {
@@ -450,6 +460,10 @@ inline const wchar_t* ImagesPrimary(const WindowViewModel& vm) {
     return PrimaryLabel(vm.settings_pack_images_available, vm.settings_pack_images_installed, vm.settings_pack_images_installing);
 }
 inline bool ShowsImagesEnable(const WindowViewModel& vm) { return vm.settings_pack_images_installed; }
+inline std::wstring ImagesUpdate(const WindowViewModel& vm) {
+    return UpdateLabel(vm.settings_pack_images_installed, vm.settings_pack_images_installing,
+                       vm.settings_pack_images_update_version);
+}
 inline Badge RawBadge(const WindowViewModel& vm) {
     return PackBadge(vm.settings_pack_raw_available, vm.settings_pack_raw_installed,
         vm.settings_pack_raw_installing, vm.settings_pack_raw_enabled, vm.settings_pack_raw_version);
@@ -458,6 +472,9 @@ inline const wchar_t* RawPrimary(const WindowViewModel& vm) {
     return PrimaryLabel(vm.settings_pack_raw_available, vm.settings_pack_raw_installed, vm.settings_pack_raw_installing);
 }
 inline bool ShowsRawEnable(const WindowViewModel& vm) { return vm.settings_pack_raw_installed; }
+inline std::wstring RawUpdate(const WindowViewModel& vm) {
+    return UpdateLabel(vm.settings_pack_raw_installed, vm.settings_pack_raw_installing, vm.settings_pack_raw_update_version);
+}
 inline Badge ArchiveBadge(const WindowViewModel& vm) {
     return PackBadge(vm.settings_pack_archive_available, vm.settings_pack_archive_installed,
         vm.settings_pack_archive_installing, vm.settings_pack_archive_enabled, vm.settings_pack_archive_version);
@@ -466,6 +483,10 @@ inline const wchar_t* ArchivePrimary(const WindowViewModel& vm) {
     return PrimaryLabel(vm.settings_pack_archive_available, vm.settings_pack_archive_installed, vm.settings_pack_archive_installing);
 }
 inline bool ShowsArchiveEnable(const WindowViewModel& vm) { return vm.settings_pack_archive_installed; }
+inline std::wstring ArchiveUpdate(const WindowViewModel& vm) {
+    return UpdateLabel(vm.settings_pack_archive_installed, vm.settings_pack_archive_installing,
+                       vm.settings_pack_archive_update_version);
+}
 // Switch and path rows exist once there is something to switch.
 inline bool ShowsEnable(const WindowViewModel& vm) { return vm.settings_pack_ffmpeg != 0 || vm.settings_pack_use_custom; }
 inline bool ShowsPath(const WindowViewModel&) {
@@ -580,11 +601,13 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
                               right - 16*scale, l.pack_summary.bottom - 16*scale);
 
     // One pack card: icon, title + badge (+ switch), description, meta line
-    // with the primary button, and the last action's message.
+    // with the primary button (and 更新到 left of it), and the last action's
+    // message.
     const float text_left = left + 54*scale, inner_right = right - 16*scale;
-    struct CardRects { D2D1_RECT_F *card, *badge, *enable, *primary, *notice; float* desc_h; };
+    struct CardRects { D2D1_RECT_F *card, *badge, *enable, *primary, *update, *notice; float* desc_h; };
     auto card_layout = [&](const CardRects& out, bool shows_enable, const pack_text::Badge& badge,
-                           std::wstring_view desc, std::wstring_view primary, const std::wstring& notice) {
+                           std::wstring_view desc, std::wstring_view primary, std::wstring_view update,
+                           const std::wstring& notice) {
         const float top = y;
         float badge_right = inner_right;
         const float badge_top = top + (compact_pack ? 44*font : 19)*scale;
@@ -599,6 +622,11 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
         const float footer = desc_top + *out.desc_h + 12*scale;
         const float primary_w = button_w(primary);
         *out.primary = D2D1::RectF(inner_right - primary_w, footer, inner_right, footer + 32*scale);
+        if (!update.empty()) {
+            const float update_w = button_w(update);
+            *out.update = D2D1::RectF(out.primary->left - 8*scale - update_w, footer,
+                                      out.primary->left - 8*scale, footer + 32*scale);
+        }
         float bottom = footer + 32*scale + 14*scale;
         if (!notice.empty()) {
             const float notice_h = caption_h(notice, inner_right - text_left - 12*scale);
@@ -611,9 +639,10 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
 
     // Media: the FFmpeg pack card.
     y += 24*scale; l.pack_media_section = row(28);
-    card_layout({&l.pack_card, &l.pack_badge, &l.pack_enable, &l.pack_primary, &l.pack_notice, &l.pack_desc_h},
+    card_layout({&l.pack_card, &l.pack_badge, &l.pack_enable, &l.pack_primary, &l.pack_update, &l.pack_notice,
+                 &l.pack_desc_h},
                 false, pack_text::MediaBadge(vm), pack_text::MediaDesc(),
-                pack_text::Primary(vm), vm.settings_pack_notice);
+                pack_text::Primary(vm), pack_text::MediaUpdate(vm), vm.settings_pack_notice);
 
     // Optional existing FFmpeg is adjacent to the independently installable media pack.
     y += 12*scale;
@@ -642,23 +671,23 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
     // Images: the image pack card.
     y += 24*scale; l.pack_images_section = row(28);
     card_layout({&l.pack_images_card, &l.pack_images_badge, &l.pack_images_enable, &l.pack_images_primary,
-                 &l.pack_images_notice, &l.pack_images_desc_h},
+                 &l.pack_images_update, &l.pack_images_notice, &l.pack_images_desc_h},
                 pack_text::ShowsImagesEnable(vm), pack_text::ImagesBadge(vm), pack_text::ImagesDesc(),
-                pack_text::ImagesPrimary(vm), vm.settings_pack_images_notice);
+                pack_text::ImagesPrimary(vm), pack_text::ImagesUpdate(vm), vm.settings_pack_images_notice);
 
     // RAW camera photos card.
     y += 12*scale;
     card_layout({&l.pack_raw_card, &l.pack_raw_badge, &l.pack_raw_enable, &l.pack_raw_primary,
-                 &l.pack_raw_notice, &l.pack_raw_desc_h},
+                 &l.pack_raw_update, &l.pack_raw_notice, &l.pack_raw_desc_h},
                 pack_text::ShowsRawEnable(vm), pack_text::RawBadge(vm), pack_text::RawDesc(),
-                pack_text::RawPrimary(vm), vm.settings_pack_raw_notice);
+                pack_text::RawPrimary(vm), pack_text::RawUpdate(vm), vm.settings_pack_raw_notice);
 
     // 7-Zip archive contents card.
     y += 24*scale; l.pack_archive_section = row(28);
     card_layout({&l.pack_archive_card, &l.pack_archive_badge, &l.pack_archive_enable, &l.pack_archive_primary,
-                 &l.pack_archive_notice, &l.pack_archive_desc_h},
+                 &l.pack_archive_update, &l.pack_archive_notice, &l.pack_archive_desc_h},
                 pack_text::ShowsArchiveEnable(vm), pack_text::ArchiveBadge(vm), pack_text::ArchiveDesc(),
-                pack_text::ArchivePrimary(vm), vm.settings_pack_archive_notice);
+                pack_text::ArchivePrimary(vm), pack_text::ArchiveUpdate(vm), vm.settings_pack_archive_notice);
 
     // Uninstall preferences remain separate from the media source.
     y += 24*scale; l.pack_advanced_section = row(28);

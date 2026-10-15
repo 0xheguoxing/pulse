@@ -2071,16 +2071,17 @@ struct SettingsLayout {
     D2D1_RECT_F preview_codec_row[kPreviewCodecCount]{}, preview_codec_button[kPreviewCodecCount]{};
     // 预览增强包 page (5), see LayoutSettingsPacks.
     D2D1_RECT_F pack_summary{}, pack_open{}, pack_media_section{}, pack_card{}, pack_badge{}, pack_enable{},
-        pack_primary{}, pack_notice{}, pack_advanced_section{}, pack_custom_row{}, pack_path_row{},
+        pack_primary{}, pack_update{}, pack_notice{}, pack_advanced_section{}, pack_custom_row{}, pack_path_row{},
         pack_detect{}, pack_browse{}, pack_remove_row{}, pack_group{}, pack_note{}, pack_source_group{}, pack_source_status{};
     float pack_desc_h = 0.0f;
     // The image pack card (same parts as the FFmpeg one).
     D2D1_RECT_F pack_images_section{}, pack_images_card{}, pack_images_badge{}, pack_images_enable{},
-        pack_images_primary{}, pack_images_notice{};
+        pack_images_primary{}, pack_images_update{}, pack_images_notice{};
     float pack_images_desc_h = 0.0f;
-    D2D1_RECT_F pack_raw_card{}, pack_raw_badge{}, pack_raw_enable{}, pack_raw_primary{}, pack_raw_notice{};
+    D2D1_RECT_F pack_raw_card{}, pack_raw_badge{}, pack_raw_enable{}, pack_raw_primary{}, pack_raw_update{}, pack_raw_notice{};
     float pack_raw_desc_h = 0.0f;
-    D2D1_RECT_F pack_archive_section{}, pack_archive_card{}, pack_archive_badge{}, pack_archive_enable{}, pack_archive_primary{}, pack_archive_notice{};
+    D2D1_RECT_F pack_archive_section{}, pack_archive_card{}, pack_archive_badge{}, pack_archive_enable{}, pack_archive_primary{},
+        pack_archive_update{}, pack_archive_notice{};
     float pack_archive_desc_h = 0.0f;
     D2D1_RECT_F content_header{}, content_types{}, content_pause{}, content_options{}, content_rebuild{}, content_empty{};
     D2D1_RECT_F body{};

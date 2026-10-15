@@ -200,6 +200,15 @@ void SettingsController::RefreshPacks() {
     const packs::InstalledPack images = packs::ReadInstalledPack(PackId::Images);
     state.images_installed = images.present;
     state.images_version = images.version;
+    // Packs older than this build's catalog offer 更新到.
+    auto update_of = [](const packs::InstalledPack& pack, const PackRelease& release) {
+        return pack.present && release.file_count && packs::PackUpdateAvailable(pack.version, release.version)
+            ? std::wstring(release.version) : std::wstring();
+    };
+    state.update_version = update_of(media, kMediaPackRelease);
+    state.images_update_version = update_of(images, kImagePackRelease);
+    state.raw_update_version = update_of(raw, kRawPackRelease);
+    state.archive_update_version = update_of(archive, kArchivePackRelease);
     state.installed = (media.present ? 1u : 0u) + (images.present ? 1u : 0u) + (raw.present ? 1u : 0u) + (archive.present ? 1u : 0u);
     // What the preview host would use, ignoring the on/off switch so the card
     // can still say which FFmpeg it is switching.
@@ -302,9 +311,18 @@ bool SettingsController::InstallPack(packs::PackId id, HWND notify) {
                             L"This preview pack has not been published for download.");
         return false;
     }
+    // Replacing an installed pack is an update: TakePackResult keeps the switches.
+    updating_[static_cast<uint32_t>(id)] = packs::ReadInstalledPack(id).present;
     if (!installer.Start(release, notify)) return false;
     Packs();
     return false;
+}
+
+bool SettingsController::UpdatePack(packs::PackId id, HWND notify) {
+    // Only from idle: the button goes away while the download runs, and a
+    // late second click must not cancel it.
+    if (InstallerFor(id).running() || !packs::ReadInstalledPack(id).present) return false;
+    return InstallPack(id, notify);
 }
 
 bool SettingsController::InstallMediaPack(HWND notify) { return InstallPack(packs::PackId::Media, notify); }
@@ -314,12 +332,16 @@ bool SettingsController::TakePackResult(packs::PackId id) {
     DWORD error = ERROR_SUCCESS;
     const PackInstallOutcome outcome = InstallerFor(id).TakeOutcome(error);
     if (outcome == PackInstallOutcome::None) return false;
+    bool& updating = updating_[static_cast<uint32_t>(id)];
+    const bool update = updating;
+    updating = false;
     RefreshPacks();
     std::wstring& notice = NoticeFor(id);
     switch (outcome) {
     case PackInstallOutcome::Installed: {
         notice.clear();
-        if (id == packs::PackId::Media) {
+        // A first install selects the pack; an update keeps the user's choice.
+        if (id == packs::PackId::Media && !update) {
             auto settings = packs::LoadPackSettings();
             settings.use_custom_ffmpeg = false;
             settings.enabled[0] = true;

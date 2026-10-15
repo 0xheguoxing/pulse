@@ -28,10 +28,14 @@ struct PackInstallProgress {
 
 // Synchronous core, used by the worker and by tests. `root` is the packs
 // directory; `error` gets a Win32 code on failure (ERROR_CANCELLED when
-// progress.cancelled was set).
+// progress.cancelled was set). With `reuse_installed`, a file the installed
+// version already has with the pinned size and SHA-256 is copied (and
+// verified again) instead of downloaded, so an update only fetches what
+// changed.
 PackInstallOutcome InstallPack(const PackRelease& release, const std::wstring& root,
                                PackInstallProgress& progress, DWORD& error,
-                               const UpdateResponseReader& read = ReadUpdateResponse);
+                               const UpdateResponseReader& read = ReadUpdateResponse,
+                               bool reuse_installed = false);
 
 // Removes a directory tree without following junctions.
 bool RemovePackTree(const std::wstring& directory);

@@ -652,6 +652,7 @@ enum class PackAction : int {
     TriggerHover, TriggerSpace,                         // 预览方式: hover card / Space only
     HoverDelayShort, HoverDelayMedium, HoverDelayLong,  // 悬停延迟: 0.3 / 0.5 / 0.8 s
     HoverSizeSmall, HoverSizeMedium, HoverSizeLarge,    // 卡片尺寸: 小 / 中 / 大
+    Update, ImagesUpdate, RawUpdate, ArchiveUpdate,     // 更新到: the catalog's newer release
 };
 
 // A tab dragged out of another window, over this one (multi-window M7h): the
@@ -824,20 +825,22 @@ struct WindowViewModel {
     std::wstring settings_pack_notice;          // last action's message, empty when none
     bool settings_pack_installing = false;      // the FFmpeg pack is downloading
     float settings_pack_progress = 0.0f;        // 0..1 while downloading
+    std::wstring settings_pack_update_version;  // newer catalog release of the installed pack, or empty
     bool settings_pack_images_installed = false; // the image pack (现代图像格式) is on disk
     bool settings_pack_images_enabled = true;
     bool settings_pack_images_installing = false;
     float settings_pack_images_progress = 0.0f;
     std::wstring settings_pack_images_version;
     std::wstring settings_pack_images_notice;
+    std::wstring settings_pack_images_update_version;
     bool settings_pack_raw_installed = false, settings_pack_raw_enabled = true, settings_pack_raw_installing = false;
     bool settings_pack_raw_available = false;
     float settings_pack_raw_progress = 0.0f;
-    std::wstring settings_pack_raw_version, settings_pack_raw_notice;
+    std::wstring settings_pack_raw_version, settings_pack_raw_notice, settings_pack_raw_update_version;
     bool settings_pack_archive_installed = false, settings_pack_archive_enabled = true, settings_pack_archive_installing = false;
     bool settings_pack_archive_available = false;
     float settings_pack_archive_progress = 0.0f;
-    std::wstring settings_pack_archive_version, settings_pack_archive_notice;
+    std::wstring settings_pack_archive_version, settings_pack_archive_notice, settings_pack_archive_update_version;
     int settings_theme = 0; // system, light, dark
     bool settings_open = false;
     int settings_page = 0; // 0 general, 1 search/index, 2 context menu, 3 about, 4 duplicates, 5 quick look, 6 system menu

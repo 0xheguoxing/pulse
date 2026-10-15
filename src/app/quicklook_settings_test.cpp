@@ -147,6 +147,59 @@ int RunQuickLookSettingsTest(pulse::AppState& s, const wchar_t* output) {
                 controls_ok &= text.right <= badge.left || text.bottom <= badge.top;
             }
             check(controls_ok, "codec labels and status controls never overlap");
+            if (installed) {
+                // Current packs show no 更新到; older ones show it left of 卸载, with its own target.
+                check(lay.pack_update.right <= lay.pack_update.left && lay.pack_images_update.right <= lay.pack_images_update.left &&
+                      lay.pack_raw_update.right <= lay.pack_raw_update.left && lay.pack_archive_update.right <= lay.pack_archive_update.left,
+                      "current packs offer no update");
+                auto older = vm;
+                older.settings_pack_version = older.settings_pack_images_version = older.settings_pack_raw_version =
+                    older.settings_pack_archive_version = L"1.0.1";
+                older.settings_pack_update_version = older.settings_pack_images_update_version =
+                    older.settings_pack_raw_update_version = older.settings_pack_archive_update_version = L"1.0.2";
+                const auto u = ui::MakeSettingsLayout(older, rect, scale, s.renderer.TitleBarHeight(), 28*scale, &painter);
+                using Lay = ui::SettingsLayout;
+                struct UpdateCard { D2D1_RECT_F Lay::* card; D2D1_RECT_F Lay::* update; D2D1_RECT_F Lay::* primary; ui::PackAction action; };
+                const UpdateCard cards[] = {
+                    {&Lay::pack_card, &Lay::pack_update, &Lay::pack_primary, ui::PackAction::Update},
+                    {&Lay::pack_images_card, &Lay::pack_images_update, &Lay::pack_images_primary, ui::PackAction::ImagesUpdate},
+                    {&Lay::pack_raw_card, &Lay::pack_raw_update, &Lay::pack_raw_primary, ui::PackAction::RawUpdate},
+                    {&Lay::pack_archive_card, &Lay::pack_archive_update, &Lay::pack_archive_primary, ui::PackAction::ArchiveUpdate}};
+                bool placed = true, targets = true;
+                for (const auto& c : cards) {
+                    const auto card = u.*c.card, update = u.*c.update, primary = u.*c.primary;
+                    placed &= update.right > update.left && update.right < primary.left &&
+                              update.top == primary.top && update.bottom == primary.bottom &&
+                              update.left >= card.left + 54*scale && update.bottom <= card.bottom;
+                    auto scrolled = older;
+                    scrolled.settings_scroll = card.top - u.content.top - 10*scale;
+                    const auto visible = ui::MakeSettingsLayout(scrolled, rect, scale, s.renderer.TitleBarHeight(), 28*scale, &painter);
+                    const auto r = visible.*c.update;
+                    const auto hit = s.renderer.HitTest(scrolled, rect, (r.left + r.right)/2, (r.top + r.bottom)/2);
+                    targets &= hit.region == H::SettingsPackAction && hit.index == static_cast<int>(c.action);
+                }
+                check(placed, "update button sits left of the primary button inside every pack card");
+                check(targets, "each update button hits its own pack's update action");
+                auto busy = older;
+                busy.settings_pack_images_installing = true;
+                busy.settings_pack_images_progress = 0.42f;
+                const auto b = ui::MakeSettingsLayout(busy, rect, scale, s.renderer.TitleBarHeight(), 28*scale, &painter);
+                check(b.pack_images_update.right <= b.pack_images_update.left && b.pack_raw_update.right > b.pack_raw_update.left &&
+                      ui::pack_text::ImagesBadge(busy).text == l10n::Pick(L"正在更新", L"Updating"),
+                      "a downloading update hides only its own button and says it is updating");
+                if (language[0] == L'z' && scale == 1 && ((width == 1280 && font == 100) || (width == 760 && font == 125))) {
+                    for (int section = 0; section < 2; ++section) {
+                        auto shot = section == 0 ? older : busy;
+                        shot.dark = false;
+                        shot.settings_scroll = (section == 0 ? u.pack_card.top : u.pack_images_card.top) - u.content.top - 40*scale;
+                        const auto theme = ui::MakeTheme(false, ui::HexColor(0x4F7766));
+                        s.compositor.Dc()->BeginDraw(); s.renderer.Render(shot, rect, theme); s.compositor.Dc()->EndDraw();
+                        const auto name = L"quicklook-" + std::to_wstring(width) + L"-font" + std::to_wstring(font) +
+                            (section == 0 ? L"-update.png" : L"-updating.png");
+                        check(s.compositor.SaveSnapshot((folder / name).c_str()), "Quick Look screenshot saved");
+                    }
+                }
+            }
             if (!installed) {
                 for (const bool expanded : {true, false}) {
                 auto scrolled = vm;

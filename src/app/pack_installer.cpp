@@ -168,6 +168,30 @@ DWORD InstallFile(const PackRelease& release, const PackFile& file, const std::w
     return ERROR_SUCCESS;
 }
 
+// Takes one file from the installed version when it already matches the
+// pinned size and hash. The copy is hashed again on disk, like a download;
+// anything doubtful falls back to downloading.
+bool ReuseInstalledFile(const PackFile& file, const std::wstring& installed, const std::wstring& directory) {
+    const std::wstring source = installed + L"\\" + file.name;
+    const std::wstring target = directory + L"\\" + file.name;
+    {
+        FileHandle in(CreateFileW(source.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr,
+                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+        LARGE_INTEGER size{};
+        if (!in.ok() || !GetFileSizeEx(in.value, &size) || static_cast<uint64_t>(size.QuadPart) != file.size ||
+            !VerifyUpdateInstaller(in.value, file.sha256)) return false;
+    }
+    if (!CopyFileW(source.c_str(), target.c_str(), TRUE)) return false;
+    {
+        FileHandle copy(CreateFileW(target.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                                    FILE_ATTRIBUTE_NORMAL, nullptr));
+        if (copy.ok() && VerifyUpdateInstaller(copy.value, file.sha256)) return true;
+    }
+    SetFileAttributesW(target.c_str(), FILE_ATTRIBUTE_NORMAL);
+    DeleteFileW(target.c_str());
+    return false;
+}
+
 // Old version directories and leftovers; files still in use stay until next time.
 void RemoveOtherVersions(const std::wstring& base, const std::wstring& keep) {
     WIN32_FIND_DATAW data{};
@@ -210,7 +234,7 @@ bool RemovePackTree(const std::wstring& directory) {
 
 PackInstallOutcome InstallPack(const PackRelease& release, const std::wstring& root,
                                PackInstallProgress& progress, DWORD& error,
-                               const UpdateResponseReader& read) {
+                               const UpdateResponseReader& read, bool reuse_installed) {
     error = ERROR_SUCCESS;
     auto failed = [&](DWORD code) {
         error = code;
@@ -231,18 +255,29 @@ PackInstallOutcome InstallPack(const PackRelease& release, const std::wstring& r
     if (!packs::CreateDirectoryChain(base)) return failed(Fail(GetLastError()));
     RemovePackTree(staging);
     if (!CreateDirectoryW(staging.c_str(), nullptr)) return failed(Fail(GetLastError()));
+    // An update starts from the files of the version installed now.
+    std::wstring installed_directory = reuse_installed ? packs::InstalledPackDirectory(base) : std::wstring();
+    if (!_wcsicmp(installed_directory.c_str(), staging.c_str())) installed_directory.clear();
 
     uint64_t done = 0;
+    size_t reused = 0;
     for (size_t i = 0; i < release.file_count; ++i) {
-        const DWORD code = progress.cancelled.load() ? ERROR_CANCELLED :
-            InstallFile(release, release.files[i], staging, lzms, progress, done, read);
+        DWORD code = progress.cancelled.load() ? ERROR_CANCELLED : ERROR_SUCCESS;
+        if (code == ERROR_SUCCESS && !installed_directory.empty() &&
+            ReuseInstalledFile(release.files[i], installed_directory, staging)) {
+            ++reused;
+        } else if (code == ERROR_SUCCESS) {
+            code = InstallFile(release, release.files[i], staging, lzms, progress, done, read);
+        }
         if (code != ERROR_SUCCESS) {
             RemovePackTree(staging);
             diagnostics::runtime::Event("pack_install_failed", {{"error", code}, {"file", i}});
             return failed(code);
         }
         done += release.files[i].packed_size;
+        progress.received.store(done, std::memory_order_relaxed);
     }
+    if (reused) diagnostics::runtime::Event("pack_install_reused", {{"files", reused}});
     // Reinstalling the same version replaces it; a running preview may still
     // hold the old files, in which case the old copy stays and we fail cleanly.
     if (GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES && !RemovePackTree(target)) {
@@ -283,7 +318,8 @@ bool PackInstaller::Start(const PackRelease& release, HWND notify) {
             }
         });
         DWORD error = ERROR_SUCCESS;
-        const PackInstallOutcome outcome = InstallPack(release, root, job->progress, error);
+        const PackInstallOutcome outcome = InstallPack(release, root, job->progress, error,
+                                                       ReadUpdateResponse, true);
         pumping.store(false);
         ticker.join();
         job->error.store(error);

@@ -594,6 +594,11 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     {&lay.pack_primary, vm.settings_pack_media_installed && !vm.settings_pack_installing
                                             ? PackAction::Remove : PackAction::Install},
                     {&lay.pack_enable, PackAction::Enable},
+                    // 更新到: empty rects (nothing to update) never match.
+                    {&lay.pack_update, PackAction::Update},
+                    {&lay.pack_images_update, PackAction::ImagesUpdate},
+                    {&lay.pack_raw_update, PackAction::RawUpdate},
+                    {&lay.pack_archive_update, PackAction::ArchiveUpdate},
                     {&lay.pack_images_primary, vm.settings_pack_images_installed && !vm.settings_pack_images_installing
                                                    ? PackAction::ImagesRemove : PackAction::ImagesInstall},
                     {&lay.pack_images_enable, PackAction::ImagesEnable},
