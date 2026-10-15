@@ -13,6 +13,7 @@
 #include <uxtheme.h>
 #include <wincodec.h>
 #include <d2d1effects.h>
+#include <dwmapi.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -23,6 +24,7 @@
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "uxtheme.lib")
 #pragma comment(lib, "imm32.lib")
+#pragma comment(lib, "dwmapi.lib")
 
 namespace pulse::ui {
 
@@ -429,7 +431,7 @@ LRESULT CALLBACK FluentMenu::MenuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
             const int rows = notches != 0 ? -notches * 3
                 : (GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? -1 : 1); // high-resolution wheels
             if (self->ScrollRows(rows) && self->Render())
-                self->Present(255, self->present_offset_);
+                self->Present(self->present_alpha_, self->present_offset_);
             return 0;
         }
         break;
@@ -452,7 +454,7 @@ LRESULT CALLBACK FluentMenu::MenuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
             // Keep the flyout: the pointer may be crossing onto it.
             if (self->arrow_hover_ != 0) {
                 self->arrow_hover_ = 0;
-                if (self->hover_row_ < 0 && self->Render()) self->Present(255, self->present_offset_);
+                if (self->hover_row_ < 0 && self->Render()) self->Present(self->present_alpha_, self->present_offset_);
             }
             self->UpdateHover(-1);
         }
@@ -590,7 +592,7 @@ void FluentMenu::TickArrowScroll() {
         ++steps;
     }
     if (steps > 0 && ScrollRows(arrow_hover_ * steps) && Render())
-        Present(255, present_offset_);
+        Present(present_alpha_, present_offset_);
 }
 
 void FluentMenu::LayoutWindow(POINT screen_pt) {
@@ -605,10 +607,12 @@ void FluentMenu::LayoutWindow(POINT screen_pt) {
     h = static_cast<int>(std::ceil(BodyHeightPx())) + static_cast<int>(FilterHeaderPx()) + kShadowMargin * 2;
     int x = screen_pt.x;
     int y = screen_pt.y;
+    int natural_y = y; // where the menu sits when the work area has room
     if (dropdown_) {
         const int gap = static_cast<int>(std::lround(4 * scale_));
         x = dropdown_rect_.left - kShadowMargin;
         y = dropdown_rect_.bottom + gap - kShadowMargin;
+        natural_y = y;
         if (y + h > mi.rcWork.bottom)
             y = dropdown_rect_.top - gap + kShadowMargin - h;
         x = std::max<int>(mi.rcWork.left, std::min<int>(x, mi.rcWork.right - w));
@@ -616,6 +620,7 @@ void FluentMenu::LayoutWindow(POINT screen_pt) {
     } else if (anchor_to_rect_) {
         x = anchor_rect_.left - kShadowMargin;
         y = (external_edit_ ? anchor_rect_.bottom + static_cast<int>(4 * scale_) : anchor_rect_.top) - kShadowMargin;
+        natural_y = y;
         if (x + w > mi.rcWork.right) x = (std::max)(mi.rcWork.left, mi.rcWork.right - w);
         if (x < mi.rcWork.left) x = mi.rcWork.left;
         if (y + h > mi.rcWork.bottom) y = std::max(mi.rcWork.top, mi.rcWork.bottom - h);
@@ -626,6 +631,7 @@ void FluentMenu::LayoutWindow(POINT screen_pt) {
         POINT top{ 0, static_cast<LONG>(std::lround(44.0f * scale_ + 4.0f * scale_)) };
         ClientToScreen(owner_, &top);
         y = top.y - kShadowMargin;
+        natural_y = y;
         if (x + w > mi.rcWork.right) x = (std::max)(mi.rcWork.left, mi.rcWork.right - w);
         if (x < mi.rcWork.left) x = mi.rcWork.left;
         if (y + h > mi.rcWork.bottom) y = (std::max)(mi.rcWork.top, mi.rcWork.bottom - h);
@@ -638,12 +644,18 @@ void FluentMenu::LayoutWindow(POINT screen_pt) {
     }
     base_x_ = x;
     base_y_ = y;
+    // Slide in from the anchor side: down from above normally, up from below
+    // when the menu had to flip or lift above its natural spot (screen
+    // bottom). Chosen at open; a re-layout while open keeps the direction.
+    if (!open_) slide_sign_ = y < natural_y ? 1 : -1;
     LONG_PTR ex = GetWindowLongPtrW(hwnd_, GWL_EXSTYLE);
     if (filter_fn_ && !external_edit_)
         SetWindowLongPtrW(hwnd_, GWL_EXSTYLE, ex & ~WS_EX_NOACTIVATE);
     else
         SetWindowLongPtrW(hwnd_, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE);
-    SetWindowPos(hwnd_, topmost_ ? HWND_TOPMOST : HWND_TOP, x, y, w, h,
+    // While open (late rows), stay where the running slide put the window;
+    // the next frame continues from there instead of jumping to rest.
+    SetWindowPos(hwnd_, topmost_ ? HWND_TOPMOST : HWND_TOP, x, open_ ? y + present_offset_ : y, w, h,
                  (filter_fn_ && !external_edit_) ? SWP_SHOWWINDOW : (SWP_NOACTIVATE | SWP_SHOWWINDOW));
 }
 
@@ -1023,6 +1035,7 @@ void FluentMenu::Present(BYTE alpha, int y_offset_px) {
     UpdateLayeredWindow(hwnd_, nullptr, &dst, &sz, surf_.mem_dc, &src, 0, &blend, ULW_ALPHA);
     SelectObject(surf_.mem_dc, old);
     present_offset_ = y_offset_px;
+    present_alpha_ = alpha;
     if (filter_fn_ && edit_ && open_ && !animating_out_)
         PlaceFilterEdit(y_offset_px);
 }
@@ -1097,13 +1110,13 @@ void FluentMenu::OpenSubmenu(int row) {
     SetWindowPos(sub_hwnd_, topmost_ ? HWND_TOPMOST : HWND_TOP, x, y, w, h,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
     if (RenderSub()) PresentSub(255);
-    if (Render()) Present(255, present_offset_); // header row stays active
+    if (Render()) Present(present_alpha_, present_offset_); // header row stays active
 }
 
 void FluentMenu::CloseSubmenu() {
     const bool was_open = sub_parent_row_ >= 0;
     HideSubWindow();
-    if (was_open && open_ && !animating_out_ && Render()) Present(255, present_offset_);
+    if (was_open && open_ && !animating_out_ && Render()) Present(present_alpha_, present_offset_);
 }
 
 void FluentMenu::OnSubMouse(POINT client_pt, bool button_up) {
@@ -1148,15 +1161,15 @@ void FluentMenu::OnMouse(POINT client_pt, bool button_up) {
             // A click pages; resting on the arrow scrolls continuously.
             const int page = std::max(1, static_cast<int>(ViewportPx() / model_.RowHeightPx()) - 1);
             if (ScrollRows(zone * page) && Render())
-                Present(255, present_offset_);
+                Present(present_alpha_, present_offset_);
             return;
         }
         UpdateTooltip(-1);
         if (hover_row_ >= 0) UpdateHover(-1);
-        else if (zone_changed && Render()) Present(255, present_offset_);
+        else if (zone_changed && Render()) Present(present_alpha_, present_offset_);
         return;
     }
-    if (zone_changed && Render()) Present(255, present_offset_);
+    if (zone_changed && Render()) Present(present_alpha_, present_offset_);
     int row = y >= 0 && y < body_h ? model_.HitTestRow(y - arrow + scroll_y_) : -1;
     const FluentMenuItem* it = model_.At(row);
     const bool flyout_header = it && it->enabled && !it->children.empty();
@@ -1357,7 +1370,7 @@ void FluentMenu::UpdateHover(int row, int swatch) {
             scroll_y_ = row == model_.Count() - 1 ? MaxScrollPx()
                                                   : top + model_.RowHeightPx() - ViewportPx();
     }
-    if (Render()) Present(255, 0);
+    if (Render()) Present(present_alpha_, present_offset_);
 }
 
 int FluentMenu::HitTestSwatch(int row, float client_x) const {
@@ -1692,12 +1705,23 @@ bool FluentMenu::HandleFilterKey(UINT msg, WPARAM wParam) {
 
 int FluentMenu::RunModalLoop() {
     MSG msg{};
+    // The fade-out starts from what is on screen: a dismiss during the
+    // fade-in must not flash back to opaque or snap the slide into place.
+    bool fade_out_started = false;
+    BYTE out_alpha = 255;
+    int out_offset = 0;
     while (open_) {
+        bool animating = false;
         // Animation progress (fade + slide for open, fade for dismiss).
         if (hwnd_) {
             double elapsed = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - anim_start_).count();
             if (animating_out_) {
+                if (!fade_out_started) {
+                    fade_out_started = true;
+                    out_alpha = present_alpha_;
+                    out_offset = present_offset_;
+                }
                 const float kOutMs = 80.0f; // ui.md §6 菜单收起
                 float t = (float)(elapsed / kOutMs);
                 if (t >= 1.0f) {
@@ -1705,15 +1729,20 @@ int FluentMenu::RunModalLoop() {
                     ShowWindow(hwnd_, SW_HIDE);
                     break;
                 }
-                Present((BYTE)(255 * (1.0f - t)), 0);
+                Present((BYTE)std::lround(out_alpha * (1.0f - t)), out_offset);
+                animating = true;
             } else {
-                // ui.md §6: 淡入 120ms + 下滑 8px OutQuad.
+                // ui.md §6: 淡入 120ms + 滑入 8px OutQuad. The slide comes from
+                // the anchor side (slide_sign_): down normally, up when the
+                // menu had to flip or lift above its anchor.
                 fluent::MotionSpec spec{ 120.0f, fluent::EasingCurve::OutQuad };
                 float t = fluent::EvaluateMotion(spec, (float)elapsed);
                 if (t < 1.0f) {
                     const float dip = (anchor_to_rect_ && filter_fn_)
                         ? 0.0f : fluent::motion::MenuTravelDip * scale_;
-                    Present((BYTE)(255 * t), (int)std::lround(-dip * (1.0f - t)));
+                    Present((BYTE)(255 * t),
+                            (int)std::lround(static_cast<float>(slide_sign_) * dip * (1.0f - t)));
+                    animating = true;
                 } else {
                     Present(255, 0);
                 }
@@ -1730,8 +1759,11 @@ int FluentMenu::RunModalLoop() {
             }
         }
         if (open_ && !animating_out_ && overflow_) TickArrowScroll();
-        DWORD wait = MsgWaitForMultipleObjects(0, nullptr, FALSE, 16, QS_ALLINPUT);
-        (void)wait;
+        // Animation frames follow the compositor: a 16 ms timeout rounds up to
+        // two 15.6 ms timer ticks, which left the 120 ms fade ~4 uneven frames
+        // (smooth only while the pointer moved).
+        if (!animating || FAILED(DwmFlush()))
+            MsgWaitForMultipleObjects(0, nullptr, FALSE, animating ? 1 : 16, QS_ALLINPUT);
         if (topmost_ && open_ && !animating_out_ &&
             ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON)) & 0x8000)) {
             // A press over the foreign overlay never reaches this thread's
@@ -1940,7 +1972,7 @@ int FluentMenu::TrackPopup(POINT screen_pt, std::vector<FluentMenuItem> items,
     open_ = true;
     anim_start_ = std::chrono::steady_clock::now();
     const int slide = (anchor_to_rect_ && filter_fn_)
-        ? 0 : (int)std::lround(-fluent::motion::MenuTravelDip * scale_);
+        ? 0 : (int)std::lround(static_cast<float>(slide_sign_) * fluent::motion::MenuTravelDip * scale_);
     Present(0, slide);
     if (external_edit_) {
         HideFilterEdit();
@@ -2001,7 +2033,7 @@ void FluentMenu::RefreshFilter() {
     hover_row_ = model_.FirstEnabled();
     hover_swatch_ = -1;
     LayoutWindow(popup_pt_);
-    if (Render()) Present(255, present_offset_);
+    if (Render()) Present(present_alpha_, present_offset_);
     // Refresh only the results; a cached internal editor may be hidden while
     // an external search field owns input, selection and IME composition.
 }

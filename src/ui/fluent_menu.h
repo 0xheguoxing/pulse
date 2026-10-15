@@ -8,7 +8,9 @@
 //
 // Behavior: TrackPopup runs a nested modal loop (like TrackPopupMenu):
 // hover tracking, keyboard nav (Up/Down/Enter/Esc), click-outside dismiss,
-// 120ms OutQuad fade-in + 8px slide (motion::MenuTravelDip), 80ms fade-out.
+// 120ms OutQuad fade-in + 8px slide from the anchor side (motion::MenuTravelDip;
+// up when the menu flips/lifts above its anchor), 80ms fade-out from the
+// alpha on screen. Animation frames are paced by DwmFlush.
 // The same component serves the right-click menu and the toolbar "新建▾"
 // dropdown.
 //
@@ -332,6 +334,8 @@ private:
     float edit_font_scale_ = 0.0f;
     HBRUSH edit_brush_ = nullptr;
     int present_offset_ = 0;
+    BYTE present_alpha_ = 0;       // alpha of the last Present (repaints keep it)
+    int slide_sign_ = -1;          // -1 slides down into place, +1 slides up
     int hover_row_ = -1;
     int hover_swatch_ = -1;
     int max_visible_rows_ = 0;
