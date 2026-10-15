@@ -41,8 +41,11 @@ class ReleaseGate(unittest.TestCase):
         return ''
 
     def test_catalog_is_complete_and_tag_bound(self):
-        header = Path(__file__).resolve().parents[1] / 'src/app/pack_catalog_generated.h'
-        packs = catalog(header, 'jimmgreen/pulse', 'v1.0.53')
+        root = Path(__file__).resolve().parents[1]
+        header = root / 'src/app/pack_catalog_generated.h'
+        # Bound to the release being built, so a version bump needs no edit here.
+        tag = 'v' + (root / 'version.txt').read_text(encoding='utf-8').strip()
+        packs = catalog(header, 'jimmgreen/pulse', tag)
         self.assertEqual(sum(len(p['files']) for p in packs), 17)
         with self.assertRaises(ValueError):
             catalog(header, 'jimmgreen/pulse', 'wrong-tag')
