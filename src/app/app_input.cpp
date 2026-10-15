@@ -10,6 +10,7 @@
 #include "explorer_shortcuts.h"
 #include "app_updates.h"
 #include "app_internal.h"
+#include "selection_caps.h"
 #include "app_input.h"
 #include "app_hover.h"
 #include "app_hover_preview.h"
@@ -584,6 +585,8 @@ void StartDragOut(AppState& s) {
     if(DeferContentSelection(s,[](AppState& v){if(GetKeyState(VK_LBUTTON)&0x8000) StartDragOut(v);})) return;
     app::Tab* tab = ActiveTab(s);
     if (!tab || !tab->snapshot || IsRecycleTab(tab)) return;
+    const app::SelectionCaps caps = app::ComputeSelectionCaps(*tab, &s.places);
+    if (!caps.copy && !caps.cut) return;
     std::vector<std::wstring> paths = SelectedFullPaths(*tab);
     if (paths.empty()) return;
     for (auto& path : paths) path = ClipboardPath(path);
@@ -2701,7 +2704,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         } else if (hit.region == ui::HitTestResult::Paste) {
             PasteIntoCurrent(*s);
         } else if (hit.region == ui::HitTestResult::Rename) {
-            ShowRenameOverlay(*s);
+            RenameSelected(*s);
         } else if (hit.region == ui::HitTestResult::Delete) {
             DeleteSelected(*s, (GetKeyState(VK_SHIFT) & 0x8000) != 0);
         } else if (hit.region == ui::HitTestResult::GroupHeader ||
@@ -2905,7 +2908,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         } else if (hit.region == ui::HitTestResult::DetailsSecurityChange) {
             DispatchMenuCommand(*s, app::CmdProperties);
         } else if (hit.region == ui::HitTestResult::DetailsRename) {
-            ShowRenameOverlay(*s);
+            RenameSelected(*s);
         } else if (hit.region == ui::HitTestResult::DetailsTagAdd) {
             POINT point{ mx, my };
             ClientToScreen(hwnd, &point);
@@ -4190,7 +4193,7 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         } else if (ctrl && shift && wParam == L'R') {
             ShowBatchRename(*s);
         } else if (wParam == VK_F2) {
-            ShowRenameOverlay(*s);
+            RenameSelected(*s);
         } else if (wParam == VK_F7) {
             CreateNewItem(*s, true); // 新建文件夹并进入重命名（ui.md §7.9）
         } else if (alt && wParam == VK_RETURN) {

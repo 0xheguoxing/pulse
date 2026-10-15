@@ -18,6 +18,8 @@
 #include "batch_rename.h"
 #include "link_resolve.h"
 #include "locked_item_prompt.h"
+#include "selection_caps.h"
+#include "app_commands.h"
 #include "paste_source.h"
 #include "resource.h"
 #include "../ops/clipboard.h"
@@ -196,7 +198,9 @@ void SendTrayToDest(AppState& s, const std::wstring& dir, bool move) {
 // else paste from the system clipboard (paste_source.h).
 void PasteIntoCurrent(AppState& s) {
     app::Tab* tab = ActiveTab(s);
-    if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path) || tab->net_readonly) return;
+    if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path) || tab->net_readonly ||
+        app::IsUncServerRoot(tab->current_path))
+        return;
     ops::ClipboardData cb;
     const bool clipboard_files = ops::ReadClipboard(cb);
     // Virtual files (Remote Desktop, a zip, Outlook) are a newer copy too and
@@ -283,6 +287,14 @@ void DeleteSelected(AppState& s, bool permanent) {
         s.ops.Submit(std::move(req));
         return;
     }
+    // Network view: Del removes the selected pins, never the shares behind
+    // them. Drives and a server's shares are not deleted at all.
+    const app::SelectionCaps caps = SelectionCapsOf(s);
+    if (caps.kind == app::SelectionKind::NetworkPlaces) {
+        UnpinSelectedNetworks(s);
+        return;
+    }
+    if (!caps.del) return;
     std::vector<std::wstring> paths = SelectedFullPaths(*tab);
     DeletePaths(s, std::move(paths), permanent);
 }
@@ -398,6 +410,9 @@ void CollectToTray(AppState& s, bool move_intent) {
     if(DeferContentSelection(s,[=](AppState& v){CollectToTray(v,move_intent);})) return;
     app::Tab* tab = ActiveTab(s);
     if (!tab || !tab->snapshot || IsRecycleTab(tab)) return;
+    // A drive or a share is not copied as a whole by Ctrl+C / Ctrl+X.
+    const app::SelectionCaps caps = SelectionCapsOf(s);
+    if (!(move_intent ? caps.cut : caps.copy)) return;
     std::vector<std::wstring> paths = SelectedFullPaths(*tab);
     CollectPathsToTray(s, paths, move_intent);
 }
@@ -524,7 +539,9 @@ static void SubmitBatchRename(AppState& s, const std::vector<std::wstring>& path
 void ShowBatchRename(AppState& s) {
     if(DeferContentSelection(s,[=](AppState& v){ShowBatchRename(v);})) return;
     app::Tab* tab = ActiveTab(s);
-    if (!tab || IsRecycleTab(tab) || tab->net_readonly) return;
+    if (!tab || IsRecycleTab(tab) || tab->net_readonly ||
+        app::ComputeSelectionCaps(*tab, &s.places).kind != app::SelectionKind::Files)
+        return;
     SubmitBatchRename(s, SelectedFullPaths(*tab), tab);
 }
 void ShowBatchRenamePaths(AppState& s, const std::vector<std::wstring>& paths) {

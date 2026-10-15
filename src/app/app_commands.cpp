@@ -44,6 +44,14 @@
 #include "../ipc/ctx_menu_util.h"
 #include "shell_registry_watch.h"
 #include "search_refresh_log.h"
+#include "selection_caps.h"
+#include "drive_verbs.h"
+#include "bitlocker_unlock.h"
+#include "../fs/bitlocker_volume.h"
+#include "app_navigation.h"
+#include "app_network_locations.h"
+#include "app_messages.h"
+#include "../ui/confirm_dialog.h"
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -115,7 +123,9 @@ void CopySelectedPath(AppState& s) {
 // snapshot) selects it and enters the rename overlay.
 void CreateNewItem(AppState& s, bool folder) {
     app::Tab* tab = ActiveTab(s);
-    if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path) || tab->net_readonly) return;
+    if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path) || tab->net_readonly ||
+        app::IsUncServerRoot(tab->current_path))
+        return;
     // 自定义工具栏 "remember the last type": the New button follows what was made last.
     if (s.appPrefs.toolbar_last_new != (folder ? 0 : 1)) {
         s.appPrefs.toolbar_last_new = folder ? 0 : 1;
@@ -139,7 +149,8 @@ void CreateNewItem(AppState& s, bool folder) {
 
 namespace {
 bool CanCreateHere(const app::Tab* tab) {
-    return tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path) && !tab->net_readonly;
+    return tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path) && !tab->net_readonly &&
+        !app::IsUncServerRoot(tab->current_path);  // \\server lists shares, not files
 }
 
 std::wstring JoinChild(std::wstring dir, const std::wstring& name) {
@@ -226,6 +237,9 @@ std::vector<app::TagAdsUpdate> BuildTagAdsUpdates(
 bool ToggleTagForSelection(AppState& s, const app::TagId& tag_id,
                                   const std::vector<std::wstring>& paths) {
     if (tag_id.empty() || paths.empty()) return false;
+    if (const app::Tab* tab = ActiveTab(s); tab && tab->SelectedCount() > 0 &&
+        SelectedFullPaths(*tab) == paths && !app::ComputeSelectionCaps(*tab, &s.places).tags)
+        return false;
     const bool add = s.places.GetSelectionState(tag_id, paths) != app::TagSelectionState::All;
     std::vector<app::TagAdsUpdate> updates;
     if (!s.places.SetTagsBatch(tag_id, paths, add, &updates)) return false;
@@ -260,6 +274,10 @@ void AppendCustomTagColor(AppState& s, uint32_t rgb) {
 void ShowTagPicker(AppState& s, POINT screen_pt, const std::vector<std::wstring>* paths_override) {
     if (!paths_override &&
         DeferContentSelection(s,[=](AppState& v){ShowTagPicker(v,screen_pt);})) return;
+    if (!paths_override) {
+        const app::Tab* tab = ActiveTab(s);
+        if (tab && tab->SelectedCount() > 0 && !app::ComputeSelectionCaps(*tab, &s.places).tags) return;
+    }
     if (!EnsureMenu(s)) return;
     const std::vector<std::wstring> paths = paths_override ? *paths_override
         : ActiveTab(s) ? SelectedFullPaths(*ActiveTab(s)) : std::vector<std::wstring>{};
@@ -762,6 +780,187 @@ bool DeleteTagAndRefreshViews(AppState& s, const app::TagId& tag_id) {
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// What the selection is (a drive, a share, a Recycle Bin item, ...) decides
+// which commands it gets: toolbar, chip, item menu and shortcuts alike.
+app::SelectionCaps SelectionCapsOf(AppState& s) {
+    const app::Tab* tab = ActiveTab(s);
+    return tab ? app::ComputeSelectionCaps(*tab, &s.places) : app::SelectionCaps{};
+}
+
+namespace {
+struct SelectedDrive {
+    std::wstring root;  // "H:\"
+    uint8_t type = 0;
+    bool locked = false;
+};
+
+std::vector<SelectedDrive> SelectedDrives(const app::Tab& tab) {
+    std::vector<SelectedDrive> drives;
+    if (!tab.current_path.empty() || !tab.snapshot) return drives;  // This PC rows only
+    for (int index : tab.SelectedIndices()) {
+        if (index < 0 || static_cast<size_t>(index) >= tab.EntryCount()) continue;
+        const fs::DirEntry e = tab.EntryAt(static_cast<size_t>(index));
+        if (!e.drive_type) continue;
+        std::wstring root = fs::DriveRootOf(EntryFullPath(tab, index));
+        if (!root.empty()) drives.push_back({std::move(root), e.drive_type, e.drive_locked});
+    }
+    return drives;
+}
+
+std::wstring DriveDisplay(const std::wstring& root) {
+    return root.size() >= 2 ? root.substr(0, 2) : root;
+}
+
+// The selected Pulse network pins (Network view).
+std::vector<std::wstring> SelectedNetworkPins(AppState& s) {
+    std::vector<std::wstring> pins;
+    const app::Tab* tab = ActiveTab(s);
+    if (!tab || tab->current_path != kNetworkLocationsPath) return pins;
+    for (const std::wstring& path : SelectedFullPaths(*tab))
+        if (s.places.FindNetwork(path) >= 0) pins.push_back(path);
+    return pins;
+}
+
+// The share a 映射网络驱动器 row maps: one selected \\server\share.
+std::wstring SelectedShare(AppState& s) {
+    const app::Tab* tab = ActiveTab(s);
+    if (!tab || tab->SelectedCount() != 1) return {};
+    const std::wstring path = SelectedFullPath(s);
+    // WNetConnectionDialog1 requires a conventional \\server\\share path,
+    // not Win32's internal \\?\\UNC\\ extended prefix.
+    return app::IsUncShareRoot(path) ? ClipboardPath(path) : std::wstring{};
+}
+
+// 在终端打开 in This PC / a server / a Pulse view opens the selected folder;
+// in a real folder it opens that folder, as before.
+std::wstring TerminalTarget(AppState& s) {
+    const app::Tab* tab = ActiveTab(s);
+    if (!tab) return {};
+    const bool real_folder = !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path) &&
+        !app::IsUncServerRoot(tab->current_path);
+    if (real_folder) return tab->current_path;
+    if (tab->SelectedCount() != 1 || !tab->snapshot || tab->selected_index < 0 ||
+        static_cast<size_t>(tab->selected_index) >= tab->EntryCount())
+        return {};
+    const fs::DirEntry e = tab->EntryAt(static_cast<size_t>(tab->selected_index));
+    if (!e.is_dir || e.drive_locked) return {};
+    std::wstring path = EntryFullPath(*tab, tab->selected_index);
+    return fs::IsVirtualPath(path) ? std::wstring{} : path;
+}
+
+void RefreshAfterDriveChange(AppState& s) {
+    RefreshPath(s, L"", RefreshReason::Explicit);  // This PC
+    RequestSidebarRefresh(s);
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void RunMapNetworkDrive(AppState& s, const std::wstring& share) {
+    const DWORD error = app::MapNetworkDrive(s.hwnd, share);
+    if (error == NO_ERROR) {
+        RefreshAfterDriveChange(s);
+        return;
+    }
+    if (error == ERROR_CANCELLED || error == static_cast<DWORD>(-1)) return;
+    ui::ConfirmDialogSpec spec;
+    spec.tone = ui::ConfirmTone::Warning;
+    spec.title = l10n::Pick(L"无法映射网络驱动器", L"Could not map network drive");
+    wchar_t* text = nullptr;
+    FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                   nullptr, error, 0, reinterpret_cast<wchar_t*>(&text), 0, nullptr);
+    spec.message = text ? text : l10n::Pick(L"Windows 无法打开网络驱动器对话框。", L"Windows could not open the network drive dialog.");
+    if (text) LocalFree(text);
+    wchar_t code[64]{};
+    swprintf_s(code, l10n::Get(l10n::StringId::ErrorCodeFormat).c_str(), error);
+    spec.note = code;
+    spec.confirm_text = l10n::Pick(L"关闭", L"Close");
+    (void)ui::ShowConfirmDialog(s.hwnd, spec, s.darkMode, s.accentColor);
+}
+
+void RunDriveVerb(AppState& s, int cmd) {
+    const app::Tab* tab = ActiveTab(s);
+    if (!tab) return;
+    const std::vector<SelectedDrive> drives = SelectedDrives(*tab);
+    // A verb on a multi-selection could eject/disconnect several volumes or
+    // open several unlock prompts. Explorer's drive verbs are per-drive.
+    if (drives.size() != 1) return;
+    const SelectedDrive& drive = drives.front();
+    if (cmd == app::CmdUnlockDrive && drive.locked) {
+        app::StartBitLockerUnlock(s.hwnd, ServiceWindow(s), WM_BITLOCKER_UNLOCK, drive.root);
+    } else if (cmd == app::CmdEjectDrive && app::DriveEjectable(drive.root, drive.type)) {
+        app::StartDriveEject(s.hwnd, WM_DRIVE_VERB, drive.root, drive.type);
+    } else if (cmd == app::CmdDisconnectDrive && drive.type == DRIVE_REMOTE) {
+        app::StartDriveDisconnect(s.hwnd, WM_DRIVE_VERB, drive.root, false);
+    }
+}
+} // namespace
+
+bool UnpinSelectedNetworks(AppState& s) {
+    bool changed = false;
+    for (const std::wstring& pin : SelectedNetworkPins(s)) changed = s.places.UnpinNetwork(pin) || changed;
+    if (!changed) return false;
+    // The Network view lists the pins too (ShowNetworkPlaceMenu does the same).
+    ForEachPane(s, [&](app::Pane& pane) {
+        if (auto* tab = pane.ActiveTab(); tab && tab->current_path == kNetworkLocationsPath)
+            FillNetworkLocationsView(s, *tab);
+    });
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+    return true;
+}
+
+void RenameSelected(AppState& s) {
+    // A share, a network location, a Recycle Bin item or a locked drive has no
+    // name to change here (drives rename their label).
+    if (SelectionCapsOf(s).rename) ShowRenameOverlay(s);
+}
+
+void ApplyDriveVerbResult(AppState& s, const app::DriveVerbResult& result) {
+    const std::wstring drive = DriveDisplay(result.root);
+    if (result.error == NO_ERROR) {
+        RefreshAfterDriveChange(s);
+        return;
+    }
+    ui::ConfirmDialogSpec spec;
+    spec.tone = ui::ConfirmTone::Warning;
+    if (result.verb == app::DriveVerb::Disconnect && result.open_files) {
+        spec.title = l10n::Pick(L"断开 ", L"Disconnect ") + drive + l10n::Pick(L"？", L"?");
+        spec.message = l10n::Pick(L"此驱动器上有打开的文件或正在运行的程序。强制断开可能会丢失未保存的更改。",
+                                  L"Files or programs on this drive are open. Disconnecting anyway may lose unsaved changes.");
+        spec.confirm_text = l10n::Pick(L"仍要断开", L"Disconnect anyway");
+        spec.danger = true;
+        spec.default_choice = ui::ConfirmChoice::Cancel;
+        if (ui::ShowConfirmDialog(s.hwnd, spec, s.darkMode, s.accentColor))
+            app::StartDriveDisconnect(s.hwnd, WM_DRIVE_VERB, result.root, true);
+        return;
+    }
+    const bool eject = result.verb == app::DriveVerb::Eject;
+    spec.title = (eject ? l10n::Pick(L"无法弹出 ", L"Cannot eject ") :
+        l10n::Pick(L"无法断开网络驱动器 ", L"Cannot disconnect network drive ")) + drive;
+    if (eject && result.error == ERROR_DEVICE_IN_USE) {
+        spec.message = l10n::Pick(L"设备正在使用中。请关闭可能正在使用该设备上文件的程序或窗口，然后重试。",
+                                  L"The device is in use. Close any programs or windows that might be using files on it, then try again.");
+        if (!result.veto_name.empty()) spec.note = l10n::Pick(L"占用者：", L"In use by: ") + result.veto_name;
+    } else {
+        wchar_t* text = nullptr;
+        FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                       nullptr, result.error, 0, reinterpret_cast<wchar_t*>(&text), 0, nullptr);
+        spec.message = text ? text : L"";
+        if (text) LocalFree(text);
+        wchar_t code[64]{};
+        swprintf_s(code, l10n::Get(l10n::StringId::ErrorCodeFormat).c_str(), result.error);
+        spec.note = code;
+    }
+    spec.confirm_text = l10n::Pick(L"重试", L"Try again");
+    spec.cancel_text = l10n::Pick(L"关闭", L"Close");
+    if (!ui::ShowConfirmDialog(s.hwnd, spec, s.darkMode, s.accentColor)) return;
+    if (eject) {
+        uint8_t type = static_cast<uint8_t>(GetDriveTypeW(result.root.c_str()));
+        app::StartDriveEject(s.hwnd, WM_DRIVE_VERB, result.root, type);
+    } else {
+        app::StartDriveDisconnect(s.hwnd, WM_DRIVE_VERB, result.root, false);
+    }
+}
+
 void DispatchMenuCommand(AppState& s, int cmd) {
     const bool needs_files=cmd==app::CmdProperties || cmd==app::CmdOpenPath || cmd==app::CmdOpenInNewTab || cmd==app::CmdRename;
     if(needs_files && DeferContentSelection(s,[cmd](AppState& v){DispatchMenuCommand(v,cmd);})) return;
@@ -884,7 +1083,12 @@ void DispatchMenuCommand(AppState& s, int cmd) {
     case app::CmdCopy: CollectToTray(s, false); break;
     case app::CmdPaste: PasteIntoCurrent(s); break;
     case app::CmdDelete: DeleteSelected(s, (GetKeyState(VK_SHIFT) & 0x8000) != 0); break;
-    case app::CmdRename: ShowRenameOverlay(s); break;
+    case app::CmdRename: RenameSelected(s); break;
+    case app::CmdEjectDrive:
+    case app::CmdDisconnectDrive:
+    case app::CmdUnlockDrive: RunDriveVerb(s, cmd); break;
+    case app::CmdMapNetworkDrive: RunMapNetworkDrive(s, SelectedShare(s)); break;
+    case app::CmdUnpinNetwork: UnpinSelectedNetworks(s); break;
     case app::CmdBatchRename: ShowBatchRename(s); break;
     case app::CmdAdvancedSearch: ShowAdvancedSearch(s); break;
     case app::CmdRestoreRecycle: RestoreSelected(s); break;
@@ -935,8 +1139,8 @@ void DispatchMenuCommand(AppState& s, int cmd) {
         break;
     }
     case app::CmdOpenTerminal: {
-        app::Tab* tab = ActiveTab(s);
-        if (tab && !tab->current_path.empty()) s.ops.OpenTerminal(ClipboardPath(tab->current_path));
+        const std::wstring target = TerminalTarget(s);
+        if (!target.empty()) s.ops.OpenTerminal(ClipboardPath(target));
         break;
     }
     case app::CmdCopyPath: {
@@ -1062,6 +1266,89 @@ void ApplyWorkspacePinLabel(std::vector<ui::FluentMenuItem>& items, AppState& s)
     }
 }
 
+namespace {
+ui::FluentMenuItem VerbRow(int command, std::wstring text, const wchar_t* glyph) {
+    ui::FluentMenuItem item;
+    item.command = command;
+    item.text = std::move(text);
+    item.glyph = glyph;
+    item.enabled = true;
+    return item;
+}
+
+void EraseCommand(std::vector<ui::FluentMenuItem>& items, int command) {
+    std::erase_if(items, [command](const ui::FluentMenuItem& item) { return item.command == command; });
+}
+
+// Drives, shares and network locations get their own verbs (弹出, 断开连接,
+// 解锁, 映射网络驱动器, 取消固定) instead of the file ones, as in Explorer.
+void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const app::SelectionCaps& caps) {
+    if (TerminalTarget(s).empty()) EraseCommand(items, app::CmdOpenTerminal);
+    if (caps.kind == app::SelectionKind::Files || caps.kind == app::SelectionKind::None) return;
+    // The 剪切 / 复制 / 删除 / 重命名 strip keeps what this selection allows.
+    for (auto it = items.begin(); it != items.end(); ++it) {
+        if (it->command != app::CmdNone || it->quick_swatches.empty()) continue;
+        std::erase_if(it->quick_swatches, [&](const ui::FluentMenuSwatch& button) {
+            return (button.command == app::CmdCut && !caps.cut) || (button.command == app::CmdCopy && !caps.copy) ||
+                (button.command == app::CmdDelete && !caps.del) || (button.command == app::CmdRename && !caps.rename);
+        });
+        if (it->quick_swatches.empty()) {
+            if (it != items.begin()) std::prev(it)->separator_after = true;
+            items.erase(it);
+        }
+        break;
+    }
+    EraseCommand(items, app::CmdTags);  // the swatch strip and 标签...
+    EraseCommand(items, app::CmdBatchRename);
+    std::vector<ui::FluentMenuItem> verbs;
+    const app::Tab* tab = ActiveTab(s);
+    if (caps.kind == app::SelectionKind::Drives && tab) {
+        EraseCommand(items, app::CmdPinNetwork);
+        if (caps.all_locked) {
+            for (int command : {app::CmdOpenInNewTab, app::CmdPinWorkspace, app::CmdViewRecentChanges,
+                                app::CmdPinQuickAccess, app::CmdUnpinQuickAccess})
+                EraseCommand(items, command);
+        }
+        const std::vector<SelectedDrive> drives = SelectedDrives(*tab);
+        if (drives.size() == 1) {
+            const SelectedDrive& drive = drives.front();
+            if (drive.locked)
+                verbs.push_back(VerbRow(app::CmdUnlockDrive, l10n::Pick(L"解锁驱动器", L"Unlock drive"), L"\xE785"));
+            if (app::DriveEjectable(drive.root, drive.type))
+                verbs.push_back(VerbRow(app::CmdEjectDrive, l10n::Pick(L"弹出", L"Eject"), app::EjectGlyph()));
+            if (drive.type == DRIVE_REMOTE)
+                verbs.push_back(VerbRow(app::CmdDisconnectDrive,
+                                        l10n::Pick(L"断开网络驱动器", L"Disconnect network drive"), L"\xE8CD"));
+        }
+    } else if (caps.kind == app::SelectionKind::NetworkShares) {
+        if (!SelectedShare(s).empty())
+            verbs.push_back(VerbRow(app::CmdMapNetworkDrive, l10n::Pick(L"映射网络驱动器", L"Map network drive"), L"\xE8CE"));
+    } else if (caps.kind == app::SelectionKind::NetworkPlaces) {
+        // NetHood shortcuts are local .lnk files: don't offer actions that would
+        // accidentally pin the shortcut file as a workspace or Quick Access.
+        EraseCommand(items, app::CmdPinWorkspace);
+        EraseCommand(items, app::CmdPinQuickAccess);
+        EraseCommand(items, app::CmdUnpinQuickAccess);
+        if (caps.any_network_pin) {
+            verbs.push_back(VerbRow(app::CmdUnpinNetwork, l10n::Get(l10n::StringId::Unpin), L"\xE77A"));
+            EraseCommand(items, app::CmdPinNetwork);
+        } else {
+            const auto paths = tab ? SelectedFullPaths(*tab) : std::vector<std::wstring>{};
+            if (std::none_of(paths.begin(), paths.end(), [](const std::wstring& path) { return fs::IsUncPath(path); }))
+                EraseCommand(items, app::CmdPinNetwork);
+        }
+        if (!SelectedShare(s).empty())
+            verbs.push_back(VerbRow(app::CmdMapNetworkDrive, l10n::Pick(L"映射网络驱动器", L"Map network drive"), L"\xE8CE"));
+    }
+    if (verbs.empty()) return;
+    verbs.back().separator_after = true;
+    // Right after 打开.
+    auto open = std::find_if(items.begin(), items.end(),
+                             [](const ui::FluentMenuItem& item) { return item.command == app::CmdOpen; });
+    items.insert(open == items.end() ? items.begin() : open + 1, verbs.begin(), verbs.end());
+}
+} // namespace
+
 std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         AppState& s, bool can_undo, const std::wstring& undo_label) {
     if (IsRecycleTab(ActiveTab(s)))
@@ -1128,6 +1415,7 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         compare.glyph = L"\xE89F"; // side-by-side panes
         items.insert(items.begin() + 1, std::move(compare));
     }
+    if (tab) AdaptItemMenu(s, items, app::ComputeSelectionCaps(*tab, &s.places));
     return items;
 }
 
@@ -1505,7 +1793,8 @@ void ShowItemContextMenu(AppState& s, POINT screen_pt, bool from_chip) {
     if (!IsRecycleTab(tab)) {
         app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs, app::BuiltinMenuSurface::Item);
         if (!paths.empty()) window_folders = WindowTransferFolders(s);
-        app::AppendWindowTransferCommands(base_items, window_folders, tab && !tab->net_readonly);
+        const app::SelectionCaps caps = SelectionCapsOf(s);
+        app::AppendWindowTransferCommands(base_items, window_folders, tab && (caps.copy || caps.cut));
     } else {
         app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs);
     }
@@ -1584,9 +1873,14 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
         if (cmd != app::CmdNone) DispatchMenuCommand(s, cmd);
         return;
     }
-    if (tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path))
+    if (tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path)) {
         StartCtxQuery(s, { tab->current_path }, true, ipc::kBackgroundVerbKey);
-    s.context_menu.SeedComItemsFromCache();
+        s.context_menu.SeedComItemsFromCache();
+    } else {
+        // This PC and Pulse views have no shell folder to ask: drop the last
+        // item's Explorer rows (格式化 under This PC's background otherwise).
+        s.context_menu.Close();
+    }
     const bool seeded = s.context_menu.com_predicted();
 
     std::wstring undoLabel = s.ops.UndoLabel();
@@ -1603,6 +1897,20 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     const auto new_templates = can_create_here ? NewTemplatesForMenu(s, false)
                                                : std::vector<app::sysctx::NewTemplate>{};
     if (can_create_here) AppendBackgroundNewMenu(base_items, new_templates);
+    // This PC, a server's share list, the Network view and other Pulse views
+    // take no new items or pastes, and have no folder of their own to open a
+    // terminal in or pin as a workspace.
+    if (!can_create_here) {
+        for (int command : {app::CmdNewFolder, app::CmdNewTextFile, app::CmdPaste}) EraseCommand(base_items, command);
+    }
+    if (!view_options.filesystem || app::IsUncServerRoot(tab->current_path)) {
+        for (int command : {app::CmdOpenTerminal, app::CmdPinWorkspace}) EraseCommand(base_items, command);
+    }
+    if (tab->current_path.empty()) {  // This PC, as in Explorer
+        auto map = VerbRow(app::CmdMapNetworkDrive, l10n::Pick(L"映射网络驱动器", L"Map network drive"), L"\xE8CE");
+        map.separator_after = true;
+        base_items.insert(base_items.begin(), std::move(map));
+    }
     s.context_menu.OpenMenu(std::move(base_items));
     auto display = ExplorerMenu(s, s.context_menu.base_items());
 
@@ -1614,6 +1922,7 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     if (HandleQuickAccessCommand(s, cmd, quick_paths)) return;
     if (RunShellNewCommand(s, cmd, new_templates)) return;
     if (cmd == app::CmdViewRecentChanges) { OpenChangeView(s, recent_changes_path); return; }
+    if (cmd == app::CmdMapNetworkDrive) { RunMapNetworkDrive(s, L""); return; }
     if (cmd != app::CmdNone) DispatchMenuCommand(s, cmd);
 }
 
@@ -2232,6 +2541,7 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
         const app::Tab* tab = nullptr;
         std::wstring path;
         std::vector<int> selected;   // the folder items depend on the whole selection
+        const void* snapshot = nullptr;  // a drive unlocked or ejected: same rows, new verbs
         uint32_t hidden = 0;
         uint32_t pins = 0;
         app::BuiltinMenuOrder order;
@@ -2243,13 +2553,15 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
     std::vector<int> selected = tab->SelectedIndices();
     app::BuiltinMenuOrder order = s.ctxMenuPrefs.BuiltinOrder(app::BuiltinMenuSurface::Item);
     if (cache.state == &s && cache.tab == tab && cache.path == tab->current_path &&
-        cache.selected == selected && cache.hidden == s.ctxMenuPrefs.builtin_hidden && cache.order == order &&
+        cache.selected == selected && cache.snapshot == tab->snapshot.get() &&
+        cache.hidden == s.ctxMenuPrefs.builtin_hidden && cache.order == order &&
         cache.pins == s.appPrefs.toolbar_pins)
         return cache.actions;
     cache.state = &s;
     cache.tab = tab;
     cache.path = tab->current_path;
     cache.selected = std::move(selected);
+    cache.snapshot = tab->snapshot.get();
     cache.hidden = s.ctxMenuPrefs.builtin_hidden;
     cache.pins = s.appPrefs.toolbar_pins;
     cache.order = std::move(order);
@@ -2264,8 +2576,12 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
         const app::BuiltinMenuItem builtin = app::BuiltinItemForCommand(item.command);
         // Selection-only rows the item menu adds on its own (2+ items, two
         // folders, search results) are not in the builtin catalog but belong here.
+        // Drive / network / Recycle Bin verbs (AdaptItemMenu) likewise.
         const bool selection_row = item.command == app::CmdBatchRename ||
-            item.command == app::CmdCompareSideBySide || item.command == app::CmdOpenPath;
+            item.command == app::CmdCompareSideBySide || item.command == app::CmdOpenPath ||
+            item.command == app::CmdUnlockDrive || item.command == app::CmdEjectDrive ||
+            item.command == app::CmdDisconnectDrive || item.command == app::CmdMapNetworkDrive ||
+            item.command == app::CmdUnpinNetwork || item.command == app::CmdRestoreRecycle;
         if ((builtin == app::BuiltinMenuItem::Count && !selection_row) ||
             builtin == app::BuiltinMenuItem::Undo || builtin == app::BuiltinMenuItem::SelectCommands)
             continue;
@@ -2291,7 +2607,8 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
     // windows drop actions from the end.
     const auto rank = [](int command) {
         static constexpr int kOrder[] = {
-            app::CmdBatchRename, app::CmdCompareSideBySide, app::CmdTags, app::CmdCopyPath,
+            app::CmdUnlockDrive, app::CmdEjectDrive, app::CmdDisconnectDrive, app::CmdRestoreRecycle,
+            app::CmdMapNetworkDrive, app::CmdUnpinNetwork, app::CmdBatchRename, app::CmdCompareSideBySide, app::CmdTags, app::CmdCopyPath,
             app::CmdOpenInNewTab, app::CmdOpenPath, app::CmdPinQuickAccess, app::CmdUnpinQuickAccess,
             app::CmdProperties, app::CmdOpenTerminal, app::CmdViewRecentChanges,
             app::CmdPinWorkspace, app::CmdPinNetwork,
@@ -2349,7 +2666,6 @@ void ShowToolbarMore(AppState& s) {
     // More is always there (prototype note 5). Narrow windows also fold the
     // file commands, the pinned commands and the pane buttons in here.
     const bool narrow=layout.commands[0].right <= layout.commands[0].left;
-    const bool real_folder=!tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path);
     std::vector<ui::FluentMenuItem> items;
     if (narrow) {
         const int commands[]={app::CmdCut,app::CmdCopy,app::CmdPaste,app::CmdRename,app::CmdDelete};
@@ -2358,12 +2674,14 @@ void ShowToolbarMore(AppState& s) {
         const wchar_t* glyphs[]={L"\xE8C6",L"\xE8C8",L"\xE77F",L"\xE8AC",L"\xE74D"};
         const wchar_t* shortcuts[]={L"Ctrl+X",L"Ctrl+C",L"Ctrl+V",L"F2",L"Delete"};
         // Same rules as the toolbar buttons (ui_toolbar.cpp).
-        const bool can_paste=real_folder && !tab->net_readonly && (!s.tray.batches().empty() || ClipboardHasFiles());
+        const bool can_paste=CanCreateHere(tab) && (!s.tray.batches().empty() || ClipboardHasFiles());
+        const app::SelectionCaps caps=SelectionCapsOf(s);
+        const bool allowed[]={caps.cut,caps.copy,can_paste,caps.rename,caps.del};
         for (int i=0;i<5;++i) {
             ui::FluentMenuItem item;
             item.command=commands[i]; item.text=l10n::Get(labels[i]); item.glyph=glyphs[i];
             item.shortcut=shortcuts[i];
-            item.enabled=i==2 ? can_paste : i==3 ? tab->SelectedCount()==1 : tab->SelectedCount()>0;
+            item.enabled=allowed[i];
             items.push_back(std::move(item));
         }
     }
@@ -2418,7 +2736,7 @@ void ShowToolbarMore(AppState& s) {
     items.push_back(std::move(select_all));
     ui::FluentMenuItem terminal;
     terminal.command=app::CmdOpenTerminal; terminal.text=l10n::Get(l10n::StringId::OpenInTerminal);
-    terminal.glyph=L"\xE756"; terminal.enabled=real_folder;
+    terminal.glyph=L"\xE756"; terminal.enabled=!TerminalTarget(s).empty();
     items.push_back(std::move(terminal));
     ui::FluentMenuItem properties;
     properties.command=app::CmdProperties; properties.text=l10n::Get(l10n::StringId::Properties);
@@ -2440,7 +2758,6 @@ std::vector<ui::SelectionChipAction> ToolbarPinActions(AppState& s) {
     const uint32_t pins = s.appPrefs.toolbar_pins;
     const app::Tab* tab = ActiveTab(s);
     if (!pins || !tab) return out;
-    const bool real_folder = !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path);
     const bool has_selection = tab->SelectedCount() > 0;
     for (size_t i = 0; i < std::size(kToolbarPins); ++i) {
         if (!(pins & (1u << i))) continue;
@@ -2451,9 +2768,9 @@ std::vector<ui::SelectionChipAction> ToolbarPinActions(AppState& s) {
         action.label = l10n::Get(def.label);
         if (*def.shortcut) action.label += std::wstring(L" (") + def.shortcut + L")";
         switch (def.command) {
-        case app::CmdNewTextFile: action.enabled = real_folder && !tab->net_readonly; break;
+        case app::CmdNewTextFile: action.enabled = CanCreateHere(tab); break;
         case app::CmdCopyPath: action.enabled = has_selection || !tab->current_path.empty(); break;
-        case app::CmdOpenTerminal: action.enabled = real_folder; break;
+        case app::CmdOpenTerminal: action.enabled = !TerminalTarget(s).empty(); break;
         case app::CmdProperties: action.enabled = has_selection; break;
         default: action.enabled = s.ops.CanUndo(); break;
         }

@@ -805,6 +805,14 @@ add_executable(pulse_pane_drop_test src/bench/pane_drop_test.cpp src/app/pane_dr
     src/index/content_result_store.cpp src/fs/fs_enum.cpp src/ui/view_layout.cpp)
 target_link_libraries(pulse_pane_drop_test PRIVATE
     user32 shell32 ole32 uuid advapi32 shlwapi netapi32 secur32 pulse_localization pulse_runtime_log pulse_sqlite)
+# Toolbar / chip / item menu: what a drive, a share or a Recycle Bin item can do.
+add_executable(pulse_selection_caps_test src/bench/selection_caps_test.cpp
+    src/app/app_model.cpp src/app/places.cpp src/app/entry_group.cpp src/app/tag_ads_sync.cpp
+    src/app/pane_layout.cpp src/app/column_view_model.cpp src/app/search_query.cpp
+    src/app/search_query_rewrite.cpp src/index/index_query.cpp src/index/search_kinds.cpp
+    src/index/content_result_store.cpp src/fs/fs_enum.cpp src/ui/view_layout.cpp)
+target_link_libraries(pulse_selection_caps_test PRIVATE
+    user32 shell32 ole32 uuid advapi32 shlwapi netapi32 secur32 pulse_localization pulse_runtime_log pulse_sqlite)
 # Multi-window M1: AppState's process-wide members alias one AppCore (compile-time checks).
 add_executable(pulse_app_core_alias_test src/bench/app_core_alias_test.cpp)
 target_include_directories(pulse_app_core_alias_test PRIVATE "${CMAKE_BINARY_DIR}/generated")

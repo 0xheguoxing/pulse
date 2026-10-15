@@ -1,5 +1,6 @@
 // app_model.cpp
 #include "app_model.h"
+#include "selection_caps.h"
 #include "split_tree_shape.h"
 #include "layout_pane_selection.h"
 #include "network_sidebar.h"
@@ -1608,7 +1609,7 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
         ? true
         : (fs::IsVirtualPath(tab->current_path) ? tab->CanGoBack() : !tab->current_path.empty());
     out.is_file_system = !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path);
-    out.can_create = out.is_file_system && !tab->net_readonly;
+    out.can_create = out.is_file_system && !tab->net_readonly && !IsUncServerRoot(tab->current_path);
     out.curated_order = virtual_kind == L"starred" || virtual_kind == L"recent" || virtual_kind == L"changes";
     out.is_starred = virtual_kind == L"starred";
     out.is_recent = virtual_kind == L"recent";
@@ -1963,7 +1964,15 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
     vm.dark = dark;
     vm.can_go_back = tab->CanGoBack();
     vm.can_go_forward = tab->CanGoForward();
-    vm.paste_target = !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path) && !tab->net_readonly;
+    vm.paste_target = !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path) && !tab->net_readonly &&
+        !IsUncServerRoot(tab->current_path);
+    {   // Cut / copy / rename / delete by what is selected (a drive, a share, ...).
+        const SelectionCaps caps = ComputeSelectionCaps(*tab, places);
+        vm.selection_cut = caps.cut;
+        vm.selection_copy = caps.copy;
+        vm.selection_rename = caps.rename;
+        vm.selection_delete = caps.del;
+    }
     vm.clipboard_files = ops::ClipboardHasPasteableFiles();
 
     FillPaneViewModel(vm.pane, pane, places);

@@ -4,6 +4,7 @@
 #include "../ui/quick_preview_command.h"
 
 namespace pulse::ui { struct ToolbarCustomizeSpec; }
+namespace pulse::app { struct SelectionCaps; struct DriveVerbResult; }
 
 namespace pulse {
 bool EnsureMenu(AppState& s);
@@ -43,6 +44,15 @@ CreateTagPickerTestIo* SetCreateTagPickerTestIo(CreateTagPickerTestIo* io);
 void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt);
 void DispatchMenuCommand(AppState& s, int cmd);
 bool ClipboardHasFiles();
+// What the active selection can do by what it is (selection_caps.h): the
+// toolbar, the chip, the item menu and the shortcuts all ask this.
+app::SelectionCaps SelectionCapsOf(AppState& s);
+// F2 / 重命名 when the selection has a name to change (a drive: its label).
+void RenameSelected(AppState& s);
+// Network view: removes the selected Pulse pins. False when none was selected.
+bool UnpinSelectedNetworks(AppState& s);
+// WM_DRIVE_VERB: an eject / disconnect finished (drive_verbs.h).
+void ApplyDriveVerbResult(AppState& s, const app::DriveVerbResult& result);
 void ApplyWorkspacePinLabel(std::vector<ui::FluentMenuItem>& items, AppState& s);
 std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         AppState& s, bool can_undo, const std::wstring& undo_label);

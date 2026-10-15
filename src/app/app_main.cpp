@@ -40,6 +40,7 @@
 #include "session_save.h"
 #include "window_placement.h"
 #include "bitlocker_unlock.h"
+#include "drive_verbs.h"
 #include "network_connect.h"
 #include "context_menu.h"
 #include "context_menu_controller.h"
@@ -1560,7 +1561,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     !s->dragPending && !s->marqueePending && !s->marqueeActive &&
                     !s->scrollbarDragging && !s->splitterDragging;
                 CancelRenameClick(*s);
-                if (valid) ShowRenameOverlay(*s);
+                if (valid) RenameSelected(*s);
             }
             // Search affordance: expand only the focused pane, then reveal
             // the hosted edit once it has enough room for stable text layout.
@@ -1887,6 +1888,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_NETWORK_LOCATIONS:
         if (s) ApplyNetworkLocations(*s);
         return 0;
+
+    case WM_DRIVE_VERB: {
+        std::unique_ptr<app::DriveVerbResult> result(reinterpret_cast<app::DriveVerbResult*>(lParam));
+        if (s && result) ApplyDriveVerbResult(*s, *result);
+        return 0;
+    }
 
     case WM_BITLOCKER_UNLOCK: {
         std::unique_ptr<app::BitLockerUnlockResult> result(

@@ -3,6 +3,7 @@
 // app_navigation.cpp — extracted from app_main.cpp.
 #include "app_internal.h"
 #include "bitlocker_unlock.h"
+#include "selection_caps.h"
 #include "network_connect.h"
 #include "../fs/bitlocker_volume.h"
 #include "shell_window_sync.h"
@@ -2261,8 +2262,11 @@ void TransferToTarget(AppState& s, bool move) {
     if(DeferContentSelection(s,[=](AppState& v){TransferToTarget(v,move);})) return;
     app::Tab* src = ActiveTab(s);
     if (!src || !s.targetPane || s.targetPane == s.pane) return;
+    const app::SelectionCaps caps = app::ComputeSelectionCaps(*src, &s.places);
+    if (!(move ? caps.cut : caps.copy)) return;
     app::Tab* dst = s.targetPane->ActiveTab();
-    if (!dst || dst->current_path.empty() || fs::IsVirtualPath(dst->current_path) || dst->net_readonly) return;
+    if (!dst || dst->current_path.empty() || fs::IsVirtualPath(dst->current_path) || dst->net_readonly ||
+        app::IsUncServerRoot(dst->current_path)) return;
     std::vector<std::wstring> paths = SelectedFullPaths(*src);
     if (paths.empty()) return;
     ops::OpRequest req;
@@ -2283,7 +2287,8 @@ std::vector<std::wstring> WindowTransferFolders(AppState& s) {
         for (app::Pane* pane : VisiblePanes(window)) shown.push_back(pane ? pane->ActiveTab() : nullptr);
         for (const app::Tab* tab : shown) {
             if (folders.size() >= app::kMaxWindowTransferTargets) return;
-            if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path) || tab->net_readonly) continue;
+            if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path) || tab->net_readonly ||
+                app::IsUncServerRoot(tab->current_path)) continue;
             const auto same = [&](const std::wstring& path) { return _wcsicmp(path.c_str(), tab->current_path.c_str()) == 0; };
             if (same(here) || std::any_of(folders.begin(), folders.end(), same)) continue;
             folders.push_back(tab->current_path);
@@ -2295,7 +2300,9 @@ std::vector<std::wstring> WindowTransferFolders(AppState& s) {
 void TransferSelectionToFolder(AppState& s, const std::wstring& folder, bool move) {
     if (DeferContentSelection(s, [=](AppState& v) { TransferSelectionToFolder(v, folder, move); })) return;
     app::Tab* src = ActiveTab(s);
-    if (!src || folder.empty() || fs::IsVirtualPath(folder)) return;
+    if (!src || folder.empty() || fs::IsVirtualPath(folder) || app::IsUncServerRoot(folder)) return;
+    const app::SelectionCaps caps = app::ComputeSelectionCaps(*src, &s.places);
+    if (!(move ? caps.cut : caps.copy)) return;
     std::vector<std::wstring> paths = SelectedFullPaths(*src);
     if (paths.empty()) return;
     ops::OpRequest req;

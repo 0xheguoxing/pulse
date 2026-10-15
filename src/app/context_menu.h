@@ -115,6 +115,13 @@ enum MenuCmd : int {
     CmdNewMarkdownFile = 198,   // New menu: 新建 Markdown 文档
     CmdExitPulse = 196,         // palette: quit even when closing keeps Pulse running (#57)
     CmdRecentBase = 200,
+    // Drive and network verbs (selection_caps.h / drive_verbs.h), clear of the
+    // palette range above CmdIndexBase and of CmdShellNewBase.
+    CmdEjectDrive = 3900,       // removable / optical / USB drive: 弹出
+    CmdDisconnectDrive = 3901,  // mapped network drive: 断开连接
+    CmdUnlockDrive = 3902,      // BitLocker-locked drive: 解锁
+    CmdMapNetworkDrive = 3903,  // a share, or This PC background: 映射网络驱动器
+    CmdUnpinNetwork = 3904,     // Network view: remove the selected pins
     CmdIndexBase = 1000,
     // Explorer integration (优化.md §7): registry static verbs bound to the
     // current selection (+index into the StaticVerb list) and pulse_shell

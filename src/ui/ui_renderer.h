@@ -681,6 +681,12 @@ struct WindowViewModel {
     bool can_go_forward = false;
     bool paste_target = false;      // current folder is real and writable (toolbar paste)
     bool clipboard_files = false;   // CF_HDROP on the clipboard (refreshed on WM_CLIPBOARDUPDATE)
+    // File commands the selection allows (app::SelectionCaps): drives, shares,
+    // network locations and Recycle Bin items do not get all of them.
+    bool selection_cut = false;
+    bool selection_copy = false;
+    bool selection_rename = false;
+    bool selection_delete = false;
     // Toolbar selection chip: leading commands of the Pulse item menu.
     std::vector<SelectionChipAction> selection_actions;
     // Pinned toolbar commands (自定义工具栏), enabled per the current state.

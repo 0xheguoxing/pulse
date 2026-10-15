@@ -191,8 +191,10 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     create.bounds=layout.create; create.text=compact ? std::wstring_view{} : std::wstring_view{label};
     create.glyph=NewButtonGlyph(); create.kind=fluent::ButtonKind::Primary;
     create.drop_down=true;
+    // This PC, a server's shares, Pulse views: nothing can be created there.
+    create.state.enabled=vm.pane.can_create;
     painter_.DrawButton(create);
-    const bool newMainHot=IsHovered(vm,HitTestResult::NewButton);
+    const bool newMainHot=vm.pane.can_create && IsHovered(vm,HitTestResult::NewButton);
     const bool newArrowHot=IsHovered(vm,HitTestResult::NewButtonArrow);
     if (newMainHot || newArrowHot) {
         D2D1_RECT_F hot=layout.create;
@@ -216,11 +218,12 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         HitTestResult::Rename,HitTestResult::Delete,HitTestResult::SplitButton,HitTestResult::DetailsToggle,HitTestResult::PaneColumnLayout};
     for(int i=0;i<8;++i) {
         if (layout.commands[i].right <= layout.commands[i].left) continue;
-        // Prototype rules: cut / copy / delete need a selection, rename exactly
-        // one item, paste something to paste (clipboard files or a tray batch)
-        // and a folder that takes it.
+        // Cut / copy / rename / delete follow what is selected (a drive takes
+        // a rename only; app::SelectionCaps); paste needs something to paste
+        // (clipboard files or a tray batch) and a folder that takes it.
         const bool can_paste=vm.paste_target && (vm.clipboard_files || vm.tray_deck.batch_count>0);
-        const bool enabled=i>=5 || (i==2 ? can_paste : i==3 ? vm.pane.selected_count==1 : vm.pane.selected_count>0);
+        const bool allowed[]={vm.selection_cut,vm.selection_copy,can_paste,vm.selection_rename,vm.selection_delete};
+        const bool enabled=i>=5 || allowed[i];
         const bool selected=(i==5 && vm.pane_slots.size()>1) || (i==6 && vm.details_visible) ||
             (i==7 && vm.pane.column_strip.enabled);
         DrawButton(layout.commands[i],theme,enabled && IsHovered(vm,hits[i]) ? theme.fill_hover :
