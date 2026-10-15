@@ -262,6 +262,10 @@ void InvalidateCaches() {
     g_generation.fetch_add(1, std::memory_order_relaxed);
 }
 
+void InvalidateMeasurements() noexcept {
+    g_generation.fetch_add(1, std::memory_order_relaxed);
+}
+
 std::uint64_t Generation() noexcept {
     return g_generation.load(std::memory_order_relaxed);
 }

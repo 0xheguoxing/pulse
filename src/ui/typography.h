@@ -61,6 +61,11 @@ HFONT CreateEditFont(float scale, float dip = 14.0f);
 
 // Invalidate language-dependent fallback and measurement caches.
 void InvalidateCaches();
+// Text formats were recreated (DPI, font scale, a new window). Width caches
+// keyed by format pointer must not hand a new format the widths of a freed
+// one at the same address; this bumps Generation() without rebuilding the
+// font fallback.
+void InvalidateMeasurements() noexcept;
 std::uint64_t Generation() noexcept;
 
 // Pulse lays out in physical pixels on a 96-DPI D2D target. Keep vertical

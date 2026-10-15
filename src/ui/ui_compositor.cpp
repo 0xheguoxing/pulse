@@ -595,6 +595,9 @@ static void CreateFormat(IDWriteFactory2* factory, float size, DWRITE_FONT_WEIGH
 void Compositor::RecreateTextFormats(float scale) {
     UpdateTextRenderingParams(hwnd_
         ? MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST) : nullptr);
+    // Every renderer file keeps its own width cache (ui_renderer_internal.h);
+    // only a new generation retires them all when formats are replaced.
+    typography::InvalidateMeasurements();
     textFormat_.reset();
     fileNameFormat_.reset();
     smallFormat_.reset();
