@@ -82,6 +82,13 @@ struct OpRequest {
     std::vector<uint8_t> template_data;
     CollisionPolicy collision_policy = CollisionPolicy::System; // Copy / Move
     bool is_undo = false;     // undo-originated ops do not re-enter the stack
+    // Several operations making up one user action (合并到文件夹, 解散文件夹)
+    // share a nonzero group and undo as one step, under this label.
+    uint64_t undo_group = 0;
+    std::wstring undo_label;
+    // RecycleDelete only: skip any source that is not an empty folder when
+    // its turn comes (解散文件夹 queues it behind the move-out).
+    bool only_if_empty = false;
     // Lock retry only: end these processes first (never journaled, so a
     // recovered operation cannot terminate anything).
     std::vector<LockOwner> close_first;
@@ -99,6 +106,8 @@ struct UndoEntry {
     std::wstring dest_dir;
     std::wstring new_name;
     bool supported = true;    // false = recorded for history, cannot be undone
+    uint64_t group = 0;       // OpRequest::undo_group (session only, not persisted)
+    std::wstring label;       // OpRequest::undo_label
 };
 
 struct OpStatus {
@@ -371,6 +380,10 @@ private:
     std::deque<QueueItem> queue_;
     std::deque<std::wstring> recovery_cleanup_roots_;
     std::optional<QueueItem> active_item_;
+    // Undo asked for while part of that action is still queued; runs once
+    // the group's last operation finishes. Guarded by mutex_.
+    uint64_t deferred_undo_group_ = 0;
+    bool GroupPendingLocked(uint64_t group) const;
     bool update_preparing_ = false;
     bool recovery_cleanup_active_ = false;
     struct LockRetry {

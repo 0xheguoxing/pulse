@@ -210,6 +210,13 @@ bool CanDissolveSelection(const app::Tab* tab) {
     return true;
 }
 
+// Ties the operations of one menu action into one undo step.
+uint64_t NewUndoGroup() {
+    FILETIME now{};
+    GetSystemTimeAsFileTime(&now);
+    return (static_cast<uint64_t>(now.dwHighDateTime) << 32) | now.dwLowDateTime;
+}
+
 // Names directly inside dir; false when it cannot be listed.
 bool ListFolderChildren(const std::wstring& dir, std::vector<std::wstring>& names) {
     names.clear();
@@ -237,9 +244,13 @@ void GroupSelectionIntoFolder(AppState& s) {
     for (int index : GroupableSelection(*tab)) sources.push_back(EntryFullPath(*tab, index));
     const std::wstring folder = JoinChild(tab->current_path,
         app::UniqueChildName(tab->current_path, l10n::Get(l10n::StringId::NewFolder), L""));
+    const uint64_t group = NewUndoGroup();
+    const std::wstring label = l10n::Pick(L"合并到文件夹", L"new folder with selection");
     ops::OpRequest create;
     create.type = ops::OpType::CreateFolder;
     create.sources.push_back(folder);
+    create.undo_group = group;
+    create.undo_label = label;
     s.ops.Submit(std::move(create));
     // Operations run one at a time, so the move starts after the folder exists.
     ops::OpRequest move;
@@ -247,7 +258,11 @@ void GroupSelectionIntoFolder(AppState& s) {
     move.sources = std::move(sources);
     move.dest_dir = folder;
     move.collision_policy = ops::CollisionPolicy::KeepBoth;
+    move.undo_group = group;
+    move.undo_label = label;
     const auto move_id = s.ops.Submit(std::move(move));
+    s.groupRenameFolder = folder;
+    s.groupRenameUndo = group;
     app::QueueCreateRenameIntent(tab->create_rename_intents, move_id,
         tab->current_path, tab->view_generation);
 }
@@ -263,14 +278,18 @@ void DissolveSelectedFolders(AppState& s) {
     for (int index : GroupableSelection(*tab)) folders.push_back(EntryFullPath(*tab, index));
     std::vector<std::wstring> select;
     std::vector<std::wstring> children;
+    const uint64_t group = NewUndoGroup();
+    const std::wstring label = l10n::Pick(L"解散文件夹", L"ungroup folder");
     for (const std::wstring& folder : folders) {
         if (!ListFolderChildren(folder, children)) continue;
         if (children.empty()) {
             ops::OpRequest recycle;
             recycle.type = ops::OpType::RecycleDelete;
             recycle.sources.push_back(folder);
+            recycle.undo_group = group;
+            recycle.undo_label = label;
             const auto recycle_id = s.ops.Submit(std::move(recycle));
-            s.dissolveSteps.push_back({recycle_id, folder, tab->current_path, true});
+            s.dissolveSteps.push_back({recycle_id, tab->current_path});
             continue;
         }
         const size_t slash = folder.find_last_of(L"\\/");
@@ -285,6 +304,8 @@ void DissolveSelectedFolders(AppState& s) {
             rename.type = ops::OpType::Rename;
             rename.sources.push_back(folder);
             rename.new_name = aside;
+            rename.undo_group = group;
+            rename.undo_label = label;
             s.ops.Submit(std::move(rename));
             container = JoinChild(tab->current_path, aside);
         }
@@ -296,8 +317,19 @@ void DissolveSelectedFolders(AppState& s) {
         }
         move.dest_dir = tab->current_path;
         move.collision_policy = ops::CollisionPolicy::KeepBoth;
-        const auto move_id = s.ops.Submit(std::move(move));
-        s.dissolveSteps.push_back({move_id, container, tab->current_path, false});
+        move.undo_group = group;
+        move.undo_label = label;
+        s.ops.Submit(std::move(move));
+        // Queued with the move so one undo always sees the whole action; a
+        // child that could not move out keeps its folder.
+        ops::OpRequest recycle;
+        recycle.type = ops::OpType::RecycleDelete;
+        recycle.sources.push_back(container);
+        recycle.only_if_empty = true;
+        recycle.undo_group = group;
+        recycle.undo_label = label;
+        const auto recycle_id = s.ops.Submit(std::move(recycle));
+        s.dissolveSteps.push_back({recycle_id, tab->current_path});
     }
     if (!select.empty()) {
         tab->pending_selected_name = select.front();

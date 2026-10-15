@@ -2319,28 +2319,43 @@ D2D1_RECT_F MainRenderer::RenameFieldRect(const PaneViewModel& vm, const D2D1_RE
     }
     // The field is sized for the name being typed, not the old one: the whole
     // name column in details, at least 360 dip in lists and tiles, so added
-    // dates and versions stay visible while editing. Icon grids instead wrap
-    // it in a field about the cell's width that grows down line by line.
+    // dates and versions stay visible while editing. Icon grids instead fit
+    // the field to the text, centered on the cell like the name it replaces,
+    // no wider than the cell; longer names wrap and the field grows down.
     const float minW = 40.0f * scale_;
     const float wideW = 360.0f * scale_;
     const float listLeft = list.left + margin_;
     const float listRight = std::max(listLeft + minW, list.right - margin_);
     float fieldLeft = nameX;
     float field_w = std::max(minW, nameColRight - nameX);
+    const std::wstring& typed = vm.rename_index == source_index ? vm.rename_text : e.name;
+    // Text box of the EDIT inside the field: frame inset 3 dip a side and
+    // LumaText's 2 px pad a side (one spare px against rounding).
+    const auto editTextWidth = [&](float field) { return std::max(1.0f, field - 6.0f * scale_ - 5.0f); };
     if (iconGrid) {
-        field_w = std::min(std::max(nameRc.right - nameRc.left + 8.0f * scale_, 160.0f * scale_),
-                           listRight - listLeft);
-        fieldLeft = std::clamp((nameRc.left + nameRc.right - field_w) * 0.5f, listLeft,
-                               std::max(listLeft, listRight - field_w));
+        const D2D1_RECT_F cell = layout.ItemRect(view);
+        const float maxW = std::max(minW, std::min(cell.right - cell.left, listRight - listLeft));
+        float natural = 0.0f;
+        ComPtr<IDWriteTextLayout> line;
+        if (compositor_->TextFormat() && SUCCEEDED(compositor_->DwriteFactory()->CreateTextLayout(
+                typed.c_str(), static_cast<UINT32>(typed.size()), compositor_->TextFormat(), 1.0e6f, 1.0e6f,
+                &line)) && line.get()) {
+            line->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            DWRITE_TEXT_METRICS metrics{};
+            if (SUCCEEDED(line->GetMetrics(&metrics))) natural = metrics.widthIncludingTrailingWhitespace;
+        }
+        // Room for the caret after the last glyph, so a fitted line never wraps.
+        const float hug = natural + 6.0f * scale_ + 5.0f + 4.0f * scale_;
+        field_w = std::clamp(std::ceil(hug), std::min(maxW, 48.0f * scale_), maxW);
+        const float center = (cell.left + cell.right) * 0.5f;
+        fieldLeft = std::clamp(center - field_w * 0.5f, listLeft, std::max(listLeft, listRight - field_w));
     } else if (vm.view_mode != ViewMode::Details) {
         field_w = std::max(minW, std::min(std::max(field_w, wideW), listRight - nameX));
     }
     float field_h = std::max(22.0f * scale_, std::min(textH, 30.0f * scale_));
     if (iconGrid && compositor_->TextFormat()) {
-        // Wrap exactly as the EDIT will: its box is the field less the frame
-        // inset (3 dip a side) and LumaText's 2 px text pad a side.
-        const std::wstring& typed = vm.rename_index == source_index ? vm.rename_text : e.name;
-        const float textW = std::max(1.0f, field_w - 6.0f * scale_ - 5.0f);
+        // Wrap exactly as the EDIT will.
+        const float textW = editTextWidth(field_w);
         float wrappedH = 18.0f * scale_;
         ComPtr<IDWriteTextLayout> wrapped;
         if (SUCCEEDED(compositor_->DwriteFactory()->CreateTextLayout(typed.c_str(),

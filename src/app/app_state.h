@@ -551,16 +551,16 @@ struct AppState : AppCoreOwner {
     // the last window takes along the windows closed since then.
     uint64_t previous_use_tick = 0;
     bool renameIgnoreKillFocus = false;
-    // 解散文件夹: the move that empties a folder (recycled once that move has
-    // finished and left it empty; anything left behind keeps it), then that
-    // recycle, after which the parent is listed afresh.
+    // 解散文件夹: the recycle that ends each folder's chain, after which the
+    // parent is listed afresh.
     struct DissolveStep {
         uint64_t task_id = 0;
-        std::wstring folder;
         std::wstring parent;
-        bool recycle = false;
     };
     std::vector<DissolveStep> dissolveSteps;
+    // 合并到文件夹: renaming the new folder joins the action's undo step.
+    std::wstring groupRenameFolder;
+    uint64_t groupRenameUndo = 0;
     bool renameClickCandidate = false;
     app::Pane* renameClickPane = nullptr;
     app::Tab* renameClickTab = nullptr;
