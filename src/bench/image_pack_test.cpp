@@ -10,6 +10,7 @@
 #include "../preview_host/image_pack.h"
 #include "../common/image_pack_protocol.h"
 #include "../common/preview_packs.h"
+#include "../common/ffmpeg_tool.h"
 #include "preview_host_client.h"
 #include <windows.h>
 #include <algorithm>
@@ -108,6 +109,10 @@ static void UnitTests() {
     Check(sniff(std::string("\0\0\0\x0CJXL \x0D\x0A\x87\x0A", 12)) == L"JPEG XL", "sniff JPEG XL container");
     Check(sniff("\x76\x2F\x31\x01\x02\0\0\0") == L"OpenEXR", "sniff OpenEXR");
     Check(sniff("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n") == L"Radiance HDR", "sniff Radiance HDR");
+    Check(sniff("#?RGBE\n") == L"Radiance HDR" && sniff("#?PFSTOOLS\r\n") == L"Radiance HDR",
+          "sniff Radiance HDR of other programs");
+    Check(sniff("FORMAT=32-bit_rle_xyze\n\n-Y 1 +X 1\n") == L"Radiance HDR", "sniff Radiance HDR without magic");
+    Check(sniff("#?\n").empty() && sniff("#!/bin/sh\n").empty(), "a bare #? is not Radiance");
     Check(sniff("ENVI\ndescription = {") .empty(), "an ENVI .hdr header is text");
     Check(sniff(std::string("qoif\0\0\0\x10\0\0\0\x10\x04\0", 14)) == L"QOI", "sniff QOI");
     Check(SniffImagePackFormat(nullptr, 0).empty(), "sniff nothing");
@@ -287,6 +292,40 @@ int wmain() {
             Check(GetTickCount64() - t0 < 3000, "failures answer within 3 s");
             Check(!preview::LooksLikeImagePackFile(envi.wstring()) && preview::LooksLikeImagePackFile(qoi.wstring()),
                   "sniffing tells pictures from text");
+        }
+        {   // Radiance files from other tools: bottom-up / mirrored / column
+            // scanlines, CRLF headers, other magics, XYZE pixels.
+            std::string px;
+            for (int i = 0; i < 16 * 8; ++i) px += std::string{static_cast<char>(10 + i), 40, 90, static_cast<char>(129)};
+            const char* heads[] = {"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n+Y 8 +X 16\n",
+                                   "#?RGBE\r\nEXPOSURE=1\r\n\r\n-Y 8 -X 16\r\n",
+                                   "#?PFSTOOLS\nFORMAT=32-bit_rle_xyze\n\n+X 16 -Y 8\n"};
+            int n = 0;
+            for (const char* head : heads) {
+                const fs::path file = images / (L"variant" + std::to_wstring(n++) + L".hdr");
+                WriteBytes(file, head + px);
+                preview::ImagePackFrame frame;
+                snprintf(what, sizeof(what), "radiance variant %d previews", n);
+                Check(preview::LooksLikeImagePackFile(file.wstring()) &&
+                      preview::ImagePackDecode(file.wstring(), 256, true, frame) && frame.width == 16 &&
+                      frame.height == 8 && PixelsVary(frame.pixels), what);
+            }
+        }
+        {   // A decoder that cannot even start (its DLLs fail to initialise when
+            // commit runs out: 0xC0000142) must fail quietly. With the default
+            // error mode Windows shows "application error" and the process waits
+            // for a click; children inherit the launcher's SEM_FAILCRITICALERRORS.
+            const UINT saved_mode = SetErrorMode(0);
+            ffmpeg::Process process;
+            ffmpeg::LaunchOptions options;
+            options.memory_limit = 2u * 1024 * 1024;
+            options.discard_stderr = true;
+            const bool started = process.Start((installed / L"pulse-imgpack.exe").wstring(), L"version", options);
+            Check(started && process.Wait(10000), "starved decoder exits by itself (no error box)");
+            Check(started && ffmpeg::StartupFailed(process.ExitCode()), "starved decoder reports a start-up failure");
+            Check((GetErrorMode() & SEM_FAILCRITICALERRORS) != 0, "launcher turns on SEM_FAILCRITICALERRORS");
+            process.Terminate();
+            SetErrorMode(saved_mode);
         }
         {   // A folder's worth of thumbnails at once: all succeed, slots bound the processes.
             std::atomic<int> ok{0};

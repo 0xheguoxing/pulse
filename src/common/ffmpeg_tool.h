@@ -28,6 +28,13 @@ bool IsAudioExtension(std::wstring_view extension);
 
 // Command-line quoting for CreateProcess (CommandLineToArgvW rules).
 std::wstring QuoteArgument(const std::wstring& argument);
+
+// The child died before its main(): DLL initialisation failed (0xC0000142)
+// or the machine was out of commit (0xC0000017, 0xC000012D). Happens when
+// many decoders start at once on a loaded machine; worth one more try.
+inline bool StartupFailed(unsigned long exit_code) {
+    return exit_code == 0xC0000142ul || exit_code == 0xC0000017ul || exit_code == 0xC000012Dul;
+}
 // ffmpeg's own path syntax: "file:" stops "C:..." or names containing ':'
 // from being read as protocols; \\?\ prefixes are dropped when not needed.
 std::wstring InputArgument(const std::wstring& path);

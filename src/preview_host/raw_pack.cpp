@@ -118,28 +118,40 @@ bool RawPackDecode(const std::wstring& path, UINT cap, bool allow_full_decode, I
         diagnostics::runtime::Event("raw_pack_busy", {{"grid", grid ? 1u : 0u}});
         return false;
     }
-    ffmpeg::Process process;
     const std::wstring arguments = (allow_full_decode ? L"decode-full " : L"decode ") + ffmpeg::QuoteArgument(path) + L" " + std::to_wstring(cap);
     // Embedded previews stay cheap; only explicit large views may demosaic.
     const SIZE_T memory = static_cast<SIZE_T>(grid ? 512 : 1536) * 1024 * 1024;
-    if (!StartPack(process, arguments, memory, 1u << 20)) return false;
     bool ok = false;
     bool timed_out = false;
-    {
-        Watchdog watchdog(process, grid ? 3000 : 20000);
-        imgpack::FrameHeader header;
-        if (process.ReadOutExact(&header, sizeof(header)) && ValidHeader(header, cap)) {
-            FillFrame(header, frame);
-            frame.pixels.resize(static_cast<size_t>(header.stride) * header.height);
-            ok = process.ReadOutExact(frame.pixels.data(), static_cast<DWORD>(frame.pixels.size()));
+    DWORD code = 0;
+    for (int attempt = 0;; ++attempt) {
+        ffmpeg::Process process;
+        if (!StartPack(process, arguments, memory, 1u << 20)) return false;
+        ok = false;
+        {
+            Watchdog watchdog(process, grid ? 3000 : 20000);
+            imgpack::FrameHeader header;
+            if (process.ReadOutExact(&header, sizeof(header)) && ValidHeader(header, cap)) {
+                FillFrame(header, frame);
+                frame.pixels.resize(static_cast<size_t>(header.stride) * header.height);
+                ok = process.ReadOutExact(frame.pixels.data(), static_cast<DWORD>(frame.pixels.size()));
+            }
+            // Drain to the end so a well-behaved decoder exits with its code.
+            uint8_t rest[256];
+            while (process.ReadOut(rest, sizeof(rest))) ok = false;   // more than announced
+            process.Wait(INFINITE);   // the watchdog bounds this
+            timed_out = watchdog.timed_out();
         }
-        // Drain to the end so a well-behaved decoder exits with its code.
-        uint8_t rest[256];
-        while (process.ReadOut(rest, sizeof(rest))) ok = false;   // more than announced
-        process.Wait(INFINITE);   // the watchdog bounds this
-        timed_out = watchdog.timed_out();
+        code = process.ExitCode();
+        // Starved before main(): one more try (see ffmpeg::StartupFailed).
+        if (attempt == 0 && !timed_out && ffmpeg::StartupFailed(code)) {
+            diagnostics::runtime::Event("raw_pack_startup_failed", {{"code", static_cast<uint64_t>(code)}});
+            frame = ImagePackFrame{};
+            Sleep(150);
+            continue;
+        }
+        break;
     }
-    const DWORD code = process.ExitCode();
     ok = ok && !timed_out && code == imgpack::kExitOk;
     diagnostics::runtime::Event(ok ? "raw_pack_frame" : "raw_pack_frame_failed",
         {{"ms", GetTickCount64() - started}, {"grid", grid ? 1u : 0u}, {"code", static_cast<uint64_t>(code)},

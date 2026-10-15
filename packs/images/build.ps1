@@ -92,7 +92,7 @@ Get-ChildItem (Join-Path $prefix 'share') -Directory | Sort-Object Name | ForEac
     }
 }
 [void]$notices.AppendLine(('=' * 78))
-[void]$notices.AppendLine('stb_image (public domain / MIT), qoi.h (MIT) - see packs/images/third_party')
+[void]$notices.AppendLine('qoi.h (MIT) - see packs/images/third_party')
 [IO.File]::WriteAllText((Join-Path $pack 'THIRD_PARTY_NOTICES.txt'), $notices.ToString(), (New-Object Text.UTF8Encoding $false))
 
 Step 'smoke'

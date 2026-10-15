@@ -148,6 +148,23 @@ unsigned ImagePackConcurrency(unsigned cpus) {
     return std::clamp(cpus / 4, 1u, 3u);
 }
 
+// "#?" and the writing program's name (RADIANCE, RGBE, PFSTOOLS, ...), or
+// rarely no magic and straight the FORMAT line. ENVI and Analyze .hdr
+// headers start differently and stay with the other previewers.
+static bool LooksLikeRadiance(const uint8_t* b, size_t size) {
+    if (size >= 18 && std::memcmp(b, "FORMAT=32-bit_rle_", 18) == 0) return true;
+    if (size < 3 || b[0] != '#' || b[1] != '?') return false;
+    size_t i = 2;
+    for (; i < size && i < 66; ++i) {
+        const uint8_t c = b[i];
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-' ||
+              c == '.' || c == ' '))
+            break;
+    }
+    if (i == 2) return false;
+    return i == size || b[i] == '\n' || b[i] == '\r';   // the name may run past a short prefix
+}
+
 std::wstring_view SniffImagePackFormat(const uint8_t* b, size_t size) {
     if (!b) return {};
     if (const std::wstring_view heif = HeifBrand(b, size); !heif.empty()) return heif;
@@ -155,8 +172,7 @@ std::wstring_view SniffImagePackFormat(const uint8_t* b, size_t size) {
     static const uint8_t kJxlBox[12] = {0, 0, 0, 0x0C, 'J', 'X', 'L', ' ', 0x0D, 0x0A, 0x87, 0x0A};
     if (size >= 12 && std::memcmp(b, kJxlBox, 12) == 0) return L"JPEG XL";
     if (size >= 4 && b[0] == 0x76 && b[1] == 0x2F && b[2] == 0x31 && b[3] == 0x01) return L"OpenEXR";
-    if ((size >= 10 && std::memcmp(b, "#?RADIANCE", 10) == 0) || (size >= 6 && std::memcmp(b, "#?RGBE", 6) == 0))
-        return L"Radiance HDR";
+    if (LooksLikeRadiance(b, size)) return L"Radiance HDR";
     if (size >= 14 && std::memcmp(b, "qoif", 4) == 0) return L"QOI";
     return {};
 }
@@ -165,7 +181,7 @@ bool LooksLikeImagePackFile(const std::wstring& path) {
     HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) return false;
-    uint8_t head[16]{};
+    uint8_t head[80]{};   // a Radiance magic line carries the program name
     DWORD got = 0;
     const BOOL ok = ReadFile(file, head, sizeof(head), &got, nullptr);
     CloseHandle(file);
@@ -193,28 +209,41 @@ bool ImagePackDecode(const std::wstring& path, UINT cap, bool grid, ImagePackFra
         diagnostics::runtime::Event("image_pack_busy", {{"grid", grid ? 1u : 0u}});
         return false;
     }
-    ffmpeg::Process process;
     const std::wstring arguments = L"decode " + ffmpeg::QuoteArgument(path) + L" " + std::to_wstring(cap);
     // Grid pictures are small, a full view may hold a 100 MP 16-bit decode.
     const SIZE_T memory = static_cast<SIZE_T>(grid ? 1024 : 3072) * 1024 * 1024;
-    if (!StartPack(process, arguments, memory, 1u << 20)) return false;
     bool ok = false;
     bool timed_out = false;
-    {
-        Watchdog watchdog(process, grid ? 10000 : 30000);
-        imgpack::FrameHeader header;
-        if (process.ReadOutExact(&header, sizeof(header)) && ValidHeader(header, cap)) {
-            FillFrame(header, frame);
-            frame.pixels.resize(static_cast<size_t>(header.stride) * header.height);
-            ok = process.ReadOutExact(frame.pixels.data(), static_cast<DWORD>(frame.pixels.size()));
+    DWORD code = 0;
+    for (int attempt = 0;; ++attempt) {
+        ffmpeg::Process process;
+        if (!StartPack(process, arguments, memory, 1u << 20)) return false;
+        ok = false;
+        {
+            Watchdog watchdog(process, grid ? 10000 : 30000);
+            imgpack::FrameHeader header;
+            if (process.ReadOutExact(&header, sizeof(header)) && ValidHeader(header, cap)) {
+                FillFrame(header, frame);
+                frame.pixels.resize(static_cast<size_t>(header.stride) * header.height);
+                ok = process.ReadOutExact(frame.pixels.data(), static_cast<DWORD>(frame.pixels.size()));
+            }
+            // Drain to the end so a well-behaved decoder exits with its code.
+            uint8_t rest[256];
+            while (process.ReadOut(rest, sizeof(rest))) ok = false;   // more than announced
+            process.Wait(INFINITE);   // the watchdog bounds this
+            timed_out = watchdog.timed_out();
         }
-        // Drain to the end so a well-behaved decoder exits with its code.
-        uint8_t rest[256];
-        while (process.ReadOut(rest, sizeof(rest))) ok = false;   // more than announced
-        process.Wait(INFINITE);   // the watchdog bounds this
-        timed_out = watchdog.timed_out();
+        code = process.ExitCode();
+        // Starved before main() (every decoder starting at once on a full
+        // machine): one more try after a breath instead of a blank tile.
+        if (attempt == 0 && !timed_out && ffmpeg::StartupFailed(code)) {
+            diagnostics::runtime::Event("image_pack_startup_failed", {{"code", static_cast<uint64_t>(code)}});
+            frame = ImagePackFrame{};
+            Sleep(150);
+            continue;
+        }
+        break;
     }
-    const DWORD code = process.ExitCode();
     ok = ok && !timed_out && code == imgpack::kExitOk;
     diagnostics::runtime::Event(ok ? "image_pack_frame" : "image_pack_frame_failed",
         {{"ms", GetTickCount64() - started}, {"grid", grid ? 1u : 0u}, {"code", static_cast<uint64_t>(code)},

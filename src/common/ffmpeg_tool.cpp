@@ -128,6 +128,12 @@ bool Process::Start(const std::wstring& exe, const std::wstring& arguments, cons
         }
     }
 
+    // Children inherit the error mode. Without SEM_FAILCRITICALERRORS a tool
+    // that cannot start (DLL init failed under memory pressure, 0xC0000142)
+    // puts a system "application error" box in front of the user instead of
+    // just failing; the caller already handles the exit code.
+    if (const UINT mode = GetErrorMode(); (mode & SEM_FAILCRITICALERRORS) == 0)
+        SetErrorMode(mode | SEM_FAILCRITICALERRORS);
     std::wstring command = QuoteArgument(exe) + L" " + arguments;
     PROCESS_INFORMATION pi{};
     const DWORD flags = CREATE_NO_WINDOW | CREATE_SUSPENDED | options.priority |

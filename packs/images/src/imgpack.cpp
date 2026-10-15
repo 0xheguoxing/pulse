@@ -1,7 +1,7 @@
 // pulse-imgpack.exe - decoder of Pulse's optional image preview pack.
 //
 // HEIC / HEIF (libheif + libde265), AVIF (libheif + dav1d), JPEG XL (libjxl),
-// OpenEXR, Radiance HDR (stb_image) and QOI. The preview host starts one
+// OpenEXR, Radiance HDR (radiance.h) and QOI. The preview host starts one
 // short-lived process per picture inside a kill-on-close job with a memory
 // cap; see src/common/image_pack_protocol.h for the command line and output.
 //
@@ -19,6 +19,7 @@
 
 #include "../../../src/common/image_pack_protocol.h"
 #include "pixel_ops.h"
+#include "radiance.h"
 
 #include <libheif/heif.h>
 #include <jxl/decode.h>
@@ -32,14 +33,11 @@
 #include <ImfMultiPartInputFile.h>
 #include <ImfThreading.h>
 
-#define STBI_ONLY_HDR
-#define STBI_NO_STDIO
-#define STB_IMAGE_IMPLEMENTATION
-#include "../third_party/stb_image.h"
 #define QOI_NO_STDIO
 #define QOI_IMPLEMENTATION
 #include "../third_party/qoi.h"
 
+#include <climits>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -93,8 +91,7 @@ Format Detect(const uint8_t* d, size_t n) {
     const JxlSignature jxl = JxlSignatureCheck(d, n);
     if (jxl == JXL_SIG_CODESTREAM || jxl == JXL_SIG_CONTAINER) return Format::Jxl;
     if (n >= 4 && d[0] == 0x76 && d[1] == 0x2f && d[2] == 0x31 && d[3] == 0x01) return Format::Exr;
-    if ((n >= 10 && std::memcmp(d, "#?RADIANCE", 10) == 0) || (n >= 6 && std::memcmp(d, "#?RGBE", 6) == 0))
-        return Format::Radiance;
+    if (radiance::LooksLikeRadiance(d, n)) return Format::Radiance;
     if (n >= 14 && std::memcmp(d, "qoif", 4) == 0) return Format::Qoi;
     return Format::Unknown;
 }
@@ -534,28 +531,35 @@ int DecodeExr(const MappedFile& file, uint32_t cap, Picture& out, Properties* pr
 
 // ---- Radiance HDR, QOI ---------------------------------------------------------
 
+// Scanlines go straight into the downscaler: memory follows the output size,
+// not the panorama's (a 16K .hdr is 2 GB as floats).
 int DecodeRadiance(const MappedFile& file, uint32_t cap, Picture& out, Properties* probe) {
-    if (file.size() > static_cast<size_t>(INT_MAX)) return kExitTooLarge;
-    int w = 0, h = 0, comp = 0;
-    if (!stbi_info_from_memory(file.data(), static_cast<int>(file.size()), &w, &h, &comp) || w <= 0 || h <= 0)
-        return kExitDecodeFailed;
-    if (static_cast<uint64_t>(w) * static_cast<uint64_t>(h) > kMaxSourcePixels) return kExitTooLarge;
-    out.source_width = static_cast<uint32_t>(w);
-    out.source_height = static_cast<uint32_t>(h);
+    radiance::Header h;
+    switch (radiance::ParseHeader(file.data(), file.size(), h)) {
+    case radiance::Result::Ok: break;
+    case radiance::Result::Unsupported: Fail("unsupported Radiance pixel format"); return kExitDecodeFailed;
+    default: Fail("damaged Radiance header"); return kExitDecodeFailed;
+    }
+    if (static_cast<uint64_t>(h.width) * h.height > kMaxSourcePixels) return kExitTooLarge;
+    out.source_width = h.width;
+    out.source_height = h.height;
     if (probe) {
-        probe->push_back({"format", "Radiance HDR"});
-        probe->push_back({"width", std::to_string(w)});
-        probe->push_back({"height", std::to_string(h)});
+        probe->push_back({"format", h.xyz ? "Radiance HDR (XYZE)" : "Radiance HDR"});
+        probe->push_back({"width", std::to_string(h.width)});
+        probe->push_back({"height", std::to_string(h.height)});
         return kExitOk;
     }
-    float* pixels = stbi_loadf_from_memory(file.data(), static_cast<int>(file.size()), &w, &h, &comp, 4);
-    if (!pixels) return kExitDecodeFailed;
-    std::unique_ptr<float, void (*)(void*)> owned(pixels, stbi_image_free);
-    const imgpack::Size fit = imgpack::FitSize(static_cast<uint32_t>(w), static_cast<uint32_t>(h), cap);
+    const imgpack::Size fit = imgpack::FitSize(h.width, h.height, cap);
     out.width = fit.w;
     out.height = fit.h;
-    imgpack::FloatDownscaler scale(w, h, fit.w, fit.h);
-    for (int y = 0; y < h; ++y) scale.AddRow(y, pixels + static_cast<size_t>(y) * w * 4);
+    imgpack::FloatDownscaler scale(h.width, h.height, fit.w, fit.h);
+    const radiance::Result decoded = radiance::Decode(file.data(), file.size(), h,
+        [&](uint32_t y, const float* rgba) { scale.AddRow(y, rgba); });
+    if (decoded == radiance::Result::TooLarge) return kExitTooLarge;
+    if (decoded != radiance::Result::Ok) {
+        Fail("damaged Radiance scanlines");
+        return kExitDecodeFailed;
+    }
     std::vector<float> linear = scale.Finish();
     out.bgra = imgpack::ToneMapToBgra(linear, imgpack::AutoExposure(linear));
     out.flags |= kFlagToneMapped;
