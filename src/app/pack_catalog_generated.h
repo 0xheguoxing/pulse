@@ -9,7 +9,7 @@ inline constexpr PackFile kMediaPackFiles[] = {
     {L"LICENSE-FFmpeg-LGPL-2.1.txt", 26526, L"b634ab5640e258563c536e658cad87080553df6f34f62269a21d554844e58bfe", 9710, L"33cc1bc8fcc4a84722997c4b2ba21a6ce7ecdef68cceb51832676c88627dd0f7", L"ffmpeg-LICENSE-FFmpeg-LGPL-2.1.txt.lzms"},
     {L"SOURCE.txt", 296, L"378f77467284a1616bd39c738c06109cdd672c15d4cdcf5821de1e277b4188ce", 288, L"4b13a8ac3d9ca2e1ce792eb3e394e93a1dc83ab0a1a4b5103e68b3a5af11c70e", L"ffmpeg-SOURCE.txt.lzms"},
 };
-inline constexpr PackRelease kMediaPackRelease{L"ffmpeg", L"1.0.2", L"https://github.com/jimmgreen/pulse/releases/download/v1.0.54/", kMediaPackFiles, std::size(kMediaPackFiles)};
+inline constexpr PackRelease kMediaPackRelease{L"ffmpeg", L"1.0.2", L"https://github.com/jimmgreen/pulse/releases/download/v1.0.55/", kMediaPackFiles, std::size(kMediaPackFiles)};
 
 inline constexpr PackFile kImagePackFiles[] = {
     {L"heif.dll", 3281408, L"1d15e773475eb8ce17a4857459fbe196d05961ac6dd391c68a44209179c55831", 1175912, L"fd207a53a598a53bc3932c01b8a86181c6ddfc33528927d320c16bf89b054cac", L"images-heif.dll.lzms"},
@@ -17,14 +17,14 @@ inline constexpr PackFile kImagePackFiles[] = {
     {L"pulse-imgpack.exe", 3073024, L"e0609abeab1f6ed41680eca6c52ae280c338b0b62d1712a31f3c87aa54a256ff", 1093532, L"0a41846a8be59d1507b5b57a90993ed85b91928c47459d516329d9e2c278f31a", L"images-pulse-imgpack.exe.lzms"},
     {L"THIRD_PARTY_NOTICES.txt", 122210, L"53ffd248d30b57c63e98d300cf7ebc328c72318a47744c220cf6312473eeeba9", 34492, L"5e06512e8a5e52ea3dd7fe9ff1d46581a7db3ca75edf60292b00c2963e5bd136", L"images-THIRD_PARTY_NOTICES.txt.lzms"},
 };
-inline constexpr PackRelease kImagePackRelease{L"images", L"1.0.2", L"https://github.com/jimmgreen/pulse/releases/download/v1.0.54/", kImagePackFiles, std::size(kImagePackFiles)};
+inline constexpr PackRelease kImagePackRelease{L"images", L"1.0.2", L"https://github.com/jimmgreen/pulse/releases/download/v1.0.55/", kImagePackFiles, std::size(kImagePackFiles)};
 
 inline constexpr PackFile kRawPackFiles[] = {
     {L"pulse-rawpack.exe", 173056, L"4eb07ac1684ee7318da5cf1b4c63b4c735c1dde4750306e28760ec8066e88c68", 79038, L"f13e567c9e0cfc99fa4aae87751c46d24fdd1dd080ee3c150efd73e05ee1c86d", L"raw-pulse-rawpack.exe.lzms"},
     {L"raw_r.dll", 2180096, L"d55bb88c6b43f5ed17a001f99b139253a2e2d4cfbff289a30ef1b493a3f79c98", 732750, L"a39c3be4c36199efff1e0b991f2e4d66a009d17080ff7483d2629e8f28cf3fc9", L"raw-raw_r.dll.lzms"},
     {L"THIRD-PARTY-NOTICES.txt", 53926, L"54bed68b3f940a25ffea55679f35973058f5f29c2c5ab77537754adfd0704f82", 17466, L"f056e02cafd33b95e943162fd67ace3931ba09f90e5e6680e1912f738c4bbb09", L"raw-THIRD-PARTY-NOTICES.txt.lzms"},
 };
-inline constexpr PackRelease kRawPackRelease{L"raw", L"1.0.2", L"https://github.com/jimmgreen/pulse/releases/download/v1.0.54/", kRawPackFiles, std::size(kRawPackFiles)};
+inline constexpr PackRelease kRawPackRelease{L"raw", L"1.0.2", L"https://github.com/jimmgreen/pulse/releases/download/v1.0.55/", kRawPackFiles, std::size(kRawPackFiles)};
 
 inline constexpr PackFile kArchivePackFiles[] = {
     {L"7z.dll", 1908736, L"bbd705e3b58ca7677c1e9e67473f166a6712da034dcb567d571fbb67507a443f", 754450, L"33b256c217edfa5d81cfabe740e7378815cfec36eb79b551d18e083769dbf802", L"archive-7z.dll.lzms"},
@@ -32,4 +32,4 @@ inline constexpr PackFile kArchivePackFiles[] = {
     {L"License.txt", 6031, L"519ac0a4bded9c18ea02e0afb71f663d8c47373bd9facd3ac96a79f51d77765d", 2242, L"911666a80c81363c28106cfac2d09f99b3d7f68eb929a1bfade1ee60387b9cb4", L"archive-License.txt.lzms"},
     {L"NOTICE.txt", 307, L"88a4e61cc4858cb4086acd028b16fea1a76ddd9eabc7b09a8bec7dc3f840eb89", 308, L"7e27daea019f5eb04908489f8759eabd17a8831ada71871cad072d6fbce8e1c5", L"archive-NOTICE.txt.lzms"},
 };
-inline constexpr PackRelease kArchivePackRelease{L"archive", L"1.0.2", L"https://github.com/jimmgreen/pulse/releases/download/v1.0.54/", kArchivePackFiles, std::size(kArchivePackFiles)};
+inline constexpr PackRelease kArchivePackRelease{L"archive", L"1.0.2", L"https://github.com/jimmgreen/pulse/releases/download/v1.0.55/", kArchivePackFiles, std::size(kArchivePackFiles)};
