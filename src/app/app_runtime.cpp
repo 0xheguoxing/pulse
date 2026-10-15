@@ -1025,7 +1025,10 @@ int TrayDeckCap(const AppState& s) {
 
 // Cyclic window into the newest-first item list: the card at `offset` is on
 // top, the following ones sit underneath, wrapping around the end so the
-// stack can be flipped through endlessly.
+// stack can be flipped through endlessly. A path staged more than once (copied
+// again, or once to copy and once to move) shows once per window: its cards
+// would share the path's animation entry and pull it toward two depths on
+// every tick, so the stack never settled and its text shimmered.
 std::vector<TrayDeckEntry> TrayDeckEntries(const app::StagingTray& tray, size_t offset,
                                                   size_t cap) {
     std::vector<TrayDeckEntry> all;
@@ -1039,7 +1042,12 @@ std::vector<TrayDeckEntry> TrayDeckEntries(const app::StagingTray& tray, size_t 
     if (all.empty()) return out;
     const size_t n = all.size();
     const size_t start = offset % n;
-    for (size_t i = 0; i < std::min(cap, n); ++i) out.push_back(all[(start + i) % n]);
+    for (size_t i = 0; i < n && out.size() < cap; ++i) {
+        const TrayDeckEntry& entry = all[(start + i) % n];
+        const bool shown = std::any_of(out.begin(), out.end(),
+            [&entry](const TrayDeckEntry& e) { return e.item->path == entry.item->path; });
+        if (!shown) out.push_back(entry);
+    }
     return out;
 }
 

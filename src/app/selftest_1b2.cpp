@@ -6393,6 +6393,21 @@ void TestTrayStack() {
         vm = BuildVm(*state, false);
         Check(vm.tray_deck.cards.empty() && state->trayCards.empty(),
               L"tray stack: clear leaves no animation state behind");
+
+        // The same file staged twice (Ctrl+C again, or once to copy and once
+        // to move) settles as one card. Two cards would share the path's
+        // animation entry and pull it toward two depths on every tick, so the
+        // stack never came to rest and its text shimmered.
+        state->tray.Collect({ files[0] }, false);
+        state->tray.Collect({ files[0] }, true);
+        TrayStackSettle(*state, 900);
+        vm = BuildVm(*state, false);
+        const bool duplicate_moving = TickTrayDeck(*state);
+        Check(!duplicate_moving && vm.tray_deck.live_count == 1 && vm.tray_deck.cards.size() == 1 &&
+              vm.tray_deck.cards[0].depth < 0.05f,
+              (L"tray stack: a file staged twice settles as one card (moving=" + std::to_wstring(duplicate_moving) +
+               L" live=" + std::to_wstring(vm.tray_deck.live_count) + L")").c_str());
+        state->tray.Clear();
         SetKeyboardState(saved_keys);
     } else Check(false, L"tray stack: graphics initialized");
     if (GetCapture() == hwnd) ReleaseCapture();
