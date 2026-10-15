@@ -4,6 +4,8 @@
 #include <winioctl.h>
 #include <cfgmgr32.h>
 #include <algorithm>
+// Also for the tests that compile this file directly.
+#pragma comment(lib, "cfgmgr32.lib")
 
 namespace pulse::fs {
 
