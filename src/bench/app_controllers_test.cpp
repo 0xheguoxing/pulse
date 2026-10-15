@@ -1309,9 +1309,9 @@ int wmain(int argc, wchar_t** argv) {
         ok &= Report("experimental choice alone does not enable master",
             prefs.take_over_explorer_windows && !prefs.integration_enabled && settings.IntegrationState() == 0);
         settings.IntegrationAction(0);
-        ok &= Report("master applies exactly selected scopes",
-            prefs.open_folders_in_pulse && !prefs.take_over_win_e && prefs.take_over_this_pc &&
-            prefs.take_over_recycle_bin && settings.IntegrationState() == 1);
+        ok &= Report("master turns on folders, This PC and Win + E together",
+            prefs.open_folders_in_pulse && prefs.take_over_win_e && prefs.take_over_this_pc &&
+            prefs.integration_win_e && prefs.take_over_recycle_bin && settings.IntegrationState() == 1);
         settings.IntegrationAction(7);
         ok &= Report("Recycle Bin scope toggles on its own",
             !prefs.integration_recycle_bin && !prefs.take_over_recycle_bin && prefs.take_over_this_pc &&
@@ -1319,10 +1319,10 @@ int wmain(int argc, wchar_t** argv) {
         settings.IntegrationAction(7);
         ok &= Report("Recycle Bin scope turns back on",
             prefs.integration_recycle_bin && prefs.take_over_recycle_bin && settings.IntegrationState() == 1);
-        prefs.take_over_win_e = true;
+        prefs.take_over_win_e = false;
         ok &= Report("external state mismatch is shown as partial", settings.IntegrationState() == 2);
         settings.IntegrationAction(5);
-        ok &= Report("retry reconciles selected scopes", !prefs.take_over_win_e && settings.IntegrationState() == 1);
+        ok &= Report("retry reconciles selected scopes", prefs.take_over_win_e && settings.IntegrationState() == 1);
         prefs.integration_incomplete = true;
         ok &= Report("incomplete owned association remains visible even outside selected scope",
             settings.IntegrationState() == 2 && settings.IntegrationCanRestore());
@@ -1330,14 +1330,14 @@ int wmain(int argc, wchar_t** argv) {
         settings.IntegrationAction(6);
         ok &= Report("restore disables all mechanisms while preserving scope choices",
             !prefs.integration_enabled && !prefs.open_folders_in_pulse && !prefs.take_over_win_e &&
-            !prefs.take_over_this_pc && prefs.integration_folders && !prefs.integration_win_e &&
+            !prefs.take_over_this_pc && prefs.integration_folders && prefs.integration_win_e &&
             prefs.take_over_explorer_windows && settings.IntegrationState() == 0);
         AppPrefs loaded;
         loaded.FromJson(prefs.ToJson());
         loaded.MigrateIntegration();
         ok &= Report("disabled master and retained choices round trip",
             loaded.integration_configured && !loaded.integration_enabled && loaded.integration_folders &&
-            !loaded.integration_win_e && loaded.take_over_explorer_windows);
+            loaded.integration_win_e && loaded.take_over_explorer_windows);
         loaded.FromJson(L"{}");
         loaded.take_over_win_e = true;
         loaded.MigrateIntegration();

@@ -875,6 +875,12 @@ struct WindowViewModel {
     std::wstring settings_integration_summary;
     bool settings_integration_can_retry = false;
     bool settings_integration_can_restore = false;
+    // Read back from the registry: what actually opens in Pulse right now.
+    bool settings_integration_folders_active = false;
+    bool settings_integration_this_pc_active = false;
+    bool settings_integration_win_e_active = false;
+    bool settings_integration_just_enabled = false; // confirmation line after turning it on
+    std::wstring settings_integration_other_exe;     // another Pulse copy owns the associations
     bool settings_shell_tags = false;
     int settings_blank_click_action = 0;   // app/blank_pane_click.h
     int settings_preview_trigger = 0;      // app::kPreviewTrigger*
@@ -1050,7 +1056,7 @@ struct HitTestResult {
         StatusBarCancelSearch,
         SettingsNav,
         SettingsToggle,
-        SettingsIntegration, // 0 master, 1 folders, 2 Win+E, 3 This PC, 4 experimental, 5 retry, 6 restore
+        SettingsIntegration, // 0 master, 4 experimental, 5 retry/restore, 6 restore all, 7 Recycle Bin, 8 try it
         SettingsGlobalSearchHotkey,
         SettingsChangeDays,
         SettingsRestore,

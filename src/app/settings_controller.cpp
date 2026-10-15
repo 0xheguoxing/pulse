@@ -12,6 +12,7 @@
 #include "pack_catalog.h"
 #include "../ui/quick_preview_command.h"
 
+#include <shellapi.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -979,12 +980,28 @@ std::wstring SettingsController::IntegrationSummary() const {
     return {};
 }
 
+bool SettingsController::IntegrationJustEnabled() const noexcept {
+    return prefs_ && prefs_->integration_enabled && integration_enabled_at_ &&
+        GetTickCount64() - integration_enabled_at_ < 4000;
+}
+
 void SettingsController::IntegrationAction(int index) {
-    if (!prefs_ || index < 0 || index > 7) return;
+    if (!prefs_ || index < 0 || index > 8) return;
+    if (index == 8) {
+        // Try it: open This PC the way the desktop icon does, through the shell.
+        ShellExecuteW(nullptr, nullptr, L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
     if (ui_.integration_changing) ui_.integration_changing();
     auto& p = *prefs_;
     p.integration_configured = true;
-    if (index == 0) p.integration_enabled = !p.integration_enabled;
+    if (index == 0) {
+        p.integration_enabled = !p.integration_enabled;
+        // Folders and drives, This PC and Win + E go together: with only some of them,
+        // Explorer opens first and then hands every double-click on to Pulse.
+        if (p.integration_enabled) p.integration_folders = p.integration_win_e = p.integration_this_pc = true;
+        integration_enabled_at_ = p.integration_enabled ? GetTickCount64() : 0;
+    }
     else if (index == 1) p.integration_folders = !p.integration_folders;
     else if (index == 2) p.integration_win_e = !p.integration_win_e;
     else if (index == 3) p.integration_this_pc = !p.integration_this_pc;

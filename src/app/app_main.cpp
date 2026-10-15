@@ -3165,10 +3165,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
                 failure_prefs.Load();
                 l10n::Initialize(hInstance, failure_prefs.language);
                 const std::wstring message = l10n::HantText(l10n::Pick(
-                    L"无法确认运行中的 Pulse 已收到此请求。原窗口可能仍会处理它，请先检查原窗口再重试。",
-                    L"Pulse could not confirm that the running instance received this request. "
-                    L"The running instance may still open it. Check that window before trying again."));
-                MessageBoxW(nullptr, message.c_str(), L"Pulse", MB_OK | MB_ICONERROR);
+                    L"Pulse 正在忙，文件夹会稍后在已打开的 Pulse 窗口里出现。\n\n如果过一会儿还没出现，再打开一次就行。",
+                    L"Pulse is busy. The folder will show up in the open Pulse window shortly.\n\n"
+                    L"If it doesn't appear after a while, just open it again."));
+                MessageBoxW(nullptr, message.c_str(), L"Pulse", MB_OK | MB_ICONINFORMATION);
             }
             OleUninitialize();
             return forwarded ? 0 : 1;

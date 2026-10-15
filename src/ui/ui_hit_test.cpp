@@ -263,13 +263,13 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             for(int i=0;i<3;++i) if(ContainsPt(actions[i],x,y)) {r.region=HitTestResult::SettingsContentAction;r.index=i+1;return r;}
 
             if (vm.settings_page == 0) {
-                const D2D1_RECT_F integration_rows[]={lay.default_manager_row,lay.startup_row[2],
-                    lay.win_e_row,lay.this_pc_row,lay.explorer_windows_row};
-                for(int i=0;i<5;++i) if(ContainsPt(integration_rows[i],x,y)) {
-                    r.region=HitTestResult::SettingsIntegration;r.index=i;return r;
+                // The switch, then the two extras (only while it is on); the coverage tiles are read-only.
+                if(ContainsPt(lay.default_manager_row,x,y)) {r.region=HitTestResult::SettingsIntegration;r.index=0;return r;}
+                if(vm.settings_integration_enabled) {
+                    if(ContainsPt(lay.explorer_windows_row,x,y)) {r.region=HitTestResult::SettingsIntegration;r.index=4;return r;}
+                    if(ContainsPt(lay.recycle_bin_row,x,y)) {r.region=HitTestResult::SettingsIntegration;r.index=7;return r;}
                 }
-                // Added after retry (5) and restore (6), so it takes the next action index.
-                if(ContainsPt(lay.recycle_bin_row,x,y)) {r.region=HitTestResult::SettingsIntegration;r.index=7;return r;}
+                if(ContainsPt(lay.integration_try,x,y)) {r.region=HitTestResult::SettingsIntegration;r.index=8;return r;}
                 if(vm.settings_integration_can_retry && ContainsPt(lay.integration_retry,x,y)) {
                     r.region=HitTestResult::SettingsIntegration;r.index=5;return r;
                 }

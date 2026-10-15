@@ -32,6 +32,7 @@ struct AppPrefs {
     bool integration_configured = false; // runtime: new-format preferences were loaded
     bool integration_residual = false; // runtime: some association still belongs to Pulse
     bool integration_incomplete = false;
+    std::wstring integration_other_exe; // runtime: another Pulse copy owns the associations
     bool take_over_explorer_windows = false; // experimental choice; runtime is gated by integration_enabled
     bool shell_tag_menu = false;    // File Explorer "Pulse tags" submenu (shell_tag_menu.cpp syncs HKCU)   // registry is the source of truth (not in app.json)
     bool verify_copies = false;
@@ -150,6 +151,7 @@ struct AppPrefs {
     void MigrateIntegration();
     bool ReadIntegrationResidual() const;
     bool ReadIntegrationIncomplete() const;
+    std::wstring ReadIntegrationOtherExe() const;
 
     // HKCU Run key is the source of truth; call after Load() and on toggle.
     bool ReadLaunchOnStartup() const;

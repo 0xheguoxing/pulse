@@ -567,12 +567,26 @@ bool AppPrefs::ReadIntegrationIncomplete() const {
     return false;
 }
 
+std::wstring AppPrefs::ReadIntegrationOtherExe() const {
+    // Only another pulse.exe counts; anything else is drift, not a second copy.
+    const std::wstring exe = ExePath();
+    for (const auto kind : {ShellIntegrationKind::Folders, ShellIntegrationKind::ThisPc, ShellIntegrationKind::WinE}) {
+        const std::wstring target = ShellIntegrationCommandExecutable(kind);
+        if (target.empty() || ShellCommandTargetsExecutable(L"\"" + target + L"\"", exe)) continue;
+        const size_t slash = target.find_last_of(L"\\/");
+        const std::wstring name = slash == std::wstring::npos ? target : target.substr(slash + 1);
+        if (CompareStringOrdinal(name.c_str(), -1, L"pulse.exe", -1, TRUE) == CSTR_EQUAL) return target;
+    }
+    return {};
+}
+
 bool AppPrefs::ApplyFolderOpen(bool on) {
     if (!persist) { open_folders_in_pulse = on; return true; }
     const bool ok = ApplyShellIntegration(ShellIntegrationKind::Folders, ExePath(), on);
     open_folders_in_pulse = ReadFolderOpen();
     integration_residual = ReadIntegrationResidual();
     integration_incomplete = ReadIntegrationIncomplete();
+    integration_other_exe = ReadIntegrationOtherExe();
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
     return ok && open_folders_in_pulse == on;
 }
@@ -587,6 +601,7 @@ bool AppPrefs::ApplyWinE(bool on) {
     take_over_win_e = ReadWinE();
     integration_residual = ReadIntegrationResidual();
     integration_incomplete = ReadIntegrationIncomplete();
+    integration_other_exe = ReadIntegrationOtherExe();
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
     return ok && take_over_win_e == on;
 }
@@ -658,6 +673,7 @@ bool AppPrefs::Load() {
         take_over_recycle_bin = ReadRecycleBinOpen(ExePath());
         integration_residual = ReadIntegrationResidual();
         integration_incomplete = ReadIntegrationIncomplete();
+        integration_other_exe = ReadIntegrationOtherExe();
         MigrateIntegration();
         return false;
     }
@@ -683,6 +699,7 @@ bool AppPrefs::Load() {
     take_over_recycle_bin = ReadRecycleBinOpen(ExePath());
     integration_residual = ReadIntegrationResidual();
     integration_incomplete = ReadIntegrationIncomplete();
+    integration_other_exe = ReadIntegrationOtherExe();
     MigrateIntegration();
     return true;
 }

@@ -247,6 +247,8 @@ public:
     std::wstring IntegrationSummary() const;
     bool IntegrationCanRestore() const noexcept;
     bool IntegrationCanRetry() const noexcept { return !integration_error_.empty() || integration_save_failed_; }
+    // A few seconds after the switch went on: the card shows a one-line confirmation.
+    bool IntegrationJustEnabled() const noexcept;
     void BeginGlobalSearchHotkeyCapture() noexcept { global_search_capturing_ = true; }
     void CancelGlobalSearchHotkeyCapture() noexcept { global_search_capturing_ = false; }
     bool CaptureGlobalSearchHotkey(uint32_t key, uint32_t modifiers);
@@ -312,6 +314,7 @@ private:
     std::wstring error_;
     std::wstring integration_error_;
     bool integration_save_failed_ = false;
+    unsigned long long integration_enabled_at_ = 0;
     bool service_installed_ = false;
     AppPrefs* prefs_ = nullptr;
     ContextMenuPrefs* context_ = nullptr;

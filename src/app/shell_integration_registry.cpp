@@ -579,6 +579,25 @@ bool ShellCommandTargetsExecutable(const std::wstring& command, const std::wstri
                              exe.data(), static_cast<int>(exe.size()), TRUE) == CSTR_EQUAL;
 }
 
+std::wstring ShellIntegrationCommandExecutable(ShellIntegrationKind kind) {
+    const auto groups = Groups(kind);
+    if (groups.empty()) return {};
+    const auto bindings = Bindings(groups.front(), L"pulse.exe");
+    Value actual;
+    if (!Read(bindings.front().key, bindings.front().name, actual) || !actual.exists) return {};
+    const std::wstring command = Text(actual);
+    size_t start = 0;
+    while (start < command.size() && iswspace(command[start])) ++start;
+    size_t end = start;
+    if (start < command.size() && command[start] == L'"') {
+        end = command.find(L'"', ++start);
+        if (end == std::wstring::npos) return {};
+    } else {
+        while (end < command.size() && !iswspace(command[end])) ++end;
+    }
+    return command.substr(start, end - start);
+}
+
 bool ApplyShellIntegration(ShellIntegrationKind kind, const std::wstring& exe, bool on) {
     t_failure = {};
     if (exe.empty()) { t_failure.kind = ShellIntegrationFailureKind::Unknown; return false; }

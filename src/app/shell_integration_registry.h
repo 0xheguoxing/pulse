@@ -28,6 +28,8 @@ bool PrepareShellIntegrationUpgrade(ShellIntegrationKind kind, const std::wstrin
 bool UpgradeShellIntegration(ShellIntegrationKind kind, const std::wstring& previous_exe,
                              const std::wstring& exe);
 bool ShellCommandTargetsExecutable(const std::wstring& command, const std::wstring& exe);
+// The program the first open command of kind runs, or empty when there is none.
+std::wstring ShellIntegrationCommandExecutable(ShellIntegrationKind kind);
 
 // Why the last ApplyShellIntegration call on this thread returned false (the
 // first problem it hit). kind is None after a successful call.

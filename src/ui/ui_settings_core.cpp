@@ -226,53 +226,86 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
             }
             if(lay.integration_bar.bottom>lay.integration_bar.top) {
                 const bool failed=vm.settings_integration_state==3;
+                // The spec holds views: keep the strings alive until it is drawn.
+                const auto title=IntegrationProblemTitle(vm);
                 const auto message=IntegrationProblemMessage(vm);
                 fluent::InfoBarSpec bar{};
                 bar.bounds=lay.integration_bar;
-                bar.title=l10n::Get(failed ? I::IntegrationFailTitle : I::IntegrationDriftTitle);
+                bar.title=title;
                 bar.message=message;
                 bar.kind=failed ? fluent::InfoBarKind::Error : fluent::InfoBarKind::Warning;
                 bar.show_close=false;
                 painter_.DrawInfoBar(bar);
                 if(lay.integration_retry.bottom>lay.integration_retry.top)
-                    button(lay.integration_retry,l10n::Get(failed ? I::IntegrationRetry : I::IntegrationReapply),H::SettingsIntegration,5,true);
+                    button(lay.integration_retry,l10n::Get(IntegrationRetryLabel(vm)),H::SettingsIntegration,5,true);
                 if(lay.integration_restore.bottom>lay.integration_restore.top)
                     button(lay.integration_restore,l10n::Get(I::IntegrationRestore),H::SettingsIntegration,6);
             }
             {
                 const auto r=lay.integration_list_head;
-                painter_.DrawText(l10n::Get(I::IntegrationScope),D2D1::RectF(r.left+54*scale_,r.top+8*scale_,r.right-16*scale_,r.bottom),
+                painter_.DrawText(l10n::Get(master_on ? I::IntegrationScope : I::IntegrationScopeDesc),
+                    D2D1::RectF(r.left+54*scale_,r.top+8*scale_,r.right-16*scale_,r.bottom),
                     compositor_->SmallFormat(),theme.text_secondary);
             }
-            auto item=[&](D2D1_RECT_F r,I title,I desc,const wchar_t* icon,bool on,int action) {
+            // Read-only tiles: what opens in Pulse right now (registry read-back), faded while off.
+            const wchar_t* cover_icons[]={L"\xE8B7",L"\xE7F4",L"\xE765"};
+            for(int i=0;i<3;++i) {
+                const auto r=lay.integration_cover[i];
+                if(r.bottom<=r.top) continue;
+                const bool active=IntegrationCoverActive(vm,i);
+                const float alpha=master_on ? 1.0f : 0.55f;
+                MakeBrush(dc,WithAlpha(theme.fill_input,theme.fill_input.a*alpha),brFillInput_);
+                MakeBrush(dc,WithAlpha(theme.stroke_card,theme.stroke_card.a*alpha),brStrokeCard_);
+                dc->FillRoundedRectangle(D2D1::RoundedRect(r,6*scale_,6*scale_),brFillInput_.get());
+                dc->DrawRoundedRectangle(D2D1::RoundedRect(r,6*scale_,6*scale_),brStrokeCard_.get(),1);
+                const float mid=(r.top+r.bottom)/2;
+                DrawIconText(r.left+10*scale_,mid-8*scale_,16*scale_,16*scale_,cover_icons[i],L"",
+                    master_on ? theme.accent : theme.text_secondary,master_on ? 0.95f : 0.5f);
+                const float check=active ? 22*scale_ : 0.0f;
+                painter_.DrawText(l10n::Get(kIntegrationCover[i]),
+                    D2D1::RectF(r.left+34*scale_,r.top,r.right-8*scale_-check,r.bottom),
+                    compositor_->TextFormat(),master_on ? theme.text : theme.text_secondary);
+                if(active) DrawIconText(r.right-24*scale_,mid-7*scale_,14*scale_,14*scale_,L"\xE73E",L"",theme.accent,0.95f);
+            }
+            {
+                const auto r=lay.integration_options_head;
+                painter_.DrawText(l10n::Get(I::IntegrationOptions),D2D1::RectF(r.left+54*scale_,r.top+8*scale_,r.right-16*scale_,r.bottom),
+                    compositor_->SmallFormat(),theme.text_secondary);
+            }
+            // The two optional extras; they only mean something while the switch is on.
+            auto item=[&](D2D1_RECT_F r,I title,I desc,const wchar_t* icon,bool on,int action,float title_right) {
                 fluent::ControlState state{};
-                state.checked=on;state.hovered=IsHovered(vm,H::SettingsIntegration,action);
+                state.checked=on;state.enabled=master_on;
+                state.hovered=master_on && IsHovered(vm,H::SettingsIntegration,action);
                 if(state.hovered) hover_fill(D2D1::RectF(r.left+40*scale_,r.top,r.right-6*scale_,r.bottom));
                 const float x=r.left+54*scale_, text_left=r.left+112*scale_;
                 painter_.DrawCheckBox(D2D1::RectF(x,r.top+11*scale_,x+20*scale_,r.top+31*scale_),L"",state);
-                DrawIconText(x+30*scale_,r.top+11*scale_,20*scale_,20*scale_,icon,L"",theme.text_secondary,master_on ? 0.85f : 0.6f);
-                painter_.DrawText(l10n::Get(title),D2D1::RectF(text_left,r.top+9*scale_,r.right-16*scale_,r.top+31*scale_),
+                DrawIconText(x+30*scale_,r.top+11*scale_,20*scale_,20*scale_,icon,L"",theme.text_secondary,master_on ? 0.85f : 0.45f);
+                painter_.DrawText(l10n::Get(title),D2D1::RectF(text_left,r.top+9*scale_,title_right,r.top+31*scale_),
                     compositor_->TextFormat(),master_on ? theme.text : theme.text_secondary);
                 painter_.DrawWrappedCaption(l10n::Get(desc),D2D1::Point2F(text_left,r.top+31*scale_),
                     (std::max)(40*scale_,r.right-16*scale_-text_left),theme.text_secondary);
             };
-            item(lay.startup_row[2],I::IntegrationFolders,I::IntegrationFoldersDesc,L"\xE8B7",vm.settings_integration_folders,1);
-            item(lay.this_pc_row,I::SettingsThisPc,I::SettingsThisPcDesc,L"\xE7F4",vm.settings_integration_this_pc,3);
-            item(lay.recycle_bin_row,I::SettingsRecycleBin,I::SettingsRecycleBinDesc,L"\xE74D",vm.settings_integration_recycle_bin,7);
-            item(lay.win_e_row,I::SettingsWinE,I::SettingsWinEDesc,L"\xE765",vm.settings_integration_win_e,2);
-            item(lay.explorer_windows_row,I::IntegrationExperimental,I::IntegrationExperimentalDesc,L"\xE8A7",vm.settings_integration_experimental,4);
-            for(int i=0;i<4;++i) {
+            item(lay.recycle_bin_row,I::IntegrationRecycleOption,I::SettingsRecycleBinDesc,L"\xE74D",
+                vm.settings_integration_recycle_bin,7,lay.recycle_bin_row.right-16*scale_);
+            item(lay.explorer_windows_row,I::IntegrationExperimental,I::IntegrationExperimentalDesc,L"\xE8A7",
+                vm.settings_integration_experimental,4,lay.integration_chip[0].left-8*scale_);
+            {
                 fluent::BadgeSpec chip{};
-                chip.bounds=lay.integration_chip[i];chip.text=l10n::Get(kIntegrationChips[i]);
-                chip.kind=i==0 ? fluent::BadgeKind::Warning : fluent::BadgeKind::Neutral;
+                chip.bounds=lay.integration_chip[0];chip.text=l10n::Get(I::IntegrationExperimentalTag);
+                chip.kind=fluent::BadgeKind::Warning;
                 painter_.DrawBadge(chip);
             }
             if(lay.integration_hint.bottom>lay.integration_hint.top) {
                 const auto r=lay.integration_hint;
                 divider(D2D1::RectF(r.left,r.top-1,r.right,r.top-1));
-                DrawIconText(r.left+54*scale_,r.top+5*scale_,16*scale_,16*scale_,L"\xE946",L"",theme.text_secondary,0.8f);
-                painter_.DrawWrappedCaption(IntegrationHint(vm),D2D1::Point2F(r.left+78*scale_,r.top+4*scale_),
-                    (std::max)(40*scale_,r.right-16*scale_-r.left-78*scale_),theme.text_secondary);
+                if(lay.integration_try.bottom>lay.integration_try.top)
+                    button(lay.integration_try,l10n::Get(I::IntegrationTry),H::SettingsIntegration,8,true);
+                const auto t=lay.integration_hint_text;
+                if(vm.settings_integration_just_enabled)
+                    DrawIconText(t.left-24*scale_,t.top+1*scale_,16*scale_,16*scale_,L"\xE73E",L"",theme.accent,0.95f);
+                painter_.DrawWrappedCaption(IntegrationHint(vm),D2D1::Point2F(t.left,t.top),
+                    (std::max)(40*scale_,t.right-t.left),vm.settings_integration_just_enabled ? theme.text : theme.text_secondary);
             }
         }
         toggle(lay.startup_row[0],I::SettingsLaunch,I::SettingsLaunchDesc,L"\xE7E8",vm.settings_launch_on_startup,1);divider(lay.startup_row[0]);

@@ -68,6 +68,7 @@ bool ApplyThisPcOpen(AppPrefs& prefs, bool on) {
     prefs.take_over_this_pc = ReadThisPcOpen(exe);
     prefs.integration_residual = prefs.ReadIntegrationResidual();
     prefs.integration_incomplete = prefs.ReadIntegrationIncomplete();
+    prefs.integration_other_exe = prefs.ReadIntegrationOtherExe();
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
     return ok && prefs.take_over_this_pc == on;
 }
@@ -83,6 +84,7 @@ bool ApplyRecycleBinOpen(AppPrefs& prefs, bool on) {
     prefs.take_over_recycle_bin = ReadRecycleBinOpen(exe);
     prefs.integration_residual = prefs.ReadIntegrationResidual();
     prefs.integration_incomplete = prefs.ReadIntegrationIncomplete();
+    prefs.integration_other_exe = prefs.ReadIntegrationOtherExe();
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
     return ok && prefs.take_over_recycle_bin == on;
 }

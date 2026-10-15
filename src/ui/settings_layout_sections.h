@@ -1,45 +1,55 @@
 // Included inside ui_renderer_internal.h's anonymous namespace.
 // Default file manager card helpers shared by layout, drawing and tests.
 struct IntegrationBadgeInfo { std::wstring text; fluent::BadgeKind kind = fluent::BadgeKind::Neutral; };
-inline int IntegrationSelectedCount(const WindowViewModel& vm) {
-    return int(vm.settings_integration_folders)+int(vm.settings_integration_this_pc)+
-        int(vm.settings_integration_recycle_bin)+
-        int(vm.settings_integration_win_e)+int(vm.settings_integration_experimental);
+// One switch: on hands folders and drives, This PC and Win + E to Pulse together, so
+// Explorer never ends up as a launcher that bounces every double-click to Pulse.
+inline bool IntegrationHasProblem(const WindowViewModel& vm) {
+    return vm.settings_integration_state==2 || vm.settings_integration_state==3;
 }
 inline IntegrationBadgeInfo MakeIntegrationBadge(const WindowViewModel& vm) {
     using I=l10n::StringId;
     if(vm.settings_integration_state==3) return {l10n::Get(I::IntegrationFailed),fluent::BadgeKind::Danger};
     if(vm.settings_integration_state==2) return {l10n::Get(I::IntegrationPartial),fluent::BadgeKind::Warning};
     if(!vm.settings_integration_enabled) return {l10n::Get(I::IntegrationOff),fluent::BadgeKind::Neutral};
-    const int count=IntegrationSelectedCount(vm);
-    if(count==0) return {l10n::Get(I::IntegrationNone),fluent::BadgeKind::Warning};
-    wchar_t value[128]{};
-    swprintf_s(value,l10n::Get(I::IntegrationOnCount).c_str(),count);
-    return {value,fluent::BadgeKind::Success};
+    return {l10n::Get(I::IntegrationOn),fluent::BadgeKind::Success};
 }
-// Problems get an InfoBar with their own actions; healthy states need none.
-inline bool IntegrationHasProblem(const WindowViewModel& vm) {
-    return vm.settings_integration_state==2 || vm.settings_integration_state==3;
+inline std::wstring IntegrationProblemTitle(const WindowViewModel& vm) {
+    using I=l10n::StringId;
+    if(vm.settings_integration_state==3) return l10n::Get(I::IntegrationFailTitle);
+    return l10n::Get(vm.settings_integration_other_exe.empty() ? I::IntegrationDriftTitle : I::IntegrationOtherTitle);
 }
 inline std::wstring IntegrationProblemMessage(const WindowViewModel& vm) {
     if(vm.settings_integration_state==3)
         return vm.settings_integration_summary.empty() ? l10n::Get(l10n::StringId::IntegrationFailed) : vm.settings_integration_summary;
-    return vm.settings_integration_state==2 ? l10n::Get(l10n::StringId::IntegrationDriftDesc) : std::wstring{};
+    if(vm.settings_integration_state!=2) return {};
+    return vm.settings_integration_other_exe.empty() ? l10n::Get(l10n::StringId::IntegrationDriftDesc)
+                                                     : vm.settings_integration_other_exe;
 }
-// One short next step, naming only the settings that are actually missing.
+inline l10n::StringId IntegrationRetryLabel(const WindowViewModel& vm) {
+    using I=l10n::StringId;
+    if(vm.settings_integration_state==3) return I::IntegrationRetry;
+    return vm.settings_integration_other_exe.empty() ? I::IntegrationReapply : I::IntegrationUseThis;
+}
+// The footer: one plain sentence about what happens now.
 inline std::wstring IntegrationHint(const WindowViewModel& vm) {
     using I=l10n::StringId;
     if(!vm.settings_integration_enabled) return l10n::Get(I::IntegrationInactiveHint);
-    if(IntegrationSelectedCount(vm)==0) return l10n::Get(I::IntegrationNoneHint);
-    if(!vm.settings_integration_experimental) return {};
+    if(vm.settings_integration_just_enabled) return l10n::Get(I::IntegrationJustOn);
     // Taking over works only while Pulse runs, and closing the window ends
     // Pulse unless it keeps running (AppPrefs::KeepsRunningInBackground).
-    if(!vm.settings_keep_running) return l10n::Get(I::IntegrationHintKeep);
-    if(!vm.settings_launch_on_startup) return l10n::Get(I::IntegrationHintLaunch);
-    return {};
+    if(vm.settings_integration_experimental && !vm.settings_keep_running) return l10n::Get(I::IntegrationHintKeep);
+    if(vm.settings_integration_experimental && !vm.settings_launch_on_startup) return l10n::Get(I::IntegrationHintLaunch);
+    return l10n::Get(I::IntegrationOnFoot);
 }
-inline constexpr l10n::StringId kIntegrationChips[]={l10n::StringId::IntegrationExperimentalTag,
-    l10n::StringId::IntegrationFactRunning,l10n::StringId::IntegrationFactShift,l10n::StringId::IntegrationFactWin11};
+inline bool IntegrationShowsTry(const WindowViewModel& vm) {
+    return vm.settings_integration_enabled && !IntegrationHasProblem(vm);
+}
+inline constexpr l10n::StringId kIntegrationCover[]={l10n::StringId::IntegrationFolders,
+    l10n::StringId::ThisPc,l10n::StringId::SettingsWinE};
+inline bool IntegrationCoverActive(const WindowViewModel& vm,int i) {
+    return vm.settings_integration_enabled && (i==0 ? vm.settings_integration_folders_active
+        : i==1 ? vm.settings_integration_this_pc_active : vm.settings_integration_win_e_active);
+}
 
 float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float scale,
                             float y, const fluent::Painter* painter) {
@@ -85,7 +95,7 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
     l.ui_font_size_card=row(narrow ? 98.0f : 64.0f); segments(l.ui_font_size_card,l.ui_font_size_row,4,340);
     l.group[0]=D2D1::RectF(left,l.theme_row.top,right,y);
     // Default file manager: a titled card of its own, independent of startup and background running.
-    // Every choice stays visible, so users see what the master switch hands to Pulse.
+    // The switch says what it does; the tiles below show what actually opens in Pulse.
     y+=24*scale; l.integration_section=row(28);
     const float integration_top=y;
     auto caption_height=[&](std::wstring_view value,float width) {
@@ -109,10 +119,9 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
         l.integration_text_right=text_right;
     }
     if(IntegrationHasProblem(vm)) {
-        const bool failed=vm.settings_integration_state==3;
         const float bar_left=left+16*scale, bar_right=right-16*scale;
         const float msg_h=caption_height(IntegrationProblemMessage(vm),bar_right-bar_left-60*scale);
-        const auto retry_text=l10n::Get(failed ? l10n::StringId::IntegrationRetry : l10n::StringId::IntegrationReapply);
+        const auto retry_text=l10n::Get(IntegrationRetryLabel(vm));
         const float retry_w=!vm.settings_integration_can_retry ? 0.0f
             : painter ? painter->MeasureButtonWidth(retry_text) : 96*scale;
         const float restore_w=!vm.settings_integration_can_restore ? 0.0f
@@ -133,32 +142,56 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
     }
     l.integration_list_head=row(32);
     const float item_text_left=left+112*scale, item_text_right=right-16*scale;
-    auto item_row=[&](l10n::StringId desc,float extra) {
-        const float h=caption_height(l10n::Get(desc),item_text_right-item_text_left);
-        return row((std::max)(52.0f,(31*scale+h+extra+12*scale)/scale));
-    };
-    l.startup_row[2]=item_row(l10n::StringId::IntegrationFoldersDesc,0);
-    l.this_pc_row=item_row(l10n::StringId::SettingsThisPcDesc,0);
-    l.recycle_bin_row=item_row(l10n::StringId::SettingsRecycleBinDesc,0);
-    l.win_e_row=item_row(l10n::StringId::SettingsWinEDesc,0);
     {
-        // Experimental caveats as compact chips that wrap with the window width.
-        float x=item_text_left, chip_y=0.0f;
-        for(int i=0;i<4;++i) {
-            const float w=(std::min)(item_text_right-item_text_left,
-                painter ? painter->MeasureBadgeWidth(l10n::Get(kIntegrationChips[i])) : 120*scale);
-            if(x>item_text_left && x+w>item_text_right) { x=item_text_left; chip_y+=28*scale; }
-            l.integration_chip[i]=D2D1::RectF(x,chip_y,x+w,chip_y+22*scale);
-            x+=w+6*scale;
+        // What opens in Pulse: three read-only tiles that wrap with the width.
+        const float x0=left+54*scale, x1=right-16*scale, tile_h=36*scale, gap=8*scale;
+        float x=x0, top=y;
+        for(int i=0;i<3;++i) {
+            const auto name=l10n::Get(kIntegrationCover[i]);
+            // Button width is the label plus 16; the tile adds the icon (34), the check (22) and slack.
+            const float w=(std::min)(x1-x0,(painter ? painter->MeasureButtonWidth(name) : 140*scale)+64*scale);
+            if(x>x0 && x+w>x1) { x=x0; top+=tile_h+gap; }
+            l.integration_cover[i]=D2D1::RectF(x,top,x+w,top+tile_h);
+            x+=w+gap;
         }
-        const float desc_h=caption_height(l10n::Get(l10n::StringId::IntegrationExperimentalDesc),item_text_right-item_text_left);
-        l.explorer_windows_row=item_row(l10n::StringId::IntegrationExperimentalDesc,8*scale+chip_y+22*scale);
-        const float chip_top=l.explorer_windows_row.top+31*scale+desc_h+8*scale;
-        for(auto& chip:l.integration_chip) { chip.top+=chip_top; chip.bottom+=chip_top; }
+        y=top+tile_h+6*scale;
     }
-    const auto hint=IntegrationHint(vm);
-    if(!hint.empty()) l.integration_hint=row((4*scale+caption_height(hint,item_text_right-(left+78*scale))+14*scale)/scale);
-    else y+=6*scale;
+    l.integration_options_head=row(32);
+    auto item_row=[&](l10n::StringId desc,float text_right) {
+        const float h=caption_height(l10n::Get(desc),text_right-item_text_left);
+        return row((std::max)(52.0f,(31*scale+h+12*scale)/scale));
+    };
+    l.recycle_bin_row=item_row(l10n::StringId::SettingsRecycleBinDesc,item_text_right);
+    {
+        // The experimental tag sits at the end of the title line.
+        const auto tag=l10n::Get(l10n::StringId::IntegrationExperimentalTag);
+        const float w=painter ? painter->MeasureBadgeWidth(tag) : 60*scale;
+        l.explorer_windows_row=item_row(l10n::StringId::IntegrationExperimentalDesc,item_text_right);
+        const float top=l.explorer_windows_row.top;
+        l.integration_chip[0]=D2D1::RectF(item_text_right-w,top+9*scale,item_text_right,top+31*scale);
+    }
+    {
+        // Footer: the try-it button (while on) and one sentence about what happens now.
+        const auto hint=IntegrationHint(vm);
+        const float foot_left=left+54*scale;
+        y+=6*scale;
+        const float top=y+12*scale;
+        float text_left=foot_left, text_top=top+6*scale, bottom=top;
+        if(IntegrationShowsTry(vm)) {
+            const auto label=l10n::Get(l10n::StringId::IntegrationTry);
+            const float w=painter ? painter->MeasureButtonWidth(label) : 180*scale;
+            l.integration_try=D2D1::RectF(foot_left,top,(std::min)(foot_left+w,item_text_right),top+32*scale);
+            bottom=l.integration_try.bottom;
+            if(item_text_right-(l.integration_try.right+12*scale)>=200*scale) text_left=l.integration_try.right+12*scale;
+            else text_top=l.integration_try.bottom+8*scale;
+        }
+        if(vm.settings_integration_just_enabled) text_left+=24*scale;
+        const float text_h=caption_height(hint,item_text_right-text_left);
+        l.integration_hint_text=D2D1::RectF(text_left,text_top,item_text_right,text_top+text_h);
+        bottom=(std::max)(bottom,l.integration_hint_text.bottom);
+        l.integration_hint=D2D1::RectF(left,y,right,bottom+14*scale);
+        y=l.integration_hint.bottom;
+    }
     l.integration_card=D2D1::RectF(left,integration_top,right,y);
     section(1);
     l.startup_row[0]=row(64); l.start_in_tray_row=row(64); l.startup_row[1]=row(64);
