@@ -400,7 +400,11 @@ D2D1_RECT_F ListRect(const AppState& s) {
     D2D1_RECT_F pane = FocusedPaneRect(s);
     float extra = 0.0f;
     const app::Tab* tab = s.pane ? s.pane->ActiveTab() : nullptr;
-    if (tab && !tab->banner_message.empty()) extra = 36.0f * s.scale;
+    if (tab && !tab->banner_message.empty()) {
+        // The strip grows to two lines when its message is long.
+        const float drawn = s.renderer.FocusedPaneBannerHeight();
+        extra = drawn > 0.0f ? drawn : 36.0f * s.scale;
+    }
     std::wstring virtual_kind;
     if (tab && app::ParsePulsePath(tab->current_path, &virtual_kind, nullptr) &&
         virtual_kind == L"recent") {
@@ -2649,6 +2653,8 @@ std::wstring TooltipForHover(AppState& s) {
     case R::ContentIndexManage:
     case R::SettingsContentIndex: return text(I::ContentIndexManage);
     case R::NetworkIndexAdd: return text(I::NetworkLiveAdd);
+    case R::PaneBannerButton:  // the buttons carry their words; only the close glyph needs one
+        return s.hoverControlIndex == static_cast<int>(ui::PaneBannerAction::Dismiss) ? text(I::Close) : L"";
     case R::AddressSearchClear: return text(I::Clear);
     case R::AddressSearchClose: return text(I::Back);
     case R::TabClose: return text(I::TooltipCloseTab);

@@ -857,10 +857,87 @@ void ClearTextWidthCache() {
         return std::max(36 * scale, metrics.height + 16 * scale);
     }
 
+    std::wstring PaneBannerActionLabel(PaneBannerAction action) {
+        using I = pulse::l10n::StringId;
+        switch (action) {
+        case PaneBannerAction::Retry: return pulse::l10n::Get(I::IntegrationRetry);
+        case PaneBannerAction::GoUp: return pulse::l10n::Get(I::BannerGoUp);
+        case PaneBannerAction::Reconnect: return pulse::l10n::Get(I::BannerReconnect);
+        case PaneBannerAction::Unlock: return pulse::l10n::Get(I::BannerUnlock);
+        case PaneBannerAction::Refresh: return pulse::l10n::Get(I::Refresh);
+        case PaneBannerAction::ManageIndex: return pulse::l10n::Get(I::ContentManageShort);
+        case PaneBannerAction::AddNetworkIndex: return pulse::l10n::Get(I::NetworkLiveAdd);
+        default: return {};
+        }
+    }
+
+    // The strip takes a second line when its message does not fit beside the
+    // title and the buttons; measured with the window font, a little generously.
+    bool PaneBannerTwoLine(const PaneViewModel& pane, float width, float scale, Compositor* compositor) {
+        if (pane.is_changes || pane.compare_active || pane.banner_message.empty() || !compositor) return false;
+        IDWriteTextFormat* const format = compositor->TextFormat();
+        if (!format) return false;
+        const auto measure = [&](std::wstring_view text) {
+            return text.empty() ? 0.0f : typography::MeasureLine(compositor, format, text);
+        };
+        float room = width - 16 * scale - (12 + 16 + 8 + 4) * scale;
+        bool any = false;
+        for (const auto action : pane.banner_actions) {
+            if (action == PaneBannerAction::None) continue;
+            room -= measure(PaneBannerActionLabel(action)) * 1.06f + 20 * scale;
+            any = true;
+        }
+        if (any) room -= 6 * scale;
+        if (pane.banner_dismissible) room -= 28 * scale;
+        const float need = measure(pane.banner_title) * 1.06f + 10 * scale + measure(pane.banner_message);
+        return need > room;
+    }
+
     float PaneBannerHeight(const PaneViewModel& pane, float width, float scale, Compositor* compositor) {
-        if (!pane.is_changes) return pane.banner_message.empty() ? 0.0f : 36 * scale;
+        if (!pane.is_changes) return pane.banner_message.empty() ? 0.0f
+            : (PaneBannerTwoLine(pane, width, scale, compositor) ? 54 * scale : 36 * scale);
         ComPtr<IDWriteTextLayout> layout;
         return ChangeBannerLayout(pane, width, scale, compositor, layout);
+    }
+
+    // The strip above a file list: what it shows and where its buttons go.
+    // The InfoBar spec views the labels, so fill it in place and keep it alive.
+    struct PaneBannerParts {
+        std::wstring labels[2];
+        HitTestResult::Region regions[2] = {HitTestResult::None, HitTestResult::None};
+        int indices[2] = {-1, -1};
+        fluent::InfoBarSpec bar{};
+    };
+
+    void BuildPaneBanner(const PaneViewModel& pane, const D2D1_RECT_F& bounds, int pane_index,
+                         PaneBannerParts& out) {
+        out.bar.bounds = bounds;
+        out.bar.kind = static_cast<fluent::InfoBarKind>(std::clamp(pane.banner_kind, 0, 4));
+        out.bar.show_close = false;
+        if (pane.compare_active && !pane.is_content_search) {
+            // Counts are drawn as colored chips by the caller, so narrow panes still fit.
+            out.bar.kind = fluent::InfoBarKind::Neutral;
+            out.labels[0] = pulse::l10n::Get(pane.compare_diff_only ? pulse::l10n::StringId::CompareShowAll
+                                                                    : pulse::l10n::StringId::CompareDiffOnly);
+            out.labels[1] = pulse::l10n::Get(pulse::l10n::StringId::CompareExit);
+            out.regions[0] = HitTestResult::CompareDiffToggle;
+            out.regions[1] = HitTestResult::CompareExit;
+            out.indices[0] = out.indices[1] = pane_index;
+        } else {
+            out.bar.title = pane.banner_title;
+            out.bar.message = pane.banner_message;
+            out.bar.show_close = pane.banner_dismissible;
+            for (int i = 0; i < 2; ++i) {
+                const PaneBannerAction action = pane.banner_actions[i];
+                if (action == PaneBannerAction::None) continue;
+                out.labels[i] = PaneBannerActionLabel(action);
+                out.regions[i] = action == PaneBannerAction::ManageIndex ? HitTestResult::ContentIndexManage
+                    : action == PaneBannerAction::AddNetworkIndex ? HitTestResult::NetworkIndexAdd
+                    : HitTestResult::PaneBannerButton;
+                out.indices[i] = out.regions[i] == HitTestResult::PaneBannerButton ? static_cast<int>(action) : pane_index;
+            }
+        }
+        for (int i = 0; i < 2; ++i) out.bar.actions[i] = out.labels[i];
     }
 
     // Folder compare status colors (rows, banner chips).
@@ -871,16 +948,6 @@ void ClearTextWidthCache() {
         case CompareMark::Older:    return HexColor(dark ? 0xD29922u : 0x9A6700u);
         default:                    return HexColor(dark ? 0xBC8CFFu : 0x8250DFu);
         }
-    }
-
-    // Folder compare banner: [只看差异|显示全部] [退出对比] on the right.
-    void CompareBannerButtons(const D2D1_RECT_F& bar, float scale, D2D1_RECT_F& diff,
-                              D2D1_RECT_F& exit) {
-        const float avail = bar.right - bar.left;
-        const float ew = std::min(56.0f * scale, avail * 0.16f);
-        const float dw = std::min(84.0f * scale, avail * 0.24f);
-        exit = D2D1::RectF(bar.right - ew, bar.top, bar.right, bar.bottom);
-        diff = D2D1::RectF(exit.left - dw, bar.top, exit.left, bar.bottom);
     }
 
     float PaneExtraTop(const PaneViewModel& pane, float scale, float width, Compositor* compositor) {

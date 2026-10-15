@@ -1670,6 +1670,7 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
     }
 
     const float bannerH = PaneBannerHeight(pane, w, scale_, compositor_);
+    if (focused) focused_banner_height_ = bannerH;
     if (bannerH > 0.0f) {
         if (pane.is_changes) {
             ComPtr<IDWriteTextLayout> explanation;
@@ -1680,40 +1681,25 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
                     brTextSecondary_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
             }
         } else {
-            fluent::InfoBarSpec bar;
-            bar.bounds = D2D1::RectF(x + 8 * scale_, y, x + w - 8 * scale_, y + bannerH - 4 * scale_);
-            bar.title = pane.banner_title;
-            bar.message = pane.banner_message;
-            bar.kind = static_cast<fluent::InfoBarKind>(std::clamp(pane.banner_kind, 0, 3));
-            bar.show_close = false;
-            if (pane.is_content_search || pane.network_live_action) {
-                const auto action_bounds = bar.bounds;
-                const float action_width = std::min(144.0f * scale_, (action_bounds.right - action_bounds.left) * 0.4f);
-                bar.trailing_width = action_width / scale_;
-                painter_.DrawInfoBar(bar);
-                fluent::ButtonSpec action;
-                action.bounds = D2D1::RectF(action_bounds.right - action_width, action_bounds.top, action_bounds.right, action_bounds.bottom);
-                action.text = l10n::Get(pane.is_content_search ? l10n::StringId::ContentManageShort
-                                                               : l10n::StringId::NetworkLiveAdd);
-                action.kind = fluent::ButtonKind::Transparent;
-                action.state.hovered = IsHovered(vm, pane.is_content_search
-                    ? HitTestResult::ContentIndexManage : HitTestResult::NetworkIndexAdd);
-                painter_.DrawButton(action);
-            } else if (pane.compare_active) {
-                D2D1_RECT_F diffRc{}, exitRc{};
-                CompareBannerButtons(bar.bounds, scale_, diffRc, exitRc);
-                bar.trailing_width = (exitRc.right - diffRc.left) / scale_;
-                // Counts are drawn as colored chips (matching the row bars)
-                // instead of the InfoBar message, so narrow panes still fit.
-                bar.title = {};
-                bar.message = {};
-                painter_.DrawInfoBar(bar);
+            PaneBannerParts parts;
+            BuildPaneBanner(pane, D2D1::RectF(x + 8 * scale_, y, x + w - 8 * scale_, y + bannerH - 4 * scale_),
+                            pane_index, parts);
+            fluent::InfoBarSpec& bar = parts.bar;
+            const bool here = vm.hover_pane_index == pane_index;
+            for (int i = 0; i < 2; ++i)
+                if (parts.regions[i] != HitTestResult::None && here && IsHovered(vm, parts.regions[i], parts.indices[i]))
+                    bar.hovered_action = i;
+            bar.state.hovered = bar.show_close && here &&
+                IsHovered(vm, HitTestResult::PaneBannerButton, static_cast<int>(PaneBannerAction::Dismiss));
+            painter_.DrawInfoBar(bar);
+            if (pane.compare_active && !pane.is_content_search) {
+                const fluent::InfoBarLayout lay = painter_.LayoutInfoBar(bar);
                 {
                     const bool dark_bg = 0.2126f * theme.bg.r + 0.7152f * theme.bg.g + 0.0722f * theme.bg.b < 0.5f;
                     IDWriteTextFormat* chip_fmt = compositor_->SmallFormat();
-                    const float left = bar.bounds.left + 52.0f * scale_;
-                    const float right = diffRc.left - 6.0f * scale_;
-                    const float cy = (bar.bounds.top + bar.bounds.bottom) * 0.5f;
+                    const float left = lay.title.left;
+                    const float right = lay.actions[0].left - 6.0f * scale_;
+                    const float cy = (lay.glyph.top + lay.glyph.bottom) * 0.5f;
                     const float line_h = 18.0f * scale_;
                     static constexpr l10n::StringId kChipLabels[] = {
                         l10n::StringId::CompareChipOnly, l10n::StringId::CompareChipNewer,
@@ -1759,20 +1745,7 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
                         }
                     }
                 }
-                fluent::ButtonSpec diff;
-                diff.bounds = diffRc;
-                diff.text = l10n::Get(pane.compare_diff_only ? l10n::StringId::CompareShowAll
-                                                             : l10n::StringId::CompareDiffOnly);
-                diff.kind = fluent::ButtonKind::Transparent;
-                diff.state.hovered = IsHovered(vm, HitTestResult::CompareDiffToggle, pane_index);
-                painter_.DrawButton(diff);
-                fluent::ButtonSpec exit;
-                exit.bounds = exitRc;
-                exit.text = l10n::Get(l10n::StringId::CompareExit);
-                exit.kind = fluent::ButtonKind::Transparent;
-                exit.state.hovered = IsHovered(vm, HitTestResult::CompareExit, pane_index);
-                painter_.DrawButton(exit);
-            } else painter_.DrawInfoBar(bar);
+            }
         }
         y += bannerH;
     }

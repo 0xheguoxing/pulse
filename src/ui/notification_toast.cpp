@@ -179,41 +179,86 @@ void NotificationToast::Draw(Compositor& compositor, const Theme& theme, float s
     painter_.SetCompositor(&compositor);
     painter_.SetScale(scale);
     if (!painter_.BeginFrame(theme, high_contrast)) return;
-    const float margin = 16.0f * scale;
-    const float width = std::min(420.0f * scale, compositor.Width() - 2 * margin);
-    if (width < 100.0f * scale) return;
-    float body_height = 40.0f * scale;
-    const float close_inset = top_center_ ? 12.0f : 2.0f;
-    ComPtr<IDWriteTextLayout> layout;
-    if (SUCCEEDED(compositor.DwriteFactory()->CreateTextLayout(message_.c_str(),
-            static_cast<UINT32>(message_.size()), compositor.SmallFormat(),
-            width - (82 + close_inset) * scale, 400 * scale, &layout))) {
-        layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    ID2D1DeviceContext* const dc = compositor.Dc();
+    IDWriteFactory2* const factory = compositor.DwriteFactory();
+    if (!dc || !factory) return;
+    // A floating card on the capsule's acrylic plate: a status glyph, a bold
+    // line and up to two quieter ones, and a close button in the corner.
+    const SnackPalette pal = MakeSnackPalette(theme, high_contrast);
+    const auto px = [scale](float dip) { return dip * scale; };
+    const float window_w = static_cast<float>(compositor.Width());
+    const float window_h = static_cast<float>(compositor.Height());
+    const float margin = px(16.0f);
+    const float width = (std::min)(px(360.0f), window_w - 2 * margin);
+    if (width < px(100.0f)) return;
+    const float pad = px(14.0f), icon = px(20.0f);
+    const float text_x = pad + icon + px(12.0f);
+    const float text_w = (std::max)(px(40.0f), width - text_x - px(8.0f + 24.0f + 6.0f));
+    const float title_h = px(22.0f);
+    auto title = Line(compositor, title_, compositor.TextFormat(), text_w, title_h, true);
+    ComPtr<IDWriteTextLayout> body;
+    float body_h = 0.0f;
+    if (!message_.empty() && SUCCEEDED(factory->CreateTextLayout(message_.c_str(), static_cast<UINT32>(message_.size()),
+            compositor.SmallFormat(), text_w, px(400.0f), &body))) {
+        body->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
         DWRITE_TEXT_METRICS metrics{};
-        if (SUCCEEDED(layout->GetMetrics(&metrics))) body_height = metrics.height;
+        if (SUCCEEDED(body->GetMetrics(&metrics))) {
+            const float line = metrics.lineCount ? metrics.height / static_cast<float>(metrics.lineCount) : px(16.0f);
+            body_h = (std::min)(metrics.height, std::ceil(line * 2.0f));
+            if (metrics.lineCount > 2) {
+                // Two lines at most; the rest is cut with an ellipsis.
+                body->SetMaxHeight(body_h + 0.5f);
+                ComPtr<IDWriteInlineObject> ellipsis;
+                if (SUCCEEDED(factory->CreateEllipsisTrimmingSign(body.get(), &ellipsis))) {
+                    const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_WORD, 0, 0};
+                    body->SetTrimming(&trimming, ellipsis.get());
+                }
+            } else {
+                body->SetMaxHeight(body_h + 0.5f);
+            }
+        }
     }
-    const float height = std::min(std::max(72 * scale, body_height + 44 * scale),
-        std::max(72 * scale, compositor.Height() - 110 * scale));
-    const float age = std::min(1.0f, static_cast<float>(GetTickCount64() - born_) / 180.0f);
-    const float slide = high_contrast ? 0 : 12 * scale * (1 - age) * (1 - age);
-    const float right = top_center_ ? (compositor.Width() + width) * 0.5f : compositor.Width() - margin;
-    const float top = top_center_ ? 64 * scale - slide : compositor.Height() - 48 * scale + slide - height;
+    const float height = std::round(px(12.0f) + title_h + (body_h > 0.0f ? px(2.0f) + body_h : 0.0f) + px(12.0f));
+    const float age = (std::min)(1.0f, static_cast<float>(GetTickCount64() - born_) / 180.0f);
+    const float slide = high_contrast ? 0.0f : px(12.0f) * (1.0f - age) * (1.0f - age);
+    const float right = std::round(top_center_ ? (window_w + width) * 0.5f : window_w - margin);
+    const float top = std::round(top_center_ ? px(64.0f) - slide : window_h - px(48.0f) + slide - height);
     card_ = D2D1::RectF(right - width, top, right, top + height);
-    const float center = (card_.top + card_.bottom) * 0.5f;
-    close_ = D2D1::RectF(right - (28 + close_inset) * scale, center - 14 * scale,
-        right - close_inset * scale, center + 14 * scale);
-    fluent::InfoBarSpec spec;
-    spec.bounds = card_;
-    spec.title = title_;
-    spec.message = message_;
-    spec.kind = kind_;
-    spec.show_icon_background = !top_center_;
-    spec.close_inset = close_inset;
-    spec.show_close = true;
+    const float radius = px(10.0f);
+    DrawSnackPlate(dc, card_, radius, pal, scale, high_contrast);
+    if (kind_ == fluent::InfoBarKind::Error && !high_contrast) {
+        // An error keeps a thin edge in its tone so it is not read as a status note.
+        D2D1_COLOR_F edge = painter_.StatusToneColor(kind_);
+        edge.a = 0.55f;
+        painter_.StrokeRoundedRect(D2D1::RectF(card_.left + 0.5f, card_.top + 0.5f, card_.right - 0.5f, card_.bottom - 0.5f),
+                                   radius - 0.5f, edge, 1.0f);
+    }
+    const float line_mid = top + px(12.0f) + title_h * 0.5f;
+    painter_.DrawStatusGlyph(kind_, D2D1::RectF(card_.left + pad, line_mid - icon * 0.5f, card_.left + pad + icon,
+                                                line_mid + icon * 0.5f), pal.plate);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(dc->CreateSolidColorBrush(pal.text, &brush))) return;
+    if (title.get()) dc->DrawTextLayout(D2D1::Point2F(card_.left + text_x, top + px(12.0f)), title.get(), brush.get(),
+                                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    if (body.get() && body_h > 0.0f) {
+        brush->SetColor(pal.text_secondary);
+        dc->DrawTextLayout(D2D1::Point2F(card_.left + text_x, top + px(12.0f) + title_h + px(2.0f)), body.get(),
+                           brush.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
     POINT cursor{};
-    if (GetCursorPos(&cursor) && ScreenToClient(compositor.Hwnd(), &cursor))
-        spec.state.hovered = Contains(close_, static_cast<float>(cursor.x), static_cast<float>(cursor.y));
-    painter_.DrawInfoBar(spec);
+    float cx = -1.0f, cy = -1.0f;
+    if (GetCursorPos(&cursor) && ScreenToClient(compositor.Hwnd(), &cursor)) {
+        cx = static_cast<float>(cursor.x);
+        cy = static_cast<float>(cursor.y);
+    }
+    close_ = D2D1::RectF(card_.right - px(8.0f + 24.0f), line_mid - px(12.0f), card_.right - px(8.0f), line_mid + px(12.0f));
+    if (Contains(close_, cx, cy) || pressed_close_) painter_.FillRoundedRect(close_, px(12.0f), pal.hover);
+    {
+        const float c = (close_.left + close_.right) * 0.5f, arm = px(3.5f);
+        brush->SetColor(pal.text_secondary);
+        dc->DrawLine(D2D1::Point2F(c - arm, line_mid - arm), D2D1::Point2F(c + arm, line_mid + arm), brush.get(), px(1.2f));
+        dc->DrawLine(D2D1::Point2F(c + arm, line_mid - arm), D2D1::Point2F(c - arm, line_mid + arm), brush.get(), px(1.2f));
+    }
 }
 
 void NotificationToast::DrawSnack(Compositor& compositor, const Theme& theme, float scale, bool high_contrast) {

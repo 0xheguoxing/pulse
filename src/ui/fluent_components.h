@@ -28,7 +28,7 @@ enum class TitleBarButtonRole { Custom, Minimize, Maximize, Restore, Close };
 enum class BadgeKind { Neutral, Accent, Success, Warning, Danger, Keycap };
 enum class SegmentPosition { Single, First, Middle, Last };
 enum class SortDirection { None, Ascending, Descending };
-enum class InfoBarKind { Informational, Success, Warning, Error };
+enum class InfoBarKind { Informational, Success, Warning, Error, Neutral };
 enum class EasingCurve { Linear, OutQuad, OutCubic, InOutQuad, InOutSine, OutSine };
 // Small pane-layout diagrams for the split menu (not Segoe glyphs).
 enum class MenuPictogram {
@@ -339,6 +339,22 @@ struct InfoBarSpec {
     bool show_icon_background = true;
     float trailing_width = 0.0f; // DIP reserved for an adjacent action.
     float close_inset = 2.0f;
+    // Up to two tone-colored text buttons on the right of the first line
+    // (the first one is the main action). Empty views are skipped.
+    std::wstring_view actions[2];
+    int hovered_action = -1;
+    // What the bar sits on, for text rendering; alpha 0 means the theme background.
+    D2D1_COLOR_F backdrop{};
+};
+
+// Where an InfoBar puts its parts; the same numbers drive drawing and hit tests.
+struct InfoBarLayout {
+    D2D1_RECT_F glyph{};
+    D2D1_RECT_F title{};
+    D2D1_RECT_F message{};
+    D2D1_RECT_F actions[2]{};
+    D2D1_RECT_F close{};
+    bool two_line = false;     // message on its own line under the title
 };
 
 struct EmptyStateSpec {
@@ -446,6 +462,15 @@ public:
     void DrawStagingItem(const StagingItemSpec& spec);
     void DrawStatusBar(const StatusBarSpec& spec);
     void DrawInfoBar(const InfoBarSpec& spec);
+    InfoBarLayout LayoutInfoBar(const InfoBarSpec& spec) const;
+    // The round status glyph of an InfoBar (check, !, x, i) filling `rect`;
+    // `backdrop` alpha 0 means the theme background.
+    void DrawStatusGlyph(InfoBarKind kind, const D2D1_RECT_F& rect, D2D1_COLOR_F backdrop = {});
+    // The solid color of that glyph (for an edge or a line in the same tone).
+    D2D1_COLOR_F StatusToneColor(InfoBarKind kind) const;
+    // Height of a one-line strip, or of two lines when the message does not
+    // fit beside the title and the actions at this width (pixels).
+    float InfoBarStripHeight(const InfoBarSpec& spec, float width) const;
     void DrawEmptyState(const EmptyStateSpec& spec);
 
     D2D1_RECT_F ScrollbarThumbRect(const ScrollbarSpec& spec) const noexcept;

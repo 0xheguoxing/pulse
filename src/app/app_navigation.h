@@ -104,6 +104,9 @@ void OpenSelected(AppState& s);
 // Opens one path as if chosen in the list: folders navigate, files launch.
 void OpenPath(AppState& s, const std::wstring& path);
 void GoUp(AppState& s);
+// A press on a pane banner button (retry, go up, reconnect, unlock, refresh,
+// dismiss); false when the hit is not one. The pane is already focused.
+bool HandlePaneBannerPress(AppState& s, const ui::HitTestResult& hit);
 void GoBack(AppState& s);
 void GoForward(AppState& s);
 bool IsSettingsTab(const app::Tab* tab);

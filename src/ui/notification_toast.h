@@ -18,6 +18,9 @@ class NotificationToast {
 public:
     void Show(HWND owner, std::wstring title, std::wstring message, bool persistent = true, UINT action_message = 0);
     void ShowError(HWND owner, std::wstring title, std::wstring message);
+    // The tone of the card shown by the last Show (its glyph; an error also
+    // gets an edge). Show picks warning for persistent cards, else info.
+    void SetKind(fluent::InfoBarKind kind) noexcept { kind_ = kind; }
     // A one-line capsule at the bottom center (M7i): an icon, what happened
     // (`text`) and a quieter `detail`, up to two buttons and a shortcut chip.
     // It goes after `duration_ms` (paused under the cursor), with a line that

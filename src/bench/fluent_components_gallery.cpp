@@ -364,9 +364,30 @@ bool DrawCompositeGallery(Compositor& compositor, bool dark, bool high_contrast,
     file.tag_count = 0;
     painter.DrawFileRowContent(file);
 
-    painter.DrawInfoBar({Rect(256, 392, 720, 42), L"Network snapshot",
-                         L"Showing cached results while the share refreshes.", {},
-                         InfoBarKind::Informational, State(), true});
+    {
+        // Every tone of the pane strip: one line, buttons on the right.
+        struct Tone { InfoBarKind kind; const wchar_t* title; const wchar_t* message; const wchar_t* action; };
+        static constexpr Tone tones[] = {
+            {InfoBarKind::Informational, L"Network snapshot", L"Results are a snapshot.", L"Refresh"},
+            {InfoBarKind::Success, L"Added to network index", L"Searches here are now instant.", nullptr},
+            {InfoBarKind::Warning, L"Drive is locked", L"The drive is still locked.", L"Unlock"},
+            {InfoBarKind::Error, L"Cannot open", L"This folder may not exist or was moved.", L"Retry"},
+            {InfoBarKind::Neutral, L"Recycle Bin", L"Items here can be restored.", nullptr},
+        };
+        float y = 380.0f;
+        for (const Tone& tone : tones) {
+            InfoBarSpec bar{};
+            bar.bounds = Rect(256, y, 720, 32);
+            bar.title = tone.title;
+            bar.message = tone.message;
+            bar.kind = tone.kind;
+            bar.show_close = tone.kind == InfoBarKind::Success;
+            if (tone.action) bar.actions[0] = tone.action;
+            if (tone.kind == InfoBarKind::Error) bar.actions[1] = L"Go up";
+            painter.DrawInfoBar(bar);
+            y += 38.0f;
+        }
+    }
     painter.DrawStatusBar({Rect(0, 646, 1000, 24), L"Ready | 1 selected (14.2 KB)",
                            L"14 files and folders", L"main | UTF-8 | Fluent mode", true});
 

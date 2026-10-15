@@ -1084,30 +1084,22 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             paneRc = PaneBodyBounds(paneVm, paneRect);
         }
         const float banner = PaneBannerHeight(paneVm, paneRc.right - paneRc.left, scale_, compositor_);
-        if ((paneVm.is_content_search || paneVm.network_live_action) && banner > 0) {
-            const float action_width = std::min(144.0f * scale_, (paneRc.right - paneRc.left - 16 * scale_) * 0.4f);
-            if (x >= paneRc.right - 8 * scale_ - action_width && x < paneRc.right - 8 * scale_ &&
-                y >= paneRc.top + pane_header_height_ && y < paneRc.top + pane_header_height_ + banner - 4 * scale_) {
-                out.region = paneVm.is_content_search ? HitTestResult::ContentIndexManage
-                                                      : HitTestResult::NetworkIndexAdd;
-                out.index = paneIndex;
-                return out;
-            }
-        }
-        if (paneVm.compare_active && !paneVm.is_changes && !paneVm.is_content_search && banner > 0 &&
+        if (banner > 0 && !paneVm.is_changes &&
             y >= paneRc.top + pane_header_height_ && y < paneRc.top + pane_header_height_ + banner - 4 * scale_) {
             const D2D1_RECT_F bar = D2D1::RectF(paneRc.left + 8 * scale_, paneRc.top + pane_header_height_,
                 paneRc.right - 8 * scale_, paneRc.top + pane_header_height_ + banner - 4 * scale_);
-            D2D1_RECT_F diffRc{}, exitRc{};
-            CompareBannerButtons(bar, scale_, diffRc, exitRc);
-            if (ContainsPt(diffRc, x, y)) {
-                out.region = HitTestResult::CompareDiffToggle;
-                out.index = paneIndex;
+            PaneBannerParts parts;
+            BuildPaneBanner(paneVm, bar, paneIndex, parts);
+            const fluent::InfoBarLayout lay = painter_.LayoutInfoBar(parts.bar);
+            for (int i = 0; i < 2; ++i) {
+                if (parts.regions[i] == HitTestResult::None || !ContainsPt(lay.actions[i], x, y)) continue;
+                out.region = parts.regions[i];
+                out.index = parts.indices[i];
                 return out;
             }
-            if (ContainsPt(exitRc, x, y)) {
-                out.region = HitTestResult::CompareExit;
-                out.index = paneIndex;
+            if (parts.bar.show_close && ContainsPt(lay.close, x, y)) {
+                out.region = HitTestResult::PaneBannerButton;
+                out.index = static_cast<int>(PaneBannerAction::Dismiss);
                 return out;
             }
         }

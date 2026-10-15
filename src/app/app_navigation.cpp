@@ -1645,7 +1645,7 @@ void ApplyNetworkConnect(AppState& s, const std::wstring& share, DWORD error) {
         const std::wstring why = app::NetworkConnectErrorText(error);
         tab->banner_message = !why.empty() ? why
             : tab->snapshot ? l10n::Get(l10n::StringId::CachedReadOnly)
-            : l10n::Pick(L"未登录到此共享。按 F5 重新连接。", L"Not signed in to this share. Press F5 to connect again.");
+            : l10n::Pick(L"未登录到此共享。", L"Not signed in to this share.");
     });
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
@@ -2455,6 +2455,32 @@ void OpenPath(AppState& s, const std::wstring& path) {
         s.ops.OpenWith(path);
         RecordRecentOpen(s, path, app::PlaceItemKind::File);
     }
+}
+
+bool HandlePaneBannerPress(AppState& s, const ui::HitTestResult& hit) {
+    if (hit.region != ui::HitTestResult::PaneBannerButton) return false;
+    using A = ui::PaneBannerAction;
+    switch (static_cast<A>(hit.index)) {
+    case A::Retry:
+    case A::Reconnect:
+    case A::Unlock:
+    case A::Refresh:
+        RefreshActiveTab(s);
+        break;
+    case A::GoUp:
+        GoUp(s);
+        break;
+    case A::Dismiss:
+        if (app::Tab* tab = ActiveTab(s)) {
+            tab->banner_title.clear();
+            tab->banner_message.clear();
+        }
+        break;
+    default:
+        break;
+    }
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+    return true;
 }
 
 void GoUp(AppState& s) {

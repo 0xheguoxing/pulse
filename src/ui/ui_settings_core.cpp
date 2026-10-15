@@ -235,6 +235,10 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
                 bar.message=message;
                 bar.kind=failed ? fluent::InfoBarKind::Error : fluent::InfoBarKind::Warning;
                 bar.show_close=false;
+                // Tinted against the card it sits in, not the page.
+                const float ca=card_alpha_;
+                bar.backdrop=D2D1::ColorF(theme.bg.r+(theme.surface_card.r-theme.bg.r)*ca,
+                    theme.bg.g+(theme.surface_card.g-theme.bg.g)*ca,theme.bg.b+(theme.surface_card.b-theme.bg.b)*ca,1.0f);
                 painter_.DrawInfoBar(bar);
                 if(lay.integration_retry.bottom>lay.integration_retry.top)
                     button(lay.integration_retry,l10n::Get(IntegrationRetryLabel(vm)),H::SettingsIntegration,5,true);

@@ -177,6 +177,10 @@ struct ColumnStripView {
 
 // Folder compare (two panes): per-entry status relative to the other pane.
 enum class CompareMark : uint8_t { Same = 0, OnlyHere = 1, Newer = 2, Older = 3, Differs = 4 };
+// Buttons on the strip above a file list (pane banner), main one first.
+enum class PaneBannerAction : int {
+    None = 0, Retry, GoUp, Reconnect, Unlock, Refresh, ManageIndex, AddNetworkIndex, Dismiss
+};
 
 struct PaneViewModel {
     using FilterMap = std::vector<int>;
@@ -208,7 +212,9 @@ struct PaneViewModel {
     float header_controls_opacity = 1.0f;
     std::wstring banner_title;
     std::wstring banner_message;
-    int banner_kind = 0; // 0 info, 1 success, 2 warning, 3 error
+    int banner_kind = 0; // 0 info, 1 success, 2 warning, 3 error, 4 neutral
+    PaneBannerAction banner_actions[2] = {PaneBannerAction::None, PaneBannerAction::None};
+    bool banner_dismissible = false;  // a close button that clears the banner
     // Derived data is shared with the tab cache. Search views can contain
     // 100k rows, so copying these containers for every animation frame is not
     // acceptable.
@@ -995,6 +1001,7 @@ struct HitTestResult {
         AddressSearchOptions,
         ContentIndexManage,
         NetworkIndexAdd,
+        PaneBannerButton,         // index = ui::PaneBannerAction
         SettingsContentIndex,
         SettingsFind, SettingsDisclosure, SettingsTheme, SettingsDropdown,
         SettingsContentAction,
@@ -1289,6 +1296,9 @@ public:
     WindowIdentityGeometry WindowIdentityLayout(const WindowViewModel& vm, float w) const;
     D2D1_RECT_F WindowIdentityRect(const WindowViewModel& vm, float w) const { return WindowIdentityLayout(vm, w).hit; }
     float PaneHeaderHeight() const { return pane_header_height_; }
+    // Height the focused pane's banner strip took in the last frame (one or
+    // two lines plus its gap); 0 before any frame or without a banner.
+    float FocusedPaneBannerHeight() const { return focused_banner_height_; }
     float ColumnHeaderHeight() const { return column_header_height_; }
     float RowHeight() const { return row_height_; }
     float ListRowHeightDip(const PaneViewModel& vm) const;
@@ -1841,6 +1851,7 @@ private:
     uint64_t collapse_start_ = 0;  // motion::NowMs()
     static constexpr float kSidebarCollapseMs = 200.0f;
     float pane_header_height_ = 40.0f;
+    float focused_banner_height_ = 0.0f;
     float column_header_height_ = 32.0f;
     float row_height_ = 34.0f;
     float row_height_dip_ = 34.0f;

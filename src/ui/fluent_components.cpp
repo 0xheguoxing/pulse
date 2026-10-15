@@ -2697,95 +2697,211 @@ void Painter::DrawStatusBar(const StatusBarSpec& spec) {
              CaptionFormat(), theme_->text_secondary, HorizontalAlignment::Right);
 }
 
-void Painter::DrawInfoBar(const InfoBarSpec& spec) {
-    if (!theme_ || Width(spec.bounds) <= 0.0f || Height(spec.bounds) <= 0.0f) {
-        return;
-    }
-    D2D1_COLOR_F accent;
-    std::wstring_view fallback_glyph;
-    switch (spec.kind) {
+namespace {
+D2D1_COLOR_F InfoMix(const D2D1_COLOR_F& a, const D2D1_COLOR_F& b, float t) noexcept {
+    return D2D1::ColorF(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1.0f);
+}
+float InfoLuma(const D2D1_COLOR_F& c) noexcept { return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b; }
+
+// One tone per kind: the glyph, the text of the main action, the wash and the edge.
+struct InfoTone { D2D1_COLOR_F glyph, action, fill, edge; };
+
+InfoTone MakeInfoTone(const Theme& theme, InfoBarKind kind, bool dark, bool high_contrast,
+                      const D2D1_COLOR_F& backdrop) noexcept {
+    if (high_contrast)
+        return {theme.text, theme.accent_text, theme.surface_flyout, theme.stroke_card};
+    D2D1_COLOR_F glyph{}, action{};
+    switch (kind) {
     case InfoBarKind::Success:
-        accent = dark_ ? HexColor(0x45D7A4) : HexColor(0x107C5A);
-        fallback_glyph = kSuccess;
+        glyph = action = dark ? HexColor(0x5FD4A0) : HexColor(0x0F7B4F);
         break;
     case InfoBarKind::Warning:
-        accent = dark_ ? HexColor(0xF7D154) : HexColor(0x8A5500);
-        fallback_glyph = kWarning;
+        glyph = dark ? HexColor(0xF2C14E) : HexColor(0xC98A00);
+        action = dark ? HexColor(0xF2C14E) : HexColor(0x9A5B00);
         break;
     case InfoBarKind::Error:
-        accent = theme_->danger;
-        fallback_glyph = kError;
+        glyph = action = dark ? HexColor(0xFF8F86) : HexColor(0xC42B1C);
+        break;
+    case InfoBarKind::Neutral: {
+        // A quiet disc: the secondary text tone, eased into the backdrop.
+        glyph = InfoMix(backdrop, theme.text_secondary, 0.72f);
+        action = theme.text;
+        action.a = 1.0f;
+        const D2D1_COLOR_F ink = dark ? HexColor(0xFFFFFF) : HexColor(0x000000);
+        return {glyph, action, InfoMix(backdrop, ink, dark ? 0.05f : 0.035f),
+                InfoMix(backdrop, ink, dark ? 0.11f : 0.10f)};
+    }
+    case InfoBarKind::Informational:
+    default: {
+        // The theme accent, pushed toward the text tone until it reads on the wash.
+        D2D1_COLOR_F accent = theme.accent;
+        accent.a = 1.0f;
+        const D2D1_COLOR_F toward = dark ? HexColor(0xFFFFFF) : HexColor(0x000000);
+        for (int step = 0; step < 8; ++step) {
+            const float luma = InfoLuma(accent);
+            if (dark ? luma >= 0.50f : luma <= 0.30f) break;
+            accent = InfoMix(accent, toward, 0.16f);
+        }
+        glyph = action = accent;
+        break;
+    }
+    }
+    const float fill = dark ? 0.13f : (kind == InfoBarKind::Warning ? 0.12f : 0.08f);
+    const float edge = dark ? 0.30f : 0.24f;
+    return {glyph, action, InfoMix(backdrop, glyph, fill), InfoMix(backdrop, glyph, edge)};
+}
+}  // namespace
+
+InfoBarLayout Painter::LayoutInfoBar(const InfoBarSpec& spec) const {
+    InfoBarLayout out{};
+    const auto& b = spec.bounds;
+    const bool stacked = Height(b) >= Px(56.0f) && !spec.message.empty();
+    out.two_line = stacked || (Height(b) >= Px(44.0f) && !spec.message.empty());
+    const float line_top = stacked ? b.top + Px(10.0f) : b.top + Px(6.0f);
+    const float line_mid = line_top + Px(10.0f);
+    const float lead = stacked ? Px(14.0f) : Px(12.0f);
+    out.glyph = D2D1::RectF(b.left + lead, line_mid - Px(8.0f), b.left + lead + Px(16.0f), line_mid + Px(8.0f));
+    const float text_left = out.glyph.right + (stacked ? Px(10.0f) : Px(8.0f));
+    float right = b.right - Px(4.0f) - Px(spec.trailing_width);
+    if (spec.show_close) {
+        const float close_right = b.right - Px(spec.close_inset + 2.0f);
+        out.close = D2D1::RectF(close_right - Px(24.0f), line_mid - Px(12.0f), close_right, line_mid + Px(12.0f));
+        right = (std::min)(right, out.close.left - Px(2.0f));
+    }
+    for (int i = 1; i >= 0; --i) {
+        if (spec.actions[i].empty()) continue;
+        const float w = MeasureTextWidth(compositor_, i == 0 ? SectionFormat() : NavFormat(), spec.actions[i]) + Px(18.0f);
+        out.actions[i] = D2D1::RectF(right - w, line_mid - Px(12.0f), right, line_mid + Px(12.0f));
+        right -= w + Px(2.0f);
+    }
+    if (!spec.actions[0].empty() || !spec.actions[1].empty()) right -= Px(6.0f);
+    right = (std::max)(right, text_left);
+    const float title_w = (std::min)(MeasureTextWidth(compositor_, SectionFormat(), spec.title) + Px(1.0f), right - text_left);
+    out.title = D2D1::RectF(text_left, line_top, text_left + title_w, line_top + Px(20.0f));
+    if (spec.message.empty()) return out;
+    if (stacked) {
+        out.message = D2D1::RectF(text_left, b.top + Px(32.0f), b.right - Px(12.0f), b.bottom - Px(4.0f));
+    } else if (out.two_line) {
+        // The second line runs under the buttons, to the edge of the bar.
+        out.message = D2D1::RectF(text_left, line_top + Px(20.0f), b.right - Px(12.0f), line_top + Px(40.0f));
+    } else {
+        const float x = spec.title.empty() ? text_left : out.title.right + Px(10.0f);
+        out.message = D2D1::RectF((std::min)(x, right), line_top, right, line_top + Px(20.0f));
+    }
+    return out;
+}
+
+float Painter::InfoBarStripHeight(const InfoBarSpec& spec, float width) const {
+    if (spec.message.empty()) return Px(32.0f);
+    InfoBarSpec probe = spec;
+    probe.bounds = D2D1::RectF(0.0f, 0.0f, width, Px(32.0f));
+    const InfoBarLayout one = LayoutInfoBar(probe);
+    const float need = MeasureTextWidth(compositor_, NavFormat(), spec.message);
+    return one.message.right - one.message.left + Px(0.5f) >= need ? Px(32.0f) : Px(50.0f);
+}
+
+D2D1_COLOR_F Painter::StatusToneColor(InfoBarKind kind) const {
+    if (!theme_) return D2D1::ColorF(0, 0, 0, 0);
+    return MakeInfoTone(*theme_, kind, dark_, high_contrast_, theme_->bg).glyph;
+}
+
+// A solid round glyph with the symbol cut out of it, in the tone of `kind`.
+void Painter::DrawStatusGlyph(InfoBarKind kind, const D2D1_RECT_F& rect, D2D1_COLOR_F backdrop) {
+    if (!theme_ || !dc_ || Width(rect) <= 0.0f) return;
+    EnsureStrokeStyle();
+    if (backdrop.a <= 0.0f) backdrop = theme_->bg;
+    const InfoTone tone = MakeInfoTone(*theme_, kind, dark_, high_contrast_, backdrop);
+    const auto& g = rect;
+    const D2D1_POINT_2F c = D2D1::Point2F((g.left + g.right) * 0.5f, (g.top + g.bottom) * 0.5f);
+    const float r = (g.right - g.left) * 0.5f;
+    dc_->FillEllipse(D2D1::Ellipse(c, r, r), ScratchBrush(tone.glyph));
+    const D2D1_COLOR_F cut = high_contrast_ ? theme_->bg : (InfoLuma(tone.glyph) > 0.5f ? HexColor(0x1C1C1C) : HexColor(0xFFFFFF));
+    auto* brush = ScratchBrush(cut);
+    const float w = (std::max)(1.0f, Px(1.6f));
+    const float u = r / 8.0f;
+    switch (kind) {
+    case InfoBarKind::Success:
+        dc_->DrawLine(D2D1::Point2F(c.x - 3.1f * u, c.y + 0.2f * u), D2D1::Point2F(c.x - 1.0f * u, c.y + 2.3f * u), brush, w, round_stroke_.get());
+        dc_->DrawLine(D2D1::Point2F(c.x - 1.0f * u, c.y + 2.3f * u), D2D1::Point2F(c.x + 3.1f * u, c.y - 2.1f * u), brush, w, round_stroke_.get());
+        break;
+    case InfoBarKind::Warning:
+        dc_->DrawLine(D2D1::Point2F(c.x, c.y - 3.7f * u), D2D1::Point2F(c.x, c.y + 0.9f * u), brush, w, round_stroke_.get());
+        dc_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(c.x, c.y + 3.5f * u), 1.0f * u, 1.0f * u), brush);
+        break;
+    case InfoBarKind::Error:
+        dc_->DrawLine(D2D1::Point2F(c.x - 2.3f * u, c.y - 2.3f * u), D2D1::Point2F(c.x + 2.3f * u, c.y + 2.3f * u), brush, w, round_stroke_.get());
+        dc_->DrawLine(D2D1::Point2F(c.x + 2.3f * u, c.y - 2.3f * u), D2D1::Point2F(c.x - 2.3f * u, c.y + 2.3f * u), brush, w, round_stroke_.get());
         break;
     case InfoBarKind::Informational:
+    case InfoBarKind::Neutral:
     default:
-        accent = theme_->accent;
-        fallback_glyph = kInfo;
+        dc_->DrawLine(D2D1::Point2F(c.x, c.y - 0.8f * u), D2D1::Point2F(c.x, c.y + 3.5f * u), brush, w, round_stroke_.get());
+        dc_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(c.x, c.y - 3.3f * u), 1.0f * u, 1.0f * u), brush);
         break;
     }
-    const float radius = Px(8.0f);
-    if (!high_contrast_) {
-        auto shadow = spec.bounds;
-        shadow.top += Px(2.0f);
-        shadow.bottom += Px(2.0f);
-        FillRoundedRect(shadow, radius, Rgba(0x000000, dark_ ? 28 : 12));
+}
+
+void Painter::DrawInfoBar(const InfoBarSpec& spec) {
+    if (!theme_ || !dc_ || Width(spec.bounds) <= 0.0f || Height(spec.bounds) <= 0.0f) {
+        return;
     }
-    FillRoundedRect(spec.bounds, radius, theme_->surface_flyout);
-    StrokeRoundedRect(spec.bounds, radius,
-                      high_contrast_ ? theme_->stroke_card : theme_->stroke_card);
-    FillRoundedAccent(dc_, ScratchBrush(accent), spec.bounds, radius, Px(3.0f), AccentEdge::Left);
+    EnsureStrokeStyle();
+    const D2D1_COLOR_F backdrop = spec.backdrop.a > 0.0f ? spec.backdrop : theme_->bg;
+    const InfoTone tone = MakeInfoTone(*theme_, spec.kind, dark_, high_contrast_, backdrop);
+    const InfoBarLayout lay = LayoutInfoBar(spec);
     const bool stacked = Height(spec.bounds) >= Px(56.0f) && !spec.message.empty();
-    const float icon_top = stacked ? spec.bounds.top + Px(spec.show_icon_background ? 12.0f : 6.0f)
-        : (spec.bounds.top + spec.bounds.bottom - Px(28.0f)) * 0.5f;
-    const auto glyph_bounds = D2D1::RectF(spec.bounds.left + Px(14.0f), icon_top,
-                                          spec.bounds.left + Px(42.0f), icon_top + Px(28.0f));
-    if (spec.show_icon_background) {
-        auto icon_fill = accent;
-        icon_fill.a = dark_ ? 0.18f : 0.10f;
-        FillRoundedRect(glyph_bounds, Px(14.0f), icon_fill);
+    // Flat: a wash of the tone and a hairline of it, sitting in the page.
+    const float radius = stacked ? Px(8.0f) : Px(6.0f);
+    FillRoundedRect(spec.bounds, radius, tone.fill);
+    const float inset = 0.5f;
+    StrokeRoundedRect(D2D1::RectF(spec.bounds.left + inset, spec.bounds.top + inset,
+                                  spec.bounds.right - inset, spec.bounds.bottom - inset),
+                      radius - inset, tone.edge);
+    DrawStatusGlyph(spec.kind, lay.glyph, backdrop);
+    DrawText(spec.title, lay.title, SectionFormat(), theme_->text, HorizontalAlignment::Left, tone.fill);
+    if (!spec.message.empty() && lay.message.right > lay.message.left + Px(8.0f)) {
+        if (stacked) {
+            ComPtr<IDWriteTextLayout> layout;
+            if (compositor_ && compositor_->DwriteFactory() && SUCCEEDED(compositor_->DwriteFactory()->CreateTextLayout(
+                    spec.message.data(), static_cast<UINT32>(spec.message.size()), CaptionFormat(),
+                    Width(lay.message), Height(lay.message), &layout))) {
+                layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+                layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+                dc_->DrawTextLayout(D2D1::Point2F(lay.message.left, lay.message.top),
+                                    layout.get(), ScratchBrush(theme_->text_secondary), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            }
+        } else {
+            // One line, cut with an ellipsis rather than wrapped out of sight.
+            ComPtr<IDWriteTextLayout> layout;
+            if (compositor_ && compositor_->DwriteFactory() && SUCCEEDED(compositor_->DwriteFactory()->CreateTextLayout(
+                    spec.message.data(), static_cast<UINT32>(spec.message.size()), NavFormat(),
+                    Width(lay.message), Height(lay.message), &layout))) {
+                layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                ComPtr<IDWriteInlineObject> ellipsis;
+                if (SUCCEEDED(compositor_->DwriteFactory()->CreateEllipsisTrimmingSign(layout.get(), &ellipsis))) {
+                    const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+                    layout->SetTrimming(&trimming, ellipsis.get());
+                }
+                const D2D1_RECT_F snapped = typography::SnapVerticalBounds(lay.message);
+                dc_->DrawTextLayout(D2D1::Point2F(snapped.left, snapped.top), layout.get(),
+                                    ScratchBrush(theme_->text_secondary), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            }
+        }
     }
-    DrawGlyph(spec.glyph.empty() ? fallback_glyph : spec.glyph, glyph_bounds, accent);
-    const float close_space = (spec.show_close ? Px(30.0f + spec.close_inset) : Px(8.0f)) + Px(spec.trailing_width);
-    const auto text_bounds = D2D1::RectF(glyph_bounds.right + Px(10.0f), spec.bounds.top,
-                                         spec.bounds.right - close_space, spec.bounds.bottom);
-    if (stacked) {
-        DrawText(spec.title, D2D1::RectF(text_bounds.left, text_bounds.top + Px(10.0f),
-                 text_bounds.right, text_bounds.top + Px(30.0f)), BodyFormat(), theme_->text);
-        ComPtr<IDWriteTextLayout> layout;
-        if (compositor_ && compositor_->DwriteFactory() && SUCCEEDED(compositor_->DwriteFactory()->CreateTextLayout(
-                spec.message.data(), static_cast<UINT32>(spec.message.size()), CaptionFormat(),
-                Width(text_bounds), Height(text_bounds) - Px(36.0f), &layout))) {
-            layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
-            layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-            dc_->DrawTextLayout(D2D1::Point2F(text_bounds.left, text_bounds.top + Px(32.0f)),
-                                layout.get(), ScratchBrush(theme_->text_secondary), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-        }
-    } else {
-        const float measured_title = MeasureTextWidth(compositor_, BodyFormat(), spec.title);
-        const bool show_message = !spec.message.empty() &&
-            measured_title + Px(12.0f + 120.0f) <= Width(text_bounds);
-        const float title_width = show_message ? measured_title : Width(text_bounds);
-        DrawText(spec.title,
-                 D2D1::RectF(text_bounds.left, text_bounds.top,
-                            text_bounds.left + title_width, text_bounds.bottom),
-                 BodyFormat(), theme_->text);
-        if (show_message) {
-            DrawText(spec.message,
-                     D2D1::RectF(text_bounds.left + title_width + Px(12.0f), text_bounds.top,
-                                text_bounds.right, text_bounds.bottom),
-                     CaptionFormat(), theme_->text_secondary);
-        }
+    for (int i = 0; i < 2; ++i) {
+        if (spec.actions[i].empty()) continue;
+        const auto& r = lay.actions[i];
+        if (spec.hovered_action == i)
+            FillRoundedRect(r, Px(4.0f), high_contrast_ ? theme_->fill_hover : InfoMix(tone.fill, tone.glyph, dark_ ? 0.16f : 0.12f));
+        DrawText(spec.actions[i], r, i == 0 ? SectionFormat() : NavFormat(),
+                 i == 0 ? tone.action : theme_->text_secondary, HorizontalAlignment::Center, tone.fill);
     }
     if (spec.show_close) {
-        const float close_right = spec.bounds.right - Px(spec.close_inset);
-        if (spec.state.hovered) {
-            const float center_y = (spec.bounds.top + spec.bounds.bottom) * 0.5f;
-            FillRoundedRect(D2D1::RectF(close_right - Px(28.0f), center_y - Px(14.0f),
-                close_right, center_y + Px(14.0f)), Px(4.0f), theme_->fill_hover);
-        }
-        DrawGlyphWithFormat(kClose,
-                            D2D1::RectF(close_right - Px(26.0f), spec.bounds.top,
-                                       close_right - Px(2.0f), spec.bounds.bottom),
-                            theme_->text_secondary, MicroIconFormat());
+        if (spec.state.hovered)
+            FillRoundedRect(lay.close, Px(4.0f), high_contrast_ ? theme_->fill_hover : InfoMix(tone.fill, tone.glyph, dark_ ? 0.16f : 0.12f));
+        DrawGlyphWithFormat(kClose, lay.close, theme_->text_secondary, MicroIconFormat());
     }
 }
 

@@ -3,6 +3,7 @@
 #include "split_tree_shape.h"
 #include "layout_pane_selection.h"
 #include "network_sidebar.h"
+#include "pane_banner.h"
 #include "../common/config_json.h"
 #include "search_query.h"
 #include "entry_group.h"
@@ -1594,7 +1595,7 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
     out.header_controls_opacity = pane.header_animation.opacity;
     out.banner_title = tab->banner_title;
     out.banner_message = tab->banner_message;
-    out.banner_kind = tab->net_readonly ? 2 : 0;
+    out.banner_kind = tab->net_readonly ? 2 : 0;  // refined below, once the view kind is known
     out.filter_map.reset();
     out.tag_dots.reset();
     out.loading = tab->loading;
@@ -1640,6 +1641,14 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
         out.search_crumb = crumb.empty() ? l10n::Get(l10n::StringId::Search) : crumb;
         // Keep pulse:search:... so the address bar is one segment, not C:\ splits.
         out.path = tab->current_path;
+    }
+    if (!out.banner_message.empty()) {
+        const PaneBannerStyle banner = ClassifyPaneBanner(*tab, out.can_go_up, out.is_content_search,
+                                                          out.network_live_action);
+        out.banner_kind = banner.kind;
+        out.banner_actions[0] = banner.actions[0];
+        out.banner_actions[1] = banner.actions[1];
+        out.banner_dismissible = banner.dismissible;
     }
     out.content_results = tab->content_results;
     out.search_snippets = tab->search_snippets;
@@ -1715,7 +1724,9 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
                        c[1], c[2], c[3], c[4]);
             out.banner_message = summary;
         }
-        out.banner_kind = 0;
+        out.banner_kind = 4;
+        out.banner_actions[0] = out.banner_actions[1] = ui::PaneBannerAction::None;
+        out.banner_dismissible = false;
         if (out.compare_diff_only && tab->snapshot && !tab->content_results &&
             tab->compare_marks->size() == tab->EntryCount()) {
             if (!tab->view_compare_map || tab->view_compare_base != out.filter_map ||
