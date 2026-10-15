@@ -124,5 +124,14 @@ int main() {
           "shell:RecycleBinFolder and lower-case shell parsing names are accepted");
     Check(C::NormalizeLaunchPath(L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", launch) &&
           launch == L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", "This PC argument is unchanged");
+    // The Drive verb's "%1" = "C:\" reaches argv as C:" (\" is an escaped
+    // quote). Resolved as is, it named the drive's current directory instead.
+    wchar_t cwd[MAX_PATH]{};
+    GetCurrentDirectoryW(MAX_PATH, cwd);
+    const std::wstring drive = std::wstring(1, cwd[0]) + L":";
+    Check(C::NormalizeLaunchPath(drive + L"\"", launch) && launch == drive + L"\\",
+          "a drive root with the stray quote of \"%1\" opens the root, not the current directory");
+    Check(C::NormalizeLaunchPath(L"\"D:\\Data\"", launch) && launch == L"D:\\Data",
+          "quotes around a folder are dropped");
     return failures ? 1 : 0;
 }

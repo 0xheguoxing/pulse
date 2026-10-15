@@ -27,6 +27,7 @@ struct ExplorerWindowTakeover::Shared {
     HWND window = nullptr;
     UINT message = 0;
     std::atomic<bool> stopping{false};
+    std::atomic<bool> take_this_pc{true};
     std::atomic<DWORD> thread_id{0};
     std::mutex handoffs_mutex;
     std::vector<std::weak_ptr<ExplorerHandoff>> handoffs;
@@ -274,6 +275,9 @@ public:
             probe.age_ms = static_cast<unsigned>(now - it->registered_at);
             ExplorerTakeoverRequest request;
             Read(*it, probe, request);
+            // This PC opened while 「此电脑」 is left to File Explorer: the user
+            // chose Explorer for it (the desktop icon, Win+E set to This PC).
+            if (probe.supported && request.folder.empty() && !shared_.take_this_pc) probe.supported = false;
             if (probe.view_ready && !it->view_ready_at) it->view_ready_at = now;
             probe.view_age_ms = it->view_ready_at ? static_cast<unsigned>(now - it->view_ready_at) : 0;
             const ExplorerTakeoverStep step = DecideExplorerTakeover(probe);
@@ -622,6 +626,8 @@ ExplorerWindowTakeover::ExplorerWindowTakeover(HWND window, UINT message)
 }
 
 ExplorerWindowTakeover::~ExplorerWindowTakeover() { Stop(); }
+
+void ExplorerWindowTakeover::SetTakeThisPc(bool on) { shared_->take_this_pc = on; }
 
 void ExplorerWindowTakeover::Stop(DWORD timeout_ms) {
     if (!thread_) return;

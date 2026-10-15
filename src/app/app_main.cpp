@@ -622,6 +622,21 @@ static void NoteUiActivity(AppState& s, HWND hwnd, bool visible) {
     SyncUiTimerRate(s, hwnd, visible);
 }
 
+// The second launch waits for this reply, and opening a folder can touch the
+// disk: a drive spinning up, a share that does not answer (~3 s), a BitLocker
+// prompt. Run inside WM_COPYDATA, that ran out the sender's time and it
+// reported “无法确认运行中的 Pulse 已收到此请求” although the folder opened a
+// moment later. So the request is accepted now and opened from the queue.
+static void QueueExternalOpen(AppState& s, std::wstring path) {
+    auto request = std::make_unique<std::wstring>(std::move(path));
+    const HWND host = s.core.host.Hwnd();
+    if (host && PostMessageW(host, WM_OPEN_EXTERNAL, 0, reinterpret_cast<LPARAM>(request.get()))) {
+        request.release();
+        return;
+    }
+    OpenExternalFolder(s, *request);
+}
+
 // A second launch or the Explorer tag verb reached the host window (the
 // single-instance endpoint, host_window.h); `s` is the window that handles it.
 static BOOL HandleInstanceCopyData(AppState& s, COPYDATASTRUCT* cds) {
@@ -636,12 +651,12 @@ static BOOL HandleInstanceCopyData(AppState& s, COPYDATASTRUCT* cds) {
         const auto accepted = s.single_instance.AcceptOpenRequest(request, GetTickCount64());
         if (accepted == app::SingleInstanceCoordinator::OpenAcceptance::Invalid) return FALSE;
         if (accepted == app::SingleInstanceCoordinator::OpenAcceptance::New)
-            OpenExternalFolder(s, request.path);  // plan §6: tab, window or the open one
+            QueueExternalOpen(s, std::move(request.path));  // plan §6: tab, window or the open one
         return TRUE; // acceptance, not a claim that asynchronous enumeration succeeded
     }
     std::wstring path;
     if (!app::SingleInstanceCoordinator::DecodeOpenPath(cds, path)) return FALSE;
-    OpenExternalFolder(s, path);
+    QueueExternalOpen(s, std::move(path));
     return TRUE;
 }
 
@@ -3141,7 +3156,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             bool forwarded = true;
             if (shell_tag) forwarded = app::ForwardShellTagRequest(*shell_tag);
             // A sign-in launch must not pop up the window that is already running.
-            else if (!startup_launch && !shell_tag_com) forwarded = state.single_instance.ForwardOpenPath(state.open_path, 5000);
+            else if (!startup_launch && !shell_tag_com) forwarded = state.single_instance.ForwardOpenPath(state.open_path, 10000);
             if (!forwarded) {
                 // This process exits before WM_CREATE initializes localization.
                 // Read the preference without repairing startup registration.
@@ -3221,6 +3236,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             }
             if (message == WM_RELEASE_WINDOW_STATES) {
                 ReleaseRetiredWindowStates();
+                return 0;
+            }
+            if (message == WM_OPEN_EXTERNAL) {
+                // QueueExternalOpen: the window most recently used now.
+                std::unique_ptr<std::wstring> path(reinterpret_cast<std::wstring*>(lParam));
+                if (path && target) OpenExternalFolder(*target, *path);
                 return 0;
             }
             if (message != WM_COPYDATA) return std::nullopt;

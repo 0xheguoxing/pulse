@@ -277,8 +277,28 @@ void BindCurrentLayout(AppState& s) {
 // blocks for ~13 s, and startup asked twice (ResolveOpenFolderPath, then
 // SelectLaunchedFile), so the window took ~27 s to appear. A share gets a
 // second; past that the path opens as a folder and the listing says why.
+static DWORD QueryLaunchArgumentAttributes(const std::wstring& path);
+
+// One external open asks up to three times (OpenExternalFolder, then
+// OpenFolderInNewTab and SelectLaunchedFile): the answer is kept for a few
+// seconds so a share that does not answer costs one wait, not three.
+// A drive root is a folder without asking: the first access to a sleeping
+// disk waits for it to spin up.
 static DWORD LaunchArgumentAttributes(const std::wstring& path) {
     if (path.empty()) return INVALID_FILE_ATTRIBUTES;
+    if ((path.size() == 2 || (path.size() == 3 && (path[2] == L'\\' || path[2] == L'/'))) && path[1] == L':' &&
+        (path[0] | 0x20) >= L'a' && (path[0] | 0x20) <= L'z')
+        return FILE_ATTRIBUTE_DIRECTORY;
+    struct Cached { std::wstring path; DWORD attrs = INVALID_FILE_ATTRIBUTES; ULONGLONG tick = 0; };
+    thread_local Cached cached;
+    const ULONGLONG now = GetTickCount64();
+    if (cached.tick && now - cached.tick < 3000 && cached.path == path) return cached.attrs;
+    const DWORD attrs = QueryLaunchArgumentAttributes(path);
+    cached = {path, attrs, GetTickCount64()};
+    return attrs;
+}
+
+static DWORD QueryLaunchArgumentAttributes(const std::wstring& path) {
     const bool remote = fs::IsUncPath(path) || (path.size() >= 2 && path[1] == L':' &&
         GetDriveTypeW((path.substr(0, 2) + L"\\").c_str()) == DRIVE_REMOTE);
     if (!remote) return GetFileAttributesW(path.c_str());

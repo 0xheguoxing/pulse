@@ -49,6 +49,7 @@ void SyncExplorerTakeover(AppState& s) {
         s.explorer_takeover->Stop();
         s.explorer_takeover.reset();
     }
+    if (s.explorer_takeover) s.explorer_takeover->SetTakeThisPc(s.isolatedTest || s.appPrefs.integration_this_pc);
 }
 
 // Explorer held the foreground; the takeover request arrives while it still

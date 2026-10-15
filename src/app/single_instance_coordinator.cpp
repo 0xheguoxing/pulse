@@ -99,6 +99,16 @@ bool SingleInstanceCoordinator::NormalizeLaunchPath(const std::wstring& input, s
     // The Recycle Bin verb (设为默认文件管理器) opens Pulse's own view.
     if (IsRecycleBinArgument(input)) { output = L"pulse:recycle"; return true; }
     auto path = input;
+    // The Drive verb passes "%1" = "C:\", and the C runtime reads its \" as
+    // an escaped quote: the argument arrives as C:". Kept, GetFullPathName
+    // resolves it against that drive's current directory, so double-clicking
+    // C: in File Explorer opened C:\Windows\System32 (the verb's working
+    // directory). Quotes are never part of a path; drop them first.
+    while (!path.empty() && (path.front() == L'"' || path.back() == L'"')) {
+        if (path.front() == L'"') path.erase(path.begin());
+        if (!path.empty() && path.back() == L'"') path.pop_back();
+    }
+    if (path.empty()) { output.clear(); return true; }
     std::replace(path.begin(), path.end(), L'/', L'\\');
     if (path.size() == 2 && path[1] == L':') path += L'\\';
     wchar_t absolute[32768]{};

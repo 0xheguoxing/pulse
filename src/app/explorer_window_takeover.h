@@ -42,6 +42,8 @@ public:
 
     // Ends the thread, waiting at most `timeout_ms`.
     void Stop(DWORD timeout_ms = 2000);
+    // Whether This PC windows are taken too (「此电脑」 is handed to Pulse).
+    void SetTakeThisPc(bool on);
 
     struct Shared;
 
