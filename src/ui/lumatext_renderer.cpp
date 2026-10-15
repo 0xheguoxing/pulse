@@ -1366,6 +1366,16 @@ struct LumaTextRenderer::Impl {
             form.ptCurrentPos = {static_cast<LONG>(pad + caret_x - scroll),
                                  wraps ? static_cast<LONG>(caret_top - 1.0f) : 0};
             ImmSetCompositionWindow(imc, &form);
+            // The EDIT cannot answer IMR_QUERYCHARPOSITION, so without this an
+            // IME guesses where candidates go; past the end of a long name it
+            // put them at the top-left of the window (#188).
+            CANDIDATEFORM candidate{};
+            candidate.dwIndex = 0;
+            candidate.dwStyle = CFS_EXCLUDE;
+            candidate.ptCurrentPos = form.ptCurrentPos;
+            candidate.rcArea = {form.ptCurrentPos.x, wraps ? form.ptCurrentPos.y : 0, form.ptCurrentPos.x + 1,
+                                wraps ? static_cast<LONG>(std::ceil(caret_bottom + 1.0f)) : h};
+            ImmSetCandidateWindow(imc, &candidate);
             ImmReleaseContext(hwnd, imc);
         }
         return presented;
