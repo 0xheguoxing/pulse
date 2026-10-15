@@ -437,6 +437,63 @@ RenameResult RenameInProcess(const std::wstring& source, const std::wstring& new
     return RenameResult::Completed;
 }
 
+// A drive root ("C:\", "\\?\C:\") as "C:\".
+bool DriveRootOf(const std::wstring& path, std::wstring& root) {
+    const std::wstring plain = path::StripExtendedPathPrefix(path);
+    if (plain.size() < 2 || plain.size() > 3 || plain[1] != L':' || !std::iswalpha(plain[0])) return false;
+    if (plain.size() == 3 && plain[2] != L'\\' && plain[2] != L'/') return false;
+    root = { static_cast<wchar_t>(std::towupper(plain[0])), L':', L'\\' };
+    return true;
+}
+
+// This PC rows read "Label (C:)", or "share (\\server) (Z:)" for a network
+// drive without a label, and the rename field starts from that text.
+std::wstring DriveLabelFromRename(std::wstring name, wchar_t letter) {
+    const auto trim = [](std::wstring& text) {
+        while (!text.empty() && std::iswspace(text.back())) text.pop_back();
+        while (!text.empty() && std::iswspace(text.front())) text.erase(text.begin());
+    };
+    trim(name);
+    size_t open = name.rfind(L" (");
+    if (open != std::wstring::npos && name.size() == open + 5 && name[open + 3] == L':' && name.back() == L')' &&
+        std::towupper(name[open + 2]) == std::towupper(letter)) {
+        name.erase(open);
+        trim(name);
+    }
+    open = name.rfind(L" (\\\\");
+    if (open != std::wstring::npos && !name.empty() && name.back() == L')') {
+        name.erase(open);
+        trim(name);
+    }
+    return name;
+}
+
+// Drives are renamed by label, as in File Explorer (#208): This PC's own
+// SetNameOf sets the volume label (asking for elevation the way Explorer
+// does) or the Shell's label of a mapped network drive. A drive root cannot
+// be moved, so the file rename path always failed for it.
+bool RenameDriveLabel(const std::wstring& root, const std::wstring& typed, HWND owner, std::wstring* error) {
+    const std::wstring label = DriveLabelFromRename(typed, root.front());
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    HRESULT hr = SHParseDisplayName(root.c_str(), nullptr, &pidl, 0, nullptr);
+    IShellFolder* parent = nullptr;
+    PCUITEMID_CHILD child = nullptr;
+    if (SUCCEEDED(hr)) hr = SHBindToParent(pidl, IID_PPV_ARGS(&parent), &child);
+    if (SUCCEEDED(hr)) {
+        PITEMID_CHILD renamed = nullptr;
+        hr = parent->SetNameOf(owner, child, label.c_str(), SHGDN_NORMAL, &renamed);
+        if (renamed) CoTaskMemFree(renamed);
+        parent->Release();
+    }
+    if (pidl) CoTaskMemFree(pidl);
+    if (SUCCEEDED(hr)) return true;
+    if (error) {
+        *error = hr == HRESULT_FROM_WIN32(ERROR_CANCELLED) ? l10n::Pick(L"已取消", L"Canceled")
+            : RenameFailureText(HRESULT_FACILITY(hr) == FACILITY_WIN32 ? HRESULT_CODE(hr) : ERROR_GEN_FAILURE);
+    }
+    return false;
+}
+
 struct TransferEntry {
     std::wstring source;
     std::wstring destination;
@@ -2984,6 +3041,30 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
     }
 
     auto& client = ipc::ShellClient::Instance();
+
+    // A drive takes a label, not a file name: "Label (C:)" is not one.
+    std::wstring drive_root;
+    if (req.type == OpType::Rename && req.sources.size() == 1 && DriveRootOf(req.sources.front(), drive_root)) {
+        std::wstring error;
+        const bool renamed = !shell_cancel_requested_.load() && !stopping_.load() &&
+            RenameDriveLabel(drive_root, req.new_name, ui_hwnd_.load(), &error);
+        SetStatus([&](OpStatus& st) {
+            st.active = false;
+            st.percent = -1.0f;
+            ++st.completed_ops;
+            if (renamed) {
+                OpRequest shown = req;  // the label set, not the typed " (Z:)"
+                shown.new_name = DriveLabelFromRename(req.new_name, drive_root.front());
+                st.completed_items = st.total_items;
+                st.phase = OpPhase::Completed;
+                st.summary = Describe(shown) + l10n::Pick(L" 完成", L" completed");
+            } else {
+                st.phase = OpPhase::Failed;
+                st.last_error = error.empty() ? l10n::Pick(L"已取消", L"Canceled") : error;
+            }
+        });
+        return;
+    }
 
     if (req.type == OpType::Rename || req.type == OpType::BatchRename) {
         bool valid = !req.sources.empty() && (req.type != OpType::Rename || req.sources.size() == 1);

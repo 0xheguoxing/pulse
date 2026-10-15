@@ -11,6 +11,7 @@
 #include "../common/path_utils.h"
 #include "../common/display_path.h"
 #include "../common/text_format.h"
+#include "../fs/drive_label.h"
 #include "../ops/clipboard.h"
 #include <commctrl.h>
 #include <prsht.h>
@@ -1367,7 +1368,7 @@ SidebarModel BuildSidebarModel(const fs::RecycleBinInfo* recycle) {
         DWORD sn = 0;
         GetVolumeInformationW(root, volName, MAX_PATH, &sn, nullptr, nullptr, nullptr, 0);
         SidebarEntry e;
-        e.label = std::wstring(volName[0] ? volName : l10n::Get(l10n::StringId::LocalDisk).c_str()) +
+        e.label = fs::DriveLabel(root[0], volName, l10n::Get(l10n::StringId::LocalDisk)) +
                   L" (" + root[0] + L":)";
         e.glyph = L"\xE7F1"; // HardDrive (Segoe Fluent Icons)
         e.fallback = L"Drive";

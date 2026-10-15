@@ -7,6 +7,7 @@
 #include <chrono>
 // fs_enum.cpp
 #include "fs_enum.h"
+#include "drive_label.h"
 #include "bitlocker_volume.h"
 #include "bounded_enumeration.h"
 #include "../common/localization.h"
@@ -14,11 +15,13 @@
 #include <shellapi.h>
 #include <shlwapi.h>
 #include <lm.h>
+#include <winnetwk.h>
 #include <algorithm>
 #include <array>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#pragma comment(lib, "mpr.lib")
 
 #pragma comment(lib, "shlwapi.lib")
 
@@ -411,6 +414,32 @@ DriveMedia QueryDriveMedia(const wchar_t* root) {
 }
 } // namespace
 
+std::wstring DriveLabel(wchar_t letter, const std::wstring& volume_label, const std::wstring& fallback) {
+    const wchar_t root[] = { letter, L':', L'\\', L'\0' };
+    if (GetDriveTypeW(root) == DRIVE_REMOTE) {
+        const wchar_t local[] = { letter, L':', L'\0' };
+        wchar_t remote[MAX_PATH * 2] = {};
+        DWORD size = ARRAYSIZE(remote);
+        // A remembered but disconnected drive still names its share.
+        const DWORD result = WNetGetConnectionW(local, remote, &size);
+        std::wstring unc = (result == NO_ERROR || result == ERROR_CONNECTION_UNAVAIL) ? remote : L"";
+        while (unc.size() > 2 && unc.back() == L'\\') unc.pop_back();
+        const size_t slash = unc.find_last_of(L'\\');
+        if (unc.starts_with(L"\\\\") && slash != std::wstring::npos && slash > 2 && slash + 1 < unc.size()) {
+            std::wstring key = unc;
+            std::replace(key.begin(), key.end(), L'\\', L'#');
+            key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MountPoints2\\" + key;
+            wchar_t label[MAX_PATH] = {};
+            DWORD bytes = sizeof(label);
+            if (RegGetValueW(HKEY_CURRENT_USER, key.c_str(), L"_LabelFromReg", RRF_RT_REG_SZ, nullptr,
+                             label, &bytes) == ERROR_SUCCESS && label[0])
+                return label;
+            return unc.substr(slash + 1) + L" (" + unc.substr(0, slash) + L")";
+        }
+    }
+    return volume_label.empty() ? fallback : volume_label;
+}
+
 // "This PC" view (empty path): one entry per logical drive, label matches
 // the sidebar ("Label (C:)" or a localized fallback). full_path is set so
 // the app layer can navigate/open without joining parent+name.
@@ -457,9 +486,8 @@ static void EnumerateThisPc(std::vector<DirEntry>& out, const std::atomic<bool>*
         wchar_t root[4] = { wchar_t(L'A' + i), L':', L'\\', L'\0' };
         const DriveMedia* media = answers[i] ? &*answers[i] : nullptr;
         DirEntry e;
-        e.name = (media && !media->label.empty() ? media->label
-                                                 : std::wstring(l10n::Pick(L"本地磁盘", L"Local Disk"))) +
-                 L" (" + root[0] + L":)";
+        e.name = DriveLabel(root[0], media ? media->label : std::wstring(),
+                            l10n::Pick(L"本地磁盘", L"Local Disk")) + L" (" + root[0] + L":)";
         e.full_path = NormalizePath(root);
         e.is_dir = true;
         e.attrs = FILE_ATTRIBUTE_DIRECTORY;
