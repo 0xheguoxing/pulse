@@ -50,8 +50,15 @@ struct FolderSizesUiTest {
                 ViewLayout geometry(mode, {0, 0, static_cast<float>(width)*scale, 550*scale}, 9, 0, 0, scale);
                 const auto name_bounds = geometry.NameRect(0);
                 const auto size_bounds = geometry.FolderSizeRect(0);
-                const bool fits = mode == ViewMode::Details || size_bounds.top >= name_bounds.bottom && size_bounds.bottom <= geometry.ItemRect(0).bottom &&
-                    size_bounds.bottom-size_bounds.top >= 21*scale;
+                // e922dbc: icon grids keep a sized folder's name to one line; the
+                // size takes the second line's slot.
+                const bool icon_grid = mode == ViewMode::ExtraLargeIcons || mode == ViewMode::LargeIcons ||
+                                       mode == ViewMode::MediumIcons;
+                const float name_floor = icon_grid ? name_bounds.top + kIconGridNameLineDip * scale : name_bounds.bottom;
+                const float min_height = (icon_grid ? kIconGridNameLineDip : 21.0f) * scale;
+                const bool fits = mode == ViewMode::Details || size_bounds.top + 0.01f >= name_floor &&
+                    size_bounds.bottom <= geometry.ItemRect(0).bottom + 0.01f &&
+                    size_bounds.bottom-size_bounds.top + 0.01f >= min_height;
                 log << (fits ? "[PASS] " : "[FAIL] ") << "capacity line fits below name within cell\n";
                 ok &= fits;
                 auto* dc = compositor.Dc();
@@ -192,25 +199,31 @@ bool RunFolderSizesTest() {
         slot.rect = D2D1::RectF(240, 120, 900, 550); slot.focused = true;
         slot.pane.path = fixture.wstring(); slot.pane.is_file_system = true;
         slot.pane.view_mode = ui::ViewMode::Tiles;
-        ui::ListEntryView e; e.name = L"empty"; e.path = empty; e.is_dir = true;
+        // 91379bc: an empty folder shows 空/Empty instead of a size and skips the
+        // size work, so the wiring is checked on a folder with content.
+        const auto wired = fixture / L"wired";
+        std::filesystem::create_directories(wired);
+        file(wired / L"w.bin", 2048);
+        const std::wstring wired_label = format::ByteSize(2048);
+        ui::ListEntryView e; e.name = L"wired"; e.path = wired.wstring(); e.is_dir = true;
         slot.pane.entries.push_back(e);
         vm.pane_slots.push_back(slot);
         FillFolderSizes(*state, vm);
-        check(wait([&] { FillFolderSizes(*state, vm); return vm.pane_slots[0].pane.folder_size_labels[0] == L"0 B"; }),
+        check(wait([&] { FillFolderSizes(*state, vm); return vm.pane_slots[0].pane.folder_size_labels[0] == wired_label; }),
               "real view-model wiring requests and displays the last visible row, including a single-item folder");
         for (auto mode : {ui::ViewMode::MediumIcons, ui::ViewMode::LargeIcons, ui::ViewMode::ExtraLargeIcons, ui::ViewMode::Content}) {
             vm.pane_slots[0].pane.view_mode = mode;
             FillFolderSizes(*state, vm);
-            check(vm.pane_slots[0].pane.folder_size_labels[0] == L"0 B", "grid/content view receives actual folder total");
+            check(vm.pane_slots[0].pane.folder_size_labels[0] == wired_label, "grid/content view receives actual folder total");
         }
         vm.pane_slots[0].pane.view_mode = ui::ViewMode::Details;
         FillFolderSizes(*state, vm);
-        check(vm.pane_slots[0].pane.folder_size_labels[0] == L"0 B", "details view receives folder total");
+        check(vm.pane_slots[0].pane.folder_size_labels[0] == wired_label, "details view receives folder total");
         vm.pane_slots[0].pane.is_file_system = false;
         vm.pane_slots[0].pane.is_search = true;
         vm.pane_slots[0].pane.path = L"pulse:search:test";
         FillFolderSizes(*state, vm);
-        check(vm.pane_slots[0].pane.folder_size_labels[0] == L"0 B", "search results use each folder's real path");
+        check(vm.pane_slots[0].pane.folder_size_labels[0] == wired_label, "search results use each folder's real path");
         auto& search_pane = vm.pane_slots[0].pane;
         search_pane.content_results = std::make_shared<index::ContentResultStore>(nullptr, 0);
         index::ContentHit hit;
@@ -228,6 +241,17 @@ bool RunFolderSizesTest() {
         vm.pane_slots[0].pane.is_recycle = true;
         FillFolderSizes(*state, vm);
         check(vm.pane_slots[0].pane.folder_size_labels.empty(), "recycle results do not request folder sizes");
+        // 91379bc: an empty folder says so, muted, instead of a size.
+        auto& empty_pane = vm.pane_slots[0].pane;
+        empty_pane.is_recycle = false; empty_pane.is_search = false; empty_pane.is_file_system = true;
+        empty_pane.path = fixture.wstring(); empty_pane.view_mode = ui::ViewMode::Tiles;
+        empty_pane.entries.clear();
+        ui::ListEntryView empty_entry; empty_entry.name = L"empty"; empty_entry.path = empty; empty_entry.is_dir = true;
+        empty_pane.entries.push_back(empty_entry);
+        const std::wstring empty_label = pulse::l10n::Pick(L"空", L"Empty");
+        check(wait([&] { FillFolderSizes(*state, vm);
+                         return empty_pane.folder_size_labels[0] == empty_label && empty_pane.folder_size_muted.contains(0); }),
+              "an empty folder says so instead of a size");
         state->folderSizes.Stop();
     }
     {

@@ -2123,7 +2123,9 @@ void TestMenuModel() {
             if (layout.get()) layout->GetMetrics(&metrics);
             text_w = (std::max)(metrics.width, metrics.widthIncludingTrailingWhitespace);
         }
-        Check(static_cast<float>(en_model.WidthPx()) + 0.5f >= 60.0f + text_w,
+        // DrawMenuItem chrome since c7b98c6: inset 6 + pad 10 + icon 16 + gap 8,
+        // then pad 10 + inset 6 (FluentMenuModel::Layout reserves the same).
+        Check(static_cast<float>(en_model.WidthPx()) + 0.5f >= 56.0f + text_w,
               L"menu: Empty Recycle Bin fits in the flyout");
     }
 
@@ -5821,8 +5823,11 @@ void TestViewLayouts() {
           L"view: icon and filename share the cell center axis");
     ui::ViewLayout hidpiIcons(ui::ViewMode::ExtraLargeIcons,
         D2D1::RectF(0, 0, 900, 700), 20, 0, 0, 1.5f);
-    Check(std::abs(hidpiIcons.Metrics().icon_size - 240.0f) < 0.01f &&
-          std::abs(hidpiIcons.Metrics().cell_width - 280.0f) < 0.01f,
+    // e922dbc: the tier keeps 240 device pixels of artwork; cells are at least
+    // that plus 16 DIP and share the row's leftover (900 px: 3 x 300).
+    const auto& xl = hidpiIcons.Metrics();
+    Check(std::abs(xl.icon_size - 240.0f) < 0.01f && xl.cell_width + 0.01f >= 240.0f + 16.0f * 1.5f &&
+          std::abs(xl.cell_width * static_cast<float>(xl.columns) - 900.0f) < 0.01f,
           L"view: extra-large Explorer tier remains capped in physical pixels");
     Check(hidpiIcons.NameRect(0).top >= hidpiIcons.IconRect(0).bottom,
           L"view: extra-large filename never overlaps icon bounds");
