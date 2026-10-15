@@ -301,7 +301,8 @@ void OpenGroupWheel(AppState& s) {
     const float width = static_cast<float>(s.compositor.Width());
     const float height = static_cast<float>(s.compositor.Height());
     const float left = s.renderer.EffectiveSidebarWidth(width);
-    const auto layout = s.renderer.ToolbarLayoutAt(width, s.renderer.NewButtonWidthPx(width - left < 600 * s.scale));
+    const auto layout = s.renderer.ToolbarLayoutAt(width, s.renderer.NewButtonWidthPx(width - left < 600 * s.scale),
+                                                   s.pane ? s.pane->filter_expand : 0.0f);
     g_wheel_accum = 0;
     g_kind = WheelKind::Group;
     s.renderer.GroupWheelPicker().Open(std::move(data), layout.group, D2D1::RectF(0, 0, width, height),
@@ -376,7 +377,8 @@ void OpenSortWheel(AppState& s) {
     const float width = static_cast<float>(s.compositor.Width());
     const float height = static_cast<float>(s.compositor.Height());
     const float left = s.renderer.EffectiveSidebarWidth(width);
-    const auto layout = s.renderer.ToolbarLayoutAt(width, s.renderer.NewButtonWidthPx(width - left < 600 * s.scale));
+    const auto layout = s.renderer.ToolbarLayoutAt(width, s.renderer.NewButtonWidthPx(width - left < 600 * s.scale),
+                                                   s.pane ? s.pane->filter_expand : 0.0f);
     g_wheel_accum = 0;
     g_kind = WheelKind::Sort;
     s.renderer.GroupWheelPicker().Open(std::move(data), layout.sort, D2D1::RectF(0, 0, width, height),

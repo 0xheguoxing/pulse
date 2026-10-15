@@ -2670,7 +2670,8 @@ void ShowSortDropdown(AppState& s) {
     }
     const float width = static_cast<float>(s.compositor.Width());
     const float left = s.renderer.EffectiveSidebarWidth(width);
-    const auto layout = s.renderer.ToolbarLayoutAt(width,s.renderer.NewButtonWidthPx(width-left < 600*s.scale));
+    const auto layout = s.renderer.ToolbarLayoutAt(width,s.renderer.NewButtonWidthPx(width-left < 600*s.scale),
+                                                   s.pane ? s.pane->filter_expand : 0.0f);
     POINT anchor{static_cast<LONG>(layout.sort.left),static_cast<LONG>(layout.sort.bottom)};
     ClientToScreen(s.hwnd,&anchor);
     // Grouping has its own toolbar button, so the Sort dropdown is sort-only.
@@ -2702,7 +2703,8 @@ void ShowGroupDropdown(AppState& s) {
     } else {
         const float width = static_cast<float>(s.compositor.Width());
         const float left = s.renderer.EffectiveSidebarWidth(width);
-        const auto layout = s.renderer.ToolbarLayoutAt(width, s.renderer.NewButtonWidthPx(width - left < 600 * s.scale));
+        const auto layout = s.renderer.ToolbarLayoutAt(width, s.renderer.NewButtonWidthPx(width - left < 600 * s.scale),
+                                                       s.pane ? s.pane->filter_expand : 0.0f);
         POINT anchor{static_cast<LONG>(layout.group.left), static_cast<LONG>(layout.group.bottom)};
         ClientToScreen(s.hwnd, &anchor);
         const int cmd = s.menu->TrackPopup(anchor, app::BuildGroupMenu(options).children);
@@ -2817,7 +2819,8 @@ void RunToolbarSelectionAction(AppState& s, int action) {
     }
     // Menus and pickers open under the clicked chip button.
     const float width = static_cast<float>(s.compositor.Width());
-    const auto layout = s.renderer.ToolbarLayoutAt(width, s.renderer.NewButtonWidthPx(width - s.renderer.EffectiveSidebarWidth(width) < 600 * s.scale));
+    const auto layout = s.renderer.ToolbarLayoutAt(width, s.renderer.NewButtonWidthPx(width - s.renderer.EffectiveSidebarWidth(width) < 600 * s.scale),
+                                                   s.pane ? s.pane->filter_expand : 0.0f);
     const auto actions = SelectionChipActions(s);
     const auto chip = s.renderer.SelectionChipAt(layout, width, static_cast<int>(tab->SelectedCount()),
                                                  static_cast<int>(actions.size()));
@@ -2841,7 +2844,9 @@ void ShowToolbarMore(AppState& s) {
     if (!tab) return;
     const float width=static_cast<float>(s.compositor.Width());
     const float left=s.renderer.EffectiveSidebarWidth(width);
-    const auto layout=s.renderer.ToolbarLayoutAt(width,s.renderer.NewButtonWidthPx(width-left < 600*s.scale));
+    // The toolbar as drawn: an open filter folds pins in here too.
+    const auto layout=s.renderer.ToolbarLayoutAt(width,s.renderer.NewButtonWidthPx(width-left < 600*s.scale),
+                                                 s.pane ? s.pane->filter_expand : 0.0f);
     // More is always there (prototype note 5). Narrow windows also fold the
     // file commands, the pinned commands and the pane buttons in here.
     const bool narrow=layout.commands[0].right <= layout.commands[0].left;

@@ -786,6 +786,8 @@ void TestFilterControls() {
         const auto clear = state->renderer.FilterClearRect(bounds, 1);
         const auto edit = state->renderer.FilterEditRect(bounds, 1, true);
         Check(edit.right < clear.left, L"filter: edit and clear hit areas do not overlap");
+        Check(edit.right - edit.left >= 120, (L"filter: an open filter leaves room to type (" +
+              std::to_wstring(static_cast<int>(edit.right - edit.left)) + L" px)").c_str());
         point = MAKELPARAM(static_cast<int>((clear.left + clear.right) / 2), static_cast<int>((clear.top + clear.bottom) / 2));
         SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, point);
         SendMessageW(hwnd, WM_LBUTTONUP, 0, point);

@@ -773,6 +773,30 @@ bool TestToolbarApps() {
                                            ToolbarPinOptions{0, true, 400});
     ok &= Report("toolbar apps: the drop label gives way before an app does",
         no_room.pin_label.right <= no_room.pin_label.left && no_room.pins[0].right > no_room.pins[0].left);
+
+    // An open filter gets room to type: pins fold into More, the labels to
+    // icons and a selection chip to its smallest form, from the first frame
+    // of the animation on.
+    const float chip = pulse::ui::SelectionChipSpan(1, 60, 6);
+    const auto closed = MakeToolbarLayout(1000, 1, 46, 8, 96, 224, 0, 0, 108, 88, 80, 3, 0, mixed);
+    const auto opening = MakeToolbarLayout(1000, 1, 46, 8, 96, 224, 0.05f, 0, 108, 88, 80, 3, 0, mixed);
+    const auto open = MakeToolbarLayout(1000, 1, 46, 8, 96, 224, 1, 0, 108, 88, 80, 3, 0, mixed);
+    const auto selected = MakeToolbarLayout(1000, 1, 46, 8, 96, 224, 1, 0, 108, 88, 80, 3, chip, mixed);
+    const auto width_of = [](const D2D1_RECT_F& r) { return r.right - r.left; };
+    const auto apart = [&](const pulse::ui::ToolbarLayout& l) {
+        float pins_end = 0.0f;
+        for (const auto& pin : l.pins) if (pin.right > pin.left) pins_end = pin.right;
+        return l.sort.left >= pins_end && l.filter.left >= l.sort.right && l.group.left >= l.filter.right &&
+               l.group.right + 4 <= l.commands[5].left;
+    };
+    const bool roomy = width_of(open.filter) >= 199.0f && width_of(selected.filter) >= 150.0f &&
+        width_of(closed.pins[2]) > 0 && width_of(open.pins[1]) <= 0 && width_of(opening.pins[1]) <= 0 &&
+        width_of(open.sort) == 32.0f && width_of(opening.sort) == 32.0f &&
+        apart(closed) && apart(opening) && apart(open) && apart(selected);
+    if (!roomy)
+        std::printf("    filter: closed %.1f opening %.1f open %.1f selected %.1f\n", width_of(closed.filter),
+                    width_of(opening.filter), width_of(open.filter), width_of(selected.filter));
+    ok &= Report("toolbar: an open filter gets room to type", roomy);
     return ok;
 }
 

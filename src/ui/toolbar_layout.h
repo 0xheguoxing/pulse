@@ -30,6 +30,8 @@ struct ToolbarLayout {
     D2D1_RECT_F pin_label{};   // drop mode only (ToolbarPinOptions::label_width)
 };
 
+inline float SelectionChipSpan(float scale, float label_width, int n);
+
 // search_min_dip widens the search field while a search is active or being
 // edited, borrowing from the address bar but leaving it at least 120 DIP.
 inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, float margin, float create_width,
@@ -90,9 +92,17 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
     // dragged over the window the toolbar holds drop targets only (the caller
     // passes the apps alone): they show in the narrow tier too, after a label
     // when it fits together with every one of them.
+    // An open filter (filter_expand > 0) asks for 200 DIP to type in: the
+    // pinned commands and apps fold into More, the view labels to icons and
+    // the selection chip to its smallest form (more, clear) first. That
+    // happens as the field starts to open, not midway through the animation.
+    const bool filter_open = filter_expand > 0.0f;
+    const float filter_open_w = 200*scale;
+    const float chip_span = filter_open ? std::min(selection_span, SelectionChipSpan(scale, 0.0f, 0)) : selection_span;
     const bool drop_mode = pin_options.drop_mode;
     if ((!overflow || drop_mode) && (pin_count > 0 || (drop_mode && pin_options.label_width > 0.0f))) {
-        const float view_min = 70*scale + (group_width > 0.0f ? 38*scale : 0.0f);
+        const float view_min = 70*scale + (group_width > 0.0f ? 38*scale : 0.0f) +
+                               (filter_open ? filter_open_w - 32*scale + chip_span : 0.0f);
         const int count = std::min(pin_count, kToolbarPinSlots);
         const bool gap = pin_options.app_from > 0 && pin_options.app_from < count;
         float px = x + (overflow ? 13.0f : 9.0f)*scale;   // 13 DIP after the last command, like the selection chip
@@ -123,13 +133,15 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
     // While something is selected the selection chip (prototype note 4) comes
     // before the view labels: they fold to icons first so the chip keeps its
     // quick actions. The chip itself shrinks into whatever is left.
-    const float room = view_end - left_end - (overflow ? 0.0f : selection_span);
+    const float room = view_end - left_end - (overflow ? 0.0f : chip_span);
     auto block_of = [&](float filter) { return sort_w+6*scale+filter+(group_w > 0.0f ? group_w+6*scale : 0.0f); };
     // Priority collapse when the labels do not fit: icon-only sort / filter
     // first, then a narrower group chip (never below its icon).
     if (block_of(filter_base) > room) { sort_w = 32*scale; filter_base = 32*scale; }
-    if (group_w > 0.0f && block_of(filter_base) > room)
-        group_w = std::max(32*scale, group_w-(block_of(filter_base)-room));
+    const float filter_goal = filter_open ? std::max(filter_base, filter_open_w) : filter_base;
+    if (block_of(filter_goal) > room) sort_w = 32*scale;
+    if (group_w > 0.0f && block_of(filter_goal) > room)
+        group_w = std::max(32*scale, group_w-(block_of(filter_goal)-room));
     const float filter_max = std::clamp(room-block_of(0.0f),filter_base,220*scale);
     const float filter_w = filter_base + (filter_max-filter_base)*std::clamp(filter_expand,0.0f,1.0f);
     // Still too narrow to right-align: start right after the left cluster instead.
