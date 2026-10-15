@@ -2317,11 +2317,10 @@ D2D1_RECT_F MainRenderer::RenameFieldRect(const PaneViewModel& vm, const D2D1_RE
         textY = nameRc.top;
         textH = std::min(textH, 24.0f * scale_);
     }
-    // Icon grids rename on one line, at the first name line.
-    if (iconGrid) textH = std::min(textH, 24.0f * scale_);
     // The field is sized for the name being typed, not the old one: the whole
-    // name column in details, at least 360 dip elsewhere (centered on icon
-    // cells), so added dates and versions stay visible while editing.
+    // name column in details, at least 360 dip in lists and tiles, so added
+    // dates and versions stay visible while editing. Icon grids instead wrap
+    // it in a field about the cell's width that grows down line by line.
     const float minW = 40.0f * scale_;
     const float wideW = 360.0f * scale_;
     const float listLeft = list.left + margin_;
@@ -2329,13 +2328,30 @@ D2D1_RECT_F MainRenderer::RenameFieldRect(const PaneViewModel& vm, const D2D1_RE
     float fieldLeft = nameX;
     float field_w = std::max(minW, nameColRight - nameX);
     if (iconGrid) {
-        field_w = std::min(std::max(nameRc.right - nameRc.left, wideW), listRight - listLeft);
+        field_w = std::min(std::max(nameRc.right - nameRc.left + 8.0f * scale_, 160.0f * scale_),
+                           listRight - listLeft);
         fieldLeft = std::clamp((nameRc.left + nameRc.right - field_w) * 0.5f, listLeft,
                                std::max(listLeft, listRight - field_w));
     } else if (vm.view_mode != ViewMode::Details) {
         field_w = std::max(minW, std::min(std::max(field_w, wideW), listRight - nameX));
     }
-    const float field_h = std::max(22.0f * scale_, std::min(textH, 30.0f * scale_));
+    float field_h = std::max(22.0f * scale_, std::min(textH, 30.0f * scale_));
+    if (iconGrid && compositor_->TextFormat()) {
+        // Wrap exactly as the EDIT will: its box is the field less the frame
+        // inset (3 dip a side) and LumaText's 2 px text pad a side.
+        const std::wstring& typed = vm.rename_index == source_index ? vm.rename_text : e.name;
+        const float textW = std::max(1.0f, field_w - 6.0f * scale_ - 5.0f);
+        float wrappedH = 18.0f * scale_;
+        ComPtr<IDWriteTextLayout> wrapped;
+        if (SUCCEEDED(compositor_->DwriteFactory()->CreateTextLayout(typed.c_str(),
+                static_cast<UINT32>(typed.size()), compositor_->TextFormat(), textW, 1.0e6f, &wrapped)) &&
+            wrapped.get()) {
+            wrapped->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+            DWRITE_TEXT_METRICS metrics{};
+            if (SUCCEEDED(wrapped->GetMetrics(&metrics))) wrappedH = metrics.height;
+        }
+        field_h = std::max(24.0f * scale_, std::ceil(wrappedH) + 6.0f * scale_);
+    }
     return D2D1::RectF(fieldLeft, textY, fieldLeft + field_w, textY + field_h);
 }
 

@@ -265,6 +265,7 @@ struct PaneViewModel {
     int drop_target_index = -1;   // folder row under an OLE drag (accent 2px stroke)
     bool header_drop = false;     // pane title bar is a navigate-to-folder target
     int rename_index = -1;        // name column is in edit mode; do not draw the label
+    std::wstring rename_text;     // text being typed; icon grids grow the field to wrap it
     bool focus_first_hint = false; // first view row has keyboard focus but no selection
     float scroll_y = 0.0f;
     float scroll_x = 0.0f;

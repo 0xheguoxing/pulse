@@ -180,6 +180,132 @@ void CreateNewMarkdown(AppState& s) {
                       L".md", {}, {});
 }
 
+namespace {
+// Selected rows that are real items of this folder (not change-history rows).
+std::vector<int> GroupableSelection(const app::Tab& tab) {
+    std::vector<int> rows;
+    if (!tab.snapshot) return rows;
+    for (int index : tab.SelectedIndices()) {
+        if (index < 0 || index >= static_cast<int>(tab.EntryCount())) continue;
+        if (tab.EntryAt(static_cast<size_t>(index)).change_record_only) continue;
+        rows.push_back(index);
+    }
+    return rows;
+}
+
+bool CanGroupSelection(const app::Tab* tab) {
+    return CanCreateHere(tab) && !IsRecycleTab(tab) && GroupableSelection(*tab).size() >= 2;
+}
+
+// Only plain folders dissolve: emptying a junction or symlink would move the
+// items out of the folder it points at.
+bool CanDissolveSelection(const app::Tab* tab) {
+    if (!CanCreateHere(tab) || IsRecycleTab(tab)) return false;
+    const std::vector<int> rows = GroupableSelection(*tab);
+    if (rows.empty() || rows.size() != tab->SelectedIndices().size()) return false;
+    for (int index : rows) {
+        const fs::DirEntry& e = tab->EntryAt(static_cast<size_t>(index));
+        if (!e.is_dir || e.is_reparse) return false;
+    }
+    return true;
+}
+
+// Names directly inside dir; false when it cannot be listed.
+bool ListFolderChildren(const std::wstring& dir, std::vector<std::wstring>& names) {
+    names.clear();
+    WIN32_FIND_DATAW data{};
+    const std::wstring pattern = JoinChild(dir, L"*");
+    HANDLE find = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &data, FindExSearchNameMatch,
+                                   nullptr, FIND_FIRST_EX_LARGE_FETCH);
+    if (find == INVALID_HANDLE_VALUE) return GetLastError() == ERROR_FILE_NOT_FOUND;
+    do {
+        if (std::wcscmp(data.cFileName, L".") != 0 && std::wcscmp(data.cFileName, L"..") != 0)
+            names.emplace_back(data.cFileName);
+    } while (FindNextFileW(find, &data));
+    FindClose(find);
+    return true;
+}
+} // namespace
+
+// 合并到文件夹 (macOS "New Folder with Selection"): a new folder beside the
+// selection, the selection moved into it, then its name is edited in place.
+// Undo takes the items back out (and, one step later, the folder away).
+void GroupSelectionIntoFolder(AppState& s) {
+    app::Tab* tab = ActiveTab(s);
+    if (!CanGroupSelection(tab)) return;
+    std::vector<std::wstring> sources;
+    for (int index : GroupableSelection(*tab)) sources.push_back(EntryFullPath(*tab, index));
+    const std::wstring folder = JoinChild(tab->current_path,
+        app::UniqueChildName(tab->current_path, l10n::Get(l10n::StringId::NewFolder), L""));
+    ops::OpRequest create;
+    create.type = ops::OpType::CreateFolder;
+    create.sources.push_back(folder);
+    s.ops.Submit(std::move(create));
+    // Operations run one at a time, so the move starts after the folder exists.
+    ops::OpRequest move;
+    move.type = ops::OpType::Move;
+    move.sources = std::move(sources);
+    move.dest_dir = folder;
+    move.collision_policy = ops::CollisionPolicy::KeepBoth;
+    const auto move_id = s.ops.Submit(std::move(move));
+    app::QueueCreateRenameIntent(tab->create_rename_intents, move_id,
+        tab->current_path, tab->view_generation);
+}
+
+// 解散文件夹: each selected folder's contents move up into this folder (a
+// clashing name becomes "name (2)"), then the emptied folder goes to the
+// Recycle Bin. Unwrapping X\X first renames the outer X out of the way, so the
+// inner one keeps the name. Undo restores the folder, then moves items back.
+void DissolveSelectedFolders(AppState& s) {
+    app::Tab* tab = ActiveTab(s);
+    if (!CanDissolveSelection(tab)) return;
+    std::vector<std::wstring> folders;
+    for (int index : GroupableSelection(*tab)) folders.push_back(EntryFullPath(*tab, index));
+    std::vector<std::wstring> select;
+    std::vector<std::wstring> children;
+    for (const std::wstring& folder : folders) {
+        if (!ListFolderChildren(folder, children)) continue;
+        if (children.empty()) {
+            ops::OpRequest recycle;
+            recycle.type = ops::OpType::RecycleDelete;
+            recycle.sources.push_back(folder);
+            const auto recycle_id = s.ops.Submit(std::move(recycle));
+            s.dissolveSteps.push_back({recycle_id, folder, tab->current_path, true});
+            continue;
+        }
+        const size_t slash = folder.find_last_of(L"\\/");
+        const std::wstring leaf = slash == std::wstring::npos ? folder : folder.substr(slash + 1);
+        std::wstring container = folder;
+        const bool clash = std::any_of(children.begin(), children.end(), [&](const std::wstring& name) {
+            return _wcsicmp(name.c_str(), leaf.c_str()) == 0;
+        });
+        if (clash) {
+            const std::wstring aside = app::UniqueChildName(tab->current_path, leaf, L"");
+            ops::OpRequest rename;
+            rename.type = ops::OpType::Rename;
+            rename.sources.push_back(folder);
+            rename.new_name = aside;
+            s.ops.Submit(std::move(rename));
+            container = JoinChild(tab->current_path, aside);
+        }
+        ops::OpRequest move;
+        move.type = ops::OpType::Move;
+        for (const auto& name : children) {
+            move.sources.push_back(JoinChild(container, name));
+            select.push_back(name);
+        }
+        move.dest_dir = tab->current_path;
+        move.collision_policy = ops::CollisionPolicy::KeepBoth;
+        const auto move_id = s.ops.Submit(std::move(move));
+        s.dissolveSteps.push_back({move_id, container, tab->current_path, false});
+    }
+    if (!select.empty()) {
+        tab->pending_selected_name = select.front();
+        tab->pending_selected_names = std::move(select);
+        tab->pending_selection_revision = tab->selection_revision;
+    }
+}
+
 void QueueTagAds(AppState& s, std::vector<app::TagAdsUpdate> updates) {
     const HWND notify = ServiceWindow(s);
     app::QueueTagAdsDrain(std::move(updates), [&worker = s.worker](std::function<void()> task) {
@@ -962,7 +1088,8 @@ void ApplyDriveVerbResult(AppState& s, const app::DriveVerbResult& result) {
 }
 
 void DispatchMenuCommand(AppState& s, int cmd) {
-    const bool needs_files=cmd==app::CmdProperties || cmd==app::CmdOpenPath || cmd==app::CmdOpenInNewTab || cmd==app::CmdRename;
+    const bool needs_files=cmd==app::CmdProperties || cmd==app::CmdOpenPath || cmd==app::CmdOpenInNewTab || cmd==app::CmdRename ||
+        cmd==app::CmdGroupIntoFolder || cmd==app::CmdDissolveFolder;
     if(needs_files && DeferContentSelection(s,[cmd](AppState& v){DispatchMenuCommand(v,cmd);})) return;
     if (cmd >= app::CmdViewBase && cmd < app::CmdViewBase + 8) {
         SetViewMode(s, ui::ViewModeFromIndex(cmd - app::CmdViewBase));
@@ -1090,6 +1217,8 @@ void DispatchMenuCommand(AppState& s, int cmd) {
     case app::CmdMapNetworkDrive: RunMapNetworkDrive(s, SelectedShare(s)); break;
     case app::CmdUnpinNetwork: UnpinSelectedNetworks(s); break;
     case app::CmdBatchRename: ShowBatchRename(s); break;
+    case app::CmdGroupIntoFolder: GroupSelectionIntoFolder(s); break;
+    case app::CmdDissolveFolder: DissolveSelectedFolders(s); break;
     case app::CmdAdvancedSearch: ShowAdvancedSearch(s); break;
     case app::CmdRestoreRecycle: RestoreSelected(s); break;
     case app::CmdRestoreAllRecycle: RestoreAllRecycle(s); break;
@@ -1300,6 +1429,8 @@ void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const ap
     }
     EraseCommand(items, app::CmdTags);  // the swatch strip and 标签...
     EraseCommand(items, app::CmdBatchRename);
+    EraseCommand(items, app::CmdGroupIntoFolder);
+    EraseCommand(items, app::CmdDissolveFolder);
     std::vector<ui::FluentMenuItem> verbs;
     const app::Tab* tab = ActiveTab(s);
     if (caps.kind == app::SelectionKind::Drives && tab) {
@@ -1399,6 +1530,20 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         open_path.text = l10n::Get(l10n::StringId::OpenPath);
         open_path.glyph = L"\xE8B7"; // folder glyph, same family as kGlyphFolder
         items.insert(items.begin() + 1, std::move(open_path));
+    }
+    if (CanDissolveSelection(tab)) {
+        ui::FluentMenuItem dissolve;
+        dissolve.command = app::CmdDissolveFolder;
+        dissolve.text = l10n::Pick(L"解散文件夹", L"Ungroup folder");
+        dissolve.glyph = L"\xED25"; // open folder
+        items.insert(items.begin() + 1, std::move(dissolve));
+    }
+    if (CanGroupSelection(tab)) {
+        ui::FluentMenuItem group;
+        group.command = app::CmdGroupIntoFolder;
+        group.text = l10n::Pick(L"合并到文件夹", L"New folder with selection");
+        group.glyph = L"\xE8F4"; // new folder
+        items.insert(items.begin() + 1, std::move(group));
     }
     if (tab && tab->SelectedCount() >= 2) {
         ui::FluentMenuItem batch;
@@ -2578,6 +2723,7 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
         // folders, search results) are not in the builtin catalog but belong here.
         // Drive / network / Recycle Bin verbs (AdaptItemMenu) likewise.
         const bool selection_row = item.command == app::CmdBatchRename ||
+            item.command == app::CmdGroupIntoFolder || item.command == app::CmdDissolveFolder ||
             item.command == app::CmdCompareSideBySide || item.command == app::CmdOpenPath ||
             item.command == app::CmdUnlockDrive || item.command == app::CmdEjectDrive ||
             item.command == app::CmdDisconnectDrive || item.command == app::CmdMapNetworkDrive ||
@@ -2608,7 +2754,8 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
     const auto rank = [](int command) {
         static constexpr int kOrder[] = {
             app::CmdUnlockDrive, app::CmdEjectDrive, app::CmdDisconnectDrive, app::CmdRestoreRecycle,
-            app::CmdMapNetworkDrive, app::CmdUnpinNetwork, app::CmdBatchRename, app::CmdCompareSideBySide, app::CmdTags, app::CmdCopyPath,
+            app::CmdMapNetworkDrive, app::CmdUnpinNetwork, app::CmdBatchRename, app::CmdGroupIntoFolder,
+            app::CmdDissolveFolder, app::CmdCompareSideBySide, app::CmdTags, app::CmdCopyPath,
             app::CmdOpenInNewTab, app::CmdOpenPath, app::CmdPinQuickAccess, app::CmdUnpinQuickAccess,
             app::CmdProperties, app::CmdOpenTerminal, app::CmdViewRecentChanges,
             app::CmdPinWorkspace, app::CmdPinNetwork,

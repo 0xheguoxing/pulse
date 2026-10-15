@@ -272,6 +272,15 @@ void BindCurrentLayout(AppState& s) {
     SyncVisibleWatches(s);
     SyncTaskbarWindowTitle(s);
 }
+// Live text of the rename field; icon grids size the field to wrap it.
+static std::wstring RenameEditText(const AppState& s) {
+    if (s.renameIndex < 0 || !s.hwndRenameEdit || !IsWindow(s.hwndRenameEdit)) return {};
+    const int len = GetWindowTextLengthW(s.hwndRenameEdit);
+    if (len <= 0) return {};
+    std::wstring text(static_cast<size_t>(len) + 1, L'\0');
+    text.resize(static_cast<size_t>(std::max(0, GetWindowTextW(s.hwndRenameEdit, text.data(), len + 1))));
+    return text;
+}
 // Whether a launch argument names a file, without stalling the UI thread on
 // a share (or mapped drive) that does not answer: GetFileAttributes on an unreachable server
 // blocks for ~13 s, and startup asked twice (ResolveOpenFolderPath, then
@@ -988,6 +997,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             }
             if (slot.focused) {
                 slot.pane.rename_index = s.renameIndex;
+                slot.pane.rename_text = RenameEditText(s);
                 if (s.marqueeActive) {
                     slot.pane.marquee_active = true;
                     slot.pane.marquee_rect = MarqueeDisplayRect(s);
@@ -2147,6 +2157,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     }
     vm.pane.drop_target_index = s.dropRow;
     vm.pane.rename_index = s.renameIndex;
+    vm.pane.rename_text = RenameEditText(s);
     SyncSearchBarWidth(s);
     vm.address_editing = s.addressEditing;
     vm.address_searching = s.addressSearching;

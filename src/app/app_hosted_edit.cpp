@@ -366,13 +366,23 @@ void LayoutRenameOverlay(AppState& s) {
     if (!s.hwndRenameEdit || s.renameIndex < 0 || !s.hwnd) return;
     ui::WindowViewModel vm = BuildVm(s, false);
     D2D1_RECT_F field{};
+    bool wraps = false;
     for (const auto& slot : vm.pane_slots) {
         if (!slot.focused) continue;
         const auto list = s.renderer.PaneListRect(slot.pane, slot.rect);
         field = s.renderer.RenameFieldRect(slot.pane, list, s.renameIndex);
+        wraps = slot.pane.view_mode == ui::ViewMode::ExtraLargeIcons ||
+                slot.pane.view_mode == ui::ViewMode::LargeIcons ||
+                slot.pane.view_mode == ui::ViewMode::MediumIcons;
         break;
     }
     if (field.right <= field.left) return;
+    // Icon grids edit the name wrapped over as many lines as it needs (the
+    // field grows with it, see RenameFieldRect); other views scroll one line.
+    const bool wrapped_before = GetPropW(s.hwndRenameEdit, L"Pulse.EditWrap") != nullptr;
+    if (wraps) SetPropW(s.hwndRenameEdit, L"Pulse.EditWrap", reinterpret_cast<HANDLE>(1));
+    else RemovePropW(s.hwndRenameEdit, L"Pulse.EditWrap");
+    if (wraps != wrapped_before) InvalidateRect(s.hwndRenameEdit, nullptr, FALSE);
     // Seat the EDIT inside the Fluent frame: frame stroke + text padding.
     const float insetX = 3.0f * s.scale;
     const float insetY = 2.0f * s.scale;
@@ -380,7 +390,32 @@ void LayoutRenameOverlay(AppState& s) {
     field.right -= insetX;
     field.top += insetY;
     field.bottom -= insetY;
-    PlaceHostedEdit(s.hwndRenameEdit, s.hwnd, field, s.scale, 4, 4);
+    if (!wraps) {
+        PlaceHostedEdit(s.hwndRenameEdit, s.hwnd, field, s.scale, 4, 4);
+        return;
+    }
+    // The whole wrapped block: PlaceHostedEdit would trim it to one line.
+    const int x = static_cast<int>(std::lround(field.left));
+    const int y = static_cast<int>(std::lround(field.top));
+    const int w = std::max(40, static_cast<int>(std::lround(field.right)) - x);
+    const int h = std::max(18, static_cast<int>(std::lround(field.bottom)) - y);
+    RECT now{};
+    GetWindowRect(s.hwndRenameEdit, &now);
+    MapWindowPoints(HWND_DESKTOP, s.hwnd, reinterpret_cast<POINT*>(&now), 2);
+    if (now.left != x || now.top != y || now.right - now.left != w || now.bottom - now.top != h)
+        SetWindowPos(s.hwndRenameEdit, HWND_TOP, x, y, w, h, SWP_NOACTIVATE);
+}
+
+// Typing can add or remove a wrapped line: regrow the field and its frame.
+static void RegrowRenameField(AppState& s) {
+    if (!s.hwndRenameEdit || s.renameIndex < 0 || !s.hwnd) return;
+    if (!GetPropW(s.hwndRenameEdit, L"Pulse.EditWrap")) return;
+    RECT before{};
+    GetWindowRect(s.hwndRenameEdit, &before);
+    LayoutRenameOverlay(s);
+    RECT after{};
+    GetWindowRect(s.hwndRenameEdit, &after);
+    if (!EqualRect(&before, &after)) InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 void ShowRenameOverlay(AppState& s) {
     if(DeferContentSelection(s,[](AppState& v){ShowRenameOverlay(v);})) return;
@@ -714,7 +749,12 @@ LRESULT CALLBACK RenameEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return EraseHostedEditBackground(hwnd, wParam, s) ? 1 : 0;
     }
     }
-    return DefPresentedHostedEditProc(s, hwnd, msg, wParam, lParam);
+    const bool edits_text = msg == WM_CHAR || msg == WM_KEYDOWN || msg == WM_PASTE || msg == WM_CUT ||
+        msg == WM_CLEAR || msg == WM_UNDO || msg == EM_UNDO || msg == EM_REPLACESEL ||
+        msg == WM_SETTEXT || msg == WM_IME_COMPOSITION || msg == WM_IME_ENDCOMPOSITION;
+    const LRESULT result = DefPresentedHostedEditProc(s, hwnd, msg, wParam, lParam);
+    if (s && edits_text) RegrowRenameField(*s);
+    return result;
 }
 
 LRESULT CALLBACK TagRenameEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
