@@ -12,4 +12,6 @@ void ShowQuickAccessMenu(AppState& s, const std::wstring& path, POINT point);
 void ShowQuickAccessAddMenu(AppState& s, POINT point);
 // Right-click on a workspace row: open, refresh its saved layout, unpin.
 void ShowWorkspaceMenu(AppState& s, int index, POINT point);
+// Right-click on a pinned network location row: open, unpin (#236).
+void ShowNetworkPlaceMenu(AppState& s, const std::wstring& unc, POINT point);
 }

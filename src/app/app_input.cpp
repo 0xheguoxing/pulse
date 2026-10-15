@@ -3846,6 +3846,12 @@ LRESULT HandleRButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         } else if (HandleVerticalTabContextMenu(*s, hit, sp)) {
             shown = true;
         } else if (hit.region == ui::HitTestResult::SidebarItem &&
+                   hit.sidebar_section == static_cast<int>(app::SidebarSectionId::Networks) &&
+                   s->places.FindNetwork(hit.path) >= 0) {
+            // Pinned network locations had no menu, so they could not be unpinned (#236).
+            ShowNetworkPlaceMenu(*s, hit.path, sp);
+            shown = true;
+        } else if (hit.region == ui::HitTestResult::SidebarItem &&
                    hit.sidebar_section == static_cast<int>(app::SidebarSectionId::Cloud)) {
             // OneDrive has no header to right-click (#80): its rows carry the menu.
             ShowCloudPlaceMenu(*s, hit.path, sp);

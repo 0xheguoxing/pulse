@@ -1,6 +1,7 @@
 #include "quick_access.h"
 #include "app_commands.h"
 #include "app_navigation.h"
+#include "app_network_locations.h"
 #include "../common/localization.h"
 #include <algorithm>
 
@@ -156,5 +157,28 @@ void ShowWorkspaceMenu(AppState& s, int index, POINT point) {
         return;
     }
     InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void ShowNetworkPlaceMenu(AppState& s, const std::wstring& unc, POINT point) {
+    if (!EnsureMenu(s)) return;
+    ui::FluentMenuItem open;
+    open.command = app::CmdOpen;
+    open.text = l10n::Get(l10n::StringId::Open);
+    open.glyph = L"\xE8B7";
+    ui::FluentMenuItem unpin;
+    unpin.command = app::CmdUnpinQuickAccess;
+    unpin.text = l10n::Get(l10n::StringId::Unpin);
+    unpin.glyph = L"\xE77A";
+    const int command = s.menu->TrackPopup(point, {open, unpin});
+    if (command == app::CmdOpen) {
+        NavigateTo(s, unc);
+    } else if (command == app::CmdUnpinQuickAccess && s.places.UnpinNetwork(unc)) {
+        // The Network view lists the pins too.
+        ForEachPane(s, [&](app::Pane& pane) {
+            if (auto* tab = pane.ActiveTab(); tab && tab->current_path == kNetworkLocationsPath)
+                FillNetworkLocationsView(s, *tab);
+        });
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+    }
 }
 }

@@ -116,6 +116,7 @@ public:
 
     int FindNetwork(const std::wstring& unc) const;
     int PinNetwork(const std::wstring& unc, const std::wstring& name);
+    bool UnpinNetwork(const std::wstring& unc);
     void SetNetworkStatus(const std::wstring& unc, fs::NetStatus status, DWORD rtt_ms);
 
     void RecordVisit(const std::wstring& path);
