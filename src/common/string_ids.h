@@ -1541,3 +1541,6 @@
 #define IDS_TOOLBAR_APP_PICKER_TITLE 2683
 #define IDS_TOOLBAR_APP_PICKER_FILTER 2684
 #define IDS_TOOLBAR_APP_FOOTNOTE 2685
+// Network view warning when Windows Firewall's Network Discovery group is off.
+#define IDS_NETWORK_DISCOVERY_OFF_TITLE 2731
+#define IDS_NETWORK_DISCOVERY_OFF_DESC 2732

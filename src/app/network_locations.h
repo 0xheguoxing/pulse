@@ -25,17 +25,32 @@ struct NetworkLocation {
     bool shell_link = false;
 };
 
+enum class NetworkDiscoveryState {
+    Unknown,
+    Enabled,
+    Disabled,
+};
+
 struct NetworkLocationScan {
     std::vector<NetworkLocation> items;
+    // Unknown unless Windows Firewall can conclusively report every active profile.
+    NetworkDiscoveryState discovery = NetworkDiscoveryState::Unknown;
     DWORD error = 0;
     bool cancelled = false;
 };
 
-// Worker-only: reads local shortcut metadata without resolving or probing targets.
-// Initializes COM internally; an existing STA or MTA is also supported.
-// An absent NetHood is empty. Errors/cancellation never return partial results.
+// Worker-only: reads local shortcut metadata without resolving or probing targets,
+// and checks the firewall discovery group when using the real NetHood root.
+// Initializes COM internally; an existing STA or MTA is also supported. An absent
+// NetHood is empty; explicit roots skip host firewall state for deterministic tests.
+// Errors/cancellation never return partial results.
 NetworkLocationScan ReadNetworkLocations(const std::wstring& root = {},
     const std::function<bool()>& cancel = {});
+// Returns Disabled only when every active profile is affirmatively disabled.
+// Empty/unknown or mixed results stay conservative so an empty device list is
+// never mistaken for a disabled discovery setting.
+NetworkDiscoveryState SummarizeNetworkDiscoveryProfiles(
+    const std::vector<NetworkDiscoveryState>& active_profiles);
 std::vector<NetworkLocation> MergeNetworkLocations(const std::vector<NetworkLocation>& pinned,
     const std::vector<NetworkLocation>& system);
 

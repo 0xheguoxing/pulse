@@ -1150,7 +1150,7 @@ add_executable(pulse_link_pill_test src/bench/link_pill_test.cpp)
 target_link_libraries(pulse_link_pill_test PRIVATE user32)
 
 add_executable(pulse_network_locations_test src/bench/network_locations_test.cpp src/app/network_locations.cpp)
-target_link_libraries(pulse_network_locations_test PRIVATE shell32 ole32 uuid)
+target_link_libraries(pulse_network_locations_test PRIVATE shell32 ole32 oleaut32 uuid)
 
 add_executable(pulse_archive_integrity_test src/bench/archive_integrity_test.cpp
     src/preview_host/archive_listing.cpp src/preview_host/udf_listing.cpp)

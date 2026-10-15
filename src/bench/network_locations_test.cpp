@@ -10,8 +10,10 @@
 namespace {
 namespace fs = std::filesystem;
 using Microsoft::WRL::ComPtr;
+using pulse::app::NetworkDiscoveryState;
 using pulse::app::NetworkLocation;
 using pulse::app::ReadNetworkLocations;
+using pulse::app::SummarizeNetworkDiscoveryProfiles;
 
 struct Fixture {
     fs::path root;
@@ -82,6 +84,17 @@ int wmain(int argc, wchar_t** argv) {
         std::cout << (pass ? "[PASS] " : "[FAIL] ") << label << '\n';
         ok &= pass;
     };
+    using Discovery = NetworkDiscoveryState;
+    check(SummarizeNetworkDiscoveryProfiles({}) == Discovery::Unknown,
+        "no active network profiles cannot prove discovery is off");
+    check(SummarizeNetworkDiscoveryProfiles({Discovery::Disabled, Discovery::Disabled}) == Discovery::Disabled,
+        "discovery is off only when every active profile is confirmed off");
+    check(SummarizeNetworkDiscoveryProfiles({Discovery::Disabled, Discovery::Unknown}) == Discovery::Unknown,
+        "an unreadable active profile suppresses the off banner");
+    check(SummarizeNetworkDiscoveryProfiles({Discovery::Enabled, Discovery::Enabled}) == Discovery::Enabled,
+        "all active profiles enabled is reported as enabled");
+    check(SummarizeNetworkDiscoveryProfiles({Discovery::Enabled, Discovery::Disabled}) == Discovery::Unknown,
+        "mixed active profile states are not reported as conclusively on or off");
     const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(com)) { std::cout << "[FAIL] COM setup\n"; return 1; }
     if (argc != 1) {
@@ -125,6 +138,7 @@ int wmain(int argc, wchar_t** argv) {
         std::ofstream(root / L"desktop.ini") << "[.ShellClassInfo]\n";
         fs::create_directories(root / L"Ignored folder");
         auto scan = ReadNetworkLocations(root.wstring());
+        check(scan.discovery == Discovery::Unknown, "fixture scans do not read host firewall settings");
         check(!scan.error && !scan.cancelled && scan.items.size() == 5, "enumerate supported shortcuts and skip malformed/irrelevant files");
         const auto* offline = Named(scan.items, L"Offline");
         check(offline && !offline->shell_link && offline->path == L"\\\\pulse-offline.invalid\\share",

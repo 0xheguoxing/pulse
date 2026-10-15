@@ -867,6 +867,7 @@ void ClearTextWidthCache() {
         case PaneBannerAction::Refresh: return pulse::l10n::Get(I::Refresh);
         case PaneBannerAction::ManageIndex: return pulse::l10n::Get(I::ContentManageShort);
         case PaneBannerAction::AddNetworkIndex: return pulse::l10n::Get(I::NetworkLiveAdd);
+        case PaneBannerAction::NetworkSettings: return pulse::l10n::Get(I::Settings);
         default: return {};
         }
     }

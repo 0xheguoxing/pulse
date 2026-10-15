@@ -1,5 +1,7 @@
 #include "network_locations.h"
 #include <shlobj.h>
+#include <netfw.h>
+#include <oleauto.h>
 #include <wrl/client.h>
 #include <algorithm>
 #include <array>
@@ -16,6 +18,42 @@ struct FindScope {
     HANDLE handle;
     ~FindScope() { if (handle != INVALID_HANDLE_VALUE) FindClose(handle); }
 };
+struct BstrScope {
+    explicit BstrScope(BSTR value) : value(value) {}
+    ~BstrScope() { if (value) SysFreeString(value); }
+    BSTR value;
+};
+
+NetworkDiscoveryState QueryNetworkDiscoveryState() {
+    ComPtr<INetFwPolicy2> firewall;
+    if (FAILED(CoCreateInstance(__uuidof(NetFwPolicy2), nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&firewall)))) return NetworkDiscoveryState::Unknown;
+
+    long active_profiles = 0;
+    if (FAILED(firewall->get_CurrentProfileTypes(&active_profiles))) return NetworkDiscoveryState::Unknown;
+
+    BstrScope group(SysAllocString(L"@FirewallAPI.dll,-32752")); // Windows' localized Network Discovery group.
+    if (!group.value) return NetworkDiscoveryState::Unknown;
+
+    const NET_FW_PROFILE_TYPE2 profiles[] = {
+        NET_FW_PROFILE2_DOMAIN, NET_FW_PROFILE2_PRIVATE, NET_FW_PROFILE2_PUBLIC};
+    std::vector<NetworkDiscoveryState> states;
+    for (const NET_FW_PROFILE_TYPE2 profile : profiles) {
+        const long profile_mask = static_cast<long>(profile);
+        if ((active_profiles & profile_mask) == 0) continue;
+        VARIANT_BOOL firewall_enabled = VARIANT_FALSE;
+        if (firewall->get_FirewallEnabled(profile, &firewall_enabled) != S_OK || firewall_enabled != VARIANT_TRUE) {
+            states.push_back(NetworkDiscoveryState::Unknown);
+            continue;
+        }
+        VARIANT_BOOL discovery_enabled = VARIANT_FALSE;
+        const HRESULT hr = firewall->IsRuleGroupEnabled(profile_mask, group.value, &discovery_enabled);
+        states.push_back(hr == S_OK
+            ? (discovery_enabled == VARIANT_TRUE ? NetworkDiscoveryState::Enabled : NetworkDiscoveryState::Disabled)
+            : NetworkDiscoveryState::Unknown);
+    }
+    return SummarizeNetworkDiscoveryProfiles(states);
+}
 
 bool Equal(const std::wstring& a, const std::wstring& b) {
     return CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_EQUAL;
@@ -53,6 +91,20 @@ bool ReadLink(const std::wstring& local_path, const std::wstring& name, NetworkL
 }
 } // namespace
 
+NetworkDiscoveryState SummarizeNetworkDiscoveryProfiles(
+    const std::vector<NetworkDiscoveryState>& active_profiles) {
+    if (active_profiles.empty()) return NetworkDiscoveryState::Unknown;
+    bool all_enabled = true;
+    bool all_disabled = true;
+    for (const auto state : active_profiles) {
+        all_enabled &= state == NetworkDiscoveryState::Enabled;
+        all_disabled &= state == NetworkDiscoveryState::Disabled;
+    }
+    if (all_enabled) return NetworkDiscoveryState::Enabled;
+    if (all_disabled) return NetworkDiscoveryState::Disabled;
+    return NetworkDiscoveryState::Unknown;
+}
+
 NetworkLocationScan ReadNetworkLocations(const std::wstring& root, const std::function<bool()>& cancel) {
     NetworkLocationScan result;
     auto stopped = [&] {
@@ -70,6 +122,8 @@ NetworkLocationScan ReadNetworkLocations(const std::wstring& root, const std::fu
     if (stopped()) return result;
     ComScope com;
     if (FAILED(com.hr) && com.hr != RPC_E_CHANGED_MODE) return fail(static_cast<DWORD>(com.hr));
+    // Fixtures stay deterministic and never read the host's firewall state.
+    if (root.empty()) result.discovery = QueryNetworkDiscoveryState();
     std::wstring directory = root;
     if (directory.empty()) {
         PWSTR folder = nullptr;

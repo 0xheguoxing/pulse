@@ -179,7 +179,8 @@ struct ColumnStripView {
 enum class CompareMark : uint8_t { Same = 0, OnlyHere = 1, Newer = 2, Older = 3, Differs = 4 };
 // Buttons on the strip above a file list (pane banner), main one first.
 enum class PaneBannerAction : int {
-    None = 0, Retry, GoUp, Reconnect, Unlock, Refresh, ManageIndex, AddNetworkIndex, Dismiss
+    None = 0, Retry, GoUp, Reconnect, Unlock, Refresh, ManageIndex, AddNetworkIndex, Dismiss,
+    NetworkSettings
 };
 
 struct PaneViewModel {

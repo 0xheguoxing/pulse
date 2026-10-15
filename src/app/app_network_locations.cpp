@@ -12,6 +12,7 @@ struct NetworkLocationLoad {
     bool ready = false;
     bool pending = false; // UI thread only
     DWORD error = 0; // UI thread only
+    app::NetworkDiscoveryState discovery = app::NetworkDiscoveryState::Unknown; // UI thread only
     std::vector<app::NetworkLocation> items; // UI thread only
 };
 
@@ -89,6 +90,10 @@ void FillNetworkLocationsView(AppState& state, app::Tab& tab) {
         wchar_t code[64]{};
         swprintf_s(code, l10n::Get(l10n::StringId::ErrorCodeFormat).c_str(), state.networkLocations->error);
         tab.banner_message = code;
+    } else if (state.networkLocations &&
+        state.networkLocations->discovery == app::NetworkDiscoveryState::Disabled) {
+        tab.banner_title = l10n::Get(l10n::StringId::NetworkDiscoveryOffTitle);
+        tab.banner_message = l10n::Get(l10n::StringId::NetworkDiscoveryOffDesc);
     }
 }
 
@@ -102,6 +107,7 @@ void ApplyNetworkLocations(AppState& state) {
         load->pending = false;
         if (load->result.cancelled) return;
         load->error = load->result.error;
+        load->discovery = load->result.discovery;
         if (!load->error) load->items = app::MergeNetworkLocations({}, load->result.items);
     }
     state.sidebar.system_networks.clear();

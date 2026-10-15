@@ -1155,6 +1155,8 @@ enum class StringId : UINT {
     NetworkLiveAdded = IDS_NETWORK_LIVE_ADDED,
     NetworkLiveAddedMessage = IDS_NETWORK_LIVE_ADDED_MSG,
     NetworkLiveAddFailed = IDS_NETWORK_LIVE_ADD_FAILED,
+    NetworkDiscoveryOffTitle = IDS_NETWORK_DISCOVERY_OFF_TITLE,
+    NetworkDiscoveryOffDesc = IDS_NETWORK_DISCOVERY_OFF_DESC,
     SettingsConfirmDelete = IDS_SETTINGS_CONFIRM_DELETE,
     SettingsConfirmDeleteDesc = IDS_SETTINGS_CONFIRM_DELETE_DESC,
     RecycleConfirmOne = IDS_RECYCLE_CONFIRM_ONE,

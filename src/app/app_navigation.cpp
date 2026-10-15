@@ -2477,6 +2477,18 @@ bool HandlePaneBannerPress(AppState& s, const ui::HitTestResult& hit) {
     case A::GoUp:
         GoUp(s);
         break;
+    case A::NetworkSettings: {
+        HINSTANCE opened = ShellExecuteW(s.hwnd, L"open", L"ms-settings:network-advancedsettings",
+            nullptr, nullptr, SW_SHOWNORMAL);
+        if (reinterpret_cast<INT_PTR>(opened) <= 32) {
+            opened = ShellExecuteW(s.hwnd, L"open", L"control.exe",
+                L"/name Microsoft.NetworkAndSharingCenter", nullptr, SW_SHOWNORMAL);
+            if (reinterpret_cast<INT_PTR>(opened) <= 32)
+                ShellExecuteW(s.hwnd, L"open", L"ms-settings:network-status",
+                    nullptr, nullptr, SW_SHOWNORMAL);
+        }
+        break;
+    }
     case A::Dismiss:
         if (app::Tab* tab = ActiveTab(s)) {
             tab->banner_title.clear();

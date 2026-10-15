@@ -1715,6 +1715,8 @@ BEGIN
     IDS_NETWORK_LIVE_ADDED "已加入網路索引"
     IDS_NETWORK_LIVE_ADDED_MSG "正在建立索引；完成前，這裡的搜尋仍會即時進行。"
     IDS_NETWORK_LIVE_ADD_FAILED "無法加入網路索引"
+    IDS_NETWORK_DISCOVERY_OFF_TITLE "網路探索已關閉"
+    IDS_NETWORK_DISCOVERY_OFF_DESC "Windows 防火牆中，所有使用中的網路設定檔之「網路探索」規則群組都已關閉。區域網路裝置可能因此不會顯示；Pulse 不會掃描子網路。可在「進階共用設定」中檢查。"
     IDS_SETTINGS_CONFIRM_DELETE "刪除前確認"
     IDS_SETTINGS_CONFIRM_DELETE_DESC "按 Delete 移到資源回收筒前先詢問；永久刪除始終會確認"
     IDS_RECYCLE_CONFIRM_ONE "要把此項目移到資源回收筒嗎？"

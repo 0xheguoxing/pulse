@@ -48,6 +48,7 @@ inline PaneBannerStyle ClassifyPaneBanner(const Tab& tab, bool can_go_up, bool c
     }
     if (is(I::SearchIncomplete)) return with(3, A::Retry);
     if (is(I::CannotOpenSavedSearch)) return with(3, A::None);
+    if (is(I::NetworkDiscoveryOffTitle)) return with(2, A::NetworkSettings);
     if (is(I::NetworkLiveAddFailed)) return with(3, network_live_action ? A::AddNetworkIndex : A::None);
     if (is(I::NetworkLiveAdded)) {
         st.kind = 1;
