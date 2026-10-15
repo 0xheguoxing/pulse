@@ -1048,7 +1048,7 @@ foreach(task_target pulse_index pulse_content_search_test pulse_content_index_te
 endforeach()
 
 add_library(pulse_fs_watch STATIC src/fs/fs_watch.cpp src/fs/fs_enum.cpp)
-target_link_libraries(pulse_fs_watch PUBLIC shell32 shlwapi netapi32 pulse_localization)
+target_link_libraries(pulse_fs_watch PUBLIC shell32 shlwapi netapi32 cfgmgr32 pulse_localization)
 add_executable(pulse_bitlocker_volume_test src/bench/bitlocker_volume_test.cpp)
 target_link_libraries(pulse_bitlocker_volume_test PRIVATE pulse_fs_watch)
 add_executable(pulse_watch_lease_test src/bench/watch_lease_test.cpp)

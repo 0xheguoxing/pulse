@@ -2,6 +2,7 @@
 #include "fs_watch.h"
 #include "fs_enum.h"
 #include <winioctl.h>
+#include <cfgmgr32.h>
 #include <algorithm>
 
 namespace pulse::fs {
@@ -69,11 +70,22 @@ struct DirWatch::State {
     OVERLAPPED lease_overlapped_{};
     REQUEST_OPLOCK_OUTPUT_BUFFER lease_output_{};
     bool lease_pending_ = false;
+    // Device removal (#251). An open handle on a volume vetoes "Safely Remove"
+    // and eject unless it is closed on query-remove, as Explorer does. The
+    // callback asks the worker to close the handle and waits until it has;
+    // the worker reopens when the removal fails, or after it completes.
+    HCMNOTIFICATION removal_ = nullptr;
+    HANDLE removal_event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);   // query-remove arrived
+    HANDLE released_event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);  // handle closed for it
+    HANDLE resume_event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);    // removal failed or done
     ~State() {
+        UnwatchRemoval();
         const HANDLE directory = hDir_.load();
         if (directory != INVALID_HANDLE_VALUE) CloseHandle(directory);
         if (hStop_) CloseHandle(hStop_);
         if (lease_event_) CloseHandle(lease_event_);
+        for (HANDLE event : {removal_event_, released_event_, resume_event_})
+            if (event) CloseHandle(event);
         --active_watchers;
     }
     static HANDLE OpenDirectory(const std::wstring& path);
@@ -83,6 +95,10 @@ struct DirWatch::State {
     void RequestLease(HANDLE directory, DWORD level, DWORD flags);
     void DropLease(HANDLE directory);
     bool LeaseBreakWantsHandle(HANDLE directory);
+    void WatchRemoval(HANDLE directory);
+    void UnwatchRemoval();
+    static DWORD CALLBACK RemovalCallback(HCMNOTIFICATION, PVOID context, CM_NOTIFY_ACTION action,
+                                          PCM_NOTIFY_EVENT_DATA, DWORD);
     void Notify(bool overflow, std::vector<DirNotifyEvent> events);
     void WorkerThread();
 };
@@ -98,7 +114,8 @@ bool DirWatch::Start(const std::wstring& path, ChangeCallback cb, bool subtree) 
     std::shared_ptr<State> state;
     try { state = std::make_shared<State>(); }
     catch (...) { --active_watchers; return false; }
-    if (!state->hStop_) return false;
+    if (!state->hStop_ || !state->removal_event_ || !state->released_event_ || !state->resume_event_)
+        return false;
     path_ = NormalizePath(path);
     state->path_ = path_;
     state->subtree_ = subtree;
@@ -161,6 +178,7 @@ bool DirWatch::State::ReopenDirectory() {
     const HANDLE old = hDir_.exchange(INVALID_HANDLE_VALUE, std::memory_order_acq_rel);
     DropLease(old);
     if (old != INVALID_HANDLE_VALUE) CloseHandle(old);
+    UnwatchRemoval();
     identity_valid_ = false;
 
     while (running_) {
@@ -173,6 +191,7 @@ bool DirWatch::State::ReopenDirectory() {
                 hDir_.store(directory, std::memory_order_release);
                 RequestLease(directory, OPLOCK_LEVEL_CACHE_READ | OPLOCK_LEVEL_CACHE_HANDLE,
                              REQUEST_OPLOCK_INPUT_FLAG_REQUEST);
+                WatchRemoval(directory);
                 return true;
             }
             CloseHandle(directory);
@@ -228,6 +247,50 @@ bool DirWatch::State::LeaseBreakWantsHandle(HANDLE directory) {
     return false;
 }
 
+void DirWatch::State::WatchRemoval(HANDLE directory) {
+    // Shares have no local device to remove.
+    if (removal_ || !removal_event_ || !released_event_ || !resume_event_ ||
+        path_.starts_with(L"\\\\?\\UNC\\") || !path_.starts_with(L"\\\\?\\"))
+        return;
+    ResetEvent(removal_event_);
+    ResetEvent(resume_event_);
+    CM_NOTIFY_FILTER filter{};
+    filter.cbSize = sizeof(filter);
+    filter.FilterType = CM_NOTIFY_FILTER_TYPE_DEVICEHANDLE;
+    filter.u.DeviceHandle.hTarget = directory;
+    if (CM_Register_Notification(&filter, this, &State::RemovalCallback, &removal_) != CR_SUCCESS)
+        removal_ = nullptr;
+}
+
+void DirWatch::State::UnwatchRemoval() {
+    if (!removal_) return;
+    // Waits for a callback in flight; never called from the callback itself.
+    if (released_event_) SetEvent(released_event_);
+    CM_Unregister_Notification(removal_);
+    removal_ = nullptr;
+}
+
+DWORD CALLBACK DirWatch::State::RemovalCallback(HCMNOTIFICATION, PVOID context, CM_NOTIFY_ACTION action,
+                                                PCM_NOTIFY_EVENT_DATA, DWORD) {
+    auto* state = static_cast<State*>(context);
+    switch (action) {
+    case CM_NOTIFY_ACTION_DEVICEQUERYREMOVE:
+        ResetEvent(state->released_event_);
+        SetEvent(state->removal_event_);
+        // The worker's wait wakes at once; give up rather than stall the removal.
+        WaitForSingleObject(state->released_event_, 5000);
+        break;
+    case CM_NOTIFY_ACTION_DEVICEQUERYREMOVEFAILED:
+    case CM_NOTIFY_ACTION_DEVICEREMOVEPENDING:
+    case CM_NOTIFY_ACTION_DEVICEREMOVECOMPLETE:
+        SetEvent(state->resume_event_);
+        break;
+    default:
+        break;
+    }
+    return ERROR_SUCCESS;
+}
+
 void DirWatch::State::Notify(bool overflow, std::vector<DirNotifyEvent> events) {
     std::lock_guard lock(callback_mutex_);
     if (!running_ || !callback_) return;
@@ -266,7 +329,7 @@ void DirWatch::State::WorkerThread() {
         ZeroMemory(&overlapped_, sizeof(overlapped_));
         overlapped_.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (!overlapped_.hEvent) break;
-        HANDLE events[3] = { hStop_, overlapped_.hEvent, lease_event_ };
+        HANDLE events[4] = { hStop_, overlapped_.hEvent, removal_event_, lease_event_ };
         const HANDLE directory = hDir_.load(std::memory_order_acquire);
         if (directory == INVALID_HANDLE_VALUE) {
             CloseHandle(overlapped_.hEvent);
@@ -308,9 +371,16 @@ void DirWatch::State::WorkerThread() {
         bool replaced = false;
         bool stopped = false;
         bool stepped_aside = false;
+        bool removing = false;
         for (;;) {
-            const DWORD wait = WaitForMultipleObjects(lease_pending_ ? 3 : 2, events, FALSE, 500);
+            const DWORD wait = WaitForMultipleObjects(lease_pending_ ? 4 : 3, events, FALSE, 500);
             if (wait == WAIT_OBJECT_0 + 2) {
+                CancelIoEx(directory, &overlapped_);
+                WaitForSingleObject(overlapped_.hEvent, INFINITE);
+                removing = true;
+                break;
+            }
+            if (wait == WAIT_OBJECT_0 + 3) {
                 if (!LeaseBreakWantsHandle(directory)) continue;
                 CancelIoEx(directory, &overlapped_);
                 WaitForSingleObject(overlapped_.hEvent, INFINITE);
@@ -347,6 +417,22 @@ void DirWatch::State::WorkerThread() {
         overlapped_.hEvent = nullptr;
 
         if (stopped || !running_) break;
+
+        if (removing) {
+            // Close for the removal, then stay closed until it fails (reopen
+            // now) or completes (reopen once the volume is back).
+            armed_ = false;
+            pending_rename_old_.clear();
+            const HANDLE old = hDir_.exchange(INVALID_HANDLE_VALUE, std::memory_order_acq_rel);
+            DropLease(old);
+            if (old != INVALID_HANDLE_VALUE) CloseHandle(old);
+            SetEvent(released_event_);
+            HANDLE resume[2] = { hStop_, resume_event_ };
+            if (WaitForMultipleObjects(2, resume, FALSE, 60000) == WAIT_OBJECT_0 || !running_) break;
+            if (!ReopenDirectory()) break;
+            newly_armed = true;
+            continue;
+        }
 
         if (stepped_aside) {
             // Close now so the waiting rename or move goes ahead, and let it
@@ -387,6 +473,7 @@ void DirWatch::State::WorkerThread() {
     }
     armed_ = false;
     DropLease(hDir_.load(std::memory_order_acquire));
+    UnwatchRemoval();
 }
 
 void DirWatchSet::Sync(const std::vector<std::wstring>& paths, Callback cb) {
