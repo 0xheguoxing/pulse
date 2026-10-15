@@ -60,10 +60,19 @@ inline D2D1_RECT_F GroupSelectRect(const D2D1_RECT_F& header, float scale) noexc
                        right, header.bottom - 5.0f * scale};
 }
 
+// Lines an icon-grid name may wrap to before its end is elided ("a…z.ext").
+inline constexpr int kIconGridNameLines = 2;
+// Line pitch of the 13 DIP file-name font (Segoe UI / Microsoft YaHei UI).
+inline constexpr float kIconGridNameLineDip = 18.0f;
+
 struct ViewLayoutMetrics {
     float cell_width = 0.0f;
     float cell_height = 0.0f;
     float icon_size = 0.0f;
+    // Icon grids: height of the thumbnail slot above the name. Equal to
+    // icon_size (a square) except extra large icons, whose 4:3 slot fits the
+    // landscape photos most folders hold without a blank band above them.
+    float slot_height = 0.0f;
     int columns = 1;
     int rows_per_column = 1;
     bool column_major = false;
@@ -85,7 +94,12 @@ public:
     float MaxScrollX() const noexcept;
     float MaxScrollY() const noexcept;
     D2D1_RECT_F ItemRect(int view_index) const noexcept;
+    // Shell icon square. In icon grids it rests on the bottom of the slot.
     D2D1_RECT_F IconRect(int view_index) const noexcept;
+    // Icon grids: the whole thumbnail slot (wider than IconRect for extra
+    // large icons). Other views: IconRect.
+    D2D1_RECT_F ThumbnailRect(int view_index) const noexcept;
+    // Icon grids: room for kIconGridNameLines lines under the slot.
     D2D1_RECT_F NameRect(int view_index) const noexcept;
     D2D1_RECT_F FolderSizeRect(int view_index) const noexcept;
     int HitTest(float x, float y) const noexcept;

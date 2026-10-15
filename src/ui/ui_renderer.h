@@ -1794,10 +1794,17 @@ private:
     // Returns true when the name had to be shortened with an ellipsis.
     bool DrawTruncatedName(const std::wstring& name, float x, float y, float w, float h,
                            const Theme& theme, bool selected, const std::vector<NameMatchRange>& matches, bool dim_extension = false);
-    // `truncated` (optional, costs one extra layout): the wrapped name did not fit.
-    void DrawCenteredIconName(const std::wstring& name, const D2D1_RECT_F& bounds,
+    // Icon-grid name: up to `max_lines` centered lines; a longer name keeps
+    // its end ("a…z.ext"). Returns (and sets `truncated`) when it was elided.
+    bool DrawCenteredIconName(const std::wstring& name, const D2D1_RECT_F& bounds,
                               const D2D1_COLOR_F& color, const Theme& theme,
-                              const std::vector<NameMatchRange>& matches, bool* truncated = nullptr);
+                              const std::vector<NameMatchRange>& matches, bool* truncated = nullptr,
+                              int max_lines = kIconGridNameLines, float* text_height = nullptr);
+    // The selected item's whole name (up to 6 lines) on an opaque plate that
+    // covers the row below.
+    void DrawExpandedIconName(const std::wstring& name, const D2D1_RECT_F& bounds,
+                              const D2D1_COLOR_F& color, const Theme& theme,
+                              const std::vector<NameMatchRange>& matches, bool pane_focused);
     // Title-bar product mark from the app icon resource (nullptr until loaded).
     ID2D1Bitmap* LogoBitmap();
 

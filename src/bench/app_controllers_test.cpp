@@ -30,6 +30,7 @@
 #include <shlobj.h>
 #include <cstdio>
 #include <cmath>
+#include <cmath>
 #include <condition_variable>
 #include <mutex>
 #include <string>
@@ -1201,8 +1202,25 @@ bool TestViewHitBounds() {
     bool ok = true;
     ViewLayout xl(ViewMode::ExtraLargeIcons, {0,0,900,900}, 20, 0, 0, 1);
     ViewLayout list(ViewMode::List, {0,0,800,250}, 30, 0, 0, 1);
-    ok &= Report("XL right gutter and List bottom gutter reject neighboring items",
-        xl.HitTest(850,20) == -1 && list.HitTest(30,245) == -1);
+    ok &= Report("XL row spreads its leftover (no blank right strip); List bottom gutter rejects neighboring items",
+        xl.HitTest(850,20) == 2 && xl.ItemRect(2).right <= 900.5f && list.HitTest(30,245) == -1);
+    bool slots = true;
+    for (float scale : {1.0f,1.5f,2.0f}) {
+        ViewLayout big(ViewMode::ExtraLargeIcons, {0,0,1000,900}, 20, 0, 0, scale);
+        const auto slot = big.ThumbnailRect(0), icon = big.IconRect(0), name = big.NameRect(0), cell = big.ItemRect(0);
+        // 240 px wide 4:3 slot, icon square resting on its bottom, two name lines inside the cell.
+        slots &= std::abs((slot.right - slot.left) - 240.0f) < 0.5f && std::abs((slot.bottom - slot.top) - 180.0f) < 0.5f;
+        slots &= std::abs((icon.right - icon.left) - 180.0f) < 0.5f && std::abs(icon.bottom - slot.bottom) < 0.5f;
+        slots &= name.top >= slot.bottom && name.bottom <= cell.bottom + 0.5f &&
+                 name.bottom - name.top >= 2 * kIconGridNameLineDip * scale;
+        for (ViewMode mode : {ViewMode::LargeIcons, ViewMode::MediumIcons}) {
+            ViewLayout grid(mode, {0,0,1000,900}, 20, 0, 0, scale);
+            const auto t = grid.ThumbnailRect(0), ic = grid.IconRect(0), nm = grid.NameRect(0), c = grid.ItemRect(0);
+            slots &= std::abs(t.left - ic.left) < 0.01f && std::abs(t.bottom - ic.bottom) < 0.01f &&
+                     std::abs(t.right - ic.right) < 0.01f && nm.top >= ic.bottom && nm.bottom <= c.bottom + 0.5f;
+        }
+    }
+    ok &= Report("icon grids: 4:3 XL thumbnail slot, square icons on its bottom, two-line names fit the cell", slots);
     bool contained = true;
     for (int mode = 0; mode < 8; ++mode) {
         for (float scale : {1.0f,1.5f,2.0f}) {

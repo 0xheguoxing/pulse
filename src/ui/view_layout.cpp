@@ -70,23 +70,29 @@ ViewLayout::ViewLayout(ViewMode mode, D2D1_RECT_F viewport, size_t item_count,
     if (mode_ == ViewMode::Details) viewport_ = DetailsContentRect(viewport_, scale_);
     const float width = std::max(1.0f, viewport_.right - viewport_.left);
     const float height = std::max(1.0f, viewport_.bottom - viewport_.top);
-    auto grid = [&](float cell_w, float cell_h, float icon, bool fixed_pixel_tier = false) {
+    auto grid = [&](float cell_w, float cell_h, float icon, bool fixed_pixel_tier = false,
+                    float slot_h = 0.0f) {
         const float factor = fixed_pixel_tier ? 1.0f : scale_;
         metrics_.cell_width = std::min(width, cell_w * factor);
         metrics_.cell_height = cell_h * factor;
         metrics_.icon_size = icon * factor;
+        metrics_.slot_height = slot_h > 0.0f ? slot_h * factor : metrics_.icon_size;
         metrics_.columns = std::max(1, static_cast<int>(width / metrics_.cell_width));
-        if (!fixed_pixel_tier)
-            metrics_.cell_width = width / static_cast<float>(metrics_.columns);
+        // Every grid spreads the row's leftover over its columns: a fixed
+        // pixel tier keeps its artwork size, not a blank strip on the right.
+        metrics_.cell_width = width / static_cast<float>(metrics_.columns);
         const size_t rows = (count_ + static_cast<size_t>(metrics_.columns) - 1) /
                             static_cast<size_t>(metrics_.columns);
         content_width_ = width;
         content_height_ = static_cast<float>(rows) * metrics_.cell_height;
     };
     switch (mode_) {
-    case ViewMode::ExtraLargeIcons: grid(280.0f, 240.0f + 64.0f * scale_, 240.0f, true); break;
-    case ViewMode::LargeIcons: grid(116.0f, 160.0f, 96.0f); break;
-    case ViewMode::MediumIcons: grid(112.0f, 112.0f, 48.0f); break;
+    // Icon grids: 8 pad + slot + 6 gap + two 18 DIP name lines (+2) + bottom.
+    // Extra large thumbnails stay 240 device pixels wide; their slot is 4:3.
+    case ViewMode::ExtraLargeIcons:
+        grid(240.0f + 16.0f * scale_, 180.0f + 56.0f * scale_, 240.0f, true, 180.0f); break;
+    case ViewMode::LargeIcons: grid(112.0f, 148.0f, 96.0f); break;
+    case ViewMode::MediumIcons: grid(104.0f, 100.0f, 48.0f); break;
     case ViewMode::SmallIcons: grid(144.0f, 28.0f, 16.0f); break;
     case ViewMode::Tiles: grid(280.0f, 72.0f, 48.0f); break;
     case ViewMode::List: {
@@ -243,13 +249,28 @@ D2D1_RECT_F ViewLayout::IconRect(int index) const noexcept {
     const float pad = 8.0f * scale_;
     if (mode_ == ViewMode::ExtraLargeIcons || mode_ == ViewMode::LargeIcons ||
         mode_ == ViewMode::MediumIcons) {
-        const float available = std::max(16.0f, cell.right - cell.left - pad * 2.0f);
-        const float fittedIcon = std::min(icon, available);
-        const float left = cell.left + (cell.right - cell.left - fittedIcon) * 0.5f;
-        return {left, cell.top + pad, left + fittedIcon, cell.top + pad + fittedIcon};
+        const D2D1_RECT_F slot = ThumbnailRect(index);
+        const float side = std::min(slot.right - slot.left, slot.bottom - slot.top);
+        const float left = cell.left + (cell.right - cell.left - side) * 0.5f;
+        return {left, slot.bottom - side, left + side, slot.bottom};
     }
     const float top = cell.top + (cell.bottom - cell.top - icon) * 0.5f;
     return {cell.left + pad, top, cell.left + pad + icon, top + icon};
+}
+
+D2D1_RECT_F ViewLayout::ThumbnailRect(int index) const noexcept {
+    if (mode_ != ViewMode::ExtraLargeIcons && mode_ != ViewMode::LargeIcons &&
+        mode_ != ViewMode::MediumIcons)
+        return IconRect(index);
+    const D2D1_RECT_F cell = ItemRect(index);
+    const float pad = 8.0f * scale_;
+    const float available = std::max(16.0f, cell.right - cell.left - pad * 2.0f);
+    const float slot_w = std::min(metrics_.icon_size, available);
+    // A narrow pane shrinks the slot, keeping its shape.
+    const float slot_h = metrics_.icon_size > 0.0f
+        ? metrics_.slot_height * slot_w / metrics_.icon_size : slot_w;
+    const float left = cell.left + (cell.right - cell.left - slot_w) * 0.5f;
+    return {left, cell.top + pad, left + slot_w, cell.top + pad + slot_h};
 }
 
 D2D1_RECT_F ViewLayout::NameRect(int index) const noexcept {
@@ -258,10 +279,10 @@ D2D1_RECT_F ViewLayout::NameRect(int index) const noexcept {
     const float icon = metrics_.icon_size;
     if (mode_ == ViewMode::ExtraLargeIcons || mode_ == ViewMode::LargeIcons ||
         mode_ == ViewMode::MediumIcons) {
-        const D2D1_RECT_F icon_rect = IconRect(index);
-        const float top = std::min(cell.bottom - 4.0f * scale_,
-                                   icon_rect.bottom + 4.0f * scale_);
-        return {cell.left + pad, top, cell.right - pad, top + 24.0f * scale_};
+        const D2D1_RECT_F slot = ThumbnailRect(index);
+        const float top = std::min(cell.bottom - 4.0f * scale_, slot.bottom + 6.0f * scale_);
+        const float lines_h = (kIconGridNameLines * kIconGridNameLineDip + 2.0f) * scale_;
+        return {cell.left + pad, top, cell.right - pad, top + lines_h};
     }
     if (mode_ == ViewMode::Tiles || mode_ == ViewMode::Content) {
         const float left = cell.left + pad + icon + 10.0f * scale_;
@@ -276,8 +297,11 @@ D2D1_RECT_F ViewLayout::NameRect(int index) const noexcept {
 D2D1_RECT_F ViewLayout::FolderSizeRect(int index) const noexcept {
     if (!ShowsFolderSize(mode_)) return {};
     const auto name = NameRect(index);
-    const float top = name.top + 25.0f * scale_;
-    return {name.left, top, name.right, top + 22.0f * scale_};
+    // Icon grids: a folder with a size keeps its name to one line above it.
+    const bool grid = mode_ == ViewMode::ExtraLargeIcons || mode_ == ViewMode::LargeIcons ||
+                      mode_ == ViewMode::MediumIcons;
+    const float top = name.top + (grid ? 19.0f : 25.0f) * scale_;
+    return {name.left, top, name.right, top + (grid ? 20.0f : 22.0f) * scale_};
 }
 
 int ViewLayout::HitTest(float x, float y) const noexcept {
