@@ -112,10 +112,10 @@ bool RunOperationToastTest() {
             check(SUCCEEDED(dc->EndDraw()) && state->compositor.SaveSnapshot((output / (std::wstring(variant.name) + L".png")).c_str()),
                 "operation toast screenshot saved");
             const auto bounds = state->notification_toast.Bounds();
-            check(bounds.left >= 16 * variant.scale && bounds.right <= variant.width - 16 * variant.scale &&
-                bounds.top >= 48 * variant.scale && bounds.top <= 64 * variant.scale && bounds.bottom <= variant.height &&
-                std::abs(bounds.left + bounds.right - variant.width) < 1.0f,
-                "error toast sits at the top center and fits narrow high-DPI windows");
+            check(bounds.left >= 16 * variant.scale && bounds.top >= 0 &&
+                std::abs(bounds.right - (variant.width - 16 * variant.scale)) < 1.0f &&
+                bounds.bottom <= variant.height - 48 * variant.scale + 13 * variant.scale,
+                "error toast sits in the bottom-right corner like every toast and fits narrow high-DPI windows");
             SendMessageW(hwnd, WM_KEYDOWN, VK_ESCAPE, 0);
             UpdateOperationWindow(*state, false);
             check(!state->notification_toast.IsVisible(), "Escape dismisses error and repeated status does not reopen it");
@@ -167,13 +167,15 @@ bool RunOperationToastTest() {
             state->notification_toast.DismissFor(hwnd, kSnackAction);
             check(!state->notification_toast.IsVisible(), "a capsule goes when what its button offers is done another way");
         }
-        state->notification_toast.ShowError(hwnd, L"Error", L"Transient error");
+        state->notification_toast.ShowError(hwnd, L"Error", L"Lasting error");
         const auto start = GetTickCount64();
-        while (state->notification_toast.IsVisible() && GetTickCount64() - start < 7500) {
+        while (state->notification_toast.IsVisible() && GetTickCount64() - start < 6500) {
             PumpToast();
             Sleep(10);
         }
-        check(!state->notification_toast.IsVisible(), "error toast dismisses automatically after six seconds");
+        check(state->notification_toast.IsVisible(), "an error toast stays until it is closed");
+        SendMessageW(hwnd, WM_KEYDOWN, VK_ESCAPE, 0);
+        check(!state->notification_toast.IsVisible(), "Escape closes a lasting error toast");
         state->notification_toast.ShowSnack(hwnd, ui::SnackIcon::Merge, L"merged", {}, {}, {}, 1500);
         const auto snack_start = GetTickCount64();
         while (state->notification_toast.IsVisible() && GetTickCount64() - snack_start < 4000) {

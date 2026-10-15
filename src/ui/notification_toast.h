@@ -49,7 +49,6 @@ private:
     D2D1_RECT_F card_{}, close_{};
     ULONGLONG born_ = 0, last_tick_ = 0, remaining_ = 0;
     bool visible_ = false, hovered_ = false, pressed_close_ = false, pressed_card_ = false, persistent_ = true;
-    bool top_center_ = false;
     fluent::InfoBarKind kind_ = fluent::InfoBarKind::Warning;
     // The capsule (M7i).
     bool snack_ = false;

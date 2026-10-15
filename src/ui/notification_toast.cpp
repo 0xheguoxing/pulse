@@ -53,7 +53,6 @@ void NotificationToast::Show(HWND owner, std::wstring title, std::wstring messag
     title_ = std::move(title);
     message_ = std::move(message);
     persistent_ = persistent;
-    top_center_ = false;
     snack_ = false;
     actions_.clear();
     action_rects_.clear();
@@ -81,8 +80,9 @@ void NotificationToast::ShowSnack(HWND owner, SnackIcon icon, std::wstring text,
     duration_ = remaining_ = (std::max)(UINT{1500}, duration_ms);
 }
 void NotificationToast::ShowError(HWND owner, std::wstring title, std::wstring message) {
-    Show(owner, std::move(title), std::move(message), false);
-    top_center_ = true;
+    // Same corner and card as every other toast; an error waits to be read
+    // and closed (the close button or Esc) instead of timing out.
+    Show(owner, std::move(title), std::move(message), true);
     kind_ = fluent::InfoBarKind::Error;
 }
 void NotificationToast::Dismiss(HWND owner) {
@@ -221,8 +221,8 @@ void NotificationToast::Draw(Compositor& compositor, const Theme& theme, float s
     const float height = std::round(px(12.0f) + title_h + (body_h > 0.0f ? px(2.0f) + body_h : 0.0f) + px(12.0f));
     const float age = (std::min)(1.0f, static_cast<float>(GetTickCount64() - born_) / 180.0f);
     const float slide = high_contrast ? 0.0f : px(12.0f) * (1.0f - age) * (1.0f - age);
-    const float right = std::round(top_center_ ? (window_w + width) * 0.5f : window_w - margin);
-    const float top = std::round(top_center_ ? px(64.0f) - slide : window_h - px(48.0f) + slide - height);
+    const float right = std::round(window_w - margin);
+    const float top = std::round(window_h - px(48.0f) + slide - height);
     card_ = D2D1::RectF(right - width, top, right, top + height);
     const float radius = px(10.0f);
     DrawSnackPlate(dc, card_, radius, pal, scale, high_contrast);

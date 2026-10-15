@@ -570,6 +570,7 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
             swprintf_s(error, l10n::Get(l10n::StringId::ErrorCodeFormat).c_str(), result.error);
             s.notification_toast.Show(s.hwnd, l10n::Get(l10n::StringId::OpCopyFailed),
                 result.source + L"\n" + error, false);
+            s.notification_toast.SetKind(ui::fluent::InfoBarKind::Error);
             return DROPEFFECT_NONE;
         }
     } else submit(sources);
@@ -2184,7 +2185,10 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         D2D1_RECT_F content = s->renderer.ContentRect((float)s->compositor.Width(), (float)s->compositor.Height());
         float extra = 0.0f;
         if (app::Tab* tab = ActiveTab(*s); tab) {
-            if (!tab->banner_message.empty()) extra = 36.0f * s->scale;
+            if (!tab->banner_message.empty()) {
+                const float drawn = s->renderer.FocusedPaneBannerHeight();  // one or two lines
+                extra = drawn > 0.0f ? drawn : 36.0f * s->scale;
+            }
             std::wstring kind;
             if (app::ParsePulsePath(tab->current_path, &kind, nullptr) && kind == L"recent")
                 extra += 40.0f * s->scale;
@@ -2288,6 +2292,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             hit.region != ui::HitTestResult::AddressSearchOptions &&
             hit.region != ui::HitTestResult::ContentIndexManage &&
             hit.region != ui::HitTestResult::NetworkIndexAdd &&
+            hit.region != ui::HitTestResult::PaneBannerButton &&
             hit.region != ui::HitTestResult::AddressSearchClear &&
             hit.region != ui::HitTestResult::AddressSearchClose) {
             HideAddressEditor(*s, false);
@@ -2305,6 +2310,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             return 0;
         }
         if (HandleWindowIdentityPress(*s, hit, POINT{mx, my})) return 0;  // M7c
+        if (HandlePaneBannerPress(*s, hit)) return 0;  // retry, go up, reconnect... on a pane banner
         if (hit.region == ui::HitTestResult::TrayCard && hit.index == 0) {
             const auto top = TrayDeckEntries(s->tray, static_cast<size_t>(TrayStackTop(*s)), 1);
             if (!top.empty()) {
