@@ -304,10 +304,18 @@ D2D1_RECT_F MainRenderer::FilterClearRect(const D2D1_RECT_F& pane_bounds, float 
 }
 
 D2D1_RECT_F MainRenderer::FilterEditRect(const D2D1_RECT_F& pane_bounds, float expand, bool has_text) const {
-    D2D1_RECT_F rc = FilterBoxRect(pane_bounds, expand);
+    const D2D1_RECT_F box = FilterBoxRect(pane_bounds, expand);
+    D2D1_RECT_F rc = box;
     rc.left += 34.0f * scale_;
     rc.right -= (has_text ? 34.0f : 10.0f) * scale_;
-    if (rc.right < rc.left + 24.0f * scale_) rc.right = rc.left + 24.0f * scale_;
+    if (rc.right < rc.left + 24.0f * scale_) {
+        // A crowded toolbar can leave the expanded field narrower than its icon,
+        // 24 DIP of text and the clear button. The text gives up icon padding
+        // first; with text it never grows into the clear button's hit area.
+        rc.left = (std::max)(box.left + 26.0f * scale_, rc.right - 24.0f * scale_);
+        if (!has_text) rc.right = (std::max)(rc.right, rc.left + 24.0f * scale_);
+        rc.left = (std::min)(rc.left, rc.right);
+    }
     return rc;
 }
 

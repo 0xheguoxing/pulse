@@ -297,11 +297,13 @@ D2D1_RECT_F ViewLayout::NameRect(int index) const noexcept {
 D2D1_RECT_F ViewLayout::FolderSizeRect(int index) const noexcept {
     if (!ShowsFolderSize(mode_)) return {};
     const auto name = NameRect(index);
-    // Icon grids: a folder with a size keeps its name to one line above it.
+    // Icon grids: a folder with a size keeps its name to one line above it and
+    // the size takes the second line's slot, which ends inside the cell.
     const bool grid = mode_ == ViewMode::ExtraLargeIcons || mode_ == ViewMode::LargeIcons ||
                       mode_ == ViewMode::MediumIcons;
-    const float top = name.top + (grid ? 19.0f : 25.0f) * scale_;
-    return {name.left, top, name.right, top + (grid ? 20.0f : 22.0f) * scale_};
+    if (grid) return {name.left, name.top + kIconGridNameLineDip * scale_, name.right, name.bottom};
+    const float top = name.top + 25.0f * scale_;
+    return {name.left, top, name.right, top + 22.0f * scale_};
 }
 
 int ViewLayout::HitTest(float x, float y) const noexcept {
