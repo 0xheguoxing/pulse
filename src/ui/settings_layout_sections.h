@@ -375,6 +375,8 @@ inline const wchar_t* Browse() { return l10n::Pick(L"浏览…", L"Browse…"); 
 inline const wchar_t* UseDetected() { return l10n::Pick(L"使用检测到的", L"Use found"); }
 inline const wchar_t* RemoveTitle() { return l10n::Pick(L"卸载 Pulse 时删除预览增强包", L"Remove packs when uninstalling Pulse"); }
 inline const wchar_t* RemoveDesc() { return l10n::Pick(L"否则保留，重新安装 Pulse 后可直接使用", L"Otherwise they stay and work again after reinstalling Pulse"); }
+inline const wchar_t* AutoUpdateTitle() { return l10n::Pick(L"自动更新预览增强包", L"Update preview packs automatically"); }
+inline const wchar_t* AutoUpdateDesc() { return l10n::Pick(L"随 Pulse 更新检查一起进行，在后台下载", L"Runs with the Pulse update check and downloads in the background"); }
 inline const wchar_t* Note() { return l10n::Pick(
     L"预览增强包在隔离的预览进程中运行：崩溃或超时只影响当前预览，Pulse 会回退到内置的缩略图和文本视图。",
     L"Packs run in the isolated preview process: a crash or timeout only affects that preview, and Pulse falls back to its built-in views."); }
@@ -689,9 +691,10 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
                 pack_text::ShowsArchiveEnable(vm), pack_text::ArchiveBadge(vm), pack_text::ArchiveDesc(),
                 pack_text::ArchivePrimary(vm), pack_text::ArchiveUpdate(vm), vm.settings_pack_archive_notice);
 
-    // Uninstall preferences remain separate from the media source.
+    // Background updates and the uninstall choice remain separate from the media source.
     y += 24*scale; l.pack_advanced_section = row(28);
     const float group_top = y;
+    l.pack_auto_update_row = row((caption_h(pack_text::AutoUpdateDesc(), right - left - 126*scale) + 47*scale) / scale);
     l.pack_remove_row = row((caption_h(pack_text::RemoveDesc(), right - left - 126*scale) + 47*scale) / scale);
     l.pack_group = D2D1::RectF(left, group_top, right, y);
     y += 12*scale;

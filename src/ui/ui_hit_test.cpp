@@ -611,6 +611,7 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     {&lay.pack_detect, PackAction::UseDetected},
                     {&lay.pack_browse, PackAction::Browse},
                     {&lay.pack_custom_row, PackAction::UseCustom},
+                    {&lay.pack_auto_update_row, PackAction::AutoUpdate},
                     {&lay.pack_remove_row, PackAction::RemoveOnUninstall},
                     {&lay.trigger_choice[0], PackAction::TriggerHover},
                     {&lay.trigger_choice[1], PackAction::TriggerSpace},

@@ -110,6 +110,9 @@ struct AppCore {
     DWORD update_install_error = ERROR_SUCCESS;
     ULONGLONG next_update_progress_paint = 0;
     ULONGLONG next_update_check = GetTickCount64() + 15000;
+    // Background preview pack updates (TickUpdates): half a minute after
+    // start, then every update check interval.
+    ULONGLONG next_pack_update_check = GetTickCount64() + 30000;
     std::wstring notified_update_version;
 
     std::wstring whatsNewVersion;      // set once after an upgrade; toast shown at whatsNewAt

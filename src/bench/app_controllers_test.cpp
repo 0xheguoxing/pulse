@@ -25,6 +25,8 @@
 #include "../app/toolbar_apps.h"
 #include "../app/app_prefs.h"
 #include "../ui/toolbar_layout.h"
+#include "../common/preview_packs.h"
+#include "../common/utf8_file.h"
 
 #include <shlwapi.h>
 #include <shlobj.h>
@@ -51,6 +53,10 @@ struct SettingsControllerTestPeer {
                       SettingsTaskOperation operation, SettingsTaskCompletion completion) {
         return controller.StartTask(std::move(task), std::move(operation),
                                     std::move(completion));
+    }
+    // Pack downloads go to `read` instead of the network.
+    static void SetPackReader(SettingsController& controller, UpdateResponseReader read) {
+        controller.pack_reader_ = std::move(read);
     }
 };
 
@@ -1266,6 +1272,111 @@ bool TestViewHitBounds() {
     return Report("eight views, DPI, partial rows, empty lists and scrolling hit only containing rectangles", contained) && ok;
 }
 
+// 自动更新预览增强包 (SettingsController::AutoUpdatePacks): which installed
+// packs a background update takes, and how its end differs from 更新到. The
+// packs live in a scratch LOCALAPPDATA and the downloads go to a fake server.
+bool TestPackAutoUpdate() {
+    namespace packs = pulse::packs;
+    using pulse::app::SettingsController;
+    using pulse::app::SettingsControllerTestPeer;
+    bool passed = true;
+    std::wstring previous(32768, L'\0');
+    const DWORD previous_size = GetEnvironmentVariableW(L"LOCALAPPDATA", previous.data(), 32768);
+    previous.resize(previous_size < 32768 ? previous_size : 0);
+    wchar_t temp[MAX_PATH]{};
+    GetTempPathW(MAX_PATH, temp);
+    const std::wstring profile = std::wstring(temp) + L"pulse-pack-auto-update-" + std::to_wstring(GetCurrentProcessId());
+    pulse::app::RemovePackTree(profile);
+    SetEnvironmentVariableW(L"LOCALAPPDATA", profile.c_str());
+    const packs::PackId raw = packs::PackId::Raw;
+    const std::wstring catalog = pulse::app::kRawPackRelease.version;
+    const std::wstring base = packs::PacksRoot() + L"\\" + packs::PackKey(raw);
+    auto install = [&](const std::wstring& version) {
+        packs::CreateDirectoryChain(base + L"\\" + version);
+        pulse::WriteUtf8FileAtomic(base + L"\\" + version + L"\\" + packs::PackMainTool(raw), L"fixture");
+        pulse::WriteUtf8FileAtomic(base + L"\\installed.json",
+                                   L"{\"version\":\"" + version + L"\",\"dir\":\"" + version + L"\"}");
+    };
+    auto save = [](bool auto_update, bool enabled) {
+        packs::PackSettings settings;
+        settings.auto_update = auto_update;
+        settings.enabled[static_cast<uint32_t>(packs::PackId::Raw)] = enabled;
+        return packs::SavePackSettings(settings);
+    };
+    // Offline, or - while `stall` is set - holding the first file until the job is cancelled.
+    std::atomic<int> requests{0};
+    std::atomic<bool> stall{false};
+    auto server = [&](std::wstring_view, uint64_t, const std::atomic<bool>& cancelled,
+                      const std::function<bool(const void*, DWORD)>&, pulse::app::UpdateError& category, DWORD& error) {
+        ++requests;
+        while (stall.load() && !cancelled.load()) Sleep(5);
+        category = pulse::app::UpdateError::Network;
+        error = cancelled.load() ? ERROR_CANCELLED : ERROR_NETWORK_UNREACHABLE;
+        return false;
+    };
+    auto settle = [](SettingsController& settings) {
+        for (int i = 0; i < 1000 && settings.Packs().raw_installing; ++i) Sleep(10);
+        return !settings.Packs().raw_installing;
+    };
+    if (!packs::PackUpdateAvailable(L"0.0.1", catalog) || !pulse::app::kRawPackRelease.file_count) {
+        SetEnvironmentVariableW(L"LOCALAPPDATA", previous.empty() ? nullptr : previous.c_str());
+        return Report("pack auto-update: the RAW pack is published", false);
+    }
+    {
+        SettingsController settings;
+        SettingsControllerTestPeer::SetPackReader(settings, server);
+        install(catalog);
+        passed &= Report("pack auto-update: a current pack is left alone",
+            settings.AutoUpdatePacks(nullptr) == 0 && requests == 0 && !settings.Packs().raw_installing);
+        install(L"0.0.1");
+        passed &= Report("pack auto-update: nothing starts while the setting is off",
+            save(false, true) && settings.AutoUpdatePacks(nullptr) == 0 && requests == 0 &&
+            !settings.Packs().raw_installing);
+        passed &= Report("pack auto-update: a switched-off pack is left alone",
+            save(true, false) && settings.AutoUpdatePacks(nullptr) == 0 && requests == 0);
+        settings.ToggleAutoUpdatePacks();
+        const bool toggled_off = !packs::LoadPackSettings().auto_update && !settings.Packs().auto_update;
+        settings.ToggleAutoUpdatePacks();
+        passed &= Report("pack auto-update: the switch is saved in packs.json",
+            toggled_off && packs::LoadPackSettings().auto_update && settings.Packs().auto_update);
+
+        stall = true;
+        passed &= Report("pack auto-update: an older pack in use starts updating",
+            save(true, true) && settings.AutoUpdatePacks(nullptr) == 1 && settings.Packs().raw_installing);
+        passed &= Report("pack auto-update: a running update is not started again",
+            settings.AutoUpdatePacks(nullptr) == 0);
+        for (int i = 0; i < 1000 && requests == 0; ++i) Sleep(5);
+        settings.InstallRawPack(nullptr);   // 取消 on the card
+        const bool cancelled = settle(settings) && !settings.TakeRawPackResult() && !settings.Packs().raw_notice.empty();
+        passed &= Report("pack auto-update: a cancel says so and keeps the installed version",
+            cancelled && packs::ReadInstalledPack(raw).version == L"0.0.1" && settings.Packs().raw_update_version == catalog);
+        stall = false;
+        const int before_declined = requests;
+        passed &= Report("pack auto-update: once cancelled, not again in this run",
+            settings.AutoUpdatePacks(nullptr) == 0 && requests == before_declined && !settings.Packs().raw_installing);
+        settings.UpdatePack(raw, nullptr);
+        passed &= Report("pack auto-update: 更新到 still works, and its failure is explained",
+            settle(settings) && requests > before_declined && !settings.TakeRawPackResult() &&
+            !settings.Packs().raw_notice.empty());
+    }
+    {
+        SettingsController settings;   // the next run forgets the cancel
+        SettingsControllerTestPeer::SetPackReader(settings, server);
+        const int before = requests;
+        const bool started = settings.AutoUpdatePacks(nullptr) == 1;
+        const bool quiet = settle(settings) && !settings.TakeRawPackResult() && settings.Packs().raw_notice.empty();
+        passed &= Report("pack auto-update: a failed background update stays quiet and keeps 更新到",
+            started && quiet && requests > before && packs::ReadInstalledPack(raw).version == L"0.0.1" &&
+            settings.Packs().raw_update_version == catalog);
+        passed &= Report("pack auto-update: the next check tries again",
+            settings.AutoUpdatePacks(nullptr) == 1 && settle(settings) && !settings.TakeRawPackResult() &&
+            settings.Packs().raw_notice.empty());
+    }
+    SetEnvironmentVariableW(L"LOCALAPPDATA", previous.empty() ? nullptr : previous.c_str());
+    pulse::app::RemovePackTree(profile);
+    return passed;
+}
+
 int wmain(int argc, wchar_t** argv) {
     if (argc == 2 && std::wstring_view(argv[1]) == L"--context-query-key") {
         pulse::app::ContextMenuController controller;
@@ -2465,6 +2576,7 @@ int wmain(int argc, wchar_t** argv) {
     passed &= TestShellWindowPlan();
     passed &= TestThisPc();
     passed &= TestToolbarApps();
+    passed &= TestPackAutoUpdate();
     passed &= Report("menu row height sits 4 DIP under list density (28/34/40 -> 26/30/36, clamped)",
         pulse::app::MenuRowHeightDip(28) == 26 && pulse::app::MenuRowHeightDip(34) == 30 &&
         pulse::app::MenuRowHeightDip(40) == 36 && pulse::app::MenuRowHeightDip(24) == 26 &&

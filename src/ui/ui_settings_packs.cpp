@@ -358,6 +358,10 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
     }
     text(pack_text::Advanced(), lay.pack_advanced_section);
     card(lay.pack_group);
+    hover_row(lay.pack_auto_update_row, PackAction::AutoUpdate);
+    setting(lay.pack_auto_update_row, L"\xE72C", pack_text::AutoUpdateTitle(), pack_text::AutoUpdateDesc());
+    toggle(row_switch(lay.pack_auto_update_row), vm.settings_pack_auto_update, PackAction::AutoUpdate);
+    divider_below(lay.pack_auto_update_row);
     hover_row(lay.pack_remove_row, PackAction::RemoveOnUninstall);
     setting(lay.pack_remove_row, L"\xE74D", pack_text::RemoveTitle(), pack_text::RemoveDesc());
     toggle(row_switch(lay.pack_remove_row), vm.settings_pack_remove_on_uninstall, PackAction::RemoveOnUninstall);

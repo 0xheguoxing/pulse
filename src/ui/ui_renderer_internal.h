@@ -2072,7 +2072,8 @@ struct SettingsLayout {
     // 预览增强包 page (5), see LayoutSettingsPacks.
     D2D1_RECT_F pack_summary{}, pack_open{}, pack_media_section{}, pack_card{}, pack_badge{}, pack_enable{},
         pack_primary{}, pack_update{}, pack_notice{}, pack_advanced_section{}, pack_custom_row{}, pack_path_row{},
-        pack_detect{}, pack_browse{}, pack_remove_row{}, pack_group{}, pack_note{}, pack_source_group{}, pack_source_status{};
+        pack_detect{}, pack_browse{}, pack_remove_row{}, pack_group{}, pack_note{}, pack_source_group{}, pack_source_status{},
+        pack_auto_update_row{};
     float pack_desc_h = 0.0f;
     // The image pack card (same parts as the FFmpeg one).
     D2D1_RECT_F pack_images_section{}, pack_images_card{}, pack_images_badge{}, pack_images_enable{},

@@ -304,6 +304,7 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
         case ui::PackAction::UseCustom: refresh=s.settings.ToggleCustomFfmpeg();break;
         case ui::PackAction::UseDetected: refresh=s.settings.UseDetectedFfmpeg();break;
         case ui::PackAction::RemoveOnUninstall: s.settings.ToggleRemovePacksOnUninstall();break;
+        case ui::PackAction::AutoUpdate: s.settings.ToggleAutoUpdatePacks();break;
         case ui::PackAction::TriggerHover:
         case ui::PackAction::TriggerSpace:
             s.settings.PreviewTrigger(hit.index-static_cast<int>(ui::PackAction::TriggerHover));

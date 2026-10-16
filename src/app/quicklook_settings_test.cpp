@@ -106,6 +106,22 @@ int RunQuickLookSettingsTest(pulse::AppState& s, const wchar_t* output) {
             check(lay.pack_card.bottom <= lay.pack_source_group.top && lay.pack_source_group.bottom < lay.pack_images_card.top &&
                   lay.pack_images_card.bottom < lay.pack_raw_card.top && lay.pack_raw_card.bottom < lay.pack_archive_card.top,
                 "all four pack managers remain separately laid out");
+            {   // 高级: background updates above the uninstall choice, each row its own switch.
+                const auto a = lay.pack_auto_update_row, r = lay.pack_remove_row;
+                check(a.bottom > a.top && a.top >= lay.pack_group.top && a.bottom <= r.top && r.bottom <= lay.pack_group.bottom,
+                      "automatic pack updates share the advanced card, above the uninstall choice");
+                auto scrolled = vm;
+                scrolled.settings_scroll = lay.pack_group.top - lay.content.top - 10*scale;
+                const auto visible = ui::MakeSettingsLayout(scrolled, rect, scale, s.renderer.TitleBarHeight(), 28*scale, &painter);
+                const auto at = [&](D2D1_RECT_F row) {
+                    return s.renderer.HitTest(scrolled, rect, row.right - 37*scale, (row.top + row.bottom)/2);
+                };
+                const auto auto_hit = at(visible.pack_auto_update_row), remove_hit = at(visible.pack_remove_row);
+                check(auto_hit.region == H::SettingsPackAction && auto_hit.index == static_cast<int>(ui::PackAction::AutoUpdate) &&
+                      remove_hit.region == H::SettingsPackAction &&
+                      remove_hit.index == static_cast<int>(ui::PackAction::RemoveOnUninstall),
+                      "the automatic update and uninstall switches hit their own actions");
+            }
             std::vector<ui::PreviewFormatChip> chips;
             std::vector<ui::PreviewFormatRow> rows;
             ui::LayoutPreviewFormats(lay.preview_formats, scale, &chips, &rows,
@@ -215,10 +231,11 @@ int RunQuickLookSettingsTest(pulse::AppState& s, const wchar_t* output) {
                 }
             }
             if (language[0] == L'z' && scale == 1 && ((width == 1280 && font == 100) || (width == 760 && font == 125))) {
-                for (const bool dark : {false, true}) for (int section = 0; section < 3; ++section) {
+                for (const bool dark : {false, true}) for (int section = 0; section < 4; ++section) {
                     vm.dark = dark;
                     auto shot = vm;
-                    shot.settings_scroll = section == 0 ? 0 : (section == 1 ? lay.preview_codec_section.top : lay.pack_section.top) - lay.content.top - 10*scale;
+                    const float tops[] = {0, lay.preview_codec_section.top, lay.pack_section.top, lay.pack_advanced_section.top};
+                    shot.settings_scroll = section == 0 ? 0 : tops[section] - lay.content.top - 10*scale;
                     const auto theme = ui::MakeTheme(dark, ui::HexColor(0x4F7766));
                     s.compositor.Dc()->BeginDraw(); s.renderer.Render(shot, rect, theme); s.compositor.Dc()->EndDraw();
                     const auto name = L"quicklook-" + std::to_wstring(width) + L"-font" + std::to_wstring(font) +

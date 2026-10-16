@@ -47,8 +47,9 @@ public:
     PackInstaller& operator=(const PackInstaller&) = delete;
     ~PackInstaller();
 
-    // `notify` is invalidated on progress and when the job ends.
-    bool Start(const PackRelease& release, HWND notify);
+    // `notify` is invalidated on progress and when the job ends; `read`
+    // fetches the files (tests pass a fake server).
+    bool Start(const PackRelease& release, HWND notify, UpdateResponseReader read = ReadUpdateResponse);
     void Cancel() noexcept;
     bool running() const noexcept;
     // 0..1 of the compressed bytes.

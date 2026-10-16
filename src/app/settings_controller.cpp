@@ -8,6 +8,7 @@
 #include "../index/index_config.h"
 #include "../index/network_agent_client.h"
 #include "../common/preview_packs.h"
+#include "../common/runtime_log.h"
 #include "system_ctx_model.h"
 #include "pack_catalog.h"
 #include "../ui/quick_preview_command.h"
@@ -194,6 +195,7 @@ void SettingsController::RefreshPacks() {
     state.use_custom = settings.use_custom_ffmpeg;
     state.custom_path = settings.custom_ffmpeg;
     state.remove_on_uninstall = settings.remove_on_uninstall;
+    state.auto_update = settings.auto_update;
     const packs::InstalledPack media = packs::ReadInstalledPack(PackId::Media);
     state.media_installed = media.present;
     state.version = media.version;
@@ -230,6 +232,15 @@ uint64_t DownloadBytes(const PackRelease& release) {
     uint64_t bytes = 0;
     for (size_t i = 0; i < release.file_count; ++i) bytes += release.files[i].packed_size;
     return bytes;
+}
+
+const PackRelease& ReleaseFor(packs::PackId id) {
+    switch (id) {
+    case packs::PackId::Images: return kImagePackRelease;
+    case packs::PackId::Raw: return kRawPackRelease;
+    case packs::PackId::Archives: return kArchivePackRelease;
+    default: return kMediaPackRelease;
+    }
 }
 } // namespace
 
@@ -294,11 +305,9 @@ std::wstring& SettingsController::NoticeFor(packs::PackId id) {
     }
 }
 
-bool SettingsController::InstallPack(packs::PackId id, HWND notify) {
-    const bool images = id == packs::PackId::Images;
+bool SettingsController::InstallPack(packs::PackId id, HWND notify, bool automatic) {
     PackInstaller& installer = InstallerFor(id);
-    const PackRelease& release = id == packs::PackId::Raw ? kRawPackRelease :
-        id == packs::PackId::Archives ? kArchivePackRelease : images ? kImagePackRelease : kMediaPackRelease;
+    const PackRelease& release = ReleaseFor(id);
     std::wstring& notice = NoticeFor(id);
     if (installer.running()) {
         installer.Cancel();
@@ -313,9 +322,28 @@ bool SettingsController::InstallPack(packs::PackId id, HWND notify) {
     }
     // Replacing an installed pack is an update: TakePackResult keeps the switches.
     updating_[static_cast<uint32_t>(id)] = packs::ReadInstalledPack(id).present;
-    if (!installer.Start(release, notify)) return false;
+    if (!installer.Start(release, notify, pack_reader_)) return false;
+    automatic_[static_cast<uint32_t>(id)] = automatic;
     Packs();
     return false;
+}
+
+int SettingsController::AutoUpdatePacks(HWND notify) {
+    const packs::PackSettings settings = packs::LoadPackSettings();
+    if (!settings.auto_update) return 0;
+    int started = 0;
+    for (uint32_t index = 0; index < packs::kPackCount; ++index) {
+        const auto id = static_cast<packs::PackId>(index);
+        const PackRelease& release = ReleaseFor(id);
+        if (auto_declined_[index] || !release.file_count || InstallerFor(id).running() ||
+            !packs::PackAutoUpdateWanted(id, settings, packs::ReadInstalledPack(id), release.version)) continue;
+        automatic_[index] = false;
+        InstallPack(id, notify, true);
+        if (!automatic_[index]) continue;   // not started
+        ++started;
+        diagnostics::runtime::Event("pack_auto_update_start", {{"pack", index}});
+    }
+    return started;
 }
 
 bool SettingsController::UpdatePack(packs::PackId id, HWND notify) {
@@ -332,9 +360,13 @@ bool SettingsController::TakePackResult(packs::PackId id) {
     DWORD error = ERROR_SUCCESS;
     const PackInstallOutcome outcome = InstallerFor(id).TakeOutcome(error);
     if (outcome == PackInstallOutcome::None) return false;
-    bool& updating = updating_[static_cast<uint32_t>(id)];
-    const bool update = updating;
-    updating = false;
+    const uint32_t index = static_cast<uint32_t>(id);
+    const bool update = updating_[index], automatic = automatic_[index];
+    updating_[index] = automatic_[index] = false;
+    if (automatic) {
+        diagnostics::runtime::Event("pack_auto_update_end", {{"pack", index},
+            {"outcome", static_cast<uint64_t>(outcome)}, {"error", error}});
+    }
     RefreshPacks();
     std::wstring& notice = NoticeFor(id);
     switch (outcome) {
@@ -354,9 +386,14 @@ bool SettingsController::TakePackResult(packs::PackId id) {
         return true;
     }
     case PackInstallOutcome::Cancelled:
+        // Only the card's 取消 ends a job early: for an automatic update that
+        // is the answer for this run.
+        if (automatic) auto_declined_[index] = true;
         notice = l10n::Pick(L"已取消下载。", L"Download cancelled.");
         break;
     default:
+        // A background update fails quietly: 更新到 stays, the next check retries.
+        if (automatic) break;
         if (error == ERROR_INVALID_DATA) {
             notice = l10n::Pick(L"下载的文件校验失败，已丢弃。请稍后重试。",
                                 L"The download did not pass verification and was discarded. Try again later.");
@@ -484,6 +521,11 @@ bool SettingsController::UseDetectedFfmpeg() {
 
 void SettingsController::ToggleRemovePacksOnUninstall() {
     UpdatePackSettings([](packs::PackSettings& s) { s.remove_on_uninstall = !s.remove_on_uninstall; });
+    RefreshPacks();
+}
+
+void SettingsController::ToggleAutoUpdatePacks() {
+    UpdatePackSettings([](packs::PackSettings& s) { s.auto_update = !s.auto_update; });
     RefreshPacks();
 }
 

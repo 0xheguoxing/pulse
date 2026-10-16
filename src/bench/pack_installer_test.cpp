@@ -421,6 +421,38 @@ int wmain(int argc, wchar_t** argv) {
         Check(parses, "published catalog versions can be offered as updates");
     }
 
+    {   // Background updates take an installed pack in use, and only a newer release.
+        using packs::PackAutoUpdateWanted;
+        using packs::PackId;
+        const packs::PackSettings on{};
+        packs::InstalledPack older;
+        older.present = true;
+        older.version = L"1.0.1";
+        auto current = older;
+        current.version = L"1.0.2";
+        const packs::InstalledPack missing{};
+        Check(PackAutoUpdateWanted(PackId::Raw, on, older, L"1.0.2") &&
+              PackAutoUpdateWanted(PackId::Media, on, older, L"1.0.2"), "an older pack in use updates in the background");
+        Check(!PackAutoUpdateWanted(PackId::Raw, on, current, L"1.0.2") &&
+              !PackAutoUpdateWanted(PackId::Raw, on, missing, L"1.0.2") &&
+              !PackAutoUpdateWanted(PackId::Raw, on, older, L""), "current, missing and unpublished packs stay");
+        auto off = on;
+        off.auto_update = false;
+        auto switched_off = on;
+        switched_off.enabled[static_cast<uint32_t>(PackId::Raw)] = false;
+        auto own_ffmpeg = on;
+        own_ffmpeg.use_custom_ffmpeg = true;
+        Check(!PackAutoUpdateWanted(PackId::Raw, off, older, L"1.0.2") &&
+              !PackAutoUpdateWanted(PackId::Raw, switched_off, older, L"1.0.2") &&
+              PackAutoUpdateWanted(PackId::Images, switched_off, older, L"1.0.2") &&
+              !PackAutoUpdateWanted(PackId::Media, own_ffmpeg, older, L"1.0.2") &&
+              PackAutoUpdateWanted(PackId::Raw, own_ffmpeg, older, L"1.0.2"),
+              "the setting, a switched-off pack and the user's own FFmpeg keep packs as they are");
+        Check(on.auto_update && packs::ParsePackSettings(L"{}").auto_update &&
+              !packs::ParsePackSettings(packs::SerializePackSettings(off)).auto_update,
+              "background updates default on and turning them off is saved");
+    }
+
     {   // installed.json names a directory inside its pack, nothing else.
         const std::wstring probe = root + L"\\probe";
         Check(packs::CreateDirectoryChain(probe), "probe pack folder created");

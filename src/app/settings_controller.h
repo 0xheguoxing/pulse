@@ -131,6 +131,7 @@ public:
         bool media_available = false, images_available = false;
         bool media_installed = false;     // the FFmpeg pack itself is on disk
         bool enabled = true, use_custom = false, remove_on_uninstall = true;
+        bool auto_update = true;          // 自动更新预览增强包
         uint32_t installed = 0;
         uint64_t bytes = 0;
         std::wstring version, custom_path, detected_path, root, notice;
@@ -184,6 +185,12 @@ public:
     bool SetCustomFfmpeg(const std::wstring& path);
     bool UseDetectedFfmpeg();
     void ToggleRemovePacksOnUninstall();
+    void ToggleAutoUpdatePacks();
+    // Background updates (TickUpdates): 更新到 for every installed pack that
+    // packs::PackAutoUpdateWanted picks. A failed one stays quiet - the
+    // button remains and the next call tries again - and one the user
+    // cancels is not retried until Pulse restarts. Returns how many started.
+    int AutoUpdatePacks(HWND notify);
 
     bool VolumePending(std::wstring_view id) const;
     bool network_pending() const noexcept;
@@ -309,10 +316,13 @@ private:
     PackInstaller raw_installer_, archive_installer_;
     PackInstaller& InstallerFor(packs::PackId id);
     std::wstring& NoticeFor(packs::PackId id);
-    bool InstallPack(packs::PackId id, HWND notify);
+    bool InstallPack(packs::PackId id, HWND notify, bool automatic = false);
     bool TakePackResult(packs::PackId id);
     bool RemovePack(packs::PackId id);
     bool updating_[4] = {};   // per packs::PackId: the running job replaces an installed pack
+    bool automatic_[4] = {};       // the running job was started by AutoUpdatePacks
+    bool auto_declined_[4] = {};   // the user cancelled an automatic update: none again this run
+    UpdateResponseReader pack_reader_ = ReadUpdateResponse;   // tests substitute a fake server
     std::shared_ptr<TaskState> task_state_ = std::make_shared<TaskState>();
     std::mutex workers_mutex_;
     std::vector<std::thread> workers_;

@@ -522,6 +522,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
                 vm.settings_pack_ffmpeg_enabled = packs.enabled;
                 vm.settings_pack_use_custom = packs.use_custom;
                 vm.settings_pack_remove_on_uninstall = packs.remove_on_uninstall;
+                vm.settings_pack_auto_update = packs.auto_update;
                 vm.settings_pack_installed = packs.installed;
                 vm.settings_pack_bytes = packs.bytes;
                 vm.settings_pack_version = packs.version;

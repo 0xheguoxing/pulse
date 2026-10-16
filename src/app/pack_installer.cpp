@@ -300,14 +300,14 @@ PackInstaller::~PackInstaller() {
     if (worker_.joinable()) worker_.join();
 }
 
-bool PackInstaller::Start(const PackRelease& release, HWND notify) {
+bool PackInstaller::Start(const PackRelease& release, HWND notify, UpdateResponseReader read) {
     if (running()) return false;
     if (worker_.joinable()) worker_.join();
     auto job = std::make_shared<Job>();
     job->running.store(true);
     job_ = job;
     const std::wstring root = packs::PacksRoot();
-    worker_ = std::thread([job, release, root, notify] {
+    worker_ = std::thread([job, release, root, notify, read = std::move(read)] {
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
         // Repaint at most ~8 times a second while bytes arrive.
         std::atomic<bool> pumping{true};
@@ -318,8 +318,7 @@ bool PackInstaller::Start(const PackRelease& release, HWND notify) {
             }
         });
         DWORD error = ERROR_SUCCESS;
-        const PackInstallOutcome outcome = InstallPack(release, root, job->progress, error,
-                                                       ReadUpdateResponse, true);
+        const PackInstallOutcome outcome = InstallPack(release, root, job->progress, error, read, true);
         pumping.store(false);
         ticker.join();
         job->error.store(error);

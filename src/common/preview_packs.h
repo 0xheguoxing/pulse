@@ -80,7 +80,7 @@ struct PackSettings {
     // Media pack only: an FFmpeg the user already has (path to ffmpeg.exe).
     bool use_custom_ffmpeg = false;
     std::wstring custom_ffmpeg;
-    bool auto_update = true;
+    bool auto_update = true;        // 自动更新预览增强包, see PackAutoUpdateWanted
     uint32_t download_source = 0;   // 0 automatic, 1 GitHub, 2 accelerated mirror
     bool remove_on_uninstall = true;
 };
@@ -208,6 +208,17 @@ inline bool PackUpdateAvailable(std::wstring_view installed, std::wstring_view c
         if (a != b) return b > a;
     }
     return false;
+}
+
+// Whether a background update (Settings > 自动更新预览增强包) replaces an
+// installed pack with the catalog's release: only a pack the preview host
+// can use - switched on, and for FFmpeg not set aside for the user's own
+// build - and only when the catalog is newer. The rest wait for 更新到.
+inline bool PackAutoUpdateWanted(PackId id, const PackSettings& settings, const InstalledPack& installed,
+                                 std::wstring_view catalog_version) {
+    if (!settings.auto_update || !installed.present || !settings.enabled[static_cast<uint32_t>(id)]) return false;
+    if (id == PackId::Media && settings.use_custom_ffmpeg) return false;
+    return PackUpdateAvailable(installed.version, catalog_version);
 }
 
 // Where a pack's tools come from right now.

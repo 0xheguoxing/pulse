@@ -653,6 +653,7 @@ enum class PackAction : int {
     HoverDelayShort, HoverDelayMedium, HoverDelayLong,  // 悬停延迟: 0.3 / 0.5 / 0.8 s
     HoverSizeSmall, HoverSizeMedium, HoverSizeLarge,    // 卡片尺寸: 小 / 中 / 大
     Update, ImagesUpdate, RawUpdate, ArchiveUpdate,     // 更新到: the catalog's newer release
+    AutoUpdate,         // 自动更新预览增强包: on / off
 };
 
 // A tab dragged out of another window, over this one (multi-window M7h): the
@@ -814,6 +815,7 @@ struct WindowViewModel {
     bool settings_pack_ffmpeg_enabled = true;
     bool settings_pack_use_custom = false;
     bool settings_pack_remove_on_uninstall = true;
+    bool settings_pack_auto_update = true;      // 自动更新预览增强包
     uint32_t settings_pack_installed = 0;       // installed pack count
     bool settings_pack_media_available = false, settings_pack_images_available = false;
     bool settings_pack_media_installed = false; // the FFmpeg pack itself is on disk
