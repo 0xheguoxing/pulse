@@ -2249,3 +2249,4 @@ ToolbarToolSearchAll	IDS_TOOLBAR_TOOL_SEARCH_ALL	3451	全盘搜索	Search everyw
 ToolbarAppOpened	IDS_TOOLBAR_APP_OPENED	3452	已用 {app} 打开 {n} 项	Opened {n} items with {app}	已用 {app} 開啟 {n} 項
 DeleteSnackTitle	IDS_DELETE_SNACK_TITLE	3453	已删除 {n} 项	Deleted {n} items	已刪除 {n} 項
 DeleteSnackDetail	IDS_DELETE_SNACK_DETAIL	3454	已移到回收站	Moved to the Recycle Bin	已移到資源回收筒
+SetAliasEllipsis	IDS_SET_ALIAS_ELLIPSIS	3455	设置别名…	Set alias…	設定別名…

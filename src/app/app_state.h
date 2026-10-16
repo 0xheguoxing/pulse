@@ -560,6 +560,8 @@ struct AppState : AppCoreOwner {
     HWND hwndRenameEdit = nullptr;
     int renameIndex = -1;
     bool renameAlias = false;   // the rename field edits the 别名, not the name
+    // Rename task id -> (old path, new path): the alias follows once it succeeds.
+    std::unordered_map<uint64_t, std::pair<std::wstring, std::wstring>> aliasPendingMoves;
     // Last key press, click or wheel turn in this window, any of its child
     // controls included (GetTickCount64; the message loop, NoteUserInput).
     // External opens avoid interrupting a window in use (M7a, plan §6).

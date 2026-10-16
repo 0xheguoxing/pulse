@@ -123,7 +123,8 @@ enum MenuCmd : int {
     CmdMapNetworkDrive = 3903,  // a share, or This PC background: 映射网络驱动器
     CmdUnpinNetwork = 3904,     // Network view: remove the selected pins
     CmdGroupIntoFolder = 3910,  // 2+ items: 合并到文件夹 (macOS New Folder with Selection)
-    CmdDissolveFolder = 3911,   // folders only: 解散文件夹 (contents up one level, folder removed)
+    CmdDissolveFolder = 3911,
+    CmdSetAlias = 3912,         // one item: 设置别名… (Shift+F2)   // folders only: 解散文件夹 (contents up one level, folder removed)
     CmdIndexBase = 1000,
     // Explorer integration (优化.md §7): registry static verbs bound to the
     // current selection (+index into the StaticVerb list) and pulse_shell

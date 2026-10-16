@@ -512,6 +512,14 @@ void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
                                     std::vector<BreadcrumbPlaced>& out) const {
     out.clear();
     auto segments = SplitBreadcrumb(vm.is_query_search && vm.has_search_origin ? vm.search_origin : vm.path);
+    // 别名: a folder on the way shows its alias; the click still goes to the real path.
+    if (!app::AliasStore::Instance().Empty()) {
+        for (auto& seg : segments) {
+            if (seg.path.empty() || seg.path.starts_with(L"pulse:")) continue;
+            if (std::wstring alias = app::AliasStore::Instance().Find(seg.path); !alias.empty())
+                seg.text = std::move(alias);
+        }
+    }
     if (vm.is_query_search && vm.has_search_origin) {
         BreadcrumbSegment search;
         search.text = vm.search_crumb.empty() ? pulse::l10n::Get(pulse::l10n::StringId::Search) : vm.search_crumb;

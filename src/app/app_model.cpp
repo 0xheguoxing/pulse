@@ -1,5 +1,6 @@
 // app_model.cpp
 #include "app_model.h"
+#include "folder_alias.h"
 #include "selection_caps.h"
 #include "split_tree_shape.h"
 #include "layout_pane_selection.h"
@@ -909,6 +910,8 @@ std::wstring TabTitle(const std::wstring& path) {
         if (kind == L"search") return l10n::Get(l10n::StringId::Search);
         if (kind == L"tag") return rest.empty() ? l10n::Get(l10n::StringId::Tag) : rest;
     }
+    // 别名: tabs, the sidebar and window lists show the folder's alias.
+    if (std::wstring alias = AliasStore::Instance().Find(path); !alias.empty()) return alias;
     std::wstring_view v = path;
     if (v.size() > 1 && v.back() == L'\\') v.remove_suffix(1);
     auto pos = v.find_last_of(L"\\/");
@@ -1612,7 +1615,12 @@ void CollectFilterMatches(const Tab& tab, const PlacesCatalog* places, std::vect
     for (int i = 0; i < n; ++i) {
         const auto& e = tab.EntryAt(static_cast<size_t>(i));
         if (!tab.EntryVisible(i)) continue;
-        const bool name_ok = NameMatchesPattern(e.name, name_needle);
+        bool name_ok = NameMatchesPattern(e.name, name_needle);
+        // 别名: the filter also finds an item by its alias, or its pinyin.
+        if (!name_ok && !name_needle.empty() && !AliasStore::Instance().Empty()) {
+            const std::wstring alias = AliasStore::Instance().Find(EntryPathOf(tab, e));
+            name_ok = AliasStore::AliasMatches(alias, name_needle);
+        }
         bool tag_ok = tag_needles.empty();
         if (!tag_ok && places) {
             const std::wstring full = EntryPathOf(tab, e);

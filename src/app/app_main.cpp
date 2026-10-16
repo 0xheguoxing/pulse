@@ -1,5 +1,6 @@
 #include "app_diagnostics.h"
 #include "folder_alias.h"
+#include "../index/filename_pinyin.h"
 #include "../common/windows_compat.h"
 #include "../ui/FluentTokens.h"
 #include "quick_access.h"
@@ -849,6 +850,9 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             s->places.Load();
             if (!s->isolatedTest || s->isolatedTestPersist)
                 app::AliasStore::Instance().Load(app::GetPulseDataDir() + L"\\aliases.json");
+            app::AliasStore::PinyinHook() = [](std::wstring_view name, std::wstring_view query) {
+                return index::PinyinEligible(query) && static_cast<bool>(index::FindPinyinMatch(name, query));
+            };
             ProbePinnedNetworks(*s);
             s->ctxMenuPrefs.Load();
             if (s->isolatedTest) {

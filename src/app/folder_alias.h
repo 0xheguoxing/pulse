@@ -112,7 +112,7 @@ public:
                                    (k[from_key.size()] == L'\\' || from_key.back() == L'\\');
                 if (!same && !under) { ++it; continue; }
                 AliasEntry e = it->second;
-                e.path = to + e.path.substr(std::min(e.path.size(), Normalized(from).size()));
+                e.path = Normalized(to) + e.path.substr(std::min(e.path.size(), Normalized(from).size()));
                 moved.push_back(std::move(e));
                 it = map_.erase(it);
             }
@@ -167,6 +167,21 @@ public:
         }
         path = std::move(target);
         return true;
+    }
+
+    // Filter matching on an alias: substring, then — when the app installed
+    // it — pinyin (full or initials, "fbb" finds 发布包). The hook keeps this
+    // header free of the pinyin tables for targets that don't link them.
+    using PinyinMatcher = bool (*)(std::wstring_view name, std::wstring_view folded_query);
+    static PinyinMatcher& PinyinHook() {
+        static PinyinMatcher hook = nullptr;
+        return hook;
+    }
+    static bool AliasMatches(std::wstring_view alias, std::wstring_view folded_query) {
+        if (alias.empty() || folded_query.empty()) return false;
+        if (Lower(alias).find(folded_query) != std::wstring::npos) return true;
+        const PinyinMatcher hook = PinyinHook();
+        return hook && hook(alias, folded_query);
     }
 
     static std::wstring Lower(std::wstring_view s) {

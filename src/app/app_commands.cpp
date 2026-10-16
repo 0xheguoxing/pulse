@@ -1139,7 +1139,7 @@ void DispatchMenuCommand(AppState& s, int cmd) {
         return;
     }
     const bool needs_files=cmd==app::CmdProperties || cmd==app::CmdOpenPath || cmd==app::CmdOpenInNewTab || cmd==app::CmdRename ||
-        cmd==app::CmdGroupIntoFolder || cmd==app::CmdDissolveFolder;
+        cmd==app::CmdGroupIntoFolder || cmd==app::CmdDissolveFolder || cmd==app::CmdSetAlias;
     if(needs_files && DeferContentSelection(s,[cmd](AppState& v){DispatchMenuCommand(v,cmd);})) return;
     if (cmd >= app::CmdViewBase && cmd < app::CmdViewBase + 8) {
         SetViewMode(s, ui::ViewModeFromIndex(cmd - app::CmdViewBase));
@@ -1269,6 +1269,7 @@ void DispatchMenuCommand(AppState& s, int cmd) {
     case app::CmdBatchRename: ShowBatchRename(s); break;
     case app::CmdGroupIntoFolder: GroupSelectionIntoFolder(s); break;
     case app::CmdDissolveFolder: DissolveSelectedFolders(s); break;
+    case app::CmdSetAlias: ShowAliasOverlay(s); break;
     case app::CmdAdvancedSearch: ShowAdvancedSearch(s); break;
     case app::CmdRestoreRecycle: RestoreSelected(s); break;
     case app::CmdRestoreAllRecycle: RestoreAllRecycle(s); break;
@@ -1594,6 +1595,17 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         group.text = l10n::Get(l10n::StringId::NewFolderWithSelection_2).c_str();
         group.glyph = L"\xE8F4"; // new folder
         items.insert(items.begin() + 1, std::move(group));
+    }
+    // 别名: one real item can take a display name (after 复制路径).
+    if (tab && tab->SelectedCount() == 1 && !fs::IsVirtualPath(tab->current_path) && !IsRecycleTab(tab)) {
+        ui::FluentMenuItem alias;
+        alias.command = app::CmdSetAlias;
+        alias.text = l10n::Get(l10n::StringId::SetAliasEllipsis);
+        alias.glyph = L"\xE8EC";  // tag
+        alias.shortcut = app::ShownShortcut(L"Shift+F2");
+        auto at = std::find_if(items.begin(), items.end(),
+            [](const ui::FluentMenuItem& item) { return item.command == app::CmdCopyPath; });
+        items.insert(at == items.end() ? items.end() : std::next(at), std::move(alias));
     }
     if (tab && tab->SelectedCount() >= 2) {
         ui::FluentMenuItem batch;
