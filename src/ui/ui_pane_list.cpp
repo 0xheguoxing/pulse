@@ -3229,7 +3229,11 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 textY = nameLine.y;
                 textH = nameLine.h;
             }
-            const auto name_matches = NameMatchRanges(e.name, highlight_terms);
+            // 别名: the alias leads and the real name follows, quieter.
+            const bool has_alias = !e.alias.empty();
+            const std::wstring alias_line = has_alias ? e.alias + L"\u2003\u2003" + e.name : std::wstring();
+            static const std::vector<NameMatchRange> kNoAliasMatches;
+            const auto name_matches = has_alias ? kNoAliasMatches : NameMatchRanges(e.name, highlight_terms);
             if (iconGrid && tagDotCount > 0) {
                 const float fullNameW = MeasureLayoutText(
                     compositor_, compositor_->DwriteFactory(), compositor_->FileNameFormat(), e.name) +
@@ -3251,7 +3255,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 ? std::min(108.0f * scale_, painter_.MeasureTagWidth(e.badge)) : 0.0f;
             const NameTrail trail = LayoutNameTrail(
                 nameX, textY, textH, nameColRight, cell.top, cell.bottom, scale_,
-                e.name, tagDotCount, badgeW, showStar, showNewTab, showMore,
+                has_alias ? alias_line : e.name, tagDotCount, badgeW, showStar, showNewTab, showMore,
                 compositor_, compositor_->DwriteFactory(), compositor_->FileNameFormat(), change != nullptr,
                 vm.view_mode == ViewMode::Details ? (e.is_dir ? 3 : 2) : 0, name_matches, row_actions_);
             if (src == vm.rename_index) {
@@ -3289,19 +3293,36 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 if (iconGrid && tagDotCount == 0) {
                     // A folder showing its size keeps the second line for it.
                     const bool size_line = e.is_dir && vm.folder_size_labels.contains(src);
-                    DrawCenteredIconName(e.name, nameRc, nameColor, theme, name_matches,
+                    DrawCenteredIconName(has_alias ? e.alias : e.name, nameRc, nameColor, theme, name_matches,
                                          &name_truncated, size_line ? 1 : kIconGridNameLines);
                     // The single selected item shows its whole name on top of
                     // the rows below (drawn after every row).
                     if (name_truncated && selected && vm.selected_count == 1 && !vm.marquee_active &&
                         !morphing && !size_line) {
                         expanded_name.valid = true;
-                        expanded_name.name = e.name;
+                        expanded_name.name = has_alias ? e.alias : e.name;
                         expanded_name.bounds = D2D1::RectF(nameRc.left + row_dx, nameRc.top + row_dy,
                                                            nameRc.right + row_dx, nameRc.bottom + row_dy);
                         expanded_name.color = nameColor;
                         expanded_name.matches = name_matches;
                     }
+                } else if (has_alias) {
+                    Theme name_theme = theme;
+                    name_theme.text = nameColor;
+                    const float alias_w = MeasureLayoutText(compositor_, compositor_->DwriteFactory(),
+                                                            compositor_->FileNameFormat(), e.alias) + 1.0f;
+                    const float shown_w = std::min(trail.name_w, alias_w);
+                    DrawTruncatedName(e.alias, trail.name_x, textY, shown_w, textH, name_theme,
+                                      selected, kNoAliasMatches, false);
+                    const float real_x = trail.name_x + shown_w + 8.0f * scale_;
+                    const float real_w = trail.name_x + trail.name_w - real_x;
+                    if (real_w >= 28.0f * scale_) {
+                        Theme real_theme = theme;
+                        real_theme.text = WithAlpha(theme.text_secondary, cut ? 0.45f : 0.85f);
+                        DrawTruncatedName(e.name, real_x, textY, real_w, textH, real_theme,
+                                          selected, kNoAliasMatches, detailsView && !e.is_dir);
+                    }
+                    name_truncated = true;   // the row tooltip names the real item
                 } else {
                     Theme name_theme = theme;
                     name_theme.text = nameColor;

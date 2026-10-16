@@ -1,4 +1,5 @@
 #include "app_diagnostics.h"
+#include "folder_alias.h"
 #include "../common/windows_compat.h"
 #include "../ui/FluentTokens.h"
 #include "quick_access.h"
@@ -846,6 +847,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             s->savedSearches.Load();
             SyncSavedSearchSidebar(*s);
             s->places.Load();
+            if (!s->isolatedTest || s->isolatedTestPersist)
+                app::AliasStore::Instance().Load(app::GetPulseDataDir() + L"\\aliases.json");
             ProbePinnedNetworks(*s);
             s->ctxMenuPrefs.Load();
             if (s->isolatedTest) {

@@ -94,6 +94,7 @@ struct ListEntryView {
     bool is_link = false;
     std::wstring link_destination;
     std::wstring name;
+    std::wstring alias;   // 别名 shown instead of the name (empty = none)
     std::wstring size_text;
     std::wstring date_text;
     std::wstring type_text;
@@ -124,6 +125,7 @@ struct ListEntryView {
 
 struct RowPresentationCache {
     fs::SnapshotPtr snapshot;
+    uint64_t alias_revision = 0;   // rows rebuild when an alias changes
     std::unordered_map<size_t, ListEntryView> rows;
     std::deque<size_t> order;
 };

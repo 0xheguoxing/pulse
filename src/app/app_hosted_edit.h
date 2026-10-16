@@ -45,6 +45,9 @@ void ClearPaneFilter(AppState& s);
 void SyncFilterEditor(AppState& s);
 void LayoutRenameOverlay(AppState& s);
 void ShowRenameOverlay(AppState& s);
+// Shift+F2: the rename field sets the selected item's 别名 instead; clearing
+// it (or typing the real name) removes the alias.
+void ShowAliasOverlay(AppState& s);
 void HideRenameOverlay(AppState& s, bool commit);
 bool TagRenameCell(AppState& s, const app::TagId& tag_id, D2D1_RECT_F& cell);
 void LayoutTagRenameOverlay(AppState& s);

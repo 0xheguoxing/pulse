@@ -7,6 +7,7 @@
 #include "typography.h"
 #include "name_highlight.h"
 #include "../app/places.h"
+#include "../app/folder_alias.h"
 #include "../app/builtin_menu_items.h"
 #include "../app/search_query.h"
 #include "../common/text_format.h"
@@ -322,8 +323,10 @@ void ClearTextWidthCache() {
 
         if (!vm.row_cache) vm.row_cache = std::make_shared<RowPresentationCache>();
         auto& cache = *vm.row_cache;
-        if (cache.snapshot != vm.snapshot) {
+        const uint64_t alias_revision = app::AliasStore::Instance().Revision();
+        if (cache.snapshot != vm.snapshot || cache.alias_revision != alias_revision) {
             cache.snapshot = vm.snapshot;
+            cache.alias_revision = alias_revision;
             cache.rows.clear();
             cache.order.clear();
         }
@@ -359,6 +362,7 @@ void ClearTextWidthCache() {
         entry.accessed_value = time_value(source.atime);
         entry.path = !source.full_path.empty() ? source.full_path
                      : (fs::IsVirtualPath(vm.path) ? L"" : JoinDirName(vm.path, source.name));
+        if (!entry.path.empty()) entry.alias = app::AliasStore::Instance().Find(entry.path);
         entry.attrs = source.attrs;
         entry.size_value = source.size;
         entry.modified_value = (static_cast<uint64_t>(source.mtime.dwHighDateTime) << 32) |

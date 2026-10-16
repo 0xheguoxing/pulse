@@ -4274,6 +4274,8 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             else InvalidateRect(hwnd, nullptr, FALSE);
         } else if (ctrl && shift && wParam == L'R') {
             ShowBatchRename(*s);
+        } else if (shift && !ctrl && wParam == VK_F2) {
+            ShowAliasOverlay(*s);   // 别名
         } else if (wParam == VK_F2) {
             RenameSelected(*s);
         } else if (wParam == VK_F7) {

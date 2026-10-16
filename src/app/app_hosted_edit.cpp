@@ -3,6 +3,7 @@
 // app_hosted_edit.cpp — extracted from app_main.cpp.
 #include "app_internal.h"
 #include "address_bar_command.h"
+#include "folder_alias.h"
 #include "keymap.h"
 #include "tab_shortcuts.h"
 #include "window_overview_ui.h"
@@ -60,6 +61,11 @@ std::wstring FormatAddressPath(const std::wstring& text) {
 }
 
 std::wstring AddressNavigationTarget(const std::wstring& text, bool* shortcut) {
+    // 别名 jump: "发布包" or "发布包\\v1.0.56" opens the aliased folder.
+    if (std::wstring aliased; app::AliasStore::Instance().ResolveTyped(text, aliased)) {
+        if (shortcut) *shortcut = true;
+        return FormatAddressPath(aliased);
+    }
     const app::AddressShortcut resolved = app::ResolveAddressShortcut(text);
     if (shortcut) *shortcut = resolved.resolved;
     if (!resolved.resolved) return FormatAddressPath(text);
@@ -422,6 +428,23 @@ static void RegrowRenameField(AppState& s) {
     GetWindowRect(s.hwndRenameEdit, &after);
     if (!EqualRect(&before, &after)) InvalidateRect(s.hwnd, nullptr, FALSE);
 }
+// Every Pulse window of this process repaints: rows cache their alias.
+static void BroadcastAliasChanged(AppState& s) {
+    if (!s.hwnd) return;
+    struct Ctx { wchar_t cls[64]; DWORD pid; } ctx{};
+    GetClassNameW(s.hwnd, ctx.cls, ARRAYSIZE(ctx.cls));
+    ctx.pid = GetCurrentProcessId();
+    EnumWindows([](HWND w, LPARAM p) -> BOOL {
+        const Ctx& c = *reinterpret_cast<const Ctx*>(p);
+        DWORD pid = 0;
+        GetWindowThreadProcessId(w, &pid);
+        wchar_t cls[64]{};
+        if (pid == c.pid && GetClassNameW(w, cls, ARRAYSIZE(cls)) && wcscmp(cls, c.cls) == 0)
+            InvalidateRect(w, nullptr, FALSE);
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&ctx));
+}
+
 void ShowRenameOverlay(AppState& s) {
     if(DeferContentSelection(s,[](AppState& v){ShowRenameOverlay(v);})) return;
     app::Tab* tab = ActiveTab(s);
@@ -456,16 +479,33 @@ void ShowRenameOverlay(AppState& s) {
     }
 
     const std::wstring& name = tab->EntryAt(s.renameIndex).name;
-    SetWindowTextW(s.hwndRenameEdit, name.c_str());
+    std::wstring initial = name;
+    if (s.renameAlias) {
+        const std::wstring alias = app::AliasStore::Instance().Find(EntryFullPath(*tab, s.renameIndex));
+        if (!alias.empty()) initial = alias;
+    }
+    SetWindowTextW(s.hwndRenameEdit, initial.c_str());
     LayoutRenameOverlay(s);
     ShowWindow(s.hwndRenameEdit, SW_SHOW);
     SetForegroundWindow(GetAncestor(s.hwndRenameEdit, GA_ROOT));
     SetFocus(s.hwndRenameEdit);
     int stem = (int)name.find_last_of(L'.');
     bool isDir = tab->EntryAt(s.renameIndex).is_dir;
-    SendMessageW(s.hwndRenameEdit, EM_SETSEL, 0, (stem > 0 && !isDir) ? stem : -1);
+    SendMessageW(s.hwndRenameEdit, EM_SETSEL, 0, (stem > 0 && !isDir && !s.renameAlias) ? stem : -1);
     s.renameIgnoreKillFocus = false;
     InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void ShowAliasOverlay(AppState& s) {
+    app::Tab* tab = ActiveTab(s);
+    if (!tab || !tab->snapshot || tab->SelectedCount() != 1 || tab->selected_index < 0 ||
+        tab->selected_index >= static_cast<int>(tab->EntryCount()) || IsRecycleTab(tab))
+        return;
+    if (EntryFullPath(*tab, tab->selected_index).empty()) return;
+    if (s.renameIndex >= 0) HideRenameOverlay(s, false);
+    s.renameAlias = true;
+    ShowRenameOverlay(s);
+    if (s.renameIndex < 0) s.renameAlias = false;
 }
 
 void HideRenameOverlay(AppState& s, bool commit) {
@@ -477,7 +517,20 @@ void HideRenameOverlay(AppState& s, bool commit) {
     }
     const int index = s.renameIndex;
     s.renameIndex = -1;
-    if (commit) {
+    const bool alias_edit = s.renameAlias;
+    s.renameAlias = false;
+    if (commit && alias_edit) {
+        app::Tab* tab = ActiveTab(s);
+        wchar_t buf[512];
+        GetWindowTextW(s.hwndRenameEdit, buf, ARRAYSIZE(buf));
+        if (tab && tab->snapshot && index < static_cast<int>(tab->EntryCount())) {
+            const std::wstring full = EntryFullPath(*tab, index);
+            // Typing the real name back is the same as clearing the alias.
+            const bool same = _wcsicmp(buf, tab->EntryAt(index).name.c_str()) == 0;
+            app::AliasStore::Instance().Set(full, same ? std::wstring_view() : std::wstring_view(buf));
+            BroadcastAliasChanged(s);
+        }
+    } else if (commit) {
         app::Tab* tab = ActiveTab(s);
         wchar_t buf[512];
         GetWindowTextW(s.hwndRenameEdit, buf, ARRAYSIZE(buf));
