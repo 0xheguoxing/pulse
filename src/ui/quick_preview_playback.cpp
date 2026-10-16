@@ -801,21 +801,20 @@ void QuickPreviewWindow::DrawCodecCard(ID2D1DeviceContext* dc, const D2D1_RECT_F
     const bool zh = l10n::IsChinese();
     CodecCardText t;
     if (state.unsupported_audio) {
-        t.title = l10n::HantText(l10n::Pick(L"此音频暂无法预览", L"Audio preview unavailable"));
-        t.lead = l10n::HantText(l10n::Pick(L"系统无法解码此音频。\n可尝试用默认应用打开。",
-                          L"Windows cannot decode this audio.\nTry opening it in the default app."));
+        t.title = l10n::HantText(l10n::Get(l10n::StringId::AudioPreviewUnavailable).c_str());
+        t.lead = l10n::HantText(l10n::Get(l10n::StringId::WindowsCannotDecodeThisAudioTryOpeningItInTheDefaultApp).c_str());
         t.pack = pack_offer_.installable || pack_offer_.installing;
         DrawCodecCardText(dc, content, t, brush);
         return;
     }
-    t.title = l10n::Pick(L"这台电脑无法显示此视频的画面", L"Can't show this video on this PC");
-    t.lead = l10n::Pick(L"视频使用 ", L"It's encoded as ");
+    t.title = l10n::Get(l10n::StringId::CanTShowThisVideoOnThisPC).c_str();
+    t.lead = l10n::Get(l10n::StringId::ItSEncodedAs).c_str();
     t.name = state.codec_name;
-    t.tail = l10n::Pick(L" 编码，系统中没有对应的解码器。\n声音仍可正常播放。", L" and no decoder for it is installed.\nThe sound still plays.");
+    t.tail = l10n::Get(l10n::StringId::AndNoDecoderForItIsInstalledTheSoundStillPlays).c_str();
     t.store_id = state.store_id;
     if (state.store_id)
         t.get = zh ? l10n::Cn(L"获取 ") + state.codec + l10n::Cn(L" 视频扩展") : L"Get " + state.codec + L" Video Extension";
-    t.hint = l10n::Pick(L"安装后重新打开预览即可看到画面", L"Reopen the preview after installing");
+    t.hint = l10n::Get(l10n::StringId::ReopenThePreviewAfterInstalling).c_str();
     t.pack = pack_offer_.installable || pack_offer_.installing;
     DrawCodecCardText(dc, content, t, brush);
 }
@@ -829,9 +828,9 @@ void QuickPreviewWindow::DrawImageCodecCard(ID2D1DeviceContext* dc, const D2D1_R
     t.picture = true;
     t.image_pack = true;
     t.pack = image_offer_.installable || image_offer_.installing;
-    t.title = l10n::Pick(L"这台电脑无法显示此图片", L"Can't show this picture on this PC");
-    t.lead = l10n::Pick(L"图片使用 ", L"It uses ");
-    t.tail = l10n::Pick(L" 格式，系统中没有对应的解码器。", L" and no decoder for it is installed.");
+    t.title = l10n::Get(l10n::StringId::CanTShowThisPictureOnThisPC).c_str();
+    t.lead = l10n::Get(l10n::StringId::ItUses).c_str();
+    t.tail = l10n::Get(l10n::StringId::AndNoDecoderForItIsInstalled).c_str();
     if (codec == L"pack") {
         const size_t dot = item_.path.find_last_of(L'.');
         std::wstring extension = dot == std::wstring::npos ? std::wstring{} : item_.path.substr(dot);
@@ -839,23 +838,23 @@ void QuickPreviewWindow::DrawImageCodecCard(ID2D1DeviceContext* dc, const D2D1_R
         t.name = extension == L".exr" ? L"OpenEXR" : extension == L".hdr" ? L"Radiance HDR"
                : extension == L".qoi" ? L"QOI" : extension == L".jxl" ? L"JPEG XL" : L"";
         if (t.name.empty()) t.name = extension.size() > 1 ? extension.substr(1) : extension;
-        t.tail = l10n::Pick(L" 格式，Windows 无法直接读取。", L", which Windows cannot read by itself.");
+        t.tail = l10n::Get(l10n::StringId::WhichWindowsCannotReadByItself).c_str();
     } else if (codec == L"av1") {
         t.name = L"AVIF";
         t.store_id = L"9MVZQVXJBQ9V";
-        t.get = l10n::Pick(L"获取 AV1 视频扩展", L"Get AV1 Video Extension");
-        t.hint = l10n::Pick(L"安装后重新打开预览即可看到图片", L"Reopen the preview after installing");
+        t.get = l10n::Get(l10n::StringId::GetAV1VideoExtension).c_str();
+        t.hint = l10n::Get(l10n::StringId::ReopenThePreviewAfterInstalling_2).c_str();
     } else if (codec == L"hevc") {
         t.name = L"HEIF / HEIC";
-        t.tail = l10n::Pick(L" 格式，照片使用 HEVC 编码，还需要 HEVC 视频扩展。", L"; its photo is HEVC-encoded and needs the HEVC Video Extension.");
+        t.tail = l10n::Get(l10n::StringId::ItsPhotoIsHEVCEncodedAndNeedsTheHEVCVideoExtension).c_str();
         t.store_id = L"9NMZLZ57R3T7";
-        t.get = l10n::Pick(L"获取 HEVC 视频扩展", L"Get HEVC Video Extension");
-        t.hint = l10n::Pick(L"安装后重新打开预览即可看到图片", L"Reopen the preview after installing");
+        t.get = l10n::Get(l10n::StringId::GetHEVCVideoExtension).c_str();
+        t.hint = l10n::Get(l10n::StringId::ReopenThePreviewAfterInstalling_2).c_str();
     } else {
         t.name = L"HEIF / HEIC";
         t.store_id = L"9PMMSR1CGPWG";
-        t.get = l10n::Pick(L"获取 HEIF 图像扩展", L"Get HEIF Image Extensions");
-        t.hint = l10n::Pick(L"iPhone 照片常用这个格式；部分 HEIC 还需要 HEVC 视频扩展", L"Common for iPhone photos; some HEIC also need the HEVC Video Extension");
+        t.get = l10n::Get(l10n::StringId::GetHEIFImageExtensions).c_str();
+        t.hint = l10n::Get(l10n::StringId::CommonForIPhonePhotosSomeHEICAlsoNeedTheHEVCVideoExtension).c_str();
     }
     DrawCodecCardText(dc, content, t, brush);
 }
@@ -878,7 +877,7 @@ void QuickPreviewWindow::DrawCodecCardText(ID2D1DeviceContext* dc, const D2D1_RE
     const std::wstring& lead = text.lead;
     const std::wstring body = text.lead + text.name + text.tail;
     const std::wstring& get = text.get;
-    const std::wstring open = l10n::Pick(L"用默认应用打开", L"Open in default app");
+    const std::wstring open = l10n::Get(l10n::StringId::OpenInDefaultApp).c_str();
     const std::wstring& hint = text.hint;
 
     const float width = (std::min)(440.0f * s, content.right - content.left - 32.0f * s);
@@ -975,13 +974,13 @@ void QuickPreviewWindow::DrawCodecCardText(ID2D1DeviceContext* dc, const D2D1_RE
         if (offer.installing) {
             const int percent = static_cast<int>(std::clamp(offer.progress, 0.0f, 1.0f) * 100.0f + 0.5f);
             label = (text.image_pack
-                ? l10n::Pick(L"正在下载图像预览增强包 ", L"Downloading the image preview pack ")
-                : l10n::Pick(L"正在下载 FFmpeg 预览增强包 ", L"Downloading the FFmpeg preview pack ")) +
-                    std::to_wstring(percent) + l10n::Pick(L"% · 点击取消", L"% · Click to cancel");
+                ? l10n::Get(l10n::StringId::DownloadingTheImagePreviewPack).c_str()
+                : l10n::Get(l10n::StringId::DownloadingTheFFmpegPreviewPack).c_str()) +
+                    std::to_wstring(percent) + l10n::Get(l10n::StringId::ClickToCancel).c_str();
         } else {
             label = text.image_pack
-                ? l10n::Pick(L"安装图像预览增强包", L"Install the image preview pack")
-                : l10n::Pick(L"安装 FFmpeg 预览增强包", L"Install the FFmpeg preview pack");
+                ? l10n::Get(l10n::StringId::InstallTheImagePreviewPack).c_str()
+                : l10n::Get(l10n::StringId::InstallTheFFmpegPreviewPack).c_str();
             if (offer.download_bytes) {
                 const uint64_t mb = (std::max)(uint64_t{1}, (offer.download_bytes + 512 * 1024) / (1024 * 1024));
                 label += L" \x00B7 " + std::to_wstring(mb) + L" MB";
@@ -1024,9 +1023,8 @@ void QuickPreviewWindow::DrawCodecCardText(ID2D1DeviceContext* dc, const D2D1_RE
     if (text.pack) {
         if (!offer.notice.empty()) footnote = offer.notice;
         else if (offer.installing)
-            footnote = l10n::Pick(L"安装完成后会自动重新打开预览", L"The preview reopens by itself once installed");
-        else footnote = l10n::Pick(L"预览增强包可随时在“设置 › 预览增强包”中卸载",
-                                   L"Remove it any time in Settings › Preview packs");
+            footnote = l10n::Get(l10n::StringId::ThePreviewReopensByItselfOnceInstalled).c_str();
+        else footnote = l10n::Get(l10n::StringId::RemoveItAnyTimeInSettingsPreviewPacks).c_str();
     } else if (text.store_id) {
         footnote = hint;
     }

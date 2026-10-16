@@ -269,8 +269,8 @@ std::vector<std::wstring> TreeView::StatusParts() const {
     if (current_ >= 0) {
         parts.push_back(PathOf(static_cast<size_t>(current_)));
     } else {
-        std::wstring count = std::to_wstring(nodes_.size()) + (pulse::l10n::Pick(L" \u4E2A\u8282\u70B9", L" nodes"));
-        if (truncated_) count += pulse::l10n::Pick(L" \u00B7 \u5DF2\u622A\u65AD", L" \u00B7 truncated");
+        std::wstring count = std::to_wstring(nodes_.size()) + (pulse::l10n::Get(pulse::l10n::StringId::Nodes).c_str());
+        if (truncated_) count += pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str();
         parts.push_back(std::move(count));
     }
     return parts;

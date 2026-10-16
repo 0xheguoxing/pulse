@@ -211,7 +211,7 @@ float Ease(EasingCurve curve, float value) noexcept {
 }
 
 const wchar_t* OmnibarHintBadge() {
-    return pulse::l10n::Pick(L"\u547D\u4EE4", L"Command");
+    return pulse::l10n::Get(pulse::l10n::StringId::Command).c_str();
 }
 
 } // namespace

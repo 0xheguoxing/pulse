@@ -19,4 +19,6 @@ void ToggleWindowOverview(AppState& s);
 // Every message while the overview is open (and Ctrl+Shift+O before). True
 // when handled; `result` is then the window procedure's reply.
 bool WindowOverviewMessage(AppState& s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, LRESULT& result);
+// Ctrl+Shift+O with the current keyboard state.
+bool IsWindowOverviewKey(WPARAM vk);
 }  // namespace pulse

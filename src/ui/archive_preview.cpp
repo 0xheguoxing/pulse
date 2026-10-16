@@ -256,17 +256,17 @@ std::wstring ArchivePreview::SelectedPath() const {
 std::wstring ArchivePreview::StateNote() const {
     if (!filter_.empty()) {
         if (format_ == L"ISO/UDF")
-            return pulse::l10n::Pick(L"仅搜索已加载的 ISO 兼容目录；UDF 内容可能缺失", L"Search: loaded ISO entries only; UDF may be missing");
+            return pulse::l10n::Get(pulse::l10n::StringId::SearchLoadedISOEntriesOnlyUDFMayBeMissing).c_str();
         if (incomplete_ || counting_)
-            return pulse::l10n::Pick(L"列表不完整；仅搜索已加载内容", L"Partial listing; search covers loaded entries only");
-        return pulse::l10n::Pick(L"仅搜索已加载内容", L"Search covers loaded entries only");
+            return pulse::l10n::Get(pulse::l10n::StringId::PartialListingSearchCoversLoadedEntriesOnly).c_str();
+        return pulse::l10n::Get(pulse::l10n::StringId::SearchCoversLoadedEntriesOnly).c_str();
     }
     if (format_ == L"ISO/UDF")
-        return pulse::l10n::Pick(L"仅显示 ISO 兼容目录；UDF 内容可能缺失", L"ISO compatibility directory only; UDF may be missing");
-    if (counting_) return pulse::l10n::Pick(L"\x7EDF\x8BA1\x4E2D\x2026", L"Counting\x2026");
+        return pulse::l10n::Get(pulse::l10n::StringId::ISOCompatibilityDirectoryOnlyUDFMayBeMissing).c_str();
+    if (counting_) return pulse::l10n::Get(pulse::l10n::StringId::Counting).c_str();
     if (!incomplete_) return {};
     if (folder_)
-        return pulse::l10n::Pick(L"\x5DF2\x8FBE\x7EDF\x8BA1\x4E0A\x9650\xFF0C\x6570\x503C\x4E3A\x4E0B\x9650", L"Scan limit reached; totals are minimums");
+        return pulse::l10n::Get(pulse::l10n::StringId::ScanLimitReachedTotalsAreMinimums).c_str();
     return pulse::l10n::Get(StringId::ArcIncomplete);
 }
 
@@ -536,12 +536,12 @@ float ArchivePreview::DrawHeader(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect
         sub = std::to_wstring(dir_count_) + L" " + pulse::l10n::Get(StringId::ArcFolders) + L" · " +
               std::to_wstring(file_count_) + L" " + pulse::l10n::Get(StringId::ArcFiles) + L" · " +
               (incomplete_ || counting_ ? L"\x2265 " : L"") + pulse::format::ByteSize(unpacked_);
-        if (counting_) sub += pulse::l10n::Pick(L" \xFF08\x7EDF\x8BA1\x4E2D\x2026\xFF09", L" (counting\x2026)");
+        if (counting_) sub += pulse::l10n::Get(pulse::l10n::StringId::Counting_2).c_str();
     } else {
     Fill(dc, t, 9.0f * s, HexColor(kArchiveAmber, 0.15f));
     DrawText(dc, chip_.Get(), format_, t, HexColor(kArchiveAmber), DWRITE_TEXT_ALIGNMENT_CENTER);
     const bool image = format_ == L"ISO" || format_ == L"ISO/UDF" || format_ == L"UDF";
-    const std::wstring kind = image ? pulse::l10n::Pick(L"镜像", L"image") : pulse::l10n::Get(StringId::ArcArchive);
+    const std::wstring kind = image ? pulse::l10n::Get(pulse::l10n::StringId::Image).c_str() : pulse::l10n::Get(StringId::ArcArchive);
     if (large) {
         title = file_name_;
         sub = format_ + L" " + kind + L" · " +
@@ -551,7 +551,7 @@ float ArchivePreview::DrawHeader(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect
                 pulse::format::ByteSize(file_size_);
         sub = std::to_wstring(file_count_) + L" " + pulse::l10n::Get(StringId::ArcFiles) + L" · " +
               std::to_wstring(dir_count_) + L" " + pulse::l10n::Get(StringId::ArcFolders) + L" · " +
-              (image ? pulse::l10n::Pick(L"已读内容", L"Loaded content") : pulse::l10n::Get(StringId::ArcUnpacked)) +
+              (image ? pulse::l10n::Get(pulse::l10n::StringId::LoadedContent).c_str() : pulse::l10n::Get(StringId::ArcUnpacked)) +
               L" " + pulse::format::ByteSize(unpacked_);
     }
     }
@@ -837,7 +837,7 @@ void ArchivePreview::Draw(ID2D1DeviceContext* dc, Compositor* compositor, const 
         {std::to_wstring(file_count_), pulse::l10n::Get(StringId::ArcFiles), false},
         {std::to_wstring(dir_count_), pulse::l10n::Get(StringId::ArcFolders), false},
         {(folder_ && (incomplete_ || counting_) ? L"\x2265" : L"") + pulse::format::ByteSize(unpacked_),
-         folder_ ? std::wstring(pulse::l10n::Pick(L"\x603B\x5927\x5C0F", L"Total size"))
+         folder_ ? std::wstring(pulse::l10n::Get(pulse::l10n::StringId::TotalSize).c_str())
                  : std::wstring(pulse::l10n::Get(StringId::ArcUnpacked)),
          !folder_ && format_ != L"ISO" && format_ != L"ISO/UDF" && format_ != L"UDF"},
     };

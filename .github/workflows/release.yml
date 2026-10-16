@@ -13,7 +13,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  l10n:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install -r tools/l10n/requirements.txt
+      - run: python tools/l10n/gen_strings.py --check
+      - run: python tools/l10n/check_service_text.py
+      - run: python tools/l10n/check_no_pick.py
   build:
+    needs: l10n
     runs-on: windows-2022
     timeout-minutes: 60
     strategy:

@@ -8,6 +8,7 @@
 #include "../fs/bitlocker_volume.h"
 #include "shell_window_sync.h"
 #include "app_column_view.h"
+#include "app_details_tree.h"
 #include "listing_selection_restore.h"
 #include "content_navigation.h"
 #include "content_search_snapshot.h"
@@ -990,7 +991,7 @@ void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathL
                 tab.current_path, tag.paths, tab.sort_column, tab.sort_direction, false, {}, tab.EffectiveGroup());
             return;
         }
-        tab.virtual_title = l10n::Pick(L"标签已删除", L"Tag deleted");
+        tab.virtual_title = l10n::Get(l10n::StringId::TagDeleted).c_str();
     } else if (kind == L"search") {
         wchar_t title[512]{};
         swprintf_s(title, l10n::Get(l10n::StringId::SearchLoadingFormat).c_str(),
@@ -1267,9 +1268,8 @@ static bool ApplyWorkerResultData(AppCore& core, const app::WorkResult& res) {
 }
 
 static void ShowConnectingBanner(app::Tab& tab) {
-    tab.banner_title = l10n::Pick(L"正在连接", L"Connecting");
-    tab.banner_message = l10n::Pick(L"如果服务器要求登录，请在弹出的窗口中输入用户名和密码。",
-                                    L"If the server asks you to sign in, enter the user name and password in the window that opens.");
+    tab.banner_title = l10n::Get(l10n::StringId::Connecting).c_str();
+    tab.banner_message = l10n::Get(l10n::StringId::IfTheServerAsksYouToSignInEnterTheUserNameAndPasswordInTheWi).c_str();
 }
 
 // Window layer: the panes of one window that wait for this listing. Returns
@@ -1277,6 +1277,7 @@ static void ShowConnectingBanner(app::Tab& tab) {
 static bool ApplyWorkerResultToWindow(AppState& s, app::WorkResult& res, bool again) {
     if (Panes(s).empty()) return false;
     NoteColumnStripResult(s, res);
+    NoteDetailsTreeResult(s, res);
     if (res.error) {
         bool awaited = false;
         ForEachPane(s, [&](app::Pane& pane) {
@@ -1649,7 +1650,7 @@ void ApplyNetworkConnect(AppState& s, const std::wstring& share, DWORD error) {
         const std::wstring why = app::NetworkConnectErrorText(error);
         tab->banner_message = !why.empty() ? why
             : tab->snapshot ? l10n::Get(l10n::StringId::CachedReadOnly)
-            : l10n::Pick(L"未登录到此共享。", L"Not signed in to this share.");
+            : l10n::Get(l10n::StringId::NotSignedInToThisShare).c_str();
     });
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
@@ -2729,6 +2730,7 @@ void NewBackgroundTab(AppState& s, const std::wstring& path) {
 }
 
 void OpenSettingsTab(AppState& s, int page) {
+    if (!IsSettingsTab(ActiveTab(s))) s.settings.set_return_tab(s.window_tabs.Active());
     s.settings.SelectPage(page);
     const std::wstring path = app::MakeSettingsPath(
         app::SettingsController::PageName(s.settings.page()));
@@ -2758,6 +2760,20 @@ void OpenSettingsTab(AppState& s, int page) {
     if (app::Tab* tab = ActiveTab(s))
         tab->virtual_title = l10n::Get(l10n::StringId::Settings);
 }
+void CloseSettings(AppState& s) {
+    if (!IsSettingsTab(ActiveTab(s))) return;
+    const size_t active = s.window_tabs.active;
+    const size_t count = s.window_tabs.items.size();
+    size_t target = count;
+    for (size_t i = 0; i < count; ++i)
+        if (i != active && s.window_tabs.items[i].get() == s.settings.return_tab()) target = i;
+    if (target == count) target = active > 0 ? active - 1 : active + 1;
+    s.settings.set_return_tab(nullptr);
+    // BindCurrentLayout drops the settings tab once another tab is active.
+    if (target < count) SwitchTab(s, target);
+    else NewTab(s, NewTabPath(s));  // settings was the only tab
+}
+
 void CloseLayoutTab(AppState& s, size_t idx) {
     if (idx >= s.window_tabs.items.size()) return;
     if (app::LastTabClosesWindow(s.window_tabs.items.size(), s.window_tabs.items[idx]->pinned,

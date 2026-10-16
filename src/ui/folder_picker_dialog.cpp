@@ -130,10 +130,10 @@ std::vector<SidebarItem> ReadSidebarDrives() {
             }
         }
         if (label.empty()) {
-            label = type == DRIVE_REMOTE ? l10n::Pick(L"网络驱动器", L"Network drive")
-                  : type == DRIVE_CDROM ? l10n::Pick(L"光驱", L"CD drive")
-                  : type == DRIVE_REMOVABLE ? l10n::Pick(L"可移动磁盘", L"Removable disk")
-                  : l10n::Pick(L"本地磁盘", L"Local disk");
+            label = type == DRIVE_REMOTE ? l10n::Get(l10n::StringId::NetworkDrive).c_str()
+                  : type == DRIVE_CDROM ? l10n::Get(l10n::StringId::CDDrive).c_str()
+                  : type == DRIVE_REMOVABLE ? l10n::Get(l10n::StringId::RemovableDisk_2).c_str()
+                  : l10n::Get(l10n::StringId::LocalDisk_2).c_str();
         }
         item.label = label + L" (" + root.substr(0, 2) + L")";
         items.push_back(std::move(item));
@@ -235,10 +235,10 @@ public:
         options_.show_hidden = spec.show_hidden;
         if (options_.filters.empty() && mode_ != PickerMode::Folder) {
             if (mode_ == PickerMode::Image) {
-                options_.filters = {{l10n::Pick(L"支持的图片", L"Supported images"), L"*.jpg;*.jpeg;*.png;*.bmp;*.webp;*.jfif"},
+                options_.filters = {{l10n::Get(l10n::StringId::SupportedImages).c_str(), L"*.jpg;*.jpeg;*.png;*.bmp;*.webp;*.jfif"},
                     {L"JPEG (*.jpg; *.jpeg; *.jfif)", L"*.jpg;*.jpeg;*.jfif"}, {L"PNG (*.png)", L"*.png"},
                     {L"WebP (*.webp)", L"*.webp"}, {L"BMP (*.bmp)", L"*.bmp"}};
-            } else options_.filters = {{l10n::Pick(L"所有文件 (*.*)", L"All files (*.*)"), L"*.*"}};
+            } else options_.filters = {{l10n::Get(l10n::StringId::AllFiles_2).c_str(), L"*.*"}};
         }
         options_.filter_index = options_.filters.empty() ? 0 : (std::min)(spec.filter_index, options_.filters.size() - 1);
         view_mode_ = g_last_view[mode_index_];
@@ -246,10 +246,10 @@ public:
 
         chrome_.mode = mode_;
         chrome_.title = !spec.title.empty() ? spec.title
-            : mode_ == PickerMode::File ? l10n::Pick(L"打开", L"Open")
+            : mode_ == PickerMode::File ? l10n::Get(l10n::StringId::Open).c_str()
             : l10n::Get(mode_ == PickerMode::Image ? l10n::StringId::TooltipChooseBackground
                                                    : l10n::StringId::PickerTitleFolder);
-        chrome_.filename_label = l10n::Pick(L"文件名(N):", L"File name:");
+        chrome_.filename_label = l10n::Get(l10n::StringId::FileName).c_str();
         chrome_.primary_text = l10n::Get(mode_ != PickerMode::Folder
                                              ? l10n::StringId::PickerSelect
                                              : l10n::StringId::PickerSelectFolder);
@@ -466,7 +466,7 @@ private:
 
     void UpdateFilterText() {
         chrome_.filter_text = options_.filters.empty()
-            ? l10n::Pick(L"所有文件 (*.*)", L"All files (*.*)")
+            ? l10n::Get(l10n::StringId::AllFiles_2).c_str()
             : options_.filters[options_.filter_index].label;
     }
 
@@ -558,13 +558,13 @@ private:
     void ValidateNames(std::vector<std::wstring> names) {
         if (!loader_ || validating_ || waiting_ || names.empty()) return;
         if (!allow_multiselect_ && names.size() > 1) {
-            chrome_.notice = l10n::Pick(L"此处只能选择一个文件。", L"Select one file here.");
+            chrome_.notice = l10n::Get(l10n::StringId::SelectOneFileHere).c_str();
             Invalidate();
             return;
         }
         validation_navigation_only_ = false;
         validating_ = true;
-        chrome_.notice = l10n::Pick(L"正在检查所选项目…", L"Checking the selected items…");
+        chrome_.notice = l10n::Get(l10n::StringId::CheckingTheSelectedItems).c_str();
         UpdateChosen();
         loader_->Validate(++generation_, current_, std::move(names), mode_, options_);
         Invalidate();
@@ -575,7 +575,7 @@ private:
         std::vector<std::wstring> names;
         if (mode_ != PickerMode::Folder && !filename_text_.empty()) {
             if (!ParsePickerNames(filename_text_, names)) {
-                chrome_.notice = l10n::Pick(L"请为每个文件名使用配对的引号。", L"Use matching quotes around each filename.");
+                chrome_.notice = l10n::Get(l10n::StringId::UseMatchingQuotesAroundEachFilename).c_str();
                 Invalidate();
                 return;
             }
@@ -591,7 +591,7 @@ private:
         chrome_.notice.clear();
         if (validation->error != ERROR_SUCCESS) {
             chrome_.notice = validation->error == ERROR_UNSUPPORTED_TYPE
-                ? l10n::Pick(L"所选文件不符合当前文件类型。", L"The selected file does not match the file type.")
+                ? l10n::Get(l10n::StringId::TheSelectedFileDoesNotMatchTheFileType).c_str()
                 : ErrorText(validation->error, validation->failed_path);
             if (chrome_.notice.empty()) chrome_.notice = l10n::Get(l10n::StringId::PickerOpenFailed);
             if (waiting_ && loader_) loader_->Load(++generation_, current_, mode_, options_);
@@ -705,7 +705,7 @@ private:
         vm_.address_search_content = false;
         vm_.address_search_text = search_text_;
         vm_.address_search_has_text = !search_text_.empty();
-        vm_.address_search_scope_label = l10n::Pick(L"当前文件夹", L"This folder");
+        vm_.address_search_scope_label = l10n::Get(l10n::StringId::ThisFolder).c_str();
         BuildSidebar();
 
         PaneViewModel& pane = vm_.pane;
@@ -768,7 +768,7 @@ private:
                 ? path::FriendlyPathText(chosen_) : chosen_;
             chrome_.summary = prefix + FitPathMiddle(shown, width - measure(prefix), measure);
         } else if (mode_ == PickerMode::Folder && current_.empty() && !waiting_) {
-            chrome_.summary = l10n::Pick(L"请选择一个文件夹或磁盘。", L"Choose a folder or a drive.");
+            chrome_.summary = l10n::Get(l10n::StringId::ChooseAFolderOrADrive).c_str();
         } else if (mode_ == PickerMode::Image) {
             chrome_.summary = l10n::Get(l10n::StringId::PickerPickImageHint);
         }
@@ -831,11 +831,11 @@ private:
         if (mode_ != PickerMode::Folder) {
             filename_edit_ = MakeEdit(kFilenameEditId, filename_text_.c_str());
             if (filename_edit_) SendMessageW(filename_edit_, EM_SETCUEBANNER, TRUE,
-                reinterpret_cast<LPARAM>(l10n::Pick(L"输入文件名，或从上方选择", L"Type a name, or pick one above")));
+                reinterpret_cast<LPARAM>(l10n::Get(l10n::StringId::TypeANameOrPickOneAbove).c_str()));
         }
         search_edit_ = MakeEdit(kSearchEditId, L"");
         if (search_edit_) SendMessageW(search_edit_, EM_SETCUEBANNER, TRUE,
-            reinterpret_cast<LPARAM>(l10n::Pick(L"搜索当前文件夹", L"Search this folder")));
+            reinterpret_cast<LPARAM>(l10n::Get(l10n::StringId::SearchThisFolder).c_str()));
         if (path_edit_) ShowWindow(path_edit_, SW_HIDE);
         if (search_edit_) ShowWindow(search_edit_, SW_HIDE);
     }
@@ -910,7 +910,7 @@ private:
         if (!loader_) return;
         validation_navigation_only_ = true;
         validating_ = true;
-        chrome_.notice = l10n::Pick(L"正在检查路径…", L"Checking the path…");
+        chrome_.notice = l10n::Get(l10n::StringId::CheckingThePath).c_str();
         PickerOptions all;
         loader_->Validate(++generation_, current_, {text}, PickerMode::File, all);
         UpdateChosen();
@@ -1270,20 +1270,20 @@ private:
     }
 
     FluentMenuItem SortMenu() const {
-        FluentMenuItem sort = Item(0, l10n::Pick(L"排序方式", L"Sort by"), L"\xE8CB");
+        FluentMenuItem sort = Item(0, l10n::Get(l10n::StringId::SortBy).c_str(), L"\xE8CB");
         const wchar_t* zh[] = {L"名称", L"修改日期", L"大小", L"类型"};
         const wchar_t* en[] = {L"Name", L"Date modified", L"Size", L"Type"};
         for (int i = 0; i < 4; ++i)
             sort.children.push_back(Radio(10 + i, l10n::Pick(zh[i], en[i]),
                                           static_cast<int>(options_.sort) == i));
         sort.children.back().separator_after = true;
-        sort.children.push_back(Radio(14, l10n::Pick(L"递增", L"Ascending"), !options_.descending));
-        sort.children.push_back(Radio(15, l10n::Pick(L"递减", L"Descending"), options_.descending));
+        sort.children.push_back(Radio(14, l10n::Get(l10n::StringId::Ascending).c_str(), !options_.descending));
+        sort.children.push_back(Radio(15, l10n::Get(l10n::StringId::Descending).c_str(), options_.descending));
         return sort;
     }
 
     FluentMenuItem HiddenItem(int command) const {
-        FluentMenuItem hidden = Item(command, l10n::Pick(L"显示隐藏的项目", L"Show hidden items"), L"\xE7B3");
+        FluentMenuItem hidden = Item(command, l10n::Get(l10n::StringId::ShowHiddenItems).c_str(), L"\xE7B3");
         hidden.toggle = true;
         hidden.checked = options_.show_hidden;
         return hidden;
@@ -1314,7 +1314,7 @@ private:
     // The pane's "…" button: everything the old toolbar row offered.
     void ShowViewMenu(const D2D1_RECT_F& anchor) {
         std::vector<FluentMenuItem> items;
-        FluentMenuItem create = Item(1, l10n::Pick(L"新建文件夹", L"New folder"), L"\xE8F4",
+        FluentMenuItem create = Item(1, l10n::Get(l10n::StringId::NewFolder).c_str(), L"\xE8F4",
                                      !current_.empty() && !waiting_);
         create.shortcut = L"Ctrl+Shift+N";
         create.separator_after = true;
@@ -1363,9 +1363,9 @@ private:
 
     void ShowAddressMenu(std::wstring path, POINT point) {
         std::vector<FluentMenuItem> items;
-        items.push_back(Item(1, l10n::Pick(L"编辑地址", L"Edit address"), L"\xE8AC"));
+        items.push_back(Item(1, l10n::Get(l10n::StringId::EditAddress).c_str(), L"\xE8AC"));
         items.back().shortcut = L"Ctrl+L";
-        items.push_back(Item(2, l10n::Pick(L"复制路径", L"Copy path"), L"\xE8C8", !path.empty()));
+        items.push_back(Item(2, l10n::Get(l10n::StringId::CopyPath).c_str(), L"\xE8C8", !path.empty()));
         const int command = TrackAt(point, std::move(items));
         if (done_) return;
         if (command == 1) BeginAddressEdit();
@@ -1378,27 +1378,27 @@ private:
         const PickerEntry entry = entries_[static_cast<size_t>(index)];
         const bool container = entry.kind == PickerEntryKind::Folder || entry.kind == PickerEntryKind::Drive;
         std::vector<FluentMenuItem> items;
-        items.push_back(Item(1, container ? l10n::Pick(L"打开", L"Open")
-                                          : l10n::Pick(L"选择", L"Select"),
+        items.push_back(Item(1, container ? l10n::Get(l10n::StringId::Open).c_str()
+                                          : l10n::Get(l10n::StringId::PickerSelect).c_str(),
                              container ? L"\xE838" : L"\xE73E"));
-        if (!container) items.push_back(Item(2, l10n::Pick(L"打开方式…", L"Open with…"), L"\xE7AC"));
+        if (!container) items.push_back(Item(2, l10n::Get(l10n::StringId::ShellOpenWith).c_str(), L"\xE7AC"));
         items.back().separator_after = true;
         const bool editable = entry.kind != PickerEntryKind::Drive && !waiting_ && !validating_;
-        items.push_back(Item(6, l10n::Pick(L"剪切", L"Cut"), L"\xE8C6", editable));
+        items.push_back(Item(6, l10n::Get(l10n::StringId::Cut).c_str(), L"\xE8C6", editable));
         items.back().shortcut = L"Ctrl+X";
-        items.push_back(Item(7, l10n::Pick(L"复制", L"Copy"), L"\xE8C8", editable));
+        items.push_back(Item(7, l10n::Get(l10n::StringId::TrayIntentCopy).c_str(), L"\xE8C8", editable));
         items.back().shortcut = L"Ctrl+C";
-        items.push_back(Item(8, l10n::Pick(L"粘贴", L"Paste"), L"\xE77F", CanPaste()));
+        items.push_back(Item(8, l10n::Get(l10n::StringId::Paste).c_str(), L"\xE77F", CanPaste()));
         items.back().shortcut = L"Ctrl+V";
-        items.push_back(Item(9, l10n::Pick(L"重命名", L"Rename"), L"\xE8AC",
+        items.push_back(Item(9, l10n::Get(l10n::StringId::Rename).c_str(), L"\xE8AC",
                              editable && selected_set_.size() == 1));
         items.back().shortcut = L"F2";
         items.back().separator_after = true;
-        items.push_back(Item(3, l10n::Pick(L"复制路径", L"Copy path"), L"\xE8C8"));
+        items.push_back(Item(3, l10n::Get(l10n::StringId::CopyPath).c_str(), L"\xE8C8"));
         if (entry.kind != PickerEntryKind::Drive)
-            items.push_back(Item(4, l10n::Pick(L"删除", L"Delete"), L"\xE74D"));
+            items.push_back(Item(4, l10n::Get(l10n::StringId::Delete).c_str(), L"\xE74D"));
         items.back().separator_after = true;
-        items.push_back(Item(5, l10n::Pick(L"属性", L"Properties"), L"\xE946"));
+        items.push_back(Item(5, l10n::Get(l10n::StringId::Properties).c_str(), L"\xE946"));
         const int command = TrackAt(client, std::move(items));
         if (done_ || command <= 0) return;
         switch (command) {
@@ -1422,12 +1422,12 @@ private:
 
     void ShowBlankMenu(POINT client) {
         std::vector<FluentMenuItem> items;
-        items.push_back(Item(4, l10n::Pick(L"粘贴", L"Paste"), L"\xE77F", CanPaste()));
+        items.push_back(Item(4, l10n::Get(l10n::StringId::Paste).c_str(), L"\xE77F", CanPaste()));
         items.back().shortcut = L"Ctrl+V";
         items.back().separator_after = true;
-        items.push_back(Item(1, l10n::Pick(L"新建文件夹", L"New folder"), L"\xE8F4",
+        items.push_back(Item(1, l10n::Get(l10n::StringId::NewFolder).c_str(), L"\xE8F4",
                              !current_.empty() && !waiting_));
-        items.push_back(Item(2, l10n::Pick(L"刷新", L"Refresh"), L"\xE72C"));
+        items.push_back(Item(2, l10n::Get(l10n::StringId::Refresh).c_str(), L"\xE72C"));
         items.back().separator_after = true;
         items.push_back(SortMenu());
         items.push_back(HiddenItem(3));
@@ -1459,7 +1459,7 @@ private:
         chrome_.notice = ops::WriteClipboard(paths, cut)
             ? l10n::Pick(cut ? L"已剪切，进入目标文件夹后粘贴。" : L"已复制，可在目标文件夹粘贴。",
                          cut ? L"Cut. Paste in the destination folder." : L"Copied. Paste in the destination folder.")
-            : l10n::Pick(L"无法写入剪贴板，请重试。", L"Could not write to the clipboard. Try again.");
+            : l10n::Get(l10n::StringId::CouldNotWriteToTheClipboardTryAgain).c_str();
         Invalidate();
     }
 
@@ -1506,7 +1506,7 @@ private:
         if (!CanPaste()) return;
         ops::ClipboardData clipboard;
         if (!ops::ReadClipboard(clipboard) || clipboard.paths.empty()) {
-            chrome_.notice = l10n::Pick(L"无法读取剪贴板中的文件，请重试。", L"Could not read clipboard files. Try again.");
+            chrome_.notice = l10n::Get(l10n::StringId::CouldNotReadClipboardFilesTryAgain).c_str();
             Invalidate();
             return;
         }
@@ -1525,9 +1525,9 @@ private:
         menu_.SetTheme(dark_, accent_);
         menu_.SetInitialFilterText(name);
         menu_.SetSelectAllOnOpen(true);
-        menu_.SetFilterPlaceholder(l10n::Pick(L"新名称", L"New name"));
+        menu_.SetFilterPlaceholder(l10n::Get(l10n::StringId::NewName).c_str());
         auto rows = [](const std::wstring& value) {
-            return std::vector<FluentMenuItem>{Item(1, l10n::Pick(L"重命名", L"Rename"), L"\xE8AC", !value.empty())};
+            return std::vector<FluentMenuItem>{Item(1, l10n::Get(l10n::StringId::Rename).c_str(), L"\xE8AC", !value.empty())};
         };
         SyncVm();
         const auto anchor = ScreenRect(renderer_.ItemRectInPane(vm_.pane, PaneBounds(), *selected_set_.begin()));
@@ -1548,8 +1548,8 @@ private:
         const bool scope = region == HitTestResult::AddressSearchScope;
         const bool mode = region == HitTestResult::AddressSearchMode || region == HitTestResult::AddressSearchContent;
         std::vector<FluentMenuItem> items;
-        if (!mode) items.push_back(Radio(1, l10n::Pick(L"当前文件夹（不含子文件夹）", L"This folder (no subfolders)"), true));
-        if (!scope) items.push_back(Radio(2, l10n::Pick(L"仅文件名（不搜索内容）", L"File names only (no contents)"), true));
+        if (!mode) items.push_back(Radio(1, l10n::Get(l10n::StringId::ThisFolderNoSubfolders).c_str(), true));
+        if (!scope) items.push_back(Radio(2, l10n::Get(l10n::StringId::FileNamesOnlyNoContents).c_str(), true));
         menu_.SetTheme(dark_, accent_);
         TrackPickerDropdown(ScreenRect(scope ? layout.scope : mode ? layout.mode : layout.options), std::move(items));
     }
@@ -1578,13 +1578,13 @@ private:
     void NewFolder() {
         if (current_.empty() || waiting_ || validating_ || !loader_) return;
         menu_.SetTheme(dark_, accent_);
-        menu_.SetInitialFilterText(l10n::Pick(L"新建文件夹", L"New folder"));
+        menu_.SetInitialFilterText(l10n::Get(l10n::StringId::NewFolder).c_str());
         menu_.SetSelectAllOnOpen(true);
-        menu_.SetFilterPlaceholder(l10n::Pick(L"文件夹名称", L"Folder name"));
+        menu_.SetFilterPlaceholder(l10n::Get(l10n::StringId::FolderName).c_str());
         auto rows = [](const std::wstring& name) {
             FluentMenuItem item;
             item.command = 1;
-            item.text = l10n::Pick(L"创建文件夹", L"Create folder");
+            item.text = l10n::Get(l10n::StringId::CreateFolder).c_str();
             item.enabled = !name.empty();
             return std::vector<FluentMenuItem>{std::move(item)};
         };
@@ -1597,7 +1597,7 @@ private:
         if (name.empty()) return;
         validation_navigation_only_ = false;
         validating_ = true;
-        chrome_.notice = l10n::Pick(L"正在创建文件夹…", L"Creating folder…");
+        chrome_.notice = l10n::Get(l10n::StringId::CreatingFolder).c_str();
         UpdateChosen();
         loader_->CreateFolder(++generation_, current_, name);
         Invalidate();

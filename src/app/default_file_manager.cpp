@@ -36,7 +36,7 @@ std::wstring DefaultFileManagerSummary(const AppPrefs& prefs) {
         return l10n::Get(I::SettingsDefaultManagerDesc);
     std::wstring missing;
     auto add = [&](const std::wstring& part) {
-        if (!missing.empty()) missing += l10n::Pick(L"、", L", ");
+        if (!missing.empty()) missing += l10n::Get(l10n::StringId::Text2776).c_str();
         missing += part;
     };
     if (!prefs.open_folders_in_pulse) add(l10n::Get(I::SettingsTakeoverFolders));

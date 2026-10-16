@@ -6,6 +6,7 @@
 #include "../common/display_path.h"
 #include "../fs/fs_enum.h"
 #include "../ipc/ctx_menu_util.h"
+#include "keymap.h"
 #include <windows.h>
 #include <algorithm>
 #include <cwchar>
@@ -49,7 +50,7 @@ ui::FluentMenuItem Item(int cmd, const wchar_t* text, const wchar_t* glyph,
     it.command = cmd;
     it.text = text;
     it.glyph = glyph;
-    if (shortcut) it.shortcut = shortcut;
+    if (shortcut) it.shortcut = ShownShortcut(shortcut);  // the user's key (keymap.h)
     it.enabled = enabled;
     it.mnemonic = BuiltinMenuMnemonic(cmd);
     // Command-less flyout headers: 查看(V) / 排序方式(O) / 分组依据(P).
@@ -409,7 +410,7 @@ std::vector<ui::FluentMenuItem> BuildSortMenu(const BackgroundViewOptions& optio
 
 ui::FluentMenuItem BuildShortcutHints() {
     auto item = Item(CmdShortcutHelp, l10n::Get(l10n::StringId::ShortcutHints).c_str(), L"\xE765");  // keyboard
-    item.shortcut = L"Ctrl+/";  // app_input: Ctrl+/ opens the same dialog
+    item.shortcut = ShownShortcut(L"Ctrl+/");  // app_input: Ctrl+/ opens the same dialog
     return item;
 }
 

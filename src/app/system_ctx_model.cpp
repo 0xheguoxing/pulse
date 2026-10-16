@@ -190,12 +190,12 @@ bool IsMicrosoft(const std::wstring& publisher, const std::wstring& file) {
 
 const wchar_t* KindLabel(Kind kind) {
     switch (kind) {
-    case Kind::ShellEx: return l10n::Pick(L"右键扩展", L"Shell extension");
-    case Kind::DragDrop: return l10n::Pick(L"拖放扩展", L"Drag-and-drop extension");
-    case Kind::ShellNew: return l10n::Pick(L"新建模板", L"New item template");
-    case Kind::SendTo: return l10n::Pick(L"发送到目标", L"Send to target");
-    case Kind::OpenWith: return l10n::Pick(L"打开方式程序", L"Open with program");
-    default: return l10n::Pick(L"菜单命令", L"Menu command");
+    case Kind::ShellEx: return l10n::Get(l10n::StringId::ShellExtension).c_str();
+    case Kind::DragDrop: return l10n::Get(l10n::StringId::DragAndDropExtension).c_str();
+    case Kind::ShellNew: return l10n::Get(l10n::StringId::NewItemTemplate).c_str();
+    case Kind::SendTo: return l10n::Get(l10n::StringId::SendToTarget).c_str();
+    case Kind::OpenWith: return l10n::Get(l10n::StringId::OpenWithProgram).c_str();
+    default: return l10n::Get(l10n::StringId::MenuCommand).c_str();
     }
 }
 
@@ -400,7 +400,7 @@ std::wstring StripPlumbing(std::wstring text) {
 // CLSID's name, the handler key or the file, each without the plumbing words.
 // "夸克的右键菜单", "Bandizip 的右键菜单": a space only after a Latin name.
 std::wstring Possessive(const std::wstring& program, const wchar_t* zh_tail, const wchar_t* en_tail) {
-    const bool chinese = std::wstring_view(l10n::Pick(L"zh", L"en")) == L"zh";
+    const bool chinese = std::wstring_view(l10n::Get(l10n::StringId::En).c_str()) == L"zh";
     if (!chinese) return program + L" " + en_tail;
     return program + (!program.empty() && program.back() >= 0x2E80 ? L"" : L" ") + zh_tail;
 }
@@ -439,30 +439,17 @@ bool GenericProduct(const std::wstring& product) {
 
 std::wstring MethodText(const Item& item, bool toggleable) {
     if (item.trusted_installer)
-        return l10n::Pick(L"这一项由 Windows 自己管理（TrustedInstaller），Pulse 不会去改它。",
-                          L"Windows manages this entry itself (TrustedInstaller); Pulse leaves it alone.");
+        return l10n::Get(l10n::StringId::WindowsManagesThisEntryItselfTrustedInstallerPulseLeavesItAl).c_str();
     if (item.is_protected)
-        return l10n::Pick(L"这是 Windows 的基础命令，关掉会让资源管理器不好用，所以不提供开关。",
-                          L"A basic Windows command; switching it off breaks File Explorer, so there is no switch.");
+        return l10n::Get(l10n::StringId::ABasicWindowsCommandSwitchingItOffBreaksFileExplorerSoThereI).c_str();
     if (!toggleable)
-        return l10n::Pick(L"新建、发送到、打开方式的开关会在后续版本提供，现在可以查看和定位。",
-                          L"Switches for New, Send to and Open with come in a later version; for now you can inspect them.");
+        return l10n::Get(l10n::StringId::SwitchesForNewSendToAndOpenWithComeInALaterVersionForNowYouC).c_str();
     std::wstring text = item.kind == Kind::Verb
-        ? l10n::Pick(L"关闭后，这个命令不再出现在右键菜单里。Pulse 只给它加上隐藏标记（和 ContextMenuManager 的做法相同），"
-                     L"重新打开就去掉标记，原有设置不会丢。",
-                     L"Switched off, the command leaves the context menu. Pulse only adds hide markers (as "
-                     L"ContextMenuManager does); switching it on removes them and nothing else changes.")
-        : l10n::Pick(L"关闭后，Windows 不再加载这个扩展，它添加的菜单项也随之消失。Pulse 只是把它的注册表项挪到旁边的"
-                     L"“-”分组（和 ContextMenuManager 的做法相同），重新打开就挪回来。",
-                     L"Switched off, Windows stops loading the extension and its rows leave the menu. Pulse moves its key "
-                     L"to the sibling \"-\" group (as ContextMenuManager does); switching it on moves it back.");
+        ? l10n::Get(l10n::StringId::SwitchedOffTheCommandLeavesTheContextMenuPulseOnlyAddsHideMa).c_str()
+        : l10n::Get(l10n::StringId::SwitchedOffWindowsStopsLoadingTheExtensionAndItsRowsLeaveThe).c_str();
     if (Deletable(item))
-        text += l10n::Pick(L"\n它指向的程序已经不存在（多半是卸载时没清理干净），可以直接删除这个残留项。删除前会导出 .reg 备份，"
-                           L"之后也能撤销。",
-                           L"\nIts program is gone (usually left behind by an uninstaller), so the entry can be deleted. "
-                           L"A .reg backup is exported first and the delete can be undone.");
-    text += l10n::Pick(L"\n所有改动点“应用更改”后才会写入注册表。",
-                       L"\nNothing is written until you choose Apply changes.");
+        text += l10n::Get(l10n::StringId::ItsProgramIsGoneUsuallyLeftBehindByAnUninstallerSoTheEntryCa).c_str();
+    text += l10n::Get(l10n::StringId::NothingIsWrittenUntilYouChooseApplyChanges).c_str();
     return text;
 }
 
@@ -688,7 +675,7 @@ bool SystemCtxModel::RunElevated(const std::vector<Op>& ops, std::vector<OpResul
     results.assign(ops.size(), OpResult::Failed);
     const std::wstring helper = HelperPath();
     if (helper.empty() || GetFileAttributesW(helper.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        error = l10n::Pick(L"找不到 pulse_integration.exe", L"pulse_integration.exe is missing");
+        error = l10n::Get(l10n::StringId::PulseIntegrationExeIsMissing).c_str();
         return false;
     }
     wchar_t temp[MAX_PATH];
@@ -715,9 +702,8 @@ bool SystemCtxModel::RunElevated(const std::vector<Op>& ops, std::vector<OpResul
     if (!ShellExecuteExW(&info) || !info.hProcess) {
         const DWORD e = GetLastError();
         DeleteFileW(batch.c_str());
-        error = e == ERROR_CANCELLED ? l10n::Pick(L"已取消：没有获得管理员权限，未做任何更改。",
-                                                  L"Cancelled: no administrator permission, nothing changed.")
-                                     : l10n::Pick(L"无法启动管理员助手。", L"Couldn't start the administrator helper.");
+        error = e == ERROR_CANCELLED ? l10n::Get(l10n::StringId::CancelledNoAdministratorPermissionNothingChanged).c_str()
+                                     : l10n::Get(l10n::StringId::CouldnTStartTheAdministratorHelper).c_str();
         return false;
     }
     WaitForSingleObject(info.hProcess, INFINITE);
@@ -740,7 +726,7 @@ bool SystemCtxModel::RunElevated(const std::vector<Op>& ops, std::vector<OpResul
     DeleteFileW(batch.c_str());
     DeleteFileW(result.c_str());
     if (!sysctx::ParseResults(text, parsed) || parsed.size() != ops.size()) {
-        error = l10n::Pick(L"管理员助手没有返回结果。", L"The administrator helper returned no result.");
+        error = l10n::Get(l10n::StringId::TheAdministratorHelperReturnedNoResult).c_str();
         return false;
     }
     results = std::move(parsed);
@@ -790,14 +776,13 @@ void SystemCtxModel::RunJob(std::vector<Op> ops, size_t pop_undo, bool record_un
         if (!cancelled) collect(machine, machine_results);
         if (!cancelled || !done.empty()) {
             if (failed > 0) {
-                message = l10n::Pick(L"有 ", L"") + std::to_wstring(failed) +
-                          l10n::Pick(L" 项没有改成（可能被系统保护或已被其他程序改动），其余已完成。",
-                                     L" change(s) failed (protected, or changed by another program); the rest are done.");
+                message = l10n::Get(l10n::StringId::Text2971).c_str() + std::to_wstring(failed) +
+                          l10n::Get(l10n::StringId::ChangeSFailedProtectedOrChangedByAnotherProgramTheRestAreDon).c_str();
                 error = true;
             } else if (!done.empty() && message.empty()) {
-                message = (record_undo ? l10n::Pick(L"已更改 ", L"Changed ") : l10n::Pick(L"已撤销 ", L"Undid ")) +
+                message = (record_undo ? l10n::Get(l10n::StringId::Changed).c_str() : l10n::Get(l10n::StringId::Undid).c_str()) +
                           std::to_wstring(done.size()) +
-                          l10n::Pick(L" 项，改动前的注册表已备份。", L" entr(ies); the registry was backed up first.");
+                          l10n::Get(l10n::StringId::EntrIesTheRegistryWasBackedUpFirst).c_str();
             }
         }
     }
@@ -994,7 +979,7 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
             const std::wstring target = !item.file.empty() ? item.file : !item.command.empty() ? item.command : item.clsid;
             const bool handler = item.kind == Kind::ShellEx || item.kind == Kind::DragDrop;
             if (item.missing) {
-                row.subtitle = l10n::Pick(L"程序已不存在（多半已卸载） · ", L"Program gone (probably uninstalled) · ") +
+                row.subtitle = l10n::Get(l10n::StringId::ProgramGoneProbablyUninstalled).c_str() +
                                (!item.command.empty() ? item.command : target);
             } else if (handler) {
                 // Named by its menu rows: "Bandizip 的右键扩展 · Bandisoft"; named
@@ -1017,8 +1002,8 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
             } else if (item.kind == Kind::SendTo) {
                 row.subtitle = FileName(item.key_path);
             } else if (item.kind == Kind::Verb) {
-                row.subtitle = item.command.empty() ? std::wstring(l10n::Pick(L"Windows 自带的命令", L"Built into Windows"))
-                                                    : l10n::Pick(L"运行 ", L"Runs ") + item.command;
+                row.subtitle = item.command.empty() ? std::wstring(l10n::Get(l10n::StringId::BuiltIntoWindows).c_str())
+                                                    : l10n::Get(l10n::StringId::Runs).c_str() + item.command;
             } else {
                 row.subtitle = KindLabel(item.kind);
             }
@@ -1047,9 +1032,9 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
                 if (queued != pending_pulse_.end()) row.pending = true;
             }
             row.kind_label = std::wstring(KindLabel(item.kind)) + L" · " +
-                             (item.root == Root::File ? l10n::Pick(L"当前用户的文件夹", L"your SendTo folder")
-                              : row.machine          ? l10n::Pick(L"所有用户", L"all users")
-                                                     : l10n::Pick(L"当前用户", L"current user"));
+                             (item.root == Root::File ? l10n::Get(l10n::StringId::YourSendToFolder).c_str()
+                              : row.machine          ? l10n::Get(l10n::StringId::AllUsers).c_str()
+                                                     : l10n::Get(l10n::StringId::CurrentUser).c_str());
             row.registry = item.root == Root::File ? item.key_path
                            : (row.machine ? L"HKLM\\Software\\Classes\\" : L"HKCU\\Software\\Classes\\") + item.key_path;
             row.file = !item.file.empty() ? item.file : !item.command.empty() ? item.command : item.clsid;
@@ -1060,8 +1045,8 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
                 const auto labels = labels_.find(UpperClsid(item.clsid));
                 if (labels != labels_.end() && !labels->second.empty()) {
                     std::wstring added;
-                    for (const auto& label : labels->second) added += (added.empty() ? L"" : l10n::Pick(L"、", L", ")) + label;
-                    row.method = l10n::Pick(L"它在菜单里添加：", L"It adds: ") + added + L"\n" + row.method;
+                    for (const auto& label : labels->second) added += (added.empty() ? L"" : l10n::Get(l10n::StringId::Text2776).c_str()) + label;
+                    row.method = l10n::Get(l10n::StringId::ItAdds).c_str() + added + L"\n" + row.method;
                 }
             }
             if (row.selected) {
@@ -1127,7 +1112,7 @@ std::shared_ptr<const ui::SysCtxView> SystemCtxModel::View() {
                 break;
             }
         }
-        if (r.entry.first < 0) r.row.publisher = l10n::Pick(L"不在已扫描的场景里", L"Not in a scanned scene");
+        if (r.entry.first < 0) r.row.publisher = l10n::Get(l10n::StringId::NotInAScannedScene).c_str();
         if (r.row.ms >= ui::kSysCtxSlowMs) ++ov.slow;
         ranked.push_back(std::move(r));
     }
@@ -1460,7 +1445,7 @@ std::wstring SystemCtxModel::TitleLocked(const Entry& e) const {
         if (labels != labels_.end() && !labels->second.empty()) {
             const auto& rows = labels->second;
             title.clear();
-            const bool chinese = std::wstring_view(l10n::Pick(L"zh", L"en")) == L"zh";
+            const bool chinese = std::wstring_view(l10n::Get(l10n::StringId::En).c_str()) == L"zh";
             // Two fit a row; with more, one name and a count keep the count visible:
             // 解压到当前文件夹 等 4 项 / Extract here + 3 more
             const size_t shown = rows.size() > 2 ? 1 : rows.size();
@@ -1512,14 +1497,14 @@ std::wstring SystemCtxModel::ChangeTitleLocked(const std::vector<Op>& ops) const
     }
     if (name.empty()) name = FileName(first.key_path);
     name.erase(std::remove(name.begin(), name.end(), L'&'), name.end());
-    std::wstring title = first.action == Action::Disable   ? l10n::Pick(L"禁用", L"Turned off ")
-                         : first.action == Action::Enable  ? l10n::Pick(L"启用", L"Turned on ")
-                         : first.action == Action::Delete  ? l10n::Pick(L"删除残留", L"Deleted leftover ")
-                         : first.action == Action::Restore ? l10n::Pick(L"恢复", L"Put back ")
-                                                           : l10n::Pick(L"移动", L"Moved ");
-    title += l10n::Pick(L"「", L"\"") + name + l10n::Pick(L"」", L"\"");
+    std::wstring title = first.action == Action::Disable   ? l10n::Get(l10n::StringId::TurnedOff).c_str()
+                         : first.action == Action::Enable  ? l10n::Get(l10n::StringId::TurnedOn).c_str()
+                         : first.action == Action::Delete  ? l10n::Get(l10n::StringId::DeletedLeftover).c_str()
+                         : first.action == Action::Restore ? l10n::Get(l10n::StringId::PutBack).c_str()
+                                                           : l10n::Get(l10n::StringId::Moved).c_str();
+    title += l10n::Get(l10n::StringId::Text2989).c_str() + name + l10n::Get(l10n::StringId::Text2990).c_str();
     if (ops.size() > 1) {
-        const bool chinese = std::wstring_view(l10n::Pick(L"zh", L"en")) == L"zh";
+        const bool chinese = std::wstring_view(l10n::Get(l10n::StringId::En).c_str()) == L"zh";
         title += chinese ? L"等 " + std::to_wstring(ops.size()) + L" 项"
                          : L" + " + std::to_wstring(ops.size() - 1) + L" more";
     }

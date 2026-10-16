@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <iterator>
 #include <mutex>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace pulse::l10n {
@@ -45,6 +47,11 @@ struct PhraseIndex {
     std::array<std::pair<uint32_t, uint32_t>, 256> buckets{};  // hashed on the low byte
 };
 
+// Unregistered text converted at first use. UI literals are stable and the
+// map is append-only, so returned pointers stay valid while workers hold them.
+std::mutex g_hant_cache_mutex;
+std::unordered_map<std::wstring, std::wstring> g_hant_cache;
+
 const PhraseIndex& Index() {
     static PhraseIndex index;
     static std::once_flag once;
@@ -78,7 +85,14 @@ bool IsChinese() noexcept {
 const wchar_t* Cn(const wchar_t* chinese) noexcept {
     if (!chinese || !Traditional()) return chinese;
     const ZhHantPhrase* phrase = FindPhrase(chinese);
-    return phrase ? phrase->traditional : chinese;
+    if (phrase) return phrase->traditional;
+    if (!*chinese) return chinese;
+    // Unregistered text still converts phrase by phrase and char by char
+    // (ToTraditional), so the zh-TW UI never falls back to Simplified.
+    std::lock_guard lock(g_hant_cache_mutex);
+    const auto found = g_hant_cache.find(chinese);
+    if (found != g_hant_cache.end()) return found->second.c_str();
+    return g_hant_cache.emplace(chinese, ToTraditional(chinese)).first->second.c_str();
 }
 
 const wchar_t* Pick(const wchar_t* chinese, const wchar_t* english) noexcept {

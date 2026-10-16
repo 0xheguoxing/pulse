@@ -7,6 +7,7 @@
 #include "../ui/folder_picker_dialog.h"
 #include "../common/preview_packs.h"
 #include "system_ctx_model.h"
+#include "shortcut_page.h"
 #include "content_scope_mode.h"
 #include <shellapi.h>
 #include <shlobj.h>
@@ -69,12 +70,12 @@ std::vector<ui::FluentMenuItem> FilterSettings(const std::wstring& query) {
             // Translate each visible heading separately: the Traditional Chinese
             // phrase table deliberately does not translate unknown concatenations.
             const std::wstring aliases[] = {
-                l10n::Pick(L"支持的格式", L"Supported formats"),
-                l10n::Pick(L"预览增强包", L"Preview packs"),
-                l10n::Pick(L"系统扩展", L"System extensions"),
-                l10n::Pick(L"现代图像格式", L"Modern image formats"),
-                l10n::Pick(L"RAW 相机照片", L"RAW camera photos"),
-                l10n::Pick(L"压缩包", L"Archives")};
+                l10n::Get(l10n::StringId::SupportedFormats).c_str(),
+                l10n::Get(l10n::StringId::PreviewPacks).c_str(),
+                l10n::Get(l10n::StringId::SystemExtensions).c_str(),
+                l10n::Get(l10n::StringId::ModernImageFormats).c_str(),
+                l10n::Get(l10n::StringId::RAWCameraPhotos).c_str(),
+                l10n::Get(l10n::StringId::ArcFamArchive).c_str()};
             for (const auto& alias : aliases) haystack += L" " + alias;
         }
         std::transform(haystack.begin(),haystack.end(),haystack.begin(),towlower);
@@ -170,19 +171,19 @@ void SysCtxRowMenu(AppState& s,int row) {
     };
     const size_t slash=file.find_last_of(L"\\/");
     const std::wstring folder=slash==std::wstring::npos ? std::wstring() : file.substr(0,slash);
-    add(1,l10n::Pick(L"复制注册表路径",L"Copy registry path"),!key.empty());
-    add(2,l10n::Pick(L"复制程序路径",L"Copy program path"),!file.empty());
-    add(3,l10n::Pick(L"在新标签页打开所在文件夹",L"Open its folder in a new tab"),!folder.empty());
+    add(1,l10n::Get(l10n::StringId::CopyRegistryPath).c_str(),!key.empty());
+    add(2,l10n::Get(l10n::StringId::CopyProgramPath).c_str(),!file.empty());
+    add(3,l10n::Get(l10n::StringId::OpenItsFolderInANewTab).c_str(),!folder.empty());
     if(!pulse_key.empty()) {
         items.back().separator_after=true;
-        add(4,l10n::Pick(L"只在 Pulse 右键菜单中隐藏",L"Hide in Pulse's menu only"),true);
+        add(4,l10n::Get(l10n::StringId::HideInPulseSMenuOnly).c_str(),true);
         items.back().checked=model.RowPulseHidden(row);
     }
     if(model.RowDeletable(row)) {
         items.back().separator_after=true;
         const bool deleting=model.RowDeleting(row);
-        add(5,deleting ? l10n::Pick(L"取消删除",L"Keep it")
-                       : l10n::Pick(L"删除残留项（点“应用更改”后生效）",L"Delete leftover (on Apply changes)"),true);
+        add(5,deleting ? l10n::Get(l10n::StringId::KeepIt).c_str()
+                       : l10n::Get(l10n::StringId::DeleteLeftoverOnApplyChanges).c_str(),true);
     }
     const int command=Popup(s,std::move(items));
     if(command==1) app::CopyTextToClipboard(s.hwnd,key);
@@ -201,9 +202,9 @@ void SysCtxOpenFolder(AppState& s,const std::wstring& file) {
 void SysCtxRestoreAll(AppState& s) {
     std::vector<ui::FluentMenuItem> items;
     ui::FluentMenuItem item;item.command=1;
-    item.text=l10n::Pick(L"撤销这次打开 Pulse 以来的全部改动",L"Undo every change made since Pulse started");
+    item.text=l10n::Get(l10n::StringId::UndoEveryChangeMadeSincePulseStarted).c_str();
     items.push_back(std::move(item));
-    ui::FluentMenuItem cancel;cancel.command=0;cancel.text=l10n::Pick(L"取消",L"Cancel");items.push_back(std::move(cancel));
+    ui::FluentMenuItem cancel;cancel.command=0;cancel.text=l10n::Get(l10n::StringId::Cancel).c_str();items.push_back(std::move(cancel));
     if(Popup(s,std::move(items))==1) s.settings.SystemCtx().RestoreAll();
 }
 void SysCtxAction(AppState& s,int index) {
@@ -306,6 +307,7 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
     case H::SettingsIntegration: s.settings.IntegrationAction(hit.index);break;
     case H::SettingsPreviewStore: ui::OpenPreviewCodecStore(s.hwnd,hit.index);break;
     case H::SettingsSysCtx: SysCtxAction(s,hit.index);break;
+    case H::SettingsShortcuts: ShortcutsAction(s,hit.index);break;
     case H::SettingsPackAction: {
         bool refresh=false;
         switch(static_cast<ui::PackAction>(hit.index)) {
@@ -344,7 +346,7 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
             s.settings.HoverCardSize(hit.index-static_cast<int>(ui::PackAction::HoverSizeSmall));break;
         case ui::PackAction::Browse: {
             ui::FolderPickerSpec spec;spec.mode=ui::PickerMode::File;
-            spec.title=l10n::Pick(L"选择 ffmpeg.exe",L"Choose ffmpeg.exe");
+            spec.title=l10n::Get(l10n::StringId::ChooseFfmpegExe).c_str();
             spec.filters={{L"ffmpeg.exe",L"ffmpeg.exe"}};
             const auto& state=s.settings.Packs();
             const std::wstring& current=!state.custom_path.empty() ? state.custom_path : state.detected_path;

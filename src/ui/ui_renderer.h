@@ -8,6 +8,7 @@
 #include "shell_icons.h"
 #include "open_with_icons.h"
 #include "sysctx_view.h"
+#include "shortcuts_view.h"
 #include "view_layout.h"
 #include "column_strip_layout.h"
 #include "panel_metrics.h"
@@ -28,6 +29,7 @@
 #include "window_switcher_view.h"
 #include "../app/builtin_menu_items.h"
 #include "details_column_set.h"
+#include "details_tree_rows.h"
 #include "../fs/fs_enum.h"
 #include "../fs/fs_snapshot.h"
 #include <algorithm>
@@ -281,6 +283,10 @@ struct PaneViewModel {
     // "Group by" (app::GroupBy value) and its spans over view rows.
     int group_by = 0;
     std::shared_ptr<const ListGroups> groups;
+    // Inline folder expansion (details view of a real folder): facts per
+    // view row. filter_map then lists child rows after their folder, so it
+    // is not sorted and ViewIndex uses tree->view_of_source instead.
+    std::shared_ptr<const DetailsTreeRows> tree;
     bool focused = true;
     bool marquee_active = false;
     D2D1_RECT_F marquee_rect{};
@@ -321,6 +327,7 @@ struct PaneViewModel {
 
     int ViewIndex(int source_index) const {
         if (source_index < 0) return -1;
+        if (tree) return tree->ViewOf(source_index);
         if (content_results || (!filter_map && filter_text.empty())) return source_index;
         if (!filter_map) return -1;
         const auto it = std::lower_bound(filter_map->begin(), filter_map->end(), source_index);
@@ -603,9 +610,36 @@ struct DuplicateDriveView {
     bool selected = false;
 };
 
+// A folder under the hover card: its children, read off the window thread
+// (app_hover_preview.cpp) and in the pane's order.
+// The composition bar's kinds, by extension (direct files only).
+enum HoverFolderKind : int {
+    kHoverKindImage = 0, kHoverKindVideo, kHoverKindAudio, kHoverKindDocument,
+    kHoverKindCode, kHoverKindArchive, kHoverKindOther, kHoverKindCount
+};
+struct HoverFolderItem {
+    std::wstring name;
+    DWORD attrs = 0;
+    bool is_dir = false;
+    int kind = kHoverKindOther;   // files: HoverFolderKind
+    uint64_t size = 0;
+    uint64_t modified = 0;        // FILETIME as uint64 (thumbnail cache key part)
+    int children = -1;            // folders: entries inside, -1 not counted
+};
+struct HoverFolderInfo {
+    enum class State : uint8_t { Reading, Ready, Denied, Failed };
+    State state = State::Reading;
+    std::vector<HoverFolderItem> items;   // the first kHoverFolderMaxItems children
+    uint64_t folders = 0, files = 0;      // every child, also past the list's end
+    std::array<uint32_t, kHoverKindCount> kinds{};
+    std::wstring file_system;             // drives: "NTFS"
+};
+constexpr size_t kHoverFolderMaxItems = 5000;
+
 // The hover preview card (Settings > 快速预览 > 预览方式 = 悬停预览): drawn
 // over the window for the file under the pointer. Never hit-tested; the app
 // hides it on click, wheel, keys and focus loss (app_hover_preview.cpp).
+// A folder's card keeps the pointer instead: its list scrolls under the wheel.
 struct HoverPreviewView {
     bool visible = false;
     D2D1_RECT_F anchor{};        // the hovered item, client px
@@ -632,6 +666,15 @@ struct HoverPreviewView {
     int size_step = 1;            // 0 small, 1 medium, 2 large
     bool zoom = false;            // Ctrl held: much larger, for a closer look
     bool instant = false;         // --shot: no size easing between frames
+    // Folders and This PC drives: their contents instead of a preview.
+    bool folder = false;
+    bool drive = false;
+    std::shared_ptr<const HoverFolderInfo> listing;  // null until the worker answers
+    float folder_scroll = 0.0f;   // px the list is scrolled (clamped while drawn)
+    std::wstring size_text;       // the 大小 fact: "1.24 GB", "≥ 1.6 GB", "—"
+    bool size_running = false;    // still being counted
+    uint64_t drive_total = 0, drive_free = 0;
+    bool drive_locked = false;    // BitLocker volume not unlocked
 };
 
 // HitTestResult::SettingsPackAction indices (Settings > 预览增强包).
@@ -845,9 +888,13 @@ struct WindowViewModel {
     std::wstring settings_pack_archive_version, settings_pack_archive_notice, settings_pack_archive_update_version;
     int settings_theme = 0; // system, light, dark
     bool settings_open = false;
-    int settings_page = 0; // 0 general, 1 search/index, 2 context menu, 3 about, 4 duplicates, 5 quick look, 6 system menu
+    int settings_page = 0; // 0 general, 1 search/index, 2 context menu, 3 about, 4 duplicates, 5 quick look, 6 system menu, 7 shortcuts
     // Settings > 系统右键菜单 (page 6): the model's last published view.
     std::shared_ptr<const SysCtxView> settings_sysctx;
+    // Settings > 快捷键 (page 7): the page model's last view; the sidebar badge
+    // (keys that may not work) is filled on every page.
+    std::shared_ptr<const ShortcutsView> settings_shortcuts;
+    int settings_shortcut_issues = 0;
     float settings_scroll = 0.0f;
     bool settings_launch_on_startup = false;
     bool settings_start_in_tray = false;
@@ -1147,6 +1194,7 @@ struct HitTestResult {
         NewButtonArrow,        // chevron segment of the split New button: open the New menu
         SettingsSysCtx,        // Settings > 系统右键菜单: index = SysCtxHit
         SettingsCtxPivot,      // Settings > 右键菜单 layer card 系统右键菜单: index = page (6)
+        SettingsShortcuts,     // Settings > 快捷键: index = ShortcutsHit
     } region = None;
     SidebarAddAction sidebar_action = SidebarAddAction::None;
     int index = -1;          // tab/row/sidebar item/tray batch/tray item.
@@ -1192,6 +1240,12 @@ public:
     // something animates (dwell line, loading sweep), longer for a playing
     // video's progress line.
     unsigned HoverPreviewFrameMs() const noexcept { return hover_frame_ms_; }
+    // The card drawn last, client px (empty when none): the pointer on a
+    // folder card keeps it (app_hover.cpp). Its list and how far that scrolls.
+    D2D1_RECT_F HoverCardRect() const noexcept { return hover_card_rect_; }
+    D2D1_RECT_F HoverFolderListRect() const noexcept { return hover_list_rect_; }
+    float HoverFolderScrollMax() const noexcept { return hover_scroll_max_; }
+    float HoverFolderRowHeight() const noexcept { return 26.0f * scale_; }
     VideoPreview::State HoverVideoState() const;
     // --bench-hover (app_hover_preview.cpp): one card's content asked for
     // exactly as the card asks (facts, then the preview at pixel_size),
@@ -1551,6 +1605,13 @@ public:
                              float row_height_px = 0.0f) const;
     bool PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,
                          int source_index, float x, float y) const;
+    // Details tree: view row whose chevron is under (x, y), else -1.
+    int TreeChevronAt(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,
+                      float x, float y) const;
+    // Details tree "more" row at view_row: 0 show more, 1 show all,
+    // 2 open in a new tab, -1 elsewhere on the row.
+    int TreeMoreActionAt(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,
+                         int view_row, float x, float y) const;
     // Exact geometry of the Fluent frame drawn for the rename row; the hosted
     // EDIT control is placed inside this rect (must stay in sync with DrawList).
     D2D1_RECT_F RenameFieldRect(const PaneViewModel& vm, const D2D1_RECT_F& list,
@@ -1644,6 +1705,8 @@ public:
     // so repeated clicks land on the next close button (as in Chrome).
     void FreezeTabWidths(const WindowViewModel& vm, float window_w);
     bool ReleaseTabWidths();
+    // Settings > 快捷键: how far to scroll so the open popover is in view (0: it is).
+    float SettingsShortcutsRevealDelta(const WindowViewModel& vm, float window_w, float window_h) const;
     float SettingsMaxScroll(const WindowViewModel& vm, float window_w, float window_h) const;
     D2D1_RECT_F SettingsDropdownBounds(const WindowViewModel& vm, int index, float window_w, float window_h) const;
     float SettingsDestinationOffset(const WindowViewModel& vm, int setting_id, float window_w, float window_h) const;
@@ -1717,6 +1780,7 @@ private:
     void DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawSettingsSysCtx(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
+    void DrawSettingsShortcuts(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     // 右键菜单 layer cards, the same on pages 2 and 6: Pulse 右键菜单 | 系统右键菜单.
     void DrawCtxLayerCards(const D2D1_RECT_F& pulse, const D2D1_RECT_F& system, bool system_current,
                            bool other_hovered, const Theme& theme);
@@ -1995,6 +2059,11 @@ private:
     float hover_card_w_ = 0.0f, hover_well_h_ = 0.0f;
     unsigned long long hover_ease_ms_ = 0;
     bool hover_bench_ = false;                 // --bench-hover owns the cache and player
+    // A folder's card (ui_hover_preview.cpp), and where the last card went.
+    void DrawHoverFolderCard(const HoverPreviewView& view, const D2D1_RECT_F& client,
+                             const Theme& theme, bool high_contrast);
+    D2D1_RECT_F hover_card_rect_{}, hover_list_rect_{};
+    float hover_scroll_max_ = 0.0f;
     ComPtr<IDWriteTextLayout> details_text_layout_;
     std::wstring details_layout_text_;
     float details_layout_scale_ = 0;

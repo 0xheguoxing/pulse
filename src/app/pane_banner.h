@@ -42,7 +42,7 @@ inline PaneBannerStyle ClassifyPaneBanner(const Tab& tab, bool can_go_up, bool c
     if (is(I::Offline)) return with(2, A::Reconnect);
     if (is(I::CannotOpen)) {
         // A share that wants a sign-in offers that, anything else a plain retry.
-        if (tab.banner_message.rfind(l10n::Pick(L"未登录", L"Not signed in"), 0) == 0)
+        if (tab.banner_message.rfind(l10n::Get(l10n::StringId::NotSignedIn).c_str(), 0) == 0)
             return with(3, A::Reconnect, can_go_up ? A::GoUp : A::None);
         return with(3, A::Retry, can_go_up ? A::GoUp : A::None);
     }

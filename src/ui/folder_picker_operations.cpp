@@ -16,7 +16,7 @@ PickerOperationResult RunPickerOperation(HWND owner, ops::OpRequest request,
     callbacks.retry_authorization = [&](uint64_t id) { manager.ResolveAuthorization(id, true); };
     callbacks.skip_authorization = [&](uint64_t id) { manager.ResolveAuthorization(id, false); };
     if (!progress.Create(owner, std::move(callbacks))) {
-        result.error = l10n::Pick(L"无法创建文件操作窗口。", L"Could not open the file operation window.");
+        result.error = l10n::Get(l10n::StringId::CouldNotOpenTheFileOperationWindow).c_str();
         return result;
     }
     progress.SetTheme(dark, accent);
@@ -28,7 +28,7 @@ PickerOperationResult RunPickerOperation(HWND owner, ops::OpRequest request,
         manager.Stop();
         progress.Destroy();
         if (enabled) EnableWindow(owner, TRUE);
-        result.error = l10n::Pick(L"不支持此文件操作。", L"This file operation is not supported.");
+        result.error = l10n::Get(l10n::StringId::ThisFileOperationIsNotSupported).c_str();
         return result;
     }
     const ULONGLONG started = GetTickCount64();

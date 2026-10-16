@@ -68,15 +68,15 @@ std::vector<Fact> Facts(const HoverPreviewView& view, const std::vector<PreviewP
         if (property.label.empty() || property.value.empty() || property.value.size() > 24) continue;
         facts.push_back({property.label, property.value});
     }
-    facts.push_back({l10n::Pick(L"大小", L"Size"), format::ByteSize(view.size)});
+    facts.push_back({l10n::Get(l10n::StringId::GroupBySize).c_str(), format::ByteSize(view.size)});
     if (facts.size() < 3 && view.modified) {
         std::wstring date = format::LocalFileTime(ToFileTime(view.modified));
         if (date.size() > 10) date.resize(10);  // the day; the type line has the time
-        if (!date.empty()) facts.push_back({l10n::Pick(L"修改日期", L"Modified"), date});
+        if (!date.empty()) facts.push_back({l10n::Get(l10n::StringId::Modified).c_str(), date});
     }
     if (facts.size() < 3) {
         const std::wstring ext = Extension(view.name);
-        facts.push_back({l10n::Pick(L"格式", L"Format"), ext.empty() ? std::wstring(L"-") : ext});
+        facts.push_back({l10n::Get(l10n::StringId::Format).c_str(), ext.empty() ? std::wstring(L"-") : ext});
     }
     return facts;
 }
@@ -151,6 +151,63 @@ std::wstring Excerpt(const std::wstring& text, int max_lines) {
     return out;
 }
 
+// ---- Folder cards ------------------------------------------------------
+
+std::wstring Thousands(uint64_t n) {
+    const std::wstring digits = std::to_wstring(n);
+    std::wstring out;
+    for (size_t i = 0; i < digits.size(); ++i) {
+        if (i && (digits.size() - i) % 3 == 0) out += L',';
+        out += digits[i];
+    }
+    return out;
+}
+
+std::wstring ItemCount(uint64_t n) {
+    return Thousands(n) + (n == 1 ? l10n::Get(l10n::StringId::Item).c_str() : l10n::Get(l10n::StringId::Items).c_str());
+}
+
+// "位于 …": the parent folder's own name ("C:" for a drive root), without
+// the \\?\ long-path prefix.
+std::wstring ParentName(const std::wstring& path) {
+    std::wstring parent = fs::ParentPath(path);
+    if (parent.empty() || parent == path) return {};
+    if (parent.starts_with(L"\\\\?\\UNC\\")) parent = L"\\\\" + parent.substr(8);
+    else if (parent.starts_with(L"\\\\?\\")) parent = parent.substr(4);
+    while (parent.size() > 1 && parent.back() == L'\\') parent.pop_back();
+    const size_t slash = parent.find_last_of(L'\\');
+    return slash == std::wstring::npos || slash + 1 >= parent.size() ? parent : parent.substr(slash + 1);
+}
+
+std::wstring ChildPath(const std::wstring& parent, const std::wstring& name) {
+    if (parent.empty() || parent.back() == L'\\') return parent + name;
+    return parent + L'\\' + name;
+}
+
+const wchar_t* KindName(int kind) {
+    switch (kind) {
+    case kHoverKindImage: return l10n::Get(l10n::StringId::Images).c_str();
+    case kHoverKindVideo: return l10n::Get(l10n::StringId::Videos).c_str();
+    case kHoverKindAudio: return l10n::Get(l10n::StringId::KindAudio).c_str();
+    case kHoverKindDocument: return l10n::Get(l10n::StringId::PickerDocuments).c_str();
+    case kHoverKindCode: return l10n::Get(l10n::StringId::KindCode).c_str();
+    case kHoverKindArchive: return l10n::Get(l10n::StringId::ArcFamArchive).c_str();
+    default: return l10n::Get(l10n::StringId::GroupNameOther).c_str();
+    }
+}
+
+D2D1_COLOR_F KindColor(int kind) {
+    switch (kind) {
+    case kHoverKindImage: return D2D1::ColorF(0x2FA37A);
+    case kHoverKindVideo: return D2D1::ColorF(0xC8507E);
+    case kHoverKindAudio: return D2D1::ColorF(0xE0A33A);
+    case kHoverKindDocument: return D2D1::ColorF(0x3F7BE0);
+    case kHoverKindCode: return D2D1::ColorF(0x8A63D2);
+    case kHoverKindArchive: return D2D1::ColorF(0xA8742A);
+    default: return D2D1::ColorF(0xA0A4AA);
+    }
+}
+
 }  // namespace
 
 VideoPreview::State MainRenderer::HoverVideoState() const {
@@ -171,6 +228,9 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
         return;
     }
     if (hover_bench_) return;
+    hover_card_rect_ = D2D1_RECT_F{};
+    hover_list_rect_ = D2D1_RECT_F{};
+    hover_scroll_max_ = 0.0f;
     ID2D1DeviceContext* dc = compositor_->Dc();
     const float s = scale_;
     if (!view.visible) {
@@ -194,6 +254,13 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
             }
             hover_frame_ms_ = 16;
         }
+        return;
+    }
+    if (view.folder) {
+        stop_video();
+        hover_shape_path_.clear();
+        hover_card_w_ = hover_well_h_ = 0.0f;
+        DrawHoverFolderCard(view, client, theme, high_contrast);
         return;
     }
     const float margin = 8.0f * s;
@@ -294,6 +361,7 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
     x = std::round(std::clamp(x, client.left + margin, client.right - margin - width));
     y = std::round(std::clamp(y, client.top + margin, client.bottom - margin - height));
     const D2D1_RECT_F card = D2D1::RectF(x, y, x + width, y + height);
+    hover_card_rect_ = card;
 
     const SnackPalette palette = MakeSnackPalette(theme, high_contrast);
     DrawSnackPlate(dc, card, kRadius * s, palette, s, high_contrast);
@@ -548,6 +616,444 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
                                          strip.bottom - 2.0f * s),
              compositor_->TextFormat(), palette.text);
     }
+}
+
+// A folder's card: what is inside (a scrolling list, or a picture mosaic
+// when most of its files are images and clips; a drive adds its capacity),
+// the mix of file kinds, then the icon tile, name and the three facts.
+void MainRenderer::DrawHoverFolderCard(const HoverPreviewView& view, const D2D1_RECT_F& client,
+                                       const Theme& theme, bool high_contrast) {
+    ID2D1DeviceContext* dc = compositor_->Dc();
+    const float s = scale_;
+    const float margin = 8.0f * s;
+    const float client_w = client.right - client.left, client_h = client.bottom - client.top;
+    using State = HoverFolderInfo::State;
+    const HoverFolderInfo* info = view.listing.get();
+    const bool reading = !info || info->state == State::Reading;
+    const bool ready = info && info->state == State::Ready;
+    const bool denied = info && info->state == State::Denied;
+    const bool unreadable = denied || (info && info->state == State::Failed) || view.drive_locked;
+    const uint64_t total = ready ? info->folders + info->files : 0;
+    const size_t listed = ready ? info->items.size() : 0;
+
+    // Width: the 小/中/大 base edge (Ctrl: much larger), like a file's card.
+    float base = kBaseEdge[std::clamp(view.size_step, 0, 2)] * s;
+    float max_w = client_w * 0.45f, max_h = client_h * 0.8f;
+    int rows_cap = view.size_step <= 0 ? 6 : view.size_step == 1 ? 8 : 11;
+    if (view.zoom) {
+        base *= kZoom;
+        max_w = client_w * 0.7f;
+        max_h = client_h * 0.92f;
+        rows_cap *= 2;
+    }
+    const float min_w = (std::min)(kMinCardWidth * s, client_w - 2.0f * margin);
+    const float width = std::round(std::clamp(base, min_w, (std::max)(max_w, min_w)));
+
+    // Pictures when most of the direct files are images or clips.
+    std::vector<size_t> media;
+    uint32_t pictures = 0;
+    if (ready && !view.drive) {
+        pictures = info->kinds[kHoverKindImage] + info->kinds[kHoverKindVideo];
+        if (pictures >= 4 && pictures * 10 >= info->files * 6 && info->folders * 2 <= info->files) {
+            for (size_t i = 0; i < listed && media.size() < 9; ++i) {
+                const HoverFolderItem& item = info->items[i];
+                if (!item.is_dir && (item.kind == kHoverKindImage || item.kind == kHoverKindVideo))
+                    media.push_back(i);
+            }
+        }
+    }
+    const bool mosaic = media.size() >= 4;
+    const bool truncated = ready && total > listed;
+
+    // The well: a drive's capacity on top, then the list (or the mosaic).
+    const float row_h = 26.0f * s;
+    const float list_pad = 4.0f * s;
+    const float well_w = width - 2.0f * kInset * s;
+    const float meter_h = view.drive ? 50.0f * s : 0.0f;
+    const float tile_gap = 3.0f * s;
+    const float tile_w = std::floor((well_w - 8.0f * s - 2.0f * tile_gap) / 3.0f);
+    const float tile_h = std::round(tile_w * 0.75f);
+    float content_h = 0.0f;  // the list's full height
+    float body_h = 0.0f;     // what of it the well shows
+    if (reading) {
+        content_h = body_h = 3.0f * row_h + 2.0f * list_pad;
+    } else if (mosaic) {
+        const int mosaic_rows = static_cast<int>((media.size() + 2) / 3);
+        content_h = body_h = static_cast<float>(mosaic_rows) * tile_h + static_cast<float>(mosaic_rows - 1) * tile_gap + 8.0f * s;
+    } else if (ready && (listed || truncated)) {
+        const size_t rows = listed + (truncated ? 1 : 0);
+        content_h = static_cast<float>(rows) * row_h + 2.0f * list_pad;
+        body_h = (std::min)(content_h, static_cast<float>(rows_cap) * row_h + 2.0f * list_pad);
+    }
+    const bool composition = ready && !view.drive && info->files >= 3;
+    const float composition_h = composition ? (kGap + 6.0f + 5.0f + 16.0f) * s : 0.0f;
+    const float note_h = unreadable ? (kGap + 30.0f) * s : 0.0f;
+    const bool hint = !view.drive && !unreadable;
+    const float hint_h = hint ? 16.0f * s : 0.0f;
+    const auto card_height = [&](float body) {
+        const float well = meter_h + body;
+        const float top = well >= 1.0f ? kInset * s + well + kGap * s : kBareTop * s;
+        return top + composition_h + kTile * s + note_h + (kGap + kStatsHeight) * s + hint_h + kBottom * s;
+    };
+    // A short window: fewer list rows, never fewer than two.
+    float height = card_height(body_h);
+    const float room = (std::min)(max_h, client_h - 2.0f * margin);
+    if (height > room && !mosaic && body_h > 0.0f) {
+        body_h = (std::max)(2.0f * row_h + 2.0f * list_pad, body_h - (height - room));
+        height = card_height(body_h);
+    }
+    if (width < 240.0f * s || height > client_h - 2.0f * margin) return;
+    const float well_h = meter_h + body_h;
+    const bool show_well = well_h >= 1.0f;
+
+    // Beside the pointer on wide rows, beside the cell in icon grids (as a
+    // file's card).
+    const float anchor_w = view.anchor.right - view.anchor.left;
+    const float anchor_h = view.anchor.bottom - view.anchor.top;
+    float x = 0.0f, y = 0.0f;
+    if (anchor_w > anchor_h * 3.0f) {
+        x = view.pointer.x + 20.0f * s;
+        if (x + width > client.right - margin) x = view.pointer.x - 20.0f * s - width;
+        y = (view.anchor.top + view.anchor.bottom - height) * 0.5f;
+    } else {
+        x = view.anchor.right + 8.0f * s;
+        if (x + width > client.right - margin) x = view.anchor.left - 8.0f * s - width;
+        y = view.anchor.top;
+    }
+    x = std::round(std::clamp(x, client.left + margin, client.right - margin - width));
+    y = std::round(std::clamp(y, client.top + margin, client.bottom - margin - height));
+    const D2D1_RECT_F card = D2D1::RectF(x, y, x + width, y + height);
+    hover_card_rect_ = card;
+
+    const SnackPalette palette = MakeSnackPalette(theme, high_contrast);
+    DrawSnackPlate(dc, card, kRadius * s, palette, s, high_contrast);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(dc->CreateSolidColorBrush(palette.hover, &brush)) || !brush.get()) return;
+    const auto fill = [&](const D2D1_RECT_F& r, float radius, const D2D1_COLOR_F& color) {
+        brush->SetColor(color);
+        dc->FillRoundedRectangle(D2D1::RoundedRect(r, radius, radius), brush.get());
+    };
+    const auto text = [&](std::wstring_view value, const D2D1_RECT_F& r, IDWriteTextFormat* format,
+                          const D2D1_COLOR_F& color,
+                          fluent::HorizontalAlignment align = fluent::HorizontalAlignment::Left) {
+        painter_.DrawText(value, r, format, color, align, palette.plate);
+    };
+
+    const D2D1_RECT_F well = show_well
+        ? D2D1::RectF(card.left + kInset * s, card.top + kInset * s, card.right - kInset * s,
+                      card.top + kInset * s + well_h)
+        : D2D1::RectF(card.left + kInset * s, card.top, card.right - kInset * s, card.top);
+    if (show_well) fill(well, (kRadius - kInset * 0.5f) * s, palette.hover);
+
+    // A drive: how full it is.
+    if (view.drive && show_well) {
+        const D2D1_RECT_F head = D2D1::RectF(well.left + 12.0f * s, well.top + 7.0f * s, well.right - 12.0f * s,
+                                             well.top + 27.0f * s);
+        if (view.drive_total) {
+            const uint64_t used = view.drive_total > view.drive_free ? view.drive_total - view.drive_free : 0;
+            text(format::ByteSize(used) + l10n::Get(l10n::StringId::Used).c_str(), head, compositor_->TextFormat(),
+                 palette.text);
+            text(l10n::Get(l10n::StringId::Of).c_str() + format::ByteSize(view.drive_total), head, compositor_->SmallFormat(),
+                 palette.text_secondary, fluent::HorizontalAlignment::Right);
+            const D2D1_RECT_F bar = D2D1::RectF(head.left, well.top + 33.0f * s, head.right, well.top + 41.0f * s);
+            fill(bar, 4.0f * s, palette.divider);
+            const float fraction = static_cast<float>(static_cast<double>(used) / static_cast<double>(view.drive_total));
+            const bool low = view.drive_free * 10 < view.drive_total;  // under 10% left
+            if (fraction > 0.0f)
+                fill(D2D1::RectF(bar.left, bar.top, bar.left + (std::max)(8.0f * s, (bar.right - bar.left) * fraction),
+                                 bar.bottom),
+                     4.0f * s, low ? D2D1::ColorF(0xD1453B) : palette.accent);
+        } else {
+            text(l10n::Get(l10n::StringId::CapacityUnknown).c_str(), head, compositor_->SmallFormat(), palette.text_secondary);
+        }
+    }
+
+    // The list (or the mosaic) under it.
+    const D2D1_RECT_F list = D2D1::RectF(well.left + 4.0f * s, well.top + meter_h, well.right - 4.0f * s,
+                                         well.bottom);
+    if (show_well && body_h > 0.0f) {
+        if (reading) {
+            text(l10n::Get(l10n::StringId::Reading).c_str(),
+                 D2D1::RectF(list.left + 10.0f * s, list.top + list_pad, list.right - 10.0f * s,
+                             list.top + list_pad + row_h),
+                 compositor_->SmallFormat(), palette.text_secondary);
+            const D2D1_RECT_F track = D2D1::RectF(well.left + 12.0f * s, well.bottom - 3.0f * s,
+                                                  well.right - 12.0f * s, well.bottom - 1.0f * s);
+            fill(track, 1.0f * s, palette.divider);
+            const float span = track.right - track.left, seg = span * 0.3f;
+            const float t = static_cast<float>(GetTickCount64() % 1200ull) / 1200.0f;
+            const float head = track.left - seg + (span + seg) * t;
+            dc->PushAxisAlignedClip(track, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            fill(D2D1::RectF(head, track.top, head + seg, track.bottom), 1.0f * s, palette.accent);
+            dc->PopAxisAlignedClip();
+            hover_frame_ms_ = 33;
+        } else if (mosaic) {
+            const uint32_t pixels = tile_w <= 120.0f ? 128u : 256u;
+            ComPtr<ID2D1Factory> factory;
+            dc->GetFactory(&factory);
+            for (size_t k = 0; k < media.size(); ++k) {
+                const HoverFolderItem& item = info->items[media[k]];
+                const float tx = list.left + static_cast<float>(k % 3) * (tile_w + tile_gap);
+                const float ty = list.top + 4.0f * s + static_cast<float>(k / 3) * (tile_h + tile_gap);
+                const D2D1_RECT_F tile = D2D1::RectF(tx, ty, tx + tile_w, ty + tile_h);
+                fill(tile, 4.0f * s, palette.divider);
+                const std::wstring path = ChildPath(view.path, item.name);
+                dc->PushAxisAlignedClip(tile, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                D2D1_RECT_F art{};
+                const PreviewDrawResult result = thumbnail_cache_.DrawGridThumbnail(
+                    dc, tile, path, item.attrs, pixels, 1, item.modified, item.size, 1.0f, false, &art);
+                const float art_w = art.right - art.left, art_h = art.bottom - art.top;
+                if (result == PreviewDrawResult::Bitmap && art_w > 1.0f && art_h > 1.0f) {
+                    // Fill the tile (cover, cropped by the clip) instead of
+                    // leaving bars around a letterboxed picture.
+                    const float grow = (std::max)(tile_w / art_w, tile_h / art_h);
+                    if (grow > 1.01f) {
+                        const float w = tile_w * grow, h = tile_h * grow;
+                        const float mx = (tile.left + tile.right) * 0.5f, my = (tile.top + tile.bottom) * 0.5f;
+                        thumbnail_cache_.DrawGridThumbnail(dc, D2D1::RectF(mx - w * 0.5f, my - h * 0.5f,
+                            mx + w * 0.5f, my + h * 0.5f), path, item.attrs, pixels, 1, item.modified,
+                            item.size, 1.0f, false, nullptr);
+                    }
+                }
+                dc->PopAxisAlignedClip();
+                const float cx = (tile.left + tile.right) * 0.5f, cy = (tile.top + tile.bottom) * 0.5f;
+                // The last tile says how many more there are: no fallback
+                // icon or play mark under the count.
+                const bool more_tile = k + 1 == media.size() && pictures > media.size();
+                if (result != PreviewDrawResult::Bitmap && !more_tile) {
+                    const float icon = 28.0f * s;
+                    icon_cache_.Draw(dc, D2D1::RectF(cx - icon * 0.5f, cy - icon * 0.5f, cx + icon * 0.5f,
+                                                     cy + icon * 0.5f),
+                                     path, item.name, false, item.attrs,
+                                     result == PreviewDrawResult::Pending ? 0.45f : 1.0f);
+                    if (result == PreviewDrawResult::Pending) hover_frame_ms_ = hover_frame_ms_ ? hover_frame_ms_ : 100;
+                }
+                if (more_tile && result == PreviewDrawResult::Pending)
+                    hover_frame_ms_ = hover_frame_ms_ ? hover_frame_ms_ : 100;
+                if (item.kind == kHoverKindVideo && factory.get() && !more_tile) {
+                    // A clip: a play mark on its poster.
+                    brush->SetColor(D2D1::ColorF(0x000000, 0.42f));
+                    dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 11.0f * s, 11.0f * s), brush.get());
+                    ComPtr<ID2D1PathGeometry> play;
+                    ComPtr<ID2D1GeometrySink> sink;
+                    if (SUCCEEDED(factory->CreatePathGeometry(&play)) && SUCCEEDED(play->Open(&sink))) {
+                        sink->BeginFigure(D2D1::Point2F(cx - 3.5f * s, cy - 5.5f * s), D2D1_FIGURE_BEGIN_FILLED);
+                        sink->AddLine(D2D1::Point2F(cx + 5.5f * s, cy));
+                        sink->AddLine(D2D1::Point2F(cx - 3.5f * s, cy + 5.5f * s));
+                        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+                        sink->Close();
+                        brush->SetColor(D2D1::ColorF(0xFFFFFF, 0.95f));
+                        dc->FillGeometry(play.get(), brush.get());
+                    }
+                }
+                if (more_tile) {
+                    fill(tile, 4.0f * s, D2D1::ColorF(0x000000, 0.45f));
+                    text(L"+" + Thousands(pictures - static_cast<uint32_t>(media.size()) + 1), tile,
+                         compositor_->TextFormat(), D2D1::ColorF(0xFFFFFF), fluent::HorizontalAlignment::Center);
+                }
+            }
+        } else {
+            // The children in the pane's order; the wheel scrolls them.
+            const float view_h = list.bottom - list.top;
+            hover_scroll_max_ = (std::max)(0.0f, content_h - view_h);
+            const float scroll = std::clamp(view.folder_scroll, 0.0f, hover_scroll_max_);
+            hover_list_rect_ = list;
+            dc->PushAxisAlignedClip(list, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            const size_t rows = listed + (truncated ? 1 : 0);
+            const size_t first = static_cast<size_t>((std::max)(0.0f, (scroll - list_pad) / row_h));
+            const float icon = 18.0f * s;
+            for (size_t i = first; i < rows; ++i) {
+                const float top = list.top + list_pad + static_cast<float>(i) * row_h - scroll;
+                if (top >= list.bottom) break;
+                const D2D1_RECT_F row = D2D1::RectF(list.left, top, list.right, top + row_h);
+                if (i >= listed) {
+                    text(l10n::Get(l10n::StringId::OnlyTheFirst).c_str() + Thousands(listed) +
+                             l10n::Get(l10n::StringId::Listed).c_str() + ItemCount(total),
+                         D2D1::RectF(row.left + 34.0f * s, row.top, row.right - 10.0f * s, row.bottom),
+                         compositor_->SmallFormat(), palette.text_secondary);
+                    break;
+                }
+                const HoverFolderItem& item = info->items[i];
+                const float cy = (row.top + row.bottom) * 0.5f;
+                icon_cache_.Draw(dc, D2D1::RectF(row.left + 8.0f * s, cy - icon * 0.5f, row.left + 8.0f * s + icon,
+                                                 cy + icon * 0.5f),
+                                 ChildPath(view.path, item.name), item.name, item.is_dir, item.attrs,
+                                 (item.attrs & FILE_ATTRIBUTE_HIDDEN) ? 0.55f : 1.0f);
+                std::wstring side;
+                if (item.is_dir) {
+                    if (item.children >= 0) side = ItemCount(static_cast<uint64_t>(item.children));
+                } else {
+                    side = format::ByteSize(item.size);
+                }
+                const float side_w = side.empty() ? 0.0f : 78.0f * s;
+                text(item.name, D2D1::RectF(row.left + 34.0f * s, row.top, row.right - 12.0f * s - side_w, row.bottom),
+                     compositor_->TextFormat(), palette.text);
+                if (!side.empty())
+                    text(side, D2D1::RectF(row.right - 10.0f * s - side_w, row.top, row.right - 10.0f * s, row.bottom),
+                         compositor_->SmallFormat(), palette.text_secondary, fluent::HorizontalAlignment::Right);
+            }
+            dc->PopAxisAlignedClip();
+            if (hover_scroll_max_ > 0.0f) {
+                // Where in the list the well is.
+                const float thumb_h = (std::max)(20.0f * s, view_h * view_h / content_h);
+                const float thumb_top = list.top + (view_h - thumb_h) * (scroll / hover_scroll_max_);
+                fill(D2D1::RectF(list.right - 3.0f * s, thumb_top + 2.0f * s, list.right - 0.5f * s,
+                                 thumb_top + thumb_h - 2.0f * s),
+                     1.25f * s, SnackAlpha(palette.text_secondary, 0.45f));
+            }
+        }
+    }
+
+    // The mix of file kinds: the four largest, the rest as 其他.
+    float cursor = show_well ? well.bottom : card.top;
+    if (composition) {
+        std::vector<std::pair<int, uint32_t>> kinds;
+        for (int k = 0; k < kHoverKindCount; ++k)
+            if (info->kinds[static_cast<size_t>(k)]) kinds.push_back({k, info->kinds[static_cast<size_t>(k)]});
+        std::stable_sort(kinds.begin(), kinds.end(), [](const auto& a, const auto& b) {
+            if ((a.first == kHoverKindOther) != (b.first == kHoverKindOther)) return b.first == kHoverKindOther;
+            return a.second > b.second;
+        });
+        if (kinds.size() > 5) {
+            uint32_t rest = 0;
+            for (size_t k = 4; k < kinds.size(); ++k) rest += kinds[k].second;
+            kinds.resize(4);
+            kinds.push_back({kHoverKindOther, rest});
+        }
+        const D2D1_RECT_F bar = D2D1::RectF(card.left + 14.0f * s, cursor + kGap * s, card.right - 14.0f * s,
+                                            cursor + (kGap + 6.0f) * s);
+        const float span = bar.right - bar.left;
+        const float files = static_cast<float>((std::max)(1ull, info->files));
+        // Widest extent first: each kind is drawn from the bar's start, so
+        // the rounded ends of the later (shorter) ones mark the joins.
+        std::vector<float> ends;
+        float acc = 0.0f;
+        for (const auto& kind : kinds) {
+            acc += static_cast<float>(kind.second) / files;
+            ends.push_back(bar.left + span * (std::min)(1.0f, acc));
+        }
+        for (size_t k = kinds.size(); k-- > 0;)
+            fill(D2D1::RectF(bar.left, bar.top, ends[k], bar.bottom), 3.0f * s, KindColor(kinds[k].first));
+        const float column = span / static_cast<float>(kinds.size());
+        for (size_t k = 0; k < kinds.size(); ++k) {
+            const float left = bar.left + column * static_cast<float>(k);
+            const float top = bar.bottom + 5.0f * s;
+            fill(D2D1::RectF(left, top + 5.0f * s, left + 7.0f * s, top + 12.0f * s), 2.0f * s,
+                 KindColor(kinds[k].first));
+            const int percent = (std::max)(1, static_cast<int>(std::lround(100.0f * static_cast<float>(kinds[k].second) / files)));
+            text(std::wstring(KindName(kinds[k].first)) + L" " + std::to_wstring(percent) + L"%",
+                 D2D1::RectF(left + 11.0f * s, top, left + column - 2.0f * s, top + 16.0f * s),
+                 compositor_->SmallFormat(), palette.text_secondary);
+        }
+        cursor = bar.bottom + (5.0f + 16.0f) * s;
+    }
+
+    // Icon tile, name and the type line.
+    const float info_top = show_well ? cursor + kGap * s : card.top + kBareTop * s + composition_h;
+    const D2D1_RECT_F tile = D2D1::RectF(card.left + 14.0f * s, info_top, card.left + (14.0f + kTile) * s,
+                                         info_top + kTile * s);
+    fill(tile, 9.0f * s, palette.hover);
+    brush->SetColor(palette.stroke);
+    dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(tile.left + 0.5f, tile.top + 0.5f,
+        tile.right - 0.5f, tile.bottom - 0.5f), 9.0f * s, 9.0f * s), brush.get(), 1.0f);
+    icon_cache_.Draw(dc, D2D1::RectF(tile.left + 6.0f * s, tile.top + 6.0f * s, tile.right - 6.0f * s,
+                                     tile.bottom - 6.0f * s),
+                     view.path, view.name, true, view.attrs);
+    const float text_left = tile.right + 12.0f * s, text_right = card.right - 14.0f * s;
+    IDWriteTextFormat* name_format = compositor_->FileNameFormat() ? compositor_->FileNameFormat()
+                                                                   : compositor_->TextFormat();
+    text(view.name, D2D1::RectF(text_left, tile.top - 3.0f * s, text_right, tile.top + 21.0f * s), name_format,
+         palette.text);
+    std::wstring type_line;
+    const std::wstring dot = L" \u00B7 ";
+    if (view.drive) {
+        type_line = view.type_text;
+        if (view.drive_total) type_line += dot + l10n::Get(l10n::StringId::Text3350).c_str() + format::ByteSize(view.drive_total);
+    } else {
+        if (ready && total == 0) {
+            type_line = l10n::Get(l10n::StringId::EmptyFolder).c_str();
+        } else if (ready) {
+            if (info->folders)
+                type_line = Thousands(info->folders) +
+                    (info->folders == 1 ? l10n::Get(l10n::StringId::Folder_2).c_str() : l10n::Get(l10n::StringId::Folders).c_str());
+            if (info->files)
+                type_line += (type_line.empty() ? L"" : dot) + Thousands(info->files) +
+                    (info->files == 1 ? l10n::Get(l10n::StringId::File_2).c_str() : l10n::Get(l10n::StringId::Files_3).c_str());
+        } else {
+            type_line = view.type_text;
+        }
+        const std::wstring parent = ParentName(view.path);
+        if (!parent.empty()) type_line += dot + l10n::Get(l10n::StringId::In).c_str() + parent;
+    }
+    text(type_line, D2D1::RectF(text_left, tile.top + 21.0f * s, text_right, tile.bottom + 3.0f * s),
+         compositor_->SmallFormat(), palette.text_secondary);
+    float below = tile.bottom;
+
+    // Why there is nothing to list.
+    if (unreadable) {
+        const D2D1_RECT_F note = D2D1::RectF(card.left + 12.0f * s, below + kGap * s, card.right - 12.0f * s,
+                                             below + (kGap + 30.0f) * s);
+        const D2D1_COLOR_F amber = palette.dark ? D2D1::ColorF(0xE8B04A) : D2D1::ColorF(0x97620C);
+        fill(note, 7.0f * s, SnackAlpha(amber, palette.dark ? 0.14f : 0.10f));
+        const wchar_t* why = view.drive_locked ? l10n::Get(l10n::StringId::LockedByBitLockerUnlockItToSeeInside).c_str()
+                           : denied ? l10n::Get(l10n::StringId::CanTReadItsContentsAccessDenied).c_str()
+                                    : l10n::Get(l10n::StringId::CanTReadItsContents).c_str();
+        text(why, D2D1::RectF(note.left + 10.0f * s, note.top, note.right - 8.0f * s, note.bottom),
+             compositor_->SmallFormat(), amber);
+        below = note.bottom;
+    }
+
+    // Three facts in a quiet strip: label above value.
+    std::vector<Fact> facts;
+    bool size_fact_running = false;
+    if (view.drive) {
+        const int percent = view.drive_total
+            ? static_cast<int>(std::lround(100.0 * static_cast<double>(view.drive_total - (std::min)(view.drive_free, view.drive_total)) /
+                                           static_cast<double>(view.drive_total)))
+            : 0;
+        facts.push_back({l10n::Get(l10n::StringId::Free).c_str(), view.drive_total ? format::ByteSize(view.drive_free) : L"\u2014"});
+        facts.push_back({l10n::Get(l10n::StringId::Used_2).c_str(), view.drive_total ? std::to_wstring(percent) + L"%" : L"\u2014"});
+        facts.push_back({l10n::Get(l10n::StringId::FileSystem).c_str(),
+                         info && !info->file_system.empty() ? info->file_system : std::wstring(L"\u2014")});
+    } else {
+        facts.push_back({l10n::Get(l10n::StringId::AdvSearchContains).c_str(),
+                         ready ? ItemCount(total) : reading ? std::wstring(L"\u2026") : std::wstring(L"\u2014")});
+        size_fact_running = view.size_running;
+        facts.push_back({view.size_running ? l10n::Get(l10n::StringId::SizeCounting).c_str() : l10n::Get(l10n::StringId::GroupBySize).c_str(),
+                         view.size_text.empty() ? std::wstring(L"\u2014") : view.size_text});
+        std::wstring date = view.modified ? format::LocalFileTime(ToFileTime(view.modified)) : std::wstring();
+        if (date.size() > 10) date.resize(10);
+        facts.push_back({l10n::Get(l10n::StringId::Modified).c_str(), date.empty() ? std::wstring(L"\u2014") : date});
+    }
+    const D2D1_RECT_F strip = D2D1::RectF(card.left + 12.0f * s, below + kGap * s, card.right - 12.0f * s,
+                                          below + (kGap + kStatsHeight) * s);
+    fill(strip, 8.0f * s, palette.hover);
+    const float cell = (strip.right - strip.left) / 3.0f;
+    for (size_t i = 0; i < 3 && i < facts.size(); ++i) {
+        const float left = strip.left + cell * static_cast<float>(i);
+        if (i) {
+            brush->SetColor(palette.divider);
+            dc->FillRectangle(D2D1::RectF(left, strip.top + 10.0f * s, left + 1.0f, strip.bottom - 10.0f * s),
+                              brush.get());
+        }
+        text(facts[i].label, D2D1::RectF(left + 10.0f * s, strip.top + 5.0f * s, left + cell - 6.0f * s,
+                                         strip.top + 22.0f * s),
+             compositor_->SmallFormat(), palette.text_secondary);
+        text(facts[i].value, D2D1::RectF(left + 10.0f * s, strip.top + 21.0f * s, left + cell - 6.0f * s,
+                                         strip.bottom - 2.0f * s),
+             compositor_->TextFormat(), i == 1 && size_fact_running ? palette.accent : palette.text);
+    }
+
+    // What the card answers to.
+    if (hint) {
+        const std::wstring keys = hover_scroll_max_ > 0.0f
+            ? l10n::Get(l10n::StringId::WheelToScrollSpaceForQuickLook).c_str()
+            : l10n::Get(l10n::StringId::SpaceForQuickLook).c_str();
+        text(keys, D2D1::RectF(card.left + 14.0f * s, strip.bottom + 3.0f * s, card.right - 14.0f * s,
+                               strip.bottom + 3.0f * s + hint_h),
+             compositor_->SmallFormat(), palette.text_secondary, fluent::HorizontalAlignment::Right);
+    }
+    if (view.size_running && !hover_frame_ms_) hover_frame_ms_ = 250;
 }
 
 namespace {

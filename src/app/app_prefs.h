@@ -138,6 +138,9 @@ struct AppPrefs {
     // Tag colors the user added via the custom color dialog (0xRRGGBB),
     // appended after the seven Finder defaults in the swatch strip.
     std::vector<uint32_t> custom_tag_colors;
+    // Settings > 快捷键: one "Id=Ctrl+Shift+C|F8" line per changed action
+    // (app/keymap.h); defaults are not stored.
+    std::vector<std::wstring> shortcuts;
     int duplicate_scan_scope = 0; // 0 folder, 1 drive, 2 all local disks
     std::wstring duplicate_scan_folder;
     std::wstring duplicate_scan_drive;

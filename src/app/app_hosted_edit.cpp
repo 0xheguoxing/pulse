@@ -3,7 +3,11 @@
 // app_hosted_edit.cpp — extracted from app_main.cpp.
 #include "app_internal.h"
 #include "address_bar_command.h"
+#include "keymap.h"
 #include "tab_shortcuts.h"
+#include "window_overview_ui.h"
+#include "window_switcher.h"
+#include <imm.h>
 #include "../ui/address_search_layout.h"
 #include "../ui/lumatext_renderer.h"
 #include "../ui/fluent_menu.h"
@@ -488,7 +492,7 @@ void HideRenameOverlay(AppState& s, bool commit) {
                 // action: one undo takes the name, the move and the folder.
                 if (s.groupRenameUndo && _wcsicmp(full.c_str(), s.groupRenameFolder.c_str()) == 0) {
                     req.undo_group = s.groupRenameUndo;
-                    req.undo_label = l10n::Pick(L"合并到文件夹", L"new folder with selection");
+                    req.undo_label = l10n::Get(l10n::StringId::NewFolderWithSelection).c_str();
                 }
                 tab->pending_selected_name = buf;
                 tab->pending_selected_names = { buf };
@@ -605,6 +609,23 @@ IDWriteTextFormat* HostedEditFormat(AppState& s, HWND hwnd) {
 
 bool HandleHostedEditMessage(AppState& s, HWND hwnd, UINT msg, WPARAM wParam,
                                     LPARAM lParam, LRESULT& result) {
+    if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
+        // Keys the user gave to 窗口总览, 切换窗口 or 下一个标签页 (Settings >
+        // 快捷键) act from text boxes like their defaults below: the main
+        // window translates them (keymap_input.h).
+        WPARAM vk = wParam;
+        if (vk == VK_PROCESSKEY) vk = ImmGetVirtualKey(hwnd);
+        if (!app::IsModifierKey(static_cast<UINT>(vk))) {
+            const auto t = app::ActiveKeymap().Translate(app::CurrentChord(static_cast<UINT>(vk)));
+            if (t.kind == app::Keymap::Translation::Rewrite &&
+                (t.action == app::KeyAction::Overview || t.action == app::KeyAction::SwitchWindow ||
+                 t.action == app::KeyAction::NextTab)) {
+                SetFocus(s.hwnd);
+                result = SendMessageW(s.hwnd, msg, vk, lParam);
+                return true;
+            }
+        }
+    }
     if ((msg == WM_KEYDOWN || msg == WM_CHAR) &&
         app::IsTabShortcut(static_cast<UINT>(wParam),
                            (GetKeyState(VK_CONTROL) & 0x8000) != 0,
@@ -613,6 +634,18 @@ bool HandleHostedEditMessage(AppState& s, HWND hwnd, UINT msg, WPARAM wParam,
         if (msg == WM_KEYDOWN) HandleKeyDown(&s, s.hwnd, msg, wParam, lParam);
         result = 0;
         return true;
+    }
+    if (msg == WM_KEYDOWN && (GetKeyState(VK_CONTROL) & 0x8000) && !(GetKeyState(VK_MENU) & 0x8000)) {
+        // Window keys an edit box has no use for: 窗口总览 and the window
+        // switcher answer on the main window, which also takes the keys
+        // that follow (Esc, arrows), so the focus moves there first.
+        WPARAM vk = wParam;
+        if (vk == VK_PROCESSKEY) vk = ImmGetVirtualKey(hwnd);
+        if (IsWindowOverviewKey(vk) || app::IsWindowSwitcherScanCode(lParam)) {
+            SetFocus(s.hwnd);
+            result = SendMessageW(s.hwnd, WM_KEYDOWN, vk, lParam);
+            return true;
+        }
     }
     EnsureEditVisuals(s);
     return ui::HandleChildEditMessage(s.compositor, HostedEditFormat(s, hwnd),

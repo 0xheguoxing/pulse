@@ -170,18 +170,18 @@ std::wstring DisplayPath(const std::wstring& path) {
 
 const wchar_t* OpVerb(OpType t) {
     switch (t) {
-    case OpType::Copy: return l10n::Pick(L"复制", L"Copy");
-    case OpType::Move: return l10n::Pick(L"移动", L"Move");
-    case OpType::RecycleDelete: return l10n::Pick(L"删除", L"Delete");
-    case OpType::RealDelete: return l10n::Pick(L"永久删除", L"Permanently delete");
-    case OpType::Rename: return l10n::Pick(L"重命名", L"Rename");
-    case OpType::CreateFolder: return l10n::Pick(L"新建文件夹", L"New folder");
-    case OpType::CreateTextFile: return l10n::Pick(L"新建文本文档", L"New text document");
-    case OpType::RestoreRecycle: return l10n::Pick(L"还原", L"Restore");
-    case OpType::EmptyRecycle: return l10n::Pick(L"清空回收站", L"Empty Recycle Bin");
-    case OpType::BatchRename: return l10n::Pick(L"批量重命名", L"Batch rename");
+    case OpType::Copy: return l10n::Get(l10n::StringId::TrayIntentCopy).c_str();
+    case OpType::Move: return l10n::Get(l10n::StringId::TrayIntentMove).c_str();
+    case OpType::RecycleDelete: return l10n::Get(l10n::StringId::Delete).c_str();
+    case OpType::RealDelete: return l10n::Get(l10n::StringId::PermanentlyDelete).c_str();
+    case OpType::Rename: return l10n::Get(l10n::StringId::Rename).c_str();
+    case OpType::CreateFolder: return l10n::Get(l10n::StringId::NewFolder).c_str();
+    case OpType::CreateTextFile: return l10n::Get(l10n::StringId::NewTextDocument).c_str();
+    case OpType::RestoreRecycle: return l10n::Get(l10n::StringId::Restore).c_str();
+    case OpType::EmptyRecycle: return l10n::Get(l10n::StringId::EmptyRecycleConfirmTitle).c_str();
+    case OpType::BatchRename: return l10n::Get(l10n::StringId::BatchRename).c_str();
     }
-    return l10n::Pick(L"操作", L"Operation");
+    return l10n::Get(l10n::StringId::Operation).c_str();
 }
 
 // English progress wording ("Copying 3 items"); Chinese keeps 正在 + OpVerb.
@@ -221,14 +221,14 @@ std::wstring Describe(const OpRequest& r) {
         const std::wstring name = FileName(r.sources.front());
         const size_t dot = name.find_last_of(L'.');
         if (dot == std::wstring::npos || _wcsicmp(name.c_str() + dot, L".txt") != 0)
-            s = l10n::Pick(L"创建", L"Create");
+            s = l10n::Get(l10n::StringId::Create).c_str();
     }
     if (r.type == OpType::EmptyRecycle) return s;
     s += L" ";
     if (!r.sources.empty()) s += FileName(r.sources.front());
     if (r.sources.size() > 1) {
         wchar_t buf[32];
-        swprintf_s(buf, l10n::Pick(L" 等 %zu 项", L" (%zu items)"), r.sources.size());
+        swprintf_s(buf, l10n::Get(l10n::StringId::ZuItems).c_str(), r.sources.size());
         s += buf;
     }
     if (r.type == OpType::Copy || r.type == OpType::Move) {
@@ -237,7 +237,7 @@ std::wstring Describe(const OpRequest& r) {
         s += L" → " + r.new_name;
     } else if (r.type == OpType::BatchRename && r.sources.size() > 1) {
         wchar_t buf[32];
-        swprintf_s(buf, l10n::Pick(L" %zu 项", L" · %zu items"), r.sources.size());
+        swprintf_s(buf, l10n::Get(l10n::StringId::ZuItems_2).c_str(), r.sources.size());
         s += buf;
     }
     return s;
@@ -256,19 +256,17 @@ std::wstring Win32Message(DWORD code);
 std::wstring RenameNameText(const std::wstring& name) {
     switch (RenameFilenameProblem(name)) {
     case RenameFilenameIssue::Empty:
-        return l10n::Pick(L"名称不能为空。", L"The name can't be empty.");
+        return l10n::Get(l10n::StringId::TheNameCanTBeEmpty).c_str();
     case RenameFilenameIssue::InvalidCharacter:
-        return l10n::Pick(L"名称不能包含以下字符：\\ / : * ? \" < > |",
-                          L"A name can't contain any of these characters: \\ / : * ? \" < > |");
+        return l10n::Get(l10n::StringId::ANameCanTContainAnyOfTheseCharacters).c_str();
     case RenameFilenameIssue::TrailingDotOrSpace:
-        return l10n::Pick(L"名称不能以空格或句点结尾。", L"A name can't end with a space or a period.");
+        return l10n::Get(l10n::StringId::ANameCanTEndWithASpaceOrAPeriod).c_str();
     case RenameFilenameIssue::Reserved:
-        return l10n::Pick(L"这是 Windows 保留的名称（如 CON、NUL、COM1），请换一个名称。",
-                          L"Windows reserves this name (like CON, NUL or COM1). Choose a different name.");
+        return l10n::Get(l10n::StringId::WindowsReservesThisNameLikeCONNULOrCOM1ChooseADifferentName).c_str();
     case RenameFilenameIssue::None:
         break;
     }
-    return l10n::Pick(L"名称无效", L"Invalid name");
+    return l10n::Get(l10n::StringId::InvalidName_2).c_str();
 }
 
 // The reason a rename failed, in the user's words; never a bare error number.
@@ -278,43 +276,37 @@ std::wstring RenameFailureText(DWORD code) {
     case ERROR_ACCESS_DENIED:
     case ERROR_PRIVILEGE_NOT_HELD:
     case ERROR_ELEVATION_REQUIRED:
-        return l10n::Pick(L"可能需要管理员权限，或此项（或其中的文件）正被其他程序使用。",
-                          L"You may need administrator permission, or another program may be using this item or a file inside it.");
+        return l10n::Get(l10n::StringId::YouMayNeedAdministratorPermissionOrAnotherProgramMayBeUsingT).c_str();
     case ERROR_SHARING_VIOLATION:
     case ERROR_LOCK_VIOLATION:
-        return l10n::Pick(L"该项目正被其他程序使用。关闭相关程序后重试。",
-                          L"The item is in use by another program. Close it and try again.");
+        return l10n::Get(l10n::StringId::TheItemIsInUseByAnotherProgramCloseItAndTryAgain).c_str();
     case ERROR_FILE_NOT_FOUND:
     case ERROR_PATH_NOT_FOUND:
-        return l10n::Pick(L"找不到此项，它可能已被移动、重命名或删除。请刷新后重试。",
-                          L"The item can't be found. It may have been moved, renamed or deleted. Refresh and try again.");
+        return l10n::Get(l10n::StringId::TheItemCanTBeFoundItMayHaveBeenMovedRenamedOrDeletedRefreshA).c_str();
     case ERROR_ALREADY_EXISTS:
     case ERROR_FILE_EXISTS:
-        return l10n::Pick(L"目标名称已存在", L"The target name already exists");
+        return l10n::Get(l10n::StringId::TheTargetNameAlreadyExists).c_str();
     case ERROR_INVALID_NAME:
     case ERROR_BAD_PATHNAME:
     case ERROR_DIRECTORY:
-        return l10n::Pick(L"此位置不接受这个名称，请换一个名称。",
-                          L"This location doesn't accept that name. Choose a different name.");
+        return l10n::Get(l10n::StringId::ThisLocationDoesnTAcceptThatNameChooseADifferentName).c_str();
     case ERROR_FILENAME_EXCED_RANGE:
-        return l10n::Pick(L"名称太长，或完整路径超出了系统限制。请缩短名称后重试。",
-                          L"The name is too long, or the full path exceeds the system limit. Use a shorter name.");
+        return l10n::Get(l10n::StringId::TheNameIsTooLongOrTheFullPathExceedsTheSystemLimitUseAShorte).c_str();
     case ERROR_WRITE_PROTECT:
-        return l10n::Pick(L"该磁盘处于写保护状态，无法修改。", L"The disk is write-protected.");
+        return l10n::Get(l10n::StringId::TheDiskIsWriteProtected).c_str();
     case ERROR_NOT_READY:
     case ERROR_DEV_NOT_EXIST:
     case ERROR_BAD_NETPATH:
     case ERROR_NETNAME_DELETED:
     case ERROR_UNEXP_NET_ERR:
     case ERROR_NETWORK_UNREACHABLE:
-        return l10n::Pick(L"该位置当前不可用，设备可能已断开或网络连接已中断。",
-                          L"This location isn't available. The device may be disconnected or the network connection lost.");
+        return l10n::Get(l10n::StringId::ThisLocationIsnTAvailableTheDeviceMayBeDisconnectedOrTheNetw).c_str();
     case ERROR_DISK_FULL:
     case ERROR_HANDLE_DISK_FULL:
-        return l10n::Pick(L"磁盘空间不足。", L"There isn't enough disk space.");
+        return l10n::Get(l10n::StringId::ThereIsnTEnoughDiskSpace).c_str();
     case ERROR_NOT_SUPPORTED:
     case ERROR_INVALID_FUNCTION:
-        return l10n::Pick(L"此位置不支持重命名。", L"This location doesn't support renaming.");
+        return l10n::Get(l10n::StringId::ThisLocationDoesnTSupportRenaming).c_str();
     case ERROR_CANT_ACCESS_FILE:
 #ifdef ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING
     case ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING:
@@ -325,8 +317,7 @@ std::wstring RenameFailureText(DWORD code) {
 #ifdef ERROR_CLOUD_FILE_UNSUCCESSFUL
     case ERROR_CLOUD_FILE_UNSUCCESSFUL:
 #endif
-        return l10n::Pick(L"云同步文件暂时无法修改。请确认同步客户端正在运行，等同步完成后重试。",
-                          L"This cloud file can't be changed right now. Make sure the sync app is running and try again after it syncs.");
+        return l10n::Get(l10n::StringId::ThisCloudFileCanTBeChangedRightNowMakeSureTheSyncAppIsRunnin).c_str();
     default:
         // The system's own sentence, in the system language, without the number.
         return Win32Message(code);
@@ -340,17 +331,16 @@ std::wstring CreateFailureText(DWORD code) {
     case ERROR_ACCESS_DENIED:
     case ERROR_PRIVILEGE_NOT_HELD:
     case ERROR_ELEVATION_REQUIRED:
-        return l10n::Pick(L"没有权限在此位置新建", L"You don't have permission to create items here.");
+        return l10n::Get(l10n::StringId::YouDonTHavePermissionToCreateItemsHere).c_str();
     case ERROR_FILE_NOT_FOUND:
     case ERROR_PATH_NOT_FOUND:
-        return l10n::Pick(L"当前文件夹已不存在，它可能已被移动或删除。请刷新后重试。",
-                          L"This folder no longer exists. It may have been moved or deleted. Refresh and try again.");
+        return l10n::Get(l10n::StringId::ThisFolderNoLongerExistsItMayHaveBeenMovedOrDeletedRefreshAn).c_str();
     case ERROR_ALREADY_EXISTS:
     case ERROR_FILE_EXISTS:
-        return l10n::Pick(L"已存在同名项目", L"An item with this name already exists");
+        return l10n::Get(l10n::StringId::AnItemWithThisNameAlreadyExists).c_str();
     case ERROR_NOT_SUPPORTED:
     case ERROR_INVALID_FUNCTION:
-        return l10n::Pick(L"此位置不支持新建。", L"This location doesn't support creating items.");
+        return l10n::Get(l10n::StringId::ThisLocationDoesnTSupportCreatingItems).c_str();
     default:
         return RenameFailureText(code);
     }
@@ -413,19 +403,19 @@ RenameResult RenameInProcess(const std::wstring& source, const std::wstring& new
                      std::wstring* error, DWORD* code = nullptr) {
     if (code) *code = ERROR_SUCCESS;
     if (source.empty() || !IsRenameComponent(new_name)) {
-        if (error) *error = source.empty() ? l10n::Pick(L"名称无效", L"Invalid name") : RenameNameText(new_name);
+        if (error) *error = source.empty() ? l10n::Get(l10n::StringId::InvalidName_2).c_str() : RenameNameText(new_name);
         return RenameResult::Rejected;
     }
     const std::wstring target = JoinPath(ParentOf(source), new_name);
     if (target.empty()) {
-        if (error) *error = l10n::Pick(L"名称无效", L"Invalid name");
+        if (error) *error = l10n::Get(l10n::StringId::InvalidName_2).c_str();
         return RenameResult::Rejected;
     }
     // The current shell host suppresses confirmation UI, so sending an existing
     // target there could silently overwrite it. Reject that conflict here.
     if (CompareStringOrdinal(source.c_str(), -1, target.c_str(), -1, TRUE) != CSTR_EQUAL &&
         GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES) {
-        if (error) *error = l10n::Pick(L"目标名称已存在", L"The target name already exists");
+        if (error) *error = l10n::Get(l10n::StringId::TheTargetNameAlreadyExists).c_str();
         return RenameResult::Rejected;
     }
     if (!MoveFileW(source.c_str(), target.c_str())) {
@@ -488,7 +478,7 @@ bool RenameDriveLabel(const std::wstring& root, const std::wstring& typed, HWND 
     if (pidl) CoTaskMemFree(pidl);
     if (SUCCEEDED(hr)) return true;
     if (error) {
-        *error = hr == HRESULT_FROM_WIN32(ERROR_CANCELLED) ? l10n::Pick(L"已取消", L"Canceled")
+        *error = hr == HRESULT_FROM_WIN32(ERROR_CANCELLED) ? l10n::Get(l10n::StringId::Canceled).c_str()
             : RenameFailureText(HRESULT_FACILITY(hr) == FACILITY_WIN32 ? HRESULT_CODE(hr) : ERROR_GEN_FAILURE);
     }
     return false;
@@ -580,7 +570,7 @@ std::wstring Win32Message(DWORD code) {
     FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
                        FORMAT_MESSAGE_IGNORE_INSERTS,
                    nullptr, code, 0, reinterpret_cast<wchar_t*>(&raw), 0, nullptr);
-    std::wstring text = raw ? raw : l10n::Pick(L"文件操作失败", L"File operation failed");
+    std::wstring text = raw ? raw : l10n::Get(l10n::StringId::FileOperationFailed).c_str();
     if (raw) LocalFree(raw);
     while (!text.empty() && (text.back() == L'\r' || text.back() == L'\n')) text.pop_back();
     return text;
@@ -591,13 +581,13 @@ bool EnsureDirectories(const std::wstring& dir, std::wstring& failure) {
     bool is_directory = false;
     if (PathExists(dir, &is_directory)) {
         if (is_directory) return true;
-        failure = l10n::Pick(L"无法创建目标目录：", L"Could not create the destination folder: ") + dir + l10n::Pick(L" | 目标已存在且不是文件夹", L" | The target exists and is not a folder");
+        failure = l10n::Get(l10n::StringId::CouldNotCreateTheDestinationFolder).c_str() + dir + l10n::Get(l10n::StringId::TheTargetExistsAndIsNotAFolder).c_str();
         return false;
     }
     std::error_code error;
     std::filesystem::create_directories(std::filesystem::path(dir), error);
     if (error) {
-        failure = l10n::Pick(L"无法创建目标目录：", L"Could not create the destination folder: ") + dir + L" | " + Win32Message(error.value());
+        failure = l10n::Get(l10n::StringId::CouldNotCreateTheDestinationFolder).c_str() + dir + L" | " + Win32Message(error.value());
         return false;
     }
     return true;
@@ -618,12 +608,12 @@ std::wstring UniqueCopyPath(const std::wstring& destination, bool directory) {
     }
     for (unsigned index = 1; index < 10000; ++index) {
         // Same suffix as File Explorer in the UI language.
-        std::wstring name = stem + l10n::Pick(L" - 副本", L" - Copy");
+        std::wstring name = stem + l10n::Get(l10n::StringId::Copy_2).c_str();
         if (index > 1) name += L" (" + std::to_wstring(index) + L")";
         std::wstring candidate = JoinPath(parent, name + extension);
         if (!PathExists(candidate)) return candidate;
     }
-    return JoinPath(parent, stem + l10n::Pick(L" - 副本 ", L" - Copy ") + std::to_wstring(GetTickCount64()) + extension);
+    return JoinPath(parent, stem + l10n::Get(l10n::StringId::Copy_3).c_str() + std::to_wstring(GetTickCount64()) + extension);
 }
 
 // Files below this size are copied straight to a free final name (#60). The
@@ -740,14 +730,14 @@ bool Sha256File(const std::wstring& path, const std::atomic<bool>& cancel,
                           reinterpret_cast<PUCHAR>(&hash_bytes), sizeof(hash_bytes),
                           &returned, 0) < 0 || hash_bytes != digest.size()) {
         if (algorithm) BCryptCloseAlgorithmProvider(algorithm, 0);
-        error = l10n::Pick(L"无法初始化 SHA-256 校验", L"Could not initialize SHA-256 verification");
+        error = l10n::Get(l10n::StringId::CouldNotInitializeSHA256Verification).c_str();
         return false;
     }
     std::vector<uint8_t> object(object_bytes);
     if (BCryptCreateHash(algorithm, &hash, object.data(), object_bytes,
                          nullptr, 0, 0) < 0) {
         BCryptCloseAlgorithmProvider(algorithm, 0);
-        error = l10n::Pick(L"无法初始化 SHA-256 校验", L"Could not initialize SHA-256 verification");
+        error = l10n::Get(l10n::StringId::CouldNotInitializeSHA256Verification).c_str();
         return false;
     }
     HANDLE file = CreateFileW(path.c_str(), GENERIC_READ,
@@ -1293,7 +1283,7 @@ bool OpsManager::PrepareLockRetry(OpRequest& req, uint64_t task_id) {
             st.task_id = task_id;
             st.phase = OpPhase::Running;
             st.percent = -1.0f;
-            st.summary = l10n::Pick(L"正在结束占用文件的进程…", L"Ending the processes that are using the files…");
+            st.summary = l10n::Get(l10n::StringId::EndingTheProcessesThatAreUsingTheFiles).c_str();
             st.last_error.clear();
             st.locked_path.clear();
             st.lock_owners.clear();
@@ -1304,8 +1294,8 @@ bool OpsManager::PrepareLockRetry(OpRequest& req, uint64_t task_id) {
         DWORD error = ERROR_SUCCESS;
         const CloseOwnerResult result = CloseLockOwner(owner, 5000, &error);
         if (result == CloseOwnerResult::Closed || result == CloseOwnerResult::AlreadyGone) continue;
-        failure = l10n::Pick(L"无法结束进程 ", L"Could not end process ") + DescribeLockOwner(owner);
-        if (result == CloseOwnerResult::TimedOut) failure += l10n::Pick(L" | 进程没有及时退出", L" | The process did not exit in time");
+        failure = l10n::Get(l10n::StringId::CouldNotEndProcess).c_str() + DescribeLockOwner(owner);
+        if (result == CloseOwnerResult::TimedOut) failure += l10n::Get(l10n::StringId::TheProcessDidNotExitInTime).c_str();
         else if (error != ERROR_SUCCESS) failure += L" | " + Win32Message(error);
         break;
     }
@@ -1335,12 +1325,12 @@ bool OpsManager::PrepareLockRetry(OpRequest& req, uint64_t task_id) {
             st.phase = OpPhase::Completed;
             st.percent = 100.0f;
             st.last_error.clear();
-            st.summary = summary + l10n::Pick(L" 完成", L" completed");
+            st.summary = summary + l10n::Get(l10n::StringId::Completed).c_str();
         } else {
             st.phase = OpPhase::Failed;
             st.percent = -1.0f;
             st.last_error = failure;
-            st.summary = std::wstring(OpVerb(req.type)) + l10n::Pick(L"失败", L" failed");
+            st.summary = std::wstring(OpVerb(req.type)) + l10n::Get(l10n::StringId::Failed).c_str();
         }
     });
     return false;
@@ -1469,7 +1459,7 @@ void OpsManager::Undo() {
         }
         if (!undo_.back().supported) {
             // Leave the entry; report why it cannot be undone.
-            status_.last_error = l10n::Pick(L"回收站删除暂不支持撤销（1B-2 恢复方案：枚举 $Recycle.Bin 还原）", L"Undo is not supported for items moved to the Recycle Bin");
+            status_.last_error = l10n::Get(l10n::StringId::UndoIsNotSupportedForItemsMovedToTheRecycleBin).c_str();
         } else {
             // One user action recorded as several operations undoes as one
             // step, newest first; the queue runs the inverses in that order.
@@ -1612,7 +1602,7 @@ void OpsManager::OpenThread() {
                 wchar_t detail[512]{};
                 FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr,
                     result.error, 0, detail, ARRAYSIZE(detail), nullptr);
-                const auto message = std::wstring(l10n::Pick(L"无法打开终端。", L"Could not open the terminal.")) +
+                const auto message = std::wstring(l10n::Get(l10n::StringId::CouldNotOpenTheTerminal).c_str()) +
                     L"\n" + detail + L" (" + std::to_wstring(result.error) + L")";
                 MessageBoxW(dialog_owner, message.c_str(), L"Pulse", MB_OK | MB_ICONERROR);
             }
@@ -1629,7 +1619,7 @@ void OpsManager::OpenThread() {
                 wchar_t detail[512]{};
                 FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr,
                     result.error, 0, detail, ARRAYSIZE(detail), nullptr);
-                const auto message = std::wstring(l10n::Pick(L"无法启动此菜单命令。", L"Could not launch this menu command.")) +
+                const auto message = std::wstring(l10n::Get(l10n::StringId::CouldNotLaunchThisMenuCommand).c_str()) +
                     L"\n" + detail + L" (" + std::to_wstring(result.error) + L")";
                 MessageBoxW(dialog_owner, message.c_str(), L"Pulse", MB_OK | MB_ICONERROR);
             }
@@ -1724,8 +1714,8 @@ void OpsManager::OpenThread() {
             FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr,
                 result.error, 0, detail, ARRAYSIZE(detail), nullptr);
             const auto message = std::wstring(item.open_verb.empty()
-                ? l10n::Pick(L"无法使用默认应用打开此文件。", L"Could not open this file with its default application.")
-                : l10n::Pick(L"无法完成此打开操作。", L"Could not complete this open operation.")) +
+                ? l10n::Get(l10n::StringId::CouldNotOpenThisFileWithItsDefaultApplication).c_str()
+                : l10n::Get(l10n::StringId::CouldNotCompleteThisOpenOperation).c_str()) +
                 L"\n" + target + L"\n" + detail + L" (" + std::to_wstring(result.error) + L")";
             MessageBoxW(dialog_owner, message.c_str(), L"Pulse", MB_OK | MB_ICONERROR);
         }
@@ -2160,7 +2150,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             const auto previous = Status();
             SetStatus([&](OpStatus& st) {
                 st.phase = OpPhase::Paused;
-                st.summary = std::wstring(OpVerb(req.type)) + l10n::Pick(L"已暂停", L" paused");
+                st.summary = std::wstring(OpVerb(req.type)) + l10n::Get(l10n::StringId::Paused).c_str();
                 st.bytes_per_second = 0.0;
                 st.eta_seconds = 0;
             });
@@ -2180,7 +2170,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
     if (!req.new_name.empty() && (req.type != OpType::Move || req.sources.size() != 1 ||
         !pulse::IsRenameFilename(req.new_name))) {
         failure_hr = E_INVALIDARG;
-        failure = l10n::Pick(L"移动目标名称无效", L"The move destination name is invalid");
+        failure = l10n::Get(l10n::StringId::TheMoveDestinationNameIsInvalid).c_str();
     }
     const auto root_name = [&](const std::wstring& source) {
         return req.new_name.empty() ? FileName(source) : req.new_name;
@@ -2193,7 +2183,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             while (folder.size() > 3 && (folder.back() == L'\\' || folder.back() == L'/')) folder.pop_back();
             if (!folder.empty() && StartsWithPath(req.dest_dir, folder)) {
                 failure_hr = HRESULT_FROM_WIN32(ERROR_INVALID_PARAMETER);
-                failure = l10n::Pick(L"不能将目录复制或移动到其自身内部：", L"Cannot copy or move a folder into itself: ") + source;
+                failure = l10n::Get(l10n::StringId::CannotCopyOrMoveAFolderIntoItself).c_str() + source;
                 break;
             }
         }
@@ -2220,7 +2210,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
     std::vector<ReplacementBackup> replacement_backups;
 
     if (req.sources.empty() || req.dest_dir.empty()) {
-        failure = l10n::Pick(L"复制或移动请求缺少来源/目标", L"The copy or move request is missing a source or destination");
+        failure = l10n::Get(l10n::StringId::TheCopyOrMoveRequestIsMissingASourceOrDestination).c_str();
     }
     if (failure.empty() && !stop_requested() && req.is_undo && req.type == OpType::Move) {
         // A merged move can remove the now-empty source directories. Its
@@ -2243,7 +2233,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                     st.phase = OpPhase::Completed;
                     st.percent = 100.0f;
                     st.total_items = st.completed_items = 1;
-                    st.summary = Describe(req) + l10n::Pick(L" 完成", L" completed");
+                    st.summary = Describe(req) + l10n::Get(l10n::StringId::Completed).c_str();
                     st.completed_ops++;
                 });
                 transfer_active_.store(false);
@@ -2299,7 +2289,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 root.destination = UniqueCopyPath(root.destination, root.directory);
             }
             if (root.directory && StartsWithPath(req.dest_dir, root.source)) {
-                failure = l10n::Pick(L"不能将目录复制或移动到其自身内部：", L"Cannot copy or move a folder into itself: ") + source;
+                failure = l10n::Get(l10n::StringId::CannotCopyOrMoveAFolderIntoItself).c_str() + source;
                 break;
             }
             root.destination_preexisting = PathExists(root.destination);
@@ -2326,7 +2316,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             fsys::recursive_directory_iterator end;
             if (ec) {
                 failure_hr = HRESULT_FROM_WIN32(static_cast<DWORD>(ec.value()));
-                failure = l10n::Pick(L"无法读取来源目录：", L"Could not read the source folder: ") + source + L" | " + Win32Message(ec.value());
+                failure = l10n::Get(l10n::StringId::CouldNotReadTheSourceFolder).c_str() + source + L" | " + Win32Message(ec.value());
                 break;
             }
             for (; it != end;) {
@@ -2355,7 +2345,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 // not in a loop body that will never execute again.
                 if (ec) {
                     failure_hr = HRESULT_FROM_WIN32(static_cast<DWORD>(ec.value()));
-                    failure = l10n::Pick(L"扫描来源目录失败：", L"Could not scan the source folder: ") +
+                    failure = l10n::Get(l10n::StringId::CouldNotScanTheSourceFolder).c_str() +
                         scanned_path + L" | " + Win32Message(ec.value());
                     break;
                 }
@@ -2527,7 +2517,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             SetStatus([&](OpStatus& st) {
                 st.phase = OpPhase::WaitingForConflict;
                 st.current_item = FileName(entry.source);
-                st.summary = l10n::Pick(L"正在等待处理文件冲突", L"Waiting for file conflicts to be resolved");
+                st.summary = l10n::Get(l10n::StringId::WaitingForFileConflictsToBeResolved).c_str();
                 st.bytes_per_second = 0.0;
                 st.eta_seconds = 0;
             });
@@ -2581,13 +2571,13 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         if (conflict && choice == ConflictChoice::Replace &&
             (entry.directory != destination_is_directory || entry.reparse)) {
             if (req.type == OpType::Move) {
-                failure = l10n::Pick(L"移动时无法原子替换不同类型或重解析目标：", L"Cannot atomically replace a target of a different type or a reparse point while moving: ") + entry.destination;
+                failure = l10n::Get(l10n::StringId::CannotAtomicallyReplaceATargetOfADifferentTypeOrAReparsePoin).c_str() + entry.destination;
                 break;
             }
             const std::wstring backup = UniqueTemporaryPath(
                 entry.destination, L".pulse-backup-", task_id, index);
             if (!MoveFileExW(entry.destination.c_str(), backup.c_str(), MOVEFILE_WRITE_THROUGH)) {
-                failure = l10n::Pick(L"无法安全备份要替换的目标项目：", L"Could not safely back up the item being replaced: ") + entry.destination
+                failure = l10n::Get(l10n::StringId::CouldNotSafelyBackUpTheItemBeingReplaced).c_str() + entry.destination
                     + L" | " + Win32Message(GetLastError());
                 break;
             }
@@ -2685,7 +2675,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
 
             SetStatus([&](OpStatus& st) {
                 st.phase = OpPhase::Paused;
-                st.summary = std::wstring(OpVerb(req.type)) + l10n::Pick(L"已暂停", L" paused");
+                st.summary = std::wstring(OpVerb(req.type)) + l10n::Get(l10n::StringId::Paused).c_str();
                 st.bytes_per_second = 0.0;
                 st.eta_seconds = 0;
             });
@@ -2719,7 +2709,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         if (verify_copies_.load()) {
             SetStatus([&](OpStatus& st) {
                 st.phase = OpPhase::Verifying;
-                st.summary = l10n::Pick(L"正在校验 ", L"Verifying ") + FileName(entry.source);
+                st.summary = l10n::Get(l10n::StringId::Verifying).c_str() + FileName(entry.source);
                 st.bytes_per_second = 0.0;
                 st.eta_seconds = 0;
             });
@@ -2729,7 +2719,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 if (!transfer_pause_.load() || transfer_cancel_.load()) return;
                 SetStatus([&](OpStatus& st) {
                     st.phase = OpPhase::Paused;
-                    st.summary = std::wstring(OpVerb(req.type)) + l10n::Pick(L"已暂停", L" paused");
+                    st.summary = std::wstring(OpVerb(req.type)) + l10n::Get(l10n::StringId::Paused).c_str();
                 });
                 std::unique_lock<std::mutex> lock(transfer_control_mutex_);
                 transfer_control_cv_.wait(lock, [&] {
@@ -2738,7 +2728,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 lock.unlock();
                 if (!transfer_cancel_.load()) SetStatus([&](OpStatus& st) {
                     st.phase = OpPhase::Verifying;
-                    st.summary = l10n::Pick(L"正在校验 ", L"Verifying ") + FileName(entry.source);
+                    st.summary = l10n::Get(l10n::StringId::Verifying).c_str() + FileName(entry.source);
                 });
             };
             if (!Sha256File(entry.source, transfer_cancel_, wait_if_paused, source_hash, failure) ||
@@ -2749,7 +2739,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             }
             if (source_hash != copied_hash) {
                 discard_copy();
-                failure = l10n::Pick(L"SHA-256 校验失败 | ", L"SHA-256 verification failed | ") + entry.source;
+                failure = l10n::Get(l10n::StringId::SHA256VerificationFailed).c_str() + entry.source;
                 break;
             }
             SetStatus([&](OpStatus& st) { st.phase = OpPhase::Running; });
@@ -2852,10 +2842,8 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 !MoveFileExW(it->backup.c_str(), it->original.c_str(), MOVEFILE_WRITE_THROUGH))
                 error = GetLastError();
             if (error != ERROR_SUCCESS) {
-                rollback_note += l10n::Pick(L"\uFF1B\u65E0\u6CD5\u8FD8\u539F ",
-                                            L"; could not restore ") + it->original +
-                    l10n::Pick(L"\uFF0C\u539F\u6587\u4EF6\u4FDD\u7559\u5728 ",
-                               L", original kept at ") + it->backup + L" | " +
+                rollback_note += l10n::Get(l10n::StringId::CouldNotRestore).c_str() + it->original +
+                    l10n::Get(l10n::StringId::OriginalKeptAt).c_str() + it->backup + L" | " +
                     Win32Message(error);
             }
         }
@@ -2927,18 +2915,18 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         st.lock_owners = lock_report.owners;
         if (transfer_cancelled) {
             st.phase = OpPhase::Failed;
-            st.last_error = l10n::Pick(L"已取消", L"Canceled") + rollback_note;
-            st.summary = std::wstring(OpVerb(req.type)) + l10n::Pick(L"已取消", L" canceled");
+            st.last_error = l10n::Get(l10n::StringId::Canceled).c_str() + rollback_note;
+            st.summary = std::wstring(OpVerb(req.type)) + l10n::Get(l10n::StringId::Canceled_2).c_str();
         } else if (!failure.empty()) {
             st.phase = OpPhase::Failed;
             st.last_error = failure + rollback_note;
-            st.summary = std::wstring(OpVerb(req.type)) + l10n::Pick(L"失败", L" failed");
+            st.summary = std::wstring(OpVerb(req.type)) + l10n::Get(l10n::StringId::Failed).c_str();
         } else {
             st.phase = OpPhase::Completed;
             st.percent = 100.0f;
             st.transferred_bytes = st.total_bytes;
             st.completed_items = st.total_items;
-            st.summary = Describe(req) + l10n::Pick(L" 完成", L" completed");
+            st.summary = Describe(req) + l10n::Get(l10n::StringId::Completed).c_str();
             st.last_error.clear();
         }
     });
@@ -2990,9 +2978,8 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
                 st.active = false;
                 st.phase = OpPhase::Failed;
                 ++st.completed_ops;
-                st.last_error = cancelled() ? l10n::Pick(L"已取消", L"Canceled") :
-                    l10n::Pick(L"重复文件已变化或无法验证。请重新扫描后再清理。",
-                               L"Duplicate files changed or could not be verified. Scan again before cleaning up.");
+                st.last_error = cancelled() ? l10n::Get(l10n::StringId::Canceled).c_str() :
+                    l10n::Get(l10n::StringId::DuplicateFilesChangedOrCouldNotBeVerifiedScanAgainBeforeClea).c_str();
             });
             return;
         }
@@ -3070,11 +3057,11 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
             st.completed_ops++;
             if (FAILED(hr)) {
                 st.phase = OpPhase::Failed;
-                st.last_error = l10n::Pick(L"无法清空回收站", L"Could not empty the Recycle Bin");
+                st.last_error = l10n::Get(l10n::StringId::CouldNotEmptyTheRecycleBin).c_str();
             } else {
                 st.phase = OpPhase::Completed;
                 st.completed_items = st.total_items;
-                st.summary = Describe(req) + l10n::Pick(L" 完成", L" completed");
+                st.summary = Describe(req) + l10n::Get(l10n::StringId::Completed).c_str();
             }
         });
         return;
@@ -3097,10 +3084,10 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
                 shown.new_name = DriveLabelFromRename(req.new_name, drive_root.front());
                 st.completed_items = st.total_items;
                 st.phase = OpPhase::Completed;
-                st.summary = Describe(shown) + l10n::Pick(L" 完成", L" completed");
+                st.summary = Describe(shown) + l10n::Get(l10n::StringId::Completed).c_str();
             } else {
                 st.phase = OpPhase::Failed;
-                st.last_error = error.empty() ? l10n::Pick(L"已取消", L"Canceled") : error;
+                st.last_error = error.empty() ? l10n::Get(l10n::StringId::Canceled).c_str() : error;
             }
         });
         return;
@@ -3118,8 +3105,8 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
             SetStatus([&](OpStatus& st) {
                 st.active = false; st.phase = OpPhase::Failed; st.percent = -1.0f;
                 ++st.completed_ops;
-                st.last_error = valid ? l10n::Pick(L"已取消", L"Canceled")
-                    : !invalid_reason.empty() ? invalid_reason : l10n::Pick(L"名称无效", L"Invalid name");
+                st.last_error = valid ? l10n::Get(l10n::StringId::Canceled).c_str()
+                    : !invalid_reason.empty() ? invalid_reason : l10n::Get(l10n::StringId::InvalidName_2).c_str();
             });
             return;
         }
@@ -3168,13 +3155,13 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
             st.completed_items = ok_sources.size();
             if (cancelled) {
                 st.phase = OpPhase::Failed;
-                st.last_error = l10n::Pick(L"已取消", L"Canceled");
+                st.last_error = l10n::Get(l10n::StringId::Canceled).c_str();
             } else if (ok_sources.empty()) {
                 st.phase = OpPhase::Failed;
-                st.last_error = last_error.empty() ? l10n::Pick(L"操作失败", L"Operation failed") : last_error;
+                st.last_error = last_error.empty() ? l10n::Get(l10n::StringId::OpFailed).c_str() : last_error;
             } else {
                 st.phase = OpPhase::Completed;
-                st.summary = Describe(req) + l10n::Pick(L" 完成", L" completed");
+                st.summary = Describe(req) + l10n::Get(l10n::StringId::Completed).c_str();
                 if (ok_sources.size() != req.sources.size())
                     st.last_error = last_error;
             }
@@ -3208,7 +3195,7 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
                 st.completed_ops++;
                 st.completed_items = st.total_items;
                 st.phase = OpPhase::Completed;
-                st.summary = Describe(req) + l10n::Pick(L" 完成", L" completed");
+                st.summary = Describe(req) + l10n::Get(l10n::StringId::Completed).c_str();
             });
             return;
         }
@@ -3225,7 +3212,7 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
             if (created) {
                 st.completed_items = st.total_items;
                 st.phase = OpPhase::Completed;
-                st.summary = Describe(req) + l10n::Pick(L" 完成", L" completed");
+                st.summary = Describe(req) + l10n::Get(l10n::StringId::Completed).c_str();
             } else {
                 st.phase = OpPhase::Failed;
                 st.last_error = local_error;
@@ -3260,7 +3247,7 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
             st.active = false;
             st.phase = OpPhase::Failed;
             st.percent = -1.0f;
-            st.last_error = l10n::Pick(L"操作层未启动", L"The file operation service is not running");
+            st.last_error = l10n::Get(l10n::StringId::TheFileOperationServiceIsNotRunning).c_str();
             st.completed_ops++;
         });
         return;
@@ -3286,14 +3273,14 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
         st.lock_owners = lock_report.owners;
         if (cancelled) {
             st.phase = OpPhase::Failed;
-            st.last_error = l10n::Pick(L"已取消", L"Canceled");
+            st.last_error = l10n::Get(l10n::StringId::Canceled).c_str();
         } else if (FAILED((HRESULT)hr)) {
             st.phase = OpPhase::Failed;
-            st.last_error = error.empty() ? l10n::Pick(L"操作失败", L"Operation failed") : error;
+            st.last_error = error.empty() ? l10n::Get(l10n::StringId::OpFailed).c_str() : error;
         } else {
             st.phase = OpPhase::Completed;
             st.completed_items = st.total_items;
-            st.summary = Describe(req) + l10n::Pick(L" 完成", L" completed");
+            st.summary = Describe(req) + l10n::Get(l10n::StringId::Completed).c_str();
         }
     });
 }
@@ -3338,8 +3325,8 @@ bool OpsManager::WaitShellDone(uint32_t id, uint32_t& hr, bool& cancelled, std::
         SetStatus([](OpStatus& st) {
             st.active = false;
             st.phase = OpPhase::Failed;
-            st.last_error = l10n::Pick(L"操作已停止", L"Operation stopped");
-            st.summary = l10n::Pick(L"操作已停止", L"Operation stopped");
+            st.last_error = l10n::Get(l10n::StringId::OperationStopped).c_str();
+            st.summary = l10n::Get(l10n::StringId::OperationStopped).c_str();
             st.completed_ops++;
         });
         return false;

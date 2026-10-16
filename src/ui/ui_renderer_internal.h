@@ -1886,7 +1886,7 @@ TitleChrome MakeTitleChrome(float window_w, float scale, float title_h) {
 }
 
 constexpr float kSettingsNavW = 200.0f;
-constexpr int kSettingsNavCount = 7;  // 5: 预览增强包, 6: 系统右键菜单
+constexpr int kSettingsNavCount = 8;  // 5: 预览增强包, 6: 系统右键菜单, 7: 快捷键
 
 // System folder groups shown under Settings > Exclusions: 0-4 follow
 // index::kSystemExclusionGroups, 5-6 are always skipped by the index.
@@ -1929,6 +1929,11 @@ inline constexpr float kPulsePreviewTitle = 24.0f, kPulsePreviewRow = 34.0f,
     kPulsePreviewSwatches = 34.0f, kPulsePreviewSeparator = 9.0f, kPulsePreviewPad = 5.0f;
 // Hint line under the preview box ("drag to reorder").
 inline constexpr float kPulsePreviewHint = 26.0f;
+// Switch rows of the Pulse menu card (系统右键菜单 rows are kSysCtxRowDip).
+inline constexpr float kPulseMenuRowDip = 48.0f;
+inline const wchar_t* PulseMenuSideNote() {
+    return l10n::Get(l10n::StringId::ThePreviewUsesTheSameDataAsTheRealMenuCommandsFromWindowsAnd).c_str();
+}
 inline const app::BuiltinMenuOrder& PulseMenuOrder(const WindowViewModel& vm) {
     return vm.settings_builtin_order[static_cast<size_t>(PulseMenuSurface(vm))];
 }
@@ -2044,11 +2049,16 @@ struct SettingsLayout {
     // Rows of vm.settings_items; only Pulse's own commands (group 5) are laid
     // out. Windows and other software are managed on 系统右键菜单 (page 6).
     std::vector<D2D1_RECT_F> context_rows;
-    // Pulse menu card (first on the page): presets (3 = 自定义, display
-    // only), surface tabs, fixed rows of the current tab, live preview.
+    // Three columns like 系统右键菜单: pulse_tabs is the left card with the
+    // surfaces (pulse_tab) under group label pulse_group[0]; pulse_card the
+    // switch list (head, presets 3 = 自定义 display only, fixed rows);
+    // pulse_side the live preview card, present on wide pages only.
     D2D1_RECT_F pulse_card{}, pulse_restore{}, pulse_preset[4]{}, pulse_tabs{}, pulse_tab[3]{},
         pulse_fixed[2]{}, pulse_preview{}, pulse_order_reset{};
-    // Below it: where the entries of Windows and other software went (opens page 6).
+    D2D1_RECT_F pulse_group[2]{}, pulse_head{}, pulse_rows_top{}, pulse_side{}, pulse_side_tab{},
+        pulse_side_note{};
+    // The left card's last row, under pulse_group[1]: where the entries of
+    // Windows and other software went (opens page 6).
     D2D1_RECT_F context_system_hint{};
     D2D1_RECT_F duplicate_options{};
     D2D1_RECT_F section[4]{}, group[3]{}, footer{};
@@ -2093,6 +2103,7 @@ struct SettingsLayout {
     // 1 = 系统右键菜单; page 6 has its own (sysctx.local_card / system_card).
     D2D1_RECT_F ctx_intro{}, ctx_layer[2]{};
     SysCtxLayout sysctx;  // page 6, see LayoutSettingsSysCtx
+    ShortcutsLayout shortcuts;  // page 7, see LayoutSettingsShortcuts
     D2D1_RECT_F accent_card{};
     D2D1_RECT_F accent_picker{};
     D2D1_RECT_F effect_card{};
@@ -2240,6 +2251,7 @@ float ReleaseLineHeight(const fluent::Painter* painter, const std::wstring& line
 
 #include "settings_layout_sections.h"
 #include "settings_sysctx_layout.h"
+#include "settings_shortcuts_layout.h"
 
 
 SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& rect,
@@ -2255,7 +2267,8 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
         // 系统右键菜单 (6) has no row of its own: the 右键菜单 (2) layer cards
         // switch between the two, see ctx_layer. 关于 (3) stays at the bottom.
         if (i == 6) { l.nav_row[i] = {}; continue; }
-        const int position = i == 4 ? 3 : i == 5 ? 4 : i;
+        // 快捷键 (7) sits under 右键菜单, as in the mockup.
+        const int position = i == 7 ? 3 : i == 4 ? 4 : i == 5 ? 5 : i;
         const float top = i == 3 ? l.nav.bottom - 92*scale : l.nav.top + (20 + position*46)*scale;
         l.nav_row[i] = D2D1::RectF(l.nav.left + 8*scale, top, l.nav.right - 8*scale, top + 40*scale);
     }
@@ -2424,63 +2437,77 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
         }
         l.context_rows.resize(vm.settings_items.size());
         {
-            // Pulse menu card: header, presets, surface tabs, then the
-            // switch list with a live menu preview on the right.
+            // Columns as LayoutSettingsSysCtx places them: the menus on the
+            // left, the switch list, the live preview on wide pages.
             const float left=l.content.left+pad,right=l.content.right-pad,top=y;
-            const float inner=left+54*scale;
-            const float link_w=label_btn_w(l10n::Get(l10n::StringId::RestoreDefaults))-8*scale;
-            l.pulse_restore=D2D1::RectF(right-16*scale-link_w,top+18*scale,right-16*scale,top+46*scale);
-            y=top+72*scale;
-            static constexpr l10n::StringId kPresetDesc[]={l10n::StringId::ContextPresetSlimDesc,l10n::StringId::ContextPresetStandardDesc,
-                l10n::StringId::ContextPresetFullDesc,l10n::StringId::ContextPresetCustomDesc};
-            float px=inner;
-            for(int i=0;i<4;++i) {
-                // Fit the longer caption line (small text is narrower than the button font).
-                const float w=std::max(80*scale,label_btn_w(l10n::Get(kPresetDesc[i]))*0.92f);
-                l.pulse_preset[i]=D2D1::RectF(px,y,px+w,y+48*scale);
-                px+=w+8*scale;
-            }
-            y+=60*scale;
-            static constexpr l10n::StringId kTabs[]={l10n::StringId::ContextTabItem,l10n::StringId::ContextTabBackground,l10n::StringId::ContextTabRow};
-            float tx=inner+3*scale;
+            const bool wide=right-left>=960*scale;
+            const float nav_w=(wide ? 200 : 176)*scale,side_w=310*scale,gap=12*scale;
+            const float list_left=left+nav_w+gap,list_right=wide ? right-side_w-gap : right;
+            // Left card: Pulse 菜单 (the three surfaces), then Windows 和其他软件.
+            float ny=top+8*scale;
+            l.pulse_group[0]=D2D1::RectF(left+6*scale,ny,left+nav_w-6*scale,ny+26*scale);
+            ny+=26*scale;
             for(int i=0;i<3;++i) {
-                const float w=std::max(72*scale,label_btn_w(l10n::Get(kTabs[i])));
-                l.pulse_tab[i]=D2D1::RectF(tx,y+3*scale,tx+w,y+33*scale);
-                tx+=w;
+                l.pulse_tab[i]=D2D1::RectF(left+6*scale,ny,left+nav_w-6*scale,ny+32*scale);
+                ny+=34*scale;
             }
-            l.pulse_tabs=D2D1::RectF(inner,y,tx+3*scale,y+36*scale);
-            y+=52*scale;
-            const bool preview=right-left>=700*scale;
-            const float preview_w=244*scale;
-            const float list_right=preview ? right-24*scale-preview_w-28*scale : right-24*scale;
-            const float list_top=y;
+            ny+=12*scale;
+            l.pulse_group[1]=D2D1::RectF(left+6*scale,ny,left+nav_w-6*scale,ny+26*scale);
+            ny+=26*scale;
+            l.context_system_hint=D2D1::RectF(left+6*scale,ny,left+nav_w-6*scale,ny+32*scale);
+            ny+=32*scale+8*scale;
+            l.pulse_tabs=D2D1::RectF(left,top,left+nav_w,ny);
+            // Middle card: head with 恢复默认, the preset chips, the rows.
+            l.pulse_head=D2D1::RectF(list_left,top,list_right,top+48*scale);
+            const float restore_w=SysCtxHeaderButtonWidth(painter,l10n::Get(l10n::StringId::RestoreDefaults),scale);
+            l.pulse_restore=D2D1::RectF(list_right-10*scale-restore_w,top+11*scale,list_right-10*scale,top+11*scale+kSysCtxHeaderButtonDip*scale);
+            float ly=l.pulse_head.bottom+8*scale;
+            static constexpr l10n::StringId kPresetName[]={l10n::StringId::ContextPresetSlim,l10n::StringId::ContextPresetStandard,
+                l10n::StringId::ContextPresetFull,l10n::StringId::ContextPresetCustom};
+            const float chip_h=26*scale;
+            float cx=list_left+12*scale+SysCtxTextWidth(painter,l10n::Get(l10n::StringId::Preset).c_str(),scale);
+            for(int i=0;i<4;++i) {
+                const float w=SysCtxTextWidth(painter,l10n::Get(kPresetName[i]),scale)+10*scale;
+                if(cx+w>list_right-12*scale && i>0) {cx=list_left+12*scale;ly+=chip_h+6*scale;}
+                l.pulse_preset[i]=D2D1::RectF(cx,ly,cx+w,ly+chip_h);
+                cx+=w+6*scale;
+            }
+            ly+=chip_h+8*scale;
+            l.pulse_rows_top=D2D1::RectF(list_left,ly,list_right,ly+1);
+            ly+=6*scale;
             const auto rows=app::BuiltinMenuOrderedRows(PulseMenuSurface(vm),PulseMenuOrder(vm));
             for(size_t k=0;k<rows.size();++k) {
                 const auto& row=rows[k];
-                const auto row_rc=D2D1::RectF(inner,y,list_right,y+44*scale);
+                const auto row_rc=D2D1::RectF(list_left+6*scale,ly,list_right-6*scale,ly+kPulseMenuRowDip*scale);
                 if(row.fixed!=app::BuiltinFixedRow::None) {
                     l.pulse_fixed[row.fixed==app::BuiltinFixedRow::Open ? 0 : 1]=row_rc;
                 } else {
                     const size_t i=vm.settings_builtin_first+static_cast<size_t>(row.item);
                     if(i<l.context_rows.size()) l.context_rows[i]=row_rc;
                 }
-                y+=44*scale;
+                ly+=kPulseMenuRowDip*scale+2*scale;
             }
-            float bottom=y;
-            if(preview) {
-                const float h=PulseMenuPreviewHeight(vm,scale);
-                l.pulse_preview=D2D1::RectF(right-24*scale-preview_w,list_top,right-24*scale,list_top+h);
+            ly+=8*scale;
+            l.pulse_card=D2D1::RectF(list_left,top,list_right,ly);
+            float bottom=std::max(ly,l.pulse_tabs.bottom);
+            if(wide) {
+                // Right card: 实时预览 head, the menu, a note on what it shows.
+                const float side_left=right-side_w;
+                l.pulse_side_tab=D2D1::RectF(side_left+8*scale,top+8*scale,right-8*scale,top+36*scale);
+                const float pv_top=top+56*scale;
+                l.pulse_preview=D2D1::RectF(side_left+16*scale,pv_top,right-16*scale,pv_top+PulseMenuPreviewHeight(vm,scale));
                 if(PulseMenuOrderCustom(vm,PulseMenuSurface(vm))) {
                     const float order_w=label_btn_w(l10n::Get(l10n::StringId::ContextOrderReset))-8*scale;
-                    l.pulse_order_reset=D2D1::RectF(l.pulse_preview.right-order_w,list_top-4*scale,l.pulse_preview.right,list_top+20*scale);
+                    l.pulse_order_reset=D2D1::RectF(l.pulse_preview.right-order_w,pv_top-4*scale,l.pulse_preview.right,pv_top+20*scale);
                 }
-                bottom=std::max(bottom,l.pulse_preview.bottom);
+                const float note_w=l.pulse_preview.right-l.pulse_preview.left;
+                const float note_h=SysCtxWrappedHeight(painter,PulseMenuSideNote(),note_w-48*scale,scale)+24*scale;
+                l.pulse_side_note=D2D1::RectF(l.pulse_preview.left,l.pulse_preview.bottom+10*scale,l.pulse_preview.right,
+                                              l.pulse_preview.bottom+10*scale+note_h);
+                l.pulse_side=D2D1::RectF(side_left,top,right,std::max(l.pulse_side_note.bottom+16*scale,ly));
+                bottom=std::max(bottom,l.pulse_side.bottom);
             }
-            y=bottom+16*scale;
-            l.pulse_card=D2D1::RectF(left,top,right,y);
-            y+=20*scale;
-            l.context_system_hint=D2D1::RectF(left,y,right,y+64*scale);
-            y+=64*scale;
+            y=bottom;
         }
         y+=24*scale;
     } else if (vm.settings_page == 3) {
@@ -2605,6 +2632,8 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
         y = LayoutSettingsPacks(l, vm, scale, y, painter);
     } else if (vm.settings_page == 6) {
         y = LayoutSettingsSysCtx(l, vm, scale, y, painter);
+    } else if (vm.settings_page == 7) {
+        y = LayoutSettingsShortcuts(l, vm, scale, y, painter);
     } else if (vm.settings_page == 4) {
         const float card_left = l.content.left + pad;
         const float card_right = l.content.right - pad;

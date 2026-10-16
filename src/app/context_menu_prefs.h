@@ -36,18 +36,18 @@ struct ContextMenuPrefs {
     // Load saves the cleaned file once.
     bool migrated = false;
 
-    // Explorer shows 软件功能 / 打开方式 / 打印 and leaves 发送到 plus the image
-    // and system verbs out unless the type registers them; those two groups stay
-    // off by default and the settings page turns them on. Only the COM-sourced
-    // 打开方式 rows stay off — our own 打开方式… already covers them.
+    // Every group Explorer's classic menu shows is on by default, so Pulse's
+    // menu is never shorter than Explorer's; the settings page and the menu
+    // presets turn groups off. Only the COM-sourced 打开方式 rows stay off —
+    // our own 打开方式… already covers them.
     bool software = true;
-    bool share = false;
-    bool wallpaper = false;
-    bool rotate = false;
-    bool shortcut = false;
+    bool share = true;
+    bool wallpaper = true;
+    bool rotate = true;
+    bool shortcut = true;
     bool open_with = true;
     bool open_with_com = false;
-    bool system_extra = false;
+    bool system_extra = true;
     bool print = true;
 
     int open_with_mru = 2;

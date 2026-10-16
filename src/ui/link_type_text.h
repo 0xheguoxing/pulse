@@ -5,8 +5,8 @@
 namespace pulse::ui {
 
 inline std::wstring LinkTypeText(fs::LinkKind kind) {
-    if (kind == fs::LinkKind::SymbolicLink) return l10n::Pick(L"符号链接", L"Symbolic link");
-    if (kind == fs::LinkKind::Junction) return l10n::Pick(L"目录联接", L"Junction");
+    if (kind == fs::LinkKind::SymbolicLink) return l10n::Get(l10n::StringId::SymbolicLink).c_str();
+    if (kind == fs::LinkKind::Junction) return l10n::Get(l10n::StringId::Junction).c_str();
     return {};
 }
 

@@ -1372,9 +1372,21 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
     const float buttonBottom = groupBottom - 2.0f * scale_;
     const D2D1_RECT_F settingsRc = D2D1::RectF(chrome.settings_left, buttonTop,
         chrome.settings_left + chrome.settings_w, buttonBottom);
-    DrawButton(settingsRc, theme,
-        IsHovered(vm, HitTestResult::SettingsButton) ? theme.fill_hover : kTransparent,
-        kIconSettings, L"S", theme.text, true, true);
+    // Open settings has no tab: the button shows as selected instead, with the
+    // active tab's accent underline.
+    const bool settingsSelected = vm.settings_open;
+    const D2D1_COLOR_F settingsFill = settingsSelected
+        ? WithAlpha(theme.accent, IsHovered(vm, HitTestResult::SettingsButton) ? 0.26f : 0.18f)
+        : IsHovered(vm, HitTestResult::SettingsButton) ? theme.fill_hover : kTransparent;
+    DrawButton(settingsRc, theme, settingsFill, kIconSettings, L"S",
+        settingsSelected && !IsHighContrast() ? theme.accent : theme.text, true, true);
+    if (settingsSelected) {
+        MakeBrush(dc, theme.accent, brAccent_);
+        const float barW = 14.0f * scale_;
+        const float midX = (settingsRc.left + settingsRc.right) * 0.5f;
+        FillRoundedRect(dc, brAccent_.get(), midX - barW * 0.5f, settingsRc.bottom - 3.0f * scale_,
+                        barW, 2.5f * scale_, 1.25f * scale_);
+    }
 
     const D2D1_RECT_F themeRc = D2D1::RectF(chrome.theme_left, buttonTop,
         chrome.theme_left + chrome.theme_w, buttonBottom);

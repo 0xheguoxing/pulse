@@ -1,5 +1,6 @@
 #include "global_search_controller.h"
 #include "global_search_handoff.h"
+#include "shortcut_page.h"
 #include "app_internal.h"
 #include "tray_reveal.h"
 #include "../common/localization.h"
@@ -20,6 +21,7 @@ bool HotkeyAllowed(const AppState& s) {
 }
 
 void ApplyGlobalSearchSettings(AppState& s) {
+    ApplyKeymapPrefs(s);  // the shortcut conflict checks see the hotkey
     if (!HotkeyAllowed(s)) return;
     const bool enabled = s.appPrefs.global_search_enabled;
     const bool ok = s.globalSearchHotkey.Update(ServiceWindow(s), enabled,

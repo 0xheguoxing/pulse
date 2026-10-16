@@ -274,41 +274,36 @@ float LayoutSettingsContent(SettingsLayout& l, const WindowViewModel& vm, float 
 // Texts shared by layout (measuring) and drawing. l10n::Pick converts to
 // Traditional Chinese at run time, like the Quick Look format catalog.
 namespace pack_text {
-inline const wchar_t* Title() { return l10n::Pick(L"快速预览", L"Quick Look"); }
-inline const wchar_t* Intro() { return l10n::Pick(
-    L"悬停或按空格键预览文件，在这里选择预览方式、查看格式支持并管理扩展。",
-    L"Hover over or press Space to preview files. Choose how, explore format support and manage extensions here."); }
-inline const wchar_t* TriggerSection() { return l10n::Pick(L"预览方式", L"Preview trigger"); }
-inline const wchar_t* TriggerTitle() { return l10n::Pick(L"打开预览", L"Open previews"); }
+inline const wchar_t* Title() { return l10n::Get(l10n::StringId::QuickPreview).c_str(); }
+inline const wchar_t* Intro() { return l10n::Get(l10n::StringId::HoverOverOrPressSpaceToPreviewFilesChooseHowExploreFormatSup).c_str(); }
+inline const wchar_t* TriggerSection() { return l10n::Get(l10n::StringId::PreviewTrigger).c_str(); }
+inline const wchar_t* TriggerTitle() { return l10n::Get(l10n::StringId::OpenPreviews).c_str(); }
 inline const wchar_t* TriggerDesc(int trigger) {
     return trigger == 1
-        ? l10n::Pick(L"选中文件后按空格键预览", L"Select a file and press Space")
-        : l10n::Pick(L"指针停在文件上时显示预览卡片，空格键仍可展开完整预览",
-                     L"Rest the pointer on a file for a preview card; Space still opens the full preview");
+        ? l10n::Get(l10n::StringId::SelectAFileAndPressSpace).c_str()
+        : l10n::Get(l10n::StringId::RestThePointerOnAFileForAPreviewCardSpaceStillOpensTheFullPr).c_str();
 }
 inline const wchar_t* TriggerChoice(int i) {
-    return i == 0 ? l10n::Pick(L"悬停预览", L"Hover") : l10n::Pick(L"空格预览", L"Space");
+    return i == 0 ? l10n::Get(l10n::StringId::Hover).c_str() : l10n::Get(l10n::StringId::Space).c_str();
 }
-inline const wchar_t* DelayTitle() { return l10n::Pick(L"悬停延迟", L"Hover delay"); }
-inline const wchar_t* DelayDesc() { return l10n::Pick(L"指针停留多久后显示预览卡片",
-                                                      L"How long the pointer rests before the card appears"); }
+inline const wchar_t* DelayTitle() { return l10n::Get(l10n::StringId::HoverDelay).c_str(); }
+inline const wchar_t* DelayDesc() { return l10n::Get(l10n::StringId::HowLongThePointerRestsBeforeTheCardAppears).c_str(); }
 inline const wchar_t* DelayChoice(int i) {
-    if (i == 0) return l10n::Pick(L"0.3 秒", L"0.3 s");
-    if (i == 1) return l10n::Pick(L"0.5 秒", L"0.5 s");
-    return l10n::Pick(L"0.8 秒", L"0.8 s");
+    if (i == 0) return l10n::Get(l10n::StringId::S03S).c_str();
+    if (i == 1) return l10n::Get(l10n::StringId::S05S).c_str();
+    return l10n::Get(l10n::StringId::S08S).c_str();
 }
-inline const wchar_t* SizeTitle() { return l10n::Pick(L"卡片尺寸", L"Card size"); }
+inline const wchar_t* SizeTitle() { return l10n::Get(l10n::StringId::CardSize).c_str(); }
 inline const wchar_t* SizeDesc() {
-    return l10n::Pick(L"卡片随内容变形；按住 Ctrl 临时放大",
-                      L"Follows the content's shape; hold Ctrl to enlarge");
+    return l10n::Get(l10n::StringId::FollowsTheContentSShapeHoldCtrlToEnlarge).c_str();
 }
 inline const wchar_t* SizeChoice(int i) {
-    if (i == 0) return l10n::Pick(L"小", L"Small");
-    if (i == 1) return l10n::Pick(L"中", L"Medium");
-    return l10n::Pick(L"大", L"Large");
+    if (i == 0) return l10n::Get(l10n::StringId::UiFontSmall).c_str();
+    if (i == 1) return l10n::Get(l10n::StringId::Medium).c_str();
+    return l10n::Get(l10n::StringId::UiFontLarge).c_str();
 }
-inline const wchar_t* PacksSection() { return l10n::Pick(L"预览增强包", L"Preview packs"); }
-inline const wchar_t* FormatsSection() { return l10n::Pick(L"格式", L"Formats"); }
+inline const wchar_t* PacksSection() { return l10n::Get(l10n::StringId::PreviewPacks).c_str(); }
+inline const wchar_t* FormatsSection() { return l10n::Get(l10n::StringId::Formats).c_str(); }
 inline std::wstring FormatsSummary(const WindowViewModel& vm) {
     const int packs = int(vm.settings_pack_media_installed) + int(vm.settings_pack_images_installed) +
                       int(vm.settings_pack_raw_installed) + int(vm.settings_pack_archive_installed);
@@ -319,67 +314,51 @@ inline std::wstring FormatsSummary(const WindowViewModel& vm) {
         ? l10n::Cn(L"共 ") + count + l10n::Cn(L" 种格式 · 增强包 ") + std::to_wstring(packs) + L"/4"
         : count + L" formats · Preview packs " + std::to_wstring(packs) + L"/4";
     if (vm.settings_preview_codecs & kPreviewCodecsDetected)
-        result += std::wstring(l10n::Pick(L" · 系统扩展 ", L" · System extensions ")) + std::to_wstring(codecs) + L"/4";
-    else result += l10n::Pick(L" · 系统扩展检测中", L" · Checking system extensions");
+        result += std::wstring(l10n::Get(l10n::StringId::SystemExtensions_2).c_str()) + std::to_wstring(codecs) + L"/4";
+    else result += l10n::Get(l10n::StringId::CheckingSystemExtensions).c_str();
     return result;
 }
-inline const wchar_t* FormatsTitle() { return l10n::Pick(L"支持的格式", L"Supported formats"); }
-inline const wchar_t* SystemTitle() { return l10n::Pick(L"系统扩展", L"System extensions"); }
+inline const wchar_t* FormatsTitle() { return l10n::Get(l10n::StringId::SupportedFormats).c_str(); }
+inline const wchar_t* SystemTitle() { return l10n::Get(l10n::StringId::SystemExtensions).c_str(); }
 inline const wchar_t* Legend(int source) {
-    if (source == 0) return l10n::Pick(L"内置", L"Built in");
-    if (source == 1) return l10n::Pick(L"预览增强包", L"Preview pack");
-    return l10n::Pick(L"增强包或系统扩展", L"Pack or system extension");
+    if (source == 0) return l10n::Get(l10n::StringId::BuiltIn).c_str();
+    if (source == 1) return l10n::Get(l10n::StringId::PreviewPack).c_str();
+    return l10n::Get(l10n::StringId::PackOrSystemExtension).c_str();
 }
-inline const wchar_t* LegendNote() { return l10n::Pick(
-    L"虚线：对应的增强支持尚未启用",
-    L"Dashed: enhanced support is not enabled"); }
+inline const wchar_t* LegendNote() { return l10n::Get(l10n::StringId::DashedEnhancedSupportIsNotEnabled).c_str(); }
 inline const wchar_t* SystemHint(const WindowViewModel& vm) { return vm.settings_pack_images_installed && vm.settings_pack_images_enabled
-    ? l10n::Pick(L"已启用现代图像格式增强包：HEIC / AVIF 可以由增强包解码，无需另装对应的系统扩展。",
-                 L"The image pack is enabled: it decodes HEIC / AVIF without the corresponding system extensions.")
-    : l10n::Pick(L"HEIC / AVIF 也可通过现代图像格式增强包预览，无需微软账户。",
-                 L"The image pack also supports HEIC / AVIF without a Microsoft account."); }
+    ? l10n::Get(l10n::StringId::TheImagePackIsEnabledItDecodesHEICAVIFWithoutTheCorrespondin).c_str()
+    : l10n::Get(l10n::StringId::TheImagePackAlsoSupportsHEICAVIFWithoutAMicrosoftAccount).c_str(); }
 
-inline const wchar_t* OpenFolder() { return l10n::Pick(L"打开文件夹", L"Open folder"); }
-inline const wchar_t* Media() { return l10n::Pick(L"媒体", L"Media"); }
-inline const wchar_t* Advanced() { return l10n::Pick(L"高级", L"Advanced"); }
-inline const wchar_t* MediaTitle() { return l10n::Pick(L"FFmpeg 媒体增强", L"FFmpeg media"); }
-inline const wchar_t* MediaDesc() { return l10n::Pick(
-    L"系统缺少解码器的视频也能生成缩略图、显示时长和媒体信息：HEVC、AV1、VP9、ProRes、FLV、RMVB、MPEG-TS 等。",
-    L"Thumbnails, playing time and media details for videos Windows has no decoder for: HEVC, AV1, VP9, ProRes, FLV, RMVB, MPEG-TS and more."); }
-inline const wchar_t* MediaMeta() { return l10n::Pick(L"LGPL-2.1 · 仅解码构建，不含 GPL 组件", L"LGPL-2.1 · decode-only build, no GPL parts"); }
-inline const wchar_t* Images() { return l10n::Pick(L"图像", L"Images"); }
-inline const wchar_t* ImagesTitle() { return l10n::Pick(L"现代图像格式", L"Modern image formats"); }
-inline const wchar_t* ImagesDesc() { return l10n::Pick(
-    L"不依赖微软商店扩展，直接预览 iPhone 照片（HEIC）、AVIF、JPEG XL 和 HDR / EXR 图像，文件夹里也能看到缩略图。",
-    L"Preview iPhone photos (HEIC), AVIF, JPEG XL and HDR / EXR pictures without the Microsoft Store extensions, thumbnails included."); }
-inline const wchar_t* ImagesMeta() { return l10n::Pick(L"libheif · dav1d · libjxl · OpenEXR · LGPL-3.0 / BSD", L"libheif · dav1d · libjxl · OpenEXR · LGPL-3.0 / BSD"); }
-inline const wchar_t* RawTitle() { return l10n::Pick(L"RAW 相机照片", L"RAW camera photos"); }
-inline const wchar_t* RawDesc() { return l10n::Pick(
-    L"通过 LibRaw 为 CR2、CR3、NEF、ARW、DNG、RAF 等相机原片提供预览和缩略图。",
-    L"Use LibRaw for previews and thumbnails of camera originals such as CR2, CR3, NEF, ARW, DNG and RAF."); }
+inline const wchar_t* OpenFolder() { return l10n::Get(l10n::StringId::OpenFolder).c_str(); }
+inline const wchar_t* Media() { return l10n::Get(l10n::StringId::Media).c_str(); }
+inline const wchar_t* Advanced() { return l10n::Get(l10n::StringId::Advanced_2).c_str(); }
+inline const wchar_t* MediaTitle() { return l10n::Get(l10n::StringId::FFmpegMedia).c_str(); }
+inline const wchar_t* MediaDesc() { return l10n::Get(l10n::StringId::ThumbnailsPlayingTimeAndMediaDetailsForVideosWindowsHasNoDec).c_str(); }
+inline const wchar_t* MediaMeta() { return l10n::Get(l10n::StringId::LGPL21DecodeOnlyBuildNoGPLParts).c_str(); }
+inline const wchar_t* Images() { return l10n::Get(l10n::StringId::Images_2).c_str(); }
+inline const wchar_t* ImagesTitle() { return l10n::Get(l10n::StringId::ModernImageFormats).c_str(); }
+inline const wchar_t* ImagesDesc() { return l10n::Get(l10n::StringId::PreviewIPhonePhotosHEICAVIFJPEGXLAndHDREXRPicturesWithoutThe).c_str(); }
+inline const wchar_t* ImagesMeta() { return l10n::Get(l10n::StringId::LibheifDav1dLibjxlOpenEXRLGPL30BSD).c_str(); }
+inline const wchar_t* RawTitle() { return l10n::Get(l10n::StringId::RAWCameraPhotos).c_str(); }
+inline const wchar_t* RawDesc() { return l10n::Get(l10n::StringId::UseLibRawForPreviewsAndThumbnailsOfCameraOriginalsSuchAsCR2C).c_str(); }
 inline const wchar_t* RawMeta() { return L"LibRaw · LGPL-2.1 / CDDL"; }
-inline const wchar_t* Archive() { return l10n::Pick(L"压缩包", L"Archives"); }
-inline const wchar_t* ArchiveTitle() { return l10n::Pick(L"7-Zip 压缩包增强", L"7-Zip archives"); }
-inline const wchar_t* ArchiveDesc() { return l10n::Pick(
-    L"通过 7-Zip 扩展压缩包内容列表预览，支持 7z、RAR、ISO、CAB、WIM 等格式。",
-    L"Use 7-Zip to preview archive contents, including 7z, RAR, ISO, CAB and WIM."); }
+inline const wchar_t* Archive() { return l10n::Get(l10n::StringId::ArcFamArchive).c_str(); }
+inline const wchar_t* ArchiveTitle() { return l10n::Get(l10n::StringId::S7ZipArchives).c_str(); }
+inline const wchar_t* ArchiveDesc() { return l10n::Get(l10n::StringId::Use7ZipToPreviewArchiveContentsIncluding7zRARISOCABAndWIM).c_str(); }
 inline const wchar_t* ArchiveMeta() { return L"7-Zip · LGPL-2.1 + unRAR"; }
-inline const wchar_t* Install() { return l10n::Pick(L"下载并安装", L"Download and install"); }
-inline const wchar_t* Remove() { return l10n::Pick(L"卸载", L"Remove"); }
-inline const wchar_t* CustomTitle() { return l10n::Pick(L"使用已有 FFmpeg", L"Use existing FFmpeg"); }
-inline const wchar_t* CustomDesc() { return l10n::Pick(
-    L"可选来源；关闭后使用 Pulse 管理的增强包",
-    L"Optional source; turn off to use the Pulse-managed pack"); }
-inline const wchar_t* NoCustom() { return l10n::Pick(L"尚未选择 ffmpeg.exe", L"No ffmpeg.exe chosen"); }
-inline const wchar_t* Browse() { return l10n::Pick(L"浏览…", L"Browse…"); }
-inline const wchar_t* UseDetected() { return l10n::Pick(L"使用检测到的", L"Use found"); }
-inline const wchar_t* RemoveTitle() { return l10n::Pick(L"卸载 Pulse 时删除预览增强包", L"Remove packs when uninstalling Pulse"); }
-inline const wchar_t* RemoveDesc() { return l10n::Pick(L"否则保留，重新安装 Pulse 后可直接使用", L"Otherwise they stay and work again after reinstalling Pulse"); }
-inline const wchar_t* AutoUpdateTitle() { return l10n::Pick(L"自动更新预览增强包", L"Update preview packs automatically"); }
-inline const wchar_t* AutoUpdateDesc() { return l10n::Pick(L"随 Pulse 更新检查一起进行，在后台下载", L"Runs with the Pulse update check and downloads in the background"); }
-inline const wchar_t* Note() { return l10n::Pick(
-    L"预览增强包在隔离的预览进程中运行：崩溃或超时只影响当前预览，Pulse 会回退到内置的缩略图和文本视图。",
-    L"Packs run in the isolated preview process: a crash or timeout only affects that preview, and Pulse falls back to its built-in views."); }
+inline const wchar_t* Install() { return l10n::Get(l10n::StringId::DownloadAndInstall).c_str(); }
+inline const wchar_t* Remove() { return l10n::Get(l10n::StringId::Remove_2).c_str(); }
+inline const wchar_t* CustomTitle() { return l10n::Get(l10n::StringId::UseExistingFFmpeg).c_str(); }
+inline const wchar_t* CustomDesc() { return l10n::Get(l10n::StringId::OptionalSourceTurnOffToUseThePulseManagedPack).c_str(); }
+inline const wchar_t* NoCustom() { return l10n::Get(l10n::StringId::NoFfmpegExeChosen).c_str(); }
+inline const wchar_t* Browse() { return l10n::Get(l10n::StringId::Browse).c_str(); }
+inline const wchar_t* UseDetected() { return l10n::Get(l10n::StringId::UseFound).c_str(); }
+inline const wchar_t* RemoveTitle() { return l10n::Get(l10n::StringId::RemovePacksWhenUninstallingPulse).c_str(); }
+inline const wchar_t* RemoveDesc() { return l10n::Get(l10n::StringId::OtherwiseTheyStayAndWorkAgainAfterReinstallingPulse).c_str(); }
+inline const wchar_t* AutoUpdateTitle() { return l10n::Get(l10n::StringId::UpdatePreviewPacksAutomatically).c_str(); }
+inline const wchar_t* AutoUpdateDesc() { return l10n::Get(l10n::StringId::RunsWithThePulseUpdateCheckAndDownloadsInTheBackground).c_str(); }
+inline const wchar_t* Note() { return l10n::Get(l10n::StringId::PacksRunInTheIsolatedPreviewProcessACrashOrTimeoutOnlyAffect).c_str(); }
 inline std::wstring Bytes(uint64_t bytes) {
     wchar_t text[48]{};
     if (bytes >= 1024ull * 1024 * 1024) swprintf_s(text, L"%.1f GB", bytes / (1024.0 * 1024 * 1024));
@@ -388,20 +367,20 @@ inline std::wstring Bytes(uint64_t bytes) {
     return text;
 }
 inline std::wstring Summary(const WindowViewModel& vm) {
-    if (!vm.settings_pack_installed) return l10n::Pick(L"尚未安装预览增强包", L"No preview packs installed");
+    if (!vm.settings_pack_installed) return l10n::Get(l10n::StringId::NoPreviewPacksInstalled).c_str();
     wchar_t text[128]{};
-    swprintf_s(text, l10n::Pick(L"已安装 %u 个 · 占用 %s", L"%u installed · %s"),
+    swprintf_s(text, l10n::Get(l10n::StringId::UInstalledS).c_str(),
                vm.settings_pack_installed, Bytes(vm.settings_pack_bytes).c_str());
     return text;
 }
 inline std::wstring Found(const std::wstring& path) {
-    return std::wstring(l10n::Pick(L"检测到：", L"Found: ")) + path;
+    return std::wstring(l10n::Get(l10n::StringId::Found).c_str()) + path;
 }
 struct Badge { std::wstring text; fluent::BadgeKind kind = fluent::BadgeKind::Neutral; };
 inline const wchar_t* PrimaryLabel(bool available, bool installed, bool installing) {
-    if (installing) return l10n::Pick(L"取消", L"Cancel");
+    if (installing) return l10n::Get(l10n::StringId::Cancel).c_str();
     if (installed) return Remove();
-    return available ? Install() : l10n::Pick(L"尚未发布", L"Not published");
+    return available ? Install() : l10n::Get(l10n::StringId::NotPublished).c_str();
 }
 inline bool PrimaryEnabled(bool available, bool installed, bool installing) {
     return available || installed || installing;
@@ -410,14 +389,14 @@ inline bool PrimaryEnabled(bool available, bool installed, bool installing) {
 // catalog; empty (no button) while it downloads or when it is current.
 inline std::wstring UpdateLabel(bool installed, bool installing, const std::wstring& version) {
     if (!installed || installing || version.empty()) return {};
-    return std::wstring(l10n::Pick(L"更新到 ", L"Update to ")) + version;
+    return std::wstring(l10n::Get(l10n::StringId::UpdateTo).c_str()) + version;
 }
 inline Badge PackBadge(bool available, bool installed, bool installing, bool enabled, const std::wstring& version) {
-    if (installing) return {installed ? l10n::Pick(L"正在更新", L"Updating") : l10n::Pick(L"正在安装", L"Installing"),
+    if (installing) return {installed ? l10n::Get(l10n::StringId::Updating).c_str() : l10n::Get(l10n::StringId::Installing).c_str(),
                             fluent::BadgeKind::Accent};
     if (!installed) return {l10n::Pick(available ? L"未安装" : L"尚未发布", available ? L"Not installed" : L"Not published"), fluent::BadgeKind::Neutral};
-    if (!enabled) return {l10n::Pick(L"已停用", L"Off"), fluent::BadgeKind::Neutral};
-    std::wstring text = l10n::Pick(L"已安装", L"Installed");
+    if (!enabled) return {l10n::Get(l10n::StringId::Off).c_str(), fluent::BadgeKind::Neutral};
+    std::wstring text = l10n::Get(l10n::StringId::Installed).c_str();
     if (!version.empty()) text += L" " + version;
     return {text, fluent::BadgeKind::Success};
 }
@@ -431,26 +410,26 @@ inline const wchar_t* Primary(const WindowViewModel& vm) {
 inline std::wstring MediaUpdate(const WindowViewModel& vm) {
     return UpdateLabel(vm.settings_pack_media_installed, vm.settings_pack_installing, vm.settings_pack_update_version);
 }
-inline const wchar_t* SourceTitle() { return l10n::Pick(L"启用媒体增强", L"Enable media enhancement"); }
+inline const wchar_t* SourceTitle() { return l10n::Get(l10n::StringId::EnableMediaEnhancement).c_str(); }
 inline const wchar_t* SourceStatus(const WindowViewModel& vm) {
     if (!vm.settings_pack_use_custom && !vm.settings_pack_media_installed)
         return vm.settings_pack_media_available
-            ? l10n::Pick(L"尚无可用媒体来源；可下载增强包或选择已有 FFmpeg", L"No media source available; download a pack or choose existing FFmpeg")
-            : l10n::Pick(L"尚无可用媒体来源；可选择已有 FFmpeg", L"No media source available; choose existing FFmpeg");
+            ? l10n::Get(l10n::StringId::NoMediaSourceAvailableDownloadAPackOrChooseExistingFFmpeg).c_str()
+            : l10n::Get(l10n::StringId::NoMediaSourceAvailableChooseExistingFFmpeg).c_str();
     if (vm.settings_pack_use_custom && vm.settings_pack_ffmpeg != 2)
-        return l10n::Pick(L"当前来源：已有 FFmpeg（路径无效，请重新选择）", L"Source: existing FFmpeg (invalid path; choose again)");
+        return l10n::Get(l10n::StringId::SourceExistingFFmpegInvalidPathChooseAgain).c_str();
     if (!vm.settings_pack_ffmpeg_enabled)
         return vm.settings_pack_use_custom
-            ? l10n::Pick(L"已停用；所选来源：已有 FFmpeg", L"Off; selected source: existing FFmpeg")
-            : l10n::Pick(L"已停用；所选来源：Pulse 管理的增强包", L"Off; selected source: Pulse-managed pack");
+            ? l10n::Get(l10n::StringId::OffSelectedSourceExistingFFmpeg).c_str()
+            : l10n::Get(l10n::StringId::OffSelectedSourcePulseManagedPack).c_str();
     if (vm.settings_pack_use_custom)
-        return l10n::Pick(L"当前来源：已有 FFmpeg（用户文件，不做完整性校验）", L"Source: existing FFmpeg (user file, not verified)");
-    return l10n::Pick(L"当前来源：Pulse 管理的增强包", L"Source: Pulse-managed pack");
+        return l10n::Get(l10n::StringId::SourceExistingFFmpegUserFileNotVerified).c_str();
+    return l10n::Get(l10n::StringId::SourcePulseManagedPack).c_str();
 }
 // "正在下载… 42%" while a pack downloads.
 inline std::wstring Downloading(float progress) {
     const int percent = static_cast<int>(progress * 100.0f + 0.5f);
-    return std::wstring(l10n::Pick(L"正在下载… ", L"Downloading… ")) +
+    return std::wstring(l10n::Get(l10n::StringId::Downloading).c_str()) +
            std::to_wstring(percent < 0 ? 0 : percent > 100 ? 100 : percent) + L"%";
 }
 inline std::wstring Downloading(const WindowViewModel& vm) { return Downloading(vm.settings_pack_progress); }
@@ -573,10 +552,10 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
         const bool detected = (vm.settings_preview_codecs & kPreviewCodecsDetected) != 0;
         const bool has = (vm.settings_preview_codecs & (1u << i)) != 0;
         const bool button = detected && !has && info.store_id;
-        const auto status = !detected ? l10n::Pick(L"检测中", L"Checking") : has
-            ? l10n::Pick(L"已安装", L"Installed") : l10n::Pick(L"未安装", L"Not installed");
+        const auto status = !detected ? l10n::Get(l10n::StringId::Checking).c_str() : has
+            ? l10n::Get(l10n::StringId::Installed).c_str() : l10n::Get(l10n::StringId::NotInstalled).c_str();
         const float badge_w = painter ? painter->MeasureBadgeWidth(status) : 110*scale;
-        const float bw = button ? button_w(l10n::Pick(L"获取", L"Get")) : 0;
+        const float bw = button ? button_w(l10n::Get(l10n::StringId::Get).c_str()) : 0;
         const float text_right = stacked_codecs ? right - 16*scale : right - 28*scale - badge_w - (button ? bw + 10*scale : 0);
         const float desc_h = caption_h(info.description, text_right - left - 54*scale);
         const float text_h = 14*scale + 26*font*scale + desc_h;

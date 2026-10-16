@@ -366,6 +366,15 @@ struct AppState : AppCoreOwner {
         ULONGLONG dwell_start = 0;
         UINT dwell_ms = 0;
         UINT frame_ms = 0;              // kTimerHoverPreviewFrame interval, 0 when off
+        // A folder or This PC drive: its contents instead of a preview, read
+        // on a worker (app_hover_preview.cpp); the card keeps the pointer and
+        // its list scrolls under the wheel.
+        bool folder = false;
+        bool drive = false, drive_locked = false;
+        uint64_t drive_total = 0, drive_free = 0;
+        std::shared_ptr<struct HoverFolderJob> folder_job;
+        float folder_scroll = 0.0f;     // px
+        bool size_started = false;      // this card asked folderSizes to count
     } hoverPreview;
     int dropPaneIndex = -1;
     bool dropHeader = false;            // drop on pane title bar → open folder

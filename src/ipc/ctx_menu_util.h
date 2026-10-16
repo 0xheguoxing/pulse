@@ -17,9 +17,11 @@ inline std::wstring ToLowerVerb(std::wstring_view v) {
     return out;
 }
 
-// Canonical verbs Pulse already provides natively (or explicitly hides).
-// These are dropped from the Explorer section so the merged menu has no
-// duplicates. `background` = folder background menu (paste/new-area rules).
+// Canonical verbs Pulse already provides natively. These are dropped from the
+// Explorer section so the merged menu has no duplicates; a verb Pulse has no
+// row for must never be listed here, or the menu ends up shorter than
+// Explorer's (固定到"开始"屏幕 has no Pulse row, so the Start pins stay).
+// `background` = folder background menu (paste/new-area rules).
 inline bool IsBuiltinContextVerb(std::wstring_view verb, bool background) {
     const std::wstring v = ToLowerVerb(verb);
     if (v.empty()) return false;
@@ -27,7 +29,7 @@ inline bool IsBuiltinContextVerb(std::wstring_view verb, bool background) {
         L"open", L"opennewprocess", L"opennewwindow", L"opennewtab",
         L"explore", L"openas", L"cut", L"copy", L"paste", L"pastelink",
         L"delete", L"rename", L"properties", L"copyaspath",
-        L"pintohome", L"pintostartscreen", L"pintostart",
+        L"pintohome",
     };
     for (auto k : kCommon)
         if (v == k) return true;

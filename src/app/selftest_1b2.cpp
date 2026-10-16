@@ -15,6 +15,8 @@
 #include "operation_toast_test.h"
 #include "filter_animation.h"
 #include "tab_shortcuts.h"
+#include "keymap.h"
+#include "keymap_input.h"
 #include "quick_access.h"
 #include "../common/windows_compat.h"
 #include "app_input.h"
@@ -2298,6 +2300,9 @@ void TestShellMenuMerge() {
     Check(ipc::IsBuiltinContextVerb(L"Open", false), L"shellmenu: open filtered");
     Check(ipc::IsBuiltinContextVerb(L"copyaspath", false), L"shellmenu: copyaspath filtered");
     Check(ipc::IsBuiltinContextVerb(L"pintohome", false), L"shellmenu: pintohome filtered");
+    Check(!ipc::IsBuiltinContextVerb(L"PinToStartScreen", false) &&
+          !ipc::IsBuiltinContextVerb(L"pintostart", false),
+          L"shellmenu: 固定到开始 kept (Pulse has no row for it)");
     Check(!ipc::IsBuiltinContextVerb(L"MergePdf", false), L"shellmenu: third-party verb kept");
     Check(!ipc::IsBuiltinContextVerb(L"refresh", false), L"shellmenu: refresh only filtered on background");
     Check(ipc::IsBuiltinContextVerb(L"refresh", true), L"shellmenu: background refresh filtered");
@@ -2461,6 +2466,10 @@ void TestContextMenuPrefs() {
 
     ContextMenuPrefs prefs;
     prefs.persist = false;
+    // The fixtures below run with 发送到 and the system verbs switched off;
+    // the defaults (Explorer parity, everything on) are asserted separately.
+    prefs.SetGroupEnabled(ipc::CtxMenuGroup::Share, false);
+    prefs.SetGroupEnabled(ipc::CtxMenuGroup::System, false);
 
     ShellMenuEntry sendto;
     sendto.text = L"发送到";
@@ -2493,12 +2502,45 @@ void TestContextMenuPrefs() {
             if (e.text == text) return true;
         return false;
     };
-    // Explorer keeps 软件功能 / 打开方式 / 打印 and hides 发送到 plus the system
-    // verbs; the settings page turns those two groups on when the user wants them.
     Check(!has(L"发送到") && !has(L"设置为桌面背景") && !has(L"向右旋转"),
-          L"prefs: defaults hide share / wallpaper / rotate");
+          L"prefs: switched-off groups hide share / wallpaper / rotate");
     Check(has(L"Bandizip") && has(L"合并 PDF") && has(L"打印"),
-          L"prefs: defaults keep vendor flyout, type verb, print");
+          L"prefs: other groups keep vendor flyout, type verb, print");
+    {
+        // Pulse's menu must never be shorter than Explorer's: by default every
+        // group Explorer's classic menu shows is on.
+        ContextMenuPrefs defaults;
+        defaults.persist = false;
+        const auto native = ApplyExplorerPrefs(defaults, raw);
+        auto shown = [&](std::wstring_view text) {
+            for (const auto& e : native)
+                if (e.text == text) return true;
+            return false;
+        };
+        Check(shown(L"发送到") && shown(L"设置为桌面背景") && shown(L"向右旋转") &&
+              shown(L"Bandizip") && shown(L"打印"),
+              L"prefs: defaults show every Explorer group (发送到 / wallpaper / rotate)");
+        ContextMenuPrefs reset;
+        reset.persist = false;
+        reset.SetGroupEnabled(ipc::CtxMenuGroup::Share, false);
+        reset.ResetToDefaults();
+        Check(reset.share && reset.GroupEnabled(ipc::CtxMenuGroup::System) && !reset.open_with_com,
+              L"prefs: restore defaults turns 发送到 and the system group back on");
+        // Files written before version 3 stored the old off defaults.
+        ContextMenuPrefs old_file;
+        old_file.persist = false;
+        Check(old_file.FromJson(L"{\"version\":2,\"categories\":{\"share\":false,\"rotate\":false,"
+                                L"\"system_extra\":false,\"print\":false}}") &&
+              old_file.share && old_file.rotate && old_file.system_extra && !old_file.print &&
+              old_file.migrated,
+              L"prefs: version 2 files turn 发送到 / system groups on once, keep other switches");
+        ContextMenuPrefs current_file;
+        current_file.persist = false;
+        Check(current_file.FromJson(L"{\"version\":3,\"categories\":{\"share\":false,\"rotate\":false}}") &&
+              !current_file.share && !current_file.rotate && current_file.wallpaper &&
+              !current_file.migrated,
+              L"prefs: version 3 files keep a group the user switched off");
+    }
     ContextMenuPrefs with_share;
     with_share.persist = false;
     with_share.SetGroupEnabled(ipc::CtxMenuGroup::Share, true);
@@ -2660,7 +2702,7 @@ void TestContextMenuPrefs() {
           L"prefs: slow COM stats round-trip");
 
     loaded.ResetToDefaults();
-    Check(loaded.seen.empty() && loaded.item_enabled.empty() && !loaded.share,
+    Check(loaded.seen.empty() && loaded.item_enabled.empty() && loaded.share,
           L"prefs: restore defaults clears seen and overrides");
     ContextMenuPrefs old_cap;
     old_cap.persist = false;
@@ -6791,6 +6833,182 @@ void TestSessionLayoutTabs() {
     }
 }
 
+// Settings > 快捷键: the keymap table, prefs lines, translation and checks.
+void TestKeymap() {
+    namespace k = pulse::app;
+    using k::KeyChord;
+    using k::KeyAction;
+    using T = k::Keymap::Translation;
+    const uint8_t C = k::kKeyCtrl, A = k::kKeyAlt, S = k::kKeyShift;
+    auto chord = [](const wchar_t* text) { KeyChord c{}; k::ParseChord(text, c); return c; };
+
+    k::Keymap map;
+    Check(map.AllDefault() && map.ToPrefs().empty(), L"keymap: defaults store nothing");
+    Check(map.Translate(KeyChord{static_cast<uint8_t>(C | S), 'C'}).kind == T::Pass &&
+          map.Translate(KeyChord{0, VK_F4}).kind == T::Pass &&
+          map.Translate(KeyChord{A, 'D'}).kind == T::Pass,
+          L"keymap: default keys pass through untouched");
+    bool ids_ok = true;
+    for (int i = 0; i < k::kKeyActionCount; ++i) {
+        const auto& info = k::ActionInfo(static_cast<KeyAction>(i));
+        ids_ok = ids_ok && info.action == static_cast<KeyAction>(i) && k::ActionFromId(info.id) == info.action;
+    }
+    Check(ids_ok, L"keymap: table order and ids match KeyAction");
+    Check(k::ActionFromId("NoSuchAction") == KeyAction::Count, L"keymap: unknown id");
+
+    // Every default key reaches exactly its own action (no duplicates in the table).
+    bool unique = true;
+    for (int i = 0; i < k::kKeyActionCount; ++i) {
+        const auto action = static_cast<KeyAction>(i);
+        if (k::ActionInfo(action).kind == k::KeyKind::Global) continue;
+        for (const KeyChord c : map.EffectiveChords(action)) {
+            const auto owner = map.Find(c);
+            if (owner.action != action) {
+                unique = false;
+                LogLine(L"  keymap duplicate: %s -> %d (want %d)\n", k::FormatChord(c).c_str(),
+                        static_cast<int>(owner.action), i);
+            }
+        }
+    }
+    Check(unique, L"keymap: default keys are unique");
+
+    for (const wchar_t* text : {L"Ctrl+Alt+Shift+C", L"F8", L"Shift+F10", L"Ctrl+#C0", L"Alt+Left", L"Ctrl+Tab", L"Apps"}) {
+        KeyChord c{};
+        const bool ok = k::ParseChord(text, c) && k::FormatChord(c) == text;
+        if (!ok) LogLine(L"  keymap round trip failed: %s\n", text);
+        Check(ok, L"keymap: chord text round trip");
+    }
+    KeyChord bad{};
+    Check(!k::ParseChord(L"Ctrl+", bad) && !k::ParseChord(L"C+Ctrl", bad) && !k::ParseChord(L"Ctrl+Shift", bad) &&
+          !k::ParseChord(L"F25", bad) && !k::ParseChord(L"", bad) && !k::ParseChord(L"Ctrl+Bogus", bad),
+          L"keymap: malformed chords rejected");
+    Check(chord(L"ctrl+shift+c") == KeyChord{static_cast<uint8_t>(C | S), 'C'}, L"keymap: parsing ignores case");
+
+    // 复制到目标栏 moved to F8 (the reported Ctrl+Alt+C conflict).
+    map.SetBindings(KeyAction::CopyToTarget, {KeyChord{0, VK_F8}});
+    const auto lines = map.ToPrefs();
+    Check(lines.size() == 1 && lines[0] == L"CopyToTarget=F8", L"keymap: only the change is stored");
+    const k::Keymap reread = k::Keymap::FromPrefs(lines);
+    Check(reread.Bindings(KeyAction::CopyToTarget) == std::vector<KeyChord>{KeyChord{0, VK_F8}} &&
+          !reread.IsDefault(KeyAction::CopyToTarget) && reread.IsDefault(KeyAction::MoveToTarget),
+          L"keymap: prefs lines read back");
+    const T moved = map.Translate(KeyChord{0, VK_F8});
+    Check(moved.kind == T::Rewrite && moved.target == KeyChord{static_cast<uint8_t>(C | A), 'C'} &&
+          moved.action == KeyAction::CopyToTarget, L"keymap: the new key becomes the default key");
+    const T old_key = map.Translate(KeyChord{static_cast<uint8_t>(C | A), 'C'});
+    Check(old_key.kind == T::Swallow && old_key.action == KeyAction::CopyToTarget,
+          L"keymap: the old default key no longer acts");
+    map.Reset(KeyAction::CopyToTarget);
+    Check(map.AllDefault(), L"keymap: reset restores the default");
+
+    // A second key next to the default, and an action without any key.
+    map.SetBindings(KeyAction::Refresh, {KeyChord{0, VK_F5}, KeyChord{C, 'R'}});
+    Check(map.Translate(KeyChord{C, 'R'}).kind == T::Rewrite && map.Translate(KeyChord{0, VK_F5}).kind == T::Pass,
+          L"keymap: extra key beside the default");
+    const k::Keymap cleared = k::Keymap::FromPrefs({L"CopyPath="});
+    Check(cleared.Bindings(KeyAction::CopyPath).empty() &&
+          cleared.Translate(KeyChord{static_cast<uint8_t>(C | S), 'C'}).kind == T::Swallow &&
+          cleared.ToPrefs() == std::vector<std::wstring>{L"CopyPath="},
+          L"keymap: an action can be left without a key");
+    const k::Keymap junk = k::Keymap::FromPrefs({L"Bogus=F8", L"CopyPath=Nope", L"=", L"Layout=Shift", L"Open=F9"});
+    Check(junk.AllDefault(), L"keymap: unknown, malformed and fixed entries are ignored");
+
+    // Numbered groups: only the modifiers move.
+    k::Keymap ranges;
+    ranges.SetRangeMods(KeyAction::TabNumber, A);
+    const T tab3 = ranges.Translate(KeyChord{A, '3'});
+    Check(tab3.kind == T::Rewrite && tab3.target == KeyChord{C, '3'} && tab3.action == KeyAction::TabNumber,
+          L"keymap: Alt+3 reaches tab 3");
+    Check(ranges.Translate(KeyChord{C, '3'}).kind == T::Swallow, L"keymap: Ctrl+3 is free after the move");
+    Check(ranges.ToPrefs() == std::vector<std::wstring>{L"TabNumber=Alt"} &&
+          k::Keymap::FromPrefs({L"TabNumber=Alt"}).RangeMods(KeyAction::TabNumber) == A,
+          L"keymap: range modifiers stored");
+
+    // Shift steps backwards for Ctrl+Tab and the window switcher.
+    k::Keymap tabs;
+    tabs.SetBindings(KeyAction::NextTab, {KeyChord{C, VK_NEXT}});
+    const T back = tabs.Translate(KeyChord{static_cast<uint8_t>(C | S), VK_NEXT});
+    Check(back.kind == T::Rewrite && back.target == KeyChord{static_cast<uint8_t>(C | S), VK_TAB},
+          L"keymap: Shift with the new key steps backwards");
+    Check(tabs.Translate(KeyChord{static_cast<uint8_t>(C | S), VK_TAB}).kind == T::Swallow,
+          L"keymap: Ctrl+Shift+Tab moves with Ctrl+Tab");
+
+    // Conflict checks.
+    k::ShortcutEnv env;
+    env.taken = {KeyChord{static_cast<uint8_t>(C | A), 'C'}, KeyChord{static_cast<uint8_t>(C | A), 'X'}};
+    env.chinese_ime = true;
+    k::Keymap m;
+    auto issue = [&](KeyAction action, const wchar_t* text) { return k::CheckChord(m, action, chord(text), env).issue; };
+    using I = k::ChordIssue;
+    Check(issue(KeyAction::CopyPath, L"Alt+F4") == I::Reserved, L"keymap check: Alt+F4 reserved");
+    Check(k::CheckChord(m, KeyAction::CopyPath, KeyChord{0, 'Q'}, env).issue == I::PlainKey &&
+          k::CheckChord(m, KeyAction::CopyPath, KeyChord{S, '5'}, env).issue == I::PlainKey,
+          L"keymap check: single letters and digits rejected");
+    Check(issue(KeyAction::CopyPath, L"Win+F") == I::WinKey && issue(KeyAction::GlobalSearch, L"Win+Shift+F") == I::None,
+          L"keymap check: Win only for the global hotkey");
+    Check(issue(KeyAction::CopyToTarget, L"Ctrl+Alt+X") == I::Taken, L"keymap check: another program's hotkey");
+    const auto dup = k::CheckChord(m, KeyAction::CopyPath, chord(L"Ctrl+Shift+F"), env);
+    Check(dup.issue == I::Duplicate && dup.level == k::ChordLevel::Warn && dup.other.action == KeyAction::AdvancedSearch,
+          L"keymap check: another action's key can be replaced");
+    Check(issue(KeyAction::CopyPath, L"Ctrl+3") == I::DuplicateFixed && issue(KeyAction::CopyPath, L"Down") == I::DuplicateFixed,
+          L"keymap check: numbered groups and fixed keys cannot be replaced");
+    m.SetBindings(KeyAction::AdvancedSearch, {chord(L"Ctrl+Alt+F")});
+    Check(issue(KeyAction::CopyPath, L"Ctrl+Shift+F") == I::Ime, L"keymap check: IME key warns");
+    env.ime_ignored = {chord(L"Ctrl+Shift+F")};
+    Check(issue(KeyAction::CopyPath, L"Ctrl+Shift+F") == I::None, L"keymap check: dismissed IME warning");
+    env.ime_ignored.clear();
+    Check(issue(KeyAction::CopyPath, L"Ctrl+Y") == I::TextEdit, L"keymap check: text editing key is a note");
+    Check(issue(KeyAction::CopyPath, L"Ctrl+Shift+C") == I::Same, L"keymap check: same key");
+    Check(issue(KeyAction::SwitchWindow, L"Alt+Q") == I::NeedsCtrl && issue(KeyAction::SwitchWindow, L"Ctrl+Shift+Q") == I::ShiftReserved,
+          L"keymap check: the switcher needs Ctrl, Shift steps back");
+    Check(issue(KeyAction::NextTab, L"Ctrl+Shift+PgDn") == I::ShiftReserved, L"keymap check: Shift reserved for backwards");
+    Check(issue(KeyAction::GlobalSearch, L"Alt+Space") != I::Reserved && issue(KeyAction::CopyPath, L"Alt+Space") == I::Reserved,
+          L"keymap check: Alt+Space only for the global hotkey");
+
+    const auto overlap = k::CheckRange(m, KeyAction::ViewMode, C, env);
+    Check(overlap.issue == I::RangeBad && overlap.bad == 8, L"keymap range: Ctrl+1-8 collide with tabs");
+    Check(k::CheckRange(m, KeyAction::TabNumber, S, env).issue == I::RangeNeedsMod, L"keymap range: needs Ctrl or Alt");
+    const auto free_range = k::CheckRange(m, KeyAction::Layout, static_cast<uint8_t>(A | S), env);
+    Check(free_range.level == k::ChordLevel::Ok && free_range.digits.size() == 4, L"keymap range: Alt+Shift+1-4 free");
+    Check(k::CheckRange(m, KeyAction::Layout, static_cast<uint8_t>(C | A), env).issue == I::RangeSame,
+          L"keymap range: current modifiers");
+
+    k::Keymap fresh;
+    const auto issues = k::CollectIssues(fresh, env);
+    Check(issues.size() == 3 && issues[0].level == k::ChordLevel::Block && issues[1].level == k::ChordLevel::Block &&
+          issues[2].issue == I::Ime && issues[2].action == KeyAction::AdvancedSearch,
+          L"keymap: issues list (taken first, then the IME)");
+    const auto suggestions = k::SuggestChords(fresh, KeyAction::CopyToTarget, env);
+    bool suggestions_ok = suggestions.size() == 3;
+    for (const KeyChord c : suggestions)
+        suggestions_ok = suggestions_ok && k::CheckChord(fresh, KeyAction::CopyToTarget, c, env).level == k::ChordLevel::Ok;
+    Check(suggestions_ok && suggestions[0] == chord(L"Ctrl+Alt+Shift+C"), L"keymap: three free suggestions");
+    const auto probe = k::ProbeCandidates(fresh);
+    Check(std::find(probe.begin(), probe.end(), chord(L"Ctrl+Alt+C")) != probe.end() && probe.size() > 60,
+          L"keymap: probe list covers the keys in effect");
+
+    // Messages the handlers expect.
+    Check(k::KeyMessageFor(chord(L"Alt+D")) == WM_SYSKEYDOWN && k::KeyMessageFor(chord(L"Ctrl+Alt+C")) == WM_KEYDOWN,
+          L"keymap input: Alt alone arrives as a system key");
+    const LPARAM lp = k::KeyMessageLParam(KeyChord{C, k::SwitcherVirtualKey()}, 1);
+    Check(((lp >> 16) & 0xFF) == 0x29 && !(lp & (LPARAM{1} << 29)), L"keymap input: switcher key keeps scan code 0x29");
+    Check((k::KeyMessageLParam(chord(L"Alt+Left"), 1) & (LPARAM{1} << 29)) &&
+          (k::KeyMessageLParam(chord(L"Alt+Left"), 1) & (LPARAM{1} << 24)),
+          L"keymap input: context and extended bits");
+    {
+        BYTE before[256]{};
+        GetKeyboardState(before);
+        {
+            k::ModifierOverride over(static_cast<uint8_t>(C | A));
+            Check((GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000) && !(GetKeyState(VK_SHIFT) & 0x8000),
+                  L"keymap input: modifiers reported while handled");
+        }
+        Check(((GetKeyState(VK_CONTROL) & 0x8000) != 0) == ((before[VK_CONTROL] & 0x80) != 0) &&
+              ((GetKeyState(VK_MENU) & 0x8000) != 0) == ((before[VK_MENU] & 0x80) != 0),
+              L"keymap input: modifiers restored");
+    }
+}
+
 void TestTabShortcuts() {
     WindowTabs tabs;
     Check(!TabShortcutTarget(tabs, false), L"tab shortcuts: empty strip has no target");
@@ -7333,6 +7551,13 @@ int RunSelfTest1B2() {
         return passed ? 0 : 1;
     }
     if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
+        wcscmp(test_case, L"keymap") == 0) {
+        TestKeymap();
+        LogLine(L"\n== keymap: %d passed, %d failed ==\n", g_pass, g_fail);
+        if (g_log) { fclose(g_log); g_log = nullptr; }
+        return g_fail ? 1 : 0;
+    }
+    if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
         wcscmp(test_case, L"audit-tabs") == 0) {
         TestAuditTabs();
         LogLine(L"\n== audit-tabs: %d passed, %d failed ==\n", g_pass, g_fail);
@@ -7631,6 +7856,7 @@ int RunSelfTest1B2() {
     TestFindGroupRun();
     TestSessionLayoutTabs();
     TestTabShortcuts();
+    TestKeymap();
     TestStagingTrayDeletion();
     TestStagingTraySession();
     TestLayoutOwnedTabs();

@@ -67,7 +67,7 @@ TransferLabels MakeTransferLabels(const ops::OpStatus& status, bool detailed) {
     labels.show_skip = labels.show_retry && status.can_skip_authorization;
     labels.actions_enabled = !status.authorization_retrying;
     labels.retry = l10n::Get(l10n::StringId::OpRetryAuthorization);
-    const std::wstring retrying = l10n::Pick(L"正在重试…", L"Retrying…");
+    const std::wstring retrying = l10n::Get(l10n::StringId::Retrying).c_str();
     labels.retry_reserve = retrying.size() > labels.retry.size() ? retrying : labels.retry;
     if (!labels.actions_enabled) labels.retry = retrying;
     labels.skip = l10n::Get(l10n::StringId::OpSkipAuthorization);

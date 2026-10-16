@@ -428,7 +428,8 @@ void ProbePath(const std::wstring& path, bool extended) {
         Check(false, path + L": path exists");
         return;
     }
-    const UINT flags = CMF_NORMAL | (extended ? CMF_EXTENDEDVERBS : 0);
+    // The host's item-menu flags (QueryContextMenuFlags in shell_host/main.cpp).
+    const UINT flags = CMF_NORMAL | CMF_ITEMMENU | (extended ? CMF_EXTENDEDVERBS : 0);
     const std::wstring verb_key = StaticVerbKey(path, attributes);
     Out(L"\n\n# %ls  (static verb key %ls, extended=%d)\n\n", path.c_str(), verb_key.c_str(), extended ? 1 : 0);
     if (!verb_key.empty() && verb_key[0] == L'.') DumpAssociation(verb_key);

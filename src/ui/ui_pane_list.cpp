@@ -684,6 +684,88 @@ D2D1_RECT_F MainRenderer::NameCellRect(const D2D1_RECT_F& pane_bounds, int view_
                        row_y + row_h - inset);
 }
 
+namespace {
+// Details tree: a disclosure chevron (right when closed, down when open).
+void DrawTreeChevron(ID2D1DeviceContext* dc, ID2D1Brush* brush, float cx, float cy,
+                     float arm, float stroke, bool expanded) {
+    Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+    dc->GetFactory(&factory);
+    Microsoft::WRL::ComPtr<ID2D1PathGeometry> path;
+    if (!factory || FAILED(factory->CreatePathGeometry(&path))) return;
+    Microsoft::WRL::ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(path->Open(&sink))) return;
+    const float half = arm * 0.5f;
+    if (expanded) {
+        sink->BeginFigure(D2D1::Point2F(cx - arm, cy - half), D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(D2D1::Point2F(cx, cy + half));
+        sink->AddLine(D2D1::Point2F(cx + arm, cy - half));
+    } else {
+        sink->BeginFigure(D2D1::Point2F(cx - half, cy - arm), D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(D2D1::Point2F(cx + half, cy));
+        sink->AddLine(D2D1::Point2F(cx - half, cy + arm));
+    }
+    sink->EndFigure(D2D1_FIGURE_END_OPEN);
+    if (FAILED(sink->Close())) return;
+    dc->DrawGeometry(path.Get(), brush, stroke);
+}
+
+// Details tree "more" row: "showing X of Y", then show more / show all / open
+// in a new tab. Shared by DrawList and TreeMoreActionAt so they never disagree.
+struct TreeMoreLayout {
+    std::wstring label;
+    float label_x = 0.0f;
+    float label_w = 0.0f;
+    std::wstring texts[3];
+    int actions[3]{};
+    D2D1_RECT_F buttons[3]{};
+    int count = 0;
+};
+
+TreeMoreLayout LayoutTreeMore(const DetailsTreeRow& row, const D2D1_RECT_F& cell, float x0,
+                              float scale, IDWriteFactory2* factory, IDWriteTextFormat* fmt) {
+    TreeMoreLayout out;
+    wchar_t text[192]{};
+    swprintf_s(text, l10n::Get(l10n::StringId::TreeShownOfFormat).c_str(),
+               pulse::format::GroupedInt(row.shown).c_str(),
+               pulse::format::GroupedInt(row.total).c_str());
+    out.label = text;
+    out.label_x = x0;
+    out.label_w = MeasureTextWidth(factory, fmt, out.label);
+    const uint32_t remaining = row.total > row.shown ? row.total - row.shown : 0;
+    const uint32_t step = std::min(remaining, kTreeMoreStep);
+    std::wstring texts[3];
+    int actions[3]{};
+    int n = 0;
+    if (step > 0) {
+        swprintf_s(text, l10n::Get(l10n::StringId::TreeShowMoreFormat).c_str(),
+                   pulse::format::GroupedInt(step).c_str());
+        texts[n] = text;
+        actions[n++] = 0;
+    }
+    if (remaining > kTreeMoreStep) {
+        texts[n] = l10n::Get(l10n::StringId::TreeShowAll);
+        actions[n++] = 1;
+    }
+    texts[n] = l10n::Get(l10n::StringId::OpenNewTab);
+    actions[n++] = 2;
+    const float pad = 10.0f * scale;
+    const float gap = 6.0f * scale;
+    const float button_h = 24.0f * scale;
+    const float top = std::round((cell.top + cell.bottom - button_h) * 0.5f);
+    float bx = std::round(x0 + out.label_w + 12.0f * scale);
+    for (int k = 0; k < n; ++k) {
+        const float bw = std::round(MeasureTextWidth(factory, fmt, texts[k]) + pad * 2.0f);
+        if (bx + bw > cell.right - 6.0f * scale) break;
+        out.texts[out.count] = texts[k];
+        out.actions[out.count] = actions[k];
+        out.buttons[out.count] = D2D1::RectF(bx, top, bx + bw, top + button_h);
+        ++out.count;
+        bx += bw + gap;
+    }
+    return out;
+}
+} // namespace
+
 bool MainRenderer::PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& full_bounds,
                                    int source_index, float x, float y) const {
     const D2D1_RECT_F pane_bounds = PaneBodyBounds(vm, full_bounds);
@@ -715,6 +797,8 @@ bool MainRenderer::PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& f
         const auto defaults = DetailsColumns(pane_bounds, vm.details_column_dividers,
                                             vm.is_search, vm.search_column_dividers);
         name.right += actual.Width(ColumnKind::Name) - defaults.Width(ColumnKind::Name);
+        if (const DetailsTreeRow* tree_row = vm.tree ? vm.tree->At(view_index) : nullptr)
+            name.left = std::min(name.right, name.left + std::round(TreeOffsetDip(*tree_row) * scale_));
     }
     const bool icon_grid = vm.view_mode == ViewMode::ExtraLargeIcons ||
                            vm.view_mode == ViewMode::LargeIcons ||
@@ -753,6 +837,42 @@ bool MainRenderer::PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& f
     const float slop = 2.0f * scale_;
     return x >= text_left - slop && x < text_left + text_width + slop &&
            y >= name.top && y < name.bottom;
+}
+
+int MainRenderer::TreeChevronAt(const PaneViewModel& vm, const D2D1_RECT_F& full_bounds,
+                                float x, float y) const {
+    if (!vm.tree || vm.view_mode != ViewMode::Details) return -1;
+    const D2D1_RECT_F pane_bounds = PaneBodyBounds(vm, full_bounds);
+    const float extra = PaneExtraTop(vm, scale_, pane_bounds.right - pane_bounds.left, compositor_);
+    const D2D1_RECT_F list = PaneListRect(pane_bounds, extra, vm.view_mode);
+    const ViewLayout layout(vm.view_mode, list, vm.EntryCount(), vm.scroll_x, vm.scroll_y, scale_,
+                            ListRowHeightDip(vm, list), vm.Groups());
+    const int row = layout.HitTest(x, y);
+    const DetailsTreeRow* tree_row = vm.tree->At(row);
+    if (!tree_row || tree_row->kind != TreeRowKind::Entry || !tree_row->expandable) return -1;
+    const float left = layout.IconRect(row).left +
+                       static_cast<float>(tree_row->depth) * kTreeIndentDip * scale_;
+    return x >= left - 3.0f * scale_ && x < left + kTreeChevronDip * scale_ ? row : -1;
+}
+
+int MainRenderer::TreeMoreActionAt(const PaneViewModel& vm, const D2D1_RECT_F& full_bounds,
+                                   int view_row, float x, float y) const {
+    const DetailsTreeRow* tree_row = vm.tree ? vm.tree->At(view_row) : nullptr;
+    if (!tree_row || tree_row->kind != TreeRowKind::More || !compositor_) return -1;
+    const D2D1_RECT_F pane_bounds = PaneBodyBounds(vm, full_bounds);
+    const float extra = PaneExtraTop(vm, scale_, pane_bounds.right - pane_bounds.left, compositor_);
+    const D2D1_RECT_F list = PaneListRect(pane_bounds, extra, vm.view_mode);
+    const ViewLayout layout(vm.view_mode, list, vm.EntryCount(), vm.scroll_x, vm.scroll_y, scale_,
+                            ListRowHeightDip(vm, list), vm.Groups());
+    const D2D1_RECT_F cell = layout.ItemRect(view_row);
+    const float x0 = layout.IconRect(view_row).left + TreeOffsetDip(*tree_row) * scale_;
+    const TreeMoreLayout more = LayoutTreeMore(*tree_row, cell, x0, scale_,
+                                               compositor_->DwriteFactory(), compositor_->TextFormat());
+    for (int k = 0; k < more.count; ++k) {
+        const D2D1_RECT_F& b = more.buttons[k];
+        if (x >= b.left && x < b.right && y >= b.top && y < b.bottom) return more.actions[k];
+    }
+    return -1;
 }
 void MainRenderer::DrawFolderIcon(float x, float y, float size, const Theme& theme,
                                   float opacity) {
@@ -2291,7 +2411,10 @@ D2D1_RECT_F MainRenderer::RenameFieldRect(const PaneViewModel& vm, const D2D1_RE
     const ListEntryView& e = MakeVisibleEntry(vm, static_cast<size_t>(source_index));
     ViewLayout layout(vm.view_mode, list, vm.EntryCount(), vm.scroll_x, vm.scroll_y,
                       scale_, ListRowHeightDip(vm, list), vm.Groups());
-    const D2D1_RECT_F nameRc = layout.NameRect(view);
+    D2D1_RECT_F nameRc = layout.NameRect(view);
+    if (const DetailsTreeRow* tree_row = vm.view_mode == ViewMode::Details && vm.tree
+            ? vm.tree->At(view) : nullptr)
+        nameRc.left = std::min(nameRc.right, nameRc.left + std::round(TreeOffsetDip(*tree_row) * scale_));
     const bool iconGrid = vm.view_mode == ViewMode::ExtraLargeIcons ||
                           vm.view_mode == ViewMode::LargeIcons ||
                           vm.view_mode == ViewMode::MediumIcons;
@@ -2580,6 +2703,71 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
         D2D1_COLOR_F color{};
         std::vector<NameMatchRange> matches;
     } expanded_name;
+    // Details tree (inline folder expansion): chevrons and the rows that stand
+    // in for a folder's children (loading, empty, failed, more). Like Finder,
+    // depth shows through indentation alone: guide lines broke up against
+    // zebra stripes and selection fills.
+    const auto drawTreeChevron = [&](const DetailsTreeRow& tr, const D2D1_RECT_F& cell, float baseX,
+                                     bool strong) {
+        const float cx = baseX + (static_cast<float>(tr.depth) * kTreeIndentDip +
+                                  kTreeChevronDip * 0.5f) * scale_;
+        const float cy = (cell.top + cell.bottom) * 0.5f;
+        MakeBrush(dc, strong ? theme.text : theme.text_secondary, brFillInput_);
+        DrawTreeChevron(dc, brFillInput_.get(), cx, cy, 3.5f * scale_, 1.4f * scale_, tr.expanded);
+    };
+    const auto drawTreePlaceholder = [&](const DetailsTreeRow& tr, const D2D1_RECT_F& cell, float baseX) {
+        const float x0 = baseX + TreeOffsetDip(tr) * scale_;
+        const float rowH = cell.bottom - cell.top;
+        const float textW = std::max(0.0f, cell.right - x0 - 8.0f * scale_);
+        IDWriteFactory2* factory = compositor_->DwriteFactory();
+        IDWriteTextFormat* fmt = compositor_->TextFormat();
+        switch (tr.kind) {
+        case TreeRowKind::Loading: {
+            list_loading_active_ = true;  // keeps frames coming for the delay and the pulse
+            const uint64_t age = motion_now_ > tr.since_ms ? motion_now_ - tr.since_ms : 0;
+            if (age < kTreeLoadingDelayMs) return;
+            const float fade = std::min(1.0f, static_cast<float>(age - kTreeLoadingDelayMs) / 150.0f);
+            const float wave = 0.5f + 0.5f * std::sin(static_cast<float>(age % 1200) / 1200.0f * 6.2831853f);
+            MakeBrush(dc, WithAlpha(theme.accent, (0.35f + 0.5f * wave) * fade), brFillInput_);
+            const float dot = 3.0f * scale_;
+            dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x0 + dot + 2.0f * scale_, (cell.top + cell.bottom) * 0.5f),
+                                          dot, dot), brFillInput_.get());
+            MakeBrush(dc, WithAlpha(theme.text_secondary, theme.text_secondary.a * fade), brTextSecondary_);
+            DrawTextEndEllipsis(dc, factory, fmt, brTextSecondary_.get(),
+                                l10n::Get(l10n::StringId::LoadingEllipsis), x0 + 14.0f * scale_, cell.top,
+                                std::max(0.0f, textW - 14.0f * scale_), rowH);
+            return;
+        }
+        case TreeRowKind::Empty:
+        case TreeRowKind::Failed:
+            MakeBrush(dc, theme.text_secondary, brTextSecondary_);
+            DrawTextEndEllipsis(dc, factory, fmt, brTextSecondary_.get(),
+                                l10n::Get(tr.kind == TreeRowKind::Failed ? l10n::StringId::TreeReadFailed
+                                                                         : l10n::StringId::EmptyFolder),
+                                x0, cell.top, textW, rowH);
+            return;
+        case TreeRowKind::More: {
+            const TreeMoreLayout more = LayoutTreeMore(tr, cell, x0, scale_, factory, fmt);
+            MakeBrush(dc, theme.text_secondary, brTextSecondary_);
+            DrawTextEndEllipsis(dc, factory, fmt, brTextSecondary_.get(), more.label, more.label_x, cell.top,
+                                std::min(textW, more.label_w + 2.0f * scale_), rowH);
+            const float pad = 10.0f * scale_;
+            for (int k = 0; k < more.count; ++k) {
+                const D2D1_RECT_F& b = more.buttons[k];
+                const bool primary = more.actions[k] == 0;
+                MakeBrush(dc, primary ? WithAlpha(theme.accent, 0.14f) : WithAlpha(theme.text, 0.07f), brFillInput_);
+                FillRoundedRect(dc, brFillInput_.get(), b.left, b.top, b.right - b.left, b.bottom - b.top,
+                                6.0f * scale_);
+                MakeBrush(dc, primary ? theme.accent : theme.text, brTextSecondary_);
+                DrawTextEndEllipsis(dc, factory, fmt, brTextSecondary_.get(), more.texts[k], b.left + pad,
+                                    cell.top, std::max(0.0f, b.right - b.left - pad), rowH);
+            }
+            return;
+        }
+        default:
+            return;
+        }
+    };
     for (int pass = 0; pass < passes; ++pass) {
         const bool draw_shapes = pass == 0;
         const bool draw_text = !morphing || pass == 1;
@@ -2608,6 +2796,16 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     cell.right-cell.left-40*scale_,cell.bottom-cell.top);
                 continue;
             }
+            if (detailsView && vm.tree) {
+                const DetailsTreeRow* standIn = vm.tree->At(i);
+                if (standIn && standIn->kind != TreeRowKind::Entry) {
+                    // The "more" row takes keyboard focus (Enter shows more).
+                    if (draw_shapes && standIn->kind == TreeRowKind::More && vm.IsRowSelected(src))
+                        selection_painter.Selected(cell);
+                    if (draw_text) drawTreePlaceholder(*standIn, cell, layout.IconRect(i).left);
+                    continue;
+                }
+            }
             const ListEntryView& e = MakeVisibleEntry(vm, static_cast<size_t>(src));
             const uint64_t row_key = std::hash<std::wstring_view>{}(std::wstring_view(e.name));
             D2D1_POINT_2F row_shift{0.0f, 0.0f};
@@ -2623,6 +2821,17 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             // Thumbnails fill the whole slot (4:3 for extra large icons); shell
             // icons keep their square on its bottom edge.
             D2D1_RECT_F thumbRect = layout.ThumbnailRect(i);
+            // Details tree: rows indent by depth after the chevron slot.
+            const DetailsTreeRow* treeRow = detailsView && vm.tree ? vm.tree->At(i) : nullptr;
+            const float treeBaseX = iconRect.left;
+            if (treeRow) {
+                const float dx = std::round(TreeOffsetDip(*treeRow) * scale_);
+                iconRect.left += dx;
+                iconRect.right += dx;
+                thumbRect.left += dx;
+                thumbRect.right += dx;
+                nameRc.left = std::min(nameRc.right, nameRc.left + dx);
+            }
             if (change && iconGrid) {
                 const float icon_inset = std::min(18 * scale_, (iconRect.bottom - iconRect.top) * 0.3f);
                 iconRect.top += icon_inset;
@@ -2667,7 +2876,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 : (expand_link ? 1.0f : 0.0f);
             const std::wstring link_label = !e.is_link ? std::wstring()
                 : e.link_destination.empty()
-                ? std::wstring(l10n::Pick(L"目标不可用", L"Target unavailable")) : e.link_destination;
+                ? std::wstring(l10n::Get(l10n::StringId::TargetUnavailable).c_str()) : e.link_destination;
             D2D1_RECT_F artwork = iconRect;
 
             const float inset = 4.0f * scale_;
@@ -2733,6 +2942,9 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     brFillInput_.get(), 1.0f * scale_, dashStroke_.get());
             }
 
+            if (draw_shapes && treeRow) {
+                if (treeRow->expandable) drawTreeChevron(*treeRow, cell, treeBaseX, hover || selected);
+            }
             if (draw_text && change && iconGrid) {
                 const float bw = std::min(ChangeBadgeWidth(*change, scale_, compositor_), cell.right - cell.left - 12 * scale_);
                 const float bx = (cell.left + cell.right - bw) * 0.5f;

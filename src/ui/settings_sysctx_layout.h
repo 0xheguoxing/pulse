@@ -10,190 +10,172 @@
 // details under the selected row instead.
 
 namespace sysctx_text {
-inline const wchar_t* Title() { return l10n::Pick(L"系统右键菜单", L"System context menu"); }
+inline const wchar_t* Title() { return l10n::Get(l10n::StringId::SystemContextMenu).c_str(); }
 // One sidebar entry for both context-menu pages; the layer cards under the intro
 // switch between Pulse's own menu (page 2) and the system handlers (page 6).
-inline const wchar_t* PageTitle() { return l10n::Pick(L"右键菜单", L"Context menu"); }
-inline const wchar_t* Intro() { return l10n::Pick(
-    L"改动作用于资源管理器和所有应用的右键菜单。开关先记下，点“应用更改”才写入注册表；写入前自动导出 .reg 备份，随时可以撤销或全部还原。",
-    L"Changes apply to the context menu in File Explorer and every app. Switches are only noted until you choose "
-    L"Apply changes; a .reg backup is exported first, and you can undo or restore everything at any time."); }
-inline const wchar_t* Undo() { return l10n::Pick(L"撤销", L"Undo"); }
-inline const wchar_t* Log() { return l10n::Pick(L"操作日志", L"Activity log"); }
-inline const wchar_t* RestoreAll() { return l10n::Pick(L"全部还原…", L"Restore all…"); }
-inline const wchar_t* LocalTitle() { return l10n::Pick(L"Pulse 右键菜单", L"Pulse context menu"); }
-inline const wchar_t* LocalCaption() { return l10n::Pick(L"只影响 Pulse · 不需要权限 · 随时恢复",
-                                                         L"Only inside Pulse · no permission needed · always reversible"); }
-inline const wchar_t* LocalTag() { return l10n::Pick(L"切换 →", L"Switch →"); }
-inline const wchar_t* SystemTitle() { return l10n::Pick(L"系统右键菜单", L"System context menu"); }
-inline const wchar_t* SystemCaption() { return l10n::Pick(
-    L"影响资源管理器和所有应用 · 点“应用更改”后写入，涉及所有用户时只需确认一次管理员权限",
-    L"File Explorer and every app · written when you apply; all-user changes need one admin confirmation"); }
-inline const wchar_t* Current() { return l10n::Pick(L"当前", L"Current"); }
+inline const wchar_t* PageTitle() { return l10n::Get(l10n::StringId::ContextMenu).c_str(); }
+inline const wchar_t* Intro() { return l10n::Get(l10n::StringId::ChangesApplyToTheContextMenuInFileExplorerAndEveryAppSwitche).c_str(); }
+inline const wchar_t* Undo() { return l10n::Get(l10n::StringId::SnackUndo).c_str(); }
+inline const wchar_t* Log() { return l10n::Get(l10n::StringId::ActivityLog).c_str(); }
+inline const wchar_t* RestoreAll() { return l10n::Get(l10n::StringId::RestoreAll_2).c_str(); }
+inline const wchar_t* LocalTitle() { return l10n::Get(l10n::StringId::SettingsContextMenu).c_str(); }
+inline const wchar_t* LocalCaption() { return l10n::Get(l10n::StringId::OnlyInsidePulseNoPermissionNeededAlwaysReversible).c_str(); }
+inline const wchar_t* LocalTag() { return l10n::Get(l10n::StringId::Switch).c_str(); }
+inline const wchar_t* SystemTitle() { return l10n::Get(l10n::StringId::SystemContextMenu).c_str(); }
+inline const wchar_t* SystemCaption() { return l10n::Get(l10n::StringId::FileExplorerAndEveryAppWrittenWhenYouApplyAllUserChangesNeed).c_str(); }
+inline const wchar_t* Current() { return l10n::Get(l10n::StringId::GroupWheelCurrent).c_str(); }
 inline const wchar_t* Group(int g) {
-    return g == 0 ? l10n::Pick(L"基本对象", L"Basic objects")
-         : g == 1 ? l10n::Pick(L"特定类型", L"Specific types")
-                  : l10n::Pick(L"专门菜单", L"Special menus");
+    return g == 0 ? l10n::Get(l10n::StringId::BasicObjects).c_str()
+         : g == 1 ? l10n::Get(l10n::StringId::SpecificTypes).c_str()
+                  : l10n::Get(l10n::StringId::SpecialMenus).c_str();
 }
 inline const wchar_t* Filter(int f) {
     switch (f) {
-    case kSysCtxFilterOff: return l10n::Pick(L"已禁用", L"Off");
-    case kSysCtxFilterAdmin: return l10n::Pick(L"需要管理员", L"Needs admin");
-    case kSysCtxFilterThirdParty: return l10n::Pick(L"第三方", L"Third-party");
-    case kSysCtxFilterMissing: return l10n::Pick(L"残留项", L"Leftovers");
-    case kSysCtxFilterDefaultHidden: return l10n::Pick(L"系统默认隐藏", L"Hidden by Windows");
-    default: return l10n::Pick(L"全部", L"All");
+    case kSysCtxFilterOff: return l10n::Get(l10n::StringId::Off_2).c_str();
+    case kSysCtxFilterAdmin: return l10n::Get(l10n::StringId::NeedsAdmin).c_str();
+    case kSysCtxFilterThirdParty: return l10n::Get(l10n::StringId::ThirdParty).c_str();
+    case kSysCtxFilterMissing: return l10n::Get(l10n::StringId::Leftovers).c_str();
+    case kSysCtxFilterDefaultHidden: return l10n::Get(l10n::StringId::HiddenByWindows).c_str();
+    default: return l10n::Get(l10n::StringId::FilterAll).c_str();
     }
 }
 inline std::wstring Chip(const SysCtxView& v, int f) {
     return std::wstring(Filter(f)) + L"  " + std::to_wstring(v.filter_counts[static_cast<size_t>(f)]);
 }
 inline const wchar_t* SubLabel(bool perceived) {
-    return perceived ? l10n::Pick(L"感知类型", L"Type") : l10n::Pick(L"扩展名", L"Extension");
+    return perceived ? l10n::Get(l10n::StringId::Type).c_str() : l10n::Get(l10n::StringId::Extension).c_str();
 }
-inline const wchar_t* Loading() { return l10n::Pick(L"正在读取注册表…", L"Reading the registry…"); }
+inline const wchar_t* Loading() { return l10n::Get(l10n::StringId::ReadingTheRegistry).c_str(); }
 inline std::wstring PendingTitle(int n) {
-    return l10n::Pick(L"", L"") + std::to_wstring(n) + l10n::Pick(L" 项更改待应用", L" change(s) waiting");
+    return l10n::Get(l10n::StringId::Text3296).c_str() + std::to_wstring(n) + l10n::Get(l10n::StringId::ChangeSWaiting).c_str();
 }
 inline std::wstring PendingCaption(const SysCtxView& v) {
     if (v.pending_pulse == v.pending)  // nothing for the registry: no backup, no admin
-        return l10n::Pick(L"只改 Pulse 自己的右键菜单，Windows 不变", L"Pulse's own menu only; Windows is unchanged");
+        return l10n::Get(l10n::StringId::PulseSOwnMenuOnlyWindowsIsUnchanged).c_str();
     if (v.pending_admin > 0)
-        return l10n::Pick(L"其中 ", L"") + std::to_wstring(v.pending_admin) +
-               l10n::Pick(L" 项涉及所有用户，需确认一次管理员权限 · 写入前先导出 .reg 备份",
-                          L" affect all users: one administrator confirmation · a .reg backup first");
-    return l10n::Pick(L"只改当前用户，无需管理员权限 · 写入前先导出 .reg 备份，可以撤销",
-                      L"Your user only, no admin needed · a .reg backup first; undo any time");
+        return l10n::Get(l10n::StringId::Text3299).c_str() + std::to_wstring(v.pending_admin) +
+               l10n::Get(l10n::StringId::AffectAllUsersOneAdministratorConfirmationARegBackupFirst).c_str();
+    return l10n::Get(l10n::StringId::YourUserOnlyNoAdminNeededARegBackupFirstUndoAnyTime).c_str();
 }
-inline const wchar_t* Applying() { return l10n::Pick(L"正在应用… 如有管理员权限提示，请确认。",
-                                                     L"Applying… confirm the administrator prompt if one appears."); }
-inline const wchar_t* Apply() { return l10n::Pick(L"应用更改", L"Apply changes"); }
-inline const wchar_t* Discard() { return l10n::Pick(L"放弃", L"Discard"); }
+inline const wchar_t* Applying() { return l10n::Get(l10n::StringId::ApplyingConfirmTheAdministratorPromptIfOneAppears).c_str(); }
+inline const wchar_t* Apply() { return l10n::Get(l10n::StringId::ApplyChanges).c_str(); }
+inline const wchar_t* Discard() { return l10n::Get(l10n::StringId::RecoveryDiscard).c_str(); }
 inline const wchar_t* Empty(bool filtered) {
-    return filtered ? l10n::Pick(L"没有符合这个筛选的条目。", L"Nothing matches this filter.")
-                    : l10n::Pick(L"这里没有条目。", L"No entries here.");
+    return filtered ? l10n::Get(l10n::StringId::NothingMatchesThisFilter).c_str()
+                    : l10n::Get(l10n::StringId::NoEntriesHere).c_str();
 }
-inline const wchar_t* Admin() { return l10n::Pick(L"所有用户", L"All users"); }
-inline const wchar_t* NoAdmin() { return l10n::Pick(L"当前用户", L"Your user"); }
-inline const wchar_t* WillDelete() { return l10n::Pick(L"将删除", L"To delete"); }
-inline const wchar_t* RowDelete() { return l10n::Pick(L"删除", L"Delete"); }
-inline const wchar_t* RowKeep() { return l10n::Pick(L"撤回", L"Keep"); }
-inline const wchar_t* DeleteLeftover() { return l10n::Pick(L"删除残留项", L"Delete leftover"); }
-inline const wchar_t* KeepLeftover() { return l10n::Pick(L"取消删除", L"Keep it"); }
+inline const wchar_t* Admin() { return l10n::Get(l10n::StringId::AllUsers_2).c_str(); }
+inline const wchar_t* NoAdmin() { return l10n::Get(l10n::StringId::YourUser).c_str(); }
+inline const wchar_t* WillDelete() { return l10n::Get(l10n::StringId::ToDelete).c_str(); }
+inline const wchar_t* RowDelete() { return l10n::Get(l10n::StringId::Delete).c_str(); }
+inline const wchar_t* RowKeep() { return l10n::Get(l10n::StringId::Keep).c_str(); }
+inline const wchar_t* DeleteLeftover() { return l10n::Get(l10n::StringId::DeleteLeftover).c_str(); }
+inline const wchar_t* KeepLeftover() { return l10n::Get(l10n::StringId::KeepIt).c_str(); }
 inline std::wstring Clean(int n) {
-    return l10n::Pick(L"清理残留 ", L"Clean up ") + std::to_wstring(n);
+    return l10n::Get(l10n::StringId::CleanUp).c_str() + std::to_wstring(n);
 }
-inline const wchar_t* Missing() { return l10n::Pick(L"残留 · 程序已卸载", L"Leftover · uninstalled"); }
-inline const wchar_t* DefaultHidden() { return l10n::Pick(L"系统默认隐藏", L"Hidden by Windows"); }
-inline const wchar_t* Queued() { return l10n::Pick(L"待应用", L"Pending"); }
+inline const wchar_t* Missing() { return l10n::Get(l10n::StringId::LeftoverUninstalled).c_str(); }
+inline const wchar_t* DefaultHidden() { return l10n::Get(l10n::StringId::HiddenByWindows).c_str(); }
+inline const wchar_t* Queued() { return l10n::Get(l10n::StringId::Pending).c_str(); }
 inline const wchar_t* Shift() { return L"\x21E7 Shift"; }
-inline const wchar_t* Protected() { return l10n::Pick(L"受保护", L"Protected"); }
-inline const wchar_t* SystemOwned() { return l10n::Pick(L"系统所有", L"Owned by Windows"); }
-inline const wchar_t* ReadOnly() { return l10n::Pick(L"暂不可改", L"Not yet"); }
-inline const wchar_t* TabPreview() { return l10n::Pick(L"实时预览", L"Live preview"); }
-inline const wchar_t* TabDetail() { return l10n::Pick(L"详情", L"Details"); }
+inline const wchar_t* Protected() { return l10n::Get(l10n::StringId::Protected).c_str(); }
+inline const wchar_t* SystemOwned() { return l10n::Get(l10n::StringId::OwnedByWindows).c_str(); }
+inline const wchar_t* ReadOnly() { return l10n::Get(l10n::StringId::NotYet).c_str(); }
+inline const wchar_t* TabPreview() { return l10n::Get(l10n::StringId::LivePreview).c_str(); }
+inline const wchar_t* TabDetail() { return l10n::Get(l10n::StringId::Details).c_str(); }
 inline const wchar_t* Key(int i) {
-    return i == 0 ? l10n::Pick(L"注册表", L"Registry")
-         : i == 1 ? l10n::Pick(L"文件", L"File")
-         : i == 2 ? l10n::Pick(L"发布者", L"Publisher")
-                  : l10n::Pick(L"权限", L"Permission");
+    return i == 0 ? l10n::Get(l10n::StringId::Registry).c_str()
+         : i == 1 ? l10n::Get(l10n::StringId::TypeFile).c_str()
+         : i == 2 ? l10n::Get(l10n::StringId::Publisher).c_str()
+                  : l10n::Get(l10n::StringId::Permission).c_str();
 }
 inline std::wstring Permission(const SysCtxRowView& r) {
-    return r.machine ? l10n::Pick(L"所有用户 · 应用时确认一次管理员权限", L"All users · one admin confirmation when applied")
-                     : l10n::Pick(L"只影响当前用户 · 无需管理员权限", L"Your user only · no admin needed");
+    return r.machine ? l10n::Get(l10n::StringId::AllUsersOneAdminConfirmationWhenApplied).c_str()
+                     : l10n::Get(l10n::StringId::YourUserOnlyNoAdminNeeded).c_str();
 }
-inline const wchar_t* EnabledTitle() { return l10n::Pick(L"在系统里启用", L"Enabled in Windows"); }
-inline const wchar_t* EnabledCaption() { return l10n::Pick(L"资源管理器和所有应用", L"File Explorer and every app"); }
-inline const wchar_t* PulseShownTitle() { return l10n::Pick(L"在 Pulse 右键菜单中显示", L"Shown in Pulse's menu"); }
-inline const wchar_t* PulseShownCaption() { return l10n::Pick(L"只影响 Pulse，不改动 Windows", L"Pulse only; Windows is unchanged"); }
-inline const wchar_t* PulseHidden() { return l10n::Pick(L"Pulse 中隐藏", L"Hidden in Pulse"); }
-inline const wchar_t* CopyKey() { return l10n::Pick(L"复制注册表路径", L"Copy registry path"); }
-inline const wchar_t* OpenFolder() { return l10n::Pick(L"打开所在文件夹", L"Open folder"); }
-inline const wchar_t* NoSelection() { return l10n::Pick(L"在左侧列表里点一个条目查看详情。",
-                                                        L"Pick an entry in the list to see its details."); }
+inline const wchar_t* EnabledTitle() { return l10n::Get(l10n::StringId::EnabledInWindows).c_str(); }
+inline const wchar_t* EnabledCaption() { return l10n::Get(l10n::StringId::FileExplorerAndEveryApp).c_str(); }
+inline const wchar_t* PulseShownTitle() { return l10n::Get(l10n::StringId::ShownInPulseSMenu).c_str(); }
+inline const wchar_t* PulseShownCaption() { return l10n::Get(l10n::StringId::PulseOnlyWindowsIsUnchanged).c_str(); }
+inline const wchar_t* PulseHidden() { return l10n::Get(l10n::StringId::HiddenInPulse).c_str(); }
+inline const wchar_t* CopyKey() { return l10n::Get(l10n::StringId::CopyRegistryPath).c_str(); }
+inline const wchar_t* OpenFolder() { return l10n::Get(l10n::StringId::OpenFolder_2).c_str(); }
+inline const wchar_t* NoSelection() { return l10n::Get(l10n::StringId::PickAnEntryInTheListToSeeItsDetails).c_str(); }
 inline std::wstring PreviewHead(const SysCtxView& v) {
     // 按扩展名 / 按感知类型: name the picked extension or type, not the scene.
     const bool picked = !v.subs.empty() && v.sub >= 0 && v.sub < static_cast<int>(v.subs.size());
-    const std::wstring target = picked ? v.subs[static_cast<size_t>(v.sub)] + l10n::Pick(L" 文件", L" files") : v.scene_title;
-    return l10n::Pick(L"右键单击「", L"Right-click on ") + target + l10n::Pick(L"」时", L"");
+    const std::wstring target = picked ? v.subs[static_cast<size_t>(v.sub)] + l10n::Get(l10n::StringId::Files_2).c_str() : v.scene_title;
+    return l10n::Get(l10n::StringId::RightClickOn).c_str() + target + l10n::Get(l10n::StringId::Text3333).c_str();
 }
-inline const wchar_t* PreviewNote() { return l10n::Pick(L"示意图 · 拖动条目可置顶、置底或隐藏",
-                                                        L"Sketch of this scene's entries. Drag to pin or hide."); }
+inline const wchar_t* PreviewNote() { return l10n::Get(l10n::StringId::SketchOfThisSceneSEntriesDragToPinOrHide).c_str(); }
 inline const wchar_t* Zone(int zone) {
-    return zone == kSysCtxZoneTop ? l10n::Pick(L"置顶", L"Top")
-         : zone == kSysCtxZoneBottom ? l10n::Pick(L"置底", L"Bottom") : l10n::Pick(L"默认位置", L"Default");
+    return zone == kSysCtxZoneTop ? l10n::Get(l10n::StringId::SortWheelFolderTop).c_str()
+         : zone == kSysCtxZoneBottom ? l10n::Get(l10n::StringId::Bottom).c_str() : l10n::Get(l10n::StringId::Default).c_str();
 }
 inline const wchar_t* Moved(int zone) {
-    return zone == kSysCtxZoneTop ? l10n::Pick(L"将置顶", L"To top")
-         : zone == kSysCtxZoneBottom ? l10n::Pick(L"将置底", L"To bottom") : l10n::Pick(L"将恢复位置", L"To default");
+    return zone == kSysCtxZoneTop ? l10n::Get(l10n::StringId::ToTop).c_str()
+         : zone == kSysCtxZoneBottom ? l10n::Get(l10n::StringId::ToBottom).c_str() : l10n::Get(l10n::StringId::ToDefault).c_str();
 }
 inline std::wstring ShelfHead(int n) {
-    return l10n::Pick(L"已隐藏 · ", L"Hidden · ") + std::to_wstring(n);
+    return l10n::Get(l10n::StringId::Hidden_2).c_str() + std::to_wstring(n);
 }
-inline const wchar_t* ShelfEmpty() { return l10n::Pick(L"把条目拖到这里即可隐藏", L"Drop an entry here to hide it"); }
+inline const wchar_t* ShelfEmpty() { return l10n::Get(l10n::StringId::DropAnEntryHereToHideIt).c_str(); }
 inline const wchar_t* DragHintVerb() {
-    return l10n::Pick(L"拖到「置顶 / 置底」分区，或拖到下方隐藏", L"Drop on Top / Bottom, or below to hide");
+    return l10n::Get(l10n::StringId::DropOnTopBottomOrBelowToHide).c_str();
 }
 inline const wchar_t* DragHintHandler() {
-    return l10n::Pick(L"第三方扩展的位置由 Windows 决定，只能拖到下方隐藏", L"Windows places extensions itself: drop below to hide");
+    return l10n::Get(l10n::StringId::WindowsPlacesExtensionsItselfDropBelowToHide).c_str();
 }
-inline const wchar_t* WillMove() { return l10n::Pick(L"将移动", L"Moves"); }
-inline const wchar_t* WillHide() { return l10n::Pick(L"将隐藏", L"Hides"); }
-inline const wchar_t* WillShow() { return l10n::Pick(L"将显示", L"Shows"); }
+inline const wchar_t* WillMove() { return l10n::Get(l10n::StringId::Moves).c_str(); }
+inline const wchar_t* WillHide() { return l10n::Get(l10n::StringId::Hides).c_str(); }
+inline const wchar_t* WillShow() { return l10n::Get(l10n::StringId::Shows).c_str(); }
 inline std::wstring More(int n) {
-    return l10n::Pick(L"… 还有 ", L"… ") + std::to_wstring(n) + l10n::Pick(L" 项", L" more");
+    return l10n::Get(l10n::StringId::Text3347).c_str() + std::to_wstring(n) + l10n::Get(l10n::StringId::More_2).c_str();
 }
 // 概览 (the prototype's home scene).
-inline const wchar_t* Overview() { return l10n::Pick(L"概览", L"Overview"); }
+inline const wchar_t* Overview() { return l10n::Get(l10n::StringId::Overview).c_str(); }
 inline std::wstring OverviewKey(const SysCtxView& v) {
-    return l10n::Pick(L"共 ", L"") + std::to_wstring(v.total) + l10n::Pick(L" 个条目 · ", L" entries · ") +
-           std::to_wstring(v.scenes.size()) + l10n::Pick(L" 个场景", L" scenes");
+    return l10n::Get(l10n::StringId::Text3350).c_str() + std::to_wstring(v.total) + l10n::Get(l10n::StringId::Entries_2).c_str() +
+           std::to_wstring(v.scenes.size()) + l10n::Get(l10n::StringId::Scenes).c_str();
 }
 inline const wchar_t* Stat(int i) {
     switch (i) {
-    case 0: return l10n::Pick(L"已禁用", L"Switched off");
-    case 1: return l10n::Pick(L"由 ContextMenuManager 禁用", L"Off by ContextMenuManager");
-    case 2: return l10n::Pick(L"拖慢右键 ≥150 ms 的扩展", L"Extensions slowing the menu ≥150 ms");
-    default: return l10n::Pick(L"Pulse 做过的改动", L"Changes made by Pulse");
+    case 0: return l10n::Get(l10n::StringId::SwitchedOff).c_str();
+    case 1: return l10n::Get(l10n::StringId::OffByContextMenuManager).c_str();
+    case 2: return l10n::Get(l10n::StringId::ExtensionsSlowingTheMenu150Ms).c_str();
+    default: return l10n::Get(l10n::StringId::ChangesMadeByPulse).c_str();
     }
 }
-inline const wchar_t* SlowTitle() { return l10n::Pick(L"慢扩展排行", L"Slowest extensions"); }
+inline const wchar_t* SlowTitle() { return l10n::Get(l10n::StringId::SlowestExtensions).c_str(); }
 inline const wchar_t* SlowCaption() {
-    return l10n::Pick(L"来自 Pulse 右键菜单的实测数据（每个场景最近一次）。禁用后，资源管理器和 Pulse 的右键都会变快。",
-                      L"Measured while Pulse built its own menu (the last query per scene). Switching one off "
-                      L"speeds up File Explorer and Pulse alike.");
+    return l10n::Get(l10n::StringId::MeasuredWhilePulseBuiltItsOwnMenuTheLastQueryPerSceneSwitchi).c_str();
 }
 inline const wchar_t* SlowEmpty() {
-    return l10n::Pick(L"还没有数据。在 Pulse 里右键几次文件或文件夹，这里就会显示各扩展的耗时。",
-                      L"No data yet. Right-click a few files or folders in Pulse and the times show up here.");
+    return l10n::Get(l10n::StringId::NoDataYetRightClickAFewFilesOrFoldersInPulseAndTheTimesShowU).c_str();
 }
-inline const wchar_t* PulseSkip() { return l10n::Pick(L"Pulse 跳过", L"Skip in Pulse"); }
-inline const wchar_t* PulseSkipped() { return l10n::Pick(L"Pulse 已跳过", L"Skipped in Pulse"); }
-inline const wchar_t* TurnOff() { return l10n::Pick(L"禁用", L"Turn off"); }
-inline const wchar_t* Off() { return l10n::Pick(L"已禁用", L"Off"); }
-inline const wchar_t* MarksTitle() { return l10n::Pick(L"来自其他工具的禁用标记", L"Marks left by other tools"); }
+inline const wchar_t* PulseSkip() { return l10n::Get(l10n::StringId::SkipInPulse).c_str(); }
+inline const wchar_t* PulseSkipped() { return l10n::Get(l10n::StringId::SkippedInPulse).c_str(); }
+inline const wchar_t* TurnOff() { return l10n::Get(l10n::StringId::TurnOff).c_str(); }
+inline const wchar_t* Off() { return l10n::Get(l10n::StringId::Off_2).c_str(); }
+inline const wchar_t* MarksTitle() { return l10n::Get(l10n::StringId::MarksLeftByOtherTools).c_str(); }
 inline const wchar_t* MarksCaption() {
-    return l10n::Pick(L"识别 ContextMenuManager 写下的标记，显示在对应场景里，也可以在这里一键还原。",
-                      L"Marks written by ContextMenuManager show in their scenes and can be restored here.");
+    return l10n::Get(l10n::StringId::MarksWrittenByContextMenuManagerShowInTheirScenesAndCanBeRes).c_str();
 }
-inline const wchar_t* MarksEmpty() { return l10n::Pick(L"没有了 ✓", L"None ✓"); }
-inline const wchar_t* Restore() { return l10n::Pick(L"还原", L"Restore"); }
-inline const wchar_t* RecentTitle() { return l10n::Pick(L"最近的改动", L"Recent changes"); }
+inline const wchar_t* MarksEmpty() { return l10n::Get(l10n::StringId::None_2).c_str(); }
+inline const wchar_t* Restore() { return l10n::Get(l10n::StringId::Restore).c_str(); }
+inline const wchar_t* RecentTitle() { return l10n::Get(l10n::StringId::RecentChanges).c_str(); }
 inline const wchar_t* RecentCaption() {
-    return l10n::Pick(L"每次应用都有对应的 .reg 备份，可以逐步撤销。",
-                      L"Every batch has its .reg backup and can be undone step by step.");
+    return l10n::Get(l10n::StringId::EveryBatchHasItsRegBackupAndCanBeUndoneStepByStep).c_str();
 }
 inline const wchar_t* RecentEmpty() {
-    return l10n::Pick(L"还没有改动。在左侧选择一个场景开始。", L"No changes yet. Pick a scene on the left to start.");
+    return l10n::Get(l10n::StringId::NoChangesYetPickASceneOnTheLeftToStart).c_str();
 }
-inline const wchar_t* UndonePrefix() { return l10n::Pick(L"已撤销 · ", L"Undone · "); }
+inline const wchar_t* UndonePrefix() { return l10n::Get(l10n::StringId::Undone_2).c_str(); }
 inline const wchar_t* OverviewSideHint() {
-    return l10n::Pick(L"在左侧选择一个场景，这里会显示它的右键菜单，并实时反映你的改动。",
-                      L"Pick a scene on the left to see its menu here, live with your changes.");
+    return l10n::Get(l10n::StringId::PickASceneOnTheLeftToSeeItsMenuHereLiveWithYourChanges).c_str();
 }
 inline const wchar_t* OverviewSideNote() {
-    return l10n::Pick(L"概览页的数据来自 Pulse 实际右键时的测量，不需要额外运行任何东西。",
-                      L"The overview uses what Pulse measured on real right-clicks; nothing else needs to run.");
+    return l10n::Get(l10n::StringId::TheOverviewUsesWhatPulseMeasuredOnRealRightClicksNothingElse).c_str();
 }
 inline std::wstring Ms(uint32_t ms) { return std::to_wstring(ms) + L" ms"; }
 } // namespace sysctx_text

@@ -826,6 +826,10 @@ UINT QueryContextMenuFlags(const CtxSessionData& d) {
     UINT flags = CMF_NORMAL;
     if (d.extended) flags |= CMF_EXTENDEDVERBS;
     if (!d.background) {
+        // An item menu, as Explorer's view asks for it. Some extensions only
+        // add their rows then: 播放到设备 (PlayTo) returns nothing for
+        // CMF_NORMAL alone, though Explorer shows it on every image.
+        flags |= CMF_ITEMMENU;
         bool all_dirs = !d.paths.empty();
         for (const auto& p : d.paths) {
             const std::wstring path = ToParsingPath(p);

@@ -21,6 +21,7 @@ namespace pulse::index { class IndexClient; class NetworkAgentClient; }
 namespace pulse::app {
 
 class SystemCtxModel;
+class ShortcutSettings;
 
 enum class SettingsEffect : uint32_t {
     None = 0,
@@ -120,6 +121,10 @@ public:
 
     void SelectPage(int page) noexcept;
     int page() const noexcept { return page_; }
+    // Settings lives in its title-bar button, not in the tab strip: the tab
+    // to go back to when the button closes it (compared, never dereferenced).
+    const void* return_tab() const noexcept { return return_tab_; }
+    void set_return_tab(const void* tab) noexcept { return_tab_ = tab; }
     float scroll() const noexcept { return scroll_; }
     void SetScroll(float value, float maximum) noexcept;
     void ScrollBy(float delta, float scale, float maximum) noexcept;
@@ -243,6 +248,8 @@ public:
     int ContextTab() const { return context_tab_; }
     // 系统右键菜单 (page 6): created on first use, scans on a worker thread.
     SystemCtxModel& SystemCtx();
+    // 快捷键 (page 7): created on first use; probes key conflicts on a worker.
+    ShortcutSettings& Shortcuts();
     // Pulse menu preview: a row pressed for dragging (BuiltinMenuItem), live
     // once the pointer moved 3 px along the tab's axis. EndMenuDrag drops
     // the drag; SetMenuOrder saves the order for the current tab.
@@ -282,8 +289,10 @@ public:
     void DiagnosticsAction(int action);
 
 private:
+    const void* return_tab_ = nullptr;
     int context_tab_ = 0;
     std::shared_ptr<SystemCtxModel> sysctx_;  // shared_ptr: fine with the forward declaration
+    std::shared_ptr<ShortcutSettings> shortcuts_;
     friend struct SettingsControllerTestPeer;
 
     struct TaskState {

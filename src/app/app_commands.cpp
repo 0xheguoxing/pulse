@@ -1,5 +1,6 @@
 #include "tag_color_commands.h"
 #include "tag_ads_sync.h"
+#include "keymap.h"
 #include <atomic>
 #include "../ui/shortcut_help.h"
 // app_commands.cpp — extracted from app_main.cpp.
@@ -245,7 +246,7 @@ void GroupSelectionIntoFolder(AppState& s) {
     const std::wstring folder = JoinChild(tab->current_path,
         app::UniqueChildName(tab->current_path, l10n::Get(l10n::StringId::NewFolder), L""));
     const uint64_t group = NewUndoGroup();
-    const std::wstring label = l10n::Pick(L"合并到文件夹", L"new folder with selection");
+    const std::wstring label = l10n::Get(l10n::StringId::NewFolderWithSelection).c_str();
     ops::OpRequest create;
     create.type = ops::OpType::CreateFolder;
     create.sources.push_back(folder);
@@ -279,7 +280,7 @@ void DissolveSelectedFolders(AppState& s) {
     std::vector<std::wstring> select;
     std::vector<std::wstring> children;
     const uint64_t group = NewUndoGroup();
-    const std::wstring label = l10n::Pick(L"解散文件夹", L"ungroup folder");
+    const std::wstring label = l10n::Get(l10n::StringId::UngroupFolder).c_str();
     for (const std::wstring& folder : folders) {
         if (!ListFolderChildren(folder, children)) continue;
         if (children.empty()) {
@@ -1022,16 +1023,16 @@ void RunMapNetworkDrive(AppState& s, const std::wstring& share) {
     if (error == ERROR_CANCELLED || error == static_cast<DWORD>(-1)) return;
     ui::ConfirmDialogSpec spec;
     spec.tone = ui::ConfirmTone::Warning;
-    spec.title = l10n::Pick(L"无法映射网络驱动器", L"Could not map network drive");
+    spec.title = l10n::Get(l10n::StringId::CouldNotMapNetworkDrive).c_str();
     wchar_t* text = nullptr;
     FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                    nullptr, error, 0, reinterpret_cast<wchar_t*>(&text), 0, nullptr);
-    spec.message = text ? text : l10n::Pick(L"Windows 无法打开网络驱动器对话框。", L"Windows could not open the network drive dialog.");
+    spec.message = text ? text : l10n::Get(l10n::StringId::WindowsCouldNotOpenTheNetworkDriveDialog).c_str();
     if (text) LocalFree(text);
     wchar_t code[64]{};
     swprintf_s(code, l10n::Get(l10n::StringId::ErrorCodeFormat).c_str(), error);
     spec.note = code;
-    spec.confirm_text = l10n::Pick(L"关闭", L"Close");
+    spec.confirm_text = l10n::Get(l10n::StringId::Close).c_str();
     (void)ui::ShowConfirmDialog(s.hwnd, spec, s.darkMode, s.accentColor);
 }
 
@@ -1081,10 +1082,9 @@ void ApplyDriveVerbResult(AppState& s, const app::DriveVerbResult& result) {
     ui::ConfirmDialogSpec spec;
     spec.tone = ui::ConfirmTone::Warning;
     if (result.verb == app::DriveVerb::Disconnect && result.open_files) {
-        spec.title = l10n::Pick(L"断开 ", L"Disconnect ") + drive + l10n::Pick(L"？", L"?");
-        spec.message = l10n::Pick(L"此驱动器上有打开的文件或正在运行的程序。强制断开可能会丢失未保存的更改。",
-                                  L"Files or programs on this drive are open. Disconnecting anyway may lose unsaved changes.");
-        spec.confirm_text = l10n::Pick(L"仍要断开", L"Disconnect anyway");
+        spec.title = l10n::Get(l10n::StringId::Disconnect).c_str() + drive + l10n::Get(l10n::StringId::Text2738).c_str();
+        spec.message = l10n::Get(l10n::StringId::FilesOrProgramsOnThisDriveAreOpenDisconnectingAnywayMayLoseU).c_str();
+        spec.confirm_text = l10n::Get(l10n::StringId::DisconnectAnyway).c_str();
         spec.danger = true;
         spec.default_choice = ui::ConfirmChoice::Cancel;
         if (ui::ShowConfirmDialog(s.hwnd, spec, s.darkMode, s.accentColor))
@@ -1092,12 +1092,11 @@ void ApplyDriveVerbResult(AppState& s, const app::DriveVerbResult& result) {
         return;
     }
     const bool eject = result.verb == app::DriveVerb::Eject;
-    spec.title = (eject ? l10n::Pick(L"无法弹出 ", L"Cannot eject ") :
-        l10n::Pick(L"无法断开网络驱动器 ", L"Cannot disconnect network drive ")) + drive;
+    spec.title = (eject ? l10n::Get(l10n::StringId::CannotEject).c_str() :
+        l10n::Get(l10n::StringId::CannotDisconnectNetworkDrive).c_str()) + drive;
     if (eject && result.error == ERROR_DEVICE_IN_USE) {
-        spec.message = l10n::Pick(L"设备正在使用中。请关闭可能正在使用该设备上文件的程序或窗口，然后重试。",
-                                  L"The device is in use. Close any programs or windows that might be using files on it, then try again.");
-        if (!result.veto_name.empty()) spec.note = l10n::Pick(L"占用者：", L"In use by: ") + result.veto_name;
+        spec.message = l10n::Get(l10n::StringId::TheDeviceIsInUseCloseAnyProgramsOrWindowsThatMightBeUsingFil).c_str();
+        if (!result.veto_name.empty()) spec.note = l10n::Get(l10n::StringId::InUseBy).c_str() + result.veto_name;
     } else {
         wchar_t* text = nullptr;
         FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
@@ -1108,8 +1107,8 @@ void ApplyDriveVerbResult(AppState& s, const app::DriveVerbResult& result) {
         swprintf_s(code, l10n::Get(l10n::StringId::ErrorCodeFormat).c_str(), result.error);
         spec.note = code;
     }
-    spec.confirm_text = l10n::Pick(L"重试", L"Try again");
-    spec.cancel_text = l10n::Pick(L"关闭", L"Close");
+    spec.confirm_text = l10n::Get(l10n::StringId::IntegrationRetry).c_str();
+    spec.cancel_text = l10n::Get(l10n::StringId::Close).c_str();
     if (!ui::ShowConfirmDialog(s.hwnd, spec, s.darkMode, s.accentColor)) return;
     if (eject) {
         uint8_t type = static_cast<uint8_t>(GetDriveTypeW(result.root.c_str()));
@@ -1476,16 +1475,16 @@ void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const ap
         if (drives.size() == 1) {
             const SelectedDrive& drive = drives.front();
             if (drive.locked)
-                verbs.push_back(VerbRow(app::CmdUnlockDrive, l10n::Pick(L"解锁驱动器", L"Unlock drive"), L"\xE785"));
+                verbs.push_back(VerbRow(app::CmdUnlockDrive, l10n::Get(l10n::StringId::UnlockDrive).c_str(), L"\xE785"));
             if (app::DriveEjectable(drive.root, drive.type))
-                verbs.push_back(VerbRow(app::CmdEjectDrive, l10n::Pick(L"弹出", L"Eject"), app::EjectGlyph()));
+                verbs.push_back(VerbRow(app::CmdEjectDrive, l10n::Get(l10n::StringId::Eject).c_str(), app::EjectGlyph()));
             if (drive.type == DRIVE_REMOTE)
                 verbs.push_back(VerbRow(app::CmdDisconnectDrive,
-                                        l10n::Pick(L"断开网络驱动器", L"Disconnect network drive"), L"\xE8CD"));
+                                        l10n::Get(l10n::StringId::DisconnectNetworkDrive).c_str(), L"\xE8CD"));
         }
     } else if (caps.kind == app::SelectionKind::NetworkShares) {
         if (!SelectedShare(s).empty())
-            verbs.push_back(VerbRow(app::CmdMapNetworkDrive, l10n::Pick(L"映射网络驱动器", L"Map network drive"), L"\xE8CE"));
+            verbs.push_back(VerbRow(app::CmdMapNetworkDrive, l10n::Get(l10n::StringId::MapNetworkDrive).c_str(), L"\xE8CE"));
     } else if (caps.kind == app::SelectionKind::NetworkPlaces) {
         // NetHood shortcuts are local .lnk files: don't offer actions that would
         // accidentally pin the shortcut file as a workspace or Quick Access.
@@ -1501,7 +1500,7 @@ void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const ap
                 EraseCommand(items, app::CmdPinNetwork);
         }
         if (!SelectedShare(s).empty())
-            verbs.push_back(VerbRow(app::CmdMapNetworkDrive, l10n::Pick(L"映射网络驱动器", L"Map network drive"), L"\xE8CE"));
+            verbs.push_back(VerbRow(app::CmdMapNetworkDrive, l10n::Get(l10n::StringId::MapNetworkDrive).c_str(), L"\xE8CE"));
     }
     if (verbs.empty()) return;
     verbs.back().separator_after = true;
@@ -1566,14 +1565,14 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
     if (CanDissolveSelection(tab)) {
         ui::FluentMenuItem dissolve;
         dissolve.command = app::CmdDissolveFolder;
-        dissolve.text = l10n::Pick(L"解散文件夹", L"Ungroup folder");
+        dissolve.text = l10n::Get(l10n::StringId::UngroupFolder_2).c_str();
         dissolve.glyph = L"\xED25"; // open folder
         items.insert(items.begin() + 1, std::move(dissolve));
     }
     if (CanGroupSelection(tab)) {
         ui::FluentMenuItem group;
         group.command = app::CmdGroupIntoFolder;
-        group.text = l10n::Pick(L"合并到文件夹", L"New folder with selection");
+        group.text = l10n::Get(l10n::StringId::NewFolderWithSelection_2).c_str();
         group.glyph = L"\xE8F4"; // new folder
         items.insert(items.begin() + 1, std::move(group));
     }
@@ -1582,7 +1581,7 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         batch.command = app::CmdBatchRename;
         batch.text = l10n::Get(l10n::StringId::BatchRename);
         batch.glyph = L"\xE8AC";
-        batch.shortcut = L"Ctrl+Shift+R";
+        batch.shortcut = app::ShownShortcut(L"Ctrl+Shift+R");
         items.insert(items.begin() + 1, std::move(batch));
     }
     if (tab && SideBySideFolders(*tab).size() == 2) {
@@ -2084,7 +2083,7 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
         for (int command : {app::CmdOpenTerminal, app::CmdPinWorkspace}) EraseCommand(base_items, command);
     }
     if (tab->current_path.empty()) {  // This PC, as in Explorer
-        auto map = VerbRow(app::CmdMapNetworkDrive, l10n::Pick(L"映射网络驱动器", L"Map network drive"), L"\xE8CE");
+        auto map = VerbRow(app::CmdMapNetworkDrive, l10n::Get(l10n::StringId::MapNetworkDrive).c_str(), L"\xE8CE");
         map.separator_after = true;
         base_items.insert(base_items.begin(), std::move(map));
     }
@@ -2864,7 +2863,7 @@ void ShowToolbarMore(AppState& s) {
         for (int i=0;i<5;++i) {
             ui::FluentMenuItem item;
             item.command=commands[i]; item.text=l10n::Get(labels[i]); item.glyph=glyphs[i];
-            item.shortcut=shortcuts[i];
+            item.shortcut=app::ShownShortcut(shortcuts[i]);
             item.enabled=allowed[i];
             items.push_back(std::move(item));
         }
@@ -2878,7 +2877,7 @@ void ShowToolbarMore(AppState& s) {
         if (slot<layout.pins.size() && layout.pins[slot].right>layout.pins[slot].left) continue;
         ui::FluentMenuItem item;
         item.command=kToolbarPins[i].command; item.text=l10n::Get(kToolbarPins[i].label);
-        item.glyph=kToolbarPins[i].glyph; item.shortcut=kToolbarPins[i].shortcut;
+        item.glyph=kToolbarPins[i].glyph; item.shortcut=app::ShownShortcut(kToolbarPins[i].shortcut);
         item.enabled=pins[slot].enabled;
         items.push_back(std::move(item));
     }
@@ -2915,7 +2914,7 @@ void ShowToolbarMore(AppState& s) {
     }
     ui::FluentMenuItem select_all;
     select_all.command=app::CmdSelectAll; select_all.text=l10n::Get(l10n::StringId::SelectAll);
-    select_all.glyph=L"\xE8B3"; select_all.shortcut=L"Ctrl+A";
+    select_all.glyph=L"\xE8B3"; select_all.shortcut=app::ShownShortcut(L"Ctrl+A");
     select_all.enabled=tab->snapshot && tab->EntryCount()>0;
     items.push_back(std::move(select_all));
     ui::FluentMenuItem terminal;
@@ -2924,7 +2923,7 @@ void ShowToolbarMore(AppState& s) {
     items.push_back(std::move(terminal));
     ui::FluentMenuItem properties;
     properties.command=app::CmdProperties; properties.text=l10n::Get(l10n::StringId::Properties);
-    properties.glyph=L"\xE946"; properties.shortcut=L"Alt+Enter";
+    properties.glyph=L"\xE946"; properties.shortcut=app::ShownShortcut(L"Alt+Enter");
     properties.enabled=tab->SelectedCount()>0;
     properties.separator_after=true;
     items.push_back(std::move(properties));
@@ -2950,7 +2949,7 @@ std::vector<ui::SelectionChipAction> ToolbarPinActions(AppState& s) {
         action.command = def.command;
         action.glyph = def.glyph;
         action.label = l10n::Get(def.label);
-        if (*def.shortcut) action.label += std::wstring(L" (") + def.shortcut + L")";
+        if (const auto key = app::ShownShortcut(def.shortcut); !key.empty()) action.label += L" (" + key + L")";
         switch (def.command) {
         case app::CmdNewTextFile: action.enabled = CanCreateHere(tab); break;
         case app::CmdCopyPath: action.enabled = has_selection || !tab->current_path.empty(); break;
@@ -2995,7 +2994,7 @@ void ShowToolbarCustomize(AppState& s) {
     for (int i = 0; i < 3; ++i) {
         ui::ToolbarCustomizeRow row;
         row.label = l10n::Get(primary[i]);
-        if (i == 0) row.caption = L"Ctrl+Shift+N";
+        if (i == 0) row.caption = app::ShownShortcut(L"Ctrl+Shift+N");
         row.checked = s.appPrefs.toolbar_new_primary == i;
         spec.primary.push_back(std::move(row));
     }
@@ -3009,7 +3008,7 @@ void ShowToolbarCustomize(AppState& s) {
         ui::ToolbarCustomizeRow row;
         row.glyph = kToolbarPins[i].glyph;
         row.label = l10n::Get(kToolbarPins[i].label);
-        row.caption = kToolbarPins[i].shortcut;
+        row.caption = app::ShownShortcut(kToolbarPins[i].shortcut);
         row.checked = (s.appPrefs.toolbar_pins & (1u << i)) != 0;
         spec.pins.push_back(std::move(row));
     }

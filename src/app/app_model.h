@@ -11,6 +11,7 @@
 #include "entry_order_hold.h"
 #include "create_rename_intent.h"
 #include "pane_header_animation.h"
+#include "details_tree.h"
 #include "../index/content_result_store.h"
 #include <map>
 #include <memory>
@@ -145,7 +146,18 @@ struct Tab {
     std::map<size_t,index::ContentResultStore::Row> content_action_rows;
     bool content_action_ready = false;
     size_t content_action_count = 0;
-    size_t EntryCount() const { if(content_action_ready && all_selected) return content_action_count; return content_results ? content_results->Count() : snapshot ? snapshot->size() : 0; }
+    size_t EntryCount() const { if(content_action_ready && all_selected) return content_action_count; if(const auto* combined=TreeEntries()) return combined->size(); return content_results ? content_results->Count() : snapshot ? snapshot->size() : 0; }
+    // Inline folder expansion in the details view (app_details_tree.cpp).
+    std::shared_ptr<DetailsTree> tree;
+    // Snapshot rows followed by expanded children and placeholders while the
+    // tree was built for the current snapshot; null otherwise.
+    const std::vector<fs::DirEntry>* TreeEntries() const {
+        return tree && tree->combined && tree->base == snapshot && snapshot && !content_results
+            ? tree->combined.get() : nullptr;
+    }
+    // Moves the selection on child rows into the tree stash (by path) before
+    // the rows they index go away.
+    void StashTreeSelection();
     fs::DirEntry EntryAt(size_t index) const;
     size_t search_total = 0;
     size_t search_next_offset = 0;

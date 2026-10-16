@@ -644,6 +644,13 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     r.index = target;
                     return r;
                 }
+            } else if (vm.settings_page == 7) {
+                const int target = HitTestSettingsShortcuts(lay, vm, x, y);
+                if (target >= 0) {
+                    r.region = HitTestResult::SettingsShortcuts;
+                    r.index = target;
+                    return r;
+                }
             } else if (vm.settings_page == 4) {
                 for (int i = 0; i < 3; ++i) {
                     if (ContainsPt(lay.dup_scope[i], x, y)) {
@@ -1283,13 +1290,19 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             if (idx >= 0) {
                 if (idx != paneVm.rename_index) {
                     int viewRow = paneVm.ViewIndex(idx);
+                    // Details tree placeholders (loading, empty, more...) carry
+                    // no row actions; their own buttons are TreeMoreActionAt.
+                    const DetailsTreeRow* treeRow = paneVm.tree ? paneVm.tree->At(viewRow) : nullptr;
+                    if (treeRow && treeRow->kind != TreeRowKind::Entry) viewRow = -1;
                     if (viewRow >= 0 && compositor_ && compositor_->DwriteFactory()) {
                         const D2D1_RECT_F list = PaneListRect(paneRc, extra, paneVm.view_mode);
                         const DetailsColumnLayout columns = DetailsColumns(list, paneVm);
                         ViewLayout layout(paneVm.view_mode, list, paneVm.EntryCount(),
                                           paneVm.scroll_x, paneVm.scroll_y, scale_,
                                           ListRowHeightDip(paneVm, list), paneVm.Groups());
-                        const D2D1_RECT_F nameRc = layout.NameRect(viewRow);
+                        D2D1_RECT_F nameRc = layout.NameRect(viewRow);
+                        if (treeRow && paneVm.view_mode == ViewMode::Details)
+                            nameRc.left = std::min(nameRc.right, nameRc.left + std::round(TreeOffsetDip(*treeRow) * scale_));
                         const D2D1_RECT_F cell = layout.ItemRect(viewRow);
                         const ListEntryView& entry = MakeVisibleEntry(paneVm, static_cast<size_t>(idx));
                         const auto folder_size_rect = paneVm.view_mode == ViewMode::Details

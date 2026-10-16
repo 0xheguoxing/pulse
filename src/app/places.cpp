@@ -1545,7 +1545,7 @@ void PlacesCatalog::MergeAdsRecords(const std::wstring& path,
                 if (index < 0) {
                     ColorTag tag;
                     tag.id = record.id.empty() ? NewTagId() : record.id;
-                    tag.name = imported_name.empty() ? std::wstring(l10n::Pick(L"导入的标签", L"Imported tag")) : imported_name;
+                    tag.name = imported_name.empty() ? std::wstring(l10n::Get(l10n::StringId::ImportedTag).c_str()) : imported_name;
                     tag.rgb = record.rgb;
                     tags.push_back(std::move(tag));
                     index = static_cast<int>(tags.size()) - 1;

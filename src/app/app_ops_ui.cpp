@@ -307,8 +307,7 @@ bool ConfirmPermanentDelete(AppState& s, const std::vector<std::wstring>& paths,
     ui::ConfirmDialogSpec confirm;
     confirm.title = l10n::Get(l10n::StringId::PermanentDelete);
     if (no_recycle_bin)
-        confirm.message = l10n::Pick(L"网络位置和移动设备上没有回收站。",
-                                     L"Network locations and removable drives have no Recycle Bin. ");
+        confirm.message = l10n::Get(l10n::StringId::NetworkLocationsAndRemovableDrivesHaveNoRecycleBin).c_str();
     if (paths.size() == 1) {
         confirm.message += l10n::Get(l10n::StringId::PermanentDeleteOne);
     } else {

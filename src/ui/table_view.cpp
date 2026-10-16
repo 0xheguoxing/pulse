@@ -235,10 +235,10 @@ std::vector<std::wstring> TableView::StatusParts(uint32_t encoding) const {
     const bool zh = Zh();
     parts.push_back(s->detail == L"tab" ? L"TSV" : L"CSV");
     std::wstring detail;
-    if (s->detail == L"tab") detail = pulse::l10n::Pick(L"Tab \x5206\x9694", L"Tab");
-    else if (s->detail == L"semicolon") detail = pulse::l10n::Pick(L"\x5206\x53F7", L"Semicolon");
-    else if (s->detail == L"pipe") detail = pulse::l10n::Pick(L"\x7AD6\x7EBF", L"Pipe");
-    else detail = pulse::l10n::Pick(L"\x9017\x53F7", L"Comma");
+    if (s->detail == L"tab") detail = pulse::l10n::Get(pulse::l10n::StringId::Tab).c_str();
+    else if (s->detail == L"semicolon") detail = pulse::l10n::Get(pulse::l10n::StringId::Semicolon).c_str();
+    else if (s->detail == L"pipe") detail = pulse::l10n::Get(pulse::l10n::StringId::Pipe).c_str();
+    else detail = pulse::l10n::Get(pulse::l10n::StringId::Comma).c_str();
     std::wstring name;
     switch (static_cast<ipc::PreviewTextEncoding>(encoding)) {
     case ipc::PreviewTextEncoding::Utf8: name = L"UTF-8"; break;
@@ -427,17 +427,17 @@ void TableView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D
 
     dc->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (s.cols == 0 || s.cells.empty()) {
-        std::wstring empty = pulse::l10n::Pick(L"\x7A7A\x5DE5\x4F5C\x8868", L"Empty sheet");
+        std::wstring empty = pulse::l10n::Get(pulse::l10n::StringId::EmptySheet).c_str();
         if (spreadsheet_ && !s.detail.empty()) {
-            if (awaiting_sheet_) empty = pulse::l10n::Pick(L"正在加载工作表…", L"Loading sheet…");
-            else if (s.detail == L"hidden") empty = pulse::l10n::Pick(L"隐藏的工作表；请在原应用中查看", L"Hidden sheet; open in the original app");
-            else if (s.detail == L"not-loaded") empty = pulse::l10n::Pick(L"选择工作表后按需加载", L"Select a sheet to load its content");
-            else if (s.detail == L"time-limit") empty = pulse::l10n::Pick(L"未读取：已达到预览时间上限", L"Not loaded: preview time limit reached");
-            else if (s.detail == L"payload-limit") empty = pulse::l10n::Pick(L"未读取：已达到预览容量上限", L"Not loaded: preview size limit reached");
-            else if (s.detail == L"missing-relationship") empty = pulse::l10n::Pick(L"未读取：工作表引用缺失", L"Not loaded: missing worksheet relationship");
-            else empty = pulse::l10n::Pick(L"未读取：工作表内容读取失败", L"Not loaded: worksheet content could not be read");
+            if (awaiting_sheet_) empty = pulse::l10n::Get(pulse::l10n::StringId::LoadingSheet).c_str();
+            else if (s.detail == L"hidden") empty = pulse::l10n::Get(pulse::l10n::StringId::HiddenSheetOpenInTheOriginalApp).c_str();
+            else if (s.detail == L"not-loaded") empty = pulse::l10n::Get(pulse::l10n::StringId::SelectASheetToLoadItsContent).c_str();
+            else if (s.detail == L"time-limit") empty = pulse::l10n::Get(pulse::l10n::StringId::NotLoadedPreviewTimeLimitReached).c_str();
+            else if (s.detail == L"payload-limit") empty = pulse::l10n::Get(pulse::l10n::StringId::NotLoadedPreviewSizeLimitReached).c_str();
+            else if (s.detail == L"missing-relationship") empty = pulse::l10n::Get(pulse::l10n::StringId::NotLoadedMissingWorksheetRelationship).c_str();
+            else empty = pulse::l10n::Get(pulse::l10n::StringId::NotLoadedWorksheetContentCouldNotBeRead).c_str();
         } else if (spreadsheet_ && s.truncated) {
-            empty = pulse::l10n::Pick(L"没有可显示的单元格：预览内容已截断", L"No cells available: preview content was truncated");
+            empty = pulse::l10n::Get(pulse::l10n::StringId::NoCellsAvailablePreviewContentWasTruncated).c_str();
         }
         text_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         text_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
@@ -629,7 +629,7 @@ void TableView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D
             (zh ? L" 表 · 已读取 " : L" sheets · read ") + std::to_wstring(loaded_sheets_);
         if (sheets_.size() < total_sheets_)
             size += zh ? L" · 列表已截断（容量上限）" : L" · list capped (size limit)";
-        if (s.truncated) size += pulse::l10n::Pick(L" · 内容不完整", L" · incomplete");
+        if (s.truncated) size += pulse::l10n::Get(pulse::l10n::StringId::Incomplete).c_str();
         WrlPtr<IDWriteTextLayout> size_layout;
         const float status_width = (std::max)(1.0f, (g.tabs.right - g.tabs.left - 100.0f * k) * 0.55f);
         factory->CreateTextLayout(size.data(), static_cast<UINT32>(size.size()), small_.Get(), status_width, 30.0f * k, &size_layout);

@@ -193,8 +193,8 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
         painter_.DrawWrappedCaption(info.description, D2D1::Point2F(bounds.left, bounds.top + title_h),
             bounds.right - bounds.left, theme.text_secondary);
         const bool has = (vm.settings_preview_codecs & (1u << i)) != 0;
-        const auto status = !detected ? l10n::Pick(L"检测中", L"Checking") : has
-            ? l10n::Pick(L"已安装", L"Installed") : l10n::Pick(L"未安装", L"Not installed");
+        const auto status = !detected ? l10n::Get(l10n::StringId::Checking).c_str() : has
+            ? l10n::Get(l10n::StringId::Installed).c_str() : l10n::Get(l10n::StringId::NotInstalled).c_str();
         fluent::BadgeSpec badge;
         badge.bounds = lay.preview_codec_badge[i]; badge.text = status;
         badge.kind = !detected ? fluent::BadgeKind::Neutral : has ? fluent::BadgeKind::Success : fluent::BadgeKind::Warning;
@@ -203,7 +203,7 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
         if (get.right > get.left) {
             fluent::ControlState state{};
             state.hovered = IsHovered(vm, H::SettingsPreviewStore, i);
-            painter_.DrawButton({get, l10n::Pick(L"获取", L"Get"), {}, fluent::ButtonKind::Standard, state});
+            painter_.DrawButton({get, l10n::Get(l10n::StringId::Get).c_str(), {}, fluent::ButtonKind::Standard, state});
         }
         divider_below(r);
     }

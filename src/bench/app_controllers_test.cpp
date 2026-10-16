@@ -1136,6 +1136,7 @@ bool TestPulseOnlyVisibility() {
     using namespace pulse::app;
     ContextMenuPrefs prefs;
     prefs.persist = false;
+    prefs.share = false;
     const std::wstring tool = pulse::ipc::HandlerCatalogKey(L"{11111111-2222-3333-4444-555555555555}");
     const std::wstring share = pulse::ipc::CatalogKey(L"Share", false);
     const std::wstring unseen = pulse::ipc::CatalogKey(L"Unseen verb", false);
@@ -1532,6 +1533,9 @@ int wmain(int argc, wchar_t** argv) {
         pulse::app::ContextMenuPrefs context;
         context.persist = false;
         context.ResetToDefaults();
+        // Start from both groups switched off (they default on).
+        context.SetGroupEnabled(pulse::ipc::CtxMenuGroup::Share, false);
+        context.SetGroupEnabled(pulse::ipc::CtxMenuGroup::System, false);
         const auto category = pulse::ipc::CtxMenuCategory::Share;
         const std::wstring send_key = pulse::ipc::CatalogKey(L"Send to", true);
         const std::wstring other_key = pulse::ipc::CatalogKey(L"Other sharing action", false);

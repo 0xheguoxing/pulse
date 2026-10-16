@@ -7,6 +7,7 @@
 
 #ifdef PULSE_WITH_SELFTEST
 namespace pulse { bool TestSettingsFilter(const std::wstring&,l10n::StringId); }
+int RunShortcutFlowTest(pulse::AppState& s, const wchar_t* output);
 using namespace pulse;
 int RunSettingsWidthBorderTest(AppState& s, const wchar_t* output) {
     using H = ui::HitTestResult;
@@ -603,6 +604,8 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
         return RunSettingsDropdownTest(s, output);
     if (GetEnvironmentVariableW(L"PULSE_TEST_SETTINGS_WIDTH_BORDER", nullptr, 0))
         return RunSettingsWidthBorderTest(s, output);
+    if (GetEnvironmentVariableW(L"PULSE_TEST_SHORTCUTS", nullptr, 0))
+        return RunShortcutFlowTest(s, output);
     using H=ui::HitTestResult;using I=l10n::StringId;
     std::ofstream log{std::filesystem::path(output)};int failures=0;
     auto check=[&](bool ok,const char* label){log<<(ok ? "[PASS] " : "[FAIL] ")<<label<<'\n';if(!ok)++failures;};
@@ -692,15 +695,17 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
                     l10n::SetLanguage(L"zh-CN");
                 }
                 if(page==2) {
-                    // No pivot: the 系统右键菜单 layer card and the hint below the
-                    // Pulse card both open page 6; the Pulse card is the page itself.
+                    // No pivot: the 系统右键菜单 layer card and the hint row in the
+                    // left card both open page 6; the Pulse card is the page itself.
                     auto layer=hit(layout.ctx_layer[1]),hint=hit(layout.context_system_hint),own=hit(layout.ctx_layer[0]);
                     check(layer.region==H::SettingsCtxPivot && layer.index==6 &&
                           hint.region==H::SettingsNav && hint.index==6 &&
                           own.region!=H::SettingsCtxPivot && own.region!=H::SettingsNav &&
                           layout.ctx_layer[0].top>=layout.ctx_intro.bottom && layout.pulse_card.top>=layout.ctx_layer[0].bottom &&
-                          layout.context_system_hint.top>=layout.pulse_card.bottom,
-                          "context page: layer cards above the Pulse card, hint below it, both open the system page");
+                          layout.context_system_hint.top>=layout.pulse_tab[2].bottom &&
+                          layout.context_system_hint.bottom<=layout.pulse_tabs.bottom &&
+                          layout.pulse_tabs.right<=layout.pulse_card.left && layout.pulse_tabs.top==layout.pulse_card.top,
+                          "context page: layer cards above the columns, hint in the left card, both open the system page");
                     bool hidden=true;for(const auto& r:layout.context_rows) hidden &= r.bottom==0;
                     check(hidden,"collapsed context entries do not receive clicks");
                 }
@@ -831,6 +836,14 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
     toggle.index=1;HandleSettingsControl(s,toggle);vm=BuildVm(s,false);
     const float offset=s.renderer.SettingsDestinationOffset(vm,static_cast<int>(I::IndexLocation),window.right,window.bottom);
     check(offset>0 && (s.settingsExpanded&2u),"search destination locates expanded index storage section");
+    // Pulse 右键菜单 in the 系统右键菜单 column style: three columns when wide,
+    // no preview column below 960 dip.
+    for(int w:{1400,900}) {
+        SetWindowPos(s.hwnd,nullptr,0,0,static_cast<int>(w*s.scale),static_cast<int>(900*s.scale),SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+        OpenSettingsTab(s,2);s.settings.SetScroll(0,0);Render(s);
+        const auto png=std::filesystem::path(output).parent_path()/(L"settings-context-"+std::to_wstring(w)+L".png");
+        check(s.compositor.SaveSnapshot(png.c_str()),"context menu page screenshot captured");
+    }
     log<<"failures="<<failures<<'\n';return failures ? 1 : 0;
 }
 #endif

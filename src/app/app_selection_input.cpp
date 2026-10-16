@@ -16,10 +16,12 @@ bool HandleListCharacter(AppState& s, wchar_t ch) {
         s.listTypeAheadFolder = tab->current_path;
     }
     const auto vm = BuildVm(s, false);
+    // Details tree rows index past the snapshot (expanded children).
+    const std::vector<fs::DirEntry>& rows = tab->TreeEntries() ? *tab->TreeEntries() : *tab->snapshot;
     const int current = vm.pane.ViewIndex(tab->selected_index);
     const int next = s.listTypeAhead.Find(ch, GetTickCount64(), current,
         static_cast<int>(vm.pane.EntryCount()), [&](int view) -> const std::wstring& {
-            return (*tab->snapshot)[vm.pane.SourceIndex(view)].name;
+            return rows[static_cast<size_t>(vm.pane.SourceIndex(view))].name;
         });
     if (next >= 0) {
         CancelRenameClick(s);

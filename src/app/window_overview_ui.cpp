@@ -210,7 +210,7 @@ void Hover(AppState& s, float x, float y) {
 
 bool Down(int vk) { return (GetKeyState(vk) & 0x8000) != 0; }
 
-bool IsToggleKey(WPARAM vk) { return vk == 'O' && Down(VK_CONTROL) && Down(VK_SHIFT) && !Down(VK_MENU); }
+bool IsToggleKey(WPARAM vk) { return IsWindowOverviewKey(vk); }
 
 void Open(AppState& s) {
     s.overview = {};
@@ -220,6 +220,10 @@ void Open(AppState& s) {
 }
 
 }  // namespace
+
+bool IsWindowOverviewKey(WPARAM vk) {
+    return vk == 'O' && Down(VK_CONTROL) && Down(VK_SHIFT) && !Down(VK_MENU);
+}
 
 void ToggleWindowOverview(AppState& s) {
     if (s.overview.open)

@@ -10,6 +10,7 @@
 #include "../common/preview_packs.h"
 #include "../common/runtime_log.h"
 #include "system_ctx_model.h"
+#include "shortcut_settings.h"
 #include "pack_catalog.h"
 #include "../ui/quick_preview_command.h"
 
@@ -40,26 +41,26 @@ std::wstring IntegrationFailureText(const ShellIntegrationFailure& failure) {
     const std::wstring code = std::to_wstring(failure.status);
     switch (failure.kind) {
     case K::AccessDenied:
-        return l10n::Pick(L"系统拒绝写入，可能被安全软件拦截", L"the write was denied, possibly by security software");
+        return l10n::Get(l10n::StringId::TheWriteWasDeniedPossiblyBySecuritySoftware).c_str();
     case K::Reverted:
-        return l10n::Pick(L"写入后被改回，可能被安全软件拦截", L"it was undone right after writing, possibly by security software");
+        return l10n::Get(l10n::StringId::ItWasUndoneRightAfterWritingPossiblyBySecuritySoftware).c_str();
     case K::WriteError:
-        return std::wstring(l10n::Pick(L"写入注册表失败，错误 ", L"registry write failed, error ")) + code;
+        return std::wstring(l10n::Get(l10n::StringId::RegistryWriteFailedError).c_str()) + code;
     case K::ReadError:
-        return std::wstring(l10n::Pick(L"读取注册表失败，错误 ", L"registry read failed, error ")) + code;
+        return std::wstring(l10n::Get(l10n::StringId::RegistryReadFailedError).c_str()) + code;
     case K::LegacyResidue:
-        return l10n::Pick(L"发现旧版本留下的关联，点「重试」会先清理", L"old associations from an earlier version were found; Try again cleans them first");
+        return l10n::Get(l10n::StringId::OldAssociationsFromAnEarlierVersionWereFoundTryAgainCleansTh).c_str();
     case K::BadBackup:
-        return l10n::Pick(L"原设置的备份已损坏，为免丢失原设置已停止", L"the backup of the original setting is damaged, so nothing was changed");
+        return l10n::Get(l10n::StringId::TheBackupOfTheOriginalSettingIsDamagedSoNothingWasChanged).c_str();
     case K::PendingUpgrade:
-        return l10n::Pick(L"上次升级的关联迁移没有完成", L"the association update from the last upgrade did not finish");
+        return l10n::Get(l10n::StringId::TheAssociationUpdateFromTheLastUpgradeDidNotFinish).c_str();
     case K::ChangedByOther:
-        return l10n::Pick(L"已被其他程序修改，为免覆盖已停止", L"another program changed it, so it was not overwritten");
+        return l10n::Get(l10n::StringId::AnotherProgramChangedItSoItWasNotOverwritten).c_str();
     case K::None:
-        return l10n::Pick(L"写入后读取结果不一致", L"the setting did not read back as written");
+        return l10n::Get(l10n::StringId::TheSettingDidNotReadBackAsWritten).c_str();
     case K::Unknown: break;
     }
-    return l10n::Pick(L"原因未知", L"unknown reason");
+    return l10n::Get(l10n::StringId::UnknownReason).c_str();
 }
 
 std::wstring IntegrationLogPath() {
@@ -111,6 +112,11 @@ SystemCtxModel& SettingsController::SystemCtx() {
     return *sysctx_;
 }
 
+ShortcutSettings& SettingsController::Shortcuts() {
+    if (!shortcuts_) shortcuts_ = std::make_shared<ShortcutSettings>();
+    return *shortcuts_;
+}
+
 int SettingsController::PageFromName(std::wstring_view name) noexcept {
     if (name == L"index") return 1;
     if (name == L"context") return 2;
@@ -118,6 +124,7 @@ int SettingsController::PageFromName(std::wstring_view name) noexcept {
     if (name == L"duplicates") return 4;
     if (name == L"packs") return 5;
     if (name == L"system-menu") return 6;
+    if (name == L"shortcuts") return 7;
     return 0;
 }
 
@@ -128,12 +135,13 @@ const wchar_t* SettingsController::PageName(int page) noexcept {
     if (page == 4) return L"duplicates";
     if (page == 5) return L"packs";
     if (page == 6) return L"system-menu";
+    if (page == 7) return L"shortcuts";
     return L"general";
 }
 
 void SettingsController::SelectPage(int page) noexcept {
     CancelGlobalSearchHotkeyCapture();
-    page_ = std::clamp(page, 0, 6);
+    page_ = std::clamp(page, 0, 7);
     scroll_ = 0.0f;
     packs_checked_ = 0;  // re-read the packs when their page opens
 }
@@ -316,8 +324,7 @@ bool SettingsController::InstallPack(packs::PackId id, HWND notify, bool automat
     notice.clear();
     if (!release.file_count) {
         // No release is advertised until its downloadable files are published.
-        notice = l10n::Pick(L"此预览增强包尚未发布下载。",
-                            L"This preview pack has not been published for download.");
+        notice = l10n::Get(l10n::StringId::ThisPreviewPackHasNotBeenPublishedForDownload).c_str();
         return false;
     }
     // Replacing an installed pack is an update: TakePackResult keeps the switches.
@@ -378,8 +385,7 @@ bool SettingsController::TakePackResult(packs::PackId id) {
             settings.use_custom_ffmpeg = false;
             settings.enabled[0] = true;
             if (!packs::SavePackSettings(settings)) {
-                notice = l10n::Pick(L"增强包已安装，但未能保存来源设置。请关闭“使用已有 FFmpeg”以切换到增强包。",
-                    L"Pack installed, but the source setting could not be saved. Turn off Use existing FFmpeg to select the pack.");
+                notice = l10n::Get(l10n::StringId::PackInstalledButTheSourceSettingCouldNotBeSavedTurnOffUseExi).c_str();
             }
             RefreshPacks();
         }
@@ -389,26 +395,21 @@ bool SettingsController::TakePackResult(packs::PackId id) {
         // Only the card's 取消 ends a job early: for an automatic update that
         // is the answer for this run.
         if (automatic) auto_declined_[index] = true;
-        notice = l10n::Pick(L"已取消下载。", L"Download cancelled.");
+        notice = l10n::Get(l10n::StringId::DownloadCancelled).c_str();
         break;
     default:
         // A background update fails quietly: 更新到 stays, the next check retries.
         if (automatic) break;
         if (error == ERROR_INVALID_DATA) {
-            notice = l10n::Pick(L"下载的文件校验失败，已丢弃。请稍后重试。",
-                                L"The download did not pass verification and was discarded. Try again later.");
+            notice = l10n::Get(l10n::StringId::TheDownloadDidNotPassVerificationAndWasDiscardedTryAgainLate).c_str();
         } else if (error == ERROR_SHARING_VIOLATION) {
             notice = id != packs::PackId::Media
-                ? l10n::Pick(L"旧版本的文件正在使用，请稍后再试一次。",
-                             L"Files of the old version are in use. Try again in a moment.")
-                : l10n::Pick(L"旧版本的文件正在使用。关闭正在播放的视频后再试一次。",
-                             L"Files of the old version are in use. Close playing videos and try again.");
+                ? l10n::Get(l10n::StringId::FilesOfTheOldVersionAreInUseTryAgainInAMoment).c_str()
+                : l10n::Get(l10n::StringId::FilesOfTheOldVersionAreInUseClosePlayingVideosAndTryAgain).c_str();
         } else if (error == ERROR_NOT_SUPPORTED) {
-            notice = l10n::Pick(L"这台电脑缺少解压所需的系统组件，无法安装。",
-                                L"This PC lacks the Windows component needed to unpack the download.");
+            notice = l10n::Get(l10n::StringId::ThisPCLacksTheWindowsComponentNeededToUnpackTheDownload).c_str();
         } else {
-            notice = l10n::Pick(L"下载失败，请检查网络后重试。",
-                                L"The download failed. Check the connection and try again.");
+            notice = l10n::Get(l10n::StringId::TheDownloadFailedCheckTheConnectionAndTryAgain).c_str();
         }
         break;
     }
@@ -426,10 +427,8 @@ bool SettingsController::RemovePack(packs::PackId id) {
     std::wstring message;
     if (!removed) {
         message = id != packs::PackId::Media
-            ? l10n::Pick(L"有文件正在使用，未能全部删除。请稍后再试一次。",
-                         L"Some files are in use and were not removed. Try again in a moment.")
-            : l10n::Pick(L"有文件正在使用，未能全部删除。关闭正在播放的视频后再试一次。",
-                         L"Some files are in use and were not removed. Close playing videos and try again.");
+            ? l10n::Get(l10n::StringId::SomeFilesAreInUseAndWereNotRemovedTryAgainInAMoment).c_str()
+            : l10n::Get(l10n::StringId::SomeFilesAreInUseAndWereNotRemovedClosePlayingVideosAndTryAg).c_str();
     }
     NoticeFor(id) = std::move(message);
     RefreshPacks();
@@ -492,15 +491,14 @@ bool SettingsController::ToggleCustomFfmpeg() {
         if (s.use_custom_ffmpeg && !packs::IsRegularFile(s.custom_ffmpeg) && !detected.empty())
             s.custom_ffmpeg = detected;
     });
-    packs_.notice = saved ? std::wstring{} : l10n::Pick(L"无法保存 FFmpeg 来源设置，请重试。",
-        L"Could not save the FFmpeg source setting. Try again.");
+    packs_.notice = saved ? std::wstring{} : l10n::Get(l10n::StringId::CouldNotSaveTheFFmpegSourceSettingTryAgain).c_str();
     RefreshPacks();
     return saved;
 }
 
 bool SettingsController::SetCustomFfmpeg(const std::wstring& path) {
     if (!IsFfmpegExe(path)) {
-        packs_.notice = l10n::Pick(L"请选择名为 ffmpeg.exe 的程序。", L"Choose the program named ffmpeg.exe.");
+        packs_.notice = l10n::Get(l10n::StringId::ChooseTheProgramNamedFfmpegExe).c_str();
         return false;
     }
     const bool saved = UpdatePackSettings([&](packs::PackSettings& s) {
@@ -508,8 +506,7 @@ bool SettingsController::SetCustomFfmpeg(const std::wstring& path) {
         s.use_custom_ffmpeg = true;
         s.enabled[0] = true;
     });
-    packs_.notice = saved ? std::wstring{} : l10n::Pick(L"无法保存 FFmpeg 来源设置，请重试。",
-        L"Could not save the FFmpeg source setting. Try again.");
+    packs_.notice = saved ? std::wstring{} : l10n::Get(l10n::StringId::CouldNotSaveTheFFmpegSourceSettingTryAgain).c_str();
     RefreshPacks();
     return saved;
 }
@@ -742,10 +739,8 @@ void SettingsController::Apply(SettingsEffect effect) const {
 void SettingsController::SaveAndApply(SettingsEffect effect) const {
     if (!prefs_->Save() && ui_.show_error)
         ui_.show_error(l10n::HantText(prefs_->load_failed ?
-            l10n::Pick(L"原设置未能读取，已阻止覆盖。请关闭后重试打开 Pulse。",
-                L"The original settings could not be read. Saving is blocked to protect them. Restart Pulse to retry.") :
-            l10n::Pick(L"设置未能保存，重启后可能恢复原值。",
-                L"Settings could not be saved and may revert after a restart.")));
+            l10n::Get(l10n::StringId::TheOriginalSettingsCouldNotBeReadSavingIsBlockedToProtectThe).c_str() :
+            l10n::Get(l10n::StringId::SettingsCouldNotBeSavedAndMayRevertAfterARestart).c_str()));
     Apply(effect);
 }
 
@@ -941,8 +936,7 @@ void SettingsController::Wallpaper(int action) {
     if (action == 0 && ui_.pick_image && ui_.pick_image(path)) {
         if (!path.empty()) {
             if (prefs_->StoreBackgroundImage(path)) Apply(SettingsEffect::WindowMaterial);
-            else if (ui_.show_error) ui_.show_error(l10n::HantText(l10n::Pick(
-                L"新壁纸未能保存，已保留原壁纸。", L"The new wallpaper could not be saved. The previous wallpaper was kept.")));
+            else if (ui_.show_error) ui_.show_error(l10n::HantText(l10n::Get(l10n::StringId::TheNewWallpaperCouldNotBeSavedThePreviousWallpaperWasKept).c_str()));
         }
     } else if (action == 1 && !prefs_->background_image.empty()) {
         prefs_->ClearBackgroundImage();
@@ -1030,13 +1024,11 @@ std::wstring SettingsController::IntegrationSummary() const {
     if (IntegrationCanRetry()) {
         std::wstring message;
         if (!integration_error_.empty())
-            message = std::wstring(l10n::Pick(L"没能设置：", L"Could not apply: ")) + integration_error_ +
-                l10n::Pick(L"。详情见 %LOCALAPPDATA%\\Pulse\\logs\\integration.log。",
-                           L". Details: %LOCALAPPDATA%\\Pulse\\logs\\integration.log.");
+            message = std::wstring(l10n::Get(l10n::StringId::CouldNotApply).c_str()) + integration_error_ +
+                l10n::Get(l10n::StringId::DetailsLOCALAPPDATAPulseLogsIntegrationLog).c_str();
         if (integration_save_failed_) {
             if (!message.empty()) message += L" ";
-            message += l10n::Pick(L"你的选择没能保存，重启后可能变回原来的设置。",
-                L"Your choices could not be saved and may revert after a restart.");
+            message += l10n::Get(l10n::StringId::YourChoicesCouldNotBeSavedAndMayRevertAfterARestart).c_str();
         }
         return message;
     }
@@ -1076,28 +1068,28 @@ void SettingsController::IntegrationAction(int index) {
     if (p.integration_enabled || index == 0 || index == 5 || index == 6) {
         integration_error_.clear();
         auto failed = [&](const wchar_t* label, const wchar_t* item, bool on, bool explained) {
-            if (!integration_error_.empty()) integration_error_ += l10n::Pick(L"；", L"; ");
+            if (!integration_error_.empty()) integration_error_ += l10n::Get(l10n::StringId::Text2855).c_str();
             integration_error_ += label;
             if (!explained) return;
             const auto failure = LastShellIntegrationFailure();
-            integration_error_ += l10n::Pick(L"（", L" (") + IntegrationFailureText(failure) + l10n::Pick(L"）", L")");
+            integration_error_ += l10n::Get(l10n::StringId::Text2856).c_str() + IntegrationFailureText(failure) + l10n::Get(l10n::StringId::Text2857).c_str();
             LogIntegrationFailure(item, on, failure);
         };
         if ((index == 5 || index == 6) && HasLegacyShellIntegrationResidue() &&
             !RepairLegacyShellIntegrationResidue())
-            failed(l10n::Pick(L"旧版资源管理器关联", L"Legacy Explorer associations"), L"legacy", false, false);
+            failed(l10n::Get(l10n::StringId::LegacyExplorerAssociations).c_str(), L"legacy", false, false);
         const bool folders_on = p.integration_enabled && p.integration_folders;
         if (!p.ApplyFolderOpen(folders_on))
-            failed(l10n::Pick(L"文件夹和磁盘", L"Folders and drives"), L"folders", folders_on, true);
+            failed(l10n::Get(l10n::StringId::FoldersAndDrives).c_str(), L"folders", folders_on, true);
         const bool win_e_on = p.integration_enabled && p.integration_win_e;
         if (!p.ApplyWinE(win_e_on))
             failed(L"Win + E", L"win-e", win_e_on, true);
         const bool this_pc_on = p.integration_enabled && p.integration_this_pc;
         if (!ApplyThisPcOpen(p, this_pc_on))
-            failed(l10n::Pick(L"桌面上的「此电脑」", L"This PC on the desktop"), L"this-pc", this_pc_on, true);
+            failed(l10n::Get(l10n::StringId::SettingsThisPc).c_str(), L"this-pc", this_pc_on, true);
         const bool recycle_bin_on = p.integration_enabled && p.integration_recycle_bin;
         if (!ApplyRecycleBinOpen(p, recycle_bin_on))
-            failed(l10n::Pick(L"桌面上的「回收站」", L"Recycle Bin on the desktop"), L"recycle-bin", recycle_bin_on, true);
+            failed(l10n::Get(l10n::StringId::SettingsRecycleBin).c_str(), L"recycle-bin", recycle_bin_on, true);
     }
     integration_save_failed_ = !p.Save();
     if (ui_.integration_changed) ui_.integration_changed();

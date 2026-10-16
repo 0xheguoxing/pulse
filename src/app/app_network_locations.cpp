@@ -86,7 +86,7 @@ void FillNetworkLocationsView(AppState& state, app::Tab& tab) {
     tab.banner_title.clear();
     tab.banner_message.clear();
     if (state.networkLocations && state.networkLocations->error) {
-        tab.banner_title = l10n::Pick(L"系统网络位置读取失败", L"Could not read system network locations");
+        tab.banner_title = l10n::Get(l10n::StringId::CouldNotReadSystemNetworkLocations).c_str();
         wchar_t code[64]{};
         swprintf_s(code, l10n::Get(l10n::StringId::ErrorCodeFormat).c_str(), state.networkLocations->error);
         tab.banner_message = code;
@@ -116,7 +116,7 @@ void ApplyNetworkLocations(AppState& state) {
         entry.label = item.name;
         entry.path = item.path;
         entry.detail = item.shell_link
-            ? l10n::Pick(L"由系统打开", L"Opens in Windows") : item.path;
+            ? l10n::Get(l10n::StringId::OpensInWindows).c_str() : item.path;
         state.sidebar.system_networks.push_back(std::move(entry));
     }
     ForEachPane(state, [&](app::Pane& pane) {

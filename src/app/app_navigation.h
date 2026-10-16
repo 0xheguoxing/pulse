@@ -119,6 +119,8 @@ void OpenTabAt(AppState& s, const std::wstring& path);
 void NewTab(AppState& s, const std::wstring& path);
 void NewBackgroundTab(AppState& s, const std::wstring& path);
 void OpenSettingsTab(AppState& s, int page);
+// The settings button again: back to the tab settings was opened from.
+void CloseSettings(AppState& s);
 void CloseLayoutTab(AppState& s, size_t idx);
 void CloseActiveTab(AppState& s);
 void SwitchTab(AppState& s, size_t idx);

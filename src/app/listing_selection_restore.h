@@ -92,7 +92,8 @@ inline void RestoreListingSelection(Tab& tab, const ListingSelectionRestore& res
             std::unordered_map<std::wstring_view, int> surviving;
             surviving.reserve(visible.size());
             for (int index : visible) {
-                if (tab.EntryVisible(index)) surviving.emplace((*tab.snapshot)[static_cast<size_t>(index)].name, index);
+                if (tab.EntryVisible(index) && static_cast<size_t>(index) < tab.snapshot->size())
+                    surviving.emplace((*tab.snapshot)[static_cast<size_t>(index)].name, index);
             }
             const auto select = [&](int old_index) {
                 const auto found = surviving.find((*restore.previous_snapshot)[static_cast<size_t>(old_index)].name);

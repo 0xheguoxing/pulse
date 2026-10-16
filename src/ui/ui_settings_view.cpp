@@ -51,12 +51,14 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
         // 右键菜单 (2): the list glyph of its Pulse 右键菜单 card, not the gear.
         kIconHome, kIconSearch, L"\xE8FD", kIconInfo, kIconCopy, L"\xE890",  // Quick Look
         L"\xE71D",  // 系统右键菜单
+        L"\xE765",  // 快捷键 (keyboard)
     };
     static_assert(std::size(kNavIcon) == kSettingsNavCount);
     // Page 5 (快速预览) has no string-table entry; see pack_text. Page 2 is
     // the single 右键菜单 entry; page 6 shares its row (layer cards on both pages).
     auto nav_label = [](int page) -> std::wstring {
         if (page == 2 || page == 6) return std::wstring(sysctx_text::PageTitle());
+        if (page == 7) return std::wstring(shortcuts_text::Title());
         return page == 5 ? std::wstring(pack_text::Title()) : pulse::l10n::Get(kNav[page]);
     };
     const int nav_page = vm.settings_page == 6 ? 2 : vm.settings_page;
@@ -94,6 +96,19 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
         if (!compact_nav) DrawTextRect(dc, compositor_->TextFormat(), brText_.get(), nav_label(i),
                      rc.left + 42.0f * scale_, rc.top, rc.right - rc.left - 48.0f * scale_,
                      rc.bottom - rc.top);
+        // 快捷键: a red count of the keys that may not work (taken / IME).
+        if (i == 7 && vm.settings_shortcut_issues > 0) {
+            const std::wstring count = std::to_wstring(vm.settings_shortcut_issues);
+            const float bw = (std::max)(18.0f * scale_, painter_.MeasureBadgeWidth(count) - 10.0f * scale_);
+            const float mid = (rc.top + rc.bottom) * 0.5f;
+            const D2D1_RECT_F badge = compact_nav
+                ? D2D1::RectF(rc.left + 26.0f * scale_, rc.top + 4.0f * scale_, rc.left + 26.0f * scale_ + bw, rc.top + 20.0f * scale_)
+                : D2D1::RectF(rc.right - 10.0f * scale_ - bw, mid - 9.0f * scale_, rc.right - 10.0f * scale_, mid + 9.0f * scale_);
+            painter_.FillRoundedRect(badge, (badge.bottom - badge.top) * 0.5f,
+                                     vm.dark ? D2D1::ColorF(0xE6716B) : D2D1::ColorF(0xC2413A));
+            painter_.DrawText(count, badge, compositor_->SmallFormat(), D2D1::ColorF(0xFFFFFF),
+                              fluent::HorizontalAlignment::Center);
+        }
     }
 
     dc->PushAxisAlignedClip(lay.content, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -110,7 +125,8 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
                                 : pulse::l10n::StringId::SettingsAboutDiagnostics;
     MakeBrush(dc, theme.text, brText_);
     const std::wstring title = vm.settings_page == 2 || vm.settings_page == 6 ? std::wstring(sysctx_text::PageTitle())
-        : vm.settings_page == 5 ? std::wstring(pack_text::Title()) : l10n::Get(page_title_id);
+        : vm.settings_page == 5 ? std::wstring(pack_text::Title())
+        : vm.settings_page == 7 ? std::wstring(shortcuts_text::Title()) : l10n::Get(page_title_id);
     ComPtr<IDWriteTextLayout> title_layout;
     compositor_->DwriteFactory()->CreateTextLayout(title.c_str(), static_cast<UINT32>(title.size()),
         compositor_->HeaderFormat(), lay.content.right-lay.content.left-pad*2, 40*scale_, &title_layout);
@@ -837,6 +853,8 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
         DrawSettingsPacks(vm, rect, theme);
     } else if (vm.settings_page == 6) {
         DrawSettingsSysCtx(vm, rect, theme);
+    } else if (vm.settings_page == 7) {
+        DrawSettingsShortcuts(vm, rect, theme);
     } else if (vm.settings_page == 4) {
         auto draw_card = [&](const D2D1_RECT_F& card) {
             if (card.right <= card.left || card.bottom <= card.top) return;

@@ -144,8 +144,7 @@ void ApplyDueBatches(AppState& s, ULONGLONG now) {
         s.notification_toast.Show(s.hwnd, l10n::Get(l10n::StringId::ShellTagMenu), message, false);
     }
     if (failed) s.notification_toast.Show(s.hwnd, l10n::Get(l10n::StringId::ShellTagMenu),
-        l10n::HantText(l10n::Pick(L"未能处理完整选择，标签未完成更新。请检查后重试。",
-            L"The complete selection could not be processed. Check the tags before trying again.")), false);
+        l10n::HantText(l10n::Get(l10n::StringId::TheCompleteSelectionCouldNotBeProcessedCheckTheTagsBeforeTry).c_str()), false);
     if (st.headless) st.headless_exit_at = now + kHeadlessExitDelayMs;
 }
 

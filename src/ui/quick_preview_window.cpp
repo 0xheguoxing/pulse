@@ -491,17 +491,17 @@ void QuickPreviewWindow::DrawMarkdownToggle(ID2D1DeviceContext* dc,
                                             ID2D1SolidColorBrush* text_brush) {
     IDWriteTextFormat* format = compositor_.SmallFormat();
     if (!dc || !text_brush || !format) return;
-    const wchar_t* labels[2] = {pulse::l10n::Pick(L"\x6E32\x67D3", L"Rendered"), pulse::l10n::Pick(L"\x6E90\x7801", L"Source")};
+    const wchar_t* labels[2] = {pulse::l10n::Get(pulse::l10n::StringId::Rendered).c_str(), pulse::l10n::Get(pulse::l10n::StringId::Source).c_str()};
     if (toggle_kind_ == ToggleKind::TableSource || toggle_kind_ == ToggleKind::TableHandler)
-        labels[0] = pulse::l10n::Pick(L"\x8868\x683C", L"Table");
+        labels[0] = pulse::l10n::Get(pulse::l10n::StringId::Table).c_str();
     else if (toggle_kind_ == ToggleKind::TreeSource)
-        labels[0] = pulse::l10n::Pick(L"\x6811", L"Tree");
+        labels[0] = pulse::l10n::Get(pulse::l10n::StringId::Tree).c_str();
     else if (toggle_kind_ == ToggleKind::NotebookSource)
-        labels[0] = pulse::l10n::Pick(L"\x7B14\x8BB0\x672C", L"Notebook");
+        labels[0] = pulse::l10n::Get(pulse::l10n::StringId::Notebook).c_str();
     else if (toggle_kind_ == ToggleKind::DocHandler)
-        labels[0] = pulse::l10n::Pick(L"\x6B63\x6587", L"Document");
+        labels[0] = pulse::l10n::Get(pulse::l10n::StringId::Document).c_str();
     if (toggle_kind_ == ToggleKind::TableHandler || toggle_kind_ == ToggleKind::DocHandler)
-        labels[1] = pulse::l10n::Pick(L"\x7CFB\x7EDF\x9884\x89C8", L"System");
+        labels[1] = pulse::l10n::Get(pulse::l10n::StringId::System).c_str();
     D2D1_COLOR_F color = text_brush->GetColor();
     ComPtr<ID2D1SolidColorBrush> track, thumb, dim;
     color.a = dark_ ? 0.08f : 0.06f;
@@ -1242,7 +1242,7 @@ void QuickPreviewWindow::ShowContextMenu(POINT screen) {
     };
     if (archive_entry) {
         add(kArchiveCmdCopyPath, StringId::CopyPath, kLinkGlyph, L"Ctrl+Shift+C");
-        items.back().text = pulse::l10n::Pick(L"复制包内路径", L"Copy path inside archive");
+        items.back().text = pulse::l10n::Get(pulse::l10n::StringId::CopyPathInsideArchive).c_str();
     }
     if (text_kind) {
         // Text verbs keep their ids and order; file verbs follow below them.
@@ -1255,8 +1255,8 @@ void QuickPreviewWindow::ShowContextMenu(POINT screen) {
         if (line_toggle) {
             FluentMenuItem item;
             item.command = kTextCmdLineNumbers;
-            item.text = line_numbers_ ? (pulse::l10n::Pick(L"\x9690\x85CF\x884C\x53F7", L"Hide line numbers"))
-                                      : (pulse::l10n::Pick(L"\x663E\x793A\x884C\x53F7", L"Show line numbers"));
+            item.text = line_numbers_ ? (pulse::l10n::Get(pulse::l10n::StringId::HideLineNumbers).c_str())
+                                      : (pulse::l10n::Get(pulse::l10n::StringId::ShowLineNumbers).c_str());
             item.glyph = L"\xE8FD";
             item.shortcut = L"";
             item.separator_after = file_verbs;
@@ -1274,7 +1274,7 @@ void QuickPreviewWindow::ShowContextMenu(POINT screen) {
         add(file_cmd(QuickPreviewAction::ToggleStar),
             target.starred ? StringId::Unstar : StringId::Star,
             target.starred ? kStarFilledGlyph : kStarGlyph, L"", true, true);
-        if (child) items.back().text = pulse::l10n::Pick(L"切换星标", L"Toggle star");
+        if (child) items.back().text = pulse::l10n::Get(pulse::l10n::StringId::ToggleStar).c_str();
         add(file_cmd(QuickPreviewAction::Rename), StringId::Rename, kRenameGlyph, L"F2", writable);
         add(file_cmd(QuickPreviewAction::Delete), StringId::Delete, kDeleteGlyph, L"Delete",
             writable, true);
@@ -1439,10 +1439,10 @@ void QuickPreviewWindow::DrawTextStatus(ID2D1DeviceContext* dc, const D2D1_RECT_
     if (!dc || !format || !compositor_.DwriteFactory()) return;
     std::vector<std::wstring> parts;
     if (hex) {
-        parts.push_back(pulse::l10n::Pick(L"\x5341\x516D\x8FDB\x5236", L"Hex"));
+        parts.push_back(pulse::l10n::Get(pulse::l10n::StringId::Hex).c_str());
     } else {
         parts.push_back(!syntax_language_.empty() ? syntax_language_
-                                                  : std::wstring(pulse::l10n::Pick(L"\x7EAF\x6587\x672C", L"Plain text")));
+                                                  : std::wstring(pulse::l10n::Get(pulse::l10n::StringId::PlainText).c_str()));
         std::wstring name;
         switch (static_cast<ipc::PreviewTextEncoding>(encoding)) {
         case ipc::PreviewTextEncoding::Utf8: name = L"UTF-8"; break;
@@ -1464,9 +1464,9 @@ void QuickPreviewWindow::DrawTextStatus(ID2D1DeviceContext* dc, const D2D1_RECT_
         if (!name.empty()) parts.push_back(std::move(name));
     }
     std::wstring size = hex ? std::wstring() : std::to_wstring(text_line_count_) +
-        (pulse::l10n::Pick(L" \x884C \x00B7 ", L" lines \x00B7 "));
+        (pulse::l10n::Get(pulse::l10n::StringId::Lines).c_str());
     size += pulse::format::ByteSize(bytes_read, true);
-    if (truncated) size += pulse::l10n::Pick(L" \x00B7 \x5DF2\x622A\x65AD", L" \x00B7 truncated");
+    if (truncated) size += pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str();
     parts.push_back(std::move(size));
     DrawStatusPill(dc, content, parts, text_brush);
 }
@@ -1773,8 +1773,7 @@ void QuickPreviewWindow::Render() {
             // The card explains the missing picture.
         } else if (FAILED(video.error))
             status = video.unsupported_audio
-                ? l10n::HantText(l10n::Pick(L"系统无法解码此音频，请用默认应用打开。",
-                                          L"Windows cannot decode this audio. Open it in the default app."))
+                ? l10n::HantText(l10n::Get(l10n::StringId::WindowsCannotDecodeThisAudioOpenItInTheDefaultApp).c_str())
                 : pulse::l10n::Get(pulse::l10n::StringId::PreviewCannotRender);
         else if (!video.ready && !audio)
             status = pulse::l10n::Get(pulse::l10n::StringId::PreviewLoading);
@@ -1964,20 +1963,20 @@ void QuickPreviewWindow::Render() {
                                     ? std::wstring(L"Jupyter")
                                     : L"Jupyter \x00B7 " + markdown_.NotebookKernel());
                 parts.push_back(std::to_wstring(markdown_.NotebookCells()) +
-                                (pulse::l10n::Pick(L" \x4E2A\x5355\x5143\x683C", L" cells")));
+                                (pulse::l10n::Get(pulse::l10n::StringId::Cells).c_str()));
                 std::wstring size = pulse::format::ByteSize(bytes_read, true);
-                if (truncated) size += pulse::l10n::Pick(L" \x00B7 \x5DF2\x622A\x65AD", L" \x00B7 truncated");
+                if (truncated) size += pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str();
                 parts.push_back(std::move(size));
                 DrawStatusPill(dc, content, parts, text_brush.get());
             } else if (markdown_.DocFormat() == L"docx") {
                 // Word 文档  |  约 1,240 字  |  38 KB
                 const bool zh = pulse::l10n::IsChinese();
                 std::vector<std::wstring> parts;
-                parts.push_back(pulse::l10n::Pick(L"Word \x6587\x6863", L"Word document"));
+                parts.push_back(pulse::l10n::Get(pulse::l10n::StringId::WordDocument).c_str());
                 const std::wstring words = GroupedNumber(markdown_.WordCount());
                 parts.push_back(zh ? pulse::l10n::Cn(L"\x7EA6 ") + words + pulse::l10n::Cn(L" \x5B57") : L"about " + words + L" words");
                 std::wstring size = pulse::format::ByteSize(item_.size ? item_.size : bytes_read, true);
-                if (truncated) size += pulse::l10n::Pick(L" \x00B7 \x5DF2\x622A\x65AD", L" \x00B7 truncated");
+                if (truncated) size += pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str();
                 parts.push_back(std::move(size));
                 DrawStatusPill(dc, content, parts, text_brush.get());
             } else if (markdown_.DocFormat() == L"epub") {
@@ -1991,7 +1990,7 @@ void QuickPreviewWindow::Render() {
                 std::wstring who = markdown_.DocAuthor();
                 if (who.size() > 40) who = who.substr(0, 39) + L"\x2026";
                 if (!who.empty()) parts.push_back(std::move(who));
-                if (truncated) parts.push_back(pulse::l10n::Pick(L"\x5DF2\x622A\x65AD", L"truncated"));
+                if (truncated) parts.push_back(pulse::l10n::Get(pulse::l10n::StringId::Truncated_2).c_str());
                 DrawStatusPill(dc, content, parts, text_brush.get());
             }
         } else if (result == PreviewDrawResult::Markdown && markdown_.SetPayload(text, item_.path)) {
@@ -2084,7 +2083,7 @@ void QuickPreviewWindow::Render() {
                 tree_.Draw(dc, compositor_.DwriteFactory(), content, CurrentTheme(), dark_, scale_, marks);
                 auto parts = tree_.StatusParts();
                 std::wstring size = pulse::format::ByteSize(bytes_read, true);
-                if (truncated) size += pulse::l10n::Pick(L" \x00B7 \x5DF2\x622A\x65AD", L" \x00B7 truncated");
+                if (truncated) size += pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str();
                 parts.push_back(std::move(size));
                 DrawStatusPill(dc, content, parts, text_brush.get());
             }

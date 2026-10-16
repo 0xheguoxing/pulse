@@ -4,6 +4,7 @@
 #include "../ui/address_search_layout.h"
 #include "../common/localization.h"
 #include "content_scope_mode.h"
+#include "keymap.h"
 #include <algorithm>
 
 namespace pulse {
@@ -170,7 +171,7 @@ void ShowSearchOptions(AppState& s, bool management) {
         }
         auto advanced = MenuItem(6, I::AdvancedSearch);
         advanced.text += L"…";
-        advanced.shortcut = L"Ctrl+Shift+F";
+        advanced.shortcut = app::ShownShortcut(L"Ctrl+Shift+F");
         items.insert(items.end() - 1, std::move(advanced));
         POINT anchor{};
         if (s.addressSearching) {

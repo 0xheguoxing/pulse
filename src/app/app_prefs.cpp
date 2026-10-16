@@ -120,6 +120,7 @@ void AppPrefs::ResetToDefaults() {
     accent_rgb.clear();
     accent_follow_system = false;
     custom_tag_colors.clear();
+    shortcuts.clear();
     duplicate_scan_scope = 0;
     duplicate_scan_folder.clear();
     duplicate_scan_drive.clear();
@@ -283,6 +284,13 @@ std::wstring AppPrefs::ToJson() const {
         out += hex;
         out += L"\"";
     }
+    out += L"],\n  \"shortcuts\":[";
+    for (size_t i = 0; i < shortcuts.size(); ++i) {
+        std::wstring escaped_line;
+        pulse::json::Escape(shortcuts[i], escaped_line);
+        if (i > 0) out += L",";
+        out += L"\"" + escaped_line + L"\"";
+    }
     out += L"],\n  \"duplicate_scan_scope\":";
     out += std::to_wstring(duplicate_scan_scope);
     out += L",\n  \"duplicate_scan_folder\":\"";
@@ -415,6 +423,9 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     toolbar_last_new = pulse::json::ExtractInt(json, L"toolbar_last_new", 0) == 1 ? 1 : 0;
     const int pins = pulse::json::ExtractInt(json, L"toolbar_pins", 0);
     toolbar_pins = pins > 0 ? static_cast<uint32_t>(pins) & 0x1Fu : 0u;
+    shortcuts.clear();
+    for (auto& line : pulse::json::ExtractStringArray(json, L"shortcuts"))
+        if (!line.empty() && line.size() < 200 && shortcuts.size() < 128) shortcuts.push_back(std::move(line));
     toolbar_apps.clear();
     for (auto& app : pulse::json::ExtractStringArray(json, L"toolbar_apps")) {
         if (app.empty() || toolbar_apps.size() >= 8) continue;   // app::kMaxToolbarApps

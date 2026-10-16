@@ -20,17 +20,14 @@ std::wstring KnownDeleteError(HRESULT hr) {
     case 0x80070005u:  // E_ACCESSDENIED
     case 0x80270021u:  // COPYENGINE_E_ACCESS_DENIED_SRC
     case 0x80270022u:  // COPYENGINE_E_ACCESS_DENIED_DEST
-        return l10n::Pick(L"访问被拒绝。该项目可能受系统保护、权限设置不允许删除，或正被其他程序使用。",
-                          L"Access denied. The item may be protected, its permissions may not allow deletion, or another program may be using it.");
+        return l10n::Get(l10n::StringId::AccessDeniedTheItemMayBeProtectedItsPermissionsMayNotAllowDe).c_str();
     case 0x80070020u:  // ERROR_SHARING_VIOLATION
     case 0x80070021u:  // ERROR_LOCK_VIOLATION
     case 0x80270027u:  // COPYENGINE_E_SHARING_VIOLATION_SRC
     case 0x80270028u:  // COPYENGINE_E_SHARING_VIOLATION_DEST
-        return l10n::Pick(L"该项目正被其他程序使用。关闭相关程序后重试。",
-                          L"The item is in use by another program. Close it and try again.");
+        return l10n::Get(l10n::StringId::TheItemIsInUseByAnotherProgramCloseItAndTryAgain).c_str();
     case static_cast<uint32_t>(COPYENGINE_E_RECYCLE_BIN_NOT_FOUND):
-        return l10n::Pick(L"此位置无法安全地移到回收站，项目未被删除。",
-                          L"This location cannot be safely sent to the Recycle Bin. The item was not deleted.");
+        return l10n::Get(l10n::StringId::ThisLocationCannotBeSafelySentToTheRecycleBinTheItemWasNotDe).c_str();
     default:
         return {};
     }
@@ -39,8 +36,7 @@ std::wstring DeleteError(const ShellTransferResult& result) {
     if (auto known = KnownDeleteError(result.hr); !known.empty()) return known;
     if (!result.error.empty()) return result.error;
     if (result.hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
-        return l10n::Pick(L"未获得管理员权限。可以重试授权，或跳过当前项。",
-                         L"Administrator permission was not granted. Retry or skip this item.");
+        return l10n::Get(l10n::StringId::AdministratorPermissionWasNotGrantedRetryOrSkipThisItem).c_str();
     wchar_t* text = nullptr;
     std::wstring error;
     if (FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
@@ -50,8 +46,8 @@ std::wstring DeleteError(const ShellTransferResult& result) {
     if (!error.empty()) return error;
     wchar_t code[16];
     swprintf_s(code, L"0x%08X", static_cast<unsigned>(result.hr));
-    return std::wstring(l10n::Pick(L"无法删除当前项（错误 ", L"Could not delete this item (error ")) + code +
-           l10n::Pick(L"）。", L").");
+    return std::wstring(l10n::Get(l10n::StringId::CouldNotDeleteThisItemError).c_str()) + code +
+           l10n::Get(l10n::StringId::Text3072).c_str();
 }
 }
 
@@ -99,8 +95,8 @@ void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
                 status.authorization = awaiting ? AuthorizationState::Requesting : AuthorizationState::None;
                 status.authorization_retrying = false;
                 status.summary = awaiting
-                    ? l10n::Pick(L"正在请求管理员授权…", L"Requesting administrator permission…")
-                    : l10n::Pick(L"正在删除…", L"Deleting…");
+                    ? l10n::Get(l10n::StringId::RequestingAdministratorPermission).c_str()
+                    : l10n::Get(l10n::StringId::Deleting).c_str();
             });
         };
         auto progress = [&](const std::wstring& item, float percent) {
@@ -192,14 +188,14 @@ void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
         status.lock_owners = lock_report.owners;
         if (cancelled || FAILED(failure)) {
             status.phase = OpPhase::Failed;
-            status.last_error = cancelled ? l10n::Pick(L"已取消", L"Canceled") : error;
+            status.last_error = cancelled ? l10n::Get(l10n::StringId::Canceled).c_str() : error;
             status.summary = status.last_error;
         } else {
             status.phase = OpPhase::Completed;
             status.percent = 100;
             status.last_error.clear();
-            status.summary = skipped ? l10n::Pick(L"删除结束，已跳过 ", L"Deletion finished; skipped ") + std::to_wstring(skipped)
-                                     : l10n::Pick(L"删除完成", L"Deletion completed");
+            status.summary = skipped ? l10n::Get(l10n::StringId::DeletionFinishedSkipped).c_str() + std::to_wstring(skipped)
+                                     : l10n::Get(l10n::StringId::DeletionCompleted).c_str();
         }
     });
     transfer_active_.store(false);

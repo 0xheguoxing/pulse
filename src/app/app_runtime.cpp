@@ -1,6 +1,8 @@
 // app_runtime.cpp — extracted from app_main.cpp.
 #include "app_window_title.h"
 #include "app_internal.h"
+#include "shortcut_page.h"
+#include "keymap.h"
 #include <memory>
 #include <thread>
 #include "system_ctx_model.h"
@@ -8,6 +10,7 @@
 #include "tab_spring.h"
 #include "vertical_tabs.h"
 #include "app_column_view.h"
+#include "app_details_tree.h"
 #include "folder_sizes_ui.h"
 #include "update_status.h"
 #include "about_info.h"
@@ -244,6 +247,18 @@ void SyncVisibleWatches(AppState& s) {
 }
 
 void BindCurrentLayout(AppState& s) {
+    // Settings has no tab in the strip (its title-bar button stands in): once
+    // another tab is active the settings tab goes away. Page, scroll and
+    // expanded cards live in s.settings, so reopening comes back the same.
+    if (!s.tabDragging) {
+        for (size_t i = s.window_tabs.items.size(); i-- > 0;) {
+            app::LayoutTab& layout = *s.window_tabs.items[i];
+            if (i == s.window_tabs.active || layout.pinned || layout.panes.size() != 1 ||
+                s.window_tabs.items.size() <= 1 || !IsSettingsTab(layout.ActiveFolder()))
+                continue;
+            s.window_tabs.CloseTab(i);
+        }
+    }
     app::LayoutTab* tab = s.window_tabs.Active();
     if (!tab || tab->panes.empty()) {
         s.pane = nullptr;
@@ -491,6 +506,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             vm.settings_global_search_error = s.settings.global_search_error();
             vm.settings_content_status = ContentIndexStatusText(s);
             vm.settings_expanded = s.settingsExpanded;
+            FillShortcutsVm(s, vm);  // 快捷键: sidebar badge everywhere, the page view on page 7
             if (vm.settings_page == 5) vm.settings_preview_codecs = ui::DetectPreviewCodecs(false, s.hwnd);
             if (vm.settings_page == 6) {
                 // 系统右键菜单: the first visit starts a background scan.
@@ -2047,11 +2063,15 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
         }
     });
     SyncColumnStrips(s);
+    SyncDetailsTrees(s);
     ui::WindowViewModel vm = app::BuildWindowViewModel(*s.pane, s.sidebar,
         s.pane->focused, s.maximized, s.darkMode, &s.places, s.sidebarCollapsedMask,
         s.sidebarHiddenMask, s.starredExpanded, &s.sidebarOrder,
         s.sidebarQuickAccessHiddenMask);
     app::FillWindowTabStrip(vm, s.window_tabs);
+    // Open settings shows as the selected settings button, not as a tab.
+    if (s.window_tabs.active < vm.tabs.size() && IsSettingsTab(ActiveTab(s)))
+        vm.tabs[s.window_tabs.active].hidden = true;
     if (WindowIdentityShown(s) && app::ValidWindowColor(s.identity.color)) {  // M7c
         vm.window_identity = true;
         vm.window_identity_name = WindowDisplayName(s);
@@ -2159,6 +2179,8 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
         if (vm.status.hint_text.empty()) {
             StatusHintAction action = StatusHintAction::None;
             vm.status.hint_text = ContextStatusHint(s, action);
+            // The search-box keys are not keymap actions (Alt+Enter there is not 属性).
+            if (!s.addressSearching) vm.status.hint_text = app::RemapShortcutText(vm.status.hint_text);
             if (action != StatusHintAction::None) {
                 vm.status.hint_action = static_cast<int>(action);
                 vm.status.hint_action_text = StatusHintActionText(action) + L" \u2192";
@@ -2498,7 +2520,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
                 dv.subtitle_text += pulse::format::ByteSize(dv.size_value, true);
                 dv.size_text = pulse::format::ByteSize(dv.size_value, true) + L" (" +
                                pulse::format::GroupedInt(dv.size_value) +
-                               pulse::l10n::Pick(L" \u5B57\u8282)", L" bytes)");
+                               pulse::l10n::Get(pulse::l10n::StringId::Bytes).c_str();
             }
             if (s.detailsMetaPath == dv.path) {
                 dv.owner_text = s.detailsOwner;
@@ -2659,7 +2681,8 @@ void ApplyHoverTarget(AppState& s, const ui::HitTestResult& hit) {
 std::wstring TooltipForHover(AppState& s) {
     using R = ui::HitTestResult;
     using I = l10n::StringId;
-    auto text = [](I id) -> const std::wstring& { return l10n::Get(id); };
+    // Tooltips name keys; show the ones the user set (keymap.h).
+    auto text = [](I id) { return app::RemapShortcutText(l10n::Get(id)); };
     switch (static_cast<R::Region>(s.hoverRegion)) {
     case R::RowFolderSize: {
         auto* pane = PaneAtSlot(s, s.hoverPaneIndex);
@@ -2711,8 +2734,8 @@ std::wstring TooltipForHover(AppState& s) {
     case R::SettingsButton: return text(I::Settings);
     case R::SettingsFind: return text(I::SettingsFind);
     case R::SettingsNav: {
-        if (s.hoverControlIndex == 5) return l10n::Pick(L"快速预览", L"Quick Look");
-        if (s.hoverControlIndex == 2) return l10n::Pick(L"右键菜单", L"Context menu");  // one entry for both pages
+        if (s.hoverControlIndex == 5) return l10n::Get(l10n::StringId::QuickPreview).c_str();
+        if (s.hoverControlIndex == 2) return l10n::Get(l10n::StringId::ContextMenu).c_str();  // one entry for both pages
         const I names[]={I::SettingsGeneral,I::SettingsSearchIndex,I::SettingsContextMenu,I::SettingsAboutDiagnostics,I::SettingsDuplicates};
         return s.hoverControlIndex>=0 && s.hoverControlIndex<5 ? text(names[s.hoverControlIndex]) : L"";
     }
@@ -2862,7 +2885,8 @@ std::wstring TooltipForHover(AppState& s) {
         app::Pane* pane = PaneAtSlot(s, s.hoverPaneIndex);
         app::Tab* tab = pane ? pane->ActiveTab() : ActiveTab(s);
         if (tab && tab->snapshot && s.hoverControlIndex >= 0 &&
-            s.hoverControlIndex < static_cast<int>(tab->EntryCount())) {
+            s.hoverControlIndex < static_cast<int>(tab->EntryCount()) &&
+            !IsDetailsTreePlaceholder(*tab, s.hoverControlIndex)) {
             const auto& entry = tab->EntryAt(s.hoverControlIndex);
             std::wstring tooltip = entry.name;
             if (!entry.change_type_text.empty()) {

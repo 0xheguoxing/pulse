@@ -118,10 +118,39 @@ fs::DirEntry Tab::EntryAt(size_t index) const {
         if(content_results->Get(index,row)) return row.entry;
         fs::DirEntry pending; pending.change_record_only=true; return pending;
     }
+    if (const auto* combined = TreeEntries()) return index < combined->size() ? (*combined)[index] : fs::DirEntry{};
     return snapshot && index<snapshot->size() ? (*snapshot)[index] : fs::DirEntry{};
 }
 
+void Tab::StashTreeSelection() {
+    const auto* combined = TreeEntries();
+    if (!combined || all_selected) return;
+    DetailsTree& t = *tree;
+    const auto child = [&](int index) {
+        return index >= 0 && static_cast<size_t>(index) >= t.base_size &&
+               static_cast<size_t>(index) < combined->size();
+    };
+    bool moved = false;
+    for (auto it = selected.begin(); it != selected.end();) {
+        if (!child(*it)) { ++it; continue; }
+        if (!t.IsPlaceholder(static_cast<size_t>(*it)))
+            t.stash_selected.push_back((*combined)[static_cast<size_t>(*it)].full_path);
+        it = selected.erase(it);
+        moved = true;
+    }
+    if (child(selected_index)) {
+        if (!t.IsPlaceholder(static_cast<size_t>(selected_index)))
+            t.stash_focus = (*combined)[static_cast<size_t>(selected_index)].full_path;
+        selected_index = selected.empty() ? -1 : *selected.begin();
+        moved = true;
+    }
+    if (child(selection_anchor)) selection_anchor = selected_index;
+    if (moved) ++selection_revision;
+}
+
 void Tab::SetSnapshot(fs::SnapshotPtr value) {
+    // Child rows sit past the end of the old snapshot; keep them by path.
+    if (value != snapshot) StashTreeSelection();
     snapshot = std::move(value);
     view_cache_snapshot.reset();
     view_cache_places = nullptr;
@@ -151,6 +180,12 @@ void Tab::SetSnapshot(fs::SnapshotPtr value) {
 bool Tab::EntryVisible(int index) const {
     if(index < 0 || static_cast<size_t>(index) >= EntryCount()) return false;
     if(content_results) return true;
+    if (const auto* combined = TreeEntries()) {
+        // Only the "more" row takes focus (Enter shows more); loading,
+        // empty and failed rows are skipped.
+        if (tree->IsPlaceholder(static_cast<size_t>(index))) return tree->IsMoreRow(static_cast<size_t>(index));
+        return AllowsAttributes((*combined)[static_cast<size_t>(index)].attrs);
+    }
     return AllowsAttributes((*snapshot)[static_cast<size_t>(index)].attrs);
 }
 
@@ -321,9 +356,11 @@ void Tab::SelectRange(int from, int to, const ui::PaneViewModel* view) {
 void Tab::SelectAll() {
     RememberSelection remember{*this};
     ++selection_revision;
-    if (!content_results && !ShowsEveryEntry()) {
+    // Tree placeholders never count as selected, so list the real rows.
+    if (!content_results && (!ShowsEveryEntry() || TreeEntries())) {
         std::vector<int> visible;
-        for (int i = 0; i < CountBound(); ++i) if (EntryVisible(i)) visible.push_back(i);
+        for (int i = 0; i < CountBound(); ++i)
+            if (EntryVisible(i) && !(TreeEntries() && tree->IsPlaceholder(static_cast<size_t>(i)))) visible.push_back(i);
         SelectIndices(visible);
         return;
     }
@@ -352,6 +389,8 @@ void Tab::SelectIndices(const std::vector<int>& indices) {
     int focus = -1;
     for (int index : indices) {
         if (index < 0 || index >= n || !EntryVisible(index)) continue;
+        // Details tree "more" rows take focus alone, never in a group.
+        if (TreeEntries() && tree->IsPlaceholder(static_cast<size_t>(index))) continue;
         if (selected.insert(index).second && focus < 0) focus = index;
     }
     if (selected.empty()) {
@@ -380,7 +419,8 @@ void Tab::InvertIndices(const std::vector<int>& universe) {
     std::unordered_set<int> uni;
     uni.reserve(universe.size());
     for (int index : universe) {
-        if (index >= 0 && index < n && EntryVisible(index)) uni.insert(index);
+        if (index >= 0 && index < n && EntryVisible(index) &&
+            !(TreeEntries() && tree->IsPlaceholder(static_cast<size_t>(index)))) uni.insert(index);
     }
     if (uni.empty()) return;
     std::unordered_set<int> next;
@@ -454,19 +494,21 @@ void Tab::SelectionSizeSummary(uint64_t* bytes, int* files, int* folders) const 
     auto& c = selection_size_cache;
     const int count = SelectedCount();
     const size_t entries = EntryCount();
-    if (c.revision != selection_revision || c.snapshot != snapshot.get() ||
+    const auto* tree_entries = TreeEntries();
+    const std::vector<fs::DirEntry>* list = tree_entries ? tree_entries : snapshot.get();
+    if (c.revision != selection_revision || c.snapshot != list ||
         c.entry_count != entries || c.selected_count != count) {
         c.revision = selection_revision;
-        c.snapshot = snapshot.get();
+        c.snapshot = list;
         c.entry_count = entries;
         c.selected_count = count;
         c.bytes = 0;
         c.files = 0;
         c.folders = 0;
-        if (snapshot && !content_results) {
+        if (list && !content_results) {
             const auto add = [&](int index) {
-                if (index < 0 || static_cast<size_t>(index) >= snapshot->size()) return;
-                const fs::DirEntry& entry = (*snapshot)[static_cast<size_t>(index)];
+                if (index < 0 || static_cast<size_t>(index) >= list->size()) return;
+                const fs::DirEntry& entry = (*list)[static_cast<size_t>(index)];
                 if (entry.change_record_only) return;
                 if (entry.is_dir) ++c.folders;
                 else { ++c.files; c.bytes += entry.size; }
@@ -1406,6 +1448,10 @@ static std::wstring StatusText(const Tab& tab) {
 static std::wstring SelectionText(const Tab& tab) {
     const int count = tab.SelectedCount();
     if (count <= 0) return l10n::Get(l10n::StringId::NotSelected);
+    // Only the details tree's "more" row: it is not an item.
+    if (count == 1 && tab.TreeEntries() && tab.selected_index >= 0 &&
+        tab.tree->IsPlaceholder(static_cast<size_t>(tab.selected_index)))
+        return l10n::Get(l10n::StringId::NotSelected);
     if (count == 1 && tab.snapshot && tab.selected_index >= 0 &&
         tab.selected_index < static_cast<int>(tab.EntryCount())) {
         const auto& e = tab.EntryAt(tab.selected_index);
@@ -1664,6 +1710,10 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
     }
     out.selected_index = tab->selected_index;
     out.selected_count = tab->SelectedCount();
+    // A lone details-tree "more" row is keyboard focus, not a selection.
+    if (out.selected_count == 1 && tab->TreeEntries() && tab->selected_index >= 0 &&
+        tab->tree->IsPlaceholder(static_cast<size_t>(tab->selected_index)))
+        out.selected_count = 0;
     out.all_selected = tab->all_selected;
     out.selected_indices = tab->all_selected ? nullptr : &tab->selected;
     out.focus_first_hint = tab->HasFocusHint();
@@ -1820,6 +1870,14 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
             tab->view_groups_rev = tab->group_collapse_rev;
         }
         out.groups = tab->view_groups;
+    }
+    // Details tree: children follow their folder, so the view rows come from
+    // the tree (app_details_tree.cpp) instead of the sorted filter map.
+    if (tab->TreeEntries() && tab->tree->rows && tab->tree->map) {
+        out.snapshot = tab->tree->combined;
+        out.filter_map = tab->tree->map;
+        out.tree = tab->tree->rows;
+        out.groups.reset();
     }
 }
 

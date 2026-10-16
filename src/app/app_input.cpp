@@ -15,6 +15,7 @@
 #include "app_hover.h"
 #include "app_hover_preview.h"
 #include "app_column_view.h"
+#include "app_details_tree.h"
 #include "details_column_menu.h"
 #include "../ui/lumatext_renderer.h"
 #include "../ui/fluent_menu.h"
@@ -277,8 +278,8 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
         s.dropLaunchProgram = launch_program;
         s.dropRow = hit.index;
         s.dropPaneIndex = hit.pane_index;
-        s.dropBadge = std::wstring(l10n::Pick(L"用 ", L"Open with ")) +
-            fs::StripLnkSuffix(tab->EntryAt(hit.index).name) + l10n::Pick(L" 打开", L"");
+        s.dropBadge = std::wstring(l10n::Get(l10n::StringId::OpenWith).c_str()) +
+            fs::StripLnkSuffix(tab->EntryAt(hit.index).name) + l10n::Get(l10n::StringId::Text2758).c_str();
         s.dropBadgeX = (float)pt.x;
         s.dropBadgeY = (float)pt.y;
         InvalidateRect(s.hwnd, nullptr, FALSE);
@@ -728,7 +729,8 @@ void ApplyMarqueeSelection(AppState& s) {
     if (n > 0 && right > left && bottom > top) {
         std::vector<int> hits;
         s.renderer.ItemsInRectInPane(pane, FocusedPaneRect(s), D2D1::RectF(left, top, right, bottom), hits);
-        for (const int source : hits) tab->selected.insert(source);
+        for (const int source : hits)
+            if (!IsDetailsTreePlaceholder(*tab, source)) tab->selected.insert(source);
     }
 
     if (tab->selected.empty()) {
@@ -2461,6 +2463,11 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
         } else if (hit.region == ui::HitTestResult::Row && hit.index >= 0) {
+            // Details tree: chevrons (Alt: with subfolders), "more" buttons, placeholders.
+            if (HandleDetailsTreeMouseDown(*s, vm, hit, mx, my, (GetKeyState(VK_MENU) & 0x8000) != 0)) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
             const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
             const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             app::Tab* tab = ActiveTab(*s);
@@ -2528,7 +2535,10 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         } else if (hit.region == ui::HitTestResult::ThemeToggle) {
             ToggleTheme(*s);
         } else if (hit.region == ui::HitTestResult::SettingsButton) {
-            OpenSettingsTab(*s, 0);
+            // The button is settings' tab: it opens where you left off and
+            // closes again on a second click.
+            if (IsSettingsTab(ActiveTab(*s))) CloseSettings(*s);
+            else OpenSettingsTab(*s, s->settings.page());
         } else if (hit.region == ui::HitTestResult::SettingsNav ||
                    hit.region == ui::HitTestResult::SettingsCtxPivot) {
             OpenSettingsTab(*s, hit.index);
@@ -3201,6 +3211,11 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
             {"item_index", hit.index >= 0 ? static_cast<uint64_t>(hit.index) : 0}});
         if (HandleWindowIdentityDoubleClick(*s, hit, POINT{mx, my})) return 0;  // M7c: rename, recolor
         if (pulse::HandleTabDoubleClick(*s, hit)) return 0;
+        // A second press on a chevron toggles again instead of opening the folder.
+        if (HandleDetailsTreeMouseDown(*s, vm, hit, mx, my, (GetKeyState(VK_MENU) & 0x8000) != 0)) {
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         if ((hit.region == ui::HitTestResult::Pane || hit.region == ui::HitTestResult::None) &&
             PointInList(*s, mx, my) &&
             (hit.pane_index < 0 || PaneAtSlot(*s, hit.pane_index) == s->pane)) {
@@ -4095,6 +4110,17 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         bool handled = true;
 
+        // Settings has no tab of its own: Esc closes it like a second click on
+        // the settings button. Popovers, recorders, the shortcut search box and
+        // drags took their Esc before this; editors keep theirs.
+        if (wParam == VK_ESCAPE && !ctrl && !alt && !shift && IsSettingsTab(tab) &&
+            !s->addressSearching && !s->filterEditing && s->renameIndex < 0 &&
+            (GetFocus() == hwnd || GetFocus() == nullptr)) {
+            CloseSettings(*s);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+
         auto switchToTab = [&](std::optional<size_t> target) {
             if (!target || *target == s->window_tabs.active) return;
             if (s->renameIndex >= 0) HideRenameOverlay(*s, false);
@@ -4180,7 +4206,9 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         } else if (wParam == VK_F4) {
             ShowOmnibar(*s, OmnibarMode::Path);
         } else if (ctrl && shift && wParam == L'C') {
-            CopySelectedPath(*s);
+            // As the 复制路径 rows that show this key: the selection, or the
+            // folder when nothing is selected (background menu).
+            DispatchMenuCommand(*s, app::CmdCopyPath);
         } else if (ctrl && wParam == L'C') {
             CollectToTray(*s, false);
         } else if (ctrl && wParam == L'X') {
@@ -4201,7 +4229,7 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         } else if (wParam == VK_DELETE) {
             DeleteSelected(*s, (GetKeyState(VK_SHIFT) & 0x8000) != 0);
         } else if (wParam == VK_RETURN) {
-            OpenSelected(*s);
+            if (!HandleDetailsTreeKey(*s, vm.pane, VK_RETURN)) OpenSelected(*s);
         } else if (alt && wParam == VK_UP) {
             GoUp(*s);
         } else if (alt && wParam == VK_LEFT) {
@@ -4234,8 +4262,9 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 ResetMarquee(*s);
                 s->clickCollapseIndex = -1;
             }
-        } else if (!shift && (wParam == VK_LEFT || wParam == VK_RIGHT) &&
-                   HandleColumnArrowKey(*s, wParam == VK_RIGHT)) {
+        } else if (!shift && (((wParam == VK_LEFT || wParam == VK_RIGHT) &&
+                               HandleColumnArrowKey(*s, wParam == VK_RIGHT)) ||
+                              HandleDetailsTreeKey(*s, vm.pane, wParam))) {
             CancelScrollAnimation(*s);
         } else if (wParam == VK_DOWN || wParam == VK_UP ||
                    wParam == VK_LEFT || wParam == VK_RIGHT) {
@@ -4250,7 +4279,9 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                     // The first arrow press selects the focused (not yet
                     // selected) first row instead of stepping past it.
                     const int next = tab->HasFocusHint() ? 0
-                        : s->renderer.MoveViewIndex(vm.pane, FocusedPaneRect(*s), view, dx, dy);
+                        : SkipDetailsTreePlaceholders(vm.pane,
+                              s->renderer.MoveViewIndex(vm.pane, FocusedPaneRect(*s), view, dx, dy),
+                              dy != 0 ? dy : dx);
                     tab->MoveFocus(vm.pane.SourceIndex(next), shift, &vm.pane);
                     EnsureRowVisible(*s, *tab, tab->selected_index);
                 }
@@ -4263,7 +4294,7 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 if (n > 0) {
                     int view = vm.pane.ViewIndex(tab->selected_index);
                     if (view < 0) view = 0;
-                    const int next = std::min(n - 1, view + page);
+                    const int next = SkipDetailsTreePlaceholders(vm.pane, std::min(n - 1, view + page), 1);
                     tab->MoveFocus(vm.pane.SourceIndex(next), shift, &vm.pane);
                     EnsureRowVisible(*s, *tab, tab->selected_index);
                 }
@@ -4276,7 +4307,7 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 if (n > 0) {
                     int view = vm.pane.ViewIndex(tab->selected_index);
                     if (view < 0) view = 0;
-                    const int next = std::max(0, view - page);
+                    const int next = SkipDetailsTreePlaceholders(vm.pane, std::max(0, view - page), -1);
                     tab->MoveFocus(vm.pane.SourceIndex(next), shift, &vm.pane);
                     EnsureRowVisible(*s, *tab, tab->selected_index);
                 }
@@ -4290,7 +4321,8 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         } else if (wParam == VK_END) {
             CancelScrollAnimation(*s);
             if (vm.pane.EntryCount() > 0) {
-                tab->MoveFocus(vm.pane.SourceIndex(static_cast<int>(vm.pane.EntryCount()) - 1), shift, &vm.pane);
+                tab->MoveFocus(vm.pane.SourceIndex(SkipDetailsTreePlaceholders(
+                    vm.pane, static_cast<int>(vm.pane.EntryCount()) - 1, -1)), shift, &vm.pane);
                 EnsureRowVisible(*s, *tab, tab->selected_index);
                 s->scrollTargetY = tab->scroll_y;
                 MaybePrefetchSearchPage(*s);

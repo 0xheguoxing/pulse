@@ -3,6 +3,7 @@
 #include "../ui/FluentTokens.h"
 #include "quick_access.h"
 #include "app_hover_preview.h"
+#include "app_details_tree.h"
 #include "update_stage.h"
 #include "tag_ads_sync.h"
 #include "app_prompts.h"
@@ -67,6 +68,8 @@
 #include "reopen_closed.h"
 #include "tray_controller.h"
 #include "global_search_controller.h"
+#include "keymap_input.h"
+#include "shortcut_page.h"
 #include "tab_controller.h"
 #include "startup_location.h"
 #include "update_checker.h"
@@ -150,6 +153,7 @@ void UnregisterAssocChangeNotify() {
 #include "group_wheel_ui.h"
 #include "window_overview_ui.h"
 #include "window_switcher_ui.h"
+#include <imm.h>
 #include "duplicate_scan.h"
 #include "shell_tag_menu.h"
 #include "shell_tag_com.h"
@@ -661,8 +665,60 @@ static BOOL HandleInstanceCopyData(AppState& s, COPYDATASTRUCT* cds) {
     return TRUE;
 }
 
+// Settings > 快捷键: a key the user assigned reaches the handlers as the
+// action's default key (keymap_input.h); a default key that moved to another
+// key is swallowed, with the character message it produces. Recorders see
+// the raw keys.
+LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+static int g_shortcut_remap_depth = 0;
+static bool g_shortcut_eat_char = false;
+
+static bool RouteUserShortcut(AppState& s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, LRESULT& result) {
+    if (msg == WM_CHAR || msg == WM_SYSCHAR) {
+        if (!g_shortcut_eat_char) return false;
+        g_shortcut_eat_char = false;
+        result = 0;
+        return true;
+    }
+    if (msg == WM_KEYUP || msg == WM_SYSKEYUP) {
+        g_shortcut_eat_char = false;
+        return false;
+    }
+    if (msg != WM_KEYDOWN && msg != WM_SYSKEYDOWN) return false;
+    g_shortcut_eat_char = false;
+    if (g_shortcut_remap_depth > 0 || s.settings.global_search_hotkey_capturing()) return false;
+    if (app::IsModifierKey(static_cast<UINT>(wParam))) return false;
+    const app::KeyRoute route = app::RouteKey(app::ActiveKeymap(),
+        app::CurrentChord(static_cast<UINT>(wParam)), lParam);
+    if (route.kind == app::KeyRoute::Pass) return false;
+    g_shortcut_eat_char = true;
+    if (route.kind == app::KeyRoute::Swallow) {
+        result = 0;
+        return true;
+    }
+    ++g_shortcut_remap_depth;
+    {
+        app::ModifierOverride modifiers(route.mods);
+        result = WndProcImpl(hwnd, route.msg, route.vk, route.lparam);
+    }
+    --g_shortcut_remap_depth;
+    return true;
+}
+
 LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     AppState* s = GetAppState(hwnd);
+    // A Chinese / Japanese IME in native mode can report a Ctrl or Alt chord
+    // as VK_PROCESSKEY; every shortcut below compares the real key.
+    if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && wParam == VK_PROCESSKEY &&
+        ((GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000))) {
+        if (const UINT vk = ImmGetVirtualKey(hwnd); vk && vk != VK_PROCESSKEY) wParam = vk;
+    }
+    if (s && msg != 0) {
+        // Settings > 快捷键 recorder / key tester / search box: raw keys first.
+        if (g_shortcut_remap_depth == 0 && ShortcutsPageKey(*s, msg, wParam, lParam)) return 0;
+        LRESULT routed = 0;
+        if (RouteUserShortcut(*s, hwnd, msg, wParam, lParam, routed)) return routed;
+    }
     if (s && msg != 0 && msg == app::UpdateShutdownMessage())
         return CloseForUpdate(*s);
     if (s && IsUiActivityMessage(msg)) NoteUiActivity(*s, hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
@@ -817,6 +873,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 }
             }
             s->appPrefs.Load();
+            ApplyKeymapPrefs(*s);
             NoteRunningVersion(*s);
             if (!s->shot.active && s->appPrefs.theme_mode >= 0) {
                 s->themeOverride = s->appPrefs.theme_mode == 1 ? ui::ThemeMode::Light :
@@ -926,9 +983,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 window.notification_toast.Show(window.hwnd, l10n::Get(l10n::StringId::SettingsGeneral), message);
             };
             if (s->appPrefs.load_failed) {
-                settings_callbacks.show_error(l10n::HantText(l10n::Pick(
-                    L"原设置未能读取，已阻止覆盖。请关闭后重试打开 Pulse。",
-                    L"The original settings could not be read. Saving is blocked to protect them. Restart Pulse to retry.")));
+                settings_callbacks.show_error(l10n::HantText(l10n::Get(l10n::StringId::TheOriginalSettingsCouldNotBeReadSavingIsBlockedToProtectThe).c_str()));
             }
             settings_callbacks.integration_changed = [s] { SyncShellWindows(app::CurrentWindow(*s)); };
             settings_callbacks.task_completion = SettingsCompletion(ServiceWindow(*s));
@@ -1413,6 +1468,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s) ReopenClosedTabs(*s);
         return 0;
 
+    case WM_DETAILS_TREE_UNDO:
+        if (s) UndoDetailsTreeExpand(*s);
+        return 0;
+
     case WM_OPEN_SESSION_WINDOWS:
         if (s) OpenSessionWindows(*s);
         return 0;
@@ -1813,6 +1872,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_HOTKEY:
         if (s && wParam == GlobalSearchHotkey::kId) {
+            if (ShortcutsPageHotkey(*s, lParam)) return 0;  // 快捷键 recorder: our own hotkey pressed
             if (s->settings.global_search_hotkey_capturing() && IsSettingsTab(ActiveTab(*s))) {
                 s->settings.CaptureGlobalSearchHotkey(HIWORD(lParam), LOWORD(lParam));
                 InvalidateRect(hwnd, nullptr, FALSE);
@@ -2779,7 +2839,7 @@ int ShotModeMain(AppState& state, HWND hwnd) {
         }
         if (state.shot_hover_preview >= 0 && StageHoverPreviewShot(state, state.shot_hover_preview)) {
             // Let the card's thumbnail or text excerpt decode before the shot.
-            for (int i = 0; i < (state.hoverPreview.video ? 40 : 15); ++i) {
+            for (int i = 0; i < (state.hoverPreview.video || state.hoverPreview.folder ? 40 : 15); ++i) {
                 Render(state);
                 while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
                     TranslateMessage(&msg);
@@ -2841,9 +2901,9 @@ int RunPickerLive(int first) {
     spec.initial_path = init;
     if (spec.mode == ui::PickerMode::File) {
         spec.allow_multiselect = true;
-        spec.filters = {{l10n::Pick(L"所有文件 (*.*)", L"All files (*.*)"), L"*.*"},
-                        {l10n::Pick(L"文本文档 (*.txt; *.md)", L"Text documents (*.txt; *.md)"), L"*.txt;*.md"},
-                        {l10n::Pick(L"图片", L"Pictures"), L"*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp"}};
+        spec.filters = {{l10n::Get(l10n::StringId::AllFiles_2).c_str(), L"*.*"},
+                        {l10n::Get(l10n::StringId::TextDocumentsTxtMd).c_str(), L"*.txt;*.md"},
+                        {l10n::Get(l10n::StringId::PickerPictures).c_str(), L"*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp"}};
     }
     const D2D1_COLOR_F accent = ui::HexColor(0x0078D4);
     ui::FilePickerResult result;
@@ -3171,10 +3231,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
                 failure_prefs.persist = false;
                 failure_prefs.Load();
                 l10n::Initialize(hInstance, failure_prefs.language);
-                const std::wstring message = l10n::HantText(l10n::Pick(
-                    L"Pulse 正在忙，文件夹会稍后在已打开的 Pulse 窗口里出现。\n\n如果过一会儿还没出现，再打开一次就行。",
-                    L"Pulse is busy. The folder will show up in the open Pulse window shortly.\n\n"
-                    L"If it doesn't appear after a while, just open it again."));
+                const std::wstring message = l10n::HantText(l10n::Get(l10n::StringId::PulseIsBusyTheFolderWillShowUpInTheOpenPulseWindowShortlyIfI).c_str());
                 MessageBoxW(nullptr, message.c_str(), L"Pulse", MB_OK | MB_ICONINFORMATION);
             }
             OleUninitialize();
