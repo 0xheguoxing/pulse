@@ -129,7 +129,7 @@ void Refresh(AppState& s) {
     data.hint = FormatString(l10n::StringId::WindowSwitcherHint, SwitcherKeyLabel().c_str());
     view.Show(std::move(data),
               D2D1::RectF(0.0f, 0.0f, static_cast<float>(s.compositor.Width()), static_cast<float>(s.compositor.Height())),
-              s.scale);
+              s.scale, s.hwnd);
     Kick(s);
 }
 
@@ -219,6 +219,8 @@ bool WindowSwitcherMessage(AppState& s, HWND hwnd, UINT msg, WPARAM wParam, LPAR
         return true;
     }
     case WM_MOUSEMOVE:
+        if (view.SetHover(view.HitCard(x, y))) Kick(s);
+        return true;
     case WM_LBUTTONUP:
     case WM_RBUTTONUP:
     case WM_MBUTTONUP:
