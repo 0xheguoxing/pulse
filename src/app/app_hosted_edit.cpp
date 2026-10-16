@@ -169,6 +169,8 @@ void ShowAddressEditor(AppState& s) {
     if (s.filterEditing) HideFilterEditor(s, true);
     s.addressSearching = false;
     s.addressEditing = true;
+    s.addressSuggest.clear();
+    s.addressSuggestSel = -1;
     // DestroyWindow synchronously sends WM_KILLFOCUS to the old editor.
     s.addressIgnoreKillFocus = true;
     if (s.hwndAddressEdit) {
@@ -223,6 +225,8 @@ void HideAddressEditor(AppState& s, bool navigate) {
         if (command.program != app::AddressBarProgram::None) RunAddressBarCommand(s, command);
         else NavigateTo(s, AddressNavigationTarget(buf));
     }
+    s.addressSuggest.clear();
+    s.addressSuggestSel = -1;
     s.addressIgnoreKillFocus = true;
     ShowWindow(s.hwndAddressEdit, SW_HIDE);
     s.addressEditing = false;
@@ -233,12 +237,61 @@ void HideAddressEditor(AppState& s, bool navigate) {
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
-void DismissPathEditorOutside(AppState& s, int x, int y) {
-    if (!s.addressEditing || s.addressSearching) return;
-    const auto bounds = s.renderer.AddressBarRect(static_cast<float>(s.compositor.Width()));
-    if (x >= bounds.left && x < bounds.right && y >= bounds.top && y < bounds.bottom) return;
+bool DismissPathEditorOutside(AppState& s, int x, int y) {
+    if (!s.addressEditing || s.addressSearching) return false;
+    const float w = static_cast<float>(s.compositor.Width());
+    const auto bounds = s.renderer.AddressBarRect(w);
+    if (x >= bounds.left && x < bounds.right && y >= bounds.top && y < bounds.bottom) return false;
+    const int row = s.renderer.AddressSuggestionAt(w, s.addressSuggest.size(), static_cast<float>(x),
+                                                   static_cast<float>(y));
+    if (row >= 0) {
+        const std::wstring path = s.addressSuggest[static_cast<size_t>(row)].path;
+        HideAddressEditor(s, false);
+        NavigateTo(s, path);
+        return true;
+    }
+    if (row == -2) return true;  // the card's padding: keep editing
     // Owner-drawn controls need not transfer keyboard focus from the native edit.
     HideAddressEditor(s, false);
+    return false;
+}
+
+void UpdateAddressSuggestions(AppState& s) {
+    const size_t before = s.addressSuggest.size();
+    s.addressSuggest.clear();
+    s.addressSuggestSel = -1;
+    const auto done = [&] { if (before || !s.addressSuggest.empty()) InvalidateRect(s.hwnd, nullptr, FALSE); };
+    if (!s.addressEditing || s.addressSearching || !s.hwndAddressEdit ||
+        app::AliasStore::Instance().Empty()) return done();
+    const int len = GetWindowTextLengthW(s.hwndAddressEdit);
+    if (len <= 0 || len > 260) return done();
+    std::wstring text(static_cast<size_t>(len) + 1, L'\0');
+    text.resize(static_cast<size_t>(GetWindowTextW(s.hwndAddressEdit, text.data(), len + 1)));
+    while (!text.empty() && iswspace(text.back())) text.pop_back();
+    while (!text.empty() && iswspace(text.front())) text.erase(text.begin());
+    // Paths, shell: and %VAR% shortcuts keep the plain editor.
+    if (text.empty() || text.find_first_of(L"\\/:%\"") != std::wstring::npos) return done();
+    const auto aliases = app::AliasStore::Instance().Suggest(text, 6);
+    if (aliases.empty()) return done();
+    // A real subfolder with that very name wins over any alias.
+    const app::Tab* tab = ActiveTab(s);
+    if (tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path)) {
+        std::wstring child = tab->current_path;
+        if (child.back() != L'\\') child += L'\\';
+        child += text;
+        const DWORD attrs = GetFileAttributesW(child.c_str());
+        if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY))
+            s.addressSuggest.push_back({text, ClipboardPath(child), true});
+    }
+    for (const auto& e : aliases) {
+        if (s.addressSuggest.size() >= 6) break;
+        if (!s.addressSuggest.empty() && _wcsicmp(s.addressSuggest.front().path.c_str(), e.path.c_str()) == 0)
+            continue;
+        s.addressSuggest.push_back({e.alias, e.path, false});
+    }
+    // Enter takes the first row unless the text is a known shortcut (desktop, ...).
+    if (!app::ResolveAddressShortcut(text).resolved) s.addressSuggestSel = 0;
+    done();
 }
 
 void ApplyFilterCue(AppState& s) {
@@ -753,6 +806,20 @@ LRESULT CALLBACK AddressEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             ShowAddressSearchScope(*s);
             return 0;
         }
+        if (!s->addressSearching && !s->addressSuggest.empty() && (wParam == VK_DOWN || wParam == VK_UP)) {
+            const int n = static_cast<int>(s->addressSuggest.size());
+            int& sel = s->addressSuggestSel;
+            sel = wParam == VK_DOWN ? (sel + 1 >= n ? -1 : sel + 1) : (sel < 0 ? n - 1 : sel - 1);
+            InvalidateRect(s->hwnd, nullptr, FALSE);
+            return 0;
+        }
+        if (wParam == VK_RETURN && !s->addressSearching && s->addressSuggestSel >= 0 &&
+            s->addressSuggestSel < static_cast<int>(s->addressSuggest.size())) {
+            const std::wstring path = s->addressSuggest[static_cast<size_t>(s->addressSuggestSel)].path;
+            HideAddressEditor(*s, false);
+            NavigateTo(*s, path);
+            return 0;
+        }
         if (wParam == VK_RETURN) {
             if (s->addressSearching) {
                 // Shift+Enter searches every indexed location.
@@ -764,6 +831,13 @@ LRESULT CALLBACK AddressEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             return 0;
         }
         if (wParam == VK_ESCAPE) {
+            if (!s->addressSearching && !s->addressSuggest.empty()) {
+                // First Esc closes the suggestions, the next one the editor.
+                s->addressSuggest.clear();
+                s->addressSuggestSel = -1;
+                InvalidateRect(s->hwnd, nullptr, FALSE);
+                return 0;
+            }
             if (s->menu && s->menu->IsOpen()) s->menu->Dismiss();
             else if (s->addressSearching) EscapeAddressSearch(*s);
             else HideAddressEditor(*s, false);

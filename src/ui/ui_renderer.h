@@ -722,6 +722,13 @@ struct DragGhostView {
     std::wstring detail;       // a smaller note after it (may be empty)
 };
 
+// 别名: one row of the list under the path editor ("fbb" → 发布包).
+struct AddressSuggestionView {
+    std::wstring label;   // the alias, or a real subfolder's name
+    std::wstring path;    // where choosing it goes
+    bool real = false;    // a real subfolder of the current folder (listed first)
+};
+
 struct WindowViewModel {
     std::wstring window_title;
     // Multi-window M7c: with two or more windows the title bar shows this
@@ -836,6 +843,8 @@ struct WindowViewModel {
     bool safe_mode = false;
     bool address_editing = false;
     bool address_searching = false;
+    std::vector<AddressSuggestionView> address_suggestions;
+    int address_suggestion_selected = -1;
     bool address_search_current = false;
     bool address_search_content = false;
     bool settings_search_pinyin = true;
@@ -1634,6 +1643,9 @@ public:
     D2D1_RECT_F TitleBarRect(float w) const;
     D2D1_RECT_F ToolbarRect(float w) const;
     D2D1_RECT_F AddressBarRect(float w) const;
+    // The 别名 suggestion list under the path editor, and the row at (x, y) or -1.
+    D2D1_RECT_F AddressSuggestionsRect(float w, size_t count) const;
+    int AddressSuggestionAt(float w, size_t count, float x, float y) const;
     D2D1_RECT_F SearchBarRect(float w) const;
     D2D1_RECT_F NewCommandRect(float w) const;
     // Chevron segment of the split New button (opens the New menu); the rest creates a folder.
@@ -1786,6 +1798,7 @@ private:
     bool HitTestColumnStrip(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,
                             float x, float y, HitTestResult& out) const;
     void DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
+    void DrawAddressSuggestions(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawTeachBubble(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     // File-operation capsule in the status bar: ring progress while running,
     // accent check on success, then settles back to plain summary text.

@@ -2309,7 +2309,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         s->blankDoublePending = false;
         int mx = GET_X_LPARAM(lParam);
         int my = GET_Y_LPARAM(lParam);
-        DismissPathEditorOutside(*s, mx, my);
+        if (DismissPathEditorOutside(*s, mx, my)) return 0;  // chose a 别名 suggestion
         CancelRenameClick(*s);
         CancelScrollAnimation(*s);
         // Commit explicitly before changing pane/selection; a click on a

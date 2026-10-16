@@ -2234,6 +2234,8 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     SyncSearchBarWidth(s);
     vm.address_editing = s.addressEditing;
     vm.address_searching = s.addressSearching;
+    vm.address_suggestions = s.addressSuggest;
+    vm.address_suggestion_selected = s.addressSuggestSel;
     vm.address_search_current = s.addressSearchCurrent;
     vm.address_search_has_text = s.addressSearching && s.hwndAddressEdit &&
                                 GetWindowTextLengthW(s.hwndAddressEdit) > 0;

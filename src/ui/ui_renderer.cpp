@@ -508,6 +508,71 @@ std::vector<BreadcrumbSegment> SplitBreadcrumb(const std::wstring& path) {
     return out;
 }
 
+namespace {
+constexpr float kSuggestRowDip = 36.0f;
+constexpr float kSuggestPadDip = 5.0f;
+}
+
+D2D1_RECT_F MainRenderer::AddressSuggestionsRect(float w, size_t count) const {
+    const D2D1_RECT_F addr = AddressBarRect(w);
+    const float top = addr.bottom + 4.0f * scale_;
+    const float h = (2.0f * kSuggestPadDip + kSuggestRowDip * static_cast<float>(count)) * scale_;
+    return D2D1::RectF(addr.left, top, addr.right, top + h);
+}
+
+int MainRenderer::AddressSuggestionAt(float w, size_t count, float x, float y) const {
+    if (count == 0) return -1;
+    const D2D1_RECT_F rc = AddressSuggestionsRect(w, count);
+    if (x < rc.left || x >= rc.right || y < rc.top || y >= rc.bottom) return -1;
+    const int row = static_cast<int>((y - rc.top - kSuggestPadDip * scale_) / (kSuggestRowDip * scale_));
+    return row >= 0 && row < static_cast<int>(count) ? row : -2;  // -2: the card's padding
+}
+
+void MainRenderer::DrawAddressSuggestions(const WindowViewModel& vm, const D2D1_RECT_F& rect,
+                                          const Theme& theme) {
+    ID2D1DeviceContext* dc = compositor_->Dc();
+    const size_t count = vm.address_suggestions.size();
+    const D2D1_RECT_F card = AddressSuggestionsRect(rect.right - rect.left, count);
+    const SnackPalette pal = MakeSnackPalette(theme, IsHighContrast());
+    DrawSnackPlate(dc, card, 8.0f * scale_, pal, scale_, IsHighContrast());
+    const D2D1_COLOR_F saved_bg = text_background_;
+    text_background_ = pal.plate;
+    IDWriteTextFormat* fmt = compositor_->TextFormat();
+    IDWriteTextFormat* small_fmt = compositor_->SmallFormat();
+    const auto measure_small = [&](const std::wstring& t) {
+        return MeasureLayoutText(compositor_, compositor_->DwriteFactory(), small_fmt, t);
+    };
+    const float row_h = kSuggestRowDip * scale_;
+    for (size_t i = 0; i < count; ++i) {
+        const AddressSuggestionView& item = vm.address_suggestions[i];
+        const float y = card.top + kSuggestPadDip * scale_ + row_h * static_cast<float>(i);
+        const D2D1_RECT_F row = D2D1::RectF(card.left + 5.0f * scale_, y, card.right - 5.0f * scale_, y + row_h);
+        if (static_cast<int>(i) == vm.address_suggestion_selected) {
+            MakeBrush(dc, WithAlpha(theme.accent, 0.16f), brAccent_);
+            FillRoundedRect(dc, brAccent_.get(), row.left, row.top, row.right - row.left, row_h, 6.0f * scale_);
+        }
+        DrawIconText(row.left + 10.0f * scale_, y, 18.0f * scale_, row_h, kIconFolder, L"[]", theme.icon_folder, 0.95f);
+        float x = row.left + 38.0f * scale_;
+        const float label_w = (std::min)(MeasureLayoutText(compositor_, compositor_->DwriteFactory(), fmt, item.label) + 1.0f,
+                                         (row.right - x) * 0.5f);
+        MakeBrush(dc, pal.text, brText_);
+        DrawTextRect(dc, fmt, brText_.get(), item.label, x, y, label_w, row_h);
+        x += label_w + 10.0f * scale_;
+        if (!item.real) {
+            // The alias mark: what was matched is a name the user gave.
+            painter_.DrawGlyph(L"\xE8EC", D2D1::RectF(x, y, x + 14.0f * scale_, y + row_h), theme.accent);
+            x += 22.0f * scale_;
+        }
+        const float path_w = (std::max)(0.0f, row.right - 10.0f * scale_ - x);
+        if (path_w > 24.0f * scale_) {
+            MakeBrush(dc, pal.text_secondary, brText_);
+            DrawTextRect(dc, small_fmt, brText_.get(), FitEndEllipsis(item.path, path_w, measure_small),
+                         x, y, path_w, row_h);
+        }
+    }
+    text_background_ = saved_bg;
+}
+
 void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
                                     std::vector<BreadcrumbPlaced>& out) const {
     out.clear();
@@ -896,6 +961,8 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
         content.top = rc.bottom - 38 * scale_; content.bottom = rc.bottom - 8 * scale_;
         painter_.DrawText(pulse::l10n::Get(pulse::l10n::StringId::ChangeView), content, compositor_->TextFormat(), theme.accent);
     }
+    if (vm.address_editing && !vm.address_searching && !vm.address_suggestions.empty())
+        DrawAddressSuggestions(vm, rect, theme);
     if (vm.teach.visible && vm.drag_badge.empty()) DrawTeachBubble(vm, rect, theme);
     if (!vm.change_popover.visible && vm.drag_badge.empty() && !vm.tooltip_text.empty() &&
         !group_wheel_.Visible() && !window_switcher_.IsOpen() && !window_overview_.IsOpen()) {

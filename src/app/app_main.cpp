@@ -1935,7 +1935,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         if (s && reinterpret_cast<HWND>(lParam) == s->hwndAddressEdit &&
             (HIWORD(wParam) == EN_CHANGE || HIWORD(wParam) == EN_UPDATE)) {
-            if (HIWORD(wParam) == EN_CHANGE) QueueAddressSearch(*s);
+            if (HIWORD(wParam) == EN_CHANGE) {
+                QueueAddressSearch(*s);
+                UpdateAddressSuggestions(*s);
+            }
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }

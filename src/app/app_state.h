@@ -503,6 +503,9 @@ struct AppState : AppCoreOwner {
     HWND hwndAddressEdit = nullptr;
     bool addressEditing = false;
     bool addressSearching = false;
+    // 别名 suggestions under the path editor; Up/Down pick, Enter opens.
+    std::vector<ui::AddressSuggestionView> addressSuggest;
+    int addressSuggestSel = -1;
     bool searchHistoryOpen = false;
     bool searchScopePending = false;
     bool sidebarResizing = false;

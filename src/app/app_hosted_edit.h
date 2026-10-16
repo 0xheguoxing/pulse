@@ -16,7 +16,10 @@ void LayoutAddressEditor(AppState& s);
 void EnsureEditVisuals(AppState& s);
 void ShowAddressEditor(AppState& s);
 void HideAddressEditor(AppState& s, bool navigate);
-void DismissPathEditorOutside(AppState& s, int x, int y);
+// True when the click chose a 别名 suggestion (and so is consumed).
+bool DismissPathEditorOutside(AppState& s, int x, int y);
+// Refills the 别名 suggestions from the path editor's text.
+void UpdateAddressSuggestions(AppState& s);
 void ShowAddressSearch(AppState& s);
 void SyncSearchBarWidth(AppState& s);
 void EscapeAddressSearch(AppState& s);
