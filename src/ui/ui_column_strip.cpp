@@ -5,6 +5,9 @@
 #include "../common/localization.h"
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <map>
+#include <unordered_map>
 
 namespace pulse::ui {
 
@@ -27,6 +30,87 @@ size_t StripRowCount(const ColumnStripColumnView& column) {
 
 float StripDividerX(const ColumnStripSlot& slot) {
     return slot.id == kColumnStripChildId ? slot.rect.left : slot.rect.right;
+}
+
+// Column view motion (animation phase 4a, pulse_motion_v2). Drawing only:
+// hit-testing keeps the settled layout and scroll.
+//  - the selected folder's contents cascade in: each row fades in and slides
+//    8 dip from the left, 9 ms after the one above (capped at 10 rows);
+//  - one hover plate glides between rows and columns (Plate spring);
+//  - a column's highlight glides to the new row (Snappy spring);
+//  - a column's auto scroll eases to its new place (Smooth spring).
+// State per renderer and pane lives here (ui_renderer.h is being edited
+// elsewhere); frames come from a one-shot TIMERPROC timer re-armed only
+// while something moves.
+constexpr float kCascadeSlideDip = 8.0f, kCascadeRowMs = 160.0f, kCascadeStaggerMs = 9.0f;
+constexpr int kCascadeRows = 10;
+constexpr float kStripHoverFadeInMs = 90.0f, kStripHoverFadeOutMs = 120.0f;
+constexpr UINT_PTR kStripFrameTimer = 0x53434D54;  // 'SCMT'
+
+void CALLBACK StripFrameTick(HWND hwnd, UINT, UINT_PTR id, DWORD) {
+    KillTimer(hwnd, id);
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+struct StripColumnMotion {
+    std::wstring path;
+    uint64_t born = 0;        // rows of this path first drawn (cascade start)
+    bool had_rows = false;
+    bool scroll_init = false;
+    float scroll_shown = 0.0f, scroll_vel = 0.0f;
+    uint64_t scroll_last = 0;
+    motion::SpringRectMotion highlight;
+    bool seen = false;
+};
+
+struct StripPaneMotion {
+    std::unordered_map<int, StripColumnMotion> columns;
+    motion::SpringRectMotion hover;
+    float hover_alpha = 0.0f;
+    uint64_t hover_context = 0, hover_last = 0;
+    int64_t hover_key = 0;
+    D2D1_RECT_F hover_target{}, hover_rect{}, hover_clip{};
+    bool animations = true;
+    uint64_t animations_checked = 0;
+    bool moving = false;
+};
+
+StripPaneMotion& StripMotionFor(const void* renderer, int pane_index) {
+    static std::map<std::pair<const void*, int>, StripPaneMotion> motions;
+    return motions[{renderer, pane_index}];
+}
+
+D2D1_RECT_F StripCell(const D2D1_RECT_F& rc, int row, float scroll, float row_h, float scale) {
+    const float top = rc.top + kCaptionDip * scale + static_cast<float>(row) * row_h - scroll;
+    return D2D1::RectF(rc.left + 6.0f * scale, top + 1.0f * scale, rc.right - 6.0f * scale, top + row_h - 1.0f * scale);
+}
+
+// Eases the drawn scroll toward `target` (Smooth spring, 4 ms steps); a
+// different folder or a jump of several screens just lands.
+float StepStripScroll(StripColumnMotion& m, float target, float view_h, uint64_t now, bool animate, bool& moving) {
+    if (!m.scroll_init || !animate || std::fabs(target - m.scroll_shown) > 3.0f * (std::max)(view_h, 1.0f)) {
+        m.scroll_init = true;
+        m.scroll_shown = target;
+        m.scroll_vel = 0.0f;
+        m.scroll_last = now;
+        return target;
+    }
+    float dt = static_cast<float>((std::min<uint64_t>)(now - m.scroll_last, 64)) * 0.001f;
+    m.scroll_last = now;
+    const motion::SpringSpec s = motion::spring::Smooth;
+    while (dt > 0.0f) {
+        const float h = (std::min)(dt, 0.004f);
+        m.scroll_vel += (s.k * (target - m.scroll_shown) - s.c * m.scroll_vel) * h;
+        m.scroll_shown += m.scroll_vel * h;
+        dt -= h;
+    }
+    if (std::fabs(target - m.scroll_shown) < 0.5f && std::fabs(m.scroll_vel) < 10.0f) {
+        m.scroll_shown = target;
+        m.scroll_vel = 0.0f;
+    } else {
+        moving = true;
+    }
+    return m.scroll_shown;
 }
 
 std::wstring LeafName(const std::wstring& path) {
@@ -101,6 +185,92 @@ void MainRenderer::DrawColumnStrip(const WindowViewModel& vm, const PaneViewMode
     if (!strip.active) return;
     const ColumnStripView& cs = pane.column_strip;
     const bool has_viewport = strip.viewport.right > strip.viewport.left;
+    StripPaneMotion& pm = StripMotionFor(this, pane_index);
+    const bool hc = IsHighContrast();
+    if (motion_now_ - pm.animations_checked > 2000 || !pm.animations_checked) {
+        pm.animations_checked = motion_now_ ? motion_now_ : 1;
+        pm.animations = motion::SystemAnimationsEnabled();
+        pm.hover.SetAnimationsEnabled(pm.animations);
+    }
+    const bool animate = pm.animations && !hc;
+    pm.moving = false;
+    // Per column: which folder it shows, when its rows came, and the scroll
+    // it is drawn at. Columns that went away are forgotten.
+    for (auto it = pm.columns.begin(); it != pm.columns.end();) {
+        const bool present = std::any_of(strip.columns.begin(), strip.columns.end(),
+                                         [&](const ColumnStripSlot& s) { return s.id == it->first; });
+        it = present ? std::next(it) : pm.columns.erase(it);
+    }
+    const ColumnStripSlot* hover_slot = nullptr;
+    int hover_row = -1;
+    for (const ColumnStripSlot& slot : strip.columns) {
+        const ColumnStripColumnView* column = StripColumn(cs, slot.id);
+        if (!column) continue;
+        StripColumnMotion& cm = pm.columns[slot.id];
+        cm.highlight.SetAnimationsEnabled(animate);
+        if (!cm.seen || cm.path != column->path) {
+            // Another folder in this column: its rows cascade in once they
+            // are there (child column), its scroll lands without easing.
+            cm.seen = true;
+            cm.path = column->path;
+            cm.had_rows = false;
+            cm.born = 0;
+            cm.scroll_init = false;
+        }
+        const bool rows_now = StripRowCount(*column) > 0;
+        if (rows_now && !cm.had_rows) {
+            cm.had_rows = true;
+            cm.born = (animate && slot.id == kColumnStripChildId) ? motion_now_ : 0;
+        }
+        const float view_h = ColumnStripViewHeight(slot.rect);
+        StepStripScroll(cm, ColumnStripScrollPx(*column, view_h), view_h, motion_now_, animate, pm.moving);
+        if (vm.hover_region == static_cast<int>(HitTestResult::ColumnStripRow) &&
+            vm.hover_pane_index == pane_index && vm.hover_sub_index == slot.id &&
+            vm.hover_control_index >= 0 && static_cast<size_t>(vm.hover_control_index) < StripRowCount(*column)) {
+            hover_slot = &slot;
+            hover_row = vm.hover_control_index;
+        }
+    }
+    {
+        const float dt = static_cast<float>((std::min<uint64_t>)(motion_now_ - pm.hover_last, 64));
+        pm.hover_last = motion_now_;
+        if (hover_slot && !hc) {
+            const StripColumnMotion& cm = pm.columns[hover_slot->id];
+            if (pm.hover_alpha <= 0.0f) ++pm.hover_context;  // from nothing: appear in place
+            pm.hover_key = static_cast<int64_t>(hover_slot->id) * 1000003 + hover_row;
+            pm.hover_target = StripCell(hover_slot->rect, hover_row, cm.scroll_shown, row_height_, scale_);
+            pm.hover_rect = pm.hover.Update(pm.hover_context, pm.hover_key, pm.hover_target, motion_frame_,
+                                            motion_now_, motion::spring::Plate);
+            D2D1_RECT_F clip = hover_slot->rect;
+            clip.top += kCaptionDip * scale_;
+            clip.bottom = clip.top + ColumnStripViewHeight(hover_slot->rect);
+            if (hover_slot->id != kColumnStripChildId && has_viewport) {
+                clip.left = (std::max)(clip.left, strip.viewport.left);
+                clip.right = (std::min)(clip.right, strip.viewport.right);
+            }
+            pm.hover_clip = clip;
+            pm.hover_alpha = animate ? (std::min)(1.0f, pm.hover_alpha + dt / kStripHoverFadeInMs) : 1.0f;
+        } else {
+            pm.hover_alpha = animate ? (std::max)(0.0f, pm.hover_alpha - dt / kStripHoverFadeOutMs) : 0.0f;
+            if (pm.hover_alpha > 0.0f)
+                pm.hover_rect = pm.hover.Update(pm.hover_context, pm.hover_key, pm.hover_target, motion_frame_,
+                                                motion_now_, motion::spring::Plate);
+            else
+                pm.hover.Hide();
+        }
+        if (pm.hover.Active(motion_now_) || (pm.hover_alpha > 0.0f && pm.hover_alpha < 1.0f)) pm.moving = true;
+        if (pm.hover_alpha > 0.0f && !hc) {
+            // Under the rows, in the column the pointer is over.
+            D2D1_COLOR_F fill = theme.fill_hover;
+            fill.a *= pm.hover_alpha;
+            MakeBrush(dc, fill, brFillHover_);
+            dc->PushAxisAlignedClip(pm.hover_clip, D2D1_ANTIALIAS_MODE_ALIASED);
+            FillRoundedRect(dc, brFillHover_.get(), pm.hover_rect.left, pm.hover_rect.top,
+                            pm.hover_rect.right - pm.hover_rect.left, pm.hover_rect.bottom - pm.hover_rect.top,
+                            theme.radius_control * scale_);
+            dc->PopAxisAlignedClip();
+        }
+    }
     for (const ColumnStripSlot& slot : strip.columns) {
         const bool child = slot.id == kColumnStripChildId;
         if (!child) dc->PushAxisAlignedClip(strip.viewport, D2D1_ANTIALIAS_MODE_ALIASED);
@@ -144,6 +314,8 @@ void MainRenderer::DrawColumnStrip(const WindowViewModel& vm, const PaneViewMode
         FillRoundedRect(dc, brScrollbar_.get(), thumb.left, cy - h * 0.5f,
                         thumb.right - thumb.left, h, h * 0.5f);
     }
+    if (pm.moving && compositor_ && compositor_->Hwnd())
+        SetTimer(compositor_->Hwnd(), kStripFrameTimer, 15, StripFrameTick);
 }
 
 void MainRenderer::DrawColumnStripColumn(const WindowViewModel& vm, const PaneViewModel& /*pane*/,
@@ -178,7 +350,11 @@ void MainRenderer::DrawColumnStripColumn(const WindowViewModel& vm, const PaneVi
         return;
     }
 
-    const float scroll = ColumnStripScrollPx(column, view_h);
+    StripPaneMotion& pm = StripMotionFor(this, pane_index);
+    StripColumnMotion& cm = pm.columns[column_id];
+    const bool hc = IsHighContrast();
+    // Drawn at the eased scroll (hit-testing uses the settled one).
+    const float scroll = cm.scroll_init ? cm.scroll_shown : ColumnStripScrollPx(column, view_h);
     const float max_scroll = ColumnStripMaxScrollPx(column, view_h);
     const D2D1_RECT_F list_rc = D2D1::RectF(rc.left, list_top, rc.right, list_top + view_h);
     dc->PushAxisAlignedClip(list_rc, D2D1_ANTIALIAS_MODE_ALIASED);
@@ -189,6 +365,28 @@ void MainRenderer::DrawColumnStripColumn(const WindowViewModel& vm, const PaneVi
     const bool hover_col = vm.hover_region == static_cast<int>(HitTestResult::ColumnStripRow) &&
                            vm.hover_pane_index == pane_index && vm.hover_sub_index == column_id;
     const auto& entries = *column.snapshot;
+    // The highlight glides between rows of the same folder.
+    const bool glide_highlight = !hc && column.highlight_row >= 0;
+    if (glide_highlight) {
+        const D2D1_RECT_F target = StripCell(rc, column.highlight_row, scroll, row_height_, scale_);
+        const D2D1_RECT_F plate = cm.highlight.Update(std::hash<std::wstring>{}(column.path), column.highlight_row,
+                                                      target, motion_frame_, motion_now_, motion::spring::Snappy);
+        if (cm.highlight.Active(motion_now_)) pm.moving = true;
+        MakeBrush(dc, WithAlpha(theme.accent, 0.26f), brFillSelected_);
+        FillRoundedRect(dc, brFillSelected_.get(), plate.left, plate.top, plate.right - plate.left,
+                        plate.bottom - plate.top, theme.radius_control * scale_);
+        MakeBrush(dc, theme.accent, brAccent_);
+        const float bar_h = (plate.bottom - plate.top) * 0.5f;
+        FillRoundedRect(dc, brAccent_.get(), plate.left + 1.0f * scale_,
+                        plate.top + (plate.bottom - plate.top - bar_h) * 0.5f, 3.0f * scale_, bar_h, 1.5f * scale_);
+    } else {
+        cm.highlight.Hide();
+    }
+    const uint64_t cascade_age = cm.born ? motion_now_ - cm.born : ~uint64_t{0};
+    if (cm.born && cascade_age < static_cast<uint64_t>(kCascadeRowMs + kCascadeStaggerMs * kCascadeRows) + 20)
+        pm.moving = true;
+    D2D1_MATRIX_3X2_F base_transform{};
+    dc->GetTransform(&base_transform);
     for (int row = first; row <= last; ++row) {
         const int source = (*column.rows)[static_cast<size_t>(row)];
         if (source < 0 || static_cast<size_t>(source) >= entries.size()) continue;
@@ -197,22 +395,37 @@ void MainRenderer::DrawColumnStripColumn(const WindowViewModel& vm, const PaneVi
         const D2D1_RECT_F cell = D2D1::RectF(rc.left + pad, top + 1.0f * scale_,
                                              rc.right - pad, top + row_height_ - 1.0f * scale_);
         const bool highlighted = row == column.highlight_row;
-        const bool hovered = hover_col && vm.hover_control_index == row;
-        if (highlighted || hovered) {
+        // The pane's gliding plate draws the hover (high contrast: here).
+        const bool hovered = hc && hover_col && vm.hover_control_index == row;
+        // Cascade: fade in and slide from the left, row by row.
+        float fade = 1.0f;
+        if (cm.born) {
+            const float t = static_cast<float>(cascade_age) -
+                            kCascadeStaggerMs * static_cast<float>((std::min)(row - first, kCascadeRows));
+            const float p = std::clamp(t / kCascadeRowMs, 0.0f, 1.0f);
+            const float ease = 1.0f - (1.0f - p) * (1.0f - p) * (1.0f - p);
+            fade = ease;
+            if (fade <= 0.0f) continue;
+            if (ease < 1.0f)
+                dc->SetTransform(base_transform *
+                                 D2D1::Matrix3x2F::Translation(-kCascadeSlideDip * scale_ * (1.0f - ease), 0.0f));
+        }
+        const bool own_highlight = highlighted && !glide_highlight;
+        if (own_highlight || hovered) {
             // The navigation path is tinted with the accent so it reads at a
             // glance against wallpaper backgrounds.
-            ComPtr<ID2D1SolidColorBrush>& br = highlighted ? brFillSelected_ : brFillHover_;
-            MakeBrush(dc, highlighted ? WithAlpha(theme.accent, 0.26f) : theme.fill_hover, br);
+            ComPtr<ID2D1SolidColorBrush>& br = own_highlight ? brFillSelected_ : brFillHover_;
+            MakeBrush(dc, own_highlight ? WithAlpha(theme.accent, 0.26f) : theme.fill_hover, br);
             FillRoundedRect(dc, br.get(), cell.left, cell.top, cell.right - cell.left,
                             cell.bottom - cell.top, theme.radius_control * scale_);
-            if (highlighted) {
+            if (own_highlight) {
                 MakeBrush(dc, theme.accent, brAccent_);
                 const float bar_h = (cell.bottom - cell.top) * 0.5f;
                 FillRoundedRect(dc, brAccent_.get(), cell.left + 1.0f * scale_,
                                 cell.top + (cell.bottom - cell.top - bar_h) * 0.5f,
                                 3.0f * scale_, bar_h, 1.5f * scale_);
             }
-            if (highlighted && hovered) {
+            if (own_highlight && hovered) {
                 MakeBrush(dc, theme.fill_hover, brFillHover_);
                 FillRoundedRect(dc, brFillHover_.get(), cell.left, cell.top, cell.right - cell.left,
                                 cell.bottom - cell.top, theme.radius_control * scale_);
@@ -222,7 +435,7 @@ void MainRenderer::DrawColumnStripColumn(const WindowViewModel& vm, const PaneVi
         const float iy = std::round(top + (row_height_ - icon) * 0.5f);
         const std::wstring full = JoinDirName(column.path, entry.name);
         const D2D1_RECT_F dest = D2D1::RectF(ix, iy, ix + icon, iy + icon);
-        const float hidden_alpha = HiddenEntryAlpha(entry.attrs);
+        const float hidden_alpha = HiddenEntryAlpha(entry.attrs) * fade;
         // Nothing to open into: the empty-folder icon, and no chevron below.
         const bool empty_folder = entry.is_dir && column.empty_sources.contains(source);
         if (empty_folder) {
@@ -235,8 +448,9 @@ void MainRenderer::DrawColumnStripColumn(const WindowViewModel& vm, const PaneVi
             (!entry.is_dir && IsShortcutName(entry.name)))
             DrawLinkOverlay(ix, iy, icon, theme, hidden_alpha);
         if (IsProtectedSystemEntry(entry.attrs)) DrawProtectedBadge(dc, dest, scale_, theme);
-        MakeBrush(dc, IsHighContrast() ? theme.text
-                                       : HiddenEntryNameColor(entry.attrs, theme, theme.text), brText_);
+        const D2D1_COLOR_F name_color =
+            IsHighContrast() ? theme.text : HiddenEntryNameColor(entry.attrs, theme, theme.text);
+        MakeBrush(dc, WithAlpha(name_color, name_color.a * fade), brText_);
         const float tx = ix + icon + 8.0f * scale_;
         const float chevron_w = entry.is_dir && !empty_folder ? 18.0f * scale_ : 0.0f;
         DrawTextEndEllipsis(dc, factory, compositor_->FileNameFormat(), brText_.get(), entry.name,
@@ -244,8 +458,9 @@ void MainRenderer::DrawColumnStripColumn(const WindowViewModel& vm, const PaneVi
                             row_height_);
         if (entry.is_dir && !empty_folder) {
             DrawIconText(cell.right - chevron_w - 2.0f * scale_, top, chevron_w, row_height_,
-                         kIconChevronRight, L">", theme.text_secondary, 0.55f);
+                         kIconChevronRight, L">", WithAlpha(theme.text_secondary, theme.text_secondary.a * fade), 0.55f);
         }
+        if (fade < 1.0f) dc->SetTransform(base_transform);
     }
     dc->PopAxisAlignedClip();
     MakeBrush(dc, theme.text, brText_);
