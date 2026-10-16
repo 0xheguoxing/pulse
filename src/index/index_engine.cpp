@@ -1914,6 +1914,8 @@ void Engine::WriteVolumeShards(const Store& aggregate, const std::vector<VolStat
         v.frn_base = nullptr;
         v.frn_base_n = 0;
         v.frn_new.clear();
+        v.frn_new_tail.clear();
+        v.frn_new_prev.clear();
         v.frn_build.clear();
         for (const auto& entry : source.frn_build) {
             if (entry.second >= first && entry.second < last)
@@ -2239,6 +2241,8 @@ void Engine::PreserveOfflineVolumesLocked(const std::vector<VolumeInfo>& active,
         kept.frn_base = nullptr;
         kept.frn_base_n = 0;
         kept.frn_new.clear();
+        kept.frn_new_tail.clear();
+        kept.frn_new_prev.clear();
         kept.frn_build.clear();
         kept.item_count = 0;
         for (int32_t i = 0; i < n; ++i) {
@@ -2344,8 +2348,28 @@ bool Engine::FlattenLocked(Store& out, std::vector<VolState>& vols_out) const {
             roots.push_back(i);
     }
     for (int32_t r : roots) emit(emit, r);
-    for (int32_t i = 0; i < n; ++i)
-        if (remap[static_cast<size_t>(i)] < 0) emit(emit, i);
+    // Everything reachable from a root now has a slot. A live node left over
+    // lost its ancestor chain (a tombstoned directory whose child delete never
+    // arrived, or an out-of-range/cyclic parent). Emitting it as a parentless
+    // root writes a FileRoot that fails hierarchy validation, so every later
+    // merge fails as well and the WAL grows until startup replay takes hours.
+    // NTFS cannot delete a non-empty directory, so such an orphan is stale:
+    // drop it together with its subtree.
+    uint64_t orphan_nodes = 0, orphan_roots = 0;
+    int32_t first_orphan = -1;
+    for (int32_t i = 0; i < n; ++i) {
+        if (remap[static_cast<size_t>(i)] >= 0 || IsTomb(i)) continue;
+        ++orphan_nodes;
+        const int32_t p = NodeAt(i).parent;
+        if (p < 0 || p >= n || IsTomb(p)) {
+            ++orphan_roots;
+            if (first_orphan < 0) first_orphan = i;
+        }
+    }
+    if (orphan_nodes)
+        diagnostics::runtime::Event("index_flatten_orphans_dropped", {{"operation", index_operation},
+            {"nodes", orphan_nodes}, {"roots", orphan_roots},
+            {"first", static_cast<uint32_t>(first_orphan)}}, diagnostics::runtime::Level::Warning);
 
     vols_out = vols_;
     for (auto& v : vols_out) {
@@ -2371,6 +2395,8 @@ bool Engine::FlattenLocked(Store& out, std::vector<VolState>& vols_out) const {
         v.frn_base = nullptr;
         v.frn_base_n = 0;
         v.frn_new.clear();
+        v.frn_new_tail.clear();
+        v.frn_new_prev.clear();
     }
     return true;
 }
@@ -2452,6 +2478,20 @@ bool Engine::ReplayDeltasLocked() {
     std::vector<Addition> additions;
     bool valid = true;
     int32_t greatest_reference = -1;
+    const auto replay_started = GetTickCount64();
+    auto last_progress = replay_started;
+    uint64_t records = 0, patch_records = 0, tomb_records = 0;
+    // A stalled merge once left a WAL that took 73 minutes to replay with no
+    // log output; report progress so a slow load is visible while it runs.
+    auto progress = [&](uint8_t pass) {
+        ++records;
+        if ((records & 0xFFFF) != 0) return;
+        const auto now = GetTickCount64();
+        if (now - last_progress < 10000) return;
+        last_progress = now;
+        diagnostics::runtime::Event("index_replay_progress", {{"pass", static_cast<uint64_t>(pass)}, {"records", records},
+            {"additions", static_cast<uint64_t>(additions.size())}, {"elapsed_ms", now - replay_started}});
+    };
     // IDs are global, while WALs are per volume. Validate every log before
     // changing the snapshot, then restore additions in their original ID order.
     // Version 1 omitted these IDs and cannot safely reconstruct interleaving.
@@ -2460,10 +2500,12 @@ bool Engine::ReplayDeltasLocked() {
             [&](DeltaOp op, int32_t idx, int32_t parent, uint8_t flags, uint8_t which,
                 uint32_t mtime, uint64_t size, std::wstring_view name, uint64_t frn,
                 uint64_t, int64_t) {
+                progress(1);
                 if (op == DeltaOp::Add) {
                     valid &= idx >= LiveCount() && parent >= 0 && parent < idx;
                     additions.push_back({volume, std::wstring(name), idx, parent, flags, mtime, size, frn});
                 } else if (op == DeltaOp::Patch || op == DeltaOp::Tomb) {
+                    ++(op == DeltaOp::Patch ? patch_records : tomb_records);
                     valid &= idx >= 0;
                     greatest_reference = (std::max)(greatest_reference, idx);
                     if (op == DeltaOp::Patch && (which & static_cast<uint8_t>(PatchBits::Meta))) {
@@ -2476,6 +2518,8 @@ bool Engine::ReplayDeltasLocked() {
     if (!valid || static_cast<size_t>(LiveCount()) > kIndexCap + 64 ||
         additions.size() > kIndexCap + 64 - static_cast<size_t>(LiveCount())) return false;
     std::sort(additions.begin(), additions.end(), [](const Addition& a, const Addition& b) { return a.idx < b.idx; });
+    const uint64_t pass1_records = records;
+    records = 0;
     const int32_t original_count = LiveCount();
     for (size_t i = 0; i < additions.size(); ++i)
         if (additions[i].idx != original_count + static_cast<int32_t>(i)) return false;
@@ -2487,6 +2531,11 @@ bool Engine::ReplayDeltasLocked() {
         }
         AddNodeLocked(live_, add.parent, add.name, add.flags, add.frn, add.size, UnixToFt(add.mtime), true, volume);
     }
+    // The child map is rebuilt once when replay finishes. Maintaining it per
+    // record is quadratic: every addition is inserted before any tombstone is
+    // applied, so a name recreated N times in one folder (atomic saves, temp
+    // files) leaves an N-long equal_range that each tombstone has to scan.
+    child_map_.clear();
     std::unordered_map<int32_t, size_t> owners;
     for (size_t i = 0; i < vols_.size(); ++i) owners.emplace(vols_[i].root_idx, i);
     for (const auto& add : additions) {
@@ -2541,7 +2590,6 @@ bool Engine::ReplayDeltasLocked() {
         }
         if (op == DeltaOp::Tomb) {
             if (idx < 0 || idx >= LiveCount() || IsTomb(idx)) return;
-            ChildMapRemove(NodeAt(idx).parent, NameOf(idx), idx);
             tombstones_.insert(idx);
             ++deleted_;
             return;
@@ -2579,6 +2627,7 @@ bool Engine::ReplayDeltasLocked() {
                 [&](DeltaOp op, int32_t idx, int32_t parent, uint8_t flags, uint8_t which,
                     uint32_t mtime, uint64_t size, std::wstring_view name, uint64_t frn,
                     uint64_t journal_id, int64_t next_usn) {
+                    progress(2);
                     apply(volume, op, idx, parent, flags, which, mtime, size, name, frn,
                           journal_id, next_usn);
                 }) || !valid) {
@@ -2602,6 +2651,10 @@ bool Engine::ReplayDeltasLocked() {
     RebuildChildMapLocked();
     indexed_.store(static_cast<size_t>(LiveCount()) > deleted_ ? LiveCount() - deleted_ : 0);
     InvalidateFilterLocked();
+    if (pass1_records)
+        diagnostics::runtime::Event("index_replay_end", {{"records", pass1_records},
+            {"additions", static_cast<uint64_t>(additions.size())}, {"patches", patch_records},
+            {"tombstones", tomb_records}, {"elapsed_ms", GetTickCount64() - replay_started}});
     return true;
 }
 
@@ -2777,8 +2830,12 @@ bool Engine::TryLoadCache() {
         const std::wstring active = published.active_slot == 0 ? paths.base_a : paths.base_b;
         if (!MapIndexFile(active, mapped)) return false;
     }
+    const auto mapped_ms = GetTickCount64() - load_started;
     std::unique_lock<std::shared_mutex> lock(mutex_);
+    const auto adopt_started = GetTickCount64();
     AdoptMappedLocked(std::move(mapped));
+    const auto adopt_ms = GetTickCount64() - adopt_started;
+    const auto replay_started = GetTickCount64();
     if (!ReplayDeltasLocked()) {
         diagnostics::runtime::Event("index_replay_rejected", {{"nodes", static_cast<uint64_t>(LiveCount())},
             {"elapsed_ms", GetTickCount64() - load_started}, {"rebuild_required", 1}}, diagnostics::runtime::Level::Error);
@@ -2793,7 +2850,8 @@ bool Engine::TryLoadCache() {
     SetStatus(L"已加载 " + std::to_wstring(indexed_.load()) + L" 项");
     ready_ = true;
     diagnostics::runtime::Event("index_cache_loaded", {{"nodes", indexed_.load()},
-        {"volumes", vols_.size()}, {"elapsed_ms", GetTickCount64() - load_started}});
+        {"volumes", vols_.size()}, {"elapsed_ms", GetTickCount64() - load_started},
+        {"map_ms", mapped_ms}, {"adopt_ms", adopt_ms}, {"replay_ms", GetTickCount64() - replay_started}});
     return true;
 }
 
@@ -2817,9 +2875,25 @@ void Engine::CompactLocked() {
     InvalidateFilterLocked();
 }
 
+namespace {
+constexpr uint32_t kNoFrnSlot = UINT32_MAX;
+// True when frn_new_tail/frn_new_prev still describe frn_new exactly; any
+// future writer that bypasses MapFrnLocked falls back to the linear scan.
+bool FrnIndexCurrent(const std::vector<DiskFrn>& rows, const std::vector<uint32_t>& prev) {
+    return rows.size() == prev.size();
+}
+} // namespace
+
 int32_t Engine::FindByFrnLocked(const VolState& v, uint64_t frn) const {
-    for (auto it = v.frn_new.rbegin(); it != v.frn_new.rend(); ++it)
-        if (it->frn == frn) return it->idx;
+    if (FrnIndexCurrent(v.frn_new, v.frn_new_prev)) {
+        const auto tail = v.frn_new_tail.find(frn);
+        if (tail != v.frn_new_tail.end() && tail->second < v.frn_new.size() &&
+            v.frn_new[tail->second].frn == frn)
+            return v.frn_new[tail->second].idx;
+    } else {
+        for (auto it = v.frn_new.rbegin(); it != v.frn_new.rend(); ++it)
+            if (it->frn == frn) return it->idx;
+    }
     if (v.frn_base && v.frn_base_n) {
         const DiskFrn* b = v.frn_base;
         const DiskFrn* e = v.frn_base + v.frn_base_n;
@@ -2838,8 +2912,21 @@ void Engine::CollectFrnLocked(const VolState& v, uint64_t frn, std::vector<int32
         if (idx < 0 || idx >= live || IsTomb(idx)) return;
         if (std::find(out.begin(), out.end(), idx) == out.end()) out.push_back(idx);
     };
-    for (const auto& entry : v.frn_new)
-        if (entry.frn == frn) add(entry.idx);
+    if (FrnIndexCurrent(v.frn_new, v.frn_new_prev)) {
+        // Walk the per-FRN chain newest-first, then report oldest-first like
+        // the former forward scan (callers prefer links.front()).
+        std::vector<int32_t> chain;
+        const auto tail = v.frn_new_tail.find(frn);
+        for (uint32_t slot = tail == v.frn_new_tail.end() ? kNoFrnSlot : tail->second;
+             slot != kNoFrnSlot && slot < v.frn_new.size() && v.frn_new[slot].frn == frn &&
+             chain.size() < v.frn_new.size();
+             slot = v.frn_new_prev[slot])
+            chain.push_back(v.frn_new[slot].idx);
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) add(*it);
+    } else {
+        for (const auto& entry : v.frn_new)
+            if (entry.frn == frn) add(entry.idx);
+    }
     if (v.frn_base && v.frn_base_n) {
         const DiskFrn* b = v.frn_base;
         const DiskFrn* e = v.frn_base + v.frn_base_n;
@@ -2852,6 +2939,12 @@ void Engine::CollectFrnLocked(const VolState& v, uint64_t frn, std::vector<int32
 }
 
 void Engine::MapFrnLocked(VolState& v, uint64_t frn, int32_t idx) {
+    if (FrnIndexCurrent(v.frn_new, v.frn_new_prev)) {
+        const uint32_t slot = static_cast<uint32_t>(v.frn_new.size());
+        auto [tail, inserted] = v.frn_new_tail.try_emplace(frn, slot);
+        v.frn_new_prev.push_back(inserted ? kNoFrnSlot : tail->second);
+        tail->second = slot;
+    }
     v.frn_new.push_back(DiskFrn{ frn, idx, 0 });
     if (v.frn_build.size() || (!v.frn_base && v.frn_new.size() < kFrnMergeThreshold)) {
         v.frn_build.emplace_back(frn, idx);
@@ -3673,6 +3766,8 @@ bool Engine::RebuildVolumeMft(const VolumeInfo& volume) {
         state.frn_base = nullptr;
         state.frn_base_n = 0;
         state.frn_new.clear();
+        state.frn_new_tail.clear();
+        state.frn_new_prev.clear();
         state.frn_build.clear();
         for (const auto& entry : source.frn_build) {
             if (entry.second >= 0 && entry.second < static_cast<int32_t>(remap.size()) &&

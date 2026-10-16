@@ -278,6 +278,11 @@ private:
         const DiskFrn* frn_base = nullptr;
         uint32_t frn_base_n = 0;
         std::vector<DiskFrn> frn_new;
+        // O(1) FRN lookup over frn_new. A stalled merge can leave hundreds of
+        // thousands of entries here, and every USN record looks FRNs up 2-5
+        // times; a linear scan made each record cost ~1 ms of CPU.
+        std::unordered_map<uint64_t, uint32_t> frn_new_tail; // FRN -> newest frn_new slot
+        std::vector<uint32_t> frn_new_prev;                   // older slot with the same FRN
         std::vector<std::pair<uint64_t, int32_t>> frn_build; // MFT rebuild only
     };
 

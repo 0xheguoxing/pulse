@@ -256,6 +256,83 @@ struct EngineTestAccess {
             const auto* log = engine.DeltaFor(0);
             check(log && log->BaseBuilt() == 654321, "walk-mode recovery replaces rejected legacy WAL after rebuilding");
         }
+        select(L"scale");
+        {
+            // A merge that never succeeds leaves every addition and tombstone in
+            // the WAL. Atomic saves recreate one name in one folder repeatedly;
+            // replay used to rescan that name's child-map range per tombstone.
+            constexpr int32_t kRecreated = 100000;
+            Engine engine; Init(engine);
+            {
+                DeltaLog log; check(log.Open(DeltaFilePathForVolume(engine.vols_[0].volume_id), engine.built_unix_),
+                    "open repeated-name WAL");
+                for (int32_t i = 0; i < kRecreated; ++i)
+                    log.QueueAdd(2 + i, 0, 0, 0, static_cast<uint64_t>(i), L"the-real-index", 10000 + static_cast<uint64_t>(i));
+                for (int32_t i = 0; i + 1 < kRecreated; ++i) log.QueueTomb(2 + i);
+                check(log.Flush(), "flush repeated-name WAL");
+            }
+            const auto started = GetTickCount64();
+            const bool replayed = engine.ReplayDeltasLocked();
+            const auto elapsed = GetTickCount64() - started;
+            std::cout << "  repeated-name replay: " << kRecreated << " adds + " << (kRecreated - 1)
+                      << " tombstones in " << elapsed << " ms\n";
+            const int32_t survivor = 2 + kRecreated - 1;
+            check(replayed && engine.FindChildLiveLocked(0, L"the-real-index") == survivor &&
+                  engine.FindByFrnLocked(engine.vols_[0], 10000 + kRecreated - 1) == survivor &&
+                  engine.indexed_.load() == 3, "repeated-name replay keeps only the surviving node");
+            check(elapsed < 15000, "repeated-name replay is not quadratic in the WAL length");
+        }
+        {
+            // A live file under a tombstoned directory used to be written as a
+            // parentless FileRoot, failing every merge from then on.
+            Engine engine; Init(engine);
+            const int32_t dir = engine.AddNodeLocked(engine.live_, 0, L"gone", Engine::kFlagDir, 0, 0, 0, true);
+            const int32_t orphan = engine.AddNodeLocked(engine.live_, dir, L"orphan.txt", 0, 0, 0, 0, true);
+            const int32_t nested = engine.AddNodeLocked(engine.live_, dir, L"sub", Engine::kFlagDir, 0, 0, 0, true);
+            engine.AddNodeLocked(engine.live_, nested, L"deep.txt", 0, 0, 0, 0, true);
+            const int32_t kept = engine.AddNodeLocked(engine.live_, 1, L"kept.txt", 0, 0, 0, 0, true);
+            engine.tombstones_.insert(dir); ++engine.deleted_;
+            Engine::Store store;
+            std::vector<Engine::VolState> volumes;
+            check(engine.FlattenLocked(store, volumes), "flatten with an orphaned subtree");
+            bool orphan_written = false, kept_written = false;
+            for (const auto& node : store.nodes) {
+                const std::wstring_view name(store.pool.data() + node.off, node.len);
+                orphan_written |= name == L"orphan.txt" || name == L"deep.txt" || name == L"sub";
+                kept_written |= name == L"kept.txt";
+            }
+            check(!orphan_written && kept_written && store.nodes.size() == 3,
+                "orphaned subtree is dropped while reachable nodes are kept");
+            check(PublishBase(engine), "merge publishes instead of failing hierarchy validation");
+            (void)orphan; (void)kept;
+        }
+        {
+            Engine engine; Init(engine);
+            auto& volume = engine.vols_[0];
+            const int32_t a = engine.AddNodeLocked(engine.live_, 0, L"a.txt", 0, 77, 0, 0, true, &volume);
+            const int32_t b = engine.AddNodeLocked(engine.live_, 0, L"b.txt", 0, 88, 0, 0, true, &volume);
+            const int32_t c = engine.AddNodeLocked(engine.live_, 0, L"c.txt", 0, 77, 0, 0, true, &volume);
+            std::vector<int32_t> links;
+            engine.CollectFrnLocked(volume, 77, links);
+            check(engine.FindByFrnLocked(volume, 77) == c && engine.FindByFrnLocked(volume, 88) == b &&
+                  engine.FindByFrnLocked(volume, 99) == -1 && links == std::vector<int32_t>{a, c},
+                "indexed FRN lookup keeps newest-wins and oldest-first hard-link order");
+            // Production lookups run against a mapped base; frn_build is only
+            // the MFT-rebuild staging list and stays empty once a base exists.
+            static const DiskFrn mapped_base[1] = {{1, 0, 0}};
+            volume.frn_base = mapped_base; volume.frn_base_n = 1; volume.frn_build.clear();
+            constexpr int32_t kEntries = 200000;
+            for (int32_t i = 0; i < kEntries; ++i)
+                engine.MapFrnLocked(volume, 1000000 + static_cast<uint64_t>(i), c);
+            const auto started = GetTickCount64();
+            int32_t misses = 0;
+            for (int32_t i = 0; i < kEntries; ++i)
+                misses += engine.FindByFrnLocked(volume, 5000000 + static_cast<uint64_t>(i)) == -1;
+            const auto elapsed = GetTickCount64() - started;
+            std::cout << "  " << kEntries << " FRN misses over " << volume.frn_new.size()
+                      << " unmerged entries in " << elapsed << " ms\n";
+            check(misses == kEntries && elapsed < 5000, "FRN lookup does not scan unmerged entries");
+        }
         SetActiveIndexDirectory(L"");
         std::error_code error;
         std::filesystem::remove_all(root, error);
