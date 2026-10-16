@@ -8,6 +8,7 @@
 #include "toolbar_apps.h"
 
 #include "../common/localization.h"
+#include "../ui/toolbar_pin_drag.h"
 #include "../ui/drag_drop.h"
 #include "../ui/fluent_menu.h"
 #include "../ui/toolbar_picker.h"
@@ -214,6 +215,21 @@ void OpenWithToolbarApp(AppState& s, size_t app, const std::vector<std::wstring>
     if (app >= s.appPrefs.toolbar_apps.size()) return;
     const app::ToolbarAppInfo info = AppNow(s, app);
     Start(s, LaunchTarget(info), ItemsFor(info.exe, items, all));
+}
+
+void DropOnToolbarApp(AppState& s, size_t app, const std::vector<std::wstring>& items, bool all) {
+    if (app >= s.appPrefs.toolbar_apps.size()) return;
+    const app::ToolbarAppInfo info = AppNow(s, app);
+    std::vector<std::wstring> handed = ItemsFor(info.exe, items, all);
+    const size_t count = handed.size();
+    Start(s, LaunchTarget(info), handed);
+    // As in the prototype: the icon gulps the drop, then a note says what
+    // went where.
+    ui::GulpToolbarApp(&s.renderer, static_cast<int>(app));
+    if (count > 0 && s.hwnd)
+        s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Window,
+            Fill(Fill(Text(l10n::StringId::ToolbarAppOpened), L"{app}", info.name), L"{n}", std::to_wstring(count)),
+            std::wstring{}, {}, std::wstring{}, 2600);
 }
 
 void RunToolbarApp(AppState& s, size_t app) {

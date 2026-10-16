@@ -2246,3 +2246,4 @@ ToolbarSelRecent	IDS_TOOLBAR_SEL_RECENT	3448	最近变化	Recent changes	最近�
 ToolbarSectionSelect	IDS_TOOLBAR_SECTION_SELECT	3449	选择	Select	選取
 ToolbarToolApplyAll	IDS_TOOLBAR_TOOL_APPLY_ALL	3450	视图用于全部	Use view everywhere	檢視套用到全部
 ToolbarToolSearchAll	IDS_TOOLBAR_TOOL_SEARCH_ALL	3451	全盘搜索	Search everywhere	全碟搜尋
+ToolbarAppOpened	IDS_TOOLBAR_APP_OPENED	3452	已用 {app} 打开 {n} 项	Opened {n} items with {app}	已用 {app} 開啟 {n} 項

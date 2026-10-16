@@ -187,6 +187,12 @@ ToolbarMotion& ToolbarMotionFor(const void* renderer) {
     return motions[renderer];
 }
 
+// GulpToolbarApp: the app pin that took a drop, per renderer.
+struct ToolbarGulp { int app = -1; uint64_t born = 0; };
+std::unordered_map<const void*, ToolbarGulp>& Gulps() {
+    static std::unordered_map<const void*, ToolbarGulp> gulps;
+    return gulps;
+}
 std::unordered_map<const void*, ToolbarPinDragState>& PinDrags() {
     static std::unordered_map<const void*, ToolbarPinDragState> drags;
     return drags;
@@ -274,6 +280,28 @@ void MainRenderer::DrawToolbarApps(const WindowViewModel& vm, const ToolbarLayou
     }
     ComPtr<ID2D1SolidColorBrush> accent;
     dc->CreateSolidColorBrush(theme.accent,&accent);
+    // A drop's gulp (prototype .tb.gulp): 0.82 at 35 %, then an overshooting
+    // spring back to 1, 340 ms.
+    int gulp_app=-1;
+    float gulp_scale=1.0f;
+    if (auto it=Gulps().find(this); it!=Gulps().end()) {
+        ToolbarGulp& g=it->second;
+        if (!g.born) g.born=motion_now_ ? motion_now_ : 1;
+        const float t=static_cast<float>(motion_now_-g.born)/340.0f;
+        if (t>=1.0f || !tm.animations) {
+            Gulps().erase(it);
+        } else {
+            gulp_app=g.app;
+            if (t<0.35f) {
+                const float v=1.0f-t/0.35f;
+                gulp_scale=1.0f-0.18f*(1.0f-v*v*v);
+            } else {
+                const float u=(t-0.35f)/0.65f, c1=1.70158f*1.4f, c3=c1+1.0f;
+                gulp_scale=0.82f+0.18f*(1.0f+c3*(u-1.0f)*(u-1.0f)*(u-1.0f)+c1*(u-1.0f)*(u-1.0f));
+            }
+            tm.pins.moving=true;
+        }
+    }
     for (size_t i=0;i<vm.toolbar_apps.size() && from+i<layout.pins.size();++i) {
         const D2D1_RECT_F slot=layout.pins[from+i];
         if (slot.right <= slot.left) continue;
@@ -306,6 +334,7 @@ void MainRenderer::DrawToolbarApps(const WindowViewModel& vm, const ToolbarLayou
         const float half=8*scale_;
         float opacity=app.fit==3 && !(target && vm.toolbar_drop_force) ? 0.35f : 1.0f;
         if (dragged && drag.out) opacity*=0.35f;
+        const AroundCentre gulp(dc,D2D1::Point2F(cx,cy),gulp_app==static_cast<int>(i) ? gulp_scale : 1.0f);
         if (ID2D1Bitmap* bitmap=AppIconBitmap(app.icon)) {
             dc->DrawBitmap(bitmap,D2D1::RectF(cx-half,cy-half,cx+half,cy+half),opacity,
                 D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
@@ -767,6 +796,9 @@ std::wstring MainRenderer::ToolbarGroupLabel() const {
     return label;
 }
 
+void GulpToolbarApp(const void* renderer, int app) {
+    Gulps()[renderer] = ToolbarGulp{app, 0};   // born on the next frame
+}
 void SetToolbarPinDrag(const void* renderer, const ToolbarPinDragState& state) {
     if (state.index < 0 && state.preview_command == 0 && state.linked < 0) PinDrags().erase(renderer);
     else PinDrags()[renderer] = state;

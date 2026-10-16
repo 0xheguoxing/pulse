@@ -135,6 +135,8 @@ std::vector<ui::WindowViewModel::ToolbarAppPin> ToolbarAppPins(AppState& s);
 void RunToolbarApp(AppState& s, size_t app);
 // Opens `items` with pinned app `app`: only the types it opens unless `all`.
 void OpenWithToolbarApp(AppState& s, size_t app, const std::vector<std::wstring>& items, bool all);
+// The same for files dropped on the app's pin: the pin gulps, a note follows.
+void DropOnToolbarApp(AppState& s, size_t app, const std::vector<std::wstring>& items, bool all);
 // Adds a program (.exe or a shortcut to one) to the pins and saves.
 bool PinToolbarApp(AppState& s, const std::wstring& path);
 std::wstring ToolbarAppTooltip(AppState& s, size_t app);

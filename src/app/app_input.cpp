@@ -469,7 +469,7 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
     }
     if (toolbar_app >= 0) {
         // Shift hands over every item, also types the app does not list.
-        OpenWithToolbarApp(s, static_cast<size_t>(toolbar_app), sources, (key_state & MK_SHIFT) != 0);
+        DropOnToolbarApp(s, static_cast<size_t>(toolbar_app), sources, (key_state & MK_SHIFT) != 0);
         return effect;
     }
 

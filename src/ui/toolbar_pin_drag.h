@@ -15,5 +15,8 @@ struct ToolbarPinDragState {
 };
 
 void SetToolbarPinDrag(const void* renderer, const ToolbarPinDragState& state);
+// Files were dropped on pinned app `app` (index into the apps): its icon
+// gulps (shrinks to 0.82 and springs back, 340 ms).
+void GulpToolbarApp(const void* renderer, int app);
 
 } // namespace pulse::ui
