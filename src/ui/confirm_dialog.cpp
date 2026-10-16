@@ -2,6 +2,7 @@
 #include "confirm_dialog.h"
 
 #include "confirm_dialog_view.h"
+#include "ui_motion.h"
 #include "window_helpers.h"
 
 #include <windowsx.h>
@@ -13,6 +14,22 @@ namespace pulse::ui {
 namespace {
 
 constexpr wchar_t kConfirmClass[] = L"PulseConfirmWindow";
+
+// Motion (animation phase 9b, pulse_motion_v2): the icon pops in (and a
+// warning glyph wobbles once), the text, item rows and buttons rise in one
+// after another, and the keyboard focus ring springs between the buttons.
+// Frames come from a timer armed only while something moves.
+constexpr UINT_PTR kConfirmFrameTimer = 0x43464D54;  // 'CFMT'
+constexpr float kBodyDelayMs = 30.0f;
+constexpr float kRowsDelayMs = 50.0f;
+constexpr float kFooterDelayMs = 80.0f;
+constexpr float kWobbleDelayMs = 90.0f;
+constexpr float kWobbleMs = 460.0f;
+constexpr motion::SpringSpec kFocusSpring{700.0f, 44.0f};
+
+float After(float t_ms, float delay_ms, motion::SpringSpec spec) {
+    return t_ms <= delay_ms ? 0.0f : motion::SpringProgress(spec, t_ms - delay_ms);
+}
 
 bool CopyTextToClipboard(HWND hwnd, const std::wstring& text) {
     if (!OpenClipboard(hwnd)) return false;
@@ -44,6 +61,8 @@ public:
         visual_.focus = ConfirmControlFor(spec_.default_choice, HasSecondary());
         // Any other default is not what the colours suggest, so show it at once.
         visual_.show_focus = visual_.focus != kConfirmPrimary;
+        animations_ = motion::SystemAnimationsEnabled() && !IsHighContrast();
+        focus_motion_.SetAnimationsEnabled(animations_);
         scale_ = static_cast<float>(pulse::compat::WindowDpi(owner ? owner : GetDesktopWindow()))
                / 96.0f;
 
@@ -132,6 +151,52 @@ private:
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
+    D2D1_RECT_F ButtonRect(int id) const {
+        switch (id) {
+        case kConfirmPrimary: return layout_.primary;
+        case kConfirmSecondary: return layout_.secondary;
+        default: return layout_.cancel;
+        }
+    }
+
+    // Fills the motion fields of visual_ for this frame; true while moving.
+    bool StepMotion() {
+        const uint64_t now = motion::NowMs();
+        if (!opened_at_) opened_at_ = now;  // the first frame starts it
+        ++frame_;
+        bool moving = false;
+        if (animations_) {
+            const float t = static_cast<float>(now - opened_at_);
+            const motion::SpringSpec rise = motion::spring::Snappy;
+            visual_.icon_scale = 0.6f + 0.4f * motion::SpringProgress(motion::spring::Pop, t);
+            visual_.body_in = After(t, kBodyDelayMs, rise);
+            for (size_t i = 0; i < kConfirmMaxItemRows; ++i)
+                visual_.rows_in[i] = After(t, kRowsDelayMs + 9.0f * static_cast<float>(i), rise);
+            visual_.footer_in = After(t, kFooterDelayMs, rise);
+            const ConfirmTone tone = ResolveConfirmTone(spec_);
+            const bool wobble = tone == ConfirmTone::Danger || tone == ConfirmTone::Warning;
+            const float w = t - kWobbleDelayMs;
+            visual_.icon_turn = wobble && w > 0.0f && w < kWobbleMs
+                ? 10.0f * std::sin(w * 0.0345f) * std::exp(-w / 120.0f) : 0.0f;
+            const float settle = kFooterDelayMs + static_cast<float>(motion::SpringSettleMs(rise));
+            if (t < std::max(settle, kWobbleDelayMs + kWobbleMs)) moving = true;
+            else {
+                visual_.icon_scale = visual_.body_in = visual_.footer_in = 1.0f;
+                for (float& k : visual_.rows_in) k = 1.0f;
+                visual_.icon_turn = 0.0f;
+            }
+        }
+        visual_.focus_glide = animations_;
+        if (visual_.show_focus) {
+            visual_.focus_rect = focus_motion_.Update(1, visual_.focus, ButtonRect(visual_.focus),
+                                                      frame_, now, kFocusSpring);
+            if (focus_motion_.Active(now)) moving = true;
+        } else {
+            focus_motion_.Hide();
+        }
+        return moving;
+    }
+
     void Render() {
         if (compositor_.NeedsRecovery()) {
             if (!compositor_.Recover()) return;
@@ -142,11 +207,13 @@ private:
         if (!compositor_.Dc()) return;
         const bool high_contrast = IsHighContrast();
         const Theme theme = high_contrast ? MakeHighContrastTheme() : MakeTheme(dark_, accent_);
+        const bool moving = StepMotion();
         BeginSurface(compositor_, painter_, theme, dark_, high_contrast, backdrop_enabled_,
                      scale_);
         DrawConfirmDialog(compositor_, painter_, theme, spec_, layout_, formats_, visual_,
                           dark_, high_contrast);
         EndSurface(compositor_);
+        if (moving) SetTimer(hwnd_, kConfirmFrameTimer, 15, nullptr);
     }
 
     int Hit(LPARAM lparam) const {
@@ -249,6 +316,13 @@ private:
         }
         case WM_ERASEBKGND:
             return 1;
+        case WM_TIMER:
+            if (wparam == kConfirmFrameTimer) {
+                KillTimer(hwnd_, kConfirmFrameTimer);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
+            break;
         case WM_DESTROY:
             compositor_.Shutdown();
             done_ = true;
@@ -272,6 +346,10 @@ private:
     bool backdrop_enabled_ = false;
     bool done_ = false;
     bool sizing_ = false;
+    bool animations_ = true;
+    uint64_t opened_at_ = 0;
+    uint64_t frame_ = 0;
+    motion::SpringRectMotion focus_motion_;
 };
 
 } // namespace

@@ -56,6 +56,15 @@ struct ConfirmDialogVisual {
     int pressed = kConfirmNone;
     int focus = kConfirmPrimary;
     bool show_focus = false;
+    // Motion (animation phase 9b), filled by the window per frame; the
+    // defaults draw the settled dialog (the gallery renders it that way).
+    float icon_scale = 1.0f;   // the icon tile pops in
+    float icon_turn = 0.0f;    // degrees; a warning glyph wobbles once
+    float body_in = 1.0f;      // 0..1 (springs may overshoot): title, message, note rise in
+    float rows_in[kConfirmMaxItemRows] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    float footer_in = 1.0f;    // the buttons
+    bool focus_glide = false;  // draw the focus ring at focus_rect, gliding between buttons
+    D2D1_RECT_F focus_rect{};
 };
 
 // Fills default button texts and turns raw paths into friendly text.

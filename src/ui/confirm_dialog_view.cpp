@@ -50,6 +50,64 @@ float ButtonWidth(const fluent::Painter& painter, const std::wstring& text, floa
     return std::max(painter.MeasureButtonWidth(text), Dip(scale, kButtonMinW));
 }
 
+// One group of the dialog rising in: drawn 6 DIP lower and faded until its
+// spring reaches 1. A settled group (k == 1) costs nothing.
+class RiseIn {
+public:
+    RiseIn(Compositor& compositor, float k, float rise) {
+        if (k == 1.0f) return;
+        dc_ = compositor.Dc();
+        if (!dc_) return;
+        dc_->GetTransform(&old_);
+        dc_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, (1.0f - k) * rise) * old_);
+        const float opacity = std::clamp(k * 1.6f, 0.0f, 1.0f);
+        if (opacity < 1.0f) {
+            dc_->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr,
+                                                  D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                                  D2D1::IdentityMatrix(), opacity, nullptr,
+                                                  D2D1_LAYER_OPTIONS1_NONE),
+                           nullptr);
+            layered_ = true;
+        }
+    }
+    ~RiseIn() {
+        if (!dc_) return;
+        if (layered_) dc_->PopLayer();
+        dc_->SetTransform(old_);
+    }
+    RiseIn(const RiseIn&) = delete;
+    RiseIn& operator=(const RiseIn&) = delete;
+
+private:
+    ID2D1DeviceContext* dc_ = nullptr;
+    D2D1_MATRIX_3X2_F old_{};
+    bool layered_ = false;
+};
+
+// Scales (and turns) what is drawn while alive around `centre`.
+class AroundCentre {
+public:
+    AroundCentre(Compositor& compositor, D2D1_POINT_2F centre, float scale, float degrees) {
+        if (scale == 1.0f && degrees == 0.0f) return;
+        dc_ = compositor.Dc();
+        if (!dc_) return;
+        dc_->GetTransform(&old_);
+        dc_->SetTransform(D2D1::Matrix3x2F::Rotation(degrees, centre) *
+                          D2D1::Matrix3x2F::Scale(scale, scale, centre) * old_);
+    }
+    ~AroundCentre() { if (dc_) dc_->SetTransform(old_); }
+    AroundCentre(const AroundCentre&) = delete;
+    AroundCentre& operator=(const AroundCentre&) = delete;
+
+private:
+    ID2D1DeviceContext* dc_ = nullptr;
+    D2D1_MATRIX_3X2_F old_{};
+};
+
+D2D1_POINT_2F Centre(const D2D1_RECT_F& r) {
+    return D2D1::Point2F((r.left + r.right) * 0.5f, (r.top + r.bottom) * 0.5f);
+}
+
 float Wrapped(IDWriteFactory2* factory, IDWriteTextFormat* format, std::wstring_view text,
               float width) {
     if (!factory || !format || text.empty() || width <= 0.0f) return 0.0f;
@@ -256,27 +314,39 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
     painter.DrawTitleBarButton(l.close, fluent::TitleBarButtonRole::Close, {}, close_state);
 
     // Icon tile: the tone colour at low opacity behind its glyph.
-    D2D1_COLOR_F tile = tone_color;
-    tile.a = high_contrast ? 0.0f : (dark ? 0.18f : 0.12f);
-    painter.FillRoundedRect(l.icon, Dip(scale, 10.0f), tile);
-    if (high_contrast) painter.StrokeRoundedRect(l.icon, Dip(scale, 10.0f), theme.text);
-    painter.DrawGlyph(spec.glyph.empty() ? ToneGlyph(tone) : spec.glyph.c_str(), l.icon,
-                      tone_color);
+    {
+        AroundCentre pop(compositor, Centre(l.icon), visual.icon_scale, 0.0f);
+        D2D1_COLOR_F tile = tone_color;
+        tile.a = high_contrast ? 0.0f : (dark ? 0.18f : 0.12f);
+        painter.FillRoundedRect(l.icon, Dip(scale, 10.0f), tile);
+        if (high_contrast) painter.StrokeRoundedRect(l.icon, Dip(scale, 10.0f), theme.text);
+        AroundCentre turn(compositor, Centre(l.icon), 1.0f, visual.icon_turn);
+        painter.DrawGlyph(spec.glyph.empty() ? ToneGlyph(tone) : spec.glyph.c_str(), l.icon,
+                          tone_color);
+    }
 
-    DrawDialogParagraph(compositor, formats.title.get(), l.title, spec.title, theme.text);
-    DrawDialogParagraph(compositor, formats.body.get(), l.message, spec.message,
-                        high_contrast ? theme.text : theme.text_secondary);
+    const float rise = Dip(scale, 6.0f);
+    {
+        RiseIn in(compositor, visual.body_in, rise);
+        DrawDialogParagraph(compositor, formats.title.get(), l.title, spec.title, theme.text);
+        DrawDialogParagraph(compositor, formats.body.get(), l.message, spec.message,
+                            high_contrast ? theme.text : theme.text_secondary);
+    }
 
     const std::vector<std::wstring> rows = ConfirmItemRows(spec);
     if (!rows.empty()) {
         const float radius = Dip(scale, theme.radius_control);
-        painter.FillRoundedRect(l.card, radius, theme.surface_card);
-        painter.StrokeRoundedRect(l.card, radius, theme.stroke_card);
+        {
+            RiseIn in(compositor, visual.rows_in[0], rise);
+            painter.FillRoundedRect(l.card, radius, theme.surface_card);
+            painter.StrokeRoundedRect(l.card, radius, theme.stroke_card);
+        }
         const std::wstring_view glyph = spec.item_glyph.empty()
             ? std::wstring_view(L"\xE8A5") : std::wstring_view(spec.item_glyph);
         const bool truncated = spec.items.size() > rows.size();
         for (size_t i = 0; i < rows.size() && i < l.rows.size(); ++i) {
             const D2D1_RECT_F& row = l.rows[i];
+            RiseIn in(compositor, visual.rows_in[std::min(i, kConfirmMaxItemRows - 1)], rise);
             if (i > 0) {
                 painter.FillRoundedRect(D2D1::RectF(row.left + Dip(scale, 12.0f), row.top,
                                                     row.right - Dip(scale, 12.0f),
@@ -302,8 +372,11 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
                              fluent::HorizontalAlignment::Left, theme.surface_card);
         }
     }
-    DrawDialogParagraph(compositor, formats.note.get(), l.note, spec.note,
-                        high_contrast ? theme.text : theme.text_secondary);
+    {
+        RiseIn in(compositor, visual.body_in, rise);
+        DrawDialogParagraph(compositor, formats.note.get(), l.note, spec.note,
+                            high_contrast ? theme.text : theme.text_secondary);
+    }
 
     // Footer band: one layer up from the body, like the main window's sheet.
     painter.FillRoundedRect(l.footer, 0, theme.surface_sheet);
@@ -315,26 +388,47 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
         fluent::ControlState state{};
         state.hovered = visual.hover == id;
         state.pressed = visual.pressed == id;
-        state.keyboard_focus = visual.show_focus && visual.focus == id;
+        state.keyboard_focus = visual.show_focus && visual.focus == id && !visual.focus_glide;
         return state;
     };
-    painter.DrawButton({l.cancel, spec.cancel_text, {}, fluent::ButtonKind::Standard,
-                        state_for(kConfirmCancel)});
-    if (!spec.secondary_text.empty()) {
-        painter.DrawButton({l.secondary, spec.secondary_text, {},
-                            fluent::ButtonKind::Standard, state_for(kConfirmSecondary)});
-    }
-    painter.DrawButton({l.primary, spec.confirm_text, {},
-                        spec.danger ? fluent::ButtonKind::Danger : fluent::ButtonKind::Primary,
-                        state_for(kConfirmPrimary)});
-    // The shared accent ring vanishes against a filled button; add the Fluent
-    // outer ring in the text colour.
-    if (state_for(kConfirmPrimary).keyboard_focus) {
-        const float gap = Dip(scale, 3.0f);
-        painter.StrokeRoundedRect(D2D1::RectF(l.primary.left - gap, l.primary.top - gap,
-                                              l.primary.right + gap, l.primary.bottom + gap),
-                                  Dip(scale, theme.radius_control) + gap, theme.text,
-                                  Dip(scale, 1.5f));
+    // A button held down (pointer still on it) sinks a little.
+    auto pressed_scale = [&](int id) {
+        return visual.pressed == id && visual.hover == id && !high_contrast ? 0.97f : 1.0f;
+    };
+    {
+        RiseIn in(compositor, visual.footer_in, rise);
+        {
+            AroundCentre press(compositor, Centre(l.cancel), pressed_scale(kConfirmCancel), 0.0f);
+            painter.DrawButton({l.cancel, spec.cancel_text, {}, fluent::ButtonKind::Standard,
+                                state_for(kConfirmCancel)});
+        }
+        if (!spec.secondary_text.empty()) {
+            AroundCentre press(compositor, Centre(l.secondary), pressed_scale(kConfirmSecondary),
+                               0.0f);
+            painter.DrawButton({l.secondary, spec.secondary_text, {},
+                                fluent::ButtonKind::Standard, state_for(kConfirmSecondary)});
+        }
+        {
+            AroundCentre press(compositor, Centre(l.primary), pressed_scale(kConfirmPrimary),
+                               0.0f);
+            painter.DrawButton({l.primary, spec.confirm_text, {},
+                                spec.danger ? fluent::ButtonKind::Danger
+                                            : fluent::ButtonKind::Primary,
+                                state_for(kConfirmPrimary)});
+        }
+        // The focus ring travelling between buttons (the window springs focus_rect).
+        const bool ring = visual.show_focus && visual.focus_glide;
+        if (ring) painter.DrawFocusRing(visual.focus_rect, Dip(scale, theme.radius_control));
+        // The shared accent ring vanishes against a filled button; add the Fluent
+        // outer ring in the text colour.
+        if (visual.show_focus && visual.focus == kConfirmPrimary) {
+            const D2D1_RECT_F& r = ring ? visual.focus_rect : l.primary;
+            const float gap = Dip(scale, 3.0f);
+            painter.StrokeRoundedRect(D2D1::RectF(r.left - gap, r.top - gap,
+                                                  r.right + gap, r.bottom + gap),
+                                      Dip(scale, theme.radius_control) + gap, theme.text,
+                                      Dip(scale, 1.5f));
+        }
     }
 
     // The footer band covers the surface outline; draw it again on top.
