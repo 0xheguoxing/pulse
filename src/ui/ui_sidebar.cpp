@@ -35,6 +35,84 @@ void DrawSidebarInsertionLine(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* brus
         brush);
 }
 
+// Sidebar motion (animation phase 7, pulse_motion_v2): the selection pill
+// stretches toward the new row - its leading edge on a stiff spring, the
+// trailing edge on a softer one - a hover plate glides under the pointer, and
+// an item's expand chevron turns. The state lives here, per renderer, and the
+// frames are asked for with a one-shot TIMERPROC timer on the window, so idle
+// stays idle: no timer runs once everything has settled.
+constexpr motion::SpringSpec kPillLead{900.0f, 60.0f};
+constexpr motion::SpringSpec kPillTrail{300.0f, 30.0f};
+constexpr float kPillMaxStretch = 1.9f;  // times the row height
+constexpr float kHoverFadeInMs = 90.0f, kHoverFadeOutMs = 120.0f;
+constexpr UINT_PTR kSidebarFrameTimer = 0x53424D54;  // 'SBMT'
+
+void CALLBACK SidebarFrameTick(HWND hwnd, UINT, UINT_PTR id, DWORD) {
+    KillTimer(hwnd, id);
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+struct ChevronTurn {
+    bool expanded = false;
+    uint64_t at = 0;
+};
+
+struct SidebarMotion {
+    motion::SpringRectMotion lead, trail, hover;
+    uint64_t hover_context = 0;
+    float hover_alpha = 0.0f;
+    D2D1_RECT_F hover_rect{}, hover_target{};
+    int64_t hover_key = 0;
+    float hover_radius = 0.0f;
+    uint64_t hover_last = 0;
+    std::unordered_map<std::wstring, ChevronTurn> chevrons;
+    bool animations = true;
+    uint64_t animations_checked = 0;
+};
+
+SidebarMotion& SidebarMotionFor(const void* renderer) {
+    static std::unordered_map<const void*, SidebarMotion> motions;
+    return motions[renderer];
+}
+
+// The pill spans both springs: leading edge from the stiff one, trailing edge
+// from the soft one, cut to kPillMaxStretch rows and a touch thinner while
+// stretched.
+D2D1_RECT_F StretchPill(const D2D1_RECT_F& lead, const D2D1_RECT_F& trail, float scale) {
+    D2D1_RECT_F pill = D2D1::RectF((std::min)(lead.left, trail.left), (std::min)(lead.top, trail.top),
+                                   (std::max)(lead.right, trail.right), (std::max)(lead.bottom, trail.bottom));
+    const float row_h = (std::max)(1.0f, lead.bottom - lead.top);
+    const float max_h = row_h * kPillMaxStretch;
+    if (pill.bottom - pill.top > max_h) {
+        if (lead.top >= trail.top) pill.top = pill.bottom - max_h;  // moving down: the bottom leads
+        else pill.bottom = pill.top + max_h;
+    }
+    const float stretch = (std::clamp)((pill.bottom - pill.top - row_h) / row_h, 0.0f, 1.0f);
+    pill.left += 2.0f * scale * stretch;
+    pill.right -= 2.0f * scale * stretch;
+    return pill;
+}
+
+float ChevronAngle(SidebarMotion& m, const std::wstring& key, bool expanded, uint64_t now, bool& moving) {
+    auto [it, fresh] = m.chevrons.try_emplace(key);
+    ChevronTurn& turn = it->second;
+    if (fresh) {
+        turn.expanded = expanded;
+        turn.at = 0;
+    } else if (turn.expanded != expanded) {
+        turn.expanded = expanded;
+        turn.at = m.animations ? now : 0;
+    }
+    float p = 1.0f;
+    if (turn.at) {
+        const float t = static_cast<float>(now - turn.at);
+        p = motion::SpringProgress(motion::spring::Snappy, t);
+        if (t < static_cast<float>(motion::SpringSettleMs(motion::spring::Snappy))) moving = true;
+        else turn.at = 0;
+    }
+    return 90.0f * (expanded ? p : 1.0f - p);
+}
+
 } // namespace
 
 D2D1_RECT_F MainRenderer::SidebarRect(float w, float h) const {
@@ -134,6 +212,64 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     const bool reordering = vm.tag_drag_group >= 0 || vm.sidebar_pin_drag_index >= 0 ||
                             vm.sidebar_group_drag_id >= 0;
     const int pill_slot = !reordering && !IsHighContrast() ? selected_slot : -1;
+    SidebarMotion& sm = SidebarMotionFor(this);
+    if (motion_now_ - sm.animations_checked > 2000 || !sm.animations_checked) {
+        // The Windows animation switch, re-read every couple of seconds.
+        sm.animations_checked = motion_now_ ? motion_now_ : 1;
+        sm.animations = motion::SystemAnimationsEnabled();
+        sm.lead.SetAnimationsEnabled(sm.animations);
+        sm.trail.SetAnimationsEnabled(sm.animations);
+        sm.hover.SetAnimationsEnabled(sm.animations);
+    }
+    bool sidebar_moving = false;
+    // One hover plate glides between rows (the menus' plate); reorders and
+    // high contrast keep each row's own static hover.
+    const bool plate_live = !reordering && !IsHighContrast();
+    int hover_slot = -1;
+    if (plate_live) {
+        for (size_t k = 0; k < slots.size(); ++k) {
+            const auto& slot = slots[k];
+            if (slot.kind != SidebarSlot::Item && slot.kind != SidebarSlot::Drive &&
+                slot.kind != SidebarSlot::Tag) continue;
+            if (slot.group < 0 || slot.item < 0) continue;
+            if (static_cast<int>(k) == pill_slot) continue;
+            const auto& item = vm.sidebar[slot.group].items[slot.item];
+            if (item.tab_row && item.tab_active) continue;  // the raised card is its own hover
+            if (IsHovered(vm, HitTestResult::SidebarItem, slot.run) ||
+                IsHovered(vm, HitTestResult::SidebarItemAction, slot.run) ||
+                IsHovered(vm, HitTestResult::SidebarItemExpand, slot.run)) {
+                hover_slot = static_cast<int>(k);
+                break;
+            }
+        }
+    }
+    {
+        const uint64_t context = compact ? 1u : 2u;
+        const float dt = static_cast<float>((std::min<uint64_t>)(motion_now_ - sm.hover_last, 64));
+        sm.hover_last = motion_now_;
+        if (hover_slot >= 0) {
+            const auto& slot = slots[static_cast<size_t>(hover_slot)];
+            // Coming from nothing, the plate appears at the row (no glide
+            // from wherever it was last).
+            if (sm.hover_alpha <= 0.0f) ++sm.hover_context;
+            sm.hover_key = slot.run;
+            sm.hover_target = slot.rc;
+            sm.hover_rect = sm.hover.Update(context * 0x10000u + sm.hover_context, slot.run, slot.rc,
+                                            motion_frame_, motion_now_, motion::spring::Plate);
+            sm.hover_radius = (compact ? theme.radius_control : theme.radius_flyout) * scale_;
+            sm.hover_alpha = sm.animations ? (std::min)(1.0f, sm.hover_alpha + dt / kHoverFadeInMs) : 1.0f;
+        } else {
+            // Fading out where it was; kept in step so a pointer coming back
+            // mid-fade glides on from there.
+            sm.hover_alpha = sm.animations && plate_live ? (std::max)(0.0f, sm.hover_alpha - dt / kHoverFadeOutMs) : 0.0f;
+            if (sm.hover_alpha > 0.0f)
+                sm.hover_rect = sm.hover.Update(context * 0x10000u + sm.hover_context, sm.hover_key, sm.hover_target,
+                                                motion_frame_, motion_now_, motion::spring::Plate);
+            else
+                sm.hover.Hide();
+        }
+        if (sm.hover.Active(motion_now_) || (sm.hover_alpha > 0.0f && sm.hover_alpha < 1.0f)) sidebar_moving = true;
+    }
     const auto isSelectedSlot = [&](const SidebarSlot& slot) {
         return selected_slot >= 0 && &slot == &slots[static_cast<size_t>(selected_slot)];
     };
@@ -165,14 +301,21 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             well.right - 0.5f, well.bottom - 0.5f), r, r), brStrokeDivider_.get(), 1.0f);
         break;
     }
+    if (sm.hover_alpha > 0.0f) {
+        D2D1_COLOR_F fill = theme.fill_hover;
+        fill.a *= sm.hover_alpha;
+        painter_.FillRoundedRect(sm.hover_rect, sm.hover_radius, fill);
+    }
     if (pill_slot >= 0) {
         const auto& slot = slots[static_cast<size_t>(pill_slot)];
         const auto& item = vm.sidebar[slot.group].items[slot.item];
         const uint64_t context = compact ? 1u : 2u;
         const int64_t key = static_cast<int64_t>(std::hash<std::wstring>{}(item.path)) ^
                             (static_cast<int64_t>(slot.group) << 48);
-        const D2D1_RECT_F pill = sidebar_pill_.Update(context, key, slot.rc, motion_frame_,
-                                                      motion_now_, 200);
+        const D2D1_RECT_F lead = sm.lead.Update(context, key, slot.rc, motion_frame_, motion_now_, kPillLead);
+        const D2D1_RECT_F trail = sm.trail.Update(context, key, slot.rc, motion_frame_, motion_now_, kPillTrail);
+        const D2D1_RECT_F pill = StretchPill(lead, trail, scale_);
+        if (sm.lead.Active(motion_now_) || sm.trail.Active(motion_now_)) sidebar_moving = true;
         const float radius = (compact ? theme.radius_control : theme.radius_flyout) * scale_;
         // Same fills the static rows use (Painter::DrawSidebarItem / rail).
         D2D1_COLOR_F fill = theme.fill_selected;
@@ -184,9 +327,21 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         FillRoundedRect(dc, brFillSelected_.get(), pill.left, pill.top,
                         pill.right - pill.left, pill.bottom - pill.top, radius);
     }
+    if (pill_slot < 0) {
+        sm.lead.Hide();
+        sm.trail.Hide();
+    }
     const auto isPillSlot = [&](const SidebarSlot& slot) {
         return pill_slot >= 0 && &slot == &slots[static_cast<size_t>(pill_slot)];
     };
+    // Every return below asks for the next frame while something moves.
+    struct FrameRequest {
+        HWND hwnd;
+        const bool& moving;
+        ~FrameRequest() {
+            if (moving && hwnd) SetTimer(hwnd, kSidebarFrameTimer, 15, SidebarFrameTick);
+        }
+    } frame_request{compositor_ ? compositor_->Hwnd() : nullptr, sidebar_moving};
 
     if (compact) {
         for (const auto& slot : slots) {
@@ -301,7 +456,7 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             const auto& item = vm.sidebar[slot.group].items[slot.item];
             const bool pill_row = isPillSlot(slot);
             const bool selected = (!pill_row && isSelectedSlot(slot)) || item.tab_active;
-            const bool hovered = !pill_row && IsHovered(vm, HitTestResult::SidebarItem, slot.run);
+            const bool hovered = !pill_row && !plate_live && IsHovered(vm, HitTestResult::SidebarItem, slot.run);
             if (selected || hovered || slot.run == vm.sidebar_drop_index) {
                 MakeBrush(dc, selected ? theme.fill_selected : theme.fill_hover, brFillSelected_);
                 FillRoundedRect(dc, brFillSelected_.get(), slot.rc.left, slot.rc.top,
@@ -498,6 +653,9 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         if (vm.sidebar_pin_drag_index >= 0 && slot.run == vm.sidebar_pin_drag_index)
             state.hovered = true;
         if (vm.tag_drag_group >= 0) state.hovered = false; // run indices shift mid-drag
+        const bool row_hot = state.hovered;
+        // The gliding plate paints the hover under ordinary rows.
+        if (plate_live && !(item.tab_row && item.tab_active)) state.hovered = false;
         if (item.tab_row && item.tab_active) {
             // Active tab: raised card with an accent bar, like the top strip's
             // active tab plate.
@@ -644,7 +802,7 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             if (unpin && item.tab_row) {
                 // Tab rows: close button, shown on hover and on the active tab.
                 const bool close_hot = IsHovered(vm, HitTestResult::SidebarItemAction, slot.run);
-                if (state.hovered || item.tab_active) {
+                if (row_hot || item.tab_active) {
                     if (close_hot) {
                         MakeBrush(dc, theme.fill_hover, brFillHover_);
                         FillRoundedRect(dc, brFillHover_.get(), unpin_rc.left, unpin_rc.top,
@@ -674,10 +832,26 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                         expand_rc.right - expand_rc.left, expand_rc.bottom - expand_rc.top,
                         4.0f * scale_);
                 }
-                DrawIconText(expand_rc.left, expand_rc.top,
-                    expand_rc.right - expand_rc.left, expand_rc.bottom - expand_rc.top,
-                    item.expanded ? kIconChevronDown : kIconChevronRight,
-                    item.expanded ? L"v" : L">", theme.text_secondary, 0.68f);
+                // The chevron turns (Snappy) instead of swapping glyphs.
+                const float angle = IsHighContrast() ? (item.expanded ? 90.0f : 0.0f)
+                    : ChevronAngle(sm, std::to_wstring(slot.group) + L"|" + item.path, item.expanded,
+                                   motion_now_, sidebar_moving);
+                if (angle <= 0.01f || angle >= 89.99f) {
+                    DrawIconText(expand_rc.left, expand_rc.top,
+                        expand_rc.right - expand_rc.left, expand_rc.bottom - expand_rc.top,
+                        item.expanded ? kIconChevronDown : kIconChevronRight,
+                        item.expanded ? L"v" : L">", theme.text_secondary, 0.68f);
+                } else {
+                    D2D1_MATRIX_3X2_F saved{};
+                    dc->GetTransform(&saved);
+                    const D2D1_POINT_2F center = D2D1::Point2F((expand_rc.left + expand_rc.right) * 0.5f,
+                                                               (expand_rc.top + expand_rc.bottom) * 0.5f);
+                    dc->SetTransform(D2D1::Matrix3x2F::Rotation(angle, center) * saved);
+                    DrawIconText(expand_rc.left, expand_rc.top,
+                        expand_rc.right - expand_rc.left, expand_rc.bottom - expand_rc.top,
+                        kIconChevronRight, L">", theme.text_secondary, 0.68f);
+                    dc->SetTransform(saved);
+                }
             }
         }
     }
