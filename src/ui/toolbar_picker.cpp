@@ -503,9 +503,25 @@ private:
             static_cast<size_t>(hover_.index) < spec_->pins.size() && !spec_->pins[hover_.index].checked &&
             (!spec_->max_tools || CheckedCount(kTools) < spec_->max_tools))
             want = hover_.index;
-        if (want == preview_) return;
-        preview_ = want;
-        if (spec_->on_preview) spec_->on_preview(want);
+        if (want != preview_) {
+            preview_ = want;
+            if (spec_->on_preview) spec_->on_preview(want);
+        }
+        UpdateLink();
+    }
+    // The hovered (or dragged) tile that is checked: its toolbar pin rings.
+    void UpdateLink() {
+        int page = -1, tile = -1;
+        if (!closing_at_) {
+            if (drag_.active) { if (drag_.page == page_) tile = static_cast<int>(drag_.tile); }
+            else if (hover_.part == Part::Tile) tile = hover_.index;
+            if (tile >= 0 && (static_cast<size_t>(tile) >= Tiles(page_).size() || !Tiles(page_)[tile].checked)) tile = -1;
+            if (tile >= 0) page = page_;
+        }
+        if (page == link_page_ && tile == link_tile_) return;
+        link_page_ = page;
+        link_tile_ = tile;
+        if (spec_->on_link) spec_->on_link(page, tile, tile >= 0 ? Tiles(page)[tile].value : std::wstring{});
     }
 
     void AddApp() {
@@ -1410,6 +1426,8 @@ private:
             if (g_window == this) g_window = nullptr;
             if (preview_ >= 0 && spec_->on_preview) spec_->on_preview(-1);
             preview_ = -1;
+            if (link_page_ >= 0 && spec_->on_link) spec_->on_link(-1, -1, std::wstring{});
+            link_page_ = link_tile_ = -1;
             return 0;
         }
         return DefWindowProcW(hwnd_, message, wparam, lparam);
@@ -1453,6 +1471,7 @@ private:
     bool apps_loaded_ = true;
     bool parked_ = false;   // inactive while the owner drags a toolbar pin
     int preview_ = -1;
+    int link_page_ = -1, link_tile_ = -1;
 };
 
 } // namespace

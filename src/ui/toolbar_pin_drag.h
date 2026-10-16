@@ -11,6 +11,7 @@ struct ToolbarPinDragState {
     float dy = 0.0f;           // px below its row
     bool out = false;          // let go here, it leaves the toolbar
     int preview_command = 0;   // a tool hovered in the picker: drawn as a dashed preview pin
+    int linked = -1;           // pin of the picker's hovered (or dragged) pinned tile: a pulsing ring
 };
 
 void SetToolbarPinDrag(const void* renderer, const ToolbarPinDragState& state);

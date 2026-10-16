@@ -3075,6 +3075,9 @@ void ShowToolbarMore(AppState& s) {
 // being dragged while the picker is open.
 namespace {
 int g_toolbar_preview = -1;
+// The picker's hovered pinned tile (T3d): tools page tool index, or an app path.
+int g_toolbar_link_tool = -1;
+std::wstring g_toolbar_link_app;
 struct ToolbarPinDrag {
     bool down = false, active = false, out = false, moved = false;
     int index = -1;        // the pin's slot now (tools, then apps)
@@ -3093,6 +3096,22 @@ void PushToolbarPinDrag(AppState& s) {
         state.out = g_pin_drag.out;
     }
     if (g_toolbar_preview >= 0) state.preview_command = ToolbarToolCommand(static_cast<size_t>(g_toolbar_preview));
+    // The linked pin's slot, worked out now: the toolbar order may have moved.
+    if (g_toolbar_link_tool >= 0 && static_cast<size_t>(g_toolbar_link_tool) < app::kToolbarToolCount) {
+        int slot = 0;
+        for (const auto& id : s.appPrefs.toolbar_tools) {
+            if (app::ToolbarToolIndex(id) < 0) continue;
+            if (id == app::kToolbarToolIds[g_toolbar_link_tool]) { state.linked = slot; break; }
+            ++slot;
+        }
+    } else if (!g_toolbar_link_app.empty()) {
+        const auto& apps = s.appPrefs.toolbar_apps;
+        for (size_t j = 0; j < apps.size() && j < app::kMaxToolbarApps; ++j)
+            if (_wcsicmp(apps[j].c_str(), g_toolbar_link_app.c_str()) == 0) {
+                state.linked = static_cast<int>(ToolbarPinActions(s).size() + j);
+                break;
+            }
+    }
     ui::SetToolbarPinDrag(&s.renderer, state);
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
@@ -3307,6 +3326,7 @@ void ShowToolbarCustomize(AppState& s, int page) {
         tools = app::NormalizeToolbarTools(tools);
         if (tools == s.appPrefs.toolbar_tools) return;
         s.appPrefs.toolbar_tools = std::move(tools);
+        if (g_toolbar_link_tool >= 0) PushToolbarPinDrag(s);   // the ring follows its pin
         save();
     };
     spec.on_selection = [&s, save](const std::vector<size_t>& shown) {
@@ -3323,11 +3343,21 @@ void ShowToolbarCustomize(AppState& s, int page) {
         return ToolbarToggleOn(s, index);
     };
     spec.on_apps = [&s, save](const std::vector<ui::ToolbarPickerTile>& apps) {
-        if (ApplyToolbarAppRows(s, apps)) save();
+        if (ApplyToolbarAppRows(s, apps)) {
+            save();
+            if (!g_toolbar_link_app.empty()) PushToolbarPinDrag(s);
+        }
     };
     // T3c: the toolbar beside the open picker.
     spec.on_preview = [&s](int index) {
         g_toolbar_preview = index;
+        PushToolbarPinDrag(s);
+    };
+    // T3d: a pinned tile hovered in the picker rings its toolbar pin (the
+    // selection page's chip is not on the toolbar, so it rings nothing).
+    spec.on_link = [&s](int page, int index, const std::wstring& value) {
+        g_toolbar_link_tool = page == 0 ? index : -1;
+        g_toolbar_link_app = page == 2 ? value : std::wstring{};
         PushToolbarPinDrag(s);
     };
     spec.keep_open = [&s](POINT screen) {
@@ -3359,6 +3389,8 @@ void ShowToolbarCustomize(AppState& s, int page) {
     spec.dark_now = [&s] { return s.darkMode; };
     ui::ShowToolbarPicker(s.hwnd, spec, s.darkMode, s.accentColor);
     g_toolbar_preview = -1;
+    g_toolbar_link_tool = -1;
+    g_toolbar_link_app.clear();
     PushToolbarPinDrag(s);
 }
 

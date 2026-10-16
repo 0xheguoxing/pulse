@@ -580,6 +580,29 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         }
     }
     DrawToolbarApps(vm,layout,theme);
+    // The picker's hovered pinned tile: its pin breathes an accent ring
+    // (prototype .tb.linked: 1.5 px strong to 3 px soft, 0.9 s each way).
+    if (pin_drag.linked>=0 && static_cast<size_t>(pin_drag.linked)<layout.pins.size() &&
+        layout.pins[pin_drag.linked].right>layout.pins[pin_drag.linked].left) {
+        float k=0.0f;
+        if (tm.animations) {
+            const float t=static_cast<float>(motion_now_%1800)/900.0f;
+            const float tri=t<=1.0f ? t : 2.0f-t;
+            k=tri*tri*(3.0f-2.0f*tri);
+            toolbar_moving=true;
+        }
+        const float width=(1.5f+1.5f*k)*scale_;
+        D2D1_COLOR_F ring=theme.accent;
+        ring.a*=0.7f+(0.22f-0.7f)*k;
+        ComPtr<ID2D1SolidColorBrush> brush;
+        dc->CreateSolidColorBrush(ring,&brush);
+        if (brush.get()) {
+            const D2D1_RECT_F r=layout.pins[pin_drag.linked];
+            const float o=width*0.5f, radius=theme.radius_control*scale_+o;
+            dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(r.left-o,r.top-o,r.right+o,r.bottom+o),radius,radius),
+                                     brush.get(),width);
+        }
+    }
     // Pins with no room (narrow window, open filter) are in More: a small
     // count on it says how many.
     if (layout.overflow.right > layout.overflow.left) {
@@ -745,7 +768,7 @@ std::wstring MainRenderer::ToolbarGroupLabel() const {
 }
 
 void SetToolbarPinDrag(const void* renderer, const ToolbarPinDragState& state) {
-    if (state.index < 0 && state.preview_command == 0) PinDrags().erase(renderer);
+    if (state.index < 0 && state.preview_command == 0 && state.linked < 0) PinDrags().erase(renderer);
     else PinDrags()[renderer] = state;
 }
 }
