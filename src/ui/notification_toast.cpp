@@ -1,6 +1,7 @@
 #include "notification_toast.h"
 
 #include "snack_style.h"
+#include "ui_motion.h"
 
 #include <windowsx.h>
 #include <algorithm>
@@ -8,6 +9,48 @@
 
 namespace pulse::ui {
 namespace {
+// Motion (pulse_motion_v2 toasts): a capsule rises 14 dip on the Pop spring
+// while its plate unfurls from 70% width and fades in, the content following
+// 40 ms later; a replacing message morphs the plate to its new width; a
+// dismissed one sinks 8 dip and fades in 150 ms. Transform and opacity only.
+constexpr float kRiseDip = 14.0f, kSinkDip = 8.0f, kUnfurlFrom = 0.70f;
+constexpr float kFadeInMs = 110.0f, kContentDelayMs = 40.0f, kContentFadeMs = 130.0f, kSwapFadeMs = 140.0f;
+constexpr uint64_t kExitMs = 150;
+uint32_t EnterSettleMs() noexcept { return motion::SpringSettleMs(motion::spring::Pop); }
+float Clamp01(float v) noexcept { return (std::clamp)(v, 0.0f, 1.0f); }
+
+// Moves the drawing by the pose's drop and, once the plate is down, clips and
+// fades the content; restores all of it on scope exit (Draw returns early).
+class PoseScope {
+public:
+    PoseScope(ID2D1DeviceContext* dc, float dy) : dc_(dc) {
+        dc_->GetTransform(&saved_);
+        if (dy != 0.0f) dc_->SetTransform(saved_ * D2D1::Matrix3x2F::Translation(0.0f, dy));
+    }
+    ~PoseScope() {
+        if (layer_) dc_->PopLayer();
+        if (clip_) dc_->PopAxisAlignedClip();
+        dc_->SetTransform(saved_);
+    }
+    PoseScope(const PoseScope&) = delete;
+    PoseScope& operator=(const PoseScope&) = delete;
+    void Clip(const D2D1_RECT_F& rect) {
+        dc_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        clip_ = true;
+    }
+    void Fade(float alpha) {
+        if (alpha >= 0.999f) return;
+        dc_->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                              D2D1::IdentityMatrix(), alpha),
+                       nullptr);
+        layer_ = true;
+    }
+private:
+    ID2D1DeviceContext* dc_;
+    D2D1_MATRIX_3X2_F saved_{};
+    bool clip_ = false, layer_ = false;
+};
+
 bool Contains(const D2D1_RECT_F& rect, float x, float y) {
     return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
 }
@@ -50,6 +93,13 @@ std::wstring_view SnackGlyph(SnackIcon icon) {
 }
 }
 void NotificationToast::Show(HWND owner, std::wstring title, std::wstring message, bool persistent, UINT action_message) {
+    // Over a toast that is up, the plate morphs from what was drawn; else it rises.
+    swapped_ = visible_ && drawn_w_ > 0.0f;
+    swap_snack_ = snack_;
+    swap_from_w_ = drawn_w_;
+    exiting_ = false;
+    animate_ = motion::SystemAnimationsEnabled();
+    enter_at_ = motion::NowMs();
     title_ = std::move(title);
     message_ = std::move(message);
     persistent_ = persistent;
@@ -86,14 +136,63 @@ void NotificationToast::ShowError(HWND owner, std::wstring title, std::wstring m
     kind_ = fluent::InfoBarKind::Error;
 }
 void NotificationToast::Dismiss(HWND owner) {
+    const bool was_up = visible_;
     visible_ = false;
     pressed_close_ = pressed_card_ = hovered_ = false;
     pressed_action_ = -1;
-    KillTimer(owner, timer);
+    // Input stops now; the drawing sinks away over kExitMs.
+    if (was_up && animate_ && drawn_w_ > 0.0f) {
+        exiting_ = true;
+        exit_at_ = motion::NowMs();
+        SetTimer(owner, timer, 16, nullptr);
+    } else {
+        exiting_ = false;
+        drawn_w_ = 0.0f;
+        KillTimer(owner, timer);
+    }
     InvalidateRect(owner, nullptr, FALSE);
+}
+
+NotificationToast::Pose NotificationToast::CurrentPose(float scale, float target_w, bool high_contrast) const {
+    Pose pose;
+    pose.plate_w = target_w;
+    if (!animate_ || high_contrast) return pose;
+    if (exiting_) {
+        const float e = Clamp01(static_cast<float>(motion::NowMs() - exit_at_) / static_cast<float>(kExitMs));
+        pose.dy = kSinkDip * scale * e * e;
+        if (snack_) pose.plate_w = target_w * (1.0f - 0.06f * e * e);
+        pose.plate_alpha = 1.0f - e;
+        pose.content_alpha = Clamp01(1.0f - 1.7f * e);
+        return pose;
+    }
+    const float t = static_cast<float>(motion::NowMs() - enter_at_);
+    if (swapped_ && swap_snack_ == snack_) {
+        if (snack_ && swap_from_w_ > 0.0f) {
+            const float s = motion::SpringProgress(motion::spring::Snappy, t);
+            pose.plate_w = swap_from_w_ + (target_w - swap_from_w_) * s;
+        }
+        pose.content_alpha = Clamp01(t / kSwapFadeMs);
+        return pose;
+    }
+    const float s = motion::SpringProgress(motion::spring::Pop, t);
+    pose.dy = kRiseDip * scale * (1.0f - s);
+    if (snack_) pose.plate_w = target_w * (kUnfurlFrom + (1.0f - kUnfurlFrom) * s);
+    pose.plate_alpha = Clamp01(t / kFadeInMs);
+    pose.content_alpha = Clamp01((t - kContentDelayMs) / kContentFadeMs);
+    return pose;
 }
 bool NotificationToast::HandleMessage(HWND owner, UINT message, WPARAM wparam, LPARAM lparam) {
     if (message == WM_DESTROY) { KillTimer(owner, timer); return false; }
+    if (message == WM_TIMER && wparam == timer && !visible_) {
+        // The exit frames; nothing to count down any more.
+        if (!exiting_ || motion::NowMs() - exit_at_ >= kExitMs) {
+            exiting_ = false;
+            drawn_w_ = 0.0f;
+            KillTimer(owner, timer);
+        }
+        InvalidateRect(owner, nullptr, FALSE);
+        return true;
+    }
     if (!visible_) return false;
     if (message == WM_KEYDOWN && wparam == VK_ESCAPE) {
         Dismiss(owner);
@@ -107,7 +206,8 @@ bool NotificationToast::HandleMessage(HWND owner, UINT message, WPARAM wparam, L
             if (!remaining_) { Dismiss(owner); return true; }
         }
         last_tick_ = now;
-        if (now - born_ >= 180) {
+        // 16 ms frames while the toast comes in, then only the run-down line.
+        if (!animate_ || motion::NowMs() - enter_at_ >= EnterSettleMs()) {
             if (persistent_) KillTimer(owner, timer);
             else SetTimer(owner, timer, snack_ ? 100 : 200, nullptr);  // the capsule's line runs down smoothly
         }
@@ -171,7 +271,7 @@ bool NotificationToast::HandleMessage(HWND owner, UINT message, WPARAM wparam, L
     return false;
 }
 void NotificationToast::Draw(Compositor& compositor, const Theme& theme, float scale, bool high_contrast) {
-    if (!visible_) return;
+    if (!visible_ && !exiting_) return;
     if (snack_) {
         DrawSnack(compositor, theme, scale, high_contrast);
         return;
@@ -219,13 +319,16 @@ void NotificationToast::Draw(Compositor& compositor, const Theme& theme, float s
         }
     }
     const float height = std::round(px(12.0f) + title_h + (body_h > 0.0f ? px(2.0f) + body_h : 0.0f) + px(12.0f));
-    const float age = (std::min)(1.0f, static_cast<float>(GetTickCount64() - born_) / 180.0f);
-    const float slide = high_contrast ? 0.0f : px(12.0f) * (1.0f - age) * (1.0f - age);
     const float right = std::round(window_w - margin);
-    const float top = std::round(window_h - px(48.0f) + slide - height);
+    const float top = std::round(window_h - px(48.0f) - height);
     card_ = D2D1::RectF(right - width, top, right, top + height);
     const float radius = px(10.0f);
-    DrawSnackPlate(dc, card_, radius, pal, scale, high_contrast);
+    const Pose pose = CurrentPose(scale, width, high_contrast);
+    if (visible_) drawn_w_ = width;
+    PoseScope scope(dc, std::round(pose.dy));
+    DrawSnackPlate(dc, card_, radius, pal, scale, high_contrast, pose.plate_alpha);
+    if (pose.content_alpha <= 0.0f) return;
+    scope.Fade(pose.content_alpha);
     if (kind_ == fluent::InfoBarKind::Error && !high_contrast) {
         // An error keeps a thin edge in its tone so it is not read as a status note.
         D2D1_COLOR_F edge = painter_.StatusToneColor(kind_);
@@ -252,7 +355,7 @@ void NotificationToast::Draw(Compositor& compositor, const Theme& theme, float s
         cy = static_cast<float>(cursor.y);
     }
     close_ = D2D1::RectF(card_.right - px(8.0f + 24.0f), line_mid - px(12.0f), card_.right - px(8.0f), line_mid + px(12.0f));
-    if (Contains(close_, cx, cy) || pressed_close_) painter_.FillRoundedRect(close_, px(12.0f), pal.hover);
+    if (visible_ && (Contains(close_, cx, cy) || pressed_close_)) painter_.FillRoundedRect(close_, px(12.0f), pal.hover);
     {
         const float c = (close_.left + close_.right) * 0.5f, arm = px(3.5f);
         brush->SetColor(pal.text_secondary);
@@ -302,10 +405,8 @@ void NotificationToast::DrawSnack(Compositor& compositor, const Theme& theme, fl
     if (total() > max_width) title_w = (std::max)(px(40.0f), title_w - (total() - max_width));
     const float width = (std::min)(max_width, total());
 
-    const float age = (std::min)(1.0f, static_cast<float>(GetTickCount64() - born_) / 180.0f);
-    const float slide = high_contrast ? 0.0f : px(10.0f) * (1.0f - age) * (1.0f - age);
     const float left = std::round((window_w - width) * 0.5f);
-    const float top = std::round(window_h - px(48.0f) - height + slide);
+    const float top = std::round(window_h - px(48.0f) - height);
     card_ = D2D1::RectF(left, top, left + width, top + height);
     const float radius = height * 0.5f;
     const float mid = top + height * 0.5f;
@@ -317,8 +418,19 @@ void NotificationToast::DrawSnack(Compositor& compositor, const Theme& theme, fl
         cy = static_cast<float>(cursor.y);
     }
 
-    // Acrylic plate in the window's theme, with the flyout shadow.
-    DrawSnackPlate(dc, card_, radius, pal, scale, high_contrast);
+    // Acrylic plate in the window's theme, with the flyout shadow. It
+    // unfurls from the middle as the capsule rises; the content (laid out at
+    // the settled place) shows through it as it widens.
+    const Pose pose = CurrentPose(scale, width, high_contrast);
+    const float plate_w = (std::max)(height, pose.plate_w);
+    const float plate_left = (left + width * 0.5f) - plate_w * 0.5f;
+    const D2D1_RECT_F plate = D2D1::RectF(plate_left, top, plate_left + plate_w, top + height);
+    if (visible_) drawn_w_ = plate_w;
+    PoseScope scope(dc, std::round(pose.dy));
+    DrawSnackPlate(dc, plate, radius, pal, scale, high_contrast, pose.plate_alpha);
+    if (pose.content_alpha <= 0.0f) return;
+    if (plate_w < width - 0.5f) scope.Clip(D2D1::RectF(plate.left + radius * 0.5f, top, plate.right - radius * 0.5f, top + height));
+    scope.Fade(pose.content_alpha);
 
     ComPtr<ID2D1SolidColorBrush> brush;
     if (FAILED(dc->CreateSolidColorBrush(pal.text, &brush))) return;
@@ -350,13 +462,18 @@ void NotificationToast::DrawSnack(Compositor& compositor, const Theme& theme, fl
         const float label_w = LineWidth(labels[i].get());
         const D2D1_RECT_F button = D2D1::RectF(x, mid - px(13.0f), x + label_w + px(16.0f), mid + px(13.0f));
         action_rects_[i] = button;
-        const bool hot = Contains(button, cx, cy) || pressed_action_ == static_cast<int>(i);
+        const bool pressed = pressed_action_ == static_cast<int>(i);
+        const bool hot = visible_ && (Contains(button, cx, cy) || pressed);
+        // Pressed, the button gives a little (the label stays put).
+        const D2D1_RECT_F wash = pressed ? D2D1::RectF(button.left + px(1.5f), button.top + px(1.0f),
+                                                       button.right - px(1.5f), button.bottom - px(1.0f))
+                                         : button;
         if (i == 0 && !high_contrast) {
             // The first button reads as one: a wash of the accent, deeper under the cursor.
-            painter_.FillRoundedRect(button, px(13.0f), hot ? SnackAlpha(pal.accent_wash, pal.accent_wash.a * 1.8f)
+            painter_.FillRoundedRect(wash, px(13.0f), hot ? SnackAlpha(pal.accent_wash, pal.accent_wash.a * 1.8f)
                                                             : pal.accent_wash);
         } else if (hot) {
-            painter_.FillRoundedRect(button, px(13.0f), pal.hover);
+            painter_.FillRoundedRect(wash, px(13.0f), pal.hover);
         }
         draw(labels[i].get(), x + px(8.0f), label_w + 1.0f, height, top, i == 0 ? pal.accent : pal.text_secondary);
         x = button.right;
@@ -373,7 +490,7 @@ void NotificationToast::DrawSnack(Compositor& compositor, const Theme& theme, fl
     }
     // Close: a small x in a round hover target.
     close_ = D2D1::RectF(card_.right - px(6.0f + 24.0f), mid - px(12.0f), card_.right - px(6.0f), mid + px(12.0f));
-    if (Contains(close_, cx, cy) || pressed_close_) painter_.FillRoundedRect(close_, px(12.0f), pal.hover);
+    if (visible_ && (Contains(close_, cx, cy) || pressed_close_)) painter_.FillRoundedRect(close_, px(12.0f), pal.hover);
     {
         const float c = (close_.left + close_.right) * 0.5f, arm = px(3.5f);
         brush->SetColor(pal.text_secondary);

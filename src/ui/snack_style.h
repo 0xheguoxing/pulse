@@ -86,7 +86,9 @@ inline SnackPalette MakeSnackPalette(const Theme& theme, bool high_contrast) noe
 
 // Paints the plate: the shadow, then acrylic sampled from what the frame
 // already holds under `rect` (a solid plate when that cannot be sampled),
-// then the hairline edge. Draw it before the content.
+// then the hairline edge. Draw it before the content. `opacity` fades the
+// whole plate (a capsule coming or going); the backdrop is sampled before the
+// fade layer opens, since a target cannot be read with a layer pushed.
 void DrawSnackPlate(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float radius, const SnackPalette& palette,
-                    float scale, bool high_contrast);
+                    float scale, bool high_contrast, float opacity = 1.0f);
 }  // namespace pulse::ui

@@ -3,6 +3,8 @@
 
 #include <d2d1effects.h>
 
+#include <algorithm>
+
 #include "window_material.h"
 
 namespace pulse::ui {
@@ -12,8 +14,8 @@ constexpr GUID kShadowClsid = {0xC67EA361, 0x1863, 0x4e69, {0x89, 0xdb, 0x69, 0x
 }  // namespace
 
 void DrawSnackPlate(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float radius, const SnackPalette& palette,
-                    float scale, bool high_contrast) {
-    if (!dc || !(rect.right > rect.left) || !(rect.bottom > rect.top)) return;
+                    float scale, bool high_contrast, float opacity) {
+    if (!dc || !(rect.right > rect.left) || !(rect.bottom > rect.top) || !(opacity > 0.0f)) return;
     ComPtr<ID2D1SolidColorBrush> brush;
     if (FAILED(dc->CreateSolidColorBrush(palette.plate, &brush))) return;
     const D2D1_ROUNDED_RECT shape = D2D1::RoundedRect(rect, radius, radius);
@@ -31,6 +33,7 @@ void DrawSnackPlate(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float radiu
     const float blur = 16.0f * scale;
     TargetSample sample;
     const bool sampled = SampleTarget(dc, rect, 2.0f * blur, sample);
+    const float fade = (std::min)(opacity, 1.0f);
 
     // Fluent flyout elevation: a wide soft shadow below and a tight one around.
     ComPtr<ID2D1CommandList> silhouette;
@@ -44,10 +47,10 @@ void DrawSnackPlate(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float radiu
         if (SUCCEEDED(silhouette->Close())) {
             const auto cast = [&](float deviation, float drop, const D2D1_COLOR_F& color) {
                 ComPtr<ID2D1Effect> shadow;
-                if (color.a <= 0.0f || FAILED(dc->CreateEffect(kShadowClsid, &shadow)) || !shadow.get()) return;
+                if (color.a * fade <= 0.0f || FAILED(dc->CreateEffect(kShadowClsid, &shadow)) || !shadow.get()) return;
                 shadow->SetInput(0, silhouette.get());
                 shadow->SetValue(D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, deviation);
-                shadow->SetValue(D2D1_SHADOW_PROP_COLOR, D2D1::Vector4F(color.r, color.g, color.b, color.a));
+                shadow->SetValue(D2D1_SHADOW_PROP_COLOR, D2D1::Vector4F(color.r, color.g, color.b, color.a * fade));
                 dc->DrawImage(shadow.get(), D2D1::Point2F(0.0f, drop), D2D1_INTERPOLATION_MODE_LINEAR);
             };
             cast(8.0f * scale, 6.0f * scale, palette.shadow_key);
@@ -55,6 +58,13 @@ void DrawSnackPlate(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float radiu
         }
     }
 
+    // The shadow fades with its alpha; the glass in a layer (opened only now:
+    // the silhouette above retargets the context, which a layer forbids).
+    const bool fading = fade < 0.999f;
+    if (fading)
+        dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                             D2D1::IdentityMatrix(), fade),
+                      nullptr);
     if (sampled && DrawAcrylicSample(dc, sample, rect, radius, palette.dark, blur)) {
         brush->SetColor(palette.veil);
     } else {
@@ -63,5 +73,6 @@ void DrawSnackPlate(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float radiu
     dc->FillRoundedRectangle(shape, brush.get());
     brush->SetColor(palette.stroke);
     dc->DrawRoundedRectangle(edge, brush.get(), 1.0f);
+    if (fading) dc->PopLayer();
 }
 }  // namespace pulse::ui
