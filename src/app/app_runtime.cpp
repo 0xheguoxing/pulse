@@ -577,6 +577,13 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
                 static_cast<unsigned long long>(content_config.roots.size()),static_cast<unsigned long long>(content_status.indexed_files));
             vm.settings_content_summary=content_summary;
             if (vm.settings_content_instant) vm.settings_content_summary = l10n::Get(l10n::StringId::ContentInstantReady);
+            // Unscoped searches cover the user folders unless all drives was chosen (content_scope_mode.h).
+            if (vm.settings_content_instant && content_config.shared_scope) {
+                const bool all_drives = s.appPrefs.content_scope == 2;
+                vm.settings_content_summary += l10n::IsChinese()
+                    ? l10n::HantText(all_drives ? L"；范围：所有驱动器" : L"；范围：个人文件夹")
+                    : std::wstring(all_drives ? L"; scope: all drives" : L"; scope: personal folders");
+            }
             for (const auto& root : content_config.roots) {
                 ui::WindowViewModel::ContentFolderView folder;
                 folder.path = root.path;

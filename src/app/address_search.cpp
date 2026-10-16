@@ -4,8 +4,14 @@
 #include "search_query.h"
 #include "../common/localization.h"
 #include "../ui/address_search_layout.h"
+#include "../index/content_config_storage.h"
+#include "../common/text_format.h"
+#include "app_prompts.h"
+#include "content_scope_mode.h"
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <thread>
 
 namespace pulse {
 
@@ -13,6 +19,60 @@ bool IsAddressSearchResults(const app::Tab* tab) {
     std::wstring kind;
     return tab && app::ParsePulsePath(tab->current_path, &kind, nullptr) && kind == L"search";
 }
+
+namespace {
+// Code-side Chinese, converted for the zh-TW UI phrase by phrase.
+std::wstring Zh(const wchar_t* chinese, const wchar_t* english) {
+    return l10n::IsChinese() ? l10n::HantText(chinese) : std::wstring(english);
+}
+
+// Removes the pre-Instant content-v1.sqlite once per process
+// (app::DeleteLegacyContentDatabase). The delete runs on a worker so a
+// multi-GB file never stalls the window; the next tick reports it. A database
+// still open elsewhere is left for the next launch.
+struct LegacyContentCleanupState {
+    enum Stage : int { Idle, Running, Finished, Done };
+    std::atomic<int> stage{Idle};
+    app::LegacyContentCleanup result;
+};
+LegacyContentCleanupState& LegacyContentCleanup() {
+    static LegacyContentCleanupState state;
+    return state;
+}
+void TickLegacyContentCleanup(AppState& s) {
+    auto& state = LegacyContentCleanup();
+    const int stage = state.stage.load(std::memory_order_acquire);
+    if (stage == LegacyContentCleanupState::Idle) {
+        if (!s.contentSearch.ConfigurationReady()) return;
+        int expected = LegacyContentCleanupState::Idle;
+        if (!state.stage.compare_exchange_strong(expected, LegacyContentCleanupState::Running)) return;
+        const auto database = index::config_storage::DatabasePath();
+        index::ContentIndexConfig stored;
+        // Instant mode keeps its folders in .config beside the database; only
+        // delete the database once that file is there.
+        if (database.empty() || GetFileAttributesW(database.c_str()) == INVALID_FILE_ATTRIBUTES ||
+            !index::config_storage::ReadConfigFile(database, stored)) {
+            state.stage.store(LegacyContentCleanupState::Done, std::memory_order_release);
+            return;
+        }
+        std::thread([database] {
+            auto& worker = LegacyContentCleanup();
+            worker.result = app::DeleteLegacyContentDatabase(database);
+            worker.stage.store(LegacyContentCleanupState::Finished, std::memory_order_release);
+        }).detach();
+        return;
+    }
+    if (stage != LegacyContentCleanupState::Finished) return;
+    state.stage.store(LegacyContentCleanupState::Done, std::memory_order_release);
+    if (!state.result.deleted) return;
+    const auto size = format::ByteSize(state.result.bytes);
+    std::wstring message = Zh(L"已删除旧版本留下的内容索引数据库，释放了 ", L"Deleted the content index database left by an older version and freed ");
+    message += size;
+    message += Zh(L"。内容搜索现在直接读取文件，不再需要它。", L". Content search now reads files directly and no longer needs it.");
+    s.notification_toast.SetKind(ui::fluent::InfoBarKind::Success);
+    s.notification_toast.Show(s.hwnd, Zh(L"已清理旧的内容索引", L"Old content index removed"), std::move(message));
+}
+} // namespace
 
 static std::wstring SearchOrigin(const app::Tab& tab) {
     if (tab.search_origin_valid) return tab.search_origin_path;
@@ -206,6 +266,17 @@ void SwitchAddressSearchMode(AppState& s, bool content) {
     if (!s.addressSearching) ShowAddressSearch(s);
     if (s.addressSearchContent == content) return;
     if (s.searchHistoryOpen && s.menu) s.menu->Dismiss();
+    // First switch to content search: where unscoped searches look. Closing
+    // the prompt keeps the default (user folders) and asks again next time.
+    if (content && !s.isolatedTest && s.appPrefs.content_scope == 0) {
+        const int scope = AskContentScope(s);
+        if (scope) {
+            s.appPrefs.content_scope = scope;
+            s.appPrefs.Save();
+            app::SetContentScopeMode(scope);
+        }
+        if (s.hwndAddressEdit) SetFocus(s.hwndAddressEdit);
+    }
     s.addressSearchContent = content;
     const auto& cue = l10n::Get(content ? l10n::StringId::SearchContentHint : l10n::StringId::SearchNameHint);
     SendMessageW(s.hwndAddressEdit, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(cue.c_str()));
@@ -403,6 +474,7 @@ void ShowAddressSearchScope(AppState& s) {
 
 bool TickAddressSearch(AppState& s, ULONGLONG now) {
     bool searched = false;
+    app::SetContentScopeMode(s.appPrefs.content_scope);
     if (s.searchOptionsPending && !s.searchHistoryOpen && (!s.menu || !s.menu->IsOpen())) {
         s.searchOptionsPending = false;
         ShowSearchOptions(s);
@@ -420,6 +492,7 @@ bool TickAddressSearch(AppState& s, ULONGLONG now) {
             index::content::PutConfig(new_scope, shared);
             if (old_scope.data() != new_scope.data()) s.contentSearch.Configure(shared);
         }
+        if (!s.isolatedTest) TickLegacyContentCleanup(s);
         const auto status = ContentIndexStatusText(s);
         if (status != s.contentStatusText) {
             s.contentStatusText = status;

@@ -71,6 +71,10 @@ std::vector<uint8_t> RequestPayload(const ContentSearchRequest& request) {
     if (request.case_sensitive) flags |= 2u;
     if (request.skip_system_locations) flags |= 4u;
     if (request.whole_word) flags |= 8u;
+    // 16: a multi-folder content search with no single scope. The wire carries
+    // roots.front() in the root field; without this bit the agent would read
+    // it back as a scope and drop the other folders.
+    if (request.mode == ContentSearchMode::Content && request.root.empty() && !request.roots.empty()) flags |= 16u;
     writer.PutU32(flags);
     writer.PutU64(request.maximum_file_bytes);
     writer.PutU32(static_cast<uint32_t>(request.maximum_hits));

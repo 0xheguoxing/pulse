@@ -12,6 +12,7 @@
 #include "../common/localization.h"
 #include "../index/index_client.h"
 #include "../index/content_search_client.h"
+#include "content_scope_mode.h"
 #include "../index/network_agent_client.h"
 #include <d2d1.h>
 #include <dwrite.h>
@@ -183,6 +184,7 @@ struct GlobalSearchWindow::Impl {
             request.maximum_file_bytes = config.maximum_file_bytes;
             request.maximum_document_bytes = config.maximum_document_bytes;
             if (current_only && !current_folder.empty()) request.root = current_folder;
+            else request.roots = app::DefaultContentSearchRoots(config.shared_scope);
             contents.SearchAsync(std::move(request));
         } else {
             index::Query request;

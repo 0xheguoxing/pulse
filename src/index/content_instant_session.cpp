@@ -97,7 +97,9 @@ bool RunInstantContentSession(ContentIndex& index, ContentSearchRequest request,
     const auto included = [&](const std::wstring& path) {
         return !path.empty() && !IsInternalContentPath(path) && !ContentPathExcluded(config, path) &&
             std::any_of(config.roots.begin(), config.roots.end(), [&](const auto& root) { return Under(path, root.path); }) &&
-            (request.root.empty() || Under(path, request.root));
+            (request.root.empty() ? request.roots.empty() ||
+                std::any_of(request.roots.begin(), request.roots.end(), [&](const auto& root) { return Under(path, root); })
+                : Under(path, request.root));
     };
     auto enqueue = [&](const std::wstring& path, bool imported = false) {
         const bool ancestor = !request.root.empty() && Under(request.root, path) &&

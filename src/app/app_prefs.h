@@ -112,6 +112,10 @@ struct AppPrefs {
     int sidebar_width = 224; // DIPs
     bool address_search_current = false;
     bool address_search_content = false;
+    // Unscoped content searches (content_scope_mode.h): 0 not chosen yet, which
+    // searches the user folders and asks once; 1 Desktop/Documents/Downloads;
+    // 2 all drives.
+    int content_scope = 0;
     int tray_icon_size = 48; // staging-tray deck icon edge in DIPs (32..64)
     // Interaction hints: status-bar context hints + one-time teaching tips.
     bool show_hints = true;

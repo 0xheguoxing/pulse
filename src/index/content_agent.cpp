@@ -58,6 +58,7 @@ bool ParseRequest(const std::vector<uint8_t>& payload, ContentSearchRequest& req
     request.case_sensitive = (flags & 2) != 0;
     request.skip_system_locations = (flags & 4) != 0;
     request.whole_word = (flags & 8) != 0;
+    const bool roots_only = (flags & 16) != 0 && request.mode == ContentSearchMode::Content;
     request.maximum_hits = maximum_hits;
     if (reader.remaining() >= 12) {
         uint32_t extra_roots = 0;
@@ -72,6 +73,8 @@ bool ParseRequest(const std::vector<uint8_t>& payload, ContentSearchRequest& req
         }
         if (!request.root.empty()) request.roots.push_back(request.root);
         request.roots.insert(request.roots.end(), extras.begin(), extras.end());
+        // The root field was only the first folder of a multi-folder search.
+        if (roots_only) request.root.clear();
         if (reader.remaining() >= 12) {
             uint32_t match_mode = 0;
             uint32_t extra_needles = 0;
@@ -111,7 +114,7 @@ bool ParseRequest(const std::vector<uint8_t>& payload, ContentSearchRequest& req
         request.sort = static_cast<ContentResultSort>(sort); request.sort_desc = descending != 0;
     }
     if (request.mode == ContentSearchMode::Duplicates && request.roots.empty() && request.candidate_paths.empty()) return false;
-    if (request.root.empty() && !request.roots.empty()) request.root = request.roots.front();
+    if (request.root.empty() && !request.roots.empty() && !roots_only) request.root = request.roots.front();
     if (reader.remaining()) {
         uint32_t version = 0;
         if (!reader.GetU32(version) || version != 1 || !reader.GetU64(request.session_id)) return false;

@@ -4,6 +4,7 @@
 #include "app_state.h"
 #include "../common/localization.h"
 #include "../ui/confirm_dialog.h"
+#include "content_scope_mode.h"
 
 #include <cwchar>
 #include <string>
@@ -23,7 +24,34 @@ std::wstring TrimBreaks(std::wstring text) {
     return text;
 }
 
+// Code-side Chinese, converted for the zh-TW UI phrase by phrase.
+std::wstring Zh(const wchar_t* chinese, const wchar_t* english) {
+    return l10n::IsChinese() ? l10n::HantText(chinese) : std::wstring(english);
+}
+
 } // namespace
+
+int AskContentScope(AppState& s) {
+    ui::ConfirmDialogSpec spec;
+    spec.title = Zh(L"内容搜索范围", L"Content search scope");
+    spec.message = Zh(L"内容搜索会在搜索时直接读取文件。只搜索个人文件夹更快，占用也更少；"
+                      L"搜索所有驱动器能找到更多文件，但每次搜索要读的文件也更多。",
+                      L"Content search reads files while you search. Searching your personal folders "
+                      L"is faster and lighter; searching all drives finds more but reads far more files each time.");
+    spec.items = app::UserContentFolders();
+    spec.item_glyph = L"\xE8B7";  // Folder
+    spec.note = Zh(L"指定了文件夹的搜索（如“仅当前文件夹”）不受影响。可随时在设置中更改。",
+                   L"Searches in a specific folder (such as current folder only) are not affected. "
+                   L"You can change this anytime in Settings.");
+    spec.confirm_text = Zh(L"仅个人文件夹（推荐）", L"Personal folders (recommended)");
+    spec.secondary_text = Zh(L"所有驱动器", L"All drives");
+    spec.cancel_text = Zh(L"以后再说", L"Not now");
+    spec.tone = ui::ConfirmTone::Question;
+    spec.glyph = L"\xE721";  // Search
+    spec.default_choice = ui::ConfirmChoice::Confirm;
+    const auto choice = Ask(s, spec);
+    return choice == ui::ConfirmChoice::Confirm ? 1 : choice == ui::ConfirmChoice::Secondary ? 2 : 0;
+}
 
 bool ConfirmClearRecent(AppState& s) {
     ui::ConfirmDialogSpec spec;

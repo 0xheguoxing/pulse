@@ -7,6 +7,7 @@
 #include "../ui/folder_picker_dialog.h"
 #include "../common/preview_packs.h"
 #include "system_ctx_model.h"
+#include "content_scope_mode.h"
 #include <shellapi.h>
 #include <shlobj.h>
 #include <algorithm>
@@ -106,9 +107,32 @@ void ContentOptions(AppState& s) {
     if (config.roots.empty()) return;
     const I encodings[]={I::ContentIndexAutoEncoding,I::ContentIndexUtf8Encoding,I::ContentIndexSystemEncoding,I::ContentIndexGbEncoding};
     std::vector<ui::FluentMenuItem> items;
+    // Where unscoped searches look (content_scope_mode.h). Only the shared
+    // all-drives configuration has a choice; picked roots are the scope.
+    if (config.shared_scope) {
+        auto zh=[](const wchar_t* chinese,const wchar_t* english) {
+            return l10n::IsChinese() ? l10n::HantText(chinese) : std::wstring(english);
+        };
+        auto scope=[&](int command,std::wstring text,bool selected) {
+            ui::FluentMenuItem item;item.command=command;item.text=std::move(text);
+            item.radio_group=true;item.radio=selected;items.push_back(std::move(item));
+        };
+        const bool all=s.appPrefs.content_scope==static_cast<int>(app::ContentScopeMode::AllDrives);
+        scope(11,zh(L"搜索个人文件夹（桌面、文档、下载）",L"Search personal folders (Desktop, Documents, Downloads)"),!all);
+        scope(12,zh(L"搜索所有驱动器",L"Search all drives"),all);
+        items.back().separator_after=true;
+    }
     for(int i=0;i<4;++i) items.push_back(Item(i+1,encodings[i],std::all_of(config.roots.begin(), config.roots.end(),
         [&](const auto& root) { return static_cast<int>(root.encoding) == i; })));
     const int command=Popup(s,std::move(items));
+    if(command==11 || command==12) {
+        s.appPrefs.content_scope=command==11 ? static_cast<int>(app::ContentScopeMode::UserFolders)
+                                             : static_cast<int>(app::ContentScopeMode::AllDrives);
+        if(!s.isolatedTest) s.appPrefs.Save();
+        app::SetContentScopeMode(s.appPrefs.content_scope);
+        InvalidateRect(s.hwnd,nullptr,FALSE);
+        return;
+    }
     if(command<1 || command>4) return;
     config=s.contentSearch.GetConfig();
     config.default_encoding=static_cast<text::Encoding>(command-1);

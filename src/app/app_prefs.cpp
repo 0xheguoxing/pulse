@@ -108,6 +108,7 @@ void AppPrefs::ResetToDefaults() {
     sidebar_width = 224;
     address_search_current = false;
     address_search_content = false;
+    content_scope = 0;
     tray_icon_size = 48;
     show_hints = true;
     auto_check_updates = true;
@@ -240,6 +241,7 @@ std::wstring AppPrefs::ToJson() const {
     out += L",\n  \"sidebar_width\":" + std::to_wstring(sidebar_width);
     out += L",\n  \"address_search_current\":" + std::to_wstring(address_search_current);
     out += L",\n  \"address_search_content\":" + std::to_wstring(address_search_content);
+    out += L",\n  \"content_scope\":" + std::to_wstring(content_scope);
     out += L",\n  \"tray_icon_size\":";
     out += std::to_wstring(tray_icon_size);
     out += L",\n  \"show_hints\":";
@@ -400,6 +402,8 @@ bool AppPrefs::FromJson(const std::wstring& json) {
         sidebar_width > static_cast<int>(ui::kPanelWidthMaxDip)) sidebar_width = 224;
     address_search_current = pulse::json::ExtractInt(json, L"address_search_current", 0) != 0;
     address_search_content = pulse::json::ExtractInt(json, L"address_search_content", 0) != 0;
+    content_scope = pulse::json::ExtractInt(json, L"content_scope", 0);
+    if (content_scope < 0 || content_scope > 2) content_scope = 0;
     if (row_height < 24 || row_height > 48) row_height = 34;
     tray_icon_size = pulse::json::ExtractInt(json, L"tray_icon_size", 48);
     show_hints = pulse::json::ExtractBool(json, L"show_hints", true);
