@@ -57,8 +57,88 @@ struct GlidePlate {
     }
 };
 
+// Pinned tools and apps (toolbar picker T2): a pin that shows up pops in
+// from 0.55 on the Pop spring; a toggle that flips turns its glyph in from
+// -50 degrees and half size (300 ms, slight overshoot). Keyed by command or
+// app name, so a pin keeps its state when it moves along the row. Nothing
+// pops on the first paint.
+constexpr float kPinPopFrom = 0.55f;
+constexpr float kToggleTurnMs = 300.0f;
+constexpr float kToggleTurnDeg = -50.0f;
+
+struct PinMotion {
+    uint64_t born = 0, flipped = 0, seen = 0;
+    bool checked = false;
+};
+
+struct PinMotions {
+    std::unordered_map<std::wstring, PinMotion> map;
+    bool primed = false;
+    bool moving = false;   // set while any pin pops or turns this frame
+
+    PinMotion& Touch(const std::wstring& key, bool checked, uint64_t frame, uint64_t now, bool animate) {
+        auto [it, added] = map.try_emplace(key);
+        PinMotion& m = it->second;
+        if (added) {
+            m.checked = checked;
+            m.born = primed && animate ? (now ? now : 1) : 0;
+        } else if (m.checked != checked) {
+            m.checked = checked;
+            m.flipped = animate ? (now ? now : 1) : 0;
+        }
+        m.seen = frame;
+        return m;
+    }
+    // Pins not drawn this frame are forgotten: they pop again when they return.
+    void Sweep(uint64_t frame) {
+        std::erase_if(map, [frame](const auto& entry) { return entry.second.seen != frame; });
+        primed = true;
+    }
+    // Scale of the whole button while it pops in (1 when settled).
+    float Pop(PinMotion& m, uint64_t now) {
+        if (!m.born) return 1.0f;
+        const float t = static_cast<float>(now - m.born);
+        if (t >= static_cast<float>(motion::SpringSettleMs(motion::spring::Pop))) { m.born = 0; return 1.0f; }
+        moving = true;
+        return kPinPopFrom + (1.0f - kPinPopFrom) * motion::SpringProgress(motion::spring::Pop, t);
+    }
+    // Glyph turn and scale while a toggle flips.
+    void Turn(PinMotion& m, uint64_t now, float& degrees, float& scale) {
+        degrees = 0.0f;
+        scale = 1.0f;
+        if (!m.flipped) return;
+        const float t = static_cast<float>(now - m.flipped) / kToggleTurnMs;
+        if (t >= 1.0f) { m.flipped = 0; return; }
+        moving = true;
+        const float e = motion::EaseOutBack(t);
+        degrees = kToggleTurnDeg * (1.0f - e);
+        scale = 0.5f + 0.5f * e;
+    }
+};
+
+// Scales (and turns) what is drawn inside around a centre; no-op at rest.
+struct AroundCentre {
+    ID2D1DeviceContext* dc;
+    D2D1_MATRIX_3X2_F saved{};
+    bool on = false;
+    AroundCentre(ID2D1DeviceContext* context, D2D1_POINT_2F centre, float scale, float degrees = 0.0f) : dc(context) {
+        if (!dc || (scale == 1.0f && degrees == 0.0f)) return;
+        dc->GetTransform(&saved);
+        dc->SetTransform(D2D1::Matrix3x2F::Rotation(degrees, centre) *
+                         D2D1::Matrix3x2F::Scale(scale, scale, centre) * saved);
+        on = true;
+    }
+    ~AroundCentre() { if (on) dc->SetTransform(&saved); }
+    AroundCentre(const AroundCentre&) = delete;
+    AroundCentre& operator=(const AroundCentre&) = delete;
+};
+
 struct ToolbarMotion {
     GlidePlate nav, crumbs, commands;
+    PinMotions pins;
+    // The More button's count of pins folded into it; pops when it changes.
+    int folded = 0;
+    uint64_t folded_born = 0;
     bool animations = true;
     uint64_t animations_checked = 0;
 };
@@ -92,6 +172,7 @@ float MainRenderer::SelectionChipLabelWidth(float width, int selected) const {
 void MainRenderer::DrawToolbarApps(const WindowViewModel& vm, const ToolbarLayout& layout, const Theme& theme) {
     const bool plate_hover=!IsHighContrast();  // DrawToolbar's gliding plate shows the hover
     ID2D1DeviceContext* dc=compositor_->Dc();
+    ToolbarMotion& tm=ToolbarMotionFor(this);
     const size_t from=vm.toolbar_pins.size();
     D2D1_RECT_F band=layout.pin_label;
     bool any=band.right > band.left;
@@ -134,6 +215,8 @@ void MainRenderer::DrawToolbarApps(const WindowViewModel& vm, const ToolbarLayou
             const float x=b.left-6.5f*scale_;
             FillRect(dc,brStrokeDivider_.get(),x,b.top+9*scale_,scale_,14*scale_);
         }
+        PinMotion& pm=tm.pins.Touch(L"a"+app.name,false,motion_frame_,motion_now_,tm.animations);
+        const AroundCentre pop(dc,D2D1::Point2F((b.left+b.right)*0.5f,(b.top+b.bottom)*0.5f),tm.pins.Pop(pm,motion_now_));
         const bool target=vm.toolbar_drop_app==static_cast<int>(i);
         if (target) {
             D2D1_COLOR_F hot=theme.accent;
@@ -413,10 +496,62 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         }
         // Toggle tools that are on look like the selected pane buttons.
         const bool hovered=pin.enabled && IsHovered(vm,HitTestResult::ToolbarPin,static_cast<int>(i));
-        DrawButton(b,theme,hovered && !plates ? theme.fill_hover : pin.checked ? theme.fill_selected : kTransparent,
-            pin.glyph,L"",!pin.enabled ? theme.text_disabled : pin.checked ? theme.accent : theme.text_secondary,true,true);
+        const D2D1_COLOR_F bg=hovered && !plates ? theme.fill_hover : pin.checked ? theme.fill_selected : kTransparent;
+        const D2D1_COLOR_F fg=!pin.enabled ? theme.text_disabled : pin.checked ? theme.accent : theme.text_secondary;
+        PinMotion& pm=tm.pins.Touch(L"c"+std::to_wstring(pin.command),pin.checked,motion_frame_,motion_now_,tm.animations);
+        float turn=0.0f, glyph_scale=1.0f;
+        tm.pins.Turn(pm,motion_now_,turn,glyph_scale);
+        const D2D1_POINT_2F centre=D2D1::Point2F((b.left+b.right)*0.5f,(b.top+b.bottom)*0.5f);
+        const AroundCentre pop(dc,centre,tm.pins.Pop(pm,motion_now_));
+        if (turn==0.0f && glyph_scale==1.0f) {
+            DrawButton(b,theme,bg,pin.glyph,L"",fg,true,true);
+        } else {
+            if (bg.a > 0.0f) painter_.FillRoundedRect(b,theme.radius_control*scale_,bg);
+            const AroundCentre spin(dc,centre,glyph_scale,turn);
+            DrawIconText(b.left,b.top,b.right-b.left,b.bottom-b.top,pin.glyph,L"",fg);
+        }
     }
     DrawToolbarApps(vm,layout,theme);
+    // Pins with no room (narrow window, open filter) are in More: a small
+    // count on it says how many.
+    if (layout.overflow.right > layout.overflow.left) {
+        const size_t total=vm.toolbar_pins.size()+vm.toolbar_apps.size();
+        int folded=0;
+        for (size_t i=0;i<total;++i)
+            if (i>=layout.pins.size() || layout.pins[i].right <= layout.pins[i].left) ++folded;
+        if (folded!=tm.folded) {
+            if (folded>tm.folded && tm.pins.primed && tm.animations) tm.folded_born=motion_now_ ? motion_now_ : 1;
+            tm.folded=folded;
+        }
+        if (folded>0) {
+            float s=1.0f;
+            if (tm.folded_born) {
+                const float t=static_cast<float>(motion_now_-tm.folded_born);
+                if (t < static_cast<float>(motion::SpringSettleMs(motion::spring::Pop))) {
+                    s=kPinPopFrom+(1.0f-kPinPopFrom)*motion::SpringProgress(motion::spring::Pop,t);
+                    toolbar_moving=true;
+                } else {
+                    tm.folded_born=0;
+                }
+            }
+            const std::wstring count=folded>9 ? L"9+" : std::to_wstring(folded);
+            const float h=16*scale_;
+            const float w=(count.size()>1 ? 22.0f : 16.0f)*scale_;
+            const D2D1_RECT_F badge=D2D1::RectF(layout.overflow.right-w+3*scale_,layout.overflow.top-2*scale_,
+                                                layout.overflow.right+3*scale_,layout.overflow.top-2*scale_+h);
+            const AroundCentre pop(dc,D2D1::Point2F((badge.left+badge.right)*0.5f,(badge.top+badge.bottom)*0.5f),s);
+            painter_.FillRoundedRect(badge,h*0.5f,theme.accent);
+            // The caption box is taller than the pill; let it overhang so the
+            // digits are not clipped.
+            painter_.DrawText(count,D2D1::RectF(badge.left,badge.top-3*scale_,badge.right,badge.bottom+3*scale_),
+                              compositor_->SmallFormat(),theme.accent_text,fluent::HorizontalAlignment::Center,theme.accent);
+        }
+    } else {
+        tm.folded=0;
+    }
+    tm.pins.Sweep(motion_frame_);
+    if (tm.pins.moving) toolbar_moving=true;
+    tm.pins.moving=false;
     const auto command = [&](D2D1_RECT_F bounds, const wchar_t* glyph, l10n::StringId label,
                              HitTestResult::Region region, bool dropdown, float turn = 0.0f) {
         fluent::ButtonSpec button;

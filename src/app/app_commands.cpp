@@ -2129,13 +2129,13 @@ constexpr ToolbarToolDef kToolbarTools[] = {
     {app::CmdUndo, L"\xE7A7", l10n::StringId::Undo, L"Ctrl+Z", false},
     {0, L"\xE7B3", l10n::StringId::SettingsShowHidden, L"", true},
     {0, L"\xEA18", l10n::StringId::SettingsShowProtected, L"", true},
-    {0, L"\xE8FD", l10n::StringId::SettingsDensityCompact, L"", true},
-    {0, L"\xE8A9", l10n::StringId::ListZebraRows, L"", true},
+    {0, L"\xE73F", l10n::StringId::SettingsDensityCompact, L"", true},
+    {0, L"\xE8BF", l10n::StringId::ListZebraRows, L"", true},
     {0, L"\xE9D2", l10n::StringId::ListSizeBar, L"", true},
-    {0, L"\xE787", l10n::StringId::ListSmartDate, L"", true},
+    {0, L"\xEC92", l10n::StringId::ListSmartDate, L"", true},
     {0, L"\xE739", l10n::StringId::ListSelectionOutline, L"", true},
-    {0, L"\xE700", l10n::StringId::HelpSidebar, L"Ctrl+B", true},
-    {0, L"\xE708", l10n::StringId::TooltipToggleTheme, L"", true},
+    {0, L"\xE90C", l10n::StringId::HelpSidebar, L"Ctrl+B", true},
+    {0, L"\xE793", l10n::StringId::TooltipToggleTheme, L"", true},
 };
 static_assert(std::size(kToolbarTools) == app::kToolbarToolCount, "one catalog row per toolbar_tools.h id");
 int ToolbarToolCommand(size_t index) {
@@ -2157,7 +2157,7 @@ bool ToolbarToggleOn(const AppState& s, size_t index) {
     if (id == L"size_bar") return p.list_size_bar;
     if (id == L"smart_date") return p.list_smart_date;
     if (id == L"outline") return p.list_selection_outline;
-    if (id == L"sidebar") return p.sidebar_collapsed;
+    if (id == L"sidebar") return !p.sidebar_collapsed;  // lit = sidebar shown
     if (id == L"theme") return s.darkMode;
     return false;
 }
