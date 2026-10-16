@@ -86,6 +86,10 @@ struct ToolbarCustomizeSpec {
     // on_preview: the tools page's hovered tile that is not on the toolbar
     // (pins index; -1 none), for a dashed preview pin there.
     std::function<void(int index)> on_preview;
+    // Footer row 快捷键 (keys_text, keys_hint the chord): on_shortcuts runs
+    // after the popover closes.
+    std::wstring keys_text, keys_hint;
+    std::function<void()> on_shortcuts;
     // on_link: the hovered (or dragged) tile that is on the toolbar already,
     // so the toolbar can ring its pin (prototype: .tb.linked); page -1 none.
     std::function<void(int page, int index, const std::wstring& value)> on_link;

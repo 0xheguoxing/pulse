@@ -34,6 +34,7 @@ constexpr float kTabsY = 48.0f, kTabsH = 30.0f;
 constexpr float kDescY = 86.0f, kDescH = 24.0f;
 constexpr float kGridY = 120.0f;
 constexpr float kPadBottom = 12.0f;
+constexpr float kFootH = 36.0f;      // under the grid: a divider, then the 快捷键 row
 constexpr float kGridMax = 370.0f;
 constexpr int kCols = 5;
 constexpr float kTileGap = 8.0f, kTileH = 76.0f;
@@ -76,7 +77,7 @@ struct Spring1 {
     }
 };
 
-enum class Part { None, Outside, Card, Done, Tab, Search, Tile, Switch, Add };
+enum class Part { None, Outside, Card, Done, Tab, Search, Tile, Switch, Add, Keys };
 struct Hit {
     Part part = Part::None;
     int index = -1;
@@ -197,7 +198,7 @@ private:
     // ---- geometry -------------------------------------------------------
     float S(float dip) const { return dip * scale_; }
     D2D1_RECT_F Card() const {
-        const float h = S(kGridY + kPadBottom) + grid_h_.v;
+        const float h = S(kGridY + kFootH + kPadBottom) + grid_h_.v;
         return D2D1::RectF(S(kMargin), S(kMargin), S(kMargin + kCardW), S(kMargin) + h);
     }
     float TileW() const { return (kCardW - 2 * kPadX - kTileGap * (kCols - 1)) / kCols; }
@@ -225,6 +226,12 @@ private:
         const D2D1_RECT_F c = Card();
         return D2D1::RectF(c.left + S(kPadX - 6.0f), c.top + S(kGridY - 6.0f), c.right - S(kPadX - 6.0f),
                            c.top + S(kGridY) + grid_h_.v);
+    }
+    // The 快捷键 row under the grid (spec.keys_text).
+    D2D1_RECT_F KeysRect() const {
+        const D2D1_RECT_F c = Card();
+        const float top = c.top + S(kGridY) + grid_h_.v + S(kFootH - 26.0f);
+        return D2D1::RectF(c.left + S(kPadX - 6.0f), top, c.right - S(kPadX - 6.0f), top + S(26.0f));
     }
     D2D1_POINT_2F GridOrigin() const {
         const D2D1_RECT_F c = Card();
@@ -269,13 +276,13 @@ private:
         if (card_right > work.right - pad) { card_right = work.right - pad; card_left = card_right - card_w; }
         if (card_left < work.left + pad) { card_left = work.left + pad; card_right = card_left + card_w; }
         const int card_top = a.bottom + static_cast<int>(S(10.0f));
-        const float room = static_cast<float>(work.bottom - pad - card_top) - S(kGridY + kPadBottom);
+        const float room = static_cast<float>(work.bottom - pad - card_top) - S(kGridY + kFootH + kPadBottom);
         grid_max_ = std::clamp(room, S(90.0f), S(kGridMax));
         const int m = static_cast<int>(std::lround(S(kMargin)));
         win_.left = card_left - m;
         win_.top = card_top - m;
         win_.right = card_right + m;
-        win_.bottom = card_top + static_cast<int>(std::ceil(S(kGridY + kPadBottom) + grid_max_)) + m;
+        win_.bottom = card_top + static_cast<int>(std::ceil(S(kGridY + kFootH + kPadBottom) + grid_max_)) + m;
         notch_x_ = static_cast<float>((a.left + a.right) / 2 - win_.left);
     }
 
@@ -699,6 +706,7 @@ private:
         const D2D1_RECT_F card = Card();
         if (!Inside(card, x, y)) return Hit{ Part::Outside, -1 };
         if (Inside(DoneRect(), x, y)) return Hit{ Part::Done, -1 };
+        if (!spec_->keys_text.empty() && Inside(KeysRect(), x, y)) return Hit{ Part::Keys, -1 };
         for (int i = 0; i < kPages; ++i)
             if (Inside(TabRect(i), x, y)) return Hit{ Part::Tab, i };
         if (page_ == kTools && Inside(SearchRect(), x, y)) return Hit{ Part::Search, -1 };
@@ -724,6 +732,12 @@ private:
     void Activate(const Hit& hit) {
         switch (hit.part) {
         case Part::Done: Close(); break;
+        case Part::Keys: {
+            const auto open = spec_->on_shortcuts;
+            Close();
+            if (open) open();
+            break;
+        }
         case Part::Tab: SetPage(hit.index); break;
         case Part::Search: search_focus_ = true; focus_ = hit; Frame(); break;
         case Part::Tile: ToggleTile(page_, static_cast<size_t>(hit.index)); break;
@@ -1156,6 +1170,27 @@ private:
             }
         }
 
+        // Footer: 快捷键, a row that opens the shortcut list (replaces More's entry).
+        if (!spec_->keys_text.empty()) {
+            const D2D1_RECT_F kr = KeysRect();
+            painter_.FillRoundedRect(D2D1::RectF(card.left + S(kPadX), kr.top - S(5.0f), card.right - S(kPadX),
+                                                 kr.top - S(5.0f) + 0.75f), 0.0f, pal.line2);
+            const bool hot = hover_.part == Part::Keys;
+            if (hot) painter_.FillRoundedRect(kr, S(7.0f), pressed_.part == Part::Keys ? Alpha(pal.hover, 1.6f) : pal.hover);
+            if (show_focus_ && focus_.part == Part::Keys) painter_.StrokeRoundedRect(kr, S(7.0f), pal.accent, S(1.5f));
+            const float cy = (kr.top + kr.bottom) * 0.5f;
+            Glyph(L"\xE765", D2D1::Point2F(kr.left + S(16.0f), cy), S(14.0f), hot ? pal.text : pal.sub);
+            painter_.DrawText(spec_->keys_text, D2D1::RectF(kr.left + S(32.0f), kr.top, kr.right - S(96.0f), kr.bottom),
+                              small_fmt_.get(), hot ? pal.text : pal.sub);
+            if (!spec_->keys_hint.empty()) {
+                const float kw = std::ceil(typography::MeasureLine(&compositor_, tiny_fmt_.get(), spec_->keys_hint)) + S(12.0f);
+                const D2D1_RECT_F kb = D2D1::RectF(kr.right - S(8.0f) - kw, cy - S(9.0f), kr.right - S(8.0f), cy + S(9.0f));
+                painter_.StrokeRoundedRect(kb, S(5.0f), pal.line2, 1.0f);
+                painter_.DrawText(spec_->keys_hint, D2D1::RectF(kb.left, kb.top - S(2.0f), kb.right, kb.bottom + S(2.0f)),
+                                  tiny_fmt_.get(), pal.sub, fluent::HorizontalAlignment::Center);
+            }
+        }
+
         // Grids: the incoming page slides in from 16 px, the outgoing one leaves.
         const D2D1_RECT_F grid = GridRect();
         dc->PushAxisAlignedClip(grid, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -1424,6 +1459,7 @@ private:
             hwnd_ = nullptr;
             g_open = false;
             if (g_window == this) g_window = nullptr;
+            if (owner_) InvalidateRect(owner_, nullptr, FALSE);   // its customize button drops the accent
             if (preview_ >= 0 && spec_->on_preview) spec_->on_preview(-1);
             preview_ = -1;
             if (link_page_ >= 0 && spec_->on_link) spec_->on_link(-1, -1, std::wstring{});

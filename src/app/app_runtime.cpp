@@ -2809,7 +2809,7 @@ std::wstring TooltipForHover(AppState& s) {
     case R::ToolbarSort: return text(I::SortBy);
     case R::ToolbarGroup: return text(I::GroupBy);
     case R::ToolbarGroupClear: return text(I::GroupClear);
-    case R::ToolbarMore: return text(I::MoreCustomizeToolbar);
+    case R::ToolbarMore: return text(I::CustomizeToolbar);   // the customize button (T5)
     case R::ToolbarPin: {
         const auto pins = ToolbarPinActions(s);
         if (s.hoverControlIndex >= static_cast<int>(pins.size()))

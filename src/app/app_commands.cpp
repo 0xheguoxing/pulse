@@ -3006,8 +3006,9 @@ void ShowToolbarMore(AppState& s) {
     // The toolbar as drawn: an open filter folds pins in here too.
     const auto layout=s.renderer.ToolbarLayoutAt(width,s.renderer.NewButtonWidthPx(width-left < 600*s.scale),
                                                  s.pane ? s.pane->filter_expand : 0.0f);
-    // More is always there (prototype note 5). Narrow windows fold every pin
-    // in here (cut .. delete and the pane tools are pins too since T3d).
+    // The customize button (T5, in place of More): pins without room on the
+    // toolbar (all of them in the narrow tier) come first, in a menu that
+    // ends in 自定义工具栏…; with none folded it opens the popover directly.
     std::vector<ui::FluentMenuItem> items;
     // Pinned commands without room on the toolbar (all of them when narrow).
     const auto pins=ToolbarPinActions(s);
@@ -3044,25 +3045,10 @@ void ShowToolbarMore(AppState& s) {
         // then passes none of the selected items).
         items.push_back(std::move(item));
     }
-    if (!items.empty()) items.back().separator_after=true;
-    ui::FluentMenuItem select_all;
-    select_all.command=app::CmdSelectAll; select_all.text=l10n::Get(l10n::StringId::SelectAll);
-    select_all.glyph=L"\xE8B3"; select_all.shortcut=app::ShownShortcut(L"Ctrl+A");
-    select_all.enabled=tab->snapshot && tab->EntryCount()>0;
-    // These two stay in More unless they are toolbar tools already.
-    if (!ToolbarToolPinned(s,L"select_all")) items.push_back(std::move(select_all));
-    ui::FluentMenuItem terminal;
-    terminal.command=app::CmdOpenTerminal; terminal.text=l10n::Get(l10n::StringId::OpenInTerminal);
-    terminal.glyph=L"\xE756"; terminal.enabled=!TerminalTarget(s).empty();
-    if (!ToolbarToolPinned(s,L"terminal")) items.push_back(std::move(terminal));
-    ui::FluentMenuItem properties;
-    properties.command=app::CmdProperties; properties.text=l10n::Get(l10n::StringId::Properties);
-    properties.glyph=L"\xE946"; properties.shortcut=app::ShownShortcut(L"Alt+Enter");
-    properties.enabled=tab->SelectedCount()>0;
-    properties.separator_after=true;
-    items.push_back(std::move(properties));
+    // Everything fits: the button is just 自定义工具栏 (prototype #custBtn).
+    if (items.empty()) { ShowToolbarCustomize(s, 0); return; }
+    items.back().separator_after=true;
     items.push_back(CustomizeToolbarItem());
-    items.push_back(app::BuildShortcutHints());
     POINT anchor{static_cast<LONG>(layout.overflow.left),static_cast<LONG>(layout.overflow.bottom)};
     ClientToScreen(s.hwnd,&anchor);
     const int cmd=s.menu->TrackPopup(anchor,items);
@@ -3261,6 +3247,9 @@ void ShowToolbarCustomize(AppState& s, int page) {
     spec.on_toolbar_text = l10n::Get(l10n::StringId::ToolbarPickerOnToolbar);
     spec.tools_full_text = l10n::Get(l10n::StringId::ToolbarPickerToolsFull);
     spec.max_tools = app::kMaxToolbarTools;
+    spec.keys_text = l10n::Get(l10n::StringId::KeyboardShortcuts);
+    spec.keys_hint = app::ShownShortcut(L"Ctrl+/");
+    spec.on_shortcuts = [&s] { DispatchMenuCommand(s, app::CmdShortcutHelp); };
     spec.tools_desc = l10n::Get(l10n::StringId::ToolbarPickerToolsDesc);
     spec.apps_desc = l10n::Get(l10n::StringId::ToolbarPickerAppsDesc);
     spec.search_hint = l10n::Get(l10n::StringId::ToolbarPickerSearch);

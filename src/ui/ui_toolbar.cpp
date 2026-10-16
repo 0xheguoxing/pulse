@@ -2,6 +2,7 @@
 #include "toolbar_layout.h"
 #include "pane_header_icons.h"
 #include "toolbar_pin_drag.h"
+#include "toolbar_picker.h"
 #include <unordered_map>
 
 namespace pulse::ui {
@@ -558,8 +559,12 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         return kIcons[preset];
     };
     if (layout.overflow.right > layout.overflow.left) {
-        DrawButton(layout.overflow,theme,!plates && IsHovered(vm,HitTestResult::ToolbarMore) ? theme.fill_hover : kTransparent,
-            L"\xE712",L"",theme.text_secondary,true,true);
+        // The customize button (prototype #custBtn, T5): sliders, accent
+        // while the popover is open.
+        const bool open=ToolbarPickerOpen();
+        DrawButton(layout.overflow,theme,!plates && IsHovered(vm,HitTestResult::ToolbarMore) ? theme.fill_hover
+                   : open ? theme.fill_selected : kTransparent,
+            L"\xE9E9",L"",open ? theme.accent : theme.text_secondary,true,true);
     }
     // Pinned commands (自定义工具栏), after a divider.
     const ToolbarPinDragState& pin_drag=PinDragFor(this);
