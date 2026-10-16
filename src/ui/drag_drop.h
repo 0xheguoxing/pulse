@@ -103,6 +103,23 @@ private:
     DWORD performed_effect_ = 0;
 };
 
+// Optional visual that follows the pointer during a file drag (the card stack
+// in drag_stack.cpp). Pulse.exe registers a factory at start-up; builds that
+// compile drag_drop.cpp alone (the console drag test) run without one.
+class DragVisual {
+public:
+    virtual ~DragVisual() = default;
+    // Called from the modal loop on every input change, pointer moves included.
+    virtual void Track() = 0;
+    // The effect the current target answered (DROPEFFECT_*).
+    virtual void Effect(DWORD effect) = 0;
+    // The drag ended. The visual animates out and frees itself; the caller
+    // must not touch it afterwards.
+    virtual void Finish(DWORD effect, bool cancelled) = 0;
+};
+using DragVisualFactory = DragVisual* (*)(const std::vector<std::wstring>& paths);
+void SetDragVisualFactory(DragVisualFactory factory);
+
 class ListDropSource final : public IDropSource {
 public:
     // When set and returning true, Esc is consumed by the drop target
@@ -113,11 +130,19 @@ public:
     IFACEMETHODIMP_(ULONG) AddRef() override { return ++ref_; }
     IFACEMETHODIMP_(ULONG) Release() override;
     IFACEMETHODIMP QueryContinueDrag(BOOL escape_pressed, DWORD key_state) override;
-    IFACEMETHODIMP GiveFeedback(DWORD) override { return DRAGDROP_S_USEDEFAULTCURSORS; }
+    IFACEMETHODIMP GiveFeedback(DWORD effect) override {
+        if (visual_) visual_->Effect(effect);
+        return DRAGDROP_S_USEDEFAULTCURSORS;
+    }
+
+    void SetVisual(DragVisual* visual) { visual_ = visual; }
+    bool Cancelled() const { return cancelled_; }
 
 private:
     LONG ref_ = 1;
     std::function<bool()> esc_hook_;
+    DragVisual* visual_ = nullptr; // not owned
+    bool cancelled_ = false;
 };
 
 // Runs the modal DoDragDrop loop. Returns the performed DROPEFFECT_*.

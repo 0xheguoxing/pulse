@@ -541,9 +541,17 @@ ULONG ListDropSource::Release() {
     return r;
 }
 
+namespace {
+DragVisualFactory g_drag_visual_factory = nullptr;
+} // namespace
+
+void SetDragVisualFactory(DragVisualFactory factory) { g_drag_visual_factory = factory; }
+
 HRESULT ListDropSource::QueryContinueDrag(BOOL escape_pressed, DWORD key_state) {
+    if (visual_) visual_->Track();
     if (escape_pressed) {
         if (esc_hook_ && esc_hook_()) return S_OK; // target consumed Esc (spring-back)
+        cancelled_ = true;
         return DRAGDROP_S_CANCEL;
     }
     if (!(key_state & (MK_LBUTTON | MK_RBUTTON))) return DRAGDROP_S_DROP;
@@ -575,12 +583,23 @@ DWORD DoFileDragDrop(const std::vector<std::wstring>& paths, DWORD allowed_effec
 
     auto* source = new ListDropSource();
     source->SetEscHook(std::move(esc_consumed));
+    DragVisual* visual = g_drag_visual_factory ? g_drag_visual_factory(paths) : nullptr;
+    source->SetVisual(visual);
     DWORD effect = DROPEFFECT_NONE;
     // Explorer's file drags also allow LINK. Apps that open a dropped file
     // often answer LINK, and without it they show the no-drop cursor (#235).
     // Preferred DropEffect above keeps only the caller's copy/move, so drop
     // targets that pick a default (Explorer, Pulse) still copy or move.
-    ::DoDragDrop(data, source, allowed_effects | DROPEFFECT_LINK, &effect);
+    const HRESULT drag_hr = ::DoDragDrop(data, source, allowed_effects | DROPEFFECT_LINK, &effect);
+    if (visual) {
+        // Hand off before the effect fix-up below: a drop that Explorer
+        // performed asynchronously still landed, so only a refused or
+        // cancelled drag flies the stack back.
+        source->SetVisual(nullptr);
+        const bool dropped = drag_hr == DRAGDROP_S_DROP && !source->Cancelled();
+        visual->Finish(effect, !dropped);
+        visual = nullptr;
+    }
     if (effect == DROPEFFECT_NONE) {
         if (fallback && fallback->PerformedEffect() != 0) {
             effect = fallback->PerformedEffect();
