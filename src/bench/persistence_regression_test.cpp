@@ -222,6 +222,18 @@ int main(int argc, char** argv) {
     Check(!prefs.StoreBackgroundImage(source) && prefs.background_image==old && std::filesystem::exists(old), "PERSIST-05 configuration commit failure preserves previous image");CloseHandle(locked);
     Check(prefs.StoreBackgroundImage(source) && std::filesystem::exists(prefs.background_image) && !std::filesystem::exists(old), "PERSIST-05 successful commit precedes old image removal");
     AppPrefs reloaded;reloaded.persist=false;Check(reloaded.Load() && reloaded.background_image==prefs.background_image, "PERSIST-05 new cache path survives reload");
+    {
+        using Tools = std::vector<std::wstring>;
+        AppPrefs legacy; legacy.persist=false;
+        Check(legacy.FromJson(LR"({"toolbar_pins":5})") && legacy.toolbar_tools==Tools{L"new_text",L"terminal"}, "TOOLBAR-01 legacy pin mask becomes the tool list");
+        legacy.toolbar_tools={L"hidden",L"copy_path",L"bogus",L"hidden",L"theme"};
+        const std::wstring saved_json=legacy.ToJson();
+        AppPrefs again; again.persist=false;
+        Check(again.FromJson(saved_json) && again.toolbar_tools==Tools{L"hidden",L"copy_path",L"theme"}, "TOOLBAR-02 tool list round trips; unknown and repeated ids dropped");
+        Check(saved_json.find(L"\"toolbar_pins\":2")!=std::wstring::npos, "TOOLBAR-03 an older Pulse still reads its pins");
+        AppPrefs cleared; cleared.persist=false;
+        Check(cleared.FromJson(LR"({"toolbar_tools":[],"toolbar_pins":31})") && cleared.toolbar_tools.empty(), "TOOLBAR-04 an emptied list is not refilled from the old mask");
+    }
     std::filesystem::remove_all(dir);
     return failures ? 1 : 0;
 }

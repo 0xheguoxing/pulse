@@ -411,8 +411,10 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             MakeBrush(dc,theme.stroke_divider,brStrokeDivider_);
             FillRect(dc,brStrokeDivider_.get(),b.left-7*scale_,b.top+7*scale_,scale_,18*scale_);
         }
-        DrawButton(b,theme,!plates && pin.enabled && IsHovered(vm,HitTestResult::ToolbarPin,static_cast<int>(i)) ? theme.fill_hover : kTransparent,
-            pin.glyph,L"",pin.enabled ? theme.text_secondary : theme.text_disabled,true,true);
+        // Toggle tools that are on look like the selected pane buttons.
+        const bool hovered=pin.enabled && IsHovered(vm,HitTestResult::ToolbarPin,static_cast<int>(i));
+        DrawButton(b,theme,hovered && !plates ? theme.fill_hover : pin.checked ? theme.fill_selected : kTransparent,
+            pin.glyph,L"",!pin.enabled ? theme.text_disabled : pin.checked ? theme.accent : theme.text_secondary,true,true);
     }
     DrawToolbarApps(vm,layout,theme);
     const auto command = [&](D2D1_RECT_F bounds, const wchar_t* glyph, l10n::StringId label,

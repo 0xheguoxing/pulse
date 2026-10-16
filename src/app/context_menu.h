@@ -137,6 +137,8 @@ enum MenuCmd : int {
     // and 固定到工具栏 ▸ <suggested app> (+ index into the suggestions listed).
     CmdToolbarAppBase = 5100,
     CmdToolbarPinAppBase = 5120,
+    // Toolbar toggle tools (toolbar_tools.h): + index into kToolbarToolIds.
+    CmdToolbarToolBase = 5160,
     CmdShellStaticBase = 6000,
     CmdShellComBase = 8000,
 };

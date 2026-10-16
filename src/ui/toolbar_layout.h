@@ -12,7 +12,7 @@ inline D2D1_RECT_F NavigationButtonAt(float x, float y, float scale, float step)
     return {x, y, x + step - 4 * scale, y + 32 * scale};
 }
 // Toolbar pins: the pinned commands (自定义工具栏), then the pinned apps.
-constexpr int kToolbarCommandPins = 5;
+constexpr int kToolbarCommandPins = 12;   // = app::kMaxToolbarTools
 constexpr int kToolbarAppPins = 8;
 constexpr int kToolbarPinSlots = kToolbarCommandPins + kToolbarAppPins;
 struct ToolbarPinOptions {
@@ -167,6 +167,7 @@ struct SelectionChipAction {
     std::wstring glyph;
     std::wstring label;   // tooltip, with the shortcut
     bool enabled = true;
+    bool checked = false; // toolbar toggle tools: the setting is on
 };
 constexpr int kSelChipMaxActions = 6;
 constexpr int kSelChipMore = kSelChipMaxActions;

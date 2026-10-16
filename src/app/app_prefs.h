@@ -124,11 +124,12 @@ struct AppPrefs {
     uint32_t tips_seen = 0; // bit per app::TeachTip already shown or dismissed
     // 自定义工具栏 (toolbar redesign note 5): the New button's main part makes
     // 0 a folder, 1 the type made last (toolbar_last_new: 0 folder, 1 text
-    // document), 2 nothing: the whole button opens the New menu. toolbar_pins
-    // has a bit per pinnable command (kToolbarPins in app_commands.cpp).
+    // document), 2 nothing: the whole button opens the New menu.
     int toolbar_new_primary = 0;
     int toolbar_last_new = 0;
-    uint32_t toolbar_pins = 0;
+    // Tools pinned to the toolbar, in toolbar order, by id (toolbar_tools.h).
+    // Saved as json toolbar_tools; older prefs had the toolbar_pins mask.
+    std::vector<std::wstring> toolbar_tools;
     // Programs pinned to the toolbar (自定义工具栏 → 固定的软件), in toolbar
     // order: .exe paths or shortcuts to them, at most app::kMaxToolbarApps.
     std::vector<std::wstring> toolbar_apps;

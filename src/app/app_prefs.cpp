@@ -5,6 +5,7 @@
 #include "default_file_manager.h"
 #include "shell_integration_registry.h"
 #include "session.h"
+#include "toolbar_tools.h"
 #include "../ui/panel_metrics.h"
 #include "../common/json_utils.h"
 #include "../common/config_json.h"
@@ -115,7 +116,7 @@ void AppPrefs::ResetToDefaults() {
     tips_seen = 0;
     toolbar_new_primary = 0;
     toolbar_last_new = 0;
-    toolbar_pins = 0;
+    toolbar_tools.clear();
     toolbar_apps.clear();
     accent_rgb.clear();
     accent_follow_system = false;
@@ -252,7 +253,16 @@ std::wstring AppPrefs::ToJson() const {
     out += L",\n  \"tips_seen\":" + std::to_wstring(tips_seen);
     out += L",\n  \"toolbar_new_primary\":" + std::to_wstring(toolbar_new_primary);
     out += L",\n  \"toolbar_last_new\":" + std::to_wstring(toolbar_last_new);
-    out += L",\n  \"toolbar_pins\":" + std::to_wstring(toolbar_pins);
+    out += L",\n  \"toolbar_tools\":[";
+    for (size_t i = 0; i < toolbar_tools.size(); ++i) {
+        std::wstring escaped_tool;
+        pulse::json::Escape(toolbar_tools[i], escaped_tool);
+        if (i > 0) out += L",";
+        out += L"\"" + escaped_tool + L"\"";
+    }
+    out += L"]";
+    // Still written for an older Pulse, which knows only these five.
+    out += L",\n  \"toolbar_pins\":" + std::to_wstring(app::LegacyPinsFromToolbarTools(toolbar_tools));
     out += L",\n  \"toolbar_apps\":[";
     for (size_t i = 0; i < toolbar_apps.size(); ++i) {
         std::wstring escaped_app;
@@ -421,8 +431,12 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     const int new_primary = pulse::json::ExtractInt(json, L"toolbar_new_primary", 0);
     toolbar_new_primary = new_primary >= 0 && new_primary <= 2 ? new_primary : 0;
     toolbar_last_new = pulse::json::ExtractInt(json, L"toolbar_last_new", 0) == 1 ? 1 : 0;
-    const int pins = pulse::json::ExtractInt(json, L"toolbar_pins", 0);
-    toolbar_pins = pins > 0 ? static_cast<uint32_t>(pins) & 0x1Fu : 0u;
+    if (json.find(L"\"toolbar_tools\"") != std::wstring::npos) {
+        toolbar_tools = app::NormalizeToolbarTools(pulse::json::ExtractStringArray(json, L"toolbar_tools"));
+    } else {
+        const int pins = pulse::json::ExtractInt(json, L"toolbar_pins", 0);
+        toolbar_tools = app::ToolbarToolsFromLegacyPins(pins > 0 ? static_cast<uint32_t>(pins) : 0u);
+    }
     shortcuts.clear();
     for (auto& line : pulse::json::ExtractStringArray(json, L"shortcuts"))
         if (!line.empty() && line.size() < 200 && shortcuts.size() < 128) shortcuts.push_back(std::move(line));

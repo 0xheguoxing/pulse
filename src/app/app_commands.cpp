@@ -35,6 +35,8 @@
 #include "system_ctx_registry.h"
 #include "shell_verbs.h"
 #include "toolbar_apps.h"
+#include "toolbar_tools.h"
+#include "vertical_tabs.h"
 #include "app_change_tracking.h"
 #include "batch_rename.h"
 #include "search_query.h"
@@ -1118,7 +1120,13 @@ void ApplyDriveVerbResult(AppState& s, const app::DriveVerbResult& result) {
     }
 }
 
+static void FlipToolbarTool(AppState& s, size_t index);
+
 void DispatchMenuCommand(AppState& s, int cmd) {
+    if (cmd >= app::CmdToolbarToolBase && cmd < app::CmdToolbarToolBase + static_cast<int>(app::kToolbarToolCount)) {
+        FlipToolbarTool(s, static_cast<size_t>(cmd - app::CmdToolbarToolBase));
+        return;
+    }
     const bool needs_files=cmd==app::CmdProperties || cmd==app::CmdOpenPath || cmd==app::CmdOpenInNewTab || cmd==app::CmdRename ||
         cmd==app::CmdGroupIntoFolder || cmd==app::CmdDissolveFolder;
     if(needs_files && DeferContentSelection(s,[cmd](AppState& v){DispatchMenuCommand(v,cmd);})) return;
@@ -2103,21 +2111,56 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
 }
 
 namespace {
-struct ToolbarPinDef {
-    int command;
+struct ToolbarToolDef {
+    int command;   // toggles: none, they run as CmdToolbarToolBase + index
     const wchar_t* glyph;
     l10n::StringId label;
     const wchar_t* shortcut;
+    bool toggle;
 };
-// Bit i of AppPrefs::toolbar_pins pins kToolbarPins[i] (prototype PINNABLE;
-// 新建文件夹 is the New button itself and always shown).
-constexpr ToolbarPinDef kToolbarPins[] = {
-    {app::CmdNewTextFile, L"\xE8A5", l10n::StringId::NewTextDocument, L""},
-    {app::CmdCopyPath, L"\xE71B", l10n::StringId::CopyPath, L"Ctrl+Shift+C"},
-    {app::CmdOpenTerminal, L"\xE756", l10n::StringId::OpenInTerminal, L""},
-    {app::CmdProperties, L"\xE946", l10n::StringId::Properties, L"Alt+Enter"},
-    {app::CmdUndo, L"\xE7A7", l10n::StringId::Undo, L"Ctrl+Z"},
+// The tools AppPrefs::toolbar_tools can pin, in app::kToolbarToolIds order
+// (新建文件夹 is the New button itself and always shown). Toggles flip an
+// existing setting; the toolbar shows them in the accent color while on.
+constexpr ToolbarToolDef kToolbarTools[] = {
+    {app::CmdNewTextFile, L"\xE8A5", l10n::StringId::NewTextDocument, L"", false},
+    {app::CmdCopyPath, L"\xE71B", l10n::StringId::CopyPath, L"Ctrl+Shift+C", false},
+    {app::CmdOpenTerminal, L"\xE756", l10n::StringId::OpenInTerminal, L"", false},
+    {app::CmdProperties, L"\xE946", l10n::StringId::Properties, L"Alt+Enter", false},
+    {app::CmdUndo, L"\xE7A7", l10n::StringId::Undo, L"Ctrl+Z", false},
+    {0, L"\xE7B3", l10n::StringId::SettingsShowHidden, L"", true},
+    {0, L"\xEA18", l10n::StringId::SettingsShowProtected, L"", true},
+    {0, L"\xE8FD", l10n::StringId::SettingsDensityCompact, L"", true},
+    {0, L"\xE8A9", l10n::StringId::ListZebraRows, L"", true},
+    {0, L"\xE9D2", l10n::StringId::ListSizeBar, L"", true},
+    {0, L"\xE787", l10n::StringId::ListSmartDate, L"", true},
+    {0, L"\xE739", l10n::StringId::ListSelectionOutline, L"", true},
+    {0, L"\xE700", l10n::StringId::HelpSidebar, L"Ctrl+B", true},
+    {0, L"\xE708", l10n::StringId::TooltipToggleTheme, L"", true},
 };
+static_assert(std::size(kToolbarTools) == app::kToolbarToolCount, "one catalog row per toolbar_tools.h id");
+int ToolbarToolCommand(size_t index) {
+    return kToolbarTools[index].toggle ? app::CmdToolbarToolBase + static_cast<int>(index)
+                                       : kToolbarTools[index].command;
+}
+bool ToolbarToolPinned(const AppState& s, std::wstring_view id) {
+    for (const auto& kept : s.appPrefs.toolbar_tools) if (kept == id) return true;
+    return false;
+}
+// A toggle tool's setting, as the toolbar shows it.
+bool ToolbarToggleOn(const AppState& s, size_t index) {
+    const std::wstring_view id = app::kToolbarToolIds[index];
+    const app::AppPrefs& p = s.appPrefs;
+    if (id == L"hidden") return p.show_hidden_files;
+    if (id == L"protected") return p.show_protected_os_files;
+    if (id == L"compact") return p.row_height <= 28;
+    if (id == L"zebra") return p.list_zebra_rows;
+    if (id == L"size_bar") return p.list_size_bar;
+    if (id == L"smart_date") return p.list_smart_date;
+    if (id == L"outline") return p.list_selection_outline;
+    if (id == L"sidebar") return p.sidebar_collapsed;
+    if (id == L"theme") return s.darkMode;
+    return false;
+}
 ui::FluentMenuItem CustomizeToolbarItem() {
     ui::FluentMenuItem item;
     item.command = app::CmdCustomizeToolbar;
@@ -2721,7 +2764,7 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
         std::vector<int> selected;   // the folder items depend on the whole selection
         const void* snapshot = nullptr;  // a drive unlocked or ejected: same rows, new verbs
         uint32_t hidden = 0;
-        uint32_t pins = 0;
+        std::vector<std::wstring> tools;
         app::BuiltinMenuOrder order;
         std::vector<ui::SelectionChipAction> actions;
     };
@@ -2733,7 +2776,7 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
     if (cache.state == &s && cache.tab == tab && cache.path == tab->current_path &&
         cache.selected == selected && cache.snapshot == tab->snapshot.get() &&
         cache.hidden == s.ctxMenuPrefs.builtin_hidden && cache.order == order &&
-        cache.pins == s.appPrefs.toolbar_pins)
+        cache.tools == s.appPrefs.toolbar_tools)
         return cache.actions;
     cache.state = &s;
     cache.tab = tab;
@@ -2741,7 +2784,7 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
     cache.selected = std::move(selected);
     cache.snapshot = tab->snapshot.get();
     cache.hidden = s.ctxMenuPrefs.builtin_hidden;
-    cache.pins = s.appPrefs.toolbar_pins;
+    cache.tools = s.appPrefs.toolbar_tools;
     cache.order = std::move(order);
     cache.actions.clear();
     // The chip is its own surface: rows hidden from the right-click menu
@@ -2766,8 +2809,10 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
             continue;
         // Already pinned to the toolbar (自定义工具栏): not twice in one row.
         bool pinned = false;
-        for (size_t i = 0; i < std::size(kToolbarPins); ++i)
-            pinned = pinned || ((cache.pins & (1u << i)) && kToolbarPins[i].command == item.command);
+        for (const auto& id : cache.tools) {
+            const int tool = app::ToolbarToolIndex(id);
+            pinned = pinned || (tool >= 0 && !kToolbarTools[tool].toggle && kToolbarTools[tool].command == item.command);
+        }
         if (pinned) continue;
         ui::SelectionChipAction action;
         action.command = item.command;
@@ -2871,14 +2916,17 @@ void ShowToolbarMore(AppState& s) {
     // Pinned commands without room on the toolbar (all of them when narrow).
     const auto pins=ToolbarPinActions(s);
     size_t pin=0;
-    for (size_t i=0;i<std::size(kToolbarPins) && pin<pins.size();++i) {
-        if (!(s.appPrefs.toolbar_pins & (1u<<i))) continue;
+    for (const auto& id : s.appPrefs.toolbar_tools) {
+        const int tool=app::ToolbarToolIndex(id);
+        if (tool<0 || pin>=pins.size()) continue;
         const size_t slot=pin++;
         if (slot<layout.pins.size() && layout.pins[slot].right>layout.pins[slot].left) continue;
+        const ToolbarToolDef& def=kToolbarTools[tool];
         ui::FluentMenuItem item;
-        item.command=kToolbarPins[i].command; item.text=l10n::Get(kToolbarPins[i].label);
-        item.glyph=kToolbarPins[i].glyph; item.shortcut=app::ShownShortcut(kToolbarPins[i].shortcut);
+        item.command=pins[slot].command; item.text=l10n::Get(def.label);
+        item.glyph=def.glyph; item.shortcut=app::ShownShortcut(def.shortcut);
         item.enabled=pins[slot].enabled;
+        item.checked=pins[slot].checked;
         items.push_back(std::move(item));
     }
     // Pinned apps without room, after the commands (the toolbar order).
@@ -2938,18 +2986,23 @@ void ShowToolbarMore(AppState& s) {
 
 std::vector<ui::SelectionChipAction> ToolbarPinActions(AppState& s) {
     std::vector<ui::SelectionChipAction> out;
-    const uint32_t pins = s.appPrefs.toolbar_pins;
     const app::Tab* tab = ActiveTab(s);
-    if (!pins || !tab) return out;
+    if (s.appPrefs.toolbar_tools.empty() || !tab) return out;
     const bool has_selection = tab->SelectedCount() > 0;
-    for (size_t i = 0; i < std::size(kToolbarPins); ++i) {
-        if (!(pins & (1u << i))) continue;
-        const ToolbarPinDef& def = kToolbarPins[i];
+    for (const auto& id : s.appPrefs.toolbar_tools) {
+        const int tool = app::ToolbarToolIndex(id);
+        if (tool < 0 || out.size() >= static_cast<size_t>(ui::kToolbarCommandPins)) continue;
+        const ToolbarToolDef& def = kToolbarTools[tool];
         ui::SelectionChipAction action;
-        action.command = def.command;
+        action.command = ToolbarToolCommand(static_cast<size_t>(tool));
         action.glyph = def.glyph;
         action.label = l10n::Get(def.label);
         if (const auto key = app::ShownShortcut(def.shortcut); !key.empty()) action.label += L" (" + key + L")";
+        if (def.toggle) {
+            action.checked = ToolbarToggleOn(s, static_cast<size_t>(tool));
+            out.push_back(std::move(action));
+            continue;
+        }
         switch (def.command) {
         case app::CmdNewTextFile: action.enabled = CanCreateHere(tab); break;
         case app::CmdCopyPath: action.enabled = has_selection || !tab->current_path.empty(); break;
@@ -3004,12 +3057,12 @@ void ShowToolbarCustomize(AppState& s) {
     folder.caption = l10n::Get(l10n::StringId::AlwaysShown);
     folder.locked = true;
     spec.pins.push_back(std::move(folder));
-    for (size_t i = 0; i < std::size(kToolbarPins); ++i) {
+    for (size_t i = 0; i < std::size(kToolbarTools); ++i) {
         ui::ToolbarCustomizeRow row;
-        row.glyph = kToolbarPins[i].glyph;
-        row.label = l10n::Get(kToolbarPins[i].label);
-        row.caption = app::ShownShortcut(kToolbarPins[i].shortcut);
-        row.checked = (s.appPrefs.toolbar_pins & (1u << i)) != 0;
+        row.glyph = kToolbarTools[i].glyph;
+        row.label = l10n::Get(kToolbarTools[i].label);
+        row.caption = app::ShownShortcut(kToolbarTools[i].shortcut);
+        row.checked = ToolbarToolPinned(s, app::kToolbarToolIds[i]);
         spec.pins.push_back(std::move(row));
     }
     FillToolbarAppRows(s, spec);
@@ -3017,16 +3070,43 @@ void ShowToolbarCustomize(AppState& s) {
     int new_primary = 0;
     for (size_t i = 0; i < spec.primary.size(); ++i)
         if (spec.primary[i].checked) new_primary = static_cast<int>(i);
-    uint32_t pins = 0;
-    for (size_t i = 0; i < std::size(kToolbarPins) && i + 1 < spec.pins.size(); ++i)
-        if (spec.pins[i + 1].checked) pins |= 1u << i;
+    // Tools still checked keep their place; newly checked ones go last.
+    const auto checked = [&](size_t tool) { return tool + 1 < spec.pins.size() && spec.pins[tool + 1].checked; };
+    std::vector<std::wstring> tools;
+    for (const auto& id : s.appPrefs.toolbar_tools) {
+        const int tool = app::ToolbarToolIndex(id);
+        if (tool >= 0 && checked(static_cast<size_t>(tool))) tools.push_back(id);
+    }
+    for (size_t i = 0; i < std::size(kToolbarTools); ++i)
+        if (checked(i)) tools.emplace_back(app::kToolbarToolIds[i]);
+    tools = app::NormalizeToolbarTools(tools);
     const bool apps_changed = ApplyToolbarAppRows(s, spec);
-    if (apps_changed || new_primary != s.appPrefs.toolbar_new_primary || pins != s.appPrefs.toolbar_pins) {
+    if (apps_changed || new_primary != s.appPrefs.toolbar_new_primary || tools != s.appPrefs.toolbar_tools) {
         s.appPrefs.toolbar_new_primary = new_primary;
-        s.appPrefs.toolbar_pins = pins;
+        s.appPrefs.toolbar_tools = std::move(tools);
         if (!s.isolatedTest) s.appPrefs.Save();
     }
     InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+// Toolbar toggle tools: the same change and effects as the settings page.
+static void FlipToolbarTool(AppState& s, size_t index) {
+    if (index >= app::kToolbarToolCount || !kToolbarTools[index].toggle) return;
+    const std::wstring_view id = app::kToolbarToolIds[index];
+    if (id == L"sidebar") { ToggleSidebarCollapsed(s); return; }
+    if (id == L"theme") { ToggleTheme(s); return; }
+    app::AppPrefs& p = s.appPrefs;
+    app::SettingsEffect effect = app::SettingsEffect::ListStyle;
+    if (id == L"hidden") { p.show_hidden_files = !p.show_hidden_files; effect = app::SettingsEffect::FileVisibility; }
+    else if (id == L"protected") { p.show_protected_os_files = !p.show_protected_os_files; effect = app::SettingsEffect::FileVisibility; }
+    else if (id == L"compact") { p.row_height = p.row_height <= 28 ? 34 : 28; effect = app::SettingsEffect::RowHeight; }
+    else if (id == L"zebra") p.list_zebra_rows = !p.list_zebra_rows;
+    else if (id == L"size_bar") p.list_size_bar = !p.list_size_bar;
+    else if (id == L"smart_date") p.list_smart_date = !p.list_smart_date;
+    else if (id == L"outline") p.list_selection_outline = !p.list_selection_outline;
+    else return;
+    if (!s.isolatedTest) p.Save();
+    ApplySettingsEffects(s, effect);
 }
 
 void ShowAdvancedSearch(AppState& s, bool require_scope) {
