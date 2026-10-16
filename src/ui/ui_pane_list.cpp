@@ -1510,6 +1510,134 @@ void MainRenderer::DrawMorphFrom(const PaneViewModel& vm, const motion::ViewMorp
     meta_format->SetParagraphAlignment(meta_paragraph);
 }
 
+void MainRenderer::DrawSpringRing(ID2D1DeviceContext* dc, const D2D1_RECT_F& icon, float progress,
+                                  const Theme& theme) {
+    const float cx = (icon.left + icon.right) * 0.5f;
+    const float cy = (icon.top + icon.bottom) * 0.5f;
+    const float r = (std::max)(icon.right - icon.left, icon.bottom - icon.top) * 0.5f + 3.0f * scale_;
+    const float stroke = 2.0f * scale_;
+    MakeBrush(dc, WithAlpha(theme.accent, 0.18f), brFillInput_);
+    dc->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), r, r), brFillInput_.get(), stroke);
+    const float p = (std::clamp)(progress, 0.0f, 1.0f);
+    if (p <= 0.0f) return;
+    MakeBrush(dc, theme.accent, brFillInput_);
+    if (p >= 0.999f) {
+        dc->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), r, r), brFillInput_.get(), stroke);
+        return;
+    }
+    ID2D1Factory* factory = nullptr;
+    dc->GetFactory(&factory);
+    if (!factory) return;
+    ComPtr<ID2D1PathGeometry> arc;
+    if (SUCCEEDED(factory->CreatePathGeometry(&arc)) && arc.get()) {
+        ComPtr<ID2D1GeometrySink> sink;
+        if (SUCCEEDED(arc->Open(&sink)) && sink.get()) {
+            const float a = p * 6.2831853f;
+            sink->BeginFigure(D2D1::Point2F(cx, cy - r), D2D1_FIGURE_BEGIN_HOLLOW);
+            sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(cx + r * std::sin(a), cy - r * std::cos(a)),
+                                          D2D1::SizeF(r, r), 0.0f, D2D1_SWEEP_DIRECTION_CLOCKWISE,
+                                          p > 0.5f ? D2D1_ARC_SIZE_LARGE : D2D1_ARC_SIZE_SMALL));
+            sink->EndFigure(D2D1_FIGURE_END_OPEN);
+            sink->Close();
+            if (!roundCapStroke_.get()) {
+                D2D1_STROKE_STYLE_PROPERTIES props{};
+                props.startCap = D2D1_CAP_STYLE_ROUND;
+                props.endCap = D2D1_CAP_STYLE_ROUND;
+                factory->CreateStrokeStyle(props, nullptr, 0, &roundCapStroke_);
+            }
+            dc->DrawGeometry(arc.get(), brFillInput_.get(), stroke, roundCapStroke_.get());
+        }
+    }
+    factory->Release();
+}
+
+// Motion 4b (pulse_motion_v2.html splitter): hover grows an accent knob out of
+// the divider (spring Pop), dragging stretches it and shows the split as a
+// badge, a magnet snap flashes a guide along the divider.
+void MainRenderer::DrawSplitterKnob(int index, const SplitterView& sp, bool hovered, bool pressed,
+                                    bool dark, const Theme& theme) {
+    if (index < 0 || index >= static_cast<int>(splitter_knobs_.size()) || !compositor_ ||
+        !compositor_->Dc() || IsHighContrast())
+        return;
+    auto* dc = compositor_->Dc();
+    SplitterKnobMotion& m = splitter_knobs_[static_cast<size_t>(index)];
+    const uint64_t now = motion_now_;
+    auto value = [&](float from, float to, uint64_t start, motion::SpringSpec spec) {
+        return from + (to - from) * motion::SpringProgress(spec, static_cast<float>(now - start));
+    };
+    const auto showSpec = [&] { return m.show_to > 0.5f ? motion::spring::Pop : motion::spring::Snappy; };
+    const float showTarget = hovered || pressed ? 1.0f : 0.0f;
+    if (showTarget != m.show_to) {
+        const bool animate = motion::SystemAnimationsEnabled();
+        m.show_from = animate ? value(m.show_from, m.show_to, m.show_start, showSpec()) : showTarget;
+        m.show_to = showTarget;
+        m.show_start = now;
+    }
+    const float grabTarget = pressed ? 1.0f : 0.0f;
+    if (grabTarget != m.grab_to) {
+        m.grab_from = value(m.grab_from, m.grab_to, m.grab_start, motion::spring::Pop);
+        m.grab_to = grabTarget;
+        m.grab_start = now;
+    }
+    if (sp.snapped && !m.snapped) m.snap_at = now;
+    m.snapped = sp.snapped;
+    const uint32_t settle = motion::SpringSettleMs(motion::spring::Pop);
+    const bool moving = now - m.show_start < settle || now - m.grab_start < settle ||
+                        (m.snap_at && now - m.snap_at < 380);
+    if (moving) splitter_motion_until_ = now + 60;
+    const float show = value(m.show_from, m.show_to, m.show_start, showSpec());
+    const float grab = value(m.grab_from, m.grab_to, m.grab_start, motion::spring::Pop);
+    const float cx = (sp.hit_rect.left + sp.hit_rect.right) * 0.5f;
+    const float cy = (sp.hit_rect.top + sp.hit_rect.bottom) * 0.5f;
+    // Snap guide: the whole divider lights up and fades (380 ms).
+    if (m.snap_at && now - m.snap_at < 380) {
+        const float a = 0.9f * (1.0f - static_cast<float>(now - m.snap_at) / 380.0f);
+        MakeBrush(dc, WithAlpha(theme.accent, a), brAccent_);
+        const float half = 1.0f * scale_;
+        const D2D1_RECT_F line = sp.vertical
+            ? D2D1::RectF(cx - half, sp.hit_rect.top, cx + half, sp.hit_rect.bottom)
+            : D2D1::RectF(sp.hit_rect.left, cy - half, sp.hit_rect.right, cy + half);
+        dc->FillRectangle(line, brAccent_.get());
+    }
+    if (show <= 0.01f) return;
+    // Knob: 6 x 36 DIP along the divider, out of the swap button's way.
+    float kx = cx, ky = cy;
+    const float alongLen = 36.0f * scale_ * (0.6f + 0.4f * show) * (1.0f + 0.25f * grab);
+    const float acrossLen = 6.0f * scale_ * (0.4f + 0.6f * show);
+    if (sp.swap_rect.right > sp.swap_rect.left) {
+        const bool overlaps = sp.vertical
+            ? (ky + alongLen * 0.5f > sp.swap_rect.top && ky - alongLen * 0.5f < sp.swap_rect.bottom)
+            : (kx + alongLen * 0.5f > sp.swap_rect.left && kx - alongLen * 0.5f < sp.swap_rect.right);
+        if (overlaps) {
+            if (sp.vertical) ky = sp.swap_rect.bottom + 12.0f * scale_ + alongLen * 0.5f;
+            else kx = sp.swap_rect.right + 12.0f * scale_ + alongLen * 0.5f;
+        }
+    }
+    const D2D1_RECT_F knob = sp.vertical
+        ? D2D1::RectF(kx - acrossLen * 0.5f, ky - alongLen * 0.5f, kx + acrossLen * 0.5f, ky + alongLen * 0.5f)
+        : D2D1::RectF(kx - alongLen * 0.5f, ky - acrossLen * 0.5f, kx + alongLen * 0.5f, ky + acrossLen * 0.5f);
+    MakeBrush(dc, WithAlpha(theme.accent, (std::min)(1.0f, show)), brAccent_);
+    const float kr = 4.0f * scale_;
+    dc->FillRoundedRectangle(D2D1::RoundedRect(knob, kr, kr), brAccent_.get());
+    // Drag badge: "58% · 42%" next to the knob; accent while snapped.
+    if (grab <= 0.05f) return;
+    const int first = static_cast<int>(std::lround(sp.ratio * 100.0f));
+    const std::wstring text = std::to_wstring(first) + L"% \u00B7 " + std::to_wstring(100 - first) + L"%";
+    IDWriteTextFormat* fmt = compositor_->SmallFormat();
+    const float tw = MeasureLayoutText(compositor_, compositor_->DwriteFactory(), fmt, text);
+    const float bw = tw + 14.0f * scale_, bh = 22.0f * scale_;
+    const float bx = sp.vertical ? kx - bw * 0.5f : knob.right + 10.0f * scale_;
+    const float by = sp.vertical ? knob.bottom + 10.0f * scale_ : ky - bh * 0.5f;
+    const float alpha = (std::min)(1.0f, grab);
+    const D2D1_COLOR_F badgeBg = sp.snapped ? theme.accent
+                                            : (dark ? D2D1::ColorF(0x000000) : D2D1::ColorF(0x111827));
+    MakeBrush(dc, WithAlpha(badgeBg, alpha), brFillPressed_);
+    dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(bx, by, bx + bw, by + bh), 6.0f * scale_, 6.0f * scale_),
+                             brFillPressed_.get());
+    MakeBrush(dc, WithAlpha(sp.snapped ? theme.accent_text : D2D1::ColorF(0xFFFFFF), alpha), brText_);
+    DrawTextRect(dc, fmt, brText_.get(), text, bx + 7.0f * scale_, by, tw + 1.0f * scale_, bh);
+}
+
 void MainRenderer::DrawPane(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme) {
     if (!vm.pane_slots.empty()) {
         for (int i = 0; i < static_cast<int>(vm.pane_slots.size()); ++i) {
@@ -1527,6 +1655,7 @@ void MainRenderer::DrawPane(const WindowViewModel& vm, const D2D1_RECT_F& rect, 
                                   vm.hover_control_index == i) || on_swap;
             spec.state.pressed = vm.splitter_pressed && spec.state.hovered;
             painter_.DrawSplitter(spec);
+            DrawSplitterKnob(i, sp, spec.state.hovered && !on_swap, spec.state.pressed, vm.dark, theme);
             if (spec.state.hovered && !vm.splitter_pressed && sp.swap_rect.right > sp.swap_rect.left &&
                 compositor_ && compositor_->Dc()) {
                 auto* dc = compositor_->Dc();
@@ -2810,6 +2939,15 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             const uint64_t row_key = std::hash<std::wstring_view>{}(std::wstring_view(e.name));
             D2D1_POINT_2F row_shift{0.0f, 0.0f};
             if (shift) row_shift = shift->Offset(row_key, D2D1::Point2F(cell.left, cell.top));
+            // Motion 5b: a row on its way to the Recycle Bin slides 14 px left
+            // and fades out (120 ms); the gap closes once the listing drops it.
+            float row_leave = 0.0f;
+            if (!vm.leaving_names.empty() && vm.leaving_names.contains(e.name)) {
+                row_leave = (std::clamp)(static_cast<float>(motion_now_ - vm.leaving_since) / 120.0f,
+                                         0.0f, 1.0f);
+                if (row_leave >= 1.0f) continue;
+                row_leave_until_ = motion_now_ + 60;
+            }
 
             const bool iconGrid = vm.view_mode == ViewMode::ExtraLargeIcons ||
                                   vm.view_mode == ViewMode::LargeIcons ||
@@ -2851,9 +2989,21 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             }
             const bool morph_item = morphing && morph_sample.animating;
             // Whole-pixel offset keeps text crisp while the row slides or morphs.
-            const float row_dx = std::round(row_shift.x + morph_sample.cell.left - cell.left);
+            const float row_dx = std::round(row_shift.x + morph_sample.cell.left - cell.left -
+                                            14.0f * scale_ * row_leave * row_leave);
             const float row_dy = std::round(row_shift.y + morph_sample.cell.top - cell.top);
             const RowShiftTransform row_transform(dc, row_dx, row_dy);
+            struct RowFade {
+                ID2D1DeviceContext* dc;
+                bool on;
+                ~RowFade() { if (on) dc->PopLayer(); }
+            } row_fade{dc, row_leave > 0.0f};
+            if (row_fade.on) {
+                dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr,
+                                                     D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                                     D2D1::IdentityMatrix(), 1.0f - row_leave, nullptr,
+                                                     D2D1_LAYER_OPTIONS1_NONE), nullptr);
+            }
             // Backgrounds take the morphing cell's shape; the transform already
             // moved everything by (row_dx, row_dy).
             const D2D1_RECT_F bg = morph_item
@@ -2919,6 +3069,12 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 dc->DrawRoundedRectangle(
                     D2D1::RoundedRect(rc, theme.radius_control * scale_, theme.radius_control * scale_),
                     brAccent_.get(), 2.0f * scale_);
+                // Spring-loading: a ring fills around the folder icon until
+                // the folder opens under the drag (pulse_motion_v2.html).
+                if (vm.drop_spring_progress >= 0.0f && !IsHighContrast()) {
+                    DrawSpringRing(dc, iconRect, vm.drop_spring_progress, theme);
+                    if (vm.drop_spring_progress < 1.0f) spring_ring_until_ = motion_now_ + 60;
+                }
             }
             if (draw_shapes && i == 0 && vm.focus_first_hint && !selected && pane_focused) {
                 // Folder just opened: keyboard focus without a selection, so a

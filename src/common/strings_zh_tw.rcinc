@@ -2224,4 +2224,6 @@ BEGIN
     IDS_TOOLBAR_TOOL_APPLY_ALL "檢視套用到全部"
     IDS_TOOLBAR_TOOL_SEARCH_ALL "全碟搜尋"
     IDS_TOOLBAR_APP_OPENED "已用 {app} 開啟 {n} 項"
+    IDS_DELETE_SNACK_TITLE "已刪除 {n} 項"
+    IDS_DELETE_SNACK_DETAIL "已移到資源回收筒"
 END

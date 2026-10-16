@@ -1080,10 +1080,13 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
     const TabStripMetrics strip = ComputeTabStrip(vm, rect.right);
     const float tabH = strip.h;
     const float tabY = strip.y;
-    auto drawTab = [&](size_t i, float left, bool raised) {
+    // part: 0 = whole tab, 1 = background only (the gliding active plate),
+    // 2 = content only (over a plate drawn elsewhere). w_override >= 0
+    // replaces the slot width (the plate between two slot widths).
+    auto drawTab = [&](size_t i, float left, bool raised, int part, float w_override) {
         const bool active = vm.tabs[i].active;
         const bool pinned = vm.tabs[i].pinned;
-        const float tabW = strip.Width(vm, i);
+        const float tabW = w_override >= 0.0f ? w_override : strip.Width(vm, i);
         const bool hovered = IsHovered(vm, HitTestResult::Tab, static_cast<int>(i)) ||
                              IsHovered(vm, HitTestResult::TabClose, static_cast<int>(i));
         const bool connect = active || raised;
@@ -1097,7 +1100,9 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         const float tabBottom = connect ? std::round(h)
                                         : (std::round(h) - control_gap_);
         const D2D1_RECT_F tabRc = D2D1::RectF(left, tabTop, left + tabW, tabBottom);
-        if (raised) {
+        if (part == 2) {
+            // Content over a plate drawn elsewhere.
+        } else if (raised) {
             D2D1_RECT_F shadow = tabRc;
             shadow.left += 1.0f * scale_;
             shadow.top += 2.0f * scale_;
@@ -1123,7 +1128,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
             }
             FillChromeTab(dc, brFillHover_.get(), tabRc, shape);
         }
-        if (vm.tabs[i].flash > 0.0f) {
+        if (vm.tabs[i].flash > 0.0f && part != 2) {
             MakeBrush(dc, WithAlpha(theme.accent, (vm.dark ? 0.34f : 0.26f) * vm.tabs[i].flash), brFillHover_);
             FillChromeTab(dc, brFillHover_.get(), tabRc, shape);
         }
@@ -1131,17 +1136,18 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         // just in their group color instead of the accent.
         const float r = shape.top_radius;
         const bool has_color = vm.tabs[i].color_rgb != 0;
-        if (has_color) {
+        if (has_color && part != 2) {
             D2D1_COLOR_F line = HexColor(vm.tabs[i].color_rgb);
             if (!active) line.a *= 0.55f;
             MakeBrush(dc, line, brAccent_);
             FillChromeTabAccent(dc, brAccent_.get(), tabRc, shape, 2.0f * scale_);
         }
-        if (active) {
+        if (active && part != 2) {
             MakeBrush(dc, vm.tabs[i].color_rgb ? HexColor(vm.tabs[i].color_rgb) : theme.accent, brAccent_);
             FillRoundedRect(dc, brAccent_.get(), tabRc.left + 15*scale_, tabRc.bottom - 3*scale_,
                 std::min(28*scale_, tabW - 24*scale_), 2*scale_, scale_);
         }
+        if (part == 1) return;
         if ((pinned && !vm.show_pinned_tab_names) || (strip.compact && !pinned && !active)) {
             // Chrome pinned tab, or a crowded inactive tab: centered icon, no
             // title, no close button (the tooltip names it).
@@ -1255,35 +1261,185 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
     int activeI = -1;
     const int dragN = std::max(1, vm.tab_drag_count);
     auto inDragRun = [&](int i) { return dragI >= 0 && i >= dragI && i < dragI + dragN; };
+    // ---- Tab motion bookkeeping: which tabs appeared or went away. ----
+    const uint64_t tnow = motion_now_;
+    const bool tabDragging = dragI >= 0;
+    bool tabMoving = false;
+    {
+        std::vector<uintptr_t> ids;
+        ids.reserve(vm.tabs.size());
+        for (const auto& t : vm.tabs)
+            if (!t.hidden && t.id) ids.push_back(t.id);
+        std::sort(ids.begin(), ids.end());
+        if (ids != tab_ids_prev_) {
+            const bool primed = !tab_ids_prev_.empty() && !tabDragging;
+            if (primed) tab_anim_on_ = motion::SystemAnimationsEnabled();
+            if (primed && tab_anim_on_) {
+                for (uintptr_t id : ids)
+                    if (!std::binary_search(tab_ids_prev_.begin(), tab_ids_prev_.end(), id))
+                        tab_slots_[id].born = tnow;
+                for (uintptr_t id : tab_ids_prev_) {
+                    if (std::binary_search(ids.begin(), ids.end(), id)) continue;
+                    const auto it = tab_slots_.find(id);
+                    if (it == tab_slots_.end() || it->second.seen + 1 < motion_frame_) continue;
+                    if (tab_ghosts_.size() < 12)
+                        tab_ghosts_.push_back({it->second.title, it->second.last, tnow});
+                }
+            }
+            for (auto it = tab_slots_.begin(); it != tab_slots_.end();) {
+                if (std::binary_search(ids.begin(), ids.end(), it->first)) ++it;
+                else it = tab_slots_.erase(it);
+            }
+            ++tab_gen_;
+            tab_ids_prev_ = std::move(ids);
+        }
+    }
+    constexpr motion::SpringSpec kTabPlateSpring{900.0f, 56.0f};
+    const uint32_t popMs = motion::SpringSettleMs(motion::spring::Pop);
+    // Rest slot -> drawn left: siblings spring to their new slots when the
+    // set of tabs changes; resizes and scrolling follow at once.
+    std::vector<float> lefts(vm.tabs.size(), 0.0f);
+    for (size_t i = 0; i < vm.tabs.size(); ++i) {
+        if (vm.tabs[i].hidden || inDragRun(static_cast<int>(i))) continue;
+        const float extra = i < strip.extra.size() ? strip.extra[i] : 0.0f;
+        float left = strip.x0
+            + (static_cast<float>(i) + vm.tabs[i].x_offset) * strip.pitch + extra;
+        const float w = strip.Width(vm, i);
+        if (vm.tabs[i].id) {
+            TabSlotMotion& m = tab_slots_[vm.tabs[i].id];
+            if (!tabDragging) {
+                m.rect.SetAnimationsEnabled(tab_anim_on_);
+                const D2D1_RECT_F r = m.rect.Update(1, static_cast<int64_t>(tab_gen_),
+                    D2D1::RectF(left, 0.0f, left + w, 1.0f), motion_frame_, tnow, motion::spring::Smooth);
+                if (m.rect.Active(tnow)) tabMoving = true;
+                left = r.left;
+            }
+            m.seen = motion_frame_;
+            m.last = D2D1::RectF(left, tabY, left + w, tabY + tabH);
+            m.title = vm.tabs[i].title;
+        }
+        lefts[i] = left;
+        if (vm.tabs[i].active) activeI = static_cast<int>(i);
+    }
+    // A new tab pops in: scale .9 -> 1, rising 6 px, fading in (spring Pop).
+    auto drawSlot = [&](size_t i, int part) {
+        const float left = lefts[i];
+        const auto it = vm.tabs[i].id ? tab_slots_.find(vm.tabs[i].id) : tab_slots_.end();
+        const uint64_t born = it != tab_slots_.end() ? it->second.born : 0;
+        if (born && tnow - born < popMs) {
+            tabMoving = true;
+            const float p = motion::SpringProgress(motion::spring::Pop, static_cast<float>(tnow - born));
+            const float alpha = (std::clamp)(p, 0.0f, 1.0f);
+            const float sc = 0.9f + 0.1f * p;
+            const float w = strip.Width(vm, i);
+            const D2D1_POINT_2F c = D2D1::Point2F(left + w * 0.5f, tabY + tabH * 0.5f);
+            D2D1_MATRIX_3X2_F old{};
+            dc->GetTransform(&old);
+            dc->SetTransform(D2D1::Matrix3x2F::Scale(sc, sc, c) *
+                             D2D1::Matrix3x2F::Translation(0.0f, 6.0f * scale_ * (1.0f - p)) *
+                             *D2D1::Matrix3x2F::ReinterpretBaseType(&old));
+            dc->PushLayer(D2D1::LayerParameters1(D2D1::RectF(left - 16.0f * scale_, 0.0f,
+                                                             left + w + 16.0f * scale_, h + 4.0f * scale_),
+                                                 nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                                 D2D1::IdentityMatrix(), alpha, nullptr,
+                                                 D2D1_LAYER_OPTIONS1_NONE), nullptr);
+            drawTab(i, left, false, part, -1.0f);
+            dc->PopLayer();
+            dc->SetTransform(old);
+            return;
+        }
+        if (born) it->second.born = 0;
+        drawTab(i, left, false, part, -1.0f);
+    };
+    // The active plate glides between slots; while it moves it is drawn
+    // under the other tabs, at rest on top as before.
+    bool plateGliding = false;
+    D2D1_RECT_F plateRc{};
+    if (activeI >= 0 && !tabDragging && vm.tabs[static_cast<size_t>(activeI)].id) {
+        const size_t i = static_cast<size_t>(activeI);
+        const float w = strip.Width(vm, i);
+        tab_plate_.SetAnimationsEnabled(tab_anim_on_);
+        plateRc = tab_plate_.Update(2, static_cast<int64_t>(vm.tabs[i].id),
+            D2D1::RectF(lefts[i], 0.0f, lefts[i] + w, 1.0f), motion_frame_, tnow, kTabPlateSpring);
+        plateGliding = tab_plate_.Active(tnow) &&
+                       (std::fabs(plateRc.left - lefts[i]) > 0.5f || std::fabs(plateRc.right - lefts[i] - w) > 0.5f);
+        if (plateGliding) {
+            tabMoving = true;
+            drawTab(i, plateRc.left, false, 1, plateRc.right - plateRc.left);
+        }
+    }
     for (size_t i = 0; i < vm.tabs.size(); ++i) {
         if (vm.tabs[i].hidden) continue;
         if (inDragRun(static_cast<int>(i))) continue;
-        if (vm.tabs[i].active) {
-            activeI = static_cast<int>(i);
-            continue;
-        }
-        const float extra = i < strip.extra.size() ? strip.extra[i] : 0.0f;
-        const float left = strip.x0
-            + (static_cast<float>(i) + vm.tabs[i].x_offset) * strip.pitch + extra;
-        drawTab(i, left, false);
+        if (static_cast<int>(i) == activeI) continue;
+        drawSlot(i, 0);
     }
-    if (activeI >= 0 && !inDragRun(activeI) && !vm.tabs[static_cast<size_t>(activeI)].hidden) {
-        const size_t i = static_cast<size_t>(activeI);
-        const float extra = i < strip.extra.size() ? strip.extra[i] : 0.0f;
-        const float left = strip.x0
-            + (static_cast<float>(i) + vm.tabs[i].x_offset) * strip.pitch + extra;
-        drawTab(i, left, false);
+    if (activeI >= 0 && !inDragRun(activeI) && !vm.tabs[static_cast<size_t>(activeI)].hidden)
+        drawSlot(static_cast<size_t>(activeI), plateGliding ? 2 : 0);
+    // Closed tabs fade and shrink to .88 in place (120 ms, ease-in).
+    for (auto it = tab_ghosts_.begin(); it != tab_ghosts_.end();) {
+        const float e = static_cast<float>(tnow - it->start) / 120.0f;
+        if (e >= 1.0f) { it = tab_ghosts_.erase(it); continue; }
+        tabMoving = true;
+        const float k = e * e;
+        const D2D1_RECT_F& g = it->rc;
+        const float sc = 1.0f - 0.12f * k;
+        D2D1_MATRIX_3X2_F old{};
+        dc->GetTransform(&old);
+        dc->SetTransform(D2D1::Matrix3x2F::Scale(sc, sc, D2D1::Point2F((g.left + g.right) * 0.5f,
+                                                                       (g.top + g.bottom) * 0.5f)) *
+                         *D2D1::Matrix3x2F::ReinterpretBaseType(&old));
+        dc->PushLayer(D2D1::LayerParameters1(D2D1::RectF(g.left, g.top, g.right, g.bottom), nullptr,
+                                             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(),
+                                             1.0f - k, nullptr, D2D1_LAYER_OPTIONS1_NONE), nullptr);
+        const float gw = g.right - g.left;
+        DrawIconText(g.left + 6.0f * scale_, tabY, 16.0f * scale_, tabH, kIconFolder, L"[]",
+                     theme.text_secondary, 0.85f);
+        MakeBrush(dc, theme.text, brText_);
+        DrawTabTitle(dc, compositor_->DwriteFactory(), compositor_->TabFormat(), brText_.get(),
+                     it->title, g.left + 24.0f * scale_, tabY,
+                     (std::max)(0.0f, gw - 30.0f * scale_), tabH, scale_);
+        dc->PopLayer();
+        dc->SetTransform(old);
+        ++it;
     }
     // The dragged run floats as one block (browser group drag); collapsed
     // members stay hidden and do not take float width.
     if (dragI >= 0 && dragI < static_cast<int>(vm.tabs.size())) {
+        // Lifted: the run grows to 1.04 with spring Pop as the drag starts.
+        if (!tab_lift_start_) {
+            tab_lift_start_ = tnow;
+            tab_anim_on_ = motion::SystemAnimationsEnabled();
+        }
+        float sc = 1.0f;
+        if (tab_anim_on_) {
+            const float age = static_cast<float>(tnow - tab_lift_start_);
+            sc = 1.0f + 0.04f * motion::SpringProgress(motion::spring::Pop, age);
+            if (age < static_cast<float>(popMs)) tabMoving = true;
+        }
+        int runN = 0;
+        for (int k = 0; k < dragN && dragI + k < static_cast<int>(vm.tabs.size()); ++k)
+            if (!vm.tabs[static_cast<size_t>(dragI + k)].hidden) ++runN;
+        D2D1_MATRIX_3X2_F old{};
+        dc->GetTransform(&old);
+        if (sc != 1.0f) {
+            const float runW = static_cast<float>((std::max)(0, runN - 1)) * strip.pitch +
+                               strip.Width(vm, static_cast<size_t>(dragI));
+            dc->SetTransform(D2D1::Matrix3x2F::Scale(sc, sc, D2D1::Point2F(vm.tab_drag_x + runW * 0.5f,
+                                                                           tabY + tabH * 0.5f)) *
+                             *D2D1::Matrix3x2F::ReinterpretBaseType(&old));
+        }
         float floatX = vm.tab_drag_x;
         for (int k = 0; k < dragN && dragI + k < static_cast<int>(vm.tabs.size()); ++k) {
             if (vm.tabs[static_cast<size_t>(dragI + k)].hidden) continue;
-            drawTab(static_cast<size_t>(dragI + k), floatX, true);
+            drawTab(static_cast<size_t>(dragI + k), floatX, true, 0, -1.0f);
             floatX += strip.pitch;
         }
+        dc->SetTransform(old);
+    } else {
+        tab_lift_start_ = 0;
     }
+    if (tabMoving) tab_motion_until_ = tnow + 60;
 
     // A tab dragged from another window lands here (multi-window M6b): a bar
     // in the gap before the visible tab at the index, or after the last tab.

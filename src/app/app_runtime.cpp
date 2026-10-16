@@ -478,6 +478,26 @@ void RecordRecentOpen(AppState& s, const std::wstring& path,
                              app::PlaceItemKind kind) {
     s.places.RecordRecent(path, kind);
 }
+// Drag spring-loading: how far the 800 ms rest on the folder row under the
+// drag has come (the ring around its icon); <0 when no folder is arming.
+static float DropSpringProgress(const AppState& s) {
+    if (s.springRow < 0 || s.springRow != s.dropRow || s.springEntered || !s.springStart) return -1.0f;
+    return (std::min)(1.0f, static_cast<float>(GetTickCount64() - s.springStart) / 800.0f);
+}
+
+// Motion 5b: rows of `dir` that are on their way to the Recycle Bin.
+static void FillLeavingRows(const AppState& s, const std::wstring& dir, ui::PaneViewModel& pane) {
+    if (s.leavingPaths.empty() || dir.empty()) return;
+    const uint64_t now = ui::motion::NowMs();
+    if (s.leavingDoneAt ? now - s.leavingDoneAt > 800 : now - s.leavingSince > 8000) return;
+    for (const auto& path : s.leavingPaths) {
+        if (fs::ParentPath(path) != dir) continue;
+        const size_t slash = path.find_last_of(L"\\/");
+        pane.leaving_names.insert(slash == std::wstring::npos ? path : path.substr(slash + 1));
+    }
+    if (!pane.leaving_names.empty()) pane.leaving_since = s.leavingSince;
+}
+
 void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
     D2D1_RECT_F content = s.renderer.ContentRect(
         static_cast<float>(s.compositor.Width()), static_cast<float>(s.compositor.Height()));
@@ -983,6 +1003,9 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
         view.hit_rect = sp.hit_rect;
         view.parent_bounds = sp.parent_bounds;
         view.vertical = (sp.orientation == app::SplitOrientation::Vertical);
+        view.ratio = sp.node ? sp.node->ratio : 0.5f;
+        view.snapped = s.splitterDragging && s.splitterSnap > 0.0f &&
+                       s.splitterDragIndex == static_cast<int>(vm.splitters.size());
         if (splitters.size() == 1 && laid.size() == 2) {
             // Level with the pane headers for left/right, centered for top/bottom.
             const float r = 16.0f * s.scale;
@@ -1014,6 +1037,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
                     slot.pane.cut_names.insert(slash == std::wstring::npos
                         ? cutPath : cutPath.substr(slash + 1));
                 }
+                if (!slot.focused) FillLeavingRows(s, tab->current_path, slot.pane);
             }
             if (static_cast<int>(i) == s.hoverPaneIndex) slot.pane.hover_index = s.hoverRow;
             if (s.stripResizing && static_cast<int>(i) == s.stripResizePane)
@@ -1023,6 +1047,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             if (static_cast<int>(i) == s.dropPaneIndex) {
                 slot.pane.drop_target_index = s.dropRow;
                 slot.pane.header_drop = s.dropHeader;
+                slot.pane.drop_spring_progress = DropSpringProgress(s);
             }
             if (slot.focused) {
                 slot.pane.rename_index = s.renameIndex;
@@ -2199,7 +2224,11 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
             }
         }
     }
+    if (!s.leavingPaths.empty()) {
+        if (app::Tab* tab = ActiveTab(s)) FillLeavingRows(s, tab->current_path, vm.pane);
+    }
     vm.pane.drop_target_index = s.dropRow;
+    vm.pane.drop_spring_progress = DropSpringProgress(s);
     vm.pane.rename_index = s.renameIndex;
     vm.pane.rename_text = RenameEditText(s);
     SyncSearchBarWidth(s);
@@ -2832,6 +2861,8 @@ std::wstring TooltipForHover(AppState& s) {
         if (s.hoverControlIndex >= ui::kSplitterSwapIndex)
             return text(LayoutOf(s) == app::LayoutPreset::TwoHorizontal ? I::SplitSwapTopBottom
                                                                          : I::SplitSwapLeftRight);
+        // Motion 4b: while dragging, the ratio badge speaks instead.
+        if (s.splitterDragging) return {};
         return text(I::ResizeSplit);
     case R::DetailsOpen: return text(I::Open);
     case R::DetailsStar: return text(I::Favorite);

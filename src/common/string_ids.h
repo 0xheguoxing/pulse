@@ -2240,5 +2240,7 @@
 #define IDS_TOOLBAR_TOOL_APPLY_ALL                                                       3450
 #define IDS_TOOLBAR_TOOL_SEARCH_ALL                                                      3451
 #define IDS_TOOLBAR_APP_OPENED                                                           3452
+#define IDS_DELETE_SNACK_TITLE                                                           3453
+#define IDS_DELETE_SNACK_DETAIL                                                          3454
 
 #endif  // PULSE_STRING_IDS_H

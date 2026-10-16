@@ -395,6 +395,7 @@ struct AppState : AppCoreOwner {
     bool splitterDragging = false;
     int splitterDragIndex = -1;
     D2D1_RECT_F splitterParentBounds{};
+    float splitterSnap = 0.0f;   // ratio the dragged divider is held at (1/3, 1/2, 2/3), 0 = free
     app::SplitOrientation splitterOrientation = app::SplitOrientation::Vertical;
     std::vector<app::SplitContainer*> splitterNodes;
 
@@ -541,6 +542,12 @@ struct AppState : AppCoreOwner {
 
     std::wstring pending_undo_json; // loaded from session, imported in WM_CREATE
     uint64_t opsCompleted = 0;
+    // Rows on their way to the Recycle Bin slide out before the listing drops
+    // them (motion 5b). Cleared when the delete fails, shortly after it ends.
+    std::vector<std::wstring> leavingPaths;
+    uint64_t leavingSince = 0;   // ui::motion::NowMs
+    uint64_t leavingDoneAt = 0;  // ui::motion::NowMs, 0 while running
+    uint64_t leavingTask = 0;
     std::unique_ptr<ui::FileOperationWindow> operationWindow;
     uint64_t operationUiTaskId = 0;
     uint64_t operationDismissedTaskId = 0;

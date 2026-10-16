@@ -90,6 +90,28 @@ bool UpdateSplitterDrag(AppState& s, int mx, int my) {
     if (!node) return true;
     app::ApplySplitRatio(*node, s.splitterParentBounds, 8.0f * s.scale,
                          static_cast<float>(mx), static_cast<float>(my));
+    // Motion 4b: the divider holds at thirds and the middle within 12 px,
+    // unless the panes' minimum sizes keep it from getting there.
+    s.splitterSnap = 0.0f;
+    {
+        const float gap = 8.0f * s.scale;
+        const D2D1_RECT_F& b = s.splitterParentBounds;
+        const bool vertical = node->orientation == app::SplitOrientation::Vertical;
+        const float span = (vertical ? b.right - b.left : b.bottom - b.top) - gap;
+        const float origin = (vertical ? b.left : b.top) + gap * 0.5f;
+        const float free_ratio = node->ratio;
+        for (const float snap : {1.0f / 3.0f, 0.5f, 2.0f / 3.0f}) {
+            if (span <= 1.0f || std::fabs(free_ratio - snap) * span >= 12.0f * s.scale) continue;
+            const float at = origin + snap * span;
+            app::ApplySplitRatio(*node, b, gap, vertical ? at : 0.0f, vertical ? 0.0f : at);
+            if (std::fabs(node->ratio - snap) < 1e-4f) {
+                s.splitterSnap = snap;
+            } else {
+                node->ratio = free_ratio;
+            }
+            break;
+        }
+    }
     s.hoverRegion = static_cast<int>(ui::HitTestResult::Splitter);
     s.hoverControlIndex = s.splitterDragIndex;
     return true;
@@ -2428,6 +2450,8 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             }
             s->splitterDragging = true;
             s->splitterDragIndex = hit.index;
+            s->splitterSnap = 0.0f;
+            s->tooltipText.clear();   // motion 4b: the ratio badge takes over
             if (hit.index >= 0 && hit.index < static_cast<int>(vm.splitters.size())) {
                 s->splitterParentBounds = vm.splitters[static_cast<size_t>(hit.index)].parent_bounds;
                 s->splitterOrientation = vm.splitters[static_cast<size_t>(hit.index)].vertical

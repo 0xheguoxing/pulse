@@ -20,6 +20,7 @@
 #include "locked_item_prompt.h"
 #include "selection_caps.h"
 #include "app_commands.h"
+#include "reopen_closed.h"
 #include "paste_source.h"
 #include "resource.h"
 #include "../ops/clipboard.h"
@@ -324,6 +325,44 @@ bool ConfirmPermanentDelete(AppState& s, const std::vector<std::wstring>& paths,
 }
 }
 
+// Motion 5b: the rows slide out now; the listing drops them when the delete
+// lands. Small selections only (the list animates up to 30 changed rows).
+static void MarkLeavingRows(AppState& s, const std::vector<std::wstring>& paths, uint64_t task) {
+    if (paths.empty() || paths.size() > 64 || task == 0) return;
+    const uint64_t now = ui::motion::NowMs();
+    if (s.leavingPaths.empty() || s.leavingDoneAt || now - s.leavingSince > 8000) {
+        s.leavingPaths.clear();
+        s.leavingSince = now;
+    }
+    s.leavingPaths.insert(s.leavingPaths.end(), paths.begin(), paths.end());
+    s.leavingDoneAt = 0;
+    s.leavingTask = task;
+    if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void NoteDeleteFinished(AppState& s, const ops::FinishedTask& done) {
+    if (done.type != ops::OpType::RecycleDelete && done.type != ops::OpType::RealDelete) {
+        // Anything else (the undo itself, a later copy...) ends the slide-out
+        // hold, and the snack's Undo would no longer undo the delete.
+        s.leavingPaths.clear();
+        DismissReopenToasts(s, WM_UNDO_DELETE);
+        return;
+    }
+    if (done.task_id == s.leavingTask && !s.leavingPaths.empty()) {
+        if (done.success) s.leavingDoneAt = ui::motion::NowMs();
+        else s.leavingPaths.clear();
+    }
+    if (done.type != ops::OpType::RecycleDelete || !done.success || done.sources.empty() ||
+        !s.ops.CanUndo() || !s.hwnd)
+        return;
+    std::wstring title = l10n::Get(l10n::StringId::DeleteSnackTitle);
+    if (const size_t at = title.find(L"{n}"); at != std::wstring::npos)
+        title.replace(at, 3, std::to_wstring(done.sources.size()));
+    s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Undo, std::move(title),
+        l10n::Get(l10n::StringId::DeleteSnackDetail),
+        {ui::SnackAction{l10n::Get(l10n::StringId::SnackUndo), WM_UNDO_DELETE}}, L"Ctrl+Z");
+}
+
 void DeletePaths(AppState& s, std::vector<std::wstring> paths, bool permanent) {
     if (paths.empty()) return;
     if (!permanent) {
@@ -342,7 +381,8 @@ void DeletePaths(AppState& s, std::vector<std::wstring> paths, bool permanent) {
             ops::OpRequest req;
             req.type = ops::OpType::RealDelete;
             req.sources = std::move(direct);
-            s.ops.Submit(std::move(req));
+            const std::vector<std::wstring> leaving = req.sources;
+            MarkLeavingRows(s, leaving, s.ops.Submit(std::move(req)));
             if (paths.empty()) return;
         }
     }
@@ -355,7 +395,8 @@ void DeletePaths(AppState& s, std::vector<std::wstring> paths, bool permanent) {
     ops::OpRequest req;
     req.type = permanent ? ops::OpType::RealDelete : ops::OpType::RecycleDelete;
     req.sources = std::move(paths);
-    s.ops.Submit(std::move(req));
+    const std::vector<std::wstring> leaving = req.sources;
+    MarkLeavingRows(s, leaving, s.ops.Submit(std::move(req)));
 }
 
 // ---------------------------------------------------------------------------

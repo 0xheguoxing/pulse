@@ -60,5 +60,6 @@ constexpr UINT WM_CTX_LAYOUT_SEED = WM_APP + 87;  // lParam CtxLayoutSeed*: pers
 constexpr UINT WM_OPEN_EXTERNAL = WM_APP + 89;  // host: lParam std::wstring*, a forwarded launch accepted earlier
 constexpr UINT WM_DRIVE_VERB = WM_APP + 90;  // app::DriveVerbResult* (drive_verbs.h): eject / disconnect finished
 constexpr UINT WM_DETAILS_TREE_UNDO = WM_APP + 91;  // the "expanded N folders" snack: undo it
+constexpr UINT WM_UNDO_DELETE = WM_APP + 92;  // the "deleted N items" snack: undo the delete
 
 }  // namespace pulse

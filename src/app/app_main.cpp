@@ -1472,6 +1472,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s) UndoDetailsTreeExpand(*s);
         return 0;
 
+    case WM_UNDO_DELETE:
+        if (s && s->ops.CanUndo()) s->ops.Undo();
+        return 0;
+
     case WM_OPEN_SESSION_WINDOWS:
         if (s) OpenSessionWindows(*s);
         return 0;
@@ -2099,7 +2103,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 }
                 if (!tag_metadata_paths.empty())
                     QueueTagAds(*s, BuildTagAdsUpdates(s->places, tag_metadata_paths, true));
-                for (const auto& finished : finished_tasks) FinishOperationIntents(*s, finished);
+                for (const auto& finished : finished_tasks) {
+                    FinishOperationIntents(*s, finished);
+                    NoteDeleteFinished(*s, finished);
+                }
                 // An op finished: refresh the view (watcher also fires, this is immediate).
                 app::Tab* tab = ActiveTab(*s);
                 if (tab && refresh) {

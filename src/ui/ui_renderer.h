@@ -78,6 +78,7 @@ struct TabView {
     bool hidden = false;    // member of a collapsed group: zero width, not drawn
     bool pinned = false;    // narrow icon-only slot, left cluster, no close
     float flash = 0.0f;     // 0..1 attention pulse: reopened folder already had this tab
+    uintptr_t id = 0;       // stable identity (app::LayoutTab*): tab motion only
 };
 
 // A named, colored tab group shown as a chip at the start of its run.
@@ -230,6 +231,9 @@ struct PaneViewModel {
     mutable std::shared_ptr<RowPresentationCache> row_cache;
     const app::PlacesCatalog* tag_catalog = nullptr;
     std::unordered_set<std::wstring> cut_names;
+    // Rows being deleted: they slide out and fade from leaving_since (NowMs).
+    std::unordered_set<std::wstring> leaving_names;
+    uint64_t leaving_since = 0;
     // Folder compare: CompareMark per source index (null = compare off).
     std::shared_ptr<const std::vector<uint8_t>> compare_marks;
     bool compare_active = false;
@@ -266,6 +270,7 @@ struct PaneViewModel {
     const std::unordered_set<int>* selected_indices = nullptr;
     int hover_index = -1;
     int drop_target_index = -1;   // folder row under an OLE drag (accent 2px stroke)
+    float drop_spring_progress = -1.0f;  // 0..1 until the folder spring-opens; <0 = none
     bool header_drop = false;     // pane title bar is a navigate-to-folder target
     int rename_index = -1;        // name column is in edit mode; do not draw the label
     std::wstring rename_text;     // text being typed; icon grids grow the field to wrap it
@@ -560,6 +565,8 @@ struct SplitterView {
     // Two-pane layouts: round swap button shown while the divider is hovered.
     // Empty otherwise.
     D2D1_RECT_F swap_rect{};
+    float ratio = 0.5f;    // share of the first pane (drag badge)
+    bool snapped = false;  // being dragged and held at a magnet snap
 };
 // Splitter hit index of the swap button on splitter i: kSplitterSwapIndex + i.
 inline constexpr int kSplitterSwapIndex = 1000;
@@ -1470,6 +1477,10 @@ public:
                  (task_pill_done_at_ != 0 && now - task_pill_done_at_ < kTaskPillDoneMs + 400);
         if (copy_feedback_.Tick(now)) active = true;
         if (group_wheel_.Tick(motion_now)) active = true;
+        if (motion_now < tab_motion_until_) active = true;
+        if (motion_now < row_leave_until_) active = true;
+        if (motion_now < splitter_motion_until_) active = true;
+        if (motion_now < spring_ring_until_) active = true;
         if (folder_thumbnail_cache_.Tick(now)) active = true;
         return active;
     }
@@ -1755,6 +1766,9 @@ private:
     void DrawToolbarApps(const WindowViewModel& vm, const ToolbarLayout& layout, const Theme& theme);
     void DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawPane(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
+    void DrawSpringRing(ID2D1DeviceContext* dc, const D2D1_RECT_F& icon, float progress, const Theme& theme);
+    void DrawSplitterKnob(int index, const SplitterView& sp, bool hovered, bool pressed, bool dark,
+                          const Theme& theme);
     void DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawSinglePane(const WindowViewModel& vm, const PaneViewModel& pane,
                         const D2D1_RECT_F& bounds, int pane_index, bool focused, bool target,
@@ -1968,6 +1982,41 @@ private:
     std::array<uint64_t, 8> folder_size_pending_since_{};
     bool folder_size_anim_active_ = false;
     motion::CopyFeedback copy_feedback_;
+    // Tab strip motion (pulse_motion_v2.html "Tabs"): slots spring when tabs
+    // open or close, the active plate glides, new tabs pop in, closed ones
+    // fade out, a lifted tab grows. Visual only: hit-testing keeps the slots.
+    struct TabSlotMotion {
+        motion::SpringRectMotion rect;
+        uint64_t born = 0;     // motion::NowMs when it appeared; 0 = no pop
+        uint64_t seen = 0;     // motion_frame_ it was last drawn
+        D2D1_RECT_F last{};    // where it was last drawn
+        std::wstring title;
+    };
+    struct TabGhost {
+        std::wstring title;
+        D2D1_RECT_F rc{};
+        uint64_t start = 0;
+    };
+    std::unordered_map<uintptr_t, TabSlotMotion> tab_slots_;
+    std::vector<TabGhost> tab_ghosts_;
+    std::vector<uintptr_t> tab_ids_prev_;   // sorted visible tab ids of the last frame
+    uint64_t tab_gen_ = 0;                  // bumps whenever that set changes
+    motion::SpringRectMotion tab_plate_;
+    uint64_t tab_lift_start_ = 0;
+    uint64_t tab_motion_until_ = 0;         // NowMs: keep frames coming until then
+    bool tab_anim_on_ = true;
+    uint64_t row_leave_until_ = 0;          // NowMs: a deleted row is still fading out
+    // Pane dividers (motion 4b): an accent knob springs in on hover and
+    // stretches while dragged; snaps flash a guide line.
+    struct SplitterKnobMotion {
+        float show_from = 0.0f, show_to = 0.0f;
+        float grab_from = 0.0f, grab_to = 0.0f;
+        uint64_t show_start = 0, grab_start = 0, snap_at = 0;
+        bool snapped = false;
+    };
+    std::array<SplitterKnobMotion, 8> splitter_knobs_{};
+    uint64_t splitter_motion_until_ = 0;
+    uint64_t spring_ring_until_ = 0;        // NowMs: a spring-load ring is filling
     static constexpr ULONGLONG kTaskPillDoneMs = 1600;
     static constexpr ULONGLONG kTaskPillFadeMs = 300;
     bool task_pill_was_active_ = false;
@@ -2029,6 +2078,7 @@ private:
     mutable ComPtr<ID2D1SolidColorBrush> brIconFolder_;
     mutable ComPtr<ID2D1SolidColorBrush> brIconFile_;
     mutable ComPtr<ID2D1StrokeStyle> dashStroke_;
+    ComPtr<ID2D1StrokeStyle> roundCapStroke_;  // spring-load ring arc
     ComPtr<ID2D1StrokeStyle> paneHeaderStroke_;
     ComPtr<ID2D1PathGeometry> link_arrow_geometry_;
     ComPtr<ID2D1PathGeometry> play_triangle_geometry_;

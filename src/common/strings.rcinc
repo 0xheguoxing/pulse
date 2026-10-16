@@ -2226,6 +2226,8 @@ BEGIN
     IDS_TOOLBAR_TOOL_APPLY_ALL "视图用于全部"
     IDS_TOOLBAR_TOOL_SEARCH_ALL "全盘搜索"
     IDS_TOOLBAR_APP_OPENED "已用 {app} 打开 {n} 项"
+    IDS_DELETE_SNACK_TITLE "已删除 {n} 项"
+    IDS_DELETE_SNACK_DETAIL "已移到回收站"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4451,6 +4453,8 @@ BEGIN
     IDS_TOOLBAR_TOOL_APPLY_ALL "Use view everywhere"
     IDS_TOOLBAR_TOOL_SEARCH_ALL "Search everywhere"
     IDS_TOOLBAR_APP_OPENED "Opened {n} items with {app}"
+    IDS_DELETE_SNACK_TITLE "Deleted {n} items"
+    IDS_DELETE_SNACK_DETAIL "Moved to the Recycle Bin"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

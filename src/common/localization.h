@@ -2236,6 +2236,8 @@ enum class StringId : UINT {
     ToolbarToolApplyAll = IDS_TOOLBAR_TOOL_APPLY_ALL,
     ToolbarToolSearchAll = IDS_TOOLBAR_TOOL_SEARCH_ALL,
     ToolbarAppOpened = IDS_TOOLBAR_APP_OPENED,
+    DeleteSnackTitle = IDS_DELETE_SNACK_TITLE,
+    DeleteSnackDetail = IDS_DELETE_SNACK_DETAIL,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;
