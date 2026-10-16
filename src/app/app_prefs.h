@@ -5,6 +5,7 @@
 #include "entry_group.h"
 #include "../ui/details_column_set.h"
 #include "toolbar_selection.h"
+#include "toolbar_tools.h"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -129,8 +130,9 @@ struct AppPrefs {
     int toolbar_new_primary = 0;
     int toolbar_last_new = 0;
     // Tools pinned to the toolbar, in toolbar order, by id (toolbar_tools.h).
-    // Saved as json toolbar_tools; older prefs had the toolbar_pins mask.
-    std::vector<std::wstring> toolbar_tools;
+    // Saved as json toolbar_tools (+ toolbar_tools_v); older prefs had the
+    // toolbar_pins mask. A fresh install gets the prototype's default.
+    std::vector<std::wstring> toolbar_tools = DefaultToolbarTools();
     // Actions the selection chip may show, in chip order, by id
     // (toolbar_selection.h). Without the json key: all, default order.
     std::vector<std::wstring> toolbar_selection = DefaultToolbarSelection();

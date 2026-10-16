@@ -793,7 +793,7 @@ bool TestToolbarApps() {
         float pins_end = 0.0f;
         for (const auto& pin : l.pins) if (pin.right > pin.left) pins_end = pin.right;
         return l.sort.left >= pins_end && l.filter.left >= l.sort.right && l.group.left >= l.filter.right &&
-               l.group.right + 4 <= l.commands[5].left;
+               l.group.right + 4 <= l.overflow.left;
     };
     const bool roomy = width_of(open.filter) >= 199.0f && width_of(selected.filter) >= 150.0f &&
         width_of(closed.pins[2]) > 0 && width_of(open.pins[1]) <= 0 && width_of(opening.pins[1]) <= 0 &&

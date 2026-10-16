@@ -2243,3 +2243,6 @@ ToolbarSelHintTwoFolders	IDS_TOOLBAR_SEL_HINT_TWO_FOLDERS	3445	两个文件夹�
 ToolbarSelHintFolders	IDS_TOOLBAR_SEL_HINT_FOLDERS	3446	选中文件夹时	Folders	選取資料夾時
 ToolbarSelHintSearch	IDS_TOOLBAR_SEL_HINT_SEARCH	3447	搜索结果中	Search results	搜尋結果中
 ToolbarSelRecent	IDS_TOOLBAR_SEL_RECENT	3448	最近变化	Recent changes	最近變化
+ToolbarSectionSelect	IDS_TOOLBAR_SECTION_SELECT	3449	选择	Select	選取
+ToolbarToolApplyAll	IDS_TOOLBAR_TOOL_APPLY_ALL	3450	视图用于全部	Use view everywhere	檢視套用到全部
+ToolbarToolSearchAll	IDS_TOOLBAR_TOOL_SEARCH_ALL	3451	全盘搜索	Search everywhere	全碟搜尋

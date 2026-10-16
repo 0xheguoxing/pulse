@@ -454,16 +454,6 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     if (embedded_) return;
     // The command row's plate: the file and pane commands, overflow, pinned
     // commands and apps, Sort / Filter / Group.
-    const bool can_paste=vm.paste_target && (vm.clipboard_files || vm.tray_deck.batch_count>0);
-    const HitTestResult::Region hits[]={HitTestResult::Cut,HitTestResult::Copy,HitTestResult::Paste,
-        HitTestResult::Rename,HitTestResult::Delete,HitTestResult::SplitButton,HitTestResult::DetailsToggle,HitTestResult::PaneColumnLayout};
-    const auto command_enabled=[&](int i) {
-        // Cut / copy / rename / delete follow what is selected (a drive takes
-        // a rename only; app::SelectionCaps); paste needs something to paste
-        // (clipboard files or a tray batch) and a folder that takes it.
-        const bool allowed[]={vm.selection_cut,vm.selection_copy,can_paste,vm.selection_rename,vm.selection_delete};
-        return i>=5 || allowed[i];
-    };
     const bool filter_field=!(vm.pane.filter_expand <= 0.015f && !vm.filter_editing);
     const bool group_chip=toolbar_group_ > 0;
     if (plates) {
@@ -474,8 +464,6 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             if (!hot && hovered && r.right > r.left) { hot=&r; hot_key=key; hot_radius=radius; }
         };
         const float rc=theme.radius_control*scale_;
-        for (int i=0;i<8;++i)
-            consider(layout.commands[i],command_enabled(i) && IsHovered(vm,hits[i]),PlateKey(hits[i],i),rc);
         consider(layout.overflow,IsHovered(vm,HitTestResult::ToolbarMore),PlateKey(HitTestResult::ToolbarMore,0),rc);
         const size_t from=vm.toolbar_pins.size();
         for (size_t i=0;i<layout.pins.size();++i) {
@@ -524,35 +512,22 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         if (divider_brush.get()) FillRect(dc,divider_brush.get(),newArrow.left-0.5f*scale_,newArrow.top+7*scale_,
             scale_,newArrow.bottom-newArrow.top-14*scale_);
     }
-    const wchar_t* glyphs[]={kIconCut,kIconCopy,kIconPaste,kIconRename,kIconDelete,kIconSplit,
-        vm.details_visible ? kIconDetailsClose : kIconDetailsOpen,L""};
-    for(int i=0;i<8;++i) {
-        if (layout.commands[i].right <= layout.commands[i].left) continue;
-        const bool enabled=command_enabled(i);
-        const bool hovered=enabled && IsHovered(vm,hits[i]);
-        const bool selected=(i==5 && vm.pane_slots.size()>1) || (i==6 && vm.details_visible) ||
-            (i==7 && vm.pane.column_strip.enabled);
-        DrawButton(layout.commands[i],theme,hovered ? (plates ? kTransparent : theme.fill_hover) :
-            selected ? theme.fill_selected : kTransparent,
-            i==5 ? L"" : glyphs[i],L"",!enabled ? theme.text_disabled : selected ? theme.accent : theme.text_secondary,true,true);
-        if (i==5) {
-            // The split button shows the current layout (1 / 2 side by side /
-            // 2 stacked / 3 / 4). A pane count that does not match the preset
-            // (a custom split) is described from the pane rectangles instead.
-            constexpr int kPaneCount[]={1,2,2,3,4};
-            int preset=std::clamp(vm.layout_preset,0,4);
-            const int panes=static_cast<int>(vm.pane_slots.size());
-            if (panes>0 && kPaneCount[preset]!=panes) {
-                if (panes==1) preset=0;
-                else if (panes==2) preset=vm.pane_slots[1].rect.top>=vm.pane_slots[0].rect.bottom-1.0f ? 2 : 1;
-                else preset=panes==3 ? 3 : 4;
-            }
-            constexpr PaneHeaderIcon kIcons[]={PaneHeaderIcon::SplitSingle,PaneHeaderIcon::Split,
-                PaneHeaderIcon::SplitStacked,PaneHeaderIcon::SplitThree,PaneHeaderIcon::SplitFour};
-            DrawPaneHeaderIcon(layout.commands[i],kIcons[preset],selected ? theme.accent : theme.text_secondary);
+    // The split tool's pin shows the current layout (1 / 2 side by side /
+    // 2 stacked / 3 / 4). A pane count that does not match the preset (a
+    // custom split) is described from the pane rectangles instead.
+    const auto split_icon=[&vm]() {
+        constexpr int kPaneCount[]={1,2,2,3,4};
+        int preset=std::clamp(vm.layout_preset,0,4);
+        const int panes=static_cast<int>(vm.pane_slots.size());
+        if (panes>0 && kPaneCount[preset]!=panes) {
+            if (panes==1) preset=0;
+            else if (panes==2) preset=vm.pane_slots[1].rect.top>=vm.pane_slots[0].rect.bottom-1.0f ? 2 : 1;
+            else preset=panes==3 ? 3 : 4;
         }
-        if (i==7) DrawPaneHeaderIcon(layout.commands[i],PaneHeaderIcon::Columns,selected ? theme.accent : theme.text_secondary);
-    }
+        constexpr PaneHeaderIcon kIcons[]={PaneHeaderIcon::SplitSingle,PaneHeaderIcon::Split,
+            PaneHeaderIcon::SplitStacked,PaneHeaderIcon::SplitThree,PaneHeaderIcon::SplitFour};
+        return kIcons[preset];
+    };
     if (layout.overflow.right > layout.overflow.left) {
         DrawButton(layout.overflow,theme,!plates && IsHovered(vm,HitTestResult::ToolbarMore) ? theme.fill_hover : kTransparent,
             L"\xE712",L"",theme.text_secondary,true,true);
@@ -563,6 +538,7 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         const D2D1_RECT_F slot=layout.pins[i];
         if (slot.right <= slot.left) continue;
         const SelectionChipAction& pin=vm.toolbar_pins[i];
+        const bool split_pin=pin.glyph==kToolbarSplitGlyph;
         if (i==0) {
             MakeBrush(dc,theme.stroke_divider,brStrokeDivider_);
             FillRect(dc,brStrokeDivider_.get(),slot.left-7*scale_,slot.top+7*scale_,scale_,18*scale_);
@@ -594,11 +570,13 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             faint.a*=0.5f;
             DrawIconText(b.left,b.top,b.right-b.left,b.bottom-b.top,pin.glyph,L"",faint);
         } else if (turn==0.0f && glyph_scale==1.0f) {
-            DrawButton(b,theme,bg,pin.glyph,L"",fg,true,true);
+            DrawButton(b,theme,bg,split_pin ? L"" : pin.glyph.c_str(),L"",fg,true,true);
+            if (split_pin) DrawPaneHeaderIcon(b,split_icon(),fg);
         } else {
             if (bg.a > 0.0f) painter_.FillRoundedRect(b,theme.radius_control*scale_,bg);
             const AroundCentre spin(dc,centre,glyph_scale,turn);
-            DrawIconText(b.left,b.top,b.right-b.left,b.bottom-b.top,pin.glyph,L"",fg);
+            if (split_pin) DrawPaneHeaderIcon(b,split_icon(),fg);
+            else DrawIconText(b.left,b.top,b.right-b.left,b.bottom-b.top,pin.glyph,L"",fg);
         }
     }
     DrawToolbarApps(vm,layout,theme);
@@ -656,16 +634,8 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         button.state.hovered=!plates && IsHovered(vm,region);
         painter_.DrawButton(button);
     };
-    // Group dividers as in the prototype: after 新建, and between the view
-    // commands and the pane layout buttons.
-    MakeBrush(dc,theme.stroke_divider,brStrokeDivider_);
-    if (layout.commands[0].right > layout.commands[0].left)
-        FillRect(dc,brStrokeDivider_.get(),layout.create.right+6*scale_,layout.create.top+7*scale_,scale_,18*scale_);
-    const D2D1_RECT_F view_tail=layout.group.right > layout.group.left ? layout.group : layout.filter;
-    const float pane_left=layout.commands[5].right > layout.commands[5].left ? layout.commands[5].left
-                        : layout.overflow.right > layout.overflow.left ? layout.overflow.left : 0.0f;
-    if (pane_left > view_tail.right+8*scale_)
-        FillRect(dc,brStrokeDivider_.get(),pane_left-7*scale_,layout.sort.top+7*scale_,scale_,18*scale_);
+    // The divider after 新建 comes with the first pin (above); the pane
+    // buttons are pins now (T3d), so More needs none.
     // The shared drum picker turns the chevron of the button that opened it,
     // in step with its open/close fade.
     const float picker_open=group_wheel_.OpenAmount();

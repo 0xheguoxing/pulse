@@ -225,14 +225,14 @@ int main(int argc, char** argv) {
     {
         using Tools = std::vector<std::wstring>;
         AppPrefs legacy; legacy.persist=false;
-        Check(legacy.FromJson(LR"({"toolbar_pins":5})") && legacy.toolbar_tools==Tools{L"new_text",L"terminal"}, "TOOLBAR-01 legacy pin mask becomes the tool list");
+        Check(legacy.FromJson(LR"({"toolbar_pins":5})") && legacy.toolbar_tools==Tools{L"cut",L"copy",L"paste",L"rename",L"delete",L"new_text",L"terminal",L"split",L"details",L"columns"}, "TOOLBAR-01 legacy pin mask becomes the tool list, with the former fixed buttons");
         legacy.toolbar_tools={L"hidden",L"copy_path",L"bogus",L"hidden",L"theme"};
         const std::wstring saved_json=legacy.ToJson();
         AppPrefs again; again.persist=false;
         Check(again.FromJson(saved_json) && again.toolbar_tools==Tools{L"hidden",L"copy_path",L"theme"}, "TOOLBAR-02 tool list round trips; unknown and repeated ids dropped");
         Check(saved_json.find(L"\"toolbar_pins\":2")!=std::wstring::npos, "TOOLBAR-03 an older Pulse still reads its pins");
         AppPrefs cleared; cleared.persist=false;
-        Check(cleared.FromJson(LR"({"toolbar_tools":[],"toolbar_pins":31})") && cleared.toolbar_tools.empty(), "TOOLBAR-04 an emptied list is not refilled from the old mask");
+        Check(cleared.FromJson(LR"({"toolbar_tools":[],"toolbar_tools_v":2,"toolbar_pins":31})") && cleared.toolbar_tools.empty(), "TOOLBAR-04 an emptied list is not refilled from the old mask");
         Check(cleared.toolbar_selection==pulse::app::DefaultToolbarSelection(), "TOOLBAR-05 prefs without toolbar_selection show every chip action");
         AppPrefs chip; chip.persist=false;
         chip.toolbar_selection={L"tags",L"bogus",L"compare",L"tags"};
@@ -240,6 +240,14 @@ int main(int argc, char** argv) {
         Check(chip_again.FromJson(chip.ToJson()) && chip_again.toolbar_selection==Tools{L"tags",L"compare"}, "TOOLBAR-06 chip action list round trips; unknown and repeated ids dropped");
         AppPrefs chip_none; chip_none.persist=false;
         Check(chip_none.FromJson(LR"({"toolbar_selection":[]})") && chip_none.toolbar_selection.empty(), "TOOLBAR-07 an emptied chip list stays empty");
+        AppPrefs v1; v1.persist=false;
+        Check(v1.FromJson(LR"({"toolbar_tools":["zebra","details"]})") &&
+              v1.toolbar_tools==Tools{L"cut",L"copy",L"paste",L"rename",L"delete",L"zebra",L"details",L"split",L"columns"},
+              "TOOLBAR-08 a list from before the full catalog gets the former fixed buttons back, once");
+        AppPrefs v1_again; v1_again.persist=false;
+        Check(v1_again.FromJson(v1.ToJson()) && v1_again.toolbar_tools==v1.toolbar_tools, "TOOLBAR-09 the upgraded list round trips unchanged");
+        AppPrefs fresh; fresh.persist=false;
+        Check(fresh.toolbar_tools==pulse::app::DefaultToolbarTools() && fresh.toolbar_tools.size()==9, "TOOLBAR-10 a fresh install gets the prototype's default tools");
     }
     std::filesystem::remove_all(dir);
     return failures ? 1 : 0;

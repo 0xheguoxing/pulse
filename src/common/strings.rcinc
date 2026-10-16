@@ -2222,6 +2222,9 @@ BEGIN
     IDS_TOOLBAR_SEL_HINT_FOLDERS "选中文件夹时"
     IDS_TOOLBAR_SEL_HINT_SEARCH "搜索结果中"
     IDS_TOOLBAR_SEL_RECENT "最近变化"
+    IDS_TOOLBAR_SECTION_SELECT "选择"
+    IDS_TOOLBAR_TOOL_APPLY_ALL "视图用于全部"
+    IDS_TOOLBAR_TOOL_SEARCH_ALL "全盘搜索"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4443,6 +4446,9 @@ BEGIN
     IDS_TOOLBAR_SEL_HINT_FOLDERS "Folders"
     IDS_TOOLBAR_SEL_HINT_SEARCH "Search results"
     IDS_TOOLBAR_SEL_RECENT "Recent changes"
+    IDS_TOOLBAR_SECTION_SELECT "Select"
+    IDS_TOOLBAR_TOOL_APPLY_ALL "Use view everywhere"
+    IDS_TOOLBAR_TOOL_SEARCH_ALL "Search everywhere"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

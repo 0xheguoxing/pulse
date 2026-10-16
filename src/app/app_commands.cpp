@@ -1125,8 +1125,11 @@ void ApplyDriveVerbResult(AppState& s, const app::DriveVerbResult& result) {
 static void FlipToolbarTool(AppState& s, size_t index);
 
 void DispatchMenuCommand(AppState& s, int cmd) {
-    if (cmd >= app::CmdToolbarToolBase && cmd < app::CmdToolbarToolBase + static_cast<int>(app::kToolbarToolCount)) {
-        FlipToolbarTool(s, static_cast<size_t>(cmd - app::CmdToolbarToolBase));
+    if (cmd >= app::CmdToolbarToolBase && cmd < app::CmdNewPrimaryBase &&
+        cmd < app::CmdToolbarToolBase + static_cast<int>(app::kToolbarToolCount)) {
+        const size_t tool = static_cast<size_t>(cmd - app::CmdToolbarToolBase);
+        if (app::kToolbarToolIds[tool] == L"split") ShowSplitDropdown(s);
+        else FlipToolbarTool(s, tool);
         return;
     }
     if (cmd >= app::CmdNewPrimaryBase && cmd < app::CmdNewPrimaryBase + 3) {
@@ -2144,6 +2147,27 @@ constexpr ToolbarToolDef kToolbarTools[] = {
     {0, L"\xE739", l10n::StringId::ListSelectionOutline, L"", true},
     {0, L"\xE90C", l10n::StringId::HelpSidebar, L"Ctrl+B", true},
     {0, L"\xE793", l10n::StringId::TooltipToggleTheme, L"", true},
+    // T3d: the former fixed buttons, then the rest of the prototype's tools.
+    {app::CmdCut, L"\xE8C6", l10n::StringId::Cut, L"Ctrl+X", false},
+    {app::CmdCopy, L"\xE8C8", l10n::StringId::Copy, L"Ctrl+C", false},
+    {app::CmdPaste, L"\xE77F", l10n::StringId::Paste, L"Ctrl+V", false},
+    {app::CmdRename, L"\xE8AC", l10n::StringId::Rename, L"F2", false},
+    {app::CmdDelete, L"\xE74D", l10n::StringId::Delete, L"Delete", false},
+    {0, ui::kToolbarSplitGlyph, l10n::StringId::SplitLayout, L"", false},       // opens the split menu
+    {app::CmdDetailsPanel, L"\xE8A0", l10n::StringId::DetailsPane, L"", true},
+    {app::CmdColumnLayout, ui::kToolbarColumnsGlyph, l10n::StringId::ColumnLayout, L"", true},
+    {app::CmdSelectAll, L"\xE8B3", l10n::StringId::SelectAll, L"Ctrl+A", false},
+    {app::CmdInvertSelection, L"\xE8AB", l10n::StringId::InvertSelection, L"", false},
+    {app::CmdSelectWildcard, L"\xE71C", l10n::StringId::HelpSelectPattern, L"", false},
+    {app::CmdNewMarkdownFile, L"\xE943", l10n::StringId::MarkdownDocument, L"", false},
+    {app::CmdViewRecentChanges, L"\xE81C", l10n::StringId::ToolbarSelRecent, L"", false},
+    {app::CmdApplyViewToAllFolders, L"\xE8A9", l10n::StringId::ToolbarToolApplyAll, L"", false},
+    {app::CmdSearchAll, L"\xE774", l10n::StringId::ToolbarToolSearchAll, L"", false},
+    {app::CmdAdvancedSearch, L"\xE721", l10n::StringId::AdvancedSearch, L"", false},
+    {app::CmdOpenRecycle, L"\xE75C", l10n::StringId::RecycleBin, L"", false},
+    {app::CmdMapNetworkDrive, L"\xE8CE", l10n::StringId::MapNetworkDrive, L"", false},
+    {app::CmdShortcutHelp, L"\xE765", l10n::StringId::KeyboardShortcuts, L"", false},
+    {app::CmdSettings, L"\xE713", l10n::StringId::Settings, L"", false},
 };
 static_assert(std::size(kToolbarTools) == app::kToolbarToolCount, "one catalog row per toolbar_tools.h id");
 
@@ -2171,7 +2195,7 @@ constexpr SelectionActionDef kSelectionActions[] = {
     {app::CmdPinQuickAccess, app::CmdUnpinQuickAccess, L"\xE718", l10n::StringId::SidebarQuickAccess, kSelHintNone, nullptr},
     {app::CmdProperties, 0, L"\xE946", l10n::StringId::Properties, kSelHintNone, L"properties"},
     {app::CmdOpenTerminal, 0, L"\xE756", l10n::StringId::OpenInTerminal, kSelHintNone, L"terminal"},
-    {app::CmdViewRecentChanges, 0, L"\xE81C", l10n::StringId::ToolbarSelRecent, kSelHintNone, nullptr},
+    {app::CmdViewRecentChanges, 0, L"\xE81C", l10n::StringId::ToolbarSelRecent, kSelHintNone, L"recent"},
     {app::CmdPinWorkspace, 0, L"\xE8B7", l10n::StringId::PinWorkspace, kSelHintNone, nullptr},
     {app::CmdPinNetwork, 0, L"\xE71B", l10n::StringId::PinNetwork, kSelHintNone, nullptr},
 };
@@ -2190,9 +2214,12 @@ std::wstring WithoutEllipsis(std::wstring label) {
     }
     return label;
 }
+// Tools with a command of their own run it (details / columns too, which are
+// toggles); the others (the setting switches, split) run as
+// CmdToolbarToolBase + index, kept below CmdNewPrimaryBase.
 int ToolbarToolCommand(size_t index) {
-    return kToolbarTools[index].toggle ? app::CmdToolbarToolBase + static_cast<int>(index)
-                                       : kToolbarTools[index].command;
+    return kToolbarTools[index].command ? kToolbarTools[index].command
+                                        : app::CmdToolbarToolBase + static_cast<int>(index);
 }
 bool ToolbarToolPinned(const AppState& s, std::wstring_view id) {
     for (const auto& kept : s.appPrefs.toolbar_tools) if (kept == id) return true;
@@ -2211,6 +2238,8 @@ bool ToolbarToggleOn(const AppState& s, size_t index) {
     if (id == L"outline") return p.list_selection_outline;
     if (id == L"sidebar") return !p.sidebar_collapsed;  // lit = sidebar shown
     if (id == L"theme") return s.darkMode;
+    if (id == L"details") return s.showDetailsPanel;
+    if (id == L"columns") { const app::Tab* tab = s.pane ? s.pane->ActiveTab() : nullptr; return tab && tab->column_layout; }
     return false;
 }
 ui::FluentMenuItem CustomizeToolbarItem() {
@@ -2425,7 +2454,22 @@ void ShowNewDropdown(AppState& s) {
 // Stage 1B-2: OLE drag & drop wiring.
 void ShowSplitDropdown(AppState& s) {
     if (!EnsureMenu(s)) return;
-    const auto anchor = s.renderer.SplitCommandRect((float)s.compositor.Width()); POINT pt{(LONG)anchor.left, (LONG)anchor.bottom};
+    // Under the split pin when it is on the toolbar (T3d), else under More.
+    const float width = static_cast<float>(s.compositor.Width());
+    const float left = s.renderer.EffectiveSidebarWidth(width);
+    const auto layout = s.renderer.ToolbarLayoutAt(width, s.renderer.NewButtonWidthPx(width - left < 600 * s.scale),
+                                                   s.pane ? s.pane->filter_expand : 0.0f);
+    D2D1_RECT_F anchor = layout.overflow;
+    size_t slot = 0;
+    for (const auto& id : s.appPrefs.toolbar_tools) {
+        if (app::ToolbarToolIndex(id) < 0) continue;
+        if (id == L"split") {
+            if (slot < layout.pins.size() && layout.pins[slot].right > layout.pins[slot].left) anchor = layout.pins[slot];
+            break;
+        }
+        ++slot;
+    }
+    POINT pt{(LONG)anchor.left, (LONG)anchor.bottom};
     ClientToScreen(s.hwnd, &pt);
     auto items = app::BuildSplitMenu(static_cast<int>(LayoutOf(s)));
     if (!items.empty()) items.back().separator_after = true;
@@ -2962,28 +3006,9 @@ void ShowToolbarMore(AppState& s) {
     // The toolbar as drawn: an open filter folds pins in here too.
     const auto layout=s.renderer.ToolbarLayoutAt(width,s.renderer.NewButtonWidthPx(width-left < 600*s.scale),
                                                  s.pane ? s.pane->filter_expand : 0.0f);
-    // More is always there (prototype note 5). Narrow windows also fold the
-    // file commands, the pinned commands and the pane buttons in here.
-    const bool narrow=layout.commands[0].right <= layout.commands[0].left;
+    // More is always there (prototype note 5). Narrow windows fold every pin
+    // in here (cut .. delete and the pane tools are pins too since T3d).
     std::vector<ui::FluentMenuItem> items;
-    if (narrow) {
-        const int commands[]={app::CmdCut,app::CmdCopy,app::CmdPaste,app::CmdRename,app::CmdDelete};
-        const l10n::StringId labels[]={l10n::StringId::Cut,l10n::StringId::Copy,l10n::StringId::Paste,
-            l10n::StringId::Rename,l10n::StringId::Delete};
-        const wchar_t* glyphs[]={L"\xE8C6",L"\xE8C8",L"\xE77F",L"\xE8AC",L"\xE74D"};
-        const wchar_t* shortcuts[]={L"Ctrl+X",L"Ctrl+C",L"Ctrl+V",L"F2",L"Delete"};
-        // Same rules as the toolbar buttons (ui_toolbar.cpp).
-        const bool can_paste=CanCreateHere(tab) && (!s.tray.batches().empty() || ClipboardHasFiles());
-        const app::SelectionCaps caps=SelectionCapsOf(s);
-        const bool allowed[]={caps.cut,caps.copy,can_paste,caps.rename,caps.del};
-        for (int i=0;i<5;++i) {
-            ui::FluentMenuItem item;
-            item.command=commands[i]; item.text=l10n::Get(labels[i]); item.glyph=glyphs[i];
-            item.shortcut=app::ShownShortcut(shortcuts[i]);
-            item.enabled=allowed[i];
-            items.push_back(std::move(item));
-        }
-    }
     // Pinned commands without room on the toolbar (all of them when narrow).
     const auto pins=ToolbarPinActions(s);
     size_t pin=0;
@@ -2998,6 +3023,12 @@ void ShowToolbarMore(AppState& s) {
         item.glyph=def.glyph; item.shortcut=app::ShownShortcut(def.shortcut);
         item.enabled=pins[slot].enabled;
         item.checked=pins[slot].checked;
+        item.glyph=pins[slot].glyph;
+        if (id==L"split") {   // the split menu itself, as a flyout
+            item.command=app::CmdNone;
+            item.checked=false;
+            item.children=app::BuildSplitMenu(static_cast<int>(LayoutOf(s)));
+        }
         items.push_back(std::move(item));
     }
     // Pinned apps without room, after the commands (the toolbar order).
@@ -3014,32 +3045,16 @@ void ShowToolbarMore(AppState& s) {
         items.push_back(std::move(item));
     }
     if (!items.empty()) items.back().separator_after=true;
-    if (narrow) {
-        ui::FluentMenuItem split;
-        split.text=l10n::Get(l10n::StringId::SplitLayout);
-        split.children=app::BuildSplitMenu(-1);
-        items.push_back(std::move(split));
-        ui::FluentMenuItem preview;
-        preview.command=app::CmdDetailsPanel;
-        preview.text=l10n::Get(l10n::StringId::DetailsPane);
-        preview.checked=s.showDetailsPanel;
-        items.push_back(std::move(preview));
-        ui::FluentMenuItem column;
-        column.command=app::CmdColumnLayout;
-        column.text=l10n::Get(l10n::StringId::ColumnLayout);
-        column.checked=tab->column_layout;
-        column.separator_after=true;
-        items.push_back(std::move(column));
-    }
     ui::FluentMenuItem select_all;
     select_all.command=app::CmdSelectAll; select_all.text=l10n::Get(l10n::StringId::SelectAll);
     select_all.glyph=L"\xE8B3"; select_all.shortcut=app::ShownShortcut(L"Ctrl+A");
     select_all.enabled=tab->snapshot && tab->EntryCount()>0;
-    items.push_back(std::move(select_all));
+    // These two stay in More unless they are toolbar tools already.
+    if (!ToolbarToolPinned(s,L"select_all")) items.push_back(std::move(select_all));
     ui::FluentMenuItem terminal;
     terminal.command=app::CmdOpenTerminal; terminal.text=l10n::Get(l10n::StringId::OpenInTerminal);
     terminal.glyph=L"\xE756"; terminal.enabled=!TerminalTarget(s).empty();
-    items.push_back(std::move(terminal));
+    if (!ToolbarToolPinned(s,L"terminal")) items.push_back(std::move(terminal));
     ui::FluentMenuItem properties;
     properties.command=app::CmdProperties; properties.text=l10n::Get(l10n::StringId::Properties);
     properties.glyph=L"\xE946"; properties.shortcut=app::ShownShortcut(L"Alt+Enter");
@@ -3088,6 +3103,8 @@ std::vector<ui::SelectionChipAction> ToolbarPinActions(AppState& s) {
     const app::Tab* tab = ActiveTab(s);
     if ((s.appPrefs.toolbar_tools.empty() && g_toolbar_preview < 0) || !tab) return out;
     const bool has_selection = tab->SelectedCount() > 0;
+    app::SelectionCaps caps{};
+    bool caps_known = false;
     std::vector<std::wstring> ids = s.appPrefs.toolbar_tools;
     if (g_toolbar_preview >= 0 && static_cast<size_t>(g_toolbar_preview) < app::kToolbarToolCount &&
         !ToolbarToolPinned(s, app::kToolbarToolIds[g_toolbar_preview]))
@@ -3103,15 +3120,35 @@ std::vector<ui::SelectionChipAction> ToolbarPinActions(AppState& s) {
         if (const auto key = app::ShownShortcut(def.shortcut); !key.empty()) action.label += L" (" + key + L")";
         if (def.toggle) {
             action.checked = ToolbarToggleOn(s, static_cast<size_t>(tool));
+            if (def.command == app::CmdDetailsPanel) action.glyph = action.checked ? L"\xE89F" : L"\xE8A0";
             out.push_back(std::move(action));
             continue;
         }
         switch (def.command) {
-        case app::CmdNewTextFile: action.enabled = CanCreateHere(tab); break;
+        case app::CmdNewTextFile: case app::CmdNewMarkdownFile: action.enabled = CanCreateHere(tab); break;
         case app::CmdCopyPath: action.enabled = has_selection || !tab->current_path.empty(); break;
         case app::CmdOpenTerminal: action.enabled = !TerminalTarget(s).empty(); break;
         case app::CmdProperties: action.enabled = has_selection; break;
-        default: action.enabled = s.ops.CanUndo(); break;
+        case app::CmdUndo: action.enabled = s.ops.CanUndo(); break;
+        // Same rules as the former fixed buttons: what is selected decides
+        // (a drive takes a rename only); paste needs files or a tray batch
+        // and a folder that takes them. Worked out once, when asked for.
+        case app::CmdCut: case app::CmdCopy: case app::CmdRename: case app::CmdDelete: {
+            if (!caps_known) { caps = SelectionCapsOf(s); caps_known = true; }
+            action.enabled = def.command == app::CmdCut ? caps.cut : def.command == app::CmdCopy ? caps.copy
+                           : def.command == app::CmdRename ? caps.rename : caps.del;
+            break;
+        }
+        case app::CmdPaste:
+            action.enabled = CanCreateHere(tab) && (!s.tray.batches().empty() || ClipboardHasFiles());
+            break;
+        case app::CmdSelectAll: case app::CmdInvertSelection: case app::CmdSelectWildcard:
+            action.enabled = tab->snapshot && tab->EntryCount() > 0;
+            break;
+        case 0:   // split: lit while the window is split
+            action.checked = LiveLayout(s).VisiblePanes().size() > 1;
+            break;
+        default: break;
         }
         out.push_back(std::move(action));
     }
@@ -3156,11 +3193,41 @@ static RECT ToolbarMoreScreenRect(AppState& s) {
 }
 
 // Section of each toolbar_tools.h id on the picker's tools page.
+// Sections follow the v3 prototype: 文件 / 选择 / 显示 / 窗格 / 更多.
 static int ToolbarToolSection(std::wstring_view id) {
-    if (id == L"new_text" || id == L"copy_path" || id == L"properties" || id == L"undo") return 0;
-    if (id == L"sidebar") return 2;
-    if (id == L"terminal") return 3;
-    return 1;   // the display switches
+    for (std::wstring_view file : {L"new_text", L"copy_path", L"properties", L"undo", L"cut", L"copy",
+                                   L"paste", L"rename", L"delete", L"new_md"})
+        if (id == file) return 0;
+    if (id == L"select_all" || id == L"invert" || id == L"select_wild") return 1;
+    for (std::wstring_view pane : {L"sidebar", L"split", L"details", L"columns", L"apply_all", L"recent"})
+        if (id == pane) return 3;
+    for (std::wstring_view more : {L"terminal", L"search_all", L"adv_search", L"recycle", L"map_drive",
+                                   L"shortcuts", L"settings"})
+        if (id == more) return 4;
+    return 2;   // the display switches
+}
+
+// The tools page order: pinned tools in toolbar order lead; the rest follow
+// in the prototype's catalog order.
+static std::vector<size_t> ToolbarPinsOrder(const AppState& s) {
+    static constexpr std::wstring_view kCatalogOrder[] = {
+        L"cut", L"copy", L"paste", L"rename", L"delete", L"undo", L"new_text", L"new_md", L"copy_path",
+        L"properties", L"select_all", L"invert", L"select_wild", L"hidden", L"protected", L"compact",
+        L"zebra", L"size_bar", L"smart_date", L"outline", L"theme", L"split", L"details", L"columns",
+        L"sidebar", L"apply_all", L"recent", L"terminal", L"search_all", L"adv_search", L"recycle",
+        L"map_drive", L"shortcuts", L"settings"};
+    static_assert(std::size(kCatalogOrder) == app::kToolbarToolCount, "every tool has a place");
+    std::vector<size_t> order;
+    std::vector<char> placed(app::kToolbarToolCount, 0);
+    for (const auto& id : s.appPrefs.toolbar_tools) {
+        const int at = app::ToolbarToolIndex(id);
+        if (at >= 0 && !placed[at]) { placed[at] = 1; order.push_back(static_cast<size_t>(at)); }
+    }
+    for (std::wstring_view id : kCatalogOrder) {
+        const int at = app::ToolbarToolIndex(id);
+        if (at >= 0 && !placed[at]) { placed[at] = 1; order.push_back(static_cast<size_t>(at)); }
+    }
+    return order;
 }
 
 void ShowToolbarCustomize(AppState& s, int page) {
@@ -3180,8 +3247,9 @@ void ShowToolbarCustomize(AppState& s, int page) {
     spec.search_hint = l10n::Get(l10n::StringId::ToolbarPickerSearch);
     spec.empty_text = l10n::Get(l10n::StringId::ToolbarPickerEmpty);
     spec.apps_full_text = l10n::Get(l10n::StringId::ToolbarPickerAppsFull);
-    spec.sections = {l10n::Get(l10n::StringId::ToolbarSectionFile), l10n::Get(l10n::StringId::ToolbarSectionShow),
-                     l10n::Get(l10n::StringId::ToolbarSectionPane), l10n::Get(l10n::StringId::ToolbarSectionMore)};
+    spec.sections = {l10n::Get(l10n::StringId::ToolbarSectionFile), l10n::Get(l10n::StringId::ToolbarSectionSelect),
+                     l10n::Get(l10n::StringId::ToolbarSectionShow), l10n::Get(l10n::StringId::ToolbarSectionPane),
+                     l10n::Get(l10n::StringId::ToolbarSectionMore)};
     for (size_t i = 0; i < std::size(kToolbarTools); ++i) {
         ui::ToolbarPickerTile tile;
         tile.glyph = kToolbarTools[i].glyph;
@@ -3193,13 +3261,7 @@ void ShowToolbarCustomize(AppState& s, int page) {
         tile.toggle_on = tile.toggle && ToolbarToggleOn(s, i);
         spec.pins.push_back(std::move(tile));
     }
-    // Pinned tools in toolbar order lead; the rest follow in catalog order.
-    for (const auto& id : s.appPrefs.toolbar_tools) {
-        const int at = app::ToolbarToolIndex(id);
-        if (at >= 0) spec.pins_order.push_back(static_cast<size_t>(at));
-    }
-    for (size_t i = 0; i < spec.pins.size(); ++i)
-        if (!spec.pins[i].checked) spec.pins_order.push_back(i);
+    spec.pins_order = ToolbarPinsOrder(s);
 
     // 选中时: the chip's actions, kept ones in chip order first.
     std::vector<bool> kept(app::kSelectionActionCount, false);
@@ -3275,15 +3337,10 @@ void ShowToolbarCustomize(AppState& s, int page) {
         return s.renderer.HitTest(vm, rect, (float)screen.x, (float)screen.y).region == ui::HitTestResult::ToolbarPin;
     };
     spec.resync = [&s](ui::ToolbarCustomizeSpec& now) {
-        now.pins_order.clear();
-        for (const auto& id : s.appPrefs.toolbar_tools) {
-            const int at = app::ToolbarToolIndex(id);
-            if (at >= 0) now.pins_order.push_back(static_cast<size_t>(at));
-        }
+        now.pins_order = ToolbarPinsOrder(s);
         for (size_t i = 0; i < now.pins.size() && i < app::kToolbarToolCount; ++i) {
             now.pins[i].checked = ToolbarToolPinned(s, app::kToolbarToolIds[i]);
             now.pins[i].toggle_on = now.pins[i].toggle && ToolbarToggleOn(s, i);
-            if (!now.pins[i].checked) now.pins_order.push_back(i);
         }
         now.apps_pinned = s.appPrefs.toolbar_apps.size();
         std::vector<char> placed(now.apps.size(), 0);
@@ -3406,6 +3463,7 @@ static void FlipToolbarTool(AppState& s, size_t index) {
     const std::wstring_view id = app::kToolbarToolIds[index];
     if (id == L"sidebar") { ToggleSidebarCollapsed(s); return; }
     if (id == L"theme") { ToggleTheme(s); return; }
+    if (id == L"details" || id == L"columns") { DispatchMenuCommand(s, kToolbarTools[index].command); return; }
     app::AppPrefs& p = s.appPrefs;
     app::SettingsEffect effect = app::SettingsEffect::ListStyle;
     if (id == L"hidden") { p.show_hidden_files = !p.show_hidden_files; effect = app::SettingsEffect::FileVisibility; }

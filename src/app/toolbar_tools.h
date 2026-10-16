@@ -8,6 +8,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -21,11 +22,21 @@ inline constexpr std::wstring_view kToolbarToolIds[] = {
     // Toggles: each flips an existing setting (the toolbar shows it on).
     L"hidden", L"protected", L"compact", L"zebra", L"size_bar", L"smart_date",
     L"outline", L"sidebar", L"theme",
+    // Toolbar picker T3d (the v3 prototype's whole catalog): the commands that
+    // were fixed buttons (cut .. delete, split / details / columns), then the
+    // rest of the prototype's tools Pulse has commands for.
+    L"cut", L"copy", L"paste", L"rename", L"delete", L"split", L"details", L"columns",
+    L"select_all", L"invert", L"select_wild", L"new_md", L"recent", L"apply_all",
+    L"search_all", L"adv_search", L"recycle", L"map_drive", L"shortcuts", L"settings",
 };
 inline constexpr size_t kToolbarToolCount = std::size(kToolbarToolIds);
 inline constexpr size_t kLegacyToolbarPins = 5;
-// Room on the toolbar; matches ui::kToolbarCommandPins.
-inline constexpr size_t kMaxToolbarTools = 12;
+// Every tool may be pinned; the toolbar folds what has no room into More.
+// Matches ui::kToolbarCommandPins.
+inline constexpr size_t kMaxToolbarTools = kToolbarToolCount;
+// toolbar_tools_v in app.json. Lists saved before 2 lack the former fixed
+// buttons; UpgradeToolbarTools adds them back where they used to be.
+inline constexpr int kToolbarToolsVersion = 2;
 
 inline int ToolbarToolIndex(std::wstring_view id) noexcept {
     for (size_t i = 0; i < kToolbarToolCount; ++i)
@@ -44,6 +55,28 @@ inline std::vector<std::wstring> NormalizeToolbarTools(const std::vector<std::ws
         if (!seen) out.push_back(id);
     }
     return out;
+}
+
+// The prototype's default toolbar (a fresh install).
+inline std::vector<std::wstring> DefaultToolbarTools() {
+    return {L"cut", L"copy", L"paste", L"rename", L"delete", L"hidden", L"split", L"details", L"columns"};
+}
+
+// A list saved before kToolbarToolsVersion: cut .. delete were fixed buttons
+// ahead of the pins and split / details / columns sat after them, so they
+// come back there and the toolbar looks as before.
+inline std::vector<std::wstring> UpgradeToolbarTools(const std::vector<std::wstring>& tools) {
+    const auto has = [&](std::wstring_view id) {
+        for (const auto& t : tools) if (t == id) return true;
+        return false;
+    };
+    std::vector<std::wstring> out;
+    for (std::wstring_view id : {L"cut", L"copy", L"paste", L"rename", L"delete"})
+        if (!has(id)) out.emplace_back(id);
+    out.insert(out.end(), tools.begin(), tools.end());
+    for (std::wstring_view id : {L"split", L"details", L"columns"})
+        if (!has(id)) out.emplace_back(id);
+    return NormalizeToolbarTools(out);
 }
 
 inline std::vector<std::wstring> ToolbarToolsFromLegacyPins(uint32_t pins) {

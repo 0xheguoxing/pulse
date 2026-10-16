@@ -2236,5 +2236,8 @@
 #define IDS_TOOLBAR_SEL_HINT_FOLDERS                                                     3446
 #define IDS_TOOLBAR_SEL_HINT_SEARCH                                                      3447
 #define IDS_TOOLBAR_SEL_RECENT                                                           3448
+#define IDS_TOOLBAR_SECTION_SELECT                                                       3449
+#define IDS_TOOLBAR_TOOL_APPLY_ALL                                                       3450
+#define IDS_TOOLBAR_TOOL_SEARCH_ALL                                                      3451
 
 #endif  // PULSE_STRING_IDS_H

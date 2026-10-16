@@ -84,6 +84,8 @@ inline Icon FromGlyph(std::wstring_view glyph) noexcept {
     case L'\xE9E9': case L'\xE8A4': return Icon::Sliders;
     case L'\xE7BA': return Icon::Warning;
     case L'\xE72E': return Icon::Lock;
+    case L'\xF5B0': return Icon::Split;     // ui::kToolbarSplitGlyph
+    case L'\xF5B1': return Icon::Columns;   // ui::kToolbarColumnsGlyph
     default: return Icon::None;
     }
 }

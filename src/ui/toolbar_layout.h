@@ -12,8 +12,12 @@ inline D2D1_RECT_F NavigationButtonAt(float x, float y, float scale, float step)
     return {x, y, x + step - 4 * scale, y + 32 * scale};
 }
 // Toolbar pins: the pinned commands (自定义工具栏), then the pinned apps.
-constexpr int kToolbarCommandPins = 12;   // = app::kMaxToolbarTools
+constexpr int kToolbarCommandPins = 34;   // = app::kMaxToolbarTools (every tool)
 constexpr int kToolbarAppPins = 8;
+// Glyphs of the split and column-view tools (no icon-font meaning; mapped in
+// command_icons.h). The toolbar draws the split pin as the current layout.
+inline constexpr const wchar_t* kToolbarSplitGlyph = L"\xF5B0";
+inline constexpr const wchar_t* kToolbarColumnsGlyph = L"\xF5B1";
 constexpr int kToolbarPinSlots = kToolbarCommandPins + kToolbarAppPins;
 struct ToolbarPinOptions {
     int app_from = -1;          // index of the first app pin (a short gap goes before it)
@@ -28,6 +32,7 @@ struct ToolbarLayout {
     std::array<D2D1_RECT_F, 8> commands{};
     std::array<D2D1_RECT_F, kToolbarPinSlots> pins{};   // pinned commands, then pinned apps
     D2D1_RECT_F pin_label{};   // drop mode only (ToolbarPinOptions::label_width)
+    bool narrow = false;       // the narrow tier: every pin waits in More
 };
 
 inline float SelectionChipSpan(float scale, float label_width, int n);
@@ -64,12 +69,11 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
     out.navigation[3] = NavigationButtonAt(out.search.left - margin - nav_step, top + 6 * scale, scale, nav_step);
     out.address.right = out.navigation[3].left-margin;
     out.create = {left+margin,top+50*scale,left+margin+create_width,top+82*scale};
-    x = out.create.right + 12*scale;
-    for (int i=0;i<5;++i) {
-        out.commands[i] = {x,top+50*scale,x+30*scale,top+82*scale};
-        x += 34*scale;
-    }
-    if (overflow) { for (auto& command : out.commands) command = {}; x = out.create.right; }
+    out.narrow = overflow;
+    // Toolbar picker T3d: cut .. delete and split / details / columns are
+    // tools like any other now (toolbar_tools), drawn as pins; `commands`
+    // stays empty.
+    x = out.create.right;
     // Left cluster ends here: 新建 + file commands ("act on files"), plus the
     // pinned commands placed below.
     float left_end = x + 8*scale;
@@ -78,14 +82,7 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
     // More is always there (prototype note 5): select all, terminal,
     // properties, 自定义工具栏, plus the folded commands when narrow.
     out.overflow = {width-margin-32*scale,top+50*scale,width-margin,top+82*scale};
-    if (!overflow) {
-        const float pane_left = out.overflow.left-4*scale-98*scale;
-        for (int i=5;i<8;++i) {
-            const float cx = pane_left+(i-5)*34*scale;
-            out.commands[i] = {cx,top+50*scale,cx+30*scale,top+82*scale};
-        }
-    }
-    const float view_end = overflow ? out.overflow.left-8*scale : out.commands[5].left-13*scale;
+    const float view_end = out.overflow.left-8*scale;
     // Pinned commands and apps (自定义工具栏) follow the file commands after a
     // divider, as many as leave the view group its icon-only minimum. The rest,
     // and all of them in the narrow tier, wait in the More menu. While files are
@@ -105,7 +102,7 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
                                (filter_open ? filter_open_w - 32*scale + chip_span : 0.0f);
         const int count = std::min(pin_count, kToolbarPinSlots);
         const bool gap = pin_options.app_from > 0 && pin_options.app_from < count;
-        float px = x + (overflow ? 13.0f : 9.0f)*scale;   // 13 DIP after the last command, like the selection chip
+        float px = x + 13.0f*scale;   // 13 DIP after 新建 (a divider at 6), like the selection chip
         if (drop_mode && pin_options.label_width > 0.0f) {
             const float all = pin_options.label_width + 4*scale + static_cast<float>(count)*34*scale;
             if (px+all+8*scale+view_min <= view_end) {
