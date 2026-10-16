@@ -2223,3 +2223,14 @@ TreeReadFailed	IDS_TREE_READ_FAILED	3425	无法读取此文件夹	Can't read thi
 TreeExpandedFormat	IDS_TREE_EXPANDED_FORMAT	3426	已展开 %d 个文件夹	Expanded %d folders	
 TreeSkippedFormat	IDS_TREE_SKIPPED_FORMAT	3427	%d 个大文件夹没有展开	%d large folders left closed	
 TreeStoppedFormat	IDS_TREE_STOPPED_FORMAT	3428	到 %s 项为止	Stopped at %s items	
+ToolbarPickerToolsTab	IDS_TOOLBAR_PICKER_TOOLS_TAB	3429	工具	Tools	工具
+ToolbarPickerAppsTab	IDS_TOOLBAR_PICKER_APPS_TAB	3430	应用	Apps	應用程式
+ToolbarPickerToolsDesc	IDS_TOOLBAR_PICKER_TOOLS_DESC	3431	常驻在工具栏上的按钮。带开关的磁贴可以直接切换。	Buttons that stay on the toolbar. Tiles with a switch flip it here.	常駐在工具列上的按鈕。有開關的磚可以直接切換。
+ToolbarPickerAppsDesc	IDS_TOOLBAR_PICKER_APPS_DESC	3432	固定的程序：选中文件时提示能否打开，也可以把文件拖上去。最多 8 个。	Pinned programs: they show whether they open the selection and take dropped files. Up to 8.	釘選的程式：選取檔案時提示能否開啟，也可以把檔案拖上去。最多 8 個。
+ToolbarPickerSearch	IDS_TOOLBAR_PICKER_SEARCH	3433	搜索工具	Search tools	搜尋工具
+ToolbarPickerEmpty	IDS_TOOLBAR_PICKER_EMPTY	3434	没有匹配的工具	No matching tools	沒有相符的工具
+ToolbarPickerAppsFull	IDS_TOOLBAR_PICKER_APPS_FULL	3435	工具栏最多固定 8 个应用，先取消一个	The toolbar holds up to 8 apps; unpin one first	工具列最多釘選 8 個應用程式，請先取消一個
+ToolbarSectionFile	IDS_TOOLBAR_SECTION_FILE	3436	文件	Files	檔案
+ToolbarSectionShow	IDS_TOOLBAR_SECTION_SHOW	3437	显示（开关，立即生效）	Show (switches apply at once)	顯示（開關，立即生效）
+ToolbarSectionPane	IDS_TOOLBAR_SECTION_PANE	3438	窗格与视图	Panes and view	窗格與檢視
+ToolbarSectionMore	IDS_TOOLBAR_SECTION_MORE	3439	更多	More	更多

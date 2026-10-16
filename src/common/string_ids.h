@@ -2216,5 +2216,16 @@
 #define IDS_TREE_EXPANDED_FORMAT                                                         3426
 #define IDS_TREE_SKIPPED_FORMAT                                                          3427
 #define IDS_TREE_STOPPED_FORMAT                                                          3428
+#define IDS_TOOLBAR_PICKER_TOOLS_TAB                                                     3429
+#define IDS_TOOLBAR_PICKER_APPS_TAB                                                      3430
+#define IDS_TOOLBAR_PICKER_TOOLS_DESC                                                    3431
+#define IDS_TOOLBAR_PICKER_APPS_DESC                                                     3432
+#define IDS_TOOLBAR_PICKER_SEARCH                                                        3433
+#define IDS_TOOLBAR_PICKER_EMPTY                                                         3434
+#define IDS_TOOLBAR_PICKER_APPS_FULL                                                     3435
+#define IDS_TOOLBAR_SECTION_FILE                                                         3436
+#define IDS_TOOLBAR_SECTION_SHOW                                                         3437
+#define IDS_TOOLBAR_SECTION_PANE                                                         3438
+#define IDS_TOOLBAR_SECTION_MORE                                                         3439
 
 #endif  // PULSE_STRING_IDS_H

@@ -3801,6 +3801,16 @@ LRESULT HandleRButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             ShowItemContextMenu(*s, sp);
             return 0;
         }
+        // Toolbar tools / apps / More: the customize popover, on the page of
+        // the part clicked.
+        if (hit.region == ui::HitTestResult::ToolbarPin || hit.region == ui::HitTestResult::ToolbarPinLabel ||
+            hit.region == ui::HitTestResult::ToolbarMore) {
+            const bool app_page = hit.region == ui::HitTestResult::ToolbarPinLabel ||
+                (hit.region == ui::HitTestResult::ToolbarPin &&
+                 hit.index >= static_cast<int>(ToolbarPinActions(*s).size()));
+            ShowToolbarCustomize(*s, app_page ? 1 : 0);
+            return 0;
+        }
         bool shown = false;
         if (hit.region == ui::HitTestResult::WindowIdentity) {
             ShowWindowIdentityMenu(*s, sp);  // M7c

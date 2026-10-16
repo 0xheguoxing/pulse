@@ -19,7 +19,7 @@
 #include "../ui/file_operation_dialog.h"
 #include "../ui/folder_picker_dialog.h"
 #include "../ui/batch_rename_dialog.h"
-#include "../ui/toolbar_customize_dialog.h"
+#include "../ui/toolbar_picker.h"
 #include "../ui/advanced_search_dialog.h"
 #include "../ui/quick_preview_window.h"
 #include "../ui/typography.h"
@@ -1125,6 +1125,12 @@ static void FlipToolbarTool(AppState& s, size_t index);
 void DispatchMenuCommand(AppState& s, int cmd) {
     if (cmd >= app::CmdToolbarToolBase && cmd < app::CmdToolbarToolBase + static_cast<int>(app::kToolbarToolCount)) {
         FlipToolbarTool(s, static_cast<size_t>(cmd - app::CmdToolbarToolBase));
+        return;
+    }
+    if (cmd >= app::CmdNewPrimaryBase && cmd < app::CmdNewPrimaryBase + 3) {
+        s.appPrefs.toolbar_new_primary = cmd - app::CmdNewPrimaryBase;
+        if (!s.isolatedTest) s.appPrefs.Save();
+        InvalidateRect(s.hwnd, nullptr, FALSE);
         return;
     }
     const bool needs_files=cmd==app::CmdProperties || cmd==app::CmdOpenPath || cmd==app::CmdOpenInNewTab || cmd==app::CmdRename ||
@@ -2348,6 +2354,21 @@ void ShowNewDropdown(AppState& s) {
     for (auto& item : items) item.enabled = can_create;
     AppendShellNewRows(items, templates, can_create);
     items.back().separator_after = true;
+    // 「新建」按钮的主操作 (was a section of the old customize sheet).
+    ui::FluentMenuItem primary;
+    primary.text = l10n::Get(l10n::StringId::NewButtonPrimary);
+    primary.glyph = L"\xE710";
+    const l10n::StringId choices[] = {l10n::StringId::NewPrimaryFolder, l10n::StringId::NewPrimaryLast,
+                                      l10n::StringId::NewPrimaryMenu};
+    for (int i = 0; i < 3; ++i) {
+        ui::FluentMenuItem row;
+        row.command = app::CmdNewPrimaryBase + i;
+        row.text = l10n::Get(choices[i]);
+        row.radio = s.appPrefs.toolbar_new_primary == i;
+        row.radio_group = true;
+        primary.children.push_back(std::move(row));
+    }
+    items.push_back(std::move(primary));
     items.push_back(CustomizeToolbarItem());
     int cmd = s.menu->TrackPopup(pt, std::move(items));
     if (RunShellNewCommand(s, cmd, templates)) return;
@@ -3034,58 +3055,87 @@ bool ToolbarNewCreatesFolder(const AppState& s) {
     return !(s.appPrefs.toolbar_new_primary == 1 && s.appPrefs.toolbar_last_new == 1);
 }
 
-void ShowToolbarCustomize(AppState& s) {
+// Screen rect of the toolbar's More button (the picker hangs from it).
+static RECT ToolbarMoreScreenRect(AppState& s) {
+    const float width = static_cast<float>(s.compositor.Width());
+    const float left = s.renderer.EffectiveSidebarWidth(width);
+    const auto layout = s.renderer.ToolbarLayoutAt(width, s.renderer.NewButtonWidthPx(width - left < 600 * s.scale),
+                                                   s.pane ? s.pane->filter_expand : 0.0f);
+    POINT a{static_cast<LONG>(layout.overflow.left), static_cast<LONG>(layout.overflow.top)};
+    POINT b{static_cast<LONG>(layout.overflow.right), static_cast<LONG>(layout.overflow.bottom)};
+    if (layout.overflow.right <= layout.overflow.left) {   // no More button: the toolbar's right end
+        const auto bar = s.renderer.ToolbarRect(width);
+        a = {static_cast<LONG>(bar.right - 40 * s.scale), static_cast<LONG>(bar.top)};
+        b = {static_cast<LONG>(bar.right - 8 * s.scale), static_cast<LONG>(bar.bottom)};
+    }
+    ClientToScreen(s.hwnd, &a);
+    ClientToScreen(s.hwnd, &b);
+    return RECT{a.x, a.y, b.x, b.y};
+}
+
+// Section of each toolbar_tools.h id on the picker's tools page.
+static int ToolbarToolSection(std::wstring_view id) {
+    if (id == L"new_text" || id == L"copy_path" || id == L"properties" || id == L"undo") return 0;
+    if (id == L"sidebar") return 2;
+    if (id == L"terminal") return 3;
+    return 1;   // the display switches
+}
+
+void ShowToolbarCustomize(AppState& s, int page) {
+    if (ui::ToolbarPickerOpen()) return;
     ui::ToolbarCustomizeSpec spec;
     spec.title = l10n::Get(l10n::StringId::CustomizeToolbar);
-    spec.intro = l10n::Get(l10n::StringId::CustomizeToolbarIntro);
-    spec.primary_heading = l10n::Get(l10n::StringId::NewButtonPrimary);
-    spec.pin_heading = l10n::Get(l10n::StringId::PinToToolbar);
     spec.done_text = l10n::Get(l10n::StringId::ToolbarDone);
-    spec.cancel_text = l10n::Get(l10n::StringId::Cancel);
-    const l10n::StringId primary[] = {l10n::StringId::NewPrimaryFolder, l10n::StringId::NewPrimaryLast,
-                                      l10n::StringId::NewPrimaryMenu};
-    for (int i = 0; i < 3; ++i) {
-        ui::ToolbarCustomizeRow row;
-        row.label = l10n::Get(primary[i]);
-        if (i == 0) row.caption = app::ShownShortcut(L"Ctrl+Shift+N");
-        row.checked = s.appPrefs.toolbar_new_primary == i;
-        spec.primary.push_back(std::move(row));
-    }
-    ui::ToolbarCustomizeRow folder;
-    folder.glyph = L"\xE8F4";
-    folder.label = l10n::Get(l10n::StringId::NewFolder);
-    folder.caption = l10n::Get(l10n::StringId::AlwaysShown);
-    folder.locked = true;
-    spec.pins.push_back(std::move(folder));
+    spec.tools_tab = l10n::Get(l10n::StringId::ToolbarPickerToolsTab);
+    spec.apps_tab = l10n::Get(l10n::StringId::ToolbarPickerAppsTab);
+    spec.tools_desc = l10n::Get(l10n::StringId::ToolbarPickerToolsDesc);
+    spec.apps_desc = l10n::Get(l10n::StringId::ToolbarPickerAppsDesc);
+    spec.search_hint = l10n::Get(l10n::StringId::ToolbarPickerSearch);
+    spec.empty_text = l10n::Get(l10n::StringId::ToolbarPickerEmpty);
+    spec.apps_full_text = l10n::Get(l10n::StringId::ToolbarPickerAppsFull);
+    spec.sections = {l10n::Get(l10n::StringId::ToolbarSectionFile), l10n::Get(l10n::StringId::ToolbarSectionShow),
+                     l10n::Get(l10n::StringId::ToolbarSectionPane), l10n::Get(l10n::StringId::ToolbarSectionMore)};
     for (size_t i = 0; i < std::size(kToolbarTools); ++i) {
-        ui::ToolbarCustomizeRow row;
-        row.glyph = kToolbarTools[i].glyph;
-        row.label = l10n::Get(kToolbarTools[i].label);
-        row.caption = app::ShownShortcut(kToolbarTools[i].shortcut);
-        row.checked = ToolbarToolPinned(s, app::kToolbarToolIds[i]);
-        spec.pins.push_back(std::move(row));
+        ui::ToolbarPickerTile tile;
+        tile.glyph = kToolbarTools[i].glyph;
+        tile.label = l10n::Get(kToolbarTools[i].label);
+        tile.keywords = std::wstring(app::kToolbarToolIds[i]) + L" " + app::ShownShortcut(kToolbarTools[i].shortcut);
+        tile.section = ToolbarToolSection(app::kToolbarToolIds[i]);
+        tile.checked = ToolbarToolPinned(s, app::kToolbarToolIds[i]);
+        tile.toggle = kToolbarTools[i].toggle;
+        tile.toggle_on = tile.toggle && ToolbarToggleOn(s, i);
+        spec.pins.push_back(std::move(tile));
     }
-    FillToolbarAppRows(s, spec);
-    if (!ui::ShowToolbarCustomizeDialog(s.hwnd, spec, s.darkMode, s.accentColor)) return;
-    int new_primary = 0;
-    for (size_t i = 0; i < spec.primary.size(); ++i)
-        if (spec.primary[i].checked) new_primary = static_cast<int>(i);
-    // Tools still checked keep their place; newly checked ones go last.
-    const auto checked = [&](size_t tool) { return tool + 1 < spec.pins.size() && spec.pins[tool + 1].checked; };
-    std::vector<std::wstring> tools;
-    for (const auto& id : s.appPrefs.toolbar_tools) {
-        const int tool = app::ToolbarToolIndex(id);
-        if (tool >= 0 && checked(static_cast<size_t>(tool))) tools.push_back(id);
-    }
-    for (size_t i = 0; i < std::size(kToolbarTools); ++i)
-        if (checked(i)) tools.emplace_back(app::kToolbarToolIds[i]);
-    tools = app::NormalizeToolbarTools(tools);
-    const bool apps_changed = ApplyToolbarAppRows(s, spec);
-    if (apps_changed || new_primary != s.appPrefs.toolbar_new_primary || tools != s.appPrefs.toolbar_tools) {
-        s.appPrefs.toolbar_new_primary = new_primary;
-        s.appPrefs.toolbar_tools = std::move(tools);
+    spec.apps_pinned = s.appPrefs.toolbar_apps.size();
+    spec.load_apps = [&s](ui::ToolbarCustomizeSpec& later) {
+        FillToolbarAppRows(s, later);
+    };
+    spec.page = page;
+    spec.anchor = ToolbarMoreScreenRect(s);
+    const auto save = [&s] {
         if (!s.isolatedTest) s.appPrefs.Save();
-    }
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+    };
+    // Checked tools keep their place; a newly checked one goes last.
+    spec.on_tool = [&s, save](size_t index, bool checked) {
+        if (index >= app::kToolbarToolCount) return;
+        const std::wstring id(app::kToolbarToolIds[index]);
+        std::vector<std::wstring> tools;
+        for (const auto& kept : s.appPrefs.toolbar_tools)
+            if (kept != id) tools.push_back(kept);
+        if (checked) tools.push_back(id);
+        s.appPrefs.toolbar_tools = app::NormalizeToolbarTools(tools);
+        save();
+    };
+    spec.on_switch = [&s](size_t index) {
+        FlipToolbarTool(s, index);
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        return ToolbarToggleOn(s, index);
+    };
+    spec.on_apps = [&s, save](const std::vector<ui::ToolbarPickerTile>& apps) {
+        if (ApplyToolbarAppRows(s, apps)) save();
+    };
+    ui::ShowToolbarPicker(s.hwnd, spec, s.darkMode, s.accentColor);
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 

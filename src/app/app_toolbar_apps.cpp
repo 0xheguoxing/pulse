@@ -10,7 +10,7 @@
 #include "../common/localization.h"
 #include "../ui/drag_drop.h"
 #include "../ui/fluent_menu.h"
-#include "../ui/toolbar_customize_dialog.h"
+#include "../ui/toolbar_picker.h"
 
 #include <shlobj.h>
 
@@ -391,11 +391,8 @@ bool RunToolbarAppMenuCommand(AppState& s, int command) {
 }
 
 void FillToolbarAppRows(AppState& s, ui::ToolbarCustomizeSpec& spec) {
-    spec.app_heading = Text(l10n::StringId::ToolbarAppsHeading);
-    spec.app_hint = Text(l10n::StringId::ToolbarAppsHint);
     spec.add_app_text = Text(l10n::StringId::ToolbarAddApp);
     spec.add_app_caption = Text(l10n::StringId::ToolbarAddAppCaption);
-    spec.app_footnote = Text(l10n::StringId::ToolbarAppFootnote);
     spec.max_apps = app::kMaxToolbarApps;
     const std::vector<std::wstring> folder_types = FolderTypes(s, 12);
     std::vector<std::wstring> exclude = s.appPrefs.toolbar_apps;
@@ -440,9 +437,9 @@ void FillToolbarAppRows(AppState& s, ui::ToolbarCustomizeSpec& spec) {
     };
 }
 
-bool ApplyToolbarAppRows(AppState& s, const ui::ToolbarCustomizeSpec& spec) {
+bool ApplyToolbarAppRows(AppState& s, const std::vector<ui::ToolbarPickerTile>& rows) {
     std::vector<std::wstring> apps;
-    for (const auto& row : spec.apps)
+    for (const auto& row : rows)
         if (row.checked) app::AddToolbarAppPath(apps, row.value);
     if (apps == s.appPrefs.toolbar_apps) return false;
     s.appPrefs.toolbar_apps = std::move(apps);

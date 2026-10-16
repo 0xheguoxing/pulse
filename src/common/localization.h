@@ -2212,6 +2212,17 @@ enum class StringId : UINT {
     TreeExpandedFormat = IDS_TREE_EXPANDED_FORMAT,
     TreeSkippedFormat = IDS_TREE_SKIPPED_FORMAT,
     TreeStoppedFormat = IDS_TREE_STOPPED_FORMAT,
+    ToolbarPickerToolsTab = IDS_TOOLBAR_PICKER_TOOLS_TAB,
+    ToolbarPickerAppsTab = IDS_TOOLBAR_PICKER_APPS_TAB,
+    ToolbarPickerToolsDesc = IDS_TOOLBAR_PICKER_TOOLS_DESC,
+    ToolbarPickerAppsDesc = IDS_TOOLBAR_PICKER_APPS_DESC,
+    ToolbarPickerSearch = IDS_TOOLBAR_PICKER_SEARCH,
+    ToolbarPickerEmpty = IDS_TOOLBAR_PICKER_EMPTY,
+    ToolbarPickerAppsFull = IDS_TOOLBAR_PICKER_APPS_FULL,
+    ToolbarSectionFile = IDS_TOOLBAR_SECTION_FILE,
+    ToolbarSectionShow = IDS_TOOLBAR_SECTION_SHOW,
+    ToolbarSectionPane = IDS_TOOLBAR_SECTION_PANE,
+    ToolbarSectionMore = IDS_TOOLBAR_SECTION_MORE,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

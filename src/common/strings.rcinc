@@ -2202,6 +2202,17 @@ BEGIN
     IDS_TREE_EXPANDED_FORMAT "已展开 %d 个文件夹"
     IDS_TREE_SKIPPED_FORMAT "%d 个大文件夹没有展开"
     IDS_TREE_STOPPED_FORMAT "到 %s 项为止"
+    IDS_TOOLBAR_PICKER_TOOLS_TAB "工具"
+    IDS_TOOLBAR_PICKER_APPS_TAB "应用"
+    IDS_TOOLBAR_PICKER_TOOLS_DESC "常驻在工具栏上的按钮。带开关的磁贴可以直接切换。"
+    IDS_TOOLBAR_PICKER_APPS_DESC "固定的程序：选中文件时提示能否打开，也可以把文件拖上去。最多 8 个。"
+    IDS_TOOLBAR_PICKER_SEARCH "搜索工具"
+    IDS_TOOLBAR_PICKER_EMPTY "没有匹配的工具"
+    IDS_TOOLBAR_PICKER_APPS_FULL "工具栏最多固定 8 个应用，先取消一个"
+    IDS_TOOLBAR_SECTION_FILE "文件"
+    IDS_TOOLBAR_SECTION_SHOW "显示（开关，立即生效）"
+    IDS_TOOLBAR_SECTION_PANE "窗格与视图"
+    IDS_TOOLBAR_SECTION_MORE "更多"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4403,6 +4414,17 @@ BEGIN
     IDS_TREE_EXPANDED_FORMAT "Expanded %d folders"
     IDS_TREE_SKIPPED_FORMAT "%d large folders left closed"
     IDS_TREE_STOPPED_FORMAT "Stopped at %s items"
+    IDS_TOOLBAR_PICKER_TOOLS_TAB "Tools"
+    IDS_TOOLBAR_PICKER_APPS_TAB "Apps"
+    IDS_TOOLBAR_PICKER_TOOLS_DESC "Buttons that stay on the toolbar. Tiles with a switch flip it here."
+    IDS_TOOLBAR_PICKER_APPS_DESC "Pinned programs: they show whether they open the selection and take dropped files. Up to 8."
+    IDS_TOOLBAR_PICKER_SEARCH "Search tools"
+    IDS_TOOLBAR_PICKER_EMPTY "No matching tools"
+    IDS_TOOLBAR_PICKER_APPS_FULL "The toolbar holds up to 8 apps; unpin one first"
+    IDS_TOOLBAR_SECTION_FILE "Files"
+    IDS_TOOLBAR_SECTION_SHOW "Show (switches apply at once)"
+    IDS_TOOLBAR_SECTION_PANE "Panes and view"
+    IDS_TOOLBAR_SECTION_MORE "More"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

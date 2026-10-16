@@ -3,7 +3,7 @@
 #include "app_runtime.h"
 #include "../ui/quick_preview_command.h"
 
-namespace pulse::ui { struct ToolbarCustomizeSpec; }
+namespace pulse::ui { struct ToolbarCustomizeSpec; struct ToolbarPickerTile; }
 namespace pulse::app { struct SelectionCaps; struct DriveVerbResult; }
 
 namespace pulse {
@@ -120,7 +120,8 @@ std::vector<ui::SelectionChipAction> ToolbarPinActions(AppState& s);
 // type" last saw a text document.
 bool ToolbarNewCreatesFolder(const AppState& s);
 // The 自定义工具栏 sheet; Done saves app.json.
-void ShowToolbarCustomize(AppState& s);
+// The 自定义工具栏 popover; page 0 tools, 1 apps.
+void ShowToolbarCustomize(AppState& s, int page = 0);
 // Pinned apps (自定义工具栏 → 固定的软件), app_toolbar_apps.cpp.
 // Toolbar entries in pin order, with their fit against the selection (or the
 // dragged items in drop mode).
@@ -146,7 +147,7 @@ bool RunToolbarAppMenuCommand(AppState& s, int command);
 // The 自定义工具栏 sheet's 固定的软件 section: pinned apps, two suggestions
 // for this folder and 添加软件…; Apply returns true when the pins changed.
 void FillToolbarAppRows(AppState& s, ui::ToolbarCustomizeSpec& spec);
-bool ApplyToolbarAppRows(AppState& s, const ui::ToolbarCustomizeSpec& spec);
+bool ApplyToolbarAppRows(AppState& s, const std::vector<ui::ToolbarPickerTile>& apps);
 // Pulse's file picker for a program (.exe or shortcut), opening in the Start menu.
 bool PickToolbarAppFile(AppState& s, HWND owner, std::wstring& path);
 void ShowOmnibar(AppState& s, OmnibarMode mode);

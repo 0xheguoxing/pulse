@@ -326,7 +326,7 @@ add_executable(pulse_dialog_gallery WIN32
     src/bench/dialog_gallery.cpp
     src/bench/dialog_gallery.rc
     src/ui/confirm_dialog.cpp
-    src/ui/toolbar_customize_dialog.cpp
+    src/ui/toolbar_picker.cpp
     src/ui/confirm_dialog_view.cpp
     src/ui/dialog_lifecycle.cpp
     src/ui/edit_host.cpp
