@@ -18,8 +18,42 @@
 #include <cwchar>
 #include <cwctype>
 #include <string_view>
+#include <unordered_map>
 
 namespace pulse::ui {
+
+namespace {
+// Details motion (animation phase 7b, pulse_motion_v2): when the selection
+// moves to another item, the name, buttons and properties are revealed top
+// to bottom - a soft edge sweeps down the panel while the content rises
+// 6 dip - so the panel reads as new instead of flickering in place. Held
+// arrow keys (changes under 160 ms apart) just swap. The pinned preview well
+// above (it may hold a preview-handler window) does not move. State per
+// renderer lives here (ui_renderer.h is being edited elsewhere); frames come
+// from a one-shot TIMERPROC timer re-armed only during the sweep.
+constexpr float kDetailsSweepMs = 260.0f, kDetailsSweepBandDip = 56.0f, kDetailsRiseDip = 6.0f;
+constexpr uint64_t kDetailsRapidMs = 160;
+constexpr UINT_PTR kDetailsFrameTimer = 0x53444D54;  // 'SDMT'
+
+void CALLBACK DetailsFrameTick(HWND hwnd, UINT, UINT_PTR id, DWORD) {
+    KillTimer(hwnd, id);
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+struct DetailsMotion {
+    std::wstring path;
+    bool seen = false;
+    uint64_t last_change = 0;  // NowMs of the last selection change
+    uint64_t sweep_at = 0;     // 0: no sweep running
+    bool animations = true;
+    uint64_t animations_checked = 0;
+};
+
+DetailsMotion& DetailsMotionFor(const void* renderer) {
+    static std::unordered_map<const void*, DetailsMotion> motions;
+    return motions[renderer];
+}
+}  // namespace
 
 D2D1_RECT_F MainRenderer::DetailsPanelRect(float w, float h) const {
     if (DetailsPanelWidth(w) <= 0.0f) return D2D1::RectF(0.0f, 0.0f, 0.0f, 0.0f);
@@ -42,6 +76,21 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
     LayoutDetailsPanel(panel, s, d, compositor_->DwriteFactory(),
                        compositor_->SmallFormat(), compositor_, previewH, hit);
 
+    DetailsMotion& dm = DetailsMotionFor(this);
+    if (motion_now_ - dm.animations_checked > 2000 || !dm.animations_checked) {
+        dm.animations_checked = motion_now_ ? motion_now_ : 1;
+        dm.animations = motion::SystemAnimationsEnabled();
+    }
+    if (d.has_selection && (!dm.seen || d.path != dm.path)) {
+        const bool rapid = dm.last_change && motion_now_ - dm.last_change < kDetailsRapidMs;
+        dm.sweep_at = dm.seen && !rapid && dm.animations && !IsHighContrast() ? motion_now_ : 0;
+        dm.seen = true;
+        dm.path = d.path;
+        dm.last_change = motion_now_;
+    } else if (!d.has_selection && dm.seen) {
+        dm.path.clear();
+        dm.sweep_at = 0;
+    }
     const std::wstring identity = d.path + L"|" + std::to_wstring(d.modified_value) +
         L"|" + std::to_wstring(d.size_value);
     if (identity != details_preview_identity_ || !d.has_selection) {
@@ -448,6 +497,37 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
         panel.left, hit.preview_toggle.bottom,
         panel.right, panel.bottom);
     dc->PushAxisAlignedClip(restClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    // The reveal: an opacity mask whose soft edge sweeps down, and a rise.
+    bool sweeping = false;
+    D2D1_MATRIX_3X2_F sweep_saved{};
+    if (dm.sweep_at) {
+        const float t = static_cast<float>(motion_now_ - dm.sweep_at) / kDetailsSweepMs;
+        if (t >= 1.0f) {
+            dm.sweep_at = 0;
+        } else {
+            const float p = std::clamp(t, 0.0f, 1.0f);
+            const float e = 1.0f - (1.0f - p) * (1.0f - p) * (1.0f - p);
+            const float band = kDetailsSweepBandDip * s;
+            const float edge = restClip.top - band + e * (restClip.bottom - restClip.top + 2.0f * band);
+            const D2D1_GRADIENT_STOP stops[2] = {{0.0f, D2D1::ColorF(0, 0, 0, 1.0f)},
+                                                 {1.0f, D2D1::ColorF(0, 0, 0, 0.0f)}};
+            ComPtr<ID2D1GradientStopCollection> collection;
+            ComPtr<ID2D1LinearGradientBrush> mask;
+            if (SUCCEEDED(dc->CreateGradientStopCollection(stops, 2, &collection)) &&
+                SUCCEEDED(dc->CreateLinearGradientBrush(
+                    D2D1::LinearGradientBrushProperties(D2D1::Point2F(0.0f, edge - band), D2D1::Point2F(0.0f, edge)),
+                    collection.get(), &mask))) {
+                dc->PushLayer(D2D1::LayerParameters1(restClip, nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                                     D2D1::IdentityMatrix(), 1.0f, mask.get()),
+                              nullptr);
+                dc->GetTransform(&sweep_saved);
+                dc->SetTransform(sweep_saved * D2D1::Matrix3x2F::Translation(0.0f, kDetailsRiseDip * s * (1.0f - e)));
+                sweeping = true;
+            }
+            if (compositor_ && compositor_->Hwnd())
+                SetTimer(compositor_->Hwnd(), kDetailsFrameTimer, 15, DetailsFrameTick);
+        }
+    }
 
     // Name + star + rename pencil + subtitle.
     {
@@ -743,6 +823,10 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
             default: break;
             }
         }
+    }
+    if (sweeping) {
+        dc->SetTransform(sweep_saved);
+        dc->PopLayer();
     }
     dc->PopAxisAlignedClip();
     dc->PopAxisAlignedClip();
