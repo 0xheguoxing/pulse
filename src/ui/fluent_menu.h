@@ -8,9 +8,12 @@
 //
 // Behavior: TrackPopup runs a nested modal loop (like TrackPopupMenu):
 // hover tracking, keyboard nav (Up/Down/Enter/Esc), click-outside dismiss,
-// 120ms OutQuad fade-in + 8px slide from the anchor side (motion::MenuTravelDip;
-// up when the menu flips/lifts above its anchor), 80ms fade-out from the
-// alpha on screen. Animation frames are paced by DwmFlush.
+// open: the card grows from the anchor point (0.94 -> 1, Pop spring) while it
+// fades in over 90ms and the rows follow with a 9ms stagger (capped); the
+// hover plate glides between rows (Plate spring); flyouts fade/slide in and
+// glide to a new header instead of closing and reopening; close shrinks to
+// 0.97 while fading from the alpha on screen. Everything is instant when
+// Windows animation effects are off. Frames are paced by DwmFlush.
 // The same component serves the right-click menu and the toolbar "新建▾"
 // dropdown.
 //
@@ -18,6 +21,7 @@
 // self-test drives it directly with a standalone DWrite factory.
 #pragma once
 #include "fluent_components.h"
+#include "ui_motion.h"
 #include "../common/menu_icon.h"
 
 #include <dwrite_3.h>
@@ -238,6 +242,14 @@ private:
         ComPtr<ID2D1Bitmap1> plate;
         RECT plate_key{};
         bool plate_dark = false;
+        // Render targets reused across frames (hover glides and the open
+        // transition redraw every frame; allocating per frame churned VRAM).
+        const void* dc_key = nullptr;
+        int tw = 0;
+        int th = 0;
+        ComPtr<ID2D1Bitmap1> target;
+        ComPtr<ID2D1Bitmap1> scaled;
+        ComPtr<ID2D1Bitmap1> readback;
     };
 
     bool EnsureWindow();
@@ -263,6 +275,7 @@ private:
     void OnSubMouse(POINT client_pt, bool button_up);
     bool RenderSub();
     void PresentSub(BYTE alpha);
+    bool TickSubMotion();            // flyout fade/slide or glide; true while running
     void HideSubWindow();
     void LayoutWindow(POINT screen_pt);
     void RefreshFilter();
@@ -375,6 +388,26 @@ private:
     std::chrono::steady_clock::time_point sub_pending_since_;
     int sub_x_ = 0;                // flyout window origin (screen px)
     int sub_y_ = 0;
+
+    // Motion (see the header comment). motion_ samples SystemAnimationsEnabled
+    // once per TrackPopup.
+    bool motion_ = true;
+    float open_t_ms_ = -1.0f;      // elapsed of the open transition; <0 = settled
+    float close_k_ = 0.0f;         // 0..1 progress of the dismiss
+    D2D1_POINT_2F open_origin_{};  // grow/shrink origin in surface px
+    ::pulse::ui::motion::SpringRectMotion plate_;
+    ::pulse::ui::motion::SpringRectMotion sub_plate_;
+    uint64_t plate_frame_ = 0;
+    uint64_t sub_plate_frame_ = 0;
+    uint64_t plate_context_ = 0;   // bumped per TrackPopup
+    bool sub_animating_ = false;
+    bool sub_fade_ = false;        // true: fade+slide in, false: glide to new header
+    std::chrono::steady_clock::time_point sub_anim_start_;
+    int sub_dx_ = 0;               // presented offset from sub_x_/sub_y_
+    int sub_dy_ = 0;
+    int sub_from_dx_ = 0;
+    int sub_from_dy_ = 0;
+    BYTE sub_alpha_ = 255;         // cap for PresentSub while fading in
 };
 
 } // namespace pulse::ui

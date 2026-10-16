@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <d2d1.h>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <unordered_map>
 
@@ -276,6 +277,129 @@ private:
     std::unordered_map<uint64_t, D2D1_POINT_2F> current_;
     std::unordered_map<uint64_t, D2D1_POINT_2F> shifts_;
     std::unordered_map<uint64_t, uint64_t> born_;
+};
+
+// Damped spring (mass 1) evaluated in closed form, so a transition is a pure
+// function of elapsed time: no per-frame integration state, frame drops never
+// change the path, and the same curve can be baked into a DComp animation.
+// k: stiffness, c: damping. Values match the motion tokens of the design
+// prototype (pulse_motion_v2.html).
+struct SpringSpec {
+    float k = 520.0f;
+    float c = 34.0f;
+};
+
+namespace spring {
+inline constexpr SpringSpec Snappy{520.0f, 34.0f};  // buttons, small moves
+inline constexpr SpringSpec Smooth{380.0f, 36.0f};  // list reflow, no overshoot
+inline constexpr SpringSpec Plate{700.0f, 50.0f};   // hover / selection plates
+inline constexpr SpringSpec Pop{620.0f, 30.0f};     // menus, badges, landings
+inline constexpr SpringSpec Open{480.0f, 38.0f};    // windows growing from a source
+inline constexpr SpringSpec Close{700.0f, 52.0f};   // ...and shrinking back
+inline constexpr SpringSpec Soft{260.0f, 24.0f};    // cancelled drag flying home
+} // namespace spring
+
+// Position of a spring released at 0 towards 1 after t_ms (may overshoot 1).
+inline float SpringProgress(SpringSpec s, float t_ms) noexcept {
+    if (t_ms <= 0.0f) return 0.0f;
+    const float t = t_ms * 0.001f;
+    const float w0 = std::sqrt(s.k);
+    const float zeta = s.c / (2.0f * w0);
+    if (zeta < 0.999f) {
+        const float wd = w0 * std::sqrt(1.0f - zeta * zeta);
+        const float e = std::exp(-zeta * w0 * t);
+        return 1.0f - e * (std::cos(wd * t) + (zeta * w0 / wd) * std::sin(wd * t));
+    }
+    if (zeta <= 1.001f) return 1.0f - std::exp(-w0 * t) * (1.0f + w0 * t);
+    const float r = w0 * std::sqrt(zeta * zeta - 1.0f);
+    const float r1 = -zeta * w0 + r, r2 = -zeta * w0 - r;
+    return 1.0f - (r2 * std::exp(r1 * t) - r1 * std::exp(r2 * t)) / (r2 - r1);
+}
+
+// Time after which the spring stays within 0.5% of its target; used to bound
+// frame requests (the visible motion ends well before).
+inline uint32_t SpringSettleMs(SpringSpec s) noexcept {
+    const float w0 = std::sqrt(s.k);
+    const float zeta = s.c / (2.0f * w0);
+    const float decay = zeta < 1.0f ? zeta * w0 : w0 * (zeta - std::sqrt(std::max(0.0f, zeta * zeta - 1.0f)));
+    const float ms = 1000.0f * 5.3f / std::max(decay, 1.0f);  // ln(200)
+    return static_cast<uint32_t>(std::clamp(ms, 60.0f, 900.0f));
+}
+
+// RectMotion driven by a spring instead of a fixed ease: the plate keeps its
+// momentum when the target changes mid-flight (re-aims from where it is).
+class SpringRectMotion {
+public:
+    D2D1_RECT_F Update(uint64_t context, int64_t key, const D2D1_RECT_F& target,
+                       uint64_t frame, uint64_t now, SpringSpec spec) noexcept {
+        const bool continuous = visible_ && context == context_ &&
+                                (frame == frame_ || frame == frame_ + 1);
+        if (!continuous || !animations_) {
+            Snap(target);
+        } else if (key != key_) {
+            from_ = current_;
+            to_ = target;
+            start_ = now;
+            spec_ = spec;
+            settle_ = SpringSettleMs(spec);
+            settled_ = false;
+        } else if (!Same(target, to_)) {
+            if (settled_) {
+                Snap(target);
+            } else {
+                from_.left += target.left - to_.left;
+                from_.top += target.top - to_.top;
+                from_.right += target.right - to_.right;
+                from_.bottom += target.bottom - to_.bottom;
+                to_ = target;
+            }
+        }
+        visible_ = true;
+        context_ = context;
+        key_ = key;
+        frame_ = frame;
+        if (!settled_) {
+            const uint64_t elapsed = now - start_;
+            if (elapsed >= settle_) {
+                current_ = to_;
+                settled_ = true;
+            } else {
+                const float e = SpringProgress(spec_, static_cast<float>(elapsed));
+                current_ = D2D1::RectF(from_.left + (to_.left - from_.left) * e,
+                                       from_.top + (to_.top - from_.top) * e,
+                                       from_.right + (to_.right - from_.right) * e,
+                                       from_.bottom + (to_.bottom - from_.bottom) * e);
+            }
+        }
+        return current_;
+    }
+    // Query SystemAnimationsEnabled once per surface open, not per frame.
+    void SetAnimationsEnabled(bool on) noexcept { animations_ = on; }
+    void Hide() noexcept { visible_ = false; }
+    bool Active(uint64_t now) const noexcept {
+        return visible_ && !settled_ && now - start_ < settle_ + kSettleGraceMs;
+    }
+
+private:
+    static bool Same(const D2D1_RECT_F& a, const D2D1_RECT_F& b) noexcept {
+        return a.left == b.left && a.top == b.top && a.right == b.right && a.bottom == b.bottom;
+    }
+    void Snap(const D2D1_RECT_F& target) noexcept {
+        from_ = to_ = current_ = target;
+        settled_ = true;
+    }
+    bool visible_ = false;
+    bool settled_ = true;
+    bool animations_ = true;
+    uint64_t context_ = 0;
+    int64_t key_ = 0;
+    uint64_t frame_ = 0;
+    uint64_t start_ = 0;
+    uint32_t settle_ = 0;
+    SpringSpec spec_{};
+    D2D1_RECT_F from_{};
+    D2D1_RECT_F to_{};
+    D2D1_RECT_F current_{};
 };
 
 } // namespace pulse::ui::motion

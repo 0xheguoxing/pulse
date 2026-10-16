@@ -798,12 +798,34 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
     auto props = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
         96.0f, 96.0f);
-    ComPtr<ID2D1Bitmap1> bmp;
-    if (FAILED(dc->CreateBitmap(size, nullptr, 0, props, &bmp))) return false;
+    if (s.dc_key != dc || s.tw != w || s.th != h) {
+        s.target.reset();
+        s.scaled.reset();
+        s.readback.reset();
+        s.dc_key = dc;
+        s.tw = w;
+        s.th = h;
+    }
+    if (!s.target.get() && FAILED(dc->CreateBitmap(size, nullptr, 0, props, &s.target))) return false;
+    ID2D1Bitmap1* bmp = s.target.get();
+
+    // Open / close transition of the main card (pulse_motion_v2 tokens).
+    const bool animate_open = main && motion_ && open_t_ms_ >= 0.0f && !animating_out_;
+    float card_scale = 1.0f;
+    if (main && motion_) {
+        if (animating_out_) card_scale = 1.0f - 0.03f * close_k_;
+        else if (open_t_ms_ >= 0.0f)
+            card_scale = 0.94f + 0.06f * ::pulse::ui::motion::SpringProgress(::pulse::ui::motion::spring::Pop, open_t_ms_);
+    }
+    auto row_alpha = [&](int row) {
+        if (!animate_open) return 1.0f;
+        const float delay = 20.0f + 9.0f * static_cast<float>((std::min)(row, 8));
+        return ::pulse::ui::motion::EaseOutCubic((open_t_ms_ - delay) / 120.0f);
+    };
 
     ComPtr<ID2D1Image> old_target;
     dc->GetTarget(&old_target);
-    dc->SetTarget(bmp.get());
+    dc->SetTarget(bmp);
     // Match the main compositor: grayscale text AA. Default ClearType writes
     // subpixel RGB coverage that survives premultiplied readback as ghosted
     // glyphs (worst on CJK) once composited by UpdateLayeredWindow.
@@ -829,7 +851,7 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
         dc->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 1.0f), &black);
         dc->FillRoundedRectangle(D2D1::RoundedRect(drop, radius, radius), black.get());
         card_list->Close();
-        dc->SetTarget(bmp.get());
+        dc->SetTarget(bmp);
 
         ComPtr<ID2D1Effect> shadow;
         if (SUCCEEDED(dc->CreateEffect(kShadowEffectClsid, &shadow))) {
@@ -843,7 +865,7 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
     bool plate = false;
     if (acrylic_active_ && !IsHighContrast() && drop.right > drop.left && drop.bottom > drop.top) {
         const POINT origin = main ? POINT{ base_x_, base_y_ } : POINT{ sub_x_, sub_y_ };
-        plate = EnsurePlate(s, drop, origin, bmp.get());
+        plate = EnsurePlate(s, drop, origin, bmp);
         ComPtr<ID2D1Factory> factory;
         dc->GetFactory(&factory);
         ComPtr<ID2D1RoundedRectangleGeometry> shape;
@@ -886,9 +908,47 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
         const float arrow = main ? ArrowPx() : 0.0f;
         dc->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(kShadowMargin), y + arrow,
             static_cast<float>(kShadowMargin + cw), y + body - arrow), D2D1_ANTIALIAS_MODE_ALIASED);
+        // Hover plate: one rounded rect that glides between rows (Plate
+        // spring) instead of each row lighting up on its own. High contrast
+        // keeps the per-row system highlight.
+        const bool glide = !IsHighContrast();
+        int plate_row = -1;
+        if (glide && hover_row >= 0) {
+            const FluentMenuItem* hv = model.At(hover_row);
+            if (hv && hv->enabled && hv->quick_swatches.empty()) plate_row = hover_row;
+        }
+        {
+            ::pulse::ui::motion::SpringRectMotion& pm = main ? plate_ : sub_plate_;
+            uint64_t& pf = main ? plate_frame_ : sub_plate_frame_;
+            if (plate_row >= 0) {
+                const float top = y + arrow + model.RowTopPx(plate_row) - (main ? scroll_y_ : 0.0f);
+                float right = static_cast<float>(kShadowMargin + cw) - 6.0f * scale_;
+                if (model.At(plate_row)->trailing_command) right -= 32.0f * scale_;
+                const D2D1_RECT_F target = D2D1::RectF(static_cast<float>(kShadowMargin) + 6.0f * scale_,
+                    top + 2.0f * scale_, right, top + model.RowHeightPx() - 2.0f * scale_);
+                const uint64_t ctx = main ? plate_context_
+                    : plate_context_ * 1315423911ull + static_cast<uint64_t>(sub_parent_row_ + 2);
+                const D2D1_RECT_F r = pm.Update(ctx, plate_row, target, ++pf, ::pulse::ui::motion::NowMs(), ::pulse::ui::motion::spring::Plate);
+                D2D1_COLOR_F fill = dark_ ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f)
+                                          : D2D1::ColorF(0.0f, 0.0f, 0.0f, 9.0f / 255.0f);
+                fill.a *= (std::max)(0.0f, row_alpha(plate_row));
+                painter_.FillRoundedRect(r, 5.0f * scale_, fill);
+            } else {
+                pf += 2;
+                pm.Hide();
+            }
+        }
         y += arrow + model.RowTopPx(0) - (main ? scroll_y_ : 0.0f);
         for (int i = 0; i < model.Count(); ++i) {
             const FluentMenuItem* it = model.At(i);
+            // Rows follow the card in with a short stagger and a 4dip rise.
+            const float ra = row_alpha(i);
+            const bool layered = ra < 0.999f;
+            const float rise = layered ? (1.0f - (std::max)(0.0f, ra)) * 4.0f * scale_ : 0.0f;
+            if (layered)
+                dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr,
+                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), (std::max)(0.0f, ra)), nullptr);
+            y += rise;
             fluent::MenuItemSpec spec;
             spec.bounds = D2D1::RectF((float)kShadowMargin, y,
                                       (float)(kShadowMargin + cw), y + model.RowHeightPx());
@@ -903,7 +963,7 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
             spec.state.enabled = it->enabled;
             // A quick-swatch strip owns its hover feedback per dot; treating it
             // as a regular menu row produces a misleading full-width highlight.
-            spec.state.hovered = (i == hover_row && it->quick_swatches.empty());
+            spec.state.hovered = (i == hover_row && it->quick_swatches.empty()) && !glide;
             spec.separator_after = it->separator_after;
             spec.has_swatch = it->has_swatch;
             spec.checked = it->checked;
@@ -954,6 +1014,8 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
                     }
                 }
             }
+            y -= rise;
+            if (layered) dc->PopLayer();
             y += model.RowHeightPx();
             if (it->separator_after) y += 5.0f * scale_;
         }
@@ -981,16 +1043,41 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
     HRESULT hr = dc->EndDraw();
     dc->SetTextAntialiasMode(old_text_aa);
     dc->SetTarget(old_target.get());
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        s.target.reset();
+        s.scaled.reset();
+        s.readback.reset();
+        return false;
+    }
+
+    // Grow / shrink: scale the finished card about the anchor point in a
+    // second pass, so painter code never sees a transform.
+    ID2D1Bitmap1* src_bmp = bmp;
+    if (std::abs(card_scale - 1.0f) > 0.0005f) {
+        if (!s.scaled.get() && FAILED(dc->CreateBitmap(size, nullptr, 0, props, &s.scaled))) s.scaled.reset();
+        if (s.scaled.get()) {
+            D2D1_MATRIX_3X2_F old_tf{};
+            dc->GetTransform(&old_tf);
+            dc->SetTarget(s.scaled.get());
+            dc->BeginDraw();
+            dc->Clear(D2D1::ColorF(0, 0, 0, 0));
+            dc->SetTransform(D2D1::Matrix3x2F::Scale(card_scale, card_scale, open_origin_));
+            dc->DrawBitmap(bmp, D2D1::RectF(0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h)),
+                           1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+            dc->SetTransform(old_tf);
+            if (SUCCEEDED(dc->EndDraw())) src_bmp = s.scaled.get();
+            dc->SetTarget(old_target.get());
+        }
+    }
 
     // GPU -> CPU readback.
     auto cpu_props = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
         96.0f, 96.0f);
-    ComPtr<ID2D1Bitmap1> cpu;
-    if (FAILED(dc->CreateBitmap(size, nullptr, 0, cpu_props, &cpu))) return false;
-    if (FAILED(cpu->CopyFromBitmap(nullptr, bmp.get(), nullptr))) return false;
+    if (!s.readback.get() && FAILED(dc->CreateBitmap(size, nullptr, 0, cpu_props, &s.readback))) return false;
+    ID2D1Bitmap1* cpu = s.readback.get();
+    if (FAILED(cpu->CopyFromBitmap(nullptr, src_bmp, nullptr))) return false;
     D2D1_MAPPED_RECT mapped{};
     if (FAILED(cpu->Map(D2D1_MAP_OPTIONS_READ, &mapped))) return false;
 
@@ -1042,8 +1129,9 @@ void FluentMenu::Present(BYTE alpha, int y_offset_px) {
 
 void FluentMenu::PresentSub(BYTE alpha) {
     if (!sub_hwnd_ || !sub_surf_.dib || !sub_surf_.bits) return;
+    alpha = (std::min)(alpha, sub_alpha_);
     HGDIOBJ old = SelectObject(sub_surf_.mem_dc, sub_surf_.dib);
-    POINT dst{ sub_x_, sub_y_ };
+    POINT dst{ sub_x_ + sub_dx_, sub_y_ + sub_dy_ };
     POINT src{ 0, 0 };
     SIZE sz{ sub_surf_.w, sub_surf_.h };
     BLENDFUNCTION blend{ AC_SRC_OVER, 0, alpha, AC_SRC_ALPHA };
@@ -1069,7 +1157,33 @@ void FluentMenu::HideSubWindow() {
     sub_parent_row_ = -1;
     sub_hover_ = -1;
     sub_hover_swatch_ = -1;
+    sub_animating_ = false;
+    sub_dx_ = sub_dy_ = 0;
+    sub_alpha_ = 255;
+    sub_plate_.Hide();
     if (sub_hwnd_) ShowWindow(sub_hwnd_, SW_HIDE);
+}
+
+// Flyout motion, driven from the modal loop: a fresh flyout fades in while
+// sliding 6dip away from the parent card; moving to another header glides the
+// open flyout to its new row (same window, new rows) instead of a hide/show.
+bool FluentMenu::TickSubMotion() {
+    if (!sub_animating_ || sub_parent_row_ < 0) return false;
+    const float e = std::chrono::duration<float, std::milli>(
+        std::chrono::steady_clock::now() - sub_anim_start_).count();
+    const ::pulse::ui::motion::SpringSpec spec = sub_fade_ ? ::pulse::ui::motion::spring::Pop : ::pulse::ui::motion::spring::Plate;
+    const bool done = e >= 260.0f;
+    const float k = done ? 1.0f : ::pulse::ui::motion::SpringProgress(spec, e);
+    sub_dx_ = static_cast<int>(std::lround(static_cast<float>(sub_from_dx_) * (1.0f - k)));
+    sub_dy_ = static_cast<int>(std::lround(static_cast<float>(sub_from_dy_) * (1.0f - k)));
+    sub_alpha_ = sub_fade_ ? static_cast<BYTE>(std::lround(255.0f * ::pulse::ui::motion::EaseOutCubic(e / 110.0f))) : 255;
+    if (done) {
+        sub_animating_ = false;
+        sub_dx_ = sub_dy_ = 0;
+        sub_alpha_ = 255;
+    }
+    PresentSub(255);
+    return !done;
 }
 
 // Opens the one-level flyout for row's children, anchored to the row's right
@@ -1079,6 +1193,9 @@ void FluentMenu::OpenSubmenu(int row) {
     if (!it || !it->enabled || it->children.empty() || !compositor_) return;
     if (row == sub_parent_row_) return; // already showing this row's children
     if (!EnsureSubWindow()) return;
+    const bool was_shown = sub_parent_row_ >= 0 && IsWindowVisible(sub_hwnd_);
+    const int shown_y = sub_y_ + sub_dy_;
+    const int shown_x = sub_x_ + sub_dx_;
     sub_model_.SetItems(it->children);
     sub_model_.Layout(compositor_->DwriteFactory(), scale_);
     sub_parent_row_ = row;
@@ -1107,7 +1224,26 @@ void FluentMenu::OpenSubmenu(int row) {
     sub_x_ = x;
     sub_y_ = y;
     sub_surf_.plate.reset();
-    SetWindowPos(sub_hwnd_, topmost_ ? HWND_TOPMOST : HWND_TOP, x, y, w, h,
+    sub_animating_ = false;
+    sub_dx_ = sub_dy_ = 0;
+    sub_alpha_ = 255;
+    if (motion_) {
+        sub_anim_start_ = std::chrono::steady_clock::now();
+        sub_animating_ = true;
+        sub_fade_ = !was_shown;
+        if (was_shown) {
+            sub_from_dx_ = shown_x - x;
+            sub_from_dy_ = shown_y - y;
+        } else {
+            const int travel = static_cast<int>(std::lround(6.0f * scale_));
+            sub_from_dx_ = x < base_x_ ? travel : -travel; // slide away from the parent card
+            sub_from_dy_ = 0;
+            sub_alpha_ = 0;
+        }
+        sub_dx_ = sub_from_dx_;
+        sub_dy_ = sub_from_dy_;
+    }
+    SetWindowPos(sub_hwnd_, topmost_ ? HWND_TOPMOST : HWND_TOP, x + sub_dx_, y + sub_dy_, w, h,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
     if (RenderSub()) PresentSub(255);
     if (Render()) Present(present_alpha_, present_offset_); // header row stays active
@@ -1722,22 +1858,46 @@ int FluentMenu::RunModalLoop() {
                     out_alpha = present_alpha_;
                     out_offset = present_offset_;
                 }
-                const float kOutMs = 80.0f; // ui.md §6 菜单收起
+                // Exit is quicker than entry: 90ms, shrinking to 0.97 about the
+                // anchor while fading from the alpha on screen.
+                const float kOutMs = motion_ ? 90.0f : 1.0f;
                 float t = (float)(elapsed / kOutMs);
                 if (t >= 1.0f) {
                     open_ = false;
                     ShowWindow(hwnd_, SW_HIDE);
                     break;
                 }
-                Present((BYTE)std::lround(out_alpha * (1.0f - t)), out_offset);
+                if (motion_) {
+                    close_k_ = t;
+                    open_t_ms_ = -1.0f;
+                    Render();
+                }
+                const float fade = 1.0f - t * t;  // ease-in
+                Present((BYTE)std::lround(out_alpha * fade), out_offset);
+                if (sub_parent_row_ >= 0) PresentSub((BYTE)std::lround(255.0f * fade));
                 animating = true;
             } else {
-                // ui.md §6: 淡入 120ms + 滑入 8px OutQuad. The slide comes from
-                // the anchor side (slide_sign_): down normally, up when the
-                // menu had to flip or lift above its anchor.
+                // Open (pulse_motion_v2): grow from the anchor with the Pop
+                // spring, 90ms fade, 4dip travel from the anchor side
+                // (slide_sign_), rows staggered in RenderSurface. The filter
+                // palette keeps the plain fade.
                 fluent::MotionSpec spec{ 120.0f, fluent::EasingCurve::OutQuad };
                 float t = fluent::EvaluateMotion(spec, (float)elapsed);
-                if (t < 1.0f) {
+                if (open_t_ms_ >= 0.0f) {
+                    constexpr float kOpenMs = 330.0f;
+                    const float e = static_cast<float>(elapsed);
+                    open_t_ms_ = e >= kOpenMs ? -1.0f : e;
+                    const float fade = ::pulse::ui::motion::EaseOutCubic(e / 90.0f);
+                    const float travel = 4.0f * scale_ * (1.0f - ::pulse::ui::motion::SpringProgress(::pulse::ui::motion::spring::Pop, e));
+                    if (Render())
+                        Present(static_cast<BYTE>(std::lround(255.0f * fade)),
+                                static_cast<int>(std::lround(static_cast<float>(slide_sign_) * travel)));
+                    animating = open_t_ms_ >= 0.0f;
+                } else if (present_alpha_ == 255 && present_offset_ == 0) {
+                    // settled
+                } else if (!motion_) {
+                    Present(255, 0);
+                } else if (t < 1.0f) {
                     const float dip = (anchor_to_rect_ && filter_fn_)
                         ? 0.0f : fluent::motion::MenuTravelDip * scale_;
                     Present((BYTE)(255 * t),
@@ -1748,11 +1908,27 @@ int FluentMenu::RunModalLoop() {
                 }
             }
         }
-        // Hover-to-open flyout delay (like native menus).
+        // Hover plates still gliding, flyout sliding in or moving.
+        if (open_ && !animating_out_ && hwnd_) {
+            const uint64_t now_ms = ::pulse::ui::motion::NowMs();
+            if (open_t_ms_ < 0.0f && plate_.Active(now_ms) && Render()) {
+                Present(present_alpha_, present_offset_);
+                animating = true;
+            }
+            if (sub_parent_row_ >= 0) {
+                const bool sub_glide = sub_plate_.Active(now_ms);
+                if (sub_glide) RenderSub();
+                if (TickSubMotion()) animating = true;
+                else if (sub_glide) PresentSub(255);
+                if (sub_glide) animating = true;
+            }
+        }
+        // Hover-to-open flyout delay (like native menus; 120ms, prototype
+        // token - 200ms felt sluggish next to the gliding plate).
         if (open_ && !animating_out_ && sub_pending_row_ >= 0) {
             const double dwell = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - sub_pending_since_).count();
-            if (dwell >= 200.0) {
+            if (dwell >= 120.0) {
                 const int r = sub_pending_row_;
                 sub_pending_row_ = -1;
                 if (r == hover_row_) OpenSubmenu(r);
@@ -1959,6 +2135,34 @@ int FluentMenu::TrackPopup(POINT screen_pt, std::vector<FluentMenuItem> items,
     result_ = 0;
     animating_out_ = false;
     LayoutWindow(screen_pt);
+    motion_ = ::pulse::ui::motion::SystemAnimationsEnabled();
+    plate_.SetAnimationsEnabled(motion_);
+    sub_plate_.SetAnimationsEnabled(motion_);
+    plate_.Hide();
+    sub_plate_.Hide();
+    ++plate_context_;
+    close_k_ = 0.0f;
+    open_t_ms_ = (motion_ && !(anchor_to_rect_ && filter_fn_)) ? 0.0f : -1.0f;
+    {
+        // Grow from where the menu was asked for: the cursor, the dropdown's
+        // edge, or the top centre of a centred palette.
+        const float cw = static_cast<float>(model_.WidthPx());
+        const float ch = static_cast<float>(std::ceil(BodyHeightPx())) + FilterHeaderPx();
+        const float m = static_cast<float>(kShadowMargin);
+        float ox = static_cast<float>(screen_pt.x - base_x_);
+        float oy = static_cast<float>(screen_pt.y - base_y_);
+        if (dropdown_) {
+            ox = static_cast<float>((dropdown_rect_.left + dropdown_rect_.right) / 2 - base_x_);
+            oy = slide_sign_ < 0 ? m : m + ch;
+        } else if (anchor_to_rect_) {
+            ox = static_cast<float>(anchor_rect_.left - base_x_);
+            oy = static_cast<float>(anchor_rect_.top - base_y_);
+        } else if (top_center_) {
+            ox = m + cw * 0.5f;
+            oy = m;
+        }
+        open_origin_ = D2D1::Point2F(std::clamp(ox, m, m + cw), std::clamp(oy, m, m + ch));
+    }
     if (!Render()) {
         external_edit_ = nullptr;
         max_visible_rows_ = 0;
@@ -1971,9 +2175,10 @@ int FluentMenu::TrackPopup(POINT screen_pt, std::vector<FluentMenuItem> items,
     }
     open_ = true;
     anim_start_ = std::chrono::steady_clock::now();
-    const int slide = (anchor_to_rect_ && filter_fn_)
-        ? 0 : (int)std::lround(static_cast<float>(slide_sign_) * fluent::motion::MenuTravelDip * scale_);
-    Present(0, slide);
+    const float travel = open_t_ms_ >= 0.0f ? 4.0f : fluent::motion::MenuTravelDip;
+    const int slide = (anchor_to_rect_ && filter_fn_) || !motion_
+        ? 0 : (int)std::lround(static_cast<float>(slide_sign_) * travel * scale_);
+    Present(motion_ ? 0 : 255, slide);
     if (external_edit_) {
         HideFilterEdit();
         SetWindowSubclass(external_edit_, ExternalFilterEditProc, 2, reinterpret_cast<DWORD_PTR>(this));
@@ -2115,7 +2320,21 @@ bool FluentMenu::SaveDebugSnapshot(const wchar_t* png_path,
         ? static_cast<float>(dropdown_rect_.right - dropdown_rect_.left) : filter_min_width_ * scale_);
     hover_row_ = hover_row;
     hover_swatch_ = -1;
-    if (!Render()) return false;
+    // Motion regression shots: PULSE_MENUSHOT_OPEN_MS freezes the open
+    // transition at that time (grown from the top-left corner);
+    // PULSE_MENUSHOT_HOVER overrides the hovered row.
+    wchar_t env[32]{};
+    open_t_ms_ = -1.0f;
+    if (GetEnvironmentVariableW(L"PULSE_MENUSHOT_OPEN_MS", env, ARRAYSIZE(env)) > 0) {
+        motion_ = true;
+        open_t_ms_ = static_cast<float>(_wtof(env));
+        open_origin_ = D2D1::Point2F(static_cast<float>(kShadowMargin), static_cast<float>(kShadowMargin));
+    }
+    if (GetEnvironmentVariableW(L"PULSE_MENUSHOT_HOVER", env, ARRAYSIZE(env)) > 0)
+        hover_row_ = _wtoi(env);
+    const bool rendered = Render();
+    open_t_ms_ = -1.0f;
+    if (!rendered) return false;
 
     ComPtr<IWICImagingFactory> wic;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
