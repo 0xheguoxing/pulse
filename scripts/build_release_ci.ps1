@@ -150,6 +150,12 @@ Remove-Item Env:PULSE_LUMATEXT
 & $batch
 if ($LASTEXITCODE -ne 0) { throw 'Production compilation failed' }
 & (Join-Path $repo 'scripts/check_release_payload.ps1') -BuildDir $build
+# Content enhancement pack assets of this channel, matching the catalog in pulse.exe.
+$contentPack = Join-Path $build 'content-pack'
+& (Join-Path $repo 'scripts/check_content_pack.ps1') -PackDir $contentPack -BuildDir $build
+$contentDist = Join-Path $repo "dist/content-pack-$Channel"
+New-Item -ItemType Directory -Path $contentDist -Force | Out-Null
+Copy-Item -Path (Join-Path $contentPack '*') -Destination $contentDist -Force
 if ($Channel -eq 'win81') {
     python tools/audit_win81_imports.py $build
     if ($LASTEXITCODE -ne 0) { throw 'Windows 8.1 startup import guard failed' }

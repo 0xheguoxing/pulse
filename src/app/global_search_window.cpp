@@ -13,6 +13,7 @@
 #include "../index/index_client.h"
 #include "../index/content_search_client.h"
 #include "content_scope_mode.h"
+#include "content_pack_ui.h"
 #include "../index/network_agent_client.h"
 #include <d2d1.h>
 #include <dwrite.h>
@@ -702,7 +703,9 @@ struct GlobalSearchWindow::Impl {
                 }
                 total = rows.size(); truncated = update.progress.truncated;
                 busy = !update.progress.done;
-                if (update.progress.error && update.progress.error != ERROR_CANCELLED) error = Text(StringId::GlobalSearchFailed);
+                std::wstring pack_title, pack_message;
+                if (ContentPackBanner(update.progress.error, pack_title, pack_message)) error = std::move(pack_title);
+                else if (update.progress.error && update.progress.error != ERROR_CANCELLED) error = Text(StringId::GlobalSearchFailed);
                 if (!had_rows && !rows.empty()) selected = 0;
                 ClampSelection(false); Invalidate();
             }

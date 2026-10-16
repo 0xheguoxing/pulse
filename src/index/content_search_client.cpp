@@ -4,10 +4,13 @@
 
 #include <objbase.h>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 
 namespace pulse::index {
 namespace {
+
+std::atomic<ContentAgentLocator> g_content_agent_locator{nullptr};
 
 std::wstring NewToken() {
     GUID guid{};
@@ -143,15 +146,27 @@ bool ParseUpdate(const std::vector<uint8_t>& payload, ContentSearchUpdate& updat
 
 } // namespace
 
+void SetContentAgentLocator(ContentAgentLocator locator) noexcept {
+    g_content_agent_locator.store(locator);
+}
+
+// Pulse.Content.exe beside the running exe (development builds, tests), else
+// wherever the registered locator finds a verified pack; empty when neither.
 std::wstring ContentSearchClient::ExePath() {
     std::wstring path(32768, L'\0');
     const DWORD length = GetModuleFileNameW(nullptr, path.data(),
                                             static_cast<DWORD>(path.size()));
-    if (!length || length >= path.size()) return L"Pulse.Index.exe";
-    path.resize(length);
-    const size_t slash = path.find_last_of(L"\\/");
-    return slash == std::wstring::npos ? L"Pulse.Index.exe"
-        : path.substr(0, slash + 1) + L"Pulse.Index.exe";
+    if (length && length < path.size()) {
+        path.resize(length);
+        const size_t slash = path.find_last_of(L"\\/");
+        if (slash != std::wstring::npos) {
+            const std::wstring sibling = path.substr(0, slash + 1) + L"Pulse.Content.exe";
+            const DWORD attributes = GetFileAttributesW(sibling.c_str());
+            if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY)) return sibling;
+        }
+    }
+    const auto locate = g_content_agent_locator.load();
+    return locate ? locate() : std::wstring{};
 }
 
 void ContentSearchClient::Start(HWND notify, UINT update_message, bool persistent, bool read_only) {
@@ -274,6 +289,10 @@ bool ContentSearchClient::EnsurePersistent() {
     if (persistent_process_) { CloseHandle(persistent_process_); persistent_process_ = nullptr; }
     persistent_token_ = NewToken();
     const auto exe = ExePath();
+    if (exe.empty()) {
+        std::lock_guard lock(state_mu_); status_.error = ERROR_FILE_NOT_FOUND;
+        SetLastError(ERROR_FILE_NOT_FOUND); return false;
+    }
     std::wstring command = L"\"" + exe + (mode_ == ContentAgentMode::Instant ? L"\" --content-instant-agent " : read_only_ ? L"\" --content-index-observer " : L"\" --content-index-agent ") + persistent_token_ + L" " + std::to_wstring(GetCurrentProcessId());
     STARTUPINFOW startup{sizeof(startup)}; startup.dwFlags = STARTF_FORCEOFFFEEDBACK; PROCESS_INFORMATION created{};
     if (!CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &startup, &created)) {
@@ -438,6 +457,7 @@ void ContentSearchClient::Run(ContentSearchRequest request, const std::shared_pt
         DuplicateHandle(GetCurrentProcess(), persistent_process_, GetCurrentProcess(), &process, 0, FALSE, DUPLICATE_SAME_ACCESS);
     } else {
         const auto exe = ExePath(); token = NewToken();
+        if (exe.empty()) { fail(ERROR_FILE_NOT_FOUND); return; }
         std::wstring command = L"\"" + exe + L"\" --content-agent " + token;
         STARTUPINFOW startup{sizeof(startup)}; startup.dwFlags = STARTF_FORCEOFFFEEDBACK; PROCESS_INFORMATION created{};
         if (!CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &startup, &created)) {

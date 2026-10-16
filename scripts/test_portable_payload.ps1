@@ -4,7 +4,7 @@ $repo = Split-Path -Parent $PSScriptRoot
 $root = Join-Path $repo ('bench_data/portable-audit-' + [guid]::NewGuid().ToString('N'))
 $build = Join-Path $root 'build'
 New-Item -ItemType Directory -Path $build -Force | Out-Null
-foreach ($file in $PulseReleasePayload) {
+foreach ($file in $PulseReleasePayload + $PulseContentPackExecutables) {
     [IO.File]::WriteAllText((Join-Path $build $file), "isolated packaging fixture: $file")
 }
 foreach ($license in @('LumaText', 'PDFium')) {
@@ -21,6 +21,10 @@ try {
         $entry = @($zip.Entries | Where-Object { $_.Name -eq $file })
         if ($entry.Count -ne 1) { throw "Final ZIP missing $file" }
         Write-Output "[PASS] final ZIP contains $file"
+    }
+    foreach ($file in $PulseContentPackExecutables) {
+        if (@($zip.Entries | Where-Object { $_.Name -eq $file }).Count -ne 0) { throw "Final ZIP carries content pack file $file" }
+        Write-Output "[PASS] final ZIP leaves $file to the content pack"
     }
 } finally { $zip.Dispose() }
 $helper = Join-Path $build 'pulse_elevated.exe'
@@ -41,4 +45,8 @@ foreach ($name in $PulseReleaseExecutables) {
     if ($installer -notmatch [regex]::Escape($name)) { throw "Installer payload drift: $name" }
 }
 Write-Output '[PASS] installer includes every shared production executable'
+foreach ($name in $PulseContentPackExecutables) {
+    if ($installer -match [regex]::Escape($name)) { throw "Installer carries content pack file $name" }
+}
+Write-Output '[PASS] installer leaves the content pack to its download'
 Write-Output "Fixtures retained: $root"

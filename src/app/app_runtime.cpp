@@ -29,6 +29,7 @@
 #include "snapshot_patch.h"
 #include "dir_notify_queue.h"
 #include "text_diff.h"
+#include "content_pack_ui.h"
 #include "session.h"
 #include "context_menu.h"
 #include "batch_rename.h"
@@ -2002,6 +2003,7 @@ static void FillTrayCompare(AppState& s, const app::TrayItem* const (&items)[2],
 ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     SyncTaskbarWindowTitle(s);
     if (!s.pane) return {};
+    TickContentPackInstall(s);
     // A finished pack download repaints the window once; drop the cached
     // failed thumbnails so the newly supported files are decoded again.
     if (s.settings.TakeMediaPackResult()) {

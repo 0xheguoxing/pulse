@@ -28,13 +28,27 @@ if ($LASTEXITCODE -ne 0) { throw "Release build failed" }
 
 $signTool = (Get-Command signtool.exe -ErrorAction Stop).Source
 . "$PSScriptRoot/release_payload.ps1"
-$binaries = $PulseReleaseExecutables
-foreach ($name in $binaries) {
-    $path = Join-Path $buildPath $name
-    if (-not (Test-Path -LiteralPath $path)) { throw "Missing release binary: $path" }
-    & $signTool sign /sha1 $CodeSigningThumbprint /fd SHA256 /tr $TimestampUrl.AbsoluteUri /td SHA256 $path
-    if ($LASTEXITCODE -ne 0) { throw "Code signing failed: $path" }
+function Invoke-Sign([string[]]$names) {
+    foreach ($name in $names) {
+        $path = Join-Path $buildPath $name
+        if (-not (Test-Path -LiteralPath $path)) { throw "Missing release binary: $path" }
+        & $signTool sign /sha1 $CodeSigningThumbprint /fd SHA256 /tr $TimestampUrl.AbsoluteUri /td SHA256 $path
+        if ($LASTEXITCODE -ne 0) { throw "Code signing failed: $path" }
+    }
 }
+# The content enhancement pack goes first: pulse.exe compiles in the SHA-256 of
+# the signed pack files, so the catalog and LZMS assets are regenerated from them
+# and pulse.exe is rebuilt before it is signed itself.
+Invoke-Sign $PulseContentPackExecutables
+& cmd /c "call `"$repo\scripts\vcvars.bat`" >nul && cmake --build `"$buildPath`" --target pulse"
+if ($LASTEXITCODE -ne 0) { throw "Rebuilding pulse.exe for the signed content pack failed" }
+$contentPack = Join-Path $buildPath "content-pack"
+& "$PSScriptRoot/check_content_pack.ps1" -PackDir $contentPack -BuildDir $buildPath
+Invoke-Sign $PulseReleaseExecutables
+$binaries = $PulseSignedExecutables
+$contentDist = Join-Path $repo "dist\content-pack-windows"
+New-Item -ItemType Directory -Path $contentDist -Force | Out-Null
+Copy-Item -Path (Join-Path $contentPack "*") -Destination $contentDist -Force
 
 & (Join-Path $repo "build_installer.bat") /skipbuild
 if ($LASTEXITCODE -ne 0) { throw "Installer build failed" }
@@ -54,6 +68,7 @@ if ($LASTEXITCODE -ne 0) { throw "Update manifest signing failed" }
 $buildId = (Get-Content -LiteralPath (Join-Path $buildPath "pulse_build_id.txt") -TotalCount 1).Trim()
 $hashArtifacts = @($installer, $manifest)
 foreach ($name in $binaries) { $hashArtifacts += Join-Path $buildPath $name }
+$hashArtifacts += @(Get-ChildItem -LiteralPath $contentDist -Filter "*.lzms" | ForEach-Object { $_.FullName })
 $hashes = foreach ($path in $hashArtifacts) {
     $item = Get-Item -LiteralPath $path
     [ordered]@{

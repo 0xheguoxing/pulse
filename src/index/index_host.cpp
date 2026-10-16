@@ -19,7 +19,6 @@
 #include "index_paths.h"
 #include "index_path_service.h"
 #include "network_agent_host.h"
-#include "content_agent.h"
 #include "../common/current_user_security.h"
 #include <windows.h>
 #include <sddl.h>
@@ -1276,7 +1275,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     const bool service_mode = a1 == L"--service";
     const auto role = service_mode ? pulse::crash::ProcessRole::IndexService
         : a1 == L"--network-agent" ? pulse::crash::ProcessRole::NetworkAgent
-        : a1 == L"--content-agent" ? pulse::crash::ProcessRole::ContentAgent
         : pulse::crash::ProcessRole::IndexHelper;
     pulse::crash::Initialize({role, service_mode, {}});
 
@@ -1296,10 +1294,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     }
     if (a1 == L"--network-agent") return RunNetworkAgent();
     if (a1 == L"--test-network-agent" && args.size() == 3) return RunNetworkAgentTest(args[2]);
-    if (a1 == L"--content-instant-agent" && args.size() == 4) return RunPersistentContentAgent(args[2], wcstoul(args[3].c_str(), nullptr, 10), ContentAgentMode::Instant);
-    if (a1 == L"--content-index-agent" && args.size() == 4) return RunPersistentContentAgent(args[2], wcstoul(args[3].c_str(), nullptr, 10));
-    if (a1 == L"--content-index-observer" && args.size() == 4) return RunPersistentContentAgent(args[2], wcstoul(args[3].c_str(), nullptr, 10), true);
-    if (a1 == L"--content-agent" && args.size() == 3) return RunContentAgent(args[2]);
+    // Content search moved to Pulse.Content.exe (the content enhancement
+    // pack). Refuse its roles here rather than starting a helper host.
+    if (a1.rfind(L"--content-", 0) == 0) return ERROR_NOT_SUPPORTED;
     if (a1 == L"--test-host" && args.size() >= 3) {
         const std::wstring& token = args[2];
         const bool valid = !token.empty() && token.size() <= 64 &&

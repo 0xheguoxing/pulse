@@ -10,6 +10,12 @@
 #include <thread>
 #include <map>
 namespace pulse::index {
+// Finds Pulse.Content.exe when it is not beside the running exe: in releases
+// it comes with the content enhancement pack, which pulse.exe verifies. An
+// empty path means the pack is missing, outdated or failed verification, and
+// the search fails with ERROR_FILE_NOT_FOUND.
+using ContentAgentLocator = std::wstring (*)();
+void SetContentAgentLocator(ContentAgentLocator locator) noexcept;
 // A long-lived user-mode index agent serves cached TEXT queries. Explicit
 // transient scans and duplicate scans retain the isolated per-request agent.
 // Cancel/SearchAsync only signal and enqueue; neither joins a thread on the UI.

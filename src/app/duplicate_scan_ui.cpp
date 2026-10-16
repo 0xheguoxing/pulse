@@ -2,6 +2,7 @@
 #include "app_internal.h"
 #include "../fs/fs_enum.h"
 #include "../common/localization.h"
+#include "content_pack_ui.h"
 
 #include <thread>
 
@@ -59,6 +60,8 @@ void StartDuplicateScan(AppState& s) {
     auto roots = app::DuplicateScanSession::ResolveRoots(
         session.scope, session.folder_path, session.drive_root, volumes);
     if (roots.empty()) return;
+    // Duplicate finding runs in Pulse.Content.exe (content enhancement pack).
+    if (!OfferContentPack(s)) return;
     PersistDuplicateScanPrefs(s);
     session.ResetResults();
     session.generation += 1;

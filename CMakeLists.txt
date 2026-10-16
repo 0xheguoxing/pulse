@@ -147,6 +147,19 @@ if(NOT PULSE_UPDATE_MANIFEST_URL STREQUAL "" OR
 endif()
 configure_file(cmake/pulse_update_config.h.in generated/pulse_update_config.h @ONLY)
 
+# Content enhancement pack: release channel of its assets, and the pdfium.dll
+# Pulse.Document.exe accepts from the install directory when it runs from the
+# pack (it no longer sits beside it there).
+set(PULSE_CONTENT_PACK_CHANNEL windows)
+if(PULSE_WIN81_CANDIDATE)
+    set(PULSE_CONTENT_PACK_CHANNEL win81)
+endif()
+file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/third_party/pdfium/bin/pdfium.dll" PULSE_PDFIUM_SHA256)
+file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/generated/pdfium_pin.h" CONTENT
+    "// Generated at configure time from third_party/pdfium/bin/pdfium.dll.\n#pragma once\n#define PULSE_PDFIUM_SHA256 L\"@PULSE_PDFIUM_SHA256@\"\n" @ONLY)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/pdfium/bin/pdfium.dll")
+
 function(pulse_add_version_resource target description internal_name original_filename)
     set(PULSE_FILE_DESCRIPTION "${description}")
     set(PULSE_INTERNAL_NAME "${internal_name}")
@@ -239,7 +252,7 @@ add_executable(pulse_content_search_test
     src/index/content_search.cpp
     src/index/content_search_client.cpp)
 target_link_libraries(pulse_content_search_test PRIVATE pulse_text bcrypt ole32)
-add_dependencies(pulse_content_search_test pulse_index)
+add_dependencies(pulse_content_search_test pulse_index pulse_content)
 
 add_executable(pulse_duplicate_scan_test
     src/bench/duplicate_scan_test.cpp
@@ -436,6 +449,7 @@ file(GLOB_RECURSE PULSE_APP_SOURCES CONFIGURE_DEPENDS
     src/app/*.cpp src/ui/*.cpp src/fs/*.cpp src/ops/*.cpp src/ipc/*.cpp src/index/*.cpp)
 list(FILTER PULSE_APP_SOURCES EXCLUDE REGEX "index_host\\.cpp$")
 list(FILTER PULSE_APP_SOURCES EXCLUDE REGEX "network_agent_main\\.cpp$")
+list(FILTER PULSE_APP_SOURCES EXCLUDE REGEX "content_host_main\\.cpp$")
 list(FILTER PULSE_APP_SOURCES EXCLUDE REGEX "content_(agent|index|search|task_search|hit_aliases|instant_session)\\.cpp$")
 list(FILTER PULSE_APP_SOURCES EXCLUDE REGEX "filename_timing\\.cpp$")
 list(FILTER PULSE_APP_SOURCES EXCLUDE REGEX "text_task_reader\\.cpp$")
@@ -508,9 +522,6 @@ add_executable(pulse_index WIN32
     src/index/index_path_service.cpp
     src/index/index_migration.cpp
     src/index/network_agent_main.cpp
-    src/index/content_agent.cpp
-    src/index/content_instant_session.cpp
-    src/index/content_search.cpp
     src/index/index_engine.cpp
     src/index/change_tracking.cpp
     src/index/index_visibility.cpp
@@ -533,6 +544,21 @@ add_dependencies(pulse_index_host_stress pulse_index)
 add_executable(pulse_index_caller_filter_test src/bench/index_caller_filter_test.cpp)
 target_link_libraries(pulse_index_caller_filter_test PRIVATE advapi32)
 add_dependencies(pulse_index_caller_filter_test pulse_index)
+
+# ---- Pulse.Content.exe: content search agent, shipped in the content enhancement pack ----
+add_executable(pulse_content WIN32
+    src/index/content_host_main.cpp
+    src/index/content_agent.cpp
+    src/index/content_instant_session.cpp
+    src/index/content_search.cpp
+    src/index/index_query.cpp
+    src/index/search_kinds.cpp)
+target_sources(pulse_content PRIVATE src/index/content_host.rc)
+target_link_options(pulse_content PRIVATE /MANIFEST:NO)
+set_target_properties(pulse_content PROPERTIES OUTPUT_NAME "Pulse.Content")
+target_link_libraries(pulse_content PRIVATE advapi32 shlwapi ole32 shell32 bcrypt pulse_localization
+    pulse_crash_reporter pulse_text)
+pulse_add_version_resource(pulse_content "Pulse content search agent" "Pulse.Content" "Pulse.Content.exe")
 
 # ---- Stage 1B-1 ops self test (console; drives pulse_shell.exe over the pipe) ----
 add_executable(pulse_operation_presentation_test src/bench/operation_presentation_test.cpp)
@@ -960,7 +986,7 @@ foreach(folder_size_target pulse_index pulse_index_engine_test pulse_index_pinyi
     target_sources(${folder_size_target} PRIVATE src/index/index_folder_sizes.cpp)
 endforeach()
 
-foreach(search_target pulse_index pulse_content_search_test)
+foreach(search_target pulse_content pulse_content_search_test)
     target_sources(${search_target} PRIVATE src/index/content_index.cpp)
     target_link_libraries(${search_target} PRIVATE pulse_sqlite)
 endforeach()
@@ -987,7 +1013,7 @@ add_executable(pulse_content_index_test src/bench/content_index_test.cpp src/ben
     src/index/content_index.cpp src/index/content_search.cpp src/index/content_search_client.cpp
     src/index/index_query.cpp src/index/search_kinds.cpp src/index/filename_pinyin.cpp)
 target_link_libraries(pulse_content_index_test PRIVATE pulse_sqlite pulse_text bcrypt ole32)
-add_dependencies(pulse_content_index_test pulse_index)
+add_dependencies(pulse_content_index_test pulse_index pulse_content)
 add_executable(pulse_search_enhancement_ui_test src/bench/search_enhancement_ui_test.cpp
     src/ui/name_highlight.cpp src/app/search_query.cpp src/app/search_query_rewrite.cpp src/index/index_query.cpp
     src/index/search_kinds.cpp src/index/filename_pinyin.cpp)
@@ -1008,7 +1034,7 @@ add_executable(pulse_content_paging_test src/bench/content_paging_test.cpp
     src/index/content_result_store.cpp src/index/content_index.cpp src/index/content_search.cpp
     src/index/content_search_client.cpp src/index/index_query.cpp src/index/search_kinds.cpp src/index/filename_pinyin.cpp)
 target_link_libraries(pulse_content_paging_test PRIVATE pulse_sqlite pulse_text bcrypt ole32)
-add_dependencies(pulse_content_paging_test pulse_index)
+add_dependencies(pulse_content_paging_test pulse_index pulse_content)
 
 foreach(content_client_target pulse pulse_content_search_test pulse_content_index_test pulse_content_paging_test)
     target_sources(${content_client_target} PRIVATE src/index/content_search_session.cpp)
@@ -1034,10 +1060,44 @@ add_dependencies(pulse_document_pool_bench pulse_document)
 target_link_libraries(pulse_pdf_bench PRIVATE pulse_document_reader ole32 psapi)
 add_dependencies(pulse_pdf_bench pulse_document)
 pulse_add_version_resource(pulse_document "Pulse document text extractor" "Pulse.Document" "Pulse.Document.exe")
-foreach(document_target pulse pulse_index pulse_content_search_test pulse_content_index_test pulse_content_paging_test)
+foreach(document_target pulse pulse_content pulse_content_search_test pulse_content_index_test pulse_content_paging_test)
     target_link_libraries(${document_target} PRIVATE pulse_document_reader)
     add_dependencies(${document_target} pulse_document)
 endforeach()
+target_include_directories(pulse_document PRIVATE "${CMAKE_BINARY_DIR}/generated")
+
+# The content enhancement pack: LZMS release assets of Pulse.Content.exe and
+# Pulse.Document.exe in build/content-pack, and the catalog pulse.exe checks
+# them against (size + SHA-256, downloaded from this version's GitHub release).
+# Re-generated whenever either file changes, including after release signing.
+add_executable(pulse_pack_catalog src/build_tools/pack_catalog_tool.cpp)
+target_link_libraries(pulse_pack_catalog PRIVATE cabinet bcrypt)
+set(PULSE_CONTENT_PACK_DIR "${CMAKE_BINARY_DIR}/content-pack")
+set(PULSE_CONTENT_PACK_CATALOG "${CMAKE_BINARY_DIR}/generated/content_pack_catalog.h")
+add_custom_command(OUTPUT "${PULSE_CONTENT_PACK_CATALOG}"
+    COMMAND pulse_pack_catalog --key content --symbol Content --version "${PULSE_VERSION}"
+        --channel "${PULSE_CONTENT_PACK_CHANNEL}"
+        --base-url "https://github.com/jimmgreen/pulse/releases/download/v${PULSE_VERSION}/"
+        --out-dir "${PULSE_CONTENT_PACK_DIR}" --header "${PULSE_CONTENT_PACK_CATALOG}"
+        "$<TARGET_FILE:pulse_content>" "$<TARGET_FILE:pulse_document>"
+    DEPENDS pulse_pack_catalog pulse_content pulse_document
+        "$<TARGET_FILE:pulse_content>" "$<TARGET_FILE:pulse_document>"
+    COMMENT "Content enhancement pack catalog"
+    VERBATIM)
+add_custom_target(pulse_content_pack DEPENDS "${PULSE_CONTENT_PACK_CATALOG}")
+add_executable(pulse_content_pack_test src/bench/content_pack_test.cpp src/app/content_pack.cpp
+    src/app/pack_installer.cpp src/app/update_installer.cpp src/app/update_transport.cpp
+    src/app/update_download_cleanup.cpp)
+target_compile_definitions(pulse_content_pack_test PRIVATE PULSE_CONTENT_PACK_NO_CATALOG=1)
+target_include_directories(pulse_content_pack_test PRIVATE "${CMAKE_BINARY_DIR}/generated")
+target_link_libraries(pulse_content_pack_test PRIVATE pulse_runtime_log bcrypt cabinet shell32 user32 winhttp crypt32 advapi32)
+add_dependencies(pulse_content_pack_test pulse_pack_catalog)
+if(TARGET pulse)
+    add_dependencies(pulse pulse_content_pack)
+    target_sources(pulse PRIVATE "${PULSE_CONTENT_PACK_CATALOG}")
+    target_include_directories(pulse PRIVATE "${CMAKE_BINARY_DIR}/generated")
+endif()
+
 add_executable(pulse_office_ooxml_test src/bench/office_ooxml_test.cpp src/index/office_ooxml.cpp)
 target_include_directories(pulse_office_ooxml_test PRIVATE src)
 target_link_libraries(pulse_office_ooxml_test PRIVATE ole32 uuid xmllite)
@@ -1051,7 +1111,7 @@ target_link_libraries(pulse_content_task PUBLIC pulse_document_reader pulse_text
 add_executable(pulse_content_timing_test src/bench/content_timing_test.cpp src/index/content_timing.cpp)
 add_executable(pulse_text_task_test src/bench/text_task_reader_test.cpp src/index/text_task_reader.cpp)
 target_link_libraries(pulse_text_task_test PRIVATE pulse_text)
-foreach(task_target pulse_index pulse_content_search_test pulse_content_index_test pulse_content_paging_test pulse_office_index_test)
+foreach(task_target pulse_content pulse_content_search_test pulse_content_index_test pulse_content_paging_test pulse_office_index_test)
     target_link_libraries(${task_target} PRIVATE pulse_content_task)
 endforeach()
 
@@ -1063,7 +1123,7 @@ add_executable(pulse_watch_lease_test src/bench/watch_lease_test.cpp)
 target_link_libraries(pulse_watch_lease_test PRIVATE pulse_fs_watch)
 add_executable(pulse_bitlocker_unlock_test src/bench/bitlocker_unlock_test.cpp src/app/bitlocker_unlock.cpp)
 target_link_libraries(pulse_bitlocker_unlock_test PRIVATE shell32 ole32 user32)
-foreach(watch_target pulse pulse_index pulse_content_search_test pulse_content_index_test pulse_content_paging_test pulse_office_index_test)
+foreach(watch_target pulse pulse_index pulse_content pulse_content_search_test pulse_content_index_test pulse_content_paging_test pulse_office_index_test)
     target_link_libraries(${watch_target} PRIVATE pulse_fs_watch)
 endforeach()
 
@@ -1319,7 +1379,7 @@ add_executable(pulse_common_persistence_test src/bench/common_persistence_test.c
 target_link_libraries(pulse_common_persistence_test PRIVATE pulse_localization pulse_runtime_log user32 shell32 ole32 uuid advapi32 shlwapi netapi32 psapi)
 
 if(PULSE_RELEASE_SYMBOLS)
-    foreach(payload_target pulse pulse_index pulse_document pulse_preview pulse_shell pulse_integration pulse_elevated)
+    foreach(payload_target pulse pulse_index pulse_content pulse_document pulse_preview pulse_shell pulse_integration pulse_elevated)
         target_compile_options(${payload_target} PRIVATE /Z7)
         target_link_options(${payload_target} PRIVATE /DEBUG:FULL /OPT:REF /OPT:ICF)
     endforeach()
@@ -1770,6 +1830,7 @@ if(PULSE_BUILD_PROGRESS_UI_TESTS)
     get_target_property(progress_ui_libraries pulse LINK_LIBRARIES)
     add_executable(pulse_content_progress_ui_test src/bench/content_progress_ui_test.cpp ${progress_ui_sources})
     target_link_libraries(pulse_content_progress_ui_test PRIVATE ${progress_ui_libraries})
+    add_dependencies(pulse_content_progress_ui_test pulse_content_pack)
     foreach(progress_property INCLUDE_DIRECTORIES COMPILE_DEFINITIONS LINK_OPTIONS)
         get_target_property(progress_value pulse ${progress_property})
         if(progress_value)

@@ -28,7 +28,7 @@ std::vector<DWORD> Children() {
     PROCESSENTRY32W entry{sizeof(entry)};
     if (snapshot != INVALID_HANDLE_VALUE) {
         if (Process32FirstW(snapshot, &entry)) do {
-            if (entry.th32ParentProcessID == GetCurrentProcessId() && entry.th32ProcessID != fixture_host && _wcsicmp(entry.szExeFile, L"Pulse.Index.exe") == 0) ids.push_back(entry.th32ProcessID);
+            if (entry.th32ParentProcessID == GetCurrentProcessId() && entry.th32ProcessID != fixture_host && _wcsicmp(entry.szExeFile, L"Pulse.Content.exe") == 0) ids.push_back(entry.th32ProcessID);
         } while (Process32NextW(snapshot, &entry));
         CloseHandle(snapshot);
     }

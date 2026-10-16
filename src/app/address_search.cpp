@@ -8,6 +8,7 @@
 #include "../common/text_format.h"
 #include "app_prompts.h"
 #include "content_scope_mode.h"
+#include "content_pack_ui.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -277,6 +278,8 @@ void SwitchAddressSearchMode(AppState& s, bool content) {
         }
         if (s.hwndAddressEdit) SetFocus(s.hwndAddressEdit);
     }
+    // Content search comes in the enhancement pack; offer it once per run here.
+    if (content && !s.isolatedTest) OfferContentPack(s, true);
     s.addressSearchContent = content;
     const auto& cue = l10n::Get(content ? l10n::StringId::SearchContentHint : l10n::StringId::SearchNameHint);
     SendMessageW(s.hwndAddressEdit, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(cue.c_str()));
@@ -318,6 +321,8 @@ void SubmitAddressSearch(AppState& s, bool live) {
     const auto first = query.find_first_not_of(L" \t\r\n");
     s.addressLiveDue = 0;
     if (s.addressSearchComposing) return;
+    // Enter in content search without the pack: ask (again) for the download.
+    if (!live && s.addressSearchContent) OfferContentPack(s);
     if (first == std::wstring::npos) {
         if ((!live || !IsAddressSearchResults(tab)) && !s.addressSearchContent) return;
         query.clear();

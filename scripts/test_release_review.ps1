@@ -9,13 +9,15 @@ $failures = 0
 function Check([bool]$ok, [string]$label) {
     if ($ok) { Write-Output "[PASS] $label" } else { Write-Output "[FAIL] $label"; $script:failures++ }
 }
-foreach ($name in @('package_portable.ps1','check_release_payload.ps1','archive_symbols.ps1')) {
+foreach ($name in @('package_portable.ps1','check_release_payload.ps1','archive_symbols.ps1','release_payload.ps1')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $fixtureScripts
 }
 [IO.File]::WriteAllText((Join-Path $fixture 'version.txt'), '0.0.0')
-$binaryNames = @('pulse.exe','Pulse.Index.exe','Pulse.Document.exe','Pulse.Preview.exe',
+$binaryNames = @('pulse.exe','Pulse.Index.exe','Pulse.Preview.exe',
     'pulse_shell.exe','pulse_elevated.exe','pulse_integration.exe','lumatext.dll','pdfium.dll')
-foreach ($name in $binaryNames) { [IO.File]::WriteAllText((Join-Path $build $name), 'private non-executable fixture') }
+# Content enhancement pack: signed and symbol-archived, never in the ZIP.
+$packNames = @('Pulse.Content.exe','Pulse.Document.exe')
+foreach ($name in $binaryNames + $packNames) { [IO.File]::WriteAllText((Join-Path $build $name), 'private non-executable fixture') }
 foreach ($folder in @('licenses/PDFium','licenses/LumaText')) {
     $path = Join-Path $build $folder
     New-Item -ItemType Directory -Path $path -Force | Out-Null
@@ -34,6 +36,9 @@ $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
 try {
     foreach ($name in $binaryNames) {
         Check (@($archive.Entries | Where-Object { $_.Name -eq $name }).Count -eq 1) "portable contains $name exactly once"
+    }
+    foreach ($name in $packNames) {
+        Check (@($archive.Entries | Where-Object { $_.Name -eq $name }).Count -eq 0) "portable leaves $name to the content pack"
     }
 } finally { $archive.Dispose() }
 $archiveHash = (Get-FileHash -LiteralPath $archivePath).Hash
@@ -60,13 +65,14 @@ Check ($signedSource.Contains('"build_release.bat") /symbols') -and $releaseSour
 Check ([regex]::Matches($releaseSource, '-DCMAKE_BUILD_TYPE=%PULSE_BUILD_TYPE%').Count -eq 3) 'all release dependency branches carry symbol configuration'
 Check ($signedSource.Contains('"pulse_elevated.exe"')) 'signed package includes elevated helper'
 [IO.File]::WriteAllText((Join-Path $build 'pulse_build_id.txt'), 'fixture-build')
-foreach ($name in $binaryNames | Where-Object { $_.EndsWith('.exe') }) {
+foreach ($name in ($binaryNames + $packNames) | Where-Object { $_.EndsWith('.exe') }) {
     [IO.File]::WriteAllText((Join-Path $build ([IO.Path]::ChangeExtension($name,'pdb'))), 'private symbol fixture')
 }
 & pwsh -NoProfile -File (Join-Path $fixtureScripts 'archive_symbols.ps1') -BuildDir 'build' *> (Join-Path $fixture 'symbols.log')
 Check ($LASTEXITCODE -eq 0) 'production symbol archiver accepts complete private set'
 $manifest = Get-Content (Join-Path $fixture 'dist/symbols/0.0.0/fixture-build/manifest.json') -Raw | ConvertFrom-Json
 Check (@($manifest.artifacts | Where-Object { $_.file -eq 'pulse_elevated.pdb' }).Count -eq 1) 'symbol archive records elevated helper PDB'
+Check (@($manifest.artifacts | Where-Object { $_.file -eq 'Pulse.Content.pdb' }).Count -eq 1) 'symbol archive records content pack PDB'
 Move-Item -LiteralPath (Join-Path $build 'pulse_elevated.pdb') -Destination (Join-Path $build 'pulse_elevated.symbol-fixture')
 & pwsh -NoProfile -File (Join-Path $fixtureScripts 'archive_symbols.ps1') -BuildDir 'build' *> (Join-Path $fixture 'missing-symbol.log')
 Check ($LASTEXITCODE -ne 0) 'missing expected symbol remains a hard failure'

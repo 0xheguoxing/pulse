@@ -39,6 +39,7 @@
 #include "search_snapshot_hint.h"
 #include "search_refresh_log.h"
 #include "link_resolve.h"
+#include "content_pack_ui.h"
 #include "startup_location.h"
 #include "last_tab_close.h"
 #include "folder_move_remap.h"
@@ -753,6 +754,8 @@ void ApplyContentSearchUpdate(AppState& s, index::ContentSearchUpdate update) {
         if (update.progress.truncated) {
             target->banner_title = l10n::Get(l10n::StringId::ResultLimitTitle);
             target->banner_message = l10n::Get(l10n::StringId::ResultLimitMessage);
+        } else if (ContentPackBanner(update.progress.error, target->banner_title, target->banner_message)) {
+            // Missing content pack: say so instead of an error code.
         } else if (update.progress.error != ERROR_SUCCESS &&
                    update.progress.error != ERROR_CANCELLED) {
             target->banner_title = l10n::Get(l10n::StringId::SearchIncomplete);

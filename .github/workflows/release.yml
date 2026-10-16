@@ -42,6 +42,11 @@ jobs:
             dist/Pulse-*-portable-win-x64.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        with:
+          name: content-pack-${{ matrix.channel }}
+          path: dist/content-pack-${{ matrix.channel }}/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: diagnostics-${{ matrix.channel }}
@@ -66,6 +71,11 @@ jobs:
           pattern: installer-*
           path: dist
           merge-multiple: true
+      # One directory per channel: dist/content-pack-windows, dist/content-pack-win81.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: content-pack-*
+          path: dist
       - name: Sign manifests and publish both installers
         shell: pwsh
         env:

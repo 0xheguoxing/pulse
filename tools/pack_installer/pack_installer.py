@@ -45,7 +45,6 @@ DEFAULT_LAYOUT = [
     ("{build}/pulse_elevated.exe", "pulse_elevated.exe"),
     ("{build}/pulse_shell.exe", "pulse_shell.exe"),
     ("{build}/pulse_integration.exe", "pulse_integration.exe"),
-    ("{build}/Pulse.Document.exe", "Pulse.Document.exe"),
     ("{build}/lumatext.dll", "lumatext.dll"),
     ("{build}/pdfium.dll", "pdfium.dll"),
     ("{build}/licenses/PDFium/*", "licenses/PDFium/"),
