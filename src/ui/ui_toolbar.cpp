@@ -1,9 +1,77 @@
 #include "ui_renderer_internal.h"
 #include "toolbar_layout.h"
 #include "pane_header_icons.h"
+#include <unordered_map>
 
 namespace pulse::ui {
 namespace {
+// Toolbar motion (pulse_motion_v2, the sidebar's and menus' plate): one hover
+// plate per row glides between the buttons under the pointer - the navigation
+// buttons, the address bar's breadcrumb segments, and the command row - and
+// fades in and out at the ends. The state lives here, per renderer; frames are
+// asked for with a one-shot TIMERPROC timer, so nothing ticks once it settles.
+constexpr float kPlateFadeInMs = 90.0f, kPlateFadeOutMs = 120.0f;
+constexpr UINT_PTR kToolbarFrameTimer = 0x54424D54;  // 'TBMT'
+
+void CALLBACK ToolbarFrameTick(HWND hwnd, UINT, UINT_PTR id, DWORD) {
+    KillTimer(hwnd, id);
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+struct GlidePlate {
+    motion::SpringRectMotion spring;
+    uint64_t context = 0;
+    uint64_t last = 0;
+    int64_t key = -1;
+    float alpha = 0.0f;
+    float radius = 0.0f;
+    D2D1_RECT_F rect{}, target{};
+
+    // hot: the hovered button's rect (nullptr: nothing hovered). Returns true
+    // while the plate still moves or fades.
+    bool Step(int64_t hot_key, const D2D1_RECT_F* hot, float hot_radius, uint64_t frame, uint64_t now,
+              bool animations) {
+        const float dt = static_cast<float>((std::min<uint64_t>)(now - last, 64));
+        last = now;
+        spring.SetAnimationsEnabled(animations);
+        if (hot) {
+            // Coming from nothing, the plate appears at the button (no glide
+            // from wherever it was last).
+            if (alpha <= 0.0f) ++context;
+            key = hot_key;
+            target = *hot;
+            radius = hot_radius;
+            rect = spring.Update(context, key, target, frame, now, motion::spring::Plate);
+            alpha = animations ? (std::min)(1.0f, alpha + dt / kPlateFadeInMs) : 1.0f;
+        } else {
+            // Fades out where it was; a pointer coming back mid-fade glides on.
+            alpha = animations ? (std::max)(0.0f, alpha - dt / kPlateFadeOutMs) : 0.0f;
+            if (alpha > 0.0f) rect = spring.Update(context, key, target, frame, now, motion::spring::Plate);
+            else spring.Hide();
+        }
+        return spring.Active(now) || (alpha > 0.0f && alpha < 1.0f);
+    }
+    void Reset() noexcept {
+        alpha = 0.0f;
+        spring.Hide();
+    }
+};
+
+struct ToolbarMotion {
+    GlidePlate nav, crumbs, commands;
+    bool animations = true;
+    uint64_t animations_checked = 0;
+};
+
+ToolbarMotion& ToolbarMotionFor(const void* renderer) {
+    static std::unordered_map<const void*, ToolbarMotion> motions;
+    return motions[renderer];
+}
+
+int64_t PlateKey(HitTestResult::Region region, int index) {
+    return static_cast<int64_t>(region) * 4096 + index;
+}
+
 std::wstring SelectionChipLabel(int count) {
     wchar_t buf[64]{};
     swprintf_s(buf,l10n::Get(l10n::StringId::SelectedCountFormat).c_str(),count);
@@ -22,6 +90,7 @@ float MainRenderer::SelectionChipLabelWidth(float width, int selected) const {
 // they sit on a faint accent band behind a label, and the app under the
 // drag gets an accent outline.
 void MainRenderer::DrawToolbarApps(const WindowViewModel& vm, const ToolbarLayout& layout, const Theme& theme) {
+    const bool plate_hover=!IsHighContrast();  // DrawToolbar's gliding plate shows the hover
     ID2D1DeviceContext* dc=compositor_->Dc();
     const size_t from=vm.toolbar_pins.size();
     D2D1_RECT_F band=layout.pin_label;
@@ -75,7 +144,7 @@ void MainRenderer::DrawToolbarApps(const WindowViewModel& vm, const ToolbarLayou
                 dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(b.left+h,b.top+h,b.right-h,b.bottom-h),
                     6*scale_,6*scale_),accent.get(),2*scale_);
             }
-        } else if (IsHovered(vm,HitTestResult::ToolbarPin,static_cast<int>(from+i))) {
+        } else if (!plate_hover && IsHovered(vm,HitTestResult::ToolbarPin,static_cast<int>(from+i))) {
             painter_.FillRoundedRect(b,6*scale_,theme.fill_hover);
         }
         const float cx=std::round((b.left+b.right)*0.5f);
@@ -109,9 +178,46 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     const bool compact = rect.right-left < 600*scale_;
     const auto layout = ToolbarLayoutAt(rect.right,NewButtonWidthPx(compact),vm.pane.filter_expand);
     const bool searchOverlay=vm.address_searching && rect.right-left<480*scale_;
+    ToolbarMotion& tm=ToolbarMotionFor(this);
+    if (motion_now_-tm.animations_checked > 2000 || !tm.animations_checked) {
+        // The Windows animation switch, re-read every couple of seconds.
+        tm.animations_checked=motion_now_ ? motion_now_ : 1;
+        tm.animations=motion::SystemAnimationsEnabled();
+    }
+    // High contrast keeps each button's own static hover.
+    const bool plates=!IsHighContrast();
+    bool toolbar_moving=false;
+    // Every return below asks for the next frame while a plate moves.
+    struct FrameRequest {
+        HWND hwnd;
+        const bool& moving;
+        ~FrameRequest() {
+            if (moving && hwnd) SetTimer(hwnd,kToolbarFrameTimer,15,ToolbarFrameTick);
+        }
+    } frame_request{compositor_ ? compositor_->Hwnd() : nullptr,toolbar_moving};
+    const auto draw_plate=[&](const GlidePlate& plate) {
+        if (plate.alpha <= 0.0f) return;
+        D2D1_COLOR_F fill=theme.fill_hover;
+        fill.a*=plate.alpha;
+        painter_.FillRoundedRect(plate.rect,plate.radius,fill);
+    };
+    if (searchOverlay || !plates) tm.nav.Reset();
+    if (searchOverlay || !plates || (vm.address_editing && !vm.address_searching)) tm.crumbs.Reset();
     if (!searchOverlay) {
         const wchar_t* nav_glyphs[] = {kIconBack,kIconForward,kIconUp,kIconRefresh};
         const HitTestResult::Region nav_hits[] = {HitTestResult::NavBack,HitTestResult::NavForward,HitTestResult::NavUp,HitTestResult::NavRefresh};
+        if (plates) {
+            const D2D1_RECT_F* hot=nullptr;
+            int hot_i=-1;
+            for (int i=0;i<4;++i) {
+                const auto& r=layout.navigation[i];
+                const bool enabled=i==0 ? vm.can_go_back : i==1 ? vm.can_go_forward : true;
+                if (r.right>r.left && enabled && IsHovered(vm,nav_hits[i])) { hot=&r; hot_i=i; }
+            }
+            if (tm.nav.Step(hot_i,hot,theme.radius_control*scale_,motion_frame_,motion_now_,tm.animations))
+                toolbar_moving=true;
+            draw_plate(tm.nav);
+        }
         for (int i=0;i<4;++i) {
             const auto r=layout.navigation[i];
             if (r.right<=r.left) continue;
@@ -119,7 +225,7 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             fluent::ButtonSpec button;
             button.bounds = r; button.glyph = nav_glyphs[i];
             button.state.enabled = enabled;
-            button.state.hovered = enabled && IsHovered(vm, nav_hits[i]);
+            button.state.hovered = !plates && enabled && IsHovered(vm, nav_hits[i]);
             painter_.DrawCommandButton(button);
         }
         // Breadcrumb address bar: segments clickable, empty area -> edit mode.
@@ -132,6 +238,14 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         if (!vm.address_editing || vm.address_searching) {
             std::vector<BreadcrumbPlaced> placed;
             BreadcrumbLayout(vm.pane, rect.right, placed);
+            if (plates) {
+                const int hot_i = vm.breadcrumb_hover >= 0 && vm.breadcrumb_hover < static_cast<int>(placed.size()) &&
+                                  vm.breadcrumb_hover != vm.breadcrumb_drop ? vm.breadcrumb_hover : -1;
+                if (tm.crumbs.Step(hot_i, hot_i >= 0 ? &placed[static_cast<size_t>(hot_i)].rc : nullptr,
+                                   theme.radius_control * scale_, motion_frame_, motion_now_, tm.animations))
+                    toolbar_moving = true;
+                draw_plate(tm.crumbs);
+            }
             for (size_t i = 0; i < placed.size(); ++i) {
                 const auto& seg = placed[i];
                 if ((int)i == vm.breadcrumb_drop) {
@@ -139,7 +253,7 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                     dc->DrawRoundedRectangle(
                         D2D1::RoundedRect(seg.rc, theme.radius_control * scale_, theme.radius_control * scale_),
                         brAccent_.get(), 2.0f * scale_);
-                } else if ((int)i == vm.breadcrumb_hover) {
+                } else if (!plates && (int)i == vm.breadcrumb_hover) {
                     MakeBrush(dc, theme.fill_hover, brFillHover_);
                     FillRoundedRect(dc, brFillHover_.get(), seg.rc.left, seg.rc.top,
                         seg.rc.right - seg.rc.left, seg.rc.bottom - seg.rc.top,
@@ -183,6 +297,49 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     FillRect(dc,brStrokeDivider_.get(),left+margin_,title_bar_height_+44*scale_,rect.right-left-2*margin_,scale_);
     // Embedded hosts (the file picker) keep the address row only.
     if (embedded_) return;
+    // The command row's plate: the file and pane commands, overflow, pinned
+    // commands and apps, Sort / Filter / Group.
+    const bool can_paste=vm.paste_target && (vm.clipboard_files || vm.tray_deck.batch_count>0);
+    const HitTestResult::Region hits[]={HitTestResult::Cut,HitTestResult::Copy,HitTestResult::Paste,
+        HitTestResult::Rename,HitTestResult::Delete,HitTestResult::SplitButton,HitTestResult::DetailsToggle,HitTestResult::PaneColumnLayout};
+    const auto command_enabled=[&](int i) {
+        // Cut / copy / rename / delete follow what is selected (a drive takes
+        // a rename only; app::SelectionCaps); paste needs something to paste
+        // (clipboard files or a tray batch) and a folder that takes it.
+        const bool allowed[]={vm.selection_cut,vm.selection_copy,can_paste,vm.selection_rename,vm.selection_delete};
+        return i>=5 || allowed[i];
+    };
+    const bool filter_field=!(vm.pane.filter_expand <= 0.015f && !vm.filter_editing);
+    const bool group_chip=toolbar_group_ > 0;
+    if (plates) {
+        const D2D1_RECT_F* hot=nullptr;
+        int64_t hot_key=-1;
+        float hot_radius=theme.radius_control*scale_;
+        const auto consider=[&](const D2D1_RECT_F& r, bool hovered, int64_t key, float radius) {
+            if (!hot && hovered && r.right > r.left) { hot=&r; hot_key=key; hot_radius=radius; }
+        };
+        const float rc=theme.radius_control*scale_;
+        for (int i=0;i<8;++i)
+            consider(layout.commands[i],command_enabled(i) && IsHovered(vm,hits[i]),PlateKey(hits[i],i),rc);
+        consider(layout.overflow,IsHovered(vm,HitTestResult::ToolbarMore),PlateKey(HitTestResult::ToolbarMore,0),rc);
+        const size_t from=vm.toolbar_pins.size();
+        for (size_t i=0;i<layout.pins.size();++i) {
+            const int idx=static_cast<int>(i);
+            if (!IsHovered(vm,HitTestResult::ToolbarPin,idx)) continue;
+            if (i<from) consider(layout.pins[i],vm.toolbar_pins[i].enabled,PlateKey(HitTestResult::ToolbarPin,idx),rc);
+            else if (i-from<vm.toolbar_apps.size() && vm.toolbar_drop_app!=static_cast<int>(i-from))
+                consider(layout.pins[i],true,PlateKey(HitTestResult::ToolbarPin,idx),6*scale_);
+        }
+        consider(layout.sort,IsHovered(vm,HitTestResult::ToolbarSort),PlateKey(HitTestResult::ToolbarSort,0),rc);
+        if (!filter_field)
+            consider(layout.filter,IsHovered(vm,HitTestResult::FilterBox),PlateKey(HitTestResult::FilterBox,0),rc);
+        if (!group_chip)
+            consider(layout.group,IsHovered(vm,HitTestResult::ToolbarGroup),PlateKey(HitTestResult::ToolbarGroup,0),rc);
+        if (tm.commands.Step(hot_key,hot,hot_radius,motion_frame_,motion_now_,tm.animations)) toolbar_moving=true;
+        draw_plate(tm.commands);
+    } else {
+        tm.commands.Reset();
+    }
     // Split New button: the main part creates a folder (Ctrl+Shift+N), the
     // chevron segment opens the New menu. Each segment gets its own hover.
     const std::wstring label=NewButtonLabel();
@@ -214,19 +371,13 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     }
     const wchar_t* glyphs[]={kIconCut,kIconCopy,kIconPaste,kIconRename,kIconDelete,kIconSplit,
         vm.details_visible ? kIconDetailsClose : kIconDetailsOpen,L""};
-    const HitTestResult::Region hits[]={HitTestResult::Cut,HitTestResult::Copy,HitTestResult::Paste,
-        HitTestResult::Rename,HitTestResult::Delete,HitTestResult::SplitButton,HitTestResult::DetailsToggle,HitTestResult::PaneColumnLayout};
     for(int i=0;i<8;++i) {
         if (layout.commands[i].right <= layout.commands[i].left) continue;
-        // Cut / copy / rename / delete follow what is selected (a drive takes
-        // a rename only; app::SelectionCaps); paste needs something to paste
-        // (clipboard files or a tray batch) and a folder that takes it.
-        const bool can_paste=vm.paste_target && (vm.clipboard_files || vm.tray_deck.batch_count>0);
-        const bool allowed[]={vm.selection_cut,vm.selection_copy,can_paste,vm.selection_rename,vm.selection_delete};
-        const bool enabled=i>=5 || allowed[i];
+        const bool enabled=command_enabled(i);
+        const bool hovered=enabled && IsHovered(vm,hits[i]);
         const bool selected=(i==5 && vm.pane_slots.size()>1) || (i==6 && vm.details_visible) ||
             (i==7 && vm.pane.column_strip.enabled);
-        DrawButton(layout.commands[i],theme,enabled && IsHovered(vm,hits[i]) ? theme.fill_hover :
+        DrawButton(layout.commands[i],theme,hovered ? (plates ? kTransparent : theme.fill_hover) :
             selected ? theme.fill_selected : kTransparent,
             i==5 ? L"" : glyphs[i],L"",!enabled ? theme.text_disabled : selected ? theme.accent : theme.text_secondary,true,true);
         if (i==5) {
@@ -248,7 +399,7 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         if (i==7) DrawPaneHeaderIcon(layout.commands[i],PaneHeaderIcon::Columns,selected ? theme.accent : theme.text_secondary);
     }
     if (layout.overflow.right > layout.overflow.left) {
-        DrawButton(layout.overflow,theme,IsHovered(vm,HitTestResult::ToolbarMore) ? theme.fill_hover : kTransparent,
+        DrawButton(layout.overflow,theme,!plates && IsHovered(vm,HitTestResult::ToolbarMore) ? theme.fill_hover : kTransparent,
             L"\xE712",L"",theme.text_secondary,true,true);
     }
     // Pinned commands (自定义工具栏), after a divider.
@@ -260,7 +411,7 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             MakeBrush(dc,theme.stroke_divider,brStrokeDivider_);
             FillRect(dc,brStrokeDivider_.get(),b.left-7*scale_,b.top+7*scale_,scale_,18*scale_);
         }
-        DrawButton(b,theme,pin.enabled && IsHovered(vm,HitTestResult::ToolbarPin,static_cast<int>(i)) ? theme.fill_hover : kTransparent,
+        DrawButton(b,theme,!plates && pin.enabled && IsHovered(vm,HitTestResult::ToolbarPin,static_cast<int>(i)) ? theme.fill_hover : kTransparent,
             pin.glyph,L"",pin.enabled ? theme.text_secondary : theme.text_disabled,true,true);
     }
     DrawToolbarApps(vm,layout,theme);
@@ -275,7 +426,7 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         button.bordered=false;
         button.drop_down=dropdown && !button.icon_only;
         button.chevron_turn=turn;
-        button.state.hovered=IsHovered(vm,region);
+        button.state.hovered=!plates && IsHovered(vm,region);
         painter_.DrawButton(button);
     };
     // Group dividers as in the prototype: after 新建, and between the view
@@ -294,7 +445,7 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     const bool sort_picker=group_wheel_.IsSortPicker();
     command(layout.sort,L"\xE8CB",l10n::StringId::ToolbarSort,HitTestResult::ToolbarSort,true,
         sort_picker ? picker_open : 0.0f);
-    if (vm.pane.filter_expand <= 0.015f && !vm.filter_editing) {
+    if (!filter_field) {
         command(layout.filter,kIconFilter,l10n::StringId::ToolbarFilter,HitTestResult::FilterBox,false);
     } else {
         fluent::TextFieldSpec field;
@@ -319,7 +470,7 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     if (layout.group.right > layout.group.left) {
         const D2D1_RECT_F g=layout.group;
         const bool icon_only=g.right-g.left < 60*scale_;
-        if (toolbar_group_ <= 0) {
+        if (!group_chip) {
             command(g,L"\xF168",l10n::StringId::ToolbarGroup,HitTestResult::ToolbarGroup,true,
                 sort_picker ? 0.0f : picker_open);
         } else if (icon_only) {
