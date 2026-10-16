@@ -2250,3 +2250,6 @@ ToolbarAppOpened	IDS_TOOLBAR_APP_OPENED	3452	已用 {app} 打开 {n} 项	Opened 
 DeleteSnackTitle	IDS_DELETE_SNACK_TITLE	3453	已删除 {n} 项	Deleted {n} items	已刪除 {n} 項
 DeleteSnackDetail	IDS_DELETE_SNACK_DETAIL	3454	已移到回收站	Moved to the Recycle Bin	已移到資源回收筒
 SetAliasEllipsis	IDS_SET_ALIAS_ELLIPSIS	3455	设置别名…	Set alias…	設定別名…
+AliasDisplayBoth	IDS_ALIAS_DISPLAY_BOTH	3456	别名 + 原名	Alias + name	別名 + 原名
+AliasDisplayOnly	IDS_ALIAS_DISPLAY_ONLY	3457	只显示别名	Alias only	只顯示別名
+AliasDisplayReal	IDS_ALIAS_DISPLAY_REAL	3458	显示原名	Real names	顯示原名

@@ -2239,6 +2239,9 @@ enum class StringId : UINT {
     DeleteSnackTitle = IDS_DELETE_SNACK_TITLE,
     DeleteSnackDetail = IDS_DELETE_SNACK_DETAIL,
     SetAliasEllipsis = IDS_SET_ALIAS_ELLIPSIS,
+    AliasDisplayBoth = IDS_ALIAS_DISPLAY_BOTH,
+    AliasDisplayOnly = IDS_ALIAS_DISPLAY_ONLY,
+    AliasDisplayReal = IDS_ALIAS_DISPLAY_REAL,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

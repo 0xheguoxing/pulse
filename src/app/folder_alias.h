@@ -12,6 +12,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <mutex>
 #include <string>
@@ -20,6 +21,9 @@
 #include <vector>
 
 namespace pulse::app {
+
+// How aliased items are labelled: 别名 + 原名 (default), 只显示别名, 显示原名.
+enum class AliasDisplay : int { Both = 0, AliasOnly = 1, Real = 2 };
 
 struct AliasEntry {
     std::wstring path;    // as given (original case)
@@ -37,7 +41,10 @@ public:
     void Load(const std::wstring& file) {
         std::wstring text;
         std::unordered_map<std::wstring, AliasEntry> loaded;
+        int display = 0;
         if (ReadUtf8File(file, text)) {
+            display = json::ExtractInt(text, L"display", 0);
+            if (display < 0 || display > 2) display = 0;
             const std::wstring object = json::ExtractObject(text, L"aliases");
             json::ForEachMember(object, [&](const std::wstring& key, const std::wstring& raw) {
                 if (raw.size() < 2 || raw.front() != L'"') return;
@@ -51,6 +58,7 @@ public:
         std::lock_guard<std::mutex> lock(mu_);
         file_ = file;
         map_ = std::move(loaded);
+        display_.store(display, std::memory_order_relaxed);
         count_.store(map_.size(), std::memory_order_relaxed);
         revision_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -58,6 +66,27 @@ public:
     bool Empty() const { return count_.load(std::memory_order_relaxed) == 0; }
     // Bumped on every change, so cached rows know to look again.
     uint64_t Revision() const { return revision_.load(std::memory_order_relaxed); }
+
+    AliasDisplay Display() const { return static_cast<AliasDisplay>(display_.load(std::memory_order_relaxed)); }
+    void SetDisplay(AliasDisplay mode) {
+        std::wstring file;
+        std::wstring json;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            if (display_.load(std::memory_order_relaxed) == static_cast<int>(mode)) return;
+            display_.store(static_cast<int>(mode), std::memory_order_relaxed);
+            revision_.fetch_add(1, std::memory_order_relaxed);
+            file = file_;
+            json = SerializeLocked();
+        }
+        if (!file.empty()) WriteUtf8FileAtomic(file, json);
+    }
+    // The label to show for `path` under the display mode: its alias, or
+    // empty when it has none or 显示原名 is on.
+    std::wstring Shown(std::wstring_view path) const {
+        if (Display() == AliasDisplay::Real) return {};
+        return Find(path);
+    }
 
     // The alias of `path`, or empty.
     std::wstring Find(std::wstring_view path) const {
@@ -184,6 +213,39 @@ public:
         return hook && hook(alias, folded_query);
     }
 
+    // Omnibar suggestions for `query`: aliased folders, best first — the
+    // alias itself, then an alias starting with it, its pinyin, an alias
+    // containing it, and last a real folder name containing it.
+    std::vector<AliasEntry> Suggest(std::wstring_view query, size_t limit) const {
+        const std::wstring q = Lower(Trimmed(query));
+        if (q.empty() || Empty()) return {};
+        std::vector<std::pair<int, AliasEntry>> ranked;
+        for (const AliasEntry& e : All()) {
+            const std::wstring a = Lower(e.alias);
+            const size_t slash = e.path.find_last_of(L'\\');
+            const std::wstring base = Lower(slash == std::wstring::npos ? e.path : e.path.substr(slash + 1));
+            int rank = -1;
+            if (a == q) rank = 0;
+            else if (a.starts_with(q)) rank = 1;
+            else if (PinyinHook() && PinyinHook()(e.alias, q)) rank = 2;
+            else if (a.find(q) != std::wstring::npos) rank = 3;
+            else if (base.find(q) != std::wstring::npos) rank = 4;
+            if (rank < 0) continue;
+            const DWORD attrs = GetFileAttributesW(e.path.c_str());
+            if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY)) continue;
+            ranked.emplace_back(rank, e);
+        }
+        std::stable_sort(ranked.begin(), ranked.end(), [](const auto& l, const auto& r) {
+            return l.first != r.first ? l.first < r.first : l.second.alias < r.second.alias;
+        });
+        std::vector<AliasEntry> out;
+        for (auto& [rank, e] : ranked) {
+            if (out.size() >= limit) break;
+            out.push_back(std::move(e));
+        }
+        return out;
+    }
+
     static std::wstring Lower(std::wstring_view s) {
         std::wstring out(s);
         if (!out.empty())
@@ -215,7 +277,8 @@ private:
     static std::wstring Key(std::wstring_view path) { return Lower(Normalized(path)); }
 
     std::wstring SerializeLocked() const {
-        std::wstring out = L"{\n  \"version\": 1,\n  \"aliases\": {";
+        std::wstring out = L"{\n  \"version\": 1,\n  \"display\": " +
+                           std::to_wstring(display_.load(std::memory_order_relaxed)) + L",\n  \"aliases\": {";
         bool first = true;
         for (const auto& [k, e] : map_) {
             out += first ? L"\n    \"" : L",\n    \"";
@@ -233,6 +296,7 @@ private:
     std::wstring file_;
     std::unordered_map<std::wstring, AliasEntry> map_;
     std::atomic<size_t> count_{0};
+    std::atomic<int> display_{0};
     std::atomic<uint64_t> revision_{1};
 };
 

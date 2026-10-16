@@ -362,7 +362,7 @@ void ClearTextWidthCache() {
         entry.accessed_value = time_value(source.atime);
         entry.path = !source.full_path.empty() ? source.full_path
                      : (fs::IsVirtualPath(vm.path) ? L"" : JoinDirName(vm.path, source.name));
-        if (!entry.path.empty()) entry.alias = app::AliasStore::Instance().Find(entry.path);
+        if (!entry.path.empty()) entry.alias = app::AliasStore::Instance().Shown(entry.path);
         entry.attrs = source.attrs;
         entry.size_value = source.size;
         entry.modified_value = (static_cast<uint64_t>(source.mtime.dwHighDateTime) << 32) |

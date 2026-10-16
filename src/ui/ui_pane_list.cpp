@@ -3231,7 +3231,10 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             }
             // 别名: the alias leads and the real name follows, quieter.
             const bool has_alias = !e.alias.empty();
-            const std::wstring alias_line = has_alias ? e.alias + L"\u2003\u2003" + e.name : std::wstring();
+            // 只显示别名 drops the real name (the tooltip still has it).
+            const bool alias_both = has_alias && app::AliasStore::Instance().Display() == app::AliasDisplay::Both;
+            const std::wstring alias_line = !has_alias ? std::wstring()
+                : alias_both ? e.alias + L"\u2003\u2003" + e.name : e.alias;
             static const std::vector<NameMatchRange> kNoAliasMatches;
             const auto name_matches = has_alias ? kNoAliasMatches : NameMatchRanges(e.name, highlight_terms);
             if (iconGrid && tagDotCount > 0) {
@@ -3316,7 +3319,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                                       selected, kNoAliasMatches, false);
                     const float real_x = trail.name_x + shown_w + 8.0f * scale_;
                     const float real_w = trail.name_x + trail.name_w - real_x;
-                    if (real_w >= 28.0f * scale_) {
+                    if (alias_both && real_w >= 28.0f * scale_) {
                         Theme real_theme = theme;
                         real_theme.text = WithAlpha(theme.text_secondary, cut ? 0.45f : 0.85f);
                         DrawTruncatedName(e.name, real_x, textY, real_w, textH, real_theme,

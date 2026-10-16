@@ -1,5 +1,6 @@
 #include "tag_color_commands.h"
 #include "tag_ads_sync.h"
+#include "folder_alias.h"
 #include "keymap.h"
 #include <atomic>
 #include "../ui/shortcut_help.h"
@@ -1130,6 +1131,11 @@ void DispatchMenuCommand(AppState& s, int cmd) {
         const size_t tool = static_cast<size_t>(cmd - app::CmdToolbarToolBase);
         if (app::kToolbarToolIds[tool] == L"split") ShowSplitDropdown(s);
         else FlipToolbarTool(s, tool);
+        return;
+    }
+    if (cmd >= app::CmdAliasDisplayBase && cmd < app::CmdAliasDisplayBase + 3) {
+        app::AliasStore::Instance().SetDisplay(static_cast<app::AliasDisplay>(cmd - app::CmdAliasDisplayBase));
+        InvalidateRect(s.hwnd, nullptr, FALSE);
         return;
     }
     if (cmd >= app::CmdNewPrimaryBase && cmd < app::CmdNewPrimaryBase + 3) {
@@ -3682,7 +3688,8 @@ void ShowOmnibar(AppState& s, OmnibarMode mode) {
                                        l10n::StringId::OmnibarDefault));
 
     const bool project_only = mode == OmnibarMode::Project;
-    auto rebuild = [&s, project_only](const std::wstring& query) {
+    std::vector<std::wstring> alias_paths;
+    auto rebuild = [&s, project_only, &alias_paths](const std::wstring& query) {
         const auto parsed = app::ParseOmnibarQuery(query, project_only);
         s.paletteQuery = query;
         bool folders_only = parsed.kind == app::OmnibarQuery::Kind::Project;
@@ -3732,6 +3739,28 @@ void ShowOmnibar(AppState& s, OmnibarMode mode) {
         const std::wstring current = ActiveTab(s) ? ActiveTab(s)->current_path : L"";
         auto items = app::BuildCommandPalette(query, s.places.RecentFolderPaths(), s.paletteHits,
                                               project_only, s.paletteTotal, current);
+        // 别名: aliased folders lead ("fbb" or 发布包 → that folder).
+        alias_paths.clear();
+        if (parsed.kind == app::OmnibarQuery::Kind::Mixed && !parsed.needle.empty() &&
+            !app::LooksLikeFilesystemPath(parsed.needle)) {
+            std::vector<ui::FluentMenuItem> aliased;
+            for (const auto& e : app::AliasStore::Instance().Suggest(parsed.needle, 6)) {
+                ui::FluentMenuItem item;
+                item.command = app::CmdAliasBase + static_cast<int>(alias_paths.size());
+                item.text = e.alias;
+                item.glyph = L"\xE8B7";  // folder
+                item.shortcut = e.path;
+                item.shortcut_inline = true;
+                item.tooltip = e.path;
+                alias_paths.push_back(e.path);
+                aliased.push_back(std::move(item));
+            }
+            if (!aliased.empty()) {
+                aliased.back().separator_after = !items.empty();
+                items.insert(items.begin(), std::make_move_iterator(aliased.begin()),
+                             std::make_move_iterator(aliased.end()));
+            }
+        }
         if (s.paletteSearching) {
             ui::FluentMenuItem wait;
             wait.text = l10n::Get(l10n::StringId::Searching);
@@ -3755,6 +3784,11 @@ void ShowOmnibar(AppState& s, OmnibarMode mode) {
     s.paletteIssuedNeedle.clear();
     s.addressEditing = false;
     InvalidateRect(s.hwnd, nullptr, FALSE);
+    if (cmd >= app::CmdAliasBase && cmd < app::CmdAliasBase + 16) {
+        const size_t index = static_cast<size_t>(cmd - app::CmdAliasBase);
+        if (index < alias_paths.size()) NavigateTo(s, alias_paths[index]);
+        return;
+    }
     if (cmd != app::CmdNone) {
         DispatchMenuCommand(s, cmd);
         return;

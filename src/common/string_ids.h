@@ -2243,5 +2243,8 @@
 #define IDS_DELETE_SNACK_TITLE                                                           3453
 #define IDS_DELETE_SNACK_DETAIL                                                          3454
 #define IDS_SET_ALIAS_ELLIPSIS                                                           3455
+#define IDS_ALIAS_DISPLAY_BOTH                                                           3456
+#define IDS_ALIAS_DISPLAY_ONLY                                                           3457
+#define IDS_ALIAS_DISPLAY_REAL                                                           3458
 
 #endif  // PULSE_STRING_IDS_H

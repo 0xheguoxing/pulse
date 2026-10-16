@@ -516,7 +516,7 @@ void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
     if (!app::AliasStore::Instance().Empty()) {
         for (auto& seg : segments) {
             if (seg.path.empty() || seg.path.starts_with(L"pulse:")) continue;
-            if (std::wstring alias = app::AliasStore::Instance().Find(seg.path); !alias.empty())
+            if (std::wstring alias = app::AliasStore::Instance().Shown(seg.path); !alias.empty())
                 seg.text = std::move(alias);
         }
     }

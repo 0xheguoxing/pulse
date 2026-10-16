@@ -911,7 +911,7 @@ std::wstring TabTitle(const std::wstring& path) {
         if (kind == L"tag") return rest.empty() ? l10n::Get(l10n::StringId::Tag) : rest;
     }
     // 别名: tabs, the sidebar and window lists show the folder's alias.
-    if (std::wstring alias = AliasStore::Instance().Find(path); !alias.empty()) return alias;
+    if (std::wstring alias = AliasStore::Instance().Shown(path); !alias.empty()) return alias;
     std::wstring_view v = path;
     if (v.size() > 1 && v.back() == L'\\') v.remove_suffix(1);
     auto pos = v.find_last_of(L"\\/");

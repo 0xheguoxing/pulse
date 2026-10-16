@@ -2229,6 +2229,9 @@ BEGIN
     IDS_DELETE_SNACK_TITLE "已删除 {n} 项"
     IDS_DELETE_SNACK_DETAIL "已移到回收站"
     IDS_SET_ALIAS_ELLIPSIS "设置别名…"
+    IDS_ALIAS_DISPLAY_BOTH "别名 + 原名"
+    IDS_ALIAS_DISPLAY_ONLY "只显示别名"
+    IDS_ALIAS_DISPLAY_REAL "显示原名"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4457,6 +4460,9 @@ BEGIN
     IDS_DELETE_SNACK_TITLE "Deleted {n} items"
     IDS_DELETE_SNACK_DETAIL "Moved to the Recycle Bin"
     IDS_SET_ALIAS_ELLIPSIS "Set alias…"
+    IDS_ALIAS_DISPLAY_BOTH "Alias + name"
+    IDS_ALIAS_DISPLAY_ONLY "Alias only"
+    IDS_ALIAS_DISPLAY_REAL "Real names"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

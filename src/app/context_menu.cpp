@@ -1,5 +1,6 @@
 // context_menu.cpp — See context_menu.h.
 #include "context_menu.h"
+#include "folder_alias.h"
 #include "app_model.h"
 #include "../common/localization.h"
 #include "../common/path_utils.h"
@@ -537,6 +538,21 @@ std::vector<ui::FluentMenuItem> BuildViewMenu(ui::ViewMode current_mode, bool de
         items.back().separator_after = true;
         items.push_back(Item(CmdApplyViewToAllFolders,
             l10n::Get(l10n::StringId::ApplyViewAllFolders).c_str(), L"\xE8B3"));
+    }
+    // 别名: how aliased items are labelled, once there are any.
+    if (!AliasStore::Instance().Empty()) {
+        items.back().separator_after = true;
+        static constexpr l10n::StringId alias_labels[] = {
+            l10n::StringId::AliasDisplayBoth, l10n::StringId::AliasDisplayOnly,
+            l10n::StringId::AliasDisplayReal,
+        };
+        const int current = static_cast<int>(AliasStore::Instance().Display());
+        for (int i = 0; i < 3; ++i) {
+            auto row = Item(CmdAliasDisplayBase + i, l10n::Get(alias_labels[i]).c_str(),
+                            i == 0 ? L"\xE8EC" : L"");
+            row.radio = current == i;
+            items.push_back(std::move(row));
+        }
     }
     return items;
 }
