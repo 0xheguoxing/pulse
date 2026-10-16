@@ -5,6 +5,11 @@
 namespace pulse::ui {
 constexpr UINT_PTR kEditCaretTimer = 71;
 namespace {
+// Re-arm the blink timer after a caret move so the next toggle comes one full
+// interval later; the painter restarts the blink phase at the same moment.
+void RestartCaretBlink(HWND hwnd) {
+    if (GetFocus() == hwnd) SetTimer(hwnd, kEditCaretTimer, GetCaretBlinkTime(), nullptr);
+}
 constexpr wchar_t kNativeEdit[] = L"Pulse.NativeEditFallback";
 constexpr wchar_t kPolicyNative[] = L"Pulse.NativeEditPolicy";
 constexpr wchar_t kRestoreUploaded[] = L"Pulse.EditRestoreUploaded";
@@ -114,6 +119,8 @@ bool HandleChildEditMessage(Compositor& compositor, IDWriteTextFormat* format,
         if (!CustomEdit(compositor, hwnd)) return false;
         result = compositor.CallLumaEditMouse(
             hwnd, msg, wParam, lParam, format);
+        if (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK || msg == WM_LBUTTONUP)
+            RestartCaretBlink(hwnd);
         if (msg != WM_MOUSEMOVE || GetCapture() == hwnd) {
             PresentEdit(compositor, hwnd, format,
                                          foreground, background);
@@ -131,6 +138,7 @@ bool HandleChildEditMessage(Compositor& compositor, IDWriteTextFormat* format,
         result = DefSubclassProc(hwnd, msg, wParam, lParam);
         if (CustomEdit(compositor, hwnd)) {
             HideCaret(hwnd);
+            compositor.SynchronizeEditSelection(hwnd, msg, wParam, lParam); // caret starts solid
             SetTimer(hwnd, kEditCaretTimer, GetCaretBlinkTime(), nullptr);
             PresentEdit(compositor, hwnd, format,
                                          foreground, background);
@@ -183,6 +191,7 @@ LRESULT DefPresentedChildEditProc(Compositor& compositor, IDWriteTextFormat* for
     if (custom_paint) {
         SendMessageW(hwnd, WM_SETREDRAW, TRUE, 0);
         HideCaret(hwnd);
+        RestartCaretBlink(hwnd);
         PresentEdit(compositor, hwnd, format,
             foreground, background);
     }

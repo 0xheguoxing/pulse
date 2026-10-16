@@ -192,6 +192,11 @@ struct LumaTextRenderer::Impl {
     // only when the caret would leave the field. Paint and mouse hit-testing
     // share it so the pointer maps to the characters actually on screen.
     std::unordered_map<HWND, float> edit_scrolls;
+    // Caret blink restarts (solid) at the last caret move, typed character or
+    // click, as in native editors. Phasing the blink off the global tick
+    // count left the caret hidden for up to a blink interval after an arrow
+    // key, and invisible throughout when the keys landed in the off phase.
+    std::unordered_map<HWND, DWORD> caret_epochs;
     static constexpr float kEditPad = 2.0f;
     // Edits carrying this property wrap onto as many lines as the text needs
     // (the icon-grid rename field). The EDIT itself stays single-line, so
@@ -1319,8 +1324,10 @@ struct LumaTextRenderer::Impl {
             }
         }
         const UINT blink = GetCaretBlinkTime();
+        const auto epoch = caret_epochs.find(hwnd);
+        const DWORD since = GetTickCount() - (epoch != caret_epochs.end() ? epoch->second : 0u);
         const bool caret_on = GetFocus() == hwnd && GetCapture() != hwnd &&
-            (blink == INFINITE || ((GetTickCount() / std::max(1u, blink)) % 2u) == 0u);
+            (blink == INFINITE || ((since / std::max(1u, blink)) % 2u) == 0u);
         if (caret_on && brush) {
             brush->SetColor(foreground);
             // Fill whole pixels: a half-pixel origin splits the caret into two
@@ -1438,12 +1445,18 @@ void LumaTextRenderer::SyncEditSelection(HWND hwnd, UINT message, WPARAM wparam,
         if (message == WM_NCDESTROY) {
             impl_->edit_selections.erase(hwnd);
             impl_->edit_scrolls.erase(hwnd);
+            impl_->caret_epochs.erase(hwnd);
             impl_->edit_painted.erase(hwnd);
         }
         return;
     }
     // New text starts at the left edge, as native EDIT does.
     if (message == WM_SETTEXT) impl_->edit_scrolls.erase(hwnd);
+    if (message == WM_SETFOCUS || message == EM_SETSEL || message == WM_KEYDOWN ||
+        message == WM_CHAR || message == WM_SETTEXT || message == EM_REPLACESEL ||
+        message == WM_CUT || message == WM_PASTE || message == WM_CLEAR || message == WM_UNDO ||
+        message == EM_UNDO || message == WM_IME_COMPOSITION || message == WM_IME_ENDCOMPOSITION)
+        impl_->caret_epochs[hwnd] = GetTickCount();
     if (impl_->applying_mouse_selection) return;
     if (message != EM_SETSEL && message != WM_KEYDOWN && message != WM_CHAR &&
         message != WM_SETTEXT && message != EM_REPLACESEL && message != WM_CUT &&
@@ -1514,6 +1527,8 @@ LRESULT LumaTextRenderer::CallEditDefaultMouse(HWND hwnd, UINT msg, WPARAM wPara
             }
         } guard(*impl_, hwnd);
         HideCaret(hwnd);
+        if (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK || msg == WM_LBUTTONUP)
+            impl_->caret_epochs[hwnd] = GetTickCount();
         switch (msg) {
         case WM_LBUTTONDOWN:
         case WM_LBUTTONDBLCLK:
