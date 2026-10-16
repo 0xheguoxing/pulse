@@ -69,6 +69,7 @@ private:
     void RecreateFormats();
     bool OfflinePlaceholder() const noexcept;
     void ResetAnimation();
+    void PostNavigate(int dir);
     void BeginVideo();
     void ResetPlayback();
     bool HasPlayback() const noexcept;
@@ -317,6 +318,12 @@ private:
     uint32_t loop_count_ = 0;
     uint32_t completed_loops_ = 0;
     bool animation_active_ = false;
+    // Prev / next slide (motion phase 6): direction asked for, and the slide
+    // of the item that answered it.
+    int pending_nav_dir_ = 0;
+    uint64_t pending_nav_at_ = 0;   // motion::NowMs
+    int nav_dir_ = 0;
+    uint64_t nav_start_ = 0;        // motion::NowMs
     bool waiting_for_frame_ = false;
     bool animation_started_ = false;
     // Paged document state; pages_count_ > 1 switches Render to DrawPages.

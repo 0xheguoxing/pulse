@@ -57,6 +57,7 @@ constexpr UINT_PTR kAnimationTimer = 7;
 constexpr UINT_PTR kPreviewDeadlineTimer = 31;
 constexpr UINT_PTR kFindEditCaretTimer = 71;
 constexpr UINT_PTR kZoomCloseTimer = 72;
+constexpr UINT_PTR kNavSlideTimer = 74;  // the next item slides in (motion phase 6)
 constexpr double kZoomOpenSeconds = 0.22;
 constexpr double kZoomCloseSeconds = 0.15;
 constexpr float kMaxDecodedZoom = 4.0f;
@@ -320,8 +321,26 @@ void QuickPreviewWindow::Show(const QuickPreviewItem& item, bool dark, WindowEff
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+// Prev / next: remember the direction so the item that answers slides in
+// from that side (pulse_motion_v2.html quick preview, spring Smooth).
+void QuickPreviewWindow::PostNavigate(int dir) {
+    if (!owner_ || !navigate_message_) return;
+    pending_nav_dir_ = dir;
+    pending_nav_at_ = motion::NowMs();
+    PostMessageW(owner_, navigate_message_, static_cast<WPARAM>(static_cast<INT_PTR>(dir)), 0);
+}
+
 void QuickPreviewWindow::Update(const QuickPreviewItem& item) {
     if (!visible() || item.path.empty()) return;
+    const uint64_t nav_now = motion::NowMs();
+    nav_dir_ = 0;
+    if (pending_nav_dir_ != 0 && item.path != item_.path && nav_now - pending_nav_at_ < 600 &&
+        motion::SystemAnimationsEnabled()) {
+        nav_dir_ = pending_nav_dir_;
+        nav_start_ = nav_now;
+        SetTimer(hwnd_, kNavSlideTimer, 15, nullptr);
+    }
+    pending_nav_dir_ = 0;
     commands_.Clear();
     item_ = item;
     ++generation_;
@@ -546,11 +565,10 @@ QuickPreviewWindow::ChromeButton QuickPreviewWindow::HitChromeButton(POINT clien
 void QuickPreviewWindow::ActivateChromeButton(ChromeButton button) {
     switch (button) {
     case ChromeButton::Prev:
-        if (owner_ && navigate_message_)
-            PostMessageW(owner_, navigate_message_, static_cast<WPARAM>(-1), 0);
+        PostNavigate(-1);
         break;
     case ChromeButton::Next:
-        if (owner_ && navigate_message_) PostMessageW(owner_, navigate_message_, 1, 0);
+        PostNavigate(1);
         break;
     case ChromeButton::More: {
         const D2D1_RECT_F rect = ChromeButtonRect(ChromeButton::More);
@@ -1733,6 +1751,29 @@ void QuickPreviewWindow::Render() {
     preview_notice_height_ = DrawPreviewNotice(dc, compositor_.DwriteFactory(), compositor_.SmallFormat(),
         preview_notice_, notice_rect, scale_, CurrentTheme().text, CurrentTheme().fill_hover);
     const D2D1_RECT_F full_content = D2D1::RectF(0, header, width, height);
+    // Prev / next: the new item's content slides 36 px in from its side and
+    // fades in (160 ms). Preview handler windows stay put.
+    float nav_dx = 0.0f, nav_alpha = 1.0f;
+    if (nav_dir_ != 0) {
+        const float t = static_cast<float>(motion::NowMs() - nav_start_);
+        if (t >= static_cast<float>(motion::SpringSettleMs(motion::spring::Smooth))) {
+            nav_dir_ = 0;
+        } else {
+            const float p = motion::SpringProgress(motion::spring::Smooth, t);
+            nav_dx = std::round(36.0f * scale_ * static_cast<float>(nav_dir_) * (1.0f - p));
+            nav_alpha = (std::clamp)(t / 160.0f, 0.0f, 1.0f);
+        }
+    }
+    const bool nav_layer = nav_dx != 0.0f || nav_alpha < 1.0f;
+    D2D1_MATRIX_3X2_F nav_saved{};
+    if (nav_layer) {
+        dc->GetTransform(&nav_saved);
+        dc->SetTransform(D2D1::Matrix3x2F::Translation(nav_dx, 0.0f) *
+                         *D2D1::Matrix3x2F::ReinterpretBaseType(&nav_saved));
+        dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr,
+                                             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(),
+                                             nav_alpha, nullptr, D2D1_LAYER_OPTIONS1_NONE), nullptr);
+    }
     const bool offline = OfflinePlaceholder();
     const bool use_handler = !offline && !safe_mode_ && !video_.active() &&
         !(item_.attrs & FILE_ATTRIBUTE_DIRECTORY) && PreviewHandlerHost::CanHost(item_.path) &&
@@ -2130,6 +2171,10 @@ void QuickPreviewWindow::Render() {
             compositor_.TextFormat(), ContentRect(), secondary_brush.get());
         compositor_.TextFormat()->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         compositor_.TextFormat()->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+    if (nav_layer) {
+        dc->PopLayer();
+        dc->SetTransform(nav_saved);
     }
     SchedulePreviewDeadline();
     const HRESULT result = dc->EndDraw();
@@ -2592,6 +2637,11 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
             else KillTimer(hwnd_, kZoomCloseTimer);
             return 0;
         }
+        if (wparam == kNavSlideTimer) {
+            if (nav_dir_ != 0 && visible()) InvalidateRect(hwnd_, nullptr, FALSE);
+            else KillTimer(hwnd_, kNavSlideTimer);
+            return 0;
+        }
         if (wparam == 9) {
             TickPlaybackSeek();
             return 0;
@@ -2805,10 +2855,10 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
             return 0;
         if (wparam == VK_RETURN && owner_ && open_message_ && !find_open_)
             PostMessageW(owner_, open_message_, 0, 0);
-        else if ((wparam == VK_LEFT || wparam == VK_UP) && owner_ && navigate_message_)
-            PostMessageW(owner_, navigate_message_, static_cast<WPARAM>(-1), 0);
-        else if ((wparam == VK_RIGHT || wparam == VK_DOWN) && owner_ && navigate_message_)
-            PostMessageW(owner_, navigate_message_, 1, 0);
+        else if (wparam == VK_LEFT || wparam == VK_UP)
+            PostNavigate(-1);
+        else if (wparam == VK_RIGHT || wparam == VK_DOWN)
+            PostNavigate(1);
         return 0;
     }
     case WM_SYSKEYDOWN:
