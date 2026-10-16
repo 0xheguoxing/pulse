@@ -19,6 +19,7 @@
 #include "details_column_menu.h"
 #include "../ui/lumatext_renderer.h"
 #include "../ui/fluent_menu.h"
+#include "../ui/toolbar_picker.h"
 #include "../ui/drag_drop.h"
 #include "../ui/file_operation_dialog.h"
 #include "../ui/batch_rename_dialog.h"
@@ -1187,6 +1188,11 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         if (!s) return DefWindowProcW(hwnd, msg, wParam, lParam);
         int mx = GET_X_LPARAM(lParam);
         int my = GET_Y_LPARAM(lParam);
+        if (ToolbarPinDragging()) {   // picker T3c: no hover plate or tooltip under the dragged pin
+            MoveToolbarPinDrag(*s, POINT{mx, my});
+            if (s->hoverRegion != 0 || !s->tooltipText.empty()) HandleMouseLeave(s, hwnd, WM_MOUSELEAVE, 0, 0);
+            return 0;
+        }
         s->hoverPoint = POINT{ mx, my };
         s->bloom_accent.SetPointer(static_cast<float>(mx), static_cast<float>(my), true);
         if (static_cast<float>(my) >= s->renderer.TitleBarHeight() && s->renderer.ReleaseTabWidths())
@@ -2290,6 +2296,15 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         ui::WindowViewModel vm = BuildVm(*s, false);
         D2D1_RECT_F rect = D2D1::RectF(0, 0, (float)s->compositor.Width(), (float)s->compositor.Height());
         ui::HitTestResult hit = s->renderer.HitTest(vm, rect, (float)mx, (float)my);
+        // Picker T3c: with 自定义工具栏 open, a toolbar pin can be dragged (or
+        // clicked); a press anywhere else closes the picker first.
+        if (ui::ToolbarPickerOpen()) {
+            if (hit.region == ui::HitTestResult::ToolbarPin) {
+                BeginToolbarPinDrag(*s, hit.index, POINT{mx, my});
+                return 0;
+            }
+            ui::CloseToolbarPicker();
+        }
         if (s->addressSearching && hit.region != ui::HitTestResult::AddressSearchInput &&
             hit.region != ui::HitTestResult::AddressSearchScope &&
             hit.region != ui::HitTestResult::AddressSearchMode &&
@@ -3287,6 +3302,10 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
 LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         (void)msg;
         (void)wParam;
+        if (s && ToolbarPinDragging()) {   // picker T3c
+            EndToolbarPinDrag(*s, false);
+            return 0;
+        }
         if (s) {
             s->paneDragPending = false;
             if (s->settings.slider_drag() >= 0) {
@@ -3669,6 +3688,7 @@ LRESULT HandleCaptureChanged(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LP
         (void)msg;
         (void)wParam;
         (void)lParam;
+        if (s && ToolbarPinDragging() && reinterpret_cast<HWND>(lParam) != hwnd) EndToolbarPinDrag(*s, true);
         if (s) {
             s->columnResizing = false;
             s->columnResizeIndex = -1;

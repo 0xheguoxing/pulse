@@ -44,6 +44,8 @@ constexpr float kRadius = 12.0f;
 constexpr int kTools = 0, kSel = 1, kApps = 2, kPages = 3;
 
 bool g_open = false;
+class PickerWindow;
+PickerWindow* g_window = nullptr;
 
 
 float Clamp01(float v) { return std::clamp(v, 0.0f, 1.0f); }
@@ -165,6 +167,7 @@ public:
                                 WS_POPUP, win_.left, win_.top, win_.right - win_.left, win_.bottom - win_.top,
                                 owner, nullptr, wc.hInstance, this);
         if (!hwnd_) return;
+        g_window = this;
         apps_loaded_ = !spec.load_apps;
         if (page_ == kApps) EnsureApps();
         for (int p = 0; p < kPages; ++p) Layout(p, false);
@@ -456,7 +459,53 @@ private:
         const bool was = t.toggle_on;
         t.toggle_on = spec_->on_switch ? spec_->on_switch(i) : !t.toggle_on;
         if (t.toggle_on != was) pages_[0].tiles[i].switch_at = motion::NowMs();
+        if (spec_->dark_now) dark_ = spec_->dark_now();   // 深色主题 restyles the popover too
         Frame();
+    }
+
+public:
+    // The toolbar changed beside the popover (a pin dragged, removed or
+    // clicked): reread it; changed tiles pop their check, moved ones slide.
+    void Resync() {
+        if (!spec_->resync || closing_at_ || !hwnd_) return;
+        std::vector<char> pin_was, on_was, app_was;
+        for (const auto& t : spec_->pins) { pin_was.push_back(t.checked); on_was.push_back(t.toggle_on); }
+        for (const auto& t : spec_->apps) app_was.push_back(t.checked);
+        spec_->apps_order.clear();
+        spec_->resync(*spec_);
+        const uint64_t now = motion::NowMs();
+        PageState& tools = pages_[kTools];
+        for (size_t i = 0; i < spec_->pins.size() && i < pin_was.size() && i < tools.tiles.size(); ++i) {
+            if (spec_->pins[i].checked != static_cast<bool>(pin_was[i])) tools.tiles[i].check_at = now;
+            if (spec_->pins[i].toggle_on != static_cast<bool>(on_was[i])) tools.tiles[i].switch_at = now;
+        }
+        PageState& apps = pages_[kApps];
+        for (size_t i = 0; i < spec_->apps.size() && i < app_was.size() && i < apps.tiles.size(); ++i)
+            if (spec_->apps[i].checked != static_cast<bool>(app_was[i])) apps.tiles[i].check_at = now;
+        InitOrder(kTools, spec_->pins_order, spec_->pins.size());
+        if (apps_loaded_ && !spec_->apps_order.empty()) InitOrder(kApps, spec_->apps_order, spec_->apps.size());
+        for (int p = 0; p < kPages; ++p) Layout(p, animations_);
+        if (animations_) grid_h_.To(TargetGridH()); else grid_h_.Snap(TargetGridH());
+        Frame();
+    }
+    void Activate() {
+        parked_ = false;
+        Resync();
+        if (hwnd_ && !closing_at_ && GetForegroundWindow() != hwnd_) SetForegroundWindow(hwnd_);
+    }
+    void CloseNow() { Close(); }
+private:
+    // The tools page's hovered tile that is not on the toolbar (and would
+    // fit there) shows as a dashed pin on the toolbar.
+    void UpdatePreview() {
+        int want = -1;
+        if (page_ == kTools && !closing_at_ && !drag_.active && hover_.part == Part::Tile && hover_.index >= 0 &&
+            static_cast<size_t>(hover_.index) < spec_->pins.size() && !spec_->pins[hover_.index].checked &&
+            (!spec_->max_tools || CheckedCount(kTools) < spec_->max_tools))
+            want = hover_.index;
+        if (want == preview_) return;
+        preview_ = want;
+        if (spec_->on_preview) spec_->on_preview(want);
     }
 
     void AddApp() {
@@ -963,6 +1012,7 @@ private:
     }
 
     void Render() {
+        UpdatePreview();
         if (compositor_.NeedsRecovery()) {
             if (!compositor_.Recover()) return;
             icons_ = IconBitmaps{};
@@ -1225,9 +1275,19 @@ private:
             return MA_ACTIVATE;
         case WM_ACTIVATE:
             if (LOWORD(wparam) == WA_INACTIVE && live_ && !busy_) {
-                // A window of our own (the file dialog) does not count.
+                // A window of our own (the file dialog) does not count, nor
+                // a press on the toolbar's pins (they can be dragged while the
+                // popover is open; the owner gives the activation back).
                 const HWND next = reinterpret_cast<HWND>(lparam);
-                if (!next || GetWindow(next, GW_OWNER) != hwnd_) Close();
+                POINT pt{};
+                GetCursorPos(&pt);
+                if (next && GetWindow(next, GW_OWNER) == hwnd_) return 0;
+                if (next == owner_ && spec_->keep_open && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) && spec_->keep_open(pt))
+                    parked_ = true;
+                else
+                    Close();
+            } else if (LOWORD(wparam) != WA_INACTIVE) {
+                parked_ = false;
             }
             return 0;
         case WM_TIMER:
@@ -1347,6 +1407,9 @@ private:
             compositor_.Shutdown();
             hwnd_ = nullptr;
             g_open = false;
+            if (g_window == this) g_window = nullptr;
+            if (preview_ >= 0 && spec_->on_preview) spec_->on_preview(-1);
+            preview_ = -1;
             return 0;
         }
         return DefWindowProcW(hwnd_, message, wparam, lparam);
@@ -1388,11 +1451,21 @@ private:
     bool live_ = false;
     bool destroy_posted_ = false;
     bool apps_loaded_ = true;
+    bool parked_ = false;   // inactive while the owner drags a toolbar pin
+    int preview_ = -1;
 };
 
 } // namespace
 
 bool ToolbarPickerOpen() noexcept { return g_open; }
+
+void ToolbarPickerActivate() {
+    if (g_window) g_window->Activate();
+}
+
+void CloseToolbarPicker() {
+    if (g_window) g_window->CloseNow();
+}
 
 void ShowToolbarPicker(HWND owner, ToolbarCustomizeSpec& spec, bool dark, D2D1_COLOR_F accent) {
     if (g_open) return;

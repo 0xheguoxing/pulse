@@ -81,11 +81,31 @@ struct ToolbarCustomizeSpec {
     std::function<void(const std::vector<size_t>& shown)> on_selection;
     std::function<bool(size_t index)> on_switch;
     std::function<void(const std::vector<ToolbarPickerTile>& apps)> on_apps;
+
+    // T3c, the toolbar beside the popover.
+    // on_preview: the tools page's hovered tile that is not on the toolbar
+    // (pins index; -1 none), for a dashed preview pin there.
+    std::function<void(int index)> on_preview;
+    // A press on the owner at this screen point (a toolbar pin) keeps the
+    // popover open so the pin can be dragged; the owner calls
+    // ToolbarPickerActivate() when the press is over.
+    std::function<bool(POINT screen)> keep_open;
+    // After the toolbar changed outside the popover: refresh the pins'
+    // checked and toggle_on and pins_order, the apps' checked (or
+    // apps_pinned before they are loaded) and fill apps_order.
+    std::function<void(ToolbarCustomizeSpec& spec)> resync;
+    std::vector<size_t> apps_order;
+    // The window's theme after on_switch (the 深色主题 tool), so the popover follows.
+    std::function<bool()> dark_now;
 };
 
 // Runs until the popover closes (Esc, Done, a click elsewhere). Returns at
 // once when a picker is already open.
 void ShowToolbarPicker(HWND owner, ToolbarCustomizeSpec& spec, bool dark, D2D1_COLOR_F accent);
 bool ToolbarPickerOpen() noexcept;
+// The owner is done with a press kept by keep_open: resync and take the
+// activation back.
+void ToolbarPickerActivate();
+void CloseToolbarPicker();
 
 } // namespace pulse::ui

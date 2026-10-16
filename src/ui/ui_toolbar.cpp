@@ -1,6 +1,7 @@
 #include "ui_renderer_internal.h"
 #include "toolbar_layout.h"
 #include "pane_header_icons.h"
+#include "toolbar_pin_drag.h"
 #include <unordered_map>
 
 namespace pulse::ui {
@@ -69,7 +70,16 @@ constexpr float kToggleTurnDeg = -50.0f;
 struct PinMotion {
     uint64_t born = 0, flipped = 0, seen = 0;
     bool checked = false;
+    // Picker T3c: a pin whose place in the row changed (reordered, a neighbour
+    // added or removed, or let go after a drag) slides there from where it was
+    // drawn (240 ms, ease out). A resize or the selection chip moves pins
+    // without changing their index, so they don't slide then.
+    bool placed = false, dragged = false;
+    int index = -1;
+    float visual = 0.0f, slide_from = 0.0f;
+    uint64_t slide_at = 0;
 };
+constexpr float kPinSlideMs = 240.0f;
 
 struct PinMotions {
     std::unordered_map<std::wstring, PinMotion> map;
@@ -101,6 +111,35 @@ struct PinMotions {
         if (t >= static_cast<float>(motion::SpringSettleMs(motion::spring::Pop))) { m.born = 0; return 1.0f; }
         moving = true;
         return kPinPopFrom + (1.0f - kPinPopFrom) * motion::SpringProgress(motion::spring::Pop, t);
+    }
+    // Where the pin is drawn this frame: its slot, sliding, or under the pointer.
+    D2D1_RECT_F Place(PinMotion& m, const D2D1_RECT_F& b, int index, const ToolbarPinDragState& drag, uint64_t now,
+                      bool animate) {
+        const float w = b.right - b.left;
+        if (drag.index == index && drag.index >= 0) {
+            m.placed = m.dragged = true;
+            m.index = index;
+            m.visual = drag.left;
+            m.slide_at = 0;
+            return D2D1::RectF(drag.left, b.top + drag.dy, drag.left + w, b.bottom + drag.dy);
+        }
+        if (!m.placed) {
+            m.placed = true;
+            m.visual = b.left;
+        } else if ((index != m.index || m.dragged) && animate && primed && std::fabs(m.visual - b.left) > 0.5f) {
+            m.slide_from = m.visual - b.left;
+            m.slide_at = now ? now : 1;
+        }
+        m.index = index;
+        m.dragged = false;
+        float off = 0.0f;
+        if (m.slide_at) {
+            const float t = static_cast<float>(now - m.slide_at) / kPinSlideMs;
+            if (t >= 1.0f) m.slide_at = 0;
+            else { off = m.slide_from * (1.0f - motion::EaseOutCubic(t)); moving = true; }
+        }
+        m.visual = b.left + off;
+        return D2D1::RectF(b.left + off, b.top, b.right + off, b.bottom);
     }
     // Glyph turn and scale while a toggle flips.
     void Turn(PinMotion& m, uint64_t now, float& degrees, float& scale) {
@@ -146,6 +185,34 @@ struct ToolbarMotion {
 ToolbarMotion& ToolbarMotionFor(const void* renderer) {
     static std::unordered_map<const void*, ToolbarMotion> motions;
     return motions[renderer];
+}
+
+std::unordered_map<const void*, ToolbarPinDragState>& PinDrags() {
+    static std::unordered_map<const void*, ToolbarPinDragState> drags;
+    return drags;
+}
+const ToolbarPinDragState& PinDragFor(const void* renderer) {
+    static const ToolbarPinDragState none;
+    const auto it = PinDrags().find(renderer);
+    return it == PinDrags().end() ? none : it->second;
+}
+
+// Dashed outline of the picker's preview pin; one per D2D factory.
+ID2D1StrokeStyle* PreviewDashes(ID2D1DeviceContext* dc) {
+    static ComPtr<ID2D1StrokeStyle> style;
+    static ID2D1Factory* owner = nullptr;
+    ComPtr<ID2D1Factory> factory;
+    dc->GetFactory(&factory);
+    if (!factory.get()) return nullptr;
+    if (owner != factory.get()) {
+        style.reset();
+        const float dashes[] = { 3.0f, 2.5f };
+        factory->CreateStrokeStyle(D2D1::StrokeStyleProperties(D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_FLAT,
+                                   D2D1_CAP_STYLE_FLAT, D2D1_LINE_JOIN_ROUND, 10.0f, D2D1_DASH_STYLE_CUSTOM, 0.0f),
+                                   dashes, 2, &style);
+        owner = factory.get();
+    }
+    return style.get();
 }
 
 int64_t PlateKey(HitTestResult::Region region, int index) {
@@ -208,15 +275,19 @@ void MainRenderer::DrawToolbarApps(const WindowViewModel& vm, const ToolbarLayou
     ComPtr<ID2D1SolidColorBrush> accent;
     dc->CreateSolidColorBrush(theme.accent,&accent);
     for (size_t i=0;i<vm.toolbar_apps.size() && from+i<layout.pins.size();++i) {
-        const D2D1_RECT_F b=layout.pins[from+i];
-        if (b.right <= b.left) continue;
+        const D2D1_RECT_F slot=layout.pins[from+i];
+        if (slot.right <= slot.left) continue;
         const WindowViewModel::ToolbarAppPin& app=vm.toolbar_apps[i];
         if (i==0 && from > 0) {   // short divider between the commands and the apps
-            const float x=b.left-6.5f*scale_;
-            FillRect(dc,brStrokeDivider_.get(),x,b.top+9*scale_,scale_,14*scale_);
+            const float x=slot.left-6.5f*scale_;
+            FillRect(dc,brStrokeDivider_.get(),x,slot.top+9*scale_,scale_,14*scale_);
         }
         PinMotion& pm=tm.pins.Touch(L"a"+app.name,false,motion_frame_,motion_now_,tm.animations);
-        const AroundCentre pop(dc,D2D1::Point2F((b.left+b.right)*0.5f,(b.top+b.bottom)*0.5f),tm.pins.Pop(pm,motion_now_));
+        const ToolbarPinDragState& drag=PinDragFor(this);
+        const bool dragged=drag.index==static_cast<int>(from+i);
+        const D2D1_RECT_F b=tm.pins.Place(pm,slot,static_cast<int>(from+i),drag,motion_now_,tm.animations);
+        const AroundCentre pop(dc,D2D1::Point2F((b.left+b.right)*0.5f,(b.top+b.bottom)*0.5f),
+                               tm.pins.Pop(pm,motion_now_)*(dragged ? 1.08f : 1.0f));
         const bool target=vm.toolbar_drop_app==static_cast<int>(i);
         if (target) {
             D2D1_COLOR_F hot=theme.accent;
@@ -233,7 +304,8 @@ void MainRenderer::DrawToolbarApps(const WindowViewModel& vm, const ToolbarLayou
         const float cx=std::round((b.left+b.right)*0.5f);
         const float cy=std::round((b.top+b.bottom)*0.5f-(app.fit!=0 ? 1.5f*scale_ : 0.0f));
         const float half=8*scale_;
-        const float opacity=app.fit==3 && !(target && vm.toolbar_drop_force) ? 0.35f : 1.0f;
+        float opacity=app.fit==3 && !(target && vm.toolbar_drop_force) ? 0.35f : 1.0f;
+        if (dragged && drag.out) opacity*=0.35f;
         if (ID2D1Bitmap* bitmap=AppIconBitmap(app.icon)) {
             dc->DrawBitmap(bitmap,D2D1::RectF(cx-half,cy-half,cx+half,cy+half),opacity,
                 D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
@@ -486,24 +558,42 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             L"\xE712",L"",theme.text_secondary,true,true);
     }
     // Pinned commands (自定义工具栏), after a divider.
+    const ToolbarPinDragState& pin_drag=PinDragFor(this);
     for (size_t i=0;i<layout.pins.size() && i<vm.toolbar_pins.size();++i) {
-        const D2D1_RECT_F b=layout.pins[i];
-        if (b.right <= b.left) continue;
+        const D2D1_RECT_F slot=layout.pins[i];
+        if (slot.right <= slot.left) continue;
         const SelectionChipAction& pin=vm.toolbar_pins[i];
         if (i==0) {
             MakeBrush(dc,theme.stroke_divider,brStrokeDivider_);
-            FillRect(dc,brStrokeDivider_.get(),b.left-7*scale_,b.top+7*scale_,scale_,18*scale_);
+            FillRect(dc,brStrokeDivider_.get(),slot.left-7*scale_,slot.top+7*scale_,scale_,18*scale_);
         }
+        const bool dragged=pin_drag.index==static_cast<int>(i);
+        const bool preview=pin_drag.preview_command!=0 && pin.command==pin_drag.preview_command;
         // Toggle tools that are on look like the selected pane buttons.
         const bool hovered=pin.enabled && IsHovered(vm,HitTestResult::ToolbarPin,static_cast<int>(i));
-        const D2D1_COLOR_F bg=hovered && !plates ? theme.fill_hover : pin.checked ? theme.fill_selected : kTransparent;
-        const D2D1_COLOR_F fg=!pin.enabled ? theme.text_disabled : pin.checked ? theme.accent : theme.text_secondary;
+        D2D1_COLOR_F bg=hovered && !plates ? theme.fill_hover : pin.checked ? theme.fill_selected : kTransparent;
+        D2D1_COLOR_F fg=!pin.enabled ? theme.text_disabled : pin.checked ? theme.accent : theme.text_secondary;
+        if (dragged && pin_drag.out) { fg.a*=0.35f; bg.a*=0.35f; }
         PinMotion& pm=tm.pins.Touch(L"c"+std::to_wstring(pin.command),pin.checked,motion_frame_,motion_now_,tm.animations);
         float turn=0.0f, glyph_scale=1.0f;
         tm.pins.Turn(pm,motion_now_,turn,glyph_scale);
+        const D2D1_RECT_F b=tm.pins.Place(pm,slot,static_cast<int>(i),pin_drag,motion_now_,tm.animations);
         const D2D1_POINT_2F centre=D2D1::Point2F((b.left+b.right)*0.5f,(b.top+b.bottom)*0.5f);
-        const AroundCentre pop(dc,centre,tm.pins.Pop(pm,motion_now_));
-        if (turn==0.0f && glyph_scale==1.0f) {
+        const AroundCentre pop(dc,centre,tm.pins.Pop(pm,motion_now_)*(dragged ? 1.08f : 1.0f));
+        if (preview) {
+            // The picker's hovered tool: where it would go, dashed and faint.
+            D2D1_COLOR_F line=theme.accent;
+            line.a*=0.7f;
+            ComPtr<ID2D1SolidColorBrush> brush;
+            dc->CreateSolidColorBrush(line,&brush);
+            const float h=0.5f*scale_;
+            if (brush.get())
+                dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(b.left+h,b.top+h,b.right-h,b.bottom-h),
+                    theme.radius_control*scale_,theme.radius_control*scale_),brush.get(),scale_,PreviewDashes(dc));
+            D2D1_COLOR_F faint=theme.text_secondary;
+            faint.a*=0.5f;
+            DrawIconText(b.left,b.top,b.right-b.left,b.bottom-b.top,pin.glyph,L"",faint);
+        } else if (turn==0.0f && glyph_scale==1.0f) {
             DrawButton(b,theme,bg,pin.glyph,L"",fg,true,true);
         } else {
             if (bg.a > 0.0f) painter_.FillRoundedRect(b,theme.radius_control*scale_,bg);
@@ -682,5 +772,10 @@ std::wstring MainRenderer::ToolbarGroupLabel() const {
     const size_t at=label.find(L"{g}");
     if (at!=std::wstring::npos) label.replace(at,3,l10n::Get(names[std::clamp(toolbar_group_,1,6)-1]));
     return label;
+}
+
+void SetToolbarPinDrag(const void* renderer, const ToolbarPinDragState& state) {
+    if (state.index < 0 && state.preview_command == 0) PinDrags().erase(renderer);
+    else PinDrags()[renderer] = state;
 }
 }

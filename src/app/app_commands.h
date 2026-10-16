@@ -122,6 +122,11 @@ bool ToolbarNewCreatesFolder(const AppState& s);
 // The 自定义工具栏 sheet; Done saves app.json.
 // The 自定义工具栏 popover; page 0 tools, 1 apps.
 void ShowToolbarCustomize(AppState& s, int page = 0);
+// Toolbar picker T3c: a toolbar pin pressed while the picker is open.
+bool ToolbarPinDragging();
+void BeginToolbarPinDrag(AppState& s, int index, POINT pt);
+void MoveToolbarPinDrag(AppState& s, POINT pt);
+void EndToolbarPinDrag(AppState& s, bool cancel);
 // Pinned apps (自定义工具栏 → 固定的软件), app_toolbar_apps.cpp.
 // Toolbar entries in pin order, with their fit against the selection (or the
 // dragged items in drop mode).

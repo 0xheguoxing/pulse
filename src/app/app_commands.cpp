@@ -20,6 +20,7 @@
 #include "../ui/folder_picker_dialog.h"
 #include "../ui/batch_rename_dialog.h"
 #include "../ui/toolbar_picker.h"
+#include "../ui/toolbar_pin_drag.h"
 #include "../ui/advanced_search_dialog.h"
 #include "../ui/quick_preview_window.h"
 #include "../ui/typography.h"
@@ -3054,12 +3055,44 @@ void ShowToolbarMore(AppState& s) {
     if (cmd!=app::CmdNone) DispatchMenuCommand(s,cmd);
 }
 
+// Toolbar picker T3c: the tools tile hovered in the open picker (-1 none),
+// shown as a dashed preview pin after the pinned ones; and a toolbar pin
+// being dragged while the picker is open.
+namespace {
+int g_toolbar_preview = -1;
+struct ToolbarPinDrag {
+    bool down = false, active = false, out = false, moved = false;
+    int index = -1;        // the pin's slot now (tools, then apps)
+    POINT start{};
+    float grab = 0.0f;     // pointer x - the pin's left edge at the press
+    float left = 0.0f, dy = 0.0f;
+};
+ToolbarPinDrag g_pin_drag;
+
+void PushToolbarPinDrag(AppState& s) {
+    ui::ToolbarPinDragState state;
+    if (g_pin_drag.active) {
+        state.index = g_pin_drag.index;
+        state.left = g_pin_drag.left;
+        state.dy = g_pin_drag.dy;
+        state.out = g_pin_drag.out;
+    }
+    if (g_toolbar_preview >= 0) state.preview_command = ToolbarToolCommand(static_cast<size_t>(g_toolbar_preview));
+    ui::SetToolbarPinDrag(&s.renderer, state);
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+}
+
 std::vector<ui::SelectionChipAction> ToolbarPinActions(AppState& s) {
     std::vector<ui::SelectionChipAction> out;
     const app::Tab* tab = ActiveTab(s);
-    if (s.appPrefs.toolbar_tools.empty() || !tab) return out;
+    if ((s.appPrefs.toolbar_tools.empty() && g_toolbar_preview < 0) || !tab) return out;
     const bool has_selection = tab->SelectedCount() > 0;
-    for (const auto& id : s.appPrefs.toolbar_tools) {
+    std::vector<std::wstring> ids = s.appPrefs.toolbar_tools;
+    if (g_toolbar_preview >= 0 && static_cast<size_t>(g_toolbar_preview) < app::kToolbarToolCount &&
+        !ToolbarToolPinned(s, app::kToolbarToolIds[g_toolbar_preview]))
+        ids.emplace_back(app::kToolbarToolIds[g_toolbar_preview]);
+    for (const auto& id : ids) {
         const int tool = app::ToolbarToolIndex(id);
         if (tool < 0 || out.size() >= static_cast<size_t>(ui::kToolbarCommandPins)) continue;
         const ToolbarToolDef& def = kToolbarTools[tool];
@@ -3230,8 +3263,141 @@ void ShowToolbarCustomize(AppState& s, int page) {
     spec.on_apps = [&s, save](const std::vector<ui::ToolbarPickerTile>& apps) {
         if (ApplyToolbarAppRows(s, apps)) save();
     };
+    // T3c: the toolbar beside the open picker.
+    spec.on_preview = [&s](int index) {
+        g_toolbar_preview = index;
+        PushToolbarPinDrag(s);
+    };
+    spec.keep_open = [&s](POINT screen) {
+        ScreenToClient(s.hwnd, &screen);
+        const ui::WindowViewModel vm = BuildVm(s, false);
+        const D2D1_RECT_F rect = D2D1::RectF(0, 0, (float)s.compositor.Width(), (float)s.compositor.Height());
+        return s.renderer.HitTest(vm, rect, (float)screen.x, (float)screen.y).region == ui::HitTestResult::ToolbarPin;
+    };
+    spec.resync = [&s](ui::ToolbarCustomizeSpec& now) {
+        now.pins_order.clear();
+        for (const auto& id : s.appPrefs.toolbar_tools) {
+            const int at = app::ToolbarToolIndex(id);
+            if (at >= 0) now.pins_order.push_back(static_cast<size_t>(at));
+        }
+        for (size_t i = 0; i < now.pins.size() && i < app::kToolbarToolCount; ++i) {
+            now.pins[i].checked = ToolbarToolPinned(s, app::kToolbarToolIds[i]);
+            now.pins[i].toggle_on = now.pins[i].toggle && ToolbarToggleOn(s, i);
+            if (!now.pins[i].checked) now.pins_order.push_back(i);
+        }
+        now.apps_pinned = s.appPrefs.toolbar_apps.size();
+        std::vector<char> placed(now.apps.size(), 0);
+        for (const auto& path : s.appPrefs.toolbar_apps)
+            for (size_t i = 0; i < now.apps.size(); ++i)
+                if (!placed[i] && _wcsicmp(now.apps[i].value.c_str(), path.c_str()) == 0) {
+                    placed[i] = 1;
+                    now.apps_order.push_back(i);
+                    break;
+                }
+        for (size_t i = 0; i < now.apps.size(); ++i) {
+            now.apps[i].checked = placed[i] != 0;
+            if (!placed[i]) now.apps_order.push_back(i);
+        }
+    };
+    spec.dark_now = [&s] { return s.darkMode; };
     ui::ShowToolbarPicker(s.hwnd, spec, s.darkMode, s.accentColor);
-    InvalidateRect(s.hwnd, nullptr, FALSE);
+    g_toolbar_preview = -1;
+    PushToolbarPinDrag(s);
+}
+
+// ---- T3c: dragging a toolbar pin while the picker is open -------------------
+// Along the row it reorders (tools among tools, apps among apps; the others
+// slide out of the way); let go more than 34 DIP below the row it leaves the
+// toolbar. A press without a drag is a click. Either way the picker then
+// rereads the toolbar and takes the activation back.
+static ui::ToolbarLayout CurrentToolbarLayout(AppState& s) {
+    const float width = static_cast<float>(s.compositor.Width());
+    const float left = s.renderer.EffectiveSidebarWidth(width);
+    return s.renderer.ToolbarLayoutAt(width, s.renderer.NewButtonWidthPx(width - left < 600 * s.scale),
+                                      s.pane ? s.pane->filter_expand : 0.0f);
+}
+
+bool ToolbarPinDragging() { return g_pin_drag.down; }
+
+void BeginToolbarPinDrag(AppState& s, int index, POINT pt) {
+    const auto layout = CurrentToolbarLayout(s);
+    if (index < 0 || index >= static_cast<int>(layout.pins.size())) return;
+    g_pin_drag = ToolbarPinDrag{};
+    g_pin_drag.down = true;
+    g_pin_drag.index = index;
+    g_pin_drag.start = pt;
+    g_pin_drag.grab = static_cast<float>(pt.x) - layout.pins[static_cast<size_t>(index)].left;
+    SetCapture(s.hwnd);
+}
+
+void MoveToolbarPinDrag(AppState& s, POINT pt) {
+    ToolbarPinDrag& d = g_pin_drag;
+    if (!d.down) return;
+    const float dx = static_cast<float>(pt.x - d.start.x), dy = static_cast<float>(pt.y - d.start.y);
+    const int tools = static_cast<int>(std::min<size_t>(s.appPrefs.toolbar_tools.size(), ui::kToolbarCommandPins));
+    const int pins = static_cast<int>(ToolbarPinActions(s).size());
+    const int apps = static_cast<int>(std::min<size_t>(s.appPrefs.toolbar_apps.size(), app::kMaxToolbarApps));
+    const bool is_tool = d.index < tools;
+    const bool is_app = d.index >= pins && d.index < pins + apps;
+    if (!is_tool && !is_app) return;   // the preview pin
+    if (!d.active) {
+        if (std::hypot(dx, dy) < 4.0f * s.scale) return;
+        d.active = true;
+    }
+    const auto layout = CurrentToolbarLayout(s);
+    const D2D1_RECT_F home = layout.pins[static_cast<size_t>(d.index)];
+    const float w = home.right - home.left;
+    d.left = static_cast<float>(pt.x) - d.grab;
+    // Below the row it stays in sight (14 DIP down at most), faded once
+    // letting go would take it off.
+    d.dy = std::clamp(dy, -4.0f * s.scale, 14.0f * s.scale);
+    d.out = dy > 34.0f * s.scale;
+    // The slot whose centre is nearest the pin's, in its own group.
+    const int from = is_tool ? 0 : pins, to = is_tool ? tools : pins + apps;
+    int best = d.index;
+    float best_dist = 1e9f;
+    for (int i = from; i < to && i < static_cast<int>(layout.pins.size()); ++i) {
+        const D2D1_RECT_F r = layout.pins[static_cast<size_t>(i)];
+        if (r.right <= r.left) continue;
+        const float dist = std::fabs((r.left + r.right) * 0.5f - (d.left + w * 0.5f));
+        if (dist < best_dist) { best_dist = dist; best = i; }
+    }
+    if (best != d.index && !d.out) {
+        auto move = [](std::vector<std::wstring>& list, int a, int b) {
+            if (a < 0 || b < 0 || a >= static_cast<int>(list.size()) || b >= static_cast<int>(list.size())) return;
+            std::wstring item = std::move(list[static_cast<size_t>(a)]);
+            list.erase(list.begin() + a);
+            list.insert(list.begin() + b, std::move(item));
+        };
+        if (is_tool) move(s.appPrefs.toolbar_tools, d.index, best);
+        else move(s.appPrefs.toolbar_apps, d.index - pins, best - pins);
+        d.index = best;
+        d.moved = true;
+    }
+    PushToolbarPinDrag(s);
+}
+
+void EndToolbarPinDrag(AppState& s, bool cancel) {
+    ToolbarPinDrag d = g_pin_drag;
+    if (!d.down) return;
+    g_pin_drag = ToolbarPinDrag{};
+    if (GetCapture() == s.hwnd) ReleaseCapture();
+    bool changed = d.moved;
+    if (d.active && d.out && !cancel) {
+        const int tools = static_cast<int>(std::min<size_t>(s.appPrefs.toolbar_tools.size(), ui::kToolbarCommandPins));
+        const int pins = static_cast<int>(ToolbarPinActions(s).size());
+        if (d.index < tools) {
+            s.appPrefs.toolbar_tools.erase(s.appPrefs.toolbar_tools.begin() + d.index);
+            changed = true;
+        } else if (d.index >= pins && d.index - pins < static_cast<int>(s.appPrefs.toolbar_apps.size())) {
+            s.appPrefs.toolbar_apps.erase(s.appPrefs.toolbar_apps.begin() + (d.index - pins));
+            changed = true;
+        }
+    }
+    if (changed && !s.isolatedTest) s.appPrefs.Save();
+    PushToolbarPinDrag(s);
+    if (!d.active && !cancel) RunToolbarAction(s, true, d.index);   // a click
+    ui::ToolbarPickerActivate();
 }
 
 // Toolbar toggle tools: the same change and effects as the settings page.
