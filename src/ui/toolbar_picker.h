@@ -1,8 +1,9 @@
 // toolbar_picker.h — the 「自定义工具栏」 popover (toolbar picker T3,
 // pulse_toolbar_picker.html v3). It hangs under the toolbar's More button and
-// shows the toolbar's tools and pinned apps as tiles, one page each. Every
-// change applies at once through the callbacks, so the toolbar behind the
-// popover updates while it is open; there is no Cancel.
+// shows the toolbar's tools, the selection chip's actions and the pinned apps
+// as tiles, one page each. Tiles are dragged to reorder (within their
+// section). Every change applies at once through the callbacks, so the
+// toolbar behind the popover updates while it is open; there is no Cancel.
 #pragma once
 
 #include <d2d1.h>
@@ -22,9 +23,10 @@ struct ToolbarPickerTile {
     std::wstring caption;        // apps: the file types it opens (tooltip line)
     std::wstring keywords;       // tools: extra search words (shortcut, stable id)
     common::MenuIconRef icon;    // apps: the program icon (instead of glyph)
-    std::wstring badge;          // apps: an accent note under the name (此文件夹常用)
+    std::wstring badge;          // an accent note under the name (apps: 此文件夹常用; selection: 多选时)
     std::wstring value;          // apps: the program path, returned untouched
     int section = 0;             // tools: index into ToolbarCustomizeSpec::sections
+    int tool = -1;               // selection: the same command on the tools page (pins index)
     bool checked = false;        // on the toolbar
     bool toggle = false;         // tools: the tile carries a switch for its setting
     bool toggle_on = false;
@@ -36,6 +38,10 @@ struct ToolbarCustomizeSpec {
     std::wstring done_text;      // 完成
     std::wstring tools_tab;      // 工具
     std::wstring apps_tab;       // 应用
+    std::wstring sel_tab;        // 选中时
+    std::wstring sel_desc;
+    std::wstring on_toolbar_text;   // selection tile whose tool is pinned: 已在工具栏上
+    std::wstring tools_full_text;   // the toolbar holds max_tools tools
     std::wstring tools_desc;
     std::wstring apps_desc;
     std::wstring search_hint;    // 搜索工具
@@ -43,6 +49,12 @@ struct ToolbarCustomizeSpec {
     std::wstring apps_full_text; // the toolbar holds max_apps apps
     std::vector<std::wstring> sections;
     std::vector<ToolbarPickerTile> pins;     // tools page
+    size_t max_tools = 0;                    // 0: no limit
+    // Display order of pins / selection (indices; empty = as listed). The
+    // checked tiles in this order are the toolbar's / the chip's order.
+    std::vector<size_t> pins_order;
+    std::vector<ToolbarPickerTile> selection;   // selection page (选中时)
+    std::vector<size_t> selection_order;
     // Apps page (FillToolbarAppRows): pinned apps (checked), then suggestions.
     std::wstring add_app_text;   // 添加软件…
     std::wstring add_app_caption;
@@ -58,13 +70,15 @@ struct ToolbarCustomizeSpec {
     std::function<void(ToolbarCustomizeSpec& spec)> load_apps;
     size_t apps_pinned = 0;
 
-    int page = 0;                // 0 tools, 1 apps
+    int page = 0;                // 0 tools, 1 selection, 2 apps
     RECT anchor{};               // screen rect of the button the popover hangs from
 
-    // Live edits. on_tool: pins[index] was checked / unchecked. on_switch:
-    // flip the setting behind pins[index], returns its new state. on_apps:
-    // the app tiles changed (checked state or a new row).
-    std::function<void(size_t index, bool checked)> on_tool;
+    // Live edits. on_tools / on_selection: the checked pins / selection
+    // indices, in display order (a tile was checked, unchecked or moved).
+    // on_switch: flip the setting behind pins[index], returns its new state.
+    // on_apps: the app tiles in display order (checked state, order or a new row).
+    std::function<void(const std::vector<size_t>& pinned)> on_tools;
+    std::function<void(const std::vector<size_t>& shown)> on_selection;
     std::function<bool(size_t index)> on_switch;
     std::function<void(const std::vector<ToolbarPickerTile>& apps)> on_apps;
 };

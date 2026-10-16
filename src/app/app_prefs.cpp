@@ -117,6 +117,7 @@ void AppPrefs::ResetToDefaults() {
     toolbar_new_primary = 0;
     toolbar_last_new = 0;
     toolbar_tools.clear();
+    toolbar_selection = app::DefaultToolbarSelection();
     toolbar_apps.clear();
     accent_rgb.clear();
     accent_follow_system = false;
@@ -263,6 +264,14 @@ std::wstring AppPrefs::ToJson() const {
     out += L"]";
     // Still written for an older Pulse, which knows only these five.
     out += L",\n  \"toolbar_pins\":" + std::to_wstring(app::LegacyPinsFromToolbarTools(toolbar_tools));
+    out += L",\n  \"toolbar_selection\":[";
+    for (size_t i = 0; i < toolbar_selection.size(); ++i) {
+        std::wstring escaped_action;
+        pulse::json::Escape(toolbar_selection[i], escaped_action);
+        if (i > 0) out += L",";
+        out += L"\"" + escaped_action + L"\"";
+    }
+    out += L"]";
     out += L",\n  \"toolbar_apps\":[";
     for (size_t i = 0; i < toolbar_apps.size(); ++i) {
         std::wstring escaped_app;
@@ -437,6 +446,9 @@ bool AppPrefs::FromJson(const std::wstring& json) {
         const int pins = pulse::json::ExtractInt(json, L"toolbar_pins", 0);
         toolbar_tools = app::ToolbarToolsFromLegacyPins(pins > 0 ? static_cast<uint32_t>(pins) : 0u);
     }
+    toolbar_selection = json.find(L"\"toolbar_selection\"") != std::wstring::npos
+        ? app::NormalizeToolbarSelection(pulse::json::ExtractStringArray(json, L"toolbar_selection"))
+        : app::DefaultToolbarSelection();
     shortcuts.clear();
     for (auto& line : pulse::json::ExtractStringArray(json, L"shortcuts"))
         if (!line.empty() && line.size() < 200 && shortcuts.size() < 128) shortcuts.push_back(std::move(line));

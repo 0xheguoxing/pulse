@@ -4,6 +4,7 @@
 #include "folder_sort_prefs.h"
 #include "entry_group.h"
 #include "../ui/details_column_set.h"
+#include "toolbar_selection.h"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -130,6 +131,9 @@ struct AppPrefs {
     // Tools pinned to the toolbar, in toolbar order, by id (toolbar_tools.h).
     // Saved as json toolbar_tools; older prefs had the toolbar_pins mask.
     std::vector<std::wstring> toolbar_tools;
+    // Actions the selection chip may show, in chip order, by id
+    // (toolbar_selection.h). Without the json key: all, default order.
+    std::vector<std::wstring> toolbar_selection = DefaultToolbarSelection();
     // Programs pinned to the toolbar (自定义工具栏 → 固定的软件), in toolbar
     // order: .exe paths or shortcuts to them, at most app::kMaxToolbarApps.
     std::vector<std::wstring> toolbar_apps;

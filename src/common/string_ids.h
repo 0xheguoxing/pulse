@@ -2227,5 +2227,14 @@
 #define IDS_TOOLBAR_SECTION_SHOW                                                         3437
 #define IDS_TOOLBAR_SECTION_PANE                                                         3438
 #define IDS_TOOLBAR_SECTION_MORE                                                         3439
+#define IDS_TOOLBAR_PICKER_SEL_TAB                                                       3440
+#define IDS_TOOLBAR_PICKER_SEL_DESC                                                      3441
+#define IDS_TOOLBAR_PICKER_ON_TOOLBAR                                                    3442
+#define IDS_TOOLBAR_PICKER_TOOLS_FULL                                                    3443
+#define IDS_TOOLBAR_SEL_HINT_MULTI                                                       3444
+#define IDS_TOOLBAR_SEL_HINT_TWO_FOLDERS                                                 3445
+#define IDS_TOOLBAR_SEL_HINT_FOLDERS                                                     3446
+#define IDS_TOOLBAR_SEL_HINT_SEARCH                                                      3447
+#define IDS_TOOLBAR_SEL_RECENT                                                           3448
 
 #endif  // PULSE_STRING_IDS_H

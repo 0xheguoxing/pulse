@@ -36,6 +36,7 @@
 #include "shell_verbs.h"
 #include "toolbar_apps.h"
 #include "toolbar_tools.h"
+#include "toolbar_selection.h"
 #include "vertical_tabs.h"
 #include "app_change_tracking.h"
 #include "batch_rename.h"
@@ -2144,6 +2145,50 @@ constexpr ToolbarToolDef kToolbarTools[] = {
     {0, L"\xE793", l10n::StringId::TooltipToggleTheme, L"", true},
 };
 static_assert(std::size(kToolbarTools) == app::kToolbarToolCount, "one catalog row per toolbar_tools.h id");
+
+// The selection chip's actions AppPrefs::toolbar_selection can keep, in
+// app::kSelectionActionIds order. `hint` names the condition under which the
+// item menu offers the row; `tool` is the same command on the tools page.
+enum SelectionHint { kSelHintNone, kSelHintMulti, kSelHintTwoFolders, kSelHintFolders, kSelHintSearch };
+struct SelectionActionDef {
+    int command;
+    int alt_command;
+    const wchar_t* glyph;
+    l10n::StringId label;
+    SelectionHint hint;
+    const wchar_t* tool;
+};
+constexpr SelectionActionDef kSelectionActions[] = {
+    {app::CmdBatchRename, 0, L"\xE8AC", l10n::StringId::BatchRename, kSelHintMulti, nullptr},
+    {app::CmdGroupIntoFolder, 0, L"\xE8F4", l10n::StringId::NewFolderWithSelection_2, kSelHintNone, nullptr},
+    {app::CmdDissolveFolder, 0, L"\xED25", l10n::StringId::UngroupFolder_2, kSelHintFolders, nullptr},
+    {app::CmdCompareSideBySide, 0, L"\xE89F", l10n::StringId::CompareSideBySide, kSelHintTwoFolders, nullptr},
+    {app::CmdTags, 0, L"\xE8EC", l10n::StringId::TagsEllipsis, kSelHintNone, nullptr},
+    {app::CmdCopyPath, 0, L"\xE71B", l10n::StringId::CopyPath, kSelHintNone, L"copy_path"},
+    {app::CmdOpenInNewTab, 0, L"\xE8A7", l10n::StringId::OpenNewTab, kSelHintFolders, nullptr},
+    {app::CmdOpenPath, 0, L"\xE8B7", l10n::StringId::OpenPath, kSelHintSearch, nullptr},
+    {app::CmdPinQuickAccess, app::CmdUnpinQuickAccess, L"\xE718", l10n::StringId::SidebarQuickAccess, kSelHintNone, nullptr},
+    {app::CmdProperties, 0, L"\xE946", l10n::StringId::Properties, kSelHintNone, L"properties"},
+    {app::CmdOpenTerminal, 0, L"\xE756", l10n::StringId::OpenInTerminal, kSelHintNone, L"terminal"},
+    {app::CmdViewRecentChanges, 0, L"\xE81C", l10n::StringId::ToolbarSelRecent, kSelHintNone, nullptr},
+    {app::CmdPinWorkspace, 0, L"\xE8B7", l10n::StringId::PinWorkspace, kSelHintNone, nullptr},
+    {app::CmdPinNetwork, 0, L"\xE71B", l10n::StringId::PinNetwork, kSelHintNone, nullptr},
+};
+static_assert(std::size(kSelectionActions) == app::kSelectionActionCount, "one catalog row per toolbar_selection.h id");
+int SelectionActionFor(int command) {
+    for (size_t i = 0; i < std::size(kSelectionActions); ++i)
+        if (kSelectionActions[i].command == command || (kSelectionActions[i].alt_command && kSelectionActions[i].alt_command == command))
+            return static_cast<int>(i);
+    return -1;
+}
+// Menu labels end in "..." where a dialog follows; tiles and chips drop it.
+std::wstring WithoutEllipsis(std::wstring label) {
+    for (const wchar_t* tail : {L"...", L"\u2026"}) {
+        const std::wstring_view t{tail};
+        if (label.size() > t.size() && std::wstring_view{label}.ends_with(t)) label.resize(label.size() - t.size());
+    }
+    return label;
+}
 int ToolbarToolCommand(size_t index) {
     return kToolbarTools[index].toggle ? app::CmdToolbarToolBase + static_cast<int>(index)
                                        : kToolbarTools[index].command;
@@ -2786,6 +2831,7 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
         const void* snapshot = nullptr;  // a drive unlocked or ejected: same rows, new verbs
         uint32_t hidden = 0;
         std::vector<std::wstring> tools;
+        std::vector<std::wstring> selection;
         app::BuiltinMenuOrder order;
         std::vector<ui::SelectionChipAction> actions;
     };
@@ -2797,7 +2843,7 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
     if (cache.state == &s && cache.tab == tab && cache.path == tab->current_path &&
         cache.selected == selected && cache.snapshot == tab->snapshot.get() &&
         cache.hidden == s.ctxMenuPrefs.builtin_hidden && cache.order == order &&
-        cache.tools == s.appPrefs.toolbar_tools)
+        cache.tools == s.appPrefs.toolbar_tools && cache.selection == s.appPrefs.toolbar_selection)
         return cache.actions;
     cache.state = &s;
     cache.tab = tab;
@@ -2806,7 +2852,14 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
     cache.snapshot = tab->snapshot.get();
     cache.hidden = s.ctxMenuPrefs.builtin_hidden;
     cache.tools = s.appPrefs.toolbar_tools;
+    cache.selection = s.appPrefs.toolbar_selection;
     cache.order = std::move(order);
+    // Place of each catalog action in the user's list (自定义工具栏 → 选中时); -1: left out.
+    std::vector<int> kept(app::kSelectionActionCount, -1);
+    for (size_t i = 0; i < cache.selection.size(); ++i) {
+        const int at = app::SelectionActionIndex(cache.selection[i]);
+        if (at >= 0) kept[static_cast<size_t>(at)] = static_cast<int>(i);
+    }
     cache.actions.clear();
     // The chip is its own surface: rows hidden from the right-click menu
     // (Settings > Pulse menu) still belong here, so it reads the full item menu.
@@ -2835,33 +2888,29 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
             pinned = pinned || (tool >= 0 && !kToolbarTools[tool].toggle && kToolbarTools[tool].command == item.command);
         }
         if (pinned) continue;
+        const int listed = SelectionActionFor(item.command);
+        if (listed >= 0 && kept[static_cast<size_t>(listed)] < 0) continue;
         ui::SelectionChipAction action;
         action.command = item.command;
         action.glyph = item.glyph;
         action.label = item.text;
-        for (const wchar_t* tail : {L"...", L"\u2026"}) {
-            const std::wstring_view t{tail};
-            if (action.label.size() > t.size() && std::wstring_view{action.label}.ends_with(t))
-                action.label.resize(action.label.size() - t.size());
-        }
+        action.label = WithoutEllipsis(std::move(action.label));
         if (!item.shortcut.empty()) action.label += L" (" + item.shortcut + L")";
         cache.actions.push_back(std::move(action));
     }
-    // Prototype order (标签, 复制路径 first), the selection-only rows ahead of
-    // them; cut / copy / rename / delete already sit on the toolbar. Narrow
-    // windows drop actions from the end.
-    const auto rank = [](int command) {
-        static constexpr int kOrder[] = {
+    // Drive / network / Recycle Bin verbs first, then the user's order
+    // (自定义工具栏 → 选中时); cut / copy / rename / delete already sit on the
+    // toolbar. Narrow windows drop actions from the end.
+    const auto rank = [&kept](int command) {
+        static constexpr int kContext[] = {
             app::CmdUnlockDrive, app::CmdEjectDrive, app::CmdDisconnectDrive, app::CmdRestoreRecycle,
-            app::CmdMapNetworkDrive, app::CmdUnpinNetwork, app::CmdBatchRename, app::CmdGroupIntoFolder,
-            app::CmdDissolveFolder, app::CmdCompareSideBySide, app::CmdTags, app::CmdCopyPath,
-            app::CmdOpenInNewTab, app::CmdOpenPath, app::CmdPinQuickAccess, app::CmdUnpinQuickAccess,
-            app::CmdProperties, app::CmdOpenTerminal, app::CmdViewRecentChanges,
-            app::CmdPinWorkspace, app::CmdPinNetwork,
+            app::CmdMapNetworkDrive, app::CmdUnpinNetwork,
         };
-        for (size_t i = 0; i < std::size(kOrder); ++i)
-            if (kOrder[i] == command) return static_cast<int>(i);
-        return static_cast<int>(std::size(kOrder));
+        for (size_t i = 0; i < std::size(kContext); ++i)
+            if (kContext[i] == command) return static_cast<int>(i);
+        const int listed = SelectionActionFor(command);
+        if (listed >= 0) return 100 + kept[static_cast<size_t>(listed)];
+        return 10000;
     };
     std::stable_sort(cache.actions.begin(), cache.actions.end(),
                      [&](const ui::SelectionChipAction& a, const ui::SelectionChipAction& b) {
@@ -3088,6 +3137,11 @@ void ShowToolbarCustomize(AppState& s, int page) {
     spec.done_text = l10n::Get(l10n::StringId::ToolbarDone);
     spec.tools_tab = l10n::Get(l10n::StringId::ToolbarPickerToolsTab);
     spec.apps_tab = l10n::Get(l10n::StringId::ToolbarPickerAppsTab);
+    spec.sel_tab = l10n::Get(l10n::StringId::ToolbarPickerSelTab);
+    spec.sel_desc = l10n::Get(l10n::StringId::ToolbarPickerSelDesc);
+    spec.on_toolbar_text = l10n::Get(l10n::StringId::ToolbarPickerOnToolbar);
+    spec.tools_full_text = l10n::Get(l10n::StringId::ToolbarPickerToolsFull);
+    spec.max_tools = app::kMaxToolbarTools;
     spec.tools_desc = l10n::Get(l10n::StringId::ToolbarPickerToolsDesc);
     spec.apps_desc = l10n::Get(l10n::StringId::ToolbarPickerAppsDesc);
     spec.search_hint = l10n::Get(l10n::StringId::ToolbarPickerSearch);
@@ -3106,6 +3160,40 @@ void ShowToolbarCustomize(AppState& s, int page) {
         tile.toggle_on = tile.toggle && ToolbarToggleOn(s, i);
         spec.pins.push_back(std::move(tile));
     }
+    // Pinned tools in toolbar order lead; the rest follow in catalog order.
+    for (const auto& id : s.appPrefs.toolbar_tools) {
+        const int at = app::ToolbarToolIndex(id);
+        if (at >= 0) spec.pins_order.push_back(static_cast<size_t>(at));
+    }
+    for (size_t i = 0; i < spec.pins.size(); ++i)
+        if (!spec.pins[i].checked) spec.pins_order.push_back(i);
+
+    // 选中时: the chip's actions, kept ones in chip order first.
+    std::vector<bool> kept(app::kSelectionActionCount, false);
+    for (const auto& id : s.appPrefs.toolbar_selection) {
+        const int at = app::SelectionActionIndex(id);
+        if (at < 0) continue;
+        kept[static_cast<size_t>(at)] = true;
+        spec.selection_order.push_back(static_cast<size_t>(at));
+    }
+    for (size_t i = 0; i < std::size(kSelectionActions); ++i) {
+        const SelectionActionDef& def = kSelectionActions[i];
+        ui::ToolbarPickerTile tile;
+        tile.glyph = def.glyph;
+        tile.label = WithoutEllipsis(l10n::Get(def.label));
+        tile.keywords = std::wstring(app::kSelectionActionIds[i]);
+        switch (def.hint) {
+        case kSelHintMulti: tile.badge = l10n::Get(l10n::StringId::ToolbarSelHintMulti); break;
+        case kSelHintTwoFolders: tile.badge = l10n::Get(l10n::StringId::ToolbarSelHintTwoFolders); break;
+        case kSelHintFolders: tile.badge = l10n::Get(l10n::StringId::ToolbarSelHintFolders); break;
+        case kSelHintSearch: tile.badge = l10n::Get(l10n::StringId::ToolbarSelHintSearch); break;
+        default: break;
+        }
+        tile.tool = def.tool ? app::ToolbarToolIndex(def.tool) : -1;
+        tile.checked = kept[i];
+        spec.selection.push_back(std::move(tile));
+        if (!kept[i]) spec.selection_order.push_back(i);
+    }
     spec.apps_pinned = s.appPrefs.toolbar_apps.size();
     spec.load_apps = [&s](ui::ToolbarCustomizeSpec& later) {
         FillToolbarAppRows(s, later);
@@ -3116,15 +3204,22 @@ void ShowToolbarCustomize(AppState& s, int page) {
         if (!s.isolatedTest) s.appPrefs.Save();
         InvalidateRect(s.hwnd, nullptr, FALSE);
     };
-    // Checked tools keep their place; a newly checked one goes last.
-    spec.on_tool = [&s, save](size_t index, bool checked) {
-        if (index >= app::kToolbarToolCount) return;
-        const std::wstring id(app::kToolbarToolIds[index]);
+    // The picker hands over the checked tiles in its order: the toolbar's.
+    spec.on_tools = [&s, save](const std::vector<size_t>& pinned) {
         std::vector<std::wstring> tools;
-        for (const auto& kept : s.appPrefs.toolbar_tools)
-            if (kept != id) tools.push_back(kept);
-        if (checked) tools.push_back(id);
-        s.appPrefs.toolbar_tools = app::NormalizeToolbarTools(tools);
+        for (size_t index : pinned)
+            if (index < app::kToolbarToolCount) tools.emplace_back(app::kToolbarToolIds[index]);
+        tools = app::NormalizeToolbarTools(tools);
+        if (tools == s.appPrefs.toolbar_tools) return;
+        s.appPrefs.toolbar_tools = std::move(tools);
+        save();
+    };
+    spec.on_selection = [&s, save](const std::vector<size_t>& shown) {
+        std::vector<std::wstring> actions;
+        for (size_t index : shown)
+            if (index < app::kSelectionActionCount) actions.emplace_back(app::kSelectionActionIds[index]);
+        if (actions == s.appPrefs.toolbar_selection) return;
+        s.appPrefs.toolbar_selection = std::move(actions);
         save();
     };
     spec.on_switch = [&s](size_t index) {

@@ -40,6 +40,8 @@ constexpr float kTileGap = 8.0f, kTileH = 76.0f;
 constexpr float kSecH = 24.0f, kSecGap = 12.0f;
 constexpr float kSearchW = 150.0f;
 constexpr float kRadius = 12.0f;
+// Pages, in tab order.
+constexpr int kTools = 0, kSel = 1, kApps = 2, kPages = 3;
 
 bool g_open = false;
 
@@ -95,6 +97,22 @@ struct PageState {
     std::vector<bool> head_shown;
     float content_h = 0.0f;
     size_t visible = 0;
+    // Per section (one on the selection and apps pages): its top and the
+    // shown tiles in display order (the apps page's add tile not included).
+    std::vector<float> sec_top;
+    std::vector<std::vector<size_t>> sec_list;
+};
+
+// A tile being dragged to a new place (positions in DIPs, grid space).
+struct TileDrag {
+    int page = -1;
+    size_t tile = 0;
+    POINT start{};
+    float ox = 0.0f, oy = 0.0f, scroll0 = 0.0f;
+    int last_x = 0;
+    uint64_t moved_at = 0;
+    bool active = false;
+    std::vector<size_t> before;   // the page order when the drag started
 };
 
 // Device bitmaps of the app icons; dropped with the device.
@@ -129,7 +147,10 @@ public:
         spec_ = &spec;
         dark_ = dark;
         accent_ = accent;
-        page_ = std::clamp(spec.page, 0, 1);
+        page_ = std::clamp(spec.page, 0, kPages - 1);
+        InitOrder(kTools, spec.pins_order, spec.pins.size());
+        InitOrder(kSel, spec.selection_order, spec.selection.size());
+        InitOrder(kApps, {}, spec.apps.size());
         animations_ = motion::SystemAnimationsEnabled() && !IsHighContrast();
         scale_ = static_cast<float>(pulse::compat::WindowDpi(owner ? owner : GetDesktopWindow())) / 96.0f;
         Place();
@@ -145,8 +166,8 @@ public:
                                 owner, nullptr, wc.hInstance, this);
         if (!hwnd_) return;
         apps_loaded_ = !spec.load_apps;
-        if (page_ == 1) EnsureApps();
-        for (int p = 0; p < 2; ++p) Layout(p, false);
+        if (page_ == kApps) EnsureApps();
+        for (int p = 0; p < kPages; ++p) Layout(p, false);
         grid_h_.Snap(TargetGridH());
         tab_x_.Snap(TabRect(page_).left);
         tab_w_.Snap(TabRect(page_).right - TabRect(page_).left);
@@ -188,7 +209,7 @@ private:
     }
     D2D1_RECT_F TabRect(int i) const {
         const D2D1_RECT_F t = TabsRect();
-        const float w = (t.right - t.left - S(4.0f)) / 2.0f;
+        const float w = (t.right - t.left - S(4.0f)) / static_cast<float>(kPages);
         const float x = t.left + S(2.0f) + w * static_cast<float>(i);
         return D2D1::RectF(x, t.top + S(2.0f), x + w, t.bottom - S(2.0f));
     }
@@ -206,10 +227,22 @@ private:
         const D2D1_RECT_F c = Card();
         return D2D1::Point2F(c.left + S(kPadX), c.top + S(kGridY) - scroll_);
     }
-    size_t TileCount(int page) const {
-        return page == 0 ? spec_->pins.size() : spec_->apps.size() + (spec_->add_app ? 1u : 0u);
+    std::vector<ToolbarPickerTile>& Tiles(int page) {
+        return page == kTools ? spec_->pins : page == kSel ? spec_->selection : spec_->apps;
     }
-    bool IsAdd(int page, size_t i) const { return page == 1 && i >= spec_->apps.size(); }
+    const std::vector<ToolbarPickerTile>& Tiles(int page) const {
+        return page == kTools ? spec_->pins : page == kSel ? spec_->selection : spec_->apps;
+    }
+    size_t TileCount(int page) const {
+        return Tiles(page).size() + (page == kApps && spec_->add_app ? 1u : 0u);
+    }
+    bool IsAdd(int page, size_t i) const { return page == kApps && i >= spec_->apps.size(); }
+    // A selection action whose command is pinned as a tool: the chip skips it.
+    bool OnToolbar(int page, size_t i) const {
+        if (page != kSel || i >= spec_->selection.size()) return false;
+        const int tool = spec_->selection[i].tool;
+        return tool >= 0 && static_cast<size_t>(tool) < spec_->pins.size() && spec_->pins[static_cast<size_t>(tool)].checked;
+    }
     D2D1_RECT_F TileRect(int page, size_t i, float dx = 0.0f) const {
         const D2D1_POINT_2F o = GridOrigin();
         const TileAnim& t = pages_[page].tiles[i];
@@ -251,6 +284,20 @@ private:
         return Lower(t.label + L" " + t.keywords).find(q) != std::wstring::npos;
     }
 
+    void InitOrder(int page, const std::vector<size_t>& wanted, size_t n) {
+        std::vector<size_t>& order = order_[page];
+        order.clear();
+        std::vector<bool> seen(n, false);
+        for (size_t i : wanted)
+            if (i < n && !seen[i]) { seen[i] = true; order.push_back(i); }
+        for (size_t i = 0; i < n; ++i)
+            if (!seen[i]) order.push_back(i);
+    }
+
+    int SectionOf(int page, size_t i) const {
+        return page == kTools ? std::max(0, spec_->pins[i].section) : 0;
+    }
+
     void Layout(int page, bool animate) {
         PageState& ps = pages_[page];
         const size_t n = TileCount(page);
@@ -260,6 +307,7 @@ private:
         ps.visible = 0;
         auto place = [&](size_t i, size_t k, float top) {
             TileAnim& t = ps.tiles[i];
+            if (drag_.active && drag_.page == page && drag_.tile == i) return;   // follows the pointer
             const float px = static_cast<float>(k % kCols) * (tw + kTileGap);
             const float py = top + static_cast<float>(k / kCols) * (kTileH + kTileGap);
             if (!animate || !t.placed || !animations_) { t.x.Snap(px); t.y.Snap(py); }
@@ -271,32 +319,33 @@ private:
             if (!animate || !animations_) t.gone.Snap(gone ? 1.0f : 0.0f);
             else t.gone.To(gone ? 1.0f : 0.0f);
         };
-        if (page == 0) {
-            const size_t sections = std::max<size_t>(1, spec_->sections.size());
-            ps.heads.resize(sections);
-            ps.head_shown.assign(sections, false);
-            for (size_t sec = 0; sec < sections; ++sec) {
-                std::vector<size_t> shown;
-                for (size_t i = 0; i < n; ++i) {
-                    if (static_cast<size_t>(std::max(0, spec_->pins[i].section)) != sec) continue;
-                    const bool match = Matches(page, i);
-                    set_gone(i, !match);
-                    if (match) shown.push_back(i);
-                }
-                if (shown.empty()) continue;
-                ps.head_shown[sec] = !spec_->sections.empty();
-                if (ps.head_shown[sec]) {
-                    if (!animate || !animations_) ps.heads[sec].Snap(y); else ps.heads[sec].To(y);
-                    y += kSecH;
-                }
-                for (size_t k = 0; k < shown.size(); ++k) place(shown[k], k, y);
-                ps.visible += shown.size();
-                y += std::ceil(static_cast<float>(shown.size()) / kCols) * (kTileH + kTileGap) - kTileGap + kSecGap;
+        const bool titled = page == kTools && !spec_->sections.empty();
+        const size_t sections = page == kTools ? std::max<size_t>(1, spec_->sections.size()) : 1;
+        ps.heads.resize(titled ? sections : 0);
+        ps.head_shown.assign(ps.heads.size(), false);
+        ps.sec_top.assign(sections, 0.0f);
+        ps.sec_list.assign(sections, {});
+        for (size_t sec = 0; sec < sections; ++sec) {
+            std::vector<size_t>& shown = ps.sec_list[sec];
+            for (size_t i : order_[page]) {
+                if (i >= Tiles(page).size() || static_cast<size_t>(SectionOf(page, i)) != sec) continue;
+                const bool match = Matches(page, i);
+                set_gone(i, !match);
+                if (match) shown.push_back(i);
             }
-        } else {
-            for (size_t i = 0; i < n; ++i) { place(i, i, 0.0f); set_gone(i, false); }
-            ps.visible = n;
-            if (n) y += std::ceil(static_cast<float>(n) / kCols) * (kTileH + kTileGap) - kTileGap + kSecGap;
+            const bool add = page == kApps && spec_->add_app;
+            const size_t count = shown.size() + (add ? 1u : 0u);
+            if (count == 0) { ps.sec_top[sec] = y; continue; }
+            if (titled) {
+                ps.head_shown[sec] = true;
+                if (!animate || !animations_) ps.heads[sec].Snap(y); else ps.heads[sec].To(y);
+                y += kSecH;
+            }
+            ps.sec_top[sec] = y;
+            for (size_t k = 0; k < shown.size(); ++k) place(shown[k], k, y);
+            if (add) { place(spec_->apps.size(), shown.size(), y); set_gone(spec_->apps.size(), false); }
+            ps.visible += count;
+            y += std::ceil(static_cast<float>(count) / kCols) * (kTileH + kTileGap) - kTileGap + kSecGap;
         }
         ps.content_h = std::max(0.0f, y - kSecGap);
     }
@@ -312,25 +361,63 @@ private:
         if (apps_loaded_) return;
         apps_loaded_ = true;
         if (spec_->load_apps) spec_->load_apps(*spec_);
-        pages_[1].tiles.clear();
-        Layout(1, false);
+        InitOrder(kApps, {}, spec_->apps.size());
+        pages_[kApps].tiles.clear();
+        Layout(kApps, false);
     }
 
     size_t CheckedCount(int page) const {
-        if (page == 1 && !apps_loaded_) return spec_->apps_pinned;
+        if (page == kApps && !apps_loaded_) return spec_->apps_pinned;
         size_t n = 0;
-        if (page == 0) { for (const auto& t : spec_->pins) n += t.checked ? 1u : 0u; }
-        else { for (const auto& t : spec_->apps) n += t.checked ? 1u : 0u; }
+        for (size_t i = 0; i < Tiles(page).size(); ++i)
+            n += Tiles(page)[i].checked && !OnToolbar(page, i) ? 1u : 0u;
         return n;
+    }
+
+    // Hands the page's checked tiles, in display order, to the app.
+    void Emit(int page) {
+        if (page == kApps) {
+            if (!spec_->on_apps) return;
+            std::vector<ToolbarPickerTile> rows;
+            for (size_t i : order_[kApps]) if (i < spec_->apps.size()) rows.push_back(spec_->apps[i]);
+            spec_->on_apps(rows);
+            return;
+        }
+        std::vector<size_t> checked;
+        for (size_t i : order_[page]) if (i < Tiles(page).size() && Tiles(page)[i].checked) checked.push_back(i);
+        if (page == kTools && spec_->on_tools) spec_->on_tools(checked);
+        if (page == kSel && spec_->on_selection) spec_->on_selection(checked);
+    }
+
+    // Moves tile i to slot `to` of its section; the other sections keep their
+    // places in the page order. True when the order changed.
+    bool MoveInSection(int page, size_t i, int to) {
+        const PageState& ps = pages_[page];
+        const size_t sec = static_cast<size_t>(SectionOf(page, i));
+        if (sec >= ps.sec_list.size()) return false;
+        const std::vector<size_t> list = ps.sec_list[sec];
+        const auto at = std::find(list.begin(), list.end(), i);
+        if (at == list.end() || list.empty()) return false;
+        const int cur = static_cast<int>(at - list.begin());
+        to = std::clamp(to, 0, static_cast<int>(list.size()) - 1);
+        if (to == cur) return false;
+        std::vector<size_t> moved = list;
+        moved.erase(moved.begin() + cur);
+        moved.insert(moved.begin() + to, i);
+        size_t k = 0;
+        for (size_t& slot : order_[page])
+            if (std::find(list.begin(), list.end(), slot) != list.end()) slot = moved[k++];
+        Layout(page, true);
+        return true;
     }
 
     // ---- actions --------------------------------------------------------
     void SetPage(int page) {
-        page = std::clamp(page, 0, 1);
+        page = std::clamp(page, 0, kPages - 1);
         if (page == page_) return;
         from_page_ = page_;
         page_ = page;
-        if (page_ == 1) EnsureApps();
+        if (page_ == kApps) EnsureApps();
         page_at_ = motion::NowMs();
         enter_at_ = page_at_;
         scroll_ = 0.0f;
@@ -345,26 +432,21 @@ private:
 
     void ToggleTile(int page, size_t i) {
         const uint64_t now = motion::NowMs();
-        if (page == 0) {
-            if (i >= spec_->pins.size()) return;
-            ToolbarPickerTile& t = spec_->pins[i];
-            t.checked = !t.checked;
-            pages_[0].tiles[i].check_at = now;
-            if (spec_->on_tool) spec_->on_tool(i, t.checked);
-        } else {
-            if (i >= spec_->apps.size()) { AddApp(); return; }
-            ToolbarPickerTile& t = spec_->apps[i];
-            if (!t.checked && CheckedCount(1) >= spec_->max_apps) {
-                pages_[1].tiles[i].shake_at = now;
-                note_until_ = now + 2200;
-                MessageBeep(MB_OK);
-                Frame();
-                return;
-            }
-            t.checked = !t.checked;
-            pages_[1].tiles[i].check_at = now;
-            if (spec_->on_apps) spec_->on_apps(spec_->apps);
+        if (page == kApps && i >= spec_->apps.size()) { AddApp(); return; }
+        if (i >= Tiles(page).size()) return;
+        ToolbarPickerTile& t = Tiles(page)[i];
+        const size_t limit = page == kApps ? spec_->max_apps : page == kTools ? spec_->max_tools : 0;
+        if (!t.checked && limit && CheckedCount(page) >= limit) {
+            pages_[page].tiles[i].shake_at = now;
+            note_until_ = now + 2200;
+            note_page_ = page;
+            MessageBeep(MB_OK);
+            Frame();
+            return;
         }
+        t.checked = !t.checked;
+        pages_[page].tiles[i].check_at = now;
+        Emit(page);
         Frame();
     }
 
@@ -390,25 +472,91 @@ private:
         for (size_t i = 0; i < spec_->apps.size(); ++i) {
             ToolbarPickerTile& existing = spec_->apps[i];
             if (_wcsicmp(existing.value.c_str(), row.value.c_str()) != 0) continue;
-            if (!existing.checked && CheckedCount(1) < spec_->max_apps) {
+            if (!existing.checked && CheckedCount(kApps) < spec_->max_apps) {
                 existing.checked = true;
-                pages_[1].tiles[i].check_at = now;
-                if (spec_->on_apps) spec_->on_apps(spec_->apps);
+                pages_[kApps].tiles[i].check_at = now;
+                Emit(kApps);
             }
             Frame();
             return;
         }
-        row.checked = CheckedCount(1) < spec_->max_apps;
+        row.checked = CheckedCount(kApps) < spec_->max_apps;
         spec_->apps.push_back(std::move(row));
+        order_[kApps].push_back(spec_->apps.size() - 1);
         // The new tile takes the add tile's place and pops in; the add tile moves on.
-        PageState& ps = pages_[1];
+        PageState& ps = pages_[kApps];
         TileAnim fresh;
         if (!ps.tiles.empty() && spec_->add_app) fresh = ps.tiles.back();
         fresh.check_at = now;
         ps.tiles.insert(ps.tiles.begin() + static_cast<std::ptrdiff_t>(spec_->apps.size() - 1), fresh);
-        Layout(1, true);
+        Layout(kApps, true);
         grid_h_.To(TargetGridH());
-        if (spec_->on_apps) spec_->on_apps(spec_->apps);
+        Emit(kApps);
+        Frame();
+    }
+
+    // Alt+←/→: the focused tile one slot along its section.
+    void MoveFocused(int step) {
+        const size_t i = static_cast<size_t>(focus_.index);
+        if (focus_.index < 0 || IsAdd(page_, i) || i >= Tiles(page_).size()) return;
+        const PageState& ps = pages_[page_];
+        const size_t sec = static_cast<size_t>(SectionOf(page_, i));
+        if (sec >= ps.sec_list.size()) return;
+        const auto& list = ps.sec_list[sec];
+        const auto at = std::find(list.begin(), list.end(), i);
+        if (at == list.end()) return;
+        if (MoveInSection(page_, i, static_cast<int>(at - list.begin()) + step)) {
+            Emit(page_);
+            ScrollIntoView(i);
+        }
+        show_focus_ = true;
+        Frame();
+    }
+
+    // ---- dragging a tile -------------------------------------------------
+    void DragTo(int x, int y) {
+        if (drag_.page != page_ || drag_.tile >= pages_[page_].tiles.size()) { drag_ = TileDrag{}; return; }
+        const float dx = static_cast<float>(x - drag_.start.x), dy = static_cast<float>(y - drag_.start.y);
+        if (!drag_.active) {
+            if (std::hypot(dx, dy) < S(4.0f)) return;
+            drag_.active = true;
+            pressed_ = Hit{};
+            hover_ = Hit{};
+            show_focus_ = false;
+        }
+        // Near the grid's edges the page scrolls along.
+        const D2D1_RECT_F grid = GridRect();
+        if (static_cast<float>(y) < grid.top + S(16.0f)) scroll_ = std::clamp(scroll_ - S(8.0f), 0.0f, MaxScroll());
+        else if (static_cast<float>(y) > grid.bottom - S(16.0f)) scroll_ = std::clamp(scroll_ + S(8.0f), 0.0f, MaxScroll());
+        TileAnim& t = pages_[page_].tiles[drag_.tile];
+        const float gx = drag_.ox + dx / scale_;
+        const float gy = drag_.oy + (dy + scroll_ - drag_.scroll0) / scale_;
+        t.x.Snap(gx);
+        t.y.Snap(gy);
+        const float vx = static_cast<float>(x - drag_.last_x) / scale_;
+        drag_.last_x = x;
+        drag_.moved_at = motion::NowMs();
+        if (animations_) tilt_.To(std::clamp(vx * 0.6f, -6.0f, 6.0f));
+        // The slot under the tile's centre, inside its own section.
+        const PageState& ps = pages_[page_];
+        const size_t sec = static_cast<size_t>(SectionOf(page_, drag_.tile));
+        if (sec < ps.sec_top.size()) {
+            const float tw = TileW();
+            const int col = std::clamp(static_cast<int>(std::floor((gx + tw * 0.5f) / (tw + kTileGap))), 0, kCols - 1);
+            const int row = std::max(0, static_cast<int>(std::floor((gy + kTileH * 0.5f - ps.sec_top[sec]) / (kTileH + kTileGap))));
+            MoveInSection(page_, drag_.tile, row * kCols + col);
+        }
+        Frame();
+    }
+
+    void EndDrag() {
+        if (!drag_.active) { drag_ = TileDrag{}; return; }
+        const int page = drag_.page;
+        const bool changed = order_[page] != drag_.before;
+        drag_ = TileDrag{};
+        tilt_.Snap(0.0f);
+        Layout(page, true);   // the tile springs into its slot from where it was let go
+        if (changed) Emit(page);
         Frame();
     }
 
@@ -422,8 +570,11 @@ private:
     // ---- focus ----------------------------------------------------------
     Hit FirstTile() const {
         const PageState& ps = pages_[page_];
-        for (size_t i = 0; i < ps.tiles.size(); ++i)
-            if (ps.tiles[i].gone.to < 0.5f) return Hit{ IsAdd(page_, i) ? Part::Add : Part::Tile, static_cast<int>(i) };
+        for (const auto& list : ps.sec_list)
+            for (size_t i : list)
+                if (i < ps.tiles.size() && ps.tiles[i].gone.to < 0.5f) return Hit{ Part::Tile, static_cast<int>(i) };
+        if (page_ == kApps && spec_->add_app && ps.tiles.size() > spec_->apps.size())
+            return Hit{ Part::Add, static_cast<int>(spec_->apps.size()) };
         return Hit{ Part::Search, -1 };
     }
 
@@ -483,9 +634,9 @@ private:
         const D2D1_RECT_F card = Card();
         if (!Inside(card, x, y)) return Hit{ Part::Outside, -1 };
         if (Inside(DoneRect(), x, y)) return Hit{ Part::Done, -1 };
-        for (int i = 0; i < 2; ++i)
+        for (int i = 0; i < kPages; ++i)
             if (Inside(TabRect(i), x, y)) return Hit{ Part::Tab, i };
-        if (page_ == 0 && Inside(SearchRect(), x, y)) return Hit{ Part::Search, -1 };
+        if (page_ == kTools && Inside(SearchRect(), x, y)) return Hit{ Part::Search, -1 };
         const D2D1_RECT_F grid = GridRect();
         if (Inside(grid, x, y)) {
             const PageState& ps = pages_[page_];
@@ -494,7 +645,7 @@ private:
                 const D2D1_RECT_F r = TileRect(page_, i);
                 if (!Inside(r, x, y)) continue;
                 if (IsAdd(page_, i)) return Hit{ Part::Add, static_cast<int>(i) };
-                if (page_ == 0 && spec_->pins[i].toggle) {
+                if (page_ == kTools && spec_->pins[i].toggle) {
                     D2D1_RECT_F sw = SwitchRect(r);
                     sw.left -= S(5.0f); sw.top -= S(5.0f); sw.right += S(5.0f); sw.bottom += S(5.0f);
                     if (Inside(sw, x, y)) return Hit{ Part::Switch, static_cast<int>(i) };
@@ -529,6 +680,8 @@ private:
         moving |= grid_h_.Step(dt, motion::spring::Snappy);
         moving |= tab_x_.Step(dt, motion::spring::Snappy);
         moving |= tab_w_.Step(dt, motion::spring::Snappy);
+        if (drag_.active && now - drag_.moved_at > 70) tilt_.To(0.0f);
+        moving |= tilt_.Step(dt, motion::spring::Snappy);
         for (auto& ps : pages_) {
             for (auto& t : ps.tiles) {
                 moving |= t.x.Step(dt, motion::spring::Snappy);
@@ -651,8 +804,11 @@ private:
         ID2D1DeviceContext* dc = compositor_.Dc();
         const TileAnim& anim = pages_[page].tiles[i];
         const bool add = IsAdd(page, i);
-        const ToolbarPickerTile* t = add ? nullptr : (page == 0 ? &spec_->pins[i] : &spec_->apps[i]);
+        const ToolbarPickerTile* t = add ? nullptr : &Tiles(page)[i];
         const bool on = t && t->checked;
+        const bool dragged = drag_.active && drag_.page == page && drag_.tile == i;
+        // A selection action pinned as a tool: the chip leaves it out, the tile says so.
+        const bool on_toolbar = OnToolbar(page, i);
         const Hit me{ add ? Part::Add : Part::Tile, static_cast<int>(i) };
         const bool hot = page == page_ && (hover_ == me || (hover_.part == Part::Switch && hover_.index == static_cast<int>(i)));
         const bool pressed = page == page_ && pressed_ == me && hover_ == me;
@@ -670,13 +826,25 @@ private:
         if (pressed) sc *= 0.95f;
         const float lift = S(6.0f) * (1.0f - motion::EaseOutCubic(enter));
         sc *= 1.0f - 0.12f * (1.0f - alpha);   // filtered out: shrink to 0.88 while fading
+        if (dragged) sc *= 1.05f;              // lifted
         D2D1_MATRIX_3X2_F old;
         dc->GetTransform(&old);
         const D2D1_POINT_2F centre = D2D1::Point2F((r.left + r.right) * 0.5f, (r.top + r.bottom) * 0.5f + lift);
-        dc->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, lift) * D2D1::Matrix3x2F::Scale(sc, sc, centre) * M(old));
+        D2D1::Matrix3x2F local = D2D1::Matrix3x2F::Translation(0.0f, lift) * D2D1::Matrix3x2F::Scale(sc, sc, centre);
+        if (dragged) local = local * D2D1::Matrix3x2F::Rotation(tilt_.v, centre);
+        dc->SetTransform(local * M(old));
 
         const float radius = S(11.0f);
         const D2D1_RECT_F inner = D2D1::RectF(r.left + 0.5f, r.top + 0.5f, r.right - 0.5f, r.bottom - 0.5f);
+        if (dragged) {
+            // Lifted: a soft shadow under an opaque card, so the tiles below don't show through.
+            for (int k = 3; k >= 1; --k) {
+                const float g = S(2.0f * static_cast<float>(k));
+                painter_.FillRoundedRect(D2D1::RectF(r.left - g, r.top - g + S(5.0f), r.right + g, r.bottom + g + S(5.0f)),
+                                         radius + g, HexColor(0x000000, (dark_ ? 0.10f : 0.05f) * alpha));
+            }
+            painter_.FillRoundedRect(r, radius, Alpha(card_color_, alpha));
+        }
         if (add) {
             if (hot) painter_.FillRoundedRect(r, radius, Alpha(pal.hover, alpha));
             dc->DrawRoundedRectangle(D2D1::RoundedRect(inner, radius, radius), BrushOf(Alpha(pal.acc_line, alpha)),
@@ -696,13 +864,14 @@ private:
                                        radius + S(1.5f), Alpha(pal.accent, alpha), S(2.0f));
 
         // Art and label, centred as a column (icon 20 + gap 6 + label).
-        const bool has_note = t && !t->badge.empty();
+        const std::wstring& note = on_toolbar ? spec_->on_toolbar_text : (t ? t->badge : spec_->add_app_text);
+        const bool has_note = t && !note.empty();
         const float art_cy = r.top + S(has_note ? 24.0f : 28.0f);
         const float label_top = r.top + S(has_note ? 40.0f : 45.0f);
-        const float dim = on || add || hot ? 1.0f : 0.6f;
+        const float dim = (on && !on_toolbar) || add || hot ? 1.0f : 0.6f;
         if (add) {
             Glyph(L"\xE710", D2D1::Point2F((r.left + r.right) * 0.5f, art_cy), S(20.0f), Alpha(pal.accent, alpha));
-        } else if (page == 1) {
+        } else if (page == kApps) {
             const float half = S(13.0f);
             const float cx = std::round((r.left + r.right) * 0.5f), cy = std::round(art_cy);
             if (ID2D1Bitmap* bitmap = icons_.For(dc, t->icon))
@@ -719,8 +888,8 @@ private:
         painter_.DrawText(label, D2D1::RectF(r.left + S(5.0f), label_top, r.right - S(5.0f), label_top + S(17.0f)),
                           label_fmt_.get(), Alpha(label_color, alpha), fluent::HorizontalAlignment::Center);
         if (has_note)
-            painter_.DrawText(t->badge, D2D1::RectF(r.left + S(4.0f), label_top + S(16.0f), r.right - S(4.0f), label_top + S(31.0f)),
-                              tiny_fmt_.get(), Alpha(pal.accent, alpha), fluent::HorizontalAlignment::Center);
+            painter_.DrawText(note, D2D1::RectF(r.left + S(4.0f), label_top + S(16.0f), r.right - S(4.0f), label_top + S(31.0f)),
+                              tiny_fmt_.get(), Alpha(on_toolbar ? pal.faint : pal.accent, alpha), fluent::HorizontalAlignment::Center);
 
         // Check badge, top right: pops in (Pop spring), drops out quickly.
         if (t) {
@@ -738,7 +907,7 @@ private:
             }
         }
         // Switch, top left: flips the setting without pinning the tool.
-        if (t && page == 0 && t->toggle) {
+        if (t && page == kTools && t->toggle) {
             const D2D1_RECT_F sw = SwitchRect(r);
             float k = t->toggle_on ? 1.0f : 0.0f;
             if (anim.switch_at && animations_) {
@@ -760,7 +929,7 @@ private:
         if (alpha <= 0.01f) return;
         const PageState& ps = pages_[page];
         const D2D1_POINT_2F o = GridOrigin();
-        if (page == 0) {
+        if (page == kTools) {
             for (size_t sec = 0; sec < ps.heads.size() && sec < spec_->sections.size(); ++sec) {
                 if (!ps.head_shown[sec]) continue;
                 const float y = o.y + S(ps.heads[sec].v);
@@ -768,8 +937,16 @@ private:
                                   head_fmt_.get(), Alpha(pal.sub, alpha));
             }
         }
+        // Reading order (sections, then the page order) staggers the entrance.
+        std::vector<size_t> seq;
+        for (const auto& list : ps.sec_list) seq.insert(seq.end(), list.begin(), list.end());
+        if (page == kApps && spec_->add_app && ps.tiles.size() > spec_->apps.size()) seq.push_back(spec_->apps.size());
+        for (size_t i = 0; i < ps.tiles.size(); ++i)
+            if (std::find(seq.begin(), seq.end(), i) == seq.end()) seq.push_back(i);   // fading out
+        const bool lifting = drag_.active && drag_.page == page;
         size_t order = 0;
-        for (size_t i = 0; i < ps.tiles.size(); ++i) {
+        for (size_t i : seq) {
+            if (i >= ps.tiles.size()) continue;
             const float shown = 1.0f - Clamp01(ps.tiles[i].gone.v);
             if (shown <= 0.01f) continue;
             float enter = 1.0f;
@@ -778,8 +955,11 @@ private:
                 enter = Clamp01((static_cast<float>(now - enter_at_) - delay) / 260.0f);
             }
             ++order;
+            if (lifting && i == drag_.tile) continue;   // drawn last, above the rest
             DrawTile(pal, page, i, TileRect(page, i, dx), alpha * shown * motion::EaseOutCubic(enter), now, enter);
         }
+        if (lifting && drag_.tile < ps.tiles.size())
+            DrawTile(pal, page, drag_.tile, TileRect(page, drag_.tile, dx), alpha, now, 1.0f);
     }
 
     void Render() {
@@ -800,6 +980,7 @@ private:
         const bool hc = IsHighContrast();
         const Theme theme = hc ? MakeHighContrastTheme() : MakeTheme(dark_, accent_);
         const Palette pal = Colors(theme);
+        card_color_ = pal.card;
 
         // Open: Pop 0.94 -> 1 from the notch, fading in fast. Close: 110 ms to 0.97.
         float alpha = 1.0f, sc = 1.0f, ty = 0.0f;
@@ -864,9 +1045,9 @@ private:
                                  HexColor(0x000000, dark_ ? 0.25f : 0.08f));
         painter_.FillRoundedRect(plate, S(7.0f), pal.plate);
         painter_.StrokeRoundedRect(plate, S(7.0f), pal.line2, 0.75f);
-        for (int i = 0; i < 2; ++i) {
+        for (int i = 0; i < kPages; ++i) {
             const D2D1_RECT_F tr = TabRect(i);
-            const std::wstring& name = i == 0 ? spec_->tools_tab : spec_->apps_tab;
+            const std::wstring& name = i == kTools ? spec_->tools_tab : i == kSel ? spec_->sel_tab : spec_->apps_tab;
             const std::wstring count = std::to_wstring(CheckedCount(i));
             const float name_w = std::ceil(typography::MeasureLine(&compositor_, label_fmt_.get(), name));
             const float pill_w = std::max(S(16.0f), std::ceil(typography::MeasureLine(&compositor_, tiny_fmt_.get(), count)) + S(8.0f));
@@ -884,12 +1065,14 @@ private:
         }
 
         // Description (or the apps-full note), and the search field on the tools page.
-        const float desc_right = page_ == 0 ? SearchRect().left - S(8.0f) : card.right - S(kPadX);
-        const bool note = note_until_ && now < note_until_ && page_ == 1;
-        painter_.DrawText(note ? spec_->apps_full_text : (page_ == 0 ? spec_->tools_desc : spec_->apps_desc),
+        const float desc_right = page_ == kTools ? SearchRect().left - S(8.0f) : card.right - S(kPadX);
+        const bool note = note_until_ && now < note_until_ && page_ == note_page_;
+        const std::wstring& desc = page_ == kTools ? spec_->tools_desc : page_ == kSel ? spec_->sel_desc : spec_->apps_desc;
+        const std::wstring& full = page_ == kTools ? spec_->tools_full_text : spec_->apps_full_text;
+        painter_.DrawText(note ? full : desc,
                           D2D1::RectF(card.left + S(kPadX), card.top + S(kDescY), desc_right, card.top + S(kDescY + kDescH)),
                           small_fmt_.get(), note ? pal.accent : pal.sub);
-        if (page_ == 0) {
+        if (page_ == kTools) {
             const D2D1_RECT_F sr = SearchRect();
             painter_.FillRoundedRect(sr, S(7.0f), pal.hover);
             if (search_focus_) painter_.StrokeRoundedRect(sr, S(7.0f), pal.accent, 1.0f);
@@ -919,7 +1102,7 @@ private:
         } else {
             DrawPage(pal, page_, 0.0f, 1.0f, now);
         }
-        if (page_ == 0 && pages_[0].visible == 0)
+        if (page_ == kTools && pages_[kTools].visible == 0)
             painter_.DrawText(spec_->empty_text, D2D1::RectF(grid.left, grid.top + S(30.0f), grid.right, grid.top + S(50.0f)),
                               small_fmt_.get(), pal.faint, fluent::HorizontalAlignment::Center);
         // Scroll hint: a thin thumb when the page is taller than the popover.
@@ -950,7 +1133,7 @@ private:
     }
 
     void OnChar(wchar_t ch) {
-        if (page_ != 0) return;
+        if (page_ != kTools) return;
         if (ch == 8) {   // Backspace
             if (query_.empty()) return;
             query_.pop_back();
@@ -979,20 +1162,19 @@ private:
             else Close();
             return true;
         case VK_TAB:
-            if (ctrl) { SetPage(1 - page_); return true; }
+            if (ctrl) { SetPage((page_ + (shift ? kPages - 1 : 1)) % kPages); return true; }
             // Search -> tiles -> tabs -> Done.
             if (search_focus_ || focus_.part == Part::Search) { search_focus_ = false; focus_ = FirstTile(); }
             else if (focus_.part == Part::Tile || focus_.part == Part::Add || focus_.part == Part::Switch) focus_ = Hit{ Part::Tab, page_ };
             else if (focus_.part == Part::Tab) focus_ = Hit{ Part::Done, -1 };
-            else if (page_ == 0) { focus_ = Hit{ Part::Search, -1 }; search_focus_ = true; }
+            else if (page_ == kTools) { focus_ = Hit{ Part::Search, -1 }; search_focus_ = true; }
             else focus_ = FirstTile();
-            (void)shift;
             show_focus_ = true;
             Frame();
             return true;
         case VK_LEFT:
         case VK_RIGHT:
-            if (focus_.part == Part::Tab) { SetPage(key == VK_LEFT ? 0 : 1); focus_ = Hit{ Part::Tab, page_ }; show_focus_ = true; return true; }
+            if (focus_.part == Part::Tab) { SetPage(page_ + (key == VK_LEFT ? -1 : 1)); focus_ = Hit{ Part::Tab, page_ }; show_focus_ = true; return true; }
             if (search_focus_) return true;
             MoveFocus(key == VK_LEFT ? -1 : 1, 0);
             return true;
@@ -1010,12 +1192,12 @@ private:
                 if (key == VK_RETURN) { search_focus_ = false; focus_ = FirstTile(); show_focus_ = true; Frame(); }
                 return key == VK_RETURN;
             }
-            if (focus_.part == Part::Tile && shift && page_ == 0) FlipSwitch(static_cast<size_t>(focus_.index));
+            if (focus_.part == Part::Tile && shift && page_ == kTools) FlipSwitch(static_cast<size_t>(focus_.index));
             else Activate(focus_);
             show_focus_ = true;
             return true;
         case 'F':
-            if (ctrl && page_ == 0) { search_focus_ = true; focus_ = Hit{ Part::Search, -1 }; Frame(); return true; }
+            if (ctrl && page_ == kTools) { search_focus_ = true; focus_ = Hit{ Part::Search, -1 }; Frame(); return true; }
             return false;
         }
         return false;
@@ -1061,6 +1243,10 @@ private:
             }
             break;
         case WM_MOUSEMOVE: {
+            if (drag_.page >= 0 && (wparam & MK_LBUTTON)) {
+                DragTo(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+                return 0;
+            }
             const Hit hit = HitAt(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam)));
             if (hit != hover_) { hover_ = hit; Frame(); }
             TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, hwnd_, 0 };
@@ -1073,12 +1259,31 @@ private:
         case WM_LBUTTONDOWN:
         case WM_LBUTTONDBLCLK:
             pressed_ = HitAt(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam)));
+            drag_ = TileDrag{};
+            if (pressed_.part == Part::Tile && message == WM_LBUTTONDOWN) {   // may become a drag
+                const size_t i = static_cast<size_t>(pressed_.index);
+                drag_.page = page_;
+                drag_.tile = i;
+                drag_.start = POINT{ GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+                drag_.ox = pages_[page_].tiles[i].x.v;
+                drag_.oy = pages_[page_].tiles[i].y.v;
+                drag_.scroll0 = scroll_;
+                drag_.last_x = drag_.start.x;
+                drag_.before = order_[page_];
+            }
             if (pressed_.part != Part::Search) search_focus_ = false;
             show_focus_ = false;
             SetCapture(hwnd_);
             Frame();
             return 0;
         case WM_LBUTTONUP: {
+            if (drag_.active) {
+                pressed_ = Hit{};
+                EndDrag();
+                if (GetCapture() == hwnd_) ReleaseCapture();
+                return 0;
+            }
+            drag_ = TileDrag{};
             const Hit hit = HitAt(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam)));
             const Hit pressed = pressed_;
             pressed_ = Hit{};
@@ -1090,6 +1295,9 @@ private:
             Frame();
             return 0;
         }
+        case WM_CAPTURECHANGED:
+            if (drag_.active && reinterpret_cast<HWND>(lparam) != hwnd_) EndDrag();
+            return 0;
         case WM_MOUSEWHEEL: {
             const float step = S(48.0f) * static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) / WHEEL_DELTA;
             const float next = std::clamp(scroll_ - step, 0.0f, MaxScroll());
@@ -1098,15 +1306,20 @@ private:
         }
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN:
-            if (message == WM_SYSKEYDOWN && (wparam == VK_LEFT || wparam == VK_RIGHT)) {   // Alt+←/→: pages
-                SetPage(wparam == VK_LEFT ? 0 : 1);
+            if (message == WM_SYSKEYDOWN && (wparam == VK_LEFT || wparam == VK_RIGHT)) {
+                const int step = wparam == VK_LEFT ? -1 : 1;
+                if (focus_.part == Part::Tile && !search_focus_) {   // Alt+←/→ on a tile: move it
+                    MoveFocused(step);
+                    return 0;
+                }
+                SetPage(page_ + step);   // elsewhere: pages
                 return 0;
             }
             if (OnKey(wparam)) return 0;
             break;
         case WM_CHAR:
             if (wparam == L' ' && !search_focus_) return 0;   // Space toggles (WM_KEYDOWN)
-            if ((wparam == L't' || wparam == L'T') && !search_focus_ && focus_.part == Part::Tile) {
+            if ((wparam == L't' || wparam == L'T') && !search_focus_ && focus_.part == Part::Tile && page_ == kTools) {
                 FlipSwitch(static_cast<size_t>(focus_.index));   // T: the tile's switch
                 return 0;
             }
@@ -1156,8 +1369,12 @@ private:
     float notch_x_ = 0.0f;
     float grid_max_ = 370.0f;
     float scroll_ = 0.0f;
-    PageState pages_[2];
-    Spring1 grid_h_, tab_x_, tab_w_;
+    PageState pages_[kPages];
+    std::vector<size_t> order_[kPages];   // display order of each page's tiles
+    TileDrag drag_;
+    Spring1 grid_h_, tab_x_, tab_w_, tilt_;
+    D2D1_COLOR_F card_color_{};
+    int note_page_ = kApps;
     int page_ = 0;
     int from_page_ = 0;
     Hit hover_, pressed_, focus_;

@@ -233,6 +233,13 @@ int main(int argc, char** argv) {
         Check(saved_json.find(L"\"toolbar_pins\":2")!=std::wstring::npos, "TOOLBAR-03 an older Pulse still reads its pins");
         AppPrefs cleared; cleared.persist=false;
         Check(cleared.FromJson(LR"({"toolbar_tools":[],"toolbar_pins":31})") && cleared.toolbar_tools.empty(), "TOOLBAR-04 an emptied list is not refilled from the old mask");
+        Check(cleared.toolbar_selection==pulse::app::DefaultToolbarSelection(), "TOOLBAR-05 prefs without toolbar_selection show every chip action");
+        AppPrefs chip; chip.persist=false;
+        chip.toolbar_selection={L"tags",L"bogus",L"compare",L"tags"};
+        AppPrefs chip_again; chip_again.persist=false;
+        Check(chip_again.FromJson(chip.ToJson()) && chip_again.toolbar_selection==Tools{L"tags",L"compare"}, "TOOLBAR-06 chip action list round trips; unknown and repeated ids dropped");
+        AppPrefs chip_none; chip_none.persist=false;
+        Check(chip_none.FromJson(LR"({"toolbar_selection":[]})") && chip_none.toolbar_selection.empty(), "TOOLBAR-07 an emptied chip list stays empty");
     }
     std::filesystem::remove_all(dir);
     return failures ? 1 : 0;

@@ -2234,3 +2234,12 @@ ToolbarSectionFile	IDS_TOOLBAR_SECTION_FILE	3436	文件	Files	檔案
 ToolbarSectionShow	IDS_TOOLBAR_SECTION_SHOW	3437	显示（开关，立即生效）	Show (switches apply at once)	顯示（開關，立即生效）
 ToolbarSectionPane	IDS_TOOLBAR_SECTION_PANE	3438	窗格与视图	Panes and view	窗格與檢視
 ToolbarSectionMore	IDS_TOOLBAR_SECTION_MORE	3439	更多	More	更多
+ToolbarPickerSelTab	IDS_TOOLBAR_PICKER_SEL_TAB	3440	选中时	Selection	選取時
+ToolbarPickerSelDesc	IDS_TOOLBAR_PICKER_SEL_DESC	3441	选中文件后胶囊里的快捷操作，可拖动排序；带条件的满足时才出现。	Quick actions in the selection chip; drag to reorder. Conditional ones show up when they apply.	選取檔案後膠囊裡的快速操作，可拖曳排序；帶條件的滿足時才出現。
+ToolbarPickerOnToolbar	IDS_TOOLBAR_PICKER_ON_TOOLBAR	3442	已在工具栏上	On the toolbar	已在工具列上
+ToolbarPickerToolsFull	IDS_TOOLBAR_PICKER_TOOLS_FULL	3443	工具栏最多放 12 个工具，先取消一个	The toolbar holds up to 12 tools; unpin one first	工具列最多放 12 個工具，先取消一個
+ToolbarSelHintMulti	IDS_TOOLBAR_SEL_HINT_MULTI	3444	多选时	2+ items	多選時
+ToolbarSelHintTwoFolders	IDS_TOOLBAR_SEL_HINT_TWO_FOLDERS	3445	两个文件夹时	2 folders	兩個資料夾時
+ToolbarSelHintFolders	IDS_TOOLBAR_SEL_HINT_FOLDERS	3446	选中文件夹时	Folders	選取資料夾時
+ToolbarSelHintSearch	IDS_TOOLBAR_SEL_HINT_SEARCH	3447	搜索结果中	Search results	搜尋結果中
+ToolbarSelRecent	IDS_TOOLBAR_SEL_RECENT	3448	最近变化	Recent changes	最近變化

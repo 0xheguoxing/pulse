@@ -2213,6 +2213,15 @@ BEGIN
     IDS_TOOLBAR_SECTION_SHOW "显示（开关，立即生效）"
     IDS_TOOLBAR_SECTION_PANE "窗格与视图"
     IDS_TOOLBAR_SECTION_MORE "更多"
+    IDS_TOOLBAR_PICKER_SEL_TAB "选中时"
+    IDS_TOOLBAR_PICKER_SEL_DESC "选中文件后胶囊里的快捷操作，可拖动排序；带条件的满足时才出现。"
+    IDS_TOOLBAR_PICKER_ON_TOOLBAR "已在工具栏上"
+    IDS_TOOLBAR_PICKER_TOOLS_FULL "工具栏最多放 12 个工具，先取消一个"
+    IDS_TOOLBAR_SEL_HINT_MULTI "多选时"
+    IDS_TOOLBAR_SEL_HINT_TWO_FOLDERS "两个文件夹时"
+    IDS_TOOLBAR_SEL_HINT_FOLDERS "选中文件夹时"
+    IDS_TOOLBAR_SEL_HINT_SEARCH "搜索结果中"
+    IDS_TOOLBAR_SEL_RECENT "最近变化"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4425,6 +4434,15 @@ BEGIN
     IDS_TOOLBAR_SECTION_SHOW "Show (switches apply at once)"
     IDS_TOOLBAR_SECTION_PANE "Panes and view"
     IDS_TOOLBAR_SECTION_MORE "More"
+    IDS_TOOLBAR_PICKER_SEL_TAB "Selection"
+    IDS_TOOLBAR_PICKER_SEL_DESC "Quick actions in the selection chip; drag to reorder. Conditional ones show up when they apply."
+    IDS_TOOLBAR_PICKER_ON_TOOLBAR "On the toolbar"
+    IDS_TOOLBAR_PICKER_TOOLS_FULL "The toolbar holds up to 12 tools; unpin one first"
+    IDS_TOOLBAR_SEL_HINT_MULTI "2+ items"
+    IDS_TOOLBAR_SEL_HINT_TWO_FOLDERS "2 folders"
+    IDS_TOOLBAR_SEL_HINT_FOLDERS "Folders"
+    IDS_TOOLBAR_SEL_HINT_SEARCH "Search results"
+    IDS_TOOLBAR_SEL_RECENT "Recent changes"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

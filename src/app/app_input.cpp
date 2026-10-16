@@ -3808,7 +3808,7 @@ LRESULT HandleRButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             const bool app_page = hit.region == ui::HitTestResult::ToolbarPinLabel ||
                 (hit.region == ui::HitTestResult::ToolbarPin &&
                  hit.index >= static_cast<int>(ToolbarPinActions(*s).size()));
-            ShowToolbarCustomize(*s, app_page ? 1 : 0);
+            ShowToolbarCustomize(*s, app_page ? 2 : 0);
             return 0;
         }
         bool shown = false;

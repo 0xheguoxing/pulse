@@ -2223,6 +2223,15 @@ enum class StringId : UINT {
     ToolbarSectionShow = IDS_TOOLBAR_SECTION_SHOW,
     ToolbarSectionPane = IDS_TOOLBAR_SECTION_PANE,
     ToolbarSectionMore = IDS_TOOLBAR_SECTION_MORE,
+    ToolbarPickerSelTab = IDS_TOOLBAR_PICKER_SEL_TAB,
+    ToolbarPickerSelDesc = IDS_TOOLBAR_PICKER_SEL_DESC,
+    ToolbarPickerOnToolbar = IDS_TOOLBAR_PICKER_ON_TOOLBAR,
+    ToolbarPickerToolsFull = IDS_TOOLBAR_PICKER_TOOLS_FULL,
+    ToolbarSelHintMulti = IDS_TOOLBAR_SEL_HINT_MULTI,
+    ToolbarSelHintTwoFolders = IDS_TOOLBAR_SEL_HINT_TWO_FOLDERS,
+    ToolbarSelHintFolders = IDS_TOOLBAR_SEL_HINT_FOLDERS,
+    ToolbarSelHintSearch = IDS_TOOLBAR_SEL_HINT_SEARCH,
+    ToolbarSelRecent = IDS_TOOLBAR_SEL_RECENT,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;
