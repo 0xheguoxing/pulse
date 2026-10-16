@@ -655,8 +655,13 @@ void FluentMenu::LayoutWindow(POINT screen_pt) {
         SetWindowLongPtrW(hwnd_, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE);
     // While open (late rows), stay where the running slide put the window;
     // the next frame continues from there instead of jumping to rest.
+    // Opening: place and size only. The window is shown by Show() after its
+    // first frame is in the layered surface; showing here put whatever the
+    // previous popup last presented (often the settled, fully opaque menu)
+    // on screen for a compositor frame before the open animation began.
+    const UINT show = open_ ? SWP_SHOWWINDOW : 0;
     SetWindowPos(hwnd_, topmost_ ? HWND_TOPMOST : HWND_TOP, x, open_ ? y + present_offset_ : y, w, h,
-                 (filter_fn_ && !external_edit_) ? SWP_SHOWWINDOW : (SWP_NOACTIVATE | SWP_SHOWWINDOW));
+                 (filter_fn_ && !external_edit_) ? show : (SWP_NOACTIVATE | show));
 }
 
 namespace {
@@ -1243,9 +1248,13 @@ void FluentMenu::OpenSubmenu(int row) {
         sub_dx_ = sub_from_dx_;
         sub_dy_ = sub_from_dy_;
     }
-    SetWindowPos(sub_hwnd_, topmost_ ? HWND_TOPMOST : HWND_TOP, x + sub_dx_, y + sub_dy_, w, h,
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    // Frame first, then show: a hidden flyout still holds the last child list
+    // it presented, which would flash at full opacity for one frame.
+    if (!was_shown) SetWindowPos(sub_hwnd_, nullptr, x + sub_dx_, y + sub_dy_, w, h,
+                                 SWP_NOACTIVATE | SWP_NOZORDER);
     if (RenderSub()) PresentSub(255);
+    SetWindowPos(sub_hwnd_, topmost_ ? HWND_TOPMOST : HWND_TOP, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     if (Render()) Present(present_alpha_, present_offset_); // header row stays active
 }
 
@@ -2179,6 +2188,9 @@ int FluentMenu::TrackPopup(POINT screen_pt, std::vector<FluentMenuItem> items,
     const int slide = (anchor_to_rect_ && filter_fn_) || !motion_
         ? 0 : (int)std::lround(static_cast<float>(slide_sign_) * travel * scale_);
     Present(motion_ ? 0 : 255, slide);
+    SetWindowPos(hwnd_, topmost_ ? HWND_TOPMOST : HWND_TOP, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW |
+                     ((filter_fn_ && !external_edit_) ? 0 : SWP_NOACTIVATE));
     if (external_edit_) {
         HideFilterEdit();
         SetWindowSubclass(external_edit_, ExternalFilterEditProc, 2, reinterpret_cast<DWORD_PTR>(this));
