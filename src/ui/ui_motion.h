@@ -292,7 +292,7 @@ struct SpringSpec {
 namespace spring {
 inline constexpr SpringSpec Snappy{520.0f, 34.0f};  // buttons, small moves
 inline constexpr SpringSpec Smooth{380.0f, 36.0f};  // list reflow, no overshoot
-inline constexpr SpringSpec Plate{700.0f, 50.0f};   // hover / selection plates
+inline constexpr SpringSpec Plate{2600.0f, 98.0f};  // hover / selection plates: ~40 ms behind a sweeping pointer
 inline constexpr SpringSpec Pop{620.0f, 30.0f};     // menus, badges, landings
 inline constexpr SpringSpec Open{480.0f, 38.0f};    // windows growing from a source
 inline constexpr SpringSpec Close{700.0f, 52.0f};   // ...and shrinking back
@@ -326,8 +326,11 @@ inline uint32_t SpringSettleMs(SpringSpec s) noexcept {
     return static_cast<uint32_t>(std::clamp(ms, 60.0f, 900.0f));
 }
 
-// RectMotion driven by a spring instead of a fixed ease: the plate keeps its
-// momentum when the target changes mid-flight (re-aims from where it is).
+// RectMotion driven by a spring instead of a fixed ease. The plate carries
+// its velocity across target changes: sweeping the pointer over several
+// rows keeps it moving instead of restarting from rest at every row (which
+// read as the plate lagging the pointer). Integrated in fixed 4 ms steps
+// from the elapsed time, so the path does not depend on the frame rate.
 class SpringRectMotion {
 public:
     D2D1_RECT_F Update(uint64_t context, int64_t key, const D2D1_RECT_F& target,
@@ -336,57 +339,69 @@ public:
                                 (frame == frame_ || frame == frame_ + 1);
         if (!continuous || !animations_) {
             Snap(target);
+            last_ = now;
         } else if (key != key_) {
-            from_ = current_;
             to_ = target;
-            start_ = now;
             spec_ = spec;
-            settle_ = SpringSettleMs(spec);
-            settled_ = false;
-        } else if (!Same(target, to_)) {
             if (settled_) {
-                Snap(target);
-            } else {
-                from_.left += target.left - to_.left;
-                from_.top += target.top - to_.top;
-                from_.right += target.right - to_.right;
-                from_.bottom += target.bottom - to_.bottom;
-                to_ = target;
+                for (float& v : vel_) v = 0.0f;
+                last_ = now;
             }
+            settled_ = false;
+            start_ = now;
+        } else if (!Same(target, to_)) {
+            // Same row moved (scroll, re-layout): carry the plate with it.
+            current_.left += target.left - to_.left;
+            current_.top += target.top - to_.top;
+            current_.right += target.right - to_.right;
+            current_.bottom += target.bottom - to_.bottom;
+            to_ = target;
         }
         visible_ = true;
         context_ = context;
         key_ = key;
         frame_ = frame;
-        if (!settled_) {
-            const uint64_t elapsed = now - start_;
-            if (elapsed >= settle_) {
-                current_ = to_;
-                settled_ = true;
-            } else {
-                const float e = SpringProgress(spec_, static_cast<float>(elapsed));
-                current_ = D2D1::RectF(from_.left + (to_.left - from_.left) * e,
-                                       from_.top + (to_.top - from_.top) * e,
-                                       from_.right + (to_.right - from_.right) * e,
-                                       from_.bottom + (to_.bottom - from_.bottom) * e);
-            }
-        }
+        if (!settled_) Step(now);
         return current_;
     }
     // Query SystemAnimationsEnabled once per surface open, not per frame.
     void SetAnimationsEnabled(bool on) noexcept { animations_ = on; }
     void Hide() noexcept { visible_ = false; }
     bool Active(uint64_t now) const noexcept {
-        return visible_ && !settled_ && now - start_ < settle_ + kSettleGraceMs;
+        // Bounded so a surface that stops rendering cannot keep ticking.
+        return visible_ && !settled_ && now - start_ < kMaxGlideMs;
     }
 
 private:
+    static constexpr uint64_t kMaxGlideMs = 1200;
     static bool Same(const D2D1_RECT_F& a, const D2D1_RECT_F& b) noexcept {
         return a.left == b.left && a.top == b.top && a.right == b.right && a.bottom == b.bottom;
     }
     void Snap(const D2D1_RECT_F& target) noexcept {
-        from_ = to_ = current_ = target;
+        to_ = current_ = target;
+        for (float& v : vel_) v = 0.0f;
         settled_ = true;
+    }
+    void Step(uint64_t now) noexcept {
+        float dt = static_cast<float>(std::min<uint64_t>(now - last_, 64)) * 0.001f;
+        last_ = now;
+        float* x[4] = {&current_.left, &current_.top, &current_.right, &current_.bottom};
+        const float g[4] = {to_.left, to_.top, to_.right, to_.bottom};
+        while (dt > 0.0f) {
+            const float h = std::min(dt, 0.004f);
+            for (int i = 0; i < 4; ++i) {
+                vel_[i] += (spec_.k * (g[i] - *x[i]) - spec_.c * vel_[i]) * h;
+                *x[i] += vel_[i] * h;
+            }
+            dt -= h;
+        }
+        bool rest = now - start_ >= kMaxGlideMs;
+        if (!rest) {
+            rest = true;
+            for (int i = 0; i < 4 && rest; ++i)
+                rest = std::fabs(g[i] - *x[i]) < 0.25f && std::fabs(vel_[i]) < 8.0f;
+        }
+        if (rest) Snap(to_);
     }
     bool visible_ = false;
     bool settled_ = true;
@@ -395,9 +410,9 @@ private:
     int64_t key_ = 0;
     uint64_t frame_ = 0;
     uint64_t start_ = 0;
-    uint32_t settle_ = 0;
+    uint64_t last_ = 0;
     SpringSpec spec_{};
-    D2D1_RECT_F from_{};
+    float vel_[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     D2D1_RECT_F to_{};
     D2D1_RECT_F current_{};
 };
