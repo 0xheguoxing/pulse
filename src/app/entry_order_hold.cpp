@@ -1,5 +1,6 @@
 #include "entry_order_hold.h"
 #include "entry_group.h"
+#include "entry_sort.h"
 #include <algorithm>
 #include <cstdint>
 #include <cwctype>
@@ -15,11 +16,6 @@ int GroupOrder(const fs::DirEntry& a, const fs::DirEntry& b,
     const EntryGrouping* grouping = CurrentEntryGrouping();
     if (!grouping || grouping->by == GroupBy::None) return 0;
     return GroupCompare(a, b, grouping->by, grouping->clock, col, dir);
-}
-
-bool Grouped() noexcept {
-    const EntryGrouping* grouping = CurrentEntryGrouping();
-    return grouping && grouping->by != GroupBy::None;
 }
 
 // Case-insensitive name key, folded per character like _wcsicmp.
@@ -57,14 +53,11 @@ bool GroupBefore(const fs::DirEntry& a, const fs::DirEntry& b,
 
 void InsertAtGroupEnd(std::vector<fs::DirEntry>& entries, fs::DirEntry entry,
                       ui::SortColumn col, ui::SortDirection dir) {
-    if (!Grouped()) {
-        entries.push_back(std::move(entry));
-        return;
-    }
-    const auto it = std::upper_bound(entries.begin(), entries.end(), entry,
-        [col, dir](const fs::DirEntry& value, const fs::DirEntry& row) {
-            return GroupOrder(value, row, col, dir) < 0;
-        });
+    // Before the first row that sorts after it: its sort position in a sorted
+    // list, and a sensible one among rows held out of order.
+    const auto it = std::find_if(entries.begin(), entries.end(), [&](const fs::DirEntry& row) {
+        return EntryLess(entry, row, col, dir);
+    });
     entries.insert(it, std::move(entry));
 }
 
@@ -109,15 +102,15 @@ std::vector<fs::DirEntry> KeepEntryOrder(const std::vector<fs::DirEntry>& shown,
         kept.push_back(at);
     }
 
-    // Everything else is new to this view: fresh is in sort order, so each
-    // group's newcomers follow its kept rows in sort order.
+    // Everything else is new to this view: fresh is in sort order, so the
+    // newcomers merge in at their sort position among the kept rows.
     std::vector<fs::DirEntry> out;
     out.reserve(fresh.size());
     size_t next = 0;
     const auto skip_used = [&] { while (next < fresh.size() && used[next]) ++next; };
     skip_used();
     for (const size_t at : kept) {
-        while (next < fresh.size() && GroupOrder(fresh[next], fresh[at], col, dir) < 0) {
+        while (next < fresh.size() && EntryLess(fresh[next], fresh[at], col, dir)) {
             out.push_back(fresh[next++]);
             skip_used();
         }

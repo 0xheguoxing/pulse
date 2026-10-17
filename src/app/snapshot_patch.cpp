@@ -1,5 +1,6 @@
 #include "snapshot_patch.h"
 #include "entry_order_hold.h"
+#include "entry_sort.h"
 #include "../fs/fs_enum.h"
 #include <algorithm>
 #include <cstdint>
@@ -181,9 +182,9 @@ NotifyPatch ApplyDirNotifyBatch(std::vector<fs::DirEntry>& entries, const std::w
 
     // Replays the per-event rules on slots instead of a vector: rows keep
     // their slot, and a row that has to move (new, or its group changed) gets
-    // a new slot after every original one. Appended slots are merged into
-    // their group's end at the finish, exactly where InsertAtGroupEnd would
-    // have put them one at a time.
+    // a new slot after every original one. Appended slots are merged in at
+    // their sort position: a pasted or extracted item shows up where it
+    // belongs right away, while renamed and modified rows stay put (#13).
     struct Slot {
         fs::DirEntry entry;
         bool live = true;
@@ -238,7 +239,7 @@ NotifyPatch ApplyDirNotifyBatch(std::vector<fs::DirEntry>& entries, const std::w
     for (size_t i = original; i < slots.size(); ++i)
         if (slots[i].live) appended.push_back(i);
     std::stable_sort(appended.begin(), appended.end(), [&](size_t a, size_t b) {
-        return GroupBefore(slots[a].entry, slots[b].entry, col, sort_dir);
+        return EntryLess(slots[a].entry, slots[b].entry, col, sort_dir);
     });
     std::vector<fs::DirEntry> merged;
     merged.reserve(slots.size());
@@ -246,7 +247,7 @@ NotifyPatch ApplyDirNotifyBatch(std::vector<fs::DirEntry>& entries, const std::w
     for (size_t i = 0; i < original; ++i) {
         if (!slots[i].live) continue;
         while (next < appended.size() &&
-               GroupBefore(slots[appended[next]].entry, slots[i].entry, col, sort_dir))
+               EntryLess(slots[appended[next]].entry, slots[i].entry, col, sort_dir))
             merged.push_back(std::move(slots[appended[next++]].entry));
         merged.push_back(std::move(slots[i].entry));
     }

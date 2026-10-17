@@ -3348,10 +3348,31 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     const float real_x = trail.name_x + shown_w + 8.0f * scale_;
                     const float real_w = trail.name_x + trail.name_w - real_x;
                     if (alias_both && real_w >= 28.0f * scale_) {
-                        Theme real_theme = theme;
-                        real_theme.text = WithAlpha(theme.text_secondary, cut ? 0.45f : 0.85f);
-                        DrawTruncatedName(e.name, real_x, textY, real_w, textH, real_theme,
-                                          selected, kNoAliasMatches, detailsView && !e.is_dir);
+                        // The real name steps back (pulse_alias.html .real: the
+                        // faint color, a size smaller) so the alias reads first.
+                        IDWriteTextFormat* small_format = compositor_->SmallFormat();
+                        IDWriteFactory2* dwrite = compositor_->DwriteFactory();
+                        const D2D1_COLOR_F faint = WithAlpha(theme.text_secondary, cut ? 0.35f : 0.62f);
+                        ComPtr<IDWriteTextLayout> real_layout;
+                        if (small_format && dwrite) {
+                            const std::wstring fitted = FitHighlightedFileName(compositor_, dwrite, small_format, e.name,
+                                                                               real_w, kNoAliasMatches, scale_);
+                            if (SUCCEEDED(dwrite->CreateTextLayout(fitted.c_str(), static_cast<UINT32>(fitted.size()),
+                                                                    small_format, real_w, textH, &real_layout))) {
+                                real_layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                                real_layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                                real_layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                                MakeBrush(dc, faint, brText_);
+                                dc->DrawTextLayout({real_x, textY}, real_layout.get(), brText_.get(),
+                                                   D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                            }
+                        }
+                        if (!real_layout.get()) {
+                            Theme real_theme = theme;
+                            real_theme.text = faint;
+                            DrawTruncatedName(e.name, real_x, textY, real_w, textH, real_theme,
+                                              selected, kNoAliasMatches, false);
+                        }
                     }
                     name_truncated = true;   // the row tooltip names the real item
                 } else {
