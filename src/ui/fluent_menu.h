@@ -204,6 +204,9 @@ public:
     // Align the next TrackPopup to this screen rect (address bar). The filter
     // field covers the rect; results hang below. Cleared after the popup.
     void SetAnchorRect(RECT screen_rc) { anchor_rect_ = screen_rc; anchor_to_rect_ = true; }
+    // Motion v2 "newmenu": the next popup grows out of this button (screen
+    // px) - the container morphs from the button's pill, then rows fade in.
+    void SetMorphFrom(RECT screen_rc) { morph_button_ = screen_rc; morph_next_ = true; }
     // Align an ordinary selection menu below its control; cleared after use.
     void SetDropdownRect(RECT screen_rc) { dropdown_rect_ = screen_rc; dropdown_ = true; }
     // Override the filter-mode minimum width (dips) for the next TrackPopup;
@@ -395,6 +398,10 @@ private:
     float open_t_ms_ = -1.0f;      // elapsed of the open transition; <0 = settled
     float close_k_ = 0.0f;         // 0..1 progress of the dismiss
     D2D1_POINT_2F open_origin_{};  // grow/shrink origin in surface px
+    RECT morph_button_{};          // SetMorphFrom, screen px
+    bool morph_next_ = false;      // armed for the next TrackPopup
+    bool morph_ = false;           // this open morphs from morph_from_
+    D2D1_RECT_F morph_from_{};     // the button pill in surface px
     ::pulse::ui::motion::SpringRectMotion plate_;
     ::pulse::ui::motion::SpringRectMotion sub_plate_;
     uint64_t plate_frame_ = 0;

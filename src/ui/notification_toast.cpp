@@ -13,9 +13,14 @@ namespace {
 // while its plate unfurls from 70% width and fades in, the content following
 // 40 ms later; a replacing message morphs the plate to its new width; a
 // dismissed one sinks 8 dip and fades in 150 ms. Transform and opacity only.
-constexpr float kRiseDip = 14.0f, kSinkDip = 8.0f, kUnfurlFrom = 0.70f;
+// Leaving follows the prototype's poof: 14 dip down, tipping -3 degrees,
+// 200 ms.
+constexpr float kRiseDip = 14.0f, kSinkDip = 14.0f, kUnfurlFrom = 0.70f, kExitTiltDeg = -3.0f;
 constexpr float kFadeInMs = 110.0f, kContentDelayMs = 40.0f, kContentFadeMs = 130.0f, kSwapFadeMs = 140.0f;
-constexpr uint64_t kExitMs = 150;
+constexpr uint64_t kExitMs = 200;
+constexpr size_t kMaxGhosts = 3;
+constexpr ULONGLONG kGhostLifeMs = 8000;
+constexpr float kStackStepDip = 9.0f, kFanStepDip = 52.0f;
 uint32_t EnterSettleMs() noexcept { return motion::SpringSettleMs(motion::spring::Pop); }
 float Clamp01(float v) noexcept { return (std::clamp)(v, 0.0f, 1.0f); }
 
@@ -23,9 +28,10 @@ float Clamp01(float v) noexcept { return (std::clamp)(v, 0.0f, 1.0f); }
 // fades the content; restores all of it on scope exit (Draw returns early).
 class PoseScope {
 public:
-    PoseScope(ID2D1DeviceContext* dc, float dy) : dc_(dc) {
+    PoseScope(ID2D1DeviceContext* dc, float dy, float rot = 0.0f, D2D1_POINT_2F pivot = {}) : dc_(dc) {
         dc_->GetTransform(&saved_);
-        if (dy != 0.0f) dc_->SetTransform(saved_ * D2D1::Matrix3x2F::Translation(0.0f, dy));
+        if (dy != 0.0f || rot != 0.0f)
+            dc_->SetTransform(D2D1::Matrix3x2F::Rotation(rot, pivot) * D2D1::Matrix3x2F::Translation(0.0f, dy) * saved_);
     }
     ~PoseScope() {
         if (layer_) dc_->PopLayer();
@@ -93,6 +99,9 @@ std::wstring_view SnackGlyph(SnackIcon icon) {
 }
 }
 void NotificationToast::Show(HWND owner, std::wstring title, std::wstring message, bool persistent, UINT action_message) {
+    ghosts_.clear();   // ShowSnack keeps its stack
+    replace_next_ = false;
+    expand_from_ = expand_to_ = 0.0f;
     // Over a toast that is up, the plate morphs from what was drawn; else it rises.
     swapped_ = visible_ && drawn_w_ > 0.0f;
     swap_snack_ = snack_;
@@ -120,7 +129,22 @@ void NotificationToast::Show(HWND owner, std::wstring title, std::wstring messag
 }
 void NotificationToast::ShowSnack(HWND owner, SnackIcon icon, std::wstring text, std::wstring detail,
                                   std::vector<SnackAction> actions, std::wstring key, UINT duration_ms) {
+    // A capsule that is up steps back into the stack instead of morphing.
+    const bool stack = snack_ && visible_ && drawn_w_ > 0.0f && !replace_next_ && motion::SystemAnimationsEnabled();
+    replace_next_ = false;
+    std::vector<Ghost> ghosts = std::move(ghosts_);
+    if (stack) {
+        ghosts.insert(ghosts.begin(), Ghost{title_, message_, icon_, drawn_w_, GetTickCount64()});
+        if (ghosts.size() > kMaxGhosts) ghosts.resize(kMaxGhosts);
+    } else {
+        ghosts.clear();
+    }
     Show(owner, std::move(text), std::move(detail), false);
+    ghosts_ = std::move(ghosts);
+    if (stack) {
+        swapped_ = false;   // rises in front
+        stack_push_at_ = motion::NowMs();
+    }
     snack_ = true;
     icon_ = icon;
     if (actions.size() > 2) actions.resize(2);
@@ -148,9 +172,23 @@ void NotificationToast::Dismiss(HWND owner) {
     } else {
         exiting_ = false;
         drawn_w_ = 0.0f;
+        ghosts_.clear();
         KillTimer(owner, timer);
     }
     InvalidateRect(owner, nullptr, FALSE);
+}
+
+float NotificationToast::Expand() const noexcept {
+    if (expand_from_ == expand_to_) return expand_to_;
+    const float p = motion::SpringProgress(motion::spring::Pop, static_cast<float>(motion::NowMs() - expand_at_));
+    return expand_from_ + (expand_to_ - expand_from_) * p;
+}
+
+bool NotificationToast::StackMoving() const noexcept {
+    if (ghosts_.empty()) return false;
+    const uint64_t now = motion::NowMs();
+    const uint64_t settle = EnterSettleMs();
+    return now - stack_push_at_ < settle || now - expand_at_ < settle;
 }
 
 NotificationToast::Pose NotificationToast::CurrentPose(float scale, float target_w, bool high_contrast) const {
@@ -160,7 +198,8 @@ NotificationToast::Pose NotificationToast::CurrentPose(float scale, float target
     if (exiting_) {
         const float e = Clamp01(static_cast<float>(motion::NowMs() - exit_at_) / static_cast<float>(kExitMs));
         pose.dy = kSinkDip * scale * e * e;
-        if (snack_) pose.plate_w = target_w * (1.0f - 0.06f * e * e);
+        pose.rot = snack_ ? kExitTiltDeg * e : 0.0f;
+        if (snack_) pose.plate_w = target_w * (1.0f - 0.10f * e);
         pose.plate_alpha = 1.0f - e;
         pose.content_alpha = Clamp01(1.0f - 1.7f * e);
         return pose;
@@ -188,6 +227,7 @@ bool NotificationToast::HandleMessage(HWND owner, UINT message, WPARAM wparam, L
         if (!exiting_ || motion::NowMs() - exit_at_ >= kExitMs) {
             exiting_ = false;
             drawn_w_ = 0.0f;
+            ghosts_.clear();
             KillTimer(owner, timer);
         }
         InvalidateRect(owner, nullptr, FALSE);
@@ -206,8 +246,16 @@ bool NotificationToast::HandleMessage(HWND owner, UINT message, WPARAM wparam, L
             if (!remaining_) { Dismiss(owner); return true; }
         }
         last_tick_ = now;
+        // Old capsules leave the stack on their own; the fan holds them.
+        if (!hovered_) {
+            const size_t before = ghosts_.size();
+            while (!ghosts_.empty() && now - ghosts_.back().at > kGhostLifeMs) ghosts_.pop_back();
+            if (ghosts_.size() != before && ghosts_.empty()) expand_from_ = expand_to_ = 0.0f;
+        }
         // 16 ms frames while the toast comes in, then only the run-down line.
-        if (!animate_ || motion::NowMs() - enter_at_ >= EnterSettleMs()) {
+        if (StackMoving()) {
+            SetTimer(owner, timer, 16, nullptr);
+        } else if (!animate_ || motion::NowMs() - enter_at_ >= EnterSettleMs()) {
             if (persistent_) KillTimer(owner, timer);
             else SetTimer(owner, timer, snack_ ? 100 : 200, nullptr);  // the capsule's line runs down smoothly
         }
@@ -217,10 +265,16 @@ bool NotificationToast::HandleMessage(HWND owner, UINT message, WPARAM wparam, L
     const float x = static_cast<float>(GET_X_LPARAM(lparam));
     const float y = static_cast<float>(GET_Y_LPARAM(lparam));
     if (message == WM_MOUSEMOVE) {
-        const bool hovered = Contains(card_, x, y);
+        const bool hovered = Contains(card_, x, y) || (!ghosts_.empty() && Contains(stack_area_, x, y));
         if (hovered != hovered_) {
             hovered_ = hovered;
             last_tick_ = GetTickCount64();
+            if (!ghosts_.empty()) {
+                expand_from_ = Expand();
+                expand_to_ = hovered ? 1.0f : 0.0f;
+                expand_at_ = motion::NowMs();
+                SetTimer(owner, timer, 16, nullptr);
+            }
             InvalidateRect(owner, nullptr, FALSE);
         }
         if (hovered_) {
@@ -232,6 +286,13 @@ bool NotificationToast::HandleMessage(HWND owner, UINT message, WPARAM wparam, L
     } else if (message == WM_MOUSELEAVE) {
         hovered_ = false;
         last_tick_ = GetTickCount64();
+        if (!ghosts_.empty() && expand_to_ != 0.0f) {
+            expand_from_ = Expand();
+            expand_to_ = 0.0f;
+            expand_at_ = motion::NowMs();
+            SetTimer(owner, timer, 16, nullptr);
+            InvalidateRect(owner, nullptr, FALSE);
+        }
     } else if (message == WM_LBUTTONDOWN && Contains(card_, x, y)) {
         pressed_card_ = true;
         pressed_close_ = Contains(close_, x, y);
@@ -426,7 +487,8 @@ void NotificationToast::DrawSnack(Compositor& compositor, const Theme& theme, fl
     const float plate_left = (left + width * 0.5f) - plate_w * 0.5f;
     const D2D1_RECT_F plate = D2D1::RectF(plate_left, top, plate_left + plate_w, top + height);
     if (visible_) drawn_w_ = plate_w;
-    PoseScope scope(dc, std::round(pose.dy));
+    DrawGhosts(compositor, pal, scale, height, pose, high_contrast);
+    PoseScope scope(dc, std::round(pose.dy), pose.rot, D2D1::Point2F(left + width * 0.5f, mid));
     DrawSnackPlate(dc, plate, radius, pal, scale, high_contrast, pose.plate_alpha);
     if (pose.content_alpha <= 0.0f) return;
     if (plate_w < width - 0.5f) scope.Clip(D2D1::RectF(plate.left + radius * 0.5f, top, plate.right - radius * 0.5f, top + height));
@@ -507,6 +569,63 @@ void NotificationToast::DrawSnack(Compositor& compositor, const Theme& theme, fl
             painter_.FillRoundedRect(D2D1::RectF(card_.left + inset, card_.bottom - px(2.5f), card_.left + inset + span,
                                                  card_.bottom - px(1.0f)),
                                      px(0.75f), line);
+    }
+}
+
+void NotificationToast::DrawGhosts(Compositor& compositor, const SnackPalette& pal, float scale, float height,
+                                   const Pose& pose, bool high_contrast) {
+    stack_area_ = card_;
+    if (ghosts_.empty() || high_contrast) return;
+    ID2D1DeviceContext* const dc = compositor.Dc();
+    const auto px = [scale](float dip) { return dip * scale; };
+    const float center = (card_.left + card_.right) * 0.5f;
+    const float e = Expand();
+    // Each ghost moved one step back at the last push.
+    const float push = motion::SpringProgress(motion::spring::Pop, static_cast<float>(motion::NowMs() - stack_push_at_));
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(dc->CreateSolidColorBrush(pal.text, &brush))) return;
+    for (size_t n = ghosts_.size(); n-- > 0;) {
+        const Ghost& g = ghosts_[n];
+        const float depth = static_cast<float>(n + 1) - (1.0f - push);
+        const float step = kStackStepDip + (kFanStepDip - kStackStepDip) * e;
+        const float s = 1.0f - 0.05f * depth * (1.0f - e);
+        const float rest_alpha = depth > 3.0f ? 0.0f : (std::max)(0.0f, 1.0f - 0.18f * depth);
+        const float alpha = (rest_alpha + (1.0f - rest_alpha) * e) * pose.plate_alpha;
+        if (alpha <= 0.01f) continue;
+        const float w = g.width * s, h = height * s;
+        const float bottom = card_.bottom - px(step) * depth;
+        const D2D1_RECT_F plate = D2D1::RectF(std::round(center - w * 0.5f), std::round(bottom - h),
+                                              std::round(center + w * 0.5f), std::round(bottom));
+        stack_area_.left = (std::min)(stack_area_.left, plate.left);
+        stack_area_.right = (std::max)(stack_area_.right, plate.right);
+        stack_area_.top = (std::min)(stack_area_.top, plate.top);
+        PoseScope scope(dc, std::round(pose.dy));
+        DrawSnackPlate(dc, plate, h * 0.5f, pal, scale, high_contrast, alpha);
+        // What it said shows once the stack fans out.
+        const float content = alpha * Clamp01((e - 0.35f) / 0.65f);
+        if (content <= 0.01f) continue;
+        scope.Clip(D2D1::RectF(plate.left + h * 0.4f, plate.top, plate.right - h * 0.4f, plate.bottom));
+        scope.Fade(content);
+        const float mid = (plate.top + plate.bottom) * 0.5f;
+        float x = plate.left + px(14.0f);
+        painter_.DrawGlyph(SnackGlyph(g.icon), D2D1::RectF(x - px(2.0f), mid - px(10.0f), x + px(18.0f), mid + px(10.0f)),
+                           pal.accent);
+        x += px(16.0f + 9.0f);
+        const float room = plate.right - px(14.0f) - x;
+        auto title = Line(compositor, g.title, compositor.TextFormat(), (std::max)(1.0f, room), h, true);
+        const float title_w = (std::min)(room, LineWidth(title.get()));
+        if (title.get() && title_w > 0.0f) {
+            brush->SetColor(pal.text);
+            dc->DrawTextLayout(D2D1::Point2F(x, plate.top), title.get(), brush.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        }
+        if (!g.detail.empty() && room - title_w > px(24.0f)) {
+            auto detail = Line(compositor, L" \u00B7 " + g.detail, compositor.TextFormat(), room - title_w, h, false);
+            if (detail.get()) {
+                brush->SetColor(pal.text_secondary);
+                dc->DrawTextLayout(D2D1::Point2F(x + title_w, plate.top), detail.get(), brush.get(),
+                                   D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            }
+        }
     }
 }
 }

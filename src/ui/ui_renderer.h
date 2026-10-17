@@ -815,11 +815,16 @@ struct WindowViewModel {
     // insertion line.
     int sidebar_pin_drag_index = -1;
     float sidebar_pin_gap_line_y = 0.0f; // px, 0 = hidden
+    float sidebar_pin_drag_dy = 0.0f;    // cursor travel since the press (px)
     // Title-bar tab drag: floating tab follows the cursor (QFluent TabBar).
     int tab_drag_index = -1; // display index of the run's first tab, or -1
     int tab_drag_count = 1;  // >1: a whole group run floats as one block
     bool tab_drag_chip = false; // drag started from the group chip (collapse-safe)
     float tab_drag_x = 0.0f; // left edge of the floating tab (px)
+    // Tear-off pull (motion v2 "tabdetach"): cursor travel off the strip, px,
+    // and 0..1 of the distance at which the tab becomes a window.
+    float tab_detach_dy = 0.0f;
+    float tab_detach_pull = 0.0f;
     bool tray_drop = false;       // staging tray under a drag
     std::wstring drag_badge;      // action badge text near the cursor
     float drag_badge_x = 0.0f;
@@ -1261,6 +1266,10 @@ public:
     // Also stops the card's video when the view is no longer visible.
     void DrawHoverPreview(const HoverPreviewView& view, const D2D1_RECT_F& client,
                           const Theme& theme, bool high_contrast);
+    // Motion v2 "star": a star arcs from (x, y) client px into the sidebar's
+    // 已加星标 row; DrawStarFlight paints it over everything (ui_sidebar.cpp).
+    void LaunchStarFlight(float x, float y);
+    void DrawStarFlight(const Theme& theme);
     // Repaint interval the last drawn card asked for: 0 none, short while
     // something animates (dwell line, loading sweep), longer for a playing
     // video's progress line.
@@ -1407,7 +1416,15 @@ public:
     float Margin() const { return margin_; }
 
     // Right details panel: toggled from the view menu; ContentRect shrinks.
-    void SetDetailsPanelVisible(bool visible) {
+    // animate: the panel's width rides the smooth spring (motion v2 "layout").
+    void SetDetailsPanelVisible(bool visible, bool animate = false) {
+        if (visible != details_visible_ && animate && motion::SystemAnimationsEnabled()) {
+            details_from_ = details_value_;
+            details_anim_start_ = motion::NowMs();
+            details_anim_ = true;
+        } else if (!details_anim_) {
+            details_value_ = visible ? 1.0f : 0.0f;
+        }
         details_visible_ = visible;
         if (!visible) { EndDetailsPreviewPan(); details_preview_ready_ = false; }
     }
@@ -1480,7 +1497,7 @@ public:
         // task pill and copy feedback below.
         const uint64_t motion_now = motion::NowMs();
         bool active = sidebar_pill_.Active(motion_now) || settings_nav_pill_.Active(motion_now) ||
-                      settings_nav_hover_.Active(motion_now) || collapse_anim_;
+                      settings_nav_hover_.Active(motion_now) || collapse_anim_ || details_anim_;
         for (const auto& m : list_hover_motion_) active = active || m.Active(motion_now);
         for (const auto& m : list_shift_) active = active || m.Active(motion_now);
         for (const auto& m : view_morph_) active = active || m.Active(motion_now);
@@ -1517,6 +1534,17 @@ public:
     // region = HitTestResult region of the button that copied, index its index.
     void NotifyCopied(int region, int index) {
         copy_feedback_.Trigger(region, index, GetTickCount64());
+    }
+    // The columns of the pane in this slot were just auto-fitted: they glide
+    // there from the widths drawn last.
+    void NoteColumnAutoFit(int pane_index) {
+        if (pane_index < 0 || pane_index >= static_cast<int>(col_fit_.size()) || !motion::SystemAnimationsEnabled())
+            return;
+        auto& f = col_fit_[static_cast<size_t>(pane_index)];
+        if (f.last_count <= 0) return;
+        f.from = f.last;
+        f.count = f.last_count;
+        f.start = motion::NowMs();
     }
     void ScrollDetailsPreview(float steps, float x, float y, bool horizontal = false);
     void ToggleDetailsPreviewFit(float x, float y);
@@ -1998,6 +2026,45 @@ private:
     std::array<LinkPillMotion, 8> link_pill_motion_{};
     std::array<motion::ListShiftMotion, 8> list_shift_{};
     std::array<motion::ViewMorphMotion, 8> view_morph_{};
+    // Motion v2 "nav": after a pane opens another folder its rows come in
+    // from 16 px on the side it was entered from (back/up: the left), a
+    // short stagger apart. start 0 = idle; pending until the listing lands.
+    struct NavEnter {
+        std::wstring path;
+        uint64_t start = 0;
+        int dir = 0;   // +1 deeper, -1 to an ancestor, 0 elsewhere (rises 6 px)
+        bool pending = false;
+    };
+    std::array<NavEnter, 8> nav_enter_{};
+    // Motion v2 "colresize": double-clicking a divider springs the columns
+    // to their fitted widths (from = what was drawn), and dragging one shows
+    // a guide line plus a badge with the width and its change.
+    struct ColumnFit {
+        uint64_t start = 0;
+        int count = 0, last_count = 0;
+        std::array<float, kMaxDetailsColumns> from{}, last{};
+    };
+    std::array<ColumnFit, 8> col_fit_{};
+    // Motion v2 "newfolder": the inline rename field pops in (frame 96% ->
+    // 100% on Pop, an accent ripple leaving it).
+    struct RenamePop {
+        int index = -1;
+        uint64_t since = 0;
+    };
+    std::array<RenamePop, 8> rename_pop_{};
+    // Motion v2 "nav": breadcrumb segments that were not shown before slide
+    // in 10 dip from the right, 30 ms apart (smooth spring). Value: start.
+    std::vector<std::wstring> crumb_keys_;
+    std::unordered_map<std::wstring, uint64_t> crumb_born_;
+    DetailsColumnLayout AnimateColumns(DetailsColumnLayout target, int pane_index);
+    struct ColumnBadge {
+        bool on = false;
+        int pane = -1, divider = -1;
+        float w0 = 0.0f, w = 0.0f, guide_x = 0.0f, guide_top = 0.0f, guide_bottom = 0.0f;
+        uint64_t since = 0, released = 0;
+        std::wstring name;
+    } col_badge_;
+    void DrawColumnBadge(int pane_index, const Theme& theme);
     std::array<uint64_t, 8> list_loading_since_{};
     bool list_loading_animate_ = true;
     bool list_loading_active_ = false;
@@ -2082,6 +2149,10 @@ private:
     float sheet_alpha_ = 1.0f;
     float card_alpha_ = 1.0f;
     bool details_visible_ = false;
+    bool details_anim_ = false;
+    float details_value_ = 0.0f;   // 0 closed .. 1 open (frame-stable while animating)
+    float details_from_ = 0.0f;
+    uint64_t details_anim_start_ = 0;
     float details_width_ = 340.0f;
     PreviewViewport details_viewport_;
     std::wstring details_preview_identity_;

@@ -101,6 +101,13 @@ public:
     static bool FrameCopyEnabled() noexcept;
     ID2D1Bitmap1* FrameCopy() const { return frameCopy_.get(); }
 
+    // Theme reveal: the next Present() also keeps that frame in HeldFrame()
+    // until ReleaseHeldFrame() (or a resize / device loss drops it).
+    void CaptureNextFrame() { captureNext_ = true; }
+    void CancelCaptureNextFrame() { captureNext_ = false; }
+    ID2D1Bitmap1* HeldFrame() const { return held_.get(); }
+    void ReleaseHeldFrame() { held_.reset(); }
+
     // Whole-window zoom on the DirectComposition root visual (runs on the
     // compositor thread, so no frames are pumped). origin is in client pixels.
     // HideContent() makes the visual transparent until PlayZoom starts, so a
@@ -134,6 +141,8 @@ private:
     ComPtr<ID2D1DeviceContext> dc_;
     ComPtr<ID2D1Bitmap1> targetBitmap_;
     ComPtr<ID2D1Bitmap1> frameCopy_;
+    ComPtr<ID2D1Bitmap1> held_;
+    bool captureNext_ = false;
     ComPtr<IDWriteFactory2> dwriteFactory_;
     ComPtr<IDWriteRenderingParams2> textRenderingParams_;
     ComPtr<IDWriteTextFormat> textFormat_;

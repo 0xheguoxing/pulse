@@ -817,14 +817,20 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
     // Open / close transition of the main card (pulse_motion_v2 tokens).
     const bool animate_open = main && motion_ && open_t_ms_ >= 0.0f && !animating_out_;
     float card_scale = 1.0f;
+    // newmenu: the card is revealed through a rounded mask that morphs from
+    // the button's pill to the full card; the rows wait for the container.
+    const bool morphing = animate_open && morph_;
+    float morph_p = 1.0f;
     if (main && motion_) {
         if (animating_out_) card_scale = 1.0f - 0.03f * close_k_;
+        else if (morphing)
+            morph_p = ::pulse::ui::motion::SpringProgress(::pulse::ui::motion::spring::Open, open_t_ms_);
         else if (open_t_ms_ >= 0.0f)
             card_scale = 0.94f + 0.06f * ::pulse::ui::motion::SpringProgress(::pulse::ui::motion::spring::Pop, open_t_ms_);
     }
     auto row_alpha = [&](int row) {
         if (!animate_open) return 1.0f;
-        const float delay = 20.0f + 9.0f * static_cast<float>((std::min)(row, 8));
+        const float delay = (morphing ? 110.0f : 20.0f) + 9.0f * static_cast<float>((std::min)(row, 8));
         return ::pulse::ui::motion::EaseOutCubic((open_t_ms_ - delay) / 120.0f);
     };
 
@@ -1058,7 +1064,35 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
     // Grow / shrink: scale the finished card about the anchor point in a
     // second pass, so painter code never sees a transform.
     ID2D1Bitmap1* src_bmp = bmp;
-    if (std::abs(card_scale - 1.0f) > 0.0005f) {
+    if (morphing && morph_p < 0.999f) {
+        if (!s.scaled.get() && FAILED(dc->CreateBitmap(size, nullptr, 0, props, &s.scaled))) s.scaled.reset();
+        ComPtr<ID2D1Factory> factory;
+        dc->GetFactory(&factory);
+        if (s.scaled.get() && factory.get()) {
+            const float m = static_cast<float>(kShadowMargin);
+            const float fw = static_cast<float>(w), fh = static_cast<float>(h);
+            // Full card plus its shadow margin, reached as the spring lands.
+            const float grow = m * std::clamp(morph_p, 0.0f, 1.0f);
+            const D2D1_RECT_F to = D2D1::RectF(m - grow, m - grow, fw - m + grow, fh - m + grow);
+            auto lerp = [&](float a, float b) { return a + (b - a) * morph_p; };
+            const D2D1_RECT_F mask = D2D1::RectF(lerp(morph_from_.left, to.left), lerp(morph_from_.top, to.top),
+                                                 lerp(morph_from_.right, to.right), lerp(morph_from_.bottom, to.bottom));
+            const float r0 = (morph_from_.bottom - morph_from_.top) * 0.5f;
+            const float radius = (std::max)(0.0f, lerp(r0, 8.0f * scale_));
+            ComPtr<ID2D1RoundedRectangleGeometry> geo;
+            if (SUCCEEDED(factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(mask, radius, radius), &geo)) &&
+                geo.get()) {
+                dc->SetTarget(s.scaled.get());
+                dc->BeginDraw();
+                dc->Clear(D2D1::ColorF(0, 0, 0, 0));
+                dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), geo.get()), nullptr);
+                dc->DrawBitmap(bmp, D2D1::RectF(0.0f, 0.0f, fw, fh), 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+                dc->PopLayer();
+                if (SUCCEEDED(dc->EndDraw())) src_bmp = s.scaled.get();
+                dc->SetTarget(old_target.get());
+            }
+        }
+    } else if (std::abs(card_scale - 1.0f) > 0.0005f) {
         if (!s.scaled.get() && FAILED(dc->CreateBitmap(size, nullptr, 0, props, &s.scaled))) s.scaled.reset();
         if (s.scaled.get()) {
             D2D1_MATRIX_3X2_F old_tf{};
@@ -1893,11 +1927,12 @@ int FluentMenu::RunModalLoop() {
                 fluent::MotionSpec spec{ 120.0f, fluent::EasingCurve::OutQuad };
                 float t = fluent::EvaluateMotion(spec, (float)elapsed);
                 if (open_t_ms_ >= 0.0f) {
-                    constexpr float kOpenMs = 330.0f;
+                    const float kOpenMs = morph_ ? 420.0f : 330.0f;
                     const float e = static_cast<float>(elapsed);
                     open_t_ms_ = e >= kOpenMs ? -1.0f : e;
-                    const float fade = ::pulse::ui::motion::EaseOutCubic(e / 90.0f);
-                    const float travel = 4.0f * scale_ * (1.0f - ::pulse::ui::motion::SpringProgress(::pulse::ui::motion::spring::Pop, e));
+                    const float fade = ::pulse::ui::motion::EaseOutCubic(e / (morph_ ? 40.0f : 90.0f));
+                    const float travel = morph_ ? 0.0f
+                        : 4.0f * scale_ * (1.0f - ::pulse::ui::motion::SpringProgress(::pulse::ui::motion::spring::Pop, e));
                     if (Render())
                         Present(static_cast<BYTE>(std::lround(255.0f * fade)),
                                 static_cast<int>(std::lround(static_cast<float>(slide_sign_) * travel)));
@@ -2171,6 +2206,18 @@ int FluentMenu::TrackPopup(POINT screen_pt, std::vector<FluentMenuItem> items,
             oy = m;
         }
         open_origin_ = D2D1::Point2F(std::clamp(ox, m, m + cw), std::clamp(oy, m, m + ch));
+        morph_ = morph_next_ && open_t_ms_ >= 0.0f;
+        if (morph_) {
+            // The pill starts flush with the card's top edge under the button.
+            const float bw = static_cast<float>(morph_button_.right - morph_button_.left);
+            const float bh = (std::min)(static_cast<float>(morph_button_.bottom - morph_button_.top), ch);
+            const float left = std::clamp(static_cast<float>(morph_button_.left - base_x_), m, m + cw);
+            const float right = std::clamp(left + bw, left + 1.0f, m + cw);
+            const bool above = static_cast<float>(morph_button_.top - base_y_) > m + ch * 0.5f;
+            morph_from_ = above ? D2D1::RectF(left, m + ch - bh, right, m + ch)
+                                : D2D1::RectF(left, m, right, m + bh);
+        }
+        morph_next_ = false;
     }
     if (!Render()) {
         external_edit_ = nullptr;
@@ -2185,7 +2232,7 @@ int FluentMenu::TrackPopup(POINT screen_pt, std::vector<FluentMenuItem> items,
     open_ = true;
     anim_start_ = std::chrono::steady_clock::now();
     const float travel = open_t_ms_ >= 0.0f ? 4.0f : fluent::motion::MenuTravelDip;
-    const int slide = (anchor_to_rect_ && filter_fn_) || !motion_
+    const int slide = (anchor_to_rect_ && filter_fn_) || !motion_ || morph_
         ? 0 : (int)std::lround(static_cast<float>(slide_sign_) * travel * scale_);
     Present(motion_ ? 0 : 255, slide);
     SetWindowPos(hwnd_, topmost_ ? HWND_TOPMOST : HWND_TOP, 0, 0, 0, 0,

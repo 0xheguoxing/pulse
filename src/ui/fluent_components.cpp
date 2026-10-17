@@ -1620,6 +1620,30 @@ void Painter::DrawSidebarItem(const SidebarItemSpec& spec) {
         DrawGlyph(spec.glyph, icon_rc, icon_color);
     }
     content.left += icon_slot + Px(8.0f);
+    // The trailing count / detail, rolling odometer-style while it changes.
+    auto draw_trailing = [&](std::wstring_view now_text, const D2D1_RECT_F& rc) {
+        const float p = std::clamp(spec.count_roll, 0.0f, 1.0f);
+        if (p >= 1.0f || !dc_) {
+            DrawText(now_text, rc, CaptionFormat(), theme_->text_secondary, HorizontalAlignment::Right);
+            return;
+        }
+        const float travel = Height(rc) * 0.62f * (spec.count_roll_down ? -1.0f : 1.0f);
+        D2D1_RECT_F clip = rc;
+        clip.left -= Px(12.0f);
+        dc_->PushAxisAlignedClip(clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        D2D1_COLOR_F out = theme_->text_secondary;
+        out.a *= (1.0f - p);
+        DrawText(spec.count_prev,
+                 D2D1::RectF(rc.left - Px(12.0f), rc.top - travel * p, rc.right, rc.bottom - travel * p),
+                 CaptionFormat(), out, HorizontalAlignment::Right);
+        D2D1_COLOR_F in = theme_->text_secondary;
+        in.a *= p;
+        DrawText(now_text,
+                 D2D1::RectF(rc.left - Px(12.0f), rc.top + travel * (1.0f - p), rc.right,
+                             rc.bottom + travel * (1.0f - p)),
+                 CaptionFormat(), in, HorizontalAlignment::Right);
+        dc_->PopAxisAlignedClip();
+    };
     if (!spec.badge_text.empty()) {
         const float badge_width = spec.custom_badge_color
             ? MeasureTagWidth(spec.badge_text) : MeasureBadgeWidth(spec.badge_text);
@@ -1641,10 +1665,8 @@ void Painter::DrawSidebarItem(const SidebarItemSpec& spec) {
     } else if (spec.show_count || spec.badge_count > 0) {
         const auto count = std::to_wstring(std::min(spec.badge_count, 99));
         const float count_width = Px(spec.badge_count > 9 ? 22.0f : 14.0f);
-        DrawText(count,
-                 D2D1::RectF(content.right - count_width, content.top, content.right,
-                            content.bottom),
-                 CaptionFormat(), theme_->text_secondary, HorizontalAlignment::Right);
+        draw_trailing(count, D2D1::RectF(content.right - count_width, content.top, content.right,
+                                         content.bottom));
         content.right -= count_width + Px(6.0f);
     }
     if (spec.suppress_text) {
@@ -1671,10 +1693,8 @@ void Painter::DrawSidebarItem(const SidebarItemSpec& spec) {
                  D2D1::RectF(content.left, content.top, content.right - detail_width,
                             content.bottom),
                  NavFormat(), foreground);
-        DrawText(spec.detail,
-                 D2D1::RectF(content.right - detail_width, content.top, content.right,
-                            content.bottom),
-                 CaptionFormat(), theme_->text_secondary, HorizontalAlignment::Right);
+        draw_trailing(spec.detail, D2D1::RectF(content.right - detail_width, content.top,
+                                               content.right, content.bottom));
     }
 }
 

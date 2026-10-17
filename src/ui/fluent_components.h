@@ -161,6 +161,11 @@ struct SidebarItemSpec {
     bool skip_glyph = false;
     float trailing_reserve = 0.0f;
     bool alias_mark = false;   // the label is a 别名: the mark follows it
+    // Count roll (motion v2 "dropbin"): below 1 the count / detail text is
+    // still rolling in from count_prev - up when it grew, down when it shrank.
+    float count_roll = 1.0f;
+    std::wstring_view count_prev;
+    bool count_roll_down = false;
     D2D1_COLOR_F icon_color{};
     D2D1_COLOR_F tag_color{};
     D2D1_COLOR_F status_color{};

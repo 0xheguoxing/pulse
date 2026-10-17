@@ -162,11 +162,13 @@ float MainRenderer::SidebarFullWidth(float window_width) const {
 // the panel back temporarily and widening it restores what the user dragged.
 float MainRenderer::DetailsPanelWidth(float window_w) const {
     const float window_dip = window_w / scale_;
-    if (!details_visible_ || window_dip < kDetailsVisibleWindowDip) return 0.0f;
+    if (window_dip < kDetailsVisibleWindowDip) return 0.0f;
+    const float open = details_anim_ ? details_value_ : (details_visible_ ? 1.0f : 0.0f);
+    if (open <= 0.0f) return 0.0f;
     const float max_dip = MaxDetailsWidthDip(window_dip, sidebar_width_dip_,
                                              (window_dip < kSidebarRailWindowDip || sidebar_collapsed_),
                                              2.0f * margin_ / scale_);
-    return (std::min)(details_width_, max_dip) * scale_ + margin_;
+    return std::round(((std::min)(details_width_, max_dip) * scale_ + margin_) * open);
 }
 
 float MainRenderer::SidebarMaxWidthDip(float window_w) const {
@@ -758,13 +760,26 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
     landing_rects_.clear();
     if (collapse_anim_) {
         // Sampled once per frame so every layout query agrees on the width.
-        const float t = static_cast<float>(motion_now_ - collapse_start_) / kSidebarCollapseMs;
+        // Motion v2 "rail": the width rides the smooth spring (seb-sidebar-collapse).
+        const float ms = static_cast<float>(motion_now_ - collapse_start_);
         const float target = sidebar_collapsed_ ? 1.0f : 0.0f;
-        if (t >= 1.0f) {
+        if (ms >= static_cast<float>(motion::SpringSettleMs(motion::spring::Smooth))) {
             collapse_value_ = target;
             collapse_anim_ = false;
         } else {
-            collapse_value_ = collapse_from_ + (target - collapse_from_) * motion::EaseOutCubic(t);
+            const float p = motion::SpringProgress(motion::spring::Smooth, ms);
+            collapse_value_ = std::clamp(collapse_from_ + (target - collapse_from_) * p, 0.0f, 1.0f);
+        }
+    }
+    if (details_anim_) {
+        const float ms = static_cast<float>(motion_now_ - details_anim_start_);
+        const float target = details_visible_ ? 1.0f : 0.0f;
+        if (ms >= static_cast<float>(motion::SpringSettleMs(motion::spring::Smooth))) {
+            details_value_ = target;
+            details_anim_ = false;
+        } else {
+            const float p = motion::SpringProgress(motion::spring::Smooth, ms);
+            details_value_ = std::clamp(details_from_ + (target - details_from_) * p, 0.0f, 1.0f);
         }
     }
     ID2D1DeviceContext* dc = compositor_->Dc();
@@ -1535,6 +1550,41 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
                              *D2D1::Matrix3x2F::ReinterpretBaseType(&old));
         }
         float floatX = vm.tab_drag_x;
+        // Motion v2 "tabdetach": pulled off the strip, the tab follows the
+        // cursor and a window body grows out beneath it, so the tear-off
+        // reads as the tab becoming a window rather than a sudden jump.
+        const float pull = tab_anim_on_ ? (std::clamp)(vm.tab_detach_pull, 0.0f, 1.0f) : 0.0f;
+        if (pull > 0.02f && runN == 1) {
+            const float e = pull * pull * (3.0f - 2.0f * pull);
+            const float tw = strip.Width(vm, static_cast<size_t>(dragI));
+            const float dy = vm.tab_detach_dy * 0.85f;
+            const D2D1_RECT_F body = D2D1::RectF(
+                vm.tab_drag_x - 4.0f * scale_ * e, tabY + tabH * 0.5f + dy,
+                vm.tab_drag_x + tw + 150.0f * scale_ * e, tabY + tabH + dy + 84.0f * scale_ * e);
+            const float r = 8.0f * scale_;
+            D2D1_COLOR_F fill = vm.dark ? HexColor(0x2B2B2B) : HexColor(0xFFFFFF);
+            fill.a = 0.92f * e;
+            MakeBrush(dc, D2D1::ColorF(0, 0, 0, (vm.dark ? 0.30f : 0.14f) * e), brFillHover_);
+            dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(body.left, body.top + 3.0f * scale_,
+                                                                   body.right, body.bottom + 4.0f * scale_), r, r),
+                                     brFillHover_.get());
+            MakeBrush(dc, fill, brFillSelected_);
+            dc->FillRoundedRectangle(D2D1::RoundedRect(body, r, r), brFillSelected_.get());
+            MakeBrush(dc, WithAlpha(theme.stroke_card, theme.stroke_card.a * e), brStrokeCard_);
+            dc->DrawRoundedRectangle(D2D1::RoundedRect(body, r, r), brStrokeCard_.get(), 1.0f);
+            // Placeholder rows hint at the folder the window will show.
+            MakeBrush(dc, WithAlpha(theme.text_secondary, 0.16f * e), brFillHover_);
+            for (int row = 0; row < 3; ++row) {
+                const float y = tabY + tabH + dy + (14.0f + 18.0f * static_cast<float>(row)) * scale_ * e;
+                if (y + 6.0f * scale_ > body.bottom - 6.0f * scale_) break;
+                dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(body.left + 12.0f * scale_, y,
+                    body.left + 12.0f * scale_ + (body.right - body.left - 24.0f * scale_) * (0.8f - 0.2f * row),
+                    y + 6.0f * scale_), 3.0f * scale_, 3.0f * scale_), brFillHover_.get());
+            }
+            D2D1_MATRIX_3X2_F cur{};
+            dc->GetTransform(&cur);
+            dc->SetTransform(cur * D2D1::Matrix3x2F::Translation(0.0f, dy));
+        }
         for (int k = 0; k < dragN && dragI + k < static_cast<int>(vm.tabs.size()); ++k) {
             if (vm.tabs[static_cast<size_t>(dragI + k)].hidden) continue;
             drawTab(static_cast<size_t>(dragI + k), floatX, true, 0, -1.0f);

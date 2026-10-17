@@ -96,6 +96,7 @@ void Compositor::Shutdown() {
     }
     if (lumaText_) lumaText_->Shutdown();
     frameCopy_.reset();
+    held_.reset();
     targetBitmap_.reset();
     if (dc_.get()) dc_->SetTarget(nullptr);
     if (compositionTarget_.get()) compositionTarget_->SetRoot(nullptr);
@@ -321,6 +322,7 @@ bool Compositor::CreateSwapChain() {
 void Compositor::ResizeSwapChain() {
     if (!swapChain_.get() || width_ <= 0 || height_ <= 0) return;
     frameCopy_.reset();
+    held_.reset();
     targetBitmap_.reset();
     dc_->SetTarget(nullptr);
     HRESULT hr = swapChain_->ResizeBuffers(0, (UINT)width_, (UINT)height_,
@@ -482,6 +484,17 @@ void Compositor::Present() {
     if (hwnd_) UpdateTextRenderingParams(
         MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST));
     CopyFrame();
+    if (captureNext_) {
+        captureNext_ = false;
+        held_.reset();
+        if (dc_.get() && targetBitmap_.get()) {
+            const auto props = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+                targetBitmap_->GetPixelFormat(), 96.0f, 96.0f);
+            if (SUCCEEDED(dc_->CreateBitmap(targetBitmap_->GetPixelSize(), nullptr, 0, &props, &held_)) &&
+                FAILED(held_->CopyFromBitmap(nullptr, targetBitmap_.get(), nullptr)))
+                held_.reset();
+        }
+    }
     HRESULT hr = S_OK;
     if (swapChain_.get()) hr = swapChain_->Present(1, 0);
     if (FAILED(hr)) {
