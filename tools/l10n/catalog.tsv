@@ -1632,7 +1632,7 @@ TheAssociationUpdateFromTheLastUpgradeDidNotFinish	IDS_THE_ASSOCIATION_UPDATE_FR
 AnotherProgramChangedItSoItWasNotOverwritten	IDS_ANOTHER_PROGRAM_CHANGED_IT_SO_IT_WAS_NOT_OVERWRITTEN	2835	已被其他程序修改，为免覆盖已停止	another program changed it, so it was not overwritten	
 TheSettingDidNotReadBackAsWritten	IDS_THE_SETTING_DID_NOT_READ_BACK_AS_WRITTEN	2836	写入后读取结果不一致	the setting did not read back as written	
 UnknownReason	IDS_UNKNOWN_REASON	2837	原因未知	unknown reason	
-ThisPreviewPackHasNotBeenPublishedForDownload	IDS_THIS_PREVIEW_PACK_HAS_NOT_BEEN_PUBLISHED_FOR_DOWNLOAD	2838	此预览增强包尚未发布下载。	This preview pack has not been published for download.	
+ThisPreviewPackHasNotBeenPublishedForDownload	IDS_THIS_PREVIEW_PACK_HAS_NOT_BEEN_PUBLISHED_FOR_DOWNLOAD	2838	此增强包尚未发布下载。	This pack has not been published for download.	此增強包尚未發佈下載。
 PackInstalledButTheSourceSettingCouldNotBeSavedTurnOffUseExi	IDS_PACK_INSTALLED_BUT_THE_SOURCE_SETTING_COULD_NOT_BE_SAVED_TURN_OFF_USE_EXI	2839	增强包已安装，但未能保存来源设置。请关闭“使用已有 FFmpeg”以切换到增强包。	Pack installed, but the source setting could not be saved. Turn off Use existing FFmpeg to select the pack.	
 DownloadCancelled	IDS_DOWNLOAD_CANCELLED	2840	已取消下载。	Download cancelled.	
 TheDownloadDidNotPassVerificationAndWasDiscardedTryAgainLate	IDS_THE_DOWNLOAD_DID_NOT_PASS_VERIFICATION_AND_WAS_DISCARDED_TRY_AGAIN_LATE	2841	下载的文件校验失败，已丢弃。请稍后重试。	The download did not pass verification and was discarded. Try again later.	
@@ -1655,7 +1655,7 @@ Text2857	IDS_TEXT2857	2857	）	)
 LegacyExplorerAssociations	IDS_LEGACY_EXPLORER_ASSOCIATIONS	2858	旧版资源管理器关联	Legacy Explorer associations	
 FoldersAndDrives	IDS_FOLDERS_AND_DRIVES	2859	文件夹和磁盘	Folders and drives	
 SupportedFormats	IDS_SUPPORTED_FORMATS	2860	支持的格式	Supported formats	
-PreviewPacks	IDS_PREVIEW_PACKS	2861	预览增强包	Preview packs	
+PreviewPacks	IDS_PREVIEW_PACKS	2861	增强包	Enhancement packs	增強包
 SystemExtensions	IDS_SYSTEM_EXTENSIONS	2862	系统扩展	System extensions	
 ModernImageFormats	IDS_MODERN_IMAGE_FORMATS	2863	现代图像格式	Modern image formats	
 RAWCameraPhotos	IDS_RAWCAMERA_PHOTOS	2864	RAW 相机照片	RAW camera photos	
@@ -1964,7 +1964,7 @@ ClickToCancel	IDS_CLICK_TO_CANCEL	3166	% · 点击取消	% · Click to cancel
 InstallTheImagePreviewPack	IDS_INSTALL_THE_IMAGE_PREVIEW_PACK	3167	安装图像预览增强包	Install the image preview pack	
 InstallTheFFmpegPreviewPack	IDS_INSTALL_THE_FFMPEG_PREVIEW_PACK	3168	安装 FFmpeg 预览增强包	Install the FFmpeg preview pack	
 ThePreviewReopensByItselfOnceInstalled	IDS_THE_PREVIEW_REOPENS_BY_ITSELF_ONCE_INSTALLED	3169	安装完成后会自动重新打开预览	The preview reopens by itself once installed	
-RemoveItAnyTimeInSettingsPreviewPacks	IDS_REMOVE_IT_ANY_TIME_IN_SETTINGS_PREVIEW_PACKS	3170	预览增强包可随时在“设置 › 预览增强包”中卸载	Remove it any time in Settings › Preview packs	
+RemoveItAnyTimeInSettingsPreviewPacks	IDS_REMOVE_IT_ANY_TIME_IN_SETTINGS_PREVIEW_PACKS	3170	增强包可随时在“设置 › 增强包”中卸载	Remove it any time in Settings › Enhancement packs	增強包可隨時在「設定 › 增強包」中解除安裝
 Rendered	IDS_RENDERED	3171	渲染	Rendered	
 Source	IDS_SOURCE	3172	源码	Source	
 Table	IDS_TABLE	3173	表格	Table	
@@ -2027,12 +2027,12 @@ OptionalSourceTurnOffToUseThePulseManagedPack	IDS_OPTIONAL_SOURCE_TURN_OFF_TO_US
 NoFfmpegExeChosen	IDS_NO_FFMPEG_EXE_CHOSEN	3230	尚未选择 ffmpeg.exe	No ffmpeg.exe chosen	
 Browse	IDS_BROWSE	3231	浏览…	Browse…	
 UseFound	IDS_USE_FOUND	3232	使用检测到的	Use found	
-RemovePacksWhenUninstallingPulse	IDS_REMOVE_PACKS_WHEN_UNINSTALLING_PULSE	3233	卸载 Pulse 时删除预览增强包	Remove packs when uninstalling Pulse	
+RemovePacksWhenUninstallingPulse	IDS_REMOVE_PACKS_WHEN_UNINSTALLING_PULSE	3233	卸载 Pulse 时删除增强包	Remove packs when uninstalling Pulse	解除安裝 Pulse 時刪除增強包
 OtherwiseTheyStayAndWorkAgainAfterReinstallingPulse	IDS_OTHERWISE_THEY_STAY_AND_WORK_AGAIN_AFTER_REINSTALLING_PULSE	3234	否则保留，重新安装 Pulse 后可直接使用	Otherwise they stay and work again after reinstalling Pulse	
-UpdatePreviewPacksAutomatically	IDS_UPDATE_PREVIEW_PACKS_AUTOMATICALLY	3235	自动更新预览增强包	Update preview packs automatically	
+UpdatePreviewPacksAutomatically	IDS_UPDATE_PREVIEW_PACKS_AUTOMATICALLY	3235	自动更新增强包	Update packs automatically	自動更新增強包
 RunsWithThePulseUpdateCheckAndDownloadsInTheBackground	IDS_RUNS_WITH_THE_PULSE_UPDATE_CHECK_AND_DOWNLOADS_IN_THE_BACKGROUND	3236	随 Pulse 更新检查一起进行，在后台下载	Runs with the Pulse update check and downloads in the background	
 PacksRunInTheIsolatedPreviewProcessACrashOrTimeoutOnlyAffect	IDS_PACKS_RUN_IN_THE_ISOLATED_PREVIEW_PROCESS_ACRASH_OR_TIMEOUT_ONLY_AFFECT	3237	预览增强包在隔离的预览进程中运行：崩溃或超时只影响当前预览，Pulse 会回退到内置的缩略图和文本视图。	Packs run in the isolated preview process: a crash or timeout only affects that preview, and Pulse falls back to its built-in views.	
-NoPreviewPacksInstalled	IDS_NO_PREVIEW_PACKS_INSTALLED	3238	尚未安装预览增强包	No preview packs installed	
+NoPreviewPacksInstalled	IDS_NO_PREVIEW_PACKS_INSTALLED	3238	尚未安装增强包	No packs installed	尚未安裝增強包
 UInstalledS	IDS_UINSTALLED_S	3239	已安装 %u 个 · 占用 %s	%u installed · %s	
 Found	IDS_FOUND	3240	检测到：	Found: 	
 NotPublished	IDS_NOT_PUBLISHED	3241	尚未发布	Not published	
@@ -2276,3 +2276,6 @@ OpRenamedPrefix	IDS_OP_RENAMED_PREFIX	3478	已重命名 	Renamed 	已重新命�
 OpCreatingPrefix	IDS_OP_CREATING_PREFIX	3479	正在新建 	Creating 	正在新增 
 OpRenamingPrefix	IDS_OP_RENAMING_PREFIX	3480	正在重命名 	Renaming 	正在重新命名 
 ToolbarSectionView	IDS_TOOLBAR_SECTION_VIEW	3481	排序与筛选	Sort & filter	排序與篩選
+PacksPageIntro	IDS_PACKS_PAGE_INTRO	3482	按需为 Pulse 添加模块：预览更多格式、搜索文件正文……每个模块独立下载、在隔离进程中运行，随时可以停用或卸载，不影响 Pulse 本体。	Add modules to Pulse as you need them: preview more formats, search inside files and more. Each module downloads on its own, runs in an isolated process and can be turned off or removed at any time without affecting Pulse itself.	按需為 Pulse 新增模組：預覽更多格式、搜尋檔案內文……每個模組獨立下載、在隔離處理程序中執行，隨時可以停用或解除安裝，不影響 Pulse 本體。
+ManagePacks	IDS_MANAGE_PACKS	3483	管理增强包	Manage packs	管理增強包
+UpdateAllPacks	IDS_UPDATE_ALL_PACKS	3484	全部更新	Update all	全部更新

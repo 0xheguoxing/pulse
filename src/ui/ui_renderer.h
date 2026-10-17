@@ -710,7 +710,9 @@ enum class PackAction : int {
     HoverDelayShort, HoverDelayMedium, HoverDelayLong,  // 悬停延迟: 0.3 / 0.5 / 0.8 s
     HoverSizeSmall, HoverSizeMedium, HoverSizeLarge,    // 卡片尺寸: 小 / 中 / 大
     Update, ImagesUpdate, RawUpdate, ArchiveUpdate,     // 更新到: the catalog's newer release
-    AutoUpdate,         // 自动更新预览增强包: on / off
+    AutoUpdate,         // 自动更新增强包: on / off
+    UpdateAll,          // 增强包 page: 全部更新 (every pack with a newer release)
+    ManagePacks,        // 快速预览 page: open the 增强包 page
 };
 
 // A tab dragged out of another window, over this one (multi-window M7h): the
@@ -925,6 +927,7 @@ struct WindowViewModel {
     // (keys that may not work) is filled on every page.
     std::shared_ptr<const ShortcutsView> settings_shortcuts;
     int settings_shortcut_issues = 0;
+    int settings_pack_updates = 0;   // 增强包 nav badge: packs with a newer release
     float settings_scroll = 0.0f;
     bool settings_launch_on_startup = false;
     bool settings_start_in_tray = false;

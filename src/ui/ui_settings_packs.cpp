@@ -122,6 +122,7 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
             painter_.DrawSegmentedItem(item);
         }
     };
+    if (vm.settings_page != 8) {
     text(pack_text::TriggerSection(), lay.trigger_section);
     const int trigger = vm.settings_preview_trigger == 1 ? 1 : 0;
     choice_row(lay.trigger_row, lay.trigger_choice, 2, trigger, PackAction::TriggerHover, L"\xE890",
@@ -211,6 +212,19 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
         D2D1::Point2F(lay.preview_codec_hint.left, lay.preview_codec_hint.top),
         lay.preview_codec_hint.right - lay.preview_codec_hint.left, theme.text_secondary);
     text(pack_text::PacksSection(), lay.pack_section);
+    // The packs live on their own page now: count and size, and the way there.
+    {
+        const auto& r = lay.pack_summary;
+        card(r);
+        DrawIconText(r.left + 16*s, r.top + 24*s, 24*s, 24*s, L"\xE7B8", L"", theme.text_secondary, 0.85f);
+        const bool compact = r.right - r.left < 560*s*static_cast<float>(vm.settings_ui_font_scale)/100;
+        const float right = compact ? r.right - 16*s : lay.pack_manage.left - 12*s;
+        text(pack_text::Summary(vm), D2D1::RectF(r.left + 54*s, r.top + 14*s, right, r.top + 38*s));
+        text(vm.settings_pack_root, D2D1::RectF(r.left + 54*s, r.top + 38*s, right, r.top + 58*s), true);
+        button(lay.pack_manage, pack_text::ManagePacks(), PackAction::ManagePacks);
+    }
+    return;
+    }
 
     // Summary: count, disk use and location.
     {
@@ -218,10 +232,14 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
         card(r);
         DrawIconText(r.left + 16*s, r.top + 24*s, 24*s, 24*s, L"\xE7B8", L"", theme.text_secondary, 0.85f);
         const bool compact = r.right - r.left < 560*s*static_cast<float>(vm.settings_ui_font_scale)/100;
-        const float right = compact ? r.right - 16*s : lay.pack_open.left - 12*s;
+        const float right = compact ? r.right - 16*s
+            : (lay.pack_update_all.right > lay.pack_update_all.left ? lay.pack_update_all.left : lay.pack_open.left) - 12*s;
         text(pack_text::Summary(vm), D2D1::RectF(r.left + 54*s, r.top + 14*s, right, r.top + 38*s));
         text(vm.settings_pack_root, D2D1::RectF(r.left + 54*s, r.top + 38*s, right, r.top + 58*s), true);
         button(lay.pack_open, pack_text::OpenFolder(), PackAction::OpenFolder);
+        if (lay.pack_update_all.right > lay.pack_update_all.left)
+            button(lay.pack_update_all, pack_text::UpdateAll(vm.settings_pack_updates), PackAction::UpdateAll,
+                   fluent::ButtonKind::Primary);
     }
 
     // One pack card (geometry from LayoutSettingsPacks' card_layout).

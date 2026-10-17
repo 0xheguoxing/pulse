@@ -587,10 +587,12 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 if (ContainsPt(lay.update_auto_row, x, y)) {
                     r.region = HitTestResult::SettingsToggle; r.index = 31; return r;
                 }
-            } else if (vm.settings_page == 5) {
+            } else if (vm.settings_page == 5 || vm.settings_page == 8) {
                 // Buttons first: they sit inside the clickable rows.
                 const std::pair<const D2D1_RECT_F*, PackAction> pack_targets[] = {
                     {&lay.pack_open, PackAction::OpenFolder},
+                    {&lay.pack_update_all, PackAction::UpdateAll},
+                    {&lay.pack_manage, PackAction::ManagePacks},
                     {&lay.pack_primary, vm.settings_pack_media_installed && !vm.settings_pack_installing
                                             ? PackAction::Remove : PackAction::Install},
                     {&lay.pack_enable, PackAction::Enable},

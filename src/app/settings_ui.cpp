@@ -56,17 +56,18 @@ constexpr SettingDestination destinations[]={
     {I::SettingsWallpaper,0,1},{I::SettingsWallpaperLook,0,1},{I::SettingsWallpaperBlur,0,1},{I::SettingsTrayIcon,0,1},{I::SettingsShowHidden,0,1},{I::SettingsShowProtected,0,1},{I::PinnedNames,0,1},{I::SettingsVerticalTabs,0,1},{I::SettingsHints,0,1},{I::SettingsHintsReset,0,1},
     {I::SettingsBlankClickBack,0,1},{I::SettingsChangeTracking,0,1},{I::SettingsOpenFolders,0,0},{I::SettingsWinE,0,0},{I::SettingsThisPc,0,0},{I::SettingsRecycleBin,0,0},{I::SettingsExplorerWindows,0,0},{I::SettingsShellTags,0,1},
     {I::GlobalSearch,1,0},{I::GlobalSearchHotkey,1,0},{I::SearchPinyin,1,0},{I::ContentIndexManage,1,0},{I::IndexLocation,1,2},{I::LocalDrives,1,2},
-    {I::Exclusions,1,2},{I::ServerFolders,1,2},{I::SettingsContextMenu,2,0},{I::SettingsDuplicates,4,0},{I::QuickPreview,5,4},{I::SettingsAboutDiagnostics,3,0},{I::SettingsAutoUpdate,3,0},
+    {I::Exclusions,1,2},{I::ServerFolders,1,2},{I::SettingsContextMenu,2,0},{I::SettingsDuplicates,4,0},{I::QuickPreview,5,4},{I::PreviewPacks,8,0},{I::SettingsAboutDiagnostics,3,0},{I::SettingsAutoUpdate,3,0},
 };
 std::vector<ui::FluentMenuItem> FilterSettings(const std::wstring& query) {
     std::wstring needle=query;std::transform(needle.begin(),needle.end(),needle.begin(),towlower);
     std::vector<ui::FluentMenuItem> items;
-    const I pages[]={I::SettingsGeneral,I::SettingsSearchIndex,I::SettingsContextMenu,I::SettingsAboutDiagnostics,I::SettingsDuplicates,I::QuickPreview};
+    const I pages[]={I::SettingsGeneral,I::SettingsSearchIndex,I::SettingsContextMenu,I::SettingsAboutDiagnostics,I::SettingsDuplicates,I::QuickPreview,
+                     I::SettingsContextMenu,I::KeyboardShortcuts,I::PreviewPacks};
     for(size_t i=0;i<std::size(destinations);++i) {
         auto item=Item(static_cast<int>(i)+1,destinations[i].title);
         item.shortcut=l10n::Get(pages[destinations[i].page]);
         std::wstring haystack=item.text+L" "+item.shortcut;
-        if (destinations[i].page == 5) {
+        if (destinations[i].page == 5 || destinations[i].page == 8) {
             // Translate each visible heading separately: the Traditional Chinese
             // phrase table deliberately does not translate unknown concatenations.
             const std::wstring aliases[] = {
@@ -331,6 +332,15 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
         case ui::PackAction::UseDetected: refresh=s.settings.UseDetectedFfmpeg();break;
         case ui::PackAction::RemoveOnUninstall: s.settings.ToggleRemovePacksOnUninstall();break;
         case ui::PackAction::AutoUpdate: s.settings.ToggleAutoUpdatePacks();break;
+        case ui::PackAction::UpdateAll: {
+            const auto state=s.settings.Packs();   // a copy: each update refreshes it
+            if(!state.update_version.empty()) refresh|=s.settings.UpdatePack(packs::PackId::Media,s.hwnd);
+            if(!state.images_update_version.empty()) refresh|=s.settings.UpdatePack(packs::PackId::Images,s.hwnd);
+            if(!state.raw_update_version.empty()) refresh|=s.settings.UpdatePack(packs::PackId::Raw,s.hwnd);
+            if(!state.archive_update_version.empty()) refresh|=s.settings.UpdatePack(packs::PackId::Archives,s.hwnd);
+            break;
+        }
+        case ui::PackAction::ManagePacks: OpenSettingsTab(s,8); return true;
         case ui::PackAction::TriggerHover:
         case ui::PackAction::TriggerSpace:
             s.settings.PreviewTrigger(hit.index-static_cast<int>(ui::PackAction::TriggerHover));

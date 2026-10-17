@@ -303,6 +303,11 @@ inline const wchar_t* SizeChoice(int i) {
     return l10n::Get(l10n::StringId::UiFontLarge).c_str();
 }
 inline const wchar_t* PacksSection() { return l10n::Get(l10n::StringId::PreviewPacks).c_str(); }
+inline const wchar_t* PacksIntro() { return l10n::Get(l10n::StringId::PacksPageIntro).c_str(); }
+inline const wchar_t* ManagePacks() { return l10n::Get(l10n::StringId::ManagePacks).c_str(); }
+inline std::wstring UpdateAll(int count) {
+    return std::wstring(l10n::Get(l10n::StringId::UpdateAllPacks).c_str()) + L" (" + std::to_wstring(count) + L")";
+}
 inline const wchar_t* FormatsSection() { return l10n::Get(l10n::StringId::Formats).c_str(); }
 inline std::wstring FormatsSummary(const WindowViewModel& vm) {
     const int packs = int(vm.settings_pack_media_installed) + int(vm.settings_pack_images_installed) +
@@ -488,8 +493,12 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
         return text.empty() ? 0.0f : painter
             ? painter->MeasureWrappedCaptionHeight(text, (std::max)(40*scale, width)) : 40*scale;
     };
-    y += caption_h(pack_text::Intro(), right - left) + 10*scale;
     const float font = static_cast<float>(vm.settings_ui_font_scale) / 100.0f;
+    const float open_w = button_w(pack_text::OpenFolder());
+    // 快速预览 (page 5): how previews open and which formats they cover, then a
+    // card leading to the 增强包 page (8), which holds the packs themselves.
+    if (vm.settings_page != 8) {
+    y += caption_h(pack_text::Intro(), right - left) + 10*scale;
     // 预览方式: one card per choice row, segments at the right (below when narrow).
     {
         const bool narrow = right - left < 560*scale;
@@ -574,12 +583,27 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
     y = l.preview_codec_hint.bottom + 14*scale;
     l.preview_codec_group = D2D1::RectF(left, codecs_top, right, y);
     y += 30*scale; l.pack_section = row(32*font);
-    // Summary: how many packs, their disk use and where they live.
+    {
+        const bool compact = right - left < 560*font*scale;
+        l.pack_summary = row(compact ? 116.0f : 76.0f);
+        const float manage_w = button_w(pack_text::ManagePacks());
+        l.pack_manage = D2D1::RectF(right - 16*scale - manage_w, l.pack_summary.bottom - 48*scale,
+                                    right - 16*scale, l.pack_summary.bottom - 16*scale);
+    }
+    return y + 24*scale;
+    }
+    y += caption_h(pack_text::PacksIntro(), right - left) + 18*scale;
+    // Summary: how many packs, their disk use and where they live; 全部更新
+    // left of 打开文件夹 while some pack has a newer release.
     const bool compact_pack = right - left < 560*font*scale;
     l.pack_summary = row(compact_pack ? 116.0f : 76.0f);
-    const float open_w = button_w(pack_text::OpenFolder());
     l.pack_open = D2D1::RectF(right - 16*scale - open_w, l.pack_summary.bottom - 48*scale,
                               right - 16*scale, l.pack_summary.bottom - 16*scale);
+    if (vm.settings_pack_updates > 0) {
+        const float all_w = button_w(pack_text::UpdateAll(vm.settings_pack_updates));
+        l.pack_update_all = D2D1::RectF(l.pack_open.left - 8*scale - all_w, l.pack_open.top,
+                                        l.pack_open.left - 8*scale, l.pack_open.bottom);
+    }
 
     // One pack card: icon, title + badge (+ switch), description, meta line
     // with the primary button (and 更新到 left of it), and the last action's

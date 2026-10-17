@@ -622,7 +622,13 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
                 sysctx.SetPulseHidden(s.ctxMenuPrefs.HiddenCatalogKeys());
                 vm.settings_sysctx = sysctx.View();
             }
-            if (vm.settings_page == 5) {
+            {
+                // 增强包 nav badge, on every page (the controller caches 2 s).
+                const auto& packs = s.settings.Packs();
+                vm.settings_pack_updates = int(!packs.update_version.empty()) + int(!packs.images_update_version.empty()) +
+                                           int(!packs.raw_update_version.empty()) + int(!packs.archive_update_version.empty());
+            }
+            if (vm.settings_page == 5 || vm.settings_page == 8) {
                 // Cached in the controller: the disk is read at most every 2 s.
                 const auto& packs = s.settings.Packs();
                 vm.settings_pack_ffmpeg = packs.ffmpeg;

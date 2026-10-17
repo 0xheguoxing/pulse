@@ -1894,7 +1894,7 @@ TitleChrome MakeTitleChrome(float window_w, float scale, float title_h) {
 }
 
 constexpr float kSettingsNavW = 200.0f;
-constexpr int kSettingsNavCount = 8;  // 5: 预览增强包, 6: 系统右键菜单, 7: 快捷键
+constexpr int kSettingsNavCount = 9;  // 5: 快速预览, 6: 系统右键菜单, 7: 快捷键, 8: 增强包
 
 // System folder groups shown under Settings > Exclusions: 0-4 follow
 // index::kSystemExclusionGroups, 5-6 are always skipped by the index.
@@ -2088,6 +2088,7 @@ struct SettingsLayout {
     D2D1_RECT_F preview_codec_text[kPreviewCodecCount]{}, preview_codec_badge[kPreviewCodecCount]{};
     D2D1_RECT_F preview_codec_row[kPreviewCodecCount]{}, preview_codec_button[kPreviewCodecCount]{};
     // 预览增强包 page (5), see LayoutSettingsPacks.
+    D2D1_RECT_F pack_update_all{}, pack_manage{};   // 增强包 page: 全部更新; 快速预览 page: 管理增强包
     D2D1_RECT_F pack_summary{}, pack_open{}, pack_media_section{}, pack_card{}, pack_badge{}, pack_enable{},
         pack_primary{}, pack_update{}, pack_notice{}, pack_advanced_section{}, pack_custom_row{}, pack_path_row{},
         pack_detect{}, pack_browse{}, pack_remove_row{}, pack_group{}, pack_note{}, pack_source_group{}, pack_source_status{},
@@ -2276,7 +2277,8 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
         // switch between the two, see ctx_layer. 关于 (3) stays at the bottom.
         if (i == 6) { l.nav_row[i] = {}; continue; }
         // 快捷键 (7) sits under 右键菜单, as in the mockup.
-        const int position = i == 7 ? 3 : i == 4 ? 4 : i == 5 ? 5 : i;
+        // 增强包 (8) follows 快速预览.
+        const int position = i == 7 ? 3 : i == 4 ? 4 : i == 5 ? 5 : i == 8 ? 6 : i;
         const float top = i == 3 ? l.nav.bottom - 92*scale : l.nav.top + (20 + position*46)*scale;
         l.nav_row[i] = D2D1::RectF(l.nav.left + 8*scale, top, l.nav.right - 8*scale, top + 40*scale);
     }
@@ -2636,7 +2638,7 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
         }
         l.release_card = D2D1::RectF(card_left, release_top, card_right, ry + 10.0f * scale);
         y = l.release_card.bottom + 24.0f * scale;
-    } else if (vm.settings_page == 5) {
+    } else if (vm.settings_page == 5 || vm.settings_page == 8) {
         y = LayoutSettingsPacks(l, vm, scale, y, painter);
     } else if (vm.settings_page == 6) {
         y = LayoutSettingsSysCtx(l, vm, scale, y, painter);
