@@ -56,6 +56,16 @@ int main() {
                 const auto result = engine.Search(q);
                 check(result.total == (term[0] == L'a' ? 2u : 1u), "valid mapped prefix search");
             }
+            // Name terms combined with filters are driven by the name postings
+            // and must still apply every filter (and the pinyin-free literal).
+            const struct { const wchar_t* needle; uint32_t total; } filtered[] = {
+                {L"pa ext:pdf", 1}, {L"a ext:pdf", 1}, {L"a ext:txt", 1}, {L"pa ext:txt", 0},
+                {L"a !alpha", 1}, {L"alpha !ext:txt", 0}, {L"ext:pdf pa", 1},
+            };
+            for (const auto& c : filtered) {
+                Query q; q.needle = c.needle; q.rank = false;
+                check(engine.Search(q).total == c.total, "mapped name search with filter");
+            }
         }
     };
     verify(original, true, "healthy snapshot accepted");

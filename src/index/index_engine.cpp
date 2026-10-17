@@ -1048,15 +1048,29 @@ void Engine::CollectMatchesLocked(const CompiledQuery& cq, int32_t prefix_node,
     // The immutable snapshot carries a disk-backed bigram inverted table.
     // Use it for ordinary two-or-more character name searches; only the
     // small mutable overlay still needs a direct scan.
-    if (map_ && QueryIsSimpleName(cq) && !cq.groups[0][0].name.empty() &&
-        ((cq.groups[0][0].name.size() == 1 && map_->prefix1_all_chars) ||
-         (cq.groups[0][0].name.size() >= 2 && map_->prefix2_start))) {
-        const auto& term = cq.groups[0][0];
+    // A conjunctive query such as "report type:image" or "report dm:today"
+    // still requires every hit's name to contain its literal name term, so
+    // that term's postings bound the candidates; the remaining filters are
+    // verified per candidate instead of scanning every record.
+    size_t driver = SIZE_MAX;
+    if (map_ && cq.groups.size() == 1) {
+        const auto& group = cq.groups[0];
+        for (size_t i = 0; i < group.size(); ++i) {
+            const Term& t = group[i];
+            if (t.name_not || t.name_in_path || t.name.empty() ||
+                (t.name_how != NameHow::Substring && t.name_how != NameHow::Exact)) continue;
+            if (t.name.size() == 1 ? !map_->prefix1_all_chars : !map_->prefix2_start) continue;
+            if (driver == SIZE_MAX || t.name.size() > group[driver].name.size()) driver = i;
+        }
+    }
+    if (driver != SIZE_MAX) {
+        const auto& term = cq.groups[0][driver];
         CompiledQuery literal_cq = cq;
-        literal_cq.groups[0][0].pinyin = false;
+        literal_cq.groups[0][driver].pinyin = false;
         const bool single_char = term.name.size() == 1;
         const uint32_t bucket = single_char ? PrefixChar(term.name) : PairBucket(term.name);
-        const bool direct_literal = term.name_how == NameHow::Substring && prefix_node < 0 && !folders_only &&
+        const bool direct_literal = QueryIsSimpleName(cq) &&
+            term.name_how == NameHow::Substring && prefix_node < 0 && !folders_only &&
             live_.nodes.empty() && patches_.empty() && tombstones_.empty() &&
             inactive_volume_roots_.empty();
         auto collect_table = [&](const MappedFile& mapped, int32_t global_first) {
