@@ -694,8 +694,8 @@ void Wizard::PaintWelcome() {
     // Logo glow, coloured from the icon itself: its gold pulse line and lit
     // dot. Light leaks from the dot past the tile, a broad warm halo balances
     // it, and a navy-tinted shadow lifts the tile. While the page is shown
-    // the light slowly flows: the dot breathes, the halo drifts and a warm
-    // blob circles behind the tile (pulse_installer_glow.html, "金色余晖").
+    // the light flows: the dot breathes, the halo drifts and two warm lights
+    // circle the tile in opposite directions (pulse_installer_glow.html, "金色余晖").
     {
         const float lx = kW / 2 - 48, ly = 54 + kWelcomeDy, cx = kW / 2, cy = 102 + kWelcomeDy;
         const D2D1_POINT_2F dot{lx + 64.2f, ly + 42.6f};
@@ -703,8 +703,8 @@ void Wizard::PaintWelcome() {
         const float k = theme_.dark ? 1.15f : 1.f;
         // Seconds within a 36 s loop: every period below divides it.
         const float t = GlowAnimating() ? static_cast<float>(GetTickCount64() % 36000) / 1000.f : 0.f;
-        const float breath = GlowAnimating() ? .5f - .5f * std::cos(2 * kPi * t / 3.6f) : 1.f;
-        const float drift = 2 * kPi * t / 9.f, orbit = 2 * kPi * t / 12.f;
+        const float breath = GlowAnimating() ? .5f - .5f * std::cos(2 * kPi * t / 3.6f) : .7f;
+        const float drift = 2 * kPi * t / 9.f, orbit = 2 * kPi * t / 12.f, counter = -2 * kPi * t / 18.f;
         auto glow = [&](D2D1_POINT_2F c, float rx, float ry, std::initializer_list<D2D1_GRADIENT_STOP> list) {
             ID2D1GradientStopCollection* coll = nullptr;
             ID2D1RadialGradientBrush* brush = nullptr;
@@ -716,15 +716,20 @@ void Wizard::PaintWelcome() {
             SafeRelease(coll);
         };
         const D2D1_COLOR_F wash = theme_.dark ? Hex(0xFFBA50) : Hex(0xFFCE78);
-        const float wa = theme_.dark ? .07f : .16f;
+        const float wa = theme_.dark ? .06f : .11f;  // low enough to stay free of 8-bit banding rings
         glow({cx, cy - 20}, 380, 380, {{0, WithAlpha(wash, wa)}, {.45f, WithAlpha(wash, wa * .45f)}, {1, WithAlpha(wash, 0)}});
-        glow({cx + 6 * std::cos(drift), cy + 4 * std::sin(drift)}, 175, 175,
+        glow({cx + 14 * std::cos(drift), cy + 9 * std::sin(drift)}, 175, 175,
              {{0, WithAlpha(gold, .20f * k)}, {.38f, WithAlpha(gold, .13f * k)}, {.62f, WithAlpha(hot, .05f * k)},
               {1, WithAlpha(hot, 0)}});
-        if (GlowAnimating())
-            glow({cx + 34 * std::cos(orbit), cy + 22 * std::sin(orbit)}, 92, 92,
-                 {{0, WithAlpha(hot, .12f * k)}, {.5f, WithAlpha(gold, .05f * k)}, {1, WithAlpha(gold, 0)}});
-        const float dk = k * (.80f + .20f * breath), dr = 128 * (.97f + .05f * breath);
+        // Two warm lights circle the tile in opposite directions, so the glow
+        // visibly moves around it rather than only pulsing in place.
+        if (GlowAnimating()) {
+            glow({cx + 72 * std::cos(orbit), cy + 40 * std::sin(orbit)}, 110, 110,
+                 {{0, WithAlpha(hot, .24f * k)}, {.45f, WithAlpha(gold, .10f * k)}, {1, WithAlpha(gold, 0)}});
+            glow({cx + 62 * std::cos(counter + kPi), cy + 34 * std::sin(counter + kPi)}, 96, 96,
+                 {{0, WithAlpha(core, .20f * k)}, {.5f, WithAlpha(hot, .07f * k)}, {1, WithAlpha(hot, 0)}});
+        }
+        const float dk = k * (.55f + .45f * breath), dr = 128 * (.88f + .20f * breath);
         glow(dot, dr, dr, {{0, WithAlpha(core, .70f * dk)}, {.10f, WithAlpha(hot, .55f * dk)}, {.30f, WithAlpha(gold, .30f * dk)},
                            {.55f, WithAlpha(gold, .10f * dk)}, {.80f, WithAlpha(gold, .025f * dk)}, {1, WithAlpha(gold, 0)}});
         // Soft drop shadow: stacked rounded rects, tinted navy on light themes.
