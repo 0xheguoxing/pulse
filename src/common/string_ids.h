@@ -2246,5 +2246,10 @@
 #define IDS_ALIAS_DISPLAY_BOTH                                                           3456
 #define IDS_ALIAS_DISPLAY_ONLY                                                           3457
 #define IDS_ALIAS_DISPLAY_REAL                                                           3458
+#define IDS_MANAGE_ALIASES_ELLIPSIS                                                      3459
+#define IDS_EXPORT_ALIASES_ELLIPSIS                                                      3460
+#define IDS_IMPORT_ALIASES_ELLIPSIS                                                      3461
+#define IDS_NO_ALIASES_YET                                                               3462
+#define IDS_FILTER_ALIASES_PLACEHOLDER                                                   3463
 
 #endif  // PULSE_STRING_IDS_H

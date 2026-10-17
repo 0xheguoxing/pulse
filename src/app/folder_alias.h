@@ -154,6 +154,51 @@ public:
         if (!file.empty()) WriteUtf8FileAtomic(file, json);
     }
 
+    // 导出: writes every alias to `file` in the store's own format.
+    bool ExportTo(const std::wstring& file) const {
+        std::wstring json;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            json = SerializeLocked();
+        }
+        return WriteUtf8FileAtomic(file, json);
+    }
+    // 导入: merges the aliases in `file` (an export or another aliases.json);
+    // an imported alias replaces the current one of the same item. Returns
+    // how many changed, or -1 when the file has no aliases object.
+    int ImportFrom(const std::wstring& file) {
+        std::wstring text;
+        if (!ReadUtf8File(file, text)) return -1;
+        const std::wstring object = json::ExtractObject(text, L"aliases");
+        if (object.empty()) return -1;
+        std::vector<AliasEntry> incoming;
+        json::ForEachMember(object, [&](const std::wstring& key, const std::wstring& raw) {
+            if (raw.size() < 2 || raw.front() != L'"') return;
+            size_t pos = 1;
+            std::wstring alias = Trimmed(json::UnescapeString(raw, pos));
+            if (!key.empty() && !alias.empty()) incoming.push_back(AliasEntry{Normalized(key), alias});
+        });
+        int changed = 0;
+        std::wstring target;
+        std::wstring json;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            for (auto& e : incoming) {
+                auto& slot = map_[Key(e.path)];
+                if (slot.alias == e.alias && slot.path == e.path) continue;
+                slot = std::move(e);
+                ++changed;
+            }
+            if (changed == 0) return 0;
+            count_.store(map_.size(), std::memory_order_relaxed);
+            revision_.fetch_add(1, std::memory_order_relaxed);
+            target = file_;
+            json = SerializeLocked();
+        }
+        if (!target.empty()) WriteUtf8FileAtomic(target, json);
+        return changed;
+    }
+
     std::vector<AliasEntry> All() const {
         std::lock_guard<std::mutex> lock(mu_);
         std::vector<AliasEntry> out;

@@ -2242,6 +2242,11 @@ enum class StringId : UINT {
     AliasDisplayBoth = IDS_ALIAS_DISPLAY_BOTH,
     AliasDisplayOnly = IDS_ALIAS_DISPLAY_ONLY,
     AliasDisplayReal = IDS_ALIAS_DISPLAY_REAL,
+    ManageAliasesEllipsis = IDS_MANAGE_ALIASES_ELLIPSIS,
+    ExportAliasesEllipsis = IDS_EXPORT_ALIASES_ELLIPSIS,
+    ImportAliasesEllipsis = IDS_IMPORT_ALIASES_ELLIPSIS,
+    NoAliasesYet = IDS_NO_ALIASES_YET,
+    FilterAliasesPlaceholder = IDS_FILTER_ALIASES_PLACEHOLDER,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

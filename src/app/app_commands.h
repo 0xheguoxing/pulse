@@ -158,6 +158,8 @@ bool ApplyToolbarAppRows(AppState& s, const std::vector<ui::ToolbarPickerTile>& 
 // Pulse's file picker for a program (.exe or shortcut), opening in the Start menu.
 bool PickToolbarAppFile(AppState& s, HWND owner, std::wstring& path);
 void ShowOmnibar(AppState& s, OmnibarMode mode);
+// 管理别名: list, open and remove aliases; export / import them.
+void ShowAliasManager(AppState& s);
 void ShowAdvancedSearch(AppState& s, bool require_scope = false);
 void ShowSearchFilterMenu(AppState& s, int chip, RECT control_rect);
 void ShowRecyclePlaceMenu(AppState& s, POINT screen_pt);

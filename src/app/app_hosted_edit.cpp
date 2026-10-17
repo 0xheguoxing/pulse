@@ -606,12 +606,7 @@ void HideRenameOverlay(AppState& s, bool commit) {
                 // The renamed row keeps its place even if the refresh beats
                 // the watcher event (#13).
                 tab->held_renames.push_back({tab->EntryAt(index).name, buf});
-                const uint64_t task = s.ops.Submit(std::move(req));
-                if (task && !app::AliasStore::Instance().Find(full).empty()) {
-                    std::wstring renamed = fs::ParentPath(full);
-                    if (!renamed.empty() && renamed.back() != L'\\') renamed += L'\\';
-                    s.aliasPendingMoves[task] = {full, renamed + buf};
-                }
+                s.ops.Submit(std::move(req));  // its 别名 follows on completion (app_main)
             }
         }
     }

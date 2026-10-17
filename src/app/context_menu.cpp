@@ -553,6 +553,8 @@ std::vector<ui::FluentMenuItem> BuildViewMenu(ui::ViewMode current_mode, bool de
             row.radio = current == i;
             items.push_back(std::move(row));
         }
+        items.back().separator_after = true;
+        items.push_back(Item(CmdManageAliases, l10n::Get(l10n::StringId::ManageAliasesEllipsis).c_str(), L""));
     }
     return items;
 }

@@ -126,7 +126,12 @@ enum MenuCmd : int {
     CmdDissolveFolder = 3911,   // folders only: 解散文件夹 (contents up one level, folder removed)
     CmdSetAlias = 3912,         // one item: 设置别名… (Shift+F2)
     CmdAliasDisplayBase = 3913, // 查看 menu: +AliasDisplay (别名 + 原名 / 只显示别名 / 显示原名)
+    CmdManageAliases = 3916,    // 查看 menu: 管理别名… (list, remove, export, import)
+    CmdExportAliases = 3917,
+    CmdImportAliases = 3918,
     CmdAliasBase = 3920,        // omnibar: +0..15 aliased folders matching the query
+    CmdAliasOpenBase = 3940,    // 管理别名: +0..29 open the item
+    CmdAliasRemoveBase = 3970,  // 管理别名: +0..29 remove the alias (row's trailing ×)
     CmdIndexBase = 1000,
     // Explorer integration (优化.md §7): registry static verbs bound to the
     // current selection (+index into the StaticVerb list) and pulse_shell

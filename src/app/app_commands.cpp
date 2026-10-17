@@ -1133,6 +1133,10 @@ void DispatchMenuCommand(AppState& s, int cmd) {
         else FlipToolbarTool(s, tool);
         return;
     }
+    if (cmd == app::CmdManageAliases) {
+        ShowAliasManager(s);
+        return;
+    }
     if (cmd >= app::CmdAliasDisplayBase && cmd < app::CmdAliasDisplayBase + 3) {
         app::AliasStore::Instance().SetDisplay(static_cast<app::AliasDisplay>(cmd - app::CmdAliasDisplayBase));
         InvalidateRect(s.hwnd, nullptr, FALSE);
@@ -3643,6 +3647,148 @@ void ShowSearchFilterMenu(AppState& s, int chip, RECT control_rect) {
         else spec.size = static_cast<app::SizePreset>(cmd - 1);
     }
     NavigateTo(s, app::MakeSearchPath(app::CompileSearchQuery(spec)));
+}
+
+// Windows' own JSON file dialog for 导出别名 / 导入别名.
+static bool PickAliasFile(HWND owner, bool save, std::wstring& out) {
+    IFileDialog* dlg = nullptr;
+    const HRESULT hr = save
+        ? CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_IFileSaveDialog,
+                           reinterpret_cast<void**>(&dlg))
+        : CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_IFileOpenDialog,
+                           reinterpret_cast<void**>(&dlg));
+    if (FAILED(hr) || !dlg) return false;
+    const COMDLG_FILTERSPEC spec{L"JSON", L"*.json"};
+    dlg->SetFileTypes(1, &spec);
+    dlg->SetDefaultExtension(L"json");
+    if (save) dlg->SetFileName(L"pulse-aliases.json");
+    bool ok = false;
+    if (SUCCEEDED(dlg->Show(owner))) {
+        IShellItem* item = nullptr;
+        if (SUCCEEDED(dlg->GetResult(&item)) && item) {
+            PWSTR path = nullptr;
+            if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path) {
+                out = path;
+                CoTaskMemFree(path);
+                ok = true;
+            }
+            item->Release();
+        }
+    }
+    dlg->Release();
+    return ok;
+}
+
+// 管理别名: every alias (type to filter), click opens the item, the row's ×
+// removes the alias; 导出 / 导入 below.
+void ShowAliasManager(AppState& s) {
+    if (!EnsureMenu(s)) return;
+    const auto fold = [](std::wstring t) {
+        for (auto& c : t) c = static_cast<wchar_t>(std::towlower(c));
+        return t;
+    };
+    for (int round = 0; round < 64; ++round) {
+        auto all = app::AliasStore::Instance().All();
+        std::sort(all.begin(), all.end(), [](const app::AliasEntry& l, const app::AliasEntry& r) {
+            return lstrcmpiW(l.alias.c_str(), r.alias.c_str()) < 0;
+        });
+        std::vector<std::wstring> shown;
+        auto build = [&](const std::wstring& query) {
+            std::vector<ui::FluentMenuItem> items;
+            shown.clear();
+            const std::wstring q = fold(query);
+            for (const auto& e : all) {
+                if (shown.size() >= 30) break;
+                if (!q.empty() && !app::AliasStore::AliasMatches(e.alias, q) &&
+                    fold(e.path).find(q) == std::wstring::npos) continue;
+                const DWORD attrs = GetFileAttributesW(e.path.c_str());
+                ui::FluentMenuItem item;
+                item.command = app::CmdAliasOpenBase + static_cast<int>(shown.size());
+                item.trailing_command = app::CmdAliasRemoveBase + static_cast<int>(shown.size());
+                item.text = e.alias;
+                item.glyph = attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY)
+                    ? L"\xE8B7" : L"\xE8A5";
+                item.secondary = attrs == INVALID_FILE_ATTRIBUTES;  // the item is gone
+                item.shortcut = e.path;
+                item.shortcut_inline = true;
+                item.tooltip = e.path;
+                shown.push_back(e.path);
+                items.push_back(std::move(item));
+            }
+            if (items.empty()) {
+                ui::FluentMenuItem none;
+                none.text = l10n::Get(all.empty() ? l10n::StringId::NoAliasesYet : l10n::StringId::NoMatches);
+                none.enabled = false;
+                items.push_back(std::move(none));
+            }
+            items.back().separator_after = true;
+            ui::FluentMenuItem out;
+            out.command = app::CmdExportAliases;
+            out.text = l10n::Get(l10n::StringId::ExportAliasesEllipsis);
+            out.glyph = L"\xEDE1";  // export
+            out.enabled = !all.empty();
+            items.push_back(std::move(out));
+            ui::FluentMenuItem in;
+            in.command = app::CmdImportAliases;
+            in.text = l10n::Get(l10n::StringId::ImportAliasesEllipsis);
+            in.glyph = L"\xE8B5";  // import
+            items.push_back(std::move(in));
+            return items;
+        };
+        D2D1_RECT_F addr = s.renderer.AddressBarRect(static_cast<float>(s.compositor.Width()));
+        POINT pt{ static_cast<LONG>(std::lround(addr.left)), static_cast<LONG>(std::lround(addr.bottom)) };
+        ClientToScreen(s.hwnd, &pt);
+        s.menu->SetFilterPlaceholder(l10n::Get(l10n::StringId::FilterAliasesPlaceholder));
+        const int cmd = s.menu->TrackPopup(pt, build(L""), build, false);
+        s.menu->SetFilterPlaceholder({});
+        if (cmd >= app::CmdAliasRemoveBase && cmd < app::CmdAliasRemoveBase + 30) {
+            const size_t index = static_cast<size_t>(cmd - app::CmdAliasRemoveBase);
+            if (index < shown.size()) app::AliasStore::Instance().Set(shown[index], L"");
+            InvalidateRect(s.hwnd, nullptr, FALSE);
+            if (app::AliasStore::Instance().Empty()) return;
+            continue;
+        }
+        if (cmd >= app::CmdAliasOpenBase && cmd < app::CmdAliasOpenBase + 30) {
+            const size_t index = static_cast<size_t>(cmd - app::CmdAliasOpenBase);
+            if (index >= shown.size()) return;
+            const std::wstring& path = shown[index];
+            const DWORD attrs = GetFileAttributesW(path.c_str());
+            if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+                NavigateTo(s, path);
+                return;
+            }
+            // A file: its folder, with it selected.
+            const std::wstring parent = fs::ParentPath(path);
+            if (parent.empty()) return;
+            const size_t slash = path.find_last_of(L"\\/");
+            NavigateTo(s, parent);
+            if (app::Tab* tab = ActiveTab(s)) {
+                const std::wstring leaf = slash == std::wstring::npos ? path : path.substr(slash + 1);
+                tab->pending_selected_names = {leaf};
+                tab->pending_selection_revision = tab->selection_revision;
+                tab->pending_selected_name = leaf;
+                tab->pending_ensure_selection_visible = true;
+            }
+            return;
+        }
+        if (cmd == app::CmdExportAliases) {
+            std::wstring file;
+            if (PickAliasFile(s.hwnd, true, file) && !app::AliasStore::Instance().ExportTo(file))
+                MessageBeep(MB_ICONWARNING);
+            return;
+        }
+        if (cmd == app::CmdImportAliases) {
+            std::wstring file;
+            if (!PickAliasFile(s.hwnd, false, file)) return;
+            if (app::AliasStore::Instance().ImportFrom(file) < 0) {
+                MessageBeep(MB_ICONWARNING);
+                return;
+            }
+            InvalidateRect(s.hwnd, nullptr, FALSE);
+            continue;  // show the list with what came in
+        }
+        return;
+    }
 }
 
 void ShowOmnibar(AppState& s, OmnibarMode mode) {

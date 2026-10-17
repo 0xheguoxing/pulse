@@ -1,6 +1,5 @@
 // app_ops_ui.cpp — extracted from app_main.cpp.
 #include "app_internal.h"
-#include "folder_alias.h"
 #include "../ui/lumatext_renderer.h"
 #include "../ui/fluent_menu.h"
 #include "../ui/drag_drop.h"
@@ -342,11 +341,6 @@ static void MarkLeavingRows(AppState& s, const std::vector<std::wstring>& paths,
 }
 
 void NoteDeleteFinished(AppState& s, const ops::FinishedTask& done) {
-    // A renamed item keeps its 别名.
-    if (const auto it = s.aliasPendingMoves.find(done.task_id); it != s.aliasPendingMoves.end()) {
-        if (done.success) app::AliasStore::Instance().Move(it->second.first, it->second.second);
-        s.aliasPendingMoves.erase(it);
-    }
     if (done.type != ops::OpType::RecycleDelete && done.type != ops::OpType::RealDelete) {
         // Anything else (the undo itself, a later copy...) ends the slide-out
         // hold, and the snack's Undo would no longer undo the delete.
