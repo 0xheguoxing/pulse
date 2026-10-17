@@ -3279,6 +3279,38 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
             {"item_index", hit.index >= 0 ? static_cast<uint64_t>(hit.index) : 0}});
         if (HandleWindowIdentityDoubleClick(*s, hit, POINT{mx, my})) return 0;  // M7c: rename, recolor
         if (pulse::HandleTabDoubleClick(*s, hit)) return 0;
+        // Buttons have no double-click meaning: a quick second press (inside
+        // the system double-click time - 1 s on some machines) is just another
+        // press. Without this the theme toggle and friends swallowed it, so
+        // they sometimes needed two clicks.
+        switch (hit.region) {
+        case ui::HitTestResult::ThemeToggle:
+        case ui::HitTestResult::SettingsButton:
+        case ui::HitTestResult::SidebarToggle:
+        case ui::HitTestResult::TabNew:
+        case ui::HitTestResult::TabClose:
+        case ui::HitTestResult::NavBack:
+        case ui::HitTestResult::NavForward:
+        case ui::HitTestResult::NavUp:
+        case ui::HitTestResult::NavRefresh:
+        case ui::HitTestResult::Cut:
+        case ui::HitTestResult::Copy:
+        case ui::HitTestResult::Paste:
+        case ui::HitTestResult::Delete:
+        case ui::HitTestResult::DetailsToggle:
+        case ui::HitTestResult::PaneMediumIcons:
+        case ui::HitTestResult::PaneViewButton:
+        case ui::HitTestResult::PaneDetails:
+        case ui::HitTestResult::ToolbarPin:
+        case ui::HitTestResult::FilterClear:
+        case ui::HitTestResult::CompareDiffToggle:
+        case ui::HitTestResult::DetailsAttrToggle:
+        case ui::HitTestResult::DetailsPreviewToggle:
+        case ui::HitTestResult::SettingsToggle:
+            return HandleLButtonDown(s, hwnd, WM_LBUTTONDOWN, wParam, lParam);
+        default:
+            break;
+        }
         // A second press on a chevron toggles again instead of opening the folder.
         if (HandleDetailsTreeMouseDown(*s, vm, hit, mx, my, (GetKeyState(VK_MENU) & 0x8000) != 0)) {
             InvalidateRect(hwnd, nullptr, FALSE);
