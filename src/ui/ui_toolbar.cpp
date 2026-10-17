@@ -3,6 +3,7 @@
 #include "pane_header_icons.h"
 #include "toolbar_pin_drag.h"
 #include "toolbar_picker.h"
+#include <algorithm>
 #include <unordered_map>
 
 namespace pulse::ui {
@@ -425,8 +426,56 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                     toolbar_moving = true;
                 draw_plate(tm.crumbs);
             }
+            {
+                std::vector<std::wstring> keys;
+                keys.reserve(placed.size());
+                for (const auto& seg : placed) keys.push_back(seg.path + L"|" + seg.text);
+                if (keys != crumb_keys_) {
+                    const bool animate = !crumb_keys_.empty() && motion::SystemAnimationsEnabled() && !IsHighContrast();
+                    int k = 0;
+                    for (const auto& key : keys) {
+                        if (std::find(crumb_keys_.begin(), crumb_keys_.end(), key) != crumb_keys_.end()) continue;
+                        if (animate) crumb_born_[key] = motion_now_ + 30u * static_cast<uint64_t>(k++);
+                    }
+                    crumb_keys_ = std::move(keys);
+                }
+                const uint64_t settle = motion::SpringSettleMs(motion::spring::Smooth);
+                for (auto it = crumb_born_.begin(); it != crumb_born_.end();) {
+                    if (motion_now_ > it->second && motion_now_ - it->second > settle) it = crumb_born_.erase(it);
+                    else ++it;
+                }
+                if (!crumb_born_.empty()) RequestMotionFrame();
+            }
             for (size_t i = 0; i < placed.size(); ++i) {
                 const auto& seg = placed[i];
+                struct CrumbEnter {
+                    ID2D1DeviceContext* dc;
+                    D2D1_MATRIX_3X2_F saved{};
+                    bool moved = false, faded = false;
+                    ~CrumbEnter() {
+                        if (faded) dc->PopLayer();
+                        if (moved) dc->SetTransform(saved);
+                    }
+                } enter{dc};
+                if (!crumb_born_.empty() && i < crumb_keys_.size()) {
+                    const auto born = crumb_born_.find(crumb_keys_[i]);
+                    if (born != crumb_born_.end()) {
+                        const float age = static_cast<float>(static_cast<int64_t>(motion_now_ - born->second));
+                        const float p = motion::SpringProgress(motion::spring::Smooth, age);
+                        if (p <= 0.0f) continue;
+                        dc->GetTransform(&enter.saved);
+                        dc->SetTransform(D2D1::Matrix3x2F::Translation(std::round(10.0f * scale_ * (1.0f - p)), 0.0f) *
+                                         enter.saved);
+                        enter.moved = true;
+                        if (p < 0.999f) {
+                            dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr,
+                                                                 D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                                                 D2D1::IdentityMatrix(), (std::min)(1.0f, p)),
+                                          nullptr);
+                            enter.faded = true;
+                        }
+                    }
+                }
                 if ((int)i == vm.breadcrumb_drop) {
                     // Drop target: accent 2px stroke (ui.md §5.2 rule 7).
                     dc->DrawRoundedRectangle(

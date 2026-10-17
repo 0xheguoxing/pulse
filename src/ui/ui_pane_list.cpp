@@ -606,6 +606,102 @@ void MainRenderer::AutoFitColumnDivider(const D2D1_RECT_F& pane_bounds,
     }
 }
 
+MainRenderer::DetailsColumnLayout MainRenderer::AnimateColumns(DetailsColumnLayout target, int pane_index) {
+    if (pane_index < 0 || pane_index >= static_cast<int>(col_fit_.size())) return target;
+    auto& f = col_fit_[static_cast<size_t>(pane_index)];
+    if (f.start) {
+        const float ms = static_cast<float>(motion_now_ - f.start);
+        if (f.count != target.count || ms >= static_cast<float>(motion::SpringSettleMs(motion::spring::Pop))) {
+            f.start = 0;
+        } else {
+            // Pop: a touch of overshoot, like the prototype's spring auto-fit.
+            const float p = motion::SpringProgress(motion::spring::Pop, ms);
+            float sum_from = 0.0f, sum_to = 0.0f;
+            for (int i = 0; i < target.count; ++i) {
+                sum_from += f.from[static_cast<size_t>(i)];
+                sum_to += target.widths[static_cast<size_t>(i)];
+            }
+            // A resized pane since: keep the old shares, on the new total.
+            const float k = sum_from > 0.0f ? sum_to / sum_from : 1.0f;
+            for (int i = 0; i < target.count; ++i) {
+                float& w = target.widths[static_cast<size_t>(i)];
+                const float from = f.from[static_cast<size_t>(i)] * k;
+                w = (std::max)(0.0f, std::round(from + (w - from) * p));
+            }
+            RequestMotionFrame();
+        }
+    }
+    f.last = target.widths;
+    f.last_count = target.count;
+    return target;
+}
+
+void MainRenderer::DrawColumnBadge(int pane_index, const Theme& theme) {
+    auto& b = col_badge_;
+    if (b.pane != pane_index) return;
+    float alpha = 1.0f;
+    if (!b.on) {
+        const uint64_t age = motion_now_ - b.released;
+        if (age >= 140) {
+            b = {};
+            return;
+        }
+        alpha = 1.0f - static_cast<float>(age) / 140.0f;
+        RequestMotionFrame();
+    }
+    ID2D1DeviceContext* dc = compositor_->Dc();
+    IDWriteFactory2* factory = compositor_->DwriteFactory();
+    IDWriteTextFormat* fmt = compositor_->SmallFormat();
+    if (!dc || !factory || !fmt) return;
+    // Guide through the list, 60% accent.
+    if (b.on) {
+        MakeBrush(dc, WithAlpha(theme.accent, 0.6f), brFillInput_);
+        dc->FillRectangle(D2D1::RectF(b.guide_x - scale_, b.guide_top, b.guide_x + scale_, b.guide_bottom),
+                          brFillInput_.get());
+    }
+    POINT cursor{};
+    if (!GetCursorPos(&cursor) || !ScreenToClient(compositor_->Hwnd(), &cursor)) return;
+    const int w_dip = static_cast<int>(std::lround(b.w / scale_));
+    const int d_dip = w_dip - static_cast<int>(std::lround(b.w0 / scale_));
+    const std::wstring value = L"  " + std::to_wstring(w_dip) + L"px  ";
+    const std::wstring delta = (d_dip >= 0 ? L"+" : L"") + std::to_wstring(d_dip);
+    const std::wstring text = b.name + value + delta;
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(factory->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), fmt, 1000.0f * scale_,
+                                         26.0f * scale_, &layout)))
+        return;
+    layout->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_RANGE{0, static_cast<UINT32>(b.name.size())});
+    layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    DWRITE_TEXT_METRICS m{};
+    layout->GetMetrics(&m);
+    const float h = 26.0f * scale_;
+    const float pw = std::ceil(m.widthIncludingTrailingWhitespace) + 18.0f * scale_;
+    const float pop = 0.8f + 0.2f * motion::SpringProgress(motion::spring::Pop, static_cast<float>(motion_now_ - b.since));
+    if (motion_now_ - b.since < motion::SpringSettleMs(motion::spring::Pop)) RequestMotionFrame();
+    const float left = static_cast<float>(cursor.x) + 14.0f * scale_;
+    const float top = static_cast<float>(cursor.y) + 16.0f * scale_;
+    D2D1_MATRIX_3X2_F saved{};
+    dc->GetTransform(&saved);
+    dc->SetTransform(D2D1::Matrix3x2F::Scale(pop, pop, D2D1::Point2F(left, top)) * saved);
+    const bool dark = theme.bg.r < 0.5f;
+    const D2D1_COLOR_F plate = dark ? D2D1::ColorF(0xF3F4F6, alpha) : D2D1::ColorF(0x111827, alpha);
+    const D2D1_COLOR_F ink = dark ? D2D1::ColorF(0x111827, alpha) : D2D1::ColorF(0xFFFFFF, alpha);
+    MakeBrush(dc, D2D1::ColorF(0, 0.18f * alpha), brFillInput_);
+    dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(left, top + 3.0f * scale_, left + pw, top + h + 3.0f * scale_),
+                                               h * 0.5f, h * 0.5f), brFillInput_.get());
+    MakeBrush(dc, plate, brFillInput_);
+    dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(left, top, left + pw, top + h), h * 0.5f, h * 0.5f),
+                             brFillInput_.get());
+    MakeBrush(dc, ink, brFillInput_);
+    // The change reads quieter than the value.
+    ComPtr<ID2D1SolidColorBrush> quiet;
+    if (SUCCEEDED(dc->CreateSolidColorBrush(D2D1::ColorF(ink.r, ink.g, ink.b, ink.a * 0.6f), &quiet)))
+        layout->SetDrawingEffect(quiet.get(), DWRITE_TEXT_RANGE{static_cast<UINT32>(b.name.size() + value.size()),
+                                                                 static_cast<UINT32>(delta.size())});
+    dc->DrawTextLayout(D2D1::Point2F(left + 9.0f * scale_, top), layout.get(), brFillInput_.get());
+    dc->SetTransform(saved);
+}
+
 namespace {
 // Move the shared edge while keeping the adjacent pair's outer edges fixed.
 // Flexible name/path widths are implicit; metadata widths are stored in DIP.
@@ -2086,7 +2182,7 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
         MakeBrush(dc, theme.fill_input, brFillInput_);
         FillRect(dc, brFillInput_.get(), x, y, w, column_header_height_);
         FillRect(dc, brStrokeDivider_.get(), x, y + column_header_height_ - 1, w, 1);
-        const DetailsColumnLayout columns = DetailsColumns(bounds, pane);
+        const DetailsColumnLayout columns = AnimateColumns(DetailsColumns(bounds, pane), pane_index);
         if (pane_index >= 0 && pane_index < static_cast<int>(painted_columns_.size())) {
             uint32_t mask = columns.two_line ? (1u << 8) : 0u;
             for (int col = 0; col < columns.count; ++col)
@@ -2186,6 +2282,40 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
             FillRect(dc, brAccent_.get(), dividerX - scale_, y + 4.0f * scale_,
                      2.0f * scale_, column_header_height_ - 8.0f * scale_);
         }
+        // Width badge while a divider is dragged (motion v2 "colresize").
+        if (vm.column_resize_pressed && vm.hover_pane_index == pane_index && active_divider >= 0 &&
+            !IsHighContrast()) {
+            const float x0 = active_divider == 0 ? columns.left : columns.DividerX(active_divider - 1);
+            const float wpx = columns.DividerX(active_divider) - x0;
+            auto& b = col_badge_;
+            if (!b.on || b.pane != pane_index || b.divider != active_divider) {
+                b = {};
+                b.on = true;
+                b.pane = pane_index;
+                b.divider = active_divider;
+                b.w0 = wpx;
+                b.since = motion_now_;
+            }
+            b.w = wpx;
+            b.guide_x = columns.DividerX(active_divider);
+            b.guide_top = y + column_header_height_;
+            b.guide_bottom = bottom;
+            switch (columns.kinds[static_cast<size_t>(active_divider)]) {
+            case ColumnKind::Name: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnName); break;
+            case ColumnKind::Path: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnPath); break;
+            case ColumnKind::Date:
+                b.name = pane.date_column_label.empty() ? pulse::l10n::Get(pulse::l10n::StringId::ColumnModified)
+                                                        : pane.date_column_label;
+                break;
+            case ColumnKind::Type: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnType); break;
+            case ColumnKind::Size: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnSize); break;
+            case ColumnKind::Created: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnCreated); break;
+            case ColumnKind::Accessed: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnAccessed); break;
+            }
+        } else if (col_badge_.on && col_badge_.pane == pane_index) {
+            col_badge_.on = false;
+            col_badge_.released = motion_now_;
+        }
         y += column_header_height_;
     }
     float listH = bottom - y;
@@ -2197,6 +2327,7 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
         DrawList(pane, x, y, w, listH, theme, vm.hover_region, vm.hover_control_index, focused || !split,
                  pane_index);
     dc->PopAxisAlignedClip();
+    if (col_badge_.pane == pane_index) DrawColumnBadge(pane_index, theme);
 
     const float radius = theme.radius_control * scale_;
     D2D1_COLOR_F frameColor = theme.stroke_card;
@@ -2759,11 +2890,37 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
     const std::wstring folder_size_offer = pulse::l10n::Get(pulse::l10n::StringId::FolderSizeCalculate);
     const std::wstring folder_size_scanning = pulse::l10n::Get(pulse::l10n::StringId::Calculating);
     const size_t entryCount = vm.EntryCount();
+    // Motion v2 "nav": a pane that changed folders lets the new rows enter
+    // from the direction of travel once its listing has arrived.
+    NavEnter* nav = pane_index >= 0 && pane_index < static_cast<int>(nav_enter_.size())
+        ? &nav_enter_[static_cast<size_t>(pane_index)] : nullptr;
+    if (nav) {
+        if (nav->path != vm.path) {
+            const bool animate = !nav->path.empty() && !vm.is_search && motion::SystemAnimationsEnabled() &&
+                                 !IsHighContrast();
+            const auto under = [](const std::wstring& child, const std::wstring& parent) {
+                if (parent.empty() || child.size() <= parent.size()) return false;
+                if (_wcsnicmp(child.c_str(), parent.c_str(), parent.size()) != 0) return false;
+                return parent.back() == L'\\' || child[parent.size()] == L'\\';
+            };
+            nav->dir = under(vm.path, nav->path) ? 1 : under(nav->path, vm.path) ? -1 : 0;
+            nav->pending = animate;
+            nav->start = 0;
+            nav->path = vm.path;
+        }
+        if (nav->pending && !vm.loading) {
+            nav->pending = false;
+            if (entryCount > 0) nav->start = motion_now_;
+        }
+        if (nav->start && motion_now_ - nav->start > 130u + motion::SpringSettleMs(motion::spring::Smooth))
+            nav->start = 0;
+        if (nav->start || nav->pending) RequestMotionFrame();
+    }
     if (entryCount == 0) return;
     const D2D1_RECT_F viewport = D2D1::RectF(x, y, x + w, y + h);
     ViewLayout layout(vm.view_mode, viewport, entryCount, vm.scroll_x, vm.scroll_y, scale_, ListRowHeightDip(vm, viewport), vm.Groups());
     const auto [startIdx, endIdx] = layout.VisibleRange();
-    const DetailsColumnLayout detailsColumns = DetailsColumns(viewport, vm);
+    const DetailsColumnLayout detailsColumns = AnimateColumns(DetailsColumns(viewport, vm), pane_index);
     const bool detailsView = vm.view_mode == ViewMode::Details;
     D2D1_COLOR_F zebraColor = theme.text;
     zebraColor.a = (theme.bg.r < 0.5f) ? 0.035f : 0.025f;
@@ -2774,13 +2931,19 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
     // (ui_motion.h ListShiftMotion). Same folder, view, filter and scroll only.
     const uint64_t folder_context = std::hash<std::wstring>{}(vm.path) ^
         (std::hash<std::wstring>{}(vm.filter_text) * 31u);
-    const uint64_t list_context = folder_context ^ (static_cast<uint64_t>(vm.view_mode) << 56);
+    // The filter and the sort order are not part of the shift context: a
+    // change of either is a re-arrangement the visible rows travel through
+    // (motion v2 "sort" / "filter").
+    const uint64_t list_context = std::hash<std::wstring>{}(vm.path) ^
+        (static_cast<uint64_t>(vm.view_mode) << 56);
+    const uint64_t arrangement = (std::hash<std::wstring>{}(vm.filter_text) * 31u) ^
+        (static_cast<uint64_t>(vm.sort_column) << 40) ^ (static_cast<uint64_t>(vm.sort_direction) << 48);
     motion::ListShiftMotion* shift =
         pane_index >= 0 && pane_index < static_cast<int>(list_shift_.size())
             ? &list_shift_[pane_index] : nullptr;
     if (shift) {
         shift->BeginFrame(list_context, vm.scroll_x, vm.scroll_y, entryCount, motion_frame_,
-                          motion_now_, !vm.is_search && !vm.loading);
+                          motion_now_, !vm.is_search && !vm.loading && !(nav && nav->start), arrangement);
     }
     // View-mode switch: items travel from their previous cell/icon to the new
     // layout (ui_view_morph.h). Same folder and filter, continuous frames only.
@@ -3011,17 +3174,31 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             const float row_dx = std::round(row_shift.x + morph_sample.cell.left - cell.left -
                                             14.0f * scale_ * row_leave * row_leave);
             const float row_dy = std::round(row_shift.y + morph_sample.cell.top - cell.top);
-            const RowShiftTransform row_transform(dc, row_dx, row_dy);
+            // Nav entry: smooth spring, 40 ms + 9 ms per visible row (max 90).
+            float nav_dx = 0.0f, nav_dy = 0.0f, nav_alpha = 1.0f;
+            if (nav && nav->start && !morph_item) {
+                const int order = (std::max)(0, i - startIdx);
+                const float delay = 40.0f + (std::min)(static_cast<float>(order) * 9.0f, 90.0f);
+                const float p = motion::SpringProgress(motion::spring::Smooth,
+                                                       static_cast<float>(motion_now_ - nav->start) - delay);
+                nav_alpha = (std::clamp)(p, 0.0f, 1.0f);
+                if (nav->dir != 0) nav_dx = static_cast<float>(nav->dir) * 16.0f * scale_ * (1.0f - p);
+                else nav_dy = 6.0f * scale_ * (1.0f - p);
+            }
+            const float row_appear = shift ? shift->Appear(row_key) : 1.0f;
+            const RowShiftTransform row_transform(dc, row_dx + std::round(nav_dx), row_dy + std::round(nav_dy));
+            const float row_opacity = (1.0f - row_leave) * (1.0f - row_land_hide) * nav_alpha * row_appear;
+            if (nav_alpha <= 0.0f || row_appear <= 0.0f) continue;
             struct RowFade {
                 ID2D1DeviceContext* dc;
                 bool on;
                 ~RowFade() { if (on) dc->PopLayer(); }
-            } row_fade{dc, row_leave > 0.0f || row_land_hide > 0.0f};
+            } row_fade{dc, row_opacity < 0.999f};
             if (row_fade.on) {
                 dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr,
                                                      D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
                                                      D2D1::IdentityMatrix(),
-                                                     (1.0f - row_leave) * (1.0f - row_land_hide), nullptr,
+                                                     row_opacity, nullptr,
                                                      D2D1_LAYER_OPTIONS1_NONE), nullptr);
             }
             // Backgrounds take the morphing cell's shape; the transform already
@@ -3031,6 +3208,24 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                               morph_sample.cell.right - row_dx, morph_sample.cell.bottom - row_dy)
                 : cell;
             const float row_flash = shift ? shift->Flash(row_key) : 0.0f;
+            // Motion v2 "newfolder": a row that just appeared grows open from
+            // its top edge (Pop) while the rows below slide down.
+            struct RowGrowClip {
+                ID2D1DeviceContext* dc;
+                bool on;
+                ~RowGrowClip() { if (on) dc->PopAxisAlignedClip(); }
+            } row_grow{dc, false};
+            if (row_flash > 0.0f && !morph_item) {
+                const float age = (1.0f - row_flash) * static_cast<float>(motion::ListShiftMotion::kFlashMs);
+                if (age < 260.0f) {
+                    const float g = (std::clamp)(motion::SpringProgress(motion::spring::Pop, age), 0.02f, 1.0f);
+                    dc->PushAxisAlignedClip(D2D1::RectF(cell.left - 4.0f * scale_, cell.top,
+                                                        cell.right + 4.0f * scale_,
+                                                        cell.top + (cell.bottom - cell.top) * g),
+                                            D2D1_ANTIALIAS_MODE_ALIASED);
+                    row_grow.on = true;
+                }
+            }
 
             bool selected = vm.IsRowSelected(src);
             // A marquee sweeps across many rows: hover feedback (row highlight,
@@ -3755,8 +3950,45 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
         dc->PushAxisAlignedClip(D2D1::RectF(x, y, x + w, y + h), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         fluent::ControlState fieldState{};
         fieldState.focused = true;
-        painter_.DrawTextFieldFrame(RenameFieldRect(vm, viewport, vm.rename_index), fieldState);
+        const D2D1_RECT_F field = RenameFieldRect(vm, viewport, vm.rename_index);
+        float pop = 1.0f, age = 1e6f;
+        if (pane_index >= 0 && pane_index < static_cast<int>(rename_pop_.size())) {
+            RenamePop& rp = rename_pop_[static_cast<size_t>(pane_index)];
+            if (rp.index != vm.rename_index) {
+                rp.index = vm.rename_index;
+                rp.since = motion::SystemAnimationsEnabled() && !IsHighContrast() ? motion_now_ : 0;
+            }
+            if (rp.since) {
+                age = static_cast<float>(motion_now_ - rp.since);
+                if (age < static_cast<float>(motion::SpringSettleMs(motion::spring::Pop))) {
+                    pop = 0.96f + 0.04f * motion::SpringProgress(motion::spring::Pop, age);
+                    RequestMotionFrame();
+                } else {
+                    rp.since = 0;
+                }
+            }
+        }
+        D2D1_MATRIX_3X2_F saved{};
+        dc->GetTransform(&saved);
+        if (pop != 1.0f) {
+            const D2D1_POINT_2F c = D2D1::Point2F((field.left + field.right) * 0.5f, (field.top + field.bottom) * 0.5f);
+            dc->SetTransform(D2D1::Matrix3x2F::Scale(pop, pop, c) * saved);
+        }
+        painter_.DrawTextFieldFrame(field, fieldState);
+        dc->SetTransform(saved);
+        if (age < 320.0f) {
+            // The ripple: 0 -> 6 dip out, fading.
+            const float t = age / 320.0f;
+            const float grow = 6.0f * scale_ * motion::EaseOutCubic(t);
+            MakeBrush(dc, WithAlpha(theme.accent, 0.45f * (1.0f - t)), brFillInput_);
+            const float r = theme.radius_control * scale_ + grow;
+            dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(field.left - grow, field.top - grow,
+                                                                   field.right + grow, field.bottom + grow), r, r),
+                                     brFillInput_.get(), 1.5f * scale_);
+        }
         dc->PopAxisAlignedClip();
+    } else if (pane_index >= 0 && pane_index < static_cast<int>(rename_pop_.size())) {
+        rename_pop_[static_cast<size_t>(pane_index)] = {};
     }
     if (morphing) DrawMorphFrom(vm, *morph, viewport, theme);
     if (shift) shift->EndFrame();
