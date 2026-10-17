@@ -2326,5 +2326,25 @@
 #define IDS_TRAY_GHOST_COPY                                                              3536
 #define IDS_TRAY_GHOST_MOVE                                                              3537
 #define IDS_TRAY_NO_TARGET                                                               3538
+#define IDS_TRAY_CLIP_STRIP                                                              3539
+#define IDS_TRAY_CLIP_ROW                                                                3540
+#define IDS_TRAY_CLIP_TAKE                                                               3541
+#define IDS_TRAY_COPIED_OFFER                                                            3542
+#define IDS_TRAY_CUT_OFFER                                                               3543
+#define IDS_CTX_ADD_TO_TRAY                                                              3544
+#define IDS_TRAY_SELECT_FIRST                                                            3545
+#define IDS_TRAY_COLLAPSE_TIP                                                            3546
+#define IDS_TRAY_FILTER_ALL                                                              3547
+#define IDS_TRAY_FILTER_IMAGES                                                           3548
+#define IDS_TRAY_FILTER_DOCS                                                             3549
+#define IDS_TRAY_FILTER_OTHER                                                            3550
+#define IDS_TRAY_GROUP_OPEN                                                              3551
+#define IDS_TRAY_SELECTED_FORMAT                                                         3552
+#define IDS_TRAY_NONE_CHECKED_FORMAT                                                     3553
+#define IDS_TRAY_COMPARE_THESE                                                           3554
+#define IDS_TRAY_COMPARE_NEED_TWO                                                        3555
+#define IDS_TRAY_COPY_N_TO_FORMAT                                                        3556
+#define IDS_TRAY_MOVE_N_TO_FORMAT                                                        3557
+#define IDS_TRAY_HIDE_WHEN_EMPTY                                                         3558
 
 #endif  // PULSE_STRING_IDS_H

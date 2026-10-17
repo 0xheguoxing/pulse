@@ -1699,6 +1699,15 @@ std::shared_ptr<const std::unordered_set<uint64_t>> StagedHashes(AppState& s) {
     return s.trayShelf.staged;
 }
 
+// Del in the open view: rows slide out for 320 ms, then leave the tray.
+static void TickTrayOpenRemoval(AppState& s, ULONGLONG now) {
+    auto& v = s.trayView;
+    if (v.removing.empty() || now - v.remove_at < 320) return;
+    const std::vector<uint64_t> ids = std::move(v.removing);
+    v.removing.clear();
+    RemoveTrayItems(s, ids);
+}
+
 // Shelf layers and the sprung panel height (Open 480/38 growing, Close
 // 700/52 shrinking), integrated in fixed 4 ms steps.
 static bool TickTrayShelf(AppState& s, float elapsed) {
@@ -1707,8 +1716,11 @@ static bool TickTrayShelf(AppState& s, float elapsed) {
     const ULONGLONG now = GetTickCount64();
     const int total = TrayItemTotalCount(s.tray);
     int stage = static_cast<int>(ui::TrayStage::Strip);
+    if (total == 0 && s.trayView.open) s.trayView = {};
     if (s.dragFilesOver && !s.trayDragOut) stage = static_cast<int>(ui::TrayStage::Drop);
-    else if (total > 0) stage = static_cast<int>(ui::TrayStage::Shelf);
+    else if (total > 0) stage = static_cast<int>(s.trayView.open ? ui::TrayStage::Open : ui::TrayStage::Shelf);
+    if (stage != static_cast<int>(ui::TrayStage::Open)) s.trayView.compare = false;
+    TickTrayOpenRemoval(s, now);
     const bool animate = ui::motion::SystemAnimationsEnabled();
     if (stage != a.stage) {
         a.prev_stage = a.initialized && animate ? a.stage : -1;
@@ -1717,7 +1729,10 @@ static bool TickTrayShelf(AppState& s, float elapsed) {
         a.swap_at = now;
         dirty = true;
     }
-    float target = ui::TrayShelfStageHeightDip(stage);
+    // The Ctrl+C offer adds the 收入 row to the shelf (and pops in).
+    const bool clip = TrayClipLive(s);
+    if (clip && now - s.trayClip.at < 460) dirty = true;
+    float target = ui::TrayShelfStageHeightDip(stage, clip);
     if (stage == static_cast<int>(ui::TrayStage::Drop)) target = std::max(target, a.drop_from);
     if (!a.initialized || !animate) {
         if (a.height != target) dirty = true;
@@ -1766,6 +1781,10 @@ static bool TickTrayShelf(AppState& s, float elapsed) {
     if (a.label_at && now - a.label_at < 340) dirty = true;
     if (a.flash_at && now - a.flash_at < 920) dirty = true;
     if (s.trayZip.id) dirty = true;  // progress ring
+    // Open view: row stagger, Del slide-out, compare card entrance.
+    if (s.trayView.open && s.trayView.opened_at && now - s.trayView.opened_at < 1000) dirty = true;
+    if (!s.trayView.removing.empty()) dirty = true;
+    if (s.trayView.compare && now - s.trayView.compare_at < 470) dirty = true;
     return dirty;
 }
 
@@ -2255,6 +2274,111 @@ static void FillTrayCompare(AppState& s, const app::TrayItem* const (&items)[2],
     }).detach();
 }
 
+// Type filter of the open view: 1 images, 2 documents, 3 other (folders too).
+static int TrayItemKind(const std::wstring& name, bool is_dir) {
+    if (is_dir) return 3;
+    const size_t dot = name.find_last_of(L'.');
+    if (dot == std::wstring::npos) return 3;
+    std::wstring ext = name.substr(dot + 1);
+    for (auto& ch : ext) ch = static_cast<wchar_t>(towlower(ch));
+    static const wchar_t* const kImages[] = {L"jpg", L"jpeg", L"png", L"gif", L"bmp", L"webp", L"heic", L"heif",
+        L"tif", L"tiff", L"svg", L"ico", L"avif", L"jxl", L"raw", L"cr2", L"nef", L"arw", L"dng", L"psd"};
+    static const wchar_t* const kDocs[] = {L"pdf", L"doc", L"docx", L"xls", L"xlsx", L"ppt", L"pptx", L"txt",
+        L"md", L"csv", L"rtf", L"odt", L"ods", L"odp", L"epub", L"pages", L"numbers", L"key", L"json",
+        L"xml", L"html", L"htm", L"log", L"tsv"};
+    for (const wchar_t* e : kImages) if (ext == e) return 1;
+    for (const wchar_t* e : kDocs) if (ext == e) return 2;
+    return 3;
+}
+
+// Open view rows: the filtered items grouped by source folder (staging order).
+static void FillTrayOpen(AppState& s, ui::TrayDeckView& deck, ULONGLONG now) {
+    auto& v = s.trayView;
+    auto progress = [now](ULONGLONG at, float ms) {
+        return now >= at ? std::clamp(static_cast<float>(now - at) / ms, 0.0f, 1.0f) : 0.0f;
+    };
+    // Checks follow the tray: removed or released items drop out.
+    v.checked.erase(std::remove_if(v.checked.begin(), v.checked.end(), [&](uint64_t id) {
+        for (const auto& b : s.tray.batches())
+            for (const auto& item : b.items)
+                if (item.id == id) return !item.exists;
+        return true;
+    }), v.checked.end());
+    struct Group { std::wstring path; std::vector<const app::TrayItem*> items; };
+    std::vector<Group> groups;
+    for (const auto& b : s.tray.batches()) {
+        for (const auto& item : b.items) {
+            const std::wstring name = TrayItemName(item.path);
+            const int kind = TrayItemKind(name, item.is_dir);
+            ++deck.filter_counts[0];
+            ++deck.filter_counts[kind];
+            if (item.exists) ++deck.live_total;
+            if (v.filter != 0 && kind != v.filter) continue;
+            const std::wstring parent = fs::ParentPath(item.path);
+            auto g = std::find_if(groups.begin(), groups.end(), [&](const Group& x) {
+                return _wcsicmp(x.path.c_str(), parent.c_str()) == 0; });
+            if (g == groups.end()) { groups.push_back({parent, {}}); g = std::prev(groups.end()); }
+            g->items.push_back(&item);
+        }
+    }
+    if (v.filter != 0 && deck.filter_counts[v.filter] == 0) v.filter = 0;
+    deck.filter = v.filter;
+    deck.checked = static_cast<int>(v.checked.size());
+    deck.target_count = deck.checked > 0 ? deck.checked : deck.live_total;
+    int i = 0;
+    for (const Group& g : groups) {
+        bool first = true;
+        for (const app::TrayItem* item : g.items) {
+            ui::TrayOpenRow row;
+            row.id = item->id;
+            row.path = ClipboardPath(item->path);
+            row.name = TrayItemName(item->path);
+            row.is_dir = item->is_dir;
+            row.attrs = item->attrs;
+            row.exists = item->exists;
+            row.size = item->is_dir ? std::wstring() : format::ByteSize(item->size);
+            row.checked = std::find(v.checked.begin(), v.checked.end(), item->id) != v.checked.end();
+            row.group_start = first;
+            row.group_path = ClipboardPath(g.path);
+            row.group = TrayItemName(g.path);
+            if (row.group.empty()) row.group = row.group_path;
+            first = false;
+            // .oi.in: 60 + 40·i ms delay, 400 ms (the first dozen rows).
+            row.in_t = v.opened_at ? progress(v.opened_at + 60 + 40 * static_cast<ULONGLONG>(std::min(i, 12)), 400.0f) : 1.0f;
+            if (std::find(v.removing.begin(), v.removing.end(), item->id) != v.removing.end())
+                row.out_t = std::max(0.001f, progress(v.remove_at, 320.0f));
+            deck.open_rows.push_back(std::move(row));
+            ++i;
+        }
+    }
+    // Wheel clamp: headers 27 + rows 36 + 8 against the list (panel - 81 - 80).
+    const float content = static_cast<float>(groups.size()) * 27.0f + static_cast<float>(i) * 36.0f + 8.0f;
+    v.scroll = std::clamp(v.scroll, 0.0f, std::max(0.0f, content - (s.trayShelf.height - 161.0f)));
+    deck.open_scroll = v.scroll;
+    // 同名 on the main button counts only what it would release.
+    if (deck.checked > 0) {
+        int n = 0;
+        for (const uint64_t id : s.trayShelf.conflict_ids)
+            if (std::find(v.checked.begin(), v.checked.end(), id) != v.checked.end()) ++n;
+        deck.conflicts = n;
+    }
+    // Compare card: exactly two checked existing files.
+    deck.cmp_shown = false;
+    if (v.compare && v.checked.size() == 2) {
+        const app::TrayItem* pair[2]{};
+        for (const auto& b : s.tray.batches())
+            for (const auto& item : b.items)
+                for (int k = 0; k < 2; ++k)
+                    if (item.id == v.checked[static_cast<size_t>(k)]) pair[k] = &item;
+        if (pair[0] && pair[1] && !pair[0]->is_dir && !pair[1]->is_dir && pair[0]->exists && pair[1]->exists) {
+            deck.cmp_shown = true;
+            deck.cmp_t = progress(v.compare_at, 450.0f);
+            FillTrayCompare(s, pair, deck.compare);
+        }
+    }
+    if (!deck.cmp_shown) v.compare = false;
+}
+
 // Shelf part of the tray view (pulse_tray_redesign.html).
 static void FillTrayShelf(AppState& s, ui::TrayDeckView& deck, ULONGLONG now) {
     const auto& a = s.trayShelf;
@@ -2273,6 +2397,10 @@ static void FillTrayShelf(AppState& s, ui::TrayDeckView& deck, ULONGLONG now) {
     deck.bump = progress(a.bump_at, 500.0f);
     deck.zipping = s.trayZip.id != 0;
     deck.zip_progress = s.trayZip.progress ? s.trayZip.progress->load() : 0.0f;
+    if (TrayClipLive(s)) {
+        deck.clip_count = static_cast<int>(s.trayClip.paths.size());
+        deck.clip_t = progress(s.trayClip.at, 450.0f);
+    }
 
     // Target: the current folder, when files can land there.
     std::wstring current;
@@ -2345,9 +2473,11 @@ static void FillTrayShelf(AppState& s, ui::TrayDeckView& deck, ULONGLONG now) {
         for (const auto& item : b.items) sig = (sig ^ item.id) * 1099511628211ull;
     if (current.empty()) {
         c.conflicts = 0;
+        c.conflict_ids.clear();
     } else if (sig != c.conflict_sig || _wcsicmp(c.conflict_dir.c_str(), current.c_str()) != 0 ||
                now - c.conflict_at > 1500) {
         int n = 0, probed = 0;
+        c.conflict_ids.clear();
         const bool remote = fs::IsUncPath(current);
         for (const auto& b : batches) {
             for (const auto& item : b.items) {
@@ -2358,7 +2488,10 @@ static void FillTrayShelf(AppState& s, ui::TrayDeckView& deck, ULONGLONG now) {
                 std::wstring dest = current;
                 if (!dest.empty() && dest.back() != L'\\') dest += L'\\';
                 dest += TrayItemName(item.path);
-                if (GetFileAttributesW(dest.c_str()) != INVALID_FILE_ATTRIBUTES) ++n;
+                if (GetFileAttributesW(dest.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                    ++n;
+                    c.conflict_ids.push_back(item.id);
+                }
             }
         }
         c.conflicts = n;
@@ -2367,6 +2500,8 @@ static void FillTrayShelf(AppState& s, ui::TrayDeckView& deck, ULONGLONG now) {
         c.conflict_at = now;
     }
     deck.conflicts = c.conflicts;
+    if (deck.stage == static_cast<int>(ui::TrayStage::Open) || deck.prev_stage == static_cast<int>(ui::TrayStage::Open))
+        FillTrayOpen(s, deck, now);
 }
 
 ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
@@ -2704,7 +2839,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
             deck.can_compare = n == 2 && files;
             deck.comparing = deck.can_compare && s.trayCompare;
             if (deck.comparing) FillTrayCompare(s, pair, deck.compare);
-            else if (s.trayMetadata) s.trayMetadata->Cancel();
+            else if (s.trayMetadata && !s.trayView.compare) s.trayMetadata->Cancel();
         }
         // Live sum: items removed one by one leave the batch totals stale.
         for (const auto& b : s.tray.batches())

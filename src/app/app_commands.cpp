@@ -608,10 +608,24 @@ static int CompareFileBytes(const std::wstring& a, const std::wstring& b) {
     return result;
 }
 
-void TrayStartContentCompare(AppState& s) {
+// The pair the compare views show: the two checked items of the open view,
+// else the whole tray when it holds exactly two.
+static std::vector<std::wstring> TrayComparePaths(const AppState& s) {
     std::vector<std::wstring> paths;
+    if (s.trayView.compare && s.trayView.checked.size() == 2) {
+        for (const uint64_t id : s.trayView.checked)
+            for (const auto& batch : s.tray.batches())
+                for (const auto& item : batch.items)
+                    if (item.id == id) paths.push_back(item.path);
+        return paths;
+    }
     for (const auto& batch : s.tray.batches())
         for (const auto& item : batch.items) paths.push_back(item.path);
+    return paths;
+}
+
+void TrayStartContentCompare(AppState& s) {
+    const std::vector<std::wstring> paths = TrayComparePaths(s);
     if (paths.size() != 2) return;
     auto job = std::make_shared<TrayCompareJob>();
     job->a = paths[0];
@@ -626,9 +640,7 @@ void TrayStartContentCompare(AppState& s) {
 }
 
 void TrayOpenTextDiff(AppState& s) {
-    std::vector<std::wstring> paths;
-    for (const auto& batch : s.tray.batches())
-        for (const auto& item : batch.items) paths.push_back(item.path);
+    const std::vector<std::wstring> paths = TrayComparePaths(s);
     if (paths.size() != 2) return;
     if (!s.textDiff) s.textDiff = std::make_unique<ui::TextDiffWindow>();
     s.textDiff->Show(s.hwnd, paths[0], paths[1], s.darkMode, s.accentColor);
@@ -1379,6 +1391,7 @@ void DispatchMenuCommand(AppState& s, int cmd) {
     case app::CmdGroupIntoFolder: GroupSelectionIntoFolder(s); break;
     case app::CmdDissolveFolder: DissolveSelectedFolders(s); break;
     case app::CmdSetAlias: ShowAliasOverlay(s); break;
+    case app::CmdStageToTray: StageSelection(s); break;
     case app::CmdAdvancedSearch: ShowAdvancedSearch(s); break;
     case app::CmdRestoreRecycle: RestoreSelected(s); break;
     case app::CmdRestoreAllRecycle: RestoreAllRecycle(s); break;
@@ -1715,6 +1728,22 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         auto at = std::find_if(items.begin(), items.end(),
             [](const ui::FluentMenuItem& item) { return item.command == app::CmdCopyPath; });
         items.insert(at == items.end() ? items.end() : std::next(at), std::move(alias));
+    }
+    // 加入暂存区: stage without the clipboard (after 复制路径 / 设置别名).
+    if (tab && tab->SelectedCount() > 0 && !IsRecycleTab(tab) && SelectionCapsOf(s).copy) {
+        ui::FluentMenuItem stage;
+        stage.command = app::CmdStageToTray;
+        stage.text = l10n::Get(l10n::StringId::CtxAddToTray);
+        stage.glyph = L"\xE7B8";  // package
+        stage.shortcut = app::ShownShortcut(L"Ctrl+Shift+S");
+        auto at = std::find_if(items.begin(), items.end(), [](const ui::FluentMenuItem& item) {
+            return item.command == app::CmdSetAlias || item.command == app::CmdCopyPath;
+        });
+        if (at != items.end() && at->command == app::CmdCopyPath) {
+            auto alias = std::next(at);
+            if (alias != items.end() && alias->command == app::CmdSetAlias) at = alias;
+        }
+        items.insert(at == items.end() ? items.end() : std::next(at), std::move(stage));
     }
     if (tab && tab->SelectedCount() >= 2) {
         ui::FluentMenuItem batch;

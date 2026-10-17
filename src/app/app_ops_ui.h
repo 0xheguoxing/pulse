@@ -1,6 +1,7 @@
 // app_ops_ui.h — Delete/tray/paste/conflict/recycle operations UI.
 #pragma once
 #include "app_runtime.h"
+#include <optional>
 #include "../ui/confirm_dialog.h"
 
 namespace pulse {
@@ -19,7 +20,18 @@ void RestoreSelected(AppState& s);
 void RestoreAllRecycle(AppState& s);
 void EmptyRecycleBin(AppState& s);
 void CollectToTray(AppState& s, bool move_intent);
+// Ctrl+C / Ctrl+X: writes the system clipboard and arms s.trayClip (the
+// shelf's 收入 offer). Nothing is staged.
 void CollectPathsToTray(AppState& s, const std::vector<std::wstring>& paths, bool move_intent);
+// The Ctrl+C offer still matches the clipboard; clears it once it does not.
+bool TrayClipLive(AppState& s);
+// Stages paths not already on the tray. move_mode sets the release mode;
+// nullopt keeps it. Returns how many were added.
+size_t StagePaths(AppState& s, const std::vector<std::wstring>& paths, std::optional<bool> move_mode);
+// Ctrl+Shift+S / 加入暂存区: the selection, without touching the clipboard.
+void StageSelection(AppState& s);
+// 收入: stages the Ctrl+C offer.
+void TakeTrayClip(AppState& s);
 void ShowBatchRename(AppState& s);
 // Staging tray recent drop destinations (appPrefs.tray_dests, newest first, max 5).
 std::vector<std::wstring> TrayDestList(const AppState& s);
@@ -36,6 +48,8 @@ std::vector<std::wstring> TrayLivePaths(const AppState& s);
 // Clears the tray; the snack offers to put the items back (WM_TRAY_RESTORE).
 void ClearTrayWithUndo(AppState& s);
 void HandleTrayMessage(AppState& s, UINT message);
+// Removes staged items by id (open view Del).
+void RemoveTrayItems(AppState& s, const std::vector<uint64_t>& ids);
 // Removes one staged path (the "已暂存" row pill).
 void UnstagePath(AppState& s, const std::wstring& path);
 // Batch rename an explicit path list (staging tray); tray entries follow.

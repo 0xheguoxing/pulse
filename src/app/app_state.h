@@ -860,6 +860,7 @@ struct AppState : AppCoreOwner {
         uint64_t conflict_sig = 0;
         ULONGLONG conflict_at = 0;
         int conflicts = 0;
+        std::vector<uint64_t> conflict_ids;  // items behind conflicts (open view subsets)
         // "已暂存" row pills: hashes of every staged path.
         uint64_t staged_sig = 0;
         std::shared_ptr<const std::unordered_set<uint64_t>> staged;
@@ -873,6 +874,28 @@ struct AppState : AppCoreOwner {
         bool move = false;
         std::wstring dest;           // target folder
     } trayRelease;
+    // Ctrl+C / Ctrl+X inside Pulse only write the system clipboard; the shelf
+    // then offers to stage that copy (剪贴板 N 项 · 收入). The offer is gone
+    // once anything else changes the clipboard.
+    struct TrayClipOffer {
+        std::vector<std::wstring> paths;
+        bool move = false;
+        DWORD seq = 0;               // GetClipboardSequenceNumber after the write
+        ULONGLONG at = 0;            // pop-in start
+    } trayClip;
+    // Expanded tray (⌃ on the shelf): every item grouped by source folder, a
+    // type filter, check boxes that narrow the release, a two-file compare.
+    struct TrayOpenView {
+        bool open = false;
+        ULONGLONG opened_at = 0;     // row stagger (60 + 40·i ms)
+        int filter = 0;              // 0 all, 1 images, 2 documents, 3 other
+        std::vector<uint64_t> checked;  // item ids, check order
+        float scroll = 0.0f;         // list offset, DIPs
+        bool compare = false;        // compare card beside the sidebar
+        ULONGLONG compare_at = 0;
+        std::vector<uint64_t> removing;  // Del: rows sliding out (320 ms)
+        ULONGLONG remove_at = 0;
+    } trayView;
     std::wstring trayReleaseOpen;    // folder the release snack's 打开 opens
     std::wstring trayClearedJson;    // tray before 清空, for the snack's 撤销
     struct TrayZipJob {

@@ -453,6 +453,20 @@ struct TrayPuffView {
     float size = 1.0f;         // final scale
 };
 
+// One row of the open tray view (pulse_tray_redesign.html openHTML).
+struct TrayOpenRow {
+    uint64_t id = 0;
+    std::wstring path, name, size;
+    DWORD attrs = 0;
+    bool is_dir = false;
+    bool exists = true;
+    bool checked = false;
+    bool group_start = false;        // first row of its source folder: header above
+    std::wstring group, group_path;  // source folder name / path
+    float in_t = 1.0f;               // 0..1 stagger entrance
+    float out_t = 0.0f;              // 0..1 Del slide-out
+};
+
 // Staging tray recent drop destination (chip row under the deck).
 struct TrayDestView {
     std::wstring path;
@@ -510,15 +524,28 @@ struct TrayDeckView {
     float zip_progress = 0.0f;       // 0..1 (ring)
     int flash_chip = -1;             // 送到 chip that just received items
     float flash_t = 1.0f;            // 0..1 flash progress
+    int clip_count = 0;              // Ctrl+C offer (剪贴板 N 项 · 收入), 0 none
+    float clip_t = 1.0f;             // 0..1 offer pop-in (450 ms)
+    // Open view (stage 3).
+    std::vector<TrayOpenRow> open_rows;  // filtered, grouped by source folder
+    int filter = 0;                  // 0 all, 1 images, 2 documents, 3 other
+    int filter_counts[4]{};          // per filter (0 = every item)
+    int checked = 0;                 // checked live items
+    int live_total = 0;              // existing items (未勾选 · 对全部 N 项)
+    int target_count = 0;            // items the main button acts on
+    float open_scroll = 0.0f;        // DIPs
+    bool cmp_shown = false;          // compare card beside the sidebar
+    float cmp_t = 1.0f;              // 0..1 card entrance
 };
 
-enum class TrayStage : int { Strip = 0, Drop = 1, Shelf = 2 };
+enum class TrayStage : int { Strip = 0, Drop = 1, Shelf = 2, Open = 3 };
 
 // Panel height of each layer, DIPs (the drop layer never shrinks the panel).
-inline float TrayShelfStageHeightDip(int stage) {
+inline float TrayShelfStageHeightDip(int stage, bool clip = false) {
     switch (static_cast<TrayStage>(stage)) {
     case TrayStage::Drop: return 112.0f;
-    case TrayStage::Shelf: return 150.0f;
+    case TrayStage::Shelf: return clip ? 184.0f : 150.0f;  // + the 收入 row
+    case TrayStage::Open: return 476.0f;  // capped at the sidebar height - 20
     default: return 40.0f;
     }
 }
@@ -563,6 +590,19 @@ enum class TrayShelfHit : int {
     DropCopy,        // drop layer halves
     DropMove,
     Strip,           // empty strip
+    Clip,            // 剪贴板 N 项 · 收入 (strip button / shelf row)
+    // Open view.
+    Collapse,        // ⌄ back to the shelf
+    Filter,          // type chip (sub_index: filter)
+    Row,             // item row: toggle its check (sub_index: row)
+    GroupOpen,       // 打开 › on a source header (path)
+    SelNone,         // 取消: clear the checks
+    Compare,         // ⇄ 比较这两个
+    List,            // list background (wheel)
+    // Compare card (beside the sidebar).
+    Card,            // background: swallows the click
+    CardAction,      // result line: compare content / view diff
+    CardClose,
 };
 
 // Right-side details panel for the current selection (ui.md §7.2 视图簇).
@@ -1976,6 +2016,11 @@ private:
                        const Theme& theme);
     void DrawTrayShelfLayer(const WindowViewModel& vm, int stage, const D2D1_RECT_F& panel_rc,
                             const Theme& theme);
+    // 剪贴板 N 项 · 收入: the strip button (row false) or the shelf row.
+    void DrawShelfClip(const WindowViewModel& vm, const D2D1_RECT_F& rc, bool row, const Theme& theme);
+    void DrawTrayOpen(const WindowViewModel& vm, const D2D1_RECT_F& panel_rc, const Theme& theme);
+    // Two checked files side by side, right of the sidebar (after the panes).
+    void DrawTrayCompareCard(const WindowViewModel& vm, const Theme& theme);
     void DrawTrayDeck(const WindowViewModel& vm, const D2D1_RECT_F& panel_rc,
                       const Theme& theme);
 
@@ -2245,7 +2290,8 @@ private:
     // Staging tray card text: 13 px semibold name, 11 px folder line.
     mutable ComPtr<IDWriteTextFormat> tray_name_format_;
     // Staging tray shelf text formats (ui_tray_shelf.cpp ShelfFormat roles).
-    static constexpr int kShelfFormatCount = 7;
+    static constexpr int kShelfFormatCount = 11;
+    mutable D2D1_RECT_F tray_panel_rc_{};  // last painted tray panel (compare card anchor)
     mutable ComPtr<IDWriteTextFormat> shelf_formats_[kShelfFormatCount];
     mutable float shelf_formats_scale_ = 0.0f;
     mutable ComPtr<IDWriteTextFormat> tray_folder_format_;

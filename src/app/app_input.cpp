@@ -559,14 +559,8 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
     }
 
     if (tray) {
-        std::vector<std::wstring> paths;
-        for (auto& p : sources) paths.push_back(fs::NormalizePath(p));
-        const bool stage_move = tray_move;
-        s.tray.Collect(paths, stage_move);
-        // The batch's mode becomes the shelf's release mode (the main button).
-        s.trayMoveMode = stage_move;
-        ops::WriteClipboard(sources, stage_move);
-        InvalidateRect(s.hwnd, nullptr, FALSE);
+        // Staging leaves the clipboard alone; the half sets the release mode.
+        StagePaths(s, sources, tray_move);
         return DROPEFFECT_COPY;
     }
     if (dest.starts_with(L"pulse:tag:")) {
@@ -694,6 +688,21 @@ static void StartTrayDragOut(AppState& s) {
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
+// Open view row click: toggle the check of the staged item shown at path.
+static void ToggleTrayOpenCheck(AppState& s, const std::wstring& path) {
+    if (path.empty()) return;
+    for (const auto& b : s.tray.batches())
+        for (const auto& item : b.items) {
+            if (_wcsicmp(ClipboardPath(item.path).c_str(), path.c_str()) != 0) continue;
+            auto& checked = s.trayView.checked;
+            const auto at = std::find(checked.begin(), checked.end(), item.id);
+            if (at != checked.end()) checked.erase(at);
+            else if (item.exists) checked.push_back(item.id);
+            if (checked.size() != 2) s.trayView.compare = false;
+            return;
+        }
+}
+
 // Staging shelf press (pulse_tray_redesign.html). The fan drags the whole
 // stack out; the main button releases into the current folder; ▾ and ⋯ open
 // their menus; chips send without opening the folder.
@@ -726,6 +735,45 @@ static void HandleTrayShelfPress(AppState& s, HWND hwnd, const ui::HitTestResult
     }
     case ui::TrayShelfHit::Chip:
         if (!hit.path.empty()) TraySendTo(s, hit.path, move);
+        break;
+    case ui::TrayShelfHit::Clip:
+        TakeTrayClip(s);
+        break;
+    case ui::TrayShelfHit::Expand:
+        s.trayView = {};
+        s.trayView.open = true;
+        s.trayView.opened_at = ui::motion::SystemAnimationsEnabled() ? GetTickCount64() : 0;
+        break;
+    case ui::TrayShelfHit::Collapse:
+        s.trayView.open = false;
+        s.trayView.compare = false;
+        break;
+    case ui::TrayShelfHit::Filter:
+        if (hit.sub_index >= 0 && hit.sub_index < 4) {
+            s.trayView.filter = hit.sub_index;
+            s.trayView.scroll = 0.0f;
+        }
+        break;
+    case ui::TrayShelfHit::Row:
+        ToggleTrayOpenCheck(s, hit.path);
+        break;
+    case ui::TrayShelfHit::GroupOpen:
+        if (!hit.path.empty()) NavigateTo(s, hit.path);
+        break;
+    case ui::TrayShelfHit::SelNone:
+        s.trayView.checked.clear();
+        s.trayView.compare = false;
+        break;
+    case ui::TrayShelfHit::Compare:
+        s.trayView.compare = !s.trayView.compare;
+        s.trayView.compare_at = ui::motion::SystemAnimationsEnabled() ? GetTickCount64() : 0;
+        break;
+    case ui::TrayShelfHit::CardClose:
+        s.trayView.compare = false;
+        break;
+    case ui::TrayShelfHit::CardAction:
+        if (hit.sub_index == 2) TrayOpenTextDiff(s);
+        else TrayStartContentCompare(s);
         break;
     case ui::TrayShelfHit::Pick: {
         std::wstring folder;
@@ -3276,7 +3324,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         } else if (hit.region == ui::HitTestResult::StatusHintAction) {
             // Re-derived at click time, so the action always matches the current state.
             switch (CurrentStatusHintAction(*s)) {
-            case StatusHintAction::Tray: CollectToTray(*s, false); break;
+            case StatusHintAction::Tray: StageSelection(*s); break;
             case StatusHintAction::Compare: DispatchMenuCommand(*s, app::CmdCompareToggle); break;
             case StatusHintAction::DiffOnly:
             case StatusHintAction::ShowAll: DispatchMenuCommand(*s, app::CmdCompareDiffOnly); break;
@@ -4193,18 +4241,19 @@ LRESULT HandleMouseWheel(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM
         // sidebar branch below would swallow every wheel event over it.
         // Wheel down sends the top card to the back, wheel up brings the
         // last one back on top (cyclic).
-        if (TrayItemTotalCount(s->tray) > 1) {
+        if (TrayItemTotalCount(s->tray) > 0) {
             const D2D1_RECT_F tray_rc = s->renderer.StagingTrayRect(
                 wheelVm, wheelRect.right, wheelRect.bottom);
             if (pt.x >= tray_rc.left && pt.x < tray_rc.right &&
                 pt.y >= tray_rc.top && pt.y < tray_rc.bottom) {
-                const int wheel_delta = GET_WHEEL_DELTA_WPARAM(wParam);
-                s->trayWheelAccum += wheel_delta;
-                int steps = 0;
-                while (s->trayWheelAccum <= -WHEEL_DELTA) { s->trayWheelAccum += WHEEL_DELTA; ++steps; }
-                while (s->trayWheelAccum >= WHEEL_DELTA) { s->trayWheelAccum -= WHEEL_DELTA; --steps; }
-                for (int k = 0; k < std::min(steps, 3); ++k) ThrowTrayTop(*s, -1.0f, -30.0f, -10.0f);
-                for (int k = 0; k < std::min(-steps, 3); ++k) TrayStepBack(*s);
+                // Shelf redesign: the open view's list scrolls (FillTrayOpen
+                // clamps it); the other layers just keep the sidebar still.
+                if (s->trayView.open) {
+                    const float steps = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) /
+                                        static_cast<float>(WHEEL_DELTA);
+                    s->trayView.scroll = std::max(0.0f, s->trayView.scroll - steps * 48.0f);
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
                 return 0;
             }
         }
@@ -4336,6 +4385,33 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             return 0;
         }
 
+        // Open tray view (pulse_tray_redesign.html): Esc collapses (the compare
+        // card first), Del takes the checked items off the tray, Enter
+        // releases them into this folder. Without checks Del / Enter keep
+        // acting on the list.
+        if (s->trayView.open && !ctrl && !alt && !s->addressSearching && !s->filterEditing &&
+            s->renameIndex < 0 && (GetFocus() == hwnd || GetFocus() == nullptr)) {
+            if (wParam == VK_ESCAPE) {
+                if (s->trayView.compare) s->trayView.compare = false;
+                else s->trayView.open = false;
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (wParam == VK_DELETE && !shift && !s->trayView.checked.empty()) {
+                s->trayView.removing = s->trayView.checked;
+                s->trayView.remove_at = GetTickCount64();
+                s->trayView.compare = false;
+                if (!ui::motion::SystemAnimationsEnabled()) s->trayView.remove_at -= 320;
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (wParam == VK_RETURN && !s->trayView.checked.empty()) {
+                if (tab && !tab->current_path.empty()) ReleaseTrayTo(*s, tab->current_path, TrayEffectiveMove(*s));
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+        }
+
         auto switchToTab = [&](std::optional<size_t> target) {
             if (!target || *target == s->window_tabs.active) return;
             if (s->renameIndex >= 0) HideRenameOverlay(*s, false);
@@ -4420,6 +4496,8 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             ShowOmnibar(*s, OmnibarMode::Path);
         } else if (wParam == VK_F4) {
             ShowOmnibar(*s, OmnibarMode::Path);
+        } else if (ctrl && shift && wParam == L'S') {
+            StageSelection(*s);  // 加入暂存区: the clipboard is left alone
         } else if (ctrl && shift && wParam == L'C') {
             // As the 复制路径 rows that show this key: the selection, or the
             // folder when nothing is selected (background menu).

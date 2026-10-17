@@ -2333,3 +2333,23 @@ TrayExpandTip	IDS_TRAY_EXPAND_TIP	3535	展开全部	Show all	展開全部
 TrayGhostCopy	IDS_TRAY_GHOST_COPY	3536	松开 · 暂存为复制	Release · stage as copy	放開 · 暫存為複製
 TrayGhostMove	IDS_TRAY_GHOST_MOVE	3537	松开 · 暂存为移动	Release · stage as move	放開 · 暫存為移動
 TrayNoTarget	IDS_TRAY_NO_TARGET	3538	这里不能放文件	Can't place files here	這裡不能放檔案
+TrayClipStrip	IDS_TRAY_CLIP_STRIP	3539	剪贴板 {n} 项 · 收入	Clipboard {n} · Stage	剪貼簿 {n} 項 · 收入
+TrayClipRow	IDS_TRAY_CLIP_ROW	3540	剪贴板里有 {n} 项	{n} on the clipboard	剪貼簿裡有 {n} 項
+TrayClipTake	IDS_TRAY_CLIP_TAKE	3541	收入暂存 →	Stage them →	收入暫存 →
+TrayCopiedOffer	IDS_TRAY_COPIED_OFFER	3542	已复制 {n} 项 · 暂存区可「收入」	Copied {n} · the tray can stage them	已複製 {n} 項 · 暫存區可「收入」
+TrayCutOffer	IDS_TRAY_CUT_OFFER	3543	已剪切 {n} 项 · 暂存区可「收入」	Cut {n} · the tray can stage them	已剪下 {n} 項 · 暫存區可「收入」
+CtxAddToTray	IDS_CTX_ADD_TO_TRAY	3544	加入暂存区	Add to staging tray	加入暫存區
+TraySelectFirst	IDS_TRAY_SELECT_FIRST	3545	先选中文件	Select files first	先選取檔案
+TrayCollapseTip	IDS_TRAY_COLLAPSE_TIP	3546	收起 · Esc	Collapse · Esc	收起 · Esc
+TrayFilterAll	IDS_TRAY_FILTER_ALL	3547	全部	All	全部
+TrayFilterImages	IDS_TRAY_FILTER_IMAGES	3548	图片	Images	圖片
+TrayFilterDocs	IDS_TRAY_FILTER_DOCS	3549	文档	Documents	文件
+TrayFilterOther	IDS_TRAY_FILTER_OTHER	3550	其他	Other	其他
+TrayGroupOpen	IDS_TRAY_GROUP_OPEN	3551	打开 ›	Open ›	開啟 ›
+TraySelectedFormat	IDS_TRAY_SELECTED_FORMAT	3552	已选 {n} 项	{n} selected	已選 {n} 項
+TrayNoneCheckedFormat	IDS_TRAY_NONE_CHECKED_FORMAT	3553	未勾选 · 对全部 {n} 项操作	Nothing checked · acts on all {n}	未勾選 · 對全部 {n} 項操作
+TrayCompareThese	IDS_TRAY_COMPARE_THESE	3554	⇄ 比较这两个	⇄ Compare these two	⇄ 比較這兩個
+TrayCompareNeedTwo	IDS_TRAY_COMPARE_NEED_TWO	3555	正好 2 项时才能比较	Check exactly 2 items to compare	正好 2 項時才能比較
+TrayCopyNToFormat	IDS_TRAY_COPY_N_TO_FORMAT	3556	复制 {n} 项到「{name}」	Copy {n} to “{name}”	複製 {n} 項到「{name}」
+TrayMoveNToFormat	IDS_TRAY_MOVE_N_TO_FORMAT	3557	移动 {n} 项到「{name}」	Move {n} to “{name}”	移動 {n} 項到「{name}」
+TrayHideWhenEmpty	IDS_TRAY_HIDE_WHEN_EMPTY	3558	暂存区为空时完全隐藏	Hide the staging tray when it is empty	暫存區為空時完全隱藏

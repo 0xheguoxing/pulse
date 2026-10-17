@@ -1593,6 +1593,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_TRAY_UNDO:
     case WM_TRAY_OPEN_DEST:
     case WM_TRAY_RESTORE:
+    case WM_TRAY_TAKE_CLIP:
         if (s) HandleTrayMessage(*s, msg);
         return 0;
 

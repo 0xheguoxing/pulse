@@ -51,6 +51,14 @@ float EaseOutBack(float t) {
     return 1.0f + c3 * u * u * u + c1 * u * u;
 }
 
+// popin: scale .5 -> 1 on cubic-bezier(.3,1.6,.5,1), fading in (450 ms).
+float PopInScale(float t) {
+    t = Clamp01(t);
+    const float c1 = 2.2f, c3 = c1 + 1.0f;
+    const float u = t - 1.0f;
+    return 0.5f + 0.5f * (1.0f + c3 * u * u * u + c1 * u * u);
+}
+
 struct ShelfPalette {
     D2D1_COLOR_F tray, edge, strong, text, sub, faint;
     D2D1_COLOR_F chip, chip_hot, ib_hot, kbd;
@@ -108,7 +116,7 @@ ShelfPalette MakeShelfPalette(bool dark, bool hc, const Theme& theme) {
 }
 
 // Small vector icons from the prototype (16x16 viewBox).
-enum class ShelfIcon { Tray, Up, Down, Zip, Rename, More, Copy, Move };
+enum class ShelfIcon { Tray, Up, Down, Zip, Rename, More, Copy, Move, Clip, Check, Close };
 
 void DrawShelfIcon(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* br, ShelfIcon icon,
                    const D2D1_RECT_F& box, float px /* drawn edge in pixels */) {
@@ -182,6 +190,17 @@ void DrawShelfIcon(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* br, ShelfIcon i
         poly({{8.5f, 4.8f}, {11.7f, 8.0f}, {8.5f, 11.2f}}, false, 1.2f);
         line(13.5f, 3.0f, 13.5f, 13.0f, 1.2f);
         break;
+    case ShelfIcon::Check:  // M3 8.5l3 3 7-7
+        poly({{3.0f, 8.5f}, {6.0f, 11.5f}, {13.0f, 4.5f}}, false, 2.6f);
+        break;
+    case ShelfIcon::Close:
+        line(4.5f, 4.5f, 11.5f, 11.5f, 1.5f);
+        line(11.5f, 4.5f, 4.5f, 11.5f, 1.5f);
+        break;
+    case ShelfIcon::Clip:
+        rrect(3.5f, 3.0f, 9.0f, 11.0f, 1.6f, 1.5f);
+        poly({{6.0f, 3.0f}, {6.0f, 2.0f}, {10.0f, 2.0f}, {10.0f, 3.0f}}, false, 1.5f);
+        break;
     }
 }
 
@@ -223,6 +242,10 @@ IDWriteTextFormat* MainRenderer::ShelfFormat(int role) const {
             {11.5f, DWRITE_FONT_WEIGHT_NORMAL},     // 4 sub lines, 送到
             {10.5f, DWRITE_FONT_WEIGHT_BOLD},       // 5 badges
             {10.5f, DWRITE_FONT_WEIGHT_NORMAL},     // 6 kbd
+            {11.5f, DWRITE_FONT_WEIGHT_BOLD},       // 7 clip button
+            {11.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD},  // 8 clip row
+            {11.0f, DWRITE_FONT_WEIGHT_BOLD},       // 9 open view source header
+            {13.0f, DWRITE_FONT_WEIGHT_NORMAL},     // 10 open view row name
         };
         typography::CreateTextFormat(compositor_->DwriteFactory(),
             {typography::FontRole::Text, kSpecs[role].size * scale_, kSpecs[role].weight},
@@ -248,6 +271,7 @@ void MainRenderer::DrawTrayShelf(const WindowViewModel& vm, const D2D1_RECT_F& r
     const ShelfPalette p = MakeShelfPalette(vm.dark, IsHighContrast(), theme);
     const float s = scale_;
     const float radius = 12.0f * s;
+    tray_panel_rc_ = rc;
 
     ComPtr<ID2D1SolidColorBrush> br;
     dc->CreateSolidColorBrush(p.tray, &br);
@@ -333,6 +357,8 @@ void MainRenderer::DrawTrayShelfLayer(const WindowViewModel& vm, int stage, cons
             ShelfText(dc, dw, ShelfFormat(6), B(p.sub), l10n::Get(StringId::TrayStripKbd), g.strip_kbd,
                       DWRITE_TEXT_ALIGNMENT_CENTER);
         }
+        if (d.clip_count > 0 && g.strip_clip.right > g.strip_clip.left)
+            DrawShelfClip(vm, g.strip_clip, false, theme);
         return;
     }
 
@@ -387,7 +413,13 @@ void MainRenderer::DrawTrayShelfLayer(const WindowViewModel& vm, int stage, cons
         return;
     }
 
+    if (stage == static_cast<int>(TrayStage::Open)) {
+        DrawTrayOpen(vm, rc, theme);
+        return;
+    }
+
     // ---------------------------------------------------------------- shelf
+    if (d.clip_count > 0 && g.clip_row.right > g.clip_row.left) DrawShelfClip(vm, g.clip_row, true, theme);
     // r1: fan.
     {
         const D2D1_RECT_F f = g.fan;
@@ -617,6 +649,325 @@ void MainRenderer::DrawTrayShelfLayer(const WindowViewModel& vm, int stage, cons
         ShelfText(dc, dw, ShelfFormat(1), B(is_hot ? p.strong : p.sub), L"\xFF0B", g.pick,
                   DWRITE_TEXT_ALIGNMENT_CENTER);
     }
+}
+
+void MainRenderer::DrawShelfClip(const WindowViewModel& vm, const D2D1_RECT_F& rc, bool row,
+                                 const Theme& theme) {
+    ID2D1DeviceContext* dc = compositor_->Dc();
+    IDWriteFactory2* dw = compositor_->DwriteFactory();
+    const TrayDeckView& d = vm.tray_deck;
+    const ShelfPalette p = MakeShelfPalette(vm.dark, IsHighContrast(), theme);
+    const float s = scale_;
+    ComPtr<ID2D1SolidColorBrush> br;
+    dc->CreateSolidColorBrush(p.acc, &br);
+    if (!br.get()) return;
+    auto B = [&](const D2D1_COLOR_F& c) { br->SetColor(c); return br.get(); };
+    const bool hot = IsHovered(vm, HitTestResult::TrayShelf, static_cast<int>(TrayShelfHit::Clip));
+    const float cy = (rc.top + rc.bottom) * 0.5f;
+    const float t = Clamp01(d.clip_t);
+    D2D1_MATRIX_3X2_F old;
+    dc->GetTransform(&old);
+    const bool layered = t < 1.0f;
+    if (layered) {
+        // popin: the row grows from its left edge, the button from its centre.
+        const float k = PopInScale(t);
+        const D2D1_POINT_2F origin = row ? D2D1::Point2F(rc.left, cy)
+                                         : D2D1::Point2F((rc.left + rc.right) * 0.5f, cy);
+        dc->SetTransform(D2D1::Matrix3x2F::Scale(k, k, origin) * old);
+        dc->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                            D2D1::IdentityMatrix(), EaseOutCubic(t / 0.6f)), nullptr);
+    }
+    const float radius = row ? 8.0f * s : (rc.bottom - rc.top) * 0.5f;
+    const float a = row ? (hot ? 0.30f : 0.16f) : (hot ? 0.38f : 0.24f);
+    dc->FillRoundedRectangle(D2D1::RoundedRect(rc, radius, radius), B(Alpha(p.acc, a)));
+    const D2D1_COLOR_F ink = vm.dark ? Rgba(0xC6CEFF) : Mix(p.acc, Rgba(0x000000), 0.2f);
+    const D2D1_RECT_F ib = D2D1::RectF(rc.left + 10.0f * s, cy - 6.5f * s, rc.left + 23.0f * s, cy + 6.5f * s);
+    DrawShelfIcon(dc, B(ink), ShelfIcon::Clip, ib, 13.0f * s);
+    const std::wstring n = std::to_wstring(d.clip_count);
+    if (!row) {
+        ShelfText(dc, dw, ShelfFormat(7), B(ink), Fill(l10n::Get(StringId::TrayClipStrip), L"{n}", n),
+                  D2D1::RectF(ib.right + 5.0f * s, rc.top, rc.right - 8.0f * s, rc.bottom));
+    } else {
+        const std::wstring take = l10n::Get(StringId::TrayClipTake);
+        const float take_w = MeasureTextWidth(dw, ShelfFormat(8), take) + 1.0f * s;
+        const D2D1_RECT_F tr = D2D1::RectF(std::max(ib.right, rc.right - 10.0f * s - take_w), rc.top,
+                                           rc.right - 10.0f * s, rc.bottom);
+        ShelfText(dc, dw, ShelfFormat(8), B(ink), Fill(l10n::Get(StringId::TrayClipRow), L"{n}", n),
+                  D2D1::RectF(ib.right + 7.0f * s, rc.top, tr.left - 6.0f * s, rc.bottom));
+        ShelfText(dc, dw, ShelfFormat(8), B(vm.dark ? Rgba(0xFFFFFF) : p.strong), take, tr,
+                  DWRITE_TEXT_ALIGNMENT_TRAILING);
+    }
+    if (layered) {
+        dc->PopLayer();
+        dc->SetTransform(old);
+    }
+}
+
+void MainRenderer::DrawTrayOpen(const WindowViewModel& vm, const D2D1_RECT_F& rc, const Theme& theme) {
+    ID2D1DeviceContext* dc = compositor_->Dc();
+    IDWriteFactory2* dw = compositor_->DwriteFactory();
+    const TrayDeckView& d = vm.tray_deck;
+    const ShelfPalette p = MakeShelfPalette(vm.dark, IsHighContrast(), theme);
+    const float s = scale_;
+    const TrayOpenGeom g = TrayOpenGeometry(d, rc, s,
+        [this](const std::wstring& t, bool compact_text) { return ShelfMeasure(t, compact_text); });
+    ComPtr<ID2D1SolidColorBrush> br;
+    dc->CreateSolidColorBrush(p.text, &br);
+    if (!br.get()) return;
+    auto B = [&](const D2D1_COLOR_F& c) { br->SetColor(c); return br.get(); };
+    auto fill = [&](const D2D1_RECT_F& r, float radius, const D2D1_COLOR_F& c) {
+        dc->FillRoundedRectangle(D2D1::RoundedRect(r, radius, radius), B(c));
+    };
+    auto hot = [&](TrayShelfHit h, int sub = -1) {
+        return IsHovered(vm, HitTestResult::TrayShelf, static_cast<int>(h), sub);
+    };
+    D2D1_MATRIX_3X2_F old;
+    dc->GetTransform(&old);
+
+    // .oh: 暂存区  N 项 · size              ⌄
+    ShelfText(dc, dw, ShelfFormat(3), B(p.strong), l10n::Get(StringId::TrayShelfTitle), g.title);
+    std::wstring count = Fill(l10n::Get(StringId::TrayItemsFormat), L"{n}", std::to_wstring(d.total_count));
+    if (d.total_size > 0) count += L" \u00B7 " + format::ByteSize(d.total_size, true);
+    ShelfText(dc, dw, ShelfFormat(1), B(p.sub), count, g.count);
+    if (hot(TrayShelfHit::Collapse)) fill(g.collapse, 8.0f * s, p.ib_hot);
+    DrawShelfIcon(dc, B(hot(TrayShelfHit::Collapse) ? p.strong : p.sub), ShelfIcon::Down, g.collapse, 14.0f * s);
+
+    // .flt chips.
+    const StringId names[4] = {StringId::TrayFilterAll, StringId::TrayFilterImages, StringId::TrayFilterDocs,
+                               StringId::TrayFilterOther};
+    for (size_t i = 0; i < g.filters.size(); ++i) {
+        const int f = g.filter_id[i];
+        const bool on = d.filter == f;
+        const bool h = hot(TrayShelfHit::Filter, f);
+        fill(g.filters[i], 12.0f * s, on ? Alpha(p.acc, vm.dark ? 0.26f : 0.18f) : (h ? p.ib_hot : p.chip));
+        const std::wstring label = l10n::Get(names[f]) + L" " + std::to_wstring(d.filter_counts[f]);
+        ShelfText(dc, dw, ShelfFormat(on ? 7 : 4), B(on ? (vm.dark ? Rgba(0xE2E6FF) : p.acc) : p.sub), label,
+                  g.filters[i], DWRITE_TEXT_ALIGNMENT_CENTER);
+    }
+
+    // .ol: grouped rows, clipped to the list.
+    dc->PushAxisAlignedClip(g.list, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    for (size_t i = 0; i < g.rows.size(); ++i) {
+        const TrayOpenRow& row = d.open_rows[i];
+        const D2D1_RECT_F& rr = g.rows[i];
+        const D2D1_RECT_F& hr = g.heads[i];
+        const float top = row.group_start ? hr.top : rr.top;
+        if (rr.bottom < g.list.top || top > g.list.bottom) continue;
+        // .oi.in: fade + rise 10; .oi.out: slide left 30 + fade.
+        const float in = EaseOutBack(row.in_t);
+        const float out = row.out_t > 0.0f ? EaseOutCubic(row.out_t) : 0.0f;
+        const float alpha = Clamp01(EaseOutCubic(row.in_t)) * (1.0f - out);
+        if (alpha <= 0.01f) continue;
+        const bool layered = alpha < 0.999f;
+        dc->SetTransform(D2D1::Matrix3x2F::Translation(-30.0f * s * out, 10.0f * s * (1.0f - in)) * old);
+        if (layered)
+            dc->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                                D2D1::IdentityMatrix(), alpha), nullptr);
+        if (row.group_start) {
+            // .og: folder 12x9, name (11 bold), 打开 › on the right.
+            const float cy = hr.top + 8.0f * s + 7.5f * s;
+            const D2D1_RECT_F fo = D2D1::RectF(hr.left + 6.0f * s, cy - 4.5f * s, hr.left + 18.0f * s, cy + 4.5f * s);
+            fill(fo, 2.0f * s, p.folder);
+            fill(D2D1::RectF(fo.left, fo.top - 1.5f * s, fo.left + 5.0f * s, fo.top + 2.0f * s), 1.0f * s, p.folder);
+            const D2D1_RECT_F& orc = g.head_open[i];
+            ShelfText(dc, dw, ShelfFormat(9), B(p.faint), row.group,
+                      D2D1::RectF(fo.right + 7.0f * s, hr.top + 8.0f * s, orc.left - 6.0f * s, hr.bottom - 4.0f * s));
+            const bool oh = hot(TrayShelfHit::GroupOpen, static_cast<int>(i));
+            ShelfText(dc, dw, ShelfFormat(6), B(oh ? p.acc2 : p.faint), l10n::Get(StringId::TrayGroupOpen),
+                      D2D1::RectF(orc.left, hr.top + 8.0f * s, orc.right, hr.bottom - 4.0f * s),
+                      DWRITE_TEXT_ALIGNMENT_TRAILING);
+        }
+        if (rr.bottom - rr.top > 1.0f) {
+            const bool h = hot(TrayShelfHit::Row, static_cast<int>(i));
+            if (row.checked) fill(rr, 8.0f * s, Alpha(p.acc, vm.dark ? 0.24f : 0.14f));
+            else if (h) fill(rr, 8.0f * s, p.ib_hot);
+            const float cy = (rr.top + rr.bottom) * 0.5f;
+            // .ck 16, r5: inset ring, or filled with a check (scale 1.08).
+            const float ck = (row.checked ? 8.64f : 8.0f) * s;
+            const D2D1_RECT_F box = D2D1::RectF(rr.left + 16.0f * s - ck, cy - ck, rr.left + 16.0f * s + ck, cy + ck);
+            if (row.checked) {
+                fill(box, 5.0f * s, p.acc2);
+                DrawShelfIcon(dc, B(Rgba(0xFFFFFF)), ShelfIcon::Check, box, 10.0f * s);
+            } else {
+                const D2D1_RECT_F in_box = D2D1::RectF(box.left + 0.75f * s, box.top + 0.75f * s,
+                                                       box.right - 0.75f * s, box.bottom - 0.75f * s);
+                dc->DrawRoundedRectangle(D2D1::RoundedRect(in_box, 4.25f * s, 4.25f * s),
+                                         B(vm.dark ? Rgba(0xFFFFFF, 0.2f) : Rgba(0x000000, 0.25f)), 1.5f * s);
+            }
+            // Icon 16, gap 9.
+            const float ix = rr.left + 8.0f * s + 16.0f * s + 9.0f * s;
+            const float icon = std::round(16.0f * s);
+            if (row.is_dir) {
+                DrawFolderIcon(ix, cy - icon * 0.5f, icon, theme, row.exists ? 1.0f : 0.45f);
+            } else if (ID2D1Bitmap* bitmap = icon_cache_.BitmapFor(row.exists ? row.path : L"", row.name, false,
+                                                                   row.attrs, icon)) {
+                const D2D1_RECT_F dest = D2D1::RectF(ix, cy - icon * 0.5f, ix + icon, cy + icon * 0.5f);
+                dc->DrawBitmap(bitmap, &dest, row.exists ? 1.0f : 0.45f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+                               nullptr, nullptr);
+            }
+            const float sw = row.size.empty() ? 0.0f : MeasureTextWidth(dw, ShelfFormat(4), row.size) + 2.0f * s;
+            const D2D1_RECT_F sr = D2D1::RectF(rr.right - 8.0f * s - sw, rr.top, rr.right - 8.0f * s, rr.bottom);
+            ShelfText(dc, dw, ShelfFormat(10), B(row.exists ? (vm.dark ? Rgba(0xDFE3F0) : p.text) : p.faint), row.name,
+                      D2D1::RectF(ix + icon + 9.0f * s, rr.top, sr.left - 9.0f * s, rr.bottom));
+            if (sw > 0.0f) ShelfText(dc, dw, ShelfFormat(4), B(p.faint), row.size, sr, DWRITE_TEXT_ALIGNMENT_TRAILING);
+        }
+        if (layered) dc->PopLayer();
+        dc->SetTransform(old);
+    }
+    dc->PopAxisAlignedClip();
+
+    // .of: top rule, selection line, split button.
+    dc->DrawLine(D2D1::Point2F(g.footer.left, g.footer.top + 0.5f), D2D1::Point2F(g.footer.right, g.footer.top + 0.5f),
+                 B(vm.dark ? Rgba(0xFFFFFF, 0.06f) : Rgba(0x000000, 0.07f)), 1.0f);
+    if (d.checked > 0) {
+        std::wstring prefix = Fill(l10n::Get(StringId::TraySelectedFormat), L"{n}", std::to_wstring(d.checked));
+        prefix += L" \u00B7 ";
+        ShelfText(dc, dw, ShelfFormat(4), B(p.sub), prefix,
+                  D2D1::RectF(g.selinfo.left, g.selinfo.top, g.none_link.left + 1.0f * s, g.selinfo.bottom));
+        ShelfText(dc, dw, ShelfFormat(7), B(hot(TrayShelfHit::SelNone) ? p.strong : (vm.dark ? Rgba(0xAAB5F5) : p.acc)),
+                  l10n::Get(StringId::Cancel), D2D1::RectF(g.none_link.left, g.selinfo.top, g.none_link.right + 4.0f * s,
+                  g.selinfo.bottom));
+    } else {
+        ShelfText(dc, dw, ShelfFormat(4), B(p.sub),
+                  Fill(l10n::Get(StringId::TrayNoneCheckedFormat), L"{n}", std::to_wstring(d.live_total)), g.selinfo);
+    }
+    if (d.checked == 2) {
+        fill(g.cmp, 9.0f * s, Alpha(p.acc, (hot(TrayShelfHit::Compare) || d.cmp_shown) ? 0.5f : 0.3f));
+        ShelfText(dc, dw, ShelfFormat(4), B(vm.dark ? Rgba(0xFFFFFF) : p.strong), l10n::Get(StringId::TrayCompareThese),
+                  g.cmp, DWRITE_TEXT_ALIGNMENT_CENTER);
+    }
+    {
+        const D2D1_RECT_F sp = g.split;
+        const float r = 9.0f * s;
+        const bool usable = !d.target.empty() && d.target_count > 0;
+        const D2D1_COLOR_F base = Mix(p.acc, p.move, d.mode_t);
+        for (int l = 0; l < 3; ++l) {
+            const float off = (3.0f + 1.5f * static_cast<float>(l)) * s;
+            const float inset = (4.0f - 1.0f * static_cast<float>(l)) * s;
+            fill(D2D1::RectF(sp.left + inset, sp.top + off, sp.right - inset, sp.bottom + off), r,
+                 Alpha(base, (usable ? 0.16f : 0.06f) * (1.0f - 0.3f * static_cast<float>(l))));
+        }
+        fill(sp, r, usable ? base : Alpha(base, 0.45f));
+        dc->DrawLine(D2D1::Point2F(sp.left + r * 0.6f, sp.top + 0.5f * s),
+                     D2D1::Point2F(sp.right - r * 0.6f, sp.top + 0.5f * s), B(Rgba(0xFFFFFF, 0.14f)), 1.0f * s);
+        dc->PushAxisAlignedClip(sp, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        if (usable && hot(TrayShelfHit::Release))
+            fill(D2D1::RectF(g.go.left, g.go.top, g.go.right + r, g.go.bottom), r, Rgba(0xFFFFFF, 0.12f));
+        if (hot(TrayShelfHit::ReleaseMenu))
+            fill(D2D1::RectF(g.dd.left - r, g.dd.top, g.dd.right, g.dd.bottom), r, Rgba(0xFFFFFF, 0.12f));
+        dc->PopAxisAlignedClip();
+        dc->DrawLine(D2D1::Point2F(g.dd.left, g.dd.top), D2D1::Point2F(g.dd.left, g.dd.bottom),
+                     B(Rgba(0xFFFFFF, 0.22f)), 1.0f);
+        DrawShelfIcon(dc, B(p.on_acc), ShelfIcon::Down, g.dd, 14.0f * s);
+        std::wstring label = !d.target.empty()
+            ? Fill(Fill(l10n::Get(d.move_mode ? StringId::TrayMoveNToFormat : StringId::TrayCopyNToFormat), L"{n}",
+                        std::to_wstring(d.target_count)), L"{name}", d.target)
+            : l10n::Get(StringId::TrayNoTarget);
+        const float lt = Clamp01(d.label_t);
+        const float e = EaseOutBack(lt);
+        const D2D1_RECT_F lr = D2D1::RectF(g.go.left + 8.0f * s, g.go.top + 6.0f * s * (1.0f - e),
+                                           g.go.right - 8.0f * s, g.go.bottom + 6.0f * s * (1.0f - e));
+        ShelfText(dc, dw, ShelfFormat(2), B(Alpha(p.on_acc, (usable ? 1.0f : 0.75f) * EaseOutCubic(lt))), label, lr,
+                  DWRITE_TEXT_ALIGNMENT_CENTER);
+        if (d.conflicts > 0 && usable) {
+            const std::wstring c = Fill(l10n::Get(StringId::TrayConflictsFormat), L"{n}", std::to_wstring(d.conflicts));
+            const float cw = MeasureTextWidth(dw, ShelfFormat(5), c) + 12.0f * s;
+            const D2D1_RECT_F cb = D2D1::RectF(sp.right + 5.0f * s - cw, sp.top - 8.0f * s, sp.right + 5.0f * s,
+                                               sp.top + 8.0f * s);
+            const float ring = 2.5f * s;
+            fill(D2D1::RectF(cb.left - ring, cb.top - ring, cb.right + ring, cb.bottom + ring), 8.0f * s + ring, p.tray);
+            fill(cb, 8.0f * s, p.warn);
+            ShelfText(dc, dw, ShelfFormat(5), B(Rgba(0x2A1800)), c, cb, DWRITE_TEXT_ALIGNMENT_CENTER);
+        }
+    }
+}
+
+void MainRenderer::DrawTrayCompareCard(const WindowViewModel& vm, const Theme& theme) {
+    const TrayDeckView& d = vm.tray_deck;
+    if (!d.cmp_shown || !compositor_ || !compositor_->Dc() || tray_panel_rc_.bottom <= tray_panel_rc_.top) return;
+    ID2D1DeviceContext* dc = compositor_->Dc();
+    IDWriteFactory2* dw = compositor_->DwriteFactory();
+    const ShelfPalette p = MakeShelfPalette(vm.dark, IsHighContrast(), theme);
+    const float s = scale_;
+    D2D1_SIZE_F target = dc->GetSize();
+    const TrayCardGeom g = TrayCompareCardGeometry(tray_panel_rc_, s, target.width);
+    ComPtr<ID2D1SolidColorBrush> br;
+    dc->CreateSolidColorBrush(p.text, &br);
+    if (!br.get()) return;
+    auto B = [&](const D2D1_COLOR_F& c) { br->SetColor(c); return br.get(); };
+    auto fill = [&](const D2D1_RECT_F& r, float radius, const D2D1_COLOR_F& c) {
+        dc->FillRoundedRectangle(D2D1::RoundedRect(r, radius, radius), B(c));
+    };
+    auto hot = [&](TrayShelfHit h) { return IsHovered(vm, HitTestResult::TrayShelf, static_cast<int>(h)); };
+    // #cmp.on: opacity .2 s, translateX(-14) scale(.97) -> none on (.2,1.3,.3,1) .45 s.
+    const float t = Clamp01(d.cmp_t);
+    const float e = EaseOutBack(t);
+    const float a = EaseOutCubic(Clamp01(t * 0.45f / 0.2f));
+    D2D1_MATRIX_3X2_F old;
+    dc->GetTransform(&old);
+    const float k = 0.97f + 0.03f * e;
+    dc->SetTransform(D2D1::Matrix3x2F::Scale(k, k, D2D1::Point2F(g.box.left, g.box.bottom)) *
+                     D2D1::Matrix3x2F::Translation(-14.0f * s * (1.0f - e), 0.0f) * old);
+    const bool layered = a < 0.999f;
+    if (layered)
+        dc->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                            D2D1::IdentityMatrix(), a), nullptr);
+    const float r = 14.0f * s;
+    // 0 30px 70px -10px rgba(0,0,0,.75): a few soft layers.
+    for (int l = 0; l < 6; ++l) {
+        const float grow = (2.0f + 5.0f * static_cast<float>(l)) * s;
+        fill(D2D1::RectF(g.box.left - grow + 10.0f * s, g.box.top - grow + 24.0f * s, g.box.right + grow - 10.0f * s,
+                         g.box.bottom + grow + 24.0f * s), r + grow, Rgba(0x000000, (vm.dark ? 0.11f : 0.04f)));
+    }
+    fill(g.box, r, vm.dark ? Rgba(0x1D222E) : Rgba(0xFFFFFF));
+    dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(g.box.left + 0.5f, g.box.top + 0.5f, g.box.right - 0.5f,
+        g.box.bottom - 0.5f), r, r), B(vm.dark ? Rgba(0xFFFFFF, 0.08f) : Rgba(0x000000, 0.10f)), 1.0f);
+    const TrayCompareView& cv = d.compare;
+    ShelfText(dc, dw, ShelfFormat(0), B(p.strong), L"\u21C4 " + l10n::Get(StringId::TrayCompareTwo), g.title);
+    if (hot(TrayShelfHit::CardClose)) fill(g.close, 6.0f * s, p.ib_hot);
+    DrawShelfIcon(dc, B(p.sub), ShelfIcon::Close, g.close, 14.0f * s);
+    const D2D1_COLOR_F key = vm.dark ? Rgba(0x7D869E) : p.faint;
+    const D2D1_COLOR_F val = vm.dark ? Rgba(0xDFE3F0) : p.text;
+    const D2D1_COLOR_F newer = vm.dark ? Rgba(0x7EE0A8) : Rgba(0x1F9D57);
+    const D2D1_COLOR_F diff = vm.dark ? Rgba(0xFFCF8A) : Rgba(0xB8730E);
+    auto cell = [&](int row, int col) {
+        const float h = (row == 0 ? 20.0f : 18.0f) * s;
+        const float y = g.row_y[row];
+        if (col < 0) return D2D1::RectF(g.label_l, y, g.label_l + 64.0f * s, y + h);
+        return D2D1::RectF(g.col_l[col], y, g.col_l[col] + g.col_w, y + h);
+    };
+    const StringId keys[3] = {StringId::TrayCmpLocation, StringId::TrayCmpModified, StringId::TrayCmpSize};
+    for (int row = 1; row <= 3; ++row)
+        ShelfText(dc, dw, ShelfFormat(1), B(key), l10n::Get(keys[row - 1]), cell(row, -1));
+    for (int c = 0; c < 2; ++c) {
+        ShelfText(dc, dw, ShelfFormat(7), B(p.strong), cv.name[c], cell(0, c));
+        ShelfText(dc, dw, ShelfFormat(1), B(val), cv.where[c], cell(1, c));
+        const bool nw = cv.newer == c;
+        ShelfText(dc, dw, ShelfFormat(1), B(nw ? newer : val),
+                  nw ? cv.time[c] + L" \u00B7 " + l10n::Get(StringId::TrayCmpNewer) : cv.time[c], cell(2, c));
+        ShelfText(dc, dw, ShelfFormat(1), B(cv.size_differs ? diff : val), cv.size[c], cell(3, c));
+    }
+    // .res: the content verdict (clickable while it can do something).
+    std::wstring res;
+    D2D1_COLOR_F bg = Alpha(p.acc, 0.14f), ink = vm.dark ? Rgba(0xC6CEFF) : p.acc;
+    switch (cv.content) {
+    case 0: res = l10n::Get(StringId::TrayCmpCheck); break;
+    case 1: res = l10n::Get(StringId::TrayCmpChecking); break;
+    case 2: res = l10n::Get(StringId::TrayCmpSame); bg = Alpha(newer, 0.14f); ink = newer; break;
+    case 3:
+        res = l10n::Get(cv.text == 1 ? StringId::TrayCmpViewDiff : (cv.text == 0 ? StringId::TrayCmpBinary
+                                                                                  : StringId::TrayCmpDifferent));
+        bg = Rgba(0xF2A93B, 0.12f);
+        ink = diff;
+        break;
+    default: res = l10n::Get(StringId::TrayCmpFailed); bg = Rgba(0xF2A93B, 0.12f); ink = diff; break;
+    }
+    if (hot(TrayShelfHit::CardAction)) bg.a = std::min(1.0f, bg.a + 0.1f);
+    fill(g.res, 9.0f * s, bg);
+    ShelfText(dc, dw, ShelfFormat(7), B(ink), res,
+              D2D1::RectF(g.res.left + 11.0f * s, g.res.top, g.res.right - 11.0f * s, g.res.bottom));
+    if (layered) dc->PopLayer();
+    dc->SetTransform(old);
 }
 
 } // namespace pulse::ui

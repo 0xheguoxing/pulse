@@ -67,5 +67,6 @@ constexpr UINT WM_ZIP_CANCEL = WM_APP + 94;  // the 压缩 snack: cancel
 constexpr UINT WM_TRAY_UNDO = WM_APP + 96;       // the tray release snack: undo the copy / move
 constexpr UINT WM_TRAY_OPEN_DEST = WM_APP + 97;  // the tray release snack: open the target folder
 constexpr UINT WM_TRAY_RESTORE = WM_APP + 98;    // the 已清空暂存区 snack: put the items back
+constexpr UINT WM_TRAY_TAKE_CLIP = WM_APP + 99;  // stage the Ctrl+C / Ctrl+X offer (剪贴板 N 项 · 收入)
 
 }  // namespace pulse

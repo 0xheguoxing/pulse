@@ -104,6 +104,21 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             return r;
         }
     }
+    if (vm.tray_deck.cmp_shown && tray_panel_rc_.bottom > tray_panel_rc_.top) {
+        const TrayCardGeom cg = TrayCompareCardGeometry(tray_panel_rc_, scale_, rect.right);
+        if (ContainsPt(cg.box, x, y)) {
+            r.region = HitTestResult::TrayShelf;
+            r.index = static_cast<int>(TrayShelfHit::Card);
+            const int content = vm.tray_deck.compare.content;
+            if (ContainsPt(cg.close, x, y)) {
+                r.index = static_cast<int>(TrayShelfHit::CardClose);
+            } else if (ContainsPt(cg.res, x, y) && (content == 0 || (content == 3 && vm.tray_deck.compare.text == 1))) {
+                r.index = static_cast<int>(TrayShelfHit::CardAction);
+                r.sub_index = content == 0 ? 1 : 2;
+            }
+            return r;
+        }
+    }
     if (vm.teach.visible) {
         const TeachBubbleLayout t = MakeTeachBubbleLayout(rect, status_height_, scale_);
         if (t.card.right - t.card.left >= 200.0f * scale_ && ContainsPt(t.card, x, y)) {
@@ -887,11 +902,45 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 switch (static_cast<TrayStage>(deck.stage)) {
                 case TrayStage::Strip:
                     r.index = static_cast<int>(TrayShelfHit::Strip);
+                    if (deck.clip_count > 0) zone(g.strip_clip, TrayShelfHit::Clip);
                     break;
                 case TrayStage::Drop:
                     if (!zone(g.half[1], TrayShelfHit::DropMove)) zone(g.half[0], TrayShelfHit::DropCopy);
                     break;
+                case TrayStage::Open: {
+                    const TrayOpenGeom og = TrayOpenGeometry(deck, slot.rc, scale_,
+                        [this](const std::wstring& t, bool compact_text) { return ShelfMeasure(t, compact_text); });
+                    if (zone(og.collapse, TrayShelfHit::Collapse, pulse::l10n::Get(StringId::TrayCollapseTip))) break;
+                    bool done = false;
+                    for (size_t fi = 0; fi < og.filters.size() && !done; ++fi)
+                        if (zone(og.filters[fi], TrayShelfHit::Filter)) { r.sub_index = og.filter_id[fi]; done = true; }
+                    if (done) break;
+                    if (y >= og.footer.top) {
+                        if (deck.checked > 0 && zone(og.none_link, TrayShelfHit::SelNone)) break;
+                        if (deck.checked == 2 && zone(og.cmp, TrayShelfHit::Compare)) break;
+                        if (zone(og.dd, TrayShelfHit::ReleaseMenu)) break;
+                        zone(og.go, TrayShelfHit::Release);
+                        break;
+                    }
+                    if (!ContainsPt(og.list, x, y)) break;
+                    r.index = static_cast<int>(TrayShelfHit::List);
+                    for (size_t ri = 0; ri < og.rows.size(); ++ri) {
+                        const TrayOpenRow& row = deck.open_rows[ri];
+                        if (row.group_start && zone(og.head_open[ri], TrayShelfHit::GroupOpen, row.group_path)) {
+                            r.path = row.group_path;
+                            r.sub_index = static_cast<int>(ri);
+                            break;
+                        }
+                        if (row.out_t <= 0.0f && zone(og.rows[ri], TrayShelfHit::Row)) {
+                            r.sub_index = static_cast<int>(ri);
+                            r.path = row.path;
+                            break;
+                        }
+                    }
+                    break;
+                }
                 case TrayStage::Shelf: {
+                    if (deck.clip_count > 0 && zone(g.clip_row, TrayShelfHit::Clip)) break;
                     if (zone(g.fan, TrayShelfHit::Fan, pulse::l10n::Get(StringId::TrayFanTip))) break;
                     if (g.has_expand && zone(g.expand, TrayShelfHit::Expand, pulse::l10n::Get(StringId::TrayExpandTip))) break;
                     if (zone(g.more, TrayShelfHit::More, pulse::l10n::Get(StringId::More))) break;
