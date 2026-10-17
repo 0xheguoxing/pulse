@@ -2250,6 +2250,10 @@ BEGIN
     IDS_ZIP_COMPRESS_DETAIL "{n} 个文件 · {size}"
     IDS_ZIP_COMPRESS_FAILED "压缩失败"
     IDS_ZIP_COMPRESS_CANCELLED "已取消压缩"
+    IDS_OP_CREATED_PREFIX "已新建 "
+    IDS_OP_RENAMED_PREFIX "已重命名 "
+    IDS_OP_CREATING_PREFIX "正在新建 "
+    IDS_OP_RENAMING_PREFIX "正在重命名 "
 END
 
 LANGUAGE 0x09, 0x01
@@ -4499,6 +4503,10 @@ BEGIN
     IDS_ZIP_COMPRESS_DETAIL "{n} files · {size}"
     IDS_ZIP_COMPRESS_FAILED "Couldn’t compress"
     IDS_ZIP_COMPRESS_CANCELLED "Compression cancelled"
+    IDS_OP_CREATED_PREFIX "Created "
+    IDS_OP_RENAMED_PREFIX "Renamed "
+    IDS_OP_CREATING_PREFIX "Creating "
+    IDS_OP_RENAMING_PREFIX "Renaming "
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

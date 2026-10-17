@@ -2260,6 +2260,10 @@ enum class StringId : UINT {
     ZipCompressDetail = IDS_ZIP_COMPRESS_DETAIL,
     ZipCompressFailed = IDS_ZIP_COMPRESS_FAILED,
     ZipCompressCancelled = IDS_ZIP_COMPRESS_CANCELLED,
+    OpCreatedPrefix = IDS_OP_CREATED_PREFIX,
+    OpRenamedPrefix = IDS_OP_RENAMED_PREFIX,
+    OpCreatingPrefix = IDS_OP_CREATING_PREFIX,
+    OpRenamingPrefix = IDS_OP_RENAMING_PREFIX,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

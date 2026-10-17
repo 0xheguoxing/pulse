@@ -2264,5 +2264,9 @@
 #define IDS_ZIP_COMPRESS_DETAIL                                                          3474
 #define IDS_ZIP_COMPRESS_FAILED                                                          3475
 #define IDS_ZIP_COMPRESS_CANCELLED                                                       3476
+#define IDS_OP_CREATED_PREFIX                                                            3477
+#define IDS_OP_RENAMED_PREFIX                                                            3478
+#define IDS_OP_CREATING_PREFIX                                                           3479
+#define IDS_OP_RENAMING_PREFIX                                                           3480
 
 #endif  // PULSE_STRING_IDS_H

@@ -816,16 +816,36 @@ void FileOperationWindow::Render() {
                        || status_.type == ops::OpType::RealDelete;
     const bool restoring = status_.type == ops::OpType::RestoreRecycle;
     const bool emptying = status_.type == ops::OpType::EmptyRecycle;
+    // 新建 and 重命名 go through the same window (opened from the status pill)
+    // and must not read as a copy.
+    const bool creating = status_.type == ops::OpType::CreateFolder
+                       || status_.type == ops::OpType::CreateTextFile;
+    const bool renaming = status_.type == ops::OpType::Rename
+                       || status_.type == ops::OpType::BatchRename;
     const D2D1_COLOR_F sky = dark_ ? HexColor(0x38BDF8) : HexColor(0x0284C7);
 
     const wchar_t* operation_glyph = authorization ? L"\xEA18" : (deleting || emptying) ? L"\xE74D"
-        : restoring ? L"\xE777" : (moving ? L"\xE7C2" : L"\xE8C8");
+        : restoring ? L"\xE777" : creating ? (status_.type == ops::OpType::CreateFolder ? L"\xE8F4" : L"\xE8A5")
+        : renaming ? L"\xE8AC" : (moving ? L"\xE7C2" : L"\xE8C8");
     painter_.DrawGlyph(operation_glyph, Rect(scale_, 14, 10, 16, 16), sky);
     std::wstring title;
     if (emptying) {
         if (failed) title = l10n::Get(l10n::StringId::OpCannotEmpty);
         else if (completed) title = l10n::Get(l10n::StringId::OpEmptied);
         else title = l10n::Get(l10n::StringId::OpEmptying);
+    } else if (failed && (creating || renaming)) {
+        title = l10n::Get(renaming ? l10n::StringId::CannotRename
+            : status_.type == ops::OpType::CreateFolder ? l10n::StringId::CannotCreateFolder
+            : l10n::StringId::CannotCreateFile);
+    } else if (completed && (creating || renaming)) {
+        title = l10n::Get(creating ? l10n::StringId::OpCreatedPrefix : l10n::StringId::OpRenamedPrefix) +
+            std::to_wstring((std::max)(status_.completed_items, static_cast<uint64_t>(1))) +
+            l10n::Get(l10n::StringId::OpItemsSuffix);
+    } else if (!paused && !scanning && (creating || renaming)) {
+        const uint64_t count = status_.total_items > 0 ? status_.total_items
+            : (std::max)(status_.completed_items, static_cast<uint64_t>(1));
+        title = l10n::Get(creating ? l10n::StringId::OpCreatingPrefix : l10n::StringId::OpRenamingPrefix) +
+            std::to_wstring(count) + l10n::Get(l10n::StringId::OpItemsSuffix);
     } else if (failed) {
         title = deleting ? l10n::Get(l10n::StringId::OpDeleteFailed).c_str() : restoring ? l10n::Get(l10n::StringId::OpRestoreFailed).c_str()
             : moving ? l10n::Get(l10n::StringId::OpMoveFailed).c_str() : l10n::Get(l10n::StringId::OpCopyFailed).c_str();
@@ -868,6 +888,8 @@ void FileOperationWindow::Render() {
     else if (emptying) subtitle = l10n::Get(l10n::StringId::OpEmptyingSub);
     else if (deleting) subtitle = l10n::Get(l10n::StringId::OpDeletingPrefix).c_str() + src;
     else if (restoring) subtitle = l10n::Get(l10n::StringId::OpRestoringPrefix).c_str() + src;
+    else if (creating) subtitle = l10n::Get(l10n::StringId::OpCreatingPrefix) + src;
+    else if (renaming) subtitle = l10n::Get(l10n::StringId::OpRenamingPrefix) + src;
     else if (moving) subtitle = l10n::Get(l10n::StringId::OpFromPrefix).c_str() + src + l10n::Get(l10n::StringId::OpMoveTo).c_str() + dst;
     else subtitle = l10n::Get(l10n::StringId::OpFromPrefix).c_str() + src + l10n::Get(l10n::StringId::OpCopyTo).c_str() + dst;
     DrawEllipsizedText(compositor_, compositor_.SmallFormat(),
