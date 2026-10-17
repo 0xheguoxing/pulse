@@ -60,6 +60,29 @@ struct SidebarMotion {
     float hover_radius = 0.0f;
     uint64_t hover_last = 0;
     std::unordered_map<std::wstring, ChevronTurn> chevrons;
+    // Quick-access reorder: per-row make-room offsets (px) keyed by run, the
+    // held row's lift start and the last frame time for the follow filter.
+    std::unordered_map<int, float> pin_offsets;
+    int pin_run = -1;
+    // Count roll + gulp per row path (motion v2 "dropbin"). epoch counts the
+    // expanded sidebar's frames so only a change seen frame-to-frame plays.
+    struct CountRoll {
+        std::wstring last, prev;
+        uint64_t start = 0;
+        uint64_t epoch = 0;
+        bool down = false;
+    };
+    std::unordered_map<std::wstring, CountRoll> counts;
+    uint64_t count_epoch = 0;
+    // Star flight (motion v2 "star"): launch point, start, and the 已加星标
+    // row as last painted (valid when star_dest_epoch == count_epoch).
+    D2D1_POINT_2F star_from{};
+    uint64_t star_start = 0;
+    bool star_landed = false;
+    D2D1_RECT_F star_dest{};
+    uint64_t star_dest_epoch = 0;
+    uint64_t pin_lift_start = 0;
+    uint64_t pin_last = 0;
     bool animations = true;
     uint64_t animations_checked = 0;
 };
@@ -173,6 +196,31 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
 
     // Partially visible scrolled rows must not paint over the toolbar or status bar.
     dc->PushAxisAlignedClip(sb_clip, D2D1_ANTIALIAS_MODE_ALIASED);
+    // Motion v2 "rail": while the sidebar folds, the icon column stays solid
+    // and everything right of it (labels, counts) fades - late on the way
+    // out to full width, early on the way into the rail.
+    bool label_layer = false;
+    if (collapse_anim_ && rect.right / scale_ >= kSidebarRailWindowDip) {
+        const float open = std::clamp((1.0f - collapse_value_ - 0.35f) / 0.65f, 0.0f, 1.0f);
+        const D2D1_GRADIENT_STOP stops[] = {
+            {0.0f, D2D1::ColorF(0, 0, 0, 1.0f)},
+            {0.5f, D2D1::ColorF(0, 0, 0, 1.0f)},
+            {1.0f, D2D1::ColorF(0, 0, 0, open * open)},
+        };
+        ComPtr<ID2D1GradientStopCollection> stop_set;
+        ComPtr<ID2D1LinearGradientBrush> fade;
+        const float x0 = sb.left + 38.0f * scale_;
+        if (SUCCEEDED(dc->CreateGradientStopCollection(stops, 3, &stop_set)) && stop_set.get() &&
+            SUCCEEDED(dc->CreateLinearGradientBrush(
+                D2D1::LinearGradientBrushProperties(D2D1::Point2F(x0 - 8.0f * scale_, 0.0f),
+                                                    D2D1::Point2F(x0 + 8.0f * scale_, 0.0f)),
+                stop_set.get(), &fade)) && fade.get()) {
+            D2D1_LAYER_PARAMETERS1 lp = D2D1::LayerParameters1(sb_clip, nullptr,
+                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), 1.0f, fade.get());
+            dc->PushLayer(lp, nullptr);
+            label_layer = true;
+        }
+    }
 
     // The sidebar sits on the shared sheet painted by Render(); the pane cards
     // beside it provide the edge, so it has no fill or divider of its own.
@@ -504,6 +552,7 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                 fmt->SetParagraphAlignment(oldPara);
             }
         }
+        if (label_layer) dc->PopLayer();
         dc->PopAxisAlignedClip();
         return;
     }
@@ -513,7 +562,101 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     if (trayCount > 0) swprintf_s(countLabel,
         pulse::l10n::Get(pulse::l10n::StringId::ItemsCountFormat).c_str(), trayCount);
 
-    for (const auto& slot : slots) {
+    // Quick-access reorder (pulse_motion_v2 qareorder): the held pin lifts and
+    // rides the cursor while the pins it passes slide aside to open its slot.
+    // It paints last so the rows sliding under it never cover the card.
+    std::vector<size_t> paint_order(slots.size());
+    for (size_t k = 0; k < slots.size(); ++k) paint_order[k] = k;
+    int pin_slot = -1;
+    float pin_pitch = 0.0f;
+    const bool pin_live = vm.sidebar_pin_drag_index >= 0 && sm.animations && !IsHighContrast();
+    if (pin_live) {
+        for (size_t k = 0; k < slots.size(); ++k) {
+            const auto& slot = slots[k];
+            if (slot.group < 0 || slot.item < 0 || slot.kind == SidebarSlot::Header) continue;
+            if (slot.run != vm.sidebar_pin_drag_index) continue;
+            pin_slot = static_cast<int>(k);
+            break;
+        }
+    }
+    if (pin_slot >= 0) {
+        const auto& held = slots[static_cast<size_t>(pin_slot)];
+        pin_pitch = held.rc.bottom - held.rc.top;
+        if (static_cast<size_t>(pin_slot) + 1 < slots.size() &&
+            slots[static_cast<size_t>(pin_slot) + 1].group == held.group &&
+            slots[static_cast<size_t>(pin_slot) + 1].rc.top > held.rc.top)
+            pin_pitch = slots[static_cast<size_t>(pin_slot) + 1].rc.top - held.rc.top;
+        else if (pin_slot > 0 && slots[static_cast<size_t>(pin_slot) - 1].group == held.group &&
+                 slots[static_cast<size_t>(pin_slot) - 1].rc.top < held.rc.top)
+            pin_pitch = held.rc.top - slots[static_cast<size_t>(pin_slot) - 1].rc.top;
+        paint_order.erase(paint_order.begin() + pin_slot);
+        paint_order.push_back(static_cast<size_t>(pin_slot));
+        if (sm.pin_run != held.run) {
+            sm.pin_run = held.run;
+            sm.pin_lift_start = motion_now_;
+            sm.pin_offsets.clear();
+            sm.pin_last = motion_now_;
+        }
+        const float held_c = (held.rc.top + held.rc.bottom) * 0.5f;
+        const float gap = vm.sidebar_pin_gap_line_y;
+        const float dt = static_cast<float>(motion_now_ > sm.pin_last ? motion_now_ - sm.pin_last : 0);
+        sm.pin_last = motion_now_;
+        const float follow = 1.0f - std::exp(-(std::min)(dt, 64.0f) / 55.0f);
+        bool sliding = false;
+        for (const auto& slot : slots) {
+            if (slot.group != held.group || slot.item < 0 || slot.kind == SidebarSlot::Header ||
+                slot.run == held.run) continue;
+            const float c = (slot.rc.top + slot.rc.bottom) * 0.5f;
+            float target = 0.0f;
+            if (gap > 0.0f) {
+                if (c > held_c && c < gap) target = -pin_pitch;
+                else if (c < held_c && c > gap) target = pin_pitch;
+            }
+            float& cur = sm.pin_offsets[slot.run];
+            cur += (target - cur) * follow;
+            if (std::fabs(target - cur) < 0.4f) cur = target;
+            else sliding = true;
+        }
+        const uint64_t lift_ms = motion_now_ - sm.pin_lift_start;
+        if (sliding || lift_ms < static_cast<uint64_t>(motion::SpringSettleMs(motion::spring::Pop)))
+            RequestMotionFrame();
+    } else if (sm.pin_run >= 0) {
+        sm.pin_run = -1;
+        sm.pin_offsets.clear();
+    }
+    // Per-row transform for the reorder; restores on every exit of the body.
+    struct RowXform {
+        ID2D1DeviceContext* dc = nullptr;
+        D2D1_MATRIX_3X2_F saved{};
+        bool active = false;
+        void Apply(ID2D1DeviceContext* d, const D2D1_MATRIX_3X2_F& m) {
+            dc = d;
+            dc->GetTransform(&saved);
+            dc->SetTransform(m * saved);
+            active = true;
+        }
+        ~RowXform() { if (active) dc->SetTransform(saved); }
+    };
+
+    ++sm.count_epoch;
+    for (const size_t paint_k : paint_order) {
+        const auto& slot = slots[paint_k];
+        RowXform row_xform;
+        if (pin_slot >= 0 && slot.group == slots[static_cast<size_t>(pin_slot)].group &&
+            slot.item >= 0 && slot.kind != SidebarSlot::Header) {
+            if (static_cast<int>(paint_k) == pin_slot) {
+                const float t = static_cast<float>(motion_now_ - sm.pin_lift_start);
+                const float lift = motion::SpringProgress(motion::spring::Pop, t);
+                const float s_ = 1.0f + 0.03f * lift;
+                const D2D1_POINT_2F c = D2D1::Point2F((slot.rc.left + slot.rc.right) * 0.5f,
+                                                      (slot.rc.top + slot.rc.bottom) * 0.5f);
+                row_xform.Apply(dc, D2D1::Matrix3x2F::Scale(s_, s_, c) *
+                                    D2D1::Matrix3x2F::Translation(0.0f, vm.sidebar_pin_drag_dy));
+            } else if (auto it = sm.pin_offsets.find(slot.run);
+                       it != sm.pin_offsets.end() && it->second != 0.0f) {
+                row_xform.Apply(dc, D2D1::Matrix3x2F::Translation(0.0f, it->second));
+            }
+        }
         if (slot.kind == SidebarSlot::Header) {
             fluent::SidebarSectionHeaderSpec header;
             header.bounds = slot.rc;
@@ -635,6 +778,60 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         if (slot.group < 0 || slot.item < 0) continue;
 
         const auto& item = vm.sidebar[slot.group].items[slot.item];
+        // Motion v2 "dropbin": a row whose count changes (files dropped on the
+        // 回收站, items tagged) gulps - a quick squeeze that springs back past
+        // rest - under an accent wash, while its count rolls to the new value.
+        float count_roll = 1.0f;
+        bool count_down = false;
+        const std::wstring* count_prev = nullptr;
+        if (item.path == L"pulse:starred") {
+            sm.star_dest = slot.rc;
+            sm.star_dest_epoch = sm.count_epoch;
+        }
+        if (!item.path.empty() && slot.kind != SidebarSlot::Drive && !item.tab_row) {
+            std::wstring now_count;
+            if (item.path == L"pulse:recycle") now_count = item.detail;
+            else if (item.show_count || item.count > 0) now_count = std::to_wstring((std::min)(item.count, 99));
+            auto [found, fresh] = sm.counts.try_emplace(item.path);
+            SidebarMotion::CountRoll& cr = found->second;
+            const bool seen_last_frame = !fresh && cr.epoch + 1 == sm.count_epoch;
+            if (seen_last_frame && sm.animations && cr.last != now_count &&
+                !now_count.empty() && !cr.last.empty()) {
+                cr.prev = cr.last;
+                cr.start = motion_now_ ? motion_now_ : 1;
+                cr.down = wcstol(now_count.c_str(), nullptr, 10) < wcstol(cr.last.c_str(), nullptr, 10);
+            }
+            cr.last = std::move(now_count);
+            cr.epoch = sm.count_epoch;
+            if (cr.start) {
+                constexpr motion::SpringSpec kGulp{420.0f, 20.0f};  // HTML "bouncy"
+                constexpr float kSqueezeMs = 90.0f;
+                const float t = static_cast<float>(motion_now_ - cr.start);
+                if (t >= 760.0f) {
+                    cr.start = 0;
+                } else {
+                    count_roll = t >= static_cast<float>(motion::SpringSettleMs(motion::spring::Smooth))
+                        ? 1.0f : motion::SpringProgress(motion::spring::Smooth, t);
+                    count_down = cr.down;
+                    count_prev = &cr.prev;
+                    const float squeeze = t < kSqueezeMs
+                        ? motion::EaseOutCubic(t / kSqueezeMs)
+                        : 1.0f - motion::SpringProgress(kGulp, t - kSqueezeMs);
+                    const float g = 1.0f - 0.07f * squeeze;
+                    if (!row_xform.active) {
+                        const D2D1_POINT_2F c = D2D1::Point2F((slot.rc.left + slot.rc.right) * 0.5f,
+                                                              (slot.rc.top + slot.rc.bottom) * 0.5f);
+                        row_xform.Apply(dc, D2D1::Matrix3x2F::Scale(g, g, c));
+                    }
+                    const float wash = 1.0f - t / 760.0f;
+                    MakeBrush(dc, WithAlpha(theme.accent, (vm.dark ? 0.30f : 0.22f) * wash * wash), brFillHover_);
+                    FillRoundedRect(dc, brFillHover_.get(), slot.rc.left, slot.rc.top,
+                        slot.rc.right - slot.rc.left, slot.rc.bottom - slot.rc.top,
+                        theme.radius_control * scale_);
+                    RequestMotionFrame();
+                }
+            }
+        }
         fluent::ControlState state;
         state.selected = isSelectedSlot(slot);
         state.hovered = IsHovered(vm, HitTestResult::SidebarItem, slot.run) ||
@@ -700,7 +897,8 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         } else {
             const bool draggedTag =
                 slot.group == vm.tag_drag_group && slot.item == vm.tag_drag_item;
-            if (draggedTag) {
+            const bool heldPin = static_cast<int>(paint_k) == pin_slot;
+            if (draggedTag || heldPin) {
                 // Insertion indicator under the lifted card: accent line with a
                 // leading dot at the tentative gap's top edge.
                 if (vm.tag_gap_line_y > 0.0f) {
@@ -722,6 +920,12 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                 if (card.get()) {
                     ComPtr<ID2D1Image> prev;
                     dc->GetTarget(&prev);
+                    // Record untransformed: DrawImage below applies the current
+                    // transform (the held pin's lift/follow), so recording
+                    // through it as well would move the card twice as far.
+                    D2D1_MATRIX_3X2_F record_saved{};
+                    dc->GetTransform(&record_saved);
+                    dc->SetTransform(D2D1::Matrix3x2F::Identity());
                     dc->SetTarget(card.get());
                     MakeBrush(dc, vm.dark ? HexColor(0x303030) : HexColor(0xFFFFFF), brFillSelected_);
                     FillRoundedRect(dc, brFillSelected_.get(),
@@ -729,6 +933,7 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                         slot.rc.right - slot.rc.left - 2.0f,
                         slot.rc.bottom - slot.rc.top - 2.0f, r);
                     dc->SetTarget(prev.get());
+                    dc->SetTransform(record_saved);
                     card->Close();
                     ComPtr<ID2D1Effect> shadow;
                     if (SUCCEEDED(dc->CreateEffect(kShadowEffectClsid, &shadow)) && shadow.get()) {
@@ -763,6 +968,11 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             row.status_color = item.status_color;
             row.icon_color = item.icon_color;
             row.suppress_text = item.editing;
+            if (count_prev) {
+                row.count_roll = count_roll;
+                row.count_prev = *count_prev;
+                row.count_roll_down = count_down;
+            }
             // The label is the folder's 别名 (places show it): the mark follows it.
             row.alias_mark = !item.path.empty() && !item.is_tag && !item.editing &&
                              !app::AliasStore::Instance().Empty() &&
@@ -861,13 +1071,104 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         if (vm.sidebar_group_gap_line_y > 0.0f)
             DrawSidebarInsertionLine(dc, brAccent_.get(), sb, scale_,
                                      vm.sidebar_group_gap_line_y);
-        if (vm.sidebar_pin_gap_line_y > 0.0f)
+        if (vm.sidebar_pin_gap_line_y > 0.0f && pin_slot < 0)
             DrawSidebarInsertionLine(dc, brAccent_.get(), sb, scale_,
                                      vm.sidebar_pin_gap_line_y);
     }
 
     painter_.DrawScrollbar(SidebarScrollbarSpec(vm, sb, scale_));
+    if (label_layer) dc->PopLayer();
     dc->PopAxisAlignedClip();
+}
+
+void MainRenderer::LaunchStarFlight(float x, float y) {
+    if (!motion::SystemAnimationsEnabled()) return;
+    SidebarMotion& sm = SidebarMotionFor(this);
+    sm.star_from = D2D1::Point2F(x, y);
+    sm.star_start = motion::NowMs();
+    sm.star_landed = false;
+    RequestMotionFrame();
+}
+
+// Motion v2 "star": the star arcs from where it was clicked into the sidebar's
+// 已加星标 row with a short spark trail, bursts there, and the row gulps.
+void MainRenderer::DrawStarFlight(const Theme& theme) {
+    SidebarMotion& sm = SidebarMotionFor(this);
+    if (!sm.star_start || !compositor_ || !compositor_->Dc()) return;
+    ID2D1DeviceContext* dc = compositor_->Dc();
+    constexpr float kFlightMs = 560.0f;
+    constexpr float kBurstMs = 360.0f;
+    const uint64_t now = motion::NowMs();
+    const float t = static_cast<float>(now - sm.star_start);
+    if (t >= kFlightMs + kBurstMs) {
+        sm.star_start = 0;
+        return;
+    }
+    D2D1_POINT_2F to = D2D1::Point2F(28.0f * scale_, 96.0f * scale_);
+    if (sm.star_dest_epoch == sm.count_epoch && sm.star_dest.right > sm.star_dest.left)
+        to = D2D1::Point2F(sm.star_dest.left + 22.0f * scale_,
+                           (sm.star_dest.top + sm.star_dest.bottom) * 0.5f);
+    const D2D1_POINT_2F from = sm.star_from;
+    const float dist = std::hypot(to.x - from.x, to.y - from.y);
+    // Arc over the content, its apex kept inside the window (16 dip down):
+    // the curve's peak is (from + 2*ctrl + to) / 4.
+    const float apex_floor = (4.0f * 16.0f * scale_ - from.y - to.y) * 0.5f;
+    const D2D1_POINT_2F ctrl = D2D1::Point2F((from.x + to.x) * 0.5f,
+        (std::max)(apex_floor, (std::min)(from.y, to.y) - (std::max)(60.0f * scale_, dist * 0.22f)));
+    auto at = [&](float e) {
+        const float v = 1.0f - e;
+        return D2D1::Point2F(v * v * from.x + 2.0f * v * e * ctrl.x + e * e * to.x,
+                             v * v * from.y + 2.0f * v * e * ctrl.y + e * e * to.y);
+    };
+    auto ease = [](float u) {
+        u = std::clamp(u, 0.0f, 1.0f);
+        return u < 0.5f ? 4.0f * u * u * u : 1.0f - std::pow(-2.0f * u + 2.0f, 3.0f) * 0.5f;
+    };
+    D2D1_MATRIX_3X2_F saved{};
+    dc->GetTransform(&saved);
+    if (t < kFlightMs) {
+        const float e = ease(t / kFlightMs);
+        // Spark trail: a few dots sampled behind the star, smaller and fainter.
+        for (int k = 1; k <= 5; ++k) {
+            const float ek = e - 0.045f * static_cast<float>(k);
+            if (ek <= 0.0f) break;
+            const D2D1_POINT_2F q = at(ek);
+            const float fade = 1.0f - static_cast<float>(k) / 6.0f;
+            MakeBrush(dc, WithAlpha(theme.accent, 0.55f * fade), brAccent_);
+            const float r = (2.4f * fade + 0.6f) * scale_;
+            dc->FillEllipse(D2D1::Ellipse(q, r, r), brAccent_.get());
+        }
+        const D2D1_POINT_2F p = at(e);
+        const float size = 18.0f * scale_ * (1.0f + 0.45f * std::sin(3.14159265f * e) - 0.25f * e);
+        dc->SetTransform(D2D1::Matrix3x2F::Rotation(300.0f * e, p) * saved);
+        DrawIconText(p.x - size * 0.5f, p.y - size * 0.5f, size, size, L"\xE735", L"*",
+                     theme.accent, 1.0f);
+        dc->SetTransform(saved);
+    } else {
+        if (!sm.star_landed) {
+            sm.star_landed = true;
+            // The row takes the star in: replay its gulp now that it lands.
+            auto found = sm.counts.find(L"pulse:starred");
+            if (found != sm.counts.end()) {
+                if (found->second.prev.empty()) found->second.prev = found->second.last;
+                found->second.start = now;
+            }
+        }
+        const float b = std::clamp((t - kFlightMs) / kBurstMs, 0.0f, 1.0f);
+        const float out = 1.0f - (1.0f - b) * (1.0f - b) * (1.0f - b);
+        for (int k = 0; k < 8; ++k) {
+            const float a = 6.2831853f * static_cast<float>(k) / 8.0f + 0.3f;
+            const float rr = (5.0f + 15.0f * out) * scale_;
+            const D2D1_POINT_2F q = D2D1::Point2F(to.x + std::cos(a) * rr, to.y + std::sin(a) * rr);
+            MakeBrush(dc, WithAlpha(theme.accent, 0.8f * (1.0f - b)), brAccent_);
+            const float r = 2.2f * (1.0f - b * 0.7f) * scale_;
+            dc->FillEllipse(D2D1::Ellipse(q, r, r), brAccent_.get());
+        }
+        MakeBrush(dc, WithAlpha(theme.accent, 0.45f * (1.0f - b)), brAccent_);
+        const float ring = (6.0f + 14.0f * out) * scale_;
+        dc->DrawEllipse(D2D1::Ellipse(to, ring, ring), brAccent_.get(), 1.4f * scale_);
+    }
+    RequestMotionFrame();
 }
 
 void MainRenderer::DrawTrayDeck(const WindowViewModel& vm, const D2D1_RECT_F& panel_rc,
