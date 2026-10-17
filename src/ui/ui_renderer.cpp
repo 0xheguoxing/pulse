@@ -409,7 +409,10 @@ std::vector<BreadcrumbSegment> SplitBreadcrumb(const std::wstring& path) {
     if (p.starts_with(L"\\\\?\\UNC\\")) p = L"\\\\" + p.substr(8);
     else if (p.starts_with(L"\\\\?\\")) p = p.substr(4);
     while (p.size() > 1 && p.back() == L'\\') p.pop_back();
-    if (p.empty()) {
+    // The view model carries This PC as its display name (DisplayPath), not
+    // "": kept as a folder name, clicking the crumb a second time opened
+    // "C:\Program Files\Pulse\此电脑" relative to the working directory.
+    if (p.empty() || p == pulse::l10n::Get(pulse::l10n::StringId::ThisPc)) {
         // Empty path = This PC: a single segment that navigates to "".
         BreadcrumbSegment seg;
         seg.text = pulse::l10n::Get(pulse::l10n::StringId::ThisPc);

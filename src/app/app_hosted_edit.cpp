@@ -60,11 +60,31 @@ std::wstring FormatAddressPath(const std::wstring& text) {
     return t;
 }
 
+// The editor shows This PC by its display name, so committing it unchanged
+// (or typing it) must reach This PC, not a folder of that name resolved
+// against the working directory (it opened "C:\Program Files\Pulse\此电脑").
+static bool IsThisPcDisplayName(std::wstring_view text) {
+    while (!text.empty() && (iswspace(text.front()) || text.front() == L'"')) text.remove_prefix(1);
+    while (!text.empty() && (iswspace(text.back()) || text.back() == L'"' || text.back() == L'\\'))
+        text.remove_suffix(1);
+    if (text.empty()) return false;
+    const auto same = [&](std::wstring_view name) {
+        return !name.empty() && CompareStringOrdinal(text.data(), static_cast<int>(text.size()),
+            name.data(), static_cast<int>(name.size()), TRUE) == CSTR_EQUAL;
+    };
+    return same(l10n::Get(l10n::StringId::ThisPc)) || same(L"This PC") ||
+        same(L"\u6B64\u7535\u8111") || same(L"\u672C\u6A5F");
+}
+
 std::wstring AddressNavigationTarget(const std::wstring& text, bool* shortcut) {
     // 别名 jump: "发布包" or "发布包\\v1.0.56" opens the aliased folder.
     if (std::wstring aliased; app::AliasStore::Instance().ResolveTyped(text, aliased)) {
         if (shortcut) *shortcut = true;
         return FormatAddressPath(aliased);
+    }
+    if (IsThisPcDisplayName(text)) {
+        if (shortcut) *shortcut = true;
+        return std::wstring();
     }
     const app::AddressShortcut resolved = app::ResolveAddressShortcut(text);
     if (shortcut) *shortcut = resolved.resolved;
