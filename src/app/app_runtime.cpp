@@ -19,6 +19,7 @@
 #include "../ui/fluent_menu.h"
 #include "../ui/preview_format_catalog.h"
 #include "../ui/drag_drop.h"
+#include "../ui/toolbar_picker.h"
 #include "../ui/file_operation_dialog.h"
 #include "../ui/batch_rename_dialog.h"
 #include "../ui/quick_preview_window.h"
@@ -2949,7 +2950,8 @@ std::wstring TooltipForHover(AppState& s) {
     case R::ToolbarSort: return text(I::SortBy);
     case R::ToolbarGroup: return text(I::GroupBy);
     case R::ToolbarGroupClear: return text(I::GroupClear);
-    case R::ToolbarMore: return text(I::CustomizeToolbar);   // the customize button (T5)
+    case R::ToolbarMore:   // the customize button (T5); silent while its picker is open
+        return ui::ToolbarPickerOpen() ? std::wstring() : text(I::CustomizeToolbar);
     case R::ToolbarPin: {
         const auto pins = ToolbarPinActions(s);
         if (s.hoverControlIndex >= static_cast<int>(pins.size()))

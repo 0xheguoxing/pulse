@@ -3280,6 +3280,10 @@ static std::vector<size_t> ToolbarPinsOrder(const AppState& s) {
 
 void ShowToolbarCustomize(AppState& s, int page) {
     if (ui::ToolbarPickerOpen()) return;
+    // The button's own tooltip would otherwise hang over the picker.
+    s.tooltipText.clear();
+    s.hoverSince = 0;
+    InvalidateRect(s.hwnd, nullptr, FALSE);
     ui::ToolbarCustomizeSpec spec;
     spec.title = l10n::Get(l10n::StringId::CustomizeToolbar);
     spec.done_text = l10n::Get(l10n::StringId::ToolbarDone);
