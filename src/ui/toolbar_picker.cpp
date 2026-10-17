@@ -187,6 +187,18 @@ public:
         bool quit = false;
         WPARAM quit_code = 0;
         while (hwnd_) {
+            // WM_TIMER and WM_PAINT come after every posted message. While the
+            // owner animates on its frame pump (the hovered tile's pin breathes
+            // a ring), they starved and the picker froze mid-animation: a check
+            // badge stuck half-popped, or never appeared after the first one.
+            // An overdue frame is drawn here, between messages.
+            if (frame_due_ && motion::NowMs() >= frame_due_ + 8) {
+                frame_due_ = 0;
+                KillTimer(hwnd_, kFrameTimer);
+                Render();
+                ValidateRect(hwnd_, nullptr);
+                continue;
+            }
             const BOOL got = GetMessageW(&message, nullptr, 0, 0);
             if (got <= 0) { quit = got == 0; quit_code = message.wParam; if (hwnd_) DestroyWindow(hwnd_); break; }
             TranslateMessage(&message);
@@ -1043,6 +1055,7 @@ private:
     }
 
     void Render() {
+        frame_due_ = 0;   // re-armed at the end while something still moves
         UpdatePreview();
         if (compositor_.NeedsRecovery()) {
             if (!compositor_.Recover()) return;
@@ -1232,6 +1245,7 @@ private:
         dc->SetTransform(D2D1::IdentityMatrix());
         EndSurface(compositor_);
         if (moving && hwnd_) SetTimer(hwnd_, kFrameTimer, 8, nullptr);
+        frame_due_ = moving ? motion::NowMs() + 8 : 0;
     }
 
     // ---- window ---------------------------------------------------------
@@ -1516,6 +1530,7 @@ private:
     std::wstring query_;
     std::wstring caret_query_;
     DWORD caret_epoch_ = 0;
+    uint64_t frame_due_ = 0;   // a frame is wanted from this time (see Run)
     bool caret_focus_ = false;
     uint64_t opened_at_ = 0, page_at_ = 0, enter_at_ = 0, closing_at_ = 0, note_until_ = 0, last_step_ = 0;
     bool dark_ = false;
