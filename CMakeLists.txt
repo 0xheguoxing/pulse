@@ -582,6 +582,15 @@ add_executable(pulse_ops_test
     src/ops/clipboard.cpp
     src/ipc/shell_client.cpp)
 target_link_libraries(pulse_ops_test PRIVATE ole32 shell32 uuid bcrypt pulse_localization)
+# Copy / delete throughput through OpsManager (synthetic files, cleaned up).
+add_executable(pulse_ops_bench
+    src/bench/ops_bench_main.cpp
+    src/ops/duplicate_cleanup_guard.cpp
+    src/ops/ops_manager.cpp
+    src/ops/file_lock_owner.cpp
+    src/ops/clipboard.cpp
+    src/ipc/shell_client.cpp)
+target_link_libraries(pulse_ops_bench PRIVATE ole32 shell32 uuid bcrypt pulse_localization)
 add_executable(pulse_authorization_flow_test src/bench/authorization_flow_test.cpp
     src/ops/ops_manager.cpp src/ops/duplicate_cleanup_guard.cpp src/ops/file_lock_owner.cpp src/ipc/shell_client.cpp)
 target_link_libraries(pulse_authorization_flow_test PRIVATE ole32 shell32 uuid bcrypt advapi32 pulse_localization)
