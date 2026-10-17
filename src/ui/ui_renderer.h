@@ -1492,6 +1492,9 @@ public:
     }
     // Highlight glides and copy confirmations (ui_motion.h). True while another
     // frame is needed; false once everything has settled, so idle stays idle.
+    // Owner-drawn text fields (Settings > 快捷键 search): milliseconds until
+    // the caret should toggle, 0 when no drawn caret is showing.
+    UINT CaretBlinkDueMs() const { return caret_due_ms_; }
     bool TickMotion(ULONGLONG now) {
         // Glides run on the NowMs clock; `now` (GetTickCount64) serves the
         // task pill and copy feedback below.
@@ -1785,6 +1788,10 @@ public:
     int TrayDeckCapacity(float window_w) const;
 
 private:
+    UINT caret_due_ms_ = 0;
+    DWORD shortcut_caret_epoch_ = 0;
+    bool shortcut_caret_focus_ = false;
+    std::wstring shortcut_caret_query_;
     struct TabStripMetrics {
         float x0 = 0.0f;
         float y = 0.0f;

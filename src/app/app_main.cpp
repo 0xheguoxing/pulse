@@ -427,6 +427,8 @@ void Render(AppState& s) {
         (s.scrollAnimating || s.marqueeAutoScroll || s.themeReveal.start || s.paneLayoutMotion.start ||
          s.renderer.TickMotion(GetTickCount64())))
         s.framePump.Arm();
+    if (const UINT caret = s.renderer.CaretBlinkDueMs()) SetTimer(s.hwnd, kTimerDrawnCaret, caret, nullptr);
+    else KillTimer(s.hwnd, kTimerDrawnCaret);
 }
 
 // The session used to be written only in WM_DESTROY, so a Windows shutdown,
@@ -1663,6 +1665,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_TIMER: {
         if (s && wParam == kTimerMarqueeScroll) {
             TickMarqueeAutoScroll(*s);
+            return 0;
+        }
+        if (s && wParam == kTimerDrawnCaret) {
+            KillTimer(hwnd, kTimerDrawnCaret);
+            InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if (s && wParam == kTimerUncProbeRetry) {

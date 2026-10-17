@@ -81,6 +81,8 @@ namespace pulse {
 constexpr UINT kTimerUi = 1;
 // Scrolls the list while a marquee is dragged past its edge.
 constexpr UINT_PTR kTimerMarqueeScroll = 0x4D51;
+// Repaints when an owner-drawn caret (Settings > 快捷键 search) blinks.
+constexpr UINT_PTR kTimerDrawnCaret = 0x4342;
 
 enum class OmnibarMode { Path, Mixed, Command, Project };
 

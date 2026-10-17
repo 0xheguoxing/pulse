@@ -757,6 +757,7 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
     } folder_frame{folder_thumbnail_cache_};
     // One timestamp per frame: every glide and the sidebar width agree.
     motion_now_ = motion::NowMs();
+    caret_due_ms_ = 0;
     list_loading_active_ = false;
     folder_size_anim_active_ = false;
     motion_frame_wanted_ = false;

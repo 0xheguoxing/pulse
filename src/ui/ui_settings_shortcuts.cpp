@@ -101,10 +101,23 @@ void MainRenderer::DrawSettingsShortcuts(const WindowViewModel& vm, const D2D1_R
         field.state.hovered = hot(kScSearch);
         field.trailing_width = o.search_clear.right > o.search_clear.left ? 22.0f : 0.0f;
         painter_.DrawTextField(field);
+        if (!v->search_focused) shortcut_caret_focus_ = false;
         const float text_left = o.search.left + 10 * s + 18 * s + 6 * s;
         if (show_caps) {
             draw_caps(v->find_caps, text_left, (o.search.top + o.search.bottom) * 0.5f, 0, false);
-        } else if (v->search_focused) {
+        } else if (v->search_focused && [&] {
+            // Blink like a native caret, solid again after each edit.
+            if (!shortcut_caret_focus_ || v->query != shortcut_caret_query_) {
+                shortcut_caret_query_ = v->query;
+                shortcut_caret_epoch_ = GetTickCount();
+            }
+            shortcut_caret_focus_ = true;
+            const UINT blink = GetCaretBlinkTime();
+            if (blink == 0 || blink == INFINITE) return true;
+            const DWORD since = GetTickCount() - shortcut_caret_epoch_;
+            caret_due_ms_ = std::max<UINT>(1, blink - since % blink);
+            return (since / blink) % 2u == 0u;
+        }()) {
             const float caret_x = text_left + text_width(v->query, compositor_->TextFormat()) + 1 * s;
             if (caret_x < o.search.right - 30 * s)
                 painter_.FillRoundedRect(D2D1::RectF(caret_x, o.search.top + 8 * s, caret_x + 1 * s, o.search.bottom - 8 * s), 0,
