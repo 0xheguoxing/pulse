@@ -1394,7 +1394,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_NCLBUTTONDOWN: {
         if (!s) break;
-        if (s->addressEditing && !s->addressSearching) HideAddressEditor(*s, false);
+        // A press on the title bar releases the address editor, the search box
+        // and the filter box alike, as a press in the client area does.
+        if (s->addressEditing) HideAddressEditor(*s, false);
+        if (s->filterEditing) HideFilterEditor(*s, true);
         if (wParam == HTMINBUTTON) {
             ShowWindow(hwnd, SW_MINIMIZE);
             return 0;
