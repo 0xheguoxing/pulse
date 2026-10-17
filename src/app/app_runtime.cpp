@@ -2768,6 +2768,10 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
             if (can_group && list_like && !vm.pane.compare_active) toolbar_group = gt->group_by;
         }
         s.renderer.SetToolbarGroup(toolbar_group);
+        // A hidden filter or group control still shows while it is in effect.
+        s.renderer.SetToolbarView(s.appPrefs.toolbar_show_sort,
+                                  s.appPrefs.toolbar_show_filter || !vm.pane.filter_text.empty(),
+                                  s.appPrefs.toolbar_show_group || toolbar_group > 0);
     }
     // Toolbar follows the pointer: a file drag over the window swaps the
     // selection chip and the pinned commands for the pinned apps.

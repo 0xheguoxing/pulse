@@ -2254,6 +2254,7 @@ BEGIN
     IDS_OP_RENAMED_PREFIX "已重命名 "
     IDS_OP_CREATING_PREFIX "正在新建 "
     IDS_OP_RENAMING_PREFIX "正在重命名 "
+    IDS_TOOLBAR_SECTION_VIEW "排序与筛选"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4507,6 +4508,7 @@ BEGIN
     IDS_OP_RENAMED_PREFIX "Renamed "
     IDS_OP_CREATING_PREFIX "Creating "
     IDS_OP_RENAMING_PREFIX "Renaming "
+    IDS_TOOLBAR_SECTION_VIEW "Sort & filter"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

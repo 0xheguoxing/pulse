@@ -2275,3 +2275,4 @@ OpCreatedPrefix	IDS_OP_CREATED_PREFIX	3477	已新建 	Created 	已新增
 OpRenamedPrefix	IDS_OP_RENAMED_PREFIX	3478	已重命名 	Renamed 	已重新命名 
 OpCreatingPrefix	IDS_OP_CREATING_PREFIX	3479	正在新建 	Creating 	正在新增 
 OpRenamingPrefix	IDS_OP_RENAMING_PREFIX	3480	正在重命名 	Renaming 	正在重新命名 
+ToolbarSectionView	IDS_TOOLBAR_SECTION_VIEW	3481	排序与筛选	Sort & filter	排序與篩選

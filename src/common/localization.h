@@ -2264,6 +2264,7 @@ enum class StringId : UINT {
     OpRenamedPrefix = IDS_OP_RENAMED_PREFIX,
     OpCreatingPrefix = IDS_OP_CREATING_PREFIX,
     OpRenamingPrefix = IDS_OP_RENAMING_PREFIX,
+    ToolbarSectionView = IDS_TOOLBAR_SECTION_VIEW,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

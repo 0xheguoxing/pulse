@@ -3240,6 +3240,26 @@ static RECT ToolbarMoreScreenRect(AppState& s) {
     return RECT{a.x, a.y, b.x, b.y};
 }
 
+// 自定义工具栏 → 排序与筛选: the toolbar's view buttons (not pins; they
+// show or hide in place, AppPrefs::toolbar_show_*).
+struct ToolbarViewDef {
+    std::wstring_view id;
+    const wchar_t* glyph;
+    l10n::StringId label;
+};
+static constexpr ToolbarViewDef kToolbarViews[] = {
+    {L"sort", L"\xE8CB", l10n::StringId::ToolbarSort},
+    {L"filter", L"\xE71C", l10n::StringId::ToolbarFilter},
+    {L"group", L"\xF168", l10n::StringId::ToolbarGroup},
+};
+static constexpr size_t kToolbarViewCount = std::size(kToolbarViews);
+static bool& ToolbarViewPref(AppState& s, size_t i) {
+    return i == 0 ? s.appPrefs.toolbar_show_sort : i == 1 ? s.appPrefs.toolbar_show_filter : s.appPrefs.toolbar_show_group;
+}
+static bool ToolbarViewShown(const AppState& s, size_t i) {
+    return i == 0 ? s.appPrefs.toolbar_show_sort : i == 1 ? s.appPrefs.toolbar_show_filter : s.appPrefs.toolbar_show_group;
+}
+
 // Section of each toolbar_tools.h id on the picker's tools page.
 // Sections follow the v3 prototype: 文件 / 选择 / 显示 / 窗格 / 更多.
 static int ToolbarToolSection(std::wstring_view id) {
@@ -3275,6 +3295,7 @@ static std::vector<size_t> ToolbarPinsOrder(const AppState& s) {
         const int at = app::ToolbarToolIndex(id);
         if (at >= 0 && !placed[at]) { placed[at] = 1; order.push_back(static_cast<size_t>(at)); }
     }
+    for (size_t i = 0; i < kToolbarViewCount; ++i) order.push_back(app::kToolbarToolCount + i);
     return order;
 }
 
@@ -3293,7 +3314,7 @@ void ShowToolbarCustomize(AppState& s, int page) {
     spec.sel_desc = l10n::Get(l10n::StringId::ToolbarPickerSelDesc);
     spec.on_toolbar_text = l10n::Get(l10n::StringId::ToolbarPickerOnToolbar);
     spec.tools_full_text = l10n::Get(l10n::StringId::ToolbarPickerToolsFull);
-    spec.max_tools = app::kMaxToolbarTools;
+    spec.max_tools = app::kMaxToolbarTools + kToolbarViewCount;
     spec.keys_text = l10n::Get(l10n::StringId::KeyboardShortcuts);
     spec.keys_hint = app::ShownShortcut(L"Ctrl+/");
     spec.on_shortcuts = [&s] { DispatchMenuCommand(s, app::CmdShortcutHelp); };
@@ -3304,7 +3325,7 @@ void ShowToolbarCustomize(AppState& s, int page) {
     spec.apps_full_text = l10n::Get(l10n::StringId::ToolbarPickerAppsFull);
     spec.sections = {l10n::Get(l10n::StringId::ToolbarSectionFile), l10n::Get(l10n::StringId::ToolbarSectionSelect),
                      l10n::Get(l10n::StringId::ToolbarSectionShow), l10n::Get(l10n::StringId::ToolbarSectionPane),
-                     l10n::Get(l10n::StringId::ToolbarSectionMore)};
+                     l10n::Get(l10n::StringId::ToolbarSectionMore), l10n::Get(l10n::StringId::ToolbarSectionView)};
     for (size_t i = 0; i < std::size(kToolbarTools); ++i) {
         ui::ToolbarPickerTile tile;
         tile.glyph = kToolbarTools[i].glyph;
@@ -3314,6 +3335,17 @@ void ShowToolbarCustomize(AppState& s, int page) {
         tile.checked = ToolbarToolPinned(s, app::kToolbarToolIds[i]);
         tile.toggle = kToolbarTools[i].toggle;
         tile.toggle_on = tile.toggle && ToolbarToggleOn(s, i);
+        spec.pins.push_back(std::move(tile));
+    }
+    // 排序与筛选: the view buttons at the toolbar's right, shown or hidden
+    // in place (tiles kToolbarToolCount + i).
+    for (size_t i = 0; i < kToolbarViewCount; ++i) {
+        ui::ToolbarPickerTile tile;
+        tile.glyph = kToolbarViews[i].glyph;
+        tile.label = l10n::Get(kToolbarViews[i].label);
+        tile.keywords = std::wstring(kToolbarViews[i].id);
+        tile.section = 5;
+        tile.checked = ToolbarViewShown(s, i);
         spec.pins.push_back(std::move(tile));
     }
     spec.pins_order = ToolbarPinsOrder(s);
@@ -3357,13 +3389,21 @@ void ShowToolbarCustomize(AppState& s, int page) {
     // The picker hands over the checked tiles in its order: the toolbar's.
     spec.on_tools = [&s, save](const std::vector<size_t>& pinned) {
         std::vector<std::wstring> tools;
-        for (size_t index : pinned)
+        bool view[kToolbarViewCount] = {};
+        for (size_t index : pinned) {
             if (index < app::kToolbarToolCount) tools.emplace_back(app::kToolbarToolIds[index]);
+            else if (index - app::kToolbarToolCount < kToolbarViewCount) view[index - app::kToolbarToolCount] = true;
+        }
+        bool changed = false;
+        for (size_t i = 0; i < kToolbarViewCount; ++i)
+            if (ToolbarViewShown(s, i) != view[i]) { ToolbarViewPref(s, i) = view[i]; changed = true; }
         tools = app::NormalizeToolbarTools(tools);
-        if (tools == s.appPrefs.toolbar_tools) return;
-        s.appPrefs.toolbar_tools = std::move(tools);
-        if (g_toolbar_link_tool >= 0) PushToolbarPinDrag(s);   // the ring follows its pin
-        save();
+        if (tools != s.appPrefs.toolbar_tools) {
+            s.appPrefs.toolbar_tools = std::move(tools);
+            if (g_toolbar_link_tool >= 0) PushToolbarPinDrag(s);   // the ring follows its pin
+            changed = true;
+        }
+        if (changed) save();
     };
     spec.on_selection = [&s, save](const std::vector<size_t>& shown) {
         std::vector<std::wstring> actions;
@@ -3386,13 +3426,14 @@ void ShowToolbarCustomize(AppState& s, int page) {
     };
     // T3c: the toolbar beside the open picker.
     spec.on_preview = [&s](int index) {
-        g_toolbar_preview = index;
+        // The view tiles show or hide in place: no dashed preview pin.
+        g_toolbar_preview = index >= 0 && static_cast<size_t>(index) < app::kToolbarToolCount ? index : -1;
         PushToolbarPinDrag(s);
     };
     // T3d: a pinned tile hovered in the picker rings its toolbar pin (the
     // selection page's chip is not on the toolbar, so it rings nothing).
     spec.on_link = [&s](int page, int index, const std::wstring& value) {
-        g_toolbar_link_tool = page == 0 ? index : -1;
+        g_toolbar_link_tool = page == 0 && index >= 0 && static_cast<size_t>(index) < app::kToolbarToolCount ? index : -1;
         g_toolbar_link_app = page == 2 ? value : std::wstring{};
         PushToolbarPinDrag(s);
     };
@@ -3408,6 +3449,8 @@ void ShowToolbarCustomize(AppState& s, int page) {
             now.pins[i].checked = ToolbarToolPinned(s, app::kToolbarToolIds[i]);
             now.pins[i].toggle_on = now.pins[i].toggle && ToolbarToggleOn(s, i);
         }
+        for (size_t i = 0; i < kToolbarViewCount && app::kToolbarToolCount + i < now.pins.size(); ++i)
+            now.pins[app::kToolbarToolCount + i].checked = ToolbarViewShown(s, i);
         now.apps_pinned = s.appPrefs.toolbar_apps.size();
         std::vector<char> placed(now.apps.size(), 0);
         for (const auto& path : s.appPrefs.toolbar_apps)

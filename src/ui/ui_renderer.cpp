@@ -223,7 +223,7 @@ float ToolbarCommandWidth(const fluent::Painter& painter, IDWriteTextFormat* for
 } // namespace
 
 float MainRenderer::ToolbarGroupWidth(float w) const {
-    if (toolbar_group_ < 0) return 0.0f;
+    if (toolbar_group_ < 0 || !toolbar_show_group_) return 0.0f;
     // Narrow windows: icon only, like Sort and Filter.
     if (w - EffectiveSidebarWidth(w) < 700.0f * scale_) return 32.0f * scale_;
     if (toolbar_group_ > 0) {
@@ -242,10 +242,11 @@ ToolbarLayout MainRenderer::ToolbarLayoutAt(float w, float create_width, float f
     const float left = EffectiveSidebarWidth(w);
     const float group_width = ToolbarGroupWidth(w);
     IDWriteTextFormat* format = compositor_ ? compositor_->TextFormat() : nullptr;
-    const float sort_width = ToolbarCommandWidth(painter_, format, l10n::StringId::ToolbarSort,
-                                                 L"\xE8CB", true, scale_, 88.0f);
-    const float filter_width = ToolbarCommandWidth(painter_, format, l10n::StringId::ToolbarFilter,
-                                                   kIconFilter, false, scale_, 88.0f);
+    // Hidden ones pass -1 (MakeToolbarLayout); an opening filter shows anyway.
+    const float sort_width = !toolbar_show_sort_ ? -1.0f
+        : ToolbarCommandWidth(painter_, format, l10n::StringId::ToolbarSort, L"\xE8CB", true, scale_, 88.0f);
+    const float filter_width = !toolbar_show_filter_ ? -1.0f
+        : ToolbarCommandWidth(painter_, format, l10n::StringId::ToolbarFilter, kIconFilter, false, scale_, 88.0f);
     const float selection_span = selection_count_ > 0 && !embedded_ && !pin_drop_mode_
         ? SelectionChipSpan(scale_, SelectionChipLabelWidth(w, selection_count_), selection_actions_) : 0.0f;
     ToolbarPinOptions pins;

@@ -136,6 +136,11 @@ struct AppPrefs {
     // Saved as json toolbar_tools (+ toolbar_tools_v); older prefs had the
     // toolbar_pins mask. A fresh install gets the prototype's default.
     std::vector<std::wstring> toolbar_tools = DefaultToolbarTools();
+    // 排序 / 筛选 / 分组 at the toolbar's right (自定义工具栏 → 排序与筛选).
+    // An active filter or grouping shows its control even when hidden.
+    bool toolbar_show_sort = true;
+    bool toolbar_show_filter = true;
+    bool toolbar_show_group = true;
     // Actions the selection chip may show, in chip order, by id
     // (toolbar_selection.h). Without the json key: all, default order.
     std::vector<std::wstring> toolbar_selection = DefaultToolbarSelection();

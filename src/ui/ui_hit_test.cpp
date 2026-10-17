@@ -761,7 +761,7 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             }
             return r;
         }
-        if (ContainsPt(toolbar.sort,x,y)) {r.region=HitTestResult::ToolbarSort; return r;}
+        if (toolbar.sort.right>toolbar.sort.left && ContainsPt(toolbar.sort,x,y)) {r.region=HitTestResult::ToolbarSort; return r;}
         if (toolbar.group.right>toolbar.group.left && ContainsPt(toolbar.group,x,y)) {
             const bool chip=toolbar_group_>0 && toolbar.group.right-toolbar.group.left>=60*scale_;
             r.region=chip && ContainsPt(ToolbarGroupClearRect(toolbar.group,scale_),x,y)
@@ -769,7 +769,7 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             return r;
         }
         if (ContainsPt(toolbar.overflow,x,y)) {r.region=HitTestResult::ToolbarMore; return r;}
-        if (ContainsPt(toolbar.filter,x,y)) {
+        if (toolbar.filter.right>toolbar.filter.left && ContainsPt(toolbar.filter,x,y)) {
             r.region = !vm.pane.filter_text.empty() && vm.pane.filter_expand >= 0.985f &&
                 ContainsPt(FilterClearRect(rect,vm.pane.filter_expand),x,y)
                 ? HitTestResult::FilterClear : HitTestResult::FilterBox;

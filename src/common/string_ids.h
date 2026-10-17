@@ -2268,5 +2268,6 @@
 #define IDS_OP_RENAMED_PREFIX                                                            3478
 #define IDS_OP_CREATING_PREFIX                                                           3479
 #define IDS_OP_RENAMING_PREFIX                                                           3480
+#define IDS_TOOLBAR_SECTION_VIEW                                                         3481
 
 #endif  // PULSE_STRING_IDS_H

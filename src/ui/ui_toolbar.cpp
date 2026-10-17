@@ -749,9 +749,12 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     // in step with its open/close fade.
     const float picker_open=group_wheel_.OpenAmount();
     const bool sort_picker=group_wheel_.IsSortPicker();
-    command(layout.sort,L"\xE8CB",l10n::StringId::ToolbarSort,HitTestResult::ToolbarSort,true,
-        sort_picker ? picker_open : 0.0f);
-    if (!filter_field) {
+    if (layout.sort.right > layout.sort.left)
+        command(layout.sort,L"\xE8CB",l10n::StringId::ToolbarSort,HitTestResult::ToolbarSort,true,
+            sort_picker ? picker_open : 0.0f);
+    if (layout.filter.right <= layout.filter.left) {
+        // hidden (自定义工具栏 → 排序与筛选)
+    } else if (!filter_field) {
         command(layout.filter,kIconFilter,l10n::StringId::ToolbarFilter,HitTestResult::FilterBox,false);
     } else {
         fluent::TextFieldSpec field;

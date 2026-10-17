@@ -266,6 +266,12 @@ std::wstring AppPrefs::ToJson() const {
     }
     out += L"]";
     out += L",\n  \"toolbar_tools_v\":" + std::to_wstring(app::kToolbarToolsVersion);
+    out += L",\n  \"toolbar_show_sort\":";
+    out += toolbar_show_sort ? L"true" : L"false";
+    out += L",\n  \"toolbar_show_filter\":";
+    out += toolbar_show_filter ? L"true" : L"false";
+    out += L",\n  \"toolbar_show_group\":";
+    out += toolbar_show_group ? L"true" : L"false";
     // Still written for an older Pulse, which knows only these five.
     out += L",\n  \"toolbar_pins\":" + std::to_wstring(app::LegacyPinsFromToolbarTools(toolbar_tools));
     out += L",\n  \"toolbar_selection\":[";
@@ -454,6 +460,9 @@ bool AppPrefs::FromJson(const std::wstring& json) {
         toolbar_tools = app::UpgradeToolbarTools(
             app::ToolbarToolsFromLegacyPins(pins > 0 ? static_cast<uint32_t>(pins) : 0u));
     }
+    toolbar_show_sort = pulse::json::ExtractBool(json, L"toolbar_show_sort", true);
+    toolbar_show_filter = pulse::json::ExtractBool(json, L"toolbar_show_filter", true);
+    toolbar_show_group = pulse::json::ExtractBool(json, L"toolbar_show_group", true);
     toolbar_selection = json.find(L"\"toolbar_selection\"") != std::wstring::npos
         ? app::NormalizeToolbarSelection(pulse::json::ExtractStringArray(json, L"toolbar_selection"))
         : app::DefaultToolbarSelection();

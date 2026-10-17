@@ -94,11 +94,16 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
     // the selection chip to its smallest form (more, clear) first. That
     // happens as the field starts to open, not midway through the animation.
     const bool filter_open = filter_expand > 0.0f;
+    // 自定义工具栏 → 排序与筛选: a negative sort / filter width hides that
+    // button (an open filter shows anyway); a hidden group passes 0.
+    const bool sort_shown = sort_width >= 0.0f;
+    const bool filter_shown = filter_width >= 0.0f || filter_open;
     const float filter_open_w = 200*scale;
     const float chip_span = filter_open ? std::min(selection_span, SelectionChipSpan(scale, 0.0f, 0)) : selection_span;
     const bool drop_mode = pin_options.drop_mode;
     if ((!overflow || drop_mode) && (pin_count > 0 || (drop_mode && pin_options.label_width > 0.0f))) {
-        const float view_min = 70*scale + (group_width > 0.0f ? 38*scale : 0.0f) +
+        const float view_min = (sort_shown ? 38*scale : 0.0f) + (filter_shown ? 32*scale : 0.0f) +
+                               (group_width > 0.0f ? 38*scale : 0.0f) +
                                (filter_open ? filter_open_w - 32*scale + chip_span : 0.0f);
         const int count = std::min(pin_count, kToolbarPinSlots);
         const bool gap = pin_options.app_from > 0 && pin_options.app_from < count;
@@ -121,35 +126,52 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
         }
     }
     // sort_width: measured "icon + label + chevron" width (0 = legacy 88 DIP).
-    float sort_w = available >= 700*scale ? (sort_width > 0.0f ? sort_width : 88*scale) : 32*scale;
+    float sort_w = !sort_shown ? 0.0f
+        : available >= 700*scale ? (sort_width > 0.0f ? sort_width : 88*scale) : 32*scale;
     // filter_width: measured "icon + label" width (0 = legacy 88 DIP); kept above the
     // 60 DIP icon-only threshold. Expanding grows the field to the left.
-    float filter_base = available >= 700*scale
+    float filter_base = !filter_shown ? 0.0f : available >= 700*scale
         ? (filter_width > 0.0f ? std::max(filter_width, 64*scale) : 88*scale) : 32*scale;
     float group_w = group_width;
     // While something is selected the selection chip (prototype note 4) comes
     // before the view labels: they fold to icons first so the chip keeps its
     // quick actions. The chip itself shrinks into whatever is left.
     const float room = view_end - left_end - (overflow ? 0.0f : chip_span);
-    auto block_of = [&](float filter) { return sort_w+6*scale+filter+(group_w > 0.0f ? group_w+6*scale : 0.0f); };
+    // The shown buttons with 6 DIP between them (all three: sort+6+filter+6+group).
+    auto block_of = [&](float filter) {
+        const int n = (sort_shown ? 1 : 0) + (filter_shown ? 1 : 0) + (group_w > 0.0f ? 1 : 0);
+        return (sort_shown ? sort_w : 0.0f) + (filter_shown ? filter : 0.0f) + (group_w > 0.0f ? group_w : 0.0f) +
+               (n > 1 ? static_cast<float>(n-1)*6*scale : 0.0f);
+    };
     // Priority collapse when the labels do not fit: icon-only sort / filter
     // first, then a narrower group chip (never below its icon).
-    if (block_of(filter_base) > room) { sort_w = 32*scale; filter_base = 32*scale; }
-    const float filter_goal = filter_open ? std::max(filter_base, filter_open_w) : filter_base;
-    if (block_of(filter_goal) > room) sort_w = 32*scale;
+    if (block_of(filter_base) > room) {
+        if (sort_shown) sort_w = 32*scale;
+        if (filter_shown) filter_base = 32*scale;
+    }
+    const float filter_goal = !filter_shown ? 0.0f : filter_open ? std::max(filter_base, filter_open_w) : filter_base;
+    if (sort_shown && block_of(filter_goal) > room) sort_w = 32*scale;
     if (group_w > 0.0f && block_of(filter_goal) > room)
         group_w = std::max(32*scale, group_w-(block_of(filter_goal)-room));
     const float filter_max = std::clamp(room-block_of(0.0f),filter_base,220*scale);
-    const float filter_w = filter_base + (filter_max-filter_base)*std::clamp(filter_expand,0.0f,1.0f);
+    const float filter_w = !filter_shown ? 0.0f
+        : filter_base + (filter_max-filter_base)*std::clamp(filter_expand,0.0f,1.0f);
     // Still too narrow to right-align: start right after the left cluster instead.
     x = std::max(left_end, view_end-block_of(filter_w));
-    out.sort = {x,top+50*scale,x+sort_w,top+82*scale};
-    x = out.sort.right + 6*scale;
-    out.filter = {x,top+50*scale,x+filter_w,top+82*scale};
-    if (group_width > 0.0f) {
-        const float gx = out.filter.right+6*scale;
-        out.group = {gx,top+50*scale,gx+group_w,top+82*scale};
+    // A hidden button keeps an empty rect (no paint, no hit) at its place.
+    if (sort_shown) {
+        out.sort = {x,top+50*scale,x+sort_w,top+82*scale};
+        x = out.sort.right + 6*scale;
+    } else {
+        out.sort = {x,top+50*scale,x,top+82*scale};
     }
+    if (filter_shown) {
+        out.filter = {x,top+50*scale,x+filter_w,top+82*scale};
+        x = out.filter.right + 6*scale;
+    } else {
+        out.filter = {x,top+50*scale,x,top+82*scale};
+    }
+    out.group = {x,top+50*scale,group_width > 0.0f ? x+group_w : x,top+82*scale};
     return out;
 }
 

@@ -1351,6 +1351,13 @@ public:
     void SetSearchBarMinWidth(float dip) { search_min_dip_ = dip; }
     // Toolbar "Group" button: -1 hidden, 0 not grouped, 1..4 app::GroupBy value.
     void SetToolbarGroup(int group_by) { toolbar_group_ = group_by; }
+    // 自定义工具栏 → 排序与筛选: which of 排序 / 筛选 / 分组 the toolbar shows
+    // (the caller already forces an active filter or grouping on).
+    void SetToolbarView(bool sort, bool filter, bool group) {
+        toolbar_show_sort_ = sort;
+        toolbar_show_filter_ = filter;
+        toolbar_show_group_ = group;
+    }
     // 自定义工具栏: the New button's main action (0 folder, 1 the type made
     // last, 2 menu only), whether that last type was a text document, and how
     // many commands are pinned.
@@ -1986,6 +1993,9 @@ private:
     bool vertical_tabs_ = false;
     float search_min_dip_ = 0.0f;
     int toolbar_group_ = -1;
+    bool toolbar_show_sort_ = true;
+    bool toolbar_show_filter_ = true;
+    bool toolbar_show_group_ = true;
     int new_primary_ = 0;
     bool new_last_text_ = false;
     int pin_count_ = 0;
