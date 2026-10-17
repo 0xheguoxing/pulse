@@ -935,6 +935,33 @@ bool MainRenderer::PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& f
            y >= name.top && y < name.bottom;
 }
 
+bool MainRenderer::PointInItemGrip(const PaneViewModel& vm, const D2D1_RECT_F& full_bounds,
+                                   int source_index, float x, float y) const {
+    if (vm.view_mode != ViewMode::Details && vm.view_mode != ViewMode::List &&
+        vm.view_mode != ViewMode::SmallIcons)
+        return true;
+    if (PointInItemName(vm, full_bounds, source_index, x, y)) return true;
+    const int view_index = vm.ViewIndex(source_index);
+    if (view_index < 0) return false;
+    const D2D1_RECT_F pane_bounds = PaneBodyBounds(vm, full_bounds);
+    const float extra = PaneExtraTop(vm, scale_, pane_bounds.right - pane_bounds.left, compositor_);
+    const D2D1_RECT_F list = PaneListRect(pane_bounds, extra, vm.view_mode);
+    const ViewLayout layout(vm.view_mode, list, vm.EntryCount(), vm.scroll_x, vm.scroll_y, scale_,
+                            ListRowHeightDip(vm, list), vm.Groups());
+    const D2D1_RECT_F cell = layout.ItemRect(view_index);
+    D2D1_RECT_F icon = layout.IconRect(view_index);
+    if (vm.view_mode == ViewMode::Details) {
+        if (const DetailsTreeRow* tree_row = vm.tree ? vm.tree->At(view_index) : nullptr) {
+            const float shift = std::round(TreeOffsetDip(*tree_row) * scale_);
+            icon.left += shift;
+            icon.right += shift;
+        }
+    }
+    // Icon plus the gap up to the name text (PointInItemName covers the text).
+    return x >= icon.left - 3.0f * scale_ && x < icon.right + 8.0f * scale_ &&
+           y >= cell.top && y < cell.bottom;
+}
+
 int MainRenderer::TreeChevronAt(const PaneViewModel& vm, const D2D1_RECT_F& full_bounds,
                                 float x, float y) const {
     if (!vm.tree || vm.view_mode != ViewMode::Details) return -1;

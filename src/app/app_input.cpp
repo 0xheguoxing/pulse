@@ -855,7 +855,10 @@ void ResetMarquee(AppState& s) {
     s.marqueePending = false;
     s.marqueeActive = false;
     s.marqueeAdditive = false;
+    s.marqueeToggle = false;
+    s.marqueeRowIndex = -1;
     s.marqueeBase.clear();
+    s.marqueeBefore.clear();
     s.blankClickPane = nullptr;
     s.blankClickTab = nullptr;
     s.blankClickGeneration = 0;
@@ -893,8 +896,10 @@ void ApplyMarqueeSelection(AppState& s) {
     const float curY = std::clamp(static_cast<float>(s.marqueeCur.y), list.top, list.bottom);
     const float left = std::min(static_cast<float>(start.x), curX);
     const float top = std::min(static_cast<float>(start.y), curY);
-    const float right = std::max(static_cast<float>(start.x), curX);
-    const float bottom = std::max(static_cast<float>(start.y), curY);
+    // A straight vertical (or horizontal) drag still crosses the rows under
+    // it, as in File Explorer: give the band at least 1 px of extent.
+    const float right = std::max(std::max(static_cast<float>(start.x), curX), left + 1.0f);
+    const float bottom = std::max(std::max(static_cast<float>(start.y), curY), top + 1.0f);
 
     ++tab->selection_revision;
     tab->all_selected = false;
@@ -906,8 +911,12 @@ void ApplyMarqueeSelection(AppState& s) {
     if (n > 0 && right > left && bottom > top) {
         std::vector<int> hits;
         s.renderer.ItemsInRectInPane(pane, FocusedPaneRect(s), D2D1::RectF(left, top, right, bottom), hits);
-        for (const int source : hits)
-            if (!IsDetailsTreePlaceholder(*tab, source)) tab->selected.insert(source);
+        for (const int source : hits) {
+            if (IsDetailsTreePlaceholder(*tab, source)) continue;
+            // Ctrl (File Explorer): the band inverts what it covers.
+            if (s.marqueeToggle && s.marqueeBase.contains(source)) tab->selected.erase(source);
+            else tab->selected.insert(source);
+        }
     }
 
     if (tab->selected.empty()) {
@@ -1195,6 +1204,38 @@ bool PointInHitItemName(AppState& s, const ui::WindowViewModel& vm,
         return s.renderer.PointInItemName(slot.pane, slot.rect, hit.index, x, y);
     }
     return s.renderer.PointInItemName(vm.pane, FocusedPaneRect(s), hit.index, x, y);
+}
+
+static bool PointInHitItemGrip(AppState& s, const ui::WindowViewModel& vm,
+                               const ui::HitTestResult& hit, float x, float y) {
+    if (hit.region != ui::HitTestResult::Row || hit.index < 0) return true;
+    if (hit.pane_index >= 0 &&
+        hit.pane_index < static_cast<int>(vm.pane_slots.size())) {
+        const auto& slot = vm.pane_slots[static_cast<size_t>(hit.pane_index)];
+        return s.renderer.PointInItemGrip(slot.pane, slot.rect, hit.index, x, y);
+    }
+    return s.renderer.PointInItemGrip(vm.pane, FocusedPaneRect(s), hit.index, x, y);
+}
+
+// Esc during a marquee puts this selection back.
+static void RememberSelectionForMarquee(AppState& s, app::Tab* tab) {
+    s.marqueeBefore.clear();
+    s.marqueeBeforeAll = tab && tab->all_selected;
+    s.marqueeBeforeIndex = tab ? tab->selected_index : -1;
+    if (tab && !tab->all_selected) s.marqueeBefore = tab->selected;
+}
+
+static bool CancelMarquee(AppState& s) {
+    if (!s.marqueeActive && !s.marqueePending) return false;
+    if (app::Tab* tab = ActiveTab(s); tab && s.marqueeActive) {
+        ++tab->selection_revision;
+        tab->all_selected = s.marqueeBeforeAll;
+        tab->selected = s.marqueeBefore;
+        tab->selected_index = s.marqueeBeforeIndex;
+    }
+    ResetMarquee(s);
+    if (s.hwnd && GetCapture() == s.hwnd) ReleaseCapture();
+    return true;
 }
 
 void CancelScrollAnimation(AppState& s) {
@@ -2112,6 +2153,15 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                      std::abs(my - s->marqueeStart.y) >= GetSystemMetrics(SM_CYDRAG))) {
                     s->marqueeActive = true;
                     s->marqueePending = false;
+                    s->tooltipText.clear();  // the hover tip of the pressed row would ride along
+                    // A marquee from a row clears the selection only now that
+                    // it really is a marquee (a plain click selects the row).
+                    if (s->marqueeRowIndex >= 0) {
+                        if (!s->marqueeAdditive) {
+                            if (app::Tab* tab = ActiveTab(*s)) tab->ClearSelection();
+                        }
+                        s->marqueeRowIndex = -1;
+                    }
                 }
                 // Applied once per frame in Render (UpdateMarqueeFrame).
                 if (s->marqueeActive) s->marqueeSelectionDirty = true;
@@ -2676,6 +2726,33 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
             const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             app::Tab* tab = ActiveTab(*s);
+            // File Explorer: in Details / List only the icon and the name drag
+            // the item; the rest of the row starts a marquee (a click there
+            // still selects the row, on release).
+            if (tab && !IsSettingsTab(tab) && !PointInHitItemGrip(*s, vm, hit, static_cast<float>(mx), static_cast<float>(my))) {
+                RememberSelectionForMarquee(*s, tab);
+                s->marqueePending = true;
+                s->marqueeActive = false;
+                s->marqueeAdditive = ctrl || shift;
+                s->marqueeToggle = ctrl;
+                s->marqueeRowIndex = hit.index;
+                s->marqueeRowCtrl = ctrl;
+                s->marqueeRowShift = shift;
+                s->blankClickTab = nullptr;
+                s->blankClickPane = s->pane;
+                s->blankClickGeneration = tab->view_generation;
+                s->marqueeStart = s->marqueeCur = POINT{ mx, my };
+                s->marqueeOriginScrollX = tab->scroll_x;
+                s->marqueeOriginScrollY = tab->scroll_y;
+                s->marqueeBase.clear();
+                if (ctrl || shift) {
+                    tab->MaterializeSelection();
+                    s->marqueeBase = tab->selected;
+                }
+                SetCapture(hwnd);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
             const bool renameCandidate = !ctrl && !shift && tab && !tab->net_readonly &&
                 s->renameIndex < 0 && tab->SelectedCount() == 1 &&
                 tab->selected_index == hit.index && tab->IsSelected(hit.index) &&
@@ -3360,12 +3437,17 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
                    (PointInList(*s, mx, my) && hit.region == ui::HitTestResult::None))) {
             app::Tab* tab = ActiveTab(*s);
             const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             // A selection-clearing first click still counts toward the
             // blank double click, so the second click navigates back.
-            if (tab && !ctrl) tab->ClearSelection();
+            // Shift keeps the selection (the band adds), Ctrl inverts.
+            RememberSelectionForMarquee(*s, tab);
+            if (tab && !ctrl && !shift) tab->ClearSelection();
             s->marqueePending = true;
             s->marqueeActive = false;
-            s->marqueeAdditive = ctrl;
+            s->marqueeAdditive = ctrl || shift;
+            s->marqueeToggle = ctrl;
+            s->marqueeRowIndex = -1;
             s->blankClickPane = s->pane;
             s->blankClickTab = s->appPrefs.blank_click_action != app::kBlankClickOff && tab &&
                 !IsAddressSearchResults(tab) && !ctrl && PointInList(*s, mx, my) &&
@@ -3376,7 +3458,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             s->marqueeOriginScrollX = tab ? tab->scroll_x : 0.0f;
             s->marqueeOriginScrollY = tab ? tab->scroll_y : 0.0f;
             s->marqueeBase.clear();
-            if (tab && ctrl) {
+            if (tab && (ctrl || shift)) {
                 tab->MaterializeSelection();
                 s->marqueeBase = tab->selected;
             }
@@ -3879,8 +3961,16 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 s->blankDoubleTime = static_cast<DWORD>(GetMessageTime());
                 s->blankDoublePoint = s->marqueeStart;
                 goBack = goBack && double_click;
+                const int row_click = s->marqueePending ? s->marqueeRowIndex : -1;
+                const bool row_ctrl = s->marqueeRowCtrl, row_shift = s->marqueeRowShift;
                 if (s->marqueeActive) ApplyMarqueeSelection(*s);
                 ResetMarquee(*s);
+                if (row_click >= 0) {
+                    // No movement: the press on the row was a click on it.
+                    HandleListRowClick(*s, row_click, row_ctrl, row_shift);
+                    FinishListRowClick(*s);
+                    goBack = false;
+                }
                 if (goBack) RunBlankDoubleClick(*s, *tab);
             } else if (s->clickCollapseIndex >= 0) {
                 FinishListRowClick(*s);
@@ -4372,6 +4462,10 @@ void ShowKeyboardContextMenu(AppState& s) {
 LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (!s) return DefWindowProcW(hwnd, msg, wParam, lParam);
         if (wParam == VK_ESCAPE && SysCtxPreviewDragCancel(*s)) return 0;
+        if (wParam == VK_ESCAPE && CancelMarquee(*s)) {
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         if (wParam == VK_ESCAPE && s->settings.menu_drag_item() >= 0) {
             // Esc puts a dragged Pulse menu preview row back.
             s->settings.EndMenuDrag();
