@@ -252,6 +252,7 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
                     compositor_->SmallFormat(),theme.text_secondary);
             }
             // Read-only tiles: what opens in Pulse right now (registry read-back), faded while off.
+            // DrawIconText's last argument is a size factor: fade with the colour, keep the size.
             const wchar_t* cover_icons[]={L"\xE8B7",L"\xE7F4",L"\xE765"};
             for(int i=0;i<3;++i) {
                 const auto r=lay.integration_cover[i];
@@ -264,7 +265,7 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
                 dc->DrawRoundedRectangle(D2D1::RoundedRect(r,6*scale_,6*scale_),brStrokeCard_.get(),1);
                 const float mid=(r.top+r.bottom)/2;
                 DrawIconText(r.left+10*scale_,mid-8*scale_,16*scale_,16*scale_,cover_icons[i],L"",
-                    master_on ? theme.accent : theme.text_secondary,master_on ? 0.95f : 0.5f);
+                    master_on ? theme.accent : WithAlpha(theme.text_secondary,theme.text_secondary.a*0.5f),0.95f);
                 const float check=active ? 22*scale_ : 0.0f;
                 painter_.DrawText(l10n::Get(kIntegrationCover[i]),
                     D2D1::RectF(r.left+34*scale_,r.top,r.right-8*scale_-check,r.bottom),
@@ -284,7 +285,7 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
                 if(state.hovered) hover_fill(D2D1::RectF(r.left+40*scale_,r.top,r.right-6*scale_,r.bottom));
                 const float x=r.left+54*scale_, text_left=r.left+112*scale_;
                 painter_.DrawCheckBox(D2D1::RectF(x,r.top+11*scale_,x+20*scale_,r.top+31*scale_),L"",state);
-                DrawIconText(x+30*scale_,r.top+11*scale_,20*scale_,20*scale_,icon,L"",theme.text_secondary,master_on ? 0.85f : 0.45f);
+                DrawIconText(x+30*scale_,r.top+11*scale_,20*scale_,20*scale_,icon,L"",master_on ? theme.text_secondary : WithAlpha(theme.text_secondary,theme.text_secondary.a*0.5f),0.85f);
                 painter_.DrawText(l10n::Get(title),D2D1::RectF(text_left,r.top+9*scale_,title_right,r.top+31*scale_),
                     compositor_->TextFormat(),master_on ? theme.text : theme.text_secondary);
                 painter_.DrawWrappedCaption(l10n::Get(desc),D2D1::Point2F(text_left,r.top+31*scale_),
