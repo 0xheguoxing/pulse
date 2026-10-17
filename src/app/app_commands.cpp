@@ -3,6 +3,7 @@
 #include "folder_alias.h"
 #include "zip_compress_ui.h"
 #include "keymap.h"
+#include "../ui/ui_motion.h"
 #include <atomic>
 #include "../ui/shortcut_help.h"
 // app_commands.cpp — extracted from app_main.cpp.
@@ -1376,7 +1377,7 @@ void DispatchMenuCommand(AppState& s, int cmd) {
         break;
     case app::CmdDetailsPanel:
         s.showDetailsPanel = !s.showDetailsPanel;
-        s.renderer.SetDetailsPanelVisible(s.showDetailsPanel);
+        s.renderer.SetDetailsPanelVisible(s.showDetailsPanel, true);
         break;
     case app::CmdLayoutSingle: ApplyLayoutPreset(s, app::LayoutPreset::Single); break;
     case app::CmdLayoutTwoVertical: ApplyLayoutPreset(s, app::LayoutPreset::TwoVertical); break;
@@ -2479,6 +2480,13 @@ void ShowNewDropdown(AppState& s) {
     }
     items.push_back(std::move(primary));
     items.push_back(CustomizeToolbarItem());
+    {
+        // Motion v2 "newmenu": the menu grows out of the 新建 button.
+        POINT tl{(LONG)anchor.left, (LONG)anchor.top}, br{(LONG)anchor.right, (LONG)anchor.bottom};
+        ClientToScreen(s.hwnd, &tl);
+        ClientToScreen(s.hwnd, &br);
+        s.menu->SetMorphFrom(RECT{tl.x, tl.y, br.x, br.y});
+    }
     int cmd = s.menu->TrackPopup(pt, std::move(items));
     if (RunShellNewCommand(s, cmd, templates)) return;
     if (cmd != app::CmdNone) DispatchMenuCommand(s, cmd);
@@ -4318,6 +4326,29 @@ void ToggleTheme(AppState& s) {
     SetThemeMode(s, s.darkMode ? 1 : 2);
 }
 void SetThemeMode(AppState& s, int mode) {
+    // Circular reveal (motion v2 "theme"): keep the frame the old theme
+    // painted, then let the new one grow over it from the pointer.
+    const ui::ThemeMode next = mode == 1 ? ui::ThemeMode::Light : mode == 2 ? ui::ThemeMode::Dark : ui::ThemeMode::Auto;
+    const bool reveal = s.hwnd && IsWindowVisible(s.hwnd) && !IsIconic(s.hwnd) &&
+        ui::motion::SystemAnimationsEnabled() && !ui::IsHighContrast() && !s.shot_high_contrast &&
+        ui::ShouldUseDarkMode(next) != s.darkMode;
+    if (reveal) {
+        s.compositor.CaptureNextFrame();
+        RedrawWindow(s.hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+        s.compositor.CancelCaptureNextFrame();
+        if (s.compositor.HeldFrame()) {
+            RECT rc{};
+            GetClientRect(s.hwnd, &rc);
+            POINT pt{};
+            GetCursorPos(&pt);
+            ScreenToClient(s.hwnd, &pt);
+            if (!PtInRect(&rc, pt)) pt = POINT{rc.right / 2, rc.bottom / 2};
+            s.themeReveal.start = ui::motion::NowMs();
+            s.themeReveal.x = static_cast<float>(pt.x);
+            s.themeReveal.y = static_cast<float>(pt.y);
+            if (s.framePump.Running()) s.framePump.Arm();
+        }
+    }
     s.appPrefs.theme_mode = std::clamp(mode, 0, 2);
     s.appPrefs.Save();
     s.themeOverride = mode == 1 ? ui::ThemeMode::Light : mode == 2 ? ui::ThemeMode::Dark : ui::ThemeMode::Auto;

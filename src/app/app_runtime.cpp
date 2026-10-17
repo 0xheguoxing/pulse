@@ -511,12 +511,71 @@ static void FillLeavingRows(const AppState& s, const std::wstring& dir, ui::Pane
     if (!pane.leaving_names.empty()) pane.leaving_since = s.leavingSince;
 }
 
+// Motion v2 "layout": panes added or removed by a layout change glide from
+// where they were drawn (a new pane grows in from its outer edge). The same
+// content area only: a window resize or sidebar/details motion snaps.
+static void AnimatePaneLayout(AppState& s, const D2D1_RECT_F& content,
+                              std::vector<std::pair<app::Pane*, D2D1_RECT_F>>& laid,
+                              std::vector<app::SplitterLayout>& splitters) {
+    auto& m = s.paneLayoutMotion;
+    const auto same_rect = [](const D2D1_RECT_F& a, const D2D1_RECT_F& b) {
+        return std::fabs(a.left - b.left) < 0.5f && std::fabs(a.top - b.top) < 0.5f &&
+               std::fabs(a.right - b.right) < 0.5f && std::fabs(a.bottom - b.bottom) < 0.5f;
+    };
+    const uint64_t now = ui::motion::NowMs();
+    if (laid.size() != m.last.size() && !m.last.empty() && same_rect(content, m.content) && !s.splitterDragging &&
+        ui::motion::SystemAnimationsEnabled()) {
+        m.from = m.last;
+        m.start = now;
+    }
+    if (!same_rect(content, m.content)) m.start = 0;
+    m.content = content;
+    if (m.start) {
+        const float ms = static_cast<float>(now - m.start);
+        if (ms >= static_cast<float>(ui::motion::SpringSettleMs(ui::motion::spring::Smooth))) {
+            m.start = 0;
+        } else {
+            const float p = ui::motion::SpringProgress(ui::motion::spring::Smooth, ms);
+            const D2D1_RECT_F first_final = laid.empty() ? D2D1_RECT_F{} : laid[0].second;
+            for (auto& [pane, r] : laid) {
+                D2D1_RECT_F f = r;
+                bool found = false;
+                for (const auto& [key, rect] : m.from)
+                    if (key == pane) { f = rect; found = true; break; }
+                if (!found) {
+                    if (r.left > content.left + 1.0f) f = D2D1::RectF(r.right, r.top, r.right, r.bottom);
+                    else if (r.top > content.top + 1.0f) f = D2D1::RectF(r.left, r.bottom, r.right, r.bottom);
+                    else f = D2D1::RectF(r.left, r.top, r.left, r.bottom);
+                }
+                r = D2D1::RectF(std::round(f.left + (r.left - f.left) * p), std::round(f.top + (r.top - f.top) * p),
+                                std::round(f.right + (r.right - f.right) * p),
+                                std::round(f.bottom + (r.bottom - f.bottom) * p));
+            }
+            // One splitter between two panes follows the first pane's edge;
+            // anything more involved hides its splitters until settled.
+            if (splitters.size() == 1 && laid.size() == 2) {
+                auto& sp = splitters[0];
+                const bool vertical = sp.orientation == app::SplitOrientation::Vertical;
+                const float d = vertical ? laid[0].second.right - first_final.right
+                                         : laid[0].second.bottom - first_final.bottom;
+                if (vertical) { sp.hit_rect.left += d; sp.hit_rect.right += d; }
+                else { sp.hit_rect.top += d; sp.hit_rect.bottom += d; }
+            } else {
+                splitters.clear();
+            }
+        }
+    }
+    m.last.clear();
+    for (const auto& [pane, r] : laid) m.last.emplace_back(pane, r);
+}
+
 void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
     D2D1_RECT_F content = s.renderer.ContentRect(
         static_cast<float>(s.compositor.Width()), static_cast<float>(s.compositor.Height()));
     std::vector<std::pair<app::Pane*, D2D1_RECT_F>> laid;
     std::vector<app::SplitterLayout> splitters;
     if (Root(s)) app::LayoutWindowPanes(*Root(s), content, s.scale, laid, &splitters);
+    AnimatePaneLayout(s, content, laid, splitters);
     vm.pane_slots.clear();
     vm.splitters.clear();
     s.splitterNodes.clear();
@@ -1286,6 +1345,11 @@ bool ToggleStarred(AppState& s, const std::wstring& target,
     if (target.empty() || fs::IsVirtualPath(target)) return false;
     const bool on = s.places.ToggleStarred(target, kind);
     s.detailsStarred = on;
+    POINT cursor{};
+    RECT client{};
+    if (on && s.hwnd && GetCursorPos(&cursor) && ScreenToClient(s.hwnd, &cursor) &&
+        GetClientRect(s.hwnd, &client) && PtInRect(&client, cursor))
+        s.renderer.LaunchStarFlight(static_cast<float>(cursor.x), static_cast<float>(cursor.y));
     RefreshStarredViews(s);
     InvalidateRect(s.hwnd, nullptr, FALSE);
     return on;
@@ -1633,8 +1697,20 @@ bool TickTrayDeck(AppState& s) {
             a.appear = 1.0f;
             // A fresh collect drops in on top; cards revealed underneath
             // start hidden behind the stack (depth 3) and rise into place.
-            if (i == 0 && grew) { a.appear = 0.0f; a.depth = 0.0f; }
-            else if (i > 0) a.depth = 3.0f;
+            if (i > 0) a.depth = 3.0f;
+        }
+        // A fresh collect drops in on top - even when the path still has a
+        // settled anim left over from an earlier stay in the tray.
+        if (i == 0 && grew && !(s.trayDrag.active && s.trayDrag.path == item.path)) {
+            a.appear = 0.0f;
+            a.depth = 0.0f;
+            // Motion v2 "droptray": the new card falls in on a spring - it
+            // lands with a small bounce and its tilt straightens out.
+            if (ui::motion::SystemAnimationsEnabled()) {
+                a.dy = -22.0f;
+                a.angle = (total & 1) ? -6.0f : 6.0f;
+                StartTrayMotion(a, M::Spring, now);
+            }
         }
         if (item.path == s.trayRaisePath) {
             a.appear = 0.0f;
@@ -2148,6 +2224,9 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     if (s.pinDragActive) {
         vm.sidebar_pin_drag_index = s.pinDragRun;
         if (s.pinGapVisible) vm.sidebar_pin_gap_line_y = s.pinGapLineY;
+        POINT cursor{};
+        if (s.hwnd && GetCursorPos(&cursor) && ScreenToClient(s.hwnd, &cursor))
+            vm.sidebar_pin_drag_dy = static_cast<float>(cursor.y - s.pinDragStartPt.y);
     }
     if (app::Tab* sel_tab = ActiveTab(s); sel_tab && sel_tab->content_results && sel_tab->SelectedCount() > 1) {
         wchar_t count[64]{};
@@ -2322,6 +2401,14 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
                 if (s.tabOrder[pos] == s.tabDragIndex) { vm.tab_drag_index = pos; break; }
             }
             vm.tab_drag_x = s.tabDragFloatLeft;
+            POINT cursor{};
+            if (s.window_tabs.items.size() >= 2 && !s.tabDragFromChip && s.hwnd &&
+                GetCursorPos(&cursor) && ScreenToClient(s.hwnd, &cursor)) {
+                const float dy = static_cast<float>(cursor.y - s.tabDragStartPt.y);
+                const float limit = 24.0f * s.scale;  // kTabDetachDistanceDip
+                vm.tab_detach_dy = std::clamp(dy, -limit, limit);
+                vm.tab_detach_pull = std::clamp(std::fabs(dy) / limit, 0.0f, 1.0f);
+            }
             vm.tab_drag_count = s.tabDragRunLen;
             vm.tab_drag_chip = s.tabDragFromChip;
             if (s.tabDragRunLen > 1) vm.tab_drag_index = s.tabDragRunPos;
@@ -2430,6 +2517,10 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
                 card.name = TrayItemName(item.path);
                 card.depth = static_cast<float>(i);
             }
+            // A collect that the deck tick has not seen yet stays hidden for
+            // this one frame, so the drop-in never flashes the settled card.
+            if (i == 0 && TrayItemTotalCount(s.tray) > static_cast<int>(s.trayDeckLastTotal))
+                card.appear = 0.0f;
             deck.cards.push_back(std::move(card));
         }
         for (const auto& [key, anim] : s.trayCards) {

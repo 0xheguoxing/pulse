@@ -3005,7 +3005,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             ShowSplitDropdown(*s);
         } else if (hit.region == ui::HitTestResult::DetailsToggle) {
             s->showDetailsPanel = !s->showDetailsPanel;
-            s->renderer.SetDetailsPanelVisible(s->showDetailsPanel);
+            s->renderer.SetDetailsPanelVisible(s->showDetailsPanel, true);
             InvalidateRect(hwnd, nullptr, FALSE);
         } else if (hit.region == ui::HitTestResult::PaneMediumIcons) {
             SetViewMode(*s, ui::ViewMode::MediumIcons);
@@ -3313,6 +3313,7 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
             if (fitTab && hit.pane_index >= 0 &&
                 hit.pane_index < static_cast<int>(vm.pane_slots.size())) {
                 const auto& fitView = vm.pane_slots[static_cast<size_t>(hit.pane_index)].pane;
+                s->renderer.NoteColumnAutoFit(hit.pane_index);   // motion v2 "colresize"
                 app::AutoFitPaneColumn(*fitTab, fitView, s->renderer,
                     s->renderer.PaneBodyBounds(fitView,
                         vm.pane_slots[static_cast<size_t>(hit.pane_index)].rect), hit.index);

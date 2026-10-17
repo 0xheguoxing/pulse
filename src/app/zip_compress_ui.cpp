@@ -61,6 +61,7 @@ bool CompressTarget(AppState& s, std::vector<std::wstring>* paths, std::wstring*
 
 void ShowResult(AppState& s, const ZipDone& done) {
     const std::wstring name = Leaf(done.zip_path);
+    s.notification_toast.ReplaceNextSnack();   // the 正在压缩 capsule becomes the result
     if (done.result.ok) {
         std::wstring detail = Fill(l10n::Get(l10n::StringId::ZipCompressDetail), L"{n}",
                                    std::to_wstring(done.result.files));

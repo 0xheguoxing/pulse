@@ -249,6 +249,70 @@ static void TickDragLanding(AppState& s) {
     }
 }
 
+// cubic-bezier(.3,.6,.2,1), the motion v2 reveal curve.
+static float ThemeRevealEase(float t) {
+    constexpr float x1 = 0.3f, y1 = 0.6f, x2 = 0.2f, y2 = 1.0f;
+    auto bez = [](float a, float b, float u) {
+        const float v = 1.0f - u;
+        return 3.0f * v * v * u * a + 3.0f * v * u * u * b + u * u * u;
+    };
+    float lo = 0.0f, hi = 1.0f, u = t;
+    for (int i = 0; i < 24; ++i) {
+        u = (lo + hi) * 0.5f;
+        if (bez(x1, x2, u) < t) lo = u; else hi = u;
+    }
+    return bez(y1, y2, u);
+}
+
+// The old theme's frame, drawn everywhere outside the growing circle.
+static void DrawThemeReveal(AppState& s, ID2D1DeviceContext* dc, const D2D1_RECT_F& rect) {
+    auto& r = s.themeReveal;
+    if (!r.start) return;
+    ID2D1Bitmap1* old = s.compositor.HeldFrame();
+    constexpr float kRevealMs = 520.0f;
+    const float t = static_cast<float>(ui::motion::NowMs() - r.start) / kRevealMs;
+    const D2D1_SIZE_U px = old ? old->GetPixelSize() : D2D1_SIZE_U{};
+    auto stop = [&] {
+        r = {};
+        s.compositor.ReleaseHeldFrame();
+    };
+    if (!old || t >= 1.0f || px.width != static_cast<UINT32>(rect.right) ||
+        px.height != static_cast<UINT32>(rect.bottom)) {
+        stop();
+        return;
+    }
+    const float far_x = (std::max)(r.x, rect.right - r.x);
+    const float far_y = (std::max)(r.y, rect.bottom - r.y);
+    const float radius = std::sqrt(far_x * far_x + far_y * far_y) * ThemeRevealEase((std::max)(t, 0.0f)) + 0.5f;
+    ID2D1Factory* factory = nullptr;
+    dc->GetFactory(&factory);
+    ID2D1RectangleGeometry* box = nullptr;
+    ID2D1EllipseGeometry* hole = nullptr;
+    ID2D1GeometryGroup* mask = nullptr;
+    ID2D1BitmapBrush* brush = nullptr;
+    bool ok = factory &&
+        SUCCEEDED(factory->CreateRectangleGeometry(D2D1::RectF(-1.0f, -1.0f, rect.right + 1.0f, rect.bottom + 1.0f), &box)) &&
+        SUCCEEDED(factory->CreateEllipseGeometry(D2D1::Ellipse(D2D1::Point2F(r.x, r.y), radius, radius), &hole)) &&
+        SUCCEEDED(dc->CreateBitmapBrush(old, &brush));
+    if (ok) {
+        ID2D1Geometry* parts[2] = {box, hole};
+        ok = SUCCEEDED(factory->CreateGeometryGroup(D2D1_FILL_MODE_ALTERNATE, parts, 2, &mask));
+    }
+    if (ok) {
+        // Copy, not blend: the frames may be translucent (backdrop), and the
+        // old pixels must replace the new ones outside the circle.
+        const D2D1_PRIMITIVE_BLEND blend = dc->GetPrimitiveBlend();
+        dc->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_COPY);
+        dc->FillGeometry(mask, brush);
+        dc->SetPrimitiveBlend(blend);
+    }
+    for (IUnknown* p : {static_cast<IUnknown*>(mask), static_cast<IUnknown*>(brush),
+                        static_cast<IUnknown*>(hole), static_cast<IUnknown*>(box),
+                        static_cast<IUnknown*>(factory)})
+        if (p) p->Release();
+    if (!ok) stop();
+}
+
 void Render(AppState& s) {
     auto t0 = std::chrono::steady_clock::now();
 
@@ -291,8 +355,10 @@ void Render(AppState& s) {
     s.renderer.Render(vm, rect, theme);
     TickDragLanding(s);
     s.renderer.DrawHoverPreview(hover_card, rect, theme, hc);  // also the dwell line, and stops a video
+    s.renderer.DrawStarFlight(theme);
     AfterHoverPreviewDraw(s);
     s.notification_toast.Draw(s.compositor, theme, s.scale, hc);
+    DrawThemeReveal(s, dc, rect);
 
     const HRESULT end_hr = dc->EndDraw();
     const auto draw_end = std::chrono::steady_clock::now();
@@ -358,7 +424,8 @@ void Render(AppState& s) {
     // Motion started or still running: the next frames follow the display
     // clock instead of the 16 ms UI timer (see WM_FRAME_PUMP).
     if (s.framePump.Running() &&
-        (s.scrollAnimating || s.marqueeAutoScroll || s.renderer.TickMotion(GetTickCount64())))
+        (s.scrollAnimating || s.marqueeAutoScroll || s.themeReveal.start || s.paneLayoutMotion.start ||
+         s.renderer.TickMotion(GetTickCount64())))
         s.framePump.Arm();
 }
 
@@ -1576,7 +1643,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (!s) return 0;
         s->framePump.FrameConsumed();
         if (!IsWindowVisible(hwnd) || IsIconic(hwnd) ||
-            (!s->scrollAnimating && !s->marqueeAutoScroll && !s->renderer.TickMotion(GetTickCount64()))) {
+            (!s->scrollAnimating && !s->marqueeAutoScroll && !s->themeReveal.start && !s->paneLayoutMotion.start &&
+             !s->renderer.TickMotion(GetTickCount64()))) {
             s->framePump.Disarm();  // WM_PAINT re-arms once shown again
             return 0;
         }
@@ -1629,7 +1697,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             }
             TickSessionAutosave(*s, hwnd, now);
             if (s->renderer.TickDetailsPreview(now)) dirty = true;
-            if (s->renderer.TickMotion(now)) {
+            if (s->themeReveal.start || s->paneLayoutMotion.start || s->renderer.TickMotion(now)) {
                 // Paced by the frame pump when it runs; the timer only
                 // re-arms it so the two never both render the same motion.
                 if (s->framePump.Running()) s->framePump.Arm();

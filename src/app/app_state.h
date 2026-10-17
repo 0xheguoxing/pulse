@@ -561,6 +561,19 @@ struct AppState : AppCoreOwner {
         uint64_t since = 0;
         uint64_t reveal_at = 0;   // 0 until the cards were sent
     } dragLanding;
+    // Theme switch: the old theme's last frame (Compositor::HeldFrame) stays
+    // outside a circle that grows from the button until it covers the window.
+    struct ThemeReveal {
+        uint64_t start = 0;   // ui::motion::NowMs, 0 when idle
+        float x = 0.0f, y = 0.0f;   // client px
+    } themeReveal;
+    // Motion v2 "layout": a preset that adds or removes panes lets them glide
+    // to their new rects (smooth spring); new panes grow in from their edge.
+    struct PaneLayoutMotion {
+        std::vector<std::pair<const void*, D2D1_RECT_F>> last, from;
+        D2D1_RECT_F content{};
+        uint64_t start = 0;   // ui::motion::NowMs, 0 when idle
+    } paneLayoutMotion;
     // Items a paste, drop, 压缩 or shell verb brings into the folder are
     // selected as they show up (arrival_select.h). Names are lower-cased;
     // times are GetTickCount64.
