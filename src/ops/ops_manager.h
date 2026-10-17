@@ -363,6 +363,10 @@ private:
                          const std::wstring& error);
     bool PrepareLockRetry(OpRequest& req, uint64_t task_id);
     void SetStatus(const std::function<void(OpStatus&)>& fn);
+    // Per-file progress: the status always changes, but the UI is told at
+    // most every kProgressNotifyMs. Phase changes and results use SetStatus.
+    void SetProgressStatus(const std::function<void(OpStatus&)>& fn);
+    void NotifyStatusChanged();
     void PushUndo(const OpRequest& req, uint64_t task_id,
                   const std::vector<std::wstring>* actual_destinations = nullptr);
     void LoadRecoveryJournal();
@@ -374,6 +378,12 @@ private:
                     ShellMenuAnswer answer);
 
     std::function<void()> notify_;
+    // One posted notification at a time: stamped when notify_ runs, cleared
+    // when the UI reads Status(). Without it a 10 000-file copy posts 50 000+
+    // messages that the UI thread handles one by one. A consumer that never
+    // reads Status() is still told again after kNotifyPendingMs.
+    mutable std::atomic<ULONGLONG> notify_pending_since_{0};
+    std::atomic<ULONGLONG> last_status_notify_{0};
 
     mutable std::mutex mutex_;            // guards queue_ + status_ + undo_
     std::condition_variable cv_;

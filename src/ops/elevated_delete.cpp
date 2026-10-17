@@ -69,18 +69,56 @@ private:
     std::atomic<bool>& cancel_;
     const ShellTransferProgress& progress_;
 };
+std::wstring ParentKey(const std::wstring& path) {
+    std::wstring key = path::StripExtendedPathPrefix(path);
+    const size_t slash = key.find_last_of(L'\\');
+    key.resize(slash == std::wstring::npos ? 0 : slash);
+    if (!key.empty()) CharLowerBuffW(key.data(), static_cast<DWORD>(key.size()));
+    return key;
+}
+}  // namespace
+
+struct RecycleCache::State {
+    ComPtr<IShellItem> bin;
+    std::wstring transfer_parent;
+    ComPtr<ITransferSource> transfer;
+    std::wstring volume_parent;
+    bool volume_checked = false;
+    bool available = false;
+    DWORD volume_error = 0;
+};
+RecycleCache::RecycleCache() : state_(std::make_unique<State>()) {}
+RecycleCache::~RecycleCache() = default;
+
+namespace {
 HRESULT RecycleOnly(const std::wstring& source, std::atomic<bool>& cancel,
-                    ShellTransferResult& result, const ShellTransferProgress& progress) {
+                    ShellTransferResult& result, const ShellTransferProgress& progress,
+                    RecycleCache* cache) {
     ComPtr<IShellItem> item, parent, bin;
     HRESULT hr = SHCreateItemFromParsingName(path::StripExtendedPathPrefix(source).c_str(), nullptr, IID_PPV_ARGS(&item));
     if (FAILED(hr)) return hr;
-    hr = item->GetParent(&parent);
-    if (FAILED(hr)) return hr;
     ComPtr<ITransferSource> transfer;
-    hr = parent->BindToHandler(nullptr, BHID_Transfer, IID_PPV_ARGS(&transfer));
-    if (FAILED(hr)) return hr;
-    hr = SHGetKnownFolderItem(FOLDERID_RecycleBinFolder, KF_FLAG_DEFAULT, nullptr, IID_PPV_ARGS(&bin));
-    if (FAILED(hr)) return hr;
+    const std::wstring parent_key = cache ? ParentKey(source) : std::wstring{};
+    if (cache && cache->state().transfer && !parent_key.empty() &&
+        cache->state().transfer_parent == parent_key) {
+        transfer = cache->state().transfer;
+    } else {
+        hr = item->GetParent(&parent);
+        if (FAILED(hr)) return hr;
+        hr = parent->BindToHandler(nullptr, BHID_Transfer, IID_PPV_ARGS(&transfer));
+        if (FAILED(hr)) return hr;
+        if (cache) {
+            cache->state().transfer = transfer;
+            cache->state().transfer_parent = parent_key;
+        }
+    }
+    if (cache && cache->state().bin) {
+        bin = cache->state().bin;
+    } else {
+        hr = SHGetKnownFolderItem(FOLDERID_RecycleBinFolder, KF_FLAG_DEFAULT, nullptr, IID_PPV_ARGS(&bin));
+        if (FAILED(hr)) return hr;
+        if (cache) cache->state().bin = bin;
+    }
     ComPtr<RecycleSink> sink;
     sink.Attach(new (std::nothrow) RecycleSink(source, cancel, progress));
     if (!sink) return E_OUTOFMEMORY;
@@ -99,6 +137,11 @@ HRESULT RecycleOnly(const std::wstring& source, std::atomic<bool>& cancel,
         }
     }
     transfer->Unadvise(cookie);
+    // A failed transfer source is not trusted with the next item.
+    if (cache && FAILED(hr)) {
+        cache->state().transfer.Reset();
+        cache->state().transfer_parent.clear();
+    }
     const DWORD attributes = GetFileAttributesW(source.c_str());
     const DWORD source_error = attributes == INVALID_FILE_ATTRIBUTES ? GetLastError() : ERROR_SUCCESS;
     const bool missing = attributes == INVALID_FILE_ATTRIBUTES &&
@@ -212,7 +255,8 @@ bool RecycleBinAvailable(const std::wstring& path, DWORD* volume_error) {
 }
 
 ShellTransferResult DeleteWithCurrentToken(const std::vector<std::wstring>& sources,
-    bool permanent, HWND owner, std::atomic<bool>& cancel, ShellTransferProgress progress) {
+    bool permanent, HWND owner, std::atomic<bool>& cancel, ShellTransferProgress progress,
+    RecycleCache* cache) {
     ShellTransferResult result;
     for (const auto& source : sources) {
         if (cancel.load()) { result.hr = kCancelled; result.cancelled = true; break; }
@@ -221,7 +265,27 @@ ShellTransferResult DeleteWithCurrentToken(const std::vector<std::wstring>& sour
             // (DeletePaths); a recycle request for them is refused, never
             // turned into a silent permanent delete.
             DWORD volume_error = 0;
-            if (!RecycleBinAvailable(source, &volume_error)) {
+            bool available = false;
+            // A mount point is checked on its own: its volume is not its parent's.
+            const DWORD source_attributes = cache ? GetFileAttributesW(source.c_str()) : INVALID_FILE_ATTRIBUTES;
+            const bool cacheable = source_attributes != INVALID_FILE_ATTRIBUTES &&
+                !(source_attributes & FILE_ATTRIBUTE_REPARSE_POINT);
+            const std::wstring volume_parent = cacheable ? ParentKey(source) : std::wstring{};
+            if (cache && cache->state().volume_checked && !volume_parent.empty() &&
+                cache->state().volume_parent == volume_parent) {
+                available = cache->state().available;
+                volume_error = cache->state().volume_error;
+            } else {
+                available = RecycleBinAvailable(source, &volume_error);
+                if (cache && !volume_parent.empty()) {
+                    auto& state = cache->state();
+                    state.volume_checked = true;
+                    state.volume_parent = volume_parent;
+                    state.available = available;
+                    state.volume_error = volume_error;
+                }
+            }
+            if (!available) {
                 if (volume_error) {
                     result.hr = HRESULT_FROM_WIN32(volume_error);
                 } else {
@@ -230,7 +294,7 @@ ShellTransferResult DeleteWithCurrentToken(const std::vector<std::wstring>& sour
                 }
                 break;
             }
-            result.hr = RecycleOnly(source, cancel, result, progress);
+            result.hr = RecycleOnly(source, cancel, result, progress, cache);
             result.cancelled = cancel.load() || result.hr == kCancelled || result.hr == E_ABORT || result.hr == COPYENGINE_E_USER_CANCELLED;
             if (result.cancelled && SUCCEEDED(result.hr)) result.hr = kCancelled;
             if (FAILED(result.hr) || result.cancelled) break;

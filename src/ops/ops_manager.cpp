@@ -26,6 +26,7 @@
 #include <filesystem>
 #include <system_error>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 #include <winioctl.h>
 
@@ -160,6 +161,14 @@ std::wstring JoinPath(const std::wstring& dir, const std::wstring& name) {
     if (dir.empty()) return name;
     if (dir.back() == L'\\') return dir + name;
     return dir + L"\\" + name;
+}
+
+// Long paths get the \\?\ form so Win32 calls accept deep trees. Short
+// paths and paths already in that form pass through unchanged.
+std::wstring LongPathForApi(const std::wstring& path) {
+    if (path.size() < 240 || path.starts_with(L"\\\\?\\") || path.starts_with(L"\\\\.\\")) return path;
+    if (path.starts_with(L"\\\\")) return L"\\\\?\\UNC\\" + path.substr(2);
+    return L"\\\\?\\" + path;
 }
 
 std::wstring DisplayPath(const std::wstring& path) {
@@ -1337,8 +1346,23 @@ bool OpsManager::PrepareLockRetry(OpRequest& req, uint64_t task_id) {
 }
 
 OpStatus OpsManager::Status() const {
+    // Cleared before the snapshot: a change made after it posts again.
+    notify_pending_since_.store(0);
     std::lock_guard<std::mutex> lock(mutex_);
     return PresentOperationStatus(status_);
+}
+
+constexpr ULONGLONG kNotifyPendingMs = 250;
+
+void OpsManager::NotifyStatusChanged() {
+    if (!notify_) return;
+    const ULONGLONG now = GetTickCount64();
+    ULONGLONG pending = notify_pending_since_.load();
+    do {
+        if (pending != 0 && now - pending < kNotifyPendingMs) return;
+    } while (!notify_pending_since_.compare_exchange_weak(pending, now));
+    last_status_notify_.store(now);
+    notify_();
 }
 
 void OpsManager::SetStatus(const std::function<void(OpStatus&)>& fn) {
@@ -1346,7 +1370,26 @@ void OpsManager::SetStatus(const std::function<void(OpStatus&)>& fn) {
         std::lock_guard<std::mutex> lock(mutex_);
         fn(status_);
     }
-    if (notify_) notify_();
+    NotifyStatusChanged();
+}
+
+constexpr ULONGLONG kProgressNotifyMs = 50;
+// Tasks this small show every finished item; it costs nothing at that count.
+constexpr uint64_t kEveryItemMaxTotal = 64;
+// Below this size CopyFile2 runs without a progress callback.
+constexpr uint64_t kProgressCallbackMinBytes = 1024 * 1024;
+
+void OpsManager::SetProgressStatus(const std::function<void(OpStatus&)>& fn) {
+    bool item_finished = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const uint64_t items_before = status_.completed_items;
+        fn(status_);
+        item_finished = status_.completed_items != items_before &&
+            status_.total_items <= kEveryItemMaxTotal;
+    }
+    if (item_finished || GetTickCount64() - last_status_notify_.load() >= kProgressNotifyMs)
+        NotifyStatusChanged();
 }
 
 bool OpsManager::CanUndo() const {
@@ -2223,7 +2266,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
     if (failure.empty() && !stop_requested() && req.type == OpType::Move && req.sources.size() == 1) {
         const std::wstring destination = JoinPath(req.dest_dir, root_name(req.sources.front()));
         if (!PathExists(destination) && !stop_requested()) {
-            if (MoveFileExW(req.sources.front().c_str(), destination.c_str(), MOVEFILE_WRITE_THROUGH)) {
+            if (MoveFileExW(req.sources.front().c_str(), destination.c_str(), 0)) {
                 completed_sources = req.sources;
                 moved_sources_ = req.sources;
                 completed_destinations.push_back(destination);
@@ -2299,7 +2342,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             // a lock) takes the per-file path below.
             if (stop_requested()) break;
             if (req.type == OpType::Move && !root.destination_preexisting &&
-                MoveFileExW(source.c_str(), root.destination.c_str(), MOVEFILE_WRITE_THROUGH)) {
+                MoveFileExW(source.c_str(), root.destination.c_str(), 0)) {
                 root.renamed = true;
                 moved_sources_.push_back(root.source);
                 completed_sources.push_back(root.source);
@@ -2310,46 +2353,86 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             entries.push_back(root);
             if (!root.directory || root.reparse) continue;
 
-            std::error_code ec;
-            fsys::recursive_directory_iterator it(fsys::path(source),
-                fsys::directory_options::none, ec);
-            fsys::recursive_directory_iterator end;
-            if (ec) {
-                failure_hr = HRESULT_FROM_WIN32(static_cast<DWORD>(ec.value()));
-                failure = l10n::Get(l10n::StringId::CouldNotReadTheSourceFolder).c_str() + source + L" | " + Win32Message(ec.value());
-                break;
-            }
-            for (; it != end;) {
-#ifdef PULSE_ELEVATED_TEST_CLIENT
-                ObserveTransferScanForReview(*this, it->path().wstring());
-#endif
+            // One FindFirstFileEx pass per folder: attributes, size and times
+            // arrive with the listing, so nothing is queried per entry. Depth
+            // first and pre-order, a folder before what it contains, which the
+            // copy loop and the keep-both rename below rely on. Links are
+            // copied as links and never entered.
+            struct OpenFolder {
+                HANDLE find = INVALID_HANDLE_VALUE;
+                std::wstring source;
+                std::wstring destination;
+            };
+            std::vector<OpenFolder> folders;
+            WIN32_FIND_DATAW pending_find{};
+            bool has_pending_find = false;
+            const auto open_folder = [&](const std::wstring& folder_source,
+                                         const std::wstring& folder_destination, bool is_root) {
+                WIN32_FIND_DATAW data{};
+                const std::wstring pattern = JoinPath(LongPathForApi(folder_source), L"*");
+                HANDLE find = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &data,
+                                               FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+                if (find == INVALID_HANDLE_VALUE) {
+                    const DWORD code = GetLastError();
+                    if (code == ERROR_FILE_NOT_FOUND || code == ERROR_NO_MORE_FILES) return true;  // empty
+                    failure_hr = HRESULT_FROM_WIN32(code);
+                    failure = (is_root ? l10n::Get(l10n::StringId::CouldNotReadTheSourceFolder).c_str()
+                                       : l10n::Get(l10n::StringId::CouldNotScanTheSourceFolder).c_str()) +
+                        folder_source + L" | " + Win32Message(code);
+                    return false;
+                }
+                folders.push_back({find, folder_source, folder_destination});
+                // The first result is consumed by the loop below.
+                pending_find = data;
+                has_pending_find = true;
+                return true;
+            };
+            bool scan_ok = open_folder(source, root.destination, true);
+            while (scan_ok && !folders.empty()) {
                 if (stop_requested()) break;
-                TransferEntry child;
-                child.source = it->path().wstring();
-                child.destination = (fsys::path(root.destination) /
-                    it->path().lexically_relative(fsys::path(source))).wstring();
-                if (!ReadEntryMetadata(child.source, child)) {
-                    {
-                        const DWORD code = GetLastError();
+                WIN32_FIND_DATAW data{};
+                if (has_pending_find) {
+                    data = pending_find;
+                    has_pending_find = false;
+                } else if (!FindNextFileW(folders.back().find, &data)) {
+                    const DWORD code = GetLastError();
+                    FindClose(folders.back().find);
+                    if (code != ERROR_NO_MORE_FILES) {
                         failure_hr = HRESULT_FROM_WIN32(code);
-                        failure = Win32Message(code) + L" | " + child.source;
+                        failure = l10n::Get(l10n::StringId::CouldNotScanTheSourceFolder).c_str() +
+                            folders.back().source + L" | " + Win32Message(code);
+                        folders.pop_back();
+                        scan_ok = false;
+                        break;
                     }
-                    break;
+                    folders.pop_back();
+                    continue;
                 }
-                if (stop_requested()) break;
+                const wchar_t* name = data.cFileName;
+                if (name[0] == L'.' && (name[1] == 0 || (name[1] == L'.' && name[2] == 0))) continue;
+                TransferEntry child;
+                child.source = JoinPath(folders.back().source, name);
+                child.destination = JoinPath(folders.back().destination, name);
+#ifdef PULSE_ELEVATED_TEST_CLIENT
+                ObserveTransferScanForReview(*this, child.source);
+#endif
+                child.attributes = data.dwFileAttributes;
+                child.directory = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                child.reparse = (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+                child.created = data.ftCreationTime;
+                child.accessed = data.ftLastAccessTime;
+                child.modified = data.ftLastWriteTime;
+                child.bytes = child.directory ? 0
+                    : (static_cast<uint64_t>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+                const bool descend = child.directory && !child.reparse;
                 entries.push_back(std::move(child));
-                if (entries.back().reparse && entries.back().directory) it.disable_recursion_pending();
-                const auto scanned_path = it->path().wstring();
-                it.increment(ec);
-                // An error may also turn the iterator into end: inspect it now,
-                // not in a loop body that will never execute again.
-                if (ec) {
-                    failure_hr = HRESULT_FROM_WIN32(static_cast<DWORD>(ec.value()));
-                    failure = l10n::Get(l10n::StringId::CouldNotScanTheSourceFolder).c_str() +
-                        scanned_path + L" | " + Win32Message(ec.value());
-                    break;
+                if (descend) {
+                    const TransferEntry& folder = entries.back();
+                    scan_ok = open_folder(folder.source, folder.destination, false);
                 }
             }
+            for (auto& folder : folders) FindClose(folder.find);
+            folders.clear();
             if (!failure.empty() || cancelled) break;
         }
     }
@@ -2408,7 +2491,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         published_bytes = overall;
         const ULONGLONG now = GetTickCount64();
         rate.Observe(now, overall, total_bytes);
-        SetStatus([&](OpStatus& st) {
+        SetProgressStatus([&](OpStatus& st) {
             st.current_item = FileName(entry.source);
             st.transferred_bytes = overall;
             st.completed_items = completed_items;
@@ -2437,7 +2520,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         total_bytes -= (std::min)(total_bytes, entry.bytes);
         ++processed_items;
         rate.Observe(GetTickCount64(), published_bytes, total_bytes);
-        SetStatus([&](OpStatus& st) {
+        SetProgressStatus([&](OpStatus& st) {
             st.total_bytes = total_bytes;
             st.transferred_bytes = published_bytes;
             st.completed_items = processed_items;
@@ -2463,6 +2546,25 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         return count;
     };
 
+    // Folders this task created (nothing inside can pre-exist, so the
+    // per-entry existence and same-object probes are skipped) and folders
+    // known to exist (no EnsureDirectories walk up the tree per file).
+    std::unordered_set<std::wstring> fresh_dirs;
+    std::unordered_set<std::wstring> ready_dirs;
+    const auto dir_key = [](const std::wstring& dir) {
+        std::wstring key = dir;
+        while (key.size() > 3 && key.back() == L'\\') key.pop_back();
+        if (!key.empty()) CharLowerBuffW(key.data(), static_cast<DWORD>(key.size()));
+        return key;
+    };
+    const auto ensure_parent = [&](const std::wstring& dir) {
+        std::wstring key = dir_key(dir);
+        if (ready_dirs.contains(key)) return true;
+        if (!EnsureDirectories(dir, failure)) return false;
+        ready_dirs.insert(std::move(key));
+        return true;
+    };
+
     for (size_t index = 0; failure.empty() && !cancelled && index < entries.size(); ++index) {
         if (stop_requested()) break;
         auto& entry = entries[index];
@@ -2481,14 +2583,17 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             mark_skipped(entry);
             continue;
         }
-        if (SameFileObject(entry.source, entry.destination)) {
+        const std::wstring parent_dir = ParentOf(entry.destination);
+        const std::wstring parent_key = dir_key(parent_dir);
+        const bool fresh_parent = fresh_dirs.contains(parent_key);
+        bool destination_is_directory = false;
+        bool destination_exists = !fresh_parent && PathExists(entry.destination, &destination_is_directory);
+        // Source and target can only be one object when the target exists.
+        if (destination_exists && SameFileObject(entry.source, entry.destination)) {
             if (entry.directory) skipped_prefixes.push_back(entry.source);
             mark_skipped(entry);
             continue;
         }
-
-        bool destination_is_directory = false;
-        bool destination_exists = PathExists(entry.destination, &destination_is_directory);
         ConflictChoice choice = repeated;
         const bool conflict = destination_exists &&
             !(entry.directory && !entry.reparse && destination_is_directory);
@@ -2587,7 +2692,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         }
 
         if (entry.reparse) {
-            if (!EnsureDirectories(ParentOf(entry.destination), failure)) break;
+            if (!ensure_parent(parent_dir)) break;
             if (!CopyReparsePoint(entry, failure)) break;
             if (req.type == OpType::Move) {
                 const BOOL removed = entry.directory ? RemoveDirectoryW(entry.source.c_str())
@@ -2611,10 +2716,30 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         }
 
         if (entry.directory) {
-            if (!EnsureDirectories(entry.destination, failure)) break;
+            const std::wstring key = dir_key(entry.destination);
+            if (fresh_parent || ready_dirs.contains(parent_key)) {
+                // The parent exists, so one CreateDirectory does it; an
+                // existing folder of that name is merged into.
+                if (CreateDirectoryW(entry.destination.c_str(), nullptr)) {
+                    fresh_dirs.insert(key);
+                } else {
+                    const DWORD code = GetLastError();
+                    bool is_directory = false;
+                    if (code != ERROR_ALREADY_EXISTS || !PathExists(entry.destination, &is_directory) || !is_directory) {
+                        failure_hr = HRESULT_FROM_WIN32(code);
+                        failure = l10n::Get(l10n::StringId::CouldNotCreateTheDestinationFolder).c_str() +
+                            entry.destination + L" | " + Win32Message(code);
+                        break;
+                    }
+                }
+            } else {
+                if (!EnsureDirectories(entry.destination, failure)) break;
+                if (!destination_exists) fresh_dirs.insert(key);
+            }
+            ready_dirs.insert(key);
             entry.directory_prepared = true;
             ++processed_items;
-            SetStatus([&](OpStatus& st) {
+            SetProgressStatus([&](OpStatus& st) {
                 st.current_item = FileName(entry.source);
                 st.completed_items = processed_items;
                 if (st.total_bytes == 0 && st.total_items > 0)
@@ -2623,7 +2748,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             continue;
         }
 
-        if (!EnsureDirectories(ParentOf(entry.destination), failure)) break;
+        if (!fresh_parent && !ensure_parent(parent_dir)) break;
 
         const bool direct = !destination_exists && entry.bytes < kDirectCopyMaxBytes;
         std::wstring copy_destination = direct ? entry.destination
@@ -2640,7 +2765,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 else total_bytes -= (std::min)(total_bytes, known_file_total - actual_total);
                 known_file_total = actual_total;
                 entry.bytes = actual_total;
-                SetStatus([&](OpStatus& st) { st.total_bytes = total_bytes; });
+                SetProgressStatus([&](OpStatus& st) { st.total_bytes = total_bytes; });
             }
             publish_progress(entry, done, actual_total, processed_items);
         };
@@ -2664,8 +2789,13 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             if (!resume) parameters.dwCopyFlags |= COPY_FILE_FAIL_IF_EXISTS;
             if (resume) parameters.dwCopyFlags |= COPY_FILE_RESUME_FROM_PAUSE;
             parameters.pfCancel = nullptr;
-            parameters.pProgressRoutine = CopyProgress;
-            parameters.pvCallbackContext = &context;
+            // Small files finish within one callback interval; the callback
+            // only adds a round trip per file. Pause and cancel are checked
+            // between files for them.
+            if (entry.bytes >= kProgressCallbackMinBytes) {
+                parameters.pProgressRoutine = CopyProgress;
+                parameters.pvCallbackContext = &context;
+            }
             copy_result = CopyFile2(entry.source.c_str(), copy_destination.c_str(), &parameters);
             if (copy_result == HRESULT_FROM_WIN32(ERROR_INVALID_PARAMETER) && extra_flags != 0 && !resume) {
                 extra_flags = 0;
@@ -2775,10 +2905,9 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         }
 
         if (req.type == OpType::Move) {
-            DWORD source_attributes = GetFileAttributesW(entry.source.c_str());
-            if (source_attributes != INVALID_FILE_ATTRIBUTES &&
-                (source_attributes & FILE_ATTRIBUTE_READONLY))
-                SetFileAttributesW(entry.source.c_str(), source_attributes & ~FILE_ATTRIBUTE_READONLY);
+            // The attributes were read while scanning.
+            if (entry.attributes & FILE_ATTRIBUTE_READONLY)
+                SetFileAttributesW(entry.source.c_str(), entry.attributes & ~FILE_ATTRIBUTE_READONLY);
             if (!DeleteFileW(entry.source.c_str())) {
                 {
                     const DWORD code = GetLastError();

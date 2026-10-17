@@ -5,6 +5,8 @@
 #include "../common/localization.h"
 #include "../common/runtime_log.h"
 #include <sherrors.h>
+#include <atomic>
+#include <vector>
 
 namespace pulse::ops {
 namespace {
@@ -49,6 +51,124 @@ std::wstring DeleteError(const ShellTransferResult& result) {
     return std::wstring(l10n::Get(l10n::StringId::CouldNotDeleteThisItemError).c_str()) + code +
            l10n::Get(l10n::StringId::Text3072).c_str();
 }
+
+// Permanent delete without the Shell. IFileOperation spends ~20 ms per item
+// on setup; a handle with POSIX delete semantics removes the name at once,
+// so a folder is empty, and deletable, as soon as its children are gone.
+// FILE_DISPOSITION_INFO_EX is spelled out because the Windows 8.1 build
+// targets headers older than it.
+constexpr auto kFileDispositionInfoEx = static_cast<FILE_INFO_BY_HANDLE_CLASS>(21);
+constexpr DWORD kDispositionDelete = 0x1;
+constexpr DWORD kDispositionPosixSemantics = 0x2;
+constexpr DWORD kDispositionIgnoreReadonly = 0x10;
+std::atomic<bool> g_disposition_ex_unsupported{false};
+
+std::wstring NativePath(const std::wstring& path) {
+    if (path.size() < 240 || path.starts_with(L"\\\\?\\")) return path;
+    if (path.starts_with(L"\\\\")) return L"\\\\?\\UNC\\" + path.substr(2);
+    return L"\\\\?\\" + path;
+}
+
+std::wstring JoinChild(const std::wstring& dir, const wchar_t* name) {
+    if (!dir.empty() && dir.back() == L'\\') return dir + name;
+    return dir + L"\\" + name;
+}
+
+// ERROR_SUCCESS, or why the item is still there.
+DWORD DeleteNativeItem(const std::wstring& path, DWORD attributes) {
+    const std::wstring api_path = NativePath(path);
+    if (!g_disposition_ex_unsupported.load(std::memory_order_relaxed)) {
+        HANDLE handle = CreateFileW(api_path.c_str(), DELETE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        if (handle == INVALID_HANDLE_VALUE) return GetLastError();
+        struct { DWORD flags; } info{kDispositionDelete | kDispositionPosixSemantics | kDispositionIgnoreReadonly};
+        const BOOL deleted = SetFileInformationByHandle(handle, kFileDispositionInfoEx, &info, sizeof(info));
+        const DWORD code = deleted ? ERROR_SUCCESS : GetLastError();
+        CloseHandle(handle);
+        if (deleted) return ERROR_SUCCESS;
+        // Before Windows 10 1809, or a file system without it (FAT, some
+        // shares): use the classic calls from now on.
+        if (code != ERROR_INVALID_PARAMETER && code != ERROR_NOT_SUPPORTED &&
+            code != ERROR_INVALID_FUNCTION)
+            return code;
+        g_disposition_ex_unsupported.store(true, std::memory_order_relaxed);
+    }
+    if (attributes & FILE_ATTRIBUTE_READONLY)
+        SetFileAttributesW(api_path.c_str(), attributes & ~FILE_ATTRIBUTE_READONLY);
+    const BOOL removed = (attributes & FILE_ATTRIBUTE_DIRECTORY) ? RemoveDirectoryW(api_path.c_str())
+                                                                 : DeleteFileW(api_path.c_str());
+    if (removed) return ERROR_SUCCESS;
+    const DWORD code = GetLastError();
+    if (attributes & FILE_ATTRIBUTE_READONLY)
+        SetFileAttributesW(api_path.c_str(), attributes);
+    return code;
+}
+
+struct NativeDeleteOutcome {
+    bool done = false;       // the source no longer exists
+    bool mutated = false;    // something under it was deleted
+    bool cancelled = false;
+};
+
+// Deletes one source, links as links (never entered). Stops at the first
+// item it cannot delete and leaves the rest, with its error UI, to the Shell
+// path. Lists the tree first so progress has a total.
+template <typename Progress>
+NativeDeleteOutcome DeleteNative(const std::wstring& source, std::atomic<bool>& cancel, Progress&& progress) {
+    NativeDeleteOutcome outcome;
+    // Never a volume root; anything that is not a plain path goes to the Shell.
+    if (source.size() <= 3 || source.starts_with(L"::") || source.find(L'/') != std::wstring::npos)
+        return outcome;
+    const DWORD root_attributes = GetFileAttributesW(NativePath(source).c_str());
+    if (root_attributes == INVALID_FILE_ATTRIBUTES) return outcome;
+    struct Item { std::wstring path; DWORD attributes; };
+    std::vector<Item> items;  // pre-order: every folder before its contents
+    items.push_back({source, root_attributes});
+    if ((root_attributes & FILE_ATTRIBUTE_DIRECTORY) && !(root_attributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        std::vector<size_t> pending{0};
+        while (!pending.empty()) {
+            if (cancel.load()) { outcome.cancelled = true; return outcome; }
+            const std::wstring folder = items[pending.back()].path;
+            pending.pop_back();
+            WIN32_FIND_DATAW data{};
+            const std::wstring pattern = JoinChild(NativePath(folder), L"*");
+            HANDLE find = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &data, FindExSearchNameMatch,
+                                           nullptr, FIND_FIRST_EX_LARGE_FETCH);
+            if (find == INVALID_HANDLE_VALUE) {
+                if (GetLastError() == ERROR_FILE_NOT_FOUND) continue;
+                return outcome;  // unreadable: the Shell path reports it
+            }
+            do {
+                const wchar_t* name = data.cFileName;
+                if (name[0] == L'.' && (name[1] == 0 || (name[1] == L'.' && name[2] == 0))) continue;
+                items.push_back({JoinChild(folder, name), data.dwFileAttributes});
+                if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
+                    !(data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+                    pending.push_back(items.size() - 1);
+            } while (FindNextFileW(find, &data));
+            const DWORD code = GetLastError();
+            FindClose(find);
+            if (code != ERROR_NO_MORE_FILES) return outcome;
+        }
+    }
+    // Reverse pre-order: contents before their folder.
+    const size_t total = items.size();
+    ULONGLONG last_report = 0;
+    for (size_t i = total; i-- > 0;) {
+        if (cancel.load()) { outcome.cancelled = true; return outcome; }
+        const DWORD code = DeleteNativeItem(items[i].path, items[i].attributes);
+        if (code != ERROR_SUCCESS && code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND) return outcome;
+        outcome.mutated = true;
+        const ULONGLONG now = GetTickCount64();
+        if (total > 1 && now - last_report >= 50) {
+            last_report = now;
+            progress(items[i].path, static_cast<float>((total - i) * 100.0 / total));
+        }
+    }
+    outcome.done = true;
+    return outcome;
+}
 }
 
 void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
@@ -76,9 +196,13 @@ void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
                                                 status.items_per_second);
         status.eta_seconds = rate.eta_seconds();
     };
+    // Set while the authorization view is up; leaving it is shown at once,
+    // ordinary per-item progress is throttled.
+    bool authorization_shown = false;
+    RecycleCache recycle_cache;
     for (const auto& source : req.sources) {
         if (transfer_cancel_.load()) break;
-        SetStatus([&](OpStatus& status) {
+        SetProgressStatus([&](OpStatus& status) {
             status.current_item = source;
             status.last_error.clear();
             status.phase = OpPhase::Running;
@@ -91,6 +215,7 @@ void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
         ElevatedTransferCallbacks callbacks;
         callbacks.authorization = [&](bool awaiting) {
             if (retrying && !awaiting) return;
+            authorization_shown = awaiting;
             SetStatus([&](OpStatus& status) {
                 status.authorization = awaiting ? AuthorizationState::Requesting : AuthorizationState::None;
                 status.authorization_retrying = false;
@@ -104,7 +229,7 @@ void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
                 if (percent <= 0) return;
                 retrying = false;
             }
-            SetStatus([&](OpStatus& status) {
+            const auto update = [&](OpStatus& status) {
                 status.authorization = AuthorizationState::None;
                 status.authorization_retrying = false;
                 status.current_item = item.empty() ? source : item;
@@ -113,12 +238,30 @@ void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
                     static_cast<float>((completed.size() + skipped + (percent < 0 ? 0 : percent / 100.0)) *
                                        100.0 / req.sources.size());
                 update_rate(status);
-            });
+            };
+            if (authorization_shown) { authorization_shown = false; SetStatus(update); }
+            else SetProgressStatus(update);
         };
         callbacks.progress = [&](const OpStatus& status) { progress(status.current_item, status.percent); };
-        bool authorized = NeedsShellTransfer({source}, L"", true);
         ShellTransferResult result;
-        for (;;) {
+        bool native_mutated = false;
+        if (permanent) {
+            const auto native = DeleteNative(source, transfer_cancel_, progress);
+            native_mutated = native.mutated;
+            if (native.done || native.cancelled) {
+                result.mutated = native.mutated;
+                if (native.done) result.sources = {source};
+                if (native.cancelled) {
+                    result.cancelled = true;
+                    result.hr = HRESULT_FROM_WIN32(ERROR_CANCELLED);
+                }
+            }
+        }
+        // What the native pass could not delete takes the Shell path, which
+        // brings the elevation and in-use prompts.
+        const bool handled = !result.sources.empty() || result.cancelled;
+        bool authorized = !handled && NeedsShellTransfer({source}, L"", true);
+        for (; !handled;) {
             if (authorized && defer_authorization) {
                 const auto choice = WaitForAuthorization(task_id, authorization_error, source);
                 if (choice == AuthorizationChoice::Cancel) break;
@@ -127,7 +270,8 @@ void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
             }
             result = authorized
                 ? DeleteWithElevatedHelper({source}, permanent, UiWindow(), transfer_cancel_, callbacks)
-                : DeleteWithCurrentToken({source}, permanent, UiWindow(), transfer_cancel_, progress);
+                : DeleteWithCurrentToken({source}, permanent, UiWindow(), transfer_cancel_, progress,
+                                         permanent ? nullptr : &recycle_cache);
             if (!authorized && !result.mutated && PermissionFailure(result.hr) && !transfer_cancel_.load()) {
                 authorized = true;
                 continue;
@@ -143,16 +287,20 @@ void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
             }
             break;
         }
+        if (native_mutated) result.mutated = true;
         completed.insert(completed.end(), result.sources.begin(), result.sources.end());
-        SetStatus([&](OpStatus& status) {
+        const auto finish_item = [&](OpStatus& status) {
             // A retried attempt on a reused elevated session never invokes the
             // authorization callback, so leave the Requesting view explicitly.
             status.authorization = AuthorizationState::None;
             status.authorization_retrying = false;
             status.completed_items = completed.size();
             update_rate(status);
-        });
-        if (result.mutated && (FAILED(result.hr) || result.cancelled)) {
+        };
+        if (handled && !authorization_shown) SetProgressStatus(finish_item);
+        else { authorization_shown = false; SetStatus(finish_item); }
+        // Also when a partly deleted item was then skipped.
+        if (result.mutated && (FAILED(result.hr) || result.cancelled || result.sources.empty())) {
         CompletedOperation refresh;
         refresh.task_id = task_id;
             refresh.type = req.type;
