@@ -583,8 +583,15 @@ void ClearTextWidthCache() {
 
     float ExpandedTrayHeight(const WindowViewModel& vm, const SidebarMetrics& m) {
         if (vm.tray_deck.hidden) return 0.0f;
-        // Shelf redesign: the runtime springs the height between the layers.
-        return std::max(40.0f, vm.tray_deck.height_dip) * m.scale;
+        // Shelf redesign: the runtime springs the height between the layers
+        // (down to 0 when the empty tray hides itself).
+        return std::max(vm.tray_deck.hide_empty ? 0.0f : 40.0f, vm.tray_deck.height_dip) * m.scale;
+    }
+
+    // Space under the places list: the tray plus its padding. The padding
+    // shrinks with a hiding tray so the list grows into the freed space.
+    float TrayGap(float tray_h, const SidebarMetrics& m) {
+        return m.pad * std::clamp(tray_h / (12.0f * m.scale), 0.0f, 1.0f);
     }
 
     // The open tray may cover the sidebar up to 20 dip from its top; the
@@ -620,7 +627,7 @@ void ClearTextWidthCache() {
                                                const D2D1_RECT_F& sb, float scale) {
         const SidebarMetrics m = MakeSidebarMetrics(scale);
         const float tray_height = std::min(ExpandedTrayHeight(vm, m), TrayHeightCap(vm, sb, scale));
-        const float bottom = std::max(sb.top, sb.bottom - tray_height - 2.0f * m.pad);
+        const float bottom = std::max(sb.top, sb.bottom - tray_height - 2.0f * TrayGap(tray_height, m));
         fluent::ScrollbarSpec bar;
         bar.viewport = D2D1::RectF(sb.right - 12.0f * scale, sb.top,
                                    sb.right - 2.0f * scale, bottom);
@@ -644,7 +651,8 @@ void ClearTextWidthCache() {
 
         if (compact) {
             const float rowH = 38.0f * scale;
-            const float trayH = vm.tray_deck.hidden ? 0.0f : 44.0f * scale;
+            const bool tray_gone = vm.tray_deck.hidden || (vm.tray_deck.hide_empty && vm.tray_deck.height_dip < 20.0f);
+            const float trayH = tray_gone ? 0.0f : 44.0f * scale;
             float y = sb.top;
             int run = 0;
             for (int g = 0; g < static_cast<int>(vm.sidebar.size()); ++g) {
@@ -707,14 +715,15 @@ void ClearTextWidthCache() {
             tray.kind = SidebarSlot::TrayPanel;
             tray.rc = D2D1::RectF(4.0f * scale, sb.bottom - trayH,
                                   width - 4.0f * scale, sb.bottom - 4.0f * scale);
-            if (!vm.tray_deck.hidden) out.push_back(tray);
+            if (!tray_gone) out.push_back(tray);
             return;
         }
 
         float trayH = ExpandedTrayHeight(vm, m);
         trayH = std::min(trayH, TrayHeightCap(vm, sb, scale));
-        const float trayTop = sb.bottom - m.pad - trayH;
-        const float contentBottom = trayTop - m.pad;
+        const float trayGap = TrayGap(trayH, m);
+        const float trayTop = sb.bottom - trayGap - trayH;
+        const float contentBottom = trayTop - trayGap;
         const float innerL = sb.left + m.pad;
         const float innerR = sb.right - m.pad;
 
@@ -811,10 +820,10 @@ void ClearTextWidthCache() {
             }
         }
 
-        if (vm.tray_deck.hidden) return;
+        if (vm.tray_deck.hidden || trayH < 1.0f * scale) return;
         SidebarSlot tray;
         tray.kind = SidebarSlot::TrayPanel;
-        tray.rc = D2D1::RectF(innerL, trayTop, innerR, sb.bottom - m.pad);
+        tray.rc = D2D1::RectF(innerL, trayTop, innerR, sb.bottom - trayGap);
         out.push_back(tray);
 
     }
@@ -2404,6 +2413,7 @@ struct SettingsLayout {
     D2D1_RECT_F protected_files_row{};
     D2D1_RECT_F pinned_names_row{};
     D2D1_RECT_F vertical_tabs_row{};
+    D2D1_RECT_F tray_hide_row{};
     D2D1_RECT_F hints_row{};
     D2D1_RECT_F hints_reset_row{};
     D2D1_RECT_F hints_reset_button{};

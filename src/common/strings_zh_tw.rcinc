@@ -2330,4 +2330,5 @@ BEGIN
     IDS_TRAY_COPY_N_TO_FORMAT "複製 {n} 項到「{name}」"
     IDS_TRAY_MOVE_N_TO_FORMAT "移動 {n} 項到「{name}」"
     IDS_TRAY_HIDE_WHEN_EMPTY "暫存區為空時完全隱藏"
+    IDS_TRAY_HIDE_WHEN_EMPTY_DESC "拖曳檔案經過視窗時它仍會出現"
 END

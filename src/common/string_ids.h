@@ -2346,5 +2346,6 @@
 #define IDS_TRAY_COPY_N_TO_FORMAT                                                        3556
 #define IDS_TRAY_MOVE_N_TO_FORMAT                                                        3557
 #define IDS_TRAY_HIDE_WHEN_EMPTY                                                         3558
+#define IDS_TRAY_HIDE_WHEN_EMPTY_DESC                                                    3559
 
 #endif  // PULSE_STRING_IDS_H

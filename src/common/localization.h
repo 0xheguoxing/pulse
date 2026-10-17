@@ -2342,6 +2342,7 @@ enum class StringId : UINT {
     TrayCopyNToFormat = IDS_TRAY_COPY_N_TO_FORMAT,
     TrayMoveNToFormat = IDS_TRAY_MOVE_N_TO_FORMAT,
     TrayHideWhenEmpty = IDS_TRAY_HIDE_WHEN_EMPTY,
+    TrayHideWhenEmptyDesc = IDS_TRAY_HIDE_WHEN_EMPTY_DESC,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

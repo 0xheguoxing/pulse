@@ -184,6 +184,8 @@ std::wstring AppPrefs::ToJson() const {
     out += list_thumbnail_badges ? L"true" : L"false";
     out += L",\n  \"vertical_tabs\":";
     out += vertical_tabs ? L"true" : L"false";
+    out += L",\n  \"tray_hide_when_empty\":";
+    out += tray_hide_when_empty ? L"true" : L"false";
     out += L",\n  \"sidebar_collapsed\":";
     out += sidebar_collapsed ? L"true" : L"false";
     out += L",\n  \"folder_sort_mode\":";
@@ -387,6 +389,7 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     list_selection_outline = pulse::json::ExtractBool(json, L"list_selection_outline", false);
     list_thumbnail_badges = pulse::json::ExtractBool(json, L"list_thumbnail_badges", true);
     vertical_tabs = pulse::json::ExtractBool(json, L"vertical_tabs", false);
+    tray_hide_when_empty = pulse::json::ExtractBool(json, L"tray_hide_when_empty", false);
     sidebar_collapsed = pulse::json::ExtractBool(json, L"sidebar_collapsed", false);
     folder_sort_mode = pulse::json::ExtractInt(json, L"folder_sort_mode", 0);
     if (folder_sort_mode < 0 || folder_sort_mode > 2) folder_sort_mode = 0;

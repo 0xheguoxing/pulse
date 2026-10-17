@@ -672,12 +672,15 @@ void StartDragOut(AppState& s) {
 
 // Drags every staged item that still exists out of the tray (other apps,
 // panes, sidebar folders). Always a copy, so the tray keeps its items.
-static void StartTrayDragOut(AppState& s) {
+// `only` limits the drag to those item ids (open view rows).
+static void StartTrayDragOut(AppState& s, const std::vector<uint64_t>* only = nullptr) {
     std::vector<std::wstring> paths;
     for (const auto& batch : s.tray.batches())
-        for (const auto& item : batch.items)
+        for (const auto& item : batch.items) {
+            if (only && std::find(only->begin(), only->end(), item.id) == only->end()) continue;
             if (GetFileAttributesW(item.path.c_str()) != INVALID_FILE_ATTRIBUTES)
                 paths.push_back(ClipboardPath(item.path));
+        }
     if (paths.empty()) return;
     CancelScrollAnimation(s);
     s.trayDragOut = true;
@@ -755,7 +758,20 @@ static void HandleTrayShelfPress(AppState& s, HWND hwnd, const ui::HitTestResult
         }
         break;
     case ui::TrayShelfHit::Row:
-        ToggleTrayOpenCheck(s, hit.path);
+        // Dragging a row takes the checked items along when it is one of
+        // them, else just that row; a click toggles its check.
+        if (DragDetect(hwnd, sp)) {
+            std::vector<uint64_t> ids;
+            for (const auto& b : s.tray.batches())
+                for (const auto& item : b.items)
+                    if (!hit.path.empty() && _wcsicmp(ClipboardPath(item.path).c_str(), hit.path.c_str()) == 0)
+                        ids.push_back(item.id);
+            const auto& checked = s.trayView.checked;
+            if (!ids.empty() && std::find(checked.begin(), checked.end(), ids.front()) != checked.end()) ids = checked;
+            if (!ids.empty()) StartTrayDragOut(s, &ids);
+        } else {
+            ToggleTrayOpenCheck(s, hit.path);
+        }
         break;
     case ui::TrayShelfHit::GroupOpen:
         if (!hit.path.empty()) NavigateTo(s, hit.path);

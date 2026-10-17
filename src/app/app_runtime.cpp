@@ -1733,6 +1733,8 @@ static bool TickTrayShelf(AppState& s, float elapsed) {
     const bool clip = TrayClipLive(s);
     if (clip && now - s.trayClip.at < 460) dirty = true;
     float target = ui::TrayShelfStageHeightDip(stage, clip);
+    // Setting: an empty tray folds away; a Ctrl+C offer or a drag brings it back.
+    if (stage == static_cast<int>(ui::TrayStage::Strip) && !clip && s.appPrefs.tray_hide_when_empty) target = 0.0f;
     if (stage == static_cast<int>(ui::TrayStage::Drop)) target = std::max(target, a.drop_from);
     if (!a.initialized || !animate) {
         if (a.height != target) dirty = true;
@@ -2389,6 +2391,7 @@ static void FillTrayShelf(AppState& s, ui::TrayDeckView& deck, ULONGLONG now) {
     deck.prev_stage = a.prev_stage;
     deck.swap = a.prev_stage >= 0 ? progress(a.swap_at, 410.0f) : 1.0f;
     deck.height_dip = a.height;
+    deck.hide_empty = s.appPrefs.tray_hide_when_empty;
     deck.drop_move = s.dropTrayMove;
     deck.move_mode = TrayEffectiveMove(s);
     deck.mode_t = a.mode_t;
@@ -2574,6 +2577,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.settings_list_selection_outline = s.appPrefs.list_selection_outline;
     vm.settings_list_thumbnail_badges = s.appPrefs.list_thumbnail_badges;
     vm.settings_vertical_tabs = s.appPrefs.vertical_tabs;
+    vm.settings_tray_hide_empty = s.appPrefs.tray_hide_when_empty;
     vm.settings_show_hints = s.appPrefs.show_hints;
     vm.settings_tips_seen = s.appPrefs.tips_seen != 0;
     vm.settings_folder_sort = s.appPrefs.folder_sort_mode;

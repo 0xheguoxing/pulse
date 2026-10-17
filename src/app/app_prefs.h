@@ -52,6 +52,7 @@ struct AppPrefs {
     // Grid thumbnails: default-program badge, plus playing time on videos.
     bool list_thumbnail_badges = true;
     bool vertical_tabs = false;       // tabs as the first sidebar section
+    bool tray_hide_when_empty = false; // staging tray folds away while empty (drags still show it)
     bool sidebar_collapsed = false;   // sidebar folded to its icon rail (Ctrl+B)
     // 0 folders first, 1 follow the sort direction, 2 mixed with files
     int folder_sort_mode = 0;

@@ -510,6 +510,7 @@ struct TrayDeckView {
     int prev_stage = -1;             // layer fading out during a swap, -1 none
     float swap = 1.0f;               // 0..1 layer swap progress (410 ms)
     float height_dip = 40.0f;        // animated panel height (spring)
+    bool hide_empty = false;         // setting: the empty strip folds to 0 (fades below 40)
     bool drop_move = false;          // drop layer: 移动暂存 half is the active one
     bool move_mode = false;          // release moves (mode, flipped live by Shift)
     float mode_t = 0.0f;             // 0..1 copy -> move colour blend
@@ -1063,6 +1064,7 @@ struct WindowViewModel {
     bool settings_list_selection_outline = false;
     bool settings_list_thumbnail_badges = true;
     bool settings_vertical_tabs = false;
+    bool settings_tray_hide_empty = false;
     bool settings_show_hints = true;
     bool settings_tips_seen = false;   // any teaching bubble already shown
     int settings_folder_sort = 0; // 0 folders first, 1 follow direction, 2 mixed

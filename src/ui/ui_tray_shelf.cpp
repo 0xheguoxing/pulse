@@ -270,12 +270,18 @@ void MainRenderer::DrawTrayShelf(const WindowViewModel& vm, const D2D1_RECT_F& r
     const TrayDeckView& d = vm.tray_deck;
     const ShelfPalette p = MakeShelfPalette(vm.dark, IsHighContrast(), theme);
     const float s = scale_;
-    const float radius = 12.0f * s;
     tray_panel_rc_ = rc;
+    const float panel_h = rc.bottom - rc.top;
+    const float radius = std::min(12.0f * s, panel_h * 0.5f);
 
     ComPtr<ID2D1SolidColorBrush> br;
     dc->CreateSolidColorBrush(p.tray, &br);
     if (!br.get()) return;
+    // A hiding empty tray fades out over its last 40 dip.
+    const bool fading = d.hide_empty && panel_h < 40.0f * s;
+    if (fading)
+        dc->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+            D2D1::IdentityMatrix(), Clamp01(panel_h / (40.0f * s))), nullptr);
     dc->FillRoundedRectangle(D2D1::RoundedRect(rc, radius, radius), br.get());
     // Drop target: the edge brightens while files hover the tray itself.
     const D2D1_COLOR_F edge = vm.tray_drop ? Alpha(p.acc2, 0.75f) : p.edge;
@@ -323,6 +329,7 @@ void MainRenderer::DrawTrayShelf(const WindowViewModel& vm, const D2D1_RECT_F& r
         }
     }
     if (clip.get()) dc->PopLayer();
+    if (fading) dc->PopLayer();
 }
 
 void MainRenderer::DrawTrayShelfLayer(const WindowViewModel& vm, int stage, const D2D1_RECT_F& rc,

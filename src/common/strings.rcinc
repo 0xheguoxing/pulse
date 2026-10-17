@@ -2332,6 +2332,7 @@ BEGIN
     IDS_TRAY_COPY_N_TO_FORMAT "复制 {n} 项到「{name}」"
     IDS_TRAY_MOVE_N_TO_FORMAT "移动 {n} 项到「{name}」"
     IDS_TRAY_HIDE_WHEN_EMPTY "暂存区为空时完全隐藏"
+    IDS_TRAY_HIDE_WHEN_EMPTY_DESC "拖动文件经过窗口时它仍会出现"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4663,6 +4664,7 @@ BEGIN
     IDS_TRAY_COPY_N_TO_FORMAT "Copy {n} to “{name}”"
     IDS_TRAY_MOVE_N_TO_FORMAT "Move {n} to “{name}”"
     IDS_TRAY_HIDE_WHEN_EMPTY "Hide the staging tray when it is empty"
+    IDS_TRAY_HIDE_WHEN_EMPTY_DESC "It still appears while you drag files over the window"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

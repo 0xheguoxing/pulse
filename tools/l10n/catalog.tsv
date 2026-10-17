@@ -2353,3 +2353,4 @@ TrayCompareNeedTwo	IDS_TRAY_COMPARE_NEED_TWO	3555	正好 2 项时才能比较	Ch
 TrayCopyNToFormat	IDS_TRAY_COPY_N_TO_FORMAT	3556	复制 {n} 项到「{name}」	Copy {n} to “{name}”	複製 {n} 項到「{name}」
 TrayMoveNToFormat	IDS_TRAY_MOVE_N_TO_FORMAT	3557	移动 {n} 项到「{name}」	Move {n} to “{name}”	移動 {n} 項到「{name}」
 TrayHideWhenEmpty	IDS_TRAY_HIDE_WHEN_EMPTY	3558	暂存区为空时完全隐藏	Hide the staging tray when it is empty	暫存區為空時完全隱藏
+TrayHideWhenEmptyDesc	IDS_TRAY_HIDE_WHEN_EMPTY_DESC	3559	拖动文件经过窗口时它仍会出现	It still appears while you drag files over the window	拖曳檔案經過視窗時它仍會出現
