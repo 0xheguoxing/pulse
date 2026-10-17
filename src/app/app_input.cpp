@@ -3249,6 +3249,31 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         return 0;
 }
 
+// The blank double-click action (设置 > 双击列表空白处).
+static void RunBlankDoubleClick(AppState& s, app::Tab& tab) {
+    if (app::BlankClickGoesBack(s.appPrefs.blank_click_action, tab.CanGoBack())) {
+        GoBack(s);
+    } else if (!fs::IsVirtualPath(tab.current_path)) {
+        // Same as the Up button: a drive or share root goes on
+        // to This PC, where it stops (#68).
+        GoUp(s);
+    }
+}
+
+// The empty strip of the pane title bar is list blank space too.
+static bool HandlePaneHeaderBlankDoubleClick(AppState& s, const ui::HitTestResult& hit) {
+    if (hit.region != ui::HitTestResult::PaneHeader || hit.index != 0 || hit.pane_index < 0) return false;
+    app::Tab* tab = ActiveTab(s);
+    if (s.appPrefs.blank_click_action == app::kBlankClickOff || !tab || IsSettingsTab(tab) ||
+        IsAddressSearchResults(tab) || PaneAtSlot(s, hit.pane_index) != s.pane ||
+        (GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_SHIFT) & 0x8000) ||
+        (GetKeyState(VK_MENU) & 0x8000))
+        return false;
+    s.paneDragPending = false;
+    RunBlankDoubleClick(s, *tab);
+    return true;
+}
+
 LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (!s) return DefWindowProcW(hwnd, msg, wParam, lParam);
         if (ColumnStripSwallowDoubleClick(*s)) {
@@ -3279,6 +3304,10 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
             {"item_index", hit.index >= 0 ? static_cast<uint64_t>(hit.index) : 0}});
         if (HandleWindowIdentityDoubleClick(*s, hit, POINT{mx, my})) return 0;  // M7c: rename, recolor
         if (pulse::HandleTabDoubleClick(*s, hit)) return 0;
+        if (HandlePaneHeaderBlankDoubleClick(*s, hit)) {
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         // Buttons have no double-click meaning: a quick second press (inside
         // the system double-click time - 1 s on some machines) is just another
         // press. Without this the theme toggle and friends swallowed it, so
@@ -3715,15 +3744,7 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 goBack = goBack && double_click;
                 if (s->marqueeActive) ApplyMarqueeSelection(*s);
                 ResetMarquee(*s);
-                if (goBack) {
-                    if (app::BlankClickGoesBack(s->appPrefs.blank_click_action, tab->CanGoBack())) {
-                        GoBack(*s);
-                    } else if (!fs::IsVirtualPath(tab->current_path)) {
-                        // Same as the Up button: a drive or share root goes on
-                        // to This PC, where it stops (#68).
-                        GoUp(*s);
-                    }
-                }
+                if (goBack) RunBlankDoubleClick(*s, *tab);
             } else if (s->clickCollapseIndex >= 0) {
                 FinishListRowClick(*s);
             }

@@ -1138,6 +1138,19 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                         (ShowsColumnHeader(paneVm.view_mode) ? column_header_height_ : 0.0f);
         if (y >= paneRc.top && y < paneRc.top + pane_header_height_) {
             out.region = HitTestResult::PaneHeader;
+            // index 0: the empty strip right of the title (and its change
+            // badge), which counts as list blank space for blank double clicks.
+            const float textLeft = paneRect.left + 8.0f * scale_;
+            const float textRight = std::max(textLeft, detailsRc.left - 8.0f * scale_);
+            float titleEnd = textLeft;
+            if (compositor_ && !paneVm.header_text.empty()) {
+                titleEnd += std::min(textRight - textLeft, MeasureLayoutText(compositor_,
+                    compositor_->DwriteFactory(), compositor_->HeaderFormat(), paneVm.header_text));
+                const D2D1_RECT_F badge = ChangeTitleRect(paneRect, textRight, pane_header_height_,
+                    paneVm.title_change_badge, scale_, compositor_, paneVm.header_text);
+                if (badge.right > badge.left) titleEnd = std::max(titleEnd, badge.right);
+            }
+            if (x >= titleEnd + 6.0f * scale_) out.index = 0;
             return out;
         }
         if (paneVm.is_recent && y >= recentTop && y < columnTop) {
