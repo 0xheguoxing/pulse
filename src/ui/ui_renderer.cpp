@@ -754,6 +754,7 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
     motion_now_ = motion::NowMs();
     list_loading_active_ = false;
     folder_size_anim_active_ = false;
+    motion_frame_wanted_ = false;
     if (collapse_anim_) {
         // Sampled once per frame so every layout query agrees on the width.
         const float t = static_cast<float>(motion_now_ - collapse_start_) / kSidebarCollapseMs;

@@ -29,16 +29,10 @@ namespace {
 // 6 dip - so the panel reads as new instead of flickering in place. Held
 // arrow keys (changes under 160 ms apart) just swap. The pinned preview well
 // above (it may hold a preview-handler window) does not move. State per
-// renderer lives here (ui_renderer.h is being edited elsewhere); frames come
-// from a one-shot TIMERPROC timer re-armed only during the sweep.
+// renderer lives here; frames come from the renderer's frame pump
+// (RequestMotionFrame), asked for only during the sweep.
 constexpr float kDetailsSweepMs = 260.0f, kDetailsSweepBandDip = 56.0f, kDetailsRiseDip = 6.0f;
 constexpr uint64_t kDetailsRapidMs = 160;
-constexpr UINT_PTR kDetailsFrameTimer = 0x53444D54;  // 'SDMT'
-
-void CALLBACK DetailsFrameTick(HWND hwnd, UINT, UINT_PTR id, DWORD) {
-    KillTimer(hwnd, id);
-    InvalidateRect(hwnd, nullptr, FALSE);
-}
 
 struct DetailsMotion {
     std::wstring path;
@@ -524,8 +518,7 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
                 dc->SetTransform(sweep_saved * D2D1::Matrix3x2F::Translation(0.0f, kDetailsRiseDip * s * (1.0f - e)));
                 sweeping = true;
             }
-            if (compositor_ && compositor_->Hwnd())
-                SetTimer(compositor_->Hwnd(), kDetailsFrameTimer, 15, DetailsFrameTick);
+            RequestMotionFrame();
         }
     }
 

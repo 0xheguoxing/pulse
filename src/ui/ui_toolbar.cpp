@@ -11,14 +11,8 @@ namespace {
 // plate per row glides between the buttons under the pointer - the navigation
 // buttons, the address bar's breadcrumb segments, and the command row - and
 // fades in and out at the ends. The state lives here, per renderer; frames are
-// asked for with a one-shot TIMERPROC timer, so nothing ticks once it settles.
+// asked for from the renderer's frame pump, so nothing ticks once it settles.
 constexpr float kPlateFadeInMs = 90.0f, kPlateFadeOutMs = 120.0f;
-constexpr UINT_PTR kToolbarFrameTimer = 0x54424D54;  // 'TBMT'
-
-void CALLBACK ToolbarFrameTick(HWND hwnd, UINT, UINT_PTR id, DWORD) {
-    KillTimer(hwnd, id);
-    InvalidateRect(hwnd, nullptr, FALSE);
-}
 
 struct GlidePlate {
     motion::SpringRectMotion spring;
@@ -374,12 +368,12 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     bool toolbar_moving=false;
     // Every return below asks for the next frame while a plate moves.
     struct FrameRequest {
-        HWND hwnd;
+        const MainRenderer* self;
         const bool& moving;
         ~FrameRequest() {
-            if (moving && hwnd) SetTimer(hwnd,kToolbarFrameTimer,15,ToolbarFrameTick);
+            if (moving) self->RequestMotionFrame();
         }
-    } frame_request{compositor_ ? compositor_->Hwnd() : nullptr,toolbar_moving};
+    } frame_request{this,toolbar_moving};
     const auto draw_plate=[&](const GlidePlate& plate) {
         if (plate.alpha <= 0.0f) return;
         D2D1_COLOR_F fill=theme.fill_hover;

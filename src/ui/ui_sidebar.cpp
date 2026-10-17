@@ -38,19 +38,13 @@ void DrawSidebarInsertionLine(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* brus
 // Sidebar motion (animation phase 7, pulse_motion_v2): the selection pill
 // stretches toward the new row - its leading edge on a stiff spring, the
 // trailing edge on a softer one - a hover plate glides under the pointer, and
-// an item's expand chevron turns. The state lives here, per renderer, and the
-// frames are asked for with a one-shot TIMERPROC timer on the window, so idle
-// stays idle: no timer runs once everything has settled.
+// an item's expand chevron turns. The state lives here, per renderer; frames
+// come from the renderer's frame pump (RequestMotionFrame), so idle stays
+// idle: nothing ticks once everything has settled.
 constexpr motion::SpringSpec kPillLead{900.0f, 60.0f};
 constexpr motion::SpringSpec kPillTrail{300.0f, 30.0f};
 constexpr float kPillMaxStretch = 1.9f;  // times the row height
 constexpr float kHoverFadeInMs = 90.0f, kHoverFadeOutMs = 120.0f;
-constexpr UINT_PTR kSidebarFrameTimer = 0x53424D54;  // 'SBMT'
-
-void CALLBACK SidebarFrameTick(HWND hwnd, UINT, UINT_PTR id, DWORD) {
-    KillTimer(hwnd, id);
-    InvalidateRect(hwnd, nullptr, FALSE);
-}
 
 struct ChevronTurn {
     bool expanded = false;
@@ -336,12 +330,12 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     };
     // Every return below asks for the next frame while something moves.
     struct FrameRequest {
-        HWND hwnd;
+        const MainRenderer* self;
         const bool& moving;
         ~FrameRequest() {
-            if (moving && hwnd) SetTimer(hwnd, kSidebarFrameTimer, 15, SidebarFrameTick);
+            if (moving) self->RequestMotionFrame();
         }
-    } frame_request{compositor_ ? compositor_->Hwnd() : nullptr, sidebar_moving};
+    } frame_request{this, sidebar_moving};
 
     if (compact) {
         for (const auto& slot : slots) {

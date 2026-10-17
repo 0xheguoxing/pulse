@@ -1495,6 +1495,9 @@ public:
         if (motion_now < row_leave_until_) active = true;
         if (motion_now < splitter_motion_until_) active = true;
         if (motion_now < spring_ring_until_) active = true;
+        // Sidebar pill/plate, toolbar plates, column cascade, details sweep:
+        // their last frame asked for another (RequestMotionFrame).
+        if (motion_frame_wanted_) active = true;
         if (folder_thumbnail_cache_.Tick(now)) active = true;
         return active;
     }
@@ -2036,6 +2039,11 @@ private:
     std::array<SplitterKnobMotion, 8> splitter_knobs_{};
     uint64_t splitter_motion_until_ = 0;
     uint64_t spring_ring_until_ = 0;        // NowMs: a spring-load ring is filling
+    // Set while drawing by motion whose state lives outside this class (the
+    // sidebar, toolbar, column strip and details panel files); cleared at the
+    // start of every frame. Rides the same frame pump as everything else.
+    mutable bool motion_frame_wanted_ = false;
+    void RequestMotionFrame() const { motion_frame_wanted_ = true; }
     static constexpr ULONGLONG kTaskPillDoneMs = 1600;
     static constexpr ULONGLONG kTaskPillFadeMs = 300;
     bool task_pill_was_active_ = false;

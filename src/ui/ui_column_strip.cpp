@@ -39,18 +39,11 @@ float StripDividerX(const ColumnStripSlot& slot) {
 //  - one hover plate glides between rows and columns (Plate spring);
 //  - a column's highlight glides to the new row (Snappy spring);
 //  - a column's auto scroll eases to its new place (Smooth spring).
-// State per renderer and pane lives here (ui_renderer.h is being edited
-// elsewhere); frames come from a one-shot TIMERPROC timer re-armed only
-// while something moves.
+// State per renderer and pane lives here; frames come from the renderer's
+// frame pump (RequestMotionFrame), asked for only while something moves.
 constexpr float kCascadeSlideDip = 8.0f, kCascadeRowMs = 160.0f, kCascadeStaggerMs = 9.0f;
 constexpr int kCascadeRows = 10;
 constexpr float kStripHoverFadeInMs = 90.0f, kStripHoverFadeOutMs = 120.0f;
-constexpr UINT_PTR kStripFrameTimer = 0x53434D54;  // 'SCMT'
-
-void CALLBACK StripFrameTick(HWND hwnd, UINT, UINT_PTR id, DWORD) {
-    KillTimer(hwnd, id);
-    InvalidateRect(hwnd, nullptr, FALSE);
-}
 
 struct StripColumnMotion {
     std::wstring path;
@@ -314,8 +307,7 @@ void MainRenderer::DrawColumnStrip(const WindowViewModel& vm, const PaneViewMode
         FillRoundedRect(dc, brScrollbar_.get(), thumb.left, cy - h * 0.5f,
                         thumb.right - thumb.left, h, h * 0.5f);
     }
-    if (pm.moving && compositor_ && compositor_->Hwnd())
-        SetTimer(compositor_->Hwnd(), kStripFrameTimer, 15, StripFrameTick);
+    if (pm.moving) RequestMotionFrame();
 }
 
 void MainRenderer::DrawColumnStripColumn(const WindowViewModel& vm, const PaneViewModel& /*pane*/,
