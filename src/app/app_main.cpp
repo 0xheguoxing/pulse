@@ -1,4 +1,6 @@
 #include "app_diagnostics.h"
+#include "arrival_select.h"
+#include "zip_compress_ui.h"
 #include "folder_alias.h"
 #include "../index/filename_pinyin.h"
 #include "../common/windows_compat.h"
@@ -1086,15 +1088,18 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 },
                 [s](uint32_t token) { s->ops.CloseShellMenu(token); },
                 [s](uint32_t token, uint32_t command, std::wstring verb, std::wstring text) {
+                    if (ShellVerbMayCreate(verb)) ArmArrivalSelection(app::CurrentWindow(*s), nullptr, 0, 8000);
                     s->ops.InvokeShellMenu(token, command, std::move(verb), std::move(text));
                 },
                 [s](const std::wstring& path, const std::wstring& verb) {
+                    if (ShellVerbMayCreate(verb)) ArmArrivalSelection(app::CurrentWindow(*s), nullptr, 0, 8000);
                     s->ops.ExecuteVerb(path, verb);
                 },
                 [s](const std::wstring& app_path, const std::wstring& path) {
                     s->ops.OpenWithApp(app_path, path);
                 },
                 [s](const std::wstring& command, const std::wstring& path) {
+                    ArmArrivalSelection(app::CurrentWindow(*s), nullptr, 0, 8000);
                     s->ops.ExecuteCommand(command, path);
                 },
             });
@@ -1511,6 +1516,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_UNDO_DELETE:
         if (s && s->ops.CanUndo()) s->ops.Undo();
+        return 0;
+
+    case WM_ZIP_COMPRESS:
+    case WM_ZIP_CANCEL:
+        if (s) HandleZipMessage(*s, msg, wParam, lParam);
         return 0;
 
     case WM_OPEN_SESSION_WINDOWS:
@@ -2067,6 +2077,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                         s->store.MarkDirty(directory);
                     if (completed.refresh_only) continue;
                     ApplyOperationIntentCompletion(*s, completed);
+                    NoteArrivalCompletion(*s, completed);
                     if (completed.type == ops::OpType::Copy) {
                         for (size_t i = 0; i < completed.sources.size() &&
                                            i < completed.destinations.size(); ++i) {
@@ -2148,6 +2159,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     QueueTagAds(*s, BuildTagAdsUpdates(s->places, tag_metadata_paths, true));
                 for (const auto& finished : finished_tasks) {
                     FinishOperationIntents(*s, finished);
+                    NoteArrivalFinished(*s, finished);
                     NoteDeleteFinished(*s, finished);
                 }
                 // An op finished: refresh the view (watcher also fires, this is immediate).
@@ -2514,6 +2526,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (last_window) app::shell_tags::RevokeCommandServer();
         if (s) {
             s->framePump.Stop();
+            CancelZipJobs(*s);
             if (last_window) {
                 s->probe_scheduler.Clear();
                 s->probeQueue.clear();

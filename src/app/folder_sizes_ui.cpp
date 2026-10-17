@@ -44,6 +44,8 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
     std::vector<ColumnRow> column_rows;
     std::vector<app::FolderSizeRequest> requests;
     std::vector<std::wstring> roots;
+    // 文件夹大小 off: shown rows wait for a click (cached and indexed sizes still show).
+    const bool auto_sizes = s.appPrefs.folder_size_auto;
     // Column view: every column is a listing of its own; probe the rows near
     // the navigation path (or the scrolled-to rows) without size work.
     const auto probe_column = [&](ui::ColumnStripColumnView& column) {
@@ -109,7 +111,7 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
             if (ProbesEmptiness(path)) probe_rows.push_back({&pane, source, path});
             if (!labels) continue;
             rows.push_back({&pane, source, path});
-            requests.push_back({path, !fs::IsUncPath(path)});
+            requests.push_back({path, auto_sizes && !fs::IsUncPath(path)});
             shown.insert(source);
         }
         if (sorted) {
@@ -167,7 +169,12 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
             row.pane->folder_size_labels.emplace(row.index, l10n::Get(l10n::StringId::GroupSizeEmpty).c_str());
             continue;
         }
-        const auto value = s.folderSizes.Get(row.path);
+        // 文件夹大小 off: a folder shows a size it was asked for (a click,
+        // this session); index totals and the disk cache wait for that too.
+        auto value = s.folderSizes.Get(row.path);
+        if (!auto_sizes && value.has_value &&
+            (value.source != app::FolderSizeSource::Scan || value.state == app::FolderSizeState::Cached))
+            value = {};
         const auto work = s.folderSizes.GetWork(row.path);
         // Without a value: an answer that is on its way (index reply, queue,
         // first scan delay) is a quiet placeholder, an active scan says so,
@@ -176,7 +183,7 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
             (work.activity == app::FolderSizeActivity::Queued && work.manual);
         const bool pending = !value.has_value && !scanning &&
             (work.activity == app::FolderSizeActivity::Queued ||
-             (work.activity == app::FolderSizeActivity::Idle && !fs::IsUncPath(row.path)));
+             (work.activity == app::FolderSizeActivity::Idle && auto_sizes && !fs::IsUncPath(row.path)));
         std::wstring text;
         if (value.has_value) text = format::ByteSize(value.bytes);
         else if (scanning) text = l10n::Get(l10n::StringId::Calculating);

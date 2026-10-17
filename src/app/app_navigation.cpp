@@ -10,6 +10,7 @@
 #include "app_column_view.h"
 #include "app_details_tree.h"
 #include "listing_selection_restore.h"
+#include "arrival_select.h"
 #include "content_navigation.h"
 #include "content_search_snapshot.h"
 #include "global_search_result_state.h"
@@ -1414,6 +1415,7 @@ static bool ApplyWorkerResultToWindow(AppState& s, app::WorkResult& res, bool ag
             }
             if (!startedRename) {
                 app::RestoreListingSelection(*tab, selection_restore, &pane, &s.places);
+                ApplyArrivalSelection(s, pane, *tab, focusedTab);
             }
             if (focusedTab && ensurePendingVisible && tab->selected_index >= 0) {
                 EnsureRowVisible(s, *tab, tab->selected_index);
@@ -1737,6 +1739,7 @@ static bool ApplyNotifiesToVisible(AppState& s, const std::wstring& path,
         if (!selection_restore.names.empty()) app::RestoreListingSelection(*tab, selection_restore, &pane, &s.places);
         else if (tab->snapshot && tab->EntryCount() != 0 && tab->selected_index < 0)
             tab->FocusFirstEntry();
+        ApplyArrivalSelection(s, pane, *tab, &pane == s.pane);
         if (!store_snap) store_snap = tab->snapshot;
         any = true;
     });

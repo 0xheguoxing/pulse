@@ -61,5 +61,7 @@ constexpr UINT WM_OPEN_EXTERNAL = WM_APP + 89;  // host: lParam std::wstring*, a
 constexpr UINT WM_DRIVE_VERB = WM_APP + 90;  // app::DriveVerbResult* (drive_verbs.h): eject / disconnect finished
 constexpr UINT WM_DETAILS_TREE_UNDO = WM_APP + 91;  // the "expanded N folders" snack: undo it
 constexpr UINT WM_UNDO_DELETE = WM_APP + 92;  // the "deleted N items" snack: undo the delete
+constexpr UINT WM_ZIP_COMPRESS = WM_APP + 93;  // 压缩: wParam 0 still running (lParam job id), 1 done (ZipDone*)
+constexpr UINT WM_ZIP_CANCEL = WM_APP + 94;  // the 压缩 snack: cancel
 
 }  // namespace pulse

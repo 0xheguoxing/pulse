@@ -2257,5 +2257,12 @@
 #define IDS_ALIAS_SUGGEST_ENTER                                                          3467
 #define IDS_ALIAS_SUGGEST_BY_PINYIN                                                      3468
 #define IDS_ALIAS_SUGGEST_BY_NAME                                                        3469
+#define IDS_TOOLBAR_TOOL_ZIP                                                             3470
+#define IDS_TOOLBAR_TOOL_FOLDER_SIZES                                                    3471
+#define IDS_ZIP_COMPRESSING                                                              3472
+#define IDS_ZIP_COMPRESS_DONE                                                            3473
+#define IDS_ZIP_COMPRESS_DETAIL                                                          3474
+#define IDS_ZIP_COMPRESS_FAILED                                                          3475
+#define IDS_ZIP_COMPRESS_CANCELLED                                                       3476
 
 #endif  // PULSE_STRING_IDS_H

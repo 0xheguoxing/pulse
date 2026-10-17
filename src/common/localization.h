@@ -2253,6 +2253,13 @@ enum class StringId : UINT {
     AliasSuggestEnter = IDS_ALIAS_SUGGEST_ENTER,
     AliasSuggestByPinyin = IDS_ALIAS_SUGGEST_BY_PINYIN,
     AliasSuggestByName = IDS_ALIAS_SUGGEST_BY_NAME,
+    ToolbarToolZip = IDS_TOOLBAR_TOOL_ZIP,
+    ToolbarToolFolderSizes = IDS_TOOLBAR_TOOL_FOLDER_SIZES,
+    ZipCompressing = IDS_ZIP_COMPRESSING,
+    ZipCompressDone = IDS_ZIP_COMPRESS_DONE,
+    ZipCompressDetail = IDS_ZIP_COMPRESS_DETAIL,
+    ZipCompressFailed = IDS_ZIP_COMPRESS_FAILED,
+    ZipCompressCancelled = IDS_ZIP_COMPRESS_CANCELLED,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

@@ -1,6 +1,7 @@
 #include "tag_color_commands.h"
 #include "tag_ads_sync.h"
 #include "folder_alias.h"
+#include "zip_compress_ui.h"
 #include "keymap.h"
 #include <atomic>
 #include "../ui/shortcut_help.h"
@@ -1156,6 +1157,14 @@ void DispatchMenuCommand(AppState& s, int cmd) {
         return;
     }
     switch (cmd) {
+    case app::CmdCompressZip:
+        CompressSelection(s);
+        break;
+    case app::CmdToggleFolderSizes:
+        s.appPrefs.folder_size_auto = !s.appPrefs.folder_size_auto;
+        if (!s.isolatedTest) s.appPrefs.Save();
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        break;
     case app::CmdApplyViewToAllFolders:
         ApplyViewToAllFolders(s);
         break;
@@ -2190,6 +2199,8 @@ constexpr ToolbarToolDef kToolbarTools[] = {
     {app::CmdMapNetworkDrive, L"\xE8CE", l10n::StringId::MapNetworkDrive, L"", false},
     {app::CmdShortcutHelp, L"\xE765", l10n::StringId::KeyboardShortcuts, L"", false},
     {app::CmdSettings, L"\xE713", l10n::StringId::Settings, L"", false},
+    {app::CmdCompressZip, L"\xF012", l10n::StringId::ToolbarToolZip, L"", false},
+    {app::CmdToggleFolderSizes, L"\xEDA2", l10n::StringId::ToolbarToolFolderSizes, L"", true},
 };
 static_assert(std::size(kToolbarTools) == app::kToolbarToolCount, "one catalog row per toolbar_tools.h id");
 
@@ -2261,6 +2272,7 @@ bool ToolbarToggleOn(const AppState& s, size_t index) {
     if (id == L"sidebar") return !p.sidebar_collapsed;  // lit = sidebar shown
     if (id == L"theme") return s.darkMode;
     if (id == L"details") return s.showDetailsPanel;
+    if (id == L"folder_size") return p.folder_size_auto;
     if (id == L"columns") { const app::Tab* tab = s.pane ? s.pane->ActiveTab() : nullptr; return tab && tab->column_layout; }
     return false;
 }
@@ -3156,6 +3168,7 @@ std::vector<ui::SelectionChipAction> ToolbarPinActions(AppState& s) {
         case app::CmdCopyPath: action.enabled = has_selection || !tab->current_path.empty(); break;
         case app::CmdOpenTerminal: action.enabled = !TerminalTarget(s).empty(); break;
         case app::CmdProperties: action.enabled = has_selection; break;
+        case app::CmdCompressZip: action.enabled = CanCompressSelection(s); break;
         case app::CmdUndo: action.enabled = s.ops.CanUndo(); break;
         // Same rules as the former fixed buttons: what is selected decides
         // (a drive takes a rename only); paste needs files or a tray batch
@@ -3223,7 +3236,7 @@ static RECT ToolbarMoreScreenRect(AppState& s) {
 // Sections follow the v3 prototype: 文件 / 选择 / 显示 / 窗格 / 更多.
 static int ToolbarToolSection(std::wstring_view id) {
     for (std::wstring_view file : {L"new_text", L"copy_path", L"properties", L"undo", L"cut", L"copy",
-                                   L"paste", L"rename", L"delete", L"new_md"})
+                                   L"paste", L"rename", L"delete", L"new_md", L"zip"})
         if (id == file) return 0;
     if (id == L"select_all" || id == L"invert" || id == L"select_wild") return 1;
     for (std::wstring_view pane : {L"sidebar", L"split", L"details", L"columns", L"apply_all", L"recent"})
@@ -3239,7 +3252,7 @@ static int ToolbarToolSection(std::wstring_view id) {
 static std::vector<size_t> ToolbarPinsOrder(const AppState& s) {
     static constexpr std::wstring_view kCatalogOrder[] = {
         L"cut", L"copy", L"paste", L"rename", L"delete", L"undo", L"new_text", L"new_md", L"copy_path",
-        L"properties", L"select_all", L"invert", L"select_wild", L"hidden", L"protected", L"compact",
+        L"properties", L"zip", L"select_all", L"invert", L"select_wild", L"hidden", L"protected", L"folder_size", L"compact",
         L"zebra", L"size_bar", L"smart_date", L"outline", L"theme", L"split", L"details", L"columns",
         L"sidebar", L"apply_all", L"recent", L"terminal", L"search_all", L"adv_search", L"recycle",
         L"map_drive", L"shortcuts", L"settings"};
@@ -3506,7 +3519,7 @@ static void FlipToolbarTool(AppState& s, size_t index) {
     const std::wstring_view id = app::kToolbarToolIds[index];
     if (id == L"sidebar") { ToggleSidebarCollapsed(s); return; }
     if (id == L"theme") { ToggleTheme(s); return; }
-    if (id == L"details" || id == L"columns") { DispatchMenuCommand(s, kToolbarTools[index].command); return; }
+    if (id == L"details" || id == L"columns" || id == L"folder_size") { DispatchMenuCommand(s, kToolbarTools[index].command); return; }
     app::AppPrefs& p = s.appPrefs;
     app::SettingsEffect effect = app::SettingsEffect::ListStyle;
     if (id == L"hidden") { p.show_hidden_files = !p.show_hidden_files; effect = app::SettingsEffect::FileVisibility; }

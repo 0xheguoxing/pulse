@@ -44,6 +44,9 @@ struct AppPrefs {
     bool list_smart_date = true;
     bool list_zebra_rows = true;
     bool list_size_bar = false;
+    // Folders in the list get their size worked out on their own; off, the
+    // size cell offers it per folder (a size sort still asks for them all).
+    bool folder_size_auto = true;
     bool list_tag_name_color = false; // tint tagged names with their first tag's color
     bool list_selection_outline = false; // accent outline around selected items (#78)
     // Grid thumbnails: default-program badge, plus playing time on videos.

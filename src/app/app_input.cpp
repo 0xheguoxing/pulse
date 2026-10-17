@@ -1,4 +1,5 @@
 #include "reopen_closed.h"
+#include "arrival_select.h"
 #include "pane_column_input.h"
 // app_input.cpp — extracted from app_main.cpp.
 #include "quick_access.h"
@@ -581,12 +582,13 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
         (key_state & MK_SHIFT) == 0 && preferred_effect != DROPEFFECT_MOVE)
         effect = DROPEFFECT_COPY;
     bool submitted = false;
+    uint64_t drop_task = 0;
     auto submit = [&](const std::vector<std::wstring>& prepared) {
         ops::OpRequest req;
         req.type = (effect == DROPEFFECT_MOVE) ? ops::OpType::Move : ops::OpType::Copy;
         req.dest_dir = fs::NormalizePath(dest);
         for (const auto& p : prepared) req.sources.push_back(fs::NormalizePath(p));
-        submitted = SubmitWithConflictResolution(s, std::move(req));
+        submitted = SubmitWithConflictResolution(s, std::move(req), &drop_task);
     };
     if (!temp_dir.empty() && effect == DROPEFFECT_COPY) {
         const auto result = app::SubmitStagedDrop(sources, temp_dir, stage_root, submit);
@@ -601,6 +603,14 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
     } else submit(sources);
     if (!submitted) return DROPEFFECT_NONE;
     if (s.trayDragOut) RememberTrayDest(s, dest);
+    // Dropped into the folder a pane shows: the new rows get selected there.
+    {
+        const app::Pane* pane = PaneAtSlot(s, header_pane);
+        if (!pane) pane = s.pane;
+        const app::Tab* tab = pane ? pane->ActiveTab() : nullptr;
+        if (tab && _wcsicmp(fs::NormalizePath(tab->current_path).c_str(), fs::NormalizePath(dest).c_str()) == 0)
+            ArmArrivalSelection(s, pane, drop_task, 0);
+    }
     // Dropped into the list that shows `dest` (not onto a folder row): the
     // drag's cards wait and land on the new rows once they appear.
     if (g_internal_drag && !header && ui::motion::SystemAnimationsEnabled()) {

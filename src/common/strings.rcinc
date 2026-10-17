@@ -2243,6 +2243,13 @@ BEGIN
     IDS_ALIAS_SUGGEST_ENTER "Enter 前往"
     IDS_ALIAS_SUGGEST_BY_PINYIN "按拼音匹配 · Enter 前往"
     IDS_ALIAS_SUGGEST_BY_NAME "按原名匹配 · Enter 前往"
+    IDS_TOOLBAR_TOOL_ZIP "压缩"
+    IDS_TOOLBAR_TOOL_FOLDER_SIZES "文件夹大小"
+    IDS_ZIP_COMPRESSING "正在压缩…"
+    IDS_ZIP_COMPRESS_DONE "已压缩为 {name}"
+    IDS_ZIP_COMPRESS_DETAIL "{n} 个文件 · {size}"
+    IDS_ZIP_COMPRESS_FAILED "压缩失败"
+    IDS_ZIP_COMPRESS_CANCELLED "已取消压缩"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4485,6 +4492,13 @@ BEGIN
     IDS_ALIAS_SUGGEST_ENTER "Enter to go"
     IDS_ALIAS_SUGGEST_BY_PINYIN "Pinyin match · Enter to go"
     IDS_ALIAS_SUGGEST_BY_NAME "Name match · Enter to go"
+    IDS_TOOLBAR_TOOL_ZIP "Compress"
+    IDS_TOOLBAR_TOOL_FOLDER_SIZES "Folder sizes"
+    IDS_ZIP_COMPRESSING "Compressing…"
+    IDS_ZIP_COMPRESS_DONE "Compressed to {name}"
+    IDS_ZIP_COMPRESS_DETAIL "{n} files · {size}"
+    IDS_ZIP_COMPRESS_FAILED "Couldn’t compress"
+    IDS_ZIP_COMPRESS_CANCELLED "Compression cancelled"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

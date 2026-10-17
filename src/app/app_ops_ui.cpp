@@ -22,6 +22,7 @@
 #include "app_commands.h"
 #include "reopen_closed.h"
 #include "paste_source.h"
+#include "arrival_select.h"
 #include "resource.h"
 #include "../ops/clipboard.h"
 #include "../ops/elevated_delete.h"
@@ -129,6 +130,7 @@ void ReleaseTrayBatch(AppState& s, size_t idx) {
     const auto moved = move ? req.sources : std::vector<std::wstring>{};
     const auto task = s.ops.Submit(std::move(req));
     if (!task) return;
+    ArmArrivalSelection(s, nullptr, task, 0);
     if (move) TrackTrayCutClipboard(s, moved);
     s.tray.MarkInFlight(task, item_ids, move);
     RememberTrayDest(s, tab->current_path);
@@ -232,8 +234,14 @@ void PasteIntoCurrent(AppState& s) {
         req.type = cb.cut ? ops::OpType::Move : ops::OpType::Copy;
         req.dest_dir = tab->current_path;
         for (auto& p : cb.paths) req.sources.push_back(fs::NormalizePath(p));
-        if (SubmitWithConflictResolution(s, std::move(req)) && cb.cut) TrackCutClipboard(s, cb);
+        uint64_t task = 0;
+        if (SubmitWithConflictResolution(s, std::move(req), &task)) {
+            ArmArrivalSelection(s, nullptr, task, 0);
+            if (cb.cut) TrackCutClipboard(s, cb);
+        }
     } else if (shell_files) {
+        // Virtual files: the shell writes them with no task to follow.
+        ArmArrivalSelection(s, nullptr, 0, 8000);
         ops::PasteShellClipboard(tab->current_path);
     }
 }

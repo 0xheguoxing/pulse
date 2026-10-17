@@ -561,6 +561,26 @@ struct AppState : AppCoreOwner {
         uint64_t since = 0;
         uint64_t reveal_at = 0;   // 0 until the cards were sent
     } dragLanding;
+    // Items a paste, drop, 压缩 or shell verb brings into the folder are
+    // selected as they show up (arrival_select.h). Names are lower-cased;
+    // times are GetTickCount64.
+    struct ArrivalSelect {
+        std::wstring dir;                          // fs::NormalizePath
+        const app::Pane* pane = nullptr;
+        std::unordered_set<std::wstring> baseline;  // listed when armed
+        std::unordered_set<std::wstring> expected;  // reported by the operation
+        std::vector<std::wstring> chosen;           // what it selected last
+        uint64_t task_id = 0;
+        uint64_t armed_at = 0;
+        uint64_t until = 0;                         // 0 while the task runs
+    } arrivalSelect;
+    // 压缩 runs on a thread of its own per archive (zip_compress_ui.h).
+    struct ZipJob {
+        uint64_t id = 0;
+        std::wstring zip_path;
+        std::shared_ptr<std::atomic<bool>> cancel;
+    };
+    std::vector<ZipJob> zipJobs;
     std::unique_ptr<ui::FileOperationWindow> operationWindow;
     uint64_t operationUiTaskId = 0;
     uint64_t operationDismissedTaskId = 0;

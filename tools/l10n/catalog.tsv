@@ -2264,3 +2264,10 @@ AliasSuggestSubfolder	IDS_ALIAS_SUGGEST_SUBFOLDER	3466	子文件夹	Subfolder	�
 AliasSuggestEnter	IDS_ALIAS_SUGGEST_ENTER	3467	Enter 前往	Enter to go	Enter 前往
 AliasSuggestByPinyin	IDS_ALIAS_SUGGEST_BY_PINYIN	3468	按拼音匹配 · Enter 前往	Pinyin match · Enter to go	按拼音匹配 · Enter 前往
 AliasSuggestByName	IDS_ALIAS_SUGGEST_BY_NAME	3469	按原名匹配 · Enter 前往	Name match · Enter to go	按原名匹配 · Enter 前往
+ToolbarToolZip	IDS_TOOLBAR_TOOL_ZIP	3470	压缩	Compress	壓縮
+ToolbarToolFolderSizes	IDS_TOOLBAR_TOOL_FOLDER_SIZES	3471	文件夹大小	Folder sizes	資料夾大小
+ZipCompressing	IDS_ZIP_COMPRESSING	3472	正在压缩…	Compressing…	正在壓縮…
+ZipCompressDone	IDS_ZIP_COMPRESS_DONE	3473	已压缩为 {name}	Compressed to {name}	已壓縮為 {name}
+ZipCompressDetail	IDS_ZIP_COMPRESS_DETAIL	3474	{n} 个文件 · {size}	{n} files · {size}	{n} 個檔案 · {size}
+ZipCompressFailed	IDS_ZIP_COMPRESS_FAILED	3475	压缩失败	Couldn’t compress	壓縮失敗
+ZipCompressCancelled	IDS_ZIP_COMPRESS_CANCELLED	3476	已取消压缩	Compression cancelled	已取消壓縮
