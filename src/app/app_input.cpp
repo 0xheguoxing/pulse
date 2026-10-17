@@ -1038,7 +1038,9 @@ void HandleListRowClick(AppState& s, int index, bool ctrl, bool shift) {
             : (tab->selected_index >= 0 ? tab->selected_index : index);
         ui::PaneViewModel view;
         app::FillPaneViewModel(view, *s.pane, &s.places);
-        tab->SelectRange(anchor, index, &view);
+        // Ctrl+Shift adds the range to what is already selected (Explorer).
+        if (ctrl) tab->AddRange(anchor, index, &view);
+        else tab->SelectRange(anchor, index, &view);
     } else if (ctrl) {
         // A selected item remains part of the drag payload. Only a completed
         // Ctrl-click (without a drag) removes it from the selection.
@@ -1064,6 +1066,26 @@ void FinishListRowClick(AppState& s) {
     }
     s.clickCollapseIndex = -1;
     s.clickToggleOnRelease = false;
+}
+
+// Keyboard navigation to a view row, the way File Explorer treats modifiers:
+// plain keys select it, Shift extends from the anchor, Ctrl moves only the
+// focus (Ctrl+Space then toggles it), Ctrl+Shift adds the range.
+void MoveKeyboardFocus(AppState& s, app::Tab& tab, const ui::PaneViewModel& pane, int view_index,
+                       bool ctrl, bool shift) {
+    const int index = pane.SourceIndex(view_index);
+    if (index < 0) return;
+    if (ctrl && !shift) {
+        tab.SetCaret(index);
+    } else if (ctrl) {
+        const int focus = tab.FocusIndex();
+        const int anchor = tab.selection_anchor >= 0 ? tab.selection_anchor : (focus >= 0 ? focus : index);
+        tab.AddRange(anchor, index, &pane);
+        tab.SetCaret(index);
+    } else {
+        tab.MoveFocus(index, shift, &pane);
+    }
+    EnsureRowVisible(s, tab, index);
 }
 
 // ---- Sidebar section header drag: reorders the sections ---------------------
@@ -4648,6 +4670,21 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             s->showFps = s->forceStatusPerformance || s->appPrefs.show_status_performance;
             s->appPrefs.Save();
             InvalidateRect(hwnd, nullptr, FALSE);
+        } else if (wParam == VK_SPACE && (ctrl || shift) && !alt && vm.pane.EntryCount() > 0) {
+            // Ctrl+Space toggles the focused item; Shift+Space selects from
+            // the anchor to it. Plain Space stays Quick Look.
+            const int focus = tab->HasFocusHint() ? vm.pane.SourceIndex(0) : tab->FocusIndex();
+            if (focus >= 0) {
+                if (ctrl && !shift) {
+                    tab->ToggleSelect(focus);
+                } else {
+                    const int anchor = tab->selection_anchor >= 0 ? tab->selection_anchor : focus;
+                    if (ctrl) tab->AddRange(anchor, focus, &vm.pane);
+                    else tab->SelectRange(anchor, focus, &vm.pane);
+                    tab->SetCaret(focus);
+                }
+                EnsureRowVisible(*s, *tab, focus);
+            }
         } else if (wParam == VK_SPACE) {
             // A hover card up: Space opens its file, not the selection.
             if (!OpenHoverPreviewInQuickLook(*s)) ToggleQuickPreview(*s);
@@ -4667,7 +4704,7 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 ResetMarquee(*s);
                 s->clickCollapseIndex = -1;
             }
-        } else if (!shift && (((wParam == VK_LEFT || wParam == VK_RIGHT) &&
+        } else if (!shift && !ctrl && (((wParam == VK_LEFT || wParam == VK_RIGHT) &&
                                HandleColumnArrowKey(*s, wParam == VK_RIGHT)) ||
                               HandleDetailsTreeKey(*s, vm.pane, wParam))) {
             CancelScrollAnimation(*s);
@@ -4677,18 +4714,18 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             {
                 const int n = static_cast<int>(vm.pane.EntryCount());
                 if (n > 0) {
-                    int view = vm.pane.ViewIndex(tab->selected_index);
+                    int view = vm.pane.ViewIndex(tab->FocusIndex());
                     if (view < 0) view = 0;
                     const int dx = wParam == VK_LEFT ? -1 : (wParam == VK_RIGHT ? 1 : 0);
                     const int dy = wParam == VK_UP ? -1 : (wParam == VK_DOWN ? 1 : 0);
                     // The first arrow press selects the focused (not yet
                     // selected) first row instead of stepping past it.
-                    const int next = tab->HasFocusHint() ? 0
+                    // Ctrl moves the focus itself, so it steps on.
+                    const int next = tab->HasFocusHint() && !ctrl ? 0
                         : SkipDetailsTreePlaceholders(vm.pane,
                               s->renderer.MoveViewIndex(vm.pane, FocusedPaneRect(*s), view, dx, dy),
                               dy != 0 ? dy : dx);
-                    tab->MoveFocus(vm.pane.SourceIndex(next), shift, &vm.pane);
-                    EnsureRowVisible(*s, *tab, tab->selected_index);
+                    MoveKeyboardFocus(*s, *tab, vm.pane, next, ctrl, shift);
                 }
             }
         } else if (wParam == VK_NEXT) {
@@ -4697,11 +4734,10 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 const int n = static_cast<int>(vm.pane.EntryCount());
                 const int page = s->renderer.PageDelta(vm.pane, FocusedPaneRect(*s));
                 if (n > 0) {
-                    int view = vm.pane.ViewIndex(tab->selected_index);
+                    int view = vm.pane.ViewIndex(tab->FocusIndex());
                     if (view < 0) view = 0;
                     const int next = SkipDetailsTreePlaceholders(vm.pane, std::min(n - 1, view + page), 1);
-                    tab->MoveFocus(vm.pane.SourceIndex(next), shift, &vm.pane);
-                    EnsureRowVisible(*s, *tab, tab->selected_index);
+                    MoveKeyboardFocus(*s, *tab, vm.pane, next, ctrl, shift);
                 }
             }
         } else if (wParam == VK_PRIOR) {
@@ -4710,25 +4746,23 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 const int n = static_cast<int>(vm.pane.EntryCount());
                 const int page = s->renderer.PageDelta(vm.pane, FocusedPaneRect(*s));
                 if (n > 0) {
-                    int view = vm.pane.ViewIndex(tab->selected_index);
+                    int view = vm.pane.ViewIndex(tab->FocusIndex());
                     if (view < 0) view = 0;
                     const int next = SkipDetailsTreePlaceholders(vm.pane, std::max(0, view - page), -1);
-                    tab->MoveFocus(vm.pane.SourceIndex(next), shift, &vm.pane);
-                    EnsureRowVisible(*s, *tab, tab->selected_index);
+                    MoveKeyboardFocus(*s, *tab, vm.pane, next, ctrl, shift);
                 }
             }
         } else if (wParam == VK_HOME) {
             CancelScrollAnimation(*s);
             if (vm.pane.EntryCount() > 0) {
-                tab->MoveFocus(vm.pane.SourceIndex(0), shift, &vm.pane);
+                MoveKeyboardFocus(*s, *tab, vm.pane, 0, ctrl, shift);
                 tab->scroll_y = 0;
             }
         } else if (wParam == VK_END) {
             CancelScrollAnimation(*s);
             if (vm.pane.EntryCount() > 0) {
-                tab->MoveFocus(vm.pane.SourceIndex(SkipDetailsTreePlaceholders(
-                    vm.pane, static_cast<int>(vm.pane.EntryCount()) - 1, -1)), shift, &vm.pane);
-                EnsureRowVisible(*s, *tab, tab->selected_index);
+                MoveKeyboardFocus(*s, *tab, vm.pane, SkipDetailsTreePlaceholders(
+                    vm.pane, static_cast<int>(vm.pane.EntryCount()) - 1, -1), ctrl, shift);
                 s->scrollTargetY = tab->scroll_y;
                 MaybePrefetchSearchPage(*s);
             }

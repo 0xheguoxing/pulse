@@ -3318,7 +3318,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     if (vm.drop_spring_progress < 1.0f) spring_ring_until_ = motion_now_ + 60;
                 }
             }
-            if (draw_shapes && i == 0 && vm.focus_first_hint && !selected && pane_focused) {
+            if (draw_shapes && ((i == 0 && vm.focus_first_hint) || src == vm.focus_ring_source) &&
+                !selected && pane_focused) {
                 // Folder just opened: keyboard focus without a selection, so a
                 // stray Ctrl+C / Ctrl+X cannot collect the first item.
                 if (!dashStroke_.get()) {

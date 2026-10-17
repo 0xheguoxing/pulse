@@ -47,6 +47,10 @@ struct Tab {
 
     int selected_index = -1;
     int selection_anchor = -1;
+    // Keyboard focus that is not the selection (Ctrl+arrows, a Ctrl-click
+    // that deselects). It lapses as soon as the selection changes elsewhere.
+    int caret_index = -1;
+    uint64_t caret_revision = UINT64_MAX;
     bool all_selected = false;
     std::unordered_set<int> selected;
     float scroll_y = 0.0f;
@@ -238,6 +242,14 @@ struct Tab {
     void SelectIndices(const std::vector<int>& indices);
     void InvertIndices(const std::vector<int>& universe);
     void MoveFocus(int index, bool extend, const ui::PaneViewModel* view = nullptr);
+    // Ctrl+Shift: adds anchor..index to the selection instead of replacing it.
+    void AddRange(int from, int to, const ui::PaneViewModel* view = nullptr);
+    void SetCaret(int index) { caret_index = index; caret_revision = selection_revision; }
+    bool HasCaret() const {
+        return caret_revision == selection_revision && caret_index >= 0 && caret_index < CountBound();
+    }
+    // The row keyboard navigation starts from.
+    int FocusIndex() const { return HasCaret() ? caret_index : selected_index; }
     bool IsSelected(int index) const;
     int SelectedCount() const;
     std::vector<int> SelectedIndices() const;

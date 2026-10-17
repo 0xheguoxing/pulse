@@ -4431,6 +4431,21 @@ void TestMultiSelect() {
     Check(tab.SelectedCount() == 3 && tab.IsSelected(2) && tab.IsSelected(4) && tab.selected_index == 4,
           L"select: shift-extend");
 
+    tab.SelectOnly(0);
+    tab.ToggleSelect(2);
+    tab.AddRange(2, 4);
+    Check(tab.SelectedCount() == 4 && tab.IsSelected(0) && !tab.IsSelected(1) && tab.IsSelected(4) &&
+          tab.selected_index == 4 && tab.selection_anchor == 2,
+          L"select: ctrl-shift adds a range to the selection");
+    tab.ToggleSelect(4);
+    Check(!tab.IsSelected(4) && tab.HasCaret() && tab.FocusIndex() == 4 && tab.selection_anchor == 4,
+          L"select: ctrl-click keeps focus on the item it deselected");
+    tab.SetCaret(1);
+    Check(tab.FocusIndex() == 1 && !tab.IsSelected(1) && tab.SelectedCount() == 3,
+          L"select: ctrl-arrow moves focus without selecting");
+    tab.SelectOnly(3);
+    Check(!tab.HasCaret() && tab.FocusIndex() == 3, L"select: a new selection drops the moved focus");
+
     tab.ClearSelection();
     Check(tab.SelectedCount() == 0 && !tab.IsSelected(0) && tab.selected_index < 0,
           L"select: escape clears");
