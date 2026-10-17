@@ -2290,3 +2290,10 @@ PackPlanned	IDS_PACK_PLANNED	3492	规划中	Planned	規劃中
 PackComingSoon	IDS_PACK_COMING_SOON	3493	即将推出	Coming soon	即將推出
 ContentPackBundled	IDS_CONTENT_PACK_BUNDLED	3494	开发版内置	Bundled (dev build)	開發版內建
 ContentPackRepair	IDS_CONTENT_PACK_REPAIR	3495	需要重新下载	Download again	需要重新下載
+GlobalSearchBestMatch	IDS_GLOBAL_SEARCH_BEST_MATCH	3496	最佳匹配	Best match	最佳符合
+GlobalSearchContentMatches	IDS_GLOBAL_SEARCH_CONTENT_MATCHES	3497	内容匹配	Content matches	內容符合
+GlobalSearchAddPlace	IDS_GLOBAL_SEARCH_ADD_PLACE	3498	添加常用位置…	Add a place…	新增常用位置…
+GlobalSearchLocal	IDS_GLOBAL_SEARCH_LOCAL	3499	本机	This PC	本機
+GlobalSearchNetwork	IDS_GLOBAL_SEARCH_NETWORK	3500	网络	Network	網路
+GlobalSearchPickPlace	IDS_GLOBAL_SEARCH_PICK_PLACE	3501	选择要固定到快速访问的文件夹	Choose a folder to pin to Quick access	選擇要釘選到快速存取的資料夾
+GlobalSearchNoFilteredResults	IDS_GLOBAL_SEARCH_NO_FILTERED_RESULTS	3502	当前筛选下没有结果	No results with these filters	目前篩選下沒有結果

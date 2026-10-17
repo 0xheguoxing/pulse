@@ -2283,5 +2283,12 @@
 #define IDS_PACK_COMING_SOON                                                             3493
 #define IDS_CONTENT_PACK_BUNDLED                                                         3494
 #define IDS_CONTENT_PACK_REPAIR                                                          3495
+#define IDS_GLOBAL_SEARCH_BEST_MATCH                                                     3496
+#define IDS_GLOBAL_SEARCH_CONTENT_MATCHES                                                3497
+#define IDS_GLOBAL_SEARCH_ADD_PLACE                                                      3498
+#define IDS_GLOBAL_SEARCH_LOCAL                                                          3499
+#define IDS_GLOBAL_SEARCH_NETWORK                                                        3500
+#define IDS_GLOBAL_SEARCH_PICK_PLACE                                                     3501
+#define IDS_GLOBAL_SEARCH_NO_FILTERED_RESULTS                                            3502
 
 #endif  // PULSE_STRING_IDS_H

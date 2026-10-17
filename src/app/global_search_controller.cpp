@@ -3,7 +3,11 @@
 #include "shortcut_page.h"
 #include "app_internal.h"
 #include "tray_reveal.h"
+#include "app_runtime.h"
+#include "app_hosted_edit.h"
+#include "places.h"
 #include "../common/localization.h"
+#include <algorithm>
 
 namespace pulse {
 namespace {
@@ -17,6 +21,57 @@ bool HotkeyAllowed(const AppState& s) {
 #else
     return false;
 #endif
+}
+
+// What the popup shows with an empty query: the first Quick access pins as
+// scopes, recent searches as chips and recently opened items as rows.
+GlobalSearchContext MakeGlobalSearchContext(const AppState& s) {
+    GlobalSearchContext context;
+    for (const auto& path : s.places.quick_access_paths) {
+        if (context.pinned_folders.size() >= 3) break;
+        if (!path.empty() && !fs::IsVirtualPath(path)) context.pinned_folders.push_back(path);
+    }
+    for (const auto& entry : s.searchHistory.entries) {
+        if (context.recent_queries.size() >= 6) break;
+        if (entry.query.empty()) continue;
+        if (std::find(context.recent_queries.begin(), context.recent_queries.end(), entry.query) != context.recent_queries.end()) continue;
+        context.recent_queries.push_back(entry.query);
+    }
+    for (const auto& item : s.places.RecentItems()) {
+        if (context.recent_files.size() >= 6) break;
+        if (item.path.empty() || fs::IsVirtualPath(item.path)) continue;
+        context.recent_files.push_back({item.path, item.kind == app::PlaceItemKind::Folder});
+    }
+    context.width = s.appPrefs.global_search_width;
+    context.height = s.appPrefs.global_search_height;
+    return context;
+}
+
+// Events land on whichever window is most recent: the popup outlives the
+// window that opened it.
+GlobalSearchEvents MakeGlobalSearchEvents(AppState& s) {
+    GlobalSearchEvents events;
+    auto* core = &s.core;
+    events.resized = [core](int width, int height) {
+        AppState* window = core->windows.MostRecent();
+        if (!window) return;
+        window->appPrefs.global_search_width = std::clamp(width, 0, 4000);
+        window->appPrefs.global_search_height = std::clamp(height, 0, 4000);
+        window->appPrefs.Save();
+    };
+    events.pin_folder = [core](const std::wstring& path) {
+        AppState* window = core->windows.MostRecent();
+        if (!window) return;
+        window->places.SetQuickAccessPinned({path}, true);
+        if (window->hwnd) InvalidateRect(window->hwnd, nullptr, FALSE);
+    };
+    events.opened = [core](const GlobalSearchHandoff& search, const std::wstring& path, bool directory) {
+        AppState* window = core->windows.MostRecent();
+        if (!window) return;
+        RecordRecentOpen(*window, path, directory ? app::PlaceItemKind::Folder : app::PlaceItemKind::File);
+        if (const auto history = GlobalSearchHandoffPath(search); !history.empty()) RecordSearchHistory(*window, history);
+    };
+    return events;
 }
 }
 
@@ -65,6 +120,8 @@ void ToggleGlobalSearch(AppState& s) {
     s.globalSearchWindow.SetHandoffHandler([core = &s.core](const GlobalSearchHandoff& request) {
         if (AppState* window = core->windows.MostRecent()) ContinueGlobalSearchInMain(*window, request);
     });
+    s.globalSearchWindow.SetContext(MakeGlobalSearchContext(s));
+    s.globalSearchWindow.SetEvents(MakeGlobalSearchEvents(s));
     if (!s.globalSearchWindow.Show(s.hwnd, s.darkMode, s.scale, folder, s.appPrefs.search_pinyin)) {
         RevealWindow(s);
         s.notification_toast.ShowError(s.hwnd, l10n::Get(l10n::StringId::GlobalSearch),

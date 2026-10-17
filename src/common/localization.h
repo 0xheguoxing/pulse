@@ -2279,6 +2279,13 @@ enum class StringId : UINT {
     PackComingSoon = IDS_PACK_COMING_SOON,
     ContentPackBundled = IDS_CONTENT_PACK_BUNDLED,
     ContentPackRepair = IDS_CONTENT_PACK_REPAIR,
+    GlobalSearchBestMatch = IDS_GLOBAL_SEARCH_BEST_MATCH,
+    GlobalSearchContentMatches = IDS_GLOBAL_SEARCH_CONTENT_MATCHES,
+    GlobalSearchAddPlace = IDS_GLOBAL_SEARCH_ADD_PLACE,
+    GlobalSearchLocal = IDS_GLOBAL_SEARCH_LOCAL,
+    GlobalSearchNetwork = IDS_GLOBAL_SEARCH_NETWORK,
+    GlobalSearchPickPlace = IDS_GLOBAL_SEARCH_PICK_PLACE,
+    GlobalSearchNoFilteredResults = IDS_GLOBAL_SEARCH_NO_FILTERED_RESULTS,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

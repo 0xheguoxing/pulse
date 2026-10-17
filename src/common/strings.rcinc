@@ -2269,6 +2269,13 @@ BEGIN
     IDS_PACK_COMING_SOON "即将推出"
     IDS_CONTENT_PACK_BUNDLED "开发版内置"
     IDS_CONTENT_PACK_REPAIR "需要重新下载"
+    IDS_GLOBAL_SEARCH_BEST_MATCH "最佳匹配"
+    IDS_GLOBAL_SEARCH_CONTENT_MATCHES "内容匹配"
+    IDS_GLOBAL_SEARCH_ADD_PLACE "添加常用位置…"
+    IDS_GLOBAL_SEARCH_LOCAL "本机"
+    IDS_GLOBAL_SEARCH_NETWORK "网络"
+    IDS_GLOBAL_SEARCH_PICK_PLACE "选择要固定到快速访问的文件夹"
+    IDS_GLOBAL_SEARCH_NO_FILTERED_RESULTS "当前筛选下没有结果"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4537,6 +4544,13 @@ BEGIN
     IDS_PACK_COMING_SOON "Coming soon"
     IDS_CONTENT_PACK_BUNDLED "Bundled (dev build)"
     IDS_CONTENT_PACK_REPAIR "Download again"
+    IDS_GLOBAL_SEARCH_BEST_MATCH "Best match"
+    IDS_GLOBAL_SEARCH_CONTENT_MATCHES "Content matches"
+    IDS_GLOBAL_SEARCH_ADD_PLACE "Add a place…"
+    IDS_GLOBAL_SEARCH_LOCAL "This PC"
+    IDS_GLOBAL_SEARCH_NETWORK "Network"
+    IDS_GLOBAL_SEARCH_PICK_PLACE "Choose a folder to pin to Quick access"
+    IDS_GLOBAL_SEARCH_NO_FILTERED_RESULTS "No results with these filters"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

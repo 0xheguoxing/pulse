@@ -86,6 +86,9 @@ struct AppPrefs {
     bool global_search_enabled = false;
     uint32_t global_search_modifiers = 1; // MOD_ALT
     uint32_t global_search_key = 32; // VK_SPACE
+    // Quick search popup size in DIP after the user resized it; 0 = default.
+    int global_search_width = 0;
+    int global_search_height = 0;
     bool show_hidden_files = false;
     // Hidden + system attributes; File Explorer keeps these behind a separate option.
     bool show_protected_os_files = false;
