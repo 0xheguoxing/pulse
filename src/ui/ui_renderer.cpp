@@ -511,12 +511,13 @@ std::vector<BreadcrumbSegment> SplitBreadcrumb(const std::wstring& path) {
 namespace {
 constexpr float kSuggestRowDip = 36.0f;
 constexpr float kSuggestPadDip = 5.0f;
+constexpr float kSuggestHeadDip = 24.0f;
 }
 
 D2D1_RECT_F MainRenderer::AddressSuggestionsRect(float w, size_t count) const {
     const D2D1_RECT_F addr = AddressBarRect(w);
     const float top = addr.bottom + 4.0f * scale_;
-    const float h = (2.0f * kSuggestPadDip + kSuggestRowDip * static_cast<float>(count)) * scale_;
+    const float h = (2.0f * kSuggestPadDip + kSuggestHeadDip + kSuggestRowDip * static_cast<float>(count)) * scale_;
     return D2D1::RectF(addr.left, top, addr.right, top + h);
 }
 
@@ -524,7 +525,9 @@ int MainRenderer::AddressSuggestionAt(float w, size_t count, float x, float y) c
     if (count == 0) return -1;
     const D2D1_RECT_F rc = AddressSuggestionsRect(w, count);
     if (x < rc.left || x >= rc.right || y < rc.top || y >= rc.bottom) return -1;
-    const int row = static_cast<int>((y - rc.top - kSuggestPadDip * scale_) / (kSuggestRowDip * scale_));
+    const float rows_top = rc.top + (kSuggestPadDip + kSuggestHeadDip) * scale_;
+    if (y < rows_top) return -2;  // the header
+    const int row = static_cast<int>((y - rows_top) / (kSuggestRowDip * scale_));
     return row >= 0 && row < static_cast<int>(count) ? row : -2;  // -2: the card's padding
 }
 
@@ -543,27 +546,48 @@ void MainRenderer::DrawAddressSuggestions(const WindowViewModel& vm, const D2D1_
         return MeasureLayoutText(compositor_, compositor_->DwriteFactory(), small_fmt, t);
     };
     const float row_h = kSuggestRowDip * scale_;
+    const float rows_top = card.top + (kSuggestPadDip + kSuggestHeadDip) * scale_;
+    if (!vm.address_suggestion_header.empty()) {
+        // Header: 别名, or why a real subfolder leads (pulse_alias.html .sugh).
+        MakeBrush(dc, WithAlpha(pal.text_secondary, 0.85f), brText_);
+        DrawTextRect(dc, small_fmt, brText_.get(), vm.address_suggestion_header,
+                     card.left + 15.0f * scale_, card.top + kSuggestPadDip * scale_,
+                     card.right - card.left - 30.0f * scale_, kSuggestHeadDip * scale_);
+    }
     for (size_t i = 0; i < count; ++i) {
         const AddressSuggestionView& item = vm.address_suggestions[i];
-        const float y = card.top + kSuggestPadDip * scale_ + row_h * static_cast<float>(i);
+        const float y = rows_top + row_h * static_cast<float>(i);
         const D2D1_RECT_F row = D2D1::RectF(card.left + 5.0f * scale_, y, card.right - 5.0f * scale_, y + row_h);
         if (static_cast<int>(i) == vm.address_suggestion_selected) {
             MakeBrush(dc, WithAlpha(theme.accent, 0.16f), brAccent_);
             FillRoundedRect(dc, brAccent_.get(), row.left, row.top, row.right - row.left, row_h, 6.0f * scale_);
         }
-        DrawIconText(row.left + 10.0f * scale_, y, 18.0f * scale_, row_h, kIconFolder, L"[]", theme.icon_folder, 0.95f);
-        float x = row.left + 38.0f * scale_;
+        if (item.real) {
+            DrawIconText(row.left + 8.0f * scale_, y, 18.0f * scale_, row_h, kIconFolder, L"[]", theme.icon_folder, 0.95f);
+        } else {
+            // The alias mark leads: what matched is a name the user gave.
+            const float m = kAliasMarkDip * scale_;
+            const float mx = std::round(row.left + 10.0f * scale_);
+            const float my = std::round(y + (row_h - m) * 0.5f);
+            painter_.DrawAliasMark(D2D1::RectF(mx, my, mx + m, my + m));
+        }
+        float x = row.left + 34.0f * scale_;
+        float right = row.right - 10.0f * scale_;
+        if (!item.hint.empty()) {
+            // Right-aligned hint: 子文件夹 / 按拼音匹配 · Enter 前往.
+            const float hint_w = measure_small(item.hint) + 1.0f;
+            if (hint_w < (right - x) * 0.45f) {
+                MakeBrush(dc, WithAlpha(pal.text_secondary, 0.75f), brText_);
+                DrawTextRect(dc, small_fmt, brText_.get(), item.hint, right - hint_w, y, hint_w, row_h);
+                right -= hint_w + 12.0f * scale_;
+            }
+        }
         const float label_w = (std::min)(MeasureLayoutText(compositor_, compositor_->DwriteFactory(), fmt, item.label) + 1.0f,
-                                         (row.right - x) * 0.5f);
+                                         (std::max)(0.0f, (right - x) * 0.6f));
         MakeBrush(dc, pal.text, brText_);
         DrawTextRect(dc, fmt, brText_.get(), item.label, x, y, label_w, row_h);
         x += label_w + 10.0f * scale_;
-        if (!item.real) {
-            // The alias mark: what was matched is a name the user gave.
-            painter_.DrawGlyph(L"\xE8EC", D2D1::RectF(x, y, x + 14.0f * scale_, y + row_h), theme.accent);
-            x += 22.0f * scale_;
-        }
-        const float path_w = (std::max)(0.0f, row.right - 10.0f * scale_ - x);
+        const float path_w = (std::max)(0.0f, right - x);
         if (path_w > 24.0f * scale_) {
             MakeBrush(dc, pal.text_secondary, brText_);
             DrawTextRect(dc, small_fmt, brText_.get(), FitEndEllipsis(item.path, path_w, measure_small),
@@ -581,8 +605,10 @@ void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
     if (!app::AliasStore::Instance().Empty()) {
         for (auto& seg : segments) {
             if (seg.path.empty() || seg.path.starts_with(L"pulse:")) continue;
-            if (std::wstring alias = app::AliasStore::Instance().Shown(seg.path); !alias.empty())
+            if (std::wstring alias = app::AliasStore::Instance().Shown(seg.path); !alias.empty()) {
                 seg.text = std::move(alias);
+                seg.alias = true;
+            }
         }
     }
     if (vm.is_query_search && vm.has_search_origin) {
@@ -605,7 +631,8 @@ void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
     std::vector<float> widths(segments.size(), 0.0f);
     float total = 0.0f;
     for (size_t i = 0; i < segments.size(); ++i) {
-        widths[i] = MeasureTextWidth(dwrite, fmt, segments[i].text) + segPad * 2;
+        widths[i] = MeasureTextWidth(dwrite, fmt, segments[i].text) + segPad * 2 +
+                    (segments[i].alias ? kCrumbAliasMarkDip * scale_ : 0.0f);
         total += widths[i] + (i ? chevronW : 0.0f);
     }
     // Collapse leading segments until the rest fits (last segment always kept).
@@ -622,6 +649,7 @@ void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
         p.rc = D2D1::RectF(x, addr.top + 2 * scale_, x + widths[i], addr.bottom - 2 * scale_);
         p.text = segments[i].text;
         p.path = segments[i].path;
+        p.alias = segments[i].alias;
         out.push_back(p);
         x += widths[i];
     }

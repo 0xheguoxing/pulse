@@ -259,6 +259,7 @@ bool DismissPathEditorOutside(AppState& s, int x, int y) {
 void UpdateAddressSuggestions(AppState& s) {
     const size_t before = s.addressSuggest.size();
     s.addressSuggest.clear();
+    s.addressSuggestHeader.clear();
     s.addressSuggestSel = -1;
     const auto done = [&] { if (before || !s.addressSuggest.empty()) InvalidateRect(s.hwnd, nullptr, FALSE); };
     if (!s.addressEditing || s.addressSearching || !s.hwndAddressEdit ||
@@ -269,9 +270,18 @@ void UpdateAddressSuggestions(AppState& s) {
     text.resize(static_cast<size_t>(GetWindowTextW(s.hwndAddressEdit, text.data(), len + 1)));
     while (!text.empty() && iswspace(text.back())) text.pop_back();
     while (!text.empty() && iswspace(text.front())) text.erase(text.begin());
-    // Paths, shell: and %VAR% shortcuts keep the plain editor.
-    if (text.empty() || text.find_first_of(L"\\/:%\"") != std::wstring::npos) return done();
-    const auto aliases = app::AliasStore::Instance().Suggest(text, 6);
+    // Paths, shell: and %VAR% shortcuts keep the plain editor; "别名\rest"
+    // suggests the aliased folder plus the rest (pulse_alias.html).
+    if (text.empty() || text.find_first_of(L":%\"") != std::wstring::npos ||
+        text.front() == L'\\' || text.front() == L'/') return done();
+    const size_t cut = text.find_first_of(L"\\/");
+    std::wstring head = text.substr(0, cut);
+    while (!head.empty() && iswspace(head.back())) head.pop_back();
+    std::wstring rest = cut == std::wstring::npos ? std::wstring() : text.substr(cut);
+    for (auto& c : rest) if (c == L'/') c = L'\\';
+    while (!rest.empty() && rest.back() == L'\\') rest.pop_back();
+    if (head.empty()) return done();
+    const auto aliases = app::AliasStore::Instance().SuggestRanked(head, 6);
     if (aliases.empty()) return done();
     // A real subfolder with that very name wins over any alias.
     const app::Tab* tab = ActiveTab(s);
@@ -281,13 +291,23 @@ void UpdateAddressSuggestions(AppState& s) {
         child += text;
         const DWORD attrs = GetFileAttributesW(child.c_str());
         if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY))
-            s.addressSuggest.push_back({text, ClipboardPath(child), true});
+            s.addressSuggest.push_back({text, ClipboardPath(child), l10n::Get(l10n::StringId::AliasSuggestSubfolder), true});
     }
-    for (const auto& e : aliases) {
+    s.addressSuggestHeader = l10n::Get(s.addressSuggest.empty() ? l10n::StringId::AliasSuggestHeader
+                                                                 : l10n::StringId::AliasSuggestSubfolderFirst);
+    for (const auto& [rank, e] : aliases) {
         if (s.addressSuggest.size() >= 6) break;
-        if (!s.addressSuggest.empty() && _wcsicmp(s.addressSuggest.front().path.c_str(), e.path.c_str()) == 0)
+        std::wstring path = e.path;
+        if (!rest.empty()) {
+            if (!path.empty() && path.back() == L'\\') path.pop_back();
+            path += rest;
+        }
+        if (!s.addressSuggest.empty() && _wcsicmp(s.addressSuggest.front().path.c_str(), path.c_str()) == 0)
             continue;
-        s.addressSuggest.push_back({e.alias, e.path, false});
+        const auto hint = rank == 2 ? l10n::StringId::AliasSuggestByPinyin
+                        : rank == 4 ? l10n::StringId::AliasSuggestByName
+                                    : l10n::StringId::AliasSuggestEnter;
+        s.addressSuggest.push_back({e.alias + rest, std::move(path), l10n::Get(hint), false});
     }
     // Enter takes the first row unless the text is a known shortcut (desktop, ...).
     if (!app::ResolveAddressShortcut(text).resolved) s.addressSuggestSel = 0;

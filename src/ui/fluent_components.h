@@ -160,6 +160,7 @@ struct SidebarItemSpec {
     bool suppress_text = false;
     bool skip_glyph = false;
     float trailing_reserve = 0.0f;
+    bool alias_mark = false;   // the label is a 别名: the mark follows it
     D2D1_COLOR_F icon_color{};
     D2D1_COLOR_F tag_color{};
     D2D1_COLOR_F status_color{};
@@ -389,6 +390,9 @@ public:
                   HorizontalAlignment alignment, const D2D1_COLOR_F& background);
     void DrawGlyph(std::wstring_view glyph, const D2D1_RECT_F& bounds,
                    const D2D1_COLOR_F& color);
+    // 别名 mark (pulse_alias.html .amark): a soft-accent rounded tile with a
+    // tag drawn in the accent. `tile` is its 14-DIP square.
+    void DrawAliasMark(const D2D1_RECT_F& tile);
     void DrawFocusRing(const D2D1_RECT_F& bounds, float radius);
 
     void DrawButton(const ButtonSpec& spec);

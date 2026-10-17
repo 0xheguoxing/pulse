@@ -2251,5 +2251,11 @@
 #define IDS_IMPORT_ALIASES_ELLIPSIS                                                      3461
 #define IDS_NO_ALIASES_YET                                                               3462
 #define IDS_FILTER_ALIASES_PLACEHOLDER                                                   3463
+#define IDS_ALIAS_SUGGEST_HEADER                                                         3464
+#define IDS_ALIAS_SUGGEST_SUBFOLDER_FIRST                                                3465
+#define IDS_ALIAS_SUGGEST_SUBFOLDER                                                      3466
+#define IDS_ALIAS_SUGGEST_ENTER                                                          3467
+#define IDS_ALIAS_SUGGEST_BY_PINYIN                                                      3468
+#define IDS_ALIAS_SUGGEST_BY_NAME                                                        3469
 
 #endif  // PULSE_STRING_IDS_H

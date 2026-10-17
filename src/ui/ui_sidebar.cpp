@@ -769,6 +769,10 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             row.status_color = item.status_color;
             row.icon_color = item.icon_color;
             row.suppress_text = item.editing;
+            // The label is the folder's 别名 (places show it): the mark follows it.
+            row.alias_mark = !item.path.empty() && !item.is_tag && !item.editing &&
+                             !app::AliasStore::Instance().Empty() &&
+                             app::AliasStore::Instance().Shown(item.path) == item.label;
             const int row_svg = item.is_tag ? 0 : FluentSvgIdForGlyph(item.icon_glyph);
             row.skip_glyph = !IsHighContrast() && row_svg != 0 && EnsureFluentSvg(row_svg, true);
             const bool unpin = SidebarItemHasUnpin(item);

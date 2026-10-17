@@ -2247,6 +2247,12 @@ enum class StringId : UINT {
     ImportAliasesEllipsis = IDS_IMPORT_ALIASES_ELLIPSIS,
     NoAliasesYet = IDS_NO_ALIASES_YET,
     FilterAliasesPlaceholder = IDS_FILTER_ALIASES_PLACEHOLDER,
+    AliasSuggestHeader = IDS_ALIAS_SUGGEST_HEADER,
+    AliasSuggestSubfolderFirst = IDS_ALIAS_SUGGEST_SUBFOLDER_FIRST,
+    AliasSuggestSubfolder = IDS_ALIAS_SUGGEST_SUBFOLDER,
+    AliasSuggestEnter = IDS_ALIAS_SUGGEST_ENTER,
+    AliasSuggestByPinyin = IDS_ALIAS_SUGGEST_BY_PINYIN,
+    AliasSuggestByName = IDS_ALIAS_SUGGEST_BY_NAME,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

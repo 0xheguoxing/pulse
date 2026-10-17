@@ -262,6 +262,14 @@ public:
     // alias itself, then an alias starting with it, its pinyin, an alias
     // containing it, and last a real folder name containing it.
     std::vector<AliasEntry> Suggest(std::wstring_view query, size_t limit) const {
+        std::vector<AliasEntry> out;
+        for (auto& [rank, e] : SuggestRanked(query, limit)) out.push_back(std::move(e));
+        return out;
+    }
+
+    // Suggest, keeping how each matched: 0 exact, 1 prefix, 2 pinyin,
+    // 3 alias contains, 4 real folder name contains.
+    std::vector<std::pair<int, AliasEntry>> SuggestRanked(std::wstring_view query, size_t limit) const {
         const std::wstring q = Lower(Trimmed(query));
         if (q.empty() || Empty()) return {};
         std::vector<std::pair<int, AliasEntry>> ranked;
@@ -283,12 +291,8 @@ public:
         std::stable_sort(ranked.begin(), ranked.end(), [](const auto& l, const auto& r) {
             return l.first != r.first ? l.first < r.first : l.second.alias < r.second.alias;
         });
-        std::vector<AliasEntry> out;
-        for (auto& [rank, e] : ranked) {
-            if (out.size() >= limit) break;
-            out.push_back(std::move(e));
-        }
-        return out;
+        if (ranked.size() > limit) ranked.resize(limit);
+        return ranked;
     }
 
     static std::wstring Lower(std::wstring_view s) {

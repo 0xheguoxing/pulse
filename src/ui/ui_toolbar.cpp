@@ -460,11 +460,20 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                     if (tint_brush.get()) FillRoundedRect(dc, tint_brush.get(), seg.rc.left, seg.rc.top,
                         seg.rc.right - seg.rc.left, seg.rc.bottom - seg.rc.top, theme.radius_control * scale_);
                 }
+                float text_left = seg.rc.left + 8 * scale_;
+                if (seg.alias) {
+                    // 别名 crumb: the mark, then the alias (pulse_alias.html).
+                    const float m = kAliasMarkDip * scale_;
+                    const float my = std::round((seg.rc.top + seg.rc.bottom - m) * 0.5f);
+                    const float mx = std::round(text_left);
+                    painter_.DrawAliasMark(D2D1::RectF(mx, my, mx + m, my + m));
+                    text_left += kCrumbAliasMarkDip * scale_;
+                }
                 MakeBrush(dc, theme.text, brText_);
                 // Width measured exactly; let the ink use the right padding as slack
                 // so the trailing glyph is not shaved by the clip rect.
                 DrawTextRect(dc, compositor_->AddressFormat(), brText_.get(), seg.text,
-                    seg.rc.left + 8 * scale_, seg.rc.top, seg.rc.right - seg.rc.left - 8 * scale_,
+                    text_left, seg.rc.top, seg.rc.right - text_left,
                     seg.rc.bottom - seg.rc.top);
             }
             if (placed.empty() && !vm.pane.path.empty()) {

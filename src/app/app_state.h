@@ -505,6 +505,7 @@ struct AppState : AppCoreOwner {
     bool addressSearching = false;
     // 别名 suggestions under the path editor; Up/Down pick, Enter opens.
     std::vector<ui::AddressSuggestionView> addressSuggest;
+    std::wstring addressSuggestHeader;
     int addressSuggestSel = -1;
     bool searchHistoryOpen = false;
     bool searchScopePending = false;

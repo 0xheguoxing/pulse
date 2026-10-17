@@ -209,6 +209,10 @@ void ClearTextWidthCache() {
     constexpr const wchar_t* kIconChevronDown = L"\xE70D";
     constexpr const wchar_t* kIconCloseSmall = L"\xE711";
     constexpr const wchar_t* kIconPinFilled = L"\xE841";
+    // The 别名 mark (14 DIP) and its gaps (pulse_alias.html .amark).
+    constexpr float kAliasMarkDip = 14.0f;
+    constexpr float kCrumbAliasMarkDip = 19.0f;   // breadcrumb: mark + 5
+    constexpr float kListAliasMarkDip = 22.0f;    // list row: mark + 8
 
     std::wstring JoinDirName(const std::wstring& dir, const std::wstring& name) {
         if (name.empty()) return dir;

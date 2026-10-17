@@ -2237,6 +2237,12 @@ BEGIN
     IDS_IMPORT_ALIASES_ELLIPSIS "导入别名…"
     IDS_NO_ALIASES_YET "还没有别名 · 选中项目后按 Shift+F2 设置"
     IDS_FILTER_ALIASES_PLACEHOLDER "筛选别名（别名、拼音或路径）"
+    IDS_ALIAS_SUGGEST_HEADER "别名"
+    IDS_ALIAS_SUGGEST_SUBFOLDER_FIRST "当前文件夹里的同名文件夹优先"
+    IDS_ALIAS_SUGGEST_SUBFOLDER "子文件夹"
+    IDS_ALIAS_SUGGEST_ENTER "Enter 前往"
+    IDS_ALIAS_SUGGEST_BY_PINYIN "按拼音匹配 · Enter 前往"
+    IDS_ALIAS_SUGGEST_BY_NAME "按原名匹配 · Enter 前往"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4473,6 +4479,12 @@ BEGIN
     IDS_IMPORT_ALIASES_ELLIPSIS "Import aliases…"
     IDS_NO_ALIASES_YET "No aliases yet. Select an item and press Shift+F2"
     IDS_FILTER_ALIASES_PLACEHOLDER "Filter aliases (name, pinyin or path)"
+    IDS_ALIAS_SUGGEST_HEADER "Aliases"
+    IDS_ALIAS_SUGGEST_SUBFOLDER_FIRST "A same-named folder here comes first"
+    IDS_ALIAS_SUGGEST_SUBFOLDER "Subfolder"
+    IDS_ALIAS_SUGGEST_ENTER "Enter to go"
+    IDS_ALIAS_SUGGEST_BY_PINYIN "Pinyin match · Enter to go"
+    IDS_ALIAS_SUGGEST_BY_NAME "Name match · Enter to go"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

@@ -347,6 +347,7 @@ struct PaneViewModel {
 struct BreadcrumbSegment {
     std::wstring text;
     std::wstring path;
+    bool alias = false;   // text is the folder's 别名 (drawn after the mark)
 };
 
 // Splits "C:\Users\TestUser" into [{C:\, C:\}, {Users, C:\Users}, ...].
@@ -724,8 +725,9 @@ struct DragGhostView {
 
 // 别名: one row of the list under the path editor ("fbb" → 发布包).
 struct AddressSuggestionView {
-    std::wstring label;   // the alias, or a real subfolder's name
+    std::wstring label;   // the alias (plus any typed \rest), or a real subfolder's name
     std::wstring path;    // where choosing it goes
+    std::wstring hint;    // right-aligned: 子文件夹 / 按拼音匹配 · Enter 前往 ...
     bool real = false;    // a real subfolder of the current folder (listed first)
 };
 
@@ -844,6 +846,7 @@ struct WindowViewModel {
     bool address_editing = false;
     bool address_searching = false;
     std::vector<AddressSuggestionView> address_suggestions;
+    std::wstring address_suggestion_header;   // 别名 / 当前文件夹里的同名文件夹优先
     int address_suggestion_selected = -1;
     bool address_search_current = false;
     bool address_search_content = false;
@@ -1662,6 +1665,7 @@ public:
         D2D1_RECT_F rc{};
         std::wstring text;
         std::wstring path;
+        bool alias = false;
     };
     // Shared by DrawToolbar, HitTest and the drop-target logic so the three
     // can never disagree about segment positions.

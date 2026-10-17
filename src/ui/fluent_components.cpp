@@ -591,6 +591,37 @@ void Painter::DrawGlyphWithBrush(std::wstring_view glyph, const D2D1_RECT_F& bou
                       HorizontalAlignment::Center);
 }
 
+void Painter::DrawAliasMark(const D2D1_RECT_F& tile) {
+    if (!theme_ || !dc_) return;
+    D2D1_COLOR_F soft = theme_->accent;
+    soft.a = dark_ ? 0.24f : 0.14f;
+    FillRoundedRect(tile, Px(4.0f), soft);
+    ComPtr<ID2D1Factory> factory;
+    dc_->GetFactory(&factory);
+    ComPtr<ID2D1PathGeometry> path;
+    if (!factory.get() || FAILED(factory->CreatePathGeometry(&path))) return;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(path->Open(&sink))) return;
+    // The prototype's tag: "M2.5 9.5l5-6.5h6v6l-6.5 5z" in a 16-unit box,
+    // shown 10 DIPs wide in the middle of the tile.
+    const float u = (tile.right - tile.left) * (10.0f / 14.0f) / 16.0f;
+    const float ox = (tile.left + tile.right) * 0.5f - 8.0f * u;
+    const float oy = (tile.top + tile.bottom) * 0.5f - 8.0f * u;
+    const auto P = [&](float x, float y) { return D2D1::Point2F(ox + x * u, oy + y * u); };
+    sink->BeginFigure(P(2.5f, 9.5f), D2D1_FIGURE_BEGIN_HOLLOW);
+    sink->AddLine(P(7.5f, 3.0f));
+    sink->AddLine(P(13.5f, 3.0f));
+    sink->AddLine(P(13.5f, 9.0f));
+    sink->AddLine(P(7.0f, 14.0f));
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    if (FAILED(sink->Close())) return;
+    EnsureStrokeStyle();
+    ID2D1SolidColorBrush* brush = ScratchBrush(theme_->accent);
+    if (!brush) return;
+    dc_->DrawGeometry(path.get(), brush, (std::max)(1.0f, 2.0f * u), round_stroke_.get());
+    dc_->FillEllipse(D2D1::Ellipse(P(10.5f, 5.5f), 1.1f * u, 1.1f * u), brush);
+}
+
 void Painter::DrawGlyphWithFormat(std::wstring_view glyph, const D2D1_RECT_F& bounds,
                                   const D2D1_COLOR_F& color, IDWriteTextFormat* format) {
     const auto command = command_icons::FromGlyph(glyph);
@@ -1619,7 +1650,19 @@ void Painter::DrawSidebarItem(const SidebarItemSpec& spec) {
     if (spec.suppress_text) {
         return;
     }
-    if (spec.detail.empty()) {
+    if (spec.detail.empty() && spec.alias_mark) {
+        // 别名: the name, then the mark right after it (pulse_alias.html).
+        const float mark = Px(14.0f);
+        const float gap = Px(6.0f);
+        const float avail = (std::max)(0.0f, Width(content) - mark - gap);
+        const float text_w = (std::min)(avail, MeasureTextWidth(compositor_->DwriteFactory(), NavFormat(),
+                                                                spec.text) + Px(1.0f));
+        DrawText(spec.text, D2D1::RectF(content.left, content.top, content.left + text_w, content.bottom),
+                 NavFormat(), foreground);
+        const float x = std::round(content.left + text_w + gap);
+        const float y = std::round((content.top + content.bottom - mark) * 0.5f);
+        DrawAliasMark(D2D1::RectF(x, y, x + mark, y + mark));
+    } else if (spec.detail.empty()) {
         DrawText(spec.text, content, NavFormat(), foreground);
     } else {
         const float detail_width = MeasureTextWidth(compositor_->DwriteFactory(),

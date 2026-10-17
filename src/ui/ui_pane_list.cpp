@@ -3256,8 +3256,10 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 src != vm.rename_index && !change && e.badge.empty();
             const float badgeW = change && !iconGrid ? ChangeBadgeWidth(*change, scale_, compositor_) : vm.view_mode == ViewMode::Details && !e.badge.empty()
                 ? std::min(108.0f * scale_, painter_.MeasureTagWidth(e.badge)) : 0.0f;
+            // List rows: [mark] alias  real name (pulse_alias.html .amark).
+            const bool list_mark = has_alias && !iconGrid;
             const NameTrail trail = LayoutNameTrail(
-                nameX, textY, textH, nameColRight, cell.top, cell.bottom, scale_,
+                list_mark ? nameX + kListAliasMarkDip * scale_ : nameX, textY, textH, nameColRight, cell.top, cell.bottom, scale_,
                 has_alias ? alias_line : e.name, tagDotCount, badgeW, showStar, showNewTab, showMore,
                 compositor_, compositor_->DwriteFactory(), compositor_->FileNameFormat(), change != nullptr,
                 vm.view_mode == ViewMode::Details ? (e.is_dir ? 3 : 2) : 0, name_matches, row_actions_);
@@ -3310,6 +3312,12 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         expanded_name.matches = name_matches;
                     }
                 } else if (has_alias) {
+                    {
+                        const float m = kAliasMarkDip * scale_;
+                        const float mx = std::round(trail.name_x - kListAliasMarkDip * scale_);
+                        const float my = std::round(textY + (textH - m) * 0.5f);
+                        painter_.DrawAliasMark(D2D1::RectF(mx, my, mx + m, my + m));
+                    }
                     Theme name_theme = theme;
                     name_theme.text = nameColor;
                     const float alias_w = MeasureLayoutText(compositor_, compositor_->DwriteFactory(),

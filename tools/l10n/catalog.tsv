@@ -2258,3 +2258,9 @@ ExportAliasesEllipsis	IDS_EXPORT_ALIASES_ELLIPSIS	3460	导出别名…	Export al
 ImportAliasesEllipsis	IDS_IMPORT_ALIASES_ELLIPSIS	3461	导入别名…	Import aliases…	匯入別名…
 NoAliasesYet	IDS_NO_ALIASES_YET	3462	还没有别名 · 选中项目后按 Shift+F2 设置	No aliases yet. Select an item and press Shift+F2	還沒有別名 · 選取項目後按 Shift+F2 設定
 FilterAliasesPlaceholder	IDS_FILTER_ALIASES_PLACEHOLDER	3463	筛选别名（别名、拼音或路径）	Filter aliases (name, pinyin or path)	篩選別名（別名、拼音或路徑）
+AliasSuggestHeader	IDS_ALIAS_SUGGEST_HEADER	3464	别名	Aliases	別名
+AliasSuggestSubfolderFirst	IDS_ALIAS_SUGGEST_SUBFOLDER_FIRST	3465	当前文件夹里的同名文件夹优先	A same-named folder here comes first	目前資料夾裡的同名資料夾優先
+AliasSuggestSubfolder	IDS_ALIAS_SUGGEST_SUBFOLDER	3466	子文件夹	Subfolder	子資料夾
+AliasSuggestEnter	IDS_ALIAS_SUGGEST_ENTER	3467	Enter 前往	Enter to go	Enter 前往
+AliasSuggestByPinyin	IDS_ALIAS_SUGGEST_BY_PINYIN	3468	按拼音匹配 · Enter 前往	Pinyin match · Enter to go	按拼音匹配 · Enter 前往
+AliasSuggestByName	IDS_ALIAS_SUGGEST_BY_NAME	3469	按原名匹配 · Enter 前往	Name match · Enter to go	按原名匹配 · Enter 前往
