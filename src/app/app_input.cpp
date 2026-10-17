@@ -601,6 +601,25 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
     } else submit(sources);
     if (!submitted) return DROPEFFECT_NONE;
     if (s.trayDragOut) RememberTrayDest(s, dest);
+    // Dropped into the list that shows `dest` (not onto a folder row): the
+    // drag's cards wait and land on the new rows once they appear.
+    if (g_internal_drag && !header && ui::motion::SystemAnimationsEnabled()) {
+        const app::Pane* pane = PaneAtSlot(s, header_pane);
+        const app::Tab* tab = pane ? pane->ActiveTab() : ActiveTab(s);
+        if (tab && _wcsicmp(fs::NormalizePath(tab->current_path).c_str(), fs::NormalizePath(dest).c_str()) == 0) {
+            s.dragLanding = {};
+            s.dragLanding.dir = tab->current_path;
+            s.dragLanding.pane = pane ? pane : s.pane;
+            for (const auto& p : sources) {
+                std::wstring leaf = p;
+                while (leaf.size() > 3 && (leaf.back() == L'\\' || leaf.back() == L'/')) leaf.pop_back();
+                const size_t slash = leaf.find_last_of(L"\\/");
+                s.dragLanding.names.push_back(slash == std::wstring::npos ? leaf : leaf.substr(slash + 1));
+            }
+            s.dragLanding.since = ui::motion::NowMs();
+            ui::ExpectDragLanding();
+        }
+    }
     return effect;
 }
 

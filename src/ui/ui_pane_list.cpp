@@ -2970,6 +2970,25 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 thumbRect.right += dx;
                 nameRc.left = std::min(nameRc.right, nameRc.left + dx);
             }
+            // Landing: a row a drag just dropped here stays hidden while the
+            // drag's cards fly onto it, then fades in (its flash runs on).
+            float row_land_hide = 0.0f;
+            if (!vm.landing_names.empty() && vm.landing_names.contains(e.name)) {
+                if (draw_shapes) {
+                    D2D1_MATRIX_3X2_F m{};
+                    dc->GetTransform(&m);
+                    const auto at = [&m](float x, float y) {
+                        return D2D1::Point2F(x * m._11 + y * m._21 + m._31, x * m._12 + y * m._22 + m._32);
+                    };
+                    const D2D1_POINT_2F a = at(iconRect.left, cell.top);
+                    const D2D1_POINT_2F b = at(cell.right, cell.bottom);
+                    landing_rects_.push_back(D2D1::RectF(a.x, a.y, b.x, b.y));
+                }
+                row_land_hide = vm.landing_reveal_at == 0 || motion_now_ < vm.landing_reveal_at ? 1.0f
+                    : 1.0f - (std::min)(1.0f, static_cast<float>(motion_now_ - vm.landing_reveal_at) / 140.0f);
+                if (row_land_hide > 0.0f) RequestMotionFrame();
+                if (row_land_hide >= 1.0f) continue;
+            }
             if (change && iconGrid) {
                 const float icon_inset = std::min(18 * scale_, (iconRect.bottom - iconRect.top) * 0.3f);
                 iconRect.top += icon_inset;
@@ -2997,11 +3016,12 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 ID2D1DeviceContext* dc;
                 bool on;
                 ~RowFade() { if (on) dc->PopLayer(); }
-            } row_fade{dc, row_leave > 0.0f};
+            } row_fade{dc, row_leave > 0.0f || row_land_hide > 0.0f};
             if (row_fade.on) {
                 dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr,
                                                      D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-                                                     D2D1::IdentityMatrix(), 1.0f - row_leave, nullptr,
+                                                     D2D1::IdentityMatrix(),
+                                                     (1.0f - row_leave) * (1.0f - row_land_hide), nullptr,
                                                      D2D1_LAYER_OPTIONS1_NONE), nullptr);
             }
             // Backgrounds take the morphing cell's shape; the transform already

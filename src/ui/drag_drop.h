@@ -120,6 +120,19 @@ public:
 using DragVisualFactory = DragVisual* (*)(const std::vector<std::wstring>& paths);
 void SetDragVisualFactory(DragVisualFactory factory);
 
+// Landing in the real slots (pulse_motion_v2, rolando-sound-cards): a drop
+// into a folder that a Pulse list shows asks the card stack to wait at the
+// drop point instead of gulping; once the new rows are on screen their
+// rects (screen px: icon left, row top/right/bottom) land the cards there.
+// Without an answer the stack gulps on its own after a short wait.
+void ExpectDragLanding();                 // the drop target, before Drop returns
+bool TakeDragLandingExpectation();        // the visual, in Finish
+void SetDragLandingWindow(HWND hwnd);     // the visual waiting (nullptr: none)
+bool DragLandingAwaiting();
+bool LandDragStack(const std::vector<RECT>& screen_rects);  // posts to the visual
+std::vector<RECT> TakeDragLandingRects(); // the visual, on that message
+inline constexpr UINT kDragLandMessage = WM_APP + 0x4C;
+
 class ListDropSource final : public IDropSource {
 public:
     // When set and returning true, Esc is consumed by the drop target

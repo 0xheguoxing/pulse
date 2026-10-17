@@ -552,6 +552,15 @@ struct AppState : AppCoreOwner {
     uint64_t leavingSince = 0;   // ui::motion::NowMs
     uint64_t leavingDoneAt = 0;  // ui::motion::NowMs, 0 while running
     uint64_t leavingTask = 0;
+    // A drag from Pulse dropped into a folder a pane shows: its cards land on
+    // the new rows (drag_drop.h LandDragStack). Times are ui::motion::NowMs.
+    struct DragLanding {
+        std::wstring dir;
+        const app::Pane* pane = nullptr;   // the pane that took the drop
+        std::vector<std::wstring> names;
+        uint64_t since = 0;
+        uint64_t reveal_at = 0;   // 0 until the cards were sent
+    } dragLanding;
     std::unique_ptr<ui::FileOperationWindow> operationWindow;
     uint64_t operationUiTaskId = 0;
     uint64_t operationDismissedTaskId = 0;

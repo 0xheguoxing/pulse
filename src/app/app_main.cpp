@@ -218,6 +218,35 @@ static bool IndexStatusVisible(AppState& s) {
     return visible;
 }
 
+// Landing: once the dropped rows were drawn, send their screen rects to the
+// waiting drag cards and reveal the rows as the cards arrive.
+static void TickDragLanding(AppState& s) {
+    auto& l = s.dragLanding;
+    if (l.names.empty()) return;
+    const uint64_t now = ui::motion::NowMs();
+    if (l.reveal_at) {
+        if (now > l.reveal_at + 200) l = {};
+        return;
+    }
+    const auto& rects = s.renderer.LandingRects();
+    if (!rects.empty()) {
+        std::vector<RECT> screen;
+        for (const auto& r : rects) {
+            POINT a{std::lround(r.left), std::lround(r.top)};
+            POINT b{std::lround(r.right), std::lround(r.bottom)};
+            ClientToScreen(s.hwnd, &a);
+            ClientToScreen(s.hwnd, &b);
+            screen.push_back(RECT{a.x, a.y, b.x, b.y});
+        }
+        if (ui::LandDragStack(screen)) l.reveal_at = now + 240;
+        else l = {};   // the cards are gone: just show the rows
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+    } else if (now - l.since > 750 || (!ui::DragLandingAwaiting() && now - l.since > 150)) {
+        l = {};
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+    }
+}
+
 void Render(AppState& s) {
     auto t0 = std::chrono::steady_clock::now();
 
@@ -258,6 +287,7 @@ void Render(AppState& s) {
     FillHoverPreviewView(s, vm, hover_card);
     if (hover_card.visible) vm.tooltip_text.clear();  // the card already names the file
     s.renderer.Render(vm, rect, theme);
+    TickDragLanding(s);
     s.renderer.DrawHoverPreview(hover_card, rect, theme, hc);  // also the dwell line, and stops a video
     AfterHoverPreviewDraw(s);
     s.notification_toast.Draw(s.compositor, theme, s.scale, hc);
@@ -2125,6 +2155,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 if (tab && refresh) {
                     s->store.MarkDirty(tab->current_path);
                     RefreshActiveTab(*s, RefreshReason::OperationCompleted);
+                }
+                // A drag's cards are waiting over another pane: list the
+                // dropped rows now rather than on the watcher's next beat.
+                if (refresh && !s->dragLanding.names.empty() && !s->dragLanding.reveal_at) {
+                    s->store.MarkDirty(s->dragLanding.dir);
+                    RefreshPath(*s, s->dragLanding.dir, RefreshReason::OperationCompleted);
                 }
             }
             InvalidateRect(hwnd, nullptr, FALSE);

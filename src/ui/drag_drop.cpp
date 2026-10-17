@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cwctype>
+#include <mutex>
 #include <vector>
 
 namespace pulse::ui {
@@ -546,6 +547,53 @@ DragVisualFactory g_drag_visual_factory = nullptr;
 } // namespace
 
 void SetDragVisualFactory(DragVisualFactory factory) { g_drag_visual_factory = factory; }
+
+namespace {
+// UI threads only, but windows may run on their own: keep it locked.
+std::mutex g_land_mu;
+bool g_land_expect = false;
+ULONGLONG g_land_expect_at = 0;
+HWND g_land_hwnd = nullptr;
+std::vector<RECT> g_land_rects;
+} // namespace
+
+void ExpectDragLanding() {
+    std::lock_guard<std::mutex> lock(g_land_mu);
+    g_land_expect = true;
+    g_land_expect_at = GetTickCount64();
+}
+
+bool TakeDragLandingExpectation() {
+    std::lock_guard<std::mutex> lock(g_land_mu);
+    const bool fresh = g_land_expect && GetTickCount64() - g_land_expect_at < 2000;
+    g_land_expect = false;
+    return fresh;
+}
+
+void SetDragLandingWindow(HWND hwnd) {
+    std::lock_guard<std::mutex> lock(g_land_mu);
+    g_land_hwnd = hwnd;
+    if (!hwnd) g_land_rects.clear();
+}
+
+bool DragLandingAwaiting() {
+    std::lock_guard<std::mutex> lock(g_land_mu);
+    return g_land_hwnd != nullptr;
+}
+
+bool LandDragStack(const std::vector<RECT>& screen_rects) {
+    std::lock_guard<std::mutex> lock(g_land_mu);
+    if (!g_land_hwnd || screen_rects.empty()) return false;
+    g_land_rects = screen_rects;
+    const HWND hwnd = g_land_hwnd;
+    g_land_hwnd = nullptr;  // one answer per drop
+    return PostMessageW(hwnd, kDragLandMessage, 0, 0) != FALSE;
+}
+
+std::vector<RECT> TakeDragLandingRects() {
+    std::lock_guard<std::mutex> lock(g_land_mu);
+    return std::move(g_land_rects);
+}
 
 HRESULT ListDropSource::QueryContinueDrag(BOOL escape_pressed, DWORD key_state) {
     if (visual_) visual_->Track();

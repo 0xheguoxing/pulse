@@ -485,6 +485,19 @@ static float DropSpringProgress(const AppState& s) {
     return (std::min)(1.0f, static_cast<float>(GetTickCount64() - s.springStart) / 800.0f);
 }
 
+// Landing: rows a drag just dropped into `dir`, hidden while its cards fly
+// to them. Time-bounded, so rows that show up late are simply shown.
+static void FillLandingRows(const AppState& s, const app::Pane* owner, const std::wstring& dir,
+                            ui::PaneViewModel& pane) {
+    const auto& l = s.dragLanding;
+    if (l.names.empty() || dir.empty() || _wcsicmp(dir.c_str(), l.dir.c_str()) != 0) return;
+    if (l.pane && l.pane != owner) return;   // another pane showing the same folder
+    const uint64_t now = ui::motion::NowMs();
+    if (l.reveal_at ? now > l.reveal_at + 200 : now - l.since > 750) return;
+    pane.landing_names.insert(l.names.begin(), l.names.end());
+    pane.landing_reveal_at = l.reveal_at;
+}
+
 // Motion 5b: rows of `dir` that are on their way to the Recycle Bin.
 static void FillLeavingRows(const AppState& s, const std::wstring& dir, ui::PaneViewModel& pane) {
     if (s.leavingPaths.empty() || dir.empty()) return;
@@ -1038,6 +1051,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
                         ? cutPath : cutPath.substr(slash + 1));
                 }
                 if (!slot.focused) FillLeavingRows(s, tab->current_path, slot.pane);
+                if (!slot.focused) FillLandingRows(s, p, tab->current_path, slot.pane);
             }
             if (static_cast<int>(i) == s.hoverPaneIndex) slot.pane.hover_index = s.hoverRow;
             if (s.stripResizing && static_cast<int>(i) == s.stripResizePane)
@@ -2226,6 +2240,9 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     }
     if (!s.leavingPaths.empty()) {
         if (app::Tab* tab = ActiveTab(s)) FillLeavingRows(s, tab->current_path, vm.pane);
+    }
+    if (!s.dragLanding.names.empty()) {
+        if (app::Tab* tab = ActiveTab(s)) FillLandingRows(s, s.pane, tab->current_path, vm.pane);
     }
     vm.pane.drop_target_index = s.dropRow;
     vm.pane.drop_spring_progress = DropSpringProgress(s);

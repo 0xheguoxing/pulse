@@ -236,6 +236,10 @@ struct PaneViewModel {
     // Rows being deleted: they slide out and fade from leaving_since (NowMs).
     std::unordered_set<std::wstring> leaving_names;
     uint64_t leaving_since = 0;
+    // Rows a drag just dropped here: hidden while the drag's cards fly to
+    // them, faded in from landing_reveal_at (NowMs; 0 = cards not sent yet).
+    std::unordered_set<std::wstring> landing_names;
+    uint64_t landing_reveal_at = 0;
     // Folder compare: CompareMark per source index (null = compare off).
     std::shared_ptr<const std::vector<uint8_t>> compare_marks;
     bool compare_active = false;
@@ -1501,6 +1505,9 @@ public:
         if (folder_thumbnail_cache_.Tick(now)) active = true;
         return active;
     }
+    // Where the rows in PaneViewModel::landing_names were drawn in the last
+    // frame (window px: icon left, row top/right/bottom).
+    const std::vector<D2D1_RECT_F>& LandingRects() const { return landing_rects_; }
     void RefreshFolderThumbnails() { folder_thumbnail_cache_.Refresh(); }
     // A preview pack was installed, removed or switched: files that had no
     // thumbnail may have one now, so cached results are dropped.
@@ -2043,6 +2050,7 @@ private:
     // sidebar, toolbar, column strip and details panel files); cleared at the
     // start of every frame. Rides the same frame pump as everything else.
     mutable bool motion_frame_wanted_ = false;
+    mutable std::vector<D2D1_RECT_F> landing_rects_;   // this frame's landing rows (window px)
     void RequestMotionFrame() const { motion_frame_wanted_ = true; }
     static constexpr ULONGLONG kTaskPillDoneMs = 1600;
     static constexpr ULONGLONG kTaskPillFadeMs = 300;

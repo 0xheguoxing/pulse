@@ -7,7 +7,8 @@
 // horizontal speed. A badge counts the items and a small glyph shows what
 // the current target will do (copy / link / refused; move needs none).
 // A cancelled or refused drag flies the stack back to where it was picked
-// up; a drop gulps it into the pointer.
+// up; a drop gulps it into the pointer - or, when it went into a folder a
+// Pulse list shows, waits there and lands each card on its new row.
 //
 // The visual is a click-through, layered top-level window, so OLE hit
 // testing and every drop target (Pulse or Explorer) behave exactly as
@@ -26,6 +27,7 @@
 #include <wincodec.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -76,7 +78,11 @@ private:
 };
 
 constexpr wchar_t kClassName[] = L"PulseDragStack";
-constexpr UINT_PTR kTimerId = 1;
+// Steps come from a pool timer posting kStepMessage rather than WM_TIMER:
+// WM_TIMER is only generated when the queue is empty, and after the drop the
+// main window's frame pump keeps it busy (rows fading in, the list shifting),
+// so the cards would freeze until the list settled.
+constexpr UINT kStepMessage = WM_APP + 0x4D;
 constexpr int kMaxCards = 3;
 
 // Geometry in DIPs.
@@ -141,7 +147,14 @@ bool FontFamilyExists(IDWriteFactory* dw, const wchar_t* family) {
     return SUCCEEDED(fonts->FindFamilyName(family, &index, &exists)) && exists;
 }
 
-enum class Phase { Live, FlyBack, Gulp };
+enum class Phase { Live, FlyBack, Gulp, Await, Land };
+constexpr float kAwaitMs = 700.0f;    // no rows by then: gulp after all
+constexpr float kLandStaggerMs = 30.0f;
+// The cards fade out once they rest on their rows (capped, for a far trip).
+constexpr float kLandFadeAtMs = 420.0f, kLandFadeMs = 110.0f;
+// Pop's stiffness, damped close to critical: a 400 px trip with Pop's own
+// damping overshoots by ~40 px and would fade out mid-bounce.
+constexpr motion::SpringSpec kLandSpring{620.0f, 46.0f};
 
 struct Card {
     std::wstring name;
@@ -167,13 +180,26 @@ public:
 
     void Finish(DWORD effect, bool cancelled) override {
         effect_ = effect;
+        const bool land = TakeDragLandingExpectation() && !cancelled && effect != DROPEFFECT_NONE;
         if (!hwnd_ || !animate_) {
             Close();
             return;
         }
-        phase_ = cancelled ? Phase::FlyBack : Phase::Gulp;
+        phase_ = cancelled ? Phase::FlyBack : land ? Phase::Await : Phase::Gulp;
+        if (phase_ == Phase::Await) SetDragLandingWindow(hwnd_);
         finish_ms_ = NowMs();
         GetCursorPos(&drop_pt_);
+        Arm();
+        Step(true);
+    }
+
+    // The new rows are on screen (kDragLandMessage): fly the cards there.
+    void BeginLand(std::vector<RECT> rects) {
+        if (phase_ != Phase::Await || rects.empty()) return;
+        land_rects_ = std::move(rects);
+        phase_ = Phase::Land;
+        land_ms_ = NowMs();
+        rest_ms_ = 0.0;
         Arm();
         Step(true);
     }
@@ -193,15 +219,24 @@ private:
                   D2D1_POINT_2F pivot);
     void Arm() {
         if (hwnd_ && !timer_) {
-            SetTimer(hwnd_, kTimerId, 10, nullptr);
-            timer_ = true;
+            tick_hwnd_ = hwnd_;
+            tick_pending_ = false;
+            timer_ = CreateTimerQueueTimer(&tick_, nullptr, &DragStack::OnTick, this, 8, 8,
+                                           WT_EXECUTEDEFAULT) != FALSE;
         }
     }
     void Disarm() {
-        if (hwnd_ && timer_) {
-            KillTimer(hwnd_, kTimerId);
+        if (timer_) {
+            // Waits for a callback in flight, so `this` outlives every tick.
+            DeleteTimerQueueTimer(nullptr, tick_, INVALID_HANDLE_VALUE);
+            tick_ = nullptr;
             timer_ = false;
         }
+    }
+    static VOID CALLBACK OnTick(PVOID param, BOOLEAN) {
+        auto* self = static_cast<DragStack*>(param);
+        // One step message in the queue at a time; a busy thread just skips.
+        if (!self->tick_pending_.exchange(true)) PostMessageW(self->tick_hwnd_, kStepMessage, 0, 0);
     }
     void Close() {
         if (hwnd_) {
@@ -215,6 +250,9 @@ private:
 
     HWND hwnd_ = nullptr;
     bool timer_ = false;
+    HANDLE tick_ = nullptr;
+    HWND tick_hwnd_ = nullptr;
+    std::atomic<bool> tick_pending_{false};
     bool shown_ = false;
     bool animate_ = true;
     bool dark_ = false;
@@ -226,6 +264,9 @@ private:
     Phase phase_ = Phase::Live;
     POINT origin_{};  // pointer when the drag began
     POINT drop_pt_{}; // pointer when it ended
+    std::vector<RECT> land_rects_;  // screen px, one per new row
+    double land_ms_ = 0;
+    double rest_ms_ = 0;  // when the lead card settled on its row
     POINT last_pt_{};
     double start_ms_ = 0, last_ms_ = 0, finish_ms_ = 0;
     float alpha_ = 1.0f;  // smoothed refused-drop dimming
@@ -254,8 +295,14 @@ LRESULT CALLBACK DragStack::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
         break;
     }
-    case WM_TIMER:
-        if (self && wp == kTimerId) self->Step(false);
+    case kStepMessage:
+        if (self) {
+            self->tick_pending_ = false;
+            self->Step(false);
+        }
+        return 0;
+    case kDragLandMessage:
+        if (self) self->BeginLand(TakeDragLandingRects());
         return 0;
     case WM_NCHITTEST:
         return HTTRANSPARENT;
@@ -264,7 +311,8 @@ LRESULT CALLBACK DragStack::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_NCDESTROY:
         if (self) {
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-            if (self->timer_) KillTimer(hwnd, kTimerId);
+            self->Disarm();
+            if (self->phase_ == Phase::Await) SetDragLandingWindow(nullptr);
             self->hwnd_ = nullptr;
             delete self;
         }
@@ -502,6 +550,20 @@ void DragStack::Integrate(float dt, float tx, float ty) {
             spec = motion::spring::Soft;
             gx = tx + kFanDx[i] * s_ * 0.5f;
             gy = ty + kFanDy[i] * s_ * 0.5f;
+        } else if (phase_ == Phase::Await ||
+                   (phase_ == Phase::Land && NowMs() - land_ms_ < i * kLandStaggerMs)) {
+            // Held where it was let go, gathered a little.
+            spec = {900.0f, 60.0f};
+            gx = tx + kFanDx[i] * s_ * 0.5f;
+            gy = ty + kFanDy[i] * s_ * 0.5f;
+        } else if (phase_ == Phase::Land) {
+            // Each card onto its own new row (the last row takes the rest),
+            // the card's icon over the row's icon.
+            const RECT& r = land_rects_[std::min(i, land_rects_.size() - 1)];
+            const size_t extra = i >= land_rects_.size() ? i - land_rects_.size() + 1 : 0;
+            spec = kLandSpring;
+            gx = r.left - kPadX * s_ + extra * 3.0f * s_;
+            gy = (r.top + r.bottom) * 0.5f - kCardH * s_ * 0.5f;
         } else {
             spec = {900.0f, 60.0f};
         }
@@ -520,7 +582,8 @@ void DragStack::Integrate(float dt, float tx, float ty) {
         // Tilt with horizontal speed (px/s -> DIP/s), eased so jitter
         // does not wobble the cards.
         const float tilt = std::clamp(c.vx / s_ * 0.0075f, -9.0f, 9.0f);
-        const float want = (live ? kFanRot[i] : kFanRot[i] * 0.5f) + (animate_ ? tilt : 0.0f);
+        const float rest = live ? kFanRot[i] : phase_ == Phase::Land ? 0.0f : kFanRot[i] * 0.5f;
+        const float want = rest + (animate_ ? tilt : 0.0f);
         c.rot += (want - c.rot) * std::min(1.0f, dt * 22.0f);
     }
 }
@@ -542,6 +605,9 @@ void DragStack::Step(bool force) {
     if (phase_ == Phase::Live) {
         tx = pt.x + kOffX * s_;
         ty = pt.y + kOffY * s_;
+    } else if (phase_ == Phase::Await || phase_ == Phase::Land) {
+        tx = drop_pt_.x + kOffX * s_;
+        ty = drop_pt_.y + kOffY * s_;
     } else if (phase_ == Phase::FlyBack) {
         tx = origin_.x + kOffX * s_;
         ty = origin_.y + kOffY * s_;
@@ -577,6 +643,35 @@ void DragStack::Step(bool force) {
         alpha *= 1.0f - Clamp01((t - 170.0f) / 190.0f);
         scale *= 1.0f - 0.06f * Clamp01(t / 360.0f);
         done = t >= 380.0f;
+    } else if (phase_ == Phase::Await) {
+        const float t = static_cast<float>(now - finish_ms_);
+        scale *= 1.0f - 0.03f * Clamp01(t / 120.0f);
+        if (t >= kAwaitMs) {
+            // No rows showed up in time (a slow copy, a conflict prompt).
+            SetDragLandingWindow(nullptr);
+            phase_ = Phase::Gulp;
+            finish_ms_ = now;
+            GetCursorPos(&drop_pt_);
+        }
+    } else if (phase_ == Phase::Land) {
+        const float t = static_cast<float>(now - land_ms_);
+        const float stagger = kLandStaggerMs * static_cast<float>(
+            std::min(cards_.size(), land_rects_.size()) - 1);
+        if (rest_ms_ == 0.0) {
+            const Card& lead = cards_[0];
+            const RECT& r = land_rects_[0];
+            const float dx = lead.x - (r.left - kPadX * s_);
+            const float dy = lead.y - ((r.top + r.bottom) * 0.5f - kCardH * s_ * 0.5f);
+            if (std::fabs(dx) < 2.0f * s_ && std::fabs(dy) < 2.0f * s_ &&
+                std::fabs(lead.vx) + std::fabs(lead.vy) < 120.0f * s_)
+                rest_ms_ = now;
+        }
+        const float fade_at = std::min(kLandFadeAtMs,
+                                       rest_ms_ != 0.0 ? static_cast<float>(rest_ms_ - land_ms_) : kLandFadeAtMs) +
+                              stagger;
+        scale *= 1.0f - 0.03f * (1.0f - Clamp01(t / 120.0f));  // un-gather from Await
+        alpha *= 1.0f - Clamp01((t - fade_at) / kLandFadeMs);
+        done = t >= fade_at + kLandFadeMs;
     } else if (phase_ == Phase::Gulp) {
         const float t = static_cast<float>(now - finish_ms_);
         const float k = Clamp01(t / 150.0f);
