@@ -835,6 +835,51 @@ struct AppState : AppCoreOwner {
     int trayWheelAccum = 0;     // sub-notch wheel delta accumulator
     size_t trayDeckLastTotal = 0; // collect detection (stack resets to newest)
 
+    // Staging tray shelf (pulse_tray_redesign.html): strip / drop / shelf
+    // layers, sprung panel height, live copy-move mode. TickTrayShelf
+    // advances it; BuildVm copies it into vm.tray_deck.
+    struct TrayShelfAnim {
+        int stage = 0;               // ui::TrayStage shown
+        int prev_stage = -1;         // layer fading out
+        ULONGLONG swap_at = 0;       // layer swap start
+        float height = 40.0f;        // panel height, DIPs (spring)
+        float velocity = 0.0f;       // DIPs / s
+        float drop_from = 0.0f;      // height when the drop layer opened
+        bool initialized = false;
+        float mode_t = 0.0f;         // copy (0) -> move (1) colour blend
+        bool last_move = false;
+        ULONGLONG label_at = 0;      // main label rise-in after a mode flip
+        float fan_spread = 0.0f;
+        ULONGLONG bump_at = 0;       // count bump after a collect
+        int last_total = -1;
+        std::wstring flash_path;     // 送到 chip that just received items
+        ULONGLONG flash_at = 0;
+        // Same-name probe against the current folder (cached, re-probed
+        // when the folder or the tray changes, at most every 1.5 s).
+        std::wstring conflict_dir;
+        uint64_t conflict_sig = 0;
+        ULONGLONG conflict_at = 0;
+        int conflicts = 0;
+        // "已暂存" row pills: hashes of every staged path.
+        uint64_t staged_sig = 0;
+        std::shared_ptr<const std::unordered_set<uint64_t>> staged;
+    } trayShelf;
+    bool trayMoveMode = false;       // tray-wide release mode; staging as move sets it
+    bool dragFilesOver = false;      // an OLE file drag is over this window (drop layer)
+    bool dropTrayMove = false;       // drop layer: the 移动暂存 half is active
+    struct TrayReleaseNote {
+        uint64_t task = 0;           // copy / move submitted by the shelf
+        size_t count = 0;
+        bool move = false;
+        std::wstring dest;           // target folder
+    } trayRelease;
+    std::wstring trayReleaseOpen;    // folder the release snack's 打开 opens
+    std::wstring trayClearedJson;    // tray before 清空, for the snack's 撤销
+    struct TrayZipJob {
+        uint64_t id = 0;             // zipJobs id while the shelf ring spins
+        std::shared_ptr<std::atomic<float>> progress;
+    } trayZip;
+
     // Right details panel (view-menu toggle, session-persisted).
     bool showDetailsPanel = false;
     float detailsPanelWidth = 340.0f;

@@ -634,14 +634,12 @@ void TrayOpenTextDiff(AppState& s) {
     s.textDiff->Show(s.hwnd, paths[0], paths[1], s.darkMode, s.accentColor);
 }
 
+// Shelf ⋯ menu (pulse_tray_redesign.html moreMenu); also the tray's
+// right-click menu. ZIP and rename are shelf buttons now.
 void ShowTrayBatchMenu(AppState& s, POINT screen_pt) {
     if (!EnsureMenu(s)) return;
-    std::vector<std::wstring> paths;
-    for (const auto& batch : s.tray.batches())
-        for (const auto& item : batch.items)
-            if (GetFileAttributesW(item.path.c_str()) != INVALID_FILE_ATTRIBUTES)
-                paths.push_back(item.path);
-    enum { kZip = 1, kRename, kTag, kCopyPaths, kOpenAll, kReveal, kClear, kDiff };
+    const std::vector<std::wstring> paths = TrayLivePaths(s);
+    enum { kTag = 1, kCopyPaths, kOpenAll, kReveal, kClear, kDiff };
     std::vector<ui::FluentMenuItem> items;
     auto add = [&](int cmd, l10n::StringId id, const wchar_t* glyph, bool enabled, bool sep) {
         ui::FluentMenuItem item;
@@ -653,19 +651,17 @@ void ShowTrayBatchMenu(AppState& s, POINT screen_pt) {
         items.push_back(std::move(item));
     };
     const bool any = !paths.empty();
-    add(kZip, l10n::StringId::TrayMenuZip, L"\xF012", any, false);
-    add(kRename, l10n::StringId::TrayMenuRename, L"\xE8AC", paths.size() >= 2, false);
     size_t staged = 0;
     for (const auto& batch : s.tray.batches()) staged += batch.items.size();
     const bool two_text = paths.size() == 2 && staged == 2 &&
                           diff::ProbeLooksText(paths[0]) && diff::ProbeLooksText(paths[1]);
-    add(kDiff, l10n::StringId::TrayCompareTwo, L"\xE8AB", two_text, false);
-    add(kTag, l10n::StringId::TrayMenuTag, L"\xE8EC", any, true);
     add(kCopyPaths, l10n::StringId::TrayMenuCopyPaths, L"\xE8C8", any, false);
+    add(kTag, l10n::StringId::TrayMenuTag, L"\xE8EC", any, false);
     add(kOpenAll, l10n::StringId::TrayMenuOpenAll, L"\xE8E5", any, false);
-    add(kReveal, l10n::StringId::TrayMenuReveal, L"\xE838", any, true);
-    add(kClear, l10n::StringId::ClearAll, L"\xE74D", !s.tray.batches().empty(), false);
-    // The card tooltip would otherwise linger under the menu.
+    add(kReveal, l10n::StringId::TrayMenuReveal, L"\xE838", any, false);
+    add(kDiff, l10n::StringId::TrayCompareTwo, L"\xE8AB", two_text, true);
+    add(kClear, l10n::StringId::TrayMenuClear, L"\xE74D", !s.tray.batches().empty(), false);
+    // The tooltip would otherwise linger under the menu.
     s.tooltipText.clear();
     s.hoverSince = 0;
     s.hoverRegion = 0;
@@ -674,12 +670,6 @@ void ShowTrayBatchMenu(AppState& s, POINT screen_pt) {
     s.menu->SetTheme(s.darkMode, s.accentColor);
     const int cmd = s.menu->TrackPopup(screen_pt, std::move(items));
     switch (cmd) {
-    case kZip:
-        ZipViaShell(paths);
-        break;
-    case kRename:
-        ShowBatchRenamePaths(s, paths);
-        break;
     case kDiff:
         TrayOpenTextDiff(s);
         break;
@@ -730,20 +720,119 @@ void ShowTrayBatchMenu(AppState& s, POINT screen_pt) {
         }
         break;
     }
-    case kClear: {
-        std::vector<std::wstring> all;
-        for (const auto& b : s.tray.batches())
-            for (const auto& item : b.items) all.push_back(item.path);
-        if (!all.empty()) {
-            MarkTrayExit(s, all, true);
-            SpawnTrayPuffs(s);
-        }
-        s.tray.Clear();
+    case kClear:
+        ClearTrayWithUndo(s);
         break;
-    }
     default:
         break;
     }
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+// Shelf ▾ menu: 放置方式 (the tray-wide mode) and 送到 targets that skip
+// opening the folder, then 选择文件夹….
+void ShowTrayReleaseMenu(AppState& s, POINT screen_pt) {
+    if (!EnsureMenu(s)) return;
+    enum { kCopy = 1, kMove, kPick, kDestBase = 100 };
+    std::vector<std::wstring> dests;
+    std::wstring current;
+    if (const app::Tab* tab = ActiveTab(s); tab && !fs::IsVirtualPath(tab->current_path))
+        current = ClipboardPath(fs::NormalizePath(tab->current_path));
+    for (const auto& d : TrayDestList(s))
+        if (current.empty() || _wcsicmp(d.c_str(), current.c_str()) != 0) dests.push_back(d);
+    std::vector<ui::FluentMenuItem> items;
+    auto header = [&](l10n::StringId id) {
+        ui::FluentMenuItem item;
+        item.text = l10n::Get(id);
+        item.enabled = false;
+        item.secondary = true;
+        items.push_back(std::move(item));
+    };
+    header(l10n::StringId::TrayMenuPlacement);
+    {
+        ui::FluentMenuItem copy;
+        copy.command = kCopy;
+        copy.text = l10n::Get(l10n::StringId::TrayReleaseCopy);
+        copy.shortcut = l10n::Get(l10n::StringId::TrayDropDefault);
+        copy.radio_group = true;
+        copy.radio = !s.trayMoveMode;
+        items.push_back(std::move(copy));
+        ui::FluentMenuItem move;
+        move.command = kMove;
+        move.text = l10n::Get(l10n::StringId::TrayReleaseMove);
+        move.shortcut = L"Shift";
+        move.radio_group = true;
+        move.radio = s.trayMoveMode;
+        move.separator_after = true;
+        items.push_back(std::move(move));
+    }
+    header(l10n::StringId::TrayMenuSendHeader);
+    for (size_t i = 0; i < dests.size(); ++i) {
+        ui::FluentMenuItem item;
+        item.command = kDestBase + static_cast<int>(i);
+        std::wstring label = dests[i];
+        while (label.size() > 3 && label.back() == L'\\') label.pop_back();
+        const size_t slash = label.find_last_of(L"\\/");
+        if (slash != std::wstring::npos && slash + 1 < label.size()) label = label.substr(slash + 1);
+        item.text = label;
+        item.glyph = L"\xE8B7";
+        item.tooltip = dests[i];
+        item.enabled = fs::IsUncPath(dests[i]) || GetFileAttributesW(dests[i].c_str()) != INVALID_FILE_ATTRIBUTES;
+        items.push_back(std::move(item));
+    }
+    {
+        ui::FluentMenuItem pick;
+        pick.command = kPick;
+        pick.text = l10n::Get(l10n::StringId::TrayPickFolder);
+        pick.glyph = L"\xE838";
+        items.push_back(std::move(pick));
+    }
+    s.tooltipText.clear();
+    s.hoverSince = 0;
+    s.hoverRegion = 0;
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+    UpdateWindow(s.hwnd);
+    s.menu->SetTheme(s.darkMode, s.accentColor);
+    const bool move_now = TrayEffectiveMove(s);
+    const int cmd = s.menu->TrackPopup(screen_pt, std::move(items));
+    if (cmd == kCopy || cmd == kMove) {
+        s.trayMoveMode = cmd == kMove;
+    } else if (cmd == kPick) {
+        std::wstring folder;
+        if (PickFolder(s, folder, l10n::Get(l10n::StringId::TrayPickFolder).c_str()) && !folder.empty())
+            TraySendTo(s, folder, move_now);
+    } else if (cmd >= kDestBase && cmd < kDestBase + static_cast<int>(dests.size())) {
+        TraySendTo(s, dests[static_cast<size_t>(cmd - kDestBase)], move_now);
+    }
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+// 送到: release into a folder without opening it; its chip flashes.
+void TraySendTo(AppState& s, const std::wstring& dir, bool move) {
+    ReleaseTrayTo(s, dir, move);
+    s.trayShelf.flash_path = ClipboardPath(fs::NormalizePath(dir));
+    s.trayShelf.flash_at = GetTickCount64();
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+// Shelf ZIP: "暂存 N 项.zip" in the current folder, ring on the button.
+// Without the built-in compressor the shell's zipped-folder target does it.
+void TrayShelfZip(AppState& s) {
+    if (s.trayZip.id) return;
+    const app::Tab* tab = ActiveTab(s);
+    if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path) || tab->net_readonly) return;
+    std::vector<std::wstring> paths = TrayLivePaths(s);
+    if (paths.empty()) return;
+    std::wstring base = l10n::Get(l10n::StringId::TrayZipName);
+    if (const size_t at = base.find(L"{n}"); at != std::wstring::npos) base.replace(at, 3, std::to_wstring(paths.size()));
+    auto progress = std::make_shared<std::atomic<float>>(0.0f);
+    const uint64_t id = CompressPathsTo(s, std::move(paths), tab->current_path, base, progress);
+    if (!id) {
+        ZipViaShell(TrayLivePaths(s));
+        return;
+    }
+    s.trayZip.id = id;
+    s.trayZip.progress = std::move(progress);
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 

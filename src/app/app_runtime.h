@@ -125,6 +125,10 @@ void StartDetailsSizeWalk(AppState& s, const std::wstring& path);
 void ShutdownDetailsSizeWalk(AppState& s);
 std::wstring DetailsAttributeText(DWORD attrs);
 bool TickTrayDeck(AppState& s);
+// Shelf release mode right now: the tray-wide mode, flipped while Shift is held.
+bool TrayEffectiveMove(const AppState& s);
+// Hashes of every staged path ("已暂存" row pills), cached per tray state.
+std::shared_ptr<const std::unordered_set<uint64_t>> StagedHashes(AppState& s);
 ui::WindowViewModel BuildVm(AppState& s, bool probe_details = true);
 std::wstring TooltipForHover(AppState& s);
 // Records what the pointer is over. Both mouse-move paths (client and frame)

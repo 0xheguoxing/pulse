@@ -1590,6 +1590,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s && s->ops.CanUndo()) s->ops.Undo();
         return 0;
 
+    case WM_TRAY_UNDO:
+    case WM_TRAY_OPEN_DEST:
+    case WM_TRAY_RESTORE:
+        if (s) HandleTrayMessage(*s, msg);
+        return 0;
+
     case WM_ZIP_COMPRESS:
     case WM_ZIP_CANCEL:
         if (s) HandleZipMessage(*s, msg, wParam, lParam);
@@ -2043,7 +2049,19 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             if (GetCapture() == hwnd) ReleaseCapture();
             return 0;
         }
+        // Shift flips the shelf's copy / move label live.
+        if (s && wParam == VK_SHIFT && !s->tray.batches().empty()) {
+            s->uiTimerPacer.NoteActivity(GetTickCount64());
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
         return HandleKeyDown(s, hwnd, msg, wParam, lParam);
+
+    case WM_KEYUP:
+        if (s && wParam == VK_SHIFT && !s->tray.batches().empty()) {
+            s->uiTimerPacer.NoteActivity(GetTickCount64());
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        break;
 
     case WM_COMMAND: {
         if (s && reinterpret_cast<HWND>(lParam) == s->hwndFilterEdit &&
@@ -2239,6 +2257,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     FinishOperationIntents(*s, finished);
                     NoteArrivalFinished(*s, finished);
                     NoteDeleteFinished(*s, finished);
+                    NoteTrayReleaseFinished(*s, finished);
                 }
                 // An op finished: refresh the view (watcher also fires, this is immediate).
                 app::Tab* tab = ActiveTab(*s);

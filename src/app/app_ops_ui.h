@@ -21,11 +21,23 @@ void EmptyRecycleBin(AppState& s);
 void CollectToTray(AppState& s, bool move_intent);
 void CollectPathsToTray(AppState& s, const std::vector<std::wstring>& paths, bool move_intent);
 void ShowBatchRename(AppState& s);
-// Staging tray recent drop destinations (appPrefs.tray_dests, newest first, max 3).
+// Staging tray recent drop destinations (appPrefs.tray_dests, newest first, max 5).
 std::vector<std::wstring> TrayDestList(const AppState& s);
 void RememberTrayDest(AppState& s, const std::wstring& dir);
 // Copy (or move) every staged item that still exists into dir.
 void SendTrayToDest(AppState& s, const std::wstring& dir, bool move);
+// Shelf release (pulse_tray_redesign.html): copy / move every staged item
+// that exists and is not already in dir. Selects the arrivals when dir is the
+// current folder; a snack with 撤销 / 打开 follows when the task finishes.
+void ReleaseTrayTo(AppState& s, const std::wstring& dir, bool move);
+void NoteTrayReleaseFinished(AppState& s, const ops::FinishedTask& done);
+// Every staged path whose file still exists (shelf ZIP, rename, drag-out).
+std::vector<std::wstring> TrayLivePaths(const AppState& s);
+// Clears the tray; the snack offers to put the items back (WM_TRAY_RESTORE).
+void ClearTrayWithUndo(AppState& s);
+void HandleTrayMessage(AppState& s, UINT message);
+// Removes one staged path (the "已暂存" row pill).
+void UnstagePath(AppState& s, const std::wstring& path);
 // Batch rename an explicit path list (staging tray); tray entries follow.
 void ShowBatchRenamePaths(AppState& s, const std::vector<std::wstring>& paths);
 // Builds this window's operations window the first time it has to show it.

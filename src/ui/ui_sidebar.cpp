@@ -557,10 +557,6 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         return;
     }
 
-    wchar_t countLabel[24]{};
-    const int trayCount = TrayTotalCount(vm);
-    if (trayCount > 0) swprintf_s(countLabel,
-        pulse::l10n::Get(pulse::l10n::StringId::ItemsCountFormat).c_str(), trayCount);
 
     // Quick-access reorder (pulse_motion_v2 qareorder): the held pin lifts and
     // rides the cursor while the pins it passes slide aside to open its slot.
@@ -695,83 +691,8 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             continue;
         }
         if (slot.kind == SidebarSlot::TrayPanel) {
-            fluent::StagingTrayPanelSpec tray;
-            tray.bounds = slot.rc;
-            tray.title = pulse::l10n::Get(pulse::l10n::StringId::StagingTray);
-            // The empty state (dashed outline + hint) is drawn by DrawTrayDeck.
-            // Do not assign a conditional std::wstring temporary to a
-            // std::wstring_view: the view would dangle before DrawText runs.
-            tray.count_label = countLabel;
-            if (vm.tray_deck.total_count != 0) {
-                tray.action_text = pulse::l10n::Get(vm.tray_deck.release_move
-                    ? pulse::l10n::StringId::TrayReleaseMove
-                    : pulse::l10n::StringId::TrayReleaseCopy);
-            }
-            tray.action_hovered =
-                vm.hover_region == static_cast<int>(HitTestResult::TrayRelease);
-            tray.item_count = trayCount;
-            tray.state.hovered = vm.tray_drop;
-            tray.expanded = true;
-            painter_.DrawStagingTrayPanel(tray);
-            DrawTrayDeck(vm, TrayDeckArea(slot.rc, vm.tray_deck, scale_), theme);
-            if (TrayStaleRowH(vm.tray_deck, scale_) > 0.0f && vm.tray_deck.live_count > 0) {
-                // Items moved or deleted outside Pulse: amber notice + Find / Remove.
-                const D2D1_RECT_F row = TrayStaleRowRect(slot.rc, vm.tray_deck, scale_);
-                const D2D1_RECT_F find = TrayStaleButtonRect(slot.rc, vm.tray_deck, scale_, 0);
-                std::wstring note = pulse::l10n::Get(pulse::l10n::StringId::TrayStaleFormat);
-                const size_t at = note.find(L"{n}");
-                if (at != std::wstring::npos)
-                    note.replace(at, 3, std::to_wstring(vm.tray_deck.stale_count));
-                D2D1_RECT_F nr = row;
-                nr.right = find.left - 4.0f * scale_;
-                if (IDWriteFactory2* f = compositor_ ? compositor_->DwriteFactory() : nullptr) {
-                    auto measure = [&](const std::wstring& s) {
-                        return MeasureTextWidth(f, compositor_->SmallFormat(), s);
-                    };
-                    note = FitEndEllipsis(note, std::max(0.0f, nr.right - nr.left), measure);
-                }
-                const D2D1_COLOR_F amber = IsHighContrast() ? theme.text : D2D1::ColorF(0xE0A43A);
-                painter_.DrawText(note, nr, compositor_->SmallFormat(), amber);
-                for (int b = 0; b < 2; ++b) {
-                    const D2D1_RECT_F rc = TrayStaleButtonRect(slot.rc, vm.tray_deck, scale_, b);
-                    const bool hot = IsHovered(vm, HitTestResult::TrayStale, b);
-                    D2D1_COLOR_F fill = theme.fill_hover;
-                    fill.a *= hot ? 1.0f : 0.55f;
-                    painter_.FillRoundedRect(rc, 6.0f * scale_, fill);
-                    painter_.DrawText(pulse::l10n::Get(b == 0 ? pulse::l10n::StringId::TrayStaleFind
-                                                            : pulse::l10n::StringId::TrayStaleRemove),
-                                      rc, compositor_->SmallFormat(),
-                                      hot ? theme.text : theme.text_secondary,
-                                      fluent::HorizontalAlignment::Center);
-                }
-            }
-            if (TrayDestRowH(vm.tray_deck, scale_) > 0.0f && vm.tray_deck.live_count > 0) {
-                // Recent destinations: click copies the tray there, Shift moves.
-                IDWriteFactory2* factory = compositor_ ? compositor_->DwriteFactory() : nullptr;
-                for (int d = 0; d < static_cast<int>(vm.tray_deck.dests.size()); ++d) {
-                    const TrayDestView& dest = vm.tray_deck.dests[static_cast<size_t>(d)];
-                    const D2D1_RECT_F rc = TrayDestChipRect(slot.rc, vm.tray_deck, scale_, d);
-                    const bool hot = !dest.missing && IsHovered(vm, HitTestResult::TrayDest, d);
-                    D2D1_COLOR_F fill = theme.fill_hover;
-                    fill.a *= hot ? 1.0f : 0.55f;
-                    painter_.FillRoundedRect(rc, 6.0f * scale_, fill);
-                    D2D1_COLOR_F fg = hot ? theme.text : theme.text_secondary;
-                    if (dest.missing) fg.a *= 0.45f;
-                    DrawIconText(rc.left + 4.0f * scale_, rc.top, 18.0f * scale_, rc.bottom - rc.top,
-                                 L"\xE8B7", L"\u25A1", fg, 0.62f);
-                    D2D1_RECT_F tr = rc;
-                    tr.left += 24.0f * scale_;
-                    tr.right -= 6.0f * scale_;
-                    std::wstring label = dest.label;
-                    if (factory && compositor_->SmallFormat()) {
-                        auto measure = [&](const std::wstring& s) {
-                            return MeasureTextWidth(factory, compositor_->SmallFormat(), s);
-                        };
-                        label = FitEndEllipsis(label, std::max(0.0f, tr.right - tr.left), measure);
-                    }
-                    painter_.DrawText(label, tr, compositor_->SmallFormat(), fg);
-                }
-            }
+            // Shelf redesign (pulse_tray_redesign.html): strip / drop / shelf.
+            DrawTrayShelf(vm, slot.rc, theme);
             continue;
         }
         if (slot.kind == SidebarSlot::TrayRelease) continue;
