@@ -223,6 +223,7 @@ private:
     void MoveFocus(bool back);
     std::vector<int> StepsList() const;
     bool Animating() const;
+    bool GlowAnimating() const;
     void Invalidate() { InvalidateRect(hwnd_, nullptr, FALSE); }
     void CloseWith(int code) { outcome_.exit_code = code; DestroyWindow(hwnd_); }
     const wchar_t* T(Str s) const { return pulse::setup::Text(lang_, s); }
@@ -284,6 +285,7 @@ private:
     InstallResult result_;
     bool engine_done_ = false, busy_given_up_ = false;
     ULONGLONG done_time_ = 0;
+    ULONGLONG glow_frame_ = 0;  // last welcome-glow repaint (throttled to ~30 fps)
     HANDLE busy_answer_event_ = nullptr;
     std::atomic<bool> busy_retry_{false};
     bool slow_ = false;
@@ -689,18 +691,51 @@ void Wizard::PaintPage(Page p, float dx, float alpha) {
 }
 
 void Wizard::PaintWelcome() {
-    // Logo with a soft accent glow.
+    // Logo glow, coloured from the icon itself: its gold pulse line and lit
+    // dot. Light leaks from the dot past the tile, a broad warm halo balances
+    // it, and a navy-tinted shadow lifts the tile. While the page is shown
+    // the light slowly flows: the dot breathes, the halo drifts and a warm
+    // blob circles behind the tile (pulse_installer_glow.html, "金色余晖").
     {
-        D2D1_GRADIENT_STOP stops[] = {{0, WithAlpha(theme_.accent, .45f)}, {.6f, WithAlpha(Hex(0x38BDF8), .12f)},
-                                      {1, WithAlpha(theme_.accent, 0)}};
-        ID2D1GradientStopCollection* coll = nullptr;
-        ID2D1RadialGradientBrush* glow = nullptr;
-        rt_->CreateGradientStopCollection(stops, 3, &coll);
-        if (coll && SUCCEEDED(rt_->CreateRadialGradientBrush(
-                        D2D1::RadialGradientBrushProperties({kW / 2, 102 + kWelcomeDy}, {0, 0}, 92, 92), coll, &glow)))
-            rt_->FillEllipse(D2D1::Ellipse({kW / 2, 102 + kWelcomeDy}, 92, 92), glow);
-        SafeRelease(glow);
-        SafeRelease(coll);
+        const float lx = kW / 2 - 48, ly = 54 + kWelcomeDy, cx = kW / 2, cy = 102 + kWelcomeDy;
+        const D2D1_POINT_2F dot{lx + 64.2f, ly + 42.6f};
+        const D2D1_COLOR_F gold = Hex(0xF2B43A), hot = Hex(0xFFD66E), core = Hex(0xFFF6D2);
+        const float k = theme_.dark ? 1.15f : 1.f;
+        // Seconds within a 36 s loop: every period below divides it.
+        const float t = GlowAnimating() ? static_cast<float>(GetTickCount64() % 36000) / 1000.f : 0.f;
+        const float breath = GlowAnimating() ? .5f - .5f * std::cos(2 * kPi * t / 3.6f) : 1.f;
+        const float drift = 2 * kPi * t / 9.f, orbit = 2 * kPi * t / 12.f;
+        auto glow = [&](D2D1_POINT_2F c, float rx, float ry, std::initializer_list<D2D1_GRADIENT_STOP> list) {
+            ID2D1GradientStopCollection* coll = nullptr;
+            ID2D1RadialGradientBrush* brush = nullptr;
+            rt_->CreateGradientStopCollection(list.begin(), static_cast<UINT32>(list.size()), &coll);
+            if (coll && SUCCEEDED(rt_->CreateRadialGradientBrush(
+                            D2D1::RadialGradientBrushProperties(c, {0, 0}, rx, ry), coll, &brush)))
+                rt_->FillEllipse(D2D1::Ellipse(c, rx, ry), brush);
+            SafeRelease(brush);
+            SafeRelease(coll);
+        };
+        const D2D1_COLOR_F wash = theme_.dark ? Hex(0xFFBA50) : Hex(0xFFCE78);
+        const float wa = theme_.dark ? .07f : .16f;
+        glow({cx, cy - 20}, 380, 380, {{0, WithAlpha(wash, wa)}, {.45f, WithAlpha(wash, wa * .45f)}, {1, WithAlpha(wash, 0)}});
+        glow({cx + 6 * std::cos(drift), cy + 4 * std::sin(drift)}, 175, 175,
+             {{0, WithAlpha(gold, .20f * k)}, {.38f, WithAlpha(gold, .13f * k)}, {.62f, WithAlpha(hot, .05f * k)},
+              {1, WithAlpha(hot, 0)}});
+        if (GlowAnimating())
+            glow({cx + 34 * std::cos(orbit), cy + 22 * std::sin(orbit)}, 92, 92,
+                 {{0, WithAlpha(hot, .12f * k)}, {.5f, WithAlpha(gold, .05f * k)}, {1, WithAlpha(gold, 0)}});
+        const float dk = k * (.80f + .20f * breath), dr = 128 * (.97f + .05f * breath);
+        glow(dot, dr, dr, {{0, WithAlpha(core, .70f * dk)}, {.10f, WithAlpha(hot, .55f * dk)}, {.30f, WithAlpha(gold, .30f * dk)},
+                           {.55f, WithAlpha(gold, .10f * dk)}, {.80f, WithAlpha(gold, .025f * dk)}, {1, WithAlpha(gold, 0)}});
+        // Soft drop shadow: stacked rounded rects, tinted navy on light themes.
+        const D2D1_COLOR_F shade = theme_.dark ? Hex(0x000000) : Hex(0x1C1F34);
+        const float sa = theme_.dark ? 2.1f : .6f;
+        for (int i = 14; i >= 1; --i) {
+            const float sp = i * 1.5f, oy = 8 + i * 1.25f;
+            Fill({lx + 6 - sp * .5f, ly + oy - sp * .3f, lx + 90 + sp * .5f, ly + oy + 92 + sp * .3f}, WithAlpha(shade, .016f * sa),
+                 21 + sp * .6f);
+        }
+        glow({cx, ly + 98}, 60, 9.6f, {{0, WithAlpha(shade, .30f * sa)}, {1, WithAlpha(shade, 0)}});
     }
     if (logo_) rt_->DrawBitmap(logo_, {kW / 2 - 48, 54 + kWelcomeDy, kW / 2 + 48, 150 + kWelcomeDy}, 1, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
 
@@ -1235,6 +1270,16 @@ void Wizard::PaintDialog() {
 // ======================================================================
 // Behaviour
 
+// The welcome glow flows only while it can be seen, and not when the user
+// turned off animations in Windows.
+bool Wizard::GlowAnimating() const {
+    if (page_ != Page::Welcome || dialog_ != Dialog::None || !hwnd_ || IsIconic(hwnd_) || !IsWindowVisible(hwnd_))
+        return false;
+    BOOL animate = TRUE;
+    SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animate, 0);
+    return animate != FALSE;
+}
+
 bool Wizard::Animating() const {
     const ULONGLONG now = GetTickCount64();
     return now - page_time_ < 1000 || now - dialog_time_ < 300 || page_ == Page::Install ||
@@ -1549,7 +1594,12 @@ LRESULT Wizard::Proc(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_TIMER:
-            if (Animating()) Invalidate();
+            if (Animating()) {
+                Invalidate();
+            } else if (GlowAnimating() && GetTickCount64() - glow_frame_ >= 33) {
+                glow_frame_ = GetTickCount64();
+                Invalidate();
+            }
             if (page_ == Page::Install && engine_done_ && shown_progress_ >= .999f && GetTickCount64() - done_time_ > 550)
                 Show(result_.exit_code == kExitOk ? Page::Done : Page::Error);
             return 0;
