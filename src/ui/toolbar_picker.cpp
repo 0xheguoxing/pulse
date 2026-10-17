@@ -20,6 +20,7 @@ namespace {
 constexpr wchar_t kPickerClass[] = L"PulseToolbarPicker";
 constexpr UINT_PTR kFrameTimer = 1;
 constexpr UINT_PTR kPrefetchTimer = 2;
+constexpr UINT_PTR kCaretTimer = 3;
 constexpr UINT kDestroyMessage = WM_APP + 41;
 // CLSID_D2D1Shadow (d2d1.lib does not export the effect CLSIDs).
 constexpr GUID kShadowClsid = { 0xC67EA361, 0x1863, 0x4e69,
@@ -1163,7 +1164,18 @@ private:
             } else {
                 painter_.DrawText(query_, text, small_fmt_.get(), pal.text);
             }
-            if (search_focus_) {
+            // Blink like a native caret: solid again after each focus change or edit.
+            if (search_focus_ != caret_focus_ || query_ != caret_query_) {
+                caret_focus_ = search_focus_; caret_query_ = query_; caret_epoch_ = GetTickCount();
+            }
+            const UINT blink = GetCaretBlinkTime();
+            const DWORD since = GetTickCount() - caret_epoch_;
+            const bool caret_on = blink == INFINITE || blink == 0 || (since / blink) % 2u == 0u;
+            if (search_focus_ && blink != INFINITE && blink != 0 && hwnd_)
+                SetTimer(hwnd_, kCaretTimer, blink - since % blink, nullptr);
+            else if (hwnd_)
+                KillTimer(hwnd_, kCaretTimer);
+            if (search_focus_ && caret_on) {
                 const float w = query_.empty() ? 0.0f : typography::MeasureLine(&compositor_, small_fmt_.get(), query_) - S(1.0f);
                 const float cx = std::min(text.left + w + S(1.0f), text.right);
                 painter_.FillRoundedRect(D2D1::RectF(cx, sr.top + S(6.0f), cx + S(1.0f), sr.bottom - S(6.0f)), 0.0f, pal.text);
@@ -1347,6 +1359,11 @@ private:
                 Frame();
                 return 0;
             }
+            if (wparam == kCaretTimer) {
+                KillTimer(hwnd_, kCaretTimer);
+                Frame();
+                return 0;
+            }
             if (wparam == kPrefetchTimer) {
                 KillTimer(hwnd_, kPrefetchTimer);
                 if (!closing_at_ && !apps_loaded_) { EnsureApps(); Frame(); }
@@ -1455,6 +1472,7 @@ private:
         case WM_DESTROY:
             KillTimer(hwnd_, kFrameTimer);
             KillTimer(hwnd_, kPrefetchTimer);
+            KillTimer(hwnd_, kCaretTimer);
             compositor_.Shutdown();
             hwnd_ = nullptr;
             g_open = false;
@@ -1496,6 +1514,9 @@ private:
     int from_page_ = 0;
     Hit hover_, pressed_, focus_;
     std::wstring query_;
+    std::wstring caret_query_;
+    DWORD caret_epoch_ = 0;
+    bool caret_focus_ = false;
     uint64_t opened_at_ = 0, page_at_ = 0, enter_at_ = 0, closing_at_ = 0, note_until_ = 0, last_step_ = 0;
     bool dark_ = false;
     bool animations_ = true;
