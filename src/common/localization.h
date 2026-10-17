@@ -2268,6 +2268,17 @@ enum class StringId : UINT {
     PacksPageIntro = IDS_PACKS_PAGE_INTRO,
     ManagePacks = IDS_MANAGE_PACKS,
     UpdateAllPacks = IDS_UPDATE_ALL_PACKS,
+    PackSearchSection = IDS_PACK_SEARCH_SECTION,
+    ContentPackTitle = IDS_CONTENT_PACK_TITLE,
+    ContentPackDesc = IDS_CONTENT_PACK_DESC,
+    ContentPackMeta = IDS_CONTENT_PACK_META,
+    ManageContentIndex = IDS_MANAGE_CONTENT_INDEX,
+    OcrPackTitle = IDS_OCR_PACK_TITLE,
+    OcrPackDesc = IDS_OCR_PACK_DESC,
+    PackPlanned = IDS_PACK_PLANNED,
+    PackComingSoon = IDS_PACK_COMING_SOON,
+    ContentPackBundled = IDS_CONTENT_PACK_BUNDLED,
+    ContentPackRepair = IDS_CONTENT_PACK_REPAIR,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

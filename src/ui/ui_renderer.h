@@ -713,6 +713,8 @@ enum class PackAction : int {
     AutoUpdate,         // 自动更新增强包: on / off
     UpdateAll,          // 增强包 page: 全部更新 (every pack with a newer release)
     ManagePacks,        // 快速预览 page: open the 增强包 page
+    ContentInstall,     // 内容搜索 module: download (asks first)
+    ContentManage,      // 内容搜索 module: the index settings (搜索与索引)
 };
 
 // A tab dragged out of another window, over this one (multi-window M7h): the
@@ -928,6 +930,7 @@ struct WindowViewModel {
     std::shared_ptr<const ShortcutsView> settings_shortcuts;
     int settings_shortcut_issues = 0;
     int settings_pack_updates = 0;   // 增强包 nav badge: packs with a newer release
+    int settings_content_pack_state = 2;   // app::ContentPackState (2 = missing)
     float settings_scroll = 0.0f;
     bool settings_launch_on_startup = false;
     bool settings_start_in_tray = false;

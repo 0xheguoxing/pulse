@@ -2088,7 +2088,13 @@ struct SettingsLayout {
     D2D1_RECT_F preview_codec_text[kPreviewCodecCount]{}, preview_codec_badge[kPreviewCodecCount]{};
     D2D1_RECT_F preview_codec_row[kPreviewCodecCount]{}, preview_codec_button[kPreviewCodecCount]{};
     // 预览增强包 page (5), see LayoutSettingsPacks.
-    D2D1_RECT_F pack_update_all{}, pack_manage{};   // 增强包 page: 全部更新; 快速预览 page: 管理增强包
+    D2D1_RECT_F pack_update_all{}, pack_manage{};
+    // 增强包 page, 搜索: the 内容搜索 module and the planned OCR one.
+    D2D1_RECT_F pack_search_section{}, pack_content_card{}, pack_content_badge{}, pack_content_enable{},
+        pack_content_primary{}, pack_content_update{}, pack_content_notice{};
+    D2D1_RECT_F pack_ocr_card{}, pack_ocr_badge{}, pack_ocr_enable{}, pack_ocr_primary{}, pack_ocr_update{},
+        pack_ocr_notice{};
+    float pack_content_desc_h = 0.0f, pack_ocr_desc_h = 0.0f;   // 增强包 page: 全部更新; 快速预览 page: 管理增强包
     D2D1_RECT_F pack_summary{}, pack_open{}, pack_media_section{}, pack_card{}, pack_badge{}, pack_enable{},
         pack_primary{}, pack_update{}, pack_notice{}, pack_advanced_section{}, pack_custom_row{}, pack_path_row{},
         pack_detect{}, pack_browse{}, pack_remove_row{}, pack_group{}, pack_note{}, pack_source_group{}, pack_source_status{},

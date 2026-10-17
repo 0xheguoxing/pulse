@@ -341,6 +341,25 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
                PackAction::ArchiveEnable, PackAction::ArchiveInstall, PackAction::ArchiveRemove,
                vm.settings_pack_archive_notice, lay.pack_archive_update, pack_text::ArchiveUpdate(vm), PackAction::ArchiveUpdate});
 
+    // 搜索: 内容搜索 (index status in the notice box once installed) and OCR.
+    text(pack_text::SearchSection(), lay.pack_search_section);
+    {
+        static const std::wstring kNone;
+        const bool ready = pack_text::ContentReady(vm);
+        draw_card({lay.pack_content_card, lay.pack_content_badge, lay.pack_content_enable, lay.pack_content_primary,
+                   lay.pack_content_notice, L"\xE721",
+                   pack_text::ContentTitle(), pack_text::ContentDesc(), pack_text::ContentMeta(), pack_text::ContentBadge(vm),
+                   false, false, ready, false, pack_text::ContentAvailable(vm), 0.0f, pack_text::ContentPrimary(vm),
+                   PackAction::ContentInstall, PackAction::ContentInstall, PackAction::ContentManage,
+                   ready ? vm.settings_content_status : kNone, lay.pack_content_update, std::wstring{}, PackAction::ContentInstall});
+        draw_card({lay.pack_ocr_card, lay.pack_ocr_badge, lay.pack_ocr_enable, lay.pack_ocr_primary,
+                   lay.pack_ocr_notice, L"\xE8B9",
+                   pack_text::OcrTitle(), pack_text::OcrDesc(), {}, pack_text::OcrBadge(),
+                   false, false, false, false, false, 0.0f, pack_text::ComingSoon(),
+                   PackAction::ContentInstall, PackAction::ContentInstall, PackAction::ContentInstall,
+                   kNone, lay.pack_ocr_update, std::wstring{}, PackAction::ContentInstall});
+    }
+
     card(lay.pack_source_group);
     const bool source_switch = pack_text::ShowsEnable(vm);
     const float source_right = source_switch ? lay.pack_enable.left - 14*s : lay.pack_source_status.right - 16*s;

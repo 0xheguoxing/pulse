@@ -2258,6 +2258,17 @@ BEGIN
     IDS_PACKS_PAGE_INTRO "按需为 Pulse 添加模块：预览更多格式、搜索文件正文……每个模块独立下载、在隔离进程中运行，随时可以停用或卸载，不影响 Pulse 本体。"
     IDS_MANAGE_PACKS "管理增强包"
     IDS_UPDATE_ALL_PACKS "全部更新"
+    IDS_PACK_SEARCH_SECTION "搜索"
+    IDS_CONTENT_PACK_TITLE "内容搜索"
+    IDS_CONTENT_PACK_DESC "在 Word、Excel、PowerPoint、PDF 和文本文件的正文中搜索关键词，结果中高亮命中片段。索引只在本机建立，不上传任何内容。"
+    IDS_CONTENT_PACK_META "SQLite FTS5 · PDFium · 随 Pulse 同步更新"
+    IDS_MANAGE_CONTENT_INDEX "管理索引"
+    IDS_OCR_PACK_TITLE "图片文字识别（OCR）"
+    IDS_OCR_PACK_DESC "截图、扫描件和照片里的文字也能被搜到。需要先安装「内容搜索」模块。"
+    IDS_PACK_PLANNED "规划中"
+    IDS_PACK_COMING_SOON "即将推出"
+    IDS_CONTENT_PACK_BUNDLED "开发版内置"
+    IDS_CONTENT_PACK_REPAIR "需要重新下载"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4515,6 +4526,17 @@ BEGIN
     IDS_PACKS_PAGE_INTRO "Add modules to Pulse as you need them: preview more formats, search inside files and more. Each module downloads on its own, runs in an isolated process and can be turned off or removed at any time without affecting Pulse itself."
     IDS_MANAGE_PACKS "Manage packs"
     IDS_UPDATE_ALL_PACKS "Update all"
+    IDS_PACK_SEARCH_SECTION "Search"
+    IDS_CONTENT_PACK_TITLE "Content search"
+    IDS_CONTENT_PACK_DESC "Search for words inside Word, Excel, PowerPoint, PDF and text files, with the matching passages highlighted. The index is built on this PC only; nothing is uploaded."
+    IDS_CONTENT_PACK_META "SQLite FTS5 · PDFium · updates with Pulse"
+    IDS_MANAGE_CONTENT_INDEX "Manage index"
+    IDS_OCR_PACK_TITLE "Text in images (OCR)"
+    IDS_OCR_PACK_DESC "Find the text in screenshots, scans and photos too. Needs the Content search module."
+    IDS_PACK_PLANNED "Planned"
+    IDS_PACK_COMING_SOON "Coming soon"
+    IDS_CONTENT_PACK_BUNDLED "Bundled (dev build)"
+    IDS_CONTENT_PACK_REPAIR "Download again"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

@@ -305,6 +305,22 @@ inline const wchar_t* SizeChoice(int i) {
 inline const wchar_t* PacksSection() { return l10n::Get(l10n::StringId::PreviewPacks).c_str(); }
 inline const wchar_t* PacksIntro() { return l10n::Get(l10n::StringId::PacksPageIntro).c_str(); }
 inline const wchar_t* ManagePacks() { return l10n::Get(l10n::StringId::ManagePacks).c_str(); }
+inline const wchar_t* SearchSection() { return l10n::Get(l10n::StringId::PackSearchSection).c_str(); }
+inline const wchar_t* ContentTitle() { return l10n::Get(l10n::StringId::ContentPackTitle).c_str(); }
+inline const wchar_t* ContentDesc() { return l10n::Get(l10n::StringId::ContentPackDesc).c_str(); }
+inline const wchar_t* ContentMeta() { return l10n::Get(l10n::StringId::ContentPackMeta).c_str(); }
+inline const wchar_t* OcrTitle() { return l10n::Get(l10n::StringId::OcrPackTitle).c_str(); }
+inline const wchar_t* OcrDesc() { return l10n::Get(l10n::StringId::OcrPackDesc).c_str(); }
+inline const wchar_t* ComingSoon() { return l10n::Get(l10n::StringId::PackComingSoon).c_str(); }
+// app::ContentPackState: 0 bundled (dev build), 1 ready, 2 missing, 3 outdated, 4 damaged, 5 unavailable.
+inline bool ContentReady(const WindowViewModel& vm) {
+    return vm.settings_content_pack_state == 0 || vm.settings_content_pack_state == 1;
+}
+inline bool ContentAvailable(const WindowViewModel& vm) { return vm.settings_content_pack_state != 5; }
+inline const wchar_t* ContentPrimary(const WindowViewModel& vm) {
+    return ContentReady(vm) ? l10n::Get(l10n::StringId::ManageContentIndex).c_str()
+                            : l10n::Get(l10n::StringId::DownloadAndInstall).c_str();
+}
 inline std::wstring UpdateAll(int count) {
     return std::wstring(l10n::Get(l10n::StringId::UpdateAllPacks).c_str()) + L" (" + std::to_wstring(count) + L")";
 }
@@ -382,6 +398,15 @@ inline std::wstring Found(const std::wstring& path) {
     return std::wstring(l10n::Get(l10n::StringId::Found).c_str()) + path;
 }
 struct Badge { std::wstring text; fluent::BadgeKind kind = fluent::BadgeKind::Neutral; };
+inline Badge ContentBadge(const WindowViewModel& vm) {
+    switch (vm.settings_content_pack_state) {
+    case 0: return {l10n::Get(l10n::StringId::ContentPackBundled).c_str(), fluent::BadgeKind::Success};
+    case 1: return {l10n::Get(l10n::StringId::Installed).c_str(), fluent::BadgeKind::Success};
+    case 3: case 4: return {l10n::Get(l10n::StringId::ContentPackRepair).c_str(), fluent::BadgeKind::Warning};
+    default: return {l10n::Get(l10n::StringId::NotInstalled).c_str(), fluent::BadgeKind::Neutral};
+    }
+}
+inline Badge OcrBadge() { return {l10n::Get(l10n::StringId::PackPlanned).c_str(), fluent::BadgeKind::Neutral}; }
 inline const wchar_t* PrimaryLabel(bool available, bool installed, bool installing) {
     if (installing) return l10n::Get(l10n::StringId::Cancel).c_str();
     if (installed) return Remove();
@@ -693,6 +718,17 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
                  &l.pack_archive_update, &l.pack_archive_notice, &l.pack_archive_desc_h},
                 pack_text::ShowsArchiveEnable(vm), pack_text::ArchiveBadge(vm), pack_text::ArchiveDesc(),
                 pack_text::ArchivePrimary(vm), pack_text::ArchiveUpdate(vm), vm.settings_pack_archive_notice);
+
+    // 搜索: the 内容搜索 module (its index status as the notice) and OCR, planned.
+    y += 24*scale; l.pack_search_section = row(28);
+    card_layout({&l.pack_content_card, &l.pack_content_badge, &l.pack_content_enable, &l.pack_content_primary,
+                 &l.pack_content_update, &l.pack_content_notice, &l.pack_content_desc_h},
+                false, pack_text::ContentBadge(vm), pack_text::ContentDesc(), pack_text::ContentPrimary(vm), {},
+                pack_text::ContentReady(vm) ? vm.settings_content_status : std::wstring{});
+    y += 12*scale;
+    card_layout({&l.pack_ocr_card, &l.pack_ocr_badge, &l.pack_ocr_enable, &l.pack_ocr_primary,
+                 &l.pack_ocr_update, &l.pack_ocr_notice, &l.pack_ocr_desc_h},
+                false, pack_text::OcrBadge(), pack_text::OcrDesc(), pack_text::ComingSoon(), {}, std::wstring{});
 
     // Background updates and the uninstall choice remain separate from the media source.
     y += 24*scale; l.pack_advanced_section = row(28);

@@ -2272,5 +2272,16 @@
 #define IDS_PACKS_PAGE_INTRO                                                             3482
 #define IDS_MANAGE_PACKS                                                                 3483
 #define IDS_UPDATE_ALL_PACKS                                                             3484
+#define IDS_PACK_SEARCH_SECTION                                                          3485
+#define IDS_CONTENT_PACK_TITLE                                                           3486
+#define IDS_CONTENT_PACK_DESC                                                            3487
+#define IDS_CONTENT_PACK_META                                                            3488
+#define IDS_MANAGE_CONTENT_INDEX                                                         3489
+#define IDS_OCR_PACK_TITLE                                                               3490
+#define IDS_OCR_PACK_DESC                                                                3491
+#define IDS_PACK_PLANNED                                                                 3492
+#define IDS_PACK_COMING_SOON                                                             3493
+#define IDS_CONTENT_PACK_BUNDLED                                                         3494
+#define IDS_CONTENT_PACK_REPAIR                                                          3495
 
 #endif  // PULSE_STRING_IDS_H

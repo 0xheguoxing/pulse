@@ -593,6 +593,8 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     {&lay.pack_open, PackAction::OpenFolder},
                     {&lay.pack_update_all, PackAction::UpdateAll},
                     {&lay.pack_manage, PackAction::ManagePacks},
+                    {pack_text::ContentAvailable(vm) ? &lay.pack_content_primary : &lay.pack_ocr_enable,   // ocr_enable stays empty
+                     pack_text::ContentReady(vm) ? PackAction::ContentManage : PackAction::ContentInstall},
                     {&lay.pack_primary, vm.settings_pack_media_installed && !vm.settings_pack_installing
                                             ? PackAction::Remove : PackAction::Install},
                     {&lay.pack_enable, PackAction::Enable},

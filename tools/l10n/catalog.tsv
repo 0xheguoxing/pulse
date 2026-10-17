@@ -2279,3 +2279,14 @@ ToolbarSectionView	IDS_TOOLBAR_SECTION_VIEW	3481	排序与筛选	Sort & filter	�
 PacksPageIntro	IDS_PACKS_PAGE_INTRO	3482	按需为 Pulse 添加模块：预览更多格式、搜索文件正文……每个模块独立下载、在隔离进程中运行，随时可以停用或卸载，不影响 Pulse 本体。	Add modules to Pulse as you need them: preview more formats, search inside files and more. Each module downloads on its own, runs in an isolated process and can be turned off or removed at any time without affecting Pulse itself.	按需為 Pulse 新增模組：預覽更多格式、搜尋檔案內文……每個模組獨立下載、在隔離處理程序中執行，隨時可以停用或解除安裝，不影響 Pulse 本體。
 ManagePacks	IDS_MANAGE_PACKS	3483	管理增强包	Manage packs	管理增強包
 UpdateAllPacks	IDS_UPDATE_ALL_PACKS	3484	全部更新	Update all	全部更新
+PackSearchSection	IDS_PACK_SEARCH_SECTION	3485	搜索	Search	搜尋
+ContentPackTitle	IDS_CONTENT_PACK_TITLE	3486	内容搜索	Content search	內容搜尋
+ContentPackDesc	IDS_CONTENT_PACK_DESC	3487	在 Word、Excel、PowerPoint、PDF 和文本文件的正文中搜索关键词，结果中高亮命中片段。索引只在本机建立，不上传任何内容。	Search for words inside Word, Excel, PowerPoint, PDF and text files, with the matching passages highlighted. The index is built on this PC only; nothing is uploaded.	在 Word、Excel、PowerPoint、PDF 和文字檔的內文中搜尋關鍵字，結果中醒目提示命中片段。索引只在本機建立，不上傳任何內容。
+ContentPackMeta	IDS_CONTENT_PACK_META	3488	SQLite FTS5 · PDFium · 随 Pulse 同步更新	SQLite FTS5 · PDFium · updates with Pulse	SQLite FTS5 · PDFium · 隨 Pulse 同步更新
+ManageContentIndex	IDS_MANAGE_CONTENT_INDEX	3489	管理索引	Manage index	管理索引
+OcrPackTitle	IDS_OCR_PACK_TITLE	3490	图片文字识别（OCR）	Text in images (OCR)	圖片文字辨識（OCR）
+OcrPackDesc	IDS_OCR_PACK_DESC	3491	截图、扫描件和照片里的文字也能被搜到。需要先安装「内容搜索」模块。	Find the text in screenshots, scans and photos too. Needs the Content search module.	截圖、掃描檔和相片裡的文字也能被搜到。需要先安裝「內容搜尋」模組。
+PackPlanned	IDS_PACK_PLANNED	3492	规划中	Planned	規劃中
+PackComingSoon	IDS_PACK_COMING_SOON	3493	即将推出	Coming soon	即將推出
+ContentPackBundled	IDS_CONTENT_PACK_BUNDLED	3494	开发版内置	Bundled (dev build)	開發版內建
+ContentPackRepair	IDS_CONTENT_PACK_REPAIR	3495	需要重新下载	Download again	需要重新下載

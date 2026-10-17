@@ -33,6 +33,7 @@
 #include "snapshot_patch.h"
 #include "dir_notify_queue.h"
 #include "text_diff.h"
+#include "content_pack.h"
 #include "content_pack_ui.h"
 #include "session.h"
 #include "context_menu.h"
@@ -627,6 +628,17 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
                 const auto& packs = s.settings.Packs();
                 vm.settings_pack_updates = int(!packs.update_version.empty()) + int(!packs.images_update_version.empty()) +
                                            int(!packs.raw_update_version.empty()) + int(!packs.archive_update_version.empty());
+            }
+            if (vm.settings_page == 8) {
+                // 内容搜索 module: its install directory is read at most every 2 s.
+                static uint64_t checked_at = 0;
+                static int content_state = static_cast<int>(app::ContentPackState::Missing);
+                const uint64_t now = GetTickCount64();
+                if (!checked_at || now - checked_at >= 2000) {
+                    content_state = static_cast<int>(app::QueryContentPackState());
+                    checked_at = now;
+                }
+                vm.settings_content_pack_state = content_state;
             }
             if (vm.settings_page == 5 || vm.settings_page == 8) {
                 // Cached in the controller: the disk is read at most every 2 s.
