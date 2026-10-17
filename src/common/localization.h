@@ -2286,6 +2286,9 @@ enum class StringId : UINT {
     GlobalSearchNetwork = IDS_GLOBAL_SEARCH_NETWORK,
     GlobalSearchPickPlace = IDS_GLOBAL_SEARCH_PICK_PLACE,
     GlobalSearchNoFilteredResults = IDS_GLOBAL_SEARCH_NO_FILTERED_RESULTS,
+    MediaPackUnused = IDS_MEDIA_PACK_UNUSED,
+    MediaPackLocalNotice = IDS_MEDIA_PACK_LOCAL_NOTICE,
+    MediaPackLocalNoticeInstalled = IDS_MEDIA_PACK_LOCAL_NOTICE_INSTALLED,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

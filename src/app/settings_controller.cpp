@@ -227,6 +227,9 @@ void SettingsController::RefreshPacks() {
     if (state.use_custom) {
         if (IsFfmpegExe(state.custom_path)) state.ffmpeg = 2;
     } else if (media.present) state.ffmpeg = 1;
+    // A working FFmpeg of the user's own replaces the media pack outright
+    // (no fallback to it), so the pack is neither offered nor updated.
+    if (state.ffmpeg == 2) state.update_version.clear();
     wchar_t found[MAX_PATH]{};
     if (SearchPathW(nullptr, L"ffmpeg.exe", nullptr, MAX_PATH, found, nullptr) && IsFfmpegExe(found))
         state.detected_path = found;
@@ -344,6 +347,7 @@ int SettingsController::AutoUpdatePacks(HWND notify) {
     for (uint32_t index = 0; index < packs::kPackCount; ++index) {
         const auto id = static_cast<packs::PackId>(index);
         const PackRelease& release = ReleaseFor(id);
+        if (id == packs::PackId::Media && settings.use_custom_ffmpeg && IsFfmpegExe(settings.custom_ffmpeg)) continue;
         if (auto_declined_[index] || !release.file_count || InstallerFor(id).running() ||
             !packs::PackAutoUpdateWanted(id, settings, packs::ReadInstalledPack(id), release.version)) continue;
         automatic_[index] = false;

@@ -2297,3 +2297,6 @@ GlobalSearchLocal	IDS_GLOBAL_SEARCH_LOCAL	3499	本机	This PC	本機
 GlobalSearchNetwork	IDS_GLOBAL_SEARCH_NETWORK	3500	网络	Network	網路
 GlobalSearchPickPlace	IDS_GLOBAL_SEARCH_PICK_PLACE	3501	选择要固定到快速访问的文件夹	Choose a folder to pin to Quick access	選擇要釘選到快速存取的資料夾
 GlobalSearchNoFilteredResults	IDS_GLOBAL_SEARCH_NO_FILTERED_RESULTS	3502	当前筛选下没有结果	No results with these filters	目前篩選下沒有結果
+MediaPackUnused	IDS_MEDIA_PACK_UNUSED	3503	未使用	Not in use	未使用
+MediaPackLocalNotice	IDS_MEDIA_PACK_LOCAL_NOTICE	3504	正在使用本地 FFmpeg，不需要下载这个增强包。	Your own FFmpeg is in use, so this pack is not needed.	正在使用本機 FFmpeg，不需要下載這個增強包。
+MediaPackLocalNoticeInstalled	IDS_MEDIA_PACK_LOCAL_NOTICE_INSTALLED	3505	正在使用本地 FFmpeg，已安装的增强包不会被用到，可以卸载以释放空间。	Your own FFmpeg is in use. The installed pack is not used and can be removed to free space.	正在使用本機 FFmpeg，已安裝的增強包不會被用到，可以解除安裝以釋放空間。

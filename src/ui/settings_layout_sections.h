@@ -430,14 +430,28 @@ inline Badge PackBadge(bool available, bool installed, bool installing, bool ena
     if (!version.empty()) text += L" " + version;
     return {text, fluent::BadgeKind::Success};
 }
+// The user's own FFmpeg is selected and valid: the pack is not used at all.
+inline bool MediaLocalInUse(const WindowViewModel& vm) {
+    return vm.settings_pack_use_custom && vm.settings_pack_ffmpeg == 2 && !vm.settings_pack_installing;
+}
 inline Badge MediaBadge(const WindowViewModel& vm) {
+    if (MediaLocalInUse(vm))
+        return {l10n::Get(l10n::StringId::MediaPackUnused).c_str(), fluent::BadgeKind::Neutral};
     return PackBadge(vm.settings_pack_media_available, vm.settings_pack_media_installed,
         vm.settings_pack_installing, true, vm.settings_pack_version);
 }
 inline const wchar_t* Primary(const WindowViewModel& vm) {
+    // Nothing to download while the local FFmpeg is used; an installed pack can still be removed.
+    if (MediaLocalInUse(vm) && !vm.settings_pack_media_installed) return L"";
     return PrimaryLabel(vm.settings_pack_media_available, vm.settings_pack_media_installed, vm.settings_pack_installing);
 }
+inline std::wstring MediaNotice(const WindowViewModel& vm) {
+    if (!vm.settings_pack_notice.empty() || !MediaLocalInUse(vm)) return vm.settings_pack_notice;
+    return l10n::Get(vm.settings_pack_media_installed ? l10n::StringId::MediaPackLocalNoticeInstalled
+                                                      : l10n::StringId::MediaPackLocalNotice).c_str();
+}
 inline std::wstring MediaUpdate(const WindowViewModel& vm) {
+    if (MediaLocalInUse(vm)) return {};
     return UpdateLabel(vm.settings_pack_media_installed, vm.settings_pack_installing, vm.settings_pack_update_version);
 }
 inline const wchar_t* SourceTitle() { return l10n::Get(l10n::StringId::EnableMediaEnhancement).c_str(); }
@@ -650,8 +664,9 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
         *out.desc_h = caption_h(desc, inner_right - text_left);
         const float desc_top = compact_pack ? out.badge->bottom + 12*scale : top + 40*scale;
         const float footer = desc_top + *out.desc_h + 12*scale;
-        const float primary_w = button_w(primary);
-        *out.primary = D2D1::RectF(inner_right - primary_w, footer, inner_right, footer + 32*scale);
+        const float primary_w = primary.empty() ? 0.0f : button_w(primary);
+        *out.primary = primary.empty() ? D2D1::RectF(inner_right, footer, inner_right, footer + 32*scale)
+                                       : D2D1::RectF(inner_right - primary_w, footer, inner_right, footer + 32*scale);
         if (!update.empty()) {
             const float update_w = button_w(update);
             *out.update = D2D1::RectF(out.primary->left - 8*scale - update_w, footer,
@@ -672,7 +687,7 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
     card_layout({&l.pack_card, &l.pack_badge, &l.pack_enable, &l.pack_primary, &l.pack_update, &l.pack_notice,
                  &l.pack_desc_h},
                 false, pack_text::MediaBadge(vm), pack_text::MediaDesc(),
-                pack_text::Primary(vm), pack_text::MediaUpdate(vm), vm.settings_pack_notice);
+                pack_text::Primary(vm), pack_text::MediaUpdate(vm), pack_text::MediaNotice(vm));
 
     // Optional existing FFmpeg is adjacent to the independently installable media pack.
     y += 12*scale;

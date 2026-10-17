@@ -2290,5 +2290,8 @@
 #define IDS_GLOBAL_SEARCH_NETWORK                                                        3500
 #define IDS_GLOBAL_SEARCH_PICK_PLACE                                                     3501
 #define IDS_GLOBAL_SEARCH_NO_FILTERED_RESULTS                                            3502
+#define IDS_MEDIA_PACK_UNUSED                                                            3503
+#define IDS_MEDIA_PACK_LOCAL_NOTICE                                                      3504
+#define IDS_MEDIA_PACK_LOCAL_NOTICE_INSTALLED                                            3505
 
 #endif  // PULSE_STRING_IDS_H

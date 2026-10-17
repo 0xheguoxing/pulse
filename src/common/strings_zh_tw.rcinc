@@ -2274,4 +2274,7 @@ BEGIN
     IDS_GLOBAL_SEARCH_NETWORK "網路"
     IDS_GLOBAL_SEARCH_PICK_PLACE "選擇要釘選到快速存取的資料夾"
     IDS_GLOBAL_SEARCH_NO_FILTERED_RESULTS "目前篩選下沒有結果"
+    IDS_MEDIA_PACK_UNUSED "未使用"
+    IDS_MEDIA_PACK_LOCAL_NOTICE "正在使用本機 FFmpeg，不需要下載這個增強包。"
+    IDS_MEDIA_PACK_LOCAL_NOTICE_INSTALLED "正在使用本機 FFmpeg，已安裝的增強包不會被用到，可以解除安裝以釋放空間。"
 END

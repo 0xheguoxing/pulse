@@ -288,9 +288,10 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
             text(c.meta, D2D1::RectF(text_left, c.primary.top + 6*s, meta_right, c.primary.bottom - 6*s), true);
         }
         const bool installed = c.installed && !c.installing;
-        button(c.primary, c.primary_label, installed ? c.remove_action : c.install_action,
-               installed || c.installing || !c.available ? fluent::ButtonKind::Standard : fluent::ButtonKind::Primary,
-               pack_text::PrimaryEnabled(c.available, c.installed, c.installing));
+        if (c.primary.right > c.primary.left)
+            button(c.primary, c.primary_label, installed ? c.remove_action : c.install_action,
+                   installed || c.installing || !c.available ? fluent::ButtonKind::Standard : fluent::ButtonKind::Primary,
+                   pack_text::PrimaryEnabled(c.available, c.installed, c.installing));
         if (updatable) button(c.update, c.update_label, c.update_action, fluent::ButtonKind::Primary);
         if (c.notice_box.bottom > c.notice_box.top) {
             const auto& n = c.notice_box;
@@ -309,7 +310,7 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
                pack_text::MediaTitle(), pack_text::MediaDesc(), pack_text::MediaMeta(), pack_text::MediaBadge(vm),
                false, vm.settings_pack_ffmpeg_enabled, vm.settings_pack_media_installed,
                vm.settings_pack_installing, vm.settings_pack_media_available, vm.settings_pack_progress, pack_text::Primary(vm),
-               PackAction::Enable, PackAction::Install, PackAction::Remove, vm.settings_pack_notice,
+               PackAction::Enable, PackAction::Install, PackAction::Remove, pack_text::MediaNotice(vm),
                lay.pack_update, pack_text::MediaUpdate(vm), PackAction::Update});
 
     // Images: the image pack.

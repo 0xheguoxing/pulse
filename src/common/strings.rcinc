@@ -2276,6 +2276,9 @@ BEGIN
     IDS_GLOBAL_SEARCH_NETWORK "网络"
     IDS_GLOBAL_SEARCH_PICK_PLACE "选择要固定到快速访问的文件夹"
     IDS_GLOBAL_SEARCH_NO_FILTERED_RESULTS "当前筛选下没有结果"
+    IDS_MEDIA_PACK_UNUSED "未使用"
+    IDS_MEDIA_PACK_LOCAL_NOTICE "正在使用本地 FFmpeg，不需要下载这个增强包。"
+    IDS_MEDIA_PACK_LOCAL_NOTICE_INSTALLED "正在使用本地 FFmpeg，已安装的增强包不会被用到，可以卸载以释放空间。"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4551,6 +4554,9 @@ BEGIN
     IDS_GLOBAL_SEARCH_NETWORK "Network"
     IDS_GLOBAL_SEARCH_PICK_PLACE "Choose a folder to pin to Quick access"
     IDS_GLOBAL_SEARCH_NO_FILTERED_RESULTS "No results with these filters"
+    IDS_MEDIA_PACK_UNUSED "Not in use"
+    IDS_MEDIA_PACK_LOCAL_NOTICE "Your own FFmpeg is in use, so this pack is not needed."
+    IDS_MEDIA_PACK_LOCAL_NOTICE_INSTALLED "Your own FFmpeg is in use. The installed pack is not used and can be removed to free space."
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.
