@@ -214,6 +214,137 @@ struct EngineTestAccess {
         engine.Stop();
         return valid && totals;
     }
+    // Real-data full-merge peak (P0-E). Copies an index directory to an isolated
+    // temp folder, loads it like the service, runs one forced MergeBase and
+    // prints the stage samples plus the process peak commit. The source
+    // directory is only read; the copy is removed afterwards.
+    // Fixed query mix for --merge-peak-probe: best-of-3 latency and a hash of
+    // total + returned paths, so two builds can be compared on the same data.
+    static void ProbeQueries(Engine& engine) {
+        struct ProbeQuery { const char* label; const wchar_t* needle; ResultSort sort; bool desc; const wchar_t* prefix; };
+        const ProbeQuery queries[]{
+            {"readme", L"readme", ResultSort::Index, false, L""},
+            {"x", L"x", ResultSort::Index, false, L""},
+            {"dll_size_desc", L".dll", ResultSort::Size, true, L""},
+            {"pulse_name", L"pulse", ResultSort::Name, false, L""},
+            {"cjk_weixin", L"\u5fae\u4fe1", ResultSort::Index, false, L""},
+            {"ext_png_mtime_desc", L"ext:png", ResultSort::Mtime, true, L""},
+            {"folder_src", L"folder: src", ResultSort::Index, false, L""},
+            {"log_in_users", L"log", ResultSort::Index, false, L"C:\\Users"},
+            {"zz", L"zz", ResultSort::Index, false, L""}};
+        constexpr size_t count = std::size(queries);
+        std::vector<double> best(count, 1e300);
+        std::vector<SearchResult> last(count);
+        for (int round = 0; round < 3; ++round) {
+            for (size_t i = 0; i < count; ++i) {
+                Query q;
+                q.needle = queries[i].needle;
+                q.sort = queries[i].sort;
+                q.sort_desc = queries[i].desc;
+                q.path_prefix = queries[i].prefix;
+                const auto started = std::chrono::steady_clock::now();
+                last[i] = engine.Search(q);
+                best[i] = (std::min)(best[i], std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - started).count());
+            }
+        }
+        for (size_t i = 0; i < count; ++i) {
+            uint64_t hash = 1469598103934665603ull;
+            auto mix = [&](const void* data, size_t bytes) {
+                const auto* p = static_cast<const unsigned char*>(data);
+                for (size_t k = 0; k < bytes; ++k) hash = (hash ^ p[k]) * 1099511628211ull;
+            };
+            const uint64_t total = last[i].total;
+            mix(&total, sizeof(total));
+            for (const auto& hit : last[i].hits) mix(hit.path.data(), (hit.path.size() + 1) * sizeof(wchar_t));
+            std::cout << "query=" << queries[i].label << " total=" << total << " hits=" << last[i].hits.size()
+                << " unchecked=" << last[i].unchecked_dirs.size() << " best_us="
+                << static_cast<uint64_t>(best[i] * 1000.0) << " hash=" << std::hex << hash << std::dec << "\n";
+        }
+    }
+    static bool MergePeakProbe(const std::wstring& source) {
+        namespace fs = std::filesystem;
+        if (!SetEnvironmentVariableW(L"PULSE_INDEX_DIAGNOSTICS", L"1")) return false;
+        if (!fs::is_directory(source)) return false;
+        const fs::path dir = fs::temp_directory_path() /
+            (L"pulse-merge-peak-" + std::to_wstring(GetCurrentProcessId()));
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        ec.clear();
+        fs::copy(source, dir, fs::copy_options::recursive, ec);
+        if (ec) {
+            std::cout << "copy_failed=" << ec.value() << "\n";
+            fs::remove_all(dir, ec);
+            return false;
+        }
+        auto memory = [] {
+            PROCESS_MEMORY_COUNTERS_EX c{};
+            c.cb = sizeof(c);
+            K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&c), sizeof(c));
+            return c;
+        };
+        auto cpu_ms = [] {
+            FILETIME created{}, exited{}, kernel{}, user{};
+            GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user);
+            auto value = [](FILETIME t) { return (static_cast<uint64_t>(t.dwHighDateTime) << 32) | t.dwLowDateTime; };
+            return (value(kernel) + value(user)) / 10000;
+        };
+        bool committed = false;
+        {
+            SetActiveIndexDirectory(dir.wstring());
+            SetMachineIndexScope(true);
+            Engine engine;
+            const bool loaded = engine.TryLoadCache();
+            for (int i = 0; loaded && i < 1200 && !engine.pinyin_ready_.load(); ++i) Sleep(50);
+            std::cout << "pinyin_ready=" << engine.pinyin_ready_.load() << "\n";
+            if (loaded) ProbeQueries(engine);
+            const auto before = memory();
+            const uint64_t cpu_before = cpu_ms();
+            const auto started = std::chrono::steady_clock::now();
+            if (loaded) engine.MergeBase(true, "probe");
+            const auto wall = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started).count();
+            const uint64_t cpu_used = cpu_ms() - cpu_before;
+            const auto after = memory();
+            committed = loaded && engine.merge_failures_ == 0;
+            std::cout << "loaded=" << loaded << " committed=" << committed << " nodes=" << engine.LiveCount()
+                << " shards_ready=" << engine.query_shards_ready_ << "\n"
+                << "merge_wall_ms=" << wall << " merge_cpu_ms=" << cpu_used << "\n"
+                << "private_before=" << before.PrivateUsage << " private_after=" << after.PrivateUsage
+                << " peak_before=" << before.PeakPagefileUsage << " peak_after=" << after.PeakPagefileUsage
+                << " peak_working_set=" << after.PeakWorkingSetSize << "\n"
+                << "memory_json=" << engine.filename_timing_.Memory().Json() << "\n";
+            engine.Stop();
+        }
+        SetActiveIndexDirectory(L"");
+        wchar_t keep[MAX_PATH]{};
+        const DWORD keep_length = GetEnvironmentVariableW(L"PULSE_PROBE_KEEP_BASE", keep, MAX_PATH);
+        if (keep_length > 0 && keep_length < MAX_PATH) {
+            fs::path newest;
+            fs::file_time_type newest_time{};
+            for (const auto& entry : fs::recursive_directory_iterator(dir / L"v9", ec)) {
+                const auto name = entry.path().filename().wstring();
+                if (!entry.is_regular_file() || (name != L"base-a.bin" && name != L"base-b.bin")) continue;
+                const auto time = entry.last_write_time();
+                if (newest.empty() || time > newest_time) { newest = entry.path(); newest_time = time; }
+            }
+            const bool kept = !newest.empty() && fs::copy_file(newest, keep, fs::copy_options::overwrite_existing, ec);
+            std::cout << "kept_base=" << kept << "\n";
+        }
+        std::cout << "legacy_shards_present=" << fs::exists(dir / L"v9" / L"volumes", ec) << "\n";
+        {
+            std::ifstream timing(dir / L"pulse-index-timing.jsonl");
+            for (std::string line; std::getline(timing, line);) std::cout << "timing=" << line << "\n";
+        }
+        for (const auto& entry : fs::recursive_directory_iterator(dir, ec)) {
+            if (entry.is_regular_file())
+                std::wcout << L"file=" << fs::relative(entry.path(), dir).wstring() << L" bytes=" << entry.file_size() << L"\n";
+        }
+        ec.clear();
+        fs::remove_all(dir, ec);
+        std::cout << "cleanup_error=" << ec.value() << "\n";
+        return committed;
+    }
     static bool ReopenCache(const std::wstring& directory) {
         if (!std::filesystem::is_directory(directory)) return false;
         SetActiveIndexDirectory(directory);
@@ -1361,6 +1492,7 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (argc == 4 && std::wstring_view(argv[1]) == L"--recover-cache") return EngineTestAccess::RecoverCache(argv[2], argv[3]) ? 0 : 1;
     if (argc == 3 && std::wstring_view(argv[1]) == L"--reopen-cache") return EngineTestAccess::ReopenCache(argv[2]) ? 0 : 1;
+    if (argc == 3 && std::wstring_view(argv[1]) == L"--merge-peak-probe") return EngineTestAccess::MergePeakProbe(argv[2]) ? 0 : 1;
     if (argc == 2 && std::wstring_view(argv[1]) == L"--hierarchy-only") return EngineTestAccess::HierarchyFixture() ? 0 : 1;
     const bool quiet = argc > 1 && std::wstring_view(argv[1]) == L"--quiet-maintenance-only";
     if (!SetEnvironmentVariableW(L"PULSE_INDEX_DIAGNOSTICS", quiet ? nullptr : L"1")) return 2;

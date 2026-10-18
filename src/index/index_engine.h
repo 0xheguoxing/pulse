@@ -493,7 +493,8 @@ private:
     ULONGLONG last_delta_flush_tick_ = 0;
     std::unordered_map<std::wstring, ULONGLONG> volume_retry_after_;
     std::unordered_map<std::wstring, ULONGLONG> volume_recovered_after_;
-    FilenameTiming filename_timing_;
+    // mutable: the const WriteIndexFile samples its memory stages (diagnostics only).
+    mutable FilenameTiming filename_timing_;
 
     struct WalkWatch {
         std::wstring path;

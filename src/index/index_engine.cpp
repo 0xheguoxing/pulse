@@ -1686,7 +1686,9 @@ bool Engine::WriteIndexFile(const std::wstring& path, const Store& s,
         return std::make_pair(std::move(start), std::move(ids));
     };
     const auto prefix1 = build_prefix(false);
+    filename_timing_.Memory().Capture(IndexMemoryPoint::WritePrefix1);
     const auto prefix2 = build_prefix(true);
+    filename_timing_.Memory().Capture(IndexMemoryPoint::WritePrefix2);
     if (prefix_overflow) {
         CloseHandle(h);
         DeleteFileW(tmp.c_str());
@@ -1739,6 +1741,8 @@ bool Engine::WriteIndexFile(const std::wstring& path, const Store& s,
         return c != 0 ? c < 0 : a < b;
     });
 
+    // Store, both posting tables and child_order are all alive here.
+    filename_timing_.Memory().Capture(IndexMemoryPoint::WriteSorted);
     std::vector<BYTE> pad(128, 0);
     memcpy(pad.data(), &hdr, sizeof(hdr));
     DWORD write_error = ERROR_SUCCESS;
@@ -2793,6 +2797,7 @@ void Engine::MergeBase(bool force, const char* reason) {
     }
     if (committed && MachineIndexScope()) {
         WriteVolumeShards(snap, vols, built);
+        filename_timing_.Memory().Capture(IndexMemoryPoint::ShardsDone);
         std::unique_lock<std::shared_mutex> lock(mutex_);
         RefreshQueryShardsLocked();
     }
