@@ -107,6 +107,7 @@ constexpr ZhHantPhrase kZhHantPhrases[] = {
     {L"%s \u9879 \u00b7 %s", L"%s \u9805 \u00b7 %s"},
     {L"%s \u9879\u5931\u8d25", L"%s \u9805\u5931\u6557"},
     {L"%s \u9879\u6210\u529f \u00b7 %s \u9879\u672a\u6210\u529f", L"%s \u9805\u6210\u529f \u00b7 %s \u9805\u672a\u6210\u529f"},
+    {L"%s \u9879\u672a\u6210\u529f \u00b7 \u70b9\u51fb\u67e5\u770b", L"%s \u9805\u672a\u6210\u529f \u00b7 \u9ede\u9078\u6aa2\u8996"},
     {L"%s\u4fee\u6539\u8fc7", L"%s\u4fee\u6539\u904e"},
     {L"%zu \u4e2a\u9879\u76ee (%zu \u6587\u4ef6\u5939, %zu \u6587\u4ef6)", L"%zu \u500b\u9805\u76ee (%zu \u8cc7\u6599\u593e, %zu \u6a94\u6848)"},
     {L"%zu \u9879", L"%zu \u9805"},

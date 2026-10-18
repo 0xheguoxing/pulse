@@ -2352,4 +2352,5 @@ BEGIN
     IDS_OP_OPEN_DESTINATION "開啟目標資料夾"
     IDS_OP_FAILED_COUNT "%s 項失敗"
     IDS_OP_MORE_FAILURES "另有 %s 項未列出"
+    IDS_OP_PILL_FAILED "%s 項未成功 · 按一下查看"
 END

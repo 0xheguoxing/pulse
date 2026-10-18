@@ -2364,6 +2364,7 @@ enum class StringId : UINT {
     OpOpenDestination = IDS_OP_OPEN_DESTINATION,
     OpFailedCount = IDS_OP_FAILED_COUNT,
     OpMoreFailures = IDS_OP_MORE_FAILURES,
+    OpPillFailed = IDS_OP_PILL_FAILED,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

@@ -2354,6 +2354,7 @@ BEGIN
     IDS_OP_OPEN_DESTINATION "打开目标文件夹"
     IDS_OP_FAILED_COUNT "%s 项失败"
     IDS_OP_MORE_FAILURES "另有 %s 项未列出"
+    IDS_OP_PILL_FAILED "%s 项未成功 · 点击查看"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4707,6 +4708,7 @@ BEGIN
     IDS_OP_OPEN_DESTINATION "Open destination"
     IDS_OP_FAILED_COUNT "%s failed"
     IDS_OP_MORE_FAILURES "%s more not listed"
+    IDS_OP_PILL_FAILED "%s didn't go through · Click to view"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

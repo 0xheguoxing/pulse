@@ -2261,6 +2261,15 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
         vm.status.task_progress = st.active ? st.percent : -1.0f;
         vm.status.task_active = st.active;
         vm.status.task_failed = !st.last_error.empty();
+        vm.status.task_paused = st.active && (st.phase == ops::OpPhase::Paused || st.pause_requested);
+        if (!st.active && st.phase == ops::OpPhase::Failed && st.failed_items > 0 && !st.failures.empty()) {
+            // Partial failure: what did not go through, and where to look.
+            vm.status.task_failed_items = st.failed_items;
+            const std::wstring count = pulse::format::GroupedInt(st.failed_items);
+            wchar_t pill[160]{};
+            swprintf_s(pill, l10n::Get(l10n::StringId::OpPillFailed).c_str(), count.c_str());
+            vm.status.task_text = pill;
+        }
         if(s.contentSelectionAction) vm.status.selection_text=l10n::Get(l10n::StringId::OpPreparingList);
     }
     app::ApplyUpdateStatus(vm.status, UpdateProgressForView(s), st.active);

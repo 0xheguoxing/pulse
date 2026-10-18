@@ -2368,5 +2368,6 @@
 #define IDS_OP_OPEN_DESTINATION                                                          3632
 #define IDS_OP_FAILED_COUNT                                                              3633
 #define IDS_OP_MORE_FAILURES                                                             3634
+#define IDS_OP_PILL_FAILED                                                               3635
 
 #endif  // PULSE_STRING_IDS_H

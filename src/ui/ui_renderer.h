@@ -554,6 +554,8 @@ struct StatusBarView {
     bool task_is_update = false;   // Noninteractive, centered progress; never opens file operations.
     bool task_active = false;      // file operation running (drives the progress pill)
     bool task_failed = false;      // last operation ended with an error: no success check
+    bool task_paused = false;      // paused or pausing: amber pill
+    uint64_t task_failed_items = 0; // partial failure: red pill until the next operation
     std::wstring performance_text; // development diagnostics; empty hides it
     std::wstring performance_compact_text;
 };
@@ -1525,7 +1527,8 @@ public:
         active = active || folder_size_anim_active_;
         // Operation pill: indeterminate ring spin and the completion check fade.
         active = active || task_pill_spinning_ ||
-                 (task_pill_done_at_ != 0 && now - task_pill_done_at_ < kTaskPillDoneMs + 400);
+                 (task_pill_done_at_ != 0 && now - task_pill_done_at_ < kTaskPillDoneMs + 400) ||
+                 (task_pill_pop_at_ != 0 && now - task_pill_pop_at_ < kTaskPillPopMs + 40);
         if (copy_feedback_.Tick(now)) active = true;
         if (group_wheel_.Tick(motion_now)) active = true;
         if (motion_now < tab_motion_until_) active = true;
@@ -2148,6 +2151,8 @@ private:
     bool task_pill_spinning_ = false;
     bool task_pill_animate_ = true;
     ULONGLONG task_pill_done_at_ = 0;
+    ULONGLONG task_pill_pop_at_ = 0;     // finish pop (pulse_ops_dialogs.html pillpop)
+    static constexpr ULONGLONG kTaskPillPopMs = 500;
     mutable ColumnAutoWidths auto_widths_{};
     mutable float auto_widths_scale_ = -1.0f;
     mutable std::wstring auto_widths_language_;

@@ -2375,3 +2375,4 @@ OpRetryFailedItems	IDS_OP_RETRY_FAILED_ITEMS	3631	重试失败项	Retry failed i
 OpOpenDestination	IDS_OP_OPEN_DESTINATION	3632	打开目标文件夹	Open destination	開啟目標資料夾
 OpFailedCount	IDS_OP_FAILED_COUNT	3633	%s 项失败	%s failed	%s 項失敗
 OpMoreFailures	IDS_OP_MORE_FAILURES	3634	另有 %s 项未列出	%s more not listed	另有 %s 項未列出
+OpPillFailed	IDS_OP_PILL_FAILED	3635	%s 项未成功 · 点击查看	%s didn't go through · Click to view	%s 項未成功 · 按一下查看
