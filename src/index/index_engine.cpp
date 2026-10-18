@@ -24,6 +24,7 @@
 #include <cstring>
 #include <ctime>
 #include <cwctype>
+#include <filesystem>
 #include <queue>
 #include <numeric>
 #include <iterator>
@@ -292,6 +293,26 @@ ShardPaths AggregateShardPaths() {
     return MakeShardPaths(DataDir() + L"\\v9", L"aggregate");
 }
 
+// Before 1.0.57 every merge also wrote v9\volumes\<id>: a per-volume copy of the
+// aggregate base of the same generation, read only as an alternative query
+// view. Queries use the aggregate alone now; reclaim the copy once (about as
+// large as the aggregate itself, twice with both A/B slots).
+void RemoveLegacyVolumeShards() {
+    if (!MachineIndexScope()) return;
+    const std::wstring data_dir = DataDir();
+    if (data_dir.empty()) return;
+    const std::wstring root = data_dir + L"\\v9\\volumes";
+    const DWORD attributes = GetFileAttributesW(root.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) return;
+    std::error_code error;
+    if (attributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+        std::filesystem::remove(root, error);  // never follow a link out of the index directory
+    } else {
+        std::filesystem::remove_all(root, error);
+    }
+    if (error) IndexFailure("filename_remove_volume_shards_failed", static_cast<DWORD>(error.value()), root);
+}
+
 int RankSingleCharMatch(const wchar_t* name, uint32_t length, bool is_dir,
                         wchar_t folded_char) {
     int score = 100;
@@ -436,8 +457,7 @@ void Engine::CaptureMemoryState() {
     retained.feed_records = feed_changes_.Size();
     retained.feed_page_capacity_bytes = feed_changes_.PageCapacityBytes();
     retained.aggregate_mapped_file_bytes = map_ ? map_->size : 0;
-    retained.shard_mapped_file_bytes = 0;
-    for (const auto& shard : query_shards_) if (shard.mapped) retained.shard_mapped_file_bytes += shard.mapped->size;
+    retained.shard_mapped_file_bytes = 0;  // volume shards removed; field kept for the JSON schema
     retained.overlay_nodes = live_.nodes.size();
     retained.overlay_patches = patches_.size();
     // Stream ownership is worker-only; producers touch only their own queue.
@@ -661,8 +681,6 @@ void Engine::Stop() {
     FlushDeltas();
     CloseDeltas();
     std::unique_lock<std::shared_mutex> lock(mutex_);
-    query_shards_.clear();
-    query_shards_ready_ = false;
     if (map_) map_->Close();
     map_.reset();
     ++layout_epoch_;
@@ -1094,17 +1112,12 @@ void Engine::CollectMatchesLocked(const CompiledQuery& cq, int32_t prefix_node,
                     if (node.parent >= 0 && !(node.flags & (kFlagHidden | kFlagDeleted)) &&
                         (single_char || ContainsFolded(mapped.pool + node.off, node.len, term.name)))
                         ids.Add(id);
-                } else if (MatchQueryNodeLocked(id, literal_cq, prefix_node, folders_only, use_attrs)) {
+                } else if (MatchNodeLocked(id, literal_cq, prefix_node, folders_only, use_attrs)) {
                     ids.Add(id);
                 }
             }
         };
-        if (query_shards_ready_) {
-            for (const auto& shard : query_shards_)
-                collect_table(*shard.mapped, shard.first);
-        } else {
-            collect_table(*map_, 0);
-        }
+        collect_table(*map_, 0);
         if (term.pinyin && pinyin_ready_.load() && pinyin_snapshot_ == map_.get() &&
             pinyin_version_ == kPinyinDataVersion) {
             const std::vector<int32_t>* candidate_ids = &pinyin_chinese_ids_;
@@ -1121,19 +1134,19 @@ void Engine::CollectMatchesLocked(const CompiledQuery& cq, int32_t prefix_node,
             for (int32_t id : candidates) {
                 if ((checked++ & 0x3ff) == 0 && latest && latest->load() != expected) return;
                 if (patches_.contains(id)) continue; // current names below
-                const auto name = QueryNameOfLocked(id);
+                const auto name = NameOf(id);
                 // Literal matches were already visited by the disk postings.
                 if (ContainsFolded(name.data(), static_cast<uint32_t>(name.size()), term.name)) continue;
-                if (MatchQueryNodeLocked(id, cq, prefix_node, folders_only, use_attrs)) ids.Add(id);
+                if (MatchNodeLocked(id, cq, prefix_node, folders_only, use_attrs)) ids.Add(id);
             }
         }
         for (int32_t id = BaseCount(); id < n; ++id) {
-            if (MatchQueryNodeLocked(id, cq, prefix_node, folders_only, use_attrs)) ids.Add(id);
+            if (MatchNodeLocked(id, cq, prefix_node, folders_only, use_attrs)) ids.Add(id);
         }
         for (const auto& [id, patch] : patches_) {
             (void)patch;
             if (id >= 0 && id < BaseCount() &&
-                MatchQueryNodeLocked(id, cq, prefix_node, folders_only, use_attrs)) ids.Add(id);
+                MatchNodeLocked(id, cq, prefix_node, folders_only, use_attrs)) ids.Add(id);
         }
         return;
     }
@@ -1177,7 +1190,7 @@ void Engine::CollectMatchesLocked(const CompiledQuery& cq, int32_t prefix_node,
 
     auto consider = [&](int32_t i) {
         if ((i & 0x3ff) == 0 && latest && latest->load() != expected) return false;
-        if (MatchQueryNodeLocked(i, cq, prefix_node, folders_only, use_attrs))
+        if (MatchNodeLocked(i, cq, prefix_node, folders_only, use_attrs))
             ids.Add(i);
         return true;
     };
@@ -1205,7 +1218,7 @@ void Engine::CollectMatchesLocked(const CompiledQuery& cq, int32_t prefix_node,
             for (int32_t i = a; i < b; ++i) {
                 if ((i & 0x3ff) == 0 && latest && latest->load() != expected)
                     return;
-                if (MatchQueryNodeLocked(i, cq, prefix_node, folders_only, use_attrs))
+                if (MatchNodeLocked(i, cq, prefix_node, folders_only, use_attrs))
                     parts[t].Add(i);
             }
         });
@@ -1226,7 +1239,7 @@ void Engine::NarrowMatchesLocked(const CompiledQuery& cq, int32_t prefix_node,
     prev.ForEach([&](int32_t i) {
         if ((++seen & 0x3ff) == 0 && latest && latest->load() != expected) return;
         if (i < 0 || i >= LiveCount()) return;
-        if (MatchQueryNodeLocked(i, cq, prefix_node, folders_only, use_attrs))
+        if (MatchNodeLocked(i, cq, prefix_node, folders_only, use_attrs))
             out.Add(i);
     });
 }
@@ -1235,75 +1248,6 @@ void Engine::SortIdsLocked(std::vector<int32_t>& ids, ResultSort sort, bool desc
     if (ids.size() <= 1 || sort == ResultSort::Index) {
         if (desc && sort == ResultSort::Index) std::reverse(ids.begin(), ids.end());
         return;
-    }
-    if (query_shards_ready_ && live_.nodes.empty() && patches_.empty() &&
-        tombstones_.empty()) {
-        std::vector<uint8_t> selected(static_cast<size_t>(BaseCount()), 0);
-        for (int32_t id : ids)
-            if (id >= 0 && id < BaseCount()) selected[static_cast<size_t>(id)] = 1;
-        auto less = [&](int32_t a, int32_t b) {
-            if (sort == ResultSort::Name) {
-                int c = CmpLogical(QueryNameOfLocked(a), QueryNameOfLocked(b));
-                if (c == 0) c = a < b ? -1 : a > b ? 1 : 0;
-                return desc ? c > 0 : c < 0;
-            }
-            const bool da = (QueryNodeAtLocked(a).flags & kFlagDir) != 0;
-            const bool db = (QueryNodeAtLocked(b).flags & kFlagDir) != 0;
-            if (da != db) return da;
-            const Attr aa = QueryAttrAtLocked(a);
-            const Attr ab = QueryAttrAtLocked(b);
-            const uint64_t va = sort == ResultSort::Size ? aa.size : aa.mtime;
-            const uint64_t vb = sort == ResultSort::Size ? ab.size : ab.mtime;
-            if (va != vb) return desc ? va > vb : va < vb;
-            int c = CmpLogical(QueryNameOfLocked(a), QueryNameOfLocked(b));
-            if (c == 0) c = a < b ? -1 : a > b ? 1 : 0;
-            return desc ? c > 0 : c < 0;
-        };
-        std::vector<int32_t> sorted;
-        for (const auto& shard : query_shards_) {
-            const int32_t* order = sort == ResultSort::Name ? shard.mapped->name_order :
-                sort == ResultSort::Size ? shard.mapped->size_order : shard.mapped->mtime_order;
-            if (!order) { sorted.clear(); break; }
-            std::vector<int32_t> stream;
-            stream.reserve(static_cast<size_t>(shard.last - shard.first));
-            auto append = [&](size_t first, size_t last, bool reverse) {
-                if (!reverse) {
-                    for (size_t i = first; i < last; ++i) {
-                        const int32_t id = shard.first + order[i];
-                        if (selected[static_cast<size_t>(id)]) stream.push_back(id);
-                    }
-                } else {
-                    for (size_t i = last; i > first; --i) {
-                        const int32_t id = shard.first + order[i - 1];
-                        if (selected[static_cast<size_t>(id)]) stream.push_back(id);
-                    }
-                }
-            };
-            const size_t count = static_cast<size_t>(shard.last - shard.first);
-            if (!desc || sort == ResultSort::Name) {
-                append(0, count, desc);
-            } else {
-                size_t split = 0;
-                while (split < count &&
-                       (shard.mapped->nodes[static_cast<size_t>(order[split])].flags & kFlagDir))
-                    ++split;
-                append(0, split, true);
-                append(split, count, true);
-            }
-            if (sorted.empty()) {
-                sorted = std::move(stream);
-            } else {
-                std::vector<int32_t> merged;
-                merged.reserve(sorted.size() + stream.size());
-                std::merge(sorted.begin(), sorted.end(), stream.begin(), stream.end(),
-                           std::back_inserter(merged), less);
-                sorted.swap(merged);
-            }
-        }
-        if (sorted.size() == ids.size()) {
-            ids.swap(sorted);
-            return;
-        }
     }
     if (map_) {
         const int32_t* order = sort == ResultSort::Name ? map_->name_order :
@@ -1481,7 +1425,7 @@ SearchResult Engine::Search(const Query& q, const std::atomic<uint32_t>* latest,
         int last_state = 0;
         matches.ForEach([&](int32_t id) {
             // Ids follow the folder layout, so siblings usually arrive together.
-            const int32_t parent = QueryNodeAtLocked(id).parent;
+            const int32_t parent = NodeAt(id).parent;
             if (parent != last_parent) {
                 last_parent = parent;
                 last_state = parent < 0 ? 1 : visibility->State(parent);
@@ -1493,7 +1437,7 @@ SearchResult Engine::Search(const Query& q, const std::atomic<uint32_t>* latest,
             std::sort(unchecked.begin(), unchecked.end());
             unchecked.erase(std::unique(unchecked.begin(), unchecked.end()), unchecked.end());
             out.unchecked_dirs.reserve(unchecked.size());
-            for (int32_t dir : unchecked) out.unchecked_dirs.emplace_back(dir, BuildQueryPathLocked(dir));
+            for (int32_t dir : unchecked) out.unchecked_dirs.emplace_back(dir, BuildPathLocked(dir));
             cache_raw_ = q.needle;
             cache_path_prefix_ = prefix;
             cache_folders_only_ = q.folders_only;
@@ -1558,8 +1502,8 @@ SearchResult Engine::Search(const Query& q, const std::atomic<uint32_t>* latest,
                 n = map_->nodes[static_cast<size_t>(id)];
                 nm = { map_->pool + n.off, n.len };
             } else {
-                n = QueryNodeAtLocked(id);
-                nm = QueryNameOfLocked(id);
+                n = NodeAt(id);
+                nm = NameOf(id);
             }
             const int score = rank_single_char
                 ? RankSingleCharMatch(nm.data(), static_cast<uint32_t>(nm.size()),
@@ -1602,12 +1546,12 @@ SearchResult Engine::Search(const Query& q, const std::atomic<uint32_t>* latest,
 
     out.hits.reserve(chosen.size());
     for (size_t k = 0; k < chosen.size(); ++k) {
-        const Node n = QueryNodeAtLocked(chosen[k]);
-        const Attr a = QueryAttrAtLocked(chosen[k]);
+        const Node n = NodeAt(chosen[k]);
+        const Attr a = AttrAt(chosen[k]);
         Hit h;
-        h.path = BuildQueryPathLocked(chosen[k]);
+        h.path = BuildPathLocked(chosen[k]);
         if (h.path.empty()) continue;
-        h.name.assign(QueryNameOfLocked(chosen[k]));
+        h.name.assign(NameOf(chosen[k]));
         h.is_dir = (n.flags & kFlagDir) != 0;
         h.size = a.size;
         h.mtime = UnixToFt(a.mtime);
@@ -1893,64 +1837,6 @@ bool Engine::CommitMappedFile(const std::wstring& path) {
     return true;
 }
 
-void Engine::WriteVolumeShards(const Store& aggregate, const std::vector<VolState>& vols,
-                               uint64_t built_unix) const {
-    if (!MachineIndexScope() || aggregate.nodes.empty()) return;
-    const std::wstring root = DataDir() + L"\\v9\\volumes";
-    for (const auto& source : vols) {
-        if (source.volume_id.empty() || source.item_count == 0) continue;
-        const int64_t first = source.first_idx;
-        const int64_t last = first + static_cast<int64_t>(source.item_count);
-        if (first < 0 || last > static_cast<int64_t>(aggregate.nodes.size()) || first >= last)
-            continue;
-
-        Store shard;
-        shard.nodes.reserve(static_cast<size_t>(last - first));
-        shard.attrs.reserve(static_cast<size_t>(last - first));
-        for (int64_t i = first; i < last; ++i) {
-            const Node& source_node = aggregate.nodes[static_cast<size_t>(i)];
-            Node node = source_node;
-            node.parent = (i == first) ? -1 :
-                ((source_node.parent >= first && source_node.parent < last)
-                    ? static_cast<int32_t>(source_node.parent - first) : -1);
-            const size_t name_off = shard.pool.size();
-            if (source_node.off + source_node.len <= aggregate.pool.size()) {
-                shard.pool.insert(shard.pool.end(), aggregate.pool.begin() + source_node.off,
-                                  aggregate.pool.begin() + source_node.off + source_node.len);
-            }
-            node.off = static_cast<uint32_t>(name_off);
-            node.unused = source_node.unused >= static_cast<uint32_t>(first) &&
-                          source_node.unused <= static_cast<uint32_t>(last)
-                ? source_node.unused - static_cast<uint32_t>(first) : 0;
-            shard.nodes.push_back(node);
-            shard.attrs.push_back(aggregate.attrs[static_cast<size_t>(i)]);
-        }
-        VolState v = source;
-        v.root_idx = 0;
-        v.first_idx = 0;
-        v.item_count = shard.nodes.size();
-        v.frn_base = nullptr;
-        v.frn_base_n = 0;
-        v.frn_new.clear();
-        v.frn_new_tail.clear();
-        v.frn_new_prev.clear();
-        v.frn_build.clear();
-        for (const auto& entry : source.frn_build) {
-            if (entry.second >= first && entry.second < last)
-                v.frn_build.emplace_back(entry.first, entry.second - static_cast<int32_t>(first));
-        }
-        const ShardPaths paths = MakeShardPaths(root, source.volume_id);
-        const std::wstring temp = paths.base_a + L".tmp";
-        DeleteFileW(temp.c_str());
-        if (!WriteIndexFile(paths.base_a, shard, {v}, built_unix)) continue;
-        ShardManifest published;
-        if (!PublishShardBase(paths, temp, built_unix, 0, published, nullptr, source.volume_id)) {
-            const DWORD error = GetLastError();
-            IndexFailure("filename_publish_volume_shard_failed", error, temp);
-        }
-    }
-}
-
 bool Engine::MapIndexFile(const std::wstring& path, std::unique_ptr<MappedFile>& out) const {
     auto m = std::make_unique<MappedFile>();
     auto fail = [&](const char* stage, DWORD error) {
@@ -2070,8 +1956,6 @@ void Engine::AdoptMappedLocked(std::unique_ptr<MappedFile> mapped) {
     pinyin_version_ = 0;
     pinyin_chinese_ids_.clear();
     pinyin_pair_ids_.clear();
-    query_shards_.clear();
-    query_shards_ready_ = false;
     map_ = std::move(mapped);
     ++layout_epoch_;
     live_.Clear();
@@ -2107,140 +1991,8 @@ void Engine::AdoptMappedLocked(std::unique_ptr<MappedFile> mapped) {
     }
     RebuildChildMapLocked();
     indexed_.store(static_cast<size_t>(LiveCount()));
-    RefreshQueryShardsLocked();
     InvalidateFilterLocked();
     RequestPinyinBuildLocked();
-}
-
-void Engine::RefreshQueryShardsLocked() {
-    query_shards_.clear();
-    query_shards_ready_ = false;
-    if (!MachineIndexScope() || !map_ || vols_.empty()) return;
-    const std::wstring root = DataDir() + L"\\v9\\volumes";
-    std::vector<QueryShard> loaded;
-    loaded.reserve(vols_.size());
-    for (const auto& volume : vols_) {
-        int32_t first = 0, last = 0;
-        if (volume.volume_id.empty() || !VolumeSpan(volume, first, last)) return;
-        const ShardPaths paths = MakeShardPaths(root, volume.volume_id);
-        ShardManifest manifest;
-        std::wstring active;
-        if (!ResolveActiveShard(paths, manifest, active, nullptr) ||
-            manifest.active_built != built_unix_) return;
-        std::unique_ptr<MappedFile> mapped;
-        if (!MapIndexFile(active, mapped) || !mapped || mapped->hdr->ver < kIndexVer ||
-            mapped->nvol != 1 ||
-            mapped->n != static_cast<uint32_t>(last - first) ||
-            NormalizeVolumeId(mapped->vols[0].volume_id) != NormalizeVolumeId(volume.volume_id))
-            return;
-        QueryShard shard;
-        shard.volume_id = volume.volume_id;
-        shard.first = first;
-        shard.last = last;
-        shard.mapped = std::move(mapped);
-        loaded.push_back(std::move(shard));
-    }
-    std::sort(loaded.begin(), loaded.end(), [](const QueryShard& a, const QueryShard& b) {
-        return a.first < b.first;
-    });
-    query_shards_ = std::move(loaded);
-    query_shards_ready_ = query_shards_.size() == vols_.size();
-    if (query_shards_ready_) InvalidateFilterLocked();
-}
-
-const Engine::QueryShard* Engine::QueryShardForLocked(int32_t id) const {
-    if (!query_shards_ready_ || id < 0 || id >= BaseCount()) return nullptr;
-    for (const auto& shard : query_shards_)
-        if (id >= shard.first && id < shard.last) return &shard;
-    return nullptr;
-}
-
-Node Engine::QueryNodeAtLocked(int32_t id) const {
-    if (patches_.contains(id)) return NodeAt(id);
-    const QueryShard* shard = QueryShardForLocked(id);
-    if (!shard) return NodeAt(id);
-    Node node = shard->mapped->nodes[static_cast<size_t>(id - shard->first)];
-    if (node.parent >= 0) node.parent += shard->first;
-    if (node.unused) node.unused += static_cast<uint32_t>(shard->first);
-    return node;
-}
-
-Attr Engine::QueryAttrAtLocked(int32_t id) const {
-    if (patches_.contains(id)) return AttrAt(id);
-    const QueryShard* shard = QueryShardForLocked(id);
-    if (!shard) return AttrAt(id);
-    return shard->mapped->attrs[static_cast<size_t>(id - shard->first)];
-}
-
-std::wstring_view Engine::QueryNameOfLocked(int32_t id) const {
-    if (patches_.contains(id)) return NameOf(id);
-    const QueryShard* shard = QueryShardForLocked(id);
-    if (!shard) return NameOf(id);
-    const Node& node = shard->mapped->nodes[static_cast<size_t>(id - shard->first)];
-    return { shard->mapped->pool + node.off, node.len };
-}
-
-std::wstring Engine::BuildQueryPathLocked(int32_t id) const {
-    return BuildCompleteIndexPath(id, LiveCount(),
-        [&](int32_t current) { return QueryNodeAtLocked(current).parent; },
-        [&](int32_t current) { return QueryNameOfLocked(current); });
-}
-
-bool Engine::MatchQueryNodeLocked(int32_t id, const CompiledQuery& query,
-                                  int32_t prefix_node, bool folders_only,
-                                  bool use_attrs) const {
-    if (!query_shards_ready_ || id >= BaseCount() || patches_.contains(id))
-        return MatchNodeLocked(id, query, prefix_node, folders_only, use_attrs);
-    if (IsTomb(id)) return false;
-    for (int32_t root : inactive_volume_roots_)
-        if (InSubtreeLocked(id, root)) return false;
-    const Node node = QueryNodeAtLocked(id);
-    if (node.parent < 0) return false;
-    if ((node.flags & kFlagHidden) || (folders_only && !(node.flags & kFlagDir))) return false;
-    if (prefix_node >= 0 && !InSubtreeLocked(id, prefix_node)) return false;
-    const std::wstring_view name = QueryNameOfLocked(id);
-    const Attr attr = use_attrs ? QueryAttrAtLocked(id) : Attr{};
-    for (const auto& group : query.groups) {
-        bool matched = true;
-        for (const auto& term : group) {
-            bool name_ok = true;
-            if (term.name_how != NameHow::Any) {
-                if (!term.name_in_path) {
-                    name_ok = MatchName(name.data(), static_cast<uint32_t>(name.size()), term);
-                } else if (term.name_how == NameHow::Wildcard) {
-                    const std::wstring path = BuildQueryPathLocked(id);
-                    name_ok = WildcardFolded(path.data(), static_cast<uint32_t>(path.size()),
-                                             term.name);
-                } else {
-                    name_ok = false;
-                    ParentChainGuard chain(LiveCount());
-                    for (int32_t current = id; chain.Visit(current);
-                         current = QueryNodeAtLocked(current).parent) {
-                        const std::wstring_view part = QueryNameOfLocked(current);
-                        if (MatchName(part.data(), static_cast<uint32_t>(part.size()), term)) {
-                            name_ok = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            if (term.name_not) name_ok = !name_ok;
-            bool ext_ok = MatchExt(name.data(), static_cast<uint32_t>(name.size()), term);
-            if (term.ext_not) ext_ok = !ext_ok;
-            bool size_ok = MatchSize(attr.size, term);
-            if (term.size_not) size_ok = !size_ok;
-            bool date_ok = MatchDate(UnixToFt(attr.mtime), term);
-            if (term.date_not) date_ok = !date_ok;
-            const bool is_dir = (node.flags & kFlagDir) != 0;
-            if ((term.folder && !is_dir) || (term.file && is_dir) ||
-                !name_ok || !ext_ok || !size_ok || !date_ok) {
-                matched = false;
-                break;
-            }
-        }
-        if (matched) return true;
-    }
-    return query.groups.empty();
 }
 
 void Engine::PreserveOfflineVolumesLocked(const std::vector<VolumeInfo>& active,
@@ -2795,12 +2547,7 @@ void Engine::MergeBase(bool force, const char* reason) {
             built_unix_ = previous_built;
         }
     }
-    if (committed && MachineIndexScope()) {
-        WriteVolumeShards(snap, vols, built);
-        filename_timing_.Memory().Capture(IndexMemoryPoint::ShardsDone);
-        std::unique_lock<std::shared_mutex> lock(mutex_);
-        RefreshQueryShardsLocked();
-    }
+    if (committed) RemoveLegacyVolumeShards();
     merge_failures_ = committed ? 0 : merge_failures_ + 1;
     const ULONGLONG retry_ms = MergeRetryDelayMs(merge_failures_);
     merge_retry_after_tick_ = committed ? 0 : GetTickCount64() + retry_ms;
@@ -3830,10 +3577,6 @@ bool Engine::RebuildVolumeMft(const VolumeInfo& volume) {
         building_ = false;
         return false;
     }
-    if (MachineIndexScope()) {
-        WriteVolumeShards(build_, build_vols_, built);
-        RefreshQueryShardsLocked();
-    }
     build_.Clear();
     build_.Shrink();
     build_vols_.clear();
@@ -4012,9 +3755,7 @@ void Engine::FullRebuild(const char* reason) {
         }
         if (committed && MachineIndexScope()) {
             PingNotify(true);
-            WriteVolumeShards(build_, build_vols_, built);
-            std::unique_lock<std::shared_mutex> lock(mutex_);
-            RefreshQueryShardsLocked();
+            RemoveLegacyVolumeShards();
         }
         {
             std::unique_lock<std::shared_mutex> lock(mutex_);
@@ -4121,6 +3862,7 @@ void Engine::Worker() {
     }
     PublishExcludedPaths(startup_config);
     const bool have_cache = TryLoadCache();
+    RemoveLegacyVolumeShards();
     const auto initial_drives = ConfiguredVolumes(startup_config);
     bool needs_search_rebuild = false;
     {

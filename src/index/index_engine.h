@@ -257,13 +257,6 @@ private:
         MappedFile& operator=(const MappedFile&) = delete;
     };
 
-    struct QueryShard {
-        std::wstring volume_id;
-        int32_t first = 0;
-        int32_t last = 0;
-        std::unique_ptr<MappedFile> mapped;
-    };
-
     struct VolState {
         std::unordered_map<uint64_t, std::wstring> tracking_paths;
         wchar_t letter = 0;
@@ -364,18 +357,8 @@ private:
     bool FlattenLocked(Store& out, std::vector<VolState>& vols_out) const;
     bool WriteIndexFile(const std::wstring& path, const Store& s,
                         const std::vector<VolState>& vols, uint64_t built_unix) const;
-    void WriteVolumeShards(const Store& aggregate, const std::vector<VolState>& vols,
-                           uint64_t built_unix) const;
     bool MapIndexFile(const std::wstring& path, std::unique_ptr<MappedFile>& out) const;
     void AdoptMappedLocked(std::unique_ptr<MappedFile> mapped);
-    void RefreshQueryShardsLocked();
-    const QueryShard* QueryShardForLocked(int32_t id) const;
-    Node QueryNodeAtLocked(int32_t id) const;
-    Attr QueryAttrAtLocked(int32_t id) const;
-    std::wstring_view QueryNameOfLocked(int32_t id) const;
-    std::wstring BuildQueryPathLocked(int32_t id) const;
-    bool MatchQueryNodeLocked(int32_t id, const CompiledQuery& query, int32_t prefix_node,
-                              bool folders_only, bool use_attrs) const;
     void RebuildChildMapLocked();
     bool CommitMappedFile(const std::wstring& path);
 
@@ -465,8 +448,6 @@ private:
     std::wstring status_;
 
     std::unique_ptr<MappedFile> map_;
-    std::vector<QueryShard> query_shards_;
-    bool query_shards_ready_ = false;
     Store live_;  // tests: full store; after mmap: delta only
     Store build_;
     std::vector<VolState> vols_;

@@ -9,9 +9,8 @@
 namespace pulse::index {
 enum class IndexMemoryPoint : size_t {
     ChangeFlushBefore, ChangeFlushSnapshot, ChangeFlushAfter, MergeBefore, MergeFlattened, TimingFlush,
-    // WriteIndexFile stages (merge base and every volume shard) and the end of
-    // MergeBase's shard pass: the full-merge peak lies after MergeFlattened.
-    WritePrefix1, WritePrefix2, WriteSorted, ShardsDone, Count
+    // WriteIndexFile stages: the full-merge peak lies after MergeFlattened.
+    WritePrefix1, WritePrefix2, WriteSorted, Count
 };
 // Worker-owned, allocation-free samples at a few maintenance boundaries, not an
 // allocator hook or a per-event poll. Process-wide values include other threads.
@@ -80,7 +79,7 @@ public:
             ",\"usn_queue_overflows\":" + std::to_string(r.usn_queue_overflows) + "},\"points\":{";
         constexpr const char* names[]{"change_flush_before", "change_flush_snapshot", "change_flush_after",
             "merge_before", "merge_flattened", "timing_flush", "write_prefix1", "write_prefix2",
-            "write_sorted", "shards_done"};
+            "write_sorted"};
         static_assert(std::size(names) == static_cast<size_t>(IndexMemoryPoint::Count));
         for (size_t i = 0; i < samples_.size(); ++i) {
             const auto& s = samples_[i];

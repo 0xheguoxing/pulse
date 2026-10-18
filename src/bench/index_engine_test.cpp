@@ -307,8 +307,7 @@ struct EngineTestAccess {
             const uint64_t cpu_used = cpu_ms() - cpu_before;
             const auto after = memory();
             committed = loaded && engine.merge_failures_ == 0;
-            std::cout << "loaded=" << loaded << " committed=" << committed << " nodes=" << engine.LiveCount()
-                << " shards_ready=" << engine.query_shards_ready_ << "\n"
+            std::cout << "loaded=" << loaded << " committed=" << committed << " nodes=" << engine.LiveCount() << "\n"
                 << "merge_wall_ms=" << wall << " merge_cpu_ms=" << cpu_used << "\n"
                 << "private_before=" << before.PrivateUsage << " private_after=" << after.PrivateUsage
                 << " peak_before=" << before.PeakPagefileUsage << " peak_after=" << after.PeakPagefileUsage
@@ -1373,8 +1372,7 @@ struct EngineTestAccess {
         term.name_in_path = true;
         CompiledQuery query;
         query.groups = {{term}};
-        check(!e.MatchNodeLocked(user, query, -1, false, false) &&
-              !e.MatchQueryNodeLocked(user, query, -1, false, false),
+        check(!e.MatchNodeLocked(user, query, -1, false, false),
               "existing cycle cannot hang path-name search");
         e.live_.nodes[user].parent = e.LiveCount() + 100;
         Usn(e, 201, 20, L"invalid-parent", USN_REASON_FILE_CREATE);
