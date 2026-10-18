@@ -1590,25 +1590,26 @@ bool Engine::WriteIndexFile(const std::wstring& path, const Store& s,
     bool prefix_overflow = false;
     auto build_prefix = [&](bool pair) {
         std::vector<uint32_t> counts(kPrefixBuckets, 0);
-        std::vector<uint32_t> local;
+        // Each bucket is reported once per name. A per-bucket epoch stamp replaces
+        // sort+unique per name; postings stay identical because ids are appended
+        // in node order whatever the order of buckets within one name.
+        std::vector<uint32_t> seen(kPrefixBuckets, 0);
+        uint32_t epoch = 0;
         auto visit = [&](std::wstring_view name, auto&& fn) {
+            if (++epoch == 0) {
+                std::fill(seen.begin(), seen.end(), 0u);
+                epoch = 1;
+            }
+            auto once = [&](uint32_t bucket) {
+                if (seen[bucket] == epoch) return;
+                seen[bucket] = epoch;
+                fn(bucket);
+            };
             if (!pair) {
-                local.clear();
-                local.reserve(name.size());
-                for (wchar_t c : name)
-                    local.push_back(static_cast<uint16_t>(FoldChar(c)));
-                std::sort(local.begin(), local.end());
-                local.erase(std::unique(local.begin(), local.end()), local.end());
-                for (uint32_t bucket : local) fn(bucket);
+                for (wchar_t c : name) once(static_cast<uint16_t>(FoldChar(c)));
                 return;
             }
-            local.clear();
-            local.reserve(name.size());
-            for (size_t k = 0; k + 1 < name.size(); ++k)
-                local.push_back(PairBucket(name.substr(k, 2)));
-            std::sort(local.begin(), local.end());
-            local.erase(std::unique(local.begin(), local.end()), local.end());
-            for (uint32_t bucket : local) fn(bucket);
+            for (size_t k = 0; k + 1 < name.size(); ++k) once(PairBucket(name.substr(k, 2)));
         };
         for (int32_t i = 0; i < static_cast<int32_t>(s.nodes.size()); ++i)
             visit(name_of(i), [&](uint32_t bucket) { ++counts[bucket]; });
@@ -1675,15 +1676,35 @@ bool Engine::WriteIndexFile(const std::wstring& path, const Store& s,
     for (const auto& v : vols) frn_count += v.frn_build.size();
     hdr.frn_count = static_cast<uint32_t>(frn_count);
 
+    // Order: (parent, folded name, id); roots (parent -1, validated above) first.
+    // A stable bucket pass by parent keeps ids ascending per parent. FlattenLocked
+    // already emits siblings in (folded name, id) order, so normally only the
+    // root group needs sorting; any other unordered group is sorted as before.
     std::vector<int32_t> child_order(s.nodes.size());
-    std::iota(child_order.begin(), child_order.end(), 0);
-    std::sort(child_order.begin(), child_order.end(), [&](int32_t a, int32_t b) {
-        const Node& na = s.nodes[static_cast<size_t>(a)];
-        const Node& nb = s.nodes[static_cast<size_t>(b)];
-        if (na.parent != nb.parent) return na.parent < nb.parent;
-        const int c = CompareFolded(name_of(a), name_of(b));
-        return c != 0 ? c < 0 : a < b;
-    });
+    {
+        const size_t count = s.nodes.size();
+        auto group_of = [&](size_t id) {
+            const int32_t parent = s.nodes[id].parent;
+            return parent < 0 ? size_t{0} : static_cast<size_t>(parent) + 1;
+        };
+        std::vector<uint32_t> group_end(count + 2, 0);
+        for (size_t i = 0; i < count; ++i) ++group_end[group_of(i) + 1];
+        for (size_t g = 1; g < group_end.size(); ++g) group_end[g] += group_end[g - 1];
+        for (size_t i = 0; i < count; ++i)
+            child_order[group_end[group_of(i)]++] = static_cast<int32_t>(i);
+        auto sibling_less = [&](int32_t a, int32_t b) {
+            const int c = CompareFolded(name_of(a), name_of(b));
+            return c != 0 ? c < 0 : a < b;
+        };
+        uint32_t group_begin = 0;
+        for (size_t g = 0; g + 1 < group_end.size(); ++g) {
+            const auto first = child_order.begin() + group_begin;
+            const auto last = child_order.begin() + group_end[g];
+            if (last - first > 1 && !std::is_sorted(first, last, sibling_less))
+                std::sort(first, last, sibling_less);
+            group_begin = group_end[g];
+        }
+    }
 
     // Store, both posting tables and child_order are all alive here.
     filename_timing_.Memory().Capture(IndexMemoryPoint::WriteSorted);
@@ -2057,14 +2078,18 @@ bool Engine::FlattenLocked(Store& out, std::vector<VolState>& vols_out) const {
     out.Clear();
     out.nodes.reserve(static_cast<size_t>(n));
     out.attrs.reserve(static_cast<size_t>(n));
-    out.pool.reserve(static_cast<size_t>(n) * 12);
 
+    // Reserve the pool exactly: a guessed size made the vector regrow while the
+    // old buffer was still alive (about 84 MiB transient on 2.7 M nodes).
+    size_t pool_chars = 0;
     std::vector<uint32_t> child_count(static_cast<size_t>(n), 0);
     for (int32_t i = 0; i < n; ++i) {
         if (IsTomb(i)) continue;
+        pool_chars += NameOf(i).size();
         const int32_t p = NodeAt(i).parent;
         if (p >= 0 && p < n) ++child_count[static_cast<size_t>(p)];
     }
+    out.pool.reserve(pool_chars);
     std::vector<uint32_t> head(static_cast<size_t>(n) + 1, 0);
     for (int32_t i = 0; i < n; ++i) head[static_cast<size_t>(i) + 1] = head[static_cast<size_t>(i)] +
         child_count[static_cast<size_t>(i)];
