@@ -1,5 +1,6 @@
 #include "../app/app_internal.h"
 #include "../common/localization.h"
+#include <functional>
 #include <iostream>
 
 void Render(pulse::AppState&);
@@ -23,6 +24,21 @@ LRESULT CALLBACK Observe(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_P
     }
     if(msg==WM_SETREDRAW && !wp && !(GetWindowLongPtrW(hwnd,GWL_STYLE)&WS_VISIBLE)) ++counts.hidden;
     return result;
+}
+std::function<bool()> g_menu_step;
+void CALLBACK MenuStep(HWND hwnd,UINT,UINT_PTR id,DWORD) {
+    if(!g_menu_step || !g_menu_step()) KillTimer(hwnd,id);
+}
+// The fixture parent is a STATIC window; route the edit's notifications the way
+// the main window does so live search is queued by the edit itself.
+LRESULT CALLBACK ForwardEditNotifications(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR data) {
+    auto& s=*reinterpret_cast<pulse::AppState*>(data);
+    if(msg==WM_COMMAND && reinterpret_cast<HWND>(lp)==s.hwndAddressEdit && HIWORD(wp)==EN_CHANGE) {
+        pulse::QueueAddressSearch(s);
+        pulse::UpdateAddressSuggestions(s);
+        return 0;
+    }
+    return DefSubclassProc(hwnd,msg,wp,lp);
 }
 }
 int main() {
@@ -99,6 +115,101 @@ int main() {
     type(L"abc",true);
     check(read_query()==L"3d3sabc","LumaText mouse placement at text end preserves following typing order");
     RemoveWindowSubclass(s.hwndAddressEdit,Observe,98);
+
+    // Typing pauses long enough for the first live query, which leaves the plain
+    // folder for a search page, then continues: with an IME (commit, pause,
+    // commit) and with plain characters. The next text must follow the caret.
+    SetWindowSubclass(s.hwnd,ForwardEditNotifications,97,reinterpret_cast<DWORD_PTR>(&s));
+    auto pump=[&](DWORD ms) {
+        const ULONGLONG until=GetTickCount64()+ms; MSG m{};
+        while(GetTickCount64()<until) {
+            while(PeekMessageW(&m,nullptr,0,0,PM_REMOVE)) {TranslateMessage(&m);DispatchMessageW(&m);}
+            TickAddressSearch(s,GetTickCount64());
+            Render(s);UpdateWindow(s.hwndAddressEdit);Sleep(8);
+        }
+    };
+    auto commit_ime=[&](const wchar_t* value) {
+        SendMessageW(s.hwndAddressEdit,WM_IME_STARTCOMPOSITION,0,0);
+        for(const wchar_t* p=value;*p;++p) SendMessageW(s.hwndAddressEdit,WM_CHAR,*p,1);
+        SendMessageW(s.hwndAddressEdit,WM_IME_ENDCOMPOSITION,0,0);
+    };
+    auto type_chars=[&](const wchar_t* value) {
+        for(const wchar_t* p=value;*p;++p) SendMessageW(s.hwndAddressEdit,WM_CHAR,*p,1);
+    };
+    auto caret_at=[&](DWORD where) {
+        DWORD a=0,b=0;SendMessageW(s.hwndAddressEdit,EM_GETSEL,reinterpret_cast<WPARAM>(&a),reinterpret_cast<LPARAM>(&b));
+        return a==where && b==where;
+    };
+    auto describe=[&](const char* label) {
+        DWORD a=0,b=0;SendMessageW(s.hwndAddressEdit,EM_GETSEL,reinterpret_cast<WPARAM>(&a),reinterpret_cast<LPARAM>(&b));
+        std::cout<<"[INFO] "<<label<<" text=";
+        for(wchar_t c:read_query()) std::cout<<std::hex<<static_cast<unsigned>(c)<<' ';
+        std::cout<<std::dec<<"sel="<<a<<","<<b<<" searching="<<s.addressSearching<<" results="<<IsAddressSearchResults(ActiveTab(s))
+                 <<" focus="<<(GetFocus()==s.hwndAddressEdit)<<std::endl;
+    };
+    wchar_t temp[MAX_PATH]{};GetTempPathW(MAX_PATH,temp);
+    std::wstring folder=temp;while(folder.size()>3 && folder.back()==L'\\') folder.pop_back();
+    auto fresh_search=[&](bool content) {
+        s.addressIgnoreKillFocus=true;
+        tab->search_content_active=false;tab->pending_generation=0;tab->content_results.reset();
+        tab->NavigateTo(folder);tab->current_path=folder;
+        s.addressSearching=false;s.addressEditing=false;s.addressSearchComposing=false;
+        s.appPrefs.address_search_content=content;s.appPrefs.address_search_current=true;
+        ShowAddressSearch(s);
+        s.addressIgnoreKillFocus=false;
+        s.addressSearchAnimation=1;
+        pump(60);
+    };
+    const wchar_t* const kFirst=L"\u6587\u4ef6";      // wen jian
+    const wchar_t* const kSecond=L"\u6d4b\u8bd5";     // ce shi
+    const wchar_t* const kThird=L"\u62a5\u544a";      // bao gao
+    fresh_search(false);
+    const HWND first_edit=s.hwndAddressEdit;
+    check(first_edit && s.addressSearching && read_query().empty(),"plain folder opens an empty name search");
+    commit_ime(kFirst);describe("ime first commit");
+    pump(450);describe("after live query");
+    check(IsAddressSearchResults(ActiveTab(s)),"live query reached the search page");
+    commit_ime(kSecond);describe("ime second commit");
+    check(read_query()==std::wstring(kFirst)+kSecond && caret_at(4),"IME text after a live query follows the caret");
+    check(s.hwndAddressEdit==first_edit,"live query keeps the same editor window");
+    pump(450);
+    commit_ime(kThird);describe("ime third commit");
+    check(read_query()==std::wstring(kFirst)+kSecond+kThird && caret_at(6),"IME text on a results page follows the caret");
+    fresh_search(false);
+    type_chars(L"abc");pump(450);describe("ascii after live query");
+    type_chars(L"def");
+    check(read_query()==L"abcdef" && caret_at(6),"typed text after a live query follows the caret");
+    fresh_search(true);
+    commit_ime(kFirst);pump(450);describe("content ime after live query");
+    commit_ime(kSecond);
+    check(read_query()==std::wstring(kFirst)+kSecond && caret_at(4),"content-mode IME text after a live query follows the caret");
+    // The history popup opens over an empty box and keeps a modal loop running
+    // while the user types into the search box (its external filter edit).
+    s.searchHistory.persist=false;
+    s.searchHistory.Record(L"setup-dia",app::MakeSearchPath(L"setup-dia"));
+    fresh_search(false);
+    int step=0;bool menu_open_while_typing=false;std::wstring history_text;DWORD history_caret=0;
+    ULONGLONG step_at=GetTickCount64();
+    g_menu_step=[&]() -> bool {
+        TickAddressSearch(s,GetTickCount64());Render(s);
+        if(GetTickCount64()<step_at) return true;
+        switch(step++) {
+        case 0: menu_open_while_typing=s.searchHistoryOpen && s.menu && s.menu->IsOpen();
+                commit_ime(kFirst);describe("history ime first");step_at=GetTickCount64()+450;return true;
+        case 1: describe("history after live query");commit_ime(kSecond);describe("history ime second");
+                history_text=read_query();
+                {DWORD a=0;SendMessageW(s.hwndAddressEdit,EM_GETSEL,reinterpret_cast<WPARAM>(&a),reinterpret_cast<LPARAM>(&history_caret));}
+                step_at=GetTickCount64()+100;return true;
+        default: if(s.menu && s.menu->IsOpen()) s.menu->Dismiss();return false;
+        }
+    };
+    SetTimer(s.hwnd,0x5352,30,MenuStep);
+    ShowAddressSearchHistory(s);
+    KillTimer(s.hwnd,0x5352);g_menu_step=nullptr;
+    std::cout<<"[INFO] history popup open while typing="<<menu_open_while_typing<<" steps="<<step<<std::endl;
+    check(step>=2,"history popup modal loop ran the typing script");
+    check(history_text==std::wstring(kFirst)+kSecond && history_caret==4,"IME text typed under the history popup follows the caret");
+    RemoveWindowSubclass(s.hwnd,ForwardEditNotifications,97);
     s.addressIgnoreKillFocus=true;DestroyWindow(s.hwndAddressEdit);s.hwndAddressEdit=nullptr;
     s.renderer.SetCompositor(nullptr);s.compositor.Shutdown();DestroyWindow(s.hwnd);s.hwnd=nullptr;
     std::cout<<"failures="<<failures<<std::endl;OleUninitialize();return failures ? 1:0;
