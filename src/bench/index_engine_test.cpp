@@ -1829,6 +1829,30 @@ int wmain(int argc, wchar_t** argv) {
         Check(Search(mapped, L".codex-new").total == 1, "USN move out of excluded directory");
         EngineTestAccess::Usn(mapped, 100, 20, L".codex-new", USN_REASON_FILE_DELETE);
         Check(Search(mapped, L".codex-new").total == 0, "USN delete removed");
+        constexpr auto log_path = L"C:\\Users\\TestUser\\AppData\\Local\\Temp\\ShowBoxDebug.log";
+        Check(Has(mapped, L"ShowBoxDebug", log_path), "unpatched snapshot hit found while overlay is non-empty");
+        EngineTestAccess::Usn(mapped, 30, 70, L".codex", USN_REASON_RENAME_NEW_NAME);
+        {
+            Query q; q.needle = L"ext:toml"; q.limit = 100;
+            q.path_prefix = L"C:\\Users\\TestUser\\.config";
+            const auto moved = mapped.Search(q);
+            Check(moved.total == 1 && moved.hits.size() == 1 &&
+                  moved.hits[0].path == L"C:\\Users\\TestUser\\.config\\.codex\\settings.toml",
+                  "scoped scan finds descendant of moved snapshot directory");
+            q.needle = L"settings";
+            Check(mapped.Search(q).total == 1, "scoped literal search finds descendant of moved directory");
+            q.path_prefix = L"C:\\Users\\TestUser\\AppData";
+            Check(mapped.Search(q).total == 0, "moved descendant stays out of unrelated scope");
+        }
+        EngineTestAccess::Usn(mapped, 30, 20, L".codex", USN_REASON_RENAME_NEW_NAME);
+        Check(Has(mapped, L"settings.toml", L"C:\\Users\\TestUser\\.codex\\settings.toml"),
+              "directory moved back keeps descendants searchable");
+        EngineTestAccess::Usn(mapped, 113, 112, L"renamed-debug.log", USN_REASON_RENAME_NEW_NAME);
+        Check(Search(mapped, L"renamed-debug").total == 1, "renamed snapshot node found by new name");
+        Check(Search(mapped, L"ShowBoxDebug").total == 0, "renamed snapshot node not found by old name");
+        Check(Search(mapped, L"sample.codex").total == 1, "snapshot file searchable before delete");
+        EngineTestAccess::Usn(mapped, 90, 20, L"sample.codex", USN_REASON_FILE_DELETE);
+        Check(Search(mapped, L"sample.codex").total == 0, "deleted snapshot file excluded from literal search");
     }
     {
         std::fstream file(base, std::ios::binary | std::ios::in | std::ios::out);

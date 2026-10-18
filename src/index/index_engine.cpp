@@ -1087,9 +1087,11 @@ void Engine::CollectMatchesLocked(const CompiledQuery& cq, int32_t prefix_node,
         literal_cq.groups[0][driver].pinyin = false;
         const bool single_char = term.name.size() == 1;
         const uint32_t bucket = single_char ? PrefixChar(term.name) : PairBucket(term.name);
+        // Overlay visibility changes are written as patches (see
+        // RefreshSubtreeVisibilityLocked), so an id without a patch or tombstone
+        // still matches exactly as its mapped node says, even with a backlog.
         const bool direct_literal = QueryIsSimpleName(cq) &&
             term.name_how == NameHow::Substring && prefix_node < 0 && !folders_only &&
-            live_.nodes.empty() && patches_.empty() && tombstones_.empty() &&
             inactive_volume_roots_.empty();
         auto collect_table = [&](const MappedFile& mapped, int32_t global_first) {
             const uint32_t* starts = single_char ? mapped.prefix1_start : mapped.prefix2_start;
@@ -1105,8 +1107,11 @@ void Engine::CollectMatchesLocked(const CompiledQuery& cq, int32_t prefix_node,
                     global_first < 0 || local_id >= BaseCount() - global_first) continue;
                 const int32_t id = global_first + local_id;
                 if (id < 0 || id >= BaseCount()) continue;
-                if (patches_.contains(id)) continue;
-                if (direct_literal) {
+                // Postings depend only on the snapshot name, so they still bound
+                // ids whose patch kept that name; renamed ids are checked below.
+                const auto patch = patches_.find(id);
+                if (patch != patches_.end() && patch->second.has_name) continue;
+                if (direct_literal && patch == patches_.end() && !tombstones_.contains(id)) {
                     if (local_id < 0 || local_id >= static_cast<int32_t>(mapped.n)) continue;
                     const Node& node = mapped.nodes[static_cast<size_t>(local_id)];
                     if (node.parent >= 0 && !(node.flags & (kFlagHidden | kFlagDeleted)) &&
@@ -1133,19 +1138,28 @@ void Engine::CollectMatchesLocked(const CompiledQuery& cq, int32_t prefix_node,
             size_t checked = 0;
             for (int32_t id : candidates) {
                 if ((checked++ & 0x3ff) == 0 && latest && latest->load() != expected) return;
-                if (patches_.contains(id)) continue; // current names below
+                const auto patch = patches_.find(id);
+                if (patch != patches_.end() && patch->second.has_name) continue; // renamed: below
                 const auto name = NameOf(id);
                 // Literal matches were already visited by the disk postings.
                 if (ContainsFolded(name.data(), static_cast<uint32_t>(name.size()), term.name)) continue;
                 if (MatchNodeLocked(id, cq, prefix_node, folders_only, use_attrs)) ids.Add(id);
             }
         }
+        // The query has one AND group, so every hit also matches the driver
+        // term by name; MatchNodeLocked still decides each candidate.
+        auto driver_name_matches = [&](int32_t id) {
+            const std::wstring_view name = NameOf(id);
+            return MatchName(name.data(), static_cast<uint32_t>(name.size()), term);
+        };
         for (int32_t id = BaseCount(); id < n; ++id) {
-            if (MatchNodeLocked(id, cq, prefix_node, folders_only, use_attrs)) ids.Add(id);
+            if (driver_name_matches(id) &&
+                MatchNodeLocked(id, cq, prefix_node, folders_only, use_attrs)) ids.Add(id);
         }
         for (const auto& [id, patch] : patches_) {
-            (void)patch;
-            if (id >= 0 && id < BaseCount() &&
+            // Patches that kept the snapshot name were visited through postings.
+            if (!patch.has_name || id < 0 || id >= BaseCount()) continue;
+            if (driver_name_matches(id) &&
                 MatchNodeLocked(id, cq, prefix_node, folders_only, use_attrs)) ids.Add(id);
         }
         return;
