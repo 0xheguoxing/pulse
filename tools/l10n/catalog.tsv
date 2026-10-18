@@ -2333,3 +2333,14 @@ OpKeepNameLead	IDS_OP_KEEP_NAME_LEAD	3589	新文件命名为 “	Name the new on
 OpApplyRestLead	IDS_OP_APPLY_REST_LEAD	3590	对其余 	Do the same for the other 	對其餘 
 OpApplyRestEnd	IDS_OP_APPLY_REST_END	3591	 个冲突执行相同操作	 conflicts	 個衝突執行相同操作
 OpHoverPreviewHint	IDS_OP_HOVER_PREVIEW_HINT	3592	悬停选项可预览结果	Hover an option to preview the result	暫留選項可預覽結果
+PermDeleteOneLead	IDS_PERM_DELETE_ONE_LEAD	3593	永久删除“	Permanently delete “	永久刪除「
+PermDeleteOneEnd	IDS_PERM_DELETE_ONE_END	3594	”？	”?	」？
+PermDeleteManyLead	IDS_PERM_DELETE_MANY_LEAD	3595	永久删除这 	Permanently delete these 	永久刪除這 
+PermDeleteManyEnd	IDS_PERM_DELETE_MANY_END	3596	 个项目？	 items?	 個項目？
+PermDeleteTotalLead	IDS_PERM_DELETE_TOTAL_LEAD	3597	共 	Total 	共 
+PermDeleteFiles	IDS_PERM_DELETE_FILES	3598	 个文件	 files	 個檔案
+PermDeleteMoreLead	IDS_PERM_DELETE_MORE_LEAD	3599	以及另外 	and 	以及另外 
+PermDeleteMoreEnd	IDS_PERM_DELETE_MORE_END	3600	 项	 more	 項
+PermDeleteWarn	IDS_PERM_DELETE_WARN	3601	不经过回收站，删除后无法撤销	Skips the Recycle Bin and can't be undone	不經過資源回收筒，刪除後無法復原
+PermDeleteWarnAlt	IDS_PERM_DELETE_WARN_ALT	3602	 · 可改为移到回收站	 · or move to the Recycle Bin	 · 可改為移到資源回收筒
+PermDeleteToBin	IDS_PERM_DELETE_TO_BIN	3603	移到回收站	Move to Recycle Bin	移到資源回收筒

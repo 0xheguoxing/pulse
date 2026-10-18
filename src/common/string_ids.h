@@ -2326,5 +2326,16 @@
 #define IDS_OP_APPLY_REST_LEAD                                                           3590
 #define IDS_OP_APPLY_REST_END                                                            3591
 #define IDS_OP_HOVER_PREVIEW_HINT                                                        3592
+#define IDS_PERM_DELETE_ONE_LEAD                                                         3593
+#define IDS_PERM_DELETE_ONE_END                                                          3594
+#define IDS_PERM_DELETE_MANY_LEAD                                                        3595
+#define IDS_PERM_DELETE_MANY_END                                                         3596
+#define IDS_PERM_DELETE_TOTAL_LEAD                                                       3597
+#define IDS_PERM_DELETE_FILES                                                            3598
+#define IDS_PERM_DELETE_MORE_LEAD                                                        3599
+#define IDS_PERM_DELETE_MORE_END                                                         3600
+#define IDS_PERM_DELETE_WARN                                                             3601
+#define IDS_PERM_DELETE_WARN_ALT                                                         3602
+#define IDS_PERM_DELETE_TO_BIN                                                           3603
 
 #endif  // PULSE_STRING_IDS_H

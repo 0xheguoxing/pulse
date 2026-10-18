@@ -2322,6 +2322,17 @@ enum class StringId : UINT {
     OpApplyRestLead = IDS_OP_APPLY_REST_LEAD,
     OpApplyRestEnd = IDS_OP_APPLY_REST_END,
     OpHoverPreviewHint = IDS_OP_HOVER_PREVIEW_HINT,
+    PermDeleteOneLead = IDS_PERM_DELETE_ONE_LEAD,
+    PermDeleteOneEnd = IDS_PERM_DELETE_ONE_END,
+    PermDeleteManyLead = IDS_PERM_DELETE_MANY_LEAD,
+    PermDeleteManyEnd = IDS_PERM_DELETE_MANY_END,
+    PermDeleteTotalLead = IDS_PERM_DELETE_TOTAL_LEAD,
+    PermDeleteFiles = IDS_PERM_DELETE_FILES,
+    PermDeleteMoreLead = IDS_PERM_DELETE_MORE_LEAD,
+    PermDeleteMoreEnd = IDS_PERM_DELETE_MORE_END,
+    PermDeleteWarn = IDS_PERM_DELETE_WARN,
+    PermDeleteWarnAlt = IDS_PERM_DELETE_WARN_ALT,
+    PermDeleteToBin = IDS_PERM_DELETE_TO_BIN,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

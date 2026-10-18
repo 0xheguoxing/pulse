@@ -311,25 +311,24 @@ void DeleteSelected(AppState& s, bool permanent) {
 namespace {
 // `no_recycle_bin`: the items were meant for the Recycle Bin but live where
 // there is none, so say why the delete is permanent (Explorer asks the same).
-bool ConfirmPermanentDelete(AppState& s, const std::vector<std::wstring>& paths,
-                            bool no_recycle_bin) {
-    ui::ConfirmDialogSpec confirm;
-    confirm.title = l10n::Get(l10n::StringId::PermanentDelete);
-    if (no_recycle_bin)
-        confirm.message = l10n::Get(l10n::StringId::NetworkLocationsAndRemovableDrivesHaveNoRecycleBin).c_str();
-    if (paths.size() == 1) {
-        confirm.message += l10n::Get(l10n::StringId::PermanentDeleteOne);
-    } else {
-        wchar_t buf[256]{};
-        swprintf_s(buf, l10n::Get(l10n::StringId::PermanentDeleteManyFormat).c_str(),
-                   paths.size());
-        confirm.message += buf;
-    }
-    // The dialog shows the first few and collapses the rest.
-    for (const std::wstring& path : paths) confirm.items.push_back(ClipboardPath(path));
-    confirm.confirm_text = l10n::Get(l10n::StringId::PermanentDelete);
-    confirm.danger = true;
-    return ui::ShowConfirmDialog(s.hwnd, confirm, s.darkMode, s.accentColor);
+// `offer_recycle`: Shift+Delete on items that do have a bin; the dialog then
+// offers 移到回收站 instead.
+ui::PermanentDeleteChoice ConfirmPermanentDelete(AppState& s, const std::vector<std::wstring>& paths,
+                                                 bool no_recycle_bin, bool offer_recycle = false) {
+    ui::PermanentDeleteInfo info;
+    info.paths.reserve(paths.size());
+    for (const std::wstring& path : paths) info.paths.push_back(ClipboardPath(path));
+    info.no_recycle_bin = no_recycle_bin;
+    info.offer_recycle = offer_recycle;
+    return ui::ShowPermanentDeleteDialog(s.hwnd, info, s.darkMode, s.accentColor);
+}
+
+bool AllHaveRecycleBin(const std::vector<std::wstring>& paths) {
+    if (paths.size() > 256) return false; // don't probe volumes for a huge selection
+    return std::all_of(paths.begin(), paths.end(), [](const std::wstring& path) {
+        DWORD volume_error = 0;
+        return ops::RecycleBinAvailable(path, &volume_error);
+    });
 }
 }
 
@@ -385,7 +384,7 @@ void DeletePaths(AppState& s, std::vector<std::wstring> paths, bool permanent) {
             return true;
         });
         if (!direct.empty()) {
-            if (!ConfirmPermanentDelete(s, direct, true)) return;
+            if (ConfirmPermanentDelete(s, direct, true) != ui::PermanentDeleteChoice::Delete) return;
             ops::OpRequest req;
             req.type = ops::OpType::RealDelete;
             req.sources = std::move(direct);
@@ -395,7 +394,10 @@ void DeletePaths(AppState& s, std::vector<std::wstring> paths, bool permanent) {
         }
     }
     if (permanent) {
-        if (!ConfirmPermanentDelete(s, paths, false)) return;
+        const auto choice = ConfirmPermanentDelete(s, paths, false, AllHaveRecycleBin(paths));
+        if (choice == ui::PermanentDeleteChoice::Cancel) return;
+        // 移到回收站 from the dialog: the user already confirmed, don't ask again.
+        if (choice == ui::PermanentDeleteChoice::Recycle) permanent = false;
     } else if (s.appPrefs.confirm_recycle_delete) {
         const ui::ConfirmDialogSpec confirm = BuildRecycleDeleteConfirm(paths);
         if (!ui::ShowConfirmDialog(s.hwnd, confirm, s.darkMode, s.accentColor)) return;

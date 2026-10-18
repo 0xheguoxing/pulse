@@ -2312,6 +2312,17 @@ BEGIN
     IDS_OP_APPLY_REST_LEAD "对其余 "
     IDS_OP_APPLY_REST_END " 个冲突执行相同操作"
     IDS_OP_HOVER_PREVIEW_HINT "悬停选项可预览结果"
+    IDS_PERM_DELETE_ONE_LEAD "永久删除“"
+    IDS_PERM_DELETE_ONE_END "”？"
+    IDS_PERM_DELETE_MANY_LEAD "永久删除这 "
+    IDS_PERM_DELETE_MANY_END " 个项目？"
+    IDS_PERM_DELETE_TOTAL_LEAD "共 "
+    IDS_PERM_DELETE_FILES " 个文件"
+    IDS_PERM_DELETE_MORE_LEAD "以及另外 "
+    IDS_PERM_DELETE_MORE_END " 项"
+    IDS_PERM_DELETE_WARN "不经过回收站，删除后无法撤销"
+    IDS_PERM_DELETE_WARN_ALT " · 可改为移到回收站"
+    IDS_PERM_DELETE_TO_BIN "移到回收站"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4623,6 +4634,17 @@ BEGIN
     IDS_OP_APPLY_REST_LEAD "Do the same for the other "
     IDS_OP_APPLY_REST_END " conflicts"
     IDS_OP_HOVER_PREVIEW_HINT "Hover an option to preview the result"
+    IDS_PERM_DELETE_ONE_LEAD "Permanently delete “"
+    IDS_PERM_DELETE_ONE_END "”?"
+    IDS_PERM_DELETE_MANY_LEAD "Permanently delete these "
+    IDS_PERM_DELETE_MANY_END " items?"
+    IDS_PERM_DELETE_TOTAL_LEAD "Total "
+    IDS_PERM_DELETE_FILES " files"
+    IDS_PERM_DELETE_MORE_LEAD "and "
+    IDS_PERM_DELETE_MORE_END " more"
+    IDS_PERM_DELETE_WARN "Skips the Recycle Bin and can't be undone"
+    IDS_PERM_DELETE_WARN_ALT " · or move to the Recycle Bin"
+    IDS_PERM_DELETE_TO_BIN "Move to Recycle Bin"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

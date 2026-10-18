@@ -10,6 +10,7 @@
 #include <deque>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace pulse::ui {
 
@@ -115,5 +116,17 @@ ConflictDialogResult ShowFileConflictDialog(HWND owner,
                                             const ops::ConflictItemInfo& conflict,
                                             bool dark,
                                             D2D1_COLOR_F accent);
+
+// Permanent delete confirmation (pulse_ops_dialogs.html §6).
+struct PermanentDeleteInfo {
+    std::vector<std::wstring> paths;
+    bool no_recycle_bin = false; // meant for the bin, but these items have none
+    bool offer_recycle = false;  // show 移到回收站 as the alternative
+};
+
+enum class PermanentDeleteChoice { Cancel, Delete, Recycle };
+
+PermanentDeleteChoice ShowPermanentDeleteDialog(HWND owner, const PermanentDeleteInfo& info,
+                                                bool dark, D2D1_COLOR_F accent);
 
 } // namespace pulse::ui

@@ -23,6 +23,7 @@ namespace {
 
 constexpr wchar_t kTransferClass[] = L"PulseFileOperationWindow";
 constexpr wchar_t kConflictClass[] = L"PulseFileConflictWindow";
+constexpr wchar_t kDeleteClass[] = L"PulsePermanentDeleteWindow";
 constexpr UINT_PTR kRenderTimer = 1;
 // Progress card, pulse_ops_dialogs.html §1 (DIPs). The footer stays anchored
 // to the bottom edge; everything above it is laid out from the top.
@@ -376,6 +377,39 @@ std::wstring FormatElapsed(uint64_t seconds) {
 // side (size, time, 更大 / 较新), three choices that preview their result on
 // hover (replace greys the destination, skip greys the source, keep both
 // shows the new name), R / S / K, and 对其余 N 个冲突执行相同操作 as a switch.
+// Thumbnail colours by extension (images, video, audio, archives,
+// documents, binaries); folders get the folder amber.
+void ThumbColors(const std::wstring& name, bool directory, D2D1_COLOR_F& top,
+                        D2D1_COLOR_F& bottom, std::wstring& label) {
+    top = HexColor(0x5B6170);
+    bottom = HexColor(0x3B404B);
+    label.clear();
+    if (directory) { top = HexColor(0xF5C451); bottom = HexColor(0xD99A1E); return; }
+    const size_t dot = name.find_last_of(L'.');
+    if (dot == std::wstring::npos || dot + 1 >= name.size()) return;
+    std::wstring ext = name.substr(dot + 1);
+    for (auto& c : ext) c = static_cast<wchar_t>(towlower(c));
+    auto any = [&](std::initializer_list<const wchar_t*> list) {
+        for (const auto* e : list) if (ext == e) return true;
+        return false;
+    };
+    label = ext.substr(0, 4);
+    for (auto& c : label) c = static_cast<wchar_t>(towupper(c));
+    if (any({L"jpg", L"jpeg", L"png", L"gif", L"bmp", L"webp", L"heic", L"tif", L"tiff", L"nef", L"cr2", L"cr3", L"arw", L"dng", L"raw", L"svg", L"ico"})) {
+        top = HexColor(0x4CC2C9); bottom = HexColor(0x2A8F96);
+    } else if (any({L"mp4", L"mkv", L"mov", L"avi", L"wmv", L"webm", L"m4v", L"ts"})) {
+        top = HexColor(0xF07A73); bottom = HexColor(0xC4433D);
+    } else if (any({L"mp3", L"flac", L"wav", L"m4a", L"aac", L"ogg", L"opus", L"wma"})) {
+        top = HexColor(0xA78BFA); bottom = HexColor(0x7C5CE6);
+    } else if (any({L"zip", L"7z", L"rar", L"tar", L"gz", L"xz", L"bz2", L"cab", L"iso"})) {
+        top = HexColor(0xF0B041); bottom = HexColor(0xC98410);
+    } else if (any({L"pdf", L"doc", L"docx", L"txt", L"md", L"rtf", L"xls", L"xlsx", L"csv", L"ppt", L"pptx", L"odt"})) {
+        top = HexColor(0x7D8CF0); bottom = HexColor(0x5260C0);
+    } else if (any({L"exe", L"dll", L"bin", L"sys", L"msi", L"json", L"xml", L"cpp", L"h", L"js", L"py", L"cs"})) {
+        top = HexColor(0x8E6CE8); bottom = HexColor(0x5A3FB8);
+    }
+}
+
 class ConflictWindow {
 public:
     ConflictDialogResult Show(HWND owner, const ops::ConflictItemInfo& conflict,
@@ -557,39 +591,6 @@ private:
         make(big_glyph_format_, typography::FontRole::Icon, 18.0f, DWRITE_FONT_WEIGHT_NORMAL);
         if (glyph_format_.get()) glyph_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         if (big_glyph_format_.get()) big_glyph_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    }
-
-    // Thumbnail colours by extension (images, video, audio, archives,
-    // documents, binaries); folders get the folder amber.
-    static void ThumbColors(const std::wstring& name, bool directory, D2D1_COLOR_F& top,
-                            D2D1_COLOR_F& bottom, std::wstring& label) {
-        top = HexColor(0x5B6170);
-        bottom = HexColor(0x3B404B);
-        label.clear();
-        if (directory) { top = HexColor(0xF5C451); bottom = HexColor(0xD99A1E); return; }
-        const size_t dot = name.find_last_of(L'.');
-        if (dot == std::wstring::npos || dot + 1 >= name.size()) return;
-        std::wstring ext = name.substr(dot + 1);
-        for (auto& c : ext) c = static_cast<wchar_t>(towlower(c));
-        auto any = [&](std::initializer_list<const wchar_t*> list) {
-            for (const auto* e : list) if (ext == e) return true;
-            return false;
-        };
-        label = ext.substr(0, 4);
-        for (auto& c : label) c = static_cast<wchar_t>(towupper(c));
-        if (any({L"jpg", L"jpeg", L"png", L"gif", L"bmp", L"webp", L"heic", L"tif", L"tiff", L"nef", L"cr2", L"cr3", L"arw", L"dng", L"raw", L"svg", L"ico"})) {
-            top = HexColor(0x4CC2C9); bottom = HexColor(0x2A8F96);
-        } else if (any({L"mp4", L"mkv", L"mov", L"avi", L"wmv", L"webm", L"m4v", L"ts"})) {
-            top = HexColor(0xF07A73); bottom = HexColor(0xC4433D);
-        } else if (any({L"mp3", L"flac", L"wav", L"m4a", L"aac", L"ogg", L"opus", L"wma"})) {
-            top = HexColor(0xA78BFA); bottom = HexColor(0x7C5CE6);
-        } else if (any({L"zip", L"7z", L"rar", L"tar", L"gz", L"xz", L"bz2", L"cab", L"iso"})) {
-            top = HexColor(0xF0B041); bottom = HexColor(0xC98410);
-        } else if (any({L"pdf", L"doc", L"docx", L"txt", L"md", L"rtf", L"xls", L"xlsx", L"csv", L"ppt", L"pptx", L"odt"})) {
-            top = HexColor(0x7D8CF0); bottom = HexColor(0x5260C0);
-        } else if (any({L"exe", L"dll", L"bin", L"sys", L"msi", L"json", L"xml", L"cpp", L"h", L"js", L"py", L"cs"})) {
-            top = HexColor(0x8E6CE8); bottom = HexColor(0x5A3FB8);
-        }
     }
 
     void DrawCompareCard(const Theme& theme, int side) {
@@ -1076,6 +1077,550 @@ private:
     ComPtr<IDWriteTextFormat> ext_format_;
     ComPtr<IDWriteTextFormat> glyph_format_;
     ComPtr<IDWriteTextFormat> big_glyph_format_;
+};
+
+// Permanent delete, pulse_ops_dialogs.html §6: the first items fanned out as
+// thumbnails, the first three listed with sizes, a red "can't be undone"
+// line, and 移到回收站 as the way out when the items have a Recycle Bin.
+class PermanentDeleteWindow {
+public:
+    PermanentDeleteChoice Show(HWND owner, const PermanentDeleteInfo& info, bool dark, D2D1_COLOR_F accent) {
+        owner_ = owner;
+        info_ = info;
+        dark_ = dark;
+        accent_ = accent;
+        scale_ = static_cast<float>(pulse::compat::WindowDpi(owner)) / 96.0f;
+        Measure();
+
+        WNDCLASSEXW wc{ sizeof(wc) };
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpfnWndProc = WndProc;
+        wc.lpszClassName = kDeleteClass;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        if (!GetClassInfoExW(wc.hInstance, kDeleteClass, &wc)) RegisterClassExW(&wc);
+
+        const int width = static_cast<int>(kW * scale_);
+        const int height = static_cast<int>(kH * scale_);
+        hwnd_ = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP, kDeleteClass,
+            l10n::Get(l10n::StringId::PermanentDelete).c_str(), WS_POPUP | WS_THICKFRAME | WS_SYSMENU,
+            CW_USEDEFAULT, CW_USEDEFAULT, width, height, owner, nullptr, wc.hInstance, this);
+        if (!hwnd_) return choice_;
+        pulse::ui::CenterOwnedWindow(hwnd_, owner_, width, height);
+        if (owner_) EnableWindow(owner_, FALSE);
+        ShowWindow(hwnd_, SW_SHOW);
+        SetForegroundWindow(hwnd_);
+        SetFocus(hwnd_);
+        opened_ = GetTickCount64();
+        SetTimer(hwnd_, kFanTimer, 15, nullptr);
+
+        MSG message{};
+        while (!done_ && GetMessageW(&message, nullptr, 0, 0) > 0) {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        if (IsWindow(hwnd_)) { HideComposedDialog(hwnd_, owner_); DestroyWindow(hwnd_); }
+        hwnd_ = nullptr;
+        if (owner_) EnableWindow(owner_, TRUE);
+        return choice_;
+    }
+
+private:
+    static constexpr float kW = 460.0f;
+    static constexpr float kH = 310.0f;
+    static constexpr float kStackTop = 100.0f;
+    static constexpr float kWarnTop = 198.0f;
+    static constexpr float kFooterTop = 250.0f;
+    static constexpr UINT_PTR kFanTimer = 3;
+    static constexpr ULONGLONG kFanDelay = 120;
+    static constexpr ULONGLONG kFanMs = 450;
+
+    struct Item {
+        std::wstring name;
+        bool directory = false;
+        bool sized = false;
+        uint64_t bytes = 0;
+    };
+
+    static LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+        auto* self = reinterpret_cast<PermanentDeleteWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (message == WM_NCCREATE) {
+            self = static_cast<PermanentDeleteWindow*>(reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+            self->hwnd_ = hwnd;
+        }
+        return self ? self->Handle(message, wparam, lparam) : DefWindowProcW(hwnd, message, wparam, lparam);
+    }
+
+    // Names and sizes for the list; the total only when every item is a file
+    // (a folder's size would need a walk) and the selection is small.
+    void Measure() {
+        files_ = folders_ = 0;
+        total_ = 0;
+        const bool stat_all = info_.paths.size() <= 256;
+        for (size_t i = 0; i < info_.paths.size(); ++i) {
+            if (!stat_all && i >= 3) break;
+            Item item;
+            item.name = LeafName(info_.paths[i]);
+            if (item.name.empty()) item.name = info_.paths[i];
+            WIN32_FILE_ATTRIBUTE_DATA data{};
+            if (GetFileAttributesExW(info_.paths[i].c_str(), GetFileExInfoStandard, &data)) {
+                item.directory = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                if (!item.directory) {
+                    item.bytes = (static_cast<uint64_t>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+                    item.sized = true;
+                }
+            }
+            item.directory ? ++folders_ : ++files_;
+            total_ += item.bytes;
+            if (items_.size() < 3) items_.push_back(std::move(item));
+        }
+        totals_known_ = stat_all;
+    }
+
+    std::wstring Headline() const {
+        if (info_.paths.size() == 1 && !items_.empty())
+            return l10n::Get(l10n::StringId::PermDeleteOneLead) + items_.front().name +
+                   l10n::Get(l10n::StringId::PermDeleteOneEnd);
+        return l10n::Get(l10n::StringId::PermDeleteManyLead) + pulse::format::GroupedInt(info_.paths.size()) +
+               l10n::Get(l10n::StringId::PermDeleteManyEnd);
+    }
+
+    std::wstring Summary() const {
+        std::wstring text;
+        if (info_.no_recycle_bin) {
+            text = l10n::Get(l10n::StringId::NetworkLocationsAndRemovableDrivesHaveNoRecycleBin);
+            while (!text.empty() && text.back() == L' ') text.pop_back();
+        }
+        std::wstring counts;
+        if (totals_known_) {
+            if (folders_ == 0) {
+                counts = l10n::Get(l10n::StringId::PermDeleteTotalLead) + pulse::format::ByteSize(total_);
+            } else if (info_.paths.size() > 1) {
+                counts = pulse::format::GroupedInt(folders_) + l10n::Get(l10n::StringId::Folders);
+                if (files_) counts += L" \x00B7 " + pulse::format::GroupedInt(files_) + l10n::Get(l10n::StringId::PermDeleteFiles);
+            }
+        }
+        if (!counts.empty()) text += (text.empty() ? L"" : L" ") + counts;
+        return text;
+    }
+
+    D2D1_RECT_F CloseRect() const { return Rect(scale_, kW - 46, 0, 46, 40); }
+    D2D1_RECT_F DeleteRect() const { return Rect(scale_, kW - 16 - 136, kFooterTop + 13, 136, 34); }
+    D2D1_RECT_F CancelRect() const { return Rect(scale_, kW - 16 - 136 - 8 - 92, kFooterTop + 13, 92, 34); }
+    D2D1_RECT_F BinRect() const { return Rect(scale_, 16, kFooterTop + 13, 112, 34); }
+
+    // Focus order: [recycle,] cancel, delete. Delete starts focused (Enter).
+    int FocusCount() const { return info_.offer_recycle ? 3 : 2; }
+    int FocusTarget(int focus) const { return info_.offer_recycle ? focus : focus + 1; } // 0 bin, 1 cancel, 2 delete
+
+    int Hit(float x, float y) const {
+        if (pulse::ui::ContainsRect(CloseRect(), x, y)) return 4;
+        if (pulse::ui::ContainsRect(DeleteRect(), x, y)) return 3;
+        if (pulse::ui::ContainsRect(CancelRect(), x, y)) return 2;
+        if (info_.offer_recycle && pulse::ui::ContainsRect(BinRect(), x, y)) return 1;
+        return 0;
+    }
+
+    void Complete(PermanentDeleteChoice choice) {
+        choice_ = choice;
+        done_ = true;
+        if (hwnd_) { HideComposedDialog(hwnd_, owner_); DestroyWindow(hwnd_); }
+    }
+
+    void Activate(int target) {
+        if (target == 0) Complete(PermanentDeleteChoice::Recycle);
+        else if (target == 2) Complete(PermanentDeleteChoice::Delete);
+        else Complete(PermanentDeleteChoice::Cancel);
+    }
+
+    void CreateFormats() {
+        auto* factory = compositor_.DwriteFactory();
+        auto make = [&](ComPtr<IDWriteTextFormat>& out, typography::FontRole role, float size, DWRITE_FONT_WEIGHT weight) {
+            out.reset();
+            if (!factory) return;
+            typography::TextFormatSpec spec;
+            spec.role = role;
+            spec.size = size * scale_;
+            spec.weight = weight;
+            if (FAILED(typography::CreateTextFormat(factory, spec, &out)) || !out.get()) return;
+            out->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        };
+        make(head_format_, typography::FontRole::Text, 15.5f, DWRITE_FONT_WEIGHT_BOLD);
+        make(sub_format_, typography::FontRole::Text, 12.5f, DWRITE_FONT_WEIGHT_NORMAL);
+        make(row_format_, typography::FontRole::Text, 12.5f, DWRITE_FONT_WEIGHT_MEDIUM);
+        make(meta_format_, typography::FontRole::Text, 11.5f, DWRITE_FONT_WEIGHT_NORMAL);
+        make(warn_format_, typography::FontRole::Text, 12.3f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        make(warn_sub_format_, typography::FontRole::Text, 12.3f, DWRITE_FONT_WEIGHT_NORMAL);
+        make(button_format_, typography::FontRole::Text, 13.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        make(kbd_format_, typography::FontRole::Text, 10.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        make(ext_format_, typography::FontRole::Text, 9.0f, DWRITE_FONT_WEIGHT_HEAVY);
+        make(glyph_format_, typography::FontRole::Icon, 18.0f, DWRITE_FONT_WEIGHT_NORMAL);
+        make(small_glyph_format_, typography::FontRole::Icon, 12.0f, DWRITE_FONT_WEIGHT_NORMAL);
+        make(thumb_glyph_format_, typography::FontRole::Icon, 20.0f, DWRITE_FONT_WEIGHT_NORMAL);
+        for (auto* f : { glyph_format_.get(), small_glyph_format_.get(), thumb_glyph_format_.get() })
+            if (f) f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    }
+
+    // Back-out easing, close to the spec's cubic-bezier(.2, 1.3, .3, 1).
+    static float Spring(float t) {
+        t = (std::clamp)(t, 0.0f, 1.0f);
+        const float c1 = 1.70158f * 0.9f;
+        const float c3 = c1 + 1.0f;
+        const float u = t - 1.0f;
+        return 1.0f + c3 * u * u * u + c1 * u * u;
+    }
+
+    float FanProgress() const {
+        const ULONGLONG now = GetTickCount64();
+        if (now < opened_ + kFanDelay) return 0.0f;
+        return Spring(static_cast<float>(now - opened_ - kFanDelay) / static_cast<float>(kFanMs));
+    }
+
+    void DrawThumb(const D2D1_RECT_F& box, const Item& item) {
+        auto* dc = compositor_.Dc();
+        const float s = scale_;
+        D2D1_COLOR_F top{}, bottom{};
+        std::wstring ext;
+        ThumbColors(item.name, item.directory, top, bottom, ext);
+        FillGradientTile(dc, box, ScaleDip(s, 7.0f), top, bottom);
+        StrokeRoundedRect(dc, box, ScaleDip(s, 7.0f), HexColor(0xFFFFFF, 0.08f), 1.0f);
+        if (item.directory) {
+            painter_.DrawText(L"\xE8B7", box, thumb_glyph_format_.get(), HexColor(0xFFFFFF, 0.92f),
+                              fluent::HorizontalAlignment::Center);
+            return;
+        }
+        auto factory = FactoryOf(dc);
+        ComPtr<ID2D1PathGeometry> corner;
+        if (factory.get() && SUCCEEDED(factory->CreatePathGeometry(&corner))) {
+            ComPtr<ID2D1GeometrySink> sink;
+            if (SUCCEEDED(corner->Open(&sink))) {
+                const float c = ScaleDip(s, 11.0f);
+                sink->BeginFigure(D2D1::Point2F(box.right - c, box.top), D2D1_FIGURE_BEGIN_FILLED);
+                sink->AddLine(D2D1::Point2F(box.right, box.top + c));
+                sink->AddLine(D2D1::Point2F(box.right - c, box.top + c));
+                sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+                if (SUCCEEDED(sink->Close())) {
+                    ComPtr<ID2D1SolidColorBrush> brush;
+                    if (SUCCEEDED(dc->CreateSolidColorBrush(HexColor(0xFFFFFF, 0.28f), &brush)))
+                        dc->FillGeometry(corner.get(), brush.get());
+                }
+            }
+        }
+        if (!ext.empty()) {
+            const float w = TextWidth(compositor_.DwriteFactory(), ext_format_.get(), ext) + ScaleDip(s, 8.0f);
+            const D2D1_RECT_F tag = D2D1::RectF(box.left + ScaleDip(s, 5.0f), box.bottom - ScaleDip(s, 18.0f),
+                                                box.left + ScaleDip(s, 5.0f) + (std::min)(w, box.right - box.left - ScaleDip(s, 8.0f)),
+                                                box.bottom - ScaleDip(s, 5.0f));
+            painter_.FillRoundedRect(tag, ScaleDip(s, 3.0f), HexColor(0x000000, 0.25f));
+            painter_.DrawText(ext, tag, ext_format_.get(), HexColor(0xFFFFFF), fluent::HorizontalAlignment::Center);
+        }
+    }
+
+    static void StrokeRoundedRect(ID2D1DeviceContext* dc, const D2D1_RECT_F& r, float radius, D2D1_COLOR_F color, float width) {
+        ComPtr<ID2D1SolidColorBrush> brush;
+        if (dc && SUCCEEDED(dc->CreateSolidColorBrush(color, &brush)))
+            dc->DrawRoundedRectangle(D2D1::RoundedRect(r, radius, radius), brush.get(), width);
+    }
+
+    void DrawFan() {
+        auto* dc = compositor_.Dc();
+        const float s = scale_;
+        const size_t count = (std::min)(items_.size(), static_cast<size_t>(3));
+        if (count == 0) return;
+        const float p = FanProgress();
+        // Back to front: the spec's three cards end at -14 / -2 / +12 degrees.
+        static const float kAngle3[3] = { -14.0f, -2.0f, 12.0f };
+        static const float kShift3[3] = { -14.0f, 0.0f, 14.0f };
+        static const float kAngle2[2] = { -9.0f, 7.0f };
+        static const float kShift2[2] = { -9.0f, 9.0f };
+        D2D1_MATRIX_3X2_F base{};
+        dc->GetTransform(&base);
+        for (size_t i = 0; i < count; ++i) {
+            const float angle = count == 3 ? kAngle3[i] : count == 2 ? kAngle2[i] : 0.0f;
+            const float shift = count == 3 ? kShift3[i] : count == 2 ? kShift2[i] : 0.0f;
+            const float lift = count == 3 && i != 1 ? 4.0f : 0.0f;
+            const auto box = Rect(s, 44, kStackTop + 12, 48, 60);
+            const D2D1_POINT_2F pivot = D2D1::Point2F((box.left + box.right) * 0.5f, box.bottom);
+            const D2D1_MATRIX_3X2_F transform =
+                D2D1::Matrix3x2F::Rotation(angle * p, pivot) *
+                D2D1::Matrix3x2F::Translation(ScaleDip(s, shift * p), ScaleDip(s, lift * p));
+            dc->SetTransform(transform * base);
+            // Soft shadow under each card.
+            const D2D1_RECT_F shadow = D2D1::RectF(box.left + ScaleDip(s, 2.0f), box.top + ScaleDip(s, 5.0f),
+                                                   box.right - ScaleDip(s, 2.0f), box.bottom + ScaleDip(s, 3.0f));
+            painter_.FillRoundedRect(shadow, ScaleDip(s, 8.0f), HexColor(0x000000, dark_ ? 0.30f : 0.14f));
+            DrawThumb(box, items_[i]);
+        }
+        dc->SetTransform(base);
+    }
+
+    void DrawFooterButton(const D2D1_RECT_F& r, const std::wstring& text, const wchar_t* key, int kind,
+                          bool hovered, bool pressed, bool focused, const Theme& theme) {
+        // kind: 0 ghost, 1 standard, 2 danger.
+        const float s = scale_;
+        const D2D1_COLOR_F bad = dark_ ? HexColor(0xF0625B) : HexColor(0xD93D36);
+        D2D1_COLOR_F fill = kind == 2 ? bad
+            : kind == 1 ? (dark_ ? HexColor(0xFFFFFF, hovered ? 0.12f : 0.08f) : HexColor(0xFFFFFF, hovered ? 1.0f : 0.85f))
+                        : (hovered ? (dark_ ? HexColor(0xFFFFFF, 0.07f) : HexColor(0x000000, 0.05f)) : HexColor(0x000000, 0.0f));
+        if (kind == 2 && hovered) fill = D2D1::ColorF((std::min)(1.0f, fill.r * 1.08f), (std::min)(1.0f, fill.g * 1.08f),
+                                                      (std::min)(1.0f, fill.b * 1.08f), 1.0f);
+        D2D1_RECT_F box = r;
+        if (pressed) box = D2D1::RectF(r.left + s, r.top + s, r.right - s, r.bottom - s);
+        if (focused) {
+            const float g = ScaleDip(s, 2.0f);
+            StrokeRoundedRect(compositor_.Dc(), D2D1::RectF(box.left - g, box.top - g, box.right + g, box.bottom + g),
+                              ScaleDip(s, 10.0f), kind == 2 ? WithAlpha(bad, 0.6f) : (dark_ ? HexColor(0x8F9CF0) : theme.accent),
+                              ScaleDip(s, 2.0f));
+        }
+        painter_.FillRoundedRect(box, ScaleDip(s, 8.0f), fill);
+        if (kind == 1)
+            StrokeRoundedRect(compositor_.Dc(), box, ScaleDip(s, 8.0f),
+                              dark_ ? HexColor(0xFFFFFF, 0.08f) : HexColor(0x000000, 0.10f), 1.0f);
+        const D2D1_COLOR_F ink = kind == 2 ? HexColor(0xFFFFFF) : theme.text;
+        const float text_w = TextWidth(compositor_.DwriteFactory(), button_format_.get(), text);
+        float key_w = 0.0f;
+        if (key) key_w = TextWidth(compositor_.DwriteFactory(), kbd_format_.get(), key) + ScaleDip(s, 10.0f);
+        const float gap = key ? ScaleDip(s, 7.0f) : 0.0f;
+        const float left = (box.left + box.right - text_w - gap - key_w) * 0.5f;
+        painter_.DrawText(text, D2D1::RectF(left, box.top, left + text_w + 2.0f, box.bottom), button_format_.get(), ink);
+        if (key) {
+            const float cy = (box.top + box.bottom) * 0.5f;
+            const D2D1_RECT_F chip = D2D1::RectF(left + text_w + gap, cy - ScaleDip(s, 8.5f),
+                                                 left + text_w + gap + key_w, cy + ScaleDip(s, 8.5f));
+            painter_.FillRoundedRect(chip, ScaleDip(s, 5.0f),
+                kind == 2 ? HexColor(0xFFFFFF, 0.18f) : (dark_ ? HexColor(0xFFFFFF, 0.08f) : HexColor(0x000000, 0.06f)));
+            painter_.DrawText(key, chip, kbd_format_.get(), kind == 2 ? HexColor(0xFFFFFF) : theme.text_secondary,
+                              fluent::HorizontalAlignment::Center);
+        }
+    }
+
+    void Render() {
+        if (compositor_.NeedsRecovery()) {
+            if (!compositor_.Recover()) return;
+            compositor_.RecreateTextFormats(scale_);
+            painter_.SetCompositor(&compositor_);
+            painter_.SetScale(scale_);
+            CreateFormats();
+        }
+        if (!compositor_.Dc()) return;
+        if (!head_format_.get()) CreateFormats();
+        const float s = scale_;
+        const bool high_contrast = IsHighContrast();
+        const Theme theme = high_contrast ? MakeHighContrastTheme() : MakeTheme(dark_, accent_);
+        pulse::ui::BeginSurface(compositor_, painter_, theme, dark_, high_contrast, backdrop_enabled_, s);
+        const D2D1_COLOR_F bad = dark_ ? HexColor(0xF0625B) : HexColor(0xD93D36);
+        const D2D1_COLOR_F faint = WithAlpha(theme.text, dark_ ? 0.42f : 0.48f);
+
+        painter_.DrawText(l10n::Get(l10n::StringId::PermanentDelete), Rect(s, 16, 0, 300, 40),
+                          compositor_.SmallFormat(), theme.text_secondary);
+        fluent::ControlState close_state{};
+        close_state.hovered = hover_ == 4;
+        close_state.pressed = pressed_ == 4;
+        painter_.DrawTitleBarButton(CloseRect(), fluent::TitleBarButtonRole::Close, {}, close_state);
+
+        const auto tile = Rect(s, 20, 46, 38, 38);
+        painter_.FillRoundedRect(tile, ScaleDip(s, 11.0f), WithAlpha(bad, dark_ ? 0.16f : 0.12f));
+        painter_.DrawText(L"\xE74D", tile, glyph_format_.get(), bad, fluent::HorizontalAlignment::Center);
+        DrawEllipsizedText(compositor_, head_format_.get(), Rect(s, 70, 44, kW - 90, 24), Headline(), theme.text);
+        DrawEllipsizedText(compositor_, sub_format_.get(), Rect(s, 70, 67, kW - 90, 18), Summary(), theme.text_secondary);
+
+        DrawFan();
+        // The first three, then "and N more".
+        const size_t rows = items_.size() + (info_.paths.size() > items_.size() ? 1 : 0);
+        float y = kStackTop + (84.0f - rows * 21.0f) * 0.5f;
+        for (const Item& item : items_) {
+            painter_.DrawText(item.directory ? L"\xE8B7" : L"\xE8A5", Rect(s, 130, y, 14, 21), small_glyph_format_.get(),
+                              item.directory ? HexColor(0xE9B949) : theme.text_secondary, fluent::HorizontalAlignment::Center);
+            const std::wstring size = item.directory ? l10n::Get(l10n::StringId::Folder)
+                                    : item.sized ? pulse::format::ByteSize(item.bytes) : std::wstring();
+            const float size_w = size.empty() ? 0.0f : TextWidth(compositor_.DwriteFactory(), meta_format_.get(), size) / s;
+            DrawEllipsizedText(compositor_, row_format_.get(), Rect(s, 152, y, kW - 20 - 152 - size_w - 10, 21), item.name, theme.text);
+            if (!size.empty())
+                painter_.DrawText(size, Rect(s, kW - 20 - size_w - 1, y, size_w + 2, 21), meta_format_.get(), faint);
+            y += 21.0f;
+        }
+        if (info_.paths.size() > items_.size()) {
+            painter_.DrawText(l10n::Get(l10n::StringId::PermDeleteMoreLead) +
+                                  pulse::format::GroupedInt(info_.paths.size() - items_.size()) +
+                                  l10n::Get(l10n::StringId::PermDeleteMoreEnd),
+                              Rect(s, 152, y, kW - 172, 21), sub_format_.get(), theme.text_secondary);
+        }
+
+        const auto warn = Rect(s, 20, kWarnTop, kW - 40, 36);
+        painter_.FillRoundedRect(warn, ScaleDip(s, 9.0f), WithAlpha(bad, dark_ ? 0.14f : 0.10f));
+        painter_.DrawText(L"\xE7BA", Rect(s, 30, kWarnTop, 18, 36), small_glyph_format_.get(), bad,
+                          fluent::HorizontalAlignment::Center);
+        const std::wstring warn_text = l10n::Get(l10n::StringId::PermDeleteWarn);
+        const float warn_w = TextWidth(compositor_.DwriteFactory(), warn_format_.get(), warn_text) / s;
+        painter_.DrawText(warn_text, Rect(s, 54, kWarnTop, warn_w + 2, 36), warn_format_.get(), bad);
+        if (info_.offer_recycle)
+            DrawEllipsizedText(compositor_, warn_sub_format_.get(), Rect(s, 54 + warn_w + 2, kWarnTop, kW - 40 - 46 - warn_w, 36),
+                               l10n::Get(l10n::StringId::PermDeleteWarnAlt), theme.text_secondary);
+
+        RECT client{};
+        GetClientRect(hwnd_, &client);
+        const float footer = kFooterTop * s;
+        painter_.FillRoundedRect(D2D1::RectF(0, footer, static_cast<float>(client.right), static_cast<float>(client.bottom)), 0,
+                                 dark_ ? HexColor(0x000000, 0.16f) : HexColor(0x000000, 0.03f));
+        painter_.FillRoundedRect(D2D1::RectF(0, footer, static_cast<float>(client.right), footer + 1.0f), 0, theme.stroke_divider);
+        const int focus_target = keyboard_focus_ || focus_ == FocusCount() - 1 ? FocusTarget(focus_) : -1;
+        if (info_.offer_recycle)
+            DrawFooterButton(BinRect(), l10n::Get(l10n::StringId::PermDeleteToBin), nullptr, 0, hover_ == 1, pressed_ == 1,
+                             focus_target == 0, theme);
+        DrawFooterButton(CancelRect(), l10n::Get(l10n::StringId::Cancel), L"Esc", 1, hover_ == 2, pressed_ == 2,
+                         focus_target == 1, theme);
+        DrawFooterButton(DeleteRect(), l10n::Get(l10n::StringId::PermanentDelete), L"Enter", 2, hover_ == 3, pressed_ == 3,
+                         focus_target == 2, theme);
+        pulse::ui::EndSurface(compositor_);
+    }
+
+    LRESULT Handle(UINT message, WPARAM wparam, LPARAM lparam) {
+        switch (message) {
+        case WM_CREATE:
+            scale_ = static_cast<float>(pulse::compat::WindowDpi(hwnd_)) / 96.0f;
+            backdrop_enabled_ = pulse::ui::ApplyBackdrop(hwnd_, dark_);
+            if (!compositor_.Init(hwnd_)) return -1;
+            compositor_.RecreateTextFormats(scale_);
+            painter_.SetCompositor(&compositor_);
+            painter_.SetScale(scale_);
+            CreateFormats();
+            ImmAssociateContextEx(hwnd_, nullptr, 0);
+            focus_ = FocusCount() - 1; // the delete button, so Enter deletes
+            return 0;
+        case WM_NCCALCSIZE:
+            return 0;
+        case WM_NCHITTEST:
+            return pulse::ui::BorderlessHitTest(hwnd_, lparam, 40 * scale_, CloseRect());
+        case WM_SIZE:
+            if (compositor_.Dc()) compositor_.Resize(LOWORD(lparam), HIWORD(lparam));
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        case WM_MOVE:
+            compositor_.UpdateTextRenderingParams(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST));
+            return 0;
+        case WM_DPICHANGED: {
+            scale_ = HIWORD(wparam) / 96.0f;
+            compositor_.RecreateTextFormats(scale_);
+            painter_.SetScale(scale_);
+            CreateFormats();
+            const auto* suggested = reinterpret_cast<RECT*>(lparam);
+            SetWindowPos(hwnd_, nullptr, suggested->left, suggested->top, suggested->right - suggested->left,
+                         suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOOWNERZORDER);
+            return 0;
+        }
+        case WM_TIMER:
+            if (wparam == kFanTimer) {
+                if (GetTickCount64() > opened_ + kFanDelay + kFanMs) KillTimer(hwnd_, kFanTimer);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
+            break;
+        case WM_MOUSEMOVE: {
+            const int next = Hit(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam)));
+            if (next != hover_) { hover_ = next; InvalidateRect(hwnd_, nullptr, FALSE); }
+            TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, hwnd_, 0 };
+            TrackMouseEvent(&track);
+            return 0;
+        }
+        case WM_MOUSELEAVE:
+            hover_ = 0;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        case WM_LBUTTONDOWN:
+            pressed_ = Hit(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam)));
+            SetCapture(hwnd_);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        case WM_LBUTTONUP: {
+            const int hit = Hit(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam)));
+            const int pressed = pressed_;
+            pressed_ = 0;
+            ReleaseCapture();
+            if (hit == pressed && hit != 0) {
+                if (hit == 1) Complete(PermanentDeleteChoice::Recycle);
+                else if (hit == 3) Complete(PermanentDeleteChoice::Delete);
+                else Complete(PermanentDeleteChoice::Cancel);
+                return 0;
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
+        case WM_ACTIVATE:
+            if (LOWORD(wparam) != WA_INACTIVE) SetFocus(hwnd_);
+            return 0;
+        case WM_SYSKEYDOWN:
+            if (!(lparam & (1 << 29)) && wparam != VK_F10) return Handle(WM_KEYDOWN, wparam, lparam);
+            break;
+        case WM_KEYDOWN:
+            if (wparam == VK_PROCESSKEY) {
+                const UINT vk = ImmGetVirtualKey(hwnd_);
+                if (vk && vk != VK_PROCESSKEY) wparam = vk;
+            }
+            if (wparam == VK_ESCAPE) { Complete(PermanentDeleteChoice::Cancel); return 0; }
+            if (wparam == VK_RETURN || wparam == VK_SPACE) { Activate(FocusTarget(focus_)); return 0; }
+            if (wparam == VK_TAB || wparam == VK_LEFT || wparam == VK_RIGHT) {
+                const bool back = wparam == VK_LEFT || (wparam == VK_TAB && GetKeyState(VK_SHIFT) < 0);
+                focus_ = (focus_ + (back ? FocusCount() - 1 : 1)) % FocusCount();
+                keyboard_focus_ = true;
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
+            break;
+        case WM_CLOSE:
+            Complete(PermanentDeleteChoice::Cancel);
+            return 0;
+        case WM_PAINT: {
+            PAINTSTRUCT paint{};
+            BeginPaint(hwnd_, &paint);
+            Render();
+            EndPaint(hwnd_, &paint);
+            return 0;
+        }
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_DESTROY:
+            KillTimer(hwnd_, kFanTimer);
+            compositor_.Shutdown();
+            done_ = true;
+            return 0;
+        }
+        return DefWindowProcW(hwnd_, message, wparam, lparam);
+    }
+
+    HWND hwnd_ = nullptr;
+    HWND owner_ = nullptr;
+    Compositor compositor_;
+    fluent::Painter painter_{ &compositor_ };
+    PermanentDeleteInfo info_;
+    std::vector<Item> items_;
+    size_t files_ = 0;
+    size_t folders_ = 0;
+    uint64_t total_ = 0;
+    bool totals_known_ = false;
+    PermanentDeleteChoice choice_ = PermanentDeleteChoice::Cancel;
+    D2D1_COLOR_F accent_ = HexColor(0x0078D4);
+    float scale_ = 1.0f;
+    bool dark_ = false;
+    bool backdrop_enabled_ = false;
+    bool done_ = false;
+    bool keyboard_focus_ = false;
+    int hover_ = 0;
+    int pressed_ = 0;
+    int focus_ = 0;
+    ULONGLONG opened_ = 0;
+    ComPtr<IDWriteTextFormat> head_format_;
+    ComPtr<IDWriteTextFormat> sub_format_;
+    ComPtr<IDWriteTextFormat> row_format_;
+    ComPtr<IDWriteTextFormat> meta_format_;
+    ComPtr<IDWriteTextFormat> warn_format_;
+    ComPtr<IDWriteTextFormat> warn_sub_format_;
+    ComPtr<IDWriteTextFormat> button_format_;
+    ComPtr<IDWriteTextFormat> kbd_format_;
+    ComPtr<IDWriteTextFormat> ext_format_;
+    ComPtr<IDWriteTextFormat> glyph_format_;
+    ComPtr<IDWriteTextFormat> small_glyph_format_;
+    ComPtr<IDWriteTextFormat> thumb_glyph_format_;
 };
 
 } // namespace
@@ -2103,6 +2648,12 @@ ConflictDialogResult ShowFileConflictDialog(HWND owner,
                                             D2D1_COLOR_F accent) {
     ConflictWindow window;
     return window.Show(owner, conflict, dark, accent);
+}
+
+PermanentDeleteChoice ShowPermanentDeleteDialog(HWND owner, const PermanentDeleteInfo& info,
+                                                bool dark, D2D1_COLOR_F accent) {
+    PermanentDeleteWindow window;
+    return window.Show(owner, info, dark, accent);
 }
 
 
