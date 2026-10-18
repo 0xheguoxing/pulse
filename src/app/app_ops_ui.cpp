@@ -1,5 +1,6 @@
 // app_ops_ui.cpp — extracted from app_main.cpp.
 #include "app_internal.h"
+#include "app_messages.h"
 #include "../ui/lumatext_renderer.h"
 #include "../ui/fluent_menu.h"
 #include "../ui/drag_drop.h"
@@ -137,11 +138,14 @@ void ReleaseTrayBatch(AppState& s, size_t idx) {
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
+// The shelf's 送到 chips and ▾ menu remember the last five targets.
+constexpr size_t kTrayDestMax = 5;
+
 std::vector<std::wstring> TrayDestList(const AppState& s) {
     std::vector<std::wstring> out;
     const std::wstring& all = s.appPrefs.tray_dests;
     size_t start = 0;
-    while (start < all.size() && out.size() < 3) {
+    while (start < all.size() && out.size() < kTrayDestMax) {
         size_t bar = all.find(L'|', start);
         if (bar == std::wstring::npos) bar = all.size();
         if (bar > start) out.push_back(all.substr(start, bar - start));
@@ -156,7 +160,7 @@ void RememberTrayDest(AppState& s, const std::wstring& dir) {
     const std::wstring norm = ClipboardPath(fs::NormalizePath(dir));
     std::vector<std::wstring> list{ norm };
     for (const auto& old : TrayDestList(s)) {
-        if (_wcsicmp(old.c_str(), norm.c_str()) != 0 && list.size() < 3) list.push_back(old);
+        if (_wcsicmp(old.c_str(), norm.c_str()) != 0 && list.size() < kTrayDestMax) list.push_back(old);
     }
     std::wstring joined;
     for (const auto& d : list) {
@@ -169,36 +173,169 @@ void RememberTrayDest(AppState& s, const std::wstring& dir) {
 }
 
 void SendTrayToDest(AppState& s, const std::wstring& dir, bool move) {
-    if (dir.empty() || GetFileAttributesW(dir.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+    ReleaseTrayTo(s, dir, move);
+}
+
+static std::wstring FillText(std::wstring text, const wchar_t* key, const std::wstring& value) {
+    const size_t at = text.find(key);
+    if (at != std::wstring::npos) text.replace(at, wcslen(key), value);
+    return text;
+}
+
+static std::wstring FolderLabel(const std::wstring& dir) {
+    std::wstring d = dir;
+    while (d.size() > 3 && (d.back() == L'\\' || d.back() == L'/')) d.pop_back();
+    const size_t slash = d.find_last_of(L"\\/");
+    std::wstring leaf = slash == std::wstring::npos ? d : d.substr(slash + 1);
+    return leaf.empty() ? ClipboardPath(d) : leaf;
+}
+
+void ReleaseTrayTo(AppState& s, const std::wstring& dir_in, bool move) {
+    if (dir_in.empty() || fs::IsVirtualPath(dir_in)) return;
+    const std::wstring dir = fs::NormalizePath(dir_in);
+    if (GetFileAttributesW(dir.c_str()) == INVALID_FILE_ATTRIBUTES) return;
     ops::OpRequest req;
     req.type = move ? ops::OpType::Move : ops::OpType::Copy;
-    req.dest_dir = fs::NormalizePath(dir);
+    req.dest_dir = dir;
+    // Same names keep both ("name (2).ext"), like the shelf's 同名 badge promises.
+    req.collision_policy = ops::CollisionPolicy::KeepBoth;
     std::vector<uint64_t> item_ids;
-    size_t skipped = 0;
+    size_t skipped = 0, already = 0;
+    // Open view with checks: only the checked items go.
+    const std::vector<uint64_t>* only = s.trayView.open && !s.trayView.checked.empty() ? &s.trayView.checked : nullptr;
     for (const auto& batch : s.tray.batches())
         for (const auto& item : batch.items) {
+            if (only && std::find(only->begin(), only->end(), item.id) == only->end()) continue;
             if (s.tray.IsInFlight(item.path)) continue;
-            if (GetFileAttributesW(item.path.c_str()) != INVALID_FILE_ATTRIBUTES) {
-                if (std::none_of(req.sources.begin(), req.sources.end(), [&](const auto& source) {
-                    return _wcsicmp(source.c_str(), item.path.c_str()) == 0;
-                })) req.sources.push_back(item.path);
-                item_ids.push_back(item.id);
-            } else
+            if (GetFileAttributesW(item.path.c_str()) == INVALID_FILE_ATTRIBUTES) {
                 ++skipped;
+                continue;
+            }
+            // Already there: nothing to copy, and a move would be a no-op.
+            if (_wcsicmp(fs::NormalizePath(fs::ParentPath(item.path)).c_str(), dir.c_str()) == 0) {
+                ++already;
+                continue;
+            }
+            if (std::none_of(req.sources.begin(), req.sources.end(), [&](const auto& source) {
+                return _wcsicmp(source.c_str(), item.path.c_str()) == 0;
+            })) req.sources.push_back(item.path);
+            item_ids.push_back(item.id);
         }
     NotifyTraySkipped(s, skipped);
-    if (req.sources.empty()) return;
+    if (req.sources.empty()) {
+        if (already && s.hwnd)
+            s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Suggest,
+                FillText(l10n::Get(l10n::StringId::TrayToastAlreadyThere), L"{name}", FolderLabel(dir)), {}, {},
+                {}, 3000);
+        return;
+    }
+    const size_t count = req.sources.size();
     const auto moved = move ? req.sources : std::vector<std::wstring>{};
     const auto task = s.ops.Submit(std::move(req));
     if (!task) return;
+    if (app::Tab* tab = ActiveTab(s);
+        tab && _wcsicmp(fs::NormalizePath(tab->current_path).c_str(), dir.c_str()) == 0)
+        ArmArrivalSelection(s, nullptr, task, 0);
     if (move) TrackTrayCutClipboard(s, moved);
     s.tray.MarkInFlight(task, item_ids, move);
     RememberTrayDest(s, dir);
+    s.trayRelease = {task, count, move, dir};
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
-// Ctrl+V: release the newest tray batch while it is still the latest copy,
-// else paste from the system clipboard (paste_source.h).
+void NoteTrayReleaseFinished(AppState& s, const ops::FinishedTask& done) {
+    if (!s.trayRelease.task || done.task_id != s.trayRelease.task) return;
+    const AppState::TrayReleaseNote note = std::move(s.trayRelease);
+    s.trayRelease = {};
+    if (!done.success || !s.hwnd) return;
+    std::wstring title = l10n::Get(note.move ? l10n::StringId::TrayToastMoved : l10n::StringId::TrayToastCopied);
+    title = FillText(std::move(title), L"{n}", std::to_wstring(note.count));
+    title = FillText(std::move(title), L"{name}", FolderLabel(note.dest));
+    std::vector<ui::SnackAction> actions;
+    if (s.ops.CanUndo()) actions.push_back({l10n::Get(l10n::StringId::SnackUndo), WM_TRAY_UNDO});
+    const app::Tab* tab = ActiveTab(s);
+    const bool here = tab && _wcsicmp(fs::NormalizePath(tab->current_path).c_str(), note.dest.c_str()) == 0;
+    if (!here) actions.push_back({l10n::Get(l10n::StringId::Open), WM_TRAY_OPEN_DEST});
+    s.trayReleaseOpen = note.dest;
+    s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Undo, std::move(title), {}, std::move(actions),
+                                   s.ops.CanUndo() ? L"Ctrl+Z" : L"");
+}
+
+std::vector<std::wstring> TrayLivePaths(const AppState& s) {
+    std::vector<std::wstring> paths;
+    for (const auto& batch : s.tray.batches())
+        for (const auto& item : batch.items) {
+            if (GetFileAttributesW(item.path.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
+            if (std::none_of(paths.begin(), paths.end(), [&](const std::wstring& p) {
+                    return _wcsicmp(p.c_str(), item.path.c_str()) == 0; }))
+                paths.push_back(item.path);
+        }
+    return paths;
+}
+
+void ClearTrayWithUndo(AppState& s) {
+    if (s.tray.batches().empty()) return;
+    std::wstring saved;
+    s.tray.ToJson(saved);
+    s.trayClearedJson = std::move(saved);
+    s.tray.Clear();
+    if (s.hwnd) {
+        s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Undo, l10n::Get(l10n::StringId::TrayToastCleared), {},
+            {ui::SnackAction{l10n::Get(l10n::StringId::SnackUndo), WM_TRAY_RESTORE}});
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+    }
+}
+
+void RemoveTrayItems(AppState& s, const std::vector<uint64_t>& ids) {
+    if (ids.empty()) return;
+    // Re-scan after each removal: an emptied batch leaves and shifts the rest.
+    for (bool found = true; found;) {
+        found = false;
+        const auto& batches = s.tray.batches();
+        for (size_t b = 0; b < batches.size() && !found; ++b)
+            for (size_t i = 0; i < batches[b].items.size(); ++i)
+                if (std::find(ids.begin(), ids.end(), batches[b].items[i].id) != ids.end()) {
+                    s.tray.RemoveItem(b, i);
+                    found = true;
+                    break;
+                }
+    }
+    auto& checked = s.trayView.checked;
+    checked.erase(std::remove_if(checked.begin(), checked.end(), [&](uint64_t id) {
+        return std::find(ids.begin(), ids.end(), id) != ids.end(); }), checked.end());
+    if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void UnstagePath(AppState& s, const std::wstring& path) {
+    const std::wstring key = fs::NormalizePath(path);
+    const auto& batches = s.tray.batches();
+    for (size_t b = batches.size(); b-- > 0;) {
+        const auto& items = s.tray.batches()[b].items;
+        for (size_t i = items.size(); i-- > 0;) {
+            if (_wcsicmp(fs::NormalizePath(items[i].path).c_str(), key.c_str()) != 0) continue;
+            s.tray.RemoveItem(b, i);
+            break;
+        }
+    }
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void HandleTrayMessage(AppState& s, UINT message) {
+    if (message == WM_TRAY_UNDO) {
+        if (s.ops.CanUndo()) s.ops.Undo();
+    } else if (message == WM_TRAY_OPEN_DEST) {
+        if (!s.trayReleaseOpen.empty()) NavigateTo(s, s.trayReleaseOpen);
+    } else if (message == WM_TRAY_TAKE_CLIP) {
+        TakeTrayClip(s);
+    } else if (message == WM_TRAY_RESTORE) {
+        if (!s.trayClearedJson.empty() && s.tray.batches().empty()) s.tray.FromJson(s.trayClearedJson);
+        s.trayClearedJson.clear();
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+    }
+}
+
+// Ctrl+V: the system clipboard. The tray is released from the shelf only
+// (pulse_tray_redesign.html); Ctrl+C no longer stages.
 void PasteIntoCurrent(AppState& s) {
     app::Tab* tab = ActiveTab(s);
     if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path) || tab->net_readonly ||
@@ -209,26 +346,6 @@ void PasteIntoCurrent(AppState& s) {
     // Virtual files (Remote Desktop, a zip, Outlook) are a newer copy too and
     // beat the tray batch like any other clipboard files (#109).
     const bool shell_files = !clipboard_files && ops::ClipboardHasShellFiles();
-    if (!s.tray.batches().empty()) {
-        const size_t idx = s.tray.batches().size() - 1;
-        const app::TrayBatch& newest = s.tray.batches()[idx];
-        std::vector<std::wstring> batch_paths;
-        batch_paths.reserve(newest.items.size());
-        for (const auto& item : newest.items) batch_paths.push_back(item.path);
-        app::PasteChoiceInput choice;
-        choice.batch_paths = &batch_paths;
-        choice.batch_move = newest.move_intent;
-        choice.clipboard_has_files = clipboard_files || shell_files;
-        choice.clipboard_paths = &cb.paths;
-        choice.clipboard_cut = cb.cut;
-        choice.clipboard_written_for_batch = clipboard_files && s.trayClipboardSequence != 0 &&
-            s.trayClipboardBatchId == newest.id && cb.sequence == s.trayClipboardSequence;
-        if (app::ChoosePasteSource(choice) == app::PasteSource::TrayBatch) {
-            if (newest.move_intent) s.cutPaths.clear();
-            ReleaseTrayBatch(s, idx);
-            return;
-        }
-    }
     if (clipboard_files) {
         ops::OpRequest req;
         req.type = cb.cut ? ops::OpType::Move : ops::OpType::Copy;
@@ -495,22 +612,94 @@ void CollectToTray(AppState& s, bool move_intent) {
     CollectPathsToTray(s, paths, move_intent);
 }
 
+// Ctrl+C / Ctrl+X: the system clipboard only (pulse_tray_redesign.html).
+// The shelf offers to stage this copy until the clipboard changes.
 void CollectPathsToTray(AppState& s, const std::vector<std::wstring>& paths, bool move_intent) {
-    if (!paths.empty()) {
-        s.tray.Collect(paths, move_intent);
-        // Mirror the cut state onto the list rows (ui.md §5.2 rule 6).
-        s.cutPaths = move_intent ? paths : std::vector<std::wstring>{};
-        // Interop with Explorer: mirror the collection onto the system clipboard.
-        std::vector<std::wstring> cbPaths;
-        cbPaths.reserve(paths.size());
-        for (const auto& p : paths) cbPaths.push_back(ClipboardPath(p));
-        // Remember which clipboard value belongs to the new batch so Ctrl+V can
-        // tell it from a later copy made elsewhere (paste_source.h).
-        s.trayClipboardBatchId = s.tray.batches().empty() ? 0 : s.tray.batches().back().id;
-        s.trayClipboardSequence =
-            ops::WriteClipboard(cbPaths, move_intent) ? GetClipboardSequenceNumber() : 0;
+    if (paths.empty()) return;
+    std::vector<std::wstring> cbPaths;
+    cbPaths.reserve(paths.size());
+    for (const auto& p : paths) cbPaths.push_back(ClipboardPath(p));
+    if (!ops::WriteClipboard(cbPaths, move_intent)) return;
+    // Mirror the cut state onto the list rows (ui.md §5.2 rule 6).
+    s.cutPaths = move_intent ? paths : std::vector<std::wstring>{};
+    s.trayClipboardBatchId = 0;
+    s.trayClipboardSequence = 0;
+    s.trayClip.paths = paths;
+    s.trayClip.move = move_intent;
+    s.trayClip.seq = GetClipboardSequenceNumber();
+    s.trayClip.at = GetTickCount64();
+    if (s.hwnd) {
+        std::wstring title = l10n::Get(move_intent ? l10n::StringId::TrayCutOffer : l10n::StringId::TrayCopiedOffer);
+        title = FillText(std::move(title), L"{n}", std::to_wstring(paths.size()));
+        s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Suggest, std::move(title), {}, {}, {}, 2800);
         InvalidateRect(s.hwnd, nullptr, FALSE);
     }
+}
+
+bool TrayClipLive(AppState& s) {
+    if (s.trayClip.paths.empty()) return false;
+    if (s.trayClip.seq != GetClipboardSequenceNumber()) {
+        s.trayClip = {};
+        return false;
+    }
+    // Nothing to offer once every copied path already sits on the tray (the
+    // offer comes back if they are taken off). Big copies skip the check.
+    if (s.trayClip.paths.size() > 256) return true;
+    std::vector<uint64_t> staged;
+    for (const auto& b : s.tray.batches())
+        for (const auto& item : b.items) staged.push_back(ui::StagedPathHash(item.path));
+    return std::any_of(s.trayClip.paths.begin(), s.trayClip.paths.end(), [&](const std::wstring& p) {
+        return std::find(staged.begin(), staged.end(), ui::StagedPathHash(p)) == staged.end();
+    });
+}
+
+size_t StagePaths(AppState& s, const std::vector<std::wstring>& paths, std::optional<bool> move_mode) {
+    // A path is staged once; staging it again is a no-op.
+    std::vector<std::wstring> fresh;
+    fresh.reserve(paths.size());
+    for (const auto& p : paths) {
+        const std::wstring key = fs::NormalizePath(p);
+        if (key.empty()) continue;
+        bool dup = std::any_of(fresh.begin(), fresh.end(),
+            [&](const std::wstring& f) { return _wcsicmp(f.c_str(), key.c_str()) == 0; });
+        for (const auto& b : s.tray.batches()) {
+            if (dup) break;
+            dup = std::any_of(b.items.begin(), b.items.end(), [&](const app::TrayItem& it) {
+                return _wcsicmp(it.path.c_str(), key.c_str()) == 0;
+            });
+        }
+        if (!dup) fresh.push_back(key);
+    }
+    if (fresh.empty()) return 0;
+    const bool move = move_mode.value_or(s.trayMoveMode);
+    s.tray.Collect(fresh, move);
+    // The batch's mode becomes the shelf's release mode (the main button).
+    if (move_mode) s.trayMoveMode = *move_mode;
+    if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+    return fresh.size();
+}
+
+void StageSelection(AppState& s) {
+    if (DeferContentSelection(s, [](AppState& v) { StageSelection(v); })) return;
+    app::Tab* tab = ActiveTab(s);
+    std::vector<std::wstring> paths;
+    // Same reach as Ctrl+C: drives and shares are not staged as a whole.
+    if (tab && tab->snapshot && !IsRecycleTab(tab) && SelectionCapsOf(s).copy) paths = SelectedFullPaths(*tab);
+    if (paths.empty()) {
+        if (s.hwnd)
+            s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Suggest, l10n::Get(l10n::StringId::TraySelectFirst),
+                                           {}, {}, {}, 2000);
+        return;
+    }
+    StagePaths(s, paths, std::nullopt);
+}
+
+void TakeTrayClip(AppState& s) {
+    if (!TrayClipLive(s)) return;
+    const AppState::TrayClipOffer offer = std::move(s.trayClip);
+    s.trayClip = {};
+    StagePaths(s, offer.paths, offer.move);
+    if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 bool EnsureOperationWindow(AppState& s) {
     if (s.operationWindow) return true;

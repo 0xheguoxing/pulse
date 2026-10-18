@@ -852,6 +852,7 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
                                    theme.bg, theme.text, false);
         if (peek) DrawSidebarPeek(vm, rect, theme);
         if (!embedded_) DrawStatusBar(vm, rect, theme);
+        if (!peek) DrawTrayCompareCard(vm, theme);
     }
 
     // A tab dragged from another window over the content (multi-window M6d):

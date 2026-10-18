@@ -583,15 +583,24 @@ void ClearTextWidthCache() {
 
     float ExpandedTrayHeight(const WindowViewModel& vm, const SidebarMetrics& m) {
         if (vm.tray_deck.hidden) return 0.0f;
-        if (vm.tray_deck.cards.empty())
-            return 112.0f * m.scale; // header + dashed empty state
-        // Card stack: header (38) + top card + peeking layers when fanned
-        // out (25) + gap + footer row (31) + destination chips when any.
-        const float card = TrayCardHeightDip(vm.tray_deck.thumb_dip);
-        const float compare_extra = vm.tray_deck.comparing
-            ? std::max(0.0f, TrayCompareBoxDip(vm.tray_deck.thumb_dip) - (card + 22.0f)) : 0.0f;
-        return (card + 94.0f + compare_extra) * m.scale +
-               TrayBottomRowsH(vm.tray_deck, m.scale);
+        // Shelf redesign: the runtime springs the height between the layers
+        // (down to 0 when the empty tray hides itself).
+        return std::max(vm.tray_deck.hide_empty ? 0.0f : 40.0f, vm.tray_deck.height_dip) * m.scale;
+    }
+
+    // Space under the places list: the tray plus its padding. The padding
+    // shrinks with a hiding tray so the list grows into the freed space.
+    float TrayGap(float tray_h, const SidebarMetrics& m) {
+        return m.pad * std::clamp(tray_h / (12.0f * m.scale), 0.0f, 1.0f);
+    }
+
+    // The open tray may cover the sidebar up to 20 dip from its top; the
+    // other layers keep at least half of it for places.
+    float TrayHeightCap(const WindowViewModel& vm, const D2D1_RECT_F& sb, float scale) {
+        const auto open = static_cast<int>(TrayStage::Open);
+        const bool open_like = vm.tray_deck.stage == open || vm.tray_deck.prev_stage == open;
+        const float h = sb.bottom - sb.top;
+        return std::max(40.0f * scale, open_like ? h - 20.0f * scale : h * 0.52f);
     }
 
     float SidebarContentHeight(const WindowViewModel& vm, const SidebarMetrics& m) {
@@ -617,9 +626,8 @@ void ClearTextWidthCache() {
     fluent::ScrollbarSpec SidebarScrollbarSpec(const WindowViewModel& vm,
                                                const D2D1_RECT_F& sb, float scale) {
         const SidebarMetrics m = MakeSidebarMetrics(scale);
-        const float tray_height = std::min(ExpandedTrayHeight(vm, m),
-            std::max(120.0f * scale, (sb.bottom - sb.top) * 0.52f));
-        const float bottom = std::max(sb.top, sb.bottom - tray_height - 2.0f * m.pad);
+        const float tray_height = std::min(ExpandedTrayHeight(vm, m), TrayHeightCap(vm, sb, scale));
+        const float bottom = std::max(sb.top, sb.bottom - tray_height - 2.0f * TrayGap(tray_height, m));
         fluent::ScrollbarSpec bar;
         bar.viewport = D2D1::RectF(sb.right - 12.0f * scale, sb.top,
                                    sb.right - 2.0f * scale, bottom);
@@ -643,7 +651,8 @@ void ClearTextWidthCache() {
 
         if (compact) {
             const float rowH = 38.0f * scale;
-            const float trayH = vm.tray_deck.hidden ? 0.0f : 44.0f * scale;
+            const bool tray_gone = vm.tray_deck.hidden || (vm.tray_deck.hide_empty && vm.tray_deck.height_dip < 20.0f);
+            const float trayH = tray_gone ? 0.0f : 44.0f * scale;
             float y = sb.top;
             int run = 0;
             for (int g = 0; g < static_cast<int>(vm.sidebar.size()); ++g) {
@@ -706,14 +715,15 @@ void ClearTextWidthCache() {
             tray.kind = SidebarSlot::TrayPanel;
             tray.rc = D2D1::RectF(4.0f * scale, sb.bottom - trayH,
                                   width - 4.0f * scale, sb.bottom - 4.0f * scale);
-            if (!vm.tray_deck.hidden) out.push_back(tray);
+            if (!tray_gone) out.push_back(tray);
             return;
         }
 
         float trayH = ExpandedTrayHeight(vm, m);
-        trayH = std::min(trayH, std::max(120.0f * scale, (sb.bottom - sb.top) * 0.52f));
-        const float trayTop = sb.bottom - m.pad - trayH;
-        const float contentBottom = trayTop - m.pad;
+        trayH = std::min(trayH, TrayHeightCap(vm, sb, scale));
+        const float trayGap = TrayGap(trayH, m);
+        const float trayTop = sb.bottom - trayGap - trayH;
+        const float contentBottom = trayTop - trayGap;
         const float innerL = sb.left + m.pad;
         const float innerR = sb.right - m.pad;
 
@@ -810,35 +820,273 @@ void ClearTextWidthCache() {
             }
         }
 
-        if (vm.tray_deck.hidden) return;
+        if (vm.tray_deck.hidden || trayH < 1.0f * scale) return;
         SidebarSlot tray;
         tray.kind = SidebarSlot::TrayPanel;
-        tray.rc = D2D1::RectF(innerL, trayTop, innerR, sb.bottom - m.pad);
+        tray.rc = D2D1::RectF(innerL, trayTop, innerR, sb.bottom - trayGap);
         out.push_back(tray);
 
-        const float inset = 10.0f * scale;
-        if (vm.tray_deck.total_count > 0) {
-            const float headerTop = trayTop + 6.0f * scale;
-            const float headerBottom = headerTop + m.trayHeaderH;
-            SidebarSlot release;
-            release.kind = SidebarSlot::TrayRelease;
-            release.batch = vm.tray_deck.batch_count - 1;
-            release.rc = D2D1::RectF(innerR - inset - m.actionW,
-                                     headerTop,
-                                     innerR - inset,
-                                     headerBottom);
-            out.push_back(release);
+    }
 
-            // Footer "clear all" action, bottom-right of the panel.
-            SidebarSlot clear;
-            clear.kind = SidebarSlot::TrayClear;
-            const float deckBottom = tray.rc.bottom - TrayBottomRowsH(vm.tray_deck, scale);
-            clear.rc = D2D1::RectF(innerR - inset - 72.0f * scale,
-                                   deckBottom - m.trayInner - 22.0f * scale,
-                                   tray.rc.right - inset,
-                                   deckBottom - m.trayInner);
-            out.push_back(clear);
+    // Staging tray shelf (pulse_tray_redesign.html): every interactive rect
+    // of the three layers, shared by drawing and hit-testing. Layers anchor
+    // to the panel top, so a growing panel reveals them from the top down.
+    struct TrayShelfGeom {
+        float s = 1.0f;
+        D2D1_RECT_F panel{};
+        // Strip (empty).
+        D2D1_RECT_F strip_icon{}, strip_title{}, strip_hint{}, strip_kbd{};
+        // Drop halves: 0 copy, 1 move.
+        D2D1_RECT_F half[2]{};
+        // Shelf rows.
+        D2D1_RECT_F fan{}, meta{}, expand{}, more{};
+        D2D1_RECT_F split{}, go{}, dd{}, zip{}, rename{};
+        D2D1_RECT_F send_label{};
+        std::vector<D2D1_RECT_F> chips;  // 送到 chips that fit
+        std::vector<int> chip_dest;      // index into deck.dests per chip
+        D2D1_RECT_F pick{};
+        D2D1_RECT_F strip_clip{};        // 剪贴板 N 项 · 收入 button (strip)
+        D2D1_RECT_F clip_row{};          // 剪贴板里有 N 项 row (shelf)
+        bool has_expand = false;
+    };
+
+    // measure(text, small): width of text in the small (hint, chip) format
+    // or the bold title format.
+    template <class Measure>
+    TrayShelfGeom TrayShelfGeometry(const TrayDeckView& deck, const D2D1_RECT_F& panel,
+                                    float s, Measure&& measure) {
+        TrayShelfGeom g;
+        g.s = s;
+        g.panel = panel;
+        const float L = panel.left + 10.0f * s;
+        const float R = panel.right - 10.0f * s;
+        const float top = panel.top;
+        const float inner = (R - L) / s;
+        const bool narrow = inner < 230.0f;
+
+        // Strip: icon, 暂存区, hint (+ kbd chip when it fits).
+        {
+            const float cy = top + 20.0f * s;
+            const float x0 = panel.left + 13.0f * s;
+            g.strip_icon = D2D1::RectF(x0, cy - 8.0f * s, x0 + 16.0f * s, cy + 8.0f * s);
+            const float title_w = measure(pulse::l10n::Get(pulse::l10n::StringId::TrayShelfTitle), false);
+            g.strip_title = D2D1::RectF(g.strip_icon.right + 9.0f * s, cy - 10.0f * s,
+                                        g.strip_icon.right + 9.0f * s + title_w, cy + 10.0f * s);
+            float hint_r = R;
+            if (deck.clip_count > 0) {
+                // padding 10 + icon 13 + gap 5 + label (11.5 bold) + padding 10.
+                std::wstring label = pulse::l10n::Get(pulse::l10n::StringId::TrayClipStrip);
+                if (size_t at = label.find(L"{n}"); at != std::wstring::npos)
+                    label.replace(at, 3, std::to_wstring(deck.clip_count));
+                const float w = std::min(R - g.strip_title.right - 9.0f * s,
+                                         38.0f * s + measure(label, false) * (11.5f / 13.0f));
+                g.strip_clip = D2D1::RectF(R - w, cy - 12.0f * s, R, cy + 12.0f * s);
+                hint_r = g.strip_clip.left - 9.0f * s;
+            }
+            g.strip_hint = D2D1::RectF(g.strip_title.right + 9.0f * s, cy - 10.0f * s,
+                                       std::max(g.strip_title.right + 9.0f * s, hint_r), cy + 10.0f * s);
+            const float hint_w = measure(pulse::l10n::Get(pulse::l10n::StringId::TrayStripHint), true);
+            const float kbd_w = measure(pulse::l10n::Get(pulse::l10n::StringId::TrayStripKbd), true) + 10.0f * s;
+            const float kx = g.strip_hint.left + hint_w + 4.0f * s;
+            if (kx + kbd_w <= hint_r)
+                g.strip_kbd = D2D1::RectF(kx, cy - 8.5f * s, kx + kbd_w, cy + 8.5f * s);
         }
+        // Drop: two halves, padding 10, gap 8.
+        {
+            const float bottom = std::max(top + 40.0f * s, panel.bottom - 10.0f * s);
+            const float mid = (L + R) * 0.5f;
+            g.half[0] = D2D1::RectF(L, top + 10.0f * s, mid - 4.0f * s, bottom);
+            g.half[1] = D2D1::RectF(mid + 4.0f * s, top + 10.0f * s, R, bottom);
+        }
+        // Shelf: r1 (44) / r2 (34) / r3 (26), padding 10, gap 9.
+        {
+            const float ib = (narrow ? 28.0f : 30.0f) * s;
+            float y1 = top + 10.0f * s;
+            if (deck.clip_count > 0) {
+                // .cliprow: 26 tall, margin-top -2, then the usual 9 gap.
+                g.clip_row = D2D1::RectF(L, y1 - 2.0f * s, R, y1 + 24.0f * s);
+                y1 += 34.0f * s;
+            }
+            const float c1 = y1 + 22.0f * s;
+            g.fan = D2D1::RectF(L, y1, L + 56.0f * s, y1 + 44.0f * s);
+            g.has_expand = true;
+            g.more = D2D1::RectF(R - ib, c1 - ib * 0.5f, R, c1 + ib * 0.5f);
+            float meta_r = g.more.left - (narrow ? 4.0f : 6.0f) * s;
+            if (g.has_expand) {
+                g.expand = D2D1::RectF(g.more.left - 2.0f * s - ib, g.more.top,
+                                       g.more.left - 2.0f * s, g.more.bottom);
+                meta_r = g.expand.left - (narrow ? 4.0f : 6.0f) * s;
+            }
+            g.meta = D2D1::RectF(g.fan.right + (narrow ? 8.0f : 11.0f) * s, y1, std::max(g.fan.right, meta_r),
+                                 y1 + 44.0f * s);
+
+            const float y2 = y1 + 44.0f * s + 9.0f * s;
+            const float c2 = y2 + 17.0f * s;
+            g.rename = D2D1::RectF(R - ib, c2 - ib * 0.5f, R, c2 + ib * 0.5f);
+            g.zip = D2D1::RectF(g.rename.left - 4.0f * s - ib, g.rename.top,
+                                g.rename.left - 4.0f * s, g.rename.bottom);
+            g.split = D2D1::RectF(L, y2, std::max(L + 60.0f * s, g.zip.left - 4.0f * s), y2 + 34.0f * s);
+            g.dd = D2D1::RectF(g.split.right - 30.0f * s, g.split.top, g.split.right, g.split.bottom);
+            g.go = D2D1::RectF(g.split.left, g.split.top, g.dd.left, g.split.bottom);
+
+            const float y3 = y2 + 34.0f * s + 9.0f * s;
+            const float lb_w = measure(pulse::l10n::Get(pulse::l10n::StringId::TraySendTo), true);
+            g.send_label = D2D1::RectF(L + 2.0f * s, y3, L + 2.0f * s + lb_w, y3 + 26.0f * s);
+            float x = g.send_label.right + 2.0f * s + 5.0f * s;
+            const float pick_w = 30.0f * s;
+            int shown = 0;
+            for (int d = 0; d < static_cast<int>(deck.dests.size()) && shown < 2; ++d) {
+                const auto& dest = deck.dests[static_cast<size_t>(d)];
+                if (dest.missing) continue;
+                // padding 8 + folder 13 + gap 6 + label + padding 10.
+                const float max_label = 120.0f * s;
+                const float w = 8.0f * s + 13.0f * s + 6.0f * s +
+                                std::min(max_label, measure(dest.label, true)) + 10.0f * s;
+                const float min_w = 8.0f * s + 13.0f * s + 6.0f * s + 28.0f * s + 10.0f * s;
+                const float room = R - pick_w - 5.0f * s - x;
+                if (room < min_w) break;
+                const float cw = std::min(w, room);
+                g.chips.push_back(D2D1::RectF(x, y3, x + cw, y3 + 26.0f * s));
+                g.chip_dest.push_back(d);
+                x += cw + 5.0f * s;
+                ++shown;
+            }
+            g.pick = D2D1::RectF(x, y3, x + pick_w, y3 + 26.0f * s);
+        }
+        return g;
+    }
+
+    // Open view (pulse_tray_redesign.html .op): header 47, filter chips 34,
+    // grouped list, footer 80 (selection line + split button).
+    struct TrayOpenGeom {
+        D2D1_RECT_F title{}, count{}, collapse{};
+        std::vector<D2D1_RECT_F> filters;
+        std::vector<int> filter_id;
+        D2D1_RECT_F list{};                  // clip of the scrolling rows
+        std::vector<D2D1_RECT_F> rows;       // per deck.open_rows
+        std::vector<D2D1_RECT_F> heads;      // source header above the row (empty: none)
+        std::vector<D2D1_RECT_F> head_open;  // 打开 › on that header
+        float content_h = 0.0f;              // rows + headers, unscrolled
+        D2D1_RECT_F footer{}, selinfo{}, none_link{}, cmp{};
+        D2D1_RECT_F split{}, go{}, dd{};
+    };
+    // measure(text, compact): 12 px regular (compact) or 13 px bold.
+    template <class Measure>
+    TrayOpenGeom TrayOpenGeometry(const TrayDeckView& d, const D2D1_RECT_F& panel, float s,
+                                  Measure&& measure) {
+        using pulse::l10n::StringId;
+        TrayOpenGeom g;
+        const float L = panel.left, R = panel.right, top = panel.top;
+        // .oh: padding 11 10 6 14; 14 px bold title, 12 px count, collapse ib 30.
+        const float cy = top + 26.0f * s;
+        const std::wstring title = pulse::l10n::Get(StringId::TrayShelfTitle);
+        const float tw = measure(title, false) * (14.0f / 13.0f) + 1.0f * s;
+        g.title = D2D1::RectF(L + 14.0f * s, cy - 10.0f * s, L + 14.0f * s + tw, cy + 10.0f * s);
+        g.collapse = D2D1::RectF(R - 10.0f * s - 30.0f * s, cy - 15.0f * s, R - 10.0f * s, cy + 15.0f * s);
+        g.count = D2D1::RectF(g.title.right + 8.0f * s, cy - 10.0f * s,
+                              std::max(g.title.right + 8.0f * s, g.collapse.left - 8.0f * s), cy + 10.0f * s);
+        // .flt: padding 2 12 8; chips h24, padding 0 10, gap 5, 11.5 px.
+        {
+            const StringId names[4] = {StringId::TrayFilterAll, StringId::TrayFilterImages,
+                                       StringId::TrayFilterDocs, StringId::TrayFilterOther};
+            float x = L + 12.0f * s;
+            const float y = top + 49.0f * s;
+            // Narrow sidebars squeeze the chip padding (20 -> 10) before
+            // dropping a chip.
+            float text_w[4] = {};
+            float need = 0.0f;
+            int shown = 0;
+            for (int f = 0; f < 4; ++f) {
+                if (f > 0 && d.filter_counts[f] == 0) continue;
+                text_w[f] = measure(pulse::l10n::Get(names[f]) + L" " + std::to_wstring(d.filter_counts[f]), true) *
+                            (11.5f / 12.0f) + (d.filter == f ? 4.0f * s : 0.0f);
+                need += text_w[f];
+                ++shown;
+            }
+            const float avail = (R - 8.0f * s) - x - 5.0f * s * static_cast<float>(std::max(0, shown - 1));
+            const float pad = shown > 0 ? std::clamp((avail - need) / static_cast<float>(shown), 10.0f * s, 20.0f * s)
+                                        : 20.0f * s;
+            for (int f = 0; f < 4; ++f) {
+                if (f > 0 && d.filter_counts[f] == 0) continue;
+                const float w = text_w[f] + pad;
+                if (x + w > R - 8.0f * s + 0.5f) break;
+                g.filters.push_back(D2D1::RectF(x, y, x + w, y + 24.0f * s));
+                g.filter_id.push_back(f);
+                x += w + 5.0f * s;
+            }
+        }
+        // .of: border-top, padding 9 10 11; selinfo 18, gap 8, split 34.
+        g.footer = D2D1::RectF(L, std::max(top + 120.0f * s, panel.bottom - 80.0f * s), R, panel.bottom);
+        const float fy = g.footer.top + 9.0f * s;
+        g.selinfo = D2D1::RectF(L + 10.0f * s, fy, R - 10.0f * s, fy + 18.0f * s);
+        if (d.checked > 0) {
+            std::wstring prefix = pulse::l10n::Get(StringId::TraySelectedFormat);
+            if (size_t at = prefix.find(L"{n}"); at != std::wstring::npos) prefix.replace(at, 3, std::to_wstring(d.checked));
+            prefix += L" \u00B7 ";
+            const float px = g.selinfo.left + measure(prefix, true) * (11.5f / 12.0f);
+            const float lw = measure(pulse::l10n::Get(StringId::Cancel), true) * (11.5f / 12.0f) + 2.0f * s;
+            g.none_link = D2D1::RectF(px, fy - 2.0f * s, px + lw, fy + 20.0f * s);
+        }
+        if (d.checked == 2) {
+            const float w = measure(pulse::l10n::Get(StringId::TrayCompareThese), true) * (11.5f / 12.0f) + 18.0f * s;
+            g.cmp = D2D1::RectF(g.selinfo.right - w, fy, g.selinfo.right, fy + 18.0f * s);
+        }
+        const float sy = fy + 18.0f * s + 8.0f * s;
+        g.split = D2D1::RectF(L + 10.0f * s, sy, R - 10.0f * s, sy + 34.0f * s);
+        g.dd = D2D1::RectF(g.split.right - 30.0f * s, g.split.top, g.split.right, g.split.bottom);
+        g.go = D2D1::RectF(g.split.left, g.split.top, g.dd.left, g.split.bottom);
+        // .ol: padding 0 8; .og header 27 (padding 8 6 4), .oi rows 36.
+        g.list = D2D1::RectF(L, top + 81.0f * s, R, g.footer.top);
+        float y = g.list.top - d.open_scroll * s;
+        const float y0 = y;
+        g.rows.reserve(d.open_rows.size());
+        for (const TrayOpenRow& row : d.open_rows) {
+            const float k = row.out_t > 0.0f ? std::max(0.0f, 1.0f - row.out_t) : 1.0f;
+            if (row.group_start) {
+                g.heads.push_back(D2D1::RectF(L + 8.0f * s, y, R - 8.0f * s, y + 27.0f * s));
+                const float ow = measure(pulse::l10n::Get(StringId::TrayGroupOpen), true) * (11.0f / 12.0f) + 4.0f * s;
+                g.head_open.push_back(D2D1::RectF(R - 14.0f * s - ow, y + 6.0f * s, R - 12.0f * s, y + 25.0f * s));
+                y += 27.0f * s;
+            } else {
+                g.heads.push_back(D2D1::RectF());
+                g.head_open.push_back(D2D1::RectF());
+            }
+            g.rows.push_back(D2D1::RectF(L + 8.0f * s, y, R - 8.0f * s, y + 36.0f * s * k));
+            y += 36.0f * s * k;
+        }
+        g.content_h = (y - y0) / s + 8.0f;
+        return g;
+    }
+
+    // Compare card (#cmp): 380 wide, right of the sidebar, bottom near the
+    // tray footer. Rows: header, 位置, 修改, 大小 (grid 64 / 1fr / 1fr).
+    struct TrayCardGeom {
+        D2D1_RECT_F box{}, title{}, close{}, res{};
+        float row_y[4]{};
+        float row_h = 0.0f, label_l = 0.0f, col_l[2]{}, col_w = 0.0f;
+    };
+    inline TrayCardGeom TrayCompareCardGeometry(const D2D1_RECT_F& panel, float s, float window_right) {
+        TrayCardGeom g;
+        const float w = 380.0f * s, h = 196.0f * s;
+        float left = panel.right + 18.0f * s;
+        if (left + w > window_right - 8.0f * s) left = std::max(panel.left, window_right - 8.0f * s - w);
+        const float bottom = panel.bottom - 44.0f * s;
+        g.box = D2D1::RectF(left, bottom - h, left + w, bottom);
+        const float L = g.box.left + 16.0f * s, R = g.box.right - 16.0f * s;
+        g.title = D2D1::RectF(L, g.box.top + 14.0f * s, R - 26.0f * s, g.box.top + 32.0f * s);
+        g.close = D2D1::RectF(R - 22.0f * s, g.box.top + 11.0f * s, R + 2.0f * s, g.box.top + 35.0f * s);
+        g.row_h = 18.0f * s;
+        float y = g.title.bottom + 10.0f * s;
+        for (int i = 0; i < 4; ++i) {
+            g.row_y[i] = y;
+            y += (i == 0 ? 20.0f : 18.0f) * s + 6.0f * s;
+        }
+        g.label_l = L;
+        g.col_w = std::max(0.0f, (R - L - 84.0f * s) * 0.5f);
+        g.col_l[0] = L + 74.0f * s;
+        g.col_l[1] = g.col_l[0] + g.col_w + 10.0f * s;
+        g.res = D2D1::RectF(L, y + 6.0f * s, R, y + 6.0f * s + 34.0f * s);
+        return g;
     }
 
     bool RectContains(const D2D1_RECT_F& rc, float x, float y) {
@@ -2165,6 +2413,7 @@ struct SettingsLayout {
     D2D1_RECT_F protected_files_row{};
     D2D1_RECT_F pinned_names_row{};
     D2D1_RECT_F vertical_tabs_row{};
+    D2D1_RECT_F tray_hide_row{};
     D2D1_RECT_F hints_row{};
     D2D1_RECT_F hints_reset_row{};
     D2D1_RECT_F hints_reset_button{};

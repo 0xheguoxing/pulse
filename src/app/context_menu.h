@@ -124,6 +124,7 @@ enum MenuCmd : int {
     CmdUnpinNetwork = 3904,     // Network view: remove the selected pins
     CmdCompressZip = 3905,      // toolbar 压缩: the selection into a .zip beside it
     CmdToggleFolderSizes = 3906, // toolbar 文件夹大小: size folders on their own (AppPrefs::folder_size_auto)
+    CmdStageToTray = 3907,      // 加入暂存区 (Ctrl+Shift+S): the selection onto the staging tray
     CmdGroupIntoFolder = 3910,  // 2+ items: 合并到文件夹 (macOS New Folder with Selection)
     CmdDissolveFolder = 3911,   // folders only: 解散文件夹 (contents up one level, folder removed)
     CmdSetAlias = 3912,         // one item: 设置别名… (Shift+F2)

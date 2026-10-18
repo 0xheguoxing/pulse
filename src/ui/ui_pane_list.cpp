@@ -3469,8 +3469,13 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             }
             const bool inline_link = !iconGrid && e.is_link && link_expansion > 0.0f &&
                 src != vm.rename_index && !change && e.badge.empty();
+            // "已暂存" pill (tray redesign): takes the badge slot when nothing else uses it.
+            const bool staged_pill = vm.view_mode == ViewMode::Details && !change && e.badge.empty() &&
+                vm.staged && !vm.staged->empty() && vm.staged->contains(StagedPathHash(e.path));
+            const std::wstring& staged_text = l10n::Get(l10n::StringId::TrayStagedBadge);
             const float badgeW = change && !iconGrid ? ChangeBadgeWidth(*change, scale_, compositor_) : vm.view_mode == ViewMode::Details && !e.badge.empty()
-                ? std::min(108.0f * scale_, painter_.MeasureTagWidth(e.badge)) : 0.0f;
+                ? std::min(108.0f * scale_, painter_.MeasureTagWidth(e.badge))
+                : staged_pill ? std::min(108.0f * scale_, painter_.MeasureTagWidth(staged_text)) : 0.0f;
             // List rows: [mark] alias  real name (pulse_alias.html .amark).
             const bool list_mark = has_alias && !iconGrid;
             const NameTrail trail = LayoutNameTrail(
@@ -3593,6 +3598,14 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 }
                 if (!change && !e.badge.empty() && trail.badge.right > trail.badge.left) {
                     painter_.DrawTag({trail.badge, e.badge, e.badge_color});
+                }
+                if (staged_pill && trail.badge.right > trail.badge.left) {
+                    fluent::TagSpec pill;
+                    pill.bounds = trail.badge;
+                    pill.text = staged_text;
+                    pill.color = theme.accent;
+                    pill.bordered = false;
+                    painter_.DrawTag(pill);
                 }
                 D2D1_COLOR_F halo = theme.bg;
                 halo.a = 1.0f;

@@ -131,6 +131,8 @@ void ClearDropFeedback(AppState& s) {
     s.dropBreadcrumb = -1;
     s.dropSidebar = -1;
     s.dropTray = false;
+    s.dragFilesOver = false;
+    s.dropTrayMove = false;
     s.dropQuickAccess = false;
     s.dropBadge.clear();
     s.dropBadgeMove = false;
@@ -219,6 +221,14 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
     s.dropLaunchProgram.clear();
     s.dropBadge.clear();
     s.dropBadgeMove = false;
+    // Files from outside (or another pane) are over the window: the shelf
+    // opens its 复制暂存 / 移动暂存 halves. Shift picks the move half anywhere.
+    const bool shift = (key_state & MK_SHIFT) != 0;
+    if (!s.trayDragOut && !sources.empty()) {
+        if (!s.dragFilesOver) InvalidateRect(s.hwnd, nullptr, FALSE);
+        s.dragFilesOver = true;
+        s.dropTrayMove = shift && (allowed & DROPEFFECT_MOVE) != 0;
+    }
     if (sources.empty() || !(allowed & (DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK)))
         return DROPEFFECT_NONE;
 
@@ -414,11 +424,14 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
             if (!(allowed & DROPEFFECT_COPY)) return DROPEFFECT_NONE;
             s.dropTray = true;
             s.springRow = -1;
-            // Staging defaults to a copy batch; Shift stages it as a move.
-            // The source is never touched here, so the OLE effect stays COPY.
-            const bool stage_move = (key_state & MK_SHIFT) != 0 && (allowed & DROPEFFECT_MOVE) != 0;
-            s.dropBadge = l10n::Get(stage_move ? l10n::StringId::DropStageMove
-                                               : l10n::StringId::DropStageCopy).c_str();
+            // Left half stages a copy batch, right half a move batch; Shift
+            // flips the half under the cursor. The source is never touched
+            // here, so the OLE effect stays COPY.
+            const bool right_half = pt.x >= (trayRc.left + trayRc.right) * 0.5f;
+            const bool stage_move = (right_half != shift) && (allowed & DROPEFFECT_MOVE) != 0;
+            s.dropTrayMove = stage_move;
+            s.dropBadge = l10n::Get(stage_move ? l10n::StringId::TrayGhostMove
+                                               : l10n::StringId::TrayGhostCopy).c_str();
             s.dropBadgeMove = stage_move;
             s.dropBadgeX = (float)pt.x;
             s.dropBadgeY = (float)pt.y;
@@ -472,6 +485,7 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
     std::wstring dest = s.dropDestDir;
     const std::wstring launch_program = s.dropLaunchProgram;
     bool tray = s.dropTray;
+    const bool tray_move = s.dropTrayMove;
     const bool header = s.dropHeader;
     const int header_pane = s.dropPaneIndex;
     const bool pin_quick_access = s.dropQuickAccess;
@@ -545,12 +559,8 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
     }
 
     if (tray) {
-        std::vector<std::wstring> paths;
-        for (auto& p : sources) paths.push_back(fs::NormalizePath(p));
-        const bool stage_move = (key_state & MK_SHIFT) != 0 && (allowed & DROPEFFECT_MOVE) != 0;
-        s.tray.Collect(paths, stage_move);
-        ops::WriteClipboard(sources, stage_move);
-        InvalidateRect(s.hwnd, nullptr, FALSE);
+        // Staging leaves the clipboard alone; the half sets the release mode.
+        StagePaths(s, sources, tray_move);
         return DROPEFFECT_COPY;
     }
     if (dest.starts_with(L"pulse:tag:")) {
@@ -662,12 +672,15 @@ void StartDragOut(AppState& s) {
 
 // Drags every staged item that still exists out of the tray (other apps,
 // panes, sidebar folders). Always a copy, so the tray keeps its items.
-static void StartTrayDragOut(AppState& s) {
+// `only` limits the drag to those item ids (open view rows).
+static void StartTrayDragOut(AppState& s, const std::vector<uint64_t>* only = nullptr) {
     std::vector<std::wstring> paths;
     for (const auto& batch : s.tray.batches())
-        for (const auto& item : batch.items)
+        for (const auto& item : batch.items) {
+            if (only && std::find(only->begin(), only->end(), item.id) == only->end()) continue;
             if (GetFileAttributesW(item.path.c_str()) != INVALID_FILE_ATTRIBUTES)
                 paths.push_back(ClipboardPath(item.path));
+        }
     if (paths.empty()) return;
     CancelScrollAnimation(s);
     s.trayDragOut = true;
@@ -676,6 +689,118 @@ static void StartTrayDragOut(AppState& s) {
     s.springEntered = false;
     ClearDropFeedback(s);
     InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+// Open view row click: toggle the check of the staged item shown at path.
+static void ToggleTrayOpenCheck(AppState& s, const std::wstring& path) {
+    if (path.empty()) return;
+    for (const auto& b : s.tray.batches())
+        for (const auto& item : b.items) {
+            if (_wcsicmp(ClipboardPath(item.path).c_str(), path.c_str()) != 0) continue;
+            auto& checked = s.trayView.checked;
+            const auto at = std::find(checked.begin(), checked.end(), item.id);
+            if (at != checked.end()) checked.erase(at);
+            else if (item.exists) checked.push_back(item.id);
+            if (checked.size() != 2) s.trayView.compare = false;
+            return;
+        }
+}
+
+// Staging shelf press (pulse_tray_redesign.html). The fan drags the whole
+// stack out; the main button releases into the current folder; ▾ and ⋯ open
+// their menus; chips send without opening the folder.
+static void HandleTrayShelfPress(AppState& s, HWND hwnd, const ui::HitTestResult& hit, int mx, int my) {
+    POINT sp{mx, my};
+    ClientToScreen(hwnd, &sp);
+    const bool move = TrayEffectiveMove(s);
+    switch (static_cast<ui::TrayShelfHit>(hit.index)) {
+    case ui::TrayShelfHit::Fan:
+        // DragDetect returns at once on release, so a plain click is a no-op.
+        if (DragDetect(hwnd, sp)) StartTrayDragOut(s);
+        break;
+    case ui::TrayShelfHit::Release:
+        if (const app::Tab* tab = ActiveTab(s); tab && !tab->current_path.empty())
+            ReleaseTrayTo(s, tab->current_path, move);
+        break;
+    case ui::TrayShelfHit::ReleaseMenu:
+        ShowTrayReleaseMenu(s, sp);
+        break;
+    case ui::TrayShelfHit::More:
+        ShowTrayBatchMenu(s, sp);
+        break;
+    case ui::TrayShelfHit::Zip:
+        TrayShelfZip(s);
+        break;
+    case ui::TrayShelfHit::Rename: {
+        const std::vector<std::wstring> paths = TrayLivePaths(s);
+        if (!paths.empty()) ShowBatchRenamePaths(s, paths);
+        break;
+    }
+    case ui::TrayShelfHit::Chip:
+        if (!hit.path.empty()) TraySendTo(s, hit.path, move);
+        break;
+    case ui::TrayShelfHit::Clip:
+        TakeTrayClip(s);
+        break;
+    case ui::TrayShelfHit::Expand:
+        s.trayView = {};
+        s.trayView.open = true;
+        s.trayView.opened_at = ui::motion::SystemAnimationsEnabled() ? GetTickCount64() : 0;
+        break;
+    case ui::TrayShelfHit::Collapse:
+        s.trayView.open = false;
+        s.trayView.compare = false;
+        break;
+    case ui::TrayShelfHit::Filter:
+        if (hit.sub_index >= 0 && hit.sub_index < 4) {
+            s.trayView.filter = hit.sub_index;
+            s.trayView.scroll = 0.0f;
+        }
+        break;
+    case ui::TrayShelfHit::Row:
+        // Dragging a row takes the checked items along when it is one of
+        // them, else just that row; a click toggles its check.
+        if (DragDetect(hwnd, sp)) {
+            std::vector<uint64_t> ids;
+            for (const auto& b : s.tray.batches())
+                for (const auto& item : b.items)
+                    if (!hit.path.empty() && _wcsicmp(ClipboardPath(item.path).c_str(), hit.path.c_str()) == 0)
+                        ids.push_back(item.id);
+            const auto& checked = s.trayView.checked;
+            if (!ids.empty() && std::find(checked.begin(), checked.end(), ids.front()) != checked.end()) ids = checked;
+            if (!ids.empty()) StartTrayDragOut(s, &ids);
+        } else {
+            ToggleTrayOpenCheck(s, hit.path);
+        }
+        break;
+    case ui::TrayShelfHit::GroupOpen:
+        if (!hit.path.empty()) NavigateTo(s, hit.path);
+        break;
+    case ui::TrayShelfHit::SelNone:
+        s.trayView.checked.clear();
+        s.trayView.compare = false;
+        break;
+    case ui::TrayShelfHit::Compare:
+        s.trayView.compare = !s.trayView.compare;
+        s.trayView.compare_at = ui::motion::SystemAnimationsEnabled() ? GetTickCount64() : 0;
+        break;
+    case ui::TrayShelfHit::CardClose:
+        s.trayView.compare = false;
+        break;
+    case ui::TrayShelfHit::CardAction:
+        if (hit.sub_index == 2) TrayOpenTextDiff(s);
+        else TrayStartContentCompare(s);
+        break;
+    case ui::TrayShelfHit::Pick: {
+        std::wstring folder;
+        if (PickFolder(s, folder, l10n::Get(l10n::StringId::TrayPickFolder).c_str()) && !folder.empty())
+            TraySendTo(s, folder, move);
+        break;
+    }
+    default:
+        break;
+    }
+    InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 float MaxScrollForActivePane(AppState& s, ui::PaneViewModel* out) {
@@ -2382,6 +2507,18 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         }
         if (HandleWindowIdentityPress(*s, hit, POINT{mx, my})) return 0;  // M7c
         if (HandlePaneBannerPress(*s, hit)) return 0;  // retry, go up, reconnect... on a pane banner
+        if (hit.region == ui::HitTestResult::TrayShelf) {
+            s->dragPending = false;
+            HandleTrayShelfPress(*s, hwnd, hit, mx, my);
+            return 0;
+        }
+        if (hit.region == ui::HitTestResult::StagedBadge) {
+            // "已暂存" pill on a row: take that item off the shelf.
+            s->dragPending = false;
+            if (!hit.path.empty()) UnstagePath(*s, hit.path);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         if (hit.region == ui::HitTestResult::TrayCard && hit.index == 0) {
             const auto top = TrayDeckEntries(s->tray, static_cast<size_t>(TrayStackTop(*s)), 1);
             if (!top.empty()) {
@@ -3203,7 +3340,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         } else if (hit.region == ui::HitTestResult::StatusHintAction) {
             // Re-derived at click time, so the action always matches the current state.
             switch (CurrentStatusHintAction(*s)) {
-            case StatusHintAction::Tray: CollectToTray(*s, false); break;
+            case StatusHintAction::Tray: StageSelection(*s); break;
             case StatusHintAction::Compare: DispatchMenuCommand(*s, app::CmdCompareToggle); break;
             case StatusHintAction::DiffOnly:
             case StatusHintAction::ShowAll: DispatchMenuCommand(*s, app::CmdCompareDiffOnly); break;
@@ -3971,6 +4108,11 @@ LRESULT HandleRButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         } else if (hit.region == ui::HitTestResult::BreadcrumbSegment && !hit.path.empty()) {
             ShowBreadcrumbMenu(*s, hit.path, sp);
             shown = true;
+        } else if (hit.region == ui::HitTestResult::TrayShelf &&
+                   static_cast<ui::TrayShelfHit>(hit.index) != ui::TrayShelfHit::Strip &&
+                   !s->tray.batches().empty()) {
+            ShowTrayBatchMenu(*s, sp);
+            shown = true;
         } else if (hit.region == ui::HitTestResult::TrayCard ||
                    hit.region == ui::HitTestResult::TrayIntent ||
                    hit.region == ui::HitTestResult::TrayItemRemove ||
@@ -4124,18 +4266,19 @@ LRESULT HandleMouseWheel(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM
         // sidebar branch below would swallow every wheel event over it.
         // Wheel down sends the top card to the back, wheel up brings the
         // last one back on top (cyclic).
-        if (TrayItemTotalCount(s->tray) > 1) {
+        if (TrayItemTotalCount(s->tray) > 0) {
             const D2D1_RECT_F tray_rc = s->renderer.StagingTrayRect(
                 wheelVm, wheelRect.right, wheelRect.bottom);
             if (pt.x >= tray_rc.left && pt.x < tray_rc.right &&
                 pt.y >= tray_rc.top && pt.y < tray_rc.bottom) {
-                const int wheel_delta = GET_WHEEL_DELTA_WPARAM(wParam);
-                s->trayWheelAccum += wheel_delta;
-                int steps = 0;
-                while (s->trayWheelAccum <= -WHEEL_DELTA) { s->trayWheelAccum += WHEEL_DELTA; ++steps; }
-                while (s->trayWheelAccum >= WHEEL_DELTA) { s->trayWheelAccum -= WHEEL_DELTA; --steps; }
-                for (int k = 0; k < std::min(steps, 3); ++k) ThrowTrayTop(*s, -1.0f, -30.0f, -10.0f);
-                for (int k = 0; k < std::min(-steps, 3); ++k) TrayStepBack(*s);
+                // Shelf redesign: the open view's list scrolls (FillTrayOpen
+                // clamps it); the other layers just keep the sidebar still.
+                if (s->trayView.open) {
+                    const float steps = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) /
+                                        static_cast<float>(WHEEL_DELTA);
+                    s->trayView.scroll = std::max(0.0f, s->trayView.scroll - steps * 48.0f);
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
                 return 0;
             }
         }
@@ -4267,6 +4410,33 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             return 0;
         }
 
+        // Open tray view (pulse_tray_redesign.html): Esc collapses (the compare
+        // card first), Del takes the checked items off the tray, Enter
+        // releases them into this folder. Without checks Del / Enter keep
+        // acting on the list.
+        if (s->trayView.open && !ctrl && !alt && !s->addressSearching && !s->filterEditing &&
+            s->renameIndex < 0 && (GetFocus() == hwnd || GetFocus() == nullptr)) {
+            if (wParam == VK_ESCAPE) {
+                if (s->trayView.compare) s->trayView.compare = false;
+                else s->trayView.open = false;
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (wParam == VK_DELETE && !shift && !s->trayView.checked.empty()) {
+                s->trayView.removing = s->trayView.checked;
+                s->trayView.remove_at = GetTickCount64();
+                s->trayView.compare = false;
+                if (!ui::motion::SystemAnimationsEnabled()) s->trayView.remove_at -= 320;
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (wParam == VK_RETURN && !s->trayView.checked.empty()) {
+                if (tab && !tab->current_path.empty()) ReleaseTrayTo(*s, tab->current_path, TrayEffectiveMove(*s));
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+        }
+
         auto switchToTab = [&](std::optional<size_t> target) {
             if (!target || *target == s->window_tabs.active) return;
             if (s->renameIndex >= 0) HideRenameOverlay(*s, false);
@@ -4351,6 +4521,8 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             ShowOmnibar(*s, OmnibarMode::Path);
         } else if (wParam == VK_F4) {
             ShowOmnibar(*s, OmnibarMode::Path);
+        } else if (ctrl && shift && wParam == L'S') {
+            StageSelection(*s);  // 加入暂存区: the clipboard is left alone
         } else if (ctrl && shift && wParam == L'C') {
             // As the 复制路径 rows that show this key: the selection, or the
             // folder when nothing is selected (background menu).

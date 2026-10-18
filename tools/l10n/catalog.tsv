@@ -2300,6 +2300,60 @@ GlobalSearchNoFilteredResults	IDS_GLOBAL_SEARCH_NO_FILTERED_RESULTS	3502	当前�
 MediaPackUnused	IDS_MEDIA_PACK_UNUSED	3503	未使用	Not in use	未使用
 MediaPackLocalNotice	IDS_MEDIA_PACK_LOCAL_NOTICE	3504	正在使用本地 FFmpeg，不需要下载这个增强包。	Your own FFmpeg is in use, so this pack is not needed.	正在使用本機 FFmpeg，不需要下載這個增強包。
 MediaPackLocalNoticeInstalled	IDS_MEDIA_PACK_LOCAL_NOTICE_INSTALLED	3505	正在使用本地 FFmpeg，已安装的增强包不会被用到，可以卸载以释放空间。	Your own FFmpeg is in use. The installed pack is not used and can be removed to free space.	正在使用本機 FFmpeg，已安裝的增強包不會被用到，可以解除安裝以釋放空間。
+TrayShelfTitle	IDS_TRAY_SHELF_TITLE	3506	暂存区	Staging	暫存區
+TrayStripHint	IDS_TRAY_STRIP_HINT	3507	拖入文件，或	Drop files, or	拖入檔案，或
+TrayStripKbd	IDS_TRAY_STRIP_KBD	3508	Ctrl Shift S	Ctrl Shift S	Ctrl Shift S
+TrayDropCopyTitle	IDS_TRAY_DROP_COPY_TITLE	3509	复制暂存	Stage as copy	複製暫存
+TrayDropDefault	IDS_TRAY_DROP_DEFAULT	3510	默认	Default	預設
+TrayDropMoveTitle	IDS_TRAY_DROP_MOVE_TITLE	3511	移动暂存	Stage as move	移動暫存
+TrayDropOrShift	IDS_TRAY_DROP_OR_SHIFT	3512	或按住 Shift	or hold Shift	或按住 Shift
+TrayItemsFormat	IDS_TRAY_ITEMS_FORMAT	3513	{n} 项	{n} items	{n} 項
+TraySourcesFew	IDS_TRAY_SOURCES_FEW	3514	来自 {a}	From {a}	來自 {a}
+TraySourcesMany	IDS_TRAY_SOURCES_MANY	3515	来自 {a} 等 {n} 处	From {a} and more ({n} places)	來自 {a} 等 {n} 處
+TrayCopyToFormat	IDS_TRAY_COPY_TO_FORMAT	3516	复制到「{name}」	Copy to “{name}”	複製到「{name}」
+TrayMoveToFormat	IDS_TRAY_MOVE_TO_FORMAT	3517	移动到「{name}」	Move to “{name}”	移動到「{name}」
+TrayConflictsFormat	IDS_TRAY_CONFLICTS_FORMAT	3518	{n} 同名	{n} same name	{n} 同名
+TraySendTo	IDS_TRAY_SEND_TO	3519	送到	Send to	送到
+TrayChipTipCopy	IDS_TRAY_CHIP_TIP_COPY	3520	复制 {n} 项到 {name}	Copy {n} items to {name}	複製 {n} 項到 {name}
+TrayChipTipMove	IDS_TRAY_CHIP_TIP_MOVE	3521	移动 {n} 项到 {name}	Move {n} items to {name}	移動 {n} 項到 {name}
+TrayChipTipConflicts	IDS_TRAY_CHIP_TIP_CONFLICTS	3522	 · {n} 个同名	 · {n} with the same name	 · {n} 個同名
+TrayPickFolder	IDS_TRAY_PICK_FOLDER	3523	选择文件夹…	Choose folder…	選擇資料夾…
+TrayMenuPlacement	IDS_TRAY_MENU_PLACEMENT	3524	放置方式	Placement	放置方式
+TrayMenuSendHeader	IDS_TRAY_MENU_SEND_HEADER	3525	送到（不用打开目标文件夹）	Send to (no need to open the folder)	送到（不用開啟目標資料夾）
+TrayMenuClear	IDS_TRAY_MENU_CLEAR	3526	清空暂存区	Clear staging	清空暫存區
+TrayToastCopied	IDS_TRAY_TOAST_COPIED	3527	已复制 {n} 项到「{name}」	Copied {n} items to “{name}”	已複製 {n} 項到「{name}」
+TrayToastMoved	IDS_TRAY_TOAST_MOVED	3528	已移动 {n} 项到「{name}」	Moved {n} items to “{name}”	已移動 {n} 項到「{name}」
+TrayToastCleared	IDS_TRAY_TOAST_CLEARED	3529	已清空暂存区	Staging cleared	已清空暫存區
+TrayToastAlreadyThere	IDS_TRAY_TOAST_ALREADY_THERE	3530	这些文件本来就在「{name}」里	These items are already in “{name}”	這些檔案本來就在「{name}」裡
+TrayZipName	IDS_TRAY_ZIP_NAME	3531	暂存 {n} 项	Staged {n} items	暫存 {n} 項
+TrayStagedBadge	IDS_TRAY_STAGED_BADGE	3532	已暂存	Staged	已暫存
+TrayStagedTip	IDS_TRAY_STAGED_TIP	3533	已在暂存区 · 点击移出	In staging · click to remove	已在暫存區 · 點選移出
+TrayFanTip	IDS_TRAY_FAN_TIP	3534	按住拖到文件夹或其它应用	Drag to a folder or another app	按住拖到資料夾或其他應用程式
+TrayExpandTip	IDS_TRAY_EXPAND_TIP	3535	展开全部	Show all	展開全部
+TrayGhostCopy	IDS_TRAY_GHOST_COPY	3536	松开 · 暂存为复制	Release · stage as copy	放開 · 暫存為複製
+TrayGhostMove	IDS_TRAY_GHOST_MOVE	3537	松开 · 暂存为移动	Release · stage as move	放開 · 暫存為移動
+TrayNoTarget	IDS_TRAY_NO_TARGET	3538	这里不能放文件	Can't place files here	這裡不能放檔案
+TrayClipStrip	IDS_TRAY_CLIP_STRIP	3539	剪贴板 {n} 项 · 收入	Clipboard {n} · Stage	剪貼簿 {n} 項 · 收入
+TrayClipRow	IDS_TRAY_CLIP_ROW	3540	剪贴板里有 {n} 项	{n} on the clipboard	剪貼簿裡有 {n} 項
+TrayClipTake	IDS_TRAY_CLIP_TAKE	3541	收入暂存 →	Stage them →	收入暫存 →
+TrayCopiedOffer	IDS_TRAY_COPIED_OFFER	3542	已复制 {n} 项 · 暂存区可「收入」	Copied {n} · the tray can stage them	已複製 {n} 項 · 暫存區可「收入」
+TrayCutOffer	IDS_TRAY_CUT_OFFER	3543	已剪切 {n} 项 · 暂存区可「收入」	Cut {n} · the tray can stage them	已剪下 {n} 項 · 暫存區可「收入」
+CtxAddToTray	IDS_CTX_ADD_TO_TRAY	3544	加入暂存区	Add to staging tray	加入暫存區
+TraySelectFirst	IDS_TRAY_SELECT_FIRST	3545	先选中文件	Select files first	先選取檔案
+TrayCollapseTip	IDS_TRAY_COLLAPSE_TIP	3546	收起 · Esc	Collapse · Esc	收起 · Esc
+TrayFilterAll	IDS_TRAY_FILTER_ALL	3547	全部	All	全部
+TrayFilterImages	IDS_TRAY_FILTER_IMAGES	3548	图片	Images	圖片
+TrayFilterDocs	IDS_TRAY_FILTER_DOCS	3549	文档	Documents	文件
+TrayFilterOther	IDS_TRAY_FILTER_OTHER	3550	其他	Other	其他
+TrayGroupOpen	IDS_TRAY_GROUP_OPEN	3551	打开 ›	Open ›	開啟 ›
+TraySelectedFormat	IDS_TRAY_SELECTED_FORMAT	3552	已选 {n} 项	{n} selected	已選 {n} 項
+TrayNoneCheckedFormat	IDS_TRAY_NONE_CHECKED_FORMAT	3553	未勾选 · 对全部 {n} 项操作	Nothing checked · acts on all {n}	未勾選 · 對全部 {n} 項操作
+TrayCompareThese	IDS_TRAY_COMPARE_THESE	3554	⇄ 比较这两个	⇄ Compare these two	⇄ 比較這兩個
+TrayCompareNeedTwo	IDS_TRAY_COMPARE_NEED_TWO	3555	正好 2 项时才能比较	Check exactly 2 items to compare	正好 2 項時才能比較
+TrayCopyNToFormat	IDS_TRAY_COPY_N_TO_FORMAT	3556	复制 {n} 项到「{name}」	Copy {n} to “{name}”	複製 {n} 項到「{name}」
+TrayMoveNToFormat	IDS_TRAY_MOVE_N_TO_FORMAT	3557	移动 {n} 项到「{name}」	Move {n} to “{name}”	移動 {n} 項到「{name}」
+TrayHideWhenEmpty	IDS_TRAY_HIDE_WHEN_EMPTY	3558	暂存区为空时完全隐藏	Hide the staging tray when it is empty	暫存區為空時完全隱藏
+TrayHideWhenEmptyDesc	IDS_TRAY_HIDE_WHEN_EMPTY_DESC	3559	拖动文件经过窗口时它仍会出现	It still appears while you drag files over the window	拖曳檔案經過視窗時它仍會出現
 OpElapsed	IDS_OP_ELAPSED	3560	已用时间	Elapsed	已用時間
 OpRemainingShort	IDS_OP_REMAINING_SHORT	3561	剩余	Remaining	剩餘
 OpAverageLead	IDS_OP_AVERAGE_LEAD	3562	平均 	Avg 	平均 
