@@ -237,6 +237,57 @@ void VisitSummaryAncestors(const ChangeRecord& event, Visitor visit) {
     walk(current, false);
     if (!event.old_path.empty()) walk(previous, true);
 }
+constexpr uint32_t kNoRecord = UINT32_MAX;
+bool InWindow(const ChangeRecord& e, uint64_t since, uint64_t now) {
+    return e.time >= since && e.time + kRetention >= now;
+}
+// Observed events with a stable file ID: Key() is Identity(), never an alias.
+bool Identified(const ChangeRecord& e) { return e.file_id && e.source == ChangeSource::Event; }
+// The two leading characters Identity() takes from the normalized path.
+uint32_t IdentityPrefix(const ChangeRecord& e) {
+    const auto path = Normalize(e.path);
+    uint32_t prefix = path.empty() ? 0u : static_cast<uint16_t>(path[0]);
+    if (path.size() > 1) prefix |= static_cast<uint32_t>(static_cast<uint16_t>(path[1])) << 16;
+    return prefix;
+}
+// Linear probing in a power-of-two table: the slot of this identity, or the
+// empty slot where it belongs.
+size_t SlotIndex(const std::vector<ChangeIdentitySlot>& slots, uint64_t file_id, uint32_t prefix) {
+    uint64_t x = file_id ^ (static_cast<uint64_t>(prefix) * 0x9E3779B97F4A7C15ull);
+    x ^= x >> 30; x *= 0xBF58476D1CE4E5B9ull; x ^= x >> 27; x *= 0x94D049BB133111EBull; x ^= x >> 31;
+    const size_t mask = slots.size() - 1;
+    for (size_t i = static_cast<size_t>(x) & mask;; i = (i + 1) & mask) {
+        const auto& slot = slots[i];
+        if (slot.last == kNoRecord || (slot.file_id == file_id && slot.prefix == prefix)) return i;
+    }
+}
+// Room for `live` identities at no more than 80% load.
+void ReserveSlots(std::vector<ChangeIdentitySlot>& slots, size_t live) {
+    size_t size = slots.empty() ? 1024 : slots.size();
+    while (live * 5 > size * 4) size *= 2;
+    if (size == slots.size()) return;
+    std::vector<ChangeIdentitySlot> grown(size);
+    for (const auto& slot : slots)
+        if (slot.last != kNoRecord) grown[SlotIndex(grown, slot.file_id, slot.prefix)] = slot;
+    slots.swap(grown);
+}
+// Accumulates one identity's records still inside the 7 days at `now`,
+// oldest first, as the rebuild does. `visited` collects their ancestors.
+void RollUp(const std::vector<ChangeRecord>& records, const std::vector<uint32_t>& prev, uint32_t last, uint64_t now,
+            std::vector<uint32_t>& chain, ChangeSummaryAccumulator& rollups,
+            std::unordered_map<std::wstring, ChangeSummary>& summaries, std::vector<std::wstring>* visited = nullptr) {
+    chain.clear();
+    for (uint32_t index = last; index != kNoRecord; index = prev[index])
+        if (records[index].time + kRetention >= now) chain.push_back(index);
+    rollups.Reset();
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        const auto& event = records[*it];
+        VisitSummaryAncestors(event, [&](const std::wstring& ancestor, ChangeKind kind) {
+            rollups.Add(summaries[ancestor], kind, event.time, Priority(kind));
+            if (visited) visited->push_back(ancestor);
+        });
+    }
+}
 std::wstring File(const std::wstring& dir, std::wstring owner) {
     for (auto& c : owner) if (!iswalnum(c) && c != L'-') c = L'_';
     return dir + L"\\changes-" + owner + L".bin";
@@ -585,57 +636,186 @@ ChangeResponse ChangeTracker::Details(const std::wstring& owner, const std::wstr
     if (records.size() > limit) { records.resize(limit); out.next_cursor = records.back().id; }
     out.records = std::move(records); return out;
 }
+void ChangeTracker::RebuildSummaries(Journal& j, uint64_t since, uint64_t now) {
+    j.cache_expires = now + kRetention; j.cache_oldest = UINT64_MAX;
+    j.summaries.clear();
+    j.identity_slots.clear(); j.identity_prev.clear(); j.identity_live = 0;
+    j.cache_incremental = std::all_of(j.records.begin(), j.records.end(),
+        [&](const ChangeRecord& e) { return !InWindow(e, since, now) || Identified(e); });
+    j.cache_records = j.records.size();
+    j.cache_first_id = j.records.empty() ? 0 : j.records.front().id;
+    j.cache_last_id = j.records.empty() ? 0 : j.records.back().id;
+    j.cache_now = now;
+    if (j.cache_incremental && j.records.size() < kNoRecord) {
+        // Every event has a file ID: Key() is the identity, no aliases apply.
+        j.identity_prev.assign(j.records.size(), kNoRecord);
+        for (size_t index = 0; index < j.records.size(); ++index) {
+            const auto& event = j.records[index];
+            if (!InWindow(event, since, now)) continue;
+            j.cache_expires = (std::min)(j.cache_expires, event.time + kRetention + 1);
+            j.cache_oldest = (std::min)(j.cache_oldest, event.time);
+            const uint32_t prefix = IdentityPrefix(event);
+            ReserveSlots(j.identity_slots, j.identity_live + 1);
+            auto& slot = j.identity_slots[SlotIndex(j.identity_slots, event.file_id, prefix)];
+            if (slot.last == kNoRecord) { slot.file_id = event.file_id; slot.prefix = prefix; ++j.identity_live; }
+            j.identity_prev[index] = slot.last;
+            slot.last = static_cast<uint32_t>(index);
+        }
+        ChangeSummaryAccumulator rollups;
+        std::vector<uint32_t> chain;
+        for (const auto& slot : j.identity_slots) {
+            if (slot.last == kNoRecord) continue;
+            RollUp(j.records, j.identity_prev, slot.last, now, chain, rollups, j.summaries);
+            rollups.Commit();
+        }
+        return;
+    }
+    j.cache_incremental = false;
+    j.identity_slots.shrink_to_fit(); j.identity_prev.shrink_to_fit();
+    const auto aliases = EventAliases(j.records, since, now);
+    struct Chain { size_t first, last; };
+    std::unordered_map<std::wstring, Chain> identities;
+    std::vector<size_t> next(j.records.size(), SIZE_MAX);
+    std::unordered_set<std::wstring> initial_paths;
+    for (const auto& event : j.records) {
+        if (event.time < since || event.time + kRetention < now) continue;
+        if (event.source == ChangeSource::InitialMtime && aliases.contains(Normalize(event.path))) continue;
+        j.cache_expires = (std::min)(j.cache_expires, event.time + kRetention + 1);
+        j.cache_oldest = (std::min)(j.cache_oldest, event.time);
+        if (event.source == ChangeSource::InitialMtime) {
+            if (!initial_paths.insert(Normalize(event.path)).second) continue;
+            VisitAncestors(event, [&](const std::wstring& ancestor) {
+                auto& summary = j.summaries[ancestor];
+                ++summary.count; ++summary.initial_count;
+                summary.last_change = (std::max)(summary.last_change, event.time);
+            });
+            continue;
+        }
+        const auto key = Key(event, aliases);
+        const size_t index = static_cast<size_t>(&event - j.records.data());
+        const auto [identity, inserted] = identities.try_emplace(key, Chain{index, index});
+        if (!inserted) {
+            next[identity->second.last] = index;
+            identity->second.last = index;
+        }
+    }
+    // Aggregate one file identity at a time, in original event order. The
+    // scratch vector scales with its ancestors, not all files x ancestors.
+    // unordered_map rehash preserves the summary pointers stored here.
+    ChangeSummaryAccumulator rollups;
+    for (const auto& [key, chain] : identities) {
+        (void)key;
+        rollups.Reset();
+        for (size_t index = chain.first; index != SIZE_MAX; index = next[index]) {
+            const auto& event = j.records[index];
+            VisitSummaryAncestors(event, [&](const std::wstring& ancestor, ChangeKind kind) {
+                rollups.Add(j.summaries[ancestor], kind, event.time, Priority(kind));
+            });
+        }
+        rollups.Commit();
+    }
+}
+
+bool ChangeTracker::ExtendSummaries(Journal& j, uint64_t since, uint64_t now) {
+    const size_t old_count = j.cache_records, count = j.records.size();
+    if (!j.cache_incremental || !old_count || count < old_count || count >= kNoRecord || now < j.cache_now ||
+        j.identity_prev.size() != old_count || j.records.front().id != j.cache_first_id ||
+        j.records[old_count - 1].id != j.cache_last_id) return false;
+    // Records that changed the window: those of the cached window that aged
+    // past the 7 days since, and the in-window events appended after it.
+    struct Touch { uint64_t file_id; uint32_t prefix; uint32_t index; bool fresh; };
+    std::vector<Touch> touched;
+    uint64_t expires = j.cache_expires, oldest = j.cache_oldest;
+    const bool aging = now >= j.cache_expires;
+    if (aging) {
+        expires = now + kRetention; oldest = UINT64_MAX;
+        for (size_t index = 0; index < old_count; ++index) {
+            const auto& event = j.records[index];
+            if (event.time < since || event.time + kRetention < j.cache_now) continue;  // never in the cached window
+            if (event.time + kRetention < now) {
+                touched.push_back({event.file_id, IdentityPrefix(event), static_cast<uint32_t>(index), false});
+                continue;
+            }
+            expires = (std::min)(expires, event.time + kRetention + 1);
+            oldest = (std::min)(oldest, event.time);
+        }
+    }
+    for (size_t index = old_count; index < count; ++index) {
+        const auto& event = j.records[index];
+        if (!InWindow(event, since, now)) continue;
+        if (!Identified(event)) return false;
+        touched.push_back({event.file_id, IdentityPrefix(event), static_cast<uint32_t>(index), true});
+        expires = (std::min)(expires, event.time + kRetention + 1);
+        oldest = (std::min)(oldest, event.time);
+    }
+    // One group per identity, its records still in record order.
+    std::stable_sort(touched.begin(), touched.end(), [](const Touch& a, const Touch& b) {
+        return a.file_id != b.file_id ? a.file_id < b.file_id : a.prefix < b.prefix;
+    });
+    const auto group_end = [&](size_t i) {
+        size_t end = i + 1;
+        while (end < touched.size() && touched[end].file_id == touched[i].file_id && touched[end].prefix == touched[i].prefix) ++end;
+        return end;
+    };
+    // A touched identity is rolled up again over its older records. Past a
+    // quarter of the history a rebuild costs about the same; take it instead.
+    size_t budget = (std::max)(size_t(4096), count / 4);
+    if (!j.identity_slots.empty()) {
+        for (size_t i = 0; i < touched.size(); i = group_end(i)) {
+            const auto& slot = j.identity_slots[SlotIndex(j.identity_slots, touched[i].file_id, touched[i].prefix)];
+            for (uint32_t index = slot.last; index != kNoRecord; index = j.identity_prev[index]) {
+                if (!budget) return false;
+                --budget;
+            }
+        }
+    }
+    j.identity_prev.resize(count, kNoRecord);
+    ChangeSummaryAccumulator rollups;
+    std::vector<uint32_t> chain;
+    std::vector<std::wstring> emptied;  // ancestors that may have lost their last identity
+    for (size_t i = 0; i < touched.size();) {
+        const size_t end = group_end(i);
+        const bool aged = std::any_of(touched.begin() + i, touched.begin() + end, [](const Touch& t) { return !t.fresh; });
+        ReserveSlots(j.identity_slots, j.identity_live + 1);
+        auto& slot = j.identity_slots[SlotIndex(j.identity_slots, touched[i].file_id, touched[i].prefix)];
+        if (slot.last == kNoRecord) {
+            slot.file_id = touched[i].file_id; slot.prefix = touched[i].prefix; ++j.identity_live;
+        } else {
+            RollUp(j.records, j.identity_prev, slot.last, j.cache_now, chain, rollups, j.summaries, aged ? &emptied : nullptr);
+            rollups.Retract();
+        }
+        for (size_t k = i; k < end; ++k) {
+            if (!touched[k].fresh) continue;
+            j.identity_prev[touched[k].index] = slot.last;
+            slot.last = touched[k].index;
+        }
+        RollUp(j.records, j.identity_prev, slot.last, now, chain, rollups, j.summaries);
+        rollups.Commit();
+        i = end;
+    }
+    // A rebuild has no entry for a folder without identities.
+    for (const auto& ancestor : emptied) {
+        const auto found = j.summaries.find(ancestor);
+        if (found != j.summaries.end() && !found->second.count) j.summaries.erase(found);
+    }
+    j.cache_records = count;
+    j.cache_last_id = j.records.back().id;
+    j.cache_expires = expires; j.cache_oldest = oldest; j.cache_now = now;
+    return true;
+}
+
 ChangeResponse ChangeTracker::Summaries(const std::wstring& owner, const std::vector<std::wstring>& paths, uint64_t since) {
     std::lock_guard lock(mutex_); ChangeResponse out;
     auto& j = journals_[owner]; Load(owner, j); const auto now = Now();
     since = (std::max)(since, j.tracking_since);
     out.state = j.expiry < now ? ChangeState::Unavailable :
         (j.gap && now < j.gap_until && since <= j.gap_end ? ChangeState::Gap : ChangeState::Available);
-    if (j.cache_revision != j.revision || since < j.cache_since || since > j.cache_oldest || now >= j.cache_expires) {
-        const auto aliases = EventAliases(j.records, since, now);
-        j.cache_expires = now + kRetention; j.cache_oldest = UINT64_MAX;
-        struct Chain { size_t first, last; };
-        std::unordered_map<std::wstring, Chain> identities;
-        std::vector<size_t> next(j.records.size(), SIZE_MAX);
-        std::unordered_set<std::wstring> initial_paths;
-        j.summaries.clear();
-        for (const auto& event : j.records) {
-            if (event.time < since || event.time + kRetention < now) continue;
-            if (event.source == ChangeSource::InitialMtime && aliases.contains(Normalize(event.path))) continue;
-            j.cache_expires = (std::min)(j.cache_expires, event.time + kRetention + 1);
-            j.cache_oldest = (std::min)(j.cache_oldest, event.time);
-            if (event.source == ChangeSource::InitialMtime) {
-                if (!initial_paths.insert(Normalize(event.path)).second) continue;
-                VisitAncestors(event, [&](const std::wstring& ancestor) {
-                    auto& summary = j.summaries[ancestor];
-                    ++summary.count; ++summary.initial_count;
-                    summary.last_change = (std::max)(summary.last_change, event.time);
-                });
-                continue;
-            }
-            const auto key = Key(event, aliases);
-            const size_t index = static_cast<size_t>(&event - j.records.data());
-            const auto [identity, inserted] = identities.try_emplace(key, Chain{index, index});
-            if (!inserted) {
-                next[identity->second.last] = index;
-                identity->second.last = index;
-            }
-        }
-        // Aggregate one file identity at a time, in original event order. The
-        // scratch vector scales with its ancestors, not all files x ancestors.
-        // unordered_map rehash preserves the summary pointers stored here.
-        ChangeSummaryAccumulator rollups;
-        for (const auto& [key, chain] : identities) {
-            (void)key;
-            rollups.Reset();
-            for (size_t index = chain.first; index != SIZE_MAX; index = next[index]) {
-                const auto& event = j.records[index];
-                VisitSummaryAncestors(event, [&](const std::wstring& ancestor, ChangeKind kind) {
-                    rollups.Add(j.summaries[ancestor], kind, event.time, Priority(kind));
-                });
-            }
-            rollups.Commit();
-        }
+    const bool since_moved = since < j.cache_since || since > j.cache_oldest;
+    if (j.cache_revision != j.revision || since_moved || now >= j.cache_expires) {
+        // Between flushes the journal only gains events at the end and loses
+        // the oldest to the 7-day limit; apply both to the cached rollups and
+        // rebuild only when that would not be exact.
+        if (since_moved || !ExtendSummaries(j, since, now)) RebuildSummaries(j, since, now);
         j.cache_revision = j.revision; j.cache_since = since;
     }
     j.cache_since = since;
