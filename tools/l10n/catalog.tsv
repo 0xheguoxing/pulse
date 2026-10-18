@@ -2300,3 +2300,14 @@ GlobalSearchNoFilteredResults	IDS_GLOBAL_SEARCH_NO_FILTERED_RESULTS	3502	当前�
 MediaPackUnused	IDS_MEDIA_PACK_UNUSED	3503	未使用	Not in use	未使用
 MediaPackLocalNotice	IDS_MEDIA_PACK_LOCAL_NOTICE	3504	正在使用本地 FFmpeg，不需要下载这个增强包。	Your own FFmpeg is in use, so this pack is not needed.	正在使用本機 FFmpeg，不需要下載這個增強包。
 MediaPackLocalNoticeInstalled	IDS_MEDIA_PACK_LOCAL_NOTICE_INSTALLED	3505	正在使用本地 FFmpeg，已安装的增强包不会被用到，可以卸载以释放空间。	Your own FFmpeg is in use. The installed pack is not used and can be removed to free space.	正在使用本機 FFmpeg，已安裝的增強包不會被用到，可以解除安裝以釋放空間。
+OpElapsed	IDS_OP_ELAPSED	3560	已用时间	Elapsed	已用時間
+OpRemainingShort	IDS_OP_REMAINING_SHORT	3561	剩余	Remaining	剩餘
+OpAverageLead	IDS_OP_AVERAGE_LEAD	3562	平均 	Avg 	平均 
+OpTookLead	IDS_OP_TOOK_LEAD	3563	用时 	Took 	用時 
+OpPausing	IDS_OP_PAUSING	3564	正在暂停…	Pausing…	正在暫停…
+OpHoverKeepsOpen	IDS_OP_HOVER_KEEPS_OPEN	3565	鼠标停留时保持打开	Stays open while hovered	滑鼠停留時保持開啟
+OpProcessedItems	IDS_OP_PROCESSED_ITEMS	3566	已处理	Processed	已處理
+OpTransferredBytes	IDS_OP_TRANSFERRED_BYTES	3567	已传输	Transferred	已傳輸
+OpAverageSpeed	IDS_OP_AVERAGE_SPEED	3568	平均速度	Average speed	平均速度
+OpPeakSpeed	IDS_OP_PEAK_SPEED	3569	峰值速度	Peak speed	峰值速度
+OpCancelling	IDS_OP_CANCELLING	3570	正在取消…	Cancelling…	正在取消…

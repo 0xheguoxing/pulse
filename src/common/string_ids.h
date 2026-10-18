@@ -2293,5 +2293,16 @@
 #define IDS_MEDIA_PACK_UNUSED                                                            3503
 #define IDS_MEDIA_PACK_LOCAL_NOTICE                                                      3504
 #define IDS_MEDIA_PACK_LOCAL_NOTICE_INSTALLED                                            3505
+#define IDS_OP_ELAPSED                                                                   3560
+#define IDS_OP_REMAINING_SHORT                                                           3561
+#define IDS_OP_AVERAGE_LEAD                                                              3562
+#define IDS_OP_TOOK_LEAD                                                                 3563
+#define IDS_OP_PAUSING                                                                   3564
+#define IDS_OP_HOVER_KEEPS_OPEN                                                          3565
+#define IDS_OP_PROCESSED_ITEMS                                                           3566
+#define IDS_OP_TRANSFERRED_BYTES                                                         3567
+#define IDS_OP_AVERAGE_SPEED                                                             3568
+#define IDS_OP_PEAK_SPEED                                                                3569
+#define IDS_OP_CANCELLING                                                                3570
 
 #endif  // PULSE_STRING_IDS_H

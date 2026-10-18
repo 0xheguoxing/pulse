@@ -2279,6 +2279,17 @@ BEGIN
     IDS_MEDIA_PACK_UNUSED "未使用"
     IDS_MEDIA_PACK_LOCAL_NOTICE "正在使用本地 FFmpeg，不需要下载这个增强包。"
     IDS_MEDIA_PACK_LOCAL_NOTICE_INSTALLED "正在使用本地 FFmpeg，已安装的增强包不会被用到，可以卸载以释放空间。"
+    IDS_OP_ELAPSED "已用时间"
+    IDS_OP_REMAINING_SHORT "剩余"
+    IDS_OP_AVERAGE_LEAD "平均 "
+    IDS_OP_TOOK_LEAD "用时 "
+    IDS_OP_PAUSING "正在暂停…"
+    IDS_OP_HOVER_KEEPS_OPEN "鼠标停留时保持打开"
+    IDS_OP_PROCESSED_ITEMS "已处理"
+    IDS_OP_TRANSFERRED_BYTES "已传输"
+    IDS_OP_AVERAGE_SPEED "平均速度"
+    IDS_OP_PEAK_SPEED "峰值速度"
+    IDS_OP_CANCELLING "正在取消…"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4557,6 +4568,17 @@ BEGIN
     IDS_MEDIA_PACK_UNUSED "Not in use"
     IDS_MEDIA_PACK_LOCAL_NOTICE "Your own FFmpeg is in use, so this pack is not needed."
     IDS_MEDIA_PACK_LOCAL_NOTICE_INSTALLED "Your own FFmpeg is in use. The installed pack is not used and can be removed to free space."
+    IDS_OP_ELAPSED "Elapsed"
+    IDS_OP_REMAINING_SHORT "Remaining"
+    IDS_OP_AVERAGE_LEAD "Avg "
+    IDS_OP_TOOK_LEAD "Took "
+    IDS_OP_PAUSING "Pausing…"
+    IDS_OP_HOVER_KEEPS_OPEN "Stays open while hovered"
+    IDS_OP_PROCESSED_ITEMS "Processed"
+    IDS_OP_TRANSFERRED_BYTES "Transferred"
+    IDS_OP_AVERAGE_SPEED "Average speed"
+    IDS_OP_PEAK_SPEED "Peak speed"
+    IDS_OP_CANCELLING "Cancelling…"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

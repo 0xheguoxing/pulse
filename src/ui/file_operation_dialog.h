@@ -6,6 +6,7 @@
 #include "ui_compositor.h"
 #include "../ops/ops_manager.h"
 
+#include <chrono>
 #include <deque>
 #include <functional>
 #include <string>
@@ -33,6 +34,9 @@ public:
     void Show(bool activate = true);
     void Hide();
     bool IsVisible() const;
+    // When the window is built after the task started (first pill click), the
+    // app passes the start it recorded so 已用时间 counts from the real start.
+    void SetTaskStart(uint64_t task_id, std::chrono::steady_clock::time_point started);
 
 private:
     friend struct FileOperationWindowTestAccess;
@@ -43,6 +47,12 @@ private:
     void ResizeForDetails(bool preserve_center);
     int HitTestControl(float x, float y) const;
     void RequestClose();
+    void CreateCardFormats();
+    bool AutoClosePending() const;
+    void TickAutoClose(ULONGLONG now);
+    void BeginAutoClose();
+    void FinishAutoClose();
+    void SampleGraph(ULONGLONG now);
 
     HWND hwnd_ = nullptr;
     HWND owner_ = nullptr;
@@ -50,8 +60,31 @@ private:
     fluent::Painter painter_;
     FileOperationCallbacks callbacks_;
     ops::OpStatus status_;
-    std::deque<double> speed_history_;
+    // Speed graph (pulse_ops_dialogs.html §1): x is progress when the task
+    // reports a percentage, otherwise sample order.
+    struct GraphPoint { float x = 0.0f; double v = 0.0; };
+    std::deque<GraphPoint> graph_;
+    bool graph_by_progress_ = true;
     ULONGLONG speed_sample_tick_ = 0;
+    ULONGLONG task_start_tick_ = 0;
+    ULONGLONG task_end_tick_ = 0;
+    // Auto-close after a successful finish: counts down 2.5 s from the finish,
+    // held at full while the pointer is over the window.
+    static constexpr ULONGLONG kAutoCloseMs = 2500;
+    static constexpr ULONGLONG kCloseAnimMs = 200;
+    ULONGLONG countdown_base_ = 0;
+    bool countdown_hover_ = false;
+    bool closing_ = false;
+    ULONGLONG closing_tick_ = 0;
+    ComPtr<IDWriteTextFormat> pct_format_;
+    ComPtr<IDWriteTextFormat> unit_format_;
+    ComPtr<IDWriteTextFormat> title_format_;
+    ComPtr<IDWriteTextFormat> speed_format_;
+    ComPtr<IDWriteTextFormat> label_format_;
+    ComPtr<IDWriteTextFormat> value_format_;
+    ComPtr<IDWriteTextFormat> chip_format_;
+    ComPtr<IDWriteTextFormat> glyph_format_;
+    ComPtr<IDWriteTextFormat> tile_glyph_format_;
     bool dark_ = false;
     bool backdrop_enabled_ = false;
     bool detailed_ = false;

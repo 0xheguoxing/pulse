@@ -525,7 +525,10 @@ static void HideOperationWindow(AppState& s) {
 static void ShowOperationWindow(AppState& s, const ops::OpStatus& status, bool activate) {
     const bool created = !s.operationWindow;
     if (!EnsureOperationWindow(s)) return;
-    if (created) s.operationWindow->Update(status);
+    if (created) {
+        s.operationWindow->Update(status);
+        s.operationWindow->SetTaskStart(s.operationUiTaskId, s.operationStartedAt);
+    }
     s.operationWindow->Show(activate);
 }
 
@@ -544,6 +547,7 @@ void MoveOperationUi(AppState& from, AppState& to) {
     to.ops.SetUiWindow(to.hwnd);
     if (shown && EnsureOperationWindow(to)) {
         to.operationWindow->Update(to.ops.Status());
+        to.operationWindow->SetTaskStart(to.operationUiTaskId, to.operationStartedAt);
         to.operationWindow->Show(false);
     }
 }
@@ -557,6 +561,7 @@ void PinAndShowOperationWindow(AppState& s) {
     s.operationPinnedByUser = true;
     s.operationAutoShown = true;
     s.operationWindow->Update(status);
+    s.operationWindow->SetTaskStart(s.operationUiTaskId, s.operationStartedAt);
     s.operationWindow->Show(true);
 }
 
@@ -660,12 +665,11 @@ void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog) {
     if (s.operationPinnedByUser) return;
 
     if (status.phase == ops::OpPhase::Completed) {
-        if (OperationWindowVisible(s)) {
-            if (s.operationFinishedAt.time_since_epoch().count() == 0)
-                s.operationFinishedAt = now;
-            if (now - s.operationFinishedAt >= std::chrono::milliseconds(600))
-                HideOperationWindow(s);
-        }
+        // The window closes itself 2.5 s after a successful finish (held
+        // while hovered, pulse_ops_dialogs.html §4); only the finish time is
+        // kept here.
+        if (s.operationFinishedAt.time_since_epoch().count() == 0)
+            s.operationFinishedAt = now;
     } else if (status.phase == ops::OpPhase::Failed) {
         // The ops notification shows the locked-item prompt; a timer tick
         // that sees the failure first must not open the failure window.

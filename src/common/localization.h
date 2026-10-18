@@ -2289,6 +2289,17 @@ enum class StringId : UINT {
     MediaPackUnused = IDS_MEDIA_PACK_UNUSED,
     MediaPackLocalNotice = IDS_MEDIA_PACK_LOCAL_NOTICE,
     MediaPackLocalNoticeInstalled = IDS_MEDIA_PACK_LOCAL_NOTICE_INSTALLED,
+    OpElapsed = IDS_OP_ELAPSED,
+    OpRemainingShort = IDS_OP_REMAINING_SHORT,
+    OpAverageLead = IDS_OP_AVERAGE_LEAD,
+    OpTookLead = IDS_OP_TOOK_LEAD,
+    OpPausing = IDS_OP_PAUSING,
+    OpHoverKeepsOpen = IDS_OP_HOVER_KEEPS_OPEN,
+    OpProcessedItems = IDS_OP_PROCESSED_ITEMS,
+    OpTransferredBytes = IDS_OP_TRANSFERRED_BYTES,
+    OpAverageSpeed = IDS_OP_AVERAGE_SPEED,
+    OpPeakSpeed = IDS_OP_PEAK_SPEED,
+    OpCancelling = IDS_OP_CANCELLING,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

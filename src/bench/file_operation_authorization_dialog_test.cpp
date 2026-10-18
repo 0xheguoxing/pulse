@@ -10,7 +10,7 @@ namespace pulse::ui {
 struct FileOperationWindowTestAccess {
     static HWND Handle(FileOperationWindow& window) { return window.hwnd_; }
     static void Size(FileOperationWindow& window, UINT dpi) {
-        RECT rect{0, 0, MulDiv(460, dpi, 96), MulDiv(268, dpi, 96)};
+        RECT rect{0, 0, MulDiv(468, dpi, 96), MulDiv(348, dpi, 96)};
         SendMessageW(window.hwnd_, WM_DPICHANGED, MAKELONG(dpi, dpi), reinterpret_cast<LPARAM>(&rect));
     }
     static POINT Button(FileOperationWindow& window, int id, int* pixels = nullptr) {
