@@ -283,6 +283,7 @@ struct PaneViewModel {
     int rename_index = -1;        // name column is in edit mode; do not draw the label
     std::wstring rename_text;     // text being typed; icon grids grow the field to wrap it
     bool focus_first_hint = false; // first view row has keyboard focus but no selection
+    int focus_ring_source = -1;    // unselected row holding keyboard focus (Ctrl+arrows)
     float scroll_y = 0.0f;
     float scroll_x = 0.0f;
     ViewMode view_mode = ViewMode::Details;
@@ -1809,6 +1810,11 @@ public:
                              const std::array<float, 4>& search_dividers = {},
                              float row_height_px = 0.0f) const;
     bool PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,
+                         int source_index, float x, float y) const;
+    // The item's drag handle: icon + name in Details / List / Small icons
+    // (the rest of the row starts a marquee, like File Explorer); the whole
+    // cell in the other views.
+    bool PointInItemGrip(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,
                          int source_index, float x, float y) const;
     // Details tree: view row whose chevron is under (x, y), else -1.
     int TreeChevronAt(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,

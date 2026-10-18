@@ -297,8 +297,11 @@ void Tab::ToggleSelect(int index) {
     } else {
         selected.insert(index);
         selected_index = index;
-        if (selection_anchor < 0) selection_anchor = index;
     }
+    // As in File Explorer, the toggled item becomes the anchor for a later
+    // Shift-click and keeps keyboard focus even when it was deselected.
+    selection_anchor = index;
+    SetCaret(index);
 }
 
 void Tab::SelectRange(int from, int to, const ui::PaneViewModel* view) {
@@ -449,6 +452,26 @@ void Tab::InvertIndices(const std::vector<int>& universe) {
         selected_index = *selected.begin();
         selection_anchor = selected_index;
     }
+}
+
+void Tab::AddRange(int from, int to, const ui::PaneViewModel* view) {
+    RememberSelection remember{*this};
+    const int n = CountBound();
+    if (n <= 0) {
+        ClearSelection();
+        return;
+    }
+    MaterializeSelection();
+    std::unordered_set<int> base = std::move(selected);
+    SelectRange(from, to, view);
+    for (int index : base) selected.insert(index);
+    if (static_cast<int>(selected.size()) == n) {
+        all_selected = true;
+        selected.clear();
+    }
+    to = std::clamp(to, 0, n - 1);
+    if (IsSelected(to)) selected_index = to;
+    else if (selected_index < 0 && !selected.empty()) selected_index = *selected.begin();
 }
 
 void Tab::MoveFocus(int index, bool extend, const ui::PaneViewModel* view) {
@@ -1725,6 +1748,7 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
     out.all_selected = tab->all_selected;
     out.selected_indices = tab->all_selected ? nullptr : &tab->selected;
     out.focus_first_hint = tab->HasFocusHint();
+    out.focus_ring_source = tab->HasCaret() && !tab->IsSelected(tab->caret_index) ? tab->caret_index : -1;
     out.scroll_y = tab->scroll_y;
     out.scroll_x = tab->scroll_x;
     out.view_mode = tab->view_mode;

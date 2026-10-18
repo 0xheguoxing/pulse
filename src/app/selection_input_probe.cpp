@@ -171,6 +171,73 @@ void CheckFilteredRanges(Check check) {
     pane.view.SelectRange(0, 2, &view);
     check(pane.view.SelectedCount() == 0, "empty filtered view cannot select source rows");
 }
+
+// Explorer-style keyboard selection through the real key handler. GetKeyState
+// reads this thread's key table, so SetKeyboardState stands in for held keys.
+int CheckKeyboardSelection(AppState& s, FILE* log) {
+    auto* tab = ActiveTab(s);
+    if (!tab || tab->EntryCount() < 4) {
+        fprintf(log, "[ERROR] keyboard fixture needs 4 rows, got %zu\n", tab ? tab->EntryCount() : 0);
+        return 2;
+    }
+    ui::PaneViewModel view;
+    app::FillPaneViewModel(view, *s.pane, &s.places);
+    const auto row = [&](int v) { return view.SourceIndex(v); };
+    int failures = 0;
+    const auto check = [&](bool ok, const char* label) {
+        fprintf(log, "[%s] %s\n", ok ? "PASS" : "FAIL", label);
+        fflush(log);
+        failures += !ok;
+    };
+    const auto key = [&](UINT vk, bool ctrl, bool shift) {
+        BYTE keys[256]{};
+        GetKeyboardState(keys);
+        keys[VK_CONTROL] = keys[VK_LCONTROL] = ctrl ? 0x80 : 0;
+        keys[VK_SHIFT] = keys[VK_LSHIFT] = shift ? 0x80 : 0;
+        SetKeyboardState(keys);
+        HandleKeyDown(&s, s.hwnd, WM_KEYDOWN, vk, 0);
+        keys[VK_CONTROL] = keys[VK_LCONTROL] = keys[VK_SHIFT] = keys[VK_LSHIFT] = 0;
+        SetKeyboardState(keys);
+    };
+    const auto rows = [&](std::initializer_list<int> views) {
+        std::vector<int> out;
+        for (int v : views) out.push_back(row(v));
+        std::sort(out.begin(), out.end());
+        return out;
+    };
+    tab->SelectOnly(row(0));
+    key(VK_DOWN, true, false);
+    key(VK_DOWN, true, false);
+    check(tab->SelectedIndices() == rows({0}) && tab->FocusIndex() == row(2),
+          "Ctrl+Down moves focus without changing the selection");
+    ui::PaneViewModel ring;
+    app::FillPaneViewModel(ring, *s.pane, &s.places);
+    check(ring.focus_ring_source == row(2), "the unselected focused row gets the focus ring");
+    key(VK_SPACE, true, false);
+    check(tab->SelectedIndices() == rows({0, 2}), "Ctrl+Space toggles the focused row on");
+    key(VK_DOWN, true, true);
+    check(tab->SelectedIndices() == rows({0, 2, 3}), "Ctrl+Shift+Down adds the range from the anchor");
+    HandleListRowClick(s, row(3), true, false);
+    FinishListRowClick(s);
+    check(tab->SelectedIndices() == rows({0, 2}) && tab->FocusIndex() == row(3) &&
+          tab->selection_anchor == row(3), "Ctrl-click deselects, keeps focus and becomes the anchor");
+    HandleListRowClick(s, row(1), false, true);
+    check(tab->SelectedIndices() == rows({1, 2, 3}), "Shift-click replaces with anchor..row");
+    key(VK_HOME, true, false);
+    check(tab->SelectedIndices() == rows({1, 2, 3}) && tab->FocusIndex() == row(0),
+          "Ctrl+Home moves focus only");
+    key(VK_SPACE, false, true);
+    check(tab->SelectedIndices() == rows({0, 1, 2, 3}), "Shift+Space selects anchor..focus");
+    key(VK_DOWN, false, false);
+    check(tab->SelectedIndices() == rows({1}), "plain Down continues from the moved focus");
+    tab->SelectOnly(row(0));
+    HandleListRowClick(s, row(2), true, false);
+    HandleListRowClick(s, row(3), true, true);
+    check(tab->SelectedIndices() == rows({0, 2, 3}), "Ctrl+Shift-click adds the range");
+    key(VK_UP, false, true);
+    check(tab->SelectedIndices() == rows({2}), "Shift+Up replaces with anchor..focus");
+    return failures ? 1 : 0;
+}
 }
 // Runs only in an explicitly isolated --shot test instance with fixture files.
 int RunSelectionInputProbe(AppState& s, const wchar_t* output) {
@@ -178,6 +245,11 @@ int RunSelectionInputProbe(AppState& s, const wchar_t* output) {
     if (_wfopen_s(&log, output, L"w") || !log) return 2;
     if (GetEnvironmentVariableW(L"PULSE_TEST_DELETE_SELECTION_ONLY", nullptr, 0)) {
         const int result = CheckDeleteSelection(s, log);
+        std::fclose(log);
+        return result;
+    }
+    if (GetEnvironmentVariableW(L"PULSE_TEST_KEYBOARD_SELECTION_ONLY", nullptr, 0)) {
+        const int result = CheckKeyboardSelection(s, log);
         std::fclose(log);
         return result;
     }

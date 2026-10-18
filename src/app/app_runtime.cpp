@@ -3127,7 +3127,8 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     }
     vm.hover_pane_index = s.hoverPaneIndex;
     vm.column_resize_pressed = s.columnResizing;
-    vm.tooltip_text = s.tooltipText;
+    // No hover tips while a marquee owns the pointer.
+    vm.tooltip_text = s.marqueeActive ? std::wstring{} : s.tooltipText;
     if (s.teachTip >= 0) {
         using I = l10n::StringId;
         static constexpr I kTitles[] = {I::TeachMiddleTitle, I::TeachTrayTitle, I::TeachCompareTitle,

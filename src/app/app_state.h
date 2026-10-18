@@ -945,6 +945,17 @@ struct AppState : AppCoreOwner {
     bool marqueePending = false;
     bool marqueeActive = false;
     bool marqueeAdditive = false;
+    bool marqueeToggle = false;      // Ctrl: items in the band flip against marqueeBase
+    // Press on a row outside its icon + name (Details / List): a release
+    // without movement clicks that row with these modifiers; movement turns
+    // it into a marquee.
+    int marqueeRowIndex = -1;
+    bool marqueeRowCtrl = false;
+    bool marqueeRowShift = false;
+    // Selection before the press, restored when Esc cancels the marquee.
+    std::unordered_set<int> marqueeBefore;
+    bool marqueeBeforeAll = false;
+    int marqueeBeforeIndex = -1;
     app::Pane* blankClickPane = nullptr;
     app::Tab* blankClickTab = nullptr;
     uint64_t blankClickGeneration = 0;
