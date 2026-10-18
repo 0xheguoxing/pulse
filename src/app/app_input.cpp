@@ -1423,6 +1423,50 @@ void UpdateSmoothScroll(AppState& s, const HoverPointerApi& api) {
     }
 }
 
+namespace {
+// The size tooltip names the old size: drop it while the size changes; it
+// returns with the new one once the pointer rests.
+void ResetSizeTooltip(AppState& s) {
+    s.tooltipText.clear();
+    s.hoverSince = GetTickCount64();
+}
+
+// Pane header size slider (P1e): the size under x for the pane being dragged.
+void DragPaneSize(AppState& s, int mx) {
+    const ui::WindowViewModel vm = BuildVm(s, false);
+    const int slot = s.paneSizeDragPane;
+    if (slot < 0 || slot >= static_cast<int>(vm.pane_slots.size())) return;
+    const auto& pane = vm.pane_slots[static_cast<size_t>(slot)];
+    const float dip = s.renderer.PaneSizeSliderValueAt(pane.pane, pane.rect, static_cast<float>(mx));
+    if (dip > 0.0f) SetIconSize(s, dip);
+    ResetSizeTooltip(s);
+}
+
+void EndPaneSizeDrag(AppState& s) {
+    if (!s.paneSizeDragging) return;
+    s.paneSizeDragging = false;
+    s.paneSizeDragPane = -1;
+    if (s.paneSizeSavePending) {
+        s.paneSizeSavePending = false;
+        s.appPrefs.Save();
+    }
+}
+
+// The slider follows the press; a narrow pane's size button opens or closes it.
+void PressPaneSize(AppState& s, HWND hwnd, const ui::HitTestResult& hit, int mx) {
+    if (hit.region == ui::HitTestResult::PaneSizeButton) {
+        if (app::Pane* pane = PaneAtSlot(s, hit.pane_index)) pane->size_slider_open = !pane->size_slider_open;
+    } else {
+        s.dragPending = false;
+        s.paneSizeDragging = true;
+        s.paneSizeDragPane = hit.pane_index;
+        SetCapture(hwnd);
+        DragPaneSize(s, mx);
+    }
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+} // namespace
+
 LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (!s) return DefWindowProcW(hwnd, msg, wParam, lParam);
         int mx = GET_X_LPARAM(lParam);
@@ -1436,6 +1480,15 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         s->bloom_accent.SetPointer(static_cast<float>(mx), static_cast<float>(my), true);
         if (static_cast<float>(my) >= s->renderer.TitleBarHeight() && s->renderer.ReleaseTabWidths())
             InvalidateRect(hwnd, nullptr, FALSE);
+        if (s->paneSizeDragging) {
+            if (!(wParam & MK_LBUTTON)) {
+                EndPaneSizeDrag(*s);  // capture lost without WM_LBUTTONUP
+            } else {
+                DragPaneSize(*s, mx);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+        }
         if (s->settings.slider_drag() >= 0) {
             if (!(wParam & MK_LBUTTON)) {
                 s->settings.EndSlider(); // capture lost without WM_LBUTTONUP
@@ -2544,6 +2597,11 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         ui::WindowViewModel vm = BuildVm(*s, false);
         D2D1_RECT_F rect = D2D1::RectF(0, 0, (float)s->compositor.Width(), (float)s->compositor.Height());
         ui::HitTestResult hit = s->renderer.HitTest(vm, rect, (float)mx, (float)my);
+        // A narrow pane's opened size slider closes on any press outside it.
+        if (hit.region != ui::HitTestResult::PaneSizeSlider && hit.region != ui::HitTestResult::PaneSizeButton) {
+            for (int slot = 0; slot < static_cast<int>(vm.pane_slots.size()); ++slot)
+                if (app::Pane* pane = PaneAtSlot(*s, slot)) pane->size_slider_open = false;
+        }
         // Picker T3c: with 自定义工具栏 open, a toolbar pin can be dragged (or
         // clicked); a press anywhere else closes the picker first.
         if (ui::ToolbarPickerOpen()) {
@@ -3243,8 +3301,16 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             s->showDetailsPanel = !s->showDetailsPanel;
             s->renderer.SetDetailsPanelVisible(s->showDetailsPanel, true);
             InvalidateRect(hwnd, nullptr, FALSE);
-        } else if (hit.region == ui::HitTestResult::PaneMediumIcons) {
-            SetViewMode(*s, ui::ViewMode::MediumIcons);
+        } else if (hit.region == ui::HitTestResult::PaneMediumIcons ||
+                   hit.region == ui::HitTestResult::PaneWall ||
+                   hit.region == ui::HitTestResult::PaneSizeSlider ||
+                   hit.region == ui::HitTestResult::PaneSizeButton) {
+            // One branch (this chain is at MSVC's nesting limit, see Sort/Group).
+            // Icons / photo wall buttons: the size used last in this tab (Medium
+            // at first), as a grid or as a photo wall.
+            if (hit.region == ui::HitTestResult::PaneMediumIcons || hit.region == ui::HitTestResult::PaneWall)
+                ShowIconWall(*s, hit.region == ui::HitTestResult::PaneWall);
+            else PressPaneSize(*s, hwnd, hit, mx);
         } else if (hit.region == ui::HitTestResult::PaneDetails) {
             SetViewMode(*s, ui::ViewMode::Details);
         } else if (hit.region == ui::HitTestResult::ToolbarSort ||
@@ -3552,6 +3618,10 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
             {"column_layout", double_tab && double_tab->column_layout},
             {"has_index", hit.index >= 0},
             {"item_index", hit.index >= 0 ? static_cast<uint64_t>(hit.index) : 0}});
+        if (hit.region == ui::HitTestResult::PaneSizeSlider) {  // back to the 96 DIP preset
+            SetViewMode(*s, ui::ViewMode::LargeIcons);
+            return 0;
+        }
         if (HandleWindowIdentityDoubleClick(*s, hit, POINT{mx, my})) return 0;  // M7c: rename, recolor
         if (pulse::HandleTabDoubleClick(*s, hit)) return 0;
         if (HandlePaneHeaderBlankDoubleClick(*s, hit)) {
@@ -3578,6 +3648,8 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
         case ui::HitTestResult::Delete:
         case ui::HitTestResult::DetailsToggle:
         case ui::HitTestResult::PaneMediumIcons:
+        case ui::HitTestResult::PaneWall:
+        case ui::HitTestResult::PaneSizeButton:
         case ui::HitTestResult::PaneViewButton:
         case ui::HitTestResult::PaneDetails:
         case ui::HitTestResult::ToolbarPin:
@@ -3673,6 +3745,12 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         }
         if (s) {
             s->paneDragPending = false;
+            if (s->paneSizeDragging) {
+                EndPaneSizeDrag(*s);
+                if (GetCapture() == hwnd) ReleaseCapture();
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
             if (s->settings.slider_drag() >= 0) {
                 s->settings.EndSlider();
                 if (GetCapture() == hwnd) ReleaseCapture();
@@ -4058,6 +4136,7 @@ LRESULT HandleCaptureChanged(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LP
             s->columnResizing = false;
             s->columnResizeIndex = -1;
             s->columnResizePane = -1;
+            if (reinterpret_cast<HWND>(lParam) != hwnd) EndPaneSizeDrag(*s);
             if (s->trayDrag.pending || s->trayDrag.active) {
                 // Capture lost mid-gesture: the card springs back home.
                 ReleaseTrayDrag(*s, false);
@@ -4436,11 +4515,23 @@ LRESULT HandleMouseWheel(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM
         }
         int delta = GET_WHEEL_DELTA_WPARAM(wParam);
         app::Tab* wheelTab = ActiveTab(*s);
-        if ((GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL) != 0 && !marquee) {
-            if (wheelTab) {
-                const int direction = delta > 0 ? -1 : 1;
-                const int next = std::clamp(ui::ViewModeIndex(wheelTab->view_mode) + direction, 0, 7);
-                SetViewMode(*s, ui::ViewModeFromIndex(next));
+        // The header size slider takes the plain wheel too, within the icon sizes.
+        const bool sizeWheel = wheelHit.region == ui::HitTestResult::PaneSizeSlider;
+        if (((GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL) != 0 || sizeWheel) && !marquee) {
+            if (wheelTab && delta != 0) {
+                const ULONGLONG now = GetTickCount64();
+                if (now - s->zoomWheelTick > 400 || (s->zoomWheelRemainder > 0) != (delta > 0))
+                    s->zoomWheelRemainder = 0;
+                s->zoomWheelTick = now;
+                s->zoomWheelRemainder += delta;
+                // At most one size per message: every step relayouts and
+                // requests thumbnails, and a fast spin should not skip a stop.
+                const int step = std::clamp(s->zoomWheelRemainder / WHEEL_DELTA, -1, 1);
+                if (step != 0) {
+                    s->zoomWheelRemainder = 0;
+                    ZoomIconSize(*s, step, sizeWheel ? nullptr : &pt, !sizeWheel);
+                    if (sizeWheel) ResetSizeTooltip(*s);
+                }
             }
             return 0;
         }

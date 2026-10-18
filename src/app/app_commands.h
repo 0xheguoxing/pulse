@@ -101,7 +101,22 @@ void ShowStarredBadgeEditor(AppState& s, const std::wstring& path,
                                     POINT screen_pt);
 void ShowCuratedItemMenu(AppState& s, const std::wstring& path,
                                 bool recent, POINT screen_pt);
-void SetViewMode(AppState& s, ui::ViewMode mode);
+// anchor: client point of a zoom gesture (Ctrl+wheel); the item under it keeps
+// its place. Without one the focused item (if on screen) or the middle of the
+// visible range is kept in place.
+void SetViewMode(AppState& s, ui::ViewMode mode, const POINT* anchor = nullptr);
+// Continuous icon size (DIP): shown in the icon mode the size belongs to and
+// remembered with the folder's view.
+void SetIconSize(AppState& s, float icon_dip, const POINT* anchor = nullptr);
+// The header's icon button: the icon size used last in this tab.
+void ShowLastIconSize(AppState& s, const POINT* anchor = nullptr);
+// The header's icons / photo wall buttons: that size as a grid or as a photo
+// wall, remembered with the folder.
+void ShowIconWall(AppState& s, bool wall, const POINT* anchor = nullptr);
+// Ctrl+wheel: `step` notches through the icon sizes (ui::ZoomIconDip). Out of
+// the smallest goes to Details; in from other views returns to the last size.
+// leave_icons = false (the header slider) stays within the icon sizes.
+void ZoomIconSize(AppState& s, int step, const POINT* anchor = nullptr, bool leave_icons = true);
 // "Apply to all folders" (#31) for the active real folder. Returns true when
 // applied; confirm=false skips the dialog (self tests).
 bool ApplyViewToAllFolders(AppState& s, bool confirm = true);

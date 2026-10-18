@@ -9,8 +9,13 @@ int main() {
         std::cout << (ok ? "[PASS] " : "[FAIL] ") << label << '\n';
         failures += !ok;
     };
-    check(ViewLayout(ViewMode::ExtraLargeIcons, {0, 0, 900, 900}, 20, 0, 0, 1).HitTest(850, 20) == -1,
-          "extra-large right remainder is blank");
+    {
+        // Rows are centred: both margins around an extra-large row are blank.
+        const ViewLayout xl(ViewMode::ExtraLargeIcons, {0, 0, 900, 900}, 20, 0, 0, 1);
+        const auto first = xl.ItemRect(0), last = xl.ItemRect(xl.Metrics().columns - 1);
+        check(first.left > 0 && last.right < 900 && xl.HitTest(first.left - 1, 20) == -1 &&
+              xl.HitTest(last.right + 1, 20) == -1, "extra-large row margins are blank");
+    }
     check(ViewLayout(ViewMode::List, {0, 0, 800, 250}, 30, 0, 0, 1).HitTest(30, 245) == -1,
           "column-major bottom remainder is blank");
     for (int mode = 0; mode < 8; ++mode) {

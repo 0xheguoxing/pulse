@@ -1,0 +1,1192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Pulse 视图快速切换 · 图标密度重构 — 效果图</title>
+<style>
+:root{--accent:#4CC2FF;--accent-strong:#0078D4}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 "Segoe UI Variable","Segoe UI","Microsoft YaHei UI",sans-serif;background:#111;color:#eee}
+body.light{background:#e9eef4;color:#1b1b1b}
+.wrap{max-width:1320px;margin:0 auto;padding:24px 28px 64px}
+h1{font-size:22px;margin:0 0 4px}
+h2{font-size:17px;margin:38px 0 6px}
+h3{font-size:14.5px;margin:18px 0 6px}
+p.lead,.note{color:#aab;margin:4px 0 14px;max-width:1040px}
+body.light p.lead,body.light .note{color:#556}
+code{font:12.5px Consolas,"Cascadia Mono",monospace;background:rgba(127,127,127,.18);padding:1px 5px;border-radius:4px}
+.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:14px 0 8px}
+.seg{display:inline-flex;border-radius:6px;overflow:hidden;border:1px solid #444}
+body.light .seg{border-color:#bbb}
+.seg button{background:transparent;color:inherit;border:0;padding:5px 13px;font:inherit;font-size:13px;cursor:pointer}
+.seg button.on{background:var(--accent-strong);color:#fff}
+.lbl{opacity:.7;margin-right:2px;font-size:13px}
+.kbd{display:inline-block;font:12px Consolas,monospace;border:1px solid rgba(127,127,127,.5);border-bottom-width:2px;border-radius:4px;padding:0 5px;margin:0 1px}
+.tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:9px;background:var(--accent-strong);color:#fff;margin-left:6px;vertical-align:1px}
+.tag.gray{background:#666}.tag.warn{background:#b7791f}
+
+/* ---------- window chrome ---------- */
+.win{--title:#1a1a1a;--sheet:#202020;--card:#272727;--card2:#2d2d2d;--text:#fff;--text2:#c5c5c5;--text3:#8f8f8f;--stroke:rgba(255,255,255,.08);
+  --sel:rgba(76,194,255,.22);--selb:rgba(76,194,255,.55);--hover:rgba(255,255,255,.06);--zebra:rgba(255,255,255,.025);--acc:#4CC2FF;--flyout:#2c2c2c;
+  border-radius:8px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.45);background:var(--sheet);color:var(--text);user-select:none;position:relative}
+body.light .win{--title:#ebebeb;--sheet:#f3f3f3;--card:#fff;--card2:#f7f7f7;--text:#1b1b1b;--text2:#5d5d5d;--text3:#8a8a8a;--stroke:rgba(0,0,0,.09);
+  --sel:rgba(0,120,212,.14);--selb:rgba(0,120,212,.5);--hover:rgba(0,0,0,.045);--zebra:rgba(0,0,0,.022);--acc:#0078D4;--flyout:#fbfbfb}
+.title{height:40px;background:var(--title);display:flex;align-items:flex-end;padding-left:12px;gap:4px}
+.title .app{align-self:center;font-weight:600;font-size:13px;margin-right:18px;display:flex;gap:8px;align-items:center}
+.title .app i{width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#4CC2FF,#0078D4)}
+.tab{height:32px;padding:0 14px;display:flex;align-items:center;gap:8px;border-radius:8px 8px 0 0;font-size:13px}
+.tab.on{background:var(--sheet)}
+.tab .x{opacity:.5;margin-left:24px}
+.toolbar{height:42px;display:flex;align-items:center;padding:0 12px;gap:10px}
+.nav{display:flex;gap:14px;color:var(--text2);font-size:15px;padding:0 4px}
+.addr{flex:1;height:30px;border-radius:5px;background:var(--card);border:1px solid var(--stroke);display:flex;align-items:center;padding:0 10px;color:var(--text);font-size:13px;gap:8px}
+.addr em{font-style:normal;color:var(--text3)}
+.search{width:220px;height:30px;border-radius:5px;background:var(--card);border:1px solid var(--stroke);display:flex;align-items:center;padding:0 10px;color:var(--text3);font-size:13px}
+.body{display:flex;padding:4px 6px 0;gap:6px}
+.side{width:150px;padding:4px 4px;font-size:13px;color:var(--text);flex:none}
+.side div{padding:6px 8px;border-radius:5px;display:flex;gap:8px;align-items:center}
+.side div b{width:12px;height:10px;border-radius:2px;background:#E8B64C;flex:none}
+.side .cur{background:var(--hover)}
+.side .sep{height:1px;padding:0;margin:6px 4px;background:var(--stroke)}
+.pane{flex:1;min-width:0;background:var(--card);border-radius:6px;position:relative;display:flex;flex-direction:column;outline:none}
+.pane::after{content:"";position:absolute;inset:0;border-radius:6px;border:1.5px solid color-mix(in srgb,var(--acc) 40%,transparent);pointer-events:none}
+.phead{height:38px;display:flex;align-items:center;padding:0 8px 0 12px;gap:4px;font-weight:600;font-size:14px;flex:none}
+.phead .t{flex:1}
+.ibtn{width:30px;height:28px;border-radius:5px;display:grid;place-items:center;color:var(--text2);cursor:pointer;position:relative}
+.ibtn:hover{background:var(--hover)}
+.ibtn.on{color:var(--acc);background:color-mix(in srgb,var(--acc) 14%,transparent)}
+.ibtn svg{width:16px;height:16px}
+.ibtn .badge{position:absolute;right:1px;bottom:1px;font:600 8.5px/1 "Segoe UI";color:var(--acc);}
+.colhead{height:26px;display:flex;align-items:center;font-size:12px;color:var(--text2);padding:0 18px 0 42px;flex:none;transition:height .2s,opacity .2s;overflow:hidden}
+.colhead{position:relative;padding:0}.colhead span{white-space:nowrap;position:absolute;top:5px}
+.colhead.hide{height:0;opacity:0}
+.list{flex:1;position:relative;overflow-y:auto;overflow-x:hidden;min-height:0}
+.list::-webkit-scrollbar{width:10px}.list::-webkit-scrollbar-thumb{background:rgba(127,127,127,.35);border-radius:5px;border:3px solid transparent;background-clip:padding-box}
+.inner{position:relative}
+.status{height:32px;display:flex;align-items:center;padding:0 10px 0 14px;font-size:12px;color:var(--text2);gap:10px}
+.status .grow{flex:1}
+
+/* ---------- items ---------- */
+.it{position:absolute;border-radius:6px;cursor:default}
+.it:hover{background:var(--hover)}
+.it.sel{background:var(--sel)}
+.it.sel::before{content:"";position:absolute;inset:0;border-radius:6px;box-shadow:inset 0 0 0 1px var(--selb);pointer-events:none}
+.th{position:absolute;border-radius:4px;background-size:cover;background-position:center;background-repeat:no-repeat}
+.th.icon{background-size:contain;border-radius:0}
+.th.photo{box-shadow:0 0 0 1px rgba(0,0,0,.25)}
+.th .play{position:absolute;left:50%;top:50%;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;background:rgba(0,0,0,.55);display:none}
+.th .play::after{content:"";position:absolute;left:10px;top:7px;border-left:9px solid #fff;border-top:6px solid transparent;border-bottom:6px solid transparent}
+.th .ov{position:absolute;left:0;right:0;bottom:0;padding:14px 6px 4px;font-size:11.5px;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.72));border-radius:0 0 4px 4px;opacity:0;transition:opacity .15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+.lb{position:absolute;font-size:12.5px;line-height:17px;color:var(--text);overflow:hidden;word-break:break-all}
+.lb.c{text-align:center}
+.lb.two{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.lb.one{white-space:nowrap}
+.lb .sub{display:block;color:var(--text3);font-size:11.5px;line-height:16px;white-space:nowrap}
+.md{position:absolute;inset:0;pointer-events:none;font-size:12px;color:var(--text2);transition:opacity .2s}
+.md>span{position:absolute;top:5px;white-space:nowrap}
+.md .s{text-align:right}
+.md .ext{font-size:10.5px;padding:0 5px;border-radius:3px;background:rgba(127,127,127,.18);margin-right:6px}
+
+.anim .it,.anim .th,.anim .lb{transition:left .28s cubic-bezier(.2,.8,.2,1),top .28s cubic-bezier(.2,.8,.2,1),width .28s cubic-bezier(.2,.8,.2,1),height .28s cubic-bezier(.2,.8,.2,1),opacity .2s,background-color .12s}
+.fast .it,.fast .th,.fast .lb{transition-duration:.14s}
+.m-details .it:nth-child(even){background:var(--zebra)}
+.m-details .it:nth-child(even).sel,.m-details .it.sel{background:var(--sel)}
+.m-details .it:hover{background:var(--hover)}
+.m-details .th.photo{box-shadow:none;border-radius:2px}
+.m-grid .th .play,.m-wall .th .play{display:block}
+.labels-none .it:hover .ov{opacity:1}
+.labels-none .it.sel .ov{opacity:1}
+/* 选中项展开全名（同资源管理器） */
+.expand .it.sel .lb{z-index:3;overflow:visible;height:auto!important;white-space:normal;display:block;-webkit-line-clamp:unset}
+.expand .it.sel .lb span.full{display:inline-block;background:var(--acc);color:#fff;border-radius:3px;padding:0 4px;box-shadow:0 2px 8px rgba(0,0,0,.35)}
+body.light .expand .it.sel .lb span.full{background:var(--accent-strong)}
+
+/* ---------- size control (status bar) ---------- */
+.vsz{display:flex;align-items:center;gap:6px}
+.vsz .seg2{display:flex;background:var(--card2);border:1px solid var(--stroke);border-radius:6px;padding:2px;gap:2px}
+.vsz .seg2 .ibtn{width:28px;height:22px}
+.slider{position:relative;width:170px;height:22px;display:flex;align-items:center;cursor:pointer;touch-action:none}
+.slider .rail{position:absolute;left:0;right:0;height:4px;border-radius:2px;background:rgba(127,127,127,.35)}
+.slider .fill{position:absolute;left:0;height:4px;border-radius:2px;background:var(--acc)}
+.slider .tick{position:absolute;width:2px;height:8px;margin-left:-1px;border-radius:1px;background:rgba(127,127,127,.6);top:7px}
+.slider .knob{position:absolute;width:14px;height:14px;margin-left:-7px;border-radius:50%;background:var(--acc);box-shadow:0 0 0 3px var(--card),0 1px 4px rgba(0,0,0,.5);transition:transform .1s}
+.slider:hover .knob{transform:scale(1.15)}
+.slider.off .fill,.slider.off .knob{background:var(--text3)}
+.vsz .val{width:44px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text)}
+.slider .tip{position:absolute;bottom:20px;transform:translateX(-50%);font-size:11px;color:var(--text3);white-space:nowrap;pointer-events:none}
+
+/* ---------- HUD ---------- */
+.hud{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%) scale(.96);background:rgba(20,20,20,.82);color:#fff;border-radius:10px;padding:10px 16px;font-size:13px;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;z-index:20;text-align:center;backdrop-filter:blur(8px)}
+.hud b{display:block;font-size:20px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums}
+.hud.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.hud .chain{display:flex;gap:4px;justify-content:center;margin-top:6px}
+.hud .chain i{width:22px;height:4px;border-radius:2px;background:rgba(255,255,255,.25)}
+.hud .chain i.on{background:#4CC2FF}
+
+/* ---------- flyout ---------- */
+.flyout{position:absolute;right:8px;top:36px;width:336px;background:var(--flyout);border:1px solid var(--stroke);border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.45);padding:10px 12px 12px;z-index:30;font-size:12.5px;display:none}
+.flyout.open{display:block}
+.flyout .row{display:flex;align-items:center;justify-content:space-between;margin:8px 0}
+.flyout .row>span{color:var(--text2)}
+.flyout .seg{border-color:var(--stroke)}
+.flyout .seg button{padding:3px 10px;font-size:12px}
+.flyout h4{margin:2px 0 4px;font-size:12.5px}
+.flyout .hint{color:var(--text3);font-size:11.5px;margin-top:8px;line-height:1.5}
+.flyout .presets{display:flex;gap:6px;margin:6px 0 2px}
+.flyout .presets button{flex:1;background:var(--card2);border:1px solid var(--stroke);color:inherit;border-radius:5px;font:inherit;font-size:12px;padding:5px 0;cursor:pointer}
+.flyout .presets button.on{border-color:var(--acc);color:var(--acc)}
+
+/* ---------- doc layout ---------- */
+.legend{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0 4px}
+.legend div{background:rgba(127,127,127,.08);border:1px solid rgba(127,127,127,.18);border-radius:8px;padding:10px 12px;font-size:13px}
+.legend b{display:block;margin-bottom:2px}
+
+.cmp .win .list{height:360px;flex:none}
+.cmp .cap{margin:10px 0 0;font-size:13px}
+.cmp .count{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
+.cmp .delta{color:#3ccf7a;font-weight:600;margin-left:6px}
+.cap ul{margin:4px 0 0;padding-left:18px;color:#aab}
+body.light .cap ul{color:#556}
+table.t{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0}
+table.t th,table.t td{border-bottom:1px solid rgba(127,127,127,.22);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-weight:600;color:#9ab;white-space:nowrap}
+body.light table.t th{color:#456}
+.plan{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:8px}
+.plan>div{background:rgba(127,127,127,.08);border:1px solid rgba(127,127,127,.18);border-radius:10px;padding:12px 14px;font-size:13px}
+.plan h3{margin:0 0 6px}
+.plan ul{margin:6px 0 0;padding-left:18px}
+.plan li{margin:3px 0}
+.plan .eff{font-size:12px;opacity:.75}
+pre.code{background:rgba(127,127,127,.12);border:1px solid rgba(127,127,127,.2);border-radius:8px;padding:10px 12px;font:12px/1.55 Consolas,"Cascadia Mono",monospace;overflow:auto;margin:8px 0}
+.risk li{margin:4px 0}
+
+/* ---------- panes ---------- */
+.panes{flex:1;display:flex;gap:6px;min-width:0}
+.pane::after{border-color:transparent;transition:border-color .15s}
+.pane.active::after{border-color:color-mix(in srgb,var(--acc) 45%,transparent)}
+
+/* ---------- 栏头 v2 ---------- */
+.win{--thumb:#3b3b3b;--segbg:rgba(255,255,255,.07)}
+body.light .win{--thumb:#fff;--segbg:rgba(0,0,0,.06)}
+.pane .phead{height:40px;padding:0 6px 0 14px;gap:0;container-type:inline-size;position:relative;z-index:28;font-weight:400;transition:box-shadow .2s}
+.pane.scrolled:not(.m-det) .phead{box-shadow:0 1px 0 var(--stroke),0 8px 10px -9px rgba(0,0,0,.55)}
+.colhead{z-index:5}
+.pane.scrolled .colhead:not(.hide){box-shadow:0 1px 0 var(--stroke),0 8px 10px -9px rgba(0,0,0,.55)}
+.phead .pbar{position:absolute;left:0;top:12px;width:3px;height:16px;border-radius:0 2px 2px 0;background:var(--acc);opacity:0;transform:scaleY(.3);transition:opacity .18s,transform .25s cubic-bezier(.3,1.3,.5,1)}
+.pane.active .phead .pbar{opacity:1;transform:none}
+.phead .ttl{flex:1;min-width:0;display:flex;align-items:baseline;white-space:nowrap;overflow:hidden;padding-right:8px}
+.pane .phead .t{flex:0 1 auto;min-width:24px;font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis}
+.pane:not(.active) .phead .t{color:var(--text2);font-weight:500}
+.vctl{display:flex;align-items:center;flex:none;position:relative;transition:opacity .18s;margin-right:2px}
+.pane .phead>.ibtn{transition:opacity .18s,background .12s,color .12s}
+.pane:not(.active) .vctl,.pane:not(.active) .phead>.ibtn{opacity:0}
+.pane:not(.active) .phead:hover .vctl,.pane:not(.active) .phead:hover>.ibtn{opacity:1}
+/* 尺寸滑块：只在图标 / 照片墙时出现 */
+.zoom{display:flex;align-items:center;gap:7px;height:28px;width:0;opacity:0;overflow:hidden;margin-right:0;transition:width .28s cubic-bezier(.2,.8,.2,1),opacity .16s,margin .28s cubic-bezier(.2,.8,.2,1)}
+.vctl:not(.det) .zoom{width:122px;opacity:1;margin-right:10px}
+.zoom .gs,.zoom .gl{flex:none;border:1.4px solid var(--text3);border-radius:2px}
+.zoom .gs{width:7px;height:7px}.zoom .gl{width:12px;height:12px;border-radius:3px}
+.ztrack{position:relative;flex:none;width:84px;height:28px;cursor:pointer;touch-action:none;outline:none}
+.ztrack .rail{position:absolute;left:0;right:0;top:13px;height:2px;border-radius:1px;background:rgba(127,127,127,.35)}
+.ztrack .fill{position:absolute;left:0;top:13px;height:2px;border-radius:1px;background:var(--acc)}
+.ztrack .tick{position:absolute;top:11px;width:2px;height:6px;margin-left:-1px;border-radius:1px;background:rgba(127,127,127,.55)}
+.ztrack .tick.hit{background:var(--acc)}
+.ztrack .knob{position:absolute;top:7px;width:14px;height:14px;margin-left:-7px;border-radius:50%;background:var(--thumb);box-shadow:0 0 0 1px rgba(127,127,127,.32),0 1px 3px rgba(0,0,0,.35)}
+.ztrack .knob::after{content:"";position:absolute;inset:3.5px;border-radius:50%;background:var(--acc);transition:inset .12s}
+.ztrack:hover .knob::after,.vctl.drag .knob::after{inset:2.5px}
+.ztrack:focus-visible .knob{box-shadow:0 0 0 2px var(--acc)}
+.vctl:not(.drag) .knob{transition:left .18s cubic-bezier(.2,.8,.2,1)}
+.vctl:not(.drag) .fill{transition:width .18s cubic-bezier(.2,.8,.2,1)}
+.vctl .tip{position:absolute;transform:translateX(-50%);padding:3px 8px;border-radius:5px;background:var(--flyout);border:1px solid var(--stroke);box-shadow:0 4px 12px rgba(0,0,0,.3);font-size:11.5px;color:var(--text);white-space:nowrap;opacity:0;pointer-events:none;z-index:40;transition:opacity .12s}
+.vctl.drag .tip,.vctl.peek .tip,.vctl.hov .tip{opacity:1}
+.vctl.det .tip{opacity:0!important}
+/* 分段切换：三种视图并排，一次点击 */
+.vseg{position:relative;display:flex;padding:2px;border-radius:8px;background:var(--segbg);outline:none}
+.vseg:focus-visible{box-shadow:0 0 0 2px var(--acc)}
+.vseg .thumb{position:absolute;left:2px;top:2px;width:30px;height:26px;border-radius:6px;background:var(--thumb);box-shadow:0 0 0 1px var(--stroke),0 1px 3px rgba(0,0,0,.3);transition:transform .28s cubic-bezier(.3,1.25,.5,1)}
+.vseg .sg{position:relative;z-index:1;width:30px;height:26px;display:grid;place-items:center;color:var(--text3);cursor:pointer;border-radius:6px;transition:color .15s}
+.vseg .sg:hover{color:var(--text)}
+.vseg .sg.on{color:var(--acc)}
+.vseg .sg svg{width:16px;height:16px}
+.zbtn{display:none;width:30px;height:28px;border-radius:5px;place-items:center;color:var(--text2);cursor:pointer;margin-right:4px}
+.zbtn:hover,.vctl.zpop .zbtn{background:var(--hover);color:var(--text)}
+.zbtn svg{width:16px;height:16px}
+/* 栏宽不够时：滑块收进按钮，标题再省略；分段切换和 ⋯ 始终保留 */
+@container (max-width:440px){
+  .vctl:not(.det) .zbtn{display:grid}
+  .vctl .zoom,.vctl:not(.det) .zoom{position:absolute;right:66px;top:36px;width:auto;height:auto;margin:0;padding:8px 12px;overflow:visible;
+    background:var(--flyout);border:1px solid var(--stroke);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.35);display:none;opacity:1;transition:none;z-index:35}
+  .vctl.zpop:not(.det) .zoom{display:flex}
+  .vctl .ztrack{width:120px}
+}
+/* 照片墙建议 */
+.sugg{position:absolute;left:50%;top:42px;transform:translate(-50%,-8px);opacity:0;transition:opacity .2s,transform .25s cubic-bezier(.2,.8,.2,1);z-index:25;display:flex;align-items:center;gap:10px;
+  background:var(--flyout);border:1px solid var(--stroke);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.35);padding:7px 8px 7px 12px;font-size:12.5px;white-space:nowrap;max-width:calc(100% - 24px)}
+.sugg.show{opacity:1;transform:translate(-50%,0)}
+.sugg span:nth-child(2){overflow:hidden;text-overflow:ellipsis}
+.sugg .si{color:var(--acc);display:grid}.sugg .si svg{width:16px;height:16px}
+.sugg b{color:var(--acc);font-weight:600}
+.sugg button{background:var(--accent-strong);color:#fff;border:0;border-radius:5px;padding:4px 12px;font:inherit;font-size:12px;cursor:pointer}
+.sugg .x{color:var(--text3);cursor:pointer;padding:2px 4px}
+/* ---------- state strip ---------- */
+.states{display:grid;grid-template-columns:repeat(2,1fr);gap:18px 22px;margin:14px 0 6px}
+.states .wallnote{grid-column:1/-1}
+.states .sw{border-radius:8px;padding:14px 14px 44px;min-height:118px}
+.states .pane{height:40px;flex:none}.states .pane::after{display:none}
+.states .sw.tall{padding-bottom:84px}
+
+.states .cap{font-size:12.5px;margin-top:8px;line-height:1.55}
+.states .cap>b{display:block;font-size:13px;margin-bottom:2px}
+.states .cap span{color:#aab}
+body.light .states .cap span{color:#556}
+.why{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:12px 0 4px}
+.why div{border-left:3px solid var(--accent-strong);padding:4px 0 4px 12px;font-size:13px}
+.why b{display:block;margin-bottom:2px}
+.why span{color:#aab}
+body.light .why span{color:#556}
+.status .hint2{color:var(--text3)}
+@media (max-width:1000px){.states{grid-template-columns:1fr}.why{grid-template-columns:1fr 1fr}}
+.hanat{position:relative;padding:34px 16px 16px;border-radius:8px;margin:12px 0 4px}
+.hanat .pane{height:40px}.hanat .pane::after{display:none}
+.hanat .mk{position:absolute;top:8px;transform:translateX(-50%);width:20px;height:20px;border-radius:50%;background:var(--accent-strong);color:#fff;font:600 11.5px/20px 'Segoe UI';text-align:center}
+.hanat .mk::after{content:'';position:absolute;left:50%;top:20px;width:1px;height:8px;background:var(--accent-strong)}
+.hlegend{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 22px;font-size:13px;margin:10px 0 4px}
+.hlegend div{display:flex;gap:8px}.hlegend i{flex:none;font-style:normal;width:20px;height:20px;border-radius:50%;background:var(--accent-strong);color:#fff;font:600 11.5px/20px 'Segoe UI';text-align:center}
+.hlegend span{color:#aab}body.light .hlegend span{color:#556}.hlegend b{color:inherit}
+@media (max-width:1000px){.hlegend{grid-template-columns:1fr}}
+
+
+/* ---------- 重命名 ---------- */
+.win{--editbg:#1e1e1e}body.light .win{--editbg:#fff}
+.ren{position:absolute;z-index:20;box-sizing:border-box;background:var(--flyout);color:var(--text);font-size:12.5px;line-height:17px;padding:3px 7px 4px;border-radius:6px;outline:none;text-align:center;
+  white-space:pre-wrap;word-break:normal;overflow-wrap:anywhere;overflow-y:auto;overflow-x:hidden;max-height:109px;cursor:text;user-select:text;-webkit-user-select:text;
+  box-shadow:inset 0 -2px 0 var(--acc),0 0 0 1px var(--stroke),0 10px 28px rgba(0,0,0,.5);transition:width .16s cubic-bezier(.2,.8,.2,1),left .16s cubic-bezier(.2,.8,.2,1),top .16s,box-shadow .15s;scrollbar-width:thin}
+body.light .ren{box-shadow:inset 0 -2px 0 var(--acc),0 0 0 1px var(--stroke),0 10px 28px rgba(0,0,0,.16)}
+.ren::-webkit-scrollbar{width:4px}.ren::-webkit-scrollbar-thumb{background:rgba(127,127,127,.5);border-radius:2px}
+.ren .ext{color:var(--text3)}.ren .nw{white-space:nowrap}
+.ren::selection,.ren *::selection{background:var(--accent-strong);color:#fff}
+.ren.one{white-space:nowrap;overflow:hidden;text-align:left;max-height:none}
+.ren.pop{animation:renpop .26s cubic-bezier(.3,1.35,.5,1)}
+@keyframes renpop{from{transform:scale(.94);opacity:.4}}
+.ren.shake{animation:renshake .32s}
+@keyframes renshake{20%{transform:translateX(-4px)}40%{transform:translateX(4px)}60%{transform:translateX(-2px)}80%{transform:translateX(2px)}}
+.ren.bad{box-shadow:inset 0 -2px 0 #e5534b,0 0 0 1px rgba(229,83,75,.6),0 10px 28px rgba(0,0,0,.5)}
+.ren.legacy{background:var(--editbg);border-radius:4px;padding:3px 5px;max-height:none;overflow:hidden;transition:none;animation:none;box-shadow:inset 0 -2px 0 var(--acc),0 0 0 1px rgba(127,127,127,.45)}
+.renhint{position:absolute;z-index:21;transform:translateX(-50%);font-size:11.5px;line-height:15px;padding:5px 9px;border-radius:6px;background:var(--flyout);border:1px solid var(--stroke);box-shadow:0 6px 18px rgba(0,0,0,.35);color:var(--text2);white-space:nowrap;pointer-events:none}
+.renhint b{font-weight:600;color:var(--text)}
+.renhint.ask{pointer-events:auto;white-space:normal;width:250px;text-align:left;padding:9px 11px;color:var(--text)}
+.renhint.ask .q{display:block;margin-bottom:8px;line-height:17px}
+.renhint.ask .q i{font-style:normal;color:var(--text3);display:block;font-size:11px}
+.renhint.ask .bt{display:flex;gap:6px;justify-content:flex-end}
+.renhint.ask button{font:inherit;font-size:12px;border-radius:5px;padding:3px 12px;cursor:pointer;border:1px solid var(--stroke);background:var(--card2);color:var(--text)}
+.renhint.ask button.y{background:var(--accent-strong);border-color:transparent;color:#fff}
+.renhint.err{color:#ff9a92;border-color:rgba(229,83,75,.55)}.renhint.warn{color:#f0b85a;border-color:rgba(240,184,90,.45)}
+body.light .renhint.err{color:#c4312a}body.light .renhint.warn{color:#9a6400}
+.list.renaming .it:not(.renhost) .lb{opacity:.38!important;transition:opacity .15s}
+.it.renhost .lb,.it.renhost .ov{visibility:hidden}
+.anno{position:absolute;right:12px;top:48px;z-index:30;font-size:11.5px;padding:3px 9px;border-radius:10px;background:#b7791f;color:#fff;white-space:nowrap;pointer-events:none}
+.rcmp{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:10px}
+.rcmp .list{height:330px;flex:none}
+.rcmp .cap{font-size:12.5px;margin-top:8px;color:#aab;line-height:1.6}body.light .rcmp .cap{color:#556}
+@media (max-width:1000px){.rcmp{grid-template-columns:1fr}}
+/* ---------- density section ---------- */
+.rules{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:10px 0 6px}
+.rules div{background:rgba(127,127,127,.08);border:1px solid rgba(127,127,127,.18);border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.6}
+.rules b{display:block;margin-bottom:4px;font-size:13.5px}
+.rules span b{display:inline;font-size:inherit;margin:0;color:#4CC2FF}
+body.light .rules span b{color:#0067c0}
+.rules span{color:#bbc}
+body.light .rules span{color:#445}
+svg.anat{width:100%;max-width:900px;display:block;margin:14px 0 4px}
+.anat .cell{fill:rgba(127,127,127,.08);stroke:rgba(127,127,127,.55);stroke-dasharray:4 3}
+.anat .cell.new{stroke:#4CC2FF}
+.anat .ico{fill:#E8B64C}
+.anat .txt{fill:rgba(127,127,127,.65)}
+.anat .ghost{fill:none;stroke:#e5534b;stroke-dasharray:3 3}
+.anat .ah{fill:currentColor;font-weight:600}
+.anat .an{fill:#9aa3b2}
+.anat .ad{fill:#4CC2FF}
+.anat .dim{stroke:#4CC2FF;stroke-width:1.5}
+.cmp{display:flex;flex-wrap:wrap;gap:22px}
+.cmp .cw{max-width:100%}
+.cmp .phead .tag{margin-left:8px;font-weight:400}
+table.stat{border-collapse:collapse;margin-top:10px;font-size:13px}
+table.stat th{text-align:left;font-weight:400;color:#9aa3b2;padding:3px 18px 3px 0}
+table.stat td{padding:3px 0;font-variant-numeric:tabular-nums}
+table.stat td b{font-size:17px;margin-right:8px}
+table.stat i{font-style:normal;font-weight:600;font-size:12.5px}
+table.stat .mute{color:#9aa3b2;font-size:12px}table.stat i.up{color:#3ccf7a}table.stat i.down{color:#e5534b}table.stat i.eq{color:#9aa3b2}
+@media (max-width:1000px){.rules{grid-template-columns:1fr}}
+@media (max-width:1000px){.plan,.legend{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>视图快速切换 · 图标密度重构 — 效果图</h1>
+  <p class="lead">用户反馈有两个问题。第一，从“详细信息”切到“大图标”得点开下拉菜单。第二，中、大图标下信息密度偏低。下面的现状说明对照了源码，演示窗口可以直接操作。演示里的缩略图都是本地生成的示意图，不需要联网。</p>
+
+  <div class="legend">
+    <div><b>现状 1 · Ctrl+滚轮的顺序不对</b>它按枚举顺序逐级跳：详细 → 列表 → 小图标 → 中图标 → 大图标，<b>要滚 4 格</b>才能到大图标。往另一个方向还会跳到“平铺”和“内容”（<code>app_input.cpp</code> HandleMouseWheel）。</div>
+    <div><b>现状 2 · 栏头网格按钮固定切中图标</b><code>PaneMediumIcons</code> 写死成 MediumIcons，不会记住用户上次用的图标大小（<code>app_input.cpp</code> ≈L3011）。</div>
+    <div><b>现状 3 · 剩余宽度摊成了空隙</b><code>grid()</code> 把每行剩余的宽度平均分给各列，单元格变宽了，图标还是 48/96 px，空出来的地方全是缝。</div>
+    <div><b>现状 4 · 文件名固定占两行</b><code>kIconGridNameLines = 2</code>，无论文件名长短都预留 36 DIP。中图标 104×100 的格子里，图标本身只占 23%。</div>
+  </div>
+
+  <div class="bar">
+    <span class="lbl">主题</span>
+    <span class="seg" id="theme"><button data-v="dark" class="on">深色</button><button data-v="light">浅色</button></span>
+  </div>
+
+  <!-- ================= 1 ================= -->
+  <h2>一、栏头重新设计：三种视图一次点击，尺寸随手可调</h2>
+  <p class="note">上一版把尺寸藏在“悬停展开”的轴里，切到照片墙也要先展开，图标还会换来换去，不直观。这一版的原则是<b>栏头只放这一栏自己的东西</b>：左边是标题，右边是“怎么看”（尺寸滑块 · 详细 / 网格 / 照片墙 分段切换 · ⋯）。路径留给地址栏，项目数和选中数留给状态栏，栏头不重复；也没有悬停才出现的控件。</p>
+
+  <div class="win hanat" id="hanat"><div class="pane active" id="hanatPane"><div class="phead"><span class="pbar"></span><span class="ttl"><span class="t" title="P:\照片\2026-09 旅行">2026-09 旅行</span></span><div class="vctl"></div><span class="ibtn" title="视图选项"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg></span></div></div></div>
+  <div class="hlegend">
+    <div><i>1</i><span><b>活动栏标记</b>：3 px 强调色竖条，和现在多栏激活的样式一致；非活动栏标题变灰。</span></div>
+    <div><i>2</i><span><b>标题</b>：只有当前文件夹名，和现在一样。地址栏只显示活动栏的路径，多栏时靠它分清每一栏；它同时是拖放目标和变更徽标的位置。完整路径放在悬停提示里，不常驻。单栏时也保留（拖放目标不变）。</span></div>
+    <div><i>3</i><span><b>尺寸滑块</b>：切到网格或照片墙时从左侧滑出，详细信息下收起。刻度对应中 / 大 / 特大 / 超大，拖到附近会吸附。在照片墙里调的是行高。</span></div>
+    <div><i>4</i><span><b>分段切换</b>：≡ 详细信息、▦ 网格、▥ 照片墙并排放在同一个凹槽里，选中块带弹性滑过去。任意两种之间都是一次点击。</span></div>
+    <div><i>5</i><span><b>⋯ 视图选项</b>：文件名行数、缩略图裁切、间距，以及原来的 8 种视图列表。“排列”已经移到分段切换上，菜单里不再重复。</span></div>
+  </div>
+
+  <div class="states" id="states"></div>
+
+  <div class="why">
+    <div><b>一次点击</b><span>三种视图并排，任意两种之间都只要点一次。上一版去照片墙要先悬停、等展开、再点。</span></div>
+    <div><b>看得见</b><span>图标视图下滑块常驻，当前尺寸一眼可见，不靠悬停去发现；详细信息下用不到，就收起不占位。</span></div>
+    <div><b>不重复</b><span>路径在地址栏，数量和选中数在状态栏，排序在工具栏。栏头只留标题和视图控件，每样东西只出现一次。</span></div>
+    <div><b>收得住</b><span>栏变窄时滑块先收进按钮，标题再省略，分段切换和 ⋯ 始终在。非活动栏只留标题，悬停时控件淡入，可以直接操作。</span></div>
+  </div>
+
+  <p class="note" style="margin-top:18px"><b>可以试试：</b>
+    ① 点栏头右边的 <b>≡ ▦ ▥</b> 在三种视图之间切换。从详细信息切到网格时，尺寸滑块会从左侧滑出。
+    ② 拖动滑块，或者把指针放在滑块上直接滚动滚轮（<b>不用按 Ctrl</b>）。经过刻度时会吸附，双击滑块回到 96 px。
+    ③ 在列表里按 <span class="kbd">Ctrl</span>+滚轮或双指缩放：从详细信息往上滚<b>一格</b>就回到上次的图标尺寸，缩到最小再往下滚就回到详细信息。缩放时滑块上方会短暂显示当前尺寸，选中项在屏幕上的位置保持不动。
+    ④ 键盘：<span class="kbd">Ctrl</span>+<span class="kbd">=</span>/<span class="kbd">−</span>/<span class="kbd">0</span>；<span class="kbd">Ctrl</span>+<span class="kbd">Shift</span>+<span class="kbd">1</span>~<span class="kbd">6</span> 和资源管理器一致。Tab 到分段切换上可以用方向键选视图。
+    ⑤ 把指针移到<b>没有激活的那一栏</b>的栏头上，控件会淡入，可以直接切换那一栏的视图。滚动列表后，栏头下沿会出现一条分隔阴影。
+    ⑥ 照片为主（≥70%）的文件夹第一次切到网格时，栏头下方会提示一次“试试照片墙”。点 <b>⋯</b> 可以设置文件名和间距。左右两栏互不影响，每个文件夹分别记住。</p>
+
+  <div class="win" id="mainWin">
+    <div class="title"><span class="app"><i></i>Pulse</span><div class="tab on">📁 2026-09 旅行<span class="x">✕</span></div><div class="tab" style="opacity:.7">📁 源代码</div></div>
+    <div class="toolbar"><span class="nav">←&nbsp; →&nbsp; ↑</span><div class="addr">此电脑 <em>›</em> P: <em>›</em> 照片 <em>›</em> 2026-09 旅行</div><div class="search">🔍 搜索 2026-09 旅行</div></div>
+    <div class="body" style="height:560px">
+      <div class="side"><div>★ 星标项目</div><div>最近使用</div><div>桌面</div><div class="cur">下载</div><div class="sep"></div><div><b></b>照片</div><div><b></b>2026-09 旅行</div><div><b></b>精选</div><div><b></b>待整理</div></div>
+      <div class="panes">
+        <div class="pane" id="pL" tabindex="0" style="flex:.78" data-name="下载">
+          <div class="phead"><span class="pbar"></span><span class="ttl"><span class="t" title="C:\Users\lin\Downloads">下载</span></span><div class="vctl"></div><span class="ibtn" data-act="menu" title="视图选项"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg></span></div>
+          <div class="colhead"></div>
+          <div class="list"><div class="inner"></div></div>
+        </div>
+        <div class="pane active" id="pR" tabindex="0" data-name="2026-09 旅行">
+          <div class="phead"><span class="pbar"></span><span class="ttl"><span class="t">2026-09 旅行</span></span><div class="vctl"></div><span class="ibtn" data-act="menu" title="视图选项"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg></span></div>
+          <div class="colhead"></div>
+          <div class="list"><div class="inner"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="status"><span id="wstatus">—</span><span class="grow"></span><span class="hint2" id="wcount"></span></div>
+    <div class="flyout" id="fly">
+      <h4>视图选项 <span style="color:var(--text3);font-weight:400">· 当前文件夹</span></h4>
+            <div class="row"><span>文件名</span><span class="seg" data-k="labels"><button data-v="auto">自适应</button><button data-v="2">2</button><button data-v="3">3</button><button data-v="4">4 行</button><button data-v="none">隐藏</button></span></div>
+      <div class="row"><span>缩略图</span><span class="seg" data-k="crop"><button data-v="fit">完整</button><button data-v="fill">裁切填满</button></span></div>
+      <div class="row"><span>间距</span><span class="seg" data-k="gap"><button data-v="2">紧凑</button><button data-v="6">标准</button><button data-v="14">宽松</button></span></div>
+      <div class="hint">“自适应”：按本文件夹 75% 的文件名需要的行数决定（2–4 行；几乎都是短名字时用 1 行），所有行等高；更长的名字末行从中间省略并保留扩展名，选中后显示全名。尺寸用栏头的滑块调，网格 / 照片墙用栏头的分段切换。原来 ⋯ 菜单里的 8 种视图列表保留在这些选项上方（演示里省略了）。</div>
+    </div>
+  </div>
+
+  <!-- ================= 2 ================= -->
+  <h2>二、密度：列宽跟着缩略图走，文件名按需长高</h2>
+  <p class="note">上一版把文件名压成单行、间距压到 4 px。项目数是多了，但看起来很挤，长文件名也基本读不出来，这条路走不通。这一版不靠压缩，而是<b>把现状里浪费掉的空间拿回来</b>，具体是下面三条规则：</p>
+  <div class="rules">
+    <div><b>① 列宽由缩略图决定，文件名区不低于现状</b><span>每格宽度 = 缩略图 + 8 px，最窄 90 px（文件名区 84 px，现状是 96 px，相机生成的 <code>IMG_20260922_403315.jpg</code> 这类文件名两行就能放下），列间距 6 px，行间距 2 px。中图标的列距从 104 降到 96：620 px 宽的窗格从 5 列变成 6 列，900 px 从 8 列变成 9 列。大图标列距从 112 降到 110，列数基本不变。<b>为什么不更窄</b>：实测把最窄宽度压到 76 px 时，620 px 宽能放 7 列，但大部分文件名要折成 3 行，一屏只有 21 项，比 90 px 时的 24 项还少；900 px 宽时一屏是 30 项，比现状的 32 项还少。列数的上限其实是文件名宽度决定的。</span></div>
+    <div><b>② 文件名行数按文件夹自适应，最多 4 行</b><span>统计本文件夹的文件名在当前列宽下各需要几行，取 <b>75% 分位</b>，限制在 2–4 行；只有 95% 的文件名都能一行放下时才用 1 行。所有行等高，网格保持整齐。短中文名的文件夹用 1 行，相机文件名用 2 行；导出工具生成长文件名的文件夹自动用 3–4 行。剩下少数特别长的名字从中间省略并保留扩展名，选中后完整显示（悬停预览卡片本来也会显示全名）。视图选项里也可以固定成 2、3 或 4 行。</span></div>
+    <div><b>③ 槽位比例跟着文件夹内容走</b><span>横向照片过半时用 4:3 槽（96×72），横图上方不再留一条空白，<b>大图标每行省 28 px</b>（148 → 120）；文档类文件夹仍用方形槽。每行剩余的宽度每格最多补 16 px，再多就整行居中，不会把间距拉得很开。</span></div>
+  </div>
+
+  <svg class="anat" viewBox="0 0 800 320" xmlns="http://www.w3.org/2000/svg">
+    <g font-size="12" font-family="Segoe UI, Microsoft YaHei UI, sans-serif">
+      <text x="20" y="18" class="ah">现状 · 中图标（固定 104×100）</text>
+      <rect x="20" y="30" width="177" height="170" rx="8" class="cell"/>
+      <rect x="67.5" y="43.6" width="82" height="82" rx="6" class="ico"/>
+      <rect x="63" y="140" width="90" height="11" rx="3" class="txt"/>
+      <rect x="40" y="170" width="137" height="11" rx="3" class="ghost"/>
+      <text x="108" y="222" text-anchor="middle" class="an">图标只占格子面积的 23%</text>
+      <text x="108" y="239" text-anchor="middle" class="an">短名字也占 2 行，长名字只给 2 行</text>
+      <line x1="20" y1="262" x2="197" y2="262" class="dim"/><text x="108" y="280" text-anchor="middle" class="ad">列距 104 px</text>
+
+      <text x="250" y="18" class="ah">新方案 · 短名字的文件夹</text>
+      <rect x="250" y="30" width="153" height="131" rx="8" class="cell new"/>
+      <rect x="285.5" y="36.8" width="82" height="82" rx="6" class="ico"/>
+      <rect x="286" y="128" width="81" height="11" rx="3" class="txt"/>
+      <text x="326" y="184" text-anchor="middle" class="an">95% 的名字一行放得下 → 1 行，行距 79</text>
+      <text x="326" y="201" text-anchor="middle" class="an">（现状 100）</text>
+      <line x1="250" y1="262" x2="403" y2="262" class="dim"/><text x="326" y="280" text-anchor="middle" class="ad">列距 96 px</text>
+
+      <text x="452" y="18" class="ah">新方案 · 长名字的文件夹（所有行等高）</text>
+      <rect x="452" y="30" width="153" height="218" rx="8" class="cell new"/>
+      <rect x="487.5" y="36.8" width="82" height="82" rx="6" class="ico"/>
+      <rect x="462" y="128" width="133" height="11" rx="3" class="txt"/>
+      <rect x="462" y="157" width="133" height="11" rx="3" class="txt"/>
+      <rect x="462" y="186" width="133" height="11" rx="3" class="txt"/>
+      <rect x="480" y="215" width="97" height="11" rx="3" class="txt"/>
+      <rect x="615" y="30" width="153" height="218" rx="8" class="cell new"/>
+      <rect x="650.5" y="36.8" width="82" height="82" rx="6" class="ico"/>
+      <rect x="625" y="128" width="133" height="11" rx="3" class="txt"/>
+      <rect x="650" y="157" width="83" height="11" rx="3" class="txt"/>
+      <text x="610" y="270" text-anchor="middle" class="an">75% 的文件名需要 4 行 → 整个文件夹用 4 行</text>
+      <text x="610" y="287" text-anchor="middle" class="an">网格保持整齐；更长的从中间省略，选中显示全名</text>
+    </g>
+  </svg>
+
+  <div class="bar">
+    <span class="lbl">尺寸</span><span class="seg" id="cmpSize"><button data-v="medium" class="on">中图标</button><button data-v="large">大图标</button><button data-v="xl">超大图标</button></span>
+    <span class="lbl" style="margin-left:14px">新方案文件名</span><span class="seg" id="cmpMode"><button data-v="auto" class="on">自适应</button><button data-v="2">2 行</button><button data-v="4">4 行</button><button data-v="none">隐藏</button><button data-v="wall">照片墙</button></span>
+    <span class="lbl" style="margin-left:14px">窗格宽度</span><span class="seg" id="cmpW"><button data-v="460">460</button><button data-v="620" class="on">620</button><button data-v="900">900</button></span>
+  </div>
+  <div class="cmp" id="cmp">
+    <div class="cw">
+      <div class="win"><div class="phead"><span class="t">现状</span><span class="tag gray">view_layout.cpp 参数还原</span></div><div class="list" id="listA"><div class="inner"></div></div></div>
+      <table class="stat" id="statA"></table>
+    </div>
+    <div class="cw">
+      <div class="win"><div class="phead"><span class="t">新方案</span><span class="tag">推荐</span></div><div class="list" id="listB"><div class="inner"></div></div></div>
+      <table class="stat" id="statB"></table>
+    </div>
+  </div>
+  <p class="note" id="cmpNote"></p>
+
+  <!-- ================= 3 ================= -->
+  <h2>三、重命名：长文件名的编辑框</h2>
+  <p class="note">图标视图里改名，现在的编辑框只有格子那么宽，长文件名会折成很多行，而且往下长没有上限。对照 <code>RenameFieldRect</code>（<code>ui_pane_list.cpp</code>）和 <code>LayoutRenameOverlay</code> / <code>RenameEditProc</code>（<code>app_hosted_edit.cpp</code>），问题有这几处：</p>
+  <div class="legend">
+    <div><b>现状 1 · 最宽只到格宽</b>编辑框宽度上限是格子宽度（中图标 104 DIP，减掉内边距只剩约 93 DIP 放字）。一个 40 字的中文名要折成 7–8 行，一行只看得到几个字。</div>
+    <div><b>现状 2 · 往下长没有上限，还会被裁掉</b>框画在列表的裁剪区里（<code>PushAxisAlignedClip</code>），<code>EnsureRowVisible</code> 只保证这一项的格子可见。给最后一行的文件改名时，编辑框下半截直接被裁掉，光标移到那里也看不见。</div>
+    <div><b>现状 3 · 宽度跟着每个字跳</b>单行时宽度按文字“贴合”，每敲一个字都重算一次；超过格宽才改成折行。打字时框忽宽忽窄。</div>
+    <div><b>现状 4 · 折行规则和显示不一致，也没有提示</b>显示用 2 行加省略，编辑框用 DWrite 默认折行。没有分隔符的长串会在任意字符处断开，扩展名可能被拆到下一行开头，进入编辑时文字还会重排一次。非法字符、同名要等提交给文件操作之后才报错。</div>
+  </div>
+
+  <div class="rules" style="grid-template-columns:repeat(3,1fr)">
+    <div><b>① 宽度：最多两列宽，只增不减</b><span>打开时按文字算宽度，下限是格宽，上限是 <b>min(两格宽 + 间距, 280 DIP)</b>，再被列表左右边界夹住。打字时宽度只增不减，到上限才开始折行，不再忽宽忽窄。中图标下同一个长名从 7–8 行降到 3–4 行。</span></div>
+    <div><b>② 折行：和显示同一套规则</b><span>优先在 空格 _ - . （ ） 处断开，中文按字断；扩展名和它前面两个字符<b>绑在一起不拆开</b>，扩展名用次要色显示。进入编辑时第一行的断点和选中时展开的全名一致，文字不重排。</span></div>
+    <div><b>③ 高度：最多 6 行，超出在框内滚动</b><span>编辑框最多长到 6 行（109 DIP），再长就在框里滚动并保持光标可见，不会盖住半屏。</span></div>
+    <div><b>④ 位置：永远完整可见</b><span>从文件名原来的位置向下展开、水平居中。框的下沿超出视口时，列表平滑滚动把它露出来；已经滚到底就临时加高列表。照片墙不显示文件名，编辑框贴在图块底部。</span></div>
+    <div><b>⑤ 层级：浮起来，周围让开</b><span>编辑框是一张浮起的卡片（投影 + 强调色下边线），被它盖住的邻居文件名淡到 38%，自己原来的文件名隐藏。打开时有一个轻微的弹出动画，沿用现有的 <code>rename_pop_</code>。</span></div>
+    <div><b>⑥ 提示和按键</b><span>输入 \ / : * ? " &lt; &gt; | 时字符不进入，框轻晃一下并提示原因；同名时提示回车后会改成“名称 (2)”；末尾有空格或句点也会提示。<b>改了扩展名</b>时，回车先在框下确认一次（和资源管理器一样；Enter = 改，Esc = 回到编辑并选中扩展名）。<b>Enter</b> 提交、<b>Esc</b> 取消、<b>Tab / Shift+Tab</b> 提交并改下一个 / 上一个、再按 <b>F2</b> 在 主名 → 全名 → 扩展名 之间切换选区。</span></div>
+  </div>
+
+  <div class="bar">
+    <span class="lbl">示例文件名</span>
+    <span class="seg" id="renSample"><button data-v="0" class="on">中文长名</button><button data-v="1">英文长串（无空格）</button><button data-v="2">带空格</button><button data-v="3">短名</button></span>
+    <span class="seg" id="renReset"><button>重新打开编辑框</button></span>
+  </div>
+  <div class="rcmp">
+    <div><div class="win"><div class="phead"><span class="t">现状</span><span class="tag gray">按 RenameFieldRect 还原</span></div><div class="list" id="renA"><div class="inner"></div></div></div>
+      <div class="cap">中图标 104 DIP 格子，编辑框不超过格宽，向下无限长，超出列表的部分被裁掉。点进框里打字，可以看到宽度跟着跳。</div></div>
+    <div><div class="win"><div class="phead"><span class="t">新方案</span><span class="tag">推荐</span></div><div class="list" id="renB"><div class="inner"></div></div></div>
+      <div class="cap">同一位置的文件。编辑框最多两列宽、6 行高，列表自动滚动露出整个框。点进去试试输入 <span class="kbd">:</span> 或 <span class="kbd">?</span>，或者改成“精选”看同名提示，把 .jpg 改掉再回车看扩展名确认。</div></div>
+  </div>
+  <p class="note" style="margin-top:12px"><b>在上面的主窗口里也能试：</b>选中一个文件按 <span class="kbd">F2</span>，或者在已选中项的文件名上再单击一次。详细信息、网格、照片墙三种视图都可以改，<span class="kbd">Tab</span> 会提交并接着改下一个。</p>
+
+  <!-- ================= 4 ================= -->
+  <h2>四、图片管理软件是怎么做的</h2>
+  <table class="t">
+    <tr><th>软件</th><th>尺寸切换</th><th>密度 / 信息显示</th></tr>
+    <tr><td>Windows 资源管理器</td><td>Ctrl+滚轮在图标尺寸之间细粒度连续缩放；状态栏右下角有“详细信息 / 大图标”两个按钮；Ctrl+Shift+1~8 直接切视图</td><td>选中项的文件名展开成全名，未选中的截断</td></tr>
+    <tr><td>macOS 访达</td><td>图标大小滑块（16–512），也可以 ⌘+ / ⌘−</td><td>“显示选项”里可调网格间距、标签位置（底部 / 右侧）、是否显示项目信息</td></tr>
+    <tr><td>Adobe Lightroom Classic</td><td>网格工具栏常驻缩略图大小滑块，＋/− 快捷键</td><td>按 <b>J</b> 循环切换单元格样式：紧凑 / 扩展 / 无附加信息</td></tr>
+    <tr><td>Adobe Bridge</td><td>窗口右下角缩略图滑块；旁边是“缩略图 / 详细信息 / 列表”视图按钮</td><td>“锁定网格”；缩略图下显示几行元数据可以设置</td></tr>
+    <tr><td>Eagle</td><td>尺寸滑块 + Ctrl+滚轮连续缩放</td><td>瀑布流 / 自适应等高行 / 网格三种布局；文件名、尺寸、扩展名等信息可以分别开关</td></tr>
+    <tr><td>Google 相册、Flickr</td><td>双指或 Ctrl+滚轮调整行高</td><td><b>等高行（justified）</b>：按原始比例排图，缝隙只有 2–4 px，不显示文件名</td></tr>
+    <tr><td>XnView MP、digiKam</td><td>状态栏或工具栏的缩略图滑块</td><td>缩略图下的标签内容可以自定义，也可以隐藏</td></tr>
+  </table>
+  <p class="note">这些软件有三个共同点。<b>① 尺寸是连续的</b>，Ctrl+滚轮只改尺寸、不切到别的视图（Pulse 把滑块收进栏头，不常驻占位）。<b>② 信息分级</b>，文件名、元数据可以关掉，或者悬停时再显示。<b>③ 照片按原始比例排列</b>，间距很小，宽度余量用来放大图片，而不是留成空隙。</p>
+
+  <!-- ================= 4 ================= -->
+  <h2>五、重构方案（分三期，前一期不依赖后一期）</h2>
+  <div class="plan">
+    <div><h3>P0 · 快速切换 <span class="tag">1–2 天</span></h3>
+      <div class="eff">纯输入层改动，不碰布局</div>
+      <ul>
+        <li><b>修正 Ctrl+滚轮的顺序</b>：不再按 <code>ViewModeIndex ± 1</code> 遍历，改成按语义排的缩放链 <code>Details ⇄ Medium ⇄ Large ⇄ ExtraLarge</code>。列表、小图标、平铺、内容这四种视图移出链条，只能从菜单进入。</li>
+        <li><b>栏头网格按钮记住上次的图标模式</b>：给 Tab/Pane 加一个 <code>last_icon_mode</code>，<code>PaneMediumIcons</code> 改名为 <code>PaneIcons</code>。这一步不改栏头外观，P1 再换成新栏头。</li>
+                <li><b>Ctrl+Shift+1~8</b> 按资源管理器的定义切视图（Ctrl+1~4 已经用于布局，二者不冲突；需要在 keymap 里登记，避免和自定义快捷键撞车）。</li>
+      </ul></div>
+    <div><h3>P1 · 连续尺寸 + 密度 <span class="tag">核心</span></h3>
+      <div class="eff">改 ViewLayout，复用现有的 ViewMorph</div>
+      <ul>
+        <li><b>新栏头</b>：左侧标题保持现状（<code>header_text</code> + <code>title_change_badge</code>，悬停提示完整路径）。右侧 <code>PaneSizeSlider</code>、<code>PaneViewSegment{Details, Grid, Wall}</code>、<code>PaneViewButton</code>，替换原来的 <code>PaneDetails</code> / <code>PaneMediumIcons</code>。分段选中块和滑块出入场用 <code>ui_motion</code> 的弹簧。非活动栏沿用现有的 <code>header_controls_opacity</code> 淡出，悬停该栏栏头时淡入并允许直接点击。栏宽 &lt; 440 DIP 时滑块收进 <code>PaneSizeButton</code>（点开是同一条滑块），再窄就省略标题。</li>
+        <li><b>数据模型</b>：保留 <code>ViewMode</code> 枚举，保证持久化兼容。新增 <code>icon_dip</code>（32–256），超大 / 大 / 中只是三个预设值（240/96/48）。<code>FolderViewPrefs</code> 从存 <code>ViewMode</code> 改为存 <code>{mode, icon_dip, label, gap}</code>，旧 JSON 读进来自动映射。</li>
+        <li><b>列宽</b>：<code>grid()</code> 接收连续的 <code>icon_dip</code>。格宽 = max(s+8, 90)，列间距 6，行间距 2，列数 = ⌊(W+6)/(格宽+6)⌋。每行剩余宽度每格最多补 16 px，再多就整行居中，不再无上限地摊成空隙。</li>
+        <li><b>文件名行数自适应</b>：加载文件夹时（以及格宽档位变化时）按基准格宽估算每个文件名需要几行，取 75% 分位，限制在 2–4 行（95% 的文件名都能一行放下时用 1 行）。<b>所有行等高</b>，所以 ViewLayout 仍然是 O(1) 几何，HitTest 和虚拟化都不用改。估算用字形宽度表累加（十万项约 3 ms），结果按（文件夹, 格宽档）缓存；以基准格宽为准，拖动窗口宽度时行数不会跳。</li>
+        <li><b>槽位比例</b>：加载文件夹时统计横向图片的占比（读缩略图缓存里已有的尺寸），过半就用 4:3，否则用方形。比例在加载完成后固定，不会随着缩略图陆续到达而跳动。</li>
+        <li><b>文件名</b>：自适应（默认）/ 2 / 3 / 4 行 / 隐藏。超出上限时末行从中间省略，保留扩展名（复用现有的“a…z.ext”逻辑）；选中项展开成全名并画在最上层。<code>kIconGridNameLines</code> 改成运行时参数。</li>
+        <li><b>重命名</b>：<code>RenameFieldRect</code> 的图标网格分支改成“两格宽 / 280 DIP 上限、只增不减（宽度存在 <code>rename_pop_</code> 旁边）、最多 6 行”；裁剪区改成列表视口加 6 DIP，<code>LayoutRenameOverlay</code> 之后按框的下沿调用 <code>EnsureRectVisible</code>。LumaText 布局时在 空格 _ - . （ ） 后插入零宽断点、在扩展名前插入 U+2060 连接符（只影响排版，不改文本），显示和编辑共用一个 <code>FileNameBreaks()</code>。<code>RenameEditProc</code> 增加 WM_CHAR 过滤非法字符 + 内联提示、Tab 接力、F2 切换选区；同名检查在提交前查当前快照；扩展名变化时 <code>HideRenameOverlay(commit)</code> 先弹出锚定在编辑框下的确认（Enter 确认 / Esc 返回编辑），确认前不提交、失焦不提交。</li>
+        <li><b>缩放锚点</b>：缩放前后保持锚点项（焦点项，没有焦点项就取视口中心的项）在屏幕上的位置不变，避免滚动位置乱跳。</li>
+        <li><b>缩略图解码分档</b>：<code>ThumbnailRequestPixels</code> 按 128 / 256 / 512 分档，拖滑块时不会反复解码；拖动过程中先拉伸旧位图，停下后再换成清晰版。</li>
+        <li><b>动画</b>：切换模式继续用 <code>ViewMorphMotion</code>。同一模式下改尺寸不走 FLIP（每格滚轮都起一次 400 ms 的形变动画太重），改成 120 ms 的轻量插值，拖滑块时直接重排。</li>
+      </ul></div>
+    <div><h3>P2 · 照片墙（等高行） <span class="tag gray">增强</span></h3>
+      <div class="eff">需要宽高比，布局不再是 O(1)</div>
+      <ul>
+        <li><b>宽高比来源</b>：先读 Shell 属性 <code>System.Image.Dimensions</code> 或缩略图缓存记下的尺寸；还没拿到的先按 4:3 占位，拿到后对那一行做局部重排（只影响当前行和后面的行，用动画过渡）。</li>
+        <li><b>布局</b>：宽度或尺寸变化时线性分行一次，O(n)。按行缓存 <code>row_top[]</code>，<code>HitTest</code> / <code>VisibleRange</code> 改成二分查找，虚拟化不变。</li>
+        <li><b>入口</b>：① 栏头分段切换的 ▥（P1 先放上，P2 之前点它退回网格并提示“即将支持”，或者先隐藏这一段）；② 文件夹里 ≥70% 是图片或视频、并且第一次切到网格时，栏头下方提示一次，每个文件夹只提示一次，点 ✕ 后全局不再提示；③ 背景右键菜单 → 查看 → 照片墙。和视图模式一样按文件夹记住。</li>
+        <li><b>分组</b>：先只支持不分组的情况；分组时退回网格。</li>
+      </ul></div>
+  </div>
+
+  <h3>主要改动点</h3>
+<pre class="code">src/app/app_input.cpp      HandleMouseWheel: Ctrl 分支改成 ZoomStep(+1/-1)，处理“详细 ⇄ 上次图标尺寸”的跨模式跳转
+                           ≈L3011 PaneMediumIcons → PaneIcons（恢复 last_icon_mode / icon_dip）
+src/ui/view_layout.h/.cpp  ViewLayout(..., IconGridParams{icon_dip, label_lines, gap, fill_row})
+                           grid(): 按最小格宽算列数，行宽余量放大缩略图；P2 增加 JustifiedRows
+src/ui/ui_pane_list.cpp    名字绘制改成单行中间省略、选中项展开；ThumbnailRequestPixels 分档
+src/ui/ui_hit_test.cpp     栏头 PaneDetails + PaneMediumIcons → PaneSizeSlider / PaneSizeButton
+                           / PaneViewSegment{Details, Grid, Wall}；PaneViewButton 保留
+src/ui/ui_pane_list.cpp    DrawSinglePane 栏头右侧改画滑块 + 分段；PaneHeaderLayout 按栏宽决定滑块是否收进按钮
+src/ui/ui_pane_header_icons.cpp  分段凹槽 / 选中块 / 滑块（轨道、刻度、圆点、浮动标签）；新增 Wall、Size 图标
+                           栏头 ⋯ → 原有视图菜单 + 视图选项（文件名 / 缩略图 / 间距）
+src/app/folder_view_prefs  {mode, icon_dip, label, gap}；兼容读取旧版只有 ViewMode 的 JSON
+src/ui/ui_pane_list.cpp    RenameFieldRect：两格宽上限、只增不减、6 行上限；照片墙贴图块底部
+src/app/app_hosted_edit.cpp  LayoutRenameOverlay 后 EnsureRectVisible；RenameEditProc：非法字符 / 同名提示、Tab、F2 选区
+src/ui/lumatext_renderer   FileNameBreaks()：显示与编辑共用的断点规则（零宽断点 + 扩展名连接）
+src/ui/ui_view_morph.h     沿用；FromLayout 记录 icon_dip，保证跨尺寸形变的起点能准确重建</pre>
+
+  <h3>风险与注意</h3>
+  <ul class="risk note">
+    <li><b>多窗格</b>：Ctrl+滚轮只作用于指针下方的窗格，现有逻辑已经会先 FocusPane，保持不变。尺寸滑块和分段切换放在每个栏的栏头里，天然只管自己那一栏。</li>
+    <li><b>误触</b>：分段切换和 ⋯ 的位置固定在最右边，滑块出入场只向左长，不会把用户正要点的东西挪走。滑块上的滚轮只在指针停在滑块上时生效，列表里的普通滚轮不受影响。</li>
+    <li><b>无障碍</b>：“隐藏文件名”时，UIA Name 仍然返回完整文件名；高对比度模式下强制显示文件名。</li>
+    <li><b>性能</b>：网格仍是 O(1)，拖动尺寸滑块时每帧重排也没有压力。文件名行数的 75% 分位按（文件夹, 格宽档）缓存，拖动时沿用上一档，松手后再重新计算。只有照片墙需要 O(n) 分行，结果按（宽度, 尺寸）缓存。</li>
+    <li><b>超大图标</b>：现在超大图标固定 240 个设备像素（<code>fixed_pixel_tier</code>）。改成连续尺寸后，统一按 DIP 计算，高 DPI 下 512 px 解码档能覆盖。</li>
+  </ul>
+</div>
+
+<script>
+/* ---------------- data ---------------- */
+function rng(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const R=rng(20261018);
+const pick=a=>a[Math.floor(R()*a.length)];
+const enc=s=>'data:image/svg+xml;utf8,'+encodeURIComponent(s);
+
+function photoSVG(a,seed){
+  const r=rng(seed), W=Math.round(100*a), H=100, kind=Math.floor(r()*4);
+  const hue=Math.floor(r()*360), night=kind===3;
+  const s1=night?`hsl(${(hue+220)%360},55%,12%)`:`hsl(${hue},65%,${58+r()*14}%)`;
+  const s2=night?`hsl(${(hue+250)%360},50%,28%)`:`hsl(${(hue+35)%360},85%,${78+r()*10}%)`;
+  let g=`<defs><linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${s1}"/><stop offset="1" stop-color="${s2}"/></linearGradient></defs><rect width="${W}" height="${H}" fill="url(#s)"/>`;
+  const sx=W*(.2+r()*.6), sy=H*(.18+r()*.25);
+  g+=night?`<circle cx="${sx}" cy="${sy}" r="5" fill="#f4f1d0"/>`:`<circle cx="${sx}" cy="${sy}" r="${7+r()*6}" fill="hsl(${(hue+50)%360},95%,88%)" opacity=".9"/>`;
+  const layer=(base,amp,col)=>{let p=`M0 ${H} L0 ${base}`;const n=5+Math.floor(r()*4);for(let i=1;i<=n;i++){p+=` L${(W*i/n).toFixed(1)} ${(base-amp*r()).toFixed(1)}`}return `<path d="${p} L${W} ${H} Z" fill="${col}"/>`};
+  if(kind===3){ // city night
+    g+=layer(H*.62,10,`hsl(${(hue+230)%360},30%,16%)`);
+    for(let x=0;x<W;x+=6+r()*6){const h=10+r()*34,w=4+r()*6;g+=`<rect x="${x}" y="${H*.7-h}" width="${w}" height="${h+30}" fill="hsl(${(hue+230)%360},25%,${10+r()*8}%)"/>`;
+      for(let k=0;k<4;k++)g+=`<rect x="${x+1+r()*(w-2)}" y="${H*.7-h+2+r()*h}" width="1" height="1.2" fill="#ffd27a"/>`}
+    g+=`<rect y="${H*.72}" width="${W}" height="${H*.28}" fill="hsl(${(hue+220)%360},45%,14%)"/>`;
+    for(let k=0;k<6;k++)g+=`<rect x="${r()*W}" y="${H*.74+r()*20}" width="${6+r()*10}" height=".8" fill="#ffcf70" opacity=".6"/>`;
+  }else{
+    g+=layer(H*(.48+r()*.1),18,`hsl(${(hue+180)%360},${20+r()*25}%,${50+r()*15}%)`);
+    if(kind===1)g+=`<path d="M${W*.3} ${H*.5} L${W*.45} ${H*.2} L${W*.6} ${H*.5}Z" fill="#fff" opacity=".9"/>`;
+    g+=layer(H*(.62+r()*.08),14,`hsl(${(hue+150)%360},${30+r()*30}%,${28+r()*15}%)`);
+    if(kind===2)g+=`<rect y="${H*.74}" width="${W}" height="${H*.26}" fill="hsl(${(hue+190)%360},55%,${40+r()*15}%)"/><rect y="${H*.74}" width="${W}" height="2" fill="#fff" opacity=".35"/>`;
+    else g+=layer(H*(.8+r()*.06),8,`hsl(${(hue+120)%360},${35+r()*25}%,${18+r()*12}%)`);
+  }
+  return enc(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${g}</svg>`);
+}
+const FOLDER=enc(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path d="M4 16a4 4 0 0 1 4-4h15l6 6h27a4 4 0 0 1 4 4v28a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z" fill="#D9A23A"/><rect x="10" y="20" width="44" height="22" rx="2" fill="#fff" opacity=".85"/><path d="M4 26a4 4 0 0 1 4-4h48a4 4 0 0 1 4 4v24a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z" fill="#F2C35A"/></svg>`);
+function docSVG(ext,color){return enc(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path d="M14 6h26l12 12v38a2 2 0 0 1-2 2H14a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" fill="#f4f4f4" stroke="#bbb"/><path d="M40 6v10a2 2 0 0 0 2 2h10" fill="#ddd" stroke="#bbb"/><rect x="8" y="34" width="34" height="15" rx="2" fill="${color}"/><text x="25" y="45" font-family="Segoe UI,Arial" font-size="10" font-weight="700" fill="#fff" text-anchor="middle">${ext}</text></svg>`)}
+
+const places=["西湖","外滩","洱海","黄山","鼓浪屿","香格里拉","法兰克福","京都","冰岛","青海湖","喀纳斯","莱茵河"];
+const subj=["日出","晨雾","夜景","街拍","雪山","海岸","秋色","星空","长曝光","全景"];
+const ratios=[4/3,3/2,16/9,3/2,4/3,2/3,3/4,1,4/5,3/2,21/9];
+const ITEMS=[];
+[["精选","1.2 GB","周二 17:24"],["RAW","8.4 GB","昨天 21:08"],["待整理","640 MB","今天 09:12"],["延时素材","3.1 GB","9月28日"]].forEach(f=>ITEMS.push({kind:"dir",name:f[0],a:1,src:FOLDER,date:f[2],type:"文件夹",size:f[1]}));
+for(let i=0;i<46;i++){
+  const a=pick(ratios);const useImg=R()<.3;
+  const name=useImg?`IMG_202609${String(10+Math.floor(R()*19))}_${String(100000+Math.floor(R()*899999))}.jpg`:`${pick(places)}${pick(subj)}${R()<.4?"_"+String(Math.floor(R()*90)+10):""}.jpg`;
+  const d=Math.floor(R()*28)+1;
+  ITEMS.push({kind:"img",name,a,src:photoSVG(a,i*7+3),date:`9月${d}日 ${String(8+Math.floor(R()*12)).padStart(2,"0")}:${String(Math.floor(R()*60)).padStart(2,"0")}`,type:"JPG 文件",ext:"JPG",size:(1.2+R()*6).toFixed(1)+" MB"});
+}
+const LONG=["2026-09-18_洱海双廊古镇_日落延时_DJI_Mini4Pro_0042_调色终版.jpg","黄山光明顶云海日出_全景接片_12张合成_8K.jpg","Iceland_Ring_Road_Day3_Skogafoss_Waterfall_Rainbow_HDR.jpg","西湖断桥残雪（重新导出 v2）- 给妈妈的版本.jpg","Frankfurt Skyline Mainufer Blaue Stunde Langzeitbelichtung 30s.jpg","京都伏见稻荷千本鸟居_清晨无人_竖构图_备选3.jpg","PXL_20260921_064512839.NIGHT.jpg","鼓浪屿菽庄花园_海边礁石_长曝光_ND1000_f11_120s.jpg","青海湖茶卡盐湖天空之镜_航拍_DJI_0187.jpg"];
+[8,12,17,21,26,30,35,39,44].forEach((ix,k)=>{if(ITEMS[ix])ITEMS[ix].name=LONG[k]});
+ITEMS.splice(14,0,{kind:"vid",name:"洱海延时摄影_4K.mp4",a:16/9,src:photoSVG(16/9,999),date:"9月18日 19:40",type:"MP4 视频",ext:"MP4",size:"812 MB"});
+ITEMS.splice(27,0,{kind:"vid",name:"冰岛自驾.mp4",a:16/9,src:photoSVG(16/9,555),date:"9月21日 10:02",type:"MP4 视频",ext:"MP4",size:"1.4 GB"});
+ITEMS.push({kind:"doc",name:"行程单.pdf",a:1,src:docSVG("PDF","#d9433b"),date:"9月2日 22:15",type:"PDF 文档",ext:"PDF",size:"318 KB"});
+ITEMS.push({kind:"doc",name:"相机设置备忘.docx",a:1,src:docSVG("DOC","#2b6cd4"),date:"9月3日 08:40",type:"Word 文档",ext:"DOCX",size:"42 KB"});
+ITEMS.push({kind:"doc",name:"照片清单（最终版）.xlsx",a:1,src:docSVG("XLS","#1f8a4c"),date:"9月30日 23:01",type:"Excel 工作表",ext:"XLSX",size:"27 KB"});
+
+/* ---------------- text measure / elide ---------------- */
+const mctx=document.createElement("canvas").getContext("2d");
+mctx.font='12.5px "Segoe UI Variable","Segoe UI","Microsoft YaHei UI",sans-serif';
+function midElide(name,w){
+  if(mctx.measureText(name).width<=w)return name;
+  const dot=name.lastIndexOf(".");const ext=dot>0?name.slice(dot):"";const base=dot>0?name.slice(0,dot):name;
+  let lo=0,hi=base.length;
+  while(lo<hi){const m=(lo+hi+1)>>1;const h=Math.ceil(m*0.62),t=m-h;const s=base.slice(0,h)+"…"+(t>0?base.slice(base.length-t):"")+ext;if(mctx.measureText(s).width<=w)lo=m;else hi=m-1}
+  const h=Math.ceil(lo*0.62),t=lo-h;return base.slice(0,h)+"…"+(t>0?base.slice(base.length-t):"")+ext;
+}
+
+// 文件名折行：按字符贪心折行，优先在 _ - 空格 . 括号处断开；超过 maxL 行时末行中间省略（保留扩展名）
+const wrapCache=new Map();
+function fitChars(t,w){let lo=0,hi=t.length;while(lo<hi){const m=(lo+hi+1)>>1;if(mctx.measureText(t.slice(0,m)).width<=w)lo=m;else hi=m-1}return Math.max(1,lo)}
+function wrap(name,w,maxL){
+  w=Math.floor(w);const key=name+"|"+w+"|"+maxL;const c=wrapCache.get(key);if(c)return c;
+  const lines=[];let rest=name,truncated=false;
+  while(rest.length){
+    if(mctx.measureText(rest).width<=w){lines.push(rest);break}
+    if(lines.length===maxL-1){lines.push(midElide(rest,w));truncated=true;break}
+    const n=fitChars(rest,w);let cut=n;
+    for(let k=n;k>Math.max(1,n*0.55);k--){if(/[\s_\-.()（）、，·]/.test(rest[k-1])){cut=k;break}}
+    lines.push(rest.slice(0,cut));rest=rest.slice(cut).replace(/^\s+/,"");
+  }
+  const r={lines,truncated};wrapCache.set(key,r);return r;
+}
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+/* ---------------- layout engines ---------------- */
+const isPic=it=>it.kind==="img"||it.kind==="vid";
+function fitThumb(sx,sy,sw,sh,it,cover,iconScale){
+  if(!isPic(it)){const s=Math.min(sw,sh)*iconScale;return{x:sx+(sw-s)/2,y:sy+sh-s,w:s,h:s}}
+  if(cover)return{x:sx,y:sy,w:sw,h:sh};
+  let w=sw,h=w/it.a;if(h>sh){h=sh;w=h*it.a}
+  return{x:sx+(sw-w)/2,y:sy+sh-h,w,h};
+}
+const CUR={medium:{cw:104,ch:100,icon:48,slotH:48},large:{cw:112,ch:148,icon:96,slotH:96},xl:{cw:256,ch:236,icon:240,slotH:180}};
+function layoutCurrent(tier,W,items){
+  const t=CUR[tier];const cols=Math.max(1,Math.floor(W/t.cw));const cw=W/cols;const out=[];let trunc=0;
+  items.forEach((it,i)=>{const c=i%cols,r=Math.floor(i/cols);const x=c*cw,y=r*t.ch;
+    const sw=Math.min(t.icon,cw-8),sx=x+(cw-sw)/2,sy=y+8;
+    const th=fitThumb(sx,sy,sw,t.slotH,it,false,1);
+    const wr=wrap(it.name,cw-8,2);if(wr.truncated)trunc++;
+    out.push({x:x+2,y:y+2,w:cw-4,h:t.ch-4,th,lb:{x:x+4,y:sy+t.slotH+6,w:cw-8,h:36},lines:wr.lines,center:true})});
+  return{items:out,height:Math.ceil(items.length/cols)*t.ch+8,mode:"grid",cols,trunc,rowH:t.ch};
+}
+function detCols(w){const showType=w>=520;const size=w-14-72;const type=size-12-104;const date=(showType?type:size)-12-112;return{showType,size,type,date,name:36,nameW:Math.max(60,date-36-10)}}
+function layoutDetails(W,items){
+  const out=[];const rh=28;const c=detCols(W-12);
+  items.forEach((it,i)=>{const x=6,y=4+i*rh,w=W-12;
+    out.push({x,y,w,h:rh-2,th:{x:x+10,y:y+5,w:16,h:16},lb:{x:x+36,y:y+4,w:c.nameW,h:18},lmode:"one",center:false,meta:true})});
+  return{items:out,height:items.length*rh+12,mode:"details",cols:1,trunc:0};
+}
+// 槽位比例按文件夹内容：横向图片过半用 4:3，否则方形
+function slotRatio(items){if(items._r==null){const land=items.filter(i=>isPic(i)&&i.a>=1.2).length;items._r=land>=items.length*0.5?0.75:1}return items._r}
+// 自适应行数：取本文件夹 75% 的文件名需要的行数（1–4 行），所有行等高；超出的从中间省略，选中后显示全名
+// 规则：取 75% 分位，限制在 2–4 行；只有 95% 的文件名都能一行放下时才用 1 行（不为了省一行牺牲完整度）
+function autoLines(items,w){const k="_al"+Math.floor(w);if(items[k]==null){const need=items.map(it=>wrap(it.name,w,9).lines.length).sort((a,b)=>a-b);const q=f=>need[Math.min(need.length-1,Math.floor(need.length*f))];items[k]=q(0.95)<=1?1:Math.max(2,Math.min(4,q(0.75)))}return items[k]}
+// 新网格：列宽由缩略图决定（不由文件名决定）；所有行等高，行数按文件夹自适应或固定
+function layoutGrid(o,W,items){
+  const pad=8,g=+o.gap,gv=2,s=o.size,LH=17,hide=o.labels==="none";
+  const cell0=hide?s+4:Math.max(s+8,90);   // 缩略图两侧各 4 px；文件名区至少 84 px 宽（≈现状 96 px，相机文件名两行放得下）
+  const avail=W-2*pad;
+  const cols=Math.max(1,Math.floor((avail+g)/(cell0+g)));
+  const extra=Math.max(0,(avail-(cols*cell0+(cols-1)*g))/cols);
+  const cellW=cell0+Math.min(extra,16);              // 余量每格最多补 16 px，再多就整体居中
+  const left0=pad+Math.max(0,(avail-(cols*cellW+(cols-1)*g))/2);
+  const lw=cellW-6;
+  const nL=hide?0:o.labels==="auto"?autoLines(items,cell0-6):+o.labels;   // 按基准宽度算，窗口缩放时行数不跳
+  const slotW=Math.min(s,cellW-4),slotH=s*(s>=64?slotRatio(items):1);
+  const cellH=4+slotH+(nL?3+nL*LH:0)+5;
+  const out=[];let trunc=0;
+  items.forEach((it,i)=>{const c=i%cols,r=Math.floor(i/cols);const x=left0+c*(cellW+g),y=pad+r*(cellH+gv);
+    const sx=x+(cellW-slotW)/2,sy=y+4;const th=fitThumb(sx,sy,slotW,slotH,it,o.crop==="fill",.92);
+    const wr=nL?wrap(it.name,lw,nL):null;if(!nL||wr.truncated)trunc++;
+    out[i]={x,y,w:cellW,h:cellH,th,lb:{x:x+3,y:sy+slotH+3,w:lw,h:nL*LH},lines:wr?wr.lines:null,center:true,tr:wr&&wr.truncated}});
+  return{items:out,height:pad*2+Math.ceil(items.length/cols)*(cellH+gv),mode:"grid",cols,trunc,nL,rowH:Math.round(cellH+gv)};
+}
+function layoutWall(o,W,items){
+  const pad=8,g=Math.max(3,+o.gap),avail=W-2*pad,h0=o.size*0.78;const labH=0;   // 照片墙不显示文件名（窄的竖图放不下），悬停或选中时在图上显示
+  const out=new Array(items.length);let y=pad,row=[],sumA=0,trunc=0;
+  const ar=it=>isPic(it)?it.a:0.85;
+  const flush=(last)=>{if(!row.length)return;let h=(avail-(row.length-1)*g)/sumA;if(last&&h>h0*1.25)h=h0;let x=pad;
+    row.forEach(i=>{const it=items[i];const w=ar(it)*h;
+      // 文件夹 / 文档没有画面可看，图标缩到上部，名字始终显示在图块底部
+      const pic=isPic(it);
+      const th=pic?{x,y,w,h}:fitThumb(x+w*.1,y+h*.06,w*.8,h-24,it,false,1);
+      trunc++;
+      out[i]={x:x-1,y:y-1,w:w+2,h:h+labH+2,th,lb:pic?{x,y:y+h,w,h:0}:{x:x+2,y:y+h-19,w:w-4,h:17},lmode:"one",center:true,wall:true};x+=w+g});
+    y+=h+labH+g;row=[];sumA=0};
+  items.forEach((it,i)=>{row.push(i);sumA+=ar(it);if(sumA*h0+(row.length-1)*g>=avail)flush(false)});
+  flush(true);
+  return{items:out,height:y+pad,mode:"wall",cols:0,trunc};
+}
+function computeLayout(st,W,items){
+  if(st.mode==="details")return layoutDetails(W,items);
+  if(st.mode.startsWith("cur-"))return layoutCurrent(st.mode.slice(4),W,items);
+  return st.arrange==="wall"?layoutWall(st,W,items):layoutGrid(st,W,items);
+}
+
+/* ---------------- pane renderer ---------------- */
+class PaneView{
+  constructor(list,items,state){
+    this.list=list;this.inner=list.querySelector(".inner");this.items=items;this.st=state;this.sel=-1;this.els=[];this.L=null;
+    const frag=document.createDocumentFragment();
+    items.forEach((it,i)=>{const e=document.createElement("div");e.className="it";e.dataset.i=i;
+      const th=document.createElement("div");th.className="th "+(isPic(it)?"photo":"icon");th.style.backgroundImage=`url("${it.src}")`;
+      th.innerHTML=`<span class="play"></span><span class="ov">${it.name}</span>`;if(it.kind!=="vid")th.firstChild.remove();
+      const lb=document.createElement("div");lb.className="lb";
+      const md=document.createElement("div");md.className="md";
+      md.innerHTML=`<span class="d">${it.date}</span><span class="t">${it.ext?`<span class="ext">${it.ext}</span>`:""}${it.type}</span><span class="s">${it.size}</span>`;
+      e.append(th,lb,md);frag.appendChild(e);this.els.push({e,th,lb,md})});
+    this.inner.appendChild(frag);
+    this.inner.addEventListener("mousedown",ev=>{if(ev.target.closest(".ren,.renhint"))return;const it=ev.target.closest(".it");const i=it?+it.dataset.i:-1;
+      if(this.ren&&!this.ren.opt.persist)this.ren.commit(true);
+      const again=i>=0&&i===this.sel&&ev.button===0&&!!ev.target.closest(".lb,.ov");this.select(i);if(again&&this.onSlowClick)this.onSlowClick(i)});
+  }
+  select(i){if(this.sel>=0)this.els[this.sel].e.classList.remove("sel");this.sel=i;if(i>=0)this.els[i].e.classList.add("sel");if(this.L)this.applyLabels();this.onSelect&&this.onSelect()}
+  anchor(){ // focused item if visible, else first visible
+    if(!this.L)return null;const top=this.list.scrollTop,h=this.list.clientHeight;
+    if(this.sel>=0){const r=this.L.items[this.sel];if(r.y+r.h>top&&r.y<top+h)return{i:this.sel,off:r.y-top}}
+    for(let i=0;i<this.L.items.length;i++){const r=this.L.items[i];if(r.y+r.h/2>=top)return{i,off:r.y-top}}return null;
+  }
+  render(opts={}){
+    const W=this.list.clientWidth;const anc=opts.keepAnchor?this.anchor():null;
+    this.list.classList.toggle("anim",!!opts.animate);this.list.classList.toggle("fast",opts.animate==="fast");
+    const L=computeLayout(this.st,W,this.items);this.L=L;
+    const m=L.mode;this.list.className=this.list.className.replace(/\bm-\w+/g,"").trim()+" m-"+m;
+    this.list.classList.toggle("labels-none",m==="wall"||(m!=="details"&&!this.st.mode.startsWith("cur-")&&this.st.labels==="none"));
+    this.list.classList.toggle("expand",m!=="details");
+    this.inner.style.height=L.height+"px";
+    L.items.forEach((r,i)=>{const {e,th,lb,md}=this.els[i];
+      Object.assign(e.style,{left:r.x+"px",top:r.y+"px",width:r.w+"px",height:r.h+"px"});
+      Object.assign(th.style,{left:(r.th.x-r.x)+"px",top:(r.th.y-r.y)+"px",width:r.th.w+"px",height:r.th.h+"px"});
+      Object.assign(lb.style,{left:(r.lb.x-r.x)+"px",top:(r.lb.y-r.y)+"px",width:r.lb.w+"px",height:r.lb.h+"px",opacity:r.lb.h?1:0});
+      md.style.opacity=r.meta?1:0;
+      if(r.meta){const c=detCols(r.w);const q=md.children;q[0].style.left=c.date+"px";q[1].style.left=c.type+"px";q[1].style.display=c.showType?"":"none";q[2].style.left=c.size+"px";q[2].style.width="72px"}
+    });
+    this.applyLabels();
+    if(anc){const r=L.items[anc.i];this.list.scrollTop=Math.max(0,r.y-anc.off)}
+    if(this.ren)this.ren.layout(false);
+    return L;
+  }
+  applyLabels(){
+    const L=this.L;
+    L.items.forEach((r,i)=>{const {lb}=this.els[i];const it=this.items[i];const sel=i===this.sel;
+      lb.className="lb "+(r.center?"c ":"")+(r.lines?"":"one");
+      if(!r.lb.h){lb.innerHTML="";return}
+      if(sel&&L.mode!=="details"){lb.innerHTML=`<span class="full">${esc(it.name)}</span>`;return}
+      if(r.lines){lb.innerHTML=r.lines.map(esc).join("<br>");return}
+      lb.textContent=midElide(it.name,r.lb.w-2);
+    });
+  }
+  visibleCount(){
+    if(!this.L)return 0;const top=this.list.scrollTop,h=this.list.clientHeight;let n=0;
+    this.L.items.forEach(r=>{const a=Math.max(0,Math.min(r.y+r.h,top+h)-Math.max(r.y,top));if(a>=r.h*0.5)n++});return n;
+  }
+}
+
+
+/* ---------------- rename ---------------- */
+const BAD=/[\\/:*?"<>|]/,BADG=/[\\/:*?"<>|]/g,SEP=/[\s_\-.()（）、，·]/;
+let activeRen=null;
+class Rename{
+  constructor(pv,i,opt={}){
+    if(pv.ren)pv.ren.close();
+    this.pv=pv;this.i=i;this.opt=opt;const it=pv.items[i];this.it=it;this.orig=it.name;this.w0=0;this.selMode=0;
+    const el=document.createElement("div");el.className="ren"+(opt.legacy?" legacy":" pop");
+    el.contentEditable=opt.legacy?"plaintext-only":"true";el.spellcheck=false;el.setAttribute("role","textbox");
+    this.el=el;pv.inner.appendChild(el);
+    const h=document.createElement("div");h.className="renhint";h.style.display="none";pv.inner.appendChild(h);this.hint=h;
+    pv.ren=this;if(!opt.legacy)pv.list.classList.add("renaming");pv.els[i].e.classList.add("renhost");
+    this.setText(it.name);this.layout(true);
+    if(!opt.noFocus){activeRen=this;el.focus({preventScroll:true});this.selectPart(0)}
+    el.addEventListener("focus",()=>{activeRen=this});
+    el.addEventListener("mousedown",e=>e.stopPropagation());
+    el.addEventListener("compositionstart",()=>this.composing=true);
+    el.addEventListener("compositionend",()=>{this.composing=false;this.onInput()});
+    el.addEventListener("beforeinput",e=>{
+      if(e.inputType==="insertParagraph"||e.inputType==="insertLineBreak"){e.preventDefault();return}
+      if(e.data&&BAD.test(e.data)){e.preventDefault();this.flash(`文件名不能包含 <b>\\ / : * ? " &lt; &gt; |</b>`)}});
+    el.addEventListener("paste",e=>{e.preventDefault();let t=(e.clipboardData.getData("text/plain")||"").replace(/[\r\n\t]+/g," ");
+      if(BAD.test(t)){t=t.replace(BADG,"");this.flash("粘贴内容里的非法字符已去掉")}document.execCommand("insertText",false,t)});
+    el.addEventListener("input",()=>{if(!this.composing)this.onInput()});
+    el.addEventListener("scroll",()=>{});
+    el.addEventListener("keydown",e=>{e.stopPropagation();
+      if(this.asking){e.preventDefault();if(e.key==="Enter")this.answer(true);else if(e.key==="Escape")this.answer(false);return}
+      if(e.key==="Enter"){e.preventDefault();this.commit()}
+      else if(e.key==="Escape"){e.preventDefault();this.close()}
+      else if(e.key==="Tab"&&!this.opt.persist){e.preventDefault();const d=e.shiftKey?-1:1,pv=this.pv,n=this.i+d;this.commit(true);
+        if(n>=0&&n<pv.items.length){pv.select(n);new Rename(pv,n,this.opt)}}
+      else if(e.key==="F2"){e.preventDefault();this.selMode=(this.selMode+1)%3;this.selectPart(this.selMode)}});
+    el.addEventListener("blur",()=>{if(this.opt.persist||this.closed||this.asking)return;setTimeout(()=>{if(!this.closed&&document.activeElement!==this.el)this.commit()},0)});
+  }
+  text(){return this.el.textContent}
+  isFile(t){const d=t.lastIndexOf(".");return this.it.kind!=="dir"&&d>0?d:-1}
+  markup(t){
+    const d=this.isFile(t);let o="";const glue=d>0?Math.max(0,d-2):-1;
+    for(let k=0;k<t.length;k++){
+      if(k===glue)o+='<span class="nw">';if(k===d)o+='<span class="ext">';
+      const ch=t[k];o+=ch==="&"?"&amp;":ch==="<"?"&lt;":ch===">"?"&gt;":ch;
+      if((glue<0||k<glue-1)&&SEP.test(ch))o+="<wbr>";
+    }
+    if(d>0)o+="</span></span>";return o;
+  }
+  setText(t){if(this.opt.legacy)this.el.textContent=t;else this.el.innerHTML=this.markup(t)}
+  offsets(){const s=getSelection();if(!s.rangeCount||!this.el.contains(s.anchorNode))return null;
+    const f=(n,o)=>{const r=document.createRange();r.selectNodeContents(this.el);r.setEnd(n,o);return r.toString().length};return[f(s.anchorNode,s.anchorOffset),f(s.focusNode,s.focusOffset)]}
+  setSel(a,b){const find=n=>{const w=document.createTreeWalker(this.el,NodeFilter.SHOW_TEXT);let acc=0,node,last=null;
+      while(node=w.nextNode()){const L=node.nodeValue.length;last=node;if(n<=acc+L)return[node,n-acc];acc+=L}return last?[last,last.nodeValue.length]:[this.el,0]};
+    const[an,ao]=find(a),[fn,fo]=find(b);getSelection().setBaseAndExtent(an,ao,fn,fo)}
+  selectPart(m){const t=this.text(),d=this.isFile(t);if(d<0||m===1)this.setSel(0,t.length);else if(m===0)this.setSel(0,d);else this.setSel(d+1,t.length)}
+  onInput(){
+    if(!this.opt.legacy){const o=this.offsets();this.setText(this.text());if(o)this.setSel(o[0],o[1])}
+    this.validate();this.layout(false);
+  }
+  ask(oe,ne,keepFocus){
+    const h=this.hint;this.asking=true;h.className="renhint ask";h.style.display="";
+    h.innerHTML=`<span class="q">把扩展名从 <b>${esc(oe)}</b> 改成 <b>${esc(ne||"（无）")}</b> 吗？<i>改了以后，文件可能无法用原来的程序打开。</i></span><span class="bt"><button class="n">取消</button><button class="y">改</button></span>`;
+    h.querySelector(".y").onmousedown=e=>{e.preventDefault();e.stopPropagation();this.answer(true,keepFocus)};
+    h.querySelector(".n").onmousedown=e=>{e.preventDefault();e.stopPropagation();this.answer(false)};
+    this.layout(false);
+  }
+  answer(yes,keepFocus){this.asking=false;if(yes){this.extOk=true;this.commit(keepFocus)}else{this.validate();this.layout(false);this.el.focus({preventScroll:true});this.selectPart(2)}}
+  flash(html){this.err=html;clearTimeout(this.et);this.et=setTimeout(()=>{this.err=null;this.validate();this.layout(false)},2600);
+    this.el.classList.remove("shake");void this.el.offsetWidth;this.el.classList.add("shake","bad");setTimeout(()=>this.el.classList.remove("bad"),600);this.validate();this.layout(false)}
+  target(){let t=this.text().replace(/\s+/g," ").trim();const stripped=t.replace(/[ .]+$/,"");return{t:stripped,trail:stripped!==t}}
+  uniq(t){const d=this.isFile(t),base=d>0?t.slice(0,d):t,ext=d>0?t.slice(d):"";const has=n=>this.pv.items.some((x,j)=>j!==this.i&&x.name.toLowerCase()===n.toLowerCase());
+    if(!has(t))return null;for(let n=2;;n++){const c=`${base} (${n})${ext}`;if(!has(c))return c}}
+  validate(){
+    const h=this.hint;if(this.opt.legacy){h.style.display="none";return}
+    if(this.asking)return;
+    let html=null,cls="";
+    if(this.err){html=this.err;cls="err"}
+    else{const{t,trail}=this.target(),u=t&&this.uniq(t);
+      const od=this.isFile(this.orig),nd=this.isFile(t),oe=od>0?this.orig.slice(od).toLowerCase():"",ne=nd>0?t.slice(nd).toLowerCase():"";
+      if(!t){html="文件名不能为空";cls="warn"}
+      else if(u){html=`已有同名项目 · 回车后改为 <b>${esc(u)}</b>`;cls="warn"}
+      else if(oe&&oe!==ne){html=`扩展名会从 <b>${esc(oe)}</b> 改为 <b>${esc(ne||"（无）")}</b> · 回车时会再确认一次`;cls="warn"}
+      else if(trail){html="末尾的空格和句点会被去掉"}
+      else if(t.length>200){html=`还能输入 ${255-t.length} 个字符`}}
+    if(!html){h.style.display="none";return}
+    h.className="renhint "+cls;h.innerHTML=html;h.style.display="";
+  }
+  layout(first){
+    const pv=this.pv,L=pv.L,r=L.items[this.i],list=pv.list,W=list.clientWidth,el=this.el;if(!r)return;
+    const t=this.text()||" ",nat=mctx.measureText(t).width;
+    let w,left,top;
+    if(L.mode==="details"){
+      el.classList.add("one");left=r.lb.x-6;w=Math.max(r.lb.w+12,Math.min(360,W-left-8));top=r.y+Math.round((r.h-24)/2);
+      Object.assign(el.style,{left:left+"px",top:top+"px",width:w+"px",height:"24px",textAlign:"left"});
+    }else if(this.opt.legacy){
+      const cw=r.w;w=Math.max(Math.min(cw,48),Math.min(cw,Math.ceil(nat+15)));
+      left=Math.max(6,Math.min(r.x+r.w/2-w/2,W-w-6));top=r.lb.y-2;
+      Object.assign(el.style,{left:left+"px",top:top+"px",width:w+"px",maxHeight:"none"});
+      const vb=list.scrollTop+list.clientHeight;const full=el.scrollHeight;el.style.maxHeight=Math.max(20,vb-top)+"px";
+      this.cut=Math.max(0,Math.round((full-(vb-top))/17));
+    }else{
+      const wall=L.mode==="wall",cw=r.w;
+      const minW=wall?Math.min(Math.max(cw,150),W-16):cw,maxW=Math.max(minW,Math.min(wall?300:2*cw+6,280,W-16));
+      w=Math.max(minW,Math.min(maxW,Math.ceil(nat+18)));w=Math.max(w,Math.min(this.w0,maxW));this.w0=w;
+      left=Math.max(6,Math.min(r.x+r.w/2-w/2,W-w-6));
+      el.style.width=w+"px";el.style.left=left+"px";
+      const hh=Math.min(el.scrollHeight,109);
+      top=wall?Math.max(r.y+4,r.y+r.h-hh-6):r.lb.y-3;
+      el.style.top=top+"px";
+      // 下沿超出视口：列表滚动把整个框露出来；到底了就临时加高
+      const hint=this.hint.style.display==="none"?0:this.asking?92:22,bottom=top+hh+hint+10;
+      const need=bottom-(list.scrollTop+list.clientHeight);
+      if(bottom>L.height)pv.inner.style.height=bottom+"px";
+      if(need>0)list.scrollTo({top:list.scrollTop+need,behavior:first?"smooth":"auto"});
+    }
+    const hh2=el.offsetHeight||24;
+    const hw=this.hint.offsetWidth||0;this.hint.style.left=Math.max(hw/2+6,Math.min(left+w/2,W-hw/2-6))+"px";this.hint.style.top=(top+Math.min(hh2,L.mode==="details"?24:109)+5)+"px";
+  }
+  commit(keepFocus){
+    if(this.closed)return;let{t}=this.target();
+    if(!t||t===this.orig){this.close(keepFocus);return}
+    if(BAD.test(t)){this.flash(`文件名不能包含 <b>\\ / : * ? " &lt; &gt; |</b>`);return}
+    const u=this.uniq(t);if(u)t=u;
+    // 改了扩展名：和资源管理器一样，回车时先确认一次（Enter = 改，Esc = 回到编辑）
+    if(!this.opt.legacy&&!this.extOk){const od=this.isFile(this.orig),nd=this.isFile(t),oe=od>0?this.orig.slice(od).toLowerCase():"",ne=nd>0?t.slice(nd).toLowerCase():"";
+      if(oe&&oe!==ne){this.ask(oe,ne,keepFocus);return}}
+    this.it.name=t;const ov=this.pv.els[this.i].th.querySelector(".ov");if(ov)ov.textContent=t;
+    this.close(keepFocus,true);
+  }
+  close(keepFocus,changed){
+    if(this.closed)return;this.closed=true;const pv=this.pv;
+    this.el.remove();this.hint.remove();pv.ren=null;if(activeRen===this)activeRen=null;
+    pv.list.classList.remove("renaming");pv.els[this.i].e.classList.remove("renhost");
+    if(changed)wrapCache.clear();
+    pv.render({keepAnchor:true});
+    if(this.opt.onDone)this.opt.onDone(changed);
+    if(!keepFocus&&this.opt.ctl)this.opt.ctl.root.focus({preventScroll:true});
+  }
+}
+
+/* ---------------- section 1: view axis + two panes ---------------- */
+const MIN=32,MAX=256,DETENTS=[48,96,160,256];
+const nameOf=s=>s<=40?"小图标":s<=64?"中图标":s<=120?"大图标":s<=200?"特大图标":"超大图标";
+const posOf=s=>Math.log(s/MIN)/Math.log(MAX/MIN);   // 对数刻度：小尺寸区间更细
+const sizeAt=p=>MIN*Math.pow(MAX/MIN,p);
+const ICON_LIST='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 3.5h12M2 8h12M2 12.5h12"/></svg>';
+const ICON_WALL='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2" width="7.5" height="5" rx="1"/><rect x="10.5" y="2" width="4" height="5" rx="1"/><rect x="1.5" y="9" width="4" height="5" rx="1"/><rect x="7" y="9" width="7.5" height="5" rx="1"/></svg>';
+const ICON_GRID='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>';
+
+const ICON_SIZE='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="8.5" width="5" height="5" rx="1"/><rect x="8.5" y="2.5" width="6" height="11" rx="1.2"/></svg>';
+const ICON_DOTS='<svg viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>';
+/* 栏头右侧：尺寸滑块 + 分段切换（沿用 Axis 这个名字，PaneCtl 不用改调用） */
+class Axis{
+  constructor(el,ctl){
+    this.el=el;this.ctl=ctl;this.head=el.closest(".phead");this.root=el.closest(".pane");
+    const ti=ctl?0:-1;
+    el.innerHTML=`<div class="zoom"><i class="gs"></i><span class="ztrack" tabindex="${ti}" role="slider" aria-label="图标大小"><span class="rail"></span><span class="fill"></span>${DETENTS.map(d=>`<span class="tick" data-d="${d}" style="left:${posOf(d)*100}%"></span>`).join("")}<span class="knob"></span></span><i class="gl"></i></div>`+
+      `<span class="zbtn" title="图标大小">${ICON_SIZE}</span>`+
+      `<div class="vseg" tabindex="${ti}" role="radiogroup" aria-label="视图"><span class="thumb"></span>`+
+      `<span class="sg" data-a="details" title="详细信息　Ctrl+Shift+6">${ICON_LIST}</span>`+
+      `<span class="sg" data-a="grid" title="网格（回到上次的尺寸）">${ICON_GRID}</span>`+
+      `<span class="sg" data-a="wall" title="照片墙：按原始比例排列">${ICON_WALL}</span></div><span class="tip"></span>`;
+    this.track=el.querySelector(".ztrack");this.knob=el.querySelector(".knob");this.fill=el.querySelector(".fill");this.tip=el.querySelector(".tip");
+    this.thumb=el.querySelector(".thumb");this.zoomEl=el.querySelector(".zoom");
+    this.zoomEl.addEventListener("transitionend",()=>this.placeTip());
+    if(ctl)this.bind();
+  }
+  render(st){
+    this.st=st;
+    const det=st.mode==="details",wall=!det&&st.arrange==="wall",idx=det?0:wall?2:1;
+    this.el.classList.toggle("det",det);this.head&&this.head.classList.toggle("det",det);
+    this.root&&this.root.classList.toggle("m-det",det);
+    this.el.querySelectorAll(".sg").forEach((g,i)=>{g.classList.toggle("on",i===idx);g.setAttribute("aria-checked",i===idx)});
+    this.thumb.style.transform=`translateX(${idx*30}px)`;
+    const p=posOf(st.size);
+    this.knob.style.left=(p*100)+"%";this.fill.style.width=(p*100)+"%";
+    this.tip.textContent=wall?`照片墙 · 行高 ${Math.round(st.size*0.78)} px`:`${nameOf(st.size)} · ${st.size} px`;
+    this.el.querySelectorAll(".tick").forEach(t=>t.classList.toggle("hit",st.size>=+t.dataset.d));
+    this.placeTip();
+  }
+  placeTip(){
+    if(!this.st)return;const tr=this.track.getBoundingClientRect(),vr=this.el.getBoundingClientRect();if(!tr.width)return;
+    this.tip.style.left=(tr.left-vr.left+posOf(this.st.size)*tr.width)+"px";this.tip.style.top=(tr.bottom-vr.top+3)+"px";
+  }
+  peek(ms=1100){if(!this.st||this.st.mode==="details")return;this.placeTip();this.el.classList.add("peek");clearTimeout(this.pt);this.pt=setTimeout(()=>this.el.classList.remove("peek"),ms)}
+  bind(){
+    const el=this.el,ctl=this.ctl,seg=el.querySelector(".vseg");
+    const pick=a=>{ctl.focus(true);if(a==="details")ctl.setDetails();else if(a==="wall")ctl.setArrange("wall");else ctl.setArrange("grid")};
+    seg.addEventListener("click",e=>{const g=e.target.closest(".sg");if(g)pick(g.dataset.a)});
+    seg.addEventListener("keydown",e=>{const order=["details","grid","wall"];const cur=ctl.st.mode==="details"?0:ctl.st.arrange==="wall"?2:1;
+      if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();e.stopPropagation();pick(order[Math.max(0,Math.min(2,cur+(e.key==="ArrowRight"?1:-1)))])}});
+    const at=e=>{const r=this.track.getBoundingClientRect();let p=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
+      for(const d of DETENTS)if(Math.abs((p-posOf(d))*r.width)<=4)p=posOf(d);
+      let v=Math.round(sizeAt(p));if(!DETENTS.includes(v))v=Math.round(v/2)*2;return Math.max(MIN,Math.min(MAX,v))};
+    const go=e=>{const v=at(e);if(v!==ctl.st.size)ctl.setSizeLive(v);this.placeTip()};
+    this.track.addEventListener("pointerdown",e=>{ctl.focus(true);this.drag=true;el.classList.add("drag");this.track.setPointerCapture(e.pointerId);go(e)});
+    this.track.addEventListener("pointermove",e=>{if(this.drag)go(e)});
+    const end=()=>{if(!this.drag)return;this.drag=false;el.classList.remove("drag")};
+    this.track.addEventListener("pointerup",end);this.track.addEventListener("pointercancel",end);
+    this.track.addEventListener("dblclick",()=>{ctl.setIcons(96);this.peek()});
+    this.track.addEventListener("mouseenter",()=>{this.placeTip();el.classList.add("hov")});
+    this.track.addEventListener("mouseleave",()=>el.classList.remove("hov"));
+    this.zoomEl.addEventListener("wheel",e=>{e.preventDefault();ctl.focus(true);ctl.zoom(e.deltaY<0?1:-1);this.peek()},{passive:false});
+    this.track.addEventListener("keydown",e=>{
+      if(e.key==="ArrowRight"||e.key==="ArrowUp"){e.preventDefault();e.stopPropagation();ctl.zoom(1);this.peek()}
+      else if(e.key==="ArrowLeft"||e.key==="ArrowDown"){e.preventDefault();e.stopPropagation();ctl.zoom(-1);this.peek()}
+      else if(e.key==="Home"){e.preventDefault();e.stopPropagation();ctl.setIcons(MIN);this.peek()}
+      else if(e.key==="End"){e.preventDefault();e.stopPropagation();ctl.setIcons(MAX);this.peek()}});
+    el.querySelector(".zbtn").addEventListener("click",()=>{el.classList.toggle("zpop");this.placeTip()});
+    document.addEventListener("mousedown",e=>{if(!el.contains(e.target))el.classList.remove("zpop")});
+  }
+}
+
+let activeCtl=null;
+class PaneCtl{
+  constructor(root,items,st){
+    this.root=root;this.items=items;this.st=st;this.last=st.mode==="details"?96:st.size;
+    this.list=root.querySelector(".list");this.colhead=root.querySelector(".colhead");
+    this.pv=new PaneView(this.list,items,st);
+    this.axis=new Axis(root.querySelector(".vctl"),this);
+    this.pv.onSelect=()=>updateStatus();
+    // 在已选中项的文件名上再单击一次：停 500 ms 没有双击就进入重命名（和资源管理器一致）
+    this.pv.onSlowClick=i=>{clearTimeout(this.sct);this.sct=setTimeout(()=>{if(this.pv.sel===i&&!this.pv.ren)this.rename()},500)};
+    this.list.addEventListener("dblclick",()=>clearTimeout(this.sct));
+    root.addEventListener("mousedown",()=>this.focus(true));
+    this.list.addEventListener("wheel",e=>{if(!e.ctrlKey)return;e.preventDefault();this.focus();this.zoom(e.deltaY<0?1:-1);this.axis.peek()},{passive:false});
+    this.list.addEventListener("scroll",()=>{this.root.classList.toggle("scrolled",this.list.scrollTop>2);updateStatus()});
+    root.querySelector('[data-act="menu"]').addEventListener("click",e=>{e.stopPropagation();openFly(this,e.currentTarget)});
+    this.pv.render();
+    new ResizeObserver(()=>{this.pv.render({keepAnchor:true});this.sync()}).observe(this.list);
+  }
+  focus(noFocusEl){if(activeCtl!==this){activeCtl&&activeCtl.root.classList.remove("active");activeCtl=this;this.root.classList.add("active")}if(!noFocusEl&&!this.axis.el.contains(document.activeElement))this.root.focus({preventScroll:true});updateStatus()}
+  apply(anim){if(this.pv.ren)this.pv.ren.commit(true);this.pv.render({animate:anim,keepAnchor:true});this.sync()}
+  sync(){
+    this.axis.render(this.st);
+    const c=detCols(this.list.clientWidth-12);const o=6;
+    this.colhead.innerHTML=`<span style="left:${o+c.name}px">名称 ⌃</span><span style="left:${o+c.date}px">修改日期</span>${c.showType?`<span style="left:${o+c.type}px">类型</span>`:""}<span style="left:${o+c.size}px;width:72px;text-align:right">大小</span>`;
+    this.colhead.classList.toggle("hide",this.st.mode!=="details");
+    if(flyCtl===this)syncFly();
+    if(this.st.mode==="details"||this.st.arrange==="wall")this.hideSugg();else setTimeout(()=>this.maybeSuggest(),450);
+    updateStatus();
+  }
+  rename(){if(this.pv.sel<0)return;new Rename(this.pv,this.pv.sel,{ctl:this})}
+  setDetails(){if(this.st.mode==="details")return;this.last=this.st.size;this.st.mode="details";this.apply(true)}
+  setIcons(size){const was=this.st.mode;this.st.mode="icons";this.st.size=Math.round(size??this.last);this.last=this.st.size;this.apply(was==="details"?true:"fast")}
+  setArrange(a){if(this.st.mode!=="details"&&this.st.arrange===a)return;this.st.arrange=a;if(this.st.mode==="details"){this.st.mode="icons";this.st.size=this.last}this.hideSugg();this.apply(true)}
+  // 照片为主的文件夹：第一次进入图标网格时，在栏头下方提示一次“试试照片墙”
+  maybeSuggest(){
+    if(this.suggested||this.st.mode!=="icons"||this.st.arrange!=="grid")return;
+    const pics=this.items.filter(isPic).length;if(pics<this.items.length*0.7)return;
+    this.suggested=true;
+    const d=document.createElement("div");d.className="sugg";
+    d.innerHTML=`<span class="si">${ICON_WALL}</span><span>这个文件夹以照片为主，试试<b>照片墙</b>：按原始比例排列，一屏能多放一倍左右</span><button>切换</button><span class="x" title="不再提示">✕</span>`;
+    d.querySelector("button").onclick=()=>this.setArrange("wall");
+    d.querySelector(".x").onclick=()=>this.hideSugg();
+    d.addEventListener("mousedown",e=>e.stopPropagation());
+    this.root.appendChild(d);this.sugg=d;requestAnimationFrame(()=>d.classList.add("show"));
+    this.suggT=setTimeout(()=>this.hideSugg(),9000);
+  }
+  hideSugg(){const d=this.sugg;if(!d)return;this.sugg=null;clearTimeout(this.suggT);d.classList.remove("show");setTimeout(()=>d.remove(),250)}
+  setSizeLive(v){const was=this.st.mode;this.st.mode="icons";this.st.size=v;this.last=v;this.pv.render({animate:was==="details",keepAnchor:true});this.sync()}
+  zoom(dir){
+    const st=this.st;
+    if(st.mode==="details"){if(dir>0)this.setIcons(this.last);return}
+    if(dir<0&&st.size<=MIN){this.setDetails();return}
+    let n=dir>0?st.size*1.14:st.size/1.14;n=Math.round(n/4)*4;
+    for(const d of DETENTS){if((st.size<d&&n>d&&dir>0)||(st.size>d&&n<d&&dir<0)){n=d;break}}
+    this.setIcons(Math.max(MIN,Math.min(MAX,n)));
+  }
+}
+
+/* second pane data: 下载 */
+const DL=[];
+[["安装包","今天 10:02","2.3 GB"],["截图","昨天 18:40","412 MB"],["论文资料","9月30日","96 MB"]].forEach(f=>DL.push({kind:"dir",name:f[0],a:1,src:FOLDER,date:f[1],type:"文件夹",size:f[2]}));
+[["PulseSetup-1.0.33.exe","EXE","#5a5f6b","应用程序","38.2 MB"],["Pulse-1.0.33-portable-win-x64.zip","ZIP","#a8741a","压缩文件","41.0 MB"],["季度销售数据.csv","CSV","#1f8a4c","CSV 文件","2.7 KB"],
+ ["合同扫描件_签字版.pdf","PDF","#d9433b","PDF 文档","3.4 MB"],["发票_2026-09.pdf","PDF","#d9433b","PDF 文档","184 KB"],["会议纪要 10-12.docx","DOC","#2b6cd4","Word 文档","36 KB"],
+ ["预算表（修订）.xlsx","XLS","#1f8a4c","Excel 工作表","58 KB"],["README.md","MD","#6b5bd6","Markdown","4.1 KB"],["design-tokens.json","JSON","#8a6d1f","JSON 文件","12 KB"],["字体包.ttf","TTF","#444","字体文件","9.8 MB"]
+].forEach((f,i)=>DL.push({kind:"doc",name:f[0],a:1,src:docSVG(f[1],f[2]),date:`10月${String(1+i).padStart(2,"0")}日 1${i%10}:2${i%6}`,type:f[3],ext:f[1],size:f[4]}));
+DL.splice(6,0,{kind:"img",name:"截图 2026-10-12 103512.png",a:16/10,src:photoSVG(16/10,321),date:"10月12日 10:35",type:"PNG 文件",ext:"PNG",size:"1.1 MB"});
+DL.splice(9,0,{kind:"img",name:"头像.jpg",a:1,src:photoSVG(1,77),date:"10月8日 21:14",type:"JPG 文件",ext:"JPG",size:"286 KB"});
+DL.push({kind:"vid",name:"演示录屏.mp4",a:16/9,src:photoSVG(16/9,4242),date:"10月14日 16:20",type:"MP4 视频",ext:"MP4",size:"64 MB"});
+
+const opt=()=>({arrange:"grid",labels:"auto",crop:"fit",gap:"6"});
+const ctlL=new PaneCtl(document.getElementById("pL"),DL,Object.assign({mode:"details",size:96},opt()));
+const ctlR=new PaneCtl(document.getElementById("pR"),ITEMS,Object.assign({mode:"details",size:96},opt()));
+ctlR.pv.select(9);
+/* 栏头结构图 */
+(function(){const pane=document.getElementById("hanatPane"),host=document.getElementById("hanat");const ax=new Axis(pane.querySelector(".vctl"),null);ax.render({mode:"icons",size:96,arrange:"grid"});
+  const place=()=>{host.querySelectorAll(".mk").forEach(m=>m.remove());const hr=host.getBoundingClientRect();
+    [".pbar",".t",".zoom",".vseg",".phead>.ibtn"].forEach((q,i)=>{const r=pane.querySelector(q).getBoundingClientRect();const m=document.createElement("span");m.className="mk";m.textContent=i+1;m.style.left=(r.left-hr.left+r.width/2)+"px";host.appendChild(m)})};
+  setTimeout(place,50);new ResizeObserver(place).observe(host)})();
+function updateStatus(){
+  const c=activeCtl||ctlR;if(!c.pv.L)return;
+  const dirs=c.items.filter(i=>i.kind==="dir").length;
+  const sel=c.pv.sel>=0?`　已选中 1 项：${c.items[c.pv.sel].name}　${c.items[c.pv.sel].size}`:"";
+  document.getElementById("wstatus").textContent=`${c.items.length} 个项目（${dirs} 文件夹，${c.items.length-dirs} 文件）${sel}`;
+  document.getElementById("wcount").textContent=`演示：当前栏一屏可见 ${c.pv.visibleCount()} 项`;
+}
+
+/* flyout */
+const fly=document.getElementById("fly");let flyCtl=null,flyBtn=null;
+function syncFly(){if(!flyCtl)return;fly.querySelectorAll(".seg").forEach(sg=>{const k=sg.dataset.k;sg.querySelectorAll("button").forEach(b=>b.classList.toggle("on",String(flyCtl.st[k])===b.dataset.v))})}
+function openFly(ctl,btn){
+  if(fly.classList.contains("open")&&flyCtl===ctl){closeFly();return}
+  closeFly();flyCtl=ctl;flyBtn=btn;ctl.root.appendChild(fly);fly.classList.add("open");btn.classList.add("on");ctl.focus(true);syncFly();
+}
+function closeFly(){fly.classList.remove("open");flyBtn&&flyBtn.classList.remove("on");flyBtn=null}
+fly.querySelectorAll(".seg").forEach(sg=>sg.addEventListener("click",e=>{const b=e.target.closest("button");if(!b||!flyCtl)return;
+  flyCtl.st[sg.dataset.k]=b.dataset.v;if(flyCtl.st.mode==="details"){flyCtl.st.mode="icons";flyCtl.st.size=flyCtl.last}flyCtl.apply(true)}));
+fly.addEventListener("mousedown",e=>e.stopPropagation());
+document.addEventListener("mousedown",e=>{if(fly.classList.contains("open")&&!e.target.closest('[data-act="menu"]'))closeFly()});
+
+/* keyboard (focused pane) */
+document.addEventListener("keydown",e=>{
+  const c=activeCtl;if(!c)return;const ae=document.activeElement;
+  if(ae!==c.root)return;
+  if(e.key==="F2"){e.preventDefault();c.rename();return}
+  if(e.ctrlKey&&e.shiftKey&&/^Digit[1-6]$/.test(e.code)){e.preventDefault();const k=+e.code.slice(5);
+    if(k===6)c.setDetails();else c.setIcons([256,96,48,32,32][k-1]);c.axis.peek();return}
+  if(e.ctrlKey&&(e.key==="="||e.key==="+")){e.preventDefault();c.zoom(1);c.axis.peek()}
+  else if(e.ctrlKey&&e.key==="-"){e.preventDefault();c.zoom(-1);c.axis.peek()}
+  else if(e.ctrlKey&&e.key==="0"){e.preventDefault();c.setIcons(96);c.axis.peek()}
+  else if(e.key.startsWith("Arrow")&&c.pv.L){e.preventDefault();const pv=c.pv,L=pv.L,list=c.list;
+    let i=pv.sel<0?0:pv.sel;const r=L.items[i];const cx=r.x+r.w/2,cy=r.y+r.h/2;
+    if(L.mode==="details")i+=(e.key==="ArrowDown"?1:e.key==="ArrowUp"?-1:0);
+    else if(e.key==="ArrowLeft"||e.key==="ArrowRight")i+=(e.key==="ArrowRight"?1:-1);
+    else{let best=-1,bd=1e9;L.items.forEach((q,j)=>{const qy=q.y+q.h/2,qx=q.x+q.w/2;if((e.key==="ArrowDown"&&qy>cy+4)||(e.key==="ArrowUp"&&qy<cy-4)){const d=Math.abs(qy-cy)*3+Math.abs(qx-cx);if(d<bd){bd=d;best=j}}});if(best>=0)i=best}
+    i=Math.max(0,Math.min(c.items.length-1,i));pv.select(i);const q=L.items[i];
+    if(q.y<list.scrollTop)list.scrollTop=q.y-6;else if(q.y+q.h>list.scrollTop+list.clientHeight)list.scrollTop=q.y+q.h-list.clientHeight+6;}
+});
+ctlR.focus(true);
+
+/* static state strip */
+(function(){
+  const host=document.getElementById("states");
+  // [标题, 状态, 额外 class, 说明, 栏宽, 选中数, 活动栏?]
+  const defs=[
+    ["详细信息",{mode:"details",size:96,arrange:"grid"},"","≡ 高亮，尺寸滑块收起。左边只有标题，和现在一样。",null,0,true],
+    ["网格 · 拖动尺寸",{mode:"icons",size:96,arrange:"grid"},"drag","切到 ▦ 时滑块从左侧滑出。拖动、在滑块上滚轮（不用 Ctrl）都可以，经过中 / 大 / 特大 / 超大刻度会吸附，双击回到 96 px。",null,0,true],
+    ["照片墙",{mode:"icons",size:96,arrange:"wall"},"peek","▥ 和 ▦ 并排，一次点击就到。滑块同一个位置，调的是行高。",null,0,true],
+    ["Ctrl+滚轮缩放",{mode:"icons",size:160,arrange:"grid"},"peek","在列表里 Ctrl+滚轮时，滑块跟着走，上方短暂显示当前尺寸，停下 1 秒后淡出。从详细信息往上滚一格，滑块滑出并回到上次的尺寸。",null,0,true],
+    ["窄栏（&lt; 440 px）",{mode:"icons",size:96,arrange:"grid"},"zpop","滑块收进一个按钮，点开是同一条滑块；再窄就省略标题。分段切换和 ⋯ 始终保留。",340,0,true],
+    ["非活动栏",{mode:"icons",size:96,arrange:"grid"},"","只留灰色标题，控件隐藏。指针移到栏头上时控件淡入，可以直接切换这一栏，不用先点击激活。",null,0,false]];
+  host.innerHTML=defs.map((d,i)=>`<div><div class="win sw${d[2]==="zpop"?" tall":""}"><div class="pane${d[6]?" active":""}" id="sp${i}" style="${d[4]?`width:${d[4]}px`:""}"><div class="phead"><span class="pbar"></span><span class="ttl"><span class="t">2026-09 旅行</span></span><div class="vctl"></div><span class="ibtn">${ICON_DOTS}</span></div></div></div><div class="cap"><b>${i+1} · ${d[0]}</b><span>${d[3]}</span></div></div>`).join("");
+  const axes=defs.map((d,i)=>{const p=document.getElementById("sp"+i);const ax=new Axis(p.querySelector(".vctl"),null);ax.render(d[1]);if(d[2])p.querySelector(".vctl").classList.add(d[2]);return ax});
+  const re=()=>axes.forEach(a=>a.placeTip());setTimeout(re,60);new ResizeObserver(re).observe(host);
+})();
+
+/* ---------------- rename compare ---------------- */
+(function(){
+  const SAMPLES=["2026-09-18_洱海双廊古镇_日落延时_DJI_Mini4Pro_0042_调色终版_给客户的高清无水印版本.jpg",
+    "Iceland_Ring_Road_Day3_Skogafoss_Waterfall_Rainbow_HDR_Stacked_Final_v12.jpg",
+    "Frankfurt Skyline Mainufer Blaue Stunde Langzeitbelichtung 30s (Export 2).jpg","IMG_2041.jpg"];
+  const mk=()=>ITEMS.slice(0,34).map(o=>Object.assign({},o));
+  const A={items:mk(),st:{mode:"cur-medium"},legacy:true},B={items:mk(),st:{mode:"icons",size:48,arrange:"grid",labels:"auto",crop:"fit",gap:"6"}};
+  [A,B].forEach(x=>{x.base=x.items.map(o=>o.name);x.pv=new PaneView(document.getElementById(x.legacy?"renA":"renB"),x.items,x.st)});
+  let sample=0;
+  function pick(pv){const L=pv.L,H=pv.list.clientHeight;let rowY=-1;L.items.forEach(r=>{if(r.y+r.h<=H-2&&r.y>rowY)rowY=r.y});
+    const row=L.items.map((r,i)=>[r,i]).filter(([r])=>r.y===rowY).sort((a,b)=>a[0].x-b[0].x);return row[Math.min(1,row.length-1)][1]}
+  function open(){
+    [A,B].forEach(x=>{if(x.pv.ren){x.pv.ren.opt.onDone=null;x.pv.ren.close(true)}
+      x.items.forEach((o,i)=>o.name=x.base[i]);wrapCache.clear();x.pv.list.scrollTop=0;x.pv.render();
+      const i=pick(x.pv);x.items[i].name=SAMPLES[sample];x.pv.render();x.pv.select(i);
+      const an=x.pv.list.parentElement.querySelector(".anno");if(an)an.remove();
+      const ren=new Rename(x.pv,i,{legacy:!!x.legacy,persist:true,noFocus:true,onDone:()=>setTimeout(open,900)});
+      if(x.legacy){const upd=()=>{let a=x.pv.list.parentElement.querySelector(".anno");if(ren.cut>0){if(!a){a=document.createElement("span");a.className="anno";x.pv.list.parentElement.style.position="relative";x.pv.list.parentElement.appendChild(a)}a.textContent=`演示标注：编辑框还有约 ${ren.cut} 行被列表裁掉`}else if(a)a.remove()};
+        upd();ren.el.addEventListener("input",upd)}
+    });
+  }
+  document.getElementById("renSample").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;sample=+b.dataset.v;
+    document.querySelectorAll("#renSample button").forEach(x=>x.classList.toggle("on",x===b));open()});
+  document.getElementById("renReset").addEventListener("click",open);
+  requestAnimationFrame(open);
+})();
+
+/* ---------------- section 2: comparison ---------------- */
+const SA={mode:"cur-medium"},SB={mode:"icons",size:48,arrange:"grid",labels:"auto",crop:"fit",gap:"6"};
+const pa=new PaneView(document.getElementById("listA"),ITEMS,SA);
+const pb=new PaneView(document.getElementById("listB"),ITEMS,SB);
+const sizeMap={medium:48,large:96,xl:240};
+let cmpSize="medium",cmpMode="auto",cmpW=620;
+function statRows(L,pv,ref){
+  const n=pv.items.length,full=n-L.trunc,vis=pv.visibleCount();
+  const d=(v,r,pct)=>{if(r==null)return"";const x=Math.round((v/r-1)*100);if(!isFinite(x)||x===0)return`<i class="eq">持平</i>`;return`<i class="${x>0?"up":"down"}">${x>0?"+":""}${x}%</i>`};
+  const cols=L.mode==="wall"?"按比例":L.cols;
+  const rowH=L.mode==="wall"?"按比例":L.rowH+" px";
+  const lines=L.mode==="grid"&&L.nL!=null?`（文件名 ${L.nL} 行）`:L.mode==="grid"&&!ref?"（文件名 2 行）":"";
+  return `<tr><th>行距</th><td><b>${rowH}</b><span class="mute">${lines}</span></td></tr><tr><th>列数</th><td><b>${cols}</b>${ref&&L.mode!=="wall"?d(L.cols,ref.cols):""}</td></tr>
+  <tr><th>一屏项目</th><td><b>${vis}</b>${ref?d(vis,ref.vis):""}</td></tr>
+  <tr><th>文件名完整显示</th><td><b>${pv.st.labels==="none"||L.mode==="wall"?"悬停显示":Math.round(full/n*100)+"%"}</b>${ref&&!(pv.st.labels==="none"||L.mode==="wall")?d(full,ref.full):""}</td></tr>`;
+}
+function renderCmp(){
+  document.querySelectorAll("#cmp .cw").forEach(c=>c.style.width=cmpW+"px");
+  SA.mode="cur-"+cmpSize;SB.size=sizeMap[cmpSize];
+  if(cmpMode==="wall"){SB.arrange="wall";SB.labels="auto"}else{SB.arrange="grid";SB.labels=cmpMode}
+  const LA=pa.render({animate:true}),LB=pb.render({animate:true});
+  const A={cols:LA.cols,vis:pa.visibleCount(),full:ITEMS.length-LA.trunc};
+  document.getElementById("statA").innerHTML=statRows(LA,pa,null);
+  document.getElementById("statB").innerHTML=statRows(LB,pb,A);
+  const notes={
+    medium:"中图标的收益主要在列数（列距 104 → 96），文件名完整度和现状一样。选“4 行”时长文件名几乎都能显示完整，代价是行变高，一屏的项目数少一些。这是实测结果，不是换算出来的。",
+    large:"大图标的列数不变（96 px 的缩略图横向只比现状少 2 px 开销），收益来自 4:3 槽：行距从 148 降到 120。选“4 行”时一屏项目数和现状持平，但长文件名能完整显示 96%（现状 84%）。想要更多列，可以把缩放轴拖到 80 px 左右。",
+    xl:"超大图标在网格下收益有限，每行只放得下两三张。照片多的文件夹建议用“照片墙”，按原始比例排列，一屏能多放一倍左右。"};
+  document.getElementById("cmpNote").textContent=notes[cmpSize];
+}
+function seg(id,fn){const el=document.getElementById(id);el.onclick=e=>{const b=e.target.closest("button");if(!b)return;el.querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));fn(b.dataset.v)}}
+seg("cmpSize",v=>{cmpSize=v;renderCmp()});
+seg("cmpMode",v=>{cmpMode=v;renderCmp()});
+seg("cmpW",v=>{cmpW=+v;renderCmp()});
+seg("theme",v=>document.body.classList.toggle("light",v==="light"));
+["listA","listB"].forEach(id=>document.getElementById(id).addEventListener("scroll",()=>{
+  const A={cols:pa.L.cols,vis:pa.visibleCount(),full:ITEMS.length-pa.L.trunc};
+  document.getElementById("statA").innerHTML=statRows(pa.L,pa,null);document.getElementById("statB").innerHTML=statRows(pb.L,pb,A)}));
+let cmpT=0;new ResizeObserver(()=>{clearTimeout(cmpT);cmpT=setTimeout(renderCmp,60)}).observe(document.querySelector(".wrap"));
+renderCmp();
+</script>
+</body>
+</html>

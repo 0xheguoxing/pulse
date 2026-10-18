@@ -29,6 +29,11 @@ public:
     ShellIconCache(const ShellIconCache&) = delete;
     ShellIconCache& operator=(const ShellIconCache&) = delete;
 
+    // Loads the shell's icon cache on a short-lived worker thread. The first
+    // system image list icon otherwise initializes it on the UI thread in
+    // the middle of the first frame (about 100 ms).
+    static void PrewarmSystemImageList();
+
     void SetDeviceContext(ID2D1DeviceContext* dc);
     void SetScale(float scale);
     // Set replaces every window that repaints when icons land; Add/Remove let

@@ -216,6 +216,8 @@ struct PaneViewModel {
     std::wstring filter_text;
     float filter_expand = 0.0f;
     float header_controls_opacity = 1.0f;
+    bool size_control = false;     // main window panes: icon views get the header size slider, the segment a photo wall button
+    bool size_slider_open = false; // narrow pane: its size button opened the slider
     std::wstring banner_title;
     std::wstring banner_message;
     int banner_kind = 0; // 0 info, 1 success, 2 warning, 3 error, 4 neutral
@@ -282,11 +284,16 @@ struct PaneViewModel {
     bool header_drop = false;     // pane title bar is a navigate-to-folder target
     int rename_index = -1;        // name column is in edit mode; do not draw the label
     std::wstring rename_text;     // text being typed; icon grids grow the field to wrap it
+    std::wstring rename_hint;     // note under the rename field (refused character, extension question)
+    int rename_hint_ms = 0;       // time the note has left (fades over the last 250 ms); -1 = stays
+    float rename_field_w = 0.0f;  // icon grids: widest the field has been, it does not narrow while typing
     bool focus_first_hint = false; // first view row has keyboard focus but no selection
     int focus_ring_source = -1;    // unselected row holding keyboard focus (Ctrl+arrows)
     float scroll_y = 0.0f;
     float scroll_x = 0.0f;
     ViewMode view_mode = ViewMode::Details;
+    float icon_dip = 0.0f;        // icon grids: thumbnail width in DIP (0 = the mode's preset)
+    bool wall = false;            // icon grids: shown as a photo wall (rows from ListRowHeightDip)
     uint64_t view_generation = 1;
     SortColumn sort_column = SortColumn::Name;
     SortDirection sort_direction = SortDirection::Asc;
@@ -1207,6 +1214,9 @@ struct HitTestResult {
         PaneMediumIcons,
         PaneViewButton,
         PaneDetails,
+        PaneSizeSlider,     // icon views: the pane header's size slider (index = pane)
+        PaneSizeButton,     // narrow pane: opens that slider over the title (index = pane)
+        PaneWall,           // main window panes: the view segment's photo wall button (index = pane)
         ToolbarSort,
         ToolbarMore,
         ToolbarSelAction,   // selection chip: quick actions, kSelChipMore, kSelChipClear, -1 chip body
@@ -1542,8 +1552,9 @@ public:
     float ColumnHeaderHeight() const { return column_header_height_; }
     float RowHeight() const { return row_height_; }
     float ListRowHeightDip(const PaneViewModel& vm) const;
-    // Same, but aware of the two-line (name + path) narrow search layout.
-    float ListRowHeightDip(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds) const;
+    // Same, but aware of the two-line (name + path) narrow search layout; icon
+    // grids get their name block and icon size (the pane's ViewLayout inputs).
+    ViewLayoutParams ListRowHeightDip(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds) const;
     // File-list row height preference (DIPs); survives SetScale recompute.
     void SetRowHeightDip(float dip) {
         row_height_dip_ = std::clamp(dip, 24.0f, 48.0f);
@@ -1590,12 +1601,25 @@ public:
     D2D1_RECT_F PaneListRect(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds) const;
     D2D1_RECT_F FilterBoxRect(const D2D1_RECT_F& pane_bounds,
                               float expand = 1.0f) const;
+    // wall: the segment also holds the photo wall button (PaneWallRect), so
+    // details and icons sit one step further left.
     D2D1_RECT_F PaneMediumIconsRect(const D2D1_RECT_F& pane_bounds,
-                                    float filter_expand = 1.0f) const;
+                                    float filter_expand = 1.0f, bool wall = false) const;
     D2D1_RECT_F PaneViewButtonRect(const D2D1_RECT_F& pane_bounds,
                                    float filter_expand = 1.0f) const;
     D2D1_RECT_F PaneDetailsRect(const D2D1_RECT_F& pane_bounds,
-                                     float filter_expand = 1.0f) const;
+                                     float filter_expand = 1.0f, bool wall = false) const;
+    // The segment's photo wall button, left of the view menu; empty outside
+    // main window panes (vm.size_control).
+    D2D1_RECT_F PaneWallRect(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds) const;
+    // Icon views: the header's size slider (empty when hidden). Panes under
+    // 440 DIP show PaneSizeButtonRect instead, which opens it over the title.
+    D2D1_RECT_F PaneSizeSliderRect(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds) const;
+    D2D1_RECT_F PaneSizeButtonRect(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds) const;
+    // Icon size (DIP) under x on that slider; presets catch it nearby. 0 = no slider.
+    float PaneSizeSliderValueAt(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds, float x) const;
+    // Right end of the header title, left of the view controls.
+    float PaneHeaderTitleRight(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds) const;
     // Column view geometry for a pane. When active, PaneBodyBounds replaces
     // the pane bounds for the regular list (header stays full width).
     ColumnStripLayout ColumnStripGeometry(const PaneViewModel& vm,
@@ -1989,6 +2013,12 @@ private:
                                const ColumnStripColumnView& column, int column_id,
                                const D2D1_RECT_F& rc, int pane_index, const Theme& theme);
     void DrawPaneHeaderIcon(const D2D1_RECT_F& rc, PaneHeaderIcon icon, const D2D1_COLOR_F& color);
+    // label_at: its left edge is where the size label ends, its middle the label's.
+    void DrawPaneSizeSlider(const PaneViewModel& pane, int pane_index, const D2D1_RECT_F& slider,
+                            const D2D1_RECT_F& label_at, bool hovered, const Theme& theme);
+    // The rename field's note card, under the field (above it near the bottom).
+    void DrawRenameHint(const PaneViewModel& vm, const D2D1_RECT_F& field, const D2D1_RECT_F& view,
+                        const Theme& theme);
     bool HitTestColumnStrip(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,
                             float x, float y, HitTestResult& out) const;
     void DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
@@ -2277,6 +2307,18 @@ private:
         bool snapped = false;
     };
     std::array<SplitterKnobMotion, 8> splitter_knobs_{};
+    // Pane header view controls (P1e): the selected block of the view
+    // segment, the size slider sliding in and out, and the size label shown
+    // for a moment after the size changes.
+    struct HeaderSizeMotion {
+        motion::SpringRectMotion segment;
+        motion::SpringRectMotion slider;
+        D2D1_RECT_F slider_rc{};  // last shown slider, drawn clipped while it folds away
+        float dip = 0.0f;
+        uint64_t label_until = 0;
+        std::wstring path;
+    };
+    std::array<HeaderSizeMotion, 8> header_size_motion_{};
     uint64_t splitter_motion_until_ = 0;
     uint64_t spring_ring_until_ = 0;        // NowMs: a spring-load ring is filling
     // Set while drawing by motion whose state lives outside this class (the

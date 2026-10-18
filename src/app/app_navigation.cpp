@@ -1174,9 +1174,19 @@ void StartLoadingPath(AppState& s, app::Tab& tab, const std::wstring& path, Path
         // Migrate older sessions/workspaces so returning later keeps their mode.
         if (!saved && reason == PathLoadReason::RestoreSession)
             s.appPrefs.folder_views.Set(normalized, mode);
-        if (tab.view_mode != mode) {
+        const bool icons = ui::IsZoomIconMode(mode);
+        const float icon_dip = icons
+            ? s.appPrefs.folder_views.FindIconDip(normalized).value_or(0.0f) : 0.0f;
+        const bool wall = s.appPrefs.folder_views.FindWall(normalized);
+        if (tab.view_mode != mode || (icons && (tab.icon_dip != icon_dip || tab.wall != wall))) {
             tab.view_mode = mode;
             ++tab.view_generation;
+        }
+        tab.icon_dip = icon_dip;
+        tab.wall = wall;
+        if (icons) {
+            tab.last_icon_mode = mode;
+            tab.last_icon_dip = icon_dip;
         }
         tab.scroll_x = 0.0f;
         // Sort order is remembered per folder (#26); sessions never stored it,

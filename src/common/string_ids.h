@@ -2429,5 +2429,7 @@
 #define IDS_OP_UNDONE_DELETE                                                             3639
 #define IDS_OP_UNDONE_CREATE                                                             3640
 #define IDS_OP_UNDONE                                                                    3641
+#define IDS_RENAME_EXTENSION_CONFIRM                                                     3642
+#define IDS_PHOTO_WALL                                                                   3643
 
 #endif  // PULSE_STRING_IDS_H

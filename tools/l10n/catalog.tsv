@@ -2436,3 +2436,5 @@ OpUndoneRename	IDS_OP_UNDONE_RENAME	3638	已撤销重命名	Rename undone	已復
 OpUndoneDelete	IDS_OP_UNDONE_DELETE	3639	已撤销删除	Delete undone	已復原刪除
 OpUndoneCreate	IDS_OP_UNDONE_CREATE	3640	已撤销新建	New item undone	已復原新增
 OpUndone	IDS_OP_UNDONE	3641	已撤销	Undone	已復原
+RenameExtensionConfirm	IDS_RENAME_EXTENSION_CONFIRM	3642	改了扩展名，文件可能无法打开。按 Enter 确认，Esc 返回	Changing the extension may make the file unusable. Enter to confirm, Esc to go back	變更副檔名後，檔案可能無法開啟。按 Enter 確認，Esc 返回
+PhotoWall	IDS_PHOTO_WALL	3643	照片墙	Photo wall	相片牆

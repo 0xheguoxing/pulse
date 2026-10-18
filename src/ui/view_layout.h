@@ -28,6 +28,30 @@ bool ShowsColumnHeader(ViewMode mode) noexcept;
 bool UsesThumbnails(ViewMode mode) noexcept;
 bool ShowsFolderSize(ViewMode mode) noexcept;
 
+// Ctrl+wheel / touchpad pinch zoom chain: Details <-> Medium <-> Large <-> Extra
+// large icons. List, small icons, tiles and content stay off the chain (menu
+// and Ctrl+Shift+1..8 still reach them). step > 0 zooms in.
+bool IsZoomIconMode(ViewMode mode) noexcept;
+// The first step out of Details returns to last_icon (Medium if it is off the
+// chain); zooming out past Medium lands on Details and stops there.
+ViewMode ZoomViewMode(ViewMode current, ViewMode last_icon, int step) noexcept;
+
+// Continuous icon size: icon grids take a thumbnail width in DIP, 0 meaning
+// the mode's preset (medium 48, large 96 DIP, extra large 240 device pixels).
+// A size belongs to the icon mode whose preset is nearest on a log scale.
+inline constexpr float kMinIconDip = 32.0f;
+inline constexpr float kMaxIconDip = 256.0f;
+float IconPresetDip(ViewMode mode, float scale) noexcept;
+// icon_dip, or the mode's preset when it is 0.
+float IconDip(ViewMode mode, float icon_dip, float scale) noexcept;
+ViewMode IconModeForDip(float dip, float scale) noexcept;
+// What a tab stores: 0 for the mode's preset (and for other views), otherwise
+// whole DIP within the zoom range.
+float NormalizeIconDip(ViewMode mode, float dip, float scale) noexcept;
+// Ctrl+wheel: 2^(1/4) per notch, stopping on each preset it reaches. Zooming
+// out of the smallest size returns 0 (Details).
+float ZoomIconDip(float dip, int step, float scale) noexcept;
+
 // Reserve a marquee gutter before the name and before the scrollbar.
 D2D1_RECT_F DetailsContentRect(D2D1_RECT_F bounds, float scale) noexcept;
 
@@ -60,10 +84,59 @@ inline D2D1_RECT_F GroupSelectRect(const D2D1_RECT_F& header, float scale) noexc
                        right, header.bottom - 5.0f * scale};
 }
 
-// Lines an icon-grid name may wrap to before its end is elided ("a…z.ext").
+// Lines an icon-grid name may wrap to before its end is elided ("a…z.ext"):
+// the default, and the most a folder's names get (AutoIconNameLines).
 inline constexpr int kIconGridNameLines = 2;
+inline constexpr int kIconGridMaxNameLines = 4;
 // Line pitch of the 13 DIP file-name font (Segoe UI / Microsoft YaHei UI).
 inline constexpr float kIconGridNameLineDip = 18.0f;
+// Icon grids: height of a name block of `lines` lines. ViewLayout takes it as
+// row_height_dip, which only Details otherwise uses.
+inline constexpr float IconGridNameBlockDip(int lines) noexcept {
+    return static_cast<float>(lines) * kIconGridNameLineDip + 2.0f;
+}
+// Pixel width an icon-grid name wraps in at the tier's widest cell (base cell
+// plus the most leftover a cell absorbs). Independent of the pane width, so a
+// folder's line count does not change while the pane is resized; no row keeps
+// a blank line. In a narrower row a name needing one more line is elided in
+// the middle and shown whole when selected.
+float IconGridNameWidth(ViewMode mode, float scale, float icon_dip = 0.0f) noexcept;
+// Name lines for a whole folder from the lines each sampled name needs: one
+// only when 95% fit on one line, otherwise what 75% need, kept to 2..4.
+// Folders show their size on the last line, so a folder holding subfolders
+// keeps at least two. Sorts `needed`.
+int AutoIconNameLines(std::vector<int>& needed, bool has_folders) noexcept;
+
+// Photo wall (P2): justified rows of one height, each item as wide as its
+// aspect ratio makes it. Built once per width / size / aspect change, O(n);
+// ViewLayout then finds rows by binary search. Content coordinates.
+struct WallRows {
+    std::vector<int> row_first;  // first view index of each row; back() == item count
+    std::vector<float> row_top;  // y of each row
+    std::vector<float> row_h;
+    std::vector<float> x;        // per view index
+    std::vector<float> w;
+    float content_height = 0.0f;
+    size_t RowCount() const noexcept { return row_top.size(); }
+    int RowOf(int view_index) const noexcept;
+    // Row whose band [top, top + h + gap) holds y; -1 above the first row.
+    int RowAtY(float y) const noexcept;
+};
+// aspects: width / height per view index (<= 0 = not known yet: 4:3). Rows
+// aim at row_px; a full row shrinks a little to fill the width exactly, the
+// last one keeps row_px unless filling it stretches less than 1.25x.
+WallRows BuildWallRows(const std::vector<float>& aspects, float width, float row_px, float scale);
+
+// Size inputs of a pane's layout; a plain row height converts implicitly.
+struct ViewLayoutParams {
+    ViewLayoutParams(float row_height = 0.0f, float icon = 0.0f) noexcept
+        : row_height_dip(row_height), icon_dip(icon) {}
+    // >0: Details row height override; icon grids: name block (IconGridNameBlockDip)
+    float row_height_dip;
+    float icon_dip;  // icon grids: thumbnail width in DIP (0 = the mode's preset)
+    // Icon grids shown as a photo wall: its rows (for this item count), else null.
+    const WallRows* wall = nullptr;
+};
 
 struct ViewLayoutMetrics {
     float cell_width = 0.0f;
@@ -76,6 +149,14 @@ struct ViewLayoutMetrics {
     int columns = 1;
     int rows_per_column = 1;
     bool column_major = false;
+    // Where cell (0, 0) starts and the step to the next cell (cell plus gap).
+    // Icon grids leave gaps and centre their rows; other views step by the
+    // cell size from the viewport corner.
+    float origin_x = 0.0f;
+    float origin_y = 0.0f;
+    float pitch_x = 0.0f;
+    float pitch_y = 0.0f;
+    int name_lines = kIconGridNameLines;  // icon grids
 };
 
 // Pure, O(1) virtual geometry. Coordinates returned by ItemRect are in the
@@ -84,7 +165,7 @@ class ViewLayout {
 public:
     ViewLayout(ViewMode mode, D2D1_RECT_F viewport, size_t item_count,
                float scroll_x, float scroll_y, float scale,
-               float row_height_dip = 0.0f, // >0: Details-mode row height override
+               ViewLayoutParams params = {},
                const ListGroups* groups = nullptr); // single-column views only
 
     ViewMode Mode() const noexcept { return mode_; }
@@ -99,7 +180,7 @@ public:
     // Icon grids: the whole thumbnail slot (wider than IconRect for extra
     // large icons). Other views: IconRect.
     D2D1_RECT_F ThumbnailRect(int view_index) const noexcept;
-    // Icon grids: room for kIconGridNameLines lines under the slot.
+    // Icon grids: room for Metrics().name_lines lines under the slot.
     D2D1_RECT_F NameRect(int view_index) const noexcept;
     D2D1_RECT_F FolderSizeRect(int view_index) const noexcept;
     int HitTest(float x, float y) const noexcept;
@@ -139,6 +220,7 @@ private:
     std::vector<float> group_top_;   // content-space y of each header
     float header_h_ = 0.0f;
     int visible_rows_ = 0;           // rows outside collapsed groups
+    const WallRows* wall_ = nullptr; // photo wall rows (icon grids), not owned
 };
 
 } // namespace pulse::ui

@@ -5,6 +5,8 @@
   "dependencies": [
     { "name": "libheif", "default-features": false, "features": ["dav1d"] },
     { "name": "libjxl", "default-features": false },
-    { "name": "openexr", "default-features": false }
+    { "name": "openexr", "default-features": false },
+    "libspng",
+    { "name": "libwebp", "default-features": false, "features": ["simd"] }
   ]
 }

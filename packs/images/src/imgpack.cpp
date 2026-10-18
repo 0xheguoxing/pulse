@@ -1,7 +1,9 @@
 // pulse-imgpack.exe - decoder of Pulse's optional image preview pack.
 //
 // HEIC / HEIF (libheif + libde265), AVIF (libheif + dav1d), JPEG XL (libjxl),
-// OpenEXR, Radiance HDR (radiance.h) and QOI. The preview host starts one
+// OpenEXR, Radiance HDR (radiance.h) and QOI; large PNG (libspng) and WebP
+// (libwebp), which Windows reads too, but slowly at 100 MP (the host only sends
+// big still pictures here). The preview host starts one
 // short-lived process per picture inside a kill-on-close job with a memory
 // cap; see src/common/image_pack_protocol.h for the command line and output.
 //
@@ -32,6 +34,8 @@
 #include <ImfCompression.h>
 #include <ImfMultiPartInputFile.h>
 #include <ImfThreading.h>
+#include <spng.h>
+#include <webp/decode.h>
 
 #define QOI_NO_STDIO
 #define QOI_IMPLEMENTATION
@@ -84,7 +88,7 @@ private:
     size_t size_ = 0;
 };
 
-enum class Format { Unknown, Heif, Jxl, Exr, Radiance, Qoi };
+enum class Format { Unknown, Heif, Jxl, Exr, Radiance, Qoi, Png, Webp };
 
 Format Detect(const uint8_t* d, size_t n) {
     if (n >= 12 && std::memcmp(d + 4, "ftyp", 4) == 0) return Format::Heif;
@@ -93,6 +97,8 @@ Format Detect(const uint8_t* d, size_t n) {
     if (n >= 4 && d[0] == 0x76 && d[1] == 0x2f && d[2] == 0x31 && d[3] == 0x01) return Format::Exr;
     if (radiance::LooksLikeRadiance(d, n)) return Format::Radiance;
     if (n >= 14 && std::memcmp(d, "qoif", 4) == 0) return Format::Qoi;
+    if (n >= 8 && std::memcmp(d, "\x89PNG\r\n\x1a\n", 8) == 0) return Format::Png;
+    if (n >= 12 && std::memcmp(d, "RIFF", 4) == 0 && std::memcmp(d + 8, "WEBP", 4) == 0) return Format::Webp;
     return Format::Unknown;
 }
 
@@ -620,6 +626,120 @@ int DecodeQoi(const MappedFile& file, uint32_t cap, Picture& out, Properties* pr
     return kExitOk;
 }
 
+// ---- PNG, WebP -------------------------------------------------------------------
+// The host sends these only when they are big and still (no APNG, no animated
+// WebP, no Exif orientation); WIC keeps everything else. A file this decoder
+// declines exits with kExitDecodeFailed, never kExitUnsupported: to the host,
+// Unsupported means "this pack predates PNG / WebP" and it stops asking.
+
+struct SpngDeleter { void operator()(spng_ctx* c) const { spng_ctx_free(c); } };
+
+int DecodePng(const MappedFile& file, uint32_t cap, Picture& out, Properties* probe) {
+    std::unique_ptr<spng_ctx, SpngDeleter> ctx(spng_ctx_new(0));
+    if (!ctx) return kExitDecodeFailed;
+    // Previews skip checksums (as browsers do for ancillary chunks); a damaged
+    // stream still fails in zlib or in the row count.
+    spng_set_crc_action(ctx.get(), SPNG_CRC_USE, SPNG_CRC_USE);
+    spng_set_image_limits(ctx.get(), 1u << 20, 1u << 20);
+    spng_set_chunk_limits(ctx.get(), 64u << 20, 64u << 20);
+    if (spng_set_png_buffer(ctx.get(), file.data(), file.size())) return kExitDecodeFailed;
+    spng_ihdr ihdr{};
+    if (spng_get_ihdr(ctx.get(), &ihdr)) { Fail("damaged PNG header"); return kExitDecodeFailed; }
+    if (static_cast<uint64_t>(ihdr.width) * ihdr.height > kMaxSourcePixels) return kExitTooLarge;
+    out.source_width = ihdr.width;
+    out.source_height = ihdr.height;
+    spng_trns trns{};
+    const bool alpha = ihdr.color_type == SPNG_COLOR_TYPE_GRAYSCALE_ALPHA ||
+                       ihdr.color_type == SPNG_COLOR_TYPE_TRUECOLOR_ALPHA ||
+                       spng_get_trns(ctx.get(), &trns) == 0;
+    if (probe) {
+        probe->push_back({"format", "PNG"});
+        probe->push_back({"width", std::to_string(ihdr.width)});
+        probe->push_back({"height", std::to_string(ihdr.height)});
+        probe->push_back({"bits", std::to_string(ihdr.bit_depth)});
+        probe->push_back({"alpha", alpha ? "yes" : ""});
+        return kExitOk;
+    }
+    // Interlaced rows arrive pass by pass; the host's WIC path handles those.
+    if (ihdr.interlace_method != SPNG_INTERLACE_NONE) { Fail("interlaced PNG"); return kExitDecodeFailed; }
+    const int channels = alpha ? 4 : 3;
+    const int fmt = alpha ? SPNG_FMT_RGBA8 : SPNG_FMT_RGB8;
+    if (spng_decode_image(ctx.get(), nullptr, 0, fmt, SPNG_DECODE_PROGRESSIVE | (alpha ? SPNG_DECODE_TRNS : 0))) {
+        Fail("PNG decoder refused the image");
+        return kExitDecodeFailed;
+    }
+    const imgpack::Size fit = imgpack::FitSize(ihdr.width, ihdr.height, cap);
+    out.width = fit.w;
+    out.height = fit.h;
+    if (alpha) out.flags |= kFlagAlpha;
+    imgpack::ByteDownscaler scale(ihdr.width, ihdr.height, fit.w, fit.h);
+    std::vector<uint8_t> row(static_cast<size_t>(ihdr.width) * channels);
+    uint32_t rows = 0;
+    int ret = 0;
+    for (;;) {
+        spng_row_info info{};
+        if ((ret = spng_get_row_info(ctx.get(), &info)) != 0) break;
+        if ((ret = spng_decode_row(ctx.get(), row.data(), row.size())) != 0 && ret != SPNG_EOI) break;
+        scale.AddRow(info.row_num, row.data(), channels);
+        ++rows;
+        if (ret == SPNG_EOI) break;
+    }
+    if (ret != SPNG_EOI || rows != ihdr.height) { Fail("damaged PNG data"); return kExitDecodeFailed; }
+    out.bgra = scale.Finish();
+    return kExitOk;
+}
+
+int DecodeWebp(const MappedFile& file, uint32_t cap, Picture& out, Properties* probe) {
+    WebPDecoderConfig config;
+    if (!WebPInitDecoderConfig(&config)) return kExitDecodeFailed;
+    if (WebPGetFeatures(file.data(), file.size(), &config.input) != VP8_STATUS_OK) {
+        Fail("damaged WebP header");
+        return kExitDecodeFailed;
+    }
+    const auto w = static_cast<uint32_t>(config.input.width), h = static_cast<uint32_t>(config.input.height);
+    if (!w || !h) return kExitDecodeFailed;
+    out.source_width = w;
+    out.source_height = h;
+    if (probe) {
+        probe->push_back({"format", "WebP"});
+        probe->push_back({"width", std::to_string(w)});
+        probe->push_back({"height", std::to_string(h)});
+        probe->push_back({"alpha", config.input.has_alpha ? "yes" : ""});
+        probe->push_back({"animated", config.input.has_animation ? "yes" : ""});
+        probe->push_back({"lossless", config.input.format == 2 ? "yes" : ""});
+        return kExitOk;
+    }
+    if (config.input.has_animation) { Fail("animated WebP"); return kExitDecodeFailed; }
+    const imgpack::Size fit = imgpack::FitSize(w, h, cap);
+    out.width = fit.w;
+    out.height = fit.h;
+    if (config.input.has_alpha) out.flags |= kFlagAlpha;
+    out.bgra.resize(static_cast<size_t>(fit.w) * fit.h * 4);
+    config.options.use_threads = 1;
+    if (fit.w != w || fit.h != h) {
+        // libwebp's rescaler averages areas while it decodes: rows never exist
+        // at full size.
+        config.options.use_scaling = 1;
+        config.options.scaled_width = static_cast<int>(fit.w);
+        config.options.scaled_height = static_cast<int>(fit.h);
+        // At a quarter or less, the loop filter and fancy chroma upsampling
+        // change nothing visible.
+        if (static_cast<uint64_t>(fit.w) * 4 <= w) {
+            config.options.bypass_filtering = 1;
+            config.options.no_fancy_upsampling = 1;
+        }
+    }
+    config.output.colorspace = MODE_bgrA;   // premultiplied BGRA, the wire format
+    config.output.is_external_memory = 1;
+    config.output.u.RGBA.rgba = out.bgra.data();
+    config.output.u.RGBA.stride = static_cast<int>(fit.w * 4);
+    config.output.u.RGBA.size = out.bgra.size();
+    const VP8StatusCode status = WebPDecode(file.data(), file.size(), &config);
+    WebPFreeDecBuffer(&config.output);
+    if (status != VP8_STATUS_OK) { Fail("damaged WebP data"); return kExitDecodeFailed; }
+    return kExitOk;
+}
+
 // ---- Commands ------------------------------------------------------------------
 
 int Run(const wchar_t* command, const wchar_t* path, uint32_t cap) {
@@ -638,6 +758,8 @@ int Run(const wchar_t* command, const wchar_t* path, uint32_t cap) {
     case Format::Exr: result = DecodeExr(file, cap, picture, probe ? &rows : nullptr); break;
     case Format::Radiance: result = DecodeRadiance(file, cap, picture, probe ? &rows : nullptr); break;
     case Format::Qoi: result = DecodeQoi(file, cap, picture, probe ? &rows : nullptr); break;
+    case Format::Png: result = DecodePng(file, cap, picture, probe ? &rows : nullptr); break;
+    case Format::Webp: result = DecodeWebp(file, cap, picture, probe ? &rows : nullptr); break;
     case Format::Unknown: Fail("not a format the image pack reads"); break;
     }
     if (result != kExitOk) return result;
@@ -651,12 +773,14 @@ int wmain(int argc, wchar_t** argv) {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
     _setmode(_fileno(stdout), _O_BINARY);
     if (argc >= 2 && std::wcscmp(argv[1], L"version") == 0) {
-        std::printf("pulse-imgpack %d libheif %s libjxl %u.%u.%u\n", kVersion, heif_get_version(),
-                    JPEGXL_MAJOR_VERSION, JPEGXL_MINOR_VERSION, JPEGXL_PATCH_VERSION);
+        const int webp = WebPGetDecoderVersion();
+        std::printf("pulse-imgpack %d libheif %s libjxl %u.%u.%u libspng %s libwebp %d.%d.%d\n", kVersion,
+                    heif_get_version(), JPEGXL_MAJOR_VERSION, JPEGXL_MINOR_VERSION, JPEGXL_PATCH_VERSION,
+                    spng_version_string(), webp >> 16, (webp >> 8) & 0xff, webp & 0xff);
         return kExitOk;
     }
     if (argc >= 2 && std::wcscmp(argv[1], L"formats") == 0) {
-        std::printf(".heic .heif .hif .avif .jxl .exr .hdr .qoi\n");
+        std::printf(".heic .heif .hif .avif .jxl .exr .hdr .qoi .png .webp\n");
         std::printf("hevc=%d av1=%d\n", heif_have_decoder_for_format(heif_compression_HEVC),
                     heif_have_decoder_for_format(heif_compression_AV1));
         return kExitOk;

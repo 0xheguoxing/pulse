@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <mutex>
 #include <thread>
 
 namespace pulse::preview {
@@ -64,13 +65,15 @@ std::atomic<ULONGLONG> g_backoff_until{0};
 constexpr uint32_t kLaunchFailureLimit = 3;
 constexpr ULONGLONG kLaunchBackoffMs = 60000;
 
-bool StartPack(ffmpeg::Process& process, const std::wstring& arguments, SIZE_T memory_limit, DWORD stdout_buffer) {
+bool StartPack(ffmpeg::Process& process, const std::wstring& arguments, SIZE_T memory_limit, DWORD stdout_buffer,
+               DWORD priority = BELOW_NORMAL_PRIORITY_CLASS) {
     if (GetTickCount64() < g_backoff_until.load()) return false;
     const std::wstring exe = packs::PackToolPath(packs::PackId::Images, L"pulse-imgpack.exe");
     if (exe.empty()) return false;
     ffmpeg::LaunchOptions options;
     options.memory_limit = memory_limit;
     options.stdout_buffer = stdout_buffer;
+    options.priority = priority;
     options.discard_stderr = true;   // a line at most; nobody needs to drain it
     if (process.Start(exe, arguments, options)) {
         g_launch_failures = 0;
@@ -200,13 +203,19 @@ bool ParseImagePackFrame(const std::vector<uint8_t>& output, UINT cap, ImagePack
     return true;
 }
 
-bool ImagePackDecode(const std::wstring& path, UINT cap, bool grid, ImagePackFrame& frame) {
+namespace {
+
+// One decode through pulse-imgpack. `slot_wait_ms` is how long to queue for a
+// decoder slot; `exit_code` gets the pack's exit code (0 when none ran).
+bool RunPackDecode(const std::wstring& path, UINT cap, bool grid, DWORD slot_wait_ms, ImagePackFrame& frame,
+                   DWORD& exit_code, DWORD priority = BELOW_NORMAL_PRIORITY_CLASS) {
+    exit_code = 0;
     frame = ImagePackFrame{};
     cap = std::clamp<UINT>(cap, 16, imgpack::kMaxCap);
     const ULONGLONG started = GetTickCount64();
-    SlotLease slot(grid ? GridSlots() : ViewSlot(), grid ? 8000 : 15000);
+    SlotLease slot(grid ? GridSlots() : ViewSlot(), slot_wait_ms);
     if (!slot.held()) {
-        diagnostics::runtime::Event("image_pack_busy", {{"grid", grid ? 1u : 0u}});
+        if (slot_wait_ms) diagnostics::runtime::Event("image_pack_busy", {{"grid", grid ? 1u : 0u}});
         return false;
     }
     const std::wstring arguments = L"decode " + ffmpeg::QuoteArgument(path) + L" " + std::to_wstring(cap);
@@ -217,7 +226,7 @@ bool ImagePackDecode(const std::wstring& path, UINT cap, bool grid, ImagePackFra
     DWORD code = 0;
     for (int attempt = 0;; ++attempt) {
         ffmpeg::Process process;
-        if (!StartPack(process, arguments, memory, 1u << 20)) return false;
+        if (!StartPack(process, arguments, memory, 1u << 20, priority)) return false;
         ok = false;
         {
             Watchdog watchdog(process, grid ? 10000 : 30000);
@@ -244,12 +253,100 @@ bool ImagePackDecode(const std::wstring& path, UINT cap, bool grid, ImagePackFra
         }
         break;
     }
+    exit_code = timed_out ? 0 : code;
     ok = ok && !timed_out && code == imgpack::kExitOk;
     diagnostics::runtime::Event(ok ? "image_pack_frame" : "image_pack_frame_failed",
         {{"ms", GetTickCount64() - started}, {"grid", grid ? 1u : 0u}, {"code", static_cast<uint64_t>(code)},
          {"thumb", (frame.flags & imgpack::kFlagEmbeddedThumbnail) ? 1u : 0u}});
     if (!ok) frame = ImagePackFrame{};
     return ok;
+}
+
+// Pack folder that answered "unsupported" to a PNG / WebP: an older pack.
+// Another folder (an update) is asked again.
+std::mutex g_accelerate_lock;
+std::wstring g_accelerate_refused;
+
+uint32_t Be32(const uint8_t* p) { return (uint32_t{p[0]} << 24) | (uint32_t{p[1]} << 16) | (uint32_t{p[2]} << 8) | p[3]; }
+uint32_t Le24(const uint8_t* p) { return uint32_t{p[0]} | (uint32_t{p[1]} << 8) | (uint32_t{p[2]} << 16); }
+
+} // namespace
+
+bool ImagePackDecode(const std::wstring& path, UINT cap, bool grid, ImagePackFrame& frame) {
+    DWORD code = 0;
+    return RunPackDecode(path, cap, grid, grid ? 8000 : 15000, frame, code);
+}
+
+uint64_t AcceleratedSourcePixels(const uint8_t* b, size_t size) {
+    if (!b) return 0;
+    if (size >= 33 && std::memcmp(b, "\x89PNG\r\n\x1a\n", 8) == 0 && std::memcmp(b + 12, "IHDR", 4) == 0) {
+        const uint32_t w = Be32(b + 16), h = Be32(b + 20);
+        if (!w || !h || b[28] != 0) return 0;   // interlaced: WIC
+        // Chunks before the first IDAT: APNG's acTL and eXIf both come first.
+        size_t pos = 8;
+        while (pos + 8 <= size) {
+            const uint32_t length = Be32(b + pos);
+            const uint8_t* type = b + pos + 4;
+            if (std::memcmp(type, "IDAT", 4) == 0) return static_cast<uint64_t>(w) * h;
+            if (std::memcmp(type, "acTL", 4) == 0 || std::memcmp(type, "eXIf", 4) == 0) return 0;
+            if (length > size) return 0;
+            pos += 12 + static_cast<size_t>(length);
+        }
+        return 0;   // IDAT not within the bytes read: leave it to WIC
+    }
+    if (size >= 30 && std::memcmp(b, "RIFF", 4) == 0 && std::memcmp(b + 8, "WEBP", 4) == 0) {
+        const uint8_t* chunk = b + 12;
+        const uint8_t* d = b + 20;
+        if (std::memcmp(chunk, "VP8X", 4) == 0) {
+            if (d[0] & (0x02 | 0x08)) return 0;   // animation, Exif
+            return static_cast<uint64_t>(Le24(d + 4) + 1) * (Le24(d + 7) + 1);
+        }
+        if (std::memcmp(chunk, "VP8 ", 4) == 0) {
+            if (d[3] != 0x9d || d[4] != 0x01 || d[5] != 0x2a) return 0;
+            const uint32_t w = (d[6] | (d[7] << 8)) & 0x3fff, h = (d[8] | (d[9] << 8)) & 0x3fff;
+            return static_cast<uint64_t>(w) * h;
+        }
+        if (std::memcmp(chunk, "VP8L", 4) == 0) {
+            if (d[0] != 0x2f) return 0;
+            const uint32_t bits = uint32_t{d[1]} | (uint32_t{d[2]} << 8) | (uint32_t{d[3]} << 16) | (uint32_t{d[4]} << 24);
+            return static_cast<uint64_t>((bits & 0x3fff) + 1) * (((bits >> 14) & 0x3fff) + 1);
+        }
+    }
+    return 0;
+}
+
+bool ImagePackAccelerate(const std::wstring& path, UINT cap, bool grid, ImagePackFrame& frame) {
+    frame = ImagePackFrame{};
+    if (!ImagePackAvailable()) return false;
+    const std::wstring exe = packs::PackToolPath(packs::PackId::Images, L"pulse-imgpack.exe");
+    if (exe.empty()) return false;
+    {
+        std::lock_guard<std::mutex> guard(g_accelerate_lock);
+        if (exe == g_accelerate_refused) return false;
+    }
+    // Headers, APNG's acTL and the chunks ahead of IDAT (an ICC profile, text).
+    uint8_t head[16384];
+    DWORD got = 0;
+    const HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                    nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    const bool read = ReadFile(file, head, sizeof(head), &got, nullptr) != FALSE;
+    CloseHandle(file);
+    if (!read) return false;
+    const bool webp = got >= 12 && std::memcmp(head + 8, "WEBP", 4) == 0;
+    if (AcceleratedSourcePixels(head, got) < (webp ? imgpack::kAccelerateMinPixelsWebp : imgpack::kAccelerateMinPixels))
+        return false;
+    // A full grid queue means WIC starts now instead of waiting for a slot.
+    DWORD code = 0;
+    // Same priority as this process: the WIC decode it replaces runs here, and a
+    // below-normal decoder starves behind a busy machine (a build: 5x slower).
+    if (RunPackDecode(path, cap, grid, grid ? 0 : 2000, frame, code, GetPriorityClass(GetCurrentProcess()))) return true;
+    if (code == imgpack::kExitUnsupported) {
+        std::lock_guard<std::mutex> guard(g_accelerate_lock);
+        g_accelerate_refused = exe;
+        diagnostics::runtime::Event("image_pack_no_accelerate", {{"code", static_cast<uint64_t>(code)}});
+    }
+    return false;
 }
 
 std::vector<PreviewPropertyValue> ParseImagePackProbe(std::string_view output) {

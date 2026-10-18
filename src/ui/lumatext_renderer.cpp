@@ -192,6 +192,8 @@ struct LumaTextRenderer::Impl {
     // only when the caret would leave the field. Paint and mouse hit-testing
     // share it so the pointer maps to the characters actually on screen.
     std::unordered_map<HWND, float> edit_scrolls;
+    // Wrapped edits taller than their field: lines scrolled off the top.
+    std::unordered_map<HWND, float> edit_vscrolls;
     // Caret blink restarts (solid) at the last caret move, typed character or
     // click, as in native editors. Phasing the blink off the global tick
     // count left the caret hidden for up to a blink interval after an arrow
@@ -1257,6 +1259,21 @@ struct LumaTextRenderer::Impl {
                 wrap_y = std::round((static_cast<float>(h) - wrapped.height) * 0.5f) - wrapped.top;
             float line_y = 0.0f, line_h = 0.0f;
             DwCaretPoint(dw_layout.Get(), caret, static_cast<int>(text.size()), caret_x, line_y, line_h);
+            // Taller than the field (the rename field stops at six lines): the
+            // lines scroll inside it, keeping the caret's line in view.
+            const float view_h = static_cast<float>(h) - 2.0f;
+            if (wrapped.height > view_h) {
+                const auto saved = edit_vscrolls.find(hwnd);
+                float scroll_y = saved != edit_vscrolls.end() ? saved->second : 0.0f;
+                const float line_top = line_y - wrapped.top;
+                if (line_top < scroll_y) scroll_y = line_top;
+                if (line_top + line_h > scroll_y + view_h) scroll_y = line_top + line_h - view_h;
+                scroll_y = std::clamp(scroll_y, 0.0f, wrapped.height - view_h);
+                edit_vscrolls[hwnd] = scroll_y;
+                wrap_y = 1.0f - scroll_y - wrapped.top;
+            } else {
+                edit_vscrolls.erase(hwnd);
+            }
             caret_top = wrap_y + line_y + 1.0f;
             caret_bottom = wrap_y + line_y + std::max(2.0f, line_h) - 1.0f;
             edit_painted[hwnd] = {dw_layout, pad, wrap_y};
@@ -1313,7 +1330,8 @@ struct LumaTextRenderer::Impl {
                     blit_dc->SetTarget(nullptr);
                     return false;
                 }
-                const float y = std::round((static_cast<float>(h) - metrics.height) * 0.5f) - metrics.top;
+                const float y = wraps && visible == text
+                    ? wrap_y : std::round((static_cast<float>(h) - metrics.height) * 0.5f) - metrics.top;
                 brush->SetColor(visible_color);
                 blit_dc->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
                 blit_dc->SetTextRenderingParams(params);
@@ -1445,13 +1463,17 @@ void LumaTextRenderer::SyncEditSelection(HWND hwnd, UINT message, WPARAM wparam,
         if (message == WM_NCDESTROY) {
             impl_->edit_selections.erase(hwnd);
             impl_->edit_scrolls.erase(hwnd);
+            impl_->edit_vscrolls.erase(hwnd);
             impl_->caret_epochs.erase(hwnd);
             impl_->edit_painted.erase(hwnd);
         }
         return;
     }
     // New text starts at the left edge, as native EDIT does.
-    if (message == WM_SETTEXT) impl_->edit_scrolls.erase(hwnd);
+    if (message == WM_SETTEXT) {
+        impl_->edit_scrolls.erase(hwnd);
+        impl_->edit_vscrolls.erase(hwnd);
+    }
     if (message == WM_SETFOCUS || message == EM_SETSEL || message == WM_KEYDOWN ||
         message == WM_CHAR || message == WM_SETTEXT || message == EM_REPLACESEL ||
         message == WM_CUT || message == WM_PASTE || message == WM_CLEAR || message == WM_UNDO ||
@@ -1578,6 +1600,7 @@ void LumaTextRenderer::Shutdown() noexcept {
     if (impl_) {
         impl_->edit_selections.clear();
         impl_->edit_scrolls.clear();
+        impl_->edit_vscrolls.clear();
         impl_->mouse_hwnd = nullptr;
         impl_->mouse_selection_deferred = false;
     }

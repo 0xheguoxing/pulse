@@ -7,6 +7,7 @@
 // Tint recipes match WinUI MicaController / DesktopAcrylicController.
 #include "window_material.h"
 #include "../common/windows_compat.h"
+#include "../common/os_version.h"
 
 #include <d2d1_1.h>
 #include <d2d1effects.h>
@@ -134,19 +135,10 @@ IWICBitmapSource* ToDisplayPixels(IWICImagingFactory* wic, IWICBitmapFrameDecode
     return converter.get();
 }
 
+// The kernel's build: under a compatibility layer RtlGetVersion reports 7601 /
+// 9200 on Windows 11 and Mica / rounded corners were wrongly turned off.
 bool IsWindows11OrLater() noexcept {
-    using RtlGetVersionFn = LONG (WINAPI*)(OSVERSIONINFOW*);
-    static const bool value = []() noexcept {
-        HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-        if (!ntdll) return false;
-        auto fn = reinterpret_cast<RtlGetVersionFn>(GetProcAddress(ntdll, "RtlGetVersion"));
-        if (!fn) return false;
-        OSVERSIONINFOW info{};
-        info.dwOSVersionInfoSize = sizeof(info);
-        if (fn(&info) != 0) return false;
-        return info.dwMajorVersion > 10 ||
-               (info.dwMajorVersion == 10 && info.dwBuildNumber >= 22000);
-    }();
+    static const bool value = pulse::os::TrueWindowsBuild() >= 22000;
     return value;
 }
 

@@ -50,6 +50,11 @@ public:
     ~Compositor();
 
     bool Init(HWND hwnd);
+    // Starts creating the process's first D3D11 device on a worker thread;
+    // the first Init on any thread takes it (waiting if needed) instead of
+    // creating its own. Driver loading dominates that call (about 250 ms on
+    // NVIDIA), so calling this early takes it off the startup critical path.
+    static void PrefetchSharedDevice();
     const std::wstring& InitializationError() const { return initialization_error_; }
     void Shutdown();
     void Resize(int width, int height);

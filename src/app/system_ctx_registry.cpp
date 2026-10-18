@@ -1,4 +1,5 @@
 #include "system_ctx_registry.h"
+#include "../common/os_version.h"
 
 #include <aclapi.h>
 #include <shellapi.h>
@@ -218,14 +219,8 @@ bool OwnedByTrustedInstaller(const Roots& roots, Root root, const std::wstring& 
 
 bool VelocitySupported() {
     if (g_velocity_override >= 0) return g_velocity_override != 0;
-    using RtlGetVersionFn = LONG(WINAPI*)(PRTL_OSVERSIONINFOW);
-    static const bool supported = [] {
-        HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-        auto fn = ntdll ? reinterpret_cast<RtlGetVersionFn>(
-            reinterpret_cast<void*>(GetProcAddress(ntdll, "RtlGetVersion"))) : nullptr;
-        RTL_OSVERSIONINFOW v{sizeof(v)};
-        return fn && fn(&v) == 0 && (v.dwMajorVersion > 10 || (v.dwMajorVersion == 10 && v.dwBuildNumber >= 15063));
-    }();
+    // Kernel build (Windows 10 1703+), immune to a compatibility layer's shim.
+    static const bool supported = pulse::os::TrueWindowsBuild() >= 15063;
     return supported;
 }
 

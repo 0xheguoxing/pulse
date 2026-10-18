@@ -2413,4 +2413,6 @@ BEGIN
     IDS_OP_UNDONE_DELETE "已復原刪除"
     IDS_OP_UNDONE_CREATE "已復原新增"
     IDS_OP_UNDONE "已復原"
+    IDS_RENAME_EXTENSION_CONFIRM "變更副檔名後，檔案可能無法開啟。按 Enter 確認，Esc 返回"
+    IDS_PHOTO_WALL "相片牆"
 END

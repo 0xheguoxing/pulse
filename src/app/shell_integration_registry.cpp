@@ -243,7 +243,12 @@ bool Flush(const std::wstring& key, bool missing_ok = false) {
 // only ever hide Pulse's command: taking over removes them, and while one is
 // present the takeover is not in effect. Kept out of Bindings(): the
 // snapshot format is fixed by its count.
-constexpr const wchar_t* kHideMarkers[] = {L"HideBasedOnVelocityId", L"LegacyDisable", L"ProgrammaticAccessOnly"};
+// Tools also set NeverDefault, Extended (Shift only), OnlyInBrowserWindow or
+// AppliesTo. With NeverDefault, a double-click on the desktop opened
+// Explorer through Folder\shell\open. The others hide the verb in the same
+// way.
+constexpr const wchar_t* kHideMarkers[] = {L"HideBasedOnVelocityId", L"LegacyDisable", L"ProgrammaticAccessOnly",
+                                           L"NeverDefault", L"Extended", L"OnlyInBrowserWindow", L"AppliesTo"};
 
 bool HasDefaultOpenVerb(const std::wstring& group) { return group == L"Directory" || group == L"Drive"; }
 

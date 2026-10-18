@@ -56,6 +56,15 @@ struct Tab {
     float scroll_y = 0.0f;
     float scroll_x = 0.0f;
     ui::ViewMode view_mode = ui::ViewMode::Details;
+    // Icon size the header's icon button and the first Ctrl+wheel step out of
+    // Details return to (session only; ui::IsZoomIconMode values).
+    ui::ViewMode last_icon_mode = ui::ViewMode::MediumIcons;
+    // Continuous icon size in DIP (ui::ZoomIconDip); 0 = the mode's preset.
+    float icon_dip = 0.0f;
+    float last_icon_dip = 0.0f;  // goes with last_icon_mode
+    // Icon views shown as a photo wall (the header's wall button), kept per
+    // folder; stays set in other views so returning to the icons brings it back.
+    bool wall = false;
     uint64_t view_generation = 1;
     std::vector<CreateRenameIntent> create_rename_intents;
     ui::SortColumn sort_column = ui::SortColumn::Name;
@@ -329,6 +338,7 @@ struct Pane {
     bool target = false;
     float filter_expand = 0.0f;
     PaneHeaderAnimation header_animation;
+    bool size_slider_open = false;  // narrow pane: the header's size button opened the slider
     float filter_animation_from = 0.0f;
     float filter_animation_target = 0.0f;
     uint64_t filter_animation_start = 0;

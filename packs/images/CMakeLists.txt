@@ -15,6 +15,16 @@ find_package(OpenEXR CONFIG REQUIRED)
 find_package(hwy CONFIG REQUIRED)
 find_package(unofficial-brotli CONFIG REQUIRED)
 find_package(lcms2 CONFIG REQUIRED)
+# SPNGConfig finds zlib through CMake's FindZLIB, which does not know the
+# name of vcpkg's static zlib (zs.lib) outside the vcpkg toolchain.
+find_library(ZLIB_LIBRARY NAMES zs zlib z REQUIRED)
+find_package(SPNG CONFIG REQUIRED)
+find_package(WebP CONFIG REQUIRED)
+if(TARGET spng::spng_static)
+    set(PULSE_SPNG_TARGET spng::spng_static)
+else()
+    set(PULSE_SPNG_TARGET spng::spng)
+endif()
 
 # libjxl installs no CMake package, only static libraries and pkg-config files.
 find_path(JXL_INCLUDE_DIR jxl/decode.h REQUIRED)
@@ -34,7 +44,7 @@ target_include_directories(imgpack_pixels INTERFACE src ../../src/common)
 add_executable(pulse-imgpack src/imgpack.cpp)
 target_include_directories(pulse-imgpack PRIVATE ${JXL_INCLUDE_DIR})
 target_compile_definitions(pulse-imgpack PRIVATE
-    UNICODE _UNICODE NOMINMAX
+    UNICODE _UNICODE NOMINMAX SPNG_STATIC
     JXL_STATIC_DEFINE JXL_THREADS_STATIC_DEFINE JXL_CMS_STATIC_DEFINE)
 target_compile_options(pulse-imgpack PRIVATE /W3 /EHsc /utf-8 /permissive- /Zc:__cplusplus)
 target_link_libraries(pulse-imgpack PRIVATE
@@ -43,7 +53,8 @@ target_link_libraries(pulse-imgpack PRIVATE
     ${JXL_jxl_LIBRARY} ${JXL_jxl_threads_LIBRARY} ${JXL_jxl_cms_LIBRARY}
     hwy::hwy unofficial::brotli::brotlidec unofficial::brotli::brotlienc unofficial::brotli::brotlicommon
     lcms2::lcms2
-    OpenEXR::OpenEXR)
+    OpenEXR::OpenEXR
+    ${PULSE_SPNG_TARGET} WebP::webp)
 # No incremental thunks; static imports load only from the exe folder and System32.
 target_link_options(pulse-imgpack PRIVATE /INCREMENTAL:NO /OPT:REF /OPT:ICF /DEPENDENTLOADFLAG:0xA00)
 

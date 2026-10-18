@@ -678,6 +678,7 @@ add_executable(pulse_preview WIN32 src/preview_host/main.cpp src/preview_host/vi
     src/preview_host/pdf_raster.cpp src/preview_host/dwg_thumb.cpp
     src/preview_host/archive_listing.cpp src/preview_host/udf_listing.cpp src/preview_host/psd_raster.cpp
     src/preview_host/font_raster.cpp src/preview_host/preview_decoders.cpp
+    src/preview_host/jpeg_dc_preview.cpp src/preview_host/tiff_reduce.cpp
     src/preview_host/preview_properties.cpp src/preview_host/preview_file_utils.cpp
     src/preview_host/zip_entry.cpp src/preview_host/office_model.cpp src/preview_host/office_sketch.cpp
     src/preview_host/folder_listing.cpp src/preview_host/markdown_document.cpp third_party/md4c/md4c.c
@@ -750,6 +751,14 @@ add_executable(pulse_preview_regression_test src/bench/preview_regression_test.c
     src/preview_host/doc_payload.cpp src/preview_host/archive_listing.cpp src/preview_host/udf_listing.cpp)
 target_link_libraries(pulse_preview_regression_test PRIVATE ole32 shell32 shlwapi)
 add_dependencies(pulse_preview_regression_test pulse_preview)
+
+# Progressive JPEG thumbnails from the DC scan alone, against WIC's full decode.
+add_executable(pulse_jpeg_dc_test src/bench/jpeg_dc_preview_test.cpp src/preview_host/jpeg_dc_preview.cpp)
+target_link_libraries(pulse_jpeg_dc_test PRIVATE ole32 windowscodecs)
+
+# Large TIFF thumbnails: parallel strip/tile reduction against WIC's full decode.
+add_executable(pulse_tiff_reduce_test src/bench/tiff_reduce_test.cpp src/preview_host/tiff_reduce.cpp)
+target_link_libraries(pulse_tiff_reduce_test PRIVATE ole32 windowscodecs)
 
 # Native Markdown math: focused parsing, layout and offscreen rendering checks.
 add_executable(pulse_math_syntax_test src/bench/math_syntax_test.cpp

@@ -14,6 +14,9 @@
 #include "image_frames.h"
 #include "gif_frames.h"
 #include "image_pack.h"
+#include "../common/image_pack_protocol.h"
+#include "jpeg_dc_preview.h"
+#include "tiff_reduce.h"
 #include "raw_pack.h"
 #include "archive_pack.h"
 #include "media_pack.h"
@@ -311,6 +314,40 @@ static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
     // flip-rotator in front of the scaler made every scaler pass re-decode
     // the whole frame, so a 12 MP portrait phone photo (Exif orientation 6)
     // took over 30 s and held up every preview queued behind it.
+    // Progressive JPEG: WIC cannot scale it in the DCT domain and decodes
+    // every scan at full size (about 4 s for 100 MP). When the 1/8 picture is
+    // still at least as large as asked for, the DC scan alone is enough.
+    ComPtr<IWICBitmap> dc_bitmap;
+    pulse::preview::JpegDcPicture dc;
+    const bool jpeg = IsEqualGUID(container, GUID_ContainerFormatJpeg);
+    if (jpeg && frame_index == 0 && (std::max)(sourceWidth, sourceHeight) / 8 >= pixels) {
+        const bool made = embedded
+            ? pulse::preview::DecodeProgressiveJpegDc(embedded->data(), embedded->size(), pixels, dc) ==
+                  pulse::preview::JpegDcStatus::Made
+            : pulse::preview::DecodeProgressiveJpegDcFile(path, pixels, dc);
+        if (made && dc.source_width == sourceWidth && dc.source_height == sourceHeight &&
+            dc.pixels.size() <= MAXUINT &&
+            SUCCEEDED(factory->CreateBitmapFromMemory(dc.width, dc.height,
+                dc.channels == 1 ? GUID_WICPixelFormat8bppGray : GUID_WICPixelFormat24bppBGR,
+                dc.stride, static_cast<UINT>(dc.pixels.size()), dc.pixels.data(), &dc_bitmap)))
+            source = dc_bitmap.Get();
+    }
+    // Large TIFF: WIC decodes it on one thread at full size (about 2 s for
+    // 100 MP). Strips and tiles decode in parallel straight into a picture
+    // shrunk by an integer factor; the scaler below makes the exact size.
+    ComPtr<IWICBitmap> reduced_bitmap;
+    pulse::preview::TiffReduced reduced;
+    if (!embedded && frame_index == 0 && IsEqualGUID(container, GUID_ContainerFormatTiff) &&
+        (std::max)(sourceWidth, sourceHeight) / 2 >= pixels &&
+        pulse::preview::ReduceTiffFile(path, pixels, reduced) &&
+        reduced.source_width == sourceWidth && reduced.source_height == sourceHeight &&
+        reduced.pixels.size() <= MAXUINT) {
+        const GUID& format = reduced.channels == 1 ? GUID_WICPixelFormat8bppGray
+            : reduced.channels == 3 ? GUID_WICPixelFormat24bppBGR : GUID_WICPixelFormat32bppPBGRA;
+        if (SUCCEEDED(factory->CreateBitmapFromMemory(reduced.width, reduced.height, format, reduced.stride,
+                static_cast<UINT>(reduced.pixels.size()), reduced.pixels.data(), &reduced_bitmap)))
+            source = reduced_bitmap.Get();
+    }
     const bool quarter_turn = orientation >= 5;
     source_width = quarter_turn ? sourceHeight : sourceWidth;
     source_height = quarter_turn ? sourceWidth : sourceHeight;
@@ -928,6 +965,17 @@ static bool HeifThumbnailInto(const DecodeRequest& q, UINT cap, DecodeResult& r)
     return true;
 }
 
+// Big still PNG / WebP through the image pack, several times faster than WIC
+// at 100 MP; false (WIC goes on) whenever the pack does not take it.
+static bool ImagePackAccelerateInto(const DecodeRequest& q, UINT cap, DecodeResult& r) {
+    preview::ImagePackFrame frame;
+    if (!preview::ImagePackAccelerate(q.path, cap, q.grid, frame)) return false;
+    r.pixels = std::move(frame.pixels);
+    r.width = frame.width; r.height = frame.height; r.stride = frame.stride;
+    r.source_width = frame.source_width; r.source_height = frame.source_height;
+    return true;
+}
+
 static bool ImagePackInto(const DecodeRequest& q, UINT cap, DecodeResult& r) {
     if (!preview::IsImagePackExtension(q.extension) || !preview::ImagePackAvailable()) return false;
     preview::ImagePackFrame frame;
@@ -984,6 +1032,9 @@ static DecodeStep RunImage(const DecodeRequest& q, DecodeResult& r) {
                                r.stride, r.source_width, r.source_height);
             if (!made) { r.error = frame.error; return DecodeStep::Failed; }
         }
+    } else if (!q.offline && q.request.frame_index == 0 && imgpack::IsAcceleratedExtension(q.extension) &&
+               ImagePackAccelerateInto(q, cap, r)) {
+        made = true;
     } else if (!q.offline && !q.grid && q.extension == L".webp" &&
                DecodeWebpFrame(q.path, ipc::ClampPreviewPixelSize(q.request.pixel_size, true),
                                q.request.frame_index, r, frame_count, frame_delay, loop_count)) {

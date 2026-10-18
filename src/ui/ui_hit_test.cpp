@@ -1193,14 +1193,24 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
         out.pane_index = paneIndex;
         if (x < paneRc.left || x >= paneRc.right || y < paneRc.top || y >= paneRc.bottom)
             return out;
-        const D2D1_RECT_F detailsRc = PaneDetailsRect(paneRc);
-        if (compositor_ && ContainsPt(ChangeTitleRect(paneRc, detailsRc.left - 8 * scale_, pane_header_height_, paneVm.title_change_badge, scale_, compositor_, paneVm.header_text), x, y)) {
+        const D2D1_RECT_F detailsRc = PaneDetailsRect(paneRc, 1.0f, paneVm.size_control);
+        if (focused && paneVm.header_controls_opacity > 0.05f) {
+            // The size slider can open over the title, so it goes first.
+            const D2D1_RECT_F sizeRc[] = {PaneSizeSliderRect(paneVm, paneRc), PaneSizeButtonRect(paneVm, paneRc)};
+            const HitTestResult::Region sizeHits[] = {HitTestResult::PaneSizeSlider, HitTestResult::PaneSizeButton};
+            for (int i = 0; i < 2; ++i) if (sizeRc[i].right > sizeRc[i].left && ContainsPt(sizeRc[i], x, y)) {
+                out.region = sizeHits[i]; out.index = paneIndex; return out;
+            }
+        }
+        if (compositor_ && ContainsPt(ChangeTitleRect(paneRc, PaneHeaderTitleRight(paneVm, paneRc), pane_header_height_, paneVm.title_change_badge, scale_, compositor_, paneVm.header_text), x, y)) {
             out.region = HitTestResult::ChangeBadge; out.index = -1; return out;
         }
         if (focused && paneVm.header_controls_opacity > 0.05f) {
-            const D2D1_RECT_F buttons[] = {detailsRc, PaneMediumIconsRect(paneRc), PaneViewButtonRect(paneRc)};
-            const HitTestResult::Region actions[] = {HitTestResult::PaneDetails, HitTestResult::PaneMediumIcons, HitTestResult::PaneViewButton};
-            for (int i=0;i<3;++i) if (ContainsPt(buttons[i],x,y)) {
+            const D2D1_RECT_F buttons[] = {detailsRc, PaneMediumIconsRect(paneRc, 1.0f, paneVm.size_control),
+                                           PaneWallRect(paneVm, paneRc), PaneViewButtonRect(paneRc)};
+            const HitTestResult::Region actions[] = {HitTestResult::PaneDetails, HitTestResult::PaneMediumIcons,
+                                                     HitTestResult::PaneWall, HitTestResult::PaneViewButton};
+            for (int i=0;i<4;++i) if (buttons[i].right > buttons[i].left && ContainsPt(buttons[i],x,y)) {
                 out.region=actions[i]; out.index=paneIndex; return out;
             }
         }

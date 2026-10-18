@@ -936,6 +936,31 @@ void CtxInvoke(const CtxSessionData& d, IContextMenu* menu, UINT id_first,
         SendDone(invoke_req_id, E_INVALIDARG, false, L"context menu invoke failed");
         return;
     }
+    // 固定到任务栏: CTaskbandPin's own InvokeCommand refuses a non-Explorer
+    // caller, so the pin goes to TaskbarPinManager directly. Where that
+    // manager is unavailable the verb is invoked normally below.
+    wchar_t verb_buf[64]{};
+    if (!d.background &&
+        SUCCEEDED(menu->GetCommandString(item_id - id_first, GCS_VERBW, nullptr,
+                                         reinterpret_cast<LPSTR>(verb_buf),
+                                         ARRAYSIZE(verb_buf)))) {
+        verb_buf[ARRAYSIZE(verb_buf) - 1] = L'\0';  // some handlers fill the buffer unterminated
+        HRESULT pin_hr = E_FAIL;
+        if (_wcsicmp(verb_buf, L"taskbarpin") == 0) {
+            if (pulse::shell::InvokeTaskbandPin(d.paths, pin_hr)) {
+                if (FAILED(pin_hr)) {
+                    wchar_t line[96];
+                    swprintf_s(line, L"taskbarpin via TaskbarPinManager failed hr=0x%08lX",
+                               static_cast<unsigned long>(pin_hr));
+                    HostLog(line);
+                }
+                SendDone(invoke_req_id, pin_hr, false,
+                         FAILED(pin_hr) ? L"context menu invoke failed" : L"");
+                return;
+            }
+            HostLog(L"taskbarpin: TaskbarPinManager unavailable, using InvokeCommand");
+        }
+    }
     std::wstring dir = ToParsingPath(d.paths.front());
     if (!d.background) {
         const auto slash = dir.find_last_of(L'\\');
@@ -1204,6 +1229,16 @@ DWORD CtxSessionThreadImpl(LPVOID param, const CtxSessionApi& api = {}) {
 
     auto handlers = api.enumerate(
         data->background, data->paths.front(), data->disabled_clsids);
+    // Enumeration touches the target (GetFileAttributes on a sleeping disk or
+    // an offline share) and the package catalog; a user log had it take 22 s.
+    // Logged on its own so such a stall is not mistaken for the extensions.
+    const uint32_t enumerate_ms = static_cast<uint32_t>(GetTickCount64() - started);
+    if (enumerate_ms >= 300) {
+        wchar_t line[192];
+        swprintf_s(line, L"enumerate handlers %ums count=%zu path=%ls", enumerate_ms,
+                   handlers.size(), data->paths.front().c_str());
+        api.log(line);
+    }
     if (TestStuckHandlerFor(data->paths.front()) &&
         std::find(data->disabled_clsids.begin(), data->disabled_clsids.end(),
                   kTestStuckHandler) == data->disabled_clsids.end()) {
@@ -1246,6 +1281,12 @@ DWORD CtxSessionThreadImpl(LPVOID param, const CtxSessionApi& api = {}) {
         if (!StartHandlerWorker(*worker, api.worker)) continue;
         workers.push_back(std::move(worker));
     }
+    // The fast budget, the stuck limit and the unfinished workers' elapsed
+    // time all count from here. Counting from `started` let a slow enumeration
+    // eat the whole 5 s: the loop then broke on its first pass and sent an
+    // empty menu with every worker "unfinished" (items=0 handlers=19 after
+    // 22063 ms in a user's log), and none of them had been given any time.
+    const ULONGLONG handlers_started = GetTickCount64();
 
     auto worker_done = [](const HandlerWorker& w) {
         return w.done_event && WaitForSingleObject(w.done_event, 0) == WAIT_OBJECT_0;
@@ -1285,7 +1326,7 @@ DWORD CtxSessionThreadImpl(LPVOID param, const CtxSessionApi& api = {}) {
         for (const auto& w : workers)
             if (w && worker_done(*w) && !w->desc.explorer_command)
                 invokable_texts(w->items, classic_rows);
-        const uint32_t so_far = static_cast<uint32_t>(GetTickCount64() - started);
+        const uint32_t so_far = static_cast<uint32_t>(GetTickCount64() - handlers_started);
         statuses.clear();
         std::vector<CtxItemOut> out;
         for (const auto& w : workers) {
@@ -1330,7 +1371,7 @@ DWORD CtxSessionThreadImpl(LPVOID param, const CtxSessionApi& api = {}) {
     // merely be waiting on the loader lock, so it is not blamed either.
     auto collect_hung = [&] {
         std::vector<std::wstring> hung;
-        if (GetTickCount64() - started < kHandlerStuckMs) return hung;
+        if (GetTickCount64() - handlers_started < kHandlerStuckMs) return hung;
         bool send_to_running = false;
         const HandlerWorker* stuck = nullptr;
         size_t stuck_count = 0;
@@ -1366,7 +1407,7 @@ DWORD CtxSessionThreadImpl(LPVOID param, const CtxSessionApi& api = {}) {
         while (!all_workers_done() && !SessionCloseRequested(sid)) {
             pump_session_messages();
             if (SessionCloseRequested(sid)) break;
-            const ULONGLONG elapsed = GetTickCount64() - started;
+            const ULONGLONG elapsed = GetTickCount64() - handlers_started;
             if (elapsed >= kHandlerStuckMs) break;
             if (elapsed >= kFastBudgetMs) {
                 // First snapshot at the fast budget, then one more whenever
@@ -1395,7 +1436,7 @@ DWORD CtxSessionThreadImpl(LPVOID param, const CtxSessionApi& api = {}) {
                 if (timeout == 0) timeout = 1;
             } else if (done_count() != partial_done) {
                 // Finished rows are waiting for the throttle gap: wake for it.
-                const ULONGLONG since = GetTickCount64() - started - partial_at;
+                const ULONGLONG since = GetTickCount64() - handlers_started - partial_at;
                 timeout = since >= kPartialGapMs ? 1 : static_cast<DWORD>(kPartialGapMs - since);
             }
             MsgWaitForMultipleObjects(static_cast<DWORD>(waits.size()), waits.data(),

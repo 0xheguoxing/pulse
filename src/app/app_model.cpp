@@ -1671,6 +1671,8 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
     out.filter_text = tab->filter_text;
     out.filter_expand = pane.filter_expand;
     out.header_controls_opacity = pane.header_animation.opacity;
+    out.size_control = true;
+    out.size_slider_open = pane.size_slider_open;
     out.banner_title = tab->banner_title;
     out.banner_message = tab->banner_message;
     out.banner_kind = tab->net_readonly ? 2 : 0;  // refined below, once the view kind is known
@@ -1752,6 +1754,8 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
     out.scroll_y = tab->scroll_y;
     out.scroll_x = tab->scroll_x;
     out.view_mode = tab->view_mode;
+    out.icon_dip = tab->icon_dip;
+    out.wall = tab->wall;
     out.view_generation = tab->view_generation;
     out.sort_column = tab->sort_column;
     out.sort_direction = tab->sort_direction;

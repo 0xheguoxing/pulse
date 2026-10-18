@@ -11,7 +11,10 @@
 #include <shlobj.h>
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <cstdio>
+#include <mutex>
+#include <thread>
 
 namespace pulse::ui {
 
@@ -34,6 +37,46 @@ struct SharedGraphics {
     unsigned users = 0;
 };
 thread_local SharedGraphics* t_shared_graphics = nullptr;
+
+HRESULT CreateD3DDevice(ComPtr<ID3D11Device>& device) {
+    UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+#ifdef _DEBUG
+    flags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
+    D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1 };
+    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
+        levels, ARRAYSIZE(levels), D3D11_SDK_VERSION, &device, nullptr, nullptr);
+    if (FAILED(hr)) {
+        device.reset();
+        hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags,
+            levels, ARRAYSIZE(levels), D3D11_SDK_VERSION, &device, nullptr, nullptr);
+    }
+    return hr;
+}
+
+// PrefetchSharedDevice's hand-off. Never freed: a worker still inside the
+// driver at process exit must not find it destroyed.
+struct DevicePrefetch {
+    std::mutex mutex;
+    std::condition_variable ready;
+    bool started = false;
+    bool done = false;
+    ComPtr<ID3D11Device> device;  // null once taken or when creation failed
+};
+DevicePrefetch& Prefetch() {
+    static DevicePrefetch* prefetch = new DevicePrefetch;
+    return *prefetch;
+}
+
+// The prefetched device, once; null when none was started, it failed, or
+// it was taken already. Waits for a creation still in flight.
+ComPtr<ID3D11Device> TakePrefetchedDevice() {
+    DevicePrefetch& prefetch = Prefetch();
+    std::unique_lock<std::mutex> lock(prefetch.mutex);
+    if (!prefetch.started) return {};
+    prefetch.ready.wait(lock, [&] { return prefetch.done; });
+    return std::move(prefetch.device);
+}
 
 template <typename T>
 void AssignRef(ComPtr<T>& target, T* value) {
@@ -126,6 +169,31 @@ void Compositor::Shutdown() {
     device_lost_ = false;
 }
 
+void Compositor::PrefetchSharedDevice() {
+    DevicePrefetch& prefetch = Prefetch();
+    {
+        std::lock_guard<std::mutex> lock(prefetch.mutex);
+        if (prefetch.started) return;
+        prefetch.started = true;
+    }
+    try {
+        std::thread([] {
+            ComPtr<ID3D11Device> device;
+            const bool ok = SUCCEEDED(CreateD3DDevice(device));
+            DevicePrefetch& state = Prefetch();
+            {
+                std::lock_guard<std::mutex> lock(state.mutex);
+                if (ok) state.device = std::move(device);
+                state.done = true;
+            }
+            state.ready.notify_all();
+        }).detach();
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(prefetch.mutex);
+        prefetch.done = true;  // InitD3D creates the device itself
+    }
+}
+
 bool Compositor::InitD3D() {
     SharedGraphics* shared = t_shared_graphics;
     if (shared && shared->d3d->GetDeviceRemovedReason() != S_OK) {
@@ -138,20 +206,14 @@ bool Compositor::InitD3D() {
     HRESULT hr = S_OK;
     if (!shared) {
         auto created = std::make_unique<SharedGraphics>();
-        UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-#ifdef _DEBUG
-        flags |= D3D11_CREATE_DEVICE_DEBUG;
-#endif
-        D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1 };
-        hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
-            levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
-            &created->d3d, nullptr, nullptr);
-        if (FAILED(hr)) {
-            hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags,
-                levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
-                &created->d3d, nullptr, nullptr);
+        // D3D11 devices are free-threaded, so one created on the prefetch
+        // worker serves this thread like its own.
+        created->d3d = TakePrefetchedDevice();
+        if (created->d3d.get() && created->d3d->GetDeviceRemovedReason() != S_OK) created->d3d.reset();
+        if (!created->d3d.get()) {
+            hr = CreateD3DDevice(created->d3d);
+            if (!CheckGraphics(hr, L"D3D11CreateDevice (hardware/WARP)")) return false;
         }
-        if (!CheckGraphics(hr, L"D3D11CreateDevice (hardware/WARP)")) return false;
 
         hr = created->d3d->QueryInterface(&created->dxgi);
         if (!CheckGraphics(hr, L"IDXGIDevice1")) return false;

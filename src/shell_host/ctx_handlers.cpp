@@ -9,7 +9,10 @@
 #include <shobjidl.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
 #include <cwctype>
+#include <mutex>
 #include <unordered_set>
 #include <vector>
 
@@ -32,6 +35,170 @@ namespace {
 std::wstring ToParsingPath(std::wstring path) {
     return pulse::path::StripExtendedPathPrefix(path);
 }
+
+// shell32!CTaskbandPin ({90AA3A4E-1CBA-4233-B8BB-535773D48449}) suppresses the
+// "taskbarpin" verb during QueryContextMenu unless shell32!IsProcessAnExplorer
+// returns 1. IsProcessAnExplorer begins with `mov eax, dword ptr [rip+disp32]`
+// (8B 05 <disp32>) reading its cached process-type flag (1 = Explorer).
+// The flag is process-wide, so this only ever runs inside pulse_shell, and
+// lazily from QueryOneHandler: binaries that merely link this file (tests,
+// the parity probe) keep an unpatched shell32.
+#if defined(_M_X64) && !defined(_M_ARM64EC)
+// The decoded RIP-relative target must be an aligned DWORD in a writable,
+// non-executable section of the module that owns the function; anything else
+// means the prologue is not the one described above and nothing is written.
+bool IsWritableDataOf(HMODULE module, const void* p) noexcept {
+    const auto addr = reinterpret_cast<uintptr_t>(p);
+    if (addr % alignof(LONG) != 0) return false;
+    const auto* base = reinterpret_cast<const uint8_t*>(module);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return false;
+    const IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++sec) {
+        const uintptr_t first = reinterpret_cast<uintptr_t>(base) + sec->VirtualAddress;
+        const uintptr_t last = first + (std::max)(sec->Misc.VirtualSize, sec->SizeOfRawData);
+        if (addr < first || addr + sizeof(LONG) > last) continue;
+        return (sec->Characteristics & IMAGE_SCN_MEM_WRITE) != 0 &&
+               (sec->Characteristics & IMAGE_SCN_MEM_EXECUTE) == 0;
+    }
+    return false;
+}
+#endif
+
+void EnableTaskbandPinInShell32() noexcept {
+#if defined(_M_X64) && !defined(_M_ARM64EC)
+    static std::once_flag once;
+    std::call_once(once, []() noexcept {
+        __try {
+            HMODULE hShell32 = GetModuleHandleW(L"shell32.dll");
+            if (!hShell32) hShell32 = LoadLibraryW(L"shell32.dll");
+            if (!hShell32) return;
+            const auto* fn = reinterpret_cast<const uint8_t*>(
+                GetProcAddress(hShell32, "IsProcessAnExplorer"));
+            if (!fn) {
+                fn = reinterpret_cast<const uint8_t*>(
+                    GetProcAddress(hShell32, MAKEINTRESOURCEA(680)));
+            }
+            if (!fn) return;
+            // A forwarded export resolves into another module; validate the
+            // flag against the module that actually owns the code.
+            HMODULE owner = nullptr;
+            if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                    reinterpret_cast<LPCWSTR>(fn), &owner) ||
+                !owner)
+                return;
+            for (size_t i = 0; i < 48; ++i) {
+                if (i > 0 && (fn[i - 1] == 0x48 || fn[i - 1] == 0x4C)) continue;
+                const bool mov_eax = (fn[i] == 0x8B && fn[i + 1] == 0x05 &&
+                                      fn[i + 6] == 0x85 && fn[i + 7] == 0xC0);
+                const bool mov_ecx = (fn[i] == 0x8B && fn[i + 1] == 0x0D &&
+                                      fn[i + 6] == 0x85 && fn[i + 7] == 0xC9);
+                if (!mov_eax && !mov_ecx) continue;
+                int32_t disp = 0;
+                std::memcpy(&disp, fn + i + 2, sizeof(disp));
+                const void* target = fn + i + 6 + disp;
+                if (IsWritableDataOf(owner, target))
+                    InterlockedExchange(const_cast<LONG*>(static_cast<const LONG*>(target)), 1);
+                break;
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    });
+#endif
+}
+
+// {68C6A1B9-DE39-42C3-8D28-BF40A5126541}
+constexpr GUID kIID_ICallingProcessInfo = {
+    0x68c6a1b9, 0xde39, 0x42c3, {0x8d, 0x28, 0xbf, 0x40, 0xa5, 0x12, 0x65, 0x41}
+};
+// {A5C8D635-B4ED-452B-8109-9501781096D1}
+constexpr GUID kCLSID_TaskbarPinManager = {
+    0xa5c8d635, 0xb4ed, 0x452b, {0x81, 0x09, 0x95, 0x01, 0x78, 0x10, 0x96, 0xd1}
+};
+// {D75F625F-6DF9-4874-970D-17CBF846F00D}
+constexpr GUID kIID_ITaskbarPinManager = {
+    0xd75f625f, 0x6df9, 0x4874, {0x97, 0x0d, 0x17, 0xcb, 0xf8, 0x46, 0xf0, 0x0d}
+};
+
+struct ICallingProcessInfoLocal : public IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE OpenCallerProcessHandle(
+        DWORD desiredAccess, HANDLE* phProcess) = 0;
+};
+
+struct IServerCallTargetLocal : public IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE IsTargetObject(
+        IUnknown* punkServer, BOOL* pbIsTarget) = 0;
+};
+
+struct ITaskbarPinManagerLocal : public IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE Method3() = 0;
+    virtual HRESULT STDMETHODCALLTYPE PinPidl(PCIDLIST_ABSOLUTE pidl, int caller) = 0;
+};
+
+bool IsComCallContextIid(REFIID riid) noexcept {
+    static const IID* const kIids[] = {
+        &IID_IServerSecurity, &IID_ICancelMethodCalls, &IID_ICallFactory,
+        &IID_IClientSecurity, &IID_IRpcOptions, &IID_IMarshal, &IID_IMarshal2,
+        &IID_INoMarshal, &IID_IAgileObject, &IID_IStdMarshalInfo,
+        &IID_IExternalConnection, &IID_IDispatch,
+    };
+    for (const IID* iid : kIids)
+        if (IsEqualIID(riid, *iid)) return true;
+    return false;
+}
+
+class ExplorerCallContext final : public ICallingProcessInfoLocal,
+                                  public IServerCallTargetLocal {
+public:
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
+        if (!ppv) return E_POINTER;
+        *ppv = nullptr;
+        if (IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, kIID_ICallingProcessInfo)) {
+            *ppv = static_cast<ICallingProcessInfoLocal*>(this);
+            return S_OK;
+        }
+        // While this object is the call context, CoImpersonateClient,
+        // CoQueryClientBlanket, CoTestCancel, ... query it for COM's own
+        // interfaces and call slots the 4-entry IServerCallTarget vtable does
+        // not have. Its real IID is not public, so every other IID still gets
+        // it, as TaskbarPinManager expects.
+        if (IsComCallContextIid(riid)) return E_NOINTERFACE;
+        *ppv = static_cast<IServerCallTargetLocal*>(this);
+        return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
+    ULONG STDMETHODCALLTYPE Release() override { return 1; }
+
+    HRESULT STDMETHODCALLTYPE OpenCallerProcessHandle(
+        DWORD desiredAccess, HANDLE* phProcess) override {
+        if (!phProcess) return E_POINTER;
+        *phProcess = nullptr;
+        DWORD pid = 0;
+        if (HWND shellWnd = GetShellWindow()) {
+            GetWindowThreadProcessId(shellWnd, &pid);
+        }
+        if (!pid) {
+            if (HWND trayWnd = FindWindowW(L"Shell_TrayWnd", nullptr)) {
+                GetWindowThreadProcessId(trayWnd, &pid);
+            }
+        }
+        if (!pid) return E_ACCESSDENIED;
+        HANDLE hProc = OpenProcess(desiredAccess, FALSE, pid);
+        if (!hProc) return HRESULT_FROM_WIN32(GetLastError());
+        *phProcess = hProc;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE IsTargetObject(
+        IUnknown* /*punkServer*/, BOOL* pbIsTarget) override {
+        if (!pbIsTarget) return E_POINTER;
+        *pbIsTarget = TRUE;
+        return S_OK;
+    }
+};
 
 std::wstring ClsidText(const CLSID& clsid) {
     wchar_t buf[64]{};
@@ -556,6 +723,29 @@ void AttachDefaultMenuVerbs(std::vector<CtxHandlerDesc>& handlers,
     }
 }
 
+// 创建快捷方式 / 格式化 / 旋转 come only from the default Shell menu, which the
+// SendTo slot builds. Explorer shows them whether or not the SendTo extension
+// is registered, but the slot existed only when the SendTo entry under
+// AllFilesystemObjects\shellex\ContextMenuHandlers parsed: a "右键管理" tool that turned 发送到 off
+// (key removed or its value prefixed) took 创建快捷方式 along on a user's
+// Windows 10. Without a registered SendTo, a default-menu-only slot (no 发送到
+// rows) still supplies them. One the user disabled in Pulse stays off: hiding
+// 发送到 hides its slot (main.cpp).
+void EnsureDefaultMenuSlot(std::vector<CtxHandlerDesc>& out,
+                           std::unordered_set<std::wstring>& seen,
+                           const std::vector<std::wstring>& disabled) {
+    for (const auto& desc : out)
+        if (desc.clsid == kSendToHandler) return;
+    const std::wstring text = ClsidText(kSendToHandler);
+    if (text.empty() || IsDisabledHandler(text, disabled) || !seen.insert(text).second) return;
+    CtxHandlerDesc desc;
+    desc.clsid = kSendToHandler;
+    desc.clsid_text = text;
+    desc.name = HandlerName(nullptr, nullptr, kSendToHandler);
+    desc.default_menu_only = true;
+    out.push_back(std::move(desc));
+}
+
 } // namespace
 
 std::vector<CtxHandlerDesc> EnumerateCtxHandlers(
@@ -585,6 +775,7 @@ std::vector<CtxHandlerDesc> EnumerateCtxHandlers(
         // 包含到库中 or 以便携式设备方式打开 that Explorer never offers on a file.
         const auto keys = CtxHandlerKeysForFile(ProgIdForExt(ext), ext, PerceivedType(ext));
         for (const auto& key : keys) add(key.c_str());
+        EnsureDefaultMenuSlot(out, seen, disabled_clsids);
         AttachDefaultMenuVerbs(out, keys);
         AddPackagedHandlers(false, path, out, seen, disabled_clsids);
         return out;
@@ -611,6 +802,7 @@ std::vector<CtxHandlerDesc> EnumerateCtxHandlers(
                 out.push_back(std::move(desc));
             }
         }
+        EnsureDefaultMenuSlot(out, seen, disabled_clsids);
         AttachDefaultMenuVerbs(out, keys);
         AddPackagedHandlers(false, path, out, seen, disabled_clsids);
         return out;
@@ -697,6 +889,7 @@ bool BindCtxSelection(const std::vector<std::wstring>& paths, bool background,
 HRESULT QueryOneHandler(const CtxHandlerDesc& handler, const CtxBind& bind,
                         HWND owner, UINT id_first, UINT id_last, UINT qcm_flags,
                         CtxHandlerSlot& slot, std::atomic<int>* phase) {
+    EnableTaskbandPinInShell32();
     slot = {};
     slot.id_first = id_first;
     slot.id_last = id_last;
@@ -1119,6 +1312,71 @@ std::vector<CtxItemOut> MergeNativeSendTo(const std::vector<CtxItemOut>& native,
     }
     extra.insert(extra.end(), rest.begin(), rest.end());
     return extra;
+}
+
+bool InvokeTaskbandPin(const std::vector<std::wstring>& paths, HRESULT& result) {
+    if (paths.empty()) {
+        result = E_INVALIDARG;
+        return true;
+    }
+    // twinui.pcshell.dll and its TaskbarPinManager are missing or different on
+    // older builds; report that so the caller falls back to InvokeCommand.
+    HMODULE hTwin = GetModuleHandleW(L"twinui.pcshell.dll");
+    if (!hTwin) hTwin = LoadLibraryExW(L"twinui.pcshell.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!hTwin) return false;
+
+    using DllGetClassObjectFn = HRESULT(STDAPICALLTYPE*)(REFCLSID, REFIID, void**);
+    const auto get_class_object = reinterpret_cast<DllGetClassObjectFn>(
+        reinterpret_cast<void*>(GetProcAddress(hTwin, "DllGetClassObject")));
+    if (!get_class_object) return false;
+
+    IClassFactory* factory = nullptr;
+    if (FAILED(get_class_object(kCLSID_TaskbarPinManager, IID_IClassFactory,
+                                reinterpret_cast<void**>(&factory))) || !factory)
+        return false;
+    ITaskbarPinManagerLocal* manager = nullptr;
+    const HRESULT create_hr = factory->CreateInstance(nullptr, kIID_ITaskbarPinManager,
+                                                      reinterpret_cast<void**>(&manager));
+    factory->Release();
+    if (FAILED(create_hr) || !manager) return false;
+
+    // The manager accepts the request only from Explorer, which it checks via
+    // CoGetCallContext. COM keeps the context pointer without a reference, so
+    // the object must outlive the restore below.
+    ExplorerCallContext call_context;
+    struct ContextSwitch {
+        IUnknown* previous = nullptr;
+        bool active = false;
+        explicit ContextSwitch(IUnknown* next) {
+            active = SUCCEEDED(CoSwitchCallContext(next, &previous));
+        }
+        ~ContextSwitch() {
+            IUnknown* ours = nullptr;
+            if (active) CoSwitchCallContext(previous, &ours);
+        }
+        ContextSwitch(const ContextSwitch&) = delete;
+        ContextSwitch& operator=(const ContextSwitch&) = delete;
+    };
+
+    // The caller kind Explorer's CTaskbandPin passes for a context-menu pin.
+    constexpr int kPinFromContextMenu = 4;
+    HRESULT first_failure = S_OK;
+    {
+        const ContextSwitch context_switch(static_cast<ICallingProcessInfoLocal*>(&call_context));
+        for (const auto& path : paths) {
+            PIDLIST_ABSOLUTE pidl = nullptr;
+            HRESULT hr = SHParseDisplayName(ToParsingPath(path).c_str(), nullptr, &pidl, 0, nullptr);
+            if (SUCCEEDED(hr) && !pidl) hr = E_FAIL;
+            if (SUCCEEDED(hr)) {
+                hr = manager->PinPidl(pidl, kPinFromContextMenu);
+                CoTaskMemFree(pidl);
+            }
+            if (FAILED(hr) && SUCCEEDED(first_failure)) first_failure = hr;
+        }
+    }
+    manager->Release();
+    result = first_failure;
+    return true;
 }
 
 } // namespace pulse::shell

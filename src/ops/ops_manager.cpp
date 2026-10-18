@@ -4120,6 +4120,14 @@ bool OpsManager::UndoFromJson(const std::wstring& in) {
         ++i;
         out.clear();
         while (i < in.size() && in[i] != L'"') {
+            // Plain runs in one append: the history holds thousands of paths.
+            size_t run = i;
+            while (run < in.size() && in[run] != L'"' && in[run] != L'\\') ++run;
+            if (run > i) {
+                out.append(in, i, run - i);
+                i = run;
+                continue;
+            }
             if (in[i] == L'\\' && i + 1 < in.size()) {
                 ++i;
                 if (in[i] == L'n') out += L'\n';

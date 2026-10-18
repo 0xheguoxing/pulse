@@ -81,6 +81,40 @@ bool ConvertIconPixels(uint64_t key, std::unordered_map<int, IImageList*>& lists
 
 ShellIconCache::ShellIconCache() = default;
 
+void ShellIconCache::PrewarmSystemImageList() {
+    try {
+        std::thread([] {
+            const HRESULT com_hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+            INITCOMMONCONTROLSEX icc{ sizeof(icc), ICC_WIN95_CLASSES };
+            InitCommonControlsEx(&icc);
+            // The folder and plain-file icons at the list's two usual sizes:
+            // the first GetIcon loads the shell's icon cache for the process.
+            int indices[2] = {-1, -1};
+            const DWORD attrs[2] = {FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL};
+            for (int i = 0; i < 2; ++i) {
+                SHFILEINFOW info{};
+                if (SHGetFileInfoW(L"dummy", attrs[i], &info, sizeof(info),
+                                   SHGFI_SYSICONINDEX | SHGFI_USEFILEATTRIBUTES))
+                    indices[i] = info.iIcon;
+            }
+            for (const int list_id : {SHIL_SMALL, SHIL_LARGE}) {
+                IImageList* list = nullptr;
+                if (FAILED(SHGetImageList(list_id, IID_IImageList, reinterpret_cast<void**>(&list))) || !list)
+                    continue;
+                for (const int index : indices) {
+                    HICON icon = nullptr;
+                    if (index >= 0 && SUCCEEDED(list->GetIcon(index, ILD_TRANSPARENT, &icon)) && icon)
+                        DestroyIcon(icon);
+                }
+                list->Release();
+            }
+            if (SUCCEEDED(com_hr)) CoUninitialize();
+        }).detach();
+    } catch (...) {
+        // No thread: the first frame loads the cache itself, as before.
+    }
+}
+
 ShellIconCache::~ShellIconCache() {
     Reset();
 }

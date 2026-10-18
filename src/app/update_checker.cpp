@@ -1,5 +1,6 @@
 #include "update_checker.h"
 #include "update_transport.h"
+#include "../common/os_version.h"
 #include "../common/runtime_log.h"
 #include <thread>
 
@@ -272,15 +273,10 @@ std::wstring Utf8ToWide(std::string_view input) {
     return output;
 }
 
+// The kernel's build: a compatibility layer on pulse.exe would make
+// RtlGetVersion report an old one and the manifest offer the wrong package.
 uint32_t CurrentWindowsBuild() {
-    using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOW*);
-    const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-    const auto rtl_get_version = ntdll ? reinterpret_cast<RtlGetVersionFn>(
-        GetProcAddress(ntdll, "RtlGetVersion")) : nullptr;
-    OSVERSIONINFOW version{};
-    version.dwOSVersionInfoSize = sizeof(version);
-    if (!rtl_get_version || rtl_get_version(&version) < 0) return 0;
-    return version.dwBuildNumber;
+    return os::TrueWindowsBuild();
 }
 
 UpdateResult CheckConfiguredManifest(const std::atomic<bool>& cancelled, uint64_t operation_id) {

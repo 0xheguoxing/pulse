@@ -62,6 +62,22 @@ inline bool IsImagePackExtension(std::wstring_view ext) {
     return false;
 }
 
+// Formats Windows reads itself, slowly when they are huge (a 100 MP PNG or
+// WebP takes WIC seconds). The host offers big still ones to the pack first
+// and keeps WIC as the fallback. A pack built before these existed answers
+// kExitUnsupported, which the host remembers; one that knows them never does
+// (a variant it declines exits with kExitDecodeFailed).
+inline constexpr uint64_t kAccelerateMinPixels = 16'000'000;
+inline constexpr uint64_t kAccelerateMinPixelsWebp = 1'000'000;
+inline bool IsAcceleratedExtension(std::wstring_view ext) {
+    if (ext.size() != 4 && ext.size() != 5) return false;
+    wchar_t lower[5] = {};
+    for (size_t i = 0; i < ext.size(); ++i)
+        lower[i] = ext[i] >= L'A' && ext[i] <= L'Z' ? static_cast<wchar_t>(ext[i] + 32) : ext[i];
+    const std::wstring_view l(lower, ext.size());
+    return l == L".png" || l == L".webp";
+}
+
 // Formats Windows may read itself through Store extensions (lower-case
 // extension): the pack is the fallback for these and the first choice for the
 // rest (EXR, Radiance HDR, QOI), which WIC never reads.

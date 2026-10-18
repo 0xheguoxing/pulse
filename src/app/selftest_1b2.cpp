@@ -3212,6 +3212,512 @@ bool SnapshotHasName(const fs::SnapshotPtr& snap, const wchar_t* name) {
     return false;
 }
 
+void TestViewZoomChain() {
+    using ui::ViewMode;
+    using ui::ZoomViewMode;
+    constexpr ViewMode Det = ViewMode::Details, Med = ViewMode::MediumIcons,
+        Lrg = ViewMode::LargeIcons, XL = ViewMode::ExtraLargeIcons;
+    Check(ZoomViewMode(Det, Med, 1) == Med && ZoomViewMode(Med, Med, 1) == Lrg &&
+          ZoomViewMode(Lrg, Med, 1) == XL && ZoomViewMode(XL, Med, 1) == XL,
+          L"view zoom: zooming in walks Details, medium, large, extra large and stops");
+    Check(ZoomViewMode(XL, Med, -1) == Lrg && ZoomViewMode(Lrg, Med, -1) == Med &&
+          ZoomViewMode(Med, Med, -1) == Det && ZoomViewMode(Det, Med, -1) == Det,
+          L"view zoom: zooming out returns to Details and stops (no tiles or content)");
+    Check(ZoomViewMode(Det, Lrg, 1) == Lrg && ZoomViewMode(Det, XL, 1) == XL && ZoomViewMode(Det, XL, 2) == XL,
+          L"view zoom: the first step out of Details returns to the last icon size");
+    Check(ZoomViewMode(Det, ViewMode::SmallIcons, 1) == Med && ZoomViewMode(Det, ViewMode::Tiles, 1) == Med,
+          L"view zoom: an off-chain last size falls back to medium icons");
+    for (ViewMode off : {ViewMode::List, ViewMode::SmallIcons, ViewMode::Tiles, ViewMode::Content}) {
+        Check(ZoomViewMode(off, Lrg, 1) == Lrg && ZoomViewMode(off, Lrg, -1) == Det &&
+              ZoomViewMode(off, Lrg, 0) == off,
+              L"view zoom: list, small icons, tiles and content join the chain at its ends");
+    }
+    Check(ZoomViewMode(Det, Med, 9) == XL && ZoomViewMode(XL, Med, -9) == Det,
+          L"view zoom: large steps clamp to the chain");
+    for (int i = 0; i < 8; ++i) {
+        const ViewMode mode = ui::ViewModeFromIndex(i);
+        Check(ui::IsZoomIconMode(mode) == (mode == Med || mode == Lrg || mode == XL),
+              L"view zoom: only medium, large and extra large are chain icon sizes");
+    }
+}
+
+void TestContinuousIconSize() {
+    using ui::ViewMode;
+    using ui::ZoomIconDip;
+    std::vector<float> up;
+    for (float dip = ui::kMinIconDip; up.size() < 24 && dip < ui::kMaxIconDip;)
+        up.push_back(dip = ZoomIconDip(dip, 1, 1.0f));
+    const auto reaches = [&](float dip) { return std::find(up.begin(), up.end(), dip) != up.end(); };
+    Check(reaches(48.0f) && reaches(96.0f) && reaches(240.0f) && !up.empty() &&
+          up.back() == ui::kMaxIconDip && up.size() == 14,
+          (L"icon size: zooming in stops on each preset and ends at 256 DIP (" +
+           std::to_wstring(up.size()) + L" notches)").c_str());
+    Check(ZoomIconDip(48.0f, 1, 1.0f) == 57.0f && ZoomIconDip(96.0f, -1, 1.0f) == 81.0f &&
+          ZoomIconDip(136.0f, 1, 1.5f) == 160.0f && ZoomIconDip(100.0f, -1, 1.0f) == 96.0f,
+          L"icon size: a notch is 2^(1/4) and stops on presets (extra large in device pixels)");
+    Check(ZoomIconDip(ui::kMinIconDip, -1, 1.0f) == 0.0f && ZoomIconDip(34.0f, -1, 1.0f) == ui::kMinIconDip &&
+          ZoomIconDip(ui::kMaxIconDip, 1, 1.0f) == ui::kMaxIconDip,
+          L"icon size: zooming clamps to 32..256 DIP and leaves for Details below 32");
+    Check(ui::IconModeForDip(57.0f, 1.0f) == ViewMode::MediumIcons &&
+          ui::IconModeForDip(68.0f, 1.0f) == ViewMode::LargeIcons &&
+          ui::IconModeForDip(151.0f, 1.0f) == ViewMode::LargeIcons &&
+          ui::IconModeForDip(152.0f, 1.0f) == ViewMode::ExtraLargeIcons &&
+          ui::IconModeForDip(130.0f, 3.0f) == ViewMode::ExtraLargeIcons,
+          L"icon size: a size belongs to the nearest preset on a log scale");
+    Check(ui::NormalizeIconDip(ViewMode::LargeIcons, 96.0f, 1.0f) == 0.0f &&
+          ui::NormalizeIconDip(ViewMode::ExtraLargeIcons, 160.0f, 1.5f) == 0.0f &&
+          ui::NormalizeIconDip(ViewMode::LargeIcons, 114.2f, 1.0f) == 114.0f &&
+          ui::NormalizeIconDip(ViewMode::Details, 114.0f, 1.0f) == 0.0f &&
+          ui::NormalizeIconDip(ViewMode::MediumIcons, 10.0f, 1.0f) == ui::kMinIconDip,
+          L"icon size: presets are stored as 0, custom sizes as whole DIP in range");
+
+    const D2D1_RECT_F viewport = D2D1::RectF(0.0f, 0.0f, 1000.0f, 700.0f);
+    const float block = ui::IconGridNameBlockDip(2);
+    auto metrics = [&](ViewMode mode, float dip) {
+        return ui::ViewLayout(mode, viewport, 200, 0.0f, 0.0f, 1.0f, ui::ViewLayoutParams(block, dip)).Metrics();
+    };
+    const auto large = metrics(ViewMode::LargeIcons, 0.0f), large96 = metrics(ViewMode::LargeIcons, 96.0f);
+    const auto xl = metrics(ViewMode::ExtraLargeIcons, 0.0f), xl240 = metrics(ViewMode::ExtraLargeIcons, 240.0f);
+    const auto custom = metrics(ViewMode::LargeIcons, 120.0f);
+    Check(large96.cell_width == large.cell_width && large96.cell_height == large.cell_height &&
+          xl240.cell_width == xl.cell_width && xl240.slot_height == xl.slot_height,
+          L"icon size: a custom size equal to a preset lays out like the preset");
+    Check(custom.icon_size == 120.0f && custom.slot_height > 110.0f && custom.slot_height < 120.0f &&
+          custom.columns < large.columns && custom.columns > xl.columns,
+          (L"icon size: a size between presets has its own slot and columns (" +
+           std::to_wstring(custom.columns) + L" columns)").c_str());
+    Check(ui::IconGridNameWidth(ViewMode::LargeIcons, 1.0f, 120.0f) >
+          ui::IconGridNameWidth(ViewMode::LargeIcons, 1.0f) &&
+          ui::IconGridNameWidth(ViewMode::LargeIcons, 1.0f, 96.0f) ==
+          ui::IconGridNameWidth(ViewMode::LargeIcons, 1.0f),
+          L"icon size: names wrap at the custom size's cell width");
+
+    AppPrefs prefs;
+    prefs.persist = false;
+    prefs.folder_views.Set(L"C:\\Photos", ViewMode::LargeIcons);
+    Check(prefs.folder_views.SetIconDip(L"C:\\Photos", 136.0f) &&
+          !prefs.folder_views.SetIconDip(L"c:/photos/", 136.0f) &&
+          prefs.folder_views.SetIconDip(L"", 57.0f) &&
+          !prefs.folder_views.SetIconDip(L"pulse:settings", 57.0f),
+          L"icon size: folders and This PC keep a size, virtual views do not");
+    AppPrefs reloaded;
+    reloaded.persist = false;
+    reloaded.FromJson(prefs.ToJson());
+    Check(reloaded.folder_views.FindIconDip(L"C:\\PHOTOS\\") == 136.0f &&
+          reloaded.folder_views.FindIconDip(L"") == 57.0f &&
+          reloaded.folder_views.Find(L"C:\\Photos") == ViewMode::LargeIcons,
+          L"icon size: sizes survive reload next to the view modes");
+    reloaded.FromJson(L"{\"folder_icon_dip\":[\"x|C:\\\\Bad\",\"120\",\"|C:\\\\Empty\",\"9999|C:\\\\Big\"]}");
+    Check(!reloaded.folder_views.FindIconDip(L"C:\\Bad") && !reloaded.folder_views.FindIconDip(L"C:\\Empty") &&
+          !reloaded.folder_views.FindIconDip(L"C:\\Big") && !reloaded.folder_views.FindIconDip(L"C:\\Photos"),
+          L"icon size: malformed saved sizes are ignored");
+    Check(prefs.folder_views.SetIconDip(L"C:\\Photos", 0.0f) && !prefs.folder_views.FindIconDip(L"C:\\Photos"),
+          L"icon size: 0 forgets a folder's size");
+    prefs.folder_views.SetIconDip(L"C:\\Photos", 136.0f);
+    prefs.folder_views.ApplyToAll(ViewMode::Details);
+    Check(!prefs.folder_views.FindIconDip(L"C:\\Photos") && prefs.folder_views.FindIconDip(L"") == 57.0f,
+          L"icon size: apply to all folders drops folder sizes, This PC keeps its own");
+    // Photo wall (P2b): kept for folders and This PC like the sizes.
+    Check(prefs.folder_views.SetWall(L"C:\\Photos", true) && !prefs.folder_views.SetWall(L"c:/photos/", true) &&
+          prefs.folder_views.SetWall(L"", true) && !prefs.folder_views.SetWall(L"pulse:settings", true),
+          L"photo wall: folders and This PC keep it, virtual views do not");
+    reloaded.FromJson(prefs.ToJson());
+    Check(reloaded.folder_views.FindWall(L"C:\\PHOTOS\\") && reloaded.folder_views.FindWall(L"") &&
+          !reloaded.folder_views.FindWall(L"C:\\Other"),
+          L"photo wall: survives reload next to the view modes");
+    Check(prefs.folder_views.SetWall(L"C:\\Photos", false) && !prefs.folder_views.FindWall(L"C:\\Photos") &&
+          !prefs.folder_views.SetWall(L"C:\\Photos", false),
+          L"photo wall: turning it off forgets the folder's choice");
+    prefs.folder_views.SetWall(L"C:\\Photos", true);
+    prefs.folder_views.ApplyToAll(ViewMode::Details);
+    Check(!prefs.folder_views.FindWall(L"C:\\Photos") && prefs.folder_views.FindWall(L""),
+          L"photo wall: apply to all folders drops folder choices, This PC keeps its own");
+    prefs.ResetToDefaults();
+    Check(!prefs.folder_views.FindIconDip(L""), L"icon size: reset clears saved sizes");
+    Check(!prefs.folder_views.FindWall(L""), L"photo wall: reset clears it");
+}
+
+void TestWallRows() {
+    // Justified rows: full rows fill the width, the last keeps its height.
+    std::vector<float> aspects(37, 1.5f);
+    aspects[5] = 0.0f;   // not known yet: 4:3
+    aspects[9] = 0.6f;   // portrait
+    aspects[20] = 12.0f; // panorama, capped
+    const float width = 1000.0f, row = 100.0f, scale = 1.0f;
+    const ui::WallRows wall = ui::BuildWallRows(aspects, width, row, scale);
+    bool filled = true, heights = true;
+    for (size_t r = 0; r + 1 < wall.RowCount(); ++r) {
+        const int last = wall.row_first[r + 1] - 1;
+        filled = filled && std::fabs(wall.x[static_cast<size_t>(last)] + wall.w[static_cast<size_t>(last)] - (width - 8.0f)) < 0.5f;
+        heights = heights && wall.row_h[r] <= row + 0.01f && wall.row_h[r] > row * 0.45f;
+    }
+    Check(wall.RowCount() > 3 && wall.row_first.back() == 37 && filled && heights,
+          (L"photo wall: full rows fill the width at about the row height (" + std::to_wstring(wall.RowCount()) +
+           L" rows)").c_str());
+    const ui::WallRows one = ui::BuildWallRows(std::vector<float>(1, 0.0f), width, row, scale);
+    Check(one.RowCount() == 1 && std::fabs(one.row_h[0] - row) < 0.01f && std::fabs(one.w[0] - row * 4.0f / 3.0f) < 0.01f,
+          L"photo wall: a short last row keeps the row height; unknown pictures are 4:3");
+    Check(wall.RowOf(0) == 0 && wall.RowOf(36) == static_cast<int>(wall.RowCount()) - 1 && wall.RowOf(37) == -1 &&
+              wall.RowAtY(wall.row_top[1] + 1.0f) == 1 && wall.RowAtY(0.0f) == -1,
+          L"photo wall: rows are found by index and by height");
+
+    // ViewLayout on the rows: rects, hit test, visible range, arrows.
+    const D2D1_RECT_F view = D2D1::RectF(0.0f, 0.0f, width, 300.0f);
+    ui::ViewLayoutParams params(0.0f, 96.0f);
+    params.wall = &wall;
+    const float scroll = wall.row_top[2];
+    const ui::ViewLayout layout(ui::ViewMode::LargeIcons, view, aspects.size(), 0.0f, scroll, scale, params);
+    bool rects = true, hits = true;
+    for (int i = 0; i < 37; ++i) {
+        const D2D1_RECT_F r = layout.ItemRect(i);
+        const size_t rr = static_cast<size_t>(wall.RowOf(i));
+        rects = rects && std::fabs(r.left - wall.x[static_cast<size_t>(i)]) < 0.01f &&
+                std::fabs(r.top - (wall.row_top[rr] - scroll)) < 0.01f;
+        if (r.bottom > view.top + 1.0f && r.top < view.bottom - 1.0f)
+            hits = hits && layout.HitTest((r.left + r.right) * 0.5f, std::clamp((r.top + r.bottom) * 0.5f,
+                                                                               view.top + 0.5f, view.bottom - 1.0f)) == i;
+    }
+    const D2D1_RECT_F a = layout.ItemRect(wall.row_first[2]);
+    const auto range = layout.VisibleRange();
+    const bool covers = range.first <= wall.row_first[2] &&
+                        range.second >= layout.HitTest(view.right - 9.0f, view.bottom - 2.0f);
+    Check(rects && hits && layout.HitTest(a.right + 3.0f, a.top + 5.0f) == -1 && covers &&
+              std::fabs(layout.ContentHeight() - wall.content_height) < 0.01f,
+          L"photo wall: items are hit where drawn, gaps hit nothing, the visible range covers the view");
+    const int from = wall.row_first[2] + 1;
+    const int down = layout.MoveIndex(from, 0, 1);
+    const float cx = wall.x[static_cast<size_t>(from)] + wall.w[static_cast<size_t>(from)] * 0.5f;
+    Check(wall.RowOf(down) == 3 && wall.x[static_cast<size_t>(down)] <= cx + 0.5f &&
+              wall.x[static_cast<size_t>(down)] + wall.w[static_cast<size_t>(down)] >= cx - 0.5f &&
+              layout.MoveIndex(from, 1, 0) == from + 1 && layout.MoveIndex(0, 0, -1) == 0,
+          L"photo wall: Down goes to the picture under the current one");
+
+    // Many items: built in one pass, ends where it should.
+    const ui::WallRows big = ui::BuildWallRows(std::vector<float>(100000, 1.33f), 1600.0f, 150.0f, 1.5f);
+    Check(big.row_first.back() == 100000 && big.RowCount() > 1000 &&
+              big.RowAtY(big.content_height - 20.0f) == static_cast<int>(big.RowCount()) - 1,
+          L"photo wall: 100000 pictures lay out in one pass");
+}
+
+void TestInlineRename() {
+    using ui::ViewMode;
+    auto state = std::make_unique<AppState>();
+    state->places.persist = false;
+    state->appPrefs.persist = false;
+    state->isolatedTest = true;
+    HWND hwnd = CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
+        0, 0, 1000, 700, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(hwnd != nullptr, L"inline rename: isolated owner created");
+    if (!hwnd) return;
+    state->hwnd = hwnd;
+    if (state->compositor.Init(hwnd)) {
+        state->compositor.RecreateTextFormats(1.0f);
+        state->renderer.SetCompositor(&state->compositor);
+        state->window_tabs.NewTab(L"C:\\InlineRenameFixture");
+        state->pane = state->window_tabs.Active()->panes.front().get();
+        auto* tab = state->pane->ActiveTab();
+        std::wstring long_name;
+        for (int i = 0; i < 30; ++i) long_name += L"\x957F\x6587\x4EF6\x540D";  // 长文件名
+        long_name += L".jpg";
+        auto entries = std::make_shared<std::vector<fs::DirEntry>>(4);
+        (*entries)[0].name = long_name;
+        (*entries)[1].name = L"notes.txt";
+        (*entries)[2].name = L"report.docx";
+        (*entries)[3].name = L"invoice_0001234567_ACME_Corporation_May_2024.pdf";
+        tab->SetSnapshot(entries);
+        tab->view_mode = ViewMode::MediumIcons;
+
+        // Field geometry: two cells (280 dip at most), six lines, never narrower.
+        ui::WindowViewModel vm = BuildVm(*state);
+        const D2D1_RECT_F list = state->renderer.PaneListRect(vm.pane, FocusedPaneRect(*state));
+        const D2D1_RECT_F cell = state->renderer.ItemRectInPane(vm.pane, FocusedPaneRect(*state), vm.pane.ViewIndex(0));
+        const float cell_w = cell.right - cell.left;
+        const float max_w = std::min({2.0f * cell_w + 8.0f, std::max(cell_w, 280.0f), list.right - list.left});
+        const D2D1_RECT_F field = state->renderer.RenameFieldRect(vm.pane, list, 0);
+        const float field_w = field.right - field.left;
+        const float field_h = field.bottom - field.top;
+        Check(field_w > cell_w + 1.0f && field_w <= max_w + 1.0f && field_h > 80.0f && field_h <= 6.0f * 22.0f + 6.0f,
+              (L"inline rename: a long name gets up to two cells and six lines (" + std::to_wstring(field_w) +
+               L" x " + std::to_wstring(field_h) + L", cell " + std::to_wstring(cell_w) + L")").c_str());
+        const D2D1_RECT_F latin = state->renderer.RenameFieldRect(vm.pane, list, 3);
+        Check(latin.bottom - latin.top > 40.0f,
+              (L"inline rename: a long name without spaces wraps too (" + std::to_wstring(latin.right - latin.left) +
+               L" x " + std::to_wstring(latin.bottom - latin.top) + L")").c_str());
+        const D2D1_RECT_F short_field = state->renderer.RenameFieldRect(vm.pane, list, 1);
+        vm.pane.rename_index = 1;
+        vm.pane.rename_text = L"notes.txt";
+        vm.pane.rename_field_w = 250.0f;
+        const D2D1_RECT_F kept = state->renderer.RenameFieldRect(vm.pane, list, 1);
+        Check(short_field.right - short_field.left >= cell_w - 0.5f &&
+              std::fabs((kept.right - kept.left) - std::min(max_w, 250.0f)) <= 1.0f,
+              L"inline rename: the field starts at the cell width and does not narrow while typing");
+
+        // Keys: Tab relays, refused characters, the extension question.
+        tab->SelectOnly(1);
+        ShowRenameOverlay(*state);
+        Check(state->renameIndex == 1 && state->hwndRenameEdit != nullptr, L"inline rename: the field opens");
+        if (state->hwndRenameEdit) {
+            SendMessageW(state->hwndRenameEdit, WM_KEYDOWN, VK_TAB, 0);
+            Check(state->renameIndex == 2 && tab->selected_index == 2,
+                  L"inline rename: Tab commits and renames the next item");
+            HWND edit = state->hwndRenameEdit;
+            wchar_t buf[128]{};
+            SendMessageW(edit, WM_CHAR, L':', 1);
+            GetWindowTextW(edit, buf, ARRAYSIZE(buf));
+            Check(wcscmp(buf, L"report.docx") == 0 && !state->renameHint.empty() && state->renameHintUntil != 0,
+                  L"inline rename: a character a name cannot hold is refused with a hint");
+            SetWindowTextW(edit, L"report.pdf");
+            SendMessageW(edit, WM_KEYDOWN, VK_RETURN, 0);
+            const bool asked = state->renameIndex == 2 && state->renameConfirmExt && state->renameHintUntil == 0;
+            SendMessageW(edit, WM_KEYDOWN, VK_ESCAPE, 0);
+            DWORD from = 0, to = 0;
+            SendMessageW(edit, EM_GETSEL, reinterpret_cast<WPARAM>(&from), reinterpret_cast<LPARAM>(&to));
+            Check(asked && state->renameIndex == 2 && !state->renameConfirmExt && from == 7 && to == 10,
+                  (L"inline rename: a changed extension asks first; Esc goes back with the extension selected (" +
+                   std::to_wstring(from) + L".." + std::to_wstring(to) + L")").c_str());
+            SendMessageW(edit, WM_KEYDOWN, VK_RETURN, 0);
+            const bool asked_again = state->renameConfirmExt;
+            SendMessageW(edit, WM_CHAR, L'x', 1);
+            Check(asked_again && !state->renameConfirmExt && state->renameIndex == 2,
+                  L"inline rename: typing again drops the question");
+            SendMessageW(edit, WM_KEYDOWN, VK_RETURN, 0);
+            HideRenameOverlay(*state, true);  // focus lost with the question open
+            Check(state->renameIndex == -1 && tab->held_renames.empty(),
+                  L"inline rename: an unanswered extension question never commits");
+        }
+        if (state->hwndRenameEdit) DestroyWindow(state->hwndRenameEdit);
+        state->hwndRenameEdit = nullptr;
+    } else Check(false, L"inline rename: graphics initialized");
+    DestroyWindow(hwnd);
+    state->hwnd = nullptr;
+}
+
+void TestViewZoomAnchor() {
+    using ui::ViewMode;
+    auto state = std::make_unique<AppState>();
+    state->places.persist = false;
+    state->appPrefs.persist = false;
+    state->isolatedTest = true;
+    HWND hwnd = CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
+        0, 0, 1000, 700, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(hwnd != nullptr, L"view anchor: isolated owner created");
+    if (!hwnd) return;
+    state->hwnd = hwnd;
+    if (state->compositor.Init(hwnd)) {
+        state->compositor.RecreateTextFormats(1.0f);
+        state->renderer.SetCompositor(&state->compositor);
+        state->window_tabs.NewTab(L"C:\\ZoomAnchorFixture");
+        state->pane = state->window_tabs.Active()->panes.front().get();
+        auto* tab = state->pane->ActiveTab();
+        auto entries = std::make_shared<std::vector<fs::DirEntry>>(400);
+        for (size_t i = 0; i < entries->size(); ++i)
+            (*entries)[i].name = L"photo_" + std::to_wstring(1000 + i) + L".jpg";
+        tab->SetSnapshot(entries);
+        tab->view_mode = ViewMode::Details;
+        const D2D1_RECT_F list = ListRect(*state);
+        auto rect_of = [&](int index) {
+            const auto vm = BuildVm(*state);
+            return state->renderer.ItemRectInPane(vm.pane, FocusedPaneRect(*state),
+                vm.pane.ViewIndex(index));
+        };
+        auto mid_y = [](const D2D1_RECT_F& r) { return (r.top + r.bottom) * 0.5f; };
+
+        tab->selected_index = 200;
+        EnsureRowVisible(*state, *tab, 200);
+        tab->scroll_y += (list.bottom - list.top) * 0.4f;  // focused row mid-screen
+        ClampScroll(*state);
+        const float details_y = mid_y(rect_of(200));
+        SetViewMode(*state, ViewMode::LargeIcons);
+        const D2D1_RECT_F large = rect_of(200);
+        Check(tab->scroll_y > 0.0f && std::fabs(mid_y(large) - details_y) <= 1.0f &&
+              large.top >= list.top && large.bottom <= list.bottom,
+              (L"view anchor: the focused item keeps its place when switching to icons (" +
+               std::to_wstring(details_y) + L" -> " + std::to_wstring(mid_y(large)) + L", item " +
+               std::to_wstring(large.top) + L".." + std::to_wstring(large.bottom) + L", list " +
+               std::to_wstring(list.top) + L".." + std::to_wstring(list.bottom) + L", scroll " +
+               std::to_wstring(tab->scroll_y) + L")").c_str());
+        SetViewMode(*state, ViewMode::Details);
+        Check(std::fabs(mid_y(rect_of(200)) - details_y) <= 1.0f,
+              (L"view anchor: switching back to Details returns the focused row to its place (" +
+               std::to_wstring(mid_y(rect_of(200))) + L")").c_str());
+
+        // Ctrl+wheel: the item under the pointer stays under it (rows, not columns).
+        const POINT pt{static_cast<LONG>(list.left + 40.0f), static_cast<LONG>(list.top + 60.0f)};
+        const int under = state->renderer.ItemFromPointInPane(BuildVm(*state).pane,
+            FocusedPaneRect(*state), static_cast<float>(pt.x), static_cast<float>(pt.y));
+        POINT screen = pt;
+        ClientToScreen(hwnd, &screen);
+        const LPARAM at = MAKELPARAM(screen.x, screen.y);
+        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL, MAKEWPARAM(MK_CONTROL, WHEEL_DELTA), at);
+        const D2D1_RECT_F zoomed = rect_of(under);
+        const float py = static_cast<float>(pt.y);
+        Check(under >= 0 && under != 200 && tab->view_mode == ViewMode::LargeIcons &&
+              zoomed.top <= py && py < zoomed.bottom,
+              L"view anchor: Ctrl+wheel keeps the item under the pointer on the pointer's row");
+        state->zoomWheelTick = 0;
+        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL, MAKEWPARAM(MK_CONTROL, WHEEL_DELTA / 2), at);
+        const bool half_waits = tab->view_mode == ViewMode::LargeIcons && tab->icon_dip == 0.0f;
+        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL, MAKEWPARAM(MK_CONTROL, WHEEL_DELTA / 2), at);
+        Check(half_waits && tab->view_mode == ViewMode::LargeIcons &&
+              std::fabs(tab->icon_dip - 114.0f) < 0.5f,
+              (L"view zoom: touchpad half notches add up to one step (" +
+               std::to_wstring(tab->icon_dip) + L" DIP)").c_str());
+        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL,
+            MAKEWPARAM(MK_CONTROL, static_cast<WORD>(-3 * WHEEL_DELTA)), at);
+        Check(tab->view_mode == ViewMode::LargeIcons && tab->icon_dip == 0.0f,
+              L"view zoom: a fast spin moves one size per message");
+
+        // Continuous sizes: zooming out walks down to the smallest size, then
+        // Details; the first step back returns to that size, remembered per folder.
+        int notches = 0;
+        while (ui::IsZoomIconMode(tab->view_mode) && notches < 16) {
+            ZoomIconSize(*state, -1);
+            ++notches;
+        }
+        Check(tab->view_mode == ViewMode::Details && notches == 8 &&
+              tab->last_icon_mode == ViewMode::MediumIcons && tab->last_icon_dip == ui::kMinIconDip,
+              (L"icon size: zooming out stops at 32 DIP before Details (" +
+               std::to_wstring(notches) + L" notches)").c_str());
+        ZoomIconSize(*state, 1);
+        Check(tab->view_mode == ViewMode::MediumIcons && tab->icon_dip == ui::kMinIconDip &&
+              state->appPrefs.folder_views.FindIconDip(tab->current_path) == ui::kMinIconDip,
+              L"icon size: zooming in from Details returns to the last size, kept for the folder");
+        SetIconSize(*state, 150.0f);
+        SetViewMode(*state, ViewMode::Details);
+        ShowLastIconSize(*state);
+        Check(tab->view_mode == ViewMode::LargeIcons && tab->icon_dip == 150.0f,
+              L"icon size: the icon button returns to a custom size");
+        SetViewMode(*state, ViewMode::LargeIcons);
+        Check(tab->icon_dip == 0.0f && !state->appPrefs.folder_views.FindIconDip(tab->current_path),
+              L"icon size: choosing a size from the menu returns to its preset");
+
+        // Header size slider (P1e): icon views only; drag, plain wheel, double-click.
+        state->pane->header_animation.Tick(true, 1);
+        SetViewMode(*state, ViewMode::LargeIcons);
+        const ui::WindowViewModel hvm = BuildVm(*state);
+        const D2D1_RECT_F client = D2D1::RectF(0.0f, 0.0f, static_cast<float>(state->compositor.Width()),
+                                               static_cast<float>(state->compositor.Height()));
+        const ui::PaneViewModel& hpane = hvm.pane_slots.front().pane;
+        const D2D1_RECT_F hrect = hvm.pane_slots.front().rect;
+        const D2D1_RECT_F slider = state->renderer.PaneSizeSliderRect(hpane, hrect);
+        const float sy = (slider.top + slider.bottom) * 0.5f;
+        Check(slider.right - slider.left > 60.0f &&
+              state->renderer.HitTest(hvm, client, (slider.left + slider.right) * 0.5f, sy).region ==
+                  ui::HitTestResult::PaneSizeSlider &&
+              state->renderer.PaneSizeSliderValueAt(hpane, hrect, slider.left) == ui::kMinIconDip &&
+              state->renderer.PaneSizeSliderValueAt(hpane, hrect, slider.right) == ui::kMaxIconDip,
+              L"view header: icon views show a 32..256 DIP size slider in the pane header");
+        const auto client_at = [](float x, float y) {
+            return MAKELPARAM(static_cast<int>(x), static_cast<int>(y));
+        };
+        // Press where the slider reads about 110 DIP (the track's ends move with the design).
+        float press_x = slider.left;
+        for (float px = slider.left; px <= slider.right; px += 1.0f) {
+            if (std::fabs(state->renderer.PaneSizeSliderValueAt(hpane, hrect, px) - 110.0f) <
+                std::fabs(state->renderer.PaneSizeSliderValueAt(hpane, hrect, press_x) - 110.0f))
+                press_x = px;
+        }
+        HandleLButtonDown(state.get(), hwnd, WM_LBUTTONDOWN, MK_LBUTTON, client_at(press_x, sy));
+        const float pressed = state->paneSizeDragging && tab->view_mode == ViewMode::LargeIcons
+            ? tab->icon_dip : 0.0f;
+        HandleMouseMove(state.get(), hwnd, WM_MOUSEMOVE, MK_LBUTTON, client_at(slider.right + 30.0f, sy));
+        HandleLButtonUp(state.get(), hwnd, WM_LBUTTONUP, 0, client_at(slider.right + 30.0f, sy));
+        Check(pressed > 100.0f && pressed < 140.0f && !state->paneSizeDragging &&
+              tab->view_mode == ViewMode::ExtraLargeIcons && tab->icon_dip == ui::kMaxIconDip &&
+              state->appPrefs.folder_views.FindIconDip(tab->current_path) == ui::kMaxIconDip,
+              (L"view header: dragging the slider resizes the icons and keeps the size for the folder (" +
+               std::to_wstring(pressed) + L" -> " + std::to_wstring(tab->icon_dip) + L")").c_str());
+        POINT wheel_pt{static_cast<LONG>((slider.left + slider.right) * 0.5f), static_cast<LONG>(sy)};
+        ClientToScreen(hwnd, &wheel_pt);
+        const LPARAM on_slider = MAKELPARAM(wheel_pt.x, wheel_pt.y);
+        state->zoomWheelTick = 0;
+        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL, MAKEWPARAM(0, static_cast<WORD>(-WHEEL_DELTA)), on_slider);
+        const bool wheel_down = tab->view_mode == ViewMode::ExtraLargeIcons && tab->icon_dip == 0.0f;
+        SetIconSize(*state, ui::kMinIconDip);
+        state->zoomWheelTick = 0;
+        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL, MAKEWPARAM(0, static_cast<WORD>(-WHEEL_DELTA)), on_slider);
+        Check(wheel_down && tab->view_mode == ViewMode::MediumIcons && tab->icon_dip == ui::kMinIconDip,
+              L"view header: the plain wheel on the slider changes the size and stays in the icon views");
+        HandleLButtonDblClk(state.get(), hwnd, WM_LBUTTONDBLCLK, MK_LBUTTON, client_at(press_x, sy));
+        if (GetCapture() == hwnd) ReleaseCapture();
+        state->paneSizeDragging = false;
+        Check(tab->view_mode == ViewMode::LargeIcons && tab->icon_dip == 0.0f,
+              L"view header: double-clicking the slider returns to large icons");
+        ui::PaneViewModel narrow_pane = hpane;
+        const D2D1_RECT_F narrow = D2D1::RectF(hrect.left, hrect.top, hrect.left + 400.0f, hrect.bottom);
+        const D2D1_RECT_F size_button = state->renderer.PaneSizeButtonRect(narrow_pane, narrow);
+        const D2D1_RECT_F folded = state->renderer.PaneSizeSliderRect(narrow_pane, narrow);
+        narrow_pane.size_slider_open = true;
+        const D2D1_RECT_F opened = state->renderer.PaneSizeSliderRect(narrow_pane, narrow);
+        Check(size_button.right > size_button.left && folded.right <= folded.left &&
+              opened.right > opened.left && opened.right <= size_button.left && opened.left >= narrow.left,
+              L"view header: a narrow pane folds the slider into a button that opens it over the title");
+        SetViewMode(*state, ViewMode::Details);
+        const ui::WindowViewModel dvm = BuildVm(*state);
+        const D2D1_RECT_F hidden = state->renderer.PaneSizeSliderRect(dvm.pane_slots.front().pane,
+                                                                      dvm.pane_slots.front().rect);
+        Check(hidden.right <= hidden.left, L"view header: Details hides the size slider");
+
+        // Photo wall (P2b): the segment holds details, icons and photo wall
+        // ahead of the view menu; the wall keeps the size and the folder keeps it.
+        SetViewMode(*state, ViewMode::LargeIcons);
+        const ui::WindowViewModel gvm = BuildVm(*state);
+        const ui::PaneViewModel& gpane = gvm.pane_slots.front().pane;
+        const D2D1_RECT_F grect = gvm.pane_slots.front().rect;
+        const D2D1_RECT_F seg_list = state->renderer.PaneDetailsRect(grect, 1.0f, true);
+        const D2D1_RECT_F seg_grid = state->renderer.PaneMediumIconsRect(grect, 1.0f, true);
+        const D2D1_RECT_F seg_wall = state->renderer.PaneWallRect(gpane, grect);
+        const D2D1_RECT_F seg_more = state->renderer.PaneViewButtonRect(grect);
+        const auto region_at = [&](const ui::WindowViewModel& v, const D2D1_RECT_F& r) {
+            return state->renderer.HitTest(v, client, (r.left + r.right) * 0.5f, (r.top + r.bottom) * 0.5f).region;
+        };
+        Check(seg_wall.right > seg_wall.left && seg_list.right <= seg_grid.left && seg_grid.right <= seg_wall.left &&
+              seg_wall.right <= seg_more.left && state->renderer.PaneSizeSliderRect(gpane, grect).right <= seg_list.left &&
+              region_at(gvm, seg_list) == ui::HitTestResult::PaneDetails &&
+              region_at(gvm, seg_grid) == ui::HitTestResult::PaneMediumIcons &&
+              region_at(gvm, seg_wall) == ui::HitTestResult::PaneWall &&
+              region_at(gvm, seg_more) == ui::HitTestResult::PaneViewButton,
+              L"photo wall: the header segment holds details, icons and photo wall ahead of the view menu");
+        const D2D1_RECT_F grid_item = state->renderer.ItemRectInPane(gpane, grect, 3);
+        const auto press = [&](const D2D1_RECT_F& r) {
+            const float cx = (r.left + r.right) * 0.5f, cy = (r.top + r.bottom) * 0.5f;
+            HandleLButtonDown(state.get(), hwnd, WM_LBUTTONDOWN, MK_LBUTTON, client_at(cx, cy));
+            HandleLButtonUp(state.get(), hwnd, WM_LBUTTONUP, 0, client_at(cx, cy));
+        };
+        press(seg_wall);
+        const ui::WindowViewModel wvm = BuildVm(*state);
+        const D2D1_RECT_F wall_item = state->renderer.ItemRectInPane(wvm.pane_slots.front().pane,
+                                                                     wvm.pane_slots.front().rect, 3);
+        Check(tab->wall && tab->view_mode == ViewMode::LargeIcons && wvm.pane_slots.front().pane.wall &&
+              state->appPrefs.folder_views.FindWall(tab->current_path) &&
+              (std::fabs(wall_item.left - grid_item.left) > 1.0f || std::fabs(wall_item.right - grid_item.right) > 1.0f ||
+               std::fabs(wall_item.top - grid_item.top) > 1.0f),
+              L"photo wall: the wall button keeps the size, lays the items out in rows and is kept for the folder");
+        SetIconSize(*state, 150.0f);
+        SetViewMode(*state, ViewMode::Details);
+        ShowLastIconSize(*state);
+        Check(tab->wall && tab->view_mode == ViewMode::LargeIcons && tab->icon_dip == 150.0f,
+              L"photo wall: resizing and the way back from Details keep the wall");
+        press(seg_grid);
+        Check(!tab->wall && tab->view_mode == ViewMode::LargeIcons && tab->icon_dip == 150.0f &&
+              !state->appPrefs.folder_views.FindWall(tab->current_path),
+              L"photo wall: the icons button returns to the grid at the same size");
+
+        // At the top with nothing selected there is nothing to follow.
+        tab->selected_index = -1;
+        SetViewMode(*state, ViewMode::Details);
+        tab->scroll_x = tab->scroll_y = 0.0f;
+        SetViewMode(*state, ViewMode::LargeIcons);
+        const bool large_top = tab->scroll_y == 0.0f;
+        SetViewMode(*state, ViewMode::MediumIcons);
+        Check(large_top && tab->scroll_y == 0.0f,
+              L"view anchor: at the top with nothing selected, switching views stays at the top");
+    } else Check(false, L"view anchor: graphics initialized");
+    state->watches.Stop();
+    DestroyWindow(hwnd);
+    state->hwnd = nullptr;
+}
+
 void TestFolderViews() {
     using ui::ViewMode;
     AppPrefs prefs;
@@ -3301,10 +3807,15 @@ void TestFolderViews() {
         Check(tab->view_mode == ViewMode::LargeIcons, L"folder views: back restores parent mode");
         StartLoadingPath(*state, *tab, tab->GoForward());
         Check(tab->view_mode == ViewMode::List, L"folder views: forward restores child mode");
+        Check(tab->last_icon_mode == ViewMode::LargeIcons,
+              L"view zoom: a list folder keeps the last icon size for the header button");
         state->appPrefs.FromJson(state->appPrefs.ToJson());
         tab->view_mode = ViewMode::SmallIcons;
+        tab->last_icon_mode = ViewMode::MediumIcons;
         StartLoadingPath(*state, *tab, parent, PathLoadReason::RestoreSession);
         Check(tab->view_mode == ViewMode::LargeIcons, L"folder views: saved folder choice wins over session mode");
+        Check(tab->last_icon_mode == ViewMode::LargeIcons,
+              L"view zoom: opening a saved icon folder records its size");
         tab->view_mode = ViewMode::Tiles;
         StartLoadingPath(*state, *tab, parent + L"\\legacy", PathLoadReason::RestoreSession);
         Check(tab->view_mode == ViewMode::Tiles, L"folder views: legacy session without folder preference keeps its mode");
@@ -5882,18 +6393,23 @@ void TestViewLayouts() {
           L"view: icon and filename share the cell center axis");
     ui::ViewLayout hidpiIcons(ui::ViewMode::ExtraLargeIcons,
         D2D1::RectF(0, 0, 900, 700), 20, 0, 0, 1.5f);
-    // e922dbc: the tier keeps 240 device pixels of artwork; cells are at least
-    // that plus 16 DIP and share the row's leftover (900 px: 3 x 300).
+    // e922dbc: the tier keeps 240 device pixels of artwork. Cells are that plus
+    // 8 DIP, absorb at most 16 DIP of the leftover and the row is centred
+    // (900 px at 150%: 3 x 276 with 9 px gaps, 27 px margins).
     const auto& xl = hidpiIcons.Metrics();
-    Check(std::abs(xl.icon_size - 240.0f) < 0.01f && xl.cell_width + 0.01f >= 240.0f + 16.0f * 1.5f &&
-          std::abs(xl.cell_width * static_cast<float>(xl.columns) - 900.0f) < 0.01f,
+    const D2D1_RECT_F xl_first = hidpiIcons.ItemRect(0);
+    const D2D1_RECT_F xl_last = hidpiIcons.ItemRect(xl.columns - 1);
+    Check(std::abs(xl.icon_size - 240.0f) < 0.01f && xl.columns == 3 &&
+          xl.cell_width + 0.01f >= 240.0f + 8.0f * 1.5f &&
+          xl.cell_width <= 240.0f + 24.0f * 1.5f + 0.01f &&
+          std::abs(xl_first.left - (900.0f - xl_last.right)) < 0.01f,
           L"view: extra-large Explorer tier remains capped in physical pixels");
     Check(hidpiIcons.NameRect(0).top >= hidpiIcons.IconRect(0).bottom,
           L"view: extra-large filename never overlaps icon bounds");
     ui::ViewLayout hidpiLarge(ui::ViewMode::LargeIcons,
         D2D1::RectF(0, 0, 900, 700), 20, 0, 0, 1.5f);
     Check(std::abs(hidpiLarge.Metrics().icon_size - 144.0f) < 0.01f &&
-          hidpiLarge.Metrics().cell_width >= 180.0f &&
+          hidpiLarge.Metrics().cell_width + 0.01f >= 144.0f + 8.0f * 1.5f &&
           hidpiLarge.NameRect(0).top >= hidpiLarge.IconRect(0).bottom,
           L"view: large icons scale with DPI and keep filename below image");
     ui::ViewLayout hidpiMedium(ui::ViewMode::MediumIcons,
@@ -5901,6 +6417,53 @@ void TestViewLayouts() {
     Check(std::abs(hidpiMedium.Metrics().icon_size - 72.0f) < 0.01f &&
           hidpiMedium.NameRect(0).top >= hidpiMedium.IconRect(0).bottom,
           L"view: medium icons scale with DPI and keep filename below image");
+    // Icon grid density: more columns than the old fill-the-row grid (medium
+    // at 620 DIP: 5 -> 6, large at 1000 DIP: 8 -> 9), blank gaps, centred rows.
+    ui::ViewLayout medium620(ui::ViewMode::MediumIcons, D2D1::RectF(0, 0, 620, 600), 60, 0, 0, 1.0f);
+    ui::ViewLayout large1000(ui::ViewMode::LargeIcons, D2D1::RectF(0, 0, 1000, 600), 60, 0, 0, 1.0f);
+    Check(medium620.Metrics().columns == 6 && large1000.Metrics().columns == 9,
+          L"view: icon grids fit more columns (medium 620: 6, large 1000: 9)");
+    const D2D1_RECT_F m0 = medium620.ItemRect(0), m1 = medium620.ItemRect(1), m6 = medium620.ItemRect(6);
+    Check(std::abs(m1.left - m0.right - 6.0f) < 0.01f && std::abs(m6.top - m0.bottom - 2.0f) < 0.01f &&
+          medium620.HitTest(m0.right + 3.0f, (m0.top + m0.bottom) * 0.5f) == -1,
+          L"view: icon grid gaps are 6 x 2 DIP and blank to hit-testing");
+    ui::ViewLayout spare(ui::ViewMode::MediumIcons, D2D1::RectF(0, 0, 380, 600), 3, 0, 0, 1.0f);
+    const auto& sm = spare.Metrics();
+    Check(sm.columns == 3 && std::abs(sm.cell_width - 106.0f) < 0.01f &&
+          std::abs(spare.ItemRect(0).left - (380.0f - spare.ItemRect(2).right)) < 0.01f,
+          L"view: a wide leftover centres the row instead of stretching cells past +16 DIP");
+    Check(std::abs(spare.ThumbnailRect(0).top - spare.ItemRect(0).top - 4.0f) < 0.01f &&
+          std::abs(spare.NameRect(0).top - spare.ThumbnailRect(0).bottom - 4.0f) < 0.01f &&
+          spare.NameRect(0).bottom <= spare.ItemRect(0).bottom,
+          L"view: icon cells keep thumbnail and two name lines inside the tighter cell");
+    // A folder's names get 1..4 lines; the name block resizes the cells.
+    {
+        std::vector<int> short_names(20, 1), with_dirs(20, 1), very_long(10, 5);
+        std::vector<int> mixed(19, 1), long_names{1, 2, 3, 3, 3, 3, 3, 3};
+        mixed.push_back(2);
+        Check(ui::AutoIconNameLines(short_names, false) == 1 && ui::AutoIconNameLines(with_dirs, true) == 2 &&
+              ui::AutoIconNameLines(mixed, false) == 2 && ui::AutoIconNameLines(long_names, false) == 3 &&
+              ui::AutoIconNameLines(very_long, false) == 4,
+              L"view: folder name lines follow the 75th/95th percentile rule (1..4)");
+        ui::ViewLayout two(ui::ViewMode::MediumIcons, D2D1::RectF(0, 0, 620, 600), 60, 0, 0, 1.0f);
+        ui::ViewLayout three(ui::ViewMode::MediumIcons, D2D1::RectF(0, 0, 620, 600), 60, 0, 0, 1.0f,
+                             ui::IconGridNameBlockDip(3));
+        const D2D1_RECT_F name3 = three.NameRect(0), size3 = three.FolderSizeRect(0);
+        Check(two.Metrics().name_lines == 2 && three.Metrics().name_lines == 3 &&
+              std::abs(three.Metrics().cell_height - two.Metrics().cell_height - 18.0f) < 0.01f &&
+              std::abs(name3.bottom - name3.top - 56.0f) < 0.01f && name3.bottom <= three.ItemRect(0).bottom &&
+              std::abs(size3.top - name3.top - 36.0f) < 0.01f &&
+              three.Metrics().columns == two.Metrics().columns,
+              L"view: a three-line folder grows cells by one line and keeps the size on the last line");
+        ui::ViewLayout wide(ui::ViewMode::MediumIcons, D2D1::RectF(0, 0, 380, 600), 3, 0, 0, 1.0f);
+        Check(std::abs(ui::IconGridNameWidth(ui::ViewMode::MediumIcons, 1.0f) - 100.0f) < 0.01f &&
+              std::abs(ui::IconGridNameWidth(ui::ViewMode::LargeIcons, 1.0f) - 114.0f) < 0.01f &&
+              std::abs(ui::IconGridNameWidth(ui::ViewMode::ExtraLargeIcons, 1.5f) - 267.0f) < 0.01f &&
+              two.NameRect(0).right - two.NameRect(0).left <= ui::IconGridNameWidth(ui::ViewMode::MediumIcons, 1.0f) &&
+              std::abs(wide.NameRect(0).right - wide.NameRect(0).left -
+                       ui::IconGridNameWidth(ui::ViewMode::MediumIcons, 1.0f)) < 0.01f,
+              L"view: folder name lines are measured at the widest cell width");
+    }
     ui::ViewLayout list(ui::ViewMode::List, viewport, 1000, 0, 0, 1.0f);
     Check(list.MaxScrollX() > 0 && list.MaxScrollY() == 0,
           L"view: list is column-major with horizontal scrolling");
@@ -5999,7 +6562,8 @@ void TestListColumns() {
         ui::PaneViewModel vm;
         vm.view_mode = ui::ViewMode::Details;
         vm.is_search = true;
-        Check(r.ListRowHeightDip(vm, pane(700.0f)) >= 42.0f && r.ListRowHeightDip(vm, pane(1000.0f)) < 42.0f,
+        Check(r.ListRowHeightDip(vm, pane(700.0f)).row_height_dip >= 42.0f &&
+              r.ListRowHeightDip(vm, pane(1000.0f)).row_height_dip < 42.0f,
               L"columns: only the two-line search layout grows the row height");
         std::array<float, 4> search_dividers{};
         search_dividers = r.ResizeSearchColumnDivider(pane(1000.0f), search_dividers, 0,
@@ -7660,6 +8224,11 @@ int RunSelfTest1B2() {
     }
     if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
         wcscmp(test_case, L"folder-views") == 0) {
+        TestViewZoomChain();
+        TestContinuousIconSize();
+        TestViewZoomAnchor();
+        TestInlineRename();
+        TestWallRows();
         TestFolderViews();
         TestFolderSorts();
         TestStartupLocation();
@@ -7837,6 +8406,9 @@ int RunSelfTest1B2() {
     TestAdvancedEditClicks();
     TestCtrlDragSelection();
     TestDirWatch();
+    TestViewZoomChain();
+    TestContinuousIconSize();
+    TestViewZoomAnchor();
     TestFolderViews();
     TestFolderSorts();
     TestStartupLocation();

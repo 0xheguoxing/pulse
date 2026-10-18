@@ -452,6 +452,15 @@ struct AppState : AppCoreOwner {
     std::unordered_map<int, TabTrack> chipTracks;
     std::unordered_map<int, float> chipOffsets;
 
+    // Ctrl+wheel view zoom: touchpad pinch arrives as small Ctrl+wheel deltas,
+    // so whole WHEEL_DELTA notches are counted (reset on reversal or a pause).
+    int zoomWheelRemainder = 0;
+    ULONGLONG zoomWheelTick = 0;
+    // Pane header size slider being dragged; folder prefs are saved on release.
+    bool paneSizeDragging = false;
+    int paneSizeDragPane = -1;
+    bool paneSizeSavePending = false;
+
     // Smooth scroll animation.
     bool scrollAnimating = false;
     float scrollTargetY = 0.0f;
@@ -616,6 +625,12 @@ struct AppState : AppCoreOwner {
     // the last window takes along the windows closed since then.
     uint64_t previous_use_tick = 0;
     bool renameIgnoreKillFocus = false;
+    // Inline rename (P1f): the note under the field, the extension question
+    // waiting for Enter / Esc, and the widest the icon-grid field has been.
+    std::wstring renameHint;
+    ULONGLONG renameHintUntil = 0;  // GetTickCount64; 0 = until answered
+    bool renameConfirmExt = false;
+    float renameFieldW = 0.0f;
     // 解散文件夹: the recycle that ends each folder's chain, after which the
     // parent is listed afresh.
     struct DissolveStep {

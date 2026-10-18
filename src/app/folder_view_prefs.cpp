@@ -23,6 +23,11 @@ std::wstring JsonKey(ui::ViewMode mode) {
     return std::wstring(L"folder_view_") + ui::ViewModeName(mode);
 }
 
+// Icon sizes: "<dip>|<path>" strings, This PC as an empty path.
+constexpr wchar_t kIconDipKey[] = L"folder_icon_dip";
+// Photo walls: the folders' paths, This PC as an empty one.
+constexpr wchar_t kWallKey[] = L"folder_wall";
+
 } // namespace
 
 bool FolderViewPrefs::PathLess::operator()(const std::wstring& a, const std::wstring& b) const {
@@ -53,8 +58,46 @@ bool FolderViewPrefs::Set(const std::wstring& path, ui::ViewMode mode) {
     return true;
 }
 
+std::optional<float> FolderViewPrefs::FindIconDip(const std::wstring& path) const {
+    const auto key = path.empty() ? std::wstring() : FolderPrefKey(path);
+    if (key.empty() && !path.empty()) return std::nullopt;
+    const auto it = icon_dips_.find(key);
+    if (it == icon_dips_.end()) return std::nullopt;
+    return static_cast<float>(it->second);
+}
+
+bool FolderViewPrefs::SetIconDip(const std::wstring& path, float dip) {
+    const auto key = path.empty() ? std::wstring() : FolderPrefKey(path);
+    if (key.empty() && !path.empty()) return false;
+    const auto it = icon_dips_.find(key);
+    if (!(dip > 0.0f)) {
+        if (it == icon_dips_.end()) return false;
+        icon_dips_.erase(it);
+        return true;
+    }
+    const int value = static_cast<int>(std::clamp(dip, ui::kMinIconDip, 512.0f) + 0.5f);
+    if (it != icon_dips_.end() && it->second == value) return false;
+    icon_dips_[key] = value;
+    return true;
+}
+
+bool FolderViewPrefs::FindWall(const std::wstring& path) const {
+    const auto key = path.empty() ? std::wstring() : FolderPrefKey(path);
+    if (key.empty() && !path.empty()) return false;
+    return walls_.contains(key);
+}
+
+bool FolderViewPrefs::SetWall(const std::wstring& path, bool wall) {
+    const auto key = path.empty() ? std::wstring() : FolderPrefKey(path);
+    if (key.empty() && !path.empty()) return false;
+    if (!wall) return walls_.erase(key) > 0;
+    return walls_.try_emplace(key, true).second;
+}
+
 void FolderViewPrefs::ApplyToAll(ui::ViewMode mode) {
     views_.clear();
+    std::erase_if(icon_dips_, [](const auto& item) { return !item.first.empty(); });
+    std::erase_if(walls_, [](const auto& item) { return !item.first.empty(); });
     default_ = ui::ViewModeFromIndex(ui::ViewModeIndex(mode));
 }
 
@@ -77,6 +120,30 @@ void FolderViewPrefs::AppendJson(std::wstring& out) const {
         }
         out += L"]";
     }
+    out += L",\n  \"";
+    out += kIconDipKey;
+    out += L"\":[";
+    bool first_dip = true;
+    for (const auto& [path, dip] : icon_dips_) {
+        if (!first_dip) out += L",";
+        first_dip = false;
+        out += L"\"";
+        json::Escape(std::to_wstring(dip) + L"|" + path, out);
+        out += L"\"";
+    }
+    out += L"]";
+    out += L",\n  \"";
+    out += kWallKey;
+    out += L"\":[";
+    bool first_wall = true;
+    for (const auto& item : walls_) {
+        if (!first_wall) out += L",";
+        first_wall = false;
+        out += L"\"";
+        json::Escape(item.first, out);
+        out += L"\"";
+    }
+    out += L"]";
 }
 
 void FolderViewPrefs::ReadJson(const std::wstring& input) {
@@ -90,6 +157,18 @@ void FolderViewPrefs::ReadJson(const std::wstring& input) {
         for (const auto& path : json::ExtractStringArray(input, JsonKey(mode)))
             Set(path, mode);
     }
+    for (const auto& item : json::ExtractStringArray(input, kIconDipKey)) {
+        const size_t bar = item.find(L'|');
+        if (bar == 0 || bar > 3) continue;  // also npos
+        int dip = 0;
+        bool digits = true;
+        for (size_t i = 0; i < bar; ++i) {
+            digits = digits && item[i] >= L'0' && item[i] <= L'9';
+            dip = dip * 10 + (item[i] - L'0');
+        }
+        if (digits) SetIconDip(item.substr(bar + 1), static_cast<float>(dip));
+    }
+    for (const auto& path : json::ExtractStringArray(input, kWallKey)) SetWall(path, true);
 }
 
 } // namespace pulse::app

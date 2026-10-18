@@ -2910,14 +2910,116 @@ bool ApplyGroupToAllFolders(AppState& s, int group_by, bool confirm) {
 }
 
 // Drop groups with no remaining members (after mass closes / leave operations).
-void SetViewMode(AppState& s, ui::ViewMode mode) {
+namespace {
+// One item keeps its place on screen across a view change: ref (client
+// pixels) stays at the same fraction of the item's rect.
+struct ZoomAnchor {
+    int source = -1;
+    bool pointer = false;
+    float ref_x = 0.0f, ref_y = 0.0f;
+    float frac_x = 0.5f, frac_y = 0.5f;
+};
+
+std::optional<ZoomAnchor> CaptureZoomAnchor(AppState& s, const app::Tab& tab, const POINT* point) {
+    ui::PaneViewModel pane;
+    MaxScrollForActivePane(s, &pane);
+    const int count = static_cast<int>(pane.EntryCount());
+    // Details tree rows index base entries first, so their sources match the
+    // icon views; an expanded child (past the base) simply finds no row later.
+    if (count == 0) return std::nullopt;
+    const D2D1_RECT_F bounds = FocusedPaneRect(s);
+    const D2D1_RECT_F list = s.renderer.PaneListRect(pane, bounds);
+    auto on_screen = [&](const D2D1_RECT_F& r) {
+        return r.bottom > list.top && r.top < list.bottom && r.right > list.left && r.left < list.right;
+    };
+    ZoomAnchor a;
+    int row = -1;
+    if (point) {
+        const float x = static_cast<float>(point->x), y = static_cast<float>(point->y);
+        if (x >= list.left && x < list.right && y >= list.top && y < list.bottom) {
+            a.source = s.renderer.ItemFromPointInPane(pane, bounds, x, y);
+            row = pane.ViewIndex(a.source);
+            a.pointer = row >= 0;
+            a.ref_x = x;
+            a.ref_y = y;
+        }
+    }
+    if (row < 0 && tab.selected_index >= 0) {
+        const int r = pane.ViewIndex(tab.selected_index);
+        if (r >= 0 && r < count && on_screen(s.renderer.ItemRectInPane(pane, bounds, r))) {
+            row = r;
+            a.source = tab.selected_index;
+        }
+    }
+    if (row < 0) {
+        // Nothing to follow at the top of the folder: stay at the top rather
+        // than centre a middle item and clip the first row.
+        if (tab.scroll_y <= 0.5f && tab.scroll_x <= 0.5f) return std::nullopt;
+        const auto [first, last] = s.renderer.VisibleRangeInPane(pane, bounds);
+        if (first < 0 || last < first) return std::nullopt;
+        row = std::clamp((first + last) / 2, 0, count - 1);
+        a.source = pane.SourceIndex(row);
+    }
+    if (a.source < 0) return std::nullopt;
+    const D2D1_RECT_F item = s.renderer.ItemRectInPane(pane, bounds, row);
+    const float w = item.right - item.left, h = item.bottom - item.top;
+    if (w <= 0.0f || h <= 0.0f) return std::nullopt;
+    if (a.pointer) {
+        a.frac_x = std::clamp((a.ref_x - item.left) / w, 0.0f, 1.0f);
+        a.frac_y = std::clamp((a.ref_y - item.top) / h, 0.0f, 1.0f);
+    } else {
+        a.ref_x = item.left + w * 0.5f;
+        a.ref_y = item.top + h * 0.5f;
+    }
+    return a;
+}
+
+// Call with the new view mode set and scroll at 0.
+bool RestoreZoomAnchor(AppState& s, app::Tab& tab, const ZoomAnchor& a) {
+    ui::PaneViewModel pane;
+    MaxScrollForActivePane(s, &pane);
+    const int row = pane.ViewIndex(a.source);
+    if (row < 0 || row >= static_cast<int>(pane.EntryCount())) return false;
+    const D2D1_RECT_F bounds = FocusedPaneRect(s);
+    const D2D1_RECT_F item = s.renderer.ItemRectInPane(pane, bounds, row);
+    tab.scroll_x += item.left + a.frac_x * (item.right - item.left) - a.ref_x;
+    tab.scroll_y += item.top + a.frac_y * (item.bottom - item.top) - a.ref_y;
+    ClampScroll(s);
+    // A focused anchor that grew past the viewport edge is nudged back in;
+    // a pointer anchor stays exactly under the pointer.
+    if (!a.pointer && a.source == tab.selected_index) EnsureRowVisible(s, tab, a.source);
+    s.scrollTargetX = tab.scroll_x;
+    s.scrollTargetY = tab.scroll_y;
+    return true;
+}
+
+// SetViewMode with an icon size (0 = the mode's preset; other views keep the
+// tab's size for later). wall: 1 / 0 the header's photo wall / icons button
+// (kept for the folder), -1 keeps the tab's.
+void ApplyViewMode(AppState& s, ui::ViewMode mode, float icon_dip, const POINT* anchor_point, int wall = -1) {
     app::Tab* tab = ActiveTab(s);
     if (!tab) return;
-    if (s.appPrefs.folder_views.Set(tab->current_path, mode)) s.appPrefs.Save();
-    if (tab->view_mode == mode) return;
+    const bool icons = ui::IsZoomIconMode(mode);
+    icon_dip = ui::NormalizeIconDip(mode, icon_dip, s.scale);
+    const bool to_wall = wall < 0 ? tab->wall : wall != 0;
+    bool save = s.appPrefs.folder_views.Set(tab->current_path, mode);
+    if (icons) {
+        save = s.appPrefs.folder_views.SetIconDip(tab->current_path, icon_dip) || save;
+        if (wall >= 0) save = s.appPrefs.folder_views.SetWall(tab->current_path, to_wall) || save;
+        tab->last_icon_mode = mode;
+        tab->last_icon_dip = icon_dip;
+    }
+    if (save && s.paneSizeDragging) s.paneSizeSavePending = true;  // written on release
+    else if (save) s.appPrefs.Save();
+    if (tab->view_mode == mode && (!icons || (tab->icon_dip == icon_dip && tab->wall == to_wall))) return;
     if (s.renameIndex >= 0) HideRenameOverlay(s, false);
     const int old_group = tab->EffectiveGroup();
+    const std::optional<ZoomAnchor> anchor = CaptureZoomAnchor(s, *tab, anchor_point);
     tab->view_mode = mode;
+    if (icons) {
+        tab->icon_dip = icon_dip;
+        tab->wall = to_wall;
+    }
     // Grouped order applies to list-like views only; re-sort when that flips.
     if (tab->EffectiveGroup() != old_group && !fs::IsVirtualPath(tab->current_path))
         RefreshActiveTab(s);
@@ -2926,9 +3028,51 @@ void SetViewMode(AppState& s, ui::ViewMode mode) {
     tab->scroll_y = 0.0f;
     s.scrollTargetY = 0.0f;
     s.scrollAnimating = false;
-    if (tab->selected_index >= 0) EnsureRowVisible(s, *tab, tab->selected_index);
+    // Regrouping re-sorts rows asynchronously, so the anchor would land elsewhere.
+    const bool anchored = anchor && tab->EffectiveGroup() == old_group &&
+        RestoreZoomAnchor(s, *tab, *anchor);
+    if (!anchored && tab->selected_index >= 0) EnsureRowVisible(s, *tab, tab->selected_index);
     ClampScroll(s);
     InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+} // namespace
+
+void SetViewMode(AppState& s, ui::ViewMode mode, const POINT* anchor_point) {
+    ApplyViewMode(s, mode, 0.0f, anchor_point);
+}
+
+void SetIconSize(AppState& s, float icon_dip, const POINT* anchor_point) {
+    ApplyViewMode(s, ui::IconModeForDip(icon_dip, s.scale), icon_dip, anchor_point);
+}
+
+void ShowLastIconSize(AppState& s, const POINT* anchor_point) {
+    const app::Tab* tab = ActiveTab(s);
+    if (!tab) return;
+    const bool known = ui::IsZoomIconMode(tab->last_icon_mode);
+    ApplyViewMode(s, known ? tab->last_icon_mode : ui::ViewMode::MediumIcons,
+                  known ? tab->last_icon_dip : 0.0f, anchor_point);
+}
+
+void ShowIconWall(AppState& s, bool wall, const POINT* anchor_point) {
+    const app::Tab* tab = ActiveTab(s);
+    if (!tab) return;
+    const bool known = ui::IsZoomIconMode(tab->last_icon_mode);
+    ApplyViewMode(s, known ? tab->last_icon_mode : ui::ViewMode::MediumIcons,
+                  known ? tab->last_icon_dip : 0.0f, anchor_point, wall ? 1 : 0);
+}
+
+void ZoomIconSize(AppState& s, int step, const POINT* anchor_point, bool leave_icons) {
+    const app::Tab* tab = ActiveTab(s);
+    if (!tab || step == 0) return;
+    if (!ui::IsZoomIconMode(tab->view_mode)) {
+        if (!leave_icons) return;
+        if (step > 0) ShowLastIconSize(s, anchor_point);
+        else ApplyViewMode(s, ui::ViewMode::Details, 0.0f, anchor_point);
+        return;
+    }
+    const float dip = ui::ZoomIconDip(ui::IconDip(tab->view_mode, tab->icon_dip, s.scale), step, s.scale);
+    if (dip > 0.0f) SetIconSize(s, dip, anchor_point);
+    else if (leave_icons) ApplyViewMode(s, ui::ViewMode::Details, 0.0f, anchor_point);
 }
 
 void ShowViewDropdown(AppState& s, int pane_index) {

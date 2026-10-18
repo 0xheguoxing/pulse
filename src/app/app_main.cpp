@@ -914,12 +914,13 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         s->renderer.SetCompositor(&s->compositor);
         s->renderer.SetScale(s->scale);
         s->renderer.SetIconNotifyWindow(hwnd);
-        if (init_core) RegisterAssocChangeNotify(ServiceWindow(*s));
-        // Later windows build Quick Look on first use (ToggleQuickPreview):
-        // each one is a hidden window that cost every Ctrl+N about 25 ms.
-        if (init_core)
-            s->quickPreview.Initialize(hwnd, WM_QUICK_PREVIEW_NAVIGATE,
-                                       WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND);
+        // The association watch, Quick Look and the operations window wait
+        // for WM_DEFERRED_STARTUP, after the first frame: together they cost
+        // the cold start about 150 ms. Later windows build Quick Look and the
+        // operations window on first use (ToggleQuickPreview,
+        // EnsureOperationWindow); each is a hidden window that cost every
+        // Ctrl+N about 25 ms.
+        if (init_core) PostMessageW(hwnd, WM_DEFERRED_STARTUP, 0, 0);
 
         s->window_tabs.EnsureDefault();
         BindCurrentLayout(*s);
@@ -1186,9 +1187,6 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             });
             if (!s->pending_undo_json.empty()) s->ops.UndoFromJson(s->pending_undo_json);
         }
-        // Later windows build the operations window when they first show it
-        // (EnsureOperationWindow); the first window owns operations at launch.
-        if (init_core) EnsureOperationWindow(*s);
 
         // OLE drop target: list rows, pane headers, breadcrumbs, sidebar, tray.
         {
@@ -1209,7 +1207,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                           : DROPEFFECT_NONE;
             };
             s->dropTarget = new ui::WindowDropTarget(hwnd, std::move(dcb));
-            RegisterDragDrop(hwnd, s->dropTarget);
+            // Registered from WM_REGISTER_DROP_TARGET, after the first frame:
+            // the process's first RegisterDragDrop goes through RPCSS and the
+            // view service and held the cold start's first frame back 30-120 ms.
+            if (!PostMessageW(hwnd, WM_REGISTER_DROP_TARGET, 0, 0))
+                RegisterDragDrop(hwnd, s->dropTarget);
         }
         // The toolbar's paste button follows the clipboard (WM_CLIPBOARDUPDATE).
         AddClipboardFormatListener(hwnd);
@@ -2354,6 +2356,23 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
 
+    case WM_DEFERRED_STARTUP:
+        // Posted by the first window's WM_CREATE, so it runs once the first
+        // frame is on screen. Quick Look and the operations window stay warm
+        // for the first use; both are also built on demand if used earlier.
+        if (s) {
+            RegisterAssocChangeNotify(ServiceWindow(*s));
+            s->quickPreview.Initialize(hwnd, WM_QUICK_PREVIEW_NAVIGATE,
+                                       WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND);
+            EnsureOperationWindow(*s);
+        }
+        return 0;
+
+    case WM_REGISTER_DROP_TARGET:
+        // Posted by WM_CREATE; WM_DESTROY revokes it.
+        if (s && s->dropTarget) RegisterDragDrop(hwnd, s->dropTarget);
+        return 0;
+
     case WM_ASSOC_CHANGED:
         // Another program (or Settings > Default apps) took over a file type:
         // resolve the thumbnail badges again. Bursts only bump an epoch.
@@ -3406,6 +3425,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         }
     }
 
+    // This process owns the window now: create the D3D device and warm the
+    // shell's icon cache on worker threads while the main thread builds the
+    // windows. On the main thread they cost about 250 ms (NVIDIA's driver
+    // load) and 100 ms (the first system image list icon) of the cold start.
+    ui::Compositor::PrefetchSharedDevice();
+    ui::ShellIconCache::PrewarmSystemImageList();
     if (!state.isolatedTest && !state.shot.active) app::StartUpdateDownloadCleanup();
 
     WNDCLASSEXW wc{};

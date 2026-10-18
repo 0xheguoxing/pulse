@@ -484,39 +484,109 @@ static WindowSessionSnapshot ParseWindowJson(const std::wstring& wj) {
     return w;
 }
 
+// Top-level members of session.json, split once. Every json::Extract* call
+// parses the whole object to find one key, and the undo history makes the file
+// hundreds of KB: thirty lookups cost ~25 ms of cold start. Scalars are copied
+// (raw key and value text) into a small object the lookups read; arrays and
+// objects are kept raw. The first occurrence of a key wins, as in
+// MemberPosition. Only for text ValidConfigObject accepted.
+struct SessionTopLevel {
+    std::wstring scalars = L"{";
+    std::vector<std::pair<std::wstring, std::wstring>> containers;   // key, raw value
+    std::vector<std::wstring> keys;
+
+    bool Split(const std::wstring& json) {
+        using namespace pulse::json;
+        size_t pos = 0;
+        SkipWhitespace(json, pos);   // ValidConfigObject allows space around the object
+        if (pos >= json.size() || json[pos] != L'{') return false;
+        ++pos;
+        bool first = true;
+        for (;;) {
+            SkipWhitespace(json, pos);
+            if (pos >= json.size()) return false;
+            if (json[pos] == L'}') break;
+            if (json[pos] != L'"') return false;
+            const size_t key_start = pos;
+            if (!SkipValue(json, pos)) return false;
+            const size_t key_end = pos;
+            size_t name_pos = key_start + 1;
+            std::wstring key = UnescapeString(json, name_pos);
+            SkipWhitespace(json, pos);
+            if (pos >= json.size() || json[pos] != L':') return false;
+            ++pos;
+            SkipWhitespace(json, pos);
+            const size_t value_start = pos;
+            if (!SkipValue(json, pos)) return false;
+            if (std::find(keys.begin(), keys.end(), key) == keys.end()) {
+                const wchar_t open = json[value_start];
+                if (open == L'[' || open == L'{') {
+                    containers.emplace_back(key, json.substr(value_start, pos - value_start));
+                } else {
+                    if (!first) scalars += L',';
+                    first = false;
+                    scalars.append(json, key_start, key_end - key_start);
+                    scalars += L':';
+                    scalars.append(json, value_start, pos - value_start);
+                }
+                keys.push_back(std::move(key));
+            }
+            SkipWhitespace(json, pos);
+            if (pos < json.size() && json[pos] == L',') ++pos;
+        }
+        scalars += L'}';
+        return true;
+    }
+    // json::ExtractArray on the whole text: the raw array, or empty.
+    std::wstring Array(std::wstring_view key) const {
+        for (const auto& [name, raw] : containers)
+            if (name == key) return raw.front() == L'[' ? raw : std::wstring{};
+        return {};
+    }
+    bool ArrayBody(std::wstring_view key, std::wstring& body) const {
+        const std::wstring array = Array(key);
+        if (array.size() < 2) return false;
+        body = array.substr(1, array.size() - 2);
+        return true;
+    }
+};
+
 bool ParseSessionJson(const std::wstring& json, SessionSnapshot& snap) {
     if (!pulse::json::ValidConfigObject(json)) return false;
-    snap.window_rect.left = pulse::json::ExtractInt(json, L"left");
-    snap.window_rect.top = pulse::json::ExtractInt(json, L"top");
-    snap.window_rect.right = pulse::json::ExtractInt(json, L"right");
-    snap.window_rect.bottom = pulse::json::ExtractInt(json, L"bottom");
-    snap.maximized = pulse::json::ExtractBool(json, L"maximized");
-    snap.dark = pulse::json::ExtractBool(json, L"dark");
-    snap.active_path = pulse::json::ExtractString(json, L"path");
-    snap.sidebar_collapsed = pulse::json::ExtractInt(json, L"sidebarCollapsed");
-    snap.sidebar_hidden = pulse::json::ExtractInt(json, L"sidebarHidden");
-    snap.sidebar_order = ParseSidebarOrder(pulse::json::ExtractString(json, L"sidebarOrder"));
+    SessionTopLevel top;
+    if (!top.Split(json)) return false;
+    const std::wstring& scalars = top.scalars;
+    snap.window_rect.left = pulse::json::ExtractInt(scalars, L"left");
+    snap.window_rect.top = pulse::json::ExtractInt(scalars, L"top");
+    snap.window_rect.right = pulse::json::ExtractInt(scalars, L"right");
+    snap.window_rect.bottom = pulse::json::ExtractInt(scalars, L"bottom");
+    snap.maximized = pulse::json::ExtractBool(scalars, L"maximized");
+    snap.dark = pulse::json::ExtractBool(scalars, L"dark");
+    snap.active_path = pulse::json::ExtractString(scalars, L"path");
+    snap.sidebar_collapsed = pulse::json::ExtractInt(scalars, L"sidebarCollapsed");
+    snap.sidebar_hidden = pulse::json::ExtractInt(scalars, L"sidebarHidden");
+    snap.sidebar_order = ParseSidebarOrder(pulse::json::ExtractString(scalars, L"sidebarOrder"));
     // Bit positions changed in version 7 (the reserved starred bit is gone), so
     // anything older restarts with every built-in link visible.
-    snap.quick_access_hidden = pulse::json::ExtractInt(json, L"version") >= kQuickAccessBitsVersion
-        ? pulse::json::ExtractInt(json, L"quickAccessHidden") : 0;
+    snap.quick_access_hidden = pulse::json::ExtractInt(scalars, L"version") >= kQuickAccessBitsVersion
+        ? pulse::json::ExtractInt(scalars, L"quickAccessHidden") : 0;
     snap.starred_expanded = json.find(L"\"starredExpanded\"") == std::wstring::npos
-        ? true : pulse::json::ExtractBool(json, L"starredExpanded");
-    snap.details_panel = pulse::json::ExtractInt(json, L"detailsPanel") != 0;
-    snap.details_preview_only = pulse::json::ExtractBool(json, L"detailsPreviewOnly", false);
+        ? true : pulse::json::ExtractBool(scalars, L"starredExpanded");
+    snap.details_panel = pulse::json::ExtractInt(scalars, L"detailsPanel") != 0;
+    snap.details_preview_only = pulse::json::ExtractBool(scalars, L"detailsPreviewOnly", false);
     // Missing in sessions written before the switch existed: keep the old
     // always-on behaviour.
     snap.details_preview = json.find(L"\"detailsPreview\"") == std::wstring::npos
-        ? true : pulse::json::ExtractBool(json, L"detailsPreview", true);
-    snap.details_panel_width = pulse::json::ExtractInt(json, L"detailsPanelWidth");
+        ? true : pulse::json::ExtractBool(scalars, L"detailsPreview", true);
+    snap.details_panel_width = pulse::json::ExtractInt(scalars, L"detailsPanelWidth");
     // The stored value is the user's intent; the window caps it while drawing.
     if (snap.details_panel_width < static_cast<int>(ui::kDetailsMinWidthDip) ||
         snap.details_panel_width > static_cast<int>(ui::kPanelWidthMaxDip))
         snap.details_panel_width = 340;
     const std::array<int, 3> columnEdges{
-        pulse::json::ExtractInt(json, L"detailsColumn0"),
-        pulse::json::ExtractInt(json, L"detailsColumn1"),
-        pulse::json::ExtractInt(json, L"detailsColumn2") };
+        pulse::json::ExtractInt(scalars, L"detailsColumn0"),
+        pulse::json::ExtractInt(scalars, L"detailsColumn1"),
+        pulse::json::ExtractInt(scalars, L"detailsColumn2") };
     if (columnEdges[0] > 0 && columnEdges[0] < columnEdges[1] &&
         columnEdges[1] < columnEdges[2] && columnEdges[2] < 10000) {
         for (size_t i = 0; i < columnEdges.size(); ++i)
@@ -525,22 +595,22 @@ bool ParseSessionJson(const std::wstring& json, SessionSnapshot& snap) {
     }
 
     // Both hold nested arrays (each tray batch has its own "items" list).
-    if (const std::wstring tray = pulse::json::ExtractArray(json, L"tray"); !tray.empty())
+    if (const std::wstring tray = top.Array(L"tray"); !tray.empty())
         snap.tray.FromJson(tray);
-    if (std::wstring undo = pulse::json::ExtractArray(json, L"undo"); !undo.empty())
+    if (std::wstring undo = top.Array(L"undo"); !undo.empty())
         snap.undo_json = std::move(undo);
 
-    snap.active_layout_tab = pulse::json::ExtractInt(json, L"activeTab");
+    snap.active_layout_tab = pulse::json::ExtractInt(scalars, L"activeTab");
     snap.tab_groups.clear();
     std::wstring groupsBody;
-    if (ExtractJsonArray(json, L"tabGroups", groupsBody)) {
+    if (top.ArrayBody(L"tabGroups", groupsBody)) {
         std::vector<GroupSessionSnapshot> parsed;
         if (ParseTabGroups(L"[" + groupsBody + L"]", parsed))
             snap.tab_groups = std::move(parsed);
     }
     snap.layout_tabs.clear();
     std::wstring layoutBody;
-    if (ExtractJsonArray(json, L"layoutTabs", layoutBody)) {
+    if (top.ArrayBody(L"layoutTabs", layoutBody)) {
         std::vector<LayoutTabSnapshot> parsed;
         if (ParseLayoutTabs(L"[" + layoutBody + L"]", parsed))
             snap.layout_tabs = std::move(parsed);
@@ -552,7 +622,7 @@ bool ParseSessionJson(const std::wstring& json, SessionSnapshot& snap) {
     snap.windows.clear();
     std::wstring windowsBody;
     std::vector<std::wstring> windowObjs;
-    if (ExtractJsonArray(json, L"windows", windowsBody) &&
+    if (top.ArrayBody(L"windows", windowsBody) &&
         SplitTopLevelObjects(windowsBody, windowObjs)) {
         for (const std::wstring& wj : windowObjs) snap.windows.push_back(ParseWindowJson(wj));
     }
@@ -570,7 +640,7 @@ bool ParseSessionJson(const std::wstring& json, SessionSnapshot& snap) {
         snap.windows.push_back(std::move(w));
         snap.focused_window = 0;
     } else {
-        snap.focused_window = std::clamp(pulse::json::ExtractInt(json, L"focusedWindow"), 0,
+        snap.focused_window = std::clamp(pulse::json::ExtractInt(scalars, L"focusedWindow"), 0,
                                          static_cast<int>(snap.windows.size()) - 1);
     }
 
@@ -578,7 +648,7 @@ bool ParseSessionJson(const std::wstring& json, SessionSnapshot& snap) {
     snap.closed_windows.clear();
     std::wstring closedBody;
     std::vector<std::wstring> closedObjs;
-    if (ExtractJsonArray(json, L"closedWindows", closedBody) && SplitTopLevelObjects(closedBody, closedObjs)) {
+    if (top.ArrayBody(L"closedWindows", closedBody) && SplitTopLevelObjects(closedBody, closedObjs)) {
         for (const std::wstring& cj : closedObjs) {
             ClosedWindowSessionSnapshot closed;
             closed.window = ParseWindowJson(cj);

@@ -2425,6 +2425,8 @@ enum class StringId : UINT {
     OpUndoneDelete = IDS_OP_UNDONE_DELETE,
     OpUndoneCreate = IDS_OP_UNDONE_CREATE,
     OpUndone = IDS_OP_UNDONE,
+    RenameExtensionConfirm = IDS_RENAME_EXTENSION_CONFIRM,
+    PhotoWall = IDS_PHOTO_WALL,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

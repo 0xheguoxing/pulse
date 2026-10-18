@@ -2415,6 +2415,8 @@ BEGIN
     IDS_OP_UNDONE_DELETE "已撤销删除"
     IDS_OP_UNDONE_CREATE "已撤销新建"
     IDS_OP_UNDONE "已撤销"
+    IDS_RENAME_EXTENSION_CONFIRM "改了扩展名，文件可能无法打开。按 Enter 确认，Esc 返回"
+    IDS_PHOTO_WALL "照片墙"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4829,6 +4831,8 @@ BEGIN
     IDS_OP_UNDONE_DELETE "Delete undone"
     IDS_OP_UNDONE_CREATE "New item undone"
     IDS_OP_UNDONE "Undone"
+    IDS_RENAME_EXTENSION_CONFIRM "Changing the extension may make the file unusable. Enter to confirm, Esc to go back"
+    IDS_PHOTO_WALL "Photo wall"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

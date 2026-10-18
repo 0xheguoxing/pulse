@@ -154,4 +154,10 @@ std::vector<CtxItemOut> MergeNativeSendTo(const std::vector<CtxItemOut>& native,
                                           std::vector<std::wstring>* slot_only = nullptr,
                                           std::vector<std::wstring>* native_only = nullptr);
 
+// Pins the given paths to the Windows taskbar via twinui's TaskbarPinManager
+// and stores the first failure (or S_OK) in `result`. Returns false, leaving
+// `result` untouched, when that manager is unavailable on this Windows build;
+// the caller then falls back to the verb's own InvokeCommand.
+bool InvokeTaskbandPin(const std::vector<std::wstring>& paths, HRESULT& result);
+
 } // namespace pulse::shell

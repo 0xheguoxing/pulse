@@ -291,6 +291,16 @@ void BindCurrentLayout(AppState& s) {
     SyncTaskbarWindowTitle(s);
 }
 // Live text of the rename field; icon grids size the field to wrap it.
+// Inline rename (P1f): the note under the field and the width it has grown to.
+static void FillRenameHint(const AppState& s, ui::PaneViewModel& pane) {
+    pane.rename_field_w = s.renameIndex >= 0 ? s.renameFieldW : 0.0f;
+    if (s.renameIndex < 0 || s.renameHint.empty()) return;
+    const ULONGLONG now = GetTickCount64();
+    if (s.renameHintUntil != 0 && now >= s.renameHintUntil) return;
+    pane.rename_hint = s.renameHint;
+    pane.rename_hint_ms = s.renameHintUntil == 0 ? -1 : static_cast<int>(s.renameHintUntil - now);
+}
+
 static std::wstring RenameEditText(const AppState& s) {
     if (s.renameIndex < 0 || !s.hwndRenameEdit || !IsWindow(s.hwndRenameEdit)) return {};
     const int len = GetWindowTextLengthW(s.hwndRenameEdit);
@@ -1145,6 +1155,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             if (slot.focused) {
                 slot.pane.rename_index = s.renameIndex;
                 slot.pane.rename_text = RenameEditText(s);
+                FillRenameHint(s, slot.pane);
                 if (s.marqueeActive) {
                     slot.pane.marquee_active = true;
                     slot.pane.marquee_rect = MarqueeDisplayRect(s);
@@ -2721,6 +2732,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.pane.drop_spring_progress = DropSpringProgress(s);
     vm.pane.rename_index = s.renameIndex;
     vm.pane.rename_text = RenameEditText(s);
+    FillRenameHint(s, vm.pane);
     SyncSearchBarWidth(s);
     vm.address_editing = s.addressEditing;
     vm.address_searching = s.addressSearching;
@@ -3348,6 +3360,16 @@ std::wstring TooltipForHover(AppState& s) {
     case R::SplitButton: return text(s.appPrefs.show_hints ? I::TipxSplit : I::SplitLayout);
     case R::DetailsToggle: return text(s.showDetailsPanel ? I::CollapseDetails : I::ExpandDetails);
     case R::PaneMediumIcons: return text(I::MediumIcons);
+    case R::PaneWall: return text(I::PhotoWall);
+    case R::PaneSizeSlider:
+    case R::PaneSizeButton: {  // the icon size it is at, e.g. "Large icons · 136"
+        const app::Tab* tab = ActiveTab(s);
+        if (!tab || !ui::IsZoomIconMode(tab->view_mode)) return L"";
+        const I mode = tab->view_mode == ui::ViewMode::ExtraLargeIcons ? I::ViewExtraLarge
+            : tab->view_mode == ui::ViewMode::LargeIcons ? I::ViewLarge : I::MediumIcons;
+        const float dip = ui::IconDip(tab->view_mode, tab->icon_dip, s.scale);
+        return text(mode) + L" \u00B7 " + std::to_wstring(static_cast<int>(dip + 0.5f));
+    }
     case R::PaneDetails: return text(I::ViewDetails);
     case R::ToolbarSort: return text(I::SortBy);
     case R::ToolbarGroup: return text(I::GroupBy);
