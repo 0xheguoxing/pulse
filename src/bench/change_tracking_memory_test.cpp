@@ -46,6 +46,16 @@ struct ChangeTrackerTestAccess {
     }
     static const auto& JournalOf(const ChangeTracker& tracker) { return tracker.journals_.at(L"memory-test"); }
     static bool SaveOnly(ChangeTracker& tracker) { return tracker.Save(L"memory-test", JournalOf(tracker)); }
+    // Steady state after a compaction: a minute of new events on a full journal.
+    static void Append(ChangeTracker& tracker, uint32_t count, uint64_t now) {
+        auto& j = tracker.journals_[L"memory-test"];
+        for (uint32_t i = 0; i < count; ++i) {
+            ChangeRecord e; e.id = 200001 + i; e.file_id = e.id; e.time = now - 10;
+            e.path = L"C:\\perf\\company\\department\\year\\month\\workspace\\appended\\item" + std::to_wstring(i) + L".txt";
+            j.records.push_back(std::move(e));
+        }
+        j.unsaved += count; j.dirty = true; ++j.revision;
+    }
 };
 }
 using namespace pulse::index;
@@ -127,15 +137,18 @@ int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "--check";
     int failures = 0;
     auto check = [&](bool ok, const char* label) { std::printf("[%s] %s\n", ok ? "PASS" : "FAIL", label); failures += !ok; };
-    if (mode == "--summary" || mode == "--summary-no-id" || mode == "--save" || mode == "--flush") {
+    if (mode == "--summary" || mode == "--summary-no-id" || mode == "--save" || mode == "--flush" || mode == "--flush-append") {
         ChangeTracker tracker;
         { auto records = Fixture(now, mode == "--summary-no-id"); ChangeTrackerTestAccess::Set(tracker, records, now); }
-        if (mode == "--save" || mode == "--flush") {
+        if (mode == "--save" || mode == "--flush" || mode == "--flush-append") {
             const auto root = std::filesystem::temp_directory_path() / (L"pulse-memory-bench-" + std::to_wstring(GetCurrentProcessId()));
             std::filesystem::create_directory(root); tracker.Open(root.wstring());
+            if (mode == "--flush-append") { tracker.Flush(); ChangeTrackerTestAccess::Append(tracker, 3000, now); }
             { Metric m; if (mode == "--flush") { tracker.Flush(); m.Print("flush"); }
+              else if (mode == "--flush-append") { tracker.Flush(); m.Print("flush-append"); }
               else { const bool ok = ChangeTrackerTestAccess::SaveOnly(tracker); m.Print("save"); check(ok, "save succeeds"); } }
             check(std::filesystem::exists(root / L"changes-memory-test.bin"), "isolated journal exists");
+            if (mode == "--flush-append") check(std::filesystem::exists(root / L"changes-memory-test.bin.log"), "steady flush appends to the log");
             std::filesystem::remove_all(root);
         } else {
             std::vector<std::wstring> paths;
