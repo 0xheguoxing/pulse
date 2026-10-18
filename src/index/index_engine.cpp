@@ -2288,7 +2288,8 @@ void Engine::OpenDeltasLocked() {
 
 bool Engine::ReplayDeltasLocked() {
     struct Addition {
-        std::wstring volume, name;
+        size_t volume; // vols_ slot matching the log's id, SIZE_MAX if none
+        std::wstring name;
         int32_t idx, parent;
         uint8_t flags;
         uint32_t mtime;
@@ -2300,6 +2301,22 @@ bool Engine::ReplayDeltasLocked() {
         auto path = DeltaFilePathForVolume(volume.volume_id);
         if (path.empty()) path = DeltaFilePath(volume.letter);
         logs.emplace_back(volume.volume_id, std::move(path));
+    }
+    // Resolve each log's volume once. Every record of a log carries the same
+    // id; matching it per record normalized two strings per volume each time.
+    // record_volume keeps the empty-id rule of record application, add_volume
+    // the exact-match rule used for additions.
+    std::vector<std::wstring> normalized_ids;
+    normalized_ids.reserve(vols_.size());
+    for (const auto& volume : vols_) normalized_ids.push_back(NormalizeVolumeId(volume.volume_id));
+    std::vector<size_t> record_volume(logs.size(), SIZE_MAX), add_volume(logs.size(), SIZE_MAX);
+    for (size_t k = 0; k < logs.size(); ++k) {
+        const std::wstring id = NormalizeVolumeId(logs[k].first);
+        for (size_t i = 0; i < vols_.size(); ++i) {
+            if (record_volume[k] == SIZE_MAX && (logs[k].first.empty() || normalized_ids[i] == id))
+                record_volume[k] = i;
+            if (add_volume[k] == SIZE_MAX && normalized_ids[i] == id) add_volume[k] = i;
+        }
     }
     std::vector<Addition> additions;
     bool valid = true;
@@ -2321,8 +2338,9 @@ bool Engine::ReplayDeltasLocked() {
     // IDs are global, while WALs are per volume. Validate every log before
     // changing the snapshot, then restore additions in their original ID order.
     // Version 1 omitted these IDs and cannot safely reconstruct interleaving.
-    for (const auto& [volume, path] : logs) {
-        if (!DeltaLog::Replay(path, built_unix_,
+    for (size_t log_index = 0; log_index < logs.size(); ++log_index) {
+        const size_t volume = add_volume[log_index];
+        if (!DeltaLog::Replay(logs[log_index].second, built_unix_,
             [&](DeltaOp op, int32_t idx, int32_t parent, uint8_t flags, uint8_t which,
                 uint32_t mtime, uint64_t size, std::wstring_view name, uint64_t frn,
                 uint64_t, int64_t) {
@@ -2351,10 +2369,7 @@ bool Engine::ReplayDeltasLocked() {
         if (additions[i].idx != original_count + static_cast<int32_t>(i)) return false;
     if (greatest_reference >= original_count + static_cast<int32_t>(additions.size())) return false;
     for (const auto& add : additions) {
-        VolState* volume = nullptr;
-        for (auto& state : vols_) if (NormalizeVolumeId(state.volume_id) == NormalizeVolumeId(add.volume)) {
-            volume = &state; break;
-        }
+        VolState* volume = add.volume == SIZE_MAX ? nullptr : &vols_[add.volume];
         AddNodeLocked(live_, add.parent, add.name, add.flags, add.frn, add.size, UnixToFt(add.mtime), true, volume);
     }
     // The child map is rebuilt once when replay finishes. Maintaining it per
@@ -2362,20 +2377,26 @@ bool Engine::ReplayDeltasLocked() {
     // applied, so a name recreated N times in one folder (atomic saves, temp
     // files) leaves an N-long equal_range that each tombstone has to scan.
     child_map_.clear();
-    std::unordered_map<int32_t, size_t> owners;
-    for (size_t i = 0; i < vols_.size(); ++i) owners.emplace(vols_[i].root_idx, i);
-    for (const auto& add : additions) {
-        for (size_t i = 0; i < vols_.size(); ++i)
-            if (NormalizeVolumeId(vols_[i].volume_id) == NormalizeVolumeId(add.volume)) owners.emplace(add.idx, i);
-    }
-    auto owner_of = [&](int32_t idx) {
-        std::vector<int32_t> ancestors;
+    // Owning volume per node, filled lazily along parent chains. A flat array
+    // replaces a hash map that grew by one entry per visited ancestor; the
+    // first owner recorded for a node wins, as with emplace before.
+    constexpr uint32_t kUnknownOwner = UINT32_MAX;
+    std::vector<uint32_t> owners(static_cast<size_t>(LiveCount()), kUnknownOwner);
+    auto seed_owner = [&](int32_t idx, size_t owner) {
+        if (idx >= 0 && idx < LiveCount() && owners[static_cast<size_t>(idx)] == kUnknownOwner)
+            owners[static_cast<size_t>(idx)] = static_cast<uint32_t>(owner);
+    };
+    for (size_t i = 0; i < vols_.size(); ++i) seed_owner(vols_[i].root_idx, i);
+    for (const auto& add : additions)
+        if (add.volume != SIZE_MAX) seed_owner(add.idx, add.volume);
+    std::vector<int32_t> ancestors;
+    auto owner_of = [&](int32_t idx) -> size_t {
+        ancestors.clear();
         ParentChainGuard chain(LiveCount());
         while (chain.Visit(idx)) {
-            const auto found = owners.find(idx);
-            if (found != owners.end()) {
-                const auto owner = found->second;
-                for (int32_t ancestor : ancestors) owners.emplace(ancestor, owner);
+            const uint32_t owner = owners[static_cast<size_t>(idx)];
+            if (owner != kUnknownOwner) {
+                for (int32_t ancestor : ancestors) owners[static_cast<size_t>(ancestor)] = owner;
                 return owner;
             }
             ancestors.push_back(idx);
@@ -2385,18 +2406,12 @@ bool Engine::ReplayDeltasLocked() {
     };
     if (!vols_.empty()) for (const auto& add : additions)
         if (owner_of(add.idx) == SIZE_MAX || owner_of(add.parent) != owner_of(add.idx)) return false;
-    auto apply = [&](const std::wstring& vid, DeltaOp op, int32_t idx, int32_t parent,
+    // vol is matched once per log by stable volume id: a letter reused across
+    // sessions must not pull another volume's records into this one.
+    auto apply = [&](VolState* vol, DeltaOp op, int32_t idx, int32_t parent,
                      uint8_t flags, uint8_t which, uint32_t mtime, uint64_t size,
                      std::wstring_view name, uint64_t, uint64_t journal_id,
                      int64_t next_usn) {
-        // Match by stable volume id: a letter reused across sessions must not
-        // pull another volume's records into this one.
-        VolState* vol = nullptr;
-        for (auto& v : vols_)
-            if (vid.empty() || NormalizeVolumeId(v.volume_id) == NormalizeVolumeId(vid)) {
-                vol = &v;
-                break;
-            }
         if (!valid) return;
         if (!vols_.empty() && (op == DeltaOp::Patch || op == DeltaOp::Tomb)) {
             const auto owner = vol ? static_cast<size_t>(vol - vols_.data()) : SIZE_MAX;
@@ -2448,8 +2463,9 @@ bool Engine::ReplayDeltasLocked() {
             }
         }
     };
-    for (const auto& [volume, path] : logs) {
-        if (!DeltaLog::Replay(path, built_unix_,
+    for (size_t log_index = 0; log_index < logs.size(); ++log_index) {
+        VolState* volume = record_volume[log_index] == SIZE_MAX ? nullptr : &vols_[record_volume[log_index]];
+        if (!DeltaLog::Replay(logs[log_index].second, built_unix_,
                 [&](DeltaOp op, int32_t idx, int32_t parent, uint8_t flags, uint8_t which,
                     uint32_t mtime, uint64_t size, std::wstring_view name, uint64_t frn,
                     uint64_t journal_id, int64_t next_usn) {
