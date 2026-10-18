@@ -344,6 +344,178 @@ struct EngineTestAccess {
         std::cout << "cleanup_error=" << ec.value() << "\n";
         return committed;
     }
+    // Cold-load replay cost (P0-F). Copies an index directory, appends one
+    // deterministic synthetic WAL per volume (adds under real folders, attribute
+    // and name patches, file tombstones, USN checkpoints) and times TryLoadCache
+    // on a fresh engine. The fixed seed yields the same final state, so two
+    // builds can be compared by the printed counts and query hashes.
+    static bool ReplayProbe(const std::wstring& source, uint32_t records) {
+        namespace fs = std::filesystem;
+        if (!fs::is_directory(source) || records == 0) return false;
+        const fs::path dir = fs::temp_directory_path() /
+            (L"pulse-replay-probe-" + std::to_wstring(GetCurrentProcessId()));
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        ec.clear();
+        fs::copy(source, dir, fs::copy_options::recursive, ec);
+        if (ec) {
+            std::cout << "copy_failed=" << ec.value() << "\n";
+            fs::remove_all(dir, ec);
+            return false;
+        }
+        SetActiveIndexDirectory(dir.wstring());
+        SetMachineIndexScope(true);
+        struct Range {
+            std::wstring volume_id;
+            uint64_t journal_id = 0;
+            int64_t next_usn = 0;
+            int32_t root = -1;
+            std::vector<int32_t> dirs, files, added_dirs, added_files;
+        };
+        std::vector<Range> ranges;
+        uint64_t built = 0;
+        int32_t base_count = 0;
+        bool ok = false;
+        {
+            Engine engine;
+            ok = engine.TryLoadCache();
+            if (ok) {
+                built = engine.built_unix_;
+                base_count = engine.LiveCount();
+                for (const auto& v : engine.vols_) {
+                    Range r;
+                    r.volume_id = v.volume_id;
+                    r.journal_id = v.journal_id;
+                    r.next_usn = v.next_usn;
+                    r.root = v.root_idx;
+                    const int64_t first = v.root_idx;
+                    const int64_t end = (std::min)(first + static_cast<int64_t>(v.item_count),
+                                                   static_cast<int64_t>(base_count));
+                    for (int64_t i = first; first >= 0 && i < end; ++i) {
+                        const auto id = static_cast<int32_t>(i);
+                        if (engine.IsTomb(id)) continue;
+                        ((engine.NodeAt(id).flags & Engine::kFlagDir) ? r.dirs : r.files).push_back(id);
+                    }
+                    if (!r.dirs.empty()) ranges.push_back(std::move(r));
+                }
+            }
+            engine.Stop();
+        }
+        uint64_t total_weight = 0;
+        for (const auto& r : ranges) total_weight += r.dirs.size() + r.files.size();
+        ok = ok && total_weight > 0;
+        std::vector<std::unique_ptr<DeltaLog>> logs;
+        for (size_t k = 0; ok && k < ranges.size(); ++k) {
+            logs.push_back(std::make_unique<DeltaLog>());
+            ok = logs.back()->Open(DeltaFilePathForVolume(ranges[k].volume_id), built);
+        }
+        uint64_t seed = 0x9E3779B97F4A7C15ull;
+        auto next = [&] {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            return seed;
+        };
+        int32_t next_idx = base_count;
+        uint64_t adds = 0, attr_patches = 0, name_patches = 0, tombs = 0;
+        for (uint32_t n = 0; ok && n < records; ++n) {
+            uint64_t pick = next() % total_weight;
+            size_t k = 0;
+            while (pick >= ranges[k].dirs.size() + ranges[k].files.size()) {
+                pick -= ranges[k].dirs.size() + ranges[k].files.size();
+                ++k;
+            }
+            Range& r = ranges[k];
+            DeltaLog& wal = *logs[k];
+            auto any_node = [&]() -> int32_t {
+                uint64_t i = next() % (r.dirs.size() + r.files.size() + r.added_dirs.size() + r.added_files.size());
+                if (i < r.dirs.size()) return r.dirs[i];
+                i -= r.dirs.size();
+                if (i < r.files.size()) return r.files[i];
+                i -= r.files.size();
+                if (i < r.added_dirs.size()) return r.added_dirs[i];
+                return r.added_files[i - r.added_dirs.size()];
+            };
+            const uint64_t kind = next() % 100;
+            if (kind < 35) {
+                const bool folder = next() % 10 == 0;
+                const int32_t parent = (!r.added_dirs.empty() && next() % 5 == 0)
+                    ? r.added_dirs[next() % r.added_dirs.size()] : r.dirs[next() % r.dirs.size()];
+                const std::wstring name = folder ? L"probe_dir_" + std::to_wstring(n)
+                                                 : L"probe_" + std::to_wstring(n) + L".tmp";
+                wal.QueueAdd(next_idx, parent, static_cast<uint8_t>(folder ? Engine::kFlagDir : 0),
+                             1700000000u + n, folder ? 0 : n * 7ull, name, 0x7000000000000000ull + n);
+                (folder ? r.added_dirs : r.added_files).push_back(next_idx++);
+                ++adds;
+            } else if (kind < 80) {
+                wal.QueuePatch(any_node(), static_cast<uint8_t>(PatchBits::Attr), 0, 0,
+                               1710000000u + n, n * 13ull, {});
+                ++attr_patches;
+            } else if (kind < 85) {
+                const int32_t node = any_node();
+                if (node == r.root) continue;
+                const std::wstring name = L"renamed_" + std::to_wstring(n) + L".txt";
+                wal.QueuePatch(node, static_cast<uint8_t>(PatchBits::Name), 0, 0, 0, 0, name);
+                ++name_patches;
+            } else {
+                auto& pool = (!r.added_files.empty() && next() % 2 == 0) ? r.added_files : r.files;
+                if (pool.empty()) continue;
+                wal.QueueTomb(pool[next() % pool.size()]);
+                ++tombs;
+            }
+            if ((n & 4095) == 4095) wal.QueueUsn(r.journal_id, r.next_usn + n);
+            if ((n & 65535) == 65535)
+                for (auto& l : logs) ok = l->Flush() && ok;
+        }
+        for (auto& l : logs) {
+            ok = l->Flush() && ok;
+            l->Close();
+        }
+        uint64_t wal_bytes = 0;
+        for (const auto& entry : fs::recursive_directory_iterator(dir, ec))
+            if (entry.is_regular_file() && entry.path().extension() == L".log") wal_bytes += entry.file_size();
+        std::cout << "wal_ok=" << ok << " volumes=" << ranges.size() << " base_nodes=" << base_count
+            << " records=" << records << " adds=" << adds << " attr_patches=" << attr_patches
+            << " name_patches=" << name_patches << " tombs=" << tombs << " wal_bytes=" << wal_bytes << "\n";
+        bool loaded = false;
+        if (ok) {
+            auto thread_cpu_ms = [] {
+                FILETIME created{}, exited{}, kernel{}, user{};
+                GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user);
+                auto value = [](FILETIME t) { return (static_cast<uint64_t>(t.dwHighDateTime) << 32) | t.dwLowDateTime; };
+                return (value(kernel) + value(user)) / 10000;
+            };
+            Engine engine;
+            const uint64_t cpu_before = thread_cpu_ms();
+            const auto started = std::chrono::steady_clock::now();
+            loaded = engine.TryLoadCache();
+            const auto wall = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started).count();
+            std::cout << "loaded=" << loaded << " load_wall_ms=" << wall << " load_thread_cpu_ms="
+                << thread_cpu_ms() - cpu_before << " live=" << engine.LiveCount() << " indexed="
+                << engine.indexed_.load() << " deleted=" << engine.deleted_ << "\n";
+            for (int i = 0; loaded && i < 1200 && !engine.pinyin_ready_.load(); ++i) Sleep(50);
+            if (loaded) {
+                ProbeQueries(engine);
+                for (const wchar_t* needle : {L"probe_", L"renamed_", L"probe_dir_"}) {
+                    Query q;
+                    q.needle = needle;
+                    const SearchResult result = engine.Search(q);
+                    uint64_t hash = 1469598103934665603ull;
+                    for (const auto& hit : result.hits)
+                        for (wchar_t c : hit.path) hash = (hash ^ static_cast<uint16_t>(c)) * 1099511628211ull;
+                    std::wcout << L"query=" << needle << L" total=" << result.total << L" hits=" << result.hits.size()
+                        << L" hash=" << std::hex << hash << std::dec << L"\n";
+                }
+            }
+            engine.Stop();
+        }
+        SetActiveIndexDirectory(L"");
+        ec.clear();
+        fs::remove_all(dir, ec);
+        std::cout << "cleanup_error=" << ec.value() << "\n";
+        return ok && loaded;
+    }
     static bool ReopenCache(const std::wstring& directory) {
         if (!std::filesystem::is_directory(directory)) return false;
         SetActiveIndexDirectory(directory);
@@ -1495,6 +1667,8 @@ int wmain(int argc, wchar_t** argv) {
     if (argc == 4 && std::wstring_view(argv[1]) == L"--recover-cache") return EngineTestAccess::RecoverCache(argv[2], argv[3]) ? 0 : 1;
     if (argc == 3 && std::wstring_view(argv[1]) == L"--reopen-cache") return EngineTestAccess::ReopenCache(argv[2]) ? 0 : 1;
     if (argc == 3 && std::wstring_view(argv[1]) == L"--merge-peak-probe") return EngineTestAccess::MergePeakProbe(argv[2]) ? 0 : 1;
+    if (argc == 4 && std::wstring_view(argv[1]) == L"--replay-probe")
+        return EngineTestAccess::ReplayProbe(argv[2], static_cast<uint32_t>(wcstoul(argv[3], nullptr, 10))) ? 0 : 1;
     if (argc == 2 && std::wstring_view(argv[1]) == L"--hierarchy-only") return EngineTestAccess::HierarchyFixture() ? 0 : 1;
     const bool quiet = argc > 1 && std::wstring_view(argv[1]) == L"--quiet-maintenance-only";
     if (!SetEnvironmentVariableW(L"PULSE_INDEX_DIAGNOSTICS", quiet ? nullptr : L"1")) return 2;
