@@ -13,6 +13,7 @@
 #include "index_config.h"
 #include "index_query.h"
 #include "index_delta.h"
+#include "index_overlay.h"
 #include "change_tracking.h"
 #include "change_feed_history.h"
 #include <atomic>
@@ -257,13 +258,6 @@ private:
         MappedFile& operator=(const MappedFile&) = delete;
     };
 
-    struct QueryShard {
-        std::wstring volume_id;
-        int32_t first = 0;
-        int32_t last = 0;
-        std::unique_ptr<MappedFile> mapped;
-    };
-
     struct VolState {
         std::unordered_map<uint64_t, std::wstring> tracking_paths;
         wchar_t letter = 0;
@@ -364,18 +358,8 @@ private:
     bool FlattenLocked(Store& out, std::vector<VolState>& vols_out) const;
     bool WriteIndexFile(const std::wstring& path, const Store& s,
                         const std::vector<VolState>& vols, uint64_t built_unix) const;
-    void WriteVolumeShards(const Store& aggregate, const std::vector<VolState>& vols,
-                           uint64_t built_unix) const;
     bool MapIndexFile(const std::wstring& path, std::unique_ptr<MappedFile>& out) const;
     void AdoptMappedLocked(std::unique_ptr<MappedFile> mapped);
-    void RefreshQueryShardsLocked();
-    const QueryShard* QueryShardForLocked(int32_t id) const;
-    Node QueryNodeAtLocked(int32_t id) const;
-    Attr QueryAttrAtLocked(int32_t id) const;
-    std::wstring_view QueryNameOfLocked(int32_t id) const;
-    std::wstring BuildQueryPathLocked(int32_t id) const;
-    bool MatchQueryNodeLocked(int32_t id, const CompiledQuery& query, int32_t prefix_node,
-                              bool folders_only, bool use_attrs) const;
     void RebuildChildMapLocked();
     bool CommitMappedFile(const std::wstring& path);
 
@@ -399,6 +383,10 @@ private:
     bool CatchUpVolume(VolState& v, bool* changed, bool* structural = nullptr);
     enum class UsnApply : uint8_t { None, Attr, Structure };
     UsnApply ApplyUsnLocked(VolState& v, const USN_RECORD_V2* rec);
+    enum class UsnBatch : uint8_t { Done, Stopped, InvalidParent };
+    UsnBatch ApplyUsnBatchLocked(VolState& v, const BYTE* begin, const BYTE* end,
+                                 uint64_t& applied, bool& any_struct, bool& any_attr);
+    static std::vector<uint8_t> SupersededUsnRecords(const BYTE* begin, const BYTE* end);
     bool IsIndexNoiseLocked(const VolState& v, const USN_RECORD_V2* rec) const;
     void ResolveIndexDirFrn();
     bool InSubtreeLocked(int32_t node, int32_t ancestor) const;
@@ -465,15 +453,13 @@ private:
     std::wstring status_;
 
     std::unique_ptr<MappedFile> map_;
-    std::vector<QueryShard> query_shards_;
-    bool query_shards_ready_ = false;
     Store live_;  // tests: full store; after mmap: delta only
     Store build_;
     std::vector<VolState> vols_;
     std::vector<VolState> build_vols_;
     std::vector<int32_t> inactive_volume_roots_;
-    std::unordered_set<int32_t> tombstones_;
-    std::unordered_map<int32_t, Patch> patches_;
+    OverlaySet tombstones_;
+    OverlayMap<Patch> patches_;
     std::unordered_multimap<uint64_t, int32_t> child_map_;
     std::unordered_map<wchar_t, std::unique_ptr<DeltaLog>> delta_logs_;
     size_t deleted_ = 0;
@@ -493,7 +479,8 @@ private:
     ULONGLONG last_delta_flush_tick_ = 0;
     std::unordered_map<std::wstring, ULONGLONG> volume_retry_after_;
     std::unordered_map<std::wstring, ULONGLONG> volume_recovered_after_;
-    FilenameTiming filename_timing_;
+    // mutable: the const WriteIndexFile samples its memory stages (diagnostics only).
+    mutable FilenameTiming filename_timing_;
 
     struct WalkWatch {
         std::wstring path;

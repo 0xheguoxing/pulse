@@ -5,6 +5,7 @@
 #include "../ipc/protocol.h"
 #include <windows.h>
 #include <algorithm>
+#include <cstring>
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
@@ -13,6 +14,83 @@ namespace pulse::index {
 namespace {
 constexpr uint64_t kRetention = 7 * 86400;
 constexpr size_t kMaxRecords = 100000;
+constexpr uint32_t kBaseMagic = 0x33484350;  // "PCH3": complete history image
+constexpr uint32_t kLegacyMagic = 0x32484350;
+constexpr uint32_t kLogMagic = 0x4C484350;   // "PCHL": batches appended after the base
+constexpr uint32_t kLogVersion = 1;
+constexpr size_t kLogHeaderBytes = 60, kLogEntryHeaderBytes = 8, kLogStateBytes = 40;
+// The base is rewritten (compacted) once the log carries this much history;
+// between compactions a flush only appends the records added since the last one.
+constexpr uint64_t kCompactRecords = kMaxRecords / 2;
+constexpr uint64_t kCompactBytes = 16ull * 1024 * 1024;
+constexpr uint64_t kMaxLogBytes = 64ull * 1024 * 1024;
+constexpr size_t kMaxJournalBytes = 32 * 1024 * 1024;
+std::wstring LogFile(const std::wstring& base) { return base + L".log"; }
+size_t RecordBytes(const ChangeRecord& e) { return 44 + (e.path.size() + e.old_path.size()) * sizeof(wchar_t); }
+// Number of oldest records that fall outside the persisted size budget.
+size_t OverBudget(const std::vector<ChangeRecord>& records) {
+    size_t bytes = 44, keep = records.size();
+    while (keep > 0) {
+        const auto cost = RecordBytes(records[keep - 1]);
+        if (bytes + cost > kMaxJournalBytes) break;
+        bytes += cost; --keep;
+    }
+    return keep;
+}
+// Same little-endian / UTF-16 layout as ChangeJournalWriter, into one buffer.
+class JournalBytes {
+public:
+    explicit JournalBytes(size_t reserve) { data_.reserve(reserve); }
+    void U32(uint32_t value) { Put(&value, sizeof(value)); }
+    void U64(uint64_t value) { Put(&value, sizeof(value)); }
+    void String(const std::wstring& value) {
+        static_assert(sizeof(wchar_t) == 2);
+        U32(static_cast<uint32_t>(value.size())); Put(value.data(), value.size() * sizeof(wchar_t));
+    }
+    void Record(const ChangeRecord& e) {
+        U64(e.id); U64(e.time); U64(e.file_id); U32(static_cast<uint32_t>(e.kind));
+        U32(e.is_dir ? 1u : 0u); U32(static_cast<uint32_t>(e.source)); String(e.path); String(e.old_path);
+    }
+    void Put(const void* bytes, size_t size) {
+        const auto* first = static_cast<const uint8_t*>(bytes); data_.insert(data_.end(), first, first + size);
+    }
+    std::vector<uint8_t>& data() { return data_; }
+private:
+    std::vector<uint8_t> data_;
+};
+uint32_t Checksum(const uint8_t* data, size_t size) {
+    uint32_t hash = 2166136261u;
+    for (size_t i = 0; i < size; ++i) hash = (hash ^ data[i]) * 16777619u;
+    return hash;
+}
+bool GetRecord(ipc::PayloadReader& r, ChangeRecord& e, uint32_t& source) {
+    uint32_t kind = 0, dir = 0;
+    if (!r.GetU64(e.id) || !r.GetU64(e.time) || !r.GetU64(e.file_id) || !r.GetU32(kind) || kind > 5 ||
+        !r.GetU32(dir) || !r.GetU32(source) || source > 1 || !r.GetString(e.path) || !r.GetString(e.old_path)) return false;
+    e.kind = static_cast<ChangeKind>(kind); e.is_dir = dir != 0;
+    return true;
+}
+bool ReadWhole(const std::wstring& path, uint64_t limit, std::vector<uint8_t>& data, bool& present) {
+    present = false;
+    std::ifstream input(std::filesystem::path(path), std::ios::binary);
+    if (!input) return false;
+    present = true;
+    input.seekg(0, std::ios::end); const auto size = input.tellg();
+    if (size <= 0 || static_cast<uint64_t>(size) > limit) return false;
+    input.seekg(0); data.resize(static_cast<size_t>(size));
+    input.read(reinterpret_cast<char*>(data.data()), size);
+    return static_cast<bool>(input);
+}
+bool WriteAll(HANDLE file, const std::vector<uint8_t>& bytes) {
+    size_t done = 0;
+    while (done < bytes.size()) {
+        const DWORD chunk = static_cast<DWORD>((std::min)(bytes.size() - done, static_cast<size_t>(1u << 30)));
+        DWORD written = 0;
+        if (!WriteFile(file, bytes.data() + done, chunk, &written, nullptr) || written != chunk) return false;
+        done += written;
+    }
+    return true;
+}
 std::wstring Normalize(std::wstring value) {
     for (auto& c : value) { if (c == L'/') c = L'\\'; c = static_cast<wchar_t>(towlower(c)); }
     if (value.rfind(L"\\\\?\\unc\\", 0) == 0) value = L"\\\\" + value.substr(8);
@@ -171,7 +249,8 @@ bool IsChangeJournalName(std::wstring_view name) {
     if (name.size() < 12 || _wcsnicmp(name.data(), L"changes-", 8) != 0) return false;
     const auto dot = name.find(L".bin", 8);
     return dot != std::wstring_view::npos && (dot + 4 == name.size() ||
-        (dot + 8 == name.size() && _wcsnicmp(name.data() + dot + 4, L".tmp", 4) == 0));
+        (dot + 8 == name.size() && (_wcsnicmp(name.data() + dot + 4, L".tmp", 4) == 0 ||
+                                    _wcsnicmp(name.data() + dot + 4, L".log", 4) == 0)));
 }
 uint64_t ChangeTracker::Now() {
     FILETIME ft{}; GetSystemTimeAsFileTime(&ft);
@@ -183,30 +262,29 @@ void ChangeTracker::Open(const std::wstring& directory) {
 void ChangeTracker::Load(const std::wstring& owner, Journal& j) {
     if (j.loaded) return;
     j.loaded = true;
-    std::ifstream input(std::filesystem::path(File(directory_, owner)), std::ios::binary);
-    if (!input) return;
     const auto now = Now();
-    auto corrupt = [&] { j.gap = true; j.gap_end = now; j.gap_until = now + kRetention; j.dirty = true; };
-    input.seekg(0, std::ios::end); const auto size = input.tellg();
-    if (size <= 0 || size > 32 * 1024 * 1024) { corrupt(); return; }
-    input.seekg(0); std::vector<uint8_t> data(static_cast<size_t>(size));
-    input.read(reinterpret_cast<char*>(data.data()), size);
+    auto corrupt = [&] { j.gap = true; j.gap_end = now; j.gap_until = now + kRetention; j.dirty = true; j.compact = true; };
+    std::vector<uint8_t> data; bool present = false;
+    if (!ReadWhole(File(directory_, owner), kMaxJournalBytes, data, present)) {
+        if (present) corrupt();
+        return;
+    }
     ipc::PayloadReader r(data.data(), data.size()); uint32_t magic = 0, count = 0;
-    if (!input || !r.GetU32(magic) || (magic != 0x32484350 && magic != 0x33484350) ||
+    if (!r.GetU32(magic) || (magic != kLegacyMagic && magic != kBaseMagic) ||
         !r.GetU32(count) || count > kMaxRecords) { corrupt(); return; }
     uint64_t origin = 0, paused = 0, gap_end = 0, gap_until = 0; uint32_t active = 0;
-    if (magic == 0x33484350 && (!r.GetU64(origin) || !r.GetU64(paused) || !r.GetU64(gap_end) ||
+    if (magic == kBaseMagic && (!r.GetU64(origin) || !r.GetU64(paused) || !r.GetU64(gap_end) ||
         !r.GetU64(gap_until) || !r.GetU32(active) || active > 1)) { corrupt(); return; }
-    std::vector<ChangeRecord> records;
+    const BaseIdentity identity_fields{0, 0, origin, paused, gap_end, gap_until, active};
+    std::vector<ChangeRecord> records; uint64_t last_id = 0;
     for (uint32_t i = 0; i < count; ++i) {
-        ChangeRecord e; uint32_t kind = 0, dir = 0, source = 0;
-        if (!r.GetU64(e.id) || !r.GetU64(e.time) || !r.GetU64(e.file_id) || !r.GetU32(kind) || kind > 5 ||
-            !r.GetU32(dir) || !r.GetU32(source) || source > 1 || !r.GetString(e.path) || !r.GetString(e.old_path)) { corrupt(); return; }
+        ChangeRecord e; uint32_t source = 0;
+        if (!GetRecord(r, e, source)) { corrupt(); return; }
+        last_id = (std::max)(last_id, e.id);
         if (source != static_cast<uint32_t>(ChangeSource::Event)) continue;
-        e.kind = static_cast<ChangeKind>(kind); e.is_dir = dir != 0;
         if (!NormalizeRecycleEvent(e)) continue;
         next_id_ = (std::max)(next_id_, e.id + 1);
-        if (magic == 0x32484350 && (!origin || e.time < origin)) origin = e.time;
+        if (magic == kLegacyMagic && (!origin || e.time < origin)) origin = e.time;
         if (e.time + kRetention >= now) records.push_back(std::move(e));
     }
     if (r.remaining()) { corrupt(); return; }
@@ -214,11 +292,73 @@ void ChangeTracker::Load(const std::wstring& owner, Journal& j) {
     j.gap_end = gap_end; j.gap_until = gap_until; j.gap = gap_until != 0;
     // v2 had no lifecycle metadata. Preserve captured events, but do not claim
     // continuity across the upgrade/restart or import filesystem mtime history.
-    if (magic == 0x32484350 && origin) {
+    if (magic == kLegacyMagic && origin) {
         j.gap = true; j.gap_end = now; j.gap_until = now + kRetention;
     }
-    j.records = std::move(records); ++j.revision; j.dirty = magic == 0x32484350;
+    j.compact = magic == kLegacyMagic;
+    if (magic == kBaseMagic) {
+        j.base = identity_fields; j.base.bytes = data.size(); j.base.last_id = last_id;
+        data = {};
+        ReplayLog(owner, j, records, now);
+    }
+    j.records = std::move(records); ++j.revision; j.dirty = j.compact;
 }
+
+void ChangeTracker::ReplayLog(const std::wstring& owner, Journal& j, std::vector<ChangeRecord>& records, uint64_t now) {
+    j.log_records = 0; j.log_bytes = 0;
+    std::vector<uint8_t> data; bool present = false;
+    if (!ReadWhole(LogFile(File(directory_, owner)), kMaxLogBytes, data, present)) {
+        // An empty or oversized log is rewritten into the base on the next flush.
+        if (present) j.compact = true;
+        return;
+    }
+    ipc::PayloadReader header(data.data(), (std::min)(data.size(), kLogHeaderBytes));
+    uint32_t magic = 0, version = 0; BaseIdentity identity;
+    if (data.size() < kLogHeaderBytes || !header.GetU32(magic) || magic != kLogMagic || !header.GetU32(version) ||
+        version != kLogVersion || !header.GetU64(identity.bytes) || !header.GetU64(identity.last_id) ||
+        !header.GetU64(identity.tracking_since) || !header.GetU64(identity.paused_at) || !header.GetU64(identity.gap_end) ||
+        !header.GetU64(identity.gap_until) || !header.GetU32(identity.active) || !(identity == j.base)) {
+        // Written against another base: a crash between compaction and log
+        // removal, or an older build rewrote the base without knowing the log.
+        j.compact = true;
+        return;
+    }
+    size_t at = kLogHeaderBytes; uint64_t applied = 0; bool torn = false;
+    while (at < data.size()) {
+        uint32_t length = 0, checksum = 0;
+        if (data.size() - at < kLogEntryHeaderBytes) { torn = true; break; }
+        std::memcpy(&length, data.data() + at, sizeof(length)); std::memcpy(&checksum, data.data() + at + 4, sizeof(checksum));
+        const auto* payload = data.data() + at + kLogEntryHeaderBytes;
+        if (length < kLogStateBytes || length > data.size() - at - kLogEntryHeaderBytes || Checksum(payload, length) != checksum) {
+            torn = true; break;
+        }
+        ipc::PayloadReader r(payload, length);
+        uint64_t since = 0, paused = 0, gap_end = 0, gap_until = 0; uint32_t active = 0, count = 0;
+        if (!r.GetU64(since) || !r.GetU64(paused) || !r.GetU64(gap_end) || !r.GetU64(gap_until) ||
+            !r.GetU32(active) || active > 1 || !r.GetU32(count) || count > kMaxRecords) { torn = true; break; }
+        std::vector<ChangeRecord> batch; batch.reserve(count); bool bad = false;
+        for (uint32_t i = 0; i < count; ++i) {
+            ChangeRecord e; uint32_t source = 0;
+            if (!GetRecord(r, e, source)) { bad = true; break; }
+            if (source != static_cast<uint32_t>(ChangeSource::Event) || !NormalizeRecycleEvent(e)) continue;
+            next_id_ = (std::max)(next_id_, e.id + 1);
+            if (e.time + kRetention >= now) batch.push_back(std::move(e));
+        }
+        if (bad || r.remaining()) { torn = true; break; }
+        records.insert(records.end(), std::make_move_iterator(batch.begin()), std::make_move_iterator(batch.end()));
+        j.tracking_since = since; j.paused_at = paused; j.active = active != 0;
+        j.gap_end = gap_end; j.gap_until = gap_until; j.gap = gap_until != 0;
+        applied += count; at += kLogEntryHeaderBytes + length;
+    }
+    // Same bounds Prune applied before each batch was written; the persisted
+    // gap fields already describe that trimming.
+    if (records.size() > kMaxRecords) records.erase(records.begin(), records.begin() + (records.size() - kMaxRecords));
+    if (const auto over = OverBudget(records)) records.erase(records.begin(), records.begin() + over);
+    j.log_records = applied; j.log_bytes = at;
+    // A torn tail (crash or failed append) is folded into a fresh base.
+    if (torn) j.compact = true;
+}
+
 void ChangeTracker::Prune(Journal& j) {
     const auto old_count = j.records.size();
     const auto now = Now();
@@ -226,32 +366,77 @@ void ChangeTracker::Prune(Journal& j) {
     if (j.records.size() > kMaxRecords) {
         j.records.erase(j.records.begin(), j.records.begin() + (j.records.size() - kMaxRecords)); j.gap = true; j.gap_end = Now(); j.gap_until = j.gap_end + kRetention;
     }
-    size_t bytes = 44, keep = j.records.size();
-    while (keep > 0) {
-        const auto& e = j.records[keep - 1];
-        const auto cost = 44 + (e.path.size() + e.old_path.size()) * sizeof(wchar_t);
-        if (bytes + cost > 32 * 1024 * 1024) break;
-        bytes += cost; --keep;
-    }
-    if (keep) { j.records.erase(j.records.begin(), j.records.begin() + keep); j.gap = true; j.gap_end = Now(); j.gap_until = j.gap_end + kRetention; }
+    if (const auto keep = OverBudget(j.records)) { j.records.erase(j.records.begin(), j.records.begin() + keep); j.gap = true; j.gap_end = Now(); j.gap_until = j.gap_end + kRetention; }
+    j.unsaved = (std::min)(j.unsaved, static_cast<uint64_t>(j.records.size()));
     if (j.records.size() != old_count) { ++j.revision; j.dirty = true; }
 }
-bool ChangeTracker::Save(const std::wstring& owner, const Journal& j) {
-    if (directory_.empty()) return false;
-    auto path = File(directory_, owner), temp = path + L".tmp";
-    std::ofstream out(std::filesystem::path(temp), std::ios::binary | std::ios::trunc);
-    if (!out) return false;
-    ChangeJournalWriter w(out); w.PutU32(0x33484350); w.PutU32(static_cast<uint32_t>(j.records.size()));
-    w.PutU64(j.tracking_since); w.PutU64(j.paused_at); w.PutU64(j.gap_end); w.PutU64(j.gap_until);
-    w.PutU32(j.active ? 1u : 0u);
-    for (const auto& e : j.records) {
-        w.PutU64(e.id); w.PutU64(e.time); w.PutU64(e.file_id); w.PutU32(static_cast<uint32_t>(e.kind));
-        w.PutU32(e.is_dir ? 1u : 0u); w.PutU32(static_cast<uint32_t>(e.source)); w.PutString(e.path); w.PutString(e.old_path);
-    }
-    const bool written = w.Flush();
-    out.close();
-    return written && out.good() && MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+
+std::vector<uint8_t> ChangeTracker::SerializeBase(const Journal& j, BaseIdentity& identity) {
+    size_t bytes = 44;
+    for (const auto& e : j.records) bytes += RecordBytes(e);
+    JournalBytes out(bytes);
+    out.U32(kBaseMagic); out.U32(static_cast<uint32_t>(j.records.size()));
+    out.U64(j.tracking_since); out.U64(j.paused_at); out.U64(j.gap_end); out.U64(j.gap_until); out.U32(j.active ? 1u : 0u);
+    identity = {0, 0, j.tracking_since, j.paused_at, j.gap_end, j.gap_until, j.active ? 1u : 0u};
+    for (const auto& e : j.records) { out.Record(e); identity.last_id = (std::max)(identity.last_id, e.id); }
+    identity.bytes = out.data().size();
+    return std::move(out.data());
 }
+
+std::vector<uint8_t> ChangeTracker::SerializeLog(const Journal& j, uint64_t fresh) {
+    const auto first = j.records.size() - static_cast<size_t>(fresh);
+    size_t bytes = kLogHeaderBytes + kLogEntryHeaderBytes + kLogStateBytes;
+    for (size_t i = first; i < j.records.size(); ++i) bytes += RecordBytes(j.records[i]);
+    JournalBytes out(bytes);
+    if (!j.log_bytes) {
+        out.U32(kLogMagic); out.U32(kLogVersion); out.U64(j.base.bytes); out.U64(j.base.last_id);
+        out.U64(j.base.tracking_since); out.U64(j.base.paused_at); out.U64(j.base.gap_end); out.U64(j.base.gap_until); out.U32(j.base.active);
+    }
+    const auto entry = out.data().size();
+    out.U32(0); out.U32(0);
+    out.U64(j.tracking_since); out.U64(j.paused_at); out.U64(j.gap_end); out.U64(j.gap_until); out.U32(j.active ? 1u : 0u);
+    out.U32(static_cast<uint32_t>(fresh));
+    for (size_t i = first; i < j.records.size(); ++i) out.Record(j.records[i]);
+    auto& data = out.data();
+    const auto length = static_cast<uint32_t>(data.size() - entry - kLogEntryHeaderBytes);
+    const auto checksum = Checksum(data.data() + entry + kLogEntryHeaderBytes, length);
+    std::memcpy(data.data() + entry, &length, sizeof(length)); std::memcpy(data.data() + entry + 4, &checksum, sizeof(checksum));
+    return std::move(data);
+}
+
+bool ChangeTracker::WriteBase(const std::wstring& owner, const std::vector<uint8_t>& bytes) {
+    if (directory_.empty()) return false;
+    const auto path = File(directory_, owner), temp = path + L".tmp";
+    HANDLE file = CreateFileW(temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    const bool written = WriteAll(file, bytes);
+    CloseHandle(file);
+    if (!written || !MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return false;
+    // A log that survives this (crash, sharing violation) no longer matches the
+    // new base identity and is ignored on load.
+    DeleteFileW(LogFile(path).c_str());
+    return true;
+}
+
+bool ChangeTracker::AppendLog(const std::wstring& owner, const std::vector<uint8_t>& bytes, uint64_t offset) {
+    if (directory_.empty()) return false;
+    const auto path = LogFile(File(directory_, owner));
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+        offset ? OPEN_EXISTING : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    // Append only onto exactly what this tracker wrote; anything else compacts.
+    LARGE_INTEGER size{}, end{}; end.QuadPart = static_cast<LONGLONG>(offset);
+    const bool written = GetFileSizeEx(file, &size) && static_cast<uint64_t>(size.QuadPart) == offset &&
+        SetFilePointerEx(file, end, nullptr, FILE_BEGIN) && WriteAll(file, bytes);
+    CloseHandle(file);
+    return written;
+}
+
+bool ChangeTracker::Save(const std::wstring& owner, const Journal& j) {
+    BaseIdentity identity;
+    return WriteBase(owner, SerializeBase(j, identity));
+}
+
 bool ChangeTracker::Lease(const std::wstring& owner, bool enabled) {
     if (owner.empty()) return false;
     std::lock_guard lock(mutex_); auto& j = journals_[owner]; Load(owner, j);
@@ -294,17 +479,26 @@ void ChangeTracker::Record(ChangeRecord e) {
         }
         if (duplicate) continue;
         e.id = next_id_++; j.records.push_back(e); ++j.revision;
-        j.dirty = true;
+        ++j.unsaved; j.dirty = true;
     }
 }
 void ChangeTracker::Flush(bool force, IndexMemoryProbe* memory) {
     if (!IndexDiagnosticsEnabled()) memory = nullptr;
-    std::vector<std::pair<std::wstring, Journal>> pending;
+    struct PendingSave {
+        std::wstring owner;
+        std::vector<uint8_t> bytes;
+        BaseIdentity identity;
+        uint64_t records = 0, offset = 0;
+        bool compact = false;
+    };
+    // Appends must reach the log in serialization order.
+    std::lock_guard flush_lock(flush_mutex_);
+    std::vector<PendingSave> pending;
     {
         std::lock_guard lock(mutex_);
         const auto tick = GetTickCount64();
         // Queries read live records. Batch persistence and pruning instead of
-        // copying the entire retained history on every journal notification.
+        // writing the retained history on every journal notification.
         if (!force && last_flush_tick_ && tick - last_flush_tick_ < 60000) return;
         last_flush_tick_ = tick;
         if (memory) {
@@ -321,26 +515,40 @@ void ChangeTracker::Flush(bool force, IndexMemoryProbe* memory) {
                 memory->retained.history_vector_capacity_bytes += journal.records.capacity() * sizeof(ChangeRecord);
             }
             if (!journal.dirty) continue;
-            Journal snapshot; snapshot.records = journal.records;
-            if (memory) memory->retained.flush_snapshot_records += snapshot.records.size();
-            snapshot.tracking_since = journal.tracking_since; snapshot.paused_at = journal.paused_at;
-            snapshot.gap_end = journal.gap_end; snapshot.gap_until = journal.gap_until; snapshot.active = journal.active;
-            pending.emplace_back(owner, std::move(snapshot)); journal.dirty = false;
+            PendingSave save; save.owner = owner;
+            const auto fresh = (std::min)(journal.unsaved, static_cast<uint64_t>(journal.records.size()));
+            save.compact = journal.compact || journal.log_records + fresh > kCompactRecords || journal.log_bytes > kCompactBytes;
+            if (save.compact) {
+                save.bytes = SerializeBase(journal, save.identity); save.records = journal.records.size();
+            } else {
+                save.bytes = SerializeLog(journal, fresh); save.records = fresh; save.offset = journal.log_bytes;
+            }
+            if (memory) memory->retained.flush_snapshot_records += save.records;
+            journal.unsaved = 0; journal.dirty = false;
+            pending.push_back(std::move(save));
         }
     }
-    // Serialization and disk I/O hold neither the index lock nor the tracker lock.
+    // Disk I/O holds neither the index lock nor the tracker lock.
     if (memory) memory->Capture(IndexMemoryPoint::ChangeFlushSnapshot);
-    for (const auto& [owner, snapshot] : pending) {
-        if (Save(owner, snapshot)) continue;
+    for (const auto& save : pending) {
+        const bool written = save.compact ? WriteBase(save.owner, save.bytes) : AppendLog(save.owner, save.bytes, save.offset);
         std::lock_guard lock(mutex_);
-        auto& journal = journals_[owner]; journal.gap = true;
-        journal.gap_end = Now(); journal.gap_until = journal.gap_end + kRetention; journal.dirty = true;
+        auto& journal = journals_[save.owner];
+        if (written && save.compact) {
+            journal.base = save.identity; journal.log_records = 0; journal.log_bytes = 0; journal.compact = false;
+        } else if (written) {
+            journal.log_records += save.records; journal.log_bytes = save.offset + save.bytes.size();
+        } else {
+            journal.gap = true; journal.gap_end = Now(); journal.gap_until = journal.gap_end + kRetention;
+            journal.dirty = true; journal.compact = true;
+        }
     }
     if (memory) {
         pending.clear();
         memory->Capture(IndexMemoryPoint::ChangeFlushAfter);
     }
 }
+
 void ChangeTracker::Gap() {
     std::lock_guard lock(mutex_); const auto now = Now();
     for (auto& [owner, j] : journals_) {

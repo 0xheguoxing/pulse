@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <filesystem>
 #include <cstdio>
+#include <algorithm>
 #include <chrono>
 using namespace pulse::index;
 namespace pulse::index {
@@ -13,7 +14,7 @@ struct ChangeTrackerTestAccess {
         uint64_t id = 1;
         for (auto& event : events) { event.id = id++; event.file_id = event.id; event.source = ChangeSource::Event; }
         if (!events.empty()) journal.tracking_since = events.front().time;
-        journal.records = std::move(events); ++journal.revision; journal.dirty = true;
+        journal.records = std::move(events); ++journal.revision; journal.dirty = true; journal.compact = true;
     }
     static uint64_t Origin(const ChangeTracker& tracker, const std::wstring& owner) { return tracker.journals_.at(owner).tracking_since; }
     static void GapAt(ChangeTracker& tracker, const std::wstring& owner, uint64_t end) {
@@ -35,13 +36,98 @@ struct ChangeTrackerTestAccess {
         return tracker.journals_.at(owner).records.empty();
     }
     static void MakeFlushDue(ChangeTracker& tracker) { tracker.last_flush_tick_ = 0; }
+    static uint64_t Paused(const ChangeTracker& tracker, const std::wstring& owner) { return tracker.journals_.at(owner).paused_at; }
+    static uint64_t LogRecords(const ChangeTracker& tracker, const std::wstring& owner) { return tracker.journals_.at(owner).log_records; }
+    static void FillLog(ChangeTracker& tracker, const std::wstring& owner, uint64_t records) { tracker.journals_[owner].log_records = records; }
+    // Writes a base the way an older build would: replace the file, leave any log.
+    static void RewriteBase(const ChangeTracker& tracker, const std::wstring& owner, const std::filesystem::path& file, size_t keep) {
+        auto journal = tracker.journals_.at(owner);
+        journal.records.resize((std::min)(keep, journal.records.size()));
+        ChangeTracker::BaseIdentity identity;
+        const auto bytes = ChangeTracker::SerializeBase(journal, identity);
+        std::ofstream output(file, std::ios::binary | std::ios::trunc);
+        output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
 };
+}
+int LogSuite(const std::filesystem::path& base) {
+    namespace fs = std::filesystem;
+    int failures = 0;
+    auto check = [&](bool ok, const char* name) { std::printf("[%s] %s\n", ok ? "PASS" : "FAIL", name); failures += !ok; };
+    const auto root = base / L"log";
+    fs::create_directories(root);
+    const auto file = root / L"changes-log.bin", log = root / L"changes-log.bin.log";
+    auto count = [&](const wchar_t* owner, const wchar_t* path) {
+        ChangeTracker reader; reader.Open(root.wstring());
+        return reader.Details(owner, path, 0, 0, 200).records.size();
+    };
+    ChangeRecord event;
+    auto record = [&](ChangeTracker& tracker, const wchar_t* folder, int i) {
+        event.path = std::wstring(folder) + L"\\file" + std::to_wstring(i) + L".txt"; tracker.Record(event);
+    };
+    ChangeTracker writer; writer.Open(root.wstring()); writer.Lease(L"log", true);
+    for (int i = 0; i < 3; ++i) record(writer, L"C:\\log", i);
+    writer.Flush();
+    check(fs::exists(file) && !fs::exists(log) && count(L"log", L"C:\\log") == 3, "first flush writes a complete base");
+    const auto base_size = fs::file_size(file);
+    const auto sentinel = std::chrono::floor<std::chrono::seconds>(fs::file_time_type::clock::now() - std::chrono::hours(1));
+    fs::last_write_time(file, sentinel);
+    record(writer, L"C:\\log", 3); record(writer, L"C:\\log", 4); writer.Flush();
+    check(fs::last_write_time(file) == sentinel && fs::file_size(file) == base_size && fs::exists(log) &&
+        count(L"log", L"C:\\log") == 5, "later flush appends without rewriting the base");
+    record(writer, L"C:\\log", 5); writer.Flush();
+    writer.Lease(L"log", false); writer.Flush();
+    {
+        ChangeTracker reader; reader.Open(root.wstring());
+        const auto live = writer.Details(L"log", L"C:\\log", 0, 0, 200).records;
+        const auto loaded = reader.Details(L"log", L"C:\\log", 0, 0, 200).records;
+        bool same = live.size() == 6 && live.size() == loaded.size();
+        for (size_t i = 0; same && i < live.size(); ++i)
+            same = live[i].id == loaded[i].id && live[i].path == loaded[i].path && live[i].time == loaded[i].time;
+        check(same && ChangeTrackerTestAccess::LogRecords(writer, L"log") == 3, "base plus appended batches reload in order");
+        check(ChangeTrackerTestAccess::Paused(reader, L"log") == ChangeTrackerTestAccess::Paused(writer, L"log") &&
+            ChangeTrackerTestAccess::Paused(reader, L"log") != 0 &&
+            ChangeTrackerTestAccess::Origin(reader, L"log") == ChangeTrackerTestAccess::Origin(writer, L"log"),
+            "lifecycle state appended after history survives reload");
+    }
+    { std::ofstream tail(log, std::ios::binary | std::ios::app); tail.write("\x10\0\0\0junk", 8); }
+    {
+        ChangeTracker reader; reader.Open(root.wstring());
+        check(reader.Details(L"log", L"C:\\log", 0, 0, 200).records.size() == 6, "torn log tail keeps complete batches");
+        reader.Flush();
+        check(!fs::exists(log) && fs::file_size(file) > base_size && count(L"log", L"C:\\log") == 6, "torn log is folded into a fresh base");
+    }
+    ChangeTracker next; next.Open(root.wstring()); next.Lease(L"log", true);
+    record(next, L"C:\\log", 6); next.Flush();
+    record(next, L"C:\\log", 7); next.Flush();
+    check(fs::exists(log) && count(L"log", L"C:\\log") == 8, "reloaded tracker resumes appending");
+    ChangeTrackerTestAccess::RewriteBase(next, L"log", file, 8);
+    check(count(L"log", L"C:\\log") == 8, "log left behind by an interrupted compaction is not replayed twice");
+    ChangeTrackerTestAccess::RewriteBase(next, L"log", file, 4);
+    check(count(L"log", L"C:\\log") == 4, "base rewritten by an older build ignores the stale log");
+    ChangeTracker compact; compact.Open(root.wstring()); compact.Lease(L"compact", true);
+    const auto compact_log = root / L"changes-compact.bin.log";
+    record(compact, L"C:\\compact", 0); compact.Flush();
+    record(compact, L"C:\\compact", 1); compact.Flush();
+    const bool appended = fs::exists(compact_log);
+    ChangeTrackerTestAccess::FillLog(compact, L"compact", 50000);
+    record(compact, L"C:\\compact", 2); compact.Flush();
+    check(appended && !fs::exists(compact_log) && count(L"compact", L"C:\\compact") == 3 &&
+        ChangeTrackerTestAccess::LogRecords(compact, L"compact") == 0, "large log compacts into the base");
+    check(IsChangeJournalName(L"C:\\index\\changes-S-1-5-1.bin.log") && !IsChangeJournalName(L"changes-S-1-5-1.bin.logs"),
+        "journal artifact covers the append log");
+    return failures;
 }
 int wmain(int argc, wchar_t** argv) {
     const auto root = std::filesystem::temp_directory_path() / (L"pulse-changes-test-" + std::to_wstring(GetCurrentProcessId()));
     std::filesystem::create_directories(root);
     int failures = 0;
     auto check = [&](bool ok, const char* name) { std::printf("[%s] %s\n", ok ? "PASS" : "FAIL", name); failures += !ok; };
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--log-only") {
+        failures += LogSuite(root);
+        std::filesystem::remove_all(root);
+        return failures ? 1 : 0;
+    }
     if (argc == 2 && std::wstring_view(argv[1]) == L"--flush-only") {
         ChangeTracker batched; batched.Open(root.wstring()); batched.Lease(L"batch", true);
         ChangeRecord event; event.path = L"C:\\batch\\first.txt";
@@ -238,6 +324,7 @@ int wmain(int argc, wchar_t** argv) {
     bin.path = L"C:\\archive\\$Recycle.Bin\\S-1-5-21-123\\ordinary.txt"; recycle.Record(bin);
     check(recycle.Details(L"recycle", L"C:\\archive", 0, 0, 200).records[0].kind == ChangeKind::MovedIn,
         "nested recycle-named directory stays ordinary move");
+    failures += LogSuite(root);
     std::filesystem::remove_all(root);
     return failures ? 1 : 0;
 }
