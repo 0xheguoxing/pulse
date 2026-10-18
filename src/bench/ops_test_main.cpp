@@ -1414,6 +1414,8 @@ int wmain(int argc, wchar_t** argv) {
         for (int i = 0; i < kParallelFiles; ++i)
             MakeFile(par_src + L"\\tree" + par_name(i), payload, sizeof(payload) - 1);
         const std::wstring tree = par_src + L"\\tree";
+        // A large file in the middle goes behind the small ones.
+        Check(MakePatternFile(tree + L"\\f20-big.bin", 3ull << 20), L"parallel copy: large fixture");
         SetFileAttributesW((tree + par_name(0)).c_str(), FILE_ATTRIBUTE_READONLY);
         SetFileAttributesW((tree + par_name(1)).c_str(), FILE_ATTRIBUTE_HIDDEN);
         const char stream_data[] = "side stream";
@@ -1436,6 +1438,8 @@ int wmain(int argc, wchar_t** argv) {
             if (FileSize(copied + par_name(i)) == sizeof(payload) - 1) ++present;
         Check(par_st.last_error.empty() && present == kParallelFiles,
               L"parallel copy: every small file arrives intact");
+        Check(FileHash(copied + L"\\f20-big.bin") == FileHash(tree + L"\\f20-big.bin"),
+              L"parallel copy: the deferred large file arrives intact");
         const DWORD ro = GetFileAttributesW((copied + par_name(0)).c_str());
         const DWORD hidden = GetFileAttributesW((copied + par_name(1)).c_str());
         Check(ro != INVALID_FILE_ATTRIBUTES && (ro & FILE_ATTRIBUTE_READONLY) &&

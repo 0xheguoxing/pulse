@@ -9,12 +9,17 @@ namespace {
 
 enum class Storage { Solid, Spinning, Remote, Removable, Unknown };
 
-Storage StorageOf(const std::wstring& path) {
-    if (path.empty()) return Storage::Unknown;
+std::wstring VolumeRoot(const std::wstring& path) {
+    if (path.empty()) return {};
     std::vector<wchar_t> root(32768);
-    if (!GetVolumePathNameW(path.c_str(), root.data(), static_cast<DWORD>(root.size())))
-        return Storage::Unknown;
-    switch (GetDriveTypeW(root.data())) {
+    if (!GetVolumePathNameW(path.c_str(), root.data(), static_cast<DWORD>(root.size()))) return {};
+    return root.data();
+}
+
+Storage StorageOf(const std::wstring& path) {
+    const std::wstring root = VolumeRoot(path);
+    if (root.empty()) return Storage::Unknown;
+    switch (GetDriveTypeW(root.c_str())) {
     case DRIVE_REMOTE: return Storage::Remote;
     case DRIVE_REMOVABLE:
     case DRIVE_CDROM: return Storage::Removable;
@@ -24,7 +29,7 @@ Storage StorageOf(const std::wstring& path) {
     // \\?\Volume{...}\ works for drive letters and mount points alike; the
     // device is opened without the trailing backslash and without access.
     wchar_t volume[MAX_PATH]{};
-    if (!GetVolumeNameForVolumeMountPointW(root.data(), volume, MAX_PATH)) return Storage::Unknown;
+    if (!GetVolumeNameForVolumeMountPointW(root.c_str(), volume, MAX_PATH)) return Storage::Unknown;
     std::wstring device = volume;
     if (!device.empty() && device.back() == L'\\') device.pop_back();
     HANDLE handle = CreateFileW(device.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
@@ -62,11 +67,28 @@ unsigned TransferThreadCount(const std::wstring& source, const std::wstring& des
     return (std::min)(ThreadsFor(StorageOf(source)), ThreadsFor(StorageOf(dest_dir)));
 }
 
+TransferTarget DescribeTransferTarget(const std::wstring& source, const std::wstring& dest_dir) {
+    TransferTarget target;
+    const Storage storage = StorageOf(dest_dir);
+    target.slow = storage == Storage::Remote || storage == Storage::Removable;
+    const std::wstring source_root = VolumeRoot(source);
+    const std::wstring dest_root = VolumeRoot(dest_dir);
+    DWORD flags = 0;
+    if (!dest_root.empty() && _wcsicmp(source_root.c_str(), dest_root.c_str()) == 0 &&
+        GetVolumeInformationW(dest_root.c_str(), nullptr, 0, nullptr, nullptr, &flags, nullptr, 0)) {
+        constexpr DWORD kSupportsBlockRefcounting = 0x08000000;  // FILE_SUPPORTS_BLOCK_REFCOUNTING
+        target.block_clone = (flags & kSupportsBlockRefcounting) != 0;
+    }
+    return target;
+}
+
 SmallCopyPool::SmallCopyPool(unsigned threads, std::atomic<bool>& cancel, std::atomic<bool>& pause,
                              std::mutex& control_mutex, std::condition_variable& control_cv)
     : cancel_(cancel), pause_(pause), control_mutex_(control_mutex), control_cv_(control_cv) {
     threads = (std::max)(1u, threads);
-    capacity_ = threads * 4;
+    // Deep enough that the transfer thread hands over every small file and
+    // reaches the large ones while the pool works.
+    capacity_ = (std::max<size_t>)(threads * 4, 1024);
     threads_.reserve(threads);
     for (unsigned i = 0; i < threads; ++i) threads_.emplace_back([this] { Worker(); });
 }

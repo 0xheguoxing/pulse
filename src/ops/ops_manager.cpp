@@ -507,6 +507,7 @@ struct TransferEntry {
     // completed lists are built from these in entry order afterwards.
     bool completed = false;
     bool source_removed = false;
+    bool deferred = false;  // a large file moved behind the small ones
     uint64_t bytes = 0;
     DWORD attributes = FILE_ATTRIBUTE_NORMAL;
     FILETIME created{};
@@ -2611,7 +2612,23 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         while (pool && pool->Outstanding() > 0) apply_pooled(pool->Take(true));
     };
 
-    for (size_t index = 0; failure.empty() && !cancelled && index < entries.size(); ++index) {
+    // Large files with no conflict wait until every small file has gone to
+    // the pool, then copy here while the pool works: one ISO does not hold
+    // up thousands of small files, and they do not chop it up.
+    std::vector<size_t> deferred_large;
+    // Large files bypass the cache when it cannot absorb them (the copy
+    // would stall flushing at the end) or the target is a share or a
+    // removable drive. A same-volume copy that can block-clone keeps the
+    // cached path, which clones.
+    const TransferTarget target = DescribeTransferTarget(
+        entries.empty() ? std::wstring{} : entries.front().source, req.dest_dir);
+    uint64_t large_remaining = 0;
+    for (const auto& candidate : entries)
+        if (!candidate.directory && !candidate.reparse && !candidate.renamed &&
+            candidate.bytes >= kDirectCopyMaxBytes) large_remaining += candidate.bytes;
+
+    for (size_t step = 0; failure.empty() && !cancelled && step < entries.size() + deferred_large.size(); ++step) {
+        const size_t index = step < entries.size() ? step : deferred_large[step - entries.size()];
         if (pool) apply_pooled(pool->Take(false));
         if (!failure.empty() || stop_requested()) break;
         auto& entry = entries[index];
@@ -2812,6 +2829,18 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                           req.type == OpType::Move});
             continue;
         }
+        if (pool && !entry.deferred && !destination_exists) {
+            entry.deferred = true;
+            deferred_large.push_back(index);
+            continue;
+        }
+        bool unbuffered = false;
+        if (entry.bytes >= kDirectCopyMaxBytes && !target.block_clone) {
+            MEMORYSTATUSEX memory{};
+            memory.dwLength = sizeof(memory);
+            unbuffered = target.slow ||
+                (GlobalMemoryStatusEx(&memory) && large_remaining > memory.ullAvailPhys / 2);
+        }
         std::wstring copy_destination = direct ? entry.destination
             : UniqueTemporaryPath(entry.destination, L".pulse-copy-", task_id, index);
         const bool replacing = destination_exists && choice == ConflictChoice::Replace;
@@ -2843,7 +2872,8 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             DeleteFileW(copy_destination.c_str());
         };
         bool resume = false;
-        DWORD extra_flags = COPY_FILE_COPY_SYMLINK;
+        // Dropped together if the file system rejects either.
+        DWORD extra_flags = COPY_FILE_COPY_SYMLINK | (unbuffered ? COPY_FILE_NO_BUFFERING : 0);
         for (;;) {
             context.pause_sent = false;
             COPYFILE2_EXTENDED_PARAMETERS parameters{};
@@ -2982,6 +3012,8 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             entry.source_removed = true;
         }
         entry.completed = true;
+        if (entry.bytes >= kDirectCopyMaxBytes)
+            large_remaining -= (std::min)(large_remaining, entry.bytes);
         ++processed_items;
         publish_progress(entry, entry.bytes, entry.bytes, processed_items);
         committed_bytes += entry.bytes;

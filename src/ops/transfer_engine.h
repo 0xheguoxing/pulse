@@ -24,6 +24,12 @@ namespace pulse::ops {
 // drive. When the storage cannot be identified, 2.
 unsigned TransferThreadCount(const std::wstring& source, const std::wstring& dest_dir);
 
+struct TransferTarget {
+    bool slow = false;         // a share or a removable drive
+    bool block_clone = false;  // same volume, and it clones blocks (ReFS)
+};
+TransferTarget DescribeTransferTarget(const std::wstring& source, const std::wstring& dest_dir);
+
 struct SmallCopyJob {
     size_t index = 0;           // entry index in RunTransfer
     std::wstring source;
