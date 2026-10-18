@@ -1573,9 +1573,29 @@ void OpsManager::SetStatus(const std::function<void(OpStatus&)>& fn) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         fn(status_);
+        ApplyUndoSummaryLocked();
         SampleSpeedLocked();
     }
     NotifyStatusChanged();
+}
+
+// An undo that went through reads as what it reversed (已撤销复制), not as
+// its inverse (删除完成): the pill and the card show it right away.
+void OpsManager::ApplyUndoSummaryLocked() {
+    if (!active_item_ || !active_item_->req.undo_of || active_item_->seq != status_.task_id) return;
+    if (status_.active || status_.phase != OpPhase::Completed || !status_.last_error.empty()) return;
+    l10n::StringId id = l10n::StringId::OpUndone;
+    switch (*active_item_->req.undo_of) {
+    case OpType::Copy: id = l10n::StringId::OpUndoneCopy; break;
+    case OpType::Move: id = l10n::StringId::OpUndoneMove; break;
+    case OpType::Rename:
+    case OpType::BatchRename: id = l10n::StringId::OpUndoneRename; break;
+    case OpType::RecycleDelete: id = l10n::StringId::OpUndoneDelete; break;
+    case OpType::CreateFolder:
+    case OpType::CreateTextFile: id = l10n::StringId::OpUndoneCreate; break;
+    default: break;
+    }
+    status_.summary = l10n::Get(id).c_str();
 }
 
 void OpsManager::SampleSpeedLocked() {
@@ -1612,6 +1632,7 @@ void OpsManager::SetProgressStatus(const std::function<void(OpStatus&)>& fn) {
         std::lock_guard<std::mutex> lock(mutex_);
         const uint64_t items_before = status_.completed_items;
         fn(status_);
+        ApplyUndoSummaryLocked();
         SampleSpeedLocked();
         item_finished = status_.completed_items != items_before &&
             status_.total_items <= kEveryItemMaxTotal;
@@ -1761,6 +1782,7 @@ void OpsManager::Undo() {
             OpRequest inv;
             inv.type = OpType::Move;
             inv.is_undo = true;
+            inv.undo_of = e.type;
             inv.sources.push_back(i < e.destinations.size()
                 ? e.destinations[i] : JoinPath(e.dest_dir, FileName(src)));
             inv.dest_dir = ParentOf(src);
@@ -1773,6 +1795,7 @@ void OpsManager::Undo() {
         OpRequest inv;
         inv.type = OpType::Rename;
         inv.is_undo = true;
+        inv.undo_of = e.type;
         std::wstring new_path = JoinPath(ParentOf(e.sources.front()), e.new_name);
         inv.sources.push_back(new_path);
         inv.new_name = FileName(e.sources.front());
@@ -1784,6 +1807,7 @@ void OpsManager::Undo() {
         OpRequest inv;
         inv.type = OpType::RecycleDelete;
         inv.is_undo = true;
+        inv.undo_of = e.type;
         if (!e.destinations.empty()) inv.sources = e.destinations;
         else for (const auto& src : e.sources)
             inv.sources.push_back(JoinPath(e.dest_dir, FileName(src)));
@@ -1796,6 +1820,7 @@ void OpsManager::Undo() {
         OpRequest inv;
         inv.type = OpType::RecycleDelete;
         inv.is_undo = true;
+        inv.undo_of = e.type;
         inv.sources = e.sources;
         Submit(std::move(inv));
         break;
@@ -1804,6 +1829,7 @@ void OpsManager::Undo() {
         OpRequest inv;
         inv.type = OpType::RestoreRecycle;
         inv.is_undo = true;
+        inv.undo_of = e.type;
         inv.sources = e.sources;
         Submit(std::move(inv));
         break;
@@ -1814,6 +1840,7 @@ void OpsManager::Undo() {
             OpRequest inv;
             inv.type = OpType::Rename;
             inv.is_undo = true;
+            inv.undo_of = e.type;
             inv.sources.push_back(index < e.destinations.size()
                 ? e.destinations[index]
                 : JoinPath(ParentOf(e.sources[index]), e.new_name));

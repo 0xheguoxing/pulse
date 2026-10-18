@@ -86,6 +86,9 @@ struct OpRequest {
     std::vector<uint8_t> template_data;
     CollisionPolicy collision_policy = CollisionPolicy::System; // Copy / Move
     bool is_undo = false;     // undo-originated ops do not re-enter the stack
+    // An undo task: the operation it reverses, so it finishes as 已撤销复制
+    // rather than as the inverse (删除完成). Session only.
+    std::optional<OpType> undo_of;
     // Several operations making up one user action (合并到文件夹, 解散文件夹)
     // share a nonzero group and undo as one step, under this label.
     uint64_t undo_group = 0;
@@ -459,6 +462,7 @@ private:
     OpSpeedGraph speed_graph_;                       // status_.task_id's; guarded by mutex_
     uint64_t speed_graph_task_ = 0;
     void SampleSpeedLocked();
+    void ApplyUndoSummaryLocked();
     std::vector<RecoveryEntry> pending_recovery_;
     std::wstring journal_path_;
     OpStatus status_;

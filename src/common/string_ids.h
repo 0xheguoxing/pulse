@@ -2369,5 +2369,11 @@
 #define IDS_OP_FAILED_COUNT                                                              3633
 #define IDS_OP_MORE_FAILURES                                                             3634
 #define IDS_OP_PILL_FAILED                                                               3635
+#define IDS_OP_UNDONE_COPY                                                               3636
+#define IDS_OP_UNDONE_MOVE                                                               3637
+#define IDS_OP_UNDONE_RENAME                                                             3638
+#define IDS_OP_UNDONE_DELETE                                                             3639
+#define IDS_OP_UNDONE_CREATE                                                             3640
+#define IDS_OP_UNDONE                                                                    3641
 
 #endif  // PULSE_STRING_IDS_H

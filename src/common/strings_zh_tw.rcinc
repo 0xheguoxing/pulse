@@ -2353,4 +2353,10 @@ BEGIN
     IDS_OP_FAILED_COUNT "%s 項失敗"
     IDS_OP_MORE_FAILURES "另有 %s 項未列出"
     IDS_OP_PILL_FAILED "%s 項未成功 · 按一下查看"
+    IDS_OP_UNDONE_COPY "已復原複製"
+    IDS_OP_UNDONE_MOVE "已復原移動"
+    IDS_OP_UNDONE_RENAME "已復原重新命名"
+    IDS_OP_UNDONE_DELETE "已復原刪除"
+    IDS_OP_UNDONE_CREATE "已復原新增"
+    IDS_OP_UNDONE "已復原"
 END

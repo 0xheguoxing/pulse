@@ -1144,6 +1144,8 @@ int wmain(int argc, wchar_t** argv) {
         WaitOpDone(prev);
         Check(Exists(dstDir + L"\\a2.txt") && !Exists(srcDir + L"\\a2.txt"),
               L"undo move: a2.txt back in dst");
+        Check(g_ops.Status().summary == l10n::Get(l10n::StringId::OpUndoneMove),
+              L"undo move finishes as 已撤销移动, not as the inverse move");
 
         // rename src\d.txt -> d2.txt, then undo
         RunOp(SimpleOp(ops::OpType::Rename, { (srcDir + L"\\d.txt").c_str() }, nullptr, L"d2.txt"));
@@ -1188,6 +1190,10 @@ int wmain(int argc, wchar_t** argv) {
         WaitOpDone(prev);
         Check(!Exists(dstDir + L"\\d.txt") && Exists(srcDir + L"\\d.txt"),
               L"undo copy: dst copy removed, source intact");
+        Check(g_ops.Status().summary == l10n::Get(l10n::StringId::OpUndoneCopy),
+              L"undo copy finishes as 已撤销复制, not as 删除完成");
+        Check(!g_ops.CanUndoTask(g_ops.Status().task_id),
+              L"a finished undo offers no undo of its own in the pill");
     }
 
     // --- 10. Undo stack persistence round-trip ------------------------------

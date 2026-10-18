@@ -2355,6 +2355,12 @@ BEGIN
     IDS_OP_FAILED_COUNT "%s 项失败"
     IDS_OP_MORE_FAILURES "另有 %s 项未列出"
     IDS_OP_PILL_FAILED "%s 项未成功 · 点击查看"
+    IDS_OP_UNDONE_COPY "已撤销复制"
+    IDS_OP_UNDONE_MOVE "已撤销移动"
+    IDS_OP_UNDONE_RENAME "已撤销重命名"
+    IDS_OP_UNDONE_DELETE "已撤销删除"
+    IDS_OP_UNDONE_CREATE "已撤销新建"
+    IDS_OP_UNDONE "已撤销"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4709,6 +4715,12 @@ BEGIN
     IDS_OP_FAILED_COUNT "%s failed"
     IDS_OP_MORE_FAILURES "%s more not listed"
     IDS_OP_PILL_FAILED "%s didn't go through · Click to view"
+    IDS_OP_UNDONE_COPY "Copy undone"
+    IDS_OP_UNDONE_MOVE "Move undone"
+    IDS_OP_UNDONE_RENAME "Rename undone"
+    IDS_OP_UNDONE_DELETE "Delete undone"
+    IDS_OP_UNDONE_CREATE "New item undone"
+    IDS_OP_UNDONE "Undone"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.
