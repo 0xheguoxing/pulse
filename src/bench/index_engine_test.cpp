@@ -23,6 +23,83 @@ struct UsnStreamTestAccess {
     static void Fail(UsnStream& s, DWORD error) { s.Failed(error); }
 };
 
+// Previous hash-map implementation, kept to check the array version.
+class ReferenceFolderSizeIndex {
+public:
+    using Item = FolderSizeIndex::Item;
+    void Reset() { valid_ = false; totals_.clear(); }
+    bool Valid() const { return valid_; }
+    uint64_t Builds() const { return builds_; }
+    // Background builds fill a private copy that is published under the engine's
+    // write lock; both outcomes count as one aggregation attempt.
+    void Adopt(ReferenceFolderSizeIndex&& built) { totals_ = std::move(built.totals_); valid_ = built.valid_; ++builds_; }
+    void NoteFailedBuild() { Reset(); ++builds_; }
+    std::optional<uint64_t> Get(int32_t id) const {
+        const auto it = totals_.find(id);
+        return valid_ && it != totals_.end() ? std::optional(it->second) : std::nullopt;
+    }
+    template<class Read> bool Build(int32_t count, Read read) {
+        Reset(); ++builds_;
+        std::vector<uint64_t> sums(static_cast<size_t>(count));
+        std::vector<uint32_t> children(static_cast<size_t>(count));
+        std::vector<int32_t> queue;
+        queue.reserve(static_cast<size_t>(count));
+        size_t live = 0;
+        for (int32_t i = 0; i < count; ++i) {
+            const auto n = read(i);
+            if (!n.alive) continue;
+            ++live; sums[i] = n.directory ? 0 : n.bytes;
+            if (n.parent >= count || n.parent == i) return false;
+            if (n.parent >= 0 && read(n.parent).alive) {
+                if (!read(n.parent).directory) return false;
+                ++children[n.parent];
+            }
+        }
+        for (int32_t i = 0; i < count; ++i) if (read(i).alive && !children[i]) queue.push_back(i);
+        for (size_t at = 0; at < queue.size(); ++at) {
+            const auto i = queue[at]; const auto n = read(i);
+            if (n.directory) totals_[i] = sums[i];
+            if (n.parent >= 0 && read(n.parent).alive) {
+                if (UINT64_MAX - sums[n.parent] < sums[i]) { Reset(); return false; }
+                sums[n.parent] += sums[i];
+                if (--children[n.parent] == 0) queue.push_back(n.parent);
+            }
+        }
+        valid_ = queue.size() == live;
+        if (!valid_) totals_.clear();
+        return valid_;
+    }
+    template<class Read> void Replace(int32_t id, Item before, Item after, Read read) {
+        if (!valid_) return;
+        if (before.alive && after.alive && before.directory != after.directory) { Reset(); return; }
+        const uint64_t old_size = before.directory ? Get(id).value_or(0) : before.bytes;
+        const uint64_t new_size = after.directory ? (before.alive ? old_size : 0) : after.bytes;
+        auto adjust = [&](int32_t parent, uint64_t bytes, bool add) {
+            // Malformed chains must never hang the index service.
+            for (size_t depth = 0; parent >= 0; ++depth) {
+                if (depth > totals_.size()) return false;
+                const auto n = read(parent);
+                if (!n.alive) return true;
+                const auto it = totals_.find(parent);
+                if (it == totals_.end()) return false;
+                auto& total = it->second;
+                if (add ? UINT64_MAX - total < bytes : total < bytes) return false;
+                if (add) total += bytes; else total -= bytes;
+                parent = n.parent;
+            }
+            return true;
+        };
+        if ((before.alive && !adjust(before.parent, old_size, false)) ||
+            (after.alive && !adjust(after.parent, new_size, true))) { Reset(); return; }
+        if (after.alive && after.directory) totals_[id] = new_size;
+        else totals_.erase(id);
+    }
+private:
+    bool valid_ = false;
+    uint64_t builds_ = 0;
+    std::unordered_map<int32_t, uint64_t> totals_;
+};
+
 struct ChangeTrackerTestAccess {
     struct Stats { size_t records = 0, record_bytes = 0, string_bytes = 0, summaries = 0, summary_bytes = 0; };
     static void Backdate(ChangeTracker& tracker, const std::wstring& owner, uint64_t start, uint64_t expiry) {
@@ -784,10 +861,12 @@ struct EngineTestAccess {
             if (ok) {
                 FolderSizeIndex sizes;
                 const int32_t count = engine.LiveCount();
+                const auto started = std::chrono::steady_clock::now();
                 const bool built = sizes.Build(count, [&](int32_t i) { return engine.FolderSizeItem(i); });
+                const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
                 std::unique_lock lock(engine.mutex_);
                 engine.folder_sizes_.Adopt(std::move(sizes));
-                std::cout << "folder_totals_built=" << built << "\n";
+                std::cout << "folder_totals_built=" << built << " live_count=" << count << " folder_totals_ms=" << ms << "\n";
             }
             phase("folder_totals");
             if (ok) ProbeQueries(engine);
@@ -1000,6 +1079,145 @@ struct EngineTestAccess {
         return ok;
     }
 
+    static bool FolderSizeIndexFixture() {
+        bool ok = true;
+        auto check = [&](bool value, const char* name) {
+            std::cout << (value ? "[PASS] " : "[FAIL] ") << name << '\n'; ok &= value;
+        };
+        using Item = FolderSizeIndex::Item;
+        uint64_t seed = 0x5DEECE66Dull;
+        auto next = [&] { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; return seed; };
+        size_t mismatches = 0, resets = 0, rebuilds = 0, ops = 0;
+        for (int round = 0; round < 60; ++round) {
+            std::vector<Item> nodes;
+            const int32_t initial = 40 + static_cast<int32_t>(next() % 400);
+            for (int32_t i = 0; i < initial; ++i) {
+                Item item;
+                item.alive = next() % 10 != 0;
+                item.directory = i == 0 || next() % 3 == 0;
+                for (int tries = 0; i > 0 && tries < 8 && next() % 8 != 0; ++tries) {
+                    const auto parent = static_cast<int32_t>(next() % static_cast<uint64_t>(i));
+                    if (nodes[static_cast<size_t>(parent)].directory) { item.parent = parent; break; }
+                }
+                item.bytes = item.directory ? 0 : (round % 15 == 14 && next() % 40 == 0 ? UINT64_MAX / 3 : next() % 100000);
+                nodes.push_back(item);
+            }
+            auto read = [&](int32_t i) { return nodes[static_cast<size_t>(i)]; };
+            FolderSizeIndex index;
+            ReferenceFolderSizeIndex reference;
+            auto same = [&] {
+                if (index.Valid() != reference.Valid() || index.Builds() != reference.Builds()) return false;
+                for (int32_t i = -1; i < static_cast<int32_t>(nodes.size()) + 2; ++i)
+                    if (index.Get(i) != reference.Get(i)) return false;
+                return true;
+            };
+            if (index.Build(initial, read) != reference.Build(initial, read) || !same()) ++mismatches;
+            for (int op = 0; op < 400; ++op, ++ops) {
+                const auto count = static_cast<int32_t>(nodes.size());
+                auto id = static_cast<int32_t>(next() % static_cast<uint64_t>(count));
+                Item before = nodes[static_cast<size_t>(id)];
+                Item after = before;
+                switch (next() % 7) {
+                case 0: if (!after.directory) after.bytes = next() % 100000; break;
+                case 1: {
+                    const int32_t parent = id > 0 ? static_cast<int32_t>(next() % static_cast<uint64_t>(id)) : -1;
+                    if (parent < 0 || nodes[static_cast<size_t>(parent)].directory) after.parent = parent;
+                    break;
+                }
+                case 2: after.alive = false; break;
+                case 3: case 4: {
+                    Item created;
+                    created.alive = true;
+                    created.directory = next() % 3 == 0;
+                    const auto parent = static_cast<int32_t>(next() % static_cast<uint64_t>(count));
+                    if (nodes[static_cast<size_t>(parent)].directory) created.parent = parent;
+                    created.bytes = created.directory ? 0 : next() % 100000;
+                    id = count; before = Item{}; after = created;
+                    nodes.push_back(Item{});
+                    break;
+                }
+                case 5: after.alive = true; break;
+                default:
+                    if (next() % 25 == 0) after.directory = !after.directory;
+                    else if (!after.directory) after.bytes += next() % 1000;
+                    break;
+                }
+                nodes[static_cast<size_t>(id)] = after;
+                index.Replace(id, before, after, read);
+                reference.Replace(id, before, after, read);
+                if ((op % 8 == 0 || op == 399) && !same()) ++mismatches;
+                if (!reference.Valid()) {
+                    ++resets;
+                    const auto size = static_cast<int32_t>(nodes.size());
+                    if (index.Build(size, read) != reference.Build(size, read) || !same()) ++mismatches;
+                    ++rebuilds;
+                }
+            }
+        }
+        std::cout << "folder_size_ops=" << ops << " resets=" << resets << " rebuilds=" << rebuilds << "\n";
+        check(mismatches == 0, "folder totals match the hash map implementation through random edits");
+        check(resets > 0 && rebuilds > 0, "random edits cover reset and rebuild paths");
+        FolderSizeIndex index;
+        std::vector<Item> chain{{-1, 0, true, true}, {0, 0, true, true}, {1, 7, false, true}};
+        auto read = [&](int32_t i) { return chain[static_cast<size_t>(i)]; };
+        check(index.Build(3, read) && index.Get(0) == 7u && index.Get(1) == 7u && !index.Get(2), "build totals a chain");
+        chain.push_back({1, 0, true, true});
+        index.Replace(3, {}, chain[3], read);
+        chain.push_back({3, 5, false, true});
+        index.Replace(4, {}, chain[4], read);
+        check(index.Get(3) == 5u && index.Get(0) == 12u, "directory created after the build keeps a total");
+        const Item removed = chain[1];
+        chain[1].alive = false;
+        index.Replace(1, removed, chain[1], read);
+        check(!index.Get(1) && index.Get(0) == 0u, "removed directory drops out");
+        chain[1] = removed;
+        index.Replace(1, Item{removed.parent, 0, true, false}, chain[1], read);
+        check(index.Get(1) == 0u && index.Get(0) == 0u, "restored directory starts empty like a new one");
+        return ok;
+    }
+    // --folder-size-bench <nodes>: build time and retained private memory of
+    // the array and hash map versions on one synthetic tree.
+    static bool FolderSizeBench(uint32_t count) {
+        if (count < 2) return false;
+        using Item = FolderSizeIndex::Item;
+        std::vector<Item> nodes(count);
+        uint64_t seed = 0x2545F4914F6CDD1Dull;
+        auto next = [&] { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; return seed; };
+        std::vector<int32_t> directories{0};
+        nodes[0] = {-1, 0, true, true};
+        for (uint32_t i = 1; i < count; ++i) {
+            const bool directory = next() % 4 == 0;
+            nodes[i] = {directories[next() % directories.size()], directory ? 0 : next() % 1000000, directory, true};
+            if (directory) directories.push_back(static_cast<int32_t>(i));
+        }
+        auto read = [&](int32_t i) { return nodes[static_cast<size_t>(i)]; };
+        auto private_bytes = [] {
+            PROCESS_MEMORY_COUNTERS_EX c{}; c.cb = sizeof(c);
+            K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&c), sizeof(c));
+            return static_cast<double>(c.PrivateUsage) / 1048576.0;
+        };
+        auto run = [&](const char* label, auto& index) {
+            const double before = private_bytes();
+            const auto started = std::chrono::steady_clock::now();
+            const bool built = index.Build(static_cast<int32_t>(count), read);
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+            uint64_t sum = 0;
+            const auto lookups = std::chrono::steady_clock::now();
+            for (int32_t id : directories) sum += index.Get(id).value_or(0);
+            const double lookup_ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - lookups).count() /
+                static_cast<double>(directories.size());
+            std::cout << label << " built=" << built << " build_ms=" << ms << " retained_mib=" << private_bytes() - before
+                      << " lookup_ns=" << lookup_ns << " root=" << index.Get(0).value_or(0) << " sum=" << sum << "\n";
+            return built;
+        };
+        std::cout << "nodes=" << count << " directories=" << directories.size() << "\n";
+        bool ok = true;
+        { ReferenceFolderSizeIndex reference; ok &= run("hash_map", reference); }
+        { FolderSizeIndex index; ok &= run("arrays", index); }
+        { ReferenceFolderSizeIndex reference; ok &= run("hash_map", reference); }
+        { FolderSizeIndex index; ok &= run("arrays", index); }
+        return ok;
+    }
     static bool FolderSizesFixture() {
         bool ok = true;
         auto check = [&](bool value, const char* name) {
@@ -2162,6 +2380,9 @@ int wmain(int argc, wchar_t** argv) {
     if (argc > 1 && std::wstring_view(argv[1]) == L"--visibility-cache-only") return EngineTestAccess::VisibilityCacheFixture() ? 0 : 1;
     if (argc > 1 && std::wstring_view(argv[1]) == L"--name-pool-only") return EngineTestAccess::NamePoolFixture() ? 0 : 1;
     if (argc > 1 && std::wstring_view(argv[1]) == L"--folder-sizes-only") return EngineTestAccess::FolderSizesFixture() ? 0 : 1;
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--folder-size-index-only") return EngineTestAccess::FolderSizeIndexFixture() ? 0 : 1;
+    if (argc == 3 && std::wstring_view(argv[1]) == L"--folder-size-bench")
+        return EngineTestAccess::FolderSizeBench(static_cast<uint32_t>(wcstoul(argv[2], nullptr, 10))) ? 0 : 1;
     if (argc > 1 && std::wstring_view(argv[1]) == L"--usn-only") return EngineTestAccess::UsnQueueFixture() ? 0 : 1;
     if (argc > 1 && std::wstring_view(argv[1]) == L"--feed-only") return EngineTestAccess::FeedFixture() ? 0 : 1;
     if (argc > 1 && std::wstring_view(argv[1]) == L"--maintenance-only") return EngineTestAccess::MaintenanceFixture() ? 0 : 1;
@@ -2179,6 +2400,7 @@ int wmain(int argc, wchar_t** argv) {
     Check(EngineTestAccess::OverlayContainersFixture(), "overlay containers keep exact membership");
     CheckSearch(engine);
     Check(EngineTestAccess::UsnCoalesceFixture(), "journal batch coalescing fixture");
+    Check(EngineTestAccess::FolderSizeIndexFixture(), "folder totals array fixture");
     Check(EngineTestAccess::HardLinkBuildFixture(), "hard link MFT build fixture");
     Check(EngineTestAccess::HardLinkUsnFixture(), "hard link USN fixture");
     Check(EngineTestAccess::SystemNamesFixture(), "system name visibility fixture");
