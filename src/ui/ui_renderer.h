@@ -995,6 +995,7 @@ struct WindowViewModel {
     bool address_search_content = false;
     bool settings_search_pinyin = true;
     bool settings_global_search_enabled = false;
+    bool settings_search_enabled = true;
     bool settings_global_search_capturing = false;
     std::wstring settings_global_search_hotkey;
     std::wstring settings_global_search_error;
@@ -1491,6 +1492,9 @@ public:
                                          int action_count) const;
     // 0 = default width; otherwise the minimum search field width in DIP.
     void SetSearchBarMinWidth(float dip) { search_min_dip_ = dip; }
+    // Search master switch off: no search field in the toolbar.
+    void SetSearchHidden(bool hidden) { search_hidden_ = hidden; }
+    bool SearchHidden() const { return search_hidden_; }
     // Toolbar "Group" button: -1 hidden, 0 not grouped, 1..4 app::GroupBy value.
     void SetToolbarGroup(int group_by) { toolbar_group_ = group_by; }
     // 自定义工具栏 → 排序与筛选: which of 排序 / 筛选 / 分组 the toolbar shows
@@ -2171,6 +2175,7 @@ private:
     float sidebar_width_dip_ = 224.0f;
     bool vertical_tabs_ = false;
     float search_min_dip_ = 0.0f;
+    bool search_hidden_ = false;
     int toolbar_group_ = -1;
     bool toolbar_show_sort_ = true;
     bool toolbar_show_filter_ = true;

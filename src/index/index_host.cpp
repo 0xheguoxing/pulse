@@ -53,6 +53,14 @@ namespace {
 constexpr UINT WM_ENGINE_NOTIFY = WM_APP + 1;
 constexpr UINT WM_QUIT_HOST = WM_APP + 2;
 constexpr DWORD kServiceReloadControl = 128;
+// The search master switch (Settings > Search). Interactive users may send
+// user-defined controls and start the service, so turning search off needs no
+// elevation: the service records the switch itself and stops. Started with
+// --disable-search it does the same without running; --enable-search clears it.
+constexpr DWORD kServiceDisableControl = 129;
+constexpr DWORD kServiceDisablePurgeControl = 130;
+enum class SearchSwitchRequest { None, Disable, DisablePurge, Enable };
+std::atomic<SearchSwitchRequest> g_switch_request{SearchSwitchRequest::None};
 constexpr UINT kIdleTimer = 1;
 constexpr UINT kBroadcastTimer = 2;
 constexpr UINT kIdleMs = 15000;
@@ -873,6 +881,49 @@ HWND CreateMsgWindow() {
                            HWND_MESSAGE, nullptr, wc.hInstance, nullptr);
 }
 
+// Empties the index folder after the engine let go of it. Only the folder the
+// service validated as private (service-owned) is touched; links are removed
+// without following them, and the folder itself stays.
+void PurgeIndexContents(const std::wstring& root) {
+    if (root.size() < 4) return;
+    WIN32_FIND_DATAW data{};
+    HANDLE find = FindFirstFileExW((root + L"\\*").c_str(), FindExInfoBasic, &data,
+                                   FindExSearchNameMatch, nullptr, 0);
+    if (find == INVALID_HANDLE_VALUE) return;
+    do {
+        const std::wstring name = data.cFileName;
+        if (name == L"." || name == L"..") continue;
+        const std::wstring path = root + L"\\" + name;
+        const DWORD attributes = data.dwFileAttributes;
+        if (attributes & FILE_ATTRIBUTE_READONLY)
+            SetFileAttributesW(path.c_str(), attributes & ~FILE_ATTRIBUTE_READONLY);
+        if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (!(attributes & FILE_ATTRIBUTE_REPARSE_POINT)) PurgeIndexContents(path);
+            RemoveDirectoryW(path.c_str());
+        } else {
+            DeleteFileW(path.c_str());
+        }
+    } while (FindNextFileW(find, &data));
+    FindClose(find);
+}
+
+// Runs as SYSTEM after the engine stopped (or before it ever started).
+void ApplySearchSwitch(SearchSwitchRequest request, const std::wstring& validated_index_path) {
+    if (request == SearchSwitchRequest::None) return;
+    IndexConfig config;
+    if (!LoadMachineConfig(config, nullptr)) return;
+    const bool enable = request == SearchSwitchRequest::Enable;
+    if (config.search_enabled != enable) {
+        config.search_enabled = enable;
+        if (!SaveMachineConfig(config, nullptr)) ServiceTrace(L"search switch not saved");
+    }
+    if (request == SearchSwitchRequest::DisablePurge && !validated_index_path.empty() &&
+        CompareStringOrdinal(validated_index_path.c_str(), -1, config.index_path.c_str(), -1, TRUE) == CSTR_EQUAL) {
+        PurgeIndexContents(validated_index_path);
+        ServiceTrace(L"index files removed with the search switch");
+    }
+}
+
 int RunHost(bool as_service, bool test_mode = false,
             std::wstring pipe_name = kPipeName,
             std::wstring mutex_name = kMutexName, std::wstring fixture_root = {}) {
@@ -887,6 +938,7 @@ int RunHost(bool as_service, bool test_mode = false,
     ServiceTrace(L"RunHost entered");
     SetMachineIndexScope(as_service);
     PrivateIndexDirectoryLock index_directory_lock;
+    std::wstring validated_index_path;
     if (as_service) {
         (void)MachineDataRoot();
         IndexConfig config;
@@ -894,6 +946,26 @@ int RunHost(bool as_service, bool test_mode = false,
             ServiceTrace(L"Cannot load index directory configuration");
             SetSvc(SERVICE_STOPPED, ERROR_INVALID_DATA);
             return ERROR_INVALID_DATA;
+        }
+        const auto start_request = g_switch_request.exchange(SearchSwitchRequest::None);
+        if (start_request == SearchSwitchRequest::Enable) {
+            ApplySearchSwitch(start_request, {});
+            config.search_enabled = true;
+        }
+        const bool switch_off = start_request == SearchSwitchRequest::Disable ||
+                                start_request == SearchSwitchRequest::DisablePurge;
+        if (switch_off || !config.search_enabled) {
+            // Search is off: record a pending request, then stop cleanly (exit
+            // code 0, so no recovery restart) without building or opening the index.
+            std::wstring purge_path;
+            if (start_request == SearchSwitchRequest::DisablePurge &&
+                index_directory_lock.Acquire(std::filesystem::path(config.index_path)) &&
+                ProtectIndexDirectory(config.index_path))
+                purge_path = config.index_path;
+            if (switch_off) ApplySearchSwitch(start_request, purge_path);
+            ServiceTrace(L"search is turned off; the service stays stopped");
+            SetSvc(SERVICE_STOPPED);
+            return 0;
         }
         if (!CreateDirectoryW(config.index_path.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) {
             const DWORD failure = GetLastError();
@@ -917,6 +989,7 @@ int RunHost(bool as_service, bool test_mode = false,
             return static_cast<int>(kIndexDirectoryNotPrivate);
         }
         SetActiveIndexDirectory(config.index_path);
+        validated_index_path = config.index_path;
         const std::wstring probe = config.index_path + L"\\.pulse-write-check-" +
             std::to_wstring(GetCurrentProcessId());
         HANDLE check = CreateFileW(probe.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
@@ -1006,6 +1079,7 @@ int RunHost(bool as_service, bool test_mode = false,
     g.engine.Stop();
     TraceSearch("filename_shutdown_engine_done");
     ServiceTrace(L"engine stopped");
+    if (as_service) ApplySearchSwitch(g_switch_request.exchange(SearchSwitchRequest::None), validated_index_path);
     if (g.mutex) {
         ReleaseMutex(g.mutex);
         CloseHandle(g.mutex);
@@ -1025,7 +1099,11 @@ DWORD WINAPI SvcCtrl(DWORD ctrl, DWORD, LPVOID, LPVOID) {
         g.engine.RequestRebuild();
         return NO_ERROR;
     }
-    if (ctrl == SERVICE_CONTROL_STOP || ctrl == SERVICE_CONTROL_SHUTDOWN) {
+    if (ctrl == kServiceDisableControl || ctrl == kServiceDisablePurgeControl)
+        g_switch_request = ctrl == kServiceDisablePurgeControl ? SearchSwitchRequest::DisablePurge
+                                                               : SearchSwitchRequest::Disable;
+    if (ctrl == SERVICE_CONTROL_STOP || ctrl == SERVICE_CONTROL_SHUTDOWN ||
+        ctrl == kServiceDisableControl || ctrl == kServiceDisablePurgeControl) {
         SetSvc(SERVICE_STOP_PENDING);
         g.running = false;
         {
@@ -1037,7 +1115,16 @@ DWORD WINAPI SvcCtrl(DWORD ctrl, DWORD, LPVOID, LPVOID) {
     return NO_ERROR;
 }
 
-VOID WINAPI SvcMain(DWORD, LPWSTR*) {
+VOID WINAPI SvcMain(DWORD argc, LPWSTR* argv) {
+    // StartService arguments follow the service name.
+    bool purge = false;
+    for (DWORD i = 1; argv && i < argc; ++i) if (argv[i] && wcscmp(argv[i], L"--purge-index") == 0) purge = true;
+    for (DWORD i = 1; argv && i < argc; ++i) {
+        if (!argv[i]) continue;
+        if (wcscmp(argv[i], L"--enable-search") == 0) g_switch_request = SearchSwitchRequest::Enable;
+        if (wcscmp(argv[i], L"--disable-search") == 0)
+            g_switch_request = purge ? SearchSwitchRequest::DisablePurge : SearchSwitchRequest::Disable;
+    }
     g.svc = RegisterServiceCtrlHandlerExW(kServiceName, SvcCtrl, nullptr);
     SetSvc(SERVICE_START_PENDING);
     RunHost(true);

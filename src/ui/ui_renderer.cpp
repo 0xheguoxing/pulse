@@ -255,7 +255,7 @@ ToolbarLayout MainRenderer::ToolbarLayoutAt(float w, float create_width, float f
     pins.label_width = pins.drop_mode ? ToolbarPinLabelWidth() : 0.0f;
     if (!vertical_tabs_)
         return MakeToolbarLayout(w, scale_, title_bar_height_, margin_, create_width, left, filter_expand,
-                                 search_min_dip_, group_width, sort_width, filter_width, pin_count_,
+                                 search_hidden_ ? -1.0f : search_min_dip_, group_width, sort_width, filter_width, pin_count_,
                                  selection_span, pins);
     // Command row directly under the title bar; address row centered in it,
     // stopping short of the settings button.
@@ -265,7 +265,7 @@ ToolbarLayout MainRenderer::ToolbarLayoutAt(float w, float create_width, float f
     const TitleChrome chrome = MakeTitleChrome(w, scale_, title_bar_height_);
     const float row_top = (title_bar_height_ - 36.0f * scale_) * 0.5f - 4.0f * scale_;
     const ToolbarLayout row = MakeToolbarLayout(chrome.settings_left - 4.0f * scale_, scale_, row_top,
-                                                margin_, create_width, left, 0.0f, search_min_dip_);
+                                                margin_, create_width, left, 0.0f, search_hidden_ ? -1.0f : search_min_dip_);
     out.navigation = row.navigation;
     out.address = row.address;
     out.search = row.search;
@@ -363,7 +363,7 @@ D2D1_RECT_F MainRenderer::AddressBarRect(float w) const {
     return ToolbarLayoutAt(w,NewButtonWidthPx(w-EffectiveSidebarWidth(w)<600*scale_)).address;
 }
 D2D1_RECT_F MainRenderer::SearchBarRect(float w) const {
-    if (w-EffectiveSidebarWidth(w)<480*scale_) {
+    if (!search_hidden_ && w-EffectiveSidebarWidth(w)<480*scale_) {
         const auto lay = ToolbarLayoutAt(w, NewButtonWidthPx(true));
         return D2D1::RectF(EffectiveSidebarWidth(w)+margin_, lay.address.top, lay.search.right, lay.address.bottom);
     }

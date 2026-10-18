@@ -45,6 +45,14 @@ public:
     static bool ConfigureExcludePathElevated(const std::wstring& path, bool enabled);
     static bool ConfigureSystemExclusionElevated(const std::wstring& group, bool enabled);
     static bool ExportDiagnosticsElevated(const std::wstring& empty_directory, bool include_dumps = false);
+    // Search master switch, no elevation: a running service records it and
+    // stops (purge also empties its index folder); a stopped one is started
+    // just to record it. Turning it on starts the service again. Blocks up to
+    // a few seconds while the service is starting; call off the UI thread.
+    static bool SetServiceSearch(bool enabled, bool purge_index, DWORD* error = nullptr);
+    // Empties an index folder (the per-user helper's UserIndexRoot) once no
+    // helper uses it; retries while a helper finishes its idle exit.
+    static void PurgeIndexFolder(const std::wstring& root);
 
     // Fire-and-forget. Reply arrives as search_msg (wParam = request id).
     void SearchAsync(const Query& q, uint32_t id);

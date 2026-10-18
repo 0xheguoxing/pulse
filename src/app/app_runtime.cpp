@@ -604,12 +604,14 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             vm.settings_show_hidden_files = s.appPrefs.show_hidden_files;
             vm.settings_show_protected_os_files = s.appPrefs.show_protected_os_files;
             vm.settings_search_pinyin = s.appPrefs.search_pinyin;
+            vm.settings_search_enabled = s.appPrefs.search_enabled;
             vm.settings_global_search_enabled = s.appPrefs.global_search_enabled;
             vm.settings_global_search_capturing = s.settings.global_search_hotkey_capturing();
             vm.settings_global_search_hotkey = s.settings.GlobalSearchHotkeyText();
             vm.settings_global_search_error = s.settings.global_search_error();
             vm.settings_content_status = ContentIndexStatusText(s);
-            vm.settings_expanded = s.settingsExpanded;
+            // Search off hides the index maintenance details on the search page.
+            vm.settings_expanded = s.appPrefs.search_enabled ? s.settingsExpanded : (s.settingsExpanded & ~2u);
             FillShortcutsVm(s, vm);  // 快捷键: sidebar badge everywhere, the page view on page 7
             if (vm.settings_page == 5) vm.settings_preview_codecs = ui::DetectPreviewCodecs(false, s.hwnd);
             if (vm.settings_page == 6) {
@@ -2038,7 +2040,7 @@ static std::wstring ContextStatusHint(AppState& s, StatusHintAction& action) {
     const int selected = tab->SelectedCount();
     if (s.filterEditing && !s.filterSelectMode) {
         // While typing a filter the selection may be hidden; explain the filter instead.
-        if (!tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path))
+        if (s.appPrefs.search_enabled && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path))
             action = StatusHintAction::SearchSubfolders;
         return l10n::Get(I::HintFiltering);
     }
@@ -2059,7 +2061,7 @@ static std::wstring ContextStatusHint(AppState& s, StatusHintAction& action) {
     }
     if (!tab->filter_text.empty() && !s.filterSelectMode) {
         // Pane filter vs. search: say that subfolders are not included.
-        if (!tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path))
+        if (s.appPrefs.search_enabled && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path))
             action = StatusHintAction::SearchSubfolders;
         return l10n::Get(I::HintFiltering);
     }
@@ -2072,7 +2074,7 @@ static std::wstring ContextStatusHint(AppState& s, StatusHintAction& action) {
         return l10n::Get(I::HintSplit);
     }
     action = StatusHintAction::Shortcuts;
-    return l10n::Get(I::StatusHintIdle);
+    return l10n::Get(s.appPrefs.search_enabled ? I::StatusHintIdle : I::StatusHintIdleNoSearch);
 }
 
 static const std::wstring& StatusHintActionText(StatusHintAction action) {

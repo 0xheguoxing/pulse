@@ -7,7 +7,10 @@
 #include "app_hosted_edit.h"
 #include "places.h"
 #include "../common/localization.h"
+#include "../ui/confirm_dialog.h"
+#include "../index/index_config.h"
 #include <algorithm>
+#include <thread>
 
 namespace pulse {
 namespace {
@@ -78,7 +81,7 @@ GlobalSearchEvents MakeGlobalSearchEvents(AppState& s) {
 void ApplyGlobalSearchSettings(AppState& s) {
     ApplyKeymapPrefs(s);  // the shortcut conflict checks see the hotkey
     if (!HotkeyAllowed(s)) return;
-    const bool enabled = s.appPrefs.global_search_enabled;
+    const bool enabled = s.appPrefs.global_search_enabled && s.appPrefs.search_enabled;
     const bool ok = s.globalSearchHotkey.Update(ServiceWindow(s), enabled,
         s.appPrefs.global_search_modifiers, s.appPrefs.global_search_key);
     s.settings.SetGlobalSearchError(ok ? std::wstring{} : l10n::Get(
@@ -87,6 +90,62 @@ void ApplyGlobalSearchSettings(AppState& s) {
     if (!enabled || !ok) s.globalSearchWindow.Hide();
     s.tray_controller.SetVisible(WantsTrayIcon(s, s.hidden_to_tray));
     InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void ApplySearchSwitch(AppState& s, bool purge_index) {
+    const bool on = s.appPrefs.search_enabled;
+    s.renderer.SetSearchHidden(!on);
+    if (!on) {
+        if (s.addressSearching || IsAddressSearchResults(ActiveTab(s))) ExitAddressSearch(s);
+        s.globalSearchWindow.Hide();
+        // Stop the clients first so none of them starts the service again.
+        s.index.Stop();
+        s.contentSearch.Stop();
+        s.networkIndex.Stop();
+        s.folderSizes.SetIndexEnabled(false);
+    } else if (!s.isolatedTest && !s.shot.active) {
+        const HWND service_window = ServiceWindow(s);
+        s.index.Start(service_window, WM_INDEX_NOTIFY, WM_INDEX_SEARCH);
+        s.networkIndex.Start(service_window, WM_NETWORK_INDEX_NOTIFY, WM_NETWORK_INDEX_SEARCH);
+        s.contentSearch.Start(service_window, WM_CONTENT_SEARCH,
+            s.contentIndexObserver ? index::ContentAgentMode::Observer : index::ContentAgentMode::Instant);
+        s.folderSizes.SetIndexEnabled(true);
+    }
+    if (!s.isolatedTest && !s.shot.active) {
+        const bool installed = s.index.ServiceInstalled();
+        // The service records the switch itself (no elevation); this can wait a
+        // few seconds for a starting service, so it runs off the UI thread.
+        const std::wstring user_index = purge_index ? index::UserIndexRoot() : std::wstring();
+        std::thread([on, purge_index, installed, user_index] {
+            if (installed) index::IndexClient::SetServiceSearch(on, purge_index);
+            if (!on && purge_index) index::IndexClient::PurgeIndexFolder(user_index);
+        }).detach();
+    }
+    ApplyGlobalSearchSettings(s);
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void ToggleSearchSwitch(AppState& s) {
+    bool purge = false;
+    if (s.appPrefs.search_enabled) {
+        ui::ConfirmDialogSpec spec;
+        spec.title = l10n::Get(l10n::StringId::SearchSwitchOffTitle);
+        spec.message = l10n::Get(l10n::StringId::SearchSwitchOffMessage);
+        spec.confirm_text = l10n::Get(l10n::StringId::SearchSwitchOffPurge);
+        spec.secondary_text = l10n::Get(l10n::StringId::SearchSwitchOffKeep);
+        spec.cancel_text = l10n::Get(l10n::StringId::Cancel);
+        spec.glyph = L"\xE721";
+        spec.default_choice = ui::ConfirmChoice::Secondary;
+        const auto choice = ui::ShowConfirmDialogEx(s.hwnd, spec, s.darkMode, s.accentColor);
+        if (choice == ui::ConfirmChoice::Cancel) return;
+        purge = choice == ui::ConfirmChoice::Confirm;
+    }
+    s.appPrefs.search_enabled = !s.appPrefs.search_enabled;
+    if (!s.isolatedTest && !s.appPrefs.Save()) {
+        s.appPrefs.search_enabled = !s.appPrefs.search_enabled;
+        return;
+    }
+    ApplySearchSwitch(s, purge);
 }
 
 bool HandleGlobalSearchHotkeyCapture(AppState& s, unsigned key) {
@@ -106,7 +165,7 @@ bool HandleGlobalSearchHotkeyCapture(AppState& s, unsigned key) {
 }
 
 void ToggleGlobalSearch(AppState& s) {
-    if (!s.appPrefs.global_search_enabled || !s.globalSearchHotkey.Registered()) return;
+    if (!s.appPrefs.global_search_enabled || !s.appPrefs.search_enabled || !s.globalSearchHotkey.Registered()) return;
     if (s.globalSearchWindow.Visible()) {
         s.globalSearchWindow.Hide();
         return;

@@ -2431,5 +2431,12 @@
 #define IDS_OP_UNDONE                                                                    3641
 #define IDS_RENAME_EXTENSION_CONFIRM                                                     3642
 #define IDS_PHOTO_WALL                                                                   3643
+#define IDS_SEARCH_SWITCH                                                                3644
+#define IDS_SEARCH_SWITCH_DESC                                                           3645
+#define IDS_SEARCH_SWITCH_OFF_TITLE                                                      3646
+#define IDS_SEARCH_SWITCH_OFF_MESSAGE                                                    3647
+#define IDS_SEARCH_SWITCH_OFF_PURGE                                                      3648
+#define IDS_SEARCH_SWITCH_OFF_KEEP                                                       3649
+#define IDS_STATUS_HINT_IDLE_NO_SEARCH                                                   3650
 
 #endif  // PULSE_STRING_IDS_H

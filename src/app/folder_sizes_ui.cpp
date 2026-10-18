@@ -143,7 +143,7 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
     }
     const bool probe_index = (s.isolatedTest || s.shot.active) &&
         GetEnvironmentVariableW(L"PULSE_TEST_FOLDER_INDEX", nullptr, 0) > 0;
-    s.folderSizes.SetIndexEnabled((!s.isolatedTest && !s.shot.active) || probe_index);
+    s.folderSizes.SetIndexEnabled(((!s.isolatedTest && !s.shot.active) || probe_index) && s.appPrefs.search_enabled);
     s.folderSizes.Sync(std::move(requests), std::move(roots));
     // Same visibility rule as the listing: a folder holding only entries the
     // current settings hide looks empty, like the listing inside it.

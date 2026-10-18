@@ -2415,4 +2415,11 @@ BEGIN
     IDS_OP_UNDONE "已復原"
     IDS_RENAME_EXTENSION_CONFIRM "變更副檔名後，檔案可能無法開啟。按 Enter 確認，Esc 返回"
     IDS_PHOTO_WALL "相片牆"
+    IDS_SEARCH_SWITCH "搜尋與索引"
+    IDS_SEARCH_SWITCH_DESC "執行索引服務，提供網址列搜尋、全域搜尋和內容搜尋。關閉後只保留目前資料夾篩選"
+    IDS_SEARCH_SWITCH_OFF_TITLE "關閉搜尋與索引？"
+    IDS_SEARCH_SWITCH_OFF_MESSAGE "索引服務會停止，開機後也不再執行。網址列搜尋、全域搜尋和內容搜尋將隱藏，目前資料夾篩選（Ctrl+F）仍可使用。此設定對這台電腦上的所有使用者生效。"
+    IDS_SEARCH_SWITCH_OFF_PURGE "關閉並刪除索引"
+    IDS_SEARCH_SWITCH_OFF_KEEP "關閉，保留索引"
+    IDS_STATUS_HINT_IDLE_NO_SEARCH "空格 預覽  ·  Ctrl+F 篩選"
 END

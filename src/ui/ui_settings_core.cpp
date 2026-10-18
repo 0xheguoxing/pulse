@@ -417,7 +417,14 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
             draw_card(lay.change_days_row);segmented(lay.change_days_row,lay.change_days,days,day_values,vm.settings_change_days,H::SettingsChangeDays,I::SettingsChangeDays,I::SettingsChangeTrackingDesc);
         }
         text(l10n::Get(I::SettingsImmediate),lay.footer,true);
+    } else if(!vm.settings_search_enabled) {
+        text(l10n::Get(I::Search),lay.search_master_section);
+        draw_card(lay.search_master_row);
+        toggle(lay.search_master_row,I::SearchSwitch,I::SearchSwitchDesc,L"\xE71E",false,38);
     } else {
+        text(l10n::Get(I::Search),lay.search_master_section);
+        draw_card(lay.search_master_row);
+        toggle(lay.search_master_row,I::SearchSwitch,I::SearchSwitchDesc,L"\xE71E",true,38);
         section(0,I::SearchModeName);section(1,I::SearchModeContent);
         draw_card(lay.group[0]);draw_card(lay.group[1]);
         toggle(lay.global_search_row,I::GlobalSearch,I::GlobalSearchDesc,L"\xE721",vm.settings_global_search_enabled,15);divider(lay.global_search_row);

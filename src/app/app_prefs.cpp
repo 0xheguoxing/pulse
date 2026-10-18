@@ -88,6 +88,7 @@ void AppPrefs::ResetToDefaults() {
     folder_sorts.Clear();
     folder_groups.Clear();
     search_pinyin = true;
+    search_enabled = true;
     global_search_enabled = false;
     global_search_modifiers = 1;
     global_search_key = 32;
@@ -219,6 +220,8 @@ std::wstring AppPrefs::ToJson() const {
     out += show_protected_os_files ? L"true" : L"false";
     out += L",\n  \"search_pinyin\":";
     out += search_pinyin ? L"true" : L"false";
+    out += L",\n  \"search_enabled\":";
+    out += search_enabled ? L"true" : L"false";
     out += L",\n  \"global_search_enabled\":";
     out += global_search_enabled ? L"true" : L"false";
     out += L",\n  \"global_search_modifiers\":" + std::to_wstring(global_search_modifiers);
@@ -409,6 +412,7 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     if (text_render < 0 || text_render > 2) text_render = 0;
     ui_font_scale = NormalizeUiFontScale(pulse::json::ExtractInt(json, L"ui_font_scale", 100));
     search_pinyin = pulse::json::ExtractBool(json, L"search_pinyin", true);
+    search_enabled = pulse::json::ExtractBool(json, L"search_enabled", true);
     global_search_enabled = pulse::json::ExtractBool(json, L"global_search_enabled", false);
     const int modifiers = pulse::json::ExtractInt(json, L"global_search_modifiers", 1);
     const int key = pulse::json::ExtractInt(json, L"global_search_key", 32);

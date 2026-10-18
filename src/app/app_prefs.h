@@ -85,6 +85,9 @@ struct AppPrefs {
     FolderGroupPrefs folder_groups;
     bool search_pinyin = true;
     bool global_search_enabled = false;
+    // Search master switch: index service, search box, global and content search.
+    // Off leaves only the folder filter; the service exits at start until it is on.
+    bool search_enabled = true;
     uint32_t global_search_modifiers = 1; // MOD_ALT
     uint32_t global_search_key = 32; // VK_SPACE
     // Quick search popup size in DIP after the user resized it; 0 = default.

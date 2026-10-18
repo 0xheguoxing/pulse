@@ -100,13 +100,100 @@ void IndexClient::StartStoppedService() {
         if (QueryServiceStatus(svc, &status) && status.dwCurrentState == SERVICE_STOPPED &&
             !IndexConfigurationRunning()) {
             service_start_tick_ = now;
-            StartServiceW(svc, 0, nullptr);   // the pipe shows up once it runs
+            // Only a client that is running wants search; this also clears a
+            // switch another session turned off.
+            const wchar_t* args[] = {L"--enable-search"};
+            StartServiceW(svc, 1, args);   // the pipe shows up once it runs
         }
         CloseServiceHandle(svc);
     } else {
         service_start_tick_ = now;   // denied (older DACL) or gone: do not ask every second
     }
     CloseServiceHandle(scm);
+}
+
+bool IndexClient::SetServiceSearch(bool enabled, bool purge_index, DWORD* error) {
+    DWORD failure = NO_ERROR;
+    bool ok = false;
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scm) {
+        if (error) *error = GetLastError();
+        return false;
+    }
+    if (SC_HANDLE svc = OpenServiceW(scm, kServiceName,
+            SERVICE_QUERY_STATUS | SERVICE_START | SERVICE_USER_DEFINED_CONTROL)) {
+        constexpr DWORD kDisable = 129, kDisablePurge = 130;   // index_host.cpp
+        for (int attempt = 0; attempt < 50; ++attempt) {
+            SERVICE_STATUS status{};
+            if (!QueryServiceStatus(svc, &status)) { failure = GetLastError(); break; }
+            if (status.dwCurrentState == SERVICE_STOPPED) {
+                const wchar_t* args[] = {enabled ? L"--enable-search" : L"--disable-search", L"--purge-index"};
+                const DWORD count = !enabled && purge_index ? 2 : 1;
+                ok = StartServiceW(svc, count, args) != FALSE;
+                if (!ok && GetLastError() == ERROR_SERVICE_ALREADY_RUNNING) { Sleep(100); continue; }
+                if (!ok) failure = GetLastError();
+                break;
+            }
+            if (status.dwCurrentState == SERVICE_RUNNING) {
+                if (enabled) { ok = true; break; }
+                SERVICE_STATUS after{};
+                ok = ControlService(svc, purge_index ? kDisablePurge : kDisable, &after) != FALSE;
+                if (!ok && GetLastError() == ERROR_SERVICE_CANNOT_ACCEPT_CTRL) { Sleep(100); continue; }
+                if (!ok) failure = GetLastError();
+                break;
+            }
+            Sleep(100);   // start or stop pending
+        }
+        if (!ok && failure == NO_ERROR) failure = ERROR_SERVICE_REQUEST_TIMEOUT;
+        CloseServiceHandle(svc);
+    } else {
+        failure = GetLastError();
+    }
+    CloseServiceHandle(scm);
+    if (error) *error = failure;
+    return ok;
+}
+
+namespace {
+void RemoveTree(const std::wstring& root) {
+    WIN32_FIND_DATAW data{};
+    HANDLE find = FindFirstFileExW((root + L"\\*").c_str(), FindExInfoBasic, &data,
+                                   FindExSearchNameMatch, nullptr, 0);
+    if (find == INVALID_HANDLE_VALUE) return;
+    do {
+        const std::wstring name = data.cFileName;
+        if (name == L"." || name == L"..") continue;
+        const std::wstring path = root + L"\\" + name;
+        if (data.dwFileAttributes & FILE_ATTRIBUTE_READONLY)
+            SetFileAttributesW(path.c_str(), data.dwFileAttributes & ~FILE_ATTRIBUTE_READONLY);
+        if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (!(data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) RemoveTree(path);
+            RemoveDirectoryW(path.c_str());
+        } else {
+            DeleteFileW(path.c_str());
+        }
+    } while (FindNextFileW(find, &data));
+    FindClose(find);
+}
+}
+
+void IndexClient::PurgeIndexFolder(const std::wstring& root) {
+    if (root.size() < 4) return;
+    // A helper still finishing its idle exit holds the files for a moment.
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        RemoveTree(root);
+        WIN32_FIND_DATAW data{};
+        HANDLE find = FindFirstFileExW((root + L"\\*").c_str(), FindExInfoBasic, &data,
+                                       FindExSearchNameMatch, nullptr, 0);
+        bool empty = true;
+        if (find != INVALID_HANDLE_VALUE) {
+            do { if (wcscmp(data.cFileName, L".") && wcscmp(data.cFileName, L"..")) empty = false; }
+            while (empty && FindNextFileW(find, &data));
+            FindClose(find);
+        }
+        if (empty) return;
+        Sleep(1000);
+    }
 }
 
 bool IndexClient::SpawnHelper() {

@@ -367,7 +367,16 @@ void AddLiveNetworkRoot(AppState& s, app::Tab& tab) {
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
+void DeliverIndexSearchResult(AppState& s, uint32_t id, index::SearchResult&& result,
+                              bool network_snapshot);
+
 void DispatchIndexSearch(AppState& s, const index::Query& query, uint32_t id) {
+    if (!s.appPrefs.search_enabled) {
+        // Search off: no index client runs. Answer with an empty final result so
+        // a palette, saved search or restored search tab does not wait forever.
+        DeliverIndexSearchResult(s, id, index::SearchResult{}, false);
+        return;
+    }
     // Both providers return candidates from the beginning of their own ordering.
     // The UI then merges, globally sorts and applies the requested page offset.
     index::Query provider_query = query;

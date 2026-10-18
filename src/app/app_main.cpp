@@ -1063,12 +1063,16 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 (wcscmp(fixture_scope, L"selection") == 0 || wcscmp(fixture_scope, L"menu") == 0 ||
                  wcscmp(fixture_scope, L"layout") == 0);
 #endif
+            s->renderer.SetSearchHidden(!s->appPrefs.search_enabled);
             if (!selection_fixture) {
                 const HWND service_window = ServiceWindow(*s);
-                s->index.Start(service_window, WM_INDEX_NOTIFY, WM_INDEX_SEARCH);
+                // Search off: no index client, so nothing starts the service or a helper.
+                if (s->appPrefs.search_enabled) s->index.Start(service_window, WM_INDEX_NOTIFY, WM_INDEX_SEARCH);
                 StartChangeTracking(*s);
-                s->networkIndex.Start(service_window, WM_NETWORK_INDEX_NOTIFY, WM_NETWORK_INDEX_SEARCH);
-                s->contentSearch.Start(service_window, WM_CONTENT_SEARCH, s->contentIndexObserver ? index::ContentAgentMode::Observer : index::ContentAgentMode::Instant);
+                if (s->appPrefs.search_enabled) {
+                    s->networkIndex.Start(service_window, WM_NETWORK_INDEX_NOTIFY, WM_NETWORK_INDEX_SEARCH);
+                    s->contentSearch.Start(service_window, WM_CONTENT_SEARCH, s->contentIndexObserver ? index::ContentAgentMode::Observer : index::ContentAgentMode::Instant);
+                }
                 s->duplicateSearch.Start(service_window, WM_DUPLICATE_SCAN, false);
             }
             s->settings.SetServiceInstalled(s->index.ServiceInstalled());

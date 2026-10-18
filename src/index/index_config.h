@@ -43,6 +43,9 @@ struct IndexConfig {
     bool exclude_system = true;
     std::vector<std::wstring> system_groups{L"windows", L"temp", L"old", L"node_modules"};
     bool system_groups_saved = false;
+    // Master switch from the app's search setting. Off: the service exits at
+    // start (it is still installed) until Pulse starts it with --enable-search.
+    bool search_enabled = true;
 
     bool IsExcluded(const std::wstring& id) const;
     bool IsPathExcluded(std::wstring_view path) const;

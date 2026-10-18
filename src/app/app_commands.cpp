@@ -3852,6 +3852,7 @@ static void FlipToolbarTool(AppState& s, size_t index) {
 }
 
 void ShowAdvancedSearch(AppState& s, bool require_scope) {
+    if (!s.appPrefs.search_enabled) return;
     app::Tab* tab = ActiveTab(s);
     std::wstring current;
     if (tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path))

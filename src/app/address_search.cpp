@@ -165,6 +165,7 @@ void ExitAddressSearch(AppState& s) {
 }
 
 void ShowAddressSearch(AppState& s) {
+    if (!s.appPrefs.search_enabled) return;   // search off: only the folder filter remains
     if (s.addressSearching && s.hwndAddressEdit) {
         SetForegroundWindow(GetAncestor(s.hwndAddressEdit, GA_ROOT));
         SetFocus(s.hwndAddressEdit);
@@ -248,6 +249,7 @@ void FocusSearchResults(AppState& s, bool select_first) {
 }
 
 void BeginSearchEditAt(AppState& s, int x, int y) {
+    if (!s.appPrefs.search_enabled) return;
     ShowAddressSearch(s);
     if (!s.addressSearching || !s.hwndAddressEdit) return;
     POINT point{x, y};

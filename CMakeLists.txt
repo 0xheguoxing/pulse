@@ -223,6 +223,9 @@ add_executable(pulse_index_migration_test
 target_link_libraries(pulse_index_migration_test PRIVATE shell32 advapi32)
 add_executable(pulse_index_security_test src/bench/index_security_test.cpp src/index/index_migration.cpp src/index/index_config.cpp)
 target_link_libraries(pulse_index_security_test PRIVATE advapi32)
+# Search master switch: machine config and toolbar without the search field.
+add_executable(pulse_search_switch_test src/bench/search_switch_test.cpp src/index/index_migration.cpp src/index/index_config.cpp)
+target_link_libraries(pulse_search_switch_test PRIVATE advapi32)
 add_executable(pulse_ffmpeg_process_audit_test src/bench/ffmpeg_process_audit_test.cpp)
 target_link_libraries(pulse_ffmpeg_process_audit_test PRIVATE shell32)
 

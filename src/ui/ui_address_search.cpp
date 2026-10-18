@@ -12,6 +12,7 @@ D2D1_RECT_F MainRenderer::AddressSearchButtonRect(float w) const {
 }
 
 void MainRenderer::DrawAddressSearchChrome(const WindowViewModel& vm, float w, const Theme& theme) {
+    if (search_hidden_) return;
     const auto field = SearchBarRect(w);
     if (!vm.address_searching && w-EffectiveSidebarWidth(w)<480*scale_) {
         const auto button=D2D1::RectF(field.right-32*scale_,field.top,field.right,field.bottom);

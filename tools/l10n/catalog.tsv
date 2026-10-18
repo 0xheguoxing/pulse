@@ -2438,3 +2438,10 @@ OpUndoneCreate	IDS_OP_UNDONE_CREATE	3640	已撤销新建	New item undone	已復�
 OpUndone	IDS_OP_UNDONE	3641	已撤销	Undone	已復原
 RenameExtensionConfirm	IDS_RENAME_EXTENSION_CONFIRM	3642	改了扩展名，文件可能无法打开。按 Enter 确认，Esc 返回	Changing the extension may make the file unusable. Enter to confirm, Esc to go back	變更副檔名後，檔案可能無法開啟。按 Enter 確認，Esc 返回
 PhotoWall	IDS_PHOTO_WALL	3643	照片墙	Photo wall	相片牆
+SearchSwitch	IDS_SEARCH_SWITCH	3644	搜索与索引	Search and indexing	搜尋與索引
+SearchSwitchDesc	IDS_SEARCH_SWITCH_DESC	3645	运行索引服务，提供地址栏搜索、全局搜索和内容搜索。关闭后只保留当前文件夹筛选	Runs the index service for address bar, global and content search. When off, only the folder filter remains	執行索引服務，提供網址列搜尋、全域搜尋和內容搜尋。關閉後只保留目前資料夾篩選
+SearchSwitchOffTitle	IDS_SEARCH_SWITCH_OFF_TITLE	3646	关闭搜索与索引？	Turn off search and indexing?	關閉搜尋與索引？
+SearchSwitchOffMessage	IDS_SEARCH_SWITCH_OFF_MESSAGE	3647	索引服务会停止，开机后也不再运行。地址栏搜索、全局搜索和内容搜索将隐藏，当前文件夹筛选（Ctrl+F）仍可使用。此设置对这台电脑上的所有用户生效。	The index service stops and will not run at startup. Address bar, global and content search are hidden; the folder filter (Ctrl+F) still works. This applies to every user on this PC.	索引服務會停止，開機後也不再執行。網址列搜尋、全域搜尋和內容搜尋將隱藏，目前資料夾篩選（Ctrl+F）仍可使用。此設定對這台電腦上的所有使用者生效。
+SearchSwitchOffPurge	IDS_SEARCH_SWITCH_OFF_PURGE	3648	关闭并删除索引	Turn off and delete index	關閉並刪除索引
+SearchSwitchOffKeep	IDS_SEARCH_SWITCH_OFF_KEEP	3649	关闭，保留索引	Turn off, keep index	關閉，保留索引
+StatusHintIdleNoSearch	IDS_STATUS_HINT_IDLE_NO_SEARCH	3650	空格 预览  ·  Ctrl+F 筛选	Space preview  ·  Ctrl+F filter	空格 預覽  ·  Ctrl+F 篩選

@@ -2417,6 +2417,13 @@ BEGIN
     IDS_OP_UNDONE "已撤销"
     IDS_RENAME_EXTENSION_CONFIRM "改了扩展名，文件可能无法打开。按 Enter 确认，Esc 返回"
     IDS_PHOTO_WALL "照片墙"
+    IDS_SEARCH_SWITCH "搜索与索引"
+    IDS_SEARCH_SWITCH_DESC "运行索引服务，提供地址栏搜索、全局搜索和内容搜索。关闭后只保留当前文件夹筛选"
+    IDS_SEARCH_SWITCH_OFF_TITLE "关闭搜索与索引？"
+    IDS_SEARCH_SWITCH_OFF_MESSAGE "索引服务会停止，开机后也不再运行。地址栏搜索、全局搜索和内容搜索将隐藏，当前文件夹筛选（Ctrl+F）仍可使用。此设置对这台电脑上的所有用户生效。"
+    IDS_SEARCH_SWITCH_OFF_PURGE "关闭并删除索引"
+    IDS_SEARCH_SWITCH_OFF_KEEP "关闭，保留索引"
+    IDS_STATUS_HINT_IDLE_NO_SEARCH "空格 预览  ·  Ctrl+F 筛选"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4833,6 +4840,13 @@ BEGIN
     IDS_OP_UNDONE "Undone"
     IDS_RENAME_EXTENSION_CONFIRM "Changing the extension may make the file unusable. Enter to confirm, Esc to go back"
     IDS_PHOTO_WALL "Photo wall"
+    IDS_SEARCH_SWITCH "Search and indexing"
+    IDS_SEARCH_SWITCH_DESC "Runs the index service for address bar, global and content search. When off, only the folder filter remains"
+    IDS_SEARCH_SWITCH_OFF_TITLE "Turn off search and indexing?"
+    IDS_SEARCH_SWITCH_OFF_MESSAGE "The index service stops and will not run at startup. Address bar, global and content search are hidden; the folder filter (Ctrl+F) still works. This applies to every user on this PC."
+    IDS_SEARCH_SWITCH_OFF_PURGE "Turn off and delete index"
+    IDS_SEARCH_SWITCH_OFF_KEEP "Turn off, keep index"
+    IDS_STATUS_HINT_IDLE_NO_SEARCH "Space preview  ·  Ctrl+F filter"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

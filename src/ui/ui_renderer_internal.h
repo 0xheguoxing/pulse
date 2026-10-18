@@ -2427,6 +2427,7 @@ struct SettingsLayout {
     D2D1_RECT_F shell_tags_row{};
     D2D1_RECT_F change_tracking_row{}, change_days_row{}, change_days[3]{};
     D2D1_RECT_F search_pinyin_row{};
+    D2D1_RECT_F search_master_section{}, search_master_row{};
     D2D1_RECT_F global_search_row{}, global_search_hotkey_row{}, global_search_hotkey_button{};
     D2D1_RECT_F content_index_row{};
     D2D1_RECT_F index_info{};
@@ -2551,7 +2552,17 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
     } else if (vm.settings_page == 1) {
         const float card_left = l.content.left + pad;
         const float card_right = l.content.right - pad;
+        // The master switch has its own card above every search setting.
         y += 30*scale;
+        l.search_master_section = D2D1::RectF(card_left, y, card_right, y + 28*scale);
+        y += 30*scale;
+        l.search_master_row = D2D1::RectF(card_left, y, card_right, y + 88*scale);
+        y += 88*scale;
+        if (!vm.settings_search_enabled) {
+            // Search off: only the master switch; nothing below it applies.
+            y += 24.0f * scale;
+        } else {
+        y += 24*scale;
         l.section[0] = D2D1::RectF(card_left, y, card_right, y + 28*scale);
         y += 30*scale;
         l.global_search_row = D2D1::RectF(card_left, y, card_right, y + 88*scale);
@@ -2687,6 +2698,7 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
         y += 24.0f * scale;
         }
         y = LayoutSettingsContent(l, vm, scale, y, painter);
+        }
     } else if (vm.settings_page == 2) {
         {
             // Intro, then the layer cards placed as LayoutSettingsSysCtx places them.

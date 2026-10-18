@@ -11,6 +11,7 @@
 #include "explorer_shortcuts.h"
 #include "app_updates.h"
 #include "app_internal.h"
+#include "global_search_controller.h"
 #include "selection_caps.h"
 #include "app_input.h"
 #include "app_hover.h"
@@ -2906,7 +2907,9 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             OpenSettingsTab(*s, hit.index);
         } else if (HandleSettingsControl(*s, hit)) {
         } else if (hit.region == ui::HitTestResult::SettingsToggle) {
-            s->settings.ToggleUi(hit.index);
+            // Search master switch: asks before turning off, so it is handled here.
+            if (hit.index == 38) ToggleSearchSwitch(*s);
+            else s->settings.ToggleUi(hit.index);
             InvalidateRect(hwnd, nullptr, FALSE);
         } else if (hit.region == ui::HitTestResult::SettingsAccent) {
             s->bloom_accent.SetPressed(hit.index);

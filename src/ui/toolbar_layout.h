@@ -52,7 +52,9 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
         out.navigation[i] = NavigationButtonAt(x, top + 6 * scale, scale, nav_step);
         x += nav_step;
     }
-    float search_width = std::clamp(available*0.27f, 140*scale, 360*scale);
+    // A negative search_min_dip hides the field (search master switch off).
+    const bool search_hidden = search_min_dip < 0.0f;
+    float search_width = search_hidden ? 0.0f : std::clamp(available*0.27f, 140*scale, 360*scale);
     if (search_min_dip > 0.0f && available >= 480*scale) {
         // While a query is being edited (>= 500 DIP requested) the address bar may
         // shrink to 60 DIP; a results page keeps 120 DIP of breadcrumb.
@@ -63,7 +65,7 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
     out.search = {width-margin-search_width,top+4*scale,width-margin,top+40*scale};
     out.address = {x+margin,top+4*scale,std::max(x+margin+60*scale,out.search.left-margin),top+40*scale};
     const bool overflow = available < 540*scale;
-    if (available < 480*scale) {
+    if (available < 480*scale && !search_hidden) {
         out.search.left=out.search.right-32*scale;
     }
     out.navigation[3] = NavigationButtonAt(out.search.left - margin - nav_step, top + 6 * scale, scale, nav_step);
