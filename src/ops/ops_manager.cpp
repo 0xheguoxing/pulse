@@ -4,6 +4,7 @@
 #include "../common/runtime_log.h"
 #include "operation_presentation.h"
 #include "transfer_rate_estimator.h"
+#include "transfer_engine.h"
 #include "shell_command.h"
 #include "elevated_transfer.h"
 #include "../ipc/shell_client.h"
@@ -25,6 +26,7 @@
 #include <cwctype>
 #include <filesystem>
 #include <system_error>
+#include <memory>
 #include <thread>
 #include <unordered_set>
 #include <vector>
@@ -501,6 +503,10 @@ struct TransferEntry {
     bool destination_preexisting = false;
     bool directory_prepared = false;
     bool renamed = false;  // moved by a same-volume rename while scanning
+    // Filled in as items finish, possibly out of order on the copy pool; the
+    // completed lists are built from these in entry order afterwards.
+    bool completed = false;
+    bool source_removed = false;
     uint64_t bytes = 0;
     DWORD attributes = FILE_ATTRIBUTE_NORMAL;
     FILETIME created{};
@@ -1376,8 +1382,10 @@ void OpsManager::SetStatus(const std::function<void(OpStatus&)>& fn) {
 constexpr ULONGLONG kProgressNotifyMs = 50;
 // Tasks this small show every finished item; it costs nothing at that count.
 constexpr uint64_t kEveryItemMaxTotal = 64;
-// Below this size CopyFile2 runs without a progress callback.
+// Below this size CopyFile2 runs without a progress callback, and on the
+// copy pool when there are at least kPoolMinFiles such files.
 constexpr uint64_t kProgressCallbackMinBytes = 1024 * 1024;
+constexpr size_t kPoolMinFiles = 16;
 
 void OpsManager::SetProgressStatus(const std::function<void(OpStatus&)>& fn) {
     bool item_finished = false;
@@ -2344,9 +2352,8 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             if (req.type == OpType::Move && !root.destination_preexisting &&
                 MoveFileExW(source.c_str(), root.destination.c_str(), 0)) {
                 root.renamed = true;
-                moved_sources_.push_back(root.source);
-                completed_sources.push_back(root.source);
-                completed_destinations.push_back(root.destination);
+                root.completed = true;
+                root.source_removed = true;
                 entries.push_back(root);
                 continue;
             }
@@ -2565,8 +2572,48 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         return true;
     };
 
+    // Small files without a conflict go to a copy pool sized for the storage;
+    // everything else stays on this thread, in order.
+    std::unique_ptr<SmallCopyPool> pool;
+    std::unordered_set<std::wstring> pooled_destinations;  // outside fresh folders
+    if (!verify_copies_.load()) {
+        size_t small_files = 0;
+        for (const auto& candidate : entries)
+            if (!candidate.directory && !candidate.reparse && !candidate.renamed &&
+                candidate.bytes < kProgressCallbackMinBytes) ++small_files;
+        const unsigned threads = small_files >= kPoolMinFiles
+            ? TransferThreadCount(entries.empty() ? std::wstring{} : entries.front().source, req.dest_dir) : 1;
+        if (threads > 1)
+            pool = std::make_unique<SmallCopyPool>(threads, transfer_cancel_, transfer_pause_,
+                                                   transfer_control_mutex_, transfer_control_cv_);
+    }
+    const auto apply_pooled = [&](std::vector<SmallCopyResult> results) {
+        for (const auto& result : results) {
+            if (!result.ran) continue;
+            auto& done = entries[result.index];
+            const DWORD code = FAILED(result.hr) ? HRESULT_CODE(result.hr) : result.delete_error;
+            if (code != ERROR_SUCCESS) {
+                if (failure.empty()) {
+                    failure_hr = FAILED(result.hr) ? result.hr : HRESULT_FROM_WIN32(code);
+                    failure = Win32Message(code) + L" | " + done.source;
+                }
+                pool->Stop();
+                continue;
+            }
+            done.completed = true;
+            done.source_removed = result.source_removed;
+            ++processed_items;
+            publish_progress(done, done.bytes, done.bytes, processed_items);
+            committed_bytes += done.bytes;
+        }
+    };
+    const auto drain_pool = [&] {
+        while (pool && pool->Outstanding() > 0) apply_pooled(pool->Take(true));
+    };
+
     for (size_t index = 0; failure.empty() && !cancelled && index < entries.size(); ++index) {
-        if (stop_requested()) break;
+        if (pool) apply_pooled(pool->Take(false));
+        if (!failure.empty() || stop_requested()) break;
         auto& entry = entries[index];
         if (entry.renamed) {
             ++processed_items;
@@ -2586,6 +2633,12 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         const std::wstring parent_dir = ParentOf(entry.destination);
         const std::wstring parent_key = dir_key(parent_dir);
         const bool fresh_parent = fresh_dirs.contains(parent_key);
+        // Two sources with one target name (a multi-folder selection): the
+        // first may still be copying; let it land so this one sees a conflict.
+        if (pool && !fresh_parent && pooled_destinations.contains(dir_key(entry.destination))) {
+            drain_pool();
+            if (!failure.empty()) break;
+        }
         bool destination_is_directory = false;
         bool destination_exists = !fresh_parent && PathExists(entry.destination, &destination_is_directory);
         // Source and target can only be one object when the target exists.
@@ -2705,10 +2758,9 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                     }
                     break;
                 }
-                moved_sources_.push_back(entry.source);
+                entry.source_removed = true;
             }
-            completed_sources.push_back(entry.source);
-            completed_destinations.push_back(entry.destination);
+            entry.completed = true;
             ++processed_items;
             publish_progress(entry, entry.bytes, entry.bytes, processed_items);
             committed_bytes += entry.bytes;
@@ -2751,6 +2803,15 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         if (!fresh_parent && !ensure_parent(parent_dir)) break;
 
         const bool direct = !destination_exists && entry.bytes < kDirectCopyMaxBytes;
+        if (pool && direct && entry.bytes < kProgressCallbackMinBytes) {
+            while (!pool->HasRoom() && failure.empty() && !stop_requested())
+                apply_pooled(pool->Take(true));
+            if (!failure.empty() || cancelled) break;
+            if (!fresh_parent) pooled_destinations.insert(dir_key(entry.destination));
+            pool->Submit({index, entry.source, entry.destination, entry.attributes,
+                          req.type == OpType::Move});
+            continue;
+        }
         std::wstring copy_destination = direct ? entry.destination
             : UniqueTemporaryPath(entry.destination, L".pulse-copy-", task_id, index);
         const bool replacing = destination_exists && choice == ConflictChoice::Replace;
@@ -2767,6 +2828,8 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 entry.bytes = actual_total;
                 SetProgressStatus([&](OpStatus& st) { st.total_bytes = total_bytes; });
             }
+            // Small files finishing alongside count toward the same total.
+            if (pool) apply_pooled(pool->Take(false));
             publish_progress(entry, done, actual_total, processed_items);
         };
 
@@ -2916,13 +2979,24 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 }
                 break;
             }
-            moved_sources_.push_back(entry.source);
+            entry.source_removed = true;
         }
-        completed_sources.push_back(entry.source);
-        completed_destinations.push_back(entry.destination);
+        entry.completed = true;
         ++processed_items;
         publish_progress(entry, entry.bytes, entry.bytes, processed_items);
         committed_bytes += entry.bytes;
+    }
+
+    if (pool) {
+        if (!failure.empty() || cancelled || transfer_cancel_.load()) pool->Stop();
+        drain_pool();
+        pool.reset();
+    }
+    for (const auto& done : entries) {
+        if (done.source_removed) moved_sources_.push_back(done.source);
+        if (!done.completed) continue;
+        completed_sources.push_back(done.source);
+        completed_destinations.push_back(done.destination);
     }
 
     if (failure.empty() && !stop_requested()) {

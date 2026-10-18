@@ -1396,6 +1396,111 @@ int wmain(int argc, wchar_t** argv) {
               L"nested conflict keep-both apply-all creates incremented copies");
     }
 
+    // --- Parallel small-file copy keeps what a serial copy keeps ------------
+    {
+        // 40 small files: enough for the copy pool. Attributes, a stream,
+        // timestamps, and the order-dependent results must match.
+        const std::wstring par_src = root + L"\\par-src";
+        const std::wstring par_dst = root + L"\\par-dst";
+        MakeDir(par_src);
+        MakeDir(par_src + L"\\tree");
+        MakeDir(par_dst);
+        constexpr int kParallelFiles = 40;
+        auto par_name = [](int i) {
+            wchar_t name[32];
+            swprintf_s(name, L"\\f%02d.txt", i);
+            return std::wstring(name);
+        };
+        for (int i = 0; i < kParallelFiles; ++i)
+            MakeFile(par_src + L"\\tree" + par_name(i), payload, sizeof(payload) - 1);
+        const std::wstring tree = par_src + L"\\tree";
+        SetFileAttributesW((tree + par_name(0)).c_str(), FILE_ATTRIBUTE_READONLY);
+        SetFileAttributesW((tree + par_name(1)).c_str(), FILE_ATTRIBUTE_HIDDEN);
+        const char stream_data[] = "side stream";
+        MakeFile(tree + par_name(2) + L":meta", stream_data, sizeof(stream_data) - 1);
+        FILETIME old_time{};
+        SYSTEMTIME old_system{2001, 1, 0, 1, 12, 0, 0, 0};
+        SystemTimeToFileTime(&old_system, &old_time);
+        {
+            HANDLE dated = CreateFileW((tree + par_name(3)).c_str(), FILE_WRITE_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+            if (dated != INVALID_HANDLE_VALUE) {
+                SetFileTime(dated, nullptr, nullptr, &old_time);
+                CloseHandle(dated);
+            }
+        }
+        auto par_st = RunOp(SimpleOp(ops::OpType::Copy, { tree.c_str() }, par_dst.c_str()));
+        const std::wstring copied = par_dst + L"\\tree";
+        int present = 0;
+        for (int i = 0; i < kParallelFiles; ++i)
+            if (FileSize(copied + par_name(i)) == sizeof(payload) - 1) ++present;
+        Check(par_st.last_error.empty() && present == kParallelFiles,
+              L"parallel copy: every small file arrives intact");
+        const DWORD ro = GetFileAttributesW((copied + par_name(0)).c_str());
+        const DWORD hidden = GetFileAttributesW((copied + par_name(1)).c_str());
+        Check(ro != INVALID_FILE_ATTRIBUTES && (ro & FILE_ATTRIBUTE_READONLY) &&
+              hidden != INVALID_FILE_ATTRIBUTES && (hidden & FILE_ATTRIBUTE_HIDDEN),
+              L"parallel copy: read-only and hidden attributes kept");
+        Check(FileSize(copied + par_name(2) + L":meta") == sizeof(stream_data) - 1,
+              L"parallel copy: alternate data stream kept");
+        FILETIME copied_time{};
+        {
+            HANDLE dated = CreateFileW((copied + par_name(3)).c_str(), FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+            if (dated != INVALID_HANDLE_VALUE) {
+                GetFileTime(dated, nullptr, nullptr, &copied_time);
+                CloseHandle(dated);
+            }
+        }
+        Check(CompareFileTime(&copied_time, &old_time) == 0,
+              L"parallel copy: modified time kept");
+        SetFileAttributesW((copied + par_name(0)).c_str(), FILE_ATTRIBUTE_NORMAL);
+        Check(g_ops.CanUndo(), L"parallel copy: undo available");
+
+        // One target name from two folders: the second must meet the first
+        // as a conflict, not race it.
+        const std::wstring other = par_src + L"\\other";
+        MakeDir(other);
+        MakeFile(other + par_name(5), payload, sizeof(payload) - 1);
+        const std::wstring same_dst = par_dst + L"\\same";
+        MakeDir(same_dst);
+        ops::OpRequest same_name;
+        same_name.type = ops::OpType::Copy;
+        same_name.dest_dir = same_dst;
+        for (int i = 0; i < 20; ++i) same_name.sources.push_back(tree + par_name(i));
+        same_name.sources.push_back(other + par_name(5));
+        size_t same_resolved = 0;
+        auto same_st = RunConflictOp(std::move(same_name), ops::ConflictChoice::KeepBoth, true,
+                                     &same_resolved);
+        int same_count = 0;
+        WIN32_FIND_DATAW found{};
+        HANDLE listing = FindFirstFileW((same_dst + L"\\*").c_str(), &found);
+        if (listing != INVALID_HANDLE_VALUE) {
+            do { if (!(found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) ++same_count; }
+            while (FindNextFileW(listing, &found));
+            FindClose(listing);
+        }
+        Check(same_st.last_error.empty() && same_resolved == 1 && same_count == 21,
+              L"parallel copy: same name from two folders becomes a conflict");
+
+        // Merge-move into an existing folder takes the per-file path: the
+        // pool copies and deletes each source.
+        const std::wstring merge_src = par_src + L"\\merge";
+        const std::wstring merge_dst = par_dst + L"\\merge";
+        MakeDir(merge_src);
+        MakeDir(merge_dst);
+        for (int i = 0; i < 20; ++i)
+            MakeFile(merge_src + par_name(i), payload, sizeof(payload) - 1);
+        SetFileAttributesW((merge_src + par_name(0)).c_str(), FILE_ATTRIBUTE_READONLY);
+        auto merge_st = RunOp(SimpleOp(ops::OpType::Move, { merge_src.c_str() }, par_dst.c_str()));
+        int moved = 0;
+        for (int i = 0; i < 20; ++i)
+            if (Exists(merge_dst + par_name(i)) && !Exists(merge_src + par_name(i))) ++moved;
+        Check(merge_st.last_error.empty() && moved == 20 && !Exists(merge_src),
+              L"parallel move: merged files moved and the source folder removed");
+        SetFileAttributesW((merge_dst + par_name(0)).c_str(), FILE_ATTRIBUTE_NORMAL);
+    }
+
     // --- Open: a batch file runs in its own folder (#49) --------------------
     {
         // The script writes a relative file, so it lands in whatever working
