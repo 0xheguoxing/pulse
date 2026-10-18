@@ -516,6 +516,40 @@ struct EngineTestAccess {
         std::cout << "cleanup_error=" << ec.value() << "\n";
         return ok && loaded;
     }
+    static bool OverlayContainersFixture() {
+        bool ok = true;
+        auto check = [&](bool value, const char* label) {
+            std::cout << (value ? "[PASS] " : "[FAIL] ") << label << '\n'; ok &= value;
+        };
+        OverlayMap<int> map;
+        check(map.find(5) == map.end() && !map.contains(5) && map.count(0) == 0, "empty overlay map finds nothing");
+        map[5] = 50;
+        map[1000000] = 7;
+        map[-1] = 3;
+        const auto& view = map;
+        check(view.find(5) != view.end() && view.find(5)->second == 50, "overlay map finds a low key");
+        check(map.contains(1000000) && map.find(1000000)->second == 7, "overlay map finds a key past its first word");
+        check(map.contains(-1) && map.find(-1)->second == 3, "overlay map keeps negative keys exact");
+        check(!map.contains(6) && !map.contains(999999) && !map.contains(2000000) && !map.contains(-2),
+              "overlay map rejects absent neighbours");
+        size_t seen = 0;
+        for (auto& entry : map) { ++seen; entry.second += 1; }
+        check(seen == 3 && map.size() == 3 && map.find(5)->second == 51, "overlay map iterates mutable entries");
+        check(map.erase(5) == 1 && !map.contains(5) && map.erase(5) == 0 && map.size() == 2, "overlay map erase is exact");
+        map[5] = 9;
+        check(map.contains(5) && map.find(5)->second == 9, "overlay map re-inserts an erased key");
+        map.clear();
+        check(map.empty() && !map.contains(1000000) && !map.contains(-1) && map.find(5) == map.end(),
+              "overlay map clear drops all keys");
+        OverlaySet set;
+        check(set.insert(42).second && !set.insert(42).second && set.count(42) == 1, "overlay set insert is unique");
+        set.insert(-7);
+        check(set.contains(-7) && !set.contains(-8) && !set.contains(41) && !set.contains(4096), "overlay set lookups are exact");
+        check(set.erase(42) == 1 && !set.contains(42) && set.size() == 1, "overlay set erase is exact");
+        set.clear();
+        check(set.empty() && !set.contains(-7), "overlay set clear drops all keys");
+        return ok;
+    }
     static bool ReopenCache(const std::wstring& directory) {
         if (!std::filesystem::is_directory(directory)) return false;
         SetActiveIndexDirectory(directory);
@@ -1670,6 +1704,7 @@ int wmain(int argc, wchar_t** argv) {
     if (argc == 4 && std::wstring_view(argv[1]) == L"--replay-probe")
         return EngineTestAccess::ReplayProbe(argv[2], static_cast<uint32_t>(wcstoul(argv[3], nullptr, 10))) ? 0 : 1;
     if (argc == 2 && std::wstring_view(argv[1]) == L"--hierarchy-only") return EngineTestAccess::HierarchyFixture() ? 0 : 1;
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--overlay-only") return EngineTestAccess::OverlayContainersFixture() ? 0 : 1;
     const bool quiet = argc > 1 && std::wstring_view(argv[1]) == L"--quiet-maintenance-only";
     if (!SetEnvironmentVariableW(L"PULSE_INDEX_DIAGNOSTICS", quiet ? nullptr : L"1")) return 2;
     if (quiet) return EngineTestAccess::QuietDiagnosticsFixture() ? 0 : 1;
@@ -1690,6 +1725,7 @@ int wmain(int argc, wchar_t** argv) {
     std::cout << std::unitbuf;
     Engine engine;
     Check(EngineTestAccess::Build(engine), "actual MFT tree builder accepts fixture");
+    Check(EngineTestAccess::OverlayContainersFixture(), "overlay containers keep exact membership");
     CheckSearch(engine);
     Check(EngineTestAccess::HardLinkBuildFixture(), "hard link MFT build fixture");
     Check(EngineTestAccess::HardLinkUsnFixture(), "hard link USN fixture");

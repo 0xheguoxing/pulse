@@ -13,6 +13,7 @@
 #include "index_config.h"
 #include "index_query.h"
 #include "index_delta.h"
+#include "index_overlay.h"
 #include "change_tracking.h"
 #include "change_feed_history.h"
 #include <atomic>
@@ -453,8 +454,8 @@ private:
     std::vector<VolState> vols_;
     std::vector<VolState> build_vols_;
     std::vector<int32_t> inactive_volume_roots_;
-    std::unordered_set<int32_t> tombstones_;
-    std::unordered_map<int32_t, Patch> patches_;
+    OverlaySet tombstones_;
+    OverlayMap<Patch> patches_;
     std::unordered_multimap<uint64_t, int32_t> child_map_;
     std::unordered_map<wchar_t, std::unique_ptr<DeltaLog>> delta_logs_;
     size_t deleted_ = 0;
