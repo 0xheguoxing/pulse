@@ -129,4 +129,19 @@ enum class PermanentDeleteChoice { Cancel, Delete, Recycle };
 PermanentDeleteChoice ShowPermanentDeleteDialog(HWND owner, const PermanentDeleteInfo& info,
                                                 bool dark, D2D1_COLOR_F accent);
 
+// File in use (pulse_ops_dialogs.html §5). Watches the owners and the item and
+// returns Retry on its own once the item is free.
+struct LockedItemInfo {
+    ops::OpType type = ops::OpType::RecycleDelete;
+    std::wstring path;                 // the locked item
+    std::vector<ops::LockOwner> owners;
+    bool can_end = false;              // every owner may be ended: 结束进程并重试
+    bool can_skip = false;             // 跳过此项 (OpsManager::CanSkipLockedItem)
+};
+
+enum class LockedItemChoice { Cancel, Retry, EndAndRetry, Skip };
+
+LockedItemChoice ShowLockedItemDialog(HWND owner, const LockedItemInfo& info, bool dark,
+                                      D2D1_COLOR_F accent);
+
 } // namespace pulse::ui

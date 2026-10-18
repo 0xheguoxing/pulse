@@ -2344,3 +2344,19 @@ PermDeleteMoreEnd	IDS_PERM_DELETE_MORE_END	3600	 项	 more	 項
 PermDeleteWarn	IDS_PERM_DELETE_WARN	3601	不经过回收站，删除后无法撤销	Skips the Recycle Bin and can't be undone	不經過資源回收筒，刪除後無法復原
 PermDeleteWarnAlt	IDS_PERM_DELETE_WARN_ALT	3602	 · 可改为移到回收站	 · or move to the Recycle Bin	 · 可改為移到資源回收筒
 PermDeleteToBin	IDS_PERM_DELETE_TO_BIN	3603	移到回收站	Move to Recycle Bin	移到資源回收筒
+LockHeadline	IDS_LOCK_HEADLINE	3604	文件正被其他程序使用	The file is in use by another program	檔案正被其他程式使用
+LockSubLead	IDS_LOCK_SUB_LEAD	3605	“	“	「
+LockSubMid	IDS_LOCK_SUB_MID	3606	” 被下面的程序打开，暂时无法	” is open in the programs below and can't be 	」被下面的程式開啟，暫時無法
+LockSubEnd	IDS_LOCK_SUB_END	3607	。	.	。
+LockVerbRecycle	IDS_LOCK_VERB_RECYCLE	3608	移到回收站	moved to the Recycle Bin	移到資源回收筒
+LockVerbDelete	IDS_LOCK_VERB_DELETE	3609	删除	deleted	刪除
+LockVerbMove	IDS_LOCK_VERB_MOVE	3610	移动	moved	移動
+LockVerbCopy	IDS_LOCK_VERB_COPY	3611	复制	copied	複製
+LockVerbRename	IDS_LOCK_VERB_RENAME	3612	重命名	renamed	重新命名
+LockSwitchTo	IDS_LOCK_SWITCH_TO	3613	切换到程序	Switch to	切換到程式
+LockClosed	IDS_LOCK_CLOSED	3614	✓ 已关闭	✓ Closed	✓ 已關閉
+LockWatch	IDS_LOCK_WATCH	3615	关闭这些程序后会自动继续，无需再点重试	Closing them lets Pulse continue on its own, no need to retry	關閉這些程式後會自動繼續，無需再按重試
+LockReleased	IDS_LOCK_RELEASED	3616	文件已释放，正在继续…	The file is free, continuing…	檔案已釋放，正在繼續…
+LockSkip	IDS_LOCK_SKIP	3617	跳过此项	Skip this item	略過此項
+LockMoreLead	IDS_LOCK_MORE_LEAD	3618	以及另外 	and 	以及另外 
+LockMoreEnd	IDS_LOCK_MORE_END	3619	 个程序	 more programs	 個程式

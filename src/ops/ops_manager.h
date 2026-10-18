@@ -253,8 +253,12 @@ public:
     void ResolveAuthorization(uint64_t task_id, bool retry);
     // Re-queue the operation that failed on a locked item (status.task_id).
     // close_owners = end the closable lock owners on the worker first. Items
-    // that are already gone are skipped for delete/move.
-    bool RetryLockedOperation(uint64_t task_id, bool close_owners);
+    // that are already gone are skipped for delete/move. skip_item = drop the
+    // locked item itself and go on with the rest (see CanSkipLockedItem).
+    bool RetryLockedOperation(uint64_t task_id, bool close_owners, bool skip_item = false);
+    // The locked item is one of several top-level sources, so the rest can go
+    // on without it (an item inside a source folder cannot be left out).
+    bool CanSkipLockedItem(uint64_t task_id) const;
 
     // Double-click open: ShellExecuteEx on a dedicated open thread (plan §6.2).
     void OpenWith(const std::wstring& path);
@@ -407,6 +411,7 @@ private:
         uint64_t task_id = 0;
         OpRequest req;
         std::vector<LockOwner> owners;
+        std::wstring path;              // the locked item
     };
     std::optional<LockRetry> lock_retry_;   // guarded by mutex_
     std::vector<RecoveryEntry> pending_recovery_;

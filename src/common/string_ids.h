@@ -2337,5 +2337,21 @@
 #define IDS_PERM_DELETE_WARN                                                             3601
 #define IDS_PERM_DELETE_WARN_ALT                                                         3602
 #define IDS_PERM_DELETE_TO_BIN                                                           3603
+#define IDS_LOCK_HEADLINE                                                                3604
+#define IDS_LOCK_SUB_LEAD                                                                3605
+#define IDS_LOCK_SUB_MID                                                                 3606
+#define IDS_LOCK_SUB_END                                                                 3607
+#define IDS_LOCK_VERB_RECYCLE                                                            3608
+#define IDS_LOCK_VERB_DELETE                                                             3609
+#define IDS_LOCK_VERB_MOVE                                                               3610
+#define IDS_LOCK_VERB_COPY                                                               3611
+#define IDS_LOCK_VERB_RENAME                                                             3612
+#define IDS_LOCK_SWITCH_TO                                                               3613
+#define IDS_LOCK_CLOSED                                                                  3614
+#define IDS_LOCK_WATCH                                                                   3615
+#define IDS_LOCK_RELEASED                                                                3616
+#define IDS_LOCK_SKIP                                                                    3617
+#define IDS_LOCK_MORE_LEAD                                                               3618
+#define IDS_LOCK_MORE_END                                                                3619
 
 #endif  // PULSE_STRING_IDS_H

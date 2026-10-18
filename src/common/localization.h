@@ -2333,6 +2333,22 @@ enum class StringId : UINT {
     PermDeleteWarn = IDS_PERM_DELETE_WARN,
     PermDeleteWarnAlt = IDS_PERM_DELETE_WARN_ALT,
     PermDeleteToBin = IDS_PERM_DELETE_TO_BIN,
+    LockHeadline = IDS_LOCK_HEADLINE,
+    LockSubLead = IDS_LOCK_SUB_LEAD,
+    LockSubMid = IDS_LOCK_SUB_MID,
+    LockSubEnd = IDS_LOCK_SUB_END,
+    LockVerbRecycle = IDS_LOCK_VERB_RECYCLE,
+    LockVerbDelete = IDS_LOCK_VERB_DELETE,
+    LockVerbMove = IDS_LOCK_VERB_MOVE,
+    LockVerbCopy = IDS_LOCK_VERB_COPY,
+    LockVerbRename = IDS_LOCK_VERB_RENAME,
+    LockSwitchTo = IDS_LOCK_SWITCH_TO,
+    LockClosed = IDS_LOCK_CLOSED,
+    LockWatch = IDS_LOCK_WATCH,
+    LockReleased = IDS_LOCK_RELEASED,
+    LockSkip = IDS_LOCK_SKIP,
+    LockMoreLead = IDS_LOCK_MORE_LEAD,
+    LockMoreEnd = IDS_LOCK_MORE_END,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

@@ -1285,17 +1285,41 @@ LockReport OpsManager::ProbeLock(const OpRequest& req, uint64_t task_id, HRESULT
     retry.req = req;
     retry.req.close_first.clear();
     retry.owners = report.owners;
+    retry.path = report.path;
     lock_retry_ = std::move(retry);
     return report;
 }
 
-bool OpsManager::RetryLockedOperation(uint64_t task_id, bool close_owners) {
+namespace {
+bool IsSkippableSource(const OpRequest& req, const std::wstring& path) {
+    if (req.sources.size() < 2 || path.empty()) return false;
+    if (req.type == OpType::Rename || req.type == OpType::BatchRename) return false;
+    return std::any_of(req.sources.begin(), req.sources.end(), [&](const std::wstring& source) {
+        return _wcsicmp(source.c_str(), path.c_str()) == 0;
+    });
+}
+}
+
+bool OpsManager::CanSkipLockedItem(uint64_t task_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return lock_retry_ && lock_retry_->task_id == task_id && IsSkippableSource(lock_retry_->req, lock_retry_->path);
+}
+
+bool OpsManager::RetryLockedOperation(uint64_t task_id, bool close_owners, bool skip_item) {
     OpRequest req;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!running_ || !lock_retry_ || lock_retry_->task_id != task_id) return false;
+        if (skip_item && !IsSkippableSource(lock_retry_->req, lock_retry_->path)) return false;
         req = std::move(lock_retry_->req);
         req.lock_retry = true;
+        if (skip_item) {
+            const std::wstring skipped = lock_retry_->path;
+            std::erase_if(req.sources, [&](const std::wstring& source) {
+                return _wcsicmp(source.c_str(), skipped.c_str()) == 0;
+            });
+            close_owners = false;
+        }
         if (close_owners) {
             for (const auto& owner : lock_retry_->owners)
                 if (owner.closable) req.close_first.push_back(owner);

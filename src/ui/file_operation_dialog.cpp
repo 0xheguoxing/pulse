@@ -10,13 +10,17 @@
 #include <commctrl.h>
 #include <dwmapi.h>
 #include <imm.h>
+#include <wincodec.h>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <deque>
 #include <string>
+#include <thread>
 #include <vector>
 
 #pragma comment(lib, "imm32.lib")
+#pragma comment(lib, "windowscodecs.lib")
 
 namespace pulse::ui {
 namespace {
@@ -24,6 +28,7 @@ namespace {
 constexpr wchar_t kTransferClass[] = L"PulseFileOperationWindow";
 constexpr wchar_t kConflictClass[] = L"PulseFileConflictWindow";
 constexpr wchar_t kDeleteClass[] = L"PulsePermanentDeleteWindow";
+constexpr wchar_t kLockedClass[] = L"PulseLockedItemWindow";
 constexpr UINT_PTR kRenderTimer = 1;
 // Progress card, pulse_ops_dialogs.html §1 (DIPs). The footer stays anchored
 // to the bottom edge; everything above it is laid out from the top.
@@ -1623,6 +1628,636 @@ private:
     ComPtr<IDWriteTextFormat> thumb_glyph_format_;
 };
 
+// File in use, pulse_ops_dialogs.html §5: one row per program holding the
+// item (icon, name, image · PID, 切换到程序). The dialog watches the programs
+// and the file; once the file is free it says so and continues on its own,
+// no retry click needed. 结束进程并重试 when every owner may be ended.
+class LockedItemWindow {
+public:
+    LockedItemChoice Show(HWND owner, const LockedItemInfo& info, bool dark, D2D1_COLOR_F accent) {
+        owner_ = owner;
+        info_ = info;
+        dark_ = dark;
+        accent_ = accent;
+        scale_ = static_cast<float>(pulse::compat::WindowDpi(owner)) / 96.0f;
+        gone_.assign(info_.owners.size(), false);
+        windows_.assign(info_.owners.size(), nullptr);
+        icons_.assign(info_.owners.size(), nullptr);
+        bitmaps_.resize(info_.owners.size());
+        LoadIcons();
+        FindOwnerWindows();
+        focus_ = DefaultFocus();
+
+        WNDCLASSEXW wc{ sizeof(wc) };
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpfnWndProc = WndProc;
+        wc.lpszClassName = kLockedClass;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        if (!GetClassInfoExW(wc.hInstance, kLockedClass, &wc)) RegisterClassExW(&wc);
+
+        const int width = static_cast<int>(kW * scale_);
+        const int height = static_cast<int>(HeightDip() * scale_);
+        hwnd_ = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP, kLockedClass,
+            l10n::Get(l10n::StringId::LockedItemTitle).c_str(), WS_POPUP | WS_THICKFRAME | WS_SYSMENU,
+            CW_USEDEFAULT, CW_USEDEFAULT, width, height, owner, nullptr, wc.hInstance, this);
+        if (hwnd_) {
+            pulse::ui::CenterOwnedWindow(hwnd_, owner_, width, height);
+            if (owner_) EnableWindow(owner_, FALSE);
+            ShowWindow(hwnd_, SW_SHOW);
+            SetForegroundWindow(hwnd_);
+            SetFocus(hwnd_);
+            StartWatcher();
+            SetTimer(hwnd_, kPingTimer, 50, nullptr);
+            MSG message{};
+            while (!done_ && GetMessageW(&message, nullptr, 0, 0) > 0) {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+            if (IsWindow(hwnd_)) { HideComposedDialog(hwnd_, owner_); DestroyWindow(hwnd_); }
+            hwnd_ = nullptr;
+            if (owner_) EnableWindow(owner_, TRUE);
+        }
+        StopWatcher();
+        for (HICON icon : icons_) if (icon) DestroyIcon(icon);
+        return choice_;
+    }
+
+private:
+    static constexpr float kW = 500.0f;
+    static constexpr float kProcsTop = 100.0f;
+    static constexpr float kRowH = 50.0f;
+    static constexpr float kMoreH = 30.0f;
+    static constexpr size_t kMaxRows = 4;
+    static constexpr UINT_PTR kPingTimer = 4;
+    static constexpr UINT_PTR kContinueTimer = 5;
+    static constexpr UINT kWatchMessage = WM_APP + 41;
+
+    static LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+        auto* self = reinterpret_cast<LockedItemWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (message == WM_NCCREATE) {
+            self = static_cast<LockedItemWindow*>(reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+            self->hwnd_ = hwnd;
+        }
+        return self ? self->Handle(message, wparam, lparam) : DefWindowProcW(hwnd, message, wparam, lparam);
+    }
+
+    // ---- layout ---------------------------------------------------------
+    size_t Rows() const { return (std::min)(info_.owners.size(), kMaxRows); }
+    bool HasMore() const { return info_.owners.size() > kMaxRows; }
+    float ProcsH() const { return (std::max)(Rows(), static_cast<size_t>(1)) * kRowH + (HasMore() ? kMoreH : 0.0f); }
+    float WatchTop() const { return kProcsTop + ProcsH() + 12.0f; }
+    float ContentBottom() const { return WatchTop() + 20.0f + (info_.can_end ? 22.0f : 0.0f); }
+    float FooterTop() const { return ContentBottom() + 14.0f; }
+    float HeightDip() const { return FooterTop() + 60.0f; }
+    D2D1_RECT_F CloseRect() const { return Rect(scale_, kW - 46, 0, 46, 40); }
+    float PrimaryW() const { return info_.can_end ? 150.0f : 96.0f; }
+    D2D1_RECT_F PrimaryRect() const { return Rect(scale_, kW - 16 - PrimaryW(), FooterTop() + 13, PrimaryW(), 34); }
+    D2D1_RECT_F CancelRect() const { return Rect(scale_, kW - 16 - PrimaryW() - 8 - 92, FooterTop() + 13, 92, 34); }
+    D2D1_RECT_F SkipRect() const { return Rect(scale_, 16, FooterTop() + 13, 104, 34); }
+    D2D1_RECT_F SwitchRect(size_t row) const {
+        return Rect(scale_, kW - 20 - 12 - 92, kProcsTop + row * kRowH + 12, 92, 26);
+    }
+
+    // Focus order: [skip,] cancel, primary.
+    int FocusCount() const { return info_.can_skip ? 3 : 2; }
+    int FocusTarget(int focus) const { return info_.can_skip ? focus : focus + 1; } // 0 skip, 1 cancel, 2 primary
+    // Ending processes loses unsaved work: Enter must not do that by default.
+    int DefaultFocus() const { return info_.can_end ? FocusCount() - 2 : FocusCount() - 1; }
+
+    int Hit(float x, float y) const {
+        if (pulse::ui::ContainsRect(CloseRect(), x, y)) return 4;
+        if (pulse::ui::ContainsRect(PrimaryRect(), x, y)) return 3;
+        if (pulse::ui::ContainsRect(CancelRect(), x, y)) return 2;
+        if (info_.can_skip && pulse::ui::ContainsRect(SkipRect(), x, y)) return 1;
+        for (size_t i = 0; i < Rows(); ++i)
+            if (windows_[i] && !gone_[i] && pulse::ui::ContainsRect(SwitchRect(i), x, y)) return 10 + static_cast<int>(i);
+        return 0;
+    }
+
+    void Complete(LockedItemChoice choice) {
+        choice_ = choice;
+        done_ = true;
+        if (hwnd_) { HideComposedDialog(hwnd_, owner_); DestroyWindow(hwnd_); }
+    }
+
+    void Activate(int target) {
+        if (target == 0) Complete(LockedItemChoice::Skip);
+        else if (target == 2) Complete(info_.can_end ? LockedItemChoice::EndAndRetry : LockedItemChoice::Retry);
+        else Complete(LockedItemChoice::Cancel);
+    }
+
+    // ---- owners -----------------------------------------------------------
+    struct FindWindowContext { DWORD pid; HWND found; };
+    static BOOL CALLBACK FindOwnerWindow(HWND hwnd, LPARAM param) {
+        auto* context = reinterpret_cast<FindWindowContext*>(param);
+        DWORD pid = 0;
+        GetWindowThreadProcessId(hwnd, &pid);
+        if (pid != context->pid || !IsWindowVisible(hwnd) || GetWindow(hwnd, GW_OWNER)) return TRUE;
+        if (GetWindowTextLengthW(hwnd) == 0) return TRUE;
+        context->found = hwnd;
+        return FALSE;
+    }
+
+    void FindOwnerWindows() {
+        for (size_t i = 0; i < info_.owners.size(); ++i) {
+            FindWindowContext context{ info_.owners[i].pid, nullptr };
+            if (!gone_[i] && context.pid) EnumWindows(FindOwnerWindow, reinterpret_cast<LPARAM>(&context));
+            windows_[i] = context.found;
+        }
+    }
+
+    void SwitchTo(size_t index) {
+        HWND target = index < windows_.size() ? windows_[index] : nullptr;
+        if (!target || !IsWindow(target)) return;
+        if (IsIconic(target)) ShowWindow(target, SW_RESTORE);
+        AllowSetForegroundWindow(info_.owners[index].pid);
+        SetForegroundWindow(target);
+    }
+
+    void LoadIcons() {
+        const int size = static_cast<int>(std::lround(20.0f * scale_));
+        for (size_t i = 0; i < info_.owners.size() && i < kMaxRows; ++i) {
+            HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, info_.owners[i].pid);
+            if (!process) continue;
+            wchar_t image[MAX_PATH * 2]{};
+            DWORD length = ARRAYSIZE(image);
+            if (QueryFullProcessImageNameW(process, 0, image, &length)) {
+                HICON icon = nullptr;
+                UINT id = 0;
+                if (PrivateExtractIconsW(image, 0, size, size, &icon, &id, 1, 0) == 1 && icon) icons_[i] = icon;
+            }
+            CloseHandle(process);
+        }
+    }
+
+    ID2D1Bitmap* IconBitmap(size_t index) {
+        if (index >= icons_.size() || !icons_[index]) return nullptr;
+        if (bitmaps_[index].get()) return bitmaps_[index].get();
+        if (!wic_.get() && FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                                   IID_PPV_ARGS(&wic_)))) {
+            icons_[index] = nullptr;
+            return nullptr;
+        }
+        ComPtr<IWICBitmap> source;
+        ComPtr<IWICFormatConverter> converter;
+        if (FAILED(wic_->CreateBitmapFromHICON(icons_[index], &source)) ||
+            FAILED(wic_->CreateFormatConverter(&converter)) ||
+            FAILED(converter->Initialize(source.get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone,
+                                         nullptr, 0.0, WICBitmapPaletteTypeMedianCut)) ||
+            FAILED(compositor_.Dc()->CreateBitmapFromWicBitmap(converter.get(), nullptr, &bitmaps_[index]))) {
+            return nullptr;
+        }
+        return bitmaps_[index].get();
+    }
+
+    // ---- watching ---------------------------------------------------------
+    // A worker polls every 500 ms: has each owner exited (same instance), and
+    // can the item be opened with no sharing at all (nobody holds it)? Two
+    // free reads in a row count as released; folders rely on the owners.
+    static bool OwnerGone(const ops::LockOwner& owner) {
+        HANDLE process = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, owner.pid);
+        if (!process) return GetLastError() == ERROR_INVALID_PARAMETER;
+        bool gone = WaitForSingleObject(process, 0) == WAIT_OBJECT_0;
+        if (!gone && (owner.start_time.dwLowDateTime | owner.start_time.dwHighDateTime)) {
+            FILETIME created{}, exited{}, kernel{}, user{};
+            if (GetProcessTimes(process, &created, &exited, &kernel, &user))
+                gone = CompareFileTime(&created, &owner.start_time) != 0; // the PID was reused
+        }
+        CloseHandle(process);
+        return gone;
+    }
+
+    static bool ItemFree(const std::wstring& path) {
+        const DWORD attributes = GetFileAttributesW(path.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES) {
+            const DWORD error = GetLastError();
+            return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+        }
+        if (attributes & FILE_ATTRIBUTE_DIRECTORY) return false;
+        HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING,
+                                  FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return false;
+        CloseHandle(file);
+        return true;
+    }
+
+    void StartWatcher() {
+        stop_ = false;
+        const HWND target = hwnd_;
+        const std::vector<ops::LockOwner> owners = info_.owners;
+        const std::wstring path = info_.path;
+        watcher_ = std::thread([this, target, owners, path] {
+            int free_reads = 0;
+            while (!stop_.load()) {
+                uint64_t mask = 0;
+                bool all_gone = !owners.empty();
+                for (size_t i = 0; i < owners.size(); ++i) {
+                    const bool gone = OwnerGone(owners[i]);
+                    if (gone && i < 64) mask |= 1ull << i;
+                    all_gone = all_gone && gone;
+                }
+                free_reads = !path.empty() && ItemFree(path) ? free_reads + 1 : 0;
+                const bool released = all_gone || free_reads >= 2;
+                watch_mask_.store(mask);
+                PostMessageW(target, kWatchMessage, released ? 1 : 0, 0);
+                for (int slice = 0; slice < 10 && !stop_.load(); ++slice) Sleep(50);
+            }
+        });
+    }
+
+    void StopWatcher() {
+        stop_ = true;
+        if (watcher_.joinable()) watcher_.join();
+    }
+
+    void OnWatch(bool released) {
+        const uint64_t mask = watch_mask_.load();
+        bool changed = false;
+        for (size_t i = 0; i < gone_.size() && i < 64; ++i) {
+            const bool gone = (mask >> i) & 1u;
+            if (gone && !gone_[i]) { gone_[i] = true; changed = true; }
+        }
+        if (changed) FindOwnerWindows();
+        if (released && !released_) {
+            released_ = true;
+            released_at_ = GetTickCount64();
+            // Every row reads as closed once the file is free.
+            for (size_t i = 0; i < gone_.size(); ++i) gone_[i] = true;
+            SetTimer(hwnd_, kContinueTimer, 900, nullptr);
+            changed = true;
+        }
+        if (changed) InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    // ---- drawing ----------------------------------------------------------
+    void CreateFormats() {
+        auto* factory = compositor_.DwriteFactory();
+        auto make = [&](ComPtr<IDWriteTextFormat>& out, typography::FontRole role, float size, DWRITE_FONT_WEIGHT weight) {
+            out.reset();
+            if (!factory) return;
+            typography::TextFormatSpec spec;
+            spec.role = role;
+            spec.size = size * scale_;
+            spec.weight = weight;
+            if (FAILED(typography::CreateTextFormat(factory, spec, &out)) || !out.get()) return;
+            out->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        };
+        make(head_format_, typography::FontRole::Text, 15.5f, DWRITE_FONT_WEIGHT_BOLD);
+        make(sub_format_, typography::FontRole::Text, 12.5f, DWRITE_FONT_WEIGHT_NORMAL);
+        make(name_format_, typography::FontRole::Text, 13.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        make(meta_format_, typography::FontRole::Text, 11.5f, DWRITE_FONT_WEIGHT_NORMAL);
+        make(watch_format_, typography::FontRole::Text, 12.3f, DWRITE_FONT_WEIGHT_NORMAL);
+        make(tag_format_, typography::FontRole::Text, 12.0f, DWRITE_FONT_WEIGHT_BOLD);
+        make(small_button_format_, typography::FontRole::Text, 12.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        make(button_format_, typography::FontRole::Text, 13.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        make(glyph_format_, typography::FontRole::Icon, 18.0f, DWRITE_FONT_WEIGHT_NORMAL);
+        make(app_glyph_format_, typography::FontRole::Icon, 15.0f, DWRITE_FONT_WEIGHT_NORMAL);
+        for (auto* f : { glyph_format_.get(), app_glyph_format_.get(), small_button_format_.get() })
+            if (f) f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    }
+
+    static void Stroke(ID2D1DeviceContext* dc, const D2D1_RECT_F& r, float radius, D2D1_COLOR_F color, float width) {
+        ComPtr<ID2D1SolidColorBrush> brush;
+        if (dc && SUCCEEDED(dc->CreateSolidColorBrush(color, &brush)))
+            dc->DrawRoundedRectangle(D2D1::RoundedRect(r, radius, radius), brush.get(), width);
+    }
+
+    void DrawFooterButton(const D2D1_RECT_F& r, const std::wstring& text, int kind, bool hovered, bool pressed,
+                          bool focused, const Theme& theme) {
+        // kind: 0 ghost, 1 standard, 2 danger, 3 primary.
+        const float s = scale_;
+        const D2D1_COLOR_F bad = dark_ ? HexColor(0xF0625B) : HexColor(0xD93D36);
+        const D2D1_COLOR_F acc = dark_ ? HexColor(0x6474C7) : HexColor(0x5566C4);
+        D2D1_COLOR_F fill = kind == 2 ? bad : kind == 3 ? acc
+            : kind == 1 ? (dark_ ? HexColor(0xFFFFFF, hovered ? 0.12f : 0.08f) : HexColor(0xFFFFFF, hovered ? 1.0f : 0.85f))
+                        : (hovered ? (dark_ ? HexColor(0xFFFFFF, 0.07f) : HexColor(0x000000, 0.05f)) : HexColor(0x000000, 0.0f));
+        if (kind >= 2 && hovered)
+            fill = D2D1::ColorF((std::min)(1.0f, fill.r * 1.08f), (std::min)(1.0f, fill.g * 1.08f), (std::min)(1.0f, fill.b * 1.08f), 1.0f);
+        D2D1_RECT_F box = r;
+        if (pressed) box = D2D1::RectF(r.left + s, r.top + s, r.right - s, r.bottom - s);
+        if (focused) {
+            const float g = ScaleDip(s, 2.0f);
+            Stroke(compositor_.Dc(), D2D1::RectF(box.left - g, box.top - g, box.right + g, box.bottom + g), ScaleDip(s, 10.0f),
+                   kind == 2 ? WithAlpha(bad, 0.6f) : (dark_ ? HexColor(0x8F9CF0) : theme.accent), ScaleDip(s, 2.0f));
+        }
+        painter_.FillRoundedRect(box, ScaleDip(s, 8.0f), fill);
+        if (kind == 1)
+            Stroke(compositor_.Dc(), box, ScaleDip(s, 8.0f), dark_ ? HexColor(0xFFFFFF, 0.08f) : HexColor(0x000000, 0.10f), 1.0f);
+        painter_.DrawText(text, box, button_format_.get(), kind >= 2 ? HexColor(0xFFFFFF) : theme.text,
+                          fluent::HorizontalAlignment::Center);
+    }
+
+    std::wstring Verb() const {
+        switch (info_.type) {
+        case ops::OpType::RealDelete: return l10n::Get(l10n::StringId::LockVerbDelete);
+        case ops::OpType::Move: return l10n::Get(l10n::StringId::LockVerbMove);
+        case ops::OpType::Copy: return l10n::Get(l10n::StringId::LockVerbCopy);
+        case ops::OpType::Rename:
+        case ops::OpType::BatchRename: return l10n::Get(l10n::StringId::LockVerbRename);
+        default: return l10n::Get(l10n::StringId::LockVerbRecycle);
+        }
+    }
+
+    void Render() {
+        if (compositor_.NeedsRecovery()) {
+            if (!compositor_.Recover()) return;
+            compositor_.RecreateTextFormats(scale_);
+            painter_.SetCompositor(&compositor_);
+            painter_.SetScale(scale_);
+            CreateFormats();
+            for (auto& bitmap : bitmaps_) bitmap.reset();
+        }
+        if (!compositor_.Dc()) return;
+        if (!head_format_.get()) CreateFormats();
+        auto* dc = compositor_.Dc();
+        const float s = scale_;
+        const bool high_contrast = IsHighContrast();
+        const Theme theme = high_contrast ? MakeHighContrastTheme() : MakeTheme(dark_, accent_);
+        pulse::ui::BeginSurface(compositor_, painter_, theme, dark_, high_contrast, backdrop_enabled_, s);
+        const D2D1_COLOR_F warn = dark_ ? HexColor(0xF0B041) : HexColor(0xC98410);
+        const D2D1_COLOR_F ok = dark_ ? HexColor(0x3CCF8E) : HexColor(0x16A36A);
+        const D2D1_COLOR_F faint = WithAlpha(theme.text, dark_ ? 0.42f : 0.48f);
+        const D2D1_COLOR_F line = dark_ ? HexColor(0xFFFFFF, 0.07f) : HexColor(0x000000, 0.07f);
+
+        painter_.DrawText(l10n::Get(l10n::StringId::LockedItemTitle), Rect(s, 16, 0, 300, 40),
+                          compositor_.SmallFormat(), theme.text_secondary);
+        fluent::ControlState close_state{};
+        close_state.hovered = hover_ == 4;
+        close_state.pressed = pressed_ == 4;
+        painter_.DrawTitleBarButton(CloseRect(), fluent::TitleBarButtonRole::Close, {}, close_state);
+
+        const auto tile = Rect(s, 20, 46, 38, 38);
+        painter_.FillRoundedRect(tile, ScaleDip(s, 11.0f), WithAlpha(warn, dark_ ? 0.16f : 0.13f));
+        painter_.DrawText(L"\xE72E", tile, glyph_format_.get(), warn, fluent::HorizontalAlignment::Center);
+        DrawEllipsizedText(compositor_, head_format_.get(), Rect(s, 70, 44, kW - 90, 24),
+                           l10n::Get(l10n::StringId::LockHeadline), theme.text);
+        DrawEllipsizedText(compositor_, sub_format_.get(), Rect(s, 70, 67, kW - 90, 18),
+                           l10n::Get(l10n::StringId::LockSubLead) + LeafName(info_.path) +
+                               l10n::Get(l10n::StringId::LockSubMid) + Verb() + l10n::Get(l10n::StringId::LockSubEnd),
+                           theme.text_secondary);
+
+        // Programs.
+        const auto box = Rect(s, 20, kProcsTop, kW - 40, ProcsH());
+        painter_.FillRoundedRect(box, ScaleDip(s, 11.0f), dark_ ? HexColor(0xFFFFFF, 0.045f) : HexColor(0x000000, 0.035f));
+        for (size_t i = 0; i < Rows(); ++i) {
+            const ops::LockOwner& owner = info_.owners[i];
+            const float y = kProcsTop + i * kRowH;
+            if (gone_[i]) {
+                // Square inside the list, rounded where the row meets the list's corners.
+                const bool first = i == 0, last = i + 1 == Rows() && Rows() == info_.owners.size();
+                const auto row = Rect(s, 20, y, kW - 40, kRowH);
+                const float grow = first == last ? 0.0f : ScaleDip(s, 12.0f);
+                auto fill = row;
+                if (first && !last) fill.bottom += grow;
+                if (last && !first) fill.top -= grow;
+                dc->PushAxisAlignedClip(row, D2D1_ANTIALIAS_MODE_ALIASED);
+                painter_.FillRoundedRect(fill, first || last ? ScaleDip(s, 11.0f) : 0.0f,
+                                         WithAlpha(ok, dark_ ? 0.12f : 0.10f));
+                dc->PopAxisAlignedClip();
+            }
+            if (i > 0) painter_.FillRoundedRect(Rect(s, 20, y, kW - 40, 1.0f / s), 0, line);
+            const auto icon = Rect(s, 32, y + 10, 30, 30);
+            painter_.FillRoundedRect(icon, ScaleDip(s, 8.0f), dark_ ? HexColor(0xFFFFFF, 0.07f) : HexColor(0x000000, 0.05f));
+            if (ID2D1Bitmap* bitmap = IconBitmap(i)) {
+                const float half = ScaleDip(s, 10.0f);
+                const float cx = (icon.left + icon.right) * 0.5f;
+                const float cy = (icon.top + icon.bottom) * 0.5f;
+                dc->DrawBitmap(bitmap, D2D1::RectF(cx - half, cy - half, cx + half, cy + half), gone_[i] ? 0.55f : 1.0f);
+            } else {
+                painter_.DrawText(L"\xECAA", icon, app_glyph_format_.get(), theme.text_secondary, fluent::HorizontalAlignment::Center);
+            }
+            const std::wstring name = !owner.app_name.empty() ? owner.app_name
+                                    : !owner.image_name.empty() ? owner.image_name : L"PID " + std::to_wstring(owner.pid);
+            const float right = gone_[i] ? kW - 20 - 12 - 80 : (windows_[i] ? kW - 20 - 12 - 92 - 8 : kW - 32);
+            const float name_w = (std::min)(right - 74, TextWidth(compositor_.DwriteFactory(), name_format_.get(), name) / s + 2);
+            DrawEllipsizedText(compositor_, name_format_.get(), Rect(s, 74, y + 8, name_w, 18), name,
+                               gone_[i] ? theme.text_secondary : theme.text);
+            if (gone_[i]) // struck through
+                painter_.FillRoundedRect(Rect(s, 74, y + 17, name_w - 2, 1.2f), 0, ok);
+            std::wstring meta = owner.image_name.empty() ? std::wstring() : owner.image_name + L" \x00B7 ";
+            meta += L"PID " + std::to_wstring(owner.pid);
+            DrawEllipsizedText(compositor_, meta_format_.get(), Rect(s, 74, y + 27, right - 74, 16), meta, faint);
+            if (gone_[i]) {
+                painter_.DrawText(l10n::Get(l10n::StringId::LockClosed), Rect(s, kW - 20 - 12 - 80, y, 80, kRowH),
+                                  tag_format_.get(), ok, fluent::HorizontalAlignment::Right);
+            } else if (windows_[i]) {
+                const auto button = SwitchRect(i);
+                const bool hovered = hover_ == 10 + static_cast<int>(i);
+                painter_.FillRoundedRect(button, ScaleDip(s, 7.0f),
+                    dark_ ? HexColor(0xFFFFFF, hovered ? 0.13f : 0.08f) : HexColor(0xFFFFFF, hovered ? 1.0f : 0.85f));
+                Stroke(dc, button, ScaleDip(s, 7.0f), dark_ ? HexColor(0xFFFFFF, 0.08f) : HexColor(0x000000, 0.10f), 1.0f);
+                painter_.DrawText(l10n::Get(l10n::StringId::LockSwitchTo), button, small_button_format_.get(), theme.text,
+                                  fluent::HorizontalAlignment::Center);
+            }
+        }
+        if (HasMore()) {
+            const float y = kProcsTop + Rows() * kRowH;
+            painter_.FillRoundedRect(Rect(s, 20, y, kW - 40, 1.0f / s), 0, line);
+            painter_.DrawText(l10n::Get(l10n::StringId::LockMoreLead) +
+                                  pulse::format::GroupedInt(info_.owners.size() - Rows()) +
+                                  l10n::Get(l10n::StringId::LockMoreEnd),
+                              Rect(s, 74, y, kW - 110, kMoreH), sub_format_.get(), theme.text_secondary);
+        }
+
+        // Watching: a pinging dot, amber until the file is free, then green.
+        const float wy = WatchTop();
+        const D2D1_COLOR_F dot = released_ ? ok : warn;
+        const D2D1_POINT_2F center = D2D1::Point2F(ScaleDip(s, 24.0f), ScaleDip(s, wy + 10.0f));
+        {
+            ComPtr<ID2D1SolidColorBrush> brush;
+            if (SUCCEEDED(dc->CreateSolidColorBrush(dot, &brush))) {
+                dc->FillEllipse(D2D1::Ellipse(center, ScaleDip(s, 4.0f), ScaleDip(s, 4.0f)), brush.get());
+                const float phase = static_cast<float>(GetTickCount64() % 1600) / 1600.0f;
+                const float radius = ScaleDip(s, 8.0f * (0.5f + 1.1f * phase)); // CSS ping: scale .5 → 1.6 of 16 px
+                brush->SetColor(WithAlpha(dot, 0.8f * (1.0f - phase)));
+                dc->DrawEllipse(D2D1::Ellipse(center, radius, radius), brush.get(), ScaleDip(s, 2.0f) * (1.0f - 0.5f * phase));
+            }
+        }
+        painter_.DrawText(l10n::Get(released_ ? l10n::StringId::LockReleased : l10n::StringId::LockWatch),
+                          Rect(s, 37, wy, kW - 57, 20), watch_format_.get(), released_ ? ok : theme.text_secondary);
+        if (info_.can_end)
+            DrawEllipsizedText(compositor_, meta_format_.get(), Rect(s, 37, wy + 22, kW - 57, 18),
+                               l10n::Get(l10n::StringId::LockedItemEndHint), faint);
+
+        RECT client{};
+        GetClientRect(hwnd_, &client);
+        const float footer = FooterTop() * s;
+        painter_.FillRoundedRect(D2D1::RectF(0, footer, static_cast<float>(client.right), static_cast<float>(client.bottom)), 0,
+                                 dark_ ? HexColor(0x000000, 0.16f) : HexColor(0x000000, 0.03f));
+        painter_.FillRoundedRect(D2D1::RectF(0, footer, static_cast<float>(client.right), footer + 1.0f), 0, theme.stroke_divider);
+        const int focus_target = FocusTarget(focus_);
+        if (info_.can_skip)
+            DrawFooterButton(SkipRect(), l10n::Get(l10n::StringId::LockSkip), 0, hover_ == 1, pressed_ == 1,
+                             focus_target == 0, theme);
+        DrawFooterButton(CancelRect(), l10n::Get(l10n::StringId::Cancel), 1, hover_ == 2, pressed_ == 2,
+                         focus_target == 1, theme);
+        DrawFooterButton(PrimaryRect(),
+                         l10n::Get(info_.can_end ? l10n::StringId::LockedItemEndRetry : l10n::StringId::LockedItemRetry),
+                         info_.can_end ? 2 : 3, hover_ == 3, pressed_ == 3, focus_target == 2, theme);
+        pulse::ui::EndSurface(compositor_);
+    }
+
+    LRESULT Handle(UINT message, WPARAM wparam, LPARAM lparam) {
+        switch (message) {
+        case WM_CREATE:
+            scale_ = static_cast<float>(pulse::compat::WindowDpi(hwnd_)) / 96.0f;
+            backdrop_enabled_ = pulse::ui::ApplyBackdrop(hwnd_, dark_);
+            if (!compositor_.Init(hwnd_)) return -1;
+            compositor_.RecreateTextFormats(scale_);
+            painter_.SetCompositor(&compositor_);
+            painter_.SetScale(scale_);
+            CreateFormats();
+            ImmAssociateContextEx(hwnd_, nullptr, 0);
+            return 0;
+        case WM_NCCALCSIZE:
+            return 0;
+        case WM_NCHITTEST:
+            return pulse::ui::BorderlessHitTest(hwnd_, lparam, 40 * scale_, CloseRect());
+        case WM_SIZE:
+            if (compositor_.Dc()) compositor_.Resize(LOWORD(lparam), HIWORD(lparam));
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        case WM_MOVE:
+            compositor_.UpdateTextRenderingParams(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST));
+            return 0;
+        case WM_DPICHANGED: {
+            scale_ = HIWORD(wparam) / 96.0f;
+            compositor_.RecreateTextFormats(scale_);
+            painter_.SetScale(scale_);
+            CreateFormats();
+            const auto* suggested = reinterpret_cast<RECT*>(lparam);
+            SetWindowPos(hwnd_, nullptr, suggested->left, suggested->top, suggested->right - suggested->left,
+                         suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOOWNERZORDER);
+            return 0;
+        }
+        case kWatchMessage:
+            OnWatch(wparam != 0);
+            return 0;
+        case WM_TIMER:
+            if (wparam == kPingTimer) {
+                // Only the dot's 20 px strip animates.
+                RECT strip{ 0, static_cast<LONG>((WatchTop() - 6) * scale_), static_cast<LONG>(44 * scale_),
+                            static_cast<LONG>((WatchTop() + 26) * scale_) };
+                InvalidateRect(hwnd_, &strip, FALSE);
+                return 0;
+            }
+            if (wparam == kContinueTimer) {
+                KillTimer(hwnd_, kContinueTimer);
+                Complete(LockedItemChoice::Retry);
+                return 0;
+            }
+            break;
+        case WM_MOUSEMOVE: {
+            const int next = Hit(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam)));
+            if (next != hover_) { hover_ = next; InvalidateRect(hwnd_, nullptr, FALSE); }
+            TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, hwnd_, 0 };
+            TrackMouseEvent(&track);
+            return 0;
+        }
+        case WM_MOUSELEAVE:
+            hover_ = 0;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        case WM_LBUTTONDOWN:
+            pressed_ = Hit(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam)));
+            SetCapture(hwnd_);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        case WM_LBUTTONUP: {
+            const int hit = Hit(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam)));
+            const int pressed = pressed_;
+            pressed_ = 0;
+            ReleaseCapture();
+            if (hit == pressed && hit != 0) {
+                if (hit >= 10) { SwitchTo(static_cast<size_t>(hit - 10)); InvalidateRect(hwnd_, nullptr, FALSE); return 0; }
+                if (hit == 1) Activate(0);
+                else if (hit == 3) Activate(2);
+                else Complete(LockedItemChoice::Cancel);
+                return 0;
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
+        case WM_ACTIVATE:
+            if (LOWORD(wparam) != WA_INACTIVE) SetFocus(hwnd_);
+            return 0;
+        case WM_SYSKEYDOWN:
+            if (!(lparam & (1 << 29)) && wparam != VK_F10) return Handle(WM_KEYDOWN, wparam, lparam);
+            break;
+        case WM_KEYDOWN:
+            if (wparam == VK_PROCESSKEY) {
+                const UINT vk = ImmGetVirtualKey(hwnd_);
+                if (vk && vk != VK_PROCESSKEY) wparam = vk;
+            }
+            if (wparam == VK_ESCAPE) { Complete(LockedItemChoice::Cancel); return 0; }
+            if (wparam == VK_RETURN || wparam == VK_SPACE) { Activate(FocusTarget(focus_)); return 0; }
+            if (wparam == VK_TAB || wparam == VK_LEFT || wparam == VK_RIGHT) {
+                const bool back = wparam == VK_LEFT || (wparam == VK_TAB && GetKeyState(VK_SHIFT) < 0);
+                focus_ = (focus_ + (back ? FocusCount() - 1 : 1)) % FocusCount();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
+            break;
+        case WM_CLOSE:
+            Complete(LockedItemChoice::Cancel);
+            return 0;
+        case WM_PAINT: {
+            PAINTSTRUCT paint{};
+            BeginPaint(hwnd_, &paint);
+            Render();
+            EndPaint(hwnd_, &paint);
+            return 0;
+        }
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_DESTROY:
+            KillTimer(hwnd_, kPingTimer);
+            KillTimer(hwnd_, kContinueTimer);
+            compositor_.Shutdown();
+            done_ = true;
+            return 0;
+        }
+        return DefWindowProcW(hwnd_, message, wparam, lparam);
+    }
+
+    HWND hwnd_ = nullptr;
+    HWND owner_ = nullptr;
+    Compositor compositor_;
+    fluent::Painter painter_{ &compositor_ };
+    LockedItemInfo info_;
+    std::vector<bool> gone_;
+    std::vector<HWND> windows_;
+    std::vector<HICON> icons_;
+    std::vector<ComPtr<ID2D1Bitmap>> bitmaps_;
+    ComPtr<IWICImagingFactory> wic_;
+    std::thread watcher_;
+    std::atomic<bool> stop_{ false };
+    std::atomic<uint64_t> watch_mask_{ 0 };
+    LockedItemChoice choice_ = LockedItemChoice::Cancel;
+    D2D1_COLOR_F accent_ = HexColor(0x0078D4);
+    float scale_ = 1.0f;
+    bool dark_ = false;
+    bool backdrop_enabled_ = false;
+    bool done_ = false;
+    bool released_ = false;
+    ULONGLONG released_at_ = 0;
+    int hover_ = 0;
+    int pressed_ = 0;
+    int focus_ = 0;
+    ComPtr<IDWriteTextFormat> head_format_;
+    ComPtr<IDWriteTextFormat> sub_format_;
+    ComPtr<IDWriteTextFormat> name_format_;
+    ComPtr<IDWriteTextFormat> meta_format_;
+    ComPtr<IDWriteTextFormat> watch_format_;
+    ComPtr<IDWriteTextFormat> tag_format_;
+    ComPtr<IDWriteTextFormat> small_button_format_;
+    ComPtr<IDWriteTextFormat> button_format_;
+    ComPtr<IDWriteTextFormat> glyph_format_;
+    ComPtr<IDWriteTextFormat> app_glyph_format_;
+};
+
 } // namespace
 
 FileOperationWindow::FileOperationWindow() : painter_(&compositor_) {}
@@ -2653,6 +3288,12 @@ ConflictDialogResult ShowFileConflictDialog(HWND owner,
 PermanentDeleteChoice ShowPermanentDeleteDialog(HWND owner, const PermanentDeleteInfo& info,
                                                 bool dark, D2D1_COLOR_F accent) {
     PermanentDeleteWindow window;
+    return window.Show(owner, info, dark, accent);
+}
+
+LockedItemChoice ShowLockedItemDialog(HWND owner, const LockedItemInfo& info, bool dark,
+                                      D2D1_COLOR_F accent) {
+    LockedItemWindow window;
     return window.Show(owner, info, dark, accent);
 }
 
