@@ -286,6 +286,86 @@ int main(int argc, char** argv) {
     check(status.task_is_update && status.task_progress == 37, "update replaces completed operation summary");
     s.shot.active = false;
     check(!BuildVm(s, false).status.task_is_update, "fixture cannot leak progress into idle runtime");
+
+    // Operation pill (pulse_ops_dialogs.html 状态栏胶囊): finished with 撤销 /
+    // 打开, partial failure, paused; the two actions have their own targets.
+    {
+        l10n::SetLanguage(L"zh-CN");   // the update loop above ends in en-US
+        const auto output = std::filesystem::absolute(L"../bench_data/content-progress-ui");
+        std::filesystem::create_directories(output);
+        s.scale = 1.0f; s.compositor.RecreateTextFormats(1.0f); s.renderer.SetScale(1.0f);
+        const auto rect = D2D1::RectF(0, 0, 1100, 720);
+        s.compositor.Resize(1100, 720);
+        for (const bool dark : {true, false}) {
+            const auto theme = ui::MakeTheme(dark, ui::HexColor(0x6474C7));
+            auto base = app::BuildWindowViewModel(*s.pane, s.sidebar, true, false, dark, &s.places);
+            base.status.query_active = base.status.query_cancellable = false;
+            base.status.task_is_update = false;
+            auto frame = [&](const ui::WindowViewModel& vm, const wchar_t* name) {
+                s.compositor.Dc()->BeginDraw(); s.renderer.Render(vm, rect, theme);
+                const bool drawn = SUCCEEDED(s.compositor.Dc()->EndDraw());
+                if (name) {
+                    const auto file = output / (std::wstring(L"pill-") + name + (dark ? L"-dark.png" : L"-light.png"));
+                    check(drawn && s.compositor.SaveSnapshot(file.c_str()), "operation pill screenshot saved");
+                }
+            };
+            auto running = base;
+            running.status.task_text = L"\x6b63\x5728\x590d\x5236 12 \x4e2a\x9879\x76ee";
+            running.status.task_active = true;
+            running.status.task_progress = 47.0f;
+            frame(running, L"running");
+            auto paused = running;
+            paused.status.task_paused = true;
+            frame(paused, L"paused");
+            auto done = base;
+            done.status.task_text = L"\x5df2\x590d\x5236 12 \x4e2a\x9879\x76ee";
+            done.status.task_can_undo = done.status.task_can_open = true;
+            frame(done, nullptr);
+            Sleep(650);   // past the finish pop
+            frame(done, L"done");
+            // Scan the bar: 撤销 then 打开, both inside the operation pill.
+            const float y = rect.bottom - 12.0f;
+            float undo_x = -1, open_x = -1;
+            int plain = 0;
+            for (float x = rect.right * 0.48f; x < rect.right; x += 1.0f) {
+                const auto hit = s.renderer.HitTest(done, rect, x, y);
+                if (hit.region != ui::HitTestResult::StatusBarTask) continue;
+                if (hit.sub_index == 0 && undo_x < 0) undo_x = x;
+                else if (hit.sub_index == 1 && open_x < 0) open_x = x;
+                else if (hit.sub_index < 0) ++plain;
+            }
+            check(undo_x > 0 && open_x > undo_x && plain > 0,
+                  "finished pill: undo and open have their own targets, the rest opens details");
+            auto hover = done;
+            hover.hover_region = ui::HitTestResult::StatusBarTask;
+            hover.hover_sub_index = 0;
+            frame(hover, L"done-hover");
+            auto no_undo = base;
+            no_undo.status.task_text = done.status.task_text;
+            no_undo.status.task_can_open = true;
+            frame(running, nullptr);
+            frame(no_undo, nullptr);
+            int undo_hits = 0;
+            for (float x = rect.right * 0.48f; x < rect.right; x += 1.0f)
+                if (s.renderer.HitTest(no_undo, rect, x, y).sub_index == 0) ++undo_hits;
+            check(undo_hits == 0, "no undo target when the operation cannot be undone");
+            auto bad = base;
+            bad.status.task_text = L"2 \x9879\x672a\x6210\x529f \x00b7 \x70b9\x51fb\x67e5\x770b";
+            bad.status.task_failed = true;
+            bad.status.task_failed_items = 2;
+            frame(running, nullptr);
+            frame(bad, nullptr);
+            Sleep(650);
+            frame(bad, L"partial");
+            int bad_actions = 0, bad_task = 0;
+            for (float x = rect.right * 0.48f; x < rect.right; x += 1.0f) {
+                const auto hit = s.renderer.HitTest(bad, rect, x, y);
+                if (hit.region == ui::HitTestResult::StatusBarTask) { ++bad_task; if (hit.sub_index >= 0) ++bad_actions; }
+            }
+            check(bad_task > 0 && bad_actions == 0, "partial-failure pill opens the list, no actions");
+            frame(running, nullptr);   // reset the finish edge for the next theme
+        }
+    }
     s.renderer.SetCompositor(nullptr); s.compositor.Shutdown(); DestroyWindow(s.hwnd); s.hwnd=nullptr;
     CoUninitialize(); return failures ? 1:0;
 }

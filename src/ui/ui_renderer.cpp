@@ -1937,22 +1937,47 @@ void MainRenderer::DrawTaskPill(const WindowViewModel& vm, const D2D1_RECT_F& ar
         task_pill_was_active_ = false;
         task_pill_done_at_ = vm.status.task_failed ? 0 : now;
         task_pill_animate_ = motion::SystemAnimationsEnabled();
+        if (task_pill_animate_ && (!vm.status.task_failed || vm.status.task_failed_items > 0))
+            task_pill_pop_at_ = now;
     }
-    float strength = active ? 1.0f : 0.0f;   // capsule background opacity
+    // Partial failure (pulse_ops_dialogs.html 状态栏胶囊): red until the next
+    // operation, the click opens the list.
+    const bool bad = !active && vm.status.task_failed_items > 0;
+    if (task_pill_pop_at_ != 0 && now - task_pill_pop_at_ >= kTaskPillPopMs) task_pill_pop_at_ = 0;
+    float strength = active || bad ? 1.0f : 0.0f;   // capsule background opacity
     bool done = false;
+    const bool offers = !active && !bad && (vm.status.task_can_undo || vm.status.task_can_open);
+    task_pill_hold_ms_ = offers ? kTaskPillActionsMs : kTaskPillDoneMs;
+    task_action_rects_[0] = task_action_rects_[1] = D2D1_RECT_F{};
     if (!active && task_pill_done_at_ != 0) {
-        const ULONGLONG age = now - task_pill_done_at_;
-        if (age < kTaskPillDoneMs) {
+        ULONGLONG age = now - task_pill_done_at_;
+        // Pointer on the pill: hold it, with a moment left after it leaves.
+        if (offers && IsHovered(vm, HitTestResult::StatusBarTask) && age < task_pill_hold_ms_ &&
+            age > task_pill_hold_ms_ - 1500) {
+            task_pill_done_at_ = now - (task_pill_hold_ms_ - 1500);
+            age = task_pill_hold_ms_ - 1500;
+        }
+        if (age < task_pill_hold_ms_) {
             done = true;
             strength = 1.0f;
-        } else if (task_pill_animate_ && age < kTaskPillDoneMs + kTaskPillFadeMs) {
+        } else if (task_pill_animate_ && age < task_pill_hold_ms_ + kTaskPillFadeMs) {
             done = true;
             strength = 1.0f - motion::EaseOutCubic(
-                static_cast<float>(age - kTaskPillDoneMs) / static_cast<float>(kTaskPillFadeMs));
+                static_cast<float>(age - task_pill_hold_ms_) / static_cast<float>(kTaskPillFadeMs));
         } else {
             task_pill_done_at_ = 0;
         }
     }
+    // 撤销 / 打开 while the finished pill is fully shown.
+    const bool show_actions = offers && done && strength >= 1.0f;
+    const std::wstring undo_label = l10n::Get(l10n::StringId::Undo);
+    const std::wstring open_label = l10n::Get(l10n::StringId::Open);
+    const float action_pad = 6.0f * scale_;
+    const float undo_w = show_actions && vm.status.task_can_undo
+        ? MeasureTextWidth(factory, fmt, undo_label) + action_pad * 2.0f : 0.0f;
+    const float open_w = show_actions && vm.status.task_can_open
+        ? MeasureTextWidth(factory, fmt, open_label) + action_pad * 2.0f : 0.0f;
+    const float actions_w = undo_w + open_w > 0.0f ? undo_w + open_w + 4.0f * scale_ : 0.0f;
     const bool indeterminate = active && vm.status.task_progress < 0.0f;
     task_pill_spinning_ = indeterminate;
 
@@ -1961,20 +1986,37 @@ void MainRenderer::DrawTaskPill(const WindowViewModel& vm, const D2D1_RECT_F& ar
     const float cy = (area.top + area.bottom) * 0.5f;
     const float pill_h = std::min(area.bottom - area.top - 4.0f * scale_, 22.0f * scale_);
     // The capsule collapses with its fade, so the text slides home instead of jumping.
-    const float ring_d = 12.0f * scale_ * (active ? 1.0f : done ? strength : 0.0f);
+    const float ring_d = 12.0f * scale_ * (active || bad ? 1.0f : done ? strength : 0.0f);
     const float pad_l = 7.0f * scale_ * strength;
     const float pad_r = 10.0f * scale_ * strength;
-    const float gap = 6.0f * scale_ * (active ? 1.0f : done ? strength : 0.0f);
+    const float gap = 6.0f * scale_ * (active || bad ? 1.0f : done ? strength : 0.0f);
     const float text_w = text.empty() ? 0.0f : MeasureTextWidth(factory, fmt, text);
-    const float pill_w = std::min(area_w, pad_l + ring_d + gap + text_w + pad_r + 1.0f);
+    const float pill_w = std::min(area_w, pad_l + ring_d + gap + text_w + actions_w +
+                                          (actions_w > 0.0f ? 4.0f * scale_ - pad_r : 0.0f) + pad_r + 1.0f);
     const D2D1_RECT_F pill = D2D1::RectF(area.right - pill_w, cy - pill_h * 0.5f,
                                          area.right, cy + pill_h * 0.5f);
     const bool hovered = IsHovered(vm, HitTestResult::StatusBarTask);
+    // State colour: accent running, amber paused, green done, red partial.
+    const D2D1_COLOR_F amber = vm.dark ? HexColor(0xF0B041) : HexColor(0xC98410);
+    const D2D1_COLOR_F green = vm.dark ? HexColor(0x3CCF8E) : HexColor(0x16A36A);
+    const D2D1_COLOR_F tone = bad ? theme.danger : done ? green
+        : (active && vm.status.task_paused) ? amber : theme.accent;
+    // Pop on finish: .7 -> 1.08 -> 1 (pillpop, 500 ms).
+    D2D1_MATRIX_3X2_F saved_transform{};
+    const bool popping = task_pill_pop_at_ != 0 && (done || bad);
+    if (popping) {
+        const float t = std::clamp(static_cast<float>(now - task_pill_pop_at_) / kTaskPillPopMs, 0.0f, 1.0f);
+        const float k = t < 0.6f ? 0.7f + 0.38f * motion::EaseOutCubic(t / 0.6f)
+                                 : 1.08f - 0.08f * motion::EaseOutCubic((t - 0.6f) / 0.4f);
+        dc->GetTransform(&saved_transform);
+        dc->SetTransform(D2D1::Matrix3x2F::Scale(k, k, D2D1::Point2F((pill.left + pill.right) * 0.5f, cy)) *
+                         saved_transform);
+    }
 
     if (strength > 0.0f) {
-        D2D1_COLOR_F fill = done ? theme.accent : theme.text;
-        fill.a = done ? (vm.dark ? 0.24f : 0.14f) * strength
-                      : (hovered ? (vm.dark ? 0.12f : 0.08f) : (vm.dark ? 0.07f : 0.045f));
+        D2D1_COLOR_F fill = tone;
+        fill.a = done ? (vm.dark ? 0.20f : 0.13f) * strength
+                      : (hovered ? (vm.dark ? 0.24f : 0.18f) : (vm.dark ? 0.16f : 0.12f));
         ComPtr<ID2D1SolidColorBrush> fill_brush;
         dc->CreateSolidColorBrush(fill, &fill_brush);
         if (fill_brush.get())
@@ -1985,8 +2027,12 @@ void MainRenderer::DrawTaskPill(const WindowViewModel& vm, const D2D1_RECT_F& ar
         const D2D1_POINT_2F c = D2D1::Point2F(pill.left + pad_l + ring_d * 0.5f, cy);
         const float r = ring_d * 0.5f - 1.0f * scale_;
         const float stroke = 1.75f * scale_;
-        if (done) {
-            D2D1_COLOR_F accent = theme.accent;
+        if (bad) {
+            DrawIconText(c.x - ring_d * 0.5f - 2.0f * scale_, cy - ring_d * 0.5f - 2.0f * scale_,
+                         ring_d + 4.0f * scale_, ring_d + 4.0f * scale_,
+                         L"\xE7BA", L"!", tone, 0.82f);
+        } else if (done) {
+            D2D1_COLOR_F accent = tone;
             accent.a = std::max(strength, 0.0f);
             DrawIconText(c.x - ring_d * 0.5f - 2.0f * scale_, cy - ring_d * 0.5f - 2.0f * scale_,
                          ring_d + 4.0f * scale_, ring_d + 4.0f * scale_,
@@ -1997,24 +2043,56 @@ void MainRenderer::DrawTaskPill(const WindowViewModel& vm, const D2D1_RECT_F& ar
             ComPtr<ID2D1SolidColorBrush> track_brush;
             dc->CreateSolidColorBrush(track, &track_brush);
             if (track_brush.get()) dc->DrawEllipse(D2D1::Ellipse(c, r, r), track_brush.get(), stroke);
-            MakeBrush(dc, theme.accent, brAccent_);
-            if (indeterminate) {
-                const float spin = static_cast<float>(now % 1000) * 0.36f;
-                DrawRingArc(dc, brAccent_.get(), c, r, spin, 90.0f, stroke);
-            } else {
-                const float value = std::clamp(vm.status.task_progress / 100.0f, 0.0f, 1.0f);
-                DrawRingArc(dc, brAccent_.get(), c, r, 0.0f, std::max(value * 360.0f, 12.0f), stroke);
+            ComPtr<ID2D1SolidColorBrush> tone_brush;
+            dc->CreateSolidColorBrush(tone, &tone_brush);
+            if (tone_brush.get()) {
+                if (indeterminate) {
+                    const float spin = static_cast<float>(now % 1000) * 0.36f;
+                    DrawRingArc(dc, tone_brush.get(), c, r, spin, 90.0f, stroke);
+                } else {
+                    const float value = std::clamp(vm.status.task_progress / 100.0f, 0.0f, 1.0f);
+                    DrawRingArc(dc, tone_brush.get(), c, r, 0.0f, std::max(value * 360.0f, 12.0f), stroke);
+                }
             }
         }
         text_x += ring_d + gap;
     }
     if (!text.empty()) {
-        D2D1_COLOR_F color = theme.accent;
-        if (vm.status.task_failed && !active) color = theme.text_secondary;
+        D2D1_COLOR_F color = tone;
+        if (vm.status.task_failed && !active && !bad) color = theme.text_secondary;
         MakeBrush(dc, color, brAccentText_);
+        const float text_right = actions_w > 0.0f ? pill.right - actions_w
+                                                  : area.right - pad_r + 1.0f;
         DrawTextEndEllipsis(dc, factory, fmt, brAccentText_.get(), text, text_x, area.top,
-                            std::max(0.0f, area.right - text_x - pad_r + 1.0f), status_height_);
+                            std::max(0.0f, text_right - text_x), status_height_);
     }
+    if (actions_w > 0.0f) {
+        // Plain text buttons at the right end (pulse_ops_dialogs.html .pa).
+        float x = pill.right - 4.0f * scale_ - open_w - undo_w;
+        const float top = pill.top + 2.0f * scale_;
+        const float bottom = pill.bottom - 2.0f * scale_;
+        const std::wstring* labels[2] = { &undo_label, &open_label };
+        const float widths[2] = { undo_w, open_w };
+        for (int i = 0; i < 2; ++i) {
+            if (widths[i] <= 0.0f) continue;
+            const D2D1_RECT_F button = D2D1::RectF(x, top, x + widths[i], bottom);
+            task_action_rects_[i] = button;
+            if (IsHovered(vm, HitTestResult::StatusBarTask, -1, i)) {
+                D2D1_COLOR_F hover = theme.text;
+                hover.a = vm.dark ? 0.10f : 0.08f;
+                ComPtr<ID2D1SolidColorBrush> hover_brush;
+                dc->CreateSolidColorBrush(hover, &hover_brush);
+                if (hover_brush.get())
+                    FillRoundedRect(dc, hover_brush.get(), button.left, button.top, widths[i],
+                                    bottom - top, 6.0f * scale_);
+            }
+            MakeBrush(dc, theme.text, brAccentText_);
+            DrawTextEndEllipsis(dc, factory, fmt, brAccentText_.get(), *labels[i], x + action_pad, area.top,
+                                widths[i] - action_pad * 2.0f + 1.0f, status_height_);
+            x += widths[i];
+        }
+    }
+    if (popping) dc->SetTransform(saved_transform);
 }
 
 MainRenderer::TabStripMetrics MainRenderer::ComputeTabStrip(

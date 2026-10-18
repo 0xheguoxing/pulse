@@ -3215,7 +3215,16 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             }
             InvalidateRect(hwnd, nullptr, FALSE);
         } else if (hit.region == ui::HitTestResult::StatusBarTask) {
-            PinAndShowOperationWindow(*s);
+            const ops::OpStatus finished = s->ops.Status();
+            if (hit.sub_index == 0) {
+                // 撤销 on the finished pill: only the operation it names.
+                if (s->ops.CanUndoTask(finished.task_id)) s->ops.Undo();
+            } else if (hit.sub_index == 1) {
+                if (!finished.destination_dir.empty()) NavigateTo(*s, finished.destination_dir);
+            } else {
+                PinAndShowOperationWindow(*s);
+            }
+            InvalidateRect(hwnd, nullptr, FALSE);
         } else if (hit.region == ui::HitTestResult::StatusBar) {
             // Left/right status text is not a transfer control.
         } else if (!IsSettingsTab(ActiveTab(*s)) &&

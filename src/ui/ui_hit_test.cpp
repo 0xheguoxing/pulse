@@ -809,6 +809,12 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
     if (y >= rect.bottom - status_height_) {
         r.region = StatusBarHitRegion(vm, rect, x, y, scale_, status_height_,
                                       compositor_);
+        if (r.region == HitTestResult::StatusBarTask) {
+            // 撤销 / 打开 on the finished pill, as last drawn.
+            for (int i = 0; i < 2; ++i)
+                if (task_action_rects_[i].right > task_action_rects_[i].left &&
+                    ContainsPt(task_action_rects_[i], x, y)) r.sub_index = i;
+        }
         return r;
     }
 

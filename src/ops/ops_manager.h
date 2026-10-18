@@ -16,6 +16,7 @@
 #include <windows.h>
 #include "file_lock_owner.h"
 #include "duplicate_cleanup_guard.h"
+#include "op_speed_graph.h"
 #include "../common/menu_icon.h"
 #include <condition_variable>
 #include <cstdint>
@@ -67,7 +68,10 @@ struct ConflictItemInfo {
     FILETIME destination_modified{};
     bool source_is_directory = false;
     bool destination_is_directory = false;
-    size_t remaining = 0;
+    size_t remaining = 0;     // conflicts still to come, this one included
+    size_t ordinal = 0;       // 1-based position among the conflicts asked so far (0 = unknown)
+    OpType type = OpType::Copy;
+    std::wstring keep_both_name; // leaf name 保留两者 would give the new copy
 };
 
 struct OpRequest {
@@ -82,6 +86,9 @@ struct OpRequest {
     std::vector<uint8_t> template_data;
     CollisionPolicy collision_policy = CollisionPolicy::System; // Copy / Move
     bool is_undo = false;     // undo-originated ops do not re-enter the stack
+    // An undo task: the operation it reverses, so it finishes as 已撤销复制
+    // rather than as the inverse (删除完成). Session only.
+    std::optional<OpType> undo_of;
     // Several operations making up one user action (合并到文件夹, 解散文件夹)
     // share a nonzero group and undo as one step, under this label.
     uint64_t undo_group = 0;
@@ -108,11 +115,25 @@ struct UndoEntry {
     bool supported = true;    // false = recorded for history, cannot be undone
     uint64_t group = 0;       // OpRequest::undo_group (session only, not persisted)
     std::wstring label;       // OpRequest::undo_label
+    uint64_t task_id = 0;     // the task that recorded it (session only)
+};
+
+// One item a copy or move could not handle while the rest went on
+// (pulse_ops_dialogs.html, partial failure).
+struct OpFailure {
+    std::wstring source;
+    std::wstring destination;
+    std::wstring reason;        // in the user's words, without the path
+    HRESULT hr = S_OK;
 };
 
 struct OpStatus {
     bool active = false;
     bool can_pause = true;
+    // Pause was asked for and not yet resumed. The worker may still be inside
+    // a write and only reports Paused at its next check; the UI shows paused
+    // from this so a second click resumes instead of pausing again.
+    bool pause_requested = false;
     AuthorizationState authorization = AuthorizationState::None;
     bool can_skip_authorization = false;
     // ActionRequired only: "Retry" was chosen and the attempt is in flight
@@ -127,6 +148,7 @@ struct OpStatus {
     std::wstring last_error;
     std::wstring source_label;
     std::wstring destination_label;
+    std::wstring destination_dir;   // copy / move: the folder items go to
     std::wstring current_item;
     uint64_t total_bytes = 0;
     uint64_t transferred_bytes = 0;
@@ -142,6 +164,10 @@ struct OpStatus {
     // Failed because other processes hold the item (Restart Manager result).
     std::wstring locked_path;
     std::vector<LockOwner> lock_owners;
+    // Items that failed while the task went on (Failed phase). At most
+    // kMaxReportedFailures are listed; failed_items is the full count.
+    std::vector<OpFailure> failures;
+    uint64_t failed_items = 0;
 };
 
 struct CompletedOperation {
@@ -246,8 +272,29 @@ public:
     void ResolveAuthorization(uint64_t task_id, bool retry);
     // Re-queue the operation that failed on a locked item (status.task_id).
     // close_owners = end the closable lock owners on the worker first. Items
-    // that are already gone are skipped for delete/move.
-    bool RetryLockedOperation(uint64_t task_id, bool close_owners);
+    // that are already gone are skipped for delete/move. skip_item = drop the
+    // locked item itself and go on with the rest (see CanSkipLockedItem).
+    bool RetryLockedOperation(uint64_t task_id, bool close_owners, bool skip_item = false);
+    // The locked item is one of several top-level sources, so the rest can go
+    // on without it (an item inside a source folder cannot be left out).
+    bool CanSkipLockedItem(uint64_t task_id) const;
+    // Re-queue failed items of a finished copy or move (indices into
+    // status.failures of task_id): each goes back to the folder it was meant
+    // for. Empty `indices` = all of them, once. Returns the queued tasks and
+    // the items each covers; empty when that task's failures are gone (the
+    // last few tasks with failures are kept).
+    struct RetrySpawn {
+        uint64_t task_id = 0;
+        std::vector<size_t> items;
+    };
+    std::vector<RetrySpawn> RetryFailedItems(uint64_t task_id, const std::vector<size_t>& indices = {});
+    // How a recent task ended (the last 16). Status() only shows the newest
+    // task, so retries that run back to back are looked up here.
+    std::optional<OpStatus> FinalStatus(uint64_t task_id) const;
+    // The speed history of the newest task, recorded while it runs whether
+    // or not a progress card is visible; empty for any other task.
+    OpSpeedGraph SpeedGraph(uint64_t task_id) const;
+    static constexpr size_t kMaxReportedFailures = 500;
 
     // Double-click open: ShellExecuteEx on a dedicated open thread (plan §6.2).
     void OpenWith(const std::wstring& path);
@@ -297,6 +344,8 @@ public:
     bool TakeCtxInvokeDone();
 
     bool CanUndo() const;
+    // The newest undo step belongs to this task (the pill's 撤销).
+    bool CanUndoTask(uint64_t task_id) const;
     std::wstring UndoLabel() const;   // "撤销移动 xxx" etc; empty if none
     void Undo();
 
@@ -363,6 +412,10 @@ private:
                          const std::wstring& error);
     bool PrepareLockRetry(OpRequest& req, uint64_t task_id);
     void SetStatus(const std::function<void(OpStatus&)>& fn);
+    // Per-file progress: the status always changes, but the UI is told at
+    // most every kProgressNotifyMs. Phase changes and results use SetStatus.
+    void SetProgressStatus(const std::function<void(OpStatus&)>& fn);
+    void NotifyStatusChanged();
     void PushUndo(const OpRequest& req, uint64_t task_id,
                   const std::vector<std::wstring>* actual_destinations = nullptr);
     void LoadRecoveryJournal();
@@ -374,6 +427,12 @@ private:
                     ShellMenuAnswer answer);
 
     std::function<void()> notify_;
+    // One posted notification at a time: stamped when notify_ runs, cleared
+    // when the UI reads Status(). Without it a 10 000-file copy posts 50 000+
+    // messages that the UI thread handles one by one. A consumer that never
+    // reads Status() is still told again after kNotifyPendingMs.
+    mutable std::atomic<ULONGLONG> notify_pending_since_{0};
+    std::atomic<ULONGLONG> last_status_notify_{0};
 
     mutable std::mutex mutex_;            // guards queue_ + status_ + undo_
     std::condition_variable cv_;
@@ -390,8 +449,20 @@ private:
         uint64_t task_id = 0;
         OpRequest req;
         std::vector<LockOwner> owners;
+        std::wstring path;              // the locked item
     };
     std::optional<LockRetry> lock_retry_;   // guarded by mutex_
+    struct FailedItemsRetry {
+        uint64_t task_id = 0;
+        OpRequest req;
+        std::vector<OpFailure> failures;
+    };
+    std::deque<FailedItemsRetry> failed_retries_;   // newest last; guarded by mutex_
+    std::deque<OpStatus> final_statuses_;            // newest last; guarded by mutex_
+    OpSpeedGraph speed_graph_;                       // status_.task_id's; guarded by mutex_
+    uint64_t speed_graph_task_ = 0;
+    void SampleSpeedLocked();
+    void ApplyUndoSummaryLocked();
     std::vector<RecoveryEntry> pending_recovery_;
     std::wstring journal_path_;
     OpStatus status_;

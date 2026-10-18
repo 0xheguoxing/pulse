@@ -164,6 +164,43 @@ int wmain(int argc, wchar_t** argv) {
         const bool folder_deleted = SUCCEEDED(result.hr) && result.sources.size() == 1 && result.destinations.empty() && !std::filesystem::exists(root / L"folder");
         if (!folder_deleted) std::cerr << "folder delete hr=0x" << std::hex << static_cast<unsigned long>(result.hr) << std::dec << " successes=" << result.sources.size() << " mutated=" << result.mutated << " cancelled=" << result.cancelled << " folder_exists=" << std::filesystem::exists(root / L"folder") << '\n';
         check(folder_deleted, "permanent folder deletion reports completed root");
+        // The bin's limits are judged before anything is touched.
+        {
+            using pulse::ops::RecycleBinLimits;
+            using pulse::ops::CheckRecycleFits;
+            std::filesystem::create_directories(root / L"big" / L"sub");
+            { std::ofstream file(root / L"large.bin", std::ios::binary); file << std::string(2u << 20, 'x'); }
+            { std::ofstream file(root / L"small.bin", std::ios::binary); file << std::string(100u << 10, 'x'); }
+            for (int i = 0; i < 3; ++i) {
+                std::ofstream file(root / L"big" / L"sub" / (L"part" + std::to_wstring(i)), std::ios::binary);
+                file << std::string(512u << 10, 'x');
+            }
+            RecycleBinLimits tiny;
+            tiny.max_bytes = 1u << 20;
+            tiny.used_bytes = 100ull << 30;
+            check(CheckRecycleFits((root / L"large.bin").wstring(), tiny, cancel) == pulse::ops::kRecycleBinTooSmall,
+                  "a file larger than the bin is refused");
+            check(CheckRecycleFits((root / L"small.bin").wstring(), tiny, cancel) == S_OK, "a file that fits passes");
+            check(CheckRecycleFits((root / L"big").wstring(), tiny, cancel) == pulse::ops::kRecycleBinTooSmall,
+                  "a folder larger than the bin is refused (measured through subfolders)");
+            check(CheckRecycleFits((root / L"big").wstring(), tiny, cancel, false) == S_OK,
+                  "folders are not measured on the cheap check");
+            RecycleBinLimits roomy = tiny;
+            roomy.max_bytes = roomy.used_bytes;
+            check(CheckRecycleFits((root / L"large.bin").wstring(), roomy, cancel) == S_OK,
+                  "a bin as large as the used space takes anything");
+            RecycleBinLimits off;
+            off.disabled = true;
+            check(CheckRecycleFits((root / L"small.bin").wstring(), off, cancel) == COPYENGINE_E_RECYCLE_BIN_NOT_FOUND,
+                  "a bin that is turned off refuses");
+            check(std::filesystem::exists(root / L"large.bin") && std::filesystem::exists(root / L"big" / L"sub" / L"part2"),
+                  "the checks touch nothing");
+            DWORD volume_error = 0;
+            const RecycleBinLimits real = pulse::ops::ReadRecycleBinLimits(root.wstring(), &volume_error);
+            std::cout << "temp volume bin: disabled=" << real.disabled << " max_mb=" << (real.max_bytes >> 20)
+                      << " used_mb=" << (real.used_bytes >> 20) << " error=" << volume_error << '\n';
+            check(volume_error == 0 && (real.disabled || real.max_bytes > 0), "the temp volume's bin limits are read");
+        }
         std::filesystem::remove_all(root);
     } catch (const std::exception& error) {
         std::cerr << "[FAIL] " << error.what() << '\n'; ++failed;

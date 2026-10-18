@@ -2300,3 +2300,85 @@ GlobalSearchNoFilteredResults	IDS_GLOBAL_SEARCH_NO_FILTERED_RESULTS	3502	当前�
 MediaPackUnused	IDS_MEDIA_PACK_UNUSED	3503	未使用	Not in use	未使用
 MediaPackLocalNotice	IDS_MEDIA_PACK_LOCAL_NOTICE	3504	正在使用本地 FFmpeg，不需要下载这个增强包。	Your own FFmpeg is in use, so this pack is not needed.	正在使用本機 FFmpeg，不需要下載這個增強包。
 MediaPackLocalNoticeInstalled	IDS_MEDIA_PACK_LOCAL_NOTICE_INSTALLED	3505	正在使用本地 FFmpeg，已安装的增强包不会被用到，可以卸载以释放空间。	Your own FFmpeg is in use. The installed pack is not used and can be removed to free space.	正在使用本機 FFmpeg，已安裝的增強包不會被用到，可以解除安裝以釋放空間。
+OpElapsed	IDS_OP_ELAPSED	3560	已用时间	Elapsed	已用時間
+OpRemainingShort	IDS_OP_REMAINING_SHORT	3561	剩余	Remaining	剩餘
+OpAverageLead	IDS_OP_AVERAGE_LEAD	3562	平均 	Avg 	平均 
+OpTookLead	IDS_OP_TOOK_LEAD	3563	用时 	Took 	用時 
+OpPausing	IDS_OP_PAUSING	3564	正在暂停…	Pausing…	正在暫停…
+OpHoverKeepsOpen	IDS_OP_HOVER_KEEPS_OPEN	3565	鼠标停留时保持打开	Stays open while hovered	滑鼠停留時保持開啟
+OpProcessedItems	IDS_OP_PROCESSED_ITEMS	3566	已处理	Processed	已處理
+OpTransferredBytes	IDS_OP_TRANSFERRED_BYTES	3567	已传输	Transferred	已傳輸
+OpAverageSpeed	IDS_OP_AVERAGE_SPEED	3568	平均速度	Average speed	平均速度
+OpPeakSpeed	IDS_OP_PEAK_SPEED	3569	峰值速度	Peak speed	峰值速度
+OpCancelling	IDS_OP_CANCELLING	3570	正在取消…	Cancelling…	正在取消…
+OpConflictWhileCopy	IDS_OP_CONFLICT_WHILE_COPY	3571	复制 	While copying 	複製 
+OpConflictWhileMove	IDS_OP_CONFLICT_WHILE_MOVE	3572	移动 	While moving 	移動 
+OpConflictWhileEnd	IDS_OP_CONFLICT_WHILE_END	3573	 时遇到同名项目		 時遇到同名項目
+OpQuoteClose	IDS_OP_QUOTE_CLOSE	3574	”	”	」
+OpConflictCountLead	IDS_OP_CONFLICT_COUNT_LEAD	3575	第 		第 
+OpConflictCountSep	IDS_OP_CONFLICT_COUNT_SEP	3576	 / 	 of 	 / 
+OpConflictCountEnd	IDS_OP_CONFLICT_COUNT_END	3577	 个		 個
+OpLarger	IDS_OP_LARGER	3578	更大	Larger	較大
+OpNewer	IDS_OP_NEWER	3579	较新	Newer	較新
+OpFolderKind	IDS_OP_FOLDER_KIND	3580	文件夹	Folder	資料夾
+OpWillBeReplaced	IDS_OP_WILL_BE_REPLACED	3581	将被覆盖	Will be replaced	將被覆寫
+OpNotCopied	IDS_OP_NOT_COPIED	3582	不复制	Not copied	不複製
+OpNotMoved	IDS_OP_NOT_MOVED	3583	不移动	Not moved	不移動
+OpSaveAsLead	IDS_OP_SAVE_AS_LEAD	3584	将另存为 “	Saved as “	將另存為「
+OpRecommendNewer	IDS_OP_RECOMMEND_NEWER	3585	推荐 · 源文件较新	Recommended · source is newer	建議 · 來源較新
+OpReplaceUseLead	IDS_OP_REPLACE_USE_LEAD	3586	用 	Use the 	用 
+OpReplaceUseMid	IDS_OP_REPLACE_USE_MID	3587	 的版本覆盖 	 version over the 	 的版本覆寫 
+OpReplaceUseEnd	IDS_OP_REPLACE_USE_END	3588	 的版本	 one	 的版本
+OpKeepNameLead	IDS_OP_KEEP_NAME_LEAD	3589	新文件命名为 “	Name the new one “	新檔案命名為「
+OpApplyRestLead	IDS_OP_APPLY_REST_LEAD	3590	对其余 	Do the same for the other 	對其餘 
+OpApplyRestEnd	IDS_OP_APPLY_REST_END	3591	 个冲突执行相同操作	 conflicts	 個衝突執行相同操作
+OpHoverPreviewHint	IDS_OP_HOVER_PREVIEW_HINT	3592	悬停选项可预览结果	Hover an option to preview the result	暫留選項可預覽結果
+PermDeleteOneLead	IDS_PERM_DELETE_ONE_LEAD	3593	永久删除“	Permanently delete “	永久刪除「
+PermDeleteOneEnd	IDS_PERM_DELETE_ONE_END	3594	”？	”?	」？
+PermDeleteManyLead	IDS_PERM_DELETE_MANY_LEAD	3595	永久删除这 	Permanently delete these 	永久刪除這 
+PermDeleteManyEnd	IDS_PERM_DELETE_MANY_END	3596	 个项目？	 items?	 個項目？
+PermDeleteTotalLead	IDS_PERM_DELETE_TOTAL_LEAD	3597	共 	Total 	共 
+PermDeleteFiles	IDS_PERM_DELETE_FILES	3598	 个文件	 files	 個檔案
+PermDeleteMoreLead	IDS_PERM_DELETE_MORE_LEAD	3599	以及另外 	and 	以及另外 
+PermDeleteMoreEnd	IDS_PERM_DELETE_MORE_END	3600	 项	 more	 項
+PermDeleteWarn	IDS_PERM_DELETE_WARN	3601	不经过回收站，删除后无法撤销	Skips the Recycle Bin and can't be undone	不經過資源回收筒，刪除後無法復原
+PermDeleteWarnAlt	IDS_PERM_DELETE_WARN_ALT	3602	 · 可改为移到回收站	 · or move to the Recycle Bin	 · 可改為移到資源回收筒
+PermDeleteToBin	IDS_PERM_DELETE_TO_BIN	3603	移到回收站	Move to Recycle Bin	移到資源回收筒
+LockHeadline	IDS_LOCK_HEADLINE	3604	文件正被其他程序使用	The file is in use by another program	檔案正被其他程式使用
+LockSubLead	IDS_LOCK_SUB_LEAD	3605	“	“	「
+LockSubMid	IDS_LOCK_SUB_MID	3606	” 被下面的程序打开，暂时无法	” is open in the programs below and can't be 	」被下面的程式開啟，暫時無法
+LockSubEnd	IDS_LOCK_SUB_END	3607	。	.	。
+LockVerbRecycle	IDS_LOCK_VERB_RECYCLE	3608	移到回收站	moved to the Recycle Bin	移到資源回收筒
+LockVerbDelete	IDS_LOCK_VERB_DELETE	3609	删除	deleted	刪除
+LockVerbMove	IDS_LOCK_VERB_MOVE	3610	移动	moved	移動
+LockVerbCopy	IDS_LOCK_VERB_COPY	3611	复制	copied	複製
+LockVerbRename	IDS_LOCK_VERB_RENAME	3612	重命名	renamed	重新命名
+LockSwitchTo	IDS_LOCK_SWITCH_TO	3613	切换到程序	Switch to	切換到程式
+LockClosed	IDS_LOCK_CLOSED	3614	✓ 已关闭	✓ Closed	✓ 已關閉
+LockWatch	IDS_LOCK_WATCH	3615	关闭这些程序后会自动继续，无需再点重试	Closing them lets Pulse continue on its own, no need to retry	關閉這些程式後會自動繼續，無需再按重試
+LockReleased	IDS_LOCK_RELEASED	3616	文件已释放，正在继续…	The file is free, continuing…	檔案已釋放，正在繼續…
+LockSkip	IDS_LOCK_SKIP	3617	跳过此项	Skip this item	略過此項
+LockMoreLead	IDS_LOCK_MORE_LEAD	3618	以及另外 	and 	以及另外 
+LockMoreEnd	IDS_LOCK_MORE_END	3619	 个程序	 more programs	 個程式
+RecycleBinOffForDrive	IDS_RECYCLE_BIN_OFF_FOR_DRIVE	3620	这个驱动器的回收站已关闭，删除会立即生效。	The Recycle Bin is turned off for this drive.	這個磁碟機的資源回收筒已關閉，刪除會立即生效。
+RecycleBinTooSmallForItem	IDS_RECYCLE_BIN_TOO_SMALL_FOR_ITEM	3621	回收站容量放不下它，无法移到回收站。	It's too large for the Recycle Bin.	資源回收筒容量放不下它，無法移到資源回收筒。
+RecycleBinTooSmallNotDeleted	IDS_RECYCLE_BIN_TOO_SMALL_NOT_DELETED	3622	超过回收站容量，未删除。可用 Shift+Delete 永久删除	Too large for the Recycle Bin, so it was not deleted. Shift+Delete deletes it permanently.	超過資源回收筒容量，未刪除。可用 Shift+Delete 永久刪除
+MoveKeptSourceNotFlushed	IDS_MOVE_KEPT_SOURCE_NOT_FLUSHED	3623	无法确认已写入目标磁盘，已保留原文件：	Couldn't confirm the copy reached the disk, so the original was kept: 	無法確認已寫入目標磁碟，已保留原檔案：
+TransferInUseBy	IDS_TRANSFER_IN_USE_BY	3624	被 %s 占用	In use by %s	被 %s 佔用
+MoveCopiedSourceKept	IDS_MOVE_COPIED_SOURCE_KEPT	3625	已复制到目标，但无法删除原文件：	Copied, but the original couldn't be removed: 	已複製到目標，但無法刪除原檔案：
+TransferItemsFailed	IDS_TRANSFER_ITEMS_FAILED	3626	%d 项未成功	%d items didn't go through	%d 項未成功
+OpCopyPartialTitle	IDS_OP_COPY_PARTIAL_TITLE	3627	已复制 %s 项，%s 项未成功	Copied %s items, %s didn't go through	已複製 %s 項，%s 項未成功
+OpMovePartialTitle	IDS_OP_MOVE_PARTIAL_TITLE	3628	已移动 %s 项，%s 项未成功	Moved %s items, %s didn't go through	已移動 %s 項，%s 項未成功
+OpPartialBadge	IDS_OP_PARTIAL_BADGE	3629	未全部完成	Not all done	未全部完成
+OpPartialLine	IDS_OP_PARTIAL_LINE	3630	%s 项成功 · %s 项未成功	%s done · %s didn't go through	%s 項成功 · %s 項未成功
+OpRetryFailedItems	IDS_OP_RETRY_FAILED_ITEMS	3631	重试失败项	Retry failed items	重試失敗項目
+OpOpenDestination	IDS_OP_OPEN_DESTINATION	3632	打开目标文件夹	Open destination	開啟目標資料夾
+OpFailedCount	IDS_OP_FAILED_COUNT	3633	%s 项失败	%s failed	%s 項失敗
+OpMoreFailures	IDS_OP_MORE_FAILURES	3634	另有 %s 项未列出	%s more not listed	另有 %s 項未列出
+OpPillFailed	IDS_OP_PILL_FAILED	3635	%s 项未成功 · 点击查看	%s didn't go through · Click to view	%s 項未成功 · 按一下查看
+OpUndoneCopy	IDS_OP_UNDONE_COPY	3636	已撤销复制	Copy undone	已復原複製
+OpUndoneMove	IDS_OP_UNDONE_MOVE	3637	已撤销移动	Move undone	已復原移動
+OpUndoneRename	IDS_OP_UNDONE_RENAME	3638	已撤销重命名	Rename undone	已復原重新命名
+OpUndoneDelete	IDS_OP_UNDONE_DELETE	3639	已撤销删除	Delete undone	已復原刪除
+OpUndoneCreate	IDS_OP_UNDONE_CREATE	3640	已撤销新建	New item undone	已復原新增
+OpUndone	IDS_OP_UNDONE	3641	已撤销	Undone	已復原

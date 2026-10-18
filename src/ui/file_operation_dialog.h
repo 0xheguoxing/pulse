@@ -6,9 +6,12 @@
 #include "ui_compositor.h"
 #include "../ops/ops_manager.h"
 
+#include <chrono>
 #include <deque>
 #include <functional>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace pulse::ui {
 
@@ -19,6 +22,23 @@ struct FileOperationCallbacks {
     std::function<void()> dismiss;
     std::function<void(uint64_t)> retry_authorization;
     std::function<void(uint64_t)> skip_authorization;
+    // Partial failure: re-queue failed items (OpsManager::RetryFailedItems)
+    // and open the destination folder.
+    std::function<std::vector<ops::OpsManager::RetrySpawn>(uint64_t, const std::vector<size_t>&)> retry_failed;
+    std::function<void(const std::wstring&)> open_folder;
+    // How a finished task ended (OpsManager::FinalStatus): retries that ran
+    // back to back are only partly seen through Update.
+    std::function<std::optional<ops::OpStatus>(uint64_t)> task_outcome;
+    // The engine's background speed history (OpsManager::SpeedGraph): a card
+    // first shown late, or shown again after hiding, draws the whole run.
+    std::function<ops::OpSpeedGraph(uint64_t)> speed_history;
+};
+
+// What the footer offers while failed items are listed.
+struct TransferFailureView {
+    bool on = false;
+    bool can_retry = false;   // a listed item can be retried
+    bool can_open = false;    // the destination folder is known
 };
 
 class FileOperationWindow {
@@ -33,6 +53,9 @@ public:
     void Show(bool activate = true);
     void Hide();
     bool IsVisible() const;
+    // When the window is built after the task started (first pill click), the
+    // app passes the start it recorded so 已用时间 counts from the real start.
+    void SetTaskStart(uint64_t task_id, std::chrono::steady_clock::time_point started);
 
 private:
     friend struct FileOperationWindowTestAccess;
@@ -43,6 +66,23 @@ private:
     void ResizeForDetails(bool preserve_center);
     int HitTestControl(float x, float y) const;
     void RequestClose();
+    void CreateCardFormats();
+    bool AutoClosePending() const;
+    void TickAutoClose(ULONGLONG now);
+    void BeginAutoClose();
+    void FinishAutoClose();
+    void SampleGraph(ULONGLONG now);
+    TransferFailureView FailureView() const;
+public:
+    // A retry started from the failed-items list: its outcome is shown in the
+    // list (no separate locked-item prompt).
+    bool TracksRetry(uint64_t task_id) const;
+private:
+    size_t VisibleFailureRows() const;
+    float FailureBlockDip() const;
+    ops::OpStatus BoardStatus() const;
+    void RetryFailureRows(const std::vector<size_t>& rows);
+    void FinishRetry(const ops::OpStatus& status);
 
     HWND hwnd_ = nullptr;
     HWND owner_ = nullptr;
@@ -50,8 +90,29 @@ private:
     fluent::Painter painter_;
     FileOperationCallbacks callbacks_;
     ops::OpStatus status_;
-    std::deque<double> speed_history_;
-    ULONGLONG speed_sample_tick_ = 0;
+    // Speed graph (pulse_ops_dialogs.html §1): x is progress when the task
+    // reports a percentage, otherwise sample order.
+    ops::OpSpeedGraph graph_;
+    void SyncGraph();
+    ULONGLONG task_start_tick_ = 0;
+    ULONGLONG task_end_tick_ = 0;
+    // Auto-close after a successful finish: counts down 2.5 s from the finish,
+    // held at full while the pointer is over the window.
+    static constexpr ULONGLONG kAutoCloseMs = 2500;
+    static constexpr ULONGLONG kCloseAnimMs = 200;
+    ULONGLONG countdown_base_ = 0;
+    bool countdown_hover_ = false;
+    bool closing_ = false;
+    ULONGLONG closing_tick_ = 0;
+    ComPtr<IDWriteTextFormat> pct_format_;
+    ComPtr<IDWriteTextFormat> unit_format_;
+    ComPtr<IDWriteTextFormat> title_format_;
+    ComPtr<IDWriteTextFormat> speed_format_;
+    ComPtr<IDWriteTextFormat> label_format_;
+    ComPtr<IDWriteTextFormat> value_format_;
+    ComPtr<IDWriteTextFormat> chip_format_;
+    ComPtr<IDWriteTextFormat> glyph_format_;
+    ComPtr<IDWriteTextFormat> tile_glyph_format_;
     bool dark_ = false;
     bool backdrop_enabled_ = false;
     bool detailed_ = false;
@@ -71,6 +132,30 @@ private:
     bool has_held_status_ = false;
     ULONGLONG hold_until_ = 0;
     ULONGLONG retry_shown_tick_ = 0;
+
+    // Partial failure (pulse_ops_dialogs.html, 部分失败): the failed items stay
+    // listed while their retries run, each retry being a task of its own; the
+    // card keeps showing the task that failed until another one starts.
+    struct FailureRow {
+        ops::OpFailure failure;
+        uint64_t origin_task = 0;   // the task whose failures list holds it
+        size_t origin_index = 0;
+        uint64_t retry_task = 0;    // the retry in flight, 0 = none
+        enum class State { Failed, Retrying, Done } state = State::Failed;
+    };
+    struct FailureBoard {
+        uint64_t task_id = 0;
+        ops::OpStatus status;       // the finish that opened the list
+        std::vector<FailureRow> rows;
+        uint64_t unlisted = 0;      // failed beyond the listed rows
+        // Every retry started from the list: their statuses keep arriving
+        // after they finish and must not read as another operation.
+        std::vector<uint64_t> retry_tasks;
+    };
+    std::optional<FailureBoard> board_;
+    size_t board_scroll_ = 0;
+    // Row retry buttons as last drawn: visible row, bounds (pixels).
+    std::vector<std::pair<size_t, D2D1_RECT_F>> failure_buttons_;
 };
 
 struct ConflictDialogResult {
@@ -82,5 +167,35 @@ ConflictDialogResult ShowFileConflictDialog(HWND owner,
                                             const ops::ConflictItemInfo& conflict,
                                             bool dark,
                                             D2D1_COLOR_F accent);
+
+// Permanent delete confirmation (pulse_ops_dialogs.html §6).
+struct PermanentDeleteInfo {
+    std::vector<std::wstring> paths;
+    bool no_recycle_bin = false; // meant for the bin, but these items have none
+    // Why there is no bin for them: the location has none, the bin is turned
+    // off for the drive, or an item is larger than the bin can hold.
+    enum class NoBinReason { Location, Disabled, TooLarge } no_bin_reason = NoBinReason::Location;
+    bool offer_recycle = false;  // show 移到回收站 as the alternative
+};
+
+enum class PermanentDeleteChoice { Cancel, Delete, Recycle };
+
+PermanentDeleteChoice ShowPermanentDeleteDialog(HWND owner, const PermanentDeleteInfo& info,
+                                                bool dark, D2D1_COLOR_F accent);
+
+// File in use (pulse_ops_dialogs.html §5). Watches the owners and the item and
+// returns Retry on its own once the item is free.
+struct LockedItemInfo {
+    ops::OpType type = ops::OpType::RecycleDelete;
+    std::wstring path;                 // the locked item
+    std::vector<ops::LockOwner> owners;
+    bool can_end = false;              // every owner may be ended: 结束进程并重试
+    bool can_skip = false;             // 跳过此项 (OpsManager::CanSkipLockedItem)
+};
+
+enum class LockedItemChoice { Cancel, Retry, EndAndRetry, Skip };
+
+LockedItemChoice ShowLockedItemDialog(HWND owner, const LockedItemInfo& info, bool dark,
+                                      D2D1_COLOR_F accent);
 
 } // namespace pulse::ui

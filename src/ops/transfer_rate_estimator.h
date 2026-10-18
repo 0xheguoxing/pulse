@@ -20,6 +20,7 @@ public:
         eta_seconds_ = 0;
         last_rate_tick_ = tick;
         last_eta_tick_ = tick;
+        first_eta_tick_ = 0;
     }
 
     void Observe(ULONGLONG tick, uint64_t bytes, uint64_t total_bytes) {
@@ -63,13 +64,30 @@ public:
         }
         if (eta_seconds_ != 0 && tick - last_eta_tick_ < 1000) return;
 
-        const double raw_eta = static_cast<double>(total_bytes - bytes) / smoothed_speed_;
+        // The first seconds start cold (file cache, a slow first file): the
+        // 4 s window and the smoothing both remember that, and the estimate
+        // read several times too long. While settling, estimate from the
+        // last second alone and follow it; after that, smooth as before.
+        const bool settling = first_eta_tick_ == 0 || tick - first_eta_tick_ < kSettleMs;
+        double eta_speed = smoothed_speed_;
+        if (settling) {
+            size_t from = samples_.size() - 1;
+            while (from > 0 && samples_[from].tick + kRecentMs > tick) --from;
+            const ULONGLONG recent_span = tick - samples_[from].tick;
+            if (recent_span > 0 && bytes > samples_[from].bytes)
+                eta_speed = static_cast<double>(bytes - samples_[from].bytes) * 1000.0
+                    / static_cast<double>(recent_span);
+        }
+        if (eta_speed <= eta_floor_) eta_speed = smoothed_speed_;
+        const double raw_eta = static_cast<double>(total_bytes - bytes) / eta_speed;
         if (eta_seconds_ == 0) {
             eta_seconds_ = (std::max)(uint64_t{ 1 },
                 static_cast<uint64_t>(std::ceil(raw_eta)));
+            if (first_eta_tick_ == 0) first_eta_tick_ = tick;
         } else {
             // React faster to a slowdown than to a transient speed-up.
-            const double alpha = raw_eta > static_cast<double>(eta_seconds_) ? 0.45 : 0.20;
+            const double alpha = settling ? 1.0
+                : raw_eta > static_cast<double>(eta_seconds_) ? 0.45 : 0.20;
             const double blended = static_cast<double>(eta_seconds_)
                 + alpha * (raw_eta - static_cast<double>(eta_seconds_));
             eta_seconds_ = (std::max)(uint64_t{ 1 },
@@ -80,6 +98,8 @@ public:
 
     double speed() const { return smoothed_speed_; }
     uint64_t eta_seconds() const { return eta_seconds_; }
+    static constexpr ULONGLONG kSettleMs = 10000;
+    static constexpr ULONGLONG kRecentMs = 1000;
 
 private:
     struct Sample {
@@ -92,6 +112,7 @@ private:
     uint64_t eta_seconds_ = 0;
     ULONGLONG last_rate_tick_ = 0;
     ULONGLONG last_eta_tick_ = 0;
+    ULONGLONG first_eta_tick_ = 0;
 };
 
 } // namespace pulse::ops

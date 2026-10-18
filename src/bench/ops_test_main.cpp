@@ -5,6 +5,7 @@
 // bench_data/opstest (created/cleaned by this test). Prints one PASS/FAIL
 // line per check; exit code 0 iff all checks pass.
 #include "../ops/ops_manager.h"
+#include "../ops/transfer_rate_estimator.h"
 #include "../app/update_shutdown.h"
 #include "../ops/clipboard.h"
 #include "../ipc/shell_client.h"
@@ -1144,6 +1145,8 @@ int wmain(int argc, wchar_t** argv) {
         WaitOpDone(prev);
         Check(Exists(dstDir + L"\\a2.txt") && !Exists(srcDir + L"\\a2.txt"),
               L"undo move: a2.txt back in dst");
+        Check(g_ops.Status().summary == l10n::Get(l10n::StringId::OpUndoneMove),
+              L"undo move finishes as 已撤销移动, not as the inverse move");
 
         // rename src\d.txt -> d2.txt, then undo
         RunOp(SimpleOp(ops::OpType::Rename, { (srcDir + L"\\d.txt").c_str() }, nullptr, L"d2.txt"));
@@ -1188,6 +1191,10 @@ int wmain(int argc, wchar_t** argv) {
         WaitOpDone(prev);
         Check(!Exists(dstDir + L"\\d.txt") && Exists(srcDir + L"\\d.txt"),
               L"undo copy: dst copy removed, source intact");
+        Check(g_ops.Status().summary == l10n::Get(l10n::StringId::OpUndoneCopy),
+              L"undo copy finishes as 已撤销复制, not as 删除完成");
+        Check(!g_ops.CanUndoTask(g_ops.Status().task_id),
+              L"a finished undo offers no undo of its own in the pill");
     }
 
     // --- 10. Undo stack persistence round-trip ------------------------------
@@ -1263,6 +1270,127 @@ int wmain(int argc, wchar_t** argv) {
               completed.total_items == 1 && completed.completed_items == 1,
               L"CopyFile2 publishes real byte and item totals");
         Check(FileHash(large_target) == source_hash, L"copy source and destination hashes match");
+        {
+            // The progress card's history is recorded by the engine, so a card
+            // shown late still draws the run (pulse_ops_dialogs.html speed graph).
+            const auto history = g_ops.SpeedGraph(completed.task_id);
+            bool ordered = history.by_progress;
+            for (size_t i = 1; i < history.points.size(); ++i)
+                ordered = ordered && history.points[i].x >= history.points[i - 1].x;
+            Check(ordered && history.points.size() <= ops::OpSpeedGraph::kMaxProgressPoints &&
+                  g_ops.SpeedGraph(completed.task_id + 1000).points.empty(),
+                  L"background speed history follows progress and belongs to the newest task");
+
+            ops::OpSpeedGraph graph;
+            uint64_t tick = 1000;
+            for (int i = 0; i <= 1000; ++i, tick += 250) graph.Sample(tick, i / 10.0f, 100.0 + i);
+            Check(graph.by_progress && graph.points.size() <= ops::OpSpeedGraph::kMaxProgressPoints &&
+                  graph.points.size() > ops::OpSpeedGraph::kMaxProgressPoints / 2 &&
+                  graph.points.back().x == 1.0f && graph.points.back().v == 1100.0,
+                  L"speed graph thins to its point budget and keeps the newest sample exact");
+            const size_t kept = graph.points.size();
+            graph.Sample(tick - 250 + 100, 50.0f, 1.0);
+            Check(graph.points.size() == kept && graph.points.back().v == 1100.0,
+                  L"speed graph ignores samples inside the 250 ms interval");
+            graph.Sample(tick + 250, 10.0f, 7.0);
+            Check(graph.points.size() == 1 && graph.points.front().v == 7.0,
+                  L"speed graph restarts when progress goes back (a new phase)");
+            for (int i = 0; i < 200; ++i) graph.Sample(tick + 500 + i * 250ull, -1.0f, 3.0);
+            Check(!graph.by_progress && graph.points.size() == ops::OpSpeedGraph::kMaxTimePoints,
+                  L"speed graph without progress keeps a rolling time window");
+
+            // Time left after a cold start: 10 MB/s for 1.5 s, then 100 MB/s.
+            // The estimate used to read ~80 s at 3 s for ~8 s of work.
+            const uint64_t total = 1000ull * 1000ull * 1000ull;
+            auto run_rate = [&](auto bytes_per_tick, ULONGLONG until) {
+                ops::TransferRateEstimator estimator;
+                estimator.Reset(0, 0);
+                uint64_t done = 0;
+                for (ULONGLONG at = 100; at <= until; at += 100) {
+                    done = (std::min)(total, done + bytes_per_tick(at));
+                    estimator.Observe(at, done, total);
+                }
+                return std::pair<uint64_t, uint64_t>{ estimator.eta_seconds(), total - done };
+            };
+            const auto cold = run_rate([](ULONGLONG at) { return at <= 1500 ? 1000000ull : 10000000ull; }, 3000);
+            const double cold_truth = static_cast<double>(cold.second) / 1e8;
+            Check(cold.first > 0 && cold.first <= cold_truth * 1.5 + 1 && cold.first + 2 >= cold_truth,
+                  L"time left settles within seconds after a cold start");
+            const auto steady = run_rate([](ULONGLONG) { return 10000000ull; }, 5000);
+            Check(steady.first >= 4 && steady.first <= 6, L"time left matches a steady rate");
+            // A pause is cut out of the rate clock: on resume the speed carries on.
+            ops::TransferRateEstimator held;
+            held.Reset(0, 0);
+            uint64_t held_done = 0;
+            for (ULONGLONG at = 100; at <= 3000; at += 100) held.Observe(at, held_done += 10000000ull, total);
+            const double before_pause = held.speed();
+            held.Observe(3100, held_done += 10000000ull, total);   // 20 s paused, not on this clock
+            Check(before_pause > 9e7 && held.speed() > 9e7 && held.eta_seconds() > 0,
+                  L"speed and time left carry on across a pause");
+        }
+        {
+            // A real pause mid-copy: on resume the live speed carries on and the
+            // background graph never dips to 0 (it used to reset and warm up).
+            const std::wstring held_source = srcDir + L"\\held.bin";
+            const std::wstring held_target = dstDir + L"\\held.bin";
+            HANDLE file = CreateFileW(held_source.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+            bool sized = file != INVALID_HANDLE_VALUE;
+            if (sized) {
+                LARGE_INTEGER size{};
+                size.QuadPart = 4ll * 1024 * 1024 * 1024;   // zero-filled lazily: quick to make
+                sized = SetFilePointerEx(file, size, nullptr, FILE_BEGIN) && SetEndOfFile(file);
+                CloseHandle(file);
+            }
+            const uint64_t previous = g_ops.Status().completed_ops;
+            g_ops.Submit(SimpleOp(ops::OpType::Copy, { held_source.c_str() }, dstDir.c_str()));
+            bool measured = false;
+            uint64_t task = 0;
+            const auto live_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+            while (sized && std::chrono::steady_clock::now() < live_deadline) {
+                const auto st = g_ops.Status();
+                if (st.active && st.phase == ops::OpPhase::Running && st.bytes_per_second > 0.0 &&
+                    st.percent > 3.0f && st.percent < 60.0f) { measured = true; task = st.task_id; break; }
+                if (!st.active && st.completed_ops > previous) break;
+                Sleep(10);
+            }
+            bool paused = false, resumed = false, dipped = false;
+            if (measured) {
+                g_ops.PauseCurrent();
+                const auto pause_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                while (std::chrono::steady_clock::now() < pause_deadline) {
+                    if (g_ops.Status().phase == ops::OpPhase::Paused) { paused = true; break; }
+                    Sleep(5);
+                }
+                Sleep(1500);
+                g_ops.ResumeCurrent();
+                const auto watch_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+                while (std::chrono::steady_clock::now() < watch_until) {
+                    const auto st = g_ops.Status();
+                    if (!st.active) break;
+                    if (st.phase == ops::OpPhase::Running && !st.pause_requested) {
+                        resumed = true;
+                        dipped = dipped || st.bytes_per_second <= 0.0;
+                    }
+                    Sleep(5);
+                }
+            }
+            const auto history = g_ops.SpeedGraph(task);
+            bool graph_dips = false, seen_speed = false;
+            for (const auto& point : history.points) {
+                if (point.v > 0.0) seen_speed = true;
+                else if (seen_speed) graph_dips = true;
+            }
+            g_ops.CancelCurrent();
+            WaitOpDone(previous);
+            wprintf(L"[INFO] resume speed: measured=%d paused=%d resumed=%d dipped=%d graph_points=%zu graph_dips=%d\n",
+                    measured ? 1 : 0, paused ? 1 : 0, resumed ? 1 : 0, dipped ? 1 : 0,
+                    history.points.size(), graph_dips ? 1 : 0);
+            Check(measured && paused && resumed && !dipped,
+                  L"resume keeps the live speed instead of dropping to 0");
+            Check(seen_speed && !graph_dips, L"background speed graph does not dip to 0 across a pause");
+            DeleteFileW(held_target.c_str());
+            DeleteFileW(held_source.c_str());
+        }
 
         DeleteFileW(large_target.c_str());
         g_pause_when_active.store(true);
@@ -1394,6 +1522,253 @@ int wmain(int argc, wchar_t** argv) {
               Exists(nested_target + L"\\a - 副本.txt") &&
               Exists(target_sub + L"\\b - 副本.txt"),
               L"nested conflict keep-both apply-all creates incremented copies");
+    }
+
+    // --- Parallel small-file copy keeps what a serial copy keeps ------------
+    {
+        // 40 small files: enough for the copy pool. Attributes, a stream,
+        // timestamps, and the order-dependent results must match.
+        const std::wstring par_src = root + L"\\par-src";
+        const std::wstring par_dst = root + L"\\par-dst";
+        MakeDir(par_src);
+        MakeDir(par_src + L"\\tree");
+        MakeDir(par_dst);
+        constexpr int kParallelFiles = 40;
+        auto par_name = [](int i) {
+            wchar_t name[32];
+            swprintf_s(name, L"\\f%02d.txt", i);
+            return std::wstring(name);
+        };
+        for (int i = 0; i < kParallelFiles; ++i)
+            MakeFile(par_src + L"\\tree" + par_name(i), payload, sizeof(payload) - 1);
+        const std::wstring tree = par_src + L"\\tree";
+        // A large file in the middle goes behind the small ones.
+        Check(MakePatternFile(tree + L"\\f20-big.bin", 3ull << 20), L"parallel copy: large fixture");
+        SetFileAttributesW((tree + par_name(0)).c_str(), FILE_ATTRIBUTE_READONLY);
+        SetFileAttributesW((tree + par_name(1)).c_str(), FILE_ATTRIBUTE_HIDDEN);
+        const char stream_data[] = "side stream";
+        MakeFile(tree + par_name(2) + L":meta", stream_data, sizeof(stream_data) - 1);
+        FILETIME old_time{};
+        SYSTEMTIME old_system{2001, 1, 0, 1, 12, 0, 0, 0};
+        SystemTimeToFileTime(&old_system, &old_time);
+        {
+            HANDLE dated = CreateFileW((tree + par_name(3)).c_str(), FILE_WRITE_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+            if (dated != INVALID_HANDLE_VALUE) {
+                SetFileTime(dated, nullptr, nullptr, &old_time);
+                CloseHandle(dated);
+            }
+        }
+        auto par_st = RunOp(SimpleOp(ops::OpType::Copy, { tree.c_str() }, par_dst.c_str()));
+        const std::wstring copied = par_dst + L"\\tree";
+        int present = 0;
+        for (int i = 0; i < kParallelFiles; ++i)
+            if (FileSize(copied + par_name(i)) == sizeof(payload) - 1) ++present;
+        Check(par_st.last_error.empty() && present == kParallelFiles,
+              L"parallel copy: every small file arrives intact");
+        Check(FileHash(copied + L"\\f20-big.bin") == FileHash(tree + L"\\f20-big.bin"),
+              L"parallel copy: the deferred large file arrives intact");
+        const DWORD ro = GetFileAttributesW((copied + par_name(0)).c_str());
+        const DWORD hidden = GetFileAttributesW((copied + par_name(1)).c_str());
+        Check(ro != INVALID_FILE_ATTRIBUTES && (ro & FILE_ATTRIBUTE_READONLY) &&
+              hidden != INVALID_FILE_ATTRIBUTES && (hidden & FILE_ATTRIBUTE_HIDDEN),
+              L"parallel copy: read-only and hidden attributes kept");
+        Check(FileSize(copied + par_name(2) + L":meta") == sizeof(stream_data) - 1,
+              L"parallel copy: alternate data stream kept");
+        FILETIME copied_time{};
+        {
+            HANDLE dated = CreateFileW((copied + par_name(3)).c_str(), FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+            if (dated != INVALID_HANDLE_VALUE) {
+                GetFileTime(dated, nullptr, nullptr, &copied_time);
+                CloseHandle(dated);
+            }
+        }
+        Check(CompareFileTime(&copied_time, &old_time) == 0,
+              L"parallel copy: modified time kept");
+        SetFileAttributesW((copied + par_name(0)).c_str(), FILE_ATTRIBUTE_NORMAL);
+        Check(g_ops.CanUndo(), L"parallel copy: undo available");
+
+        // A large file that meets a conflict while the small files go to the
+        // pool is deferred after the choice; keep-both must still copy it.
+        {
+            const std::wstring lc_src = par_src + L"\\lc";
+            const std::wstring lc_dst = par_dst + L"\\lcdst";
+            const std::wstring lc_in = lc_dst + L"\\lc";
+            MakeDir(lc_src);
+            MakeDir(lc_dst);
+            MakeDir(lc_in);
+            for (int i = 0; i < 20; ++i) MakeFile(lc_src + par_name(i), payload, sizeof(payload) - 1);
+            constexpr uint64_t kLargeConflictBytes = 70ull << 20;
+            Check(MakePatternFile(lc_src + L"\\zbig.bin", kLargeConflictBytes), L"large conflict: fixture");
+            MakeFile(lc_in + L"\\zbig.bin", payload, sizeof(payload) - 1);
+            auto keep = RunConflictOp(SimpleOp(ops::OpType::Copy, { lc_src.c_str() }, lc_dst.c_str()),
+                                      ops::ConflictChoice::KeepBoth, false);
+            int big_copies = 0;
+            int names = 0;
+            WIN32_FIND_DATAW found{};
+            HANDLE find = FindFirstFileW((lc_in + L"\\*").c_str(), &found);
+            if (find != INVALID_HANDLE_VALUE) {
+                do {
+                    if (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+                    ++names;
+                    const uint64_t size = (static_cast<uint64_t>(found.nFileSizeHigh) << 32) | found.nFileSizeLow;
+                    if (size == kLargeConflictBytes) ++big_copies;
+                } while (FindNextFileW(find, &found));
+                FindClose(find);
+            }
+            fwprintf(stderr, L"[INFO] large conflict keep-both: names=%d big=%d err=%ls\n",
+                     names, big_copies, keep.last_error.c_str());
+            Check(keep.last_error.empty() && big_copies == 1 &&
+                  FileSize(lc_in + L"\\zbig.bin") == sizeof(payload) - 1,
+                  L"large conflict: keep-both copies the large file beside the old one");
+            auto replace = RunConflictOp(SimpleOp(ops::OpType::Copy, { lc_src.c_str() }, lc_dst.c_str()),
+                                         ops::ConflictChoice::Replace, true);
+            Check(replace.last_error.empty() && FileSize(lc_in + L"\\zbig.bin") == kLargeConflictBytes,
+                  L"large conflict: replace overwrites with the large file");
+        }
+
+        // A large single copy reports bytes as it goes, and a pause request
+        // shows before the worker reaches its next check.
+        {
+            const std::wstring big = par_src + L"\\progress.bin";
+            const std::wstring big_dst = par_dst + L"\\progress";
+            MakeDir(big_dst);
+            Check(MakePatternFile(big, 256ull << 20), L"copy progress: fixture");
+            const uint64_t before = g_ops.Status().completed_ops;
+            g_ops.Submit(SimpleOp(ops::OpType::Copy, { big.c_str() }, big_dst.c_str()));
+            bool mid = false;
+            bool requested = false;
+            bool cleared = false;
+            bool paused_once = false;
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+            while (std::chrono::steady_clock::now() < deadline) {
+                const auto st = g_ops.Status();
+                if (st.completed_ops > before) break;
+                if (st.active && st.total_bytes > 0 && st.transferred_bytes > 0 &&
+                    st.transferred_bytes < st.total_bytes) {
+                    mid = true;
+                    if (!paused_once) {
+                        paused_once = true;
+                        g_ops.PauseCurrent();
+                        requested = g_ops.Status().pause_requested;
+                        g_ops.ResumeCurrent();
+                        cleared = !g_ops.Status().pause_requested;
+                    }
+                }
+                Sleep(1);
+            }
+            Check(mid, L"copy progress: a large file reports bytes while copying");
+            Check(requested && cleared,
+                  L"copy progress: a pause request shows at once and clears on resume");
+            Check(FileHash(big_dst + L"\\progress.bin") == FileHash(big),
+                  L"copy progress: the paused large file arrives intact");
+            DeleteFileW((big_dst + L"\\progress.bin").c_str());
+            DeleteFileW(big.c_str());
+        }
+
+        // One target name from two folders: the second must meet the first
+        // as a conflict, not race it.
+        const std::wstring other = par_src + L"\\other";
+        MakeDir(other);
+        MakeFile(other + par_name(5), payload, sizeof(payload) - 1);
+        const std::wstring same_dst = par_dst + L"\\same";
+        MakeDir(same_dst);
+        ops::OpRequest same_name;
+        same_name.type = ops::OpType::Copy;
+        same_name.dest_dir = same_dst;
+        for (int i = 0; i < 20; ++i) same_name.sources.push_back(tree + par_name(i));
+        same_name.sources.push_back(other + par_name(5));
+        size_t same_resolved = 0;
+        auto same_st = RunConflictOp(std::move(same_name), ops::ConflictChoice::KeepBoth, true,
+                                     &same_resolved);
+        int same_count = 0;
+        WIN32_FIND_DATAW found{};
+        HANDLE listing = FindFirstFileW((same_dst + L"\\*").c_str(), &found);
+        if (listing != INVALID_HANDLE_VALUE) {
+            do { if (!(found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) ++same_count; }
+            while (FindNextFileW(listing, &found));
+            FindClose(listing);
+        }
+        Check(same_st.last_error.empty() && same_resolved == 1 && same_count == 21,
+              L"parallel copy: same name from two folders becomes a conflict");
+
+        // Merge-move into an existing folder takes the per-file path: the
+        // pool copies and deletes each source.
+        const std::wstring merge_src = par_src + L"\\merge";
+        const std::wstring merge_dst = par_dst + L"\\merge";
+        MakeDir(merge_src);
+        MakeDir(merge_dst);
+        for (int i = 0; i < 20; ++i)
+            MakeFile(merge_src + par_name(i), payload, sizeof(payload) - 1);
+        SetFileAttributesW((merge_src + par_name(0)).c_str(), FILE_ATTRIBUTE_READONLY);
+        auto merge_st = RunOp(SimpleOp(ops::OpType::Move, { merge_src.c_str() }, par_dst.c_str()));
+        int moved = 0;
+        for (int i = 0; i < 20; ++i)
+            if (Exists(merge_dst + par_name(i)) && !Exists(merge_src + par_name(i))) ++moved;
+        Check(merge_st.last_error.empty() && moved == 20 && !Exists(merge_src),
+              L"parallel move: merged files moved and the source folder removed");
+        SetFileAttributesW((merge_dst + par_name(0)).c_str(), FILE_ATTRIBUTE_NORMAL);
+
+        // Partial failure: files another program holds are listed with a
+        // reason, the rest go through, and a retry finishes them.
+        const auto hold = [](const std::wstring& path) {
+            return CreateFileW(path.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        };
+        const std::wstring part_src = par_src + L"\\partial";
+        const std::wstring part_dst = par_dst + L"\\partial";
+        MakeDir(part_src);
+        MakeDir(part_dst);
+        for (int i = 0; i < 20; ++i)
+            MakeFile(part_src + par_name(i), payload, sizeof(payload) - 1);
+        HANDLE held_3 = hold(part_src + par_name(3));
+        HANDLE held_7 = hold(part_src + par_name(7));
+        auto part_st = RunOp(SimpleOp(ops::OpType::Move, { part_src.c_str() }, par_dst.c_str()));
+        int part_moved = 0;
+        for (int i = 0; i < 20; ++i)
+            if (i != 3 && i != 7 && Exists(part_dst + par_name(i)) && !Exists(part_src + par_name(i))) ++part_moved;
+        wprintf(L"[INFO] partial move: phase=%d failed=%llu listed=%zu moved=%d error=%s\n",
+                static_cast<int>(part_st.phase), static_cast<unsigned long long>(part_st.failed_items),
+                part_st.failures.size(), part_moved, part_st.last_error.c_str());
+        Check(part_st.phase == ops::OpPhase::Failed && part_st.failed_items == 2 &&
+                  part_st.failures.size() == 2 && part_moved == 18,
+              L"partial move: two held files listed, the other 18 moved");
+        Check(Exists(part_src + par_name(3)) && Exists(part_src + par_name(7)) &&
+                  !Exists(part_dst + par_name(3)) && !Exists(part_dst + par_name(7)),
+              L"partial move: held sources kept, nothing half-written at the target");
+        Check(!part_st.failures.empty() && !part_st.failures[0].reason.empty() &&
+                  part_st.failures[0].reason.find(L" | ") == std::wstring::npos,
+              L"partial move: each item has a reason without the path");
+        if (held_3 != INVALID_HANDLE_VALUE) CloseHandle(held_3);
+        if (held_7 != INVALID_HANDLE_VALUE) CloseHandle(held_7);
+        const uint64_t before_retry = g_ops.Status().completed_ops;
+        const auto retry_spawns = g_ops.RetryFailedItems(part_st.task_id);
+        const bool retry_queued = retry_spawns.size() == 1 && retry_spawns[0].items.size() == 2;
+        Check(retry_queued && WaitOpDone(before_retry) && Exists(part_dst + par_name(3)) &&
+                  Exists(part_dst + par_name(7)) && !Exists(part_src + par_name(3)) &&
+                  !Exists(part_src + par_name(7)),
+              L"partial move: retry moves the failed items to their folder");
+        const auto retry_final = retry_queued ? g_ops.FinalStatus(retry_spawns[0].task_id) : std::nullopt;
+        const auto first_final = g_ops.FinalStatus(part_st.task_id);
+        Check(retry_final && retry_final->phase == ops::OpPhase::Completed && first_final &&
+                  first_final->phase == ops::OpPhase::Failed && first_final->failed_items == 2,
+              L"partial move: how each task ended can be looked up afterwards");
+        Check(g_ops.RetryFailedItems(part_st.task_id).empty(), L"partial move: a finished retry cannot run twice");
+
+        // Few files (no pool), one held: listed, and the file-in-use prompt
+        // gets it as before.
+        const std::wstring few_src = par_src + L"\\few";
+        const std::wstring few_dst = par_dst + L"\\few";
+        MakeDir(few_src);
+        for (int i = 0; i < 3; ++i)
+            MakeFile(few_src + par_name(i), payload, sizeof(payload) - 1);
+        HANDLE held_1 = hold(few_src + par_name(1));
+        auto few_st = RunOp(SimpleOp(ops::OpType::Copy, { few_src.c_str() }, par_dst.c_str()));
+        if (held_1 != INVALID_HANDLE_VALUE) CloseHandle(held_1);
+        Check(few_st.phase == ops::OpPhase::Failed && few_st.failed_items == 1 &&
+                  Exists(few_dst + par_name(0)) && Exists(few_dst + par_name(2)) && !Exists(few_dst + par_name(1)) &&
+                  !few_st.locked_path.empty(),
+              L"partial copy: one held file listed, the rest copied, in-use prompt offered");
     }
 
     // --- Open: a batch file runs in its own folder (#49) --------------------

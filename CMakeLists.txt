@@ -410,6 +410,22 @@ add_executable(pulse_file_operation_authorization_dialog_test
 target_link_libraries(pulse_file_operation_authorization_dialog_test PRIVATE
     d3d11 d2d1 dwrite dxgi dcomp dwmapi shcore ole32 windowscodecs comctl32 uxtheme gdiplus pulse_localization)
 pulse_enable_lumatext(pulse_file_operation_authorization_dialog_test)
+# Progress card states rendered to PNG + the 2.5 s auto-close (pulse_ops_dialogs.html).
+add_executable(pulse_ops_dialog_shots
+    src/bench/ops_dialog_shots.cpp ${PULSE_PERMISSION_UI_SOURCES})
+target_link_libraries(pulse_ops_dialog_shots PRIVATE
+    d3d11 d2d1 dwrite dxgi dcomp dwmapi shcore ole32 windowscodecs comctl32 uxtheme gdiplus pulse_localization)
+pulse_enable_lumatext(pulse_ops_dialog_shots)
+add_executable(pulse_delete_dialog_test
+    src/bench/delete_dialog_test.cpp ${PULSE_PERMISSION_UI_SOURCES})
+target_link_libraries(pulse_delete_dialog_test PRIVATE
+    d3d11 d2d1 dwrite dxgi dcomp dwmapi shcore ole32 windowscodecs comctl32 uxtheme gdiplus pulse_localization)
+pulse_enable_lumatext(pulse_delete_dialog_test)
+add_executable(pulse_locked_dialog_test
+    src/bench/locked_dialog_test.cpp ${PULSE_PERMISSION_UI_SOURCES})
+target_link_libraries(pulse_locked_dialog_test PRIVATE
+    d3d11 d2d1 dwrite dxgi dcomp dwmapi shcore ole32 windowscodecs comctl32 uxtheme gdiplus pulse_localization)
+pulse_enable_lumatext(pulse_locked_dialog_test)
 
 add_executable(pulse_file_picker_operations_test
     src/bench/file_picker_operations_test.cpp
@@ -582,6 +598,15 @@ add_executable(pulse_ops_test
     src/ops/clipboard.cpp
     src/ipc/shell_client.cpp)
 target_link_libraries(pulse_ops_test PRIVATE ole32 shell32 uuid bcrypt pulse_localization)
+# Copy / delete throughput through OpsManager (synthetic files, cleaned up).
+add_executable(pulse_ops_bench
+    src/bench/ops_bench_main.cpp
+    src/ops/duplicate_cleanup_guard.cpp
+    src/ops/ops_manager.cpp
+    src/ops/file_lock_owner.cpp
+    src/ops/clipboard.cpp
+    src/ipc/shell_client.cpp)
+target_link_libraries(pulse_ops_bench PRIVATE ole32 shell32 uuid bcrypt pulse_localization)
 add_executable(pulse_authorization_flow_test src/bench/authorization_flow_test.cpp
     src/ops/ops_manager.cpp src/ops/duplicate_cleanup_guard.cpp src/ops/file_lock_owner.cpp src/ipc/shell_client.cpp)
 target_link_libraries(pulse_authorization_flow_test PRIVATE ole32 shell32 uuid bcrypt advapi32 pulse_localization)
@@ -1169,6 +1194,9 @@ foreach(runtime_target IN LISTS runtime_targets)
     if("${runtime_sources}" MATCHES "ops_manager\\.cpp")
         if(NOT "${runtime_sources}" MATCHES "elevated_transfer\\.cpp")
             target_sources(${runtime_target} PRIVATE src/ops/elevated_transfer.cpp)
+        endif()
+        if(NOT "${runtime_sources}" MATCHES "transfer_engine\\.cpp")
+            target_sources(${runtime_target} PRIVATE src/ops/transfer_engine.cpp)
         endif()
         if(NOT runtime_target MATCHES "^pulse_elevated(_test_host)?$" AND NOT "${runtime_sources}" MATCHES "ops_manager_shell_transfer\\.cpp")
             target_sources(${runtime_target} PRIVATE src/ops/ops_manager_shell_transfer.cpp)

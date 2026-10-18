@@ -21,6 +21,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shobjidl.h>
+#include <sherrors.h>
 #include <algorithm>
 #include <cstdio>
 #include <atomic>
@@ -179,8 +180,16 @@ public:
         MaybeReport(items_done_ == total_items_);
         return CheckCancel();
     }
-    IFACEMETHODIMP PreDeleteItem(DWORD, IShellItem* psi) override {
+    IFACEMETHODIMP PreDeleteItem(DWORD flags, IShellItem* psi) override {
         RememberItem(psi);
+        // A recycle the Shell cannot put in the bin (bin off, item too large,
+        // no bin on the drive) arrives without this flag and would be deleted
+        // for good under FOF_NOCONFIRMATION. Refuse it; nothing is touched.
+        constexpr DWORD kRecycleIfPossible = 0x80;  // TSF_DELETE_RECYCLE_IF_POSSIBLE
+        if (recycle_only_ && !(flags & kRecycleIfPossible)) {
+            NoteItemResult(COPYENGINE_E_RECYCLE_BIN_NOT_FOUND);
+            return COPYENGINE_E_RECYCLE_BIN_NOT_FOUND;
+        }
         return CheckCancel();
     }
     IFACEMETHODIMP PostDeleteItem(DWORD, IShellItem*, HRESULT hr, IShellItem*) override {
@@ -207,6 +216,7 @@ public:
     const std::wstring& last_failed_item() const { return last_failed_item_; }
     HRESULT item_failure() const { return item_failure_; }
     void NoteSetupFailure(const std::wstring& src) { last_failed_item_ = src; }
+    void set_recycle_only(bool value) { recycle_only_ = value; }
 
 private:
     HRESULT CheckCancel() {
@@ -223,6 +233,7 @@ private:
         }
     }
     void RememberName(LPCWSTR name) { current_item_ = name ? name : L""; }
+    bool recycle_only_ = false;
     void NoteItemResult(HRESULT hr) {
         if (FAILED(hr) && hr != HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
             if (SUCCEEDED(item_failure_)) item_failure_ = hr;
@@ -468,6 +479,7 @@ void ExecuteRequest(Request* req) {
     }
 
     ProgressSink sink(req->id, req->sources.size());
+    sink.set_recycle_only(req->type == REQ_DELETE_RECYCLE);
     DWORD sink_cookie = 0;
     if (SUCCEEDED(hr)) {
 #ifndef FOFX_DONTDISPLAYUI

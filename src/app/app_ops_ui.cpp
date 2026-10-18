@@ -311,25 +311,27 @@ void DeleteSelected(AppState& s, bool permanent) {
 namespace {
 // `no_recycle_bin`: the items were meant for the Recycle Bin but live where
 // there is none, so say why the delete is permanent (Explorer asks the same).
-bool ConfirmPermanentDelete(AppState& s, const std::vector<std::wstring>& paths,
-                            bool no_recycle_bin) {
-    ui::ConfirmDialogSpec confirm;
-    confirm.title = l10n::Get(l10n::StringId::PermanentDelete);
-    if (no_recycle_bin)
-        confirm.message = l10n::Get(l10n::StringId::NetworkLocationsAndRemovableDrivesHaveNoRecycleBin).c_str();
-    if (paths.size() == 1) {
-        confirm.message += l10n::Get(l10n::StringId::PermanentDeleteOne);
-    } else {
-        wchar_t buf[256]{};
-        swprintf_s(buf, l10n::Get(l10n::StringId::PermanentDeleteManyFormat).c_str(),
-                   paths.size());
-        confirm.message += buf;
-    }
-    // The dialog shows the first few and collapses the rest.
-    for (const std::wstring& path : paths) confirm.items.push_back(ClipboardPath(path));
-    confirm.confirm_text = l10n::Get(l10n::StringId::PermanentDelete);
-    confirm.danger = true;
-    return ui::ShowConfirmDialog(s.hwnd, confirm, s.darkMode, s.accentColor);
+// `offer_recycle`: Shift+Delete on items that do have a bin; the dialog then
+// offers 移到回收站 instead.
+ui::PermanentDeleteChoice ConfirmPermanentDelete(AppState& s, const std::vector<std::wstring>& paths,
+                                                 bool no_recycle_bin, bool offer_recycle = false,
+                                                 ui::PermanentDeleteInfo::NoBinReason reason =
+                                                     ui::PermanentDeleteInfo::NoBinReason::Location) {
+    ui::PermanentDeleteInfo info;
+    info.paths.reserve(paths.size());
+    for (const std::wstring& path : paths) info.paths.push_back(ClipboardPath(path));
+    info.no_recycle_bin = no_recycle_bin;
+    info.no_bin_reason = reason;
+    info.offer_recycle = offer_recycle;
+    return ui::ShowPermanentDeleteDialog(s.hwnd, info, s.darkMode, s.accentColor);
+}
+
+bool AllHaveRecycleBin(const std::vector<std::wstring>& paths) {
+    if (paths.size() > 256) return false; // don't probe volumes for a huge selection
+    return std::all_of(paths.begin(), paths.end(), [](const std::wstring& path) {
+        DWORD volume_error = 0;
+        return ops::RecycleBinAvailable(path, &volume_error);
+    });
 }
 }
 
@@ -374,18 +376,43 @@ void NoteDeleteFinished(AppState& s, const ops::FinishedTask& done) {
 void DeletePaths(AppState& s, std::vector<std::wstring> paths, bool permanent) {
     if (paths.empty()) return;
     if (!permanent) {
-        // Shares and removable drives have no Recycle Bin; the ops layer
-        // refuses to recycle there. Like Explorer, offer a permanent delete
-        // for those items; the rest still go to the Recycle Bin.
+        // Shares and removable drives have no Recycle Bin, a drive can have
+        // its bin turned off, and a file can be larger than the bin: the
+        // Shell would delete those for good, so the ops layer refuses to
+        // recycle them. Like Explorer, ask for a permanent delete of those
+        // items, saying why; the rest still go to the Recycle Bin. (Folders
+        // are measured by the ops layer, which refuses an oversized one.)
+        using Reason = ui::PermanentDeleteInfo::NoBinReason;
         std::vector<std::wstring> direct;
+        Reason reason = Reason::TooLarge;
+        std::atomic<bool> no_cancel{false};
+        std::wstring cached_parent;
+        bool cached_available = true;
+        ops::RecycleBinLimits cached_limits;
         std::erase_if(paths, [&](const std::wstring& path) {
-            DWORD volume_error = 0;
-            if (ops::RecycleBinAvailable(path, &volume_error) || volume_error) return false;
+            // Items of one folder share a volume, except a mount point.
+            const DWORD attributes = GetFileAttributesW(path.c_str());
+            const bool mount = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT);
+            const std::wstring parent = mount ? std::wstring{} : path.substr(0, path.find_last_of(L'\\') + 1);
+            if (parent.empty() || !pulse::path::EqualInsensitive(parent, cached_parent)) {
+                DWORD volume_error = 0;
+                cached_available = ops::RecycleBinAvailable(path, &volume_error);
+                if (volume_error) return false;  // not judged; the delete reports why
+                cached_limits = ops::ReadRecycleBinLimits(path, &volume_error);
+                if (volume_error) return false;
+                cached_parent = parent;
+            }
+            Reason why;
+            if (!cached_available) why = cached_limits.disabled ? Reason::Disabled : Reason::Location;
+            else if (ops::CheckRecycleFits(path, cached_limits, no_cancel, false) == ops::kRecycleBinTooSmall)
+                why = Reason::TooLarge;
+            else return false;
+            if (why == Reason::Location || (why == Reason::Disabled && reason == Reason::TooLarge)) reason = why;
             direct.push_back(path);
             return true;
         });
         if (!direct.empty()) {
-            if (!ConfirmPermanentDelete(s, direct, true)) return;
+            if (ConfirmPermanentDelete(s, direct, true, false, reason) != ui::PermanentDeleteChoice::Delete) return;
             ops::OpRequest req;
             req.type = ops::OpType::RealDelete;
             req.sources = std::move(direct);
@@ -395,7 +422,10 @@ void DeletePaths(AppState& s, std::vector<std::wstring> paths, bool permanent) {
         }
     }
     if (permanent) {
-        if (!ConfirmPermanentDelete(s, paths, false)) return;
+        const auto choice = ConfirmPermanentDelete(s, paths, false, AllHaveRecycleBin(paths));
+        if (choice == ui::PermanentDeleteChoice::Cancel) return;
+        // 移到回收站 from the dialog: the user already confirmed, don't ask again.
+        if (choice == ui::PermanentDeleteChoice::Recycle) permanent = false;
     } else if (s.appPrefs.confirm_recycle_delete) {
         const ui::ConfirmDialogSpec confirm = BuildRecycleDeleteConfirm(paths);
         if (!ui::ShowConfirmDialog(s.hwnd, confirm, s.darkMode, s.accentColor)) return;
@@ -502,6 +532,22 @@ bool EnsureOperationWindow(AppState& s) {
     operation_callbacks.skip_authorization = [hwnd](uint64_t task_id) {
         if (AppState* state = GetAppState(hwnd)) state->ops.ResolveAuthorization(task_id, false);
     };
+    operation_callbacks.retry_failed = [hwnd](uint64_t task_id, const std::vector<size_t>& items) {
+        std::vector<ops::OpsManager::RetrySpawn> spawns;
+        if (AppState* state = GetAppState(hwnd)) spawns = state->ops.RetryFailedItems(task_id, items);
+        return spawns;
+    };
+    operation_callbacks.task_outcome = [hwnd](uint64_t task_id) -> std::optional<ops::OpStatus> {
+        if (AppState* state = GetAppState(hwnd)) return state->ops.FinalStatus(task_id);
+        return std::nullopt;
+    };
+    operation_callbacks.speed_history = [hwnd](uint64_t task_id) {
+        if (AppState* state = GetAppState(hwnd)) return state->ops.SpeedGraph(task_id);
+        return ops::OpSpeedGraph{};
+    };
+    operation_callbacks.open_folder = [hwnd](const std::wstring& folder) {
+        if (AppState* state = GetAppState(hwnd)) NavigateTo(*state, folder);
+    };
     operation_callbacks.dismiss = [hwnd] {
         if (AppState* state = GetAppState(hwnd)) {
             state->operationDismissedTaskId = state->ops.Status().task_id;
@@ -525,7 +571,10 @@ static void HideOperationWindow(AppState& s) {
 static void ShowOperationWindow(AppState& s, const ops::OpStatus& status, bool activate) {
     const bool created = !s.operationWindow;
     if (!EnsureOperationWindow(s)) return;
-    if (created) s.operationWindow->Update(status);
+    if (created) {
+        s.operationWindow->Update(status);
+        s.operationWindow->SetTaskStart(s.operationUiTaskId, s.operationStartedAt);
+    }
     s.operationWindow->Show(activate);
 }
 
@@ -544,6 +593,7 @@ void MoveOperationUi(AppState& from, AppState& to) {
     to.ops.SetUiWindow(to.hwnd);
     if (shown && EnsureOperationWindow(to)) {
         to.operationWindow->Update(to.ops.Status());
+        to.operationWindow->SetTaskStart(to.operationUiTaskId, to.operationStartedAt);
         to.operationWindow->Show(false);
     }
 }
@@ -557,6 +607,7 @@ void PinAndShowOperationWindow(AppState& s) {
     s.operationPinnedByUser = true;
     s.operationAutoShown = true;
     s.operationWindow->Update(status);
+    s.operationWindow->SetTaskStart(s.operationUiTaskId, s.operationStartedAt);
     s.operationWindow->Show(true);
 }
 
@@ -629,7 +680,8 @@ void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog) {
     // Failed on an item other processes hold: name them and offer the retry
     // instead of the plain failure window (the token guards modal re-entry).
     const bool locked_failure = !status.active && status.phase == ops::OpPhase::Failed
-        && !status.lock_owners.empty() && status.task_id != 0;
+        && !status.lock_owners.empty() && status.task_id != 0
+        && !(s.operationWindow && s.operationWindow->TracksRetry(status.task_id));
     if (locked_failure && allow_conflict_dialog && status.task_id != s.lockPromptTaskId) {
         s.lockPromptTaskId = status.task_id;
         s.operationDismissedTaskId = status.task_id;
@@ -660,12 +712,11 @@ void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog) {
     if (s.operationPinnedByUser) return;
 
     if (status.phase == ops::OpPhase::Completed) {
-        if (OperationWindowVisible(s)) {
-            if (s.operationFinishedAt.time_since_epoch().count() == 0)
-                s.operationFinishedAt = now;
-            if (now - s.operationFinishedAt >= std::chrono::milliseconds(600))
-                HideOperationWindow(s);
-        }
+        // The window closes itself 2.5 s after a successful finish (held
+        // while hovered, pulse_ops_dialogs.html §4); only the finish time is
+        // kept here.
+        if (s.operationFinishedAt.time_since_epoch().count() == 0)
+            s.operationFinishedAt = now;
     } else if (status.phase == ops::OpPhase::Failed) {
         // The ops notification shows the locked-item prompt; a timer tick
         // that sees the failure first must not open the failure window.
