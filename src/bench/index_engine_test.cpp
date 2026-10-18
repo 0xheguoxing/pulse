@@ -516,6 +516,171 @@ struct EngineTestAccess {
         std::cout << "cleanup_error=" << ec.value() << "\n";
         return ok && loaded;
     }
+    // --usn-probe: write sessions on real C: files replayed as journal records
+    // into a copy of a real index under the exclusive lock, as the worker does.
+    // A session logs k records with cumulative reasons and eight sessions are
+    // interleaved per batch. Mode "record" applies every record; mode "batch"
+    // goes through ApplyUsnBatchLocked. Both report per-target end states.
+    static bool UsnProbeMode(const std::wstring& source, uint32_t sessions, uint32_t k, bool batch,
+                             std::vector<uint64_t>& states) {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() /
+            (L"pulse-usn-probe-" + std::to_wstring(GetCurrentProcessId()));
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        ec.clear();
+        fs::copy(source, dir, fs::copy_options::recursive, ec);
+        if (ec) {
+            std::cout << "copy_failed=" << ec.value() << "\n";
+            fs::remove_all(dir, ec);
+            return false;
+        }
+        SetActiveIndexDirectory(dir.wstring());
+        SetMachineIndexScope(true);
+        bool ok = false;
+        {
+            Engine engine;
+            ok = engine.TryLoadCache();
+            for (int i = 0; ok && i < 1200 && !engine.pinyin_ready_.load(); ++i) Sleep(50);
+            Engine::VolState* volume = nullptr;
+            for (auto& v : engine.vols_)
+                if ((v.letter == L'C' || v.letter == L'c') && v.frn_base && v.frn_base_n) volume = &v;
+            ok = ok && volume;
+            std::vector<std::vector<BYTE>> blobs;
+            std::vector<int32_t> targets;
+            size_t records = 0;
+            if (ok) {
+                const int32_t base = engine.BaseCount();
+                std::vector<uint64_t> frn_of(static_cast<size_t>(base), 0);
+                for (uint32_t i = 0; i < volume->frn_base_n; ++i) {
+                    const DiskFrn& entry = volume->frn_base[i];
+                    if (entry.idx >= 0 && entry.idx < base) frn_of[static_cast<size_t>(entry.idx)] = entry.frn;
+                }
+                std::vector<int32_t> files;
+                for (uint32_t i = 0; i < volume->frn_base_n; ++i) {
+                    const int32_t id = volume->frn_base[i].idx;
+                    if (id < 0 || id >= base || engine.IsTomb(id)) continue;
+                    const Node n = engine.NodeAt(id);
+                    if ((n.flags & (Engine::kFlagDir | Engine::kFlagHidden)) || n.parent < 0 ||
+                        n.parent >= base || !frn_of[static_cast<size_t>(n.parent)]) continue;
+                    files.push_back(id);
+                }
+                constexpr uint32_t kPerBatch = 8;
+                constexpr DWORD kReasons[3] = {USN_REASON_DATA_OVERWRITE,
+                    USN_REASON_DATA_OVERWRITE | USN_REASON_DATA_EXTEND,
+                    USN_REASON_DATA_OVERWRITE | USN_REASON_DATA_EXTEND | USN_REASON_CLOSE};
+                uint64_t seed = 0x2545F4914F6CDD1Dull;
+                FILETIME now{}; GetSystemTimeAsFileTime(&now);
+                for (uint32_t first = 0; first < sessions && !files.empty(); first += kPerBatch) {
+                    std::vector<int32_t> batch_files;
+                    for (uint32_t s = first; s < std::min(sessions, first + kPerBatch); ++s) {
+                        seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
+                        batch_files.push_back(files[seed % files.size()]);
+                    }
+                    std::vector<BYTE> blob;
+                    for (uint32_t r = 0; r < k; ++r) {
+                        const DWORD reason = r + 1 == k ? kReasons[2] : kReasons[std::min<uint32_t>(r, 1)];
+                        for (const int32_t id : batch_files) {
+                            const std::wstring_view name = engine.NameOf(id);
+                            const auto length = static_cast<WORD>(name.size() * sizeof(wchar_t));
+                            const size_t size = (sizeof(USN_RECORD_V2) + length + 7) & ~size_t{7};
+                            const size_t at = blob.size();
+                            blob.resize(at + size);
+                            auto* rec = reinterpret_cast<USN_RECORD_V2*>(blob.data() + at);
+                            rec->RecordLength = static_cast<DWORD>(size);
+                            rec->MajorVersion = 2;
+                            rec->FileReferenceNumber = frn_of[static_cast<size_t>(id)];
+                            rec->ParentFileReferenceNumber = frn_of[static_cast<size_t>(engine.NodeAt(id).parent)];
+                            rec->FileNameOffset = static_cast<WORD>(offsetof(USN_RECORD_V2, FileName));
+                            rec->FileNameLength = length;
+                            rec->FileAttributes = FILE_ATTRIBUTE_ARCHIVE;
+                            rec->Reason = reason;
+                            rec->TimeStamp.QuadPart = (static_cast<int64_t>(now.dwHighDateTime) << 32) | now.dwLowDateTime;
+                            memcpy(blob.data() + at + rec->FileNameOffset, name.data(), length);
+                            ++records;
+                        }
+                    }
+                    targets.insert(targets.end(), batch_files.begin(), batch_files.end());
+                    blobs.push_back(std::move(blob));
+                }
+                ok = !blobs.empty();
+            }
+            if (ok) {
+                engine.running_ = true;
+                if (volume->journal_id == 0) volume->journal_id = 1;
+                std::unique_lock lock(engine.mutex_);
+                auto cycles = [] { ULONG64 c = 0; QueryThreadCycleTime(GetCurrentThread(), &c); return c; };
+                const char* mode = batch ? "batch" : "record";
+                const double count = static_cast<double>(targets.size());
+                auto report = [&](const char* label, uint64_t c, std::chrono::steady_clock::duration wall) {
+                    const double us = std::chrono::duration<double, std::micro>(wall).count();
+                    std::cout << mode << "_" << label << "_wall_us_per_session=" << us / count << " " << mode << "_"
+                              << label << "_kcycles_per_session=" << static_cast<double>(c) / 1000.0 / count << "\n";
+                };
+                uint64_t missing = 0;
+                auto stat_pass = [&](bool timed) {
+                    const uint64_t c0 = cycles();
+                    const auto w0 = std::chrono::steady_clock::now();
+                    for (const int32_t id : targets) {
+                        WIN32_FILE_ATTRIBUTE_DATA fad{};
+                        if (!GetFileAttributesExW(engine.BuildPathLocked(id).c_str(), GetFileExInfoStandard, &fad) && !timed)
+                            ++missing;
+                    }
+                    if (timed) report("stat", cycles() - c0, std::chrono::steady_clock::now() - w0);
+                };
+                stat_pass(false);
+                stat_pass(true);
+                uint64_t applied = 0;
+                bool any_struct = false, any_attr = false;
+                const uint64_t c0 = cycles();
+                const auto w0 = std::chrono::steady_clock::now();
+                for (const auto& blob : blobs) {
+                    const BYTE* begin = blob.data();
+                    const BYTE* end = begin + blob.size();
+                    if (batch) {
+                        engine.ApplyUsnBatchLocked(*volume, begin, end, applied, any_struct, any_attr);
+                        continue;
+                    }
+                    for (const BYTE* p = begin; p < end;
+                         p += reinterpret_cast<const USN_RECORD_COMMON_HEADER*>(p)->RecordLength)
+                        if (engine.ApplyUsnLocked(*volume, reinterpret_cast<const USN_RECORD_V2*>(p)) != Engine::UsnApply::None)
+                            ++applied;
+                }
+                report("apply", cycles() - c0, std::chrono::steady_clock::now() - w0);
+                states.clear();
+                for (const int32_t id : targets) {
+                    const Attr a = engine.AttrAt(id);
+                    const Node n = engine.NodeAt(id);
+                    uint64_t h = 0xcbf29ce484222325ull;
+                    for (const uint64_t x : {a.size, static_cast<uint64_t>(a.mtime), static_cast<uint64_t>(n.flags),
+                                             static_cast<uint64_t>(static_cast<uint32_t>(n.parent))})
+                        h = (h ^ x) * 0x100000001b3ull;
+                    states.push_back(h);
+                }
+                std::cout << mode << " sessions=" << targets.size() << " k=" << k << " records=" << records
+                          << " applied=" << applied << " missing=" << missing << " patches=" << engine.patches_.size() << "\n";
+            }
+            engine.running_ = false;
+            engine.Stop();
+        }
+        SetActiveIndexDirectory(L"");
+        ec.clear();
+        fs::remove_all(dir, ec);
+        if (ec) std::cout << "cleanup_error=" << ec.value() << "\n";
+        return ok;
+    }
+
+    static bool UsnProbe(const std::wstring& source, uint32_t sessions, uint32_t k, bool batch_first) {
+        if (!std::filesystem::is_directory(source) || sessions == 0 || k == 0 || k > 3) return false;
+        std::vector<uint64_t> first, second;
+        const bool ok = UsnProbeMode(source, sessions, k, batch_first, first) &&
+                        UsnProbeMode(source, sessions, k, !batch_first, second);
+        size_t mismatched = first.size() == second.size() ? 0 : std::max(first.size(), second.size());
+        if (first.size() == second.size())
+            for (size_t i = 0; i < first.size(); ++i) mismatched += first[i] != second[i] ? 1 : 0;
+        std::cout << "end_state_mismatches=" << mismatched << " of " << first.size() << "\n";
+        return ok;
+    }
     static bool OverlayContainersFixture() {
         bool ok = true;
         auto check = [&](bool value, const char* label) {
@@ -1775,6 +1940,9 @@ int wmain(int argc, wchar_t** argv) {
     if (argc == 3 && std::wstring_view(argv[1]) == L"--merge-peak-probe") return EngineTestAccess::MergePeakProbe(argv[2]) ? 0 : 1;
     if (argc == 4 && std::wstring_view(argv[1]) == L"--replay-probe")
         return EngineTestAccess::ReplayProbe(argv[2], static_cast<uint32_t>(wcstoul(argv[3], nullptr, 10))) ? 0 : 1;
+    if ((argc == 5 || argc == 6) && std::wstring_view(argv[1]) == L"--usn-probe")
+        return EngineTestAccess::UsnProbe(argv[2], static_cast<uint32_t>(wcstoul(argv[3], nullptr, 10)),
+            static_cast<uint32_t>(wcstoul(argv[4], nullptr, 10)), argc == 6 && wcstoul(argv[5], nullptr, 10) != 0) ? 0 : 1;
     if (argc == 2 && std::wstring_view(argv[1]) == L"--hierarchy-only") return EngineTestAccess::HierarchyFixture() ? 0 : 1;
     if (argc == 2 && std::wstring_view(argv[1]) == L"--overlay-only") return EngineTestAccess::OverlayContainersFixture() ? 0 : 1;
     if (argc == 2 && std::wstring_view(argv[1]) == L"--usn-coalesce-only") return EngineTestAccess::UsnCoalesceFixture() ? 0 : 1;
