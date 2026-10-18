@@ -1576,7 +1576,8 @@ bool Engine::WriteIndexFile(const std::wstring& path, const Store& s,
         return IndexFailure("filename_write_hierarchy_failed", ERROR_INVALID_DATA, path);
     }
     std::wstring tmp = path + L".tmp";
-    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+    // Read access is required to map the posting region for writing.
+    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
                            FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
         const DWORD error = GetLastError();
@@ -1588,52 +1589,53 @@ bool Engine::WriteIndexFile(const std::wstring& path, const Store& s,
         return { s.pool.data() + node.off, node.len };
     };
     bool prefix_overflow = false;
-    auto build_prefix = [&](bool pair) {
-        std::vector<uint32_t> counts(kPrefixBuckets, 0);
-        // Each bucket is reported once per name. A per-bucket epoch stamp replaces
-        // sort+unique per name; postings stay identical because ids are appended
-        // in node order whatever the order of buckets within one name.
-        std::vector<uint32_t> seen(kPrefixBuckets, 0);
-        uint32_t epoch = 0;
-        auto visit = [&](std::wstring_view name, auto&& fn) {
-            if (++epoch == 0) {
-                std::fill(seen.begin(), seen.end(), 0u);
-                epoch = 1;
-            }
-            auto once = [&](uint32_t bucket) {
-                if (seen[bucket] == epoch) return;
-                seen[bucket] = epoch;
-                fn(bucket);
-            };
-            if (!pair) {
-                for (wchar_t c : name) once(static_cast<uint16_t>(FoldChar(c)));
-                return;
-            }
-            for (size_t k = 0; k + 1 < name.size(); ++k) once(PairBucket(name.substr(k, 2)));
+    // Posting tables are counted here and filled straight into a mapped view of
+    // the output file below, so the heap never holds both id tables (about 35
+    // ids per node) next to the flattened snapshot.
+    // Each bucket is reported once per name. A per-bucket epoch stamp replaces
+    // sort+unique per name; postings stay identical because ids are appended
+    // in node order whatever the order of buckets within one name.
+    std::vector<uint32_t> seen(kPrefixBuckets, 0);
+    uint32_t epoch = 0;
+    auto visit = [&](bool pair, std::wstring_view name, auto&& fn) {
+        if (++epoch == 0) {
+            std::fill(seen.begin(), seen.end(), 0u);
+            epoch = 1;
+        }
+        auto once = [&](uint32_t bucket) {
+            if (seen[bucket] == epoch) return;
+            seen[bucket] = epoch;
+            fn(bucket);
         };
+        if (!pair) {
+            for (wchar_t c : name) once(static_cast<uint16_t>(FoldChar(c)));
+            return;
+        }
+        for (size_t k = 0; k + 1 < name.size(); ++k) once(PairBucket(name.substr(k, 2)));
+    };
+    auto count_prefix = [&](bool pair) {
+        std::vector<uint32_t> counts(kPrefixBuckets, 0);
         for (int32_t i = 0; i < static_cast<int32_t>(s.nodes.size()); ++i)
-            visit(name_of(i), [&](uint32_t bucket) { ++counts[bucket]; });
-
+            visit(pair, name_of(i), [&](uint32_t bucket) { ++counts[bucket]; });
         std::vector<uint32_t> start(kPrefixBuckets + 1, 0);
         uint64_t posting_count = 0;
         for (uint32_t i = 0; i < kPrefixBuckets; ++i) {
             posting_count += counts[i];
             if (posting_count > UINT32_MAX) {
                 prefix_overflow = true;
-                return std::make_pair(std::vector<uint32_t>{}, std::vector<int32_t>{});
+                return std::vector<uint32_t>{};
             }
             start[i + 1] = static_cast<uint32_t>(posting_count);
         }
-        std::vector<uint32_t> cursor(start.begin(), start.end() - 1);
-        std::vector<int32_t> ids(start.back(), -1);
-        for (int32_t i = 0; i < static_cast<int32_t>(s.nodes.size()); ++i)
-            visit(name_of(i), [&](uint32_t bucket) { ids[cursor[bucket]++] = i; });
-        return std::make_pair(std::move(start), std::move(ids));
+        return start;
     };
-    const auto prefix1 = build_prefix(false);
-    filename_timing_.Memory().Capture(IndexMemoryPoint::WritePrefix1);
-    const auto prefix2 = build_prefix(true);
-    filename_timing_.Memory().Capture(IndexMemoryPoint::WritePrefix2);
+    auto fill_prefix = [&](bool pair, const std::vector<uint32_t>& start, int32_t* ids) {
+        std::vector<uint32_t> cursor(start.begin(), start.end() - 1);
+        for (int32_t i = 0; i < static_cast<int32_t>(s.nodes.size()); ++i)
+            visit(pair, name_of(i), [&](uint32_t bucket) { ids[cursor[bucket]++] = i; });
+    };
+    const auto prefix1_start = count_prefix(false);
+    const auto prefix2_start = prefix_overflow ? std::vector<uint32_t>{} : count_prefix(true);
     if (prefix_overflow) {
         CloseHandle(h);
         DeleteFileW(tmp.c_str());
@@ -1664,11 +1666,11 @@ bool Engine::WriteIndexFile(const std::wstring& path, const Store& s,
     hdr.mtime_order_off = 0;
     const uint64_t prefix1_position = off;
     hdr.prefix1_off = prefix1_position | kPrefixAllCharsFlag;
-    off = AlignUp(off + prefix1.first.size() * sizeof(uint32_t) +
-                         prefix1.second.size() * sizeof(int32_t), 16);
+    off = AlignUp(off + prefix1_start.size() * sizeof(uint32_t) +
+                         uint64_t{prefix1_start.back()} * sizeof(int32_t), 16);
     hdr.prefix2_off = off;
-    off = AlignUp(off + prefix2.first.size() * sizeof(uint32_t) +
-                         prefix2.second.size() * sizeof(int32_t), 16);
+    off = AlignUp(off + prefix2_start.size() * sizeof(uint32_t) +
+                         uint64_t{prefix2_start.back()} * sizeof(int32_t), 16);
     hdr.vols_off = off;
     off = AlignUp(off + sizeof(DiskVol) * vols.size(), 16);
     hdr.frn_off = off;
@@ -1706,16 +1708,56 @@ bool Engine::WriteIndexFile(const std::wstring& path, const Store& s,
         }
     }
 
-    // Store, both posting tables and child_order are all alive here.
     filename_timing_.Memory().Capture(IndexMemoryPoint::WriteSorted);
-    std::vector<BYTE> pad(128, 0);
-    memcpy(pad.data(), &hdr, sizeof(hdr));
     DWORD write_error = ERROR_SUCCESS;
     auto checked = [&](bool result) {
         if (!result) write_error = GetLastError();
         return result;
     };
-    bool ok = checked(WriteAll(h, pad.data(), pad.size()));
+    // Size the file once, then fill the posting region through a mapped view.
+    // Its pages are file-backed, so they add no private commit and the memory
+    // manager can write them out under pressure. Cached writes below share the
+    // same file cache, and untouched alignment gaps read back as zeros.
+    const uint64_t file_size = hdr.frn_off + frn_count * sizeof(DiskFrn);
+    auto seek = [&](uint64_t position) {
+        LARGE_INTEGER pos{};
+        pos.QuadPart = static_cast<LONGLONG>(position);
+        return checked(SetFilePointerEx(h, pos, nullptr, FILE_BEGIN) != 0);
+    };
+    bool ok = seek(file_size) && checked(SetEndOfFile(h) != FALSE);
+    if (ok) {
+        SYSTEM_INFO system_info{};
+        GetSystemInfo(&system_info);
+        const uint64_t granularity = system_info.dwAllocationGranularity;
+        const uint64_t view_begin = prefix1_position / granularity * granularity;
+        HANDLE section = CreateFileMappingW(h, nullptr, PAGE_READWRITE, 0, 0, nullptr);
+        ok = checked(section != nullptr);
+        if (ok) {
+            auto* view = static_cast<BYTE*>(MapViewOfFile(
+                section, FILE_MAP_WRITE, static_cast<DWORD>(view_begin >> 32),
+                static_cast<DWORD>(view_begin & 0xFFFFFFFFull),
+                static_cast<SIZE_T>(hdr.vols_off - view_begin)));
+            ok = checked(view != nullptr);
+            if (ok) {
+                auto store = [&](bool pair, uint64_t position, const std::vector<uint32_t>& start) {
+                    BYTE* at = view + (position - view_begin);
+                    memcpy(at, start.data(), start.size() * sizeof(uint32_t));
+                    fill_prefix(pair, start,
+                                reinterpret_cast<int32_t*>(at + start.size() * sizeof(uint32_t)));
+                };
+                store(false, prefix1_position, prefix1_start);
+                filename_timing_.Memory().Capture(IndexMemoryPoint::WritePrefix1);
+                store(true, hdr.prefix2_off, prefix2_start);
+                filename_timing_.Memory().Capture(IndexMemoryPoint::WritePrefix2);
+                ok = checked(UnmapViewOfFile(view) != FALSE);
+            }
+            CloseHandle(section);
+        }
+    }
+    std::vector<BYTE> pad(128, 0);
+    memcpy(pad.data(), &hdr, sizeof(hdr));
+    if (ok) ok = seek(0);
+    if (ok) ok = checked(WriteAll(h, pad.data(), pad.size()));
     if (ok && !s.nodes.empty())
         ok = checked(WriteAll(h, s.nodes.data(), s.nodes.size() * sizeof(Node)));
     if (ok) {
@@ -1742,17 +1784,6 @@ bool Engine::WriteIndexFile(const std::wstring& path, const Store& s,
         if (ok && !order.empty()) ok = checked(WriteAll(h, order.data(), order.size() * sizeof(int32_t)));
     };
     write_order(hdr.child_order_off, child_order);
-    auto write_prefix = [&](uint64_t position, const std::vector<uint32_t>& start,
-                            const std::vector<int32_t>& ids) {
-        if (!ok) return;
-        LARGE_INTEGER pos{};
-        pos.QuadPart = static_cast<LONGLONG>(position);
-        ok = checked(SetFilePointerEx(h, pos, nullptr, FILE_BEGIN) != 0);
-        if (ok) ok = checked(WriteAll(h, start.data(), start.size() * sizeof(uint32_t)));
-        if (ok && !ids.empty()) ok = checked(WriteAll(h, ids.data(), ids.size() * sizeof(int32_t)));
-    };
-    write_prefix(prefix1_position, prefix1.first, prefix1.second);
-    write_prefix(hdr.prefix2_off, prefix2.first, prefix2.second);
     if (ok) {
         LARGE_INTEGER pos{};
         pos.QuadPart = static_cast<LONGLONG>(hdr.vols_off);
