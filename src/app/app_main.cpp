@@ -1,4 +1,5 @@
 #include "app_diagnostics.h"
+#include "app_wall_hint.h"
 #include "arrival_select.h"
 #include "zip_compress_ui.h"
 #include "folder_alias.h"
@@ -207,6 +208,9 @@ void UpdateProcessMetrics(AppState& s) {
 
 // Index status only reaches the screen through search views, the palette and
 // the settings page (see BuildVm); other notifications need no repaint.
+// --view wall (screenshots): large icons shown as a photo wall.
+static bool g_shot_wall = false;
+
 static bool IndexStatusVisible(AppState& s) {
     if (s.paletteSearching) return true;
     bool visible = false;
@@ -1253,7 +1257,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             else if (open_default_location)
                 startPath = app::DefaultLocation(s->appPrefs); // empty = This PC
             s->pane->NewTab(startPath);
-            if (s->shot.active) s->pane->ActiveTab()->view_mode = s->shot.view_mode;
+            if (s->shot.active) {
+                s->pane->ActiveTab()->view_mode = s->shot.view_mode;
+                s->pane->ActiveTab()->wall = g_shot_wall;
+            }
             StartLoadingPath(*s, *s->pane->ActiveTab(), startPath,
                 !s->shot.active && !s->session_path.empty()
                     ? PathLoadReason::RestoreSession : PathLoadReason::Navigate);
@@ -1686,6 +1693,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s && wParam == kTimerDrawnCaret) {
             KillTimer(hwnd, kTimerDrawnCaret);
             InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        if (s && wParam == kTimerWallHint) {
+            WallHintTimer(*s);
             return 0;
         }
         if (s && wParam == kTimerUncProbeRetry) {
@@ -3356,7 +3367,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             state.forceStatusPerformance = true;
             state.showFps = true;
         } else if (wcscmp(__wargv[i], L"--view") == 0 && i + 1 < __argc) {
-            state.shot.view_mode = ui::ParseViewMode(__wargv[++i]);
+            const wchar_t* view = __wargv[++i];
+            g_shot_wall = wcscmp(view, L"wall") == 0;
+            state.shot.view_mode = g_shot_wall ? ui::ViewMode::LargeIcons : ui::ParseViewMode(view);
         } else if (wcscmp(__wargv[i], L"--size") == 0 && i + 1 < __argc) {
             int requestedWidth = 0;
             int requestedHeight = 0;

@@ -2438,5 +2438,9 @@
 #define IDS_SEARCH_SWITCH_OFF_PURGE                                                      3648
 #define IDS_SEARCH_SWITCH_OFF_KEEP                                                       3649
 #define IDS_STATUS_HINT_IDLE_NO_SEARCH                                                   3650
+#define IDS_PHOTO_WALL_SUGGEST                                                           3651
+#define IDS_PHOTO_WALL_SUGGEST_SWITCH                                                    3652
+#define IDS_PHOTO_WALL_SUGGEST_NEVER                                                     3653
+#define IDS_WALL_ROW_HEIGHT                                                              3654
 
 #endif  // PULSE_STRING_IDS_H

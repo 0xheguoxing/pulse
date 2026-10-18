@@ -47,6 +47,7 @@ struct AppPrefs {
     // Folders in the list get their size worked out on their own; off, the
     // size cell offers it per folder (a size sort still asks for them all).
     bool folder_size_auto = true;
+    bool photo_wall_hint = true;      // suggest the photo wall in photo folders (once per folder)
     bool list_tag_name_color = false; // tint tagged names with their first tag's color
     bool list_selection_outline = false; // accent outline around selected items (#78)
     // Grid thumbnails: default-program badge, plus playing time on videos.

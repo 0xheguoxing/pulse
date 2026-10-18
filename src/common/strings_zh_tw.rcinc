@@ -2422,4 +2422,8 @@ BEGIN
     IDS_SEARCH_SWITCH_OFF_PURGE "關閉並刪除索引"
     IDS_SEARCH_SWITCH_OFF_KEEP "關閉，保留索引"
     IDS_STATUS_HINT_IDLE_NO_SEARCH "空格 預覽  ·  Ctrl+F 篩選"
+    IDS_PHOTO_WALL_SUGGEST "這個資料夾以相片為主，試試相片牆：依原始比例排列，一屏能多放一倍左右"
+    IDS_PHOTO_WALL_SUGGEST_SWITCH "切換"
+    IDS_PHOTO_WALL_SUGGEST_NEVER "不再提示"
+    IDS_WALL_ROW_HEIGHT "列高"
 END

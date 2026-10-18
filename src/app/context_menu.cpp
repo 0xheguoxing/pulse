@@ -450,7 +450,7 @@ ui::FluentMenuItem BuildGroupMenu(const BackgroundViewOptions& options) {
 void AppendBackgroundViewCommands(std::vector<ui::FluentMenuItem>& items,
                                   const BackgroundViewOptions& options) {
     auto view = Item(CmdNone, l10n::Get(l10n::StringId::View).c_str(), kGlyphViewMenu);
-    view.children = BuildViewMenu(options.view_mode, options.details_panel, options.filesystem);
+    view.children = BuildViewMenu(options.view_mode, options.details_panel, options.filesystem, options.wall);
     auto sort = Item(CmdNone, l10n::Get(l10n::StringId::SortBy).c_str(), kGlyphSortMenu, nullptr, options.can_sort);
     sort.children = BuildSortMenu(options);
     auto refresh = Item(CmdRefresh, l10n::Get(l10n::StringId::Refresh).c_str(), L"\xE72C", L"F5");
@@ -504,7 +504,7 @@ std::vector<ui::FluentMenuItem> BuildSplitMenu(int current_preset) {
 }
 
 std::vector<ui::FluentMenuItem> BuildViewMenu(ui::ViewMode current_mode, bool details_panel,
-                                              bool can_apply_all) {
+                                              bool can_apply_all, bool wall) {
     static constexpr l10n::StringId labels[] = {
         l10n::StringId::ViewExtraLarge, l10n::StringId::ViewLarge,
         l10n::StringId::MediumIcons, l10n::StringId::ViewSmall,
@@ -516,7 +516,9 @@ std::vector<ui::FluentMenuItem> BuildViewMenu(ui::ViewMode current_mode, bool de
         L"\xEA37", L"\xE8A5", L"\xECA5", L"\xE8FD"
     };
     std::vector<ui::FluentMenuItem> items;
-    items.reserve(9);
+    items.reserve(10);
+    const bool wall_shown = wall && (current_mode == ui::ViewMode::MediumIcons ||
+        current_mode == ui::ViewMode::LargeIcons || current_mode == ui::ViewMode::ExtraLargeIcons);
     // File Explorer's Ctrl+Shift+1..8 (explorer_shortcuts.h).
     static constexpr const wchar_t* keys[] = {
         L"Ctrl+Shift+1", L"Ctrl+Shift+2", L"Ctrl+Shift+3", L"Ctrl+Shift+4",
@@ -527,9 +529,13 @@ std::vector<ui::FluentMenuItem> BuildViewMenu(ui::ViewMode current_mode, bool de
         if (i == 0) row.glyph_scale = 1.16f;
         else if (i == 1) row.glyph_scale = 1.0f;
         else if (i == 2) row.glyph_scale = 0.82f;
-        row.radio = ui::ViewModeIndex(current_mode) == i;
+        row.radio = !wall_shown && ui::ViewModeIndex(current_mode) == i;
         items.push_back(std::move(row));
     }
+    // 照片墙 (P2): pictures in justified rows at their own shape.
+    auto wall_row = Item(CmdViewWall, l10n::Get(l10n::StringId::PhotoWall).c_str(), L"\xEB9F");
+    wall_row.radio = wall_shown;
+    items.push_back(std::move(wall_row));
     items.back().separator_after = true;
     auto panel = Item(CmdDetailsPanel, l10n::Get(l10n::StringId::DetailsPane).c_str(), L"\xE700");
     panel.checked = details_panel;

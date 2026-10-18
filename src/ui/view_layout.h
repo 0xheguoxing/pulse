@@ -192,6 +192,8 @@ public:
     int PageDelta() const noexcept;
     // Group headers (empty unless grouped): header g in viewport pixels.
     bool Grouped() const noexcept { return groups_ != nullptr; }
+    // Icon grids shown as a photo wall: its rows, else null.
+    const WallRows* Wall() const noexcept { return wall_; }
     int GroupCount() const noexcept;
     D2D1_RECT_F HeaderRect(int group) const noexcept;
     int HeaderHitTest(float x, float y) const noexcept;

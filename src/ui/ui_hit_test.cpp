@@ -1214,6 +1214,14 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 out.region=actions[i]; out.index=paneIndex; return out;
             }
         }
+        if (focused && paneVm.wall_hint_since) {  // the photo wall suggestion floats over the list
+            const WallHintRects hint = PaneWallHintRects(paneVm, paneRect);
+            if (hint.alpha > 0.5f && ContainsPt(hint.card, x, y)) {
+                out.region = HitTestResult::PaneWallHint;
+                out.index = ContainsPt(hint.button, x, y) ? 1 : ContainsPt(hint.close, x, y) ? 2 : 0;
+                return out;
+            }
+        }
         if (y >= paneRect.top + pane_header_height_ && paneVm.column_strip.Active()) {
             if (HitTestColumnStrip(paneVm, paneRect, x, y, out)) return out;
             paneRc = PaneBodyBounds(paneVm, paneRect);

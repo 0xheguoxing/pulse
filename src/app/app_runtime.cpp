@@ -1,5 +1,6 @@
 // app_runtime.cpp — extracted from app_main.cpp.
 #include "app_window_title.h"
+#include "app_wall_hint.h"
 #include "app_internal.h"
 #include "shortcut_page.h"
 #include "keymap.h"
@@ -1145,6 +1146,8 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
                 if (!slot.focused) FillLandingRows(s, p, tab->current_path, slot.pane);
             }
             if (static_cast<int>(i) == s.hoverPaneIndex) slot.pane.hover_index = s.hoverRow;
+            // Hover shots stage the row on "the focused pane" (-1).
+            else if (s.shot.active && s.hoverPaneIndex < 0 && slot.focused) slot.pane.hover_index = s.hoverRow;
             if (s.stripResizing && static_cast<int>(i) == s.stripResizePane)
                 slot.pane.column_strip.resize_column = s.stripResizeColumn;
             if (s.stripHScrolling && static_cast<int>(i) == s.stripResizePane)
@@ -2568,10 +2571,12 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     });
     SyncColumnStrips(s);
     SyncDetailsTrees(s);
+    UpdateWallHint(s);
     ui::WindowViewModel vm = app::BuildWindowViewModel(*s.pane, s.sidebar,
         s.pane->focused, s.maximized, s.darkMode, &s.places, s.sidebarCollapsedMask,
         s.sidebarHiddenMask, s.starredExpanded, &s.sidebarOrder,
         s.sidebarQuickAccessHiddenMask);
+    if (const app::Tab* tab = ActiveTab(s)) FillWallHint(*tab, vm.pane);  // photo wall suggestion
     app::FillWindowTabStrip(vm, s.window_tabs);
     // Open settings shows as the selected settings button, not as a tab.
     if (s.window_tabs.active < vm.tabs.size() && IsSettingsTab(ActiveTab(s)))
@@ -3363,6 +3368,8 @@ std::wstring TooltipForHover(AppState& s) {
     case R::DetailsToggle: return text(s.showDetailsPanel ? I::CollapseDetails : I::ExpandDetails);
     case R::PaneMediumIcons: return text(I::MediumIcons);
     case R::PaneWall: return text(I::PhotoWall);
+    case R::PaneWallHint:  // Switch says its word; the close glyph needs one
+        return s.hoverControlIndex == 2 ? text(I::PhotoWallSuggestNever) : L"";
     case R::PaneSizeSlider:
     case R::PaneSizeButton: {  // the icon size it is at, e.g. "Large icons · 136"
         const app::Tab* tab = ActiveTab(s);
@@ -3370,6 +3377,9 @@ std::wstring TooltipForHover(AppState& s) {
         const I mode = tab->view_mode == ui::ViewMode::ExtraLargeIcons ? I::ViewExtraLarge
             : tab->view_mode == ui::ViewMode::LargeIcons ? I::ViewLarge : I::MediumIcons;
         const float dip = ui::IconDip(tab->view_mode, tab->icon_dip, s.scale);
+        if (tab->wall)  // the wall is sized by its row height (prototype: size x 0.78)
+            return text(I::PhotoWall) + L" \u00B7 " + text(I::WallRowHeight) + L" " +
+                   std::to_wstring(static_cast<int>(dip * 0.78f + 0.5f));
         return text(mode) + L" \u00B7 " + std::to_wstring(static_cast<int>(dip + 0.5f));
     }
     case R::PaneDetails: return text(I::ViewDetails);

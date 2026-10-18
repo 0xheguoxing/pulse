@@ -2434,6 +2434,10 @@ enum class StringId : UINT {
     SearchSwitchOffPurge = IDS_SEARCH_SWITCH_OFF_PURGE,
     SearchSwitchOffKeep = IDS_SEARCH_SWITCH_OFF_KEEP,
     StatusHintIdleNoSearch = IDS_STATUS_HINT_IDLE_NO_SEARCH,
+    PhotoWallSuggest = IDS_PHOTO_WALL_SUGGEST,
+    PhotoWallSuggestSwitch = IDS_PHOTO_WALL_SUGGEST_SWITCH,
+    PhotoWallSuggestNever = IDS_PHOTO_WALL_SUGGEST_NEVER,
+    WallRowHeight = IDS_WALL_ROW_HEIGHT,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

@@ -36,10 +36,27 @@ bool UploadBitmap(ID2D1DeviceContext* dc, ComPtr<ID2D1Bitmap>& bitmap,
     return true;
 }
 
+// Set by DrawWallThumbnail around its Draw: DrawContained fills instead.
+thread_local bool t_cover_fill = false;
+
 // Aspect-fit (contain), optionally placing the visible artwork at dest.bottom.
 void DrawContained(ID2D1DeviceContext* dc, ID2D1Bitmap* bitmap, uint32_t w, uint32_t h,
                    const D2D1_RECT_F& dest, float opacity, const IconArtworkBounds& bounds,
                    bool align_artwork_bottom, D2D1_RECT_F* artwork_rect) {
+    if (t_cover_fill && w > 0 && h > 0) {
+        // Photo wall: fill the tile, centred, cropping what overflows.
+        const float dw = dest.right - dest.left, dh = dest.bottom - dest.top;
+        const float k = std::max(dw / static_cast<float>(w), dh / static_cast<float>(h));
+        const float cw = static_cast<float>(w) * k, ch = static_cast<float>(h) * k;
+        const D2D1_RECT_F fitted = D2D1::RectF(dest.left + (dw - cw) * 0.5f, dest.top + (dh - ch) * 0.5f,
+                                               dest.left + (dw + cw) * 0.5f, dest.top + (dh + ch) * 0.5f);
+        if (artwork_rect) *artwork_rect = dest;
+        dc->PushAxisAlignedClip(dest, D2D1_ANTIALIAS_MODE_ALIASED);
+        dc->DrawBitmap(bitmap, &fitted, std::clamp(opacity, 0.0f, 1.0f),
+            D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+        dc->PopAxisAlignedClip();
+        return;
+    }
     const auto fitted = ContainedThumbnailRect(dest, w, h, bounds, align_artwork_bottom);
     if (artwork_rect) *artwork_rect = ThumbnailArtworkRect(fitted, bounds);
     dc->DrawBitmap(bitmap, &fitted, std::clamp(opacity, 0.0f, 1.0f),
@@ -453,6 +470,22 @@ PreviewDrawResult ThumbnailCache::DrawGridThumbnail(ID2D1DeviceContext* dc,
         nullptr, nullptr, nullptr, nullptr, 0, nullptr, nullptr, nullptr,
         nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, align_bottom, artwork,
         media_duration_ms);
+}
+
+PreviewDrawResult ThumbnailCache::DrawWallThumbnail(ID2D1DeviceContext* dc,
+    const D2D1_RECT_F& dest, const std::wstring& path, DWORD attrs, uint32_t pixel_size,
+    uint64_t generation, uint64_t modified, uint64_t size, float opacity, float* aspect,
+    uint32_t* media_duration_ms) {
+    uint32_t w = 0, h = 0;
+    t_cover_fill = true;
+    const PreviewDrawResult result = Draw(dc, dest, path, attrs, pixel_size, generation, modified, size,
+        opacity, nullptr, nullptr, nullptr, false, nullptr,
+        nullptr, nullptr, nullptr, nullptr, 0, nullptr, nullptr, nullptr,
+        &w, &h, nullptr, nullptr, nullptr, nullptr, false, nullptr, media_duration_ms);
+    t_cover_fill = false;
+    if (aspect) *aspect = result == PreviewDrawResult::Bitmap && w > 0 && h > 0
+        ? static_cast<float>(w) / static_cast<float>(h) : 0.0f;
+    return result;
 }
 
 void ThumbnailCache::SelectDetailsLocked(const std::wstring& identity) {

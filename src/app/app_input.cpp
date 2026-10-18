@@ -1,4 +1,5 @@
 #include "reopen_closed.h"
+#include "app_wall_hint.h"
 #include "arrival_select.h"
 #include "pane_column_input.h"
 // app_input.cpp — extracted from app_main.cpp.
@@ -2638,6 +2639,12 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         }
         if (HandleWindowIdentityPress(*s, hit, POINT{mx, my})) return 0;  // M7c
         if (HandlePaneBannerPress(*s, hit)) return 0;  // retry, go up, reconnect... on a pane banner
+        if (hit.region == ui::HitTestResult::PaneWallHint) {  // photo wall suggestion card
+            if (hit.index == 1) WallHintSwitch(*s);
+            else if (hit.index == 2) WallHintNever(*s);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         if (hit.region == ui::HitTestResult::TrayShelf) {
             s->dragPending = false;
             HandleTrayShelfPress(*s, hwnd, hit, mx, my);
@@ -4682,7 +4689,7 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 ApplyLayoutPreset(*s, kPresets[explorer.index]);
                 break;
             }
-            case A::ViewMode: SetViewMode(*s, ui::ViewModeFromIndex(explorer.index)); break;
+            case A::ViewMode: ChooseViewMode(*s, ui::ViewModeFromIndex(explorer.index)); break;
             case A::Tag: {
                 app::Tab* t = ActiveTab(*s);
                 if (t && explorer.index < static_cast<int>(s->places.tags.size())) {

@@ -294,6 +294,10 @@ struct PaneViewModel {
     ViewMode view_mode = ViewMode::Details;
     float icon_dip = 0.0f;        // icon grids: thumbnail width in DIP (0 = the mode's preset)
     bool wall = false;            // icon grids: shown as a photo wall (rows from ListRowHeightDip)
+    // "Try the photo wall" under the header of a photo folder shown as a grid:
+    // GetTickCount64 when it appeared / goes (fades out from there); 0 = none.
+    uint64_t wall_hint_since = 0;
+    uint64_t wall_hint_until = 0;
     uint64_t view_generation = 1;
     SortColumn sort_column = SortColumn::Name;
     SortDirection sort_direction = SortDirection::Asc;
@@ -1368,6 +1372,7 @@ struct HitTestResult {
         SettingsShortcuts,     // Settings > 快捷键: index = ShortcutsHit
         TrayShelf,             // staging tray shelf: index = TrayShelfHit
         StagedBadge,           // "已暂存" pill on a list row: index = entry, path
+        PaneWallHint,          // photo wall suggestion: index 0 card, 1 switch, 2 never again
     } region = None;
     SidebarAddAction sidebar_action = SidebarAddAction::None;
     int index = -1;          // tab/row/sidebar item/tray batch/tray item.
@@ -1616,6 +1621,12 @@ public:
     // The segment's photo wall button, left of the view menu; empty outside
     // main window panes (vm.size_control).
     D2D1_RECT_F PaneWallRect(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds) const;
+    // The photo wall suggestion card under the pane header and its switch /
+    // never-again parts; all empty while it is not shown.
+    // Photo wall suggestion card under the pane header (P2 maybeSuggest).
+    // alpha 0 = not shown; animating = it is fading in or out.
+    struct WallHintRects { D2D1_RECT_F card{}, button{}, close{}, text{}; float alpha = 0.0f; bool animating = false; };
+    WallHintRects PaneWallHintRects(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds) const;
     // Icon views: the header's size slider (empty when hidden). Panes under
     // 440 DIP show PaneSizeButtonRect instead, which opens it over the title.
     D2D1_RECT_F PaneSizeSliderRect(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds) const;
@@ -2108,6 +2119,12 @@ private:
     // drawn image, `icon_size` the item's icon square, both in pixels.
     void DrawThumbnailBadges(const ListEntryView& entry, const D2D1_RECT_F& artwork, float icon_size,
                              uint32_t duration_ms, const Theme& theme);
+    // Photo wall picture tile over its thumbnail: a hairline edge, the dark
+    // fade its name sits on while hovered or selected, the selection ring.
+    void DrawWallTileChrome(const D2D1_RECT_F& tile, bool hover, bool selected, const Theme& theme);
+    // The photo wall suggestion card (PaneWallHintRects) over the list.
+    void DrawPaneWallHint(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,
+                          int hover_region, int hover_index, const Theme& theme);
     // One item's icon mid view-switch (ui_view_morph.h): thumbnail and shell
     // icon cross-fade while the rect travels. dx/dy: the row transform.
     void DrawMorphIcon(const ListEntryView& entry, const PaneViewModel& vm,

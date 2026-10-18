@@ -91,6 +91,13 @@ public:
         const std::wstring& path, DWORD attrs, uint32_t pixel_size, uint64_t generation,
         uint64_t modified, uint64_t size, float opacity, bool align_bottom,
         D2D1_RECT_F* artwork, uint32_t* media_duration_ms = nullptr);
+    // Photo wall tiles: the picture fills dest, cropping the overflow (a decode
+    // of another size meanwhile is stretched). aspect receives the decoded
+    // width / height, 0 until there is a bitmap.
+    PreviewDrawResult DrawWallThumbnail(ID2D1DeviceContext* dc, const D2D1_RECT_F& dest,
+        const std::wstring& path, DWORD attrs, uint32_t pixel_size, uint64_t generation,
+        uint64_t modified, uint64_t size, float opacity, float* aspect,
+        uint32_t* media_duration_ms = nullptr);
     bool Properties(const std::wstring& path, DWORD attrs, uint64_t generation,
                     uint64_t modified, uint64_t size,
                     std::vector<PreviewProperty>& properties);

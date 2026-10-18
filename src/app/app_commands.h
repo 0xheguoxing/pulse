@@ -113,6 +113,10 @@ void ShowLastIconSize(AppState& s, const POINT* anchor = nullptr);
 // The header's icons / photo wall buttons: that size as a grid or as a photo
 // wall, remembered with the folder.
 void ShowIconWall(AppState& s, bool wall, const POINT* anchor = nullptr);
+// A view picked from the view menu or with Ctrl+Shift+1..8. An icon size
+// there means the plain grid, so it also leaves the photo wall; SetViewMode
+// keeps the wall (the size button returns to it).
+void ChooseViewMode(AppState& s, ui::ViewMode mode);
 // Ctrl+wheel: `step` notches through the icon sizes (ui::ZoomIconDip). Out of
 // the smallest goes to Details; in from other views returns to the last size.
 // leave_icons = false (the header slider) stays within the icon sizes.

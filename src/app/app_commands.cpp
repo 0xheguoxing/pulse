@@ -1255,7 +1255,11 @@ void DispatchMenuCommand(AppState& s, int cmd) {
         cmd==app::CmdGroupIntoFolder || cmd==app::CmdDissolveFolder || cmd==app::CmdSetAlias;
     if(needs_files && DeferContentSelection(s,[cmd](AppState& v){DispatchMenuCommand(v,cmd);})) return;
     if (cmd >= app::CmdViewBase && cmd < app::CmdViewBase + 8) {
-        SetViewMode(s, ui::ViewModeFromIndex(cmd - app::CmdViewBase));
+        ChooseViewMode(s, ui::ViewModeFromIndex(cmd - app::CmdViewBase));
+        return;
+    }
+    if (cmd == app::CmdViewWall) {
+        ShowIconWall(s, true);
         return;
     }
     switch (cmd) {
@@ -2194,6 +2198,7 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     app::ParsePulsePath(tab->current_path, &kind, nullptr);
     app::BackgroundViewOptions view_options;
     view_options.view_mode = tab->view_mode;
+    view_options.wall = tab->wall;
     view_options.sort_column = tab->sort_column;
     view_options.sort_direction = tab->sort_direction;
     view_options.folder_sort = s.appPrefs.folder_sort_mode;
@@ -3061,6 +3066,12 @@ void ShowIconWall(AppState& s, bool wall, const POINT* anchor_point) {
                   known ? tab->last_icon_dip : 0.0f, anchor_point, wall ? 1 : 0);
 }
 
+void ChooseViewMode(AppState& s, ui::ViewMode mode) {
+    const app::Tab* tab = ActiveTab(s);
+    if (tab && tab->wall && ui::IsZoomIconMode(mode)) ApplyViewMode(s, mode, 0.0f, nullptr, 0);
+    else SetViewMode(s, mode);
+}
+
 void ZoomIconSize(AppState& s, int step, const POINT* anchor_point, bool leave_icons) {
     const app::Tab* tab = ActiveTab(s);
     if (!tab || step == 0) return;
@@ -3091,7 +3102,7 @@ void ShowViewDropdown(AppState& s, int pane_index) {
     POINT anchor{ static_cast<LONG>(button.left), static_cast<LONG>(button.bottom) };
     ClientToScreen(s.hwnd, &anchor);
     auto items = app::BuildViewMenu(tab->view_mode, s.showDetailsPanel,
-        !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path));
+        !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path), tab->wall);
     items.back().separator_after=true;
     items.push_back(app::BuildShortcutHints());
     const int cmd = s.menu->TrackPopup(anchor, items);

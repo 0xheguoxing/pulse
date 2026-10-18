@@ -70,6 +70,7 @@ void AppPrefs::ResetToDefaults() {
     list_zebra_rows = true;
     list_size_bar = false;
     folder_size_auto = true;
+    photo_wall_hint = true;
     list_selection_outline = false;
     list_thumbnail_badges = true;
     folder_sort_mode = 0;
@@ -177,6 +178,8 @@ std::wstring AppPrefs::ToJson() const {
     out += list_size_bar ? L"true" : L"false";
     out += L",\n  \"folder_size_auto\":";
     out += folder_size_auto ? L"true" : L"false";
+    out += L",\n  \"photo_wall_hint\":";
+    out += photo_wall_hint ? L"true" : L"false";
     out += L",\n  \"list_tag_name_color\":";
     out += list_tag_name_color ? L"true" : L"false";
     out += L",\n  \"list_selection_outline\":";
@@ -388,6 +391,7 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     list_zebra_rows = pulse::json::ExtractBool(json, L"list_zebra_rows", true);
     list_size_bar = pulse::json::ExtractBool(json, L"list_size_bar", false);
     folder_size_auto = pulse::json::ExtractBool(json, L"folder_size_auto", true);
+    photo_wall_hint = pulse::json::ExtractBool(json, L"photo_wall_hint", true);
     list_tag_name_color = pulse::json::ExtractBool(json, L"list_tag_name_color", false);
     list_selection_outline = pulse::json::ExtractBool(json, L"list_selection_outline", false);
     list_thumbnail_badges = pulse::json::ExtractBool(json, L"list_thumbnail_badges", true);

@@ -65,6 +65,7 @@ enum MenuCmd : int {
     CmdTags,
     CmdTagBase = 70,        // +0..6  Ctrl+Alt+Shift+1..7
     CmdViewBase = 80,       // + ViewModeIndex (8 stable view choices)
+    CmdViewWall = 88,       // view menu: photo wall (the icon view arranged as a wall)
     CmdTabColorBase = 90,   // +0..7  tab-group color swatches
     CmdTabGroupNewTab = 98,
     CmdTabGroupUngroup,
@@ -252,6 +253,7 @@ struct BackgroundViewOptions {
     ui::SortColumn sort_column = ui::SortColumn::Name;
     ui::SortDirection sort_direction = ui::SortDirection::Asc;
     int folder_sort = 0; // 0 folders first, 1 follow direction, 2 mixed
+    bool wall = false;   // the icon view is a photo wall
     bool details_panel = false;
     bool can_sort = true;
     bool indexed_search = false;
@@ -283,9 +285,11 @@ std::vector<ui::FluentMenuItem> BuildBreadcrumbMenu(bool filesystem);
 // Split-button layout presets.
 std::vector<ui::FluentMenuItem> BuildSplitMenu(int current_preset);
 // can_apply_all: real folder, offer "apply view and sort to all folders".
+// wall: the icon view is a photo wall (its row is the checked one).
 std::vector<ui::FluentMenuItem> BuildViewMenu(ui::ViewMode current_mode,
                                               bool details_panel = false,
-                                              bool can_apply_all = false);
+                                              bool can_apply_all = false,
+                                              bool wall = false);
 
 // Ctrl+K / address omnibar: verbs + index hits + recent folders at the end.
 struct OmnibarQuery {

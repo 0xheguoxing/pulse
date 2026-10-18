@@ -2424,6 +2424,10 @@ BEGIN
     IDS_SEARCH_SWITCH_OFF_PURGE "关闭并删除索引"
     IDS_SEARCH_SWITCH_OFF_KEEP "关闭，保留索引"
     IDS_STATUS_HINT_IDLE_NO_SEARCH "空格 预览  ·  Ctrl+F 筛选"
+    IDS_PHOTO_WALL_SUGGEST "这个文件夹以照片为主，试试照片墙：按原始比例排列，一屏能多放一倍左右"
+    IDS_PHOTO_WALL_SUGGEST_SWITCH "切换"
+    IDS_PHOTO_WALL_SUGGEST_NEVER "不再提示"
+    IDS_WALL_ROW_HEIGHT "行高"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4847,6 +4851,10 @@ BEGIN
     IDS_SEARCH_SWITCH_OFF_PURGE "Turn off and delete index"
     IDS_SEARCH_SWITCH_OFF_KEEP "Turn off, keep index"
     IDS_STATUS_HINT_IDLE_NO_SEARCH "Space preview  ·  Ctrl+F filter"
+    IDS_PHOTO_WALL_SUGGEST "Mostly photos here. Try Photo wall: pictures keep their shape and about twice as many fit"
+    IDS_PHOTO_WALL_SUGGEST_SWITCH "Switch"
+    IDS_PHOTO_WALL_SUGGEST_NEVER "Don't show again"
+    IDS_WALL_ROW_HEIGHT "row height"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.
