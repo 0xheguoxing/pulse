@@ -74,7 +74,7 @@ struct TransferChrome {
 struct TransferLabels {
     std::wstring details;
     std::wstring pause;
-    const wchar_t* pause_glyph = L"\xE769";
+    const wchar_t* pause_glyph = L"\xF8AE";
     std::wstring cancel;
     std::wstring retry;
     std::wstring skip;
@@ -111,7 +111,7 @@ TransferLabels MakeTransferLabels(const ops::OpStatus& status, bool detailed,
                               : l10n::Get(l10n::StringId::OpDetails);
     const bool paused = ShowsPaused(status);
     labels.pause = paused ? l10n::Get(l10n::StringId::OpResume) : l10n::Get(l10n::StringId::OpPause);
-    labels.pause_glyph = paused ? L"\xE768" : L"\xE769";
+    labels.pause_glyph = paused ? L"\xEDDA" : L"\xF8AE";  // solid, as the HTML (F5B0 is the toolbar split icon)
     const bool emptying = status.type == ops::OpType::EmptyRecycle;
     const bool authorization = status.authorization != ops::AuthorizationState::None;
     labels.show_details = !authorization;
@@ -156,8 +156,8 @@ TransferChrome MakeTransferChrome(float scale, float width, float height,
     chrome.cancel = D2D1::RectF(width - pad - cancel_w, y0, width - pad, y1);
     if (labels.show_pause) {
         const float pause_w = (std::max)(
-            painter.MeasureButtonWidth(l10n::Get(l10n::StringId::OpPause), L"\xE769"),
-            painter.MeasureButtonWidth(l10n::Get(l10n::StringId::OpResume), L"\xE768"));
+            painter.MeasureButtonWidth(l10n::Get(l10n::StringId::OpPause), L"\xF8AE"),
+            painter.MeasureButtonWidth(l10n::Get(l10n::StringId::OpResume), L"\xEDDA"));
         chrome.pause = D2D1::RectF(chrome.cancel.left - gap - pause_w, y0,
                                    chrome.cancel.left - gap, y1);
     }
