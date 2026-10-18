@@ -1181,6 +1181,10 @@ struct EngineTestAccess {
     }
 
     static void RepairOffline(Engine& e) {
+        // Load started the pinyin worker, which reads the mapping under a
+        // shared lock. Dropping the snapshot without the lock unmaps it under
+        // that reader (intermittent 0xC0000005 in the default suite).
+        std::unique_lock lock(e.mutex_);
         e.excluded_paths_ = {L"C:\\Users\\TestUser\\excluded"};
         e.PreserveOfflineVolumesLocked({}, IndexConfig{});
         e.map_.reset();
