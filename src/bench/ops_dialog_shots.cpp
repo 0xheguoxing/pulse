@@ -21,15 +21,15 @@ struct FileOperationWindowTestAccess {
         SendMessageW(window.hwnd_, WM_DPICHANGED, MAKELONG(dpi, dpi), reinterpret_cast<LPARAM>(&rect));
     }
     static void Graph(FileOperationWindow& window, float upto, double base, bool by_progress = true) {
-        window.graph_.clear();
-        window.graph_by_progress_ = by_progress;
+        window.graph_.Reset();
+        window.graph_.by_progress = by_progress;
         const int count = by_progress ? static_cast<int>(upto * 200.0f) : 90;
         for (int i = 0; i <= count; ++i) {
             const float x = by_progress ? upto * static_cast<float>(i) / static_cast<float>(count) : 0.0f;
             const double t = static_cast<double>(i);
             double v = base * (0.82 + 0.12 * std::sin(t * 0.21) + 0.06 * std::sin(t * 0.77));
             if (i < 8) v *= 0.25 + 0.75 * t / 8.0;  // warm-up ramp
-            window.graph_.push_back({ x, v });
+            window.graph_.points.push_back({ x, v });
         }
     }
     static void Elapsed(FileOperationWindow& window, ULONGLONG ms, bool ended) {

@@ -1573,8 +1573,29 @@ void OpsManager::SetStatus(const std::function<void(OpStatus&)>& fn) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         fn(status_);
+        SampleSpeedLocked();
     }
     NotifyStatusChanged();
+}
+
+void OpsManager::SampleSpeedLocked() {
+    if (status_.task_id != speed_graph_task_) {
+        speed_graph_.Reset();
+        speed_graph_task_ = status_.task_id;
+    }
+    // Same gate as the card: only a running, unpaused transfer moves the line.
+    if (status_.phase != OpPhase::Running || status_.pause_requested) return;
+    if (status_.speed_basis == OpSpeedBasis::None) return;
+    const uint64_t now = GetTickCount64();
+    if (!speed_graph_.Due(now)) return;
+    speed_graph_.Sample(now, status_.percent, status_.speed_basis == OpSpeedBasis::Items
+        ? status_.items_per_second : status_.bytes_per_second);
+}
+
+OpSpeedGraph OpsManager::SpeedGraph(uint64_t task_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (task_id == 0 || task_id != speed_graph_task_) return {};
+    return speed_graph_;
 }
 
 constexpr ULONGLONG kProgressNotifyMs = 50;
@@ -1591,6 +1612,7 @@ void OpsManager::SetProgressStatus(const std::function<void(OpStatus&)>& fn) {
         std::lock_guard<std::mutex> lock(mutex_);
         const uint64_t items_before = status_.completed_items;
         fn(status_);
+        SampleSpeedLocked();
         item_finished = status_.completed_items != items_before &&
             status_.total_items <= kEveryItemMaxTotal;
     }

@@ -1263,6 +1263,35 @@ int wmain(int argc, wchar_t** argv) {
               completed.total_items == 1 && completed.completed_items == 1,
               L"CopyFile2 publishes real byte and item totals");
         Check(FileHash(large_target) == source_hash, L"copy source and destination hashes match");
+        {
+            // The progress card's history is recorded by the engine, so a card
+            // shown late still draws the run (pulse_ops_dialogs.html speed graph).
+            const auto history = g_ops.SpeedGraph(completed.task_id);
+            bool ordered = history.by_progress;
+            for (size_t i = 1; i < history.points.size(); ++i)
+                ordered = ordered && history.points[i].x >= history.points[i - 1].x;
+            Check(ordered && history.points.size() <= ops::OpSpeedGraph::kMaxProgressPoints &&
+                  g_ops.SpeedGraph(completed.task_id + 1000).points.empty(),
+                  L"background speed history follows progress and belongs to the newest task");
+
+            ops::OpSpeedGraph graph;
+            uint64_t tick = 1000;
+            for (int i = 0; i <= 1000; ++i, tick += 250) graph.Sample(tick, i / 10.0f, 100.0 + i);
+            Check(graph.by_progress && graph.points.size() <= ops::OpSpeedGraph::kMaxProgressPoints &&
+                  graph.points.size() > ops::OpSpeedGraph::kMaxProgressPoints / 2 &&
+                  graph.points.back().x == 1.0f && graph.points.back().v == 1100.0,
+                  L"speed graph thins to its point budget and keeps the newest sample exact");
+            const size_t kept = graph.points.size();
+            graph.Sample(tick - 250 + 100, 50.0f, 1.0);
+            Check(graph.points.size() == kept && graph.points.back().v == 1100.0,
+                  L"speed graph ignores samples inside the 250 ms interval");
+            graph.Sample(tick + 250, 10.0f, 7.0);
+            Check(graph.points.size() == 1 && graph.points.front().v == 7.0,
+                  L"speed graph restarts when progress goes back (a new phase)");
+            for (int i = 0; i < 200; ++i) graph.Sample(tick + 500 + i * 250ull, -1.0f, 3.0);
+            Check(!graph.by_progress && graph.points.size() == ops::OpSpeedGraph::kMaxTimePoints,
+                  L"speed graph without progress keeps a rolling time window");
+        }
 
         DeleteFileW(large_target.c_str());
         g_pause_when_active.store(true);

@@ -541,6 +541,10 @@ bool EnsureOperationWindow(AppState& s) {
         if (AppState* state = GetAppState(hwnd)) return state->ops.FinalStatus(task_id);
         return std::nullopt;
     };
+    operation_callbacks.speed_history = [hwnd](uint64_t task_id) {
+        if (AppState* state = GetAppState(hwnd)) return state->ops.SpeedGraph(task_id);
+        return ops::OpSpeedGraph{};
+    };
     operation_callbacks.open_folder = [hwnd](const std::wstring& folder) {
         if (AppState* state = GetAppState(hwnd)) NavigateTo(*state, folder);
     };

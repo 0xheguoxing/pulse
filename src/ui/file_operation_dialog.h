@@ -29,6 +29,9 @@ struct FileOperationCallbacks {
     // How a finished task ended (OpsManager::FinalStatus): retries that ran
     // back to back are only partly seen through Update.
     std::function<std::optional<ops::OpStatus>(uint64_t)> task_outcome;
+    // The engine's background speed history (OpsManager::SpeedGraph): a card
+    // first shown late, or shown again after hiding, draws the whole run.
+    std::function<ops::OpSpeedGraph(uint64_t)> speed_history;
 };
 
 // What the footer offers while failed items are listed.
@@ -89,10 +92,8 @@ private:
     ops::OpStatus status_;
     // Speed graph (pulse_ops_dialogs.html §1): x is progress when the task
     // reports a percentage, otherwise sample order.
-    struct GraphPoint { float x = 0.0f; double v = 0.0; };
-    std::deque<GraphPoint> graph_;
-    bool graph_by_progress_ = true;
-    ULONGLONG speed_sample_tick_ = 0;
+    ops::OpSpeedGraph graph_;
+    void SyncGraph();
     ULONGLONG task_start_tick_ = 0;
     ULONGLONG task_end_tick_ = 0;
     // Auto-close after a successful finish: counts down 2.5 s from the finish,

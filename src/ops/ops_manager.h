@@ -16,6 +16,7 @@
 #include <windows.h>
 #include "file_lock_owner.h"
 #include "duplicate_cleanup_guard.h"
+#include "op_speed_graph.h"
 #include "../common/menu_icon.h"
 #include <condition_variable>
 #include <cstdint>
@@ -287,6 +288,9 @@ public:
     // How a recent task ended (the last 16). Status() only shows the newest
     // task, so retries that run back to back are looked up here.
     std::optional<OpStatus> FinalStatus(uint64_t task_id) const;
+    // The speed history of the newest task, recorded while it runs whether
+    // or not a progress card is visible; empty for any other task.
+    OpSpeedGraph SpeedGraph(uint64_t task_id) const;
     static constexpr size_t kMaxReportedFailures = 500;
 
     // Double-click open: ShellExecuteEx on a dedicated open thread (plan §6.2).
@@ -452,6 +456,9 @@ private:
     };
     std::deque<FailedItemsRetry> failed_retries_;   // newest last; guarded by mutex_
     std::deque<OpStatus> final_statuses_;            // newest last; guarded by mutex_
+    OpSpeedGraph speed_graph_;                       // status_.task_id's; guarded by mutex_
+    uint64_t speed_graph_task_ = 0;
+    void SampleSpeedLocked();
     std::vector<RecoveryEntry> pending_recovery_;
     std::wstring journal_path_;
     OpStatus status_;

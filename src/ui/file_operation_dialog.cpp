@@ -55,8 +55,7 @@ constexpr float kFailMoreH = 22.0f;
 constexpr float kFailGap = 10.0f;
 constexpr int kHitOpen = 8;
 constexpr int kHitFailRow = 20;   // + visible row
-constexpr size_t kMaxGraphPoints = 240;
-constexpr size_t kTimeGraphPoints = 120;
+constexpr size_t kTimeGraphPoints = ops::OpSpeedGraph::kMaxTimePoints;
 constexpr float kPi = 3.14159265f;
 
 using pulse::ui::ScaleDip;
@@ -2556,9 +2555,8 @@ void FileOperationWindow::Update(const ops::OpStatus& incoming) {
     if (new_task || status.authorization != status_.authorization) pressed_ = 0;
     status_ = ops::PresentOperationStatus(status);
     if (new_task) {
-        graph_.clear();
-        graph_by_progress_ = true;
-        speed_sample_tick_ = 0;
+        graph_.Reset();
+        SyncGraph();   // a card built late starts with the run so far
         task_start_tick_ = now;
         task_end_tick_ = 0;
         countdown_base_ = 0;
@@ -2614,7 +2612,11 @@ void FileOperationWindow::Show(bool activate) {
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER |
                  (activate ? 0 : SWP_NOACTIVATE) | SWP_SHOWWINDOW);
     // SWP_SHOWWINDOW sends no WM_SHOWWINDOW; start the animation timer here.
-    if (!was_visible) SetTimer(hwnd_, kRenderTimer, 33, nullptr);
+    if (!was_visible) {
+        SyncGraph();   // fill in what ran while the card was hidden
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        SetTimer(hwnd_, kRenderTimer, 33, nullptr);
+    }
     if (activate) SetForegroundWindow(hwnd_);
 }
 
@@ -2734,35 +2736,31 @@ void FileOperationWindow::FinishAutoClose() {
 }
 
 void FileOperationWindow::SampleGraph(ULONGLONG now) {
-    if (speed_sample_tick_ != 0 && now - speed_sample_tick_ < 250) return;
-    speed_sample_tick_ = now;
-    if (status_.phase != ops::OpPhase::Running || ShowsPaused(status_)) return;
+    if (!graph_.Due(now)) return;
+    if (status_.phase != ops::OpPhase::Running || ShowsPaused(status_)) {
+        graph_.last_tick = now;
+        return;
+    }
     if (status_.speed_basis == ops::OpSpeedBasis::None) return;
     // Sample whichever unit this task tracks: byte transfers and
     // empty-recycle feed the byte rate, delete and restore the item rate.
-    const double value = (std::max)(0.0, status_.speed_basis == ops::OpSpeedBasis::Items
+    graph_.Sample(now, status_.percent, status_.speed_basis == ops::OpSpeedBasis::Items
         ? status_.items_per_second : status_.bytes_per_second);
-    if (status_.percent >= 0.0f) {
-        const float x = std::clamp(status_.percent / 100.0f, 0.0f, 1.0f);
-        if (!graph_by_progress_) { graph_.clear(); graph_by_progress_ = true; }
-        if (!graph_.empty() && x + 0.02f < graph_.back().x) graph_.clear();  // a new phase
-        if (!graph_.empty() && x <= graph_.back().x + 0.0005f) {
-            graph_.back().v = value;
-            return;
-        }
-        graph_.push_back({ x, value });
-        if (graph_.size() > kMaxGraphPoints) {
-            // Halve the resolution, keeping the newest point exact.
-            std::deque<GraphPoint> thinned;
-            for (size_t i = 0; i < graph_.size(); i += 2) thinned.push_back(graph_[i]);
-            if ((graph_.size() & 1) == 0) thinned.push_back(graph_.back());
-            graph_.swap(thinned);
-        }
-    } else {
-        if (graph_by_progress_) { graph_.clear(); graph_by_progress_ = false; }
-        graph_.push_back({ 0.0f, value });
-        while (graph_.size() > kTimeGraphPoints) graph_.pop_front();
-    }
+}
+
+// The engine samples every run in the background; while the card was not
+// on screen it holds the only record, so take it whenever it knows more.
+void FileOperationWindow::SyncGraph() {
+    if (!callbacks_.speed_history || status_.task_id == 0) return;
+    auto history = callbacks_.speed_history(status_.task_id);
+    if (history.points.empty()) return;
+    if (history.by_progress == graph_.by_progress && !graph_.points.empty() &&
+        graph_.by_progress && history.points.back().x < graph_.points.back().x) return;
+    if (history.by_progress == graph_.by_progress && !graph_.by_progress &&
+        history.points.size() <= graph_.points.size()) return;
+    const ULONGLONG tick = graph_.last_tick;
+    graph_ = std::move(history);
+    if (tick > graph_.last_tick) graph_.last_tick = tick;
 }
 
 void FileOperationWindow::Render() {
@@ -3095,24 +3093,24 @@ void FileOperationWindow::Render() {
         }
         const float plot_w = inner.right - inner.left;
         const float shown_fraction = completed ? 1.0f : fraction;
-        if (graph_by_progress_ && status_.percent >= 0.0f && shown_fraction > 0.0f) {
+        if (graph_.by_progress && status_.percent >= 0.0f && shown_fraction > 0.0f) {
             painter_.FillRoundedRect(D2D1::RectF(inner.left, inner.top,
                                                  inner.left + plot_w * shown_fraction, inner.bottom),
                                      0, WithAlpha(tone, 0.07f));
         }
         double max_value = 0.0;
-        for (const auto& point : graph_) max_value = (std::max)(max_value, point.v);
-        if (graph_.size() >= 2 && max_value > 0.0) {
+        for (const auto& point : graph_.points) max_value = (std::max)(max_value, point.v);
+        if (graph_.points.size() >= 2 && max_value > 0.0) {
             const float top = inner.top + ScaleDip(s, 16.0f);
             const float bottom = inner.bottom - ScaleDip(s, 3.0f);
             const double ceiling = max_value * 1.12;
             std::vector<D2D1_POINT_2F> points;
-            points.reserve(graph_.size());
-            const size_t span = (std::max)(graph_.size(), kTimeGraphPoints) - 1;
-            for (size_t i = 0; i < graph_.size(); ++i) {
-                const float x = graph_by_progress_ ? inner.left + plot_w * graph_[i].x
+            points.reserve(graph_.points.size());
+            const size_t span = (std::max)(graph_.points.size(), kTimeGraphPoints) - 1;
+            for (size_t i = 0; i < graph_.points.size(); ++i) {
+                const float x = graph_.by_progress ? inner.left + plot_w * graph_.points[i].x
                     : inner.left + plot_w * static_cast<float>(i) / static_cast<float>(span);
-                const float y = bottom - (bottom - top) * static_cast<float>(graph_[i].v / ceiling);
+                const float y = bottom - (bottom - top) * static_cast<float>(graph_.points[i].v / ceiling);
                 points.push_back(D2D1::Point2F(x, y));
             }
             const float strength = (paused || waiting || failed) ? 0.55f : 1.0f;
@@ -3135,7 +3133,7 @@ void FileOperationWindow::Render() {
                               label_format_.get(), faint, fluent::HorizontalAlignment::Right);
         }
         // Progress pointer.
-        if (graph_by_progress_ && status_.percent >= 0.0f && shown_fraction > 0.0f && shown_fraction < 1.0f) {
+        if (graph_.by_progress && status_.percent >= 0.0f && shown_fraction > 0.0f && shown_fraction < 1.0f) {
             const float x = inner.left + plot_w * shown_fraction;
             painter_.FillRoundedRect(D2D1::RectF(x - 0.5f, inner.top, x + 0.5f + (s > 1.4f ? 0.5f : 0.0f), inner.bottom),
                                      0, WithAlpha(tone, 0.55f));
