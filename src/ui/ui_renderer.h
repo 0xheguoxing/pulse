@@ -556,6 +556,8 @@ struct StatusBarView {
     bool task_failed = false;      // last operation ended with an error: no success check
     bool task_paused = false;      // paused or pausing: amber pill
     uint64_t task_failed_items = 0; // partial failure: red pill until the next operation
+    bool task_can_undo = false;    // finished pill offers 撤销 (sub_index 0)
+    bool task_can_open = false;    // finished pill offers 打开 (sub_index 1)
     std::wstring performance_text; // development diagnostics; empty hides it
     std::wstring performance_compact_text;
 };
@@ -1527,7 +1529,7 @@ public:
         active = active || folder_size_anim_active_;
         // Operation pill: indeterminate ring spin and the completion check fade.
         active = active || task_pill_spinning_ ||
-                 (task_pill_done_at_ != 0 && now - task_pill_done_at_ < kTaskPillDoneMs + 400) ||
+                 (task_pill_done_at_ != 0 && now - task_pill_done_at_ < task_pill_hold_ms_ + 400) ||
                  (task_pill_pop_at_ != 0 && now - task_pill_pop_at_ < kTaskPillPopMs + 40);
         if (copy_feedback_.Tick(now)) active = true;
         if (group_wheel_.Tick(motion_now)) active = true;
@@ -2153,6 +2155,10 @@ private:
     ULONGLONG task_pill_done_at_ = 0;
     ULONGLONG task_pill_pop_at_ = 0;     // finish pop (pulse_ops_dialogs.html pillpop)
     static constexpr ULONGLONG kTaskPillPopMs = 500;
+    // With 撤销 / 打开 the finished pill stays 6 s (held while hovered).
+    static constexpr ULONGLONG kTaskPillActionsMs = 6000;
+    ULONGLONG task_pill_hold_ms_ = kTaskPillDoneMs;
+    D2D1_RECT_F task_action_rects_[2]{};   // as last drawn; empty = not offered
     mutable ColumnAutoWidths auto_widths_{};
     mutable float auto_widths_scale_ = -1.0f;
     mutable std::wstring auto_widths_language_;

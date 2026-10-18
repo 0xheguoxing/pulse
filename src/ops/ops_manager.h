@@ -111,6 +111,7 @@ struct UndoEntry {
     bool supported = true;    // false = recorded for history, cannot be undone
     uint64_t group = 0;       // OpRequest::undo_group (session only, not persisted)
     std::wstring label;       // OpRequest::undo_label
+    uint64_t task_id = 0;     // the task that recorded it (session only)
 };
 
 // One item a copy or move could not handle while the rest went on
@@ -336,6 +337,8 @@ public:
     bool TakeCtxInvokeDone();
 
     bool CanUndo() const;
+    // The newest undo step belongs to this task (the pill's 撤销).
+    bool CanUndoTask(uint64_t task_id) const;
     std::wstring UndoLabel() const;   // "撤销移动 xxx" etc; empty if none
     void Undo();
 

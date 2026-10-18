@@ -2262,6 +2262,12 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
         vm.status.task_active = st.active;
         vm.status.task_failed = !st.last_error.empty();
         vm.status.task_paused = st.active && (st.phase == ops::OpPhase::Paused || st.pause_requested);
+        if (!st.active && st.phase == ops::OpPhase::Completed && st.last_error.empty()) {
+            // The finished pill offers 撤销 / 打开 (pulse_ops_dialogs.html).
+            vm.status.task_can_undo = s.ops.CanUndoTask(st.task_id);
+            vm.status.task_can_open = (st.type == ops::OpType::Copy || st.type == ops::OpType::Move) &&
+                                      !st.destination_dir.empty();
+        }
         if (!st.active && st.phase == ops::OpPhase::Failed && st.failed_items > 0 && !st.failures.empty()) {
             // Partial failure: what did not go through, and where to look.
             vm.status.task_failed_items = st.failed_items;
@@ -3019,7 +3025,10 @@ std::wstring TooltipForHover(AppState& s) {
     case R::DetailsPreviewEnable:
         return text(s.detailsPreviewEnabled ? I::PreviewHide : I::PreviewShow);
     case R::DetailsPreview: return L"";
-    case R::StatusBarTask: return text(I::OpDetails);
+    case R::StatusBarTask:
+        if (s.hoverSubIndex == 0) return s.ops.UndoLabel();
+        if (s.hoverSubIndex == 1) return s.ops.Status().destination_dir;
+        return text(I::OpDetails);
     case R::StatusBarCancelSearch: return text(I::ContentCancelSearch);
     case R::DetailsNewTab: return text(I::OpenNewTab);
     case R::DetailsCopyPath: return text(I::CopyPath);

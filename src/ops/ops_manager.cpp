@@ -1603,6 +1603,11 @@ bool OpsManager::CanUndo() const {
     return !undo_.empty() && undo_.back().supported;
 }
 
+bool OpsManager::CanUndoTask(uint64_t task_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return task_id != 0 && !undo_.empty() && undo_.back().supported && undo_.back().task_id == task_id;
+}
+
 std::wstring OpsManager::UndoLabel() const {
     std::lock_guard<std::mutex> lock(mutex_);
     if (undo_.empty()) return L"";
@@ -1659,6 +1664,7 @@ void OpsManager::PushUndo(const OpRequest& req, uint64_t task_id,
     e.new_name = req.new_name;
     e.group = req.undo_group;
     e.label = req.undo_label;
+    e.task_id = task_id;
     if (req.type == OpType::RealDelete) return;              // never undoable, not recorded
     if (req.type == OpType::RestoreRecycle) return;
     if (req.type == OpType::EmptyRecycle) return;
