@@ -23,6 +23,30 @@ struct UsnStreamTestAccess {
     static void Fail(UsnStream& s, DWORD error) { s.Failed(error); }
 };
 
+struct ChangeTrackerTestAccess {
+    struct Stats { size_t records = 0, record_bytes = 0, string_bytes = 0, summaries = 0, summary_bytes = 0; };
+    static void Backdate(ChangeTracker& tracker, const std::wstring& owner, uint64_t start, uint64_t expiry) {
+        std::lock_guard lock(tracker.mutex_);
+        auto& j = tracker.journals_[owner];
+        j.start = start; j.tracking_since = start; j.expiry = expiry;
+    }
+    static Stats Measure(ChangeTracker& tracker) {
+        auto heap = [](const std::wstring& s) { return s.capacity() > 7 ? (s.capacity() + 1) * sizeof(wchar_t) : 0; };
+        Stats out;
+        std::lock_guard lock(tracker.mutex_);
+        for (const auto& [owner, j] : tracker.journals_) {
+            out.records += j.records.size();
+            out.record_bytes += j.records.capacity() * sizeof(ChangeRecord);
+            for (const auto& e : j.records) out.string_bytes += heap(e.path) + heap(e.old_path);
+            out.summaries += j.summaries.size();
+            out.summary_bytes += j.summaries.bucket_count() * sizeof(void*) +
+                j.summaries.size() * (sizeof(std::pair<const std::wstring, ChangeSummary>) + 2 * sizeof(void*));
+            for (const auto& [path, summary] : j.summaries) out.summary_bytes += heap(path) + heap(summary.path);
+        }
+        return out;
+    }
+};
+
 struct EngineTestAccess {
     static bool ExclusionConcurrencyFixture() {
         SetMachineIndexScope(false);
@@ -679,6 +703,189 @@ struct EngineTestAccess {
         if (first.size() == second.size())
             for (size_t i = 0; i < first.size(); ++i) mismatched += first[i] != second[i] ? 1 : 0;
         std::cout << "end_state_mismatches=" << mismatched << " of " << first.size() << "\n";
+        return ok;
+    }
+    // --steady-memory-probe: loads a copy of a real index like the service,
+    // then adds the retained state a long-running service accumulates (pinyin,
+    // folder totals, query cache, change feed and an active change-tracking
+    // lease filled from real C: paths) and prints private commit per phase.
+    static bool SteadyMemoryProbe(const std::wstring& source, uint32_t events, uint32_t hot) {
+        namespace fs = std::filesystem;
+        if (!fs::is_directory(source) || events == 0 || hot == 0) return false;
+        auto counters = [] {
+            PROCESS_MEMORY_COUNTERS_EX c{}; c.cb = sizeof(c);
+            K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&c), sizeof(c));
+            return c;
+        };
+        auto mib = [](uint64_t bytes) { return static_cast<double>(bytes) / 1048576.0; };
+        uint64_t last_private = counters().PrivateUsage;
+        auto phase = [&](const char* label) {
+            const auto c = counters();
+            HEAP_SUMMARY hs{}; hs.cb = sizeof(hs);
+            HeapSummary(GetProcessHeap(), 0, &hs);
+            std::cout << "phase=" << label << " private_mib=" << mib(c.PrivateUsage) << " delta_mib="
+                      << mib(c.PrivateUsage) - mib(last_private) << " ws_mib=" << mib(c.WorkingSetSize)
+                      << " heap_committed_mib=" << mib(hs.cbCommitted) << " heap_allocated_mib=" << mib(hs.cbAllocated) << "\n";
+            last_private = c.PrivateUsage;
+        };
+        auto cycles = [] { ULONG64 c = 0; QueryThreadCycleTime(GetCurrentThread(), &c); return c; };
+        // Peak private commit while one call runs, sampled every millisecond.
+        auto peak_of = [&](const char* label, auto&& work) {
+            std::atomic<bool> done{false};
+            std::atomic<uint64_t> peak{counters().PrivateUsage};
+            std::thread sampler([&] {
+                while (!done.load()) {
+                    const uint64_t now = counters().PrivateUsage;
+                    if (now > peak.load()) peak = now;
+                    Sleep(1);
+                }
+            });
+            const uint64_t before = counters().PrivateUsage;
+            const uint64_t c0 = cycles();
+            const auto w0 = std::chrono::steady_clock::now();
+            work();
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - w0).count();
+            const uint64_t c1 = cycles();
+            done = true;
+            sampler.join();
+            std::cout << "call=" << label << " wall_ms=" << ms << " mcycles=" << static_cast<double>(c1 - c0) / 1e6
+                      << " peak_extra_mib=" << mib(peak.load() - before) << "\n";
+        };
+        phase("start");
+        const fs::path dir = fs::temp_directory_path() /
+            (L"pulse-steady-memory-" + std::to_wstring(GetCurrentProcessId()));
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        ec.clear();
+        fs::copy(source, dir, fs::copy_options::recursive, ec);
+        if (ec) {
+            std::cout << "copy_failed=" << ec.value() << "\n";
+            fs::remove_all(dir, ec);
+            return false;
+        }
+        SetActiveIndexDirectory(dir.wstring());
+        SetMachineIndexScope(true);
+        bool ok = false;
+        {
+            Engine engine;
+            phase("engine_constructed");
+            ok = engine.TryLoadCache();
+            phase("cache_loaded");
+            for (int i = 0; ok && i < 1200 && !engine.pinyin_ready_.load(); ++i) Sleep(50);
+            {
+                std::shared_lock lock(engine.mutex_);
+                size_t pair_bytes = engine.pinyin_pair_ids_.capacity() * sizeof(std::vector<int32_t>);
+                for (const auto& ids : engine.pinyin_pair_ids_) pair_bytes += ids.capacity() * sizeof(int32_t);
+                std::cout << "pinyin_ready=" << engine.pinyin_ready_.load() << " pinyin_chinese_mib="
+                          << mib(engine.pinyin_chinese_ids_.capacity() * sizeof(int32_t))
+                          << " pinyin_pairs_mib=" << mib(pair_bytes) << "\n";
+            }
+            phase("pinyin_ready");
+            if (ok) {
+                FolderSizeIndex sizes;
+                const int32_t count = engine.LiveCount();
+                const bool built = sizes.Build(count, [&](int32_t i) { return engine.FolderSizeItem(i); });
+                std::unique_lock lock(engine.mutex_);
+                engine.folder_sizes_.Adopt(std::move(sizes));
+                std::cout << "folder_totals_built=" << built << "\n";
+            }
+            phase("folder_totals");
+            if (ok) ProbeQueries(engine);
+            phase("queries");
+            Engine::VolState* volume = nullptr;
+            for (auto& v : engine.vols_)
+                if ((v.letter == L'C' || v.letter == L'c') && v.frn_base && v.frn_base_n) volume = &v;
+            ok = ok && volume;
+            std::vector<std::pair<uint64_t, std::wstring>> targets;
+            if (ok) {
+                std::shared_lock lock(engine.mutex_);
+                const int32_t base = engine.BaseCount();
+                std::vector<int32_t> files;
+                std::vector<uint64_t> frn_of(static_cast<size_t>(base), 0);
+                for (uint32_t i = 0; i < volume->frn_base_n; ++i) {
+                    const DiskFrn& entry = volume->frn_base[i];
+                    if (entry.idx < 0 || entry.idx >= base || engine.IsTomb(entry.idx)) continue;
+                    frn_of[static_cast<size_t>(entry.idx)] = entry.frn;
+                    const Node n = engine.NodeAt(entry.idx);
+                    if (!(n.flags & (Engine::kFlagDir | Engine::kFlagHidden))) files.push_back(entry.idx);
+                }
+                uint64_t seed = 0x9E3779B97F4A7C15ull;
+                for (uint32_t i = 0; i < hot && !files.empty(); ++i) {
+                    seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
+                    const int32_t id = files[seed % files.size()];
+                    targets.emplace_back(frn_of[static_cast<size_t>(id)] ^ (uint64_t{L'C'} << 56), engine.BuildPathLocked(id));
+                }
+                size_t chars = 0;
+                for (const auto& [frn, path] : targets) chars += path.size();
+                std::cout << "hot_files=" << targets.size() << " mean_path_chars="
+                          << (targets.empty() ? 0.0 : static_cast<double>(chars) / static_cast<double>(targets.size())) << "\n";
+                ok = !targets.empty();
+            }
+            phase("targets_built");
+            const std::wstring owner = L"steady-memory-probe";
+            const fs::path changes = dir / L"changes";
+            if (ok) {
+                fs::create_directories(changes, ec);
+                engine.changes_.Open(changes.wstring());
+                engine.changes_.Lease(owner, true);
+                const uint64_t now = ChangeTracker::Now();
+                ChangeTrackerTestAccess::Backdate(engine.changes_, owner, now - 7200, now + 36000);
+                uint64_t seed = 0xD1B54A32D192ED03ull;
+                const uint64_t c0 = cycles();
+                std::unique_lock lock(engine.mutex_);
+                for (uint32_t i = 0; i < events; ++i) {
+                    seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
+                    const auto& [file_id, path] = targets[seed % targets.size()];
+                    ChangeRecord event;
+                    event.time = now - 3600 + static_cast<uint64_t>(i) * 3600 / events;
+                    event.kind = ChangeKind::Modified;
+                    event.file_id = file_id;
+                    event.path = path;
+                    engine.RecordFeed(event);
+                    engine.changes_.Record(std::move(event));
+                }
+                std::cout << "record_mcycles_per_1k=" << static_cast<double>(cycles() - c0) / 1e6 / (events / 1000.0) << "\n";
+            }
+            auto tracker = [&](const char* label) {
+                const auto s = ChangeTrackerTestAccess::Measure(engine.changes_);
+                std::cout << "tracker=" << label << " records=" << s.records << " record_vector_mib=" << mib(s.record_bytes)
+                          << " path_heap_mib=" << mib(s.string_bytes) << " summaries=" << s.summaries
+                          << " summaries_mib=" << mib(s.summary_bytes) << " feed_records=" << engine.feed_changes_.Size()
+                          << " feed_pages_mib=" << mib(engine.feed_changes_.PageCapacityBytes()) << "\n";
+            };
+            if (ok) {
+                tracker("filled");
+                phase("feed_and_tracker_filled");
+                peak_of("tracker_flush", [&] { engine.changes_.Flush(true); });
+                phase("after_flush");
+                const uint64_t since = ChangeTracker::Now() - 86400;
+                peak_of("summaries_cold", [&] { (void)engine.changes_.Summaries(owner, {L"C:\\Users"}, since); });
+                tracker("after_summaries");
+                phase("after_summaries");
+                peak_of("summaries_warm", [&] { (void)engine.changes_.Summaries(owner, {L"C:\\Users"}, since + 1); });
+                for (int round = 0; round < 3; ++round) {
+                    {
+                        std::unique_lock lock(engine.mutex_);
+                        ChangeRecord event;
+                        event.time = ChangeTracker::Now();
+                        event.kind = ChangeKind::Modified;
+                        event.file_id = targets[static_cast<size_t>(round)].first;
+                        event.path = targets[static_cast<size_t>(round)].second;
+                        engine.RecordFeed(event);
+                        engine.changes_.Record(std::move(event));
+                    }
+                    peak_of("summaries_after_new_event", [&] { (void)engine.changes_.Summaries(owner, {L"C:\\Users"}, since); });
+                    peak_of("tracker_flush_again", [&] { engine.changes_.Flush(true); });
+                }
+                phase("steady_after_rounds");
+            }
+            engine.Stop();
+        }
+        phase("engine_destroyed");
+        SetActiveIndexDirectory(L"");
+        ec.clear();
+        fs::remove_all(dir, ec);
+        if (ec) std::cout << "cleanup_error=" << ec.value() << "\n";
         return ok;
     }
     static bool OverlayContainersFixture() {
@@ -1943,6 +2150,9 @@ int wmain(int argc, wchar_t** argv) {
     if ((argc == 5 || argc == 6) && std::wstring_view(argv[1]) == L"--usn-probe")
         return EngineTestAccess::UsnProbe(argv[2], static_cast<uint32_t>(wcstoul(argv[3], nullptr, 10)),
             static_cast<uint32_t>(wcstoul(argv[4], nullptr, 10)), argc == 6 && wcstoul(argv[5], nullptr, 10) != 0) ? 0 : 1;
+    if (argc == 5 && std::wstring_view(argv[1]) == L"--steady-memory-probe")
+        return EngineTestAccess::SteadyMemoryProbe(argv[2], static_cast<uint32_t>(wcstoul(argv[3], nullptr, 10)),
+            static_cast<uint32_t>(wcstoul(argv[4], nullptr, 10))) ? 0 : 1;
     if (argc == 2 && std::wstring_view(argv[1]) == L"--hierarchy-only") return EngineTestAccess::HierarchyFixture() ? 0 : 1;
     if (argc == 2 && std::wstring_view(argv[1]) == L"--overlay-only") return EngineTestAccess::OverlayContainersFixture() ? 0 : 1;
     if (argc == 2 && std::wstring_view(argv[1]) == L"--usn-coalesce-only") return EngineTestAccess::UsnCoalesceFixture() ? 0 : 1;
