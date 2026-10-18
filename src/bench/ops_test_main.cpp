@@ -5,6 +5,7 @@
 // bench_data/opstest (created/cleaned by this test). Prints one PASS/FAIL
 // line per check; exit code 0 iff all checks pass.
 #include "../ops/ops_manager.h"
+#include "../ops/transfer_rate_estimator.h"
 #include "../app/update_shutdown.h"
 #include "../ops/clipboard.h"
 #include "../ipc/shell_client.h"
@@ -1297,6 +1298,98 @@ int wmain(int argc, wchar_t** argv) {
             for (int i = 0; i < 200; ++i) graph.Sample(tick + 500 + i * 250ull, -1.0f, 3.0);
             Check(!graph.by_progress && graph.points.size() == ops::OpSpeedGraph::kMaxTimePoints,
                   L"speed graph without progress keeps a rolling time window");
+
+            // Time left after a cold start: 10 MB/s for 1.5 s, then 100 MB/s.
+            // The estimate used to read ~80 s at 3 s for ~8 s of work.
+            const uint64_t total = 1000ull * 1000ull * 1000ull;
+            auto run_rate = [&](auto bytes_per_tick, ULONGLONG until) {
+                ops::TransferRateEstimator estimator;
+                estimator.Reset(0, 0);
+                uint64_t done = 0;
+                for (ULONGLONG at = 100; at <= until; at += 100) {
+                    done = (std::min)(total, done + bytes_per_tick(at));
+                    estimator.Observe(at, done, total);
+                }
+                return std::pair<uint64_t, uint64_t>{ estimator.eta_seconds(), total - done };
+            };
+            const auto cold = run_rate([](ULONGLONG at) { return at <= 1500 ? 1000000ull : 10000000ull; }, 3000);
+            const double cold_truth = static_cast<double>(cold.second) / 1e8;
+            Check(cold.first > 0 && cold.first <= cold_truth * 1.5 + 1 && cold.first + 2 >= cold_truth,
+                  L"time left settles within seconds after a cold start");
+            const auto steady = run_rate([](ULONGLONG) { return 10000000ull; }, 5000);
+            Check(steady.first >= 4 && steady.first <= 6, L"time left matches a steady rate");
+            // A pause is cut out of the rate clock: on resume the speed carries on.
+            ops::TransferRateEstimator held;
+            held.Reset(0, 0);
+            uint64_t held_done = 0;
+            for (ULONGLONG at = 100; at <= 3000; at += 100) held.Observe(at, held_done += 10000000ull, total);
+            const double before_pause = held.speed();
+            held.Observe(3100, held_done += 10000000ull, total);   // 20 s paused, not on this clock
+            Check(before_pause > 9e7 && held.speed() > 9e7 && held.eta_seconds() > 0,
+                  L"speed and time left carry on across a pause");
+        }
+        {
+            // A real pause mid-copy: on resume the live speed carries on and the
+            // background graph never dips to 0 (it used to reset and warm up).
+            const std::wstring held_source = srcDir + L"\\held.bin";
+            const std::wstring held_target = dstDir + L"\\held.bin";
+            HANDLE file = CreateFileW(held_source.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+            bool sized = file != INVALID_HANDLE_VALUE;
+            if (sized) {
+                LARGE_INTEGER size{};
+                size.QuadPart = 4ll * 1024 * 1024 * 1024;   // zero-filled lazily: quick to make
+                sized = SetFilePointerEx(file, size, nullptr, FILE_BEGIN) && SetEndOfFile(file);
+                CloseHandle(file);
+            }
+            const uint64_t previous = g_ops.Status().completed_ops;
+            g_ops.Submit(SimpleOp(ops::OpType::Copy, { held_source.c_str() }, dstDir.c_str()));
+            bool measured = false;
+            uint64_t task = 0;
+            const auto live_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+            while (sized && std::chrono::steady_clock::now() < live_deadline) {
+                const auto st = g_ops.Status();
+                if (st.active && st.phase == ops::OpPhase::Running && st.bytes_per_second > 0.0 &&
+                    st.percent > 3.0f && st.percent < 60.0f) { measured = true; task = st.task_id; break; }
+                if (!st.active && st.completed_ops > previous) break;
+                Sleep(10);
+            }
+            bool paused = false, resumed = false, dipped = false;
+            if (measured) {
+                g_ops.PauseCurrent();
+                const auto pause_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                while (std::chrono::steady_clock::now() < pause_deadline) {
+                    if (g_ops.Status().phase == ops::OpPhase::Paused) { paused = true; break; }
+                    Sleep(5);
+                }
+                Sleep(1500);
+                g_ops.ResumeCurrent();
+                const auto watch_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+                while (std::chrono::steady_clock::now() < watch_until) {
+                    const auto st = g_ops.Status();
+                    if (!st.active) break;
+                    if (st.phase == ops::OpPhase::Running && !st.pause_requested) {
+                        resumed = true;
+                        dipped = dipped || st.bytes_per_second <= 0.0;
+                    }
+                    Sleep(5);
+                }
+            }
+            const auto history = g_ops.SpeedGraph(task);
+            bool graph_dips = false, seen_speed = false;
+            for (const auto& point : history.points) {
+                if (point.v > 0.0) seen_speed = true;
+                else if (seen_speed) graph_dips = true;
+            }
+            g_ops.CancelCurrent();
+            WaitOpDone(previous);
+            wprintf(L"[INFO] resume speed: measured=%d paused=%d resumed=%d dipped=%d graph_points=%zu graph_dips=%d\n",
+                    measured ? 1 : 0, paused ? 1 : 0, resumed ? 1 : 0, dipped ? 1 : 0,
+                    history.points.size(), graph_dips ? 1 : 0);
+            Check(measured && paused && resumed && !dipped,
+                  L"resume keeps the live speed instead of dropping to 0");
+            Check(seen_speed && !graph_dips, L"background speed graph does not dip to 0 across a pause");
+            DeleteFileW(held_target.c_str());
+            DeleteFileW(held_source.c_str());
         }
 
         DeleteFileW(large_target.c_str());

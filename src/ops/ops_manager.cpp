@@ -2452,6 +2452,11 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         st.eta_seconds = 0;
     });
 
+    // Time spent paused or waiting on a conflict. The rate clock skips it, so
+    // after a resume the speed and estimate carry on where they were instead
+    // of dropping to 0 and warming up again.
+    std::atomic<ULONGLONG> held_ms{ 0 };
+    const auto rate_now = [&] { return GetTickCount64() - held_ms.load(); };
     std::wstring failure;
     HRESULT failure_hr = S_OK;   // lets a lock-style failure be traced to its owner
     std::optional<LockReport> move_lock_report;
@@ -2466,15 +2471,19 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 st.bytes_per_second = 0.0;
                 st.eta_seconds = 0;
             });
+            const ULONGLONG held_from = GetTickCount64();
             std::unique_lock lock(transfer_control_mutex_);
             transfer_control_cv_.wait(lock, [&] {
                 return transfer_cancel_.load() || stopping_.load() || !transfer_pause_.load();
             });
             cancelled = transfer_cancel_.load() || stopping_.load();
             lock.unlock();
+            held_ms += GetTickCount64() - held_from;
             if (!cancelled) SetStatus([&](OpStatus& st) {
                 st.phase = previous.phase;
                 st.summary = previous.summary;
+                st.bytes_per_second = previous.bytes_per_second;
+                st.eta_seconds = previous.eta_seconds;
             });
         }
         return cancelled;
@@ -2748,7 +2757,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
     uint64_t published_bytes = 0;
     uint64_t processed_items = 0;
     TransferRateEstimator rate;
-    rate.Reset(GetTickCount64(), 0);
+    rate.Reset(rate_now(), 0);
 
     auto publish_progress = [&](const TransferEntry& entry, uint64_t file_done,
                                 uint64_t file_total, uint64_t completed_items) {
@@ -2759,8 +2768,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         overall = (std::max)(published_bytes, overall);
         if (total_bytes > 0) overall = (std::min)(overall, total_bytes);
         published_bytes = overall;
-        const ULONGLONG now = GetTickCount64();
-        rate.Observe(now, overall, total_bytes);
+        rate.Observe(rate_now(), overall, total_bytes);
         SetProgressStatus([&](OpStatus& st) {
             st.current_item = FileName(entry.source);
             st.transferred_bytes = overall;
@@ -2777,19 +2785,11 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         });
     };
 
-    auto reset_rate = [&] {
-        rate.Reset(GetTickCount64(), published_bytes);
-        SetStatus([&](OpStatus& st) {
-            st.bytes_per_second = 0.0;
-            st.eta_seconds = 0;
-        });
-    };
-
     auto mark_skipped = [&](const TransferEntry& entry) {
         skipped_sources.push_back(entry.source);
         total_bytes -= (std::min)(total_bytes, entry.bytes);
         ++processed_items;
-        rate.Observe(GetTickCount64(), published_bytes, total_bytes);
+        rate.Observe(rate_now(), published_bytes, total_bytes);
         SetProgressStatus([&](OpStatus& st) {
             st.total_bytes = total_bytes;
             st.transferred_bytes = published_bytes;
@@ -3100,10 +3100,12 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 st.bytes_per_second = 0.0;
                 st.eta_seconds = 0;
             });
+            const ULONGLONG held_from = GetTickCount64();
             std::unique_lock<std::mutex> lock(transfer_control_mutex_);
             transfer_control_cv_.wait(lock, [&] {
                 return transfer_cancel_.load() || resolved_conflict_token_ == info.token;
             });
+            held_ms += GetTickCount64() - held_from;
             if (transfer_cancel_.load()) {
                 pending_conflict_.reset();
                 cancelled = true;
@@ -3122,10 +3124,11 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 apply_all = true;
                 repeated = choice;
             }
-            rate.Reset(GetTickCount64(), published_bytes);
             SetStatus([&](OpStatus& st) {
                 st.phase = OpPhase::Running;
                 st.summary = ProgressSummary(req.type, entries.size());
+                st.bytes_per_second = rate.speed();
+                st.eta_seconds = rate.eta_seconds();
             });
         }
 
@@ -3326,19 +3329,23 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 st.bytes_per_second = 0.0;
                 st.eta_seconds = 0;
             });
+            const ULONGLONG held_from = GetTickCount64();
             std::unique_lock<std::mutex> lock(transfer_control_mutex_);
             transfer_control_cv_.wait(lock, [&] {
                 return transfer_cancel_.load() || !transfer_pause_.load();
             });
+            lock.unlock();
+            held_ms += GetTickCount64() - held_from;
             if (transfer_cancel_.load()) {
                 cancelled = true;
                 break;
             }
             resume = true;
-            reset_rate();
             SetStatus([&](OpStatus& st) {
                 st.phase = OpPhase::Running;
                 st.summary = ProgressSummary(req.type, entries.size());
+                st.bytes_per_second = rate.speed();
+                st.eta_seconds = rate.eta_seconds();
             });
         }
         if (cancelled || transfer_cancel_.load()) {
@@ -3367,11 +3374,13 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                     st.phase = OpPhase::Paused;
                     st.summary = std::wstring(OpVerb(req.type)) + l10n::Get(l10n::StringId::Paused).c_str();
                 });
+                const ULONGLONG held_from = GetTickCount64();
                 std::unique_lock<std::mutex> lock(transfer_control_mutex_);
                 transfer_control_cv_.wait(lock, [&] {
                     return transfer_cancel_.load() || !transfer_pause_.load();
                 });
                 lock.unlock();
+                held_ms += GetTickCount64() - held_from;
                 if (!transfer_cancel_.load()) SetStatus([&](OpStatus& st) {
                     st.phase = OpPhase::Verifying;
                     st.summary = l10n::Get(l10n::StringId::Verifying).c_str() + FileName(entry.source);
