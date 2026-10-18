@@ -383,6 +383,10 @@ private:
     bool CatchUpVolume(VolState& v, bool* changed, bool* structural = nullptr);
     enum class UsnApply : uint8_t { None, Attr, Structure };
     UsnApply ApplyUsnLocked(VolState& v, const USN_RECORD_V2* rec);
+    enum class UsnBatch : uint8_t { Done, Stopped, InvalidParent };
+    UsnBatch ApplyUsnBatchLocked(VolState& v, const BYTE* begin, const BYTE* end,
+                                 uint64_t& applied, bool& any_struct, bool& any_attr);
+    static std::vector<uint8_t> SupersededUsnRecords(const BYTE* begin, const BYTE* end);
     bool IsIndexNoiseLocked(const VolState& v, const USN_RECORD_V2* rec) const;
     void ResolveIndexDirFrn();
     bool InSubtreeLocked(int32_t node, int32_t ancestor) const;

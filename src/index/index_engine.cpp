@@ -2912,6 +2912,9 @@ Engine::UsnApply Engine::ApplyUsnLocked(VolState& v, const USN_RECORD_V2* rec) {
     const std::wstring previous_path = had_tracking_path ? tracked_path->second :
         (idx >= 0 ? BuildPathLocked(idx) : std::wstring());
     const bool previous_visible = idx >= 0 && !(NodeAt(idx).flags & kFlagHidden) && !IsExcludedPath(previous_path);
+    // previous_path and previous_visible describe idx until the record changes
+    // its structure; attribute work reuses them instead of rebuilding the path.
+    bool path_current = !had_tracking_path && idx >= 0;
     std::wstring resolved_parent;
     if ((reason & USN_REASON_RENAME_NEW_NAME) && FindByFrnLocked(v, rec->ParentFileReferenceNumber) < 0) {
         // Resolve excluded parents by FRN; never infer recycle status from $R names.
@@ -2939,7 +2942,8 @@ Engine::UsnApply Engine::ApplyUsnLocked(VolState& v, const USN_RECORD_V2* rec) {
         event.time = FtToUnix(static_cast<uint64_t>(rec->TimeStamp.QuadPart));
         event.kind = kind; event.is_dir = is_dir;
         event.file_id = frn ^ (static_cast<uint64_t>(v.letter) << 56);
-        event.path = target >= 0 ? BuildPathLocked(target) : previous_path;
+        const bool same_path = path_current && target == idx;
+        event.path = target >= 0 && !same_path ? BuildPathLocked(target) : previous_path;
         if (kind == ChangeKind::Renamed) {
             event.old_path = previous_path;
             if (!resolved_parent.empty()) {
@@ -2952,7 +2956,8 @@ Engine::UsnApply Engine::ApplyUsnLocked(VolState& v, const USN_RECORD_V2* rec) {
         }
         if (kind != ChangeKind::Renamed && had_tracking_path) event.path = previous_path;
         if (event.path.empty()) { GapFeed(); return; }
-        const bool visible = target >= 0 && !(NodeAt(target).flags & kFlagHidden) && !IsExcludedPath(event.path);
+        const bool visible = same_path ? previous_visible :
+            target >= 0 && !(NodeAt(target).flags & kFlagHidden) && !IsExcludedPath(event.path);
         if (!visible && !previous_visible) return;
         if (kind == ChangeKind::Renamed && !previous_visible && !had_tracking_path) {
             event.old_path.clear(); event.kind = ChangeKind::Created;
@@ -2963,7 +2968,8 @@ Engine::UsnApply Engine::ApplyUsnLocked(VolState& v, const USN_RECORD_V2* rec) {
     UsnApply effect = UsnApply::None;
 
     auto refresh = [&](int32_t i) {
-        std::wstring path = BuildPathLocked(i);
+        std::wstring built;
+        const std::wstring& path = path_current && i == idx ? previous_path : (built = BuildPathLocked(i));
         if (path.empty()) return;
         WIN32_FILE_ATTRIBUTE_DATA fad{};
         if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad)) return;
@@ -3039,6 +3045,7 @@ Engine::UsnApply Engine::ApplyUsnLocked(VolState& v, const USN_RECORD_V2* rec) {
         for (const int32_t i : links) other_link(i, false);
     }
     if (!structural_reason) { if (effect != UsnApply::None) track(ChangeKind::Modified, idx); return effect; }
+    path_current = false;
 
     int32_t parent = FindByFrnLocked(v, rec->ParentFileReferenceNumber);
     if (parent < 0) parent = v.root_idx;
@@ -3121,6 +3128,66 @@ Engine::UsnApply Engine::ApplyUsnLocked(VolState& v, const USN_RECORD_V2* rec) {
     }
     track(ChangeKind::Created, idx);
     return UsnApply::Structure;
+}
+
+std::vector<uint8_t> Engine::SupersededUsnRecords(const BYTE* begin, const BYTE* end) {
+    constexpr DWORD kDataReasons = USN_REASON_DATA_EXTEND | USN_REASON_DATA_TRUNCATION | USN_REASON_DATA_OVERWRITE;
+    constexpr DWORD kAttrReasons = kDataReasons | USN_REASON_BASIC_INFO_CHANGE;
+    constexpr DWORD kNameReasons = USN_REASON_FILE_CREATE | USN_REASON_FILE_DELETE |
+        USN_REASON_RENAME_OLD_NAME | USN_REASON_RENAME_NEW_NAME | USN_REASON_HARD_LINK_CHANGE;
+    std::vector<const USN_RECORD_V2*> records;
+    for (const BYTE* p = begin; p && p + sizeof(USN_RECORD_COMMON_HEADER) <= end;) {
+        const auto* hdr = reinterpret_cast<const USN_RECORD_COMMON_HEADER*>(p);
+        if (hdr->RecordLength == 0 || p + hdr->RecordLength > end) break;
+        records.push_back(hdr->MajorVersion == 2 ? reinterpret_cast<const USN_RECORD_V2*>(p) : nullptr);
+        p += hdr->RecordLength;
+    }
+    // Data reasons force the attribute patch even when the stat is unchanged,
+    // so a record carrying them is only superseded by one that carries them too.
+    enum : uint8_t { kKeep = 0, kAttrOnly = 1, kAttrData = 2 };
+    std::vector<uint8_t> superseded(records.size(), 0);
+    std::unordered_map<uint64_t, uint8_t> next;
+    next.reserve(records.size());
+    for (size_t k = records.size(); k-- > 0;) {
+        const USN_RECORD_V2* rec = records[k];
+        if (!rec) continue;
+        const DWORD reason = rec->Reason;
+        const uint8_t kind = (reason & kAttrReasons) == 0 || (reason & kNameReasons) != 0 ? kKeep :
+            (reason & kDataReasons) != 0 ? kAttrData : kAttrOnly;
+        const auto [it, first] = next.try_emplace(rec->FileReferenceNumber, kind);
+        if (!first) {
+            if (kind != kKeep && it->second != kKeep && (kind == kAttrOnly || it->second == kAttrData))
+                superseded[k] = 1;
+            it->second = kind;
+        }
+    }
+    return superseded;
+}
+
+Engine::UsnBatch Engine::ApplyUsnBatchLocked(VolState& v, const BYTE* begin, const BYTE* end,
+                                             uint64_t& applied, bool& any_struct, bool& any_attr) {
+    // Reasons accumulate while a file stays open, so one write session logs
+    // several attribute records for the same file. When the next record for
+    // that file is attribute-only too, it repeats the stat and patch with the
+    // same outcome; the index ends identical and the feed reports one change.
+    const std::vector<uint8_t> superseded = SupersededUsnRecords(begin, end);
+    size_t k = 0;
+    for (const BYTE* p = begin; p && p + sizeof(USN_RECORD_COMMON_HEADER) <= end; ++k) {
+        if (!running_) return UsnBatch::Stopped;
+        const auto* hdr = reinterpret_cast<const USN_RECORD_COMMON_HEADER*>(p);
+        if (hdr->RecordLength == 0 || p + hdr->RecordLength > end) break;
+        if (hdr->MajorVersion == 2 && !(k < superseded.size() && superseded[k])) {
+            const UsnApply apply = ApplyUsnLocked(v, reinterpret_cast<const USN_RECORD_V2*>(p));
+            if (apply != UsnApply::None) ++applied;
+            // An invalid parent relation needs a fresh volume snapshot, not a
+            // journal cursor advanced past a change we could not apply safely.
+            if (v.journal_id == 0) return UsnBatch::InvalidParent;
+            if (apply == UsnApply::Structure) any_struct = true;
+            else if (apply == UsnApply::Attr) any_attr = true;
+        }
+        p += hdr->RecordLength;
+    }
+    return UsnBatch::Done;
 }
 
 bool Engine::CatchUpVolume(VolState& v, bool* changed, bool* structural) {
@@ -3211,28 +3278,15 @@ bool Engine::CatchUpVolume(VolState& v, bool* changed, bool* structural) {
     }
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
-    BYTE* p = blob.empty() ? nullptr : blob.data();
-    BYTE* end = p + blob.size();
+    const BYTE* p = blob.empty() ? nullptr : blob.data();
     bool any_struct = false;
     bool any_attr = false;
     uint64_t applied = 0;
-    while (p && p + sizeof(USN_RECORD_COMMON_HEADER) <= end) {
-        if (!running_) return false;
-        auto* hdr = reinterpret_cast<USN_RECORD_COMMON_HEADER*>(p);
-        if (hdr->RecordLength == 0 || p + hdr->RecordLength > end) break;
-        if (hdr->MajorVersion == 2) {
-            const UsnApply apply = ApplyUsnLocked(v, reinterpret_cast<USN_RECORD_V2*>(p));
-            if (apply != UsnApply::None) ++applied;
-            // An invalid parent relation needs a fresh volume snapshot, not a
-            // journal cursor advanced past a change we could not apply safely.
-            if (v.journal_id == 0) {
-                filename_timing_.End(FilenameStage::Journal, timing, applied, ERROR_INVALID_DATA, "invalid_parent", letter);
-                return false;
-            }
-            if (apply == UsnApply::Structure) any_struct = true;
-            else if (apply == UsnApply::Attr) any_attr = true;
-        }
-        p += hdr->RecordLength;
+    const UsnBatch batch = ApplyUsnBatchLocked(v, p, p + blob.size(), applied, any_struct, any_attr);
+    if (batch == UsnBatch::Stopped) return false;
+    if (batch == UsnBatch::InvalidParent) {
+        filename_timing_.End(FilenameStage::Journal, timing, applied, ERROR_INVALID_DATA, "invalid_parent", letter);
+        return false;
     }
     v.next_usn = last;
     v.folder_size_current = true;

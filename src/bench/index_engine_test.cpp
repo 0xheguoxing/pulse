@@ -1613,9 +1613,81 @@ struct EngineTestAccess {
                 Usn(mapped, 30, 20, L".codex", USN_REASON_RENAME_NEW_NAME);
                 check(!(mapped.NodeAt(target).flags & Engine::kFlagHidden),
                       "mapped valid move restores visibility");
+                const int32_t config = mapped.FindByFrnLocked(mapped.vols_.front(), 70);
+                const int32_t settings = mapped.FindByFrnLocked(mapped.vols_.front(), 1);
+                const auto batch = UsnBlob({{30, USN_REASON_RENAME_NEW_NAME}, {80, USN_REASON_DATA_EXTEND},
+                    {80, USN_REASON_DATA_EXTEND | USN_REASON_CLOSE}}, 70, L".codex");
+                uint64_t applied = 0;
+                bool any_struct = false, any_attr = false;
+                mapped.vols_.front().journal_id = 1;
+                const auto result = mapped.ApplyUsnBatchLocked(mapped.vols_.front(), batch.data(),
+                    batch.data() + batch.size(), applied, any_struct, any_attr);
+                check(result == Engine::UsnBatch::Done && any_struct && mapped.NodeAt(target).parent == config &&
+                      mapped.NodeAt(settings).parent == target, "journal batch applies a directory move");
+                const auto back = UsnBlob({{30, USN_REASON_RENAME_NEW_NAME}}, 20, L".codex");
+                const auto restored = mapped.ApplyUsnBatchLocked(mapped.vols_.front(), back.data(),
+                    back.data() + back.size(), applied, any_struct, any_attr);
+                check(restored == Engine::UsnBatch::Done &&
+                      mapped.NodeAt(target).parent == mapped.FindByFrnLocked(mapped.vols_.front(), 20),
+                      "journal batch moves the directory back");
             }
         }
         std::filesystem::remove(file);
+        return ok;
+    }
+
+    static std::vector<BYTE> UsnBlob(std::initializer_list<std::pair<uint64_t, DWORD>> records,
+                                     uint64_t parent = 20, const wchar_t* name = L"blob.bin") {
+        std::vector<BYTE> blob;
+        const auto length = static_cast<WORD>(wcslen(name) * sizeof(wchar_t));
+        for (const auto& [id, reason] : records) {
+            const size_t size = (sizeof(USN_RECORD_V2) + length + 7) & ~size_t{7};
+            std::vector<BYTE> bytes(size);
+            auto* rec = reinterpret_cast<USN_RECORD_V2*>(bytes.data());
+            rec->RecordLength = static_cast<DWORD>(size);
+            rec->MajorVersion = 2;
+            rec->FileReferenceNumber = id;
+            rec->ParentFileReferenceNumber = parent;
+            rec->FileNameOffset = static_cast<WORD>(offsetof(USN_RECORD_V2, FileName));
+            rec->FileNameLength = length;
+            rec->FileAttributes = FILE_ATTRIBUTE_DIRECTORY;
+            rec->Reason = reason;
+            memcpy(bytes.data() + rec->FileNameOffset, name, length);
+            blob.insert(blob.end(), bytes.begin(), bytes.end());
+        }
+        return blob;
+    }
+    static bool UsnCoalesceFixture() {
+        bool ok = true;
+        auto check = [&](bool value, const char* label) {
+            std::cout << (value ? "[PASS] " : "[FAIL] ") << label << '\n'; ok &= value;
+        };
+        constexpr DWORD ext = USN_REASON_DATA_EXTEND, over = USN_REASON_DATA_OVERWRITE,
+            basic = USN_REASON_BASIC_INFO_CHANGE, close = USN_REASON_CLOSE;
+        auto mask = [](const std::vector<BYTE>& blob) {
+            return Engine::SupersededUsnRecords(blob.data(), blob.data() + blob.size());
+        };
+        using Mask = std::vector<uint8_t>;
+        check(mask(UsnBlob({{1, ext}, {2, ext}, {1, ext | close}})) == Mask{1, 0, 0},
+              "attribute record superseded by a later attribute record of the same file");
+        check(mask(UsnBlob({{1, basic}, {1, basic | over}, {1, basic | over | close}})) == Mask{1, 1, 0},
+              "only the last record of an attribute run is applied");
+        check(mask(UsnBlob({{1, ext}, {1, ext | USN_REASON_RENAME_NEW_NAME}})) == Mask{0, 0},
+              "attribute record before a rename stays");
+        check(mask(UsnBlob({{1, ext}, {1, USN_REASON_RENAME_OLD_NAME}, {1, ext}})) == Mask{0, 0, 0},
+              "rename between attribute records keeps both");
+        check(mask(UsnBlob({{1, USN_REASON_FILE_CREATE | ext}, {1, USN_REASON_FILE_CREATE | ext | close}})) == Mask{0, 0},
+              "create session records stay");
+        check(mask(UsnBlob({{1, ext}, {1, USN_REASON_FILE_DELETE | close}})) == Mask{0, 0},
+              "attribute record before a delete stays");
+        check(mask(UsnBlob({{1, ext}, {1, close}})) == Mask{0, 0}, "record without attribute reasons breaks the run");
+        check(mask(UsnBlob({{1, ext}, {1, USN_REASON_HARD_LINK_CHANGE | ext}})) == Mask{0, 0},
+              "hard link change keeps the attribute record");
+        check(mask(UsnBlob({{1, ext}, {1, basic | close}})) == Mask{0, 0},
+              "data record stays before a record without data reasons");
+        check(mask(UsnBlob({{1, basic}, {2, basic}, {1, ext | close}, {2, basic | close}})) == Mask{1, 1, 0, 0},
+              "basic info record superseded by a later attribute record");
+        check(mask({}).empty(), "empty batch");
         return ok;
     }
 
@@ -1705,6 +1777,7 @@ int wmain(int argc, wchar_t** argv) {
         return EngineTestAccess::ReplayProbe(argv[2], static_cast<uint32_t>(wcstoul(argv[3], nullptr, 10))) ? 0 : 1;
     if (argc == 2 && std::wstring_view(argv[1]) == L"--hierarchy-only") return EngineTestAccess::HierarchyFixture() ? 0 : 1;
     if (argc == 2 && std::wstring_view(argv[1]) == L"--overlay-only") return EngineTestAccess::OverlayContainersFixture() ? 0 : 1;
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--usn-coalesce-only") return EngineTestAccess::UsnCoalesceFixture() ? 0 : 1;
     const bool quiet = argc > 1 && std::wstring_view(argv[1]) == L"--quiet-maintenance-only";
     if (!SetEnvironmentVariableW(L"PULSE_INDEX_DIAGNOSTICS", quiet ? nullptr : L"1")) return 2;
     if (quiet) return EngineTestAccess::QuietDiagnosticsFixture() ? 0 : 1;
@@ -1727,6 +1800,7 @@ int wmain(int argc, wchar_t** argv) {
     Check(EngineTestAccess::Build(engine), "actual MFT tree builder accepts fixture");
     Check(EngineTestAccess::OverlayContainersFixture(), "overlay containers keep exact membership");
     CheckSearch(engine);
+    Check(EngineTestAccess::UsnCoalesceFixture(), "journal batch coalescing fixture");
     Check(EngineTestAccess::HardLinkBuildFixture(), "hard link MFT build fixture");
     Check(EngineTestAccess::HardLinkUsnFixture(), "hard link USN fixture");
     Check(EngineTestAccess::SystemNamesFixture(), "system name visibility fixture");
