@@ -2337,4 +2337,7 @@ BEGIN
     IDS_LOCK_SKIP "略過此項"
     IDS_LOCK_MORE_LEAD "以及另外 "
     IDS_LOCK_MORE_END " 個程式"
+    IDS_RECYCLE_BIN_OFF_FOR_DRIVE "這個磁碟機的資源回收筒已關閉，刪除會立即生效。"
+    IDS_RECYCLE_BIN_TOO_SMALL_FOR_ITEM "資源回收筒容量放不下它，無法移到資源回收筒。"
+    IDS_RECYCLE_BIN_TOO_SMALL_NOT_DELETED "超過資源回收筒容量，未刪除。可用 Shift+Delete 永久刪除"
 END

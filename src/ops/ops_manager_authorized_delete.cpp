@@ -28,6 +28,8 @@ std::wstring KnownDeleteError(HRESULT hr) {
     case 0x80270027u:  // COPYENGINE_E_SHARING_VIOLATION_SRC
     case 0x80270028u:  // COPYENGINE_E_SHARING_VIOLATION_DEST
         return l10n::Get(l10n::StringId::TheItemIsInUseByAnotherProgramCloseItAndTryAgain).c_str();
+    case static_cast<uint32_t>(kRecycleBinTooSmall):
+        return l10n::Get(l10n::StringId::RecycleBinTooSmallNotDeleted).c_str();
     case static_cast<uint32_t>(COPYENGINE_E_RECYCLE_BIN_NOT_FOUND):
         return l10n::Get(l10n::StringId::ThisLocationCannotBeSafelySentToTheRecycleBinTheItemWasNotDe).c_str();
     default:

@@ -5,8 +5,11 @@
 #include <shellapi.h>
 #include <sherrors.h>
 #include <wrl/client.h>
+#include <algorithm>
 #include <new>
 #include <vector>
+
+#pragma comment(lib, "advapi32.lib")
 
 namespace pulse::ops {
 namespace {
@@ -86,6 +89,8 @@ struct RecycleCache::State {
     bool volume_checked = false;
     bool available = false;
     DWORD volume_error = 0;
+    bool limits_read = false;
+    RecycleBinLimits limits;
 };
 RecycleCache::RecycleCache() : state_(std::make_unique<State>()) {}
 RecycleCache::~RecycleCache() = default;
@@ -243,6 +248,123 @@ private:
     ComPtr<IUnknown> root_identity_;
 };
 }
+namespace {
+constexpr wchar_t kExplorerPolicies[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer";
+
+bool ReadDword(HKEY root, const std::wstring& key, const wchar_t* name, DWORD& value) {
+    DWORD size = sizeof(value);
+    return RegGetValueW(root, key.c_str(), name, RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS;
+}
+
+bool PolicyDword(const wchar_t* name, DWORD& value) {
+    return ReadDword(HKEY_CURRENT_USER, kExplorerPolicies, name, value) ||
+           ReadDword(HKEY_LOCAL_MACHINE, kExplorerPolicies, name, value);
+}
+
+std::wstring LongPath(const std::wstring& path) {
+    if (path.size() < 240 || path.starts_with(L"\\\\?\\")) return path;
+    if (path.starts_with(L"\\\\")) return L"\\\\?\\UNC\\" + path.substr(2);
+    return L"\\\\?\\" + path;
+}
+
+// Bytes under `folder`, stopping once past `limit`. Links are not entered,
+// the same as the recycle itself. An unreadable subfolder counts as empty;
+// the recycle then fails on it anyway.
+uint64_t MeasureFolder(const std::wstring& folder, uint64_t limit, std::atomic<bool>& cancel) {
+    uint64_t total = 0;
+    std::vector<std::wstring> pending{folder};
+    while (!pending.empty() && total <= limit && !cancel.load()) {
+        const std::wstring current = std::move(pending.back());
+        pending.pop_back();
+        WIN32_FIND_DATAW data{};
+        const std::wstring pattern = LongPath(current + (current.ends_with(L'\\') ? L"*" : L"\\*"));
+        HANDLE find = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr,
+                                       FIND_FIRST_EX_LARGE_FETCH);
+        if (find == INVALID_HANDLE_VALUE) continue;
+        do {
+            const wchar_t* name = data.cFileName;
+            if (name[0] == L'.' && (name[1] == 0 || (name[1] == L'.' && name[2] == 0))) continue;
+            if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                if (!(data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+                    pending.push_back(current + (current.ends_with(L'\\') ? L"" : L"\\") + name);
+            } else {
+                total += (static_cast<uint64_t>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+            }
+        } while (total <= limit && FindNextFileW(find, &data));
+        FindClose(find);
+    }
+    return total;
+}
+}  // namespace
+
+RecycleBinLimits ReadRecycleBinLimits(const std::wstring& path, DWORD* volume_error) {
+    RecycleBinLimits limits;
+    if (volume_error) *volume_error = 0;
+    DWORD value = 0;
+    if (PolicyDword(L"NoRecycleFiles", value) && value != 0) {
+        limits.disabled = true;
+        return limits;
+    }
+    std::vector<wchar_t> root(32768);
+    if (!GetVolumePathNameW(LongPath(path).c_str(), root.data(), static_cast<DWORD>(root.size()))) {
+        if (volume_error) *volume_error = GetLastError();
+        return limits;
+    }
+    ULARGE_INTEGER total{}, free{};
+    if (GetDiskFreeSpaceExW(root.data(), nullptr, &total, &free))
+        limits.used_bytes = total.QuadPart - (std::min)(free.QuadPart, total.QuadPart);
+    // Policy size (percent of the volume) wins over the user's setting.
+    if (PolicyDword(L"RecycleBinSize", value) && value <= 100) {
+        limits.max_bytes = total.QuadPart / 100 * value;
+        return limits;
+    }
+    wchar_t volume_name[64]{};
+    std::wstring guid;
+    if (GetVolumeNameForVolumeMountPointW(root.data(), volume_name, 64)) {
+        const std::wstring name = volume_name;
+        const size_t open = name.find(L'{'), close = name.find(L'}');
+        if (open != std::wstring::npos && close != std::wstring::npos && close > open)
+            guid = name.substr(open, close - open + 1);
+    }
+    bool have_capacity = false;
+    if (!guid.empty()) {
+        const std::wstring key =
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\BitBucket\\Volume\\" + guid;
+        if (ReadDword(HKEY_CURRENT_USER, key, L"NukeOnDelete", value) && value != 0) {
+            limits.disabled = true;
+            return limits;
+        }
+        if (ReadDword(HKEY_CURRENT_USER, key, L"MaxCapacity", value)) {  // MB
+            limits.max_bytes = static_cast<uint64_t>(value) << 20;
+            have_capacity = true;
+        }
+    }
+    if (!have_capacity && total.QuadPart) {
+        // No setting saved yet: Windows' default, 10% of the first 40 GB and
+        // 5% of the rest.
+        constexpr uint64_t k40GB = 40ull << 30;
+        const uint64_t bytes = total.QuadPart;
+        limits.max_bytes = (std::min)(bytes, k40GB) / 10 + (bytes > k40GB ? (bytes - k40GB) / 20 : 0);
+    }
+    return limits;
+}
+
+HRESULT CheckRecycleFits(const std::wstring& path, const RecycleBinLimits& limits, std::atomic<bool>& cancel,
+                         bool measure_folders) {
+    if (limits.disabled) return COPYENGINE_E_RECYCLE_BIN_NOT_FOUND;
+    if (!limits.max_bytes || (limits.used_bytes && limits.max_bytes >= limits.used_bytes)) return S_OK;
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    if (!GetFileAttributesExW(LongPath(path).c_str(), GetFileExInfoStandard, &data)) return S_OK;  // the recycle reports it
+    uint64_t bytes = 0;
+    if (!(data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+        bytes = (static_cast<uint64_t>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+    } else if (measure_folders && !(data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        bytes = MeasureFolder(path, limits.max_bytes, cancel);
+        if (cancel.load()) return kCancelled;
+    }
+    return bytes > limits.max_bytes ? kRecycleBinTooSmall : S_OK;
+}
+
 bool RecycleBinAvailable(const std::wstring& path, DWORD* volume_error) {
     if (volume_error) *volume_error = 0;
     if (path::StripExtendedPathPrefix(path).starts_with(L"\\\\")) return false;
@@ -251,7 +373,9 @@ bool RecycleBinAvailable(const std::wstring& path, DWORD* volume_error) {
         if (volume_error) *volume_error = GetLastError();
         return false;
     }
-    return GetDriveTypeW(volume.data()) == DRIVE_FIXED;
+    if (GetDriveTypeW(volume.data()) != DRIVE_FIXED) return false;
+    // A bin that is turned off deletes at once: the same as having none.
+    return !ReadRecycleBinLimits(path).disabled;
 }
 
 ShellTransferResult DeleteWithCurrentToken(const std::vector<std::wstring>& sources,
@@ -281,6 +405,7 @@ ShellTransferResult DeleteWithCurrentToken(const std::vector<std::wstring>& sour
                     auto& state = cache->state();
                     state.volume_checked = true;
                     state.volume_parent = volume_parent;
+                    state.limits_read = false;  // read again for this folder
                     state.available = available;
                     state.volume_error = volume_error;
                 }
@@ -292,6 +417,28 @@ ShellTransferResult DeleteWithCurrentToken(const std::vector<std::wstring>& sour
                     result.hr = COPYENGINE_E_RECYCLE_BIN_NOT_FOUND;
                     result.error = L"This location cannot be safely sent to the Recycle Bin. The item was not deleted.";
                 }
+                break;
+            }
+            // The bin's size limit: an item larger than the bin would be
+            // deleted for good by the Shell, so it is refused here, untouched.
+            RecycleBinLimits limits;
+            if (cache && cache->state().limits_read && !volume_parent.empty() &&
+                cache->state().volume_parent == volume_parent) {
+                limits = cache->state().limits;
+            } else {
+                limits = ReadRecycleBinLimits(source);
+                if (cache && !volume_parent.empty() && cache->state().volume_parent == volume_parent) {
+                    cache->state().limits_read = true;
+                    cache->state().limits = limits;
+                }
+            }
+            result.hr = CheckRecycleFits(source, limits, cancel);
+            if (FAILED(result.hr)) {
+                result.cancelled = result.hr == kCancelled;
+                if (result.hr == kRecycleBinTooSmall)
+                    result.error = L"This item is larger than the Recycle Bin can hold. It was not deleted.";
+                else if (result.hr == COPYENGINE_E_RECYCLE_BIN_NOT_FOUND)
+                    result.error = L"This location cannot be safely sent to the Recycle Bin. The item was not deleted.";
                 break;
             }
             result.hr = RecycleOnly(source, cancel, result, progress, cache);

@@ -121,6 +121,9 @@ ConflictDialogResult ShowFileConflictDialog(HWND owner,
 struct PermanentDeleteInfo {
     std::vector<std::wstring> paths;
     bool no_recycle_bin = false; // meant for the bin, but these items have none
+    // Why there is no bin for them: the location has none, the bin is turned
+    // off for the drive, or an item is larger than the bin can hold.
+    enum class NoBinReason { Location, Disabled, TooLarge } no_bin_reason = NoBinReason::Location;
     bool offer_recycle = false;  // show 移到回收站 as the alternative
 };
 

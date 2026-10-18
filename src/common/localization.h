@@ -2349,6 +2349,9 @@ enum class StringId : UINT {
     LockSkip = IDS_LOCK_SKIP,
     LockMoreLead = IDS_LOCK_MORE_LEAD,
     LockMoreEnd = IDS_LOCK_MORE_END,
+    RecycleBinOffForDrive = IDS_RECYCLE_BIN_OFF_FOR_DRIVE,
+    RecycleBinTooSmallForItem = IDS_RECYCLE_BIN_TOO_SMALL_FOR_ITEM,
+    RecycleBinTooSmallNotDeleted = IDS_RECYCLE_BIN_TOO_SMALL_NOT_DELETED,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

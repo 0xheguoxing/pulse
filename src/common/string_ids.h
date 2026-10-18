@@ -2353,5 +2353,8 @@
 #define IDS_LOCK_SKIP                                                                    3617
 #define IDS_LOCK_MORE_LEAD                                                               3618
 #define IDS_LOCK_MORE_END                                                                3619
+#define IDS_RECYCLE_BIN_OFF_FOR_DRIVE                                                    3620
+#define IDS_RECYCLE_BIN_TOO_SMALL_FOR_ITEM                                               3621
+#define IDS_RECYCLE_BIN_TOO_SMALL_NOT_DELETED                                            3622
 
 #endif  // PULSE_STRING_IDS_H

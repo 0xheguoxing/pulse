@@ -2339,6 +2339,9 @@ BEGIN
     IDS_LOCK_SKIP "跳过此项"
     IDS_LOCK_MORE_LEAD "以及另外 "
     IDS_LOCK_MORE_END " 个程序"
+    IDS_RECYCLE_BIN_OFF_FOR_DRIVE "这个驱动器的回收站已关闭，删除会立即生效。"
+    IDS_RECYCLE_BIN_TOO_SMALL_FOR_ITEM "回收站容量放不下它，无法移到回收站。"
+    IDS_RECYCLE_BIN_TOO_SMALL_NOT_DELETED "超过回收站容量，未删除。可用 Shift+Delete 永久删除"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4677,6 +4680,9 @@ BEGIN
     IDS_LOCK_SKIP "Skip this item"
     IDS_LOCK_MORE_LEAD "and "
     IDS_LOCK_MORE_END " more programs"
+    IDS_RECYCLE_BIN_OFF_FOR_DRIVE "The Recycle Bin is turned off for this drive."
+    IDS_RECYCLE_BIN_TOO_SMALL_FOR_ITEM "It's too large for the Recycle Bin."
+    IDS_RECYCLE_BIN_TOO_SMALL_NOT_DELETED "Too large for the Recycle Bin, so it was not deleted. Shift+Delete deletes it permanently."
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

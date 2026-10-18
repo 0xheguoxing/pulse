@@ -1193,7 +1193,10 @@ private:
     std::wstring Summary() const {
         std::wstring text;
         if (info_.no_recycle_bin) {
-            text = l10n::Get(l10n::StringId::NetworkLocationsAndRemovableDrivesHaveNoRecycleBin);
+            using Reason = PermanentDeleteInfo::NoBinReason;
+            text = l10n::Get(info_.no_bin_reason == Reason::Disabled   ? l10n::StringId::RecycleBinOffForDrive
+                             : info_.no_bin_reason == Reason::TooLarge ? l10n::StringId::RecycleBinTooSmallForItem
+                                                                       : l10n::StringId::NetworkLocationsAndRemovableDrivesHaveNoRecycleBin);
             while (!text.empty() && text.back() == L' ') text.pop_back();
         }
         std::wstring counts;

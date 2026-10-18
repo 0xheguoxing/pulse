@@ -314,11 +314,14 @@ namespace {
 // `offer_recycle`: Shift+Delete on items that do have a bin; the dialog then
 // offers 移到回收站 instead.
 ui::PermanentDeleteChoice ConfirmPermanentDelete(AppState& s, const std::vector<std::wstring>& paths,
-                                                 bool no_recycle_bin, bool offer_recycle = false) {
+                                                 bool no_recycle_bin, bool offer_recycle = false,
+                                                 ui::PermanentDeleteInfo::NoBinReason reason =
+                                                     ui::PermanentDeleteInfo::NoBinReason::Location) {
     ui::PermanentDeleteInfo info;
     info.paths.reserve(paths.size());
     for (const std::wstring& path : paths) info.paths.push_back(ClipboardPath(path));
     info.no_recycle_bin = no_recycle_bin;
+    info.no_bin_reason = reason;
     info.offer_recycle = offer_recycle;
     return ui::ShowPermanentDeleteDialog(s.hwnd, info, s.darkMode, s.accentColor);
 }
@@ -373,18 +376,43 @@ void NoteDeleteFinished(AppState& s, const ops::FinishedTask& done) {
 void DeletePaths(AppState& s, std::vector<std::wstring> paths, bool permanent) {
     if (paths.empty()) return;
     if (!permanent) {
-        // Shares and removable drives have no Recycle Bin; the ops layer
-        // refuses to recycle there. Like Explorer, offer a permanent delete
-        // for those items; the rest still go to the Recycle Bin.
+        // Shares and removable drives have no Recycle Bin, a drive can have
+        // its bin turned off, and a file can be larger than the bin: the
+        // Shell would delete those for good, so the ops layer refuses to
+        // recycle them. Like Explorer, ask for a permanent delete of those
+        // items, saying why; the rest still go to the Recycle Bin. (Folders
+        // are measured by the ops layer, which refuses an oversized one.)
+        using Reason = ui::PermanentDeleteInfo::NoBinReason;
         std::vector<std::wstring> direct;
+        Reason reason = Reason::TooLarge;
+        std::atomic<bool> no_cancel{false};
+        std::wstring cached_parent;
+        bool cached_available = true;
+        ops::RecycleBinLimits cached_limits;
         std::erase_if(paths, [&](const std::wstring& path) {
-            DWORD volume_error = 0;
-            if (ops::RecycleBinAvailable(path, &volume_error) || volume_error) return false;
+            // Items of one folder share a volume, except a mount point.
+            const DWORD attributes = GetFileAttributesW(path.c_str());
+            const bool mount = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT);
+            const std::wstring parent = mount ? std::wstring{} : path.substr(0, path.find_last_of(L'\\') + 1);
+            if (parent.empty() || !pulse::path::EqualInsensitive(parent, cached_parent)) {
+                DWORD volume_error = 0;
+                cached_available = ops::RecycleBinAvailable(path, &volume_error);
+                if (volume_error) return false;  // not judged; the delete reports why
+                cached_limits = ops::ReadRecycleBinLimits(path, &volume_error);
+                if (volume_error) return false;
+                cached_parent = parent;
+            }
+            Reason why;
+            if (!cached_available) why = cached_limits.disabled ? Reason::Disabled : Reason::Location;
+            else if (ops::CheckRecycleFits(path, cached_limits, no_cancel, false) == ops::kRecycleBinTooSmall)
+                why = Reason::TooLarge;
+            else return false;
+            if (why == Reason::Location || (why == Reason::Disabled && reason == Reason::TooLarge)) reason = why;
             direct.push_back(path);
             return true;
         });
         if (!direct.empty()) {
-            if (ConfirmPermanentDelete(s, direct, true) != ui::PermanentDeleteChoice::Delete) return;
+            if (ConfirmPermanentDelete(s, direct, true, false, reason) != ui::PermanentDeleteChoice::Delete) return;
             ops::OpRequest req;
             req.type = ops::OpType::RealDelete;
             req.sources = std::move(direct);
