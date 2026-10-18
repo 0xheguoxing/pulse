@@ -2568,6 +2568,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         });
     };
 
+    size_t conflicts_asked = 0;
     auto remaining_conflicts = [&](size_t start) {
         size_t count = 0;
         for (size_t j = start; j < entries.size(); ++j) {
@@ -2708,6 +2709,9 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 info.destination_is_directory = destination_entry.directory;
             }
             info.remaining = remaining_conflicts(index);
+            info.ordinal = ++conflicts_asked;
+            info.type = req.type;
+            info.keep_both_name = FileName(UniqueCopyPath(entry.destination, entry.directory));
             {
                 std::lock_guard<std::mutex> lock(transfer_control_mutex_);
                 info.token = next_conflict_token_++;

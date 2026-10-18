@@ -9,11 +9,14 @@
 #include <windowsx.h>
 #include <commctrl.h>
 #include <dwmapi.h>
+#include <imm.h>
 #include <algorithm>
 #include <cmath>
 #include <deque>
 #include <string>
 #include <vector>
+
+#pragma comment(lib, "imm32.lib")
 
 namespace pulse::ui {
 namespace {
@@ -369,6 +372,10 @@ std::wstring FormatElapsed(uint64_t seconds) {
     return FormatDuration(seconds);
 }
 
+// File conflict, pulse_ops_dialogs.html §3: source and destination side by
+// side (size, time, 更大 / 较新), three choices that preview their result on
+// hover (replace greys the destination, skip greys the source, keep both
+// shows the new name), R / S / K, and 对其余 N 个冲突执行相同操作 as a switch.
 class ConflictWindow {
 public:
     ConflictDialogResult Show(HWND owner, const ops::ConflictItemInfo& conflict,
@@ -377,6 +384,8 @@ public:
         conflict_ = conflict;
         conflict_.source = path::FriendlyPathText(conflict_.source);
         conflict_.destination = path::FriendlyPathText(conflict_.destination);
+        source_dir_ = ParentPath(conflict_.source);
+        destination_dir_ = ParentPath(conflict_.destination);
         dark_ = dark;
         accent_ = accent;
         scale_ = static_cast<float>(pulse::compat::WindowDpi(owner)) / 96.0f;
@@ -389,8 +398,8 @@ public:
         wc.hbrBackground = nullptr;
         if (!GetClassInfoExW(wc.hInstance, kConflictClass, &wc)) RegisterClassExW(&wc);
 
-        const int width = static_cast<int>(480 * scale_);
-        const int height = static_cast<int>(428 * scale_);
+        const int width = static_cast<int>(kConflictW * scale_);
+        const int height = static_cast<int>(HeightDip() * scale_);
         hwnd_ = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP, kConflictClass, l10n::Get(l10n::StringId::OpConflictTitle).c_str(),
             WS_POPUP | WS_THICKFRAME | WS_SYSMENU,
             CW_USEDEFAULT, CW_USEDEFAULT, width, height, owner, nullptr,
@@ -400,6 +409,9 @@ public:
         EnableWindow(owner_, FALSE);
         ShowWindow(hwnd_, SW_SHOW);
         SetForegroundWindow(hwnd_);
+        // Without keyboard focus Windows sends letters as WM_SYSKEYDOWN, so
+        // R / S / K, Tab and Enter would only work with Alt held.
+        SetFocus(hwnd_);
 
         MSG message{};
         while (!done_ && GetMessageW(&message, nullptr, 0, 0) > 0) {
@@ -413,6 +425,15 @@ public:
     }
 
 private:
+    static constexpr float kConflictW = 560.0f;
+    static constexpr float kCompareTop = 100.0f;
+    static constexpr float kCompareH = 112.0f;
+    static constexpr float kCardW = 242.0f;
+    static constexpr float kActionsTop = 226.0f;
+    static constexpr float kActionH = 52.0f;
+    static constexpr float kFooterH = 56.0f;
+    static constexpr UINT_PTR kAnimTimer = 2;
+
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
         auto* self = reinterpret_cast<ConflictWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
@@ -425,17 +446,51 @@ private:
                     : DefWindowProcW(hwnd, message, wparam, lparam);
     }
 
-    D2D1_RECT_F CloseRect() const { return Rect(scale_, 434, 0, 46, 44); }
-    D2D1_RECT_F CardRect(int index) const { return Rect(scale_, 20, 121 + index * 66.0f, 440, 58); }
-    D2D1_RECT_F CheckRect() const { return Rect(scale_, 20, details_ ? 438.0f : 326.0f, 350, 30); }
-    D2D1_RECT_F DetailRect() const { return Rect(scale_, 20, details_ ? 486.0f : 374.0f, 124, 32); }
-    D2D1_RECT_F CancelRect() const { return Rect(scale_, 362, details_ ? 482.0f : 370.0f, 98, 34); }
+    static std::wstring ParentPath(const std::wstring& path) {
+        std::wstring copy = path;
+        while (copy.size() > 3 && (copy.back() == L'\\' || copy.back() == L'/')) copy.pop_back();
+        const size_t slash = copy.find_last_of(L"\\/");
+        if (slash == std::wstring::npos) return copy;
+        return copy.substr(0, slash == 2 && copy[1] == L':' ? 3 : slash);
+    }
+
+    bool ShowsApplyAll() const { return conflict_.remaining > 1; }
+    float HeightDip() const { return ShowsApplyAll() ? 506.0f : 470.0f; }
+    size_t Ordinal() const { return (std::max)(conflict_.ordinal, static_cast<size_t>(1)); }
+    size_t Total() const {
+        return Ordinal() - 1 + (std::max)(conflict_.remaining, static_cast<size_t>(1));
+    }
+    // 较新 only when the shown times differ: within a minute both read the same.
+    static bool NewerThan(const FILETIME& a, const FILETIME& b) {
+        const ULONGLONG ta = (static_cast<ULONGLONG>(a.dwHighDateTime) << 32) | a.dwLowDateTime;
+        const ULONGLONG tb = (static_cast<ULONGLONG>(b.dwHighDateTime) << 32) | b.dwLowDateTime;
+        return ta != 0 && tb != 0 && ta > tb + 60ull * 10000000ull;
+    }
+    bool SourceNewer() const { return NewerThan(conflict_.source_modified, conflict_.destination_modified); }
+    bool DestinationNewer() const { return NewerThan(conflict_.destination_modified, conflict_.source_modified); }
+    bool Files() const { return !conflict_.source_is_directory && !conflict_.destination_is_directory; }
+
+    D2D1_RECT_F CloseRect() const { return Rect(scale_, kConflictW - 46, 0, 46, 40); }
+    D2D1_RECT_F CardRect(int side) const {
+        return Rect(scale_, side == 0 ? 20.0f : kConflictW - 20.0f - kCardW, kCompareTop, kCardW, kCompareH);
+    }
+    D2D1_RECT_F PathRect(int side) const {
+        const float x = side == 0 ? 20.0f : kConflictW - 20.0f - kCardW;
+        return Rect(scale_, x + 12, kCompareTop + 88, kCardW - 24, 16);
+    }
+    D2D1_RECT_F ActionRect(int index) const {
+        return Rect(scale_, 20, kActionsTop + index * (kActionH + 6.0f), kConflictW - 40, kActionH);
+    }
+    D2D1_RECT_F ApplyRect() const { return Rect(scale_, 20, 404, kConflictW - 40, 30); }
+    D2D1_RECT_F CancelRect() const {
+        const float h = HeightDip();
+        return Rect(scale_, kConflictW - 20 - 98, h - kFooterH + 11, 98, 34);
+    }
 
     int Hit(float x, float y) const {
         if (pulse::ui::ContainsRect(CloseRect(), x, y)) return 7;
-        for (int i = 0; i < 3; ++i) if (pulse::ui::ContainsRect(CardRect(i), x, y)) return i + 1;
-        if (conflict_.remaining > 1 && pulse::ui::ContainsRect(CheckRect(), x, y)) return 4;
-        if (pulse::ui::ContainsRect(DetailRect(), x, y)) return 5;
+        for (int i = 0; i < 3; ++i) if (pulse::ui::ContainsRect(ActionRect(i), x, y)) return i + 1;
+        if (ShowsApplyAll() && pulse::ui::ContainsRect(ApplyRect(), x, y)) return 4;
         if (pulse::ui::ContainsRect(CancelRect(), x, y)) return 6;
         return 0;
     }
@@ -447,40 +502,270 @@ private:
         if (hwnd_) { HideComposedDialog(hwnd_, owner_); DestroyWindow(hwnd_); }
     }
 
-    void ToggleDetails() {
-        details_ = !details_;
-        RECT window{};
-        GetWindowRect(hwnd_, &window);
-        const int target = static_cast<int>((details_ ? 538 : 428) * scale_);
-        SetWindowPos(hwnd_, nullptr, 0, 0, window.right - window.left, target,
-                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOOWNERZORDER);
+    // Preview of the hovered (or focused) choice: 1 replace, 2 skip, 3 keep.
+    int Preview() const {
+        if (hover_ >= 1 && hover_ <= 3) return hover_;
+        if (keyboard_focus_ && focus_ <= 2) return focus_ + 1;
+        return 0;
+    }
+
+    void Animate() {
+        const ULONGLONG now = GetTickCount64();
+        const float dt = anim_tick_ == 0 ? 16.0f : static_cast<float>((std::min)(now - anim_tick_, 100ull));
+        anim_tick_ = now;
+        const float k = 1.0f - std::exp(-dt / 70.0f);
+        const int preview = Preview();
+        bool moving = false;
+        for (int i = 1; i <= 3; ++i) {
+            const float target = preview == i ? 1.0f : 0.0f;
+            weight_[i] += (target - weight_[i]) * k;
+            if (std::fabs(target - weight_[i]) < 0.01f) weight_[i] = target;
+            else moving = true;
+        }
+        if (!moving) { KillTimer(hwnd_, kAnimTimer); anim_tick_ = 0; }
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
-    void DrawCard(const Theme& theme, int index, const wchar_t* title,
-                  const wchar_t* subtitle, const wchar_t* glyph,
-                  D2D1_COLOR_F icon_color, const wchar_t* shortcut) {
-        const auto bounds = CardRect(index);
-        fluent::ControlState state{};
-        state.hovered = hover_ == index + 1;
-        state.pressed = pressed_ == index + 1;
-        state.focused = focus_ == index;
-        D2D1_COLOR_F fill = dark_ ? HexColor(state.hovered ? 0x474747 : 0x3A3A3A, 0.92f)
-                                  : HexColor(state.hovered ? 0xE4E4E4 : 0xEEEEEE, 0.92f);
-        painter_.FillRoundedRect(bounds, 10 * scale_, fill);
-        painter_.StrokeRoundedRect(bounds, 10 * scale_,
-            state.focused ? WithAlpha(theme.accent, 0.35f) : theme.stroke_card,
-            state.focused ? 1.5f : 1.0f);
-        const auto icon = Rect(scale_, 32, 133 + index * 66.0f, 34, 34);
-        painter_.FillRoundedRect(icon, 17 * scale_, icon_color);
-        painter_.DrawGlyph(glyph, icon, HexColor(0xFFFFFF));
-        painter_.DrawText(title, Rect(scale_, 78, 126 + index * 66.0f, 272, 25),
-                          compositor_.TextFormat(), theme.text);
-        painter_.DrawText(subtitle, Rect(scale_, 78, 150 + index * 66.0f, 300, 20),
-                          compositor_.SmallFormat(), theme.text_secondary);
-        fluent::BadgeSpec badge{ Rect(scale_, 382, 139 + index * 66.0f, 58, 22), shortcut,
-                                 fluent::BadgeKind::Keycap };
-        painter_.DrawBadge(badge);
+    void Kick() {
+        anim_tick_ = 0;
+        SetTimer(hwnd_, kAnimTimer, 15, nullptr);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    void CreateFormats() {
+        auto* factory = compositor_.DwriteFactory();
+        auto make = [&](ComPtr<IDWriteTextFormat>& out, typography::FontRole role, float size,
+                        DWRITE_FONT_WEIGHT weight) {
+            out.reset();
+            if (!factory) return;
+            typography::TextFormatSpec spec;
+            spec.role = role;
+            spec.size = size * scale_;
+            spec.weight = weight;
+            if (FAILED(typography::CreateTextFormat(factory, spec, &out)) || !out.get()) return;
+            out->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        };
+        make(head_format_, typography::FontRole::Text, 15.5f, DWRITE_FONT_WEIGHT_BOLD);
+        make(name_format_, typography::FontRole::Text, 13.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        make(meta_format_, typography::FontRole::Text, 12.0f, DWRITE_FONT_WEIGHT_NORMAL);
+        make(meta_bold_format_, typography::FontRole::Text, 12.0f, DWRITE_FONT_WEIGHT_BOLD);
+        make(label_format_, typography::FontRole::Text, 11.0f, DWRITE_FONT_WEIGHT_BOLD);
+        make(tiny_format_, typography::FontRole::Text, 10.5f, DWRITE_FONT_WEIGHT_BOLD);
+        make(ext_format_, typography::FontRole::Text, 8.5f, DWRITE_FONT_WEIGHT_HEAVY);
+        make(glyph_format_, typography::FontRole::Icon, 14.0f, DWRITE_FONT_WEIGHT_NORMAL);
+        make(big_glyph_format_, typography::FontRole::Icon, 18.0f, DWRITE_FONT_WEIGHT_NORMAL);
+        if (glyph_format_.get()) glyph_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        if (big_glyph_format_.get()) big_glyph_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    }
+
+    // Thumbnail colours by extension (images, video, audio, archives,
+    // documents, binaries); folders get the folder amber.
+    static void ThumbColors(const std::wstring& name, bool directory, D2D1_COLOR_F& top,
+                            D2D1_COLOR_F& bottom, std::wstring& label) {
+        top = HexColor(0x5B6170);
+        bottom = HexColor(0x3B404B);
+        label.clear();
+        if (directory) { top = HexColor(0xF5C451); bottom = HexColor(0xD99A1E); return; }
+        const size_t dot = name.find_last_of(L'.');
+        if (dot == std::wstring::npos || dot + 1 >= name.size()) return;
+        std::wstring ext = name.substr(dot + 1);
+        for (auto& c : ext) c = static_cast<wchar_t>(towlower(c));
+        auto any = [&](std::initializer_list<const wchar_t*> list) {
+            for (const auto* e : list) if (ext == e) return true;
+            return false;
+        };
+        label = ext.substr(0, 4);
+        for (auto& c : label) c = static_cast<wchar_t>(towupper(c));
+        if (any({L"jpg", L"jpeg", L"png", L"gif", L"bmp", L"webp", L"heic", L"tif", L"tiff", L"nef", L"cr2", L"cr3", L"arw", L"dng", L"raw", L"svg", L"ico"})) {
+            top = HexColor(0x4CC2C9); bottom = HexColor(0x2A8F96);
+        } else if (any({L"mp4", L"mkv", L"mov", L"avi", L"wmv", L"webm", L"m4v", L"ts"})) {
+            top = HexColor(0xF07A73); bottom = HexColor(0xC4433D);
+        } else if (any({L"mp3", L"flac", L"wav", L"m4a", L"aac", L"ogg", L"opus", L"wma"})) {
+            top = HexColor(0xA78BFA); bottom = HexColor(0x7C5CE6);
+        } else if (any({L"zip", L"7z", L"rar", L"tar", L"gz", L"xz", L"bz2", L"cab", L"iso"})) {
+            top = HexColor(0xF0B041); bottom = HexColor(0xC98410);
+        } else if (any({L"pdf", L"doc", L"docx", L"txt", L"md", L"rtf", L"xls", L"xlsx", L"csv", L"ppt", L"pptx", L"odt"})) {
+            top = HexColor(0x7D8CF0); bottom = HexColor(0x5260C0);
+        } else if (any({L"exe", L"dll", L"bin", L"sys", L"msi", L"json", L"xml", L"cpp", L"h", L"js", L"py", L"cs"})) {
+            top = HexColor(0x8E6CE8); bottom = HexColor(0x5A3FB8);
+        }
+    }
+
+    void DrawCompareCard(const Theme& theme, int side) {
+        auto* dc = compositor_.Dc();
+        const bool source = side == 0;
+        const float s = scale_;
+        const float x = source ? 20.0f : kConflictW - 20.0f - kCardW;
+        const float y = kCompareTop;
+        // Replace greys the destination and nudges the source toward it;
+        // skip greys the source; keep both rings both.
+        const float dim = source ? weight_[2] : weight_[1];
+        const float shift = source ? 6.0f * weight_[1] : 0.0f;
+        const float cx = x + shift;
+        const D2D1_COLOR_F green = dark_ ? HexColor(0x3CCF8E) : HexColor(0x16A36A);
+        const D2D1_COLOR_F sky = dark_ ? HexColor(0x38BDF8) : HexColor(0x0284C7);
+        const D2D1_COLOR_F violet = dark_ ? HexColor(0xA78BFA) : HexColor(0x7C5CE6);
+        const D2D1_COLOR_F red = dark_ ? HexColor(0xF0625B) : HexColor(0xD93D36);
+        const D2D1_COLOR_F well = dark_ ? HexColor(0xFFFFFF, 0.045f) : HexColor(0x000000, 0.035f);
+        const D2D1_COLOR_F line = dark_ ? HexColor(0xFFFFFF, 0.07f) : HexColor(0x000000, 0.07f);
+        const auto card = Rect(s, cx, y, kCardW, kCompareH);
+        painter_.FillRoundedRect(card, ScaleDip(s, 11.0f), well);
+        painter_.StrokeRoundedRect(card, ScaleDip(s, 11.0f), line);
+        const float ring = source ? (std::max)(weight_[1], weight_[3]) : (std::max)(weight_[2], weight_[3]);
+        if (ring > 0.01f) {
+            D2D1_COLOR_F color = weight_[3] > 0.01f ? violet : source ? green : sky;
+            painter_.StrokeRoundedRect(card, ScaleDip(s, 11.0f), WithAlpha(color, ring), 1.5f * s);
+        }
+
+        const std::wstring name = LeafName(source ? conflict_.source : conflict_.destination);
+        const bool directory = source ? conflict_.source_is_directory : conflict_.destination_is_directory;
+        const float alpha = 1.0f - 0.55f * dim;
+        auto fade = [&](D2D1_COLOR_F c) { c.a *= alpha; return c; };
+
+        painter_.DrawText(l10n::Get(source ? l10n::StringId::OpSource : l10n::StringId::OpExisting),
+                          Rect(s, cx + 12, y + 8, kCardW - 24, 16), label_format_.get(),
+                          fade(WithAlpha(theme.text, 0.45f)));
+
+        // Thumbnail: gradient tile with a folded corner and the extension.
+        D2D1_COLOR_F top{}, bottom{};
+        std::wstring ext;
+        ThumbColors(name, directory, top, bottom, ext);
+        if (dim > 0.01f) {
+            const float grey = (top.r + top.g + top.b) / 3.0f;
+            const float grey2 = (bottom.r + bottom.g + bottom.b) / 3.0f;
+            top = D2D1::ColorF(top.r + (grey - top.r) * dim, top.g + (grey - top.g) * dim, top.b + (grey - top.b) * dim, alpha);
+            bottom = D2D1::ColorF(bottom.r + (grey2 - bottom.r) * dim, bottom.g + (grey2 - bottom.g) * dim,
+                                  bottom.b + (grey2 - bottom.b) * dim, alpha);
+        }
+        const auto thumb = Rect(s, cx + 12, y + 28, 40, 50);
+        FillGradientTile(dc, thumb, ScaleDip(s, 7.0f), top, bottom);
+        if (directory) {
+            painter_.DrawText(L"\xE8B7", thumb, big_glyph_format_.get(), fade(HexColor(0xFFFFFF, 0.92f)),
+                              fluent::HorizontalAlignment::Center);
+        } else {
+            // Folded corner.
+            auto factory = FactoryOf(dc);
+            ComPtr<ID2D1PathGeometry> corner;
+            if (factory.get() && SUCCEEDED(factory->CreatePathGeometry(&corner))) {
+                ComPtr<ID2D1GeometrySink> sink;
+                if (SUCCEEDED(corner->Open(&sink))) {
+                    const float c = ScaleDip(s, 10.0f);
+                    sink->BeginFigure(D2D1::Point2F(thumb.right - c, thumb.top), D2D1_FIGURE_BEGIN_FILLED);
+                    sink->AddLine(D2D1::Point2F(thumb.right, thumb.top + c));
+                    sink->AddLine(D2D1::Point2F(thumb.right - c, thumb.top + c));
+                    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+                    if (SUCCEEDED(sink->Close())) {
+                        ComPtr<ID2D1SolidColorBrush> brush;
+                        if (SUCCEEDED(dc->CreateSolidColorBrush(HexColor(0xFFFFFF, 0.30f * alpha), &brush)))
+                            dc->FillGeometry(corner.get(), brush.get());
+                    }
+                }
+            }
+            if (!ext.empty()) {
+                const float w = TextWidth(compositor_.DwriteFactory(), ext_format_.get(), ext) / s + 7.0f;
+                const auto tag = Rect(s, cx + 16, y + 63, (std::min)(w, 32.0f), 12);
+                painter_.FillRoundedRect(tag, ScaleDip(s, 3.0f), HexColor(0x000000, 0.25f * alpha));
+                painter_.DrawText(ext, tag, ext_format_.get(), fade(HexColor(0xFFFFFF)),
+                                  fluent::HorizontalAlignment::Center);
+            }
+        }
+
+        const float tx = cx + 62;
+        const float tw = kCardW - 74;
+        DrawEllipsizedText(compositor_, name_format_.get(), Rect(s, tx, y + 27, tw, 20), name, fade(theme.text));
+        auto meta_line = [&](float row_y, const std::wstring& value, bool bold, const std::wstring& badge) {
+            IDWriteTextFormat* format = bold ? meta_bold_format_.get() : meta_format_.get();
+            const float w = (std::min)(tw, TextWidth(compositor_.DwriteFactory(), format, value) / s);
+            painter_.DrawText(value, Rect(s, tx, row_y, w + 2, 17), format,
+                              fade(bold ? theme.text : theme.text_secondary));
+            if (!badge.empty()) {
+                const float bw = TextWidth(compositor_.DwriteFactory(), tiny_format_.get(), badge) / s + 12.0f;
+                const auto chip = Rect(s, tx + w + 6, row_y, bw, 17);
+                painter_.FillRoundedRect(chip, ScaleDip(s, 5.0f), WithAlpha(green, (dark_ ? 0.16f : 0.12f) * alpha));
+                painter_.DrawText(badge, chip, tiny_format_.get(), fade(green), fluent::HorizontalAlignment::Center);
+            }
+        };
+        const uint64_t size = source ? conflict_.source_size : conflict_.destination_size;
+        const uint64_t other = source ? conflict_.destination_size : conflict_.source_size;
+        const bool larger = Files() && size > other;
+        const bool newer = source ? SourceNewer() : DestinationNewer();
+        meta_line(y + 49, directory ? l10n::Get(l10n::StringId::OpFolderKind) : pulse::format::ByteSize(size),
+                  !directory, larger ? l10n::Get(l10n::StringId::OpLarger) : std::wstring());
+        meta_line(y + 67, pulse::format::LocalFileTime(source ? conflict_.source_modified : conflict_.destination_modified,
+                                                       l10n::Get(l10n::StringId::OpUnknown).c_str()),
+                  false, newer ? l10n::Get(l10n::StringId::OpNewer) : std::wstring());
+
+        // Path, or for keep-both the name the copy will get.
+        const std::wstring& dir = source ? source_dir_ : destination_dir_;
+        const D2D1_COLOR_F faint = WithAlpha(theme.text, dark_ ? 0.42f : 0.48f);
+        const float ren = source ? weight_[3] : 0.0f;
+        if (ren > 0.01f && !conflict_.keep_both_name.empty()) {
+            DrawEllipsizedText(compositor_, meta_bold_format_.get(), Rect(s, cx + 12, y + 87, kCardW - 24, 17),
+                               l10n::Get(l10n::StringId::OpSaveAsLead) + conflict_.keep_both_name +
+                                   l10n::Get(l10n::StringId::OpQuoteClose),
+                               WithAlpha(violet, ren));
+            if (ren < 0.99f)
+                DrawEllipsizedText(compositor_, label_format_.get(), Rect(s, cx + 12, y + 88, kCardW - 24, 16),
+                                   dir, WithAlpha(faint, faint.a * (1.0f - ren)));
+        } else {
+            DrawEllipsizedText(compositor_, meta_format_.get(), Rect(s, cx + 12, y + 88, kCardW - 24, 16),
+                               dir, fade(faint));
+        }
+
+        // Result tag in the corner: 将被覆盖 on the destination, 不复制 on the source.
+        const float tag_alpha = source ? weight_[2] : weight_[1];
+        if (tag_alpha > 0.01f) {
+            const std::wstring text = source
+                ? l10n::Get(conflict_.type == ops::OpType::Move ? l10n::StringId::OpNotMoved : l10n::StringId::OpNotCopied)
+                : l10n::Get(l10n::StringId::OpWillBeReplaced);
+            const float w = TextWidth(compositor_.DwriteFactory(), tiny_format_.get(), text) / s + 14.0f;
+            const float lift = 3.0f * (1.0f - tag_alpha);
+            const auto tag = Rect(s, cx + kCardW - 10 - w, y + 9 - lift, w, 18);
+            painter_.FillRoundedRect(tag, ScaleDip(s, 5.0f),
+                source ? WithAlpha(dark_ ? HexColor(0x3A3A3E) : HexColor(0xE2E2E6), tag_alpha)
+                       : WithAlpha(red, tag_alpha));
+            painter_.DrawText(text, tag, tiny_format_.get(),
+                              WithAlpha(source ? theme.text : HexColor(0xFFFFFF), tag_alpha),
+                              fluent::HorizontalAlignment::Center);
+        }
+    }
+
+    void DrawAction(const Theme& theme, int index, const std::wstring& title, const std::wstring& subtitle,
+                    const wchar_t* glyph, D2D1_COLOR_F tone, const wchar_t* key, const std::wstring& recommend) {
+        const float s = scale_;
+        const auto bounds = ActionRect(index);
+        const bool hovered = hover_ == index + 1;
+        const bool pressed = pressed_ == index + 1;
+        const bool focused = keyboard_focus_ && focus_ == index;
+        const D2D1_COLOR_F well = dark_ ? HexColor(0xFFFFFF, hovered ? 0.085f : 0.045f)
+                                        : HexColor(0x000000, hovered ? 0.07f : 0.035f);
+        D2D1_RECT_F box = bounds;
+        if (pressed) {
+            const float inset = ScaleDip(s, 1.5f);
+            box = D2D1::RectF(box.left + inset, box.top + inset * 0.5f, box.right - inset, box.bottom - inset * 0.5f);
+        }
+        painter_.FillRoundedRect(box, ScaleDip(s, 10.0f), well);
+        painter_.StrokeRoundedRect(box, ScaleDip(s, 10.0f),
+            focused ? (dark_ ? HexColor(0x8F9CF0) : theme.accent)
+                    : (dark_ ? HexColor(0xFFFFFF, 0.07f) : HexColor(0x000000, 0.07f)),
+            focused ? 1.5f * s : 1.0f);
+        const float y = kActionsTop + index * (kActionH + 6.0f);
+        const auto icon = Rect(s, 32, y + 11, 30, 30);
+        painter_.FillRoundedRect(icon, ScaleDip(s, 9.0f), WithAlpha(tone, dark_ ? 0.16f : 0.13f));
+        painter_.DrawText(glyph, icon, glyph_format_.get(), tone, fluent::HorizontalAlignment::Center);
+        const float title_w = TextWidth(compositor_.DwriteFactory(), name_format_.get(), title) / s;
+        painter_.DrawText(title, Rect(s, 74, y + 8, title_w + 2, 20), name_format_.get(), theme.text);
+        if (!recommend.empty()) {
+            const D2D1_COLOR_F green = dark_ ? HexColor(0x3CCF8E) : HexColor(0x16A36A);
+            const float w = TextWidth(compositor_.DwriteFactory(), tiny_format_.get(), recommend) / s + 14.0f;
+            const auto chip = Rect(s, 74 + title_w + 8, y + 9, w, 18);
+            painter_.FillRoundedRect(chip, ScaleDip(s, 9.0f), WithAlpha(green, dark_ ? 0.16f : 0.12f));
+            painter_.DrawText(recommend, chip, tiny_format_.get(), green, fluent::HorizontalAlignment::Center);
+        }
+        DrawEllipsizedText(compositor_, meta_format_.get(), Rect(s, 74, y + 28, kConflictW - 40 - 54 - 56, 17),
+                           subtitle, theme.text_secondary);
+        painter_.DrawBadge({ Rect(s, kConflictW - 20 - 12 - 28, y + 15, 28, 22), key, fluent::BadgeKind::Keycap });
     }
 
     void Render() {
@@ -489,88 +774,114 @@ private:
             compositor_.RecreateTextFormats(scale_);
             painter_.SetCompositor(&compositor_);
             painter_.SetScale(scale_);
+            CreateFormats();
         }
         if (!compositor_.Dc()) return;
+        if (!head_format_.get()) CreateFormats();
+        const float s = scale_;
         const bool high_contrast = IsHighContrast();
         const Theme theme = high_contrast ? MakeHighContrastTheme() : MakeTheme(dark_, accent_);
-        pulse::ui::BeginSurface(compositor_, painter_, theme, dark_, high_contrast, backdrop_enabled_,
-                     scale_);
+        pulse::ui::BeginSurface(compositor_, painter_, theme, dark_, high_contrast, backdrop_enabled_, s);
+        const D2D1_COLOR_F violet = dark_ ? HexColor(0xA78BFA) : HexColor(0x7C5CE6);
+        const D2D1_COLOR_F green = dark_ ? HexColor(0x3CCF8E) : HexColor(0x16A36A);
+        const D2D1_COLOR_F sky = dark_ ? HexColor(0x38BDF8) : HexColor(0x0284C7);
+        const D2D1_COLOR_F faint = WithAlpha(theme.text, dark_ ? 0.42f : 0.48f);
+        const bool moving = conflict_.type == ops::OpType::Move;
 
-        painter_.DrawGlyph(L"\xE8C8", Rect(scale_, 14, 11, 22, 22), theme.accent);
-        painter_.DrawText(l10n::Get(l10n::StringId::OpConflictTitle).c_str(), Rect(scale_, 42, 0, 260, 44),
-                          compositor_.SmallFormat(), theme.text);
+        // Title strip.
+        painter_.DrawText(l10n::Get(l10n::StringId::OpConflictTitle), Rect(s, 16, 0, 300, 40),
+                          compositor_.SmallFormat(), theme.text_secondary);
         fluent::ControlState close_state{};
         close_state.hovered = hover_ == 7;
         close_state.pressed = pressed_ == 7;
-        painter_.DrawTitleBarButton(CloseRect(), fluent::TitleBarButtonRole::Close,
-                                    {}, close_state);
-        painter_.FillRoundedRect(Rect(scale_, 0, 43, 480, 1), 0, theme.stroke_divider);
+        painter_.DrawTitleBarButton(CloseRect(), fluent::TitleBarButtonRole::Close, {}, close_state);
 
-        const std::wstring route = ParentName(conflict_.source) + L"  →  "
-                                 + ParentName(conflict_.destination);
-        painter_.DrawBadge({ Rect(scale_, 20, 58, 250, 24), route,
-                             fluent::BadgeKind::Neutral });
-        const std::wstring headline = l10n::Get(l10n::StringId::OpConflictLead).c_str() + LeafName(conflict_.destination) + L"”";
-        painter_.DrawText(headline, Rect(scale_, 20, 84, 440, 30),
-                          compositor_.HeaderFormat(), theme.text);
-
-        DrawCard(theme, 0, l10n::Get(l10n::StringId::OpReplaceFile).c_str(), l10n::Get(l10n::StringId::OpReplaceDesc).c_str(),
-                 L"\xE73E", HexColor(0x107C10), L"Alt+R");
-        DrawCard(theme, 1, l10n::Get(l10n::StringId::OpSkipFile).c_str(), l10n::Get(l10n::StringId::OpSkipDesc).c_str(),
-                 L"\xE72A", HexColor(0x0078D4), L"Alt+S");
-        DrawCard(theme, 2, l10n::Get(l10n::StringId::OpKeepBoth).c_str(), l10n::Get(l10n::StringId::OpKeepBothDesc).c_str(),
-                 L"\xE8C8", HexColor(0x6B69D6), L"Alt+K");
-
-        if (conflict_.remaining > 1) {
-            fluent::ControlState check{};
-            check.checked = apply_all_;
-            check.hovered = hover_ == 4;
-            check.focused = focus_ == 3;
-            const std::wstring label = l10n::Get(l10n::StringId::OpApplyLead).c_str() + std::to_wstring(conflict_.remaining)
-                                     + l10n::Get(l10n::StringId::OpApplyEnd).c_str();
-            painter_.DrawCheckBox(CheckRect(), label, check);
+        // Header: tile, headline, where it happened, n / m.
+        const auto tile = Rect(s, 20, 46, 38, 38);
+        painter_.FillRoundedRect(tile, ScaleDip(s, 11.0f), WithAlpha(violet, dark_ ? 0.16f : 0.13f));
+        painter_.DrawText(L"\xE8AB", tile, big_glyph_format_.get(), violet, fluent::HorizontalAlignment::Center);
+        float head_right = kConflictW - 20.0f;
+        if (Total() > 1) {
+            const std::wstring count = l10n::Get(l10n::StringId::OpConflictCountLead) +
+                pulse::format::GroupedInt(Ordinal()) + l10n::Get(l10n::StringId::OpConflictCountSep) +
+                pulse::format::GroupedInt(Total()) + l10n::Get(l10n::StringId::OpConflictCountEnd);
+            const float w = TextWidth(compositor_.DwriteFactory(), tiny_format_.get(), count) / s + 18.0f;
+            const auto chip = Rect(s, kConflictW - 20 - w, 54, w, 22);
+            painter_.FillRoundedRect(chip, ScaleDip(s, 11.0f), WithAlpha(violet, dark_ ? 0.16f : 0.12f));
+            painter_.DrawText(count, chip, tiny_format_.get(), violet, fluent::HorizontalAlignment::Center);
+            head_right = kConflictW - 20 - w - 10;
         }
-        painter_.FillRoundedRect(Rect(scale_, 0, details_ ? 474.0f : 360.0f, 480, 1), 0,
-                                 theme.stroke_divider);
-        fluent::ControlState detail_state{};
-        detail_state.hovered = hover_ == 5;
-        detail_state.focused = focus_ == (conflict_.remaining > 1 ? 4 : 3);
-        painter_.DrawButton({ DetailRect(), details_ ? l10n::Get(l10n::StringId::OpBrief).c_str() : l10n::Get(l10n::StringId::OpMore).c_str(),
-                              details_ ? L"\xE70E" : L"\xE70D",
-                              fluent::ButtonKind::Transparent, detail_state });
+        DrawEllipsizedText(compositor_, head_format_.get(), Rect(s, 70, 44, head_right - 70, 24),
+                           l10n::Get(l10n::StringId::OpConflictLead) + LeafName(conflict_.destination) +
+                               l10n::Get(l10n::StringId::OpQuoteClose), theme.text);
+        const std::wstring where = l10n::Get(moving ? l10n::StringId::OpConflictWhileMove
+                                                    : l10n::StringId::OpConflictWhileCopy) +
+            LeafName(source_dir_) + L" \x2192 " + LeafName(destination_dir_) +
+            l10n::Get(l10n::StringId::OpConflictWhileEnd);
+        DrawEllipsizedText(compositor_, meta_format_.get(), Rect(s, 70, 67, head_right - 70, 18), where,
+                           theme.text_secondary);
+
+        // Side-by-side comparison with the vs marker between.
+        DrawCompareCard(theme, 0);
+        DrawCompareCard(theme, 1);
+        const auto vs = Rect(s, kConflictW * 0.5f - 13, kCompareTop + kCompareH * 0.5f - 13, 26, 26);
+        painter_.FillRoundedRect(vs, ScaleDip(s, 13.0f), dark_ ? HexColor(0xFFFFFF, 0.08f) : HexColor(0x000000, 0.06f));
+        painter_.DrawText(L"\xE8AB", vs, glyph_format_.get(), faint, fluent::HorizontalAlignment::Center);
+
+        // Choices.
+        const bool files = Files();
+        std::wstring replace_sub = l10n::Get(l10n::StringId::OpReplaceDesc);
+        if (files)
+            replace_sub = l10n::Get(l10n::StringId::OpReplaceUseLead) + pulse::format::ByteSize(conflict_.source_size) +
+                l10n::Get(l10n::StringId::OpReplaceUseMid) + pulse::format::ByteSize(conflict_.destination_size) +
+                l10n::Get(l10n::StringId::OpReplaceUseEnd);
+        const std::wstring keep_sub = conflict_.keep_both_name.empty()
+            ? l10n::Get(l10n::StringId::OpKeepBothDesc)
+            : l10n::Get(l10n::StringId::OpKeepNameLead) + conflict_.keep_both_name + l10n::Get(l10n::StringId::OpQuoteClose);
+        DrawAction(theme, 0, l10n::Get(l10n::StringId::OpReplaceFile), replace_sub, L"\xE8EE", green, L"R",
+                   files && SourceNewer() ? l10n::Get(l10n::StringId::OpRecommendNewer) : std::wstring());
+        DrawAction(theme, 1, l10n::Get(l10n::StringId::OpSkipFile), l10n::Get(l10n::StringId::OpSkipDesc),
+                   L"\xE893", sky, L"S", {});
+        DrawAction(theme, 2, l10n::Get(l10n::StringId::OpKeepBoth), keep_sub, L"\xE8C8", violet, L"K", {});
+
+        if (ShowsApplyAll()) {
+            fluent::ControlState toggle{};
+            toggle.checked = apply_all_;
+            toggle.hovered = hover_ == 4;
+            toggle.focused = keyboard_focus_ && focus_ == 3;
+            toggle.keyboard_focus = toggle.focused;
+            const std::wstring label = l10n::Get(l10n::StringId::OpApplyRestLead) +
+                pulse::format::GroupedInt(conflict_.remaining - 1) + l10n::Get(l10n::StringId::OpApplyRestEnd);
+            painter_.DrawSwitch(ApplyRect(), label, toggle);
+        }
+
+        // Footer.
+        const float footer_top = (HeightDip() - kFooterH) * s;
+        RECT client{};
+        GetClientRect(hwnd_, &client);
+        const float width = static_cast<float>(client.right);
+        const float height = static_cast<float>(client.bottom);
+        painter_.FillRoundedRect(D2D1::RectF(0, footer_top, width, height), 0,
+                                 dark_ ? HexColor(0x000000, 0.16f) : HexColor(0x000000, 0.03f));
+        painter_.FillRoundedRect(D2D1::RectF(0, footer_top, width, footer_top + 1.0f), 0, theme.stroke_divider);
+        painter_.DrawText(l10n::Get(l10n::StringId::OpHoverPreviewHint),
+                          Rect(s, 20, HeightDip() - kFooterH, 300, kFooterH), meta_format_.get(), faint);
         fluent::ControlState cancel_state{};
         cancel_state.hovered = hover_ == 6;
         cancel_state.pressed = pressed_ == 6;
-        cancel_state.focused = focus_ == (conflict_.remaining > 1 ? 5 : 4);
-        painter_.DrawButton({ CancelRect(), l10n::Get(l10n::StringId::Cancel).c_str(), {}, fluent::ButtonKind::Standard,
+        cancel_state.focused = keyboard_focus_ && focus_ == (ShowsApplyAll() ? 4 : 3);
+        painter_.DrawButton({ CancelRect(), l10n::Get(l10n::StringId::Cancel), {}, fluent::ButtonKind::Standard,
                               cancel_state });
-
-        if (details_) {
-            const float top = 326.0f;
-            painter_.FillRoundedRect(Rect(scale_, 20, top, 440, 104), 7 * scale_,
-                                     dark_ ? HexColor(0x161616, 0.62f) : HexColor(0xFFFFFF, 0.62f));
-            painter_.StrokeRoundedRect(Rect(scale_, 20, top, 440, 104), 7 * scale_, theme.stroke_card);
-            painter_.DrawText(l10n::Get(l10n::StringId::OpSource).c_str(), Rect(scale_, 32, top + 8, 190, 20),
-                              compositor_.SmallFormat(), theme.accent);
-            painter_.DrawText(l10n::Get(l10n::StringId::OpExisting).c_str(), Rect(scale_, 252, top + 8, 190, 20),
-                              compositor_.SmallFormat(), theme.text_secondary);
-            const std::wstring source_meta = pulse::format::ByteSize(conflict_.source_size) + L"  ·  "
-                                           + pulse::format::LocalFileTime(conflict_.source_modified, l10n::Get(l10n::StringId::OpUnknown).c_str());
-            const std::wstring target_meta = pulse::format::ByteSize(conflict_.destination_size) + L"  ·  "
-                                           + pulse::format::LocalFileTime(conflict_.destination_modified, l10n::Get(l10n::StringId::OpUnknown).c_str());
-            painter_.DrawText(source_meta, Rect(scale_, 32, top + 30, 198, 20),
-                              compositor_.SmallFormat(), theme.text);
-            painter_.DrawText(target_meta, Rect(scale_, 252, top + 30, 196, 20),
-                              compositor_.SmallFormat(), theme.text);
-            painter_.DrawText(conflict_.source, Rect(scale_, 32, top + 55, 198, 38),
-                              compositor_.SmallFormat(), theme.text_secondary);
-            painter_.DrawText(conflict_.destination, Rect(scale_, 252, top + 55, 196, 38),
-                              compositor_.SmallFormat(), theme.text_secondary);
-        }
-        // The paths are cut to their boxes; hovering one shows it whole (#55).
-        SetPathTip(1, details_ ? Rect(scale_, 32, 326.0f + 55, 198, 38) : D2D1_RECT_F{});
-        SetPathTip(2, details_ ? Rect(scale_, 252, 326.0f + 55, 196, 38) : D2D1_RECT_F{});
+        // Paths are cut to their line; hovering one shows it whole (#55).
+        SetPathTip(1, PathRect(0));
+        SetPathTip(2, PathRect(1));
         pulse::ui::EndSurface(compositor_);
+    }
+
+    void Choose(int index) {
+        Complete(index == 0 ? ops::ConflictChoice::Replace
+                 : index == 1 ? ops::ConflictChoice::Skip
+                              : ops::ConflictChoice::KeepBoth);
     }
 
     LRESULT Handle(UINT message, WPARAM wparam, LPARAM lparam) {
@@ -582,12 +893,16 @@ private:
             compositor_.RecreateTextFormats(scale_);
             painter_.SetCompositor(&compositor_);
             painter_.SetScale(scale_);
+            CreateFormats();
             CreatePathTips();
+            // R / S / K are shortcuts here, not text: keep a Chinese IME from
+            // swallowing them as composition (they would only work with Alt).
+            ImmAssociateContextEx(hwnd_, nullptr, 0);
             return 0;
         case WM_NCCALCSIZE:
             return 0;
         case WM_NCHITTEST:
-            return pulse::ui::BorderlessHitTest(hwnd_, lparam, 44 * scale_, CloseRect());
+            return pulse::ui::BorderlessHitTest(hwnd_, lparam, 40 * scale_, CloseRect());
         case WM_SIZE:
             if (compositor_.Dc()) compositor_.Resize(LOWORD(lparam), HIWORD(lparam));
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -600,29 +915,34 @@ private:
             scale_ = HIWORD(wparam) / 96.0f;
             compositor_.RecreateTextFormats(scale_);
             painter_.SetScale(scale_);
+            CreateFormats();
             const auto* suggested = reinterpret_cast<RECT*>(lparam);
             SetWindowPos(hwnd_, nullptr, suggested->left, suggested->top,
                          suggested->right - suggested->left, suggested->bottom - suggested->top,
                          SWP_NOZORDER | SWP_NOOWNERZORDER);
             return 0;
         }
+        case WM_TIMER:
+            if (wparam == kAnimTimer) { Animate(); return 0; }
+            break;
         case WM_MOUSEMOVE: {
             const int next = Hit(static_cast<float>(GET_X_LPARAM(lparam)),
                                  static_cast<float>(GET_Y_LPARAM(lparam)));
-            if (next != hover_) { hover_ = next; InvalidateRect(hwnd_, nullptr, FALSE); }
+            if (next != hover_) { hover_ = next; Kick(); }
             TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, hwnd_, 0 };
             TrackMouseEvent(&track);
             return 0;
         }
         case WM_MOUSELEAVE:
             hover_ = 0;
-            InvalidateRect(hwnd_, nullptr, FALSE);
+            Kick();
             return 0;
         case WM_LBUTTONDOWN:
             pressed_ = Hit(static_cast<float>(GET_X_LPARAM(lparam)),
                            static_cast<float>(GET_Y_LPARAM(lparam)));
+            keyboard_focus_ = false;
             SetCapture(hwnd_);
-            InvalidateRect(hwnd_, nullptr, FALSE);
+            Kick(); // a focus preview fades once the mouse takes over
             return 0;
         case WM_LBUTTONUP: {
             const int hit = Hit(static_cast<float>(GET_X_LPARAM(lparam)),
@@ -631,46 +951,49 @@ private:
             pressed_ = 0;
             ReleaseCapture();
             if (hit == pressed) {
-                if (hit >= 1 && hit <= 3) {
-                    focus_ = hit - 1;
-                    Complete(hit == 1 ? ops::ConflictChoice::Replace
-                             : hit == 2 ? ops::ConflictChoice::Skip
-                                        : ops::ConflictChoice::KeepBoth);
-                } else if (hit == 4) apply_all_ = !apply_all_;
-                else if (hit == 5) ToggleDetails();
-                else if (hit == 6 || hit == 7) Complete(ops::ConflictChoice::Cancel);
+                if (hit >= 1 && hit <= 3) { focus_ = hit - 1; Choose(hit - 1); return 0; }
+                if (hit == 4) apply_all_ = !apply_all_;
+                else if (hit == 6 || hit == 7) { Complete(ops::ConflictChoice::Cancel); return 0; }
             }
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
-        case WM_KEYDOWN:
-            if (GetKeyState(VK_MENU) < 0) {
-                if (wparam == 'R') { Complete(ops::ConflictChoice::Replace); return 0; }
-                if (wparam == 'S') { Complete(ops::ConflictChoice::Skip); return 0; }
-                if (wparam == 'K') { Complete(ops::ConflictChoice::KeepBoth); return 0; }
+        case WM_KEYDOWN: {
+            if (wparam == VK_PROCESSKEY) {
+                const UINT vk = ImmGetVirtualKey(hwnd_);
+                if (vk && vk != VK_PROCESSKEY) wparam = vk;
             }
+            if (wparam == 'R') { Choose(0); return 0; }
+            if (wparam == 'S') { Choose(1); return 0; }
+            if (wparam == 'K') { Choose(2); return 0; }
             if (wparam == VK_ESCAPE) { Complete(ops::ConflictChoice::Cancel); return 0; }
-            if (wparam == VK_TAB) {
-                const int count = conflict_.remaining > 1 ? 6 : 5;
-                focus_ = (focus_ + (GetKeyState(VK_SHIFT) < 0 ? count - 1 : 1)) % count;
-                InvalidateRect(hwnd_, nullptr, FALSE);
+            const int count = ShowsApplyAll() ? 5 : 4;
+            if (wparam == VK_TAB || wparam == VK_DOWN || wparam == VK_UP) {
+                const bool back = wparam == VK_UP || (wparam == VK_TAB && GetKeyState(VK_SHIFT) < 0);
+                if (keyboard_focus_) focus_ = (focus_ + (back ? count - 1 : 1)) % count;
+                keyboard_focus_ = true;
+                Kick();
                 return 0;
             }
             if (wparam == VK_RETURN || wparam == VK_SPACE) {
-                if (focus_ <= 2) Complete(focus_ == 0 ? ops::ConflictChoice::Replace
-                                         : focus_ == 1 ? ops::ConflictChoice::Skip
-                                                       : ops::ConflictChoice::KeepBoth);
-                else if (focus_ == 3 && conflict_.remaining > 1) apply_all_ = !apply_all_;
-                else if (focus_ == (conflict_.remaining > 1 ? 4 : 3)) ToggleDetails();
-                else Complete(ops::ConflictChoice::Cancel);
+                if (focus_ <= 2) { Choose(focus_); return 0; }
+                if (focus_ == 3 && ShowsApplyAll()) apply_all_ = !apply_all_;
+                else { Complete(ops::ConflictChoice::Cancel); return 0; }
+                keyboard_focus_ = true;
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return 0;
             }
             break;
+        }
+        case WM_ACTIVATE:
+            if (LOWORD(wparam) != WA_INACTIVE) SetFocus(hwnd_);
+            return 0;
         case WM_SYSKEYDOWN:
-            if (wparam == 'R') { Complete(ops::ConflictChoice::Replace); return 0; }
-            if (wparam == 'S') { Complete(ops::ConflictChoice::Skip); return 0; }
-            if (wparam == 'K') { Complete(ops::ConflictChoice::KeepBoth); return 0; }
+            // No focus: plain keys arrive here with the Alt bit clear.
+            if (!(lparam & (1 << 29)) && wparam != VK_F10) return Handle(WM_KEYDOWN, wparam, lparam);
+            if (wparam == 'R') { Choose(0); return 0; }
+            if (wparam == 'S') { Choose(1); return 0; }
+            if (wparam == 'K') { Choose(2); return 0; }
             break;
         case WM_CLOSE:
             Complete(ops::ConflictChoice::Cancel);
@@ -685,6 +1008,7 @@ private:
         case WM_ERASEBKGND:
             return 1;
         case WM_DESTROY:
+            KillTimer(hwnd_, kAnimTimer);
             compositor_.Shutdown();
             done_ = true;
             return 0;
@@ -726,19 +1050,32 @@ private:
     HWND owner_ = nullptr;
     HWND tooltip_ = nullptr;
     Compositor compositor_;
-    fluent::Painter painter_;
+    fluent::Painter painter_{ &compositor_ };
     ops::ConflictItemInfo conflict_;
+    std::wstring source_dir_;
+    std::wstring destination_dir_;
     ConflictDialogResult result_;
     D2D1_COLOR_F accent_ = HexColor(0x0078D4);
     float scale_ = 1.0f;
     bool dark_ = false;
     bool backdrop_enabled_ = false;
-    bool details_ = false;
     bool apply_all_ = false;
     bool done_ = false;
+    bool keyboard_focus_ = false;
     int hover_ = 0;
     int pressed_ = 0;
     int focus_ = 0;
+    float weight_[4] = {};
+    ULONGLONG anim_tick_ = 0;
+    ComPtr<IDWriteTextFormat> head_format_;
+    ComPtr<IDWriteTextFormat> name_format_;
+    ComPtr<IDWriteTextFormat> meta_format_;
+    ComPtr<IDWriteTextFormat> meta_bold_format_;
+    ComPtr<IDWriteTextFormat> label_format_;
+    ComPtr<IDWriteTextFormat> tiny_format_;
+    ComPtr<IDWriteTextFormat> ext_format_;
+    ComPtr<IDWriteTextFormat> glyph_format_;
+    ComPtr<IDWriteTextFormat> big_glyph_format_;
 };
 
 } // namespace

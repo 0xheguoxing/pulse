@@ -67,7 +67,10 @@ struct ConflictItemInfo {
     FILETIME destination_modified{};
     bool source_is_directory = false;
     bool destination_is_directory = false;
-    size_t remaining = 0;
+    size_t remaining = 0;     // conflicts still to come, this one included
+    size_t ordinal = 0;       // 1-based position among the conflicts asked so far (0 = unknown)
+    OpType type = OpType::Copy;
+    std::wstring keep_both_name; // leaf name 保留两者 would give the new copy
 };
 
 struct OpRequest {

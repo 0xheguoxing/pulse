@@ -2304,5 +2304,27 @@
 #define IDS_OP_AVERAGE_SPEED                                                             3568
 #define IDS_OP_PEAK_SPEED                                                                3569
 #define IDS_OP_CANCELLING                                                                3570
+#define IDS_OP_CONFLICT_WHILE_COPY                                                       3571
+#define IDS_OP_CONFLICT_WHILE_MOVE                                                       3572
+#define IDS_OP_CONFLICT_WHILE_END                                                        3573
+#define IDS_OP_QUOTE_CLOSE                                                               3574
+#define IDS_OP_CONFLICT_COUNT_LEAD                                                       3575
+#define IDS_OP_CONFLICT_COUNT_SEP                                                        3576
+#define IDS_OP_CONFLICT_COUNT_END                                                        3577
+#define IDS_OP_LARGER                                                                    3578
+#define IDS_OP_NEWER                                                                     3579
+#define IDS_OP_FOLDER_KIND                                                               3580
+#define IDS_OP_WILL_BE_REPLACED                                                          3581
+#define IDS_OP_NOT_COPIED                                                                3582
+#define IDS_OP_NOT_MOVED                                                                 3583
+#define IDS_OP_SAVE_AS_LEAD                                                              3584
+#define IDS_OP_RECOMMEND_NEWER                                                           3585
+#define IDS_OP_REPLACE_USE_LEAD                                                          3586
+#define IDS_OP_REPLACE_USE_MID                                                           3587
+#define IDS_OP_REPLACE_USE_END                                                           3588
+#define IDS_OP_KEEP_NAME_LEAD                                                            3589
+#define IDS_OP_APPLY_REST_LEAD                                                           3590
+#define IDS_OP_APPLY_REST_END                                                            3591
+#define IDS_OP_HOVER_PREVIEW_HINT                                                        3592
 
 #endif  // PULSE_STRING_IDS_H
