@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cmath>
 #include <deque>
+#include <map>
 #include <string>
 #include <thread>
 #include <vector>
@@ -46,6 +47,14 @@ constexpr float kItemTop = 198.0f;
 constexpr float kStatsTop = 226.0f;
 constexpr float kStatsH = 44.0f;
 constexpr float kDetailsTop = 280.0f;
+// Failed items (partial failure) are listed where the stats were; the stats
+// and details move down below the list.
+constexpr float kFailRowH = 36.0f;
+constexpr size_t kFailMaxRows = 4;
+constexpr float kFailMoreH = 22.0f;
+constexpr float kFailGap = 10.0f;
+constexpr int kHitOpen = 8;
+constexpr int kHitFailRow = 20;   // + visible row
 constexpr size_t kMaxGraphPoints = 240;
 constexpr size_t kTimeGraphPoints = 120;
 constexpr float kPi = 3.14159265f;
@@ -60,6 +69,7 @@ struct TransferChrome {
     D2D1_RECT_F cancel{};
     D2D1_RECT_F retry{};
     D2D1_RECT_F skip{};
+    D2D1_RECT_F open{};
 };
 
 struct TransferLabels {
@@ -75,6 +85,11 @@ struct TransferLabels {
     bool actions_enabled = true;   // false while a retry is in flight
     std::wstring retry_reserve;    // widest retry label, keeps the layout fixed
     bool show_pause = true;
+    // Partial failure: 打开目标文件夹, and the cancel slot becomes 重试失败项.
+    bool show_open = false;
+    std::wstring open;
+    bool cancel_primary = false;
+    bool cancel_retries = false;
 };
 
 // A pause shows from the click on: the worker reports Paused only at its next
@@ -90,7 +105,8 @@ bool PauseInFlight(const ops::OpStatus& status) {
     return status.phase != ops::OpPhase::Paused && ShowsPaused(status);
 }
 
-TransferLabels MakeTransferLabels(const ops::OpStatus& status, bool detailed) {
+TransferLabels MakeTransferLabels(const ops::OpStatus& status, bool detailed,
+                                  const TransferFailureView& partial = {}) {
     TransferLabels labels;
     labels.details = detailed ? l10n::Get(l10n::StringId::OpSummary)
                               : l10n::Get(l10n::StringId::OpDetails);
@@ -112,6 +128,13 @@ TransferLabels MakeTransferLabels(const ops::OpStatus& status, bool detailed) {
     labels.show_pause = !authorization && !emptying && status.active && status.can_pause;
     labels.cancel = status.active && !emptying
         ? l10n::Get(l10n::StringId::Cancel) : l10n::Get(l10n::StringId::Close);
+    if (partial.on && !status.active) {
+        labels.show_open = partial.can_open;
+        labels.open = l10n::Get(l10n::StringId::OpOpenDestination);
+        labels.cancel_retries = partial.can_retry;
+        labels.cancel_primary = partial.can_retry;
+        if (partial.can_retry) labels.cancel = l10n::Get(l10n::StringId::OpRetryFailedItems);
+    }
     return labels;
 }
 
@@ -140,6 +163,11 @@ TransferChrome MakeTransferChrome(float scale, float width, float height,
                                    chrome.cancel.left - gap, y1);
     }
     float next_right = chrome.cancel.left - gap;
+    if (labels.show_open) {
+        const float open_w = painter.MeasureButtonWidth(labels.open);
+        chrome.open = D2D1::RectF(next_right - open_w, y0, next_right, y1);
+        next_right = chrome.open.left - gap;
+    }
     if (labels.show_skip) {
         const float skip_w = painter.MeasureButtonWidth(labels.skip);
         chrome.skip = D2D1::RectF(next_right - skip_w, y0, next_right, y1);
@@ -925,7 +953,7 @@ private:
             const auto* suggested = reinterpret_cast<RECT*>(lparam);
             SetWindowPos(hwnd_, nullptr, suggested->left, suggested->top,
                          suggested->right - suggested->left, suggested->bottom - suggested->top,
-                         SWP_NOZORDER | SWP_NOOWNERZORDER);
+                         SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE);
             return 0;
         }
         case WM_TIMER:
@@ -2342,7 +2370,167 @@ void FileOperationWindow::CreateCardFormats() {
     if (tile_glyph_format_.get()) tile_glyph_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
 }
 
-void FileOperationWindow::Update(const ops::OpStatus& status) {
+namespace {
+bool IsPartialFailure(const ops::OpStatus& status) {
+    return !status.active && status.phase == ops::OpPhase::Failed &&
+           (status.type == ops::OpType::Copy || status.type == ops::OpType::Move) &&
+           status.failed_items > 0 && !status.failures.empty();
+}
+
+// "%s … %s" catalog text with grouped numbers.
+std::wstring FormatCounts(l10n::StringId id, uint64_t first, uint64_t second = 0) {
+    const std::wstring format = l10n::Get(id);
+    const std::wstring a = pulse::format::GroupedInt(first);
+    const std::wstring b = pulse::format::GroupedInt(second);
+    wchar_t text[256];
+    if (swprintf_s(text, format.c_str(), a.c_str(), b.c_str()) < 0) return a;
+    return text;
+}
+}  // namespace
+
+TransferFailureView FileOperationWindow::FailureView() const {
+    TransferFailureView view;
+    if (!board_) return view;
+    view.on = true;
+    view.can_open = !status_.destination_dir.empty() && callbacks_.open_folder != nullptr;
+    if (callbacks_.retry_failed)
+        view.can_retry = std::any_of(board_->rows.begin(), board_->rows.end(), [](const FailureRow& row) {
+            return row.state == FailureRow::State::Failed;
+        });
+    return view;
+}
+
+bool FileOperationWindow::TracksRetry(uint64_t task_id) const {
+    return board_ && task_id != 0 &&
+           std::find(board_->retry_tasks.begin(), board_->retry_tasks.end(), task_id) != board_->retry_tasks.end();
+}
+
+size_t FileOperationWindow::VisibleFailureRows() const {
+    return board_ ? (std::min)(board_->rows.size(), kFailMaxRows) : 0;
+}
+
+float FileOperationWindow::FailureBlockDip() const {
+    if (!board_) return 0.0f;
+    return static_cast<float>(VisibleFailureRows()) * kFailRowH +
+           (board_->unlisted > 0 ? kFailMoreH : 0.0f) + kFailGap;
+}
+
+// The task that failed, with what its retries have fixed since: once nothing
+// is left it reads as a success (and closes itself like one).
+ops::OpStatus FileOperationWindow::BoardStatus() const {
+    ops::OpStatus status = board_->status;
+    uint64_t failed = board_->unlisted;
+    for (const auto& row : board_->rows)
+        if (row.state != FailureRow::State::Done) ++failed;
+    status.failed_items = failed;
+    if (failed == 0) {
+        status.phase = ops::OpPhase::Completed;
+        status.last_error.clear();
+    }
+    return status;
+}
+
+void FileOperationWindow::RetryFailureRows(const std::vector<size_t>& rows) {
+    if (!board_ || !callbacks_.retry_failed) return;
+    std::map<uint64_t, std::vector<size_t>> by_task;   // origin task -> its indices
+    for (size_t r : rows) {
+        if (r >= board_->rows.size()) continue;
+        const FailureRow& row = board_->rows[r];
+        if (row.state == FailureRow::State::Failed) by_task[row.origin_task].push_back(row.origin_index);
+    }
+    for (const auto& [task, indices] : by_task) {
+        const auto spawns = callbacks_.retry_failed(task, indices);
+        for (const auto& spawn : spawns) {
+            board_->retry_tasks.push_back(spawn.task_id);
+            for (size_t index : spawn.items) {
+                for (auto& row : board_->rows) {
+                    if (row.state != FailureRow::State::Failed || row.origin_task != task ||
+                        row.origin_index != index) continue;
+                    row.retry_task = spawn.task_id;
+                    row.state = FailureRow::State::Retrying;
+                }
+            }
+        }
+    }
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void FileOperationWindow::FinishRetry(const ops::OpStatus& done) {
+    for (auto& row : board_->rows) {
+        // Only rows still waiting on it: the same finish arrives repeatedly.
+        if (row.state != FailureRow::State::Retrying || row.retry_task != done.task_id) continue;
+        row.retry_task = 0;
+        const auto found = std::find_if(done.failures.begin(), done.failures.end(), [&](const ops::OpFailure& failure) {
+            return _wcsicmp(failure.source.c_str(), row.failure.source.c_str()) == 0;
+        });
+        if (done.phase == ops::OpPhase::Completed) {
+            row.state = FailureRow::State::Done;
+        } else if (found != done.failures.end()) {
+            // Failed again: its next retry goes through the retry's list.
+            row.failure = *found;
+            row.origin_task = done.task_id;
+            row.origin_index = static_cast<size_t>(found - done.failures.begin());
+            row.state = FailureRow::State::Failed;
+        } else if (done.failed_items == 0) {
+            // The retry stopped as a whole (or was cancelled).
+            row.state = FailureRow::State::Failed;
+            if (!done.last_error.empty()) {
+                const size_t bar = done.last_error.rfind(L" | ");
+                row.failure.reason = l10n::ServiceErrorText(
+                    bar == std::wstring::npos ? done.last_error : done.last_error.substr(0, bar));
+            }
+        } else {
+            row.state = FailureRow::State::Done;
+        }
+    }
+}
+
+void FileOperationWindow::Update(const ops::OpStatus& incoming) {
+    ops::OpStatus status = incoming;
+    const bool had_board = board_.has_value();
+    if (board_) {
+        const bool spawned = incoming.task_id != 0 &&
+            std::find(board_->retry_tasks.begin(), board_->retry_tasks.end(), incoming.task_id) !=
+                board_->retry_tasks.end();
+        if (spawned || incoming.task_id == board_->task_id) {
+            if (spawned && !incoming.active && (incoming.phase == ops::OpPhase::Completed ||
+                                                incoming.phase == ops::OpPhase::Failed))
+                FinishRetry(incoming);
+            // Retries that finished while another one was being reported.
+            if (callbacks_.task_outcome) {
+                std::vector<uint64_t> waiting;
+                for (const auto& row : board_->rows)
+                    if (row.state == FailureRow::State::Retrying && row.retry_task != incoming.task_id &&
+                        std::find(waiting.begin(), waiting.end(), row.retry_task) == waiting.end())
+                        waiting.push_back(row.retry_task);
+                for (uint64_t task : waiting)
+                    if (const auto outcome = callbacks_.task_outcome(task))
+                        if (!outcome->active) FinishRetry(*outcome);
+            }
+            status = BoardStatus();
+        } else {
+            board_.reset();
+            board_scroll_ = 0;
+            failure_buttons_.clear();
+        }
+    }
+    if (!board_ && IsPartialFailure(status)) {
+        FailureBoard board;
+        board.task_id = status.task_id;
+        board.status = status;
+        for (size_t i = 0; i < status.failures.size(); ++i) {
+            FailureRow row;
+            row.failure = status.failures[i];
+            row.origin_task = status.task_id;
+            row.origin_index = i;
+            board.rows.push_back(std::move(row));
+        }
+        board.unlisted = status.failed_items > status.failures.size()
+            ? status.failed_items - status.failures.size() : 0;
+        board_ = std::move(board);
+        board_scroll_ = 0;
+    }
+    if (had_board != board_.has_value()) ResizeForDetails(false);
     const bool new_task = status.task_id != status_.task_id;
     const ULONGLONG now = GetTickCount64();
     if (!new_task && status.active && status_.active) {
@@ -2455,20 +2643,25 @@ void FileOperationWindow::ResizeForDetails(bool preserve_center) {
     GetWindowRect(hwnd_, &rect);
     const int width = rect.right - rect.left;
     const int old_height = rect.bottom - rect.top;
-    const int height = static_cast<int>((detailed_ ? kDetailedH : kCollapsedH) * scale_);
+    const int height = static_cast<int>(((detailed_ ? kDetailedH : kCollapsedH) + FailureBlockDip()) * scale_);
     const int y = preserve_center ? rect.top - (height - old_height) / 2 : rect.top;
     SetWindowPos(hwnd_, nullptr, rect.left, y, width, height,
-                 SWP_NOZORDER | SWP_NOOWNERZORDER);
+                 SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE);
 }
 
 int FileOperationWindow::HitTestControl(float x, float y) const {
     if (closing_) return 0;
-    const auto labels = MakeTransferLabels(status_, detailed_);
+    const auto labels = MakeTransferLabels(status_, detailed_, FailureView());
     const auto chrome = MakeTransferChrome(scale_,
         static_cast<float>(compositor_.Width()), static_cast<float>(compositor_.Height()),
         painter_, labels);
     if (pulse::ui::ContainsRect(chrome.close, x, y)) return 1;
     if (pulse::ui::ContainsRect(chrome.minimize, x, y)) return 2;
+    if (board_ && !status_.active) {
+        for (const auto& [row, bounds] : failure_buttons_)
+            if (pulse::ui::ContainsRect(bounds, x, y)) return kHitFailRow + static_cast<int>(row);
+    }
+    if (labels.show_open && pulse::ui::ContainsRect(chrome.open, x, y)) return kHitOpen;
     if (labels.show_retry && labels.actions_enabled && pulse::ui::ContainsRect(chrome.retry, x, y)) return 6;
     if (labels.show_skip && labels.actions_enabled && pulse::ui::ContainsRect(chrome.skip, x, y)) return 7;
     if (labels.show_pause && pulse::ui::ContainsRect(chrome.pause, x, y)) return 3;
@@ -2594,7 +2787,7 @@ void FileOperationWindow::Render() {
     const float dip_h = height / std::max(s, 0.001f);
     const float content_w = dip_w - kPadX * 2.0f;
     auto* factory = compositor_.DwriteFactory();
-    const auto labels = MakeTransferLabels(status_, detailed_);
+    const auto labels = MakeTransferLabels(status_, detailed_, FailureView());
     const auto chrome = MakeTransferChrome(s, width, height, painter_, labels);
     const ULONGLONG now = GetTickCount64();
 
@@ -2607,6 +2800,10 @@ void FileOperationWindow::Render() {
     const bool scanning = status_.phase == ops::OpPhase::Scanning;
     const bool completed = status_.phase == ops::OpPhase::Completed && !failed;
     const bool cancelling = status_.phase == ops::OpPhase::Cancelling;
+    // Partial failure: the rest went through, the failed items are listed.
+    const bool partial = failed && board_.has_value();
+    const uint64_t partial_failed = partial ? status_.failed_items : 0;
+    const uint64_t partial_done = status_.total_items > partial_failed ? status_.total_items - partial_failed : 0;
     const bool moving = status_.type == ops::OpType::Move;
     const bool deleting = status_.type == ops::OpType::RecycleDelete
                        || status_.type == ops::OpType::RealDelete;
@@ -2682,6 +2879,9 @@ void FileOperationWindow::Render() {
     } else if (!paused && !scanning && (creating || renaming)) {
         title = l10n::Get(creating ? l10n::StringId::OpCreatingPrefix : l10n::StringId::OpRenamingPrefix) +
             pulse::format::GroupedInt(item_count) + items_suffix;
+    } else if (partial) {
+        title = FormatCounts(moving ? l10n::StringId::OpMovePartialTitle : l10n::StringId::OpCopyPartialTitle,
+                             partial_done, partial_failed);
     } else if (failed) {
         title = l10n::Get(deleting ? l10n::StringId::OpDeleteFailed : restoring ? l10n::StringId::OpRestoreFailed
             : moving ? l10n::StringId::OpMoveFailed : l10n::StringId::OpCopyFailed);
@@ -2779,6 +2979,7 @@ void FileOperationWindow::Render() {
     std::wstring chip_text;
     if (authorization) chip_text = l10n::Get(requesting ? l10n::StringId::OpAuthorizationRequesting
                                                          : l10n::StringId::OpAuthorizationRequired);
+    else if (partial) chip_text = l10n::Get(l10n::StringId::OpPartialBadge);
     else if (failed) chip_text = l10n::Get(l10n::StringId::OpFailedBadge);
     else if (completed) chip_text = l10n::Get(emptying ? l10n::StringId::OpEmptied : l10n::StringId::OpCompleted);
     else if (cancelling) chip_text = l10n::Get(l10n::StringId::OpCancelling);
@@ -2825,7 +3026,7 @@ void FileOperationWindow::Render() {
         std::wstring big;
         std::wstring sub;
         D2D1_COLOR_F big_color = theme.text;
-        if (completed) {
+        if (completed || partial) {
             big = average > 0.0 ? l10n::Get(l10n::StringId::OpAverageLead) + FormatSpeedText(shown_basis, average)
                                 : std::wstring();
             sub = l10n::Get(l10n::StringId::OpTookLead) + FormatElapsed(elapsed_ms / 1000);
@@ -2945,7 +3146,11 @@ void FileOperationWindow::Render() {
         std::wstring item_line;
         D2D1_COLOR_F item_color = theme.text;
         const wchar_t* item_glyph = L"\xE8A5";
-        if (failed) {
+        if (partial) {
+            item_line = FormatCounts(l10n::StringId::OpPartialLine, partial_done, partial_failed);
+            item_color = theme.danger;
+            item_glyph = L"\xE783";
+        } else if (failed) {
             // pulse_shell errors are Simplified; known messages are localized and
             // file names are kept as they are on disk.
             item_line = status_.last_error.empty() ? l10n::Get(l10n::StringId::OpFailed)
@@ -2980,6 +3185,88 @@ void FileOperationWindow::Render() {
             painter_.DrawText(counter, Rect(s, dip_w - kPadX - counter_w, kItemTop, counter_w, 20),
                               label_format_.get(), theme.text_secondary, fluent::HorizontalAlignment::Right);
 
+        // --- Failed items (partial failure) ----------------------------------
+        const float fail_block = FailureBlockDip();
+        failure_buttons_.clear();
+        if (board_) {
+            const float list_top = kStatsTop;
+            const size_t visible = VisibleFailureRows();
+            board_scroll_ = (std::min)(board_scroll_, board_->rows.size() - visible);
+            const float list_h = static_cast<float>(visible) * kFailRowH +
+                                 (board_->unlisted > 0 ? kFailMoreH : 0.0f);
+            const auto box = Rect(s, kPadX, list_top, content_w, list_h);
+            const D2D1_COLOR_F bad = theme.danger;
+            // Everything retried: the list turns to the success tone.
+            const bool board_done = status_.failed_items == 0;
+            painter_.FillRoundedRect(box, ScaleDip(s, 9.0f),
+                                     WithAlpha(board_done ? green : bad, board_done ? (dark_ ? 0.10f : 0.08f)
+                                                                                 : (dark_ ? 0.15f : 0.10f)));
+            const std::wstring retry_label = l10n::Get(l10n::StringId::RecoveryRetry);
+            const std::wstring retrying_label = l10n::Get(l10n::StringId::Retrying);
+            const std::wstring done_label = l10n::Get(l10n::StringId::OpCompleted);
+            const float retry_w = TextWidth(factory, label_format_.get(), retry_label) / s + 20.0f;
+            for (size_t v = 0; v < visible; ++v) {
+                const size_t index = board_scroll_ + v;
+                if (index >= board_->rows.size()) break;
+                const FailureRow& row = board_->rows[index];
+                const float y = list_top + kFailRowH * static_cast<float>(v);
+                if (v > 0) {
+                    const float line = ScaleDip(s, y);
+                    painter_.FillRoundedRect(D2D1::RectF(box.left, line, box.right, line + 1.0f), 0,
+                                             WithAlpha(theme.text, dark_ ? 0.07f : 0.08f));
+                }
+                const bool done = row.state == FailureRow::State::Done;
+                const float alpha = done ? 0.6f : 1.0f;
+                painter_.DrawText(done ? L"\xE73E" : L"\xE7BA", Rect(s, kPadX + 6, y, 20, kFailRowH),
+                                  glyph_format_.get(), WithAlpha(done ? green : bad, alpha),
+                                  fluent::HorizontalAlignment::Center);
+                const std::wstring name = LeafName(row.failure.source);
+                const float name_w = (std::min)(150.0f, TextWidth(factory, chip_format_.get(), name) / s + 2.0f);
+                DrawEllipsizedText(compositor_, chip_format_.get(), Rect(s, kPadX + 30, y, name_w, kFailRowH),
+                                   name, WithAlpha(theme.text, alpha));
+                float action_left = kPadX + content_w - 8.0f;
+                if (row.state == FailureRow::State::Failed && callbacks_.retry_failed) {
+                    const auto button = Rect(s, action_left - retry_w, y + (kFailRowH - 24.0f) * 0.5f, retry_w, 24.0f);
+                    failure_buttons_.push_back({ v, button });
+                    const bool hot = hover_ == kHitFailRow + static_cast<int>(v);
+                    const bool down = pressed_ == kHitFailRow + static_cast<int>(v);
+                    painter_.FillRoundedRect(button, ScaleDip(s, 6.0f),
+                        WithAlpha(theme.text, down ? 0.14f : hot ? 0.10f : (dark_ ? 0.06f : 0.05f)));
+                    painter_.StrokeRoundedRect(button, ScaleDip(s, 6.0f), WithAlpha(theme.text, 0.14f));
+                    painter_.DrawText(retry_label, button, label_format_.get(), theme.text,
+                                      fluent::HorizontalAlignment::Center);
+                    action_left -= retry_w + 8.0f;
+                } else if (row.state == FailureRow::State::Retrying) {
+                    const float w = TextWidth(factory, label_format_.get(), retrying_label) / s + 4.0f;
+                    painter_.DrawText(retrying_label, Rect(s, action_left - w, y, w, kFailRowH),
+                                      label_format_.get(), theme.text_secondary);
+                    action_left -= w + 8.0f;
+                }
+                const float reason_x = kPadX + 30.0f + name_w + 10.0f;
+                if (action_left > reason_x + 8.0f)
+                    DrawEllipsizedText(compositor_, label_format_.get(),
+                                       Rect(s, reason_x, y, action_left - reason_x, kFailRowH),
+                                       done ? done_label : row.failure.reason,
+                                       done ? WithAlpha(green, alpha) : theme.text_secondary);
+            }
+            if (board_->unlisted > 0) {
+                DrawEllipsizedText(compositor_, label_format_.get(),
+                    Rect(s, kPadX + 30, list_top + kFailRowH * static_cast<float>(visible), content_w - 40, kFailMoreH),
+                    FormatCounts(l10n::StringId::OpMoreFailures, board_->unlisted), faint);
+            }
+            if (board_->rows.size() > visible && visible > 0) {
+                // Wheel-scrolled: a thin thumb shows where the view is.
+                const float track = static_cast<float>(visible) * kFailRowH - 8.0f;
+                const float thumb = (std::max)(16.0f, track * static_cast<float>(visible) /
+                                                          static_cast<float>(board_->rows.size()));
+                const float at = list_top + 4.0f + (track - thumb) * static_cast<float>(board_scroll_) /
+                                 static_cast<float>(board_->rows.size() - visible);
+                painter_.FillRoundedRect(Rect(s, kPadX + content_w - 4.0f, at, 2.5f, thumb), ScaleDip(s, 1.25f),
+                                         WithAlpha(theme.text, 0.25f));
+            }
+        }
+        const float stats_top = kStatsTop + fail_block;
+
         // --- Stats: 剩余时间 / 剩余 / 已用时间 --------------------------------
         // The engine's first estimates come from a cold start (the file cache,
         // a slow first file) and can read hours for a copy of seconds. Hold
@@ -2991,7 +3278,8 @@ void FileOperationWindow::Render() {
             ? static_cast<double>(left_bytes) / status_.bytes_per_second : 0.0;
         const bool eta_unsettled = elapsed_ms < 3000 ||
             (rate_eta > 0.0 && static_cast<double>(status_.eta_seconds) > rate_eta * 4.0 + 30.0);
-        const std::wstring time_text = failed ? l10n::Get(l10n::StringId::OpIncomplete)
+        const std::wstring time_text = partial ? std::wstring(L"\x2014")
+            : failed ? l10n::Get(l10n::StringId::OpIncomplete)
             : completed ? l10n::Get(l10n::StringId::OpCompleted)
             : paused ? l10n::Get(l10n::StringId::OpPaused)
             : waiting ? l10n::Get(l10n::StringId::OpWaiting)
@@ -3004,7 +3292,8 @@ void FileOperationWindow::Render() {
         const uint64_t remain_bytes = status_.total_bytes > status_.transferred_bytes
             ? status_.total_bytes - status_.transferred_bytes : 0;
         std::wstring remain_text;
-        if (completed) remain_text = l10n::Get(l10n::StringId::OpZeroItems);
+        if (partial) remain_text = FormatCounts(l10n::StringId::OpFailedCount, partial_failed);
+        else if (completed) remain_text = l10n::Get(l10n::StringId::OpZeroItems);
         else if (failed && status_.total_items == 0) remain_text = L"—";
         else if (status_.total_items == 0) remain_text = l10n::Get(l10n::StringId::OpCalculating);
         else if (byte_basis && status_.total_bytes > 0)
@@ -3016,17 +3305,18 @@ void FileOperationWindow::Render() {
             l10n::Get(l10n::StringId::OpElapsed) };
         const std::wstring stat_values[3] = { time_text, remain_text, FormatElapsed(elapsed_ms / 1000) };
         const D2D1_COLOR_F stat_colors[3] = {
-            failed ? theme.danger : completed ? green : paused ? amber : theme.text, theme.text, theme.text };
+            partial ? theme.text_secondary : failed ? theme.danger : completed ? green : paused ? amber : theme.text,
+            partial ? theme.danger : theme.text, theme.text };
         const float gap = 6.0f;
         const float box_w = (content_w - gap * 2.0f) / 3.0f;
         for (int i = 0; i < 3; ++i) {
             const float x = kPadX + (box_w + gap) * i;
-            const auto box = Rect(s, x, kStatsTop, box_w, kStatsH);
+            const auto box = Rect(s, x, stats_top, box_w, kStatsH);
             painter_.FillRoundedRect(box, ScaleDip(s, 9.0f), well);
-            painter_.DrawText(stat_labels[i], Rect(s, x + 10, kStatsTop + 4, box_w - 20, 16),
+            painter_.DrawText(stat_labels[i], Rect(s, x + 10, stats_top + 4, box_w - 20, 16),
                               label_format_.get(), theme.text_secondary);
             DrawEllipsizedText(compositor_, value_format_.get(),
-                               Rect(s, x + 10, kStatsTop + 20, box_w - 16, 20), stat_values[i], stat_colors[i]);
+                               Rect(s, x + 10, stats_top + 20, box_w - 16, 20), stat_values[i], stat_colors[i]);
         }
 
         // --- Details: 已处理 / 已传输 / 平均速度 / 峰值速度 ---------------------
@@ -3046,7 +3336,7 @@ void FileOperationWindow::Render() {
             const float half_w = (content_w - 8.0f) * 0.5f;
             for (int i = 0; i < 4; ++i) {
                 const float x = kPadX + (half_w + 8.0f) * (i % 2);
-                const float y = kDetailsTop + (kStatsH + 8.0f) * (i / 2);
+                const float y = kDetailsTop + fail_block + (kStatsH + 8.0f) * (i / 2);
                 const auto box = Rect(s, x, y, half_w, kStatsH);
                 painter_.FillRoundedRect(box, ScaleDip(s, 9.0f), well);
                 painter_.StrokeRoundedRect(box, ScaleDip(s, 9.0f), well_line);
@@ -3101,12 +3391,19 @@ void FileOperationWindow::Render() {
         painter_.DrawButton({ chrome.skip, labels.skip, {},
                               fluent::ButtonKind::Standard, skip_state });
     }
+    if (labels.show_open) {
+        fluent::ControlState open_state{};
+        open_state.hovered = hover_ == kHitOpen;
+        open_state.pressed = pressed_ == kHitOpen;
+        painter_.DrawButton({ chrome.open, labels.open, {}, fluent::ButtonKind::Standard, open_state });
+    }
     fluent::ControlState cancel_state{};
     cancel_state.enabled = !cancelling;
     cancel_state.hovered = hover_ == 4;
     cancel_state.pressed = pressed_ == 4;
     painter_.DrawButton({ chrome.cancel, labels.cancel, {},
-                          completed ? fluent::ButtonKind::Primary : fluent::ButtonKind::Standard,
+                          completed || labels.cancel_primary ? fluent::ButtonKind::Primary
+                                                             : fluent::ButtonKind::Standard,
                           cancel_state });
     pulse::ui::EndSurface(compositor_);
 }
@@ -3144,7 +3441,7 @@ LRESULT FileOperationWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM l
     case WM_NCCALCSIZE:
         return 0;
     case WM_NCHITTEST: {
-        const auto labels = MakeTransferLabels(status_, detailed_);
+        const auto labels = MakeTransferLabels(status_, detailed_, FailureView());
         const auto chrome = MakeTransferChrome(scale_,
             static_cast<float>(compositor_.Width()), static_cast<float>(compositor_.Height()),
             painter_, labels);
@@ -3175,7 +3472,7 @@ LRESULT FileOperationWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM l
         const auto* suggested = reinterpret_cast<RECT*>(lparam);
         SetWindowPos(hwnd_, nullptr, suggested->left, suggested->top,
                      suggested->right - suggested->left, suggested->bottom - suggested->top,
-                     SWP_NOZORDER | SWP_NOOWNERZORDER);
+                     SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE);
         return 0;
     }
     case WM_TIMER:
@@ -3212,6 +3509,16 @@ LRESULT FileOperationWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM l
         TrackMouseEvent(&track);
         return 0;
     }
+    case WM_MOUSEWHEEL:
+        if (board_ && board_->rows.size() > kFailMaxRows) {
+            const short delta = GET_WHEEL_DELTA_WPARAM(wparam);
+            const size_t last = board_->rows.size() - kFailMaxRows;
+            if (delta > 0 && board_scroll_ > 0) --board_scroll_;
+            else if (delta < 0 && board_scroll_ < last) ++board_scroll_;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
+        break;
     case WM_MOUSELEAVE:
         hover_ = 0;
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -3229,8 +3536,17 @@ LRESULT FileOperationWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM l
         pressed_ = 0;
         ReleaseCapture();
         if (hit == pressed) {
-            if (hit == 1 || hit == 4) {
+            const auto labels = MakeTransferLabels(status_, detailed_, FailureView());
+            if (hit == 4 && labels.cancel_retries && board_) {
+                std::vector<size_t> rows(board_->rows.size());
+                for (size_t i = 0; i < rows.size(); ++i) rows[i] = i;
+                RetryFailureRows(rows);
+            } else if (hit == 1 || hit == 4) {
                 RequestClose();
+            } else if (hit == kHitOpen && callbacks_.open_folder && !status_.destination_dir.empty()) {
+                callbacks_.open_folder(status_.destination_dir);
+            } else if (hit >= kHitFailRow && board_) {
+                RetryFailureRows({ board_scroll_ + static_cast<size_t>(hit - kHitFailRow) });
             } else if (hit == 2) ShowWindow(hwnd_, SW_MINIMIZE);
             else if (hit == 3 && status_.active &&
                      status_.phase != ops::OpPhase::WaitingForConflict &&

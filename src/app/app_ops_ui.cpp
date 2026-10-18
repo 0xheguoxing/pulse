@@ -532,6 +532,18 @@ bool EnsureOperationWindow(AppState& s) {
     operation_callbacks.skip_authorization = [hwnd](uint64_t task_id) {
         if (AppState* state = GetAppState(hwnd)) state->ops.ResolveAuthorization(task_id, false);
     };
+    operation_callbacks.retry_failed = [hwnd](uint64_t task_id, const std::vector<size_t>& items) {
+        std::vector<ops::OpsManager::RetrySpawn> spawns;
+        if (AppState* state = GetAppState(hwnd)) spawns = state->ops.RetryFailedItems(task_id, items);
+        return spawns;
+    };
+    operation_callbacks.task_outcome = [hwnd](uint64_t task_id) -> std::optional<ops::OpStatus> {
+        if (AppState* state = GetAppState(hwnd)) return state->ops.FinalStatus(task_id);
+        return std::nullopt;
+    };
+    operation_callbacks.open_folder = [hwnd](const std::wstring& folder) {
+        if (AppState* state = GetAppState(hwnd)) NavigateTo(*state, folder);
+    };
     operation_callbacks.dismiss = [hwnd] {
         if (AppState* state = GetAppState(hwnd)) {
             state->operationDismissedTaskId = state->ops.Status().task_id;
@@ -664,7 +676,8 @@ void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog) {
     // Failed on an item other processes hold: name them and offer the retry
     // instead of the plain failure window (the token guards modal re-entry).
     const bool locked_failure = !status.active && status.phase == ops::OpPhase::Failed
-        && !status.lock_owners.empty() && status.task_id != 0;
+        && !status.lock_owners.empty() && status.task_id != 0
+        && !(s.operationWindow && s.operationWindow->TracksRetry(status.task_id));
     if (locked_failure && allow_conflict_dialog && status.task_id != s.lockPromptTaskId) {
         s.lockPromptTaskId = status.task_id;
         s.operationDismissedTaskId = status.task_id;

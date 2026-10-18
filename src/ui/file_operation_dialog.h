@@ -9,6 +9,7 @@
 #include <chrono>
 #include <deque>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,20 @@ struct FileOperationCallbacks {
     std::function<void()> dismiss;
     std::function<void(uint64_t)> retry_authorization;
     std::function<void(uint64_t)> skip_authorization;
+    // Partial failure: re-queue failed items (OpsManager::RetryFailedItems)
+    // and open the destination folder.
+    std::function<std::vector<ops::OpsManager::RetrySpawn>(uint64_t, const std::vector<size_t>&)> retry_failed;
+    std::function<void(const std::wstring&)> open_folder;
+    // How a finished task ended (OpsManager::FinalStatus): retries that ran
+    // back to back are only partly seen through Update.
+    std::function<std::optional<ops::OpStatus>(uint64_t)> task_outcome;
+};
+
+// What the footer offers while failed items are listed.
+struct TransferFailureView {
+    bool on = false;
+    bool can_retry = false;   // a listed item can be retried
+    bool can_open = false;    // the destination folder is known
 };
 
 class FileOperationWindow {
@@ -54,6 +69,17 @@ private:
     void BeginAutoClose();
     void FinishAutoClose();
     void SampleGraph(ULONGLONG now);
+    TransferFailureView FailureView() const;
+public:
+    // A retry started from the failed-items list: its outcome is shown in the
+    // list (no separate locked-item prompt).
+    bool TracksRetry(uint64_t task_id) const;
+private:
+    size_t VisibleFailureRows() const;
+    float FailureBlockDip() const;
+    ops::OpStatus BoardStatus() const;
+    void RetryFailureRows(const std::vector<size_t>& rows);
+    void FinishRetry(const ops::OpStatus& status);
 
     HWND hwnd_ = nullptr;
     HWND owner_ = nullptr;
@@ -105,6 +131,30 @@ private:
     bool has_held_status_ = false;
     ULONGLONG hold_until_ = 0;
     ULONGLONG retry_shown_tick_ = 0;
+
+    // Partial failure (pulse_ops_dialogs.html, 部分失败): the failed items stay
+    // listed while their retries run, each retry being a task of its own; the
+    // card keeps showing the task that failed until another one starts.
+    struct FailureRow {
+        ops::OpFailure failure;
+        uint64_t origin_task = 0;   // the task whose failures list holds it
+        size_t origin_index = 0;
+        uint64_t retry_task = 0;    // the retry in flight, 0 = none
+        enum class State { Failed, Retrying, Done } state = State::Failed;
+    };
+    struct FailureBoard {
+        uint64_t task_id = 0;
+        ops::OpStatus status;       // the finish that opened the list
+        std::vector<FailureRow> rows;
+        uint64_t unlisted = 0;      // failed beyond the listed rows
+        // Every retry started from the list: their statuses keep arriving
+        // after they finish and must not read as another operation.
+        std::vector<uint64_t> retry_tasks;
+    };
+    std::optional<FailureBoard> board_;
+    size_t board_scroll_ = 0;
+    // Row retry buttons as last drawn: visible row, bounds (pixels).
+    std::vector<std::pair<size_t, D2D1_RECT_F>> failure_buttons_;
 };
 
 struct ConflictDialogResult {
