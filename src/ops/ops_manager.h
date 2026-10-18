@@ -113,6 +113,15 @@ struct UndoEntry {
     std::wstring label;       // OpRequest::undo_label
 };
 
+// One item a copy or move could not handle while the rest went on
+// (pulse_ops_dialogs.html, partial failure).
+struct OpFailure {
+    std::wstring source;
+    std::wstring destination;
+    std::wstring reason;        // in the user's words, without the path
+    HRESULT hr = S_OK;
+};
+
 struct OpStatus {
     bool active = false;
     bool can_pause = true;
@@ -134,6 +143,7 @@ struct OpStatus {
     std::wstring last_error;
     std::wstring source_label;
     std::wstring destination_label;
+    std::wstring destination_dir;   // copy / move: the folder items go to
     std::wstring current_item;
     uint64_t total_bytes = 0;
     uint64_t transferred_bytes = 0;
@@ -149,6 +159,10 @@ struct OpStatus {
     // Failed because other processes hold the item (Restart Manager result).
     std::wstring locked_path;
     std::vector<LockOwner> lock_owners;
+    // Items that failed while the task went on (Failed phase). At most
+    // kMaxReportedFailures are listed; failed_items is the full count.
+    std::vector<OpFailure> failures;
+    uint64_t failed_items = 0;
 };
 
 struct CompletedOperation {
@@ -259,6 +273,20 @@ public:
     // The locked item is one of several top-level sources, so the rest can go
     // on without it (an item inside a source folder cannot be left out).
     bool CanSkipLockedItem(uint64_t task_id) const;
+    // Re-queue failed items of a finished copy or move (indices into
+    // status.failures of task_id): each goes back to the folder it was meant
+    // for. Empty `indices` = all of them, once. Returns the queued tasks and
+    // the items each covers; empty when that task's failures are gone (the
+    // last few tasks with failures are kept).
+    struct RetrySpawn {
+        uint64_t task_id = 0;
+        std::vector<size_t> items;
+    };
+    std::vector<RetrySpawn> RetryFailedItems(uint64_t task_id, const std::vector<size_t>& indices = {});
+    // How a recent task ended (the last 16). Status() only shows the newest
+    // task, so retries that run back to back are looked up here.
+    std::optional<OpStatus> FinalStatus(uint64_t task_id) const;
+    static constexpr size_t kMaxReportedFailures = 500;
 
     // Double-click open: ShellExecuteEx on a dedicated open thread (plan §6.2).
     void OpenWith(const std::wstring& path);
@@ -414,6 +442,13 @@ private:
         std::wstring path;              // the locked item
     };
     std::optional<LockRetry> lock_retry_;   // guarded by mutex_
+    struct FailedItemsRetry {
+        uint64_t task_id = 0;
+        OpRequest req;
+        std::vector<OpFailure> failures;
+    };
+    std::deque<FailedItemsRetry> failed_retries_;   // newest last; guarded by mutex_
+    std::deque<OpStatus> final_statuses_;            // newest last; guarded by mutex_
     std::vector<RecoveryEntry> pending_recovery_;
     std::wstring journal_path_;
     OpStatus status_;

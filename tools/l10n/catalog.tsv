@@ -2364,3 +2364,14 @@ RecycleBinOffForDrive	IDS_RECYCLE_BIN_OFF_FOR_DRIVE	3620	这个驱动器的回�
 RecycleBinTooSmallForItem	IDS_RECYCLE_BIN_TOO_SMALL_FOR_ITEM	3621	回收站容量放不下它，无法移到回收站。	It's too large for the Recycle Bin.	資源回收筒容量放不下它，無法移到資源回收筒。
 RecycleBinTooSmallNotDeleted	IDS_RECYCLE_BIN_TOO_SMALL_NOT_DELETED	3622	超过回收站容量，未删除。可用 Shift+Delete 永久删除	Too large for the Recycle Bin, so it was not deleted. Shift+Delete deletes it permanently.	超過資源回收筒容量，未刪除。可用 Shift+Delete 永久刪除
 MoveKeptSourceNotFlushed	IDS_MOVE_KEPT_SOURCE_NOT_FLUSHED	3623	无法确认已写入目标磁盘，已保留原文件：	Couldn't confirm the copy reached the disk, so the original was kept: 	無法確認已寫入目標磁碟，已保留原檔案：
+TransferInUseBy	IDS_TRANSFER_IN_USE_BY	3624	被 %s 占用	In use by %s	被 %s 佔用
+MoveCopiedSourceKept	IDS_MOVE_COPIED_SOURCE_KEPT	3625	已复制到目标，但无法删除原文件：	Copied, but the original couldn't be removed: 	已複製到目標，但無法刪除原檔案：
+TransferItemsFailed	IDS_TRANSFER_ITEMS_FAILED	3626	%d 项未成功	%d items didn't go through	%d 項未成功
+OpCopyPartialTitle	IDS_OP_COPY_PARTIAL_TITLE	3627	已复制 %s 项，%s 项未成功	Copied %s items, %s didn't go through	已複製 %s 項，%s 項未成功
+OpMovePartialTitle	IDS_OP_MOVE_PARTIAL_TITLE	3628	已移动 %s 项，%s 项未成功	Moved %s items, %s didn't go through	已移動 %s 項，%s 項未成功
+OpPartialBadge	IDS_OP_PARTIAL_BADGE	3629	未全部完成	Not all done	未全部完成
+OpPartialLine	IDS_OP_PARTIAL_LINE	3630	%s 项成功 · %s 项未成功	%s done · %s didn't go through	%s 項成功 · %s 項未成功
+OpRetryFailedItems	IDS_OP_RETRY_FAILED_ITEMS	3631	重试失败项	Retry failed items	重試失敗項目
+OpOpenDestination	IDS_OP_OPEN_DESTINATION	3632	打开目标文件夹	Open destination	開啟目標資料夾
+OpFailedCount	IDS_OP_FAILED_COUNT	3633	%s 项失败	%s failed	%s 項失敗
+OpMoreFailures	IDS_OP_MORE_FAILURES	3634	另有 %s 项未列出	%s more not listed	另有 %s 項未列出

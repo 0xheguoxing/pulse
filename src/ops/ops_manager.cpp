@@ -335,6 +335,94 @@ std::wstring RenameFailureText(DWORD code) {
     }
 }
 
+// Why one item of a copy or move failed, in the user's words, without the
+// path (the dialog shows the name beside it).
+std::wstring TransferFailureText(HRESULT hr) {
+    const DWORD code = HRESULT_CODE(hr);
+    switch (code) {
+    case ERROR_ACCESS_DENIED:
+    case ERROR_PRIVILEGE_NOT_HELD:
+    case ERROR_ELEVATION_REQUIRED:
+    case ERROR_SHARING_VIOLATION:
+    case ERROR_LOCK_VIOLATION:
+    case ERROR_FILE_NOT_FOUND:
+    case ERROR_PATH_NOT_FOUND:
+    case ERROR_FILENAME_EXCED_RANGE:
+    case ERROR_CANT_ACCESS_FILE:
+        if (std::wstring text = RenameFailureText(code); !text.empty()) return text;
+        break;
+    default:
+        break;
+    }
+    return Win32Message(code);
+}
+
+// A catalog prefix such as "无法创建目标目录：" as a reason on its own,
+// optionally followed by the system's detail.
+std::wstring FailureReason(const std::wstring& prefix, const std::wstring& detail = {}) {
+    std::wstring reason = prefix;
+    while (!reason.empty() && (reason.back() == L' ' || reason.back() == L'|' ||
+                               reason.back() == L':' || reason.back() == L'\xFF1A'))
+        reason.pop_back();
+    if (reason.empty()) return detail;
+    if (!detail.empty()) reason += (l10n::IsChinese() ? L"\xFF1A" : L": ") + detail;
+    return reason;
+}
+
+// An ops error text ("message | path", or a catalog prefix with the path) as
+// a reason without the path.
+std::wstring ErrorWithoutPath(const std::wstring& error) {
+    const size_t bar = error.rfind(L" | ");
+    const std::wstring folder = l10n::Get(l10n::StringId::CouldNotCreateTheDestinationFolder).c_str();
+    if (error.starts_with(folder)) {
+        const std::wstring not_folder = l10n::Get(l10n::StringId::TheTargetExistsAndIsNotAFolder).c_str();
+        std::wstring detail = bar != std::wstring::npos ? error.substr(bar + 3)
+            : error.ends_with(not_folder) ? FailureReason(not_folder) : std::wstring{};
+        while (!detail.empty() && (detail.front() == L' ' || detail.front() == L'(' ||
+                                   detail.front() == L'\xFF08' || detail.front() == L'\xFF0C'))
+            detail.erase(detail.begin());
+        while (!detail.empty() && (detail.back() == L')' || detail.back() == L'\xFF09'))
+            detail.pop_back();
+        return FailureReason(folder, detail);
+    }
+    return bar == std::wstring::npos ? error : error.substr(0, bar);
+}
+
+// Failures that are about the target, the device or the session rather than
+// one item: every later item would fail the same way, so the task stops.
+bool IsStopTransferError(HRESULT hr) {
+    if (hr == E_OUTOFMEMORY) return true;
+    switch (HRESULT_CODE(hr)) {
+    case ERROR_DISK_FULL:
+    case ERROR_HANDLE_DISK_FULL:
+    case ERROR_DISK_QUOTA_EXCEEDED:
+    case ERROR_NOT_ENOUGH_QUOTA:
+    case ERROR_NOT_ENOUGH_MEMORY:
+    case ERROR_OUTOFMEMORY:
+    case ERROR_NOT_READY:
+    case ERROR_WRITE_PROTECT:
+    case ERROR_DEV_NOT_EXIST:
+    case ERROR_DEVICE_NOT_CONNECTED:
+    case ERROR_DEVICE_REMOVED:
+    case ERROR_NO_SUCH_DEVICE:
+    case ERROR_NO_MEDIA_IN_DRIVE:
+    case ERROR_MEDIA_CHANGED:
+    case ERROR_IO_DEVICE:
+    case ERROR_BAD_NETPATH:
+    case ERROR_BAD_NET_NAME:
+    case ERROR_NETNAME_DELETED:
+    case ERROR_UNEXP_NET_ERR:
+    case ERROR_NETWORK_UNREACHABLE:
+    case ERROR_SEM_TIMEOUT:
+    case ERROR_OPERATION_ABORTED:
+    case ERROR_REQUEST_ABORTED:
+    case ERROR_CANCELLED:
+        return true;
+    default:
+        return false;
+    }
+}
+
 // Why a new folder or text file could not be created. "没有权限" is the key
 // the UI maps to its write-permission message.
 std::wstring CreateFailureText(DWORD code) {
@@ -1330,6 +1418,69 @@ bool OpsManager::RetryLockedOperation(uint64_t task_id, bool close_owners, bool 
     return true;
 }
 
+std::optional<OpStatus> OpsManager::FinalStatus(uint64_t task_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto it = final_statuses_.rbegin(); it != final_statuses_.rend(); ++it)
+        if (it->task_id == task_id) return *it;
+    return std::nullopt;
+}
+
+std::vector<OpsManager::RetrySpawn> OpsManager::RetryFailedItems(uint64_t task_id,
+                                                                const std::vector<size_t>& indices) {
+    std::vector<OpRequest> requests;
+    std::vector<RetrySpawn> spawns;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto retry = std::find_if(failed_retries_.begin(), failed_retries_.end(),
+            [&](const FailedItemsRetry& known) { return known.task_id == task_id; });
+        if (!running_ || retry == failed_retries_.end()) return {};
+        const auto& failures = retry->failures;
+        std::vector<size_t> chosen = indices;
+        if (chosen.empty())
+            for (size_t i = 0; i < failures.size(); ++i) chosen.push_back(i);
+        // Each item goes back to the folder it was meant for, under the name
+        // it was meant to have; items for one folder under their own names
+        // share a request.
+        for (size_t i : chosen) {
+            if (i >= failures.size()) continue;
+            const OpFailure& failed = failures[i];
+            if (failed.source.empty() || failed.destination.empty()) continue;
+            const std::wstring folder = ParentOf(failed.destination);
+            const bool renamed = _wcsicmp(FileName(failed.source).c_str(),
+                                          FileName(failed.destination).c_str()) != 0;
+            size_t shared = requests.size();
+            if (!renamed) {
+                for (size_t r = 0; r < requests.size(); ++r)
+                    if (requests[r].new_name.empty() && _wcsicmp(requests[r].dest_dir.c_str(), folder.c_str()) == 0)
+                        shared = r;
+            }
+            if (shared < requests.size()) {
+                auto& sources = requests[shared].sources;
+                if (std::none_of(sources.begin(), sources.end(), [&](const std::wstring& known) {
+                        return _wcsicmp(known.c_str(), failed.source.c_str()) == 0; }))
+                    sources.push_back(failed.source);
+                spawns[shared].items.push_back(i);
+                continue;
+            }
+            OpRequest request = retry->req;
+            request.sources = {failed.source};
+            request.dest_dir = folder;
+            request.new_name = renamed ? FileName(failed.destination) : std::wstring{};
+            request.lock_retry = false;
+            request.close_first.clear();
+            request.is_undo = false;
+            request.undo_group = 0;
+            requests.push_back(std::move(request));
+            spawns.push_back({0, {i}});
+        }
+        if (requests.empty()) return {};
+        if (indices.empty()) failed_retries_.erase(retry);
+    }
+    for (size_t r = 0; r < requests.size(); ++r) spawns[r].task_id = Submit(std::move(requests[r]));
+    std::erase_if(spawns, [](const RetrySpawn& spawn) { return spawn.task_id == 0; });
+    return spawns;
+}
+
 // Ends the chosen lock owners (if any), then drops delete/move sources that are
 // already gone (the failed attempt may have handled part of the selection).
 // Both retry buttons go through here. Returns false when the operation must
@@ -2004,6 +2155,10 @@ void OpsManager::WorkerThread() {
                     return _wcsicmp(source.c_str(), moved.c_str()) == 0;
                 })) finished.moved_sources.push_back(source);
             finished_tasks_.push_back(std::move(finished));
+            if (!diagnostic_status.active && diagnostic_status.task_id == item.seq) {
+                final_statuses_.push_back(diagnostic_status);
+                while (final_statuses_.size() > 16) final_statuses_.pop_front();
+            }
             active_item_.reset();
             if (deferred_undo_group_ && !GroupPendingLocked(deferred_undo_group_)) {
                 deferred_undo_group_ = 0;
@@ -2221,6 +2376,8 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         st.task_id = task_id;
         st.phase = OpPhase::Scanning;
         st.percent = -1.0f;
+        st.failures.clear();
+        st.failed_items = 0;
         st.summary = l10n::IsChinese()
             ? std::wstring(l10n::Cn(L"正在准备")) + OpVerb(req.type) + L"…"
             : std::wstring(OpGerund(req.type)) + L" \u2014 preparing\u2026";
@@ -2230,6 +2387,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         st.source_label = req.sources.empty() ? L"" : FileName(req.sources.front());
         st.destination_label = FileName(req.dest_dir);
         if (st.destination_label.empty()) st.destination_label = req.dest_dir;
+        st.destination_dir = req.dest_dir;
         st.current_item.clear();
         st.total_bytes = st.transferred_bytes = 0;
         st.total_items = st.completed_items = 0;
@@ -2615,10 +2773,11 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         if (!key.empty()) CharLowerBuffW(key.data(), static_cast<DWORD>(key.size()));
         return key;
     };
-    const auto ensure_parent = [&](const std::wstring& dir) {
+    // False: `error` says why (message | folder).
+    const auto ensure_parent = [&](const std::wstring& dir, std::wstring& error) {
         std::wstring key = dir_key(dir);
         if (ready_dirs.contains(key)) return true;
-        if (!EnsureDirectories(dir, failure)) return false;
+        if (!EnsureDirectories(dir, error)) return false;
         ready_dirs.insert(std::move(key));
         return true;
     };
@@ -2638,6 +2797,53 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             pool = std::make_unique<SmallCopyPool>(threads, transfer_cancel_, transfer_pause_,
                                                    transfer_control_mutex_, transfer_control_cv_);
     }
+    // Items that failed while the task went on (partial failure). A failure
+    // about the target rather than the item (IsStopTransferError), or a run
+    // of failures with no success between, stops the task instead.
+    std::vector<OpFailure> item_failures;
+    uint64_t failed_items = 0;
+    size_t failures_in_a_row = 0;
+    constexpr size_t kStopAfterFailuresInARow = 64;
+    std::wstring kept_backup_note;
+    // A replaced item whose replacement failed gets its original back now; the
+    // task's end would otherwise discard the backup as committed.
+    const auto restore_backup = [&](const std::wstring& destination) {
+        const auto found = std::find_if(replacement_backups.begin(), replacement_backups.end(),
+            [&](const ReplacementBackup& backup) {
+                return _wcsicmp(backup.original.c_str(), destination.c_str()) == 0;
+            });
+        if (found == replacement_backups.end()) return;
+        DWORD error = ERROR_SUCCESS;
+        if (PathExists(found->original)) error = ERROR_ALREADY_EXISTS;
+        else if (!MoveFileExW(found->backup.c_str(), found->original.c_str(), MOVEFILE_WRITE_THROUGH))
+            error = GetLastError();
+        if (error != ERROR_SUCCESS) {
+            kept_backup_note += l10n::Get(l10n::StringId::CouldNotRestore).c_str() + found->original +
+                l10n::Get(l10n::StringId::OriginalKeptAt).c_str() + found->backup + L" | " + Win32Message(error);
+        }
+        replacement_backups.erase(found);  // restored, or kept where the note says
+    };
+    // Records the failed item and returns true to go on; false: stop (the
+    // failure is the task's, as before).
+    const auto item_failed = [&](TransferEntry& entry, HRESULT hr, std::wstring reason,
+                                 const std::wstring& path) -> bool {
+        if (cancelled || transfer_cancel_.load()) { cancelled = true; return false; }
+        if (IsStopTransferError(hr) || ++failures_in_a_row >= kStopAfterFailuresInARow) {
+            if (failure.empty()) {
+                failure_hr = hr;
+                failure = reason + L" | " + path;
+            }
+            return false;
+        }
+        restore_backup(entry.destination);
+        if (item_failures.size() < kMaxReportedFailures)
+            item_failures.push_back({entry.source, entry.destination, std::move(reason), hr});
+        ++failed_items;
+        if (entry.directory) skipped_prefixes.push_back(entry.source);
+        mark_skipped(entry);
+        return true;
+    };
+
     // Moves whose copy is written out but whose source is still there. The
     // sources go in batches, after one flush per volume has made every copy
     // in the batch durable (FlushCopyToDisk): a power cut leaves a moved file
@@ -2688,11 +2894,22 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 const DWORD code = GetLastError();
                 if (moved.attributes & FILE_ATTRIBUTE_READONLY)
                     SetFileAttributesW(moved.source.c_str(), moved.attributes);
-                if (failure.empty()) {
-                    failure_hr = HRESULT_FROM_WIN32(code);
-                    failure = Win32Message(code) + L" | " + moved.source;
+                const HRESULT hr = HRESULT_FROM_WIN32(code);
+                std::wstring reason = FailureReason(l10n::Get(l10n::StringId::MoveCopiedSourceKept).c_str(),
+                                                    TransferFailureText(hr));
+                if (IsStopTransferError(hr)) {
+                    if (failure.empty()) {
+                        failure_hr = hr;
+                        failure = reason + L" | " + moved.source;
+                    }
+                    ok = false;
+                    continue;
                 }
-                ok = false;
+                // Both copies stay; the item is listed, the task goes on.
+                if (item_failures.size() < kMaxReportedFailures)
+                    item_failures.push_back({moved.source, moved.destination, std::move(reason), hr});
+                ++failed_items;
+                skipped_sources.push_back(moved.source);
                 continue;
             }
             moved.source_removed = true;
@@ -2712,16 +2929,20 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             auto& done = entries[result.index];
             const DWORD code = FAILED(result.hr) ? HRESULT_CODE(result.hr) : result.delete_error;
             if (code != ERROR_SUCCESS) {
-                if (failure.empty()) {
-                    failure_hr = FAILED(result.hr) ? result.hr : HRESULT_FROM_WIN32(code);
-                    failure = result.not_flushed
-                        ? l10n::Get(l10n::StringId::MoveKeptSourceNotFlushed).c_str() + done.destination +
-                              L" | " + Win32Message(code)
-                        : Win32Message(code) + L" | " + done.source;
+                const HRESULT hr = FAILED(result.hr) ? result.hr : HRESULT_FROM_WIN32(code);
+                if (result.not_flushed) {
+                    if (failure.empty()) {
+                        failure_hr = hr;
+                        failure = l10n::Get(l10n::StringId::MoveKeptSourceNotFlushed).c_str() + done.destination +
+                                  L" | " + Win32Message(code);
+                    }
+                    pool->Stop();
+                } else if (!item_failed(done, hr, TransferFailureText(hr), done.source)) {
+                    pool->Stop();
                 }
-                pool->Stop();
                 continue;
             }
+            failures_in_a_row = 0;
             if (result.move_pending) {
                 if (!queue_move(result.index)) pool->Stop();
             } else {
@@ -2874,15 +3095,20 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         if (conflict && choice == ConflictChoice::Replace &&
             (entry.directory != destination_is_directory || entry.reparse)) {
             if (req.type == OpType::Move) {
-                failure = l10n::Get(l10n::StringId::CannotAtomicallyReplaceATargetOfADifferentTypeOrAReparsePoin).c_str() + entry.destination;
-                break;
+                if (!item_failed(entry, HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS),
+                                 FailureReason(l10n::Get(l10n::StringId::CannotAtomicallyReplaceATargetOfADifferentTypeOrAReparsePoin).c_str()),
+                                 entry.destination)) break;
+                continue;
             }
             const std::wstring backup = UniqueTemporaryPath(
                 entry.destination, L".pulse-backup-", task_id, index);
             if (!MoveFileExW(entry.destination.c_str(), backup.c_str(), MOVEFILE_WRITE_THROUGH)) {
-                failure = l10n::Get(l10n::StringId::CouldNotSafelyBackUpTheItemBeingReplaced).c_str() + entry.destination
-                    + L" | " + Win32Message(GetLastError());
-                break;
+                const DWORD code = GetLastError();
+                if (!item_failed(entry, HRESULT_FROM_WIN32(code),
+                                 FailureReason(l10n::Get(l10n::StringId::CouldNotSafelyBackUpTheItemBeingReplaced).c_str(),
+                                               TransferFailureText(HRESULT_FROM_WIN32(code))),
+                                 entry.destination)) break;
+                continue;
             }
             replacement_backups.push_back({ entry.destination, backup });
             destination_exists = false;
@@ -2890,21 +3116,24 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         }
 
         if (entry.reparse) {
-            if (!ensure_parent(parent_dir)) break;
-            if (!CopyReparsePoint(entry, failure)) break;
+            std::wstring error;
+            if (!ensure_parent(parent_dir, error) || !CopyReparsePoint(entry, error)) {
+                if (!item_failed(entry, E_FAIL, ErrorWithoutPath(error), entry.source)) break;
+                continue;
+            }
             if (req.type == OpType::Move) {
                 const BOOL removed = entry.directory ? RemoveDirectoryW(entry.source.c_str())
                                                      : DeleteFileW(entry.source.c_str());
                 if (!removed) {
-                    {
-                        const DWORD code = GetLastError();
-                        failure_hr = HRESULT_FROM_WIN32(code);
-                        failure = Win32Message(code) + L" | " + entry.source;
-                    }
-                    break;
+                    const HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
+                    // The link now exists at the target too; nothing is lost.
+                    if (!item_failed(entry, hr, FailureReason(l10n::Get(l10n::StringId::MoveCopiedSourceKept).c_str(),
+                                                              TransferFailureText(hr)), entry.source)) break;
+                    continue;
                 }
                 entry.source_removed = true;
             }
+            failures_in_a_row = 0;
             entry.completed = true;
             ++processed_items;
             publish_progress(entry, entry.bytes, entry.bytes, processed_items);
@@ -2923,16 +3152,22 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                     const DWORD code = GetLastError();
                     bool is_directory = false;
                     if (code != ERROR_ALREADY_EXISTS || !PathExists(entry.destination, &is_directory) || !is_directory) {
-                        failure_hr = HRESULT_FROM_WIN32(code);
-                        failure = l10n::Get(l10n::StringId::CouldNotCreateTheDestinationFolder).c_str() +
-                            entry.destination + L" | " + Win32Message(code);
-                        break;
+                        // Everything inside is left out with it.
+                        const HRESULT hr = HRESULT_FROM_WIN32(code);
+                        if (!item_failed(entry, hr, FailureReason(l10n::Get(l10n::StringId::CouldNotCreateTheDestinationFolder).c_str(),
+                                                                  TransferFailureText(hr)), entry.destination)) break;
+                        continue;
                     }
                 }
             } else {
-                if (!EnsureDirectories(entry.destination, failure)) break;
+                std::wstring error;
+                if (!EnsureDirectories(entry.destination, error)) {
+                    if (!item_failed(entry, E_FAIL, ErrorWithoutPath(error), entry.destination)) break;
+                    continue;
+                }
                 if (!destination_exists) fresh_dirs.insert(key);
             }
+            failures_in_a_row = 0;
             ready_dirs.insert(key);
             entry.directory_prepared = true;
             ++processed_items;
@@ -2945,7 +3180,10 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             continue;
         }
 
-        if (!fresh_parent && !ensure_parent(parent_dir)) break;
+        if (std::wstring error; !fresh_parent && !ensure_parent(parent_dir, error)) {
+            if (!item_failed(entry, E_FAIL, ErrorWithoutPath(error), entry.destination)) break;
+            continue;
+        }
 
         const bool direct = !destination_exists && entry.bytes < kDirectCopyMaxBytes;
         if (pool && direct && entry.bytes < kProgressCallbackMinBytes) {
@@ -3055,9 +3293,8 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         }
         if (FAILED(copy_result)) {
             discard_copy();
-            failure_hr = copy_result;
-            failure = Win32Message(HRESULT_CODE(copy_result)) + L" | " + entry.source;
-            break;
+            if (!item_failed(entry, copy_result, TransferFailureText(copy_result), entry.source)) break;
+            continue;
         }
 
         if (verify_copies_.load()) {
@@ -3085,16 +3322,20 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                     st.summary = l10n::Get(l10n::StringId::Verifying).c_str() + FileName(entry.source);
                 });
             };
-            if (!Sha256File(entry.source, transfer_cancel_, wait_if_paused, source_hash, failure) ||
-                !Sha256File(copy_destination, transfer_cancel_, wait_if_paused, copied_hash, failure)) {
+            std::wstring hash_error;
+            if (!Sha256File(entry.source, transfer_cancel_, wait_if_paused, source_hash, hash_error) ||
+                !Sha256File(copy_destination, transfer_cancel_, wait_if_paused, copied_hash, hash_error)) {
                 discard_copy();
-                if (transfer_cancel_.load()) cancelled = true;
-                break;
+                if (transfer_cancel_.load()) { cancelled = true; break; }
+                if (!item_failed(entry, E_FAIL, ErrorWithoutPath(hash_error), entry.source)) break;
+                continue;
             }
             if (source_hash != copied_hash) {
                 discard_copy();
-                failure = l10n::Get(l10n::StringId::SHA256VerificationFailed).c_str() + entry.source;
-                break;
+                if (!item_failed(entry, HRESULT_FROM_WIN32(ERROR_CRC),
+                                 FailureReason(l10n::Get(l10n::StringId::SHA256VerificationFailed).c_str()),
+                                 entry.source)) break;
+                continue;
             }
             SetStatus([&](OpStatus& st) { st.phase = OpPhase::Running; });
         }
@@ -3115,17 +3356,17 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                              MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
                 const DWORD error = GetLastError();
                 DeleteFileW(copy_destination.c_str());
-                failure_hr = HRESULT_FROM_WIN32(error);
-                failure = Win32Message(error) + L" | " + entry.destination;
-                break;
+                if (!item_failed(entry, HRESULT_FROM_WIN32(error), TransferFailureText(HRESULT_FROM_WIN32(error)),
+                                 entry.destination)) break;
+                continue;
             }
         } else if (!direct && !MoveFileExW(copy_destination.c_str(), entry.destination.c_str(),
                                            MOVEFILE_WRITE_THROUGH)) {
             const DWORD error = GetLastError();
             DeleteFileW(copy_destination.c_str());
-            failure_hr = HRESULT_FROM_WIN32(error);
-            failure = Win32Message(error) + L" | " + entry.destination;
-            break;
+            if (!item_failed(entry, HRESULT_FROM_WIN32(error), TransferFailureText(HRESULT_FROM_WIN32(error)),
+                             entry.destination)) break;
+            continue;
         }
 
         if (req.type == OpType::Move) {
@@ -3141,6 +3382,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         } else {
             entry.completed = true;
         }
+        failures_in_a_row = 0;
         if (entry.bytes >= kDirectCopyMaxBytes)
             large_remaining -= (std::min)(large_remaining, entry.bytes);
         ++processed_items;
@@ -3230,7 +3472,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         }
     }
 
-    if (failure.empty() && !cancelled) {
+    if (failure.empty() && !cancelled && failed_items == 0) {
         OpRequest committed = req;
         committed.sources.clear();
         std::vector<std::wstring> committed_destinations;
@@ -3270,9 +3512,51 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
     diagnostics::runtime::Event("file_transfer_result", {{"task", task_id},
         {"hresult", static_cast<uint32_t>(failure_hr)}, {"has_error", !failure.empty()},
         {"cancelled", transfer_cancelled}, {"completed_sources", completed_sources.size()}});
-    const LockReport lock_report = !transfer_cancelled && !failure.empty()
+    // Items held open by another program say by which (a bounded number:
+    // each probe asks Restart Manager).
+    if (!transfer_cancelled) {
+        size_t probed = 0;
+        for (auto& failed : item_failures) {
+            if (probed >= 16) break;
+            if (!IsLockLikeError(failed.hr)) continue;
+            ++probed;
+            const auto owners = FindLockOwners(LockProbeFiles(failed.source, 16), CurrentModuleDirectory());
+            if (owners.empty()) continue;
+            const LockOwner& owner = owners.front();
+            const std::wstring name = owner.app_name.empty() ? owner.image_name : owner.app_name;
+            if (name.empty()) continue;
+            const std::wstring format = l10n::Get(l10n::StringId::TransferInUseBy).c_str();
+            if (format.find(L"%s") == std::wstring::npos) continue;
+            wchar_t text[512];
+            swprintf_s(text, format.c_str(), name.c_str());
+            failed.reason = text;
+        }
+    }
+    // One failed item and it is in use: the file-in-use dialog, as when the
+    // task stopped there; its retry covers just that item.
+    std::optional<LockReport> single_lock;
+    if (!transfer_cancelled && failure.empty() && failed_items == 1 && item_failures.size() == 1 &&
+        IsLockLikeError(item_failures.front().hr)) {
+        OpRequest narrowed = req;
+        narrowed.sources = {item_failures.front().source};
+        narrowed.dest_dir = ParentOf(item_failures.front().destination);
+        narrowed.new_name.clear();
+        if (_wcsicmp(FileName(item_failures.front().source).c_str(),
+                     FileName(item_failures.front().destination).c_str()) != 0)
+            narrowed.new_name = FileName(item_failures.front().destination);
+        single_lock = ProbeLock(narrowed, task_id, item_failures.front().hr,
+                                item_failures.front().reason + L" | " + item_failures.front().source);
+    }
+    const LockReport lock_report = single_lock ? *single_lock
+        : !transfer_cancelled && !failure.empty()
         ? (move_lock_report ? *move_lock_report : ProbeLock(req, task_id, failure_hr, failure))
         : LockReport{};
+    if (failed_items > 0) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        failed_retries_.push_back(FailedItemsRetry{task_id, req, item_failures});
+        while (failed_retries_.size() > 8) failed_retries_.pop_front();
+    }
+    rollback_note = kept_backup_note + rollback_note;
     SetStatus([&](OpStatus& st) {
         st.active = false;
         st.pause_requested = false;
@@ -3281,6 +3565,8 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         st.eta_seconds = 0;
         st.locked_path = lock_report.path;
         st.lock_owners = lock_report.owners;
+        st.failures = item_failures;
+        st.failed_items = failed_items;
         if (transfer_cancelled) {
             st.phase = OpPhase::Failed;
             st.last_error = l10n::Get(l10n::StringId::Canceled).c_str() + rollback_note;
@@ -3289,6 +3575,17 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             st.phase = OpPhase::Failed;
             st.last_error = failure + rollback_note;
             st.summary = std::wstring(OpVerb(req.type)) + l10n::Get(l10n::StringId::Failed).c_str();
+        } else if (failed_items > 0) {
+            // The rest went through; the dialog lists what did not.
+            st.phase = OpPhase::Failed;
+            st.percent = 100.0f;
+            st.transferred_bytes = st.total_bytes;
+            st.completed_items = st.total_items;
+            st.last_error = item_failures.front().reason + L" | " + item_failures.front().source + rollback_note;
+            wchar_t text[128];
+            swprintf_s(text, l10n::Get(l10n::StringId::TransferItemsFailed).c_str(),
+                       static_cast<int>((std::min<uint64_t>)(failed_items, INT_MAX)));
+            st.summary = text;
         } else {
             st.phase = OpPhase::Completed;
             st.percent = 100.0f;
@@ -3319,6 +3616,8 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
         st.percent = 0.0f;
         st.summary = Describe(req);
         st.last_error.clear();
+        st.failures.clear();
+        st.failed_items = 0;
         st.locked_path.clear();
         st.lock_owners.clear();
         st.source_label = req.sources.empty() ? L"" : FileName(req.sources.front());

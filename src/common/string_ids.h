@@ -2357,5 +2357,16 @@
 #define IDS_RECYCLE_BIN_TOO_SMALL_FOR_ITEM                                               3621
 #define IDS_RECYCLE_BIN_TOO_SMALL_NOT_DELETED                                            3622
 #define IDS_MOVE_KEPT_SOURCE_NOT_FLUSHED                                                 3623
+#define IDS_TRANSFER_IN_USE_BY                                                           3624
+#define IDS_MOVE_COPIED_SOURCE_KEPT                                                      3625
+#define IDS_TRANSFER_ITEMS_FAILED                                                        3626
+#define IDS_OP_COPY_PARTIAL_TITLE                                                        3627
+#define IDS_OP_MOVE_PARTIAL_TITLE                                                        3628
+#define IDS_OP_PARTIAL_BADGE                                                             3629
+#define IDS_OP_PARTIAL_LINE                                                              3630
+#define IDS_OP_RETRY_FAILED_ITEMS                                                        3631
+#define IDS_OP_OPEN_DESTINATION                                                          3632
+#define IDS_OP_FAILED_COUNT                                                              3633
+#define IDS_OP_MORE_FAILURES                                                             3634
 
 #endif  // PULSE_STRING_IDS_H

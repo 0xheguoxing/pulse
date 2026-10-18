@@ -2353,6 +2353,17 @@ enum class StringId : UINT {
     RecycleBinTooSmallForItem = IDS_RECYCLE_BIN_TOO_SMALL_FOR_ITEM,
     RecycleBinTooSmallNotDeleted = IDS_RECYCLE_BIN_TOO_SMALL_NOT_DELETED,
     MoveKeptSourceNotFlushed = IDS_MOVE_KEPT_SOURCE_NOT_FLUSHED,
+    TransferInUseBy = IDS_TRANSFER_IN_USE_BY,
+    MoveCopiedSourceKept = IDS_MOVE_COPIED_SOURCE_KEPT,
+    TransferItemsFailed = IDS_TRANSFER_ITEMS_FAILED,
+    OpCopyPartialTitle = IDS_OP_COPY_PARTIAL_TITLE,
+    OpMovePartialTitle = IDS_OP_MOVE_PARTIAL_TITLE,
+    OpPartialBadge = IDS_OP_PARTIAL_BADGE,
+    OpPartialLine = IDS_OP_PARTIAL_LINE,
+    OpRetryFailedItems = IDS_OP_RETRY_FAILED_ITEMS,
+    OpOpenDestination = IDS_OP_OPEN_DESTINATION,
+    OpFailedCount = IDS_OP_FAILED_COUNT,
+    OpMoreFailures = IDS_OP_MORE_FAILURES,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

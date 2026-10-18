@@ -1581,6 +1581,66 @@ int wmain(int argc, wchar_t** argv) {
         Check(merge_st.last_error.empty() && moved == 20 && !Exists(merge_src),
               L"parallel move: merged files moved and the source folder removed");
         SetFileAttributesW((merge_dst + par_name(0)).c_str(), FILE_ATTRIBUTE_NORMAL);
+
+        // Partial failure: files another program holds are listed with a
+        // reason, the rest go through, and a retry finishes them.
+        const auto hold = [](const std::wstring& path) {
+            return CreateFileW(path.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        };
+        const std::wstring part_src = par_src + L"\\partial";
+        const std::wstring part_dst = par_dst + L"\\partial";
+        MakeDir(part_src);
+        MakeDir(part_dst);
+        for (int i = 0; i < 20; ++i)
+            MakeFile(part_src + par_name(i), payload, sizeof(payload) - 1);
+        HANDLE held_3 = hold(part_src + par_name(3));
+        HANDLE held_7 = hold(part_src + par_name(7));
+        auto part_st = RunOp(SimpleOp(ops::OpType::Move, { part_src.c_str() }, par_dst.c_str()));
+        int part_moved = 0;
+        for (int i = 0; i < 20; ++i)
+            if (i != 3 && i != 7 && Exists(part_dst + par_name(i)) && !Exists(part_src + par_name(i))) ++part_moved;
+        wprintf(L"[INFO] partial move: phase=%d failed=%llu listed=%zu moved=%d error=%s\n",
+                static_cast<int>(part_st.phase), static_cast<unsigned long long>(part_st.failed_items),
+                part_st.failures.size(), part_moved, part_st.last_error.c_str());
+        Check(part_st.phase == ops::OpPhase::Failed && part_st.failed_items == 2 &&
+                  part_st.failures.size() == 2 && part_moved == 18,
+              L"partial move: two held files listed, the other 18 moved");
+        Check(Exists(part_src + par_name(3)) && Exists(part_src + par_name(7)) &&
+                  !Exists(part_dst + par_name(3)) && !Exists(part_dst + par_name(7)),
+              L"partial move: held sources kept, nothing half-written at the target");
+        Check(!part_st.failures.empty() && !part_st.failures[0].reason.empty() &&
+                  part_st.failures[0].reason.find(L" | ") == std::wstring::npos,
+              L"partial move: each item has a reason without the path");
+        if (held_3 != INVALID_HANDLE_VALUE) CloseHandle(held_3);
+        if (held_7 != INVALID_HANDLE_VALUE) CloseHandle(held_7);
+        const uint64_t before_retry = g_ops.Status().completed_ops;
+        const auto retry_spawns = g_ops.RetryFailedItems(part_st.task_id);
+        const bool retry_queued = retry_spawns.size() == 1 && retry_spawns[0].items.size() == 2;
+        Check(retry_queued && WaitOpDone(before_retry) && Exists(part_dst + par_name(3)) &&
+                  Exists(part_dst + par_name(7)) && !Exists(part_src + par_name(3)) &&
+                  !Exists(part_src + par_name(7)),
+              L"partial move: retry moves the failed items to their folder");
+        const auto retry_final = retry_queued ? g_ops.FinalStatus(retry_spawns[0].task_id) : std::nullopt;
+        const auto first_final = g_ops.FinalStatus(part_st.task_id);
+        Check(retry_final && retry_final->phase == ops::OpPhase::Completed && first_final &&
+                  first_final->phase == ops::OpPhase::Failed && first_final->failed_items == 2,
+              L"partial move: how each task ended can be looked up afterwards");
+        Check(g_ops.RetryFailedItems(part_st.task_id).empty(), L"partial move: a finished retry cannot run twice");
+
+        // Few files (no pool), one held: listed, and the file-in-use prompt
+        // gets it as before.
+        const std::wstring few_src = par_src + L"\\few";
+        const std::wstring few_dst = par_dst + L"\\few";
+        MakeDir(few_src);
+        for (int i = 0; i < 3; ++i)
+            MakeFile(few_src + par_name(i), payload, sizeof(payload) - 1);
+        HANDLE held_1 = hold(few_src + par_name(1));
+        auto few_st = RunOp(SimpleOp(ops::OpType::Copy, { few_src.c_str() }, par_dst.c_str()));
+        if (held_1 != INVALID_HANDLE_VALUE) CloseHandle(held_1);
+        Check(few_st.phase == ops::OpPhase::Failed && few_st.failed_items == 1 &&
+                  Exists(few_dst + par_name(0)) && Exists(few_dst + par_name(2)) && !Exists(few_dst + par_name(1)) &&
+                  !few_st.locked_path.empty(),
+              L"partial copy: one held file listed, the rest copied, in-use prompt offered");
     }
 
     // --- Open: a batch file runs in its own folder (#49) --------------------
