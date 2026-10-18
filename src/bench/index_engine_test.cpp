@@ -122,6 +122,27 @@ struct ChangeTrackerTestAccess {
         }
         return out;
     }
+    // Order-sensitive digest of one journal's history and lifecycle state,
+    // loading it from disk first when this tracker has not read it yet.
+    static uint64_t Digest(ChangeTracker& tracker, const std::wstring& owner, size_t& records) {
+        std::lock_guard lock(tracker.mutex_);
+        auto& j = tracker.journals_[owner];
+        tracker.Load(owner, j);
+        uint64_t h = 1469598103934665603ull;
+        auto mix = [&](const void* p, size_t n) {
+            const auto* b = static_cast<const uint8_t*>(p);
+            for (size_t i = 0; i < n; ++i) h = (h ^ b[i]) * 1099511628211ull;
+        };
+        auto u64 = [&](uint64_t v) { mix(&v, sizeof(v)); };
+        auto str = [&](const std::wstring& s) { u64(s.size()); mix(s.data(), s.size() * sizeof(wchar_t)); };
+        u64(j.tracking_since); u64(j.paused_at); u64(j.gap_end); u64(j.gap_until); u64(j.active ? 1 : 0);
+        for (const auto& e : j.records) {
+            u64(e.id); u64(e.time); u64(e.file_id); u64(static_cast<uint64_t>(e.kind)); u64(e.is_dir ? 1 : 0);
+            str(e.path); str(e.old_path);
+        }
+        records = j.records.size();
+        return h;
+    }
 };
 
 struct EngineTestAccess {
@@ -786,7 +807,8 @@ struct EngineTestAccess {
     // then adds the retained state a long-running service accumulates (pinyin,
     // folder totals, query cache, change feed and an active change-tracking
     // lease filled from real C: paths) and prints private commit per phase.
-    static bool SteadyMemoryProbe(const std::wstring& source, uint32_t events, uint32_t hot) {
+    // Optional persistence rounds add 3000 events each and measure the flush.
+    static bool SteadyMemoryProbe(const std::wstring& source, uint32_t events, uint32_t hot, uint32_t persist_rounds) {
         namespace fs = std::filesystem;
         if (!fs::is_directory(source) || events == 0 || hot == 0) return false;
         auto counters = [] {
@@ -957,6 +979,55 @@ struct EngineTestAccess {
                     peak_of("tracker_flush_again", [&] { engine.changes_.Flush(true); });
                 }
                 phase("steady_after_rounds");
+                if (persist_rounds) {
+                    const fs::path base_file = changes / (L"changes-" + owner + L".bin");
+                    const fs::path log_file = base_file.wstring() + L".log";
+                    auto file_kib = [](const fs::path& p) {
+                        std::error_code size_ec;
+                        const auto n = fs::file_size(p, size_ec);
+                        return size_ec ? 0.0 : static_cast<double>(n) / 1024.0;
+                    };
+                    auto written = [] { IO_COUNTERS io{}; GetProcessIoCounters(GetCurrentProcess(), &io); return io.WriteTransferCount; };
+                    uint64_t seed = 0x2545F4914F6CDD1Dull, total = 0;
+                    for (uint32_t round = 0; round < persist_rounds; ++round) {
+                        {
+                            std::unique_lock lock(engine.mutex_);
+                            const uint64_t now = ChangeTracker::Now();
+                            for (uint32_t i = 0; i < 3000; ++i) {
+                                seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
+                                const auto& [file_id, path] = targets[seed % targets.size()];
+                                ChangeRecord event;
+                                event.time = now - 59 + i / 50;
+                                event.kind = ChangeKind::Modified;
+                                event.file_id = file_id;
+                                event.path = path;
+                                engine.RecordFeed(event);
+                                engine.changes_.Record(std::move(event));
+                            }
+                        }
+                        const uint64_t before = written();
+                        peak_of("persist_flush", [&] { engine.changes_.Flush(true); });
+                        const uint64_t bytes = written() - before;
+                        total += bytes;
+                        std::cout << "persist round=" << round << " io_write_kib=" << static_cast<double>(bytes) / 1024.0
+                                  << " base_kib=" << file_kib(base_file) << " log_kib=" << file_kib(log_file) << "\n";
+                    }
+                    std::cout << "persist_total_io_write_mib=" << mib(total) << " per_round_mib=" << mib(total) / persist_rounds << "\n";
+                    tracker("after_persist_rounds");
+                    phase("after_persist_rounds");
+                    size_t live_records = 0, loaded_records = 0;
+                    const uint64_t live = ChangeTrackerTestAccess::Digest(engine.changes_, owner, live_records);
+                    ChangeTracker reloaded;
+                    reloaded.Open(changes.wstring());
+                    const uint64_t c0 = cycles();
+                    const auto w0 = std::chrono::steady_clock::now();
+                    const uint64_t loaded = ChangeTrackerTestAccess::Digest(reloaded, owner, loaded_records);
+                    std::cout << "reload_ms=" << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - w0).count()
+                              << " reload_mcycles=" << static_cast<double>(cycles() - c0) / 1e6 << "\n";
+                    std::cout << "reload_equal=" << (live == loaded) << " live_records=" << live_records
+                              << " loaded_records=" << loaded_records << "\n";
+                    ok = ok && live == loaded;
+                }
             }
             engine.Stop();
         }
@@ -2368,9 +2439,10 @@ int wmain(int argc, wchar_t** argv) {
     if ((argc == 5 || argc == 6) && std::wstring_view(argv[1]) == L"--usn-probe")
         return EngineTestAccess::UsnProbe(argv[2], static_cast<uint32_t>(wcstoul(argv[3], nullptr, 10)),
             static_cast<uint32_t>(wcstoul(argv[4], nullptr, 10)), argc == 6 && wcstoul(argv[5], nullptr, 10) != 0) ? 0 : 1;
-    if (argc == 5 && std::wstring_view(argv[1]) == L"--steady-memory-probe")
+    if ((argc == 5 || argc == 6) && std::wstring_view(argv[1]) == L"--steady-memory-probe")
         return EngineTestAccess::SteadyMemoryProbe(argv[2], static_cast<uint32_t>(wcstoul(argv[3], nullptr, 10)),
-            static_cast<uint32_t>(wcstoul(argv[4], nullptr, 10))) ? 0 : 1;
+            static_cast<uint32_t>(wcstoul(argv[4], nullptr, 10)),
+            argc == 6 ? static_cast<uint32_t>(wcstoul(argv[5], nullptr, 10)) : 0) ? 0 : 1;
     if (argc == 2 && std::wstring_view(argv[1]) == L"--hierarchy-only") return EngineTestAccess::HierarchyFixture() ? 0 : 1;
     if (argc == 2 && std::wstring_view(argv[1]) == L"--overlay-only") return EngineTestAccess::OverlayContainersFixture() ? 0 : 1;
     if (argc == 2 && std::wstring_view(argv[1]) == L"--usn-coalesce-only") return EngineTestAccess::UsnCoalesceFixture() ? 0 : 1;
