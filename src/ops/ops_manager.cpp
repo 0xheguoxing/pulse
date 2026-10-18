@@ -529,6 +529,10 @@ COPYFILE2_MESSAGE_ACTION CALLBACK CopyProgress(const COPYFILE2_MESSAGE* message,
     if (!ctx || !message) return COPYFILE2_PROGRESS_CANCEL;
     uint64_t transferred = 0;
     uint64_t total = 0;
+    // Only these carry byte counts. The start messages report 0 of 0, which
+    // must neither publish nor restart the throttle: a chunk-started before
+    // every chunk-finished kept the bar at 0% for the whole file.
+    bool counted = true;
     switch (message->Type) {
     case COPYFILE2_CALLBACK_CHUNK_FINISHED:
         transferred = message->Info.ChunkFinished.uliTotalBytesTransferred.QuadPart;
@@ -543,10 +547,12 @@ COPYFILE2_MESSAGE_ACTION CALLBACK CopyProgress(const COPYFILE2_MESSAGE* message,
         total = message->Info.Error.uliTotalFileSize.QuadPart;
         break;
     default:
+        counted = false;
         break;
     }
     const ULONGLONG now = GetTickCount64();
-    if (ctx->report && (transferred == total || now - ctx->last_report >= 100)) {
+    if (ctx->report && counted &&
+        ((total > 0 && transferred == total) || now - ctx->last_report >= 100)) {
         ctx->last_report = now;
         ctx->report(transferred, total);
     }
@@ -1201,6 +1207,7 @@ void OpsManager::CancelCurrent() {
     if (transfer) {
         transfer_control_cv_.notify_all();
         SetStatus([&](OpStatus& status) {
+            status.pause_requested = false;
             if (status.active && status.task_id == task) status.phase = OpPhase::Cancelling;
         });
     }
@@ -1209,19 +1216,34 @@ void OpsManager::CancelCurrent() {
 }
 
 void OpsManager::PauseCurrent() {
-    std::scoped_lock lock(mutex_, transfer_control_mutex_);
-    if (auto* item = CurrentTransferLocked(); item && !item->transfer_cancelled)
-        item->transfer_paused = true;
-    if (transfer_active_.load() && !transfer_cancel_.load()) transfer_pause_.store(true);
+    bool requested = false;
+    {
+        std::scoped_lock lock(mutex_, transfer_control_mutex_);
+        if (auto* item = CurrentTransferLocked(); item && !item->transfer_cancelled)
+            item->transfer_paused = true;
+        if (transfer_active_.load() && !transfer_cancel_.load()) {
+            transfer_pause_.store(true);
+            // Shown at once: a buffered write can sit in the cache manager's
+            // dirty-page throttle for seconds before the next progress callback
+            // reaches the pause check.
+            requested = status_.active && !status_.pause_requested;
+            if (requested) status_.pause_requested = true;
+        }
+    }
+    if (requested) NotifyStatusChanged();
 }
 
 void OpsManager::ResumeCurrent() {
+    bool changed = false;
     {
         std::scoped_lock lock(mutex_, transfer_control_mutex_);
         if (auto* item = CurrentTransferLocked()) item->transfer_paused = false;
         if (transfer_active_.load()) transfer_pause_.store(false);
+        changed = status_.pause_requested;
+        status_.pause_requested = false;
     }
     transfer_control_cv_.notify_all();
+    if (changed) NotifyStatusChanged();
 }
 
 std::optional<ConflictItemInfo> OpsManager::PendingConflict() const {
@@ -2168,6 +2190,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
     SetStatus([&](OpStatus& st) {
         st.active = true;
         st.can_pause = true;
+        st.pause_requested = transfer_pause_.load();
         st.authorization = AuthorizationState::None;
         st.can_skip_authorization = false;
         st.type = req.type;
@@ -2282,6 +2305,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 PushUndo(req, task_id, &completed_destinations);
                 SetStatus([&](OpStatus& st) {
                     st.active = false;
+                    st.pause_requested = false;
                     st.phase = OpPhase::Completed;
                     st.percent = 100.0f;
                     st.total_items = st.completed_items = 1;
@@ -2451,6 +2475,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         SetStatus([&](OpStatus& st) {
             st.completed_ops++;
             st.active = false;
+            st.pause_requested = false;
             st.phase = OpPhase::Completed;
             st.percent = 100.0f;
             st.summary.clear();
@@ -2838,7 +2863,10 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         if (entry.bytes >= kDirectCopyMaxBytes && !target.block_clone) {
             MEMORYSTATUSEX memory{};
             memory.dwLength = sizeof(memory);
-            unbuffered = target.slow ||
+            // A spinning target drains the cache far slower than it fills;
+            // buffered, the copy then stalls in the dirty-page throttle where
+            // neither progress nor pause can get through.
+            unbuffered = target.slow || target.spinning ||
                 (GlobalMemoryStatusEx(&memory) && large_remaining > memory.ullAvailPhys / 2);
         }
         std::wstring copy_destination = direct ? entry.destination
@@ -3143,6 +3171,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         : LockReport{};
     SetStatus([&](OpStatus& st) {
         st.active = false;
+        st.pause_requested = false;
         st.completed_ops++;
         st.bytes_per_second = 0.0;
         st.eta_seconds = 0;

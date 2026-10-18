@@ -71,6 +71,7 @@ TransferTarget DescribeTransferTarget(const std::wstring& source, const std::wst
     TransferTarget target;
     const Storage storage = StorageOf(dest_dir);
     target.slow = storage == Storage::Remote || storage == Storage::Removable;
+    target.spinning = storage == Storage::Spinning;
     const std::wstring source_root = VolumeRoot(source);
     const std::wstring dest_root = VolumeRoot(dest_dir);
     DWORD flags = 0;

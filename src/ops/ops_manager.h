@@ -113,6 +113,10 @@ struct UndoEntry {
 struct OpStatus {
     bool active = false;
     bool can_pause = true;
+    // Pause was asked for and not yet resumed. The worker may still be inside
+    // a write and only reports Paused at its next check; the UI shows paused
+    // from this so a second click resumes instead of pausing again.
+    bool pause_requested = false;
     AuthorizationState authorization = AuthorizationState::None;
     bool can_skip_authorization = false;
     // ActionRequired only: "Retry" was chosen and the attempt is in flight

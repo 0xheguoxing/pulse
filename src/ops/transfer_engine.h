@@ -26,6 +26,7 @@ unsigned TransferThreadCount(const std::wstring& source, const std::wstring& des
 
 struct TransferTarget {
     bool slow = false;         // a share or a removable drive
+    bool spinning = false;     // a fixed disk with a seek penalty (HDD)
     bool block_clone = false;  // same volume, and it clones blocks (ReFS)
 };
 TransferTarget DescribeTransferTarget(const std::wstring& source, const std::wstring& dest_dir);

@@ -1461,6 +1461,84 @@ int wmain(int argc, wchar_t** argv) {
         SetFileAttributesW((copied + par_name(0)).c_str(), FILE_ATTRIBUTE_NORMAL);
         Check(g_ops.CanUndo(), L"parallel copy: undo available");
 
+        // A large file that meets a conflict while the small files go to the
+        // pool is deferred after the choice; keep-both must still copy it.
+        {
+            const std::wstring lc_src = par_src + L"\\lc";
+            const std::wstring lc_dst = par_dst + L"\\lcdst";
+            const std::wstring lc_in = lc_dst + L"\\lc";
+            MakeDir(lc_src);
+            MakeDir(lc_dst);
+            MakeDir(lc_in);
+            for (int i = 0; i < 20; ++i) MakeFile(lc_src + par_name(i), payload, sizeof(payload) - 1);
+            constexpr uint64_t kLargeConflictBytes = 70ull << 20;
+            Check(MakePatternFile(lc_src + L"\\zbig.bin", kLargeConflictBytes), L"large conflict: fixture");
+            MakeFile(lc_in + L"\\zbig.bin", payload, sizeof(payload) - 1);
+            auto keep = RunConflictOp(SimpleOp(ops::OpType::Copy, { lc_src.c_str() }, lc_dst.c_str()),
+                                      ops::ConflictChoice::KeepBoth, false);
+            int big_copies = 0;
+            int names = 0;
+            WIN32_FIND_DATAW found{};
+            HANDLE find = FindFirstFileW((lc_in + L"\\*").c_str(), &found);
+            if (find != INVALID_HANDLE_VALUE) {
+                do {
+                    if (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+                    ++names;
+                    const uint64_t size = (static_cast<uint64_t>(found.nFileSizeHigh) << 32) | found.nFileSizeLow;
+                    if (size == kLargeConflictBytes) ++big_copies;
+                } while (FindNextFileW(find, &found));
+                FindClose(find);
+            }
+            fwprintf(stderr, L"[INFO] large conflict keep-both: names=%d big=%d err=%ls\n",
+                     names, big_copies, keep.last_error.c_str());
+            Check(keep.last_error.empty() && big_copies == 1 &&
+                  FileSize(lc_in + L"\\zbig.bin") == sizeof(payload) - 1,
+                  L"large conflict: keep-both copies the large file beside the old one");
+            auto replace = RunConflictOp(SimpleOp(ops::OpType::Copy, { lc_src.c_str() }, lc_dst.c_str()),
+                                         ops::ConflictChoice::Replace, true);
+            Check(replace.last_error.empty() && FileSize(lc_in + L"\\zbig.bin") == kLargeConflictBytes,
+                  L"large conflict: replace overwrites with the large file");
+        }
+
+        // A large single copy reports bytes as it goes, and a pause request
+        // shows before the worker reaches its next check.
+        {
+            const std::wstring big = par_src + L"\\progress.bin";
+            const std::wstring big_dst = par_dst + L"\\progress";
+            MakeDir(big_dst);
+            Check(MakePatternFile(big, 256ull << 20), L"copy progress: fixture");
+            const uint64_t before = g_ops.Status().completed_ops;
+            g_ops.Submit(SimpleOp(ops::OpType::Copy, { big.c_str() }, big_dst.c_str()));
+            bool mid = false;
+            bool requested = false;
+            bool cleared = false;
+            bool paused_once = false;
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+            while (std::chrono::steady_clock::now() < deadline) {
+                const auto st = g_ops.Status();
+                if (st.completed_ops > before) break;
+                if (st.active && st.total_bytes > 0 && st.transferred_bytes > 0 &&
+                    st.transferred_bytes < st.total_bytes) {
+                    mid = true;
+                    if (!paused_once) {
+                        paused_once = true;
+                        g_ops.PauseCurrent();
+                        requested = g_ops.Status().pause_requested;
+                        g_ops.ResumeCurrent();
+                        cleared = !g_ops.Status().pause_requested;
+                    }
+                }
+                Sleep(1);
+            }
+            Check(mid, L"copy progress: a large file reports bytes while copying");
+            Check(requested && cleared,
+                  L"copy progress: a pause request shows at once and clears on resume");
+            Check(FileHash(big_dst + L"\\progress.bin") == FileHash(big),
+                  L"copy progress: the paused large file arrives intact");
+            DeleteFileW((big_dst + L"\\progress.bin").c_str());
+            DeleteFileW(big.c_str());
+        }
+
         // One target name from two folders: the second must meet the first
         // as a conflict, not race it.
         const std::wstring other = par_src + L"\\other";

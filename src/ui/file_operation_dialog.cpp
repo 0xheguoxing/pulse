@@ -53,11 +53,19 @@ struct TransferLabels {
     bool show_pause = true;
 };
 
+// A pause shows from the click on: the worker reports Paused only at its next
+// check, which a buffered write held by the cache throttle can delay.
+bool ShowsPaused(const ops::OpStatus& status) {
+    if (status.phase == ops::OpPhase::Paused) return true;
+    return status.active && status.pause_requested &&
+           (status.phase == ops::OpPhase::Running || status.phase == ops::OpPhase::Scanning);
+}
+
 TransferLabels MakeTransferLabels(const ops::OpStatus& status, bool detailed) {
     TransferLabels labels;
     labels.details = detailed ? l10n::Get(l10n::StringId::OpSummary)
                               : l10n::Get(l10n::StringId::OpDetails);
-    labels.pause = status.phase == ops::OpPhase::Paused
+    labels.pause = ShowsPaused(status)
         ? l10n::Get(l10n::StringId::OpResume) : l10n::Get(l10n::StringId::OpPause);
     const bool emptying = status.type == ops::OpType::EmptyRecycle;
     const bool authorization = status.authorization != ops::AuthorizationState::None;
@@ -807,7 +815,7 @@ void FileOperationWindow::Render() {
     const bool authorization = status_.authorization != ops::AuthorizationState::None;
     const bool requesting = status_.authorization == ops::AuthorizationState::Requesting;
     const bool failed = status_.phase == ops::OpPhase::Failed;
-    const bool paused = status_.phase == ops::OpPhase::Paused;
+    const bool paused = ShowsPaused(status_);
     const bool waiting = status_.phase == ops::OpPhase::WaitingForConflict;
     const bool scanning = status_.phase == ops::OpPhase::Scanning;
     const bool completed = status_.phase == ops::OpPhase::Completed;
@@ -1235,7 +1243,7 @@ LRESULT FileOperationWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM l
             else if (hit == 3 && status_.active &&
                      status_.phase != ops::OpPhase::WaitingForConflict &&
                      status_.phase != ops::OpPhase::Cancelling) {
-                if (status_.phase == ops::OpPhase::Paused) {
+                if (ShowsPaused(status_)) {
                     if (callbacks_.resume) callbacks_.resume();
                 } else if (callbacks_.pause) callbacks_.pause();
             } else if ((hit == 6 || hit == 7) && status_.active &&
