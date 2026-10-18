@@ -2638,6 +2638,74 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             pool = std::make_unique<SmallCopyPool>(threads, transfer_cancel_, transfer_pause_,
                                                    transfer_control_mutex_, transfer_control_cv_);
     }
+    // Moves whose copy is written out but whose source is still there. The
+    // sources go in batches, after one flush per volume has made every copy
+    // in the batch durable (FlushCopyToDisk): a power cut leaves a moved file
+    // in one place or both, never in neither.
+    std::vector<size_t> pending_moves;
+    ULONGLONG pending_since = 0;
+    std::wstring last_volume_parent, last_volume_root;
+    const auto volume_of = [&](const std::wstring& file) {
+        const std::wstring parent = ParentOf(file);
+        if (_wcsicmp(parent.c_str(), last_volume_parent.c_str()) != 0) {
+            std::vector<wchar_t> root(32768);
+            last_volume_root = GetVolumePathNameW(LongPathForApi(file).c_str(), root.data(),
+                                                  static_cast<DWORD>(root.size())) ? root.data() : parent;
+            last_volume_parent = parent;
+        }
+        return last_volume_root;
+    };
+    const auto commit_moves = [&]() -> bool {
+        if (pending_moves.empty()) return true;
+        const std::vector<size_t> batch = std::move(pending_moves);
+        pending_moves.clear();
+        std::vector<std::pair<std::wstring, size_t>> volumes;  // volume -> a copy on it
+        for (size_t i : batch) {
+            const std::wstring volume = volume_of(entries[i].destination);
+            if (std::none_of(volumes.begin(), volumes.end(), [&](const auto& known) {
+                    return _wcsicmp(known.first.c_str(), volume.c_str()) == 0; }))
+                volumes.emplace_back(volume, i);
+        }
+        for (const auto& [volume, i] : volumes) {
+            DWORD flush_error = 0;
+            if (!FlushCopyToDisk(entries[i].destination, entries[i].attributes, flush_error, true)) {
+                if (!flush_error) flush_error = ERROR_WRITE_FAULT;
+                if (failure.empty()) {
+                    failure_hr = HRESULT_FROM_WIN32(flush_error);
+                    failure = l10n::Get(l10n::StringId::MoveKeptSourceNotFlushed).c_str() + entries[i].destination +
+                              L" | " + Win32Message(flush_error);
+                }
+                return false;  // every source of the batch stays
+            }
+        }
+        bool ok = true;
+        for (size_t i : batch) {
+            auto& moved = entries[i];
+            // The attributes were read while scanning.
+            if (moved.attributes & FILE_ATTRIBUTE_READONLY)
+                SetFileAttributesW(moved.source.c_str(), moved.attributes & ~FILE_ATTRIBUTE_READONLY);
+            if (!DeleteFileW(moved.source.c_str())) {
+                const DWORD code = GetLastError();
+                if (moved.attributes & FILE_ATTRIBUTE_READONLY)
+                    SetFileAttributesW(moved.source.c_str(), moved.attributes);
+                if (failure.empty()) {
+                    failure_hr = HRESULT_FROM_WIN32(code);
+                    failure = Win32Message(code) + L" | " + moved.source;
+                }
+                ok = false;
+                continue;
+            }
+            moved.source_removed = true;
+            moved.completed = true;
+        }
+        return ok;
+    };
+    const auto queue_move = [&](size_t index) -> bool {
+        if (pending_moves.empty()) pending_since = GetTickCount64();
+        pending_moves.push_back(index);
+        if (pending_moves.size() >= 512 || GetTickCount64() - pending_since >= 2000) return commit_moves();
+        return true;
+    };
     const auto apply_pooled = [&](std::vector<SmallCopyResult> results) {
         for (const auto& result : results) {
             if (!result.ran) continue;
@@ -2646,13 +2714,20 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             if (code != ERROR_SUCCESS) {
                 if (failure.empty()) {
                     failure_hr = FAILED(result.hr) ? result.hr : HRESULT_FROM_WIN32(code);
-                    failure = Win32Message(code) + L" | " + done.source;
+                    failure = result.not_flushed
+                        ? l10n::Get(l10n::StringId::MoveKeptSourceNotFlushed).c_str() + done.destination +
+                              L" | " + Win32Message(code)
+                        : Win32Message(code) + L" | " + done.source;
                 }
                 pool->Stop();
                 continue;
             }
-            done.completed = true;
-            done.source_removed = result.source_removed;
+            if (result.move_pending) {
+                if (!queue_move(result.index)) pool->Stop();
+            } else {
+                done.completed = true;
+                done.source_removed = result.source_removed;
+            }
             ++processed_items;
             publish_progress(done, done.bytes, done.bytes, processed_items);
             committed_bytes += done.bytes;
@@ -3054,20 +3129,18 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         }
 
         if (req.type == OpType::Move) {
-            // The attributes were read while scanning.
-            if (entry.attributes & FILE_ATTRIBUTE_READONLY)
-                SetFileAttributesW(entry.source.c_str(), entry.attributes & ~FILE_ATTRIBUTE_READONLY);
-            if (!DeleteFileW(entry.source.c_str())) {
-                {
-                    const DWORD code = GetLastError();
-                    failure_hr = HRESULT_FROM_WIN32(code);
-                    failure = Win32Message(code) + L" | " + entry.source;
-                }
+            // Written out now; the source goes with its batch (commit_moves).
+            if (DWORD flush_error = 0; !FlushCopyToDisk(entry.destination, entry.attributes, flush_error, false)) {
+                if (!flush_error) flush_error = ERROR_WRITE_FAULT;
+                failure_hr = HRESULT_FROM_WIN32(flush_error);
+                failure = l10n::Get(l10n::StringId::MoveKeptSourceNotFlushed).c_str() + entry.destination +
+                          L" | " + Win32Message(flush_error);
                 break;
             }
-            entry.source_removed = true;
+            if (!queue_move(index)) break;
+        } else {
+            entry.completed = true;
         }
-        entry.completed = true;
         if (entry.bytes >= kDirectCopyMaxBytes)
             large_remaining -= (std::min)(large_remaining, entry.bytes);
         ++processed_items;
@@ -3080,6 +3153,9 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         drain_pool();
         pool.reset();
     }
+    // Copies already written out finish their move, on failure and cancel
+    // too (as each finished move used to).
+    commit_moves();
     for (const auto& done : entries) {
         if (done.source_removed) moved_sources_.push_back(done.source);
         if (!done.completed) continue;

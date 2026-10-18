@@ -2356,5 +2356,6 @@
 #define IDS_RECYCLE_BIN_OFF_FOR_DRIVE                                                    3620
 #define IDS_RECYCLE_BIN_TOO_SMALL_FOR_ITEM                                               3621
 #define IDS_RECYCLE_BIN_TOO_SMALL_NOT_DELETED                                            3622
+#define IDS_MOVE_KEPT_SOURCE_NOT_FLUSHED                                                 3623
 
 #endif  // PULSE_STRING_IDS_H

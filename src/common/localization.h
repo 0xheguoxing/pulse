@@ -2352,6 +2352,7 @@ enum class StringId : UINT {
     RecycleBinOffForDrive = IDS_RECYCLE_BIN_OFF_FOR_DRIVE,
     RecycleBinTooSmallForItem = IDS_RECYCLE_BIN_TOO_SMALL_FOR_ITEM,
     RecycleBinTooSmallNotDeleted = IDS_RECYCLE_BIN_TOO_SMALL_NOT_DELETED,
+    MoveKeptSourceNotFlushed = IDS_MOVE_KEPT_SOURCE_NOT_FLUSHED,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

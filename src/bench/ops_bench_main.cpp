@@ -143,7 +143,8 @@ std::wstring Arg(int argc, wchar_t** argv, const wchar_t* name, const std::wstri
 
 bool Wants(const std::wstring& only, const wchar_t* scenario) {
     if (only.empty()) return wcscmp(scenario, L"recycle") != 0 && wcscmp(scenario, L"cross") != 0 &&
-                             wcscmp(scenario, L"large") != 0;
+                             wcscmp(scenario, L"large") != 0 && wcscmp(scenario, L"move-cross") != 0 &&
+                             wcscmp(scenario, L"large-move-cross") != 0;
     const std::wstring needle = L"," + std::wstring(scenario) + L",";
     return (L"," + only + L",").find(needle) != std::wstring::npos;
 }
@@ -190,6 +191,66 @@ int wmain(int argc, wchar_t** argv) {
                 Report("copy-cross", Run(request), static_cast<double>(made.size()), "files");
                 RemoveTree(remote_dir);
             }
+            RemoveTree(source);
+        }
+        // Move to another volume: copy, then the source is deleted.
+        if (Wants(only, L"move-cross") && !cross.empty()) {
+            const auto source = root / L"move_src";
+            const auto made = MakeTree(source, files, kb, false);
+            const auto remote_dir = fsys::path(cross) / L"pulse_opsbench_cross";
+            RemoveTree(remote_dir);
+            fsys::create_directories(remote_dir);
+            ops::OpRequest request;
+            request.type = ops::OpType::Move;
+            request.sources = {source.wstring()};
+            request.dest_dir = remote_dir.wstring();
+            if (!made.empty()) SetFileAttributesW(made.front().c_str(), FILE_ATTRIBUTE_READONLY);
+            Report("move-cross", Run(request), static_cast<double>(made.size()), "files");
+            {
+                // Every file arrived whole, the read-only one stays read-only,
+                // and nothing is left at the source.
+                size_t arrived = 0, whole = 0;
+                std::error_code error;
+                for (const auto& item : fsys::recursive_directory_iterator(remote_dir / L"move_src", error)) {
+                    if (!item.is_regular_file()) continue;
+                    ++arrived;
+                    if (item.file_size() == static_cast<uintmax_t>(kb) * 1024) ++whole;
+                }
+                const fsys::path first = made.empty() ? fsys::path{} :
+                    remote_dir / fsys::relative(made.front(), root);
+                const DWORD first_attributes = GetFileAttributesW(first.c_str());
+                const bool read_only = first_attributes != INVALID_FILE_ATTRIBUTES &&
+                                       (first_attributes & FILE_ATTRIBUTE_READONLY);
+                if (read_only) SetFileAttributesW(first.c_str(), FILE_ATTRIBUTE_NORMAL);
+                const bool ok = arrived == made.size() && whole == made.size() && read_only &&
+                                !fsys::exists(source);
+                printf("move-verify    %s arrived=%zu whole=%zu read_only=%d source_left=%d\n", ok ? "ok  " : "FAIL",
+                       arrived, whole, read_only ? 1 : 0, fsys::exists(source) ? 1 : 0);
+            }
+            RemoveTree(remote_dir);
+            RemoveTree(source);
+        }
+        if (Wants(only, L"large-move-cross") && !cross.empty()) {
+            const auto source = root / L"large_move_src";
+            fsys::create_directories(source);
+            const auto file = (source / L"large.bin").wstring();
+            std::vector<char> chunk(8u << 20);
+            for (size_t i = 0; i < chunk.size(); ++i) chunk[i] = static_cast<char>(i * 2654435761u >> 24);
+            HANDLE handle = CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            for (int written = 0; handle != INVALID_HANDLE_VALUE && written < large_mb; written += 8) {
+                DWORD done = 0;
+                WriteFile(handle, chunk.data(), static_cast<DWORD>(chunk.size()), &done, nullptr);
+            }
+            if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+            const auto remote_dir = fsys::path(cross) / L"pulse_opsbench_cross";
+            RemoveTree(remote_dir);
+            fsys::create_directories(remote_dir);
+            ops::OpRequest request;
+            request.type = ops::OpType::Move;
+            request.sources = {file};
+            request.dest_dir = remote_dir.wstring();
+            Report("large-move-x", Run(request), static_cast<double>(large_mb), "MB");
+            RemoveTree(remote_dir);
             RemoveTree(source);
         }
         if (Wants(only, L"delete-multi")) {

@@ -31,12 +31,24 @@ struct TransferTarget {
 };
 TransferTarget DescribeTransferTarget(const std::wstring& source, const std::wstring& dest_dir);
 
+// A move deletes its source only once the copy is on the disk itself, not
+// just in the cache: after a power loss the file is then in one place or
+// the other, never in neither. A disk-cache flush costs a spinning disk
+// tens of milliseconds, so it is paid once per batch: each copy is written
+// out with `sync` false (data and metadata to the device, no cache flush),
+// then one copy per volume with `sync` true makes the whole batch durable,
+// and only then are the batch's sources deleted.
+// `attributes`: the copy's (a read-only copy is made writable for the flush
+// and restored). File systems that cannot flush count as done. False: keep
+// the source; `error` says why.
+bool FlushCopyToDisk(const std::wstring& path, DWORD attributes, DWORD& error, bool sync = true);
+
 struct SmallCopyJob {
     size_t index = 0;           // entry index in RunTransfer
     std::wstring source;
     std::wstring destination;   // known not to exist; its folder exists
     DWORD attributes = 0;       // as scanned
-    bool move = false;          // delete the source once copied
+    bool move = false;          // write the copy out for a move (FlushCopyToDisk, no sync)
 };
 
 struct SmallCopyResult {
@@ -44,6 +56,8 @@ struct SmallCopyResult {
     bool ran = false;           // false: dropped after Stop() or cancel
     HRESULT hr = S_OK;          // the copy
     DWORD delete_error = ERROR_SUCCESS;  // the source delete of a move
+    bool not_flushed = false;   // a move kept its source: the copy could not be written out
+    bool move_pending = false;  // a move's copy is written out; RunTransfer deletes the source
     bool source_removed = false;
 };
 

@@ -176,6 +176,54 @@ void SmallCopyPool::Worker() {
     }
 }
 
+namespace {
+// NtFlushBuffersFileEx with FLUSH_FLAGS_NO_SYNC (Windows 10 1709+): write the
+// file's data and metadata to the device without flushing the device cache.
+using FlushBuffersFileEx = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PVOID);
+constexpr ULONG kFlushNoSync = 0x2;
+FlushBuffersFileEx NoSyncFlush() {
+    static const FlushBuffersFileEx function = [] {
+        HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        return ntdll ? reinterpret_cast<FlushBuffersFileEx>(GetProcAddress(ntdll, "NtFlushBuffersFileEx")) : nullptr;
+    }();
+    return function;
+}
+std::atomic<bool> g_no_sync_unsupported{false};
+}  // namespace
+
+bool FlushCopyToDisk(const std::wstring& path, DWORD attributes, DWORD& error, bool sync) {
+    error = ERROR_SUCCESS;
+    const bool read_only = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_READONLY);
+    if (read_only) SetFileAttributesW(path.c_str(), attributes & ~FILE_ATTRIBUTE_READONLY);
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    bool flushed = false;
+    if (file == INVALID_HANDLE_VALUE) {
+        error = GetLastError();
+    } else {
+        const FlushBuffersFileEx no_sync = sync || g_no_sync_unsupported.load() ? nullptr : NoSyncFlush();
+        if (no_sync) {
+            struct { LONG_PTR status; ULONG_PTR information; } io{};
+            const LONG status = no_sync(file, kFlushNoSync, nullptr, 0, &io);
+            flushed = status >= 0;
+            // Not understood (older Windows, some file systems): a full flush
+            // from now on; slower, never less safe.
+            if (!flushed) g_no_sync_unsupported.store(true);
+        }
+        if (!flushed) {
+            flushed = FlushFileBuffers(file) != FALSE;
+            if (!flushed) error = GetLastError();
+        }
+        CloseHandle(file);
+    }
+    if (read_only) SetFileAttributesW(path.c_str(), attributes);
+    if (!flushed && (error == ERROR_INVALID_FUNCTION || error == ERROR_NOT_SUPPORTED)) {
+        error = ERROR_SUCCESS;  // nothing more this file system can do
+        return true;
+    }
+    return flushed;
+}
+
 SmallCopyResult SmallCopyPool::Run(const SmallCopyJob& job) {
     SmallCopyResult result;
     result.index = job.index;
@@ -198,10 +246,14 @@ SmallCopyResult SmallCopyPool::Run(const SmallCopyJob& job) {
         return result;
     }
     if (job.move) {
-        if (job.attributes & FILE_ATTRIBUTE_READONLY)
-            SetFileAttributesW(job.source.c_str(), job.attributes & ~FILE_ATTRIBUTE_READONLY);
-        if (DeleteFileW(job.source.c_str())) result.source_removed = true;
-        else result.delete_error = GetLastError();
+        // Written out here, in parallel; the source is deleted by RunTransfer
+        // once a whole batch is durable.
+        if (DWORD error = 0; !FlushCopyToDisk(job.destination, job.attributes, error, false)) {
+            result.delete_error = error ? error : ERROR_WRITE_FAULT;
+            result.not_flushed = true;
+            return result;
+        }
+        result.move_pending = true;
     }
     return result;
 }

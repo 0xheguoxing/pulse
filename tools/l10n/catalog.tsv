@@ -2363,3 +2363,4 @@ LockMoreEnd	IDS_LOCK_MORE_END	3619	 个程序	 more programs	 個程式
 RecycleBinOffForDrive	IDS_RECYCLE_BIN_OFF_FOR_DRIVE	3620	这个驱动器的回收站已关闭，删除会立即生效。	The Recycle Bin is turned off for this drive.	這個磁碟機的資源回收筒已關閉，刪除會立即生效。
 RecycleBinTooSmallForItem	IDS_RECYCLE_BIN_TOO_SMALL_FOR_ITEM	3621	回收站容量放不下它，无法移到回收站。	It's too large for the Recycle Bin.	資源回收筒容量放不下它，無法移到資源回收筒。
 RecycleBinTooSmallNotDeleted	IDS_RECYCLE_BIN_TOO_SMALL_NOT_DELETED	3622	超过回收站容量，未删除。可用 Shift+Delete 永久删除	Too large for the Recycle Bin, so it was not deleted. Shift+Delete deletes it permanently.	超過資源回收筒容量，未刪除。可用 Shift+Delete 永久刪除
+MoveKeptSourceNotFlushed	IDS_MOVE_KEPT_SOURCE_NOT_FLUSHED	3623	无法确认已写入目标磁盘，已保留原文件：	Couldn't confirm the copy reached the disk, so the original was kept: 	無法確認已寫入目標磁碟，已保留原檔案：

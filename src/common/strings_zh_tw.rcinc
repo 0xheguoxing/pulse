@@ -2340,4 +2340,5 @@ BEGIN
     IDS_RECYCLE_BIN_OFF_FOR_DRIVE "這個磁碟機的資源回收筒已關閉，刪除會立即生效。"
     IDS_RECYCLE_BIN_TOO_SMALL_FOR_ITEM "資源回收筒容量放不下它，無法移到資源回收筒。"
     IDS_RECYCLE_BIN_TOO_SMALL_NOT_DELETED "超過資源回收筒容量，未刪除。可用 Shift+Delete 永久刪除"
+    IDS_MOVE_KEPT_SOURCE_NOT_FLUSHED "無法確認已寫入目標磁碟，已保留原檔案："
 END

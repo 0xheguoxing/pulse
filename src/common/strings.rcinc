@@ -2342,6 +2342,7 @@ BEGIN
     IDS_RECYCLE_BIN_OFF_FOR_DRIVE "这个驱动器的回收站已关闭，删除会立即生效。"
     IDS_RECYCLE_BIN_TOO_SMALL_FOR_ITEM "回收站容量放不下它，无法移到回收站。"
     IDS_RECYCLE_BIN_TOO_SMALL_NOT_DELETED "超过回收站容量，未删除。可用 Shift+Delete 永久删除"
+    IDS_MOVE_KEPT_SOURCE_NOT_FLUSHED "无法确认已写入目标磁盘，已保留原文件："
 END
 
 LANGUAGE 0x09, 0x01
@@ -4683,6 +4684,7 @@ BEGIN
     IDS_RECYCLE_BIN_OFF_FOR_DRIVE "The Recycle Bin is turned off for this drive."
     IDS_RECYCLE_BIN_TOO_SMALL_FOR_ITEM "It's too large for the Recycle Bin."
     IDS_RECYCLE_BIN_TOO_SMALL_NOT_DELETED "Too large for the Recycle Bin, so it was not deleted. Shift+Delete deletes it permanently."
+    IDS_MOVE_KEPT_SOURCE_NOT_FLUSHED "Couldn't confirm the copy reached the disk, so the original was kept: "
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.
