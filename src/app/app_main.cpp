@@ -716,6 +716,35 @@ static void CloseMainWindow(AppState& s) {
     else DestroyWindow(hwnd);
 }
 
+// The last window's first steps on the way out: what the user sees and what a
+// new Pulse would depend on. The tray icon goes, saved state is written, file
+// operations stop and leave their recovery journal, and only then is the
+// single-instance claim released, so a Pulse started now reads finished files
+// instead of being forwarded to this one. Stopping the services comes after.
+static void HandOffAtExit(AppState& s, HWND hwnd) {
+    s.tray_controller.Detach();
+    // Closing the search window may still record its size in the preferences.
+    ShutdownGlobalSearch(s);
+    // Visual-regression runs must never overwrite the user's real
+    // window, path, tray, or undo session.
+    if (s.startupComplete && !s.shot.active && !s.menushot && !s.isolatedTest) {
+        // A hidden tag-only launch must not overwrite the real
+        // window/tab session (SessionWritable); tags and places still save below.
+        // ExitPulse saved every window before closing them (M4d);
+        // by now this is the only one left.
+        if (!s.updateSessionPrepared && !s.core.exiting) SaveWindowSession(s, hwnd, true);
+        s.places.Save();
+        s.ctxMenuPrefs.Save();
+        if (!s.updateSessionPrepared) s.appPrefs.Save();
+    }
+    s.searchHistoryWriter.Flush();
+    s.ops.Stop();
+    ops::ShutdownElevatedTransferHelper();
+    // Sweeps every stage, so it must finish before another Pulse can make one.
+    app::SweepDropStages(app::DropStageRoot(), true);
+    s.single_instance.Release();
+}
+
 // Tray "Exit" and the palette's "Exit Pulse": the session is saved while every
 // window is still open (v8, M4d), then every window closes, the most recent
 // one last so its WM_DESTROY stops the services (it skips the session write).
@@ -2762,6 +2791,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             s->framePump.Stop();
             CancelZipJobs(*s);
             if (last_window) {
+                HandOffAtExit(*s, hwnd);
                 s->probe_scheduler.Clear();
                 s->probeQueue.clear();
                 s->probeUnc.clear();
@@ -2770,7 +2800,6 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 RecordP1StartupRollback(*s);
 #endif
                 StopShellWindows(*s);
-                ShutdownGlobalSearch(*s);
                 StopShellRegistryWatch();
                 s->watches.Stop();
                 s->folderSizes.Stop();
@@ -2844,28 +2873,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 DeleteObject(s->editBrush);
                 s->editBrush = nullptr;
             }
-            if (last_window) {
-                // Visual-regression runs must never overwrite the user's real
-                // window, path, tray, or undo session.
-                if (s->startupComplete && !s->shot.active && !s->menushot && !s->isolatedTest) {
-                    // A hidden tag-only launch must not overwrite the real
-                    // window/tab session (SessionWritable); tags and places still save below.
-                    // ExitPulse saved every window before closing them (M4d);
-                    // by now this is the only one left.
-                    if (!s->updateSessionPrepared && !s->core.exiting) SaveWindowSession(*s, hwnd, true);
-                    s->places.Save();
-                    s->ctxMenuPrefs.Save();
-                    if (!s->updateSessionPrepared) s->appPrefs.Save();
-                }
-
-                s->tray_controller.Detach();
-                s->ops.Stop();
-                ops::ShutdownElevatedTransferHelper();
-                app::SweepDropStages(app::DropStageRoot(), true);
-                s->single_instance.Release();
-
-                UnregisterAssocChangeNotify();
-            }
+            if (last_window) UnregisterAssocChangeNotify();
             s->renderer.SetIconNotifyWindow(nullptr);
             s->renderer.SetCompositor(nullptr);
             if (last_window) ui::ResetRenderCaches(s->core.render_caches);
