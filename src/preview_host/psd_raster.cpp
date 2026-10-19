@@ -392,15 +392,14 @@ bool DecodeComposite(Reader& r, const Header& h, UINT max_edge, std::vector<unsi
         uint64_t packed_total = 0;
         for (size_t i = 0; i < rows_total; ++i) {
             counts[i] = h.psb ? r.U32() : r.U16();
-            // A preview does not allocate attacker-controlled multi-gigabyte
-            // rows, even when the file contains enough padding to hold them.
-            if (counts[i] > row_bytes * 2 + 1024) return fail(L"psd-rle-row-limit");
             packed_total += counts[i];
         }
         if (!r.ok()) return fail(L"psd-truncated");
         if (packed_total > r.size() - r.tell()) return fail(L"psd-truncated");
         // Bound even skipped channels before any row allocation. PackBits can
-        // contain arbitrary no-ops, so this is an explicit preview work budget.
+        // contain arbitrary no-ops, so this is an explicit preview work budget:
+        // a preview does not allocate attacker-controlled multi-gigabyte rows,
+        // even when the file contains enough padding to hold them.
         const size_t packed_limit = (std::max)(size_t{65536}, row_bytes * 2 + 1024);
         uint64_t remaining = r.size() - r.tell();
         for (uint32_t count : counts) {
