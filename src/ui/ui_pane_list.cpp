@@ -1110,8 +1110,57 @@ bool MainRenderer::PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& f
            y >= name.top && y < name.bottom;
 }
 
+namespace {
+// Width and height of an icon-grid name laid out as DrawCenteredIconName
+// lays it out (defined with FitIconName below).
+D2D1_SIZE_F IconGridNameSize(Compositor* compositor, const std::wstring& name, float width, int max_lines);
+} // namespace
+
 bool MainRenderer::PointInItemGrip(const PaneViewModel& vm, const D2D1_RECT_F& full_bounds,
                                    int source_index, float x, float y) const {
+    if (vm.view_mode == ViewMode::MediumIcons || vm.view_mode == ViewMode::LargeIcons ||
+        vm.view_mode == ViewMode::ExtraLargeIcons) {
+        // File Explorer icon views: the picture and the name drag the item; the rest
+        // of its cell (beside a narrow icon, under a short name) starts a marquee, and
+        // a click there still selects the item on release.
+        const int view_index = vm.ViewIndex(source_index);
+        if (view_index < 0 || !compositor_) return false;
+        const D2D1_RECT_F pane_bounds = PaneBodyBounds(vm, full_bounds);
+        const float extra = PaneExtraTop(vm, scale_, pane_bounds.right - pane_bounds.left, compositor_);
+        const D2D1_RECT_F list = PaneListRect(pane_bounds, extra, vm.view_mode);
+        const ViewLayout layout(vm.view_mode, list, vm.EntryCount(), vm.scroll_x, vm.scroll_y, scale_,
+                                ListRowHeightDip(vm, list), vm.Groups());
+        if (layout.Wall()) return true;  // photo wall: the tile is the picture
+        const ListEntryView& entry = MakeVisibleEntry(vm, static_cast<size_t>(source_index));
+        const float pad = 3.0f * scale_;
+        // Pictures and videos fill the thumbnail slot; other icons keep their square.
+        const D2D1_RECT_F pic = IsWallPicture(entry.name, entry.is_dir) ? layout.ThumbnailRect(view_index)
+                                                                        : layout.IconRect(view_index);
+        const D2D1_RECT_F name = layout.NameRect(view_index);
+        if (x >= pic.left - pad && x < pic.right + pad && y >= pic.top - pad && y < std::max(pic.bottom + pad, name.top))
+            return true;
+        const std::wstring& shown = entry.alias.empty() ? entry.name : entry.alias;
+        if (shown.empty()) return false;
+        const std::vector<int>* tag_indices = vm.tag_catalog ? vm.tag_catalog->TagIndicesForPath(entry.path) : nullptr;
+        const bool tagged = tag_indices ? !tag_indices->empty()
+                                        : vm.tag_dots && vm.tag_dots->contains(source_index);
+        if (tagged) return PointInItemName(vm, full_bounds, source_index, x, y);  // one line beside the dots
+        const auto size_label = entry.is_dir ? vm.folder_size_labels.find(source_index) : vm.folder_size_labels.end();
+        const bool size_line = size_label != vm.folder_size_labels.end();
+        const int lines = layout.Metrics().name_lines;
+        const float cell_w = std::max(1.0f, name.right - name.left);
+        const D2D1_SIZE_F text = IconGridNameSize(compositor_, shown, cell_w, size_line ? std::max(1, lines - 1) : lines);
+        float w = text.width;
+        float h = text.height;
+        if (size_line) {
+            w = std::max(w, MeasureLayoutText(compositor_, compositor_->DwriteFactory(), compositor_->FileNameFormat(),
+                                              size_label->second));
+            h += kIconGridNameLineDip * scale_;
+        }
+        const float mid = (name.left + name.right) * 0.5f;
+        w = std::min(w, cell_w);
+        return x >= mid - w * 0.5f - pad && x < mid + w * 0.5f + pad && y >= name.top - pad && y < name.top + h + pad;
+    }
     if (vm.view_mode != ViewMode::Details && vm.view_mode != ViewMode::List &&
         vm.view_mode != ViewMode::SmallIcons)
         return true;
@@ -2846,6 +2895,23 @@ int FolderIconNameLines(Compositor* compositor, const PaneViewModel& vm, float s
 
 // Pictures and videos: tiles in their own aspect on the photo wall.
 bool WallPicture(const std::wstring& name, bool is_dir) { return IsWallPicture(name, is_dir); }
+
+D2D1_SIZE_F IconGridNameSize(Compositor* compositor, const std::wstring& name, float width, int max_lines) {
+    IDWriteFactory2* factory = compositor ? compositor->DwriteFactory() : nullptr;
+    if (!factory || !compositor->FileNameFormat() || name.empty()) return D2D1::SizeF(0.0f, 0.0f);
+    const IconNameText fit = FitIconName(compositor, factory, compositor->FileNameFormat(), name, width,
+                                         std::max(1, max_lines), {});
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(factory->CreateTextLayout(fit.shown.c_str(), static_cast<UINT32>(fit.shown.size()),
+                                         compositor->FileNameFormat(), width, 4096.0f, &layout)) || !layout.get())
+        return D2D1::SizeF(width, 0.0f);
+    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    const DWRITE_TRIMMING untrimmed{DWRITE_TRIMMING_GRANULARITY_NONE, 0, 0};
+    layout->SetTrimming(&untrimmed, nullptr);
+    DWRITE_TEXT_METRICS metrics{};
+    if (FAILED(layout->GetMetrics(&metrics))) return D2D1::SizeF(width, 0.0f);
+    return D2D1::SizeF(metrics.width, metrics.height);
+}
 
 // The wall's window for the background aspect probe (set while painting).
 HWND g_wall_notify = nullptr;
