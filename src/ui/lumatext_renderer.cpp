@@ -2,6 +2,7 @@
 #include "optional_lumatext.h"
 #include "typography.h"
 #include "edit_word_range.h"
+#include "file_name_breaks.h"
 
 #include <windows.h>
 #include <windowsx.h>
@@ -207,6 +208,14 @@ struct LumaTextRenderer::Impl {
     static bool EditWraps(HWND hwnd) {
         return hwnd && GetPropW(hwnd, L"Pulse.EditWrap") != nullptr;
     }
+    // Line width of a wrapped field. The owner may give it exactly (in
+    // 1/64 px, "Pulse.EditWrapW"): the window's whole-pixel size can lose a
+    // pixel against the name it replaces and move a break.
+    static float EditWrapWidth(HWND hwnd, float client_w) {
+        const auto given = reinterpret_cast<UINT_PTR>(GetPropW(hwnd, L"Pulse.EditWrapW"));
+        if (given) return std::max(1.0f, static_cast<float>(given) / 64.0f);
+        return std::max(1.0f, client_w - 2.0f * kEditPad);
+    }
     // Last painted wrapped layout and its origin, shared by mouse hit-testing
     // and Up/Down so both act on the lines actually on screen.
     struct EditPainted {
@@ -215,6 +224,44 @@ struct LumaTextRenderer::Impl {
         float y = 0.0f;
     };
     std::unordered_map<HWND, EditPainted> edit_painted;
+    // A wrapped field is laid out with U+2028 at the file-name breaks the
+    // icon grids use (file_name_breaks.h), so its layout positions run ahead
+    // of the EDIT's by the separators before them. Kept per layout; entries
+    // go once nothing else holds their layout.
+    struct LayoutBreaks {
+        Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+        pulse::ui::BrokenFileName breaks;
+    };
+    static std::vector<LayoutBreaks>& BreakTable() {
+        static std::vector<LayoutBreaks> table;
+        return table;
+    }
+    static const pulse::ui::BrokenFileName* BreaksOf(IDWriteTextLayout* layout) {
+        if (!layout) return nullptr;
+        for (const auto& entry : BreakTable())
+            if (entry.layout.Get() == layout) return &entry.breaks;
+        return nullptr;
+    }
+    static void RememberBreaks(IDWriteTextLayout* layout, pulse::ui::BrokenFileName breaks) {
+        auto& table = BreakTable();
+        table.erase(std::remove_if(table.begin(), table.end(), [](LayoutBreaks& entry) {
+            entry.layout->AddRef();
+            return entry.layout->Release() == 1;
+        }), table.end());
+        breaks.text.clear();
+        table.push_back({layout, std::move(breaks)});
+    }
+    // EDIT position -> layout position (for a caret or the character there).
+    static UINT32 ToLayoutPos(IDWriteTextLayout* layout, int position) {
+        const UINT32 at = static_cast<UINT32>(std::max(0, position));
+        const auto* breaks = BreaksOf(layout);
+        return breaks ? breaks->ToLayout(at) : at;
+    }
+    // Layout position -> EDIT position; a separator maps to the line start.
+    static int ToEditPos(IDWriteTextLayout* layout, UINT32 position) {
+        const auto* breaks = BreaksOf(layout);
+        return static_cast<int>(breaks ? breaks->ToName(position) : position);
+    }
     // Up/Down keep the column they started from across short lines.
     HWND line_goal_hwnd = nullptr;
     int line_goal_caret = -1;
@@ -905,10 +952,20 @@ struct LumaTextRenderer::Impl {
                 }
             }
         }
-        if (FAILED(dw_factory->CreateTextLayout(text.data(), static_cast<UINT32>(text.size()),
+        // Wrapped fields break where the icon grid breaks the same name:
+        // same rules, same DirectWrite measure, same one-pixel spare.
+        pulse::ui::BrokenFileName broken;
+        if (wrap_width > 0.0f) {
+            broken = pulse::ui::BreakFileName([&](const std::wstring& part) {
+                return pulse::ui::typography::MeasureAdvance(dw_factory.Get(), format, part);
+            }, std::wstring(text), std::max(1.0f, wrap_width - 1.0f));
+        }
+        const std::wstring_view laid = wrap_width > 0.0f ? std::wstring_view(broken.text) : text;
+        if (FAILED(dw_factory->CreateTextLayout(laid.data(), static_cast<UINT32>(laid.size()),
                 format, wrap_width > 0.0f ? wrap_width : 1.0e6f, line_height, &layout)) || !layout) {
             return nullptr;
         }
+        if (!broken.breaks.empty()) RememberBreaks(layout.Get(), broken);
         if (wrap_width > 0.0f) {
             // Wrapped fields center their lines like the icon names they edit.
             layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
@@ -979,7 +1036,8 @@ struct LumaTextRenderer::Impl {
         float x = 0.0f;
         float y = 0.0f;
         DWRITE_HIT_TEST_METRICS hit{};
-        if (FAILED(layout->HitTestTextPosition(probe, trailing ? TRUE : FALSE, &x, &y, &hit)))
+        if (FAILED(layout->HitTestTextPosition(ToLayoutPos(layout, static_cast<int>(probe)),
+                trailing ? TRUE : FALSE, &x, &y, &hit)))
             return 0.0f;
         return x;
     }
@@ -993,7 +1051,8 @@ struct LumaTextRenderer::Impl {
         const bool trailing = length > 0 && position >= length;
         const UINT32 probe = static_cast<UINT32>(trailing ? length - 1 : std::max(0, position));
         DWRITE_HIT_TEST_METRICS hit{};
-        if (FAILED(layout->HitTestTextPosition(probe, trailing ? TRUE : FALSE, &x, &y, &hit))) return;
+        if (FAILED(layout->HitTestTextPosition(ToLayoutPos(layout, static_cast<int>(probe)),
+                trailing ? TRUE : FALSE, &x, &y, &hit))) return;
         y = hit.top;
         height = hit.height;
     }
@@ -1004,8 +1063,7 @@ struct LumaTextRenderer::Impl {
         BOOL inside = FALSE;
         DWRITE_HIT_TEST_METRICS hit{};
         if (FAILED(layout->HitTestPoint(x, y, &trailing, &inside, &hit))) return length;
-        const int index = static_cast<int>(hit.textPosition) +
-            (trailing ? static_cast<int>(hit.length) : 0);
+        const int index = ToEditPos(layout, hit.textPosition + (trailing ? hit.length : 0));
         return std::clamp(index, 0, length);
     }
 
@@ -1051,7 +1109,11 @@ struct LumaTextRenderer::Impl {
         BOOL inside = FALSE;
         DWRITE_HIT_TEST_METRICS hit{};
         if (FAILED(layout->HitTestPoint(x, y, &trailing, &inside, &hit))) return length - 1;
-        return std::clamp(static_cast<int>(hit.textPosition), 0, length - 1);
+        // Past a wrapped line's end the hit is its separator: the line's
+        // last character, not the next line's first.
+        int index = ToEditPos(layout, hit.textPosition);
+        if (index > 0 && ToLayoutPos(layout, index) != hit.textPosition) --index;
+        return std::clamp(index, 0, length - 1);
     }
 
     void ApplyMouseSelection(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
@@ -1089,7 +1151,7 @@ struct LumaTextRenderer::Impl {
         const int length = static_cast<int>(text.size());
         const bool wraps = EditWraps(hwnd);
         const auto dw = DwEditLayout(text, format, static_cast<float>(rc.bottom - rc.top),
-                                     wraps ? std::max(1.0f, width - 2.0f * kEditPad) : 0.0f);
+                                     wraps ? EditWrapWidth(hwnd, width) : 0.0f);
         if (!dw) return;
         const float caret_x = DwCaretX(dw.Get(), caret_for_scroll, length);
         // Hit-test against the offset last painted, not one re-derived from
@@ -1239,7 +1301,7 @@ struct LumaTextRenderer::Impl {
         caret = std::clamp(caret, 0, static_cast<int>(text.size()));
 
         const bool wraps = EditWraps(hwnd);
-        const float wrap_width = wraps ? std::max(1.0f, static_cast<float>(w) - 2.0f * kEditPad) : 0.0f;
+        const float wrap_width = wraps ? EditWrapWidth(hwnd, static_cast<float>(w)) : 0.0f;
         const auto dw_layout = DwEditLayout(text, format, static_cast<float>(h), wrap_width);
         IDWriteRenderingParams* params = DwParams(hwnd);
         if (!dw_layout || !params) return false;
@@ -1294,11 +1356,12 @@ struct LumaTextRenderer::Impl {
         if (sel_hi > sel_lo && GetFocus() == hwnd && brush) {
             brush->SetColor(D2D1::ColorF(0.0f, 0.47f, 0.83f, 0.35f));
             UINT32 count = 0;
-            dw_layout->HitTestTextRange(static_cast<UINT32>(sel_lo), static_cast<UINT32>(sel_hi - sel_lo),
-                pad - scroll, wrap_y, nullptr, 0, &count);
+            const UINT32 range_lo = ToLayoutPos(dw_layout.Get(), sel_lo);
+            const UINT32 range_n = ToLayoutPos(dw_layout.Get(), sel_hi) - range_lo;
+            dw_layout->HitTestTextRange(range_lo, range_n, pad - scroll, wrap_y, nullptr, 0, &count);
             std::vector<DWRITE_HIT_TEST_METRICS> ranges(count);
-            if (count && SUCCEEDED(dw_layout->HitTestTextRange(static_cast<UINT32>(sel_lo),
-                static_cast<UINT32>(sel_hi - sel_lo), pad - scroll, wrap_y, ranges.data(), count, &count))) {
+            if (count && SUCCEEDED(dw_layout->HitTestTextRange(range_lo, range_n,
+                pad - scroll, wrap_y, ranges.data(), count, &count))) {
                 for (const auto& range : ranges)
                     blit_dc->FillRectangle(wraps
                         ? D2D1::RectF(range.left, range.top, range.left + range.width, range.top + range.height)
@@ -1333,10 +1396,27 @@ struct LumaTextRenderer::Impl {
                 const float y = wraps && visible == text
                     ? wrap_y : std::round((static_cast<float>(h) - metrics.height) * 0.5f) - metrics.top;
                 brush->SetColor(visible_color);
+                // A wrapped file name dims its extension like the icon grid.
+                DWRITE_TEXT_RANGE ext_range{0, 0};
+                Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> ext_brush;
+                if (wraps && visible == text && GetPropW(hwnd, L"Pulse.EditDimExt")) {
+                    const size_t dot = pulse::ui::FileNameExtensionDot(text);
+                    if (dot != std::wstring::npos) {
+                        const UINT32 lo = ToLayoutPos(visible_layout.Get(), static_cast<int>(dot));
+                        const UINT32 hi = ToLayoutPos(visible_layout.Get(), static_cast<int>(text.size()));
+                        if (hi > lo && SUCCEEDED(blit_dc->CreateSolidColorBrush(D2D1::ColorF(visible_color.r,
+                                visible_color.g, visible_color.b, visible_color.a * 0.6f), &ext_brush))) {
+                            ext_range = {lo, hi - lo};
+                            visible_layout->SetDrawingEffect(ext_brush.Get(), ext_range);
+                        }
+                    }
+                }
                 blit_dc->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
                 blit_dc->SetTextRenderingParams(params);
                 blit_dc->DrawTextLayout(D2D1::Point2F(std::round(pad - scroll), y), visible_layout.Get(),
                                         brush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+                // The layout is cached and shared: leave no brush on it.
+                if (ext_range.length) visible_layout->SetDrawingEffect(nullptr, ext_range);
                 blit_dc->SetTextRenderingParams(nullptr);
                 text_drawn = true;
             }

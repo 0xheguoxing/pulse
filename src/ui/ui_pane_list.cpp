@@ -16,6 +16,7 @@
 #include "../common/text_format.h"
 #include "../common/preview_extensions.h"
 #include "wall_aspects.h"
+#include "file_name_breaks.h"
 #include <windowsx.h>
 #include <d2d1effects.h>
 #include <shlwapi.h>
@@ -2683,59 +2684,24 @@ struct IconNameText {
     bool truncated = false;
 };
 
-bool IsCjkChar(wchar_t c) {
-    return (c >= 0x2E80 && c <= 0x9FFF) || (c >= 0xAC00 && c <= 0xD7AF) ||
-           (c >= 0xF900 && c <= 0xFAFF) || (c >= 0xFF00 && c <= 0xFFEF);
-}
-bool NoLineStart(wchar_t c) {
-    return c != 0 && std::wcschr(L")]}\uFF09\u300D\u300F\u3011\u3015\u3009\u300B\uFF0C\u3002\u3001\uFF1B\uFF1A\uFF1F\uFF01,;:?!%\u2026", c) != nullptr;
-}
-// A natural place to wrap a file name, between s[i - 1] and s[i]: after a
-// space or separator, before an opening bracket or the extension, next to
-// CJK text - never in front of closing punctuation.
-bool GoodNameBreak(const std::wstring& s, size_t i, size_t ext_dot) {
-    if (i == 0 || i >= s.size() || NoLineStart(s[i])) return false;
-    const wchar_t a = s[i - 1], b = s[i];
-    if (i == ext_dot) return true;
-    if (a == L' ' || a == L'_' || a == L'-' || a == L')' || a == L']' || a == L',' ||
-        a == 0xFF09 || a == 0x3001 || a == 0xFF0C) return true;
-    if (b == L'(' || b == L'[' || b == 0xFF08 || b == 0x3010) return true;
-    return IsCjkChar(a) || IsCjkChar(b);
+using NameLine = FileNameLine;
+// Same break rules as the wrapped rename field (file_name_breaks.h).
+// Breaks are measured with plain DirectWrite advances, as the rename field
+// measures them, so a name keeps its line breaks when editing starts.
+std::vector<NameLine> WrapIconName(IDWriteFactory2* factory, IDWriteTextFormat* fmt,
+                                   const std::wstring& s, float width, size_t limit) {
+    return WrapFileName([&](const std::wstring& t) { return typography::MeasureAdvance(factory, fmt, t); },
+                        s, width, limit);
 }
 
-struct NameLine { size_t start, length; };
-// Greedy wrap with file-name break rules; stops once `limit` lines are
-// exceeded (the caller only needs to know the name overflows).
-std::vector<NameLine> WrapIconName(const std::function<float(const std::wstring&)>& measure,
-                                   const std::wstring& s, float width, size_t limit) {
-    std::vector<NameLine> lines;
-    const size_t dot = s.find_last_of(L'.');
-    const size_t ext_dot = dot != std::wstring::npos && dot > 0 && s.size() - dot <= 9 ? dot : std::wstring::npos;
-    size_t at = 0;
-    while (at < s.size() && lines.size() <= limit) {
-        if (!lines.empty()) while (at < s.size() && s[at] == L' ') ++at;
-        if (at >= s.size()) break;
-        if (measure(s.substr(at)) <= width) { lines.push_back({at, s.size() - at}); break; }
-        size_t lo = 1, hi = s.size() - at;
-        while (lo < hi) {
-            const size_t mid = (lo + hi + 1) / 2;
-            if (measure(s.substr(at, mid)) <= width) lo = mid;
-            else hi = mid - 1;
-        }
-        size_t n = lo, natural = 0;
-        // Prefer a natural break in the last 45% of the line.
-        for (size_t k = n; k > 0 && k * 100 >= n * 55; --k)
-            if (GoodNameBreak(s, at + k, ext_dot)) { natural = k; break; }
-        if (natural) {
-            n = natural;
-        } else {
-            while (n > 1 && NoLineStart(s[at + n])) --n;
-            if (n > 1 && IS_LOW_SURROGATE(s[at + n])) --n;
-        }
-        lines.push_back({at, n});
-        at += n;
-    }
-    return lines;
+// The part of a shown icon name that is the file's extension: the tail of
+// `shown` when it ends with it (a cut name keeps its extension too).
+DWRITE_TEXT_RANGE ShownExtension(const std::wstring& name, const std::wstring& shown) {
+    const size_t dot = FileNameExtensionDot(name);
+    if (dot == std::wstring::npos) return {0, 0};
+    const size_t n = name.size() - dot;
+    if (shown.size() < n || shown.compare(shown.size() - n, n, name, dot, n) != 0) return {0, 0};
+    return {static_cast<UINT32>(shown.size() - n), static_cast<UINT32>(n)};
 }
 
 struct IconNameLayout {
@@ -2753,7 +2719,7 @@ IconNameLayout LayoutIconName(Compositor* compositor, IDWriteFactory2* factory, 
     };
     const float budget = std::max(1.0f, width - 1.0f);
     const size_t limit = static_cast<size_t>(std::max(1, max_lines));
-    const auto lines = WrapIconName(measure, name, budget, limit);
+    const auto lines = WrapIconName(factory, fmt, name, budget, limit);
     const auto add = [&](size_t source, size_t length) {
         out.pieces.push_back({out.shown.size(), source, length});
         out.shown.append(name, source, length);
@@ -2856,9 +2822,6 @@ int FolderIconNameLines(Compositor* compositor, const PaneViewModel& vm, float s
                !vm.snapshot.owner_before(c.snapshot) && c.width == width && c.font == font;
     };
     for (const Cached& c : cache) if (same(c)) return c.lines;
-    const auto measure = [&](const std::wstring& s) {
-        return MeasureLayoutText(compositor, compositor->DwriteFactory(), fmt, s);
-    };
     const float budget = std::max(1.0f, width - 1.0f);  // as LayoutIconName
     const size_t total = vm.snapshot->size();
     constexpr size_t kSamples = 128;
@@ -2869,7 +2832,7 @@ int FolderIconNameLines(Compositor* compositor, const PaneViewModel& vm, float s
         const ListEntryView& e = MakeVisibleEntry(vm, i);
         const std::wstring name = e.alias.empty() ? e.name : e.alias;
         if (name.empty()) continue;
-        needed.push_back(static_cast<int>(WrapIconName(measure, name, budget,
+        needed.push_back(static_cast<int>(WrapIconName(compositor->DwriteFactory(), fmt, name, budget,
             static_cast<size_t>(kIconGridMaxNameLines)).size()));
     }
     const bool has_folders = std::any_of(vm.snapshot->begin(), vm.snapshot->end(),
@@ -3180,9 +3143,19 @@ void MainRenderer::DrawWallTileChrome(const D2D1_RECT_F& tile, bool hover, bool 
     }
 }
 
+// Extension in the secondary ink, as the details view shows it.
+void MainRenderer::DimNameExtension(IDWriteTextLayout* layout, const std::wstring& name,
+                                    const std::wstring& shown, const D2D1_COLOR_F& color) {
+    const DWRITE_TEXT_RANGE ext = ShownExtension(name, shown);
+    if (!layout || ext.length == 0 || IsHighContrast() || !compositor_ || !compositor_->Dc()) return;
+    MakeBrush(compositor_->Dc(), D2D1::ColorF(color.r, color.g, color.b, color.a * 0.6f), brNameExt_);
+    if (brNameExt_.get()) layout->SetDrawingEffect(brNameExt_.get(), ext);
+}
+
 bool MainRenderer::DrawCenteredIconName(const std::wstring& name, const D2D1_RECT_F& bounds,
                                         const D2D1_COLOR_F& color, const Theme& theme, const std::vector<NameMatchRange>& matches,
-                                        bool* truncated, int max_lines, float* text_height) {
+                                        bool* truncated, int max_lines, float* text_height,
+                                        bool dim_extension) {
     if (truncated) *truncated = false;
     if (!compositor_ || !compositor_->Dc() || !compositor_->DwriteFactory() || name.empty()) return false;
     const float width = std::max(1.0f, bounds.right - bounds.left);
@@ -3207,6 +3180,7 @@ bool MainRenderer::DrawCenteredIconName(const std::wstring& name, const D2D1_REC
         *text_height = SUCCEEDED(layout->GetMetrics(&metrics)) ? metrics.height : height;
     }
     DrawNameHighlightBackground(compositor_, layout.get(), {bounds.left, bounds.top}, bounds, fit.matches, theme, scale_);
+    if (dim_extension) DimNameExtension(layout.get(), name, fit.shown, color);
     MakeBrush(compositor_->Dc(), color, brText_);
     compositor_->Dc()->DrawTextLayout(D2D1::Point2F(bounds.left, bounds.top), layout.get(),
                                       brText_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -3217,7 +3191,7 @@ void MainRenderer::DrawExpandedIconName(const std::wstring& name, const D2D1_REC
                                         const D2D1_COLOR_F& color, const Theme& theme,
                                         const std::vector<NameMatchRange>& matches, bool pane_focused,
                                         const D2D1_RECT_F& view, const std::wstring& note,
-                                        const D2D1_COLOR_F& note_color) {
+                                        const D2D1_COLOR_F& note_color, bool dim_extension) {
     auto* dc = compositor_ ? compositor_->Dc() : nullptr;
     if (!dc || !compositor_->DwriteFactory() || name.empty()) return;
     constexpr int kExpandedLines = 6;
@@ -3282,6 +3256,7 @@ void MainRenderer::DrawExpandedIconName(const std::wstring& name, const D2D1_REC
     MakeBrush(dc, IsHighContrast() ? theme.text : WithAlpha(theme.accent, 0.55f), brFillInput_);
     dc->DrawRoundedRectangle(D2D1::RoundedRect(plate, radius, radius), brFillInput_.get(), scale_);
     DrawNameHighlightBackground(compositor_, layout.get(), {text.left, text.top}, plate, fit.matches, theme, scale_);
+    if (dim_extension) DimNameExtension(layout.get(), name, fit.shown, color);
     MakeBrush(dc, color, brText_);
     dc->DrawTextLayout(D2D1::Point2F(text.left, text.top), layout.get(), brText_.get(),
                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -3369,8 +3344,8 @@ D2D1_RECT_F MainRenderer::RenameFieldRect(const PaneViewModel& vm, const D2D1_RE
         const float floorW = std::min(maxW, wall ? std::max(cellW, 150.0f * scale_) : cellW);
         float natural = 0.0f;
         ComPtr<IDWriteTextLayout> line;
-        if (compositor_->TextFormat() && SUCCEEDED(compositor_->DwriteFactory()->CreateTextLayout(
-                typed.c_str(), static_cast<UINT32>(typed.size()), compositor_->TextFormat(), 1.0e6f, 1.0e6f,
+        if (compositor_->FileNameFormat() && SUCCEEDED(compositor_->DwriteFactory()->CreateTextLayout(
+                typed.c_str(), static_cast<UINT32>(typed.size()), compositor_->FileNameFormat(), 1.0e6f, 1.0e6f,
                 &line)) && line.get()) {
             line->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
             DWRITE_TEXT_METRICS metrics{};
@@ -3379,6 +3354,19 @@ D2D1_RECT_F MainRenderer::RenameFieldRect(const PaneViewModel& vm, const D2D1_RE
         // Room for the caret after the last glyph, so a fitted line never wraps.
         const float hug = natural + 6.0f * scale_ + 5.0f + 4.0f * scale_;
         field_w = std::clamp(std::ceil(hug), floorW, maxW);
+        // A name that wraps under its icon gets a text box exactly as wide
+        // as the selected name expands to (DrawExpandedIconName), so its
+        // lines stay where they were when editing starts.
+        const float nameW = std::max(1.0f, nameRc.right - nameRc.left);
+        if (!wall && natural + 1.0f > nameW) {
+            float textW = nameW;
+            if (WrapIconName(compositor_->DwriteFactory(), compositor_->FileNameFormat(), typed,
+                    std::max(1.0f, nameW - 1.0f), 6).size() > 6)
+                textW = std::max(nameW, std::min({2.0f * nameW + 8.0f * scale_, std::max(nameW, 280.0f * scale_),
+                                                  listRight - listLeft - 8.0f * scale_}));
+            field_w = std::max(minW, std::min(listRight - listLeft, textW + 6.0f * scale_ + 4.0f));
+            maxW = std::max(maxW, field_w);
+        }
         if (vm.rename_index == source_index) field_w = std::min(maxW, std::max(field_w, vm.rename_field_w));
         const float center = (cell.left + cell.right) * 0.5f;
         fieldLeft = std::clamp(center - field_w * 0.5f, listLeft, std::max(listLeft, listRight - field_w));
@@ -3386,13 +3374,19 @@ D2D1_RECT_F MainRenderer::RenameFieldRect(const PaneViewModel& vm, const D2D1_RE
         field_w = std::max(minW, std::min(std::max(field_w, wideW), listRight - nameX));
     }
     float field_h = std::max(22.0f * scale_, std::min(textH, 30.0f * scale_));
-    if (iconGrid && compositor_->TextFormat()) {
-        // Wrap exactly as the EDIT will.
+    if (iconGrid && compositor_->FileNameFormat()) {
+        // Wrap exactly as the EDIT will: the shared file-name breaks
+        // (LumaText's wrapped layout), in the file-name format.
         const float textW = editTextWidth(field_w);
         float wrappedH = 18.0f * scale_;
+        IDWriteFactory2* factory = compositor_->DwriteFactory();
+        IDWriteTextFormat* nameFormat = compositor_->FileNameFormat();
+        const BrokenFileName broken = BreakFileName([&](const std::wstring& part) {
+            return typography::MeasureAdvance(factory, nameFormat, part);
+        }, typed, textW);
         ComPtr<IDWriteTextLayout> wrapped;
-        if (SUCCEEDED(compositor_->DwriteFactory()->CreateTextLayout(typed.c_str(),
-                static_cast<UINT32>(typed.size()), compositor_->TextFormat(), textW, 1.0e6f, &wrapped)) &&
+        if (SUCCEEDED(factory->CreateTextLayout(broken.text.c_str(),
+                static_cast<UINT32>(broken.text.size()), nameFormat, textW + 1.0f, 1.0e6f, &wrapped)) &&
             wrapped.get()) {
             wrapped->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
             // Untrimmed like the EDIT's layout: the format's ellipsis would cut
@@ -3693,6 +3687,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
         std::vector<NameMatchRange> matches;
         std::wstring note;          // a folder's size, kept under the name
         D2D1_COLOR_F note_color{};
+        bool dim_extension = false;
     } expanded_name;
     // Details tree (inline folder expansion): chevrons and the rows that stand
     // in for a folder's children (loading, empty, failed, more). Like Finder,
@@ -4290,7 +4285,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     const bool size_line = e.is_dir && vm.folder_size_labels.contains(src);
                     const int name_lines = wall_rows ? 1 : layout.Metrics().name_lines;
                     DrawCenteredIconName(has_alias ? e.alias : e.name, nameRc, nameColor, theme, name_matches,
-                                         &name_truncated, size_line ? std::max(1, name_lines - 1) : name_lines);
+                                         &name_truncated, size_line ? std::max(1, name_lines - 1) : name_lines,
+                                         nullptr, !e.is_dir && !has_alias);
                     // The single selected item shows its whole name on top of
                     // the rows below (drawn after every row), a folder's size
                     // under it.
@@ -4298,6 +4294,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         !morphing) {
                         expanded_name.valid = true;
                         expanded_name.name = has_alias ? e.alias : e.name;
+                        expanded_name.dim_extension = !e.is_dir && !has_alias;
                         expanded_name.bounds = D2D1::RectF(nameRc.left + row_dx, nameRc.top + row_dy,
                                                            nameRc.right + row_dx, nameRc.bottom + row_dy);
                         expanded_name.color = nameColor;
@@ -4367,6 +4364,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         !vm.marquee_active && !morphing) {
                         expanded_name.valid = true;
                         expanded_name.name = e.name;
+                        expanded_name.dim_extension = !e.is_dir;
                         expanded_name.bounds = D2D1::RectF(nameRc.left + row_dx, nameRc.top + row_dy,
                                                            nameRc.right + row_dx, nameRc.bottom + row_dy);
                         expanded_name.color = nameColor;
@@ -4749,7 +4747,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
         dc->PushAxisAlignedClip(D2D1::RectF(x, y, x + w, y + h), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         DrawExpandedIconName(expanded_name.name, expanded_name.bounds, expanded_name.color, theme,
                              expanded_name.matches, pane_focused, viewport, expanded_name.note,
-                             expanded_name.note_color);
+                             expanded_name.note_color, expanded_name.dim_extension);
         dc->PopAxisAlignedClip();
     }
     if (vm.rename_index >= 0 && vm.ViewIndex(vm.rename_index) >= 0) {

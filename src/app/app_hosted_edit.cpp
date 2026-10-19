@@ -191,6 +191,17 @@ void EnsureEditVisuals(AppState& s) {
 
 void HideRenameOverlay(AppState& s, bool commit);
 
+// Edit font at the icon grids' file-name size, one per scale (a handful of
+// DPI changes at most over a session, so earlier ones are kept, not freed
+// under an EDIT that may still use them).
+static HFONT NameEditFont(float scale) {
+    static std::vector<std::pair<float, HFONT>> fonts;
+    for (const auto& [at, font] : fonts) if (at == scale) return font;
+    HFONT font = ui::typography::CreateEditFont(scale, 13.0f);
+    fonts.emplace_back(scale, font);
+    return font;
+}
+
 void ShowAddressEditor(AppState& s) {
     app::Tab* tab = ActiveTab(s);
     if (!tab) return;
@@ -497,7 +508,20 @@ void LayoutRenameOverlay(AppState& s) {
     const bool wrapped_before = GetPropW(s.hwndRenameEdit, L"Pulse.EditWrap") != nullptr;
     if (wraps) SetPropW(s.hwndRenameEdit, L"Pulse.EditWrap", reinterpret_cast<HANDLE>(1));
     else RemovePropW(s.hwndRenameEdit, L"Pulse.EditWrap");
-    if (wraps != wrapped_before) InvalidateRect(s.hwndRenameEdit, nullptr, FALSE);
+    // Exact line width for LumaText: the field's text box (frame inset 3 dip
+    // and 2 px pad a side), unrounded, as RenameFieldRect wrapped it.
+    const float wrapW = (field.right - field.left) - 6.0f * s.scale - 4.0f;
+    if (wraps && wrapW > 1.0f)
+        SetPropW(s.hwndRenameEdit, L"Pulse.EditWrapW",
+                 reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(std::lround(wrapW * 64.0f))));
+    else RemovePropW(s.hwndRenameEdit, L"Pulse.EditWrapW");
+    if (wraps != wrapped_before) {
+        // The EDIT's own font (IME composition, native metrics) follows the
+        // painted one: the 13 dip file-name size in icon grids.
+        SendMessageW(s.hwndRenameEdit, WM_SETFONT,
+                     reinterpret_cast<WPARAM>(wraps ? NameEditFont(s.scale) : s.editFont), FALSE);
+        InvalidateRect(s.hwndRenameEdit, nullptr, FALSE);
+    }
     // Seat the EDIT inside the Fluent frame: frame stroke + text padding.
     const float insetX = 3.0f * s.scale;
     const float insetY = 2.0f * s.scale;
@@ -614,6 +638,11 @@ void ShowRenameOverlay(AppState& s) {
         const std::wstring alias = app::AliasStore::Instance().Find(EntryFullPath(*tab, s.renameIndex));
         if (!alias.empty()) initial = alias;
     }
+    // A file's extension is dimmed while its name is edited wrapped, as it
+    // is under the icon (not a folder's last dot, nor an alias).
+    if (!tab->EntryAt(s.renameIndex).is_dir && !s.renameAlias)
+        SetPropW(s.hwndRenameEdit, L"Pulse.EditDimExt", reinterpret_cast<HANDLE>(1));
+    else RemovePropW(s.hwndRenameEdit, L"Pulse.EditDimExt");
     SetWindowTextW(s.hwndRenameEdit, initial.c_str());
     LayoutRenameOverlay(s);
     EnsureRenameFieldVisible(s);
@@ -792,6 +821,9 @@ D2D1_COLOR_F HostedEditBackground(const AppState& s) {
 
 IDWriteTextFormat* HostedEditFormat(AppState& s, HWND hwnd) {
     if (hwnd == s.hwndAddressEdit) return s.compositor.AddressFormat();
+    // Icon grids edit a name in the face and size it is shown in, so its
+    // lines stay put when editing starts.
+    if (hwnd == s.hwndRenameEdit && GetPropW(hwnd, L"Pulse.EditWrap")) return s.compositor.FileNameFormat();
     return s.compositor.TextFormat();
 }
 

@@ -2155,14 +2155,17 @@ private:
     bool DrawCenteredIconName(const std::wstring& name, const D2D1_RECT_F& bounds,
                               const D2D1_COLOR_F& color, const Theme& theme,
                               const std::vector<NameMatchRange>& matches, bool* truncated = nullptr,
-                              int max_lines = kIconGridNameLines, float* text_height = nullptr);
+                              int max_lines = kIconGridNameLines, float* text_height = nullptr,
+                              bool dim_extension = false);
+    void DimNameExtension(IDWriteTextLayout* layout, const std::wstring& name,
+                          const std::wstring& shown, const D2D1_COLOR_F& color);
     // The selected item's whole name (up to 6 lines) on an opaque plate that
     // covers the row below.
     void DrawExpandedIconName(const std::wstring& name, const D2D1_RECT_F& bounds,
                               const D2D1_COLOR_F& color, const Theme& theme,
                               const std::vector<NameMatchRange>& matches, bool pane_focused,
                               const D2D1_RECT_F& view, const std::wstring& note = {},
-                              const D2D1_COLOR_F& note_color = {});
+                              const D2D1_COLOR_F& note_color = {}, bool dim_extension = false);
     // Title-bar product mark from the app icon resource (nullptr until loaded).
     ID2D1Bitmap* LogoBitmap();
 
@@ -2415,6 +2418,7 @@ private:
     mutable ComPtr<ID2D1SolidColorBrush> brFillPressed_;
     mutable ComPtr<ID2D1SolidColorBrush> brFillSelected_;
     mutable ComPtr<ID2D1SolidColorBrush> brFillInput_;
+    mutable ComPtr<ID2D1SolidColorBrush> brNameExt_;   // icon-grid name extensions
     mutable ComPtr<ID2D1SolidColorBrush> brStrokeCard_;
     mutable ComPtr<ID2D1SolidColorBrush> brStrokeDivider_;
     mutable ComPtr<ID2D1SolidColorBrush> brAccent_;
