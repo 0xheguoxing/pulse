@@ -467,6 +467,10 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     r.region = HitTestResult::SettingsToggle; r.index = 27; return r;
                 }
             } else if (vm.settings_page == 1) {
+                // 搜索和索引 master switch, above everything else on the page.
+                if (ContainsPt(lay.search_master_row, x, y)) {
+                    r.region = HitTestResult::SettingsToggle; r.index = 38; return r;
+                }
                 if (ContainsPt(lay.global_search_row, x, y)) {
                     r.region = HitTestResult::SettingsToggle; r.index = 15; return r;
                 }
