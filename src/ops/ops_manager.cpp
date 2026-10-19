@@ -975,6 +975,24 @@ std::wstring OpenItemWorkingDirectory(const std::wstring& path) {
     return dir;
 }
 
+// Undo history keeps the newest kMaxUndoSteps steps, so session.json stops
+// growing. A step is one entry, or a run of entries sharing a nonzero group
+// (undone together); trimming drops whole steps from the oldest end.
+constexpr size_t kMaxUndoSteps = 100;
+
+void TrimUndoHistory(std::deque<UndoEntry>& undo) {
+    size_t steps = 0;
+    for (size_t i = 0; i < undo.size(); ++i)
+        if (i == 0 || undo[i].group == 0 || undo[i].group != undo[i - 1].group) ++steps;
+    while (steps > kMaxUndoSteps && !undo.empty()) {
+        const uint64_t group = undo.front().group;
+        do {
+            undo.pop_front();
+        } while (group != 0 && !undo.empty() && undo.front().group == group);
+        --steps;
+    }
+}
+
 } // namespace
 
 OpsManager::~OpsManager() {
@@ -1713,6 +1731,7 @@ void OpsManager::PushUndo(const OpRequest& req, uint64_t task_id,
     if (req.type == OpType::EmptyRecycle) return;
     std::lock_guard<std::mutex> lock(mutex_);
     undo_.push_back(std::move(e));
+    TrimUndoHistory(undo_);
 }
 
 std::vector<CompletedOperation> OpsManager::DrainCompletions() {
@@ -4229,6 +4248,7 @@ bool OpsManager::UndoFromJson(const std::wstring& in) {
     }
     std::lock_guard<std::mutex> lock(mutex_);
     undo_ = std::move(parsed);
+    TrimUndoHistory(undo_);
     return true;
 }
 

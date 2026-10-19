@@ -1209,6 +1209,28 @@ int wmain(int argc, wchar_t** argv) {
         ops::OpsManager legacy_manager;
         Check(legacy_manager.UndoFromJson(legacy) && legacy_manager.CanUndo(),
               L"legacy undo JSON without destination mappings remains compatible");
+        // History is capped at 100 steps; the oldest are dropped first.
+        std::wstring many = L"[";
+        for (int i = 0; i < 150; ++i) {
+            wchar_t name[16];
+            swprintf_s(name, L"u%03d", i);
+            if (i) many += L",";
+            many += L"{\"type\":0,\"sup\":true,\"dest\":\"C:\\\\tmp\",\"name\":\"\",\"src\":[\"C:\\\\tmp\\\\";
+            many += name;
+            many += L".txt\"]}";
+        }
+        many += L"]";
+        ops::OpsManager capped;
+        Check(capped.UndoFromJson(many), L"150-step undo JSON parses");
+        const std::wstring kept = capped.UndoToJson();
+        size_t steps = 0;
+        for (size_t at = kept.find(L"\"type\""); at != std::wstring::npos;
+             at = kept.find(L"\"type\"", at + 1))
+            ++steps;
+        Check(steps == 100, L"undo history keeps at most 100 steps");
+        Check(kept.find(L"u149") != std::wstring::npos && kept.find(L"u050") != std::wstring::npos &&
+              kept.find(L"u049") == std::wstring::npos && kept.find(L"u000") == std::wstring::npos,
+              L"undo history drops the oldest steps first");
     }
 
     // --- 11. Clipboard round-trip -------------------------------------------
