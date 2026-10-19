@@ -9,6 +9,7 @@
 #include "window_overview_ui.h"
 #include "window_switcher.h"
 #include <imm.h>
+#include <chrono>
 #include "../ui/address_search_layout.h"
 #include "../ui/lumatext_renderer.h"
 #include "../ui/fluent_menu.h"
@@ -17,6 +18,7 @@
 #include "../ui/batch_rename_dialog.h"
 #include "../ui/quick_preview_window.h"
 #include "../ui/typography.h"
+#include "../ui/ui_motion.h"
 #include "../ui/color_picker.h"
 #include "../common/localization.h"
 #include "../common/text_format.h"
@@ -597,10 +599,26 @@ static void EnsureRenameFieldVisible(AppState& s) {
         const D2D1_RECT_F field = s.renderer.RenameFieldRect(slot.pane, list, s.renameIndex);
         const float over = field.bottom + 4.0f * s.scale - list.bottom;
         if (field.right > field.left && over > 0.5f) {
-            tab->scroll_y += over;
-            ClampScroll(s);
-            s.scrollTargetY = tab->scroll_y;
-            LayoutRenameOverlay(s);
+            // Scrolled to the end already: the list grows for now (until
+            // the rename ends) so the card can still come fully into view.
+            const float want = tab->scroll_y + over;
+            const float most = MaxScrollForActivePane(s);
+            if (want > most) s.renameScrollRoom += want - most;
+            if (!ui::motion::SystemAnimationsEnabled()) {
+                tab->scroll_y = want;
+                s.scrollTargetY = want;
+                ClampScroll(s);
+                LayoutRenameOverlay(s);
+            } else {
+                // The list glides there; the field follows it every frame
+                // (LayoutRenameOverlay after each present).
+                s.scrollTargetY = want;
+                s.scrollHorizontal = false;
+                s.scrollLastUpdateTime = std::chrono::steady_clock::now();
+                s.scrollAnimating = true;
+                if (s.framePump.Running()) s.framePump.Arm();
+                else if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+            }
         }
         break;
     }
@@ -657,6 +675,7 @@ void ShowRenameOverlay(AppState& s) {
     s.renameHint.clear();
     s.renameConfirmExt = false;
     s.renameShakeAt = 0;
+    s.renameScrollRoom = 0.0f;
     g_renameStatusHint.clear();
     g_renameTyped.clear();
     EnsureRowVisible(s, *tab, s.renameIndex);
@@ -727,6 +746,11 @@ void HideRenameOverlay(AppState& s, bool commit) {
     s.renameConfirmExt = false;
     s.renameHint.clear();
     s.renameFieldW = 0.0f;
+    if (s.renameScrollRoom > 0.0f) {
+        // The room it made goes with the card.
+        s.renameScrollRoom = 0.0f;
+        ClampScroll(s);
+    }
     if (commit && alias_edit) {
         app::Tab* tab = ActiveTab(s);
         wchar_t buf[512];
@@ -1103,7 +1127,8 @@ static void UpdateRenameStatus(AppState& s) {
 
 // A refused character: it is not typed; the field shakes and says why.
 static void RefuseRenameChar(AppState& s) {
-    s.renameShakeAt = GetTickCount64();
+    // The Animation effects switch is asked once, when the shake starts.
+    s.renameShakeAt = ui::motion::SystemAnimationsEnabled() ? GetTickCount64() : 0;
     ShowRenameHint(s, l10n::Get(l10n::StringId::ANameCanTContainAnyOfTheseCharacters), false);
 }
 

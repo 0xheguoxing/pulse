@@ -3404,7 +3404,7 @@ D2D1_RECT_F MainRenderer::RenameFieldRect(const PaneViewModel& vm, const D2D1_RE
     }
     // A refused character shakes the field (the EDIT rides on this rect):
     // three damped swings over 360 ms.
-    if (vm.rename_index == source_index && vm.rename_shake_ms >= 0 && motion::SystemAnimationsEnabled()) {
+    if (vm.rename_index == source_index && vm.rename_shake_ms >= 0) {
         const float t = std::clamp(static_cast<float>(vm.rename_shake_ms) / 360.0f, 0.0f, 1.0f);
         fieldLeft += std::round(5.0f * scale_ * std::sin(t * 6.2831853f * 3.0f) * (1.0f - t));
     }
@@ -3773,6 +3773,14 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                               D2D1_LAYER_OPTIONS1_NONE), nullptr);
         }
         int morph_order = 0;
+        // Icon grids: names the rename card lies over fade to 38%, so the
+        // card reads as floating above them.
+        D2D1_RECT_F rename_card{};
+        const bool rename_covers = (vm.view_mode == ViewMode::ExtraLargeIcons ||
+                                    vm.view_mode == ViewMode::LargeIcons ||
+                                    vm.view_mode == ViewMode::MediumIcons) &&
+            vm.rename_index >= 0 && vm.ViewIndex(vm.rename_index) >= 0;
+        if (rename_covers) rename_card = RenameFieldRect(vm, viewport, vm.rename_index);
         for (int i = startIdx; i >= 0 && i <= endIdx; ++i) {
             D2D1_RECT_F cell = layout.ItemRect(i);
             if (cell.right < x || cell.left > x + w || cell.bottom < y || cell.top > y + h) continue;
@@ -4271,6 +4279,9 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 }
                 if (cut) nameColor = WithAlpha(nameColor, 0.55f);
                 else if (!IsHighContrast()) nameColor = HiddenEntryNameColor(e.attrs, theme, nameColor);
+                if (rename_covers && nameRc.left < rename_card.right && nameRc.right > rename_card.left &&
+                    nameRc.top < rename_card.bottom && nameRc.bottom > rename_card.top)
+                    nameColor.a *= 0.38f;
                 MakeBrush(dc, nameColor, brText_);
                 bool name_truncated = true;
                 if (wallPic) {
@@ -4785,6 +4796,20 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
         if (pop != 1.0f) {
             const D2D1_POINT_2F c = D2D1::Point2F((field.left + field.right) * 0.5f, (field.top + field.bottom) * 0.5f);
             dc->SetTransform(D2D1::Matrix3x2F::Scale(pop, pop, c) * saved);
+        }
+        const bool card = vm.view_mode == ViewMode::ExtraLargeIcons || vm.view_mode == ViewMode::LargeIcons ||
+                          vm.view_mode == ViewMode::MediumIcons;
+        if (card && !IsHighContrast()) {
+            // A floating card: a soft shadow below it (three widening
+            // translucent layers, cheaper than a blur).
+            const float r0 = theme.radius_control * scale_;
+            const float ink = theme.bg.r < 0.5f ? 0.16f : 0.06f;
+            for (int k = 3; k >= 1; --k) {
+                const float g = static_cast<float>(k) * 2.0f * scale_;
+                MakeBrush(dc, D2D1::ColorF(0.0f, 0.0f, 0.0f, ink), brFillInput_);
+                FillRoundedRect(dc, brFillInput_.get(), field.left - g * 0.5f, field.top + 1.0f * scale_,
+                                field.right - field.left + g, field.bottom - field.top + g, r0 + g * 0.5f);
+            }
         }
         painter_.DrawTextFieldFrame(field, fieldState);
         dc->SetTransform(saved);

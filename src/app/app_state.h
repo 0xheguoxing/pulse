@@ -630,6 +630,7 @@ struct AppState : AppCoreOwner {
     std::wstring renameHint;
     ULONGLONG renameHintUntil = 0;  // GetTickCount64; 0 = until answered
     ULONGLONG renameShakeAt = 0;    // GetTickCount64 of the last refused character (the field shakes)
+    float renameScrollRoom = 0.0f;  // list made taller while a rename field hangs below its end
     bool renameConfirmExt = false;
     float renameFieldW = 0.0f;
     // 解散文件夹: the recycle that ends each folder's chain, after which the

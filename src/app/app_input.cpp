@@ -809,7 +809,9 @@ float MaxScrollForActivePane(AppState& s, ui::PaneViewModel* out) {
     if (!s.pane || !s.pane->ActiveTab()) return 0.0f;
     ui::PaneViewModel pane;
     app::FillPaneViewModel(pane, *s.pane, &s.places);
-    const float max_scroll = s.renderer.MaxScrollForPane(pane, FocusedPaneRect(s));
+    float max_scroll = s.renderer.MaxScrollForPane(pane, FocusedPaneRect(s));
+    // A rename card below the list's end made it taller for now.
+    if (s.renameIndex >= 0) max_scroll += s.renameScrollRoom;
     if (out) *out = std::move(pane);
     return max_scroll;
 }
