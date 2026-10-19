@@ -2160,7 +2160,9 @@ private:
     // covers the row below.
     void DrawExpandedIconName(const std::wstring& name, const D2D1_RECT_F& bounds,
                               const D2D1_COLOR_F& color, const Theme& theme,
-                              const std::vector<NameMatchRange>& matches, bool pane_focused);
+                              const std::vector<NameMatchRange>& matches, bool pane_focused,
+                              const D2D1_RECT_F& view, const std::wstring& note = {},
+                              const D2D1_COLOR_F& note_color = {});
     // Title-bar product mark from the app icon resource (nullptr until loaded).
     ID2D1Bitmap* LogoBitmap();
 

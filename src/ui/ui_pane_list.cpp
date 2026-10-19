@@ -3215,16 +3215,38 @@ bool MainRenderer::DrawCenteredIconName(const std::wstring& name, const D2D1_REC
 
 void MainRenderer::DrawExpandedIconName(const std::wstring& name, const D2D1_RECT_F& bounds,
                                         const D2D1_COLOR_F& color, const Theme& theme,
-                                        const std::vector<NameMatchRange>& matches, bool pane_focused) {
+                                        const std::vector<NameMatchRange>& matches, bool pane_focused,
+                                        const D2D1_RECT_F& view, const std::wstring& note,
+                                        const D2D1_COLOR_F& note_color) {
     auto* dc = compositor_ ? compositor_->Dc() : nullptr;
     if (!dc || !compositor_->DwriteFactory() || name.empty()) return;
     constexpr int kExpandedLines = 6;
     const float line = kIconGridNameLineDip * scale_;
-    const D2D1_RECT_F text = D2D1::RectF(bounds.left, bounds.top, bounds.right,
-                                         bounds.top + (kExpandedLines * kIconGridNameLineDip + 2.0f) * scale_);
-    // Measure first: the plate hugs the lines the full name really takes.
-    const IconNameText fit = FitIconName(compositor_, compositor_->DwriteFactory(),
-        compositor_->FileNameFormat(), name, std::max(1.0f, text.right - text.left), kExpandedLines, matches);
+    const float edge = 4.0f * scale_;
+    // A folder's size stays under its name, inside the plate.
+    const float note_h = note.empty() ? 0.0f : line;
+    // Every line down to the bottom of the list, at least the six the cell
+    // width gets: the selected item shows its whole name.
+    const int room = std::max(1, static_cast<int>(std::floor(
+        (view.bottom - edge - note_h - bounds.top) / line)));
+    const float cell_w = std::max(1.0f, bounds.right - bounds.left);
+    float width = cell_w;
+    IconNameText fit = FitIconName(compositor_, compositor_->DwriteFactory(), compositor_->FileNameFormat(),
+                                   name, width, std::min(kExpandedLines, room), matches);
+    if (fit.truncated) {
+        // Longer than six lines at the cell width: widen like the rename
+        // field, to two cells (280 dip at most), inside the list.
+        const float wide = std::min({2.0f * cell_w + 8.0f * scale_, std::max(cell_w, 280.0f * scale_),
+                                     std::max(1.0f, view.right - view.left - 2.0f * edge)});
+        width = std::max(cell_w, wide);
+        fit = FitIconName(compositor_, compositor_->DwriteFactory(), compositor_->FileNameFormat(),
+                          name, width, room, matches);
+    }
+    const float mid0 = (bounds.left + bounds.right) * 0.5f;
+    const float left = std::clamp(mid0 - width * 0.5f, view.left + edge,
+                                  std::max(view.left + edge, view.right - edge - width));
+    const D2D1_RECT_F text = D2D1::RectF(left, bounds.top, left + width,
+                                         bounds.top + static_cast<float>(room) * line + 2.0f * scale_);
     ComPtr<IDWriteTextLayout> layout;
     if (FAILED(compositor_->DwriteFactory()->CreateTextLayout(fit.shown.c_str(),
             static_cast<UINT32>(fit.shown.size()), compositor_->FileNameFormat(),
@@ -3237,11 +3259,16 @@ void MainRenderer::DrawExpandedIconName(const std::wstring& name, const D2D1_REC
     layout->SetTrimming(&untrimmed, nullptr);
     DWRITE_TEXT_METRICS metrics{};
     if (FAILED(layout->GetMetrics(&metrics))) return;
+    float note_w = 0.0f;
+    if (!note.empty() && compositor_->SmallFormat())
+        note_w = MeasureLayoutText(compositor_, compositor_->DwriteFactory(), compositor_->SmallFormat(), note);
     const float pad_x = 4.0f * scale_;
-    const float plate_w = std::min(text.right - text.left, metrics.widthIncludingTrailingWhitespace) + pad_x * 2.0f;
+    const float plate_w = std::min(text.right - text.left,
+                                   std::max(metrics.widthIncludingTrailingWhitespace, note_w)) + pad_x * 2.0f;
     const float mid = (text.left + text.right) * 0.5f;
+    const float name_h = std::max(line, metrics.height);
     const D2D1_RECT_F plate = D2D1::RectF(mid - plate_w * 0.5f, text.top - 2.0f * scale_,
-        mid + plate_w * 0.5f, text.top + std::max(line, metrics.height) + 3.0f * scale_);
+        mid + plate_w * 0.5f, text.top + name_h + note_h + 3.0f * scale_);
     // Opaque: it lies over the next row. Same tint as the selected cell.
     const D2D1_COLOR_F base = theme.bg;
     const D2D1_COLOR_F tint = pane_focused ? theme.fill_selected : theme.fill_selected_inactive;
@@ -3258,6 +3285,15 @@ void MainRenderer::DrawExpandedIconName(const std::wstring& name, const D2D1_REC
     MakeBrush(dc, color, brText_);
     dc->DrawTextLayout(D2D1::Point2F(text.left, text.top), layout.get(), brText_.get(),
                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    if (note_w > 0.0f) {
+        auto* format = compositor_->SmallFormat();
+        const auto alignment = format->GetTextAlignment();
+        format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        MakeBrush(dc, note_color, brTextSecondary_);
+        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), format, brTextSecondary_.get(), note,
+                            plate.left + pad_x, text.top + name_h, plate.right - plate.left - 2.0f * pad_x, line);
+        format->SetTextAlignment(alignment);
+    }
 }
 D2D1_RECT_F MainRenderer::RenameFieldRect(const PaneViewModel& vm, const D2D1_RECT_F& list,
                                           int source_index) {
@@ -3655,6 +3691,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
         D2D1_RECT_F bounds{};
         D2D1_COLOR_F color{};
         std::vector<NameMatchRange> matches;
+        std::wstring note;          // a folder's size, kept under the name
+        D2D1_COLOR_F note_color{};
     } expanded_name;
     // Details tree (inline folder expansion): chevrons and the rows that stand
     // in for a folder's children (loading, empty, failed, more). Like Finder,
@@ -4254,15 +4292,25 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     DrawCenteredIconName(has_alias ? e.alias : e.name, nameRc, nameColor, theme, name_matches,
                                          &name_truncated, size_line ? std::max(1, name_lines - 1) : name_lines);
                     // The single selected item shows its whole name on top of
-                    // the rows below (drawn after every row).
+                    // the rows below (drawn after every row), a folder's size
+                    // under it.
                     if (name_truncated && selected && vm.selected_count == 1 && !vm.marquee_active &&
-                        !morphing && !size_line) {
+                        !morphing) {
                         expanded_name.valid = true;
                         expanded_name.name = has_alias ? e.alias : e.name;
                         expanded_name.bounds = D2D1::RectF(nameRc.left + row_dx, nameRc.top + row_dy,
                                                            nameRc.right + row_dx, nameRc.bottom + row_dy);
                         expanded_name.color = nameColor;
                         expanded_name.matches = name_matches;
+                        expanded_name.note.clear();
+                        if (size_line) {
+                            const auto size = vm.folder_size_labels.find(src);
+                            expanded_name.note = size->second;
+                            const bool quiet = vm.folder_size_idle.contains(src) ||
+                                vm.folder_size_muted.contains(src) || size->second == folder_size_scanning;
+                            expanded_name.note_color = cut ? WithAlpha(quiet ? theme.text_secondary : theme.text, 0.55f)
+                                                           : (quiet ? theme.text_secondary : theme.text);
+                        }
                     }
                 } else if (has_alias) {
                     {
@@ -4313,6 +4361,18 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     name_theme.text = nameColor;
                     name_truncated = DrawTruncatedName(e.name, trail.name_x, textY, trail.name_w, textH, name_theme,
                                                        selected, name_matches, detailsView && !e.is_dir);
+                    // Icon grids with tag dots keep the name on one line; the
+                    // single selected item still shows all of it.
+                    if (iconGrid && !wallPic && name_truncated && selected && vm.selected_count == 1 &&
+                        !vm.marquee_active && !morphing) {
+                        expanded_name.valid = true;
+                        expanded_name.name = e.name;
+                        expanded_name.bounds = D2D1::RectF(nameRc.left + row_dx, nameRc.top + row_dy,
+                                                           nameRc.right + row_dx, nameRc.bottom + row_dy);
+                        expanded_name.color = nameColor;
+                        expanded_name.matches = name_matches;
+                        expanded_name.note.clear();
+                    }
                 }
                 // The row tooltip repeats the name only when it is cut off (B站 #15).
                 if (hover && pane_index >= 0 && pane_index < static_cast<int>(hover_names_.size()))
@@ -4688,7 +4748,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
     if (expanded_name.valid) {
         dc->PushAxisAlignedClip(D2D1::RectF(x, y, x + w, y + h), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         DrawExpandedIconName(expanded_name.name, expanded_name.bounds, expanded_name.color, theme,
-                             expanded_name.matches, pane_focused);
+                             expanded_name.matches, pane_focused, viewport, expanded_name.note,
+                             expanded_name.note_color);
         dc->PopAxisAlignedClip();
     }
     if (vm.rename_index >= 0 && vm.ViewIndex(vm.rename_index) >= 0) {
