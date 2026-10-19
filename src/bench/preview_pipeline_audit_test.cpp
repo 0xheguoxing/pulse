@@ -33,6 +33,8 @@ int wmain() {
     for(DWORD attrs:{DWORD{0},DWORD{0x80000},DWORD{FILE_ATTRIBUTE_OFFLINE},DWORD{0x40000},DWORD{0x400000},DWORD{FILE_ATTRIBUTE_OFFLINE|0x80000},DWORD{0x480000},DWORD{0xc0000}})
         Check(IsOfflinePlaceholder(attrs)==((attrs&(FILE_ATTRIBUTE_OFFLINE|0x40000|0x400000))!=0),
             "OFFLINE and recall states override pin intent; local pinned files remain readable");
+    Check(!IsOfflinePlaceholder(INVALID_FILE_ATTRIBUTES),
+        "unknown attributes (a vanished path) are not an offline placeholder");
     const auto gif=root/L"animation.gif";
     Write(gif,Gif(100));
     Bytes pixels; UINT w=0,h=0,stride=0,sw=0,sh=0; uint32_t count=0,delay=0,loops=0; std::wstring error;
