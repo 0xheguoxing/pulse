@@ -17,6 +17,12 @@
 namespace pulse::ui {
 namespace {
 
+// 别名: the card names an item the way the list does (empty: none shown).
+std::wstring ShownAlias(const std::wstring& path) {
+    return path.empty() ? std::wstring() : app::AliasStore::Instance().Shown(path);
+}
+bool AliasWithRealName() { return app::AliasStore::Instance().Display() == app::AliasDisplay::Both; }
+
 // Card geometry in DIPs.
 constexpr float kRadius = 10.0f;
 constexpr float kInset = 6.0f;        // around the preview well
@@ -586,9 +592,12 @@ void MainRenderer::DrawHoverPreview(const HoverPreviewView& view, const D2D1_REC
     const float text_left = tile.right + 12.0f * s, text_right = card.right - 14.0f * s;
     IDWriteTextFormat* name_format = compositor_->FileNameFormat() ? compositor_->FileNameFormat()
                                                                    : compositor_->TextFormat();
-    text(view.name, D2D1::RectF(text_left, tile.top - 3.0f * s, text_right, tile.top + 21.0f * s),
-         name_format, palette.text);
+    const std::wstring file_alias = ShownAlias(view.path);
+    text(file_alias.empty() ? view.name : file_alias,
+         D2D1::RectF(text_left, tile.top - 3.0f * s, text_right, tile.top + 21.0f * s), name_format, palette.text);
     std::wstring type_line = view.type_text;
+    if (!file_alias.empty() && AliasWithRealName())
+        type_line = view.name + (type_line.empty() ? L"" : L" \u00B7 ") + type_line;
     if (view.modified) {
         const std::wstring when = format::LocalFileTime(ToFileTime(view.modified));
         if (!when.empty()) type_line += (type_line.empty() ? L"" : L" · ") + when;
@@ -886,7 +895,9 @@ void MainRenderer::DrawHoverFolderCard(const HoverPreviewView& view, const D2D1_
                     side = format::ByteSize(item.size);
                 }
                 const float side_w = side.empty() ? 0.0f : 78.0f * s;
-                text(item.name, D2D1::RectF(row.left + 34.0f * s, row.top, row.right - 12.0f * s - side_w, row.bottom),
+                const std::wstring item_alias = ShownAlias(ChildPath(view.path, item.name));
+                text(item_alias.empty() ? item.name : item_alias,
+                     D2D1::RectF(row.left + 34.0f * s, row.top, row.right - 12.0f * s - side_w, row.bottom),
                      compositor_->TextFormat(), palette.text);
                 if (!side.empty())
                     text(side, D2D1::RectF(row.right - 10.0f * s - side_w, row.top, row.right - 10.0f * s, row.bottom),
@@ -962,8 +973,9 @@ void MainRenderer::DrawHoverFolderCard(const HoverPreviewView& view, const D2D1_
     const float text_left = tile.right + 12.0f * s, text_right = card.right - 14.0f * s;
     IDWriteTextFormat* name_format = compositor_->FileNameFormat() ? compositor_->FileNameFormat()
                                                                    : compositor_->TextFormat();
-    text(view.name, D2D1::RectF(text_left, tile.top - 3.0f * s, text_right, tile.top + 21.0f * s), name_format,
-         palette.text);
+    const std::wstring folder_alias = ShownAlias(view.path);
+    text(folder_alias.empty() ? view.name : folder_alias,
+         D2D1::RectF(text_left, tile.top - 3.0f * s, text_right, tile.top + 21.0f * s), name_format, palette.text);
     std::wstring type_line;
     const std::wstring dot = L" \u00B7 ";
     if (view.drive) {
@@ -985,6 +997,8 @@ void MainRenderer::DrawHoverFolderCard(const HoverPreviewView& view, const D2D1_
         const std::wstring parent = ParentName(view.path);
         if (!parent.empty()) type_line += dot + l10n::Get(l10n::StringId::In).c_str() + parent;
     }
+    if (!folder_alias.empty() && AliasWithRealName())
+        type_line = view.name + (type_line.empty() ? L"" : dot) + type_line;
     text(type_line, D2D1::RectF(text_left, tile.top + 21.0f * s, text_right, tile.bottom + 3.0f * s),
          compositor_->SmallFormat(), palette.text_secondary);
     float below = tile.bottom;

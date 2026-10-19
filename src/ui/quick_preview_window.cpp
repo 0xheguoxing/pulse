@@ -3,6 +3,7 @@
 #include "legacy_icons.h"
 #include "../common/windows_compat.h"
 #include "quick_preview_window.h"
+#include "../app/folder_alias.h"
 #include "preview_notice.h"
 #include "../common/localization.h"
 #include "../common/text_format.h"
@@ -28,6 +29,22 @@
 
 namespace pulse::ui {
 namespace {
+
+// 别名: the title names the item the way the list does — the alias, then the
+// real name under 别名 + 原名.
+template <class Item>
+std::wstring PreviewTitle(const Item& item) {
+    const std::wstring alias = item.path.empty() ? std::wstring() : app::AliasStore::Instance().Shown(item.path);
+    if (alias.empty()) return item.name;
+    if (app::AliasStore::Instance().Display() != app::AliasDisplay::Both || item.name.empty()) return alias;
+    return alias + L"\u2003" + item.name;
+}
+// The folder / archive card's own heading: the alias alone.
+template <class Item>
+std::wstring PreviewCardName(const Item& item) {
+    const std::wstring alias = item.path.empty() ? std::wstring() : app::AliasStore::Instance().Shown(item.path);
+    return alias.empty() ? item.name : alias;
+}
 
 constexpr wchar_t kWindowClass[] = L"Pulse.QuickPreview";
 constexpr DWORD kRecallOnOpen = 0x00040000;
@@ -296,7 +313,7 @@ void QuickPreviewWindow::Show(const QuickPreviewItem& item, bool dark, WindowEff
     const int x = owner_rect.left + (owner_width - width) / 2;
     const int y = owner_rect.top + (owner_height - height) / 2;
     SetWindowTextW(hwnd_, item_.name.empty()
-        ? pulse::l10n::Get(pulse::l10n::StringId::QuickPreview).c_str() : item_.name.c_str());
+        ? pulse::l10n::Get(pulse::l10n::StringId::QuickPreview).c_str() : PreviewTitle(item_).c_str());
     // Zoom out of the item's icon. Only with a plain (None) window effect:
     // a DWM system backdrop would pop in at full size around the zooming
     // content. The DWM show transition is disabled while our zoom runs.
@@ -351,7 +368,7 @@ void QuickPreviewWindow::Update(const QuickPreviewItem& item) {
     handler_.Reset();
     BeginVideo();
     SetWindowTextW(hwnd_, item_.name.empty()
-        ? pulse::l10n::Get(pulse::l10n::StringId::QuickPreview).c_str() : item_.name.c_str());
+        ? pulse::l10n::Get(pulse::l10n::StringId::QuickPreview).c_str() : PreviewTitle(item_).c_str());
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
@@ -1727,7 +1744,8 @@ void QuickPreviewWindow::Render() {
         markdown_shown_ ? MarkdownToggleRect(-1).left - 8.0f * scale_
                         : width - (kCloseButtonWidth + kChromeButtonWidth * 3.0f + 8.0f) * scale_,
         header));
-    dc->DrawTextW(item_.name.data(), static_cast<UINT32>(item_.name.size()),
+    const std::wstring title = PreviewTitle(item_);
+    dc->DrawTextW(title.data(), static_cast<UINT32>(title.size()),
                   compositor_.HeaderFormat(), title_rect, text_brush.get(),
                   D2D1_DRAW_TEXT_OPTIONS_CLIP, DWRITE_MEASURING_MODE_NATURAL);
     const D2D1_RECT_F close_rect = D2D1::RectF(width - kCloseButtonWidth * scale_, 0,
@@ -1968,7 +1986,7 @@ void QuickPreviewWindow::Render() {
                 if (icon_unsized) InvalidateRect(hwnd_, nullptr, FALSE);  // lay out at the real size
             }
         } else if (result == PreviewDrawResult::Archive &&
-                   archive_.SetPayload(text, item_.name, item_.size)) {
+                   archive_.SetPayload(text, PreviewCardName(item_), item_.size)) {
             native_kind_ = NativeKind::Archive;
             archive_.Draw(dc, &compositor_, content, CurrentTheme(), scale_, true);
         } else if (result == PreviewDrawResult::Markdown && markdown_.SetPayload(text, item_.path) &&

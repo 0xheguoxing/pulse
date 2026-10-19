@@ -344,7 +344,10 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
 
         details_preview_archive_ = false;
         if (!handlerPreview && previewResult == PreviewDrawResult::Archive &&
-            details_archive_.SetPayload(previewText, d.name, d.size_value)) {
+            details_archive_.SetPayload(previewText, [&] {
+                const std::wstring alias = d.path.empty() ? std::wstring() : app::AliasStore::Instance().Shown(d.path);
+                return alias.empty() ? d.name : alias;   // 别名 heads the folder card too
+            }(), d.size_value)) {
             details_preview_archive_ = true;
             details_viewport_.SetContent(contentRc, 0, 0, false);
             details_archive_.Draw(dc, compositor_, contentRc, theme, s, false);
@@ -476,8 +479,10 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
     dc->DrawLine(D2D1::Point2F(cx, cy + direction * 2 * s),
         D2D1::Point2F(cx + 4 * s, cy - direction * 2 * s), brText_.get(), 1.4f * s);
     if (d.preview_only) {
+        const std::wstring caption_alias = d.path.empty() ? std::wstring()
+                                                          : app::AliasStore::Instance().Shown(d.path);
         DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), compositor_->SmallFormat(),
-            brText_.get(), d.name, footer.caption.left, footer.caption.top,
+            brText_.get(), caption_alias.empty() ? d.name : caption_alias, footer.caption.left, footer.caption.top,
             footer.caption.right - footer.caption.left, footer.caption.bottom - footer.caption.top);
     }
     if (details_viewport_.image && GetTickCount64() < details_zoom_label_until_) {
@@ -559,7 +564,10 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
             DrawIconText(hit.rename.left, hit.rename.top, 22.0f * s, 22.0f * s,
                          L"\xE8AC", L"ren", theme.text_secondary, 0.72f);
         }
-        std::wstring shown = d.name;
+        // 别名: the panel names the item the way the list does.
+        const std::wstring alias = d.multi_count <= 1 && !d.path.empty()
+            ? app::AliasStore::Instance().Shown(d.path) : std::wstring();
+        std::wstring shown = alias.empty() ? d.name : alias;
         if (d.multi_count > 1) {
             wchar_t selected[64]{};
             swprintf_s(selected,
@@ -575,6 +583,9 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
         std::wstring subtitle = d.subtitle_text;
         if (subtitle.empty())
             subtitle = d.type_text.empty() ? FormatListType(d.name, d.is_dir) : d.type_text;
+        // 别名 + 原名: the real name leads the line under the alias.
+        if (!alias.empty() && app::AliasStore::Instance().Display() == app::AliasDisplay::Both)
+            subtitle = subtitle.empty() ? d.name : d.name + L" \u00B7 " + subtitle;
         if (!subtitle.empty())
             text(subtitle, D2D1::RectF(panel.left + pad, y + 22.0f * s,
                                        panel.right - pad, y + 38.0f * s),
