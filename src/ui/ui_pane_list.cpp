@@ -3253,13 +3253,13 @@ bool MainRenderer::DrawCenteredIconName(const std::wstring& name, const D2D1_REC
     return fit.truncated;
 }
 
-void MainRenderer::DrawExpandedIconName(const std::wstring& name, const D2D1_RECT_F& bounds,
+float MainRenderer::DrawExpandedIconName(const std::wstring& name, const D2D1_RECT_F& bounds,
                                         const D2D1_COLOR_F& color, const Theme& theme,
                                         const std::vector<NameMatchRange>& matches, bool pane_focused,
                                         const D2D1_RECT_F& view, const std::wstring& note,
                                         const D2D1_COLOR_F& note_color, bool dim_extension) {
     auto* dc = compositor_ ? compositor_->Dc() : nullptr;
-    if (!dc || !compositor_->DwriteFactory() || name.empty()) return;
+    if (!dc || !compositor_->DwriteFactory() || name.empty()) return 0.0f;
     constexpr int kExpandedLines = 6;
     const float line = kIconGridNameLineDip * scale_;
     const float edge = 4.0f * scale_;
@@ -3282,6 +3282,16 @@ void MainRenderer::DrawExpandedIconName(const std::wstring& name, const D2D1_REC
         fit = FitIconName(compositor_, compositor_->DwriteFactory(), compositor_->FileNameFormat(),
                           name, width, room, matches);
     }
+    // Lines the list had no room for: the caller may glide the list up.
+    float overflow = 0.0f;
+    if (fit.truncated) {
+        const IconNameText all = FitIconName(compositor_, compositor_->DwriteFactory(), compositor_->FileNameFormat(),
+                                             name, width, 64, matches);
+        const int need = 1 + static_cast<int>(std::count(all.shown.begin(), all.shown.end(), L'\u2028'));
+        if (need > room)
+            overflow = std::min(static_cast<float>(need - room) * line,
+                                std::max(0.0f, bounds.top - view.top - edge - line));
+    }
     const float mid0 = (bounds.left + bounds.right) * 0.5f;
     const float left = std::clamp(mid0 - width * 0.5f, view.left + edge,
                                   std::max(view.left + edge, view.right - edge - width));
@@ -3291,14 +3301,14 @@ void MainRenderer::DrawExpandedIconName(const std::wstring& name, const D2D1_REC
     if (FAILED(compositor_->DwriteFactory()->CreateTextLayout(fit.shown.c_str(),
             static_cast<UINT32>(fit.shown.size()), compositor_->FileNameFormat(),
             std::max(1.0f, text.right - text.left), text.bottom - text.top, &layout)) || !layout.get())
-        return;
+        return 0.0f;
     layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
     layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     const DWRITE_TRIMMING untrimmed{DWRITE_TRIMMING_GRANULARITY_NONE, 0, 0};
     layout->SetTrimming(&untrimmed, nullptr);
     DWRITE_TEXT_METRICS metrics{};
-    if (FAILED(layout->GetMetrics(&metrics))) return;
+    if (FAILED(layout->GetMetrics(&metrics))) return 0.0f;
     float note_w = 0.0f;
     if (!note.empty() && compositor_->SmallFormat())
         note_w = MeasureLayoutText(compositor_, compositor_->DwriteFactory(), compositor_->SmallFormat(), note);
@@ -3335,6 +3345,7 @@ void MainRenderer::DrawExpandedIconName(const std::wstring& name, const D2D1_REC
                             plate.left + pad_x, text.top + name_h, plate.right - plate.left - 2.0f * pad_x, line);
         format->SetTextAlignment(alignment);
     }
+    return overflow;
 }
 D2D1_RECT_F MainRenderer::RenameFieldRect(const PaneViewModel& vm, const D2D1_RECT_F& list,
                                           int source_index) {
@@ -3760,6 +3771,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
         std::wstring note;          // a folder's size, kept under the name
         D2D1_COLOR_F note_color{};
         bool dim_extension = false;
+        int source = -1;
     } expanded_name;
     // Details tree (inline folder expansion): chevrons and the rows that stand
     // in for a folder's children (loading, empty, failed, more). Like Finder,
@@ -4376,6 +4388,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     if (name_truncated && selected && vm.selected_count == 1 && !vm.marquee_active &&
                         !morphing) {
                         expanded_name.valid = true;
+                        expanded_name.source = src;
                         expanded_name.name = has_alias ? e.alias : e.name;
                         expanded_name.dim_extension = !e.is_dir && !has_alias;
                         expanded_name.bounds = D2D1::RectF(nameRc.left + row_dx, nameRc.top + row_dy,
@@ -4446,6 +4459,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     if (iconGrid && !wallPic && name_truncated && selected && vm.selected_count == 1 &&
                         !vm.marquee_active && !morphing) {
                         expanded_name.valid = true;
+                        expanded_name.source = src;
                         expanded_name.name = e.name;
                         expanded_name.dim_extension = !e.is_dir;
                         expanded_name.bounds = D2D1::RectF(nameRc.left + row_dx, nameRc.top + row_dy,
@@ -4826,12 +4840,20 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
         }
         if (text_layer) dc->PopLayer();
     }
+    if (pane_focused) {
+        expanded_overflow_px_ = 0.0f;
+        expanded_overflow_index_ = -1;
+    }
     if (expanded_name.valid) {
         dc->PushAxisAlignedClip(D2D1::RectF(x, y, x + w, y + h), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        DrawExpandedIconName(expanded_name.name, expanded_name.bounds, expanded_name.color, theme,
+        const float overflow = DrawExpandedIconName(expanded_name.name, expanded_name.bounds, expanded_name.color, theme,
                              expanded_name.matches, pane_focused, viewport, expanded_name.note,
                              expanded_name.note_color, expanded_name.dim_extension);
         dc->PopAxisAlignedClip();
+        if (pane_focused && overflow > 0.0f) {
+            expanded_overflow_px_ = overflow;
+            expanded_overflow_index_ = expanded_name.source;
+        }
     }
     if (vm.rename_index >= 0 && vm.ViewIndex(vm.rename_index) >= 0) {
         // On top of the neighbouring cells it overlaps in icon and tile views.

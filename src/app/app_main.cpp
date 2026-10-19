@@ -112,6 +112,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include "../ui/ui_motion.h"
 #include <cwctype>
 #include <cmath>
 #include <cstdio>
@@ -317,6 +318,51 @@ static void DrawThemeReveal(AppState& s, ID2D1DeviceContext* dc, const D2D1_RECT
     if (!ok) stop();
 }
 
+// The single selected icon-grid item shows its whole name under its cell;
+// when that runs past the bottom of the list, glide the list up once, right
+// after the selection lands on it (never later: scrolling stays the user's).
+static void RevealExpandedName(AppState& s) {
+    app::Tab* tab = ActiveTab(s);
+    const int sel = tab && tab->SelectedCount() == 1 ? tab->selected_index : -1;
+    if (tab != s.revealTab || sel != s.revealIndex) {
+        s.revealTab = tab;
+        s.revealIndex = sel;
+        s.revealSince = GetTickCount64();
+        s.revealDone = sel < 0;
+        if (s.selectScrollRoom > 0.0f) {
+            s.selectScrollRoom = 0.0f;
+            ClampScroll(s);
+        }
+    }
+    if (s.revealDone || !tab) return;
+    if (s.renameIndex >= 0 || s.marqueeActive || GetTickCount64() - s.revealSince > 600) {
+        s.revealDone = true;
+        return;
+    }
+    int shown = -1;
+    const float over = s.renderer.ExpandedNameOverflow(&shown);
+    if (over <= 0.5f || shown != sel) return;
+    s.revealDone = true;
+    // Measured at the current position; a glide already under way may go further.
+    float want = tab->scroll_y + over + 4.0f * s.scale;
+    if (s.scrollAnimating && !s.scrollHorizontal) want = std::max(want, s.scrollTargetY);
+    const float most = MaxScrollForActivePane(s);
+    if (want > most) s.selectScrollRoom += want - most;
+    if (!ui::motion::SystemAnimationsEnabled()) {
+        tab->scroll_y = want;
+        s.scrollTargetY = want;
+        ClampScroll(s);
+        if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+        return;
+    }
+    s.scrollTargetY = want;
+    s.scrollHorizontal = false;
+    s.scrollLastUpdateTime = std::chrono::steady_clock::now();
+    s.scrollAnimating = true;
+    if (s.framePump.Running()) s.framePump.Arm();
+    else if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
 void Render(AppState& s) {
     auto t0 = std::chrono::steady_clock::now();
 
@@ -394,6 +440,7 @@ void Render(AppState& s) {
     s.timing.present_ms = std::chrono::duration<double, std::milli>(present_end - present_start).count();
 
     if (s.renameIndex >= 0) LayoutRenameOverlay(s);
+    RevealExpandedName(s);
     if (!s.tagRenameId.empty()) LayoutTagRenameOverlay(s);
     if (s.addressEditing) LayoutAddressEditor(s);
     if (s.filterEditing) LayoutFilterEditor(s);

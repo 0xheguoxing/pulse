@@ -1849,6 +1849,13 @@ public:
                              bool search_view = false,
                              const std::array<float, 4>& search_dividers = {},
                              float row_height_px = 0.0f) const;
+    // How far the focused pane's expanded name (the single selected icon-grid
+    // item's whole name) ran past the bottom of the list in the last frame,
+    // and whose it was; 0 and -1 when it fit or none was shown.
+    float ExpandedNameOverflow(int* source_index) const noexcept {
+        if (source_index) *source_index = expanded_overflow_index_;
+        return expanded_overflow_px_;
+    }
     bool PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,
                          int source_index, float x, float y) const;
     // The item's drag handle: icon + name in Details / List / Small icons
@@ -2162,7 +2169,7 @@ private:
                           const std::wstring& shown, const D2D1_COLOR_F& color);
     // The selected item's whole name (up to 6 lines) on an opaque plate that
     // covers the row below.
-    void DrawExpandedIconName(const std::wstring& name, const D2D1_RECT_F& bounds,
+    float DrawExpandedIconName(const std::wstring& name, const D2D1_RECT_F& bounds,
                               const D2D1_COLOR_F& color, const Theme& theme,
                               const std::vector<NameMatchRange>& matches, bool pane_focused,
                               const D2D1_RECT_F& view, const std::wstring& note = {},
@@ -2172,6 +2179,8 @@ private:
 
     WindowMaterial material_;
     Compositor* compositor_ = nullptr;
+    float expanded_overflow_px_ = 0.0f;
+    int expanded_overflow_index_ = -1;
     fluent::Painter painter_;
     // Icon and thumbnail caches (render_caches.h): shared through AppCore, or
     // owned when the renderer stands alone. The member names alias into them.

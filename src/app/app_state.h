@@ -631,6 +631,13 @@ struct AppState : AppCoreOwner {
     ULONGLONG renameHintUntil = 0;  // GetTickCount64; 0 = until answered
     ULONGLONG renameShakeAt = 0;    // GetTickCount64 of the last refused character (the field shakes)
     float renameScrollRoom = 0.0f;  // list made taller while a rename field hangs below its end
+    // The single selected icon-grid item's whole name glides into view once,
+    // right after the selection lands on it (RevealExpandedName).
+    float selectScrollRoom = 0.0f;  // list made taller for it while it stays selected
+    const void* revealTab = nullptr;
+    int revealIndex = -1;
+    uint64_t revealSince = 0;
+    bool revealDone = true;
     bool renameConfirmExt = false;
     float renameFieldW = 0.0f;
     // 解散文件夹: the recycle that ends each folder's chain, after which the
