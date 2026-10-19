@@ -75,6 +75,7 @@ public:
     void SetDecodeDelayForTesting(DWORD delay_ms);
     uint64_t DecodeAttemptsForTesting() const;
     bool DecodeFailedForTesting(const std::wstring& path);
+    D2D1_SIZE_U SourceSizeForTesting() const { return {source_width_, source_height_}; }
 #endif
 
 private:
@@ -89,7 +90,8 @@ private:
 
     static Recipe RecipeFor(WindowEffect effect, bool dark) noexcept;
     void EnsureDecodeWorker();
-    void QueueDecode(const std::wstring& path);
+    ID2D1Bitmap* SourceBitmapAt(const std::wstring& path, UINT max_edge);
+    void QueueDecode(const std::wstring& path, UINT max_edge);
     void TakeDecodeResult();
     void ResetGpuResources();
     static DWORD WINAPI DecodeWorkerMain(void* parameter);
@@ -101,6 +103,7 @@ private:
     Compositor* compositor_ = nullptr;
     std::shared_ptr<DecodeWorker> decode_worker_;
     std::wstring requested_path_;
+    UINT requested_edge_ = 0;
     uint64_t requested_generation_ = 0;
     std::vector<uint8_t> source_pixels_;
     std::wstring source_pixels_path_;

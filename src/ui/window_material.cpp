@@ -43,6 +43,15 @@ constexpr GUID kBorderClsid = { 0x2a2d49c0, 0x4acf, 0x43c7,
 
 constexpr UINT kMaxSource = 2048;
 constexpr float kSampleLongEdge = 1024.0f;
+// Blurred covers and sampled materials draw at most kSampleLongEdge, so a
+// source of that size serves them (2048 px: ~9.3 MiB on the GPU, 1024 px:
+// ~2.3 MiB). Below this radius the blur would not hide the cover crop's
+// upscale, so the full source is decoded.
+constexpr UINT kSoftSource = 1024;
+constexpr float kSoftSourceMinBlurPx = 4.0f;
+UINT SourceEdgeForBlur(float blur_px) {
+    return blur_px >= kSoftSourceMinBlurPx ? kSoftSource : kMaxSource;
+}
 
 struct MaterialGraph {
     ComPtr<ID2D1Effect> blur;
@@ -220,7 +229,7 @@ struct DecodedPixels {
     HRESULT result = E_FAIL;
 };
 
-DecodedPixels DecodeImageFile(const std::wstring& path) {
+DecodedPixels DecodeImageFile(const std::wstring& path, UINT max_edge) {
     DecodedPixels decoded;
     ComPtr<IWICImagingFactory> wic;
     ComPtr<IWICBitmapDecoder> decoder;
@@ -255,10 +264,10 @@ DecodedPixels DecodeImageFile(const std::wstring& path) {
     }
 
     IWICBitmapSource* source = pixels;
-    if (width > kMaxSource || height > kMaxSource) {
+    if (width > max_edge || height > max_edge) {
         const float scale = (std::min)(
-            static_cast<float>(kMaxSource) / static_cast<float>((std::max)(1u, width)),
-            static_cast<float>(kMaxSource) / static_cast<float>((std::max)(1u, height)));
+            static_cast<float>(max_edge) / static_cast<float>((std::max)(1u, width)),
+            static_cast<float>(max_edge) / static_cast<float>((std::max)(1u, height)));
         width = (std::max)(1u, static_cast<UINT>(width * scale));
         height = (std::max)(1u, static_cast<UINT>(height * scale));
         hr = wic->CreateBitmapScaler(&scaler);
@@ -307,6 +316,7 @@ struct WindowMaterial::DecodeWorker {
         std::wstring path;
         uint64_t generation = 0;
         HWND notify = nullptr;
+        UINT max_edge = kMaxSource;
     };
     struct Result {
         std::wstring path;
@@ -740,6 +750,7 @@ void WindowMaterial::Invalidate() {
     source_stride_ = 0;
     source_failed_.clear();
     requested_path_.clear();
+    requested_edge_ = 0;
     if (decode_worker_) {
         std::lock_guard<std::mutex> lock(decode_worker_->mutex);
         requested_generation_ = ++decode_worker_->next_generation;
@@ -764,9 +775,10 @@ void WindowMaterial::EnsureDecodeWorker() {
     decode_worker_ = std::move(worker);
 }
 
-void WindowMaterial::QueueDecode(const std::wstring& path) {
+void WindowMaterial::QueueDecode(const std::wstring& path, UINT max_edge) {
     EnsureDecodeWorker();
     requested_path_ = path;
+    requested_edge_ = max_edge;
     if (!decode_worker_) {
         source_failed_ = path;
         return;
@@ -775,7 +787,7 @@ void WindowMaterial::QueueDecode(const std::wstring& path) {
         std::lock_guard<std::mutex> lock(decode_worker_->mutex);
         requested_generation_ = ++decode_worker_->next_generation;
         decode_worker_->request = {path, requested_generation_,
-            compositor_ ? compositor_->Hwnd() : nullptr};
+            compositor_ ? compositor_->Hwnd() : nullptr, max_edge};
         decode_worker_->completed.reset();
     }
     SetEvent(decode_worker_->wake);
@@ -840,7 +852,7 @@ DWORD WINAPI WindowMaterial::DecodeWorkerMain(void* parameter) {
         const DWORD delay = self->test_delay_ms.load(std::memory_order_relaxed);
         if (delay > 0) Sleep(delay);
         DecodedPixels decoded;
-        if (SUCCEEDED(com_result)) decoded = DecodeImageFile(request.path);
+        if (SUCCEEDED(com_result)) decoded = DecodeImageFile(request.path, request.max_edge);
         else decoded.result = com_result;
 
         HWND notify = nullptr;
@@ -885,12 +897,21 @@ WindowMaterial::Recipe WindowMaterial::RecipeFor(WindowEffect effect, bool dark)
 }
 
 ID2D1Bitmap* WindowMaterial::SourceBitmap(const std::wstring& path) {
+    return SourceBitmapAt(path, kMaxSource);
+}
+
+// max_edge is the long edge the caller draws from. A smaller decode keeps
+// drawing while a sharper one is requested (turning the blur off never shows
+// a frame without the image); a larger one serves smaller requests as is.
+ID2D1Bitmap* WindowMaterial::SourceBitmapAt(const std::wstring& path, UINT max_edge) {
     ID2D1DeviceContext* dc = compositor_ ? compositor_->Dc() : nullptr;
     TakeDecodeResult();
     if (!dc || path.empty()) {
         ResetGpuResources();
         return nullptr;
     }
+    if (requested_path_ == path && max_edge > requested_edge_ && source_failed_ != path)
+        QueueDecode(path, max_edge);
     if (source_.get() && source_dc_ == dc && source_path_ == path)
         return source_.get();
     if (source_failed_ == path)
@@ -916,7 +937,18 @@ ID2D1Bitmap* WindowMaterial::SourceBitmap(const std::wstring& path) {
         source_ = std::move(uploaded);
         source_path_ = path;
         source_dc_ = dc;
+        // Everything is drawn from the GPU copy now; the CPU pixels (up to
+        // 2048 px, ~9 MiB) go. source_pixels_path_ stays to mark the upload.
+        std::vector<uint8_t>().swap(source_pixels_);
         return source_.get();
+    }
+    if (requested_path_ == path && source_pixels_path_ == path && source_pixels_.empty() &&
+        source_failed_ != path) {
+        // Uploaded and released, then the device was lost: decode once more
+        // (the mark clears, so this queues one decode, not one per frame).
+        source_pixels_path_.clear();
+        QueueDecode(path, requested_edge_);
+        return nullptr;
     }
 
     if (requested_path_ != path) {
@@ -927,7 +959,7 @@ ID2D1Bitmap* WindowMaterial::SourceBitmap(const std::wstring& path) {
         source_height_ = 0;
         source_stride_ = 0;
         source_failed_.clear();
-        QueueDecode(path);
+        QueueDecode(path, max_edge);
     }
     return nullptr;
 }
@@ -954,6 +986,10 @@ bool WindowMaterial::DecodeFailedForTesting(const std::wstring& path) {
 
 bool WindowMaterial::DrawSourceCover(ID2D1DeviceContext* dc, const D2D1_RECT_F& dest,
                                      const std::wstring& path, float blur_px) {
+    // The fallback asks for the same size as the blur: while the decode is
+    // pending EnsureBlurred returns null, and a full-size request here would
+    // decode 2048 px on the first frame.
+    const UINT edge = SourceEdgeForBlur(blur_px);
     if (blur_px > 0.5f) {
         if (ID2D1Bitmap* blurred = EnsureBlurred(dc, dest, path, blur_px)) {
             dc->DrawBitmap(blurred, dest, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR, nullptr, nullptr);
@@ -961,7 +997,7 @@ bool WindowMaterial::DrawSourceCover(ID2D1DeviceContext* dc, const D2D1_RECT_F& 
         }
         // Effect failure: fall through to the sharp cover rather than no wallpaper.
     }
-    ID2D1Bitmap* source = SourceBitmap(path);
+    ID2D1Bitmap* source = SourceBitmapAt(path, edge);
     if (!dc || !source) return false;
     const D2D1_SIZE_F size = source->GetSize();
     const D2D1_RECT_F cover = CoverRect(size.width, size.height, dest);
@@ -977,7 +1013,7 @@ bool WindowMaterial::DrawSourceCover(ID2D1DeviceContext* dc, const D2D1_RECT_F& 
 // pulling transparent pixels in at the window edges.
 ID2D1Bitmap* WindowMaterial::EnsureBlurred(ID2D1DeviceContext* dc, const D2D1_RECT_F& dest,
                                            const std::wstring& path, float blur_px) {
-    ID2D1Bitmap* source = SourceBitmap(path);
+    ID2D1Bitmap* source = SourceBitmapAt(path, SourceEdgeForBlur(blur_px));
     if (!dc || !source) return nullptr;
 
     const float dw = dest.right - dest.left;
@@ -1053,7 +1089,7 @@ ID2D1Bitmap* WindowMaterial::EnsureBlurred(ID2D1DeviceContext* dc, const D2D1_RE
 ID2D1Bitmap* WindowMaterial::EnsureSampled(ID2D1DeviceContext* dc, const D2D1_RECT_F& dest,
                                            WindowEffect effect, bool dark,
                                            const std::wstring& path) {
-    ID2D1Bitmap* source = SourceBitmap(path);
+    ID2D1Bitmap* source = SourceBitmapAt(path, kSoftSource);
     if (!dc || !source) return nullptr;
 
     const float dw = dest.right - dest.left;
