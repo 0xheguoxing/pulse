@@ -982,6 +982,38 @@ static bool RouteUserShortcut(AppState& s, HWND hwnd, UINT msg, WPARAM wParam, L
     return true;
 }
 
+// Context-menu caches and the registry watch that keeps them current.
+static void StartMenuServices(AppState& s) {
+    SeedShellVerbCache(s);
+    SeedCtxLayout(s);
+    StartShellRegistryWatch(ServiceWindow(s));
+}
+
+static void StartSearchServices(AppState& s) {
+    const HWND service_window = ServiceWindow(s);
+    // Search off: no index client, so nothing starts the service or a helper.
+    if (s.appPrefs.search_enabled) s.index.Start(service_window, WM_INDEX_NOTIFY, WM_INDEX_SEARCH);
+    StartChangeTracking(s);
+    if (s.appPrefs.search_enabled) {
+        s.networkIndex.Start(service_window, WM_NETWORK_INDEX_NOTIFY, WM_NETWORK_INDEX_SEARCH);
+        s.contentSearch.Start(service_window, WM_CONTENT_SEARCH, s.contentIndexObserver ? index::ContentAgentMode::Observer : index::ContentAgentMode::Instant);
+    }
+    s.duplicateSearch.Start(service_window, WM_DUPLICATE_SCAN, false);
+}
+
+// A hidden launch that only applies a tag (Explorer verb, --tag-*) leaves the
+// menu caches and search services out; they start if its window is shown.
+// Every one of them already stops safely without having started (search
+// off, safe mode, test instances).
+static bool g_servicesDeferred = false;
+
+static void StartDeferredServices(AppState& s) {
+    if (!g_servicesDeferred) return;
+    g_servicesDeferred = false;
+    if (!s.safeMode) StartMenuServices(s);
+    StartSearchServices(s);
+}
+
 LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     AppState* s = GetAppState(hwnd);
     // A Chinese / Japanese IME in native mode can report a Ctrl or Alt chord
@@ -1203,10 +1235,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             if (s->safeMode) {
                 s->appPrefs.window_effect = L"none";
                 s->appPrefs.background_image.clear();
+            } else if (ShellTagHeadlessLaunch()) {
+                g_servicesDeferred = true;
             } else {
-                SeedShellVerbCache(*s);
-                SeedCtxLayout(*s);
-                StartShellRegistryWatch(ServiceWindow(*s));
+                StartMenuServices(*s);
             }
         }
         // Process wide: every window's menus and frame copies follow it.
@@ -1240,15 +1272,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 #endif
             s->renderer.SetSearchHidden(!s->appPrefs.search_enabled);
             if (!selection_fixture) {
-                const HWND service_window = ServiceWindow(*s);
-                // Search off: no index client, so nothing starts the service or a helper.
-                if (s->appPrefs.search_enabled) s->index.Start(service_window, WM_INDEX_NOTIFY, WM_INDEX_SEARCH);
-                StartChangeTracking(*s);
-                if (s->appPrefs.search_enabled) {
-                    s->networkIndex.Start(service_window, WM_NETWORK_INDEX_NOTIFY, WM_NETWORK_INDEX_SEARCH);
-                    s->contentSearch.Start(service_window, WM_CONTENT_SEARCH, s->contentIndexObserver ? index::ContentAgentMode::Observer : index::ContentAgentMode::Instant);
-                }
-                s->duplicateSearch.Start(service_window, WM_DUPLICATE_SCAN, false);
+                if (ShellTagHeadlessLaunch()) g_servicesDeferred = true;
+                else StartSearchServices(*s);
             }
             s->settings.SetServiceInstalled(s->index.ServiceInstalled());
             app::SettingsController::UiCallbacks settings_callbacks;
@@ -1929,6 +1954,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             }
             if (pulse::TickSidebarPeek(*s, now)) dirty = true;
             TickShellTagMenu(*s, now);
+            // A hidden tag launch whose window the user opened meanwhile.
+            if (!ShellTagHeadlessLaunch()) StartDeferredServices(*s);
             if (s->detailsPreviewFoldStart) {
                 const float t = std::min(1.0f, static_cast<float>(now - s->detailsPreviewFoldStart) / 150.0f);
                 const float eased = t * t * (3.0f - 2.0f * t);
@@ -3633,8 +3660,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     // shell's icon cache on worker threads while the main thread builds the
     // windows. On the main thread they cost about 250 ms (NVIDIA's driver
     // load) and 100 ms (the first system image list icon) of the cold start.
+    // Started by the Explorer tag verb while Pulse was closed: stay hidden,
+    // apply the tag batch, then exit (shell_tag_menu.cpp). Known before the
+    // window exists, so its creation can leave out what such a launch never
+    // uses until the window is shown.
+    if (shell_tag) QueueShellTagRequest(state, *shell_tag, true);
+    if (shell_tag_com) BeginShellTagComLaunch();
     ui::Compositor::PrefetchSharedDevice();
-    ui::ShellIconCache::PrewarmSystemImageList();
+    if (!ShellTagHeadlessLaunch()) ui::ShellIconCache::PrewarmSystemImageList();
     if (!state.isolatedTest && !state.shot.active) app::StartUpdateDownloadCleanup();
 
     WNDCLASSEXW wc{};
@@ -3751,10 +3784,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     const bool test_hidden = (state.shot.active || state.menushot || state.colorpickshot) &&
         GetEnvironmentVariableW(L"PULSE_TEST_HIDDEN_SHOT", hidden_shot, ARRAYSIZE(hidden_shot)) == 1 &&
         hidden_shot[0] == L'1';
-    // Started by the Explorer tag verb while Pulse was closed: stay hidden,
-    // apply the tag batch, then exit (shell_tag_menu.cpp).
-    if (shell_tag) QueueShellTagRequest(state, *shell_tag, true);
-    if (shell_tag_com) BeginShellTagComLaunch();
     const CLSID* tag_com_class = nullptr;
     bool tag_com_allowed = !state.isolatedTest;
 #ifdef PULSE_WITH_SELFTEST
