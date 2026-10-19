@@ -4,6 +4,8 @@
 #include "../preview_host/xlsx_parts.h"
 #include "preview_fixture_zip.h"
 #include <objbase.h>
+#include <wincodec.h>
+#include <wrl/client.h>
 #include <cstdio>
 #include <array>
 
@@ -67,6 +69,75 @@ Bytes TransparentPsd(uint16_t depth, bool lr16) {
             if (depth == 16) Be16(out, static_cast<uint16_t>(v * 257));
             else out.push_back(static_cast<unsigned char>(v));
         }
+    return out;
+}
+// Solid-colour JPEG, for the embedded thumbnail of a PSD fixture.
+Bytes JpegSolid(UINT w, UINT h, unsigned char r, unsigned char g, unsigned char b) {
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IStream> stream;
+    ComPtr<IWICBitmapEncoder> encoder;
+    ComPtr<IWICBitmapFrameEncode> frame;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
+        FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream)) ||
+        FAILED(factory->CreateEncoder(GUID_ContainerFormatJpeg, nullptr, &encoder)) ||
+        FAILED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache)) ||
+        FAILED(encoder->CreateNewFrame(&frame, nullptr)) || FAILED(frame->Initialize(nullptr)) ||
+        FAILED(frame->SetSize(w, h)))
+        return {};
+    WICPixelFormatGUID format = GUID_WICPixelFormat24bppBGR;
+    if (FAILED(frame->SetPixelFormat(&format)) || format != GUID_WICPixelFormat24bppBGR) return {};
+    Bytes pixels(static_cast<size_t>(w) * h * 3);
+    for (size_t i = 0; i < pixels.size(); i += 3) { pixels[i] = b; pixels[i + 1] = g; pixels[i + 2] = r; }
+    if (FAILED(frame->WritePixels(h, w * 3, static_cast<UINT>(pixels.size()), pixels.data())) ||
+        FAILED(frame->Commit()) || FAILED(encoder->Commit()))
+        return {};
+    HGLOBAL memory = nullptr;
+    STATSTG stat{};
+    if (FAILED(GetHGlobalFromStream(stream.Get(), &memory)) || FAILED(stream->Stat(&stat, STATFLAG_NONAME)))
+        return {};
+    const auto* data = static_cast<const unsigned char*>(GlobalLock(memory));
+    if (!data) return {};
+    Bytes out(data, data + static_cast<size_t>(stat.cbSize.QuadPart));
+    GlobalUnlock(memory);
+    return out;
+}
+// Opaque solid red RGB document (PackBits rows) whose embedded thumbnail is
+// `jpeg`, so the pixels tell which source a grid thumbnail came from.
+Bytes OpaquePsd(uint32_t width, uint32_t height, const Bytes& jpeg, uint32_t thumb_w, uint32_t thumb_h) {
+    Bytes out{'8','B','P','S'};
+    Be16(out, 1); out.resize(out.size() + 6);
+    Be16(out, 3); Be32(out, height); Be32(out, width); Be16(out, 8); Be16(out, 3);
+    Be32(out, 0);   // colour mode data
+    Bytes resource{'8','B','I','M'};
+    Be16(resource, 1036); Be16(resource, 0);   // id, empty Pascal name
+    const uint32_t row_bytes = (thumb_w * 24 + 31) / 32 * 4;
+    Be32(resource, static_cast<uint32_t>(28 + jpeg.size()));
+    Be32(resource, 1); Be32(resource, thumb_w); Be32(resource, thumb_h);
+    Be32(resource, row_bytes); Be32(resource, row_bytes * thumb_h);
+    Be32(resource, static_cast<uint32_t>(jpeg.size()));
+    Be16(resource, 24); Be16(resource, 1);
+    resource.insert(resource.end(), jpeg.begin(), jpeg.end());
+    if (resource.size() & 1) resource.push_back(0);
+    Be32(out, static_cast<uint32_t>(resource.size()));
+    out.insert(out.end(), resource.begin(), resource.end());
+    Be32(out, 0);   // no layers
+    Be16(out, 1);   // PackBits composite
+    const auto packed = [width](unsigned char value) {
+        Bytes row;
+        for (uint32_t left = width; left;) {
+            const uint32_t run = (std::min)(left, 128u);
+            row.push_back(run == 1 ? 0 : static_cast<unsigned char>(257 - run));
+            row.push_back(value);
+            left -= run;
+        }
+        return row;
+    };
+    const Bytes rows[3] = {packed(255), packed(0), packed(0)};
+    for (const Bytes& row : rows)
+        for (uint32_t y = 0; y < height; ++y) Be16(out, static_cast<uint16_t>(row.size()));
+    for (const Bytes& row : rows)
+        for (uint32_t y = 0; y < height; ++y) out.insert(out.end(), row.begin(), row.end());
     return out;
 }
 bool ValidUtf16(const std::wstring& text) {
@@ -152,6 +223,31 @@ int wmain() {
         check(decode(TransparentPsd(lr16 ? 16 : 8, lr16), 16, pixels, error) && pixels == expected,
             lr16 ? "16-bit PSD transparency announced in Lr16 is unmatted from white"
                  : "8-bit PSD merged transparency is unmatted from white, clear stays clear");
+    }
+    {
+        // Grid thumbnails: the embedded JPEG (green; the composite is red) only
+        // for large opaque documents whose JPEG covers the requested edge.
+        const auto grid = [&](const Bytes& data, UINT edge, UINT& w, UINT& h, Bytes& pixels) {
+            const auto file = root / L"opaque.psd";
+            UINT stride = 0, sw = 0, sh = 0;
+            std::wstring error;
+            return Write(file, data) &&
+                RasterizePsdFile(file.wstring(), edge, true, pixels, w, h, stride, sw, sh, &error) &&
+                pixels.size() >= 4;
+        };
+        const auto red = [](const Bytes& p) { return p[2] > 200 && p[1] < 60 && p[0] < 60; };
+        const auto green = [](const Bytes& p) { return p[1] > 160 && p[2] < 90 && p[0] < 90; };
+        Bytes pixels; UINT w = 0, h = 0;
+        const Bytes small_jpeg = JpegSolid(64, 32, 0, 255, 0);
+        check(!small_jpeg.empty() && grid(OpaquePsd(64, 32, small_jpeg, 64, 32), 256, w, h, pixels) &&
+            red(pixels) && w == 64 && h == 32,
+            "small opaque PSD grid thumbnail is the exact composite, not the lossy JPEG");
+        const Bytes jpeg = JpegSolid(160, 133, 0, 255, 0);
+        const Bytes large = OpaquePsd(1200, 1000, jpeg, 160, 133);
+        check(!jpeg.empty() && grid(large, 128, w, h, pixels) && green(pixels) && w == 128,
+            "large opaque PSD keeps the embedded JPEG when it covers the grid edge");
+        check(grid(large, 256, w, h, pixels) && red(pixels) && w == 256 && h == 213,
+            "large opaque PSD decodes the composite when its JPEG is smaller than the grid edge");
     }
     uint32_t bytes = 0;
     const std::string cells =

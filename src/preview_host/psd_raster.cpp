@@ -17,9 +17,11 @@ namespace {
 using Microsoft::WRL::ComPtr;
 
 constexpr ULONGLONG kDecodeBudgetMs = 4000;   // composite streaming deadline
-// Grid thumbnails of transparent documents decode the composite (the
-// embedded JPEG is white-matted) up to this size; larger ones keep the JPEG.
+// Grid thumbnails decode the composite up to this size: the embedded JPEG is
+// white-matted, lossy and at most 160 px. Larger documents keep the JPEG.
 constexpr uint64_t kGridCompositePixels = 32ull * 1000 * 1000;
+// Documents up to this size always use the composite (a few milliseconds).
+constexpr uint64_t kGridSmallPixels = 1000ull * 1000;
 constexpr size_t kReadChunk = 1u << 20;
 
 // Sequential big-endian reader over a file with a 1 MB window.
@@ -106,6 +108,7 @@ struct Header {
     unsigned char palette[768]{};
     bool has_palette = false;
     std::vector<unsigned char> thumbnail;   // JFIF from resource 1036
+    uint32_t thumbnail_edge = 0;            // its long edge in pixels
     bool real_merged = true;                // resource 1057 hasRealMergedData
     bool merged_alpha = false;              // merged image carries transparency
     uint64_t image_data = 0;                // offset of the image data section
@@ -206,10 +209,12 @@ bool ParseHeader(Reader& r, Header& h, std::wstring* error) {
         if (data_end > res_end) break;
         if (id == 1036 && size > 28) {
             const uint32_t format = r.U32();
-            r.Skip(24);
+            const uint32_t thumb_w = r.U32(), thumb_h = r.U32();
+            r.Skip(16);
             if (format == 1 && size - 28 < 8u * 1024u * 1024u) {
                 h.thumbnail.resize(size - 28);
                 if (!r.Read(h.thumbnail.data(), h.thumbnail.size())) h.thumbnail.clear();
+                else h.thumbnail_edge = (std::max)(thumb_w, thumb_h);
             }
         } else if (id == 1057 && size >= 5) {
             r.Skip(4);
@@ -524,11 +529,15 @@ bool RasterizePsdFile(const std::wstring& path, UINT max_edge, bool prefer_embed
     source_height = header.height;
     max_edge = (std::max)(16u, max_edge);
 
-    // The embedded JPEG has no transparency (it is the white-matted image):
-    // grid thumbnails of transparent documents use the composite while it is
-    // affordable.
-    const bool composite_first = header.merged_alpha && header.real_merged &&
-        static_cast<uint64_t>(header.width) * header.height <= kGridCompositePixels;
+    // The embedded JPEG has no transparency (it is the white-matted image), is
+    // lossy and small. Grid thumbnails use it only for opaque documents too
+    // big to decode in a few milliseconds whose JPEG already covers the
+    // requested edge; otherwise the composite, while affordable.
+    const uint64_t document_pixels = static_cast<uint64_t>(header.width) * header.height;
+    const uint32_t wanted_edge = (std::min)(max_edge, (std::max)(header.width, header.height));
+    const bool jpeg_covers = header.thumbnail_edge >= wanted_edge;
+    const bool composite_first = header.real_merged && document_pixels <= kGridCompositePixels &&
+        (header.merged_alpha || !jpeg_covers || document_pixels <= kGridSmallPixels);
     if (prefer_embedded && !composite_first &&
         DecodeThumbnail(header.thumbnail, max_edge, pixels, width, height, stride))
         return true;

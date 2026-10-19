@@ -1187,8 +1187,9 @@ static DecodeStep RunArchive(const DecodeRequest& q, DecodeResult& r) {
     return DecodeStep::Made;
 }
 
-// PSD/PSB: the merged composite with its transparency; opaque documents'
-// grid thumbnails use the embedded JPEG. Installed shell providers are not
+// PSD/PSB: the merged composite with its transparency; grid thumbnails of
+// large opaque documents use the embedded JPEG when it covers the requested
+// size (RasterizePsdFile). Installed shell providers are not
 // preferred any more - common ones return the white-matted image labelled
 // opaque (white or washed-out thumbnails). Files the reader cannot decode
 // still reach the shell thumbnail (Next).
