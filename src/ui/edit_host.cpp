@@ -26,6 +26,31 @@ void RestoreNativeCaret(HWND hwnd) {
     }
     ShowCaret(hwnd);
 }
+// The EDIT shows and moves the system caret only while redraw is on, and the
+// text input framework learns about typed text from those caret events. Under
+// the redraw guard it never heard of a commit, so after the next one it put
+// the selection back where focus had left it: in the search box the second
+// word went in front of the first. Report the caret the EDIT skipped; the
+// caret itself stays hidden behind the custom painter.
+struct EditCaretState {
+    DWORD from = 0;
+    DWORD to = 0;
+    int length = 0;
+    bool operator==(const EditCaretState&) const = default;
+};
+EditCaretState ReadCaretState(HWND hwnd) {
+    EditCaretState state;
+    SendMessageW(hwnd, EM_GETSEL, reinterpret_cast<WPARAM>(&state.from), reinterpret_cast<LPARAM>(&state.to));
+    state.length = GetWindowTextLengthW(hwnd);
+    return state;
+}
+void ReportNativeCaret(HWND hwnd, const EditCaretState& state) {
+    if (GetFocus() != hwnd) return;
+    const LRESULT pos = SendMessageW(hwnd, EM_POSFROMCHAR, state.to, 0);
+    if (pos != -1) SetCaretPos(static_cast<short>(LOWORD(pos)), static_cast<short>(HIWORD(pos)));
+    NotifyWinEvent(EVENT_OBJECT_LOCATIONCHANGE, hwnd, OBJID_CARET, CHILDID_SELF);
+    NotifyWinEvent(EVENT_OBJECT_SHOW, hwnd, OBJID_CARET, CHILDID_SELF);
+}
 bool CustomEdit(Compositor& compositor, HWND hwnd) {
     const bool custom = compositor.CustomEditEnabled() && !GetPropW(hwnd, kNativeEdit);
     if (GetPropW(hwnd, kMigrating)) return custom;
@@ -185,11 +210,14 @@ LRESULT DefPresentedChildEditProc(Compositor& compositor, IDWriteTextFormat* for
         msg == WM_IME_ENDCOMPOSITION || msg == WM_SETFONT || msg == WM_SIZE || msg == EM_SETMARGINS ||
         msg == EM_SETCUEBANNER;
     const bool custom_paint = changes_visual && CustomEdit(compositor, hwnd) && IsWindowVisible(hwnd);
+    const EditCaretState before = custom_paint ? ReadCaretState(hwnd) : EditCaretState{};
     if (custom_paint) SendMessageW(hwnd, WM_SETREDRAW, FALSE, 0);
     const LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
     if (changes_visual) compositor.SynchronizeEditSelection(hwnd, msg, wParam, lParam);
     if (custom_paint) {
         SendMessageW(hwnd, WM_SETREDRAW, TRUE, 0);
+        const EditCaretState after = ReadCaretState(hwnd);
+        if (!(after == before)) ReportNativeCaret(hwnd, after);
         HideCaret(hwnd);
         RestartCaretBlink(hwnd);
         PresentEdit(compositor, hwnd, format,
