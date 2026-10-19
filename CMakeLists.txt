@@ -1721,8 +1721,9 @@ add_executable(pulse_notebook_clipping_test src/bench/notebook_clipping_test.cpp
 target_compile_definitions(pulse_notebook_clipping_test PRIVATE MD4C_USE_UTF16)
 
 add_executable(pulse_preview_data_boundaries_test src/bench/preview_data_boundaries_test.cpp
-    src/preview_host/psd_raster.cpp src/preview_host/table_document.cpp src/preview_host/zip_entry.cpp)
-target_link_libraries(pulse_preview_data_boundaries_test PRIVATE ole32 windowscodecs)
+    src/preview_host/psd_raster.cpp src/preview_host/table_document.cpp src/preview_host/zip_entry.cpp
+    src/preview_host/office_model.cpp)
+target_link_libraries(pulse_preview_data_boundaries_test PRIVATE ole32 windowscodecs shlwapi uuid xmllite)
 
 add_executable(pulse_rtf_page_text_test src/bench/rtf_page_text_test.cpp
     src/preview_host/office_model.cpp src/preview_host/zip_entry.cpp)

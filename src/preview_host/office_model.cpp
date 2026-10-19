@@ -1,6 +1,7 @@
 // office_model.cpp - see office_model.h.
 #include "office_model.h"
 #include "zip_entry.h"
+#include "xlsx_parts.h"
 #include <objidl.h>
 #include <shlwapi.h>
 #include <xmllite.h>
@@ -456,7 +457,29 @@ bool ReadXlsxModel(const std::wstring& path, int rows, int cols, SheetModel& mod
     // First sheet in workbook order, through its relationship id.
     std::vector<unsigned char> bytes;
     std::wstring sheet_rid, value;
-    if (!ReadZipEntry(path, "xl/workbook.xml", kSmallPartBytes, bytes, error)) return false;
+    // The workbook from the package relationships; its sheet and shared
+    // strings from the workbook's (generators may rename every part).
+    std::string workbook_part = "xl/workbook.xml";
+    if (ReadZipEntry(path, "_rels/.rels", kSmallPartBytes, bytes, nullptr)) {
+        Xml xml;
+        if (xml.Open(bytes)) {
+            std::wstring type, target;
+            while (xml.Next()) {
+                if (xml.Start(L"Relationship") && xml.Attr(L"Type", L"", type) &&
+                    RelationshipTypeIs(ToUtf8(type), "officeDocument") &&
+                    xml.Attr(L"Target", L"", target) && !target.empty()) {
+                    workbook_part = ResolvePartTarget("", ToUtf8(target));
+                    break;
+                }
+                if (xml.StartOfEmpty()) xml.FinishEmpty();
+            }
+        }
+    }
+    if (!ReadZipEntry(path, workbook_part, kSmallPartBytes, bytes, error)) {
+        if (workbook_part == "xl/workbook.xml") return false;
+        workbook_part = "xl/workbook.xml";
+        if (!ReadZipEntry(path, workbook_part, kSmallPartBytes, bytes, error)) return false;
+    }
     {
         Xml xml;
         if (!xml.Open(bytes)) { SetError(error, L"office-xml-failed"); return false; }
@@ -465,23 +488,25 @@ bool ReadXlsxModel(const std::wstring& path, int rows, int cols, SheetModel& mod
             if (xml.StartOfEmpty()) xml.FinishEmpty();
         }
     }
-    std::string sheet_part = "xl/worksheets/sheet1.xml";
-    if (!sheet_rid.empty() && ReadZipEntry(path, "xl/_rels/workbook.xml.rels", kSmallPartBytes, bytes, nullptr)) {
+    std::string sheet_part = "xl/worksheets/sheet1.xml", shared_part = "xl/sharedStrings.xml";
+    if (ReadZipEntry(path, RelationshipsPart(workbook_part), kSmallPartBytes, bytes, nullptr)) {
         Xml xml;
         if (xml.Open(bytes)) {
-            std::wstring id, target;
+            std::wstring id, type, target;
             while (xml.Next()) {
-                if (xml.Start(L"Relationship") && xml.Attr(L"Id", L"", id) && id == sheet_rid &&
-                    xml.Attr(L"Target", L"", target) && !target.empty()) {
-                    sheet_part = target[0] == L'/' ? ToUtf8(target.substr(1)) : "xl/" + ToUtf8(target);
-                    break;
+                if (xml.Start(L"Relationship") && xml.Attr(L"Target", L"", target) && !target.empty()) {
+                    if (!xml.Attr(L"Id", L"", id)) id.clear();
+                    if (!xml.Attr(L"Type", L"", type)) type.clear();
+                    const std::string part = ResolvePartTarget(workbook_part, ToUtf8(target));
+                    if (!sheet_rid.empty() && id == sheet_rid) sheet_part = part;
+                    else if (RelationshipTypeIs(ToUtf8(type), "sharedStrings")) shared_part = part;
                 }
                 if (xml.StartOfEmpty()) xml.FinishEmpty();
             }
         }
     }
     std::vector<std::wstring> shared;
-    if (ReadZipEntryPrefix(path, "xl/sharedStrings.xml", kSharedStringsBytes, bytes, nullptr, nullptr)) {
+    if (ReadZipEntryPrefix(path, shared_part, kSharedStringsBytes, bytes, nullptr, nullptr)) {
         Xml xml;
         if (xml.Open(bytes)) {
             bool in_si = false, in_t = false, in_phonetic = false;
@@ -503,20 +528,41 @@ bool ReadXlsxModel(const std::wstring& path, int rows, int cols, SheetModel& mod
     Xml xml;
     if (!xml.Open(bytes)) { SetError(error, L"office-xml-failed"); return false; }
     std::map<std::pair<int, int>, std::wstring> cells;
+    SharedFormulas formulas;
     int first_row = 0, min_col = 0;
-    int row = 0, col = 0;
-    std::wstring type, raw;
-    bool in_cell = false, in_value = false, in_inline = false;
+    int row = 0, col = 0, row_ref = 0, next_col = 1;
+    std::wstring type, raw, formula, formula_kind, formula_group;
+    bool in_cell = false, in_value = false, in_inline = false, in_formula = false;
     bool done = false;
     while (!done && xml.Next()) {
         if (xml.IsStart()) {
             const std::wstring& name = xml.Name();
-            if (name == L"c") {
-                in_cell = xml.Attr(L"r", L"", value) && ParseCellRef(value, row, col);
+            if (name == L"row") {
+                const int r = xml.Attr(L"r", L"", value) ? _wtoi(value.c_str()) : 0;
+                row_ref = r > 0 ? r : row_ref + 1;
+                next_col = 1;
+            } else if (name == L"c") {
+                // r is optional: a cell without it follows the previous one.
+                int ref_row = 0, ref_col = 0;
+                if (xml.Attr(L"r", L"", value) && ParseCellRef(value, ref_row, ref_col)) {
+                    row = ref_row;
+                    col = ref_col;
+                } else {
+                    row = row_ref;
+                    col = next_col;
+                }
+                in_cell = row > 0 && col > 0;
+                row_ref = row;
+                next_col = col + 1;
                 if (!xml.Attr(L"t", L"", type)) type.clear();
                 raw.clear();
+                formula.clear();
             } else if (in_cell && name == L"v") {
                 in_value = true;
+            } else if (in_cell && name == L"f") {
+                in_formula = true;
+                if (!xml.Attr(L"t", L"", formula_kind)) formula_kind.clear();
+                if (!xml.Attr(L"si", L"", formula_group)) formula_group.clear();
             } else if (in_cell && name == L"t" && type == L"inlineStr") {
                 in_inline = true;
             }
@@ -524,15 +570,23 @@ bool ReadXlsxModel(const std::wstring& path, int rows, int cols, SheetModel& mod
         }
         if (xml.IsText()) {
             if (in_value || in_inline) raw += xml.Text();
+            else if (in_formula) formula += xml.Text();
             continue;
         }
         const std::wstring& name = xml.Name();
         if (name == L"v") in_value = false;
         else if (name == L"t") in_inline = false;
+        else if (name == L"f" && in_formula) {
+            in_formula = false;
+            if (formula_kind == L"shared" && !formula_group.empty())
+                formulas.Resolve(static_cast<unsigned>(_wtoi(formula_group.c_str())), row, col, formula);
+        }
         else if (name == L"c" && in_cell) {
             in_cell = false;
             std::wstring shown;
-            if (type == L"s") {
+            if (Trim(raw).empty() && !formula.empty()) {
+                shown = L"=" + formula;   // never calculated: no cached result
+            } else if (type == L"s") {
                 const int index = _wtoi(raw.c_str());
                 if (index >= 0 && static_cast<size_t>(index) < shared.size()) shown = shared[index];
             } else if (type == L"b") {

@@ -26,6 +26,7 @@
 #include "pdf_raster.h"
 #include "preview_file_utils.h"
 #include "psd_raster.h"
+#include "shell_bitmap.h"
 #include "svg_raster.h"
 #include "table_document.h"
 #include "tree_document.h"
@@ -428,51 +429,27 @@ static void AlphaBlendPbgra(uint8_t* dst, const uint8_t* src) {
     dst[3] = static_cast<uint8_t>(sa + (dst[3] * inv + 127u) / 255u);
 }
 
+// alpha_type: the provider's label; see shell_bitmap.h for how it is read.
 static bool HbitmapToBgra(HBITMAP bitmap, bool own, std::vector<uint8_t>& out,
-                          UINT& width, UINT& height, UINT& stride) {
-    ComPtr<IWICImagingFactory> wicFactory;
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-                                IID_PPV_ARGS(&wicFactory)))) {
-        if (own) DeleteObject(bitmap);
-        return false;
-    }
-    const WICBitmapAlphaChannelOption options[] = {
-        WICBitmapUsePremultipliedAlpha, WICBitmapIgnoreAlpha
-    };
-    bool ok = false;
-    for (const auto option : options) {
-        ComPtr<IWICBitmap> source;
-        ComPtr<IWICFormatConverter> converter;
-        if (FAILED(wicFactory->CreateBitmapFromHBITMAP(bitmap, nullptr, option, &source)))
-            continue;
-        if (FAILED(wicFactory->CreateFormatConverter(&converter)) ||
-            FAILED(converter->Initialize(source.Get(), GUID_WICPixelFormat32bppPBGRA,
-                WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom)) ||
-            FAILED(converter->GetSize(&width, &height)) || width == 0 || height == 0)
-            continue;
-        stride = width * 4;
-        out.resize(static_cast<size_t>(stride) * height);
-        if (SUCCEEDED(converter->CopyPixels(nullptr, stride,
-                static_cast<UINT>(out.size()), out.data()))) {
-            ok = true;
-            break;
-        }
-        out.clear();
-    }
+                          UINT& width, UINT& height, UINT& stride,
+                          WTS_ALPHATYPE alpha_type = WTSAT_UNKNOWN) {
+    const bool ok = preview::ShellBitmapToPbgra(bitmap, alpha_type, out, width, height, stride);
     if (own) DeleteObject(bitmap);
-    if (!ok) out.clear();
     return ok;
 }
 
-static bool FromThumbnailProvider(IShellItem* item, UINT pixels, HBITMAP& bitmap) {
+static bool FromThumbnailProvider(IShellItem* item, UINT pixels, HBITMAP& bitmap,
+                                  WTS_ALPHATYPE& alpha) {
+    alpha = WTSAT_UNKNOWN;
     ComPtr<IThumbnailProvider> provider;
     if (FAILED(item->BindToHandler(nullptr, BHID_ThumbnailHandler, IID_PPV_ARGS(&provider))))
         return false;
-    WTS_ALPHATYPE alpha = WTSAT_UNKNOWN;
     return SUCCEEDED(provider->GetThumbnail(pixels, &bitmap, &alpha)) && bitmap;
 }
 
-static bool FromThumbnailCache(IShellItem* item, UINT pixels, bool cache_only, HBITMAP& bitmap) {
+static bool FromThumbnailCache(IShellItem* item, UINT pixels, bool cache_only, HBITMAP& bitmap,
+                               WTS_ALPHATYPE& alpha) {
+    alpha = WTSAT_UNKNOWN;
     ComPtr<IThumbnailCache> cache;
     if (FAILED(CoCreateInstance(CLSID_LocalThumbnailCache, nullptr, CLSCTX_INPROC_SERVER,
                                 IID_PPV_ARGS(&cache))))
@@ -486,6 +463,7 @@ static bool FromThumbnailCache(IShellItem* item, UINT pixels, bool cache_only, H
         return false;
     HBITMAP shared_bitmap = nullptr;
     if (FAILED(shared->GetSharedBitmap(&shared_bitmap)) || !shared_bitmap) return false;
+    if (FAILED(shared->GetFormat(&alpha))) alpha = WTSAT_UNKNOWN;
     bitmap = static_cast<HBITMAP>(CopyImage(shared_bitmap, IMAGE_BITMAP, 0, 0, 0));
     return bitmap != nullptr;
 }
@@ -502,6 +480,7 @@ static bool MakeShellThumbnail(const std::wstring& path, DWORD attrs, UINT pixel
         return false;
     const bool isDirectory = (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
     HBITMAP bitmap = nullptr;
+    WTS_ALPHATYPE alpha = WTSAT_UNKNOWN;
 
     if (isDirectory) {
         ComPtr<IShellItemImageFactory> factory;
@@ -513,17 +492,18 @@ static bool MakeShellThumbnail(const std::wstring& path, DWORD attrs, UINT pixel
         return HbitmapToBgra(bitmap, true, out, width, height, stride);
     }
 
-    if (!FromThumbnailCache(item.Get(), pixels, true, bitmap) || !bitmap)
+    if (!FromThumbnailCache(item.Get(), pixels, true, bitmap, alpha) || !bitmap)
         bitmap = nullptr;
     if (cache_only) {
         if (!bitmap) return false;
-        return HbitmapToBgra(bitmap, true, out, width, height, stride);
+        return HbitmapToBgra(bitmap, true, out, width, height, stride, alpha);
     }
-    if (!bitmap && !FromThumbnailProvider(item.Get(), pixels, bitmap))
+    if (!bitmap && !FromThumbnailProvider(item.Get(), pixels, bitmap, alpha))
         bitmap = nullptr;
-    if (!bitmap && (!FromThumbnailCache(item.Get(), pixels, false, bitmap) || !bitmap))
+    if (!bitmap && (!FromThumbnailCache(item.Get(), pixels, false, bitmap, alpha) || !bitmap))
         bitmap = nullptr;
     if (!bitmap) {
+        alpha = WTSAT_UNKNOWN;
         ComPtr<IShellItemImageFactory> factory;
         if (SUCCEEDED(item.As(&factory))) {
             const SIZE size{static_cast<LONG>(pixels), static_cast<LONG>(pixels)};
@@ -533,7 +513,7 @@ static bool MakeShellThumbnail(const std::wstring& path, DWORD attrs, UINT pixel
         }
     }
     if (!bitmap) return false;
-    return HbitmapToBgra(bitmap, true, out, width, height, stride);
+    return HbitmapToBgra(bitmap, true, out, width, height, stride, alpha);
 }
 
 // ---- Content decoders -------------------------------------------------------
@@ -1207,11 +1187,13 @@ static DecodeStep RunArchive(const DecodeRequest& q, DecodeResult& r) {
     return DecodeStep::Made;
 }
 
-// PSD/PSB: large previews show the merged composite; grid thumbnails keep an
-// installed shell provider, else the embedded JPEG thumbnail.
+// PSD/PSB: the merged composite with its transparency; opaque documents'
+// grid thumbnails use the embedded JPEG. Installed shell providers are not
+// preferred any more - common ones return the white-matted image labelled
+// opaque (white or washed-out thumbnails). Files the reader cannot decode
+// still reach the shell thumbnail (Next).
 static bool AcceptsPsd(const DecodeRequest& q) {
-    return !q.is_directory && !q.offline && preview::IsPsdExtension(q.extension) &&
-        (!q.grid || !HasShellThumbnailHandler(q.extension));
+    return !q.is_directory && !q.offline && preview::IsPsdExtension(q.extension);
 }
 static DecodeStep RunPsd(const DecodeRequest& q, DecodeResult& r) {
     if (!preview::RasterizePsdFile(q.path, q.cap, q.grid, r.pixels, r.width, r.height,

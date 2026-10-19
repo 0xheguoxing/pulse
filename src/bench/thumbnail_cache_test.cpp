@@ -1,8 +1,27 @@
 #include "../ui/thumbnail_cache.h"
+#include "../ui/thumbnail_artwork_layout.h"
 #include <cstdio>
 
 namespace pulse::ui {
 struct ThumbnailCacheTestAccess {
+    // A cut-out whose lower half is transparent: pictures rest the whole
+    // bitmap on the grid baseline, icons rest their visible ink on it.
+    static bool ArtworkCanvasRegression() {
+        std::vector<uint8_t> px(4 * 4 * 4, 0);
+        for (size_t i = 0; i < 8; ++i) px[i * 4 + 3] = 255;
+        const auto place = [&](const wchar_t* path) {
+            return ContainedThumbnailRect(D2D1::RectF(0, 0, 100, 100), 4, 4,
+                ThumbnailArtworkBounds(path, px, 4, 4, 16), true);
+        };
+        const D2D1_RECT_F webp = place(L"C:\\cut\\Product.WEBP"), psd = place(L"art.psd");
+        const D2D1_RECT_F icon = place(L"app.ico"), svg = place(L"logo.svg");
+        const bool ok = webp.top == 0.0f && webp.bottom == 100.0f && psd.bottom == 100.0f &&
+            icon.bottom == 150.0f && svg.bottom == 150.0f && IsPictureCanvasPath(L"raw.NEF") &&
+            !IsPictureCanvasPath(L"dir.v2\\noext");
+        std::printf("[%s] grid bottom alignment keeps pictures whole and measures icon ink\n",
+                    ok ? "PASS" : "FAIL");
+        return ok;
+    }
     static bool DeadlineAndPageRegression() {
         ThumbnailCache cache;
         cache.running_ = true;
@@ -389,4 +408,8 @@ bool RunThumbnailSheetRegression() {
     return pulse::ui::ThumbnailCacheTestAccess::SheetRegression();
 }
 
-bool RunThumbnailDeadlineRegression() { return pulse::ui::ThumbnailCacheTestAccess::DeadlineAndPageRegression(); }
+bool RunThumbnailDeadlineRegression() {
+    const bool deadline = pulse::ui::ThumbnailCacheTestAccess::DeadlineAndPageRegression();
+    const bool artwork = pulse::ui::ThumbnailCacheTestAccess::ArtworkCanvasRegression();
+    return deadline && artwork;
+}

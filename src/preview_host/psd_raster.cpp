@@ -17,6 +17,9 @@ namespace {
 using Microsoft::WRL::ComPtr;
 
 constexpr ULONGLONG kDecodeBudgetMs = 4000;   // composite streaming deadline
+// Grid thumbnails of transparent documents decode the composite (the
+// embedded JPEG is white-matted) up to this size; larger ones keep the JPEG.
+constexpr uint64_t kGridCompositePixels = 32ull * 1000 * 1000;
 constexpr size_t kReadChunk = 1u << 20;
 
 // Sequential big-endian reader over a file with a 1 MB window.
@@ -104,11 +107,60 @@ struct Header {
     bool has_palette = false;
     std::vector<unsigned char> thumbnail;   // JFIF from resource 1036
     bool real_merged = true;                // resource 1057 hasRealMergedData
-    bool merged_alpha = false;              // negative layer count
+    bool merged_alpha = false;              // merged image carries transparency
     uint64_t image_data = 0;                // offset of the image data section
 };
 
 enum Mode : uint16_t { Bitmap = 0, Gray = 1, Indexed = 2, Rgb = 3, Cmyk = 4, Multichannel = 7, Duotone = 8, Lab = 9 };
+
+// Tagged blocks with an 8-byte length in PSB documents.
+bool LongTaggedBlock(const char* key) {
+    static const char* const kKeys[] = {"LMsk", "Lr16", "Lr32", "Layr", "Mt16", "Mt32", "Mtrn",
+                                        "Alph", "FMsk", "lnk2", "FEid", "FXid", "PxSD"};
+    for (const char* k : kKeys)
+        if (std::memcmp(key, k, 4) == 0) return true;
+    return false;
+}
+
+bool TaggedSignatureAt(Reader& r, uint64_t at, uint64_t end) {
+    char sig[4]{};
+    return at + 12 <= end && r.Seek(at) && r.Read(sig, 4) &&
+        (std::memcmp(sig, "8BIM", 4) == 0 || std::memcmp(sig, "8B64", 4) == 0);
+}
+
+// Additional layer information after the global layer mask: signature, key,
+// length, data. 16/32-bit documents keep their layers in "Lr16"/"Lr32" (the
+// 8-bit layer info is empty), so the merged-transparency sign is read there
+// too; "Mtrn"/"Mt16"/"Mt32" mark merged transparency outright.
+void ScanTaggedBlocks(Reader& r, Header& h, uint64_t at, uint64_t end) {
+    if (at > end || end - at < 4 || !r.Seek(at)) return;
+    const uint32_t mask_len = r.U32();
+    if (!r.ok() || mask_len > end - at - 4) return;
+    at += 4 + uint64_t{mask_len};
+    for (int blocks = 0; blocks < 256 && r.ok(); ++blocks) {
+        // Writers disagree on padding block data to 2 or 4 bytes.
+        uint64_t found = 0;
+        for (const uint64_t candidate : {at, (at + 1) & ~uint64_t{1}, (at + 3) & ~uint64_t{3}}) {
+            if (TaggedSignatureAt(r, candidate, end)) { found = candidate; break; }
+        }
+        if (!found) return;
+        char key[4]{};
+        if (!r.Read(key, 4)) return;
+        const bool wide = h.psb && LongTaggedBlock(key);
+        if (found + 12 + (wide ? 4u : 0u) > end) return;
+        const uint64_t len = wide ? r.U64() : r.U32();
+        const uint64_t data = r.tell();
+        if (!r.ok() || len > end - data) return;
+        if (std::memcmp(key, "Mtrn", 4) == 0 || std::memcmp(key, "Mt16", 4) == 0 ||
+            std::memcmp(key, "Mt32", 4) == 0) {
+            h.merged_alpha = true;
+        } else if (len >= 2 && (std::memcmp(key, "Lr16", 4) == 0 ||
+                   std::memcmp(key, "Lr32", 4) == 0 || std::memcmp(key, "Layr", 4) == 0)) {
+            if (static_cast<int16_t>(r.U16()) < 0) h.merged_alpha = true;
+        }
+        at = data + len;
+    }
+}
 
 bool ParseHeader(Reader& r, Header& h, std::wstring* error) {
     auto fail = [&](const wchar_t* why) { if (error) *error = why; return false; };
@@ -167,13 +219,22 @@ bool ParseHeader(Reader& r, Header& h, std::wstring* error) {
     }
     if (!r.Seek(res_end)) return fail(L"psd-truncated");
 
-    // Layer and mask information: only the sign of the layer count matters -
-    // negative means the first alpha channel is the merged transparency.
+    // Layer and mask information. The first extra channel is the merged
+    // transparency when the layer count is negative, or when the tagged
+    // blocks after the layer info say so (see ScanTaggedBlocks): 16-bit
+    // documents with an empty 8-bit layer info otherwise read as opaque and
+    // their white-matted composite showed as a white sheet.
     const uint64_t lm_len = h.psb ? r.U64() : r.U32();
-    const uint64_t lm_end = r.tell() + lm_len;
-    if (lm_len >= (h.psb ? 10u : 6u)) {
+    const uint64_t lm_start = r.tell();
+    if (!r.ok() || lm_len > r.size() - (std::min)(r.size(), lm_start)) return fail(L"psd-truncated");
+    const uint64_t lm_end = lm_start + lm_len;
+    if (lm_len >= (h.psb ? 8u : 4u)) {
         const uint64_t layer_len = h.psb ? r.U64() : r.U32();
-        if (layer_len >= 2) h.merged_alpha = static_cast<int16_t>(r.U16()) < 0;
+        const uint64_t layer_start = r.tell();
+        if (r.ok() && layer_start <= lm_end && layer_len <= lm_end - layer_start) {
+            if (layer_len >= 2) h.merged_alpha = static_cast<int16_t>(r.U16()) < 0;
+            if (r.ok()) ScanTaggedBlocks(r, h, layer_start + layer_len, lm_end);
+        }
     }
     if (!r.Seek(lm_end) || !r.ok()) return fail(L"psd-truncated");
     h.image_data = lm_end;
@@ -206,6 +267,13 @@ bool PackBits(const unsigned char* src, size_t src_len, unsigned char* dst, size
         }
     }
     return o == dst_len;
+}
+
+// Linear coverage (32-bit alpha) -> byte; only colour takes the display curve.
+uint8_t LinearToByte(float f) {
+    if (!(f > 0.0f)) return 0;
+    if (f >= 1.0f) return 255;
+    return static_cast<uint8_t>(std::lround(f * 255.0f));
 }
 
 // Linear float (32-bit documents) -> display byte.
@@ -337,7 +405,7 @@ bool DecodeComposite(Reader& r, const Header& h, UINT max_edge, std::vector<unsi
                     const uint32_t bits = uint32_t(raw[x * 4]) << 24 | uint32_t(raw[x * 4 + 1]) << 16 |
                                           uint32_t(raw[x * 4 + 2]) << 8 | raw[x * 4 + 3];
                     float f; std::memcpy(&f, &bits, 4);
-                    row8[x] = FloatToByte(f);
+                    row8[x] = alpha && c == color ? LinearToByte(f) : FloatToByte(f);
                 }
                 break;
             }
@@ -379,12 +447,22 @@ bool DecodeComposite(Reader& r, const Header& h, UINT max_edge, std::vector<unsi
             case Lab: LabToRgb(v(0), v(1), v(2), R, G, B); break;
             default: R = G = B = v(0); break;
             }
-            if (alpha) A = v(color);
             unsigned char* px = pixels.data() + static_cast<size_t>(oy) * stride + ox * 4;
-            px[0] = static_cast<unsigned char>(B * A / 255);
-            px[1] = static_cast<unsigned char>(G * A / 255);
-            px[2] = static_cast<unsigned char>(R * A / 255);
-            px[3] = A;
+            if (!alpha) {
+                px[0] = B; px[1] = G; px[2] = R; px[3] = A;
+                continue;
+            }
+            // Photoshop stores the merged image of a transparent document
+            // composited over white: stored = colour * a + 255 * (1 - a), so
+            // the premultiplied colour is stored - (255 - a). The relation is
+            // linear and holds for box-averaged cells too. Scaling the matted
+            // colour by alpha kept the white in soft edges and clear areas.
+            A = v(color);
+            const auto unmatte = [A](uint8_t stored) {
+                const int premultiplied = int{stored} + int{A} - 255;
+                return static_cast<unsigned char>((std::clamp)(premultiplied, 0, int{A}));
+            };
+            px[0] = unmatte(B); px[1] = unmatte(G); px[2] = unmatte(R); px[3] = A;
         }
     }
     return true;
@@ -446,7 +524,13 @@ bool RasterizePsdFile(const std::wstring& path, UINT max_edge, bool prefer_embed
     source_height = header.height;
     max_edge = (std::max)(16u, max_edge);
 
-    if (prefer_embedded && DecodeThumbnail(header.thumbnail, max_edge, pixels, width, height, stride))
+    // The embedded JPEG has no transparency (it is the white-matted image):
+    // grid thumbnails of transparent documents use the composite while it is
+    // affordable.
+    const bool composite_first = header.merged_alpha && header.real_merged &&
+        static_cast<uint64_t>(header.width) * header.height <= kGridCompositePixels;
+    if (prefer_embedded && !composite_first &&
+        DecodeThumbnail(header.thumbnail, max_edge, pixels, width, height, stride))
         return true;
     if (header.real_merged &&
         DecodeComposite(reader, header, max_edge, pixels, width, height, stride, error))

@@ -856,7 +856,7 @@ void ThumbnailCache::Worker() {
                 if (void* p=MapViewOfFile(map, FILE_MAP_READ,0,0,bytes)) {
                     result.pixels.assign((uint8_t*)p,(uint8_t*)p+bytes); UnmapViewOfFile(p);
                     result.w=response.width; result.h=response.height; result.stride=response.stride;
-                    result.artwork_bounds = MeasureIconArtwork(result.pixels,
+                    result.artwork_bounds = ThumbnailArtworkBounds(req.path, result.pixels,
                         result.w, result.h, result.stride);
                     // Audio covers tint Quick Look's waveform. The pixels
                     // are freed on upload, so measure them here, off the UI

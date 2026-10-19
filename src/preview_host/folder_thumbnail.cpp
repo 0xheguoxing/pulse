@@ -1,4 +1,5 @@
 #include "folder_thumbnail.h"
+#include "shell_bitmap.h"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <shobjidl.h>
@@ -152,11 +153,16 @@ bool CachedPicture(IWICImagingFactory* factory, const std::wstring& path, UINT c
     if (FAILED(thumbnail_status) || !shared) return false;
     HBITMAP bitmap = nullptr;
     if (FAILED(shared->GetSharedBitmap(&bitmap)) || !bitmap) return false;
-    ComPtr<IWICBitmap> source;
     WTS_ALPHATYPE alpha = WTSAT_UNKNOWN;
-    shared->GetFormat(&alpha);
-    const auto alpha_mode = alpha == WTSAT_RGB ? WICBitmapIgnoreAlpha : WICBitmapUsePremultipliedAlpha;
-    return SUCCEEDED(factory->CreateBitmapFromHBITMAP(bitmap, nullptr, alpha_mode, &source)) &&
+    if (FAILED(shared->GetFormat(&alpha))) alpha = WTSAT_UNKNOWN;
+    // Straight-alpha cache entries labelled ARGB were read as premultiplied
+    // (washed-out pictures); shell_bitmap.h settles what the alpha means.
+    std::vector<uint8_t> pbgra;
+    UINT width = 0, height = 0, stride = 0;
+    if (!ShellBitmapToPbgra(bitmap, alpha, pbgra, width, height, stride)) return false;
+    ComPtr<IWICBitmap> source;
+    return SUCCEEDED(factory->CreateBitmapFromMemory(width, height, GUID_WICPixelFormat32bppPBGRA,
+               stride, static_cast<UINT>(pbgra.size()), pbgra.data(), &source)) &&
         Pixels(factory, source.Get(), cap, out);
 }
 bool ReadPicture(IWICImagingFactory* factory, const std::wstring& path, UINT cap, Picture& out) {

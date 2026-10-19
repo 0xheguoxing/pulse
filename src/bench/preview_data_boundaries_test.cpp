@@ -1,5 +1,7 @@
 #include "../preview_host/psd_raster.h"
 #include "../preview_host/table_document.h"
+#include "../preview_host/office_model.h"
+#include "../preview_host/xlsx_parts.h"
 #include "preview_fixture_zip.h"
 #include <objbase.h>
 #include <cstdio>
@@ -34,6 +36,37 @@ Bytes Psd(bool psb, bool rle, bool permute, bool solid = false, uint32_t count_o
         const bool red = solid || i % 2 == 0;
         out.push_back(static_cast<unsigned char>(red ? (permute ? 2 : 0) : (permute ? 0 : 2)));
     }
+    return out;
+}
+// 2x1 RGB document with merged transparency, stored the way Photoshop does:
+// colour composited over white. Pixel 0 is red at alpha 128 (stored
+// 255,127,127), pixel 1 is clear (stored white). lr16: the transparency is
+// announced only by an "Lr16" tagged block, as in 16-bit documents whose
+// 8-bit layer info is empty.
+Bytes TransparentPsd(uint16_t depth, bool lr16) {
+    Bytes out{'8','B','P','S'};
+    Be16(out, 1); out.resize(out.size() + 6);
+    Be16(out, 4); Be32(out, 1); Be32(out, 2); Be16(out, depth); Be16(out, 3);
+    Be32(out, 0);   // colour mode data
+    Be32(out, 0);   // image resources
+    Bytes layers;
+    if (lr16) {
+        Be32(layers, 0);   // empty layer info
+        Be32(layers, 0);   // global layer mask info
+        for (char c : std::string("8BIMLr16")) layers.push_back(static_cast<unsigned char>(c));
+        Be32(layers, 2); Be16(layers, 0xFFFF);
+    } else {
+        Be32(layers, 2); Be16(layers, 0xFFFF);
+    }
+    Be32(out, static_cast<uint32_t>(layers.size()));
+    out.insert(out.end(), layers.begin(), layers.end());
+    Be16(out, 0);   // raw composite: planes R, G, B, A
+    const uint16_t planes[4][2] = {{255, 255}, {127, 255}, {127, 255}, {128, 0}};
+    for (const auto& plane : planes)
+        for (const uint16_t v : plane) {
+            if (depth == 16) Be16(out, static_cast<uint16_t>(v * 257));
+            else out.push_back(static_cast<unsigned char>(v));
+        }
     return out;
 }
 bool ValidUtf16(const std::wstring& text) {
@@ -113,6 +146,13 @@ int wmain() {
             "incomplete PackBits literal cannot be zero-filled into a successful image");
         check(decode(Psd(true, true, false), 16, pixels, error), "normal PSB PackBits still decodes");
     }
+    for (const bool lr16 : {false, true}) {
+        Bytes pixels; std::wstring error;
+        const Bytes expected = {0, 0, 128, 128, 0, 0, 0, 0};
+        check(decode(TransparentPsd(lr16 ? 16 : 8, lr16), 16, pixels, error) && pixels == expected,
+            lr16 ? "16-bit PSD transparency announced in Lr16 is unmatted from white"
+                 : "8-bit PSD merged transparency is unmatted from white, clear stays clear");
+    }
     uint32_t bytes = 0;
     const std::string cells =
         "<c r=\"A1\" s=\"1\"><v>0</v></c><c r=\"B1\" s=\"1\"><v>1</v></c>"
@@ -168,6 +208,51 @@ int wmain() {
                     "XLSX inline/shared cell clipping propagates completeness and preserves UTF16");
             }
         }
+    }
+    {
+        // Parts named by relationships rather than by convention, cells
+        // without r, and formulas without a cached value (shared members too).
+        const auto file = root / L"renamed.xlsx";
+        const std::string kRel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
+        const std::string sheet =
+            "<worksheet><sheetData>"
+            "<row r=\"1\"><c t=\"s\"><v>0</v></c><c t=\"s\"><v>1</v></c><c><v>2</v></c></row>"
+            "<row r=\"2\"><c r=\"A2\"><v>3</v></c><c r=\"B2\"><f t=\"shared\" ref=\"B2:B3\" si=\"0\">A2*2</f></c>"
+            "<c r=\"C2\"><f>SUM($A$2:A2)</f></c></row>"
+            "<row r=\"3\"><c r=\"A3\"><v>4</v></c><c r=\"B3\"><f t=\"shared\" si=\"0\"/></c></row>"
+            "</sheetData></worksheet>";
+        check(preview_fixture::Zip(file, {
+            {"_rels/.rels", "<Relationships><Relationship Id=\"rId1\" Type=\"" + kRel +
+                "officeDocument\" Target=\"book/main.xml\"/></Relationships>"},
+            {"book/main.xml", "<workbook xmlns:r=\"" + kRel.substr(0, kRel.size() - 1) + "\"><sheets><sheet name=\"Data\" r:id=\"rId1\"/></sheets></workbook>"},
+            {"book/_rels/main.xml.rels", "<Relationships><Relationship Id=\"rId1\" Type=\"" + kRel +
+                "worksheet\" Target=\"sheets/data.xml\"/><Relationship Id=\"rId2\" Type=\"" + kRel +
+                "sharedStrings\" Target=\"/book/strings.xml\"/></Relationships>"},
+            {"book/sheets/data.xml", sheet},
+            {"book/strings.xml", "<sst><si><t>Name</t></si><si><t>Total</t></si></sst>"}}),
+            "write private workbook with renamed parts");
+        std::wstring payload;
+        const bool made = MakeXlsxTable(file.wstring(), payload, bytes);
+        std::vector<std::vector<std::wstring>> rows;
+        for (size_t at = 0; (at = payload.find(L"\nR\t", at)) != std::wstring::npos; ++at)
+            rows.push_back(Fields(payload.substr(at + 1), L'R'));
+        check(made && rows.size() == 3 && rows[0].size() == 4 && rows[0][1] == L"Name" &&
+            rows[0][2] == L"Total" && rows[0][3] == L"2",
+            "XLSX parts follow relationships; cells without r take the next column");
+        check(rows.size() == 3 && rows[1].size() == 4 && rows[2].size() == 4 &&
+            rows[1][2] == L"=A2*2" && rows[1][3] == L"=SUM($A$2:A2)" && rows[2][2] == L"=A3*2",
+            "XLSX formulas without a cached value show their text, shared members shifted");
+        SheetModel model; std::wstring model_error;
+        check(ReadXlsxModel(file.wstring(), 4, 4, model, &model_error) && model.grid.size() == 4 &&
+            model.grid[0][0] == L"Name" && model.grid[0][1] == L"Total" &&
+            model.grid[1][1] == L"=A2*2" && model.grid[1][2] == L"=SUM($A$2:A2)" &&
+            model.grid[2][1] == L"=A3*2",
+            "sheet sketch follows renamed parts, cells without r and uncalculated formulas");
+        check(ShiftFormula(L"SUM($A$1:B2)*Sheet2!C3+\"A1\"&'Q1 data'!D4+LOG10(A1)+T[Col1]", 2, 1) ==
+                L"SUM($A$1:C4)*Sheet2!D5+\"A1\"&'Q1 data'!E6+LOG10(B3)+T[Col1]" &&
+            ShiftFormula(L"A1+$B$2", -1, 0) == L"#REF!+$B$2" &&
+            ResolvePartTarget("xl/workbook.xml", "../custom/./s.xml") == "custom/s.xml",
+            "shared formula references shift like Excel; part targets resolve");
     }
     const auto csv = root / L"source.csv";
     { std::ofstream file(csv); for (int i = 0; i < 700; ++i) file << std::string(100, 'a') << '\n'; }

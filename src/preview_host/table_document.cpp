@@ -1,5 +1,6 @@
 // table_document.cpp — see table_document.h.
 #include "table_document.h"
+#include "xlsx_parts.h"
 
 #include "zip_entry.h"
 
@@ -601,12 +602,19 @@ void ReadSheet(std::string_view xml, const std::vector<std::wstring>& shared, co
     std::string type;
     unsigned style = 0;
     size_t col = 0;
-    std::wstring value;
+    std::wstring value, formula;
+    bool in_formula = false, formula_shared = false;
+    unsigned formula_group = 0;
+    SharedFormulas formulas;
     auto store = [&] {
         if (col >= kMaxColumns) { truncated = true; return; }
         if (row_index >= kMaxRows) { truncated = true; return; }
         std::wstring text;
-        if (type == "s") {
+        if (value.empty() && !formula.empty()) {
+            // Never calculated (generators often write no cached <v>): an
+            // empty cell hid whole formula columns, so show the formula.
+            text = L"=" + formula;
+        } else if (type == "s") {
             unsigned idx = 0;
             for (const wchar_t ch : value) {
                 if (ch < L'0' || ch > L'9' || idx > 100000000u) break;
@@ -648,6 +656,7 @@ void ReadSheet(std::string_view xml, const std::vector<std::wstring>& shared, co
                 type = std::string(x.Attr("t"));
                 style = ToUnsigned(x.Attr("s"));
                 value.clear();
+                formula.clear();
                 in_cell = !x.self_closing();
                 if (!in_cell) { value.clear(); store(); }
             } else if (in_cell && n == "v") {
@@ -659,30 +668,39 @@ void ReadSheet(std::string_view xml, const std::vector<std::wstring>& shared, co
             } else if (in_inline && n == "rPh") {
                 x.SkipElement();
             } else if (in_cell && n == "f") {
-                x.SkipElement();  // formula text: the cached <v> holds the result
+                // Shown only without a cached <v>. Members of a shared formula
+                // carry just the group index and take the anchor's text.
+                formula_shared = x.Attr("t") == "shared" && !x.Attr("si").empty();
+                formula_group = ToUnsigned(x.Attr("si"));
+                in_formula = !x.self_closing();
+                if (!in_formula && formula_shared)
+                    formulas.Resolve(formula_group, static_cast<long long>(row_index),
+                                     static_cast<long long>(col), formula);
             }
         } else if (k == XmlReader::Kind::Close) {
             const auto n = x.name();
             if (n == "c" && in_cell) { store(); in_cell = false; }
             else if (n == "v") in_value = false;
+            else if (n == "f" && in_formula) {
+                in_formula = false;
+                if (formula_shared)
+                    formulas.Resolve(formula_group, static_cast<long long>(row_index),
+                                     static_cast<long long>(col), formula);
+            }
             else if (n == "is") in_inline = false;
             else if (n == "t") in_t = false;
             else if (n == "row") in_row = false;
             else if (n == "sheetData") break;
         } else if (k == XmlReader::Kind::Text) {
             if (in_value || (in_inline && in_t)) value += x.Text();
+            else if (in_formula) formula += x.Text();
         }
     }
     // Drop trailing empty rows.
     while (!rows.empty() && rows.back().empty()) rows.pop_back();
 }
 
-std::string ResolveTarget(std::string target) {
-    if (!target.empty() && target[0] == '/') return target.substr(1);
-    std::string base = "xl/";
-    while (target.rfind("../", 0) == 0) { target = target.substr(3); base = ""; }
-    return base + target;
-}
+constexpr std::string_view kDefaultWorkbook = "xl/workbook.xml";
 
 }  // namespace
 
@@ -752,16 +770,44 @@ bool MakeXlsxTable(const std::wstring& path, std::wstring& payload, uint32_t& by
     const ULONGLONG started = GetTickCount64();
     uint64_t total = 0;
     std::string workbook, rels, shared_xml, styles_xml;
+    // Parts are found through relationships: not every generator names the
+    // workbook, its sheets, shared strings and styles the way Excel does,
+    // and a missed shared-strings part left every text cell empty.
+    std::string workbook_part(kDefaultWorkbook);
+    {
+        std::string package_rels;
+        if (ReadPart(path, "_rels/.rels", package_rels, nullptr, total)) {
+            XmlReader x(package_rels);
+            for (auto k = x.Next(); k != XmlReader::Kind::End; k = x.Next()) {
+                if (k == XmlReader::Kind::Open && x.name() == "Relationship" &&
+                    RelationshipTypeIs(x.Attr("Type"), "officeDocument") && !x.Attr("Target").empty()) {
+                    workbook_part = ResolvePartTarget("", x.Attr("Target"));
+                    break;
+                }
+            }
+        }
+    }
     bool workbook_cut = false;
-    if (!ReadPart(path, "xl/workbook.xml", workbook, &workbook_cut, total) || workbook_cut) return false;
-    ReadPart(path, "xl/_rels/workbook.xml.rels", rels, nullptr, total);
-    // Sheet order and names from workbook.xml, targets from its relationships.
+    bool have_workbook = ReadPart(path, workbook_part, workbook, &workbook_cut, total);
+    if (!have_workbook && workbook_part != kDefaultWorkbook) {
+        workbook_part = kDefaultWorkbook;
+        have_workbook = ReadPart(path, workbook_part, workbook, &workbook_cut, total);
+    }
+    if (!have_workbook || workbook_cut) return false;
+    ReadPart(path, RelationshipsPart(workbook_part), rels, nullptr, total);
+    // Sheet order and names from the workbook, targets from its relationships.
     std::map<std::string, std::string> targets;
+    std::string shared_part = "xl/sharedStrings.xml", styles_part = "xl/styles.xml";
     {
         XmlReader x(rels);
-        for (auto k = x.Next(); k != XmlReader::Kind::End; k = x.Next())
-            if (k == XmlReader::Kind::Open && x.name() == "Relationship")
-                targets[std::string(x.Attr("Id"))] = ResolveTarget(std::string(x.Attr("Target")));
+        for (auto k = x.Next(); k != XmlReader::Kind::End; k = x.Next()) {
+            if (k != XmlReader::Kind::Open || x.name() != "Relationship") continue;
+            const std::string target = ResolvePartTarget(workbook_part, x.Attr("Target"));
+            const auto type = x.Attr("Type");
+            if (RelationshipTypeIs(type, "sharedStrings")) shared_part = target;
+            else if (RelationshipTypeIs(type, "styles")) styles_part = target;
+            targets[std::string(x.Attr("Id"))] = target;
+        }
     }
     struct SheetRef { std::wstring name; std::string part; bool hidden; bool name_cut; };
     std::vector<SheetRef> sheets;
@@ -798,8 +844,8 @@ bool MakeXlsxTable(const std::wstring& path, std::wstring& payload, uint32_t& by
     std::vector<std::wstring> shared;
     Styles styles;
     if (!sheets[sheet_index].hidden && !sheets[sheet_index].part.empty()) {
-        if (ReadPart(path, "xl/sharedStrings.xml", shared_xml, nullptr, total)) shared = ReadSharedStrings(shared_xml);
-        if (ReadPart(path, "xl/styles.xml", styles_xml, nullptr, total)) styles = ReadStyles(styles_xml);
+        if (ReadPart(path, shared_part, shared_xml, nullptr, total)) shared = ReadSharedStrings(shared_xml);
+        if (ReadPart(path, styles_part, styles_xml, nullptr, total)) styles = ReadStyles(styles_xml);
     }
     payload = L"PULSETBL\t1\n";
     size_t loaded = 0;
