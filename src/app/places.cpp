@@ -535,7 +535,9 @@ bool PlacesCatalog::Load() {
         pending_tag_save_.reset();
         tag_save_error_ = ERROR_SUCCESS;
     }
-    EnsureDefaults();
+    // Defaults only seed a catalog that has no saved tags yet: a saved empty
+    // list means the user deleted them, and they stay deleted.
+    if (!tags_loaded) EnsureDefaults();
     RebuildTagIndex();
     RebuildStarIndex();
     if (recovered || (places_loaded && !tags_loaded)) QueueTagSave();

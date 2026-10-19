@@ -5694,6 +5694,16 @@ void TestQuickAccess() {
               L"quick access: badge text and color survive a restart");
         WriteUtf8FileAtomic(test_dir + L"\\places.json", L"{\"starred_items\":[]}");
         Check(loaded.Load() && loaded.quick_access_paths.empty(), L"quick access: old profile defaults empty");
+        // Deleting every tag sticks: a saved empty list is not re-seeded on the
+        // next start, while a profile that never saved tags still gets them.
+        // No writer may outlive the fixture directory, so nothing is queued.
+        loaded.persist = false;
+        WriteUtf8FileAtomic(test_dir + L"\\places.json", L"{}");
+        WriteUtf8FileAtomic(test_dir + L"\\tags.json",
+                            L"{\"version\":2,\"tags_generation\":\"5\",\"tags\":[\n  ]\n}\n");
+        Check(loaded.Load() && loaded.tags.empty(), L"tags: a saved empty tag list stays empty after a restart");
+        DeleteFileW((test_dir + L"\\tags.json").c_str());
+        Check(loaded.Load() && loaded.tags.size() == 7, L"tags: a profile without saved tags gets the defaults");
     }
     SetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", previous[0] ? previous : nullptr);
     cat.persist = false;
@@ -8262,6 +8272,13 @@ int RunSelfTest1B2() {
     if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
         wcscmp(test_case, L"pin-reorder") == 0) {
         TestQuickAccessPinReorder();
+        if (g_log) { fclose(g_log); g_log = nullptr; }
+        return g_fail ? 1 : 0;
+    }
+    if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
+        wcscmp(test_case, L"quick-access") == 0) {
+        TestQuickAccess();
+        LogLine(L"\n== quick-access: %d passed, %d failed ==\n", g_pass, g_fail);
         if (g_log) { fclose(g_log); g_log = nullptr; }
         return g_fail ? 1 : 0;
     }
