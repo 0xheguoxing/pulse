@@ -3,6 +3,7 @@
 #include "arrival_select.h"
 #include "zip_compress_ui.h"
 #include "folder_alias.h"
+#include "../common/runtime_log.h"
 #include "../index/filename_pinyin.h"
 #include "../common/windows_compat.h"
 #include "../ui/FluentTokens.h"
@@ -716,15 +717,37 @@ static void CloseMainWindow(AppState& s) {
     else DestroyWindow(hwnd);
 }
 
+// Exit steps report their milliseconds in runtime events (numbers only), so a
+// slow exit on a user's machine names the step that held it.
+class ExitTimer {
+public:
+    ExitTimer() noexcept { QueryPerformanceFrequency(&freq_); QueryPerformanceCounter(&last_); }
+    uint64_t Lap() noexcept {
+        LARGE_INTEGER now{};
+        QueryPerformanceCounter(&now);
+        const uint64_t ms = static_cast<uint64_t>((now.QuadPart - last_.QuadPart) * 1000 / freq_.QuadPart);
+        last_ = now;
+        return ms;
+    }
+private:
+    LARGE_INTEGER freq_{};
+    LARGE_INTEGER last_{};
+};
+static ULONGLONG g_exitStarted = 0;  // GetTickCount64 when the last window began to close
+
 // The last window's first steps on the way out: what the user sees and what a
 // new Pulse would depend on. The tray icon goes, saved state is written, file
 // operations stop and leave their recovery journal, and only then is the
 // single-instance claim released, so a Pulse started now reads finished files
 // instead of being forwarded to this one. Stopping the services comes after.
 static void HandOffAtExit(AppState& s, HWND hwnd) {
+    g_exitStarted = GetTickCount64();
+    ExitTimer timer;
     s.tray_controller.Detach();
+    const uint64_t tray_ms = timer.Lap();
     // Closing the search window may still record its size in the preferences.
     ShutdownGlobalSearch(s);
+    const uint64_t search_ms = timer.Lap();
     // Visual-regression runs must never overwrite the user's real
     // window, path, tray, or undo session.
     if (s.startupComplete && !s.shot.active && !s.menushot && !s.isolatedTest) {
@@ -738,11 +761,16 @@ static void HandOffAtExit(AppState& s, HWND hwnd) {
         if (!s.updateSessionPrepared) s.appPrefs.Save();
     }
     s.searchHistoryWriter.Flush();
+    const uint64_t save_ms = timer.Lap();
     s.ops.Stop();
     ops::ShutdownElevatedTransferHelper();
+    const uint64_t ops_ms = timer.Lap();
     // Sweeps every stage, so it must finish before another Pulse can make one.
     app::SweepDropStages(app::DropStageRoot(), true);
+    const uint64_t sweep_ms = timer.Lap();
     s.single_instance.Release();
+    diagnostics::runtime::Event("exit_handoff", {{"tray", tray_ms}, {"search", search_ms},
+        {"save", save_ms}, {"ops", ops_ms}, {"sweep", sweep_ms}, {"release", timer.Lap()}});
 }
 
 // Tray "Exit" and the palette's "Exit Pulse": the session is saved while every
@@ -2799,22 +2827,39 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 extern void RecordP1StartupRollback(const AppState&);
                 RecordP1StartupRollback(*s);
 #endif
+                ExitTimer timer;
                 StopShellWindows(*s);
                 StopShellRegistryWatch();
+                const uint64_t shell_ms = timer.Lap();
                 s->watches.Stop();
+                const uint64_t watches_ms = timer.Lap();
                 s->folderSizes.Stop();
+                const uint64_t sizes_ms = timer.Lap();
                 s->settings.ResetUi();
                 s->settings.Stop();
+                const uint64_t settings_ms = timer.Lap();
                 s->update_checker.Stop();
                 s->update_installer.Stop();
+                const uint64_t updates_ms = timer.Lap();
                 s->contentSearch.Stop();
+                const uint64_t content_ms = timer.Lap();
                 s->duplicateSearch.Stop();
+                const uint64_t duplicates_ms = timer.Lap();
                 s->networkIndex.Stop();
+                const uint64_t network_index_ms = timer.Lap();
                 s->changes.client.Stop();
+                const uint64_t changes_ms = timer.Lap();
                 s->index.Stop();
+                const uint64_t index_ms = timer.Lap();
                 CancelNetworkLocations(*s);
                 CancelSidebarRefresh(*s);
+                const uint64_t locations_ms = timer.Lap();
                 s->worker.Stop();
+                diagnostics::runtime::Event("exit_services", {{"shell", shell_ms}, {"watches", watches_ms},
+                    {"folder_sizes", sizes_ms}, {"settings", settings_ms}, {"updates", updates_ms},
+                    {"content", content_ms}, {"duplicates", duplicates_ms},
+                    {"network_index", network_index_ms}, {"changes", changes_ms}, {"index", index_ms},
+                    {"locations", locations_ms}, {"worker", timer.Lap()}});
             } else if (AppState* next = s->core.windows.MostRecentExcept(hwnd)) {
                 // Hand the process bindings this window held to the next one
                 // (M4a): tray hide/restore and the owner of shell dialogs.
@@ -3920,8 +3965,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         DispatchMessageW(&msg);
     }
     // Later windows' states hold references into the core `state` owns.
+    ExitTimer tail;
     ReleaseWindowStatesAtExit();
+    const uint64_t windows_ms = tail.Lap();
     pulse::app::hang::Stop();
+    const uint64_t hang_ms = tail.Lap();
     OleUninitialize();
+    const uint64_t ole_ms = tail.Lap();
+    if (g_exitStarted)
+        diagnostics::runtime::Event("exit_tail", {{"windows", windows_ms}, {"hang", hang_ms},
+            {"ole", ole_ms}, {"since_close", GetTickCount64() - g_exitStarted}});
     return (int)msg.wParam;
 }
