@@ -759,6 +759,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             vm.settings_integration_this_pc = s.appPrefs.integration_this_pc;
             vm.settings_integration_recycle_bin = s.appPrefs.integration_recycle_bin;
             vm.settings_integration_experimental = s.appPrefs.take_over_explorer_windows;
+            vm.settings_integration_folders_compat = s.appPrefs.integration_folders_compat;
             vm.settings_integration_state = s.settings.IntegrationState();
             vm.settings_integration_summary = s.settings.IntegrationSummary();
             vm.settings_integration_can_retry = s.settings.IntegrationCanRetry() ||

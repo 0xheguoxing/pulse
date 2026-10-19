@@ -37,6 +37,9 @@ inline std::wstring IntegrationHint(const WindowViewModel& vm) {
     if(vm.settings_integration_just_enabled) return l10n::Get(I::IntegrationJustOn);
     // Taking over works only while Pulse runs, and closing the window ends
     // Pulse unless it keeps running (AppPrefs::KeepsRunningInBackground).
+    // 兼容打开方式 needs a running Pulse for every double-click, so it speaks first.
+    if(vm.settings_integration_folders_compat && !vm.settings_keep_running) return l10n::Get(I::IntegrationHintKeepCompat);
+    if(vm.settings_integration_folders_compat && !vm.settings_launch_on_startup) return l10n::Get(I::IntegrationHintLaunchCompat);
     if(vm.settings_integration_experimental && !vm.settings_keep_running) return l10n::Get(I::IntegrationHintKeep);
     if(vm.settings_integration_experimental && !vm.settings_launch_on_startup) return l10n::Get(I::IntegrationHintLaunch);
     return l10n::Get(I::IntegrationOnFoot);
@@ -47,7 +50,8 @@ inline bool IntegrationShowsTry(const WindowViewModel& vm) {
 inline constexpr l10n::StringId kIntegrationCover[]={l10n::StringId::IntegrationFolders,
     l10n::StringId::ThisPc,l10n::StringId::SettingsWinE};
 inline bool IntegrationCoverActive(const WindowViewModel& vm,int i) {
-    return vm.settings_integration_enabled && (i==0 ? vm.settings_integration_folders_active
+    // Folders still open in Pulse under 兼容打开方式, through the takeover.
+    return vm.settings_integration_enabled && (i==0 ? (vm.settings_integration_folders_active || vm.settings_integration_folders_compat)
         : i==1 ? vm.settings_integration_this_pc_active : vm.settings_integration_win_e_active);
 }
 
@@ -162,14 +166,9 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
         return row((std::max)(52.0f,(31*scale+h+12*scale)/scale));
     };
     l.recycle_bin_row=item_row(l10n::StringId::SettingsRecycleBinDesc,item_text_right);
-    {
-        // The experimental tag sits at the end of the title line.
-        const auto tag=l10n::Get(l10n::StringId::IntegrationExperimentalTag);
-        const float w=painter ? painter->MeasureBadgeWidth(tag) : 60*scale;
-        l.explorer_windows_row=item_row(l10n::StringId::IntegrationExperimentalDesc,item_text_right);
-        const float top=l.explorer_windows_row.top;
-        l.integration_chip[0]=D2D1::RectF(item_text_right-w,top+9*scale,item_text_right,top+31*scale);
-    }
+    // The takeover is a regular option now: it also carries 兼容打开方式 below.
+    l.explorer_windows_row=item_row(l10n::StringId::IntegrationExperimentalDesc,item_text_right);
+    l.folders_compat_row=item_row(l10n::StringId::IntegrationCompatDesc,item_text_right);
     {
         // Footer: the try-it button (while on) and one sentence about what happens now.
         const auto hint=IntegrationHint(vm);

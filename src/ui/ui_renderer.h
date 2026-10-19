@@ -1110,6 +1110,7 @@ struct WindowViewModel {
     bool settings_integration_this_pc = false;
     bool settings_integration_recycle_bin = false;
     bool settings_integration_experimental = false;
+    bool settings_integration_folders_compat = false; // 兼容打开方式
     int settings_integration_state = 0; // 0 off, 1 on, 2 partial, 3 failed
     std::wstring settings_integration_summary;
     bool settings_integration_can_retry = false;

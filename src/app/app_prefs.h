@@ -36,6 +36,10 @@ struct AppPrefs {
     bool integration_incomplete = false;
     std::wstring integration_other_exe; // runtime: another Pulse copy owns the associations
     bool take_over_explorer_windows = false; // experimental choice; runtime is gated by integration_enabled
+    // 兼容打开方式: leave Directory/Drive open alone and let Explorer open the
+    // folder, then take its window over. For machines where the custom default
+    // verb never reaches Pulse (a context-menu extension stalls the lookup).
+    bool integration_folders_compat = false;
     bool shell_tag_menu = false;    // File Explorer "Pulse tags" submenu (shell_tag_menu.cpp syncs HKCU)   // registry is the source of truth (not in app.json)
     bool verify_copies = false;
     bool show_status_performance = false;

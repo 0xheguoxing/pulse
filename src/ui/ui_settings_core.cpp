@@ -294,13 +294,9 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
             item(lay.recycle_bin_row,I::IntegrationRecycleOption,I::SettingsRecycleBinDesc,L"\xE74D",
                 vm.settings_integration_recycle_bin,7,lay.recycle_bin_row.right-16*scale_);
             item(lay.explorer_windows_row,I::IntegrationExperimental,I::IntegrationExperimentalDesc,L"\xE8A7",
-                vm.settings_integration_experimental,4,lay.integration_chip[0].left-8*scale_);
-            {
-                fluent::BadgeSpec chip{};
-                chip.bounds=lay.integration_chip[0];chip.text=l10n::Get(I::IntegrationExperimentalTag);
-                chip.kind=fluent::BadgeKind::Warning;
-                painter_.DrawBadge(chip);
-            }
+                vm.settings_integration_experimental,4,lay.explorer_windows_row.right-16*scale_);
+            item(lay.folders_compat_row,I::IntegrationCompat,I::IntegrationCompatDesc,L"\xE90F",
+                vm.settings_integration_folders_compat,9,lay.folders_compat_row.right-16*scale_);
             if(lay.integration_hint.bottom>lay.integration_hint.top) {
                 const auto r=lay.integration_hint;
                 divider(D2D1::RectF(r.left,r.top-1,r.right,r.top-1));

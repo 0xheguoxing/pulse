@@ -5365,6 +5365,46 @@ void TestSplitLayout() {
           L"filter: view/source index mapping");
 }
 
+// 兼容打开方式 (settings index 9): the folder verb stays unregistered while the
+// scope stays selected, the state reads healthy, and the choice survives a save.
+// persist = false keeps every Apply* away from the registry.
+void TestIntegrationCompat() {
+    AppPrefs prefs;
+    prefs.persist = false;
+    ContextMenuPrefs context;
+    context.persist = false;
+    pulse::index::IndexClient index;
+    pulse::index::NetworkAgentClient network;
+    SettingsController settings;
+    settings.BindUi(prefs, context, index, network, {});
+    AppPrefs fresh;
+    fresh.FromJson(L"{}");
+    Check(!fresh.integration_folders_compat, L"compat: off by default");
+    settings.IntegrationAction(0);
+    Check(prefs.integration_enabled && prefs.open_folders_in_pulse && settings.IntegrationState() == 1,
+          L"compat: the master switch registers the folder verb by default");
+    settings.IntegrationAction(9);
+    Check(prefs.integration_folders_compat && !prefs.open_folders_in_pulse && prefs.integration_folders &&
+              prefs.take_over_win_e && prefs.take_over_this_pc && settings.IntegrationState() == 1,
+          L"compat: on drops only the folder verb and reads healthy");
+    AppPrefs loaded;
+    loaded.FromJson(prefs.ToJson());
+    Check(loaded.integration_folders_compat && loaded.integration_folders,
+          L"compat: the choice round trips through app.json");
+    settings.IntegrationAction(7);
+    settings.IntegrationAction(7);
+    Check(!prefs.open_folders_in_pulse && settings.IntegrationState() == 1,
+          L"compat: re-applying another scope leaves the folder verb off");
+    settings.IntegrationAction(9);
+    Check(!prefs.integration_folders_compat && prefs.open_folders_in_pulse && settings.IntegrationState() == 1,
+          L"compat: off registers the folder verb again");
+    settings.IntegrationAction(0);
+    settings.IntegrationAction(9);
+    Check(!prefs.integration_enabled && !prefs.open_folders_in_pulse && prefs.integration_folders_compat &&
+              settings.IntegrationState() == 0,
+          L"compat: with the master off it is only a saved choice");
+}
+
 void TestQuickAccessPinReorder() {
     PlacesCatalog pins;
     pins.persist = false;
@@ -8283,6 +8323,13 @@ int RunSelfTest1B2() {
         return g_fail ? 1 : 0;
     }
     if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
+        wcscmp(test_case, L"integration-compat") == 0) {
+        TestIntegrationCompat();
+        LogLine(L"\n== integration-compat: %d passed, %d failed ==\n", g_pass, g_fail);
+        if (g_log) { fclose(g_log); g_log = nullptr; }
+        return g_fail ? 1 : 0;
+    }
+    if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
         wcscmp(test_case, L"snapshot-patch") == 0) {
         TestSnapshotPatch();
         TestSnapshotPatchBatch();
@@ -8454,6 +8501,7 @@ int RunSelfTest1B2() {
     TestTrayStack();
     TestHiddenFiles();
     TestQuickAccess();
+    TestIntegrationCompat();
     TestPlacesAndIndex();
     TestRecycleAndBatchRename();
     TestLinkResolve();

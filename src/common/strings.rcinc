@@ -2432,6 +2432,10 @@ BEGIN
     IDS_RENAME_TRAILING_TRIMMED "名称末尾的空格和句点会被去掉"
     IDS_ALIAS_MARK "别名旁显示小图标"
     IDS_ALIAS_MARK_DESC "在列表、侧栏和地址栏里用小图标标出设置了别名的项目"
+    IDS_INTEGRATION_HINT_KEEP_COMPAT "「兼容打开方式」只在 Pulse 运行时有效。想关掉窗口后也生效，可以打开「关闭后继续运行」。"
+    IDS_INTEGRATION_HINT_LAUNCH_COMPAT "「兼容打开方式」只在 Pulse 运行时有效。想一开机就生效，可以打开「开机自启」。"
+    IDS_INTEGRATION_COMPAT "兼容打开方式"
+    IDS_INTEGRATION_COMPAT_DESC "双击文件夹没反应时勾选：Pulse 不再改动文件夹的双击动作，改为资源管理器先打开，再马上转到 Pulse，可能会闪一下。"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4863,6 +4867,10 @@ BEGIN
     IDS_RENAME_TRAILING_TRIMMED "Spaces and periods at the end of the name will be removed."
     IDS_ALIAS_MARK "Show a mark beside aliases"
     IDS_ALIAS_MARK_DESC "Mark aliased items with a small icon in lists, the sidebar and the address bar"
+    IDS_INTEGRATION_HINT_KEEP_COMPAT "Compatibility mode works only while Pulse is running. To keep it working after you close the window, turn on Keep running after close."
+    IDS_INTEGRATION_HINT_LAUNCH_COMPAT "Compatibility mode works only while Pulse is running. To have it from sign-in, turn on Launch at sign-in."
+    IDS_INTEGRATION_COMPAT "Compatibility mode"
+    IDS_INTEGRATION_COMPAT_DESC "Turn on if double-clicking a folder does nothing: Pulse leaves the double-click action alone, lets File Explorer open the folder, then moves it into Pulse right away. It may flash briefly."
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

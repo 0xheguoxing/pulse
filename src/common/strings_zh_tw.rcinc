@@ -2430,4 +2430,8 @@ BEGIN
     IDS_RENAME_TRAILING_TRIMMED "名稱結尾的空格和句點會被移除"
     IDS_ALIAS_MARK "別名旁顯示小圖示"
     IDS_ALIAS_MARK_DESC "在清單、側欄和網址列中用小圖示標出設定了別名的項目"
+    IDS_INTEGRATION_HINT_KEEP_COMPAT "「相容開啟方式」只在 Pulse 執行時有效。想關掉視窗後也生效，可以開啟「關閉後繼續執行」。"
+    IDS_INTEGRATION_HINT_LAUNCH_COMPAT "「相容開啟方式」只在 Pulse 執行時有效。想一開機就生效，可以開啟「開機自啟」。"
+    IDS_INTEGRATION_COMPAT "相容開啟方式"
+    IDS_INTEGRATION_COMPAT_DESC "按兩下資料夾沒反應時勾選：Pulse 不再改動資料夾的按兩下動作，改為檔案總管先開啟，再馬上轉到 Pulse，可能會閃一下。"
 END

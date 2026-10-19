@@ -292,6 +292,7 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 if(vm.settings_integration_enabled) {
                     if(ContainsPt(lay.explorer_windows_row,x,y)) {r.region=HitTestResult::SettingsIntegration;r.index=4;return r;}
                     if(ContainsPt(lay.recycle_bin_row,x,y)) {r.region=HitTestResult::SettingsIntegration;r.index=7;return r;}
+                    if(ContainsPt(lay.folders_compat_row,x,y)) {r.region=HitTestResult::SettingsIntegration;r.index=9;return r;}
                 }
                 if(ContainsPt(lay.integration_try,x,y)) {r.region=HitTestResult::SettingsIntegration;r.index=8;return r;}
                 if(vm.settings_integration_can_retry && ContainsPt(lay.integration_retry,x,y)) {

@@ -1128,6 +1128,10 @@
 #define IDS_INTEGRATION_FACT_WIN11                                                       2483
 #define IDS_INTEGRATION_HINT_LAUNCH                                                      2484
 #define IDS_INTEGRATION_HINT_KEEP                                                        2485
+#define IDS_INTEGRATION_HINT_KEEP_COMPAT                                                 3659
+#define IDS_INTEGRATION_HINT_LAUNCH_COMPAT                                               3660
+#define IDS_INTEGRATION_COMPAT                                                           3661
+#define IDS_INTEGRATION_COMPAT_DESC                                                      3662
 #define IDS_INTEGRATION_FAIL_TITLE                                                       2486
 #define IDS_INTEGRATION_DRIFT_TITLE                                                      2487
 #define IDS_INTEGRATION_DRIFT_DESC                                                       2488

@@ -1017,11 +1017,12 @@ int SettingsController::IntegrationState() const noexcept {
     const bool active = p.open_folders_in_pulse || p.take_over_win_e || p.take_over_this_pc ||
         p.take_over_recycle_bin || p.integration_residual;
     if (!p.integration_enabled) return active ? 2 : 0;
-    if (p.open_folders_in_pulse != p.integration_folders ||
+    // In 兼容打开方式 the folder verb is meant to stay unregistered.
+    if (p.open_folders_in_pulse != (p.integration_folders && !p.integration_folders_compat) ||
         p.take_over_win_e != p.integration_win_e || p.take_over_this_pc != p.integration_this_pc ||
         p.take_over_recycle_bin != p.integration_recycle_bin)
         return 2;
-    return active || p.take_over_explorer_windows ? 1 : 0;
+    return active || p.take_over_explorer_windows || p.integration_folders_compat ? 1 : 0;
 }
 
 std::wstring SettingsController::IntegrationSummary() const {
@@ -1048,7 +1049,7 @@ bool SettingsController::IntegrationJustEnabled() const noexcept {
 }
 
 void SettingsController::IntegrationAction(int index) {
-    if (!prefs_ || index < 0 || index > 8) return;
+    if (!prefs_ || index < 0 || index > 9) return;
     if (index == 8) {
         // Try it: open This PC the way the desktop icon does, through the shell.
         ShellExecuteW(nullptr, nullptr, L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", nullptr, nullptr, SW_SHOWNORMAL);
@@ -1070,6 +1071,7 @@ void SettingsController::IntegrationAction(int index) {
     else if (index == 4) p.take_over_explorer_windows = !p.take_over_explorer_windows;
     else if (index == 6) p.integration_enabled = false;
     else if (index == 7) p.integration_recycle_bin = !p.integration_recycle_bin;
+    else if (index == 9) p.integration_folders_compat = !p.integration_folders_compat;
     // Editing a disabled integration only changes the saved selection.
     if (p.integration_enabled || index == 0 || index == 5 || index == 6) {
         integration_error_.clear();
@@ -1084,7 +1086,7 @@ void SettingsController::IntegrationAction(int index) {
         if ((index == 5 || index == 6) && HasLegacyShellIntegrationResidue() &&
             !RepairLegacyShellIntegrationResidue())
             failed(l10n::Get(l10n::StringId::LegacyExplorerAssociations).c_str(), L"legacy", false, false);
-        const bool folders_on = p.integration_enabled && p.integration_folders;
+        const bool folders_on = p.integration_enabled && p.integration_folders && !p.integration_folders_compat;
         if (!p.ApplyFolderOpen(folders_on))
             failed(l10n::Get(l10n::StringId::FoldersAndDrives).c_str(), L"folders", folders_on, true);
         const bool win_e_on = p.integration_enabled && p.integration_win_e;

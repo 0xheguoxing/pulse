@@ -62,6 +62,7 @@ void AppPrefs::ResetToDefaults() {
     integration_residual = false;
     integration_incomplete = false;
     take_over_explorer_windows = false;
+    integration_folders_compat = false;
     shell_tag_menu = false;
     verify_copies = false;
     show_status_performance = false;
@@ -162,6 +163,8 @@ std::wstring AppPrefs::ToJson() const {
     out += integration_recycle_bin ? L"true" : L"false";
     out += L",\n  \"take_over_explorer_windows\":";
     out += take_over_explorer_windows ? L"true" : L"false";
+    out += L",\n  \"integration_folders_compat\":";
+    out += integration_folders_compat ? L"true" : L"false";
     out += L",\n  \"shell_tag_menu\":";
     out += shell_tag_menu ? L"true" : L"false";
     out += L",\n  \"verify_copies\":";
@@ -377,6 +380,7 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     if (notify_icon_mode < 0 || notify_icon_mode > 2) notify_icon_mode = 0;
     open_folders_in_pulse = pulse::json::ExtractBool(json, L"open_folders_in_pulse", false);
     take_over_explorer_windows = pulse::json::ExtractBool(json, L"take_over_explorer_windows", false);
+    integration_folders_compat = pulse::json::ExtractBool(json, L"integration_folders_compat", false);
     integration_configured = json.find(L"\"integration_enabled\"") != std::wstring::npos;
     integration_enabled = pulse::json::ExtractBool(json, L"integration_enabled", false);
     integration_folders = pulse::json::ExtractBool(json, L"integration_folders", true);

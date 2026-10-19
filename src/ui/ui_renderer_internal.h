@@ -2424,6 +2424,7 @@ struct SettingsLayout {
     D2D1_RECT_F this_pc_row{};
     D2D1_RECT_F recycle_bin_row{};
     D2D1_RECT_F explorer_windows_row{};
+    D2D1_RECT_F folders_compat_row{};
     D2D1_RECT_F default_manager_row{};
     D2D1_RECT_F shell_tags_row{};
     D2D1_RECT_F change_tracking_row{}, change_days_row{}, change_days[3]{};

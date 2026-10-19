@@ -437,7 +437,10 @@ int RunSettingsIntegrationUiTest(AppState& s, const wchar_t* output) {
         vm.settings_integration_state = state == 0 ? 0 : state == 4 ? 2 : state == 5 ? 1 : state;
         vm.settings_integration_enabled = state != 0;
         vm.settings_integration_folders = vm.settings_integration_win_e = vm.settings_integration_this_pc = true;
-        vm.settings_integration_folders_active = vm.settings_integration_win_e_active = state != 0;
+        // State 1 runs 兼容打开方式: no folder verb, yet the tile still reads as covered.
+        vm.settings_integration_folders_compat = state == 1;
+        vm.settings_integration_folders_active = state != 0 && state != 1;
+        vm.settings_integration_win_e_active = state != 0;
         vm.settings_integration_this_pc_active = state != 0 && state != 2;
         vm.settings_integration_recycle_bin = state == 1;
         vm.settings_integration_experimental = state == 1 || state == 3;
@@ -509,23 +512,21 @@ int RunSettingsIntegrationUiTest(AppState& s, const wchar_t* output) {
                         for (int j = 0; j < i; ++j) tiles &= !overlap(t, l.integration_cover[j]);
                         tiles_readonly &= hit(t).region != H::SettingsIntegration;
                     }
-                    // The two extras: their descriptions fit, the tag stays on the title line,
-                    // and they are only editable while the switch is on.
-                    const D2D1_RECT_F rows[] = {l.recycle_bin_row, l.explorer_windows_row};
-                    const I descriptions[] = {I::SettingsRecycleBinDesc, I::IntegrationExperimentalDesc};
-                    const int row_actions[] = {7, 4};
-                    for (int i = 0; i < 2; ++i) {
+                    // The extras (recycle bin, takeover, 兼容打开方式): their descriptions fit,
+                    // they never overlap, and they are only editable while the switch is on.
+                    const D2D1_RECT_F rows[] = {l.recycle_bin_row, l.explorer_windows_row, l.folders_compat_row};
+                    const I descriptions[] = {I::SettingsRecycleBinDesc, I::IntegrationExperimentalDesc,
+                                              I::IntegrationCompatDesc};
+                    const int row_actions[] = {7, 4, 9};
+                    for (int i = 0; i < 3; ++i) {
                         const float text_left = rows[i].left+112*scale;
                         const float height = painter.MeasureWrappedCaptionHeight(l10n::Get(descriptions[i]),
                             rows[i].right-16*scale-text_left);
                         extras &= nonempty(rows[i]) && inside(rows[i], card) &&
                             rows[i].top+31*scale+height <= rows[i].bottom-12*scale+0.5f;
                         action_hits &= is_action(rows[i], row_actions[i]) == vm.settings_integration_enabled;
+                        for (int j = 0; j < i; ++j) extras &= !overlap(rows[i], rows[j]);
                     }
-                    const auto tag = l.integration_chip[0];
-                    extras &= nonempty(tag) && inside(tag, l.explorer_windows_row) &&
-                        tag.bottom <= l.explorer_windows_row.top+31*scale+0.5f &&
-                        tag.left >= l.explorer_windows_row.left+112*scale;
                     const bool problem = state >= 2 && state <= 4;
                     action_hits &= is_action(l.integration_retry, 5) == problem &&
                         is_action(l.integration_restore, 6) == problem;
@@ -544,7 +545,7 @@ int RunSettingsIntegrationUiTest(AppState& s, const wchar_t* output) {
                     // Footer: the try-it button only while on and healthy; the sentence fits.
                     const auto h = l.integration_hint, t = l.integration_hint_text;
                     const bool try_it = vm.settings_integration_enabled && !problem;
-                    foot &= nonempty(h) && h.top >= l.explorer_windows_row.bottom-0.5f && h.bottom <= card.bottom+0.5f &&
+                    foot &= nonempty(h) && h.top >= l.folders_compat_row.bottom-0.5f && h.bottom <= card.bottom+0.5f &&
                         inside(t, h) && nonempty(l.integration_try) == try_it && is_action(l.integration_try, 8) == try_it &&
                         t.top+painter.MeasureWrappedCaptionHeight(ui::IntegrationHint(vm), t.right-t.left) <= h.bottom+0.5f;
                     if (try_it) foot &= inside(l.integration_try, h) && !overlap(l.integration_try, t);
@@ -558,7 +559,7 @@ int RunSettingsIntegrationUiTest(AppState& s, const wchar_t* output) {
     check(pill_fits, "status pill fits beside or below the master text without touching the switch");
     check(tiles, "coverage tiles fit inside the card without overlapping at every width and DPI");
     check(tiles_readonly, "coverage tiles are read-only");
-    check(extras, "both extras and the experimental tag fit narrow and high-DPI layouts");
+    check(extras, "the three extras fit narrow and high-DPI layouts without overlapping");
     check(action_hits, "switch always hits; extras only while on; retry and restore only for problems");
     check(bar_fits, "problem bar and its actions fit; healthy states have no bar or action targets");
     check(foot, "footer sentence fits; try-it appears only while on and healthy");
