@@ -2428,6 +2428,8 @@ BEGIN
     IDS_PHOTO_WALL_SUGGEST_SWITCH "切换"
     IDS_PHOTO_WALL_SUGGEST_NEVER "不再提示"
     IDS_WALL_ROW_HEIGHT "行高"
+    IDS_RENAME_WILL_BECOME_NUMBERED "已有同名项目，按 Enter 会改成「%s」"
+    IDS_RENAME_TRAILING_TRIMMED "名称末尾的空格和句点会被去掉"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4855,6 +4857,8 @@ BEGIN
     IDS_PHOTO_WALL_SUGGEST_SWITCH "Switch"
     IDS_PHOTO_WALL_SUGGEST_NEVER "Don't show again"
     IDS_WALL_ROW_HEIGHT "row height"
+    IDS_RENAME_WILL_BECOME_NUMBERED "An item with this name already exists. Enter renames it to ""%s""."
+    IDS_RENAME_TRAILING_TRIMMED "Spaces and periods at the end of the name will be removed."
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

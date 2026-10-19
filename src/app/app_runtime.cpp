@@ -295,8 +295,10 @@ void BindCurrentLayout(AppState& s) {
 // Inline rename (P1f): the note under the field and the width it has grown to.
 static void FillRenameHint(const AppState& s, ui::PaneViewModel& pane) {
     pane.rename_field_w = s.renameIndex >= 0 ? s.renameFieldW : 0.0f;
-    if (s.renameIndex < 0 || s.renameHint.empty()) return;
     const ULONGLONG now = GetTickCount64();
+    if (s.renameIndex >= 0 && s.renameShakeAt != 0 && now - s.renameShakeAt < 360)
+        pane.rename_shake_ms = static_cast<int>(now - s.renameShakeAt);
+    if (s.renameIndex < 0 || s.renameHint.empty()) return;
     if (s.renameHintUntil != 0 && now >= s.renameHintUntil) return;
     pane.rename_hint = s.renameHint;
     pane.rename_hint_ms = s.renameHintUntil == 0 ? -1 : static_cast<int>(s.renameHintUntil - now);

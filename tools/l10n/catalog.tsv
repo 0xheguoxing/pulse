@@ -2449,3 +2449,5 @@ PhotoWallSuggest	IDS_PHOTO_WALL_SUGGEST	3651	这个文件夹以照片为主，�
 PhotoWallSuggestSwitch	IDS_PHOTO_WALL_SUGGEST_SWITCH	3652	切换	Switch	切換
 PhotoWallSuggestNever	IDS_PHOTO_WALL_SUGGEST_NEVER	3653	不再提示	Don't show again	不再提示
 WallRowHeight	IDS_WALL_ROW_HEIGHT	3654	行高	row height	列高
+RenameWillBecomeNumbered	IDS_RENAME_WILL_BECOME_NUMBERED	3655	已有同名项目，按 Enter 会改成「%s」	An item with this name already exists. Enter renames it to "%s".	已有同名項目，按 Enter 會改成「%s」
+RenameTrailingTrimmed	IDS_RENAME_TRAILING_TRIMMED	3656	名称末尾的空格和句点会被去掉	Spaces and periods at the end of the name will be removed.	名稱結尾的空格和句點會被移除

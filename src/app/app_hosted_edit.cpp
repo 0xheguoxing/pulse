@@ -191,6 +191,47 @@ void EnsureEditVisuals(AppState& s) {
 
 void HideRenameOverlay(AppState& s, bool commit);
 
+// Inline rename status (P1f): the note UpdateRenameStatus last put up, and
+// the text it looked at (it reacts to changes only).
+static std::wstring g_renameStatusHint;
+static std::wstring g_renameTyped;
+
+// Windows drops a name's trailing spaces and periods; the rename takes the
+// name as it will really be.
+static std::wstring TrimNameEnd(std::wstring name) {
+    while (!name.empty() && (name.back() == L' ' || name.back() == L'.')) name.pop_back();
+    return name;
+}
+
+// Another item in the renamed item's folder already has `name` (on disk,
+// not the possibly stale listing). The item itself never counts: changing
+// only the case of its name is a rename too.
+static bool NameTakenBesides(const app::Tab& tab, int index, const std::wstring& name) {
+    if (_wcsicmp(name.c_str(), tab.EntryAt(static_cast<size_t>(index)).name.c_str()) == 0) return false;
+    const std::wstring full = EntryFullPath(tab, index);
+    const size_t slash = full.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return false;
+    return GetFileAttributesW((full.substr(0, slash + 1) + name).c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+// The name a rename to `typed` takes: trimmed like Windows trims it, and
+// numbered "name (2).ext" when another item has it - the rename itself
+// never replaces anything (MoveFileEx without REPLACE_EXISTING).
+static std::wstring RenameTarget(const app::Tab& tab, int index, const std::wstring& typed) {
+    std::wstring name = TrimNameEnd(typed);
+    if (name.empty() || !NameTakenBesides(tab, index, name)) return name;
+    const bool dir = tab.EntryAt(static_cast<size_t>(index)).is_dir;
+    const size_t dot = dir ? std::wstring::npos : name.find_last_of(L'.');
+    const bool has_ext = dot != std::wstring::npos && dot > 0;
+    const std::wstring stem = has_ext ? name.substr(0, dot) : name;
+    const std::wstring ext = has_ext ? name.substr(dot) : std::wstring();
+    for (int n = 2; n < 1000; ++n) {
+        std::wstring candidate = stem + L" (" + std::to_wstring(n) + L")" + ext;
+        if (!NameTakenBesides(tab, index, candidate)) return candidate;
+    }
+    return name;
+}
+
 // Edit font at the icon grids' file-name size, one per scale (a handful of
 // DPI changes at most over a session, so earlier ones are kept, not freed
 // under an EDIT that may still use them).
@@ -615,6 +656,9 @@ void ShowRenameOverlay(AppState& s) {
     s.renameFieldW = 0.0f;
     s.renameHint.clear();
     s.renameConfirmExt = false;
+    s.renameShakeAt = 0;
+    g_renameStatusHint.clear();
+    g_renameTyped.clear();
     EnsureRowVisible(s, *tab, s.renameIndex);
 
     // Protect the new model index before tearing down a focused old editor.
@@ -700,23 +744,25 @@ void HideRenameOverlay(AppState& s, bool commit) {
         GetWindowTextW(s.hwndRenameEdit, buf, ARRAYSIZE(buf));
         if (tab && buf[0] && index < (int)(tab->snapshot ? tab->EntryCount() : 0)) {
             std::wstring full = EntryFullPath(*tab, index);
-            if (!full.empty() && buf != tab->EntryAt(index).name) {
+            // As the note under the field said: trimmed, numbered if taken.
+            const std::wstring target = RenameTarget(*tab, index, buf);
+            if (!full.empty() && !target.empty() && target != tab->EntryAt(index).name) {
                 ops::OpRequest req;
                 req.type = ops::OpType::Rename;
                 req.sources.push_back(full);
-                req.new_name = buf;
+                req.new_name = target;
                 // Naming the folder 合并到文件夹 just made is part of that
                 // action: one undo takes the name, the move and the folder.
                 if (s.groupRenameUndo && _wcsicmp(full.c_str(), s.groupRenameFolder.c_str()) == 0) {
                     req.undo_group = s.groupRenameUndo;
                     req.undo_label = l10n::Get(l10n::StringId::NewFolderWithSelection).c_str();
                 }
-                tab->pending_selected_name = buf;
-                tab->pending_selected_names = { buf };
+                tab->pending_selected_name = target;
+                tab->pending_selected_names = { target };
                 tab->pending_selection_revision = tab->selection_revision;
                 // The renamed row keeps its place even if the refresh beats
                 // the watcher event (#13).
-                tab->held_renames.push_back({tab->EntryAt(index).name, buf});
+                tab->held_renames.push_back({tab->EntryAt(index).name, target});
                 s.ops.Submit(std::move(req));  // its 别名 follows on completion (app_main)
             }
         }
@@ -1022,6 +1068,67 @@ static void ShowRenameHint(AppState& s, std::wstring text, bool until_answered) 
     if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
+// The note for what the typed name will become: numbered when another item
+// has it, trimmed when it ends in spaces or periods. Runs on text changes
+// only, so a refused character's note stays up; never over the extension
+// question.
+static void UpdateRenameStatus(AppState& s) {
+    if (!s.hwndRenameEdit || s.renameIndex < 0 || s.renameAlias) return;
+    const int length = GetWindowTextLengthW(s.hwndRenameEdit);
+    std::wstring typed(static_cast<size_t>(length) + 1, L'\0');
+    typed.resize(static_cast<size_t>(GetWindowTextW(s.hwndRenameEdit, typed.data(), length + 1)));
+    if (typed == g_renameTyped) return;
+    g_renameTyped = typed;
+    if (s.renameConfirmExt) return;
+    const app::Tab* tab = ActiveTab(s);
+    if (!tab || !tab->snapshot || s.renameIndex >= static_cast<int>(tab->EntryCount())) return;
+    std::wstring note;
+    const std::wstring trimmed = TrimNameEnd(typed);
+    const std::wstring target = RenameTarget(*tab, s.renameIndex, typed);
+    if (!target.empty() && target != trimmed) {
+        wchar_t line[700]{};
+        swprintf_s(line, l10n::Get(l10n::StringId::RenameWillBecomeNumbered).c_str(), target.c_str());
+        note = line;
+    } else if (!trimmed.empty() && trimmed != typed) {
+        note = l10n::Get(l10n::StringId::RenameTrailingTrimmed);
+    }
+    if (!note.empty()) {
+        if (s.renameHint != note) ShowRenameHint(s, note, true);
+    } else if (!g_renameStatusHint.empty() && s.renameHint == g_renameStatusHint) {
+        s.renameHint.clear();
+        if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+    }
+    g_renameStatusHint = note;
+}
+
+// A refused character: it is not typed; the field shakes and says why.
+static void RefuseRenameChar(AppState& s) {
+    s.renameShakeAt = GetTickCount64();
+    ShowRenameHint(s, l10n::Get(l10n::StringId::ANameCanTContainAnyOfTheseCharacters), false);
+}
+
+// F2 again cycles the selection: name -> whole name -> extension, like
+// File Explorer. Folders and 别名 have no extension to pick.
+static void CycleRenameSelection(AppState& s, HWND hwnd) {
+    const int length = GetWindowTextLengthW(hwnd);
+    std::wstring text(static_cast<size_t>(length) + 1, L'\0');
+    text.resize(static_cast<size_t>(GetWindowTextW(hwnd, text.data(), length + 1)));
+    const int len = static_cast<int>(text.size());
+    const app::Tab* tab = ActiveTab(s);
+    const bool file = tab && tab->snapshot && !s.renameAlias && s.renameIndex >= 0 &&
+        s.renameIndex < static_cast<int>(tab->EntryCount()) && !tab->EntryAt(static_cast<size_t>(s.renameIndex)).is_dir;
+    const size_t dot = text.find_last_of(L'.');
+    const int stem = file && dot != std::wstring::npos && dot > 0 ? static_cast<int>(dot) : len;
+    DWORD a = 0, b = 0;
+    SendMessageW(hwnd, EM_GETSEL, reinterpret_cast<WPARAM>(&a), reinterpret_cast<LPARAM>(&b));
+    int from = 0, to = stem;
+    if (stem >= len) to = len;                                       // nothing to cycle
+    else if (a == 0 && static_cast<int>(b) == stem) to = len;        // name -> whole
+    else if (a == 0 && static_cast<int>(b) == len) { from = stem + 1; to = len; }  // whole -> extension
+    SendMessageW(hwnd, EM_SETSEL, static_cast<WPARAM>(from), static_cast<LPARAM>(to));
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
 // Typing again answers the extension question with "keep editing".
 static void DropRenameQuestion(AppState& s) {
     if (!s.renameConfirmExt) return;
@@ -1045,9 +1152,10 @@ static bool RenameChangesExtension(AppState& s) {
     if (entry.is_dir) return false;
     wchar_t buf[512]{};
     GetWindowTextW(s.hwndRenameEdit, buf, ARRAYSIZE(buf));
-    if (!buf[0] || entry.name == buf) return false;
+    const std::wstring typed = TrimNameEnd(buf);  // "a.txt." keeps .txt
+    if (typed.empty() || entry.name == typed) return false;
     const std::wstring_view before = NameExtension(entry.name);
-    const std::wstring_view after = NameExtension(buf);
+    const std::wstring_view after = NameExtension(typed);
     return before.size() != after.size() ||
            (!before.empty() && CompareStringOrdinal(before.data(), static_cast<int>(before.size()), after.data(),
                                                     static_cast<int>(after.size()), TRUE) != CSTR_EQUAL);
@@ -1120,7 +1228,7 @@ static bool PasteRenameText(AppState& s, HWND hwnd) {
     if (clean.size() == text.size()) return false;  // nothing to drop: the EDIT pastes
     DropRenameQuestion(s);
     SendMessageW(hwnd, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(clean.c_str()));
-    if (refused) ShowRenameHint(s, l10n::Get(l10n::StringId::ANameCanTContainAnyOfTheseCharacters), false);
+    if (refused) RefuseRenameChar(s);
     return true;
 }
 
@@ -1132,9 +1240,13 @@ static bool RenameKeyFilter(AppState& s, HWND hwnd, UINT msg, WPARAM wParam) {
         return true;
     }
     if (msg == WM_CHAR && wParam == L'\t') return true;
+    if (msg == WM_KEYDOWN && wParam == VK_F2 && plain && (GetKeyState(VK_SHIFT) & 0x8000) == 0) {
+        CycleRenameSelection(s, hwnd);
+        return true;
+    }
     if (msg == WM_CHAR && IsIllegalNameChar(static_cast<wchar_t>(wParam))) {
         MessageBeep(MB_OK);
-        ShowRenameHint(s, l10n::Get(l10n::StringId::ANameCanTContainAnyOfTheseCharacters), false);
+        RefuseRenameChar(s);
         return true;
     }
     if ((msg == WM_CHAR && wParam >= 0x20) || (msg == WM_CHAR && wParam == VK_BACK) ||
@@ -1177,6 +1289,7 @@ static LRESULT RenameEditProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     LRESULT handled = 0;
     if (s && RenameKeyFilter(*s, hwnd, msg, wParam)) {
         RegrowRenameField(*s);
+        UpdateRenameStatus(*s);
         return 0;
     }
     if (s && HandleHostedEditMessage(*s, hwnd, msg, wParam, lParam, handled)) return handled;
@@ -1203,7 +1316,10 @@ static LRESULT RenameEditProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         msg == WM_CLEAR || msg == WM_UNDO || msg == EM_UNDO || msg == EM_REPLACESEL ||
         msg == WM_SETTEXT || msg == WM_IME_COMPOSITION || msg == WM_IME_ENDCOMPOSITION;
     const LRESULT result = DefPresentedHostedEditProc(s, hwnd, msg, wParam, lParam);
-    if (s && edits_text) RegrowRenameField(*s);
+    if (s && edits_text) {
+        RegrowRenameField(*s);
+        UpdateRenameStatus(*s);
+    }
     return result;
 }
 

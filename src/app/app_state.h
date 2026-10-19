@@ -629,6 +629,7 @@ struct AppState : AppCoreOwner {
     // waiting for Enter / Esc, and the widest the icon-grid field has been.
     std::wstring renameHint;
     ULONGLONG renameHintUntil = 0;  // GetTickCount64; 0 = until answered
+    ULONGLONG renameShakeAt = 0;    // GetTickCount64 of the last refused character (the field shakes)
     bool renameConfirmExt = false;
     float renameFieldW = 0.0f;
     // 解散文件夹: the recycle that ends each folder's chain, after which the

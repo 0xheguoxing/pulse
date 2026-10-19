@@ -3402,6 +3402,12 @@ D2D1_RECT_F MainRenderer::RenameFieldRect(const PaneViewModel& vm, const D2D1_RE
         }
         field_h = std::max(24.0f * scale_, std::ceil(wrappedH) + 6.0f * scale_);
     }
+    // A refused character shakes the field (the EDIT rides on this rect):
+    // three damped swings over 360 ms.
+    if (vm.rename_index == source_index && vm.rename_shake_ms >= 0 && motion::SystemAnimationsEnabled()) {
+        const float t = std::clamp(static_cast<float>(vm.rename_shake_ms) / 360.0f, 0.0f, 1.0f);
+        fieldLeft += std::round(5.0f * scale_ * std::sin(t * 6.2831853f * 3.0f) * (1.0f - t));
+    }
     return D2D1::RectF(fieldLeft, textY, fieldLeft + field_w, textY + field_h);
 }
 
@@ -4756,6 +4762,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
         fluent::ControlState fieldState{};
         fieldState.focused = true;
         const D2D1_RECT_F field = RenameFieldRect(vm, viewport, vm.rename_index);
+        if (vm.rename_shake_ms >= 0) RequestMotionFrame();
         float pop = 1.0f, age = 1e6f;
         if (pane_index >= 0 && pane_index < static_cast<int>(rename_pop_.size())) {
             RenamePop& rp = rename_pop_[static_cast<size_t>(pane_index)];

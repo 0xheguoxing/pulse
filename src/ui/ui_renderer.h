@@ -285,6 +285,7 @@ struct PaneViewModel {
     int rename_index = -1;        // name column is in edit mode; do not draw the label
     std::wstring rename_text;     // text being typed; icon grids grow the field to wrap it
     std::wstring rename_hint;     // note under the rename field (refused character, extension question)
+    int rename_shake_ms = -1;     // since a refused character, while the field shakes; -1 = still
     int rename_hint_ms = 0;       // time the note has left (fades over the last 250 ms); -1 = stays
     float rename_field_w = 0.0f;  // icon grids: widest the field has been, it does not narrow while typing
     bool focus_first_hint = false; // first view row has keyboard focus but no selection

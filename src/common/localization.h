@@ -2438,6 +2438,8 @@ enum class StringId : UINT {
     PhotoWallSuggestSwitch = IDS_PHOTO_WALL_SUGGEST_SWITCH,
     PhotoWallSuggestNever = IDS_PHOTO_WALL_SUGGEST_NEVER,
     WallRowHeight = IDS_WALL_ROW_HEIGHT,
+    RenameWillBecomeNumbered = IDS_RENAME_WILL_BECOME_NUMBERED,
+    RenameTrailingTrimmed = IDS_RENAME_TRAILING_TRIMMED,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

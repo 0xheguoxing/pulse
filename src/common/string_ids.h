@@ -2442,5 +2442,7 @@
 #define IDS_PHOTO_WALL_SUGGEST_SWITCH                                                    3652
 #define IDS_PHOTO_WALL_SUGGEST_NEVER                                                     3653
 #define IDS_WALL_ROW_HEIGHT                                                              3654
+#define IDS_RENAME_WILL_BECOME_NUMBERED                                                  3655
+#define IDS_RENAME_TRAILING_TRIMMED                                                      3656
 
 #endif  // PULSE_STRING_IDS_H
