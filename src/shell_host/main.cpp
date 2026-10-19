@@ -76,14 +76,36 @@ struct HostState {
 // Crash-only diagnostics (plan §11: crashes are a normal design case).
 // Log under %LOCALAPPDATA%\Pulse: an installed copy lives in Program Files,
 // where the exe directory is not writable for a non-admin user.
+// The path is resolved once; past 1 MiB the log moves to .log.1 (one
+// generation kept, like pulse-index-timing.jsonl).
+constexpr LONGLONG kHostLogMaxBytes = 1024 * 1024;
+const std::wstring& HostLogPath() {
+    static const std::wstring path = [] {
+        wchar_t dir[MAX_PATH]{};
+        if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, dir))) return std::wstring();
+        std::wstring p = std::wstring(dir) + L"\\Pulse";
+        CreateDirectoryW(p.c_str(), nullptr);
+        return p + L"\\pulse_shell_host.log";
+    }();
+    return path;
+}
+
 void HostLog(const wchar_t* msg) {
-    wchar_t dir[MAX_PATH]{};
-    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, dir))) return;
-    std::wstring path = std::wstring(dir) + L"\\Pulse";
-    CreateDirectoryW(path.c_str(), nullptr);
-    path += L"\\pulse_shell_host.log";
-    if (HANDLE f = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
-            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr); f != INVALID_HANDLE_VALUE) {
+    const std::wstring& path = HostLogPath();
+    if (path.empty()) return;
+    const auto open_log = [&path] {
+        return CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    };
+    HANDLE f = open_log();
+    LARGE_INTEGER size{};
+    if (f != INVALID_HANDLE_VALUE && GetFileSizeEx(f, &size) && size.QuadPart > kHostLogMaxBytes) {
+        CloseHandle(f);
+        // Another host holding the file makes the move fail: keep appending.
+        MoveFileExW(path.c_str(), (path + L".1").c_str(), MOVEFILE_REPLACE_EXISTING);
+        f = open_log();
+    }
+    if (f != INVALID_HANDLE_VALUE) {
         char buf[512];
         int n = snprintf(buf, sizeof(buf), "[%lu] %ls\n", GetCurrentProcessId(), msg);
         if (n > 0) { DWORD w = 0; WriteFile(f, buf, (DWORD)n, &w, nullptr); }

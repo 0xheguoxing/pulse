@@ -17,7 +17,9 @@ class UiTimerPacer {
 public:
     static constexpr UINT kActiveMs = 16;
     static constexpr UINT kIdleMs = 100;
-    static constexpr UINT kHiddenMs = 200;
+    // Hidden to the tray or minimized: background results only need to be
+    // picked up eventually, and showing the window is activity (fast again).
+    static constexpr UINT kHiddenMs = 1000;
     // How long the fast period lasts after the last activity.
     static constexpr ULONGLONG kLingerMs = 1000;
 
