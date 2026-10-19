@@ -2993,6 +2993,22 @@ std::vector<WallRowsCache>& WallRowsCaches() {
 }
 constexpr ULONGLONG kWallGlideMs = 280;
 
+// Rows a cache entry let go of. Layouts hold plain WallRows pointers for the
+// length of one paint or hit test, and the aspects can move on between two
+// PaneWallRows calls of the same frame (the probe runs in the background), so
+// replaced rows are freed a while later instead of under a live layout.
+constexpr ULONGLONG kWallRetireMs = 2000;
+void RetireWallRows(std::shared_ptr<const WallRows> rows) {
+    static std::vector<std::pair<ULONGLONG, std::shared_ptr<const WallRows>>> retired;
+    const ULONGLONG now = GetTickCount64();
+    std::erase_if(retired, [now](const auto& r) { return now - r.first >= kWallRetireMs; });
+    if (rows) retired.emplace_back(now, std::move(rows));
+}
+void RetireWallEntry(WallRowsCache& c) {
+    RetireWallRows(std::move(c.rows));
+    RetireWallRows(std::move(c.prev));
+}
+
 const WallRows* PaneWallRows(const PaneViewModel& vm, float width, float scale) {
     if (!vm.wall || !IsZoomIconMode(vm.view_mode) || !vm.snapshot || vm.content_results) return nullptr;
     const size_t count = vm.EntryCount();
@@ -3016,6 +3032,7 @@ const WallRows* PaneWallRows(const PaneViewModel& vm, float width, float scale) 
             if (c.aspects == aspects) return c.rows.get();
             // Same listing, new aspects: the rows from the change on reflow
             // (rows before it keep their items, so nothing above moves).
+            RetireWallRows(std::move(c.prev));
             c.prev = c.rows;
             c.changed_at = GetTickCount64();
             c.rows = std::make_shared<const WallRows>(BuildWallRows(aspects, width, row_px, scale));
@@ -3023,8 +3040,14 @@ const WallRows* PaneWallRows(const PaneViewModel& vm, float width, float scale) 
             return c.rows.get();
         }
     }
+    for (WallRowsCache& c : cache)
+        if (c.snapshot.expired()) RetireWallEntry(c);
     std::erase_if(cache, [](const WallRowsCache& c) { return c.snapshot.expired(); });
-    if (cache.size() >= 16) cache.erase(cache.begin());
+    if (cache.size() >= 16) {
+        RetireWallEntry(cache.front());
+        cache.erase(cache.begin());
+    }
+    RetireWallRows(nullptr);  // frees what has waited long enough
     WallRowsCache c{vm.snapshot, vm.filter_map, ordered, count, width, row_px, {},
                     std::make_shared<const WallRows>(BuildWallRows(aspects, width, row_px, scale)), nullptr, 0};
     c.aspects = std::move(aspects);
@@ -3686,7 +3709,10 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
     if (entryCount == 0) return;
     const D2D1_RECT_F viewport = D2D1::RectF(x, y, x + w, y + h);
     g_wall_notify = notify_hwnd_;  // the aspect probe repaints this window
-    ViewLayout layout(vm.view_mode, viewport, entryCount, vm.scroll_x, vm.scroll_y, scale_, ListRowHeightDip(vm, viewport), vm.Groups());
+    // One set of params per frame: a second ListRowHeightDip could pick up
+    // newer wall aspects than the layout below was built from.
+    const ViewLayoutParams list_params = ListRowHeightDip(vm, viewport);
+    ViewLayout layout(vm.view_mode, viewport, entryCount, vm.scroll_x, vm.scroll_y, scale_, list_params, vm.Groups());
     // Photo wall: rows rebuilt for newly known aspects glide from the old ones.
     const WallRows* wall_rows = layout.Wall();
     const WallRows* wall_prev = nullptr;
@@ -3726,9 +3752,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
     if (morph) {
         morph->BeginFrame(folder_context, static_cast<int>(vm.view_mode), motion_frame_,
                           motion_now_, !vm.loading);
-        const ViewLayoutParams params = ListRowHeightDip(vm, viewport);
-        morph->NoteLayout(viewport, vm.scroll_x, vm.scroll_y, params.row_height_dip,
-                          entryCount, params.icon_dip);
+        morph->NoteLayout(viewport, vm.scroll_x, vm.scroll_y, list_params.row_height_dip,
+                          entryCount, list_params.icon_dip);
     }
     const bool morphing = morph && morph->Running();
 
