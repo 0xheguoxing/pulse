@@ -1865,7 +1865,10 @@ void SeedShellVerbCache(AppState& s) {
         // Posted after the seed, so the merge always lands first.
         size_t n = 0;
         for (const auto& ext : extensions) {
-            if (n++ > 400 || g_shell_seed_generation.load() != generation) break;
+            // The window goes away on exit: stop rather than keep resolving
+            // icons while the process tears down.
+            if (n++ > 400 || g_shell_seed_generation.load() != generation || !IsWindow(hwnd))
+                break;
             auto verbs = app::EnumerateStaticVerbs(ext);
             app::ResolveStaticVerbIcons(verbs);
             auto* result = new ShellVerbsResult{ ext, std::move(verbs), cache_generation };

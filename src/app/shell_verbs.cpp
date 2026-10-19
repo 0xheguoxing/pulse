@@ -383,8 +383,10 @@ common::MenuIconRef LoadMenuIcon(const std::wstring& reference, uint32_t edge) {
 // Process-wide cache: a few dozen distinct references across all types, and
 // misses (no such file, no icon) are remembered too.
 common::MenuIconRef CachedMenuIcon(const std::wstring& reference) {
-    static std::mutex mutex;
-    static std::unordered_map<std::wstring, common::MenuIconRef> cache;
+    // Never destroyed: SeedShellVerbCache's detached thread can still be here
+    // while exit() runs static destructors, and a destroyed map crashes it.
+    static std::mutex& mutex = *new std::mutex;
+    static auto& cache = *new std::unordered_map<std::wstring, common::MenuIconRef>;
     static uint32_t edge = 0;
     const std::wstring key = ToLower(reference);
     {
@@ -695,8 +697,9 @@ bool SeedMachineStaticVerbCache() {
 }
 
 common::MenuIconRef FileTypeMenuIcon(const std::wstring& ext) {
-    static std::mutex mutex;
-    static std::unordered_map<std::wstring, common::MenuIconRef> cache;
+    // Never destroyed, for the same reason as CachedMenuIcon's cache.
+    static std::mutex& mutex = *new std::mutex;
+    static auto& cache = *new std::unordered_map<std::wstring, common::MenuIconRef>;
     const std::wstring key = ToLower(ext);
     {
         std::lock_guard<std::mutex> lock(mutex);
