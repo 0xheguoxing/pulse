@@ -1,14 +1,11 @@
 #include "text_decode.h"
+#include "file_placeholder.h"
 
 #include <algorithm>
 #include <cwctype>
 
 namespace pulse::text {
 namespace {
-
-constexpr DWORD kRecallOnOpen = 0x00040000;
-constexpr DWORD kRecallOnData = 0x00400000;
-constexpr DWORD kPinned = 0x00080000;
 
 bool IsOneOf(std::wstring_view extension,
              std::initializer_list<std::wstring_view> values) noexcept {
@@ -18,7 +15,7 @@ bool IsOneOf(std::wstring_view extension,
 } // namespace
 
 bool IsOfflinePlaceholder(DWORD attributes) noexcept {
-    return (attributes & (kRecallOnOpen | kRecallOnData)) && !(attributes & kPinned);
+    return files::IsUnpinnedPlaceholder(attributes);   // search reads pinned files
 }
 
 bool IsKnownTextExtension(std::wstring_view extension) noexcept {
