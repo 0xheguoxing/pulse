@@ -22,6 +22,8 @@ constexpr ULONGLONG kDecodeBudgetMs = 4000;   // composite streaming deadline
 constexpr uint64_t kGridCompositePixels = 32ull * 1000 * 1000;
 // Documents up to this size always use the composite (a few milliseconds).
 constexpr uint64_t kGridSmallPixels = 1000ull * 1000;
+// Embedded ICC profiles beyond this are ignored (press CMYK runs ~0.5 MB).
+constexpr uint32_t kIccBudget = 4u * 1024u * 1024u;
 constexpr size_t kReadChunk = 1u << 20;
 
 // Sequential big-endian reader over a file with a 1 MB window.
@@ -109,6 +111,7 @@ struct Header {
     bool has_palette = false;
     std::vector<unsigned char> thumbnail;   // JFIF from resource 1036
     uint32_t thumbnail_edge = 0;            // its long edge in pixels
+    std::vector<unsigned char> icc;         // ICC profile, resource 1039 (gray/CMYK only)
     bool real_merged = true;                // resource 1057 hasRealMergedData
     bool merged_alpha = false;              // merged image carries transparency
     uint64_t image_data = 0;                // offset of the image data section
@@ -194,7 +197,7 @@ bool ParseHeader(Reader& r, Header& h, std::wstring* error) {
         r.Skip(color_len);
     }
 
-    // Image resources: embedded thumbnail and the merged-data flag.
+    // Image resources: embedded thumbnail, ICC profile and the merged-data flag.
     const uint32_t res_len = r.U32();
     const uint64_t res_end = r.tell() + res_len;
     while (r.ok() && r.tell() + 12 <= res_end) {
@@ -216,6 +219,9 @@ bool ParseHeader(Reader& r, Header& h, std::wstring* error) {
                 if (!r.Read(h.thumbnail.data(), h.thumbnail.size())) h.thumbnail.clear();
                 else h.thumbnail_edge = (std::max)(thumb_w, thumb_h);
             }
+        } else if (id == 1039 && size >= 128 && size <= kIccBudget && (h.mode == Gray || h.mode == Cmyk)) {
+            h.icc.resize(size);
+            if (!r.Read(h.icc.data(), size)) h.icc.clear();
         } else if (id == 1057 && size >= 5) {
             r.Skip(4);
             h.real_merged = r.U8() != 0;
@@ -308,6 +314,53 @@ void LabToRgb(uint8_t l8, uint8_t a8, uint8_t b8, uint8_t& r, uint8_t& g, uint8_
         return static_cast<uint8_t>(std::lround(v * 255.0));
     };
     r = enc(lr); g = enc(lg); b = enc(lb);
+}
+
+// Gray and CMYK are converted to sRGB through the document's ICC profile:
+// Photoshop grays are dot-gain encoded and press CMYK is not RGB minus ink,
+// so plain values showed grays far too dark and CMYK far too saturated.
+// CMYK without a profile goes through the system's SWOP profile (RSWOP.icm),
+// as Photoshop falls back to a SWOP working space. device holds one value
+// (gray) or four (CMYK ink, 255 = full) per pixel; on success the colour
+// bytes of the BGRA pixels are replaced. Otherwise they keep the plain values.
+bool ManageColour(const Header& h, std::vector<unsigned char>& device, UINT width, UINT height,
+                  std::vector<unsigned char>& pixels) {
+    const bool cmyk = h.mode == Cmyk;
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IWICColorContext> source, target;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&factory))) ||
+        FAILED(factory->CreateColorContext(&source)) || FAILED(factory->CreateColorContext(&target)) ||
+        FAILED(target->InitializeFromExifColorSpace(1)))   // sRGB
+        return false;
+    HRESULT hr = E_FAIL;
+    if (!h.icc.empty())
+        hr = source->InitializeFromMemory(const_cast<BYTE*>(h.icc.data()), static_cast<UINT>(h.icc.size()));
+    if (FAILED(hr) && cmyk) {
+        wchar_t dir[MAX_PATH]{};
+        const UINT n = GetSystemDirectoryW(dir, MAX_PATH);
+        if (n && n < MAX_PATH)
+            hr = source->InitializeFromFilename((std::wstring(dir, n) + L"\\spool\\drivers\\color\\RSWOP.icm").c_str());
+    }
+    if (FAILED(hr)) return false;
+    const UINT channels = cmyk ? 4u : 1u;
+    ComPtr<IWICBitmap> bitmap;
+    ComPtr<IWICColorTransform> transform;
+    std::vector<unsigned char> bgrx(pixels.size());
+    if (FAILED(factory->CreateBitmapFromMemory(width, height,
+                                               cmyk ? GUID_WICPixelFormat32bppCMYK : GUID_WICPixelFormat8bppGray,
+                                               width * channels, static_cast<UINT>(device.size()), device.data(),
+                                               &bitmap)) ||
+        FAILED(factory->CreateColorTransformer(&transform)) ||
+        FAILED(transform->Initialize(bitmap.Get(), source.Get(), target.Get(), GUID_WICPixelFormat32bppBGR)) ||
+        FAILED(transform->CopyPixels(nullptr, width * 4, static_cast<UINT>(bgrx.size()), bgrx.data())))
+        return false;
+    for (size_t i = 0; i + 3 < pixels.size(); i += 4) {
+        pixels[i] = bgrx[i];
+        pixels[i + 1] = bgrx[i + 1];
+        pixels[i + 2] = bgrx[i + 2];
+    }
+    return true;
 }
 
 bool DecodeComposite(Reader& r, const Header& h, UINT max_edge, std::vector<unsigned char>& pixels,
@@ -430,12 +483,16 @@ bool DecodeComposite(Reader& r, const Header& h, UINT max_edge, std::vector<unsi
 
     stride = out_w * 4;
     pixels.assign(static_cast<size_t>(stride) * out_h, 0);
+    // Gray and CMYK cells are also kept as device values for ManageColour.
+    const bool managed = h.mode == Gray || h.mode == Cmyk;
+    const int device_channels = h.mode == Cmyk ? 4 : 1;
+    std::vector<unsigned char> device(managed ? static_cast<size_t>(out_w) * out_h * device_channels : 0);
     for (UINT oy = 0; oy < out_h; ++oy) {
         for (UINT ox = 0; ox < out_w; ++ox) {
             const size_t i = static_cast<size_t>(oy) * out_w + ox;
             const uint64_t n = (std::max)(uint64_t{1}, uint64_t{rows_in[oy]} * cols_in[ox]);
             auto v = [&](int c) { return static_cast<uint8_t>((acc[c][i] + n / 2) / n); };
-            uint8_t R = 0, G = 0, B = 0, A = 255;
+            uint8_t R = 0, G = 0, B = 0;
             switch (h.mode) {
             case Rgb: R = v(0); G = v(1); B = v(2); break;
             case Cmyk: {
@@ -452,23 +509,25 @@ bool DecodeComposite(Reader& r, const Header& h, UINT max_edge, std::vector<unsi
             case Lab: LabToRgb(v(0), v(1), v(2), R, G, B); break;
             default: R = G = B = v(0); break;
             }
-            unsigned char* px = pixels.data() + static_cast<size_t>(oy) * stride + ox * 4;
-            if (!alpha) {
-                px[0] = B; px[1] = G; px[2] = R; px[3] = A;
-                continue;
-            }
-            // Photoshop stores the merged image of a transparent document
-            // composited over white: stored = colour * a + 255 * (1 - a), so
-            // the premultiplied colour is stored - (255 - a). The relation is
-            // linear and holds for box-averaged cells too. Scaling the matted
-            // colour by alpha kept the white in soft edges and clear areas.
-            A = v(color);
-            const auto unmatte = [A](uint8_t stored) {
-                const int premultiplied = int{stored} + int{A} - 255;
-                return static_cast<unsigned char>((std::clamp)(premultiplied, 0, int{A}));
-            };
-            px[0] = unmatte(B); px[1] = unmatte(G); px[2] = unmatte(R); px[3] = A;
+            if (managed)
+                for (int c = 0; c < device_channels; ++c)
+                    device[i * device_channels + c] = h.mode == Cmyk ? static_cast<unsigned char>(255 - v(c)) : v(c);
+            unsigned char* px = pixels.data() + i * 4;
+            px[0] = B; px[1] = G; px[2] = R; px[3] = alpha ? v(color) : uint8_t{255};
         }
+    }
+    if (managed) ManageColour(h, device, out_w, out_h, pixels);
+    if (!alpha) return true;
+    // Photoshop stores the merged image of a transparent document composited
+    // over white: stored = colour * a + 255 * (1 - a), so the premultiplied
+    // colour is stored - (255 - a). The relation is linear and holds for
+    // box-averaged cells too. Scaling the matted colour by alpha kept the
+    // white in soft edges and clear areas. Managed colour maps paper white to
+    // sRGB white, so this follows ManageColour.
+    for (size_t i = 0; i + 3 < pixels.size(); i += 4) {
+        const int a = pixels[i + 3];
+        for (size_t c = 0; c < 3; ++c)
+            pixels[i + c] = static_cast<unsigned char>((std::clamp)(int{pixels[i + c]} + a - 255, 0, a));
     }
     return true;
 }

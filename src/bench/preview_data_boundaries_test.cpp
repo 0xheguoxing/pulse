@@ -141,6 +141,67 @@ Bytes OpaquePsd(uint32_t width, uint32_t height, const Bytes& jpeg, uint32_t thu
         for (uint32_t y = 0; y < height; ++y) out.insert(out.end(), row.begin(), row.end());
     return out;
 }
+// A minimal ICC v2 gray display profile whose tone curve is a plain gamma
+// (u8Fixed8): with gamma 1.0, device 128 is half linear light, sRGB 188.
+Bytes GrayIcc(uint16_t gamma) {
+    const auto pad = [](Bytes& b) { while (b.size() % 4) b.push_back(0); };
+    const char text[] = "Pulse test gray";
+    Bytes desc{'d','e','s','c',0,0,0,0};
+    Be32(desc, sizeof(text));
+    desc.insert(desc.end(), text, text + sizeof(text));
+    Be32(desc, 0); Be32(desc, 0);          // no Unicode description
+    desc.resize(desc.size() + 70, 0);       // no ScriptCode description
+    pad(desc);
+    Bytes white{'X','Y','Z',' ',0,0,0,0};
+    Be32(white, 0xF6D6); Be32(white, 0x10000); Be32(white, 0xD32D);   // D50
+    Bytes curve{'c','u','r','v',0,0,0,0};
+    Be32(curve, 1); Be16(curve, gamma); Be16(curve, 0);
+    Bytes copyright{'t','e','x','t',0,0,0,0,'P','D',0,0};
+    const std::pair<const char*, const Bytes*> tags[] = {{"desc", &desc}, {"wtpt", &white}, {"kTRC", &curve},
+                                                         {"cprt", &copyright}};
+    Bytes table, body;
+    Be32(table, 4);
+    const uint32_t first = 128 + 4 + 12 * 4;
+    for (const auto& [sig, data] : tags) {
+        table.insert(table.end(), sig, sig + 4);
+        Be32(table, first + static_cast<uint32_t>(body.size()));
+        Be32(table, static_cast<uint32_t>(data->size()));
+        body.insert(body.end(), data->begin(), data->end());
+    }
+    Bytes out;
+    Be32(out, first + static_cast<uint32_t>(body.size()));
+    Be32(out, 0); Be32(out, 0x02100000);
+    for (const char* s : {"mntr", "GRAY", "XYZ "}) out.insert(out.end(), s, s + 4);
+    out.resize(36, 0);
+    for (char c : {'a', 'c', 's', 'p'}) out.push_back(static_cast<unsigned char>(c));
+    out.resize(68, 0);
+    Be32(out, 0xF6D6); Be32(out, 0x10000); Be32(out, 0xD32D);
+    out.resize(128, 0);
+    out.insert(out.end(), table.begin(), table.end());
+    out.insert(out.end(), body.begin(), body.end());
+    return out;
+}
+// An uncompressed one-row 8-bit document; planar holds the channel planes.
+Bytes ModePsd(uint16_t mode, uint16_t channels, uint32_t width, const Bytes& planar, const Bytes& icc) {
+    Bytes out{'8','B','P','S'};
+    Be16(out, 1); out.resize(out.size() + 6);
+    Be16(out, channels); Be32(out, 1); Be32(out, width); Be16(out, 8); Be16(out, mode);
+    Be32(out, 0);   // colour mode data
+    Bytes resources;
+    if (!icc.empty()) {
+        resources = {'8','B','I','M'};
+        Be16(resources, 1039); Be16(resources, 0);
+        Be32(resources, static_cast<uint32_t>(icc.size()));
+        resources.insert(resources.end(), icc.begin(), icc.end());
+        if (resources.size() & 1) resources.push_back(0);
+    }
+    Be32(out, static_cast<uint32_t>(resources.size()));
+    out.insert(out.end(), resources.begin(), resources.end());
+    Be32(out, 0);   // no layer and mask information
+    Be16(out, 0);   // raw image data
+    out.insert(out.end(), planar.begin(), planar.end());
+    return out;
+}
 bool ValidUtf16(const std::wstring& text) {
     for (size_t i = 0; i < text.size(); ++i) {
         if (text[i] >= 0xD800 && text[i] <= 0xDBFF) {
@@ -268,6 +329,37 @@ int wmain() {
         const Px kept = premultiplied;
         NormalizeShellAlpha(premultiplied);
         check(premultiplied == kept, "premultiplied Shell bitmap is kept");
+    }
+    {
+        // Gray and CMYK composites go through their ICC profile (resource 1039).
+        const auto rasterize = [&](const Bytes& data, Bytes& pixels) {
+            const auto file = root / L"colour.psd";
+            UINT w = 0, h = 0, stride = 0, sw = 0, sh = 0;
+            std::wstring error;
+            return Write(file, data) &&
+                RasterizePsdFile(file.wstring(), 256, false, pixels, w, h, stride, sw, sh, &error) &&
+                pixels.size() >= 4;
+        };
+        Bytes pixels;
+        const Bytes gray{0, 128};
+        check(rasterize(ModePsd(1, 1, 2, gray, GrayIcc(0x0100)), pixels) && pixels.size() == 8 && pixels[0] == 0 &&
+            pixels[4] >= 185 && pixels[4] <= 191 && pixels[5] == pixels[4] && pixels[7] == 255,
+            "gray PSD is converted through its embedded ICC profile");
+        check(rasterize(ModePsd(1, 1, 2, gray, {}), pixels) && pixels.size() == 8 && pixels[4] == 128,
+            "gray PSD without a profile keeps its values");
+        Bytes broken = GrayIcc(0x0100);
+        broken.resize(140);   // header promises tags beyond the end
+        check(rasterize(ModePsd(1, 1, 2, gray, broken), pixels) && pixels.size() == 8 && pixels[4] == 128,
+            "gray PSD with a broken profile falls back to its values");
+        // Full cyan ink, stored inverted: subtracting ink showed (0,255,255).
+        wchar_t sys[MAX_PATH]{};
+        const UINT n = GetSystemDirectoryW(sys, MAX_PATH);
+        const bool swop = n && n < MAX_PATH &&
+            GetFileAttributesW((std::wstring(sys, n) + L"\\spool\\drivers\\color\\RSWOP.icm").c_str()) !=
+                INVALID_FILE_ATTRIBUTES;
+        check(rasterize(ModePsd(4, 4, 1, Bytes{0, 255, 255, 255}, {}), pixels) &&
+            (swop ? pixels[0] > 150 && pixels[1] < 220 && pixels[2] < 80 : pixels[1] == 255),
+            "CMYK PSD without a profile is converted as SWOP, not by subtracting ink");
     }
     uint32_t bytes = 0;
     const std::string cells =
