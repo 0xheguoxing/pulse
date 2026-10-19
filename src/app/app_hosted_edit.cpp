@@ -139,7 +139,17 @@ void PlaceHostedEdit(HWND hwnd, HWND owner, const D2D1_RECT_F& cell, float scale
     // the LumaText redraw guard, briefly hiding the redirected edit surface.
     if (SendMessageW(hwnd,EM_GETMARGINS,0,0)!=margins)
         SendMessageW(hwnd,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,margins);
-    SetWindowPos(hwnd, HWND_TOP, pt.x, y, w, lineH, SWP_NOACTIVATE);
+    // Layout also runs after every parent frame; an unconditional move still
+    // sends WM_WINDOWPOSCHANGING and reports a layout change to the IME.
+    RECT current{};
+    GetWindowRect(hwnd, &current);
+    MapWindowPoints(nullptr, GetParent(hwnd), reinterpret_cast<POINT*>(&current), 2);
+    const bool placed = current.left == pt.x && current.top == y &&
+        current.right - current.left == w && current.bottom - current.top == lineH;
+    const bool topmost = GetWindow(hwnd, GW_HWNDPREV) == nullptr;
+    if (placed && topmost) return;
+    SetWindowPos(hwnd, topmost ? nullptr : HWND_TOP, pt.x, y, w, lineH,
+                 SWP_NOACTIVATE | (topmost ? SWP_NOZORDER : 0u));
 }
 
 HWND CreateHostedEdit(AppState& s, SUBCLASSPROC proc) {
