@@ -242,6 +242,15 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                                           compositor_);
             return r;
         }
+        // The scrollbar drawn over the content's right edge: press and drag
+        // it like the file list's (sub_index 3). A little wider than drawn.
+        if (lay.content_h > (lay.content.bottom - lay.content.top) + 1.0f &&
+            x >= lay.content.right - 14.0f * scale_ && x < lay.content.right &&
+            y >= lay.content.top && y < lay.content.bottom) {
+            r.region = HitTestResult::Scrollbar;
+            r.sub_index = 3;
+            return r;
+        }
         for (int i = 0; i < kSettingsNavCount; ++i) {
             if (ContainsPt(lay.nav_row[i], x, y)) {
                 r.region = HitTestResult::SettingsNav;

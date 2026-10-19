@@ -20,6 +20,19 @@
 
 namespace pulse::ui {
 
+namespace {
+// The bar over the content's right edge; drawing and dragging share it.
+fluent::ScrollbarSpec SettingsScrollbar(const SettingsLayout& lay, float scale) {
+    fluent::ScrollbarSpec bar;
+    bar.viewport = D2D1::RectF(lay.content.right - 10.0f * scale, lay.content.top,
+                               lay.content.right - 2.0f * scale, lay.content.bottom);
+    bar.viewport_extent = lay.content.bottom - lay.content.top;
+    bar.content_extent = lay.content_h;
+    bar.expand_progress = 1.0f;
+    return bar;
+}
+} // namespace
+
 void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme) {
     ID2D1DeviceContext* dc = compositor_->Dc();
     const SettingsLayout lay = MakeSettingsLayout(vm, rect, scale_, title_bar_height_,
@@ -1063,13 +1076,8 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
 
     const float view = lay.content.bottom - lay.content.top;
     if (lay.content_h > view + 1.0f) {
-        fluent::ScrollbarSpec bar;
-        bar.viewport = D2D1::RectF(lay.content.right - 10.0f * scale_, lay.content.top,
-                                   lay.content.right - 2.0f * scale_, lay.content.bottom);
+        fluent::ScrollbarSpec bar = SettingsScrollbar(lay, scale_);
         bar.offset = vm.settings_scroll;
-        bar.viewport_extent = view;
-        bar.content_extent = lay.content_h;
-        bar.expand_progress = 1.0f;
         painter_.DrawScrollbar(bar);
     }
 }
@@ -1154,6 +1162,21 @@ float MainRenderer::SettingsMaxScroll(const WindowViewModel& vm, float window_w,
                                                   status_height_, &painter_);
     const float view = (std::max)(0.0f, lay.content.bottom - lay.content.top);
     return (std::max)(0.0f, lay.content_h - view);
+}
+
+bool MainRenderer::SettingsScrollbarGeometry(const WindowViewModel& vm, float window_w, float window_h,
+                                             D2D1_RECT_F& track, D2D1_RECT_F& thumb, float& max_scroll) const {
+    const D2D1_RECT_F rect = D2D1::RectF(0, 0, window_w, window_h);
+    const SettingsLayout lay = MakeSettingsLayout(vm, rect, scale_, title_bar_height_,
+                                                  status_height_, &painter_);
+    const float view = (std::max)(0.0f, lay.content.bottom - lay.content.top);
+    max_scroll = (std::max)(0.0f, lay.content_h - view);
+    if (lay.content_h <= view + 1.0f) return false;   // DrawSettings draws no bar
+    fluent::ScrollbarSpec bar = SettingsScrollbar(lay, scale_);
+    bar.offset = vm.settings_scroll;
+    track = bar.viewport;
+    thumb = fluent::ScrollbarThumbRect(bar, scale_);
+    return max_scroll > 0.0f && thumb.bottom > thumb.top;
 }
 
 } // namespace pulse::ui

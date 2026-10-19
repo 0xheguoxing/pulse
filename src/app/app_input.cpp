@@ -410,7 +410,7 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
                hit.region == ui::HitTestResult::PaneHeader ||
                hit.region == ui::HitTestResult::ColumnHeader ||
                hit.region == ui::HitTestResult::FilterBox ||
-               hit.region == ui::HitTestResult::Scrollbar) {
+               (hit.region == ui::HitTestResult::Scrollbar && hit.sub_index != 3)) {
         s.dropDestDir = tab->current_path;
         s.dropPaneIndex = hit.pane_index;
         destName = BaseName(tab->current_path);
@@ -1643,16 +1643,27 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 
         if (s->scrollbarDragging) {
             app::Tab* tab = ActiveTab(*s);
-            if (!tab || (GetKeyState(VK_LBUTTON) & 0x8000) == 0) {
+            if ((!tab && !s->scrollbarSettings) || (GetKeyState(VK_LBUTTON) & 0x8000) == 0) {
                 s->scrollbarDragging = false;
                 s->scrollbarHorizontal = false;
                 s->scrollbarSidebar = false;
+                s->scrollbarSettings = false;
                 if (GetCapture() == hwnd) ReleaseCapture();
             } else {
                 ui::WindowViewModel dragVm = BuildVm(*s);
                 D2D1_RECT_F track{}, thumb{};
                 float maxScroll = 0.0f;
-                if (s->scrollbarSidebar && s->renderer.SidebarScrollbarGeometry(
+                if (s->scrollbarSettings) {
+                    if (s->renderer.SettingsScrollbarGeometry(
+                            dragVm, static_cast<float>(s->compositor.Width()),
+                            static_cast<float>(s->compositor.Height()), track, thumb, maxScroll)) {
+                        const float travel = std::max(1.0f,
+                            (track.bottom - track.top) - (thumb.bottom - thumb.top));
+                        s->settings.SetScroll(s->scrollbarDragStartScroll +
+                            (my - s->scrollbarDragStartY) * maxScroll / travel, maxScroll);
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                    }
+                } else if (s->scrollbarSidebar && s->renderer.SidebarScrollbarGeometry(
                         dragVm, static_cast<float>(s->compositor.Width()),
                         static_cast<float>(s->compositor.Height()), track, thumb, maxScroll)) {
                     const float travel = std::max(1.0f,
@@ -2773,15 +2784,18 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             app::Tab* tab = ActiveTab(*s);
             s->scrollbarHorizontal = hit.sub_index == 1;
             s->scrollbarSidebar = hit.sub_index == 2;
+            s->scrollbarSettings = hit.sub_index == 3;
             const auto& scrollPane = hit.pane_index >= 0 && hit.pane_index < static_cast<int>(vm.pane_slots.size())
                 ? vm.pane_slots[static_cast<size_t>(hit.pane_index)].pane : vm.pane;
-            const bool hasGeometry = s->scrollbarSidebar
+            const bool hasGeometry = s->scrollbarSettings
+                ? s->renderer.SettingsScrollbarGeometry(vm, rect.right, rect.bottom, track, thumb, maxScroll)
+                : s->scrollbarSidebar
                 ? s->renderer.SidebarScrollbarGeometry(vm, rect.right, rect.bottom,
                                                        track, thumb, maxScroll)
                 : s->scrollbarHorizontal
                 ? HorizontalScrollbarGeometry(*s, scrollPane, track, thumb, maxScroll)
                 : ScrollbarGeometry(*s, scrollPane, track, thumb, maxScroll);
-            if (tab && hasGeometry) {
+            if ((tab || s->scrollbarSettings) && hasGeometry) {
                 const bool outside = s->scrollbarHorizontal
                     ? (mx < thumb.left || mx >= thumb.right)
                     : (my < thumb.top || my >= thumb.bottom);
@@ -2795,7 +2809,8 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
                         ? thumb.right-thumb.left : thumb.bottom-thumb.top;
                     const float value = std::clamp((pointer-thumbExtent*0.5f)*maxScroll/travel,
                                                    0.0f,maxScroll);
-                    if (s->scrollbarSidebar) s->sidebarScroll=value;
+                    if (s->scrollbarSettings) s->settings.SetScroll(value, maxScroll);
+                    else if (s->scrollbarSidebar) s->sidebarScroll=value;
                     else if (s->scrollbarHorizontal) tab->scroll_x=value;
                     else { tab->scroll_y=value; s->scrollTargetY=value; MaybePrefetchSearchPage(*s); }
                 }
@@ -2803,10 +2818,13 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
                 s->scrollbarDragging = true;
                 s->scrollbarDragStartX = mx;
                 s->scrollbarDragStartY = my;
-                s->scrollbarDragStartScroll = s->scrollbarSidebar ? s->sidebarScroll
+                s->scrollbarDragStartScroll = s->scrollbarSettings ? s->settings.scroll()
+                    : s->scrollbarSidebar ? s->sidebarScroll
                     : s->scrollbarHorizontal ? tab->scroll_x : tab->scroll_y;
                 SetCapture(hwnd);
                 InvalidateRect(hwnd, nullptr, FALSE);
+            } else {
+                s->scrollbarSettings = false;
             }
         } else if (hit.region == ui::HitTestResult::Row && hit.index >= 0) {
             // Details tree: chevrons (Alt: with subfolders), "more" buttons, placeholders.
@@ -4124,6 +4142,7 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             s->scrollbarDragging = false;
             s->scrollbarHorizontal = false;
             s->scrollbarSidebar = false;
+            s->scrollbarSettings = false;
             s->splitterDragging = false;
             s->detailsPanelResizing = false;
             s->columnResizing = false;
@@ -4210,6 +4229,7 @@ LRESULT HandleCaptureChanged(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LP
             s->scrollbarDragging = false;
             s->scrollbarHorizontal = false;
             s->scrollbarSidebar = false;
+            s->scrollbarSettings = false;
             s->splitterDragging = false;
             s->splitterDragIndex = -1;
             s->tabDragPending = false;

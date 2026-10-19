@@ -1974,6 +1974,9 @@ public:
     // Settings > 快捷键: how far to scroll so the open popover is in view (0: it is).
     float SettingsShortcutsRevealDelta(const WindowViewModel& vm, float window_w, float window_h) const;
     float SettingsMaxScroll(const WindowViewModel& vm, float window_w, float window_h) const;
+    // The settings page's scrollbar as drawn (false: the page fits, no bar).
+    bool SettingsScrollbarGeometry(const WindowViewModel& vm, float window_w, float window_h,
+                                   D2D1_RECT_F& track, D2D1_RECT_F& thumb, float& max_scroll) const;
     D2D1_RECT_F SettingsDropdownBounds(const WindowViewModel& vm, int index, float window_w, float window_h) const;
     float SettingsDestinationOffset(const WindowViewModel& vm, int setting_id, float window_w, float window_h) const;
     float SidebarMaxScroll(const WindowViewModel& vm, float window_w, float window_h) const;
