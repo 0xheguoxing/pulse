@@ -1,4 +1,5 @@
 #include "../preview_host/psd_raster.h"
+#include "../preview_host/shell_bitmap.h"
 #include "../preview_host/table_document.h"
 #include "../preview_host/office_model.h"
 #include "../preview_host/xlsx_parts.h"
@@ -248,6 +249,25 @@ int wmain() {
             "large opaque PSD keeps the embedded JPEG when it covers the grid edge");
         check(grid(large, 256, w, h, pixels) && red(pixels) && w == 256 && h == 213,
             "large opaque PSD decodes the composite when its JPEG is smaller than the grid edge");
+    }
+    {
+        // Shell thumbnails (BGRA): the alpha plane is read by content.
+        using Px = std::vector<uint8_t>;
+        Px cwebp{0, 0, 0, 0, 200, 100, 50, 255, 221, 60, 29, 128};
+        NormalizeShellAlpha(cwebp);
+        check(cwebp == Px{0, 0, 0, 0, 200, 100, 50, 255, 111, 30, 15, 128},
+            "straight Shell alpha with black invisible pixels is premultiplied, clear stays clear");
+        Px photoshop{255, 255, 255, 0, 221, 60, 29, 128};
+        NormalizeShellAlpha(photoshop);
+        check(photoshop == Px{0, 0, 0, 0, 111, 30, 15, 128},
+            "straight Shell alpha with white invisible pixels is premultiplied, not shown white");
+        Px plain{10, 20, 30, 0, 40, 50, 60, 0};
+        NormalizeShellAlpha(plain);
+        check(plain == Px{10, 20, 30, 255, 40, 50, 60, 255}, "Shell bitmap without alpha is opaque");
+        Px premultiplied{100, 50, 25, 128, 0, 0, 0, 0, 1, 2, 3, 255};
+        const Px kept = premultiplied;
+        NormalizeShellAlpha(premultiplied);
+        check(premultiplied == kept, "premultiplied Shell bitmap is kept");
     }
     uint32_t bytes = 0;
     const std::string cells =

@@ -11,26 +11,24 @@
 
 namespace pulse::preview {
 
-// What the alpha byte of a Shell bitmap means depends on the provider, and
-// its WTS_ALPHATYPE label alone does not settle it:
-//  - WTSAT_RGB promises no transparency, so the alpha byte is ignored and the
-//    bitmap shown opaque. Explorer's photo provider labels WebP and PNG
-//    thumbnails this way yet keeps their straight alpha (white, zero-alpha
-//    pixels), which Explorer also shows over white.
-//  - Otherwise, premultiplied pixels never exceed their alpha, so a colour
-//    channel above it marks straight alpha (providers labelled ARGB, or the
-//    thumbnail cache's copy of a photo-provider result); that bitmap is
-//    premultiplied here. An all-zero alpha plane is an opaque bitmap.
+// What the alpha byte of a Shell bitmap means is read from the pixels; the
+// provider's WTS_ALPHATYPE label does not settle it. Explorer's photo
+// provider labels transparent WebP and PNG thumbnails WTSAT_RGB yet returns
+// their straight alpha, and what the invisible pixels hold is up to the
+// encoder: white for Photoshop, black for cwebp. Honouring the label showed
+// those areas white or black instead of transparent.
+//  - An all-zero alpha plane is an opaque bitmap (a plain 32bpp DIB).
+//  - Premultiplied pixels never exceed their alpha, so a colour channel above
+//    it marks straight alpha; that bitmap is premultiplied here.
+//  - Anything else is already premultiplied (or opaque) and kept.
 // Reading straight pixels as premultiplied added them onto the background:
 // washed-out or white thumbnails.
-inline void NormalizeShellAlpha(std::vector<uint8_t>& px, WTS_ALPHATYPE alpha_type) {
+inline void NormalizeShellAlpha(std::vector<uint8_t>& px) {
     bool any_alpha = false, straight = false;
-    if (alpha_type != WTSAT_RGB) {
-        for (size_t i = 0; i + 3 < px.size(); i += 4) {
-            const uint8_t a = px[i + 3];
-            if (a) any_alpha = true;
-            if (px[i] > a || px[i + 1] > a || px[i + 2] > a) straight = true;
-        }
+    for (size_t i = 0; i + 3 < px.size(); i += 4) {
+        const uint8_t a = px[i + 3];
+        if (a) any_alpha = true;
+        if (px[i] > a || px[i + 1] > a || px[i + 2] > a) straight = true;
     }
     if (!any_alpha) {
         for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
@@ -46,8 +44,9 @@ inline void NormalizeShellAlpha(std::vector<uint8_t>& px, WTS_ALPHATYPE alpha_ty
 }
 
 // Any HBITMAP - DIB section or device bitmap, any depth - copied top-down as
-// 32bpp and normalized as above. Bitmaps over 16384 px on a side are refused.
-inline bool ShellBitmapToPbgra(HBITMAP bitmap, WTS_ALPHATYPE alpha_type, std::vector<uint8_t>& out,
+// 32bpp and normalized as above (the alpha type label is accepted but not
+// trusted). Bitmaps over 16384 px on a side are refused.
+inline bool ShellBitmapToPbgra(HBITMAP bitmap, WTS_ALPHATYPE /*label*/, std::vector<uint8_t>& out,
                                UINT& width, UINT& height, UINT& stride) {
     out.clear();
     BITMAP info{};
@@ -72,7 +71,7 @@ inline bool ShellBitmapToPbgra(HBITMAP bitmap, WTS_ALPHATYPE alpha_type, std::ve
         out.clear();
         return false;
     }
-    NormalizeShellAlpha(out, alpha_type);
+    NormalizeShellAlpha(out);
     width = static_cast<UINT>(w);
     height = static_cast<UINT>(h);
     stride = width * 4;
