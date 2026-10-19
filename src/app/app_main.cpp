@@ -16,6 +16,7 @@
 #include "filter_animation.h"
 #include "sidebar_resize.h"
 #include "ui_timer_pacer.h"
+#include <dwmapi.h>
 // app_main.cpp — Pulse UI process entry point, window, input, shot mode.
 #include "../ui/ui_compositor.h"
 #include "../ui/lumatext_renderer.h"
@@ -211,6 +212,26 @@ void UpdateProcessMetrics(AppState& s) {
 // the settings page (see BuildVm); other notifications need no repaint.
 // --view wall (screenshots): large icons shown as a photo wall.
 static bool g_shot_wall = false;
+// Decorative motion (loading shimmer, folder size skeleton, the pill's ring)
+// runs at about 30 fps instead of the display rate (FramePump::ArmPaced).
+constexpr double kDecorativeFrameMs = 1000.0 / 30.0;
+// While the window is cloaked (another virtual desktop, a shell cloak) frames
+// stop; this polls for the uncloak, then repaints once to pick motion up.
+constexpr UINT_PTR kTimerCloakPoll = 0x434C;  // 'CL'
+constexpr UINT kCloakPollMs = 500;
+// Frames the pump paints (WM_FRAME_PUMP) are not user activity: counting
+// them kept kTimerUi at the display rate for as long as anything moved.
+static thread_local bool t_pump_paint = false;
+// Keeps frames coming while anything moves: the display rate, or about 30 fps
+// when only decorative motion runs. Render and the UI timer both decide here.
+static void ArmMotionFrames(AppState& s, bool app_motion) {
+    if (!app_motion && s.renderer.DecorativeMotionOnly()) s.framePump.ArmPaced(kDecorativeFrameMs);
+    else s.framePump.Arm();
+}
+static bool WindowCloaked(HWND hwnd) {
+    DWORD cloaked = 0;
+    return SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked != 0;
+}
 
 static bool IndexStatusVisible(AppState& s) {
     if (s.paletteSearching) return true;
@@ -474,10 +495,11 @@ void Render(AppState& s) {
     s.lastFrameTime = t1;
     // Motion started or still running: the next frames follow the display
     // clock instead of the 16 ms UI timer (see WM_FRAME_PUMP).
-    if (s.framePump.Running() &&
-        (s.scrollAnimating || s.marqueeAutoScroll || s.themeReveal.start || s.paneLayoutMotion.start ||
-         s.renderer.TickMotion(GetTickCount64())))
-        s.framePump.Arm();
+    if (s.framePump.Running()) {
+        const bool app_motion =
+            s.scrollAnimating || s.marqueeAutoScroll || s.themeReveal.start || s.paneLayoutMotion.start;
+        if (s.renderer.TickMotion(GetTickCount64()) || app_motion) ArmMotionFrames(s, app_motion);
+    }
     if (const UINT caret = s.renderer.CaretBlinkDueMs()) SetTimer(s.hwnd, kTimerDrawnCaret, caret, nullptr);
     else KillTimer(s.hwnd, kTimerDrawnCaret);
 }
@@ -875,7 +897,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
     if (s && msg != 0 && msg == app::UpdateShutdownMessage())
         return CloseForUpdate(*s);
-    if (s && IsUiActivityMessage(msg)) NoteUiActivity(*s, hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
+    if (s && IsUiActivityMessage(msg) && !(msg == WM_PAINT && t_pump_paint))
+        NoteUiActivity(*s, hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
     if (s && s->notification_toast.HandleMessage(hwnd, msg, wParam, lParam)) return 0;
     if (s && HoverPreviewMessage(*s, hwnd, msg, wParam, lParam)) return 0;
     if (s && WindowSwitcherMessage(*s, hwnd, msg, wParam, lParam)) return 0;  // M7d
@@ -1714,6 +1737,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_FRAME_PUMP: {
         if (!s) return 0;
         s->framePump.FrameConsumed();
+        if (IsWindowVisible(hwnd) && !IsIconic(hwnd) && WindowCloaked(hwnd)) {
+            s->framePump.Disarm();
+            SetTimer(hwnd, kTimerCloakPoll, kCloakPollMs, nullptr);
+            return 0;
+        }
         if (!IsWindowVisible(hwnd) || IsIconic(hwnd) ||
             (!s->scrollAnimating && !s->marqueeAutoScroll && !s->themeReveal.start && !s->paneLayoutMotion.start &&
              !s->renderer.TickMotion(GetTickCount64()))) {
@@ -1728,11 +1756,22 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
+        t_pump_paint = true;
         RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+        t_pump_paint = false;
         return 0;
     }
 
     case WM_TIMER: {
+        if (s && wParam == kTimerCloakPoll) {
+            if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) {
+                KillTimer(hwnd, kTimerCloakPoll);  // WM_PAINT re-arms once shown again
+            } else if (!WindowCloaked(hwnd)) {
+                KillTimer(hwnd, kTimerCloakPoll);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
         if (s && wParam == kTimerMarqueeScroll) {
             TickMarqueeAutoScroll(*s);
             return 0;
@@ -1778,10 +1817,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             }
             TickSessionAutosave(*s, hwnd, now);
             if (s->renderer.TickDetailsPreview(now)) dirty = true;
-            if (s->themeReveal.start || s->paneLayoutMotion.start || s->renderer.TickMotion(now)) {
+            const bool app_motion = s->themeReveal.start || s->paneLayoutMotion.start;
+            if (s->renderer.TickMotion(now) || app_motion) {
                 // Paced by the frame pump when it runs; the timer only
                 // re-arms it so the two never both render the same motion.
-                if (s->framePump.Running()) s->framePump.Arm();
+                if (s->framePump.Running()) ArmMotionFrames(*s, app_motion);
                 else dirty = true;
             }
             if (pulse::TickSidebarPeek(*s, now)) dirty = true;

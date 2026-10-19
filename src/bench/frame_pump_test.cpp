@@ -302,6 +302,23 @@ int wmain() {
     Collect(pump, hwnd, 60, true);  // one in flight may still land
     Check(Collect(pump, hwnd, 200, true).empty(), L"disarmed pump goes quiet");
 
+    // Decorative motion: ArmPaced keeps ~30 fps on clock ticks; Arm lifts it.
+    pump.ArmPaced(1000.0 / 30.0);
+    const std::vector<double> paced = Collect(pump, hwnd, 1000, true);
+    std::vector<double> paced_gaps;
+    for (size_t i = 1; i < paced.size(); ++i) paced_gaps.push_back(paced[i] - paced[i - 1]);
+    std::sort(paced_gaps.begin(), paced_gaps.end());
+    const double paced_median = paced_gaps.empty() ? 0 : paced_gaps[paced_gaps.size() / 2];
+    const double paced_min = paced_gaps.empty() ? 0 : paced_gaps.front();
+    std::wprintf(L"[INFO] paced: %zu frames/s, median gap %.2f ms, min %.2f ms\n", paced.size(), paced_median, paced_min);
+    Check(paced.size() >= 20 && paced.size() <= 34, L"paced pump delivers about 30 frames per second");
+    Check(paced_min >= 1000.0 / 30.0 - 8.0, L"paced frames never come faster than the interval");
+    pump.Arm();
+    const std::vector<double> lifted = Collect(pump, hwnd, 500, true);
+    Check(lifted.size() >= 25, L"Arm after ArmPaced returns to the display rate");
+    pump.Disarm();
+    Collect(pump, hwnd, 60, true);
+
     pump.Arm();
     Check(!Collect(pump, hwnd, 100, true).empty(), L"re-armed pump resumes");
     const double stop_start = NowMsExact();

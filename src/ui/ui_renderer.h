@@ -1684,13 +1684,8 @@ public:
         for (const auto& m : list_shift_) active = active || m.Active(motion_now);
         for (const auto& m : view_morph_) active = active || m.Active(motion_now);
         for (const auto& m : link_pill_motion_) active = active || m.Active(motion_now);
-        // Loading placeholders shimmer (and must appear on time) while any
-        // pane is still enumerating.
-        active = active || list_loading_active_;
-        // Folder size skeleton shimmer and the scanning label's breathing.
-        active = active || folder_size_anim_active_;
-        // Operation pill: indeterminate ring spin and the completion check fade.
-        active = active || task_pill_spinning_ ||
+        // Operation pill: the completion check fade and pop.
+        active = active ||
                  (task_pill_done_at_ != 0 && now - task_pill_done_at_ < task_pill_hold_ms_ + 400) ||
                  (task_pill_pop_at_ != 0 && now - task_pill_pop_at_ < kTaskPillPopMs + 40);
         if (copy_feedback_.Tick(now)) active = true;
@@ -1703,8 +1698,17 @@ public:
         // their last frame asked for another (RequestMotionFrame).
         if (motion_frame_wanted_) active = true;
         if (folder_thumbnail_cache_.Tick(now)) active = true;
-        return active;
+        // Decoration only: loading placeholders shimmer (and must appear on
+        // time) while a pane enumerates, the folder size skeleton and the
+        // scanning label breathe, the pill's indeterminate ring spins. These
+        // are fine at 30 fps (DecorativeMotionOnly), so they do not repaint
+        // the whole window at the display rate for up to ten seconds.
+        const bool decor = list_loading_active_ || folder_size_anim_active_ || task_pill_spinning_;
+        decorative_only_ = decor && !active;
+        return active || decor;
     }
+    // The last TickMotion found nothing but decorative motion running.
+    bool DecorativeMotionOnly() const { return decorative_only_; }
     // Where the rows in PaneViewModel::landing_names were drawn in the last
     // frame (window px: icon left, row top/right/bottom).
     const std::vector<D2D1_RECT_F>& LandingRects() const { return landing_rects_; }
@@ -2310,6 +2314,7 @@ private:
     bool tab_freeze_compact_ = false;
     std::array<uint64_t, 8> folder_size_pending_since_{};
     bool folder_size_anim_active_ = false;
+    bool decorative_only_ = false;   // TickMotion: only the shimmer/skeleton/spinner run
     motion::CopyFeedback copy_feedback_;
     // Tab strip motion (pulse_motion_v2.html "Tabs"): slots spring when tabs
     // open or close, the active plate glides, new tabs pop in, closed ones
