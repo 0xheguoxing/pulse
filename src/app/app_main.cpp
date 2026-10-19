@@ -118,6 +118,7 @@
 #include <cwctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <process.h>
 #include <memory>
@@ -735,6 +736,36 @@ private:
 };
 static ULONGLONG g_exitStarted = 0;  // GetTickCount64 when the last window began to close
 
+// After the hand-off nothing left matters to the user or to a new Pulse, so a
+// service, destructor or DLL that hangs from there must not keep a process
+// without windows alive. Saved files are replaced atomically or journaled;
+// ending here loses at most an update in flight, never a file.
+constexpr DWORD kExitWatchdogMs = 2000;
+static SRWLOCK g_exitLogLock = SRWLOCK_INIT;
+static bool g_exitLogAlive = true;
+
+static void StartExitWatchdog() {
+    // Registered after the runtime log started, so this runs before its
+    // logger is destroyed; past that point the watchdog ends without a line.
+    std::atexit([] {
+        AcquireSRWLockExclusive(&g_exitLogLock);
+        g_exitLogAlive = false;
+        ReleaseSRWLockExclusive(&g_exitLogLock);
+    });
+    try {
+        std::thread([] {
+            Sleep(kExitWatchdogMs);
+            AcquireSRWLockExclusive(&g_exitLogLock);  // held until the process ends
+            if (g_exitLogAlive) {
+                diagnostics::runtime::Event("exit_watchdog", {{"ms", kExitWatchdogMs},
+                    {"since_close", GetTickCount64() - g_exitStarted}}, diagnostics::runtime::Level::Warning);
+                diagnostics::runtime::Flush(500);
+            }
+            TerminateProcess(GetCurrentProcess(), 0);
+        }).detach();
+    } catch (...) {}
+}
+
 // The last window's first steps on the way out: what the user sees and what a
 // new Pulse would depend on. The tray icon goes, saved state is written, file
 // operations stop and leave their recovery journal, and only then is the
@@ -769,6 +800,7 @@ static void HandOffAtExit(AppState& s, HWND hwnd) {
     app::SweepDropStages(app::DropStageRoot(), true);
     const uint64_t sweep_ms = timer.Lap();
     s.single_instance.Release();
+    StartExitWatchdog();
     diagnostics::runtime::Event("exit_handoff", {{"tray", tray_ms}, {"search", search_ms},
         {"save", save_ms}, {"ops", ops_ms}, {"sweep", sweep_ms}, {"release", timer.Lap()}});
 }
