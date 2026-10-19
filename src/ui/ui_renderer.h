@@ -366,7 +366,7 @@ struct PaneViewModel {
 struct BreadcrumbSegment {
     std::wstring text;
     std::wstring path;
-    bool alias = false;   // text is the folder's 别名 (drawn after the mark)
+    bool alias = false;   // text is the folder's 别名 and the mark leads it (mark on)
 };
 
 // Splits "C:\Users\TestUser" into [{C:\, C:\}, {Users, C:\Users}, ...].
@@ -1121,6 +1121,7 @@ struct WindowViewModel {
     bool settings_integration_just_enabled = false; // confirmation line after turning it on
     std::wstring settings_integration_other_exe;     // another Pulse copy owns the associations
     bool settings_shell_tags = false;
+    bool settings_alias_mark = false;   // 别名旁显示小图标 (AliasStore)
     int settings_blank_click_action = 0;   // app/blank_pane_click.h
     int settings_preview_trigger = 0;      // app::kPreviewTrigger*
     int settings_hover_delay_ms = 500;     // 300 / 500 / 800

@@ -2444,5 +2444,7 @@
 #define IDS_WALL_ROW_HEIGHT                                                              3654
 #define IDS_RENAME_WILL_BECOME_NUMBERED                                                  3655
 #define IDS_RENAME_TRAILING_TRIMMED                                                      3656
+#define IDS_ALIAS_MARK                                                                   3657
+#define IDS_ALIAS_MARK_DESC                                                              3658
 
 #endif  // PULSE_STRING_IDS_H

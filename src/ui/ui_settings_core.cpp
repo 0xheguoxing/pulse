@@ -402,6 +402,7 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
             // Hidden + system entries: File Explorer keeps these behind a second option.
             draw_card(lay.protected_files_row);toggle(lay.protected_files_row,I::SettingsShowProtected,I::SettingsShowProtectedDesc,L"\xE72E",vm.settings_show_protected_os_files,16);
             draw_card(lay.pinned_names_row);toggle(lay.pinned_names_row,I::PinnedNames,I::PinnedNamesDesc,L"\xE718",vm.show_pinned_tab_names,6);
+            draw_card(lay.alias_mark_row);toggle(lay.alias_mark_row,I::AliasMark,I::AliasMarkDesc,L"\xE8EC",vm.settings_alias_mark,39);
             draw_card(lay.vertical_tabs_row);toggle(lay.vertical_tabs_row,I::SettingsVerticalTabs,I::SettingsVerticalTabsDesc,L"\xE7C4",vm.settings_vertical_tabs,23);
             draw_card(lay.tray_hide_row);toggle(lay.tray_hide_row,I::TrayHideWhenEmpty,I::TrayHideWhenEmptyDesc,L"\xE7B8",vm.settings_tray_hide_empty,37);
             draw_card(lay.hints_row);toggle(lay.hints_row,I::SettingsHints,I::SettingsHintsDesc,L"\xE82F",vm.settings_show_hints,24);

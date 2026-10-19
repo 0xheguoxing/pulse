@@ -2451,3 +2451,5 @@ PhotoWallSuggestNever	IDS_PHOTO_WALL_SUGGEST_NEVER	3653	不再提示	Don't show 
 WallRowHeight	IDS_WALL_ROW_HEIGHT	3654	行高	row height	列高
 RenameWillBecomeNumbered	IDS_RENAME_WILL_BECOME_NUMBERED	3655	已有同名项目，按 Enter 会改成「%s」	An item with this name already exists. Enter renames it to "%s".	已有同名項目，按 Enter 會改成「%s」
 RenameTrailingTrimmed	IDS_RENAME_TRAILING_TRIMMED	3656	名称末尾的空格和句点会被去掉	Spaces and periods at the end of the name will be removed.	名稱結尾的空格和句點會被移除
+AliasMark	IDS_ALIAS_MARK	3657	别名旁显示小图标	Show a mark beside aliases	別名旁顯示小圖示
+AliasMarkDesc	IDS_ALIAS_MARK_DESC	3658	在列表、侧栏和地址栏里用小图标标出设置了别名的项目	Mark aliased items with a small icon in lists, the sidebar and the address bar	在清單、側欄和網址列中用小圖示標出設定了別名的項目

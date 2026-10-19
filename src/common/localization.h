@@ -2440,6 +2440,8 @@ enum class StringId : UINT {
     WallRowHeight = IDS_WALL_ROW_HEIGHT,
     RenameWillBecomeNumbered = IDS_RENAME_WILL_BECOME_NUMBERED,
     RenameTrailingTrimmed = IDS_RENAME_TRAILING_TRIMMED,
+    AliasMark = IDS_ALIAS_MARK,
+    AliasMarkDesc = IDS_ALIAS_MARK_DESC,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

@@ -568,7 +568,7 @@ void MainRenderer::DrawAddressSuggestions(const WindowViewModel& vm, const D2D1_
             MakeBrush(dc, WithAlpha(theme.accent, 0.16f), brAccent_);
             FillRoundedRect(dc, brAccent_.get(), row.left, row.top, row.right - row.left, row_h, 6.0f * scale_);
         }
-        if (item.real) {
+        if (item.real || !app::AliasStore::Instance().ShowMark()) {
             DrawIconText(row.left + 8.0f * scale_, y, 18.0f * scale_, row_h, kIconFolder, L"[]", theme.icon_folder, 0.95f);
         } else {
             // The alias mark leads: what matched is a name the user gave.
@@ -613,7 +613,7 @@ void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
             if (seg.path.empty() || seg.path.starts_with(L"pulse:")) continue;
             if (std::wstring alias = app::AliasStore::Instance().Shown(seg.path); !alias.empty()) {
                 seg.text = std::move(alias);
-                seg.alias = true;
+                seg.alias = app::AliasStore::Instance().ShowMark();   // the mark is optional
             }
         }
     }

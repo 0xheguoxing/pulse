@@ -233,6 +233,7 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
         y+=8*scale; l.hidden_files_row=row(64);
         y+=8*scale; l.protected_files_row=row(64);
         y+=8*scale; l.pinned_names_row=row(64);
+        y+=8*scale; l.alias_mark_row=row(64);
         y+=8*scale; l.vertical_tabs_row=row(64);
         y+=8*scale; l.tray_hide_row=row(64);
         y+=8*scale; l.hints_row=row(64);

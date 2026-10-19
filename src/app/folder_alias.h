@@ -42,8 +42,10 @@ public:
         std::wstring text;
         std::unordered_map<std::wstring, AliasEntry> loaded;
         int display = 0;
+        bool mark = false;
         if (ReadUtf8File(file, text)) {
             display = json::ExtractInt(text, L"display", 0);
+            mark = json::ExtractBool(text, L"mark", false);
             if (display < 0 || display > 2) display = 0;
             const std::wstring object = json::ExtractObject(text, L"aliases");
             json::ForEachMember(object, [&](const std::wstring& key, const std::wstring& raw) {
@@ -59,6 +61,7 @@ public:
         file_ = file;
         map_ = std::move(loaded);
         display_.store(display, std::memory_order_relaxed);
+        mark_.store(mark, std::memory_order_relaxed);
         count_.store(map_.size(), std::memory_order_relaxed);
         revision_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -75,6 +78,22 @@ public:
             std::lock_guard<std::mutex> lock(mu_);
             if (display_.load(std::memory_order_relaxed) == static_cast<int>(mode)) return;
             display_.store(static_cast<int>(mode), std::memory_order_relaxed);
+            revision_.fetch_add(1, std::memory_order_relaxed);
+            file = file_;
+            json = SerializeLocked();
+        }
+        if (!file.empty()) WriteUtf8FileAtomic(file, json);
+    }
+    // The small mark beside an alias (list rows, sidebar, breadcrumb, address
+    // suggestions). Off by default; 设置 > 通用 turns it on.
+    bool ShowMark() const { return mark_.load(std::memory_order_relaxed); }
+    void SetShowMark(bool on) {
+        std::wstring file;
+        std::wstring json;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            if (mark_.load(std::memory_order_relaxed) == on) return;
+            mark_.store(on, std::memory_order_relaxed);
             revision_.fetch_add(1, std::memory_order_relaxed);
             file = file_;
             json = SerializeLocked();
@@ -327,7 +346,8 @@ private:
 
     std::wstring SerializeLocked() const {
         std::wstring out = L"{\n  \"version\": 1,\n  \"display\": " +
-                           std::to_wstring(display_.load(std::memory_order_relaxed)) + L",\n  \"aliases\": {";
+                           std::to_wstring(display_.load(std::memory_order_relaxed)) + L",\n  \"mark\": " +
+                           (mark_.load(std::memory_order_relaxed) ? L"true" : L"false") + L",\n  \"aliases\": {";
         bool first = true;
         for (const auto& [k, e] : map_) {
             out += first ? L"\n    \"" : L",\n    \"";
@@ -346,6 +366,7 @@ private:
     std::unordered_map<std::wstring, AliasEntry> map_;
     std::atomic<size_t> count_{0};
     std::atomic<int> display_{0};
+    std::atomic<bool> mark_{false};
     std::atomic<uint64_t> revision_{1};
 };
 

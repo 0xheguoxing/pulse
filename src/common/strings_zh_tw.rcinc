@@ -2428,4 +2428,6 @@ BEGIN
     IDS_WALL_ROW_HEIGHT "列高"
     IDS_RENAME_WILL_BECOME_NUMBERED "已有同名項目，按 Enter 會改成「%s」"
     IDS_RENAME_TRAILING_TRIMMED "名稱結尾的空格和句點會被移除"
+    IDS_ALIAS_MARK "別名旁顯示小圖示"
+    IDS_ALIAS_MARK_DESC "在清單、側欄和網址列中用小圖示標出設定了別名的項目"
 END

@@ -4346,7 +4346,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 ? std::min(108.0f * scale_, painter_.MeasureTagWidth(e.badge))
                 : staged_pill ? std::min(108.0f * scale_, painter_.MeasureTagWidth(staged_text)) : 0.0f;
             // List rows: [mark] alias  real name (pulse_alias.html .amark).
-            const bool list_mark = has_alias && !iconGrid;
+            const bool show_mark = has_alias && app::AliasStore::Instance().ShowMark();
+            const bool list_mark = show_mark && !iconGrid;
             const NameTrail trail = LayoutNameTrail(
                 list_mark ? nameX + kListAliasMarkDip * scale_ : nameX, textY, textH, nameColRight, cell.top, cell.bottom, scale_,
                 has_alias ? alias_line : e.name, tagDotCount, badgeW, showStar, showNewTab, showMore,
@@ -4431,7 +4432,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         }
                     }
                 } else if (has_alias) {
-                    {
+                    if (show_mark) {
                         const float m = kAliasMarkDip * scale_;
                         const float mx = std::round(trail.name_x - kListAliasMarkDip * scale_);
                         const float my = std::round(textY + (textH - m) * 0.5f);

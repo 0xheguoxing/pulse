@@ -2430,6 +2430,8 @@ BEGIN
     IDS_WALL_ROW_HEIGHT "行高"
     IDS_RENAME_WILL_BECOME_NUMBERED "已有同名项目，按 Enter 会改成「%s」"
     IDS_RENAME_TRAILING_TRIMMED "名称末尾的空格和句点会被去掉"
+    IDS_ALIAS_MARK "别名旁显示小图标"
+    IDS_ALIAS_MARK_DESC "在列表、侧栏和地址栏里用小图标标出设置了别名的项目"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4859,6 +4861,8 @@ BEGIN
     IDS_WALL_ROW_HEIGHT "row height"
     IDS_RENAME_WILL_BECOME_NUMBERED "An item with this name already exists. Enter renames it to ""%s""."
     IDS_RENAME_TRAILING_TRIMMED "Spaces and periods at the end of the name will be removed."
+    IDS_ALIAS_MARK "Show a mark beside aliases"
+    IDS_ALIAS_MARK_DESC "Mark aliased items with a small icon in lists, the sidebar and the address bar"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

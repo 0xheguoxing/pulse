@@ -1,4 +1,5 @@
 #include "reopen_closed.h"
+#include "folder_alias.h"
 #include "app_wall_hint.h"
 #include "arrival_select.h"
 #include "pane_column_input.h"
@@ -2937,7 +2938,11 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         } else if (hit.region == ui::HitTestResult::SettingsToggle) {
             // Search master switch: asks before turning off, so it is handled here.
             if (hit.index == 38) ToggleSearchSwitch(*s);
-            else s->settings.ToggleUi(hit.index);
+            else if (hit.index == 39) {
+                // 别名旁显示小图标: kept with the aliases (aliases.json), not app prefs.
+                auto& aliases = app::AliasStore::Instance();
+                aliases.SetShowMark(!aliases.ShowMark());
+            } else s->settings.ToggleUi(hit.index);
             InvalidateRect(hwnd, nullptr, FALSE);
         } else if (hit.region == ui::HitTestResult::SettingsAccent) {
             s->bloom_accent.SetPressed(hit.index);
