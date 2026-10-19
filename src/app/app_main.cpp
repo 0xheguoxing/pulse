@@ -766,6 +766,9 @@ static LRESULT HandleSystemBroadcast(AppState& s, app::SystemBroadcast kind, WPA
 // Checked from the UI timer; skipped while a mouse drag (splitter, sidebar,
 // column, window move) is in progress so a half-finished resize is not stored.
 constexpr ULONGLONG kSessionAutosaveMs = 3000;
+// Without input, paint or a dirty tick in any window since the last pass only
+// background work can have changed the session; this slower pass catches it.
+constexpr ULONGLONG kSessionAutosaveQuietMs = 60000;
 static void TickSessionAutosave(AppState& s, HWND hwnd, ULONGLONG now) {
     if (now < s.sessionAutosaveCheck) return;
     s.sessionAutosaveCheck = now + kSessionAutosaveMs;
@@ -773,6 +776,13 @@ static void TickSessionAutosave(AppState& s, HWND hwnd, ULONGLONG now) {
     // GetKeyState is not used: its queued button state can stay "down" after a click
     // whose button-up a drag-detect loop consumed, which silently stopped autosave.
     if (GetCapture() != nullptr || s.sidebarResizing) return;
+    // Capturing and serializing the session (~300 KB with the undo history)
+    // every 3 s kept a quiet window busy for nothing.
+    if (s.core.sessionActivity < s.core.sessionAutosaveFull &&
+        now - s.core.sessionAutosaveFull < kSessionAutosaveQuietMs) {
+        return;
+    }
+    s.core.sessionAutosaveFull = now;
     SaveWindowSession(s, hwnd, false);
 }
 
@@ -799,7 +809,9 @@ static bool IsUiActivityMessage(UINT msg) {
 }
 
 static void NoteUiActivity(AppState& s, HWND hwnd, bool visible) {
-    s.uiTimerPacer.NoteActivity(GetTickCount64());
+    const ULONGLONG now = GetTickCount64();
+    s.uiTimerPacer.NoteActivity(now);
+    s.core.sessionActivity = now;
     SyncUiTimerRate(s, hwnd, visible);
 }
 
@@ -1756,6 +1768,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
+        // Motion can move state the session keeps (a scroll gliding to rest).
+        s->core.sessionActivity = GetTickCount64();
         t_pump_paint = true;
         RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
         t_pump_paint = false;
@@ -1956,6 +1970,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             UpdateOperationWindow(*s, false);
             if (dirty) {
                 s->uiTimerPacer.NoteActivity(GetTickCount64());
+                s->core.sessionActivity = GetTickCount64();  // hidden windows get no paint
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
         }

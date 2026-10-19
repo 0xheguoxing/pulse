@@ -160,6 +160,10 @@ struct AppCore {
     bool restoreUpdateSession = false;
     std::wstring prefsSavedJson;
     ULONGLONG sessionAutosaveCheck = 0;
+    // Last input, paint, window change or dirty UI tick in any window, and the
+    // last autosave pass that serialized the session (TickSessionAutosave).
+    ULONGLONG sessionActivity = 0;
+    ULONGLONG sessionAutosaveFull = 0;
     uint32_t nextIndexReq = 1;
 
     app::UncProbeScheduler probe_scheduler;
