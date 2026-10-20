@@ -1211,6 +1211,12 @@ GroupThisPcLaunchers	IDS_GROUP_THISPC_LAUNCHERS	3684	网盘程序入口	Cloud dr
 GroupThisPcLaunchersNote	IDS_GROUP_THISPC_LAUNCHERS_NOTE	3685	系统“此电脑”里的图标，和资源管理器一样显示；双击打开网盘程序。网盘里的文件在侧栏最上方	Icons from Windows' This PC, shown as in File Explorer. Double-click to open the app; your cloud files are at the top of the sidebar.	系統「本機」裡的圖示，和檔案總管一樣顯示；按兩下開啟雲端硬碟程式。雲端硬碟裡的檔案在側欄最上方
 ThisPcLauncherOpensApp	IDS_THISPC_LAUNCHER_OPENS_APP	3686	打开{name}程序	Opens the {name} app	開啟{name}程式
 MountedDriveChip	IDS_MOUNTED_DRIVE_CHIP	3687	网络盘	Network	網路磁碟
+DeviceKindPhone	IDS_DEVICE_KIND_PHONE	3689	手机	Phone	手機
+DeviceReadOnlyChip	IDS_DEVICE_READ_ONLY_CHIP	3690	只读	Read-only	唯讀
+DeviceLockedChip	IDS_DEVICE_LOCKED_CHIP	3691	未解锁	Locked	未解鎖
+DeviceUnlockHintAndroid	IDS_DEVICE_UNLOCK_HINT_ANDROID	3692	在手机上解锁，并在弹窗里选“允许”	Unlock the phone and tap Allow	在手機上解鎖，並在彈窗裡選「允許」
+DeviceUnlockHintIPhone	IDS_DEVICE_UNLOCK_HINT_IPHONE	3693	解锁 iPhone，并在弹窗里点“信任”	Unlock the iPhone and tap Trust	解鎖 iPhone，並在彈窗裡點「信任」
+DeviceStorageFreeFormat	IDS_DEVICE_STORAGE_FREE_FORMAT	3694	剩 %s	%s free	剩 %s
 MountedDriveNote	IDS_MOUNTED_DRIVE_NOTE	3688	挂载盘符 · 不建索引、不算文件夹大小	Mounted drive · not indexed, no folder sizes	掛載的磁碟機 · 不建索引、不計算資料夾大小
 SidebarCloudHiddenHint	IDS_SIDEBAR_CLOUD_HIDDEN_HINT	2516	已从侧边栏隐藏。右键任一分区标题或侧边栏底部空白处，可以重新显示。	Hidden from the sidebar. Right-click any section title or the empty space at the bottom of the sidebar to show it again.	已從側邊欄隱藏。在任一區段標題或側邊欄底部空白處按右鍵，即可重新顯示。
 SidebarShowHidden	IDS_SIDEBAR_SHOW_HIDDEN	2517	显示已隐藏的分区	Show hidden sections	顯示已隱藏的區段

@@ -4461,7 +4461,7 @@ namespace {
 bool QuickPreviewItemAt(AppState& s, const app::Tab& tab, int index, ui::QuickPreviewItem& item) {
     if (!tab.snapshot || index < 0 || index >= static_cast<int>(tab.EntryCount())) return false;
     const fs::DirEntry& entry = tab.EntryAt(static_cast<size_t>(index));
-    if (entry.pc_launcher) return false;  // 网盘程序入口: a program, no file to preview
+    if (entry.pc_launcher || entry.pc_device) return false;  // 网盘程序入口 / phones: no file to preview
     // Folders preview as a contents listing; not in This PC (whole drives),
     // the recycle bin or other virtual locations.
     if (entry.is_dir && (tab.current_path.empty() || IsRecycleTab(&tab) ||

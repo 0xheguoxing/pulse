@@ -6,6 +6,7 @@
 #include "selection_caps.h"
 #include "network_connect.h"
 #include "../fs/bitlocker_volume.h"
+#include "../fs/device_path.h"
 #include "shell_window_sync.h"
 #include "app_column_view.h"
 #include "app_details_tree.h"
@@ -2021,6 +2022,7 @@ void RestoreNavigationReturnSelection(AppState& s, app::Tab& tab,
 }
 
 void NavigateTo(AppState& s, const std::wstring& path) {
+    if (fs::IsDevicePath(path)) return;  // phone browsing lands with D3
     if (OpenSystemNetworkShortcut(s, path)) return;
     app::Tab* tab = ActiveTab(s);
     if (!tab) return;
@@ -2490,6 +2492,7 @@ void OpenSelected(AppState& s) {
             OpenThisPcLauncher(s, e);
             return;
         }
+        if (e.pc_device) return;  // phones open once pulse:device: browsing lands (D3)
         if (!e.link_target.empty()) {
             if (e.link_target_is_dir) NavigateTo(s, e.link_target);
             else {
@@ -2508,7 +2511,7 @@ void OpenSelected(AppState& s) {
     }
     for (int index : indices) {
         const fs::DirEntry& e = tab->EntryAt(static_cast<size_t>(index));
-        if (e.change_record_only || e.pc_launcher) continue;  // like folders: one at a time
+        if (e.change_record_only || e.pc_launcher || e.pc_device) continue;  // like folders: one at a time
         if (!e.link_target.empty()) {
             if (!e.link_target_is_dir) {
                 s.ops.OpenWith(e.link_target);

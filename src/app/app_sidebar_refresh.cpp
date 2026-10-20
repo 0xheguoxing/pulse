@@ -1,6 +1,9 @@
 #include "app_sidebar_refresh.h"
 #include "app_internal.h"
 #include "sidebar_refresh_schedule.h"
+#include "device_registry.h"
+#include "../common/localization.h"
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <mutex>
@@ -131,6 +134,7 @@ bool TickSidebarRefresh(AppState& state, ULONGLONG now) {
             if (rebuilt) {
                 result.system_networks = std::move(state.sidebar.system_networks);
                 state.sidebar = std::move(result);
+                SyncDeviceSidebar(state);
                 SyncSavedSearchSidebar(state);
                 ApplyRecycleOccupancy(state);
                 applied = true;
@@ -143,6 +147,32 @@ bool TickSidebarRefresh(AppState& state, ULONGLONG now) {
     load->schedule.Tick(now);
     StartPending(state);
     return applied;
+}
+
+bool SyncDeviceSidebar(AppState& state) {
+    std::vector<app::SidebarEntry> rows;
+    for (const auto& device : app::DeviceRegistry::Instance().Devices()) {
+        app::SidebarEntry e;
+        e.label = device.name;
+        e.path = fs::FormatDevicePath(fs::DevicePath{device.key, L"", {}});
+        e.glyph = L"\xE8EA";  // CellPhone (Segoe Fluent Icons)
+        e.fallback = L"Phone";
+        e.color = ui::HexColor(0x60A5FA);
+        if (device.locked) {
+            // Waiting for Allow / Trust on the phone (pulse_devices_cloud.html).
+            e.badge = l10n::Get(l10n::StringId::DeviceLockedChip);
+            e.badge_rgb = 0xB7791F;
+        }
+        rows.push_back(std::move(e));
+    }
+    const auto same = [](const app::SidebarEntry& a, const app::SidebarEntry& b) {
+        return a.label == b.label && a.path == b.path && a.badge == b.badge;
+    };
+    if (rows.size() == state.sidebar.devices.size() &&
+        std::equal(rows.begin(), rows.end(), state.sidebar.devices.begin(), same))
+        return false;
+    state.sidebar.devices = std::move(rows);
+    return true;
 }
 
 void CancelSidebarRefresh(AppState& state) {

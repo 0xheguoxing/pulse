@@ -525,7 +525,7 @@ void Arm(AppState& s) {
     app::Tab* tab = TabAtSlot(s, s.hoverPaneIndex);
     if (!tab || !tab->snapshot || tab->loading || s.hoverRow >= static_cast<int>(tab->EntryCount())) return;
     const fs::DirEntry& entry = tab->EntryAt(static_cast<size_t>(s.hoverRow));
-    if (entry.is_dir || entry.change_record_only || entry.pc_launcher ||
+    if (entry.is_dir || entry.change_record_only || entry.pc_launcher || entry.pc_device ||
         !SlowToDecode(entry, EntryFullPath(*tab, s.hoverRow)))
         return;
     card.dwell_row = s.hoverRow;

@@ -1829,9 +1829,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_DEVICES_CHANGED:
-        // The phone list changed (DeviceRegistry). D2 shows it in This PC and
-        // the sidebar; for now every window just repaints.
-        if (s) app::ForEachWindowSharingCore(*s, [](AppState& window) { InvalidateRect(window.hwnd, nullptr, FALSE); });
+        // The phone list changed (DeviceRegistry): sidebar rows and This PC.
+        if (s) app::ForEachWindowSharingCore(*s, [](AppState& window) {
+            SyncDeviceSidebar(window);
+            RefreshPath(window, std::wstring(), RefreshReason::ShellNotification);
+            InvalidateRect(window.hwnd, nullptr, FALSE);
+        });
         return 0;
 
     case WM_UNDO_DELETE:

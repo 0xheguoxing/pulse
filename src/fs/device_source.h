@@ -91,6 +91,15 @@ std::unique_ptr<DeviceSource> MakeFakeDeviceSource(const std::wstring& root);
 // present? False means there is no phone, so no device thread is started.
 bool AnyPortableDevicePresent();
 
+// DirEntry::pc_device bits for This PC rows.
+constexpr uint8_t kPcDevicePhone = 1;
+constexpr uint8_t kPcDeviceIPhone = 2;   // read-only
+constexpr uint8_t kPcDeviceLocked = 4;   // no storage until Allow / Trust
+inline uint8_t PcDeviceFlags(const DeviceInfo& device) {
+    return static_cast<uint8_t>(kPcDevicePhone | (device.kind == DeviceKind::IPhone ? kPcDeviceIPhone : 0) |
+                                (device.locked ? kPcDeviceLocked : 0));
+}
+
 // Where opening a device row goes: the device root, or straight into its
 // only storage (single-storage phones skip that level, the address bar
 // still shows the device name).

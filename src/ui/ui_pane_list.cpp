@@ -1442,7 +1442,7 @@ PreviewDrawResult MainRenderer::DrawEntryThumbnail(ID2D1DeviceContext* dc,
     const D2D1_RECT_F& dest, const ListEntryView& entry, ViewMode mode,
     uint64_t generation, uint32_t pixels, float opacity, bool align_bottom,
     D2D1_RECT_F* artwork, uint32_t* duration) {
-    if (entry.launcher_rgb) return PreviewDrawResult::Failed;  // no file behind it: DrawEntryIcon
+    if (entry.launcher_rgb || entry.device) return PreviewDrawResult::Failed;  // no file behind it: DrawEntryIcon
     if (entry.is_dir) {
         const bool grid = mode == ViewMode::MediumIcons || mode == ViewMode::LargeIcons ||
                           mode == ViewMode::ExtraLargeIcons;
@@ -1739,6 +1739,20 @@ void MainRenderer::DrawEntryIcon(const ListEntryView& entry, float x, float y, f
             {x + size * 0.64f, y + size * 0.5f}, brTextSecondary_.get(), std::max(1.0f, size * 0.045f));
         return;
     }
+    if (entry.device && compositor_ && compositor_->Dc()) {
+        auto* dc = compositor_->Dc();
+        // Phones: the phone glyph on a soft plate; an amber lock while the
+        // phone waits for Allow / Trust (pulse_devices_cloud.html .lockt).
+        const bool locked = (entry.device & fs::kPcDeviceLocked) != 0;
+        const D2D1_COLOR_F tint = locked ? HexColor(theme.bg.r < 0.5f ? 0xE3A846u : 0xB7791Fu) : theme.accent;
+        const float pad = size * 0.08f;
+        MakeBrush(dc, WithAlpha(tint, 0.13f * opacity), brFillInput_);
+        FillRoundedRect(dc, brFillInput_.get(), x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, size * 0.22f);
+        const float quarter = std::round(size * 0.5f / (16.0f * scale_) * 4.0f) / 4.0f;
+        DrawIconText(x, y, size, size, locked ? L"\xE72E" : L"\xE8EA", L"", WithAlpha(tint, opacity),
+                     std::max(0.5f, quarter));
+        return;
+    }
     if (entry.launcher_rgb && compositor_ && compositor_->Dc()) {
         auto* dc = compositor_->Dc();
         // 网盘程序入口: the icon the program registered (as Explorer shows it).
@@ -1823,7 +1837,7 @@ void MainRenderer::DrawMorphIcon(const ListEntryView& entry, const PaneViewModel
                             {}, 0.0f, 0.0f, &thumbnail_artwork);
         return;
     }
-    if (entry.record_only || entry.launcher_rgb) {
+    if (entry.record_only || entry.launcher_rgb || entry.device) {
         DrawEntryIcon(entry, icon.left, icon.top, size, theme, hidden_alpha);
         return;
     }
@@ -1986,7 +2000,7 @@ void MainRenderer::DrawMorphFrom(const PaneViewModel& vm, const motion::ViewMorp
             DrawEntryThumbnail(dc, was.icon, e, mode, vm.view_generation,
                 ThumbnailRequestPixels(mode, size), hidden_alpha, grid, nullptr) == PreviewDrawResult::Bitmap;
         if (thumb) continue;
-        if (e.launcher_rgb) {  // 网盘程序入口 draw their own icon
+        if (e.launcher_rgb || e.device) {  // 网盘程序入口 and phones draw their own icon
             DrawEntryIcon(e, dest.left, dest.top, size, theme, hidden_alpha);
             continue;
         }
@@ -4386,7 +4400,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     DrawThumbnailBadges(e, artwork, renderedIconSize, media_duration_ms, theme);
                 if (!drewThumbnail && !empty_folder) {
                     // Change records and 网盘程序入口 draw their own icon (DrawEntryIcon).
-                    const bool own_icon = e.record_only || e.launcher_rgb != 0;
+                    const bool own_icon = e.record_only || e.launcher_rgb != 0 || e.device != 0;
                     ID2D1Bitmap* grid_bitmap = iconGrid && !morphing && !own_icon
                         ? icon_cache_.BitmapFor(e.path, e.name, e.is_dir, e.attrs, renderedIconSize) : nullptr;
                     float align_bottom = 0.0f;
@@ -4504,7 +4518,20 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             const bool staged_pill = vm.view_mode == ViewMode::Details && !change && e.badge.empty() &&
                 vm.staged && !vm.staged->empty() && vm.staged->contains(StagedPathHash(e.path));
             const std::wstring& staged_text = l10n::Get(l10n::StringId::TrayStagedBadge);
-            const float badgeW = change && !iconGrid ? ChangeBadgeWidth(*change, scale_, compositor_) : vm.view_mode == ViewMode::Details && !e.badge.empty()
+            // Phone tiles: 手机 / iPhone + 只读 / 未解锁 chips after the name.
+            std::wstring device_chip;
+            std::wstring device_chip2;
+            if (e.device && vm.view_mode == ViewMode::Tiles) {
+                if (e.device & fs::kPcDeviceLocked) device_chip = l10n::Get(l10n::StringId::DeviceLockedChip);
+                else if (e.device & fs::kPcDeviceIPhone) {
+                    device_chip = L"iPhone";
+                    device_chip2 = l10n::Get(l10n::StringId::DeviceReadOnlyChip);
+                } else device_chip = l10n::Get(l10n::StringId::DeviceKindPhone);
+            }
+            const float device_chip_w = device_chip.empty() ? 0.0f : painter_.MeasureTagWidth(device_chip);
+            const float device_chip2_w = device_chip2.empty() ? 0.0f : painter_.MeasureTagWidth(device_chip2);
+            const float badgeW = device_chip_w > 0.0f ? device_chip_w + (device_chip2_w > 0.0f ? 4.0f * scale_ + device_chip2_w : 0.0f)
+                : change && !iconGrid ? ChangeBadgeWidth(*change, scale_, compositor_) : vm.view_mode == ViewMode::Details && !e.badge.empty()
                 ? std::min(108.0f * scale_, painter_.MeasureTagWidth(e.badge))
                 : staged_pill ? std::min(108.0f * scale_, painter_.MeasureTagWidth(staged_text)) : 0.0f;
             // List rows: [mark] alias  real name (pulse_alias.html .amark).
@@ -4674,6 +4701,24 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 }
                 if (!change && !e.badge.empty() && trail.badge.right > trail.badge.left) {
                     painter_.DrawTag({trail.badge, e.badge, e.badge_color});
+                }
+                if (device_chip_w > 0.0f && trail.badge.right > trail.badge.left) {
+                    const bool locked = (e.device & fs::kPcDeviceLocked) != 0;
+                    fluent::TagSpec chip;
+                    chip.bounds = trail.badge;
+                    chip.bounds.right = std::min(trail.badge.right, trail.badge.left + device_chip_w);
+                    chip.text = device_chip;
+                    chip.color = locked ? HexColor(theme.bg.r < 0.5f ? 0xE3A846u : 0xB7791Fu) : theme.accent;
+                    chip.bordered = false;
+                    painter_.DrawTag(chip);
+                    if (device_chip2_w > 0.0f && chip.bounds.right + 4.0f * scale_ + device_chip2_w <= trail.badge.right + 0.5f) {
+                        fluent::TagSpec plain = chip;
+                        plain.bounds.left = chip.bounds.right + 4.0f * scale_;
+                        plain.bounds.right = plain.bounds.left + device_chip2_w;
+                        plain.text = device_chip2;
+                        plain.color = theme.text_secondary;
+                        painter_.DrawTag(plain);
+                    }
                 }
                 if (staged_pill && trail.badge.right > trail.badge.left) {
                     fluent::TagSpec pill;
@@ -4948,6 +4993,38 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     }
                     default:
                         break;
+                    }
+                }
+            } else if (vm.view_mode == ViewMode::Tiles && e.device) {
+                IDWriteTextFormat* device_fmt = compositor_->SmallFormat();
+                const float textW = std::max(0.0f, nameRc.right - nameRc.left);
+                MakeBrush(dc, theme.text_secondary, brTextSecondary_);
+                if (e.device & fs::kPcDeviceLocked) {
+                    // What to do on the phone; the tile updates by itself.
+                    DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), device_fmt, brTextSecondary_.get(),
+                        l10n::Get((e.device & fs::kPcDeviceIPhone) ? l10n::StringId::DeviceUnlockHintIPhone
+                                                                   : l10n::StringId::DeviceUnlockHintAndroid),
+                        nameRc.left, nameRc.top + 25.0f * scale_, textW, 20.0f * scale_);
+                } else {
+                    // One row per storage: name, usage, what is left (.pbars).
+                    const float rowH = 16.0f * scale_;
+                    const float labelW = std::min(64.0f * scale_, textW * 0.3f);
+                    const float freeW = std::min(112.0f * scale_, textW * 0.4f);
+                    float rowY = nameRc.top + 24.0f * scale_;
+                    const size_t rows = std::min<size_t>(2, e.device_bars.size());
+                    for (size_t b = 0; b < rows; ++b) {
+                        const auto& bar = e.device_bars[b];
+                        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), device_fmt, brTextSecondary_.get(),
+                            bar.label, nameRc.left, rowY, labelW, rowH);
+                        const float barL = nameRc.left + labelW + 6.0f * scale_;
+                        const float barR = std::max(barL, nameRc.left + textW - freeW - 6.0f * scale_);
+                        const float mid = rowY + rowH * 0.5f;
+                        if (bar.used >= 0.0f && barR - barL > 8.0f * scale_)
+                            painter_.DrawCapacityBar(D2D1::RectF(barL, mid - 2.5f * scale_, barR, mid + 2.5f * scale_),
+                                                     bar.used, theme.accent);
+                        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), device_fmt, brTextSecondary_.get(),
+                            bar.free_text, barR + 6.0f * scale_, rowY, freeW, rowH);
+                        rowY += rowH + 2.0f * scale_;
                     }
                 }
             } else if (vm.view_mode == ViewMode::Tiles && e.drive_mounted) {

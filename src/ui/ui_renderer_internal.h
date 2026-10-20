@@ -7,6 +7,7 @@
 #include "typography.h"
 #include "name_highlight.h"
 #include "../app/places.h"
+#include "../app/device_registry.h"
 #include "../app/folder_alias.h"
 #include "../app/builtin_menu_items.h"
 #include "../app/search_query.h"
@@ -421,6 +422,37 @@ void ClearTextWidthCache() {
                 text.replace(at, 6, name);
             }
             entry.type_text = std::move(text);
+        }
+        if (source.pc_device) {
+            // Phones: 手机 / iPhone · 只读, then 未解锁 while waiting for Allow / Trust.
+            entry.device = source.pc_device;
+            const bool iphone = (source.pc_device & fs::kPcDeviceIPhone) != 0;
+            entry.type_text = iphone ? L"iPhone \u00B7 " + pulse::l10n::Get(pulse::l10n::StringId::DeviceReadOnlyChip)
+                                     : pulse::l10n::Get(pulse::l10n::StringId::DeviceKindPhone);
+            if (source.pc_device & fs::kPcDeviceLocked)
+                entry.type_text += L" \u00B7 " + pulse::l10n::Get(pulse::l10n::StringId::DeviceLockedChip);
+            // Storages from the registry's listing; This PC re-lists on every change.
+            for (const auto& device : app::DeviceRegistry::Instance().Devices()) {
+                if (fs::FormatDevicePath(fs::DevicePath{device.key, L"", {}}) != source.full_path) continue;
+                for (const auto& storage : device.storages) {
+                    ListEntryView::DeviceBar bar;
+                    bar.label = storage.name;
+                    if (storage.total > 0) {
+                        const uint64_t free_bytes = std::min(storage.free, storage.total);
+                        bar.used = static_cast<float>(static_cast<double>(storage.total - free_bytes) /
+                                                      static_cast<double>(storage.total));
+                        wchar_t left[96]{};
+                        swprintf_s(left, pulse::l10n::Get(pulse::l10n::StringId::DeviceStorageFreeFormat).c_str(),
+                                   pulse::format::ByteSize(free_bytes).c_str());
+                        bar.free_text = left;
+                    }
+                    // FAT32 cards cannot take files over 4 GB (copy checks it, D5).
+                    if (_wcsicmp(storage.file_system.c_str(), L"FAT32") == 0)
+                        bar.free_text += bar.free_text.empty() ? L"FAT32" : L" \u00B7 FAT32";
+                    entry.device_bars.push_back(std::move(bar));
+                }
+                break;
+            }
         }
         entry.record_only = source.change_record_only;
         if (!source.change_type_text.empty()) entry.type_text = source.change_type_text;

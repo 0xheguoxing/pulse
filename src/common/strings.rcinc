@@ -2462,6 +2462,12 @@ BEGIN
     IDS_THISPC_LAUNCHER_OPENS_APP "打开{name}程序"
     IDS_MOUNTED_DRIVE_CHIP "网络盘"
     IDS_MOUNTED_DRIVE_NOTE "挂载盘符 · 不建索引、不算文件夹大小"
+    IDS_DEVICE_KIND_PHONE "手机"
+    IDS_DEVICE_READ_ONLY_CHIP "只读"
+    IDS_DEVICE_LOCKED_CHIP "未解锁"
+    IDS_DEVICE_UNLOCK_HINT_ANDROID "在手机上解锁，并在弹窗里选“允许”"
+    IDS_DEVICE_UNLOCK_HINT_IPHONE "解锁 iPhone，并在弹窗里点“信任”"
+    IDS_DEVICE_STORAGE_FREE_FORMAT "剩 %s"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4923,6 +4929,12 @@ BEGIN
     IDS_THISPC_LAUNCHER_OPENS_APP "Opens the {name} app"
     IDS_MOUNTED_DRIVE_CHIP "Network"
     IDS_MOUNTED_DRIVE_NOTE "Mounted drive · not indexed, no folder sizes"
+    IDS_DEVICE_KIND_PHONE "Phone"
+    IDS_DEVICE_READ_ONLY_CHIP "Read-only"
+    IDS_DEVICE_LOCKED_CHIP "Locked"
+    IDS_DEVICE_UNLOCK_HINT_ANDROID "Unlock the phone and tap Allow"
+    IDS_DEVICE_UNLOCK_HINT_IPHONE "Unlock the iPhone and tap Trust"
+    IDS_DEVICE_STORAGE_FREE_FORMAT "%s free"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

@@ -2262,6 +2262,9 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
     }
     drives = ConvertGroup(l10n::Get(l10n::StringId::SidebarDrives),
                           sidebar.drives, false);
+    // Phones follow the drives, as in File Explorer's This PC.
+    for (auto& phone : ConvertGroup(std::wstring(), sidebar.devices, false).items)
+        drives.items.push_back(std::move(phone));
     // Section icons: every header section names itself with a glyph, so the wide
     // header and the narrow rail read the same. The PC glyph (monitor on a
     // stand) keeps "This PC" apart from the monitor-only Desktop row.

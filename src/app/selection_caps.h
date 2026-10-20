@@ -101,7 +101,7 @@ inline SelectionCaps ComputeSelectionCaps(const Tab& tab, const PlacesCatalog* p
         for (int index : tab.SelectedIndices()) {
             if (index < 0 || static_cast<size_t>(index) >= tab.EntryCount()) continue;
             const fs::DirEntry e = tab.EntryAt(static_cast<size_t>(index));
-            if (e.pc_launcher) {
+            if (e.pc_launcher || e.pc_device) {  // programs and phones: open only
                 launchers = true;
                 continue;
             }

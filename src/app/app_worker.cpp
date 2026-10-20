@@ -5,6 +5,7 @@
 #include "entry_group.h"
 #include "link_resolve.h"
 #include "cloud_roots.h"
+#include "device_registry.h"
 #include "../fs/fs_enum.h"
 #include "../fs/bitlocker_volume.h"
 #include "../fs/bounded_enumeration.h"
@@ -232,6 +233,15 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
                             e.full_path = kThisPcLauncherPrefix + launcher.clsid;
                             e.attrs = FILE_ATTRIBUTE_NORMAL;
                             e.pc_launcher = launcher.brand;
+                            result.entries.push_back(std::move(e));
+                        }
+                        // Phones (the device thread's last listing, device_registry.h).
+                        for (const auto& device : pulse::app::DeviceRegistry::Instance().Devices()) {
+                            fs::DirEntry e;
+                            e.name = device.name;
+                            e.full_path = fs::FormatDevicePath(fs::DevicePath{device.key, L"", {}});
+                            e.attrs = FILE_ATTRIBUTE_NORMAL;
+                            e.pc_device = fs::PcDeviceFlags(device);
                             result.entries.push_back(std::move(e));
                         }
                     }

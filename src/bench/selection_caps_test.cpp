@@ -197,6 +197,21 @@ int main() {
         Check(tab.EffectiveGroup() == 0, "real folders keep their own grouping");
     }
 
+    {
+        // This PC phones (D2): open only, never a copy / delete / rename source.
+        fs::DirEntry phone;
+        phone.name = L"Xiaomi 14";
+        phone.full_path = L"pulse:device:0123456789ab";
+        phone.pc_device = 1;
+        Fill(tab, L"", {Entry(L"Win11 (C:)", L"C:\\", DRIVE_FIXED), phone});
+        tab.ToggleSelect(1);
+        caps = ComputeSelectionCaps(tab, &places);
+        Check(!caps.cut && !caps.copy && !caps.del && !caps.rename && !caps.tags, "phone: no file commands");
+        tab.ToggleSelect(0);
+        caps = ComputeSelectionCaps(tab, &places);
+        Check(!caps.rename && !caps.del && !caps.cut, "drive + phone: still none");
+    }
+
     std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "OK", g_failures, g_failures == 1 ? "" : "s");
     return g_failures ? 1 : 0;
 }

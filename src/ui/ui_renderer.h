@@ -123,6 +123,15 @@ struct ListEntryView {
     std::wstring drive_space_text;
     bool drive_mounted = false;  // This PC: mapped / user-mode mount (网络盘 chip in tiles)
     uint32_t launcher_rgb = 0;   // This PC program icon (网盘程序入口): brand tint, 0 = not one
+    // This PC phone: fs::kPcDevice* bits (0 = not a phone) and one capacity
+    // row per storage (used -1 = unknown).
+    uint8_t device = 0;
+    struct DeviceBar {
+        std::wstring label;
+        float used = -1.0f;
+        std::wstring free_text;
+    };
+    std::vector<DeviceBar> device_bars;
 };
 
 struct RowPresentationCache {

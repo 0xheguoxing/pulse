@@ -623,6 +623,7 @@ struct SidebarModel {
     std::vector<SidebarEntry> drives;
     std::vector<SidebarEntry> cloud;   // OneDrive accounts (empty while signed out)
     std::vector<SidebarEntry> starred; // the "starred items" root row
+    std::vector<SidebarEntry> devices; // phones after the drives (SyncDeviceSidebar)
 };
 
 SidebarModel BuildSidebarModel(const fs::RecycleBinInfo* recycle = nullptr);

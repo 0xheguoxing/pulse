@@ -1204,6 +1204,12 @@
 #define IDS_GROUP_THISPC_LAUNCHERS_NOTE                                                  3685
 #define IDS_THISPC_LAUNCHER_OPENS_APP                                                    3686
 #define IDS_MOUNTED_DRIVE_CHIP                                                           3687
+#define IDS_DEVICE_KIND_PHONE                                                            3689
+#define IDS_DEVICE_READ_ONLY_CHIP                                                        3690
+#define IDS_DEVICE_LOCKED_CHIP                                                           3691
+#define IDS_DEVICE_UNLOCK_HINT_ANDROID                                                   3692
+#define IDS_DEVICE_UNLOCK_HINT_IPHONE                                                    3693
+#define IDS_DEVICE_STORAGE_FREE_FORMAT                                                   3694
 #define IDS_MOUNTED_DRIVE_NOTE                                                           3688
 #define IDS_SIDEBAR_CLOUD_HIDDEN_HINT                                                    2516
 #define IDS_SIDEBAR_SHOW_HIDDEN                                                          2517

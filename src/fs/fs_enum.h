@@ -34,6 +34,9 @@ struct DirEntry {
     // "This PC" program icon (网盘程序入口, full_path "shell:::{CLSID}"):
     // 0 none, 1 other, 2 Baidu, 3 WPS. Never a file operation source.
     uint8_t pc_launcher = 0;
+    // "This PC" phone (full_path pulse:device:<key>, see device_source.h
+    // kPcDevice*): 0 none. Never a file operation source.
+    uint8_t pc_device = 0;
     std::wstring full_path; // set for virtual views (search/tag); empty = parent+name
     std::wstring recycle_path; // $R payload when listing pulse:recycle; not a .lnk target
     bool change_record_only = false; // Historical deleted/moved-out item, never a file operation source.

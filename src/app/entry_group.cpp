@@ -176,7 +176,7 @@ int GroupRank(const fs::DirEntry& e, GroupBy g, const GroupClock& c) {
         return 7;
     }
     case GroupBy::Type: return IsFolder(e) ? 0 : 1;
-    case GroupBy::ThisPc: return e.pc_launcher ? 2 : 0;
+    case GroupBy::ThisPc: return e.pc_launcher ? 2 : e.pc_device ? 1 : 0;
     case GroupBy::Tag: {
         if (!c.tags) return 0;
         if (c.tags->rank_by_name.empty()) return c.tags->untagged;
