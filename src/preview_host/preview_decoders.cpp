@@ -495,7 +495,11 @@ static bool FromThumbnailCache(IShellItem* item, UINT pixels, bool cache_only, H
 static bool MakeShellThumbnail(const std::wstring& path, DWORD attrs, UINT pixels,
                                std::vector<uint8_t>& out, UINT& width, UINT& height,
                                UINT& stride, bool cache_only = false) {
-    if (IsOfflinePlaceholder(attrs)) return false;
+    // A cloud placeholder may still have a picture in Explorer's thumbnail
+    // cache (made before it was freed, or put there by the sync engine).
+    // Asking the cache reads no content; any provider would make the sync
+    // engine download the file, so placeholders only ever get the cache.
+    if (IsOfflinePlaceholder(attrs) && (!cache_only || (attrs & FILE_ATTRIBUTE_DIRECTORY))) return false;
     const std::wstring shell_path = ShellPath(path);
     ComPtr<IShellItem> item;
     if (FAILED(SHCreateItemFromParsingName(shell_path.c_str(), nullptr, IID_PPV_ARGS(&item))))
@@ -2147,7 +2151,20 @@ static DecodeStep RunShortcut(const DecodeRequest& q, DecodeResult& r) {
 // Order is behaviour: it is the order the formats were tested in before the
 // table existed. New families go before "shell-preview" unless the shell
 // provider must win.
+// Cloud placeholders (content not on this device): a grid tile shows the
+// thumbnail Explorer already cached and nothing else; every later decoder
+// declines offline files, so a miss ends with the type icon.
+static bool AcceptsCloudCached(const DecodeRequest& q) {
+    return q.offline && !q.is_directory && q.grid;
+}
+static DecodeStep RunCloudCached(const DecodeRequest& q, DecodeResult& r) {
+    if (CachedShellThumbnailInto(q, r)) return MadeBitmap(r);
+    ClearBitmap(r);
+    return DecodeStep::Next;
+}
+
 static const preview::DecoderEntry kDecoders[] = {
+    { "cloud-cached",    AcceptsCloudCached,  RunCloudCached },
     { "folder",          AcceptsFolder,       RunFolder },
     { "shortcut",        AcceptsShortcut,     RunShortcut },
     { "image",           AcceptsImage,        RunImage },

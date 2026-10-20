@@ -2447,4 +2447,5 @@ BEGIN
     IDS_CLOUD_FREED_TOAST "已釋放 · 檔案仍在雲端，需要時再下載"
     IDS_CLOUD_KEPT_TOAST "已設為一律保留 · 雲端硬碟會在背景下載"
     IDS_CLOUD_PIN_FAILED "有 {n} 項無法變更"
+    IDS_CLOUD_OPEN_DOWNLOADS_FIRST "會先下載"
 END

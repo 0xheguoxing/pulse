@@ -1,4 +1,5 @@
 #include "edit_host.h"
+#include "../fs/cloud_state.h"
 #include "FluentTokens.h"
 #include "legacy_icons.h"
 #include "../common/windows_compat.h"
@@ -47,9 +48,6 @@ std::wstring PreviewCardName(const Item& item) {
 }
 
 constexpr wchar_t kWindowClass[] = L"Pulse.QuickPreview";
-constexpr DWORD kRecallOnOpen = 0x00040000;
-constexpr DWORD kRecallOnData = 0x00400000;
-constexpr DWORD kPinned = 0x00080000;
 constexpr float kCloseButtonWidth = 46.0f;
 constexpr float kChromeButtonWidth = 40.0f;   // prev / next / more, left of close
 constexpr float kCloseGlyphSize = 16.0f * 0.66f;
@@ -419,7 +417,7 @@ bool QuickPreviewWindow::visible() const noexcept {
 }
 
 bool QuickPreviewWindow::OfflinePlaceholder() const noexcept {
-    return (item_.attrs & (kRecallOnOpen | kRecallOnData)) && !(item_.attrs & kPinned);
+    return pulse::fs::IsCloudPlaceholder(item_.attrs);
 }
 
 void QuickPreviewWindow::Resize() {

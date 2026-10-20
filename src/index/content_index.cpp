@@ -1,4 +1,5 @@
 #include "content_sort_sql.h"
+#include "../fs/cloud_state.h"
 #include "content_config_storage.h"
 #include "content_task_search.h"
 #include "content_index.h"
@@ -546,7 +547,7 @@ struct ContentIndex::Impl {
         for (int attempt = 0; attempt < 3 && ContinueIndexing(); ++attempt) {
             WIN32_FILE_ATTRIBUTE_DATA before{}, after{};
             if (!GetFileAttributesExW(native.c_str(), GetFileExInfoStandard, &before)) { result.error = GetLastError(); return result; }
-            constexpr DWORD cloud = FILE_ATTRIBUTE_OFFLINE | 0x00040000 | 0x00400000;
+            constexpr DWORD cloud = ::pulse::fs::kCloudPlaceholderAttrs;
             if (before.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | cloud)) { result.error = ERROR_FILE_OFFLINE; return result; }
             const auto version = FileVersion(result.job.path);
             if (!ReadSearchableDocument(native, result.job.maximum, result.body, result.bytes,
@@ -644,7 +645,7 @@ struct ContentIndex::Impl {
         std::wstring ext = dot == std::wstring::npos ? L"" : p.substr(dot);
         std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
         const auto maximum = IsExtractedDocumentExtension(ext) ? c.maximum_document_bytes : c.maximum_file_bytes;
-        constexpr DWORD cloud = FILE_ATTRIBUTE_OFFLINE | 0x00040000 | 0x00400000;
+        constexpr DWORD cloud = ::pulse::fs::kCloudPlaceholderAttrs;
         if (size > maximum || !IsIndexedContentExtension(ext) || ExcludedContentPath(c, p) || (data.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DEVICE | cloud))) {
             Remove(db, p); std::lock_guard lock(mu); ++status.skipped_files; return;
         }
@@ -1552,7 +1553,7 @@ bool ContentIndex::SearchTask(const ContentSearchRequest& request, const std::at
                             [&](const auto& root) { return Under(hit.path, root.path); })) continue;
                         WIN32_FILE_ATTRIBUTE_DATA data{};
                         if (!GetFileAttributesExW(LongPath(hit.path).c_str(),GetFileExInfoStandard,&data) ||
-                            (data.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DEVICE|FILE_ATTRIBUTE_OFFLINE|0x00040000|0x00400000))) continue;
+                            (data.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DEVICE|::pulse::fs::kCloudPlaceholderAttrs))) continue;
                         const uint64_t size=(uint64_t(data.nFileSizeHigh)<<32)|data.nFileSizeLow;
                         sqlite3_reset(hit_version.p);
                         hit_version.Text(1, hit.path);

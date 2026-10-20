@@ -1192,6 +1192,7 @@
 #define IDS_CLOUD_FREED_TOAST                                                            3673
 #define IDS_CLOUD_KEPT_TOAST                                                             3674
 #define IDS_CLOUD_PIN_FAILED                                                             3675
+#define IDS_CLOUD_OPEN_DOWNLOADS_FIRST                                                   3676
 #define IDS_SIDEBAR_CLOUD_HIDDEN_HINT                                                    2516
 #define IDS_SIDEBAR_SHOW_HIDDEN                                                          2517
 #define IDS_SETTINGS_DEFAULT_MANAGER_DESC                                                1481

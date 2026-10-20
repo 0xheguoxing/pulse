@@ -1,5 +1,6 @@
 // folder_listing.cpp — see folder_listing.h.
 #include "folder_listing.h"
+#include "../fs/cloud_state.h"
 #include "../ipc/preview_protocol.h"
 #include <shlwapi.h>
 #include <algorithm>
@@ -48,8 +49,7 @@ struct Walk {
 };
 
 bool IsPlaceholder(DWORD attrs) {
-    return (attrs & (FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS |
-                     FILE_ATTRIBUTE_RECALL_ON_OPEN)) != 0;
+    return ::pulse::fs::IsCloudPlaceholder(attrs);
 }
 
 std::wstring ExtensionKey(const std::wstring& name) {

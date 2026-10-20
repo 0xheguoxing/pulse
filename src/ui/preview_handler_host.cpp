@@ -1,4 +1,5 @@
 #include "preview_handler_host.h"
+#include "../fs/cloud_state.h"
 #include "preview_handler_pan.h"
 #include "../common/preview_extensions.h"
 #include "../common/path_utils.h"
@@ -41,9 +42,6 @@ constexpr CLSID kWindowsTxtPreviewer = {
 constexpr CLSID kQueryAssociations = {
     0xa07034fd, 0x6caa, 0x4954, {0xac, 0x3f, 0x97, 0xa2, 0x72, 0x16, 0xf9, 0x8a}
 };
-constexpr DWORD kRecallOnOpen = 0x00040000;
-constexpr DWORD kRecallOnData = 0x00400000;
-constexpr DWORD kPinned = 0x00080000;
 constexpr HRESULT kServerExecFailure = static_cast<HRESULT>(0x80080005);
 
 // One apartment hosts the system preview handler and owns the overlay window, so
@@ -194,7 +192,7 @@ bool IsNativePreviewExtension(std::wstring_view extension) {
 }
 
 bool IsOfflinePlaceholder(DWORD attrs) {
-    return (attrs & (kRecallOnOpen | kRecallOnData)) && !(attrs & kPinned);
+    return pulse::fs::IsCloudPlaceholder(attrs);
 }
 
 // The shell's content type for an extension, when an installer recorded one -

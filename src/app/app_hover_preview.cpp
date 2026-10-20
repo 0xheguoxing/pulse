@@ -1,5 +1,6 @@
 // app_hover_preview.cpp - The hover preview card (see app_hover_preview.h).
 #include "app_hover_preview.h"
+#include "../fs/cloud_state.h"
 #include "app_internal.h"
 #include "app_details_tree.h"
 #include "entry_sort.h"
@@ -327,8 +328,7 @@ void ReadFolder(const std::shared_ptr<HoverFolderJob>& job, const FolderReadOpti
     bool any = false;
     for (auto& item : counted->items) {
         if (cancelled() || asked >= 48 || GetTickCount64() - start > 800) break;
-        if (!item.is_dir || (item.attrs & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE |
-                                           FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)))
+        if (!item.is_dir || (item.attrs & FILE_ATTRIBUTE_REPARSE_POINT) || fs::IsCloudPlaceholder(item.attrs))
             continue;
         ++asked;
         std::vector<fs::DirEntry> children;

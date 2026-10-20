@@ -2449,6 +2449,7 @@ BEGIN
     IDS_CLOUD_FREED_TOAST "已释放 · 文件还在云端，需要时再下载"
     IDS_CLOUD_KEPT_TOAST "已设为始终保留 · 网盘会在后台下载"
     IDS_CLOUD_PIN_FAILED "有 {n} 项未能更改"
+    IDS_CLOUD_OPEN_DOWNLOADS_FIRST "会先下载"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4897,6 +4898,7 @@ BEGIN
     IDS_CLOUD_FREED_TOAST "Space freed · the files stay in the cloud and download when needed"
     IDS_CLOUD_KEPT_TOAST "Kept on this device · the drive downloads them in the background"
     IDS_CLOUD_PIN_FAILED "{n} items could not be changed"
+    IDS_CLOUD_OPEN_DOWNLOADS_FIRST "Downloads first"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

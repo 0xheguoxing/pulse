@@ -19,9 +19,14 @@ enum class CloudState : uint8_t {
     Pinned, // kept on this device
 };
 
-// Content (or, for folders, the listing) is not on this device yet.
+// Any of these: content (or, for folders, the listing) is not on this device,
+// and reading it would make the sync engine download it. The one definition
+// every reader (thumbnails, previews, properties, content index, folder
+// thumbnails, hover preview) checks before touching file content.
+inline constexpr DWORD kCloudPlaceholderAttrs = FILE_ATTRIBUTE_OFFLINE | kAttrRecallOnOpen | kAttrRecallOnDataAccess;
+
 constexpr bool IsCloudPlaceholder(DWORD attrs) noexcept {
-    return (attrs & (FILE_ATTRIBUTE_OFFLINE | kAttrRecallOnOpen | kAttrRecallOnDataAccess)) != 0;
+    return (attrs & kCloudPlaceholderAttrs) != 0;
 }
 
 constexpr CloudState CloudStateFromAttrs(DWORD attrs) noexcept {

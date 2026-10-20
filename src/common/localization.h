@@ -1186,6 +1186,7 @@ enum class StringId : UINT {
     CloudFreedToast = IDS_CLOUD_FREED_TOAST,
     CloudKeptToast = IDS_CLOUD_KEPT_TOAST,
     CloudPinFailed = IDS_CLOUD_PIN_FAILED,
+    CloudOpenDownloadsFirst = IDS_CLOUD_OPEN_DOWNLOADS_FIRST,
     SidebarCloudHiddenHint = IDS_SIDEBAR_CLOUD_HIDDEN_HINT,
     SidebarShowHidden = IDS_SIDEBAR_SHOW_HIDDEN,
     SettingsDefaultManagerDesc = IDS_SETTINGS_DEFAULT_MANAGER_DESC,

@@ -1,5 +1,6 @@
 // ui_details_panel.cpp — Details panel draw and content height.
 #include "ui_renderer.h"
+#include "../fs/cloud_state.h"
 #include "preview_footer_layout.h"
 #include "preview_notice.h"
 #include "ui_renderer_internal.h"
@@ -410,8 +411,7 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
                         d.multi_count);
                     state = count;
                 }
-            else if ((d.attrs & (0x00040000u | 0x00400000u)) &&
-                     !(d.attrs & 0x00080000u))
+            else if (pulse::fs::IsCloudPlaceholder(d.attrs))
                 state = pulse::l10n::Get(pulse::l10n::StringId::OnlineToPreview);
             else if (previewResult == PreviewDrawResult::Pending)
                 state = pulse::l10n::Get(pulse::l10n::StringId::PreviewLoading);

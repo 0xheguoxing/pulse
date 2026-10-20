@@ -1686,12 +1686,14 @@ void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const ap
 // out when it would change nothing for any selected item.
 void AppendCloudPinCommands(const app::Tab& tab, std::vector<ui::FluentMenuItem>& items) {
     if (!tab.snapshot || tab.SelectedCount() == 0 || !app::IsUnderCloudFilesRoot(tab.current_path)) return;
-    bool can_keep = false, can_free = false;
+    bool can_keep = false, can_free = false, all_remote_files = true;
     for (int index : tab.SelectedIndices()) {
         if (index < 0 || index >= static_cast<int>(tab.EntryCount())) continue;
-        const fs::CloudState state = fs::CloudStateFromAttrs(tab.EntryAt(static_cast<size_t>(index)).attrs);
+        const fs::DirEntry entry = tab.EntryAt(static_cast<size_t>(index));
+        const fs::CloudState state = fs::CloudStateFromAttrs(entry.attrs);
         can_keep |= state != fs::CloudState::Pinned;
         can_free |= state != fs::CloudState::Online;
+        all_remote_files &= !entry.is_dir && fs::IsCloudPlaceholder(entry.attrs);
     }
     ui::FluentMenuItem keep = VerbRow(app::CmdCloudKeep, l10n::Get(l10n::StringId::CloudKeepOnDevice), L"\xE718");
     keep.enabled = can_keep;
@@ -1700,7 +1702,13 @@ void AppendCloudPinCommands(const app::Tab& tab, std::vector<ui::FluentMenuItem>
     release.separator_after = true;
     auto open = std::find_if(items.begin(), items.end(),
                              [](const ui::FluentMenuItem& item) { return item.command == app::CmdOpen; });
-    if (open != items.end()) open->separator_after = true;
+    if (open != items.end()) {
+        open->separator_after = true;
+        // 打开 is the user asking for the content: the sync engine downloads it
+        // first, so say so (design: 打开 · 会先下载).
+        if (all_remote_files && open->shortcut.empty())
+            open->shortcut = l10n::Get(l10n::StringId::CloudOpenDownloadsFirst);
+    }
     const ui::FluentMenuItem rows[] = {std::move(keep), std::move(release)};
     items.insert(open == items.end() ? items.begin() : open + 1, std::begin(rows), std::end(rows));
 }
