@@ -755,22 +755,12 @@ void ClearTextWidthCache() {
             }
             for (int i = 0; i < static_cast<int>(group.items.size()); ++i) {
                 const auto& item = group.items[i];
-                if (g == vm.tag_drag_group && i == vm.tag_drag_item) {
-                    // Keep the tentative slot open (SortableJS-style gap); the
-                    // dragged card itself is drawn floating below. Packing the
-                    // flow instead would teleport every sibling on grab/drop.
-                    y += SidebarItemHeight(item, m) + m.itemGap;
-                    continue;
-                }
                 const float h = SidebarItemHeight(item, m);
                 if (y >= contentBottom) break;
                 SidebarSlot slot;
                 slot.kind = item.is_drive ? SidebarSlot::Drive
                           : item.is_tag ? SidebarSlot::Tag : SidebarSlot::Item;
-                float top = y;
-                if (item.is_tag && item.y_offset != 0.0f)
-                    top += item.y_offset * (m.tagH + m.itemGap); // slot units -> px
-                slot.rc = D2D1::RectF(innerL + item.indent * 16.0f * scale, top, innerR, top + h);
+                slot.rc = D2D1::RectF(innerL + item.indent * 16.0f * scale, y, innerR, y + h);
                 slot.group = g;
                 slot.item = i;
                 slot.run = run++;
@@ -781,43 +771,6 @@ void ClearTextWidthCache() {
             y += m.groupGap - m.itemGap;
             if (group.tabs_section) y += kSidebarTabsDividerGapDip * scale;
             if (bands) bands->push_back({ g, band_top, std::min(y, contentBottom) });
-        }
-
-        // Dragged tag floats at the cursor, clamped to the tag flow range.
-        if (vm.tag_drag_group >= 0 && vm.tag_drag_group < static_cast<int>(vm.sidebar.size())) {
-            const auto& dgroup = vm.sidebar[vm.tag_drag_group];
-            if (vm.tag_drag_item >= 0 && vm.tag_drag_item < static_cast<int>(dgroup.items.size())) {
-                float minTop = 1e30f, maxBottom = -1e30f;
-                for (const auto& slot : out) {
-                    if (slot.kind == SidebarSlot::Tag && slot.group == vm.tag_drag_group) {
-                        // Clamp against the *rest* geometry: slide offsets are
-                        // baked into slot.rc, and a mid-flight sibling would
-                        // otherwise shrink/extend the range on that side.
-                        float base = slot.rc.top;
-                        const auto& sib = dgroup.items[static_cast<size_t>(slot.item)];
-                        if (sib.y_offset != 0.0f)
-                            base -= sib.y_offset * (m.tagH + m.itemGap);
-                        minTop = std::min(minTop, base);
-                        maxBottom = std::max(maxBottom, base + (slot.rc.bottom - slot.rc.top));
-                    }
-                }
-                float cy = vm.tag_drag_y;
-                if (minTop <= maxBottom) {
-                    // The gap slot contributes no rect, so extend the clamp by
-                    // one pitch: the float must still reach the first/last
-                    // position. The gesture clamps to the exact range anyway.
-                    const float pitch = m.tagH + m.itemGap;
-                    cy = std::clamp(cy, minTop + m.tagH * 0.5f - pitch,
-                                    maxBottom - m.tagH * 0.5f + pitch);
-                }
-                SidebarSlot dragged;
-                dragged.kind = SidebarSlot::Tag;
-                dragged.rc = D2D1::RectF(innerL, cy - m.tagH * 0.5f, innerR, cy + m.tagH * 0.5f);
-                dragged.group = vm.tag_drag_group;
-                dragged.item = vm.tag_drag_item;
-                dragged.run = run++;
-                out.push_back(dragged);
-            }
         }
 
         if (vm.tray_deck.hidden || trayH < 1.0f * scale) return;

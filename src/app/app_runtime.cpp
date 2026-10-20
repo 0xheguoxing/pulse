@@ -2784,8 +2784,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.content_drop_as_tab = s.contentDropAsTab;
     vm.content_drop_rects = s.contentDropRects;
     vm.drag_ghost = s.dragGhost;
-    // Sidebar tag reorder: emit the tags group in the tentative drag order and
-    // feed each tag its current slide offset (slot units).
+    // Sidebar tags: mark the row being renamed.
     int tagsGroup = -1;
     for (int g = 0; g < static_cast<int>(vm.sidebar.size()); ++g) {
         if (!vm.sidebar[g].items.empty() && vm.sidebar[g].items[0].is_tag) { tagsGroup = g; break; }
@@ -2795,22 +2794,6 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
         if (!s.tagRenameId.empty()) {
             const std::wstring editing_path = app::MakeTagPath(s.tagRenameId);
             for (auto& item : items) item.editing = item.path == editing_path;
-        }
-        if (s.tagDragActive && s.tagOrder.size() == items.size()) {
-            std::vector<ui::SidebarItem> reordered;
-            reordered.reserve(items.size());
-            for (int idx : s.tagOrder) reordered.push_back(std::move(items[idx]));
-            items = std::move(reordered);
-            for (int pos = 0; pos < static_cast<int>(s.tagOrder.size()); ++pos) {
-                if (s.tagOrder[pos] == s.tagDragTag) { vm.tag_drag_item = pos; break; }
-            }
-            vm.tag_drag_group = tagsGroup;
-            vm.tag_drag_y = s.tagDragY;
-            vm.tag_gap_line_y = s.tagGapVisible ? s.tagGapLineY : 0.0f;
-        }
-        for (auto& it : items) {
-            const auto off = s.tagOffsets.find(it.label);
-            if (off != s.tagOffsets.end()) it.y_offset = off->second;
         }
     }
     // Title-bar tabs: emit the tentative drag order and slide offsets.

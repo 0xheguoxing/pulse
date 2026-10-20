@@ -2040,11 +2040,6 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 if (s->framePump.Running()) s->framePump.Arm();
                 else dirty = true;
             }
-            // Tag slide animation.
-            if (!s->tagTracks.empty() || s->tagGapFrom != s->tagGapTo) {
-                TickTagTransitions(*s);
-                dirty = true;
-            }
             if (!s->tabTracks.empty() || !s->chipTracks.empty()) {
                 TickTabTransitions(*s);
                 dirty = true;
@@ -2095,7 +2090,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_SETCURSOR: {
         if (!s || LOWORD(lParam) != HTCLIENT) break;
-        if (s->starDragActive || s->tagDragActive || s->tabDragging) {
+        if (s->starDragActive || s->tabDragging) {
             SetCursor(LoadCursorW(nullptr, IDC_SIZEALL));
             return TRUE;
         }
@@ -3065,8 +3060,6 @@ void StageTagShotStates(AppState& state) {
             state.places.tags[1 % state.places.tags.size()].id;
     }
     if (state.shot_tag_drag && state.places.tags.size() >= 4) {
-        // Stage a mid-drag frame at slot 0 (the regression case): the third
-        // tag floats at the list top; the first slides down mid-flight.
         ui::WindowViewModel vm0 = BuildVm(state);
         int g0 = -1;
         for (int g = 0; g < static_cast<int>(vm0.sidebar.size()); ++g) {
@@ -3085,19 +3078,28 @@ void StageTagShotStates(AppState& state) {
                                        static_cast<float>(state.compositor.Height()),
                                        g0, 1, &b);
         if (okA && okB) {
+            // The third tag held one row up, mid-drag, on the shared sidebar
+            // row gesture: its slot is open above the first tag.
             const float pitch = b.top - a.top;
-            state.tagDragActive = true;
-            state.tagDragTag = 2;
-            state.tagOrder.resize(state.places.tags.size());
-            for (int i = 0; i < static_cast<int>(state.tagOrder.size()); ++i)
-                state.tagOrder[static_cast<size_t>(i)] = i;
-            state.tagOrder[0] = 2;
-            state.tagOrder[1] = 0;
-            state.tagOrder[2] = 1;
-            state.tagDragY = a.top + pitch * 0.5f;
-            state.tagOffsets[state.places.tags[0].name] = -0.5f;
-            state.tagGapVisible = true;
-            state.tagGapLineY = state.tagGapFrom = state.tagGapTo = a.top;
+            D2D1_RECT_F held{};
+            if (state.renderer.TagItemRect(vm0, static_cast<float>(state.compositor.Width()),
+                                           static_cast<float>(state.compositor.Height()),
+                                           g0, 2, &held)) {
+                const ui::HitTestResult hit = state.renderer.HitTest(vm0,
+                    D2D1::RectF(0, 0, static_cast<float>(state.compositor.Width()),
+                                static_cast<float>(state.compositor.Height())),
+                    (held.left + held.right) * 0.5f, (held.top + held.bottom) * 0.5f);
+                POINT cursor{};
+                if (GetCursorPos(&cursor)) ScreenToClient(state.hwnd, &cursor);
+                state.pinDragActive = true;
+                state.pinDragPath = hit.path;
+                state.pinDragRun = hit.index;
+                // The renderer reads the travel from the live cursor.
+                state.pinDragStartPt = POINT{ cursor.x, cursor.y + static_cast<LONG>(pitch * 1.5f) };
+                state.pinDragToIndex = 1;
+                state.pinGapVisible = true;
+                state.pinGapLineY = b.top;
+            }
         }
     }
 }

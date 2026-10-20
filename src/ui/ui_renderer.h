@@ -389,7 +389,6 @@ struct SidebarItem {
     std::wstring path;
     bool is_drive = false;
     float used_ratio = 0.0f;       // For drives: 0..1.
-    float y_offset = 0.0f;         // Tags: slide-animation offset added at layout.
     int indent = 0;
     bool status_dot = false;
     D2D1_COLOR_F status_color = {};
@@ -941,17 +940,12 @@ struct WindowViewModel {
     bool content_drop_as_tab = false;
     std::vector<D2D1_RECT_F> content_drop_rects;  // one per pane it brings (M7h)
     DragGhostView drag_ghost;     // the dragged tab itself (M7h)
-    // Tag drag-reorder gesture (group/item = dragged tag, tag_drag_y = cursor).
-    int tag_drag_group = -1;
-    int tag_drag_item = -1;
-    float tag_drag_y = 0.0f;
-    float tag_gap_line_y = 0.0f; // insertion indicator position (px, 0 = hidden)
     // Sidebar section header drag: the id-identified section floats, the rest
     // stay put, and the insertion line marks the slot it would land in.
     int sidebar_group_drag_id = -1;
     float sidebar_group_gap_line_y = 0.0f; // px, 0 = hidden
-    // Quick-access pin drag: the dragged row (layout index) plus its own
-    // insertion line.
+    // Sidebar row drag (quick-access rows, vertical tabs, tags): the dragged
+    // row (layout index) plus its own insertion line.
     int sidebar_pin_drag_index = -1;
     float sidebar_pin_gap_line_y = 0.0f; // px, 0 = hidden
     float sidebar_pin_drag_dy = 0.0f;    // cursor travel since the press (px)

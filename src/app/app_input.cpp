@@ -5,6 +5,7 @@
 #include "pane_column_input.h"
 // app_input.cpp — extracted from app_main.cpp.
 #include "quick_access.h"
+#include "sidebar_tag_drag.h"
 #include "app_prompts.h"
 #include "vertical_tabs.h"
 #include "tab_detach.h"
@@ -1131,6 +1132,7 @@ void ResetSidebarPinDrag(AppState& s) {
 void UpdateSidebarPinDrag(AppState& s, int my) {
     if (!s.pinDragActive || s.pinDragPath.empty()) return;
     if (UpdateVerticalTabDrag(s, my)) return;  // tab rows share this gesture
+    if (UpdateSidebarTagDrag(s, my)) return;   // so do tag rows
     ui::WindowViewModel vm = BuildVm(s, false);
     const float w = static_cast<float>(s.compositor.Width());
     const float h = static_cast<float>(s.compositor.Height());
@@ -1267,45 +1269,9 @@ void CancelScrollAnimation(AppState& s) {
     s.scrollAnimating = false;
 }
 
-// --- Tag slide animation ------------------------------------------------------
-// SortableJS-style reorder motion: a quick easeOutCubic with no overshoot.
-// On 32px rows an overshoot spring (the old Pivot indicator curve) reads as
-// wobble, especially when fast drags restart the track mid-flight.
-float TagEaseOutCubic(float x) {
-    const float u = 1.0f - x;
-    return 1.0f - u * u * u;
-}
-
 float TagEaseInOutQuad(float t) { // used by the window-tab slide animation
     const float u = -2.0f * t + 2.0f;
     return t < 0.5f ? 2.0f * t * t : 1.0f - u * u * 0.5f;
-}
-
-void TickTagTransitions(AppState& s) {
-    const auto now = std::chrono::steady_clock::now();
-    for (auto it = s.tagTracks.begin(); it != s.tagTracks.end();) {
-        const float t = std::chrono::duration<float, std::milli>(now - it->second.t0).count()
-            / static_cast<float>(it->second.durationMs);
-        if (t >= 1.0f) {
-            s.tagOffsets.erase(it->first);
-            it = s.tagTracks.erase(it);
-        } else {
-            s.tagOffsets[it->first] = it->second.start * (1.0f - TagEaseOutCubic(t));
-            ++it;
-        }
-    }
-    // Insertion indicator chase (same 180ms easeOutCubic as the slides).
-    if (s.tagGapFrom != s.tagGapTo) {
-        const float t = std::chrono::duration<float, std::milli>(now - s.tagGapT0).count()
-            / 180.0f;
-        if (t >= 1.0f) {
-            s.tagGapLineY = s.tagGapTo;
-            s.tagGapFrom = s.tagGapTo;
-        } else {
-            s.tagGapLineY = s.tagGapFrom +
-                (s.tagGapTo - s.tagGapFrom) * TagEaseOutCubic(t);
-        }
-    }
 }
 
 void TickTabTransitions(AppState& s) {
@@ -2331,133 +2297,6 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 
         // Tag reorder drag (QFluentKit TabBar model): the dragged tag follows
         // cursor deltas 1:1 and swaps with a sibling on center crossing.
-        if (s->tagDragPending || s->tagDragActive) {
-            if ((GetKeyState(VK_LBUTTON) & 0x8000) == 0) {
-                s->tagDragPending = false;
-                s->tagDragActive = false;
-                s->tagDragTag = -1;
-                s->tagDragPath.clear();
-                s->tagOrder.clear();
-                s->tagGapVisible = false;
-                s->tagGapFrom = s->tagGapTo = s->tagGapLineY = 0.0f;
-            } else {
-                if (!s->tagDragActive &&
-                    std::abs(my - s->tagDragStartPt.y) >= 2 && // TabBar starts on a 2px delta
-                    s->tagDragTag >= 0 &&
-                    s->tagDragTag < static_cast<int>(s->places.tags.size()) &&
-                    s->renderer.EffectiveSidebarWidth(static_cast<float>(s->compositor.Width()))
-                        > 60.0f * s->scale) {
-                    // Capture the tag flow geometry once so the gesture can map
-                    // cursor deltas 1:1 and evaluate sibling-center crossings.
-                    ui::WindowViewModel vm0 = BuildVm(*s);
-                    const float w0 = static_cast<float>(s->compositor.Width());
-                    const float h0 = static_cast<float>(s->compositor.Height());
-                    int g0 = -1;
-                    for (int g = 0; g < static_cast<int>(vm0.sidebar.size()); ++g) {
-                        if (!vm0.sidebar[g].items.empty() && vm0.sidebar[g].items[0].is_tag) {
-                            g0 = g;
-                            break;
-                        }
-                    }
-                    const int n0 = g0 >= 0 ? static_cast<int>(vm0.sidebar[g0].items.size()) : 0;
-                    D2D1_RECT_F first{}, last{}, self{};
-                    if (n0 == static_cast<int>(s->places.tags.size()) &&
-                        s->renderer.TagItemRect(vm0, w0, h0, g0, 0, &first) &&
-                        s->renderer.TagItemRect(vm0, w0, h0, g0, n0 - 1, &last) &&
-                        s->renderer.TagItemRect(vm0, w0, h0, g0, s->tagDragTag, &self)) {
-                        s->tagDragActive = true;
-                        s->tagFlowTop = first.top;
-                        s->tagFlowBottom = last.bottom;
-                        s->tagSlotH = self.bottom - self.top;
-                        s->tagPitch = n0 >= 2 ? (last.top - first.top) / (n0 - 1) : s->tagSlotH;
-                        s->tagDragFloatTop = self.top;
-                        s->tagDragGrabDy = static_cast<float>(my) - self.top;
-                        s->tagDragY = (self.top + self.bottom) * 0.5f;
-                        s->tagDragLastY = my;
-                        s->tagTracks.clear();
-                        s->tagOffsets.clear();
-                        s->tagOrder.resize(s->places.tags.size());
-                        for (int i = 0; i < static_cast<int>(s->tagOrder.size()); ++i)
-                            s->tagOrder[i] = i;
-                        // The indicator starts at the grabbed slot, no chase yet.
-                        s->tagGapVisible = true;
-                        s->tagGapLineY = self.top;
-                        s->tagGapFrom = s->tagGapTo = self.top;
-                        s->tagGapT0 = std::chrono::steady_clock::now();
-                    } else {
-                        s->tagDragPending = false; // geometry unavailable: plain click
-                    }
-                }
-                if (s->tagDragActive) {
-                    const int dy = my - s->tagDragLastY;
-                    if (std::abs(dy) >= 2) { // 2px deadzone against jitter, as in TabBar
-                        s->tagDragLastY = my;
-                        // Grab-relative position keeps the tag glued to the cursor
-                        // even after clamping at a flow edge (TabBar edge behavior).
-                        s->tagDragFloatTop = std::clamp(
-                            static_cast<float>(my) - s->tagDragGrabDy, s->tagFlowTop,
-                            std::max(s->tagFlowTop, s->tagFlowBottom - s->tagSlotH));
-                        s->tagDragY = s->tagDragFloatTop + s->tagSlotH * 0.5f;
-                        int cur = -1;
-                        for (int p = 0; p < static_cast<int>(s->tagOrder.size()); ++p)
-                            if (s->tagOrder[p] == s->tagDragTag) { cur = p; break; }
-                        const int n = static_cast<int>(s->tagOrder.size());
-                        if (cur >= 0 && s->tagPitch > 0.0f) {
-                            // SortableJS-style insertion target: the dragged card's
-                            // center maps straight to a flow slot, so a fast flick
-                            // crosses several rows in a single mouse event.
-                            const int target = std::clamp(
-                                static_cast<int>((s->tagDragY - s->tagFlowTop) / s->tagPitch),
-                                0, n - 1);
-                            if (target != cur) {
-                                const auto now = std::chrono::steady_clock::now();
-                                std::vector<int> next = s->tagOrder;
-                                const int dragged = next[static_cast<size_t>(cur)];
-                                next.erase(next.begin() + cur);
-                                next.insert(next.begin() + target, dragged);
-                                // FLIP: every shifted sibling slides from its current
-                                // (possibly mid-flight) visual position to its new slot.
-                                for (int pos = 0; pos < n; ++pos) {
-                                    const int idx = next[static_cast<size_t>(pos)];
-                                    if (idx == dragged) continue;
-                                    int oldPos = -1;
-                                    for (int p = 0; p < n; ++p)
-                                        if (s->tagOrder[static_cast<size_t>(p)] == idx) {
-                                            oldPos = p;
-                                            break;
-                                        }
-                                    if (oldPos < 0 || oldPos == pos) continue;
-                                    const std::wstring& label =
-                                        s->places.tags[static_cast<size_t>(idx)].name;
-                                    const auto off = s->tagOffsets.find(label);
-                                    const float curOff =
-                                        off != s->tagOffsets.end() ? off->second : 0.0f;
-                                    const float start = static_cast<float>(oldPos) + curOff
-                                        - static_cast<float>(pos);
-                                    if (std::abs(start) >= 0.01f) {
-                                        s->tagTracks[label] = AppState::TagTrack{
-                                            start, 180, now };
-                                        s->tagOffsets[label] = start;
-                                    }
-                                }
-                                s->tagOrder = std::move(next);
-                                // The insertion indicator chases the new gap.
-                                const float lineTarget =
-                                    s->tagFlowTop + static_cast<float>(target) * s->tagPitch;
-                                if (lineTarget != s->tagGapTo) {
-                                    s->tagGapFrom = s->tagGapLineY;
-                                    s->tagGapTo = lineTarget;
-                                    s->tagGapT0 = now;
-                                }
-                            }
-                        }
-                    }
-                    InvalidateRect(hwnd, nullptr, FALSE);
-                    return 0;
-                }
-            }
-        }
-
         // Sidebar section header drag: past a small deadzone the press turns into
         // a reorder and the insertion line follows the cursor.
         if (s->groupDragPending || s->groupDragActive) {
@@ -3520,14 +3359,18 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
                 s->pinGapVisible = false;
                 s->pinGapLineY = 0.0f;
                 SetCapture(hwnd);
-            } else if (hit.path.starts_with(L"pulse:tag:")) {
-                // Tags defer navigation to release; a press may become a reorder drag.
-                s->tagDragPending = true;
-                s->tagDragStartPt = POINT{ mx, my };
-                s->tagDragPath = hit.path;
-                std::wstring kind, rest;
-                app::ParsePulsePath(hit.path, &kind, &rest);
-                s->tagDragTag = s->places.FindTagIndex(s->places.ResolveTagRef(rest));
+            } else if (IsSidebarTagPath(hit.path)) {
+                // Tags defer navigation to release too: a press may become the
+                // same reorder drag as the quick-access rows above.
+                s->pinDragPending = true;
+                s->pinDragActive = false;
+                s->pinDragStartPt = POINT{ mx, my };
+                s->pinDragPath = hit.path;
+                s->pinDragKey.clear();
+                s->pinDragRun = hit.index;
+                s->pinDragToIndex = -1;
+                s->pinGapVisible = false;
+                s->pinGapLineY = 0.0f;
                 SetCapture(hwnd);
             } else if (hit.path.starts_with(L"pulse:workspace:")) {
                 std::wstring kind, rest;
@@ -3744,10 +3587,7 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
         }
         if (hit.region == ui::HitTestResult::SidebarItem &&
             hit.path.starts_with(L"pulse:tag:")) {
-            s->tagDragPending = false;
-            s->tagDragActive = false;
-            s->tagDragTag = -1;
-            s->tagDragPath.clear();
+            ResetSidebarPinDrag(*s);
             if (GetCapture() == hwnd) ReleaseCapture();
             std::wstring kind, rest;
             app::ParsePulsePath(hit.path, &kind, &rest);
@@ -3861,6 +3701,8 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 if (was_active && s->pinDragToIndex >= 0) {
                     if (tab_row)
                         CommitVerticalTabDrag(*s, path, static_cast<size_t>(s->pinDragToIndex));
+                    else if (IsSidebarTagPath(path))
+                        CommitSidebarTagDrag(*s, path, static_cast<size_t>(s->pinDragToIndex));
                     else if (!qa_drag_key.empty())
                         CommitQuickAccessDrag(*s, qa_drag_key,
                                               static_cast<size_t>(s->pinDragToIndex));
@@ -3882,64 +3724,6 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 s->dropSidebar = -1;
                 if (GetCapture() == hwnd) ReleaseCapture();
                 if (!was_active && !path.empty()) NavigateTo(*s, path);
-                InvalidateRect(hwnd, nullptr, FALSE);
-                return 0;
-            }
-            if (s->tagDragPending || s->tagDragActive) {
-                const bool wasActive = s->tagDragActive;
-                const std::wstring path = s->tagDragPath;
-                if (wasActive && s->tagDragTag >= 0 &&
-                    s->tagDragTag < static_cast<int>(s->places.tags.size())) {
-                    // Slide the dragged tag home; duration scales with distance
-                    // (250 ms per slot height, snap when < 50 ms), as in TabBar.
-                    int cur = -1;
-                    for (int p = 0; p < static_cast<int>(s->tagOrder.size()); ++p)
-                        if (s->tagOrder[p] == s->tagDragTag) { cur = p; break; }
-                    if (cur >= 0 && s->tagPitch > 0.0f) {
-                        const float targetTop = s->tagFlowTop + cur * s->tagPitch;
-                        const float dist = std::abs(s->tagDragFloatTop - targetTop);
-                        const int raw = static_cast<int>(
-                            dist * 250.0f / std::max(1.0f, s->tagSlotH));
-                        // Snap tiny gaps; otherwise ease home (easeOutCubic via
-                        // TickTagTransitions), fast enough to feel magnetic.
-                        const int dur = raw < 120 ? 0 : std::clamp(raw, 160, 320);
-                        if (dur > 0) {
-                            const std::wstring label =
-                                s->places.tags[static_cast<size_t>(s->tagDragTag)].name;
-                            const float start =
-                                (s->tagDragFloatTop - targetTop) / s->tagPitch;
-                            s->tagTracks[label] = AppState::TagTrack{
-                                start, dur, std::chrono::steady_clock::now() };
-                            s->tagOffsets[label] = start;
-                        }
-                    }
-                }
-                if (wasActive && s->tagOrder.size() == s->places.tags.size() &&
-                    !s->tagOrder.empty()) {
-                    bool changed = false;
-                    for (size_t i = 0; i < s->tagOrder.size(); ++i)
-                        if (s->tagOrder[i] != static_cast<int>(i)) { changed = true; break; }
-                    if (changed) {
-                        std::vector<app::ColorTag> reordered;
-                        reordered.reserve(s->places.tags.size());
-                        for (int idx : s->tagOrder)
-                            if (idx >= 0 && idx < static_cast<int>(s->places.tags.size()))
-                                reordered.push_back(s->places.tags[static_cast<size_t>(idx)]);
-                        if (reordered.size() == s->places.tags.size()) {
-                            s->places.tags = std::move(reordered);
-                            s->places.TagsReordered();
-                        }
-                    }
-                }
-                s->tagDragPending = false;
-                s->tagDragActive = false;
-                s->tagDragTag = -1;
-                s->tagDragPath.clear();
-                s->tagOrder.clear();
-                s->tagGapVisible = false;
-                s->tagGapFrom = s->tagGapTo = s->tagGapLineY = 0.0f;
-                if (GetCapture() == hwnd) ReleaseCapture();
-                if (!wasActive && !path.empty()) NavigateTo(*s, path); // plain click
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
@@ -4198,19 +3982,6 @@ LRESULT HandleCaptureChanged(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LP
             if (s->pinDragPending || s->pinDragActive) {
                 // Same for the pin reorder: abandon it, keep the stored order.
                 ResetSidebarPinDrag(*s);
-                InvalidateRect(hwnd, nullptr, FALSE);
-            }
-            if (s->tagDragPending || s->tagDragActive) {
-                // Capture lost mid-gesture: cancel the reorder, keep places.tags.
-                s->tagDragPending = false;
-                s->tagDragActive = false;
-                s->tagDragTag = -1;
-                s->tagDragPath.clear();
-                s->tagOrder.clear();
-                s->tagGapVisible = false;
-                s->tagGapFrom = s->tagGapTo = s->tagGapLineY = 0.0f;
-                s->tagTracks.clear();
-                s->tagOffsets.clear();
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
             if (s->tabDragPending || s->tabDragging) {

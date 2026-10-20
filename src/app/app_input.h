@@ -56,9 +56,7 @@ void CancelRenameClick(AppState& s);
 bool PointInHitItemName(AppState& s, const ui::WindowViewModel& vm,
                                const ui::HitTestResult& hit, float x, float y);
 void CancelScrollAnimation(AppState& s);
-float TagEaseOutCubic(float x);
 float TagEaseInOutQuad(float t);
-void TickTagTransitions(AppState& s);
 void TickTabTransitions(AppState& s);
 void StartSmoothScroll(AppState& s, float delta, bool horizontal = false);
 void UpdateSmoothScroll(AppState& s, const HoverPointerApi& api = {});

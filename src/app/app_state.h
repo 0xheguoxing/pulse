@@ -736,30 +736,6 @@ struct AppState : AppCoreOwner {
     // the dragged tag follows cursor deltas 1:1, swaps with a sibling when its
     // edge crosses the sibling's center (sibling slides 150 ms InOutQuad), and
     // on release slides home with a distance-proportional duration.
-    bool tagDragPending = false;
-    bool tagDragActive = false;
-    POINT tagDragStartPt{};
-    int tagDragTag = -1;                 // places.tags index of the dragged tag
-    std::wstring tagDragPath;            // pulse:tag:<index> at press time
-    int tagDragLastY = 0;
-    float tagDragGrabDy = 0.0f;          // cursor y minus dragged slot top at activation
-    float tagDragFloatTop = 0.0f;        // dragged slot top (px, cursor-delta driven)
-    float tagDragY = 0.0f;               // dragged slot center for the renderer
-    float tagFlowTop = 0.0f;             // tag flow range / slot geometry (px)
-    float tagFlowBottom = 0.0f;
-    float tagSlotH = 0.0f;
-    float tagPitch = 0.0f;
-    std::vector<int> tagOrder;           // display position -> places.tags index
-    struct TagTrack { float start = 0.0f; int durationMs = 150; std::chrono::steady_clock::time_point t0; };
-    std::unordered_map<std::wstring, TagTrack> tagTracks; // label -> slide track (slot units)
-    std::unordered_map<std::wstring, float> tagOffsets;   // label -> current offset (slot units)
-    // Insertion indicator line at the tentative gap's top edge; chases the
-    // target slot with the same 180ms easeOutCubic as the sibling slides.
-    bool tagGapVisible = false;
-    float tagGapLineY = 0.0f;            // current animated position (px)
-    float tagGapFrom = 0.0f;
-    float tagGapTo = 0.0f;
-    std::chrono::steady_clock::time_point tagGapT0{};
 
     bool starDragPending = false;
     bool starDragActive = false;

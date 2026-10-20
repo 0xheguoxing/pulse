@@ -251,8 +251,7 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             }
         }
     }
-    const bool reordering = vm.tag_drag_group >= 0 || vm.sidebar_pin_drag_index >= 0 ||
-                            vm.sidebar_group_drag_id >= 0;
+    const bool reordering = vm.sidebar_pin_drag_index >= 0 || vm.sidebar_group_drag_id >= 0;
     const int pill_slot = !reordering && !IsHighContrast() ? selected_slot : -1;
     SidebarMotion& sm = SidebarMotionFor(this);
     if (motion_now_ - sm.animations_checked > 2000 || !sm.animations_checked) {
@@ -558,8 +557,9 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     }
 
 
-    // Quick-access reorder (pulse_motion_v2 qareorder): the held pin lifts and
-    // rides the cursor while the pins it passes slide aside to open its slot.
+    // Sidebar row reorder (pulse_motion_v2 qareorder; quick-access rows, tabs
+    // and tags): the held row lifts and rides the cursor while the rows it
+    // passes slide aside to open its slot.
     // It paints last so the rows sliding under it never cover the card.
     std::vector<size_t> paint_order(slots.size());
     for (size_t k = 0; k < slots.size(); ++k) paint_order[k] = k;
@@ -764,7 +764,6 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             vm.sidebar[slot.group].id == vm.sidebar_group_drag_id) state.hovered = true;
         if (vm.sidebar_pin_drag_index >= 0 && slot.run == vm.sidebar_pin_drag_index)
             state.hovered = true;
-        if (vm.tag_drag_group >= 0) state.hovered = false; // run indices shift mid-drag
         const bool row_hot = state.hovered;
         // The gliding plate paints the hover under ordinary rows.
         if (plate_live && !(item.tab_row && item.tab_active)) state.hovered = false;
@@ -816,23 +815,8 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                               1.0f, nullptr, true);
             }
         } else {
-            const bool draggedTag =
-                slot.group == vm.tag_drag_group && slot.item == vm.tag_drag_item;
             const bool heldPin = static_cast<int>(paint_k) == pin_slot;
-            if (draggedTag || heldPin) {
-                // Insertion indicator under the lifted card: accent line with a
-                // leading dot at the tentative gap's top edge.
-                if (vm.tag_gap_line_y > 0.0f) {
-                    const float th = 2.5f * scale_;
-                    const float lx0 = slot.rc.left + 2.0f * scale_;
-                    const float lx1 = slot.rc.right - 2.0f * scale_;
-                    MakeBrush(dc, theme.accent, brAccent_);
-                    FillRoundedRect(dc, brAccent_.get(), lx0,
-                        vm.tag_gap_line_y - th * 0.5f, lx1 - lx0, th, th * 0.5f);
-                    dc->FillEllipse(D2D1::Ellipse(
-                        D2D1::Point2F(lx0 + 4.0f * scale_, vm.tag_gap_line_y),
-                        3.0f * scale_, 3.0f * scale_), brAccent_.get());
-                }
+            if (heldPin) {
                 // Raised while dragging: a clearly deeper shadow + brighter card
                 // than a plain selected row, so the lift reads at a glance.
                 const float r = theme.radius_control * scale_;
