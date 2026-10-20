@@ -1334,6 +1334,10 @@ void AppendOtherCloudEntries(std::vector<SidebarEntry>& cloud) {
         entry.color = ui::HexColor(CloudRootColor(roots[i]));
         entry.path = fs::NormalizePath(roots[i].path);
         entry.label = roots[i].label;
+        // Explorer's navigation pane shows the program's own icon for its
+        // CLSID (WPS网盘, 百度网盘); the tinted cloud stays as the fallback.
+        if (roots[i].source == CloudRootSource::NavigationPane && !roots[i].id.empty())
+            entry.icon_path = L"::" + roots[i].id;
         if (!entry.path.empty()) cloud.push_back(std::move(entry));
     }
 }
@@ -1548,6 +1552,7 @@ static ui::SidebarGroup ConvertGroup(const std::wstring& header, const std::vect
         it.label = e.label;
         it.detail = e.detail;
         it.icon_glyph = e.glyph;
+        it.icon_path = e.icon_path;
         it.fallback_text = e.fallback;
         it.icon_color = e.color;
         it.danger = e.danger;

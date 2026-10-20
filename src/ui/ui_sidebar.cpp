@@ -900,6 +900,12 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                              app::AliasStore::Instance().Shown(item.path) == item.label;
             const int row_svg = item.is_tag ? 0 : FluentSvgIdForGlyph(item.icon_glyph);
             row.skip_glyph = !IsHighContrast() && row_svg != 0 && EnsureFluentSvg(row_svg, true);
+            // 网盘 roots: the program's registered icon, as Explorer's navigation pane.
+            const D2D1_RECT_F row_icon_rc = painter_.SidebarItemIconRect(slot.rc, item.status_dot);
+            ID2D1Bitmap* row_shell_icon = item.icon_path.empty() || IsHighContrast() ? nullptr
+                : icon_cache_.ExactBitmapFor(item.icon_path,
+                      (std::max)(row_icon_rc.right - row_icon_rc.left, row_icon_rc.bottom - row_icon_rc.top));
+            if (row_shell_icon) row.skip_glyph = true;
             const bool unpin = SidebarItemHasUnpin(item);
             const auto unpin_rc = WorkspaceUnpinRect(slot.rc, scale_);
             const auto expand_rc = SidebarExpandRect(slot.rc, scale_);
@@ -910,9 +916,11 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                 row.trailing_reserve = (std::max)(0.0f,
                     (slot.rc.right - expand_rc.left) - 4.0f * scale_);
             painter_.DrawSidebarItem(row);
-            if (row.skip_glyph) {
-                DrawFluentSvg(row_svg, painter_.SidebarItemIconRect(slot.rc, item.status_dot),
-                              1.0f, nullptr, true);
+            if (row_shell_icon) {
+                dc->DrawBitmap(row_shell_icon, &row_icon_rc, 1.0f,
+                               D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, nullptr, nullptr);
+            } else if (row.skip_glyph) {
+                DrawFluentSvg(row_svg, row_icon_rc, 1.0f, nullptr, true);
             }
             if (item.editing) {
                 // In-place tag rename: give the hosted edit a real TextField

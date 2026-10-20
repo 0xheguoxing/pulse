@@ -381,6 +381,7 @@ struct SidebarItem {
     std::wstring label;
     std::wstring detail;
     std::wstring icon_glyph;       // Segoe Fluent Icons codepoint string.
+    std::wstring icon_path;        // shell icon drawn instead, once resolved (网盘: "::{CLSID}")
     std::wstring fallback_text;
     std::wstring badge;            // e.g. "Git"
     D2D1_COLOR_F badge_color = {};

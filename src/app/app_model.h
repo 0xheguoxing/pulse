@@ -556,6 +556,7 @@ struct SidebarEntry {
     std::wstring detail;
     std::wstring glyph;
     std::wstring fallback;
+    std::wstring icon_path; // ui::SidebarItem::icon_path
     std::wstring badge;
     uint32_t badge_rgb = 0x0078D4;
     D2D1_COLOR_F color = {};

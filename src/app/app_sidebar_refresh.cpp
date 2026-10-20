@@ -39,7 +39,7 @@ bool SameEntries(const std::vector<app::SidebarEntry>& a, const std::vector<app:
         const auto& x = a[i];
         const auto& y = b[i];
         if (x.label != y.label || x.detail != y.detail || x.glyph != y.glyph ||
-            x.fallback != y.fallback || x.badge != y.badge || x.badge_rgb != y.badge_rgb ||
+            x.fallback != y.fallback || x.icon_path != y.icon_path || x.badge != y.badge || x.badge_rgb != y.badge_rgb ||
             !SameColor(x.color, y.color) || !SameColor(x.tag_dot, y.tag_dot) ||
             x.danger != y.danger || x.is_tag != y.is_tag || x.show_count != y.show_count ||
             x.count != y.count || x.path != y.path || x.is_drive != y.is_drive ||

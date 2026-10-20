@@ -1740,9 +1740,15 @@ void MainRenderer::DrawEntryIcon(const ListEntryView& entry, float x, float y, f
         return;
     }
     if (entry.launcher_rgb && compositor_ && compositor_->Dc()) {
-        // 网盘程序入口: the brand-tinted cloud on a soft plate, plus the
-        // "opens another program" mark once there is room for it.
         auto* dc = compositor_->Dc();
+        // 网盘程序入口: the icon the program registered (as Explorer shows it).
+        if (ID2D1Bitmap* own = icon_cache_.ExactBitmapFor(entry.path, size)) {
+            dc->DrawBitmap(own, &dest, opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+                           nullptr, nullptr);
+            return;
+        }
+        // Not registered (or still resolving): the brand-tinted cloud on a
+        // soft plate, plus the "opens another program" mark once there is room.
         const D2D1_COLOR_F tint = HexColor(entry.launcher_rgb);
         const float pad = size * 0.08f;
         MakeBrush(dc, WithAlpha(tint, 0.13f * opacity), brFillInput_);
@@ -1817,7 +1823,7 @@ void MainRenderer::DrawMorphIcon(const ListEntryView& entry, const PaneViewModel
                             {}, 0.0f, 0.0f, &thumbnail_artwork);
         return;
     }
-    if (entry.record_only) {
+    if (entry.record_only || entry.launcher_rgb) {
         DrawEntryIcon(entry, icon.left, icon.top, size, theme, hidden_alpha);
         return;
     }
@@ -1980,6 +1986,10 @@ void MainRenderer::DrawMorphFrom(const PaneViewModel& vm, const motion::ViewMorp
             DrawEntryThumbnail(dc, was.icon, e, mode, vm.view_generation,
                 ThumbnailRequestPixels(mode, size), hidden_alpha, grid, nullptr) == PreviewDrawResult::Bitmap;
         if (thumb) continue;
+        if (e.launcher_rgb) {  // 网盘程序入口 draw their own icon
+            DrawEntryIcon(e, dest.left, dest.top, size, theme, hidden_alpha);
+            continue;
+        }
         if (ID2D1Bitmap* bitmap = e.record_only ? nullptr
                 : icon_cache_.CachedBitmapFor(e.path, e.name, e.is_dir, e.attrs, size)) {
             dc->DrawBitmap(bitmap, &dest, hidden_alpha, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
