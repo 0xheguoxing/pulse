@@ -329,10 +329,18 @@ void LabToRgb(uint8_t l8, uint8_t a8, uint8_t b8, uint8_t& r, uint8_t& g, uint8_
 // the same way. device holds one value (gray) or four (CMYK ink, 255 = full)
 // per pixel; RGB reads the pixels themselves. On success the colour bytes of
 // the BGRA pixels are replaced. Otherwise they keep the plain values.
+// Matrix/TRC RGB profiles skip the system transform (icc::MatrixToSrgb).
 bool ManageColour(const Header& h, std::vector<unsigned char>& device, UINT width, UINT height,
                   std::vector<unsigned char>& pixels) {
     const bool cmyk = h.mode == Cmyk;
     const bool rgb = h.mode == Rgb;
+    if (rgb && pixels.size() >= size_t{width} * height * 4) {
+        icc::MatrixToSrgb matrix;
+        if (matrix.Init(h.icc.data(), h.icc.size())) {
+            matrix.Apply(pixels.data(), size_t{width} * height);
+            return true;
+        }
+    }
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICColorContext> source, target;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,

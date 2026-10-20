@@ -1,3 +1,4 @@
+#include "../preview_host/icc_profile.h"
 #include "../preview_host/psd_raster.h"
 #include "../preview_host/shell_bitmap.h"
 #include "../preview_host/table_document.h"
@@ -10,6 +11,8 @@
 #include <cstdio>
 #include <cstring>
 #include <array>
+#include <algorithm>
+#include <cstdlib>
 
 namespace {
 namespace fs = std::filesystem;
@@ -184,8 +187,8 @@ Bytes GrayIcc(uint16_t gamma) {
 }
 // A minimal ICC v2 RGB display profile: sRGB primaries (D50) and one plain
 // gamma for all three channels, under the given name. With gamma 1.0,
-// device 128 is half linear light, sRGB 188.
-Bytes RgbIcc(const char* name, uint16_t gamma) {
+// device 128 is half linear light, sRGB 188. lut adds an (empty) A2B0 tag.
+Bytes RgbIcc(const char* name, uint16_t gamma, bool lut = false) {
     const auto pad = [](Bytes& b) { while (b.size() % 4) b.push_back(0); };
     const size_t name_size = std::strlen(name) + 1;
     Bytes desc{'d','e','s','c',0,0,0,0};
@@ -205,13 +208,16 @@ Bytes RgbIcc(const char* name, uint16_t gamma) {
     Bytes curve{'c','u','r','v',0,0,0,0};
     Be32(curve, 1); Be16(curve, gamma); Be16(curve, 0);
     Bytes copyright{'t','e','x','t',0,0,0,0,'P','D',0,0};
+    const Bytes table_tag{'m','f','t','2',0,0,0,0};
     const std::pair<const char*, const Bytes*> tags[] = {
         {"desc", &desc}, {"wtpt", &white}, {"rXYZ", &red}, {"gXYZ", &green}, {"bXYZ", &blue},
-        {"rTRC", &curve}, {"gTRC", &curve}, {"bTRC", &curve}, {"cprt", &copyright}};
+        {"rTRC", &curve}, {"gTRC", &curve}, {"bTRC", &curve}, {"cprt", &copyright}, {"A2B0", &table_tag}};
+    const uint32_t count = static_cast<uint32_t>(std::size(tags)) - (lut ? 0u : 1u);
     Bytes table, body;
-    Be32(table, static_cast<uint32_t>(std::size(tags)));
-    const uint32_t first = 128 + 4 + 12 * static_cast<uint32_t>(std::size(tags));
-    for (const auto& [sig, data] : tags) {
+    Be32(table, count);
+    const uint32_t first = 128 + 4 + 12 * count;
+    for (uint32_t i = 0; i < count; ++i) {
+        const auto& [sig, data] = tags[i];
         table.insert(table.end(), sig, sig + 4);
         Be32(table, first + static_cast<uint32_t>(body.size()));
         Be32(table, static_cast<uint32_t>(data->size()));
@@ -413,6 +419,58 @@ int wmain() {
         const int linear = mid(RgbIcc("sRGB IEC61966-2.1 (Linear RGB Profile)", 0x0100));
         check(linear >= 185 && linear <= 191, "linear sRGB profile is not taken for sRGB");
         check(mid({}) == 128, "RGB PSD without a profile keeps its values");
+        // The matrix/TRC path on its own, and against the system transform.
+        {
+            namespace icc = pulse::preview::icc;
+            const Bytes linear_icc = RgbIcc("Pulse test linear RGB", 0x0100);
+            icc::MatrixToSrgb matrix;
+            unsigned char two[8] = {128, 128, 128, 77, 0, 64, 255, 0};
+            const bool ready = matrix.Init(linear_icc.data(), linear_icc.size());
+            if (ready) matrix.Apply(two, 2);
+            check(ready && two[0] >= 187 && two[0] <= 189 && two[1] == two[0] && two[2] == two[0] && two[3] == 77 &&
+                two[7] == 0, "matrix/TRC profile converts without the system transform, alpha untouched");
+            const Bytes lut = RgbIcc("Pulse test LUT RGB", 0x0100, true);
+            Bytes cut = linear_icc;
+            cut.resize(200);
+            icc::MatrixToSrgb other;
+            check(!other.Init(lut.data(), lut.size()) && !other.Init(cut.data(), cut.size()),
+                "profiles with lookup tables or cut short are left to the system transform");
+            const Bytes gamma22 = RgbIcc("Pulse test gamma 2.2", 0x0233);
+            std::vector<unsigned char> ramp(256 * 4), fast;
+            for (int v = 0; v < 256; ++v) {
+                ramp[4 * v] = static_cast<unsigned char>(v * 7);
+                ramp[4 * v + 1] = static_cast<unsigned char>(255 - v);
+                ramp[4 * v + 2] = static_cast<unsigned char>(v);
+                ramp[4 * v + 3] = 255;
+            }
+            fast = ramp;
+            int worst = -1;
+            using Microsoft::WRL::ComPtr;
+            ComPtr<IWICImagingFactory> factory;
+            ComPtr<IWICColorContext> source, target;
+            ComPtr<IWICBitmap> bitmap;
+            ComPtr<IWICColorTransform> transform;
+            std::vector<unsigned char> wcs(ramp.size());
+            if (matrix.Init(gamma22.data(), gamma22.size()) &&
+                SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                           IID_PPV_ARGS(&factory))) &&
+                SUCCEEDED(factory->CreateColorContext(&source)) && SUCCEEDED(factory->CreateColorContext(&target)) &&
+                SUCCEEDED(source->InitializeFromMemory(gamma22.data(), static_cast<UINT>(gamma22.size()))) &&
+                SUCCEEDED(target->InitializeFromExifColorSpace(1)) &&
+                SUCCEEDED(factory->CreateBitmapFromMemory(256, 1, GUID_WICPixelFormat32bppBGRA, 1024,
+                                                          static_cast<UINT>(ramp.size()), ramp.data(), &bitmap)) &&
+                SUCCEEDED(factory->CreateColorTransformer(&transform)) &&
+                SUCCEEDED(transform->Initialize(bitmap.Get(), source.Get(), target.Get(),
+                                                GUID_WICPixelFormat32bppBGRA)) &&
+                SUCCEEDED(transform->CopyPixels(nullptr, 1024, static_cast<UINT>(wcs.size()), wcs.data()))) {
+                matrix.Apply(fast.data(), 256);
+                worst = 0;
+                for (size_t i = 0; i < fast.size(); ++i)
+                    worst = (std::max)(worst, std::abs(int{fast[i]} - int{wcs[i]}));
+            }
+            printf("matrix vs system transform, gamma 2.2 ramp: largest difference %d\n", worst);
+            check(worst >= 0 && worst <= 3, "matrix/TRC path matches the system transform");
+        }
         // Full cyan ink, stored inverted: subtracting ink showed (0,255,255).
         wchar_t sys[MAX_PATH]{};
         const UINT n = GetSystemDirectoryW(sys, MAX_PATH);

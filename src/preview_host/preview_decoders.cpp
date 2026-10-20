@@ -264,6 +264,33 @@ bool MakeTextOrHex(const std::wstring& path, DWORD attrs, ipc::PreviewContentKin
 
 } // namespace
 
+// Matrix/TRC RGB profiles (nearly all RGB ones) are converted to sRGB in
+// place by icc::MatrixToSrgb, several times faster than the colour
+// transform ToSrgb uses for the others.
+static bool ConvertMatrixProfile(IWICImagingFactory* factory, IWICBitmapSource* source,
+                                 const preview::icc::MatrixToSrgb& matrix, ComPtr<IWICBitmapSource>& out) {
+    ComPtr<IWICFormatConverter> converter;
+    ComPtr<IWICBitmap> bitmap;
+    ComPtr<IWICBitmapLock> lock;
+    UINT width = 0, height = 0, stride = 0, size = 0;
+    BYTE* pixels = nullptr;
+    if (FAILED(source->GetSize(&width, &height)) || !width || !height ||
+        FAILED(factory->CreateFormatConverter(&converter)) ||
+        FAILED(converter->Initialize(source, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0,
+                                     WICBitmapPaletteTypeCustom)) ||
+        FAILED(factory->CreateBitmapFromSource(converter.Get(), WICBitmapCacheOnLoad, &bitmap)))
+        return false;
+    const WICRect all{0, 0, static_cast<INT>(width), static_cast<INT>(height)};
+    if (FAILED(bitmap->Lock(&all, WICBitmapLockRead | WICBitmapLockWrite, &lock)) ||
+        FAILED(lock->GetStride(&stride)) || FAILED(lock->GetDataPointer(&size, &pixels)) || !pixels ||
+        stride < width * 4 || size < static_cast<size_t>(stride) * (height - 1) + width * 4)
+        return false;
+    for (UINT y = 0; y < height; ++y) matrix.Apply(pixels + static_cast<size_t>(stride) * y, width);
+    lock.Reset();
+    out = bitmap;
+    return true;
+}
+
 // Embedded ICC profiles: a picture tagged with a profile other than sRGB
 // (Adobe RGB, Display P3, ProPhoto, a press CMYK, a gray dot gain) is
 // converted to sRGB, the space previews are shown in; plain values showed
@@ -313,6 +340,10 @@ static bool ToSrgb(IWICImagingFactory* factory, IWICBitmapFrameDecode* frame, IW
         if (FAILED(factory->CreateComponentInfo(format, &info)) || FAILED(info.As(&format_info)) ||
             FAILED(format_info->GetChannelCount(&channels)) ||
             FAILED(format_info->SupportsTransparency(&transparent)) || channels != 1 || transparent) return false;
+    }
+    if (space == icc::Space::Rgb) {
+        icc::MatrixToSrgb matrix;
+        if (matrix.Init(bytes.data(), bytes.size()) && ConvertMatrixProfile(factory, source, matrix, out)) return true;
     }
     const WICPixelFormatGUID device = space == icc::Space::Cmyk ? GUID_WICPixelFormat32bppCMYK
         : space == icc::Space::Gray ? GUID_WICPixelFormat8bppGray : GUID_WICPixelFormat32bppBGRA;
