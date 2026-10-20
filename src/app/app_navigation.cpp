@@ -7,6 +7,7 @@
 #include "network_connect.h"
 #include "../fs/bitlocker_volume.h"
 #include "../fs/device_path.h"
+#include "../fs/device_source.h"
 #include "shell_window_sync.h"
 #include "app_column_view.h"
 #include "app_details_tree.h"
@@ -2490,6 +2491,10 @@ void OpenSelected(AppState& s) {
         if (e.change_record_only) return;
         if (e.pc_launcher) {
             OpenThisPcLauncher(s, e);
+            return;
+        }
+        if (e.pc_device & fs::kPcDevicePlaceholder) {
+            ShowDeviceHelp(s);  // "no phone connected": how to make it show up
             return;
         }
         if (e.pc_device) return;  // phones open once pulse:device: browsing lands (D3)

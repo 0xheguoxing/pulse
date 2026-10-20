@@ -1744,12 +1744,14 @@ void MainRenderer::DrawEntryIcon(const ListEntryView& entry, float x, float y, f
         // Phones: the phone glyph on a soft plate; an amber lock while the
         // phone waits for Allow / Trust (pulse_devices_cloud.html .lockt).
         const bool locked = (entry.device & fs::kPcDeviceLocked) != 0;
-        const D2D1_COLOR_F tint = locked ? HexColor(theme.bg.r < 0.5f ? 0xE3A846u : 0xB7791Fu) : theme.accent;
+        const bool none = (entry.device & fs::kPcDevicePlaceholder) != 0;  // "no phone connected": faint plug
+        const D2D1_COLOR_F tint = none ? WithAlpha(theme.text_secondary, 0.75f)
+            : locked ? HexColor(theme.bg.r < 0.5f ? 0xE3A846u : 0xB7791Fu) : theme.accent;
         const float pad = size * 0.08f;
         MakeBrush(dc, WithAlpha(tint, 0.13f * opacity), brFillInput_);
         FillRoundedRect(dc, brFillInput_.get(), x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, size * 0.22f);
         const float quarter = std::round(size * 0.5f / (16.0f * scale_) * 4.0f) / 4.0f;
-        DrawIconText(x, y, size, size, locked ? L"\xE72E" : L"\xE8EA", L"", WithAlpha(tint, opacity),
+        DrawIconText(x, y, size, size, none ? L"\xE88E" : locked ? L"\xE72E" : L"\xE8EA", L"", WithAlpha(tint, opacity),
                      std::max(0.5f, quarter));
         return;
     }
@@ -4521,7 +4523,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             // Phone tiles: 手机 / iPhone + 只读 / 未解锁 chips after the name.
             std::wstring device_chip;
             std::wstring device_chip2;
-            if (e.device && vm.view_mode == ViewMode::Tiles) {
+            if (e.device && vm.view_mode == ViewMode::Tiles && !(e.device & fs::kPcDevicePlaceholder)) {
                 if (e.device & fs::kPcDeviceLocked) device_chip = l10n::Get(l10n::StringId::DeviceLockedChip);
                 else if (e.device & fs::kPcDeviceIPhone) {
                     device_chip = L"iPhone";
@@ -4999,7 +5001,11 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 IDWriteTextFormat* device_fmt = compositor_->SmallFormat();
                 const float textW = std::max(0.0f, nameRc.right - nameRc.left);
                 MakeBrush(dc, theme.text_secondary, brTextSecondary_);
-                if (e.device & fs::kPcDeviceLocked) {
+                if (e.device & fs::kPcDevicePlaceholder) {
+                    // No phone: how to connect one (opening the tile shows the help).
+                    DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), device_fmt, brTextSecondary_.get(),
+                        e.type_text, nameRc.left, nameRc.top + 25.0f * scale_, textW, 20.0f * scale_);
+                } else if (e.device & fs::kPcDeviceLocked) {
                     // What to do on the phone; the tile updates by itself.
                     DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), device_fmt, brTextSecondary_.get(),
                         l10n::Get((e.device & fs::kPcDeviceIPhone) ? l10n::StringId::DeviceUnlockHintIPhone

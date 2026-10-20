@@ -1,6 +1,7 @@
 // app_model.cpp
 #include "app_model.h"
 #include "cloud_roots.h"
+#include "../fs/device_source.h"
 #include "folder_alias.h"
 #include "selection_caps.h"
 #include "split_tree_shape.h"
@@ -1509,6 +1510,28 @@ static std::wstring StatusText(const Tab& tab) {
         return count;
     }
     if (tab.loading || !tab.snapshot) return L"";
+    if (tab.current_path.empty()) {
+        // This PC: what is there (2 个磁盘 · 1 个网络盘 · 1 个设备), not
+        // folders and files: phones and program icons are neither.
+        size_t counts[4]{};
+        for (size_t i = 0; i < tab.EntryCount(); ++i) {
+            const fs::DirEntry& e = tab.EntryAt(i);
+            if (e.drive_type) ++counts[e.drive_remote_like ? 1 : 0];
+            else if (e.pc_device & fs::kPcDevicePhone) ++counts[2];
+            else if (e.pc_launcher) ++counts[3];
+        }
+        const l10n::StringId ids[4] = {l10n::StringId::ThisPcStatusDrives, l10n::StringId::ThisPcStatusMounted,
+                                       l10n::StringId::ThisPcStatusDevices, l10n::StringId::ThisPcStatusLaunchers};
+        std::wstring text;
+        for (int k = 0; k < 4; ++k) {
+            if (counts[k] == 0 && k != 0) continue;
+            wchar_t part[96]{};
+            swprintf_s(part, l10n::Get(ids[k]).c_str(), counts[k]);
+            if (!text.empty()) text += L" \u00B7 ";
+            text += part;
+        }
+        return text;
+    }
     wchar_t buf[128];
     swprintf_s(buf, l10n::Get(l10n::StringId::StatusItemsFormat).c_str(),
         tab.directory_count + tab.file_count, tab.directory_count, tab.file_count);

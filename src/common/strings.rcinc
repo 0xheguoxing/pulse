@@ -2468,6 +2468,17 @@ BEGIN
     IDS_DEVICE_UNLOCK_HINT_ANDROID "在手机上解锁，并在弹窗里选“允许”"
     IDS_DEVICE_UNLOCK_HINT_IPHONE "解锁 iPhone，并在弹窗里点“信任”"
     IDS_DEVICE_STORAGE_FREE_FORMAT "剩 %s"
+    IDS_DEVICE_NONE_PLACEHOLDER "没有连接的手机"
+    IDS_DEVICE_NONE_HINT "用数据线连接，并在手机上选“文件传输”"
+    IDS_DEVICE_HELP_TITLE "手机连上了却看不到？"
+    IDS_DEVICE_HELP_STEP1 "解锁手机，下拉通知栏，点“USB 用于…”，选“文件传输”（有的手机叫“传输文件 / MTP”）。"
+    IDS_DEVICE_HELP_STEP2 "手机上如果弹出“允许访问设备数据吗”，选“允许”。"
+    IDS_DEVICE_HELP_STEP3 "换一根能传数据的线，或换个 USB 口；有些线只能充电。"
+    IDS_DEVICE_HELP_NOTE "连好后会自动出现在这里，不用刷新。"
+    IDS_THISPC_STATUS_DRIVES "%zu 个磁盘"
+    IDS_THISPC_STATUS_MOUNTED "%zu 个网络盘"
+    IDS_THISPC_STATUS_DEVICES "%zu 个设备"
+    IDS_THISPC_STATUS_LAUNCHERS "%zu 个网盘程序入口"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4935,6 +4946,17 @@ BEGIN
     IDS_DEVICE_UNLOCK_HINT_ANDROID "Unlock the phone and tap Allow"
     IDS_DEVICE_UNLOCK_HINT_IPHONE "Unlock the iPhone and tap Trust"
     IDS_DEVICE_STORAGE_FREE_FORMAT "%s free"
+    IDS_DEVICE_NONE_PLACEHOLDER "No phone connected"
+    IDS_DEVICE_NONE_HINT "Connect with a USB cable and choose File transfer on the phone"
+    IDS_DEVICE_HELP_TITLE "Phone connected but not showing up?"
+    IDS_DEVICE_HELP_STEP1 "Unlock the phone, pull down the notifications, tap the USB notice and choose File transfer (also called Transfer files / MTP)."
+    IDS_DEVICE_HELP_STEP2 "If the phone asks whether to allow access to its data, tap Allow."
+    IDS_DEVICE_HELP_STEP3 "Try a cable that carries data, or another USB port; some cables only charge."
+    IDS_DEVICE_HELP_NOTE "Once connected it shows up here by itself; no need to refresh."
+    IDS_THISPC_STATUS_DRIVES "%zu drives"
+    IDS_THISPC_STATUS_MOUNTED "%zu network drives"
+    IDS_THISPC_STATUS_DEVICES "%zu devices"
+    IDS_THISPC_STATUS_LAUNCHERS "%zu cloud drive apps"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

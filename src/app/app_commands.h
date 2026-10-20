@@ -192,6 +192,8 @@ void ShowRecyclePlaceMenu(AppState& s, POINT screen_pt);
 // searches). Used on startup, after a language switch, and when the volume set
 // changes (a plugged-in stick, a mounted image).
 void RefreshSidebarModel(AppState& s);
+// "手机连上了却看不到？" (pulse_devices_cloud.html): the three things to check.
+void ShowDeviceHelp(AppState& s);
 // Navigation-pane background menu: show or hide sections, expand or collapse them all.
 void ShowSidebarSectionsMenu(AppState& s, POINT screen_pt);
 // Menu for one section (header or empty space inside it): toggle its built-in

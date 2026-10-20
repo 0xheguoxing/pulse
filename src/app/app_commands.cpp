@@ -2741,6 +2741,24 @@ void RefreshSidebarModel(AppState& s) {
     if (s.networkLocations) RequestNetworkLocations(s);
 }
 
+void ShowDeviceHelp(AppState& s) {
+    ui::ConfirmDialogSpec spec;
+    spec.tone = ui::ConfirmTone::Info;
+    spec.glyph = L"\xE8EA";  // CellPhone
+    spec.title = l10n::Get(l10n::StringId::DeviceHelpTitle).c_str();
+    const l10n::StringId steps[] = {l10n::StringId::DeviceHelpStep1, l10n::StringId::DeviceHelpStep2,
+                                    l10n::StringId::DeviceHelpStep3};
+    // One wrapped paragraph per step: card rows are one line, these are sentences.
+    for (int i = 0; i < 3; ++i) {
+        if (i) spec.message += L"\n";
+        spec.message += std::to_wstring(i + 1) + L". " + l10n::Get(steps[i]).c_str();
+    }
+    spec.note = l10n::Get(l10n::StringId::DeviceHelpNote).c_str();
+    spec.confirm_text = l10n::Get(l10n::StringId::TeachGotIt).c_str();
+    spec.single_button = true;
+    (void)ui::ShowConfirmDialog(s.hwnd, spec, s.darkMode, s.accentColor);
+}
+
 app::SidebarEntry* QuickAccessEntryForPath(AppState& s,
                                                    const std::wstring& path) {
     for (auto* group : { &s.sidebar.quick_access, &s.sidebar.cloud, &s.sidebar.starred }) {

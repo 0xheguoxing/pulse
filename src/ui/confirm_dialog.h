@@ -32,6 +32,8 @@ struct ConfirmDialogSpec {
     // The button Enter presses at first. Destructive questions start on
     // Cancel, like MB_DEFBUTTON2, so Enter alone never confirms them.
     ConfirmChoice default_choice = ConfirmChoice::Confirm;
+    // Information only: just the confirm button (Esc / close still dismiss).
+    bool single_button = false;
 };
 
 ConfirmChoice ShowConfirmDialogEx(HWND owner, const ConfirmDialogSpec& spec, bool dark,

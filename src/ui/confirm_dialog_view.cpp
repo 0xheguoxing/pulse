@@ -140,7 +140,7 @@ ConfirmDialogSpec NormalizeConfirmSpec(ConfirmDialogSpec spec) {
     for (std::wstring& item : spec.items) item = path::FriendlyPathText(item);
     if (spec.confirm_text.empty())
         spec.confirm_text = l10n::Get(l10n::StringId::ConfirmDefault);
-    if (spec.cancel_text.empty()) spec.cancel_text = l10n::Get(l10n::StringId::Cancel);
+    if (spec.cancel_text.empty() && !spec.single_button) spec.cancel_text = l10n::Get(l10n::StringId::Cancel);
     // Trailing blank lines from older prompt strings would pad the layout.
     while (!spec.message.empty() && (spec.message.back() == L'\n' || spec.message.back() == L' '))
         spec.message.pop_back();
@@ -169,6 +169,7 @@ std::wstring FitConfirmItemText(const std::wstring& text, float width,
 }
 
 std::vector<int> ConfirmFocusOrder(const ConfirmDialogSpec& spec) {
+    if (spec.single_button) return {kConfirmPrimary};
     if (spec.secondary_text.empty()) return {kConfirmCancel, kConfirmPrimary};
     return {kConfirmCancel, kConfirmSecondary, kConfirmPrimary};
 }
@@ -198,11 +199,11 @@ ConfirmDialogLayout LayoutConfirmDialog(const ConfirmDialogSpec& spec,
     const float gap = Dip(scale, kButtonGap);
     const float btn_h = painter.MeasureButtonHeight();
     const float primary_w = ButtonWidth(painter, spec.confirm_text, scale);
-    const float cancel_w = ButtonWidth(painter, spec.cancel_text, scale);
+    const float cancel_w = spec.single_button ? 0.0f : ButtonWidth(painter, spec.cancel_text, scale);
     const float secondary_w = spec.secondary_text.empty()
         ? 0.0f : ButtonWidth(painter, spec.secondary_text, scale);
     const float buttons_w = primary_w + cancel_w +
-        (secondary_w > 0.0f ? secondary_w + gap : 0.0f) + gap;
+        (secondary_w > 0.0f ? secondary_w + gap : 0.0f) + (cancel_w > 0.0f ? gap : 0.0f);
     const float text_x = pad + Dip(scale, kIcon + kIconGap);
 
     // Widen until the message fits in a few lines or the cap is reached.
@@ -265,7 +266,8 @@ ConfirmDialogLayout LayoutConfirmDialog(const ConfirmDialogSpec& spec,
         l.secondary = D2D1::RectF(right - secondary_w, by, right, by + btn_h);
         right = l.secondary.left - gap;
     }
-    l.cancel = D2D1::RectF(right - cancel_w, by, right, by + btn_h);
+    // Single button: an empty cancel rect, so nothing draws or hits there.
+    l.cancel = spec.single_button ? D2D1::RectF() : D2D1::RectF(right - cancel_w, by, right, by + btn_h);
     l.width = width;
     l.height = std::ceil(l.footer.bottom);
     return l;
@@ -397,7 +399,7 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
     };
     {
         RiseIn in(compositor, visual.footer_in, rise);
-        {
+        if (!spec.single_button) {
             AroundCentre press(compositor, Centre(l.cancel), pressed_scale(kConfirmCancel), 0.0f);
             painter.DrawButton({l.cancel, spec.cancel_text, {}, fluent::ButtonKind::Standard,
                                 state_for(kConfirmCancel)});

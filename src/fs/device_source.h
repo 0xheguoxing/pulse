@@ -95,6 +95,7 @@ bool AnyPortableDevicePresent();
 constexpr uint8_t kPcDevicePhone = 1;
 constexpr uint8_t kPcDeviceIPhone = 2;   // read-only
 constexpr uint8_t kPcDeviceLocked = 4;   // no storage until Allow / Trust
+constexpr uint8_t kPcDevicePlaceholder = 8;  // "no phone connected" tile (opens the help)
 inline uint8_t PcDeviceFlags(const DeviceInfo& device) {
     return static_cast<uint8_t>(kPcDevicePhone | (device.kind == DeviceKind::IPhone ? kPcDeviceIPhone : 0) |
                                 (device.locked ? kPcDeviceLocked : 0));

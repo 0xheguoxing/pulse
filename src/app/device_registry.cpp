@@ -16,6 +16,7 @@ constexpr uint32_t kQuietMs = 500;          // arrivals come in bursts (device +
 constexpr uint32_t kLockedRecheckMs = 2000; // waiting for 允许 / 信任 on the phone
 constexpr uint32_t kLockedChecksMax = 150;  // 5 minutes
 constexpr uint32_t kListBudgetMs = 15000;   // a list call stuck in the driver
+constexpr uint32_t kFakePollMs = 1000;      // test source: no notifications, so poll
 
 std::wstring EnvValue(const wchar_t* name) {
     wchar_t value[1024]{};
@@ -150,6 +151,7 @@ void DeviceRegistry::RefreshOnWorker() {
 void DeviceRegistry::Publish(std::vector<fs::DeviceInfo> devices) {
     bool changed = false;
     bool recheck = false;
+    bool poll = false;
     HWND notify = nullptr;
     uint64_t revision = 0;
     {
@@ -166,12 +168,14 @@ void DeviceRegistry::Publish(std::vector<fs::DeviceInfo> devices) {
                                             [](const fs::DeviceInfo& d) { return d.locked; });
         recheck = any_locked && locked_checks_ < kLockedChecksMax;
         if (recheck) ++locked_checks_;
+        poll = test_source_;
     }
     if (changed) {
         if (test_source_ || !EnvValue(L"PULSE_TEST_DATA_DIR").empty()) WriteTestDeviceList(devices, revision);
         if (notify) PostMessageW(notify, WM_DEVICES_CHANGED, 0, 0);
     }
     if (recheck) ScheduleRefresh(kLockedRecheckMs);
+    else if (poll) ScheduleRefresh(kFakePollMs);  // fake phones come and go as folders
 }
 
 std::vector<fs::DeviceInfo> DeviceRegistry::Devices() const {

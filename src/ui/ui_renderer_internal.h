@@ -423,7 +423,10 @@ void ClearTextWidthCache() {
             }
             entry.type_text = std::move(text);
         }
-        if (source.pc_device) {
+        if (source.pc_device & fs::kPcDevicePlaceholder) {
+            entry.device = source.pc_device;  // no phone: how to connect one
+            entry.type_text = pulse::l10n::Get(pulse::l10n::StringId::DeviceNoneHint);
+        } else if (source.pc_device) {
             // Phones: 手机 / iPhone · 只读, then 未解锁 while waiting for Allow / Trust.
             entry.device = source.pc_device;
             const bool iphone = (source.pc_device & fs::kPcDeviceIPhone) != 0;

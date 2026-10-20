@@ -182,6 +182,7 @@ void UnregisterAssocChangeNotify() {
 using namespace pulse;
 namespace pulse {
 void DispatchMenuCommand(AppState& s, int cmd); // app_commands.cpp (--menushot PULSE_TEST_MENU_RUN)
+constexpr UINT_PTR kTimerDeviceHelpTest = 0xD2B1;  // PULSE_TEST_DEVICE_HELP_MS (test instances)
 }
 
 uint64_t FileTimeValue(const FILETIME& value) {
@@ -1344,6 +1345,13 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             RequestNetworkLocations(*s);
             // Phones: arrival notifications on the host; listed only when one is present.
             app::DeviceRegistry::Instance().Start(ServiceWindow(*s));
+            // Verification hook (isolated test instances only): open the phone
+            // help after N ms so its dialog can be captured.
+            if (s->isolatedTest) {
+                wchar_t ms[16]{};
+                if (GetEnvironmentVariableW(L"PULSE_TEST_DEVICE_HELP_MS", ms, 16) > 0 && _wtoi(ms) > 0)
+                    SetTimer(hwnd, kTimerDeviceHelpTest, static_cast<UINT>(_wtoi(ms)), nullptr);
+            }
 
             // Ops layer: queue worker + shell host IPC; notify repaints the status bar.
             const std::wstring data_dir = app::GetPulseDataDir();
@@ -1933,6 +1941,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_TIMER: {
+        if (s && wParam == kTimerDeviceHelpTest) {
+            KillTimer(hwnd, kTimerDeviceHelpTest);
+            ShowDeviceHelp(*s);
+            return 0;
+        }
         if (s && wParam == kTimerCloakPoll) {
             if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) {
                 KillTimer(hwnd, kTimerCloakPoll);  // WM_PAINT re-arms once shown again

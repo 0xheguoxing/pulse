@@ -1210,6 +1210,17 @@
 #define IDS_DEVICE_UNLOCK_HINT_ANDROID                                                   3692
 #define IDS_DEVICE_UNLOCK_HINT_IPHONE                                                    3693
 #define IDS_DEVICE_STORAGE_FREE_FORMAT                                                   3694
+#define IDS_DEVICE_NONE_PLACEHOLDER                                                      3695
+#define IDS_DEVICE_NONE_HINT                                                             3696
+#define IDS_DEVICE_HELP_TITLE                                                            3697
+#define IDS_DEVICE_HELP_STEP1                                                            3698
+#define IDS_DEVICE_HELP_STEP2                                                            3699
+#define IDS_DEVICE_HELP_STEP3                                                            3700
+#define IDS_DEVICE_HELP_NOTE                                                             3701
+#define IDS_THISPC_STATUS_DRIVES                                                         3702
+#define IDS_THISPC_STATUS_MOUNTED                                                        3703
+#define IDS_THISPC_STATUS_DEVICES                                                        3704
+#define IDS_THISPC_STATUS_LAUNCHERS                                                      3705
 #define IDS_MOUNTED_DRIVE_NOTE                                                           3688
 #define IDS_SIDEBAR_CLOUD_HIDDEN_HINT                                                    2516
 #define IDS_SIDEBAR_SHOW_HIDDEN                                                          2517
