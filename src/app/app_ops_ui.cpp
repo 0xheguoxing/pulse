@@ -895,6 +895,13 @@ void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog) {
     if (status.active) {
         // Progress lives in the status-bar pill; the details window opens only
         // when the pill is clicked (conflicts and failures still surface).
+        // Emptying the Recycle Bin is the exception: it starts from a menu with
+        // no row to watch, so its window opens once unless it ends quickly.
+        if (status.type == ops::OpType::EmptyRecycle && !s.operationAutoShown &&
+            now - s.operationStartedAt >= std::chrono::milliseconds(400)) {
+            s.operationAutoShown = true;
+            if (!OperationWindowVisible(s)) ShowOperationWindow(s, status, false);
+        }
         return;
     }
 

@@ -3,6 +3,8 @@
 #include <shlobj.h>
 #include <wrl/client.h>
 #include "../common/path_utils.h"
+#include "../common/current_user_security.h"
+#include "../common/recycle_index.h"
 #include <shellapi.h>
 #include <sherrors.h>
 #include <filesystem>
@@ -59,6 +61,27 @@ HRESULT FindRecycledFixture(const std::filesystem::path& original, ComPtr<IShell
     }
     return found ? S_OK : HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
 }
+// The Shell's restore leaves the item's $I record behind (still there seconds
+// later), so every run added one to the user's Recycle Bin folder. Remove only
+// this fixture's record, and only once its payload is gone.
+void RemoveOrphanFixtureIndex(const std::filesystem::path& original) {
+    const std::wstring text = original.wstring();
+    const std::wstring sid = pulse::CurrentUserSidString();
+    if (sid.empty() || text.size() < 3 || text[1] != L':') return;
+    const std::wstring bin = text.substr(0, 2) + L"\\$Recycle.Bin\\" + sid;
+    WIN32_FIND_DATAW data{};
+    HANDLE find = FindFirstFileW((bin + L"\\$I*").c_str(), &data);
+    if (find == INVALID_HANDLE_VALUE) return;
+    do {
+        const std::wstring index = bin + L"\\" + data.cFileName;
+        pulse::recycle::IndexRecord record;
+        if (!pulse::recycle::ReadIndex(index, record) || !pulse::path::EqualInsensitive(record.original_path, text)) continue;
+        std::wstring payload = index;
+        payload[bin.size() + 2] = L'R';
+        if (GetFileAttributesW(payload.c_str()) == INVALID_FILE_ATTRIBUTES) DeleteFileW(index.c_str());
+    } while (FindNextFileW(find, &data));
+    FindClose(find);
+}
 int RestoreExistingFixture(const std::filesystem::path& original) {
     if (!original.parent_path().filename().wstring().starts_with(L"pulse_recycle_fixture_{") ||
         original.filename() != L"unique_roundtrip_item" || std::filesystem::exists(original)) return 2;
@@ -77,6 +100,7 @@ int RestoreExistingFixture(const std::filesystem::path& original) {
     }
     std::wcerr << L"restore exact fixture hr=0x" << std::hex << static_cast<unsigned long>(hr) << std::dec << L" exists=" << std::filesystem::exists(original) << L"\n";
     if (SUCCEEDED(hr) && std::filesystem::exists(original)) {
+        RemoveOrphanFixtureIndex(original);
         std::filesystem::remove_all(original.parent_path());
         return 0;
     }
@@ -126,6 +150,7 @@ int RecycleRoundTrip(bool directory = false) {
     }
     // Never clear the bin. Only remove this unique directory after the fixture
     // was restored or never left it; an unsuccessful restore stays recoverable.
+    if (restored) RemoveOrphanFixtureIndex(original);
     if (restored || std::filesystem::exists(original)) std::filesystem::remove_all(root);
     return deleted && restored ? 0 : 1;
 }

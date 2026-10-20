@@ -11,6 +11,7 @@
 #include "../ipc/shell_client.h"
 #include "../common/localization.h"
 #include "../common/current_user_security.h"
+#include "../ops/recycle_empty.h"
 #include <windows.h>
 #include <oleidl.h>
 #include <winioctl.h>
@@ -754,7 +755,7 @@ int wmain(int argc, wchar_t** argv) {
         // OPS-05: recycle only our isolated files, then restore exact versions.
         const auto versioned = srcDir + L"\\versions.txt";
         const auto bin = versioned.substr(0, 2) + L"\\$Recycle.Bin\\" + CurrentUserSidString();
-        auto version_paths = [&] {
+        auto payloads_of = [&](const std::wstring& wanted) {
             std::vector<std::wstring> result;
             WIN32_FIND_DATAW data{};
             HANDLE find = FindFirstFileW((bin + L"\\$I*").c_str(), &data);
@@ -773,13 +774,14 @@ int wmain(int argc, wchar_t** argv) {
                 const size_t offset = schema == 2 ? 28 : 24;
                 const auto text = reinterpret_cast<const wchar_t*>(bytes.data() + offset);
                 const std::wstring original(text, wcsnlen(text, (read - offset) / sizeof(wchar_t)));
-                if (_wcsicmp(original.c_str(), versioned.c_str()) != 0) continue;
+                if (!pulse::path::EqualInsensitive(pulse::path::StripExtendedPathPrefix(original), pulse::path::StripExtendedPathPrefix(wanted))) continue;
                 auto content = index; content[content.find_last_of(L'\\') + 2] = L'R';
                 result.push_back(content);
             } while (FindNextFileW(find, &data));
             FindClose(find);
             return result;
         };
+        auto version_paths = [&] { return payloads_of(versioned); };
         MakeFile(versioned, "first", 5);
         auto first_status = RunOp(SimpleOp(ops::OpType::RecycleDelete, { versioned.c_str() }));
         const auto first_versions = version_paths();
@@ -805,6 +807,129 @@ int wmain(int argc, wchar_t** argv) {
                 DeleteFileW(versioned.c_str());
             }
             Check(version_paths().empty(), L"OPS-05 controlled recycle fixtures cleaned");
+        }
+        // OPS-05b: restores that used to fail. The original folder is gone, the
+        // original name is taken again, and the path is beyond MAX_PATH.
+        {
+            const auto gone_parent = srcDir + L"\\restore-parent";
+            const auto child = gone_parent + L"\\child.txt";
+            const auto taken = srcDir + L"\\restore-taken.txt";
+            const auto taken_copy = srcDir + L"\\restore-taken (2).txt";
+            const auto deep_root = L"\\\\?\\" + srcDir + L"\\restore-long";
+            std::vector<std::wstring> deep_dirs{deep_root};
+            for (int level = 0; level < 5; ++level)
+                deep_dirs.push_back(deep_dirs.back() + L"\\" + std::wstring(52, static_cast<wchar_t>(L'k' + level)));
+            const auto deep_file = deep_dirs.back() + L"\\long.txt";
+            const auto deep_plain = deep_file.substr(4);
+            MakeDir(gone_parent);
+            for (const auto& dir : deep_dirs) MakeDir(dir);
+            Check(MakeFile(child, "child", 5) && MakeFile(taken, "old", 3) && MakeFile(deep_file, "deep", 4) &&
+                  deep_plain.size() > MAX_PATH, L"OPS-05b restore fixtures created");
+            for (const auto& item : { child, taken, deep_file })
+                RunOp(SimpleOp(ops::OpType::RecycleDelete, { item.c_str() }));
+            const auto child_payloads = payloads_of(child);
+            const auto taken_payloads = payloads_of(taken);
+            const auto deep_payloads = payloads_of(deep_plain);
+            Check(child_payloads.size() == 1 && taken_payloads.size() == 1 && deep_payloads.size() == 1,
+                  L"OPS-05b each restore fixture has one recycle version");
+            RemoveDirectoryW(gone_parent.c_str());
+            MakeFile(taken, "new", 3);
+            const auto new_hash = FileHash(taken);
+            if (child_payloads.size() == 1) {
+                const auto restored_child = RunOp(SimpleOp(ops::OpType::RestoreRecycle, { child_payloads[0].c_str() }));
+                Check(restored_child.last_error.empty() && FileSize(child) == 5 && payloads_of(child).empty(),
+                      L"OPS-05b restore recreates a missing original folder");
+            }
+            if (taken_payloads.size() == 1) {
+                const auto restored_taken = RunOp(SimpleOp(ops::OpType::RestoreRecycle, { taken_payloads[0].c_str() }));
+                Check(restored_taken.last_error.empty() && FileHash(taken) == new_hash && Exists(taken_copy) &&
+                      FileHash(taken_copy) != new_hash && payloads_of(taken).empty(),
+                      L"OPS-05b restore keeps both when the original name is taken");
+            }
+            if (deep_payloads.size() == 1) {
+                const auto restored_deep = RunOp(SimpleOp(ops::OpType::RestoreRecycle, { deep_payloads[0].c_str() }));
+                Check(restored_deep.last_error.empty() && FileSize(deep_file) == 4 && payloads_of(deep_plain).empty(),
+                      L"OPS-05b restore handles paths beyond MAX_PATH");
+            }
+            // Leave nothing of ours in the real bin, whatever happened above.
+            for (const auto& original : { child, taken, deep_plain }) {
+                for (const auto& left : payloads_of(original)) {
+                    auto left_index = left;
+                    left_index[left_index.find_last_of(L'\\') + 2] = L'I';
+                    DeleteFileW((L"\\\\?\\" + left).c_str());
+                    DeleteFileW((L"\\\\?\\" + left_index).c_str());
+                }
+            }
+            DeleteFileW(child.c_str());
+            RemoveDirectoryW(gone_parent.c_str());
+            DeleteFileW(taken.c_str());
+            DeleteFileW(taken_copy.c_str());
+            DeleteFileW(deep_file.c_str());
+            for (auto it = deep_dirs.rbegin(); it != deep_dirs.rend(); ++it) RemoveDirectoryW(it->c_str());
+            Check(payloads_of(child).empty() && payloads_of(taken).empty() && payloads_of(deep_plain).empty() &&
+                  !Exists(deep_root), L"OPS-05b controlled recycle fixtures cleaned");
+        }
+        // OPS-05c: direct emptying, on a fake bin folder only (never the real one).
+        {
+            const auto fake = srcDir + L"\\fake-bin";
+            const auto outside = srcDir + L"\\fake-outside";
+            MakeDir(fake);
+            MakeDir(outside);
+            MakeFile(outside + L"\\keep.txt", "keep", 4);
+            const auto write_index = [](const std::wstring& path, const std::wstring& original, uint64_t size) {
+                std::vector<BYTE> bytes(28 + (original.size() + 1) * 2, 0);
+                bytes[0] = 2;
+                memcpy(bytes.data() + 8, &size, 8);
+                const uint32_t units = static_cast<uint32_t>(original.size() + 1);
+                memcpy(bytes.data() + 24, &units, 4);
+                memcpy(bytes.data() + 28, original.c_str(), original.size() * 2);
+                return MakeFile(path, bytes.data(), static_cast<DWORD>(bytes.size()));
+            };
+            bool built = write_index(fake + L"\\$IAAAAAA.txt", L"C:\\fixture\\a.txt", 1) &&
+                         MakeFile(fake + L"\\$RAAAAAA.txt", "a", 1);
+            const auto tree = fake + L"\\$RBBBBBB";
+            MakeDir(tree);
+            for (int d = 0; d < 3; ++d) {
+                const auto sub = tree + L"\\d" + std::to_wstring(d);
+                MakeDir(sub);
+                for (int f = 0; f < 100; ++f) built = MakeFile(sub + L"\\f" + std::to_wstring(f) + L".txt", "x", 1) && built;
+            }
+            built = MakeFile(tree + L"\\readonly.txt", "r", 1) && built;
+            SetFileAttributesW((tree + L"\\readonly.txt").c_str(), FILE_ATTRIBUTE_READONLY);
+            std::wstring deep = L"\\\\?\\" + tree;
+            for (int level = 0; level < 5; ++level) { deep += L"\\" + std::wstring(52, static_cast<wchar_t>(L'p' + level)); MakeDir(deep); }
+            built = MakeFile(deep + L"\\deep.txt", "d", 1) && built;
+            built = MakeJunction(tree + L"\\link", outside) && built;
+            built = write_index(fake + L"\\$IBBBBBB", L"C:\\fixture\\tree", 303) && built;
+            built = write_index(fake + L"\\$ICCCCCC.txt", L"C:\\fixture\\orphan.txt", 1) && built;
+            MakeDir(fake + L"\\$RDDDDDD");
+            built = MakeFile(fake + L"\\$RDDDDDD\\one.txt", "1", 1) && MakeFile(fake + L"\\$RDDDDDD\\two.txt", "2", 1) && built;
+            built = MakeFile(fake + L"\\desktop.ini", "ini", 3) && MakeFile(fake + L"\\.other", "o", 1) && built;
+            Check(built, L"OPS-05c fake bin fixture created");
+
+            // Cancelled before the first file: every item stays intact.
+            auto cancelled_run = recycle_empty::EmptyFolders({ L"\\\\?\\" + fake }, [] { return true; }, nullptr);
+            Check(cancelled_run.cancelled && cancelled_run.deleted_files == 0 && Exists(fake + L"\\$RAAAAAA.txt") &&
+                  Exists(fake + L"\\$IBBBBBB") && Exists(tree + L"\\d2\\f99.txt"), L"OPS-05c cancelled empty leaves items intact");
+
+            recycle_empty::Progress last;
+            bool saw_totals = false;
+            const auto result = recycle_empty::EmptyFolders({ L"\\\\?\\" + fake }, [] { return false; },
+                [&](const recycle_empty::Progress& p) { last = p; saw_totals = saw_totals || (p.total_items == 2 && p.total_bytes == 304); }, 4);
+            Check(result.removed_items == 2 && result.deleted_files == 305 && result.failed_entries == 0 && !result.cancelled,
+                  L"OPS-05c direct empty removes every item and file");
+            Check(saw_totals && last.removed_items == 2 && last.deleted_files == 305, L"OPS-05c progress reports totals from the $I records");
+            Check(Exists(outside + L"\\keep.txt"), L"OPS-05c a junction inside a payload is removed without following it");
+            Check(!Exists(fake + L"\\$IAAAAAA.txt") && !Exists(fake + L"\\$RAAAAAA.txt") && !Exists(fake + L"\\$IBBBBBB") &&
+                  !Exists(tree) && !Exists(fake + L"\\$ICCCCCC.txt") && !Exists(fake + L"\\$RDDDDDD") &&
+                  Exists(fake + L"\\desktop.ini") && Exists(fake + L"\\.other"),
+                  L"OPS-05c pairs, orphans and stray payloads go; other files stay");
+            DeleteFileW((fake + L"\\desktop.ini").c_str());
+            DeleteFileW((fake + L"\\.other").c_str());
+            RemoveDirectoryW(fake.c_str());
+            DeleteFileW((outside + L"\\keep.txt").c_str());
+            RemoveDirectoryW(outside.c_str());
+            Check(!Exists(fake) && !Exists(outside), L"OPS-05c fake bin cleaned");
         }
         if (recycle_only) {
             g_ops.Stop();

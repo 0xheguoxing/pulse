@@ -13,6 +13,7 @@
 #include "../common/path_utils.h"
 #include "../common/rename_filename.h"
 #include "../common/utf8_file.h"
+#include "recycle_empty.h"
 #include <objbase.h>
 #include <bcrypt.h>
 #include <shellapi.h>
@@ -3743,69 +3744,67 @@ void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
     }
 #endif
     if (req.type == OpType::EmptyRecycle) {
-        SHQUERYRBINFO start{};
-        start.cbSize = sizeof(start);
-        const bool have_start = SUCCEEDED(SHQueryRecycleBinW(nullptr, &start))
-            && start.i64NumItems >= 0;
-        const int64_t start_items = have_start ? start.i64NumItems : 0;
-        const int64_t start_bytes = have_start ? start.i64Size : 0;
-        SetStatus([&](OpStatus& st) {
+        // Delete the payloads directly (recycle_empty.h has the numbers). The
+        // Shell only gets what is left, e.g. bins of folders redirected to a
+        // network share, and is told once at the end so Explorer refreshes.
+        SetStatus([](OpStatus& st) {
+            st.can_pause = false;
             st.current_item = OpVerb(OpType::EmptyRecycle);
             st.summary = st.current_item;
-            st.total_items = start_items > 0 ? static_cast<uint64_t>(start_items) : 0;
-            st.total_bytes = start_bytes > 0 ? static_cast<uint64_t>(start_bytes) : 0;
-            st.percent = have_start && start_items > 0 ? 0.0f : -1.0f;
+            st.percent = -1.0f;
         });
-
-        // The poller sees recycled bytes actually shrink, so empty-recycle reports a byte
-        // speed like a transfer does instead of leaving the graph flat.
         TransferRateEstimator recycle_rate;
         recycle_rate.Reset(GetTickCount64(), 0);
-
-        std::atomic<bool> emptying{true};
-        std::thread poller([&] {
-            CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-            while (emptying.load(std::memory_order_relaxed) && !stopping_.load()) {
-                SHQUERYRBINFO now{};
-                now.cbSize = sizeof(now);
-                if (SUCCEEDED(SHQueryRecycleBinW(nullptr, &now)) && have_start && start_items > 0) {
-                    const int64_t left = (std::max)(int64_t{0}, now.i64NumItems);
-                    const int64_t done_items = (std::max)(int64_t{0}, start_items - left);
-                    const int64_t left_bytes = (std::max)(int64_t{0}, now.i64Size);
-                    const int64_t done_bytes = (std::max)(int64_t{0}, start_bytes - left_bytes);
-                    SetStatus([&](OpStatus& st) {
-                        if (!st.active || st.type != OpType::EmptyRecycle) return;
-                        st.completed_items = static_cast<uint64_t>(done_items);
-                        st.total_items = static_cast<uint64_t>(start_items);
-                        st.transferred_bytes = static_cast<uint64_t>(done_bytes);
-                        st.total_bytes = static_cast<uint64_t>((std::max)(start_bytes, int64_t{0}));
-                        st.percent = 100.0f * static_cast<float>(done_items)
-                            / static_cast<float>(start_items);
-                        st.current_item = OpVerb(OpType::EmptyRecycle);
-                        const ULONGLONG now_tick = GetTickCount64();
-                        recycle_rate.Observe(now_tick, st.transferred_bytes, st.total_bytes);
-                        st.bytes_per_second = recycle_rate.speed();
-                        st.peak_bytes_per_second = (std::max)(st.peak_bytes_per_second,
-                                                              st.bytes_per_second);
-                        st.eta_seconds = recycle_rate.eta_seconds();
-                    });
-                }
-                for (int i = 0; i < 8 && emptying.load(std::memory_order_relaxed); ++i)
-                    Sleep(50);
+        const ULONGLONG started = GetTickCount64();
+        const auto cancelled = [this] { return stopping_.load() || shell_cancel_requested_.load(); };
+        const auto progress = [&](const recycle_empty::Progress& p) {
+            SetStatus([&](OpStatus& st) {
+                if (!st.active || st.type != OpType::EmptyRecycle) return;
+                st.total_items = p.total_items;
+                st.completed_items = p.removed_items;
+                st.total_bytes = (std::max)(p.total_bytes, p.deleted_bytes);
+                st.transferred_bytes = p.deleted_bytes;
+                st.percent = st.total_bytes ? 100.0f * static_cast<float>(st.transferred_bytes) / static_cast<float>(st.total_bytes)
+                    : p.total_items ? 100.0f * static_cast<float>(p.removed_items) / static_cast<float>(p.total_items) : -1.0f;
+                st.current_item = p.current.empty() ? OpVerb(OpType::EmptyRecycle) : p.current;
+                recycle_rate.Observe(GetTickCount64(), st.transferred_bytes, st.total_bytes);
+                st.bytes_per_second = recycle_rate.speed();
+                st.peak_bytes_per_second = (std::max)(st.peak_bytes_per_second, st.bytes_per_second);
+                st.eta_seconds = recycle_rate.eta_seconds();
+            });
+        };
+        const recycle_empty::Result result = recycle_empty::EmptyFolders(
+            recycle_empty::CurrentUserBinFolders(), cancelled, progress);
+        HRESULT hr = S_OK;
+        uint64_t shell_items = 0;
+        if (!result.cancelled) {
+            SHQUERYRBINFO left{};
+            left.cbSize = sizeof(left);
+            if (SUCCEEDED(SHQueryRecycleBinW(nullptr, &left)) && left.i64NumItems > 0) {
+                shell_items = static_cast<uint64_t>(left.i64NumItems);
+                hr = SHEmptyRecycleBinW(nullptr, nullptr,
+                    SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND);
             }
-            CoUninitialize();
-        });
-
-        const HRESULT hr = SHEmptyRecycleBinW(nullptr, nullptr,
-            SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND);
-        emptying.store(false, std::memory_order_relaxed);
-        if (poller.joinable()) poller.join();
+        }
+        recycle_empty::NotifyShell();
+        diagnostics::runtime::Event("recycle_empty_result", {{"task", task_id},
+            {"items", result.removed_items}, {"files", result.deleted_files},
+            {"bytes", result.deleted_bytes}, {"failed", result.failed_entries},
+            {"error", static_cast<uint32_t>(result.first_error)}, {"cancelled", result.cancelled},
+            {"shell_items", shell_items}, {"shell_hresult", static_cast<uint32_t>(hr)},
+            {"elapsed_ms", GetTickCount64() - started}});
 
         SetStatus([&](OpStatus& st) {
             st.active = false;
             st.percent = -1.0f;
             st.completed_ops++;
-            if (FAILED(hr)) {
+            st.bytes_per_second = 0;
+            st.eta_seconds = 0;
+            if (result.cancelled) {
+                st.phase = OpPhase::Failed;
+                st.last_error = l10n::Get(l10n::StringId::Canceled).c_str();
+                st.summary = st.last_error;
+            } else if (FAILED(hr) || result.failed_entries) {
                 st.phase = OpPhase::Failed;
                 st.last_error = l10n::Get(l10n::StringId::CouldNotEmptyTheRecycleBin).c_str();
             } else {

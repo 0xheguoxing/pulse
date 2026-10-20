@@ -402,8 +402,57 @@ bool ReadRecycleOriginal(const std::wstring& i_path, std::wstring& original) {
     return true;
 }
 
+// \\?\ form for the Win32 calls below: this host has no longPathAware
+// manifest, and restored items are often deeper than MAX_PATH.
+std::wstring ExtendedPath(const std::wstring& path) {
+    std::wstring plain = pulse::path::StripExtendedPathPrefix(path);
+    std::replace(plain.begin(), plain.end(), L'/', L'\\');
+    if (plain.size() > 2 && plain[0] == L'\\' && plain[1] == L'\\')
+        return L"\\\\?\\UNC\\" + plain.substr(2);
+    return L"\\\\?\\" + plain;
+}
+
+// Length of the "\\?\C:\" or "\\?\UNC\server\share\" root of an ExtendedPath.
+size_t ExtendedRootLength(const std::wstring& path) {
+    if (path.rfind(L"\\\\?\\UNC\\", 0) != 0) return 7;
+    const size_t server = path.find(L'\\', 8);
+    const size_t share = server == std::wstring::npos ? server : path.find(L'\\', server + 1);
+    return share == std::wstring::npos ? path.size() : share + 1;
+}
+
+// The Shell's Restore recreates the original folder when it is gone.
+bool EnsureParentFolder(const std::wstring& path, size_t root) {
+    const size_t slash = path.find_last_of(L'\\');
+    if (slash == std::wstring::npos || slash + 1 <= root) return true;
+    const std::wstring parent = path.substr(0, slash);
+    const DWORD attributes = GetFileAttributesW(parent.c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES) return (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    if (!EnsureParentFolder(parent, root)) return false;
+    return CreateDirectoryW(parent.c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS;
+}
+
+// "name (2).ext": the next free name beside a taken one, as the Shell's
+// "keep both" names it.
+std::wstring FreeSiblingName(const std::wstring& path, bool folder) {
+    const size_t slash = path.find_last_of(L'\\');
+    const std::wstring dir = path.substr(0, slash + 1);
+    const std::wstring name = path.substr(slash + 1);
+    size_t dot = folder ? std::wstring::npos : name.find_last_of(L'.');
+    if (dot == 0) dot = std::wstring::npos;
+    const std::wstring stem = name.substr(0, dot);
+    const std::wstring extension = dot == std::wstring::npos ? L"" : name.substr(dot);
+    for (int n = 2; n < 10000; ++n) {
+        std::wstring candidate = dir + stem + L" (" + std::to_wstring(n) + L")" + extension;
+        if (GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES) return candidate;
+    }
+    return {};
+}
+
 // The production caller validates the current user's recycle-root identity
 // before reaching this step. Tests use only their own isolated $I/$R fixtures.
+// Restores like the Shell's Restore: a missing original folder is recreated,
+// long paths work, and when the original name is taken again both are kept by
+// restoring under the next free "name (N)" name.
 bool RestoreSelectedRecyclePayload(const std::wstring& payload, std::wstring& error) {
     std::wstring index = payload;
     const size_t slash = index.find_last_of(L"\\/");
@@ -414,12 +463,37 @@ bool RestoreSelectedRecyclePayload(const std::wstring& payload, std::wstring& er
         error = L"无法读取所选回收站条目";
         return false;
     }
-    const std::wstring dest = ToParsingPath(original);
-    if (!MoveFileExW(payload.c_str(), dest.c_str(), 0)) {
-        error = L"还原失败（目标可能已存在）";
+    const std::wstring source = ExtendedPath(payload);
+    const DWORD attributes = GetFileAttributesW(source.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        error = L"回收站中未找到该项";
         return false;
     }
-    DeleteFileW(index.c_str());
+    const bool folder = (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    std::wstring dest = ExtendedPath(original);
+    bool moved = false;
+    if (EnsureParentFolder(dest, ExtendedRootLength(dest))) {
+        // A name taken between the check and the move just moves on to the next one.
+        for (int attempt = 0; !moved && !dest.empty() && attempt < 4; ++attempt) {
+            if (GetFileAttributesW(dest.c_str()) != INVALID_FILE_ATTRIBUTES) dest = FreeSiblingName(dest, folder);
+            if (dest.empty()) break;
+            moved = MoveFileExW(source.c_str(), dest.c_str(), MOVEFILE_COPY_ALLOWED) != FALSE;
+            if (!moved) {
+                const DWORD move_error = GetLastError();
+                if (move_error != ERROR_ALREADY_EXISTS && move_error != ERROR_FILE_EXISTS) break;
+            }
+        }
+    }
+    if (!moved) {
+        error = L"还原失败 | " + pulse::path::StripExtendedPathPrefix(original);
+        return false;
+    }
+    DeleteFileW(ExtendedPath(index).c_str());
+    // Explorer windows on the original folder and on the Recycle Bin update.
+    const std::wstring shown = pulse::path::StripExtendedPathPrefix(dest);
+    const std::wstring gone = pulse::path::StripExtendedPathPrefix(source);
+    SHChangeNotify(folder ? SHCNE_MKDIR : SHCNE_CREATE, SHCNF_PATHW | SHCNF_FLUSHNOWAIT, shown.c_str(), nullptr);
+    SHChangeNotify(folder ? SHCNE_RMDIR : SHCNE_DELETE, SHCNF_PATHW | SHCNF_FLUSHNOWAIT, gone.c_str(), nullptr);
     return true;
 }
 
