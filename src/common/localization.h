@@ -2520,6 +2520,16 @@ enum class StringId : UINT {
     FavoritesStarHere = IDS_FAVORITES_STAR_HERE,
     FavoritesUnstarHere = IDS_FAVORITES_UNSTAR_HERE,
     FavoritesBarShow = IDS_FAVORITES_BAR_SHOW,
+    FavoritesGroupMoveTo = IDS_FAVORITES_GROUP_MOVE_TO,
+    FavoritesGroupNew = IDS_FAVORITES_GROUP_NEW,
+    FavoritesGroupDefaultName = IDS_FAVORITES_GROUP_DEFAULT_NAME,
+    FavoritesGroupLeave = IDS_FAVORITES_GROUP_LEAVE,
+    FavoritesGroupUngroup = IDS_FAVORITES_GROUP_UNGROUP,
+    FavoritesGroupName = IDS_FAVORITES_GROUP_NAME,
+    FavoritesGroupOpenAll = IDS_FAVORITES_GROUP_OPEN_ALL,
+    FavoritesSeparatorAdd = IDS_FAVORITES_SEPARATOR_ADD,
+    FavoritesSeparatorRemove = IDS_FAVORITES_SEPARATOR_REMOVE,
+    FavoritesGroupRename = IDS_FAVORITES_GROUP_RENAME,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

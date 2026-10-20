@@ -79,9 +79,34 @@ struct StarredItem {
     PlaceItemKind kind = PlaceItemKind::Unknown;
     std::wstring badge;
     uint32_t badge_rgb = 0x0078D4;
+    std::wstring group;            // StarredGroup::id (folders only); empty = top level
+    bool separator_after = false;  // a thin line after it (收藏栏, sidebar)
 };
 
 inline constexpr uint32_t kDefaultBadgeRgb = 0x0078D4;
+
+// 收藏夹分组 (toolbar redesign P2): a named run of starred folders shown as one
+// entry, a dropdown on the 收藏栏 and a folding row in the sidebar. A group
+// without members is not saved.
+struct StarredGroup {
+    std::wstring id;
+    std::wstring name;
+    bool collapsed = false;        // the sidebar's fold
+    bool separator_after = false;
+};
+
+// The starred list as the 收藏栏 and the sidebar show it: each group in place
+// of its members, at its first member; separators after the items (or
+// groups) that have one. Members inside a group are not rows of their own.
+struct StarredRow {
+    enum class Kind { Item, Group, Separator } kind = Kind::Item;
+    size_t index = 0;              // Item: into the items; Group: its first member
+    std::wstring group;            // Group: its id
+    std::vector<size_t> members;   // Group: its members, in list order
+};
+std::vector<StarredRow> MakeStarredRows(const std::vector<StarredItem>& items,
+                                        const std::vector<StarredGroup>& groups,
+                                        bool folders_only);
 
 // Badge on a non-starred sidebar link (built-in quick access, pinned folder,
 // OneDrive). The sidebar model is rebuilt from scratch, so it lives here.
@@ -135,6 +160,7 @@ public:
     // MergeQuickAccessOrder). Empty means the default order.
     std::vector<std::wstring> quick_access_order;
     std::vector<StarredItem> starred_items;
+    std::vector<StarredGroup> starred_groups;
     std::vector<QuickAccessBadge> quick_access_badges;
     std::vector<RecentItem> recent_items;
     int active_workspace = -1;
@@ -220,6 +246,21 @@ public:
     bool MoveStarredItem(size_t from, size_t to);
     std::vector<std::wstring> StarredPaths() const;
     std::vector<std::wstring> StarredFolderPaths() const;
+    // 收藏夹分组. Only folders join a group; joining (gather) moves the folder
+    // after the group's last member, so a group stays one run.
+    const StarredGroup* FindStarredGroup(const std::wstring& id) const;
+    std::wstring CreateStarredGroup(const std::wstring& name, const std::wstring& first_path);
+    bool SetStarredItemGroup(const std::wstring& path, const std::wstring& group_id, bool gather = true);
+    bool RenameStarredGroup(const std::wstring& id, const std::wstring& name);
+    bool SetStarredGroupCollapsed(const std::wstring& id, bool collapsed);
+    bool UngroupStarred(const std::wstring& id);   // the members go back to the top level
+    // A favorite's (or, with a group id, a group's) separator after it.
+    bool SetStarredSeparator(const std::wstring& path_or_group, bool on);
+    // The 收藏栏 drag: the starred list in this order (a permutation).
+    bool ReorderStarred(const std::vector<size_t>& order);
+    std::vector<StarredRow> StarredRows(bool folders_only) const {
+        return MakeStarredRows(starred_items, starred_groups, folders_only);
+    }
 
     void RecordRecent(const std::wstring& path, PlaceItemKind kind);
     const RecentItem* FindRecent(const std::wstring& path) const;
@@ -268,6 +309,7 @@ private:
         std::vector<std::wstring> quick_access_paths;
         std::vector<std::wstring> quick_access_order;
         std::vector<StarredItem> starred_items;
+        std::vector<StarredGroup> starred_groups;
         std::vector<QuickAccessBadge> quick_access_badges;
         std::vector<RecentItem> recent_items;
         int active_workspace = -1;
@@ -323,6 +365,12 @@ inline std::wstring TagGroupIdFromPath(const std::wstring& path) {
     return IsTagGroupPath(path) ? path.substr(16) : std::wstring{};
 }
 inline std::wstring MakeTagManagerPath() { return L"pulse:tag-manager"; }
+// A 收藏夹分组 entry (收藏栏 button, sidebar row); not a place.
+inline std::wstring MakeStarredGroupPath(const std::wstring& id) { return L"pulse:star-group:" + id; }
+inline bool IsStarredGroupPath(const std::wstring& path) { return path.starts_with(L"pulse:star-group:"); }
+inline std::wstring StarredGroupIdFromPath(const std::wstring& path) {
+    return IsStarredGroupPath(path) ? path.substr(17) : std::wstring{};
+}
 inline std::wstring MakeSearchPath(const std::wstring& q) { return L"pulse:search:" + q; }
 inline std::wstring MakeWorkspacePath(int i) { return L"pulse:workspace:" + std::to_wstring(i); }
 inline std::wstring MakeSettingsPath(std::wstring_view page = L"general") {

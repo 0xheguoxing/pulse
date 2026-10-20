@@ -2365,8 +2365,15 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                             });
                         if (found != folders.end()) {
                             s->starDragTarget = static_cast<size_t>(found - folders.begin());
+                            s->starDragGroup = item->group;
                             s->dropSidebar = target.index;
                         }
+                    } else if (target.region == ui::HitTestResult::SidebarItem &&
+                               app::IsStarredGroupPath(target.path)) {
+                        // A group's row: the folder joins the group.
+                        s->starDragTarget = SIZE_MAX;
+                        s->starDragGroup = app::StarredGroupIdFromPath(target.path);
+                        s->dropSidebar = target.index;
                     } else {
                         s->dropSidebar = -1;
                     }
@@ -3835,8 +3842,18 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             if (s->starDragPending || s->starDragActive) {
                 const bool was_active = s->starDragActive;
                 const std::wstring path = s->starDragPath;
-                if (was_active && s->dropSidebar >= 0)
-                    s->places.ReorderStarredFolder(path, s->starDragTarget);
+                if (was_active && s->dropSidebar >= 0) {
+                    // The target row's group comes along: onto a member joins
+                    // that group, onto a top-level folder leaves one.
+                    if (s->starDragTarget == SIZE_MAX) {
+                        s->places.SetStarredItemGroup(path, s->starDragGroup);
+                    } else {
+                        s->places.ReorderStarredFolder(path, s->starDragTarget);
+                        s->places.SetStarredItemGroup(path, s->starDragGroup, false);
+                    }
+                    RefreshStarredViews(*s);
+                }
+                s->starDragGroup.clear();
                 s->starDragPending = false;
                 s->starDragActive = false;
                 s->starDragPath.clear();

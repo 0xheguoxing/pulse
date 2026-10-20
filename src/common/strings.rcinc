@@ -2510,6 +2510,16 @@ BEGIN
     IDS_FAVORITES_STAR_HERE "收藏此文件夹"
     IDS_FAVORITES_UNSTAR_HERE "取消收藏此文件夹"
     IDS_FAVORITES_BAR_SHOW "显示收藏栏"
+    IDS_FAVORITES_GROUP_MOVE_TO "放进分组"
+    IDS_FAVORITES_GROUP_NEW "新建分组…"
+    IDS_FAVORITES_GROUP_DEFAULT_NAME "新分组"
+    IDS_FAVORITES_GROUP_LEAVE "移出分组"
+    IDS_FAVORITES_GROUP_UNGROUP "取消分组"
+    IDS_FAVORITES_GROUP_NAME "分组名称"
+    IDS_FAVORITES_GROUP_OPEN_ALL "全部在新标签页打开"
+    IDS_FAVORITES_SEPARATOR_ADD "在后面加分隔线"
+    IDS_FAVORITES_SEPARATOR_REMOVE "删除后面的分隔线"
+    IDS_FAVORITES_GROUP_RENAME "重命名分组…"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5019,6 +5029,16 @@ BEGIN
     IDS_FAVORITES_STAR_HERE "Star this folder"
     IDS_FAVORITES_UNSTAR_HERE "Unstar this folder"
     IDS_FAVORITES_BAR_SHOW "Show the favorites bar"
+    IDS_FAVORITES_GROUP_MOVE_TO "Move to group"
+    IDS_FAVORITES_GROUP_NEW "New group…"
+    IDS_FAVORITES_GROUP_DEFAULT_NAME "New group"
+    IDS_FAVORITES_GROUP_LEAVE "Remove from group"
+    IDS_FAVORITES_GROUP_UNGROUP "Ungroup"
+    IDS_FAVORITES_GROUP_NAME "Group name"
+    IDS_FAVORITES_GROUP_OPEN_ALL "Open all in new tabs"
+    IDS_FAVORITES_SEPARATOR_ADD "Add a separator after"
+    IDS_FAVORITES_SEPARATOR_REMOVE "Remove the separator after"
+    IDS_FAVORITES_GROUP_RENAME "Rename group…"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

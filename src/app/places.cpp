@@ -417,6 +417,7 @@ bool PlacesCatalog::Load() {
     quick_access_paths.clear();
     quick_access_order.clear();
     starred_items.clear();
+    starred_groups.clear();
     quick_access_badges.clear();
     recent_items.clear();
     starred_index_.clear();
@@ -509,6 +510,9 @@ bool PlacesCatalog::Load() {
         item.kind = ParseKind(pulse::json::ExtractString(block, L"kind"));
         item.badge = TrimBadge(pulse::json::ExtractString(block, L"badge"));
         item.badge_rgb = ExtractRgb(block);
+        item.group = pulse::json::ExtractString(block, L"group");
+        item.separator_after = pulse::json::ExtractBool(block, L"sep", false);
+        if (item.kind == PlaceItemKind::File) item.group.clear();
         if (!item.path.empty() && !fs::IsVirtualPath(item.path) &&
             std::none_of(starred_items.begin(), starred_items.end(), [&](const StarredItem& old) {
                 return EqualI(old.path, item.path);
@@ -523,6 +527,17 @@ bool PlacesCatalog::Load() {
                 starred_items.push_back({ normalized });
         }
     }
+    for (const auto& block : ExtractObjectArray(json, L"starred_groups")) {
+        StarredGroup group;
+        group.id = pulse::json::ExtractString(block, L"id");
+        group.name = TrimTagName(pulse::json::ExtractString(block, L"name"));
+        group.collapsed = pulse::json::ExtractBool(block, L"collapsed", false);
+        group.separator_after = pulse::json::ExtractBool(block, L"sep", false);
+        if (!group.id.empty() && !group.name.empty() && !FindStarredGroup(group.id))
+            starred_groups.push_back(std::move(group));
+    }
+    for (auto& item : starred_items)
+        if (!item.group.empty() && !FindStarredGroup(item.group)) item.group.clear();
     for (const auto& block : ExtractObjectArray(json, L"quick_access_badges")) {
         QuickAccessBadge item;
         item.path = Norm(pulse::json::ExtractString(block, L"path"));
@@ -630,6 +645,12 @@ PlacesCatalog::SaveSnapshot PlacesCatalog::CaptureSaveSnapshot() const {
     snapshot.quick_access_paths = quick_access_paths;
     snapshot.quick_access_order = quick_access_order;
     snapshot.starred_items = starred_items;
+    // A group outlives its last member in memory (the snack's undo brings
+    // the member back into it) but is not saved.
+    for (const auto& group : starred_groups)
+        if (std::any_of(starred_items.begin(), starred_items.end(),
+                        [&](const StarredItem& item) { return item.group == group.id; }))
+            snapshot.starred_groups.push_back(group);
     snapshot.quick_access_badges = quick_access_badges;
     snapshot.recent_items = recent_items;
     snapshot.active_workspace = active_workspace;
@@ -832,8 +853,27 @@ bool PlacesCatalog::SaveSnapshotFile(const SaveSnapshot& snapshot) {
         swprintf_s(rgb, L"0x%06X", item.badge_rgb & 0xFFFFFFu);
         f << L"    {\"path\":\"" << path << L"\",\"kind\":\""
           << KindName(item.kind) << L"\",\"badge\":\"" << badge
-          << L"\",\"rgb\":" << rgb << L"}";
+          << L"\",\"rgb\":" << rgb;
+        if (!item.group.empty()) {
+            std::wstring group;
+            pulse::json::Escape(item.group, group);
+            f << L",\"group\":\"" << group << L"\"";
+        }
+        if (item.separator_after) f << L",\"sep\":true";
+        f << L"}";
         if (i + 1 < snapshot.starred_items.size()) f << L",";
+        f << L"\n";
+    }
+    f << L"  ],\n  \"starred_groups\":[\n";
+    for (size_t i = 0; i < snapshot.starred_groups.size(); ++i) {
+        const auto& g = snapshot.starred_groups[i];
+        std::wstring id, name;
+        pulse::json::Escape(g.id, id);
+        pulse::json::Escape(g.name, name);
+        f << L"    {\"id\":\"" << id << L"\",\"name\":\"" << name << L"\",\"collapsed\":"
+          << (g.collapsed ? L"true" : L"false") << L",\"sep\":" << (g.separator_after ? L"true" : L"false")
+          << L"}";
+        if (i + 1 < snapshot.starred_groups.size()) f << L",";
         f << L"\n";
     }
     f << L"  ],\n  \"quick_access_badges\":[\n";
@@ -1272,6 +1312,177 @@ std::vector<std::wstring> PlacesCatalog::StarredPaths() const {
     for (const auto& item : starred_items)
         if (item.kind != PlaceItemKind::Folder) out.push_back(item.path);
     return out;
+}
+
+const StarredGroup* PlacesCatalog::FindStarredGroup(const std::wstring& id) const {
+    if (id.empty()) return nullptr;
+    const auto it = std::find_if(starred_groups.begin(), starred_groups.end(),
+                                 [&](const StarredGroup& group) { return group.id == id; });
+    return it == starred_groups.end() ? nullptr : &*it;
+}
+
+std::wstring PlacesCatalog::CreateStarredGroup(const std::wstring& raw_name,
+                                               const std::wstring& first_path) {
+    const std::wstring name = TrimTagName(raw_name);
+    const StarredItem* first = FindStarred(first_path);
+    if (name.empty() || !first || first->kind == PlaceItemKind::File) return {};
+    StarredGroup group;
+    group.id = NewTagId();
+    group.name = name;
+    starred_groups.push_back(group);
+    SetStarredItemGroup(first_path, group.id, false);
+    return group.id;
+}
+
+bool PlacesCatalog::SetStarredItemGroup(const std::wstring& path, const std::wstring& group_id,
+                                        bool gather) {
+    StarredItem* item = FindStarred(path);
+    if (!item || item->kind == PlaceItemKind::File) return false;
+    if (!group_id.empty() && !FindStarredGroup(group_id)) return false;
+    if (item->group == group_id) return false;
+    item->group = group_id;
+    if (gather && !group_id.empty()) {
+        // After the group's last member, so the group stays one run.
+        const auto self = std::find_if(starred_items.begin(), starred_items.end(),
+                                       [&](const StarredItem& candidate) { return &candidate == item; });
+        StarredItem moved = std::move(*self);
+        starred_items.erase(self);
+        size_t at = starred_items.size();
+        bool found = false;
+        for (size_t i = starred_items.size(); i-- > 0;)
+            if (starred_items[i].group == group_id) { at = i + 1; found = true; break; }
+        if (!found) {
+            at = static_cast<size_t>(std::find_if(starred_items.begin(), starred_items.end(),
+                [](const StarredItem& candidate) { return candidate.kind == PlaceItemKind::File; }) -
+                starred_items.begin());
+        }
+        starred_items.insert(starred_items.begin() + static_cast<std::ptrdiff_t>(at), std::move(moved));
+    }
+    ++tag_revision_;
+    Save();
+    return true;
+}
+
+bool PlacesCatalog::RenameStarredGroup(const std::wstring& id, const std::wstring& raw_name) {
+    const std::wstring name = TrimTagName(raw_name);
+    if (name.empty()) return false;
+    for (auto& group : starred_groups) {
+        if (group.id != id || group.name == name) continue;
+        group.name = name;
+        ++tag_revision_;
+        Save();
+        return true;
+    }
+    return false;
+}
+
+bool PlacesCatalog::SetStarredGroupCollapsed(const std::wstring& id, bool collapsed) {
+    for (auto& group : starred_groups) {
+        if (group.id != id || group.collapsed == collapsed) continue;
+        group.collapsed = collapsed;
+        Save();
+        return true;
+    }
+    return false;
+}
+
+bool PlacesCatalog::UngroupStarred(const std::wstring& id) {
+    const auto found = std::find_if(starred_groups.begin(), starred_groups.end(),
+                                    [&](const StarredGroup& group) { return group.id == id; });
+    if (found == starred_groups.end()) return false;
+    // The group's separator stays with its last member.
+    const bool separator = found->separator_after;
+    starred_groups.erase(found);
+    StarredItem* last = nullptr;
+    for (auto& item : starred_items)
+        if (item.group == id) { item.group.clear(); last = &item; }
+    if (separator && last) last->separator_after = true;
+    ++tag_revision_;
+    Save();
+    return true;
+}
+
+bool PlacesCatalog::SetStarredSeparator(const std::wstring& path_or_group, bool on) {
+    for (auto& group : starred_groups) {
+        if (group.id != path_or_group) continue;
+        if (group.separator_after == on) return false;
+        group.separator_after = on;
+        ++tag_revision_;
+        Save();
+        return true;
+    }
+    StarredItem* item = FindStarred(path_or_group);
+    if (!item || item->separator_after == on) return false;
+    item->separator_after = on;
+    ++tag_revision_;
+    Save();
+    return true;
+}
+
+bool PlacesCatalog::ReorderStarred(const std::vector<size_t>& order) {
+    if (order.size() != starred_items.size()) return false;
+    std::vector<bool> seen(order.size(), false);
+    for (size_t index : order) {
+        if (index >= order.size() || seen[index]) return false;
+        seen[index] = true;
+    }
+    bool same = true;
+    for (size_t i = 0; i < order.size() && same; ++i) same = order[i] == i;
+    if (same) return false;
+    std::vector<StarredItem> reordered;
+    reordered.reserve(order.size());
+    for (size_t index : order) reordered.push_back(std::move(starred_items[index]));
+    starred_items = std::move(reordered);
+    // Folders stay ahead of files.
+    std::stable_partition(starred_items.begin(), starred_items.end(),
+        [](const StarredItem& item) { return item.kind != PlaceItemKind::File; });
+    ++tag_revision_;
+    Save();
+    return true;
+}
+
+std::vector<StarredRow> MakeStarredRows(const std::vector<StarredItem>& items,
+                                        const std::vector<StarredGroup>& groups,
+                                        bool folders_only) {
+    std::vector<StarredRow> rows;
+    rows.reserve(items.size());
+    const auto group_of = [&](const StarredItem& item) -> const StarredGroup* {
+        if (item.group.empty() || item.kind == PlaceItemKind::File) return nullptr;
+        const auto it = std::find_if(groups.begin(), groups.end(),
+                                     [&](const StarredGroup& group) { return group.id == item.group; });
+        return it == groups.end() ? nullptr : &*it;
+    };
+    std::vector<std::wstring> placed;
+    for (size_t i = 0; i < items.size(); ++i) {
+        const StarredItem& item = items[i];
+        if (folders_only && item.kind == PlaceItemKind::File) continue;
+        bool separator = item.separator_after;
+        if (const StarredGroup* group = group_of(item)) {
+            if (std::find(placed.begin(), placed.end(), group->id) != placed.end()) continue;
+            placed.push_back(group->id);
+            StarredRow row;
+            row.kind = StarredRow::Kind::Group;
+            row.index = i;
+            row.group = group->id;
+            for (size_t j = i; j < items.size(); ++j)
+                if (group_of(items[j]) == group) row.members.push_back(j);
+            rows.push_back(std::move(row));
+            separator = group->separator_after;
+        } else {
+            StarredRow row;
+            row.index = i;
+            rows.push_back(std::move(row));
+        }
+        if (separator) {
+            StarredRow line;
+            line.kind = StarredRow::Kind::Separator;
+            line.index = i;
+            rows.push_back(std::move(line));
+        }
+    }
+    // A trailing line separates nothing.
+    if (!rows.empty() && rows.back().kind == StarredRow::Kind::Separator) rows.pop_back();
+    return rows;
 }
 
 std::vector<std::wstring> PlacesCatalog::StarredFolderPaths() const {
@@ -1836,6 +2047,7 @@ void PlacesCatalog::CloneAssignments(const std::wstring& source,
         if (!PathIsOrDescendant(item.path, src)) continue;
         StarredItem clone = item;
         clone.path = dst + item.path.substr(src.size());
+        clone.separator_after = false;
         star_clones.push_back(std::move(clone));
     }
     for (auto& clone : star_clones) {

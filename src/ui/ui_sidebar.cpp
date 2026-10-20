@@ -855,6 +855,13 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                         brStrokeCard_.get(), 1.0f);
                 }
             }
+            if (item.divider_above) {
+                // 收藏夹's separator: in the gap above the row, inset like the row.
+                MakeBrush(dc, theme.stroke_divider, brStrokeDivider_);
+                FillRect(dc, brStrokeDivider_.get(), slot.rc.left + 10.0f * scale_,
+                         std::round(slot.rc.top - 1.0f * scale_),
+                         (std::max)(0.0f, slot.rc.right - slot.rc.left - 20.0f * scale_), 1.0f);
+            }
             fluent::SidebarItemSpec row;
             row.bounds = slot.rc;
             row.text = item.label;

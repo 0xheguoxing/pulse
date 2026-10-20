@@ -2531,3 +2531,13 @@ FavoritesBarDropAdd	IDS_FAVORITES_BAR_DROP_ADD	3733	加入收藏夹	Add to favor
 FavoritesStarHere	IDS_FAVORITES_STAR_HERE	3734	收藏此文件夹	Star this folder	收藏此資料夾
 FavoritesUnstarHere	IDS_FAVORITES_UNSTAR_HERE	3735	取消收藏此文件夹	Unstar this folder	取消收藏此資料夾
 FavoritesBarShow	IDS_FAVORITES_BAR_SHOW	3736	显示收藏栏	Show the favorites bar	顯示收藏列
+FavoritesGroupMoveTo	IDS_FAVORITES_GROUP_MOVE_TO	3737	放进分组	Move to group	放進分組
+FavoritesGroupNew	IDS_FAVORITES_GROUP_NEW	3738	新建分组…	New group…	新增分組…
+FavoritesGroupDefaultName	IDS_FAVORITES_GROUP_DEFAULT_NAME	3739	新分组	New group	新分組
+FavoritesGroupLeave	IDS_FAVORITES_GROUP_LEAVE	3740	移出分组	Remove from group	移出分組
+FavoritesGroupUngroup	IDS_FAVORITES_GROUP_UNGROUP	3741	取消分组	Ungroup	取消分組
+FavoritesGroupName	IDS_FAVORITES_GROUP_NAME	3742	分组名称	Group name	分組名稱
+FavoritesGroupOpenAll	IDS_FAVORITES_GROUP_OPEN_ALL	3743	全部在新标签页打开	Open all in new tabs	全部在新分頁開啟
+FavoritesSeparatorAdd	IDS_FAVORITES_SEPARATOR_ADD	3744	在后面加分隔线	Add a separator after	在後面加分隔線
+FavoritesSeparatorRemove	IDS_FAVORITES_SEPARATOR_REMOVE	3745	删除后面的分隔线	Remove the separator after	刪除後面的分隔線
+FavoritesGroupRename	IDS_FAVORITES_GROUP_RENAME	3746	重命名分组…	Rename group…	重新命名分組…

@@ -29,4 +29,13 @@ std::wstring FavoritesBarMiddleClickPath(const AppState& s, const ui::HitTestRes
 std::wstring FavoritesBarDropFolder(const AppState& s, const ui::HitTestResult& hit, bool* offline = nullptr);
 // The favorite's path, and why it is dimmed when it cannot be reached.
 std::wstring FavoritesBarTooltip(const AppState& s, const ui::HitTestResult& hit);
+// 收藏夹分组 (P2): a group is one entry on the bar (a dropdown of its folders)
+// and a folding row in the sidebar's 收藏夹. Its menu: the name as an edit
+// field, 全部在新标签页打开, the separator after it, 取消分组.
+void ShowStarredGroupMenu(AppState& s, const std::wstring& group_id, POINT screen);
+// 放进分组 › 新建分组…: a group holding this starred folder, then its menu to name it.
+void CreateStarredGroupAndEdit(AppState& s, const std::wstring& path, POINT screen);
+// Middle click: a group's path (pulse:star-group:) opens all its folders in
+// new tabs; false for any other path.
+bool OpenFavoritesGroupTabs(AppState& s, const std::wstring& path);
 }

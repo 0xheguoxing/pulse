@@ -745,6 +745,9 @@ struct AppState : AppCoreOwner {
     POINT starDragStartPt{};
     std::wstring starDragPath;
     size_t starDragTarget = 0;
+    // 收藏夹分组: the group the dragged folder ends up in (the target row's;
+    // SIZE_MAX starDragTarget: dropped on the group's own row).
+    std::wstring starDragGroup;
 
     // Sidebar section header drag: reorders the sections. The dragged section
     // stays in place (drawn raised) while an insertion line shows the new slot.

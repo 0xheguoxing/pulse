@@ -771,14 +771,16 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
         r.region = HitTestResult::FavoritesBarItem;
         r.index = -1;
         for (size_t i = 0; i < bar.items.size(); ++i) {
-            if (!ContainsPt(bar.items[i], x, y)) continue;
+            // A separator is part of the empty bar.
+            if (!ContainsPt(bar.items[i], x, y) || (i < vm.favorites_bar.size() && vm.favorites_bar[i].separator))
+                continue;
             r.index = static_cast<int>(i);
             r.control_bounds = bar.items[i];
             if (i < vm.favorites_bar.size()) {
                 const auto& f = vm.favorites_bar[i];
                 r.path = f.path;
                 // A folder's last 20 DIP: its ⌄ (the subfolders).
-                if (f.folder && !f.offline && !bar.icon_only && vm.favorites_bar_drag < 0 &&
+                if (f.folder && !f.group && !f.offline && !bar.icon_only && vm.favorites_bar_drag < 0 &&
                     x >= bar.items[i].right - 20 * scale_)
                     r.region = HitTestResult::FavoritesBarChevron;
             }

@@ -14,6 +14,7 @@
 #include "../ui/command_icons.h"
 #include "app_internal.h"
 #include "app_sidebar_refresh.h"
+#include "favorites_bar.h"
 #include "tray_reveal.h"
 #include "group_wheel_ui.h"
 #include "text_diff.h"
@@ -3055,6 +3056,10 @@ void ShowCuratedItemMenu(AppState& s, const std::wstring& path,
                                 bool recent, POINT screen_pt) {
     if (path.empty() || !EnsureMenu(s)) return;
     constexpr int kCustomColor = 30100;
+    // 收藏夹分组与分隔线: 放进分组 › (each group, 新建分组…, 移出分组) and the
+    // separator after it.
+    constexpr int kNewGroup = 30190, kLeaveGroup = 30191, kSeparator = 30192, kGroupBase = 30200;
+    std::vector<std::wstring> group_ids;
     std::vector<ui::FluentMenuItem> items;
     ui::FluentMenuItem open;
     open.command = app::CmdOpen;
@@ -3097,6 +3102,46 @@ void ShowCuratedItemMenu(AppState& s, const std::wstring& path,
         custom.swatch_color = ui::HexColor(badge_rgb);
         custom.separator_after = true;
         items.push_back(std::move(custom));
+        if (starred && starred->kind != app::PlaceItemKind::File) {
+            ui::FluentMenuItem move;
+            move.text = l10n::Get(l10n::StringId::FavoritesGroupMoveTo);
+            move.glyph = L"\xE8F1";
+            for (const auto& group : s.places.starred_groups) {
+                if (group_ids.size() >= 90) break;
+                // An emptied group lingers for the snack's undo; it is not offered.
+                if (std::none_of(s.places.starred_items.begin(), s.places.starred_items.end(),
+                                 [&](const app::StarredItem& item) { return item.group == group.id; }))
+                    continue;
+                ui::FluentMenuItem entry;
+                entry.command = kGroupBase + static_cast<int>(group_ids.size());
+                entry.text = group.name;
+                entry.checked = starred->group == group.id;
+                move.children.push_back(std::move(entry));
+                group_ids.push_back(group.id);
+            }
+            if (!move.children.empty()) move.children.back().separator_after = true;
+            ui::FluentMenuItem create;
+            create.command = kNewGroup;
+            create.text = l10n::Get(l10n::StringId::FavoritesGroupNew);
+            create.glyph = L"\xE710";
+            move.children.push_back(std::move(create));
+            if (!starred->group.empty()) {
+                ui::FluentMenuItem leave;
+                leave.command = kLeaveGroup;
+                leave.text = l10n::Get(l10n::StringId::FavoritesGroupLeave);
+                move.children.push_back(std::move(leave));
+            }
+            items.push_back(std::move(move));
+        }
+        if (starred && starred->group.empty()) {
+            // Inside a group a separator would not show; the group has its own.
+            ui::FluentMenuItem line;
+            line.command = kSeparator;
+            line.text = l10n::Get(starred->separator_after ? l10n::StringId::FavoritesSeparatorRemove
+                                                           : l10n::StringId::FavoritesSeparatorAdd);
+            line.separator_after = true;
+            items.push_back(std::move(line));
+        }
         if (starred) {
             ui::FluentMenuItem remove;
             remove.command = app::CmdRemoveStarred;
@@ -3114,6 +3159,25 @@ void ShowCuratedItemMenu(AppState& s, const std::wstring& path,
     const int cmd = s.menu->TrackPopup(screen_pt, std::move(items));
     if (HandleQuickAccessCommand(s, cmd, known_folder ? std::vector<std::wstring>{path}
                                                                    : std::vector<std::wstring>{})) return;
+    if (cmd >= kGroupBase && cmd < kGroupBase + static_cast<int>(group_ids.size())) {
+        s.places.SetStarredItemGroup(path, group_ids[static_cast<size_t>(cmd - kGroupBase)]);
+        RefreshStarredViews(s);
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        return;
+    }
+    if (cmd == kNewGroup) {
+        CreateStarredGroupAndEdit(s, path, screen_pt);
+        return;
+    }
+    if (cmd == kLeaveGroup || cmd == kSeparator) {
+        if (const app::StarredItem* item = s.places.FindStarred(path)) {
+            if (cmd == kLeaveGroup) s.places.SetStarredItemGroup(path, std::wstring{}, false);
+            else s.places.SetStarredSeparator(path, !item->separator_after);
+        }
+        RefreshStarredViews(s);
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        return;
+    }
     if (cmd == app::CmdOpen) {
         const DWORD attrs = GetFileAttributesW(path.c_str());
         const bool is_dir = attrs != INVALID_FILE_ATTRIBUTES &&

@@ -2465,22 +2465,56 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
     }
     if (places && starred_expanded) {
         size_t starred_insert = starred_section.items.size();
-        for (const auto& entry : places->starred_items) {
-            if (entry.kind != PlaceItemKind::Folder) continue;
+        const auto add = [&](ui::SidebarItem row) {
+            starred_section.items.insert(
+                starred_section.items.begin() + static_cast<std::ptrdiff_t>(starred_insert),
+                std::move(row));
+            ++starred_insert;
+        };
+        const auto folder_row = [](const StarredItem& entry, int indent) {
             ui::SidebarItem child;
             child.label = TabTitle(entry.path);
             child.path = entry.path;
-            child.indent = 1;
+            child.indent = indent;
             child.starred_child = true;
             child.icon_glyph = L"\xE8B7";
             child.fallback_text = L"Dir";
             child.icon_color = ui::HexColor(0xFBBF24);
             child.badge = entry.badge;
             child.badge_color = ui::HexColor(entry.badge_rgb);
-            starred_section.items.insert(
-                starred_section.items.begin() + static_cast<std::ptrdiff_t>(starred_insert),
-                std::move(child));
-            ++starred_insert;
+            return child;
+        };
+        // 收藏夹分组与分隔线: a group folds its folders under one row; a
+        // separator is a line above the next row.
+        bool line = false;
+        for (const auto& row : places->StarredRows(true)) {
+            if (row.kind == StarredRow::Kind::Separator) {
+                line = true;
+                continue;
+            }
+            if (row.kind == StarredRow::Kind::Group) {
+                const StarredGroup* group = places->FindStarredGroup(row.group);
+                if (!group) continue;
+                ui::SidebarItem header;
+                header.label = group->name;
+                header.path = MakeStarredGroupPath(group->id);
+                header.indent = 1;
+                header.icon_glyph = L"\xE8F1";
+                header.fallback_text = L"Grp";
+                header.icon_color = ui::HexColor(0xFBBF24);
+                header.expandable = true;
+                header.expanded = !group->collapsed;
+                header.show_count = true;
+                header.count = static_cast<int>(row.members.size());
+                header.divider_above = std::exchange(line, false);
+                add(std::move(header));
+                if (group->collapsed) continue;
+                for (size_t member : row.members) add(folder_row(places->starred_items[member], 2));
+                continue;
+            }
+            ui::SidebarItem child = folder_row(places->starred_items[row.index], 1);
+            child.divider_above = std::exchange(line, false);
+            add(std::move(child));
         }
     }
     const std::wstring& gitRoot = tab->git_root;

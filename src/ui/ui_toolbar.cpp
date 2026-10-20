@@ -910,12 +910,19 @@ FavoritesBarLayout MainRenderer::FavoritesBarLayoutAt(const WindowViewModel& vm,
                                        w-margin_+8*scale_,bottom);
     const bool icon_only=vm.favorites_bar_icon_only || w-left < kFavoritesBarIconOnlyBelowDip*scale_;
     std::vector<float> widths;
+    std::vector<bool> separators;
     widths.reserve(vm.favorites_bar.size());
+    separators.reserve(vm.favorites_bar.size());
     // A folder keeps 12 DIP more for the ⌄ it shows on hover, so the name
-    // does not shorten under the pointer.
-    for (const auto& f : vm.favorites_bar)
-        widths.push_back(icon_only ? 0.0f : CellTextWidth(f.label,true)+(f.folder && !f.offline ? 12*scale_ : 0.0f));
-    return MakeFavoritesBarLayout(band,scale_,widths,icon_only);
+    // does not shorten under the pointer; a group always shows its count and ⌄.
+    for (const auto& f : vm.favorites_bar) {
+        separators.push_back(f.separator);
+        float tw=0.0f;
+        if (!icon_only && f.group) tw=CellTextWidth(f.label,true)+CellTextWidth(std::to_wstring(f.count),true)+24*scale_;
+        else if (!icon_only && !f.separator) tw=CellTextWidth(f.label,true)+(f.folder && !f.offline ? 12*scale_ : 0.0f);
+        widths.push_back(tw);
+    }
+    return MakeFavoritesBarLayout(band,scale_,widths,icon_only,separators);
 }
 
 void MainRenderer::DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme) {
@@ -948,6 +955,12 @@ void MainRenderer::DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F
         const bool dragged=drag.index==static_cast<int>(i);
         PinMotion& pm=tm.favorites.Touch(L"f"+f.path,false,motion_frame_,motion_now_,tm.animations);
         const D2D1_RECT_F b=tm.favorites.Place(pm,slot,static_cast<int>(i),drag,motion_now_,tm.animations);
+        if (f.separator) {
+            // 收藏夹's separator: the toolbar's short divider line.
+            MakeBrush(dc,theme.stroke_divider,brStrokeDivider_);
+            FillRect(dc,brStrokeDivider_.get(),std::round((b.left+b.right)*0.5f),b.top+7*scale_,scale_,b.bottom-b.top-14*scale_);
+            return;
+        }
         const D2D1_POINT_2F centre=D2D1::Point2F((b.left+b.right)*0.5f,(b.top+b.bottom)*0.5f);
         const AroundCentre pop(dc,centre,tm.favorites.Pop(pm,motion_now_)*(dragged ? 1.08f : 1.0f));
         const float fade=dragged && drag.out ? 0.35f : f.offline ? 0.45f : 1.0f;
@@ -972,7 +985,27 @@ void MainRenderer::DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F
         icon.a*=fade;
         ink.a*=fade;
         const float icon_x=lay.icon_only ? std::round((b.left+b.right)*0.5f-10*scale_) : b.left+5*scale_;
-        DrawIconText(icon_x,b.top,20*scale_,b.bottom-b.top,f.folder ? L"\xE8B7" : L"\xE8A5",L"",icon,0.8f);
+        DrawIconText(icon_x,b.top,20*scale_,b.bottom-b.top,f.group ? L"\xE8F1" : f.folder ? L"\xE8B7" : L"\xE8A5",L"",
+                     icon,0.8f);
+        if (f.group) {
+            // A group: its name, how many, and ⌄ (a click lists them).
+            if (!lay.icon_only) {
+                const std::wstring count=std::to_wstring(f.count);
+                const float count_w=CellTextWidth(count,true);
+                const float chevron_left=b.right-20*scale_;
+                const float count_left=chevron_left-count_w-2*scale_;
+                const float text_left=b.left+29*scale_;
+                painter_.DrawText(FitEndEllipsis(f.label,count_left-6*scale_-text_left,measure),
+                                  D2D1::RectF(text_left,b.top,count_left-4*scale_,b.bottom),compositor_->SmallFormat(),ink);
+                painter_.DrawText(count,D2D1::RectF(count_left,b.top,chevron_left+2*scale_,b.bottom),
+                                  compositor_->SmallFormat(),theme.text_secondary);
+                DrawIconText(chevron_left,b.top,17*scale_,b.bottom-b.top,L"\xE70D",L"",theme.text_secondary,0.5f);
+            }
+            if (f.current)
+                painter_.FillRoundedRect(D2D1::RectF(b.left+8*scale_,b.bottom-3*scale_,b.right-8*scale_,b.bottom-1*scale_),
+                                         scale_,theme.accent);
+            return;
+        }
         if (f.offline)   // §8 不可用: dimmed, with a small ⚠ on the icon
             DrawIconText(icon_x+9*scale_,b.top+8*scale_,12*scale_,b.bottom-b.top-8*scale_,L"\xE7BA",L"!",
                          HexColor(0xF59E0B),0.5f);

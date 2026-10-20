@@ -2524,5 +2524,15 @@
 #define IDS_FAVORITES_STAR_HERE                                                          3734
 #define IDS_FAVORITES_UNSTAR_HERE                                                        3735
 #define IDS_FAVORITES_BAR_SHOW                                                           3736
+#define IDS_FAVORITES_GROUP_MOVE_TO                                                      3737
+#define IDS_FAVORITES_GROUP_NEW                                                          3738
+#define IDS_FAVORITES_GROUP_DEFAULT_NAME                                                 3739
+#define IDS_FAVORITES_GROUP_LEAVE                                                        3740
+#define IDS_FAVORITES_GROUP_UNGROUP                                                      3741
+#define IDS_FAVORITES_GROUP_NAME                                                         3742
+#define IDS_FAVORITES_GROUP_OPEN_ALL                                                     3743
+#define IDS_FAVORITES_SEPARATOR_ADD                                                      3744
+#define IDS_FAVORITES_SEPARATOR_REMOVE                                                   3745
+#define IDS_FAVORITES_GROUP_RENAME                                                       3746
 
 #endif  // PULSE_STRING_IDS_H

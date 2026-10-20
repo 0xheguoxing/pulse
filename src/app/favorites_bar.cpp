@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <numeric>
+#include <optional>
 #include <thread>
 #include <unordered_map>
 
@@ -21,23 +22,30 @@ namespace pulse {
 namespace {
 constexpr int kFavoriteMenuBase = 36000;   // » and ★⌄ menus: kFavoriteMenuBase + favorite index
 constexpr int kIconOnlyCommand = 36900, kHideCommand = 36901, kShowCommand = 36902, kStarHereCommand = 36903;
+constexpr int kOpenAllCommand = 36904, kSeparatorCommand = 36905, kUngroupCommand = 36906;
 constexpr int kSubfolderBase = 37000;      // ⌄ menu: kSubfolderBase + subfolder index
 constexpr size_t kSubfolderMax = 400;
 constexpr wchar_t kFolderGlyph[] = L"\xE8B7";
 constexpr wchar_t kFileGlyph[] = L"\xE8A5";
+constexpr wchar_t kGroupGlyph[] = L"\xE8F1";
 
 // A press on a favorite: a click on release, or a drag along the bar (the
 // toolbar pins' model, MoveToolbarPinDrag): the favorite follows the pointer
 // 1:1 and takes the slot whose centre is nearest; nothing is saved before the
 // release. Below the row it fades; let go there and it leaves the list.
+// A group drags as one; a folder let go over the middle of a group joins it.
 struct FavoriteDrag {
     const AppState* owner = nullptr;
     bool down = false, active = false, out = false;
-    int from = -1;                 // its index in starred_items at the press
-    int slot = -1;                 // where the bar draws it now
+    size_t item = SIZE_MAX;        // the dragged favorite (index in starred_items)...
+    std::wstring group;            // ...or the dragged group
+    int slot = -1;                 // where the bar draws it now (an entry index)
     POINT start{};
+    POINT below{};                 // under the entry (screen), for a group's dropdown
     float grab = 0.0f;             // pointer x - its left edge at the press
     float left = 0.0f, dy = 0.0f;
+    std::wstring into;             // the group it would join, letting go now
+    int into_slot = -1;
     std::vector<size_t> order;     // the bar's order while dragging (starred indices)
 };
 FavoriteDrag g_drag;
@@ -127,19 +135,70 @@ bool DraggingIn(const AppState& s) {
     return g_drag.down && g_drag.owner == &s && g_drag.order.size() == s.places.starred_items.size();
 }
 
-// The starred item the bar shows at `slot`.
-const app::StarredItem* FavoriteAt(const AppState& s, int slot) {
-    if (slot < 0) return nullptr;
-    size_t index = static_cast<size_t>(slot);
-    if (DraggingIn(s)) {
-        if (index >= g_drag.order.size()) return nullptr;
-        index = g_drag.order[index];
+// The bar's entries (app::StarredRow: favorites, groups, separators) with
+// the list in `order` (null: as saved); indices stay into starred_items.
+std::vector<app::StarredRow> RowsFor(const AppState& s, const std::vector<size_t>* order) {
+    const auto& list = s.places.starred_items;
+    if (!order) return app::MakeStarredRows(list, s.places.starred_groups, false);
+    std::vector<app::StarredItem> items;
+    items.reserve(order->size());
+    for (size_t index : *order) items.push_back(list[index]);
+    auto rows = app::MakeStarredRows(items, s.places.starred_groups, false);
+    for (auto& row : rows) {
+        row.index = (*order)[row.index];
+        for (auto& member : row.members) member = (*order)[member];
     }
-    if (index >= s.places.starred_items.size()) return nullptr;
-    return &s.places.starred_items[index];
+    return rows;
+}
+
+std::vector<app::StarredRow> BarRows(const AppState& s) {
+    return RowsFor(s, DraggingIn(s) ? &g_drag.order : nullptr);
+}
+
+std::optional<app::StarredRow> RowAt(const AppState& s, int slot) {
+    if (slot < 0) return std::nullopt;
+    auto rows = BarRows(s);
+    if (static_cast<size_t>(slot) >= rows.size()) return std::nullopt;
+    return std::move(rows[static_cast<size_t>(slot)]);
+}
+
+// The favorite the bar shows at `slot` (null for a group or a separator).
+const app::StarredItem* FavoriteAt(const AppState& s, int slot) {
+    const auto row = RowAt(s, slot);
+    if (!row || row->kind != app::StarredRow::Kind::Item || row->index >= s.places.starred_items.size())
+        return nullptr;
+    return &s.places.starred_items[row->index];
+}
+
+// The group the bar shows at `slot` ("" for anything else).
+std::wstring GroupAt(const AppState& s, int slot) {
+    const auto row = RowAt(s, slot);
+    return row && row->kind == app::StarredRow::Kind::Group ? row->group : std::wstring{};
+}
+
+int SlotOf(const std::vector<app::StarredRow>& rows, size_t item, const std::wstring& group) {
+    for (size_t i = 0; i < rows.size(); ++i) {
+        const auto& row = rows[i];
+        if ((row.kind == app::StarredRow::Kind::Item && row.index == item) ||
+            (row.kind == app::StarredRow::Kind::Group && !group.empty() && row.group == group))
+            return static_cast<int>(i);
+    }
+    return -1;
+}
+
+// A group's members, in list order.
+std::vector<std::wstring> GroupPaths(const AppState& s, const std::wstring& id) {
+    std::vector<std::wstring> paths;
+    for (const auto& item : s.places.starred_items)
+        if (!id.empty() && item.group == id && item.kind != app::PlaceItemKind::File) paths.push_back(item.path);
+    return paths;
 }
 
 bool IsFolder(const app::StarredItem& item) { return item.kind != app::PlaceItemKind::File; }
+
+void OpenGroupTabs(AppState& s, const std::wstring& id) {
+    for (const auto& path : GroupPaths(s, id)) OpenFolderTab(s, path);
+}
 
 // how: 0 here, 1 a new tab, 2 the other pane (a new tab without one).
 void OpenFolder(AppState& s, const std::wstring& path, int how) {
@@ -306,15 +365,56 @@ void OpenFavoriteCommand(AppState& s, int cmd) {
         OpenFavorite(s, app::StarredItem(s.places.starred_items[index]), HowFromKeys());
 }
 
+// The bar's entries from `first` as menu rows: a group is a flyout of its
+// members, a separator a menu separator.
+void AppendFavoriteRows(const AppState& s, std::vector<ui::FluentMenuItem>& items, size_t first) {
+    const auto& list = s.places.starred_items;
+    const auto rows = BarRows(s);
+    for (size_t r = first; r < rows.size(); ++r) {
+        const auto& row = rows[r];
+        if (row.kind == app::StarredRow::Kind::Separator) {
+            if (!items.empty()) items.back().separator_after = true;
+            continue;
+        }
+        if (row.kind == app::StarredRow::Kind::Group) {
+            const app::StarredGroup* group = s.places.FindStarredGroup(row.group);
+            ui::FluentMenuItem flyout;
+            flyout.text = group ? group->name : std::wstring{};
+            flyout.glyph = kGroupGlyph;
+            for (size_t member : row.members) flyout.children.push_back(FavoriteMenuItem(list[member], member));
+            if (!flyout.children.empty()) items.push_back(std::move(flyout));
+            continue;
+        }
+        if (row.index < list.size()) items.push_back(FavoriteMenuItem(list[row.index], row.index));
+    }
+}
+
 // »: the favorites without room on the bar, in list order.
 void ShowFavoritesOverflow(AppState& s, int first, POINT screen) {
     if (!EnsureMenu(s)) return;
-    const auto& list = s.places.starred_items;
     std::vector<ui::FluentMenuItem> items;
-    for (size_t i = static_cast<size_t>(std::max(first, 0)); i < list.size(); ++i)
-        items.push_back(FavoriteMenuItem(list[i], i));
+    AppendFavoriteRows(s, items, static_cast<size_t>(std::max(first, 0)));
     if (items.empty()) return;
     OpenFavoriteCommand(s, s.menu->TrackPopup(screen, std::move(items)));
+}
+
+// A group's button: its members, then 全部在新标签页打开.
+void ShowGroupDropdown(AppState& s, const std::wstring& id, POINT screen) {
+    if (!EnsureMenu(s)) return;
+    const auto& list = s.places.starred_items;
+    std::vector<ui::FluentMenuItem> items;
+    for (size_t i = 0; i < list.size(); ++i)
+        if (list[i].group == id && IsFolder(list[i])) items.push_back(FavoriteMenuItem(list[i], i));
+    if (items.empty()) return;
+    items.back().separator_after = true;
+    ui::FluentMenuItem all;
+    all.command = kOpenAllCommand;
+    all.text = l10n::Get(l10n::StringId::FavoritesGroupOpenAll);
+    all.glyph = L"\xE8A7";   // open in new window
+    items.push_back(std::move(all));
+    const int cmd = s.menu->TrackPopup(screen, std::move(items));
+    if (cmd == kOpenAllCommand) OpenGroupTabs(s, id);
+    else OpenFavoriteCommand(s, cmd);
 }
 
 // The address bar's ★⌄ (the bar hidden): star / unstar this folder, then the
@@ -334,9 +434,8 @@ void ShowFavoritesDropdown(AppState& s, POINT screen) {
         star.separator_after = true;
         items.push_back(std::move(star));
     }
-    const auto& list = s.places.starred_items;
-    for (size_t i = 0; i < list.size(); ++i) items.push_back(FavoriteMenuItem(list[i], i));
-    if (list.empty()) items.push_back(DisabledItem(l10n::StringId::NoStarred));
+    AppendFavoriteRows(s, items, 0);
+    if (s.places.starred_items.empty()) items.push_back(DisabledItem(l10n::StringId::NoStarred));
     items.back().separator_after = true;
     ui::FluentMenuItem show;
     show.command = kShowCommand;
@@ -360,11 +459,16 @@ void BeginDrag(AppState& s, const ui::HitTestResult& hit) {
     POINT pt{};
     GetCursorPos(&pt);
     ScreenToClient(s.hwnd, &pt);
+    const auto row = RowAt(s, hit.index);
+    if (!row || row->kind == app::StarredRow::Kind::Separator) return;
     g_drag = FavoriteDrag{};
     g_drag.owner = &s;
     g_drag.down = true;
-    g_drag.from = g_drag.slot = hit.index;
+    g_drag.slot = hit.index;
+    if (row->kind == app::StarredRow::Kind::Group) g_drag.group = row->group;
+    else g_drag.item = row->index;
     g_drag.start = pt;
+    g_drag.below = BelowControl(s, hit);
     g_drag.grab = static_cast<float>(pt.x) - hit.control_bounds.left;
     g_drag.order.resize(s.places.starred_items.size());
     std::iota(g_drag.order.begin(), g_drag.order.end(), size_t{0});
@@ -402,23 +506,39 @@ void FillFavoritesBar(AppState& s, ui::WindowViewModel& vm) {
     vm.favorites_bar_drop_add = s.dropFavoriteAdd;
     // Starred paths are normalized (\\?\C:\...); compare as display text.
     const std::wstring here = tab ? pulse::path::FriendlyPathText(tab->current_path) : std::wstring{};
-    const size_t count = s.places.starred_items.size();
-    vm.favorites_bar.reserve(count);
+    const auto is_here = [&](const std::wstring& path) {
+        return !here.empty() && _wcsicmp(here.c_str(), pulse::path::FriendlyPathText(path).c_str()) == 0;
+    };
+    const auto& list = s.places.starred_items;
     {
         std::vector<std::wstring> paths;
-        paths.reserve(count);
-        for (const auto& entry : s.places.starred_items) paths.push_back(entry.path);
+        paths.reserve(list.size());
+        for (const auto& entry : list) paths.push_back(entry.path);
         Reach().Refresh(paths, s.hwnd);
     }
-    for (size_t slot = 0; slot < count; ++slot) {
-        const app::StarredItem& entry = *FavoriteAt(s, static_cast<int>(slot));
+    const auto rows = BarRows(s);
+    vm.favorites_bar.reserve(rows.size());
+    for (const auto& row : rows) {
+        if (row.index >= list.size()) continue;
         ui::WindowViewModel::FavoritesBarItem item;
-        item.path = entry.path;
-        item.label = app::TabTitle(entry.path);
-        item.folder = IsFolder(entry);
-        item.current = item.folder && !here.empty() &&
-                       _wcsicmp(here.c_str(), pulse::path::FriendlyPathText(entry.path).c_str()) == 0;
-        item.offline = Reach().Offline(entry.path);
+        if (row.kind == app::StarredRow::Kind::Separator) {
+            item.separator = true;
+            item.path = L"pulse:star-sep:" + list[row.index].path;   // keys its motion
+        } else if (row.kind == app::StarredRow::Kind::Group) {
+            const app::StarredGroup* group = s.places.FindStarredGroup(row.group);
+            item.group = true;
+            item.path = app::MakeStarredGroupPath(row.group);
+            item.label = group ? group->name : std::wstring{};
+            item.count = static_cast<int>(row.members.size());
+            for (size_t member : row.members) item.current = item.current || is_here(list[member].path);
+        } else {
+            const app::StarredItem& entry = list[row.index];
+            item.path = entry.path;
+            item.label = app::TabTitle(entry.path);
+            item.folder = IsFolder(entry);
+            item.current = item.folder && is_here(entry.path);
+            item.offline = Reach().Offline(entry.path);
+        }
         vm.favorites_bar.push_back(std::move(item));
     }
     if (DraggingIn(s) && g_drag.active) {
@@ -426,6 +546,7 @@ void FillFavoritesBar(AppState& s, ui::WindowViewModel& vm) {
         vm.favorites_bar_drag_left = g_drag.left;
         vm.favorites_bar_drag_dy = g_drag.dy;
         vm.favorites_bar_drag_out = g_drag.out;
+        if (!g_drag.into.empty()) vm.favorites_bar_drop = g_drag.into_slot;   // the ring: joins it
     }
 }
 
@@ -436,6 +557,15 @@ void ToggleFavoritesBar(AppState& s) {
 }
 
 bool HandleFavoritesBarPress(AppState& s, const ui::HitTestResult& hit) {
+    if ((hit.region == ui::HitTestResult::SidebarItem || hit.region == ui::HitTestResult::SidebarItemExpand) &&
+        app::IsStarredGroupPath(hit.path)) {
+        // A group's row in the sidebar's 收藏夹 is not a place: it folds.
+        const std::wstring id = app::StarredGroupIdFromPath(hit.path);
+        if (const app::StarredGroup* group = s.places.FindStarredGroup(id))
+            s.places.SetStarredGroupCollapsed(id, !group->collapsed);
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        return true;
+    }
     if (hit.region == ui::HitTestResult::AddressFavorites) {
         ShowFavoritesDropdown(s, BelowControl(s, hit));
         return true;
@@ -452,8 +582,8 @@ bool HandleFavoritesBarPress(AppState& s, const ui::HitTestResult& hit) {
         return true;
     }
     if (hit.region != ui::HitTestResult::FavoritesBarItem) return false;
-    if (FavoriteAt(s, hit.index)) BeginDrag(s, hit);
-    return true;   // the bar's empty part does nothing
+    BeginDrag(s, hit);   // a favorite or a group; the empty part does nothing
+    return true;
 }
 
 bool FavoritesBarDragging() { return g_drag.down; }
@@ -472,29 +602,70 @@ bool MoveFavoritesBarDrag(AppState& s, POINT pt) {
     }
     const ui::WindowViewModel vm = BuildVm(s);
     const ui::FavoritesBarLayout lay = s.renderer.FavoritesBarLayoutAt(vm, static_cast<float>(s.compositor.Width()));
-    if (d.slot < 0 || static_cast<size_t>(d.slot) >= lay.items.size()) return true;
+    const auto rows = RowsFor(s, &d.order);
+    if (d.slot < 0 || static_cast<size_t>(d.slot) >= lay.items.size() ||
+        static_cast<size_t>(d.slot) >= rows.size())
+        return true;
+    const auto& list = s.places.starred_items;
+    const auto folder_row = [&](const app::StarredRow& row) {
+        return row.kind == app::StarredRow::Kind::Group || IsFolder(list[row.index]);
+    };
+    const app::StarredRow& self = rows[static_cast<size_t>(d.slot)];
+    const bool folder = folder_row(self);
     const D2D1_RECT_F home = lay.items[static_cast<size_t>(d.slot)];
     const float w = home.right - home.left;
     d.left = static_cast<float>(pt.x) - d.grab;
     // Below the row it stays in sight (14 DIP down at most), faded once
-    // letting go would take it off.
+    // letting go would take it off. A group does not come off this way.
     d.dy = std::clamp(dy, -4.0f * s.scale, 14.0f * s.scale);
-    d.out = dy > 34.0f * s.scale;
-    // The slot whose centre is nearest its own; folders stay ahead of files.
-    const bool folder = IsFolder(s.places.starred_items[d.order[static_cast<size_t>(d.slot)]]);
-    int best = d.slot;
-    float best_dist = 1e9f;
-    for (size_t i = 0; i < lay.items.size() && i < d.order.size(); ++i) {
-        const D2D1_RECT_F r = lay.items[i];
-        if (r.right <= r.left || IsFolder(s.places.starred_items[d.order[i]]) != folder) continue;
-        const float dist = std::fabs((r.left + r.right) * 0.5f - (d.left + w * 0.5f));
-        if (dist < best_dist) { best_dist = dist; best = static_cast<int>(i); }
+    d.out = self.kind == app::StarredRow::Kind::Item && dy > 34.0f * s.scale;
+    // Over the middle half of a group, a folder joins it (the group's ring).
+    d.into.clear();
+    d.into_slot = -1;
+    if (self.kind == app::StarredRow::Kind::Item && folder && !d.out) {
+        for (size_t i = 0; i < rows.size() && i < lay.items.size(); ++i) {
+            const D2D1_RECT_F r = lay.items[i];
+            if (rows[i].kind != app::StarredRow::Kind::Group || r.right <= r.left) continue;
+            const float inset = (r.right - r.left) * 0.25f;
+            if (static_cast<float>(pt.x) >= r.left + inset && static_cast<float>(pt.x) <= r.right - inset) {
+                d.into = rows[i].group;
+                d.into_slot = static_cast<int>(i);
+                break;
+            }
+        }
     }
-    if (best != d.slot && !d.out) {
-        const size_t moved = d.order[static_cast<size_t>(d.slot)];
-        d.order.erase(d.order.begin() + d.slot);
-        d.order.insert(d.order.begin() + best, moved);
-        d.slot = best;
+    if (d.into.empty() && !d.out) {
+        // The entry whose centre is nearest its own; folders stay ahead of files.
+        int best = d.slot;
+        float best_dist = 1e9f;
+        for (size_t i = 0; i < lay.items.size() && i < rows.size(); ++i) {
+            const D2D1_RECT_F r = lay.items[i];
+            if (r.right <= r.left || rows[i].kind == app::StarredRow::Kind::Separator ||
+                folder_row(rows[i]) != folder)
+                continue;
+            const float dist = std::fabs((r.left + r.right) * 0.5f - (d.left + w * 0.5f));
+            if (dist < best_dist) { best_dist = dist; best = static_cast<int>(i); }
+        }
+        if (best != d.slot) {
+            // Move the entry, then flatten back to the list: a group brings its
+            // members, a separator follows its item when the rows are rebuilt.
+            std::vector<app::StarredRow> moved = rows;
+            app::StarredRow entry = moved[static_cast<size_t>(d.slot)];
+            moved.erase(moved.begin() + d.slot);
+            moved.insert(moved.begin() + best, std::move(entry));
+            std::vector<size_t> order;
+            order.reserve(d.order.size());
+            for (const auto& row : moved) {
+                if (row.kind == app::StarredRow::Kind::Item) order.push_back(row.index);
+                else if (row.kind == app::StarredRow::Kind::Group)
+                    order.insert(order.end(), row.members.begin(), row.members.end());
+            }
+            if (order.size() == d.order.size()) {
+                d.order = std::move(order);
+                const int now = SlotOf(RowsFor(s, &d.order), d.item, d.group);
+                if (now >= 0) d.slot = now;
+            }
+        }
     }
     InvalidateRect(s.hwnd, nullptr, FALSE);
     return true;
@@ -506,16 +677,81 @@ void EndFavoritesBarDrag(AppState& s, bool cancel) {
     g_drag = FavoriteDrag{};
     if (GetCapture() == s.hwnd) ReleaseCapture();
     InvalidateRect(s.hwnd, nullptr, FALSE);
-    if (d.owner != &s || cancel || d.from < 0) return;
-    const size_t from = static_cast<size_t>(d.from);
-    if (from >= s.places.starred_items.size()) return;
+    if (d.owner != &s || cancel || d.slot < 0) return;
+    const auto& list = s.places.starred_items;
     if (!d.active) {
-        OpenFavorite(s, app::StarredItem(s.places.starred_items[from]), HowFromKeys());
+        if (!d.group.empty()) ShowGroupDropdown(s, d.group, d.below);
+        else if (d.item < list.size()) OpenFavorite(s, app::StarredItem(list[d.item]), HowFromKeys());
         return;
     }
-    if (d.order.size() != s.places.starred_items.size()) return;
-    if (d.out) RemoveFavorite(s, from);
-    else if (d.slot >= 0 && static_cast<size_t>(d.slot) != from) s.places.MoveStarredItem(from, static_cast<size_t>(d.slot));
+    if (d.order.size() != list.size()) return;
+    if (d.out) {
+        if (d.item < list.size()) RemoveFavorite(s, d.item);
+        return;
+    }
+    const std::wstring path = d.item < list.size() ? list[d.item].path : std::wstring{};
+    bool changed = s.places.ReorderStarred(d.order);
+    if (!d.into.empty() && !path.empty()) changed = s.places.SetStarredItemGroup(path, d.into) || changed;
+    if (changed) RefreshStarredViews(s);
+}
+
+void ShowStarredGroupMenu(AppState& s, const std::wstring& id, POINT screen) {
+    const app::StarredGroup* group = s.places.FindStarredGroup(id);
+    if (!group || !EnsureMenu(s)) return;
+    const std::wstring name = group->name;
+    // The name is the menu's field (the tab group editor's model): typing
+    // renames as it goes; an emptied field keeps the last name.
+    s.menu->SetFilterPlaceholder(l10n::Get(l10n::StringId::FavoritesGroupName));
+    s.menu->SetInitialFilterText(name);
+    s.menu->SetFilterMinWidth(260.0f);
+    const auto build = [&s, id](const std::wstring& query) {
+        if (!query.empty() && s.places.RenameStarredGroup(id, query)) InvalidateRect(s.hwnd, nullptr, FALSE);
+        const app::StarredGroup* current = s.places.FindStarredGroup(id);
+        std::vector<ui::FluentMenuItem> items;
+        ui::FluentMenuItem all;
+        all.command = kOpenAllCommand;
+        all.text = l10n::Get(l10n::StringId::FavoritesGroupOpenAll);
+        all.glyph = L"\xE8A7";
+        all.separator_after = true;
+        items.push_back(std::move(all));
+        ui::FluentMenuItem line;
+        line.command = kSeparatorCommand;
+        line.text = l10n::Get(current && current->separator_after ? l10n::StringId::FavoritesSeparatorRemove
+                                                                   : l10n::StringId::FavoritesSeparatorAdd);
+        items.push_back(std::move(line));
+        ui::FluentMenuItem ungroup;
+        ungroup.command = kUngroupCommand;
+        ungroup.text = l10n::Get(l10n::StringId::FavoritesGroupUngroup);
+        ungroup.glyph = L"\xE8C6";   // cut apart
+        items.push_back(std::move(ungroup));
+        return items;
+    };
+    const int cmd = s.menu->TrackPopup(screen, build(name), build);
+    s.menu->SetFilterPlaceholder(l10n::Get(l10n::StringId::TabMenuSearch));
+    if (cmd == kOpenAllCommand) {
+        OpenGroupTabs(s, id);
+    } else if (cmd == kSeparatorCommand) {
+        if (const app::StarredGroup* current = s.places.FindStarredGroup(id))
+            s.places.SetStarredSeparator(id, !current->separator_after);
+    } else if (cmd == kUngroupCommand) {
+        s.places.UngroupStarred(id);
+    }
+    RefreshStarredViews(s);
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void CreateStarredGroupAndEdit(AppState& s, const std::wstring& path, POINT screen) {
+    const std::wstring id = s.places.CreateStarredGroup(l10n::Get(l10n::StringId::FavoritesGroupDefaultName), path);
+    if (id.empty()) return;
+    RefreshStarredViews(s);
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+    ShowStarredGroupMenu(s, id, screen);   // name it
+}
+
+bool OpenFavoritesGroupTabs(AppState& s, const std::wstring& path) {
+    if (!app::IsStarredGroupPath(path)) return false;
+    OpenGroupTabs(s, app::StarredGroupIdFromPath(path));
+    return true;
 }
 
 void UndoFavoriteRemoval(AppState& s) {
@@ -532,11 +768,18 @@ void UndoFavoriteRemoval(AppState& s) {
     }
     if (!r.item.badge.empty() || r.item.badge_rgb != app::kDefaultBadgeRgb)
         s.places.SetStarredBadge(r.item.path, r.item.badge, r.item.badge_rgb);
+    // Its group is kept in memory while empty, so it goes back in.
+    if (!r.item.group.empty()) s.places.SetStarredItemGroup(r.item.path, r.item.group, false);
+    if (r.item.separator_after) s.places.SetStarredSeparator(r.item.path, true);
     RefreshStarredViews(s);
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
 bool HandleFavoritesBarContextMenu(AppState& s, const ui::HitTestResult& hit, POINT screen) {
+    if (hit.region == ui::HitTestResult::SidebarItem && app::IsStarredGroupPath(hit.path)) {
+        ShowStarredGroupMenu(s, app::StarredGroupIdFromPath(hit.path), screen);
+        return true;
+    }
     if (hit.region == ui::HitTestResult::AddressFavorites) {
         ShowFavoritesDropdown(s, screen);
         return true;
@@ -544,11 +787,16 @@ bool HandleFavoritesBarContextMenu(AppState& s, const ui::HitTestResult& hit, PO
     if (hit.region != ui::HitTestResult::FavoritesBarItem && hit.region != ui::HitTestResult::FavoritesBarMore &&
         hit.region != ui::HitTestResult::FavoritesBarChevron)
         return false;
-    // A favorite: the same menu as its row in the sidebar's 收藏夹.
-    if (const app::StarredItem* item = FavoriteAt(s, hit.index);
-        item && hit.region != ui::HitTestResult::FavoritesBarMore) {
-        ShowCuratedItemMenu(s, std::wstring(item->path), false, screen);
-        return true;
+    if (hit.region != ui::HitTestResult::FavoritesBarMore) {
+        // A favorite: the same menu as its row in the sidebar's 收藏夹.
+        if (const app::StarredItem* item = FavoriteAt(s, hit.index)) {
+            ShowCuratedItemMenu(s, std::wstring(item->path), false, screen);
+            return true;
+        }
+        if (const std::wstring group = GroupAt(s, hit.index); !group.empty()) {
+            ShowStarredGroupMenu(s, group, screen);
+            return true;
+        }
     }
     ShowFavoritesBarMenu(s, screen);
     return true;
@@ -569,6 +817,15 @@ std::wstring FavoritesBarDropFolder(const AppState& s, const ui::HitTestResult& 
 }
 
 std::wstring FavoritesBarTooltip(const AppState& s, const ui::HitTestResult& hit) {
+    if (const std::wstring id = GroupAt(s, hit.index); !id.empty()) {
+        // A group: its name, then its members.
+        const app::StarredGroup* group = s.places.FindStarredGroup(id);
+        std::wstring text = group ? group->name : std::wstring{};
+        const auto paths = GroupPaths(s, id);
+        for (size_t i = 0; i < paths.size() && i < 8; ++i) text += L"\n" + app::TabTitle(paths[i]);
+        if (paths.size() > 8) text += L"\n\u2026";
+        return text;
+    }
     const app::StarredItem* item = FavoriteAt(s, hit.index);
     if (!item) return {};
     std::wstring text = pulse::path::FriendlyPathText(item->path);

@@ -410,6 +410,7 @@ struct SidebarItem {
     bool expandable = false;
     bool expanded = false;
     bool starred_child = false;
+    bool divider_above = false;    // 收藏夹: the user's separator, a line above the row
     bool tab_row = false;          // vertical tabs: row stands for a window tab
     int tab_number = 0;            // 1-based position, badged on the icon rail
     bool tab_active = false;

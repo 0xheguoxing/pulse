@@ -337,6 +337,9 @@ bool HandleFolderMiddleClick(AppState& s, int x, int y) {
     const ui::HitTestResult hit =
         s.renderer.HitTest(vm, bounds, static_cast<float>(x), static_cast<float>(y));
     std::wstring path;
+    // A 收藏夹 group (the bar's button, the sidebar's row): all its folders.
+    if ((hit.region == R::FavoritesBarItem || hit.region == R::SidebarItem) && OpenFavoritesGroupTabs(s, hit.path))
+        return true;
     if (hit.region == R::Row && hit.index >= 0) {
         app::Pane* pane = PaneAtSlot(s, hit.pane_index);
         app::Tab* tab = pane ? pane->ActiveTab() : nullptr;

@@ -4051,6 +4051,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
                                               L"C:\\Windows\\System32", L"Z:\\Archive"})
                     state.places.starred_items.push_back({folder, app::PlaceItemKind::Folder});
                 state.places.starred_items.push_back({L"C:\\Windows\\win.ini", app::PlaceItemKind::File});
+                // 收藏夹分组与分隔线: a line after Users, Program Files and
+                // System32 in a group.
+                state.places.starred_items[1].separator_after = true;
+                state.places.starred_groups.push_back({L"shot", L"\u7cfb\u7edf"});   // 系统
+                state.places.starred_items[2].group = L"shot";
+                state.places.starred_items[3].group = L"shot";
+                state.starredExpanded = true;
             }
         }
         if (state.shot_pinned_tab && !state.window_tabs.items.empty()) {
