@@ -640,6 +640,12 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         float turn=0.0f, glyph_scale=1.0f;
         tm.pins.Turn(pm,motion_now_,turn,glyph_scale);
         const D2D1_RECT_F b=tm.pins.Place(pm,slot,static_cast<int>(i),pin_drag,motion_now_,tm.animations);
+        if (i < 64 && (layout.pin_dividers >> i & 1)) {
+            // The user's separator (自定义工具栏): a short line like the one before the apps.
+            const float x=(dragged ? slot.left : b.left)-6.5f*scale_;
+            MakeBrush(dc,theme.stroke_divider,brStrokeDivider_);
+            FillRect(dc,brStrokeDivider_.get(),x,slot.top+9*scale_,scale_,14*scale_);
+        }
         const D2D1_POINT_2F centre=D2D1::Point2F((b.left+b.right)*0.5f,(b.top+b.bottom)*0.5f);
         const AroundCentre pop(dc,centre,tm.pins.Pop(pm,motion_now_)*(dragged ? 1.08f : 1.0f));
         if (preview) {
@@ -825,19 +831,38 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(sel.chip.left+h,sel.chip.top+h,
                 sel.chip.right-h,sel.chip.bottom-h),7*scale_,7*scale_),edge_brush.get(),scale_);
         }
-        if (sel.label.right > sel.label.left)
-            painter_.DrawText(SelectionChipLabel(vm.pane.selected_count),sel.label,compositor_->SmallFormat(),theme.accent);
         D2D1_COLOR_F hot=theme.accent;
         hot.a*=0.22f;
+        if (sel.label.right > sel.label.left) {
+            // The count opens the selection menu: it lights up like a button.
+            if (IsHovered(vm,HitTestResult::ToolbarSelAction,kSelChipLabel))
+                painter_.FillRoundedRect(D2D1::RectF(sel.label.left-6*scale_,sel.label.top+2*scale_,
+                    sel.label.right+4*scale_,sel.label.bottom-2*scale_),5*scale_,hot);
+            painter_.DrawText(SelectionChipLabel(vm.pane.selected_count),sel.label,compositor_->SmallFormat(),theme.accent);
+        }
         int last_action=-1;
         for (int i=0;i<kSelChipSlots;++i) {
             const D2D1_RECT_F b=sel.buttons[static_cast<size_t>(i)];
             if (b.right <= b.left) continue;
-            if (i < kSelChipMore) last_action=i;
+            if (i < kSelChipPin) last_action=i;
+            const bool action=i < kSelChipPin && static_cast<size_t>(i) < vm.selection_actions.size();
             const std::wstring glyph=i==kSelChipMore ? std::wstring(L"\xE712")
-                : i==kSelChipClear ? std::wstring(kIconCloseSmall) : vm.selection_actions[static_cast<size_t>(i)].glyph;
+                : i==kSelChipPin ? std::wstring(L"\xE718")
+                : i==kSelChipClear ? std::wstring(kIconCloseSmall)
+                : action ? vm.selection_actions[static_cast<size_t>(i)].glyph : std::wstring();
             DrawButton(b,theme,IsHovered(vm,HitTestResult::ToolbarSelAction,i) ? hot : kTransparent,
                 glyph,L"",theme.accent,true,true,i==kSelChipClear ? 0.6f : 0.85f);
+            if (action && vm.selection_actions[static_cast<size_t>(i)].situational) {
+                // Offered because of the moment: an accent underline.
+                const float cx=(b.left+b.right)*0.5f;
+                painter_.FillRoundedRect(D2D1::RectF(cx-6*scale_,b.bottom-2.5f*scale_,cx+6*scale_,b.bottom-0.5f*scale_),
+                    scale_,theme.accent);
+                const bool next_common=static_cast<size_t>(i+1) < vm.selection_actions.size() && i+1 < kSelChipPin &&
+                    sel.buttons[static_cast<size_t>(i+1)].right > sel.buttons[static_cast<size_t>(i+1)].left &&
+                    !vm.selection_actions[static_cast<size_t>(i+1)].situational;
+                if (next_common)   // situational | the user's own
+                    FillRect(dc,brStrokeDivider_.get(),b.right+0.5f*scale_,b.top+8*scale_,scale_,b.bottom-b.top-16*scale_);
+            }
         }
         if (last_action >= 0) {
             // Quick actions | more and clear.

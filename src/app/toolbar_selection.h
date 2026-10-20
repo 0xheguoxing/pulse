@@ -3,8 +3,7 @@
 // glyphs and labels live in the catalog in app_commands.cpp
 // (kSelectionActions, same order as the ids here).
 //
-// Prefs without the key show every action in the default order, which is the
-// order the chip had before the list existed.
+// Prefs without the key show DefaultToolbarSelection.
 #pragma once
 #include <cstddef>
 #include <string>
@@ -39,10 +38,11 @@ inline std::vector<std::wstring> NormalizeToolbarSelection(const std::vector<std
     return out;
 }
 
+// The situational rules (batch rename, compare, open path) are on; the
+// user's own actions are 标签, 复制路径, 在新标签页打开, 属性 (toolbar
+// redesign §5). Pinning moved to the chip's 固定到… menu.
 inline std::vector<std::wstring> DefaultToolbarSelection() {
-    std::vector<std::wstring> out;
-    for (const auto id : kSelectionActionIds) out.emplace_back(id);
-    return out;
+    return {L"batch_rename", L"compare", L"open_path", L"tags", L"copy_path", L"new_tab", L"properties"};
 }
 
 } // namespace pulse::app

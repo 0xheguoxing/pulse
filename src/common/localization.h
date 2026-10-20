@@ -2498,6 +2498,14 @@ enum class StringId : UINT {
     TagPanelHeaderFormat = IDS_TAG_PANEL_HEADER_FORMAT,
     TagPanelRecent = IDS_TAG_PANEL_RECENT,
     TagPanelFavorites = IDS_TAG_PANEL_FAVORITES,
+    ToolbarAddSeparator = IDS_TOOLBAR_ADD_SEPARATOR,
+    ToolbarRemoveSeparator = IDS_TOOLBAR_REMOVE_SEPARATOR,
+    ToolbarRemoveTool = IDS_TOOLBAR_REMOVE_TOOL,
+    SelChipPinTo = IDS_SEL_CHIP_PIN_TO,
+    SelChipSummary = IDS_SEL_CHIP_SUMMARY,
+    SelKeepFolders = IDS_SEL_KEEP_FOLDERS,
+    SelKeepFiles = IDS_SEL_KEEP_FILES,
+    SelSameType = IDS_SEL_SAME_TYPE,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

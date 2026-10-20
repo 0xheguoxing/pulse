@@ -252,6 +252,7 @@ ToolbarLayout MainRenderer::ToolbarLayoutAt(float w, float create_width, float f
     ToolbarPinOptions pins;
     pins.app_from = pin_app_from_;
     pins.drop_mode = pin_drop_mode_ && !embedded_;
+    pins.separators = pins.drop_mode ? 0 : pin_separators_;
     pins.label_width = pins.drop_mode ? ToolbarPinLabelWidth() : 0.0f;
     if (!vertical_tabs_)
         return MakeToolbarLayout(w, scale_, title_bar_height_, margin_, create_width, left, filter_expand,

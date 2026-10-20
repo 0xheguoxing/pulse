@@ -1536,6 +1536,8 @@ public:
         pin_drop_mode_ = drop_mode;
         pin_drop_label_ = std::move(drop_label);
     }
+    // The user's separators between pinned tools (bit i: before pin i).
+    void SetToolbarSeparators(uint64_t mask) { pin_separators_ = mask; }
     float ToolbarPinLabelWidth() const;
     // Selection chip input for the toolbar layout (the row reserves its room).
     void SetToolbarSelection(int selected, int action_count) {
@@ -2235,6 +2237,7 @@ private:
     bool new_last_text_ = false;
     int pin_count_ = 0;
     int pin_app_from_ = -1;
+    uint64_t pin_separators_ = 0;
     bool pin_drop_mode_ = false;
     std::wstring pin_drop_label_;
     // Device bitmaps of the pinned apps' icons, keyed by their pixel buffers.

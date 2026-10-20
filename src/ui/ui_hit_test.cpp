@@ -827,6 +827,7 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 // The chip body (-1) takes the right-click menu too.
                 r.region=HitTestResult::ToolbarSelAction; r.index=-1;
                 for (int i=0;i<kSelChipSlots;++i) if (ContainsPt(sel.buttons[static_cast<size_t>(i)],x,y)) r.index=i;
+                if (r.index<0 && ContainsPt(sel.label,x,y)) r.index=kSelChipLabel;   // the selection menu
                 return r;
             }
         }

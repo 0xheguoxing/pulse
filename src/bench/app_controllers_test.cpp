@@ -780,6 +780,28 @@ bool TestToolbarApps() {
                                            ToolbarPinOptions{0, true, 400});
     ok &= Report("toolbar apps: the drop label gives way before an app does",
         no_room.pin_label.right <= no_room.pin_label.left && no_room.pins[0].right > no_room.pins[0].left);
+    // The user's separators (自定义工具栏) open a 9 DIP gap before their pin.
+    {
+        ToolbarPinOptions grouped;
+        grouped.separators = 1u << 2;
+        const auto plain = MakeToolbarLayout(1400, 1, 46, 8, 96, 224, 0, 0, 0, 34, 34, 4, 0);
+        const auto split = MakeToolbarLayout(1400, 1, 46, 8, 96, 224, 0, 0, 0, 34, 34, 4, 0, grouped);
+        const float gap = split.pins[2].left - split.pins[1].right;
+        using namespace pulse::ui;
+        const auto row = MakeToolbarLayout(1600, 1, 46, 8, 96, 224, 0, 0, 0, 34, 34, 0, SelectionChipSpan(1, 60, 6));
+        const auto sel = MakeToolbarSelectionChip(row, 1, 60, 6);
+        const auto shown = [](const D2D1_RECT_F& r) { return r.right > r.left; };
+        ok &= Report("selection chip: the count, 6 actions, then pin to, more and clear",
+            shown(sel.label) && shown(sel.buttons[5]) && sel.buttons[0].left > sel.label.right &&
+            sel.buttons[kSelChipPin].left > sel.buttons[5].right &&
+            sel.buttons[kSelChipMore].left > sel.buttons[kSelChipPin].right &&
+            sel.buttons[kSelChipClear].left > sel.buttons[kSelChipMore].right &&
+            sel.chip.right >= sel.buttons[kSelChipClear].right);
+        ok &= Report("toolbar: a separator opens a gap before its pin, drawn only there",
+            std::abs(gap - (plain.pins[2].left - plain.pins[1].right) - 9.0f) < 0.01f &&
+            split.pin_dividers == (1u << 2) && plain.pin_dividers == 0 &&
+            std::abs(split.pins[1].left - plain.pins[1].left) < 0.01f);
+    }
 
     // An open filter gets room to type: pins fold into More, the labels to
     // icons and a selection chip to its smallest form, from the first frame

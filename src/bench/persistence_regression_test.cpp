@@ -247,7 +247,27 @@ int main(int argc, char** argv) {
         AppPrefs v1_again; v1_again.persist=false;
         Check(v1_again.FromJson(v1.ToJson()) && v1_again.toolbar_tools==v1.toolbar_tools, "TOOLBAR-09 the upgraded list round trips unchanged");
         AppPrefs fresh; fresh.persist=false;
-        Check(fresh.toolbar_tools==pulse::app::DefaultToolbarTools() && fresh.toolbar_tools.size()==9, "TOOLBAR-10 a fresh install gets the prototype's default tools");
+        Check(fresh.toolbar_tools==pulse::app::DefaultToolbarTools() && fresh.toolbar_tools.size()==10 &&
+              pulse::app::ToolbarToolsOnly(fresh.toolbar_tools).size()==9 && fresh.toolbar_tools[5]==L"|",
+              "TOOLBAR-10 a fresh install gets the prototype's default tools, in two groups");
+        AppPrefs sep; sep.persist=false;
+        sep.toolbar_tools={L"|",L"cut",L"|",L"|",L"copy",L"bogus",L"|",L"|"};
+        AppPrefs sep_again; sep_again.persist=false;
+        Check(sep_again.FromJson(sep.ToJson()) && sep_again.toolbar_tools==Tools{L"cut",L"|",L"copy"},
+              "TOOLBAR-11 separators round trip; none first, last or twice in a row");
+        using namespace pulse::app;
+        const Tools grouped{L"cut",L"copy",L"|",L"paste",L"rename"};
+        Check(ToolbarSeparatorMask(grouped)==4u && MoveToolbarTool(grouped,0,3)==Tools{L"copy",L"paste",L"|",L"rename",L"cut"},
+              "TOOLBAR-12 dragging a tool keeps the separator between the same slots");
+        Check(RemoveToolbarTool(grouped,2)==Tools{L"cut",L"copy",L"|",L"rename"} &&
+              RemoveToolbarTool(grouped,1)==Tools{L"cut",L"|",L"paste",L"rename"},
+              "TOOLBAR-13 removing a tool next to a separator keeps the separator");
+        Check(SetToolbarSeparatorAfter(grouped,2,true)==Tools{L"cut",L"copy",L"|",L"paste",L"|",L"rename"} &&
+              SetToolbarSeparatorAfter(grouped,1,false)==Tools{L"cut",L"copy",L"paste",L"rename"} &&
+              SetToolbarSeparatorAfter(grouped,3,true)==grouped,
+              "TOOLBAR-14 a separator is added or removed after a tool, never after the last");
+        Check(KeepToolbarSeparators(grouped,Tools{L"cut",L"copy",L"rename",L"zip"})==Tools{L"cut",L"copy",L"|",L"rename",L"zip"},
+              "TOOLBAR-15 a picker change keeps a separator before the next remaining tool");
     }
     std::filesystem::remove_all(dir);
     return failures ? 1 : 0;

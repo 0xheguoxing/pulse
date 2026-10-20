@@ -2509,3 +2509,11 @@ TagSmartViewSaveFormat	IDS_TAG_SMART_VIEW_SAVE_FORMAT	3711	保存为智能视图
 TagPanelHeaderFormat	IDS_TAG_PANEL_HEADER_FORMAT	3712	给 %s 项打标签	Tag %s items	為 %s 個項目加上標籤
 TagPanelRecent	IDS_TAG_PANEL_RECENT	3713	最近用过	Recently used	最近用過
 TagPanelFavorites	IDS_TAG_PANEL_FAVORITES	3714	常用	Favorites	常用
+ToolbarAddSeparator	IDS_TOOLBAR_ADD_SEPARATOR	3715	在后面加分隔符	Add a separator after	在後面加分隔線
+ToolbarRemoveSeparator	IDS_TOOLBAR_REMOVE_SEPARATOR	3716	移除后面的分隔符	Remove the separator after	移除後面的分隔線
+ToolbarRemoveTool	IDS_TOOLBAR_REMOVE_TOOL	3717	从工具栏移除	Remove from toolbar	從工具列移除
+SelChipPinTo	IDS_SEL_CHIP_PIN_TO	3718	固定到…	Pin to…	釘選到…
+SelChipSummary	IDS_SEL_CHIP_SUMMARY	3719	%s 个文件夹、%s 个文件	%s folders, %s files	%s 個資料夾、%s 個檔案
+SelKeepFolders	IDS_SEL_KEEP_FOLDERS	3720	只保留文件夹	Keep only folders	只保留資料夾
+SelKeepFiles	IDS_SEL_KEEP_FILES	3721	只保留文件	Keep only files	只保留檔案
+SelSameType	IDS_SEL_SAME_TYPE	3722	选择同类型（%s）	Select the same type (%s)	選取同類型（%s）

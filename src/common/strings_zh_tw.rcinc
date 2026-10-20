@@ -2486,4 +2486,12 @@ BEGIN
     IDS_TAG_PANEL_HEADER_FORMAT "為 %s 個項目加上標籤"
     IDS_TAG_PANEL_RECENT "最近用過"
     IDS_TAG_PANEL_FAVORITES "常用"
+    IDS_TOOLBAR_ADD_SEPARATOR "在後面加分隔線"
+    IDS_TOOLBAR_REMOVE_SEPARATOR "移除後面的分隔線"
+    IDS_TOOLBAR_REMOVE_TOOL "從工具列移除"
+    IDS_SEL_CHIP_PIN_TO "釘選到…"
+    IDS_SEL_CHIP_SUMMARY "%s 個資料夾、%s 個檔案"
+    IDS_SEL_KEEP_FOLDERS "只保留資料夾"
+    IDS_SEL_KEEP_FILES "只保留檔案"
+    IDS_SEL_SAME_TYPE "選取同類型（%s）"
 END

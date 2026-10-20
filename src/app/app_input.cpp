@@ -4134,6 +4134,13 @@ LRESULT HandleRButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             ShowItemContextMenu(*s, sp);
             return 0;
         }
+        // A pinned tool: separators, remove, 自定义工具栏 (the preview pin and
+        // the apps fall through to the popover).
+        if (hit.region == ui::HitTestResult::ToolbarPin && hit.index >= 0 && !ui::ToolbarPickerOpen() &&
+            hit.index < static_cast<int>(app::ToolbarToolsOnly(s->appPrefs.toolbar_tools).size())) {
+            ShowToolbarPinMenu(*s, hit.index, sp);
+            return 0;
+        }
         // Toolbar tools / apps / More: the customize popover, on the page of
         // the part clicked.
         if (hit.region == ui::HitTestResult::ToolbarPin || hit.region == ui::HitTestResult::ToolbarPinLabel ||

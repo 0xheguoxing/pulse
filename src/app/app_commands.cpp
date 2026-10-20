@@ -2647,6 +2647,19 @@ constexpr bool ToolbarGlyphsDistinct() {
     return true;
 }
 static_assert(ToolbarGlyphsDistinct(), "every toolbar command has its own glyph");
+// Offered because of the moment rather than chosen by the user (toolbar
+// redesign §5): drive / network / Recycle Bin verbs, split, two folders,
+// several items, search results.
+bool SituationalSelectionCommand(int command) {
+    switch (command) {
+    case app::CmdUnlockDrive: case app::CmdEjectDrive: case app::CmdDisconnectDrive: case app::CmdRestoreRecycle:
+    case app::CmdMapNetworkDrive: case app::CmdUnpinNetwork: case app::CmdCopyToTarget: case app::CmdMoveToTarget:
+    case app::CmdCompareSideBySide: case app::CmdBatchRename: case app::CmdOpenPath:
+        return true;
+    default:
+        return false;
+    }
+}
 int SelectionActionFor(int command) {
     for (size_t i = 0; i < std::size(kSelectionActions); ++i)
         if (kSelectionActions[i].command == command || (kSelectionActions[i].alt_command && kSelectionActions[i].alt_command == command))
@@ -3531,6 +3544,10 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
         if ((builtin == app::BuiltinMenuItem::Count && !selection_row) ||
             builtin == app::BuiltinMenuItem::Undo || builtin == app::BuiltinMenuItem::SelectCommands)
             continue;
+        // Pinning lives in the chip's 固定到… menu.
+        if (item.command == app::CmdPinQuickAccess || item.command == app::CmdUnpinQuickAccess ||
+            item.command == app::CmdPinWorkspace || item.command == app::CmdPinNetwork)
+            continue;
         // Already pinned to the toolbar (自定义工具栏): not twice in one row.
         bool pinned = false;
         for (const auto& id : cache.tools) {
@@ -3546,7 +3563,24 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
         action.label = item.text;
         action.label = WithoutEllipsis(std::move(action.label));
         if (!item.shortcut.empty()) action.label += L" (" + item.shortcut + L")";
+        action.situational = SituationalSelectionCommand(item.command);
         cache.actions.push_back(std::move(action));
+    }
+    // Split: copy / move to the other pane (new rule, toolbar redesign §5).
+    if (LiveLayout(s).VisiblePanes().size() > 1 && !IsRecycleTab(tab) && SelectionCapsOf(s).copy) {
+        const struct { int command; l10n::StringId label; const wchar_t* glyph; const wchar_t* key; } kTransfer[] = {
+            {app::CmdCopyToTarget, l10n::StringId::CopyToTarget, ui::command_icons::kGlyphCopyToPane, L"Ctrl+Alt+C"},
+            {app::CmdMoveToTarget, l10n::StringId::MoveToTarget, ui::command_icons::kGlyphMoveToPane, L"Ctrl+Alt+X"},
+        };
+        for (const auto& t : kTransfer) {
+            ui::SelectionChipAction action;
+            action.command = t.command;
+            action.glyph = t.glyph;
+            action.label = l10n::Get(t.label);
+            if (const auto key = app::ShownShortcut(t.key); !key.empty()) action.label += L" (" + key + L")";
+            action.situational = true;
+            cache.actions.push_back(std::move(action));
+        }
     }
     // Drive / network / Recycle Bin verbs first, then the user's order
     // (自定义工具栏 → 选中时); cut / copy / rename / delete already sit on the
@@ -3555,6 +3589,8 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
         static constexpr int kContext[] = {
             app::CmdUnlockDrive, app::CmdEjectDrive, app::CmdDisconnectDrive, app::CmdRestoreRecycle,
             app::CmdMapNetworkDrive, app::CmdUnpinNetwork,
+            app::CmdCopyToTarget, app::CmdMoveToTarget, app::CmdCompareSideBySide, app::CmdBatchRename,
+            app::CmdOpenPath,
         };
         for (size_t i = 0; i < std::size(kContext); ++i)
             if (kContext[i] == command) return static_cast<int>(i);
@@ -3566,10 +3602,151 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
                      [&](const ui::SelectionChipAction& a, const ui::SelectionChipAction& b) {
                          return rank(a.command) < rank(b.command);
                      });
-    if (cache.actions.size() > static_cast<size_t>(ui::kSelChipMaxActions))
-        cache.actions.resize(static_cast<size_t>(ui::kSelChipMaxActions));
+    // Up to 2 situational actions, then up to 4 of the user's.
+    std::vector<ui::SelectionChipAction> chosen;
+    int situational = 0, common = 0;
+    for (auto& action : cache.actions) {
+        int& n = action.situational ? situational : common;
+        if (n >= (action.situational ? ui::kSelChipSituational : ui::kSelChipCommon)) continue;
+        ++n;
+        chosen.push_back(std::move(action));
+    }
+    std::stable_partition(chosen.begin(), chosen.end(),
+                          [](const ui::SelectionChipAction& a) { return a.situational; });
+    cache.actions = std::move(chosen);
     return cache.actions;
 }
+
+namespace {
+// The count's menu: select more, fewer or alike.
+void ShowSelectionChipMenu(AppState& s, POINT anchor) {
+    app::Tab* tab = ActiveTab(s);
+    if (!tab || !EnsureMenu(s)) return;
+    constexpr int kKeepFolders = 35101, kKeepFiles = 35102, kSameType = 35103, kClear = 35104;
+    const std::vector<int> selected = tab->SelectedIndices();
+    const bool listing = tab->snapshot && !tab->content_results;
+    int folders = 0, files = 0;
+    std::wstring ext;
+    bool one_ext = true;
+    if (listing) {
+        for (int index : selected) {
+            if (index < 0 || static_cast<size_t>(index) >= tab->EntryCount()) continue;
+            const fs::DirEntry& e = tab->EntryAt(static_cast<size_t>(index));
+            if (e.is_dir) { ++folders; one_ext = false; continue; }
+            ++files;
+            const size_t dot = e.name.rfind(L'.');
+            const std::wstring mine = dot == std::wstring::npos || dot == 0 ? std::wstring() : e.name.substr(dot);
+            if (files == 1) ext = mine;
+            else if (_wcsicmp(ext.c_str(), mine.c_str()) != 0) one_ext = false;
+        }
+    }
+    std::vector<ui::FluentMenuItem> items;
+    const auto row = [&items](int command, std::wstring text, const wchar_t* glyph, const wchar_t* key = nullptr) {
+        ui::FluentMenuItem item;
+        item.command = command;
+        item.text = std::move(text);
+        item.glyph = glyph;
+        if (key) item.shortcut = app::ShownShortcut(key);
+        items.push_back(std::move(item));
+    };
+    row(app::CmdSelectAll, l10n::Get(l10n::StringId::SelectAll), L"\xE8B3", L"Ctrl+A");
+    row(app::CmdInvertSelection, l10n::Get(l10n::StringId::InvertSelection), L"\xE8AB");
+    row(app::CmdSelectWildcard, l10n::Get(l10n::StringId::SelectWildcard), ui::command_icons::kGlyphSelectWild,
+        L"Ctrl+Shift+A");
+    items.back().separator_after = true;
+    if (folders > 0 && files > 0) {
+        row(kKeepFolders, l10n::Get(l10n::StringId::SelKeepFolders), L"\xE8B7");
+        row(kKeepFiles, l10n::Get(l10n::StringId::SelKeepFiles), L"\xE8A5");
+    }
+    if (files > 0 && one_ext && !ext.empty()) {
+        std::wstring text = l10n::Get(l10n::StringId::SelSameType);
+        if (const size_t at = text.find(L"%s"); at != std::wstring::npos) text.replace(at, 2, ext);
+        row(kSameType, std::move(text), L"\xE8A5");
+    }
+    items.back().separator_after = true;
+    row(kClear, l10n::Get(l10n::StringId::ClearSelectionEsc), L"\xE711");
+    const int cmd = s.menu->TrackPopup(anchor, std::move(items));
+    if (cmd == app::CmdNone) return;
+    if (cmd == kClear) {
+        tab->ClearSelection();
+        s.clickCollapseIndex = -1;
+    } else if (cmd == kKeepFolders || cmd == kKeepFiles) {
+        std::vector<int> keep;
+        for (int index : selected)
+            if (index >= 0 && static_cast<size_t>(index) < tab->EntryCount() &&
+                tab->EntryAt(static_cast<size_t>(index)).is_dir == (cmd == kKeepFolders))
+                keep.push_back(index);
+        tab->SelectIndices(keep);
+    } else if (cmd == kSameType) {
+        std::vector<int> same;
+        for (size_t i = 0; i < tab->EntryCount(); ++i) {
+            const fs::DirEntry& e = tab->EntryAt(i);
+            if (e.is_dir || !tab->EntryVisible(static_cast<int>(i)) || e.name.size() <= ext.size()) continue;
+            if (_wcsicmp(e.name.c_str() + (e.name.size() - ext.size()), ext.c_str()) == 0) same.push_back(static_cast<int>(i));
+        }
+        tab->SelectIndices(same);
+    } else {
+        DispatchMenuCommand(s, cmd);
+        return;
+    }
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+// 固定到…: 收藏夹, 快速访问, 工作区, 网络位置 (the last three when the item
+// menu offers them for this selection).
+void ShowSelectionPinMenu(AppState& s, POINT anchor) {
+    app::Tab* tab = ActiveTab(s);
+    if (!tab || !EnsureMenu(s)) return;
+    constexpr int kFavorites = 35110;
+    struct Target { std::wstring path; bool dir; };
+    std::vector<Target> targets;
+    bool all_starred = true;
+    for (int index : tab->SelectedIndices()) {
+        const std::wstring path = EntryFullPath(*tab, index);
+        if (path.empty()) continue;
+        const bool dir = index >= 0 && static_cast<size_t>(index) < tab->EntryCount() &&
+            tab->EntryAt(static_cast<size_t>(index)).is_dir;
+        all_starred = all_starred && s.places.IsStarred(path);
+        targets.push_back({path, dir});
+    }
+    std::vector<ui::FluentMenuItem> items;
+    if (!targets.empty()) {
+        ui::FluentMenuItem star;
+        star.command = kFavorites;
+        star.text = l10n::Get(all_starred ? l10n::StringId::Unstar : l10n::StringId::Star);
+        star.glyph = all_starred ? L"\xE735" : ui::command_icons::kGlyphPinFavorites;
+        items.push_back(std::move(star));
+    }
+    for (const auto& item : BuildFinderItemMenu(s, false, L"")) {
+        const wchar_t* glyph = nullptr;
+        switch (item.command) {
+        case app::CmdPinQuickAccess: case app::CmdUnpinQuickAccess: glyph = ui::command_icons::kGlyphPinQuickAccess; break;
+        case app::CmdPinWorkspace: glyph = ui::command_icons::kGlyphPinWorkspace; break;
+        case app::CmdPinNetwork: glyph = ui::command_icons::kGlyphPinNetwork; break;
+        default: break;
+        }
+        if (!glyph || !item.enabled) continue;
+        ui::FluentMenuItem row;
+        row.command = item.command;
+        row.text = WithoutEllipsis(item.text);
+        row.glyph = glyph;
+        row.checked = item.checked;
+        items.push_back(std::move(row));
+    }
+    if (items.empty()) return;
+    const int cmd = s.menu->TrackPopup(anchor, std::move(items));
+    if (cmd == app::CmdNone) return;
+    if (cmd == kFavorites) {
+        for (const auto& t : targets)
+            if (all_starred || !s.places.IsStarred(t.path))
+                ToggleStarred(s, t.path, t.dir ? app::PlaceItemKind::Folder : app::PlaceItemKind::File);
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        return;
+    }
+    if (HandleQuickAccessCommand(s, cmd, QuickAccessTargets(tab, false))) return;
+    DispatchMenuCommand(s, cmd);
+}
+} // namespace
 
 void RunToolbarSelectionAction(AppState& s, int action) {
     app::Tab* tab = ActiveTab(s);
@@ -3588,9 +3765,18 @@ void RunToolbarSelectionAction(AppState& s, int action) {
     const auto actions = SelectionChipActions(s);
     const auto chip = s.renderer.SelectionChipAt(layout, width, static_cast<int>(tab->SelectedCount()),
                                                  static_cast<int>(actions.size()));
-    const D2D1_RECT_F button = chip.buttons[static_cast<size_t>(std::min(action, ui::kSelChipClear))];
+    const D2D1_RECT_F button = action == ui::kSelChipLabel ? chip.label
+        : chip.buttons[static_cast<size_t>(std::min(action, ui::kSelChipClear))];
     POINT anchor{static_cast<LONG>(button.left), static_cast<LONG>(button.bottom)};
     ClientToScreen(s.hwnd, &anchor);
+    if (action == ui::kSelChipLabel) {
+        ShowSelectionChipMenu(s, anchor);
+        return;
+    }
+    if (action == ui::kSelChipPin) {
+        ShowSelectionPinMenu(s, anchor);
+        return;
+    }
     if (action == ui::kSelChipMore) {
         ShowItemContextMenu(s, anchor, true);
         return;
@@ -3617,12 +3803,15 @@ void ShowToolbarMore(AppState& s) {
     std::vector<ui::FluentMenuItem> items;
     // Pinned commands without room on the toolbar (all of them when narrow).
     const auto pins=ToolbarPinActions(s);
+    const uint64_t separators=app::ToolbarSeparatorMask(s.appPrefs.toolbar_tools);
     size_t pin=0;
     for (const auto& id : s.appPrefs.toolbar_tools) {
         const int tool=app::ToolbarToolIndex(id);
         if (tool<0 || pin>=pins.size()) continue;
         const size_t slot=pin++;
         if (slot<layout.pins.size() && layout.pins[slot].right>layout.pins[slot].left) continue;
+        // The user's groups carry over into the menu as separator lines.
+        if (!items.empty() && slot<64 && (separators>>slot & 1)) items.back().separator_after=true;
         const ToolbarToolDef& def=kToolbarTools[tool];
         ui::FluentMenuItem item;
         item.command=pins[slot].command; item.text=l10n::Get(def.label);
@@ -3659,6 +3848,44 @@ void ShowToolbarMore(AppState& s) {
     const int cmd=s.menu->TrackPopup(anchor,items);
     if (RunToolbarAppMenuCommand(s,cmd)) return;
     if (cmd!=app::CmdNone) DispatchMenuCommand(s,cmd);
+}
+
+// Right-click on a pinned tool: group it with a separator, take it off, or
+// open 自定义工具栏.
+void ShowToolbarPinMenu(AppState& s, int slot, POINT screen) {
+    if (!EnsureMenu(s) || slot < 0) return;
+    const auto only = app::ToolbarToolsOnly(s.appPrefs.toolbar_tools);
+    if (static_cast<size_t>(slot) >= only.size()) { ShowToolbarCustomize(s, 0); return; }
+    constexpr int kAddSeparator = 35001, kRemoveSeparator = 35002, kRemoveTool = 35003;
+    const size_t next = static_cast<size_t>(slot) + 1;
+    const bool has_after = next < 64 && (app::ToolbarSeparatorMask(s.appPrefs.toolbar_tools) >> next & 1);
+    std::vector<ui::FluentMenuItem> items;
+    if (next < only.size()) {
+        ui::FluentMenuItem sep;
+        sep.command = has_after ? kRemoveSeparator : kAddSeparator;
+        sep.text = l10n::Get(has_after ? l10n::StringId::ToolbarRemoveSeparator : l10n::StringId::ToolbarAddSeparator);
+        sep.glyph = L"\xE76F";   // a vertical bar between two groups
+        items.push_back(std::move(sep));
+    }
+    ui::FluentMenuItem remove;
+    remove.command = kRemoveTool;
+    remove.text = l10n::Get(l10n::StringId::ToolbarRemoveTool);
+    remove.glyph = L"\xE711";
+    remove.separator_after = true;
+    items.push_back(std::move(remove));
+    items.push_back(CustomizeToolbarItem());
+    const int cmd = s.menu->TrackPopup(screen, std::move(items));
+    auto& tools = s.appPrefs.toolbar_tools;
+    std::vector<std::wstring> changed = tools;
+    if (cmd == kAddSeparator || cmd == kRemoveSeparator)
+        changed = app::SetToolbarSeparatorAfter(tools, static_cast<size_t>(slot), cmd == kAddSeparator);
+    else if (cmd == kRemoveTool)
+        changed = app::RemoveToolbarTool(tools, static_cast<size_t>(slot));
+    else if (cmd != app::CmdNone) { DispatchMenuCommand(s, cmd); return; }
+    if (changed == tools) return;
+    tools = std::move(changed);
+    if (!s.isolatedTest) s.appPrefs.Save();
+    InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
 // Toolbar picker T3c: the tools tile hovered in the open picker (-1 none),
@@ -3959,7 +4186,7 @@ void ShowToolbarCustomize(AppState& s, int page) {
         bool changed = false;
         for (size_t i = 0; i < kToolbarViewCount; ++i)
             if (ToolbarViewShown(s, i) != view[i]) { ToolbarViewPref(s, i) = view[i]; changed = true; }
-        tools = app::NormalizeToolbarTools(tools);
+        tools = app::KeepToolbarSeparators(s.appPrefs.toolbar_tools, tools);
         if (tools != s.appPrefs.toolbar_tools) {
             s.appPrefs.toolbar_tools = std::move(tools);
             if (g_toolbar_link_tool >= 0) PushToolbarPinDrag(s);   // the ring follows its pin
@@ -4064,7 +4291,8 @@ void MoveToolbarPinDrag(AppState& s, POINT pt) {
     ToolbarPinDrag& d = g_pin_drag;
     if (!d.down) return;
     const float dx = static_cast<float>(pt.x - d.start.x), dy = static_cast<float>(pt.y - d.start.y);
-    const int tools = static_cast<int>(std::min<size_t>(s.appPrefs.toolbar_tools.size(), ui::kToolbarCommandPins));
+    const int tools = static_cast<int>(std::min<size_t>(app::ToolbarToolsOnly(s.appPrefs.toolbar_tools).size(),
+                                                        ui::kToolbarCommandPins));
     const int pins = static_cast<int>(ToolbarPinActions(s).size());
     const int apps = static_cast<int>(std::min<size_t>(s.appPrefs.toolbar_apps.size(), app::kMaxToolbarApps));
     const bool is_tool = d.index < tools;
@@ -4099,7 +4327,8 @@ void MoveToolbarPinDrag(AppState& s, POINT pt) {
             list.erase(list.begin() + a);
             list.insert(list.begin() + b, std::move(item));
         };
-        if (is_tool) move(s.appPrefs.toolbar_tools, d.index, best);
+        if (is_tool) s.appPrefs.toolbar_tools = app::MoveToolbarTool(s.appPrefs.toolbar_tools,
+                                                                     static_cast<size_t>(d.index), static_cast<size_t>(best));
         else move(s.appPrefs.toolbar_apps, d.index - pins, best - pins);
         d.index = best;
         d.moved = true;
@@ -4114,10 +4343,11 @@ void EndToolbarPinDrag(AppState& s, bool cancel) {
     if (GetCapture() == s.hwnd) ReleaseCapture();
     bool changed = d.moved;
     if (d.active && d.out && !cancel) {
-        const int tools = static_cast<int>(std::min<size_t>(s.appPrefs.toolbar_tools.size(), ui::kToolbarCommandPins));
+        const int tools = static_cast<int>(std::min<size_t>(app::ToolbarToolsOnly(s.appPrefs.toolbar_tools).size(),
+                                                            ui::kToolbarCommandPins));
         const int pins = static_cast<int>(ToolbarPinActions(s).size());
         if (d.index < tools) {
-            s.appPrefs.toolbar_tools.erase(s.appPrefs.toolbar_tools.begin() + d.index);
+            s.appPrefs.toolbar_tools = app::RemoveToolbarTool(s.appPrefs.toolbar_tools, static_cast<size_t>(d.index));
             changed = true;
         } else if (d.index >= pins && d.index - pins < static_cast<int>(s.appPrefs.toolbar_apps.size())) {
             s.appPrefs.toolbar_apps.erase(s.appPrefs.toolbar_apps.begin() + (d.index - pins));

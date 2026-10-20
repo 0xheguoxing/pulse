@@ -2502,5 +2502,13 @@
 #define IDS_TAG_PANEL_HEADER_FORMAT                                                      3712
 #define IDS_TAG_PANEL_RECENT                                                             3713
 #define IDS_TAG_PANEL_FAVORITES                                                          3714
+#define IDS_TOOLBAR_ADD_SEPARATOR                                                        3715
+#define IDS_TOOLBAR_REMOVE_SEPARATOR                                                     3716
+#define IDS_TOOLBAR_REMOVE_TOOL                                                          3717
+#define IDS_SEL_CHIP_PIN_TO                                                              3718
+#define IDS_SEL_CHIP_SUMMARY                                                             3719
+#define IDS_SEL_KEEP_FOLDERS                                                             3720
+#define IDS_SEL_KEEP_FILES                                                               3721
+#define IDS_SEL_SAME_TYPE                                                                3722
 
 #endif  // PULSE_STRING_IDS_H

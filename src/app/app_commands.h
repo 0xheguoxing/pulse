@@ -142,6 +142,7 @@ void ShowViewDropdown(AppState& s, int pane_index);
 void ShowSortDropdown(AppState& s);
 // Toolbar "Group" button: the group-by choices on their own.
 void ShowGroupDropdown(AppState& s);
+void ShowToolbarPinMenu(AppState& s, int slot, POINT screen);
 void ShowToolbarMore(AppState& s);
 // Toolbar selection chip, linked to the Pulse item menu: the first plain
 // built-in commands of the item menu as the user configured it (order and

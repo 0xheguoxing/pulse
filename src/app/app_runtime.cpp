@@ -3215,6 +3215,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     s.renderer.SetToolbarPrefs(s.appPrefs.toolbar_new_primary, s.appPrefs.toolbar_last_new == 1,
                                static_cast<int>(vm.toolbar_pins.size() + vm.toolbar_apps.size()));
     s.renderer.SetToolbarApps(static_cast<int>(vm.toolbar_pins.size()), drop_mode, vm.toolbar_drop_label);
+    s.renderer.SetToolbarSeparators(drop_mode ? 0 : app::ToolbarSeparatorMask(s.appPrefs.toolbar_tools));
     return vm;
 }
 
@@ -3395,6 +3396,20 @@ std::wstring TooltipForHover(AppState& s) {
     case R::ToolbarSelAction: {
         if (s.hoverControlIndex == ui::kSelChipMore) return text(I::MoreActions);
         if (s.hoverControlIndex == ui::kSelChipClear) return text(I::ClearSelectionEsc);
+        if (s.hoverControlIndex == ui::kSelChipPin) return text(I::SelChipPinTo);
+        if (s.hoverControlIndex == ui::kSelChipLabel) {
+            // "2 个文件夹、1 个文件 · 24.6 MB"
+            const app::Tab* tab = ActiveTab(s);
+            if (!tab || tab->content_results || !tab->snapshot) return L"";
+            uint64_t bytes = 0;
+            int files = 0, folders = 0;
+            tab->SelectionSizeSummary(&bytes, &files, &folders);
+            std::wstring tip = text(I::SelChipSummary);
+            if (const size_t at = tip.find(L"%s"); at != std::wstring::npos) tip.replace(at, 2, std::to_wstring(folders));
+            if (const size_t at = tip.find(L"%s"); at != std::wstring::npos) tip.replace(at, 2, std::to_wstring(files));
+            if (files > 0) tip += L" \u00B7 " + pulse::format::ByteSize(bytes, true);
+            return tip;
+        }
         if (s.hoverControlIndex < 0) return L"";
         const auto actions = SelectionChipActions(s);
         return s.hoverControlIndex < static_cast<int>(actions.size())

@@ -2488,6 +2488,14 @@ BEGIN
     IDS_TAG_PANEL_HEADER_FORMAT "给 %s 项打标签"
     IDS_TAG_PANEL_RECENT "最近用过"
     IDS_TAG_PANEL_FAVORITES "常用"
+    IDS_TOOLBAR_ADD_SEPARATOR "在后面加分隔符"
+    IDS_TOOLBAR_REMOVE_SEPARATOR "移除后面的分隔符"
+    IDS_TOOLBAR_REMOVE_TOOL "从工具栏移除"
+    IDS_SEL_CHIP_PIN_TO "固定到…"
+    IDS_SEL_CHIP_SUMMARY "%s 个文件夹、%s 个文件"
+    IDS_SEL_KEEP_FOLDERS "只保留文件夹"
+    IDS_SEL_KEEP_FILES "只保留文件"
+    IDS_SEL_SAME_TYPE "选择同类型（%s）"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4975,6 +4983,14 @@ BEGIN
     IDS_TAG_PANEL_HEADER_FORMAT "Tag %s items"
     IDS_TAG_PANEL_RECENT "Recently used"
     IDS_TAG_PANEL_FAVORITES "Favorites"
+    IDS_TOOLBAR_ADD_SEPARATOR "Add a separator after"
+    IDS_TOOLBAR_REMOVE_SEPARATOR "Remove the separator after"
+    IDS_TOOLBAR_REMOVE_TOOL "Remove from toolbar"
+    IDS_SEL_CHIP_PIN_TO "Pin to…"
+    IDS_SEL_CHIP_SUMMARY "%s folders, %s files"
+    IDS_SEL_KEEP_FOLDERS "Keep only folders"
+    IDS_SEL_KEEP_FILES "Keep only files"
+    IDS_SEL_SAME_TYPE "Select the same type (%s)"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

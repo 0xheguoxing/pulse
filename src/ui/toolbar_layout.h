@@ -2,6 +2,7 @@
 #include <d2d1.h>
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <string>
 
 namespace pulse::ui {
@@ -23,6 +24,7 @@ struct ToolbarPinOptions {
     int app_from = -1;          // index of the first app pin (a short gap goes before it)
     bool drop_mode = false;     // a file drag is over the window: pins also in the narrow tier
     float label_width = 0.0f;   // drop mode: "拖到软件上打开" / "固定到工具栏" ahead of the pins
+    uint64_t separators = 0;    // bit i: the user's separator before pin i (app::ToolbarSeparatorMask)
 };
 struct ToolbarLayout {
     std::array<D2D1_RECT_F, 4> navigation{};
@@ -32,6 +34,7 @@ struct ToolbarLayout {
     std::array<D2D1_RECT_F, 8> commands{};
     std::array<D2D1_RECT_F, kToolbarPinSlots> pins{};   // pinned commands, then pinned apps
     D2D1_RECT_F pin_label{};   // drop mode only (ToolbarPinOptions::label_width)
+    uint64_t pin_dividers = 0; // bit i: a separator is drawn before pins[i] (both pins shown)
     bool narrow = false;       // the narrow tier: every pin waits in More
 };
 
@@ -119,9 +122,12 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
             }
         }
         for (int i=0;i<count;++i) {
-            const float lead = gap && i == pin_options.app_from ? 9*scale : 0.0f;
+            // The user's separators take the same 9 DIP as the gap before the apps.
+            const bool divider = i > 0 && i < 64 && (pin_options.separators >> i & 1);
+            const float lead = (gap && i == pin_options.app_from) || divider ? 9*scale : 0.0f;
             if (px+lead+30*scale+8*scale+view_min > view_end) break;
             px += lead;
+            if (divider) out.pin_dividers |= uint64_t{1} << i;
             out.pins[i] = {px,top+50*scale,px+30*scale,top+82*scale};
             px += 34*scale;
             left_end = px + 8*scale;
@@ -189,18 +195,26 @@ struct SelectionChipAction {
     std::wstring label;   // tooltip, with the shortcut
     bool enabled = true;
     bool checked = false; // toolbar toggle tools: the setting is on
+    bool situational = false; // offered because of the moment (split, two folders, ...): accent underline
 };
-constexpr int kSelChipMaxActions = 6;
-constexpr int kSelChipMore = kSelChipMaxActions;
-constexpr int kSelChipClear = kSelChipMaxActions + 1;
-constexpr int kSelChipSlots = kSelChipMaxActions + 2;
+// Four parts (toolbar redesign §5): the count (a click opens the selection
+// menu), up to 2 situational actions, up to 4 of the user's actions, then
+// 固定到…, more and clear.
+constexpr int kSelChipSituational = 2;
+constexpr int kSelChipCommon = 4;
+constexpr int kSelChipMaxActions = kSelChipSituational + kSelChipCommon;
+constexpr int kSelChipPin = kSelChipMaxActions;
+constexpr int kSelChipMore = kSelChipMaxActions + 1;
+constexpr int kSelChipClear = kSelChipMaxActions + 2;
+constexpr int kSelChipSlots = kSelChipMaxActions + 3;
+constexpr int kSelChipLabel = kSelChipSlots;   // hit index of the count
 struct ToolbarSelectionChip {
     D2D1_RECT_F chip{}, label{};
-    std::array<D2D1_RECT_F, kSelChipSlots> buttons{};   // quick actions, more, clear
+    std::array<D2D1_RECT_F, kSelChipSlots> buttons{};   // quick actions, pin to, more, clear
 };
 // Chip width with `n` quick actions (label_width 0 = no label).
 inline float SelectionChipWidth(float scale, float label_width, int n) {
-    const float buttons = static_cast<float>((n + 2)*30 - 2)*scale + (n > 0 ? 7*scale : 0.0f);
+    const float buttons = static_cast<float>((n + 3)*30 - 2)*scale + (n > 0 ? 7*scale : 0.0f);
     return (label_width > 0.0f ? 10*scale + label_width + 4*scale : 4*scale) + buttons + 4*scale;
 }
 // Room the chip asks of the toolbar row: the 13 DIP lead (divider) and the
@@ -231,7 +245,8 @@ inline ToolbarSelectionChip MakeToolbarSelectionChip(const ToolbarLayout& l, flo
         x += 30*scale;
     };
     for (int i = 0; i < count; ++i) place(i);
-    if (count > 0) x += 7*scale;   // room for a divider before more / clear
+    if (count > 0) x += 7*scale;   // room for a divider before pin to / more / clear
+    place(kSelChipPin);
     place(kSelChipMore);
     place(kSelChipClear);
     return out;
