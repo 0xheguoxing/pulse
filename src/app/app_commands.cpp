@@ -36,6 +36,7 @@
 #include "../common/path_utils.h"
 #include "../common/diagnostics_exporter.h"
 #include "snapshot_patch.h"
+#include "tag_missing.h"
 #include "entry_sort.h"
 #include "session.h"
 #include "context_menu.h"
@@ -1156,6 +1157,8 @@ void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt) 
     constexpr int kCustomColor = 31090;
     constexpr int kColorBase = 31100;
     constexpr int kDelete = 31200;
+    constexpr int kMissingClean = 31300;
+    constexpr int kMissingRelocate = 31301;
     const std::vector<uint32_t>& palette = TagColorPalette(s);
     std::vector<ui::FluentMenuItem> items;
     ui::FluentMenuItem rename;
@@ -1238,6 +1241,7 @@ void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt) 
     custom.glyph = preset_color ? L"\xE790" : L"";
     custom.separator_after = true;
     items.push_back(std::move(custom));
+    AppendMissingTagMenu(*tag, items, kMissingClean, kMissingRelocate);
     ui::FluentMenuItem remove;
     remove.command = kDelete;
     remove.text = l10n::Get(l10n::StringId::TagDelete);
@@ -1253,6 +1257,10 @@ void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt) 
     } else if (command == kNewGroup) {
         const std::wstring group = CreateTagGroupInteractive(s, screen_pt);
         if (!group.empty()) s.places.SetTagGroup(tag_id, group);
+    } else if (command == kMissingClean) {
+        CleanMissingTagged(s, {tag_id});
+    } else if (command == kMissingRelocate) {
+        RelocateMissingTagged(s, tag_id);
     } else if (command >= kGroupBase &&
                command < kGroupBase + static_cast<int>(s.places.tag_groups.size())) {
         s.places.SetTagGroup(tag_id, s.places.tag_groups[static_cast<size_t>(command - kGroupBase)].id);

@@ -2535,5 +2535,14 @@
 #define IDS_FAVORITES_SEPARATOR_REMOVE                                                   3745
 #define IDS_FAVORITES_GROUP_RENAME                                                       3746
 #define IDS_TAG_DROP_DONE_FORMAT                                                         3747
+#define IDS_TAG_FILTER_MISSING                                                           3748
+#define IDS_TAG_MISSING_MENU                                                             3749
+#define IDS_TAG_MISSING_CLEAN                                                            3750
+#define IDS_TAG_MISSING_RELOCATE                                                         3751
+#define IDS_TAG_MISSING_CLEANED                                                          3752
+#define IDS_TAG_MISSING_RELOCATE_PICK                                                    3753
+#define IDS_TAG_MISSING_RELOCATED                                                        3754
+#define IDS_TAG_MISSING_NOT_FOUND                                                        3755
+#define IDS_TAG_MISSING_CLEAN_SELECTED                                                   3756
 
 #endif  // PULSE_STRING_IDS_H

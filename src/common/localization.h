@@ -2531,6 +2531,15 @@ enum class StringId : UINT {
     FavoritesSeparatorRemove = IDS_FAVORITES_SEPARATOR_REMOVE,
     FavoritesGroupRename = IDS_FAVORITES_GROUP_RENAME,
     TagDropDoneFormat = IDS_TAG_DROP_DONE_FORMAT,
+    TagFilterMissing = IDS_TAG_FILTER_MISSING,
+    TagMissingMenu = IDS_TAG_MISSING_MENU,
+    TagMissingClean = IDS_TAG_MISSING_CLEAN,
+    TagMissingRelocate = IDS_TAG_MISSING_RELOCATE,
+    TagMissingCleaned = IDS_TAG_MISSING_CLEANED,
+    TagMissingRelocatePick = IDS_TAG_MISSING_RELOCATE_PICK,
+    TagMissingRelocated = IDS_TAG_MISSING_RELOCATED,
+    TagMissingNotFound = IDS_TAG_MISSING_NOT_FOUND,
+    TagMissingCleanSelected = IDS_TAG_MISSING_CLEAN_SELECTED,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

@@ -2519,4 +2519,13 @@ BEGIN
     IDS_FAVORITES_SEPARATOR_REMOVE "刪除後面的分隔線"
     IDS_FAVORITES_GROUP_RENAME "重新命名分組…"
     IDS_TAG_DROP_DONE_FORMAT "已為 %d 個項目加上「%s」"
+    IDS_TAG_FILTER_MISSING "有失效項目"
+    IDS_TAG_MISSING_MENU "找不到的檔案 (%d)"
+    IDS_TAG_MISSING_CLEAN "從標籤中移除"
+    IDS_TAG_MISSING_RELOCATE "重新定位…"
+    IDS_TAG_MISSING_CLEANED "已移除 %d 個找不到的檔案"
+    IDS_TAG_MISSING_RELOCATE_PICK "這些檔案現在在哪個資料夾？"
+    IDS_TAG_MISSING_RELOCATED "已重新定位 %d 個項目"
+    IDS_TAG_MISSING_NOT_FOUND "在這個資料夾裡沒找到它們"
+    IDS_TAG_MISSING_CLEAN_SELECTED "清理找不到的檔案"
 END

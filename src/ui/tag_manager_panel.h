@@ -24,6 +24,7 @@ struct TagManagerRow {
     std::wstring group;     // the group's name, empty when ungrouped
     D2D1_COLOR_F color{};
     int count = 0;          // tagged items
+    int missing = 0;        // of them, gone from a drive that is there (count shown red)
     bool favorite = false;
     bool selected = false;
 };
@@ -34,6 +35,7 @@ struct TagManagerText {
     std::wstring filter_all;
     std::wstring filter_favorites;
     std::wstring filter_unused;
+    std::wstring filter_missing;
     std::wstring merge;
     std::wstring group;
     std::wstring remove;
@@ -41,7 +43,7 @@ struct TagManagerText {
     std::wstring empty;
 };
 
-enum class TagManagerFilter { All = 0, Favorites = 1, Unused = 2 };
+enum class TagManagerFilter { All = 0, Favorites = 1, Unused = 2, Missing = 3 };
 
 enum class TagManagerAction {
     Cancelled,  // Esc: star changes are dropped

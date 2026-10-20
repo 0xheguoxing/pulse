@@ -2521,6 +2521,15 @@ BEGIN
     IDS_FAVORITES_SEPARATOR_REMOVE "删除后面的分隔线"
     IDS_FAVORITES_GROUP_RENAME "重命名分组…"
     IDS_TAG_DROP_DONE_FORMAT "已给 %d 项加上「%s」"
+    IDS_TAG_FILTER_MISSING "有失效项"
+    IDS_TAG_MISSING_MENU "找不到的文件 (%d)"
+    IDS_TAG_MISSING_CLEAN "从标签中移除"
+    IDS_TAG_MISSING_RELOCATE "重新定位…"
+    IDS_TAG_MISSING_CLEANED "已移除 %d 项找不到的文件"
+    IDS_TAG_MISSING_RELOCATE_PICK "这些文件现在在哪个文件夹？"
+    IDS_TAG_MISSING_RELOCATED "已重新定位 %d 项"
+    IDS_TAG_MISSING_NOT_FOUND "在这个文件夹里没找到它们"
+    IDS_TAG_MISSING_CLEAN_SELECTED "清理找不到的文件"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5041,6 +5050,15 @@ BEGIN
     IDS_FAVORITES_SEPARATOR_REMOVE "Remove the separator after"
     IDS_FAVORITES_GROUP_RENAME "Rename group…"
     IDS_TAG_DROP_DONE_FORMAT "Tagged %d items with “%s”"
+    IDS_TAG_FILTER_MISSING "Missing"
+    IDS_TAG_MISSING_MENU "Missing files (%d)"
+    IDS_TAG_MISSING_CLEAN "Remove from the tag"
+    IDS_TAG_MISSING_RELOCATE "Locate…"
+    IDS_TAG_MISSING_CLEANED "Removed %d missing items"
+    IDS_TAG_MISSING_RELOCATE_PICK "Which folder are they in now?"
+    IDS_TAG_MISSING_RELOCATED "Located %d items"
+    IDS_TAG_MISSING_NOT_FOUND "They are not in this folder"
+    IDS_TAG_MISSING_CLEAN_SELECTED "Clean up missing files"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

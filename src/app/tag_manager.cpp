@@ -7,6 +7,7 @@
 #include "tag_manager.h"
 
 #include "app_commands.h"
+#include "tag_missing.h"
 #include "../common/localization.h"
 #include "../ui/confirm_dialog.h"
 #include "../ui/fluent_menu.h"
@@ -28,6 +29,7 @@ std::vector<ui::TagManagerRow> ManagerRows(const AppState& s,
         if (const auto* group = s.places.FindTagGroup(s.places.TagGroupOf(tag))) row.group = group->name;
         row.color = ui::HexColor(tag.rgb);
         row.count = static_cast<int>(tag.paths.size());
+        row.missing = static_cast<int>(MissingTaggedPaths(tag).size());
         row.favorite = tag.favorite > 0;
         row.selected = std::find(selected.begin(), selected.end(), tag.id) != selected.end();
         rows.push_back(std::move(row));
@@ -120,6 +122,7 @@ constexpr int kNoGroup = 33190;
 constexpr int kNewGroup = 33191;
 constexpr int kColorBase = 33400;      // + palette index
 constexpr int kDeleteSelected = 33500;
+constexpr int kCleanMissing = 33510;
 
 ui::FluentMenuItem GroupSubmenu(const AppState& s, const std::vector<std::wstring>& ids) {
     // The current group gets the dot only when every selected tag shares it.
@@ -199,6 +202,8 @@ void ApplyMenuCommand(AppState& s, int command, const std::vector<std::wstring>&
         }
     } else if (command == kDeleteSelected) {
         DeleteTags(s, ids);
+    } else if (command == kCleanMissing) {
+        CleanMissingTagged(s, ids);
     }
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
@@ -226,6 +231,17 @@ void ShowManyTagsMenu(AppState& s, const std::vector<std::wstring>& ids, POINT p
     }
     color.separator_after = true;
     items.push_back(std::move(color));
+    // 清理找不到的文件, when any of them has missing items.
+    int missing = 0;
+    for (const auto& id : ids)
+        if (const app::ColorTag* tag = s.places.FindTag(id)) missing += static_cast<int>(MissingTaggedPaths(*tag).size());
+    if (missing > 0) {
+        ui::FluentMenuItem clean;
+        clean.command = kCleanMissing;
+        clean.text = l10n::Get(l10n::StringId::TagMissingCleanSelected);
+        clean.glyph = L"\xE7BA";
+        items.push_back(std::move(clean));
+    }
     ui::FluentMenuItem remove;
     remove.command = kDeleteSelected;
     remove.text = l10n::Get(l10n::StringId::Delete);
@@ -241,6 +257,7 @@ ui::TagManagerText ManagerText() {
     text.filter_all = l10n::Get(l10n::StringId::TagFilterAll);
     text.filter_favorites = l10n::Get(l10n::StringId::TagFilterFavorites);
     text.filter_unused = l10n::Get(l10n::StringId::TagFilterUnused);
+    text.filter_missing = l10n::Get(l10n::StringId::TagFilterMissing);
     text.merge = l10n::Get(l10n::StringId::TagMerge);
     text.group = l10n::Get(l10n::StringId::TagMoveToGroupEllipsis);
     text.remove = l10n::Get(l10n::StringId::Delete);
@@ -318,6 +335,7 @@ bool SaveTagManagerSnapshot(AppState& s, const wchar_t* png_path, bool dark) {
         rows.push_back(std::move(row));
     }
     rows[2].selected = rows[3].selected = true;
+    rows[3].missing = 2;   // 照片: two gone (the red count)
     ui::TagManagerView view;
     return ui::TagManagerPopup::SaveDebugSnapshot(&s.compositor, png_path, dark, s.accentColor,
                                                   s.scale, ManagerText(), rows, view);

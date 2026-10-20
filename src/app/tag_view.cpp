@@ -170,6 +170,7 @@ namespace {
 // What the last tag drop added, per tag, for the snack's undo.
 struct TagDropUndo {
     const AppState* owner = nullptr;
+    bool removed = false;   // the snack took them off (undo puts them back)
     std::vector<std::pair<std::wstring, std::vector<std::wstring>>> added;
 };
 TagDropUndo g_tag_drop;
@@ -210,9 +211,32 @@ void UndoDropTags(AppState& s) {
     g_tag_drop = TagDropUndo{};
     if (undo.owner != &s) return;
     std::vector<app::TagAdsUpdate> ads_updates;
-    for (const auto& [id, paths] : undo.added) s.places.SetTagsBatch(id, paths, false, &ads_updates);
+    for (const auto& [id, paths] : undo.added) s.places.SetTagsBatch(id, paths, undo.removed, &ads_updates);
     QueueTagAds(s, std::move(ads_updates));
     InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void RemoveTagPathsUndoable(AppState& s,
+                            const std::vector<std::pair<std::wstring, std::vector<std::wstring>>>& removals) {
+    TagDropUndo undo;
+    undo.owner = &s;
+    undo.removed = true;
+    std::unordered_set<std::wstring> touched;
+    std::vector<app::TagAdsUpdate> ads_updates;
+    for (const auto& [id, paths] : removals) {
+        if (paths.empty() || !s.places.FindTag(id)) continue;
+        s.places.SetTagsBatch(id, paths, false, &ads_updates);
+        touched.insert(paths.begin(), paths.end());
+        undo.added.emplace_back(id, paths);
+    }
+    QueueTagAds(s, std::move(ads_updates));
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+    if (undo.added.empty() || !s.hwnd) return;
+    g_tag_drop = std::move(undo);
+    wchar_t text[256]{};
+    swprintf_s(text, l10n::Get(l10n::StringId::TagMissingCleaned).c_str(), static_cast<int>(touched.size()));
+    s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Undo, text, std::wstring{},
+                                   {ui::SnackAction{l10n::Get(l10n::StringId::SnackUndo), WM_TAG_DROP_UNDO}});
 }
 
 bool TagViewDropTags(const AppState& s, const std::wstring& view_path, std::vector<std::wstring>* tag_ids) {

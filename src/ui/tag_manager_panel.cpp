@@ -79,7 +79,7 @@ struct State {
     // Window pixels, shadow margin included.
     D2D1_RECT_F r_card{};
     D2D1_RECT_F r_title{};
-    D2D1_RECT_F r_filter[3]{};
+    D2D1_RECT_F r_filter[4]{};
     D2D1_RECT_F r_hint{};
     D2D1_RECT_F r_list{};
     D2D1_RECT_F r_divider{};
@@ -142,6 +142,7 @@ void Filter(State& s) {
         const auto& row = (*s.rows)[i];
         const bool pass = s.view->filter == TagManagerFilter::Favorites ? row.favorite
                         : s.view->filter == TagManagerFilter::Unused   ? row.count == 0
+                        : s.view->filter == TagManagerFilter::Missing  ? row.missing > 0
                                                                        : true;
         if (pass) s.visible.push_back(i);
     }
@@ -158,6 +159,7 @@ int PositionOf(const State& s, const std::wstring& id) {
 const std::wstring& FilterLabel(const State& s, int index) {
     return index == 1 ? s.text->filter_favorites
          : index == 2 ? s.text->filter_unused
+         : index == 3 ? s.text->filter_missing
                       : s.text->filter_all;
 }
 
@@ -177,7 +179,7 @@ void Layout(State& s) {
     const float title_top = m + Px(s, y);
     const float title_bottom = m + Px(s, y + kTitleH);
     float right = s.r_card.right - Px(s, kPadX - 8.0f);
-    for (int i = 2; i >= 0; --i) {
+    for (int i = 3; i >= 0; --i) {
         const float w = s.painter.MeasureButtonWidth(FilterLabel(s, i));
         s.r_filter[i] = D2D1::RectF(right - w, title_top + Px(s, 2.0f), right,
                                     title_bottom - Px(s, 2.0f));
@@ -235,7 +237,7 @@ bool ActionEnabled(const State& s, Part part) {
 }
 
 Hit HitTest(const State& s, float x, float y) {
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         if (Contains(s.r_filter[i], x, y)) return { Part::Filter, i };
     }
     if (Contains(s.r_merge, x, y)) return { Part::Merge, -1 };
@@ -283,8 +285,11 @@ void DrawRow(State& s, ID2D1DeviceContext* dc, int position, const D2D1_RECT_F& 
     const D2D1_COLOR_F background = s.theme.surface_flyout;
     wchar_t count[16]{};
     swprintf_s(count, L"%d", item.count);
+    // Missing items (找不到的文件): the count in the Fluent danger red.
+    const bool dark = s.theme.text.r > 0.5f;
+    const D2D1_COLOR_F count_ink = item.missing > 0 ? D2D1::ColorF(dark ? 0xFF99A4 : 0xC42B1C) : s.theme.text_secondary;
     s.painter.DrawText(count, D2D1::RectF(count_left, row.top, count_right, row.bottom),
-                       s.compositor->SmallFormat(), s.theme.text_secondary,
+                       s.compositor->SmallFormat(), count_ink,
                        fluent::HorizontalAlignment::Right, background);
 
     const float left = row.left + Px(s, 54.0f);
@@ -379,7 +384,7 @@ bool Render(State& s) {
     const D2D1_COLOR_F background = s.theme.surface_flyout;
     s.painter.DrawText(s.text->title, s.r_title, s.compositor->TextFormat(), s.theme.text,
                        fluent::HorizontalAlignment::Left, background);
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         DrawPanelButton(s, s.r_filter[i], FilterLabel(s, i), {},
                         fluent::ButtonKind::TransparentToggle, Part::Filter, false, i,
                         static_cast<int>(s.view->filter) == i);

@@ -2542,3 +2542,12 @@ FavoritesSeparatorAdd	IDS_FAVORITES_SEPARATOR_ADD	3744	在后面加分隔线	Add
 FavoritesSeparatorRemove	IDS_FAVORITES_SEPARATOR_REMOVE	3745	删除后面的分隔线	Remove the separator after	刪除後面的分隔線
 FavoritesGroupRename	IDS_FAVORITES_GROUP_RENAME	3746	重命名分组…	Rename group…	重新命名分組…
 TagDropDoneFormat	IDS_TAG_DROP_DONE_FORMAT	3747	已给 %d 项加上「%s」	Tagged %d items with “%s”	已為 %d 個項目加上「%s」
+TagFilterMissing	IDS_TAG_FILTER_MISSING	3748	有失效项	Missing	有失效項目
+TagMissingMenu	IDS_TAG_MISSING_MENU	3749	找不到的文件 (%d)	Missing files (%d)	找不到的檔案 (%d)
+TagMissingClean	IDS_TAG_MISSING_CLEAN	3750	从标签中移除	Remove from the tag	從標籤中移除
+TagMissingRelocate	IDS_TAG_MISSING_RELOCATE	3751	重新定位…	Locate…	重新定位…
+TagMissingCleaned	IDS_TAG_MISSING_CLEANED	3752	已移除 %d 项找不到的文件	Removed %d missing items	已移除 %d 個找不到的檔案
+TagMissingRelocatePick	IDS_TAG_MISSING_RELOCATE_PICK	3753	这些文件现在在哪个文件夹？	Which folder are they in now?	這些檔案現在在哪個資料夾？
+TagMissingRelocated	IDS_TAG_MISSING_RELOCATED	3754	已重新定位 %d 项	Located %d items	已重新定位 %d 個項目
+TagMissingNotFound	IDS_TAG_MISSING_NOT_FOUND	3755	在这个文件夹里没找到它们	They are not in this folder	在這個資料夾裡沒找到它們
+TagMissingCleanSelected	IDS_TAG_MISSING_CLEAN_SELECTED	3756	清理找不到的文件	Clean up missing files	清理找不到的檔案

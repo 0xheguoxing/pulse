@@ -21,4 +21,8 @@ bool TagViewDropTags(const AppState& s, const std::wstring& view_path, std::vect
 // added (WM_TAG_DROP_UNDO).
 void ApplyDropTags(AppState& s, const std::vector<std::wstring>& tag_ids, const std::vector<std::wstring>& paths);
 void UndoDropTags(AppState& s);
+// Takes these paths off these tags with the snack 已移除 N 项找不到的文件 · 撤销
+// (the same undo).
+void RemoveTagPathsUndoable(AppState& s,
+                            const std::vector<std::pair<std::wstring, std::vector<std::wstring>>>& removals);
 }
