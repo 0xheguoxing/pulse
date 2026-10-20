@@ -4,7 +4,9 @@
 #include <shlwapi.h>
 #include <sddl.h>
 #include <algorithm>
+#include <atomic>
 #include <cwctype>
+#include <memory>
 
 namespace pulse::app {
 namespace {
@@ -236,6 +238,32 @@ void MergeCloudRoots(std::vector<CloudRoot>& into, std::vector<CloudRoot> more,
         if (is_directory && !is_directory(root.path)) continue;
         into.push_back(std::move(root));
     }
+}
+
+namespace {
+std::shared_ptr<const std::vector<std::wstring>> g_cloud_files_roots;
+} // namespace
+
+void PublishCloudFilesRoots(std::vector<std::wstring> roots) {
+    for (auto& root : roots) root = NormalizeCloudRootPath(root);
+    roots.erase(std::remove(roots.begin(), roots.end(), std::wstring()), roots.end());
+    std::atomic_store(&g_cloud_files_roots,
+                      std::shared_ptr<const std::vector<std::wstring>>(
+                          std::make_shared<std::vector<std::wstring>>(std::move(roots))));
+}
+
+bool IsUnderCloudFilesRoot(const std::wstring& raw) {
+    const auto roots = std::atomic_load(&g_cloud_files_roots);
+    if (!roots || roots->empty() || raw.size() < 3) return false;
+    // Pane paths may carry the long-path prefix; sync roots never do.
+    std::wstring path = raw;
+    if (path.rfind(L"\\\\?\\UNC\\", 0) == 0) path = L"\\\\" + path.substr(8);
+    else if (path.rfind(L"\\\\?\\", 0) == 0) path = path.substr(4);
+    for (const auto& root : *roots) {
+        if (path.size() < root.size() || _wcsnicmp(path.c_str(), root.c_str(), root.size()) != 0) continue;
+        if (path.size() == root.size() || path[root.size()] == L'\\' || root.back() == L'\\') return true;
+    }
+    return false;
 }
 
 std::wstring CurrentUserSidString() {

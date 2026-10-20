@@ -262,6 +262,8 @@ struct PaneViewModel {
     bool is_recent = false;
     bool is_recycle = false;
     bool is_search = false;   // search results add a display-only 路径 column
+    // Folder under a Cloud Files sync root: the Details view adds 状态.
+    bool cloud_status_column = false;
     bool is_query_search = false;
     bool is_content_search = false;
     bool network_live_action = false;  // #74: banner offers "Add to network index"
@@ -1739,13 +1741,16 @@ public:
     void ToggleDetailsPreviewFit(float x, float y);
 
     // Date = modified. Values double as details_column_set.h bits: append only.
-    enum class ColumnKind : uint8_t { Name, Path, Date, Type, Size, Created, Accessed };
-    static constexpr size_t kMaxDetailsColumns = 7;
+    // Status: cloud-file state (仅在云端 / 已在本地 / 始终保留), only drawn in
+    // folders under a Cloud Files sync root (PaneViewModel::cloud_status_column).
+    enum class ColumnKind : uint8_t { Name, Path, Date, Type, Size, Created, Accessed, Status };
+    static constexpr size_t kMaxDetailsColumns = 8;
     static_assert(kDetailsColumnModified == 1u << static_cast<uint32_t>(ColumnKind::Date) &&
                   kDetailsColumnType == 1u << static_cast<uint32_t>(ColumnKind::Type) &&
                   kDetailsColumnSize == 1u << static_cast<uint32_t>(ColumnKind::Size) &&
                   kDetailsColumnCreated == 1u << static_cast<uint32_t>(ColumnKind::Created) &&
-                  kDetailsColumnAccessed == 1u << static_cast<uint32_t>(ColumnKind::Accessed));
+                  kDetailsColumnAccessed == 1u << static_cast<uint32_t>(ColumnKind::Accessed) &&
+                  kDetailsColumnStatus == 1u << static_cast<uint32_t>(ColumnKind::Status));
     // Details columns in display order. Name is always first; Path only in
     // wide search views; then the shown metadata columns (modified, created,
     // accessed, type, size). Accessed, created, type, then modified are
@@ -1756,7 +1761,7 @@ public:
         std::array<float, kMaxDetailsColumns> widths{};
         std::array<ColumnKind, kMaxDetailsColumns> kinds{ColumnKind::Name, ColumnKind::Date,
                                         ColumnKind::Type, ColumnKind::Size, ColumnKind::Size,
-                                        ColumnKind::Size, ColumnKind::Size};
+                                        ColumnKind::Size, ColumnKind::Size, ColumnKind::Size};
         int count = 4;
         // Narrow search view: the folder path is drawn under the name.
         bool two_line = false;
@@ -1787,6 +1792,7 @@ public:
     // hit testing and painting always agree.
     struct ColumnAutoWidths {
         float date = 130.0f, type = 128.0f, size = 90.0f, created = 130.0f, accessed = 130.0f;
+        float status = 112.0f;
     };
     ColumnAutoWidths AutoColumnWidths() const;
     float TypeChipWidthDip(const std::wstring& chip) const;
@@ -1831,18 +1837,20 @@ public:
     // columns return to their fitted widths.
     void AutoFitColumnDivider(const D2D1_RECT_F& pane_bounds,
                               DetailsColumnWidths& dividers, bool search_view,
-                              std::array<float, 4>& search_dividers, int divider_index) const;
+                              std::array<float, 4>& search_dividers, int divider_index,
+                              bool status_column = false) const;
     DetailsColumnLayout DetailsColumns(
         const D2D1_RECT_F& pane_bounds,
         const DetailsColumnWidths& dividers = {},
         bool search_view = false,
-        const std::array<float, 4>& search_dividers = {}) const;
+        const std::array<float, 4>& search_dividers = {},
+        bool status_column = false) const;
     DetailsColumnLayout DetailsColumns(const D2D1_RECT_F& pane_bounds,
                                        const PaneViewModel& vm) const;
     DetailsColumnWidths ResizeDetailsColumnDivider(
         const D2D1_RECT_F& pane_bounds,
         const DetailsColumnWidths& dividers,
-        int divider_index, float cursor_x) const;
+        int divider_index, float cursor_x, bool status_column = false) const;
     std::array<float, 4> ResizeSearchColumnDivider(
         const D2D1_RECT_F& pane_bounds,
         const std::array<float, 4>& dividers,

@@ -1359,6 +1359,7 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             case ColumnKind::Size: out.column = SortColumn::Size; break;
             case ColumnKind::Created: out.column = SortColumn::Created; break;
             case ColumnKind::Accessed: out.column = SortColumn::Accessed; break;
+            case ColumnKind::Status: out.region = HitTestResult::Pane; break; // display-only
             }
             return out;
         }

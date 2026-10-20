@@ -17,6 +17,7 @@
 #include "../common/preview_extensions.h"
 #include "wall_aspects.h"
 #include "file_name_breaks.h"
+#include "../fs/cloud_state.h"
 #include <windowsx.h>
 #include <d2d1effects.h>
 #include <shlwapi.h>
@@ -27,6 +28,16 @@
 #include <functional>
 #include <string_view>
 #include <unordered_map>
+
+// Details 状态 column text for a cloud-file state.
+static std::wstring CloudStateLabel(pulse::fs::CloudState state) {
+    using pulse::l10n::StringId;
+    switch (state) {
+    case pulse::fs::CloudState::Online: return pulse::l10n::Get(StringId::CloudStateOnline);
+    case pulse::fs::CloudState::Pinned: return pulse::l10n::Get(StringId::CloudStatePinned);
+    default: return pulse::l10n::Get(StringId::CloudStateLocal);
+    }
+}
 
 namespace pulse::ui {
 
@@ -477,7 +488,7 @@ D2D1_RECT_F MainRenderer::FilterEditRect(const D2D1_RECT_F& pane_bounds, float e
 MainRenderer::DetailsColumnLayout MainRenderer::DetailsColumns(
     const D2D1_RECT_F& pane_bounds, const PaneViewModel& vm) const {
     auto columns = DetailsColumns(pane_bounds, vm.details_column_dividers, vm.is_search,
-                                  vm.search_column_dividers);
+                                  vm.search_column_dividers, vm.cloud_status_column);
     // Explicit divider positions remain a manual override. A drag starts by
     // capturing this measured layout, so the first movement does not jump.
     const bool manual = vm.is_search
@@ -487,7 +498,8 @@ MainRenderer::DetailsColumnLayout MainRenderer::DetailsColumns(
     // date columns keep their measured automatic widths.
     if (manual || !columns.Has(ColumnKind::Date) || !columns.Has(ColumnKind::Type) ||
         !columns.Has(ColumnKind::Size) || columns.Has(ColumnKind::Created) ||
-        columns.Has(ColumnKind::Accessed) || vm.view_mode != ViewMode::Details ||
+        columns.Has(ColumnKind::Accessed) || columns.Has(ColumnKind::Status) ||
+        vm.view_mode != ViewMode::Details ||
         !compositor_ || !compositor_->FileNameFormat()) return columns;
     const std::array<std::wstring, 3> labels{
         vm.date_column_label.empty() ? l10n::Get(l10n::StringId::ColumnModified)
@@ -565,11 +577,16 @@ MainRenderer::ColumnAutoWidths MainRenderer::AutoColumnWidths() const {
         for (StringId id : kinds) type = std::max(type, measure(fmt, pulse::l10n::Get(id)) + chip);
         type = std::max(type, measure(fmt, L"AutoCAD " + pulse::l10n::Get(StringId::TypeFile)) + chip);
         float size = std::max(header_w(StringId::ColumnSize), measure(fmt, L"1023.9") + kSizeUnitDip);
+        // Status: a 16 DIP glyph, a gap, then the longest state label.
+        float status = header_w(StringId::ColumnStatus);
+        for (StringId id : {StringId::CloudStateOnline, StringId::CloudStateLocal, StringId::CloudStatePinned})
+            status = std::max(status, measure(fmt, pulse::l10n::Get(id)) + 22.0f);
         out.date = std::clamp(date + pad, 72.0f, 176.0f);
         out.created = std::clamp(created + pad, 72.0f, 176.0f);
         out.accessed = std::clamp(accessed + pad, 72.0f, 176.0f);
         out.type = std::clamp(type + pad, 64.0f, 196.0f);
         out.size = std::clamp(size + pad, 60.0f, 112.0f);
+        out.status = std::clamp(status + pad, 72.0f, 160.0f);
     }
     auto_widths_ = out;
     auto_widths_scale_ = scale_;
@@ -645,7 +662,8 @@ MainRenderer::DetailsColumnLayout MainRenderer::DetailsColumns(
     const D2D1_RECT_F& pane_bounds,
     const DetailsColumnWidths& dividers,
     bool search_view,
-    const std::array<float, 4>& search_dividers) const {
+    const std::array<float, 4>& search_dividers,
+    bool status_column) const {
     DetailsColumnLayout out;
     const auto content = DetailsContentRect(pane_bounds, scale_);
     out.left = content.left + margin_;
@@ -659,18 +677,24 @@ MainRenderer::DetailsColumnLayout MainRenderer::DetailsColumns(
     const ColumnAutoWidths fitted = AutoColumnWidths();
     struct Meta { ColumnKind kind; float width; float automatic; };
     std::vector<Meta> meta;
-    meta.reserve(5);
-    // Display order. Search results carry no creation / access times.
+    meta.reserve(6);
+    // Display order. Search results carry no creation / access times. Status
+    // follows the name, as in Explorer, and only in cloud folders; it has no
+    // stored width (always content-fitted).
     const std::pair<ColumnKind, float> shown[] = {
+        {ColumnKind::Status, fitted.status},
         {ColumnKind::Date, fitted.date}, {ColumnKind::Created, fitted.created},
         {ColumnKind::Accessed, fitted.accessed}, {ColumnKind::Type, fitted.type},
         {ColumnKind::Size, fitted.size}};
     for (const auto& [kind, automatic] : shown) {
         if (!(details_columns_ & (1u << static_cast<uint32_t>(kind)))) continue;
+        const bool status = kind == ColumnKind::Status;
+        if (status && (!status_column || search_view)) continue;
         const int slot = ManualColumnSlot(kind, search_view);
-        if (slot < 0) continue;
-        const float manual = ManualWidthDip(search_view ? search_dividers[static_cast<size_t>(slot)]
-                                                        : dividers[static_cast<size_t>(slot)]);
+        if (slot < 0 && !status) continue;
+        const float manual = slot < 0 ? 0.0f
+            : ManualWidthDip(search_view ? search_dividers[static_cast<size_t>(slot)]
+                                         : dividers[static_cast<size_t>(slot)]);
         meta.push_back({kind, (manual > 0.0f ? manual : automatic) * scale_, automatic * scale_});
     }
     auto meta_sum = [&] { float sum = 0.0f; for (const auto& m : meta) sum += m.width; return sum; };
@@ -693,7 +717,7 @@ MainRenderer::DetailsColumnLayout MainRenderer::DetailsColumns(
     // Low-value columns go first when the name would get too narrow.
     while (total - automatic_sum() < min_name + (path_column ? min_path : 0.0f) && meta.size() > 1) {
         if (!drop(ColumnKind::Accessed) && !drop(ColumnKind::Created) && !drop(ColumnKind::Type) &&
-            !drop(ColumnKind::Date)) break;
+            !drop(ColumnKind::Status) && !drop(ColumnKind::Date)) break;
     }
     const float floor_flex = (kDetailsMinNameDip + (path_column ? kDetailsMinPathDip : 0.0f)) * scale_;
     const float available = std::max(0.0f, total - floor_flex);
@@ -763,8 +787,10 @@ int MainRenderer::ManualColumnSlot(ColumnKind kind, bool search_view) noexcept {
 
 void MainRenderer::AutoFitColumnDivider(const D2D1_RECT_F& pane_bounds,
                                         DetailsColumnWidths& dividers, bool search_view,
-                                        std::array<float, 4>& search_dividers, int divider_index) const {
-    const DetailsColumnLayout layout = DetailsColumns(pane_bounds, dividers, search_view, search_dividers);
+                                        std::array<float, 4>& search_dividers, int divider_index,
+                                        bool status_column) const {
+    const DetailsColumnLayout layout =
+        DetailsColumns(pane_bounds, dividers, search_view, search_dividers, status_column);
     if (divider_index < 0 || divider_index >= layout.count - 1) return;
     for (int side : {divider_index, divider_index + 1}) {
         const int slot = ManualColumnSlot(layout.kinds[static_cast<size_t>(side)], search_view);
@@ -909,8 +935,8 @@ std::array<float, N> ResizeColumns(const MainRenderer::DetailsColumnLayout& layo
 DetailsColumnWidths MainRenderer::ResizeDetailsColumnDivider(
     const D2D1_RECT_F& pane_bounds,
     const DetailsColumnWidths& dividers,
-    int divider_index, float cursor_x) const {
-    return ResizeColumns(DetailsColumns(pane_bounds, dividers), dividers, false,
+    int divider_index, float cursor_x, bool status_column) const {
+    return ResizeColumns(DetailsColumns(pane_bounds, dividers, false, {}, status_column), dividers, false,
                          divider_index, cursor_x, scale_);
 }
 
@@ -2490,8 +2516,9 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
             painted_columns_[static_cast<size_t>(pane_index)] = mask;
         }
         float cx = columns.left;
-        auto drawCol = [&](const std::wstring& label, SortColumn col, float cw, bool right = false) {
-            const bool active = !pane.curated_order && pane.sort_column == col;
+        auto drawCol = [&](const std::wstring& label, SortColumn col, float cw, bool right = false,
+                           bool sortable = true) {
+            const bool active = sortable && !pane.curated_order && pane.sort_column == col;
             MakeBrush(dc, active ? theme.accent : theme.text, brText_);
             IDWriteTextFormat* fmt = compositor_->HeaderFormat();
             const float textInset = 8.0f * scale_;
@@ -2561,6 +2588,9 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
             case ColumnKind::Accessed:
                 drawCol(pulse::l10n::Get(pulse::l10n::StringId::ColumnAccessed), SortColumn::Accessed, cw, false);
                 break;
+            case ColumnKind::Status:
+                drawCol(pulse::l10n::Get(pulse::l10n::StringId::ColumnStatus), SortColumn::Name, cw, false, false);
+                break;
             }
         }
         const bool divider_active =
@@ -2611,6 +2641,7 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
             case ColumnKind::Size: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnSize); break;
             case ColumnKind::Created: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnCreated); break;
             case ColumnKind::Accessed: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnAccessed); break;
+            case ColumnKind::Status: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnStatus); break;
             }
         } else if (col_badge_.on && col_badge_.pane == pane_index) {
             col_badge_.on = false;
@@ -4619,6 +4650,28 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         const std::wstring date = list_smart_date_ && e.modified_value && !e.date_text.empty()
                             ? SmartListDate(e.modified_value) : e.date_text;
                         draw_detail_text(fit(date, avail), left, avail, DWRITE_TEXT_ALIGNMENT_LEADING);
+                        break;
+                    }
+                    case ColumnKind::Status: {
+                        // Read from the attributes the listing already has: no
+                        // extra I/O and nothing that could trigger a download.
+                        const fs::CloudState state = fs::CloudStateFromAttrs(e.attrs);
+                        const bool darkTheme = theme.bg.r < 0.5f;
+                        const bool online = state == fs::CloudState::Online;
+                        const D2D1_COLOR_F ink = online ? HexColor(darkTheme ? 0x6CB4F0 : 0x3B82C4)
+                                                        : HexColor(darkTheme ? 0x6CC28F : 0x3F8A5F);
+                        const wchar_t* glyph = online ? L"\xE753"   // Cloud
+                            : state == fs::CloudState::Pinned ? L"\xEC61"  // CompletedSolid
+                                                              : L"\xE930"; // Completed
+                        const float iconW = 16.0f * scale_;
+                        if (avail < iconW) break;
+                        DrawIconText(left, cell.top, iconW, cell.bottom - cell.top, glyph, L"",
+                                     WithAlpha(ink, cut ? 0.55f : 1.0f), 0.8f);
+                        const float textLeft = left + iconW + 6.0f * scale_;
+                        const float textAvail = std::max(0.0f, left + avail - textLeft);
+                        if (textAvail > 1.0f)
+                            draw_detail_text(fit(CloudStateLabel(state), textAvail), textLeft, textAvail,
+                                             DWRITE_TEXT_ALIGNMENT_LEADING);
                         break;
                     }
                     case ColumnKind::Created:

@@ -1185,6 +1185,12 @@ ListSelectionOutlineDesc	IDS_LIST_SELECTION_OUTLINE_DESC	2514	选中的文件和
 SidebarHideCloud	IDS_SIDEBAR_HIDE_CLOUD	2515	在侧边栏中隐藏网盘	Hide cloud drives in the sidebar	在側邊欄中隱藏雲端硬碟
 // Header-less cloud section (OneDrive, WPS网盘, 百度网盘同步空间, ...): section menu title and toast.
 SidebarCloudDrives	IDS_SIDEBAR_CLOUD_DRIVES	3663	网盘	Cloud drives	雲端硬碟
+// Details 状态 column (folders under a Cloud Files sync root): header, the three states, menu badge.
+ColumnStatus	IDS_COLUMN_STATUS	3664	状态	Status	狀態
+CloudStateOnline	IDS_CLOUD_STATE_ONLINE	3665	仅在云端	Online only	僅在雲端
+CloudStateLocal	IDS_CLOUD_STATE_LOCAL	3666	已在本地	On this device	已在本機
+CloudStatePinned	IDS_CLOUD_STATE_PINNED	3667	始终保留	Always kept	一律保留
+DetailsColumnCloudOnly	IDS_DETAILS_COLUMN_CLOUD_ONLY	3668	仅网盘文件夹	Cloud folders only	僅限雲端硬碟資料夾
 SidebarCloudHiddenHint	IDS_SIDEBAR_CLOUD_HIDDEN_HINT	2516	已从侧边栏隐藏。右键任一分区标题或侧边栏底部空白处，可以重新显示。	Hidden from the sidebar. Right-click any section title or the empty space at the bottom of the sidebar to show it again.	已從側邊欄隱藏。在任一區段標題或側邊欄底部空白處按右鍵，即可重新顯示。
 SidebarShowHidden	IDS_SIDEBAR_SHOW_HIDDEN	2517	显示已隐藏的分区	Show hidden sections	顯示已隱藏的區段
 SettingsDefaultManagerDesc	IDS_SETTINGS_DEFAULT_MANAGER_DESC	1481	文件夹、磁盘、此电脑和 Win+E 都用 Pulse 打开；关闭即恢复资源管理器	Folders, drives, This PC and Win+E open in Pulse; turn off to restore File Explorer	資料夾、磁碟、本機和 Win+E 都用 Pulse 開啟；關閉即恢復檔案總管

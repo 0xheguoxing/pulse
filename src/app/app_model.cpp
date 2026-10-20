@@ -1320,8 +1320,12 @@ void AppendOtherCloudEntries(std::vector<SidebarEntry>& cloud) {
         const DWORD attrs = GetFileAttributesW(path.c_str());
         return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
     };
+    auto sync_roots = ReadSyncRootCloudRoots(registry);
+    std::vector<std::wstring> cloud_files_roots;
+    for (const auto& root : sync_roots) cloud_files_roots.push_back(root.path);
+    PublishCloudFilesRoots(std::move(cloud_files_roots));
     MergeCloudRoots(roots, ReadNavigationPaneCloudRoots(registry), is_directory);
-    MergeCloudRoots(roots, ReadSyncRootCloudRoots(registry), is_directory);
+    MergeCloudRoots(roots, std::move(sync_roots), is_directory);
     for (size_t i = seeded; i < roots.size(); ++i) {
         SidebarEntry entry;
         entry.glyph = L"\xE753";
@@ -1723,6 +1727,7 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
         ? true
         : (fs::IsVirtualPath(tab->current_path) ? tab->CanGoBack() : !tab->current_path.empty());
     out.is_file_system = !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path);
+    out.cloud_status_column = out.is_file_system && IsUnderCloudFilesRoot(tab->current_path);
     out.can_create = out.is_file_system && !tab->net_readonly && !IsUncServerRoot(tab->current_path);
     out.curated_order = virtual_kind == L"starred" || virtual_kind == L"recent" || virtual_kind == L"changes";
     out.is_starred = virtual_kind == L"starred";

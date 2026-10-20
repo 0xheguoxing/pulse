@@ -2435,4 +2435,9 @@ BEGIN
     IDS_INTEGRATION_COMPAT "相容開啟方式"
     IDS_INTEGRATION_COMPAT_DESC "按兩下資料夾沒反應時勾選：Pulse 不再改動資料夾的按兩下動作，改為檔案總管先開啟，再馬上轉到 Pulse，可能會閃一下。"
     IDS_SIDEBAR_CLOUD_DRIVES "雲端硬碟"
+    IDS_COLUMN_STATUS "狀態"
+    IDS_CLOUD_STATE_ONLINE "僅在雲端"
+    IDS_CLOUD_STATE_LOCAL "已在本機"
+    IDS_CLOUD_STATE_PINNED "一律保留"
+    IDS_DETAILS_COLUMN_CLOUD_ONLY "僅限雲端硬碟資料夾"
 END

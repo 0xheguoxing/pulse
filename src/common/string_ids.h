@@ -1178,6 +1178,12 @@
 #define IDS_SIDEBAR_HIDE_CLOUD                                                           2515
 // Header-less cloud section (OneDrive, WPS网盘, 百度网盘同步空间, ...): section menu title and toast.
 #define IDS_SIDEBAR_CLOUD_DRIVES                                                         3663
+// Details 状态 column (folders under a Cloud Files sync root): header, the three states, menu badge.
+#define IDS_COLUMN_STATUS                                                                3664
+#define IDS_CLOUD_STATE_ONLINE                                                           3665
+#define IDS_CLOUD_STATE_LOCAL                                                            3666
+#define IDS_CLOUD_STATE_PINNED                                                           3667
+#define IDS_DETAILS_COLUMN_CLOUD_ONLY                                                    3668
 #define IDS_SIDEBAR_CLOUD_HIDDEN_HINT                                                    2516
 #define IDS_SIDEBAR_SHOW_HIDDEN                                                          2517
 #define IDS_SETTINGS_DEFAULT_MANAGER_DESC                                                1481

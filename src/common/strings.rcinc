@@ -2437,6 +2437,11 @@ BEGIN
     IDS_INTEGRATION_COMPAT "兼容打开方式"
     IDS_INTEGRATION_COMPAT_DESC "双击文件夹没反应时勾选：Pulse 不再改动文件夹的双击动作，改为资源管理器先打开，再马上转到 Pulse，可能会闪一下。"
     IDS_SIDEBAR_CLOUD_DRIVES "网盘"
+    IDS_COLUMN_STATUS "状态"
+    IDS_CLOUD_STATE_ONLINE "仅在云端"
+    IDS_CLOUD_STATE_LOCAL "已在本地"
+    IDS_CLOUD_STATE_PINNED "始终保留"
+    IDS_DETAILS_COLUMN_CLOUD_ONLY "仅网盘文件夹"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4873,6 +4878,11 @@ BEGIN
     IDS_INTEGRATION_COMPAT "Compatibility mode"
     IDS_INTEGRATION_COMPAT_DESC "Turn on if double-clicking a folder does nothing: Pulse leaves the double-click action alone, lets File Explorer open the folder, then moves it into Pulse right away. It may flash briefly."
     IDS_SIDEBAR_CLOUD_DRIVES "Cloud drives"
+    IDS_COLUMN_STATUS "Status"
+    IDS_CLOUD_STATE_ONLINE "Online only"
+    IDS_CLOUD_STATE_LOCAL "On this device"
+    IDS_CLOUD_STATE_PINNED "Always kept"
+    IDS_DETAILS_COLUMN_CLOUD_ONLY "Cloud folders only"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

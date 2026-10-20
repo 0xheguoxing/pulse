@@ -55,6 +55,11 @@ void MergeCloudRoots(std::vector<CloudRoot>& into, std::vector<CloudRoot> more,
 std::wstring NormalizeCloudRootPath(const std::wstring& raw);
 bool SameCloudRootPath(const std::wstring& a, const std::wstring& b);
 
+// Cloud Files sync roots seen by the last sidebar refresh. Published from the
+// refresh thread, read on the UI thread (the Details 状态 column).
+void PublishCloudFilesRoots(std::vector<std::wstring> roots);
+bool IsUnderCloudFilesRoot(const std::wstring& path);
+
 // "S-1-5-21-..." of the process token, empty on failure.
 std::wstring CurrentUserSidString();
 

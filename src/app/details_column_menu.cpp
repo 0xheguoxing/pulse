@@ -17,10 +17,11 @@ using K = ui::MainRenderer::ColumnKind;
 constexpr const wchar_t* kIconCheck = L"\xE73E"; // Segoe Fluent Icons: CheckMark
 
 struct ColumnRow { K kind; I label; };
-// Same order as the header.
+// Same order as the header; 状态 last, since only cloud folders draw it.
 constexpr ColumnRow kRows[] = {
     {K::Date, I::ColumnModified}, {K::Created, I::ColumnCreated},
     {K::Accessed, I::ColumnAccessed}, {K::Type, I::ColumnType}, {K::Size, I::ColumnSize},
+    {K::Status, I::ColumnStatus},
 };
 
 constexpr uint32_t Bit(K kind) { return 1u << static_cast<uint32_t>(kind); }
@@ -51,7 +52,9 @@ std::vector<ui::FluentMenuItem> BuildDetailsColumnMenu(uint32_t mask, uint32_t v
         // never a silent no-op. A badge, not a shortcut caption: the caption
         // column is sized for short Latin key names and clips CJK text.
         if (checked && !(visible & Bit(row.kind))) {
-            if (search && (row.kind == K::Created || row.kind == K::Accessed)) {
+            if (row.kind == K::Status) {
+                item.badge_text = l10n::Get(I::DetailsColumnCloudOnly);
+            } else if (search && (row.kind == K::Created || row.kind == K::Accessed)) {
                 item.badge_text = l10n::Get(I::DetailsColumnNotInSearch);
             } else {
                 item.badge_text = l10n::Get(I::DetailsColumnNoRoom);

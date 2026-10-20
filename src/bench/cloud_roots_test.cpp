@@ -2,6 +2,7 @@
 // a private HKCU fixture (HKCU\Software\PulseTest\cloud_roots_<pid>). Never
 // writes Explorer's own keys; the fixture tree and temp folders are removed.
 #include "../app/cloud_roots.h"
+#include "../fs/cloud_state.h"
 
 #include <windows.h>
 #include <cstdio>
@@ -178,6 +179,32 @@ int main() {
               CloudRootColor({L"", L"\x767E\x5EA6\x7F51\x76D8", b, CloudRootSource::NavigationPane}) == 0x2F8CF0 &&
               CloudRootColor({L"", L"Other", L"x", CloudRootSource::SyncRoot}) == 0x60A5FA,
           "brand tints");
+
+    using pulse::fs::CloudState;
+    using pulse::fs::CloudStateFromAttrs;
+    Check(CloudStateFromAttrs(FILE_ATTRIBUTE_ARCHIVE) == CloudState::Local &&
+              CloudStateFromAttrs(pulse::fs::kAttrUnpinned) == CloudState::Local &&
+              CloudStateFromAttrs(pulse::fs::kAttrRecallOnDataAccess) == CloudState::Online &&
+              CloudStateFromAttrs(FILE_ATTRIBUTE_DIRECTORY | pulse::fs::kAttrRecallOnOpen) == CloudState::Online &&
+              CloudStateFromAttrs(FILE_ATTRIBUTE_OFFLINE) == CloudState::Online &&
+              CloudStateFromAttrs(pulse::fs::kAttrPinned) == CloudState::Pinned &&
+              CloudStateFromAttrs(pulse::fs::kAttrPinned | pulse::fs::kAttrRecallOnDataAccess) == CloudState::Pinned,
+          "cloud state from attributes");
+    Check(!IsUnderCloudFilesRoot(L"C:\\Users\\SS\\OneDrive"), "nothing published yet");
+    PublishCloudFilesRoots({L"C:\\Users\\SS\\OneDrive\\", L"", L"D:\\"});
+    Check(IsUnderCloudFilesRoot(L"C:\\Users\\SS\\OneDrive") &&
+              IsUnderCloudFilesRoot(L"c:\\users\\ss\\onedrive\\Docs\\a") &&
+              !IsUnderCloudFilesRoot(L"C:\\Users\\SS\\OneDriveOld") &&
+              !IsUnderCloudFilesRoot(L"C:\\Users\\SS") && IsUnderCloudFilesRoot(L"D:\\x") &&
+              IsUnderCloudFilesRoot(L"\\\\?\\C:\\Users\\SS\\OneDrive\\Docs") &&
+              !IsUnderCloudFilesRoot(L"\\\\?\\C:\\Users\\SS\\OneDriveOld"),
+          "cloud files root prefix matching respects folder boundaries");
+    PublishCloudFilesRoots({L"\\\\nas\\share\\Sync"});
+    Check(IsUnderCloudFilesRoot(L"\\\\?\\UNC\\nas\\share\\Sync\\a") &&
+              IsUnderCloudFilesRoot(L"\\\\nas\\share\\Sync"),
+          "long-path and UNC prefixes match the same root");
+    PublishCloudFilesRoots({});
+    Check(!IsUnderCloudFilesRoot(L"D:\\x"), "republishing replaces the set");
 
     RegDeleteTreeW(HKEY_CURRENT_USER, prefix.c_str());
     for (const auto* dir : {&wps, &baidu, &od}) RemoveDirectoryW(dir->c_str());

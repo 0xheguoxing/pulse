@@ -3,6 +3,7 @@
 // One global choice (AppPrefs::details_columns), edited from the column
 // header's right-click menu. Bit = 1 << MainRenderer::ColumnKind value; Name
 // is always shown and Path belongs to search views, so neither has a bit.
+// Status (cloud files) is chosen here too, but only cloud folders draw it.
 #pragma once
 #include <array>
 #include <cstdint>
@@ -14,9 +15,10 @@ inline constexpr uint32_t kDetailsColumnType = 1u << 3;
 inline constexpr uint32_t kDetailsColumnSize = 1u << 4;
 inline constexpr uint32_t kDetailsColumnCreated = 1u << 5;
 inline constexpr uint32_t kDetailsColumnAccessed = 1u << 6;
+inline constexpr uint32_t kDetailsColumnStatus = 1u << 7;
 
 inline constexpr uint32_t kDetailsColumnsDefault =
-    kDetailsColumnModified | kDetailsColumnType | kDetailsColumnSize;
+    kDetailsColumnModified | kDetailsColumnType | kDetailsColumnSize | kDetailsColumnStatus;
 inline constexpr uint32_t kDetailsColumnsAll = kDetailsColumnsDefault |
     kDetailsColumnCreated | kDetailsColumnAccessed;
 
