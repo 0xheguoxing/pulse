@@ -2494,6 +2494,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     NoteArrivalFinished(*s, finished);
                     NoteDeleteFinished(*s, finished);
                     NoteTrayReleaseFinished(*s, finished);
+                    if (finished.type == ops::OpType::EmptyRecycle)
+                        ApplyEmptyRecycleFinished(*s, finished.success);
                 }
                 // An op finished: refresh the view (watcher also fires, this is immediate).
                 app::Tab* tab = ActiveTab(*s);

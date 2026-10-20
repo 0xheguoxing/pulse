@@ -118,6 +118,7 @@ void ScheduleRecycleRefresh(AppState& s);
 bool PumpRecycleRefresh(AppState& s, ULONGLONG now);
 void BumpRecycleOccupancy(AppState& s, int64_t delta);
 void ClearRecycleOccupancy(AppState& s);
+void ApplyEmptyRecycleFinished(AppState& s, bool emptied);
 bool ToggleStarred(AppState& s, const std::wstring& target,
                           app::PlaceItemKind kind = app::PlaceItemKind::Unknown);
 void StopDetailsSizeWalk(AppState& s);

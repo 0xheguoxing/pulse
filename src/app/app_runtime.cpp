@@ -1369,6 +1369,15 @@ void ClearRecycleOccupancy(AppState& s) {
     ApplyRecycleOccupancy(s);
 }
 
+void ApplyEmptyRecycleFinished(AppState& s, bool emptied) {
+    // The bin is emptied in place, so the Shell count is already final: drop
+    // the stale-count guard and query now. A cancelled or partial empty keeps
+    // its old figure until that query reports what is left.
+    s.recycle_info_guard = false;
+    if (emptied) ClearRecycleOccupancy(s);
+    RefreshRecycleViews(s, true);
+}
+
 bool PumpRecycleRefresh(AppState& s, ULONGLONG now) {
     if (s.recycle_refresh_left <= 0 || s.recycle_refresh_at == 0 || now < s.recycle_refresh_at)
         return false;
