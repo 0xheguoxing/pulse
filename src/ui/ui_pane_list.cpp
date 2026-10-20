@@ -29,17 +29,33 @@
 #include <string_view>
 #include <unordered_map>
 
-// Details 状态 column text for a cloud-file state.
-static std::wstring CloudStateLabel(pulse::fs::CloudState state) {
-    using pulse::l10n::StringId;
+namespace pulse::ui {
+// Cloud-file state glyph (Segoe Fluent) and ink, shared by the Details
+// 状态 column and the grid badge.
+static const wchar_t* CloudStateGlyph(fs::CloudState state) {
     switch (state) {
-    case pulse::fs::CloudState::Online: return pulse::l10n::Get(StringId::CloudStateOnline);
-    case pulse::fs::CloudState::Pinned: return pulse::l10n::Get(StringId::CloudStatePinned);
-    default: return pulse::l10n::Get(StringId::CloudStateLocal);
+    case fs::CloudState::Online: return L"\xE753";  // Cloud
+    case fs::CloudState::Pinned: return L"\xEC61";  // CompletedSolid
+    default: return L"\xE930";                            // Completed
     }
 }
 
-namespace pulse::ui {
+static D2D1_COLOR_F CloudStateInk(fs::CloudState state, const Theme& theme) {
+    const bool dark = theme.bg.r < 0.5f;
+    return state == fs::CloudState::Online ? HexColor(dark ? 0x6CB4F0 : 0x3B82C4)
+                                                  : HexColor(dark ? 0x6CC28F : 0x3F8A5F);
+}
+
+// Details 状态 column text for a cloud-file state.
+static std::wstring CloudStateLabel(fs::CloudState state) {
+    using l10n::StringId;
+    switch (state) {
+    case fs::CloudState::Online: return l10n::Get(StringId::CloudStateOnline);
+    case fs::CloudState::Pinned: return l10n::Get(StringId::CloudStatePinned);
+    default: return l10n::Get(StringId::CloudStateLocal);
+    }
+}
+
 
 float MainRenderer::ListRowHeightDip(const PaneViewModel& vm) const {
     if (DetailsShowsSnippet(vm)) return std::max(row_height_dip_, kDetailsSnippetMinRowDip);
@@ -1630,6 +1646,35 @@ void MainRenderer::DrawThumbnailBadges(const ListEntryView& entry, const D2D1_RE
         }
     }
     if (had_fill) brFillInput_->SetColor(previous_fill);
+}
+
+void MainRenderer::DrawCloudBadge(const ListEntryView& entry, const D2D1_RECT_F& artwork, bool picture,
+                                  const Theme& theme, float opacity) {
+    auto* dc = compositor_ ? compositor_->Dc() : nullptr;
+    const float art = std::min(artwork.right - artwork.left, artwork.bottom - artwork.top);
+    if (!dc || art < 24.0f * scale_ || opacity <= 0.0f) return;
+    const fs::CloudState state = fs::CloudStateFromAttrs(entry.attrs);
+    const float d = std::round(std::clamp(art * 0.34f, 16.0f * scale_, 22.0f * scale_));
+    // Shell icons: hang off the bottom-left like the prototype's badge.
+    // Pictures fill their slot, so the badge sits inside the top-left corner,
+    // clear of the open-with and duration badges along the bottom.
+    const float inset = 6.0f * scale_;
+    const float left = picture ? artwork.left + inset : artwork.left - d * 0.3f;
+    const float top = picture ? artwork.top + inset : artwork.bottom - d * 0.75f;
+    const D2D1_ELLIPSE circle = D2D1::Ellipse(D2D1::Point2F(left + d * 0.5f, top + d * 0.5f), d * 0.5f, d * 0.5f);
+    D2D1_COLOR_F plate = theme.surface_flyout;
+    plate.a = opacity;
+    if (picture) {
+        MakeBrush(dc, D2D1::ColorF(0, 0.22f * opacity), brFillInput_);
+        dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(circle.point.x, circle.point.y + std::max(1.0f, scale_)),
+                                      circle.radiusX, circle.radiusY), brFillInput_.get());
+    }
+    MakeBrush(dc, plate, brFillInput_);
+    dc->FillEllipse(circle, brFillInput_.get());
+    MakeBrush(dc, WithAlpha(theme.text, 0.16f * opacity), brFillInput_);
+    dc->DrawEllipse(circle, brFillInput_.get(), std::max(1.0f, scale_));
+    const D2D1_COLOR_F ink = IsHighContrast() ? theme.text : CloudStateInk(state, theme);
+    DrawIconText(left, top, d, d, CloudStateGlyph(state), L"", WithAlpha(ink, opacity), 0.62f);
 }
 
 void MainRenderer::DrawEntryIcon(const ListEntryView& entry, float x, float y, float size,
@@ -4192,6 +4237,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 const float bx = (cell.left + cell.right - bw) * 0.5f;
                 DrawChangeBadge(compositor_, painter_, *change, D2D1::RectF(bx, cell.top + 2 * scale_, bx + bw, cell.top + 20 * scale_), theme, scale_);
             }
+            bool drewCloudThumbnail = false;  // the cloud badge goes inside a picture
             if (draw_shapes && morph_item) {
                 DrawMorphIcon(e, vm, morph_sample, row_dx, row_dy, iconRect,
                               static_cast<ViewMode>(morph->FromMode()), theme);
@@ -4257,6 +4303,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         hidden_alpha, iconGrid, &artwork,
                         &media_duration_ms)
                         == PreviewDrawResult::Bitmap);
+                drewCloudThumbnail = drewThumbnail;
                 // Photos and videos look alike as thumbnails: say which program
                 // opens the file, and how long a video plays (like Explorer).
                 if (drewThumbnail && thumbnail_badges_ && iconGrid && !e.is_dir && !e.is_link)
@@ -4310,6 +4357,12 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             }
             if (draw_shapes && !morph_item && !e.record_only && IsProtectedSystemEntry(e.attrs))
                 DrawProtectedBadge(dc, iconGrid ? artwork : iconRect, scale_, theme);
+            // Cloud folders: where each item's content lives, as in the 状态 column.
+            if (draw_shapes && !morph_item && !e.record_only && !e.is_link && vm.cloud_status_column &&
+                (iconGrid || wallPic)) {
+                const bool picture = wallPic || (drewCloudThumbnail && !e.is_dir);
+                DrawCloudBadge(e, wallPic ? thumbRect : artwork, picture, theme, cut ? 0.55f : hidden_alpha);
+            }
             if (draw_shapes && wallPic && !morph_item) DrawWallTileChrome(thumbRect, hover && src != vm.rename_index, selected, theme);
             // Mid-morph the labels are drawn in a second, faded pass.
             if (!draw_text) continue;
@@ -4656,13 +4709,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         // Read from the attributes the listing already has: no
                         // extra I/O and nothing that could trigger a download.
                         const fs::CloudState state = fs::CloudStateFromAttrs(e.attrs);
-                        const bool darkTheme = theme.bg.r < 0.5f;
-                        const bool online = state == fs::CloudState::Online;
-                        const D2D1_COLOR_F ink = online ? HexColor(darkTheme ? 0x6CB4F0 : 0x3B82C4)
-                                                        : HexColor(darkTheme ? 0x6CC28F : 0x3F8A5F);
-                        const wchar_t* glyph = online ? L"\xE753"   // Cloud
-                            : state == fs::CloudState::Pinned ? L"\xEC61"  // CompletedSolid
-                                                              : L"\xE930"; // Completed
+                        const D2D1_COLOR_F ink = CloudStateInk(state, theme);
+                        const wchar_t* glyph = CloudStateGlyph(state);
                         const float iconW = 16.0f * scale_;
                         if (avail < iconW) break;
                         DrawIconText(left, cell.top, iconW, cell.bottom - cell.top, glyph, L"",

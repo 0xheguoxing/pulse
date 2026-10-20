@@ -2144,6 +2144,10 @@ private:
     // drawn image, `icon_size` the item's icon square, both in pixels.
     void DrawThumbnailBadges(const ListEntryView& entry, const D2D1_RECT_F& artwork, float icon_size,
                              uint32_t duration_ms, const Theme& theme);
+    // Cloud-file state on a grid item in a cloud folder: a round plate on the
+    // artwork's bottom-left (shell icons) or inside its top-left (pictures).
+    void DrawCloudBadge(const ListEntryView& entry, const D2D1_RECT_F& artwork, bool picture,
+                        const Theme& theme, float opacity);
     // Photo wall picture tile over its thumbnail: a hairline edge, the dark
     // fade its name sits on while hovered or selected, the selection ring.
     void DrawWallTileChrome(const D2D1_RECT_F& tile, bool hover, bool selected, const Theme& theme);
