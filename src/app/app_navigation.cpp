@@ -1751,8 +1751,12 @@ static bool ApplyNotifiesToVisible(AppState& s, const std::wstring& path,
             }
             if (_wcsicmp(focus.c_str(), event.old_name.c_str()) == 0) focus = event.name;
         }
+        // Child rows of an expanded tree index past the end of the snapshot.
+        const bool focus_in_snapshot = tab->selected_index >= 0 &&
+            static_cast<size_t>(tab->selected_index) < tab->snapshot->size();
         app::ListingSelectionRestore selection_restore{
-            std::move(names), std::move(focus), false, false, tab->snapshot, tab->selected_index};
+            std::move(names), std::move(focus), false, false,
+            focus_in_snapshot ? tab->snapshot : nullptr, focus_in_snapshot ? tab->selected_index : -1};
         tab->SetSnapshot(std::move(copy));
         tab->order_held = true;
         if (!selection_restore.names.empty()) app::RestoreListingSelection(*tab, selection_restore, &pane, &s.places);
