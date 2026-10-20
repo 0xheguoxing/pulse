@@ -1173,6 +1173,7 @@ enum class StringId : UINT {
     ListSelectionOutline = IDS_LIST_SELECTION_OUTLINE,
     ListSelectionOutlineDesc = IDS_LIST_SELECTION_OUTLINE_DESC,
     SidebarHideCloud = IDS_SIDEBAR_HIDE_CLOUD,
+    SidebarCloudDrives = IDS_SIDEBAR_CLOUD_DRIVES,
     SidebarCloudHiddenHint = IDS_SIDEBAR_CLOUD_HIDDEN_HINT,
     SidebarShowHidden = IDS_SIDEBAR_SHOW_HIDDEN,
     SettingsDefaultManagerDesc = IDS_SETTINGS_DEFAULT_MANAGER_DESC,

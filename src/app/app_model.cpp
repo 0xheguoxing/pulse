@@ -1,5 +1,6 @@
 // app_model.cpp
 #include "app_model.h"
+#include "cloud_roots.h"
 #include "folder_alias.h"
 #include "selection_caps.h"
 #include "split_tree_shape.h"
@@ -1299,6 +1300,39 @@ std::vector<SidebarEntry> BuildOneDriveEntries() {
     return out;
 }
 
+// Other cloud folders Explorer pins to its navigation pane (WPS网盘, 百度网盘
+// 同步空间, Dropbox, ...) and Cloud Files sync roots, after the OneDrive rows.
+// Runs on the sidebar refresh thread with the rest of the model; a folder that
+// no longer exists is left out, the same as Explorer does.
+void AppendOtherCloudEntries(std::vector<SidebarEntry>& cloud) {
+    CloudRegistry registry = CloudRegistry::System();
+    // Isolated test instances only: a private HKCU subtree stands in for the
+    // machine's registration, so tests never touch Explorer's own keys.
+    if (GetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", nullptr, 0) > 0) {
+        wchar_t prefix[512]{};
+        const DWORD n = GetEnvironmentVariableW(L"PULSE_TEST_CLOUD_REG", prefix, ARRAYSIZE(prefix));
+        if (n > 0 && n < ARRAYSIZE(prefix)) registry = CloudRegistry::Fixture(prefix, L"S-1-5-21-pulse-test");
+    }
+    std::vector<CloudRoot> roots;
+    for (const auto& entry : cloud) roots.push_back({entry.path, entry.label, {}, CloudRootSource::Seed});
+    const size_t seeded = roots.size();
+    const auto is_directory = [](const std::wstring& path) {
+        const DWORD attrs = GetFileAttributesW(path.c_str());
+        return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    };
+    MergeCloudRoots(roots, ReadNavigationPaneCloudRoots(registry), is_directory);
+    MergeCloudRoots(roots, ReadSyncRootCloudRoots(registry), is_directory);
+    for (size_t i = seeded; i < roots.size(); ++i) {
+        SidebarEntry entry;
+        entry.glyph = L"\xE753";
+        entry.fallback = L"Cloud";
+        entry.color = ui::HexColor(CloudRootColor(roots[i]));
+        entry.path = fs::NormalizePath(roots[i].path);
+        entry.label = roots[i].label;
+        if (!entry.path.empty()) cloud.push_back(std::move(entry));
+    }
+}
+
 std::vector<int> DefaultSidebarOrder() {
     // Mirrors Explorer's navigation pane: the OneDrive accounts lead, the starred
     // root follows next to quick access, and the drive list sits near the bottom
@@ -1413,6 +1447,7 @@ SidebarModel BuildSidebarModel(const fs::RecycleBinInfo* recycle) {
             m.cloud.push_back(std::move(onedrive));
         }
     }
+    AppendOtherCloudEntries(m.cloud);
     SidebarEntry recycle_bin;
     recycle_bin.glyph = L"\xE75C";
     recycle_bin.fallback = L"Bin";
@@ -2202,7 +2237,7 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
                                  sidebar.saved_searches, false);
     // The title is only used by the section menus: the pane itself shows the
     // account rows without a header (see IsHeaderlessSection).
-    cloud = ConvertGroup(L"OneDrive", sidebar.cloud, false);
+    cloud = ConvertGroup(l10n::Get(l10n::StringId::SidebarCloudDrives), sidebar.cloud, false);
     if (places) {
         // Persisted badges win over the freshly rebuilt sidebar model (#41).
         for (auto* group : { &access, &cloud }) {

@@ -1320,7 +1320,7 @@ BEGIN
     IDS_EXIT_PULSE "結束 Pulse"
     IDS_LIST_SELECTION_OUTLINE "選取項目外框"
     IDS_LIST_SELECTION_OUTLINE_DESC "選取的檔案和資料夾外加一圈強調色外框，在長清單中更容易辨識"
-    IDS_SIDEBAR_HIDE_CLOUD "在側邊欄中隱藏 OneDrive"
+    IDS_SIDEBAR_HIDE_CLOUD "在側邊欄中隱藏雲端硬碟"
     IDS_SIDEBAR_CLOUD_HIDDEN_HINT "已從側邊欄隱藏。在任一區段標題或側邊欄底部空白處按右鍵，即可重新顯示。"
     IDS_SIDEBAR_SHOW_HIDDEN "顯示已隱藏的區段"
     IDS_UPDATE_WAITING_OPERATIONS "等待目前工作完成，隨後自動更新並重新啟動…"
@@ -2434,4 +2434,5 @@ BEGIN
     IDS_INTEGRATION_HINT_LAUNCH_COMPAT "「相容開啟方式」只在 Pulse 執行時有效。想一開機就生效，可以開啟「開機自啟」。"
     IDS_INTEGRATION_COMPAT "相容開啟方式"
     IDS_INTEGRATION_COMPAT_DESC "按兩下資料夾沒反應時勾選：Pulse 不再改動資料夾的按兩下動作，改為檔案總管先開啟，再馬上轉到 Pulse，可能會閃一下。"
+    IDS_SIDEBAR_CLOUD_DRIVES "雲端硬碟"
 END

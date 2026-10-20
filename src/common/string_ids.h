@@ -1176,6 +1176,8 @@
 #define IDS_LIST_SELECTION_OUTLINE                                                       2513
 #define IDS_LIST_SELECTION_OUTLINE_DESC                                                  2514
 #define IDS_SIDEBAR_HIDE_CLOUD                                                           2515
+// Header-less cloud section (OneDrive, WPS网盘, 百度网盘同步空间, ...): section menu title and toast.
+#define IDS_SIDEBAR_CLOUD_DRIVES                                                         3663
 #define IDS_SIDEBAR_CLOUD_HIDDEN_HINT                                                    2516
 #define IDS_SIDEBAR_SHOW_HIDDEN                                                          2517
 #define IDS_SETTINGS_DEFAULT_MANAGER_DESC                                                1481

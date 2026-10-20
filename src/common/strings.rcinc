@@ -1322,7 +1322,7 @@ BEGIN
     IDS_EXIT_PULSE "退出 Pulse"
     IDS_LIST_SELECTION_OUTLINE "选中项描边"
     IDS_LIST_SELECTION_OUTLINE_DESC "选中的文件和文件夹外加一圈强调色描边，长列表里更容易分辨"
-    IDS_SIDEBAR_HIDE_CLOUD "在侧边栏中隐藏 OneDrive"
+    IDS_SIDEBAR_HIDE_CLOUD "在侧边栏中隐藏网盘"
     IDS_SIDEBAR_CLOUD_HIDDEN_HINT "已从侧边栏隐藏。右键任一分区标题或侧边栏底部空白处，可以重新显示。"
     IDS_SIDEBAR_SHOW_HIDDEN "显示已隐藏的分区"
     IDS_UPDATE_WAITING_OPERATIONS "等待当前任务完成，随后自动更新并重启…"
@@ -2436,6 +2436,7 @@ BEGIN
     IDS_INTEGRATION_HINT_LAUNCH_COMPAT "「兼容打开方式」只在 Pulse 运行时有效。想一开机就生效，可以打开「开机自启」。"
     IDS_INTEGRATION_COMPAT "兼容打开方式"
     IDS_INTEGRATION_COMPAT_DESC "双击文件夹没反应时勾选：Pulse 不再改动文件夹的双击动作，改为资源管理器先打开，再马上转到 Pulse，可能会闪一下。"
+    IDS_SIDEBAR_CLOUD_DRIVES "网盘"
 END
 
 LANGUAGE 0x09, 0x01
@@ -3757,7 +3758,7 @@ BEGIN
     IDS_EXIT_PULSE "Exit Pulse"
     IDS_LIST_SELECTION_OUTLINE "Outline selected items"
     IDS_LIST_SELECTION_OUTLINE_DESC "Draw an accent outline around selected items so they stand out in long lists"
-    IDS_SIDEBAR_HIDE_CLOUD "Hide OneDrive in the sidebar"
+    IDS_SIDEBAR_HIDE_CLOUD "Hide cloud drives in the sidebar"
     IDS_SIDEBAR_CLOUD_HIDDEN_HINT "Hidden from the sidebar. Right-click any section title or the empty space at the bottom of the sidebar to show it again."
     IDS_SIDEBAR_SHOW_HIDDEN "Show hidden sections"
     IDS_UPDATE_WAITING_OPERATIONS "Waiting for current tasks, then updating and restarting automatically…"
@@ -4871,6 +4872,7 @@ BEGIN
     IDS_INTEGRATION_HINT_LAUNCH_COMPAT "Compatibility mode works only while Pulse is running. To have it from sign-in, turn on Launch at sign-in."
     IDS_INTEGRATION_COMPAT "Compatibility mode"
     IDS_INTEGRATION_COMPAT_DESC "Turn on if double-clicking a folder does nothing: Pulse leaves the double-click action alone, lets File Explorer open the folder, then moves it into Pulse right away. It may flash briefly."
+    IDS_SIDEBAR_CLOUD_DRIVES "Cloud drives"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.
