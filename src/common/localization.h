@@ -1179,6 +1179,8 @@ enum class StringId : UINT {
     CloudStateLocal = IDS_CLOUD_STATE_LOCAL,
     CloudStatePinned = IDS_CLOUD_STATE_PINNED,
     DetailsColumnCloudOnly = IDS_DETAILS_COLUMN_CLOUD_ONLY,
+    CloudStateSyncing = IDS_CLOUD_STATE_SYNCING,
+    CloudStateError = IDS_CLOUD_STATE_ERROR,
     SidebarCloudHiddenHint = IDS_SIDEBAR_CLOUD_HIDDEN_HINT,
     SidebarShowHidden = IDS_SIDEBAR_SHOW_HIDDEN,
     SettingsDefaultManagerDesc = IDS_SETTINGS_DEFAULT_MANAGER_DESC,

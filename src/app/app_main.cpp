@@ -29,6 +29,7 @@
 #include "../ui/batch_rename_dialog.h"
 #include "../ui/quick_preview_window.h"
 #include "app_sidebar_refresh.h"
+#include "cloud_sync_probe.h"
 #include "operation_intent_ui.h"
 #include "../ui/typography.h"
 #include "../ui/preview_format_catalog.h"
@@ -1932,6 +1933,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             // New totals re-sort Size-ordered listings, paced (#58).
             if (folderSizeResortWaiting) folderSizeResortWaiting = ResortForFolderSizes(*s);
             DrainDirNotifies(*s);
+            // Sync states of on-screen cloud rows came back: repaint once.
+            if (const uint64_t cloud_sync = app::CloudSyncProbe::Instance().Revision();
+                cloud_sync != s->cloudSyncRevision) {
+                s->cloudSyncRevision = cloud_sync;
+                dirty = true;
+            }
             const ULONGLONG now = GetTickCount64();
             TickUpdates(*s, now);
             TickQuickPreviewSelection(*s, now);

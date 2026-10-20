@@ -18,6 +18,7 @@
 #include "wall_aspects.h"
 #include "file_name_breaks.h"
 #include "../fs/cloud_state.h"
+#include "../app/cloud_sync_probe.h"
 #include <windowsx.h>
 #include <d2d1effects.h>
 #include <shlwapi.h>
@@ -54,6 +55,27 @@ static std::wstring CloudStateLabel(fs::CloudState state) {
     case fs::CloudState::Pinned: return l10n::Get(StringId::CloudStatePinned);
     default: return l10n::Get(StringId::CloudStateLocal);
     }
+}
+
+// What a drawn cloud row shows: a transfer or problem the sync engine reports
+// (asked only for rows on screen) wins over where the content lives.
+struct CloudLook {
+    const wchar_t* glyph;
+    D2D1_COLOR_F ink;
+    std::wstring label;
+};
+
+static CloudLook CloudLookFor(const ListEntryView& entry, const Theme& theme) {
+    const bool dark = theme.bg.r < 0.5f;
+    switch (app::CloudSyncProbe::Instance().Lookup(entry.path, entry.modified_value)) {
+    case fs::CloudSync::Syncing:
+        return {L"\xE895", HexColor(dark ? 0x6CB4F0 : 0x3B82C4), l10n::Get(l10n::StringId::CloudStateSyncing)};
+    case fs::CloudSync::Error:
+        return {L"\xE7BA", HexColor(dark ? 0xF5A06B : 0xC2410C), l10n::Get(l10n::StringId::CloudStateError)};
+    default: break;
+    }
+    const fs::CloudState state = fs::CloudStateFromAttrs(entry.attrs);
+    return {CloudStateGlyph(state), CloudStateInk(state, theme), CloudStateLabel(state)};
 }
 
 
@@ -1653,7 +1675,7 @@ void MainRenderer::DrawCloudBadge(const ListEntryView& entry, const D2D1_RECT_F&
     auto* dc = compositor_ ? compositor_->Dc() : nullptr;
     const float art = std::min(artwork.right - artwork.left, artwork.bottom - artwork.top);
     if (!dc || art < 24.0f * scale_ || opacity <= 0.0f) return;
-    const fs::CloudState state = fs::CloudStateFromAttrs(entry.attrs);
+    const CloudLook look = CloudLookFor(entry, theme);
     const float d = std::round(std::clamp(art * 0.34f, 16.0f * scale_, 22.0f * scale_));
     // Shell icons: hang off the bottom-left like the prototype's badge.
     // Pictures fill their slot, so the badge sits inside the top-left corner,
@@ -1673,8 +1695,8 @@ void MainRenderer::DrawCloudBadge(const ListEntryView& entry, const D2D1_RECT_F&
     dc->FillEllipse(circle, brFillInput_.get());
     MakeBrush(dc, WithAlpha(theme.text, 0.16f * opacity), brFillInput_);
     dc->DrawEllipse(circle, brFillInput_.get(), std::max(1.0f, scale_));
-    const D2D1_COLOR_F ink = IsHighContrast() ? theme.text : CloudStateInk(state, theme);
-    DrawIconText(left, top, d, d, CloudStateGlyph(state), L"", WithAlpha(ink, opacity), 0.62f);
+    const D2D1_COLOR_F ink = IsHighContrast() ? theme.text : look.ink;
+    DrawIconText(left, top, d, d, look.glyph, L"", WithAlpha(ink, opacity), 0.62f);
 }
 
 void MainRenderer::DrawEntryIcon(const ListEntryView& entry, float x, float y, float size,
@@ -4708,17 +4730,15 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     case ColumnKind::Status: {
                         // Read from the attributes the listing already has: no
                         // extra I/O and nothing that could trigger a download.
-                        const fs::CloudState state = fs::CloudStateFromAttrs(e.attrs);
-                        const D2D1_COLOR_F ink = CloudStateInk(state, theme);
-                        const wchar_t* glyph = CloudStateGlyph(state);
                         const float iconW = 16.0f * scale_;
                         if (avail < iconW) break;
-                        DrawIconText(left, cell.top, iconW, cell.bottom - cell.top, glyph, L"",
-                                     WithAlpha(ink, cut ? 0.55f : 1.0f), 0.8f);
+                        const CloudLook look = CloudLookFor(e, theme);
+                        DrawIconText(left, cell.top, iconW, cell.bottom - cell.top, look.glyph, L"",
+                                     WithAlpha(look.ink, cut ? 0.55f : 1.0f), 0.8f);
                         const float textLeft = left + iconW + 6.0f * scale_;
                         const float textAvail = std::max(0.0f, left + avail - textLeft);
                         if (textAvail > 1.0f)
-                            draw_detail_text(fit(CloudStateLabel(state), textAvail), textLeft, textAvail,
+                            draw_detail_text(fit(look.label, textAvail), textLeft, textAvail,
                                              DWRITE_TEXT_ALIGNMENT_LEADING);
                         break;
                     }

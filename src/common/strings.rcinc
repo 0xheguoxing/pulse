@@ -2442,6 +2442,8 @@ BEGIN
     IDS_CLOUD_STATE_LOCAL "已在本地"
     IDS_CLOUD_STATE_PINNED "始终保留"
     IDS_DETAILS_COLUMN_CLOUD_ONLY "仅网盘文件夹"
+    IDS_CLOUD_STATE_SYNCING "同步中"
+    IDS_CLOUD_STATE_ERROR "同步出错"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4883,6 +4885,8 @@ BEGIN
     IDS_CLOUD_STATE_LOCAL "On this device"
     IDS_CLOUD_STATE_PINNED "Always kept"
     IDS_DETAILS_COLUMN_CLOUD_ONLY "Cloud folders only"
+    IDS_CLOUD_STATE_SYNCING "Syncing"
+    IDS_CLOUD_STATE_ERROR "Sync problem"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

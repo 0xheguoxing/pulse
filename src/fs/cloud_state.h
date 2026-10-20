@@ -30,4 +30,24 @@ constexpr CloudState CloudStateFromAttrs(DWORD attrs) noexcept {
     return CloudState::Local;
 }
 
+// What the sync engine reports for an item (System.StorageProviderState,
+// STORAGEPROVIDERSTATE_* values). Only transfers and problems matter here;
+// where the content lives comes from the attributes above.
+enum class CloudSync : uint8_t { Idle, Syncing, Error };
+
+constexpr CloudSync CloudSyncFromProviderState(uint32_t state) noexcept {
+    switch (state) {
+    case 4:  // PENDING_UPLOAD
+    case 5:  // PENDING_DOWNLOAD
+    case 6:  // TRANSFERRING
+    case 10: // PENDING_UNSPECIFIED
+        return CloudSync::Syncing;
+    case 7:  // ERROR
+    case 8:  // WARNING
+        return CloudSync::Error;
+    default: // NONE, SPARSE, IN_SYNC, PINNED, EXCLUDED
+        return CloudSync::Idle;
+    }
+}
+
 } // namespace pulse::fs
