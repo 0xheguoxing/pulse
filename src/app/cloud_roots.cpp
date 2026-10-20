@@ -252,18 +252,48 @@ void PublishCloudFilesRoots(std::vector<std::wstring> roots) {
                           std::make_shared<std::vector<std::wstring>>(std::move(roots))));
 }
 
+namespace {
+// Pane paths may carry the long-path prefix; sync roots never do.
+std::wstring WithoutLongPrefix(const std::wstring& raw) {
+    if (raw.rfind(L"\\\\?\\UNC\\", 0) == 0) return L"\\\\" + raw.substr(8);
+    if (raw.rfind(L"\\\\?\\", 0) == 0) return raw.substr(4);
+    return raw;
+}
+bool PathUnderRoot(const std::wstring& path, const std::wstring& root) {
+    if (root.empty() || path.size() < root.size() ||
+        _wcsnicmp(path.c_str(), root.c_str(), root.size()) != 0) return false;
+    return path.size() == root.size() || path[root.size()] == L'\\' || root.back() == L'\\';
+}
+std::shared_ptr<const std::vector<std::pair<std::wstring, std::wstring>>> g_cloud_root_labels;
+} // namespace
+
 bool IsUnderCloudFilesRoot(const std::wstring& raw) {
     const auto roots = std::atomic_load(&g_cloud_files_roots);
     if (!roots || roots->empty() || raw.size() < 3) return false;
-    // Pane paths may carry the long-path prefix; sync roots never do.
-    std::wstring path = raw;
-    if (path.rfind(L"\\\\?\\UNC\\", 0) == 0) path = L"\\\\" + path.substr(8);
-    else if (path.rfind(L"\\\\?\\", 0) == 0) path = path.substr(4);
-    for (const auto& root : *roots) {
-        if (path.size() < root.size() || _wcsnicmp(path.c_str(), root.c_str(), root.size()) != 0) continue;
-        if (path.size() == root.size() || path[root.size()] == L'\\' || root.back() == L'\\') return true;
-    }
+    const std::wstring path = WithoutLongPrefix(raw);
+    for (const auto& root : *roots)
+        if (PathUnderRoot(path, root)) return true;
     return false;
+}
+
+void PublishCloudRootLabels(const std::vector<CloudRoot>& roots) {
+    auto labels = std::make_shared<std::vector<std::pair<std::wstring, std::wstring>>>();
+    for (const auto& root : roots) {
+        std::wstring path = NormalizeCloudRootPath(root.path);
+        if (!path.empty() && !root.label.empty()) labels->emplace_back(std::move(path), root.label);
+    }
+    std::atomic_store(&g_cloud_root_labels,
+                      std::shared_ptr<const std::vector<std::pair<std::wstring, std::wstring>>>(std::move(labels)));
+}
+
+std::wstring CloudRootLabelFor(const std::wstring& raw) {
+    const auto labels = std::atomic_load(&g_cloud_root_labels);
+    if (!labels || raw.size() < 3) return {};
+    const std::wstring path = WithoutLongPrefix(raw);
+    const std::pair<std::wstring, std::wstring>* best = nullptr;
+    for (const auto& entry : *labels)
+        if (PathUnderRoot(path, entry.first) && (!best || entry.first.size() > best->first.size())) best = &entry;
+    return best ? best->second : std::wstring();
 }
 
 std::wstring CurrentUserSidString() {

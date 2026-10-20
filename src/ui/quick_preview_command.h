@@ -18,6 +18,15 @@ enum class QuickPreviewAction : int {
     None = 0, Open, Cut, Copy, CopyPath, ToggleStar, Rename, Delete, Properties,
     InstallMediaPack,   // start (or cancel) the FFmpeg preview pack download
     InstallImagePack,   // start (or cancel) the image preview pack download
+    DownloadCloud,      // 下载并预览 on the cloud-only card
+};
+
+// 下载并预览 state for the item Quick Look shows (C4b).
+struct CloudDownloadOffer {
+    std::wstring path;          // the item this describes
+    int percent = -1;           // 0..100 while it downloads
+    std::wstring provider;      // sidebar label of its cloud root; empty: generic
+    bool operator==(const CloudDownloadOffer&) const = default;
 };
 
 // A preview pack (FFmpeg or images) as offered on Quick Look's "can't decode"

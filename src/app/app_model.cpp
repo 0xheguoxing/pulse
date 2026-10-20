@@ -1326,6 +1326,7 @@ void AppendOtherCloudEntries(std::vector<SidebarEntry>& cloud) {
     PublishCloudFilesRoots(std::move(cloud_files_roots));
     MergeCloudRoots(roots, ReadNavigationPaneCloudRoots(registry), is_directory);
     MergeCloudRoots(roots, std::move(sync_roots), is_directory);
+    PublishCloudRootLabels(roots);  // 下载并预览 names the provider
     for (size_t i = seeded; i < roots.size(); ++i) {
         SidebarEntry entry;
         entry.glyph = L"\xE753";

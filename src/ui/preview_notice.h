@@ -14,6 +14,8 @@ inline std::wstring PreviewNotice(const std::wstring& error, const std::wstring&
     using pulse::l10n::Pick;
     using pulse::l10n::Get;
     using pulse::l10n::StringId;
+    // Cloud placeholders get their own card (download and preview), not a failure notice.
+    if (error == L"offline-placeholder") return {};
     if (error == L"docx-reading")
         return Get(StringId::ReadingPreviewNotWordLayoutImagesInTablesHeadersFootersAndSo).c_str();
     if (error.starts_with(L"svg-"))

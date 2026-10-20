@@ -25,6 +25,9 @@
 #include "../ui/file_operation_dialog.h"
 #include "../ui/batch_rename_dialog.h"
 #include "../ui/quick_preview_window.h"
+#include "../fs/cloud_state.h"
+#include "cloud_download.h"
+#include "cloud_roots.h"
 #include "../ui/typography.h"
 #include "../ui/color_picker.h"
 #include "../common/localization.h"
@@ -2565,6 +2568,13 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
         }
         s.quickPreview.SetMediaPackOffer(offer);
         s.quickPreview.SetImagePackOffer(image_offer);
+        ui::CloudDownloadOffer cloud;
+        if (fs::IsCloudPlaceholder(s.quickPreview.item().attrs)) {
+            cloud.path = s.quickPreview.item().path;
+            cloud.percent = app::CloudDownloadPercent(cloud.path);
+            cloud.provider = app::CloudRootLabelFor(cloud.path);
+        }
+        s.quickPreview.SetCloudDownloadOffer(cloud);
     }
     UpdateFolderCompare(s);
     s.changes.visible_paths.clear();
@@ -3012,6 +3022,13 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
             dv.view_generation = tab->view_generation;
             dv.path = penetrated ? e.link_target
                                  : EntryFullPath(*tab, tab->selected_index);
+            // 下载并预览 (C4b): only the entry itself; a shortcut's target is
+            // not what the well would download.
+            dv.cloud_online = !penetrated && !dv.is_dir && fs::IsCloudPlaceholder(e.attrs);
+            if (dv.cloud_online) {
+                dv.cloud_download_percent = app::CloudDownloadPercent(dv.path);
+                dv.cloud_provider = app::CloudRootLabelFor(dv.path);
+            }
             // Directory refreshes replace the snapshot while the selected
             // path stays the same. Keep the details panel's cached metadata
             // aligned with the refreshed entry instead of showing its old

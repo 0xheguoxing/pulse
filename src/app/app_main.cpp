@@ -139,6 +139,7 @@
 #pragma comment(lib, "uxtheme.lib")
 #pragma comment(lib, "psapi.lib")
 #include "app_internal.h"
+#include "cloud_download.h"
 
 namespace {
 // Default-program changes (thumbnail "opens with" badges): one shell-level
@@ -1816,6 +1817,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         return 0;
 
+    case WM_CLOUD_DOWNLOAD:
+        if (s) HandleCloudDownloadMessage(*s, wParam, lParam);
+        return 0;
+
     case WM_UNDO_DELETE:
         if (s && s->ops.CanUndo()) s->ops.Undo();
         return 0;
@@ -2905,6 +2910,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             s->framePump.Stop();
             CancelZipJobs(*s);
             if (last_window) {
+                app::CancelCloudDownloads();  // 下载并预览 reads end with the app
                 HandOffAtExit(*s, hwnd);
                 s->probe_scheduler.Clear();
                 s->probeQueue.clear();
@@ -3054,6 +3060,33 @@ bool WaitForShotReady(AppState& s) {
         ProcessPendingResults(s);
         app::Tab* tab = ActiveTab(s);
         if (tab && !tab->loading && tab->snapshot) {
+            // PULSE_TEST_SHOT_SELECT=name (isolated instances): select that row
+            // with the details panel open, so the shot shows its well;
+            // PULSE_TEST_SHOT_DOWNLOAD=1 then presses 下载并预览 in it. Retried
+            // while settling: the rows can land after the snapshot does.
+            static bool shot_selected = false;
+            const auto select_for_shot = [&s] {
+                wchar_t pick[260]{};
+                const DWORD pick_len = GetEnvironmentVariableW(L"PULSE_TEST_SHOT_SELECT", pick, ARRAYSIZE(pick));
+                if (shot_selected || !s.isolatedTest || pick_len == 0 || pick_len >= ARRAYSIZE(pick)) return;
+                app::Tab* shown = ActiveTab(s);
+                if (!shown || shown->loading || !shown->snapshot) return;
+                for (size_t i = 0; i < shown->EntryCount(); ++i) {
+                    if (shown->EntryAt(i).name != pick) continue;
+                    shot_selected = true;
+                    shown->SelectIndices({static_cast<int>(i)});
+                    s.showDetailsPanel = true;
+                    s.renderer.SetDetailsPanelVisible(true);
+                    if (GetEnvironmentVariableW(L"PULSE_TEST_SHOT_DOWNLOAD", nullptr, 0) > 0) {
+                        std::wstring full = shown->current_path;
+                        if (!full.empty() && full.back() != L'\\') full += L'\\';
+                        StartCloudPreviewDownload(s, full + shown->EntryAt(i).name, shown->EntryAt(i).size);
+                    }
+                    if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+                    return;
+                }
+            };
+            select_for_shot();
             // PULSE_TEST_SHOT_SETTLE_MS: keep pumping after the folder loaded so
             // asynchronous results (thumbnails from the preview host) land in the shot.
             wchar_t settle[16]{};
@@ -3066,6 +3099,7 @@ bool WaitForShotReady(AppState& s) {
                         DispatchMessageW(&msg);
                     }
                     ProcessPendingResults(s);
+                    select_for_shot();
                     if (s.hwnd) RedrawWindow(s.hwnd, nullptr, nullptr, RDW_UPDATENOW | RDW_INTERNALPAINT);
                     Sleep(20);
                 }

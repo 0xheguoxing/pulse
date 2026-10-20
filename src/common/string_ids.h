@@ -1193,6 +1193,11 @@
 #define IDS_CLOUD_KEPT_TOAST                                                             3674
 #define IDS_CLOUD_PIN_FAILED                                                             3675
 #define IDS_CLOUD_OPEN_DOWNLOADS_FIRST                                                   3676
+#define IDS_CLOUD_ONLY_NOTE                                                              3677
+#define IDS_CLOUD_DOWNLOAD_PREVIEW                                                       3678
+#define IDS_CLOUD_DOWNLOADING_FROM                                                       3679
+#define IDS_CLOUD_DOWNLOAD_FAILED                                                        3680
+#define IDS_CLOUD_PROVIDER_GENERIC                                                       3681
 #define IDS_SIDEBAR_CLOUD_HIDDEN_HINT                                                    2516
 #define IDS_SIDEBAR_SHOW_HIDDEN                                                          2517
 #define IDS_SETTINGS_DEFAULT_MANAGER_DESC                                                1481

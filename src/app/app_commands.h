@@ -219,6 +219,10 @@ void HandleQuickPreviewCommand(AppState& s, const ui::QuickPreviewCommand& comma
 // snapshot refresh or directory notification: reloads a changed file,
 // re-anchors after an in-preview delete, closes when the entry is gone.
 void SyncQuickPreview(AppState& s);
+// 下载并预览 (C4b, details well / Quick Look card): brings one cloud-only file
+// onto this device on request; WM_CLOUD_DOWNLOAD reports progress and the end.
+void StartCloudPreviewDownload(AppState& s, const std::wstring& path, uint64_t size);
+void HandleCloudDownloadMessage(AppState& s, WPARAM event, LPARAM job);
 void ApplySettingsEffects(AppState& s, app::SettingsEffect effects);
 app::SettingsTaskCompletion SettingsCompletion(HWND hwnd);
 void SetThemeMode(AppState& s, int mode);

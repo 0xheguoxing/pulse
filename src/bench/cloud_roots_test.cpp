@@ -6,6 +6,11 @@
 #include "../app/cloud_sync_probe.h"
 #include "../fs/cloud_pin.h"
 #include "../ui/cloud_swap.h"
+#include "../fs/cloud_hydrate.h"
+#include "../app/cloud_download.h"
+#include <algorithm>
+#include <atomic>
+#include <vector>
 #include <objbase.h>
 #include <unordered_map>
 
@@ -385,6 +390,126 @@ int main() {
         Check(!pose.running && pose.scale == 1.0f, "swap: animations off settles at once");
         pose = swaps.Pose(8, L'\xE753', 3000, true);
         Check(!pose.running && swaps.Size() == 2, "swap: rows are tracked apart");
+    }
+
+    {
+        // C4b 下载并预览: provider names for the well.
+        PublishCloudRootLabels({{L"C:\\Users\\SS\\WPSDrive", L"WPS\u7f51\u76d8"},
+                                {L"C:\\Users\\SS\\WPSDrive\\Team", L"Team"},
+                                {L"D:\\", L"Disk"}});
+        Check(CloudRootLabelFor(L"c:\\users\\ss\\wpsdrive\\a.docx") == L"WPS\u7f51\u76d8", "label: file under a root");
+        Check(CloudRootLabelFor(L"C:\\Users\\SS\\WPSDrive\\Team\\x.txt") == L"Team", "label: the deepest root wins");
+        Check(CloudRootLabelFor(L"C:\\Users\\SS\\WPSDriveOld\\x").empty() && CloudRootLabelFor(L"C:\\Users").empty(),
+              "label: name prefixes and parents are not inside");
+        Check(CloudRootLabelFor(L"\\\\?\\C:\\Users\\SS\\WPSDrive\\a") == L"WPS\u7f51\u76d8" &&
+                  CloudRootLabelFor(L"D:\\x") == L"Disk",
+              "label: long-path prefix and drive roots");
+    }
+    {
+        // C4b: the download is a plain front-to-back read; nothing else.
+        wchar_t tmp[MAX_PATH]{};
+        GetTempPathW(MAX_PATH, tmp);
+        const std::wstring dir = std::wstring(tmp) + L"pulse_hydrate_" + std::to_wstring(GetCurrentProcessId());
+        CreateDirectoryW(dir.c_str(), nullptr);
+        const std::wstring file = dir + L"\\big.bin", second = dir + L"\\second.bin";
+        const uint64_t bytes = (uint64_t{5} << 20) + 12345;
+        auto write = [](const std::wstring& path, uint64_t size) {
+            HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            std::vector<char> chunk(size_t{1} << 20, 'x');
+            for (uint64_t left = size; left && h != INVALID_HANDLE_VALUE;) {
+                const DWORD n = static_cast<DWORD>(std::min<uint64_t>(left, chunk.size()));
+                DWORD written = 0;
+                if (!WriteFile(h, chunk.data(), n, &written, nullptr) || !written) break;
+                left -= written;
+            }
+            if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+        };
+        write(file, bytes);
+        write(second, uint64_t{3} << 20);
+        SetFileAttributesW(file.c_str(), FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_OFFLINE);
+        WIN32_FILE_ATTRIBUTE_DATA before{}, after{};
+        GetFileAttributesExW(file.c_str(), GetFileExInfoStandard, &before);
+        std::atomic<bool> cancel{false};
+        std::vector<uint64_t> seen;
+        auto result = pulse::fs::HydrateByReading(file, cancel, [&](uint64_t b) { seen.push_back(b); });
+        Check(result == pulse::fs::HydrateResult::Done && seen.size() == 6 &&
+                  std::is_sorted(seen.begin(), seen.end()) && seen.back() == bytes,
+              "hydrate: reads front to back in 1 MB chunks");
+        GetFileAttributesExW(file.c_str(), GetFileExInfoStandard, &after);
+        Check((after.dwFileAttributes & FILE_ATTRIBUTE_OFFLINE) &&
+                  CompareFileTime(&before.ftLastWriteTime, &after.ftLastWriteTime) == 0,
+              "hydrate: attributes and write time untouched (the provider changes them, not Pulse)");
+        cancel = true;
+        seen.clear();
+        Check(pulse::fs::HydrateByReading(file, cancel, [&](uint64_t b) { seen.push_back(b); }) ==
+                  pulse::fs::HydrateResult::Cancelled && seen.empty(),
+              "hydrate: a cancelled read stops before the first chunk");
+        cancel = false;
+        DWORD error = 0;
+        Check(pulse::fs::HydrateByReading(dir, cancel, nullptr, &error) == pulse::fs::HydrateResult::Failed && error,
+              "hydrate: a folder is refused (its listing is never fetched)");
+        Check(pulse::fs::HydrateByReading(dir + L"\\missing.bin", cancel, nullptr) == pulse::fs::HydrateResult::Failed,
+              "hydrate: a missing file fails");
+
+        WNDCLASSW wc{};
+        wc.lpfnWndProc = DefWindowProcW;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpszClassName = L"PulseCloudDownloadTest";
+        RegisterClassW(&wc);
+        HWND sink = CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, wc.hInstance, nullptr);
+        constexpr UINT kMsg = WM_APP + 98;
+        std::unordered_map<LPARAM, WPARAM> ends;
+        bool progress = false;
+        auto pump = [&](size_t want, DWORD ms) {
+            const ULONGLONG end = GetTickCount64() + ms;
+            MSG m;
+            do {
+                while (PeekMessageW(&m, sink, kMsg, kMsg, PM_REMOVE)) {
+                    if (m.wParam == kCloudDownloadProgress) progress = true;
+                    else ends[m.lParam] = m.wParam;
+                }
+                if (ends.size() >= want) break;
+                Sleep(5);
+            } while (GetTickCount64() < end);
+        };
+        Check(CloudDownloadPercent(file) == -1, "download: idle before start");
+        // Isolated-instance hooks: the provider stand-in clears OFFLINE once done.
+        SetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", dir.c_str());
+        SetEnvironmentVariableW(L"PULSE_TEST_HYDRATE_CLEAR", L"1");
+        Check(sink && StartCloudDownload(file, bytes, sink, kMsg), "download: starts");
+        pump(1, 15000);
+        const LPARAM first = ends.empty() ? 0 : ends.begin()->first;
+        Check(ends.size() == 1 && ends.begin()->second == kCloudDownloadDone, "download: done event");
+        Check(CloudDownloadPercent(file) == -1 && CloudDownloadPathFor(first) == file,
+              "download: a finished job maps back to its file");
+        Check(!(GetFileAttributesW(file.c_str()) & FILE_ATTRIBUTE_OFFLINE), "download: provider stand-in cleared OFFLINE");
+        SetEnvironmentVariableW(L"PULSE_TEST_HYDRATE_CLEAR", nullptr);
+        SetEnvironmentVariableW(L"PULSE_TEST_HYDRATE_DELAY_MS", L"200");
+        ends.clear();
+        progress = false;
+        StartCloudDownload(file, bytes, sink, kMsg);
+        Sleep(650);
+        pump(0, 50);
+        const int midway = CloudDownloadPercent(file);
+        Check(midway > 0 && midway < 100 && progress, "download: percent and progress events while reading");
+        Check(StartCloudDownload(second, uint64_t{3} << 20, sink, kMsg) && CloudDownloadPercent(file) == -1 &&
+                  CloudDownloadPercent(second) >= 0,
+              "download: a new one replaces the running one");
+        pump(1, 5000);
+        Check(ends.size() == 1 && ends.begin()->second == kCloudDownloadCancelled, "download: the replaced one ends cancelled");
+        CancelCloudDownloads();
+        pump(2, 5000);
+        size_t cancelled = 0;
+        for (const auto& [job, event] : ends) cancelled += event == kCloudDownloadCancelled;
+        Check(ends.size() == 2 && cancelled == 2 && CloudDownloadPercent(second) == -1,
+              "download: closing the app cancels the rest");
+        SetEnvironmentVariableW(L"PULSE_TEST_HYDRATE_DELAY_MS", nullptr);
+        SetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", nullptr);
+        if (sink) DestroyWindow(sink);
+        Sleep(300);  // let the cancelled workers close their handles
+        SetFileAttributesW(file.c_str(), FILE_ATTRIBUTE_NORMAL);
+        const bool removed = DeleteFileW(file.c_str()) && DeleteFileW(second.c_str()) && RemoveDirectoryW(dir.c_str());
+        Check(removed, "download: fixture files removed");
     }
 
     RegDeleteTreeW(HKEY_CURRENT_USER, prefix.c_str());

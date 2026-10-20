@@ -2448,4 +2448,9 @@ BEGIN
     IDS_CLOUD_KEPT_TOAST "已設為一律保留 · 雲端硬碟會在背景下載"
     IDS_CLOUD_PIN_FAILED "有 {n} 項無法變更"
     IDS_CLOUD_OPEN_DOWNLOADS_FIRST "會先下載"
+    IDS_CLOUD_ONLY_NOTE "這個檔案的內容不在本機（{size}）。Pulse 不會為了預覽自動下載；按兩下開啟時，由{provider}下載。"
+    IDS_CLOUD_DOWNLOAD_PREVIEW "下載並預覽"
+    IDS_CLOUD_DOWNLOADING_FROM "正在從{provider}下載… {n}%"
+    IDS_CLOUD_DOWNLOAD_FAILED "無法從{provider}下載這個檔案"
+    IDS_CLOUD_PROVIDER_GENERIC "雲端硬碟"
 END

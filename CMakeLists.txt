@@ -1252,7 +1252,7 @@ target_link_libraries(pulse_link_pill_test PRIVATE user32)
 add_executable(pulse_network_locations_test src/bench/network_locations_test.cpp src/app/network_locations.cpp)
 target_link_libraries(pulse_network_locations_test PRIVATE shell32 ole32 oleaut32 uuid)
 add_executable(pulse_cloud_roots_test src/bench/cloud_roots_test.cpp src/app/cloud_roots.cpp
-    src/app/cloud_sync_probe.cpp src/fs/cloud_pin.cpp)
+    src/app/cloud_sync_probe.cpp src/fs/cloud_pin.cpp src/fs/cloud_hydrate.cpp src/app/cloud_download.cpp)
 target_link_libraries(pulse_cloud_roots_test PRIVATE advapi32 shell32 shlwapi ole32 uuid)
 # The preview host leaves cloud placeholders unread (thumbnail cache only).
 add_executable(pulse_cloud_preview_test src/bench/cloud_preview_test.cpp)

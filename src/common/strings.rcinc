@@ -2450,6 +2450,11 @@ BEGIN
     IDS_CLOUD_KEPT_TOAST "已设为始终保留 · 网盘会在后台下载"
     IDS_CLOUD_PIN_FAILED "有 {n} 项未能更改"
     IDS_CLOUD_OPEN_DOWNLOADS_FIRST "会先下载"
+    IDS_CLOUD_ONLY_NOTE "这个文件的内容不在本地（{size}）。Pulse 不会为了预览自动下载；双击打开时，由{provider}下载。"
+    IDS_CLOUD_DOWNLOAD_PREVIEW "下载并预览"
+    IDS_CLOUD_DOWNLOADING_FROM "正在从{provider}下载… {n}%"
+    IDS_CLOUD_DOWNLOAD_FAILED "未能从{provider}下载这个文件"
+    IDS_CLOUD_PROVIDER_GENERIC "网盘"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4899,6 +4904,11 @@ BEGIN
     IDS_CLOUD_KEPT_TOAST "Kept on this device · the drive downloads them in the background"
     IDS_CLOUD_PIN_FAILED "{n} items could not be changed"
     IDS_CLOUD_OPEN_DOWNLOADS_FIRST "Downloads first"
+    IDS_CLOUD_ONLY_NOTE "This file's content is not on this device ({size}). Pulse never downloads just to preview; when you open it, {provider} downloads it."
+    IDS_CLOUD_DOWNLOAD_PREVIEW "Download and preview"
+    IDS_CLOUD_DOWNLOADING_FROM "Downloading from {provider}… {n}%"
+    IDS_CLOUD_DOWNLOAD_FAILED "Could not download this file from {provider}"
+    IDS_CLOUD_PROVIDER_GENERIC "the cloud provider"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

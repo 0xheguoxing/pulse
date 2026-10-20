@@ -648,6 +648,11 @@ struct DetailsPanelView {
     std::wstring drive_text, fs_text, free_space_text;
     bool size_pending = false;      // folder size still computing
     bool starred = false;
+    // 下载并预览 (C4b): a file whose content is only in the cloud. The well
+    // explains and offers the download instead of a preview.
+    bool cloud_online = false;
+    int cloud_download_percent = -1;   // 0..100 while downloading
+    std::wstring cloud_provider;       // sidebar label of its cloud root
     struct TagChip {
         std::wstring name;
         D2D1_COLOR_F color{};
@@ -661,6 +666,7 @@ struct DetailsPanelView {
 struct DetailsHitRects {
     D2D1_RECT_F open{}, new_tab{}, copy_path{}, more{}, star{}, rename{};
     D2D1_RECT_F tag_add{}, preview{}, preview_toggle{}, preview_enable{};
+    D2D1_RECT_F cloud_download{};   // 下载并预览 inside the preview well
     D2D1_RECT_F attr_readonly{}, attr_hidden{}, attr_advanced{};
     D2D1_RECT_F security_change{};
     std::vector<D2D1_RECT_F> preset_chips;
@@ -1297,6 +1303,7 @@ struct HitTestResult {
         DetailsPreview,
         DetailsPreviewToggle,
         DetailsPreviewEnable,   // preview pane on/off chip inside the well
+        DetailsCloudDownload,   // 下载并预览 button in the well of a cloud-only file
         DetailsResize,
         StatusBar,
         StatusBarTask,

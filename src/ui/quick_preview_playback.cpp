@@ -3,6 +3,7 @@
 #include "typography.h"
 #include "ffmpeg_playback.h"
 #include "../common/localization.h"
+#include "../common/text_format.h"
 #include "../common/image_pack_protocol.h"
 #include "../common/preview_extensions.h"
 #include <d2d1helper.h>
@@ -734,9 +735,13 @@ bool QuickPreviewWindow::CodecCardVisible(const VideoPreview::State& state) cons
 }
 bool QuickPreviewWindow::OverCodecButton(POINT point) const {
     return Contains(codec_store_rect_, point) || Contains(codec_open_rect_, point) ||
-           Contains(codec_pack_rect_, point);
+           Contains(codec_pack_rect_, point) || Contains(cloud_download_rect_, point);
 }
 bool QuickPreviewWindow::CodecCardClick(POINT point) {
+    if (Contains(cloud_download_rect_, point)) {
+        PostAction(QuickPreviewAction::DownloadCloud);
+        return true;
+    }
     if (Contains(codec_pack_rect_, point)) {
         // The app starts the download, or cancels the running one.
         PostAction(codec_pack_image_ ? QuickPreviewAction::InstallImagePack : QuickPreviewAction::InstallMediaPack);
@@ -757,6 +762,119 @@ void QuickPreviewWindow::SetMediaPackOffer(const MediaPackOffer& offer) {
     if (offer == pack_offer_) return;
     pack_offer_ = offer;
     if (hwnd_ && visible() && video_.active()) InvalidateRect(hwnd_, nullptr, FALSE);
+}
+void QuickPreviewWindow::SetCloudDownloadOffer(const CloudDownloadOffer& offer) {
+    if (offer == cloud_offer_) return;
+    cloud_offer_ = offer;
+    if (hwnd_ && visible() && OfflinePlaceholder()) InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+// 下载并预览 (C4b): same card as the codec hint - what is missing, why Pulse
+// waits (it never downloads just to preview), one accent button; a progress
+// bar takes the button's place while the file comes down.
+bool QuickPreviewWindow::DrawCloudCard(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
+                                       ID2D1SolidColorBrush* brush) {
+    cloud_download_rect_ = {};
+    auto* factory = compositor_.DwriteFactory();
+    auto* caption = compositor_.SmallFormat();
+    auto* icons = compositor_.IconFormat();
+    if (!dc || !brush || !factory || !caption) return false;
+    const float s = scale_;
+    const bool mine = cloud_offer_.path == item_.path;
+    const bool downloading = mine && cloud_offer_.percent >= 0;
+    const std::wstring provider = mine && !cloud_offer_.provider.empty()
+        ? cloud_offer_.provider : l10n::Get(l10n::StringId::CloudProviderGeneric);
+    const auto fill = [](std::wstring str, std::wstring_view key, const std::wstring& value) {
+        if (const size_t at = str.find(key); at != std::wstring::npos) str.replace(at, key.size(), value);
+        return str;
+    };
+    const std::wstring note = downloading
+        ? fill(fill(l10n::Get(l10n::StringId::CloudDownloadingFrom), L"{provider}", provider),
+               L"{n}", std::to_wstring(cloud_offer_.percent))
+        : fill(fill(l10n::Get(l10n::StringId::CloudOnlyNote), L"{size}",
+                    pulse::format::ByteSize(item_.size, true)), L"{provider}", provider);
+    const float width = (std::min)(440.0f * s, content.right - content.left - 32.0f * s);
+    if (width < 160.0f * s) return false;
+    const float inner = width - 40.0f * s;
+    ComPtr<IDWriteTextLayout> layout;
+    factory->CreateTextLayout(note.data(), static_cast<UINT32>(note.size()), caption, inner, 400.0f * s, &layout);
+    float text_h = 18.0f * s;
+    if (layout.get()) {
+        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+        DWRITE_TEXT_METRICS metrics{};
+        if (SUCCEEDED(layout->GetMetrics(&metrics))) text_h = metrics.height;
+    }
+    const float action_h = downloading ? 4.0f * s : 32.0f * s;
+    const float height = 24.0f * s + 40.0f * s + 12.0f * s + text_h + 20.0f * s + action_h + 24.0f * s;
+    if (content.bottom - content.top < height) return false;
+    const float cx = (content.left + content.right) * 0.5f;
+    const float top = std::round((content.top + content.bottom - height) * 0.5f);
+    const auto card = D2D1::RectF(cx - width * 0.5f, top, cx + width * 0.5f, top + height);
+    const auto original = brush->GetColor();
+    const auto tint = [&](float alpha) {
+        auto color = original;
+        color.a = original.a * alpha;
+        brush->SetColor(color);
+        return brush;
+    };
+    ComPtr<ID2D1SolidColorBrush> card_fill, line, accent, on_accent;
+    dc->CreateSolidColorBrush(dark_ ? D2D1::ColorF(0xFFFFFF, 0.05f) : D2D1::ColorF(0xFFFFFF, 1.0f), &card_fill);
+    dc->CreateSolidColorBrush(dark_ ? D2D1::ColorF(0xFFFFFF, 0.08f) : D2D1::ColorF(0x000000, 0.07f), &line);
+    dc->CreateSolidColorBrush(dark_ ? D2D1::ColorF(0x60CDFF) : D2D1::ColorF(0x005FB8), &accent);
+    dc->CreateSolidColorBrush(dark_ ? D2D1::ColorF(0x062030) : D2D1::ColorF(0xFFFFFF), &on_accent);
+    const auto rounded = D2D1::RoundedRect(card, 12.0f * s, 12.0f * s);
+    if (card_fill.get()) dc->FillRoundedRectangle(rounded, card_fill.get());
+    if (line.get()) dc->DrawRoundedRectangle(rounded, line.get(), 1.0f);
+    const auto glyph = [&](const wchar_t* code, float size, const D2D1_RECT_F& box, ID2D1Brush* ink) {
+        if (!icons || !ink) return;
+        ComPtr<IDWriteTextLayout> g;
+        factory->CreateTextLayout(code, 1, icons, box.right - box.left, box.bottom - box.top, &g);
+        if (!g.get()) return;
+        g->SetFontSize(size, DWRITE_TEXT_RANGE{0, 1});
+        g->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        g->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        dc->DrawTextLayout(D2D1::Point2F(box.left, box.top), g.get(), ink);
+    };
+    float y = top + 24.0f * s;
+    glyph(downloading ? L"\xE896" : L"\xE753", 32.0f * s, D2D1::RectF(cx - 24.0f * s, y, cx + 24.0f * s, y + 40.0f * s),
+          tint(0.85f));
+    y += 40.0f * s + 12.0f * s;
+    if (layout.get()) dc->DrawTextLayout(D2D1::Point2F(cx - inner * 0.5f, y), layout.get(), tint(0.72f));
+    y += text_h + 20.0f * s;
+    if (downloading) {
+        const float bar_w = (std::min)(260.0f * s, inner);
+        const float r = 2.0f * s;
+        dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - bar_w * 0.5f, y, cx + bar_w * 0.5f, y + 4.0f * s), r, r),
+                                 tint(0.12f));
+        const float done = bar_w * std::clamp(static_cast<float>(cloud_offer_.percent) / 100.0f, 0.0f, 1.0f);
+        if (accent.get() && done >= 4.0f * s)
+            dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - bar_w * 0.5f, y, cx - bar_w * 0.5f + done, y + 4.0f * s),
+                                                       r, r), accent.get());
+    } else if (accent.get() && on_accent.get()) {
+        const std::wstring label = l10n::Get(l10n::StringId::CloudDownloadPreview);
+        const float label_w = typography::MeasureAdvance(factory, caption, label);
+        const float icon_w = 16.0f * s, gap = 6.0f * s;
+        const float bw = (std::min)(inner, label_w + icon_w + gap + 32.0f * s);
+        const auto button = D2D1::RectF(std::round(cx - bw * 0.5f), y, std::round(cx + bw * 0.5f), y + 32.0f * s);
+        dc->FillRoundedRectangle(D2D1::RoundedRect(button, 5.0f * s, 5.0f * s), accent.get());
+        const float start = (std::max)(button.left + 8.0f * s, cx - (icon_w + gap + label_w) * 0.5f);
+        glyph(L"\xE896", 14.0f * s, D2D1::RectF(start, button.top, start + icon_w, button.bottom), on_accent.get());
+        ComPtr<IDWriteTextLayout> text;
+        const float box = (std::max)(1.0f, button.right - 8.0f * s - (start + icon_w + gap));
+        factory->CreateTextLayout(label.data(), static_cast<UINT32>(label.size()), caption, box,
+                                  button.bottom - button.top, &text);
+        if (text.get()) {
+            text->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            text->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            text->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            dc->DrawTextLayout(D2D1::Point2F(start + icon_w + gap, button.top), text.get(), on_accent.get());
+        }
+        cloud_download_rect_ = button;
+    }
+    brush->SetColor(original);
+    return true;
 }
 void QuickPreviewWindow::SetImagePackOffer(const MediaPackOffer& offer) {
     if (offer == image_offer_) return;

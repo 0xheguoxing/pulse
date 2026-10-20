@@ -1759,6 +1759,17 @@ void ClearTextWidthCache() {
         return typography::MeasureLine(compositor, format, text);
     }
 
+    // 下载并预览 button: centred near the bottom of the preview well; the
+    // explanation sits above it. Empty when the well is too short for both.
+    inline D2D1_RECT_F DetailsCloudButtonRect(const D2D1_RECT_F& preview, float s, float label_w) {
+        if (preview.bottom - preview.top < 132.0f * s) return {};
+        const float w = std::min(preview.right - preview.left - 24.0f * s, label_w + 16.0f * s + 6.0f * s + 32.0f * s);
+        if (w < 60.0f * s) return {};
+        const float cx = (preview.left + preview.right) * 0.5f;
+        const float bottom = preview.bottom - 16.0f * s;
+        return D2D1::RectF(std::round(cx - w * 0.5f), bottom - 30.0f * s, std::round(cx + w * 0.5f), bottom);
+    }
+
     void LayoutDetailsPanel(const D2D1_RECT_F& panel, float scale,
                             const DetailsPanelView& d, IDWriteFactory2* dwrite,
                             IDWriteTextFormat* small_fmt, Compositor* compositor,
@@ -1772,6 +1783,12 @@ void ClearTextWidthCache() {
         out.preview = D2D1::RectF(x, panel.top + pad, panel.right - pad,
                                   panel.top + pad + preview_h);
         const float previewBottom = panel.top + pad + preview_h;
+        if (d.cloud_online && d.preview_enabled && d.multi_count <= 1 && d.cloud_download_percent < 0) {
+            const std::wstring label = pulse::l10n::Get(pulse::l10n::StringId::CloudDownloadPreview);
+            const float label_w = dwrite && small_fmt
+                ? MeasureLayoutText(compositor, dwrite, small_fmt, label) : 90.0f * s;
+            out.cloud_download = DetailsCloudButtonRect(out.preview, s, label_w);
+        }
         // Preview off: no fold bar and no well to hit up there.
         if (d.preview_enabled) {
             out.preview_toggle = D2D1::RectF(x, previewBottom, panel.right - pad,

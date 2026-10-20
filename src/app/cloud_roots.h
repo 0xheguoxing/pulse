@@ -60,6 +60,12 @@ bool SameCloudRootPath(const std::wstring& a, const std::wstring& b);
 void PublishCloudFilesRoots(std::vector<std::wstring> roots);
 bool IsUnderCloudFilesRoot(const std::wstring& path);
 
+// Every sidebar cloud root with its label, published by the same refresh;
+// CloudRootLabelFor names the provider of a path (deepest root wins), empty
+// outside all of them.
+void PublishCloudRootLabels(const std::vector<CloudRoot>& roots);
+std::wstring CloudRootLabelFor(const std::wstring& path);
+
 // "S-1-5-21-..." of the process token, empty on failure.
 std::wstring CurrentUserSidString();
 
