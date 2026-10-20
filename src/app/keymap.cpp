@@ -69,6 +69,7 @@ constexpr KeyActionInfo kActions[] = {
     {X::CopyToTarget, "CopyToTarget", G::Tabs, N::Normal, L"复制到目标栏", L"Copy to target pane", D(K(C | A, 'C')), 0, 0, 0, false},
     {X::MoveToTarget, "MoveToTarget", G::Tabs, N::Normal, L"移动到目标栏", L"Move to target pane", D(K(C | A, 'X')), 0, 0, 0, false},
     {X::Sidebar, "Sidebar", G::Tabs, N::Normal, L"折叠侧栏", L"Collapse the sidebar", D(K(C, 'B')), 0, 0, 0, false},
+    {X::FavoritesBar, "FavoritesBar", G::Tabs, N::Normal, L"显示收藏栏", L"Show the favorites bar", D(K(C | S, 'B')), 0, 0, 0, false},
     {X::Maximize, "Maximize", G::Tabs, N::Normal, L"最大化", L"Maximize", D(K(0, VK_F11)), 0, 0, 0, false},
     {X::NewWindow, "NewWindow", G::Windows, N::Normal, L"新建窗口", L"New window", D(K(C, 'N')), 0, 0, 0, false},
     {X::CloseWindow, "CloseWindow", G::Windows, N::Normal, L"关闭窗口", L"Close window", D(K(C | S, 'W')), 0, 0, 0, false},

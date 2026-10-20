@@ -59,6 +59,8 @@ struct AppPrefs {
     bool vertical_tabs = false;       // tabs as the first sidebar section
     bool tray_hide_when_empty = false; // staging tray folds away while empty (drags still show it)
     bool sidebar_collapsed = false;   // sidebar folded to its icon rail (Ctrl+B)
+    bool favorites_bar = false;       // 收藏栏 under the command row (Ctrl+Shift+B)
+    bool favorites_bar_icon_only = false;
     // 0 folders first, 1 follow the sort direction, 2 mixed with files
     int folder_sort_mode = 0;
     // Optional Details columns for every folder (ui/details_column_set.h bits).

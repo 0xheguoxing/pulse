@@ -46,6 +46,7 @@
 #include "resource.h"
 #include "pulse_version.h"
 #include "tray_reveal.h"
+#include "favorites_bar.h"
 #include "default_file_manager.h"
 #include "window_identity_ui.h"
 #include "../ops/clipboard.h"
@@ -2963,6 +2964,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     }
     // Vertical tabs join the sidebar before its scroll range is measured.
     ApplyVerticalTabs(s, vm);
+    FillFavoritesBar(s, vm);
     // The tray (including exiting cards) determines the sidebar viewport.
     // Clamp only after it is populated, using the same model as draw/hit-test.
     s.sidebarScroll = std::clamp(s.sidebarScroll, 0.0f, s.renderer.SidebarMaxScroll(
@@ -3393,6 +3395,8 @@ std::wstring TooltipForHover(AppState& s) {
             return ToolbarAppTooltip(s, static_cast<size_t>(s.hoverControlIndex - static_cast<int>(pins.size())));
         return s.hoverControlIndex >= 0 ? pins[static_cast<size_t>(s.hoverControlIndex)].label : std::wstring{};
     }
+    case R::FavoritesBarItem: return s.hoverControlIndex >= 0 ? pulse::path::FriendlyPathText(s.hoverPath) : std::wstring{};
+    case R::FavoritesBarMore: return text(I::FavoritesBarMore);
     case R::ToolbarSelAction: {
         if (s.hoverControlIndex == ui::kSelChipMore) return text(I::MoreActions);
         if (s.hoverControlIndex == ui::kSelChipClear) return text(I::ClearSelectionEsc);

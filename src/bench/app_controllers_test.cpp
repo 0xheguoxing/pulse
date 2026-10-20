@@ -25,6 +25,7 @@
 #include "../app/toolbar_apps.h"
 #include "../app/app_prefs.h"
 #include "../ui/toolbar_layout.h"
+#include "../ui/favorites_bar_layout.h"
 #include "../common/preview_packs.h"
 #include "../common/utf8_file.h"
 
@@ -780,6 +781,19 @@ bool TestToolbarApps() {
                                            ToolbarPinOptions{0, true, 400});
     ok &= Report("toolbar apps: the drop label gives way before an app does",
         no_room.pin_label.right <= no_room.pin_label.left && no_room.pins[0].right > no_room.pins[0].left);
+    // 收藏栏: labels up to 168 DIP wide, the rest folds into » (toolbar redesign §8).
+    {
+        const D2D1_RECT_F band = D2D1::RectF(224, 134, 1024, 168);
+        const auto fits = pulse::ui::MakeFavoritesBarLayout(band, 1, {40, 60, 400}, false);
+        const auto folded = pulse::ui::MakeFavoritesBarLayout(D2D1::RectF(224, 134, 524, 168), 1, {80, 80, 80, 80}, false);
+        const auto icons = pulse::ui::MakeFavoritesBarLayout(band, 1, {40, 60}, true);
+        ok &= Report("favorites bar: labels fit, a long one stops at 168, the rest folds into more",
+            fits.first_hidden < 0 && fits.items[0].left == 234 && fits.items[2].right - fits.items[2].left == 168 &&
+            fits.items[0].bottom - fits.items[0].top == 28 &&
+            folded.first_hidden == 2 && folded.items[2].right <= folded.items[2].left &&
+            folded.more.left >= folded.items[1].right && folded.more.right <= 516 &&
+            icons.items[1].right - icons.items[1].left == 30);
+    }
     // The user's separators (自定义工具栏) open a 9 DIP gap before their pin.
     {
         ToolbarPinOptions grouped;

@@ -4040,13 +4040,16 @@ static constexpr ToolbarViewDef kToolbarViews[] = {
     {L"sort", L"\xE8CB", l10n::StringId::ToolbarSort},
     {L"filter", L"\xE71C", l10n::StringId::ToolbarFilter},
     {L"group", L"\xF168", l10n::StringId::ToolbarGroup},
+    {L"fav_bar", L"\xE728", l10n::StringId::FavoritesBar},   // 收藏栏, on the 窗格 section
 };
 static constexpr size_t kToolbarViewCount = std::size(kToolbarViews);
 static bool& ToolbarViewPref(AppState& s, size_t i) {
-    return i == 0 ? s.appPrefs.toolbar_show_sort : i == 1 ? s.appPrefs.toolbar_show_filter : s.appPrefs.toolbar_show_group;
+    return i == 0 ? s.appPrefs.toolbar_show_sort : i == 1 ? s.appPrefs.toolbar_show_filter
+         : i == 2 ? s.appPrefs.toolbar_show_group : s.appPrefs.favorites_bar;
 }
 static bool ToolbarViewShown(const AppState& s, size_t i) {
-    return i == 0 ? s.appPrefs.toolbar_show_sort : i == 1 ? s.appPrefs.toolbar_show_filter : s.appPrefs.toolbar_show_group;
+    return i == 0 ? s.appPrefs.toolbar_show_sort : i == 1 ? s.appPrefs.toolbar_show_filter
+         : i == 2 ? s.appPrefs.toolbar_show_group : s.appPrefs.favorites_bar;
 }
 
 // Section of each toolbar_tools.h id on the picker's tools page.
@@ -4133,7 +4136,8 @@ void ShowToolbarCustomize(AppState& s, int page) {
         tile.glyph = kToolbarViews[i].glyph;
         tile.label = l10n::Get(kToolbarViews[i].label);
         tile.keywords = std::wstring(kToolbarViews[i].id);
-        tile.section = 5;
+        if (kToolbarViews[i].id == L"fav_bar") tile.keywords += L" " + app::ShownShortcut(L"Ctrl+Shift+B");
+        tile.section = kToolbarViews[i].id == L"fav_bar" ? 3 : 5;
         tile.checked = ToolbarViewShown(s, i);
         spec.pins.push_back(std::move(tile));
     }

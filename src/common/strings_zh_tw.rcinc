@@ -2494,4 +2494,9 @@ BEGIN
     IDS_SEL_KEEP_FOLDERS "只保留資料夾"
     IDS_SEL_KEEP_FILES "只保留檔案"
     IDS_SEL_SAME_TYPE "選取同類型（%s）"
+    IDS_FAVORITES_BAR "收藏列"
+    IDS_FAVORITES_BAR_EMPTY "還沒有收藏 · 在檔案或資料夾上按右鍵選「收藏」，它會出現在這裡"
+    IDS_FAVORITES_BAR_MORE "更多收藏"
+    IDS_FAVORITES_BAR_ICON_ONLY "只顯示圖示"
+    IDS_FAVORITES_BAR_HIDE "隱藏收藏列"
 END

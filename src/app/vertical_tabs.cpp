@@ -2,6 +2,7 @@
 #include "app_commands.h"
 #include "app_navigation.h"
 #include "last_tab_close.h"
+#include "favorites_bar.h"
 #include "../common/localization.h"
 #include <algorithm>
 #include <utility>
@@ -344,6 +345,9 @@ bool HandleFolderMiddleClick(AppState& s, int x, int y) {
         path = EntryFullPath(*tab, hit.index);
     } else if (hit.region == R::BreadcrumbSegment) {
         path = hit.path;
+    } else if (hit.region == R::FavoritesBarItem) {
+        path = FavoritesBarMiddleClickPath(s, hit);
+        if (path.empty()) return true;   // a starred file, or the bar's empty part
     } else if (hit.region == R::SidebarItem) {
         if (IsVerticalTabPath(hit.path) || hit.path.starts_with(kTabPrefix)) return false;
         // Tag group headers and 所有标签 › are sidebar controls, not places.

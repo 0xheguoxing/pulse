@@ -888,4 +888,62 @@ void SetToolbarPinDrag(const void* renderer, const ToolbarPinDragState& state) {
     if (state.index < 0 && state.preview_command == 0 && state.linked < 0) PinDrags().erase(renderer);
     else PinDrags()[renderer] = state;
 }
+// 收藏栏 (toolbar redesign §8): the row under the command row, as wide as the
+// toolbar; icons only when the toolbar is narrower than 820 DIP.
+FavoritesBarLayout MainRenderer::FavoritesBarLayoutAt(const WindowViewModel& vm, float w) const {
+    const float left=EffectiveSidebarWidth(w);
+    const float bottom=title_bar_height_+toolbar_height_;
+    const D2D1_RECT_F band=D2D1::RectF(left+margin_-10*scale_,bottom-kFavoritesBarHeightDip*scale_,
+                                       w-margin_+8*scale_,bottom);
+    const bool icon_only=vm.favorites_bar_icon_only || w-left < kFavoritesBarIconOnlyBelowDip*scale_;
+    std::vector<float> widths;
+    widths.reserve(vm.favorites_bar.size());
+    for (const auto& f : vm.favorites_bar) widths.push_back(icon_only ? 0.0f : CellTextWidth(f.label,true));
+    return MakeFavoritesBarLayout(band,scale_,widths,icon_only);
+}
+
+void MainRenderer::DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme) {
+    const float bottom=title_bar_height_+toolbar_height_;
+    const float top=bottom-kFavoritesBarHeightDip*scale_;
+    if (vm.favorites_bar.empty()) {
+        // Nothing starred yet: say how to add something.
+        const float x=EffectiveSidebarWidth(rect.right)+margin_;
+        const float h=30*scale_;
+        DrawIconText(x,top,20*scale_,h,L"\xE734",L"",theme.text_secondary,0.8f);
+        painter_.DrawText(vm.favorites_bar_hint,D2D1::RectF(x+26*scale_,top,rect.right-margin_,top+h),
+                          compositor_->SmallFormat(),theme.text_secondary);
+        return;
+    }
+    const FavoritesBarLayout lay=FavoritesBarLayoutAt(vm,rect.right);
+    const float radius=6*scale_;
+    const auto measure=[&](const std::wstring& text) { return CellTextWidth(text,true); };
+    for (size_t i=0;i<vm.favorites_bar.size() && i<lay.items.size();++i) {
+        const D2D1_RECT_F b=lay.items[i];
+        if (b.right<=b.left) continue;
+        const auto& f=vm.favorites_bar[i];
+        if (f.current || IsHovered(vm,HitTestResult::FavoritesBarItem,static_cast<int>(i)))
+            painter_.FillRoundedRect(b,radius,theme.fill_hover);
+        // The sidebar's starred folder colour; files in the secondary text.
+        const float icon_x=lay.icon_only ? std::round((b.left+b.right)*0.5f-10*scale_) : b.left+5*scale_;
+        DrawIconText(icon_x,b.top,20*scale_,b.bottom-b.top,f.folder ? L"\xE8B7" : L"\xE8A5",L"",
+                     f.folder ? HexColor(0xFBBF24) : theme.text_secondary,0.8f);
+        if (!lay.icon_only) {
+            const float text_left=b.left+29*scale_;
+            const float text_w=b.right-8*scale_-text_left;
+            painter_.DrawText(FitEndEllipsis(f.label,text_w,measure),
+                              D2D1::RectF(text_left,b.top,b.right-6*scale_,b.bottom),
+                              compositor_->SmallFormat(),theme.text);
+        }
+        if (f.current)   // prototype .fav.cur: a 2px accent underline
+            painter_.FillRoundedRect(D2D1::RectF(b.left+8*scale_,b.bottom-3*scale_,b.right-8*scale_,b.bottom-1*scale_),
+                                     scale_,theme.accent);
+    }
+    if (lay.first_hidden>=0) {
+        const D2D1_RECT_F m=lay.more;
+        if (IsHovered(vm,HitTestResult::FavoritesBarMore)) painter_.FillRoundedRect(m,radius,theme.fill_hover);
+        painter_.DrawText(L"\u00BB",D2D1::RectF(m.left+10*scale_,m.top,m.right,m.bottom),
+                          compositor_->SmallFormat(),theme.text_secondary);
+    }
+}
+
 }

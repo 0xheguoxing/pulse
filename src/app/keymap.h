@@ -54,7 +54,7 @@ enum class KeyAction : uint8_t {
     SelectAll, InvertSelection, SelectPattern,
     Search, CommandBar, Project, Filter, AdvancedSearch,
     NewTab, CloseTab, NextTab, TabNumber, Layout, ViewMode, NextPane, MarkTarget, CopyToTarget,
-    MoveToTarget, Sidebar, Maximize,
+    MoveToTarget, Sidebar, FavoritesBar, Maximize,
     NewWindow, CloseWindow, TabToWindow, ReopenClosed, SwitchWindow, Overview, ShortcutHelp,
     Count
 };

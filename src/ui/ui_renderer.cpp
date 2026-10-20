@@ -107,7 +107,7 @@ void MainRenderer::SetScale(float scale) {
     }
     scale_ = scale;
     title_bar_height_ = (embedded_ ? embedded_top_dip_ : kTitleBarHeight) * scale;
-    toolbar_height_ = (vertical_tabs_ || embedded_ ? 44.0f : 88.0f) * scale;
+    toolbar_height_ = ToolbarHeightDip() * scale;
     status_height_ = (embedded_ ? embedded_bottom_dip_ : 28.0f) * scale;
     sidebar_width_ = sidebar_width_dip_ * scale;
     pane_header_height_ = 40.0f * scale;
@@ -122,6 +122,7 @@ void MainRenderer::SetScale(float scale) {
 void MainRenderer::SetEmbedded(float top_dip, float bottom_dip) {
     embedded_ = true;
     vertical_tabs_ = false;
+    favorites_bar_ = false;
     embedded_top_dip_ = top_dip;
     embedded_bottom_dip_ = bottom_dip;
     SetDetailsPanelVisible(false);
@@ -847,6 +848,7 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
         DrawStatusBar(vm, rect, theme);
     } else {
         DrawToolbar(vm, rect, theme);
+        if (favorites_bar_) DrawFavoritesBar(vm, rect, theme);
         const bool peek = SidebarPeekVisible(rect.right);
         if (!peek) DrawSidebar(vm, rect, theme);
         DrawPane(vm, rect, theme);

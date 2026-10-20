@@ -2510,5 +2510,10 @@
 #define IDS_SEL_KEEP_FOLDERS                                                             3720
 #define IDS_SEL_KEEP_FILES                                                               3721
 #define IDS_SEL_SAME_TYPE                                                                3722
+#define IDS_FAVORITES_BAR                                                                3723
+#define IDS_FAVORITES_BAR_EMPTY                                                          3724
+#define IDS_FAVORITES_BAR_MORE                                                           3725
+#define IDS_FAVORITES_BAR_ICON_ONLY                                                      3726
+#define IDS_FAVORITES_BAR_HIDE                                                           3727
 
 #endif  // PULSE_STRING_IDS_H

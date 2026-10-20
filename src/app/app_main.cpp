@@ -215,6 +215,8 @@ void UpdateProcessMetrics(AppState& s) {
 // the settings page (see BuildVm); other notifications need no repaint.
 // --view wall (screenshots): large icons shown as a photo wall.
 static bool g_shot_wall = false;
+// GUI verification for the 收藏栏: shown, with a few favorites if none.
+static bool g_shot_favorites_bar = false;
 // Decorative motion (loading shimmer, folder size skeleton, the pill's ring)
 // runs at about 30 fps instead of the display rate (FramePump::ArmPaced).
 constexpr double kDecorativeFrameMs = 1000.0 / 30.0;
@@ -3538,6 +3540,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             state.shot_tag_rename = true;
         } else if (wcscmp(__wargv[i], L"--shot-tag-drag") == 0) {
             state.shot_tag_drag = true;
+        } else if (wcscmp(__wargv[i], L"--shot-favorites-bar") == 0) {
+            g_shot_favorites_bar = true;
         } else if (wcscmp(__wargv[i], L"--shot-rail") == 0) {
             // GUI verification for the icon rail: every section folded, so a
             // narrow window shows one row per section.
@@ -4019,6 +4023,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
                 state.window_tabs.items[1]->tab_group = 1;
                 state.window_tabs.items[2]->tab_group = 2;
                 SwitchTab(state, 1); // active grouped tab in the middle
+            }
+        }
+        if (g_shot_favorites_bar) {
+            state.appPrefs.favorites_bar = true;
+            if (state.places.starred_items.empty()) {
+                for (const wchar_t* folder : {L"C:\\Windows", L"C:\\Users", L"C:\\Program Files",
+                                              L"C:\\Windows\\System32"})
+                    state.places.starred_items.push_back({folder, app::PlaceItemKind::Folder});
+                state.places.starred_items.push_back({L"C:\\Windows\\win.ini", app::PlaceItemKind::File});
             }
         }
         if (state.shot_pinned_tab && !state.window_tabs.items.empty()) {

@@ -2506,6 +2506,11 @@ enum class StringId : UINT {
     SelKeepFolders = IDS_SEL_KEEP_FOLDERS,
     SelKeepFiles = IDS_SEL_KEEP_FILES,
     SelSameType = IDS_SEL_SAME_TYPE,
+    FavoritesBar = IDS_FAVORITES_BAR,
+    FavoritesBarEmpty = IDS_FAVORITES_BAR_EMPTY,
+    FavoritesBarMore = IDS_FAVORITES_BAR_MORE,
+    FavoritesBarIconOnly = IDS_FAVORITES_BAR_ICON_ONLY,
+    FavoritesBarHide = IDS_FAVORITES_BAR_HIDE,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

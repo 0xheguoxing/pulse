@@ -2496,6 +2496,11 @@ BEGIN
     IDS_SEL_KEEP_FOLDERS "只保留文件夹"
     IDS_SEL_KEEP_FILES "只保留文件"
     IDS_SEL_SAME_TYPE "选择同类型（%s）"
+    IDS_FAVORITES_BAR "收藏栏"
+    IDS_FAVORITES_BAR_EMPTY "还没有收藏 · 在文件或文件夹上右键选「收藏」，它会出现在这里"
+    IDS_FAVORITES_BAR_MORE "更多收藏"
+    IDS_FAVORITES_BAR_ICON_ONLY "只显示图标"
+    IDS_FAVORITES_BAR_HIDE "隐藏收藏栏"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4991,6 +4996,11 @@ BEGIN
     IDS_SEL_KEEP_FOLDERS "Keep only folders"
     IDS_SEL_KEEP_FILES "Keep only files"
     IDS_SEL_SAME_TYPE "Select the same type (%s)"
+    IDS_FAVORITES_BAR "Favorites bar"
+    IDS_FAVORITES_BAR_EMPTY "No favorites yet · right-click a file or folder and choose Star to put it here"
+    IDS_FAVORITES_BAR_MORE "More favorites"
+    IDS_FAVORITES_BAR_ICON_ONLY "Icons only"
+    IDS_FAVORITES_BAR_HIDE "Hide the favorites bar"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

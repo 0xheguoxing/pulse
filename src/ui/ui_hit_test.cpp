@@ -763,6 +763,27 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
         const D2D1_RECT_F peek = SidebarRect(rect.right, rect.bottom);
         inPeek = x < peek.right && y >= peek.top && y < peek.bottom;
     }
+    // 收藏栏: the row under the command row; its empty part still belongs to it.
+    if (favorites_bar_ && !inPeek && x >= EffectiveSidebarWidth(rect.right) &&
+        y >= title_bar_height_ + toolbar_height_ - kFavoritesBarHeightDip * scale_ &&
+        y < title_bar_height_ + toolbar_height_) {
+        const FavoritesBarLayout bar = FavoritesBarLayoutAt(vm, rect.right);
+        r.region = HitTestResult::FavoritesBarItem;
+        r.index = -1;
+        for (size_t i = 0; i < bar.items.size(); ++i) {
+            if (!ContainsPt(bar.items[i], x, y)) continue;
+            r.index = static_cast<int>(i);
+            r.control_bounds = bar.items[i];
+            if (i < vm.favorites_bar.size()) r.path = vm.favorites_bar[i].path;
+            return r;
+        }
+        if (bar.first_hidden >= 0 && ContainsPt(bar.more, x, y)) {
+            r.region = HitTestResult::FavoritesBarMore;
+            r.index = bar.first_hidden;
+            r.control_bounds = bar.more;
+        }
+        return r;
+    }
     if (!inPeek && x >= EffectiveSidebarWidth(rect.right) && y < title_bar_height_ + toolbar_height_) {
         const auto toolbar = ToolbarLayoutAt(rect.right,
             NewButtonWidthPx(rect.right-EffectiveSidebarWidth(rect.right) < 600 * scale_), vm.pane.filter_expand);

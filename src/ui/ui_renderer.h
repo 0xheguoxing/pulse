@@ -13,6 +13,7 @@
 #include "column_strip_layout.h"
 #include "panel_metrics.h"
 #include "toolbar_layout.h"
+#include "favorites_bar_layout.h"
 #include "../common/menu_icon.h"
 #include "thumbnail_cache.h"
 #include "folder_thumbnail_cache.h"
@@ -927,6 +928,17 @@ struct WindowViewModel {
     bool toolbar_drop_force = false;      // Shift: opening a type the app does not list
     bool toolbar_drop_pin = false;        // a dragged program goes onto the pins
     std::wstring toolbar_drop_label;      // "拖到软件上打开" / "固定到工具栏" (layout.pin_label)
+    // 收藏栏 (favorites_bar_layout.h): the starred list under the command row.
+    struct FavoritesBarItem {
+        std::wstring label, path;
+        bool folder = true;
+        bool current = false;   // the active tab shows it
+    };
+    bool favorites_bar_on = false;
+    bool favorites_bar_icon_only = false;
+    std::vector<FavoritesBarItem> favorites_bar;
+    std::wstring favorites_bar_hint;      // shown while the list is empty
+    std::wstring favorites_bar_more;      // » tooltip
 
     PaneViewModel pane;
     std::vector<PaneSlotView> pane_slots;
@@ -1237,6 +1249,8 @@ struct HitTestResult {
         ToolbarSelAction,   // selection chip: quick actions, kSelChipMore, kSelChipClear, -1 chip body
         ToolbarPin,         // pinned command or app (自定义工具栏): index into layout.pins
         ToolbarPinLabel,    // drop mode: the label ahead of the pinned apps
+        FavoritesBarItem,   // 收藏栏: index into favorites_bar, -1 the bar's empty part
+        FavoritesBarMore,   // 收藏栏 »: index = the first favorite folded into it
         AddressBar,
         AddressSearch,
         AddressSearchInput,
@@ -1479,7 +1493,17 @@ public:
     // keeps only its command row.
     void SetVerticalTabs(bool on) {
         vertical_tabs_ = on && !embedded_;
-        toolbar_height_ = (vertical_tabs_ || embedded_ ? 44.0f : 88.0f) * scale_;
+        toolbar_height_ = ToolbarHeightDip() * scale_;
+    }
+    // 收藏栏: one more row under the command row (never in embedded hosts).
+    void SetFavoritesBar(bool on) {
+        favorites_bar_ = on && !embedded_;
+        toolbar_height_ = ToolbarHeightDip() * scale_;
+    }
+    bool FavoritesBarShown() const { return favorites_bar_; }
+    FavoritesBarLayout FavoritesBarLayoutAt(const WindowViewModel& vm, float window_width) const;
+    float ToolbarHeightDip() const {
+        return (vertical_tabs_ || embedded_ ? 44.0f : 88.0f) + (favorites_bar_ ? kFavoritesBarHeightDip : 0.0f);
     }
     // Hosted inside another window (the file picker): no title bar, tabs,
     // command row, status bar or details panel; only the address row, the
@@ -2039,6 +2063,7 @@ private:
     TabStripMetrics ComputeTabStrip(const WindowViewModel& vm, float window_w) const;
     void DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
+    void DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawToolbarApps(const WindowViewModel& vm, const ToolbarLayout& layout, const Theme& theme);
     void DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawPane(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
@@ -2218,6 +2243,7 @@ private:
     PreviewHandlerHost preview_handler_;
     HWND notify_hwnd_ = nullptr;
     bool embedded_ = false;
+    bool favorites_bar_ = false;
     float embedded_top_dip_ = 0.0f;
     float embedded_bottom_dip_ = 0.0f;
     float scale_ = 1.0f;
