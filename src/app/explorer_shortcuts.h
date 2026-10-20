@@ -10,7 +10,8 @@
 //   Ctrl+Alt+1..4        split layouts (were Ctrl+1..4)
 //   Ctrl+Shift+1..8      view: extra large, large, medium, small icons,
 //                        list, details, tiles, content
-//   Ctrl+Alt+Shift+1..7  toggle tag N (was Ctrl+Shift+1..7)
+//   Alt+1..9             toggle favorite tag N (was Ctrl+Alt+Shift+1..7)
+//   Alt+0, Alt+T         clear every tag / open the tag panel
 //   Backspace            back (Alt+Up stays "up one level")
 //   Shift+F10, Apps key  context menu
 //   F11                  maximize / restore
@@ -27,13 +28,14 @@
 namespace pulse::app {
 
 enum class ExplorerKeyAction {
-    None, Delete, MarkTarget, NewFolder, Search, TabNumber, Layout, ViewMode, Tag, Back,
+    None, Delete, MarkTarget, NewFolder, Search, TabNumber, Layout, ViewMode, Tag, ClearTags,
+    TagPanel, Back,
     ContextMenu, Maximize, NewWindow, CloseWindow, MoveTabToNewWindow
 };
 
 struct ExplorerKeyCommand {
     ExplorerKeyAction action = ExplorerKeyAction::None;
-    int index = 0;        // 0-based tab/layout/view/tag number
+    int index = 0;        // 0-based tab/layout/view number, favorite tag slot
     bool shift = false;   // Ctrl+Shift+D: delete permanently
 };
 
@@ -52,7 +54,11 @@ inline ExplorerKeyCommand ExplorerShortcut(UINT key, bool ctrl, bool shift, bool
     if (digit && ctrl && !shift && !alt) return {A::TabNumber, number};
     if (digit && ctrl && alt && !shift && number < 4) return {A::Layout, number};
     if (digit && ctrl && shift && !alt && number < 8) return {A::ViewMode, number};
-    if (digit && ctrl && shift && alt && number < 7) return {A::Tag, number};
+    if (alt && !ctrl && !shift) {
+        if (digit) return {A::Tag, number};
+        if (key == L'0') return {A::ClearTags};
+        if (key == L'T') return {A::TagPanel};
+    }
     if (key == VK_BACK && !ctrl && !shift && !alt) return {A::Back};
     if ((key == VK_F10 && shift && !ctrl && !alt) || (key == VK_APPS && !ctrl && !alt)) return {A::ContextMenu};
     if (key == VK_F11 && !ctrl && !shift && !alt) return {A::Maximize};

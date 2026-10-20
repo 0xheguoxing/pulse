@@ -509,9 +509,10 @@ bool TestExplorerShortcuts() {
         is(L'8', true, true, false, A::ViewMode, 7) && is(L'9', true, true, false, A::None) &&
         pulse::ui::ViewModeFromIndex(5) == pulse::ui::ViewMode::Details &&
         pulse::ui::ViewModeFromIndex(1) == pulse::ui::ViewMode::LargeIcons);
-    passed &= Report("explorer keys: Ctrl+Alt+Shift+1..7 tags",
-        is(L'1', true, true, true, A::Tag, 0) && is(L'7', true, true, true, A::Tag, 6) &&
-        is(L'8', true, true, true, A::None));
+    passed &= Report("explorer keys: Alt+1..9 favorite tags, Alt+0 clears, Alt+T tag panel",
+        is(L'1', false, false, true, A::Tag, 0) && is(L'9', false, false, true, A::Tag, 8) &&
+        is(L'0', false, false, true, A::ClearTags) && is(L'T', false, false, true, A::TagPanel) &&
+        is(L'1', true, true, true, A::None) && is(L'1', false, true, true, A::None));
     passed &= Report("explorer keys: Backspace back, Shift+F10 / Apps menu, F11 maximize; plain keys untouched",
         is(VK_BACK, false, false, false, A::Back) && is(VK_F10, false, true, false, A::ContextMenu) &&
         is(VK_APPS, false, false, false, A::ContextMenu) && is(VK_F11, false, false, false, A::Maximize) &&

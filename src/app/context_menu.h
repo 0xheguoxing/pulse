@@ -63,7 +63,7 @@ enum MenuCmd : int {
     CmdSettings,            // palette / title-bar gear → settings tab
     CmdSettingsContextMenu, // 管理右键项… → 右键菜单 page
     CmdTags,
-    CmdTagBase = 70,        // +0..6  Ctrl+Alt+Shift+1..7
+    CmdTagBase = 70,        // + favorite slot - 1 (Alt+1..9)
     CmdViewBase = 80,       // + ViewModeIndex (8 stable view choices)
     CmdViewWall = 88,       // view menu: photo wall (the icon view arranged as a wall)
     CmdTabColorBase = 90,   // +0..7  tab-group color swatches

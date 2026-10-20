@@ -23,6 +23,7 @@
 #define SECURITY_WIN32 1
 #include <security.h>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cwctype>
 #include <utility>
@@ -1673,13 +1674,52 @@ static void ParseFilterText(const std::wstring& text, std::wstring& name_needle,
     name_needle = ToLowerCopy(name_needle);
 }
 
-static bool TagMatchesNeedle(const ColorTag& tag, int index, const std::wstring& needle) {
+// The color family of a tag's actual color (HSV hue; low saturation is gray),
+// so #红 finds every reddish tag whatever its position or name.
+enum class TagHue { Red, Orange, Yellow, Green, Cyan, Blue, Purple, Pink, Gray };
+
+static TagHue TagHueOf(uint32_t rgb) {
+    const float r = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
+    const float g = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
+    const float b = static_cast<float>(rgb & 0xFF) / 255.0f;
+    const float hi = (std::max)({r, g, b});
+    const float lo = (std::min)({r, g, b});
+    const float delta = hi - lo;
+    if (hi <= 0.0f || delta / hi < 0.25f) return TagHue::Gray;
+    float hue;
+    if (hi == r) hue = 60.0f * std::fmod((g - b) / delta + 6.0f, 6.0f);
+    else if (hi == g) hue = 60.0f * ((b - r) / delta + 2.0f);
+    else hue = 60.0f * ((r - g) / delta + 4.0f);
+    if (hue < 15.0f || hue >= 345.0f) return TagHue::Red;
+    if (hue < 40.0f) return TagHue::Orange;
+    if (hue < 70.0f) return TagHue::Yellow;
+    if (hue < 165.0f) return TagHue::Green;
+    if (hue < 195.0f) return TagHue::Cyan;
+    if (hue < 255.0f) return TagHue::Blue;
+    if (hue < 300.0f) return TagHue::Purple;
+    return TagHue::Pink;
+}
+
+static bool TagMatchesNeedle(const ColorTag& tag, const std::wstring& needle) {
     if (needle.empty()) return true;
     if (ToLowerCopy(tag.name).find(needle) != std::wstring::npos) return true;
-    static const wchar_t* kNicks[] = { L"红", L"橙", L"绿", L"青", L"紫", L"蓝", L"灰" };
-    static const wchar_t* kNicksHant[] = { L"紅", L"橙", L"綠", L"青", L"紫", L"藍", L"灰" };
-    if (index >= 0 && index < 7 && (needle == kNicks[index] || needle == kNicksHant[index])) return true;
-    if (index == 1 && (needle == L"黄" || needle == L"黃")) return true;
+    struct Nick { TagHue hue; const wchar_t* names[4]; };
+    static const Nick kNicks[] = {
+        {TagHue::Red, {L"红", L"紅", L"red", nullptr}},
+        {TagHue::Orange, {L"橙", L"orange", nullptr, nullptr}},
+        {TagHue::Yellow, {L"黄", L"黃", L"yellow", nullptr}},
+        {TagHue::Green, {L"绿", L"綠", L"green", nullptr}},
+        {TagHue::Cyan, {L"青", L"cyan", nullptr, nullptr}},
+        {TagHue::Blue, {L"蓝", L"藍", L"blue", nullptr}},
+        {TagHue::Purple, {L"紫", L"purple", nullptr, nullptr}},
+        {TagHue::Pink, {L"粉", L"pink", nullptr, nullptr}},
+        {TagHue::Gray, {L"灰", L"gray", L"grey", nullptr}},
+    };
+    for (const Nick& nick : kNicks) {
+        for (const wchar_t* name : nick.names) {
+            if (name && needle == name) return TagHueOf(tag.rgb) == nick.hue;
+        }
+    }
     return false;
 }
 
@@ -1690,7 +1730,7 @@ index::ContentResultStore::Filter ContentFilter(const std::wstring& text, const 
     if(name.empty() && tags.empty()) name=ToLowerCopy(text);
     std::unordered_set<std::wstring> paths;
     for(size_t id=0;id<places.tags.size();++id) for(const auto& needle:tags) {
-        if(TagMatchesNeedle(places.tags[id],static_cast<int>(id),needle))
+        if(TagMatchesNeedle(places.tags[id],needle))
             for(const auto& path:places.tags[id].paths) paths.insert(ToLowerCopy(path));
     }
     return [name=std::move(name),has_tags=!tags.empty(),paths=std::move(paths)](const fs::DirEntry& entry) {
@@ -1730,7 +1770,7 @@ void CollectFilterMatches(const Tab& tab, const PlacesCatalog* places, std::vect
             for (int id : ids) {
                 if (id < 0 || id >= static_cast<int>(places->tags.size())) continue;
                 for (const auto& needle : tag_needles) {
-                    if (TagMatchesNeedle(places->tags[static_cast<size_t>(id)], id, needle)) {
+                    if (TagMatchesNeedle(places->tags[static_cast<size_t>(id)], needle)) {
                         tag_ok = true;
                         break;
                     }

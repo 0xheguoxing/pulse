@@ -206,7 +206,7 @@ bool PlacesCatalog::SaveTagFile(const std::vector<ColorTag>& snapshot, uint64_t 
         }
         file << L"]";
     };
-    file << L"{\n  \"version\":2,\n  \"tags_generation\":\"" << generation << L"\",\n  \"tags\":[\n";
+    file << L"{\n  \"version\":3,\n  \"tags_generation\":\"" << generation << L"\",\n  \"tags\":[\n";
     for (size_t i = 0; i < snapshot.size(); ++i) {
         std::wstring id, name;
         pulse::json::Escape(snapshot[i].id, id);
@@ -214,7 +214,10 @@ bool PlacesCatalog::SaveTagFile(const std::vector<ColorTag>& snapshot, uint64_t 
         wchar_t rgb[16]{};
         swprintf_s(rgb, L"0x%06X", snapshot[i].rgb & 0xFFFFFFu);
         file << L"    {\"id\":\"" << id << L"\",\"name\":\"" << name
-             << L"\",\"rgb\":" << rgb << L",\"paths\":";
+             << L"\",\"rgb\":" << rgb;
+        // v3: optional favorite slot; older versions ignore the field.
+        if (snapshot[i].favorite > 0) file << L",\"fav\":" << snapshot[i].favorite;
+        file << L",\"paths\":";
         write_array(snapshot[i].paths);
         file << L"}" << (i + 1 < snapshot.size() ? L"," : L"") << L"\n";
     }
@@ -362,6 +365,7 @@ void PlacesCatalog::EnsureDefaults() {
         t.id = d.id;
         t.name = l10n::Pick(d.name, d.english);  // seeded once in the UI language, then user data
         t.rgb = d.rgb;
+        t.favorite = static_cast<int>(tags.size()) + 1;
         tags.push_back(std::move(t));
     }
     RebuildTagIndex();
@@ -532,6 +536,7 @@ bool PlacesCatalog::Load() {
             tag.name = pulse::json::ExtractString(block, L"name");
             tag.rgb = ExtractRgb(block);
             tag.paths = pulse::json::ExtractStringArray(block, L"paths");
+            tag.favorite = pulse::json::ExtractInt(block, L"fav");
             if (!tag.id.empty() && !tag.name.empty()) loaded.push_back(std::move(tag));
         }
         const auto position = pulse::json::ValuePosition(tag_json, L"tags");
@@ -555,9 +560,18 @@ bool PlacesCatalog::Load() {
     // Defaults only seed a catalog that has no saved tags yet: a saved empty
     // list means the user deleted them, and they stay deleted.
     if (!tags_loaded) EnsureDefaults();
+    // Before tags file v3 Alt+N meant "the Nth tag": the first seven become
+    // the favorites, so the keys keep doing what they did.
+    const bool favorites_migrated = tags_loaded
+        ? pulse::json::ExtractInt(tag_json, L"version") < 3 : places_loaded;
+    if (favorites_migrated) {
+        for (size_t i = 0; i < tags.size(); ++i)
+            tags[i].favorite = i < 7 ? static_cast<int>(i) + 1 : 0;
+    }
+    NormalizeFavoriteSlots();
     RebuildTagIndex();
     RebuildStarIndex();
-    if (recovered || (places_loaded && !tags_loaded)) QueueTagSave();
+    if (recovered || favorites_migrated || (places_loaded && !tags_loaded)) QueueTagSave();
     return places_loaded || tags_loaded;
 }
 
@@ -996,6 +1010,8 @@ TagId PlacesCatalog::CreateTag(const std::wstring& raw_name, uint32_t rgb) {
     tag.id = NewTagId();
     tag.name = name;
     tag.rgb = rgb & 0xFFFFFFu;
+    // While a favorite slot is free, a new tag gets the next Alt+N key.
+    tag.favorite = FreeFavoriteSlot();
     const TagId id = tag.id;
     tags.push_back(std::move(tag));
     RebuildTagIndex();
@@ -1281,6 +1297,45 @@ std::vector<std::wstring> PlacesCatalog::RecentFolderPaths(size_t limit) const {
 void PlacesCatalog::TagsReordered() {
     RebuildTagIndex();
     QueueTagSave();
+}
+
+int PlacesCatalog::FavoriteTagIndex(int slot) const {
+    if (slot < 1 || slot > kMaxFavoriteTags) return -1;
+    for (size_t i = 0; i < tags.size(); ++i)
+        if (tags[i].favorite == slot) return static_cast<int>(i);
+    return -1;
+}
+
+int PlacesCatalog::FreeFavoriteSlot() const {
+    for (int slot = 1; slot <= kMaxFavoriteTags; ++slot)
+        if (FavoriteTagIndex(slot) < 0) return slot;
+    return 0;
+}
+
+// Out-of-range or duplicate slots (hand edits, merged files) are dropped;
+// the first tag keeps a contested slot.
+void PlacesCatalog::NormalizeFavoriteSlots() {
+    bool used[kMaxFavoriteTags + 1]{};
+    for (auto& tag : tags) {
+        if (tag.favorite < 1 || tag.favorite > kMaxFavoriteTags || used[tag.favorite]) {
+            tag.favorite = 0;
+            continue;
+        }
+        used[tag.favorite] = true;
+    }
+}
+
+bool PlacesCatalog::SetTagFavorite(const TagId& id, bool favorite) {
+    const int index = FindTagIndex(id);
+    if (index < 0) return false;
+    ColorTag& tag = tags[static_cast<size_t>(index)];
+    if ((tag.favorite > 0) == favorite) return false;
+    const int slot = favorite ? FreeFavoriteSlot() : 0;
+    if (favorite && slot == 0) return false;
+    tag.favorite = slot;
+    ++tag_revision_;
+    QueueTagSave();
+    return true;
 }
 
 void PlacesCatalog::CommitTagChanges(const std::vector<std::wstring>& paths,

@@ -36,7 +36,12 @@ struct ColorTag {
     std::wstring name;
     uint32_t rgb = 0xEF4444;
     std::vector<std::wstring> paths;
+    // Favorite slot 1..kMaxFavoriteTags (Alt+N toggles it on the selection);
+    // 0 = not a favorite. Slots stay put when tags are reordered or removed.
+    int favorite = 0;
 };
+
+constexpr int kMaxFavoriteTags = 9;
 
 struct TagAdsRecord {
     TagId id;
@@ -209,6 +214,10 @@ public:
     void ReadAdsIntoCatalog(const std::wstring& path);
     uint64_t TagRevision() const noexcept { return tag_revision_; }
     void TagsReordered();
+    // Favorite tags: slot 1..kMaxFavoriteTags -> tag index, or -1 when free.
+    int FavoriteTagIndex(int slot) const;
+    // Adding takes the lowest free slot (false when all are taken).
+    bool SetTagFavorite(const TagId& id, bool favorite);
 
 private:
     friend struct PlacesPersistenceAudit;
@@ -230,6 +239,8 @@ private:
     };
 
     void RebuildTagIndex();
+    int FreeFavoriteSlot() const;  // 0 when every slot is taken
+    void NormalizeFavoriteSlots();
     void RebuildStarIndex();
     void CommitTagChanges(const std::vector<std::wstring>& paths,
                           std::vector<TagAdsUpdate>* deferred_ads);

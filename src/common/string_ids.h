@@ -2456,5 +2456,9 @@
 #define IDS_QA_EDIT_HINT                                                                 3666
 #define IDS_QA_EDIT_ADD_FOLDER                                                           3667
 #define IDS_QA_EDIT_DONE                                                                 3668
+#define IDS_HELP_CLEAR_TAGS                                                              3669
+#define IDS_HELP_TAG_PANEL                                                               3670
+#define IDS_TAG_FAVORITE_ADD                                                             3671
+#define IDS_TAG_FAVORITE_REMOVE                                                          3672
 
 #endif  // PULSE_STRING_IDS_H

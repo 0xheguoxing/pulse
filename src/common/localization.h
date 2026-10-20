@@ -2452,6 +2452,10 @@ enum class StringId : UINT {
     QuickAccessEditHint = IDS_QA_EDIT_HINT,
     QuickAccessEditAddFolder = IDS_QA_EDIT_ADD_FOLDER,
     QuickAccessEditDone = IDS_QA_EDIT_DONE,
+    HelpClearTags = IDS_HELP_CLEAR_TAGS,
+    HelpTagPanel = IDS_HELP_TAG_PANEL,
+    TagFavoriteAdd = IDS_TAG_FAVORITE_ADD,
+    TagFavoriteRemove = IDS_TAG_FAVORITE_REMOVE,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

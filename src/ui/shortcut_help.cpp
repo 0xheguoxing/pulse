@@ -55,7 +55,9 @@ std::vector<HelpGroup> HelpGroups() {
             {Id::PermanentDelete, L"Shift Delete", {K::PermanentDelete}},
             {Id::Properties, L"Alt Enter", {K::Properties}},
             {Id::HelpContextMenu, L"Shift F10", {K::ContextMenu}},
-            {Id::HelpToggleTag, L"Ctrl Alt Shift 1–7", {K::ToggleTag}},
+            {Id::HelpToggleTag, L"Alt 1–9", {K::ToggleTag}},
+            {Id::HelpClearTags, L"Alt 0", {K::ClearTags}},
+            {Id::HelpTagPanel, L"Alt T", {K::TagPanel}},
         }},
         {Id::HelpGroupSelect, {
             {Id::SelectAll, L"Ctrl A", {K::SelectAll}},

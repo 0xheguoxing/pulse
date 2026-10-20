@@ -17,6 +17,8 @@ std::vector<app::TagAdsUpdate> BuildTagAdsUpdates(
         bool include_descendants = false);
 bool ToggleTagForSelection(AppState& s, const app::TagId& tag_id,
                                   const std::vector<std::wstring>& paths);
+// Alt+0: removes every tag from the files.
+bool ClearTagsForSelection(AppState& s, const std::vector<std::wstring>& paths);
 std::vector<uint32_t>& TagColorPalette(AppState& s);
 void AppendCustomTagColor(AppState& s, uint32_t rgb);
 void ShowTagPicker(AppState& s, POINT screen_pt,

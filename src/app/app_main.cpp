@@ -950,6 +950,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 static int g_shortcut_remap_depth = 0;
 static bool g_shortcut_eat_char = false;
 
+static bool IsAltTagKey(WPARAM key) {
+    return (GetKeyState(VK_MENU) & 0x8000) && !(GetKeyState(VK_CONTROL) & 0x8000) &&
+           !(GetKeyState(VK_SHIFT) & 0x8000) &&
+           ((key >= L'0' && key <= L'9') || key == L'T');
+}
+
 static bool RouteUserShortcut(AppState& s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, LRESULT& result) {
     if (msg == WM_CHAR || msg == WM_SYSCHAR) {
         if (!g_shortcut_eat_char) return false;
@@ -2262,10 +2268,13 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s && (wParam == VK_F10 || ((GetKeyState(VK_MENU) & 0x8000) &&
                   (wParam == VK_LEFT || wParam == VK_RIGHT || wParam == VK_UP))))
             return HandleKeyDown(s, hwnd, msg, wParam, lParam);
+        // Alt+0..9 (favorite tags, clear tags) and Alt+T (tag panel).
+        if (s && IsAltTagKey(wParam)) return HandleKeyDown(s, hwnd, msg, wParam, lParam);
         break;
 
     case WM_SYSCHAR:
-        if (wParam == L'\r') return 0; // Alt+Enter handled above; no default beep
+        // Alt+Enter and the Alt tag keys are handled above; no default beep.
+        if (wParam == L'\r' || IsAltTagKey(wParam == L't' ? WPARAM{L'T'} : wParam)) return 0;
         break;
 
     case WM_CHAR:

@@ -414,6 +414,27 @@ bool ToggleTagForSelection(AppState& s, const app::TagId& tag_id,
     return true;
 }
 
+bool ClearTagsForSelection(AppState& s, const std::vector<std::wstring>& paths) {
+    if (paths.empty()) return false;
+    if (const app::Tab* tab = ActiveTab(s); tab && tab->SelectedCount() > 0 &&
+        SelectedFullPaths(*tab) == paths && !app::ComputeSelectionCaps(*tab, &s.places).tags)
+        return false;
+    std::vector<app::TagId> present;
+    for (const auto& path : paths) {
+        for (int index : s.places.TagsForPath(path)) {
+            const app::TagId& id = s.places.tags[static_cast<size_t>(index)].id;
+            if (std::find(present.begin(), present.end(), id) == present.end()) present.push_back(id);
+        }
+    }
+    std::vector<app::TagAdsUpdate> updates;
+    bool changed = false;
+    for (const auto& id : present) changed |= s.places.SetTagsBatch(id, paths, false, &updates);
+    if (!changed) return false;
+    QueueTagAds(s, std::move(updates));
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+    return true;
+}
+
 // Finder-style tag colors: the seven defaults plus any custom colors the
 // user added through the color dialog (persisted in app prefs, shown last).
 std::vector<uint32_t>& TagColorPalette(AppState& s) {
@@ -429,11 +450,17 @@ std::vector<uint32_t>& TagColorPalette(AppState& s) {
     return palette;
 }
 
+// Keeps the eight most recent custom colors.
 void AppendCustomTagColor(AppState& s, uint32_t rgb) {
+    constexpr size_t kMaxCustomTagColors = 8;
     std::vector<uint32_t>& palette = TagColorPalette(s);
     if (std::find(palette.begin(), palette.end(), rgb) != palette.end()) return;
-    palette.push_back(rgb);
-    s.appPrefs.custom_tag_colors.push_back(rgb);
+    auto& custom = s.appPrefs.custom_tag_colors;
+    custom.push_back(rgb);
+    if (custom.size() > kMaxCustomTagColors)
+        custom.erase(custom.begin(), custom.end() - static_cast<std::ptrdiff_t>(kMaxCustomTagColors));
+    palette.clear();
+    TagColorPalette(s);
     s.appPrefs.Save();
 }
 
@@ -944,6 +971,8 @@ void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt) 
     const app::ColorTag* tag = s.places.FindTag(tag_id);
     if (!tag) return;
     constexpr int kRename = 31000;
+    constexpr int kFavorite = 31010;
+    constexpr int kCustomColor = 31090;
     constexpr int kColorBase = 31100;
     constexpr int kDelete = 31200;
     const std::vector<uint32_t>& palette = TagColorPalette(s);
@@ -953,6 +982,22 @@ void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt) 
     rename.text = l10n::Get(l10n::StringId::TagRename);
     rename.glyph = L"\xE8AC";
     items.push_back(std::move(rename));
+    // Favorites own the Alt+1..9 keys; a full set of nine leaves "add" off.
+    ui::FluentMenuItem favorite;
+    favorite.command = kFavorite;
+    favorite.glyph = tag->favorite > 0 ? L"\xE735" : L"\xE734";
+    if (tag->favorite > 0) {
+        favorite.text = l10n::Get(l10n::StringId::TagFavoriteRemove);
+        favorite.shortcut = app::ShownShortcut(L"Alt+" + std::to_wstring(tag->favorite));
+    } else {
+        favorite.text = l10n::Get(l10n::StringId::TagFavoriteAdd);
+        int used = 0;
+        for (const auto& other : s.places.tags) used += other.favorite > 0 ? 1 : 0;
+        favorite.enabled = used < app::kMaxFavoriteTags;
+    }
+    favorite.separator_after = true;
+    items.push_back(std::move(favorite));
+    bool preset_color = false;
     for (int i = 0; i < static_cast<int>(palette.size()); ++i) {
         const uint32_t rgb = palette[static_cast<size_t>(i)];
         ui::FluentMenuItem color;
@@ -973,9 +1018,18 @@ void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt) 
         color.has_swatch = true;
         color.swatch_color = ui::HexColor(rgb);
         color.checked = tag->rgb == rgb;
+        preset_color = preset_color || color.checked;
         items.push_back(std::move(color));
     }
-    items.back().separator_after = true;
+    // Any color through the picker; accepted colors join the swatch list.
+    ui::FluentMenuItem custom;
+    custom.command = kCustomColor;
+    custom.text = l10n::Get(l10n::StringId::CustomColor);
+    custom.has_swatch = !preset_color;
+    custom.swatch_color = ui::HexColor(tag->rgb);
+    custom.glyph = preset_color ? L"\xE790" : L"";
+    custom.separator_after = true;
+    items.push_back(std::move(custom));
     ui::FluentMenuItem remove;
     remove.command = kDelete;
     remove.text = l10n::Get(l10n::StringId::TagDelete);
@@ -1003,6 +1057,17 @@ void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt) 
             (apply == app::CmdNone && s.menu->LastFilterCommitted())) {
             const std::vector<std::wstring> affected = s.places.PathsForTag(tag_id);
             if (s.places.RenameTag(tag_id, name))
+                QueueTagAds(s, BuildTagAdsUpdates(s.places, affected));
+        }
+    } else if (command == kFavorite) {
+        s.places.SetTagFavorite(tag_id, tag->favorite == 0);
+    } else if (command == kCustomColor) {
+        uint32_t picked = tag->rgb;
+        if (ui::ColorPickerPopup::Pick(s.hwnd, &s.compositor, s.menu.get(), s.scale,
+                                       screen_pt, picked, s.darkMode, picked)) {
+            AppendCustomTagColor(s, picked);
+            const std::vector<std::wstring> affected = s.places.PathsForTag(tag_id);
+            if (s.places.SetTagColor(tag_id, picked))
                 QueueTagAds(s, BuildTagAdsUpdates(s.places, affected));
         }
     } else if (command >= kColorBase && command < kColorBase + static_cast<int>(palette.size())) {
@@ -1678,14 +1743,15 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
     AppendQuickAccessCommand(s, items, QuickAccessTargets(ActiveTab(s), false));
     const std::vector<std::wstring> paths = ActiveTab(s)
         ? SelectedFullPaths(*ActiveTab(s)) : std::vector<std::wstring>{};
-    const int quick_count = std::min(7, static_cast<int>(s.places.tags.size()));
+    // The color row shows the favorite tags, in slot order (Alt+1..9).
     ui::FluentMenuItem quick_tags;
     quick_tags.command = app::CmdTags;
-    quick_tags.quick_swatches.reserve(static_cast<size_t>(quick_count));
-    for (int i = 0; i < quick_count; ++i) {
-        const auto& tag = s.places.tags[static_cast<size_t>(i)];
+    for (int slot = 1; slot <= app::kMaxFavoriteTags; ++slot) {
+        const int index = s.places.FavoriteTagIndex(slot);
+        if (index < 0) continue;
+        const auto& tag = s.places.tags[static_cast<size_t>(index)];
         ui::FluentMenuSwatch swatch;
-        swatch.command = app::CmdTagBase + i;
+        swatch.command = app::CmdTagBase + slot - 1;
         swatch.color = ui::HexColor(tag.rgb);
         const auto state = s.places.GetSelectionState(tag.id, paths);
         swatch.checked = state == app::TagSelectionState::All;
@@ -2163,10 +2229,11 @@ void ShowItemContextMenu(AppState& s, POINT screen_pt, bool from_chip) {
                            std::make_move_iterator(apps.end()));
         }
     }
-    const int quick_count = std::min(7, static_cast<int>(s.places.tags.size()));
 
     if (!IsRecycleTab(tab)) BeginCtxTiming(s, display.size(), seeded);
     const int cmd = s.menu->TrackPopup(screen_pt, std::move(display));
+    const int favorite_index = cmd >= app::CmdTagBase && cmd < app::CmdTagBase + app::kMaxFavoriteTags
+        ? s.places.FavoriteTagIndex(cmd - app::CmdTagBase + 1) : -1;
     s.context_menu.CloseMenu();
     LogCtxTiming(s, cmd);
     if (from_chip && RunToolbarAppMenuCommand(s, cmd)) return;
@@ -2180,8 +2247,8 @@ void ShowItemContextMenu(AppState& s, POINT screen_pt, bool from_chip) {
     if (const std::wstring* folder = window_folder(app::CmdCopyToWindowBase)) TransferSelectionToFolder(s, *folder, false);
     else if (const std::wstring* moved_to = window_folder(app::CmdMoveToWindowBase)) TransferSelectionToFolder(s, *moved_to, true);
     else if (cmd == app::CmdTags) ShowTagPicker(s, screen_pt);
-    else if (cmd >= app::CmdTagBase && cmd < app::CmdTagBase + quick_count)
-        ToggleTagForSelection(s, s.places.tags[static_cast<size_t>(cmd - app::CmdTagBase)].id, paths);
+    else if (favorite_index >= 0)
+        ToggleTagForSelection(s, s.places.tags[static_cast<size_t>(favorite_index)].id, paths);
     else if (cmd != app::CmdNone) DispatchMenuCommand(s, cmd);
 }
 

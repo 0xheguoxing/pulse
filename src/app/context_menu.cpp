@@ -103,7 +103,7 @@ std::vector<ui::FluentMenuItem> BuildItemMenu(bool can_undo, const std::wstring&
     items.push_back(Item(CmdPinWorkspace, l10n::Get(l10n::StringId::PinWorkspace).c_str(), kGlyphFolder));
     items.push_back(Item(CmdPinNetwork, l10n::Get(l10n::StringId::PinNetwork).c_str(), kGlyphLink));
     items.back().separator_after = true;
-    items.push_back(Item(CmdTags, l10n::Get(l10n::StringId::TagsEllipsis).c_str(), kGlyphTag));
+    items.push_back(Item(CmdTags, l10n::Get(l10n::StringId::TagsEllipsis).c_str(), kGlyphTag, L"Alt+T"));
     items.back().separator_after = true;
     items.push_back(UndoItem(can_undo, undo_label));
     return items;

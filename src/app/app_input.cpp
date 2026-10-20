@@ -4365,15 +4365,13 @@ LRESULT HandleMouseWheel(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM
         return 0;
 }
 
-// Shift+F10 / Apps key: the item menu under the focused item, otherwise the
-// folder background menu at the list's top-left corner.
-void ShowKeyboardContextMenu(AppState& s) {
+// Where a keyboard-opened menu appears (screen coordinates): under the focused
+// item when something is selected, otherwise at the list's top-left corner.
+static POINT KeyboardMenuPoint(AppState& s) {
     app::Tab* tab = ActiveTab(s);
-    if (!tab || !s.hwnd) return;
     const D2D1_RECT_F list = ListRect(s);
     POINT pt{ static_cast<LONG>(list.left + 24.0f * s.scale), static_cast<LONG>(list.top + 12.0f * s.scale) };
-    const bool items = !SelectedFullPaths(*tab).empty();
-    if (items && tab->selected_index >= 0) {
+    if (tab && !SelectedFullPaths(*tab).empty() && tab->selected_index >= 0) {
         EnsureRowVisible(s, *tab, tab->selected_index);
         ui::PaneViewModel pane;
         app::FillPaneViewModel(pane, *s.pane, &s.places);
@@ -4387,7 +4385,16 @@ void ShowKeyboardContextMenu(AppState& s) {
         }
     }
     ClientToScreen(s.hwnd, &pt);
-    if (items) ShowItemContextMenu(s, pt);
+    return pt;
+}
+
+// Shift+F10 / Apps key: the item menu under the focused item, otherwise the
+// folder background menu at the list's top-left corner.
+void ShowKeyboardContextMenu(AppState& s) {
+    app::Tab* tab = ActiveTab(s);
+    if (!tab || !s.hwnd) return;
+    const POINT pt = KeyboardMenuPoint(s);
+    if (!SelectedFullPaths(*tab).empty()) ShowItemContextMenu(s, pt);
     else ShowBackgroundContextMenu(s, pt);
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
@@ -4492,14 +4499,23 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             }
             case A::ViewMode: ChooseViewMode(*s, ui::ViewModeFromIndex(explorer.index)); break;
             case A::Tag: {
-                app::Tab* t = ActiveTab(*s);
-                if (t && explorer.index < static_cast<int>(s->places.tags.size())) {
-                    const auto tag_id=s->places.tags[static_cast<size_t>(explorer.index)].id;
+                // Alt+N follows the favorite slot, not the sidebar order.
+                const int index = s->places.FavoriteTagIndex(explorer.index + 1);
+                if (index >= 0) {
+                    const auto tag_id=s->places.tags[static_cast<size_t>(index)].id;
                     auto apply=[tag_id](AppState& v){if(auto* current=ActiveTab(v)) ToggleTagForSelection(v,tag_id,SelectedFullPaths(*current));};
                     if(!DeferContentSelection(*s,apply)) apply(*s);
                 }
                 break;
             }
+            case A::ClearTags: {
+                auto apply=[](AppState& v){if(auto* current=ActiveTab(v)) ClearTagsForSelection(v,SelectedFullPaths(*current));};
+                if(!DeferContentSelection(*s,apply)) apply(*s);
+                break;
+            }
+            case A::TagPanel:
+                if (tab->SelectedCount() > 0) ShowTagPicker(*s, KeyboardMenuPoint(*s));
+                break;
             case A::Back: GoBack(*s); break;
             case A::ContextMenu: ShowKeyboardContextMenu(*s); break;
             case A::Maximize: ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE); break;

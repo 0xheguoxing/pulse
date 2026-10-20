@@ -50,7 +50,7 @@ enum class KeyAction : uint8_t {
     GlobalSearch,
     Open, Back, Forward, Up, GoToPath, Refresh, MoveFocus,
     QuickPreview, Copy, Cut, Paste, CopyPath, StageToTray, Undo, Rename, BatchRename, NewFolder, Delete,
-    PermanentDelete, Properties, ContextMenu, ToggleTag,
+    PermanentDelete, Properties, ContextMenu, ToggleTag, ClearTags, TagPanel,
     SelectAll, InvertSelection, SelectPattern,
     Search, CommandBar, Project, Filter, AdvancedSearch,
     NewTab, CloseTab, NextTab, TabNumber, Layout, ViewMode, NextPane, MarkTarget, CopyToTarget,
