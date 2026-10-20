@@ -4,11 +4,15 @@
 #include "../app/cloud_roots.h"
 #include "../fs/cloud_state.h"
 #include "../app/cloud_sync_probe.h"
+#include "../fs/cloud_pin.h"
+#include "../ui/cloud_swap.h"
 #include <objbase.h>
 #include <unordered_map>
 
 #include <windows.h>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 using namespace pulse::app;
@@ -262,6 +266,125 @@ int main() {
                   pulse::app::QueryStorageProviderState(L"Z:\\no\\such\\file") == 0,
               "real query: a local folder is idle, a missing path reads as none");
         if (SUCCEEDED(com)) CoUninitialize();
+    }
+
+    {
+        // 始终保留 / 释放空间: attribute arithmetic, then a real tree on NTFS
+        // (PINNED / UNPINNED are plain settable attributes without a provider).
+        using pulse::fs::CloudPinAction;
+        using pulse::fs::CloudPinAttrs;
+        using pulse::fs::CloudPinChanges;
+        constexpr DWORD P = pulse::fs::kAttrPinned, U = pulse::fs::kAttrUnpinned;
+        Check(CloudPinAttrs(FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_ARCHIVE | U, CloudPinAction::Keep) ==
+                  (FILE_ATTRIBUTE_ARCHIVE | P),
+              "pin: keep swaps UNPINNED for PINNED and drops DIRECTORY");
+        Check(CloudPinAttrs(pulse::fs::kAttrRecallOnDataAccess | FILE_ATTRIBUTE_REPARSE_POINT |
+                                FILE_ATTRIBUTE_SPARSE_FILE | FILE_ATTRIBUTE_READONLY | P,
+                            CloudPinAction::Free) == (FILE_ATTRIBUTE_READONLY | U),
+              "pin: free keeps READONLY, masks recall / reparse / sparse");
+        Check(!CloudPinChanges(P, CloudPinAction::Keep) && CloudPinChanges(P | U, CloudPinAction::Keep) &&
+                  CloudPinChanges(0, CloudPinAction::Free) && !CloudPinChanges(U, CloudPinAction::Free),
+              "pin: only real changes are written");
+        Check(pulse::fs::IsCloudReparseTag(0x9000001A) && pulse::fs::IsCloudReparseTag(0x9000F01A) &&
+                  !pulse::fs::IsCloudReparseTag(0xA0000003) && !pulse::fs::IsCloudReparseTag(0xA000000C),
+              "pin: cloud reparse tags recognised, junction / symlink not");
+
+        wchar_t tmp[MAX_PATH]{};
+        GetTempPathW(MAX_PATH, tmp);
+        const std::wstring top = std::wstring(tmp) + L"pulse_cloud_pin_" + std::to_wstring(GetCurrentProcessId());
+        const std::wstring root = top + L"\\root", outside = top + L"\\outside";
+        const auto touch = [](const std::wstring& path) {
+            const HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+            if (h != INVALID_HANDLE_VALUE) {
+                DWORD n = 0;
+                WriteFile(h, "pulse", 5, &n, nullptr);
+                CloseHandle(h);
+            }
+        };
+        for (const auto& folder : {top, root, outside, root + L"\\sub", root + L"\\online"}) CreateDirectoryW(folder.c_str(), nullptr);
+        touch(root + L"\\a.txt");
+        touch(root + L"\\sub\\b.txt");
+        touch(root + L"\\online\\c.txt");
+        touch(outside + L"\\x.txt");
+        SetFileAttributesW((root + L"\\a.txt").c_str(), FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN);
+        const std::wstring junction = root + L"\\link";
+        const std::wstring mk = L"cmd /c mklink /J \"" + junction + L"\" \"" + outside + L"\" >nul 2>nul";
+        _wsystem(mk.c_str());
+        const bool have_junction = (GetFileAttributesW(junction.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) != 0 &&
+                                   GetFileAttributesW(junction.c_str()) != INVALID_FILE_ATTRIBUTES;
+        const auto attrs = [](const std::wstring& path) { return GetFileAttributesW(path.c_str()); };
+        const DWORD link_before = attrs(junction);
+
+        auto r = pulse::fs::ApplyCloudPin({root}, CloudPinAction::Keep);
+        bool pinned = true;
+        for (const auto& f : {root, root + L"\\a.txt", root + L"\\sub", root + L"\\sub\\b.txt", root + L"\\online",
+                              root + L"\\online\\c.txt"})
+            pinned = pinned && (attrs(f) & P) && !(attrs(f) & U);
+        Check(pinned && r.changed == 6 && r.failed == 0 && !r.cancelled, "pin: keep pins the folder and all below it");
+        Check((attrs(root + L"\\a.txt") & (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN)) ==
+                  (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN),
+              "pin: other attributes survive");
+        Check(!(attrs(outside + L"\\x.txt") & P) && (!have_junction || attrs(junction) == link_before),
+              have_junction ? "pin: a junction is neither touched nor entered" : "pin: junction case skipped (mklink failed)");
+
+        SetFileAttributesW((root + L"\\online").c_str(), FILE_ATTRIBUTE_OFFLINE | P); // an online-only folder
+        r = pulse::fs::ApplyCloudPin({root}, CloudPinAction::Free);
+        bool freed = true;
+        for (const auto& f : {root, root + L"\\a.txt", root + L"\\sub", root + L"\\sub\\b.txt", root + L"\\online"})
+            freed = freed && (attrs(f) & U) && !(attrs(f) & P);
+        Check(freed && r.changed == 5 && r.failed == 0, "pin: free unpins the folder and all below it");
+        Check((attrs(root + L"\\online\\c.txt") & P) && (attrs(root + L"\\online") & FILE_ATTRIBUTE_OFFLINE),
+              "pin: free does not enter an online-only folder");
+        Check(attrs(root + L"\\a.txt") != INVALID_FILE_ATTRIBUTES && attrs(root + L"\\sub\\b.txt") != INVALID_FILE_ATTRIBUTES,
+              "pin: no file is ever removed");
+        r = pulse::fs::ApplyCloudPin({root + L"\\sub\\"}, CloudPinAction::Free);
+        Check(r.changed == 0 && r.visited == 2, "pin: a second free changes nothing (trailing slash accepted)");
+        std::atomic<bool> stop{true};
+        r = pulse::fs::ApplyCloudPin({root}, CloudPinAction::Keep, &stop);
+        Check(r.cancelled && r.changed == 0, "pin: a cancelled run writes nothing");
+        r = pulse::fs::ApplyCloudPin({root + L"\\gone.txt"}, CloudPinAction::Keep);
+        Check(r.failed == 1 && r.changed == 0, "pin: a missing item counts as failed");
+
+        if (have_junction) RemoveDirectoryW(junction.c_str());
+        for (const auto& f : {root + L"\\a.txt", root + L"\\sub\\b.txt", root + L"\\online\\c.txt", outside + L"\\x.txt"}) {
+            SetFileAttributesW(f.c_str(), FILE_ATTRIBUTE_NORMAL);
+            DeleteFileW(f.c_str());
+        }
+        for (const auto& folder : {root + L"\\sub", root + L"\\online", root, outside, top}) {
+            SetFileAttributesW(folder.c_str(), FILE_ATTRIBUTE_NORMAL);
+            RemoveDirectoryW(folder.c_str());
+        }
+        Check(attrs(top) == INVALID_FILE_ATTRIBUTES && attrs(outside + L"\\x.txt") == INVALID_FILE_ATTRIBUTES,
+              "pin fixture removed");
+    }
+
+    {
+        // Status icon swap (design .cbadge.swap / .st.swap: newf .5s cubic-bezier(.3,1.5,.5,1)).
+        using pulse::ui::CubicBezierAt;
+        Check(std::fabs(CubicBezierAt(0.3f, 1.5f, 0.5f, 1.0f, 0.0f)) < 1e-3f &&
+                  std::fabs(CubicBezierAt(0.3f, 1.5f, 0.5f, 1.0f, 1.0f) - 1.0f) < 1e-3f &&
+                  std::fabs(CubicBezierAt(0.25f, 0.25f, 0.75f, 0.75f, 0.3f) - 0.3f) < 1e-3f,
+              "swap: bezier ends at 0 and 1, the linear curve is linear");
+        float peak = 0.0f;
+        for (int i = 1; i < 100; ++i) peak = std::max(peak, CubicBezierAt(0.3f, 1.5f, 0.5f, 1.0f, i / 100.0f));
+        Check(peak > 1.05f && peak < 1.3f, "swap: newf overshoots like the CSS curve");
+        pulse::ui::CloudSwapTracker swaps;
+        auto pose = swaps.Pose(7, L'\xE930', 1000, true);
+        Check(!pose.running && pose.scale == 1.0f, "swap: first sighting does not animate");
+        pose = swaps.Pose(7, L'\xE930', 1100, true);
+        Check(!pose.running, "swap: an unchanged icon stays still");
+        pose = swaps.Pose(7, L'\xE895', 2000, true);
+        Check(pose.running && std::fabs(pose.scale - 0.6f) < 1e-3f && pose.alpha < 1e-3f,
+              "swap: a changed icon starts at 0.6, transparent");
+        float max_scale = 0.0f;
+        for (uint64_t t = 2000; t < 2500; t += 10) max_scale = std::max(max_scale, swaps.Pose(7, L'\xE895', t, true).scale);
+        Check(max_scale > 1.0f, "swap: the pop passes full size before settling");
+        pose = swaps.Pose(7, L'\xE895', 2500, true);
+        Check(!pose.running && pose.scale == 1.0f && pose.alpha == 1.0f, "swap: settled after 500 ms");
+        pose = swaps.Pose(7, L'\xEC61', 3000, false);
+        Check(!pose.running && pose.scale == 1.0f, "swap: animations off settles at once");
+        pose = swaps.Pose(8, L'\xE753', 3000, true);
+        Check(!pose.running && swaps.Size() == 2, "swap: rows are tracked apart");
     }
 
     RegDeleteTreeW(HKEY_CURRENT_USER, prefix.c_str());

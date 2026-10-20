@@ -19,6 +19,7 @@
 #include "file_name_breaks.h"
 #include "../fs/cloud_state.h"
 #include "../app/cloud_sync_probe.h"
+#include "cloud_swap.h"
 #include <windowsx.h>
 #include <d2d1effects.h>
 #include <shlwapi.h>
@@ -67,7 +68,10 @@ struct CloudLook {
 
 static CloudLook CloudLookFor(const ListEntryView& entry, const Theme& theme) {
     const bool dark = theme.bg.r < 0.5f;
-    switch (app::CloudSyncProbe::Instance().Lookup(entry.path, entry.modified_value)) {
+    // The probe caches by a stamp; folding the attributes in makes 始终保留 /
+    // 释放空间 (attributes only, mtime unchanged) ask the sync engine again.
+    const uint64_t stamp = entry.modified_value ^ (static_cast<uint64_t>(entry.attrs) * 0x9E3779B97F4A7C15ull);
+    switch (app::CloudSyncProbe::Instance().Lookup(entry.path, stamp)) {
     case fs::CloudSync::Syncing:
         return {L"\xE895", HexColor(dark ? 0x6CB4F0 : 0x3B82C4), l10n::Get(l10n::StringId::CloudStateSyncing)};
     case fs::CloudSync::Error:
@@ -76,6 +80,16 @@ static CloudLook CloudLookFor(const ListEntryView& entry, const Theme& theme) {
     }
     const fs::CloudState state = fs::CloudStateFromAttrs(entry.attrs);
     return {CloudStateGlyph(state), CloudStateInk(state, theme), CloudStateLabel(state)};
+}
+
+// One swap tracker for every window; keys mix in the renderer so two windows
+// showing the same row each animate their own icon (ui/cloud_swap.h).
+static CloudSwapPose CloudSwapFor(const void* owner, const std::wstring& path, int slot, wchar_t glyph,
+                                  uint64_t now) {
+    static CloudSwapTracker tracker;
+    const uint64_t key = std::hash<std::wstring>{}(path) ^
+                         (reinterpret_cast<uintptr_t>(owner) * 0x9E3779B97F4A7C15ull) ^ static_cast<uint64_t>(slot);
+    return tracker.Pose(key, glyph, now, motion::SystemAnimationsEnabled());
 }
 
 
@@ -1676,13 +1690,20 @@ void MainRenderer::DrawCloudBadge(const ListEntryView& entry, const D2D1_RECT_F&
     const float art = std::min(artwork.right - artwork.left, artwork.bottom - artwork.top);
     if (!dc || art < 24.0f * scale_ || opacity <= 0.0f) return;
     const CloudLook look = CloudLookFor(entry, theme);
-    const float d = std::round(std::clamp(art * 0.34f, 16.0f * scale_, 22.0f * scale_));
+    const CloudSwapPose pose = CloudSwapFor(this, entry.path, 0, look.glyph[0], motion_now_);
+    if (pose.running) RequestMotionFrame();
+    opacity *= pose.alpha;
+    const float settled = std::round(std::clamp(art * 0.34f, 16.0f * scale_, 22.0f * scale_));
     // Shell icons: hang off the bottom-left like the prototype's badge.
     // Pictures fill their slot, so the badge sits inside the top-left corner,
     // clear of the open-with and duration badges along the bottom.
     const float inset = 6.0f * scale_;
-    const float left = picture ? artwork.left + inset : artwork.left - d * 0.3f;
-    const float top = picture ? artwork.top + inset : artwork.bottom - d * 0.75f;
+    const float settledLeft = picture ? artwork.left + inset : artwork.left - settled * 0.3f;
+    const float settledTop = picture ? artwork.top + inset : artwork.bottom - settled * 0.75f;
+    // Scaled about its own centre while it pops.
+    const float d = settled * pose.scale;
+    const float left = settledLeft + (settled - d) * 0.5f;
+    const float top = settledTop + (settled - d) * 0.5f;
     const D2D1_ELLIPSE circle = D2D1::Ellipse(D2D1::Point2F(left + d * 0.5f, top + d * 0.5f), d * 0.5f, d * 0.5f);
     D2D1_COLOR_F plate = theme.surface_flyout;
     plate.a = opacity;
@@ -4733,8 +4754,10 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         const float iconW = 16.0f * scale_;
                         if (avail < iconW) break;
                         const CloudLook look = CloudLookFor(e, theme);
+                        const CloudSwapPose pose = CloudSwapFor(this, e.path, 1, look.glyph[0], motion_now_);
+                        if (pose.running) RequestMotionFrame();
                         DrawIconText(left, cell.top, iconW, cell.bottom - cell.top, look.glyph, L"",
-                                     WithAlpha(look.ink, cut ? 0.55f : 1.0f), 0.8f);
+                                     WithAlpha(look.ink, (cut ? 0.55f : 1.0f) * pose.alpha), 0.8f * pose.scale);
                         const float textLeft = left + iconW + 6.0f * scale_;
                         const float textAvail = std::max(0.0f, left + avail - textLeft);
                         if (textAvail > 1.0f)

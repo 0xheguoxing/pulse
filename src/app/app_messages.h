@@ -65,7 +65,8 @@ constexpr UINT WM_ZIP_COMPRESS = WM_APP + 93;  // 压缩: wParam 0 still running
 constexpr UINT WM_ZIP_CANCEL = WM_APP + 94;  // the 压缩 snack: cancel
 constexpr UINT WM_DEFERRED_STARTUP = WM_APP + 95;  // posted by the first WM_CREATE: build what the first frame does not need
 constexpr UINT WM_REGISTER_DROP_TARGET = WM_APP + 96;  // posted by every WM_CREATE: RegisterDragDrop once the first frame is up
-// WM_APP + 97 .. 99 are free.
+constexpr UINT WM_CLOUD_PIN_DONE = WM_APP + 97;  // 始终保留 / 释放空间 finished: wParam CloudPinAction, lParam failed count
+// WM_APP + 98 .. 99 are free.
 constexpr UINT WM_TRAY_UNDO = WM_APP + 100;      // the tray release snack: undo the copy / move
 constexpr UINT WM_TRAY_OPEN_DEST = WM_APP + 101;  // the tray release snack: open the target folder
 constexpr UINT WM_TRAY_RESTORE = WM_APP + 102;   // the 已清空暂存区 snack: put the items back

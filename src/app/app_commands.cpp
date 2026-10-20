@@ -54,6 +54,9 @@
 #include "search_refresh_log.h"
 #include "selection_caps.h"
 #include "drive_verbs.h"
+#include "cloud_roots.h"
+#include "../fs/cloud_pin.h"
+#include "../fs/cloud_state.h"
 #include "bitlocker_unlock.h"
 #include "../fs/bitlocker_volume.h"
 #include "app_navigation.h"
@@ -1226,6 +1229,26 @@ void ApplyDriveVerbResult(AppState& s, const app::DriveVerbResult& result) {
     }
 }
 
+// 始终保留在此设备上 / 释放空间: flip the pin attributes of the selection (and
+// everything under selected folders) off the UI thread, then report back with
+// WM_CLOUD_PIN_DONE. The sync engine does the downloading or freeing; the
+// watcher's attribute notifications redraw the rows as their state moves.
+static void RunCloudPin(AppState& s, fs::CloudPinAction action) {
+    const app::Tab* tab = ActiveTab(s);
+    if (!tab || !app::IsUnderCloudFilesRoot(tab->current_path)) return;
+    std::vector<std::wstring> paths = SelectedFullPaths(*tab);
+    if (paths.empty()) return;
+    const HWND hwnd = s.hwnd;
+    // Its own thread: a large pinned tree must not hold up folder loads queued
+    // on the worker pool.
+    std::thread([hwnd, action, paths = std::move(paths)] {
+        const fs::CloudPinResult result = fs::ApplyCloudPin(paths, action);
+        if (hwnd && IsWindow(hwnd))
+            PostMessageW(hwnd, WM_CLOUD_PIN_DONE, static_cast<WPARAM>(action),
+                         static_cast<LPARAM>(std::min<size_t>(result.failed, 0x7FFFFFFF)));
+    }).detach();
+}
+
 static void FlipToolbarTool(AppState& s, size_t index);
 
 void DispatchMenuCommand(AppState& s, int cmd) {
@@ -1396,6 +1419,8 @@ void DispatchMenuCommand(AppState& s, int cmd) {
     case app::CmdDissolveFolder: DissolveSelectedFolders(s); break;
     case app::CmdSetAlias: ShowAliasOverlay(s); break;
     case app::CmdStageToTray: StageSelection(s); break;
+    case app::CmdCloudKeep: RunCloudPin(s, fs::CloudPinAction::Keep); break;
+    case app::CmdCloudFree: RunCloudPin(s, fs::CloudPinAction::Free); break;
     case app::CmdAdvancedSearch: ShowAdvancedSearch(s); break;
     case app::CmdRestoreRecycle: RestoreSelected(s); break;
     case app::CmdRestoreAllRecycle: RestoreAllRecycle(s); break;
@@ -1655,6 +1680,30 @@ void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const ap
                              [](const ui::FluentMenuItem& item) { return item.command == app::CmdOpen; });
     items.insert(open == items.end() ? items.begin() : open + 1, verbs.begin(), verbs.end());
 }
+
+// A selection inside a Cloud Files folder (OneDrive, WPS网盘, ...) gets
+// 始终保留在此设备上 / 释放空间 right after 打开, as Explorer does. Each greys
+// out when it would change nothing for any selected item.
+void AppendCloudPinCommands(const app::Tab& tab, std::vector<ui::FluentMenuItem>& items) {
+    if (!tab.snapshot || tab.SelectedCount() == 0 || !app::IsUnderCloudFilesRoot(tab.current_path)) return;
+    bool can_keep = false, can_free = false;
+    for (int index : tab.SelectedIndices()) {
+        if (index < 0 || index >= static_cast<int>(tab.EntryCount())) continue;
+        const fs::CloudState state = fs::CloudStateFromAttrs(tab.EntryAt(static_cast<size_t>(index)).attrs);
+        can_keep |= state != fs::CloudState::Pinned;
+        can_free |= state != fs::CloudState::Online;
+    }
+    ui::FluentMenuItem keep = VerbRow(app::CmdCloudKeep, l10n::Get(l10n::StringId::CloudKeepOnDevice), L"\xE718");
+    keep.enabled = can_keep;
+    ui::FluentMenuItem release = VerbRow(app::CmdCloudFree, l10n::Get(l10n::StringId::CloudFreeUpSpace), L"\xE753");
+    release.enabled = can_free;
+    release.separator_after = true;
+    auto open = std::find_if(items.begin(), items.end(),
+                             [](const ui::FluentMenuItem& item) { return item.command == app::CmdOpen; });
+    if (open != items.end()) open->separator_after = true;
+    const ui::FluentMenuItem rows[] = {std::move(keep), std::move(release)};
+    items.insert(open == items.end() ? items.begin() : open + 1, std::begin(rows), std::end(rows));
+}
 } // namespace
 
 std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
@@ -1765,6 +1814,7 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         items.insert(items.begin() + 1, std::move(compare));
     }
     if (tab) AdaptItemMenu(s, items, app::ComputeSelectionCaps(*tab, &s.places));
+    if (tab) AppendCloudPinCommands(*tab, items);
     return items;
 }
 

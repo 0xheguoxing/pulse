@@ -2442,4 +2442,9 @@ BEGIN
     IDS_DETAILS_COLUMN_CLOUD_ONLY "僅限雲端硬碟資料夾"
     IDS_CLOUD_STATE_SYNCING "同步中"
     IDS_CLOUD_STATE_ERROR "同步發生問題"
+    IDS_CLOUD_KEEP_ON_DEVICE "一律保留在此裝置上"
+    IDS_CLOUD_FREE_UP_SPACE "釋放空間"
+    IDS_CLOUD_FREED_TOAST "已釋放 · 檔案仍在雲端，需要時再下載"
+    IDS_CLOUD_KEPT_TOAST "已設為一律保留 · 雲端硬碟會在背景下載"
+    IDS_CLOUD_PIN_FAILED "有 {n} 項無法變更"
 END

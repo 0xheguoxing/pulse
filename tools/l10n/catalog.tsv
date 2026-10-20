@@ -1194,6 +1194,11 @@ DetailsColumnCloudOnly	IDS_DETAILS_COLUMN_CLOUD_ONLY	3668	仅网盘文件夹	Clo
 // Sync engine states for on-screen cloud rows (System.StorageProviderState).
 CloudStateSyncing	IDS_CLOUD_STATE_SYNCING	3669	同步中	Syncing	同步中
 CloudStateError	IDS_CLOUD_STATE_ERROR	3670	同步出错	Sync problem	同步發生問題
+CloudKeepOnDevice	IDS_CLOUD_KEEP_ON_DEVICE	3671	始终保留在此设备上	Always keep on this device	一律保留在此裝置上
+CloudFreeUpSpace	IDS_CLOUD_FREE_UP_SPACE	3672	释放空间	Free up space	釋放空間
+CloudFreedToast	IDS_CLOUD_FREED_TOAST	3673	已释放 · 文件还在云端，需要时再下载	Space freed · the files stay in the cloud and download when needed	已釋放 · 檔案仍在雲端，需要時再下載
+CloudKeptToast	IDS_CLOUD_KEPT_TOAST	3674	已设为始终保留 · 网盘会在后台下载	Kept on this device · the drive downloads them in the background	已設為一律保留 · 雲端硬碟會在背景下載
+CloudPinFailed	IDS_CLOUD_PIN_FAILED	3675	有 {n} 项未能更改	{n} items could not be changed	有 {n} 項無法變更
 SidebarCloudHiddenHint	IDS_SIDEBAR_CLOUD_HIDDEN_HINT	2516	已从侧边栏隐藏。右键任一分区标题或侧边栏底部空白处，可以重新显示。	Hidden from the sidebar. Right-click any section title or the empty space at the bottom of the sidebar to show it again.	已從側邊欄隱藏。在任一區段標題或側邊欄底部空白處按右鍵，即可重新顯示。
 SidebarShowHidden	IDS_SIDEBAR_SHOW_HIDDEN	2517	显示已隐藏的分区	Show hidden sections	顯示已隱藏的區段
 SettingsDefaultManagerDesc	IDS_SETTINGS_DEFAULT_MANAGER_DESC	1481	文件夹、磁盘、此电脑和 Win+E 都用 Pulse 打开；关闭即恢复资源管理器	Folders, drives, This PC and Win+E open in Pulse; turn off to restore File Explorer	資料夾、磁碟、本機和 Win+E 都用 Pulse 開啟；關閉即恢復檔案總管

@@ -178,6 +178,9 @@ void UnregisterAssocChangeNotify() {
 #include <dbt.h> // WM_DEVICECHANGE / DEV_BROADCAST_HDR
 
 using namespace pulse;
+namespace pulse {
+void DispatchMenuCommand(AppState& s, int cmd); // app_commands.cpp (--menushot PULSE_TEST_MENU_RUN)
+}
 
 uint64_t FileTimeValue(const FILETIME& value) {
     ULARGE_INTEGER result{};
@@ -1794,6 +1797,23 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_DETAILS_TREE_UNDO:
         if (s) UndoDetailsTreeExpand(*s);
+        return 0;
+
+    case WM_CLOUD_PIN_DONE:
+        // Toast for 始终保留在此设备上 / 释放空间 (app_commands.cpp RunCloudPin).
+        if (s && s->hwnd) {
+            const bool freed = wParam == 1; // fs::CloudPinAction::Free
+            std::wstring title;
+            ui::SnackIcon icon = ui::SnackIcon::Suggest;
+            if (lParam > 0) {
+                title = l10n::Get(l10n::StringId::CloudPinFailed);
+                if (const size_t at = title.find(L"{n}"); at != std::wstring::npos)
+                    title.replace(at, 3, std::to_wstring(static_cast<long long>(lParam)));
+            } else {
+                title = l10n::Get(freed ? l10n::StringId::CloudFreedToast : l10n::StringId::CloudKeptToast);
+            }
+            s->notification_toast.ShowSnack(s->hwnd, icon, std::move(title), {}, {}, {}, 3000);
+        }
         return 0;
 
     case WM_UNDO_DELETE:
@@ -3819,6 +3839,35 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             // BuildFinderItemMenu only checks current_path for the search bit.
             state.pane->ActiveTab()->current_path = L"pulse:search:widgets.json";
         }
+        // PULSE_TEST_MENU_SELECT=name|name...: let the folder on the command line
+        // list, then select those rows, so the shot shows the rows that depend
+        // on the selection (网盘: 始终保留在此设备上 / 释放空间).
+        wchar_t menu_select[512]{};
+        const DWORD select_len = GetEnvironmentVariableW(L"PULSE_TEST_MENU_SELECT", menu_select, ARRAYSIZE(menu_select));
+        if (ok && select_len > 0 && select_len < ARRAYSIZE(menu_select)) {
+            if (!state.shot.path.empty()) NewTab(state, state.shot.path);
+            const ULONGLONG until = GetTickCount64() + 5000;
+            app::Tab* tab = nullptr;
+            while (GetTickCount64() < until) {
+                MSG pending;
+                while (PeekMessageW(&pending, nullptr, 0, 0, PM_REMOVE)) {
+                    TranslateMessage(&pending);
+                    DispatchMessageW(&pending);
+                }
+                ProcessPendingResults(state);
+                tab = ActiveTab(state);
+                if (tab && !tab->loading && tab->snapshot && tab->EntryCount() > 0) break;
+                Sleep(20);
+            }
+            if (tab && tab->snapshot) {
+                const std::wstring wanted = L"|" + std::wstring(menu_select) + L"|";
+                std::vector<int> picks;
+                for (size_t i = 0; i < tab->EntryCount(); ++i)
+                    if (wanted.find(L"|" + tab->EntryAt(i).name + L"|") != std::wstring::npos)
+                        picks.push_back(static_cast<int>(i));
+                tab->SelectIndices(picks);
+            }
+        }
         if (ok) {
             m.SetTheme(state.darkMode, state.accentColor);
             auto debug_items = BuildFinderItemMenu(state, true, L"撤销移动 a.txt");
@@ -3862,6 +3911,22 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
                 debug_items.push_back(std::move(compare));
             }
             ok = m.SaveDebugSnapshot(state.menushot_out.c_str(), std::move(debug_items));
+            // PULSE_TEST_MENU_RUN=<command id>: then run that command on the
+            // selection and keep pumping so its worker reports back (end-to-end
+            // check of 始终保留 / 释放空间 on a fixture folder).
+            wchar_t menu_run[16]{};
+            if (ok && GetEnvironmentVariableW(L"PULSE_TEST_MENU_RUN", menu_run, ARRAYSIZE(menu_run)) > 0) {
+                DispatchMenuCommand(state, _wtoi(menu_run));
+                const ULONGLONG until = GetTickCount64() + 3000;
+                while (GetTickCount64() < until) {
+                    MSG pending;
+                    while (PeekMessageW(&pending, nullptr, 0, 0, PM_REMOVE)) {
+                        TranslateMessage(&pending);
+                        DispatchMessageW(&pending);
+                    }
+                    Sleep(20);
+                }
+            }
         }
         DestroyWindow(hwnd);
         OleUninitialize();

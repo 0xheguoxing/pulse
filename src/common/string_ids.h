@@ -1187,6 +1187,11 @@
 // Sync engine states for on-screen cloud rows (System.StorageProviderState).
 #define IDS_CLOUD_STATE_SYNCING                                                          3669
 #define IDS_CLOUD_STATE_ERROR                                                            3670
+#define IDS_CLOUD_KEEP_ON_DEVICE                                                         3671
+#define IDS_CLOUD_FREE_UP_SPACE                                                          3672
+#define IDS_CLOUD_FREED_TOAST                                                            3673
+#define IDS_CLOUD_KEPT_TOAST                                                             3674
+#define IDS_CLOUD_PIN_FAILED                                                             3675
 #define IDS_SIDEBAR_CLOUD_HIDDEN_HINT                                                    2516
 #define IDS_SIDEBAR_SHOW_HIDDEN                                                          2517
 #define IDS_SETTINGS_DEFAULT_MANAGER_DESC                                                1481

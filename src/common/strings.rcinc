@@ -2444,6 +2444,11 @@ BEGIN
     IDS_DETAILS_COLUMN_CLOUD_ONLY "仅网盘文件夹"
     IDS_CLOUD_STATE_SYNCING "同步中"
     IDS_CLOUD_STATE_ERROR "同步出错"
+    IDS_CLOUD_KEEP_ON_DEVICE "始终保留在此设备上"
+    IDS_CLOUD_FREE_UP_SPACE "释放空间"
+    IDS_CLOUD_FREED_TOAST "已释放 · 文件还在云端，需要时再下载"
+    IDS_CLOUD_KEPT_TOAST "已设为始终保留 · 网盘会在后台下载"
+    IDS_CLOUD_PIN_FAILED "有 {n} 项未能更改"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4887,6 +4892,11 @@ BEGIN
     IDS_DETAILS_COLUMN_CLOUD_ONLY "Cloud folders only"
     IDS_CLOUD_STATE_SYNCING "Syncing"
     IDS_CLOUD_STATE_ERROR "Sync problem"
+    IDS_CLOUD_KEEP_ON_DEVICE "Always keep on this device"
+    IDS_CLOUD_FREE_UP_SPACE "Free up space"
+    IDS_CLOUD_FREED_TOAST "Space freed · the files stay in the cloud and download when needed"
+    IDS_CLOUD_KEPT_TOAST "Kept on this device · the drive downloads them in the background"
+    IDS_CLOUD_PIN_FAILED "{n} items could not be changed"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.
