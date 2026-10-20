@@ -5,6 +5,8 @@
 // passing: old files migrate to windows[0], and the single-window fields that
 // older versions read stay ahead of windows[] in the file.
 #include "../app/session.h"
+#include "../app/app_model.h"
+#include "../app/places.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -375,6 +377,41 @@ int main() {
               "M7f: a closed window without tabs is dropped");
         Check(SessionToJson(SampleSession()).find(L"closedWindows") == std::wstring::npos,
               "M7f: no closedWindows[] when nothing was closed");
+    }
+
+    {
+        // Quick-access layout keys and the display order the sidebar uses.
+        using Keys = std::vector<std::wstring>;
+        bool names = true;
+        for (int i = 0; i < static_cast<int>(BuiltinQuickAccess::Count); ++i)
+            names = names && BuiltinQuickAccessFromKey(BuiltinQuickAccessKey(i)) == i;
+        Check(names && BuiltinQuickAccessKey(static_cast<int>(BuiltinQuickAccess::Pictures)) ==
+                           L"builtin:pictures" &&
+                  BuiltinQuickAccessFromKey(L"C:\\builtin") == -1 &&
+                  BuiltinQuickAccessFromKey(L"builtin:nope") == -1 &&
+                  IsBuiltinQuickAccessKey(BuiltinQuickAccessKey(0)),
+              "quick-access link keys round-trip and never look like paths");
+        std::vector<SidebarEntry> links(3);
+        links[0].builtin = static_cast<int>(BuiltinQuickAccess::Recent);
+        links[1].builtin = static_cast<int>(BuiltinQuickAccess::Desktop);
+        links[2].builtin = static_cast<int>(BuiltinQuickAccess::Music);
+        const uint32_t music_hidden = 1u << static_cast<int>(BuiltinQuickAccess::Music);
+        PlacesCatalog places;
+        places.persist = false;
+        places.quick_access_paths = {L"C:\\a", L"C:\\b"};
+        Check(QuickAccessDisplayKeys(links, &places, music_hidden, false) ==
+                  Keys{L"builtin:recent", L"builtin:desktop", L"C:\\a", L"C:\\b"},
+              "default quick-access order: links, then pins; hidden links drop out");
+        places.quick_access_order = {L"C:\\b", L"builtin:music", L"builtin:recent"};
+        Check(QuickAccessDisplayKeys(links, &places, music_hidden, true) ==
+                  Keys{L"C:\\b", L"builtin:music", L"builtin:recent", L"builtin:desktop", L"C:\\a"},
+              "custom quick-access order: saved rows first, missing ones in default places");
+        Check(QuickAccessDisplayKeys(links, &places, music_hidden, false) ==
+                  Keys{L"C:\\b", L"builtin:recent", L"builtin:desktop", L"C:\\a"},
+              "custom quick-access order without the hidden links");
+        Check(QuickAccessDisplayKeys(links, nullptr, 0, true) ==
+                  Keys{L"builtin:recent", L"builtin:desktop", L"builtin:music"},
+              "quick-access order without places lists the links");
     }
 
     std::printf("session_window_test: %d failure(s)\n", g_failures);

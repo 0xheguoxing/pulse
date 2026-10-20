@@ -92,6 +92,12 @@ static std::wstring TagKey(const std::wstring& p) {
     return key;
 }
 
+// Comparison form of a quick-access layout key: built-in keys as they are,
+// paths normalized and case-folded like the pin list.
+static std::wstring QuickAccessKeyId(const std::wstring& key) {
+    return IsBuiltinQuickAccessKey(key) ? key : TagKey(key);
+}
+
 static TagId NewTagId() {
     GUID guid{};
     if (FAILED(CoCreateGuid(&guid))) return L"tag-" + std::to_wstring(GetTickCount64());
@@ -398,6 +404,7 @@ bool PlacesCatalog::Load() {
     tags.clear();
     networks.clear();
     quick_access_paths.clear();
+    quick_access_order.clear();
     starred_items.clear();
     quick_access_badges.clear();
     recent_items.clear();
@@ -455,6 +462,16 @@ bool PlacesCatalog::Load() {
         const auto normalized = Norm(path);
         if (!normalized.empty() && !fs::IsVirtualPath(normalized) &&
             !IsQuickAccessPinned(normalized)) quick_access_paths.push_back(normalized);
+    }
+    {
+        std::unordered_set<std::wstring> order_seen;
+        for (const auto& key : pulse::json::ExtractStringArray(json, L"quick_access_order")) {
+            const bool builtin = IsBuiltinQuickAccessKey(key);
+            std::wstring value = builtin ? key : Norm(key);
+            if (value.empty() || (!builtin && fs::IsVirtualPath(value))) continue;
+            if (order_seen.insert(QuickAccessKeyId(value)).second)
+                quick_access_order.push_back(std::move(value));
+        }
     }
 
     const bool has_starred_items = pulse::json::ValuePosition(
@@ -569,6 +586,7 @@ PlacesCatalog::SaveSnapshot PlacesCatalog::CaptureSaveSnapshot() const {
     }
     snapshot.networks = networks;
     snapshot.quick_access_paths = quick_access_paths;
+    snapshot.quick_access_order = quick_access_order;
     snapshot.starred_items = starred_items;
     snapshot.quick_access_badges = quick_access_badges;
     snapshot.recent_items = recent_items;
@@ -741,6 +759,8 @@ bool PlacesCatalog::SaveSnapshotFile(const SaveSnapshot& snapshot) {
     writeArr(legacy_starred);
     f << L",\n  \"quick_access_paths\":";
     writeArr(snapshot.quick_access_paths);
+    f << L",\n  \"quick_access_order\":";
+    writeArr(snapshot.quick_access_order);
     f << L",\n  \"starred_items\":[\n";
     for (size_t i = 0; i < snapshot.starred_items.size(); ++i) {
         const auto& item = snapshot.starred_items[i];
@@ -1383,6 +1403,115 @@ bool PlacesCatalog::ReorderQuickAccessPinned(const std::wstring& path, size_t po
     return true;
 }
 
+bool IsBuiltinQuickAccessKey(std::wstring_view key) noexcept {
+    return key.starts_with(L"builtin:");
+}
+
+std::vector<std::wstring> MergeQuickAccessOrder(const std::vector<std::wstring>& order,
+                                                const std::vector<std::wstring>& defaults) {
+    if (order.empty()) return defaults;
+    std::unordered_map<std::wstring, size_t> default_index;
+    default_index.reserve(defaults.size());
+    for (size_t i = 0; i < defaults.size(); ++i)
+        default_index.emplace(QuickAccessKeyId(defaults[i]), i);
+    std::vector<bool> placed(defaults.size(), false);
+    std::vector<size_t> merged;  // indices into defaults
+    merged.reserve(defaults.size());
+    for (const auto& key : order) {
+        const auto found = default_index.find(QuickAccessKeyId(key));
+        if (found == default_index.end() || placed[found->second]) continue;
+        placed[found->second] = true;
+        merged.push_back(found->second);
+    }
+    for (size_t i = 0; i < defaults.size(); ++i) {
+        if (placed[i]) continue;
+        placed[i] = true;
+        if (!IsBuiltinQuickAccessKey(defaults[i])) {
+            merged.push_back(i);
+            continue;
+        }
+        // Right after the nearest earlier default row, or first.
+        size_t at = 0;
+        for (size_t j = i; j-- > 0;) {
+            const auto pos = std::find(merged.begin(), merged.end(), j);
+            if (pos != merged.end()) {
+                at = static_cast<size_t>(pos - merged.begin()) + 1;
+                break;
+            }
+        }
+        merged.insert(merged.begin() + static_cast<std::ptrdiff_t>(at), i);
+    }
+    std::vector<std::wstring> keys;
+    keys.reserve(merged.size());
+    for (size_t index : merged) keys.push_back(defaults[index]);
+    return keys;
+}
+
+std::vector<std::wstring> MoveQuickAccessKey(std::vector<std::wstring> keys,
+                                             const std::vector<std::wstring>& visible,
+                                             const std::wstring& key, size_t gap) {
+    const std::wstring id = QuickAccessKeyId(key);
+    const auto same = [&](const std::wstring& candidate) { return QuickAccessKeyId(candidate) == id; };
+    const auto found = std::find_if(keys.begin(), keys.end(), same);
+    if (found == keys.end()) return keys;
+    std::wstring moved = std::move(*found);
+    keys.erase(found);
+    const auto index_of = [&](const std::wstring& value) {
+        const std::wstring value_id = QuickAccessKeyId(value);
+        const auto at = std::find_if(keys.begin(), keys.end(),
+            [&](const std::wstring& candidate) { return QuickAccessKeyId(candidate) == value_id; });
+        return static_cast<size_t>(at - keys.begin());
+    };
+    gap = (std::min)(gap, visible.size());
+    // Before the first visible row at or after the gap, skipping the dragged
+    // row (its own two gaps leave the order as it was); the end gap goes after
+    // the last visible row.
+    size_t at = keys.size();
+    bool placed = false;
+    for (size_t i = gap; i < visible.size() && !placed; ++i) {
+        if (same(visible[i])) continue;
+        at = index_of(visible[i]);
+        placed = true;
+    }
+    for (size_t i = visible.size(); !placed && i-- > 0;) {
+        if (same(visible[i])) continue;
+        at = (std::min)(index_of(visible[i]) + 1, keys.size());
+        placed = true;
+    }
+    keys.insert(keys.begin() + static_cast<std::ptrdiff_t>((std::min)(at, keys.size())),
+                std::move(moved));
+    return keys;
+}
+
+bool PlacesCatalog::SetQuickAccessLayout(const std::vector<std::wstring>& keys,
+                                         const std::vector<std::wstring>& builtin_defaults) {
+    std::vector<std::wstring> pins;
+    std::vector<std::wstring> builtins;
+    std::vector<std::wstring> layout;
+    std::unordered_set<std::wstring> seen;
+    for (const auto& key : keys) {
+        const bool builtin = IsBuiltinQuickAccessKey(key);
+        std::wstring value = builtin ? key : Norm(key);
+        if (value.empty() || (!builtin && fs::IsVirtualPath(value))) continue;
+        if (!seen.insert(QuickAccessKeyId(value)).second) continue;
+        (builtin ? builtins : pins).push_back(value);
+        layout.push_back(std::move(value));
+    }
+    std::vector<std::wstring> fallback;
+    fallback.reserve(layout.size());
+    for (const auto& key : builtin_defaults) {
+        if (std::find(builtins.begin(), builtins.end(), key) != builtins.end())
+            fallback.push_back(key);
+    }
+    fallback.insert(fallback.end(), pins.begin(), pins.end());
+    if (fallback == layout) layout.clear();
+    if (pins == quick_access_paths && layout == quick_access_order) return false;
+    quick_access_paths = std::move(pins);
+    quick_access_order = std::move(layout);
+    Save();
+    return true;
+}
+
 bool PlacesCatalog::SetQuickAccessPinned(const std::vector<std::wstring>& paths, bool pinned) {
     bool changed = false;
     for (const auto& path : paths) {
@@ -1398,6 +1527,9 @@ bool PlacesCatalog::SetQuickAccessPinned(const std::vector<std::wstring>& paths,
             const auto key = TagKey(normalized);
             changed |= std::erase_if(quick_access_paths,
                 [&](const auto& value) { return TagKey(value) == key; }) != 0;
+            std::erase_if(quick_access_order, [&](const std::wstring& value) {
+                return !IsBuiltinQuickAccessKey(value) && TagKey(value) == key;
+            });
         }
     }
     if (changed) Save();
@@ -1426,6 +1558,15 @@ void PlacesCatalog::RemapPaths(const std::wstring& old_path, const std::wstring&
     }
     std::erase_if(quick_access_paths, [&](const auto& path) {
         return !quick_seen.insert(TagKey(path)).second;
+    });
+    for (auto& key : quick_access_order) {
+        if (IsBuiltinQuickAccessKey(key) || !PathIsOrDescendant(key, old_norm)) continue;
+        key = new_norm + key.substr(old_norm.size());
+        changed = true;
+    }
+    std::unordered_set<std::wstring> order_seen;
+    std::erase_if(quick_access_order, [&](const std::wstring& key) {
+        return !order_seen.insert(QuickAccessKeyId(key)).second;
     });
     for (auto& item : starred_items) {
         if (!PathIsOrDescendant(item.path, old_norm)) continue;

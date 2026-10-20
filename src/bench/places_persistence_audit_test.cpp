@@ -1,4 +1,5 @@
 #include "../app/places.h"
+#include "../fs/fs_enum.h"
 #include "../app/context_menu_prefs.h"
 #include "../common/utf8_file.h"
 #include <filesystem>
@@ -90,6 +91,63 @@ static void WorkspaceRoundTrip() {
         }
     }
 }
+static void QuickAccessLayout() {
+    using Keys = std::vector<std::wstring>;
+    const Keys defaults = {L"builtin:recent", L"builtin:desktop", L"C:\\a", L"C:\\b"};
+    Check(MergeQuickAccessOrder({}, defaults) == defaults, "QA order: no saved order keeps the defaults");
+    Check(MergeQuickAccessOrder({L"C:\\b", L"builtin:desktop", L"C:\\A", L"builtin:recent"}, defaults) ==
+              Keys{L"C:\\b", L"builtin:desktop", L"C:\\a", L"builtin:recent"},
+          "QA order: the saved order wins and paths match case-insensitively");
+    const Keys grown = {L"builtin:recent", L"builtin:desktop", L"builtin:pictures",
+                        L"C:\\a", L"C:\\b", L"C:\\c"};
+    Check(MergeQuickAccessOrder({L"C:\\b", L"builtin:desktop", L"C:\\gone", L"C:\\a", L"builtin:recent"}, grown) ==
+              Keys{L"C:\\b", L"builtin:desktop", L"builtin:pictures", L"C:\\a", L"builtin:recent", L"C:\\c"},
+          "QA order: a new link follows its default predecessor, a new pin goes last, stale keys drop");
+
+    const Keys keys = {L"builtin:recent", L"builtin:desktop", L"builtin:downloads", L"C:\\a", L"C:\\b"};
+    const Keys visible = {L"builtin:recent", L"builtin:desktop", L"C:\\a", L"C:\\b"};
+    Check(MoveQuickAccessKey(keys, visible, L"C:\\b", 0) ==
+              Keys{L"C:\\b", L"builtin:recent", L"builtin:desktop", L"builtin:downloads", L"C:\\a"},
+          "QA move: a pin goes above the built-in links");
+    Check(MoveQuickAccessKey(keys, visible, L"builtin:recent", 4) ==
+              Keys{L"builtin:desktop", L"builtin:downloads", L"C:\\a", L"C:\\b", L"builtin:recent"},
+          "QA move: a link goes to the end");
+    Check(MoveQuickAccessKey(keys, visible, L"C:\\a", 2) == keys &&
+              MoveQuickAccessKey(keys, visible, L"C:\\a", 3) == keys,
+          "QA move: the row's own gaps change nothing");
+    Check(MoveQuickAccessKey(keys, visible, L"C:\\a", 1) ==
+              Keys{L"builtin:recent", L"C:\\a", L"builtin:desktop", L"builtin:downloads", L"C:\\b"},
+          "QA move: hidden links keep their places");
+
+    const Keys builtin = {L"builtin:recent", L"builtin:desktop"};
+    // The catalog stores pins in their normalized (extended-length) form.
+    const std::wstring a = pulse::fs::NormalizePath(L"C:\\a");
+    const std::wstring b = pulse::fs::NormalizePath(L"C:\\b");
+    const std::wstring z = pulse::fs::NormalizePath(L"C:\\z");
+    PlacesCatalog c;
+    c.quick_access_paths = {L"C:\\a", L"C:\\b"};
+    Check(c.SetQuickAccessLayout({L"builtin:recent", L"builtin:desktop", L"C:\\b", L"C:\\a"}, builtin) &&
+              c.quick_access_order.empty() && c.quick_access_paths == Keys{b, a},
+          "QA layout: the default arrangement stores only the pin order");
+    Check(c.SetQuickAccessLayout({L"C:\\a", L"builtin:recent", L"builtin:desktop"}, builtin) &&
+              c.quick_access_paths == Keys{a} &&
+              c.quick_access_order == Keys{a, L"builtin:recent", L"builtin:desktop"},
+          "QA layout: a mixed order is stored and dropped pins are unpinned");
+    Check(!c.SetQuickAccessLayout({L"C:\\a", L"builtin:recent", L"builtin:desktop"}, builtin),
+          "QA layout: an unchanged layout is not saved again");
+    {
+        PlacesCatalog reader;
+        Check(reader.Load() && reader.quick_access_order == c.quick_access_order &&
+                  reader.quick_access_paths == c.quick_access_paths,
+              "QA layout: the order survives save and reload");
+    }
+    c.RemapPaths(L"C:\\a", L"C:\\z");
+    Check(c.quick_access_order.size() == 3 && c.quick_access_order[0] == z,
+          "QA layout: a renamed pinned folder keeps its place");
+    c.SetQuickAccessPinned({L"C:\\z"}, false);
+    Check(c.quick_access_order == Keys{L"builtin:recent", L"builtin:desktop"},
+          "QA layout: unpinning removes the folder from the order");
+}
 int main(int argc, char** argv) {
     const auto root = std::filesystem::absolute(L"bench_data/places-audit-" + std::to_wstring(GetCurrentProcessId()));
     if (std::filesystem::exists(root)) return 2;
@@ -101,6 +159,7 @@ int main(int argc, char** argv) {
         return failures ? 1 : 0;
     }
     Menu();
+    QuickAccessLayout();
     {
         PlacesCatalog c;
         c.quick_access_paths = {L"C:\\old"};

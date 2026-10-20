@@ -2447,6 +2447,11 @@ enum class StringId : UINT {
     AliasMark = IDS_ALIAS_MARK,
     AliasMarkDesc = IDS_ALIAS_MARK_DESC,
     Music = IDS_MUSIC,
+    QuickAccessEdit = IDS_QA_EDIT,
+    QuickAccessEditTitle = IDS_QA_EDIT_TITLE,
+    QuickAccessEditHint = IDS_QA_EDIT_HINT,
+    QuickAccessEditAddFolder = IDS_QA_EDIT_ADD_FOLDER,
+    QuickAccessEditDone = IDS_QA_EDIT_DONE,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

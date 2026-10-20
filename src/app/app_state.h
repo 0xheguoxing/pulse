@@ -788,6 +788,7 @@ struct AppState : AppCoreOwner {
     bool pinDragActive = false;
     POINT pinDragStartPt{};
     std::wstring pinDragPath;
+    std::wstring pinDragKey;             // quick-access layout key of the dragged row
     int pinDragRun = -1;                 // slot.run of the dragged row (highlight)
     int pinDragToIndex = -1;             // target position among the pins
     float pinGapLineY = 0.0f;

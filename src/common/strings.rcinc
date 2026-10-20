@@ -2437,6 +2437,11 @@ BEGIN
     IDS_INTEGRATION_COMPAT "兼容打开方式"
     IDS_INTEGRATION_COMPAT_DESC "双击文件夹没反应时勾选：Pulse 不再改动文件夹的双击动作，改为资源管理器先打开，再马上转到 Pulse，可能会闪一下。"
     IDS_MUSIC "音乐"
+    IDS_QA_EDIT "编辑快速访问…"
+    IDS_QA_EDIT_TITLE "编辑快速访问"
+    IDS_QA_EDIT_HINT "勾选的项目显示在侧边栏，拖动可调整顺序"
+    IDS_QA_EDIT_ADD_FOLDER "添加文件夹…"
+    IDS_QA_EDIT_DONE "完成"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4873,6 +4878,11 @@ BEGIN
     IDS_INTEGRATION_COMPAT "Compatibility mode"
     IDS_INTEGRATION_COMPAT_DESC "Turn on if double-clicking a folder does nothing: Pulse leaves the double-click action alone, lets File Explorer open the folder, then moves it into Pulse right away. It may flash briefly."
     IDS_MUSIC "Music"
+    IDS_QA_EDIT "Edit Quick access…"
+    IDS_QA_EDIT_TITLE "Edit Quick access"
+    IDS_QA_EDIT_HINT "Checked items show in the sidebar. Drag to reorder."
+    IDS_QA_EDIT_ADD_FOLDER "Add folder…"
+    IDS_QA_EDIT_DONE "Done"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

@@ -1553,6 +1553,58 @@ static ui::SidebarGroup ConvertGroup(const std::wstring& header, const std::vect
     return g;
 }
 
+// Stored in places.json: a name never changes, new links get new names.
+constexpr const wchar_t* kBuiltinQuickAccessNames[] = {
+    L"recent", L"desktop", L"downloads", L"recycle_bin",
+    L"pictures", L"videos", L"documents", L"music",
+};
+static_assert(sizeof(kBuiltinQuickAccessNames) / sizeof(kBuiltinQuickAccessNames[0]) ==
+              static_cast<size_t>(BuiltinQuickAccess::Count));
+constexpr std::wstring_view kBuiltinQuickAccessPrefix = L"builtin:";  // IsBuiltinQuickAccessKey
+
+std::wstring BuiltinQuickAccessKey(int builtin) {
+    if (builtin < 0 || builtin >= static_cast<int>(BuiltinQuickAccess::Count)) return {};
+    return std::wstring(kBuiltinQuickAccessPrefix) + kBuiltinQuickAccessNames[builtin];
+}
+
+int BuiltinQuickAccessFromKey(const std::wstring& key) {
+    std::wstring_view name = key;
+    if (!name.starts_with(kBuiltinQuickAccessPrefix)) return -1;
+    name.remove_prefix(kBuiltinQuickAccessPrefix.size());
+    for (int i = 0; i < static_cast<int>(BuiltinQuickAccess::Count); ++i) {
+        if (name == kBuiltinQuickAccessNames[i]) return i;
+    }
+    return -1;
+}
+
+std::vector<std::wstring> BuiltinQuickAccessDefaultKeys(const std::vector<SidebarEntry>& quick_access) {
+    std::vector<std::wstring> keys;
+    keys.reserve(quick_access.size());
+    for (const auto& entry : quick_access) {
+        std::wstring key = BuiltinQuickAccessKey(entry.builtin);
+        if (!key.empty()) keys.push_back(std::move(key));
+    }
+    return keys;
+}
+
+std::vector<std::wstring> QuickAccessDisplayKeys(const std::vector<SidebarEntry>& quick_access,
+                                                 const PlacesCatalog* places,
+                                                 uint32_t hidden_mask, bool include_hidden) {
+    std::vector<std::wstring> keys = BuiltinQuickAccessDefaultKeys(quick_access);
+    if (places) {
+        keys.insert(keys.end(), places->quick_access_paths.begin(),
+                    places->quick_access_paths.end());
+        keys = MergeQuickAccessOrder(places->quick_access_order, keys);
+    }
+    if (!include_hidden) {
+        std::erase_if(keys, [&](const std::wstring& key) {
+            const int builtin = BuiltinQuickAccessFromKey(key);
+            return builtin >= 0 && ((hidden_mask >> builtin) & 1u) != 0;
+        });
+    }
+    return keys;
+}
+
 static std::wstring EntryPathOf(const Tab& tab, const fs::DirEntry& e) {
     if (!e.full_path.empty()) return e.full_path;
     if (fs::IsVirtualPath(tab.current_path)) return {};
@@ -2163,17 +2215,32 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
         }
     }
 
-    // Built-in quick-access links the user switched off in the section menu.
-    std::vector<SidebarEntry> quick_access_visible;
-    quick_access_visible.reserve(sidebar.quick_access.size());
-    for (const auto& entry : sidebar.quick_access) {
-        if (entry.builtin >= 0 &&
-            ((quick_access_hidden_mask >> entry.builtin) & 1u) != 0) continue;
-        quick_access_visible.push_back(entry);
-    }
-    access = ConvertGroup(
-        l10n::Get(l10n::StringId::SidebarQuickAccess), quick_access_visible, false);
+    // Quick access: the built-in links (minus the ones switched off) and the
+    // pinned folders, mixed in the user's order when there is one. The Git
+    // project row goes in front of the first pin, where it has always been.
+    access = ConvertGroup(l10n::Get(l10n::StringId::SidebarQuickAccess), {}, false);
     access.add_action = ui::SidebarAddAction::AddQuickAccess;
+    size_t first_pin_row = static_cast<size_t>(-1);
+    for (const auto& key : QuickAccessDisplayKeys(sidebar.quick_access, places,
+                                                  quick_access_hidden_mask, false)) {
+        const int builtin = BuiltinQuickAccessFromKey(key);
+        if (builtin >= 0) {
+            const auto entry = std::find_if(sidebar.quick_access.begin(), sidebar.quick_access.end(),
+                [&](const SidebarEntry& candidate) { return candidate.builtin == builtin; });
+            if (entry == sidebar.quick_access.end()) continue;
+            ui::SidebarGroup converted = ConvertGroup({}, {*entry}, false);
+            access.items.push_back(std::move(converted.items.front()));
+            continue;
+        }
+        if (first_pin_row == static_cast<size_t>(-1)) first_pin_row = access.items.size();
+        ui::SidebarItem pin;
+        pin.label = TabTitle(key);
+        pin.path = key;
+        pin.icon_glyph = L"\xE8B7";
+        pin.fallback_text = L"Dir";
+        pin.icon_color = ui::HexColor(0xFBBF24);
+        access.items.push_back(std::move(pin));
+    }
     starred_section = ConvertGroup(l10n::Get(l10n::StringId::StarredItems),
                                    sidebar.starred, false);
     if (!starred_section.items.empty()) {
@@ -2201,7 +2268,9 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
         }
     }
     const std::wstring& gitRoot = tab->git_root;
-    if (!gitRoot.empty() && (!places || !places->IsStarred(gitRoot))) {
+    // A pinned repository already has its row.
+    if (!gitRoot.empty() &&
+        (!places || (!places->IsStarred(gitRoot) && !places->IsQuickAccessPinned(gitRoot)))) {
         ui::SidebarItem project;
         wchar_t project_label[512]{};
         swprintf_s(project_label, l10n::Get(l10n::StringId::ProjectFormat).c_str(),
@@ -2212,18 +2281,9 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
         project.fallback_text = L"Repo";
         project.icon_color = ui::HexColor(0x34D399);
         project.badge = L"Git";
-        access.items.push_back(std::move(project));
-    }
-    if (places) {
-        for (const auto& path : places->quick_access_paths) {
-            ui::SidebarItem item;
-            item.label = TabTitle(path);
-            item.path = path;
-            item.icon_glyph = L"\xE8B7";
-            item.fallback_text = L"Dir";
-            item.icon_color = ui::HexColor(0xFBBF24);
-            access.items.push_back(std::move(item));
-        }
+        const size_t project_at = (std::min)(first_pin_row, access.items.size());
+        access.items.insert(access.items.begin() + static_cast<std::ptrdiff_t>(project_at),
+                            std::move(project));
     }
     savedSearches = ConvertGroup(l10n::Get(l10n::StringId::SidebarSavedSearches),
                                  sidebar.saved_searches, false);

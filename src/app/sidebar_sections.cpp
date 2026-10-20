@@ -3,8 +3,10 @@
 // File Explorer puts a context menu on the navigation-pane background that decides
 // which sections the pane shows. Pulse keeps its sections in a fixed order, so the
 // same idea becomes one checked entry per section plus a bulk expand/collapse pair.
+#include <algorithm>
 #include "app_internal.h"
 #include "app_commands.h"
+#include "quick_access.h"
 #include "../common/localization.h"
 #include "../ui/fluent_menu.h"
 
@@ -21,6 +23,7 @@ constexpr int kExpandAll = 32100;
 constexpr int kCollapseAll = 32101;
 // Section menu (opened on a section header or its empty space).
 constexpr int kBuiltinBase = 32200; // + BuiltinQuickAccess
+constexpr int kEditQuickAccess = 32250;
 constexpr int kCollapseSection = 32300;
 constexpr int kExpandSection = 32301;
 constexpr int kHideSection = 32302;
@@ -117,15 +120,27 @@ void ShowSidebarSectionMenu(AppState& s, int section, POINT screen_pt) {
     if (!EnsureMenu(s)) return;
     std::vector<ui::FluentMenuItem> items;
     if (IsQuickAccessSection(section)) {
+        ui::FluentMenuItem edit;
+        edit.command = kEditQuickAccess;
+        edit.text = l10n::Get(I::QuickAccessEdit);
+        edit.glyph = L"\xE70F";
+        edit.separator_after = true;
+        items.push_back(std::move(edit));
         // One entry per built-in link; each toggles just that row. Labels come
-        // from the model, so the menu and the sidebar always read the same.
-        for (const auto& entry : s.sidebar.quick_access) {
-            if (entry.builtin < 0 ||
-                entry.builtin >= static_cast<int>(app::BuiltinQuickAccess::Count)) continue;
+        // from the model and the order from the user's layout, so the menu and
+        // the sidebar always read the same.
+        const auto keys = app::QuickAccessDisplayKeys(
+            s.sidebar.quick_access, &s.places, s.sidebarQuickAccessHiddenMask, true);
+        for (const auto& key : keys) {
+            const int builtin = app::BuiltinQuickAccessFromKey(key);
+            if (builtin < 0) continue;
+            const auto entry = std::find_if(s.sidebar.quick_access.begin(), s.sidebar.quick_access.end(),
+                [&](const app::SidebarEntry& e) { return e.builtin == builtin; });
+            if (entry == s.sidebar.quick_access.end()) continue;
             ui::FluentMenuItem item;
-            item.command = kBuiltinBase + entry.builtin;
-            item.text = entry.label;
-            item.checked = ((s.sidebarQuickAccessHiddenMask >> entry.builtin) & 1u) == 0;
+            item.command = kBuiltinBase + builtin;
+            item.text = entry->label;
+            item.checked = ((s.sidebarQuickAccessHiddenMask >> builtin) & 1u) == 0;
             if (item.checked) item.glyph = kIconCheck;
             items.push_back(std::move(item));
         }
@@ -160,6 +175,10 @@ void ShowSidebarSectionMenu(AppState& s, int section, POINT screen_pt) {
     }
 
     const int command = s.menu->TrackPopup(screen_pt, std::move(items));
+    if (command == kEditQuickAccess) {
+        ShowQuickAccessEditor(s, screen_pt);
+        return;
+    }
     if (command >= kBuiltinBase &&
         command < kBuiltinBase + static_cast<int>(app::BuiltinQuickAccess::Count)) {
         s.sidebarQuickAccessHiddenMask ^= 1u << (command - kBuiltinBase);

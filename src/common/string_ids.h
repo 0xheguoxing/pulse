@@ -2451,5 +2451,10 @@
 #define IDS_ALIAS_MARK                                                                   3657
 #define IDS_ALIAS_MARK_DESC                                                              3658
 #define IDS_MUSIC                                                                        3663
+#define IDS_QA_EDIT                                                                      3664
+#define IDS_QA_EDIT_TITLE                                                                3665
+#define IDS_QA_EDIT_HINT                                                                 3666
+#define IDS_QA_EDIT_ADD_FOLDER                                                           3667
+#define IDS_QA_EDIT_DONE                                                                 3668
 
 #endif  // PULSE_STRING_IDS_H

@@ -1119,13 +1119,15 @@ void ResetSidebarPinDrag(AppState& s) {
     s.pinDragPending = false;
     s.pinDragActive = false;
     s.pinDragPath.clear();
+    s.pinDragKey.clear();
     s.pinDragRun = -1;
     s.pinDragToIndex = -1;
     s.pinGapVisible = false;
     s.pinGapLineY = 0.0f;
 }
 
-// Insertion slot for the dragged pin, measured against the pinned rows only.
+// Insertion slot for the dragged quick-access row, measured against the rows
+// that move: built-in links and pins (not the Git project row).
 void UpdateSidebarPinDrag(AppState& s, int my) {
     if (!s.pinDragActive || s.pinDragPath.empty()) return;
     if (UpdateVerticalTabDrag(s, my)) return;  // tab rows share this gesture
@@ -1133,19 +1135,14 @@ void UpdateSidebarPinDrag(AppState& s, int my) {
     const float w = static_cast<float>(s.compositor.Width());
     const float h = static_cast<float>(s.compositor.Height());
     const int section = static_cast<int>(app::SidebarSectionId::QuickAccess);
-    const auto& pins = s.places.quick_access_paths;
 
     std::vector<D2D1_RECT_F> rows;
-    rows.reserve(pins.size());
     const int group = app::SidebarSectionIndex(vm, section);
     if (group >= 0) {
-        const auto& items = vm.sidebar[static_cast<size_t>(group)].items;
-        for (int i = 0; i < static_cast<int>(items.size()); ++i) {
-            const bool pinned = std::any_of(pins.begin(), pins.end(),
-                [&](const std::wstring& candidate) {
-                    return _wcsicmp(candidate.c_str(), items[static_cast<size_t>(i)].path.c_str()) == 0;
-                });
-            if (!pinned) continue;
+        const auto keys = QuickAccessGroupRowKeys(s, vm.sidebar[static_cast<size_t>(group)]);
+        rows.reserve(keys.size());
+        for (int i = 0; i < static_cast<int>(keys.size()); ++i) {
+            if (keys[static_cast<size_t>(i)].empty()) continue;
             D2D1_RECT_F rc{};
             if (s.renderer.SidebarRowRect(vm, w, h, section, i, &rc)) rows.push_back(rc);
         }
@@ -3507,13 +3504,17 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
                 s->starDragTarget = found == folders.end()
                     ? 0 : static_cast<size_t>(found - folders.begin());
                 SetCapture(hwnd);
-            } else if (s->places.IsQuickAccessPinned(hit.path)) {
-                // Pinned rows reorder inside quick access; navigation waits for
-                // the release so a press can become a drag.
+            } else if (std::wstring qa_row_key = QuickAccessRowKey(*s, vm, hit.sidebar_section,
+                                                                   hit.sidebar_item);
+                       !qa_row_key.empty()) {
+                // Quick-access rows (built-in links and pins) reorder inside the
+                // section; navigation waits for the release so a press can
+                // become a drag.
                 s->pinDragPending = true;
                 s->pinDragActive = false;
                 s->pinDragStartPt = POINT{ mx, my };
                 s->pinDragPath = hit.path;
+                s->pinDragKey = std::move(qa_row_key);
                 s->pinDragRun = hit.index;
                 s->pinDragToIndex = -1;
                 s->pinGapVisible = false;
@@ -3856,12 +3857,13 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 const bool was_active = s->pinDragActive;
                 const std::wstring path = s->pinDragPath;
                 const bool tab_row = IsVerticalTabPath(path);
+                const std::wstring qa_drag_key = s->pinDragKey;
                 if (was_active && s->pinDragToIndex >= 0) {
                     if (tab_row)
                         CommitVerticalTabDrag(*s, path, static_cast<size_t>(s->pinDragToIndex));
-                    else
-                        s->places.ReorderQuickAccessPinned(path,
-                            static_cast<size_t>(s->pinDragToIndex));
+                    else if (!qa_drag_key.empty())
+                        CommitQuickAccessDrag(*s, qa_drag_key,
+                                              static_cast<size_t>(s->pinDragToIndex));
                 }
                 ResetSidebarPinDrag(*s);
                 if (GetCapture() == hwnd) ReleaseCapture();

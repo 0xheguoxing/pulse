@@ -2458,3 +2458,8 @@ RenameTrailingTrimmed	IDS_RENAME_TRAILING_TRIMMED	3656	名称末尾的空格和�
 AliasMark	IDS_ALIAS_MARK	3657	别名旁显示小图标	Show a mark beside aliases	別名旁顯示小圖示
 AliasMarkDesc	IDS_ALIAS_MARK_DESC	3658	在列表、侧栏和地址栏里用小图标标出设置了别名的项目	Mark aliased items with a small icon in lists, the sidebar and the address bar	在清單、側欄和網址列中用小圖示標出設定了別名的項目
 Music	IDS_MUSIC	3663	音乐	Music	音樂
+QuickAccessEdit	IDS_QA_EDIT	3664	编辑快速访问…	Edit Quick access…	編輯快速存取…
+QuickAccessEditTitle	IDS_QA_EDIT_TITLE	3665	编辑快速访问	Edit Quick access	編輯快速存取
+QuickAccessEditHint	IDS_QA_EDIT_HINT	3666	勾选的项目显示在侧边栏，拖动可调整顺序	Checked items show in the sidebar. Drag to reorder.	勾選的項目顯示在側邊欄，拖曳可調整順序
+QuickAccessEditAddFolder	IDS_QA_EDIT_ADD_FOLDER	3667	添加文件夹…	Add folder…	新增資料夾…
+QuickAccessEditDone	IDS_QA_EDIT_DONE	3668	完成	Done	完成

@@ -84,6 +84,22 @@ struct TagAdsUpdate {
     std::vector<TagAdsRecord> tags;
 };
 
+// Quick-access layout keys: L"builtin:<name>" for a built-in link (see
+// BuiltinQuickAccessKey in app_model.h), the folder path for a pinned folder.
+bool IsBuiltinQuickAccessKey(std::wstring_view key) noexcept;
+// Display order of the quick-access rows. `defaults` lists every row in its
+// default place (built-in links, then pins); `order` is the user's arrangement.
+// Rows `order` does not mention still get a place: a built-in link follows its
+// default predecessor, a folder pinned later goes to the end. Keys of rows that
+// no longer exist are dropped. Paths compare case-insensitively.
+std::vector<std::wstring> MergeQuickAccessOrder(const std::vector<std::wstring>& order,
+                                                const std::vector<std::wstring>& defaults);
+// Moves `key` within `keys` to gap `gap` (0..visible.size()) of `visible`, the
+// rows on screen (a subsequence of `keys`; hidden links keep their places).
+std::vector<std::wstring> MoveQuickAccessKey(std::vector<std::wstring> keys,
+                                             const std::vector<std::wstring>& visible,
+                                             const std::wstring& key, size_t gap);
+
 class PlacesCatalog {
 public:
     PlacesCatalog() = default;
@@ -92,6 +108,9 @@ public:
     std::vector<ColorTag> tags;
     std::vector<NetworkPlace> networks;
     std::vector<std::wstring> quick_access_paths;
+    // The user's quick-access arrangement, built-in links and pins mixed (see
+    // MergeQuickAccessOrder). Empty means the default order.
+    std::vector<std::wstring> quick_access_order;
     std::vector<StarredItem> starred_items;
     std::vector<QuickAccessBadge> quick_access_badges;
     std::vector<RecentItem> recent_items;
@@ -152,6 +171,13 @@ public:
     bool SetQuickAccessPinned(const std::vector<std::wstring>& paths, bool pinned);
     // Moves a pinned folder to a gap in the original pin list (0..size, clamped).
     bool ReorderQuickAccessPinned(const std::wstring& path, size_t position);
+    // Stores a whole quick-access layout, `keys` in display order. The pins
+    // become exactly the pin keys, in that order; the order list is kept only
+    // when it differs from the default (the built-in links first, in
+    // `builtin_defaults` order, then the pins), so links added by a later
+    // version still land in their default places.
+    bool SetQuickAccessLayout(const std::vector<std::wstring>& keys,
+                              const std::vector<std::wstring>& builtin_defaults);
 
     bool IsStarred(const std::wstring& path) const;
     const StarredItem* FindStarred(const std::wstring& path) const;
@@ -194,6 +220,7 @@ private:
         std::vector<ColorTag> tags;
         std::vector<NetworkPlace> networks;
         std::vector<std::wstring> quick_access_paths;
+        std::vector<std::wstring> quick_access_order;
         std::vector<StarredItem> starred_items;
         std::vector<QuickAccessBadge> quick_access_badges;
         std::vector<RecentItem> recent_items;

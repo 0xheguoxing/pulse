@@ -592,6 +592,13 @@ inline constexpr uint32_t kDefaultQuickAccessHiddenMask =
     (1u << static_cast<int>(BuiltinQuickAccess::Documents)) |
     (1u << static_cast<int>(BuiltinQuickAccess::Music));
 
+// Layout keys of the built-in links in the quick-access order list (places
+// "quick_access_order"): L"builtin:pictures" and so on. They are stored, so a
+// name never changes. Empty for values outside BuiltinQuickAccess.
+std::wstring BuiltinQuickAccessKey(int builtin);
+// The BuiltinQuickAccess value of a key, or -1 for pins and unknown names.
+int BuiltinQuickAccessFromKey(const std::wstring& key);
+
 // Sidebar sections. The ids are stable: the collapse/hide bitmasks stored in the
 // session are indexed by them, and the user may reorder the groups by dragging.
 enum class SidebarSectionId : int {
@@ -648,6 +655,14 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
                                          bool starred_expanded = true,
                                          const std::vector<int>* sidebar_order = nullptr,
                                          uint32_t quick_access_hidden_mask = 0);
+// Keys of the built-in links in quick_access (the sidebar's default order).
+std::vector<std::wstring> BuiltinQuickAccessDefaultKeys(const std::vector<SidebarEntry>& quick_access);
+// Quick-access rows in display order: built-in links and pinned folders, in the
+// user's arrangement when places has one (MergeQuickAccessOrder). Links switched
+// off in hidden_mask are left out unless include_hidden (the editor lists them).
+std::vector<std::wstring> QuickAccessDisplayKeys(const std::vector<SidebarEntry>& quick_access,
+                                                 const PlacesCatalog* places,
+                                                 uint32_t hidden_mask, bool include_hidden);
 
 // Sanitizes a stored section order: keeps only known ids, appends the missing
 // ones, drops duplicates. Returns DefaultSidebarOrder() when nothing survives.

@@ -2435,4 +2435,9 @@ BEGIN
     IDS_INTEGRATION_COMPAT "相容開啟方式"
     IDS_INTEGRATION_COMPAT_DESC "按兩下資料夾沒反應時勾選：Pulse 不再改動資料夾的按兩下動作，改為檔案總管先開啟，再馬上轉到 Pulse，可能會閃一下。"
     IDS_MUSIC "音樂"
+    IDS_QA_EDIT "編輯快速存取…"
+    IDS_QA_EDIT_TITLE "編輯快速存取"
+    IDS_QA_EDIT_HINT "勾選的項目顯示在側邊欄，拖曳可調整順序"
+    IDS_QA_EDIT_ADD_FOLDER "新增資料夾…"
+    IDS_QA_EDIT_DONE "完成"
 END
