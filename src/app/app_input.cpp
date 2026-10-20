@@ -5,6 +5,8 @@
 #include "pane_column_input.h"
 // app_input.cpp — extracted from app_main.cpp.
 #include "quick_access.h"
+#include "tag_manager.h"
+#include "tag_view.h"
 #include "sidebar_tag_drag.h"
 #include "app_prompts.h"
 #include "vertical_tabs.h"
@@ -447,6 +449,20 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
         InvalidateRect(s.hwnd, nullptr, FALSE);
         return DROPEFFECT_NONE;
     }
+    // A combined tag view takes a drop as its 且 tags (none: no drop).
+    if (s.dropDestDir.starts_with(L"pulse:tags:")) {
+        if (!(allowed & DROPEFFECT_COPY) || !TagViewDropTags(s, s.dropDestDir, nullptr)) {
+            s.dropPaneIndex = -1;
+            s.dropDestDir.clear();
+            InvalidateRect(s.hwnd, nullptr, FALSE);
+            return DROPEFFECT_NONE;
+        }
+        s.dropBadge = l10n::Get(l10n::StringId::DropTag).c_str();
+        s.dropBadgeX = (float)pt.x;
+        s.dropBadgeY = (float)pt.y;
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        return DROPEFFECT_COPY;
+    }
     // A folder released on its own row (or into its own subtree) is not a
     // target: Explorer shows "no drop" there, and the move would fail.
     if (!s.dropDestDir.starts_with(L"pulse:") && ui::DropIntoOwnFolder(sources, s.dropDestDir)) {
@@ -565,6 +581,15 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
     if (tray) {
         // Staging leaves the clipboard alone; the half sets the release mode.
         StagePaths(s, sources, tray_move);
+        return DROPEFFECT_COPY;
+    }
+    if (dest.starts_with(L"pulse:tags:")) {
+        std::vector<std::wstring> tag_ids;
+        if (!TagViewDropTags(s, dest, &tag_ids)) return DROPEFFECT_NONE;
+        std::vector<app::TagAdsUpdate> ads_updates;
+        for (const auto& id : tag_ids) s.places.SetTagsBatch(id, sources, true, &ads_updates);
+        QueueTagAds(s, std::move(ads_updates));
+        InvalidateRect(s.hwnd, nullptr, FALSE);
         return DROPEFFECT_COPY;
     }
     if (dest.starts_with(L"pulse:tag:")) {
@@ -2564,6 +2589,34 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
+        // Tag rows that are not places, and the tag view condition bar (kept
+        // out of the click chain below, which is at MSVC's nesting limit).
+        if (hit.region == ui::HitTestResult::SidebarItem && app::IsTagGroupPath(hit.path)) {
+            // A tag group header only folds; 未分组 (no id) does nothing.
+            ToggleTagGroupRow(*s, hit.path);
+            return 0;
+        }
+        if (hit.region == ui::HitTestResult::SidebarItem && hit.path == app::MakeTagManagerPath()) {
+            POINT sp{ mx, my };
+            ClientToScreen(hwnd, &sp);
+            ShowTagManager(*s, sp);
+            return 0;
+        }
+        if (hit.region == ui::HitTestResult::TagQueryChip) {
+            POINT sp{ static_cast<LONG>(std::lround(hit.control_bounds.left)),
+                      static_cast<LONG>(std::lround(hit.control_bounds.bottom)) };
+            ClientToScreen(hwnd, &sp);
+            HandleTagQueryChip(*s, hit.index, sp);
+            return 0;
+        }
+        if (hit.region == ui::HitTestResult::TagQueryChipRemove) {
+            HandleTagQueryChipRemove(*s, hit.index);
+            return 0;
+        }
+        if (hit.region == ui::HitTestResult::TagQueryRefine) {
+            HandleTagQueryRefine(*s, hit.index, (GetKeyState(VK_SHIFT) & 0x8000) != 0);
+            return 0;
+        }
         if (hit.region == ui::HitTestResult::DetailsPreview) {
             s->dragPending = false;
             return 0;
@@ -3307,6 +3360,8 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             if (hit.path == app::MakeStarredPath()) {
                 s->starredExpanded = !s->starredExpanded;
                 InvalidateRect(hwnd, nullptr, FALSE);
+            } else if (app::IsTagGroupPath(hit.path)) {
+                ToggleTagGroupRow(*s, hit.path);
             }
         } else if (hit.region == ui::HitTestResult::SidebarItem) {
             // A section whose rows are the section itself (the starred root, the
@@ -3709,7 +3764,10 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 }
                 ResetSidebarPinDrag(*s);
                 if (GetCapture() == hwnd) ReleaseCapture();
-                if (!was_active && !path.empty() && !tab_row) NavigateTo(*s, path);
+                // Ctrl / Shift on a tag row combines it into the open tag view.
+                if (!was_active && !path.empty() && !tab_row &&
+                    !(IsSidebarTagPath(path) && CombineSidebarTagClick(*s, path)))
+                    NavigateTo(*s, path);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
@@ -4146,6 +4204,14 @@ LRESULT HandleRButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             app::ParsePulsePath(hit.path, &kind, &rest);
             const app::TagId id = s->places.ResolveTagRef(rest);
             if (!id.empty()) ShowTagSidebarMenu(*s, id, sp);
+            shown = true;
+        } else if (hit.region == ui::HitTestResult::SidebarItem && app::IsTagGroupPath(hit.path)) {
+            const std::wstring group = app::TagGroupIdFromPath(hit.path);
+            if (!group.empty()) ShowTagGroupMenu(*s, group, sp);
+            else ShowSidebarSectionMenu(*s, static_cast<int>(app::SidebarSectionId::Tags), sp);
+            shown = true;
+        } else if (hit.region == ui::HitTestResult::SidebarItem && hit.path == app::MakeTagManagerPath()) {
+            ShowSidebarSectionMenu(*s, static_cast<int>(app::SidebarSectionId::Tags), sp);
             shown = true;
         } else if (hit.region == ui::HitTestResult::SidebarItem &&
                    hit.path == app::MakeRecyclePath()) {

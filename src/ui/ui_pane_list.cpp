@@ -2464,6 +2464,108 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
         y += kSearchFiltersDip * scale_;
     }
 
+    if (pane.is_tag_query) {
+        // Condition bar: 且 chips are tinted with the tag color, 任一 chips
+        // are outlined too (or between), 不含 is grey and struck through.
+        using Chip = TagQueryChipView;
+        const TagQueryBarLayout bar = LayoutTagQueryBar(compositor_, pane, bounds, y, scale_);
+        IDWriteTextFormat* fmt = compositor_->SmallFormat();
+        fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        const bool pane_hot = vm.hover_pane_index == pane_index;
+        const float line_h = 18.0f * scale_;
+        const auto alpha = [](D2D1_COLOR_F c, float a) { c.a *= a; return c; };
+        const auto text = [&](const std::wstring& t, float left, float right, float cy,
+                              const D2D1_COLOR_F& color) {
+            MakeBrush(dc, color, brText_);
+            DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), fmt, brText_.get(), t, left,
+                                cy - line_h * 0.5f, std::max(0.0f, right - left), line_h);
+        };
+        const auto dot = [&](float cx, float cy, const D2D1_COLOR_F& color) {
+            const float r = 4.0f * scale_;
+            painter_.FillRoundedRect(D2D1::RectF(cx - r, cy - r, cx + r, cy + r), r, color);
+        };
+        const auto glyph = [&](const wchar_t* g, float left, float cy, float size, const D2D1_COLOR_F& color) {
+            painter_.DrawGlyph(g, D2D1::RectF(left, cy - size * 0.5f, left + size, cy + size * 0.5f), color);
+        };
+        for (size_t i = 0; i < pane.tag_query_chips.size(); ++i) {
+            const D2D1_RECT_F rc = bar.chips[i];
+            if (rc.right <= rc.left) continue;
+            const Chip& chip = pane.tag_query_chips[i];
+            const bool hot = pane_hot && IsHovered(vm, HitTestResult::TagQueryChip, static_cast<int>(i));
+            const bool x_hot = pane_hot && IsHovered(vm, HitTestResult::TagQueryChipRemove, static_cast<int>(i));
+            const float radius = (rc.bottom - rc.top) * 0.5f;
+            const float cy = (rc.top + rc.bottom) * 0.5f;
+            float left = rc.left + 10.0f * scale_;
+            if (chip.kind >= Chip::Add) {
+                if (hot) painter_.FillRoundedRect(rc, radius, theme.fill_hover);
+                painter_.StrokeRoundedRect(rc, radius, theme.stroke_card);
+                glyph(chip.kind == Chip::Add ? kIconAdd : L"\xE74E", left, cy, 12.0f * scale_, theme.text_secondary);
+                text(chip.label, left + 18.0f * scale_, rc.right - 8.0f * scale_, cy, theme.text_secondary);
+                continue;
+            }
+            const bool tinted = chip.kind == Chip::All || chip.kind == Chip::Any;
+            painter_.FillRoundedRect(rc, radius, tinted ? alpha(chip.color, hot || x_hot ? 0.30f : 0.18f)
+                                                        : (hot || x_hot ? theme.fill_hover : theme.fill_input));
+            if (chip.kind == Chip::Any) painter_.StrokeRoundedRect(rc, radius, alpha(chip.color, 0.75f), scale_);
+            const float text_right = bar.removes[i].left - 2.0f * scale_;
+            if (chip.kind == Chip::Location) {
+                glyph(kIconFolder, left, cy, 14.0f * scale_, theme.text_secondary);
+                left += 20.0f * scale_;
+                text(chip.label, left, text_right, cy, theme.text);
+            } else {
+                dot(left + 4.0f * scale_, cy, chip.kind == Chip::Not ? alpha(chip.color, 0.45f) : chip.color);
+                left += 14.0f * scale_;
+                text(chip.label, left, text_right, cy, chip.kind == Chip::Not ? theme.text_secondary : theme.text);
+                if (chip.kind == Chip::Not) {
+                    const float strike_w = std::min(text_right - left,
+                                             MeasureTextWidth(compositor_->DwriteFactory(), fmt, chip.label));
+                    painter_.FillRoundedRect(D2D1::RectF(left, cy - 0.5f * scale_, left + strike_w, cy + 0.5f * scale_),
+                                             0.0f, theme.text_secondary);
+                }
+            }
+            const D2D1_RECT_F xr = bar.removes[i];
+            if (x_hot) painter_.FillRoundedRect(xr, (xr.bottom - xr.top) * 0.5f, theme.fill_pressed);
+            const float xs = 9.0f * scale_;
+            const float xc = (xr.left + xr.right) * 0.5f;
+            painter_.DrawGlyph(L"\xE711", D2D1::RectF(xc - xs * 0.5f, cy - xs * 0.5f, xc + xs * 0.5f, cy + xs * 0.5f),
+                               x_hot ? theme.text : theme.text_secondary);
+        }
+        for (const auto& mark : bar.or_marks) {
+            const float cy = (mark.top + mark.bottom) * 0.5f;
+            fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            text(pulse::l10n::Get(pulse::l10n::StringId::TagOr), mark.left, mark.right, cy, theme.text_secondary);
+            fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        }
+        if (!pane.tag_query_refine.empty()) {
+            const float cy = (bar.refine_label.top + bar.refine_label.bottom) * 0.5f;
+            text(pulse::l10n::Get(pulse::l10n::StringId::TagRefineLabel), bar.refine_label.left,
+                 bar.refine_label.right, cy, theme.text_secondary);
+            for (size_t i = 0; i < pane.tag_query_refine.size(); ++i) {
+                const D2D1_RECT_F rc = bar.refine[i];
+                if (rc.right <= rc.left) continue;
+                const Chip& chip = pane.tag_query_refine[i];
+                const bool hot = pane_hot && IsHovered(vm, HitTestResult::TagQueryRefine, static_cast<int>(i));
+                const float rcy = (rc.top + rc.bottom) * 0.5f;
+                if (hot) painter_.FillRoundedRect(rc, (rc.bottom - rc.top) * 0.5f, theme.fill_hover);
+                float left = rc.left + 8.0f * scale_;
+                if (chip.kind == Chip::RefineLocation) {
+                    glyph(kIconFolder, left, rcy, 14.0f * scale_, theme.text_secondary);
+                    left += 20.0f * scale_;
+                } else {
+                    dot(left + 4.0f * scale_, rcy, chip.color);
+                    left += 14.0f * scale_;
+                }
+                const std::wstring count = chip.count >= 0 ? std::to_wstring(chip.count) : std::wstring{};
+                const float count_w = count.empty() ? 0.0f
+                    : MeasureTextWidth(compositor_->DwriteFactory(), fmt, count) + 2.0f * scale_;
+                const float right = rc.right - 8.0f * scale_;
+                text(chip.label, left, right - count_w - 6.0f * scale_, rcy, theme.text);
+                if (!count.empty()) text(count, right - count_w, right, rcy, theme.text_secondary);
+            }
+        }
+        y += TagQueryBarHeight(pane, scale_);
+    }
+
     if (pane.is_changes) {
         const std::wstring labels[] = { pane.change_time_label, pane.change_type_label, pulse::l10n::Get(pulse::l10n::StringId::ChangeMore) };
         for (int i = 0; i < 3; ++i) {

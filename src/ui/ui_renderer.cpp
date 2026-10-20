@@ -447,6 +447,8 @@ std::vector<BreadcrumbSegment> SplitBreadcrumb(const std::wstring& path) {
         else if (pulse_kind == L"tag")
             seg.text = pulse_rest.empty()
                 ? pulse::l10n::Get(pulse::l10n::StringId::Tag) : pulse_rest;
+        else if (pulse_kind == L"tags")
+            seg.text = pulse::l10n::Get(pulse::l10n::StringId::Tag);
         else
             seg.text = pulse_kind;
         out.push_back(seg);

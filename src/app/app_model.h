@@ -98,6 +98,9 @@ struct Tab {
     bool net_readonly = false;
     uint64_t cache_unix = 0;
     int recent_filter = 0; // RecentFilter; transient per tab.
+    // Tag views: the 细分 suggestions, counted when the view loads.
+    std::vector<std::pair<std::wstring, int>> tag_refine;     // tag id, items
+    std::vector<std::pair<std::wstring, int>> tag_locations;  // folder, items
     int change_days = 7;
     uint32_t change_kind = UINT32_MAX;
     uint64_t change_cursor = 0;

@@ -50,6 +50,16 @@ struct CreateTagPickerTestIo {
 CreateTagPickerTestIo* SetCreateTagPickerTestIo(CreateTagPickerTestIo* io);
 #endif
 void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt);
+// The rename prompt of a tag (a menu with a text field).
+bool RenameTagInteractive(AppState& s, const app::TagId& tag_id, POINT screen_pt);
+// Right-click on a sidebar tag group header: rename / delete the group.
+void ShowTagGroupMenu(AppState& s, const std::wstring& group_id, POINT screen_pt);
+// Asks for a group name (menu with a text field); empty when cancelled.
+// Name for a smart view (a saved tag combination); empty when dismissed.
+std::wstring PromptSmartViewName(AppState& s, POINT screen_pt, const std::wstring& suggested);
+std::wstring CreateTagGroupInteractive(AppState& s, POINT screen_pt);
+// Folds or unfolds a sidebar tag group header row.
+void ToggleTagGroupRow(AppState& s, const std::wstring& path);
 void DispatchMenuCommand(AppState& s, int cmd);
 bool ClipboardHasFiles();
 // What the active selection can do by what it is (selection_caps.h): the

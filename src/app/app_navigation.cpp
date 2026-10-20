@@ -4,6 +4,7 @@
 #include "app_internal.h"
 #include "bitlocker_unlock.h"
 #include "selection_caps.h"
+#include "tag_query.h"
 #include "network_connect.h"
 #include "../fs/bitlocker_volume.h"
 #include "shell_window_sync.h"
@@ -945,7 +946,7 @@ static void CancelUnsharedDirectoryRequest(AppState& s, app::Tab& tab) {
         app::ParsePulsePath(tab.current_path, &kind, nullptr);
         // Search and other virtual providers own separate generation spaces.
         // Only these views dispatch independent WorkerPool::LoadPaths jobs.
-        if (kind == L"tag" || kind == L"starred" || kind == L"recent")
+        if (app::IsTagViewKind(kind) || kind == L"starred" || kind == L"recent")
             s.worker.CancelGeneration(generation);
         return;
     }
@@ -961,6 +962,15 @@ static void CancelUnsharedDirectoryRequest(AppState& s, app::Tab& tab) {
     if (!shared) s.worker.CancelGeneration(generation);
 }
 
+// 细分 for a tag view: the six tags that narrow the results most usefully,
+// and the folders holding most of them.
+static void FillTagViewRefinements(AppState& s, const app::TagQuery& query,
+                                   const std::vector<std::wstring>& paths, app::Tab& tab) {
+    tab.tag_refine = app::TagQueryRefinements(s.places, query, paths, 6);
+    tab.tag_locations = query.in.empty() ? app::TagQueryLocations(paths, 3)
+                                         : std::vector<std::pair<std::wstring, int>>{};
+}
+
 void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathLoadReason reason) {
     CancelUnsharedDirectoryRequest(s, tab);
     tab.explorer_handoff.reset();
@@ -970,6 +980,8 @@ void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathL
     tab.loading = false;
     tab.pending_generation = 0;
     tab.virtual_title.clear();
+    tab.tag_refine.clear();
+    tab.tag_locations.clear();
     SyncVisibleWatches(s);
 
     std::wstring kind, rest;
@@ -997,11 +1009,28 @@ void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathL
             tab.virtual_title = tag.name;
             tab.loading = true;
             tab.SetSnapshot(nullptr);
+            app::TagQuery query;
+            query.all.push_back(tag.id);
+            FillTagViewRefinements(s, query, tag.paths, tab);
             tab.pending_generation = s.worker.LoadPaths(
                 tab.current_path, tag.paths, tab.sort_column, tab.sort_direction, false, {}, tab.EffectiveGroup());
             return;
         }
         tab.virtual_title = l10n::Get(l10n::StringId::TagDeleted).c_str();
+    } else if (kind == L"tags") {
+        // The combined view: every term, a folder, or (empty) every tagged item.
+        app::TagQuery query = app::ParseTagQuery(rest);
+        app::PruneTagQuery(s.places, query);
+        tab.current_path = app::MakeTagQueryPath(query);
+        tab.virtual_title = app::TagQueryTitle(s.places, query);
+        if (tab.virtual_title.empty()) tab.virtual_title = l10n::Get(l10n::StringId::TagViewAllTagged);
+        tab.loading = true;
+        tab.SetSnapshot(nullptr);
+        std::vector<std::wstring> paths = app::TagQueryPaths(s.places, query);
+        FillTagViewRefinements(s, query, paths, tab);
+        tab.pending_generation = s.worker.LoadPaths(
+            tab.current_path, std::move(paths), tab.sort_column, tab.sort_direction, false, {}, tab.EffectiveGroup());
+        return;
     } else if (kind == L"search") {
         wchar_t title[512]{};
         swprintf_s(title, l10n::Get(l10n::StringId::SearchLoadingFormat).c_str(),
@@ -1020,6 +1049,13 @@ void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathL
     } else if (kind == L"saved-search") {
         wchar_t* end = nullptr;
         const unsigned long long index = wcstoull(rest.c_str(), &end, 10);
+        if (end && *end == L'\0' && index < s.savedSearches.items().size() &&
+            s.savedSearches.items()[static_cast<size_t>(index)].mode == app::SavedSearchMode::Tags) {
+            // A smart view opens as its combined tag view.
+            const std::wstring query = s.savedSearches.items()[static_cast<size_t>(index)].query;
+            LoadVirtualView(s, tab, query, reason);
+            return;
+        }
         if (end && *end == L'\0') {
             const auto& saved = s.savedSearches.items();
             if (reason == PathLoadReason::RestoreSession && index < saved.size() &&
@@ -2407,8 +2443,8 @@ void SetGroupBy(AppState& s, int group_by) {
     const bool recent = pulse_view && kind == L"recent";
     // Search results and tag views span folders: they group by Location.
     // The recycle bin groups by deleted date (mtime) or original folder.
-    const bool multi = pulse_view && (kind == L"search" || kind == L"saved-search" || kind == L"tag" ||
-                                      kind == L"recycle");
+    const bool multi = pulse_view && (kind == L"search" || kind == L"saved-search" ||
+                                      app::IsTagViewKind(kind) || kind == L"recycle");
     if (!recent && !multi && (tab->current_path.empty() || fs::IsVirtualPath(tab->current_path))) return;
     const app::GroupBy by = app::GroupByFromInt(group_by);
     // Tag groups need one parent folder; Recent keeps its opened-time order.

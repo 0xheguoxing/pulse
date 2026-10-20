@@ -1734,8 +1734,23 @@ void FluentMenu::SyncFilterFromEdit() {
     std::wstring text(static_cast<size_t>(length) + 1, L'\0');
     text.resize(GetWindowTextW(edit, text.data(), length + 1));
     if (filter_query_ == text) return;
+    if (TakeEmptyFilterKey(text)) {
+        SetWindowTextW(edit, L"");
+        return;
+    }
     filter_query_ = std::move(text);
     RefreshFilter();
+}
+
+bool FluentMenu::TakeEmptyFilterKey(const std::wstring& typed) {
+    if (!filter_query_.empty() || typed.size() != 1) return false;
+    for (const auto& [key, command] : empty_filter_keys_) {
+        if (key != typed[0]) continue;
+        result_ = command;
+        Dismiss();
+        return true;
+    }
+    return false;
 }
 
 LRESULT CALLBACK FluentMenu::ExternalFilterEditProc(HWND hwnd, UINT msg, WPARAM wParam,
@@ -1793,6 +1808,7 @@ LRESULT CALLBACK FluentMenu::FilterEditProc(HWND hwnd, UINT msg, WPARAM wParam, 
 
 bool FluentMenu::AppendFilterChar(wchar_t ch) {
     if (!filter_fn_ || ch < 32 || ch == 127) return false;
+    if (TakeEmptyFilterKey(std::wstring(1, ch))) return true;
     filter_query_.push_back(ch);
     RefreshFilter();
     return true;
@@ -2274,6 +2290,7 @@ int FluentMenu::TrackPopup(POINT screen_pt, std::vector<FluentMenuItem> items,
     UpdateTooltip(-1);
     initial_filter_text_.clear();
     filter_min_width_ = 0.0f;
+    empty_filter_keys_.clear();
     max_visible_rows_ = 0;
     scroll_y_ = 0.0f;
     overflow_ = false;

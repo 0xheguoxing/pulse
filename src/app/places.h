@@ -39,9 +39,25 @@ struct ColorTag {
     // Favorite slot 1..kMaxFavoriteTags (Alt+N toggles it on the selection);
     // 0 = not a favorite. Slots stay put when tags are reordered or removed.
     int favorite = 0;
+    std::wstring group;  // TagGroup::id; empty or unknown = ungrouped
 };
 
 constexpr int kMaxFavoriteTags = 9;
+
+// Sidebar-only grouping of tags (状态 / 项目 / 类型…); a group never changes
+// what a tag matches.
+struct TagGroup {
+    std::wstring id;
+    std::wstring name;
+    bool collapsed = false;
+};
+
+// How the sidebar lists tags.
+enum class TagSidebarMode : int {
+    FavoritesAndGroups = 0,  // favorites first, the rest under their groups
+    AllByGroup = 1,          // every tag under its group, favorites included
+    FavoritesOnly = 2,
+};
 
 struct TagAdsRecord {
     TagId id;
@@ -111,6 +127,8 @@ public:
     ~PlacesCatalog();
     std::vector<Workspace> workspaces;
     std::vector<ColorTag> tags;
+    std::vector<TagGroup> tag_groups;
+    TagSidebarMode tag_sidebar_mode = TagSidebarMode::FavoritesAndGroups;
     std::vector<NetworkPlace> networks;
     std::vector<std::wstring> quick_access_paths;
     // The user's quick-access arrangement, built-in links and pins mixed (see
@@ -218,6 +236,19 @@ public:
     int FavoriteTagIndex(int slot) const;
     // Adding takes the lowest free slot (false when all are taken).
     bool SetTagFavorite(const TagId& id, bool favorite);
+    // Gives the favorites, in this order, the slots they hold now (sorted), so
+    // a sidebar drag can reorder them without touching the other slots.
+    void ReorderFavoriteTags(const std::vector<TagId>& order);
+
+    const TagGroup* FindTagGroup(const std::wstring& id) const;
+    // A tag's group as the sidebar shows it: empty when ungrouped or unknown.
+    std::wstring TagGroupOf(const ColorTag& tag) const;
+    std::wstring CreateTagGroup(const std::wstring& name);  // empty on a bad name
+    bool RenameTagGroup(const std::wstring& id, const std::wstring& name);
+    bool DeleteTagGroup(const std::wstring& id);  // its tags become ungrouped
+    bool SetTagGroup(const TagId& id, const std::wstring& group_id);
+    bool SetTagGroupCollapsed(const std::wstring& id, bool collapsed);
+    void SetTagSidebarMode(TagSidebarMode mode);
 
 private:
     friend struct PlacesPersistenceAudit;
@@ -227,6 +258,8 @@ private:
     struct SaveSnapshot {
         std::vector<Workspace> workspaces;
         std::vector<ColorTag> tags;
+        std::vector<TagGroup> tag_groups;
+        TagSidebarMode tag_sidebar_mode = TagSidebarMode::FavoritesAndGroups;
         std::vector<NetworkPlace> networks;
         std::vector<std::wstring> quick_access_paths;
         std::vector<std::wstring> quick_access_order;
@@ -279,6 +312,13 @@ inline std::wstring MakeRecentPath() { return L"pulse:recent"; }
 inline std::wstring MakeRecyclePath() { return L"pulse:recycle"; }
 inline std::wstring MakeTagPath(const TagId& id) { return L"pulse:tag:" + id; }
 inline std::wstring MakeTagPath(int i) { return L"pulse:tag:" + std::to_wstring(i); }
+// Sidebar-only rows of the 标签 section: a group header and 所有标签 ›.
+inline std::wstring MakeTagGroupPath(const std::wstring& id) { return L"pulse:tag-group:" + id; }
+inline bool IsTagGroupPath(const std::wstring& path) { return path.starts_with(L"pulse:tag-group:"); }
+inline std::wstring TagGroupIdFromPath(const std::wstring& path) {
+    return IsTagGroupPath(path) ? path.substr(16) : std::wstring{};
+}
+inline std::wstring MakeTagManagerPath() { return L"pulse:tag-manager"; }
 inline std::wstring MakeSearchPath(const std::wstring& q) { return L"pulse:search:" + q; }
 inline std::wstring MakeWorkspacePath(int i) { return L"pulse:workspace:" + std::to_wstring(i); }
 inline std::wstring MakeSettingsPath(std::wstring_view page = L"general") {

@@ -2787,7 +2787,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     // Sidebar tags: mark the row being renamed.
     int tagsGroup = -1;
     for (int g = 0; g < static_cast<int>(vm.sidebar.size()); ++g) {
-        if (!vm.sidebar[g].items.empty() && vm.sidebar[g].items[0].is_tag) { tagsGroup = g; break; }
+        if (vm.sidebar[g].id == static_cast<int>(app::SidebarSectionId::Tags)) { tagsGroup = g; break; }
     }
     if (tagsGroup >= 0) {
         auto& items = vm.sidebar[tagsGroup].items;
@@ -3176,7 +3176,8 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
             app::ParsePulsePath(gt->current_path, &kind, nullptr);
             const bool can_group = !gt->content_results &&
                 ((!gt->current_path.empty() && !fs::IsVirtualPath(gt->current_path)) || kind == L"recent" ||
-                 kind == L"search" || kind == L"saved-search" || kind == L"tag" || kind == L"recycle");
+                 kind == L"search" || kind == L"saved-search" || kind == L"tag" || kind == L"tags" ||
+                 kind == L"recycle");
             const bool list_like = gt->view_mode == ui::ViewMode::Details ||
                                    gt->view_mode == ui::ViewMode::Content;
             if (can_group && list_like && !vm.pane.compare_active) toolbar_group = gt->group_by;
@@ -3680,6 +3681,13 @@ void SyncSavedSearchSidebar(AppState& s) {
         entry.color = ui::HexColor(searches[i].mode == app::SavedSearchMode::Content
             ? 0x0EA5E9 : searches[i].mode == app::SavedSearchMode::Duplicates
                 ? 0xF59E0B : 0x22C55E);
+        if (searches[i].mode == app::SavedSearchMode::Tags) {
+            // A smart view: a saved tag combination, marked with the tag glyph.
+            entry.detail.clear();
+            entry.glyph = L"\xE8EC";
+            entry.fallback = L"Tag";
+            entry.color = ui::HexColor(0xA855F7);
+        }
         entry.path = L"pulse:saved-search:" + std::to_wstring(i);
         s.sidebar.saved_searches.push_back(std::move(entry));
     }

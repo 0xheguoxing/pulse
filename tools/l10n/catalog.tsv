@@ -2467,3 +2467,45 @@ HelpClearTags	IDS_HELP_CLEAR_TAGS	3669	清除所有标签	Clear all tags	清除�
 HelpTagPanel	IDS_HELP_TAG_PANEL	3670	标签面板	Tag panel	標籤面板
 TagFavoriteAdd	IDS_TAG_FAVORITE_ADD	3671	设为常用标签	Add to favorite tags	設為常用標籤
 TagFavoriteRemove	IDS_TAG_FAVORITE_REMOVE	3672	取消常用	Remove from favorite tags	取消常用
+TagUngrouped	IDS_TAG_UNGROUPED	3673	未分组	Ungrouped	未分組
+TagAllTags	IDS_TAG_ALL_TAGS	3674	所有标签	All tags	所有標籤
+TagManage	IDS_TAG_MANAGE	3675	管理标签…	Manage tags…	管理標籤…
+TagNewGroup	IDS_TAG_NEW_GROUP	3676	新建分组…	New group…	新增群組…
+TagGroupNameHint	IDS_TAG_GROUP_NAME_HINT	3677	输入分组名称	Enter a group name	輸入群組名稱
+TagGroupCreateFormat	IDS_TAG_GROUP_CREATE_FORMAT	3678	新建分组“%s”	Create group “%s”	新增群組「%s」
+TagMoveToGroup	IDS_TAG_MOVE_TO_GROUP	3679	移到分组	Move to group	移到群組
+TagNoGroup	IDS_TAG_NO_GROUP	3680	不分组	No group	不分組
+TagSidebarMode	IDS_TAG_SIDEBAR_MODE	3681	显示方式	Show	顯示方式
+TagModeFavoritesGroups	IDS_TAG_MODE_FAVORITES_GROUPS	3682	常用 + 其余按分组	Favorites, then by group	常用 + 其餘按群組
+TagModeAllGroups	IDS_TAG_MODE_ALL_GROUPS	3683	全部按分组	All by group	全部按群組
+TagModeFavorites	IDS_TAG_MODE_FAVORITES	3684	只显示常用	Favorites only	只顯示常用
+TagGroupRename	IDS_TAG_GROUP_RENAME	3685	重命名分组…	Rename group…	重新命名群組…
+TagGroupDelete	IDS_TAG_GROUP_DELETE	3686	删除分组	Delete group	刪除群組
+TagManagerTitle	IDS_TAG_MANAGER_TITLE	3687	管理标签	Manage tags	管理標籤
+TagManagerHint	IDS_TAG_MANAGER_HINT	3688	选中多个标签可一起合并、分组或删除；右键查看更多	Select several tags to merge, group or delete them; right-click for more	選取多個標籤可一起合併、分組或刪除；按右鍵查看更多
+TagFilterAll	IDS_TAG_FILTER_ALL	3689	全部	All	全部
+TagFilterFavorites	IDS_TAG_FILTER_FAVORITES	3690	常用	Favorites	常用
+TagFilterUnused	IDS_TAG_FILTER_UNUSED	3691	未使用	Unused	未使用
+TagMerge	IDS_TAG_MERGE	3692	合并…	Merge…	合併…
+TagMergeInto	IDS_TAG_MERGE_INTO	3693	合并到	Merge into	合併到
+TagMergeTitle	IDS_TAG_MERGE_TITLE	3694	合并标签	Merge tags	合併標籤
+TagMergeConfirmFormat	IDS_TAG_MERGE_CONFIRM_FORMAT	3695	合并到“%s”：其余 %zu 个标签的项目都改用它，然后删除这些标签。	Merge into “%s”: the items of the other %zu tags get this tag, then those tags are deleted.	合併到「%s」：其餘 %zu 個標籤的項目都改用它，然後刪除這些標籤。
+TagMoveToGroupEllipsis	IDS_TAG_MOVE_TO_GROUP_ELLIPSIS	3696	移到分组…	Move to group…	移到群組…
+TagManagerEmpty	IDS_TAG_MANAGER_EMPTY	3697	没有标签	No tags	沒有標籤
+TagDeleteManyFormat	IDS_TAG_DELETE_MANY_FORMAT	3698	删除这 %s 个标签？用到它们的项目会去掉这些标签。	Delete these %s tags? Items that use them lose these tags.	刪除這 %s 個標籤？用到它們的項目會移除這些標籤。
+TagColorMenu	IDS_TAG_COLOR_MENU	3699	颜色	Color	顏色
+TagTermAll	IDS_TAG_TERM_ALL	3700	必须有（且）	Must have (and)	必須有（且）
+TagTermAny	IDS_TAG_TERM_ANY	3701	任一（或）	Any of (or)	任一（或）
+TagTermNot	IDS_TAG_TERM_NOT	3702	不含	Without	不含
+TagTermRemove	IDS_TAG_TERM_REMOVE	3703	移除条件	Remove condition	移除條件
+TagAddCondition	IDS_TAG_ADD_CONDITION	3704	条件	Condition	條件
+TagRefineLabel	IDS_TAG_REFINE_LABEL	3705	细分	Refine	細分
+TagOr	IDS_TAG_OR	3706	或	or	或
+TagLocationOpen	IDS_TAG_LOCATION_OPEN	3707	打开这个文件夹	Open this folder	開啟這個資料夾
+TagViewAllTagged	IDS_TAG_VIEW_ALL_TAGGED	3708	所有带标签的项目	All tagged items	所有帶標籤的項目
+TagSaveView	IDS_TAG_SAVE_VIEW	3709	保存视图	Save view	儲存檢視
+TagSmartViewNameHint	IDS_TAG_SMART_VIEW_NAME_HINT	3710	输入智能视图名称	Enter a smart view name	輸入智慧檢視名稱
+TagSmartViewSaveFormat	IDS_TAG_SMART_VIEW_SAVE_FORMAT	3711	保存为智能视图“%s”	Save as smart view “%s”	儲存為智慧檢視「%s」
+TagPanelHeaderFormat	IDS_TAG_PANEL_HEADER_FORMAT	3712	给 %s 项打标签	Tag %s items	為 %s 個項目加上標籤
+TagPanelRecent	IDS_TAG_PANEL_RECENT	3713	最近用过	Recently used	最近用過
+TagPanelFavorites	IDS_TAG_PANEL_FAVORITES	3714	常用	Favorites	常用

@@ -212,6 +212,9 @@ public:
     // Override the filter-mode minimum width (dips) for the next TrackPopup;
     // <= 0 restores the palette default. Reset after each popup.
     void SetFilterMinWidth(float dips) { filter_min_width_ = dips; }
+    // Keys that, typed into the still-empty filter, invoke their command at
+    // once instead of filtering (the tag panel's 1-9). Reset after each popup.
+    void SetEmptyFilterKeys(std::vector<std::pair<wchar_t, int>> keys) { empty_filter_keys_ = std::move(keys); }
     // Limit the next popup's body to this many rows; wheel/keys reveal the rest.
     // Non-positive values preserve the ordinary unconstrained menu behavior.
     void SetMaxVisibleRows(int rows) { max_visible_rows_ = rows > 0 ? rows : 0; }
@@ -309,6 +312,7 @@ private:
     int InvokeAt(const FluentMenuModel& model, int row, float client_x) const;
     float FilterHeaderPx() const;
     bool AppendFilterChar(wchar_t ch);
+    bool TakeEmptyFilterKey(const std::wstring& typed);
     bool HandleFilterKey(UINT msg, WPARAM wParam);
     void PasteFilterText();
 
@@ -330,6 +334,7 @@ private:
     std::wstring filter_placeholder_;
     std::wstring initial_filter_text_;   // prefilled into the edit on open
     float filter_min_width_ = 0.0f;      // dips; <= 0 = palette default (440)
+    std::vector<std::pair<wchar_t, int>> empty_filter_keys_;
     bool select_all_on_open_ = true;
     bool hover_first_on_open_ = true;
     bool filter_committed_ = false;

@@ -8,6 +8,7 @@
 #include "../common/windows_compat.h"
 #include "../ui/FluentTokens.h"
 #include "quick_access.h"
+#include "tag_manager.h"
 #include "app_hover_preview.h"
 #include "app_details_tree.h"
 #include "update_stage.h"
@@ -2053,9 +2054,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             if (TickTrayDeck(*s)) dirty = true;
             if (TickTabFlash(*s)) dirty = true;
             if (SyncTagGroups(*s)) {
-                // Tags changed: a tag-grouped folder re-sorts into its new groups.
-                if (app::Tab* tab = ActiveTab(*s); tab && tab->EffectiveGroup() ==
-                        static_cast<int>(app::GroupBy::Tag))
+                // Tags changed: a tag-grouped folder re-sorts into its new groups,
+                // and a tag view picks up newly tagged (or untagged) items.
+                if (app::Tab* tab = ActiveTab(*s); tab && (tab->EffectiveGroup() ==
+                        static_cast<int>(app::GroupBy::Tag) || tab->current_path.starts_with(L"pulse:tag")))
                     RefreshActiveTab(*s);
                 dirty = true;
             }
@@ -3072,7 +3074,7 @@ void StageTagShotStates(AppState& state) {
         ui::WindowViewModel vm0 = BuildVm(state);
         int g0 = -1;
         for (int g = 0; g < static_cast<int>(vm0.sidebar.size()); ++g) {
-            if (!vm0.sidebar[g].items.empty() && vm0.sidebar[g].items[0].is_tag) {
+            if (vm0.sidebar[g].id == static_cast<int>(app::SidebarSectionId::Tags)) {
                 g0 = g;
                 break;
             }
@@ -3370,6 +3372,7 @@ bool SkipSingletonFromArgv() {
             wcscmp(__wargv[i], L"--menushot") == 0 ||
             wcscmp(__wargv[i], L"--test-instance") == 0 ||
             wcscmp(__wargv[i], L"--colorpickshot") == 0 ||
+            wcscmp(__wargv[i], L"--tagmanagershot") == 0 ||
             wcscmp(__wargv[i], L"--colorpickdialog") == 0)
             return true;
     }
@@ -3511,8 +3514,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             state.menushot_out = __wargv[++i];
         } else if (wcscmp(__wargv[i], L"--menushot-search") == 0) {
             state.menushot_search = true;
-        } else if (wcscmp(__wargv[i], L"--colorpickshot") == 0 && i + 1 < __argc) {
+        } else if ((wcscmp(__wargv[i], L"--colorpickshot") == 0 ||
+                    wcscmp(__wargv[i], L"--tagmanagershot") == 0) && i + 1 < __argc) {
             state.colorpickshot = true;
+            state.colorpickshot_tags = wcscmp(__wargv[i], L"--tagmanagershot") == 0;
             state.colorpickshot_out = __wargv[++i];
             if (i + 1 < __argc && wcscmp(__wargv[i + 1], L"light") == 0) {
                 state.colorpickshot_dark = false;
@@ -3875,10 +3880,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     }
 
     if (state.colorpickshot) {
-        // Render the color picker popup to a PNG (GUI verification).
-        const bool ok = ui::ColorPickerPopup::SaveDebugSnapshot(
-            &state.compositor, state.colorpickshot_out.c_str(),
-            state.colorpickshot_dark, state.accentColor, state.scale);
+        // Render the color picker popup (or the tag manager) to a PNG (GUI verification).
+        const bool ok = state.colorpickshot_tags
+            ? SaveTagManagerSnapshot(state, state.colorpickshot_out.c_str(), state.colorpickshot_dark)
+            : ui::ColorPickerPopup::SaveDebugSnapshot(
+                  &state.compositor, state.colorpickshot_out.c_str(),
+                  state.colorpickshot_dark, state.accentColor, state.scale);
         DestroyWindow(hwnd);
         OleUninitialize();
         return ok ? 0 : 1;

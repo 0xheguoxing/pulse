@@ -1,5 +1,6 @@
 #include "tag_color_commands.h"
 #include "tag_ads_sync.h"
+#include "tag_query.h"
 #include "folder_alias.h"
 #include "zip_compress_ui.h"
 #include "keymap.h"
@@ -410,6 +411,14 @@ bool ToggleTagForSelection(AppState& s, const app::TagId& tag_id,
     std::vector<app::TagAdsUpdate> updates;
     if (!s.places.SetTagsBatch(tag_id, paths, add, &updates)) return false;
     QueueTagAds(s, std::move(updates));
+    if (add) {
+        // The tag panel's 最近用过: newest first, five at most.
+        auto& recent = s.appPrefs.recent_tags;
+        std::erase(recent, tag_id);
+        recent.insert(recent.begin(), tag_id);
+        if (recent.size() > 5) recent.resize(5);
+        s.appPrefs.Save();
+    }
     InvalidateRect(s.hwnd, nullptr, FALSE);
     return true;
 }
@@ -476,40 +485,118 @@ void ShowTagPicker(AppState& s, POINT screen_pt, const std::vector<std::wstring>
         : ActiveTab(s) ? SelectedFullPaths(*ActiveTab(s)) : std::vector<std::wstring>{};
     constexpr int kTagPickerBase = 20000;
     constexpr int kCreateTag = app::kCreateTagCommand;
+    // The tag panel (pulse_tag_redesign §6): "给 3 项打标签"; typing filters
+    // and, without an exact match, offers 新建 first; otherwise 最近用过 →
+    // 常用 (1-9, also typed into the empty filter) → each group. Each row is
+    // three-state, a partial one showing "2/3".
     auto rebuild = [&s, &paths](const std::wstring& query) {
         std::vector<ui::FluentMenuItem> items;
         std::wstring needle = query;
         for (auto& c : needle) c = static_cast<wchar_t>(std::towlower(c));
-        bool exact = false;
-        for (int i = 0; i < static_cast<int>(s.places.tags.size()); ++i) {
+        std::vector<int> counts(s.places.tags.size(), 0);
+        for (const auto& path : paths) {
+            for (int index : s.places.TagsForPath(path)) {
+                if (index >= 0 && static_cast<size_t>(index) < counts.size()) ++counts[static_cast<size_t>(index)];
+            }
+        }
+        const int total = static_cast<int>(paths.size());
+        auto row = [&](int i) {
             const auto& tag = s.places.tags[static_cast<size_t>(i)];
-            std::wstring lower = tag.name;
-            for (auto& c : lower) c = static_cast<wchar_t>(std::towlower(c));
-            if (!needle.empty() && lower.find(needle) == std::wstring::npos) continue;
-            exact = exact || (!needle.empty() && lower == needle);
             ui::FluentMenuItem item;
             item.command = kTagPickerBase + i;
             item.text = tag.name;
             item.has_swatch = true;
             item.swatch_color = ui::HexColor(tag.rgb);
-            const auto state = s.places.GetSelectionState(tag.id, paths);
-            item.checked = state == app::TagSelectionState::All;
-            item.mixed = state == app::TagSelectionState::Mixed;
-            items.push_back(std::move(item));
-        }
-        if (!needle.empty() && !exact) {
-            ui::FluentMenuItem create;
-            create.command = kCreateTag;
-            create.text = TagLabel(l10n::StringId::TagCreateFormat, query);
-            create.glyph = L"\xE710";
+            const int count = counts[static_cast<size_t>(i)];
+            item.checked = total > 0 && count == total;
+            item.mixed = count > 0 && count < total;
+            if (item.mixed) item.shortcut = std::to_wstring(count) + L"/" + std::to_wstring(total);
+            if (tag.favorite > 0) {
+                if (!item.shortcut.empty()) item.shortcut += L"   ";
+                item.shortcut += std::to_wstring(tag.favorite);
+            }
+            return item;
+        };
+        auto heading = [&items](const std::wstring& text) {
             if (!items.empty()) items.back().separator_after = true;
-            items.push_back(std::move(create));
+            ui::FluentMenuItem item;
+            item.text = text;
+            item.enabled = false;
+            item.secondary = true;
+            items.push_back(std::move(item));
+        };
+        if (total > 0) heading(TagLabel(l10n::StringId::TagPanelHeaderFormat, std::to_wstring(total)));
+        if (!needle.empty()) {
+            bool exact = false;
+            std::vector<ui::FluentMenuItem> matches;
+            for (int i = 0; i < static_cast<int>(s.places.tags.size()); ++i) {
+                std::wstring lower = s.places.tags[static_cast<size_t>(i)].name;
+                for (auto& c : lower) c = static_cast<wchar_t>(std::towlower(c));
+                if (lower.find(needle) == std::wstring::npos) continue;
+                exact = exact || lower == needle;
+                matches.push_back(row(i));
+            }
+            if (!items.empty()) items.back().separator_after = true;
+            if (!exact) {
+                ui::FluentMenuItem create;
+                create.command = kCreateTag;
+                create.text = TagLabel(l10n::StringId::TagCreateFormat, query);
+                create.glyph = L"\xE710";
+                create.separator_after = !matches.empty();
+                items.push_back(std::move(create));
+            }
+            items.insert(items.end(), std::make_move_iterator(matches.begin()),
+                         std::make_move_iterator(matches.end()));
+            return items;
+        }
+        std::vector<char> shown(s.places.tags.size(), 0);
+        bool recent_heading = false;
+        for (const auto& id : s.appPrefs.recent_tags) {
+            const int i = s.places.FindTagIndex(id);
+            if (i < 0 || shown[static_cast<size_t>(i)]) continue;
+            if (!recent_heading) heading(l10n::Get(l10n::StringId::TagPanelRecent));
+            recent_heading = true;
+            shown[static_cast<size_t>(i)] = 1;
+            items.push_back(row(i));
+        }
+        bool favorite_heading = false;
+        for (int slot = 1; slot <= app::kMaxFavoriteTags; ++slot) {
+            const int i = s.places.FavoriteTagIndex(slot);
+            if (i < 0 || shown[static_cast<size_t>(i)]) continue;
+            if (!favorite_heading) heading(l10n::Get(l10n::StringId::TagPanelFavorites));
+            favorite_heading = true;
+            shown[static_cast<size_t>(i)] = 1;
+            items.push_back(row(i));
+        }
+        // The rest under their groups, the ungrouped ones last.
+        std::vector<std::wstring> groups;
+        for (const auto& group : s.places.tag_groups) groups.push_back(group.id);
+        groups.push_back(std::wstring{});
+        for (const auto& group_id : groups) {
+            bool group_heading = false;
+            for (int i = 0; i < static_cast<int>(s.places.tags.size()); ++i) {
+                if (shown[static_cast<size_t>(i)] ||
+                    s.places.TagGroupOf(s.places.tags[static_cast<size_t>(i)]) != group_id) continue;
+                if (!group_heading && (recent_heading || favorite_heading || !s.places.tag_groups.empty())) {
+                    const app::TagGroup* group = group_id.empty() ? nullptr : s.places.FindTagGroup(group_id);
+                    heading(group ? group->name : l10n::Get(l10n::StringId::TagUngrouped));
+                }
+                group_heading = true;
+                shown[static_cast<size_t>(i)] = 1;
+                items.push_back(row(i));
+            }
         }
         return items;
     };
     for (;;) {
         s.menu->SetFilterPlaceholder(l10n::Get(l10n::StringId::TagSearchHint));
         s.menu->SetFilterMinWidth(300.0f);
+        std::vector<std::pair<wchar_t, int>> digit_keys;
+        for (int slot = 1; slot <= app::kMaxFavoriteTags; ++slot) {
+            const int index = s.places.FavoriteTagIndex(slot);
+            if (index >= 0) digit_keys.emplace_back(static_cast<wchar_t>(L'0' + slot), kTagPickerBase + index);
+        }
+        s.menu->SetEmptyFilterKeys(std::move(digit_keys));
         int command = s.menu->TrackPopup(screen_pt, rebuild(L""), rebuild);
         const std::wstring query = s.menu->LastFilterQuery();
         if (command == app::CmdNone) {
@@ -966,12 +1053,104 @@ void ShowCreateTagPicker(AppState& s, POINT screen_pt) {
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
+// A one-field prompt in the menu (the tag rename pattern): the typed text, or
+// empty when the menu was dismissed.
+static std::wstring PromptTagText(AppState& s, POINT screen_pt, const std::wstring& placeholder,
+                                  l10n::StringId format, l10n::StringId empty_hint) {
+    constexpr int kApply = 31300;
+    auto rebuild = [format, empty_hint](const std::wstring& query) {
+        ui::FluentMenuItem item;
+        item.command = kApply;
+        item.text = query.empty() ? l10n::Get(empty_hint) : TagLabel(format, query);
+        item.glyph = L"\xE8AC";
+        item.enabled = !query.empty();
+        return std::vector<ui::FluentMenuItem>{ std::move(item) };
+    };
+    s.menu->SetFilterPlaceholder(placeholder);
+    s.menu->SetFilterMinWidth(300.0f);
+    const int apply = s.menu->TrackPopup(screen_pt, rebuild(L""), rebuild);
+    const std::wstring text = s.menu->LastFilterQuery();
+    const bool committed = s.menu->LastFilterCommitted();
+    s.menu->SetFilterPlaceholder(l10n::Get(l10n::StringId::TabMenuSearch));
+    if (apply == kApply || (apply == app::CmdNone && committed)) return text;
+    return {};
+}
+
+std::wstring PromptSmartViewName(AppState& s, POINT screen_pt, const std::wstring& suggested) {
+    if (!EnsureMenu(s)) return {};
+    return PromptTagText(s, screen_pt, suggested, l10n::StringId::TagSmartViewSaveFormat,
+                         l10n::StringId::TagSmartViewNameHint);
+}
+
+std::wstring CreateTagGroupInteractive(AppState& s, POINT screen_pt) {
+    if (!EnsureMenu(s)) return {};
+    const std::wstring name = PromptTagText(s, screen_pt, l10n::Get(l10n::StringId::TagGroupNameHint),
+                                            l10n::StringId::TagGroupCreateFormat,
+                                            l10n::StringId::TagGroupNameHint);
+    if (name.empty()) return {};
+    const std::wstring id = s.places.CreateTagGroup(name);
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+    return id;
+}
+
+void ToggleTagGroupRow(AppState& s, const std::wstring& path) {
+    const app::TagGroup* group = s.places.FindTagGroup(app::TagGroupIdFromPath(path));
+    if (!group) return;
+    s.places.SetTagGroupCollapsed(group->id, !group->collapsed);
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void ShowTagGroupMenu(AppState& s, const std::wstring& group_id, POINT screen_pt) {
+    const app::TagGroup* group = s.places.FindTagGroup(group_id);
+    if (!group || !EnsureMenu(s)) return;
+    constexpr int kRenameGroup = 31500;
+    constexpr int kDeleteGroup = 31501;
+    std::vector<ui::FluentMenuItem> items;
+    ui::FluentMenuItem rename;
+    rename.command = kRenameGroup;
+    rename.text = l10n::Get(l10n::StringId::TagGroupRename);
+    rename.glyph = L"\xE8AC";
+    items.push_back(std::move(rename));
+    ui::FluentMenuItem remove;
+    remove.command = kDeleteGroup;
+    remove.text = l10n::Get(l10n::StringId::TagGroupDelete);
+    remove.glyph = L"\xE74D";
+    items.push_back(std::move(remove));
+    const std::wstring name = group->name;
+    const int command = s.menu->TrackPopup(screen_pt, std::move(items));
+    if (command == kRenameGroup) {
+        const std::wstring renamed = PromptTagText(s, screen_pt, name, l10n::StringId::TagRenameFormat,
+                                                   l10n::StringId::TagRenameHint);
+        if (!renamed.empty()) s.places.RenameTagGroup(group_id, renamed);
+    } else if (command == kDeleteGroup) {
+        // Only the grouping goes; the tags stay, ungrouped.
+        s.places.DeleteTagGroup(group_id);
+    }
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+bool RenameTagInteractive(AppState& s, const app::TagId& tag_id, POINT screen_pt) {
+    const app::ColorTag* tag = s.places.FindTag(tag_id);
+    if (!tag || !EnsureMenu(s)) return false;
+    // Enter without highlighting the row also confirms the typed name.
+    const std::wstring name = PromptTagText(s, screen_pt, tag->name, l10n::StringId::TagRenameFormat,
+                                            l10n::StringId::TagRenameHint);
+    if (name.empty()) return false;
+    const std::vector<std::wstring> affected = s.places.PathsForTag(tag_id);
+    if (!s.places.RenameTag(tag_id, name)) return false;
+    QueueTagAds(s, BuildTagAdsUpdates(s.places, affected));
+    return true;
+}
+
 void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt) {
     if (!EnsureMenu(s)) return;
     const app::ColorTag* tag = s.places.FindTag(tag_id);
     if (!tag) return;
     constexpr int kRename = 31000;
     constexpr int kFavorite = 31010;
+    constexpr int kNoGroup = 31020;
+    constexpr int kNewGroup = 31021;
+    constexpr int kGroupBase = 31400;
     constexpr int kCustomColor = 31090;
     constexpr int kColorBase = 31100;
     constexpr int kDelete = 31200;
@@ -995,8 +1174,35 @@ void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt) 
         for (const auto& other : s.places.tags) used += other.favorite > 0 ? 1 : 0;
         favorite.enabled = used < app::kMaxFavoriteTags;
     }
-    favorite.separator_after = true;
     items.push_back(std::move(favorite));
+    // 移到分组 ▸: the groups (current one checked), 不分组, 新建分组…
+    ui::FluentMenuItem move;
+    move.text = l10n::Get(l10n::StringId::TagMoveToGroup);
+    move.glyph = L"\xE8B7";
+    const std::wstring current_group = s.places.TagGroupOf(*tag);
+    for (int i = 0; i < static_cast<int>(s.places.tag_groups.size()) && i < 64; ++i) {
+        const auto& group = s.places.tag_groups[static_cast<size_t>(i)];
+        ui::FluentMenuItem item;
+        item.command = kGroupBase + i;
+        item.text = group.name;
+        item.radio_group = true;
+        item.radio = group.id == current_group;
+        move.children.push_back(std::move(item));
+    }
+    ui::FluentMenuItem no_group;
+    no_group.command = kNoGroup;
+    no_group.text = l10n::Get(l10n::StringId::TagNoGroup);
+    no_group.radio_group = true;
+    no_group.radio = current_group.empty();
+    no_group.separator_after = true;
+    move.children.push_back(std::move(no_group));
+    ui::FluentMenuItem new_group;
+    new_group.command = kNewGroup;
+    new_group.text = l10n::Get(l10n::StringId::TagNewGroup);
+    new_group.glyph = L"\xE710";
+    move.children.push_back(std::move(new_group));
+    move.separator_after = true;
+    items.push_back(std::move(move));
     bool preset_color = false;
     for (int i = 0; i < static_cast<int>(palette.size()); ++i) {
         const uint32_t rgb = palette[static_cast<size_t>(i)];
@@ -1037,30 +1243,17 @@ void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt) 
     items.push_back(std::move(remove));
     const int command = s.menu->TrackPopup(screen_pt, std::move(items));
     if (command == kRename) {
-        constexpr int kApplyRename = 31300;
-        auto rebuild = [](const std::wstring& query) {
-            ui::FluentMenuItem item;
-            item.command = kApplyRename;
-            item.text = query.empty() ? l10n::Get(l10n::StringId::TagRenameHint)
-                                      : TagLabel(l10n::StringId::TagRenameFormat, query);
-            item.glyph = L"\xE8AC";
-            item.enabled = !query.empty();
-            return std::vector<ui::FluentMenuItem>{ std::move(item) };
-        };
-        s.menu->SetFilterPlaceholder(tag->name);
-        s.menu->SetFilterMinWidth(300.0f);
-        const int apply = s.menu->TrackPopup(screen_pt, rebuild(L""), rebuild);
-        const std::wstring name = s.menu->LastFilterQuery();
-        s.menu->SetFilterPlaceholder(l10n::Get(l10n::StringId::TabMenuSearch));
-        // Enter without highlighting the row also confirms the typed name.
-        if (apply == kApplyRename ||
-            (apply == app::CmdNone && s.menu->LastFilterCommitted())) {
-            const std::vector<std::wstring> affected = s.places.PathsForTag(tag_id);
-            if (s.places.RenameTag(tag_id, name))
-                QueueTagAds(s, BuildTagAdsUpdates(s.places, affected));
-        }
+        RenameTagInteractive(s, tag_id, screen_pt);
     } else if (command == kFavorite) {
         s.places.SetTagFavorite(tag_id, tag->favorite == 0);
+    } else if (command == kNoGroup) {
+        s.places.SetTagGroup(tag_id, {});
+    } else if (command == kNewGroup) {
+        const std::wstring group = CreateTagGroupInteractive(s, screen_pt);
+        if (!group.empty()) s.places.SetTagGroup(tag_id, group);
+    } else if (command >= kGroupBase &&
+               command < kGroupBase + static_cast<int>(s.places.tag_groups.size())) {
+        s.places.SetTagGroup(tag_id, s.places.tag_groups[static_cast<size_t>(command - kGroupBase)].id);
     } else if (command == kCustomColor) {
         uint32_t picked = tag->rgb;
         if (ui::ColorPickerPopup::Pick(s.hwnd, &s.compositor, s.menu.get(), s.scale,
@@ -1102,12 +1295,17 @@ bool DeleteTagAndRefreshViews(AppState& s, const app::TagId& tag_id) {
         app::ParsePulsePath(tab->current_path, &kind, &reference);
         if (kind == L"tag" && s.places.ResolveTagRef(reference) == tag_id)
             affected.push_back(tab);
+        else if (kind == L"tags" && app::ParseTagQuery(reference).Contains(tag_id))
+            affected.push_back(tab);
     });
     std::vector<app::TagAdsUpdate> updates;
     s.places.DeleteTag(tag_id, &updates);
     QueueTagAds(s, std::move(updates));
     // Resolve legacy references before deletion changes the catalog indices.
-    for (auto* tab : affected) LoadVirtualView(s, *tab, path);
+    for (auto* tab : affected) {
+        // A combined view drops the deleted term and keeps the others.
+        LoadVirtualView(s, *tab, tab->current_path.starts_with(L"pulse:tags:") ? tab->current_path : path);
+    }
     InvalidateRect(s.hwnd, nullptr, FALSE);
     return true;
 }
@@ -2277,7 +2475,7 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     view_options.indexed_search = (kind == L"search" || kind == L"saved-search") && !tab->content_results;
     view_options.show_path = kind == L"search" || kind == L"saved-search" || kind == L"recycle";
     view_options.filesystem = !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path);
-    view_options.group_virtual = kind == L"search" || kind == L"saved-search" || kind == L"tag" || kind == L"recycle";
+    view_options.group_virtual = kind == L"search" || kind == L"saved-search" || app::IsTagViewKind(kind) || kind == L"recycle";
     view_options.can_group = !tab->content_results &&
         (view_options.filesystem || kind == L"recent" || view_options.group_virtual);
     view_options.group_by = tab->group_by;
@@ -3195,7 +3393,7 @@ void ShowSortDropdown(AppState& s) {
     options.can_sort = kind != L"starred" && kind != L"recent";
     options.indexed_search = (kind == L"search" || kind == L"saved-search") && !tab->content_results;
     options.show_path = kind == L"search" || kind == L"saved-search" || kind == L"recycle";
-    options.group_virtual = kind == L"search" || kind == L"saved-search" || kind == L"tag" || kind == L"recycle";
+    options.group_virtual = kind == L"search" || kind == L"saved-search" || app::IsTagViewKind(kind) || kind == L"recycle";
     options.can_group = !tab->content_results &&
         ((!tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path)) || kind == L"recent" ||
          options.group_virtual);
@@ -3231,7 +3429,7 @@ void ShowGroupDropdown(AppState& s) {
     {
         std::wstring kind;
         app::ParsePulsePath(tab->current_path, &kind, nullptr);
-        options.group_virtual = kind == L"search" || kind == L"saved-search" || kind == L"tag" || kind == L"recycle";
+        options.group_virtual = kind == L"search" || kind == L"saved-search" || app::IsTagViewKind(kind) || kind == L"recycle";
         options.can_apply_group_all = !tab->content_results && !tab->current_path.empty() &&
                                       !fs::IsVirtualPath(tab->current_path);
     }

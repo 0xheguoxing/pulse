@@ -9,6 +9,7 @@
 #include "../common/config_json.h"
 #include "search_query.h"
 #include "entry_group.h"
+#include "tag_query.h"
 #include "../common/json_utils.h"
 #include "../common/localization.h"
 #include "../common/path_utils.h"
@@ -933,6 +934,7 @@ std::wstring TabTitle(const std::wstring& path) {
         if (kind == L"recycle") return l10n::Get(l10n::StringId::RecycleBin);
         if (kind == L"search") return l10n::Get(l10n::StringId::Search);
         if (kind == L"tag") return rest.empty() ? l10n::Get(l10n::StringId::Tag) : rest;
+        if (kind == L"tags") return l10n::Get(l10n::StringId::Tag);
     }
     // 别名: tabs, the sidebar and window lists show the folder's alias.
     if (std::wstring alias = AliasStore::Instance().Shown(path); !alias.empty()) return alias;
@@ -1653,19 +1655,54 @@ bool NameMatchesPattern(std::wstring_view name, std::wstring_view needle) {
     return folded_name.find(folded_pat) != std::wstring::npos;
 }
 
+// Filter box tag syntax (pulse_tag_redesign §7): "#a #b" = both, "#a|b" =
+// either, "-#a" = without; #"two words" quotes a name with spaces.
+struct FilterTagTerm {
+    std::vector<std::wstring> alternatives;  // lowercase needles, any may match
+    bool exclude = false;
+};
+
+static std::wstring UnquoteTagNeedle(std::wstring value) {
+    if (!value.empty() && value[0] == L'#') value.erase(0, 1);
+    if (value.size() >= 2 && value.front() == L'"' && value.back() == L'"')
+        value = value.substr(1, value.size() - 2);
+    else if (!value.empty() && value.front() == L'"')
+        value.erase(0, 1);  // still typing the closing quote
+    return ToLowerCopy(value);
+}
+
 static void ParseFilterText(const std::wstring& text, std::wstring& name_needle,
-                            std::vector<std::wstring>& tag_needles) {
+                            std::vector<FilterTagTerm>& tag_terms) {
     name_needle.clear();
-    tag_needles.clear();
+    tag_terms.clear();
     size_t i = 0;
     while (i < text.size()) {
         while (i < text.size() && std::iswspace(text[i])) ++i;
         if (i >= text.size()) break;
         const size_t start = i;
-        while (i < text.size() && !std::iswspace(text[i])) ++i;
+        bool quoted = false;
+        while (i < text.size() && (quoted || !std::iswspace(text[i]))) {
+            if (text[i] == L'"') quoted = !quoted;
+            ++i;
+        }
         std::wstring tok = text.substr(start, i - start);
-        if (!tok.empty() && tok[0] == L'#' && tok.size() > 1) {
-            tag_needles.push_back(ToLowerCopy(tok.substr(1)));
+        const bool exclude = tok.size() > 2 && tok[0] == L'-' && tok[1] == L'#';
+        FilterTagTerm term;
+        term.exclude = exclude;
+        if (exclude || (tok.size() > 1 && tok[0] == L'#')) {
+            size_t part = exclude ? 2 : 1;
+            bool in_quotes = false;
+            for (size_t k = part; k <= tok.size(); ++k) {
+                if (k < tok.size() && tok[k] == L'"') in_quotes = !in_quotes;
+                if (k == tok.size() || (tok[k] == L'|' && !in_quotes)) {
+                    std::wstring needle = UnquoteTagNeedle(tok.substr(part, k - part));
+                    if (!needle.empty()) term.alternatives.push_back(std::move(needle));
+                    part = k + 1;
+                }
+            }
+        }
+        if (!term.alternatives.empty()) {
+            tag_terms.push_back(std::move(term));
         } else if (!tok.empty()) {
             if (!name_needle.empty()) name_needle += L' ';
             name_needle += tok;
@@ -1677,6 +1714,57 @@ static void ParseFilterText(const std::wstring& text, std::wstring& name_needle,
 // The color family of a tag's actual color (HSV hue; low saturation is gray),
 // so #红 finds every reddish tag whatever its position or name.
 enum class TagHue { Red, Orange, Yellow, Green, Cyan, Blue, Purple, Pink, Gray };
+
+// The condition bar of a tag view: the terms (且 / 或 / 不含) in TagQueryTerms
+// order, the 位置 chip, ＋ 条件, 保存视图; then the 细分 chips counted at load time.
+// tag_view.cpp maps clicks back by the same order.
+static void FillTagQueryBar(const PlacesCatalog& places, const Tab& tab, ui::PaneViewModel& out) {
+    TagQuery query;
+    if (!TagQueryFromPath(places, tab.current_path, &query)) return;
+    using Chip = ui::TagQueryChipView;
+    for (const auto& term : TagQueryTerms(query)) {
+        Chip chip;
+        const ColorTag* tag = places.FindTag(term.id);
+        chip.label = tag ? tag->name : l10n::Get(l10n::StringId::TagDeleted);
+        chip.color = tag ? ui::HexColor(tag->rgb) : ui::HexColor(0x8E8E93);
+        chip.kind = term.kind == TagTermKind::All ? Chip::All
+                  : term.kind == TagTermKind::Any ? Chip::Any : Chip::Not;
+        out.tag_query_chips.push_back(std::move(chip));
+    }
+    if (!query.in.empty()) {
+        Chip chip;
+        chip.label = TagQueryFolderLabel(query.in);
+        chip.kind = Chip::Location;
+        out.tag_query_chips.push_back(std::move(chip));
+    }
+    Chip add;
+    add.label = l10n::Get(l10n::StringId::TagAddCondition);
+    add.kind = Chip::Add;
+    out.tag_query_chips.push_back(std::move(add));
+    if (!query.Empty()) {
+        Chip save;
+        save.label = l10n::Get(l10n::StringId::TagSaveView);
+        save.kind = Chip::Save;
+        out.tag_query_chips.push_back(std::move(save));
+    }
+    for (const auto& [id, count] : tab.tag_refine) {
+        const ColorTag* tag = places.FindTag(id);
+        if (!tag) continue;
+        Chip chip;
+        chip.label = tag->name;
+        chip.color = ui::HexColor(tag->rgb);
+        chip.kind = Chip::RefineTag;
+        chip.count = count;
+        out.tag_query_refine.push_back(std::move(chip));
+    }
+    for (const auto& [folder, count] : tab.tag_locations) {
+        Chip chip;
+        chip.label = TagQueryFolderLabel(folder);
+        chip.kind = Chip::RefineLocation;
+        chip.count = count;
+        out.tag_query_refine.push_back(std::move(chip));
+    }
+}
 
 static TagHue TagHueOf(uint32_t rgb) {
     const float r = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
@@ -1723,18 +1811,46 @@ static bool TagMatchesNeedle(const ColorTag& tag, const std::wstring& needle) {
     return false;
 }
 
+// Whether the tags on one item (indices into places.tags) satisfy every term.
+static bool TagTermsMatch(const PlacesCatalog& places, const std::vector<int>& ids,
+                          const std::vector<FilterTagTerm>& terms) {
+    for (const auto& term : terms) {
+        bool hit = false;
+        for (int id : ids) {
+            if (id < 0 || id >= static_cast<int>(places.tags.size())) continue;
+            for (const auto& needle : term.alternatives) {
+                if (TagMatchesNeedle(places.tags[static_cast<size_t>(id)], needle)) { hit = true; break; }
+            }
+            if (hit) break;
+        }
+        if (hit == term.exclude) return false;
+    }
+    return true;
+}
+
 index::ContentResultStore::Filter ContentFilter(const std::wstring& text, const PlacesCatalog& places) {
     if(text.empty()) return {};
-    std::wstring name; std::vector<std::wstring> tags;
-    ParseFilterText(text,name,tags);
-    if(name.empty() && tags.empty()) name=ToLowerCopy(text);
-    std::unordered_set<std::wstring> paths;
-    for(size_t id=0;id<places.tags.size();++id) for(const auto& needle:tags) {
-        if(TagMatchesNeedle(places.tags[id],needle))
-            for(const auto& path:places.tags[id].paths) paths.insert(ToLowerCopy(path));
+    std::wstring name; std::vector<FilterTagTerm> terms;
+    ParseFilterText(text,name,terms);
+    if(name.empty() && terms.empty()) name=ToLowerCopy(text);
+    // Per term: the lowercase paths carrying a matching tag.
+    struct TermPaths { std::unordered_set<std::wstring> paths; bool exclude = false; };
+    std::vector<TermPaths> sets;
+    for(const auto& term:terms) {
+        TermPaths set; set.exclude=term.exclude;
+        for(const auto& tag:places.tags) {
+            bool hit=false;
+            for(const auto& needle:term.alternatives) hit = hit || TagMatchesNeedle(tag,needle);
+            if(hit) for(const auto& path:tag.paths) set.paths.insert(ToLowerCopy(path));
+        }
+        sets.push_back(std::move(set));
     }
-    return [name=std::move(name),has_tags=!tags.empty(),paths=std::move(paths)](const fs::DirEntry& entry) {
-        return NameMatchesPattern(entry.name,name) && (!has_tags || paths.contains(ToLowerCopy(entry.full_path)));
+    return [name=std::move(name),sets=std::move(sets)](const fs::DirEntry& entry) {
+        if(!NameMatchesPattern(entry.name,name)) return false;
+        if(sets.empty()) return true;
+        const std::wstring key=ToLowerCopy(entry.full_path);
+        for(const auto& set:sets) if(set.paths.contains(key)==set.exclude) return false;
+        return true;
     };
 }
 
@@ -1749,9 +1865,9 @@ void CollectFilterMatches(const Tab& tab, const PlacesCatalog* places, std::vect
         return;
     }
     std::wstring name_needle;
-    std::vector<std::wstring> tag_needles;
-    ParseFilterText(tab.filter_text, name_needle, tag_needles);
-    if (name_needle.empty() && tag_needles.empty())
+    std::vector<FilterTagTerm> tag_terms;
+    ParseFilterText(tab.filter_text, name_needle, tag_terms);
+    if (name_needle.empty() && tag_terms.empty())
         name_needle = ToLowerCopy(tab.filter_text);
     out.reserve(static_cast<size_t>(n));
     for (int i = 0; i < n; ++i) {
@@ -1763,21 +1879,9 @@ void CollectFilterMatches(const Tab& tab, const PlacesCatalog* places, std::vect
             const std::wstring alias = AliasStore::Instance().Find(EntryPathOf(tab, e));
             name_ok = AliasStore::AliasMatches(alias, name_needle);
         }
-        bool tag_ok = tag_needles.empty();
-        if (!tag_ok && places) {
-            const std::wstring full = EntryPathOf(tab, e);
-            const auto ids = places->TagsForPath(full);
-            for (int id : ids) {
-                if (id < 0 || id >= static_cast<int>(places->tags.size())) continue;
-                for (const auto& needle : tag_needles) {
-                    if (TagMatchesNeedle(places->tags[static_cast<size_t>(id)], needle)) {
-                        tag_ok = true;
-                        break;
-                    }
-                }
-                if (tag_ok) break;
-            }
-        }
+        bool tag_ok = tag_terms.empty();
+        if (!tag_ok && places && name_ok)
+            tag_ok = TagTermsMatch(*places, places->TagsForPath(EntryPathOf(tab, e)), tag_terms);
         if (name_ok && tag_ok) out.push_back(i);
     }
 }
@@ -1812,8 +1916,11 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
     out.is_starred = virtual_kind == L"starred";
     out.is_recent = virtual_kind == L"recent";
     out.is_recycle = virtual_kind == L"recycle";
+    // Tag views list items from many folders too: they get the 路径 column.
     out.is_search = virtual_kind == L"search" || virtual_kind == L"saved-search"
-        || virtual_kind == L"recycle" || virtual_kind == L"changes";
+        || virtual_kind == L"recycle" || virtual_kind == L"changes" || IsTagViewKind(virtual_kind);
+    out.is_tag_query = places && IsTagViewKind(virtual_kind);
+    if (out.is_tag_query) FillTagQueryBar(*places, *tab, out);
     out.is_query_search = virtual_kind == L"search";
     if (out.is_query_search) {
         std::wstring rest;
@@ -2143,6 +2250,75 @@ void FillWindowTabStrip(ui::WindowViewModel& vm, const WindowTabs& tabs) {
     vm.active_tab = static_cast<int>(tabs.active);
 }
 
+// Sidebar 标签 (pulse_tag_redesign §4): the favorites in slot order, then the
+// other tags under their groups (or every tag by group, or favorites only),
+// and 所有标签 › last. A group header row folds its tags; without groups the
+// tags list flat as before.
+static void AppendSidebarTags(ui::SidebarGroup& out, const PlacesCatalog& places) {
+    const auto tag_row = [&](size_t index, int indent) {
+        const auto& t = places.tags[index];
+        ui::SidebarItem tag;
+        tag.label = t.name;
+        tag.path = MakeTagPath(t.id);
+        tag.is_tag = true;
+        tag.show_count = true;
+        tag.count = static_cast<int>(t.paths.size());
+        tag.tag_dot = ui::HexColor(t.rgb);
+        tag.indent = indent;
+        return tag;
+    };
+    const auto header_row = [](const std::wstring& id, const std::wstring& name,
+                               bool expandable, bool expanded, int count) {
+        ui::SidebarItem item;
+        item.label = name;
+        item.path = MakeTagGroupPath(id);
+        item.icon_glyph = L"\xE8B7";
+        item.expandable = expandable;
+        item.expanded = expanded;
+        item.show_count = true;
+        item.count = count;
+        return item;
+    };
+    const TagSidebarMode mode = places.tag_sidebar_mode;
+    if (mode != TagSidebarMode::AllByGroup) {
+        for (int slot = 1; slot <= kMaxFavoriteTags; ++slot) {
+            if (const int index = places.FavoriteTagIndex(slot); index >= 0)
+                out.items.push_back(tag_row(static_cast<size_t>(index), 0));
+        }
+    }
+    if (mode != TagSidebarMode::FavoritesOnly) {
+        const bool skip_favorites = mode == TagSidebarMode::FavoritesAndGroups;
+        std::vector<size_t> loose;
+        for (size_t i = 0; i < places.tags.size(); ++i) {
+            const auto& t = places.tags[i];
+            if (!(skip_favorites && t.favorite > 0) && places.TagGroupOf(t).empty()) loose.push_back(i);
+        }
+        for (const auto& group : places.tag_groups) {
+            std::vector<size_t> members;
+            for (size_t i = 0; i < places.tags.size(); ++i) {
+                const auto& t = places.tags[i];
+                if (!(skip_favorites && t.favorite > 0) && places.TagGroupOf(t) == group.id)
+                    members.push_back(i);
+            }
+            out.items.push_back(header_row(group.id, group.name, true, !group.collapsed,
+                                           static_cast<int>(members.size())));
+            if (group.collapsed) continue;
+            for (size_t i : members) out.items.push_back(tag_row(i, 1));
+        }
+        const bool grouped = !places.tag_groups.empty();
+        if (grouped && !loose.empty()) {
+            out.items.push_back(header_row(L"", l10n::Get(l10n::StringId::TagUngrouped), false, true,
+                                           static_cast<int>(loose.size())));
+        }
+        for (size_t i : loose) out.items.push_back(tag_row(i, grouped ? 1 : 0));
+    }
+    ui::SidebarItem all;
+    all.label = l10n::Get(l10n::StringId::TagAllTags);
+    all.path = MakeTagManagerPath();
+    all.icon_glyph = L"\xE8FD";
+    out.items.push_back(std::move(all));
+}
+
 ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
                                          const SidebarModel& sidebar, bool focused,
                                          bool maximized, bool dark, const PlacesCatalog* places,
@@ -2356,19 +2532,7 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
 
     tags.header = l10n::Get(l10n::StringId::SidebarTags);
     tags.add_action = ui::SidebarAddAction::CreateTag;
-    if (places) {
-        for (int i = 0; i < static_cast<int>(places->tags.size()); ++i) {
-            const auto& t = places->tags[static_cast<size_t>(i)];
-            ui::SidebarItem tag;
-            tag.label = t.name;
-            tag.path = MakeTagPath(t.id);
-            tag.is_tag = true;
-            tag.show_count = true;
-            tag.count = static_cast<int>(t.paths.size());
-            tag.tag_dot = ui::HexColor(t.rgb);
-            tags.items.push_back(std::move(tag));
-        }
-    }
+    if (places) AppendSidebarTags(tags, *places);
     nets.header = l10n::Get(l10n::StringId::SidebarNetworkLocations);
     nets.add_action = ui::SidebarAddAction::AddNetwork;
     if (places) {

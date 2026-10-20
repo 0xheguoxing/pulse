@@ -188,6 +188,15 @@ enum class PaneBannerAction : int {
     NetworkSettings
 };
 
+// One chip of a tag view's condition bar or 细分 row.
+struct TagQueryChipView {
+    enum Kind { All = 0, Any = 1, Not = 2, Location = 3, RefineTag = 4, RefineLocation = 5, Add = 6, Save = 7 };
+    std::wstring label;
+    D2D1_COLOR_F color{};   // tag dot
+    int kind = All;
+    int count = -1;         // 细分 chips: the items it keeps
+};
+
 struct PaneViewModel {
     using FilterMap = std::vector<int>;
     using TagDots = std::unordered_map<int, std::vector<D2D1_COLOR_F>>;
@@ -264,6 +273,10 @@ struct PaneViewModel {
     bool is_search = false;   // search results add a display-only 路径 column
     bool is_query_search = false;
     bool is_content_search = false;
+    // Tag views (pulse:tag: / pulse:tags:): the condition bar and 细分 row.
+    bool is_tag_query = false;
+    std::vector<TagQueryChipView> tag_query_chips;
+    std::vector<TagQueryChipView> tag_query_refine;
     bool network_live_action = false;  // #74: banner offers "Add to network index"
     std::wstring search_query;
     // Query search breadcrumb: origin segments followed by one search segment.
@@ -1274,6 +1287,9 @@ struct HitTestResult {
         RowMore,
         RecentFilter,
         RecentClear,
+        TagQueryChip,        // condition bar chip (index into tag_query_chips)
+        TagQueryChipRemove,  // its ×
+        TagQueryRefine,      // 细分 chip (index into tag_query_refine)
         PaneEmptyNewFolder,
         DetailsOpen,
         DetailsStar,

@@ -7,6 +7,7 @@
 #include "app_internal.h"
 #include "app_commands.h"
 #include "quick_access.h"
+#include "tag_manager.h"
 #include "../common/localization.h"
 #include "../ui/fluent_menu.h"
 
@@ -24,6 +25,9 @@ constexpr int kCollapseAll = 32101;
 // Section menu (opened on a section header or its empty space).
 constexpr int kBuiltinBase = 32200; // + BuiltinQuickAccess
 constexpr int kEditQuickAccess = 32250;
+constexpr int kManageTags = 32260;
+constexpr int kNewTagGroup = 32261;
+constexpr int kTagModeBase = 32270; // + TagSidebarMode
 constexpr int kCollapseSection = 32300;
 constexpr int kExpandSection = 32301;
 constexpr int kHideSection = 32302;
@@ -146,6 +150,31 @@ void ShowSidebarSectionMenu(AppState& s, int section, POINT screen_pt) {
         }
         if (!items.empty()) items.back().separator_after = true;
     }
+    if (section == static_cast<int>(app::SidebarSectionId::Tags)) {
+        ui::FluentMenuItem manage;
+        manage.command = kManageTags;
+        manage.text = l10n::Get(I::TagManage);
+        manage.glyph = L"\xE713";
+        items.push_back(std::move(manage));
+        ui::FluentMenuItem new_group;
+        new_group.command = kNewTagGroup;
+        new_group.text = l10n::Get(I::TagNewGroup);
+        new_group.glyph = L"\xE8B7";
+        items.push_back(std::move(new_group));
+        ui::FluentMenuItem mode;
+        mode.text = l10n::Get(I::TagSidebarMode);
+        static constexpr I kModes[] = { I::TagModeFavoritesGroups, I::TagModeAllGroups, I::TagModeFavorites };
+        for (int i = 0; i < 3; ++i) {
+            ui::FluentMenuItem item;
+            item.command = kTagModeBase + i;
+            item.text = l10n::Get(kModes[i]);
+            item.radio_group = true;
+            item.radio = static_cast<int>(s.places.tag_sidebar_mode) == i;
+            mode.children.push_back(std::move(item));
+        }
+        mode.separator_after = true;
+        items.push_back(std::move(mode));
+    }
     // A header-less section has nothing to fold: its rows are the section.
     if (!app::IsHeaderlessSection(static_cast<app::SidebarSectionId>(section))) {
         const bool collapsed = ((s.sidebarCollapsedMask >> section) & 1u) != 0;
@@ -177,6 +206,19 @@ void ShowSidebarSectionMenu(AppState& s, int section, POINT screen_pt) {
     const int command = s.menu->TrackPopup(screen_pt, std::move(items));
     if (command == kEditQuickAccess) {
         ShowQuickAccessEditor(s, screen_pt);
+        return;
+    }
+    if (command == kManageTags) {
+        ShowTagManager(s, screen_pt);
+        return;
+    }
+    if (command == kNewTagGroup) {
+        CreateTagGroupInteractive(s, screen_pt);
+        return;
+    }
+    if (command >= kTagModeBase && command < kTagModeBase + 3) {
+        s.places.SetTagSidebarMode(static_cast<app::TagSidebarMode>(command - kTagModeBase));
+        InvalidateRect(s.hwnd, nullptr, FALSE);
         return;
     }
     if (command >= kBuiltinBase &&

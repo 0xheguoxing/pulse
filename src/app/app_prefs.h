@@ -165,6 +165,8 @@ struct AppPrefs {
     // Tag colors the user added via the custom color dialog (0xRRGGBB),
     // appended after the seven Finder defaults in the swatch strip.
     std::vector<uint32_t> custom_tag_colors;
+    // Tag ids the tag panel lists under 最近用过, newest first (at most 5).
+    std::vector<std::wstring> recent_tags;
     // Settings > 快捷键: one "Id=Ctrl+Shift+C|F8" line per changed action
     // (app/keymap.h); defaults are not stored.
     std::vector<std::wstring> shortcuts;

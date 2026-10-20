@@ -171,6 +171,8 @@ void ClearTextWidthCache() {
     constexpr float kCommandIconStepDip = 34.0f;
     constexpr float kRecentControlsDip = 40.0f;
     constexpr float kSearchFiltersDip = 40.0f;
+    constexpr float kTagQueryRowDip = 40.0f;      // tag view condition bar
+    constexpr float kTagQueryRefineDip = 32.0f;   // its 细分 row, when there is one
     // d2d1.lib does not export the effect CLSIDs; define the shadow one locally.
     // (CLSID_D2D1Shadow from d2d1effects.h; same idiom as fluent_menu.cpp.)
     constexpr GUID kShadowEffectClsid = { 0xC67EA361, 0x1863, 0x4e69,
@@ -1160,8 +1162,13 @@ void ClearTextWidthCache() {
         }
     }
 
+    float TagQueryBarHeight(const PaneViewModel& pane, float scale) {
+        if (!pane.is_tag_query) return 0.0f;
+        return (kTagQueryRowDip + (pane.tag_query_refine.empty() ? 0.0f : kTagQueryRefineDip)) * scale;
+    }
+
     float PaneExtraTop(const PaneViewModel& pane, float scale, float width, Compositor* compositor) {
-        return PaneBannerHeight(pane, width, scale, compositor) +
+        return PaneBannerHeight(pane, width, scale, compositor) + TagQueryBarHeight(pane, scale) +
                (pane.is_recent ? kRecentControlsDip * scale : 0.0f) +
                (pane.is_query_search ? kSearchFiltersDip * scale : 0.0f) +
                (pane.is_changes ? 36.0f * scale : 0.0f);
@@ -2985,6 +2992,95 @@ HitTestResult::Region StatusBarHitRegion(const WindowViewModel& vm, const D2D1_R
         return HitTestResult::StatusHintAction;
     return !vm.status.query_active && !vm.status.task_is_update && ContainsPt(sb.task, x, y) ? HitTestResult::StatusBarTask
                                     : HitTestResult::StatusBar;
+}
+
+// Tag view condition bar (pulse_tag_redesign §5). Row 1: the terms, the 位置
+// chip, ＋ 条件 and 保存视图 (kept at the end of the row; terms that do not fit before them
+// get an empty rect); neighboring 任一 chips have 或 between them. Row 2:
+// 细分, then the refinement chips that fit.
+struct TagQueryBarLayout {
+    std::vector<D2D1_RECT_F> chips;     // per tag_query_chips
+    std::vector<D2D1_RECT_F> removes;   // the × of term and 位置 chips (empty for ＋ / 保存)
+    std::vector<D2D1_RECT_F> or_marks;  // 或
+    std::vector<D2D1_RECT_F> refine;    // per tag_query_refine
+    D2D1_RECT_F refine_label{};
+};
+
+TagQueryBarLayout LayoutTagQueryBar(Compositor* compositor, const PaneViewModel& pane,
+                                    const D2D1_RECT_F& bounds, float top, float scale) {
+    using Chip = TagQueryChipView;
+    TagQueryBarLayout out;
+    IDWriteFactory2* factory = compositor ? compositor->DwriteFactory() : nullptr;
+    IDWriteTextFormat* fmt = compositor ? compositor->SmallFormat() : nullptr;
+    const auto text_w = [&](const std::wstring& text) {
+        const float w = factory && fmt ? MeasureTextWidth(factory, fmt, text)
+                                       : 7.0f * scale * static_cast<float>(text.size());
+        return (std::min)(w, 160.0f * scale);
+    };
+    const auto count_w = [&](int count) {
+        return count < 0 ? 0.0f : text_w(std::to_wstring(count)) + 6.0f * scale;
+    };
+    const float gap = 6.0f * scale;
+    const float right = bounds.right - 10.0f * scale;
+    const float chip_h = 28.0f * scale;
+    const float y = top + (kTagQueryRowDip * scale - chip_h) * 0.5f;
+    const auto chip_w = [&](const Chip& chip) {
+        switch (chip.kind) {
+        case Chip::Add:
+        case Chip::Save: return (10.0f + 12.0f + 6.0f + 10.0f) * scale + text_w(chip.label);
+        case Chip::Location: return (10.0f + 14.0f + 6.0f + 4.0f + 16.0f + 6.0f) * scale + text_w(chip.label);
+        default: return (10.0f + 8.0f + 6.0f + 4.0f + 16.0f + 6.0f) * scale + text_w(chip.label);
+        }
+    };
+    const size_t n = pane.tag_query_chips.size();
+    out.chips.assign(n, D2D1_RECT_F{});
+    out.removes.assign(n, D2D1_RECT_F{});
+    // ＋ 条件 and 保存视图 end the row; their room is kept first.
+    float limit = right;
+    for (const Chip& chip : pane.tag_query_chips)
+        if (chip.kind >= Chip::Add) limit -= chip_w(chip) + gap;
+    const float or_w = text_w(pulse::l10n::Get(pulse::l10n::StringId::TagOr)) + 8.0f * scale;
+    float x = bounds.left + 10.0f * scale;
+    bool full = false;
+    for (size_t i = 0; i < n; ++i) {
+        const Chip& chip = pane.tag_query_chips[i];
+        const bool add = chip.kind >= Chip::Add;
+        const bool after_or = !add && i > 0 && chip.kind == Chip::Any &&
+                              pane.tag_query_chips[i - 1].kind == Chip::Any;
+        const float left = after_or ? x + or_w - gap * 0.5f : x;
+        const float w = chip_w(chip);
+        if (!add && (full || left + w > limit)) {
+            full = true;
+            continue;
+        }
+        if (after_or) out.or_marks.push_back(D2D1::RectF(x - gap * 0.5f, y, left, y + chip_h));
+        out.chips[i] = D2D1::RectF(left, y, left + w, y + chip_h);
+        if (!add) {
+            const float cy = y + chip_h * 0.5f;
+            out.removes[i] = D2D1::RectF(left + w - 24.0f * scale, cy - 10.0f * scale,
+                                         left + w - 4.0f * scale, cy + 10.0f * scale);
+        }
+        x = left + w + gap;
+    }
+
+    const size_t m = pane.tag_query_refine.size();
+    out.refine.assign(m, D2D1_RECT_F{});
+    if (m == 0) return out;
+    const float refine_h = 24.0f * scale;
+    const float ry = top + kTagQueryRowDip * scale + (kTagQueryRefineDip * scale - refine_h) * 0.5f - 4.0f * scale;
+    const std::wstring& label = pulse::l10n::Get(pulse::l10n::StringId::TagRefineLabel);
+    float rx = bounds.left + 12.0f * scale;
+    out.refine_label = D2D1::RectF(rx, ry, rx + text_w(label) + 2.0f * scale, ry + refine_h);
+    rx = out.refine_label.right + 8.0f * scale;
+    for (size_t i = 0; i < m; ++i) {
+        const Chip& chip = pane.tag_query_refine[i];
+        const float lead = chip.kind == Chip::RefineLocation ? 14.0f : 8.0f;
+        const float w = (8.0f + lead + 6.0f + 8.0f) * scale + text_w(chip.label) + count_w(chip.count);
+        if (rx + w > right) break;
+        out.refine[i] = D2D1::RectF(rx, ry, rx + w, ry + refine_h);
+        rx += w + 4.0f * scale;
+    }
+    return out;
 }
 
 bool IsHovered(const WindowViewModel& vm, HitTestResult::Region region, int index = -1,

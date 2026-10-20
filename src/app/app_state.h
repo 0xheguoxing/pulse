@@ -487,6 +487,7 @@ struct AppState : AppCoreOwner {
     // GUI verification for the color picker popup (QFluent replica).
     bool colorpickshot = false;
     bool colorpickshot_dark = true;
+    bool colorpickshot_tags = false;   // --tagmanagershot: the 管理标签 panel instead
     std::wstring colorpickshot_out;
     // Smoke test: open the interactive color picker dialog on launch.
     bool colorpickdialog = false;

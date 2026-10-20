@@ -128,6 +128,7 @@ void AppPrefs::ResetToDefaults() {
     accent_rgb.clear();
     accent_follow_system = false;
     custom_tag_colors.clear();
+    recent_tags.clear();
     shortcuts.clear();
     duplicate_scan_scope = 0;
     duplicate_scan_folder.clear();
@@ -327,6 +328,13 @@ std::wstring AppPrefs::ToJson() const {
         out += L"\"";
         out += hex;
         out += L"\"";
+    }
+    out += L"],\n  \"recent_tags\":[";
+    for (size_t i = 0; i < recent_tags.size(); ++i) {
+        std::wstring escaped;
+        pulse::json::Escape(recent_tags[i], escaped);
+        if (i > 0) out += L",";
+        out += L"\"" + escaped + L"\"";
     }
     out += L"],\n  \"shortcuts\":[";
     for (size_t i = 0; i < shortcuts.size(); ++i) {
@@ -531,6 +539,8 @@ bool AppPrefs::FromJson(const std::wstring& json) {
         if (end && *end == L'\0' && v <= 0xFFFFFFul && wcslen(text) == 6)
             custom_tag_colors.push_back(static_cast<uint32_t>(v));
     }
+    recent_tags = pulse::json::ExtractStringArray(json, L"recent_tags");
+    if (recent_tags.size() > 5) recent_tags.resize(5);
     duplicate_scan_scope = pulse::json::ExtractInt(json, L"duplicate_scan_scope", 0);
     if (duplicate_scan_scope < 0 || duplicate_scan_scope > 2) duplicate_scan_scope = 0;
     duplicate_scan_folder = pulse::json::ExtractString(json, L"duplicate_scan_folder");

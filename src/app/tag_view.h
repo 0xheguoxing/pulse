@@ -1,0 +1,19 @@
+// tag_view.h — clicks on a tag view's condition bar, and sidebar Ctrl/Shift
+// clicks that combine tags (pulse_tag_redesign §4, §5).
+#pragma once
+#include "app_runtime.h"
+
+namespace pulse {
+// Sidebar tag row released without a drag: Ctrl adds the tag to (or drops it
+// from) the open tag view's combination, Shift adds it as 不含. False for a
+// plain click, or when no tag view is open (the row then opens as usual).
+bool CombineSidebarTagClick(AppState& s, const std::wstring& tag_path);
+// Condition bar chip: the term menu (且 / 或 / 不含 / 移除), the 位置 menu, or
+// ＋ 条件 (the tags not in the query).
+void HandleTagQueryChip(AppState& s, int index, POINT screen_pt);
+void HandleTagQueryChipRemove(AppState& s, int index);
+// 细分 chip: narrows to the tag (Shift: without it) or to the folder.
+void HandleTagQueryRefine(AppState& s, int index, bool exclude);
+// The tags a drop on the active tag view would add: its 且 terms.
+bool TagViewDropTags(const AppState& s, const std::wstring& view_path, std::vector<std::wstring>* tag_ids);
+}

@@ -267,7 +267,7 @@ std::wstring GroupFolderKey(const std::wstring& path) {
         const std::wstring kind = key.substr(6, colon == std::wstring::npos ? std::wstring::npos : colon - 6);
         if (kind == L"recent") return L"pulse:recent";
         if (kind == L"search" || kind == L"saved-search") return L"pulse:search";
-        if (kind == L"tag") return L"pulse:tag";
+        if (kind == L"tag" || kind == L"tags") return L"pulse:tag";
         if (kind == L"recycle") return L"pulse:recycle";
         return {};
     }

@@ -346,6 +346,8 @@ bool HandleFolderMiddleClick(AppState& s, int x, int y) {
         path = hit.path;
     } else if (hit.region == R::SidebarItem) {
         if (IsVerticalTabPath(hit.path) || hit.path.starts_with(kTabPrefix)) return false;
+        // Tag group headers and 所有标签 › are sidebar controls, not places.
+        if (app::IsTagGroupPath(hit.path) || hit.path == app::MakeTagManagerPath()) return true;
         path = hit.path;
         if (!path.empty() && !fs::IsVirtualPath(path)) {
             // Starred files and other non-folder places have nothing to browse.

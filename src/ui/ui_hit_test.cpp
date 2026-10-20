@@ -1276,7 +1276,35 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 out.index = chip; return out;
             }
         }
-        const float columnTop = changesTop + (paneVm.is_changes ? 36 * scale_ : 0);
+        if (paneVm.is_tag_query && y >= changesTop &&
+            y < changesTop + TagQueryBarHeight(paneVm, scale_)) {
+            const TagQueryBarLayout bar = LayoutTagQueryBar(compositor_, paneVm, paneRc, changesTop, scale_);
+            for (size_t i = 0; i < bar.chips.size(); ++i) {
+                const D2D1_RECT_F& x_rc = bar.removes[i];
+                if (x_rc.right > x_rc.left && ContainsPt(x_rc, x, y)) {
+                    out.region = HitTestResult::TagQueryChipRemove;
+                    out.index = static_cast<int>(i);
+                    out.control_bounds = bar.chips[i];
+                    return out;
+                }
+                if (bar.chips[i].right > bar.chips[i].left && ContainsPt(bar.chips[i], x, y)) {
+                    out.region = HitTestResult::TagQueryChip;
+                    out.index = static_cast<int>(i);
+                    out.control_bounds = bar.chips[i];
+                    return out;
+                }
+            }
+            for (size_t i = 0; i < bar.refine.size(); ++i) {
+                if (bar.refine[i].right > bar.refine[i].left && ContainsPt(bar.refine[i], x, y)) {
+                    out.region = HitTestResult::TagQueryRefine;
+                    out.index = static_cast<int>(i);
+                    out.control_bounds = bar.refine[i];
+                    return out;
+                }
+            }
+        }
+        const float columnTop = changesTop + (paneVm.is_changes ? 36 * scale_ : 0) +
+                                TagQueryBarHeight(paneVm, scale_);
         float listTop = paneRc.top + pane_header_height_ + extra +
                         (ShowsColumnHeader(paneVm.view_mode) ? column_header_height_ : 0.0f);
         if (y >= paneRc.top && y < paneRc.top + pane_header_height_) {

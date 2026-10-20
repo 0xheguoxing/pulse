@@ -276,7 +276,8 @@ void OpenGroupWheel(AppState& s) {
     std::wstring kind;
     app::ParsePulsePath(tab->current_path, &kind, nullptr);
     const bool recent = kind == L"recent";
-    const bool multi = kind == L"search" || kind == L"saved-search" || kind == L"tag" || kind == L"recycle";
+    const bool multi = kind == L"search" || kind == L"saved-search" || kind == L"tag" ||
+                       kind == L"tags" || kind == L"recycle";
     // Preview only: counting stops at 20k entries so opening stays instant.
     const size_t count = std::min<size_t>(tab->EntryCount(), 20000);
     std::vector<fs::DirEntry> entries;

@@ -217,6 +217,11 @@ bool PlacesCatalog::SaveTagFile(const std::vector<ColorTag>& snapshot, uint64_t 
              << L"\",\"rgb\":" << rgb;
         // v3: optional favorite slot; older versions ignore the field.
         if (snapshot[i].favorite > 0) file << L",\"fav\":" << snapshot[i].favorite;
+        if (!snapshot[i].group.empty()) {
+            std::wstring group;
+            pulse::json::Escape(snapshot[i].group, group);
+            file << L",\"group\":\"" << group << L"\"";
+        }
         file << L",\"paths\":";
         write_array(snapshot[i].paths);
         file << L"}" << (i + 1 < snapshot.size() ? L"," : L"") << L"\n";
@@ -406,6 +411,8 @@ bool PlacesCatalog::Load() {
     if (!ReadTagsGeneration(tag_json, tag_generation)) { load_failed = true; return false; }
     workspaces.clear();
     tags.clear();
+    tag_groups.clear();
+    tag_sidebar_mode = TagSidebarMode::FavoritesAndGroups;
     networks.clear();
     quick_access_paths.clear();
     quick_access_order.clear();
@@ -452,7 +459,23 @@ bool PlacesCatalog::Load() {
         t.name = pulse::json::ExtractString(block, L"name");
         t.rgb = ExtractRgb(block);
         t.paths = pulse::json::ExtractStringArray(block, L"paths");
+        t.favorite = pulse::json::ExtractInt(block, L"fav");
+        t.group = pulse::json::ExtractString(block, L"group");
         if (!t.name.empty()) tags.push_back(std::move(t));
+    }
+
+    for (const auto& block : ExtractObjectArray(json, L"tag_groups")) {
+        TagGroup group;
+        group.id = pulse::json::ExtractString(block, L"id");
+        group.name = TrimTagName(pulse::json::ExtractString(block, L"name"));
+        group.collapsed = pulse::json::ExtractBool(block, L"collapsed", false);
+        if (!group.id.empty() && !group.name.empty() && !FindTagGroup(group.id))
+            tag_groups.push_back(std::move(group));
+    }
+    {
+        const int mode = pulse::json::ExtractInt(json, L"tag_sidebar_mode");
+        tag_sidebar_mode = mode >= 0 && mode <= 2 ? static_cast<TagSidebarMode>(mode)
+                                                  : TagSidebarMode::FavoritesAndGroups;
     }
 
     for (const auto& block : ExtractObjectArray(json, L"networks")) {
@@ -537,6 +560,7 @@ bool PlacesCatalog::Load() {
             tag.rgb = ExtractRgb(block);
             tag.paths = pulse::json::ExtractStringArray(block, L"paths");
             tag.favorite = pulse::json::ExtractInt(block, L"fav");
+            tag.group = pulse::json::ExtractString(block, L"group");
             if (!tag.id.empty() && !tag.name.empty()) loaded.push_back(std::move(tag));
         }
         const auto position = pulse::json::ValuePosition(tag_json, L"tags");
@@ -563,7 +587,9 @@ bool PlacesCatalog::Load() {
     // Before tags file v3 Alt+N meant "the Nth tag": the first seven become
     // the favorites, so the keys keep doing what they did.
     const bool favorites_migrated = tags_loaded
-        ? pulse::json::ExtractInt(tag_json, L"version") < 3 : places_loaded;
+        ? pulse::json::ExtractInt(tag_json, L"version") < 3
+        : places_loaded && std::none_of(tags.begin(), tags.end(),
+                                        [](const ColorTag& tag) { return tag.favorite > 0; });
     if (favorites_migrated) {
         for (size_t i = 0; i < tags.size(); ++i)
             tags[i].favorite = i < 7 ? static_cast<int>(i) + 1 : 0;
@@ -594,6 +620,8 @@ PlacesCatalog::SaveSnapshot PlacesCatalog::CaptureSaveSnapshot() const {
     SaveSnapshot snapshot;
     snapshot.workspaces = workspaces;
     snapshot.tags = tags;
+    snapshot.tag_groups = tag_groups;
+    snapshot.tag_sidebar_mode = tag_sidebar_mode;
     {
         std::lock_guard lock(tag_save_mutex_);
         snapshot.tags_generation = tags_generation_;
@@ -750,13 +778,32 @@ bool PlacesCatalog::SaveSnapshotFile(const SaveSnapshot& snapshot) {
         wchar_t rgb[16];
         swprintf_s(rgb, L"0x%06X", t.rgb & 0xFFFFFFu);
         f << L"    {\"id\":\"" << id << L"\",\"name\":\"" << name
-          << L"\",\"rgb\":" << rgb << L",\"paths\":";
+          << L"\",\"rgb\":" << rgb;
+        if (t.favorite > 0) f << L",\"fav\":" << t.favorite;
+        if (!t.group.empty()) {
+            std::wstring group;
+            pulse::json::Escape(t.group, group);
+            f << L",\"group\":\"" << group << L"\"";
+        }
+        f << L",\"paths\":";
         writeArr(t.paths);
         f << L"}";
         if (i + 1 < snapshot.tags.size()) f << L",";
         f << L"\n";
     }
-    f << L"  ],\n  \"networks\":[\n";
+    f << L"  ],\n  \"tag_groups\":[\n";
+    for (size_t i = 0; i < snapshot.tag_groups.size(); ++i) {
+        const auto& g = snapshot.tag_groups[i];
+        std::wstring id, name;
+        pulse::json::Escape(g.id, id);
+        pulse::json::Escape(g.name, name);
+        f << L"    {\"id\":\"" << id << L"\",\"name\":\"" << name << L"\",\"collapsed\":"
+          << (g.collapsed ? L"true" : L"false") << L"}";
+        if (i + 1 < snapshot.tag_groups.size()) f << L",";
+        f << L"\n";
+    }
+    f << L"  ],\n  \"tag_sidebar_mode\":" << static_cast<int>(snapshot.tag_sidebar_mode);
+    f << L",\n  \"networks\":[\n";
     for (size_t i = 0; i < snapshot.networks.size(); ++i) {
         const auto& n = snapshot.networks[i];
         std::wstring name, unc;
@@ -1323,6 +1370,110 @@ void PlacesCatalog::NormalizeFavoriteSlots() {
         }
         used[tag.favorite] = true;
     }
+}
+
+void PlacesCatalog::ReorderFavoriteTags(const std::vector<TagId>& order) {
+    std::vector<int> slots;
+    std::vector<size_t> members;
+    for (const auto& id : order) {
+        const int index = FindTagIndex(id);
+        if (index < 0 || tags[static_cast<size_t>(index)].favorite <= 0) continue;
+        slots.push_back(tags[static_cast<size_t>(index)].favorite);
+        members.push_back(static_cast<size_t>(index));
+    }
+    std::sort(slots.begin(), slots.end());
+    bool changed = false;
+    for (size_t i = 0; i < members.size(); ++i) {
+        changed = changed || tags[members[i]].favorite != slots[i];
+        tags[members[i]].favorite = slots[i];
+    }
+    if (!changed) return;
+    ++tag_revision_;
+    QueueTagSave();
+}
+
+const TagGroup* PlacesCatalog::FindTagGroup(const std::wstring& id) const {
+    if (id.empty()) return nullptr;
+    for (const auto& group : tag_groups)
+        if (group.id == id) return &group;
+    return nullptr;
+}
+
+std::wstring PlacesCatalog::TagGroupOf(const ColorTag& tag) const {
+    return FindTagGroup(tag.group) ? tag.group : std::wstring{};
+}
+
+std::wstring PlacesCatalog::CreateTagGroup(const std::wstring& raw_name) {
+    const std::wstring name = TrimTagName(raw_name);
+    if (name.empty()) return {};
+    for (const auto& group : tag_groups)
+        if (EqualI(group.name, name)) return group.id;
+    TagGroup group;
+    group.id = NewTagId();
+    group.name = name;
+    tag_groups.push_back(group);
+    ++tag_revision_;
+    Save();
+    return group.id;
+}
+
+bool PlacesCatalog::RenameTagGroup(const std::wstring& id, const std::wstring& raw_name) {
+    const std::wstring name = TrimTagName(raw_name);
+    if (name.empty()) return false;
+    for (auto& group : tag_groups) {
+        if (group.id != id) continue;
+        if (group.name == name) return false;
+        group.name = name;
+        ++tag_revision_;
+        Save();
+        return true;
+    }
+    return false;
+}
+
+bool PlacesCatalog::DeleteTagGroup(const std::wstring& id) {
+    const auto found = std::find_if(tag_groups.begin(), tag_groups.end(),
+        [&](const TagGroup& group) { return group.id == id; });
+    if (found == tag_groups.end()) return false;
+    tag_groups.erase(found);
+    bool members = false;
+    for (auto& tag : tags) {
+        if (tag.group != id) continue;
+        tag.group.clear();
+        members = true;
+    }
+    ++tag_revision_;
+    Save();
+    if (members) QueueTagSave();
+    return true;
+}
+
+bool PlacesCatalog::SetTagGroup(const TagId& id, const std::wstring& group_id) {
+    const int index = FindTagIndex(id);
+    if (index < 0 || (!group_id.empty() && !FindTagGroup(group_id))) return false;
+    ColorTag& tag = tags[static_cast<size_t>(index)];
+    if (TagGroupOf(tag) == group_id) return false;
+    tag.group = group_id;
+    ++tag_revision_;
+    QueueTagSave();
+    return true;
+}
+
+bool PlacesCatalog::SetTagGroupCollapsed(const std::wstring& id, bool collapsed) {
+    for (auto& group : tag_groups) {
+        if (group.id != id || group.collapsed == collapsed) continue;
+        group.collapsed = collapsed;
+        MarkPlacesDirty();
+        return true;
+    }
+    return false;
+}
+
+void PlacesCatalog::SetTagSidebarMode(TagSidebarMode mode) {
+    if (tag_sidebar_mode == mode) return;
+    tag_sidebar_mode = mode;
+    ++tag_revision_;
+    MarkPlacesDirty();
 }
 
 bool PlacesCatalog::SetTagFavorite(const TagId& id, bool favorite) {
