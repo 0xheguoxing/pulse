@@ -63,7 +63,7 @@ void ToggleSidebarSection(AppState& s, int group) {
     // leave nothing to right-click, so unhiding it also restores the links.
     if (group == static_cast<int>(app::SidebarSectionId::QuickAccess) &&
         ((s.sidebarHiddenMask >> group) & 1u) == 0) {
-        s.sidebarQuickAccessHiddenMask = 0;
+        s.sidebarQuickAccessHiddenMask = app::kDefaultQuickAccessHiddenMask;
     }
 }
 

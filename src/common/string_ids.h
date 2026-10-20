@@ -2450,5 +2450,6 @@
 #define IDS_RENAME_TRAILING_TRIMMED                                                      3656
 #define IDS_ALIAS_MARK                                                                   3657
 #define IDS_ALIAS_MARK_DESC                                                              3658
+#define IDS_MUSIC                                                                        3663
 
 #endif  // PULSE_STRING_IDS_H

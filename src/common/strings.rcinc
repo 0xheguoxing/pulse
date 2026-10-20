@@ -2436,6 +2436,7 @@ BEGIN
     IDS_INTEGRATION_HINT_LAUNCH_COMPAT "「兼容打开方式」只在 Pulse 运行时有效。想一开机就生效，可以打开「开机自启」。"
     IDS_INTEGRATION_COMPAT "兼容打开方式"
     IDS_INTEGRATION_COMPAT_DESC "双击文件夹没反应时勾选：Pulse 不再改动文件夹的双击动作，改为资源管理器先打开，再马上转到 Pulse，可能会闪一下。"
+    IDS_MUSIC "音乐"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4871,6 +4872,7 @@ BEGIN
     IDS_INTEGRATION_HINT_LAUNCH_COMPAT "Compatibility mode works only while Pulse is running. To have it from sign-in, turn on Launch at sign-in."
     IDS_INTEGRATION_COMPAT "Compatibility mode"
     IDS_INTEGRATION_COMPAT_DESC "Turn on if double-clicking a folder does nothing: Pulse leaves the double-click action alone, lets File Explorer open the folder, then moves it into Pulse right away. It may flash briefly."
+    IDS_MUSIC "Music"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

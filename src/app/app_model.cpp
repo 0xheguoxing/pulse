@@ -1389,6 +1389,33 @@ SidebarModel BuildSidebarModel(const fs::RecycleBinInfo* recycle) {
         ui::HexColor(0xC084FC), l10n::Get(l10n::StringId::Downloads).c_str());
     downloads.builtin = static_cast<int>(BuiltinQuickAccess::Downloads);
     m.quick_access.push_back(std::move(downloads));
+    // The library folders Explorer lists next to them, in Explorer's order.
+    // Documents and Music start hidden (kDefaultQuickAccessHiddenMask); a
+    // folder the profile does not have is left out, section menu included.
+    const struct {
+        REFKNOWNFOLDERID id;
+        const wchar_t* glyph;
+        const wchar_t* fallback;
+        uint32_t rgb;
+        l10n::StringId label;
+        BuiltinQuickAccess builtin;
+    } libraries[] = {
+        {FOLDERID_Documents, L"\xE8A5", L"Docs", 0x60A5FA, l10n::StringId::PickerDocuments,
+         BuiltinQuickAccess::Documents},
+        {FOLDERID_Pictures, L"\xE91B", L"Pics", 0x34D399, l10n::StringId::PickerPictures,
+         BuiltinQuickAccess::Pictures},
+        {FOLDERID_Music, L"\xE8D6", L"Music", 0xF472B6, l10n::StringId::Music,
+         BuiltinQuickAccess::Music},
+        {FOLDERID_Videos, L"\xE714", L"Video", 0xF59E0B, l10n::StringId::Videos,
+         BuiltinQuickAccess::Videos},
+    };
+    for (const auto& library : libraries) {
+        SidebarEntry entry = MakeKnownEntry(library.id, library.glyph, library.fallback,
+            ui::HexColor(library.rgb), l10n::Get(library.label).c_str());
+        if (entry.path.empty()) continue;
+        entry.builtin = static_cast<int>(library.builtin);
+        m.quick_access.push_back(std::move(entry));
+    }
     // OneDrive leads its own section: one row per signed-in account, the way
     // Explorer lists them. The known folder only resolves for the primary
     // account, so it stays as the fallback when the registry has nothing.

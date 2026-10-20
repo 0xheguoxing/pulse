@@ -46,7 +46,7 @@ struct WindowLayoutSnapshot {
     int sidebar_collapsed = 0;
     int sidebar_hidden = 0;
     std::vector<int> sidebar_order;
-    int quick_access_hidden = 0;
+    int quick_access_hidden = static_cast<int>(kDefaultQuickAccessHiddenMask);
     bool starred_expanded = true;
     bool details_panel = false;
     int details_panel_width = 340;
@@ -85,7 +85,8 @@ struct SessionSnapshot {
     int sidebar_collapsed = 0; // bitmask indexed by SidebarSectionId
     int sidebar_hidden = 0;    // same ids; hidden sections are not drawn at all
     std::vector<int> sidebar_order; // display order, empty = DefaultSidebarOrder()
-    int quick_access_hidden = 0;    // bitmask over BuiltinQuickAccess links
+    // Bitmask over BuiltinQuickAccess links.
+    int quick_access_hidden = static_cast<int>(kDefaultQuickAccessHiddenMask);
     bool starred_expanded = true;
     bool details_panel = false;  // right details panel visible
     int details_panel_width = 340;

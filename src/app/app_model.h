@@ -570,16 +570,27 @@ struct SidebarEntry {
     int builtin = -1;
 };
 
-// Built-in quick-access links, in the order they are listed. The stored mask
-// (session "quickAccessHidden") is indexed by these values, so changing the set
-// or the order needs a session migration (see kSessionVersion in session.cpp).
+// Built-in quick-access links. The stored mask (session "quickAccessHidden") is
+// indexed by these values, so new links are appended and any other change needs
+// a session migration (see kSessionVersion in session.cpp). The sidebar lists
+// them in BuildSidebarModel's order, not in value order.
 enum class BuiltinQuickAccess : int {
     Recent = 0,
     Desktop,
     Downloads,
     RecycleBin,
+    Pictures,   // session version 9
+    Videos,
+    Documents,
+    Music,
     Count,
 };
+
+// Links a fresh profile hides: Documents and Music are one click away in the
+// section menu, but a default sidebar keeps to the folders people open most.
+inline constexpr uint32_t kDefaultQuickAccessHiddenMask =
+    (1u << static_cast<int>(BuiltinQuickAccess::Documents)) |
+    (1u << static_cast<int>(BuiltinQuickAccess::Music));
 
 // Sidebar sections. The ids are stable: the collapse/hide bitmasks stored in the
 // session are indexed by them, and the user may reorder the groups by dragging.

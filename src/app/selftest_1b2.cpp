@@ -5496,7 +5496,7 @@ void TestQuickAccess() {
         state.sidebarQuickAccessHiddenMask = 0x1Fu;
         state.sidebarHiddenMask = 1u << static_cast<int>(SidebarSectionId::QuickAccess);
         ToggleSidebarSection(state, static_cast<int>(SidebarSectionId::QuickAccess));
-        Check(state.sidebarQuickAccessHiddenMask == 0,
+        Check(state.sidebarQuickAccessHiddenMask == kDefaultQuickAccessHiddenMask,
               L"sidebar sections: unhiding quick access restores its built-in links");
         SetEverySidebarSectionCollapsed(state, true);
         Check(state.sidebarCollapsedMask == (1u << kSidebarSectionCount) - 1u,

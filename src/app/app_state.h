@@ -275,7 +275,7 @@ struct AppState : AppCoreOwner {
     // rewrite it; the masks above are indexed by id, so they survive a reorder.
     std::vector<int> sidebarOrder = app::DefaultSidebarOrder();
     // Built-in quick-access links switched off in the section menu.
-    uint32_t sidebarQuickAccessHiddenMask = 0;
+    uint32_t sidebarQuickAccessHiddenMask = app::kDefaultQuickAccessHiddenMask;
     bool starredExpanded = true;
     float sidebarScroll = 0.0f;
     int settingsReleaseExpanded = 0;   // Settings > About release-note row that is open, -1 none

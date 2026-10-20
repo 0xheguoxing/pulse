@@ -2446,6 +2446,7 @@ enum class StringId : UINT {
     RenameTrailingTrimmed = IDS_RENAME_TRAILING_TRIMMED,
     AliasMark = IDS_ALIAS_MARK,
     AliasMarkDesc = IDS_ALIAS_MARK_DESC,
+    Music = IDS_MUSIC,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;
