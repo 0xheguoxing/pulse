@@ -166,7 +166,7 @@ int main(int argc, char** argv) {
         passed &= Report("tab menu TabCloseRight follows display language",
             Get(StringId::TabCloseRight) == (std::wstring(language) == L"zh-CN" ? L"关闭右侧标签页" : L"Close tabs to the right"));
         passed &= Report("tab menu TabGroupName follows display language",
-            Get(StringId::TabGroupName) == (std::wstring(language) == L"zh-CN" ? L"标签组名称…" : L"Tab group name…"));
+            Get(StringId::TabGroupName) == (std::wstring(language) == L"zh-CN" ? L"标签页组名称…" : L"Tab group name…"));
         passed &= Report("tab menu TabGroupNew follows display language",
             Get(StringId::TabGroupNew) == (std::wstring(language) == L"zh-CN" ? L"在组中新建标签页" : L"New tab in group"));
         passed &= Report("tab menu TabUngroup follows display language",
