@@ -222,6 +222,8 @@ static bool g_shot_favorites_bar = false;
 static int g_shot_favorites_hover = -1;
 // --shot-favorites-drop N: files are dragged over favorite N.
 static int g_shot_favorites_drop = -1;
+// --shot-favorites-focus N: F6 onto the 收藏栏, then → N times (the focus ring).
+static int g_shot_favorites_focus = -1;
 // Decorative motion (loading shimmer, folder size skeleton, the pill's ring)
 // runs at about 30 fps instead of the display rate (FramePump::ArmPaced).
 constexpr double kDecorativeFrameMs = 1000.0 / 30.0;
@@ -2268,6 +2270,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_SYSKEYDOWN:
         if (s && HandleGlobalSearchHotkeyCapture(*s, static_cast<UINT>(wParam))) return 0;
+        // 收藏栏 holding the F6 focus: Alt+↓ (the subfolders), Shift+F10.
+        if (s && FavoritesBarHasFocus(*s) && (wParam == VK_DOWN || wParam == VK_F10) &&
+            HandleFavoritesBarKey(*s, wParam))
+            return 0;
         if (s && wParam == L'D' && (GetKeyState(VK_MENU) & 0x8000)) {
             ShowOmnibar(*s, OmnibarMode::Path);
             return 0;
@@ -3277,6 +3283,8 @@ int ShotModeMain(AppState& state, HWND hwnd) {
             state.hoverControlIndex = g_shot_favorites_hover;
         }
         if (g_shot_favorites_drop >= 0) state.dropFavorite = g_shot_favorites_drop;
+        if (g_shot_favorites_focus >= 0 && CycleFavoritesBarFocus(state))
+            for (int step = 0; step < g_shot_favorites_focus; ++step) HandleFavoritesBarKey(state, VK_RIGHT);
         RunHoverBench(state);  // --bench-hover: env PULSE_BENCH_HOVER_LIST / _OUT
         if (state.shot_hover_dwell >= 0 && StageHoverDwellShot(state, state.shot_hover_dwell)) {
             for (int i = 0; i < 2; ++i) {
@@ -3561,6 +3569,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             g_shot_favorites_hover = _wtoi(__wargv[++i]);
         } else if (wcscmp(__wargv[i], L"--shot-favorites-drop") == 0 && i + 1 < __argc) {
             g_shot_favorites_drop = _wtoi(__wargv[++i]);
+        } else if (wcscmp(__wargv[i], L"--shot-favorites-focus") == 0 && i + 1 < __argc) {
+            g_shot_favorites_focus = _wtoi(__wargv[++i]);
         } else if (wcscmp(__wargv[i], L"--shot-rail") == 0) {
             // GUI verification for the icon rail: every section folded, so a
             // narrow window shows one row per section.

@@ -949,6 +949,15 @@ void MainRenderer::DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F
     drag.left=vm.favorites_bar_drag_left;
     drag.dy=vm.favorites_bar_drag_dy;
     drag.out=vm.favorites_bar_drag_out;
+    // Keyboard focus (F6): the Fluent focus stroke, 2px in the text colour.
+    const auto draw_focus=[&](const D2D1_RECT_F& b) {
+        ComPtr<ID2D1SolidColorBrush> pen;
+        dc->CreateSolidColorBrush(theme.text,&pen);
+        const float o=1*scale_;
+        if (pen.get())
+            dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(b.left-o,b.top-o,b.right+o,b.bottom+o),radius+o,radius+o),
+                                     pen.get(),2*scale_);
+    };
     const auto draw_item=[&](size_t i) {
         const D2D1_RECT_F slot=lay.items[i];
         const auto& f=vm.favorites_bar[i];
@@ -979,6 +988,7 @@ void MainRenderer::DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F
             dc->CreateSolidColorBrush(theme.accent,&ring);
             if (ring.get()) dc->DrawRoundedRectangle(D2D1::RoundedRect(b,radius,radius),ring.get(),2*scale_);
         }
+        if (vm.favorites_bar_focus==static_cast<int>(i)) draw_focus(b);
         // The sidebar's starred folder colour; files in the secondary text.
         D2D1_COLOR_F icon=f.folder ? HexColor(0xFBBF24) : theme.text_secondary;
         D2D1_COLOR_F ink=theme.text;
@@ -1053,6 +1063,7 @@ void MainRenderer::DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F
         if (IsHovered(vm,HitTestResult::FavoritesBarMore)) painter_.FillRoundedRect(m,radius,theme.fill_hover);
         painter_.DrawText(L"\u00BB",D2D1::RectF(m.left+10*scale_,m.top,m.right,m.bottom),
                           compositor_->SmallFormat(),theme.text_secondary);
+        if (vm.favorites_bar_focus==static_cast<int>(vm.favorites_bar.size())) draw_focus(m);
     }
 }
 

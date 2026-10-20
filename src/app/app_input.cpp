@@ -351,9 +351,22 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
     } else if (hit.region == ui::HitTestResult::FavoritesBarItem ||
                hit.region == ui::HitTestResult::FavoritesBarChevron) {
         // A favorite folder takes the drop like a breadcrumb; a file does not.
-        s.springRow = -1;
         bool offline = false;
         const std::wstring folder = FavoritesBarDropFolder(s, hit, &offline);
+        // Spring-loaded like a folder row (ui.md §7.8): resting 800ms on it
+        // opens it here, Esc goes back. springRow holds bar entries below -1.
+        const int spring_key = -2 - hit.index;
+        if (folder.empty() || ui::DropIntoOwnFolder(sources, folder)) {
+            s.springRow = -1;
+        } else if (s.springRow != spring_key) {
+            s.springRow = spring_key;
+            s.springStart = GetTickCount64();
+        } else if (!s.springEntered && GetTickCount64() - s.springStart >= 800) {
+            s.springEntered = true;
+            s.springRow = -1;
+            NavigateTo(s, folder);
+            return DROPEFFECT_NONE;
+        }
         if (folder.empty()) {
             s.dropBadge = l10n::Get(offline ? l10n::StringId::FavoritesBarUnreachable
                                             : l10n::StringId::FavoritesBarNotFolder).c_str();
@@ -4567,6 +4580,7 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             return 0;
         }
         if (HandleWindowSwitcherKey(*s, lParam)) return 0;  // M7d: Ctrl+`
+        if (HandleFavoritesBarKey(*s, wParam)) return 0;    // 收藏栏 holding the F6 focus
         s->blankClickTab = nullptr;
         CancelRenameClick(*s);
         app::Tab* tab = ActiveTab(*s);
@@ -4699,7 +4713,7 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             if (IsAddressSearchResults(tab)) ShowAddressSearch(*s);
             else ShowFilterEditor(*s);
         } else if (wParam == VK_F6) {
-            CycleFocus(*s);
+            if (!CycleFavoritesBarFocus(*s)) CycleFocus(*s);   // panes, then 收藏栏
         } else if (ctrl && alt && wParam == L'C') {
             TransferToTarget(*s, false);
         } else if (ctrl && alt && wParam == L'X') {

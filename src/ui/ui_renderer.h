@@ -952,6 +952,7 @@ struct WindowViewModel {
     int favorites_bar_drop = -1;          // files dragged over this favorite folder
     bool favorites_bar_drop_add = false;  // items over the bar's empty part: 加入收藏夹
     bool favorites_here = false;          // the current folder is starred (address ★)
+    int favorites_bar_focus = -1;         // keyboard focus (F6): an entry, favorites_bar.size() = »
 
     PaneViewModel pane;
     std::vector<PaneSlotView> pane_slots;

@@ -38,4 +38,11 @@ void CreateStarredGroupAndEdit(AppState& s, const std::wstring& path, POINT scre
 // Middle click: a group's path (pulse:star-group:) opens all its folders in
 // new tabs; false for any other path.
 bool OpenFavoritesGroupTabs(AppState& s, const std::wstring& path);
+// Keyboard (§8 键盘): F6 runs panes → 收藏栏 → the first pane again. On the bar
+// ←/→ move (Home/End), Enter opens (Ctrl: a new tab, Shift: the other pane),
+// Alt+↓ the subfolders or a group's dropdown, Shift+F10 the right-click menu,
+// Esc leaves; any other key leaves and goes on to the list.
+bool CycleFavoritesBarFocus(AppState& s);   // false: let F6 cycle the panes
+bool FavoritesBarHasFocus(const AppState& s);
+bool HandleFavoritesBarKey(AppState& s, WPARAM key);
 }

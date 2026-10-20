@@ -50,6 +50,14 @@ struct FavoriteDrag {
 };
 FavoriteDrag g_drag;
 
+// The entry holding the keyboard focus (F6); -1 none. favorites_bar.size()
+// is ».
+struct KeyFocus {
+    const AppState* owner = nullptr;
+    int slot = -1;
+};
+KeyFocus g_key;
+
 // The favorite last dragged off the bar, for the snack's undo.
 struct RemovedFavorite {
     const AppState* owner = nullptr;
@@ -548,6 +556,8 @@ void FillFavoritesBar(AppState& s, ui::WindowViewModel& vm) {
         vm.favorites_bar_drag_out = g_drag.out;
         if (!g_drag.into.empty()) vm.favorites_bar_drop = g_drag.into_slot;   // the ring: joins it
     }
+    if (g_key.owner == &s && g_key.slot >= 0)
+        vm.favorites_bar_focus = std::min(g_key.slot, static_cast<int>(vm.favorites_bar.size()));
 }
 
 void ToggleFavoritesBar(AppState& s) {
@@ -557,6 +567,10 @@ void ToggleFavoritesBar(AppState& s) {
 }
 
 bool HandleFavoritesBarPress(AppState& s, const ui::HitTestResult& hit) {
+    if (g_key.slot >= 0) {   // the mouse takes over from the keyboard
+        g_key = KeyFocus{};
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+    }
     if ((hit.region == ui::HitTestResult::SidebarItem || hit.region == ui::HitTestResult::SidebarItemExpand) &&
         app::IsStarredGroupPath(hit.path)) {
         // A group's row in the sidebar's 收藏夹 is not a place: it folds.
@@ -746,6 +760,102 @@ void CreateStarredGroupAndEdit(AppState& s, const std::wstring& path, POINT scre
     RefreshStarredViews(s);
     InvalidateRect(s.hwnd, nullptr, FALSE);
     ShowStarredGroupMenu(s, id, screen);   // name it
+}
+
+bool FavoritesBarHasFocus(const AppState& s) {
+    return g_key.owner == &s && g_key.slot >= 0 && s.appPrefs.favorites_bar && !s.renderer.Embedded() &&
+           !s.places.starred_items.empty();
+}
+
+bool CycleFavoritesBarFocus(AppState& s) {
+    if (FavoritesBarHasFocus(s)) {
+        g_key = KeyFocus{};
+        const auto panes = LiveLayout(s).VisiblePanes();
+        if (!panes.empty() && panes.front()) FocusPane(s, panes.front());
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        return true;
+    }
+    if (!s.appPrefs.favorites_bar || s.renderer.Embedded() || s.places.starred_items.empty()) return false;
+    // After the last pane; before that F6 still goes pane to pane.
+    const auto panes = LiveLayout(s).VisiblePanes();
+    if (!panes.empty() && s.pane && s.pane != panes.back()) return false;
+    g_key = KeyFocus{&s, 0};
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+    return true;
+}
+
+bool HandleFavoritesBarKey(AppState& s, WPARAM key) {
+    if (!FavoritesBarHasFocus(s)) {
+        g_key = KeyFocus{};
+        return false;
+    }
+    const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+    const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    if (key == VK_SHIFT || key == VK_CONTROL || key == VK_MENU) return true;
+    if (key == VK_F6) return false;   // the F6 cycle takes it on
+    const auto leave = [&] {
+        g_key = KeyFocus{};
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+    };
+    if (key == VK_ESCAPE) {
+        leave();
+        return true;
+    }
+    const ui::WindowViewModel vm = BuildVm(s);
+    const ui::FavoritesBarLayout lay = s.renderer.FavoritesBarLayoutAt(vm, static_cast<float>(s.compositor.Width()));
+    // The stops: the entries on the bar (not the separators), then ».
+    std::vector<int> stops;
+    for (size_t i = 0; i < vm.favorites_bar.size() && i < lay.items.size(); ++i)
+        if (!vm.favorites_bar[i].separator && lay.items[i].right > lay.items[i].left) stops.push_back(static_cast<int>(i));
+    const int more = static_cast<int>(vm.favorites_bar.size());
+    if (lay.first_hidden >= 0) stops.push_back(more);
+    if (stops.empty()) {
+        leave();
+        return false;
+    }
+    size_t at = 0;
+    while (at + 1 < stops.size() && stops[at] < g_key.slot) ++at;
+    const int slot = stops[at];
+    const auto move_to = [&](size_t index) {
+        g_key.slot = stops[std::min(index, stops.size() - 1)];
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        return true;
+    };
+    if (!alt && key == VK_LEFT) return move_to(at == 0 ? 0 : at - 1);
+    if (!alt && key == VK_RIGHT) return move_to(at + 1);
+    if (!alt && key == VK_HOME) return move_to(0);
+    if (!alt && key == VK_END) return move_to(stops.size() - 1);
+    const D2D1_RECT_F r = slot == more ? lay.more : lay.items[static_cast<size_t>(slot)];
+    POINT below{static_cast<LONG>(std::lround(r.left)), static_cast<LONG>(std::lround(r.bottom))};
+    ClientToScreen(s.hwnd, &below);
+    const app::StarredItem* item = slot == more ? nullptr : FavoriteAt(s, slot);
+    const std::wstring group = slot == more ? std::wstring{} : GroupAt(s, slot);
+    if (key == VK_APPS || (key == VK_F10 && shift)) {
+        if (item) ShowCuratedItemMenu(s, std::wstring(item->path), false, below);
+        else if (!group.empty()) ShowStarredGroupMenu(s, group, below);
+        else ShowFavoritesBarMenu(s, below);
+        return true;
+    }
+    if (key == VK_DOWN) {
+        if (slot == more) ShowFavoritesOverflow(s, lay.first_hidden, below);
+        else if (!group.empty()) ShowGroupDropdown(s, group, below);
+        else if (item && IsFolder(*item)) ShowSubfolderMenu(s, std::wstring(item->path), below);
+        return true;
+    }
+    if (!alt && (key == VK_RETURN || key == VK_SPACE)) {
+        if (slot == more) {
+            ShowFavoritesOverflow(s, lay.first_hidden, below);
+        } else if (!group.empty()) {
+            ShowGroupDropdown(s, group, below);
+        } else if (item) {
+            const app::StarredItem copy = *item;
+            leave();   // like a link: focus goes on to what it opened
+            OpenFavorite(s, copy, HowFromKeys());
+        }
+        return true;
+    }
+    leave();
+    return false;
 }
 
 bool OpenFavoritesGroupTabs(AppState& s, const std::wstring& path) {
