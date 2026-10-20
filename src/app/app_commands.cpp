@@ -11,6 +11,7 @@
 #include "quick_access.h"
 #include "app_column_view.h"
 #include "../ui/toolbar_layout.h"
+#include "../ui/command_icons.h"
 #include "app_internal.h"
 #include "app_sidebar_refresh.h"
 #include "tray_reveal.h"
@@ -1969,7 +1970,7 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         ui::FluentMenuItem open_path;
         open_path.command = app::CmdOpenPath;
         open_path.text = l10n::Get(l10n::StringId::OpenPath);
-        open_path.glyph = L"\xE8B7"; // folder glyph, same family as kGlyphFolder
+        open_path.glyph = ui::command_icons::kGlyphOpenPath;
         items.insert(items.begin() + 1, std::move(open_path));
     }
     if (CanDissolveSelection(tab)) {
@@ -1983,7 +1984,7 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         ui::FluentMenuItem group;
         group.command = app::CmdGroupIntoFolder;
         group.text = l10n::Get(l10n::StringId::NewFolderWithSelection_2).c_str();
-        group.glyph = L"\xE8F4"; // new folder
+        group.glyph = ui::command_icons::kGlyphGroupFolder;
         items.insert(items.begin() + 1, std::move(group));
     }
     // 别名: one real item can take a display name (after 复制路径).
@@ -2017,7 +2018,7 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         ui::FluentMenuItem batch;
         batch.command = app::CmdBatchRename;
         batch.text = l10n::Get(l10n::StringId::BatchRename);
-        batch.glyph = L"\xE8AC";
+        batch.glyph = ui::command_icons::kGlyphBatchRename;
         batch.shortcut = app::ShownShortcut(L"Ctrl+Shift+R");
         items.insert(items.begin() + 1, std::move(batch));
     }
@@ -2025,7 +2026,7 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         ui::FluentMenuItem compare;
         compare.command = app::CmdCompareSideBySide;
         compare.text = l10n::Get(l10n::StringId::CompareSideBySide);
-        compare.glyph = L"\xE89F"; // side-by-side panes
+        compare.glyph = ui::command_icons::kGlyphCompare;
         items.insert(items.begin() + 1, std::move(compare));
     }
     if (tab) AdaptItemMenu(s, items, app::ComputeSelectionCaps(*tab, &s.places));
@@ -2557,7 +2558,7 @@ struct ToolbarToolDef {
 // existing setting; the toolbar shows them in the accent color while on.
 constexpr ToolbarToolDef kToolbarTools[] = {
     {app::CmdNewTextFile, L"\xE8A5", l10n::StringId::NewTextDocument, L"", false},
-    {app::CmdCopyPath, L"\xE71B", l10n::StringId::CopyPath, L"Ctrl+Shift+C", false},
+    {app::CmdCopyPath, ui::command_icons::kGlyphCopyPath, l10n::StringId::CopyPath, L"Ctrl+Shift+C", false},
     {app::CmdOpenTerminal, L"\xE756", l10n::StringId::OpenInTerminal, L"", false},
     {app::CmdProperties, L"\xE946", l10n::StringId::Properties, L"Alt+Enter", false},
     {app::CmdUndo, L"\xE7A7", l10n::StringId::Undo, L"Ctrl+Z", false},
@@ -2581,12 +2582,12 @@ constexpr ToolbarToolDef kToolbarTools[] = {
     {app::CmdColumnLayout, ui::kToolbarColumnsGlyph, l10n::StringId::ColumnLayout, L"", true},
     {app::CmdSelectAll, L"\xE8B3", l10n::StringId::SelectAll, L"Ctrl+A", false},
     {app::CmdInvertSelection, L"\xE8AB", l10n::StringId::InvertSelection, L"", false},
-    {app::CmdSelectWildcard, L"\xE71C", l10n::StringId::HelpSelectPattern, L"", false},
+    {app::CmdSelectWildcard, ui::command_icons::kGlyphSelectWild, l10n::StringId::HelpSelectPattern, L"", false},
     {app::CmdNewMarkdownFile, L"\xE943", l10n::StringId::MarkdownDocument, L"", false},
     {app::CmdViewRecentChanges, L"\xE81C", l10n::StringId::ToolbarSelRecent, L"", false},
-    {app::CmdApplyViewToAllFolders, L"\xE8A9", l10n::StringId::ToolbarToolApplyAll, L"", false},
+    {app::CmdApplyViewToAllFolders, ui::command_icons::kGlyphApplyAll, l10n::StringId::ToolbarToolApplyAll, L"", false},
     {app::CmdSearchAll, L"\xE774", l10n::StringId::ToolbarToolSearchAll, L"", false},
-    {app::CmdAdvancedSearch, L"\xE721", l10n::StringId::AdvancedSearch, L"", false},
+    {app::CmdAdvancedSearch, ui::command_icons::kGlyphAdvSearch, l10n::StringId::AdvancedSearch, L"", false},
     {app::CmdOpenRecycle, L"\xE75C", l10n::StringId::RecycleBin, L"", false},
     {app::CmdMapNetworkDrive, L"\xE8CE", l10n::StringId::MapNetworkDrive, L"", false},
     {app::CmdShortcutHelp, L"\xE765", l10n::StringId::KeyboardShortcuts, L"", false},
@@ -2609,22 +2610,43 @@ struct SelectionActionDef {
     const wchar_t* tool;
 };
 constexpr SelectionActionDef kSelectionActions[] = {
-    {app::CmdBatchRename, 0, L"\xE8AC", l10n::StringId::BatchRename, kSelHintMulti, nullptr},
-    {app::CmdGroupIntoFolder, 0, L"\xE8F4", l10n::StringId::NewFolderWithSelection_2, kSelHintNone, nullptr},
+    {app::CmdBatchRename, 0, ui::command_icons::kGlyphBatchRename, l10n::StringId::BatchRename, kSelHintMulti, nullptr},
+    {app::CmdGroupIntoFolder, 0, ui::command_icons::kGlyphGroupFolder, l10n::StringId::NewFolderWithSelection_2, kSelHintNone, nullptr},
     {app::CmdDissolveFolder, 0, L"\xED25", l10n::StringId::UngroupFolder_2, kSelHintFolders, nullptr},
-    {app::CmdCompareSideBySide, 0, L"\xE89F", l10n::StringId::CompareSideBySide, kSelHintTwoFolders, nullptr},
+    {app::CmdCompareSideBySide, 0, ui::command_icons::kGlyphCompare, l10n::StringId::CompareSideBySide, kSelHintTwoFolders, nullptr},
     {app::CmdTags, 0, L"\xE8EC", l10n::StringId::TagsEllipsis, kSelHintNone, nullptr},
-    {app::CmdCopyPath, 0, L"\xE71B", l10n::StringId::CopyPath, kSelHintNone, L"copy_path"},
+    {app::CmdCopyPath, 0, ui::command_icons::kGlyphCopyPath, l10n::StringId::CopyPath, kSelHintNone, L"copy_path"},
     {app::CmdOpenInNewTab, 0, L"\xE8A7", l10n::StringId::OpenNewTab, kSelHintFolders, nullptr},
-    {app::CmdOpenPath, 0, L"\xE8B7", l10n::StringId::OpenPath, kSelHintSearch, nullptr},
-    {app::CmdPinQuickAccess, app::CmdUnpinQuickAccess, L"\xE718", l10n::StringId::SidebarQuickAccess, kSelHintNone, nullptr},
+    {app::CmdOpenPath, 0, ui::command_icons::kGlyphOpenPath, l10n::StringId::OpenPath, kSelHintSearch, nullptr},
+    {app::CmdPinQuickAccess, app::CmdUnpinQuickAccess, ui::command_icons::kGlyphPinQuickAccess, l10n::StringId::SidebarQuickAccess, kSelHintNone, nullptr},
     {app::CmdProperties, 0, L"\xE946", l10n::StringId::Properties, kSelHintNone, L"properties"},
     {app::CmdOpenTerminal, 0, L"\xE756", l10n::StringId::OpenInTerminal, kSelHintNone, L"terminal"},
     {app::CmdViewRecentChanges, 0, L"\xE81C", l10n::StringId::ToolbarSelRecent, kSelHintNone, L"recent"},
-    {app::CmdPinWorkspace, 0, L"\xE8B7", l10n::StringId::PinWorkspace, kSelHintNone, nullptr},
-    {app::CmdPinNetwork, 0, L"\xE71B", l10n::StringId::PinNetwork, kSelHintNone, nullptr},
+    {app::CmdPinWorkspace, 0, ui::command_icons::kGlyphPinWorkspace, l10n::StringId::PinWorkspace, kSelHintNone, nullptr},
+    {app::CmdPinNetwork, 0, ui::command_icons::kGlyphPinNetwork, l10n::StringId::PinNetwork, kSelHintNone, nullptr},
 };
 static_assert(std::size(kSelectionActions) == app::kSelectionActionCount, "one catalog row per toolbar_selection.h id");
+
+// One shape per command (toolbar redesign §7): two different commands on the
+// tools page or the selection chip never draw the same glyph.
+constexpr bool SameGlyph(const wchar_t* a, const wchar_t* b) {
+    while (*a && *a == *b) { ++a; ++b; }
+    return *a == *b;
+}
+constexpr bool ToolbarGlyphsDistinct() {
+    for (size_t i = 0; i < std::size(kToolbarTools); ++i)
+        for (size_t j = i + 1; j < std::size(kToolbarTools); ++j)
+            if (SameGlyph(kToolbarTools[i].glyph, kToolbarTools[j].glyph)) return false;
+    for (size_t i = 0; i < std::size(kSelectionActions); ++i) {
+        for (size_t j = i + 1; j < std::size(kSelectionActions); ++j)
+            if (SameGlyph(kSelectionActions[i].glyph, kSelectionActions[j].glyph)) return false;
+        for (const ToolbarToolDef& tool : kToolbarTools)
+            if (tool.command != kSelectionActions[i].command && SameGlyph(tool.glyph, kSelectionActions[i].glyph))
+                return false;
+    }
+    return true;
+}
+static_assert(ToolbarGlyphsDistinct(), "every toolbar command has its own glyph");
 int SelectionActionFor(int command) {
     for (size_t i = 0; i < std::size(kSelectionActions); ++i)
         if (kSelectionActions[i].command == command || (kSelectionActions[i].alt_command && kSelectionActions[i].alt_command == command))
@@ -3708,7 +3730,6 @@ std::vector<ui::SelectionChipAction> ToolbarPinActions(AppState& s) {
         if (const auto key = app::ShownShortcut(def.shortcut); !key.empty()) action.label += L" (" + key + L")";
         if (def.toggle) {
             action.checked = ToolbarToggleOn(s, static_cast<size_t>(tool));
-            if (def.command == app::CmdDetailsPanel) action.glyph = action.checked ? L"\xE89F" : L"\xE8A0";
             out.push_back(std::move(action));
             continue;
         }

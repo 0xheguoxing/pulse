@@ -22,8 +22,58 @@ enum class Icon {
     Cut, Copy, Paste, Rename, Sort, Filter, List, Grid, Split, Columns,
     Panel, PanelClose, Check, Eye, Info, Home, Tray, Pin, Link,
     Palette, Sliders, Warning, Lock, OpenExternal, StarFilled, More,
-    SplitSingle, SplitStacked, SplitThree, SplitFour, Contrast, SwapHorizontal, SwapVertical, Count
+    SplitSingle, SplitStacked, SplitThree, SplitFour, Contrast, SwapHorizontal, SwapVertical,
+    // One shape per command (pulse_toolbar_redesign §7): the commands that had
+    // to share a Segoe glyph, and the ones only the font used to draw.
+    CopyPath, BatchRename, SelectWild, Compare, ApplyAll, AdvSearch, CopyToPane, MoveToPane,
+    FolderGo, FolderAdd, FolderGroup, FolderDissolve, FolderSize, Workspace, Toolbar, Sidebar,
+    Undo, NewMarkdown, Zip, SelectAll, Invert, EyeHidden, Shield, Compact, Zebra, SizeBar,
+    SmartDate, Outline, Terminal, SearchAll, MapDrive, Keyboard, PinBadge,
+    // "Pin to X" = X's shape with a pin badge in the lower right.
+    PinFavorites, PinQuickAccess, PinWorkspace, PinNetwork, PinToolbar,
+    Count
 };
+
+// Private-use glyph ids for the shapes above that no Segoe glyph stands for
+// (same scheme as ui::kToolbarSplitGlyph); FromGlyph maps them.
+inline constexpr const wchar_t* kGlyphCopyPath = L"\xF5B2";
+inline constexpr const wchar_t* kGlyphBatchRename = L"\xF5B3";
+inline constexpr const wchar_t* kGlyphSelectWild = L"\xF5B4";
+inline constexpr const wchar_t* kGlyphCompare = L"\xF5B5";
+inline constexpr const wchar_t* kGlyphApplyAll = L"\xF5B6";
+inline constexpr const wchar_t* kGlyphAdvSearch = L"\xF5B7";
+inline constexpr const wchar_t* kGlyphCopyToPane = L"\xF5B8";
+inline constexpr const wchar_t* kGlyphMoveToPane = L"\xF5B9";
+inline constexpr const wchar_t* kGlyphOpenPath = L"\xF5BA";
+inline constexpr const wchar_t* kGlyphGroupFolder = L"\xF5BB";
+inline constexpr const wchar_t* kGlyphPinFavorites = L"\xF5BC";
+inline constexpr const wchar_t* kGlyphPinQuickAccess = L"\xF5BD";
+inline constexpr const wchar_t* kGlyphPinWorkspace = L"\xF5BE";
+inline constexpr const wchar_t* kGlyphPinNetwork = L"\xF5BF";
+inline constexpr const wchar_t* kGlyphPinToolbar = L"\xF5C0";
+
+inline constexpr bool IsPinned(Icon icon) noexcept {
+    return icon >= Icon::PinFavorites && icon <= Icon::PinToolbar;
+}
+inline constexpr Icon PinnedBase(Icon icon) noexcept {
+    switch (icon) {
+    case Icon::PinFavorites: return Icon::Star;
+    case Icon::PinQuickAccess: return Icon::Sidebar;
+    case Icon::PinWorkspace: return Icon::Workspace;
+    case Icon::PinNetwork: return Icon::Network;
+    case Icon::PinToolbar: return Icon::Toolbar;
+    default: return Icon::None;
+    }
+}
+// Fill opacity of an icon's filled figures (0 = outline only).
+inline constexpr float FillOpacity(Icon icon) noexcept {
+    switch (icon) {
+    case Icon::StarFilled: case Icon::More: case Icon::Contrast: case Icon::SizeBar: return 1.0f;
+    case Icon::Invert: return 0.35f;
+    case Icon::Zebra: return 0.28f;
+    default: return 0.0f;
+    }
+}
 
 inline Icon FromGlyph(std::wstring_view glyph) noexcept {
     if (glyph.size() != 1) return Icon::None;
@@ -86,6 +136,43 @@ inline Icon FromGlyph(std::wstring_view glyph) noexcept {
     case L'\xE72E': return Icon::Lock;
     case L'\xF5B0': return Icon::Split;     // ui::kToolbarSplitGlyph
     case L'\xF5B1': return Icon::Columns;   // ui::kToolbarColumnsGlyph
+    case L'\xF5B2': return Icon::CopyPath;
+    case L'\xF5B3': return Icon::BatchRename;
+    case L'\xF5B4': return Icon::SelectWild;
+    case L'\xF5B5': return Icon::Compare;
+    case L'\xF5B6': return Icon::ApplyAll;
+    case L'\xF5B7': return Icon::AdvSearch;
+    case L'\xF5B8': return Icon::CopyToPane;
+    case L'\xF5B9': return Icon::MoveToPane;
+    case L'\xF5BA': return Icon::FolderGo;
+    case L'\xF5BB': return Icon::FolderGroup;
+    case L'\xF5BC': return Icon::PinFavorites;
+    case L'\xF5BD': return Icon::PinQuickAccess;
+    case L'\xF5BE': return Icon::PinWorkspace;
+    case L'\xF5BF': return Icon::PinNetwork;
+    case L'\xF5C0': return Icon::PinToolbar;
+    // Segoe glyphs the toolbar and menus already use, now on the vector grid.
+    case L'\xE7A7': return Icon::Undo;
+    case L'\xE7B3': return Icon::EyeHidden;
+    case L'\xEA18': return Icon::Shield;
+    case L'\xE73F': return Icon::Compact;
+    case L'\xE8BF': return Icon::Zebra;
+    case L'\xE9D2': return Icon::SizeBar;
+    case L'\xEC92': return Icon::SmartDate;
+    case L'\xE739': return Icon::Outline;
+    case L'\xE90C': return Icon::Sidebar;
+    case L'\xE8B3': return Icon::SelectAll;
+    case L'\xE8AB': case L'\xE7A1': return Icon::Invert;
+    case L'\xE943': return Icon::NewMarkdown;
+    case L'\xE81C': return Icon::History;
+    case L'\xE774': return Icon::SearchAll;
+    case L'\xE8CE': return Icon::MapDrive;
+    case L'\xE765': return Icon::Keyboard;
+    case L'\xF012': return Icon::Zip;
+    case L'\xEDA2': return Icon::FolderSize;
+    case L'\xE756': return Icon::Terminal;
+    case L'\xE8F4': return Icon::FolderAdd;
+    case L'\xED25': return Icon::FolderDissolve;
     default: return Icon::None;
     }
 }
@@ -122,8 +209,15 @@ inline ID2D1PathGeometry* BuildGeometry(ID2D1Factory* factory, Icon icon) noexce
         return nullptr;
     }
     const auto begin = [&](float x, float y) {
-        sink->BeginFigure({x,y}, (icon == Icon::StarFilled || icon == Icon::More) ?
+        sink->BeginFigure({x,y}, (icon == Icon::StarFilled || icon == Icon::More || icon == Icon::SizeBar) ?
             D2D1_FIGURE_BEGIN_FILLED : D2D1_FIGURE_BEGIN_HOLLOW);
+    };
+    // A figure that is filled (at FillOpacity) as well as outlined.
+    const auto fill_begin = [&](float x, float y) { sink->BeginFigure({x,y}, D2D1_FIGURE_BEGIN_FILLED); };
+    const auto arcto = [&](float x, float y, float radius, bool large, bool clockwise) {
+        sink->AddArc(D2D1::ArcSegment({x,y},{radius,radius},0,
+            clockwise ? D2D1_SWEEP_DIRECTION_CLOCKWISE : D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE,
+            large ? D2D1_ARC_SIZE_LARGE : D2D1_ARC_SIZE_SMALL));
     };
     const auto to = [&](float x, float y) { sink->AddLine({x,y}); };
     const auto curve = [&](float x, float y, float a, float b, float c, float d) {
@@ -336,12 +430,147 @@ inline ID2D1PathGeometry* BuildGeometry(ID2D1Factory* factory, Icon icon) noexce
         line(3,18,14,18); line(19,18,21,18); circle(16.5f,18,2.5f); break;
     case Icon::Warning: path({{12,3},{22,21},{2,21},{12,3}}); line(12,9,12,14); dot(12,17.5f); break;
     case Icon::Lock: box(4,10,20,21); arc(12,8,5,180,360); line(7,8,7,10); line(17,8,17,10); line(12,14,12,17); break;
+    case Icon::CopyPath: box(8.5f,8.5f,20,20,2); begin(15.5f,8.5f); to(15.5f,6); arcto(13.5f,4,2,false,false);
+        to(6,4); arcto(4,6,2,false,false); to(4,13.5f); arcto(6,15.5f,2,false,false); to(8.5f,15.5f); end();
+        begin(11.6f,11.8f); to(13.6f,16.8f); end(); begin(15,11.8f); to(17,16.8f); end(); break;
+    case Icon::BatchRename: begin(3.5f,5.5f); to(10.5f,5.5f); end(); begin(3.5f,9.5f); to(8.5f,9.5f); end();
+        begin(3.5f,13.5f); to(6.5f,13.5f); end(); begin(9.5f,18.5f); to(17,11); to(19.5f,13.5f); to(12,21);
+        to(9.5f,21); end(true); begin(15.2f,12.8f); to(17.2f,14.8f); end(); break;
+    case Icon::SelectWild: path({{3.5f,8},{3.5f,3.5f},{8,3.5f}}); path({{16,3.5f},{20.5f,3.5f},{20.5f,8}});
+        path({{20.5f,16},{20.5f,20.5f},{16,20.5f}}); path({{8,20.5f},{3.5f,20.5f},{3.5f,16}});
+        line(10.8f,3.5f,13.2f,3.5f); line(10.8f,20.5f,13.2f,20.5f); line(3.5f,10.8f,3.5f,13.2f);
+        line(20.5f,10.8f,20.5f,13.2f); line(12,8,12,16); line(8.6f,10,15.4f,14); line(15.4f,10,8.6f,14); break;
+    case Icon::Compare: box(3.5f,5,11,19,1.6f); box(13,5,20.5f,19,1.6f); begin(6,9); to(8.5f,9); end();
+        begin(6,12); to(8.5f,12); end(); begin(15.5f,9); to(18,9); end(); begin(15.5f,12); to(18,12); end();
+        begin(15.5f,15); to(18,15); end(); break;
+    case Icon::ApplyAll: box(4,4,10.5f,10.5f,1.4f); box(13.5f,4,20,10.5f,1.4f); box(4,13.5f,10.5f,20,1.4f);
+        begin(13.6f,17.2f); to(15.7f,19.3f); to(20,14.7f); end(); break;
+    case Icon::AdvSearch: circle(10,10,6); begin(14.4f,14.4f); to(16.5f,16.5f); end(); begin(14.5f,20.5f);
+        to(21.5f,20.5f); end(); begin(18.5f,18.5f); to(18.5f,22.5f); end(); break;
+    case Icon::CopyToPane: box(3.5f,4.5f,20.5f,19.5f,2); begin(12,4.5f); to(12,8); end(); begin(12,16);
+        to(12,19.5f); end(); begin(7,12); to(16.5f,12); end(); begin(14,9.5f); to(16.5f,12); to(14,14.5f);
+        end(); begin(6.5f,6.8f); to(6.5f,9.4f); end(); begin(5.2f,8.1f); to(7.8f,8.1f); end(); break;
+    case Icon::MoveToPane: box(3.5f,4.5f,20.5f,19.5f,2); begin(12,4.5f); to(12,8); end(); begin(12,16);
+        to(12,19.5f); end(); begin(7,12); to(16.5f,12); end(); begin(14,9.5f); to(16.5f,12); to(14,14.5f);
+        end(); break;
+    case Icon::FolderGo: folder(); begin(9,13.5f); to(15.5f,13.5f); end(); begin(13.2f,11.2f); to(15.5f,13.5f);
+        to(13.2f,15.8f); end(); break;
+    case Icon::FolderAdd: folder(); begin(12,11); to(12,16.2f); end(); begin(9.4f,13.6f); to(14.6f,13.6f);
+        end(); break;
+    case Icon::FolderGroup: folder(); line(12,11,12,16.5f); path({{9.6f,14.1f},{12,16.5f},{14.4f,14.1f}}); break;
+    case Icon::FolderDissolve: begin(3.5f,9.5f); to(3.5f,7.5f); arcto(5.5f,5.5f,2,false,true); to(9.1f,5.5f);
+        to(10.7f,7.3f); to(18.5f,7.3f); arcto(20.5f,9.3f,2,false,true); to(20.5f,10.3f); end();
+        begin(20.5f,14.5f); to(20.5f,17.2f); arcto(18.5f,19.2f,2,false,true); to(17,19.2f); end();
+        begin(7,19.2f); to(5.5f,19.2f); arcto(3.5f,17.2f,2,false,true); to(3.5f,14.5f); end(); begin(12,17.5f);
+        to(12,11.5f); end(); begin(9.6f,13.6f); to(12,11.2f); to(14.4f,13.6f); end(); break;
+    case Icon::FolderSize: folder(); begin(8.5f,16); to(8.5f,14.5f); end(); begin(12,16); to(12,12); end();
+        begin(15.5f,16); to(15.5f,13.5f); end(); break;
+    case Icon::Workspace: box(3.5f,4.5f,20.5f,19.5f,2); begin(3.5f,9); to(20.5f,9); end(); begin(9.5f,9);
+        to(9.5f,19.5f); end(); break;
+    case Icon::Toolbar: box(3.5f,5,20.5f,19,2); begin(3.5f,9.5f); to(20.5f,9.5f); end(); dot(6.4f,7.25f,0.9f);
+        dot(9.2f,7.25f,0.9f); dot(12,7.25f,0.9f); break;
+    case Icon::Sidebar: box(3.5f,4.5f,20.5f,19.5f,2); begin(9.5f,4.5f); to(9.5f,19.5f); end(); begin(5.8f,8.5f);
+        to(7.4f,8.5f); end(); begin(5.8f,11.5f); to(7.4f,11.5f); end(); break;
+    case Icon::Undo: begin(9,6.5f); to(4.5f,11); to(9,15.5f); end(); begin(4.5f,11); to(14.5f,11);
+        arcto(14.5f,21,5,false,true); to(11,21); end(); break;
+    case Icon::NewMarkdown: begin(6,3.5f); to(13.5f,3.5f); to(18.5f,8.5f); to(18.5f,19.5f);
+        arcto(17.5f,20.5f,1,false,true); to(6,20.5f); arcto(5,19.5f,1,false,true); to(5,4.5f);
+        arcto(6,3.5f,1,false,true); end(true); begin(13.5f,3.5f); to(13.5f,8.5f); to(18.5f,8.5f); end();
+        begin(7.8f,17.5f); to(7.8f,13); to(9.7f,15.3f); to(11.6f,13); to(11.6f,17.5f); end(); begin(15,13);
+        to(15,17.5f); end(); begin(13.6f,16.2f); to(15,17.6f); to(16.4f,16.2f); end(); break;
+    case Icon::Zip: box(4.5f,3.5f,19.5f,20.5f,2); begin(12,3.5f); to(12,5.5f); end(); begin(12,7.5f);
+        to(12,8.7f); end(); begin(12,10.5f); to(12,11.7f); end(); box(10.3f,13.6f,13.7f,17.2f,0.8f); break;
+    case Icon::SelectAll: box(4,4,20,20,3); begin(8,12.4f); to(11,15.4f); to(16,9.4f); end(); break;
+    case Icon::Invert: box(4,4,20,20,3); line(4.8f,19.2f,19.2f,4.8f); fill_begin(20,7); to(20,17);
+        arcto(17,20,3,false,true); to(7,20); end(true); break;
+    case Icon::EyeHidden: begin(2.5f,12); curve(2.5f,12,6,5.5f,12,5.5f); curve(18,5.5f,21.5f,12,21.5f,12);
+        curve(21.5f,12,18,18.5f,12,18.5f); curve(6,18.5f,2.5f,12,2.5f,12); end(true); circle(12,12,3);
+        line(4,4,20,20); break;
+    case Icon::Shield: begin(12,3.2f); to(19.5f,6.2f); to(19.5f,12.1f); curve(19.5f,16.5f,16.3f,19.8f,12,21);
+        curve(7.7f,19.8f,4.5f,16.5f,4.5f,12.1f); to(4.5f,6.2f); end(true); begin(8.8f,12.2f); to(11,14.4f);
+        to(15.2f,10); end(); break;
+    case Icon::Compact: begin(4,5.5f); to(20,5.5f); end(); begin(4,9.8f); to(20,9.8f); end(); begin(4,14.2f);
+        to(20,14.2f); end(); begin(4,18.5f); to(20,18.5f); end(); break;
+    case Icon::Zebra: box(3.5f,4,20.5f,20,2); line(3.5f,9.4f,20.5f,9.4f); line(3.5f,14.6f,20.5f,14.6f);
+        fill_begin(3.5f,9.4f); to(20.5f,9.4f); to(20.5f,14.6f); to(3.5f,14.6f); end(true); break;
+    case Icon::SizeBar: box(4,5.9f,20,7.1f,0.6f); box(4,11.4f,14,12.6f,0.6f); box(4,16.9f,10,18.1f,0.6f); break;
+    case Icon::SmartDate: box(3.5f,5,20.5f,20,2); begin(3.5f,9.5f); to(20.5f,9.5f); end(); begin(8,3); to(8,7);
+        end(); begin(16,3); to(16,7); end(); begin(12,12.2f); to(12.9f,14.1f); to(14.8f,15); to(12.9f,15.9f);
+        to(12,17.8f); to(11.1f,15.9f); to(9.2f,15); to(11.1f,14.1f); end(true); break;
+    case Icon::Outline: arc(6.5f,10,3,180,270); arc(17.5f,10,3,270,360); arc(17.5f,14,3,0,90);
+        arc(6.5f,14,3,90,180); line(8.8f,7,10.6f,7); line(13.4f,7,15.2f,7); line(8.8f,17,10.6f,17);
+        line(13.4f,17,15.2f,17); line(7.5f,12,16.5f,12); break;
+    case Icon::Terminal: box(3,4.5f,21,19.5f,2); begin(7,9.5f); to(10,12); to(7,14.5f); end(); begin(12.5f,15);
+        to(17,15); end(); break;
+    case Icon::SearchAll: circle(10.5f,10.5f,6.5f); begin(4,10.5f); to(17,10.5f); end(); begin(10.5f,4);
+        curve(12.2f,5.8f,13,8,13,10.5f); curve(13,13,12.2f,15.2f,10.5f,17); curve(8.8f,15.2f,8,13,8,10.5f);
+        curve(8,8,8.8f,5.8f,10.5f,4); end(true); begin(15.3f,15.3f); to(20,20); end(); break;
+    case Icon::MapDrive: box(3.5f,13,20.5f,20,2); dot(7.2f,16.5f,1.15f); begin(12,13); to(12,9.5f); end();
+        begin(8.5f,3.5f); to(15.5f,3.5f); to(15.5f,9.5f); to(8.5f,9.5f); end(true); break;
+    case Icon::Keyboard: box(2.5f,6,21.5f,18,2); dot(6.5f,10,0.95f); dot(9.5f,10,0.95f); dot(12.5f,10,0.95f);
+        dot(15.5f,10,0.95f); dot(18,10,0.95f); begin(8,14.2f); to(16,14.2f); end(); break;
+    case Icon::PinBadge: begin(8.5f,3); to(15.5f,3); to(14.5f,9); to(18,12.5f); to(6,12.5f); to(9.5f,9);
+        end(true); begin(12,12.5f); to(12,21); end(); break;
     default: break;
     }
     const HRESULT result = sink->Close();
     sink->Release();
     if (FAILED(result)) { geometry->Release(); return nullptr; }
     return geometry;
+}
+
+// "Pin to X": X's outline, widened to a filled shape, with a round hole in the
+// lower right that holds a small pin. Drawn with one fill (see Draw).
+inline ID2D1PathGeometry* BuildPinnedGeometry(ID2D1Factory* factory, Icon icon) noexcept {
+    constexpr float kTolerance = 0.05f;
+    ID2D1PathGeometry* base = BuildGeometry(factory, PinnedBase(icon));
+    ID2D1PathGeometry* badge = BuildGeometry(factory, Icon::PinBadge);
+    ID2D1StrokeStyle* stroke = nullptr;
+    auto properties = D2D1::StrokeStyleProperties();
+    properties.startCap = properties.endCap = properties.dashCap = D2D1_CAP_STYLE_ROUND;
+    properties.lineJoin = D2D1_LINE_JOIN_ROUND;
+    factory->CreateStrokeStyle(properties, nullptr, 0, &stroke);
+    ID2D1EllipseGeometry* hole = nullptr;
+    factory->CreateEllipseGeometry(D2D1::Ellipse({18.0f, 18.0f}, 6.4f, 6.4f), &hole);
+    ID2D1PathGeometry* result = nullptr;
+    const auto widen = [&](ID2D1Geometry* source, const D2D1_MATRIX_3X2_F* transform, float width) {
+        ID2D1PathGeometry* out = nullptr;
+        ID2D1GeometrySink* sink = nullptr;
+        if (FAILED(factory->CreatePathGeometry(&out))) return static_cast<ID2D1PathGeometry*>(nullptr);
+        if (SUCCEEDED(out->Open(&sink))) {
+            sink->SetFillMode(D2D1_FILL_MODE_WINDING);
+            const HRESULT hr = source->Widen(width, stroke, transform, kTolerance, sink);
+            const HRESULT closed = sink->Close();
+            sink->Release();
+            if (SUCCEEDED(hr) && SUCCEEDED(closed)) return out;
+        }
+        out->Release();
+        return static_cast<ID2D1PathGeometry*>(nullptr);
+    };
+    const auto combine = [&](ID2D1Geometry* a, ID2D1Geometry* b, D2D1_COMBINE_MODE mode) {
+        ID2D1PathGeometry* out = nullptr;
+        ID2D1GeometrySink* sink = nullptr;
+        if (FAILED(factory->CreatePathGeometry(&out))) return static_cast<ID2D1PathGeometry*>(nullptr);
+        if (SUCCEEDED(out->Open(&sink))) {
+            const HRESULT hr = a->CombineWithGeometry(b, mode, nullptr, kTolerance, sink);
+            const HRESULT closed = sink->Close();
+            sink->Release();
+            if (SUCCEEDED(hr) && SUCCEEDED(closed)) return out;
+        }
+        out->Release();
+        return static_cast<ID2D1PathGeometry*>(nullptr);
+    };
+    if (base && badge && stroke && hole) {
+        const D2D1_MATRIX_3X2_F place = D2D1::Matrix3x2F::Scale(0.5f, 0.5f) * D2D1::Matrix3x2F::Translation(12.0f, 12.0f);
+        ID2D1PathGeometry* outline = widen(base, nullptr, kStroke);
+        ID2D1PathGeometry* pin = widen(badge, &place, kStroke * 0.85f);
+        ID2D1PathGeometry* cut = outline ? combine(outline, hole, D2D1_COMBINE_MODE_EXCLUDE) : nullptr;
+        if (cut && pin) result = combine(cut, pin, D2D1_COMBINE_MODE_UNION);
+        for (ID2D1PathGeometry* g : {outline, pin, cut}) if (g) g->Release();
+    }
+    for (IUnknown* object : std::initializer_list<IUnknown*>{base, badge, stroke, hole})
+        if (object) object->Release();
+    return result;
 }
 
 inline ID2D1PathGeometry* GeometryFor(ID2D1RenderTarget* target, Icon icon) noexcept {
@@ -371,7 +600,8 @@ inline ID2D1PathGeometry* GeometryFor(ID2D1RenderTarget* target, Icon icon) noex
         factory->Release();
     }
     auto*& geometry = cache.geometries[static_cast<size_t>(icon)];
-    if (!geometry) geometry = BuildGeometry(cache.factory,icon);
+    if (!geometry) geometry = IsPinned(icon) ? BuildPinnedGeometry(cache.factory,icon)
+                                             : BuildGeometry(cache.factory,icon);
     return geometry;
 }
 
@@ -392,9 +622,16 @@ inline bool Draw(ID2D1RenderTarget* target, ID2D1Brush* brush,
     target->SetTransform(D2D1::Matrix3x2F::Scale(side/kCanvas,side/kCanvas) *
         D2D1::Matrix3x2F::Translation((bounds.left+bounds.right-side)*0.5f,
                                      (bounds.top+bounds.bottom-side)*0.5f) * previous);
-    if (icon == Icon::StarFilled || icon == Icon::More || icon == Icon::Contrast)
-        target->FillGeometry(geometry,brush);
-    if (icon != Icon::More) target->DrawGeometry(geometry,brush,kStroke,stroke);
+    if (IsPinned(icon)) {
+        target->FillGeometry(geometry,brush);   // already the stroked outline
+    } else {
+        if (const float fill = FillOpacity(icon); fill > 0.0f) {
+            brush->SetOpacity(previous_opacity * std::clamp(opacity,0.0f,1.0f) * fill);
+            target->FillGeometry(geometry,brush);
+            brush->SetOpacity(previous_opacity * std::clamp(opacity,0.0f,1.0f));
+        }
+        if (icon != Icon::More) target->DrawGeometry(geometry,brush,kStroke,stroke);
+    }
     target->SetTransform(previous);
     brush->SetOpacity(previous_opacity);
     return true;

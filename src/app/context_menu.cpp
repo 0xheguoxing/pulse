@@ -8,6 +8,7 @@
 #include "../fs/fs_enum.h"
 #include "../ipc/ctx_menu_util.h"
 #include "keymap.h"
+#include "../ui/command_icons.h"
 #include <windows.h>
 #include <algorithm>
 #include <cwchar>
@@ -28,7 +29,6 @@ constexpr const wchar_t* kGlyphDelete = L"\xE74D";
 constexpr const wchar_t* kGlyphRename = L"\xE8AC";
 constexpr const wchar_t* kGlyphProperties = L"\xE946";
 constexpr const wchar_t* kGlyphTerminal = L"\xE756";
-constexpr const wchar_t* kGlyphLink = L"\xE71B";
 constexpr const wchar_t* kGlyphUndo = L"\xE7A7";
 constexpr const wchar_t* kGlyphNewFolder = L"\xE8F4";
 constexpr const wchar_t* kGlyphNewFile = L"\xE8A5";
@@ -40,7 +40,15 @@ constexpr const wchar_t* kGlyphSettings = L"\xE713";
 constexpr const wchar_t* kGlyphRecycle = L"\xE75C";
 constexpr const wchar_t* kGlyphSelectAll = L"\xE8B3";
 constexpr const wchar_t* kGlyphInvert = L"\xE7A1";
-constexpr const wchar_t* kGlyphWildcard = L"\xE71C";
+// One shape per command (pulse_toolbar_redesign §7).
+using ui::command_icons::kGlyphAdvSearch;
+using ui::command_icons::kGlyphBatchRename;
+using ui::command_icons::kGlyphCopyPath;
+using ui::command_icons::kGlyphCopyToPane;
+using ui::command_icons::kGlyphMoveToPane;
+using ui::command_icons::kGlyphPinNetwork;
+using ui::command_icons::kGlyphPinWorkspace;
+using ui::command_icons::kGlyphSelectWild;
 constexpr const wchar_t* kGlyphViewMenu = L"\xE8A9";
 constexpr const wchar_t* kGlyphSortMenu = L"\xE8CB";
 constexpr const wchar_t* kGlyphGroupMenu = L"\xF168";
@@ -96,12 +104,12 @@ std::vector<ui::FluentMenuItem> BuildItemMenu(bool can_undo, const std::wstring&
 
     if (folder)
         items.push_back(Item(CmdOpenInNewTab, l10n::Get(l10n::StringId::OpenNewTab).c_str(), kGlyphOpenInNewTab));
-    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphLink, L"Ctrl+Shift+C"));
+    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphCopyPath, L"Ctrl+Shift+C"));
     items.push_back(Item(CmdOpenTerminal, l10n::Get(l10n::StringId::OpenTerminalHere).c_str(), kGlyphTerminal));
     items.push_back(Item(CmdProperties, l10n::Get(l10n::StringId::Properties).c_str(), kGlyphProperties, L"Alt+Enter"));
     items.back().separator_after = true;
-    items.push_back(Item(CmdPinWorkspace, l10n::Get(l10n::StringId::PinWorkspace).c_str(), kGlyphFolder));
-    items.push_back(Item(CmdPinNetwork, l10n::Get(l10n::StringId::PinNetwork).c_str(), kGlyphLink));
+    items.push_back(Item(CmdPinWorkspace, l10n::Get(l10n::StringId::PinWorkspace).c_str(), kGlyphPinWorkspace));
+    items.push_back(Item(CmdPinNetwork, l10n::Get(l10n::StringId::PinNetwork).c_str(), kGlyphPinNetwork));
     items.back().separator_after = true;
     items.push_back(Item(CmdTags, l10n::Get(l10n::StringId::TagsEllipsis).c_str(), kGlyphTag, L"Alt+T"));
     items.back().separator_after = true;
@@ -292,7 +300,7 @@ std::vector<ui::FluentMenuItem> BuildRecycleItemMenu(bool can_undo,
     items.push_back(Item(CmdRestoreRecycle, l10n::Get(l10n::StringId::Restore).c_str(), kGlyphUndo));
     items.push_back(Item(CmdDelete, l10n::Get(l10n::StringId::PermanentDelete).c_str(), kGlyphDelete, L"Del"));
     items.back().separator_after = true;
-    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphLink, L"Ctrl+Shift+C"));
+    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphCopyPath, L"Ctrl+Shift+C"));
     items.back().separator_after = true;
     items.push_back(UndoItem(can_undo, undo_label));
     return items;
@@ -327,16 +335,16 @@ std::vector<ui::FluentMenuItem> BuildBackgroundMenu(bool can_paste, bool can_und
     items.push_back(Item(CmdNewTextFile, l10n::Get(l10n::StringId::NewTextDocument).c_str(), kGlyphNewFile));
     items.back().separator_after = true;
     items.push_back(Item(CmdPaste, l10n::Get(l10n::StringId::Paste).c_str(), kGlyphPaste, L"Ctrl+V", can_paste));
-    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphLink, L"Ctrl+Shift+C"));
+    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphCopyPath, L"Ctrl+Shift+C"));
     items.back().separator_after = true;
     items.push_back(Item(CmdSelectAll, l10n::Get(l10n::StringId::SelectAll).c_str(), kGlyphSelectAll, L"Ctrl+A"));
     items.push_back(Item(CmdInvertSelection, l10n::Get(l10n::StringId::InvertSelection).c_str(), kGlyphInvert, L"Ctrl+I"));
-    items.push_back(Item(CmdSelectWildcard, l10n::Get(l10n::StringId::SelectWildcard).c_str(), kGlyphWildcard, L"Ctrl+Shift+A"));
+    items.push_back(Item(CmdSelectWildcard, l10n::Get(l10n::StringId::SelectWildcard).c_str(), kGlyphSelectWild, L"Ctrl+Shift+A"));
     items.back().separator_after = true;
     items.push_back(Item(CmdOpenTerminal, l10n::Get(l10n::StringId::OpenTerminalHere).c_str(), kGlyphTerminal));
     items.back().separator_after = true;
-    items.push_back(Item(CmdPinWorkspace, l10n::Get(l10n::StringId::PinWorkspace).c_str(), kGlyphFolder));
-    items.push_back(Item(CmdPinNetwork, l10n::Get(l10n::StringId::PinNetwork).c_str(), kGlyphLink));
+    items.push_back(Item(CmdPinWorkspace, l10n::Get(l10n::StringId::PinWorkspace).c_str(), kGlyphPinWorkspace));
+    items.push_back(Item(CmdPinNetwork, l10n::Get(l10n::StringId::PinNetwork).c_str(), kGlyphPinNetwork));
     items.back().separator_after = true;
     items.push_back(UndoItem(can_undo, undo_label));
     return items;
@@ -347,7 +355,7 @@ std::vector<ui::FluentMenuItem> BuildBreadcrumbMenu(bool filesystem) {
     items.push_back(Item(CmdOpenInNewTab, l10n::Get(l10n::StringId::OpenNewTab).c_str(), kGlyphOpenInNewTab));
     items.push_back(Item(CmdOpen, l10n::Get(l10n::StringId::Open).c_str(), kGlyphOpen));
     items.back().separator_after = true;
-    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphLink));
+    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphCopyPath));
     if (filesystem) {
         items.push_back(Item(CmdCopy, l10n::Get(l10n::StringId::Copy).c_str(), kGlyphCopy));
         items.back().separator_after = true;
@@ -498,8 +506,8 @@ std::vector<ui::FluentMenuItem> BuildSplitMenu(int current_preset) {
         items.push_back(std::move(it));
     }
     items.back().separator_after = true;
-    items.push_back(Item(CmdCopyToTarget, l10n::Get(l10n::StringId::CopyToTarget).c_str(), kGlyphCopy, L"Ctrl+Alt+C"));
-    items.push_back(Item(CmdMoveToTarget, l10n::Get(l10n::StringId::MoveToTarget).c_str(), kGlyphCut, L"Ctrl+Alt+X"));
+    items.push_back(Item(CmdCopyToTarget, l10n::Get(l10n::StringId::CopyToTarget).c_str(), kGlyphCopyToPane, L"Ctrl+Alt+C"));
+    items.push_back(Item(CmdMoveToTarget, l10n::Get(l10n::StringId::MoveToTarget).c_str(), kGlyphMoveToPane, L"Ctrl+Alt+X"));
     return items;
 }
 
@@ -660,19 +668,19 @@ std::vector<ui::FluentMenuItem> BuildCommandPalette(const std::wstring& query,
                 ui::fluent::MenuPictogram::LayoutSideBySide);
         add_cmd(CmdLayoutFourGrid, l10n::Get(l10n::StringId::LayoutFour).c_str(), L"", L"Ctrl+Alt+4",
                 ui::fluent::MenuPictogram::LayoutFour);
-        add_cmd(CmdCopyToTarget, l10n::Get(l10n::StringId::CopyToTarget).c_str(), kGlyphCopy, L"Ctrl+Alt+C");
+        add_cmd(CmdCopyToTarget, l10n::Get(l10n::StringId::CopyToTarget).c_str(), kGlyphCopyToPane, L"Ctrl+Alt+C");
         add_cmd(CmdNewFolder, l10n::Get(l10n::StringId::NewFolder).c_str(), kGlyphNewFolder, L"Ctrl+Shift+N");
-        add_cmd(CmdPinWorkspace, l10n::Get(l10n::StringId::PinWorkspace).c_str(), kGlyphFolder, nullptr);
-        add_cmd(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphLink, L"Ctrl+Shift+C");
+        add_cmd(CmdPinWorkspace, l10n::Get(l10n::StringId::PinWorkspace).c_str(), kGlyphPinWorkspace, nullptr);
+        add_cmd(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphCopyPath, L"Ctrl+Shift+C");
         add_cmd(CmdInstallFullIndex, l10n::Get(l10n::StringId::EnableFullIndex).c_str(), kGlyphSearch, nullptr);
         add_cmd(CmdSettings, l10n::Get(l10n::StringId::Settings).c_str(), kGlyphSettings, nullptr);
         add_cmd(CmdExitPulse, l10n::Get(l10n::StringId::ExitPulse).c_str(), L"\xE7E8", nullptr);
         add_cmd(CmdOpenRecycle, l10n::Get(l10n::StringId::RecycleBin).c_str(), kGlyphRecycle, nullptr);
-        add_cmd(CmdBatchRename, l10n::Get(l10n::StringId::BatchRename).c_str(), kGlyphRename, L"Ctrl+Shift+R");
-        add_cmd(CmdAdvancedSearch, l10n::Get(l10n::StringId::AdvancedSearch).c_str(), kGlyphSearch, L"Ctrl+Shift+F");
+        add_cmd(CmdBatchRename, l10n::Get(l10n::StringId::BatchRename).c_str(), kGlyphBatchRename, L"Ctrl+Shift+R");
+        add_cmd(CmdAdvancedSearch, l10n::Get(l10n::StringId::AdvancedSearch).c_str(), kGlyphAdvSearch, L"Ctrl+Shift+F");
         add_cmd(CmdSelectAll, l10n::Get(l10n::StringId::SelectAll).c_str(), kGlyphSelectAll, L"Ctrl+A");
         add_cmd(CmdInvertSelection, l10n::Get(l10n::StringId::InvertSelection).c_str(), kGlyphInvert, L"Ctrl+I");
-        add_cmd(CmdSelectWildcard, l10n::Get(l10n::StringId::SelectWildcard).c_str(), kGlyphWildcard, L"Ctrl+Shift+A");
+        add_cmd(CmdSelectWildcard, l10n::Get(l10n::StringId::SelectWildcard).c_str(), kGlyphSelectWild, L"Ctrl+Shift+A");
     }
     std::unordered_set<std::wstring> seen_paths;
     const bool has_content = index::QueryHasContent(index::ParseQuery(needle));

@@ -133,7 +133,7 @@ int main(int argc, char** argv) {
             Get(StringId::TagSearchHint) == (chinese ? L"搜索或新建标签…" : L"Search or create a tag…") &&
             Get(StringId::ColorRed) == (chinese ? L"红色" : L"Red") &&
             Get(StringId::EditBadge) == (chinese ? L"编辑徽章" : L"Edit badge") &&
-            Get(StringId::Unstar) == (chinese ? L"取消星标" : L"Unstar"));
+            Get(StringId::Unstar) == (chinese ? L"取消收藏" : L"Unstar"));
         wchar_t tag_message[256]{};
         const auto& tag_pattern = Get(StringId::TagDeleteUsedFormat);
         swprintf_s(tag_message, tag_pattern.c_str(), L"100% 工作", size_t{3});

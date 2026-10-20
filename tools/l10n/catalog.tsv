@@ -52,7 +52,7 @@ ListTagNameColor	IDS_LIST_TAG_NAME_COLOR	2074	文件名使用标签颜色	Tag-co
 ListTagNameColorDesc	IDS_LIST_TAG_NAME_COLOR_DESC	2075	有标签的文件，名称显示为第一个标签的颜色	Show tagged file names in their first tag's color	有標籤的檔案，名稱顯示為第一個標籤的顏色
 QuickAccessAddCurrent	IDS_QA_ADD_CURRENT	2076	添加当前文件夹	Add current folder	新增目前資料夾
 QuickAccessChooseFolder	IDS_QA_CHOOSE_FOLDER	2077	选择文件夹…	Choose folder…	選擇資料夾…
-QuickAccessFilesHint	IDS_QA_FILES_HINT	2078	固定文件请用「收藏」★	To pin files, use Star ★	固定檔案請用「收藏」★
+QuickAccessFilesHint	IDS_QA_FILES_HINT	2078	固定文件请用「收藏夹」★	To pin files, use Star ★	固定檔案請用「收藏夾」★
 WorkspaceUpdateLayout	IDS_WORKSPACE_UPDATE_LAYOUT	2079	用当前布局更新	Update with current layout	用目前版面配置更新
 WorkspaceLayoutUpdated	IDS_WORKSPACE_LAYOUT_UPDATED	2080	已用当前分栏更新「%s」	Updated "%s" with the current panes	已用目前分欄更新「%s」
 WorkspacePanes	IDS_WORKSPACE_PANES	2081	%d 栏	%d panes	%d 欄
@@ -276,7 +276,7 @@ PreviewFileUnavailable	IDS_PREVIEW_FILE_UNAVAILABLE	1045	文件不可用	File is
 PreviewCannotRender	IDS_PREVIEW_CANNOT_RENDER	1046	无法生成预览	Could not render a preview	無法產生預覽
 Close	IDS_CLOSE	1047	关闭	Close	關閉
 ThisPc	IDS_THIS_PC	1048	此电脑	This PC	本機
-StarredItems	IDS_STARRED_ITEMS	1049	星标项目	Starred	星標項目
+StarredItems	IDS_STARRED_ITEMS	1049	收藏夹	Starred	收藏夾
 Recent	IDS_RECENT	1050	最近使用	Recent	最近使用
 Search	IDS_SEARCH	1051	搜索	Search	搜尋
 Tag	IDS_TAG	1052	标签	Tag	標籤
@@ -319,10 +319,10 @@ TypeArchive	IDS_TYPE_ARCHIVE	1086	压缩文件	Archive	壓縮檔案
 TypeApplication	IDS_TYPE_APPLICATION	1087	应用程序	Application	應用程式
 Unavailable	IDS_UNAVAILABLE	1088	不可用	Unavailable	不可用
 NoMatches	IDS_NO_MATCHES	1089	没有匹配项	No matches	沒有符合項
-NoStarred	IDS_NO_STARRED	1090	暂无星标项目	No starred items	暫無星標項目
+NoStarred	IDS_NO_STARRED	1090	收藏夹是空的	No starred items	收藏夾是空的
 NoRecent	IDS_NO_RECENT	1091	暂无最近使用记录	No recent items	暫無最近使用記錄
 NoFilteredResults	IDS_NO_FILTERED_RESULTS	1092	此筛选下暂无记录	No items in this filter	此篩選下暫無記錄
-NoStarredMessage	IDS_NO_STARRED_MESSAGE	1093	把鼠标移到文件或文件夹上，点行尾的 ☆ 即可加星标	Hover a file or folder and click the ☆ at the end of the row	把滑鼠移到檔案或資料夾上，點行尾的 ☆ 即可加星標
+NoStarredMessage	IDS_NO_STARRED_MESSAGE	1093	把鼠标移到文件或文件夹上，点行尾的 ☆ 即可收藏	Hover a file or folder and click the ☆ at the end of the row	把滑鼠移到檔案或資料夾上，點行尾的 ☆ 即可收藏
 TryOtherType	IDS_TRY_OTHER_TYPE	1094	尝试选择其他类型	Try another item type	嘗試選擇其他類型
 NoRecentMessage	IDS_NO_RECENT_MESSAGE	1095	最近还没有打开任何文件或文件夹	No files or folders have been opened recently	最近還沒有開啟任何檔案或資料夾
 NoContent	IDS_NO_CONTENT	1096	暂无内容	No content	暫無內容
@@ -451,7 +451,7 @@ ResizeDetails	IDS_RESIZE_DETAILS	1210	拖动调整详情栏宽度	Drag to resize
 PreviewFit	IDS_PREVIEW_FIT	1211	适应	Fit	適應
 ExpandCollapse	IDS_EXPAND_COLLAPSE	1212	展开/折叠	Expand or collapse	展開/摺疊
 SystemAttributes	IDS_SYSTEM_ATTRIBUTES	1213	系统属性	System properties	系統屬性
-Star	IDS_STAR	1214	星标	Star	星標
+Star	IDS_STAR	1214	收藏	Star	收藏
 Unpin	IDS_UNPIN	1215	取消钉住	Unpin	取消釘住
 Undo	IDS_UNDO	1216	撤销	Undo	復原
 Cut	IDS_CUT	1217	剪切	Cut	剪下
@@ -729,7 +729,7 @@ ContextBuiltinDesc	IDS_CONTEXT_BUILTIN_DESC	2401	Pulse 自己的右键命令和�
 ContextBuiltinTags	IDS_CONTEXT_BUILTIN_TAGS	2402	标签（色块和“标签...”）	Tags (swatches and Tags...)	標籤（色塊和「標籤...」）
 ContextBuiltinSelect	IDS_CONTEXT_BUILTIN_SELECT	2403	全选 / 反选 / 按通配符选择	Select all / Invert / Select by pattern	全選 / 反向選取 / 按萬用字元選擇
 ContextRowNewTab	IDS_CONTEXT_ROW_NEW_TAB	2404	文件行按钮：在新标签页打开	Row button: Open in new tab	檔案行按鈕：在新分頁開啟
-ContextRowStar	IDS_CONTEXT_ROW_STAR	2405	文件行按钮：星标	Row button: Star	檔案行按鈕：星標
+ContextRowStar	IDS_CONTEXT_ROW_STAR	2405	文件行按钮：收藏	Row button: Star	檔案行按鈕：收藏
 ContextRowMore	IDS_CONTEXT_ROW_MORE	2406	文件行按钮：更多操作	Row button: More actions	檔案行按鈕：更多操作
 GlobalSearchHandoff	IDS_GLOBAL_SEARCH_HANDOFF	2410	在主界面搜索	Search in Pulse	在主介面搜尋
 GlobalSearchTruncatedShort	IDS_GLOBAL_SEARCH_TRUNCATED_SHORT	2411	仅显示前 200 个	First 200 shown	僅顯示前 200 個
@@ -1216,7 +1216,7 @@ OpenPath	IDS_OPEN_PATH	1520	打开路径	Open path	開啟路徑
 BadgeTextHint	IDS_BADGE_TEXT_HINT	1521	徽章文字（最多 12 个字符）…	Badge text (up to 12 characters)…	徽章文字（最多 12 個字元）…
 RemoveRecent	IDS_REMOVE_RECENT	1522	从最近使用中移除	Remove from recent	從最近使用中移除
 EditBadge	IDS_EDIT_BADGE	1523	编辑徽章	Edit badge	編輯徽章
-Unstar	IDS_UNSTAR	1524	取消星标	Unstar	取消星標
+Unstar	IDS_UNSTAR	1524	取消收藏	Unstar	取消收藏
 IndexMigrationIncomplete	IDS_INDEX_MIGRATION_INCOMPLETE	1700	索引迁移未完成	Index migration incomplete	索引遷移未完成
 IndexMigrationNoSpace	IDS_INDEX_MIGRATION_NO_SPACE	1701	目标磁盘空间不足，原索引已保留。请释放空间后重试。	The destination disk is full. The original index was kept. Free up space and try again.	目標磁碟空間不足，原索引已保留。請釋放空間後重試。
 RecoveryPromptFormat	IDS_RECOVERY_PROMPT_FORMAT	1702	检测到上次退出时未完成的文件操作（%zu 项）。\n\n是否重试可安全恢复的项目？	Found %zu unfinished file operations from the previous session.\n\nRetry the items that can be safely recovered?	偵測到上次退出時未完成的檔案操作（%zu 項）。\n\n是否重試可安全恢復的項目？
@@ -1381,7 +1381,7 @@ TipxSplit	IDS_TIPX_SPLIT	2201	并排浏览\n打开后可在此菜单里「并排
 TipxSidebar	IDS_TIPX_SIDEBAR	2202	折叠侧栏 · Ctrl+B\n折叠后悬停左侧图标栏可临时展开	Collapse sidebar · Ctrl+B\nWhen collapsed, hover the icon rail to peek	摺疊側欄 · Ctrl+B\n摺疊後懸停左側圖示欄可臨時展開
 TipxFilter	IDS_TIPX_FILTER	2203	筛选当前文件夹 · Ctrl+F\n只过滤当前列表；全盘查找请用搜索 Ctrl+K	Filter this folder · Ctrl+F\nFilters this list only; use Search (Ctrl+K) to find anywhere	篩選目前資料夾 · Ctrl+F\n只過濾目前清單；全磁碟查詢請用搜尋 Ctrl+K
 TipxSearch	IDS_TIPX_SEARCH	2204	搜索 · Ctrl+K\n可直接输入 pdf、本周 等词自动筛选	Search · Ctrl+K\nType words like pdf or this week to filter	搜尋 · Ctrl+K\n可直接輸入 pdf、本週 等詞自動篩選
-TipxStar	IDS_TIPX_STAR	2205	星标 / 取消星标\n星标项目显示在侧栏「星标项目」里	Star / unstar\nStarred items appear under Starred in the sidebar	星標 / 取消星標\n星標項目顯示在側欄「星標項目」裡
+TipxStar	IDS_TIPX_STAR	2205	收藏 / 取消收藏\n收藏的项目显示在侧栏「收藏夹」里	Star / unstar\nStarred items appear under Starred in the sidebar	收藏 / 取消收藏\n收藏的項目顯示在側欄「收藏夾」裡
 TipxTray	IDS_TIPX_TRAY	2206	暂存托盘\n从多个文件夹拖入，再一次性复制或移动\n放下时默认复制 · 按住 Shift 改为移动	Staging tray\nCollect files from several folders, then copy or move them at once\nDrops copy by default · hold Shift to move	暫存托盤\n從多個資料夾拖入，再一次性複製或移動\n放下時預設複製 · 按住 Shift 改為移動
 EmptySearchTry	IDS_EMPTY_SEARCH_TRY	2207	没有找到结果，试试：	No results. Try:	沒有找到結果，試試：
 EmptyActContent	IDS_EMPTY_ACT_CONTENT	2208	改为搜索文件内容	Search file contents	改為搜尋檔案內容
@@ -1979,7 +1979,7 @@ System	IDS_SYSTEM	3177	系统预览	System
 CopyPathInsideArchive	IDS_COPY_PATH_INSIDE_ARCHIVE	3178	复制包内路径	Copy path inside archive	
 HideLineNumbers	IDS_HIDE_LINE_NUMBERS	3179	隐藏行号	Hide line numbers	
 ShowLineNumbers	IDS_SHOW_LINE_NUMBERS	3180	显示行号	Show line numbers	
-ToggleStar	IDS_TOGGLE_STAR	3181	切换星标	Toggle star	
+ToggleStar	IDS_TOGGLE_STAR	3181	切换收藏	Toggle star	
 Hex	IDS_HEX	3182	十六进制	Hex	
 PlainText	IDS_PLAIN_TEXT	3183	纯文本	Plain text	
 Lines	IDS_LINES	3184	 行 · 	 lines · 	

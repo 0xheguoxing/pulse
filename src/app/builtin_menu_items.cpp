@@ -1,6 +1,7 @@
 #include "builtin_menu_items.h"
 
 #include "../common/localization.h"
+#include "../ui/command_icons.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -61,12 +62,12 @@ constexpr BuiltinMenuRow kItemRows[] = {
     { B::Count, F::Strip, nullptr, nullptr, false, false },
     { B::RecentChanges, F::None, L"\xE81C", nullptr, false, false },
     { B::OpenInNewTab, F::None, L"\xE8A7", nullptr, false, false },
-    { B::CopyPath, F::None, L"\xE71B", L"Ctrl+Shift+C", false, false },
+    { B::CopyPath, F::None, ui::command_icons::kGlyphCopyPath, L"Ctrl+Shift+C", false, false },
     { B::Terminal, F::None, L"\xE756", nullptr, false, false },
     { B::Properties, F::None, L"\xE946", L"Alt+Enter", true, false },
-    { B::QuickAccess, F::None, L"\xE718", nullptr, false, false },
-    { B::PinWorkspace, F::None, L"\xE8B7", nullptr, false, false },
-    { B::PinNetwork, F::None, L"\xE71B", nullptr, true, false },
+    { B::QuickAccess, F::None, ui::command_icons::kGlyphPinQuickAccess, nullptr, false, false },
+    { B::PinWorkspace, F::None, ui::command_icons::kGlyphPinWorkspace, nullptr, false, false },
+    { B::PinNetwork, F::None, ui::command_icons::kGlyphPinNetwork, nullptr, true, false },
     { B::Tags, F::None, L"\xE8EC", nullptr, true, false },
     { B::Undo, F::None, L"\xE7A7", L"Ctrl+Z", false, false },
 };
@@ -78,12 +79,12 @@ constexpr BuiltinMenuRow kBackgroundRows[] = {
     { B::NewFolder, F::None, L"\xE8F4", L"F7", false, false },
     { B::NewTextFile, F::None, L"\xE8A5", nullptr, true, false },
     { B::Paste, F::None, L"\xE77F", L"Ctrl+V", false, false },
-    { B::CopyPath, F::None, L"\xE71B", L"Ctrl+Shift+C", true, false },
+    { B::CopyPath, F::None, ui::command_icons::kGlyphCopyPath, L"Ctrl+Shift+C", true, false },
     { B::SelectCommands, F::None, L"\xE8B3", L"Ctrl+A", true, false },
     { B::Terminal, F::None, L"\xE756", nullptr, true, false },
-    { B::QuickAccess, F::None, L"\xE718", nullptr, false, false },
-    { B::PinWorkspace, F::None, L"\xE8B7", nullptr, false, false },
-    { B::PinNetwork, F::None, L"\xE71B", nullptr, true, false },
+    { B::QuickAccess, F::None, ui::command_icons::kGlyphPinQuickAccess, nullptr, false, false },
+    { B::PinWorkspace, F::None, ui::command_icons::kGlyphPinWorkspace, nullptr, false, false },
+    { B::PinNetwork, F::None, ui::command_icons::kGlyphPinNetwork, nullptr, true, false },
     { B::RecentChanges, F::None, L"\xE81C", nullptr, false, false },
     { B::Undo, F::None, L"\xE7A7", L"Ctrl+Z", true, false },
     { B::FolderProperties, F::None, L"\xE946", nullptr, false, false },
