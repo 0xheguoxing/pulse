@@ -16,4 +16,9 @@ void HandleTagQueryChipRemove(AppState& s, int index);
 void HandleTagQueryRefine(AppState& s, int index, bool exclude);
 // The tags a drop on the active tag view would add: its 且 terms.
 bool TagViewDropTags(const AppState& s, const std::wstring& view_path, std::vector<std::wstring>* tag_ids);
+// Files dropped on a tag (sidebar row) or a tag view: the tags go on, then
+// the snack 已给 N 项加上「…」 · 撤销 (§4). Undo takes off only what the drop
+// added (WM_TAG_DROP_UNDO).
+void ApplyDropTags(AppState& s, const std::vector<std::wstring>& tag_ids, const std::vector<std::wstring>& paths);
+void UndoDropTags(AppState& s);
 }

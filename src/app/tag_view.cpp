@@ -10,6 +10,7 @@
 #include "tag_query.h"
 #include "../common/localization.h"
 #include "../ui/fluent_menu.h"
+#include <unordered_set>
 
 namespace pulse {
 namespace {
@@ -163,6 +164,55 @@ void HandleTagQueryRefine(AppState& s, int index, bool exclude) {
         query.in = tab->tag_locations[folder].first;
     }
     Open(s, query);
+}
+
+namespace {
+// What the last tag drop added, per tag, for the snack's undo.
+struct TagDropUndo {
+    const AppState* owner = nullptr;
+    std::vector<std::pair<std::wstring, std::vector<std::wstring>>> added;
+};
+TagDropUndo g_tag_drop;
+} // namespace
+
+void ApplyDropTags(AppState& s, const std::vector<std::wstring>& tag_ids, const std::vector<std::wstring>& paths) {
+    TagDropUndo undo;
+    undo.owner = &s;
+    std::wstring names;
+    std::unordered_set<std::wstring> touched;
+    std::vector<app::TagAdsUpdate> ads_updates;
+    for (const auto& id : tag_ids) {
+        const int index = s.places.FindTagIndex(id);
+        if (index < 0) continue;
+        std::vector<std::wstring> fresh;
+        for (const auto& path : paths)
+            if (!s.places.PathHasTag(path, index)) fresh.push_back(path);
+        if (fresh.empty()) continue;
+        if (!names.empty()) names += L"\u300D\u300C";   // 」「
+        names += s.places.tags[static_cast<size_t>(index)].name;
+        s.places.SetTagsBatch(id, fresh, true, &ads_updates);
+        touched.insert(fresh.begin(), fresh.end());
+        undo.added.emplace_back(id, std::move(fresh));
+    }
+    QueueTagAds(s, std::move(ads_updates));
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+    if (undo.added.empty() || !s.hwnd) return;   // everything had them already
+    g_tag_drop = std::move(undo);
+    wchar_t text[256]{};
+    swprintf_s(text, l10n::Get(l10n::StringId::TagDropDoneFormat).c_str(), static_cast<int>(touched.size()),
+               names.c_str());
+    s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Undo, text, std::wstring{},
+                                   {ui::SnackAction{l10n::Get(l10n::StringId::SnackUndo), WM_TAG_DROP_UNDO}});
+}
+
+void UndoDropTags(AppState& s) {
+    TagDropUndo undo = std::move(g_tag_drop);
+    g_tag_drop = TagDropUndo{};
+    if (undo.owner != &s) return;
+    std::vector<app::TagAdsUpdate> ads_updates;
+    for (const auto& [id, paths] : undo.added) s.places.SetTagsBatch(id, paths, false, &ads_updates);
+    QueueTagAds(s, std::move(ads_updates));
+    InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
 bool TagViewDropTags(const AppState& s, const std::wstring& view_path, std::vector<std::wstring>* tag_ids) {

@@ -2534,5 +2534,6 @@
 #define IDS_FAVORITES_SEPARATOR_ADD                                                      3744
 #define IDS_FAVORITES_SEPARATOR_REMOVE                                                   3745
 #define IDS_FAVORITES_GROUP_RENAME                                                       3746
+#define IDS_TAG_DROP_DONE_FORMAT                                                         3747
 
 #endif  // PULSE_STRING_IDS_H

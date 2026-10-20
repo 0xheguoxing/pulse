@@ -2530,6 +2530,7 @@ enum class StringId : UINT {
     FavoritesSeparatorAdd = IDS_FAVORITES_SEPARATOR_ADD,
     FavoritesSeparatorRemove = IDS_FAVORITES_SEPARATOR_REMOVE,
     FavoritesGroupRename = IDS_FAVORITES_GROUP_RENAME,
+    TagDropDoneFormat = IDS_TAG_DROP_DONE_FORMAT,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

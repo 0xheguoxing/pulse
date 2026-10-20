@@ -649,20 +649,14 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
     if (dest.starts_with(L"pulse:tags:")) {
         std::vector<std::wstring> tag_ids;
         if (!TagViewDropTags(s, dest, &tag_ids)) return DROPEFFECT_NONE;
-        std::vector<app::TagAdsUpdate> ads_updates;
-        for (const auto& id : tag_ids) s.places.SetTagsBatch(id, sources, true, &ads_updates);
-        QueueTagAds(s, std::move(ads_updates));
-        InvalidateRect(s.hwnd, nullptr, FALSE);
+        ApplyDropTags(s, tag_ids, sources);
         return DROPEFFECT_COPY;
     }
     if (dest.starts_with(L"pulse:tag:")) {
         std::wstring kind, rest;
         app::ParsePulsePath(dest, &kind, &rest);
         const int ti = s.places.FindTagIndex(s.places.ResolveTagRef(rest));
-        std::vector<app::TagAdsUpdate> ads_updates;
-        s.places.SetTaggedBatch(ti, sources, true, &ads_updates);
-        QueueTagAds(s, std::move(ads_updates));
-        InvalidateRect(s.hwnd, nullptr, FALSE);
+        if (ti >= 0) ApplyDropTags(s, {s.places.tags[static_cast<size_t>(ti)].id}, sources);
         return DROPEFFECT_COPY;
     }
     if (dest.empty() || fs::IsVirtualPath(dest) || !(effect & allowed) ||

@@ -16,6 +16,7 @@
 #include "app_prompts.h"
 #include "vertical_tabs.h"
 #include "favorites_bar.h"
+#include "tag_view.h"
 #include "filter_animation.h"
 #include "sidebar_resize.h"
 #include "ui_timer_pacer.h"
@@ -1813,6 +1814,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_FAVORITE_UNDO:
         if (s) UndoFavoriteRemoval(*s);
+        return 0;
+
+    case WM_TAG_DROP_UNDO:
+        if (s) UndoDropTags(*s);
         return 0;
 
     case WM_UNDO_DELETE:

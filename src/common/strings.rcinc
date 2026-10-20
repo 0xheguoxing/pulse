@@ -2520,6 +2520,7 @@ BEGIN
     IDS_FAVORITES_SEPARATOR_ADD "在后面加分隔线"
     IDS_FAVORITES_SEPARATOR_REMOVE "删除后面的分隔线"
     IDS_FAVORITES_GROUP_RENAME "重命名分组…"
+    IDS_TAG_DROP_DONE_FORMAT "已给 %d 项加上「%s」"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5039,6 +5040,7 @@ BEGIN
     IDS_FAVORITES_SEPARATOR_ADD "Add a separator after"
     IDS_FAVORITES_SEPARATOR_REMOVE "Remove the separator after"
     IDS_FAVORITES_GROUP_RENAME "Rename group…"
+    IDS_TAG_DROP_DONE_FORMAT "Tagged %d items with “%s”"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.
