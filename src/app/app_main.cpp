@@ -30,6 +30,7 @@
 #include "../ui/quick_preview_window.h"
 #include "app_sidebar_refresh.h"
 #include "cloud_sync_probe.h"
+#include "device_registry.h"
 #include "operation_intent_ui.h"
 #include "../ui/typography.h"
 #include "../ui/preview_format_catalog.h"
@@ -839,6 +840,10 @@ static LRESULT HandleSystemBroadcast(AppState& s, app::SystemBroadcast kind, WPA
         RefreshSidebarModel(s);
         app::ForEachWindowSharingCore(s, [](AppState& window) { InvalidateRect(window.hwnd, nullptr, FALSE); });
         return 0;
+    case app::SystemBroadcast::Devices:
+        // Listed on the device thread after 500 ms of quiet (device_registry.h).
+        app::DeviceRegistry::Instance().OnDevicesBroadcast();
+        return 0;
     case app::SystemBroadcast::QueryEndSession:
         // Shutdown/logoff ends the process without WM_DESTROY; store the layout
         // now. session.json holds every window (v8), so it is saved once.
@@ -1337,6 +1342,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             if (s->appPrefs.persist) QueueTagAds(*s, {});
             RequestRecycleOccupancy(*s);
             RequestNetworkLocations(*s);
+            // Phones: arrival notifications on the host; listed only when one is present.
+            app::DeviceRegistry::Instance().Start(ServiceWindow(*s));
 
             // Ops layer: queue worker + shell host IPC; notify repaints the status bar.
             const std::wstring data_dir = app::GetPulseDataDir();
@@ -1819,6 +1826,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_CLOUD_DOWNLOAD:
         if (s) HandleCloudDownloadMessage(*s, wParam, lParam);
+        return 0;
+
+    case WM_DEVICES_CHANGED:
+        // The phone list changed (DeviceRegistry). D2 shows it in This PC and
+        // the sidebar; for now every window just repaints.
+        if (s) app::ForEachWindowSharingCore(*s, [](AppState& window) { InvalidateRect(window.hwnd, nullptr, FALSE); });
         return 0;
 
     case WM_UNDO_DELETE:
@@ -2911,6 +2924,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             CancelZipJobs(*s);
             if (last_window) {
                 app::CancelCloudDownloads();  // 下载并预览 reads end with the app
+                app::DeviceRegistry::Instance().Stop();
                 HandOffAtExit(*s, hwnd);
                 s->probe_scheduler.Clear();
                 s->probeQueue.clear();

@@ -529,6 +529,7 @@ target_link_options(pulse PRIVATE /MAP)
     target_link_libraries(pulse PRIVATE
         d3d11 d2d1 dwrite dxgi dcomp dwmapi shcore ole32 shell32 uuid comctl32 advapi32 shlwapi version windowscodecs gdi32 netapi32 mpr bcrypt pulse_crash_reporter)
     target_link_libraries(pulse PRIVATE propsys oleaut32)  # shell_window_registry.cpp
+    target_link_libraries(pulse PRIVATE cfgmgr32)  # device_shell.cpp: portable device presence
     target_link_libraries(pulse PRIVATE winhttp crypt32 secur32)
     target_link_libraries(pulse PRIVATE pulse_localization pulse_text)
     pulse_enable_lumatext(pulse)
@@ -1251,6 +1252,10 @@ target_link_libraries(pulse_link_pill_test PRIVATE user32)
 
 add_executable(pulse_network_locations_test src/bench/network_locations_test.cpp src/app/network_locations.cpp)
 target_link_libraries(pulse_network_locations_test PRIVATE shell32 ole32 oleaut32 uuid)
+# Phones (D1): pulse:device: paths, the fake device source, the device thread.
+add_executable(pulse_device_source_test src/bench/device_source_test.cpp src/fs/device_path.cpp
+    src/fs/device_fake.cpp src/fs/device_shell.cpp src/fs/device_worker.cpp)
+target_link_libraries(pulse_device_source_test PRIVATE shell32 ole32 uuid propsys cfgmgr32 shlwapi advapi32)
 add_executable(pulse_cloud_roots_test src/bench/cloud_roots_test.cpp src/app/cloud_roots.cpp
     src/app/cloud_sync_probe.cpp src/fs/cloud_pin.cpp src/fs/cloud_hydrate.cpp src/app/cloud_download.cpp)
 target_link_libraries(pulse_cloud_roots_test PRIVATE advapi32 shell32 shlwapi ole32 uuid)
