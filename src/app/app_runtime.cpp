@@ -3395,8 +3395,15 @@ std::wstring TooltipForHover(AppState& s) {
             return ToolbarAppTooltip(s, static_cast<size_t>(s.hoverControlIndex - static_cast<int>(pins.size())));
         return s.hoverControlIndex >= 0 ? pins[static_cast<size_t>(s.hoverControlIndex)].label : std::wstring{};
     }
-    case R::FavoritesBarItem: return s.hoverControlIndex >= 0 ? pulse::path::FriendlyPathText(s.hoverPath) : std::wstring{};
+    case R::FavoritesBarItem: {
+        ui::HitTestResult hit;
+        hit.region = R::FavoritesBarItem;
+        hit.index = s.hoverControlIndex;
+        return FavoritesBarTooltip(s, hit);
+    }
     case R::FavoritesBarMore: return text(I::FavoritesBarMore);
+    case R::FavoritesBarChevron: return text(I::FavoritesBarSubfolders);
+    case R::AddressFavorites: return text(I::StarredItems);
     case R::ToolbarSelAction: {
         if (s.hoverControlIndex == ui::kSelChipMore) return text(I::MoreActions);
         if (s.hoverControlIndex == ui::kSelChipClear) return text(I::ClearSelectionEsc);

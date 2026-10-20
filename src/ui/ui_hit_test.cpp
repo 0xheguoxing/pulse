@@ -774,7 +774,14 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             if (!ContainsPt(bar.items[i], x, y)) continue;
             r.index = static_cast<int>(i);
             r.control_bounds = bar.items[i];
-            if (i < vm.favorites_bar.size()) r.path = vm.favorites_bar[i].path;
+            if (i < vm.favorites_bar.size()) {
+                const auto& f = vm.favorites_bar[i];
+                r.path = f.path;
+                // A folder's last 20 DIP: its ⌄ (the subfolders).
+                if (f.folder && !f.offline && !bar.icon_only && vm.favorites_bar_drag < 0 &&
+                    x >= bar.items[i].right - 20 * scale_)
+                    r.region = HitTestResult::FavoritesBarChevron;
+            }
             return r;
         }
         if (bar.first_hidden >= 0 && ContainsPt(bar.more, x, y)) {
@@ -812,6 +819,12 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
         }
         if (ContainsPt(toolbar.address,x,y)) {
             r.region=HitTestResult::AddressBar;
+            if (FavoritesButtonShown() && !vm.address_editing && !vm.address_searching &&
+                ContainsPt(AddressFavoritesRect(rect.right),x,y)) {
+                r.region=HitTestResult::AddressFavorites;
+                r.control_bounds=AddressFavoritesRect(rect.right);
+                return r;
+            }
             if (!vm.address_editing && x < toolbar.address.right-28*scale_) {
                 std::vector<BreadcrumbPlaced> placed;
                 BreadcrumbLayout(vm.pane,rect.right,placed);

@@ -345,7 +345,7 @@ bool HandleFolderMiddleClick(AppState& s, int x, int y) {
         path = EntryFullPath(*tab, hit.index);
     } else if (hit.region == R::BreadcrumbSegment) {
         path = hit.path;
-    } else if (hit.region == R::FavoritesBarItem) {
+    } else if (hit.region == R::FavoritesBarItem || hit.region == R::FavoritesBarChevron) {
         path = FavoritesBarMiddleClickPath(s, hit);
         if (path.empty()) return true;   // a starred file, or the bar's empty part
     } else if (hit.region == R::SidebarItem) {

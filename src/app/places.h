@@ -214,6 +214,10 @@ public:
     // Empty text with the default color removes the badge.
     bool SetQuickAccessBadge(const std::wstring& path, const std::wstring& text, uint32_t rgb);
     bool ReorderStarredFolder(const std::wstring& path, size_t folder_position);
+    // 收藏栏 drag: the item at `from` goes to `to` (indices into
+    // starred_items). Folders stay ahead of files, so both ends must be of
+    // the same kind (a folder, or a file).
+    bool MoveStarredItem(size_t from, size_t to);
     std::vector<std::wstring> StarredPaths() const;
     std::vector<std::wstring> StarredFolderPaths() const;
 

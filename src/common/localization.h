@@ -2511,6 +2511,15 @@ enum class StringId : UINT {
     FavoritesBarMore = IDS_FAVORITES_BAR_MORE,
     FavoritesBarIconOnly = IDS_FAVORITES_BAR_ICON_ONLY,
     FavoritesBarHide = IDS_FAVORITES_BAR_HIDE,
+    FavoritesBarNotFolder = IDS_FAVORITES_BAR_NOT_FOLDER,
+    FavoritesBarSubfolders = IDS_FAVORITES_BAR_SUBFOLDERS,
+    FavoritesBarNoSubfolders = IDS_FAVORITES_BAR_NO_SUBFOLDERS,
+    FavoritesBarUnreachable = IDS_FAVORITES_BAR_UNREACHABLE,
+    FavoritesBarRemoved = IDS_FAVORITES_BAR_REMOVED,
+    FavoritesBarDropAdd = IDS_FAVORITES_BAR_DROP_ADD,
+    FavoritesStarHere = IDS_FAVORITES_STAR_HERE,
+    FavoritesUnstarHere = IDS_FAVORITES_UNSTAR_HERE,
+    FavoritesBarShow = IDS_FAVORITES_BAR_SHOW,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

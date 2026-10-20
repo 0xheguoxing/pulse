@@ -171,6 +171,7 @@ struct AroundCentre {
 struct ToolbarMotion {
     GlidePlate nav, crumbs, commands;
     PinMotions pins;
+    PinMotions favorites;   // 收藏栏 items: the same slide / pop as the pins
     // The More button's count of pins folded into it; pops when it changes.
     int folded = 0;
     uint64_t folded_born = 0;
@@ -526,6 +527,18 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                     addrRc.right - addrRc.left - 18.0f * scale_,
                     addrRc.bottom - addrRc.top);
             }
+        }
+        if (FavoritesButtonShown() && !vm.address_editing && !vm.address_searching) {
+            // ★⌄: the favorites dropdown while the 收藏栏 is hidden; filled
+            // when the current folder is starred.
+            const D2D1_RECT_F fb = AddressFavoritesRect(rect.right);
+            if (IsHovered(vm, HitTestResult::AddressFavorites))
+                painter_.FillRoundedRect(fb, theme.radius_control * scale_, theme.fill_hover);
+            DrawIconText(fb.left + 2 * scale_, fb.top, 16 * scale_, fb.bottom - fb.top,
+                         vm.favorites_here ? L"\xE735" : L"\xE734", L"",
+                         vm.favorites_here ? theme.accent : theme.text_secondary, 0.75f);
+            DrawIconText(fb.left + 16 * scale_, fb.top, 10 * scale_, fb.bottom - fb.top, L"\xE70D", L"",
+                         theme.text_secondary, 0.45f);
         }
         dc->PopAxisAlignedClip();
     }
@@ -898,7 +911,10 @@ FavoritesBarLayout MainRenderer::FavoritesBarLayoutAt(const WindowViewModel& vm,
     const bool icon_only=vm.favorites_bar_icon_only || w-left < kFavoritesBarIconOnlyBelowDip*scale_;
     std::vector<float> widths;
     widths.reserve(vm.favorites_bar.size());
-    for (const auto& f : vm.favorites_bar) widths.push_back(icon_only ? 0.0f : CellTextWidth(f.label,true));
+    // A folder keeps 12 DIP more for the ⌄ it shows on hover, so the name
+    // does not shorten under the pointer.
+    for (const auto& f : vm.favorites_bar)
+        widths.push_back(icon_only ? 0.0f : CellTextWidth(f.label,true)+(f.folder && !f.offline ? 12*scale_ : 0.0f));
     return MakeFavoritesBarLayout(band,scale_,widths,icon_only);
 }
 
@@ -917,26 +933,87 @@ void MainRenderer::DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F
     const FavoritesBarLayout lay=FavoritesBarLayoutAt(vm,rect.right);
     const float radius=6*scale_;
     const auto measure=[&](const std::wstring& text) { return CellTextWidth(text,true); };
-    for (size_t i=0;i<vm.favorites_bar.size() && i<lay.items.size();++i) {
-        const D2D1_RECT_F b=lay.items[i];
-        if (b.right<=b.left) continue;
+    ID2D1DeviceContext* dc=compositor_->Dc();
+    ToolbarMotion& tm=ToolbarMotionFor(this);
+    // A dragged favorite rides the toolbar pins' motion (PinMotions): it
+    // follows the pointer, the others slide to their new places.
+    ToolbarPinDragState drag;
+    drag.index=vm.favorites_bar_drag;
+    drag.left=vm.favorites_bar_drag_left;
+    drag.dy=vm.favorites_bar_drag_dy;
+    drag.out=vm.favorites_bar_drag_out;
+    const auto draw_item=[&](size_t i) {
+        const D2D1_RECT_F slot=lay.items[i];
         const auto& f=vm.favorites_bar[i];
-        if (f.current || IsHovered(vm,HitTestResult::FavoritesBarItem,static_cast<int>(i)))
-            painter_.FillRoundedRect(b,radius,theme.fill_hover);
+        const bool dragged=drag.index==static_cast<int>(i);
+        PinMotion& pm=tm.favorites.Touch(L"f"+f.path,false,motion_frame_,motion_now_,tm.animations);
+        const D2D1_RECT_F b=tm.favorites.Place(pm,slot,static_cast<int>(i),drag,motion_now_,tm.animations);
+        const D2D1_POINT_2F centre=D2D1::Point2F((b.left+b.right)*0.5f,(b.top+b.bottom)*0.5f);
+        const AroundCentre pop(dc,centre,tm.favorites.Pop(pm,motion_now_)*(dragged ? 1.08f : 1.0f));
+        const float fade=dragged && drag.out ? 0.35f : f.offline ? 0.45f : 1.0f;
+        const bool chevron_hot=IsHovered(vm,HitTestResult::FavoritesBarChevron,static_cast<int>(i));
+        const bool hot=vm.favorites_bar_drag<0 &&
+            (chevron_hot || IsHovered(vm,HitTestResult::FavoritesBarItem,static_cast<int>(i)));
+        if (f.current || hot || dragged) {
+            D2D1_COLOR_F bg=theme.fill_hover;
+            bg.a*=fade;
+            painter_.FillRoundedRect(b,radius,bg);
+        }
+        if (vm.favorites_bar_drop==static_cast<int>(i)) {
+            // Files dragged over a favorite folder: the drop-target ring
+            // (ui.md §5.2 rule 7), like the breadcrumb.
+            ComPtr<ID2D1SolidColorBrush> ring;
+            dc->CreateSolidColorBrush(theme.accent,&ring);
+            if (ring.get()) dc->DrawRoundedRectangle(D2D1::RoundedRect(b,radius,radius),ring.get(),2*scale_);
+        }
         // The sidebar's starred folder colour; files in the secondary text.
+        D2D1_COLOR_F icon=f.folder ? HexColor(0xFBBF24) : theme.text_secondary;
+        D2D1_COLOR_F ink=theme.text;
+        icon.a*=fade;
+        ink.a*=fade;
         const float icon_x=lay.icon_only ? std::round((b.left+b.right)*0.5f-10*scale_) : b.left+5*scale_;
-        DrawIconText(icon_x,b.top,20*scale_,b.bottom-b.top,f.folder ? L"\xE8B7" : L"\xE8A5",L"",
-                     f.folder ? HexColor(0xFBBF24) : theme.text_secondary,0.8f);
+        DrawIconText(icon_x,b.top,20*scale_,b.bottom-b.top,f.folder ? L"\xE8B7" : L"\xE8A5",L"",icon,0.8f);
+        if (f.offline)   // §8 不可用: dimmed, with a small ⚠ on the icon
+            DrawIconText(icon_x+9*scale_,b.top+8*scale_,12*scale_,b.bottom-b.top-8*scale_,L"\xE7BA",L"!",
+                         HexColor(0xF59E0B),0.5f);
         if (!lay.icon_only) {
+            // A hovered folder shows ⌄ in its last 20 DIP (the subfolders).
+            const bool chevron=hot && f.folder && !f.offline;
             const float text_left=b.left+29*scale_;
-            const float text_w=b.right-8*scale_-text_left;
-            painter_.DrawText(FitEndEllipsis(f.label,text_w,measure),
-                              D2D1::RectF(text_left,b.top,b.right-6*scale_,b.bottom),
-                              compositor_->SmallFormat(),theme.text);
+            const float text_right=b.right-(chevron ? 20 : 8)*scale_;
+            painter_.DrawText(FitEndEllipsis(f.label,text_right-text_left,measure),
+                              D2D1::RectF(text_left,b.top,text_right+2*scale_,b.bottom),
+                              compositor_->SmallFormat(),ink);
+            if (chevron) {
+                if (chevron_hot) {
+                    D2D1_COLOR_F plate=theme.fill_hover;
+                    painter_.FillRoundedRect(D2D1::RectF(b.right-20*scale_,b.top+4*scale_,b.right-3*scale_,b.bottom-4*scale_),
+                                             4*scale_,plate);
+                }
+                DrawIconText(b.right-20*scale_,b.top,17*scale_,b.bottom-b.top,L"\xE70D",L"",theme.text_secondary,0.5f);
+            }
         }
         if (f.current)   // prototype .fav.cur: a 2px accent underline
             painter_.FillRoundedRect(D2D1::RectF(b.left+8*scale_,b.bottom-3*scale_,b.right-8*scale_,b.bottom-1*scale_),
                                      scale_,theme.accent);
+    };
+    // The dragged one last, over its neighbours.
+    for (size_t i=0;i<vm.favorites_bar.size() && i<lay.items.size();++i) {
+        if (lay.items[i].right<=lay.items[i].left || drag.index==static_cast<int>(i)) continue;
+        draw_item(i);
+    }
+    if (drag.index>=0 && static_cast<size_t>(drag.index)<vm.favorites_bar.size() &&
+        static_cast<size_t>(drag.index)<lay.items.size() &&
+        lay.items[static_cast<size_t>(drag.index)].right>lay.items[static_cast<size_t>(drag.index)].left)
+        draw_item(static_cast<size_t>(drag.index));
+    tm.favorites.Sweep(motion_frame_);
+    if (tm.favorites.moving) RequestMotionFrame();
+    tm.favorites.moving=false;
+    if (vm.favorites_bar_drop_add) {
+        // Items over the bar's empty part: where they would land, after the last.
+        float x=EffectiveSidebarWidth(rect.right)+8*scale_;
+        for (const auto& item : lay.items) if (item.right>item.left) x=std::max(x,item.right);
+        painter_.FillRoundedRect(D2D1::RectF(x+3*scale_,top+7*scale_,x+5*scale_,top+27*scale_),scale_,theme.accent);
     }
     if (lay.first_hidden>=0) {
         const D2D1_RECT_F m=lay.more;

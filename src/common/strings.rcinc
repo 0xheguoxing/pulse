@@ -2501,6 +2501,15 @@ BEGIN
     IDS_FAVORITES_BAR_MORE "更多收藏"
     IDS_FAVORITES_BAR_ICON_ONLY "只显示图标"
     IDS_FAVORITES_BAR_HIDE "隐藏收藏栏"
+    IDS_FAVORITES_BAR_NOT_FOLDER "不是文件夹"
+    IDS_FAVORITES_BAR_SUBFOLDERS "子文件夹"
+    IDS_FAVORITES_BAR_NO_SUBFOLDERS "没有子文件夹"
+    IDS_FAVORITES_BAR_UNREACHABLE "无法访问此位置"
+    IDS_FAVORITES_BAR_REMOVED "已移出收藏夹"
+    IDS_FAVORITES_BAR_DROP_ADD "加入收藏夹"
+    IDS_FAVORITES_STAR_HERE "收藏此文件夹"
+    IDS_FAVORITES_UNSTAR_HERE "取消收藏此文件夹"
+    IDS_FAVORITES_BAR_SHOW "显示收藏栏"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5001,6 +5010,15 @@ BEGIN
     IDS_FAVORITES_BAR_MORE "More favorites"
     IDS_FAVORITES_BAR_ICON_ONLY "Icons only"
     IDS_FAVORITES_BAR_HIDE "Hide the favorites bar"
+    IDS_FAVORITES_BAR_NOT_FOLDER "Not a folder"
+    IDS_FAVORITES_BAR_SUBFOLDERS "Subfolders"
+    IDS_FAVORITES_BAR_NO_SUBFOLDERS "No subfolders"
+    IDS_FAVORITES_BAR_UNREACHABLE "Can't reach this location"
+    IDS_FAVORITES_BAR_REMOVED "Removed from favorites"
+    IDS_FAVORITES_BAR_DROP_ADD "Add to favorites"
+    IDS_FAVORITES_STAR_HERE "Star this folder"
+    IDS_FAVORITES_UNSTAR_HERE "Unstar this folder"
+    IDS_FAVORITES_BAR_SHOW "Show the favorites bar"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

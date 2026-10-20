@@ -933,12 +933,24 @@ struct WindowViewModel {
         std::wstring label, path;
         bool folder = true;
         bool current = false;   // the active tab shows it
+        bool offline = false;   // not reachable (cached): dimmed, takes no drop
+        bool separator = false; // a thin line, not an item
+        bool group = false;     // a group button (name + count + ⌄)
+        int count = 0;          // a group's items
     };
     bool favorites_bar_on = false;
     bool favorites_bar_icon_only = false;
     std::vector<FavoritesBarItem> favorites_bar;
     std::wstring favorites_bar_hint;      // shown while the list is empty
     std::wstring favorites_bar_more;      // » tooltip
+    // A favorite dragged along the bar (the toolbar pins' motion): its index,
+    // left edge and drop below the row (px); out: letting go removes it.
+    int favorites_bar_drag = -1;
+    float favorites_bar_drag_left = 0.0f, favorites_bar_drag_dy = 0.0f;
+    bool favorites_bar_drag_out = false;
+    int favorites_bar_drop = -1;          // files dragged over this favorite folder
+    bool favorites_bar_drop_add = false;  // items over the bar's empty part: 加入收藏夹
+    bool favorites_here = false;          // the current folder is starred (address ★)
 
     PaneViewModel pane;
     std::vector<PaneSlotView> pane_slots;
@@ -1251,6 +1263,8 @@ struct HitTestResult {
         ToolbarPinLabel,    // drop mode: the label ahead of the pinned apps
         FavoritesBarItem,   // 收藏栏: index into favorites_bar, -1 the bar's empty part
         FavoritesBarMore,   // 收藏栏 »: index = the first favorite folded into it
+        FavoritesBarChevron,// 收藏栏: a hovered folder's ⌄ (its subfolders), index as FavoritesBarItem
+        AddressFavorites,   // the address bar's ★⌄ while the 收藏栏 is hidden: the favorites dropdown
         AddressBar,
         AddressSearch,
         AddressSearchInput,
@@ -1501,6 +1515,12 @@ public:
         toolbar_height_ = ToolbarHeightDip() * scale_;
     }
     bool FavoritesBarShown() const { return favorites_bar_; }
+    // The bar hidden, the address bar ends in ★⌄ (the favorites dropdown).
+    bool FavoritesButtonShown() const { return !favorites_bar_ && !embedded_; }
+    D2D1_RECT_F AddressFavoritesRect(float window_width) const {
+        const D2D1_RECT_F a = AddressBarRect(window_width);
+        return D2D1::RectF(a.right - 32 * scale_, a.top + 4 * scale_, a.right - 4 * scale_, a.bottom - 4 * scale_);
+    }
     FavoritesBarLayout FavoritesBarLayoutAt(const WindowViewModel& vm, float window_width) const;
     float ToolbarHeightDip() const {
         return (vertical_tabs_ || embedded_ ? 44.0f : 88.0f) + (favorites_bar_ ? kFavoritesBarHeightDip : 0.0f);

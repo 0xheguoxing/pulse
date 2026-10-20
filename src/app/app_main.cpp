@@ -15,6 +15,7 @@
 #include "tag_ads_sync.h"
 #include "app_prompts.h"
 #include "vertical_tabs.h"
+#include "favorites_bar.h"
 #include "filter_animation.h"
 #include "sidebar_resize.h"
 #include "ui_timer_pacer.h"
@@ -217,6 +218,10 @@ void UpdateProcessMetrics(AppState& s) {
 static bool g_shot_wall = false;
 // GUI verification for the 收藏栏: shown, with a few favorites if none.
 static bool g_shot_favorites_bar = false;
+// --shot-favorites-hover N: favorite N's ⌄ is hot (-2: the address bar's ★⌄).
+static int g_shot_favorites_hover = -1;
+// --shot-favorites-drop N: files are dragged over favorite N.
+static int g_shot_favorites_drop = -1;
 // Decorative motion (loading shimmer, folder size skeleton, the pill's ring)
 // runs at about 30 fps instead of the display rate (FramePump::ArmPaced).
 constexpr double kDecorativeFrameMs = 1000.0 / 30.0;
@@ -1804,6 +1809,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s) UndoDetailsTreeExpand(*s);
         return 0;
 
+    case WM_FAVORITE_UNDO:
+        if (s) UndoFavoriteRemoval(*s);
+        return 0;
+
     case WM_UNDO_DELETE:
         if (s && s->ops.CanUndo()) s->ops.Undo();
         return 0;
@@ -3262,6 +3271,12 @@ int ShotModeMain(AppState& state, HWND hwnd) {
             state.hoverPoint = POINT{ 60, 320 };
             state.tooltipText = state.hoverLabel;
         }
+        if (g_shot_favorites_hover >= 0 || g_shot_favorites_hover == -2) {
+            state.hoverRegion = static_cast<int>(g_shot_favorites_hover == -2 ? ui::HitTestResult::AddressFavorites
+                                                                               : ui::HitTestResult::FavoritesBarChevron);
+            state.hoverControlIndex = g_shot_favorites_hover;
+        }
+        if (g_shot_favorites_drop >= 0) state.dropFavorite = g_shot_favorites_drop;
         RunHoverBench(state);  // --bench-hover: env PULSE_BENCH_HOVER_LIST / _OUT
         if (state.shot_hover_dwell >= 0 && StageHoverDwellShot(state, state.shot_hover_dwell)) {
             for (int i = 0; i < 2; ++i) {
@@ -3542,6 +3557,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             state.shot_tag_drag = true;
         } else if (wcscmp(__wargv[i], L"--shot-favorites-bar") == 0) {
             g_shot_favorites_bar = true;
+        } else if (wcscmp(__wargv[i], L"--shot-favorites-hover") == 0 && i + 1 < __argc) {
+            g_shot_favorites_hover = _wtoi(__wargv[++i]);
+        } else if (wcscmp(__wargv[i], L"--shot-favorites-drop") == 0 && i + 1 < __argc) {
+            g_shot_favorites_drop = _wtoi(__wargv[++i]);
         } else if (wcscmp(__wargv[i], L"--shot-rail") == 0) {
             // GUI verification for the icon rail: every section folded, so a
             // narrow window shows one row per section.
@@ -4029,7 +4048,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             state.appPrefs.favorites_bar = true;
             if (state.places.starred_items.empty()) {
                 for (const wchar_t* folder : {L"C:\\Windows", L"C:\\Users", L"C:\\Program Files",
-                                              L"C:\\Windows\\System32"})
+                                              L"C:\\Windows\\System32", L"Z:\\Archive"})
                     state.places.starred_items.push_back({folder, app::PlaceItemKind::Folder});
                 state.places.starred_items.push_back({L"C:\\Windows\\win.ini", app::PlaceItemKind::File});
             }

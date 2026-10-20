@@ -2515,5 +2515,14 @@
 #define IDS_FAVORITES_BAR_MORE                                                           3725
 #define IDS_FAVORITES_BAR_ICON_ONLY                                                      3726
 #define IDS_FAVORITES_BAR_HIDE                                                           3727
+#define IDS_FAVORITES_BAR_NOT_FOLDER                                                     3728
+#define IDS_FAVORITES_BAR_SUBFOLDERS                                                     3729
+#define IDS_FAVORITES_BAR_NO_SUBFOLDERS                                                  3730
+#define IDS_FAVORITES_BAR_UNREACHABLE                                                    3731
+#define IDS_FAVORITES_BAR_REMOVED                                                        3732
+#define IDS_FAVORITES_BAR_DROP_ADD                                                       3733
+#define IDS_FAVORITES_STAR_HERE                                                          3734
+#define IDS_FAVORITES_UNSTAR_HERE                                                        3735
+#define IDS_FAVORITES_BAR_SHOW                                                           3736
 
 #endif  // PULSE_STRING_IDS_H

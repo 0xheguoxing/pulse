@@ -690,6 +690,8 @@ struct AppState : AppCoreOwner {
     int dropSidebar = -1;
     bool dropTray = false;
     bool dropQuickAccess = false;  // folders over the Quick access header: pin
+    int dropFavorite = -1;         // 收藏栏: files over this favorite folder (index into the bar)
+    bool dropFavoriteAdd = false;  // 收藏栏's empty part: what is dropped gets starred
     std::wstring dropBadge;
     float dropBadgeX = 0.0f;
     float dropBadgeY = 0.0f;

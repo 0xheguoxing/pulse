@@ -631,7 +631,7 @@ void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
     D2D1_RECT_F addr = AddressBarRect(w);
     const float segPad = 8.0f * scale_;
     const float chevronW = 14.0f * scale_;
-    const float hint = 0.0f;
+    const float hint = FavoritesButtonShown() ? 28.0f * scale_ : 0.0f;   // the ★⌄ button
     const float avail = std::max(0.0f, addr.right - addr.left - 2 * margin_ - hint);
 
     IDWriteFactory2* dwrite = compositor_ ? compositor_->DwriteFactory() : nullptr;

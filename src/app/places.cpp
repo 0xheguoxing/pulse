@@ -1252,6 +1252,18 @@ bool PlacesCatalog::ReorderStarredFolder(const std::wstring& path, size_t folder
     return true;
 }
 
+bool PlacesCatalog::MoveStarredItem(size_t from, size_t to) {
+    if (from >= starred_items.size() || to >= starred_items.size() || from == to) return false;
+    const bool folder = starred_items[from].kind != PlaceItemKind::File;
+    if ((starred_items[to].kind != PlaceItemKind::File) != folder) return false;
+    StarredItem moved = std::move(starred_items[from]);
+    starred_items.erase(starred_items.begin() + static_cast<std::ptrdiff_t>(from));
+    starred_items.insert(starred_items.begin() + static_cast<std::ptrdiff_t>(to), std::move(moved));
+    ++tag_revision_;
+    Save();
+    return true;
+}
+
 std::vector<std::wstring> PlacesCatalog::StarredPaths() const {
     std::vector<std::wstring> out;
     out.reserve(starred_items.size());

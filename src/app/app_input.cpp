@@ -141,6 +141,8 @@ void ClearDropFeedback(AppState& s) {
     s.dragFilesOver = false;
     s.dropTrayMove = false;
     s.dropQuickAccess = false;
+    s.dropFavorite = -1;
+    s.dropFavoriteAdd = false;
     s.dropBadge.clear();
     s.dropBadgeMove = false;
     s.dropDestDir.clear();
@@ -224,6 +226,8 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
     s.dropSidebar = -1;
     s.dropTray = false;
     s.dropQuickAccess = false;
+    s.dropFavorite = -1;
+    s.dropFavoriteAdd = false;
     s.dropDestDir.clear();
     s.dropLaunchProgram.clear();
     s.dropBadge.clear();
@@ -332,6 +336,35 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
             s.dropDestDir = view->current_path;
             destName = BaseName(view->current_path);
         }
+    } else if ((hit.region == ui::HitTestResult::FavoritesBarItem ||
+                hit.region == ui::HitTestResult::FavoritesBarChevron) && hit.index < 0) {
+        // 收藏栏's empty part: what is dropped there gets starred.
+        s.springRow = -1;
+        s.dropFavoriteAdd = true;
+        s.dropBadge = l10n::Get(l10n::StringId::FavoritesBarDropAdd).c_str();
+        s.dropBadgeX = (float)pt.x;
+        s.dropBadgeY = (float)pt.y;
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        if (allowed & DROPEFFECT_LINK) return DROPEFFECT_LINK;
+        if (allowed & DROPEFFECT_COPY) return DROPEFFECT_COPY;
+        return DROPEFFECT_NONE;
+    } else if (hit.region == ui::HitTestResult::FavoritesBarItem ||
+               hit.region == ui::HitTestResult::FavoritesBarChevron) {
+        // A favorite folder takes the drop like a breadcrumb; a file does not.
+        s.springRow = -1;
+        bool offline = false;
+        const std::wstring folder = FavoritesBarDropFolder(s, hit, &offline);
+        if (folder.empty()) {
+            s.dropBadge = l10n::Get(offline ? l10n::StringId::FavoritesBarUnreachable
+                                            : l10n::StringId::FavoritesBarNotFolder).c_str();
+            s.dropBadgeX = (float)pt.x;
+            s.dropBadgeY = (float)pt.y;
+            InvalidateRect(s.hwnd, nullptr, FALSE);
+            return DROPEFFECT_NONE;
+        }
+        s.dropDestDir = folder;
+        s.dropFavorite = hit.index;
+        destName = BaseName(folder);
     } else if (hit.region == ui::HitTestResult::BreadcrumbSegment && !hit.path.empty()) {
         s.dropDestDir = hit.path;
         s.dropBreadcrumb = hit.index;
@@ -471,6 +504,7 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
         s.dropPaneIndex = -1;
         s.dropBreadcrumb = -1;
         s.dropSidebar = -1;
+        s.dropFavorite = -1;
         s.dropDestDir.clear();
         InvalidateRect(s.hwnd, nullptr, FALSE);
         return DROPEFFECT_NONE;
@@ -510,6 +544,7 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
     const bool header = s.dropHeader;
     const int header_pane = s.dropPaneIndex;
     const bool pin_quick_access = s.dropQuickAccess;
+    const bool add_favorite = s.dropFavoriteAdd;
     const int toolbar_app = s.dropToolbarApp;
     const bool toolbar_pin = s.dropToolbarPin;
     const std::wstring toolbar_program = s.toolbarDropProgram;
@@ -536,6 +571,20 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
         std::wstring folder = fs::ParentPath(fs::NormalizePath(launch_program));
         s.ops.OpenProgramIn(launch_program, folder, ui::DropLaunchArguments(sources));
         return effect;
+    }
+
+    if (add_favorite) {
+        // Dropped on the 收藏栏's empty part: starred (already starred stays).
+        bool added = false;
+        for (const auto& source : sources) {
+            const DWORD attrs = GetFileAttributesW(source.c_str());
+            if (attrs == INVALID_FILE_ATTRIBUTES || s.places.IsStarred(source)) continue;
+            ToggleStarred(s, source, (attrs & FILE_ATTRIBUTE_DIRECTORY) ? app::PlaceItemKind::Folder
+                                                                        : app::PlaceItemKind::File);
+            added = true;
+        }
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        return added ? effect : DROPEFFECT_NONE;  // nothing is copied; the source keeps its files
     }
 
     if (pin_quick_access) {
@@ -1469,6 +1518,12 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         if (ToolbarPinDragging()) {   // picker T3c: no hover plate or tooltip under the dragged pin
             MoveToolbarPinDrag(*s, POINT{mx, my});
             if (s->hoverRegion != 0 || !s->tooltipText.empty()) HandleMouseLeave(s, hwnd, WM_MOUSELEAVE, 0, 0);
+            return 0;
+        }
+        if (FavoritesBarDragging()) {   // 收藏栏: the same, under a dragged favorite
+            if (MoveFavoritesBarDrag(*s, POINT{mx, my}) &&
+                (s->hoverRegion != 0 || !s->tooltipText.empty()))
+                HandleMouseLeave(s, hwnd, WM_MOUSELEAVE, 0, 0);
             return 0;
         }
         s->hoverPoint = POINT{ mx, my };
@@ -3677,6 +3732,10 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             EndToolbarPinDrag(*s, false);
             return 0;
         }
+        if (s && FavoritesBarDragging()) {   // 收藏栏: a click opens, a drag reorders
+            EndFavoritesBarDrag(*s, false);
+            return 0;
+        }
         if (s) {
             s->paneDragPending = false;
             if (s->paneSizeDragging) {
@@ -4015,6 +4074,7 @@ LRESULT HandleCaptureChanged(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LP
         (void)wParam;
         (void)lParam;
         if (s && ToolbarPinDragging() && reinterpret_cast<HWND>(lParam) != hwnd) EndToolbarPinDrag(*s, true);
+        if (s && FavoritesBarDragging() && reinterpret_cast<HWND>(lParam) != hwnd) EndFavoritesBarDrag(*s, true);
         if (s) {
             s->columnResizing = false;
             s->columnResizeIndex = -1;

@@ -2522,3 +2522,12 @@ FavoritesBarEmpty	IDS_FAVORITES_BAR_EMPTY	3724	还没有收藏 · 在文件或�
 FavoritesBarMore	IDS_FAVORITES_BAR_MORE	3725	更多收藏	More favorites	更多收藏
 FavoritesBarIconOnly	IDS_FAVORITES_BAR_ICON_ONLY	3726	只显示图标	Icons only	只顯示圖示
 FavoritesBarHide	IDS_FAVORITES_BAR_HIDE	3727	隐藏收藏栏	Hide the favorites bar	隱藏收藏列
+FavoritesBarNotFolder	IDS_FAVORITES_BAR_NOT_FOLDER	3728	不是文件夹	Not a folder	不是資料夾
+FavoritesBarSubfolders	IDS_FAVORITES_BAR_SUBFOLDERS	3729	子文件夹	Subfolders	子資料夾
+FavoritesBarNoSubfolders	IDS_FAVORITES_BAR_NO_SUBFOLDERS	3730	没有子文件夹	No subfolders	沒有子資料夾
+FavoritesBarUnreachable	IDS_FAVORITES_BAR_UNREACHABLE	3731	无法访问此位置	Can't reach this location	無法存取此位置
+FavoritesBarRemoved	IDS_FAVORITES_BAR_REMOVED	3732	已移出收藏夹	Removed from favorites	已移出收藏夾
+FavoritesBarDropAdd	IDS_FAVORITES_BAR_DROP_ADD	3733	加入收藏夹	Add to favorites	加入收藏夾
+FavoritesStarHere	IDS_FAVORITES_STAR_HERE	3734	收藏此文件夹	Star this folder	收藏此資料夾
+FavoritesUnstarHere	IDS_FAVORITES_UNSTAR_HERE	3735	取消收藏此文件夹	Unstar this folder	取消收藏此資料夾
+FavoritesBarShow	IDS_FAVORITES_BAR_SHOW	3736	显示收藏栏	Show the favorites bar	顯示收藏列
