@@ -391,7 +391,8 @@ void ClearTextWidthCache() {
             entry.type_text = FormatListType(
                 penetrated ? fs::StripLnkSuffix(source.name) : source.name, entry.is_dir);
         }
-        if (source.drive_type != 0) entry.type_text = DriveTypeText(source.drive_type);
+        if (source.drive_type != 0)
+            entry.type_text = DriveTypeText(source.drive_remote_like ? static_cast<uint8_t>(DRIVE_REMOTE) : source.drive_type);
         if (source.drive_type != 0 && source.drive_locked)
             entry.type_text += L" \u00B7 " + pulse::l10n::Get(pulse::l10n::StringId::DriveBitLockerLocked);
         if (entry.link_kind != fs::LinkKind::None) entry.type_text = LinkTypeText(entry.link_kind);

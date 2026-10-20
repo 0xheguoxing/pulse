@@ -414,7 +414,7 @@ void StartFolderJob(AppState& s, const app::Tab& tab, const fs::DirEntry& entry,
 
 std::wstring FolderTypeName(const fs::DirEntry& entry) {
     if (!entry.drive_type) return l10n::Get(l10n::StringId::KindFolder).c_str();
-    switch (entry.drive_type) {
+    switch (entry.drive_remote_like ? static_cast<uint8_t>(DRIVE_REMOTE) : entry.drive_type) {
     case DRIVE_REMOVABLE: return l10n::Get(l10n::StringId::RemovableDisk_2).c_str();
     case DRIVE_REMOTE: return l10n::Get(l10n::StringId::NetworkDrive).c_str();
     case DRIVE_CDROM: return l10n::Get(l10n::StringId::OpticalDrive).c_str();

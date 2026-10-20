@@ -50,6 +50,7 @@ struct DirEntry {
     uint64_t drive_total = 0;
     uint64_t drive_free = 0;
     bool drive_locked = false; // "This PC" rows: BitLocker volume not unlocked yet
+    bool drive_remote_like = false; // "This PC" rows: mapped or user-mode (cloud) mount, see drive_kind.h
 };
 
 // pulse:tag: / pulse:search: / pulse:workspace: — not filesystem paths.

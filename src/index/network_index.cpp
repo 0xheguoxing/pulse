@@ -1,4 +1,5 @@
 #include "network_index.h"
+#include "../fs/drive_kind.h"
 #include "network_crawl_schedule.h"
 #include "index_config.h"
 #include "index_query.h"
@@ -1791,7 +1792,7 @@ bool IsNetworkFolderPath(const std::wstring& raw) {
     else if (path.size() >= 3 && path[0] == L'\\' && path[1] == L'\\') return true;
     if (path.size() >= 2 && path[1] == L':' && iswalpha(path[0])) {
         const wchar_t root[4] = {path[0], L':', L'\\', 0};
-        return GetDriveTypeW(root) == DRIVE_REMOTE;
+        return ::pulse::fs::IsRemoteLikeDrive(root);  // mapped drive or cloud mount
     }
     return false;
 }

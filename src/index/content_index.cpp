@@ -1,4 +1,5 @@
 #include "content_sort_sql.h"
+#include "../fs/drive_kind.h"
 #include "../fs/cloud_state.h"
 #include "content_config_storage.h"
 #include "content_task_search.h"
@@ -204,7 +205,7 @@ std::wstring Canonical(std::wstring p) {
         if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_REPARSE_POINT)) return {};
     }
     const auto drive = p.substr(0, 3);
-    if (GetDriveTypeW(drive.c_str()) == DRIVE_REMOTE) return {};
+    if (::pulse::fs::IsRemoteLikeDrive(drive)) return {};  // mapped drive or cloud mount
     return p;
 }
 bool Same(std::wstring_view a, std::wstring_view b) {

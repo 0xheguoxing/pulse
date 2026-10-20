@@ -1,5 +1,6 @@
 // app_runtime.cpp — extracted from app_main.cpp.
 #include "app_window_title.h"
+#include "../fs/drive_kind.h"
 #include "folder_alias.h"
 #include "app_wall_hint.h"
 #include "app_internal.h"
@@ -343,8 +344,7 @@ static DWORD LaunchArgumentAttributes(const std::wstring& path) {
 }
 
 static DWORD QueryLaunchArgumentAttributes(const std::wstring& path) {
-    const bool remote = fs::IsUncPath(path) || (path.size() >= 2 && path[1] == L':' &&
-        GetDriveTypeW((path.substr(0, 2) + L"\\").c_str()) == DRIVE_REMOTE);
+    const bool remote = fs::IsUncPath(path) || fs::IsRemoteLikeDrive(path);
     if (!remote) return GetFileAttributesW(path.c_str());
     struct Query {
         std::wstring path;

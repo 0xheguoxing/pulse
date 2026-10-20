@@ -2,6 +2,7 @@
 // a rename and their own verbs but no cut / copy / delete, a server's shares and
 // the Network view get no file commands, Del in the Network view only unpins.
 #include "../app/selection_caps.h"
+#include "../fs/drive_kind.h"
 
 #include <cstdio>
 #include <memory>
@@ -124,6 +125,51 @@ int main() {
     caps = ComputeSelectionCaps(tab, &places);
     Check(caps.kind == SelectionKind::Recycle && caps.del && !caps.cut && !caps.copy && !caps.rename && !caps.tags,
           "recycle item: delete only");
+
+    // Cloud mounts (C5): a WinFsp / Dokan drive is listed as a network drive but
+    // has no WNet connection to disconnect; renaming its label stays possible.
+    {
+        fs::DirEntry cloud = Entry(L"BaiduNetdisk (B:)", L"B:\\", DRIVE_FIXED);
+        cloud.drive_remote_like = true;
+        Fill(tab, L"", {cloud});
+        tab.ToggleSelect(0);
+        caps = ComputeSelectionCaps(tab, &places);
+        Check(caps.kind == SelectionKind::Drives && !caps.any_remote && !caps.any_removable && caps.rename && !caps.copy,
+              "cloud mount: drive verbs only, no disconnect");
+    }
+    Check(fs::IsUserModeVolumeDevice(L"\\Device\\Volume{d6cc17c5-1722-4085-bce7-964f1e9f5de9}") &&
+          fs::IsUserModeVolumeDevice(L"\\device\\volume{x}"),
+          "WinFsp / Dokan device names are user-mode volumes");
+    Check(!fs::IsUserModeVolumeDevice(L"\\Device\\HarddiskVolume3") && !fs::IsUserModeVolumeDevice(L"\\?" L"?\\C:\\sub") &&
+          !fs::IsUserModeVolumeDevice(L"\\Device\\ImDisk0") && !fs::IsUserModeVolumeDevice(L"\\Device\\Volume{") &&
+          !fs::IsUserModeVolumeDevice(L""),
+          "partitions, subst, RAM disks are not");
+    Check(fs::IsRemoteLikeFileSystemName(L"FUSE-rclone") && fs::IsRemoteLikeFileSystemName(L"WinFsp-FUSE") &&
+          fs::IsRemoteLikeFileSystemName(L"Dokan") && fs::IsRemoteLikeFileSystemName(L"CloudDrive") &&
+          fs::IsRemoteLikeFileSystemName(L"BaiduNetdiskFS") && fs::IsRemoteLikeFileSystemName(L"cbfs"),
+          "cloud file system names");
+    Check(!fs::IsRemoteLikeFileSystemName(L"NTFS") && !fs::IsRemoteLikeFileSystemName(L"exFAT") &&
+          !fs::IsRemoteLikeFileSystemName(L"FAT32") && !fs::IsRemoteLikeFileSystemName(L"ReFS") &&
+          !fs::IsRemoteLikeFileSystemName(L""),
+          "disk file systems are not");
+    Check(fs::DriveLetterOf(L"c:\\x") == L'C' && fs::DriveLetterOf(L"\\\\?\\D:\\") == L'D' &&
+          fs::DriveLetterOf(L"\\\\.\\E:") == L'E' && fs::DriveLetterOf(L"\\\\?\\UNC\\srv\\s") == 0 &&
+          fs::DriveLetterOf(L"\\\\srv\\s") == 0 && fs::DriveLetterOf(L"pulse:recycle") == 0,
+          "drive letter of plain, extended and UNC paths");
+    {
+        wchar_t windir[MAX_PATH]{};
+        GetWindowsDirectoryW(windir, MAX_PATH);
+        Check(!fs::IsRemoteLikeDrive(windir) && !fs::IsRemoteLikeDrive(L"\\\\srv\\share") && !fs::IsRemoteLikeDrive(L""),
+              "system drive and UNC paths are not cloud mounts");
+        const std::wstring sys(1, windir[0]);
+        SetEnvironmentVariableW(L"PULSE_TEST_REMOTE_LIKE_DRIVES", sys.c_str());
+        SetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", L"x");
+        const bool marked = fs::IsRemoteLikeDrive(windir);
+        SetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", nullptr);
+        const bool outside_tests = fs::IsRemoteLikeDrive(windir);
+        SetEnvironmentVariableW(L"PULSE_TEST_REMOTE_LIKE_DRIVES", nullptr);
+        Check(marked && !outside_tests, "test marker only applies to test instances");
+    }
 
     std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "OK", g_failures, g_failures == 1 ? "" : "s");
     return g_failures ? 1 : 0;

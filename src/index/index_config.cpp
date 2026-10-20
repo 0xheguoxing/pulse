@@ -1,4 +1,5 @@
 #include "index_config.h"
+#include "../fs/drive_kind.h"
 #include "index_directory_security.h"
 #include "../common/config_json.h"
 #include "../common/json_utils.h"
@@ -496,6 +497,9 @@ std::vector<VolumeInfo> EnumerateLocalVolumes(const IndexConfig& config) {
     for (const wchar_t* p = drives; *p; p += wcslen(p) + 1) {
         const UINT type = GetDriveTypeW(p);
         if (type != DRIVE_FIXED && type != DRIVE_REMOVABLE) continue;
+        // A cloud mount (WinFsp / Dokan) is a remote service, not a local volume;
+        // skipped before GetVolumeInformationW, which can hang on a stuck mount.
+        if (::pulse::fs::IsRemoteLikeDrive(p)) continue;
         VolumeInfo info;
         info.mount_point = p;
         info.kind = type == DRIVE_FIXED ? VolumeKind::Fixed : VolumeKind::Removable;
@@ -513,6 +517,7 @@ std::vector<VolumeInfo> EnumerateLocalVolumes(const IndexConfig& config) {
             info.label = label;
             info.file_system = fs;
         }
+        if (info.online && ::pulse::fs::IsRemoteLikeFileSystemName(info.file_system)) continue;
         info.supported = info.online && IsNtfs(info.file_system);
         const bool auto_include = info.kind == VolumeKind::Fixed
             ? config.include_fixed_ntfs : config.include_removable_ntfs;

@@ -1,4 +1,5 @@
 #include "folder_sizes.h"
+#include "../fs/drive_kind.h"
 #include "../fs/cloud_state.h"
 #include "folder_size_scanner.h"
 #include "folder_size_store.h"
@@ -226,7 +227,9 @@ struct FolderSizes::Impl {
         const auto root = plain.substr(0, 3);
         const auto found = drive_types.find(root);
         if (found != drive_types.end()) return found->second;
-        return drive_types.emplace(root, GetDriveTypeW(root.c_str())).first->second;
+        // Cloud mounts count as network drives: never walked for sizes.
+        return drive_types.emplace(root, ::pulse::fs::IsRemoteLikeDrive(root) ? static_cast<UINT>(DRIVE_REMOTE)
+                                                                       : GetDriveTypeW(root.c_str())).first->second;
     }
     void Save(const std::wstring& file) {
         if (file.empty()) return;
