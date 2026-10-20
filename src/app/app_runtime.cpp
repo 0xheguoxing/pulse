@@ -3193,8 +3193,8 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.wallpaper_blur = s.appPrefs.wallpaper_blur;
     vm.safe_mode = s.safeMode;
     {
-        // Toolbar "Group" button: list-like views of groupable places only
-        // (same rule as the Sort menu's group section).
+        // Toolbar "Group" button: views that draw group headers, in groupable
+        // places only (same rule as the Sort menu's group section).
         int toolbar_group = -1;
         if (const app::Tab* gt = ActiveTab(s)) {
             std::wstring kind;
@@ -3202,9 +3202,9 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
             const bool can_group = !gt->content_results &&
                 ((!gt->current_path.empty() && !fs::IsVirtualPath(gt->current_path)) || kind == L"recent" ||
                  kind == L"search" || kind == L"saved-search" || kind == L"tag" || kind == L"recycle");
-            const bool list_like = gt->view_mode == ui::ViewMode::Details ||
-                                   gt->view_mode == ui::ViewMode::Content;
-            if (can_group && list_like && !vm.pane.compare_active) toolbar_group = gt->group_by;
+            const bool groups_shown = ui::ShowsGroups(gt->view_mode) &&
+                                      !(gt->wall && ui::IsZoomIconMode(gt->view_mode));
+            if (can_group && groups_shown && !vm.pane.compare_active) toolbar_group = gt->group_by;
         }
         s.renderer.SetToolbarGroup(toolbar_group);
         // A hidden filter or group control still shows while it is in effect.

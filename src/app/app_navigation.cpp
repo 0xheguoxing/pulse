@@ -2413,9 +2413,10 @@ void SetGroupBy(AppState& s, int group_by) {
     SyncTagGroups(s);
     if (s.appPrefs.folder_groups.Set(tab->current_path, by)) s.appPrefs.Save();
     group_by = static_cast<int>(by);
-    // Groups are drawn in list-like views; bring an icon view to Details.
-    if (group_by != 0 && tab->view_mode != ui::ViewMode::Details &&
-        tab->view_mode != ui::ViewMode::Content)
+    // Icon grids draw groups too; only List and a photo wall cannot, so those
+    // switch to Details.
+    if (group_by != 0 && (!ui::ShowsGroups(tab->view_mode) ||
+                          (tab->wall && ui::IsZoomIconMode(tab->view_mode))))
         SetViewMode(s, ui::ViewMode::Details);
     const int old_group = tab->EffectiveGroup();
     tab->group_by = group_by;

@@ -3086,7 +3086,8 @@ void ApplyViewMode(AppState& s, ui::ViewMode mode, float icon_dip, const POINT* 
         tab->icon_dip = icon_dip;
         tab->wall = to_wall;
     }
-    // Grouped order applies to list-like views only; re-sort when that flips.
+    // Grouped order applies where groups are drawn (not List, not a photo
+    // wall); re-sort when that flips.
     if (tab->EffectiveGroup() != old_group && !fs::IsVirtualPath(tab->current_path))
         RefreshActiveTab(s);
     ++tab->view_generation;

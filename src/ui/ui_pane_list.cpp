@@ -1137,9 +1137,13 @@ bool MainRenderer::PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& f
                                  scale_, ListRowHeightDip(vm, list), groups);
         const D2D1_RECT_F cell = grouped.ItemRect(view_index);
         if (cell.bottom - cell.top < 0.5f) return false;
-        const float h = name.bottom - name.top;
-        name.top = cell.top + std::max(0.0f, (cell.bottom - cell.top - h) * 0.5f);
-        name.bottom = name.top + h;
+        if (vm.view_mode == ViewMode::Details || vm.view_mode == ViewMode::Content) {
+            const float h = name.bottom - name.top;
+            name.top = cell.top + std::max(0.0f, (cell.bottom - cell.top - h) * 0.5f);
+            name.bottom = name.top + h;
+        } else {
+            name = grouped.NameRect(view_index);  // grids: the cell moved in both axes
+        }
     }
     if (vm.view_mode == ViewMode::Details) {
         const auto actual = DetailsColumns(pane_bounds, vm);

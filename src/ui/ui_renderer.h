@@ -344,11 +344,11 @@ struct PaneViewModel {
         return view_row;
     }
 
-    // Spans for layout, or null when this view is not drawn grouped. Spans
-    // must cover exactly EntryCount() rows or the layout would drift.
+    // Spans for layout, or null when this view is not drawn grouped (List; a
+    // photo wall gets no spans from the model). Spans must cover exactly
+    // EntryCount() rows or the layout would drift.
     const ListGroups* Groups() const {
-        if (!groups || groups->empty() ||
-            (view_mode != ViewMode::Details && view_mode != ViewMode::Content)) return nullptr;
+        if (!groups || groups->empty() || !ShowsGroups(view_mode)) return nullptr;
         const ListGroup& last = groups->back();
         return static_cast<size_t>(last.first + last.count) == EntryCount() ? groups.get() : nullptr;
     }

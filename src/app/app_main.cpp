@@ -4113,7 +4113,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             state.window_tabs.items[state.window_tabs.active]->marker_rgb = 0x0078D4;
         }
         if (state.shot_group > 0)
-            if (app::Tab* grouped = ActiveTab(state)) grouped->group_by = state.shot_group;
+            if (app::Tab* grouped = ActiveTab(state)) {
+                grouped->group_by = state.shot_group;
+                RefreshActiveTab(state);  // the listing was requested before: re-sort it grouped
+            }
         if (state.shot_details) {
             state.showDetailsPanel = true;
             state.renderer.SetDetailsPanelVisible(true);
