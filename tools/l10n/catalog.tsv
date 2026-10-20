@@ -1205,6 +1205,13 @@ CloudDownloadPreview	IDS_CLOUD_DOWNLOAD_PREVIEW	3678	下载并预览	Download an
 CloudDownloadingFrom	IDS_CLOUD_DOWNLOADING_FROM	3679	正在从{provider}下载… {n}%	Downloading from {provider}… {n}%	正在從{provider}下載… {n}%
 CloudDownloadFailed	IDS_CLOUD_DOWNLOAD_FAILED	3680	未能从{provider}下载这个文件	Could not download this file from {provider}	無法從{provider}下載這個檔案
 CloudProviderGeneric	IDS_CLOUD_PROVIDER_GENERIC	3681	网盘	the cloud provider	雲端硬碟
+GroupThisPcDrives	IDS_GROUP_THISPC_DRIVES	3682	磁盘	Drives	磁碟
+GroupThisPcDevices	IDS_GROUP_THISPC_DEVICES	3683	设备	Devices	裝置
+GroupThisPcLaunchers	IDS_GROUP_THISPC_LAUNCHERS	3684	网盘程序入口	Cloud drive apps	雲端硬碟程式入口
+GroupThisPcLaunchersNote	IDS_GROUP_THISPC_LAUNCHERS_NOTE	3685	系统“此电脑”里的图标，和资源管理器一样显示；双击打开网盘程序。网盘里的文件在侧栏最上方	Icons from Windows' This PC, shown as in File Explorer. Double-click to open the app; your cloud files are at the top of the sidebar.	系統「本機」裡的圖示，和檔案總管一樣顯示；按兩下開啟雲端硬碟程式。雲端硬碟裡的檔案在側欄最上方
+ThisPcLauncherOpensApp	IDS_THISPC_LAUNCHER_OPENS_APP	3686	打开{name}程序	Opens the {name} app	開啟{name}程式
+MountedDriveChip	IDS_MOUNTED_DRIVE_CHIP	3687	网络盘	Network	網路磁碟
+MountedDriveNote	IDS_MOUNTED_DRIVE_NOTE	3688	挂载盘符 · 不建索引、不算文件夹大小	Mounted drive · not indexed, no folder sizes	掛載的磁碟機 · 不建索引、不計算資料夾大小
 SidebarCloudHiddenHint	IDS_SIDEBAR_CLOUD_HIDDEN_HINT	2516	已从侧边栏隐藏。右键任一分区标题或侧边栏底部空白处，可以重新显示。	Hidden from the sidebar. Right-click any section title or the empty space at the bottom of the sidebar to show it again.	已從側邊欄隱藏。在任一區段標題或側邊欄底部空白處按右鍵，即可重新顯示。
 SidebarShowHidden	IDS_SIDEBAR_SHOW_HIDDEN	2517	显示已隐藏的分区	Show hidden sections	顯示已隱藏的區段
 SettingsDefaultManagerDesc	IDS_SETTINGS_DEFAULT_MANAGER_DESC	1481	文件夹、磁盘、此电脑和 Win+E 都用 Pulse 打开；关闭即恢复资源管理器	Folders, drives, This PC and Win+E open in Pulse; turn off to restore File Explorer	資料夾、磁碟、本機和 Win+E 都用 Pulse 開啟；關閉即恢復檔案總管

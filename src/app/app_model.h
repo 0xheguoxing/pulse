@@ -74,6 +74,9 @@ struct Tab {
     // EffectiveGroup(); the others keep the plain order.
     int group_by = 0;
     int EffectiveGroup() const {
+        // This PC always groups its rows (磁盘 / 设备 / 网盘程序入口), as
+        // Explorer does; 7 = app::GroupBy::ThisPc.
+        if (current_path.empty()) return ui::ShowsGroups(view_mode) ? 7 : 0;
         const bool walled = wall && ui::IsZoomIconMode(view_mode);
         return ui::ShowsGroups(view_mode) && !walled ? group_by : 0;
     }

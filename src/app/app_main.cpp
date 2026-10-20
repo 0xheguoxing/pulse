@@ -3879,7 +3879,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         wchar_t menu_select[512]{};
         const DWORD select_len = GetEnvironmentVariableW(L"PULSE_TEST_MENU_SELECT", menu_select, ARRAYSIZE(menu_select));
         if (ok && select_len > 0 && select_len < ARRAYSIZE(menu_select)) {
-            if (!state.shot.path.empty()) NewTab(state, state.shot.path);
+            if (!state.shot.path.empty() && app::IsThisPcArgument(state.shot.path))
+                OpenTabAt(state, std::wstring());  // NewTab would open C: for ""
+            else if (!state.shot.path.empty()) NewTab(state, state.shot.path);
             const ULONGLONG until = GetTickCount64() + 5000;
             app::Tab* tab = nullptr;
             while (GetTickCount64() < until) {

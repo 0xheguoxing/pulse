@@ -1616,6 +1616,12 @@ void EraseCommand(std::vector<ui::FluentMenuItem>& items, int command) {
 void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const app::SelectionCaps& caps) {
     if (TerminalTarget(s).empty()) EraseCommand(items, app::CmdOpenTerminal);
     if (caps.kind == app::SelectionKind::Files || caps.kind == app::SelectionKind::None) return;
+    if (caps.kind == app::SelectionKind::Launchers) {
+        // Program icons in This PC: opening the program is all they do.
+        std::erase_if(items, [](const ui::FluentMenuItem& item) { return item.command != app::CmdOpen; });
+        for (auto& item : items) item.separator_after = false;
+        return;
+    }
     // The 剪切 / 复制 / 删除 / 重命名 strip keeps what this selection allows.
     for (auto it = items.begin(); it != items.end(); ++it) {
         if (it->command != app::CmdNone || it->quick_swatches.empty()) continue;
@@ -2069,6 +2075,14 @@ void DiscardCtxLayoutSave() { g_ctx_layout_saver.Discard(); }
 // Fluent menu fades in.
 void StartCtxQuery(AppState& s, std::vector<std::wstring> paths,
                           bool background, const std::wstring& ext) {
+    // 网盘程序入口 rows (shell:::{CLSID}) are programs, not files: no shell
+    // verbs for them, and no leftover verbs of the previous target either.
+    const size_t asked = paths.size();
+    std::erase_if(paths, [](const std::wstring& path) { return std::wstring_view(path).starts_with(L"shell:::"); });
+    if (asked > 0 && paths.empty()) {
+        s.context_menu.Close();
+        return;
+    }
     s.context_menu.StartQuery(s.ctxMenuPrefs, s.hwnd, std::move(paths),
         background, ext, (GetKeyState(VK_SHIFT) & 0x8000) != 0,
         ClipboardPath, [&s](const std::wstring& extension) {
@@ -4447,6 +4461,7 @@ namespace {
 bool QuickPreviewItemAt(AppState& s, const app::Tab& tab, int index, ui::QuickPreviewItem& item) {
     if (!tab.snapshot || index < 0 || index >= static_cast<int>(tab.EntryCount())) return false;
     const fs::DirEntry& entry = tab.EntryAt(static_cast<size_t>(index));
+    if (entry.pc_launcher) return false;  // 网盘程序入口: a program, no file to preview
     // Folders preview as a contents listing; not in This PC (whole drives),
     // the recycle bin or other virtual locations.
     if (entry.is_dir && (tab.current_path.empty() || IsRecycleTab(&tab) ||

@@ -122,6 +122,8 @@ CloudRegistry CloudRegistry::System() {
     CloudRegistry r;
     const std::wstring ns = Join(kExplorer, L"Desktop\\NameSpace");
     r.namespace_keys = { {HKEY_CURRENT_USER, ns}, {HKEY_LOCAL_MACHINE, ns} };
+    const std::wstring pc = Join(kExplorer, L"MyComputer\\NameSpace");
+    r.mycomputer_keys = { {HKEY_CURRENT_USER, pc}, {HKEY_LOCAL_MACHINE, pc} };
     r.clsid_keys = { {HKEY_CURRENT_USER, L"Software\\Classes\\CLSID"},
                      {HKEY_LOCAL_MACHINE, L"Software\\Classes\\CLSID"} };
     r.nonenum_keys = { {HKEY_CURRENT_USER, kNonEnum}, {HKEY_LOCAL_MACHINE, kNonEnum} };
@@ -133,6 +135,7 @@ CloudRegistry CloudRegistry::System() {
 CloudRegistry CloudRegistry::Fixture(const std::wstring& prefix, const std::wstring& sid) {
     CloudRegistry r;
     r.namespace_keys = { {HKEY_CURRENT_USER, Join(prefix, L"NameSpace")} };
+    r.mycomputer_keys = { {HKEY_CURRENT_USER, Join(prefix, L"MyComputer")} };
     r.clsid_keys = { {HKEY_CURRENT_USER, Join(prefix, L"CLSID")} };
     r.nonenum_keys = { {HKEY_CURRENT_USER, Join(prefix, L"NonEnum")} };
     r.sync_root_manager = {HKEY_CURRENT_USER, Join(prefix, L"SyncRootManager")};
@@ -325,6 +328,89 @@ uint32_t CloudRootColor(const CloudRoot& root) {
     if (ContainsNoCase(key, L"dropbox")) return 0x0061FE;
     if (ContainsNoCase(key, L"google")) return 0x1FA463;
     return 0x60A5FA;
+}
+
+namespace {
+
+// InprocServer32 of Windows' own shell folders: %SystemRoot%\system32\*.dll,
+// or a bare DLL name that loads from System32.
+bool SystemServer(std::wstring server) {
+    if (!server.empty() && server.front() == L'"') {
+        server.erase(0, 1);
+        const size_t quote = server.find(L'"');
+        if (quote != std::wstring::npos) server.resize(quote);
+    }
+    if (server.find_first_of(L"\\/") == std::wstring::npos) return true;
+    wchar_t windir[MAX_PATH]{};
+    const UINT n = GetWindowsDirectoryW(windir, ARRAYSIZE(windir));
+    if (n == 0 || n >= ARRAYSIZE(windir)) return false;
+    const std::wstring dir = std::wstring(windir) + L"\\";
+    return server.size() > dir.size() && _wcsnicmp(server.c_str(), dir.c_str(), dir.size()) == 0;
+}
+
+uint8_t LauncherBrand(const std::wstring& clsid, const std::wstring& label) {
+    if (EqualsNoCase(clsid, L"{679F137C-3162-45da-BE3C-2F9C3D093F64}") ||
+        ContainsNoCase(label, L"Baidu") || ContainsNoCase(label, L"\x767E\x5EA6"))
+        return 2;
+    if (EqualsNoCase(clsid, L"{5FCD4425-CA3A-48F4-A57C-B8A75C32ACB1}") || ContainsNoCase(label, L"WPS"))
+        return 3;
+    return 1;
+}
+
+} // namespace
+
+std::vector<ThisPcLauncher> ReadThisPcLaunchers(const CloudRegistry& registry) {
+    std::vector<ThisPcLauncher> out;
+    std::vector<std::wstring> seen;
+    for (const auto& ns : registry.mycomputer_keys) {
+        for (const auto& clsid : SubkeyNames(ns.root, ns.path)) {
+            if (clsid.size() != 38 || clsid.front() != L'{' || clsid.back() != L'}') continue;
+            if (std::any_of(seen.begin(), seen.end(),
+                    [&](const std::wstring& s) { return EqualsNoCase(s, clsid); }))
+                continue;
+            seen.push_back(clsid);
+            if (HiddenByPolicy(registry, clsid)) continue;
+            for (const auto& classes : registry.clsid_keys) {
+                const std::wstring key = Join(classes.path, clsid);
+                if (!KeyExists(classes.root, key)) continue;
+                std::wstring target = NormalizeCloudRootPath(TargetOf(classes.root, key));
+                if (!target.empty()) {
+                    const DWORD attrs = GetFileAttributesW(target.c_str());
+                    if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY)) target.clear();
+                }
+                std::wstring server;
+                const bool has_server = ReadString(classes.root, Join(key, L"InprocServer32"), nullptr, server);
+                if (target.empty() && (!has_server || SystemServer(server))) break;  // Windows' own
+                std::wstring label;
+                std::wstring raw;
+                if (ReadString(classes.root, key, L"LocalizedString", raw)) label = ResolveDisplayString(raw);
+                if (label.empty() && ReadString(classes.root, key, nullptr, raw)) label = ResolveDisplayString(raw);
+                if (label.empty() && ReadString(ns.root, Join(ns.path, clsid), nullptr, raw))
+                    label = ResolveDisplayString(raw);
+                if (label.empty() && !target.empty()) label = LastComponent(target);
+                if (label.empty()) break;  // nothing to call it: Explorer shows no name either
+                ThisPcLauncher launcher;
+                launcher.clsid = clsid;
+                launcher.label = std::move(label);
+                launcher.target = std::move(target);
+                launcher.brand = LauncherBrand(clsid, launcher.label);
+                out.push_back(std::move(launcher));
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+std::vector<ThisPcLauncher> CurrentThisPcLaunchers() {
+    // Isolated test instances read their private fixture instead.
+    if (GetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", nullptr, 0) > 0) {
+        wchar_t prefix[512]{};
+        const DWORD n = GetEnvironmentVariableW(L"PULSE_TEST_CLOUD_REG", prefix, ARRAYSIZE(prefix));
+        if (n > 0 && n < ARRAYSIZE(prefix))
+            return ReadThisPcLaunchers(CloudRegistry::Fixture(prefix, L"S-1-5-21-pulse-test"));
+    }
+    return ReadThisPcLaunchers(CloudRegistry::System());
 }
 
 } // namespace pulse::app

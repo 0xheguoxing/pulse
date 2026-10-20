@@ -1442,6 +1442,7 @@ PreviewDrawResult MainRenderer::DrawEntryThumbnail(ID2D1DeviceContext* dc,
     const D2D1_RECT_F& dest, const ListEntryView& entry, ViewMode mode,
     uint64_t generation, uint32_t pixels, float opacity, bool align_bottom,
     D2D1_RECT_F* artwork, uint32_t* duration) {
+    if (entry.launcher_rgb) return PreviewDrawResult::Failed;  // no file behind it: DrawEntryIcon
     if (entry.is_dir) {
         const bool grid = mode == ViewMode::MediumIcons || mode == ViewMode::LargeIcons ||
                           mode == ViewMode::ExtraLargeIcons;
@@ -1736,6 +1737,24 @@ void MainRenderer::DrawEntryIcon(const ListEntryView& entry, float x, float y, f
         dc->DrawRoundedRectangle(shape, brTextSecondary_.get(), std::max(1.0f, size * 0.045f));
         dc->DrawLine({x + size * 0.36f, y + size * 0.5f},
             {x + size * 0.64f, y + size * 0.5f}, brTextSecondary_.get(), std::max(1.0f, size * 0.045f));
+        return;
+    }
+    if (entry.launcher_rgb && compositor_ && compositor_->Dc()) {
+        // 网盘程序入口: the brand-tinted cloud on a soft plate, plus the
+        // "opens another program" mark once there is room for it.
+        auto* dc = compositor_->Dc();
+        const D2D1_COLOR_F tint = HexColor(entry.launcher_rgb);
+        const float pad = size * 0.08f;
+        MakeBrush(dc, WithAlpha(tint, 0.13f * opacity), brFillInput_);
+        FillRoundedRect(dc, brFillInput_.get(), x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, size * 0.22f);
+        const float quarter = std::round(size * 0.5f / (16.0f * scale_) * 4.0f) / 4.0f;
+        DrawIconText(x, y, size, size, L"\xE753", L"", WithAlpha(tint, opacity), std::max(0.5f, quarter));
+        if (size >= 40.0f * scale_) {
+            const float mark = std::round(size * 0.3f);
+            const float mf = std::max(0.5f, std::round(mark * 0.55f / (16.0f * scale_) * 4.0f) / 4.0f);
+            DrawIconText(x + size - mark, y + size - mark, mark, mark, L"\xE8A7", L"",
+                         WithAlpha(theme.text_secondary, opacity), mf);
+        }
         return;
     }
     if (compositor_ && compositor_->Dc() &&
@@ -4356,10 +4375,12 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 if (drewThumbnail && thumbnail_badges_ && iconGrid && !e.is_dir && !e.is_link)
                     DrawThumbnailBadges(e, artwork, renderedIconSize, media_duration_ms, theme);
                 if (!drewThumbnail && !empty_folder) {
-                    ID2D1Bitmap* grid_bitmap = iconGrid && !morphing && !e.record_only
+                    // Change records and 网盘程序入口 draw their own icon (DrawEntryIcon).
+                    const bool own_icon = e.record_only || e.launcher_rgb != 0;
+                    ID2D1Bitmap* grid_bitmap = iconGrid && !morphing && !own_icon
                         ? icon_cache_.BitmapFor(e.path, e.name, e.is_dir, e.attrs, renderedIconSize) : nullptr;
                     float align_bottom = 0.0f;
-                    if (iconGrid && !e.record_only) {
+                    if (iconGrid && !own_icon) {
                         const auto ink = icon_cache_.CachedArtworkBounds(e.path, e.name, e.is_dir, e.attrs, renderedIconSize);
                         align_bottom = renderedIconSize * (1.0f - ink.bottom);
                         artwork = {iconRect.left + ink.left * renderedIconSize,
@@ -4372,17 +4393,17 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     // An item already settled while others still glide: no
                     // synchronous conversion burst in the tail frames; the
                     // first static frame after the morph converts the rest.
-                    ID2D1Bitmap* settled = grid_bitmap ? grid_bitmap : morphing && !e.record_only
+                    ID2D1Bitmap* settled = grid_bitmap ? grid_bitmap : morphing && !own_icon
                         ? icon_cache_.CachedBitmapFor(e.path, e.name, e.is_dir, e.attrs, renderedIconSize)
                         : nullptr;
-                    if (!settled && morphing && !e.record_only)
+                    if (!settled && morphing && !own_icon)
                         icon_cache_.Prefetch(e.path, e.name, e.is_dir, e.attrs, renderedIconSize);
                     if (settled) {
                         const D2D1_RECT_F dest = D2D1::RectF(iconX, iconY, iconX + renderedIconSize,
                                                              iconY + renderedIconSize);
                         dc->DrawBitmap(settled, &dest, hidden_alpha, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
                                        nullptr, nullptr);
-                    } else if (morphing && !e.record_only) {
+                    } else if (morphing && !own_icon) {
                         if (e.is_dir) DrawFolderIcon(iconX, iconY, renderedIconSize, theme, hidden_alpha);
                         else DrawFileIcon(iconX, iconY, renderedIconSize, theme, hidden_alpha);
                     } else {
@@ -4919,6 +4940,25 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         break;
                     }
                 }
+            } else if (vm.view_mode == ViewMode::Tiles && e.drive_mounted) {
+                // Mounted drives (CloudDrive, rclone, mapped): no usage bar; the
+                // 网络盘 chip and what Pulse does with them instead.
+                IDWriteTextFormat* chip_fmt = compositor_->SmallFormat();
+                const std::wstring chip = l10n::Get(l10n::StringId::MountedDriveChip);
+                const float chipH = 18.0f * scale_;
+                const float chipW = MeasureLayoutText(compositor_, compositor_->DwriteFactory(), chip_fmt, chip) +
+                                    12.0f * scale_;
+                const float top = nameRc.top + 25.0f * scale_;
+                MakeBrush(dc, WithAlpha(theme.accent, 0.12f), brFillInput_);
+                FillRoundedRect(dc, brFillInput_.get(), nameRc.left, top, chipW, chipH, 4.0f * scale_);
+                MakeBrush(dc, theme.accent, brAccent_);
+                DrawTextRect(dc, chip_fmt, brAccent_.get(), chip, nameRc.left + 6.0f * scale_, top,
+                             chipW - 12.0f * scale_ + 1.0f, chipH);
+                const float noteX = nameRc.left + chipW + 6.0f * scale_;
+                MakeBrush(dc, theme.text_secondary, brTextSecondary_);
+                DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), chip_fmt, brTextSecondary_.get(),
+                    l10n::Get(l10n::StringId::MountedDriveNote), noteX, top,
+                    std::max(0.0f, nameRc.right - noteX), chipH);
             } else if (vm.view_mode == ViewMode::Tiles && e.drive_used >= 0.0f) {
                 // This PC tiles, as in File Explorer: usage bar, then free of total.
                 const float textW = std::max(0.0f, nameRc.right - nameRc.left);
@@ -5151,6 +5191,9 @@ std::wstring MainRenderer::GroupLabel(const PaneViewModel& vm, const ListGroup& 
         return g.label.empty() ? l10n::Get(StringId::GroupUntagged) : g.label;
     case 6:
         return g.label.empty() ? std::wstring(L"-") : g.label;
+    case 7:  // This PC
+        return l10n::Get(g.rank == 2 ? StringId::GroupThisPcLaunchers
+                         : g.rank == 1 ? StringId::GroupThisPcDevices : StringId::GroupThisPcDrives);
     default:
         return {};
     }
@@ -5222,6 +5265,16 @@ void MainRenderer::DrawGroupHeaders(const PaneViewModel& vm, const ViewLayout& l
         if (x + count_w <= text_right)
             DrawTextRect(dc, small_fmt, brTextSecondary_.get(), count_text, x, hr.top, count_w, h);
         x += count_w + 10.0f * scale_;
+        if (vm.group_by == 7 && g.rank == 2) {
+            // 网盘程序入口: say what these icons are, ahead of the rule.
+            const std::wstring note = l10n::Get(l10n::StringId::GroupThisPcLaunchersNote);
+            const float note_w = std::min(std::max(0.0f, text_right - x),
+                                          MeasureLayoutText(compositor_, factory, small_fmt, note) + 1.0f);
+            if (note_w > 48.0f * scale_) {
+                DrawTextEndEllipsis(dc, factory, small_fmt, brTextSecondary_.get(), note, x, hr.top, note_w, h);
+                x += note_w + 10.0f * scale_;
+            }
+        }
 
         float rule_right = text_right;
         if (!show_select && g.bytes > 0) {

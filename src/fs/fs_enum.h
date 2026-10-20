@@ -31,6 +31,9 @@ struct DirEntry {
     DWORD reparse_tag = 0; // Unknown tags, including cloud placeholders, are not links.
     bool cloud_recall = false;
     uint8_t drive_type = 0; // GetDriveTypeW for "This PC" rows, 0 otherwise
+    // "This PC" program icon (网盘程序入口, full_path "shell:::{CLSID}"):
+    // 0 none, 1 other, 2 Baidu, 3 WPS. Never a file operation source.
+    uint8_t pc_launcher = 0;
     std::wstring full_path; // set for virtual views (search/tag); empty = parent+name
     std::wstring recycle_path; // $R payload when listing pulse:recycle; not a .lnk target
     bool change_record_only = false; // Historical deleted/moved-out item, never a file operation source.

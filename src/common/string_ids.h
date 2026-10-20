@@ -1198,6 +1198,13 @@
 #define IDS_CLOUD_DOWNLOADING_FROM                                                       3679
 #define IDS_CLOUD_DOWNLOAD_FAILED                                                        3680
 #define IDS_CLOUD_PROVIDER_GENERIC                                                       3681
+#define IDS_GROUP_THISPC_DRIVES                                                          3682
+#define IDS_GROUP_THISPC_DEVICES                                                         3683
+#define IDS_GROUP_THISPC_LAUNCHERS                                                       3684
+#define IDS_GROUP_THISPC_LAUNCHERS_NOTE                                                  3685
+#define IDS_THISPC_LAUNCHER_OPENS_APP                                                    3686
+#define IDS_MOUNTED_DRIVE_CHIP                                                           3687
+#define IDS_MOUNTED_DRIVE_NOTE                                                           3688
 #define IDS_SIDEBAR_CLOUD_HIDDEN_HINT                                                    2516
 #define IDS_SIDEBAR_SHOW_HIDDEN                                                          2517
 #define IDS_SETTINGS_DEFAULT_MANAGER_DESC                                                1481

@@ -2453,4 +2453,11 @@ BEGIN
     IDS_CLOUD_DOWNLOADING_FROM "正在從{provider}下載… {n}%"
     IDS_CLOUD_DOWNLOAD_FAILED "無法從{provider}下載這個檔案"
     IDS_CLOUD_PROVIDER_GENERIC "雲端硬碟"
+    IDS_GROUP_THISPC_DRIVES "磁碟"
+    IDS_GROUP_THISPC_DEVICES "裝置"
+    IDS_GROUP_THISPC_LAUNCHERS "雲端硬碟程式入口"
+    IDS_GROUP_THISPC_LAUNCHERS_NOTE "系統「本機」裡的圖示，和檔案總管一樣顯示；按兩下開啟雲端硬碟程式。雲端硬碟裡的檔案在側欄最上方"
+    IDS_THISPC_LAUNCHER_OPENS_APP "開啟{name}程式"
+    IDS_MOUNTED_DRIVE_CHIP "網路磁碟"
+    IDS_MOUNTED_DRIVE_NOTE "掛載的磁碟機 · 不建索引、不計算資料夾大小"
 END

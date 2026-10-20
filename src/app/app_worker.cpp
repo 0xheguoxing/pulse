@@ -4,6 +4,7 @@
 #include "entry_sort.h"
 #include "entry_group.h"
 #include "link_resolve.h"
+#include "cloud_roots.h"
 #include "../fs/fs_enum.h"
 #include "../fs/bitlocker_volume.h"
 #include "../fs/bounded_enumeration.h"
@@ -223,6 +224,17 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
                     Listing result;
                     fs::EnumerateDirectory(path, result.entries, &cancel);
                     if (cancel) throw fs::EnumerationCancelled();
+                    if (path.empty()) {
+                        // This PC: the program icons Windows shows there (网盘程序入口).
+                        for (auto& launcher : CurrentThisPcLaunchers()) {
+                            fs::DirEntry e;
+                            e.name = std::move(launcher.label);
+                            e.full_path = kThisPcLauncherPrefix + launcher.clsid;
+                            e.attrs = FILE_ATTRIBUTE_NORMAL;
+                            e.pc_launcher = launcher.brand;
+                            result.entries.push_back(std::move(e));
+                        }
+                    }
                     fs::QueryDirectoryIdentity(path, result.identity);
                     if (cancel) throw fs::EnumerationCancelled();
                     if (!fs::IsVirtualPath(path) && !fs::IsUncPath(path))

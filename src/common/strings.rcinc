@@ -2455,6 +2455,13 @@ BEGIN
     IDS_CLOUD_DOWNLOADING_FROM "正在从{provider}下载… {n}%"
     IDS_CLOUD_DOWNLOAD_FAILED "未能从{provider}下载这个文件"
     IDS_CLOUD_PROVIDER_GENERIC "网盘"
+    IDS_GROUP_THISPC_DRIVES "磁盘"
+    IDS_GROUP_THISPC_DEVICES "设备"
+    IDS_GROUP_THISPC_LAUNCHERS "网盘程序入口"
+    IDS_GROUP_THISPC_LAUNCHERS_NOTE "系统“此电脑”里的图标，和资源管理器一样显示；双击打开网盘程序。网盘里的文件在侧栏最上方"
+    IDS_THISPC_LAUNCHER_OPENS_APP "打开{name}程序"
+    IDS_MOUNTED_DRIVE_CHIP "网络盘"
+    IDS_MOUNTED_DRIVE_NOTE "挂载盘符 · 不建索引、不算文件夹大小"
 END
 
 LANGUAGE 0x09, 0x01
@@ -4909,6 +4916,13 @@ BEGIN
     IDS_CLOUD_DOWNLOADING_FROM "Downloading from {provider}… {n}%"
     IDS_CLOUD_DOWNLOAD_FAILED "Could not download this file from {provider}"
     IDS_CLOUD_PROVIDER_GENERIC "the cloud provider"
+    IDS_GROUP_THISPC_DRIVES "Drives"
+    IDS_GROUP_THISPC_DEVICES "Devices"
+    IDS_GROUP_THISPC_LAUNCHERS "Cloud drive apps"
+    IDS_GROUP_THISPC_LAUNCHERS_NOTE "Icons from Windows' This PC, shown as in File Explorer. Double-click to open the app; your cloud files are at the top of the sidebar."
+    IDS_THISPC_LAUNCHER_OPENS_APP "Opens the {name} app"
+    IDS_MOUNTED_DRIVE_CHIP "Network"
+    IDS_MOUNTED_DRIVE_NOTE "Mounted drive · not indexed, no folder sizes"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

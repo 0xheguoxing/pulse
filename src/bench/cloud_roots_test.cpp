@@ -128,6 +128,48 @@ int main() {
     SetDword(cls + g, L"SortOrderIndex", 0x60);
     SetString(cls + g + L"\\Instance\\InitPropertyBag", L"TargetFolderPath", gone);
 
+    // This PC program icons (MyComputer\NameSpace).
+    const std::wstring pc = prefix + L"\\MyComputer\\";
+    const std::wstring l_baidu = L"{679F137C-3162-45da-BE3C-2F9C3D093F64}";
+    MakeKey(pc + l_baidu);
+    SetString(cls + l_baidu, nullptr, L"\x767E\x5EA6\x7F51\x76D8");
+    SetString(cls + l_baidu + L"\\InprocServer32", nullptr, L"C:\\Program Files\\BaiduNetdisk\\YunShellExt64.dll");
+    const std::wstring l_wps = L"{5FCD4425-CA3A-48F4-A57C-B8A75C32ACB1}";
+    MakeKey(pc + l_wps);
+    SetString(cls + l_wps, nullptr, L"ignored default");
+    SetString(cls + l_wps, L"LocalizedString", L"WPS\x7F51\x76D8");
+    SetString(cls + l_wps + L"\\InprocServer32", nullptr, L"\"%ProgramFiles%\\WPS\\wpsext.dll\"", REG_EXPAND_SZ);
+    const std::wstring l_sys = L"{00000000-0000-0000-0000-0000000000A1}";  // Windows' own (Documents)
+    MakeKey(pc + l_sys);
+    SetString(cls + l_sys, nullptr, L"Documents");
+    SetString(cls + l_sys + L"\\InprocServer32", nullptr, L"%SystemRoot%\\system32\\shell32.dll", REG_EXPAND_SZ);
+    SetString(cls + l_sys + L"\\Instance\\InitPropertyBag", L"TargetKnownFolder", L"{FDD39AD0-238F-46AF-ADB4-6C85480369C7}");
+    const std::wstring l_bare = L"{00000000-0000-0000-0000-0000000000A2}";  // bare system DLL name
+    MakeKey(pc + l_bare);
+    SetString(cls + l_bare, nullptr, L"3D Objects");
+    SetString(cls + l_bare + L"\\InprocServer32", nullptr, L"shell32.dll");
+    const std::wstring l_dir = L"{00000000-0000-0000-0000-0000000000A3}";  // delegate folder
+    MakeKey(pc + l_dir);
+    SetString(cls + l_dir, nullptr, L"Sync space");
+    SetString(cls + l_dir + L"\\InprocServer32", nullptr, L"%SystemRoot%\\system32\\shell32.dll", REG_EXPAND_SZ);
+    SetString(cls + l_dir + L"\\Instance\\InitPropertyBag", L"TargetFolderPath", baidu);
+    const std::wstring l_hidden = L"{00000000-0000-0000-0000-0000000000A4}";
+    MakeKey(pc + l_hidden);
+    SetString(cls + l_hidden, nullptr, L"Hidden app");
+    SetString(cls + l_hidden + L"\\InprocServer32", nullptr, L"D:\\Apps\\hidden.dll");
+    SetDword(prefix + L"\\NonEnum", l_hidden.c_str(), 1);
+    const std::wstring l_unreg = L"{00000000-0000-0000-0000-0000000000A5}";  // no CLSID key
+    MakeKey(pc + l_unreg);
+    const std::wstring l_noname = L"{00000000-0000-0000-0000-0000000000A6}";
+    MakeKey(pc + l_noname);
+    SetString(cls + l_noname + L"\\InprocServer32", nullptr, L"D:\\Apps\\noname.dll");
+    const std::wstring l_gone = L"{00000000-0000-0000-0000-0000000000A7}";  // folder gone, system DLL
+    MakeKey(pc + l_gone);
+    SetString(cls + l_gone, nullptr, L"Gone folder");
+    SetString(cls + l_gone + L"\\InprocServer32", nullptr, L"%SystemRoot%\\system32\\shell32.dll", REG_EXPAND_SZ);
+    SetString(cls + l_gone + L"\\Instance\\InitPropertyBag", L"TargetFolderPath", gone);
+    MakeKey(pc + L"not-a-clsid");
+
     const std::wstring srm = prefix + L"\\SyncRootManager\\";
     const std::wstring od_id = L"OneDrive!" + sid + L"!Personal";
     SetString(srm + od_id + L"\\UserSyncRoots", sid.c_str(), od + L"\\");
@@ -139,6 +181,32 @@ int main() {
     MakeKey(srm + L"Empty!" + sid);
 
     const CloudRegistry registry = CloudRegistry::Fixture(prefix, sid);
+    {
+        const auto launchers = ReadThisPcLaunchers(registry);
+        const auto find = [&](const std::wstring& id) -> const ThisPcLauncher* {
+            for (const auto& l : launchers) if (_wcsicmp(l.clsid.c_str(), id.c_str()) == 0) return &l;
+            return nullptr;
+        };
+        const ThisPcLauncher* lb = find(l_baidu);
+        const ThisPcLauncher* lw = find(l_wps);
+        const ThisPcLauncher* ld = find(l_dir);
+        Check(lb && lb->label == L"\x767E\x5EA6\x7F51\x76D8" && lb->target.empty() && lb->brand == 2,
+              "launchers: a program's DLL makes a launcher; default value names it; Baidu tint");
+        Check(lw && lw->label == L"WPS\x7F51\x76D8" && lw->brand == 3,
+              "launchers: quoted REG_EXPAND_SZ server, LocalizedString wins; WPS tint");
+        Check(ld && ld->target == baidu && ld->brand == 1, "launchers: a delegate folder keeps its target");
+        Check(!find(l_sys) && !find(l_bare), "launchers: Windows' own entries are left out");
+        Check(!find(l_hidden), "launchers: NonEnum hides one");
+        Check(!find(l_unreg) && !find(l_noname) && !find(l_gone),
+              "launchers: unregistered, unnamed or gone-folder entries are left out");
+        Check(launchers.size() == 3, "launchers: exactly three");
+        SetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", L"x");
+        SetEnvironmentVariableW(L"PULSE_TEST_CLOUD_REG", prefix.c_str());
+        const auto current = CurrentThisPcLaunchers();
+        SetEnvironmentVariableW(L"PULSE_TEST_CLOUD_REG", nullptr);
+        SetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", nullptr);
+        Check(current.size() == 3, "launchers: a test instance reads its fixture");
+    }
     const auto pane = ReadNavigationPaneCloudRoots(registry);
     const CloudRoot* ra = Find(pane, a);
     Check(ra && ra->path == wps && ra->label == L"WPS\x7F51\x76D8",

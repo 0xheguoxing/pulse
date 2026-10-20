@@ -349,7 +349,7 @@ void ClearTextWidthCache() {
         entry.name = source.name;
         entry.size_text = penetrated
             ? (source.link_target_is_dir ? L"" : pulse::format::ByteSize(source.link_target_size, true))
-            : (source.is_dir ? L"" : pulse::format::ByteSize(source.size, true));
+            : (source.is_dir || source.pc_launcher ? L"" : pulse::format::ByteSize(source.size, true));
         // A zero FILETIME means "no time" (drives, servers, index rows without
         // it), not 1601-01-01.
         const auto list_time = [](const FILETIME& time) {
@@ -406,6 +406,21 @@ void ClearTextWidthCache() {
                        pulse::format::ByteSize(free_bytes).c_str(),
                        pulse::format::ByteSize(source.drive_total).c_str());
             entry.drive_space_text = space;
+        }
+        entry.drive_mounted = source.drive_type != 0 && source.drive_remote_like;
+        if (source.pc_launcher) {
+            // 网盘程序入口: brand tint, and "打开百度网盘程序" as the type.
+            entry.launcher_rgb = source.pc_launcher == 2 ? 0x2F8CF0u : source.pc_launcher == 3 ? 0x2F6FD6u : 0x60A5FAu;
+            std::wstring text = pulse::l10n::Get(pulse::l10n::StringId::ThisPcLauncherOpensApp);
+            if (const size_t at = text.find(L"{name}"); at != std::wstring::npos) {
+                std::wstring name = source.name;
+                // CJK text around a Latin name gets a space ("打开 WPS网盘程序").
+                const auto latin = [](wchar_t c) { return (c >= L'0' && c <= L'9') || (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z'); };
+                if (!name.empty() && at > 0 && text[at - 1] >= 0x2E80 && latin(name.front())) name.insert(name.begin(), L' ');
+                if (!name.empty() && at + 6 < text.size() && text[at + 6] >= 0x2E80 && latin(name.back())) name.push_back(L' ');
+                text.replace(at, 6, name);
+            }
+            entry.type_text = std::move(text);
         }
         entry.record_only = source.change_record_only;
         if (!source.change_type_text.empty()) entry.type_text = source.change_type_text;

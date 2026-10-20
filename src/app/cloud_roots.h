@@ -22,14 +22,15 @@ struct CloudRegistry {
         std::wstring path;
     };
     std::vector<Key> namespace_keys; // ...\Explorer\Desktop\NameSpace
+    std::vector<Key> mycomputer_keys; // ...\Explorer\MyComputer\NameSpace
     std::vector<Key> clsid_keys;     // ...\Classes\CLSID, searched in order
     std::vector<Key> nonenum_keys;   // ...\Policies\NonEnum ({CLSID} = 1 hides)
     Key sync_root_manager;           // ...\Explorer\SyncRootManager
     std::wstring user_sid;           // value name under <id>\UserSyncRoots
 
     static CloudRegistry System();
-    // Test layout: <prefix>\NameSpace, <prefix>\CLSID, <prefix>\NonEnum and
-    // <prefix>\SyncRootManager under HKEY_CURRENT_USER.
+    // Test layout: <prefix>\NameSpace, <prefix>\MyComputer, <prefix>\CLSID,
+    // <prefix>\NonEnum and <prefix>\SyncRootManager under HKEY_CURRENT_USER.
     static CloudRegistry Fixture(const std::wstring& hkcu_prefix, const std::wstring& sid);
 };
 
@@ -71,5 +72,22 @@ std::wstring CurrentUserSidString();
 
 // Brand tint for the sidebar glyph (0xRRGGBB).
 uint32_t CloudRootColor(const CloudRoot& root);
+
+// Program icons Windows shows in This PC (百度网盘, WPS网盘, ...): MyComputer\
+// NameSpace entries that come from a program, i.e. their InprocServer32 lives
+// outside the Windows directory, or that name a real folder (TargetFolderPath).
+// Windows' own entries (user folders, 3D Objects, ...) and NonEnum-hidden ones
+// are left out. Read-only, like the rest of this file.
+struct ThisPcLauncher {
+    std::wstring clsid;  // "{...}"
+    std::wstring label;  // what Explorer shows
+    std::wstring target; // existing folder from TargetFolderPath, else empty
+    uint8_t brand = 1;   // fs::DirEntry::pc_launcher: 1 other, 2 Baidu, 3 WPS
+};
+std::vector<ThisPcLauncher> ReadThisPcLaunchers(const CloudRegistry& registry);
+// The machine's launchers; a test instance reads its PULSE_TEST_CLOUD_REG fixture.
+std::vector<ThisPcLauncher> CurrentThisPcLaunchers();
+// full_path of a launcher row: this prefix + its CLSID.
+constexpr wchar_t kThisPcLauncherPrefix[] = L"shell:::";
 
 } // namespace pulse::app

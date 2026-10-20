@@ -121,6 +121,8 @@ struct ListEntryView {
     // This PC tiles: used fraction (-1 = unknown) and "X free of Y".
     float drive_used = -1.0f;
     std::wstring drive_space_text;
+    bool drive_mounted = false;  // This PC: mapped / user-mode mount (网络盘 chip in tiles)
+    uint32_t launcher_rgb = 0;   // This PC program icon (网盘程序入口): brand tint, 0 = not one
 };
 
 struct RowPresentationCache {

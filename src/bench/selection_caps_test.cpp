@@ -171,6 +171,32 @@ int main() {
         Check(marked && !outside_tests, "test marker only applies to test instances");
     }
 
+    {
+        // This PC program icons (网盘程序入口): open only, even next to a drive.
+        fs::DirEntry launcher;
+        launcher.name = L"Baidu";
+        launcher.full_path = L"shell:::{679F137C-3162-45da-BE3C-2F9C3D093F64}";
+        launcher.pc_launcher = 2;
+        Fill(tab, L"", {Entry(L"Win11 (C:)", L"C:\\", DRIVE_FIXED), launcher});
+        tab.ToggleSelect(1);
+        caps = ComputeSelectionCaps(tab, &places);
+        Check(caps.kind == SelectionKind::Launchers && !caps.cut && !caps.copy && !caps.del && !caps.rename &&
+              !caps.tags, "launcher: no file commands");
+        tab.ToggleSelect(0);
+        caps = ComputeSelectionCaps(tab, &places);
+        Check(caps.kind == SelectionKind::Launchers && !caps.rename && !caps.del, "drive + launcher: still none");
+        tab.view_mode = ui::ViewMode::LargeIcons;
+        const int pc_icons = tab.EffectiveGroup();
+        tab.view_mode = ui::ViewMode::List;
+        const int pc_list = tab.EffectiveGroup();
+        tab.view_mode = ui::ViewMode::Tiles;
+        tab.group_by = 0;
+        Check(pc_icons == 7 && pc_list == 0 && tab.EffectiveGroup() == 7,
+              "This PC groups by kind in every view but List");
+        Fill(tab, L"C:\\work", {Entry(L"a", L"C:\\work\\a")});
+        Check(tab.EffectiveGroup() == 0, "real folders keep their own grouping");
+    }
+
     std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "OK", g_failures, g_failures == 1 ? "" : "s");
     return g_failures ? 1 : 0;
 }
