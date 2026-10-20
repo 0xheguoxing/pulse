@@ -1982,8 +1982,10 @@ int FluentMenu::RunModalLoop() {
         // Animation frames follow the compositor: a 16 ms timeout rounds up to
         // two 15.6 ms timer ticks, which left the 120 ms fade ~4 uneven frames
         // (smooth only while the pointer moved).
+        // MWMO_INPUTAVAILABLE also wakes for messages a bounded drain below
+        // left queued, not only for ones that arrived since the last peek.
         if (!animating || FAILED(DwmFlush()))
-            MsgWaitForMultipleObjects(0, nullptr, FALSE, animating ? 1 : 16, QS_ALLINPUT);
+            MsgWaitForMultipleObjectsEx(0, nullptr, animating ? 1 : 16, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         if (topmost_ && open_ && !animating_out_ &&
             ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON)) & 0x8000)) {
             // A press over the foreign overlay never reaches this thread's
@@ -2000,6 +2002,11 @@ int FluentMenu::RunModalLoop() {
                 ShowWindow(hwnd_, SW_HIDE);
             }
         }
+        // While the owner animates (rows leaving after a delete, the recycle
+        // gulp) its frame pump posts a frame every vsync and paints it
+        // synchronously, so draining until empty would last as long as that
+        // motion and the menu, opened at alpha 0, would only fade in after it.
+        const auto drain_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(8);
         while (open_ && PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) {
                 open_ = false;
@@ -2120,6 +2127,7 @@ int FluentMenu::RunModalLoop() {
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
+            if (std::chrono::steady_clock::now() >= drain_deadline) break;
         }
     }
     HideSubWindow();
