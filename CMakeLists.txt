@@ -906,6 +906,8 @@ add_executable(pulse_app_controllers_test
     src/bench/app_controllers_test.cpp
     src/bench/localization_test.rc
     src/app/settings_controller.cpp
+    src/app/shortcut_settings.cpp
+    src/app/keymap.cpp
     src/app/system_ctx_model.cpp
     src/app/system_ctx_registry.cpp
     src/app/pack_installer.cpp
