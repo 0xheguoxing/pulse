@@ -206,6 +206,57 @@ void ApplyDropTags(AppState& s, const std::vector<std::wstring>& tag_ids, const 
                                    {ui::SnackAction{l10n::Get(l10n::StringId::SnackUndo), WM_TAG_DROP_UNDO}});
 }
 
+namespace {
+// What has (or lacks, `has` false) the tag among paths.
+std::vector<std::wstring> PathsWhereTag(const AppState& s, int index, const std::vector<std::wstring>& paths, bool has) {
+    std::vector<std::wstring> out;
+    for (const auto& path : paths)
+        if (s.places.PathHasTag(path, index) == has) out.push_back(path);
+    return out;
+}
+
+void ShowTagUndo(AppState& s, TagDropUndo undo, const std::wstring& text) {
+    if (undo.added.empty() || !s.hwnd) return;
+    g_tag_drop = std::move(undo);
+    s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Undo, text, std::wstring{},
+                                   {ui::SnackAction{l10n::Get(l10n::StringId::SnackUndo), WM_TAG_DROP_UNDO}});
+}
+} // namespace
+
+void ToggleTagWithUndo(AppState& s, const std::wstring& tag_id, const std::vector<std::wstring>& paths) {
+    const int index = s.places.FindTagIndex(tag_id);
+    if (index < 0) return;
+    const bool add = s.places.GetSelectionState(tag_id, paths) != app::TagSelectionState::All;
+    std::vector<std::wstring> touched = PathsWhereTag(s, index, paths, !add);
+    const std::wstring name = s.places.tags[static_cast<size_t>(index)].name;
+    if (touched.empty() || !ToggleTagForSelection(s, tag_id, paths)) return;
+    TagDropUndo undo;
+    undo.owner = &s;
+    undo.removed = !add;
+    wchar_t text[256]{};
+    swprintf_s(text, l10n::Get(add ? l10n::StringId::TagDropDoneFormat : l10n::StringId::TagRemovedFormat).c_str(),
+               static_cast<int>(touched.size()), name.c_str());
+    undo.added.emplace_back(tag_id, std::move(touched));
+    ShowTagUndo(s, std::move(undo), text);
+}
+
+void ClearTagsWithUndo(AppState& s, const std::vector<std::wstring>& paths) {
+    TagDropUndo undo;
+    undo.owner = &s;
+    undo.removed = true;
+    std::unordered_set<std::wstring> touched;
+    for (size_t i = 0; i < s.places.tags.size(); ++i) {
+        auto had = PathsWhereTag(s, static_cast<int>(i), paths, true);
+        if (had.empty()) continue;
+        touched.insert(had.begin(), had.end());
+        undo.added.emplace_back(s.places.tags[i].id, std::move(had));
+    }
+    if (undo.added.empty() || !ClearTagsForSelection(s, paths)) return;
+    wchar_t text[256]{};
+    swprintf_s(text, l10n::Get(l10n::StringId::TagsClearedFormat).c_str(), static_cast<int>(touched.size()));
+    ShowTagUndo(s, std::move(undo), text);
+}
+
 void UndoDropTags(AppState& s) {
     TagDropUndo undo = std::move(g_tag_drop);
     g_tag_drop = TagDropUndo{};

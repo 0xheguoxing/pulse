@@ -23,6 +23,10 @@ void ApplyDropTags(AppState& s, const std::vector<std::wstring>& tag_ids, const 
 void UndoDropTags(AppState& s);
 // Takes these paths off these tags with the snack 已移除 N 项找不到的文件 · 撤销
 // (the same undo).
+// Alt+N / Alt+0 (the keyboard only): the change, then a snack that undoes
+// exactly the (tag, item) pairs it touched.
+void ToggleTagWithUndo(AppState& s, const std::wstring& tag_id, const std::vector<std::wstring>& paths);
+void ClearTagsWithUndo(AppState& s, const std::vector<std::wstring>& paths);
 void RemoveTagPathsUndoable(AppState& s,
                             const std::vector<std::pair<std::wstring, std::vector<std::wstring>>>& removals);
 }

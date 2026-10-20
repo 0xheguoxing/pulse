@@ -2551,6 +2551,9 @@ BEGIN
     IDS_TAG_RULE_ACCEPT "加上"
     IDS_TAG_RULE_REMOVED "已删除自动规则"
     IDS_TAG_RULE_CREATED "已新建规则：%s →「%s」"
+    IDS_FAVORITES_BAR_DROP_GROUP_FORMAT "收藏到「%s」"
+    IDS_TAG_REMOVED_FORMAT "已从 %d 项移除「%s」"
+    IDS_TAGS_CLEARED_FORMAT "已清除 %d 项的所有标签"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5101,6 +5104,9 @@ BEGIN
     IDS_TAG_RULE_ACCEPT "Tag"
     IDS_TAG_RULE_REMOVED "Auto rule removed"
     IDS_TAG_RULE_CREATED "Rule added: %s → “%s”"
+    IDS_FAVORITES_BAR_DROP_GROUP_FORMAT "Add to “%s”"
+    IDS_TAG_REMOVED_FORMAT "Untagged %d items: “%s”"
+    IDS_TAGS_CLEARED_FORMAT "Cleared all tags from %d items"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

@@ -29,6 +29,11 @@ std::wstring FavoritesBarMiddleClickPath(const AppState& s, const ui::HitTestRes
 std::wstring FavoritesBarDropFolder(const AppState& s, const ui::HitTestResult& hit, bool* offline = nullptr);
 // The favorite's path, and why it is dimmed when it cannot be reached.
 std::wstring FavoritesBarTooltip(const AppState& s, const ui::HitTestResult& hit);
+// The group at the hit's slot ("" for anything else).
+std::wstring FavoritesBarGroupAt(const AppState& s, const ui::HitTestResult& hit);
+// The group a file drag rests on: folders dropped there are starred into it.
+void SetFavoritesBarDropGroup(std::wstring id);
+const std::wstring& FavoritesBarDropGroup();
 // 收藏夹分组 (P2): a group is one entry on the bar (a dropdown of its folders)
 // and a folding row in the sidebar's 收藏夹. Its menu: the name as an edit
 // field, 全部在新标签页打开, the separator after it, 取消分组.

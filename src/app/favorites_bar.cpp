@@ -926,6 +926,18 @@ std::wstring FavoritesBarDropFolder(const AppState& s, const ui::HitTestResult& 
     return item && IsFolder(*item) && !away ? item->path : std::wstring{};
 }
 
+std::wstring FavoritesBarGroupAt(const AppState& s, const ui::HitTestResult& hit) {
+    return GroupAt(s, hit.index);
+}
+
+namespace {
+std::wstring g_drop_group;
+}
+
+void SetFavoritesBarDropGroup(std::wstring id) { g_drop_group = std::move(id); }
+
+const std::wstring& FavoritesBarDropGroup() { return g_drop_group; }
+
 std::wstring FavoritesBarTooltip(const AppState& s, const ui::HitTestResult& hit) {
     if (const std::wstring id = GroupAt(s, hit.index); !id.empty()) {
         // A group: its name, then its members.

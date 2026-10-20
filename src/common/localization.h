@@ -2561,6 +2561,9 @@ enum class StringId : UINT {
     TagRuleAccept = IDS_TAG_RULE_ACCEPT,
     TagRuleRemoved = IDS_TAG_RULE_REMOVED,
     TagRuleCreated = IDS_TAG_RULE_CREATED,
+    FavoritesBarDropGroupFormat = IDS_FAVORITES_BAR_DROP_GROUP_FORMAT,
+    TagRemovedFormat = IDS_TAG_REMOVED_FORMAT,
+    TagsClearedFormat = IDS_TAGS_CLEARED_FORMAT,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

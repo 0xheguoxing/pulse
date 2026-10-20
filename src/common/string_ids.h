@@ -2565,5 +2565,8 @@
 #define IDS_TAG_RULE_ACCEPT                                                              3775
 #define IDS_TAG_RULE_REMOVED                                                             3776
 #define IDS_TAG_RULE_CREATED                                                             3777
+#define IDS_FAVORITES_BAR_DROP_GROUP_FORMAT                                              3778
+#define IDS_TAG_REMOVED_FORMAT                                                           3779
+#define IDS_TAGS_CLEARED_FORMAT                                                          3780
 
 #endif  // PULSE_STRING_IDS_H

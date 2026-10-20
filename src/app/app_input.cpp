@@ -143,6 +143,7 @@ void ClearDropFeedback(AppState& s) {
     s.dropQuickAccess = false;
     s.dropFavorite = -1;
     s.dropFavoriteAdd = false;
+    SetFavoritesBarDropGroup({});
     s.dropBadge.clear();
     s.dropBadgeMove = false;
     s.dropDestDir.clear();
@@ -228,6 +229,7 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
     s.dropQuickAccess = false;
     s.dropFavorite = -1;
     s.dropFavoriteAdd = false;
+    SetFavoritesBarDropGroup({});
     s.dropDestDir.clear();
     s.dropLaunchProgram.clear();
     s.dropBadge.clear();
@@ -350,6 +352,33 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
         return DROPEFFECT_NONE;
     } else if (hit.region == ui::HitTestResult::FavoritesBarItem ||
                hit.region == ui::HitTestResult::FavoritesBarChevron) {
+        // A group takes folders: they get starred into it (files cannot join
+        // a group, and a menu cannot open during the drag).
+        if (const std::wstring group = FavoritesBarGroupAt(s, hit); !group.empty()) {
+            s.springRow = -1;
+            const app::StarredGroup* info = s.places.FindStarredGroup(group);
+            bool any_folder = false;
+            for (const auto& source : sources) {
+                const DWORD attrs = GetFileAttributesW(source.c_str());
+                any_folder = any_folder || (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY));
+            }
+            s.dropBadgeX = (float)pt.x;
+            s.dropBadgeY = (float)pt.y;
+            if (!any_folder || !info) {
+                s.dropBadge = l10n::Get(l10n::StringId::FavoritesBarNotFolder).c_str();
+                InvalidateRect(s.hwnd, nullptr, FALSE);
+                return DROPEFFECT_NONE;
+            }
+            SetFavoritesBarDropGroup(group);
+            s.dropFavorite = hit.index;
+            wchar_t badge[256]{};
+            swprintf_s(badge, l10n::Get(l10n::StringId::FavoritesBarDropGroupFormat).c_str(), info->name.c_str());
+            s.dropBadge = badge;
+            InvalidateRect(s.hwnd, nullptr, FALSE);
+            if (allowed & DROPEFFECT_LINK) return DROPEFFECT_LINK;
+            if (allowed & DROPEFFECT_COPY) return DROPEFFECT_COPY;
+            return DROPEFFECT_NONE;
+        }
         // A favorite folder takes the drop like a breadcrumb; a file does not.
         bool offline = false;
         const std::wstring folder = FavoritesBarDropFolder(s, hit, &offline);
@@ -558,6 +587,7 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
     const int header_pane = s.dropPaneIndex;
     const bool pin_quick_access = s.dropQuickAccess;
     const bool add_favorite = s.dropFavoriteAdd;
+    const std::wstring add_group = FavoritesBarDropGroup();
     const int toolbar_app = s.dropToolbarApp;
     const bool toolbar_pin = s.dropToolbarPin;
     const std::wstring toolbar_program = s.toolbarDropProgram;
@@ -586,6 +616,20 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
         return effect;
     }
 
+    if (!add_group.empty()) {
+        // Dropped on a 收藏栏 group: its folders are starred into it (a starred
+        // one moves there).
+        bool changed = false;
+        for (const auto& source : sources) {
+            const DWORD attrs = GetFileAttributesW(source.c_str());
+            if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY)) continue;
+            if (!s.places.IsStarred(source)) ToggleStarred(s, source, app::PlaceItemKind::Folder);
+            changed = s.places.SetStarredItemGroup(source, add_group) || changed;
+        }
+        if (changed) RefreshStarredViews(s);
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        return changed ? effect : DROPEFFECT_NONE;  // nothing is copied
+    }
     if (add_favorite) {
         // Dropped on the 收藏栏's empty part: starred (already starred stays).
         bool added = false;
@@ -4664,13 +4708,13 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 const int index = s->places.FavoriteTagIndex(explorer.index + 1);
                 if (index >= 0) {
                     const auto tag_id=s->places.tags[static_cast<size_t>(index)].id;
-                    auto apply=[tag_id](AppState& v){if(auto* current=ActiveTab(v)) ToggleTagForSelection(v,tag_id,SelectedFullPaths(*current));};
+                    auto apply=[tag_id](AppState& v){if(auto* current=ActiveTab(v)) ToggleTagWithUndo(v,tag_id,SelectedFullPaths(*current));};
                     if(!DeferContentSelection(*s,apply)) apply(*s);
                 }
                 break;
             }
             case A::ClearTags: {
-                auto apply=[](AppState& v){if(auto* current=ActiveTab(v)) ClearTagsForSelection(v,SelectedFullPaths(*current));};
+                auto apply=[](AppState& v){if(auto* current=ActiveTab(v)) ClearTagsWithUndo(v,SelectedFullPaths(*current));};
                 if(!DeferContentSelection(*s,apply)) apply(*s);
                 break;
             }

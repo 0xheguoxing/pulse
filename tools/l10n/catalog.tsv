@@ -2572,3 +2572,6 @@ TagRuleSuggestMany	IDS_TAG_RULE_SUGGEST_MANY	3774	给 %d 个新文件加上「%s
 TagRuleAccept	IDS_TAG_RULE_ACCEPT	3775	加上	Tag	加上
 TagRuleRemoved	IDS_TAG_RULE_REMOVED	3776	已删除自动规则	Auto rule removed	已刪除自動規則
 TagRuleCreated	IDS_TAG_RULE_CREATED	3777	已新建规则：%s →「%s」	Rule added: %s → “%s”	已新增規則：%s →「%s」
+FavoritesBarDropGroupFormat	IDS_FAVORITES_BAR_DROP_GROUP_FORMAT	3778	收藏到「%s」	Add to “%s”	收藏到「%s」
+TagRemovedFormat	IDS_TAG_REMOVED_FORMAT	3779	已从 %d 项移除「%s」	Untagged %d items: “%s”	已從 %d 個項目移除「%s」
+TagsClearedFormat	IDS_TAGS_CLEARED_FORMAT	3780	已清除 %d 项的所有标签	Cleared all tags from %d items	已清除 %d 個項目的所有標籤
