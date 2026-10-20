@@ -37,6 +37,7 @@
 #include "../common/diagnostics_exporter.h"
 #include "snapshot_patch.h"
 #include "tag_missing.h"
+#include "tag_rules.h"
 #include "entry_sort.h"
 #include "session.h"
 #include "context_menu.h"
@@ -1159,6 +1160,8 @@ void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt) 
     constexpr int kDelete = 31200;
     constexpr int kMissingClean = 31300;
     constexpr int kMissingRelocate = 31301;
+    constexpr int kRuleNew = 31600;
+    constexpr int kRuleBase = 31610;   // + n: the tag's n-th rule (click removes it)
     const std::vector<uint32_t>& palette = TagColorPalette(s);
     std::vector<ui::FluentMenuItem> items;
     ui::FluentMenuItem rename;
@@ -1241,6 +1244,8 @@ void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt) 
     custom.glyph = preset_color ? L"\xE790" : L"";
     custom.separator_after = true;
     items.push_back(std::move(custom));
+    AppendTagRulesMenu(*tag, items, kRuleNew, kRuleBase);
+    items.back().separator_after = true;
     AppendMissingTagMenu(*tag, items, kMissingClean, kMissingRelocate);
     ui::FluentMenuItem remove;
     remove.command = kDelete;
@@ -1257,6 +1262,7 @@ void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt) 
     } else if (command == kNewGroup) {
         const std::wstring group = CreateTagGroupInteractive(s, screen_pt);
         if (!group.empty()) s.places.SetTagGroup(tag_id, group);
+    } else if (HandleTagRulesCommand(s, tag_id, command, kRuleNew, kRuleBase, screen_pt)) {
     } else if (command == kMissingClean) {
         CleanMissingTagged(s, {tag_id});
     } else if (command == kMissingRelocate) {
@@ -4586,8 +4592,8 @@ void ShowSearchFilterMenu(AppState& s, int chip, RECT control_rect) {
     NavigateTo(s, app::MakeSearchPath(app::CompileSearchQuery(spec)));
 }
 
-// Windows' own JSON file dialog for 导出别名 / 导入别名.
-static bool PickAliasFile(HWND owner, bool save, std::wstring& out) {
+// Windows' own JSON file dialog (导出别名 / 导入别名, 标签库).
+bool PickJsonFile(HWND owner, bool save, const wchar_t* file_name, std::wstring& out) {
     IFileDialog* dlg = nullptr;
     const HRESULT hr = save
         ? CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_IFileSaveDialog,
@@ -4598,7 +4604,7 @@ static bool PickAliasFile(HWND owner, bool save, std::wstring& out) {
     const COMDLG_FILTERSPEC spec{L"JSON", L"*.json"};
     dlg->SetFileTypes(1, &spec);
     dlg->SetDefaultExtension(L"json");
-    if (save) dlg->SetFileName(L"pulse-aliases.json");
+    if (save && file_name) dlg->SetFileName(file_name);
     bool ok = false;
     if (SUCCEEDED(dlg->Show(owner))) {
         IShellItem* item = nullptr;
@@ -4710,13 +4716,13 @@ void ShowAliasManager(AppState& s) {
         }
         if (cmd == app::CmdExportAliases) {
             std::wstring file;
-            if (PickAliasFile(s.hwnd, true, file) && !app::AliasStore::Instance().ExportTo(file))
+            if (PickJsonFile(s.hwnd, true, L"pulse-aliases.json", file) && !app::AliasStore::Instance().ExportTo(file))
                 MessageBeep(MB_ICONWARNING);
             return;
         }
         if (cmd == app::CmdImportAliases) {
             std::wstring file;
-            if (!PickAliasFile(s.hwnd, false, file)) return;
+            if (!PickJsonFile(s.hwnd, false, nullptr, file)) return;
             if (app::AliasStore::Instance().ImportFrom(file) < 0) {
                 MessageBeep(MB_ICONWARNING);
                 return;

@@ -2544,5 +2544,26 @@
 #define IDS_TAG_MISSING_RELOCATED                                                        3754
 #define IDS_TAG_MISSING_NOT_FOUND                                                        3755
 #define IDS_TAG_MISSING_CLEAN_SELECTED                                                   3756
+#define IDS_TAG_LIBRARY_IMPORT                                                           3757
+#define IDS_TAG_LIBRARY_EXPORT                                                           3758
+#define IDS_TAG_LIBRARY_EXPORTED                                                         3759
+#define IDS_TAG_LIBRARY_IMPORTED                                                         3760
+#define IDS_TAG_LIBRARY_SKIPPED                                                          3761
+#define IDS_TAG_LIBRARY_BAD_FILE                                                         3762
+#define IDS_TAG_LIBRARY_EXPORT_FAILED                                                    3763
+#define IDS_TAG_RULES_MENU                                                               3764
+#define IDS_TAG_RULE_NEW                                                                 3765
+#define IDS_TAG_RULE_PICK_FOLDER                                                         3766
+#define IDS_TAG_RULE_PATTERN_HINT                                                        3767
+#define IDS_TAG_RULE_ASK_MODE                                                            3768
+#define IDS_TAG_RULE_AUTO_MODE                                                           3769
+#define IDS_TAG_RULE_ANY_FILE                                                            3770
+#define IDS_TAG_RULE_ASK_SHORT                                                           3771
+#define IDS_TAG_RULE_AUTO_SHORT                                                          3772
+#define IDS_TAG_RULE_SUGGEST_ONE                                                         3773
+#define IDS_TAG_RULE_SUGGEST_MANY                                                        3774
+#define IDS_TAG_RULE_ACCEPT                                                              3775
+#define IDS_TAG_RULE_REMOVED                                                             3776
+#define IDS_TAG_RULE_CREATED                                                             3777
 
 #endif  // PULSE_STRING_IDS_H

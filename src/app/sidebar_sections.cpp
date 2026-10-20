@@ -8,6 +8,7 @@
 #include "app_commands.h"
 #include "quick_access.h"
 #include "tag_manager.h"
+#include "tag_library.h"
 #include "../common/localization.h"
 #include "../ui/fluent_menu.h"
 
@@ -27,6 +28,8 @@ constexpr int kBuiltinBase = 32200; // + BuiltinQuickAccess
 constexpr int kEditQuickAccess = 32250;
 constexpr int kManageTags = 32260;
 constexpr int kNewTagGroup = 32261;
+constexpr int kImportTags = 32262;
+constexpr int kExportTags = 32263;
 constexpr int kTagModeBase = 32270; // + TagSidebarMode
 constexpr int kCollapseSection = 32300;
 constexpr int kExpandSection = 32301;
@@ -161,6 +164,18 @@ void ShowSidebarSectionMenu(AppState& s, int section, POINT screen_pt) {
         new_group.text = l10n::Get(I::TagNewGroup);
         new_group.glyph = L"\xE8B7";
         items.push_back(std::move(new_group));
+        // 标签库 ▸ 导入… / 导出… (another PC gets the groups and favorites too).
+        ui::FluentMenuItem import_tags;
+        import_tags.command = kImportTags;
+        import_tags.text = l10n::Get(I::TagLibraryImport);
+        import_tags.glyph = L"\xE8B5";
+        items.push_back(std::move(import_tags));
+        ui::FluentMenuItem export_tags;
+        export_tags.command = kExportTags;
+        export_tags.text = l10n::Get(I::TagLibraryExport);
+        export_tags.glyph = L"\xEDE1";
+        export_tags.enabled = !s.places.tags.empty();
+        items.push_back(std::move(export_tags));
         ui::FluentMenuItem mode;
         mode.text = l10n::Get(I::TagSidebarMode);
         static constexpr I kModes[] = { I::TagModeFavoritesGroups, I::TagModeAllGroups, I::TagModeFavorites };
@@ -214,6 +229,14 @@ void ShowSidebarSectionMenu(AppState& s, int section, POINT screen_pt) {
     }
     if (command == kNewTagGroup) {
         CreateTagGroupInteractive(s, screen_pt);
+        return;
+    }
+    if (command == kImportTags) {
+        ImportTagLibrary(s);
+        return;
+    }
+    if (command == kExportTags) {
+        ExportTagLibrary(s);
         return;
     }
     if (command >= kTagModeBase && command < kTagModeBase + 3) {

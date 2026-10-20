@@ -218,6 +218,8 @@ void ApplyAppWindowChrome(AppState& s);
 // Pulse's own pickers (ui/folder_picker_dialog), owned by the main window.
 bool PickImageFile(AppState& s, std::wstring& path);
 bool PickFolder(AppState& s, std::wstring& path, const wchar_t* title);
+// Windows' JSON file dialog; file_name is the save dialog's suggestion.
+bool PickJsonFile(HWND owner, bool save, const wchar_t* file_name, std::wstring& out);
 D2D1_COLOR_F ResolveAccentColor(const app::AppPrefs& prefs, bool dark = false);
 void ApplyAccentFromPrefs(AppState& s, bool snap_picker);
 bool SelectedQuickPreviewItem(AppState& s, ui::QuickPreviewItem& item);

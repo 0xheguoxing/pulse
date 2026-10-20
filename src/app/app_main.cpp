@@ -17,6 +17,7 @@
 #include "vertical_tabs.h"
 #include "favorites_bar.h"
 #include "tag_view.h"
+#include "tag_rules.h"
 #include "filter_animation.h"
 #include "sidebar_resize.h"
 #include "ui_timer_pacer.h"
@@ -1723,6 +1724,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_ACTIVATE:
         if (s && LOWORD(wParam) != WA_INACTIVE) {
             s->core.windows.Touch(hwnd);
+            RetargetTagRules(hwnd);
             // The session's other windows open once the first one is on screen
             // (M4d): at launch, or when a launch into the tray is revealed.
             if (!s->core.pending_session_windows.empty() && s->startupComplete)
@@ -1816,6 +1818,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s) UndoFavoriteRemoval(*s);
         return 0;
 
+    case WM_TAG_RULE_HIT:
+        if (s) HandleTagRuleHits(*s);
+        return 0;
+    case WM_TAG_RULE_ACCEPT:
+        if (s) AcceptTagRuleSuggestion(*s);
+        return 0;
     case WM_TAG_DROP_UNDO:
         if (s) UndoDropTags(*s);
         return 0;
@@ -2628,6 +2636,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             s->quickPreview.Initialize(hwnd, WM_QUICK_PREVIEW_NAVIGATE,
                                        WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND);
             EnsureOperationWindow(*s);
+            StartTagRules(hwnd);   // 自动规则 watch while Pulse runs
         }
         return 0;
 
@@ -2904,6 +2913,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         // owns; services, saved state and the shared caches go with the last.
         const bool last_window = !s || s->core.windows.IsLastWindow(hwnd);
         if (last_window) app::shell_tags::RevokeCommandServer();
+        if (last_window) StopTagRules();
         if (s) {
             s->framePump.Stop();
             CancelZipJobs(*s);

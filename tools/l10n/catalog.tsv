@@ -2551,3 +2551,24 @@ TagMissingRelocatePick	IDS_TAG_MISSING_RELOCATE_PICK	3753	这些文件现在在�
 TagMissingRelocated	IDS_TAG_MISSING_RELOCATED	3754	已重新定位 %d 项	Located %d items	已重新定位 %d 個項目
 TagMissingNotFound	IDS_TAG_MISSING_NOT_FOUND	3755	在这个文件夹里没找到它们	They are not in this folder	在這個資料夾裡沒找到它們
 TagMissingCleanSelected	IDS_TAG_MISSING_CLEAN_SELECTED	3756	清理找不到的文件	Clean up missing files	清理找不到的檔案
+TagLibraryImport	IDS_TAG_LIBRARY_IMPORT	3757	导入标签库…	Import tag library…	匯入標籤庫…
+TagLibraryExport	IDS_TAG_LIBRARY_EXPORT	3758	导出标签库…	Export tag library…	匯出標籤庫…
+TagLibraryExported	IDS_TAG_LIBRARY_EXPORTED	3759	已导出 %d 个标签	Exported %d tags	已匯出 %d 個標籤
+TagLibraryImported	IDS_TAG_LIBRARY_IMPORTED	3760	已导入 %d 个标签，%d 项	Imported %d tags, %d items	已匯入 %d 個標籤，%d 個項目
+TagLibrarySkipped	IDS_TAG_LIBRARY_SKIPPED	3761	%d 项在这台电脑上找不到，已跳过	%d items aren't on this PC and were skipped	%d 個項目在這台電腦上找不到，已略過
+TagLibraryBadFile	IDS_TAG_LIBRARY_BAD_FILE	3762	这不是 Pulse 标签库文件	This isn't a Pulse tag library	這不是 Pulse 標籤庫檔案
+TagLibraryExportFailed	IDS_TAG_LIBRARY_EXPORT_FAILED	3763	导出标签库失败	Couldn't export the tag library	匯出標籤庫失敗
+TagRulesMenu	IDS_TAG_RULES_MENU	3764	自动规则	Auto rules	自動規則
+TagRuleNew	IDS_TAG_RULE_NEW	3765	新建规则…	New rule…	新增規則…
+TagRulePickFolder	IDS_TAG_RULE_PICK_FOLDER	3766	新文件出现在哪个文件夹时？	Watch which folder for new files?	新檔案出現在哪個資料夾時？
+TagRulePatternHint	IDS_TAG_RULE_PATTERN_HINT	3767	名称包含…，或 .pdf 这样的扩展名	Name contains…, or an extension like .pdf	名稱包含…，或 .pdf 這樣的副檔名
+TagRuleAskMode	IDS_TAG_RULE_ASK_MODE	3768	出现时提示我	ask me when it appears	出現時提示我
+TagRuleAutoMode	IDS_TAG_RULE_AUTO_MODE	3769	自动加上标签	tag it automatically	自動加上標籤
+TagRuleAnyFile	IDS_TAG_RULE_ANY_FILE	3770	任意文件	Any file	任意檔案
+TagRuleAskShort	IDS_TAG_RULE_ASK_SHORT	3771	提示	Ask	提示
+TagRuleAutoShort	IDS_TAG_RULE_AUTO_SHORT	3772	自动	Auto	自動
+TagRuleSuggestOne	IDS_TAG_RULE_SUGGEST_ONE	3773	给「%s」加上「%s」？	Tag “%s” with “%s”?	給「%s」加上「%s」？
+TagRuleSuggestMany	IDS_TAG_RULE_SUGGEST_MANY	3774	给 %d 个新文件加上「%s」？	Tag %d new files with “%s”?	給 %d 個新檔案加上「%s」？
+TagRuleAccept	IDS_TAG_RULE_ACCEPT	3775	加上	Tag	加上
+TagRuleRemoved	IDS_TAG_RULE_REMOVED	3776	已删除自动规则	Auto rule removed	已刪除自動規則
+TagRuleCreated	IDS_TAG_RULE_CREATED	3777	已新建规则：%s →「%s」	Rule added: %s → “%s”	已新增規則：%s →「%s」
