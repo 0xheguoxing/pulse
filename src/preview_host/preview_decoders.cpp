@@ -11,6 +11,7 @@
 #include "markdown_document.h"
 #include "notebook_document.h"
 #include "font_raster.h"
+#include "icc_profile.h"
 #include "image_frames.h"
 #include "gif_frames.h"
 #include "image_pack.h"
@@ -263,6 +264,74 @@ bool MakeTextOrHex(const std::wstring& path, DWORD attrs, ipc::PreviewContentKin
 
 } // namespace
 
+// Embedded ICC profiles: a picture tagged with a profile other than sRGB
+// (Adobe RGB, Display P3, ProPhoto, a press CMYK, a gray dot gain) is
+// converted to sRGB, the space previews are shown in; plain values showed
+// Adobe RGB and P3 photos washed out and ProPhoto ones far off. Untagged and
+// sRGB-tagged pictures skip this and come out byte-identical. It runs on the
+// already scaled picture, held in memory first, so the JPEG decoder keeps
+// decoding at reduced size and the transform reads each pixel once.
+static bool ToSrgb(IWICImagingFactory* factory, IWICBitmapFrameDecode* frame, IWICBitmapSource* source,
+                   ComPtr<IWICBitmapSource>& out) {
+    namespace icc = preview::icc;
+    UINT count = 0;
+    if (FAILED(frame->GetColorContexts(0, nullptr, &count)) || count == 0 || count > 8) return false;
+    ComPtr<IWICColorContext> contexts[8];
+    IWICColorContext* raw[8]{};
+    for (UINT i = 0; i < count; ++i) {
+        if (FAILED(factory->CreateColorContext(&contexts[i]))) return false;
+        raw[i] = contexts[i].Get();
+    }
+    if (FAILED(frame->GetColorContexts(count, raw, &count))) return false;
+    IWICColorContext* profile = nullptr;
+    icc::Space space = icc::Space::Other;
+    std::vector<unsigned char> bytes;
+    for (UINT i = 0; i < count && !profile; ++i) {
+        WICColorContextType type{};
+        UINT size = 0;
+        if (FAILED(raw[i]->GetType(&type)) || type != WICColorContextProfile ||
+            FAILED(raw[i]->GetProfileBytes(0, nullptr, &size)) || size < 132 || size > icc::kProfileLimit) continue;
+        bytes.resize(size);
+        if (FAILED(raw[i]->GetProfileBytes(size, bytes.data(), &size))) continue;
+        space = icc::ColourSpace(bytes.data(), bytes.size());
+        if (space == icc::Space::Other || icc::IsSrgb(bytes.data(), bytes.size())) return false;
+        profile = raw[i];
+    }
+    if (!profile) return false;
+    // Gray and CMYK profiles need the matching channels, which carry no
+    // alpha: anything else (a CMYK frame the scaler already turned into RGB,
+    // gray with transparency) keeps its plain values.
+    WICPixelFormatGUID format{};
+    if (FAILED(source->GetPixelFormat(&format))) return false;
+    if (space == icc::Space::Cmyk && !IsEqualGUID(format, GUID_WICPixelFormat32bppCMYK) &&
+        !IsEqualGUID(format, GUID_WICPixelFormat64bppCMYK)) return false;
+    if (space == icc::Space::Gray) {
+        ComPtr<IWICComponentInfo> info;
+        ComPtr<IWICPixelFormatInfo2> format_info;
+        UINT channels = 0;
+        BOOL transparent = TRUE;
+        if (FAILED(factory->CreateComponentInfo(format, &info)) || FAILED(info.As(&format_info)) ||
+            FAILED(format_info->GetChannelCount(&channels)) ||
+            FAILED(format_info->SupportsTransparency(&transparent)) || channels != 1 || transparent) return false;
+    }
+    const WICPixelFormatGUID device = space == icc::Space::Cmyk ? GUID_WICPixelFormat32bppCMYK
+        : space == icc::Space::Gray ? GUID_WICPixelFormat8bppGray : GUID_WICPixelFormat32bppBGRA;
+    ComPtr<IWICColorContext> srgb;
+    ComPtr<IWICFormatConverter> converter;
+    ComPtr<IWICBitmap> held;
+    ComPtr<IWICColorTransform> transform;
+    if (FAILED(factory->CreateColorContext(&srgb)) || FAILED(srgb->InitializeFromExifColorSpace(1)) ||
+        FAILED(factory->CreateFormatConverter(&converter)) ||
+        FAILED(converter->Initialize(source, device, WICBitmapDitherTypeNone, nullptr, 0.0,
+                                     WICBitmapPaletteTypeCustom)) ||
+        FAILED(factory->CreateBitmapFromSource(converter.Get(), WICBitmapCacheOnLoad, &held)) ||
+        FAILED(factory->CreateColorTransformer(&transform)) ||
+        FAILED(transform->Initialize(held.Get(), profile, srgb.Get(), GUID_WICPixelFormat32bppBGRA)))
+        return false;
+    out = transform;
+    return true;
+}
+
 static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
                         std::vector<uint8_t>& out, UINT& width, UINT& height, UINT& stride,
                         UINT& source_width, UINT& source_height,
@@ -386,6 +455,8 @@ static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
             source = reflection.Get();
         }
     }
+    ComPtr<IWICBitmapSource> managed;
+    if (ToSrgb(factory.Get(), frame.Get(), source, managed)) source = managed.Get();
     if (FAILED(factory->CreateFormatConverter(&converter)) ||
         FAILED(converter->Initialize(source, GUID_WICPixelFormat32bppPBGRA,
                                      WICBitmapDitherTypeNone, nullptr, 0.0,

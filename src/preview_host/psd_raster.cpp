@@ -2,6 +2,7 @@
 // Formats Specification (header, color mode data, image resources, layer and
 // mask information, image data).
 #include "psd_raster.h"
+#include "icc_profile.h"
 
 #include <wincodec.h>
 #include <wrl/client.h>
@@ -111,7 +112,7 @@ struct Header {
     bool has_palette = false;
     std::vector<unsigned char> thumbnail;   // JFIF from resource 1036
     uint32_t thumbnail_edge = 0;            // its long edge in pixels
-    std::vector<unsigned char> icc;         // ICC profile, resource 1039 (gray/CMYK only)
+    std::vector<unsigned char> icc;         // ICC profile, resource 1039 (gray, CMYK; RGB unless sRGB)
     bool real_merged = true;                // resource 1057 hasRealMergedData
     bool merged_alpha = false;              // merged image carries transparency
     uint64_t image_data = 0;                // offset of the image data section
@@ -219,9 +220,12 @@ bool ParseHeader(Reader& r, Header& h, std::wstring* error) {
                 if (!r.Read(h.thumbnail.data(), h.thumbnail.size())) h.thumbnail.clear();
                 else h.thumbnail_edge = (std::max)(thumb_w, thumb_h);
             }
-        } else if (id == 1039 && size >= 128 && size <= kIccBudget && (h.mode == Gray || h.mode == Cmyk)) {
+        } else if (id == 1039 && size >= 128 && size <= kIccBudget &&
+                   (h.mode == Gray || h.mode == Cmyk || (h.mode == Rgb && h.depth <= 16))) {
+            // 32-bit documents hold linear light, already encoded for display.
             h.icc.resize(size);
-            if (!r.Read(h.icc.data(), size)) h.icc.clear();
+            if (!r.Read(h.icc.data(), size) || (h.mode == Rgb && icc::IsSrgb(h.icc.data(), h.icc.size())))
+                h.icc.clear();
         } else if (id == 1057 && size >= 5) {
             r.Skip(4);
             h.real_merged = r.U8() != 0;
@@ -320,12 +324,15 @@ void LabToRgb(uint8_t l8, uint8_t a8, uint8_t b8, uint8_t& r, uint8_t& g, uint8_
 // Photoshop grays are dot-gain encoded and press CMYK is not RGB minus ink,
 // so plain values showed grays far too dark and CMYK far too saturated.
 // CMYK without a profile goes through the system's SWOP profile (RSWOP.icm),
-// as Photoshop falls back to a SWOP working space. device holds one value
-// (gray) or four (CMYK ink, 255 = full) per pixel; on success the colour
-// bytes of the BGRA pixels are replaced. Otherwise they keep the plain values.
+// as Photoshop falls back to a SWOP working space. RGB documents tagged with
+// another profile than sRGB (Adobe RGB, Display P3, ProPhoto) are converted
+// the same way. device holds one value (gray) or four (CMYK ink, 255 = full)
+// per pixel; RGB reads the pixels themselves. On success the colour bytes of
+// the BGRA pixels are replaced. Otherwise they keep the plain values.
 bool ManageColour(const Header& h, std::vector<unsigned char>& device, UINT width, UINT height,
                   std::vector<unsigned char>& pixels) {
     const bool cmyk = h.mode == Cmyk;
+    const bool rgb = h.mode == Rgb;
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICColorContext> source, target;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
@@ -343,14 +350,16 @@ bool ManageColour(const Header& h, std::vector<unsigned char>& device, UINT widt
             hr = source->InitializeFromFilename((std::wstring(dir, n) + L"\\spool\\drivers\\color\\RSWOP.icm").c_str());
     }
     if (FAILED(hr)) return false;
-    const UINT channels = cmyk ? 4u : 1u;
+    // 32bppBGR reads the BGRA pixels and ignores their alpha byte.
+    std::vector<unsigned char>& input = rgb ? pixels : device;
+    const UINT channels = cmyk || rgb ? 4u : 1u;
+    const WICPixelFormatGUID format = rgb ? GUID_WICPixelFormat32bppBGR
+        : cmyk ? GUID_WICPixelFormat32bppCMYK : GUID_WICPixelFormat8bppGray;
     ComPtr<IWICBitmap> bitmap;
     ComPtr<IWICColorTransform> transform;
     std::vector<unsigned char> bgrx(pixels.size());
-    if (FAILED(factory->CreateBitmapFromMemory(width, height,
-                                               cmyk ? GUID_WICPixelFormat32bppCMYK : GUID_WICPixelFormat8bppGray,
-                                               width * channels, static_cast<UINT>(device.size()), device.data(),
-                                               &bitmap)) ||
+    if (FAILED(factory->CreateBitmapFromMemory(width, height, format, width * channels,
+                                               static_cast<UINT>(input.size()), input.data(), &bitmap)) ||
         FAILED(factory->CreateColorTransformer(&transform)) ||
         FAILED(transform->Initialize(bitmap.Get(), source.Get(), target.Get(), GUID_WICPixelFormat32bppBGR)) ||
         FAILED(transform->CopyPixels(nullptr, width * 4, static_cast<UINT>(bgrx.size()), bgrx.data())))
@@ -482,10 +491,12 @@ bool DecodeComposite(Reader& r, const Header& h, UINT max_edge, std::vector<unsi
 
     stride = out_w * 4;
     pixels.assign(static_cast<size_t>(stride) * out_h, 0);
-    // Gray and CMYK cells are also kept as device values for ManageColour.
-    const bool managed = h.mode == Gray || h.mode == Cmyk;
+    // Gray and CMYK cells are also kept as device values for ManageColour;
+    // RGB with a profile is converted from the pixels themselves.
+    const bool device_values = h.mode == Gray || h.mode == Cmyk;
+    const bool managed = device_values || (h.mode == Rgb && !h.icc.empty());
     const int device_channels = h.mode == Cmyk ? 4 : 1;
-    std::vector<unsigned char> device(managed ? static_cast<size_t>(out_w) * out_h * device_channels : 0);
+    std::vector<unsigned char> device(device_values ? static_cast<size_t>(out_w) * out_h * device_channels : 0);
     for (UINT oy = 0; oy < out_h; ++oy) {
         for (UINT ox = 0; ox < out_w; ++ox) {
             const size_t i = static_cast<size_t>(oy) * out_w + ox;
@@ -508,7 +519,7 @@ bool DecodeComposite(Reader& r, const Header& h, UINT max_edge, std::vector<unsi
             case Lab: LabToRgb(v(0), v(1), v(2), R, G, B); break;
             default: R = G = B = v(0); break;
             }
-            if (managed)
+            if (device_values)
                 for (int c = 0; c < device_channels; ++c)
                     device[i * device_channels + c] = h.mode == Cmyk ? static_cast<unsigned char>(255 - v(c)) : v(c);
             unsigned char* px = pixels.data() + i * 4;

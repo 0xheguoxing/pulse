@@ -8,6 +8,7 @@
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <cstdio>
+#include <cstring>
 #include <array>
 
 namespace {
@@ -172,6 +173,54 @@ Bytes GrayIcc(uint16_t gamma) {
     Be32(out, first + static_cast<uint32_t>(body.size()));
     Be32(out, 0); Be32(out, 0x02100000);
     for (const char* s : {"mntr", "GRAY", "XYZ "}) out.insert(out.end(), s, s + 4);
+    out.resize(36, 0);
+    for (char c : {'a', 'c', 's', 'p'}) out.push_back(static_cast<unsigned char>(c));
+    out.resize(68, 0);
+    Be32(out, 0xF6D6); Be32(out, 0x10000); Be32(out, 0xD32D);
+    out.resize(128, 0);
+    out.insert(out.end(), table.begin(), table.end());
+    out.insert(out.end(), body.begin(), body.end());
+    return out;
+}
+// A minimal ICC v2 RGB display profile: sRGB primaries (D50) and one plain
+// gamma for all three channels, under the given name. With gamma 1.0,
+// device 128 is half linear light, sRGB 188.
+Bytes RgbIcc(const char* name, uint16_t gamma) {
+    const auto pad = [](Bytes& b) { while (b.size() % 4) b.push_back(0); };
+    const size_t name_size = std::strlen(name) + 1;
+    Bytes desc{'d','e','s','c',0,0,0,0};
+    Be32(desc, static_cast<uint32_t>(name_size));
+    desc.insert(desc.end(), name, name + name_size);
+    Be32(desc, 0); Be32(desc, 0);
+    desc.resize(desc.size() + 70, 0);
+    pad(desc);
+    const auto xyz = [](uint32_t x, uint32_t y, uint32_t z) {
+        Bytes b{'X','Y','Z',' ',0,0,0,0};
+        Be32(b, x); Be32(b, y); Be32(b, z);
+        return b;
+    };
+    const Bytes white = xyz(0xF6D6, 0x10000, 0xD32D);
+    const Bytes red = xyz(0x6FA2, 0x38F5, 0x0390), green = xyz(0x6299, 0xB785, 0x18DA),
+                blue = xyz(0x24A0, 0x0F84, 0xB6CF);
+    Bytes curve{'c','u','r','v',0,0,0,0};
+    Be32(curve, 1); Be16(curve, gamma); Be16(curve, 0);
+    Bytes copyright{'t','e','x','t',0,0,0,0,'P','D',0,0};
+    const std::pair<const char*, const Bytes*> tags[] = {
+        {"desc", &desc}, {"wtpt", &white}, {"rXYZ", &red}, {"gXYZ", &green}, {"bXYZ", &blue},
+        {"rTRC", &curve}, {"gTRC", &curve}, {"bTRC", &curve}, {"cprt", &copyright}};
+    Bytes table, body;
+    Be32(table, static_cast<uint32_t>(std::size(tags)));
+    const uint32_t first = 128 + 4 + 12 * static_cast<uint32_t>(std::size(tags));
+    for (const auto& [sig, data] : tags) {
+        table.insert(table.end(), sig, sig + 4);
+        Be32(table, first + static_cast<uint32_t>(body.size()));
+        Be32(table, static_cast<uint32_t>(data->size()));
+        body.insert(body.end(), data->begin(), data->end());
+    }
+    Bytes out;
+    Be32(out, first + static_cast<uint32_t>(body.size()));
+    Be32(out, 0); Be32(out, 0x02100000);
+    for (const char* s : {"mntr", "RGB ", "XYZ "}) out.insert(out.end(), s, s + 4);
     out.resize(36, 0);
     for (char c : {'a', 'c', 's', 'p'}) out.push_back(static_cast<unsigned char>(c));
     out.resize(68, 0);
@@ -351,6 +400,19 @@ int wmain() {
         broken.resize(140);   // header promises tags beyond the end
         check(rasterize(ModePsd(1, 1, 2, gray, broken), pixels) && pixels.size() == 8 && pixels[4] == 128,
             "gray PSD with a broken profile falls back to its values");
+        // RGB documents: a profile other than sRGB converts, an sRGB one is
+        // left alone (by name, so the same curve under an sRGB name stays).
+        const Bytes rgb{128, 128, 128};
+        const auto mid = [&](const Bytes& icc) {
+            return rasterize(ModePsd(3, 3, 1, rgb, icc), pixels) && pixels.size() == 4 && pixels[3] == 255 &&
+                pixels[0] == pixels[1] && pixels[1] == pixels[2] ? int{pixels[0]} : -1;
+        };
+        const int wide = mid(RgbIcc("Pulse test linear RGB", 0x0100));
+        check(wide >= 185 && wide <= 191, "RGB PSD with a non-sRGB profile is converted to sRGB");
+        check(mid(RgbIcc("Pulse sRGB test", 0x0100)) == 128, "RGB PSD tagged sRGB keeps its values");
+        const int linear = mid(RgbIcc("sRGB IEC61966-2.1 (Linear RGB Profile)", 0x0100));
+        check(linear >= 185 && linear <= 191, "linear sRGB profile is not taken for sRGB");
+        check(mid({}) == 128, "RGB PSD without a profile keeps its values");
         // Full cyan ink, stored inverted: subtracting ink showed (0,255,255).
         wchar_t sys[MAX_PATH]{};
         const UINT n = GetSystemDirectoryW(sys, MAX_PATH);
