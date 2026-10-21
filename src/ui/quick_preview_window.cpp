@@ -1,6 +1,7 @@
 #include "edit_host.h"
 #include "FluentTokens.h"
 #include "legacy_icons.h"
+#include "command_icons.h"
 #include "../common/windows_compat.h"
 #include "quick_preview_window.h"
 #include "../app/folder_alias.h"
@@ -1678,6 +1679,9 @@ void QuickPreviewWindow::DrawChromeButtons(ID2D1DeviceContext* dc,
                 radius, radius};
             dc->FillRoundedRectangle(pill, hover_brush.get());
         }
+        IDWriteTextFormat* format = close_format_.get() ? close_format_.get() : compositor_.IconFormat();
+        if (format && command_icons::DrawGlyph(dc, text_brush, spec.glyph, rect, format->GetFontSize()))
+            continue;
         if (!DrawLegacyIcon(dc, compositor_.DwriteFactory(), spec.glyph, rect, text_brush))
             dc->DrawTextW(spec.glyph, 1,
                       close_format_.get() ? close_format_.get() : compositor_.IconFormat(), rect,
@@ -1757,7 +1761,10 @@ void QuickPreviewWindow::Render() {
     dc->CreateSolidColorBrush(close_hover_ ? D2D1::ColorF(0xFFFFFF) : foreground,
                               &close_brush);
     static constexpr wchar_t close_glyph[] = L"\xE711";
-    if (!DrawLegacyIcon(dc, compositor_.DwriteFactory(), close_glyph, close_rect, close_brush.get()))
+    IDWriteTextFormat* close_fmt = close_format_.get() ? close_format_.get() : compositor_.IconFormat();
+    const bool close_drawn = close_fmt &&
+        command_icons::DrawGlyph(dc, close_brush.get(), close_glyph, close_rect, close_fmt->GetFontSize());
+    if (!close_drawn && !DrawLegacyIcon(dc, compositor_.DwriteFactory(), close_glyph, close_rect, close_brush.get()))
         dc->DrawTextW(close_glyph, 1,
                   close_format_.get() ? close_format_.get() : compositor_.IconFormat(), close_rect,
                   close_brush.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP,

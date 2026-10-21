@@ -33,6 +33,11 @@ enum class Icon {
     PinFavorites, PinQuickAccess, PinWorkspace, PinNetwork, PinToolbar,
     // 分组 (Segoe F168) and a program without an icon (Segoe ECAA).
     GroupBy, App, FolderList,
+    // The other Segoe glyphs Pulse shows (menus, settings, dialogs), drawn on
+    // the same grid and stroke so no icon comes from the font.
+    Reset, TextName, Package, Unpin, Stack, Video, Cloud, Error, Merge, Pause, Play,
+    Send, VBar, Move, Power, Bulb, Pointer, Import, Export, Bolt, Camera, FavBar,
+    FullScreen, Save, Unlock, Eject, Skip, Disconnect, Music, Wrench, Timer, Help, Puzzle,
     Count
 };
 
@@ -71,7 +76,8 @@ inline constexpr Icon PinnedBase(Icon icon) noexcept {
 // Fill opacity of an icon's filled figures (0 = outline only).
 inline constexpr float FillOpacity(Icon icon) noexcept {
     switch (icon) {
-    case Icon::StarFilled: case Icon::More: case Icon::Contrast: case Icon::SizeBar: return 1.0f;
+    case Icon::StarFilled: case Icon::More: case Icon::Contrast: case Icon::SizeBar:
+    case Icon::Pause: case Icon::Play: return 1.0f;
     case Icon::Invert: return 0.35f;
     case Icon::Zebra: return 0.28f;
     default: return 0.0f;
@@ -156,6 +162,57 @@ inline Icon FromGlyph(std::wstring_view glyph) noexcept {
     case L'\xF5C0': return Icon::PinToolbar;
     case L'\xF5C1': return Icon::FolderList;
     case L'\xF168': return Icon::GroupBy;
+    case L'\xE8F1': return Icon::FolderList;
+    case L'\xE777': return Icon::Reset;
+    case L'\xE8D2': case L'\xE8C1': return Icon::TextName;
+    case L'\xE7B8': return Icon::Package;
+    case L'\xE77A': return Icon::Unpin;
+    case L'\xE7C4': return Icon::Stack;
+    case L'\xE714': return Icon::Video;
+    case L'\xE753': return Icon::Cloud;
+    case L'\xE783': case L'\xEA39': return Icon::Error;
+    case L'\xE8B8': return Icon::Merge;
+    case L'\xF8AE': return Icon::Pause;
+    case L'\xEDDA': return Icon::Play;
+    case L'\xE724': return Icon::Send;
+    case L'\xE76F': return Icon::VBar;
+    case L'\xE7C2': return Icon::Move;
+    case L'\xE7E8': return Icon::Power;
+    case L'\xE82F': case L'\xEA80': return Icon::Bulb;
+    case L'\xE8B0': case L'\xE962': return Icon::Pointer;
+    case L'\xE8B5': return Icon::Import;
+    case L'\xEDE1': return Icon::Export;
+    case L'\xE945': return Icon::Bolt;
+    case L'\xE722': return Icon::Camera;
+    case L'\xE728': return Icon::FavBar;
+    case L'\xE740': return Icon::FullScreen;
+    case L'\xE74E': return Icon::Save;
+    case L'\xE785': return Icon::Unlock;
+    case L'\xF847': return Icon::Eject;
+    case L'\xE893': return Icon::Skip;
+    case L'\xE8CD': return Icon::Disconnect;
+    case L'\xE8D6': return Icon::Music;
+    case L'\xE90F': return Icon::Wrench;
+    case L'\xE916': return Icon::Timer;
+    case L'\xE9CE': return Icon::Help;
+    case L'\xEA86': return Icon::Puzzle;
+    // Same meaning as a shape above.
+    case L'\xE8E5': case L'\xE8DA': return Icon::FolderOpen;
+    case L'\xE7AC': return Icon::OpenExternal;
+    case L'\xE70F': return Icon::Rename;
+    case L'\xE71E': case L'\xE7C8': return Icon::Search;
+    case L'\xE7C3': return Icon::File;
+    case L'\xE895': return Icon::Refresh;
+    case L'\xE8B9': return Icon::Image;
+    case L'\xECA5': return Icon::Grid;
+    case L'\xEA37': case L'\xE71D': return Icon::List;
+    case L'\xE737': return Icon::Tray;
+    case L'\xE738': return Icon::Minimize;
+    case L'\xE7EF': return Icon::Shield;
+    case L'\xE88E': return Icon::Drive;
+    case L'\xE8EE': return Icon::SwapHorizontal;
+    case L'\xEC50': return Icon::Folder;
+    case L'\xED1A': return Icon::EyeHidden;
     case L'\xECAA': return Icon::App;
     // Segoe glyphs the toolbar and menus already use, now on the vector grid.
     case L'\xE7A7': return Icon::Undo;
@@ -215,7 +272,8 @@ inline ID2D1PathGeometry* BuildGeometry(ID2D1Factory* factory, Icon icon) noexce
         return nullptr;
     }
     const auto begin = [&](float x, float y) {
-        sink->BeginFigure({x,y}, (icon == Icon::StarFilled || icon == Icon::More || icon == Icon::SizeBar) ?
+        sink->BeginFigure({x,y}, (icon == Icon::StarFilled || icon == Icon::More || icon == Icon::SizeBar ||
+                                  icon == Icon::Pause || icon == Icon::Play) ?
             D2D1_FIGURE_BEGIN_FILLED : D2D1_FIGURE_BEGIN_HOLLOW);
     };
     // A figure that is filled (at FillOpacity) as well as outlined.
@@ -520,6 +578,63 @@ inline ID2D1PathGeometry* BuildGeometry(ID2D1Factory* factory, Icon icon) noexce
         line(9.5f,19,16.5f,19); break;
     case Icon::App: box(4,4,20,20,4.5f); box(9,9,15,15,1.5f); break;
     case Icon::FolderList: folder(); line(8,13,16,13); line(8,16.5f,13,16.5f); break;
+    case Icon::Reset: begin(3.5f,12); arcto(12,3.5f,8.5f,true,false); arcto(6,6,8.5f,false,false); to(3.5f,8.5f);
+        end(); path({{3.5f,4},{3.5f,8.5f},{8,8.5f}}); break;
+    case Icon::TextName: path({{5,7},{5,4.5f},{19,4.5f},{19,7}}); line(12,4.5f,12,19.5f); line(9,19.5f,15,19.5f); break;
+    case Icon::Package: path({{12,3},{20.5f,7.5f},{20.5f,16.5f},{12,21},{3.5f,16.5f},{3.5f,7.5f},{12,3}});
+        path({{3.5f,7.5f},{12,12},{20.5f,7.5f}}); line(12,12,12,21); line(7.8f,5.3f,16.2f,9.7f); break;
+    case Icon::Unpin: path({{8,3},{16,3},{15,9},{19,13},{19,15},{5,15},{5,13},{9,9},{8,3}}); line(12,15,12,22);
+        line(3.5f,3.5f,20.5f,20.5f); break;
+    case Icon::Stack: box(3,9,21,20.5f,2); line(5.5f,6,18.5f,6); line(8,3,16,3); break;
+    case Icon::Video: box(2.5f,6,15.5f,18,2.5f); path({{15.5f,10.5f},{21.5f,7},{21.5f,17},{15.5f,13.5f}}); break;
+    case Icon::Cloud: begin(7,18.5f); to(17.5f,18.5f); curve(19.9f,18.5f,21.5f,16.6f,21.5f,14.5f);
+        curve(21.5f,12.3f,19.8f,10.5f,17.6f,10.5f); curve(17,7.3f,14.6f,5,11.5f,5); curve(8.2f,5,5.6f,7.6f,5.5f,10.8f);
+        curve(3.8f,11.4f,2.5f,13,2.5f,14.8f); curve(2.5f,16.9f,4.6f,18.5f,7,18.5f); end(true); break;
+    case Icon::Error: circle(12,12,9); line(12,7.5f,12,13); dot(12,16.5f,1); break;
+    case Icon::Merge: path({{6,3.5f},{6,8},{12,14},{12,20.5f}}); path({{18,3.5f},{18,8},{12,14}});
+        path({{9,17.5f},{12,20.5f},{15,17.5f}}); break;
+    case Icon::Pause: box(6.5f,5,10,19,1); box(14,5,17.5f,19,1); break;
+    case Icon::Play: path({{7.5f,4.5f},{19,12},{7.5f,19.5f},{7.5f,4.5f}}); break;
+    case Icon::Send: path({{21,3},{3,10.5f},{10.5f,13.5f},{13.5f,21},{21,3}}); line(21,3,10.5f,13.5f); break;
+    case Icon::VBar: line(12,4,12,20); break;
+    case Icon::Move: line(12,3,12,21); line(3,12,21,12); path({{9.5f,5.5f},{12,3},{14.5f,5.5f}});
+        path({{9.5f,18.5f},{12,21},{14.5f,18.5f}}); path({{5.5f,9.5f},{3,12},{5.5f,14.5f}});
+        path({{18.5f,9.5f},{21,12},{18.5f,14.5f}}); break;
+    case Icon::Power: line(12,3,12,11); arc(12,13,8,300,600); break;
+    case Icon::Bulb: arc(12,9.5f,6,135,405); path({{7.76f,13.74f},{9.2f,16},{14.8f,16},{16.24f,13.74f}});
+        line(9.5f,18.8f,14.5f,18.8f); line(10.5f,21,13.5f,21); break;
+    case Icon::Pointer: path({{5,3},{5,18.5f},{9,14.8f},{11.8f,21},{14.6f,19.8f},{11.9f,13.7f},{17.5f,13.7f},{5,3}}); break;
+    case Icon::Import: begin(13,3.5f); to(18.5f,3.5f); curve(19.6f,3.5f,20.5f,4.4f,20.5f,5.5f); to(20.5f,18.5f);
+        curve(20.5f,19.6f,19.6f,20.5f,18.5f,20.5f); to(13,20.5f); end(); line(3.5f,12,14.5f,12);
+        path({{11,8.5f},{14.5f,12},{11,15.5f}}); break;
+    case Icon::Export: begin(11,3.5f); to(5.5f,3.5f); curve(4.4f,3.5f,3.5f,4.4f,3.5f,5.5f); to(3.5f,18.5f);
+        curve(3.5f,19.6f,4.4f,20.5f,5.5f,20.5f); to(11,20.5f); end(); line(9.5f,12,20.5f,12);
+        path({{17,8.5f},{20.5f,12},{17,15.5f}}); break;
+    case Icon::Bolt: path({{13,2.5f},{4.5f,13.5f},{12,13.5f},{11,21.5f},{19.5f,10.5f},{12,10.5f},{13,2.5f}}); break;
+    case Icon::Camera: box(2.5f,7,21.5f,19.5f,2.5f); path({{8,7},{9.5f,4.5f},{14.5f,4.5f},{16,7}});
+        circle(12,13,3.5f); break;
+    case Icon::FavBar: path({{8.9f,3.97f},{10.5f,7.19f},{14.06f,7.72f},{11.48f,10.23f},{12.09f,13.77f},{8.9f,12.11f},
+        {5.71f,13.77f},{6.32f,10.23f},{3.74f,7.72f},{7.31f,7.19f},{8.9f,3.97f}}); line(16.5f,7,20.5f,7);
+        line(16.5f,11,20.5f,11); line(3.5f,17.5f,20.5f,17.5f); break;
+    case Icon::FullScreen: path({{3.5f,8.5f},{3.5f,3.5f},{8.5f,3.5f}}); path({{15.5f,3.5f},{20.5f,3.5f},{20.5f,8.5f}});
+        path({{20.5f,15.5f},{20.5f,20.5f},{15.5f,20.5f}}); path({{8.5f,20.5f},{3.5f,20.5f},{3.5f,15.5f}}); break;
+    case Icon::Save: path({{3.5f,3.5f},{16.5f,3.5f},{20.5f,7.5f},{20.5f,20.5f},{3.5f,20.5f},{3.5f,3.5f}});
+        path({{7.5f,3.5f},{7.5f,8},{15,8},{15,3.5f}}); path({{7,20.5f},{7,13.5f},{17,13.5f},{17,20.5f}}); break;
+    case Icon::Unlock: box(4,10,20,21); begin(7,10); to(7,7); arcto(16.9f,6,5,false,true); end();
+        line(12,14,12,17); break;
+    case Icon::Eject: path({{12,4},{20,13},{4,13},{12,4}}); line(4,18.5f,20,18.5f); break;
+    case Icon::Skip: path({{5,6},{11,12},{5,18}}); path({{12,6},{18,12},{12,18}}); break;
+    case Icon::Disconnect: box(3.5f,13,20.5f,20,2); dot(7.2f,16.5f,1.15f); line(9,3.5f,15,9.5f); line(15,3.5f,9,9.5f); break;
+    case Icon::Music: path({{9,17.5f},{9,5},{19.5f,3},{19.5f,15.5f}}); circle(6.5f,17.5f,2.5f); circle(17,15.5f,2.5f); break;
+    case Icon::Wrench: begin(14.7f,6.3f); arcto(14.7f,7.7f,1,false,false); to(16.3f,9.3f); arcto(17.7f,9.3f,1,false,false);
+        to(21.47f,5.53f); arcto(13.53f,13.47f,6,false,true); to(6.62f,20.38f); arcto(3.62f,17.38f,2.12f,false,true);
+        to(10.53f,10.47f); arcto(18.47f,2.53f,6,false,true); end(true); break;
+    case Icon::Timer: circle(12,13.5f,7.5f); path({{12,10},{12,13.5f},{14.5f,15}}); line(10,2.5f,14,2.5f);
+        line(12,2.5f,12,6); break;
+    case Icon::Help: circle(12,12,9); begin(9.3f,9.5f); curve(9.5f,8,10.6f,7,12.1f,7); curve(13.7f,7,14.9f,8.1f,14.9f,9.5f);
+        curve(14.9f,11.6f,12,11.9f,12,13.8f); end(); dot(12,16.8f,1); break;
+    case Icon::Puzzle: begin(4,8); to(8.5f,8); arcto(12.5f,8,2.4f,true,true); to(17,8); to(17,11.5f);
+        arcto(17,15.5f,2.4f,true,true); to(17,20.5f); to(4,20.5f); end(true); break;
     case Icon::PinBadge: begin(8.5f,3); to(15.5f,3); to(14.5f,9); to(18,12.5f); to(6,12.5f); to(9.5f,9);
         end(true); begin(12,12.5f); to(12,21); end(); break;
     default: break;
@@ -618,7 +733,25 @@ inline ID2D1PathGeometry* GeometryFor(ID2D1RenderTarget* target, Icon icon) noex
 
 inline bool Draw(ID2D1RenderTarget* target, ID2D1Brush* brush,
                   ID2D1StrokeStyle* stroke, Icon icon, D2D1_RECT_F bounds,
-                  float opacity = 1.0f, float width = kStroke) noexcept {
+                  float opacity = 1.0f, float width = kStroke) noexcept;
+
+// For callers that draw a Segoe glyph as text: its command icon at about the
+// size `font_size` draws the glyph, centred in bounds. False = no command
+// icon, draw the glyph with the font.
+inline bool DrawGlyph(ID2D1RenderTarget* target, ID2D1Brush* brush, std::wstring_view glyph,
+                      D2D1_RECT_F bounds, float font_size) noexcept {
+    const Icon icon = FromGlyph(glyph);
+    if (icon == Icon::None || !target || !brush) return false;
+    ID2D1StrokeStyle* stroke = nullptr;
+    CreateStrokeStyle(target, &stroke);
+    const bool drawn = Draw(target, brush, stroke, icon, CenteredBounds(bounds, font_size * 1.2f));
+    if (stroke) stroke->Release();
+    return drawn;
+}
+
+inline bool Draw(ID2D1RenderTarget* target, ID2D1Brush* brush,
+                  ID2D1StrokeStyle* stroke, Icon icon, D2D1_RECT_F bounds,
+                  float opacity, float width) noexcept {
     if (!target || !brush || icon <= Icon::None || icon >= Icon::Count) return false;
     const float side = (std::min)(bounds.right - bounds.left, bounds.bottom - bounds.top);
     if (!std::isfinite(side) || side <= 0.0f || !std::isfinite(opacity) ||

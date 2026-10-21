@@ -18,6 +18,7 @@
 // to the pointer and vanish on release.
 #include "drag_drop.h"
 #include "ui_motion.h"
+#include "command_icons.h"
 
 #include <windows.h>
 #include <d2d1.h>
@@ -796,8 +797,9 @@ void DragStack::DrawCard(const Card& c, bool lead, float dx, float dy, float sca
         brush_->SetColor(dark_ ? Rgba(0x2F2F2F, 1.0f) : Rgba(0xFFFFFF, 1.0f));
         rt_->DrawEllipse(e, brush_.Get(), 2.0f * s_);
         brush_->SetColor((solid || !accent_light_) ? D2D1::ColorF(0xFFFFFF) : D2D1::ColorF(0x111111));
-        rt_->DrawText(glyph, 1, glyph_fmt_.Get(),
-                       D2D1::RectF(gc.x - gr, gc.y - gr, gc.x + gr, gc.y + gr), brush_.Get());
+        const D2D1_RECT_F badge = D2D1::RectF(gc.x - gr, gc.y - gr, gc.x + gr, gc.y + gr);
+        if (!command_icons::DrawGlyph(rt_.Get(), brush_.Get(), glyph, badge, 9.0f * s_))
+            rt_->DrawText(glyph, 1, glyph_fmt_.Get(), badge, brush_.Get());
     }
 }
 

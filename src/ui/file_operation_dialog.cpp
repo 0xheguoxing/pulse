@@ -674,8 +674,7 @@ private:
         const auto thumb = Rect(s, cx + 12, y + 28, 40, 50);
         FillGradientTile(dc, thumb, ScaleDip(s, 7.0f), top, bottom);
         if (directory) {
-            painter_.DrawText(L"\xE8B7", thumb, big_glyph_format_.get(), fade(HexColor(0xFFFFFF, 0.92f)),
-                              fluent::HorizontalAlignment::Center);
+            painter_.DrawGlyphWithFormat(L"\xE8B7", thumb, fade(HexColor(0xFFFFFF, 0.92f)), big_glyph_format_.get());
         } else {
             // Folded corner.
             auto factory = FactoryOf(dc);
@@ -786,7 +785,7 @@ private:
         const float y = kActionsTop + index * (kActionH + 6.0f);
         const auto icon = Rect(s, 32, y + 11, 30, 30);
         painter_.FillRoundedRect(icon, ScaleDip(s, 9.0f), WithAlpha(tone, dark_ ? 0.16f : 0.13f));
-        painter_.DrawText(glyph, icon, glyph_format_.get(), tone, fluent::HorizontalAlignment::Center);
+        painter_.DrawGlyphWithFormat(glyph, icon, tone, glyph_format_.get());
         const float title_w = TextWidth(compositor_.DwriteFactory(), name_format_.get(), title) / s;
         painter_.DrawText(title, Rect(s, 74, y + 8, title_w + 2, 20), name_format_.get(), theme.text);
         if (!recommend.empty()) {
@@ -832,7 +831,7 @@ private:
         // Header: tile, headline, where it happened, n / m.
         const auto tile = Rect(s, 20, 46, 38, 38);
         painter_.FillRoundedRect(tile, ScaleDip(s, 11.0f), WithAlpha(violet, dark_ ? 0.16f : 0.13f));
-        painter_.DrawText(L"\xE8AB", tile, big_glyph_format_.get(), violet, fluent::HorizontalAlignment::Center);
+        painter_.DrawGlyphWithFormat(L"\xE8AB", tile, violet, big_glyph_format_.get());
         float head_right = kConflictW - 20.0f;
         if (Total() > 1) {
             const std::wstring count = l10n::Get(l10n::StringId::OpConflictCountLead) +
@@ -859,7 +858,7 @@ private:
         DrawCompareCard(theme, 1);
         const auto vs = Rect(s, kConflictW * 0.5f - 13, kCompareTop + kCompareH * 0.5f - 13, 26, 26);
         painter_.FillRoundedRect(vs, ScaleDip(s, 13.0f), dark_ ? HexColor(0xFFFFFF, 0.08f) : HexColor(0x000000, 0.06f));
-        painter_.DrawText(L"\xE8AB", vs, glyph_format_.get(), faint, fluent::HorizontalAlignment::Center);
+        painter_.DrawGlyphWithFormat(L"\xE8AB", vs, faint, glyph_format_.get());
 
         // Choices.
         const bool files = Files();
@@ -1321,8 +1320,7 @@ private:
         FillGradientTile(dc, box, ScaleDip(s, 7.0f), top, bottom);
         StrokeRoundedRect(dc, box, ScaleDip(s, 7.0f), HexColor(0xFFFFFF, 0.08f), 1.0f);
         if (item.directory) {
-            painter_.DrawText(L"\xE8B7", box, thumb_glyph_format_.get(), HexColor(0xFFFFFF, 0.92f),
-                              fluent::HorizontalAlignment::Center);
+            painter_.DrawGlyphWithFormat(L"\xE8B7", box, HexColor(0xFFFFFF, 0.92f), thumb_glyph_format_.get());
             return;
         }
         auto factory = FactoryOf(dc);
@@ -1456,7 +1454,7 @@ private:
 
         const auto tile = Rect(s, 20, 46, 38, 38);
         painter_.FillRoundedRect(tile, ScaleDip(s, 11.0f), WithAlpha(bad, dark_ ? 0.16f : 0.12f));
-        painter_.DrawText(L"\xE74D", tile, glyph_format_.get(), bad, fluent::HorizontalAlignment::Center);
+        painter_.DrawGlyphWithFormat(L"\xE74D", tile, bad, glyph_format_.get());
         DrawEllipsizedText(compositor_, head_format_.get(), Rect(s, 70, 44, kW - 90, 24), Headline(), theme.text);
         DrawEllipsizedText(compositor_, sub_format_.get(), Rect(s, 70, 67, kW - 90, 18), Summary(), theme.text_secondary);
 
@@ -1465,8 +1463,7 @@ private:
         const size_t rows = items_.size() + (info_.paths.size() > items_.size() ? 1 : 0);
         float y = kStackTop + (84.0f - rows * 21.0f) * 0.5f;
         for (const Item& item : items_) {
-            painter_.DrawText(item.directory ? L"\xE8B7" : L"\xE8A5", Rect(s, 130, y, 14, 21), small_glyph_format_.get(),
-                              item.directory ? HexColor(0xE9B949) : theme.text_secondary, fluent::HorizontalAlignment::Center);
+            painter_.DrawGlyphWithFormat(item.directory ? L"\xE8B7" : L"\xE8A5", Rect(s, 130, y, 14, 21), item.directory ? HexColor(0xE9B949) : theme.text_secondary, small_glyph_format_.get());
             const std::wstring size = item.directory ? l10n::Get(l10n::StringId::Folder)
                                     : item.sized ? pulse::format::ByteSize(item.bytes) : std::wstring();
             const float size_w = size.empty() ? 0.0f : TextWidth(compositor_.DwriteFactory(), meta_format_.get(), size) / s;
@@ -1484,8 +1481,7 @@ private:
 
         const auto warn = Rect(s, 20, kWarnTop, kW - 40, 36);
         painter_.FillRoundedRect(warn, ScaleDip(s, 9.0f), WithAlpha(bad, dark_ ? 0.14f : 0.10f));
-        painter_.DrawText(L"\xE7BA", Rect(s, 30, kWarnTop, 18, 36), small_glyph_format_.get(), bad,
-                          fluent::HorizontalAlignment::Center);
+        painter_.DrawGlyphWithFormat(L"\xE7BA", Rect(s, 30, kWarnTop, 18, 36), bad, small_glyph_format_.get());
         const std::wstring warn_text = l10n::Get(l10n::StringId::PermDeleteWarn);
         const float warn_w = TextWidth(compositor_.DwriteFactory(), warn_format_.get(), warn_text) / s;
         painter_.DrawText(warn_text, Rect(s, 54, kWarnTop, warn_w + 2, 36), warn_format_.get(), bad);
@@ -2020,7 +2016,7 @@ private:
 
         const auto tile = Rect(s, 20, 46, 38, 38);
         painter_.FillRoundedRect(tile, ScaleDip(s, 11.0f), WithAlpha(warn, dark_ ? 0.16f : 0.13f));
-        painter_.DrawText(L"\xE72E", tile, glyph_format_.get(), warn, fluent::HorizontalAlignment::Center);
+        painter_.DrawGlyphWithFormat(L"\xE72E", tile, warn, glyph_format_.get());
         DrawEllipsizedText(compositor_, head_format_.get(), Rect(s, 70, 44, kW - 90, 24),
                            l10n::Get(l10n::StringId::LockHeadline), theme.text);
         DrawEllipsizedText(compositor_, sub_format_.get(), Rect(s, 70, 67, kW - 90, 18),
@@ -2056,7 +2052,7 @@ private:
                 const float cy = (icon.top + icon.bottom) * 0.5f;
                 dc->DrawBitmap(bitmap, D2D1::RectF(cx - half, cy - half, cx + half, cy + half), gone_[i] ? 0.55f : 1.0f);
             } else {
-                painter_.DrawText(L"\xECAA", icon, app_glyph_format_.get(), theme.text_secondary, fluent::HorizontalAlignment::Center);
+                painter_.DrawGlyphWithFormat(L"\xECAA", icon, theme.text_secondary, app_glyph_format_.get());
             }
             const std::wstring name = !owner.app_name.empty() ? owner.app_name
                                     : !owner.image_name.empty() ? owner.image_name : L"PID " + std::to_wstring(owner.pid);
@@ -2854,9 +2850,7 @@ void FileOperationWindow::Render() {
     const auto tile = Rect(s, kPadX, 14, 40, 40);
     if (high_contrast) painter_.FillRoundedRect(tile, ScaleDip(s, 11.0f), theme.accent);
     else FillGradientTile(dc, tile, ScaleDip(s, 11.0f), tile_top, tile_bottom);
-    painter_.DrawText(tile_glyph, tile, tile_glyph_format_.get(),
-                      high_contrast ? theme.accent_text : HexColor(0xFFFFFF),
-                      fluent::HorizontalAlignment::Center);
+    painter_.DrawGlyphWithFormat(tile_glyph, tile, high_contrast ? theme.accent_text : HexColor(0xFFFFFF), tile_glyph_format_.get());
 
     const uint64_t item_count = status_.total_items > 0 ? status_.total_items
         : (std::max)(status_.completed_items, static_cast<uint64_t>(1));
@@ -2914,8 +2908,7 @@ void FileOperationWindow::Render() {
         const auto chip = Rect(s, x, 37, w, 21);
         painter_.FillRoundedRect(chip, ScaleDip(s, 6.0f), well);
         painter_.StrokeRoundedRect(chip, ScaleDip(s, 6.0f), well_line);
-        painter_.DrawText(L"\xE8B7", Rect(s, x + 4, 37, 16, 21), glyph_format_.get(), folder,
-                          fluent::HorizontalAlignment::Center);
+        painter_.DrawGlyphWithFormat(L"\xE8B7", Rect(s, x + 4, 37, 16, 21), folder, glyph_format_.get());
         DrawEllipsizedText(compositor_, compositor_.SmallFormat(), Rect(s, x + 21, 39, w - 26, 17),
                            text, theme.text_secondary);
         return x + w;
@@ -2934,8 +2927,7 @@ void FileOperationWindow::Render() {
             else { a = half; b = half; }
         }
         const float after = draw_chip(70, a, src);
-        painter_.DrawText(L"\xE72A", Rect(s, after + 3, 37, 16, 21), glyph_format_.get(), faint,
-                          fluent::HorizontalAlignment::Center);
+        painter_.DrawGlyphWithFormat(L"\xE72A", Rect(s, after + 3, 37, 16, 21), faint, glyph_format_.get());
         draw_chip(after + 22, b, status_.destination_label);
     } else {
         draw_chip(70, dip_w - 70 - kPadX, src);
@@ -3058,8 +3050,7 @@ void FileOperationWindow::Render() {
         painter_.StrokeRoundedRect(card, ScaleDip(s, 10.0f), well_line);
         const auto badge = Rect(s, kPadX + 16, kGraphTop + 18, 36, 36);
         painter_.FillRoundedRect(badge, ScaleDip(s, 18.0f), WithAlpha(amber, 0.16f));
-        painter_.DrawText(L"\xEA18", badge, tile_glyph_format_.get(), amber,
-                          fluent::HorizontalAlignment::Center);
+        painter_.DrawGlyphWithFormat(L"\xEA18", badge, amber, tile_glyph_format_.get());
         const std::wstring explanation = requesting
             ? l10n::Get(l10n::StringId::OpAuthorizationPrompt)
             : status_.last_error.empty() ? l10n::Get(l10n::StringId::OpAuthorizationNotGranted)
@@ -3168,9 +3159,7 @@ void FileOperationWindow::Render() {
         } else {
             item_line = status_.current_item.empty() ? src : status_.current_item;
         }
-        painter_.DrawText(item_glyph, Rect(s, kPadX, kItemTop, 16, 20), glyph_format_.get(),
-                          failed ? theme.danger : completed ? green : theme.text_secondary,
-                          fluent::HorizontalAlignment::Center);
+        painter_.DrawGlyphWithFormat(item_glyph, Rect(s, kPadX, kItemTop, 16, 20), failed ? theme.danger : completed ? green : theme.text_secondary, glyph_format_.get());
         std::wstring counter;
         if (status_.total_items > 0 && !failed)
             counter = pulse::format::GroupedInt(status_.completed_items) + L" / " +
@@ -3215,9 +3204,7 @@ void FileOperationWindow::Render() {
                 }
                 const bool done = row.state == FailureRow::State::Done;
                 const float alpha = done ? 0.6f : 1.0f;
-                painter_.DrawText(done ? L"\xE73E" : L"\xE7BA", Rect(s, kPadX + 6, y, 20, kFailRowH),
-                                  glyph_format_.get(), WithAlpha(done ? green : bad, alpha),
-                                  fluent::HorizontalAlignment::Center);
+                painter_.DrawGlyphWithFormat(done ? L"\xE73E" : L"\xE7BA", Rect(s, kPadX + 6, y, 20, kFailRowH), WithAlpha(done ? green : bad, alpha), glyph_format_.get());
                 const std::wstring name = LeafName(row.failure.source);
                 const float name_w = (std::min)(150.0f, TextWidth(factory, chip_format_.get(), name) / s + 2.0f);
                 DrawEllipsizedText(compositor_, chip_format_.get(), Rect(s, kPadX + 30, y, name_w, kFailRowH),

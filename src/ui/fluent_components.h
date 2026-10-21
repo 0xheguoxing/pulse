@@ -373,6 +373,9 @@ struct EmptyStateSpec {
 class Painter {
     friend struct PainterTestPeer;
 public:
+    // A glyph at `format`'s size: its command icon when it has one, else the font.
+    void DrawGlyphWithFormat(std::wstring_view glyph, const D2D1_RECT_F& bounds,
+                             const D2D1_COLOR_F& color, IDWriteTextFormat* format);
     explicit Painter(Compositor* compositor = nullptr) noexcept;
 
     void SetCompositor(Compositor* compositor) noexcept;
@@ -526,8 +529,6 @@ private:
                            HorizontalAlignment alignment = HorizontalAlignment::Left);
     void DrawGlyphWithBrush(std::wstring_view glyph, const D2D1_RECT_F& bounds,
                             BrushId brush);
-    void DrawGlyphWithFormat(std::wstring_view glyph, const D2D1_RECT_F& bounds,
-                             const D2D1_COLOR_F& color, IDWriteTextFormat* format);
     void DrawCheckMark(const D2D1_RECT_F& bounds, const D2D1_COLOR_F& color);
     void DrawPaneLayoutIcon(const D2D1_RECT_F& bounds, MenuPictogram kind,
                             const D2D1_COLOR_F& color);
