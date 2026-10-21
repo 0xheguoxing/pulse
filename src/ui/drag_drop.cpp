@@ -26,6 +26,11 @@ UINT PerformedEffectFormat() {
     return fmt;
 }
 
+UINT LogicalPerformedEffectFormat() {
+    static UINT fmt = RegisterClipboardFormatW(CFSTR_LOGICALPERFORMEDDROPEFFECT);
+    return fmt;
+}
+
 UINT FileNameWFormat() {
     static UINT fmt = RegisterClipboardFormatW(CFSTR_FILENAMEW);
     return fmt;
@@ -53,6 +58,18 @@ DWORD ReadDwordFormat(IDataObject* obj, CLIPFORMAT format) {
     }
     ReleaseStgMedium(&medium);
     return value;
+}
+
+void WriteDwordFormat(IDataObject* obj, CLIPFORMAT format, DWORD value) {
+    if (!obj) return;
+    FORMATETC fmt{ format, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+    STGMEDIUM medium{};
+    medium.tymed = TYMED_HGLOBAL;
+    medium.hGlobal = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, sizeof(DWORD));
+    if (!medium.hGlobal) return;
+    *static_cast<DWORD*>(GlobalLock(medium.hGlobal)) = value;
+    GlobalUnlock(medium.hGlobal);
+    if (FAILED(obj->SetData(&fmt, &medium, TRUE))) ReleaseStgMedium(&medium);
 }
 
 HRESULT CreateShellFilesDataObject(const std::vector<std::wstring>& paths,
@@ -467,6 +484,7 @@ bool FileDataObject::IsSupportedFormat(const FORMATETC* fmt) const {
     return fmt->cfFormat == CF_HDROP ||
            fmt->cfFormat == (CLIPFORMAT)PreferredEffectFormat() ||
            fmt->cfFormat == (CLIPFORMAT)PerformedEffectFormat() ||
+           fmt->cfFormat == (CLIPFORMAT)LogicalPerformedEffectFormat() ||
            fmt->cfFormat == (CLIPFORMAT)FileNameWFormat() ||
            fmt->cfFormat == (CLIPFORMAT)FileNameFormat() ||
            fmt->cfFormat == (CLIPFORMAT)ShellIdListFormat();
@@ -487,6 +505,8 @@ HRESULT FileDataObject::GetData(FORMATETC* fmt, STGMEDIUM* out) {
         h = RenderDword(DROPEFFECT_COPY | DROPEFFECT_MOVE);
     } else if (fmt->cfFormat == (CLIPFORMAT)PerformedEffectFormat()) {
         h = RenderDword(performed_effect_);
+    } else if (fmt->cfFormat == (CLIPFORMAT)LogicalPerformedEffectFormat()) {
+        h = RenderDword(logical_effect_);
     } else if (fmt->cfFormat == (CLIPFORMAT)FileNameWFormat()) {
         h = RenderFileNameW();
     } else if (fmt->cfFormat == (CLIPFORMAT)FileNameFormat()) {
@@ -503,12 +523,13 @@ HRESULT FileDataObject::GetData(FORMATETC* fmt, STGMEDIUM* out) {
 
 HRESULT FileDataObject::SetData(FORMATETC* fmt, STGMEDIUM* medium, BOOL release) {
     if (!fmt || !medium) return E_INVALIDARG;
+    const bool logical = fmt->cfFormat == (CLIPFORMAT)LogicalPerformedEffectFormat();
     if (fmt->cfFormat != (CLIPFORMAT)PerformedEffectFormat() &&
-        fmt->cfFormat != (CLIPFORMAT)PreferredEffectFormat())
+        fmt->cfFormat != (CLIPFORMAT)PreferredEffectFormat() && !logical)
         return DV_E_FORMATETC;
     if (medium->tymed != TYMED_HGLOBAL || !medium->hGlobal) return DV_E_TYMED;
     if (DWORD* p = static_cast<DWORD*>(GlobalLock(medium->hGlobal))) {
-        performed_effect_ = *p;
+        (logical ? logical_effect_ : performed_effect_) = *p;
         GlobalUnlock(medium->hGlobal);
     }
     if (release) ReleaseStgMedium(medium);
@@ -639,6 +660,13 @@ DWORD DoFileDragDrop(const std::vector<std::wstring>& paths, DWORD allowed_effec
     // Preferred DropEffect above keeps only the caller's copy/move, so drop
     // targets that pick a default (Explorer, Pulse) still copy or move.
     const HRESULT drag_hr = ::DoDragDrop(data, source, allowed_effects | DROPEFFECT_LINK, &effect);
+    if (effect == DROPEFFECT_NONE && drag_hr == DRAGDROP_S_DROP) {
+        // Optimized move (Pulse, Explorer): the target moved the items itself
+        // and reports NONE so that we do not delete them; it still moved.
+        const DWORD logical = fallback ? fallback->LogicalEffect()
+            : ReadDwordFormat(data, (CLIPFORMAT)LogicalPerformedEffectFormat());
+        if (logical == DROPEFFECT_MOVE) effect = DROPEFFECT_MOVE;
+    }
     if (visual) {
         // Hand off before the effect fix-up below: a drop that Explorer
         // performed asynchronously still landed, so only a refused or
@@ -740,17 +768,16 @@ HRESULT WindowDropTarget::Drop(IDataObject* obj, DWORD key_state, POINTL pt, DWO
     const DWORD preferred = PreferredDropEffect(obj);
     DWORD performed = cb_.drop ? cb_.drop(sources, ClientPoint(pt), key_state, allowed, preferred) & allowed
                                : DROPEFFECT_NONE;
-    *effect = performed;
-    // Tell the source what we did (Explorer uses this for move semantics).
-    FORMATETC fmt{ (CLIPFORMAT)PerformedEffectFormat(), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-    STGMEDIUM medium{};
-    medium.tymed = TYMED_HGLOBAL;
-    medium.hGlobal = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, sizeof(DWORD));
-    if (medium.hGlobal) {
-        *static_cast<DWORD*>(GlobalLock(medium.hGlobal)) = performed;
-        GlobalUnlock(medium.hGlobal);
-        if (FAILED(obj->SetData(&fmt, &medium, TRUE))) ReleaseStgMedium(&medium);
-    }
+    // Pulse never leaves deleting to the source: a move is queued as an ops
+    // Move that removes the originals only after their copy landed. So a move
+    // is reported as an optimized move (pdwEffect and Performed DropEffect
+    // NONE, Logical Performed DropEffect MOVE). Reporting MOVE would ask the
+    // source for an unoptimized move, and Explorer then deletes the originals
+    // while the queued move has not read them yet, e.g. Shift+drag to a share.
+    const DWORD reported = performed == DROPEFFECT_MOVE ? DROPEFFECT_NONE : performed;
+    *effect = reported;
+    WriteDwordFormat(obj, (CLIPFORMAT)PerformedEffectFormat(), reported);
+    WriteDwordFormat(obj, (CLIPFORMAT)LogicalPerformedEffectFormat(), performed);
     sources_.clear();
     return S_OK;
 }

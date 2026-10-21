@@ -69,6 +69,9 @@ public:
     static FileDataObject* Create(const std::vector<std::wstring>& paths);
 
     DWORD PerformedEffect() const { return performed_effect_; }
+    // CFSTR_LOGICALPERFORMEDDROPEFFECT: what happened from the user's view,
+    // e.g. MOVE after an optimized move that reports NONE as performed.
+    DWORD LogicalEffect() const { return logical_effect_; }
 
     IFACEMETHODIMP QueryInterface(REFIID riid, void** out) override;
     IFACEMETHODIMP_(ULONG) AddRef() override;
@@ -101,6 +104,7 @@ private:
     LONG ref_ = 1;
     std::vector<std::wstring> paths_;
     DWORD performed_effect_ = 0;
+    DWORD logical_effect_ = 0;
 };
 
 // Optional visual that follows the pointer during a file drag (the card stack
