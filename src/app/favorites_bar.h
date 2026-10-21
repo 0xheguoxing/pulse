@@ -9,6 +9,10 @@ namespace pulse {
 // Pushes the renderer flag and fills vm.favorites_bar. Called by BuildVm.
 void FillFavoritesBar(AppState& s, ui::WindowViewModel& vm);
 void ToggleFavoritesBar(AppState& s);
+// Favorites show one way at a time: while the bar (horizontal) is up, the
+// sidebar's 收藏夹 section (vertical) is hidden. The sidebar mask with that applied.
+bool FavoritesBarShown(const AppState& s);
+uint32_t SidebarHiddenMaskWithBar(const AppState& s);
 // Mouse handlers; each returns true when it consumed the hit. A click opens
 // the favorite (Ctrl: a new tab, Shift: the other pane) on release; dragging
 // it along the bar reorders (the toolbar pins' motion), down and out removes

@@ -2597,7 +2597,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     UpdateWallHint(s);
     ui::WindowViewModel vm = app::BuildWindowViewModel(*s.pane, s.sidebar,
         s.pane->focused, s.maximized, s.darkMode, &s.places, s.sidebarCollapsedMask,
-        s.sidebarHiddenMask, s.starredExpanded, &s.sidebarOrder,
+        SidebarHiddenMaskWithBar(s), s.starredExpanded, &s.sidebarOrder,
         s.sidebarQuickAccessHiddenMask);
     if (const app::Tab* tab = ActiveTab(s)) FillWallHint(*tab, vm.pane);  // photo wall suggestion
     app::FillWindowTabStrip(vm, s.window_tabs);

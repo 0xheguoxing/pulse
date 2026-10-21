@@ -9,6 +9,7 @@
 #include "quick_access.h"
 #include "tag_manager.h"
 #include "tag_library.h"
+#include "favorites_bar.h"
 #include "../common/localization.h"
 #include "../ui/fluent_menu.h"
 
@@ -77,13 +78,23 @@ void ToggleSidebarSection(AppState& s, int group) {
     }
 }
 
+// Shows or hides a section as the user sees it: ticking 收藏夹 while the
+// favorites bar is up moves the list back to the sidebar.
+void ToggleSidebarSectionShown(AppState& s, int group) {
+    if (group == static_cast<int>(app::SidebarSectionId::Starred) && FavoritesBarShown(s)) {
+        ToggleFavoritesBar(s);
+        return;
+    }
+    ToggleSidebarSection(s, group);
+}
+
 void SetEverySidebarSectionCollapsed(AppState& s, bool collapsed) {
     s.sidebarCollapsedMask = collapsed ? (1u << kSectionCount) - 1u : 0u;
 }
 
 void ShowSidebarSectionsMenu(AppState& s, POINT screen_pt) {
     if (!EnsureMenu(s)) return;
-    const uint32_t hidden = s.sidebarHiddenMask;
+    const uint32_t hidden = SidebarHiddenMaskWithBar(s);
     std::vector<ui::FluentMenuItem> items;
     items.reserve(kSectionCount + 2);
     // Listed in display order, so the menu matches the sidebar after a reorder.
@@ -109,7 +120,7 @@ void ShowSidebarSectionsMenu(AppState& s, POINT screen_pt) {
 
     const int command = s.menu->TrackPopup(screen_pt, std::move(items));
     if (command >= kToggleBase && command < kToggleBase + kSectionCount) {
-        ToggleSidebarSection(s, command - kToggleBase);
+        ToggleSidebarSectionShown(s, command - kToggleBase);
     } else if (command == kExpandAll) {
         SetEverySidebarSectionCollapsed(s, false);
     } else if (command == kCollapseAll) {
@@ -205,8 +216,9 @@ void ShowSidebarSectionMenu(AppState& s, int section, POINT screen_pt) {
     // #80: hidden sections come back from any section menu too, not only from
     // the empty space below the sections, which a full sidebar may not have.
     ui::FluentMenuItem restore;
+    const uint32_t hidden = SidebarHiddenMaskWithBar(s);
     for (int id : app::NormalizeSidebarOrder(s.sidebarOrder)) {
-        if (((s.sidebarHiddenMask >> id) & 1u) == 0) continue;
+        if (((hidden >> id) & 1u) == 0) continue;
         ui::FluentMenuItem item;
         item.command = kToggleBase + id;
         item.text = SectionTitle(id);
@@ -254,8 +266,8 @@ void ShowSidebarSectionMenu(AppState& s, int section, POINT screen_pt) {
     } else if (command == kHideSection) {
         s.sidebarHiddenMask |= 1u << section;
     } else if (command >= kToggleBase && command < kToggleBase + kSectionCount) {
-        if (((s.sidebarHiddenMask >> (command - kToggleBase)) & 1u) != 0)
-            ToggleSidebarSection(s, command - kToggleBase);
+        if (((hidden >> (command - kToggleBase)) & 1u) != 0)
+            ToggleSidebarSectionShown(s, command - kToggleBase);
     } else {
         return;
     }

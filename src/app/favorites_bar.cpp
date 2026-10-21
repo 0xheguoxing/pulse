@@ -560,8 +560,20 @@ void FillFavoritesBar(AppState& s, ui::WindowViewModel& vm) {
         vm.favorites_bar_focus = std::min(g_key.slot, static_cast<int>(vm.favorites_bar.size()));
 }
 
+bool FavoritesBarShown(const AppState& s) {
+    return s.appPrefs.favorites_bar && !s.renderer.Embedded();
+}
+
+uint32_t SidebarHiddenMaskWithBar(const AppState& s) {
+    const uint32_t starred = 1u << static_cast<int>(app::SidebarSectionId::Starred);
+    return s.sidebarHiddenMask | (FavoritesBarShown(s) ? starred : 0u);
+}
+
 void ToggleFavoritesBar(AppState& s) {
     s.appPrefs.favorites_bar = !s.appPrefs.favorites_bar;
+    // Leaving the bar brings the list back vertically in the sidebar.
+    if (!s.appPrefs.favorites_bar)
+        s.sidebarHiddenMask &= ~(1u << static_cast<int>(app::SidebarSectionId::Starred));
     s.renderer.SetFavoritesBar(s.appPrefs.favorites_bar && !s.renderer.Embedded());
     SaveAndRepaint(s);
 }
