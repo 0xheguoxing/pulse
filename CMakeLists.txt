@@ -579,6 +579,12 @@ target_link_libraries(pulse_content PRIVATE advapi32 shlwapi ole32 shell32 bcryp
     pulse_crash_reporter pulse_text)
 pulse_add_version_resource(pulse_content "Pulse content search agent" "Pulse.Content" "Pulse.Content.exe")
 
+# ---- Pulse.AI.exe: MCP server and AI assistant host, shipped in the AI enhancement pack ----
+add_executable(pulse_ai src/ai_host/main.cpp)
+target_include_directories(pulse_ai PRIVATE "${CMAKE_BINARY_DIR}/generated")
+set_target_properties(pulse_ai PROPERTIES OUTPUT_NAME "Pulse.AI")
+pulse_add_version_resource(pulse_ai "Pulse AI and MCP host" "Pulse.AI" "Pulse.AI.exe")
+
 # ---- Stage 1B-1 ops self test (console; drives pulse_shell.exe over the pipe) ----
 add_executable(pulse_operation_presentation_test src/bench/operation_presentation_test.cpp)
 add_executable(pulse_column_strip_test src/bench/column_strip_test.cpp src/ui/column_strip_layout.cpp)
@@ -1135,6 +1141,33 @@ if(TARGET pulse)
     add_dependencies(pulse pulse_content_pack)
     target_sources(pulse PRIVATE "${PULSE_CONTENT_PACK_CATALOG}")
     target_include_directories(pulse PRIVATE "${CMAKE_BINARY_DIR}/generated")
+endif()
+
+# The AI enhancement pack: Pulse.AI.exe as an LZMS release asset in
+# build/ai-pack and the catalog pulse.exe checks it against, like the content
+# pack above (same channel, same release).
+set(PULSE_AI_PACK_DIR "${CMAKE_BINARY_DIR}/ai-pack")
+set(PULSE_AI_PACK_CATALOG "${CMAKE_BINARY_DIR}/generated/ai_pack_catalog.h")
+add_custom_command(OUTPUT "${PULSE_AI_PACK_CATALOG}"
+    COMMAND pulse_pack_catalog --key ai --symbol Ai --version "${PULSE_VERSION}"
+        --channel "${PULSE_CONTENT_PACK_CHANNEL}"
+        --base-url "https://github.com/jimmgreen/pulse/releases/download/v${PULSE_VERSION}/"
+        --out-dir "${PULSE_AI_PACK_DIR}" --header "${PULSE_AI_PACK_CATALOG}"
+        "$<TARGET_FILE:pulse_ai>"
+    DEPENDS pulse_pack_catalog pulse_ai "$<TARGET_FILE:pulse_ai>"
+    COMMENT "AI enhancement pack catalog"
+    VERBATIM)
+add_custom_target(pulse_ai_pack DEPENDS "${PULSE_AI_PACK_CATALOG}")
+add_executable(pulse_ai_pack_test src/bench/ai_pack_test.cpp src/app/ai_pack.cpp src/app/content_pack.cpp
+    src/app/pack_installer.cpp src/app/update_installer.cpp src/app/update_transport.cpp
+    src/app/update_download_cleanup.cpp)
+target_compile_definitions(pulse_ai_pack_test PRIVATE PULSE_AI_PACK_NO_CATALOG=1 PULSE_CONTENT_PACK_NO_CATALOG=1)
+target_include_directories(pulse_ai_pack_test PRIVATE "${CMAKE_BINARY_DIR}/generated")
+target_link_libraries(pulse_ai_pack_test PRIVATE pulse_runtime_log bcrypt cabinet shell32 user32 winhttp crypt32 advapi32)
+add_dependencies(pulse_ai_pack_test pulse_pack_catalog pulse_ai)
+if(TARGET pulse)
+    add_dependencies(pulse pulse_ai_pack)
+    target_sources(pulse PRIVATE "${PULSE_AI_PACK_CATALOG}")
 endif()
 
 add_executable(pulse_office_ooxml_test src/bench/office_ooxml_test.cpp src/index/office_ooxml.cpp)
