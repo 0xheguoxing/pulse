@@ -955,6 +955,57 @@ bool TestThisPc() {
     return passed;
 }
 
+// #58-7: Large icons -> List -> the icons button returns to Large icons in
+// that folder, also after a restart; other folders fall back to the last one.
+bool TestLastIconView() {
+    using pulse::ui::ViewMode;
+    bool passed = true;
+    pulse::app::AppPrefs prefs;
+    prefs.persist = false;
+    auto& views = prefs.folder_views;
+    passed &= Report("last icon: nothing known before an icon view is chosen",
+        !views.FindLastIcon(L"C:\\Photos"));
+    views.Set(L"C:\\Photos", ViewMode::LargeIcons);
+    const bool large = views.SetLastIcon(L"C:\\Photos", ViewMode::LargeIcons, 0.0f);
+    views.Set(L"C:\\Photos", ViewMode::List);
+    const auto photos = views.FindLastIcon(L"C:\\Photos\\");
+    passed &= Report("last icon: List keeps the folder's Large icons",
+        large && views.Find(L"C:\\Photos") == ViewMode::List && photos &&
+        photos->mode == ViewMode::LargeIcons && photos->dip == 0.0f &&
+        !views.SetLastIcon(L"C:\\Photos", ViewMode::LargeIcons, 0.0f) &&
+        !views.SetLastIcon(L"C:\\Photos", ViewMode::List, 0.0f));
+    views.SetIconDip(L"D:\\Work", 120.0f);
+    views.SetLastIcon(L"D:\\Work", ViewMode::LargeIcons, 120.0f);
+    const auto work = views.FindLastIcon(L"D:\\Work");
+    const auto other = views.FindLastIcon(L"E:\\Elsewhere");
+    passed &= Report("last icon: sizes stay per folder, others get the last one",
+        work && work->dip == 120.0f && other && other->mode == ViewMode::LargeIcons &&
+        other->dip == 120.0f);
+    views.SetLastIcon(L"pulse:recent", ViewMode::ExtraLargeIcons, 0.0f);
+    const auto after_virtual = views.FindLastIcon(L"C:\\Photos");
+    passed &= Report("last icon: virtual views only move the fallback",
+        after_virtual && after_virtual->mode == ViewMode::LargeIcons &&
+        views.FindLastIcon(L"E:\\Elsewhere")->mode == ViewMode::ExtraLargeIcons);
+    pulse::app::AppPrefs reloaded;
+    reloaded.persist = false;
+    reloaded.FromJson(prefs.ToJson());
+    const auto restored = reloaded.folder_views.FindLastIcon(L"C:\\Photos");
+    const auto restored_fallback = reloaded.folder_views.FindLastIcon(L"F:\\New");
+    passed &= Report("last icon: survives a restart",
+        restored && restored->mode == ViewMode::LargeIcons &&
+        restored_fallback && restored_fallback->mode == ViewMode::ExtraLargeIcons &&
+        reloaded.folder_views.Find(L"C:\\Photos") == ViewMode::List);
+    reloaded.folder_views.ApplyToAll(ViewMode::Details);
+    const auto cleared = reloaded.folder_views.FindLastIcon(L"C:\\Photos");
+    passed &= Report("last icon: apply to all folders drops per-folder ones",
+        cleared && cleared->mode == ViewMode::ExtraLargeIcons);
+    reloaded.FromJson(L"{\"folder_icon_mode\":[\"9|C:\\\\X\",\"3\",\"2|pulse:recent\"],"
+                      L"\"folder_icon_last_mode\":5}");
+    passed &= Report("last icon: malformed entries are ignored",
+        !reloaded.folder_views.FindLastIcon(L"C:\\X"));
+    return passed;
+}
+
 static bool TestLayoutActivePane() {
     using namespace pulse::app;
     LayoutTab tab;
@@ -2661,6 +2712,7 @@ int wmain(int argc, wchar_t** argv) {
     passed &= TestDefaultFileManager();
     passed &= TestShellWindowPlan();
     passed &= TestThisPc();
+    passed &= TestLastIconView();
     passed &= TestToolbarApps();
     passed &= TestPackAutoUpdate();
     passed &= Report("menu row height sits 4 DIP under list density (28/34/40 -> 26/30/36, clamped)",

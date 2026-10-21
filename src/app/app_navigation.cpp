@@ -1308,6 +1308,11 @@ void StartLoadingPath(AppState& s, app::Tab& tab, const std::wstring& path, Path
         if (icons) {
             tab.last_icon_mode = mode;
             tab.last_icon_dip = icon_dip;
+        } else if (const auto last = s.appPrefs.folder_views.FindLastIcon(normalized)) {
+            // Details / List here: the icons button returns to this folder's
+            // (else the last) icon size, also after a restart.
+            tab.last_icon_mode = last->mode;
+            tab.last_icon_dip = last->dip;
         }
         tab.scroll_x = 0.0f;
         // Sort order is remembered per folder (#26); sessions never stored it,

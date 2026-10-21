@@ -3489,6 +3489,7 @@ void ApplyViewMode(AppState& s, ui::ViewMode mode, float icon_dip, const POINT* 
     if (icons) {
         save = s.appPrefs.folder_views.SetIconDip(tab->current_path, icon_dip) || save;
         if (wall >= 0) save = s.appPrefs.folder_views.SetWall(tab->current_path, to_wall) || save;
+        save = s.appPrefs.folder_views.SetLastIcon(tab->current_path, mode, icon_dip) || save;
         tab->last_icon_mode = mode;
         tab->last_icon_dip = icon_dip;
     }

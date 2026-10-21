@@ -27,6 +27,15 @@ std::wstring JsonKey(ui::ViewMode mode) {
 constexpr wchar_t kIconDipKey[] = L"folder_icon_dip";
 // Photo walls: the folders' paths, This PC as an empty one.
 constexpr wchar_t kWallKey[] = L"folder_wall";
+// Last icon views: "<mode index>|<path>" strings, This PC as an empty path;
+// the global one as two ints. Older builds ignore all three keys.
+constexpr wchar_t kIconModeKey[] = L"folder_icon_mode";
+constexpr wchar_t kLastIconModeKey[] = L"folder_icon_last_mode";
+constexpr wchar_t kLastIconDipKey[] = L"folder_icon_last_dip";
+
+int StoredDip(float dip) {
+    return dip > 0.0f ? static_cast<int>(std::clamp(dip, ui::kMinIconDip, 512.0f) + 0.5f) : 0;
+}
 
 } // namespace
 
@@ -94,10 +103,38 @@ bool FolderViewPrefs::SetWall(const std::wstring& path, bool wall) {
     return walls_.try_emplace(key, true).second;
 }
 
+std::optional<FolderViewPrefs::LastIcon> FolderViewPrefs::FindLastIcon(const std::wstring& path) const {
+    const auto key = path.empty() ? std::wstring() : FolderPrefKey(path);
+    if (!key.empty() || path.empty()) {
+        const auto it = icon_modes_.find(key);
+        if (it != icon_modes_.end()) return LastIcon{it->second, FindIconDip(path).value_or(0.0f)};
+    }
+    return last_icon_;
+}
+
+bool FolderViewPrefs::SetLastIcon(const std::wstring& path, ui::ViewMode mode, float dip) {
+    if (!ui::IsZoomIconMode(mode)) return false;
+    bool changed = false;
+    const LastIcon last{mode, static_cast<float>(StoredDip(dip))};
+    if (!last_icon_ || last_icon_->mode != last.mode || last_icon_->dip != last.dip) {
+        last_icon_ = last;
+        changed = true;
+    }
+    const auto key = path.empty() ? std::wstring() : FolderPrefKey(path);
+    if (key.empty() && !path.empty()) return changed;
+    const auto [it, inserted] = icon_modes_.try_emplace(key, mode);
+    if (inserted || it->second != mode) {
+        it->second = mode;
+        changed = true;
+    }
+    return changed;
+}
+
 void FolderViewPrefs::ApplyToAll(ui::ViewMode mode) {
     views_.clear();
     std::erase_if(icon_dips_, [](const auto& item) { return !item.first.empty(); });
     std::erase_if(walls_, [](const auto& item) { return !item.first.empty(); });
+    std::erase_if(icon_modes_, [](const auto& item) { return !item.first.empty(); });
     default_ = ui::ViewModeFromIndex(ui::ViewModeIndex(mode));
 }
 
@@ -144,6 +181,24 @@ void FolderViewPrefs::AppendJson(std::wstring& out) const {
         out += L"\"";
     }
     out += L"]";
+    out += L",\n  \"";
+    out += kIconModeKey;
+    out += L"\":[";
+    bool first_mode = true;
+    for (const auto& [path, mode] : icon_modes_) {
+        if (!first_mode) out += L",";
+        first_mode = false;
+        out += L"\"";
+        json::Escape(std::to_wstring(ui::ViewModeIndex(mode)) + L"|" + path, out);
+        out += L"\"";
+    }
+    out += L"]";
+    out += L",\n  \"";
+    out += kLastIconModeKey;
+    out += L"\":" + std::to_wstring(last_icon_ ? ui::ViewModeIndex(last_icon_->mode) : -1);
+    out += L",\n  \"";
+    out += kLastIconDipKey;
+    out += L"\":" + std::to_wstring(last_icon_ ? StoredDip(last_icon_->dip) : 0);
 }
 
 void FolderViewPrefs::ReadJson(const std::wstring& input) {
@@ -169,6 +224,18 @@ void FolderViewPrefs::ReadJson(const std::wstring& input) {
         if (digits) SetIconDip(item.substr(bar + 1), static_cast<float>(dip));
     }
     for (const auto& path : json::ExtractStringArray(input, kWallKey)) SetWall(path, true);
+    for (const auto& item : json::ExtractStringArray(input, kIconModeKey)) {
+        if (item.size() < 2 || item[1] != L'|' || item[0] < L'0' || item[0] > L'7') continue;
+        const auto mode = ui::ViewModeFromIndex(item[0] - L'0');
+        const std::wstring path = item.substr(2);
+        const auto key = path.empty() ? std::wstring() : FolderPrefKey(path);
+        if (ui::IsZoomIconMode(mode) && (!key.empty() || path.empty())) icon_modes_[key] = mode;
+    }
+    const int last_mode = json::ExtractInt(input, kLastIconModeKey, -1);
+    if (last_mode >= 0 && last_mode < 8 && ui::IsZoomIconMode(ui::ViewModeFromIndex(last_mode))) {
+        const int dip = json::ExtractInt(input, kLastIconDipKey, 0);
+        last_icon_ = LastIcon{ui::ViewModeFromIndex(last_mode), static_cast<float>(StoredDip(static_cast<float>(dip)))};
+    }
 }
 
 } // namespace pulse::app
