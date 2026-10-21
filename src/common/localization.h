@@ -2593,6 +2593,19 @@ enum class StringId : UINT {
     AiPackRemoveFailed = IDS_AI_PACK_REMOVE_FAILED,
     AiPackRemoved = IDS_AI_PACK_REMOVED,
     AiUndoCreateZip = IDS_AI_UNDO_CREATE_ZIP,
+    AiConnectTitle = IDS_AI_CONNECT_TITLE,
+    AiConnectMessage = IDS_AI_CONNECT_MESSAGE,
+    AiConnectAllow = IDS_AI_CONNECT_ALLOW,
+    AiConnectSession = IDS_AI_CONNECT_SESSION,
+    AiDeny = IDS_AI_DENY,
+    AiConnectNote = IDS_AI_CONNECT_NOTE,
+    AiCreateZipTitle = IDS_AI_CREATE_ZIP_TITLE,
+    AiCreateZipMessage = IDS_AI_CREATE_ZIP_MESSAGE,
+    AiCreateMore = IDS_AI_CREATE_MORE,
+    AiCreateAllow = IDS_AI_CREATE_ALLOW,
+    AiCreateAlways = IDS_AI_CREATE_ALWAYS,
+    AiCreateNote = IDS_AI_CREATE_NOTE,
+    AiCreateGenericMessage = IDS_AI_CREATE_GENERIC_MESSAGE,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

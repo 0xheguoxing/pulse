@@ -2598,5 +2598,18 @@
 #define IDS_AI_PACK_REMOVE_FAILED                                                        3807
 #define IDS_AI_PACK_REMOVED                                                              3808
 #define IDS_AI_UNDO_CREATE_ZIP                                                           3809
+#define IDS_AI_CONNECT_TITLE                                                             3810
+#define IDS_AI_CONNECT_MESSAGE                                                           3811
+#define IDS_AI_CONNECT_ALLOW                                                             3812
+#define IDS_AI_CONNECT_SESSION                                                           3813
+#define IDS_AI_DENY                                                                      3814
+#define IDS_AI_CONNECT_NOTE                                                              3815
+#define IDS_AI_CREATE_ZIP_TITLE                                                          3816
+#define IDS_AI_CREATE_ZIP_MESSAGE                                                        3817
+#define IDS_AI_CREATE_MORE                                                               3818
+#define IDS_AI_CREATE_ALLOW                                                              3819
+#define IDS_AI_CREATE_ALWAYS                                                             3820
+#define IDS_AI_CREATE_NOTE                                                               3821
+#define IDS_AI_CREATE_GENERIC_MESSAGE                                                    3822
 
 #endif  // PULSE_STRING_IDS_H

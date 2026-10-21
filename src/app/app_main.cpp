@@ -80,6 +80,7 @@
 #include "tray_controller.h"
 #include "ai_launcher.h"
 #include "ai_service.h"
+#include "ai_status.h"
 #include "ai_tools.h"
 #include "ai_tools_ui.h"
 #include "global_search_controller.h"
@@ -3802,6 +3803,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             if (message == WM_AI_UI_TASK) {
                 // An AI tool reading or showing something in a window (ai_tools_ui.h).
                 pulse::app::ai::HandleAiUiTask(target, lParam);
+                return 0;
+            }
+            constexpr UINT_PTR kAiChipTimer = 0x41494348;   // 'AICH'
+            if (message == WM_AI_STATUS || (message == WM_TIMER && wParam == kAiChipTimer)) {
+                // The AI chip in each status bar (ai_status.h); "done" fades by itself.
+                if (message == WM_AI_STATUS) pulse::app::ai::AckAiStatusMessage();
+                else KillTimer(host, kAiChipTimer);
+                state.core.windows.ForEach([](HWND window, AppState&) { InvalidateRect(window, nullptr, FALSE); });
+                if (const uint64_t wait = pulse::app::ai::AiChipSettlesIn(GetTickCount64()))
+                    SetTimer(host, kAiChipTimer, static_cast<UINT>(wait + 50), nullptr);
                 return 0;
             }
             if (app::IsHostRoutedMessage(message))

@@ -6,10 +6,13 @@
 // thread: the pack check reads and hashes Pulse.AI.exe, which must not happen
 // on the UI thread.
 //
-// The tools are ai_tools.h's first batch. Until the confirmation UI (M5),
-// Create calls run only where an always-allow rule in ai.json covers them.
+// The tools are ai_tools.h's first batch. A client not yet allowed is asked
+// about in Pulse on its first connection, and Create calls no rule covers are
+// confirmed there too (ai_confirm.h); ai_status.h follows what runs.
 #pragma once
+#include "ai_settings.h"
 #include "ai_tools.h"
+#include <functional>
 
 namespace pulse::app::ai {
 
@@ -23,5 +26,21 @@ void StartAiServiceAsync(const AiToolsHost& host);
 void StopAiService();
 
 bool AiServiceRunning();
+
+// The same stop from the settings page: on the service's worker thread, so
+// the UI thread never waits for running calls to finish.
+void StopAiServiceAsync();
+
+// ai.json, read-modify-written under one lock; a file that does not parse is
+// left alone (false). Small file, local disk: fine on the UI thread.
+bool UpdateAiSettings(const std::function<void(Settings&)>& change);
+Settings ReadAiSettings(bool* malformed = nullptr);
+
+// Settings > AI 与 MCP.
+bool SetAiMcpEnabled(bool enabled, const AiToolsHost& host);   // saves, then starts or stops
+void SetAiClientGrant(const std::wstring& client, ClientGrant grant);   // Denied also disconnects it
+void ForgetAiClient(const std::wstring& client);   // its record and rules; disconnects it
+void RemoveAiAllowRule(const AllowRule& rule);
+void DisconnectAiClient(const std::wstring& client);
 
 } // namespace pulse::app::ai

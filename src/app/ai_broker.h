@@ -65,6 +65,9 @@ struct ToolSpec {
     DWORD timeout_ms = 30000;    // after confirmation; the call then fails with "timeout"
     // Create: the folder an always-allow rule and the confirmation refer to.
     std::function<std::wstring(const json::Value& args)> target_folder;
+    // Create: checks the arguments before anyone is asked; false answers
+    // `error` at once (nobody is asked about a call that cannot run).
+    std::function<bool(const json::Value& args, ToolOutcome& error)> check;
 };
 
 enum class Decision { Allow, Deny, Timeout };
@@ -74,6 +77,22 @@ struct ConfirmRequest {
     std::string tool;
     std::wstring folder;
     const json::Value& args;
+};
+
+// What the broker is doing, for Pulse's status bar and activity list. Sent
+// from broker threads; the handler must be quick and must not call back into
+// the broker.
+enum class BrokerEventKind { Connected, Disconnected, CallStarted, WaitingUser, CallFinished };
+
+struct BrokerEvent {
+    BrokerEventKind kind = BrokerEventKind::Connected;
+    uint64_t connection = 0;   // unique per connection while Pulse runs
+    std::wstring client;
+    std::string tool;          // calls only
+    int64_t call = 0;          // calls only: the client's call id
+    bool ok = false;           // CallFinished
+    std::string code;          // CallFinished: the error code when !ok
+    bool changed_files = false;
 };
 
 struct BrokerOptions {
@@ -88,6 +107,7 @@ struct BrokerOptions {
     // Each connection's hello, before calls are accepted; false refuses the client
     // (client_not_approved). Without it every verified client is accepted.
     std::function<bool(const std::wstring& client)> approve_client;
+    std::function<void(const BrokerEvent&)> on_event;
     std::wstring activity_directory;    // empty: no activity log
     DWORD confirm_timeout_ms = 120000;  // 2 minutes, then user_timeout
     size_t max_connections = 4;
@@ -112,6 +132,9 @@ public:
     bool running() const noexcept { return running_.load(); }
 
     size_t connection_count() const;
+    // Closes every connection of `client`: its calls are cancelled. The client
+    // may connect again (and is asked again unless allowed).
+    void DisconnectClient(const std::wstring& client);
     bool IsAiUndoGroup(uint64_t group) const;
     void ForgetAiUndoGroup(uint64_t group);
 
@@ -124,6 +147,8 @@ private:
     bool Send(Connection& connection, const json::Value& message);
     void Log(const Connection& connection, const std::string& tool, const json::Value& args,
              const ToolOutcome& outcome, uint64_t started);
+    void Emit(const Connection& connection, BrokerEventKind kind, const std::string& tool = {}, int64_t call = 0,
+              const ToolOutcome* outcome = nullptr);
 
     BrokerOptions options_;
     std::unordered_map<std::string, ToolSpec> tools_;
@@ -135,6 +160,7 @@ private:
     mutable std::mutex mu_;
     std::vector<std::shared_ptr<Connection>> connections_;
     std::set<uint64_t> ai_undo_groups_;
+    std::atomic<uint64_t> next_connection_{1};
 };
 
 } // namespace pulse::app::ai

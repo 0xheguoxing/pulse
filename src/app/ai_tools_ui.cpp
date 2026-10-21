@@ -149,6 +149,16 @@ void RevealOnUi(AppState* s, const RevealJob& job, json::Value& out) {
 
 } // namespace
 
+bool PostAiUiTask(HWND host, std::function<void(AppState*)> work) {
+    if (!host || !IsWindow(host)) return false;
+    auto task = std::make_shared<UiTask>();
+    task->work = std::move(work);
+    auto* message = new std::shared_ptr<UiTask>(std::move(task));
+    if (PostMessageW(host, WM_AI_UI_TASK, 0, reinterpret_cast<LPARAM>(message))) return true;
+    delete message;
+    return false;
+}
+
 void HandleAiUiTask(AppState* target, LPARAM lparam) {
     std::unique_ptr<std::shared_ptr<UiTask>> holder(reinterpret_cast<std::shared_ptr<UiTask>*>(lparam));
     if (!holder || !*holder) return;

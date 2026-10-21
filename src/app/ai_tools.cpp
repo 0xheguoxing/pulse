@@ -169,7 +169,11 @@ void RegisterAiTools(ToolBroker& broker, const AiToolsHost& host) {
                      [window](const ToolCall& call) { return RevealTool(window, call); }, 15000, {}});
     broker.Register({"pulse.create_zip", PermissionClass::Create,
                      [host](const ToolCall& call) { return CreateZip(host, call); }, 10 * 60 * 1000,
-                     [](const json::Value& args) { return ZipTargetFolder(args); }});
+                     [](const json::Value& args) { return ZipTargetFolder(args); },
+                     [](const json::Value& args, ToolOutcome& error) {
+                         ZipPlan plan;
+                         return PlanZip(args, plan, error);
+                     }});
     broker.Register({"pulse.undo_last", PermissionClass::Undo,
                      [host, &broker](const ToolCall&) { return UndoLast(host, broker); }, 10000, {}});
 }

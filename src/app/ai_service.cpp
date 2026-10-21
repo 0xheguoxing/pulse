@@ -1,30 +1,75 @@
 #include "ai_service.h"
 #include "ai_activity_log.h"
 #include "ai_broker.h"
+#include "ai_confirm.h"
 #include "ai_pack.h"
-#include "ai_settings.h"
+#include "ai_status.h"
 #include "../common/runtime_log.h"
 #include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <thread>
 
 namespace pulse::app::ai {
 namespace {
 
+constexpr DWORD kConnectQuestionMs = 120000;
+
 struct Service {
     std::mutex mu;                               // guards the members below
-    std::thread starter;
     std::unique_ptr<ToolBroker> broker;
     std::shared_ptr<const Settings> settings;    // what the broker's callbacks read
     AiToolsHost host;
-    bool starting = false;
-    bool stopping = false;
+    std::set<std::wstring> session_clients;      // "只允许这次": until Pulse exits
+    std::atomic<bool> asking_stop{false};        // open questions give up
+    std::mutex file_mu;                          // ai.json read-modify-write
+    // Starts and stops run in order on one worker thread, so a quick
+    // off / on can never interleave them.
+    std::mutex jobs_mu;
+    std::condition_variable jobs_cv;
+    std::deque<std::function<void()>> jobs;
+    std::thread worker;
+    bool worker_exit = false;
 };
 
 Service& Get() {
     static auto* service = new Service;  // process lifetime, like the other app services
     return *service;
+}
+
+void WorkerLoop(Service& s) {
+    for (;;) {
+        std::function<void()> job;
+        {
+            std::unique_lock lock(s.jobs_mu);
+            s.jobs_cv.wait(lock, [&] { return s.worker_exit || !s.jobs.empty(); });
+            if (s.jobs.empty()) return;   // exiting and nothing left
+            job = std::move(s.jobs.front());
+            s.jobs.pop_front();
+        }
+        try {
+            job();
+        } catch (...) {
+        }
+    }
+}
+
+void Enqueue(Service& s, std::function<void()> job) {
+    std::lock_guard lock(s.jobs_mu);
+    if (s.worker_exit) return;
+    if (!s.worker.joinable()) {
+        try {
+            s.worker = std::thread([&s] { WorkerLoop(s); });
+        } catch (...) {
+            return;
+        }
+    }
+    s.jobs.push_back(std::move(job));
+    s.jobs_cv.notify_one();
 }
 
 std::shared_ptr<const Settings> CurrentSettings() {
@@ -33,14 +78,57 @@ std::shared_ptr<const Settings> CurrentSettings() {
     return s.settings;
 }
 
+HWND HostWindow() {
+    Service& s = Get();
+    std::lock_guard lock(s.mu);
+    return s.host.ui_window;
+}
+
 bool ApproveClient(const std::wstring& client) {
+    Service& s = Get();
     const auto settings = CurrentSettings();
     if (!settings) return false;
-    for (const ClientRecord& record : settings->clients)
-        if (record.name == client) return record.grant != ClientGrant::Denied;
-    // Not seen before. M5 asks in Pulse on the first connection; until then a
-    // verified Pulse.AI.exe may connect: Create still needs an always-allow rule.
-    return true;
+    for (const ClientRecord& record : settings->clients) {
+        if (record.name != client) continue;
+        if (record.grant == ClientGrant::Allowed) return true;
+        if (record.grant == ClientGrant::Denied) return false;
+    }
+    {
+        std::lock_guard lock(s.mu);
+        if (s.session_clients.count(client)) return true;
+    }
+    // Not decided yet: ask in Pulse.
+    switch (AskToConnect(HostWindow(), client, s.asking_stop, kConnectQuestionMs)) {
+        case ConnectAnswer::Allow:
+            SetAiClientGrant(client, ClientGrant::Allowed);
+            return true;
+        case ConnectAnswer::Session: {
+            std::lock_guard lock(s.mu);
+            s.session_clients.insert(client);
+            return true;
+        }
+        case ConnectAnswer::Deny:
+            break;
+    }
+    return false;
+}
+
+Decision Confirm(const ConfirmRequest& request, const std::atomic<bool>& cancelled, DWORD timeout_ms) {
+    switch (AskToCreate(HostWindow(), request, cancelled, Get().asking_stop, timeout_ms)) {
+        case CreateAnswer::Allow: return Decision::Allow;
+        case CreateAnswer::AlwaysHere:
+            UpdateAiSettings([&](Settings& settings) {
+                for (const AllowRule& rule : settings.allow)
+                    if (rule.client == request.client && rule.tool == request.tool &&
+                        _wcsicmp(rule.folder.c_str(), request.folder.c_str()) == 0)
+                        return;
+                settings.allow.push_back({request.client, request.tool, request.folder});
+            });
+            return Decision::Allow;
+        case CreateAnswer::Timeout: return Decision::Timeout;
+        case CreateAnswer::Deny: break;
+    }
+    return Decision::Deny;
 }
 
 bool AlwaysAllowed(const std::wstring& client, const std::string& tool, const std::wstring& folder) {
@@ -66,14 +154,13 @@ void StartNow(Service& s) {
     options.verify_peer = IsAiHostPipeClient;
     options.approve_client = ApproveClient;
     options.always_allowed = AlwaysAllowed;
+    options.confirm = Confirm;
+    options.on_event = OnAiBrokerEvent;
     options.activity_directory = activity;
-    // No confirm callback until the confirmation UI (M5): Create runs only
-    // under an always-allow rule.
     auto broker = std::make_unique<ToolBroker>(std::move(options));
     AiToolsHost host;
     {
         std::lock_guard lock(s.mu);
-        if (s.stopping) return;
         s.settings = settings;
         host = s.host;
     }
@@ -84,45 +171,17 @@ void StartNow(Service& s) {
               diagnostics::runtime::Level::Warning);
         return;
     }
-    std::unique_lock lock(s.mu);
-    if (s.stopping) {
-        lock.unlock();
-        broker->Stop();
-        return;
-    }
-    s.broker = std::move(broker);
-}
-
-} // namespace
-
-void StartAiServiceAsync(const AiToolsHost& host) {
-    Service& s = Get();
-    std::lock_guard lock(s.mu);
-    if (s.broker || s.starting) return;
-    s.host = host;
-    if (s.starter.joinable()) s.starter.join();   // a finished earlier attempt
-    s.starting = true;
-    s.stopping = false;
-    try {
-        s.starter = std::thread([&s] {
-            StartNow(s);
-            std::lock_guard done(s.mu);
-            s.starting = false;
-        });
-    } catch (...) {
-        s.starting = false;
-    }
-}
-
-void StopAiService() {
-    Service& s = Get();
-    std::thread starter;
     {
         std::lock_guard lock(s.mu);
-        s.stopping = true;
-        starter = std::move(s.starter);
+        s.broker = std::move(broker);
     }
-    if (starter.joinable()) starter.join();
+    SetAiStatusWindow(host.ui_window);
+    SetAiListening(true);
+}
+
+// Worker thread: stops the broker and waits for its threads.
+void StopNow(Service& s) {
+    s.asking_stop = true;   // a broker thread may be waiting on a question
     std::unique_ptr<ToolBroker> broker;
     {
         std::lock_guard lock(s.mu);
@@ -130,12 +189,115 @@ void StopAiService() {
         s.settings.reset();
     }
     if (broker) broker->Stop();
+    SetAiListening(false);
+}
+
+} // namespace
+
+void StartAiServiceAsync(const AiToolsHost& host) {
+    Service& s = Get();
+    {
+        std::lock_guard lock(s.mu);
+        s.host = host;
+    }
+    Enqueue(s, [&s] {
+        {
+            std::lock_guard lock(s.mu);
+            if (s.broker) return;   // already listening
+        }
+        s.asking_stop = false;
+        StartNow(s);
+    });
+}
+
+void StopAiServiceAsync() {
+    Service& s = Get();
+    Enqueue(s, [&s] { StopNow(s); });
+}
+
+void StopAiService() {
+    Service& s = Get();
+    s.asking_stop = true;   // at once, even while a start is still running
+    Enqueue(s, [&s] { StopNow(s); });
+    std::thread worker;
+    {
+        std::lock_guard lock(s.jobs_mu);
+        s.worker_exit = true;
+        s.jobs_cv.notify_all();
+        worker = std::move(s.worker);
+    }
+    if (worker.joinable()) worker.join();
 }
 
 bool AiServiceRunning() {
     Service& s = Get();
     std::lock_guard lock(s.mu);
     return s.broker && s.broker->running();
+}
+
+bool UpdateAiSettings(const std::function<void(Settings&)>& change) {
+    Service& s = Get();
+    std::lock_guard file(s.file_mu);
+    bool malformed = false;
+    Settings settings = LoadSettings(&malformed);
+    if (malformed) return false;   // never overwrite a file that does not parse
+    change(settings);
+    if (!SaveSettings(settings)) return false;
+    std::lock_guard lock(s.mu);
+    if (s.settings) s.settings = std::make_shared<const Settings>(std::move(settings));
+    return true;
+}
+
+Settings ReadAiSettings(bool* malformed) {
+    Service& s = Get();
+    std::lock_guard file(s.file_mu);
+    return LoadSettings(malformed);
+}
+
+bool SetAiMcpEnabled(bool enabled, const AiToolsHost& host) {
+    if (!UpdateAiSettings([enabled](Settings& settings) { settings.mcp_enabled = enabled; })) return false;
+    if (enabled) StartAiServiceAsync(host);
+    else StopAiServiceAsync();
+    return true;
+}
+
+void SetAiClientGrant(const std::wstring& client, ClientGrant grant) {
+    UpdateAiSettings([&](Settings& settings) {
+        for (ClientRecord& record : settings.clients)
+            if (record.name == client) {
+                record.grant = grant;
+                return;
+            }
+        settings.clients.push_back({client, grant, 0});
+    });
+    if (grant == ClientGrant::Denied) DisconnectAiClient(client);
+}
+
+void ForgetAiClient(const std::wstring& client) {
+    UpdateAiSettings([&](Settings& settings) {
+        std::erase_if(settings.clients, [&](const ClientRecord& r) { return r.name == client; });
+        std::erase_if(settings.allow, [&](const AllowRule& r) { return r.client == client; });
+    });
+    {
+        Service& s = Get();
+        std::lock_guard lock(s.mu);
+        s.session_clients.erase(client);
+    }
+    DisconnectAiClient(client);
+}
+
+void RemoveAiAllowRule(const AllowRule& rule) {
+    UpdateAiSettings([&](Settings& settings) {
+        std::erase_if(settings.allow, [&](const AllowRule& r) {
+            return r.client == rule.client && r.tool == rule.tool && _wcsicmp(r.folder.c_str(), rule.folder.c_str()) == 0;
+        });
+    });
+}
+
+void DisconnectAiClient(const std::wstring& client) {
+    Service& s = Get();
+    std::lock_guard lock(s.mu);
+    if (s.broker) s.broker->DisconnectClient(client);
 }
 
 } // namespace pulse::app::ai

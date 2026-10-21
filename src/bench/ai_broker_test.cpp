@@ -9,12 +9,14 @@
 #include "../app/ai_broker.h"
 #include "../app/ai_pack.h"
 #include "../app/ai_settings.h"
+#include "../app/ai_status.h"
 #include "../app/pack_installer.h"
 #include "../common/current_user_security.h"
 #include "../common/utf8_file.h"
 #include "../ipc/ai_tool_protocol.h"
 #include <chrono>
 #include <cstdio>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -215,6 +217,14 @@ int main() {
     }};
     zip.target_folder = [](const json::Value& args) { return json::Wide(args.get_string("dest_folder")); };
     broker.Register(zip);
+    ToolSpec checked = zip;
+    checked.name = "t.zip_checked";
+    checked.check = [](const json::Value& args, ToolOutcome& error) {
+        if (args.find("dest_folder")) return true;
+        error = ToolOutcome::Fail("invalid_args", "dest_folder is missing");
+        return false;
+    };
+    broker.Register(checked);
     broker.Register({"t.change", PermissionClass::Change, [](const ToolCall&) { return ToolOutcome{}; }});
     broker.Register({"t.undo", PermissionClass::Undo, [&](const ToolCall& call) {
         int64_t group = 0;
@@ -293,6 +303,13 @@ int main() {
         progress = 0;
         Check(Code(c.Call(13, "t.zip", inside, &progress)) == "ok" && confirms == before && progress == 0,
               "an always-allow rule skips the confirmation");
+        {
+            const int asked = confirms;
+            progress = 0;
+            const json::Value refused = c.Call(30, "t.zip_checked", json::Value::Object(), &progress);
+            Check(Code(refused) == "invalid_args" && confirms == asked && progress == 0,
+                  "a Create whose check fails answers its error without asking");
+        }
         json::Value undo_user = json::Value::Object();
         undo_user.set("group", 78);
         Check(Code(c.Call(14, "t.undo", undo_user)) == "not_ai_operation", "undo_last refuses a group the user made");
@@ -397,6 +414,113 @@ int main() {
         Check(c.Read(m, 3000) == proto::FrameStatus::Ok && Code(m) == "client_not_approved" &&
               c.Read(m, 3000) != proto::FrameStatus::Ok, "an unapproved client gets client_not_approved, then closed");
         gate.Stop();
+    }
+
+    {
+        // Events for the status bar: connect, calls (with the wait for the
+        // user), and DisconnectClient closing the connection.
+        std::mutex events_mu;
+        std::vector<BrokerEvent> events;
+        BrokerOptions watched = options;
+        watched.pipe_name = PipeFor(local, L"\\events");
+        watched.on_event = [&](const BrokerEvent& e) {
+            std::lock_guard lock(events_mu);
+            events.push_back(e);
+        };
+        ToolBroker observed(watched);
+        observed.Register({"t.echo", PermissionClass::Read, [](const ToolCall& call) {
+            ToolOutcome o;
+            o.data = call.args;
+            return o;
+        }});
+        observed.Register(zip);
+        observed.Start(error);
+        decision = 1;
+        Client c(watched.pipe_name);
+        c.Hello("Watcher");
+        const json::Value echoed = c.Call(1, "t.echo");
+        json::Value zip_args = json::Value::Object();
+        zip_args.set("dest_folder", "D:\\Other");
+        int progress = 0;
+        c.Call(2, "t.nothing");
+        auto snapshot = [&] {
+            std::lock_guard lock(events_mu);
+            return events;
+        };
+        // t.zip asks: the fake confirm only allows TestClient, so this one is denied.
+        const json::Value denied = c.Call(3, "t.zip", zip_args, &progress);
+        Check(Code(denied) == "user_denied" && progress == 1, "events: a Create call waits for the user, then is denied");
+        observed.DisconnectClient(L"watcher");
+        json::Value m;
+        Check(c.Read(m, 3000) != proto::FrameStatus::Ok, "events: DisconnectClient closes the client's connection");
+        for (int i = 0; i < 100 && (snapshot().empty() || snapshot().back().kind != BrokerEventKind::Disconnected); ++i)
+            Sleep(20);
+        const std::vector<BrokerEvent> seen = snapshot();
+        std::vector<BrokerEventKind> kinds;
+        for (const BrokerEvent& e : seen) kinds.push_back(e.kind);
+        using K = BrokerEventKind;
+        Check(kinds == std::vector<K>{K::Connected, K::CallStarted, K::CallFinished, K::CallStarted, K::CallFinished,
+                                      K::CallStarted, K::WaitingUser, K::CallFinished, K::Disconnected},
+              "events: connected, each call started and finished, the wait, disconnected - in order");
+        bool consistent = !seen.empty();
+        for (const BrokerEvent& e : seen) consistent &= e.client == L"Watcher" && e.connection == seen.front().connection;
+        Check(consistent, "events: one connection id and the client's name throughout");
+        Check(seen.size() == 9 && seen[1].tool == "t.echo" && seen[1].call == 1 && seen[2].ok && echoed.is_object() &&
+                  !seen[4].ok && seen[4].code == "unsupported" && seen[7].tool == "t.zip" && seen[7].code == "user_denied",
+              "events: tool, call id, outcome and error code");
+        observed.Stop();
+        decision = 0;
+    }
+
+    {
+        // ai_status: what the status bar chip shows, fed by events.
+        ResetAiStatusForTest();
+        auto event = [](BrokerEventKind kind, uint64_t connection, const wchar_t* client, const char* tool = "",
+                        int64_t call = 0, bool ok = true, const char* code = "") {
+            BrokerEvent e;
+            e.kind = kind;
+            e.connection = connection;
+            e.client = client;
+            e.tool = tool;
+            e.call = call;
+            e.ok = ok;
+            e.code = code;
+            OnAiBrokerEvent(e);
+        };
+        Check(GetAiChip(GetTickCount64()).state == AiChipState::Hidden, "status: no chip while not listening");
+        SetAiListening(true);
+        Check(GetAiChip(GetTickCount64()).state == AiChipState::Idle && GetAiChip(GetTickCount64()).client.empty(),
+              "status: listening without clients is an idle chip");
+        event(BrokerEventKind::Connected, 1, L"Claude");
+        event(BrokerEventKind::Connected, 2, L"Claude");
+        event(BrokerEventKind::CallStarted, 1, L"Claude", "pulse.search", 5);
+        AiChip chip = GetAiChip(GetTickCount64());
+        Check(chip.state == AiChipState::Busy && chip.client == L"Claude" && chip.tool == "search" && chip.clients == 2,
+              "status: a running call makes the chip busy, with client and short tool name");
+        event(BrokerEventKind::CallStarted, 2, L"Claude", "pulse.create_zip", 6);
+        event(BrokerEventKind::WaitingUser, 2, L"Claude", "pulse.create_zip", 6);
+        chip = GetAiChip(GetTickCount64());
+        Check(chip.state == AiChipState::Waiting && chip.tool == "create_zip", "status: waiting for the user wins over busy");
+        event(BrokerEventKind::CallFinished, 2, L"Claude", "pulse.create_zip", 6, false, "user_denied");
+        event(BrokerEventKind::CallFinished, 1, L"Claude", "pulse.search", 5);
+        const uint64_t now = GetTickCount64();
+        chip = GetAiChip(now);
+        Check(chip.state == AiChipState::Done && chip.burst_calls == 2 && AiChipSettlesIn(now) > 0,
+              "status: finished calls show as done for a while");
+        Check(GetAiChip(now + kAiDoneHoldMs + 1).state == AiChipState::Idle && AiChipSettlesIn(now + kAiDoneHoldMs + 1) == 0,
+              "status: then the chip is idle again");
+        const AiStatusSnapshot snap = GetAiStatus();
+        Check(snap.listening && snap.clients == std::vector<std::wstring>{L"Claude"} && snap.session_calls == 2 &&
+                  snap.recent.size() == 2 && snap.recent[0].tool == "create_zip" && !snap.recent[0].ok &&
+                  snap.recent[0].code == "user_denied" && snap.recent[1].ok && !snap.recent[1].running,
+              "status: the snapshot lists clients once and calls newest first with outcomes");
+        event(BrokerEventKind::CallStarted, 1, L"Claude", "pulse.list_folder", 7);
+        SetAiListening(false);
+        const AiStatusSnapshot stopped = GetAiStatus();
+        Check(!stopped.listening && stopped.clients.empty() && !stopped.recent[0].running &&
+                  stopped.recent[0].code == "cancelled" && GetAiChip(GetTickCount64()).state == AiChipState::Hidden,
+              "status: stopping forgets connections and marks running calls cancelled");
+        ResetAiStatusForTest();
     }
 
     // --- the activity log: summaries only.

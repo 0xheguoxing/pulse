@@ -2583,6 +2583,19 @@ BEGIN
     IDS_AI_PACK_REMOVE_FAILED "无法卸载：AI 增强包正在使用中。请先断开 AI 应用，再重试。"
     IDS_AI_PACK_REMOVED "AI 增强包已卸载"
     IDS_AI_UNDO_CREATE_ZIP "新建压缩包（{client}）"
+    IDS_AI_CONNECT_TITLE "「{client}」想连接 Pulse"
+    IDS_AI_CONNECT_MESSAGE "连接后，它可以浏览和搜索你的文件夹、查看文件属性（不读取文件内容），并在 Pulse 里显示文件。新建任何文件之前都会先问你。"
+    IDS_AI_CONNECT_ALLOW "允许"
+    IDS_AI_CONNECT_SESSION "只允许这次"
+    IDS_AI_DENY "拒绝"
+    IDS_AI_CONNECT_NOTE "以后可以在「设置 › 增强包 › AI 与 MCP」里更改。"
+    IDS_AI_CREATE_ZIP_TITLE "「{client}」想新建压缩包"
+    IDS_AI_CREATE_ZIP_MESSAGE "把下面的项目打包成「{name}」，放在「{folder}」。"
+    IDS_AI_CREATE_MORE "还有 {n} 个"
+    IDS_AI_CREATE_ALLOW "新建"
+    IDS_AI_CREATE_ALWAYS "始终允许这个文件夹"
+    IDS_AI_CREATE_NOTE "可以撤销：压缩包会移到回收站，原文件不会改动。"
+    IDS_AI_CREATE_GENERIC_MESSAGE "目标文件夹：「{folder}」"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5165,6 +5178,19 @@ BEGIN
     IDS_AI_PACK_REMOVE_FAILED "Couldn't remove it: the AI pack is in use. Disconnect the AI app and try again."
     IDS_AI_PACK_REMOVED "AI pack removed"
     IDS_AI_UNDO_CREATE_ZIP "New zip by {client}"
+    IDS_AI_CONNECT_TITLE "{client} wants to connect to Pulse"
+    IDS_AI_CONNECT_MESSAGE "Once connected, it can browse and search your folders, look at file properties (never file contents) and show files in Pulse. It asks you before creating anything."
+    IDS_AI_CONNECT_ALLOW "Allow"
+    IDS_AI_CONNECT_SESSION "Allow this time"
+    IDS_AI_DENY "Deny"
+    IDS_AI_CONNECT_NOTE "You can change this later in Settings › Enhancement packs › AI and MCP."
+    IDS_AI_CREATE_ZIP_TITLE "{client} wants to create a zip archive"
+    IDS_AI_CREATE_ZIP_MESSAGE "Pack the items below into “{name}” in “{folder}”."
+    IDS_AI_CREATE_MORE "and {n} more"
+    IDS_AI_CREATE_ALLOW "Create"
+    IDS_AI_CREATE_ALWAYS "Always allow here"
+    IDS_AI_CREATE_NOTE "You can undo this: the archive goes to the Recycle Bin and the original files stay as they are."
+    IDS_AI_CREATE_GENERIC_MESSAGE "Target folder: “{folder}”"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

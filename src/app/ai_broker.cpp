@@ -21,6 +21,7 @@ struct ToolBroker::Call {
 
 struct ToolBroker::Connection {
     HANDLE pipe = INVALID_HANDLE_VALUE;
+    uint64_t id = 0;
     std::wstring client;
     std::atomic<bool> closing{false};
     std::mutex write_mu;
@@ -165,6 +166,7 @@ void ToolBroker::Listen() {
             if (accept) {
                 auto connection = std::make_shared<Connection>();
                 connection->pipe = pipe;
+                connection->id = next_connection_.fetch_add(1);
                 connections_.push_back(connection);
                 connection->thread = std::thread([this, connection] { Serve(connection); });
             } else {
@@ -209,6 +211,8 @@ void ToolBroker::Serve(std::shared_ptr<Connection> c) {
         ok = false;
     }
     if (!ok) diagnostics::runtime::Event("ai_broker_hello_rejected");
+    const bool connected = ok && !stopped();
+    if (connected) Emit(*c, BrokerEventKind::Connected);
 
     while (ok && !stopped()) {
         json::Value message;
@@ -278,13 +282,41 @@ void ToolBroker::Serve(std::shared_ptr<Connection> c) {
     // client has not read yet (e.g. client_not_approved); a close lets it drain.
     CloseHandle(c->pipe);
     c->pipe = INVALID_HANDLE_VALUE;
+    if (connected) Emit(*c, BrokerEventKind::Disconnected);
     c->finished = true;
+}
+
+void ToolBroker::DisconnectClient(const std::wstring& client) {
+    std::lock_guard lock(mu_);
+    for (const auto& c : connections_)
+        if (!c->finished && _wcsicmp(c->client.c_str(), client.c_str()) == 0) c->closing = true;
+}
+
+void ToolBroker::Emit(const Connection& c, BrokerEventKind kind, const std::string& tool, int64_t call,
+                      const ToolOutcome* outcome) {
+    if (!options_.on_event) return;
+    BrokerEvent event;
+    event.kind = kind;
+    event.connection = c.id;
+    event.client = c.client;
+    event.tool = tool;
+    event.call = call;
+    if (outcome) {
+        event.ok = outcome->ok;
+        if (!outcome->ok) event.code = outcome->error.code;
+        event.changed_files = outcome->changed_files;
+    }
+    try {
+        options_.on_event(event);
+    } catch (...) {
+    }
 }
 
 void ToolBroker::RunCall(std::shared_ptr<Connection> c, std::shared_ptr<Call> call) {
     const uint64_t started = UnixMillisecondsNow();
     ToolOutcome outcome;
     bool answered_early = false;
+    Emit(*c, BrokerEventKind::CallStarted, call->tool, call->id);
     const auto found = tools_.find(call->tool);
     if (found == tools_.end()) {
         outcome = ToolOutcome::Fail("unsupported", "Pulse has no tool by this name.");
@@ -294,6 +326,9 @@ void ToolBroker::RunCall(std::shared_ptr<Connection> c, std::shared_ptr<Call> ca
         if (spec.cls == PermissionClass::Change) {
             outcome = ToolOutcome::Fail("access_denied", "Changing files this way is not available.");
             allowed = false;
+        } else if (spec.cls == PermissionClass::Create && spec.check && !spec.check(call->args, outcome)) {
+            if (outcome.ok) outcome = ToolOutcome::Fail("invalid_args", "The arguments are not valid.");
+            allowed = false;
         } else if (spec.cls == PermissionClass::Create) {
             const std::wstring folder = spec.target_folder ? spec.target_folder(call->args) : std::wstring{};
             const bool rule = options_.always_allowed && !folder.empty() &&
@@ -302,6 +337,7 @@ void ToolBroker::RunCall(std::shared_ptr<Connection> c, std::shared_ptr<Call> ca
                 Decision decision = Decision::Deny;
                 if (options_.confirm) {
                     Send(*c, proto::MakeProgress(call->id, proto::kWaitingUser));
+                    Emit(*c, BrokerEventKind::WaitingUser, call->tool, call->id);
                     decision = options_.confirm(ConfirmRequest{c->client, spec.name, folder, call->args}, call->cancelled,
                                                 options_.confirm_timeout_ms);
                 }
@@ -362,6 +398,8 @@ void ToolBroker::RunCall(std::shared_ptr<Connection> c, std::shared_ptr<Call> ca
         std::lock_guard lock(mu_);
         ai_undo_groups_.insert(outcome.undo_group);
     }
+    // Before the answer goes out, so the client's next call cannot be seen first.
+    Emit(*c, BrokerEventKind::CallFinished, call->tool, call->id, &outcome);
     if (!answered_early)
         Send(*c, outcome.ok ? proto::MakeResult(call->id, outcome.data)
                         : proto::MakeError(call->id, outcome.error.code, outcome.error.message, outcome.error.retryable));

@@ -7,6 +7,7 @@
 // thread first.
 #pragma once
 #include "ai_broker.h"
+#include <functional>
 #include <windows.h>
 
 namespace pulse { struct AppState; }
@@ -16,6 +17,11 @@ namespace pulse::app::ai {
 // The host window's WM_AI_UI_TASK; `target` is the most recently active
 // window (null when none is open). Frees the task.
 void HandleAiUiTask(AppState* target, LPARAM lparam);
+
+// Queues `work` for the UI thread without waiting (false: no host window).
+// For callers that track completion themselves (ai_confirm.h); `work` gets
+// the most recently active window or null.
+bool PostAiUiTask(HWND host, std::function<void(AppState*)> work);
 
 // pulse.get_context: the active tab's folder and up to 200 selected paths.
 ToolOutcome GetContextTool(HWND host, const ToolCall& call);

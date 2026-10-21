@@ -3,6 +3,7 @@
 #include <d2d1.h>
 #include <windows.h>
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,10 @@ struct ConfirmDialogSpec {
     // The button Enter presses at first. Destructive questions start on
     // Cancel, like MB_DEFBUTTON2, so Enter alone never confirms them.
     ConfirmChoice default_choice = ConfirmChoice::Confirm;
+    // Optional: called with the dialog once it shows and with null when it
+    // goes, so a question asked for someone else (an AI client) can be
+    // closed from outside with WM_CLOSE, which answers Cancel.
+    std::function<void(HWND)> on_open;
 };
 
 ConfirmChoice ShowConfirmDialogEx(HWND owner, const ConfirmDialogSpec& spec, bool dark,

@@ -74,5 +74,6 @@ constexpr UINT WM_TRAY_RESTORE = WM_APP + 102;   // the 已清空暂存区 snack
 constexpr UINT WM_TRAY_TAKE_CLIP = WM_APP + 103;  // stage the Ctrl+C / Ctrl+X offer (剪贴板 N 项 · 收入)
 constexpr UINT WM_TAG_RULE_ACCEPT = WM_APP + 104;  // the 自动规则 snack's 加上
 constexpr UINT WM_AI_UI_TASK = WM_APP + 105;  // host: lParam std::shared_ptr<UiTask>*, an AI tool's UI step (ai_tools_ui.h)
+constexpr UINT WM_AI_STATUS = WM_APP + 106;   // host: what AI clients do changed (ai_status.h)
 
 }  // namespace pulse
