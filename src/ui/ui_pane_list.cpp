@@ -476,6 +476,15 @@ D2D1_RECT_F MainRenderer::FilterEditRect(const D2D1_RECT_F& pane_bounds, float e
 
 MainRenderer::DetailsColumnLayout MainRenderer::DetailsColumns(
     const D2D1_RECT_F& pane_bounds, const PaneViewModel& vm) const {
+    if (vm.column_strip.Active() && !vm.is_search) {
+        // Column view: one name column, like the columns beside it.
+        DetailsColumnLayout name_only = DetailsColumns(pane_bounds, DetailsColumnWidths{}, false, {});
+        name_only.count = 1;
+        name_only.kinds[0] = ColumnKind::Name;
+        name_only.widths[0] = std::max(0.0f, name_only.right - name_only.left);
+        name_only.two_line = false;
+        return name_only;
+    }
     auto columns = DetailsColumns(pane_bounds, vm.details_column_dividers, vm.is_search,
                                   vm.search_column_dividers);
     // Explicit divider positions remain a manual override. A drag starts by
@@ -2578,7 +2587,16 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
         }
         y += 36 * scale_;
     }
-    if (ShowsColumnHeader(pane.view_mode)) {
+    if (ShowsColumnHeader(pane.view_mode) && pane.column_strip.Active()) {
+        // Column view: the folder's name as a caption like the columns beside
+        // it, at the header's height so rows line up across the columns.
+        const std::wstring& caption = pane.header_text.empty() ? pane.path : pane.header_text;
+        MakeBrush(dc, theme.text_secondary, brTextSecondary_);
+        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), compositor_->SmallFormat(),
+                            brTextSecondary_.get(), caption, x + 12.0f * scale_, y,
+                            w - 24.0f * scale_, column_header_height_);
+        y += column_header_height_;
+    } else if (ShowsColumnHeader(pane.view_mode)) {
         // Re-set the brush: earlier drawing (tray deck pills, toolbar) may
         // have left a different color on this shared member.
         MakeBrush(dc, theme.fill_input, brFillInput_);
@@ -3502,7 +3520,8 @@ D2D1_RECT_F MainRenderer::RenameFieldRect(const PaneViewModel& vm, const D2D1_RE
     const size_t totalTags = tagIndices ? tagIndices->size() : (tagDots ? tagDots->size() : 0);
     const int tagDotCount = static_cast<int>(std::min<size_t>(3, totalTags));
     const float nameColRight = vm.view_mode == ViewMode::Details
-        ? DetailsColumns(list, vm).DividerX(0) - margin_
+        ? (vm.column_strip.Active() ? DetailsColumns(list, vm).right - 18.0f * scale_
+                                    : DetailsColumns(list, vm).DividerX(0) - margin_)
         : nameRc.right;
     if (iconGrid && tagDotCount > 0) {
         const float fullNameW = MeasureLayoutText(
@@ -4398,12 +4417,20 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             }
             const size_t totalTags = tagIndices ? tagIndices->size() : (tagDots ? tagDots->size() : 0);
             const int tagDotCount = static_cast<int>(std::min<size_t>(3, totalTags));
-            const bool showRowActions = vm.view_mode == ViewMode::Details &&
+            // Column view rows: name and a chevron on folders, no row actions.
+            const bool stripRow = vm.view_mode == ViewMode::Details && vm.column_strip.Active();
+            const bool stripChevron = stripRow && e.is_dir;
+            const bool showRowActions = vm.view_mode == ViewMode::Details && !stripRow &&
                 src != vm.rename_index &&
                 (hover || (selected && vm.selected_count == 1) || e.starred);
-            const float nameColRight = vm.view_mode == ViewMode::Details
-                ? detailsColumns.DividerX(0) - margin_
-                : nameRc.right;
+            // A lone name column has no divider: it ends at the layout's right.
+            const float nameColRight = (vm.view_mode == ViewMode::Details
+                ? (stripRow ? detailsColumns.right : detailsColumns.DividerX(0) - margin_)
+                : nameRc.right) - (stripChevron ? 18.0f * scale_ : 0.0f);
+            if (stripChevron) {
+                DrawIconText(nameColRight + 2.0f * scale_, cell.top, 18.0f * scale_, cell.bottom - cell.top,
+                             kIconChevronRight, L">", theme.text_secondary, 0.55f);
+            }
             const bool showStar = showRowActions;
             const bool showNewTab = showRowActions && hover && e.is_dir;
             const bool showMore = showRowActions && (hover || (selected && vm.selected_count == 1));

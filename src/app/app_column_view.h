@@ -21,6 +21,9 @@ void EndColumnStripResize(AppState& s);
 // Double-click right after a column click changed the folder: swallow it so
 // the second click does not open whatever moved under the cursor.
 bool ColumnStripSwallowDoubleClick(const AppState& s);
+// Right-click on a column row: selects that item the way a click does (the
+// list moves to its folder). Returns true when the item is now selected.
+bool SelectColumnStripRow(AppState& s, const ui::HitTestResult& hit);
 bool HandleColumnStripWheel(AppState& s, const ui::WindowViewModel& vm,
                             const ui::HitTestResult& hit, int wheel_delta);
 // Left/Right in the column view: go to the parent / enter the selected folder.

@@ -4327,6 +4327,15 @@ LRESULT HandleRButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             ShowItemContextMenu(*s, sp);
             return 0;
         }
+        // Column view: a row of another column is selected like a click, then
+        // gets the same item menu as a list row.
+        if (hit.region == ui::HitTestResult::ColumnStripRow) {
+            if (SelectColumnStripRow(*s, hit)) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                ShowItemContextMenu(*s, sp);
+            }
+            return 0;
+        }
         if (HandleFavoritesBarContextMenu(*s, hit, sp)) return 0;   // 收藏栏
         // A pinned tool: separators, remove, 自定义工具栏 (the preview pin and
         // the apps fall through to the popover).

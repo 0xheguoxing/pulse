@@ -13,8 +13,9 @@ namespace pulse::ui {
 
 namespace {
 
-constexpr float kCaptionDip = 28.0f;
 constexpr float kGripDip = 4.0f;
+
+bool IsAncestorId(int id) { return id >= 0 && id < kColumnStripChildId; }
 
 const ColumnStripColumnView* StripColumn(const ColumnStripView& cs, int id) {
     if (id == kColumnStripChildId) {
@@ -28,8 +29,24 @@ size_t StripRowCount(const ColumnStripColumnView& column) {
     return column.rows ? column.rows->size() : 0;
 }
 
-float StripDividerX(const ColumnStripSlot& slot) {
-    return slot.id == kColumnStripChildId ? slot.rect.left : slot.rect.right;
+// Resize handles on the right edge of each column: the ancestors, the
+// current folder's list and the child column (unless it ends at the pane).
+struct StripDivider {
+    int id = -1;
+    float x = 0.0f, top = 0.0f, bottom = 0.0f;
+};
+
+std::vector<StripDivider> StripDividers(const ColumnStripLayout& strip, const D2D1_RECT_F& pane,
+                                        float top) {
+    std::vector<StripDivider> out;
+    const float bottom = std::max(top, pane.bottom);
+    for (const ColumnStripSlot& slot : strip.columns)
+        if (IsAncestorId(slot.id)) out.push_back({slot.id, slot.rect.right, top, bottom});
+    if (strip.body.right < pane.right - 1.0f) out.push_back({kColumnStripBodyId, strip.body.right, top, bottom});
+    for (const ColumnStripSlot& slot : strip.columns)
+        if (slot.id == kColumnStripChildId && slot.rect.right < pane.right - 1.0f)
+            out.push_back({slot.id, slot.rect.right, top, bottom});
+    return out;
 }
 
 // Column view motion (animation phase 4a, pulse_motion_v2). Drawing only:
@@ -73,8 +90,10 @@ StripPaneMotion& StripMotionFor(const void* renderer, int pane_index) {
     return motions[{renderer, pane_index}];
 }
 
-D2D1_RECT_F StripCell(const D2D1_RECT_F& rc, int row, float scroll, float row_h, float scale) {
-    const float top = rc.top + kCaptionDip * scale + static_cast<float>(row) * row_h - scroll;
+// caption: the column's title row, as tall as the list's column header so
+// rows line up across every column.
+D2D1_RECT_F StripCell(const D2D1_RECT_F& rc, int row, float scroll, float row_h, float scale, float caption) {
+    const float top = rc.top + caption + static_cast<float>(row) * row_h - scroll;
     return D2D1::RectF(rc.left + 6.0f * scale, top + 1.0f * scale, rc.right - 6.0f * scale, top + row_h - 1.0f * scale);
 }
 
@@ -126,7 +145,7 @@ ColumnStripLayout MainRenderer::ColumnStripGeometry(const PaneViewModel& vm,
     }
     return LayoutColumnStrip(pane_bounds, pane_bounds.top + pane_header_height_,
                              cs.ancestors.size(), cs.has_child, cs.widths_dip, scale_,
-                             cs.scroll_from_right_dip);
+                             cs.scroll_from_right_dip, cs.has_preview && !cs.has_child);
 }
 
 D2D1_RECT_F MainRenderer::PaneBodyBounds(const PaneViewModel& vm,
@@ -136,7 +155,7 @@ D2D1_RECT_F MainRenderer::PaneBodyBounds(const PaneViewModel& vm,
 }
 
 float MainRenderer::ColumnStripViewHeight(const D2D1_RECT_F& column_rect) const {
-    return std::max(0.0f, column_rect.bottom - column_rect.top - kCaptionDip * scale_ - 6.0f * scale_);
+    return std::max(0.0f, column_rect.bottom - column_rect.top - column_header_height_ - 6.0f * scale_);
 }
 
 bool MainRenderer::ColumnStripHScrollRects(const ColumnStripLayout& layout, D2D1_RECT_F& track,
@@ -231,13 +250,13 @@ void MainRenderer::DrawColumnStrip(const WindowViewModel& vm, const PaneViewMode
             const StripColumnMotion& cm = pm.columns[hover_slot->id];
             if (pm.hover_alpha <= 0.0f) ++pm.hover_context;  // from nothing: appear in place
             pm.hover_key = static_cast<int64_t>(hover_slot->id) * 1000003 + hover_row;
-            pm.hover_target = StripCell(hover_slot->rect, hover_row, cm.scroll_shown, row_height_, scale_);
+            pm.hover_target = StripCell(hover_slot->rect, hover_row, cm.scroll_shown, row_height_, scale_, column_header_height_);
             pm.hover_rect = pm.hover.Update(pm.hover_context, pm.hover_key, pm.hover_target, motion_frame_,
                                             motion_now_, motion::spring::Plate);
             D2D1_RECT_F clip = hover_slot->rect;
-            clip.top += kCaptionDip * scale_;
+            clip.top += column_header_height_;
             clip.bottom = clip.top + ColumnStripViewHeight(hover_slot->rect);
-            if (hover_slot->id != kColumnStripChildId && has_viewport) {
+            if (IsAncestorId(hover_slot->id) && has_viewport) {
                 clip.left = (std::max)(clip.left, strip.viewport.left);
                 clip.right = (std::min)(clip.right, strip.viewport.right);
             }
@@ -265,27 +284,29 @@ void MainRenderer::DrawColumnStrip(const WindowViewModel& vm, const PaneViewMode
         }
     }
     for (const ColumnStripSlot& slot : strip.columns) {
-        const bool child = slot.id == kColumnStripChildId;
-        if (!child) dc->PushAxisAlignedClip(strip.viewport, D2D1_ANTIALIAS_MODE_ALIASED);
-        if (const ColumnStripColumnView* column = StripColumn(cs, slot.id)) {
+        const bool ancestor = IsAncestorId(slot.id);
+        if (ancestor) dc->PushAxisAlignedClip(strip.viewport, D2D1_ANTIALIAS_MODE_ALIASED);
+        if (slot.id == kColumnStripPreviewId) {
+            DrawColumnStripPreview(pane, slot.rect, theme);
+        } else if (const ColumnStripColumnView* column = StripColumn(cs, slot.id)) {
             DrawColumnStripColumn(vm, pane, *column, slot.id, slot.rect, pane_index, theme);
         }
-        if (!child) dc->PopAxisAlignedClip();
+        if (ancestor) dc->PopAxisAlignedClip();
     }
-    for (const ColumnStripSlot& slot : strip.columns) {
-        const float lx = StripDividerX(slot);
-        if (slot.id != kColumnStripChildId && has_viewport &&
+    for (const StripDivider& divider : StripDividers(strip, bounds, bounds.top + pane_header_height_)) {
+        const float lx = divider.x;
+        if (IsAncestorId(divider.id) && has_viewport &&
             (lx < strip.viewport.left || lx > strip.viewport.right + 0.5f)) {
             continue;
         }
-        const bool hot = cs.resize_column == slot.id ||
+        const bool hot = cs.resize_column == divider.id ||
             (vm.hover_region == static_cast<int>(HitTestResult::ColumnStripDivider) &&
-             vm.hover_pane_index == pane_index && vm.hover_sub_index == slot.id);
+             vm.hover_pane_index == pane_index && vm.hover_sub_index == divider.id);
         const float line_w = hot ? 2.0f * scale_ : std::max(1.0f, scale_);
         MakeBrush(dc, hot ? theme.accent : theme.stroke_divider, brAccent_);
         const float inset = hot ? 0.0f : 6.0f * scale_;
-        dc->FillRectangle(D2D1::RectF(lx - line_w * 0.5f, slot.rect.top + inset,
-                                      lx + line_w * 0.5f, slot.rect.bottom - inset),
+        dc->FillRectangle(D2D1::RectF(lx - line_w * 0.5f, divider.top + inset,
+                                      lx + line_w * 0.5f, divider.bottom - inset),
                           brAccent_.get());
     }
     D2D1_RECT_F track{}, thumb{};
@@ -317,7 +338,7 @@ void MainRenderer::DrawColumnStripColumn(const WindowViewModel& vm, const PaneVi
     ID2D1DeviceContext* dc = compositor_->Dc();
     IDWriteFactory2* factory = compositor_->DwriteFactory();
     const float pad = 6.0f * scale_;
-    const float caption = kCaptionDip * scale_;
+    const float caption = column_header_height_;
     const float list_top = rc.top + caption;
     const float view_h = ColumnStripViewHeight(rc);
     dc->PushAxisAlignedClip(rc, D2D1_ANTIALIAS_MODE_ALIASED);
@@ -360,7 +381,7 @@ void MainRenderer::DrawColumnStripColumn(const WindowViewModel& vm, const PaneVi
     // The highlight glides between rows of the same folder.
     const bool glide_highlight = !hc && column.highlight_row >= 0;
     if (glide_highlight) {
-        const D2D1_RECT_F target = StripCell(rc, column.highlight_row, scroll, row_height_, scale_);
+        const D2D1_RECT_F target = StripCell(rc, column.highlight_row, scroll, row_height_, scale_, column_header_height_);
         const D2D1_RECT_F plate = cm.highlight.Update(std::hash<std::wstring>{}(column.path), column.highlight_row,
                                                       target, motion_frame_, motion_now_, motion::spring::Snappy);
         if (cm.highlight.Active(motion_now_)) pm.moving = true;
@@ -469,6 +490,93 @@ void MainRenderer::DrawColumnStripColumn(const WindowViewModel& vm, const PaneVi
     dc->PopAxisAlignedClip();
 }
 
+// The single selected file, like Finder's preview column: a large
+// thumbnail (its icon until one is ready, or when there is none), the name
+// and the type / size / date facts under it.
+void MainRenderer::DrawColumnStripPreview(const PaneViewModel& pane, const D2D1_RECT_F& rc,
+                                          const Theme& theme) {
+    if (pane.selected_count != 1 || pane.selected_index < 0) return;
+    const size_t count = pane.snapshot ? pane.snapshot->size() : pane.entries.size();
+    if (static_cast<size_t>(pane.selected_index) >= count) return;
+    const ListEntryView& e = MakeVisibleEntry(pane, static_cast<size_t>(pane.selected_index));
+    if (e.is_dir) return;
+    ID2D1DeviceContext* dc = compositor_->Dc();
+    IDWriteFactory2* factory = compositor_->DwriteFactory();
+    const float pad = 16.0f * scale_;
+    const float inner_w = rc.right - rc.left - 2.0f * pad;
+    if (inner_w < 48.0f * scale_ || rc.bottom <= rc.top) return;
+    dc->PushAxisAlignedClip(rc, D2D1_ANTIALIAS_MODE_ALIASED);
+
+    const float top = rc.top + column_header_height_ + 8.0f * scale_;
+    const float art = std::min({inner_w, 240.0f * scale_,
+                                std::max(64.0f * scale_, (rc.bottom - top) * 0.45f)});
+    const float cx = (rc.left + rc.right) * 0.5f;
+    const D2D1_RECT_F dest = D2D1::RectF(std::round(cx - art * 0.5f), std::round(top),
+                                         std::round(cx + art * 0.5f), std::round(top + art));
+    const uint32_t pixels = art <= 128.0f ? 128u : art <= 256.0f ? 256u : 512u;
+    D2D1_RECT_F drawn = dest;
+    const PreviewDrawResult result = e.record_only || e.cloud_recall
+        ? PreviewDrawResult::Failed
+        : thumbnail_cache_.DrawGridThumbnail(dc, dest, e.path, e.attrs, pixels, pane.view_generation,
+                                             e.modified_value, e.size_value, 1.0f, true, &drawn);
+    if (result != PreviewDrawResult::Bitmap) {
+        const float icon = std::min(art, 96.0f * scale_);
+        const float ix = std::round(cx - icon * 0.5f);
+        const float iy = std::round((dest.top + dest.bottom - icon) * 0.5f);
+        const D2D1_RECT_F icon_rc = D2D1::RectF(ix, iy, ix + icon, iy + icon);
+        if (ID2D1Bitmap* bitmap = icon_cache_.BitmapFor(e.path, e.name, false, e.attrs, icon / scale_)) {
+            dc->DrawBitmap(bitmap, icon_rc, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        } else {
+            DrawFileIcon(ix, iy, icon, theme, 1.0f);
+        }
+    }
+
+    float y = dest.bottom + 12.0f * scale_;
+    const std::wstring& name = e.alias.empty() ? e.name : e.alias;
+    const float name_max_h = 3.0f * 20.0f * scale_;
+    ComPtr<IDWriteTextLayout> layout;
+    if (factory && compositor_->FileNameFormat() &&
+        SUCCEEDED(factory->CreateTextLayout(name.c_str(), static_cast<UINT32>(name.size()),
+                                            compositor_->FileNameFormat(), inner_w, name_max_h,
+                                            &layout))) {
+        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        layout->SetWordWrapping(DWRITE_WORD_WRAPPING_EMERGENCY_BREAK);
+        DWRITE_TEXT_METRICS metrics{};
+        layout->GetMetrics(&metrics);
+        MakeBrush(dc, theme.text, brText_);
+        dc->PushAxisAlignedClip(D2D1::RectF(rc.left + pad, y, rc.right - pad, y + name_max_h),
+                                D2D1_ANTIALIAS_MODE_ALIASED);
+        dc->DrawTextLayout({rc.left + pad, y}, layout.get(), brText_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        dc->PopAxisAlignedClip();
+        y += std::min(metrics.height, name_max_h) + 14.0f * scale_;
+    }
+
+    const std::pair<std::wstring, std::wstring> facts[] = {
+        {l10n::Get(l10n::StringId::ColumnType), e.type_text},
+        {l10n::Get(l10n::StringId::ColumnSize), e.size_text},
+        {pane.date_column_label.empty() ? l10n::Get(l10n::StringId::ColumnModified) : pane.date_column_label,
+         e.date_text}};
+    const float fact_h = 24.0f * scale_;
+    MakeBrush(dc, theme.stroke_divider, brAccent_);
+    dc->FillRectangle(D2D1::RectF(rc.left + pad, y - 6.0f * scale_, rc.right - pad,
+                                  y - 6.0f * scale_ + std::max(1.0f, scale_)), brAccent_.get());
+    for (const auto& [label, value] : facts) {
+        if (value.empty()) continue;
+        MakeBrush(dc, theme.text_secondary, brTextSecondary_);
+        DrawTextEndEllipsis(dc, factory, compositor_->SmallFormat(), brTextSecondary_.get(), label,
+                            rc.left + pad, y, inner_w * 0.4f, fact_h);
+        const float value_w = std::min(inner_w * 0.6f - 8.0f * scale_,
+                                       MeasureTextWidth(factory, compositor_->SmallFormat(), value) + 1.0f);
+        MakeBrush(dc, theme.text, brText_);
+        DrawTextEndEllipsis(dc, factory, compositor_->SmallFormat(), brText_.get(), value,
+                            rc.right - pad - value_w, y, value_w, fact_h);
+        y += fact_h;
+    }
+    MakeBrush(dc, theme.text, brText_);
+    dc->PopAxisAlignedClip();
+}
+
 bool MainRenderer::HitTestColumnStrip(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,
                                       float x, float y, HitTestResult& out) const {
     const ColumnStripLayout strip = ColumnStripGeometry(vm, pane_bounds);
@@ -476,8 +584,8 @@ bool MainRenderer::HitTestColumnStrip(const PaneViewModel& vm, const D2D1_RECT_F
     const ColumnStripView& cs = vm.column_strip;
     const float grip = kGripDip * scale_;
     const bool has_viewport = strip.viewport.right > strip.viewport.left;
-    auto in_viewport = [&](const ColumnStripSlot& slot, float px) {
-        return slot.id == kColumnStripChildId || !has_viewport ||
+    auto in_viewport = [&](int id, float px) {
+        return !IsAncestorId(id) || !has_viewport ||
                (px >= strip.viewport.left && px < strip.viewport.right + grip);
     };
     D2D1_RECT_F track{}, thumb{};
@@ -488,14 +596,14 @@ bool MainRenderer::HitTestColumnStrip(const PaneViewModel& vm, const D2D1_RECT_F
         out.sub_index = -1;
         return true;
     }
-    for (const ColumnStripSlot& slot : strip.columns) {
-        if (y < slot.rect.top || y >= slot.rect.bottom) continue;
-        const float lx = StripDividerX(slot);
-        if (!in_viewport(slot, lx) || (slot.id != kColumnStripChildId && lx > strip.viewport.right + 0.5f))
+    for (const StripDivider& divider : StripDividers(strip, pane_bounds, pane_bounds.top + pane_header_height_)) {
+        if (y < divider.top || y >= divider.bottom) continue;
+        const float lx = divider.x;
+        if (!in_viewport(divider.id, lx) || (IsAncestorId(divider.id) && lx > strip.viewport.right + 0.5f))
             continue;
         if (std::fabs(x - lx) <= grip) {
             out.region = HitTestResult::ColumnStripDivider;
-            out.sub_index = slot.id;
+            out.sub_index = divider.id;
             out.index = -1;
             return true;
         }
@@ -503,14 +611,14 @@ bool MainRenderer::HitTestColumnStrip(const PaneViewModel& vm, const D2D1_RECT_F
     for (const ColumnStripSlot& slot : strip.columns) {
         if (x < slot.rect.left || x >= slot.rect.right ||
             y < slot.rect.top || y >= slot.rect.bottom) continue;
-        if (slot.id != kColumnStripChildId && has_viewport &&
+        if (IsAncestorId(slot.id) && has_viewport &&
             (x < strip.viewport.left || x >= strip.viewport.right)) continue;
         out.region = HitTestResult::ColumnStripBlank;
         out.sub_index = slot.id;
         out.index = -1;
         const ColumnStripColumnView* column = StripColumn(cs, slot.id);
         if (!column) return true;
-        const float list_top = slot.rect.top + kCaptionDip * scale_;
+        const float list_top = slot.rect.top + column_header_height_;
         const float view_h = ColumnStripViewHeight(slot.rect);
         if (y < list_top || y >= list_top + view_h) return true;
         const float scroll = ColumnStripScrollPx(*column, view_h);

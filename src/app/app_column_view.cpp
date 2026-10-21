@@ -350,6 +350,15 @@ bool HandleColumnStripMouseDown(AppState& s, const ui::WindowViewModel& vm,
     }
 }
 
+bool SelectColumnStripRow(AppState& s, const ui::HitTestResult& hit) {
+    if (hit.region != ui::HitTestResult::ColumnStripRow) return false;
+    app::Tab* tab = TabAtSlot(s, hit.pane_index);
+    if (!tab || !ClickRow(s, *tab, hit.sub_index, hit.index)) return false;
+    s.stripClickTick = 0; // not a folder change the next click should ignore
+    const app::Tab* active = ActiveTab(s);
+    return active && active->SelectedCount() > 0;
+}
+
 bool UpdateColumnStripResize(AppState& s, int x) {
     if (s.stripHScrolling) {
         app::Tab* tab = TabAtSlot(s, s.stripResizePane);
@@ -367,9 +376,8 @@ bool UpdateColumnStripResize(AppState& s, int x) {
     const size_t slot = ui::ColumnStripWidthSlot(s.stripResizeColumn,
                                                  tab->column_strip.ancestors.size());
     const float scale = s.scale > 0.0f ? s.scale : 1.0f;
-    float dx = static_cast<float>(x - s.stripResizeStartX) / scale;
-    // The child column's divider is its left edge: dragging left widens it.
-    if (s.stripResizeColumn == ui::kColumnStripChildId) dx = -dx;
+    // Every divider is its column's right edge: dragging right widens it.
+    const float dx = static_cast<float>(x - s.stripResizeStartX) / scale;
     const float width = std::clamp(s.stripResizeStartDip + dx,
                                    ui::kColumnStripMinDip, ui::kColumnStripMaxDip);
     if (tab->column_widths_dip.size() <= slot) tab->column_widths_dip.resize(slot + 1, 0.0f);

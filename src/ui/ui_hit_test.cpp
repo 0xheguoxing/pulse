@@ -1279,6 +1279,13 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
         if (y >= paneRect.top + pane_header_height_ && paneVm.column_strip.Active()) {
             if (HitTestColumnStrip(paneVm, paneRect, x, y, out)) return out;
             paneRc = PaneBodyBounds(paneVm, paneRect);
+            if (x >= paneRc.right) {
+                // Empty room right of the last column.
+                out.region = HitTestResult::ColumnStripBlank;
+                out.sub_index = -1;
+                out.index = -1;
+                return out;
+            }
         }
         const float banner = PaneBannerHeight(paneVm, paneRc.right - paneRc.left, scale_, compositor_);
         if (banner > 0 && !paneVm.is_changes &&
@@ -1398,7 +1405,8 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             return out;
         }
         if (ShowsColumnHeader(paneVm.view_mode) && y >= columnTop && y < listTop) {
-            if (paneVm.curated_order) {
+            // Column view: a caption, no sorting or column dividers.
+            if (paneVm.curated_order || paneVm.column_strip.Active()) {
                 out.region = HitTestResult::Pane;
                 return out;
             }
@@ -1547,8 +1555,9 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                         }
                         const bool rowHot = paneVm.hover_index == idx ||
                             (paneVm.selected_index == idx && paneVm.selected_count == 1);
+                        // Column view rows carry no row actions (see DrawPaneList).
                         const bool showActions = paneVm.view_mode == ViewMode::Details && idx != paneVm.rename_index &&
-                            (rowHot || entry.starred);
+                            !paneVm.column_strip.Active() && (rowHot || entry.starred);
                         const auto changeIt = paneVm.change_badges.find(idx);
                         const ChangeBadge* change = changeIt != paneVm.change_badges.end() && HasChangeBadge(changeIt->second) ? &changeIt->second : nullptr;
                         const bool grid = paneVm.view_mode == ViewMode::ExtraLargeIcons || paneVm.view_mode == ViewMode::LargeIcons || paneVm.view_mode == ViewMode::MediumIcons;
@@ -1572,7 +1581,10 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                             MakeDetailsNameLine(nameRc, cell, scale_, rowSnippet);
                         const NameTrail trail = LayoutNameTrail(
                             nameRc.left, nameLine.y, nameLine.h,
-                            paneVm.view_mode == ViewMode::Details ? columns.DividerX(0) - margin_ : nameRc.right, cell.top, cell.bottom, scale_,
+                            paneVm.view_mode == ViewMode::Details
+                                ? (paneVm.column_strip.Active() ? columns.right - 18.0f * scale_
+                                                                : columns.DividerX(0) - margin_)
+                                : nameRc.right, cell.top, cell.bottom, scale_,
                             entry.name, static_cast<int>(std::min<size_t>(3, tagCount)), badgeW,
                             showActions, showActions && paneVm.hover_index == idx && entry.is_dir,
                             showActions && rowHot,
