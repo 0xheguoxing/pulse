@@ -28,6 +28,14 @@ MainRenderer::MainRenderer()
 
 MainRenderer::MainRenderer(RenderCaches& caches) : caches_(caches) {}
 
+void MainRendererDeleter::operator()(MainRenderer* renderer) const noexcept {
+    delete renderer;
+}
+
+MainRendererPtr MakeMainRenderer(RenderCaches& caches) {
+    return MainRendererPtr(new MainRenderer(caches));
+}
+
 void MainRenderer::SetCompositor(Compositor* comp) {
     paneHeaderStroke_.reset();
     link_arrow_geometry_.reset();

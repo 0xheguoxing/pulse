@@ -7,6 +7,7 @@
 #include "zip_compress_ui.h"
 #include "keymap.h"
 #include "../ui/ui_motion.h"
+#include "../ui/ui_renderer.h"
 #include <atomic>
 #include "../ui/shortcut_help.h"
 // app_commands.cpp — extracted from app_main.cpp.

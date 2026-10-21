@@ -5,6 +5,7 @@
 #include "app_internal.h"
 #include "shortcut_page.h"
 #include "keymap.h"
+#include "../ui/ui_renderer.h"
 #include <memory>
 #include <thread>
 #include "system_ctx_model.h"

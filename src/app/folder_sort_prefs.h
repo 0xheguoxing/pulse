@@ -2,7 +2,7 @@
 // that "apply to all folders" replaces (#31).
 #pragma once
 
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include <map>
 #include <optional>
 #include <string>

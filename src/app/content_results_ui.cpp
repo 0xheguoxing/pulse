@@ -2,6 +2,7 @@
 #include "content_results_ui.h"
 #include "search_query.h"
 #include "../common/localization.h"
+#include "../ui/ui_renderer.h"
 #include <mutex>
 #include <optional>
 

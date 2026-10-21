@@ -2,6 +2,7 @@
 #include "search_query.h"
 #include "../common/localization.h"
 #include "../ui/address_search_layout.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 #include <cwctype>
 

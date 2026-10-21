@@ -5,6 +5,7 @@
 #include "../common/localization.h"
 #include "keymap.h"
 #include "../ui/fluent_menu.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>

@@ -10,6 +10,7 @@
 #include "shortcut_page.h"
 #include "content_scope_mode.h"
 #include "content_pack_ui.h"
+#include "../ui/ui_renderer.h"
 #include <shellapi.h>
 #include <shlobj.h>
 #include <algorithm>

@@ -3,7 +3,7 @@
 #include "../fs/fs_enum.h"
 #include "../fs/fs_recycle.h"
 #include "../fs/fs_snapshot.h"
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include "places.h"
 #include "tag_ads_sync.h"
 #include "column_view_model.h"

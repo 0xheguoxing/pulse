@@ -5,7 +5,7 @@
 #include "../fs/fs_recycle.h"
 #include "../fs/fs_snapshot.h"
 #include "../fs/fs_net_cache.h"
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include "entry_sort.h"
 #include <memory>
 #include <windows.h>

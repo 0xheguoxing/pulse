@@ -7,6 +7,7 @@
 #include "../common/text_format.h"
 #include "../common/preview_extensions.h"
 #include "../ui/video_preview.h"
+#include "../ui/ui_renderer.h"
 #include <windowsx.h>
 #include <shellapi.h>
 #include <mmsystem.h>

@@ -7,6 +7,7 @@
 #include "../common/path_utils.h"
 #include "../common/string_ids.h"
 #include "../fs/fs_enum.h"
+#include "../ui/ui_renderer.h"
 
 #include <windowsx.h>
 

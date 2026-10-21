@@ -10,6 +10,7 @@
 #include "../common/localization.h"
 #include "../common/path_utils.h"
 #include "../fs/fs_enum.h"
+#include "../ui/ui_renderer.h"
 
 #include <windowsx.h>
 

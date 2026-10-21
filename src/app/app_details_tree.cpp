@@ -14,6 +14,7 @@
 #include "../common/localization.h"
 #include "../common/text_format.h"
 #include "../ui/ui_motion.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 #include <cwchar>
 #include <unordered_map>

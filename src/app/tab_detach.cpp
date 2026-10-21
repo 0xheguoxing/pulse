@@ -1,6 +1,7 @@
 // tab_detach.cpp - Multi-window M6a: drags a tab off the strip into its own
 // window (plan §8.2).
 #include "tab_detach.h"
+#include "../ui/ui_renderer.h"
 
 #include "app_internal.h"
 #include "../common/localization.h"

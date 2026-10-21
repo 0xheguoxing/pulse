@@ -7,6 +7,7 @@
 #include "app_runtime.h"
 #include "entry_group.h"
 #include "entry_sort.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 #include <unordered_set>
 

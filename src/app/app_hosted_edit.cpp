@@ -1,5 +1,6 @@
 #include "../ui/edit_host.h"
 #include "../ui/FluentTokens.h"
+#include "../ui/ui_renderer.h"
 // app_hosted_edit.cpp — extracted from app_main.cpp.
 #include "app_internal.h"
 #include "address_bar_command.h"

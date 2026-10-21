@@ -2,6 +2,7 @@
 #include "app_runtime.h"
 #include "app_change_tracking.h"
 #include "app_hover_preview.h"
+#include "../ui/ui_renderer.h"
 
 namespace pulse {
 bool UpdatePointerHover(AppState& s, const ui::HitTestResult& pointer_hit, POINT point) {

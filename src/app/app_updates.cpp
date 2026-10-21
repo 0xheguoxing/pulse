@@ -6,6 +6,7 @@
 #include "pulse_version.h"
 #include "../common/localization.h"
 #include "../common/runtime_log.h"
+#include "../ui/ui_renderer.h"
 #include <cstdio>
 
 namespace pulse {

@@ -4,6 +4,7 @@
 // Checked at compile time (a broken alias fails the build); the executable
 // reports the checked list as [PASS] lines.
 #include "../app/app_state.h"
+#include "../ui/ui_renderer.h"
 
 #include <cstdio>
 #include <type_traits>
@@ -48,13 +49,19 @@ PULSE_APP_CORE_ALIASES(PULSE_CHECK_CORE_ALIAS)
 
 // Per-window state: owned by each AppState, never shared.
 #define PULSE_WINDOW_MEMBERS(X) \
-    X(hwnd) X(compositor) X(renderer) X(framePump) X(quickPreview) X(window_tabs) X(pane) \
+    X(hwnd) X(compositor) X(renderer_owner) X(framePump) X(quickPreview) X(window_tabs) X(pane) \
     X(targetPane) X(tabs) X(scale) X(maximized) X(menu) X(dropTarget) X(hwndAddressEdit) \
     X(hwndFilterEdit) X(hwndRenameEdit) X(sidebarScroll) X(showDetailsPanel)
 #define PULSE_CHECK_WINDOW_MEMBER(name)                                    \
     static_assert(!std::is_reference_v<decltype(AppState::name)>,         \
                   "AppState::" #name " is per-window state, not an alias");
 PULSE_WINDOW_MEMBERS(PULSE_CHECK_WINDOW_MEMBER)
+// The renderer is owned per window through renderer_owner (so app_state.h does
+// not need ui_renderer.h); `renderer` only names that same object.
+static_assert(std::is_same_v<decltype(AppState::renderer), pulse::ui::MainRenderer&>,
+              "AppState::renderer names the window's own renderer_owner");
+static_assert(std::is_same_v<decltype(AppState::renderer_owner), pulse::ui::MainRendererPtr>,
+              "each window owns its renderer");
 
 static_assert(std::is_base_of_v<AppCoreOwner, AppState>,
               "a stand-alone AppState owns its core through AppCoreOwner");

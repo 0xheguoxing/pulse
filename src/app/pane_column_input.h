@@ -1,5 +1,6 @@
 #pragma once
 #include "app_model.h"
+#include "../ui/ui_renderer.h"
 
 namespace pulse::app {
 inline void ResizePaneColumn(Tab& tab, const ui::PaneViewModel& view,

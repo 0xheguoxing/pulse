@@ -4,6 +4,7 @@
 #include "app_wall_hint.h"
 #include "arrival_select.h"
 #include "pane_column_input.h"
+#include "../ui/ui_renderer.h"
 // app_input.cpp — extracted from app_main.cpp.
 #include "quick_access.h"
 #include "tag_manager.h"

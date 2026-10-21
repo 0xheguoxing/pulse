@@ -1,5 +1,6 @@
 // filter_tag_complete.cpp — see filter_tag_complete.h.
 #include "filter_tag_complete.h"
+#include "../ui/ui_renderer.h"
 
 #include "app_commands.h"
 #include "app_internal.h"
