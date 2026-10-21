@@ -2,6 +2,7 @@
 #include "arrival_select.h"
 #include "app_internal.h"
 #include "window_registry.h"
+#include "pane_layout.h"
 #include "../common/path_utils.h"
 #include "../ops/ops_manager.h"
 #include <algorithm>
@@ -36,6 +37,27 @@ std::vector<std::wstring> SelectedNames(const app::Tab& tab) {
             names.push_back(Lower(std::wstring(tab.EntryAt(static_cast<size_t>(index)).name)));
     std::sort(names.begin(), names.end());
     return names;
+}
+
+// A copy to the other pane (#58-13) or a drop there selects rows in a pane
+// without focus. EnsureRowVisible measures the focused pane, so bring the row
+// into this pane's own view; its scroll is the tab's, not the focused one's.
+void RevealInPane(AppState& s, app::Pane& pane, app::Tab& tab, int index) {
+    ui::PaneViewModel vm;
+    app::FillPaneViewModel(vm, pane, &s.places);
+    int row = index;
+    if (vm.filter_map || !vm.filter_text.empty()) {
+        row = vm.ViewIndex(index);
+        if (row < 0) return;
+    }
+    const D2D1_RECT_F content = s.renderer.ContentRect(
+        static_cast<float>(s.compositor.Width()), static_cast<float>(s.compositor.Height()));
+    const D2D1_RECT_F bounds = app::FocusedWindowPaneRect(Root(s).get(), &pane, content, s.scale);
+    const D2D1_RECT_F list = s.renderer.PaneListRect(vm, bounds);
+    const D2D1_RECT_F item = s.renderer.ItemRectInPane(vm, bounds, row);
+    if (item.top < list.top) tab.scroll_y += item.top - list.top;
+    else if (item.bottom > list.bottom) tab.scroll_y += item.bottom - list.bottom;
+    tab.scroll_y = std::clamp(tab.scroll_y, 0.0f, s.renderer.MaxScrollForPane(vm, bounds));
 }
 
 void AddExpected(AppState& window, const std::vector<std::wstring>& paths) {
@@ -139,6 +161,7 @@ bool ApplyArrivalSelection(AppState& s, app::Pane& pane, app::Tab& tab, bool foc
     tab.RemapSelection(pick, pick.front(), false);
     a.chosen = SelectedNames(tab);
     if (focused && tab.selected_index >= 0) EnsureRowVisible(s, tab, tab.selected_index);
+    else if (tab.selected_index >= 0) RevealInPane(s, pane, tab, tab.selected_index);
     InvalidateRect(s.hwnd, nullptr, FALSE);
     return true;
 }

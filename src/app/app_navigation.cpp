@@ -2463,7 +2463,10 @@ void TransferToTarget(AppState& s, bool move) {
     req.dest_dir = dst->current_path;
     req.sources = std::move(paths);
     if (move) s.cutPaths.clear();
-    SubmitWithConflictResolution(s, std::move(req));
+    // #58-13: the items are selected in the target pane as they arrive, as a
+    // paste selects them in its own.
+    uint64_t task = 0;
+    if (SubmitWithConflictResolution(s, std::move(req), &task)) ArmArrivalSelection(s, s.targetPane, task, 0);
 }
 
 std::vector<std::wstring> WindowTransferFolders(AppState& s) {
@@ -2499,7 +2502,20 @@ void TransferSelectionToFolder(AppState& s, const std::wstring& folder, bool mov
     req.dest_dir = folder;
     req.sources = std::move(paths);
     if (move) s.cutPaths.clear();
-    SubmitWithConflictResolution(s, std::move(req));
+    uint64_t task = 0;
+    if (!SubmitWithConflictResolution(s, std::move(req), &task)) return;
+    // #58-13: select them where they land, in the window that shows the folder.
+    const std::wstring target = fs::NormalizePath(folder);
+    bool armed = false;
+    app::ForEachWindowSharingCore(s, [&](AppState& window) {
+        for (app::Pane* pane : VisiblePanes(window)) {
+            const app::Tab* shown = pane ? pane->ActiveTab() : nullptr;
+            if (armed || !shown || _wcsicmp(fs::NormalizePath(shown->current_path).c_str(), target.c_str()) != 0)
+                continue;
+            ArmArrivalSelection(window, pane, task, 0);
+            armed = true;
+        }
+    });
 }
 
 void CycleFocus(AppState& s) {
