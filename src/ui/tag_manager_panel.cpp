@@ -548,7 +548,7 @@ void ToggleStar(State& s, int position) {
 }
 
 void SetFilter(State& s, int index) {
-    const auto filter = static_cast<TagManagerFilter>(std::clamp(index, 0, 2));
+    const auto filter = static_cast<TagManagerFilter>(std::clamp(index, 0, 3));
     if (filter == s.view->filter) return;
     s.view->filter = filter;
     SelectOnly(s, -1);
