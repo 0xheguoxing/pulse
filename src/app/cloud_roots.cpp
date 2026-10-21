@@ -244,15 +244,14 @@ void MergeCloudRoots(std::vector<CloudRoot>& into, std::vector<CloudRoot> more,
 }
 
 namespace {
-std::shared_ptr<const std::vector<std::wstring>> g_cloud_files_roots;
+std::atomic<std::shared_ptr<const std::vector<std::wstring>>> g_cloud_files_roots;
 } // namespace
 
 void PublishCloudFilesRoots(std::vector<std::wstring> roots) {
     for (auto& root : roots) root = NormalizeCloudRootPath(root);
     roots.erase(std::remove(roots.begin(), roots.end(), std::wstring()), roots.end());
-    std::atomic_store(&g_cloud_files_roots,
-                      std::shared_ptr<const std::vector<std::wstring>>(
-                          std::make_shared<std::vector<std::wstring>>(std::move(roots))));
+    g_cloud_files_roots.store(std::shared_ptr<const std::vector<std::wstring>>(
+        std::make_shared<std::vector<std::wstring>>(std::move(roots))));
 }
 
 namespace {
@@ -267,11 +266,11 @@ bool PathUnderRoot(const std::wstring& path, const std::wstring& root) {
         _wcsnicmp(path.c_str(), root.c_str(), root.size()) != 0) return false;
     return path.size() == root.size() || path[root.size()] == L'\\' || root.back() == L'\\';
 }
-std::shared_ptr<const std::vector<std::pair<std::wstring, std::wstring>>> g_cloud_root_labels;
+std::atomic<std::shared_ptr<const std::vector<std::pair<std::wstring, std::wstring>>>> g_cloud_root_labels;
 } // namespace
 
 bool IsUnderCloudFilesRoot(const std::wstring& raw) {
-    const auto roots = std::atomic_load(&g_cloud_files_roots);
+    const auto roots = g_cloud_files_roots.load();
     if (!roots || roots->empty() || raw.size() < 3) return false;
     const std::wstring path = WithoutLongPrefix(raw);
     for (const auto& root : *roots)
@@ -285,12 +284,12 @@ void PublishCloudRootLabels(const std::vector<CloudRoot>& roots) {
         std::wstring path = NormalizeCloudRootPath(root.path);
         if (!path.empty() && !root.label.empty()) labels->emplace_back(std::move(path), root.label);
     }
-    std::atomic_store(&g_cloud_root_labels,
-                      std::shared_ptr<const std::vector<std::pair<std::wstring, std::wstring>>>(std::move(labels)));
+    g_cloud_root_labels.store(
+        std::shared_ptr<const std::vector<std::pair<std::wstring, std::wstring>>>(std::move(labels)));
 }
 
 std::wstring CloudRootLabelFor(const std::wstring& raw) {
-    const auto labels = std::atomic_load(&g_cloud_root_labels);
+    const auto labels = g_cloud_root_labels.load();
     if (!labels || raw.size() < 3) return {};
     const std::wstring path = WithoutLongPrefix(raw);
     const std::pair<std::wstring, std::wstring>* best = nullptr;
