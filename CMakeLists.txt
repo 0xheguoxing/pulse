@@ -561,7 +561,8 @@ if(PULSE_APP_SOURCES)
             # by hand. Options are limited to pulse: tests compile some of
             # these sources too.
             pulse_collect_app_state_sources(_pulse_app_pch ${PULSE_APP_SOURCES})
-            list(REMOVE_ITEM _pulse_app_pch ${_pulse_no_pch})
+            list(TRANSFORM _pulse_no_pch PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/" OUTPUT_VARIABLE _pulse_no_pch_abs)
+            list(REMOVE_ITEM _pulse_app_pch ${_pulse_no_pch} ${_pulse_no_pch_abs})
             list(FILTER _pulse_app_pch EXCLUDE REGEX "pch_app_state\\.cpp$")
             set(_pch_h "${CMAKE_CURRENT_SOURCE_DIR}/src/app/pch_app_state.h")
             set(_pch_bin "${CMAKE_CURRENT_BINARY_DIR}/pulse_app_state.pch")
