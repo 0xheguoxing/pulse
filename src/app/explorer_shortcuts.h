@@ -30,7 +30,7 @@ namespace pulse::app {
 enum class ExplorerKeyAction {
     None, Delete, MarkTarget, NewFolder, Search, TabNumber, Layout, ViewMode, Tag, ClearTags,
     TagPanel, Back,
-    ContextMenu, Maximize, NewWindow, CloseWindow, MoveTabToNewWindow
+    ContextMenu, Maximize, NewWindow, CloseWindow, MoveTabToNewWindow, MergeWindows
 };
 
 struct ExplorerKeyCommand {
@@ -49,6 +49,7 @@ inline ExplorerKeyCommand ExplorerShortcut(UINT key, bool ctrl, bool shift, bool
     if (ctrl && !shift && !alt && key == L'N') return {A::NewWindow};
     if (ctrl && shift && !alt && key == L'W') return {A::CloseWindow};
     if (ctrl && shift && !alt && key == L'M') return {A::MoveTabToNewWindow};
+    if (ctrl && shift && !alt && key == L'J') return {A::MergeWindows};
     if ((ctrl && !shift && !alt && key == L'E') || (!ctrl && !shift && !alt && key == VK_F3))
         return {A::Search};
     if (digit && ctrl && !shift && !alt) return {A::TabNumber, number};

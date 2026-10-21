@@ -2568,6 +2568,10 @@ enum class StringId : UINT {
     TagSmartViewNameTaken = IDS_TAG_SMART_VIEW_NAME_TAKEN,
     TagSmartViewNotSaved = IDS_TAG_SMART_VIEW_NOT_SAVED,
     TagDotTip = IDS_TAG_DOT_TIP,
+    HelpMergeWindows = IDS_HELP_MERGE_WINDOWS,
+    DropLink = IDS_DROP_LINK,
+    ShortcutNameFormat = IDS_SHORTCUT_NAME_FORMAT,
+    CannotCreateShortcut = IDS_CANNOT_CREATE_SHORTCUT,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

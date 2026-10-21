@@ -91,6 +91,7 @@ std::vector<HelpGroup> HelpGroups() {
             {Id::HelpReopenClosed, L"Ctrl Shift T", {K::ReopenClosed}},
             {Id::HelpSwitchWindow, L"Ctrl " + SwitcherKey(), {K::SwitchWindow}},
             {Id::HelpWindowOverview, L"Ctrl Shift O", {K::Overview}},
+            {Id::HelpMergeWindows, L"Ctrl Shift J", {K::MergeWindows}},
         }},
     };
     for (auto& group : groups) {

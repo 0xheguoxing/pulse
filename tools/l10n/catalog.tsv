@@ -2579,3 +2579,7 @@ SelCopyNames	IDS_SEL_COPY_NAMES	3781	复制名称	Copy names	複製名稱
 TagSmartViewNameTaken	IDS_TAG_SMART_VIEW_NAME_TAKEN	3782	已经有叫「%s」的视图了，换个名字	A view named “%s” already exists	已經有叫「%s」的檢視了，換個名稱
 TagSmartViewNotSaved	IDS_TAG_SMART_VIEW_NOT_SAVED	3783	「%s」没能保存：保存的搜索已满	Couldn't save “%s”: the saved searches are full	「%s」無法儲存：儲存的搜尋已滿
 TagDotTip	IDS_TAG_DOT_TIP	3784	「%s」 · 点按只看这个标签	“%s” · click to show only this tag	「%s」 · 點按只看這個標籤
+HelpMergeWindows	IDS_HELP_MERGE_WINDOWS	3785	合并所有窗口	Merge all windows	合併所有視窗
+DropLink	IDS_DROP_LINK	3786	创建快捷方式到 	Create shortcut in 	建立捷徑到 
+ShortcutNameFormat	IDS_SHORTCUT_NAME_FORMAT	3787	%s - 快捷方式	%s - Shortcut	%s - 捷徑
+CannotCreateShortcut	IDS_CANNOT_CREATE_SHORTCUT	3788	无法创建快捷方式	Couldn't create the shortcut	無法建立捷徑

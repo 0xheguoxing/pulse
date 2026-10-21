@@ -225,6 +225,15 @@ bool IsWindowOverviewKey(WPARAM vk) {
     return vk == 'O' && Down(VK_CONTROL) && Down(VK_SHIFT) && !Down(VK_MENU);
 }
 
+bool MergeAllWindows(AppState& s) {
+    std::vector<HWND> others;
+    for (HWND hwnd : OpenWindows(s))
+        if (hwnd != s.hwnd) others.push_back(hwnd);
+    if (s.overview.open) Close(s);
+    if (others.empty()) return false;
+    return MergeWindowsInto(others, s) > 0;  // one toast here undoes all of them
+}
+
 void ToggleWindowOverview(AppState& s) {
     if (s.overview.open)
         Close(s);

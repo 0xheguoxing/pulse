@@ -2572,5 +2572,9 @@
 #define IDS_TAG_SMART_VIEW_NAME_TAKEN                                                    3782
 #define IDS_TAG_SMART_VIEW_NOT_SAVED                                                     3783
 #define IDS_TAG_DOT_TIP                                                                  3784
+#define IDS_HELP_MERGE_WINDOWS                                                           3785
+#define IDS_DROP_LINK                                                                    3786
+#define IDS_SHORTCUT_NAME_FORMAT                                                         3787
+#define IDS_CANNOT_CREATE_SHORTCUT                                                       3788
 
 #endif  // PULSE_STRING_IDS_H

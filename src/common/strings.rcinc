@@ -2558,6 +2558,10 @@ BEGIN
     IDS_TAG_SMART_VIEW_NAME_TAKEN "已经有叫「%s」的视图了，换个名字"
     IDS_TAG_SMART_VIEW_NOT_SAVED "「%s」没能保存：保存的搜索已满"
     IDS_TAG_DOT_TIP "「%s」 · 点按只看这个标签"
+    IDS_HELP_MERGE_WINDOWS "合并所有窗口"
+    IDS_DROP_LINK "创建快捷方式到 "
+    IDS_SHORTCUT_NAME_FORMAT "%s - 快捷方式"
+    IDS_CANNOT_CREATE_SHORTCUT "无法创建快捷方式"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5115,6 +5119,10 @@ BEGIN
     IDS_TAG_SMART_VIEW_NAME_TAKEN "A view named “%s” already exists"
     IDS_TAG_SMART_VIEW_NOT_SAVED "Couldn't save “%s”: the saved searches are full"
     IDS_TAG_DOT_TIP "“%s” · click to show only this tag"
+    IDS_HELP_MERGE_WINDOWS "Merge all windows"
+    IDS_DROP_LINK "Create shortcut in "
+    IDS_SHORTCUT_NAME_FORMAT "%s - Shortcut"
+    IDS_CANNOT_CREATE_SHORTCUT "Couldn't create the shortcut"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

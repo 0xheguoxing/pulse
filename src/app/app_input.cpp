@@ -16,6 +16,7 @@
 #include "tab_spring.h"
 #include "tab_shortcuts.h"
 #include "explorer_shortcuts.h"
+#include "window_overview_ui.h"
 #include "app_updates.h"
 #include "app_internal.h"
 #include "global_search_controller.h"
@@ -4739,6 +4740,8 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             case A::NewWindow: PostMessageW(hwnd, WM_NEW_WINDOW, 0, 0); break;
             case A::CloseWindow: PostMessageW(hwnd, WM_CLOSE, 0, 0); break;
             case A::MoveTabToNewWindow: PostMessageW(hwnd, WM_MOVE_TAB_TO_NEW_WINDOW, 0, 0); break;
+            // The other windows go away; this one (whose handler runs) stays.
+            case A::MergeWindows: MergeAllWindows(*s); break;
             case A::None: break;
             }
         } else if (ctrl && !shift && !alt && wParam == L'B') {

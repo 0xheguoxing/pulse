@@ -55,7 +55,8 @@ enum class KeyAction : uint8_t {
     Search, CommandBar, Project, Filter, AdvancedSearch,
     NewTab, CloseTab, NextTab, TabNumber, Layout, ViewMode, NextPane, MarkTarget, CopyToTarget,
     MoveToTarget, Sidebar, FavoritesBar, Maximize,
-    NewWindow, CloseWindow, TabToWindow, ReopenClosed, SwitchWindow, Overview, ShortcutHelp,
+    NewWindow, CloseWindow, TabToWindow, ReopenClosed, SwitchWindow, Overview, MergeWindows,
+    ShortcutHelp,
     Count
 };
 constexpr int kKeyActionCount = static_cast<int>(KeyAction::Count);

@@ -2556,4 +2556,8 @@ BEGIN
     IDS_TAG_SMART_VIEW_NAME_TAKEN "已經有叫「%s」的檢視了，換個名稱"
     IDS_TAG_SMART_VIEW_NOT_SAVED "「%s」無法儲存：儲存的搜尋已滿"
     IDS_TAG_DOT_TIP "「%s」 · 點按只看這個標籤"
+    IDS_HELP_MERGE_WINDOWS "合併所有視窗"
+    IDS_DROP_LINK "建立捷徑到 "
+    IDS_SHORTCUT_NAME_FORMAT "%s - 捷徑"
+    IDS_CANNOT_CREATE_SHORTCUT "無法建立捷徑"
 END
