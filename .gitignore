@@ -91,3 +91,9 @@ CONERR$
 # Local scratch: experiment backups and size/test scripts.
 /_backups/
 /.size-test/
+
+# Local tool state: review pages, editor/LSP caches, agent session data.
+/.answer-me-html/
+/.cache/
+/.codegraph/
+/.pi/
