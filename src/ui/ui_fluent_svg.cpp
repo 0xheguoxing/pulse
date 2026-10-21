@@ -1,6 +1,7 @@
 // Unified command geometry, with the existing SVG loader retained for artwork.
 #include "ui_renderer.h"
 #include "command_icons.h"
+#include "fluent_color_svg.h"
 #include "../common/windows_compat.h"
 #include "../app/resource.h"
 #include <d2d1svg.h>
@@ -194,30 +195,10 @@ bool MainRenderer::EnsureFluentSvg(int resource_id, bool colorful) {
         return false;
     }
 
-    const HMODULE module = GetModuleHandleW(nullptr);
-    const HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(resource_id), RT_RCDATA);
-    if (!resource) {
-        fluent_svg_failed_.insert(resource_id);
-        return false;
-    }
-    const HGLOBAL loaded = LoadResource(module, resource);
-    const DWORD byte_count = SizeofResource(module, resource);
-    const void* bytes = loaded ? LockResource(loaded) : nullptr;
-    if (!bytes || byte_count == 0) {
-        fluent_svg_failed_.insert(resource_id);
-        return false;
-    }
-
     ComPtr<ID2D1SvgDocument> document;
-    if (!CreateSvgFromBytes(empty_state_svg_dc_.get(), bytes, byte_count, document)) {
-        const std::string simplified = SimplifySvgForD2d(
-            std::string_view(static_cast<const char*>(bytes), byte_count));
-        if (simplified.empty() ||
-            !CreateSvgFromBytes(empty_state_svg_dc_.get(), simplified.data(),
-                                static_cast<DWORD>(simplified.size()), document)) {
-            fluent_svg_failed_.insert(resource_id);
-            return false;
-        }
+    if (!LoadFluentSvg(empty_state_svg_dc_.get(), resource_id, document)) {
+        fluent_svg_failed_.insert(resource_id);
+        return false;
     }
 
     fluent_svgs_[resource_id] = std::move(document);
@@ -242,7 +223,29 @@ bool MainRenderer::DrawFluentSvg(int resource_id, const D2D1_RECT_F& bounds, flo
     const auto it = fluent_svgs_.find(resource_id);
     if (it == fluent_svgs_.end() || !it->second.get() || !empty_state_svg_dc_.get()) return false;
 
-    ID2D1SvgDocument* svg = it->second.get();
+    return DrawFluentSvgFitted(empty_state_svg_dc_.get(), it->second.get(), bounds, opacity);
+}
+
+bool LoadFluentSvg(ID2D1DeviceContext5* dc, int resource_id, ComPtr<ID2D1SvgDocument>& out) {
+    out.reset();
+    if (!dc) return false;
+    const HMODULE module = GetModuleHandleW(nullptr);
+    const HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(resource_id), RT_RCDATA);
+    if (!resource) return false;
+    const HGLOBAL loaded = LoadResource(module, resource);
+    const DWORD byte_count = SizeofResource(module, resource);
+    const void* bytes = loaded ? LockResource(loaded) : nullptr;
+    if (!bytes || byte_count == 0) return false;
+    if (CreateSvgFromBytes(dc, bytes, byte_count, out)) return true;
+    const std::string simplified = SimplifySvgForD2d(
+        std::string_view(static_cast<const char*>(bytes), byte_count));
+    return !simplified.empty() &&
+           CreateSvgFromBytes(dc, simplified.data(), static_cast<DWORD>(simplified.size()), out);
+}
+
+bool DrawFluentSvgFitted(ID2D1DeviceContext5* dc, ID2D1SvgDocument* svg,
+                         const D2D1_RECT_F& bounds, float opacity) {
+    if (!dc || !svg) return false;
     ComPtr<ID2D1SvgElement> root;
     svg->GetRoot(&root);
     if (root.get())
@@ -257,12 +260,12 @@ bool MainRenderer::DrawFluentSvg(int resource_id, const D2D1_RECT_F& bounds, flo
 
     svg->SetViewportSize(D2D1::SizeF(24.0f, 24.0f));
     D2D1_MATRIX_3X2_F previous{};
-    empty_state_svg_dc_->GetTransform(&previous);
-    empty_state_svg_dc_->SetTransform(
+    dc->GetTransform(&previous);
+    dc->SetTransform(
         D2D1::Matrix3x2F::Scale(art / 24.0f, art / 24.0f) *
         D2D1::Matrix3x2F::Translation(left, top) * previous);
-    empty_state_svg_dc_->DrawSvgDocument(svg);
-    empty_state_svg_dc_->SetTransform(previous);
+    dc->DrawSvgDocument(svg);
+    dc->SetTransform(previous);
     return true;
 }
 

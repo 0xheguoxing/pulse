@@ -11,6 +11,8 @@
 // 20-DIP icon, label, dimmed folder path, remove button for pins.
 #include "quick_access_editor.h"
 
+#include "../common/windows_compat.h"
+#include "fluent_color_svg.h"
 #include "fluent_components.h"
 #include "fluent_menu.h"
 #include "typography.h"
@@ -127,6 +129,8 @@ struct State {
     bool tracking_leave = false;
 
     std::unordered_map<std::wstring, RowText> text_cache;
+    // Color artwork by resource id; a null document marks one that failed.
+    std::unordered_map<int, ComPtr<ID2D1SvgDocument>> artwork;
 
     HDC mem_dc = nullptr;
     HBITMAP dib = nullptr;
@@ -266,6 +270,24 @@ const RowText& TextFor(State& s, const QuickAccessEditorRow& item, const D2D1_RE
     return s.text_cache.emplace(item.key, std::move(measured)).first->second;
 }
 
+// The color Fluent icon the sidebar draws for the same row (桌面, 下载, 图片…);
+// false leaves the row to its tinted glyph (no artwork, high contrast, legacy).
+bool DrawRowArtwork(State& s, ID2D1DeviceContext* dc, const std::wstring& glyph,
+                    const D2D1_RECT_F& box, float opacity) {
+    if (IsHighContrast() || compat::LegacyMode()) return false;
+    const int id = FluentSvgIdForGlyph(glyph);
+    if (id == 0) return false;
+    ComPtr<ID2D1DeviceContext5> dc5;
+    if (FAILED(dc->QueryInterface(IID_PPV_ARGS(&dc5))) || !dc5.get()) return false;
+    auto it = s.artwork.find(id);
+    if (it == s.artwork.end()) {
+        ComPtr<ID2D1SvgDocument> document;
+        LoadFluentSvg(dc5.get(), id, document);
+        it = s.artwork.emplace(id, std::move(document)).first;
+    }
+    return it->second.get() && DrawFluentSvgFitted(dc5.get(), it->second.get(), box, opacity);
+}
+
 void DrawRow(State& s, ID2D1DeviceContext* dc, size_t index, const D2D1_RECT_F& row) {
     const auto& item = (*s.rows)[index];
     const int i = static_cast<int>(index);
@@ -312,9 +334,10 @@ void DrawRow(State& s, ID2D1DeviceContext* dc, size_t index, const D2D1_RECT_F& 
     D2D1_COLOR_F icon = item.color;
     if (dim) icon.a *= 0.45f;
     const float ix = row.left + Px(s, 50.0f);
-    s.painter.DrawGlyph(item.glyph,
-                        D2D1::RectF(ix, cy - Px(s, 10.0f), ix + Px(s, 20.0f), cy + Px(s, 10.0f)),
-                        icon);
+    const D2D1_RECT_F icon_box =
+        D2D1::RectF(ix, cy - Px(s, 10.0f), ix + Px(s, 20.0f), cy + Px(s, 10.0f));
+    if (!DrawRowArtwork(s, dc, item.glyph, icon_box, dim ? 0.45f : 1.0f))
+        s.painter.DrawGlyph(item.glyph, icon_box, icon);
 
     const RowText& measured = TextFor(s, item, row);
     const float left = TextLeft(s, row);
