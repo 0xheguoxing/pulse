@@ -30,6 +30,7 @@ struct ToolbarPickerTile {
     bool checked = false;        // on the toolbar
     bool toggle = false;         // tools: the tile carries a switch for its setting
     bool toggle_on = false;
+    bool hidden = false;         // not offered (kept for its index; never shown)
 };
 using ToolbarCustomizeRow = ToolbarPickerTile;
 

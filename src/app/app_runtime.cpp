@@ -22,6 +22,7 @@
 #include "../ui/preview_format_catalog.h"
 #include "../ui/drag_drop.h"
 #include "../ui/toolbar_picker.h"
+#include "toolbar_apps.h"
 #include "../ui/file_operation_dialog.h"
 #include "../ui/batch_rename_dialog.h"
 #include "../ui/quick_preview_window.h"
@@ -3219,7 +3220,14 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     s.renderer.SetToolbarPrefs(s.appPrefs.toolbar_new_primary, s.appPrefs.toolbar_last_new == 1,
                                static_cast<int>(vm.toolbar_pins.size() + vm.toolbar_apps.size()));
     s.renderer.SetToolbarApps(static_cast<int>(vm.toolbar_pins.size()), drop_mode, vm.toolbar_drop_label);
-    s.renderer.SetToolbarSeparators(drop_mode ? 0 : app::ToolbarSeparatorMask(s.appPrefs.toolbar_tools));
+    uint64_t separators = app::ToolbarSeparatorMask(s.appPrefs.toolbar_tools);
+    // The apps' own separators (bit: before the app after the marked one).
+    const size_t app_from = vm.toolbar_pins.size();
+    for (size_t k = 0; k + 1 < vm.toolbar_apps.size() && k < s.appPrefs.toolbar_apps.size(); ++k)
+        if (app_from + k + 1 < 64 &&
+            app::ToolbarAppBreakAfter(s.appPrefs.toolbar_app_breaks, s.appPrefs.toolbar_apps[k]))
+            separators |= uint64_t{1} << (app_from + k + 1);
+    s.renderer.SetToolbarSeparators(drop_mode ? 0 : separators);
     return vm;
 }
 

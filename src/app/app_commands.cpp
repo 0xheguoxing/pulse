@@ -3791,7 +3791,7 @@ void ShowSelectionChipMenu(AppState& s, POINT anchor) {
 void ShowSelectionPinMenu(AppState& s, POINT anchor) {
     app::Tab* tab = ActiveTab(s);
     if (!tab || !EnsureMenu(s)) return;
-    constexpr int kFavorites = 35110;
+    constexpr int kFavorites = 35110, kToolbarApp = 35111;
     struct Target { std::wstring path; bool dir; };
     std::vector<Target> targets;
     bool all_starred = true;
@@ -3810,6 +3810,23 @@ void ShowSelectionPinMenu(AppState& s, POINT anchor) {
         star.text = l10n::Get(all_starred ? l10n::StringId::Unstar : l10n::StringId::Star);
         star.glyph = all_starred ? L"\xE735" : ui::command_icons::kGlyphPinFavorites;
         items.push_back(std::move(star));
+    }
+    // One program (or a shortcut, checked when picked) not pinned yet joins
+    // the toolbar's apps, like dropping it on the apps' label.
+    std::wstring program;
+    if (targets.size() == 1 && !targets.front().dir) {
+        const std::wstring& path = targets.front().path;
+        if ((app::ToolbarFileExt(path) == L".lnk" || ui::IsDropLaunchProgram(path)) &&
+            !app::ProgramListHas(s.appPrefs.toolbar_apps, path))
+            program = path;
+    }
+    if (!program.empty()) {
+        ui::FluentMenuItem pin;
+        pin.command = kToolbarApp;
+        pin.text = l10n::Get(l10n::StringId::PinToToolbar);
+        pin.glyph = ui::command_icons::kGlyphPinToolbar;
+        pin.enabled = s.appPrefs.toolbar_apps.size() < app::kMaxToolbarApps;
+        items.push_back(std::move(pin));
     }
     for (const auto& item : BuildFinderItemMenu(s, false, L"")) {
         const wchar_t* glyph = nullptr;
@@ -3835,6 +3852,11 @@ void ShowSelectionPinMenu(AppState& s, POINT anchor) {
             if (all_starred || !s.places.IsStarred(t.path))
                 ToggleStarred(s, t.path, t.dir ? app::PlaceItemKind::Folder : app::PlaceItemKind::File);
         InvalidateRect(s.hwnd, nullptr, FALSE);
+        return;
+    }
+    if (cmd == kToolbarApp) {
+        const app::ToolbarAppInfo info = app::DescribeToolbarAppNow(program);
+        if (!info.exe.empty() && ui::IsDropLaunchProgram(info.exe)) PinToolbarApp(s, program);
         return;
     }
     if (HandleQuickAccessCommand(s, cmd, QuickAccessTargets(tab, false))) return;
@@ -3978,6 +4000,42 @@ void ShowToolbarPinMenu(AppState& s, int slot, POINT screen) {
     else if (cmd != app::CmdNone) { DispatchMenuCommand(s, cmd); return; }
     if (changed == tools) return;
     tools = std::move(changed);
+    if (!s.isolatedTest) s.appPrefs.Save();
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void ShowToolbarAppPinMenu(AppState& s, size_t app, POINT screen) {
+    auto& apps = s.appPrefs.toolbar_apps;
+    if (!EnsureMenu(s) || app >= apps.size()) return;
+    constexpr int kAddSeparator = 35001, kRemoveSeparator = 35002, kUnpin = 35003;
+    auto& breaks = s.appPrefs.toolbar_app_breaks;
+    const std::wstring path = apps[app];
+    const bool has_after = app::ToolbarAppBreakAfter(breaks, path);
+    std::vector<ui::FluentMenuItem> items;
+    if (app + 1 < std::min<size_t>(apps.size(), app::kMaxToolbarApps)) {
+        ui::FluentMenuItem sep;
+        sep.command = has_after ? kRemoveSeparator : kAddSeparator;
+        sep.text = l10n::Get(has_after ? l10n::StringId::ToolbarRemoveSeparator : l10n::StringId::ToolbarAddSeparator);
+        sep.glyph = L"\xE76F";
+        items.push_back(std::move(sep));
+    }
+    ui::FluentMenuItem remove;
+    remove.command = kUnpin;
+    remove.text = l10n::Get(l10n::StringId::ToolbarRemoveTool);
+    remove.glyph = L"\xE711";
+    remove.separator_after = true;
+    items.push_back(std::move(remove));
+    items.push_back(CustomizeToolbarItem());
+    const int cmd = s.menu->TrackPopup(screen, std::move(items));
+    const auto drop_break = [&] {
+        breaks.erase(std::remove_if(breaks.begin(), breaks.end(), [&](const std::wstring& b) {
+            return _wcsicmp(b.c_str(), path.c_str()) == 0;
+        }), breaks.end());
+    };
+    if (cmd == kAddSeparator) breaks.push_back(path);
+    else if (cmd == kRemoveSeparator) drop_break();
+    else if (cmd == kUnpin) { drop_break(); apps.erase(apps.begin() + static_cast<std::ptrdiff_t>(app)); }
+    else { if (cmd != app::CmdNone) DispatchMenuCommand(s, cmd); return; }
     if (!s.isolatedTest) s.appPrefs.Save();
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
@@ -4260,6 +4318,10 @@ void ShowToolbarCustomize(AppState& s, int page) {
         }
         tile.tool = def.tool ? app::ToolbarToolIndex(def.tool) : -1;
         tile.checked = kept[i];
+        // Pinning moved to the chip's 固定到… menu: older prefs keep their
+        // pin tiles, nobody is offered new ones.
+        const std::wstring_view id = app::kSelectionActionIds[i];
+        tile.hidden = !kept[i] && (id == L"quick_access" || id == L"pin_workspace" || id == L"pin_network");
         spec.selection.push_back(std::move(tile));
         if (!kept[i]) spec.selection_order.push_back(i);
     }

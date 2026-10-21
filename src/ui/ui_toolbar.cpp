@@ -303,7 +303,8 @@ void MainRenderer::DrawToolbarApps(const WindowViewModel& vm, const ToolbarLayou
         const D2D1_RECT_F slot=layout.pins[from+i];
         if (slot.right <= slot.left) continue;
         const WindowViewModel::ToolbarAppPin& app=vm.toolbar_apps[i];
-        if (i==0 && from > 0) {   // short divider between the commands and the apps
+        if ((i==0 && from > 0) || (i > 0 && from+i < 64 && (layout.pin_dividers >> (from+i) & 1))) {
+            // Short divider between the commands and the apps, or the user's separator.
             const float x=slot.left-6.5f*scale_;
             FillRect(dc,brStrokeDivider_.get(),x,slot.top+9*scale_,scale_,14*scale_);
         }

@@ -143,6 +143,8 @@ void ShowSortDropdown(AppState& s);
 // Toolbar "Group" button: the group-by choices on their own.
 void ShowGroupDropdown(AppState& s);
 void ShowToolbarPinMenu(AppState& s, int slot, POINT screen);
+// A pinned app (index into toolbar_apps): separator after it, unpin, 自定义工具栏.
+void ShowToolbarAppPinMenu(AppState& s, size_t app, POINT screen);
 void ShowToolbarMore(AppState& s);
 // Toolbar selection chip, linked to the Pulse item menu: the first plain
 // built-in commands of the item menu as the user configured it (order and

@@ -161,6 +161,9 @@ struct AppPrefs {
     // Programs pinned to the toolbar (自定义工具栏 → 固定的软件), in toolbar
     // order: .exe paths or shortcuts to them, at most app::kMaxToolbarApps.
     std::vector<std::wstring> toolbar_apps;
+    // Pinned apps followed by a separator (paths from toolbar_apps); the
+    // separator moves with its app and goes when the app is unpinned.
+    std::vector<std::wstring> toolbar_app_breaks;
     // Empty = theme default, or Windows when explicitly selected.
     std::wstring accent_rgb;
     bool accent_follow_system = false;

@@ -66,6 +66,14 @@ inline bool ProgramListHas(const std::vector<std::wstring>& programs, const std:
     return false;
 }
 
+// A separator follows this pinned app (AppPrefs::toolbar_app_breaks).
+inline bool ToolbarAppBreakAfter(const std::vector<std::wstring>& breaks, const std::wstring& app) {
+    const std::wstring key = ToolbarLower(app);
+    for (const auto& b : breaks)
+        if (ToolbarLower(b) == key) return true;
+    return false;
+}
+
 // Appends a program to the pinned list unless it is already there (same
 // path, case-insensitive) or the list is full.
 inline bool AddToolbarAppPath(std::vector<std::wstring>& apps, const std::wstring& path) {

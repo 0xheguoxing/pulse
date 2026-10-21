@@ -4275,6 +4275,14 @@ LRESULT HandleRButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             ShowToolbarPinMenu(*s, hit.index, sp);
             return 0;
         }
+        if (hit.region == ui::HitTestResult::ToolbarPin && hit.index >= 0 && !ui::ToolbarPickerOpen() &&
+            !s->toolbarDropMode) {
+            const int pins = static_cast<int>(ToolbarPinActions(*s).size());
+            if (hit.index >= pins && hit.index - pins < static_cast<int>(s->appPrefs.toolbar_apps.size())) {
+                ShowToolbarAppPinMenu(*s, static_cast<size_t>(hit.index - pins), sp);
+                return 0;
+            }
+        }
         // Toolbar tools / apps / More: the customize popover, on the page of
         // the part clicked.
         if (hit.region == ui::HitTestResult::ToolbarPin || hit.region == ui::HitTestResult::ToolbarPinLabel ||

@@ -220,6 +220,8 @@ void UpdateProcessMetrics(AppState& s) {
 static bool g_shot_wall = false;
 // GUI verification for the 收藏栏: shown, with a few favorites if none.
 static bool g_shot_favorites_bar = false;
+// --shot-toolbar-apps: notepad, calc and mspaint pinned, a separator after notepad.
+static bool g_shot_toolbar_apps = false;
 // --shot-favorites-hover N: favorite N's ⌄ is hot (-2: the address bar's ★⌄).
 static int g_shot_favorites_hover = -1;
 // --shot-favorites-drop N: files are dragged over favorite N.
@@ -3580,6 +3582,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             state.shot_tag_drag = true;
         } else if (wcscmp(__wargv[i], L"--shot-favorites-bar") == 0) {
             g_shot_favorites_bar = true;
+        } else if (wcscmp(__wargv[i], L"--shot-toolbar-apps") == 0) {
+            g_shot_toolbar_apps = true;
         } else if (wcscmp(__wargv[i], L"--shot-favorites-hover") == 0 && i + 1 < __argc) {
             g_shot_favorites_hover = _wtoi(__wargv[++i]);
         } else if (wcscmp(__wargv[i], L"--shot-favorites-drop") == 0 && i + 1 < __argc) {
@@ -4068,6 +4072,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
                 state.window_tabs.items[2]->tab_group = 2;
                 SwitchTab(state, 1); // active grouped tab in the middle
             }
+        }
+        if (g_shot_toolbar_apps) {
+            state.appPrefs.persist = false;   // the user's own prefs stay as they are
+            state.appPrefs.toolbar_apps = {L"C:\\Windows\\System32\\notepad.exe",
+                                           L"C:\\Windows\\System32\\calc.exe",
+                                           L"C:\\Windows\\System32\\mspaint.exe"};
+            state.appPrefs.toolbar_app_breaks = {state.appPrefs.toolbar_apps.front()};
         }
         if (g_shot_favorites_bar) {
             state.appPrefs.favorites_bar = true;

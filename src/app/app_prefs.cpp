@@ -125,6 +125,7 @@ void AppPrefs::ResetToDefaults() {
     toolbar_tools = app::DefaultToolbarTools();
     toolbar_selection = app::DefaultToolbarSelection();
     toolbar_apps.clear();
+    toolbar_app_breaks.clear();
     accent_rgb.clear();
     accent_follow_system = false;
     custom_tag_colors.clear();
@@ -310,6 +311,21 @@ std::wstring AppPrefs::ToJson() const {
         out += L"\"" + escaped_app + L"\"";
     }
     out += L"]";
+    // Only the separators of apps still pinned.
+    std::vector<std::wstring> breaks;
+    for (const auto& app : toolbar_app_breaks)
+        for (const auto& pinned : toolbar_apps)
+            if (_wcsicmp(app.c_str(), pinned.c_str()) == 0) { breaks.push_back(app); break; }
+    if (!breaks.empty()) {
+        out += L",\n  \"toolbar_app_breaks\":[";
+        for (size_t i = 0; i < breaks.size(); ++i) {
+            std::wstring escaped_break;
+            pulse::json::Escape(breaks[i], escaped_break);
+            if (i > 0) out += L",";
+            out += L"\"" + escaped_break + L"\"";
+        }
+        out += L"]";
+    }
     // Legacy three-level keys stay for older builds reading the same app.json.
     out += L",\n  \"wallpaper_look\":";
     out += std::to_wstring(wallpaper_look < 38 ? 0 : (wallpaper_look < 63 ? 1 : 2));
@@ -510,6 +526,12 @@ bool AppPrefs::FromJson(const std::wstring& json) {
         bool pinned = false;
         for (const auto& kept : toolbar_apps) pinned = pinned || _wcsicmp(kept.c_str(), app.c_str()) == 0;
         if (!pinned) toolbar_apps.push_back(std::move(app));
+    }
+    toolbar_app_breaks.clear();
+    for (auto& app : pulse::json::ExtractStringArray(json, L"toolbar_app_breaks")) {
+        bool pinned = false;
+        for (const auto& kept : toolbar_apps) pinned = pinned || _wcsicmp(kept.c_str(), app.c_str()) == 0;
+        if (pinned) toolbar_app_breaks.push_back(std::move(app));
     }
     if (tray_icon_size < 32 || tray_icon_size > 64) tray_icon_size = 48;
     {

@@ -301,6 +301,7 @@ private:
 
     // ---- tiles ----------------------------------------------------------
     bool Matches(int page, size_t i) const {
+        if (i < Tiles(page).size() && Tiles(page)[i].hidden) return false;
         if (page != 0 || query_.empty()) return true;
         const ToolbarPickerTile& t = spec_->pins[i];
         const std::wstring q = Lower(query_);
