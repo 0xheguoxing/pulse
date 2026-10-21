@@ -1489,7 +1489,7 @@ add_executable(pulse_common_persistence_test src/bench/common_persistence_test.c
 target_link_libraries(pulse_common_persistence_test PRIVATE pulse_localization pulse_runtime_log user32 shell32 ole32 uuid advapi32 shlwapi netapi32 psapi)
 
 if(PULSE_RELEASE_SYMBOLS)
-    foreach(payload_target pulse pulse_index pulse_content pulse_document pulse_preview pulse_shell pulse_integration pulse_elevated)
+    foreach(payload_target pulse pulse_index pulse_content pulse_document pulse_ai pulse_preview pulse_shell pulse_integration pulse_elevated)
         target_compile_options(${payload_target} PRIVATE /Z7)
         target_link_options(${payload_target} PRIVATE /DEBUG:FULL /OPT:REF /OPT:ICF)
     endforeach()

@@ -60,7 +60,7 @@ Pulse 启动后会自动检查新版。从 1.0.51 起，点击更新提示或「
 
 使用 1.0.2 或更早版本的用户，请先从上方链接手动安装一次。自 1.0.3 起，普通版和 Windows 8.1 版分别接收适用的更新。
 
-Assets 中的 update-manifest*.json 是客户端使用的更新清单，content-*.lzms 是内容搜索增强包（Pulse 在首次使用内容搜索或重复文件查找时自动下载并校验），均无需手动下载。
+Assets 中的 update-manifest*.json 是客户端使用的更新清单，content-*.lzms 是内容搜索增强包（Pulse 在首次使用内容搜索或重复文件查找时自动下载并校验），ai-*.lzms 是 AI 增强包（在「设置 → 增强包」安装后，Claude 等支持 MCP 的 AI 应用可以连接 Pulse），均无需手动下载。
 "@ | Set-Content -LiteralPath $notesPath -Encoding utf8
 $existing = & gh release view $tag --repo $repository --json isDraft 2>$null
 if ($LASTEXITCODE -eq 0) {
@@ -73,22 +73,25 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the release draft' }
 & gh release upload $tag --repo $repository "dist/$normal" "dist/$win81" "dist/$portable" `
     dist/update-manifest.json dist/update-manifest-win81.json --clobber
 if ($LASTEXITCODE -ne 0) { throw 'Could not upload release assets; release remains a draft' }
-# Content enhancement pack: exactly the assets the catalogs in both channels' pulse.exe name.
-$contentAssets = @()
-foreach ($channel in @('windows', 'win81')) {
-    $packDir = "dist/content-pack-$channel"
-    & "$PSScriptRoot/check_content_pack.ps1" -PackDir $packDir
-    $pack = Get-Content -LiteralPath "$packDir/content-pack-assets.json" -Raw | ConvertFrom-Json
-    if ($pack.channel -ne $channel -or $pack.base_url -ne "$base/") { throw "Content pack $channel targets another release" }
-    $contentAssets += @($pack.files | ForEach-Object { Join-Path $packDir $_.asset })
+# Enhancement packs (content search, AI): exactly the assets the catalogs in
+# both channels' pulse.exe name.
+$packAssets = @()
+foreach ($key in @('content', 'ai')) {
+    foreach ($channel in @('windows', 'win81')) {
+        $packDir = "dist/$key-pack-$channel"
+        & "$PSScriptRoot/check_content_pack.ps1" -Key $key -PackDir $packDir
+        $pack = Get-Content -LiteralPath "$packDir/$key-pack-assets.json" -Raw | ConvertFrom-Json
+        if ($pack.channel -ne $channel -or $pack.base_url -ne "$base/") { throw "The $key pack for $channel targets another release" }
+        $packAssets += @($pack.files | ForEach-Object { Join-Path $packDir $_.asset })
+    }
 }
-& gh release upload $tag --repo $repository @contentAssets --clobber
-if ($LASTEXITCODE -ne 0) { throw 'Could not upload the content pack; release remains a draft' }
+& gh release upload $tag --repo $repository @packAssets --clobber
+if ($LASTEXITCODE -ne 0) { throw 'Could not upload the enhancement packs; release remains a draft' }
 $uploaded = (& gh release view $tag --repo $repository --json assets | ConvertFrom-Json).assets
-foreach ($path in $contentAssets) {
+foreach ($path in $packAssets) {
     $item = Get-Item -LiteralPath $path
     $match = @($uploaded | Where-Object { $_.name -eq $item.Name -and $_.size -eq $item.Length })
-    if ($match.Count -ne 1) { throw "Content pack asset missing after upload: $($item.Name)" }
+    if ($match.Count -ne 1) { throw "Enhancement pack asset missing after upload: $($item.Name)" }
 }
 $packArgs = @('--tag', $tag, '--repository', $repository, '--asset-directory', 'dist/preview-packs')
 if ($env:PULSE_PREVIEW_PACK_SOURCE_TAG) { $packArgs += @('--source-tag', $env:PULSE_PREVIEW_PACK_SOURCE_TAG) }

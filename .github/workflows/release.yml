@@ -60,6 +60,11 @@ jobs:
           path: dist/content-pack-${{ matrix.channel }}/
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        with:
+          name: ai-pack-${{ matrix.channel }}
+          path: dist/ai-pack-${{ matrix.channel }}/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: diagnostics-${{ matrix.channel }}
@@ -88,6 +93,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: content-pack-*
+          path: dist
+      # Likewise dist/ai-pack-windows, dist/ai-pack-win81.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ai-pack-*
           path: dist
       - name: Sign manifests and publish both installers
         shell: pwsh
