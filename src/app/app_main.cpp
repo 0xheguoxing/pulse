@@ -1325,7 +1325,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             };
             settings_callbacks.pick_folder = [s](std::wstring& path, std::wstring_view title) {
                 const std::wstring owned_title(title);
-                return PickFolder(app::CurrentWindow(*s), path, owned_title.c_str());
+                // Each settings row keeps its own history, keyed by its title.
+                return PickFolder(app::CurrentWindow(*s), path, owned_title.c_str(), L"settings:" + owned_title);
             };
             settings_callbacks.apply_effects = [s](app::SettingsEffect effects) {
                 // Every window shows the changed setting.
@@ -1363,7 +1364,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 AppState& window = app::CurrentWindow(*s);
                 if (!ConfirmDiagnosticsExport(window, include_service, include_dumps)) return false;
                 return PickFolder(window, destination,
-                    l10n::Get(l10n::StringId::DiagnosticsExportLocation).c_str());
+                    l10n::Get(l10n::StringId::DiagnosticsExportLocation).c_str(), L"diagnostics_export");
             };
             settings_callbacks.export_diagnostics = ExportAppDiagnostics;
             s->settings.BindUi(s->appPrefs, s->ctxMenuPrefs, s->index,

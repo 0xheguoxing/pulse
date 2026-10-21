@@ -130,6 +130,7 @@ void AppPrefs::ResetToDefaults() {
     accent_follow_system = false;
     custom_tag_colors.clear();
     recent_tags.clear();
+    picker_folders.clear();
     shortcuts.clear();
     duplicate_scan_scope = 0;
     duplicate_scan_folder.clear();
@@ -357,6 +358,13 @@ std::wstring AppPrefs::ToJson() const {
         if (i > 0) out += L",";
         out += L"\"" + escaped + L"\"";
     }
+    out += L"],\n  \"picker_folders\":[";
+    for (size_t i = 0; i < picker_folders.size(); ++i) {
+        std::wstring escaped;
+        pulse::json::Escape(picker_folders[i], escaped);
+        if (i > 0) out += L",";
+        out += L"\"" + escaped + L"\"";
+    }
     out += L"],\n  \"shortcuts\":[";
     for (size_t i = 0; i < shortcuts.size(); ++i) {
         std::wstring escaped_line;
@@ -574,6 +582,12 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     }
     recent_tags = pulse::json::ExtractStringArray(json, L"recent_tags");
     if (recent_tags.size() > 5) recent_tags.resize(5);
+    picker_folders = pulse::json::ExtractStringArray(json, L"picker_folders");
+    std::erase_if(picker_folders, [](const std::wstring& line) {
+        const size_t bar = line.find(L'|');
+        return bar == 0 || bar == std::wstring::npos || bar + 1 == line.size();
+    });
+    if (picker_folders.size() > kPickerFolderLimit) picker_folders.resize(kPickerFolderLimit);
     duplicate_scan_scope = pulse::json::ExtractInt(json, L"duplicate_scan_scope", 0);
     if (duplicate_scan_scope < 0 || duplicate_scan_scope > 2) duplicate_scan_scope = 0;
     duplicate_scan_folder = pulse::json::ExtractString(json, L"duplicate_scan_folder");
@@ -823,6 +837,34 @@ bool AppPrefs::Load() {
     integration_incomplete = ReadIntegrationIncomplete();
     integration_other_exe = ReadIntegrationOtherExe();
     MigrateIntegration();
+    return true;
+}
+
+namespace {
+bool PickerKeyMatches(const std::wstring& line, std::wstring_view key) {
+    return line.size() > key.size() + 1 && line[key.size()] == L'|' &&
+        std::wstring_view(line).substr(0, key.size()) == key;
+}
+} // namespace
+
+std::wstring AppPrefs::PickerFolder(std::wstring_view key) const {
+    if (key.empty()) return {};
+    for (const auto& line : picker_folders)
+        if (PickerKeyMatches(line, key)) return line.substr(key.size() + 1);
+    return {};
+}
+
+bool AppPrefs::RememberPickerFolder(std::wstring_view key, const std::wstring& folder) {
+    if (key.empty() || folder.empty() || key.find(L'|') != std::wstring_view::npos ||
+        folder.find_first_of(L"|\r\n") != std::wstring::npos)
+        return false;
+    std::wstring line(key);
+    line += L'|';
+    line += folder;
+    if (!picker_folders.empty() && picker_folders.front() == line) return false;
+    std::erase_if(picker_folders, [&](const std::wstring& item) { return PickerKeyMatches(item, key); });
+    picker_folders.insert(picker_folders.begin(), std::move(line));
+    if (picker_folders.size() > kPickerFolderLimit) picker_folders.resize(kPickerFolderLimit);
     return true;
 }
 

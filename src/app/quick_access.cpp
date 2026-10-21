@@ -99,7 +99,7 @@ void ShowQuickAccessEditor(AppState& s, POINT point) {
         if (result == ui::QuickAccessEditorResult::Applied) break;
         // 添加文件夹…: pick, add the row, and reopen with the edits so far.
         std::wstring picked;
-        if (PickFolder(s, picked, l10n::Get(l10n::StringId::QuickAccessChooseFolder).c_str()) &&
+        if (PickFolder(s, picked, l10n::Get(l10n::StringId::QuickAccessChooseFolder).c_str(), L"quick_access") &&
             !picked.empty() && !fs::IsVirtualPath(picked)) {
             const std::wstring path = fs::NormalizePath(picked);
             const bool listed = std::any_of(rows.begin(), rows.end(), [&](const auto& row) {
@@ -254,7 +254,7 @@ void ShowQuickAccessAddMenu(AppState& s, POINT point) {
     } else if (command == kChoose) {
         std::wstring picked;
         if (!PickFolder(s, picked,
-                        l10n::Get(l10n::StringId::QuickAccessChooseFolder).c_str()) ||
+                        l10n::Get(l10n::StringId::QuickAccessChooseFolder).c_str(), L"quick_access") ||
             picked.empty())
             return;
         s.places.SetQuickAccessPinned({picked}, true);

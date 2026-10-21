@@ -461,7 +461,7 @@ void ShowAddressSearchScope(AppState& s) {
     const int command = s.menu->TrackPopup(anchor, std::move(items));
     if (command == 3) {
         std::wstring chosen;
-        if (PickFolder(s, chosen, l10n::Get(l10n::StringId::SearchChooseScope).c_str())) {
+        if (PickFolder(s, chosen, l10n::Get(l10n::StringId::SearchChooseScope).c_str(), L"search_scope")) {
             s.addressSearchRoot = chosen;
             s.addressSearchCurrent = true;
             QueueAddressSearch(s);

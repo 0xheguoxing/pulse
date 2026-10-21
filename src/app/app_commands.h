@@ -221,7 +221,9 @@ void SetEverySidebarSectionCollapsed(AppState& s, bool collapsed);
 void ApplyAppWindowChrome(AppState& s);
 // Pulse's own pickers (ui/folder_picker_dialog), owned by the main window.
 bool PickImageFile(AppState& s, std::wstring& path);
-bool PickFolder(AppState& s, std::wstring& path, const wchar_t* title);
+// `history_key` names the entry point (#58-9): the picker opens where that
+// entry point last picked, and remembers the new pick for it.
+bool PickFolder(AppState& s, std::wstring& path, const wchar_t* title, std::wstring_view history_key = {});
 // Windows' JSON file dialog; file_name is the save dialog's suggestion.
 bool PickJsonFile(HWND owner, bool save, const wchar_t* file_name, std::wstring& out);
 D2D1_COLOR_F ResolveAccentColor(const app::AppPrefs& prefs, bool dark = false);

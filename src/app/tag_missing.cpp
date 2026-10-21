@@ -156,7 +156,7 @@ void RelocateMissingTagged(AppState& s, const std::wstring& tag_id) {
         std::erase_if(missing, [&](const std::wstring& path) { return !Under(path, base); });
     }
     std::wstring folder;
-    if (!PickFolder(s, folder, l10n::Get(l10n::StringId::TagMissingRelocatePick).c_str()) || folder.empty()) return;
+    if (!PickFolder(s, folder, l10n::Get(l10n::StringId::TagMissingRelocatePick).c_str(), L"tag_relocate") || folder.empty()) return;
     // The folder moved: the same tails under the picked one.
     int found = 0;
     for (const auto& path : missing)

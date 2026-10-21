@@ -342,7 +342,7 @@ bool HandleTagRulesCommand(AppState& s, const std::wstring& tag_id, int command,
     const std::wstring tag_name = tag->name;
     TagRule rule;
     rule.tag_id = tag_id;
-    if (!PickFolder(s, rule.folder, l10n::Get(l10n::StringId::TagRulePickFolder).c_str()) || rule.folder.empty())
+    if (!PickFolder(s, rule.folder, l10n::Get(l10n::StringId::TagRulePickFolder).c_str(), L"tag_rule") || rule.folder.empty())
         return true;
     rule.folder = pulse::path::FriendlyPathText(rule.folder);
     // One step for both: type the name part or .ext, pick 提示 / 自动.

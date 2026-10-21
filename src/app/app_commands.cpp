@@ -933,7 +933,7 @@ void ShowTrayReleaseMenu(AppState& s, POINT screen_pt) {
         s.trayMoveMode = cmd == kMove;
     } else if (cmd == kPick) {
         std::wstring folder;
-        if (PickFolder(s, folder, l10n::Get(l10n::StringId::TrayPickFolder).c_str()) && !folder.empty())
+        if (PickFolder(s, folder, l10n::Get(l10n::StringId::TrayPickFolder).c_str(), L"tray_send") && !folder.empty())
             TraySendTo(s, folder, move_now);
     } else if (cmd >= kDestBase && cmd < kDestBase + static_cast<int>(dests.size())) {
         TraySendTo(s, dests[static_cast<size_t>(cmd - kDestBase)], move_now);
@@ -5179,10 +5179,14 @@ bool PickToolbarAppFile(AppState& s, HWND owner, std::wstring& path) {
     return true;
 }
 
-bool PickFolder(AppState& s, std::wstring& path, const wchar_t* title) {
+bool PickFolder(AppState& s, std::wstring& path, const wchar_t* title, std::wstring_view history_key) {
     ui::FolderPickerSpec spec = MakePickerSpec(s, ui::PickerMode::Folder);
     spec.title = title ? title : L"";
-    return ui::ShowFolderPicker(s.hwnd, spec, s.darkMode, s.accentColor, path);
+    // Empty when this entry point has no history: the picker's last folder.
+    spec.initial_path = s.appPrefs.PickerFolder(history_key);
+    if (!ui::ShowFolderPicker(s.hwnd, spec, s.darkMode, s.accentColor, path)) return false;
+    if (!path.empty() && s.appPrefs.RememberPickerFolder(history_key, path)) s.appPrefs.Save();
+    return true;
 }
 
 D2D1_COLOR_F ResolveAccentColor(const app::AppPrefs& prefs, bool dark) {

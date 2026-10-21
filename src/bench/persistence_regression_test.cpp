@@ -269,6 +269,36 @@ int main(int argc, char** argv) {
         Check(KeepToolbarSeparators(grouped,Tools{L"cut",L"copy",L"rename",L"zip"})==Tools{L"cut",L"copy",L"|",L"rename",L"zip"},
               "TOOLBAR-15 a picker change keeps a separator before the next remaining tool");
     }
+    {
+        // #58-9: each folder-picker entry point remembers its own folder.
+        using pulse::app::AppPrefs;
+        AppPrefs picker; picker.persist = false;
+        Check(picker.PickerFolder(L"tray_send").empty(), "PICKER-01 no history: empty, so the picker uses its own last folder");
+        const bool stored = picker.RememberPickerFolder(L"tray_send", L"D:\\Out") &&
+            picker.RememberPickerFolder(L"duplicates", L"E:\\Photos");
+        Check(stored && picker.PickerFolder(L"tray_send") == L"D:\\Out" && picker.PickerFolder(L"duplicates") == L"E:\\Photos",
+              "PICKER-02 entry points keep separate folders");
+        Check(!picker.RememberPickerFolder(L"duplicates", L"E:\\Photos") && picker.picker_folders.size() == 2,
+              "PICKER-03 the same pick again adds nothing");
+        picker.RememberPickerFolder(L"tray_send", L"D:\\Later");
+        Check(picker.PickerFolder(L"tray_send") == L"D:\\Later" && picker.picker_folders.size() == 2 &&
+              picker.picker_folders.front() == L"tray_send|D:\\Later", "PICKER-04 a newer pick replaces the old one, newest first");
+        Check(picker.PickerFolder(L"tray").empty() && picker.PickerFolder(L"tray_send|").empty(),
+              "PICKER-05 keys match whole");
+        Check(!picker.RememberPickerFolder(L"", L"C:\\x") && !picker.RememberPickerFolder(L"a|b", L"C:\\x") &&
+              !picker.RememberPickerFolder(L"k", L"") && picker.picker_folders.size() == 2,
+              "PICKER-06 empty or malformed entries are ignored");
+        AppPrefs again; again.persist = false;
+        Check(again.FromJson(picker.ToJson()) && again.picker_folders == picker.picker_folders &&
+              again.PickerFolder(L"duplicates") == L"E:\\Photos", "PICKER-07 the history round trips");
+        AppPrefs bad; bad.persist = false;
+        Check(bad.FromJson(LR"({"picker_folders":["nobar","|C:\\x","k|","ok|C:\\y"]})") &&
+              bad.picker_folders == std::vector<std::wstring>{L"ok|C:\\y"}, "PICKER-08 malformed lines are dropped on load");
+        AppPrefs many; many.persist = false;
+        for (int i = 0; i < 40; ++i) many.RememberPickerFolder(L"k" + std::to_wstring(i), L"C:\\f");
+        Check(many.picker_folders.size() == pulse::app::kPickerFolderLimit && many.PickerFolder(L"k39") == L"C:\\f" &&
+              many.PickerFolder(L"k0").empty(), "PICKER-09 capped; the oldest entry point is dropped");
+    }
     std::filesystem::remove_all(dir);
     return failures ? 1 : 0;
 }

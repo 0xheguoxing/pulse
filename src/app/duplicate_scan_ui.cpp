@@ -46,7 +46,7 @@ void StartDuplicateScan(AppState& s) {
     const auto& volumes = s.dup_volume_cache;
     if (session.scope == app::DuplicateScanScope::Folder && session.folder_path.empty()) {
         std::wstring path;
-        if (!PickFolder(s, path, l10n::Get(l10n::StringId::DupFolderPlaceholder).c_str()))
+        if (!PickFolder(s, path, l10n::Get(l10n::StringId::DupFolderPlaceholder).c_str(), L"duplicates"))
             return;
         session.folder_path = std::move(path);
     }

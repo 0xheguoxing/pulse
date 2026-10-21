@@ -8,9 +8,13 @@
 #include "toolbar_tools.h"
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace pulse::app {
+
+// Remembered folder-picker entry points (AppPrefs::picker_folders).
+inline constexpr size_t kPickerFolderLimit = 32;
 
 struct AppPrefs {
     bool persist = true;
@@ -172,6 +176,10 @@ struct AppPrefs {
     std::vector<uint32_t> custom_tag_colors;
     // Tag ids the tag panel lists under 最近用过, newest first (at most 5).
     std::vector<std::wstring> recent_tags;
+    // Pulse's folder picker, per entry point (#58-9): one "key|folder" line
+    // each, newest first, so the tray, duplicate scan, quick access... each
+    // open where they were last used instead of overwriting one another.
+    std::vector<std::wstring> picker_folders;
     // Settings > 快捷键: one "Id=Ctrl+Shift+C|F8" line per changed action
     // (app/keymap.h); defaults are not stored.
     std::vector<std::wstring> shortcuts;
@@ -189,6 +197,10 @@ struct AppPrefs {
     bool Save() const;
     std::wstring ToJson() const;
     bool FromJson(const std::wstring& json);
+    // The folder last picked from `key`; empty when none is remembered.
+    std::wstring PickerFolder(std::wstring_view key) const;
+    // Remembers `folder` for `key`; true when picker_folders changed.
+    bool RememberPickerFolder(std::wstring_view key, const std::wstring& folder);
     void MigrateIntegration();
     bool ReadIntegrationResidual() const;
     bool ReadIntegrationIncomplete() const;
