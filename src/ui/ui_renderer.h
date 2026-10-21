@@ -1123,7 +1123,9 @@ struct WindowViewModel {
     std::wstring settings_pack_archive_version, settings_pack_archive_notice, settings_pack_archive_update_version;
     int settings_theme = 0; // system, light, dark
     bool settings_open = false;
-    int settings_page = 0; // 0 general, 1 search/index, 2 context menu, 3 about, 4 duplicates, 5 quick look, 6 system menu, 7 shortcuts
+    // 0 外观, 1 search/index, 2 context menu, 3 about, 4 duplicates, 5 quick look, 6 system menu,
+    // 7 shortcuts, 8 packs, 9 文件列表, 10 标签页与窗口, 11 启动与集成, 12 文件操作
+    int settings_page = 0;
     // Settings > 系统右键菜单 (page 6): the model's last published view.
     std::shared_ptr<const SysCtxView> settings_sysctx;
     // Settings > 快捷键 (page 7): the page model's last view; the sidebar badge
@@ -1168,6 +1170,8 @@ struct WindowViewModel {
     std::wstring settings_home_folder; // default location; empty = This PC
     int settings_text_render = 0; // 0 auto, 1 sharp, 2 smooth
     int settings_ui_font_scale = 100; // interface font size: 90 / 100 / 112 / 125
+    // 主题色 › 自定义: hue 0..360, saturation 0..100, lightness 0..100 (settings_expanded bit 5 opens it).
+    int settings_accent_hsl[3] = {220, 60, 50};
     bool settings_open_folders = false;
     bool settings_win_e = false;
     bool settings_this_pc = false;
@@ -1433,6 +1437,8 @@ struct HitTestResult {
         ColumnStripHScroll,  // ancestor strip scrollbar
         SettingsWallpaperLook,
         SettingsWallpaperBlur,
+        SettingsAccentCustom,  // 主题色 › 自定义 button
+        SettingsAccentSlider,  // sub_index 0 hue, 1 saturation, 2 lightness; index = value
         SidebarToggle,       // title-bar sidebar collapse button
         WindowIdentity,      // title-bar window color dot and name (M7c)
         StatusHintAction,    // clickable action at the end of the status-bar hint

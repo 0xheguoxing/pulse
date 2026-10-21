@@ -795,6 +795,7 @@ void ClearTextWidthCache() {
         D2D1_RECT_F panel{};
         // Strip (empty).
         D2D1_RECT_F strip_icon{}, strip_title{}, strip_hint{}, strip_kbd{};
+        bool strip_hint_short = false;   // no room for the chip: 拖入文件 without 或
         // Drop halves: 0 copy, 1 move.
         D2D1_RECT_F half[2]{};
         // Shelf rows.
@@ -849,6 +850,8 @@ void ClearTextWidthCache() {
             const float kx = g.strip_hint.left + hint_w + 4.0f * s;
             if (kx + kbd_w <= hint_r)
                 g.strip_kbd = D2D1::RectF(kx, cy - 8.5f * s, kx + kbd_w, cy + 8.5f * s);
+            else
+                g.strip_hint_short = true;   // "拖入文件，或" must not end on 或
         }
         // Drop: two halves, padding 10, gap 8.
         {
@@ -2106,7 +2109,14 @@ TitleChrome MakeTitleChrome(float window_w, float scale, float title_h) {
 }
 
 constexpr float kSettingsNavW = 200.0f;
-constexpr int kSettingsNavCount = 9;  // 5: 快速预览, 6: 系统右键菜单, 7: 快捷键, 8: 增强包
+// 5: 快速预览, 6: 系统右键菜单, 7: 快捷键, 8: 增强包; 0 and 9-12 split the former 通用 page:
+// 0 外观, 9 文件列表, 10 标签页与窗口, 11 启动与集成, 12 文件操作.
+constexpr int kSettingsNavCount = 13;
+inline bool IsGeneralSettingsPage(int page) noexcept { return page == 0 || (page >= 9 && page <= 12); }
+// Sidebar order, top to bottom, in five groups (关于 3 sits at the bottom, 6 has no row).
+constexpr int kSettingsNavOrder[] = {0, 9, 10, 11, 12, 1, 5, 8, 2, 7, 4};
+constexpr int kSettingsNavGroupStart[] = {0, 1, 3, 5, 10};  // indexes into kSettingsNavOrder
+constexpr int kSettingsNavGroups = 5;
 
 // System folder groups shown under Settings > Exclusions: 0-4 follow
 // index::kSystemExclusionGroups, 5-6 are always skipped by the index.
@@ -2281,7 +2291,22 @@ struct SettingsLayout {
     // Windows and other software went (opens page 6).
     D2D1_RECT_F context_system_hint{};
     D2D1_RECT_F duplicate_options{};
-    D2D1_RECT_F section[4]{}, group[3]{}, footer{};
+    D2D1_RECT_F section[8]{}, group[8]{}, footer{};
+    // General pages (IsGeneralSettingsPage): the title of each section[i], the
+    // tinted bands behind dependent rows, and the dividers between rows.
+    l10n::StringId section_title[8]{};
+    int section_count = 0;
+    std::vector<D2D1_RECT_F> child_bands;
+    std::vector<D2D1_RECT_F> dividers;      // left, top (= y), right; bottom unused
+    // Sidebar group headings (empty when the sidebar is too short or compact)
+    // and the thin separators used instead.
+    D2D1_RECT_F nav_group_label[kSettingsNavGroups]{};
+    D2D1_RECT_F nav_separator[kSettingsNavGroups]{};
+    // 主题色 › 自定义: the button, the preview row and the three slider rows.
+    D2D1_RECT_F accent_custom_button{}, accent_custom_head{}, accent_custom_swatch{};
+    D2D1_RECT_F accent_slider_row[3]{}, accent_slider_cells[3][3]{};
+    // 关于与诊断 › 新手提示.
+    D2D1_RECT_F tips_card{};
     D2D1_RECT_F theme_row{}, theme_tile[3]{}, effect_choice{}, language_choice{};
     D2D1_RECT_F performance_row{}, disclosure[4]{}, filename_status{};
     D2D1_RECT_F integration_card{}, integration_status{}, integration_summary{}, integration_hint{};
@@ -2504,15 +2529,42 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
         rect.right - rect.left < 1000 * scale ? 200.0f : 220.0f) * scale;
     l.nav = D2D1::RectF(l.body.left, l.body.top, l.body.left + nav_width, l.body.bottom);
     l.content = D2D1::RectF(l.nav.right, l.body.top, l.body.right, l.body.bottom);
-    for (int i = 0; i < kSettingsNavCount; ++i) {
-        // 系统右键菜单 (6) has no row of its own: the 右键菜单 (2) layer cards
-        // switch between the two, see ctx_layer. 关于 (3) stays at the bottom.
-        if (i == 6) { l.nav_row[i] = {}; continue; }
-        // 快捷键 (7) sits under 右键菜单, as in the mockup.
-        // 增强包 (8) follows 快速预览.
-        const int position = i == 7 ? 3 : i == 4 ? 4 : i == 5 ? 5 : i == 8 ? 6 : i;
-        const float top = i == 3 ? l.nav.bottom - 92*scale : l.nav.top + (20 + position*46)*scale;
-        l.nav_row[i] = D2D1::RectF(l.nav.left + 8*scale, top, l.nav.right - 8*scale, top + 40*scale);
+    {
+        // 关于 (3) stays at the bottom; 系统右键菜单 (6) has no row of its own: the
+        // 右键菜单 (2) layer cards switch between the two, see ctx_layer.
+        const bool compact = nav_width < 100.0f * scale;
+        const float about_top = l.nav.bottom - 92.0f * scale;
+        l.nav_row[3] = D2D1::RectF(l.nav.left + 8*scale, about_top, l.nav.right - 8*scale, about_top + 40*scale);
+        const float avail = about_top - 12.0f * scale - l.nav.top;
+        const int rows = static_cast<int>(std::size(kSettingsNavOrder));
+        // Roomiest arrangement that fits: headings, then separators, then tighter rows.
+        float pitch = 44.0f, row_h = 38.0f, head = 28.0f, top_pad = 10.0f;
+        bool headings = !compact;
+        auto needed = [&]() {
+            return (top_pad + rows * pitch + (headings ? kSettingsNavGroups * head : (kSettingsNavGroups - 1) * 13.0f)) * scale;
+        };
+        if (needed() > avail) headings = false;
+        if (needed() > avail) { pitch = 40.0f; row_h = 36.0f; }
+        if (needed() > avail) { pitch = 36.0f; row_h = 33.0f; top_pad = 6.0f; }
+        float y = l.nav.top + top_pad * scale;
+        int group = 0;
+        for (int k = 0; k < rows; ++k) {
+            if (group < kSettingsNavGroups && kSettingsNavGroupStart[group] == k) {
+                if (headings) {
+                    l.nav_group_label[group] = D2D1::RectF(l.nav.left + 20*scale, y + 6*scale, l.nav.right - 12*scale, y + head*scale);
+                    y += head * scale;
+                } else if (group > 0) {
+                    l.nav_separator[group] = D2D1::RectF(l.nav.left + 16*scale, y + 6*scale, l.nav.right - 16*scale, y + 7*scale);
+                    y += 13.0f * scale;
+                }
+                ++group;
+            }
+            const int page = kSettingsNavOrder[k];
+            const float top = y + (pitch - row_h) * 0.5f * scale;
+            l.nav_row[page] = D2D1::RectF(l.nav.left + 8*scale, top, l.nav.right - 8*scale, top + row_h*scale);
+            y += pitch * scale;
+        }
+        l.nav_row[6] = {};
     }
     const float pad = 20.0f * scale;
     auto label_btn_w = [&](std::wstring_view label) {
@@ -2523,7 +2575,7 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
     float y = l.content_origin + pad;
     y += 36.0f * scale;
     y += 8.0f * scale;
-    if (vm.settings_page == 0) {
+    if (IsGeneralSettingsPage(vm.settings_page)) {
         y = LayoutSettingsGeneral(l, vm, scale, y, painter);
     } else if (vm.settings_page == 1) {
         const float card_left = l.content.left + pad;
@@ -2829,6 +2881,18 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
             }
         }
         y += diagnostics_h + 12.0f * scale;
+        {
+            // 新手提示: the status-bar hints and the teaching bubbles.
+            const float card_top = y;
+            y += 44.0f * scale;
+            l.hints_row = D2D1::RectF(card_left, y, card_right, y + 64.0f * scale);
+            l.hints_reset_row = D2D1::RectF(card_left + 28.0f * scale, y + 64.0f * scale, card_right, y + 128.0f * scale);
+            const float rw = label_btn_w(pulse::l10n::Get(pulse::l10n::StringId::HintsResetButton));
+            l.hints_reset_button = D2D1::RectF(card_right - 16.0f * scale - rw, l.hints_reset_row.top + 16.0f * scale,
+                                               card_right - 16.0f * scale, l.hints_reset_row.top + 48.0f * scale);
+            l.tips_card = D2D1::RectF(card_left, card_top, card_right, y + 128.0f * scale);
+            y += 128.0f * scale + 12.0f * scale;
+        }
 
         const float available_width = std::max(0.0f, card_right - card_left - 32.0f * scale);
         const float check_w = std::min(available_width, label_btn_w(

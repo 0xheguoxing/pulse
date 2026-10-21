@@ -240,12 +240,16 @@ public:
     void TextRendering(int index);
     void UiFontSize(int index);   // 0 small 90%, 1 default 100%, 2 large 112%, 3 larger 125%
     void TrayIconSize(int index);
-    // Settings sliders: 0 interface transparency (0..90), 1 wallpaper blur (0..40).
+    // Settings sliders: 0 interface transparency (0..90), 1 wallpaper blur (0..40),
+    // 2..4 custom accent hue (0..360), saturation and lightness (0..100).
     // Values apply live while dragging; EndSlider saves once.
     void BeginSlider(int which) noexcept { slider_drag_ = which; }
     int slider_drag() const noexcept { return slider_drag_; }
     bool SliderValue(int which, int value);
     void EndSlider();
+    // 主题色 › 自定义: the sliders start from the accent in use.
+    void SyncCustomAccent(uint32_t rgb) noexcept;
+    const int* custom_accent() const noexcept { return custom_hsl_; }
     void Language(std::wstring_view language_id);
     void Wallpaper(int action);
     void ToggleUi(int index);
@@ -312,6 +316,7 @@ private:
     bool global_search_capturing_ = false;
     bool system_exclusion_expanded_ = false;
     int slider_drag_ = -1;
+    int custom_hsl_[3] = {220, 60, 50};
     int menu_drag_item_ = -1;
     bool menu_drag_live_ = false;
     float menu_drag_start_ = 0.0f, menu_drag_pos_ = 0.0f, menu_drag_grab_ = 0.0f;

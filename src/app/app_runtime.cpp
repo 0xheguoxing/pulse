@@ -2645,6 +2645,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.settings_home_folder = s.appPrefs.home_folder;
     vm.settings_text_render = s.appPrefs.text_render;
     vm.settings_ui_font_scale = s.appPrefs.ui_font_scale;
+    std::copy_n(s.settings.custom_accent(), 3, vm.settings_accent_hsl);
     vm.sidebar_scroll = s.sidebarScroll;
     vm.sidebar_scrollbar_opacity = s.sidebarScrollbarFade.Opacity();
     vm.sidebar_scrollbar_expand = s.sidebarScrollbarFade.Expand();

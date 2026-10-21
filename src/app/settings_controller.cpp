@@ -126,6 +126,10 @@ int SettingsController::PageFromName(std::wstring_view name) noexcept {
     if (name == L"packs") return 8;
     if (name == L"system-menu") return 6;
     if (name == L"shortcuts") return 7;
+    if (name == L"files") return 9;
+    if (name == L"tabs") return 10;
+    if (name == L"system") return 11;
+    if (name == L"file-ops") return 12;
     return 0;
 }
 
@@ -138,12 +142,16 @@ const wchar_t* SettingsController::PageName(int page) noexcept {
     if (page == 8) return L"packs";
     if (page == 6) return L"system-menu";
     if (page == 7) return L"shortcuts";
+    if (page == 9) return L"files";
+    if (page == 10) return L"tabs";
+    if (page == 11) return L"system";
+    if (page == 12) return L"file-ops";
     return L"general";
 }
 
 void SettingsController::SelectPage(int page) noexcept {
     CancelGlobalSearchHotkeyCapture();
-    page_ = std::clamp(page, 0, 8);
+    page_ = std::clamp(page, 0, 12);
     scroll_ = 0.0f;
     packs_checked_ = 0;  // re-read the packs when their page opens
 }
@@ -772,7 +780,43 @@ void SettingsController::AccentChoice(bool system_choice, uint32_t rgb) {
     if (prefs_->accent_rgb == next && prefs_->accent_follow_system == system_choice) return;
     prefs_->accent_rgb = std::move(next);
     prefs_->accent_follow_system = system_choice;
+    if (!system_choice) SyncCustomAccent(rgb);
     SaveAndApply(SettingsEffect::Accent);
+}
+
+namespace {
+uint32_t HslToRgb(int hue, int saturation, int lightness) noexcept {
+    const float h = static_cast<float>(hue % 360) / 60.0f;
+    const float s = static_cast<float>(std::clamp(saturation, 0, 100)) / 100.0f;
+    const float l = static_cast<float>(std::clamp(lightness, 0, 100)) / 100.0f;
+    const float c = (1.0f - std::fabs(2.0f * l - 1.0f)) * s;
+    const float x = c * (1.0f - std::fabs(std::fmod(h, 2.0f) - 1.0f));
+    float r = 0, g = 0, b = 0;
+    if (h < 1) { r = c; g = x; } else if (h < 2) { r = x; g = c; } else if (h < 3) { g = c; b = x; }
+    else if (h < 4) { g = x; b = c; } else if (h < 5) { r = x; b = c; } else { r = c; b = x; }
+    const float m = l - c / 2.0f;
+    auto channel = [&](float v) { return static_cast<uint32_t>(std::lround(std::clamp(v + m, 0.0f, 1.0f) * 255.0f)); };
+    return (channel(r) << 16) | (channel(g) << 8) | channel(b);
+}
+} // namespace
+
+void SettingsController::SyncCustomAccent(uint32_t rgb) noexcept {
+    if (slider_drag_ >= 2) return;  // the sliders drive the accent, not the other way round
+    const float r = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
+    const float g = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
+    const float b = static_cast<float>(rgb & 0xFF) / 255.0f;
+    const float hi = (std::max)({r, g, b}), lo = (std::min)({r, g, b}), d = hi - lo;
+    const float l = (hi + lo) / 2.0f;
+    float h = 0.0f, s = 0.0f;
+    if (d > 1e-4f) {
+        s = d / (1.0f - std::fabs(2.0f * l - 1.0f));
+        if (hi == r) h = 60.0f * std::fmod((g - b) / d + 6.0f, 6.0f);
+        else if (hi == g) h = 60.0f * ((b - r) / d + 2.0f);
+        else h = 60.0f * ((r - g) / d + 4.0f);
+        custom_hsl_[0] = static_cast<int>(std::lround(h)) % 360;  // grey keeps the last hue
+    }
+    custom_hsl_[1] = static_cast<int>(std::lround(std::clamp(s, 0.0f, 1.0f) * 100.0f));
+    custom_hsl_[2] = static_cast<int>(std::lround(l * 100.0f));
 }
 
 void SettingsController::RowHeight(int index) {
@@ -911,6 +955,19 @@ void SettingsController::TrayIconSize(int index) {
 // Both only change how the next frame is painted; the caller invalidates.
 // Values snap to the former preset levels unless Shift is held.
 bool SettingsController::SliderValue(int which, int value) {
+    if (prefs_ && which >= 2 && which <= 4) {
+        // 主题色 › 自定义: live while dragging; EndSlider saves.
+        int& target = custom_hsl_[which - 2];
+        value = std::clamp(value, 0, which == 2 ? 360 : 100);
+        if (target == value && !prefs_->accent_follow_system) return false;
+        target = value;
+        wchar_t hex[8]{};
+        swprintf_s(hex, L"%06X", HslToRgb(custom_hsl_[0], custom_hsl_[1], custom_hsl_[2]) & 0xFFFFFFu);
+        prefs_->accent_rgb = hex;
+        prefs_->accent_follow_system = false;
+        Apply(SettingsEffect::Accent);
+        return true;
+    }
     if (!prefs_ || which < 0 || which > 1) return false;
     const bool snap = GetKeyState(VK_SHIFT) >= 0;
     int& target = which == 0 ? prefs_->wallpaper_look : prefs_->wallpaper_blur;

@@ -3144,8 +3144,10 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             s->settings.TrayIconSize(hit.index);
             InvalidateRect(hwnd, nullptr, FALSE);
         } else if (hit.region == ui::HitTestResult::SettingsWallpaperLook ||
-                   hit.region == ui::HitTestResult::SettingsWallpaperBlur) {
-            const int which = hit.region == ui::HitTestResult::SettingsWallpaperLook ? 0 : 1;
+                   hit.region == ui::HitTestResult::SettingsWallpaperBlur ||
+                   hit.region == ui::HitTestResult::SettingsAccentSlider) {
+            const int which = hit.region == ui::HitTestResult::SettingsWallpaperLook ? 0
+                : hit.region == ui::HitTestResult::SettingsWallpaperBlur ? 1 : 2 + std::clamp(hit.sub_index, 0, 2);
             s->settings.BeginSlider(which);
             s->settings.SliderValue(which, hit.index);
             SetCapture(hwnd);

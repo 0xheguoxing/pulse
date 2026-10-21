@@ -50,20 +50,35 @@ int Dropdown(AppState& s, int index, std::vector<ui::FluentMenuItem> items) {
 }
 struct SettingDestination { I title;int page;unsigned expanded; };
 constexpr SettingDestination destinations[]={
-    {I::SettingsTheme,0,0},{I::SettingsThemeColor,0,0},{I::SettingsWindowEffect,0,0},{I::MenuAcrylic,0,0},{I::SettingsLanguage,0,0},{I::SettingsTextRender,0,0},{I::SettingsUiFontSize,0,0},
-    {I::SettingsIntegration,0,0},{I::SettingsDefaultManager,0,0},{I::SettingsLaunch,0,0},{I::SettingsStartInTray,0,0},{I::SettingsKeepRunning,0,0},{I::SettingsNotifyIcon,0,0},
-    {I::SettingsHomeFolder,0,0},{I::SettingsStartupOpen,0,0},{I::SettingsNewTabOpen,0,0},{I::SettingsExternalOpen,0,0},{I::SettingsCloseLastTab,0,0},{I::SettingsCloseTabDoubleClick,0,0},{I::SettingsRowHeight,0,0},{I::SettingsShowPerformance,0,0},
-    {I::ListSmartDate,0,0},{I::ListZebraRows,0,0},{I::ListSizeBar,0,0},{I::ListTagNameColor,0,0},{I::ListSelectionOutline,0,0},{I::ListThumbnailBadges,0,0},{I::SettingsClickOpen,0,0},{I::SettingsItemCheckboxes,0,0},{I::ListMtimeHint,0,0},{I::ListMtimeRange,0,0},{I::ListMtimePalette,0,0},{I::SyncOneDrive,0,0},{I::SyncSvn,0,0},{I::SettingsFolderSort,0,0},{I::SettingsConfirmDelete,0,0},
-    {I::SettingsWallpaper,0,1},{I::SettingsWallpaperLook,0,1},{I::SettingsWallpaperBlur,0,1},{I::SettingsTrayIcon,0,1},{I::SettingsShowHidden,0,1},{I::SettingsShowProtected,0,1},{I::PinnedNames,0,1},{I::AliasMark,0,1},{I::SettingsVerticalTabs,0,1},{I::TrayHideWhenEmpty,0,1},{I::SettingsHints,0,1},{I::SettingsHintsReset,0,1},
-    {I::SettingsBlankClickBack,0,1},{I::SettingsChangeTracking,0,1},{I::SettingsOpenFolders,0,0},{I::SettingsWinE,0,0},{I::SettingsThisPc,0,0},{I::SettingsRecycleBin,0,0},{I::SettingsExplorerWindows,0,0},{I::SettingsShellTags,0,1},
+    // 0 外观
+    {I::SettingsTheme,0,0},{I::SettingsThemeColor,0,0},{I::AccentCustomTitle,0,32},{I::SettingsWindowEffect,0,0},{I::MenuAcrylic,0,0},
+    {I::SettingsWallpaper,0,0},{I::SettingsWallpaperLook,0,0},{I::SettingsWallpaperBlur,0,0},
+    {I::SettingsLanguage,0,0},{I::SettingsTextRender,0,0},{I::SettingsUiFontSize,0,0},
+    // 9 文件列表
+    {I::SettingsClickOpen,9,0},{I::SettingsItemCheckboxes,9,0},{I::SettingsBlankClickBack,9,0},
+    {I::SettingsShowHidden,9,0},{I::SettingsShowProtected,9,0},{I::SettingsFolderSort,9,0},
+    {I::SettingsRowHeight,9,0},{I::ListZebraRows,9,0},{I::ListSmartDate,9,0},{I::ListSizeBar,9,0},{I::ListTagNameColor,9,0},
+    {I::ListSelectionOutline,9,0},{I::ListThumbnailBadges,9,0},{I::AliasMark,9,0},
+    {I::ListMtimeHint,9,0},{I::ListMtimeRange,9,0},{I::ListMtimePalette,9,0},{I::SyncOneDrive,9,0},{I::SyncSvn,9,0},
+    // 10 标签页与窗口
+    {I::SettingsHomeFolder,10,0},{I::SettingsStartupOpen,10,0},{I::SettingsNewTabOpen,10,0},{I::SettingsExternalOpen,10,0},
+    {I::SettingsVerticalTabs,10,0},{I::PinnedNames,10,0},{I::SettingsCloseTabDoubleClick,10,0},{I::SettingsCloseLastTab,10,0},
+    // 11 启动与集成
+    {I::SettingsIntegration,11,0},{I::SettingsDefaultManager,11,0},{I::SettingsOpenFolders,11,0},{I::SettingsWinE,11,0},{I::SettingsThisPc,11,0},
+    {I::SettingsRecycleBin,11,0},{I::SettingsExplorerWindows,11,0},
+    {I::SettingsLaunch,11,0},{I::SettingsStartInTray,11,0},{I::SettingsKeepRunning,11,0},{I::SettingsNotifyIcon,11,0},{I::SettingsShellTags,11,0},
+    // 12 文件操作
+    {I::SettingsConfirmDelete,12,0},{I::SettingsTrayIcon,12,0},{I::TrayHideWhenEmpty,12,0},{I::SettingsChangeTracking,12,0},
     {I::GlobalSearch,1,0},{I::GlobalSearchHotkey,1,0},{I::SearchPinyin,1,0},{I::ContentIndexManage,1,0},{I::IndexLocation,1,2},{I::LocalDrives,1,2},
-    {I::Exclusions,1,2},{I::ServerFolders,1,2},{I::SettingsContextMenu,2,0},{I::SettingsDuplicates,4,0},{I::QuickPreview,5,4},{I::PreviewPacks,8,0},{I::SettingsAboutDiagnostics,3,0},{I::SettingsAutoUpdate,3,0},
+    {I::Exclusions,1,2},{I::ServerFolders,1,2},{I::SettingsContextMenu,2,0},{I::SettingsDuplicates,4,0},{I::QuickPreview,5,4},{I::PreviewPacks,8,0},
+    {I::SettingsAboutDiagnostics,3,0},{I::SettingsShowPerformance,3,0},{I::SettingsHints,3,0},{I::SettingsHintsReset,3,0},{I::SettingsAutoUpdate,3,0},
 };
 std::vector<ui::FluentMenuItem> FilterSettings(const std::wstring& query) {
     std::wstring needle=query;std::transform(needle.begin(),needle.end(),needle.begin(),towlower);
     std::vector<ui::FluentMenuItem> items;
-    const I pages[]={I::SettingsGeneral,I::SettingsSearchIndex,I::SettingsContextMenu,I::SettingsAboutDiagnostics,I::SettingsDuplicates,I::QuickPreview,
-                     I::SettingsContextMenu,I::KeyboardShortcuts,I::PreviewPacks};
+    const I pages[]={I::SettingsAppearance,I::SettingsSearchIndex,I::SettingsContextMenu,I::SettingsAboutDiagnostics,I::SettingsDuplicates,I::QuickPreview,
+                     I::SettingsContextMenu,I::KeyboardShortcuts,I::PreviewPacks,I::SettingsFileList,I::SettingsPageTabs,
+                     I::SettingsPageSystem,I::SettingsPageFileOps};
     for(size_t i=0;i<std::size(destinations);++i) {
         auto item=Item(static_cast<int>(i)+1,destinations[i].title);
         item.shortcut=l10n::Get(pages[destinations[i].page]);
@@ -307,6 +322,18 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
         s.settings.SetScroll(s.settings.scroll(),maximum);break;
     }
     case H::SettingsIntegration: s.settings.IntegrationAction(hit.index);break;
+    case H::SettingsAccentCustom: {
+        // 主题色 › 自定义: start the sliders from the colour in use.
+        s.settingsExpanded^=32u;
+        if(s.settingsExpanded & 32u) {
+            const auto c=s.accentColor;
+            const auto channel=[](float v) { return static_cast<uint32_t>(std::lround(std::clamp(v,0.0f,1.0f)*255.0f)); };
+            s.settings.SyncCustomAccent((channel(c.r)<<16)|(channel(c.g)<<8)|channel(c.b));
+        }
+        auto vm=BuildVm(s,false);
+        const float maximum=s.renderer.SettingsMaxScroll(vm,static_cast<float>(s.compositor.Width()),static_cast<float>(s.compositor.Height()));
+        s.settings.SetScroll(s.settings.scroll(),maximum);break;
+    }
     case H::SettingsPreviewStore: ui::OpenPreviewCodecStore(s.hwnd,hit.index);break;
     case H::SettingsSysCtx: SysCtxAction(s,hit.index);break;
     case H::SettingsShortcuts: ShortcutsAction(s,hit.index);break;

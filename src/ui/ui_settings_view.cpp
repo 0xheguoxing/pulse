@@ -59,13 +59,26 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
         pulse::l10n::StringId::SettingsContextMenu,
         pulse::l10n::StringId::SettingsAboutDiagnostics,
         pulse::l10n::StringId::SettingsDuplicates,
+        pulse::l10n::StringId::SettingsGeneral,  // 5-8: see nav_label
+        pulse::l10n::StringId::SettingsGeneral,
+        pulse::l10n::StringId::SettingsGeneral,
+        pulse::l10n::StringId::SettingsGeneral,
+        pulse::l10n::StringId::SettingsFileList,
+        pulse::l10n::StringId::SettingsPageTabs,
+        pulse::l10n::StringId::SettingsPageSystem,
+        pulse::l10n::StringId::SettingsPageFileOps,
     };
+    static_assert(std::size(kNav) == kSettingsNavCount);
     static constexpr const wchar_t* kNavIcon[] = {
         // 右键菜单 (2): the list glyph of its Pulse 右键菜单 card, not the gear.
-        kIconHome, kIconSearch, L"\xE8FD", kIconInfo, kIconCopy, L"\xE890",  // Quick Look
+        L"\xE771", kIconSearch, L"\xE8FD", kIconInfo, kIconCopy, L"\xE890",  // Quick Look
         L"\xE71D",  // 系统右键菜单
         L"\xE765",  // 快捷键 (keyboard)
         L"\xE7B8",  // 增强包 (package)
+        L"\xED25",  // 文件列表
+        L"\xE737",  // 标签页与窗口
+        L"\xE7E8",  // 启动与集成
+        L"\xE8DE",  // 文件操作
     };
     static_assert(std::size(kNavIcon) == kSettingsNavCount);
     // Page 5 (快速预览) has no string-table entry; see pack_text. Page 2 is
@@ -74,8 +87,25 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
         if (page == 2 || page == 6) return std::wstring(sysctx_text::PageTitle());
         if (page == 7) return std::wstring(shortcuts_text::Title());
         if (page == 8) return std::wstring(pack_text::PacksSection());
+        if (page == 0) return pulse::l10n::Get(pulse::l10n::StringId::SettingsAppearance);
         return page == 5 ? std::wstring(pack_text::Title()) : pulse::l10n::Get(kNav[page]);
     };
+    {
+        // Group headings when the sidebar is tall enough, thin separators otherwise.
+        static constexpr pulse::l10n::StringId kGroups[] = {
+            pulse::l10n::StringId::SettingsNavPersonal, pulse::l10n::StringId::SettingsNavBrowse,
+            pulse::l10n::StringId::SettingsNavSystem, pulse::l10n::StringId::SettingsNavFeatures,
+            pulse::l10n::StringId::SettingsNavTools,
+        };
+        static_assert(std::size(kGroups) == kSettingsNavGroups);
+        for (int g = 0; g < kSettingsNavGroups; ++g) {
+            const auto& head = lay.nav_group_label[g];
+            if (head.bottom > head.top)
+                painter_.DrawText(pulse::l10n::Get(kGroups[g]), head, compositor_->SmallFormat(), theme.text_secondary);
+            const auto& sep = lay.nav_separator[g];
+            if (sep.right > sep.left) FillRect(dc, brStrokeDivider_.get(), sep.left, sep.top, sep.right - sep.left, 1);
+        }
+    }
     const int nav_page = vm.settings_page == 6 ? 2 : vm.settings_page;
     // Hover plate and selection pill glide between rows (ui_motion.h); the
     // accent bar travels with the pill.
@@ -98,7 +128,8 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
             FillRoundedRect(dc, brFillSelected_.get(), rc.left, rc.top,
                             rc.right - rc.left, rc.bottom - rc.top, 6.0f * scale_);
             MakeBrush(dc, theme.accent, brFillSelected_);
-            FillRoundedRect(dc, brFillSelected_.get(), rc.left, rc.top+10*scale_, 3*scale_, 20*scale_, 1.5f*scale_);
+            const float bar_h = (std::min)(20.0f * scale_, (rc.bottom - rc.top) * 0.45f);
+            FillRoundedRect(dc, brFillSelected_.get(), rc.left, (rc.top + rc.bottom - bar_h) * 0.5f, 3*scale_, bar_h, 1.5f*scale_);
         }
     }
     for (int i = 0; i < kSettingsNavCount; ++i) {
@@ -133,8 +164,8 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
     const float switch_w = 42.0f * scale_;
     const float switch_h = 32.0f * scale_;
 
-    const auto page_title_id = vm.settings_page == 0
-        ? pulse::l10n::StringId::SettingsGeneral
+    const auto page_title_id = vm.settings_page == 0 ? pulse::l10n::StringId::SettingsAppearance
+        : vm.settings_page >= 9 ? kNav[(std::min)(vm.settings_page, kSettingsNavCount - 1)]
         : vm.settings_page == 1 ? pulse::l10n::StringId::SettingsSearchIndex
         : vm.settings_page == 2 ? pulse::l10n::StringId::SettingsContextMenu
         : vm.settings_page == 4 ? pulse::l10n::StringId::SettingsDuplicates
@@ -156,13 +187,17 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
         painter_.DrawWrappedCaption(vm.settings_page == 8 ? pack_text::PacksIntro() : pack_text::Intro(),
             D2D1::Point2F(lay.content.left+pad, origin+60*scale_),
             lay.content.right-lay.content.left-2*pad, theme.text_secondary);
-    if (vm.settings_page == 0 || vm.settings_page == 1)
-        painter_.DrawText(l10n::Get(vm.settings_page == 0 ? l10n::StringId::SettingsGeneralIntro : l10n::StringId::SettingsSearchIntro),
+    if (IsGeneralSettingsPage(vm.settings_page) || vm.settings_page == 1)
+        painter_.DrawText(l10n::Get(vm.settings_page == 0 ? l10n::StringId::SettingsAppearanceIntro
+            : vm.settings_page == 9 ? l10n::StringId::SettingsFileListIntro
+            : vm.settings_page == 10 ? l10n::StringId::SettingsTabsIntro
+            : vm.settings_page == 11 ? l10n::StringId::SettingsSystemIntro
+            : vm.settings_page == 12 ? l10n::StringId::SettingsFileOpsIntro : l10n::StringId::SettingsSearchIntro),
             D2D1::RectF(lay.content.left+pad,origin+60*scale_,lay.content.right-pad,origin+84*scale_),
             compositor_->SmallFormat(),theme.text_secondary);
 
 
-    if (vm.settings_page == 0) {
+    if (IsGeneralSettingsPage(vm.settings_page)) {
         DrawSettingsCore(vm, rect, theme);
     } else if (vm.settings_page == 1) {
         auto draw_card = [&](const D2D1_RECT_F& card) {
@@ -708,6 +743,68 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
                 fluent::ButtonKind::Standard, state});
         }
 
+        if (lay.tips_card.bottom > lay.tips_card.top) {
+            // 新手提示: the hint switch and, beneath it, 重新显示.
+            draw_card(lay.tips_card);
+            const D2D1_RECT_F& card = lay.tips_card;
+            MakeBrush(dc, theme.text, brText_);
+            DrawTextRect(dc, compositor_->TextFormat(), brText_.get(),
+                         pulse::l10n::Get(pulse::l10n::StringId::SettingsSecTips),
+                         card.left + 16.0f * scale_, card.top + 12.0f * scale_,
+                         card.right - card.left - 32.0f * scale_, 22.0f * scale_);
+            auto tip_row = [&](const D2D1_RECT_F& row, const wchar_t* icon, const std::wstring& title,
+                               const std::wstring& desc, float text_right) {
+                DrawIconText(row.left + 16.0f * scale_, row.top, 24.0f * scale_, row.bottom - row.top,
+                             icon, L"", theme.text_secondary, 0.85f);
+                MakeBrush(dc, theme.text, brText_);
+                DrawTextRect(dc, compositor_->TextFormat(), brText_.get(), title,
+                             row.left + 52.0f * scale_, row.top + 11.0f * scale_, text_right - row.left - 52.0f * scale_, 22.0f * scale_);
+                MakeBrush(dc, theme.text_secondary, brTextSecondary_);
+                DrawTextRect(dc, compositor_->SmallFormat(), brTextSecondary_.get(), desc,
+                             row.left + 52.0f * scale_, row.top + 33.0f * scale_, text_right - row.left - 52.0f * scale_, 20.0f * scale_);
+            };
+            const D2D1_RECT_F& hints = lay.hints_row;
+            FillRect(dc, brStrokeDivider_.get(), card.left + 16.0f * scale_, hints.top, card.right - card.left - 32.0f * scale_, 1);
+            if (IsHovered(vm, HitTestResult::SettingsToggle, 24)) {
+                MakeBrush(dc, theme.fill_hover, brFillHover_);
+                FillRoundedRect(dc, brFillHover_.get(), hints.left + 4.0f * scale_, hints.top + 2.0f * scale_,
+                                hints.right - hints.left - 8.0f * scale_, hints.bottom - hints.top - 4.0f * scale_, 4.0f * scale_);
+            }
+            const float sw_right = hints.right - 16.0f * scale_;
+            tip_row(hints, L"\xE82F", pulse::l10n::Get(pulse::l10n::StringId::SettingsHints),
+                    pulse::l10n::Get(pulse::l10n::StringId::SettingsHintsDesc), sw_right - switch_w - 12.0f * scale_);
+            fluent::ControlState st{};
+            st.checked = vm.settings_show_hints;
+            st.hovered = IsHovered(vm, HitTestResult::SettingsToggle, 24);
+            const float mid = (hints.top + hints.bottom) * 0.5f;
+            painter_.DrawSwitch(D2D1::RectF(sw_right - switch_w, mid - switch_h * 0.5f, sw_right, mid + switch_h * 0.5f), L"", st);
+            const D2D1_RECT_F& reset = lay.hints_reset_row;
+            {
+                // The dependent row's band, clipped to the card's rounded corners.
+                ComPtr<ID2D1Factory> factory; dc->GetFactory(&factory);
+                ComPtr<ID2D1RoundedRectangleGeometry> clip;
+                if (factory.get()) factory->CreateRoundedRectangleGeometry(
+                    D2D1::RoundedRect(D2D1::RectF(card.left + 1.0f, card.top + 1.0f, card.right - 1.0f, card.bottom - 1.0f),
+                                      7.0f * scale_, 7.0f * scale_), &clip);
+                if (clip.get()) dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), clip.get()), nullptr);
+                MakeBrush(dc, WithAlpha(theme.text, vm.dark ? 0.035f : 0.024f), brFillHover_);
+                dc->FillRectangle(D2D1::RectF(card.left, reset.top, card.right, card.bottom), brFillHover_.get());
+                if (clip.get()) dc->PopLayer();
+            }
+            MakeBrush(dc, WithAlpha(theme.text_secondary, 0.32f), brTextSecondary_);
+            FillRoundedRect(dc, brTextSecondary_.get(), card.left + 29.0f * scale_, reset.top + 12.0f * scale_,
+                            1.5f * scale_, reset.bottom - reset.top - 24.0f * scale_, 0.75f * scale_);
+            tip_row(reset, L"\xE72C", pulse::l10n::Get(pulse::l10n::StringId::SettingsHintsReset),
+                    pulse::l10n::Get(vm.settings_tips_seen ? pulse::l10n::StringId::SettingsHintsResetDesc
+                                                           : pulse::l10n::StringId::HintsResetDone),
+                    lay.hints_reset_button.left - 8.0f * scale_);
+            fluent::ControlState bs{};
+            bs.enabled = vm.settings_tips_seen;
+            bs.hovered = bs.enabled && IsHovered(vm, HitTestResult::SettingsToggle, 25);
+            painter_.DrawButton({lay.hints_reset_button, pulse::l10n::Get(pulse::l10n::StringId::HintsResetButton), {},
+                fluent::ButtonKind::Standard, bs});
+        }
+
         draw_card(lay.update_card);
         MakeBrush(dc, theme.text, brText_);
         DrawTextRect(dc, compositor_->TextFormat(), brText_.get(),
@@ -1112,7 +1209,8 @@ float MainRenderer::SettingsDestinationOffset(const WindowViewModel& vm, int set
     case I::SettingsConfirmDelete: target=l.confirm_delete_row;break;
     case I::SettingsOpenFolders: target=l.integration_cover[0];break;
     case I::SettingsRowHeight: target=l.density_card;break;
-    case I::SettingsShowPerformance: target=l.performance_row;break;
+    case I::SettingsShowPerformance: target=l.diagnostics_perf;break;
+    case I::AccentCustomTitle: target=l.accent_custom_head;break;
     case I::ListSmartDate: target=l.list_style_row[0];break;
     case I::ListZebraRows: target=l.list_style_row[1];break;
     case I::ListSizeBar: target=l.list_style_row[2];break;

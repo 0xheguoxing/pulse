@@ -2307,6 +2307,43 @@ MediaPackLocalNoticeInstalled	IDS_MEDIA_PACK_LOCAL_NOTICE_INSTALLED	3505	正在�
 TrayShelfTitle	IDS_TRAY_SHELF_TITLE	3506	暂存区	Staging	暫存區
 TrayStripHint	IDS_TRAY_STRIP_HINT	3507	拖入文件，或	Drop files, or	拖入檔案，或
 TrayStripKbd	IDS_TRAY_STRIP_KBD	3508	Ctrl Shift S	Ctrl Shift S	Ctrl Shift S
+TrayStripHintShort	IDS_TRAY_STRIP_HINT_SHORT	3861	拖入文件	Drop files here	拖入檔案
+SettingsPageTabs	IDS_SETTINGS_PAGE_TABS	3862	标签页与窗口	Tabs & windows	標籤頁與視窗
+SettingsPageSystem	IDS_SETTINGS_PAGE_SYSTEM	3863	启动与集成	Startup & integration	啟動與整合
+SettingsPageFileOps	IDS_SETTINGS_PAGE_FILE_OPS	3864	文件操作	File operations	檔案操作
+SettingsAppearanceIntro	IDS_SETTINGS_APPEARANCE_INTRO	3865	主题、颜色、背景和文字。	Theme, color, background and text.	主題、色彩、背景和文字。
+SettingsFileListIntro	IDS_SETTINGS_FILE_LIST_INTRO	3866	打开方式、显示哪些文件，以及列表里的各种提示。	How items open, which files show, and the hints in the list.	開啟方式、顯示哪些檔案，以及清單中的各種提示。
+SettingsTabsIntro	IDS_SETTINGS_TABS_INTRO	3867	启动时打开什么，新标签页和其他程序打开的文件夹去哪里。	What opens at startup, and where new tabs and folders from other apps go.	啟動時開啟什麼，新標籤頁和其他程式開啟的資料夾去哪裡。
+SettingsSystemIntro	IDS_SETTINGS_SYSTEM_INTRO	3868	开机启动、托盘，以及接管 Windows 里打开文件夹的方式。	Startup, the tray icon, and how Windows opens folders.	開機啟動、系統匣，以及接管 Windows 中開啟資料夾的方式。
+SettingsFileOpsIntro	IDS_SETTINGS_FILE_OPS_INTRO	3869	删除确认、暂存区和文件夹变化记录。	Delete confirmation, the staging tray and folder change history.	刪除確認、暫存區和資料夾變化記錄。
+SettingsNavPersonal	IDS_SETTINGS_NAV_PERSONAL	3870	个性化	Personalize	個人化
+SettingsNavBrowse	IDS_SETTINGS_NAV_BROWSE	3871	浏览	Browsing	瀏覽
+SettingsNavSystem	IDS_SETTINGS_NAV_SYSTEM	3872	系统	System	系統
+SettingsNavFeatures	IDS_SETTINGS_NAV_FEATURES	3873	功能	Features	功能
+SettingsNavTools	IDS_SETTINGS_NAV_TOOLS	3874	工具	Tools	工具
+SettingsSecThemeColor	IDS_SETTINGS_SEC_THEME_COLOR	3875	主题与颜色	Theme & color	主題與色彩
+SettingsSecBackground	IDS_SETTINGS_SEC_BACKGROUND	3876	背景与透明度	Background & transparency	背景與透明度
+SettingsSecTextLanguage	IDS_SETTINGS_SEC_TEXT_LANGUAGE	3877	文字与语言	Text & language	文字與語言
+SettingsSecOpenSelect	IDS_SETTINGS_SEC_OPEN_SELECT	3878	打开与选择	Opening & selecting	開啟與選取
+SettingsSecVisibleItems	IDS_SETTINGS_SEC_VISIBLE_ITEMS	3879	显示哪些项目	Which items show	顯示哪些項目
+SettingsSecListLook	IDS_SETTINGS_SEC_LIST_LOOK	3880	列表外观	List appearance	清單外觀
+SettingsSecSyncStatus	IDS_SETTINGS_SEC_SYNC_STATUS	3881	同步状态	Sync status	同步狀態
+SettingsSecOpenLocation	IDS_SETTINGS_SEC_OPEN_LOCATION	3882	打开位置	Where things open	開啟位置
+SettingsSecTabs	IDS_SETTINGS_SEC_TABS	3883	标签页	Tabs	標籤頁
+SettingsSecStartupTray	IDS_SETTINGS_SEC_STARTUP_TRAY	3884	启动与托盘	Startup & tray	啟動與系統匣
+SettingsSecExplorer	IDS_SETTINGS_SEC_EXPLORER	3885	资源管理器	File Explorer	檔案總管
+SettingsSecDelete	IDS_SETTINGS_SEC_DELETE	3886	删除	Deleting	刪除
+SettingsSecStaging	IDS_SETTINGS_SEC_STAGING	3887	暂存区	Staging tray	暫存區
+SettingsSecChanges	IDS_SETTINGS_SEC_CHANGES	3888	变化记录	Change history	變化記錄
+SettingsSecTips	IDS_SETTINGS_SEC_TIPS	3889	新手提示	Tips	新手提示
+AccentCustom	IDS_ACCENT_CUSTOM	3890	自定义	Custom	自訂
+AccentCustomTitle	IDS_ACCENT_CUSTOM_TITLE	3891	自定义颜色	Custom color	自訂色彩
+AccentCustomDesc	IDS_ACCENT_CUSTOM_DESC	3892	拖动下面的滑块调出任意颜色，立即生效	Drag the sliders below to mix any color; it applies at once	拖曳下方的滑桿調出任意色彩，立即生效
+AccentHue	IDS_ACCENT_HUE	3893	色相	Hue	色相
+AccentSaturation	IDS_ACCENT_SATURATION	3894	饱和度	Saturation	飽和度
+AccentLightness	IDS_ACCENT_LIGHTNESS	3895	亮度	Lightness	亮度
+AccentCustomDone	IDS_ACCENT_CUSTOM_DONE	3896	收起	Done	收起
+SettingsChangeDaysDesc	IDS_SETTINGS_CHANGE_DAYS_DESC	3897	文件夹里标出多久以内的增删改	How far back folder changes are marked	資料夾裡標出多久以內的增刪改
 TrayDropCopyTitle	IDS_TRAY_DROP_COPY_TITLE	3509	复制暂存	Stage as copy	複製暫存
 TrayDropDefault	IDS_TRAY_DROP_DEFAULT	3510	默认	Default	預設
 TrayDropMoveTitle	IDS_TRAY_DROP_MOVE_TITLE	3511	移动暂存	Stage as move	移動暫存
@@ -2630,7 +2667,7 @@ ListMtimeBold	IDS_LIST_MTIME_BOLD	3832	今天修改的名称加粗	Bold names ch
 ListMtimeBoldDesc	IDS_LIST_MTIME_BOLD_DESC	3833	今天改过的文件名和日期用半粗体，扫一眼就能找到	Names and dates changed today are semibold, easy to spot at a glance	今天改過的檔名和日期用半粗體，掃一眼就能找到
 ListMtimeTree	IDS_LIST_MTIME_TREE	3834	文件夹算上里面的变化	Folders count changes inside	資料夾算上裡面的變化
 ListMtimeTreeDesc	IDS_LIST_MTIME_TREE_DESC	3835	文件夹里有文件改动时，文件夹的标记也跟着变新	A folder's mark also follows changes to the files inside it	資料夾裡有檔案變動時，資料夾的標記也跟著變新
-ListMtimeTreeNeeds	IDS_LIST_MTIME_TREE_NEEDS	3836	需要先在下方“更多选项”里开启“文件夹最近变化”	Turn on Recent folder changes under More options first	需要先在下方「更多選項」裡開啟「資料夾最近變化」
+ListMtimeTreeNeeds	IDS_LIST_MTIME_TREE_NEEDS	3836	需要先在“文件操作”页开启“文件夹最近变化”	Turn on Recent folder changes on the File operations page first	需要先在「檔案操作」頁開啟「資料夾最近變化」
 ListMtimeOtherViews	IDS_LIST_MTIME_OTHER_VIEWS	3837	图标和列表视图也显示	Show in icon and list views	圖示和清單檢視也顯示
 ListMtimeOtherViewsDesc	IDS_LIST_MTIME_OTHER_VIEWS_DESC	3838	没有日期列的视图里，标记显示在图标左上角	Views without a date column show the mark on the icon's top-left corner	沒有日期欄的檢視裡，標記顯示在圖示左上角
 ListMtimeFlash	IDS_LIST_MTIME_FLASH	3839	文件刚被修改时闪一下	Flash rows that just changed	檔案剛被修改時閃一下

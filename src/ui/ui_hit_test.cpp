@@ -84,6 +84,9 @@ int MainRenderer::SettingsSliderValueAt(const WindowViewModel& vm, const D2D1_RE
                                         int which, float x) const {
     const SettingsLayout lay = MakeSettingsLayout(vm, rect, scale_, title_bar_height_,
                                                   status_height_, &painter_);
+    // 0 look, 1 blur, 2..4 the custom accent's hue / saturation / lightness.
+    if (which >= 2 && which <= 4)
+        return SettingsSliderValue(SettingsSlider(lay.accent_slider_cells[which - 2], scale_), x, which == 2 ? 360 : 100);
     return which == 0
         ? SettingsSliderValue(SettingsSlider(lay.wallpaper_look_row, scale_), x, kPanelTransparencyMax)
         : SettingsSliderValue(SettingsSlider(lay.wallpaper_blur_row, scale_), x, kWallpaperBlurMax);
@@ -301,7 +304,7 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             const D2D1_RECT_F actions[]={lay.content_pause,lay.content_options,lay.content_rebuild};
             for(int i=0;i<3;++i) if(ContainsPt(actions[i],x,y)) {r.region=HitTestResult::SettingsContentAction;r.index=i+1;return r;}
 
-            if (vm.settings_page == 0) {
+            if (IsGeneralSettingsPage(vm.settings_page)) {
                 // The switch, then the two extras (only while it is on); the coverage tiles are read-only.
                 if(ContainsPt(lay.default_manager_row,x,y)) {r.region=HitTestResult::SettingsIntegration;r.index=0;return r;}
                 if(vm.settings_integration_enabled) {
@@ -316,7 +319,22 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 if(vm.settings_integration_can_restore && ContainsPt(lay.integration_restore,x,y)) {
                     r.region=HitTestResult::SettingsIntegration;r.index=6;return r;
                 }
-                if (vm.settings_bloom) {
+                if (ContainsPt(lay.accent_custom_button, x, y)) {
+                    r.region = HitTestResult::SettingsAccentCustom; r.index = 0; return r;
+                }
+                for (int i = 0; i < 3; ++i) {
+                    const auto* cells = lay.accent_slider_cells[i];
+                    if (lay.accent_slider_row[i].bottom <= lay.accent_slider_row[i].top) continue;
+                    const auto zone = D2D1::RectF(cells[0].left - 12.0f * scale_, cells[0].top - 8.0f * scale_,
+                                                  cells[2].right, cells[2].bottom + 8.0f * scale_);
+                    if (ContainsPt(zone, x, y)) {
+                        r.region = HitTestResult::SettingsAccentSlider;
+                        r.sub_index = i;
+                        r.index = SettingsSliderValue(SettingsSlider(cells, scale_), x, i == 0 ? 360 : 100);
+                        return r;
+                    }
+                }
+                if (vm.settings_bloom && lay.accent_picker.right > lay.accent_picker.left) {
                     vm.settings_bloom->SetDisk(lay.accent_picker);
                     const int dot = vm.settings_bloom->HitDot(x, y);
                     if (dot >= 0) {
@@ -429,7 +447,7 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                                                   kPanelTransparencyMax);
                     return r;
                 }
-                if (ContainsPt(slider_zone(lay.wallpaper_blur_row), x, y)) {
+                if (!vm.background_image.empty() && ContainsPt(slider_zone(lay.wallpaper_blur_row), x, y)) {
                     r.region = HitTestResult::SettingsWallpaperBlur;
                     r.index = SettingsSliderValue(SettingsSlider(lay.wallpaper_blur_row, scale_), x,
                                                   kWallpaperBlurMax);
@@ -472,7 +490,7 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 if (ContainsPt(lay.change_tracking_row, x, y)) {
                     r.region = HitTestResult::SettingsToggle; r.index = 8; return r;
                 }
-                for (int i = 0; i < 3; ++i) if (ContainsPt(lay.change_days[i], x, y)) {
+                for (int i = 0; i < 3; ++i) if (vm.settings_change_tracking && ContainsPt(lay.change_days[i], x, y)) {
                     r.region = HitTestResult::SettingsChangeDays; r.index = i; return r;
                 }
                 for (int i = 0; i < 2; ++i) {
@@ -491,7 +509,7 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 if (ContainsPt(lay.confirm_delete_row, x, y)) {
                     r.region = HitTestResult::SettingsToggle; r.index = 32; return r;
                 }
-                if (ContainsPt(lay.start_in_tray_row, x, y)) {
+                if (vm.settings_launch_on_startup && ContainsPt(lay.start_in_tray_row, x, y)) {
                     r.region = HitTestResult::SettingsToggle; r.index = 27; return r;
                 }
             } else if (vm.settings_page == 1) {
@@ -614,6 +632,12 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     r.region = HitTestResult::SettingsToggle;
                     r.index = 4;
                     return r;
+                }
+                if (vm.settings_tips_seen && ContainsPt(lay.hints_reset_button, x, y)) {
+                    r.region = HitTestResult::SettingsToggle; r.index = 25; return r;
+                }
+                if (ContainsPt(lay.hints_row, x, y)) {
+                    r.region = HitTestResult::SettingsToggle; r.index = 24; return r;
                 }
                 for (int i = 0; i < 3; ++i) {
                     if (!vm.settings_diagnostics_exporting &&

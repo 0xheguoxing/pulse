@@ -68,7 +68,7 @@ int RunSettingsInteractionTest(AppState& s,const wchar_t* output) {
     H find;find.region=H::SettingsFind;HandleSettingsControl(s,find);
     vm=BuildVm(s,false);
     log<<"search page="<<vm.settings_page<<" expanded="<<s.settingsExpanded<<" scroll="<<s.settings.scroll()<<std::endl;
-    check(vm.settings_page==0 && (s.settingsExpanded&1u) && s.settings.scroll()>0,"settings search opens and scrolls to a hidden option");
+    check(vm.settings_page==0 && s.settings.scroll()>0,"settings search opens the option's page and scrolls to it");
     OpenSettingsTab(s,2);s.settings.SetScroll(0,0);
     H expand;expand.region=H::SettingsDisclosure;expand.index=8;
     const bool group_on=s.ctxMenuPrefs.GroupEnabled(ipc::CtxMenuGroup::Software);

@@ -358,7 +358,9 @@ void MainRenderer::DrawTrayShelfLayer(const WindowViewModel& vm, int stage, cons
     if (stage == static_cast<int>(TrayStage::Strip)) {
         DrawShelfIcon(dc, B(p.acc2), ShelfIcon::Tray, g.strip_icon, 16.0f * s);
         ShelfText(dc, dw, ShelfFormat(0), B(p.acc2), l10n::Get(StringId::TrayShelfTitle), g.strip_title);
-        ShelfText(dc, dw, ShelfFormat(1), B(p.faint), l10n::Get(StringId::TrayStripHint), g.strip_hint);
+        ShelfText(dc, dw, ShelfFormat(1), B(p.faint),
+                  l10n::Get(g.strip_hint_short ? StringId::TrayStripHintShort : StringId::TrayStripHint),
+                  g.strip_hint);
         if (g.strip_kbd.right > g.strip_kbd.left) {
             fill(g.strip_kbd, 4.0f * s, p.kbd);
             ShelfText(dc, dw, ShelfFormat(6), B(p.sub), l10n::Get(StringId::TrayStripKbd), g.strip_kbd,
