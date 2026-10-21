@@ -1421,7 +1421,10 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
             vm.tabs[i].title == pulse::l10n::Get(pulse::l10n::StringId::Settings)
                 ? kIconSettings : kIconFolder, L"[]",
             active ? theme.icon_folder : theme.text_secondary, 0.85f);
-        MakeBrush(dc, theme.text, brText_);
+        // Dark chrome: the active plate is the sheet over a nearly as dark
+        // title bar, so inactive titles step back (as Edge / Chrome do) and
+        // come forward again on hover.
+        MakeBrush(dc, active || hovered || !vm.dark ? theme.text : WithAlpha(theme.text, 0.62f), brText_);
         const bool show_close = TabCloseVisible(vm, static_cast<int>(i), tabW, scale_);
         const float closeSz = kTabCloseSizeDip * scale_;
         const float closePad = kTabClosePadDip * scale_;
