@@ -2563,9 +2563,10 @@ void FileOperationWindow::Update(const ops::OpStatus& incoming) {
     else if (task_end_tick_ == 0) task_end_tick_ = now;
     const bool succeeded = finished && status_.phase == ops::OpPhase::Completed &&
         status_.last_error.empty();
-    // The countdown starts only when the finish happens in front of the user;
-    // a summary opened later from the pill stays until closed.
-    if (!succeeded) countdown_base_ = 0;
+    // The countdown starts only when the finish happens in front of the user
+    // in a window the app opened (SetAutoClose); a summary opened from the
+    // pill stays until closed.
+    if (!succeeded || !auto_close_) countdown_base_ = 0;
     else if (countdown_base_ == 0 && !was_succeeded && !closing_ && hwnd_ &&
              IsWindowVisible(hwnd_) && !IsIconic(hwnd_))
         countdown_base_ = now;
@@ -2614,6 +2615,13 @@ void FileOperationWindow::Show(bool activate) {
         SetTimer(hwnd_, kRenderTimer, 33, nullptr);
     }
     if (activate) SetForegroundWindow(hwnd_);
+}
+
+void FileOperationWindow::SetAutoClose(bool on) {
+    auto_close_ = on;
+    if (on || countdown_base_ == 0) return;
+    countdown_base_ = 0;
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 void FileOperationWindow::Hide() {

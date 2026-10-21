@@ -764,6 +764,7 @@ static void ShowOperationWindow(AppState& s, const ops::OpStatus& status, bool a
         s.operationWindow->Update(status);
         s.operationWindow->SetTaskStart(s.operationUiTaskId, s.operationStartedAt);
     }
+    s.operationWindow->SetAutoClose(!s.operationPinnedByUser);
     s.operationWindow->Show(activate);
 }
 
@@ -783,6 +784,7 @@ void MoveOperationUi(AppState& from, AppState& to) {
     if (shown && EnsureOperationWindow(to)) {
         to.operationWindow->Update(to.ops.Status());
         to.operationWindow->SetTaskStart(to.operationUiTaskId, to.operationStartedAt);
+        to.operationWindow->SetAutoClose(!to.operationPinnedByUser);
         to.operationWindow->Show(false);
     }
 }
@@ -797,6 +799,7 @@ void PinAndShowOperationWindow(AppState& s) {
     s.operationAutoShown = true;
     s.operationWindow->Update(status);
     s.operationWindow->SetTaskStart(s.operationUiTaskId, s.operationStartedAt);
+    s.operationWindow->SetAutoClose(false);   // opened from the pill: the user closes it
     s.operationWindow->Show(true);
 }
 
@@ -893,12 +896,22 @@ void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog) {
     }
 
     if (status.active) {
-        // Progress lives in the status-bar pill; the details window opens only
-        // when the pill is clicked (conflicts and failures still surface).
-        // Emptying the Recycle Bin is the exception: it starts from a menu with
-        // no row to watch, so its window opens once unless it ends quickly.
-        if (status.type == ops::OpType::EmptyRecycle && !s.operationAutoShown &&
-            now - s.operationStartedAt >= std::chrono::milliseconds(400)) {
+        // Progress starts in the status-bar pill; a task still running after
+        // kOperationAutoShowDelay opens the details window once (without
+        // taking focus), unless it is nearly done. Closing that window keeps
+        // it closed for this task (operationDismissedTaskId above).
+        // Emptying the Recycle Bin starts from a menu with no row to watch, so
+        // its window opens sooner.
+        constexpr auto kOperationAutoShowDelay = std::chrono::milliseconds(2000);
+        const bool quick_type = status.type == ops::OpType::Rename ||
+                                status.type == ops::OpType::CreateFolder ||
+                                status.type == ops::OpType::CreateTextFile;
+        const bool emptying = status.type == ops::OpType::EmptyRecycle;
+        const auto delay = emptying ? std::chrono::milliseconds(400) : kOperationAutoShowDelay;
+        const bool nearly_done = !emptying && status.percent >= 90.0f;
+        if (!quick_type && !s.operationAutoShown && !nearly_done &&
+            status.phase != ops::OpPhase::WaitingForConflict &&
+            now - s.operationStartedAt >= delay) {
             s.operationAutoShown = true;
             if (!OperationWindowVisible(s)) ShowOperationWindow(s, status, false);
         }

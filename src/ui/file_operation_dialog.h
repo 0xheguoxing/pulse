@@ -56,6 +56,10 @@ public:
     // When the window is built after the task started (first pill click), the
     // app passes the start it recorded so 已用时间 counts from the real start.
     void SetTaskStart(uint64_t task_id, std::chrono::steady_clock::time_point started);
+    // The close-button countdown after a successful finish runs only for a
+    // window the app opened itself; one the user opened from the status pill
+    // stays until they close it.
+    void SetAutoClose(bool on);
 
 private:
     friend struct FileOperationWindowTestAccess;
@@ -102,6 +106,7 @@ private:
     static constexpr ULONGLONG kCloseAnimMs = 200;
     ULONGLONG countdown_base_ = 0;
     bool countdown_hover_ = false;
+    bool auto_close_ = true;
     bool closing_ = false;
     ULONGLONG closing_tick_ = 0;
     ComPtr<IDWriteTextFormat> pct_format_;
