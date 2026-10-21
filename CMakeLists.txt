@@ -463,6 +463,44 @@ pulse_enable_lumatext(pulse_file_operation_authorization_dialog_test)
 add_executable(pulse_command_icon_test src/bench/command_icon_test.cpp)
 target_link_libraries(pulse_command_icon_test PRIVATE d2d1 dwrite dwmapi ole32 windowscodecs user32)
 
+# Sources (from the given list) whose includes reach app_state.h. Headers that
+# include it are found transitively, so new wrappers are picked up on configure.
+function(pulse_collect_app_state_sources out_var)
+    file(GLOB _hdrs "${CMAKE_CURRENT_SOURCE_DIR}/src/app/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/*.h")
+    set(_seeds "app_state")
+    set(_grew TRUE)
+    while(_grew)
+        set(_grew FALSE)
+        string(JOIN "|" _alt ${_seeds})
+        foreach(_h IN LISTS _hdrs)
+            get_filename_component(_name "${_h}" NAME_WE)
+            if(NOT _name IN_LIST _seeds)
+                file(STRINGS "${_h}" _hit REGEX "#[ \t]*include[ \t]*\"([^\"]*/)?(${_alt})\\.h\"")
+                if(_hit)
+                    list(APPEND _seeds "${_name}")
+                    set(_grew TRUE)
+                endif()
+            endif()
+        endforeach()
+    endwhile()
+    string(JOIN "|" _alt ${_seeds})
+    set(_out)
+    foreach(_src IN LISTS ARGN)
+        if(_src MATCHES "\\.cpp$")
+            if(IS_ABSOLUTE "${_src}")
+                set(_path "${_src}")
+            else()
+                set(_path "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
+            endif()
+            file(STRINGS "${_path}" _hit REGEX "#[ \t]*include[ \t]*\"([^\"]*/)?(${_alt})\\.h\"")
+            if(_hit)
+                list(APPEND _out "${_src}")
+            endif()
+        endif()
+    endforeach()
+    set(${out_var} "${_out}" PARENT_SCOPE)
+endfunction()
+
 # ---- Pulse.exe: main UI process ----
 file(GLOB_RECURSE PULSE_APP_SOURCES CONFIGURE_DEPENDS
     src/app/*.cpp src/ui/*.cpp src/fs/*.cpp src/ops/*.cpp src/ipc/*.cpp src/index/*.cpp)
@@ -498,14 +536,48 @@ if(PULSE_APP_SOURCES)
     # Settings pages, editors and dialogs are not on a hot path: build them
     # for size (/Os /Oi- is /O1 without the D9025 clash with /O2). Listing,
     # sorting, drawing the file list and input stay at /O2.
-    set_source_files_properties(
+    set(PULSE_SIZE_SOURCES
         src/ui/ui_settings_core.cpp src/ui/ui_settings_view.cpp src/ui/ui_settings_layout.cpp
         src/ui/ui_settings_context.cpp src/ui/ui_settings_packs.cpp src/ui/ui_settings_shortcuts.cpp
         src/ui/ui_settings_sysctx.cpp src/ui/file_operation_dialog.cpp src/ui/folder_picker_dialog.cpp
         src/ui/quick_access_editor.cpp src/ui/shortcut_help.cpp src/ui/tag_manager_panel.cpp
         src/ui/toolbar_picker.cpp src/app/settings_ui.cpp src/app/settings_controller.cpp
-        src/app/about_info.cpp src/app/shell_integration_registry.cpp src/app/system_ctx_registry.cpp
-        PROPERTIES COMPILE_OPTIONS "/Os;/Oi-")
+        src/app/about_info.cpp src/app/shell_integration_registry.cpp src/app/system_ctx_registry.cpp)
+    set_source_files_properties(${PULSE_SIZE_SOURCES} PROPERTIES COMPILE_OPTIONS "/Os;/Oi-")
+    # Header parsing is most of pulse.exe's compile time: app-layer sources
+    # re-parse app_state.h (~60 project headers), the rest the SDK and STL.
+    # Two PCHs cover both groups. The grouping only affects speed: a source
+    # outside a group compiles exactly as before, just without that PCH.
+    option(PULSE_USE_PCH "Build pulse.exe with precompiled headers" ON)
+    if(PULSE_USE_PCH)
+        # These redefine NTDDI_VERSION or use INITGUID before <windows.h>. The
+        # size-optimised sources can't share a PCH built at /O2 (C4653).
+        set(_pulse_no_pch src/ui/audio_waveform.cpp src/ui/preview_format_catalog.cpp
+            src/ui/video_preview.cpp src/app/drive_verbs.cpp ${PULSE_SIZE_SOURCES})
+        target_precompile_headers(pulse PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/common/pch_system.h")
+        set_source_files_properties(${_pulse_no_pch} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+        if(CMAKE_GENERATOR MATCHES "Ninja")
+            # CMake allows one PCH per target, so the app_state.h one is wired
+            # by hand. Options are limited to pulse: tests compile some of
+            # these sources too.
+            pulse_collect_app_state_sources(_pulse_app_pch ${PULSE_APP_SOURCES})
+            list(REMOVE_ITEM _pulse_app_pch ${_pulse_no_pch})
+            list(FILTER _pulse_app_pch EXCLUDE REGEX "pch_app_state\\.cpp$")
+            set(_pch_h "${CMAKE_CURRENT_SOURCE_DIR}/src/app/pch_app_state.h")
+            set(_pch_bin "${CMAKE_CURRENT_BINARY_DIR}/pulse_app_state.pch")
+            set(_in_pulse "$<STREQUAL:$<TARGET_PROPERTY:NAME>,pulse>")
+            set_property(SOURCE src/app/pch_app_state.cpp APPEND PROPERTY COMPILE_OPTIONS
+                "$<${_in_pulse}:/Yc${_pch_h}>" "$<${_in_pulse}:/FI${_pch_h}>" "$<${_in_pulse}:/Fp${_pch_bin}>")
+            set_property(SOURCE src/app/pch_app_state.cpp PROPERTY OBJECT_OUTPUTS "${_pch_bin}")
+            set_property(SOURCE ${_pulse_app_pch} APPEND PROPERTY COMPILE_OPTIONS
+                "$<${_in_pulse}:/Yu${_pch_h}>" "$<${_in_pulse}:/FI${_pch_h}>" "$<${_in_pulse}:/Fp${_pch_bin}>")
+            set_property(SOURCE ${_pulse_app_pch} APPEND PROPERTY OBJECT_DEPENDS "${_pch_bin}")
+            set_source_files_properties(src/app/pch_app_state.cpp ${_pulse_app_pch}
+                PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+            list(LENGTH _pulse_app_pch _n)
+            message(STATUS "pulse: ${_n} sources use the app_state.h PCH")
+        endif()
+    endif()
     include(cmake/release_notes.cmake)
     pulse_embed_release_notes(pulse)
     set_property(SOURCE src/app/pulse.rc APPEND PROPERTY OBJECT_DEPENDS
