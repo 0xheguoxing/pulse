@@ -2162,9 +2162,37 @@ void PlacesCatalog::ReadAdsIntoCatalog(const std::wstring& path) {
     MergeAdsRecords(n, records, records.empty() ? ReadTagAds(n) : std::vector<std::wstring>{});
 }
 
+namespace {
+// Tags are metadata: writing or deleting the stream must not change the
+// file's modified time (NTFS updates it for any stream). Restored when the
+// guard goes, after the stream handle is closed; the last error survives.
+class KeepFileTimes {
+public:
+    explicit KeepFileTimes(const std::wstring& path) {
+        file_ = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                            FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        have_ = file_ != INVALID_HANDLE_VALUE && GetFileTime(file_, nullptr, &access_, &write_);
+    }
+    ~KeepFileTimes() {
+        const DWORD error = GetLastError();
+        if (have_) SetFileTime(file_, nullptr, &access_, &write_);
+        if (file_ != INVALID_HANDLE_VALUE) CloseHandle(file_);
+        SetLastError(error);
+    }
+    KeepFileTimes(const KeepFileTimes&) = delete;
+    KeepFileTimes& operator=(const KeepFileTimes&) = delete;
+private:
+    HANDLE file_ = INVALID_HANDLE_VALUE;
+    FILETIME access_{}, write_{};
+    bool have_ = false;
+};
+} // namespace
+
 bool WriteTagAdsV2(const std::wstring& path, const std::vector<TagAdsRecord>& tags) {
     std::wstring n = Norm(path);
     if (n.empty() || fs::IsVirtualPath(n)) return false;
+    const KeepFileTimes keep_times(n);
     if (tags.empty()) {
         if (DeleteFileW((n + kAdsSuffix).c_str())) return true;
         const DWORD error = GetLastError();
