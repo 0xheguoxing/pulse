@@ -2720,6 +2720,7 @@ BEGIN
     IDS_AI_SNACK_OPEN "打开位置"
     IDS_NO_MORE_CONFLICT_WARNINGS " 不再提示冲突"
     IDS_GLOBAL_SEARCH_APPS "应用"
+    IDS_QUICK_ACCESS_NEW_TAB_HINT "中键 / Ctrl+单击"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5439,6 +5440,7 @@ BEGIN
     IDS_AI_SNACK_OPEN "Show"
     IDS_NO_MORE_CONFLICT_WARNINGS ": no more conflict warnings"
     IDS_GLOBAL_SEARCH_APPS "Apps"
+    IDS_QUICK_ACCESS_NEW_TAB_HINT "Middle-click / Ctrl+click"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

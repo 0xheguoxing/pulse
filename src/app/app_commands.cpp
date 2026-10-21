@@ -3170,6 +3170,7 @@ void ShowCuratedItemMenu(AppState& s, const std::wstring& path,
     // 收藏夹分组与分隔线: 放进分组 › (each group, 新建分组…, 移出分组) and the
     // separator after it.
     constexpr int kNewGroup = 30190, kLeaveGroup = 30191, kSeparator = 30192, kGroupBase = 30200;
+    constexpr int kOpenNewTab = 30180;
     std::vector<std::wstring> group_ids;
     std::vector<ui::FluentMenuItem> items;
     ui::FluentMenuItem open;
@@ -3177,6 +3178,17 @@ void ShowCuratedItemMenu(AppState& s, const std::wstring& path,
     open.text = l10n::Get(l10n::StringId::Open);
     open.glyph = L"\xE8A0";
     items.push_back(std::move(open));
+    // #58-2: folder places (quick access, starred folders) also open in a new
+    // tab; the shortcut column names the mouse gestures for it.
+    if (const app::StarredItem* place = s.places.FindStarred(path);
+        !recent && ((place && place->kind == app::PlaceItemKind::Folder) || QuickAccessEntryForPath(s, path))) {
+        ui::FluentMenuItem new_tab;
+        new_tab.command = kOpenNewTab;
+        new_tab.text = l10n::Get(l10n::StringId::OpenNewTab);
+        new_tab.shortcut = l10n::Get(l10n::StringId::QuickAccessNewTabHint);
+        new_tab.glyph = L"\xE8A7";
+        items.push_back(std::move(new_tab));
+    }
     if (recent) {
         ui::FluentMenuItem remove;
         remove.command = app::CmdRemoveRecent;
@@ -3287,6 +3299,10 @@ void ShowCuratedItemMenu(AppState& s, const std::wstring& path,
         }
         RefreshStarredViews(s);
         InvalidateRect(s.hwnd, nullptr, FALSE);
+        return;
+    }
+    if (cmd == kOpenNewTab) {
+        OpenFolderTab(s, path);
         return;
     }
     if (cmd == app::CmdOpen) {

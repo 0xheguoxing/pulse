@@ -2738,5 +2738,6 @@
 #define IDS_AI_SNACK_OPEN                                                                3944
 #define IDS_NO_MORE_CONFLICT_WARNINGS                                                    3945
 #define IDS_GLOBAL_SEARCH_APPS                                                           3946
+#define IDS_QUICK_ACCESS_NEW_TAB_HINT                                                    3947
 
 #endif  // PULSE_STRING_IDS_H

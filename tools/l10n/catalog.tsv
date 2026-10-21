@@ -2745,3 +2745,4 @@ AiSnackUndone	IDS_AI_SNACK_UNDONE	3943	{client} 撤销了「{name}」	{client} u
 AiSnackOpen	IDS_AI_SNACK_OPEN	3944	打开位置	Show	開啟位置
 NoMoreConflictWarnings	IDS_NO_MORE_CONFLICT_WARNINGS	3945	 不再提示冲突	: no more conflict warnings	 不再提示衝突
 GlobalSearchApps	IDS_GLOBAL_SEARCH_APPS	3946	应用	Apps	應用
+QuickAccessNewTabHint	IDS_QUICK_ACCESS_NEW_TAB_HINT	3947	中键 / Ctrl+单击	Middle-click / Ctrl+click	中鍵 / Ctrl+按一下

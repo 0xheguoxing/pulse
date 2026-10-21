@@ -3958,8 +3958,14 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 }
                 ResetSidebarPinDrag(*s);
                 if (GetCapture() == hwnd) ReleaseCapture();
-                // Ctrl / Shift on a tag row combines it into the open tag view.
-                if (!was_active && !path.empty() && !tab_row &&
+                // Ctrl / Shift on a tag row combines it into the open tag view;
+                // Ctrl on a quick-access row opens it in a new tab (#58-2), as the
+                // middle button does.
+                const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+                if (!was_active && !path.empty() && !tab_row && ctrl && !qa_drag_key.empty() &&
+                    !IsSidebarTagPath(path))
+                    OpenFolderTab(*s, path);
+                else if (!was_active && !path.empty() && !tab_row &&
                     !(IsSidebarTagPath(path) && CombineSidebarTagClick(*s, path)))
                     NavigateTo(*s, path);
                 InvalidateRect(hwnd, nullptr, FALSE);

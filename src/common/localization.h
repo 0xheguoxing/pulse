@@ -2730,6 +2730,7 @@ enum class StringId : UINT {
     AiSnackOpen = IDS_AI_SNACK_OPEN,
     NoMoreConflictWarnings = IDS_NO_MORE_CONFLICT_WARNINGS,
     GlobalSearchApps = IDS_GLOBAL_SEARCH_APPS,
+    QuickAccessNewTabHint = IDS_QUICK_ACCESS_NEW_TAB_HINT,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;
