@@ -333,8 +333,9 @@ void ShellIconCache::WorkerLoop() {
             const UINT flags = SHGFI_SYSICONINDEX | SHGFI_SMALLICON;
             const std::wstring query = ShellPath(path);
             bool found = false;
-            if (query.starts_with(L"::")) {
-                // Regitems parse through the shell namespace, not as a path.
+            if (query.starts_with(L"::") || query.starts_with(L"shell:")) {
+                // Regitems and shell: monikers (Start menu apps, "shell:AppsFolder\<id>")
+                // parse through the shell namespace, not as a path.
                 PIDLIST_ABSOLUTE pidl = nullptr;
                 if (SUCCEEDED(SHParseDisplayName(query.c_str(), nullptr, &pidl, 0, nullptr)) && pidl) {
                     found = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(pidl), 0, &info, sizeof(info),

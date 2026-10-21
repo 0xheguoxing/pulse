@@ -2717,4 +2717,5 @@ BEGIN
     IDS_AI_SNACK_UNDONE "{client} 復原了「{name}」"
     IDS_AI_SNACK_OPEN "開啟位置"
     IDS_NO_MORE_CONFLICT_WARNINGS " 不再提示衝突"
+    IDS_GLOBAL_SEARCH_APPS "應用"
 END

@@ -1552,6 +1552,10 @@ get_target_property(waveform_audit_libraries pulse_ffmpeg_playback_test LINK_LIB
 add_executable(pulse_waveform_cancel_audit_test ${waveform_audit_sources} src/bench/waveform_cancel_audit_test.cpp)
 target_link_libraries(pulse_waveform_cancel_audit_test PRIVATE ${waveform_audit_libraries})
 add_executable(pulse_global_search_state_test src/bench/global_search_state_test.cpp)
+# Quick search apps (#58-1): matching, noise and the AppsFolder enumeration.
+add_executable(pulse_app_catalog_test src/bench/app_catalog_test.cpp src/app/app_catalog.cpp
+    src/index/index_query.cpp src/index/search_kinds.cpp src/index/filename_pinyin.cpp)
+target_link_libraries(pulse_app_catalog_test PRIVATE ole32 shell32 uuid)
 add_executable(pulse_content_scope_mode_test src/bench/content_scope_mode_test.cpp)
 target_link_libraries(pulse_content_scope_mode_test PRIVATE shell32 ole32)
 add_executable(pulse_network_agent_deadline_test src/bench/network_agent_deadline_test.cpp)

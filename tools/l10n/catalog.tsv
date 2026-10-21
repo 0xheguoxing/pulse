@@ -2744,3 +2744,4 @@ AiSnackCreated	IDS_AI_SNACK_CREATED	3942	{client} 新建了「{name}」	{client}
 AiSnackUndone	IDS_AI_SNACK_UNDONE	3943	{client} 撤销了「{name}」	{client} undid “{name}”	{client} 復原了「{name}」
 AiSnackOpen	IDS_AI_SNACK_OPEN	3944	打开位置	Show	開啟位置
 NoMoreConflictWarnings	IDS_NO_MORE_CONFLICT_WARNINGS	3945	 不再提示冲突	: no more conflict warnings	 不再提示衝突
+GlobalSearchApps	IDS_GLOBAL_SEARCH_APPS	3946	应用	Apps	應用

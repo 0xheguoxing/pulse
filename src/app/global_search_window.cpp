@@ -1,5 +1,6 @@
 #include "global_search_window.h"
 #include "global_search_result_state.h"
+#include "app_catalog.h"
 #include "../ui/FluentTokens.h"
 #include "resource.h"
 #include "../ui/empty_state_layout.h"
@@ -42,7 +43,7 @@ namespace {
 using Microsoft::WRL::ComPtr;
 using l10n::StringId;
 constexpr UINT kIndexStatus = WM_APP + 181, kIndexResult = WM_APP + 182, kContentResult = WM_APP + 183;
-constexpr UINT kNetworkResult = WM_APP + 184, kThumbnailResult = WM_APP + 185;
+constexpr UINT kNetworkResult = WM_APP + 184, kThumbnailResult = WM_APP + 185, kAppsLoaded = WM_APP + 186;
 constexpr UINT_PTR kDebounce = 1;
 constexpr UINT_PTR kConnectTimeout = 2;
 constexpr UINT_PTR kScopeTooltipTimer = 3;
@@ -55,6 +56,8 @@ constexpr float kFieldLeft = 62, kFieldTop = 14, kFieldHeight = 44, kFieldRight 
 constexpr float kEditCornerRadius = 8;
 constexpr float kMinWidth = 640, kMinHeight = 420, kDefaultWidth = 960, kDefaultHeight = 620;
 constexpr size_t kMaximumResults = 200;
+// Start menu apps lead the results (#58-1), a handful at most.
+constexpr size_t kMaximumApps = 4;
 constexpr size_t kMaximumPinnedScopes = 3, kMaximumNetworkScopes = 2;
 const std::wstring& Text(StringId id) { return l10n::Get(id); }
 std::wstring ParentPath(const std::wstring& path) {
@@ -162,6 +165,7 @@ struct GlobalSearchWindow::Impl {
     struct Row {
         std::wstring name, path, snippet; bool directory = false;
         uint64_t size = 0, mtime = 0; bool network = false;
+        bool app = false;  // a Start menu app; path is shell:AppsFolder\<id>
     };
     std::vector<Row> rows;
     int selected = 0, first = 0;
@@ -203,7 +207,8 @@ struct GlobalSearchWindow::Impl {
     std::vector<Scope> scopes;
     int scope = 0, kind_filter = 0, date_filter = 0;
     std::wstring counts_key;
-    size_t best_count = 0, folder_count = 0;
+    size_t best_count = 0, folder_count = 0, app_count = 0;
+    app::AppCatalog app_catalog;
     wchar_t swallow_char = 0;
     bool stale = false, stale_content_mode = false;
     bool showing_recent = false, keyboard_nav = false, preview_open = false, animations = true;
@@ -279,10 +284,14 @@ struct GlobalSearchWindow::Impl {
         if (rows.empty()) return out;
         if (showing_recent) { out.push_back({StringId::ColumnRecentOpened, 0, rows.size()}); return out; }
         if (content_mode) { out.push_back({StringId::GlobalSearchContentMatches, 0, rows.size()}); return out; }
-        if (best_count) out.push_back({StringId::GlobalSearchBestMatch, 0, best_count});
-        if (folder_count) out.push_back({StringId::Folder, best_count, folder_count});
-        const size_t files = rows.size() - best_count - folder_count;
-        if (files) out.push_back({StringId::FilterFiles, best_count + folder_count, files});
+        const size_t apps = std::min(app_count, rows.size());
+        if (apps) out.push_back({StringId::GlobalSearchApps, 0, apps});
+        const size_t best = std::min(best_count, rows.size() - apps);
+        if (best) out.push_back({StringId::GlobalSearchBestMatch, apps, best});
+        const size_t folders = std::min(folder_count, rows.size() - apps - best);
+        if (folders) out.push_back({StringId::Folder, apps + best, folders});
+        const size_t files = rows.size() - apps - best - folders;
+        if (files) out.push_back({StringId::FilterFiles, apps + best + folders, files});
         return out;
     }
     void BuildLayout() {
@@ -356,7 +365,7 @@ struct GlobalSearchWindow::Impl {
             rows.push_back(std::move(row));
             if (rows.size() >= 6) break;
         }
-        best_count = folder_count = 0;
+        best_count = folder_count = app_count = 0;
         total = rows.size();
     }
     void Changed() {
@@ -370,13 +379,19 @@ struct GlobalSearchWindow::Impl {
         const bool keep = !query.empty() && !showing_recent && !rows.empty() && content_mode == stale_content_mode;
         stale = keep;
         stale_content_mode = content_mode;
-        if (!keep) { rows.clear(); selected = first = 0; best_count = folder_count = 0; scroll = scroll_target = 0; }
+        if (!keep) { rows.clear(); selected = first = 0; best_count = folder_count = app_count = 0; scroll = scroll_target = 0; }
         total = 0; error.clear(); truncated = false;
         local_result = {}; network_result = {}; providers = {};
         if (CountsKey() != counts_key) for (auto& item : scopes) item.counted = false;
         keyboard_nav = false;
         showing_recent = query.empty();
         if (showing_recent) { FillRecent(); selected = rows.empty() ? -1 : 0; appear_start = ui::motion::NowMs(); }
+        else {
+            // Apps match in memory, so they show at once; the index results join them.
+            ReplaceAppRows();
+            if (!keep && !rows.empty()) { selected = 0; appear_start = ui::motion::NowMs(); }
+            total = app_count;
+        }
         ++layout_epoch;
         BuildLayout();
         if (!query.empty() && !composing) { busy = true; SetTimer(hwnd, kDebounce, 140, nullptr); }
@@ -459,6 +474,48 @@ struct GlobalSearchWindow::Impl {
             for (const auto& row : rows) if (UnderFolder(row.path, item.path)) ++item.count;
         }
     }
+    // Start menu apps take part in plain name searches only: no content mode,
+    // scope or filter chip (those all narrow the search to files).
+    bool AppsWanted() const {
+        return !content_mode && !showing_recent && scope == 0 && kind_filter == 0 && date_filter == 0 && !query.empty();
+    }
+    std::vector<Row> AppRows() const {
+        std::vector<Row> out;
+        if (!AppsWanted()) return out;
+        const auto apps = app_catalog.Apps();
+        for (const size_t i : app::MatchApps(*apps, query, search_pinyin, kMaximumApps)) {
+            Row row{(*apps)[i].name, (*apps)[i].path, {}, false};
+            row.app = true;
+            out.push_back(std::move(row));
+        }
+        return out;
+    }
+    // Swaps the leading app rows for the current matches.
+    void ReplaceAppRows() {
+        const size_t old = std::min(app_count, rows.size());
+        rows.erase(rows.begin(), rows.begin() + static_cast<std::ptrdiff_t>(old));
+        auto apps = AppRows();
+        app_count = apps.size();
+        rows.insert(rows.begin(), std::make_move_iterator(apps.begin()), std::make_move_iterator(apps.end()));
+    }
+    // The app list landed (first search after start, or a refresh).
+    void AppsLoaded() {
+        if (!hwnd || !IsWindowVisible(hwnd) || !AppsWanted()) return;
+        const auto position = app::GlobalSearchPosition::Capture(rows, selected, first);
+        const bool had_rows = !rows.empty();
+        const size_t old = app_count;
+        ReplaceAppRows();
+        total = total - std::min(total, old) + app_count;
+        truncated = total > rows.size();
+        if (!had_rows && !rows.empty()) appear_start = ui::motion::NowMs();
+        BuildLayout();
+        const int restored = position.Selection(rows);
+        selected = restored >= 0 ? restored : rows.empty() ? -1 : 0;
+        ClampSelection(false);
+        UpdateCounts();
+        RequestThumbnail();
+        Invalidate();
+    }
     void MergeFilenames() {
         const auto position = app::GlobalSearchPosition::Capture(rows, selected, first);
         const bool had_rows = !rows.empty();
@@ -473,8 +530,10 @@ struct GlobalSearchWindow::Impl {
             row.size = hit.size; row.mtime = hit.mtime; row.network = IsNetworkPath(hit.path);
             rows.push_back(std::move(row));
         }
+        app_count = 0;
         GroupRows();
-        total = merged.total;
+        ReplaceAppRows();
+        total = merged.total + app_count;
         truncated = total > rows.size(); busy = providers.Busy();
         error = providers.Error() ? Text(rows.empty() ? StringId::GlobalSearchFailed : StringId::SearchIncomplete) : std::wstring{};
         if (!busy) KillTimer(hwnd, kConnectTimeout);
@@ -513,6 +572,11 @@ struct GlobalSearchWindow::Impl {
         if (stale || rows.empty() || selected < 0 || selected >= static_cast<int>(rows.size())) return;
         const auto& row = rows[static_cast<size_t>(selected)];
         auto path = row.path;
+        if (row.app) {
+            // An app has no location to reveal and stays out of the recent files.
+            Hide(); open_result(std::move(path), false);
+            return;
+        }
         const bool directory = row.directory;
         const auto search = MakeHandoff();
         const auto opened = events.opened;
@@ -898,6 +962,7 @@ struct GlobalSearchWindow::Impl {
         return buffer;
     }
     std::wstring TypeName(const Row& row) const {
+        if (row.app) return Text(StringId::TypeApplication);
         SHFILEINFOW info{};
         if (SHGetFileInfoW(row.name.c_str(), row.directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL, &info, sizeof(info),
             SHGFI_TYPENAME | SHGFI_USEFILEATTRIBUTES)) return info.szTypeName;
@@ -1142,13 +1207,13 @@ struct GlobalSearchWindow::Impl {
         icons.Draw(compositor.Dc(), {left + 12, icon_top, left + 40, icon_top + 28}, row.path, row.name, row.directory,
             row.directory ? FILE_ATTRIBUTE_DIRECTORY : 0);
         const float text_left = left + 52;
-        const float hints_w = sel ? (row.directory || preview_open ? 150.0f : 205.0f) : 0.0f;
+        const float hints_w = sel ? (row.app ? 90.0f : row.directory || preview_open ? 150.0f : 205.0f) : 0.0f;
         const float meta_w = sel ? 0.0f : 112.0f;
         const float text_right = right - 12 - std::max(hints_w, meta_w);
         const float name_top = content_row ? y + 8 : y + 7;
         LabelC(row.name, {text_left, name_top, text_right, name_top + 20}, 14, p.text, false, L"Segoe UI", !showing_recent);
         const float path_top = name_top + 20;
-        std::wstring parent = path::StripExtendedPathPrefix(ParentPath(row.path));
+        std::wstring parent = row.app ? Text(StringId::TypeApplication) : path::StripExtendedPathPrefix(ParentPath(row.path));
         float path_left = text_left;
         if (row.network) {
             LabelC(L"\xE8CE", {text_left, path_top + 2, text_left + 14, path_top + 15}, 10, p.faint, false, L"Segoe Fluent Icons");
@@ -1157,18 +1222,18 @@ struct GlobalSearchWindow::Impl {
         LabelC(MiddleEllipsis(parent, text_right - path_left, 12), {path_left, path_top, text_right, path_top + 17}, 12, p.faint);
         if (content_row && !row.snippet.empty())
             LabelC(row.snippet, {text_left, path_top + 19, right - 16, path_top + 41}, 12.5f, p.muted, false, L"Segoe UI", true);
-        if (!sel) {
+        if (!sel && !row.app) {
             const auto time = FormatTime(row.mtime);
             const auto size = row.directory ? Text(StringId::KindFolder) : row.size || row.mtime ? FormatSize(row.size) : std::wstring{};
             const float mt = content_row ? y + 9 : y + 8;
             LabelC(time, {right - 12 - meta_w, mt, right - 12, mt + 17}, 11.5f, p.faint, false, L"Segoe UI", false, DWRITE_TEXT_ALIGNMENT_TRAILING);
             LabelC(size, {right - 12 - meta_w, mt + 17, right - 12, mt + 34}, 11.5f, p.faint, false, L"Segoe UI", false, DWRITE_TEXT_ALIGNMENT_TRAILING);
-        } else {
+        } else if (sel) {
             const float mid = content_row ? y + 20 : y + h / 2;
             float r = right - 12;
-            r = KeyHint(L"Ctrl \x21B5", Text(StringId::Location), r, mid, p.muted, p.key) - 12;
+            if (!row.app) r = KeyHint(L"Ctrl \x21B5", Text(StringId::Location), r, mid, p.muted, p.key) - 12;
             r = KeyHint(L"\x21B5", Text(StringId::Open), r, mid, p.muted, p.key) - 12;
-            if (!row.directory && !preview_open) KeyHint(L"Space", Text(StringId::Preview), r, mid, p.muted, p.key);
+            if (!row.directory && !row.app && !preview_open) KeyHint(L"Space", Text(StringId::Preview), r, mid, p.muted, p.key);
         }
         if (alpha < 1.0f) target->PopLayer();
     }
@@ -1308,8 +1373,10 @@ struct GlobalSearchWindow::Impl {
         float y = thumb_box.bottom + 14;
         LabelC(row.name, {l, y, r, y + 44}, 15, p.text, true, L"Segoe UI", !showing_recent, DWRITE_TEXT_ALIGNMENT_LEADING, true);
         y += TextWidth(row.name, 15, true) > r - l ? 46 : 24;
-        LabelC(path::StripExtendedPathPrefix(row.path), {l, y, r, y + 36}, 12, p.faint, false, L"Segoe UI", false, DWRITE_TEXT_ALIGNMENT_LEADING, true);
-        y += 44;
+        if (!row.app) {
+            LabelC(path::StripExtendedPathPrefix(row.path), {l, y, r, y + 36}, 12, p.faint, false, L"Segoe UI", false, DWRITE_TEXT_ALIGNMENT_LEADING, true);
+            y += 44;
+        }
         auto meta = [&](StringId label, const std::wstring& value) {
             if (value.empty()) return;
             LabelC(Text(label), {l, y, l + 72, y + 20}, 12, p.faint);
@@ -1569,11 +1636,14 @@ struct GlobalSearchWindow::Impl {
             }
             return 0;
         }
+        case kAppsLoaded:
+            AppsLoaded();
+            return 0;
         case kContentResult: {
             index::ContentSearchUpdate update;
             while (contents.TakeUpdate(update)) {
                 if (update.progress.generation != generation || !content_mode || !IsWindowVisible(hwnd)) continue;
-                if (stale) { stale = false; rows.clear(); selected = 0; scroll = scroll_target = 0; }
+                if (stale) { stale = false; rows.clear(); selected = 0; app_count = 0; scroll = scroll_target = 0; }
                 const bool had_rows = !rows.empty();
                 for (auto& hit : update.hits) {
                     if (rows.size() >= kMaximumResults) break;
@@ -1671,6 +1741,7 @@ struct GlobalSearchWindow::Impl {
         const int h = std::clamp(Px(want_h), std::min(Px(kMinHeight), static_cast<int>(work.bottom - work.top) - Px(32)), static_cast<int>(work.bottom - work.top) - Px(32));
         SetWindowPos(hwnd, HWND_TOPMOST, work.left + (work.right - work.left - w) / 2, work.top + (work.bottom - work.top - h) / 4, w, h, SWP_SHOWWINDOW | SWP_FRAMECHANGED);
         Layout(); SetForegroundWindow(hwnd); SetFocus(edit); SendMessageW(edit, EM_SETSEL, 0, -1);
+        app_catalog.Refresh(hwnd, kAppsLoaded);  // background; at most every few minutes
         Changed(); return true;
     }
     ~Impl() {
