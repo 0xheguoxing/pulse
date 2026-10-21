@@ -3469,6 +3469,14 @@ std::wstring TooltipForHover(AppState& s) {
     case R::RowStar: return text(s.appPrefs.show_hints ? I::TipxStar : I::Star);
     case R::RowNewTab: return text(s.appPrefs.show_hints ? I::TipxRowNewTab : I::OpenNewTab);
     case R::RowMore: return text(I::MoreActions);
+    case R::RowTagDot: {
+        // The dot's tag, and what a click does.
+        if (s.hoverSubIndex < 0 || s.hoverSubIndex >= static_cast<int>(s.places.tags.size())) return L"";
+        wchar_t tip[256]{};
+        swprintf_s(tip, l10n::Get(I::TagDotTip).c_str(),
+                   s.places.tags[static_cast<size_t>(s.hoverSubIndex)].name.c_str());
+        return tip;
+    }
     case R::SidebarItemAction:
         return text(IsVerticalTabPath(s.hoverPath) ? I::TooltipCloseTab : I::Unpin);
     case R::WindowIdentity: return text(I::WindowIdentityTip);

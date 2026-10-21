@@ -2568,5 +2568,9 @@
 #define IDS_FAVORITES_BAR_DROP_GROUP_FORMAT                                              3778
 #define IDS_TAG_REMOVED_FORMAT                                                           3779
 #define IDS_TAGS_CLEARED_FORMAT                                                          3780
+#define IDS_SEL_COPY_NAMES                                                               3781
+#define IDS_TAG_SMART_VIEW_NAME_TAKEN                                                    3782
+#define IDS_TAG_SMART_VIEW_NOT_SAVED                                                     3783
+#define IDS_TAG_DOT_TIP                                                                  3784
 
 #endif  // PULSE_STRING_IDS_H

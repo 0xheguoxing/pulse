@@ -2554,6 +2554,10 @@ BEGIN
     IDS_FAVORITES_BAR_DROP_GROUP_FORMAT "收藏到「%s」"
     IDS_TAG_REMOVED_FORMAT "已从 %d 项移除「%s」"
     IDS_TAGS_CLEARED_FORMAT "已清除 %d 项的所有标签"
+    IDS_SEL_COPY_NAMES "复制名称"
+    IDS_TAG_SMART_VIEW_NAME_TAKEN "已经有叫「%s」的视图了，换个名字"
+    IDS_TAG_SMART_VIEW_NOT_SAVED "「%s」没能保存：保存的搜索已满"
+    IDS_TAG_DOT_TIP "「%s」 · 点按只看这个标签"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5107,6 +5111,10 @@ BEGIN
     IDS_FAVORITES_BAR_DROP_GROUP_FORMAT "Add to “%s”"
     IDS_TAG_REMOVED_FORMAT "Untagged %d items: “%s”"
     IDS_TAGS_CLEARED_FORMAT "Cleared all tags from %d items"
+    IDS_SEL_COPY_NAMES "Copy names"
+    IDS_TAG_SMART_VIEW_NAME_TAKEN "A view named “%s” already exists"
+    IDS_TAG_SMART_VIEW_NOT_SAVED "Couldn't save “%s”: the saved searches are full"
+    IDS_TAG_DOT_TIP "“%s” · click to show only this tag"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

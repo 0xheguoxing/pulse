@@ -2575,3 +2575,7 @@ TagRuleCreated	IDS_TAG_RULE_CREATED	3777	已新建规则：%s →「%s」	Rule a
 FavoritesBarDropGroupFormat	IDS_FAVORITES_BAR_DROP_GROUP_FORMAT	3778	收藏到「%s」	Add to “%s”	收藏到「%s」
 TagRemovedFormat	IDS_TAG_REMOVED_FORMAT	3779	已从 %d 项移除「%s」	Untagged %d items: “%s”	已從 %d 個項目移除「%s」
 TagsClearedFormat	IDS_TAGS_CLEARED_FORMAT	3780	已清除 %d 项的所有标签	Cleared all tags from %d items	已清除 %d 個項目的所有標籤
+SelCopyNames	IDS_SEL_COPY_NAMES	3781	复制名称	Copy names	複製名稱
+TagSmartViewNameTaken	IDS_TAG_SMART_VIEW_NAME_TAKEN	3782	已经有叫「%s」的视图了，换个名字	A view named “%s” already exists	已經有叫「%s」的檢視了，換個名稱
+TagSmartViewNotSaved	IDS_TAG_SMART_VIEW_NOT_SAVED	3783	「%s」没能保存：保存的搜索已满	Couldn't save “%s”: the saved searches are full	「%s」無法儲存：儲存的搜尋已滿
+TagDotTip	IDS_TAG_DOT_TIP	3784	「%s」 · 点按只看这个标签	“%s” · click to show only this tag	「%s」 · 點按只看這個標籤

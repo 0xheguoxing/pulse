@@ -1581,6 +1581,24 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                             NameMatchRanges(entry.name, NameHighlightTerms(paneVm.filter_text,
                                 paneVm.is_search ? paneVm.search_query : L"")),
                             row_actions_);
+                        // A tag dot: the front one wins where they overlap (dot 0
+                        // is drawn last), so the first dot whose right edge is
+                        // past the pointer.
+                        if (tagIndices && trail.tag_n > 0 && trail.tag_r > 0.0f &&
+                            std::abs(y - trail.tag_cy) <= trail.tag_r + 3.0f * scale_ &&
+                            x >= trail.tag_x0 - 2.0f * scale_ &&
+                            x <= trail.tag_x0 + trail.tag_r * 2.0f +
+                                     static_cast<float>(trail.tag_n - 1) * trail.tag_step + 2.0f * scale_) {
+                            int dot = 0;
+                            if (trail.tag_step > 0.0f)
+                                dot = static_cast<int>(std::ceil((x - trail.tag_x0 - trail.tag_r * 2.0f) / trail.tag_step));
+                            dot = std::clamp(dot, 0, (std::min)(trail.tag_n, static_cast<int>(tagIndices->size())) - 1);
+                            out.region = HitTestResult::RowTagDot;
+                            out.index = idx;
+                            out.pane_index = paneIndex;
+                            out.sub_index = (*tagIndices)[static_cast<size_t>(dot)];
+                            return out;
+                        }
                         if (change && !grid && ContainsPt(trail.badge, x, y)) {
                             out.region = HitTestResult::ChangeBadge; out.index = idx; return out;
                         }

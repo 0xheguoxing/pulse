@@ -2631,6 +2631,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         }
         if (HandleWindowIdentityPress(*s, hit, POINT{mx, my})) return 0;  // M7c
         if (HandlePaneBannerPress(*s, hit)) return 0;  // retry, go up, reconnect... on a pane banner
+        if (HandleRowTagDotPress(*s, hit)) return 0;   // a row's tag dot: only that tag here
         if (hit.region == ui::HitTestResult::PaneWallHint) {  // photo wall suggestion card
             if (hit.index == 1) WallHintSwitch(*s);
             else if (hit.index == 2) WallHintNever(*s);

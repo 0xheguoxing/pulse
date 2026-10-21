@@ -15,6 +15,7 @@ bool UpdatePointerHover(AppState& s, const ui::HitTestResult& pointer_hit, POINT
         (!on_card && hit.pane_index != s.hoverPaneIndex) || hit.path != s.hoverPath || hit.label != s.hoverLabel;
     const int row = on_card ? s.hoverRow : (hit.region == ui::HitTestResult::Row ||
         hit.region == ui::HitTestResult::RowStar ||
+        hit.region == ui::HitTestResult::RowTagDot ||
         hit.region == ui::HitTestResult::RowFolderSize ||
         hit.region == ui::HitTestResult::RowNewTab ||
         hit.region == ui::HitTestResult::ChangeBadge ||

@@ -6,10 +6,12 @@
 
 #include "app_commands.h"
 #include "app_navigation.h"
+#include "app_hosted_edit.h"
 #include "saved_search.h"
 #include "tag_query.h"
 #include "../common/localization.h"
 #include "../ui/fluent_menu.h"
+#include <algorithm>
 #include <unordered_set>
 
 namespace pulse {
@@ -100,10 +102,20 @@ void HandleTagQueryChip(AppState& s, int index, POINT screen_pt) {
         saved.mode = app::SavedSearchMode::Tags;
         saved.root = query.in.empty() ? std::wstring(L"pulse:tags") : query.in;
         saved.query = app::MakeTagQueryPath(query);
-        if (s.savedSearches.Add(std::move(saved))) {
+        // Say why when it cannot be kept: the name is taken, or the list is full.
+        const auto& existing = s.savedSearches.items();
+        const bool taken = std::any_of(existing.begin(), existing.end(), [&](const app::SavedSearch& item) {
+            return _wcsicmp(item.name.c_str(), name.c_str()) == 0;
+        });
+        if (!taken && s.savedSearches.Add(std::move(saved))) {
             s.savedSearches.Save();
             SyncSavedSearchSidebar(s);
             InvalidateRect(s.hwnd, nullptr, FALSE);
+        } else if (s.hwnd) {
+            wchar_t text[256]{};
+            swprintf_s(text, l10n::Get(taken ? l10n::StringId::TagSmartViewNameTaken
+                                             : l10n::StringId::TagSmartViewNotSaved).c_str(), name.c_str());
+            s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Suggest, text, std::wstring{}, {});
         }
         return;
     } else {
@@ -255,6 +267,27 @@ void ClearTagsWithUndo(AppState& s, const std::vector<std::wstring>& paths) {
     wchar_t text[256]{};
     swprintf_s(text, l10n::Get(l10n::StringId::TagsClearedFormat).c_str(), static_cast<int>(touched.size()));
     ShowTagUndo(s, std::move(undo), text);
+}
+
+bool HandleRowTagDotPress(AppState& s, const ui::HitTestResult& hit) {
+    if (hit.region != ui::HitTestResult::RowTagDot) return false;
+    if (hit.sub_index < 0 || hit.sub_index >= static_cast<int>(s.places.tags.size())) return true;
+    const auto panes = LiveLayout(s).VisiblePanes();
+    if (hit.pane_index >= 0 && hit.pane_index < static_cast<int>(panes.size()) &&
+        panes[static_cast<size_t>(hit.pane_index)] != s.pane)
+        FocusPane(s, panes[static_cast<size_t>(hit.pane_index)]);
+    if (s.filterEditing) HideFilterEditor(s, true);
+    app::Tab* tab = ActiveTab(s);
+    if (!tab) return true;
+    std::wstring name = s.places.tags[static_cast<size_t>(hit.sub_index)].name;
+    if (name.find_first_of(L" \t|") != std::wstring::npos) name = L"\"" + name + L"\"";
+    const std::wstring wanted = L"#" + name;
+    tab->filter_text = _wcsicmp(tab->filter_text.c_str(), wanted.c_str()) == 0 ? std::wstring{} : wanted;
+    tab->scroll_y = 0;
+    tab->scroll_x = 0;
+    s.scrollTargetY = 0;
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+    return true;
 }
 
 void UndoDropTags(AppState& s) {

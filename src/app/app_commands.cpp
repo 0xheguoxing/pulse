@@ -3701,6 +3701,7 @@ void ShowSelectionChipMenu(AppState& s, POINT anchor) {
     app::Tab* tab = ActiveTab(s);
     if (!tab || !EnsureMenu(s)) return;
     constexpr int kKeepFolders = 35101, kKeepFiles = 35102, kSameType = 35103, kClear = 35104;
+    constexpr int kCopyNames = 35105;
     const std::vector<int> selected = tab->SelectedIndices();
     const bool listing = tab->snapshot && !tab->content_results;
     int folders = 0, files = 0;
@@ -3742,9 +3743,24 @@ void ShowSelectionChipMenu(AppState& s, POINT anchor) {
         row(kSameType, std::move(text), L"\xE8A5");
     }
     items.back().separator_after = true;
+    if (!selected.empty()) {
+        row(kCopyNames, l10n::Get(l10n::StringId::SelCopyNames), L"\xE8C8");
+        items.back().separator_after = true;
+    }
     row(kClear, l10n::Get(l10n::StringId::ClearSelectionEsc), L"\xE711");
     const int cmd = s.menu->TrackPopup(anchor, std::move(items));
     if (cmd == app::CmdNone) return;
+    if (cmd == kCopyNames) {
+        // One name a line, in the list's order.
+        std::wstring names;
+        for (const auto& path : SelectedFullPaths(*tab)) {
+            const size_t slash = path.find_last_of(L"\\/");
+            if (!names.empty()) names += L"\r\n";
+            names += slash == std::wstring::npos ? path : path.substr(slash + 1);
+        }
+        if (!names.empty()) ops::WriteClipboardText(names);
+        return;
+    }
     if (cmd == kClear) {
         tab->ClearSelection();
         s.clickCollapseIndex = -1;

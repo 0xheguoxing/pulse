@@ -2564,6 +2564,10 @@ enum class StringId : UINT {
     FavoritesBarDropGroupFormat = IDS_FAVORITES_BAR_DROP_GROUP_FORMAT,
     TagRemovedFormat = IDS_TAG_REMOVED_FORMAT,
     TagsClearedFormat = IDS_TAGS_CLEARED_FORMAT,
+    SelCopyNames = IDS_SEL_COPY_NAMES,
+    TagSmartViewNameTaken = IDS_TAG_SMART_VIEW_NAME_TAKEN,
+    TagSmartViewNotSaved = IDS_TAG_SMART_VIEW_NOT_SAVED,
+    TagDotTip = IDS_TAG_DOT_TIP,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

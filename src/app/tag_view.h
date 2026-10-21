@@ -27,6 +27,9 @@ void UndoDropTags(AppState& s);
 // exactly the (tag, item) pairs it touched.
 void ToggleTagWithUndo(AppState& s, const std::wstring& tag_id, const std::vector<std::wstring>& paths);
 void ClearTagsWithUndo(AppState& s, const std::vector<std::wstring>& paths);
+// A row's tag dot: this folder shows only that tag (the filter box gets
+// #name); the same dot again clears it. False for any other hit.
+bool HandleRowTagDotPress(AppState& s, const ui::HitTestResult& hit);
 void RemoveTagPathsUndoable(AppState& s,
                             const std::vector<std::pair<std::wstring, std::vector<std::wstring>>>& removals);
 }

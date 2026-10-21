@@ -1322,6 +1322,7 @@ struct HitTestResult {
         CompareExit,              // folder compare banner: exit compare
         TrayClear,
         RowStar,
+        RowTagDot,   // a tag dot after the name: sub_index = the tag's index in the catalog
         RowFolderSize,
         RowNewTab,
         RowMore,
