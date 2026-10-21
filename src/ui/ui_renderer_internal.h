@@ -2546,6 +2546,8 @@ struct SettingsLayout {
     D2D1_RECT_F diagnostics_card{};
     D2D1_RECT_F diagnostics_perf{};
     D2D1_RECT_F diagnostics_action[3]{};
+    D2D1_RECT_F transfer_card{};       // 备份与迁移
+    D2D1_RECT_F transfer_action[3]{};  // export, import, restore / restart (empty: hidden)
     D2D1_RECT_F update_card{};
     D2D1_RECT_F update_action[2]{};
     D2D1_RECT_F update_auto_row{};  // empty when this build has no updater
@@ -2974,6 +2976,35 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
             }
         }
         y += diagnostics_h + 12.0f * scale;
+        {
+            // 备份与迁移: title, description, status, then the buttons; the
+            // third only once there is a staged import or a backup.
+            const int count = vm.settings_transfer_pending || vm.settings_transfer_backup ? 3 : 2;
+            const pulse::l10n::StringId labels[] = {
+                pulse::l10n::StringId::SettingsExportButton,
+                pulse::l10n::StringId::SettingsImportButton,
+                vm.settings_transfer_pending ? pulse::l10n::StringId::SettingsRestartNow
+                                             : pulse::l10n::StringId::SettingsRestoreBackup,
+            };
+            const float transfer_h = (compact_diagnostics ? 108.0f + count * 40.0f : 156.0f) * scale;
+            l.transfer_card = D2D1::RectF(card_left, y, card_right, y + transfer_h);
+            float left = action_left;
+            for (int i = 0; i < 3; ++i) {
+                if (i >= count) {
+                    l.transfer_action[i] = {};
+                } else if (compact_diagnostics) {
+                    const float top = y + (108.0f + i * 40.0f) * scale;
+                    l.transfer_action[i] = D2D1::RectF(action_left, top, action_right, top + 32.0f * scale);
+                } else {
+                    const float width = std::min(label_btn_w(pulse::l10n::Get(labels[i])),
+                                                 (action_right - action_left - gap * 2.0f) / 3.0f);
+                    const float top = y + 108.0f * scale;
+                    l.transfer_action[i] = D2D1::RectF(left, top, left + width, top + 32.0f * scale);
+                    left += width + gap;
+                }
+            }
+            y += transfer_h + 12.0f * scale;
+        }
         {
             // 新手提示: the status-bar hints and the teaching bubbles.
             const float card_top = y;

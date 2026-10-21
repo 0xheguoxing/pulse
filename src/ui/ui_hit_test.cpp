@@ -646,6 +646,12 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                         r.index = i;
                         return r;
                     }
+                    // 备份与迁移: indexes 3..5 (SettingsController::DiagnosticsAction).
+                    if (!vm.settings_transfer_busy && ContainsPt(lay.transfer_action[i], x, y)) {
+                        r.region = HitTestResult::SettingsDiagnosticsAction;
+                        r.index = 3 + i;
+                        return r;
+                    }
                 }
                 for (int i = 0; i < 2; ++i) {
                     const bool enabled = i == 0

@@ -172,10 +172,33 @@ std::wstring FitConfirmItemText(const std::wstring& text, float width,
     return FitPathMiddle(text, width, measure);
 }
 
+bool ConfirmCheckable(const ConfirmDialogSpec& spec) {
+    return spec.item_checks && !spec.items.empty() &&
+           spec.item_checks->size() == spec.items.size() &&
+           spec.items.size() <= kConfirmMaxItemRows && spec.items_total <= spec.items.size();
+}
+
+bool ConfirmRowChecked(const ConfirmDialogSpec& spec, size_t row) {
+    return ConfirmCheckable(spec) && row < spec.item_checks->size() && (*spec.item_checks)[row];
+}
+
+bool ConfirmAnyChecked(const ConfirmDialogSpec& spec) {
+    if (!ConfirmCheckable(spec)) return true;
+    for (const bool checked : *spec.item_checks)
+        if (checked) return true;
+    return false;
+}
+
 std::vector<int> ConfirmFocusOrder(const ConfirmDialogSpec& spec) {
-    if (spec.single_button) return {kConfirmPrimary};
-    if (spec.secondary_text.empty()) return {kConfirmCancel, kConfirmPrimary};
-    return {kConfirmCancel, kConfirmSecondary, kConfirmPrimary};
+    std::vector<int> order;
+    if (ConfirmCheckable(spec)) {
+        for (size_t i = 0; i < spec.items.size(); ++i)
+            order.push_back(kConfirmRowBase + static_cast<int>(i));
+    }
+    if (spec.single_button) order.push_back(kConfirmPrimary);
+    else if (spec.secondary_text.empty()) order.insert(order.end(), {kConfirmCancel, kConfirmPrimary});
+    else order.insert(order.end(), {kConfirmCancel, kConfirmSecondary, kConfirmPrimary});
+    return order;
 }
 
 int ConfirmControlFor(ConfirmChoice choice, bool has_secondary) {
@@ -189,7 +212,12 @@ int ConfirmControlFor(ConfirmChoice choice, bool has_secondary) {
 std::wstring ConfirmClipboardText(const ConfirmDialogSpec& spec) {
     std::wstring text = spec.title;
     if (!spec.message.empty()) text += L"\r\n\r\n" + spec.message;
-    for (const std::wstring& item : spec.items) text += L"\r\n  " + item;
+    const bool checkable = ConfirmCheckable(spec);
+    for (size_t i = 0; i < spec.items.size(); ++i) {
+        text += L"\r\n  ";
+        if (checkable) text += ConfirmRowChecked(spec, i) ? L"[x] " : L"[ ] ";
+        text += spec.items[i];
+    }
     if (ConfirmItemCount(spec) > spec.items.size()) {
         wchar_t more[128]{};
         swprintf_s(more, l10n::Get(l10n::StringId::ConfirmMoreItemsFormat).c_str(),
@@ -257,6 +285,7 @@ ConfirmDialogLayout LayoutConfirmDialog(const ConfirmDialogSpec& spec,
             l.rows.push_back(D2D1::RectF(l.card.left, top, l.card.right, top + row_h));
         }
         y = l.card.bottom;
+        l.checkable = ConfirmCheckable(spec);
     }
     if (!spec.note.empty()) {
         y += Dip(scale, 12.0f);
@@ -289,6 +318,10 @@ int HitTestConfirmDialog(const ConfirmDialogLayout& layout, bool has_secondary,
     if (ContainsRect(layout.primary, x, y)) return kConfirmPrimary;
     if (has_secondary && ContainsRect(layout.secondary, x, y)) return kConfirmSecondary;
     if (ContainsRect(layout.cancel, x, y)) return kConfirmCancel;
+    if (layout.checkable) {
+        for (size_t i = 0; i < layout.rows.size(); ++i)
+            if (ContainsRect(layout.rows[i], x, y)) return kConfirmRowBase + static_cast<int>(i);
+    }
     return kConfirmNone;
 }
 
@@ -366,7 +399,23 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
                                         0, theme.stroke_divider);
             }
             const bool more_row = truncated && i + 1 == rows.size();
-            if (!more_row) {
+            const int row_id = kConfirmRowBase + static_cast<int>(i);
+            if (l.checkable) {
+                if (visual.hover == row_id && !high_contrast) {
+                    painter.FillRoundedRect(D2D1::RectF(row.left + Dip(scale, 4.0f), row.top + Dip(scale, 3.0f),
+                                                        row.right - Dip(scale, 4.0f), row.bottom - Dip(scale, 3.0f)),
+                                            Dip(scale, 4.0f), theme.fill_hover);
+                }
+                fluent::ControlState check{};
+                check.checked = ConfirmRowChecked(spec, i);
+                check.hovered = visual.hover == row_id;
+                check.pressed = visual.pressed == row_id && visual.hover == row_id;
+                painter.DrawCheckBox(D2D1::RectF(row.left + Dip(scale, 11.0f), row.top,
+                                                 row.left + Dip(scale, 31.0f), row.bottom),
+                                     L"", check);
+                if (visual.show_focus && !visual.focus_glide && visual.focus == row_id)
+                    painter.DrawFocusRing(row, radius);
+            } else if (!more_row) {
                 painter.DrawGlyph(glyph, D2D1::RectF(row.left + Dip(scale, 10.0f), row.top,
                                                      row.left + Dip(scale, 30.0f), row.bottom),
                                   theme.text_secondary);
@@ -417,16 +466,22 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
         if (!spec.secondary_text.empty()) {
             AroundCentre press(compositor, Centre(l.secondary), pressed_scale(kConfirmSecondary),
                                0.0f);
+            fluent::ControlState secondary_state = state_for(kConfirmSecondary);
+            secondary_state.enabled = ConfirmAnyChecked(spec);
             painter.DrawButton({l.secondary, spec.secondary_text, {},
-                                fluent::ButtonKind::Standard, state_for(kConfirmSecondary)});
+                                fluent::ButtonKind::Standard, secondary_state});
         }
+        // Check box dialogs: nothing ticked, nothing to confirm.
+        const bool any_checked = ConfirmAnyChecked(spec);
         {
             AroundCentre press(compositor, Centre(l.primary), pressed_scale(kConfirmPrimary),
                                0.0f);
+            fluent::ControlState primary_state = state_for(kConfirmPrimary);
+            primary_state.enabled = any_checked;
             painter.DrawButton({l.primary, spec.confirm_text, {},
                                 spec.danger ? fluent::ButtonKind::Danger
                                             : fluent::ButtonKind::Primary,
-                                state_for(kConfirmPrimary)});
+                                primary_state});
         }
         // The focus ring travelling between buttons (the window springs focus_rect).
         const bool ring = visual.show_focus && visual.focus_glide;

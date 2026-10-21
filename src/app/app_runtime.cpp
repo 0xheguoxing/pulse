@@ -76,6 +76,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cwctype>
+#include "settings_transfer_ui.h"
 #include <thread>
 #include <condition_variable>
 #include <mutex>
@@ -878,6 +879,11 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             vm.settings_index_status = l10n::ServiceText(s.index.Status());
             vm.settings_index_migrating = s.settings.migration_pending();
             if (vm.settings_page == 3) {
+                const SettingsTransferView transfer = GetSettingsTransferView(s);
+                vm.settings_transfer_busy = transfer.busy;
+                vm.settings_transfer_pending = transfer.pending;
+                vm.settings_transfer_backup = transfer.has_backup;
+                vm.settings_transfer_backup_time = transfer.backup_time;
                 vm.settings_about_rows = app::BuildAboutRows(vm.settings_index_service,
                                                              vm.settings_index_installed, s.scale);
                 vm.settings_release_notes = &app::EmbeddedReleaseNotes();

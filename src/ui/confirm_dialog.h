@@ -29,6 +29,11 @@ struct ConfirmDialogSpec {
     // are listed (0: items.size()). The card then ends with "and N more".
     size_t items_total = 0;
     std::wstring item_glyph;
+    // Optional: the item rows become check boxes, one flag per item (at most
+    // kConfirmMaxItemRows items, no items_total). Clicks and Space toggle them
+    // and the dialog writes the ticks back here; the confirm and secondary
+    // buttons need at least one tick.
+    std::vector<bool>* item_checks = nullptr;
     // Optional small print under the card.
     std::wstring note;
     ConfirmTone tone = ConfirmTone::Auto;

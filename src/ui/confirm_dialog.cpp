@@ -137,9 +137,37 @@ private:
     }
 
     void Activate(int id) {
+        if (id >= kConfirmRowBase) {
+            ToggleRow(static_cast<size_t>(id - kConfirmRowBase));
+            return;
+        }
+        if ((id == kConfirmPrimary || id == kConfirmSecondary) && !ConfirmAnyChecked(spec_)) {
+            MessageBeep(MB_OK);
+            return;
+        }
         if (id == kConfirmPrimary) Complete(ConfirmChoice::Confirm);
         else if (id == kConfirmSecondary) Complete(ConfirmChoice::Secondary);
         else if (id == kConfirmCancel || id == kConfirmClose) Complete(ConfirmChoice::Cancel);
+    }
+
+    void ToggleRow(size_t row) {
+        if (!layout_.checkable || !spec_.item_checks || row >= spec_.item_checks->size()) return;
+        (*spec_.item_checks)[row] = !(*spec_.item_checks)[row];
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    // Up / Down walk the check box rows; Up from the buttons reaches the last row.
+    void MoveRowFocus(int direction) {
+        const int rows = static_cast<int>(layout_.rows.size());
+        if (!layout_.checkable || rows == 0) return;
+        const int current = visual_.focus >= kConfirmRowBase ? visual_.focus - kConfirmRowBase : -1;
+        int next = current;
+        if (current < 0) next = direction < 0 ? rows - 1 : current;
+        else next = current + direction;
+        if (next >= rows) visual_.focus = kConfirmPrimary;
+        else if (next >= 0) visual_.focus = kConfirmRowBase + next;
+        visual_.show_focus = true;
+        InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
     void MoveFocus(int direction) {
@@ -154,6 +182,10 @@ private:
     }
 
     D2D1_RECT_F ButtonRect(int id) const {
+        if (id >= kConfirmRowBase) {
+            const size_t row = static_cast<size_t>(id - kConfirmRowBase);
+            return row < layout_.rows.size() ? layout_.rows[row] : layout_.primary;
+        }
         switch (id) {
         case kConfirmPrimary: return layout_.primary;
         case kConfirmSecondary: return layout_.secondary;
@@ -296,7 +328,17 @@ private:
             case VK_TAB: MoveFocus((GetKeyState(VK_SHIFT) & 0x8000) ? -1 : 1); return 0;
             case VK_LEFT: MoveFocus(-1); return 0;
             case VK_RIGHT: MoveFocus(1); return 0;
+            case VK_UP:
+            case VK_DOWN:
+                if (layout_.checkable) {
+                    MoveRowFocus(wparam == VK_DOWN ? 1 : -1);
+                    return 0;
+                }
+                break;
             case VK_RETURN:
+                // Enter on a check box row confirms; Space ticks it.
+                Activate(visual_.focus >= kConfirmRowBase ? kConfirmPrimary : visual_.focus);
+                return 0;
             case VK_SPACE: Activate(visual_.focus); return 0;
             case 'C':
                 if (GetKeyState(VK_CONTROL) & 0x8000) {

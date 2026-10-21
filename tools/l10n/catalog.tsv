@@ -2834,3 +2834,38 @@ AiSnackOpen	IDS_AI_SNACK_OPEN	4032	打开位置	Show	開啟位置
 NoMoreConflictWarnings	IDS_NO_MORE_CONFLICT_WARNINGS	4033	 不再提示冲突	: no more conflict warnings	 不再提示衝突
 GlobalSearchApps	IDS_GLOBAL_SEARCH_APPS	4034	应用	Apps	應用
 QuickAccessNewTabHint	IDS_QUICK_ACCESS_NEW_TAB_HINT	4035	中键 / Ctrl+单击	Middle-click / Ctrl+click	中鍵 / Ctrl+按一下
+SettingsTransfer	IDS_SETTINGS_TRANSFER	4036	备份与迁移	Backup & transfer	備份與移轉
+SettingsTransferDesc	IDS_SETTINGS_TRANSFER_DESC	4037	把设置和个人数据导出为一个文件，换电脑时导入即可。窗口位置、索引和缓存不包含在内。	Save your settings and personal data to one file, then import it on another PC. Window positions, the index and caches are not included.	把設定和個人資料匯出為一個檔案，換電腦時匯入即可。視窗位置、索引和快取不包含在內。
+SettingsExportButton	IDS_SETTINGS_EXPORT_BUTTON	4038	导出设置…	Export settings…	匯出設定…
+SettingsImportButton	IDS_SETTINGS_IMPORT_BUTTON	4039	导入设置…	Import settings…	匯入設定…
+SettingsRestoreBackup	IDS_SETTINGS_RESTORE_BACKUP	4040	恢复导入前的设置	Restore previous settings	還原匯入前的設定
+SettingsRestartNow	IDS_SETTINGS_RESTART_NOW	4041	立即重启 Pulse	Restart Pulse now	立即重新啟動 Pulse
+SettingsTransferBusy	IDS_SETTINGS_TRANSFER_BUSY	4042	正在处理…	Working…	正在處理…
+SettingsTransferPending	IDS_SETTINGS_TRANSFER_PENDING	4043	导入的设置将在 Pulse 重启后生效。	The imported settings take effect when Pulse restarts.	匯入的設定將在 Pulse 重新啟動後生效。
+SettingsTransferBackupFrom	IDS_SETTINGS_TRANSFER_BACKUP_FROM	4044	导入前的设置已备份（{time}）。	Settings from before the import were backed up ({time}).	匯入前的設定已備份（{time}）。
+TransferCatPrefs	IDS_TRANSFER_CAT_PREFS	4045	设置（含快捷键与右键菜单）	Settings, shortcuts and context menu	設定（含快速鍵與右鍵選單）
+TransferCatPlaces	IDS_TRANSFER_CAT_PLACES	4046	快速访问、收藏夹和工作区	Quick access, starred and workspaces	快速存取、收藏夾和工作區
+TransferCatTags	IDS_TRANSFER_CAT_TAGS	4047	标签与标签规则	Tags and tag rules	標籤與標籤規則
+TransferCatAliases	IDS_TRANSFER_CAT_ALIASES	4048	文件夹别名	Folder aliases	資料夾別名
+TransferCatSearches	IDS_TRANSFER_CAT_SEARCHES	4049	保存的搜索	Saved searches	儲存的搜尋
+ExportSettingsTitle	IDS_EXPORT_SETTINGS_TITLE	4050	导出设置	Export settings	匯出設定
+ExportSettingsPrompt	IDS_EXPORT_SETTINGS_PROMPT	4051	选择要导出的内容。这台电脑专属的设置（开机启动、系统集成等）不会导出。	Choose what to export. Settings that belong to this PC (startup, Windows integration) stay out.	選擇要匯出的內容。這台電腦專屬的設定（開機啟動、系統整合等）不會匯出。
+ExportSettingsConfirm	IDS_EXPORT_SETTINGS_CONFIRM	4052	导出…	Export…	匯出…
+ImportSettingsTitle	IDS_IMPORT_SETTINGS_TITLE	4053	导入设置	Import settings	匯入設定
+ImportSettingsPrompt	IDS_IMPORT_SETTINGS_PROMPT	4054	来自 Pulse {version}，导出于 {time}。勾选的内容会替换这台电脑上的对应内容。	From Pulse {version}, exported {time}. The ticked items replace the same items on this PC.	來自 Pulse {version}，匯出於 {time}。勾選的內容會取代這台電腦上的對應內容。
+ImportSettingsNote	IDS_IMPORT_SETTINGS_NOTE	4055	导入前会先备份当前设置，可随时在「备份与迁移」中恢复。设置在 Pulse 重启后生效。	Your current settings are backed up first; restore them any time under Backup & transfer. The import takes effect when Pulse restarts.	匯入前會先備份目前設定，可隨時在「備份與移轉」中還原。設定在 Pulse 重新啟動後生效。
+ImportAndRestart	IDS_IMPORT_AND_RESTART	4056	导入并重启	Import and restart	匯入並重新啟動
+ImportRestartLater	IDS_IMPORT_RESTART_LATER	4057	导入，稍后重启	Import, restart later	匯入，稍後重新啟動
+ImportSettingsInvalid	IDS_IMPORT_SETTINGS_INVALID	4058	这个文件不是 Pulse 设置文件，或者已经损坏。	This file isn't a Pulse settings file, or it is damaged.	這個檔案不是 Pulse 設定檔，或者已經損壞。
+ImportSettingsNewer	IDS_IMPORT_SETTINGS_NEWER	4059	这个文件来自更新版本的 Pulse。请先更新 Pulse 再导入。	This file comes from a newer Pulse. Update Pulse first, then import it.	這個檔案來自較新版本的 Pulse。請先更新 Pulse 再匯入。
+RestoreSettingsTitle	IDS_RESTORE_SETTINGS_TITLE	4060	恢复导入前的设置	Restore previous settings	還原匯入前的設定
+RestoreSettingsPrompt	IDS_RESTORE_SETTINGS_PROMPT	4061	恢复到 {time} 导入前的状态。之后的改动会丢失，Pulse 会重启。	Go back to how things were before the import on {time}. Later changes are lost, and Pulse restarts.	還原到 {time} 匯入前的狀態。之後的變更會遺失，Pulse 會重新啟動。
+RestoreAndRestart	IDS_RESTORE_AND_RESTART	4062	恢复并重启	Restore and restart	還原並重新啟動
+SettingsExported	IDS_SETTINGS_EXPORTED	4063	设置已导出到 {file}	Settings exported to {file}	設定已匯出到 {file}
+SettingsExportFailed	IDS_SETTINGS_EXPORT_FAILED	4064	没能导出设置。	Couldn't export the settings.	無法匯出設定。
+SettingsImportFailed	IDS_SETTINGS_IMPORT_FAILED	4065	没能导入设置，当前设置没有改动。	Couldn't import the settings. Nothing was changed.	無法匯入設定，目前設定沒有變動。
+SettingsRestartFailed	IDS_SETTINGS_RESTART_FAILED	4066	没能重启 Pulse。请手动退出后重新打开，导入的设置会在那时生效。	Couldn't restart Pulse. Exit and reopen it yourself; the import takes effect then.	無法重新啟動 Pulse。請手動結束後重新開啟，匯入的設定會在那時生效。
+SettingsImportedToast	IDS_SETTINGS_IMPORTED_TOAST	4067	导入的设置已生效。如需撤销，可在「关于与诊断 › 备份与迁移」中恢复。	The imported settings are in place. To undo, go to About & diagnostics › Backup & transfer.	匯入的設定已生效。如需復原，可在「關於與診斷 › 備份與移轉」中還原。
+SettingsRestoredToast	IDS_SETTINGS_RESTORED_TOAST	4068	已恢复导入前的设置。	Previous settings restored.	已還原匯入前的設定。
+SettingsApplyFailedToast	IDS_SETTINGS_APPLY_FAILED_TOAST	4069	设置导入没有完成，部分内容可能保持原样。如有需要，可在「关于与诊断 › 备份与迁移」中恢复导入前的设置。	The settings import didn't finish; some items may be unchanged. If needed, restore the previous settings under About & diagnostics › Backup & transfer.	設定匯入沒有完成，部分內容可能維持原樣。如有需要，可在「關於與診斷 › 備份與移轉」中還原匯入前的設定。
+ExportSettingsFileName	IDS_EXPORT_SETTINGS_FILE_NAME	4070	Pulse 设置	Pulse settings	Pulse 設定

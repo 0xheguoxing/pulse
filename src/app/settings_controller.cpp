@@ -566,6 +566,16 @@ bool SettingsController::diagnostics_pending() const noexcept {
     return task_state_->diagnostics_pending;
 }
 
+bool SettingsController::settings_transfer_pending() const noexcept {
+    std::lock_guard<std::mutex> lock(task_state_->mutex);
+    return task_state_->transfer_pending;
+}
+
+bool SettingsController::StartSettingsTransfer(SettingsTask task) {
+    if (!IsSettingsTransferTask(task.kind)) return false;
+    return StartUiTask(std::move(task));
+}
+
 bool SettingsController::migration_pending() const noexcept {
     std::lock_guard<std::mutex> lock(task_state_->mutex);
     return task_state_->migration_pending;
@@ -592,6 +602,7 @@ bool SettingsController::StartTask(SettingsTask task, SettingsTaskOperation oper
             task_state_->migration_pending = task.kind == SettingsTaskKind::ConfigureIndexPath;
             task_state_->diagnostics_pending =
                 task.kind == SettingsTaskKind::DiagnosticsExport;
+            task_state_->transfer_pending = IsSettingsTransferTask(task.kind);
             if (task.kind == SettingsTaskKind::Volume)
                 task_state_->pending_volume = task.key;
         }
@@ -620,6 +631,7 @@ bool SettingsController::StartTask(SettingsTask task, SettingsTaskOperation oper
             state->local_pending = false;
             state->migration_pending = false;
             state->diagnostics_pending = false;
+            state->transfer_pending = false;
             if (task.kind == SettingsTaskKind::Volume)
                 state->pending_volume.clear();
         }
@@ -632,6 +644,7 @@ bool SettingsController::StartTask(SettingsTask task, SettingsTaskOperation oper
             state->local_pending = false;
             state->migration_pending = false;
             state->diagnostics_pending = false;
+            state->transfer_pending = false;
             state->pending_volume.clear();
         }
         return false;
@@ -643,9 +656,12 @@ bool SettingsController::StartUiTask(SettingsTask task) {
     if (!ui_.task_completion) return false;
     auto* network = network_;
     const auto diagnostics_export = ui_.export_diagnostics;
+    const auto settings_transfer = ui_.settings_transfer_task;
     if (IsNetworkTask(task.kind) && !network) return false;
-    return StartTask(std::move(task), [network, diagnostics_export](
+    if (IsSettingsTransferTask(task.kind) && !settings_transfer) return false;
+    return StartTask(std::move(task), [network, diagnostics_export, settings_transfer](
                                       const SettingsTask& value, std::wstring& error) {
+        if (IsSettingsTransferTask(value.kind)) return settings_transfer(value, error);
         // Local index settings run Pulse.Index.exe elevated. Report a missing
         // executable here (localized via ServiceText) instead of a shell dialog.
         if (!IsNetworkTask(value.kind) && value.kind != SettingsTaskKind::DiagnosticsExport &&
@@ -690,6 +706,9 @@ bool SettingsController::StartUiTask(SettingsTask task) {
         case SettingsTaskKind::DiagnosticsExport:
             return diagnostics_export &&
                 diagnostics_export(value.path, value.enabled, value.pin, error);
+        case SettingsTaskKind::SettingsExport:
+        case SettingsTaskKind::SettingsImport:
+            return false;  // handled above
         }
         return false;
     }, ui_.task_completion);
@@ -698,6 +717,8 @@ bool SettingsController::StartUiTask(SettingsTask task) {
 SettingsTaskEffect SettingsController::CompleteTask(const SettingsTaskResult& result,
                                                     bool service_installed) {
     SettingsTaskEffect effect;
+    // 备份与迁移 reports through its own toasts (settings_transfer_ui.cpp).
+    if (IsSettingsTransferTask(result.task.kind)) return effect;
     if (result.task.kind == SettingsTaskKind::ConfigureIndexPath) effect.refresh_index = true;
     if (result.ok) {
         error_.clear();
@@ -1463,6 +1484,10 @@ void SettingsController::RemoveNetwork(int position) {
 }
 
 void SettingsController::DiagnosticsAction(int action) {
+    if (action >= 3 && action <= 5) {
+        if (ui_.settings_transfer) ui_.settings_transfer(action - 3);
+        return;
+    }
     if (action == 0) {
         if (ui_.open_diagnostics) ui_.open_diagnostics();
         return;

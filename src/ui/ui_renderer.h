@@ -1287,6 +1287,12 @@ struct WindowViewModel {
     bool settings_update_available = false;
     bool settings_update_auto = true;  // background checks + reminders (AppPrefs::auto_check_updates)
     bool settings_diagnostics_exporting = false;
+    // 备份与迁移 (page 3): a task runs / an import waits for the restart /
+    // a pre-import backup exists, and its time.
+    bool settings_transfer_busy = false;
+    bool settings_transfer_pending = false;
+    bool settings_transfer_backup = false;
+    std::wstring settings_transfer_backup_time;
     bool settings_show_performance = false;
     int dup_scope = 0;
     std::wstring dup_folder;

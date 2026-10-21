@@ -2007,6 +2007,15 @@ int wmain(int argc, wchar_t** argv) {
     task_effect = settings.CompleteTask(completed_task, true);
     passed &= Report("diagnostics completion opens export without index refresh",
         !task_effect.refresh_index && task_effect.open_path == completed_task.task.path);
+    completed_task.task.kind = pulse::app::SettingsTaskKind::SettingsImport;
+    completed_task.task.path = L"C:\\settings.json";
+    completed_task.ok = false;
+    completed_task.error = L"import failed";
+    task_effect = settings.CompleteTask(completed_task, true);
+    passed &= Report("settings transfer completion leaves the index and the page error alone",
+        !task_effect.refresh_index && task_effect.open_path.empty() && settings.error().empty());
+    completed_task.error.clear();
+    completed_task.ok = true;
     completed_task.task.kind = pulse::app::SettingsTaskKind::NetworkRemove;
     completed_task.ok = false;
     task_effect = settings.CompleteTask(completed_task, true);

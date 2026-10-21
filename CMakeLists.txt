@@ -274,6 +274,11 @@ add_executable(pulse_saved_search_test
     src/app/saved_search.cpp)
 target_link_libraries(pulse_saved_search_test PRIVATE shell32 ole32)
 
+# Settings > 备份与迁移: bundle contents, staged import, backup and restore.
+add_executable(pulse_settings_transfer_test
+    src/bench/settings_transfer_test.cpp
+    src/app/settings_transfer.cpp)
+
 add_executable(pulse_search_query_test
     src/bench/search_query_test.cpp
     src/app/search_query.cpp

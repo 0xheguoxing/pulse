@@ -747,6 +747,55 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
                 fluent::ButtonKind::Standard, state});
         }
 
+        if (lay.transfer_card.bottom > lay.transfer_card.top) {
+            // 备份与迁移: export / import settings, restore the pre-import backup.
+            const D2D1_RECT_F& card = lay.transfer_card;
+            const float text_w = card.right - card.left - 32.0f * scale_;
+            draw_card(card);
+            MakeBrush(dc, theme.text, brText_);
+            DrawTextRect(dc, compositor_->TextFormat(), brText_.get(),
+                         pulse::l10n::Get(pulse::l10n::StringId::SettingsTransfer),
+                         card.left + 16.0f * scale_, card.top + 12.0f * scale_, text_w, 22.0f * scale_);
+            MakeBrush(dc, theme.text_secondary, brTextSecondary_);
+            DrawTextRect(dc, compositor_->SmallFormat(), brTextSecondary_.get(),
+                         pulse::l10n::Get(pulse::l10n::StringId::SettingsTransferDesc),
+                         card.left + 16.0f * scale_, card.top + 40.0f * scale_, text_w, 40.0f * scale_);
+            std::wstring status;
+            if (vm.settings_transfer_busy) {
+                status = pulse::l10n::Get(pulse::l10n::StringId::SettingsTransferBusy);
+            } else if (vm.settings_transfer_pending) {
+                status = pulse::l10n::Get(pulse::l10n::StringId::SettingsTransferPending);
+            } else if (vm.settings_transfer_backup) {
+                status = pulse::l10n::Get(pulse::l10n::StringId::SettingsTransferBackupFrom);
+                const size_t at = status.find(L"{time}");
+                if (at != std::wstring::npos) status.replace(at, 6, vm.settings_transfer_backup_time);
+            }
+            if (!status.empty()) {
+                MakeBrush(dc, vm.settings_transfer_pending ? theme.text : theme.text_secondary,
+                          brTextSecondary_);
+                DrawTextRect(dc, compositor_->SmallFormat(), brTextSecondary_.get(), status,
+                             card.left + 16.0f * scale_, card.top + 80.0f * scale_, text_w, 20.0f * scale_);
+            }
+            static constexpr pulse::l10n::StringId kTransferActions[] = {
+                pulse::l10n::StringId::SettingsExportButton,
+                pulse::l10n::StringId::SettingsImportButton,
+                pulse::l10n::StringId::SettingsRestoreBackup,
+            };
+            for (int i = 0; i < 3; ++i) {
+                const D2D1_RECT_F& button = lay.transfer_action[i];
+                if (button.right <= button.left) continue;
+                fluent::ControlState state{};
+                state.enabled = !vm.settings_transfer_busy;
+                state.hovered = state.enabled &&
+                    IsHovered(vm, HitTestResult::SettingsDiagnosticsAction, 3 + i);
+                const bool restart = i == 2 && vm.settings_transfer_pending;
+                painter_.DrawButton({button,
+                    pulse::l10n::Get(restart ? pulse::l10n::StringId::SettingsRestartNow
+                                             : kTransferActions[i]), {},
+                    restart ? fluent::ButtonKind::Primary : fluent::ButtonKind::Standard, state});
+            }
+        }
+
         if (lay.tips_card.bottom > lay.tips_card.top) {
             // 新手提示: the hint switch and, beneath it, 重新显示.
             draw_card(lay.tips_card);
@@ -1245,6 +1294,7 @@ float MainRenderer::SettingsDestinationOffset(const WindowViewModel& vm, int set
     case I::TrayHideWhenEmpty: target=l.tray_hide_row;break;
     case I::SettingsHints: target=l.hints_row;break;
     case I::SettingsHintsReset: target=l.hints_reset_row;break;
+    case I::SettingsTransfer: target=l.transfer_card;break;
     case I::SettingsBlankClickBack: target=l.blank_click_row;break;
     case I::SettingsWinE: target=l.integration_cover[2];break;
     case I::SettingsThisPc: target=l.integration_cover[1];break;

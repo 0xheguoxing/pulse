@@ -4,6 +4,7 @@
 #include "app_internal.h"
 #include "app_runtime.h"
 #include "pulse_version.h"
+#include "settings_transfer_ui.h"
 #include "../common/localization.h"
 #include "../common/runtime_log.h"
 #include <cstdio>
@@ -107,6 +108,9 @@ void TickUpdates(AppState& state, unsigned long long now) {
                                       false, WM_SHOW_RELEASE_NOTES);
         state.whatsNewVersion.clear();
     }
+    // 备份与迁移: what this start applied, once the window shows.
+    if (!state.shot.active && IsWindowVisible(state.hwnd) && !IsIconic(state.hwnd))
+        ShowSettingsTransferStartupToast(state);
     TickPackUpdates(state, now);
     if (state.shot.active || !app::UpdateChecker::Enabled() || !state.appPrefs.auto_check_updates ||
         now < state.next_update_check) return;

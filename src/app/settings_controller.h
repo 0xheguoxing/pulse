@@ -63,7 +63,16 @@ enum class SettingsTaskKind : uint8_t {
     NetworkRemove,
     DiagnosticsExport,
     SystemExclusion,
+    // 备份与迁移 (settings_transfer_ui.h): write a bundle (path, key = category
+    // mask) / stage a bundle for the next start (pin: a backup to restore;
+    // enabled: restart once staged).
+    SettingsExport,
+    SettingsImport,
 };
+
+constexpr bool IsSettingsTransferTask(SettingsTaskKind kind) noexcept {
+    return kind == SettingsTaskKind::SettingsExport || kind == SettingsTaskKind::SettingsImport;
+}
 
 constexpr bool IsNetworkTask(SettingsTaskKind kind) noexcept {
     return kind == SettingsTaskKind::NetworkAdd ||
@@ -110,6 +119,10 @@ public:
         std::function<bool(std::wstring&, bool&, bool&)> prepare_diagnostics_export;
         std::function<bool(const std::wstring&, bool, bool, std::wstring&)>
             export_diagnostics;
+        // 备份与迁移: 0 export, 1 import, 2 restore / restart (UI thread), and
+        // the worker side of SettingsExport / SettingsImport.
+        std::function<void(int)> settings_transfer;
+        SettingsTaskOperation settings_transfer_task;
     };
 
     SettingsController() = default;
@@ -201,6 +214,9 @@ public:
     bool VolumePending(std::wstring_view id) const;
     bool network_pending() const noexcept;
     bool diagnostics_pending() const noexcept;
+    bool settings_transfer_pending() const noexcept;
+    // Runs a SettingsExport / SettingsImport task; false while another runs.
+    bool StartSettingsTransfer(SettingsTask task);
     bool migration_pending() const noexcept;
 
     SettingsTaskEffect CompleteTask(const SettingsTaskResult& result,
@@ -295,6 +311,8 @@ public:
     void IndexAction(int action);
     void NetworkAction(int action, bool pin_after_add = false);
     void RemoveNetwork(int index);
+    // 0 open, 1 clear, 2 export diagnostics; 3..5 备份与迁移 (export, import,
+    // restore or restart).
     void DiagnosticsAction(int action);
 
 private:
@@ -310,6 +328,7 @@ private:
         bool local_pending = false;
         bool network_pending = false;
         bool diagnostics_pending = false;
+        bool transfer_pending = false;
         bool migration_pending = false;
     };
 

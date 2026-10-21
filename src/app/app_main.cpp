@@ -74,6 +74,7 @@
 #include "search_query.h"
 #include "settings_controller.h"
 #include "single_instance_coordinator.h"
+#include "settings_transfer_ui.h"
 #include "window_factory.h"
 #include "open_routing.h"
 #include "window_identity_ui.h"
@@ -1370,6 +1371,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     l10n::Get(l10n::StringId::DiagnosticsExportLocation).c_str(), L"diagnostics_export");
             };
             settings_callbacks.export_diagnostics = ExportAppDiagnostics;
+            settings_callbacks.settings_transfer = [s](int action) {
+                SettingsTransferAction(app::CurrentWindow(*s), action);
+            };
+            settings_callbacks.settings_transfer_task = RunSettingsTransferTask;
             s->settings.BindUi(s->appPrefs, s->ctxMenuPrefs, s->index,
                                s->networkIndex, std::move(settings_callbacks));
             ApplyGlobalSearchSettings(*s);
@@ -2819,6 +2824,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     app::SettingsTaskKind::DiagnosticsExport)
                 result->error = l10n::Get(l10n::StringId::DiagnosticsExportFailed);
             const auto effect = s->settings.CompleteTask(*result, s->index.ServiceInstalled());
+            if (app::IsSettingsTransferTask(result->task.kind))
+                FinishSettingsTransfer(app::CurrentWindow(*s), *result);
             if (!result->ok && result->task.kind == app::SettingsTaskKind::ConfigureIndexPath &&
                 !result->error.empty()) {
                 s->notification_toast.Show(hwnd, l10n::Get(l10n::StringId::IndexLocation), result->error);
@@ -3689,6 +3696,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     }
 
     // Parse command line.
+    unsigned long restart_after = 0;  // --restart-after <pid>
     for (int i = 1; i < __argc; ++i) {
         if (wcscmp(__wargv[i], L"--shot") == 0 && i + 1 < __argc) {
             state.shot.active = true;
@@ -3772,6 +3780,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             state.shot_high_contrast = true;
         } else if (wcscmp(__wargv[i], L"--restore-update-session") == 0) {
             state.restoreUpdateSession = true;
+        } else if (wcscmp(__wargv[i], kRestartAfterArgument) == 0 && i + 1 < __argc) {
+            restart_after = wcstoul(__wargv[++i], nullptr, 10);  // settings_transfer_ui.h
         } else if (wcscmp(__wargv[i], L"--dark") == 0) {
             state.shot.force_dark = true;
             state.themeOverride = ui::ThemeMode::Dark;
@@ -3844,6 +3854,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     }
     // Launched by the HKCU Run value (app_prefs.cpp), not by the user.
     const bool startup_launch = app::HasStartupArgument(__argc, __wargv);
+    // Restarted after 导入设置: the old Pulse still holds the endpoint and
+    // writes its last files; take over once it has gone.
+    if (restart_after) WaitForRestartingPulse(restart_after);
     if (!SkipSingletonFromArgv()) {
         const auto result = state.single_instance.Acquire();
         if (result == app::SingleInstanceCoordinator::AcquireResult::Failed) {
@@ -3878,6 +3891,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     // apply the tag batch, then exit (shell_tag_menu.cpp). Known before the
     // window exists, so its creation can leave out what such a launch never
     // uses until the window is shown.
+    // A staged settings import (备份与迁移) lands before anything reads the data dir.
+    if (!SkipSingletonFromArgv() && !state.isolatedTest && !state.shot.active && !state.menushot &&
+        !shell_tag && !shell_tag_com)
+        ApplyStagedSettingsAtStartup();
     if (shell_tag) QueueShellTagRequest(state, *shell_tag, true);
     if (shell_tag_com) BeginShellTagComLaunch();
     ui::Compositor::PrefetchSharedDevice();
