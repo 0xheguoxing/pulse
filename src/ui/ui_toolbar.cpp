@@ -3,6 +3,7 @@
 #include "pane_header_icons.h"
 #include "toolbar_pin_drag.h"
 #include "toolbar_picker.h"
+#include "command_icons.h"
 #include <algorithm>
 #include <unordered_map>
 
@@ -60,6 +61,11 @@ struct GlidePlate {
 // app name, so a pin keeps its state when it moves along the row. Nothing
 // pops on the first paint.
 constexpr float kPinPopFrom = 0.55f;
+// Toolbar icons (统一绘制): command icons in a 20 DIP box, icons inside a
+// field or chip at 16, chevrons and x at 12; every one with this line weight.
+constexpr float kIconStrokeDip = pulse::ui::command_icons::kStroke * 20.0f / pulse::ui::command_icons::kCanvas;
+constexpr float kIconField = 0.8f;
+constexpr float kIconSmall = 0.6f;
 constexpr float kToggleTurnMs = 300.0f;
 constexpr float kToggleTurnDeg = -50.0f;
 
@@ -270,8 +276,8 @@ void MainRenderer::DrawToolbarApps(const WindowViewModel& vm, const ToolbarLayou
             hot.a*=0.18f;
             painter_.FillRoundedRect(l,7*scale_,hot);
         }
-        DrawIconText(l.left+8*scale_,l.top,20*scale_,l.bottom-l.top,vm.toolbar_drop_pin ? L"\xE718" : L"\xE8E5",
-            L"",theme.accent,0.85f);
+        DrawIconText(l.left+8*scale_,l.top,20*scale_,l.bottom-l.top,vm.toolbar_drop_pin ? L"\xE718" : L"\xE8A7",
+            L"",theme.accent);
         painter_.DrawText(vm.toolbar_drop_label,D2D1::RectF(l.left+32*scale_,l.top,l.right-6*scale_,l.bottom),
             compositor_->SmallFormat(),theme.accent);
     }
@@ -329,7 +335,7 @@ void MainRenderer::DrawToolbarApps(const WindowViewModel& vm, const ToolbarLayou
         }
         const float cx=std::round((b.left+b.right)*0.5f);
         const float cy=std::round((b.top+b.bottom)*0.5f-(app.fit!=0 ? 1.5f*scale_ : 0.0f));
-        const float half=8*scale_;
+        const float half=std::round(8*scale_);
         float opacity=app.fit==3 && !(target && vm.toolbar_drop_force) ? 0.35f : 1.0f;
         if (dragged && drag.out) opacity*=0.35f;
         const AroundCentre gulp(dc,D2D1::Point2F(cx,cy),gulp_app==static_cast<int>(i) ? gulp_scale : 1.0f);
@@ -339,7 +345,7 @@ void MainRenderer::DrawToolbarApps(const WindowViewModel& vm, const ToolbarLayou
         } else {
             D2D1_COLOR_F c=theme.text_secondary;
             c.a*=opacity;
-            DrawIconText(b.left,cy-15*scale_,b.right-b.left,30*scale_,L"\xECAA",L"",c,0.9f);
+            DrawIconText(b.left,cy-15*scale_,b.right-b.left,30*scale_,L"\xECAA",L"",c);
         }
         if (accent.get() && (app.fit==1 || app.fit==2)) {
             const D2D1_POINT_2F dot=D2D1::Point2F(cx,b.bottom-4.5f*scale_);
@@ -356,6 +362,8 @@ ToolbarSelectionChip MainRenderer::SelectionChipAt(const ToolbarLayout& layout, 
 }
 void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme) {
     auto* dc = compositor_->Dc();
+    struct IconScope { float* v; ~IconScope() { *v=0.0f; } } icon_scope{&icon_stroke_px_};
+    icon_stroke_px_=kIconStrokeDip*scale_;
     const float left = EffectiveSidebarWidth(rect.right);
     const bool compact = rect.right-left < 600*scale_;
     const auto layout = ToolbarLayoutAt(rect.right,NewButtonWidthPx(compact),vm.pane.filter_expand);
@@ -493,7 +501,7 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                     // Chevron separator.
                     float chX = seg.rc.left - 14.0f * scale_;
                     DrawIconText(chX, addrRc.top, 14.0f * scale_, addrRc.bottom - addrRc.top,
-                        kIconChevronRight, L">", theme.text_secondary, 0.55f);
+                        kIconChevronRight, L">", theme.text_secondary, kIconSmall);
                 }
                 const bool search_crumb = vm.pane.is_query_search && vm.pane.has_search_origin &&
                     i + 1 == placed.size();
@@ -537,9 +545,9 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                 painter_.FillRoundedRect(fb, theme.radius_control * scale_, theme.fill_hover);
             DrawIconText(fb.left + 2 * scale_, fb.top, 16 * scale_, fb.bottom - fb.top,
                          vm.favorites_here ? L"\xE735" : L"\xE734", L"",
-                         vm.favorites_here ? theme.accent : theme.text_secondary, 0.75f);
-            DrawIconText(fb.left + 16 * scale_, fb.top, 10 * scale_, fb.bottom - fb.top, L"\xE70D", L"",
-                         theme.text_secondary, 0.45f);
+                         vm.favorites_here ? theme.accent : theme.text_secondary, kIconField);
+            DrawIconText(fb.left + 15 * scale_, fb.top, 12 * scale_, fb.bottom - fb.top, L"\xE70D", L"",
+                         theme.text_secondary, kIconSmall);
         }
         dc->PopAxisAlignedClip();
     }
@@ -761,7 +769,13 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         button.drop_down=dropdown && !button.icon_only;
         button.chevron_turn=turn;
         button.state.hovered=!plates && IsHovered(vm,region);
+        // The icon is drawn here like every other toolbar icon (20 DIP, the
+        // pins' colour): icon only, the painter's padding would shrink it.
+        button.skip_glyph=true;
         painter_.DrawButton(button);
+        const float icon_left=button.icon_only ? bounds.left : bounds.left+8*scale_;
+        const float icon_w=button.icon_only ? bounds.right-bounds.left : 20*scale_;
+        DrawIconText(icon_left,bounds.top,icon_w,bounds.bottom-bounds.top,glyph,L"",theme.text_secondary);
     };
     // The divider after 新建 comes with the first pin (above); the pane
     // buttons are pins now (T3d), so More needs none.
@@ -791,7 +805,7 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         if (!vm.pane.filter_text.empty() && vm.pane.filter_expand >= 0.985f) {
             DrawButton(FilterClearRect(rect,vm.pane.filter_expand),theme,
                 IsHovered(vm,HitTestResult::FilterClear) ? theme.fill_hover : kTransparent,
-                L"\xE711",L"",theme.text_secondary,true,true,0.65f);
+                L"\xE711",L"",theme.text_secondary,true,true,kIconSmall);
         }
     }
     // "Group" sits with Sort and Filter so grouping is findable and, once on,
@@ -810,14 +824,14 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             D2D1_COLOR_F fill=theme.accent;
             fill.a*=IsHovered(vm,HitTestResult::ToolbarGroup) ? 0.26f : 0.16f;
             painter_.FillRoundedRect(g,radius,fill);
-            DrawIconText(g.left+6*scale_,g.top,24*scale_,g.bottom-g.top,L"\xF168",L"",theme.accent,0.8f);
+            DrawIconText(g.left+6*scale_,g.top,24*scale_,g.bottom-g.top,L"\xF168",L"",theme.accent,kIconField);
             const D2D1_RECT_F x=ToolbarGroupClearRect(g,scale_);
             if (IsHovered(vm,HitTestResult::ToolbarGroupClear)) {
                 D2D1_COLOR_F xf=theme.accent;
                 xf.a*=0.28f;
                 painter_.FillRoundedRect(x,(x.bottom-x.top)*0.5f,xf);
             }
-            DrawIconText(x.left,x.top,x.right-x.left,x.bottom-x.top,kIconCloseSmall,L"x",theme.accent,0.5f);
+            DrawIconText(x.left,x.top,x.right-x.left,x.bottom-x.top,kIconCloseSmall,L"x",theme.accent,kIconSmall);
             std::wstring group_label=ToolbarGroupLabel();
             const D2D1_RECT_F text_rc=D2D1::RectF(g.left+30*scale_,g.top,x.left-2*scale_,g.bottom);
             if (IDWriteFactory2* f=compositor_->DwriteFactory()) {
@@ -865,7 +879,7 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                 : i==kSelChipClear ? std::wstring(kIconCloseSmall)
                 : action ? vm.selection_actions[static_cast<size_t>(i)].glyph : std::wstring();
             DrawButton(b,theme,IsHovered(vm,HitTestResult::ToolbarSelAction,i) ? hot : kTransparent,
-                glyph,L"",theme.accent,true,true,i==kSelChipClear ? 0.6f : 0.85f);
+                glyph,L"",theme.accent,true,true,i==kSelChipClear ? kIconSmall : 1.0f);
             if (action && vm.selection_actions[static_cast<size_t>(i)].situational) {
                 // Offered because of the moment: an accent underline.
                 const float cx=(b.left+b.right)*0.5f;
@@ -927,13 +941,15 @@ FavoritesBarLayout MainRenderer::FavoritesBarLayoutAt(const WindowViewModel& vm,
 }
 
 void MainRenderer::DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme) {
+    struct IconScope { float* v; ~IconScope() { *v=0.0f; } } icon_scope{&icon_stroke_px_};
+    icon_stroke_px_=kIconStrokeDip*scale_;
     const float bottom=title_bar_height_+toolbar_height_;
     const float top=bottom-kFavoritesBarHeightDip*scale_;
     if (vm.favorites_bar.empty()) {
         // Nothing starred yet: say how to add something.
         const float x=EffectiveSidebarWidth(rect.right)+margin_;
         const float h=30*scale_;
-        DrawIconText(x,top,20*scale_,h,L"\xE734",L"",theme.text_secondary,0.8f);
+        DrawIconText(x,top,20*scale_,h,L"\xE734",L"",theme.text_secondary,kIconField);
         painter_.DrawText(vm.favorites_bar_hint,D2D1::RectF(x+26*scale_,top,rect.right-margin_,top+h),
                           compositor_->SmallFormat(),theme.text_secondary);
         return;
@@ -996,8 +1012,8 @@ void MainRenderer::DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F
         icon.a*=fade;
         ink.a*=fade;
         const float icon_x=lay.icon_only ? std::round((b.left+b.right)*0.5f-10*scale_) : b.left+5*scale_;
-        DrawIconText(icon_x,b.top,20*scale_,b.bottom-b.top,f.group ? L"\xE8F1" : f.folder ? L"\xE8B7" : L"\xE8A5",L"",
-                     icon,0.8f);
+        DrawIconText(icon_x,b.top,20*scale_,b.bottom-b.top,f.group ? command_icons::kGlyphFolderList : f.folder ? L"\xE8B7" : L"\xE8A5",L"",
+                     icon,kIconField);
         if (f.group) {
             // A group: its name, how many, and ⌄ (a click lists them).
             if (!lay.icon_only) {
@@ -1010,7 +1026,7 @@ void MainRenderer::DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F
                                   D2D1::RectF(text_left,b.top,count_left-4*scale_,b.bottom),compositor_->SmallFormat(),ink);
                 painter_.DrawText(count,D2D1::RectF(count_left,b.top,chevron_left+2*scale_,b.bottom),
                                   compositor_->SmallFormat(),theme.text_secondary);
-                DrawIconText(chevron_left,b.top,17*scale_,b.bottom-b.top,L"\xE70D",L"",theme.text_secondary,0.5f);
+                DrawIconText(chevron_left,b.top,17*scale_,b.bottom-b.top,L"\xE70D",L"",theme.text_secondary,kIconSmall);
             }
             if (f.current)
                 painter_.FillRoundedRect(D2D1::RectF(b.left+8*scale_,b.bottom-3*scale_,b.right-8*scale_,b.bottom-1*scale_),
@@ -1034,7 +1050,7 @@ void MainRenderer::DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F
                     painter_.FillRoundedRect(D2D1::RectF(b.right-20*scale_,b.top+4*scale_,b.right-3*scale_,b.bottom-4*scale_),
                                              4*scale_,plate);
                 }
-                DrawIconText(b.right-20*scale_,b.top,17*scale_,b.bottom-b.top,L"\xE70D",L"",theme.text_secondary,0.5f);
+                DrawIconText(b.right-20*scale_,b.top,17*scale_,b.bottom-b.top,L"\xE70D",L"",theme.text_secondary,kIconSmall);
             }
         }
         if (f.current)   // prototype .fav.cur: a 2px accent underline

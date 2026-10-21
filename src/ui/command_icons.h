@@ -31,6 +31,8 @@ enum class Icon {
     SmartDate, Outline, Terminal, SearchAll, MapDrive, Keyboard, PinBadge,
     // "Pin to X" = X's shape with a pin badge in the lower right.
     PinFavorites, PinQuickAccess, PinWorkspace, PinNetwork, PinToolbar,
+    // 分组 (Segoe F168) and a program without an icon (Segoe ECAA).
+    GroupBy, App, FolderList,
     Count
 };
 
@@ -51,6 +53,7 @@ inline constexpr const wchar_t* kGlyphPinQuickAccess = L"\xF5BD";
 inline constexpr const wchar_t* kGlyphPinWorkspace = L"\xF5BE";
 inline constexpr const wchar_t* kGlyphPinNetwork = L"\xF5BF";
 inline constexpr const wchar_t* kGlyphPinToolbar = L"\xF5C0";
+inline constexpr const wchar_t* kGlyphFolderList = L"\xF5C1";   // a 收藏栏 group
 
 inline constexpr bool IsPinned(Icon icon) noexcept {
     return icon >= Icon::PinFavorites && icon <= Icon::PinToolbar;
@@ -151,6 +154,9 @@ inline Icon FromGlyph(std::wstring_view glyph) noexcept {
     case L'\xF5BE': return Icon::PinWorkspace;
     case L'\xF5BF': return Icon::PinNetwork;
     case L'\xF5C0': return Icon::PinToolbar;
+    case L'\xF5C1': return Icon::FolderList;
+    case L'\xF168': return Icon::GroupBy;
+    case L'\xECAA': return Icon::App;
     // Segoe glyphs the toolbar and menus already use, now on the vector grid.
     case L'\xE7A7': return Icon::Undo;
     case L'\xE7B3': return Icon::EyeHidden;
@@ -509,6 +515,11 @@ inline ID2D1PathGeometry* BuildGeometry(ID2D1Factory* factory, Icon icon) noexce
         begin(8.5f,3.5f); to(15.5f,3.5f); to(15.5f,9.5f); to(8.5f,9.5f); end(true); break;
     case Icon::Keyboard: box(2.5f,6,21.5f,18,2); dot(6.5f,10,0.95f); dot(9.5f,10,0.95f); dot(12.5f,10,0.95f);
         dot(15.5f,10,0.95f); dot(18,10,0.95f); begin(8,14.2f); to(16,14.2f); end(); break;
+    case Icon::GroupBy: path({{6.5f,3.5f},{4,3.5f},{4,10.5f},{6.5f,10.5f}}); line(9.5f,5,20.5f,5);
+        line(9.5f,9,16.5f,9); path({{6.5f,13.5f},{4,13.5f},{4,20.5f},{6.5f,20.5f}}); line(9.5f,15,20.5f,15);
+        line(9.5f,19,16.5f,19); break;
+    case Icon::App: box(4,4,20,20,4.5f); box(9,9,15,15,1.5f); break;
+    case Icon::FolderList: folder(); line(8,13,16,13); line(8,16.5f,13,16.5f); break;
     case Icon::PinBadge: begin(8.5f,3); to(15.5f,3); to(14.5f,9); to(18,12.5f); to(6,12.5f); to(9.5f,9);
         end(true); begin(12,12.5f); to(12,21); end(); break;
     default: break;
@@ -607,7 +618,7 @@ inline ID2D1PathGeometry* GeometryFor(ID2D1RenderTarget* target, Icon icon) noex
 
 inline bool Draw(ID2D1RenderTarget* target, ID2D1Brush* brush,
                   ID2D1StrokeStyle* stroke, Icon icon, D2D1_RECT_F bounds,
-                  float opacity = 1.0f) noexcept {
+                  float opacity = 1.0f, float width = kStroke) noexcept {
     if (!target || !brush || icon <= Icon::None || icon >= Icon::Count) return false;
     const float side = (std::min)(bounds.right - bounds.left, bounds.bottom - bounds.top);
     if (!std::isfinite(side) || side <= 0.0f || !std::isfinite(opacity) ||
@@ -630,7 +641,7 @@ inline bool Draw(ID2D1RenderTarget* target, ID2D1Brush* brush,
             target->FillGeometry(geometry,brush);
             brush->SetOpacity(previous_opacity * std::clamp(opacity,0.0f,1.0f));
         }
-        if (icon != Icon::More) target->DrawGeometry(geometry,brush,kStroke,stroke);
+        if (icon != Icon::More) target->DrawGeometry(geometry,brush,width > 0.0f ? width : kStroke,stroke);
     }
     target->SetTransform(previous);
     brush->SetOpacity(previous_opacity);

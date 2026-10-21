@@ -2529,6 +2529,9 @@ private:
     mutable ComPtr<ID2D1StrokeStyle> dashStroke_;
     ComPtr<ID2D1StrokeStyle> roundCapStroke_;  // spring-load ring arc
     ComPtr<ID2D1StrokeStyle> paneHeaderStroke_;
+    // Toolbar icons (ToolbarIconScope): one stroke in pixels whatever the
+    // icon's size, bounds on whole pixels, pane-layout icons at 20 DIP. 0 = off.
+    float icon_stroke_px_ = 0.0f;
     ComPtr<ID2D1PathGeometry> link_arrow_geometry_;
     ComPtr<ID2D1PathGeometry> play_triangle_geometry_;
     // Empty-folder icon: back/front in a 24-unit box, and a 96-unit large form.

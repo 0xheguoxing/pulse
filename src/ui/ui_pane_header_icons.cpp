@@ -31,7 +31,16 @@ void MainRenderer::DrawPaneHeaderIcon(const D2D1_RECT_F& rc, PaneHeaderIcon icon
     case PaneHeaderIcon::Wall: break;  // drawn below
     }
     MakeBrush(dc, color, brText_);
-    const D2D1_RECT_F bounds = command_icons::CenteredBounds(rc, 18.0f * scale_);
+    // In the toolbar the layout icons stand with the 20 DIP command icons.
+    const float box_dip = icon_stroke_px_ > 0.0f ? 20.0f : 18.0f;
+    D2D1_RECT_F bounds = command_icons::CenteredBounds(rc, box_dip * scale_);
+    if (icon_stroke_px_ > 0.0f) {
+        const float side = bounds.right - bounds.left;
+        bounds.left = std::round(bounds.left);
+        bounds.top = std::round(bounds.top);
+        bounds.right = bounds.left + side;
+        bounds.bottom = bounds.top + side;
+    }
     if (icon == PaneHeaderIcon::Wall) {
         // Photo wall: two justified rows (the prototype's glyph) on the command
         // icons' canvas and stroke; one button needs no shared Icon entry.
@@ -47,7 +56,10 @@ void MainRenderer::DrawPaneHeaderIcon(const D2D1_RECT_F& rc, PaneHeaderIcon icon
         dc->SetTransform(previous);
         return;
     }
-    command_icons::Draw(dc, brText_.get(), paneHeaderStroke_.get(), command, bounds);
+    const float side = bounds.right - bounds.left;
+    const float width = icon_stroke_px_ > 0.0f && side > 0.0f
+        ? icon_stroke_px_ * command_icons::kCanvas / side : command_icons::kStroke;
+    command_icons::Draw(dc, brText_.get(), paneHeaderStroke_.get(), command, bounds, 1.0f, width);
 }
 
 } // namespace pulse::ui

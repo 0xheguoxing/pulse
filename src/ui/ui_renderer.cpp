@@ -766,9 +766,24 @@ void MainRenderer::DrawIconText(float x, float y, float w, float h,
     if (command != command_icons::Icon::None) {
         if (!paneHeaderStroke_.get()) command_icons::CreateStrokeStyle(dc, &paneHeaderStroke_);
         MakeBrush(dc, color, brText_);
-        const auto bounds = command_icons::CenteredBounds(D2D1::RectF(x, y, x + w, y + h),
-                                                           20.0f * scale_ * size_factor);
-        if (command_icons::Draw(dc, brText_.get(), paneHeaderStroke_.get(), command, bounds)) return;
+        auto bounds = command_icons::CenteredBounds(D2D1::RectF(x, y, x + w, y + h),
+                                                     20.0f * scale_ * size_factor);
+        float width = command_icons::kStroke;
+        if (icon_stroke_px_ > 0.0f) {
+            // Toolbar: the same line weight at every size (chevrons and x a
+            // touch lighter), drawn from a whole pixel so no icon is softer.
+            const float side = bounds.right - bounds.left;
+            if (side > 0.0f) {
+                const float px = side < 15.0f * scale_ ? icon_stroke_px_ * 0.86f : icon_stroke_px_;
+                width = px * command_icons::kCanvas / side;
+                bounds.left = std::round(bounds.left);
+                bounds.top = std::round(bounds.top);
+                bounds.right = bounds.left + side;
+                bounds.bottom = bounds.top + side;
+            }
+        }
+        if (command_icons::Draw(dc, brText_.get(), paneHeaderStroke_.get(), command, bounds, 1.0f, width))
+            return;
     }
     IDWriteTextFormat* iconFmt = compositor_->IconFormat();
     std::wstring txt = glyph;
