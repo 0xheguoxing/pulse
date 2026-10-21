@@ -789,7 +789,7 @@ bool RegisterPanelClass() {
 
 QuickAccessEditorResult QuickAccessEditorPopup::Edit(HWND owner, Compositor* compositor,
                                                      float scale, POINT screen_pt, bool dark,
-                                                     const QuickAccessEditorText& text,
+                                                     D2D1_COLOR_F accent, const QuickAccessEditorText& text,
                                                      std::vector<QuickAccessEditorRow>& rows) {
     if (!compositor || !compositor->Dc() || !RegisterPanelClass())
         return QuickAccessEditorResult::Cancelled;
@@ -800,7 +800,7 @@ QuickAccessEditorResult QuickAccessEditorPopup::Edit(HWND owner, Compositor* com
     s.compositor = compositor;
     s.scale = (std::max)(0.5f, scale);
     s.dark = dark;
-    s.theme = IsHighContrast() ? MakeHighContrastTheme() : MakeTheme(dark, GetAccentColor());
+    s.theme = IsHighContrast() ? MakeHighContrastTheme() : MakeTheme(dark, accent);
     s.text = &text;
     s.rows = &rows;
     s.painter.SetCompositor(compositor);

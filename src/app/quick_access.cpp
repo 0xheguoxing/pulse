@@ -94,7 +94,7 @@ void ShowQuickAccessEditor(AppState& s, POINT point) {
     std::vector<ui::QuickAccessEditorRow> rows = QuickAccessEditorRows(s);
     for (;;) {
         const auto result = ui::QuickAccessEditorPopup::Edit(s.hwnd, &s.compositor, s.scale,
-                                                             point, s.darkMode, text, rows);
+                                                             point, s.darkMode, s.accentColor, text, rows);
         if (result == ui::QuickAccessEditorResult::Cancelled) return;
         if (result == ui::QuickAccessEditorResult::Applied) break;
         // 添加文件夹…: pick, add the row, and reopen with the edits so far.

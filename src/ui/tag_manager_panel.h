@@ -70,7 +70,7 @@ public:
     // Modal; opens at screen_pt clamped to the work area. `rows` carries the
     // selection and favorite flags back.
     static TagManagerAction Edit(HWND owner, Compositor* compositor, float scale, POINT screen_pt,
-                                 bool dark, const TagManagerText& text,
+                                 bool dark, D2D1_COLOR_F accent, const TagManagerText& text,
                                  std::vector<TagManagerRow>& rows, TagManagerView& view,
                                  int max_favorites);
 

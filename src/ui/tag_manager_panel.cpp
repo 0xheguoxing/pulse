@@ -831,7 +831,8 @@ void Init(State& s, Compositor* compositor, float scale, const Theme& theme,
 } // namespace
 
 TagManagerAction TagManagerPopup::Edit(HWND owner, Compositor* compositor, float scale,
-                                       POINT screen_pt, bool dark, const TagManagerText& text,
+                                       POINT screen_pt, bool dark, D2D1_COLOR_F accent,
+                                       const TagManagerText& text,
                                        std::vector<TagManagerRow>& rows, TagManagerView& view,
                                        int max_favorites) {
     if (!compositor || !compositor->Dc() || !RegisterPanelClass())
@@ -841,7 +842,7 @@ TagManagerAction TagManagerPopup::Edit(HWND owner, Compositor* compositor, float
 
     State s;
     Init(s, compositor, scale,
-         IsHighContrast() ? MakeHighContrastTheme() : MakeTheme(dark, GetAccentColor()), text,
+         IsHighContrast() ? MakeHighContrastTheme() : MakeTheme(dark, accent), text,
          rows, view, max_favorites);
 
     s.hwnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW, kClassName, L"", WS_POPUP,

@@ -57,7 +57,7 @@ public:
     // vector). For AddFolder the caller picks a folder, appends a row and
     // calls Edit again with the same rows.
     static QuickAccessEditorResult Edit(HWND owner, Compositor* compositor, float scale,
-                                        POINT screen_pt, bool dark,
+                                        POINT screen_pt, bool dark, D2D1_COLOR_F accent,
                                         const QuickAccessEditorText& text,
                                         std::vector<QuickAccessEditorRow>& rows);
 

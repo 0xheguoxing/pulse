@@ -275,7 +275,7 @@ void ShowTagManager(AppState& s, POINT screen_pt) {
     for (;;) {
         std::vector<ui::TagManagerRow> rows = ManagerRows(s, selected);
         const ui::TagManagerAction action = ui::TagManagerPopup::Edit(
-            s.hwnd, &s.compositor, s.scale, screen_pt, s.darkMode, text, rows, view,
+            s.hwnd, &s.compositor, s.scale, screen_pt, s.darkMode, s.accentColor, text, rows, view,
             app::kMaxFavoriteTags);
         if (action == ui::TagManagerAction::Cancelled) return;
         ApplyFavorites(s, rows);
