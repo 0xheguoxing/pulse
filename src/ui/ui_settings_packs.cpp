@@ -369,7 +369,7 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
         draw_card({lay.pack_ai_card, lay.pack_ai_badge, lay.pack_ai_enable, lay.pack_ai_primary,
                    lay.pack_ai_notice, L"\xE99A",
                    pack_text::AiTitle(), pack_text::AiDesc(), pack_text::AiMeta(), pack_text::AiBadge(vm),
-                   false, false, pack_text::AiInstalled(vm), vm.settings_ai_pack_installing,
+                   false, false, pack_text::AiUsable(vm), vm.settings_ai_pack_installing,
                    pack_text::AiAvailable(vm), vm.settings_ai_pack_progress, pack_text::AiPrimary(vm),
                    action, action, action, kNone, lay.pack_ai_update, std::wstring{}, action});
     }

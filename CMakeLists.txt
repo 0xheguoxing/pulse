@@ -328,6 +328,7 @@ pulse_enable_lumatext(pulse_fluent_gallery)
 add_executable(pulse_dialog_gallery WIN32
     src/bench/dialog_gallery.cpp
     src/bench/dialog_gallery.rc
+    src/app/ai_question_specs.cpp
     src/ui/confirm_dialog.cpp
     src/ui/toolbar_picker.cpp
     src/ui/confirm_dialog_view.cpp

@@ -25,6 +25,9 @@ struct ConfirmDialogSpec {
     std::wstring secondary_text;
     // Optional list shown in a card under the message (one row per item).
     std::vector<std::wstring> items;
+    // Optional: how many items `items` stands for when only the first ones
+    // are listed (0: items.size()). The card then ends with "and N more".
+    size_t items_total = 0;
     std::wstring item_glyph;
     // Optional small print under the card.
     std::wstring note;

@@ -124,6 +124,7 @@ int SettingsController::PageFromName(std::wstring_view name) noexcept {
     if (name == L"duplicates") return 4;
     if (name == L"preview") return 5;
     if (name == L"packs") return 8;
+    if (name == L"ai") return 9;   // 增强包 > AI 与 MCP
     if (name == L"system-menu") return 6;
     if (name == L"shortcuts") return 7;
     return 0;
@@ -136,6 +137,7 @@ const wchar_t* SettingsController::PageName(int page) noexcept {
     if (page == 4) return L"duplicates";
     if (page == 5) return L"preview";
     if (page == 8) return L"packs";
+    if (page == 9) return L"ai";
     if (page == 6) return L"system-menu";
     if (page == 7) return L"shortcuts";
     return L"general";
@@ -143,7 +145,7 @@ const wchar_t* SettingsController::PageName(int page) noexcept {
 
 void SettingsController::SelectPage(int page) noexcept {
     CancelGlobalSearchHotkeyCapture();
-    page_ = std::clamp(page, 0, 8);
+    page_ = std::clamp(page, 0, 9);
     scroll_ = 0.0f;
     packs_checked_ = 0;  // re-read the packs when their page opens
 }

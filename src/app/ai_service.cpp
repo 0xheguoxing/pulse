@@ -3,7 +3,9 @@
 #include "ai_broker.h"
 #include "ai_confirm.h"
 #include "ai_pack.h"
+#include "ai_settings_ui.h"
 #include "ai_status.h"
+#include "ai_tools_ui.h"
 #include "../common/runtime_log.h"
 #include <atomic>
 #include <condition_variable>
@@ -84,6 +86,17 @@ HWND HostWindow() {
     return s.host.ui_window;
 }
 
+// The status bar follows every event; a call that changed files also gets a
+// notification in Pulse (with 撤销), shown on the UI thread.
+void OnEvent(const BrokerEvent& event) {
+    OnAiBrokerEvent(event);
+    if (event.kind != BrokerEventKind::CallFinished || !event.ok || !event.changed_files) return;
+    auto copy = std::make_shared<BrokerEvent>(event);
+    PostAiUiTask(HostWindow(), [copy](AppState* s) {
+        if (s) pulse::NoteAiChange(*s, *copy);
+    });
+}
+
 bool ApproveClient(const std::wstring& client) {
     Service& s = Get();
     const auto settings = CurrentSettings();
@@ -155,7 +168,7 @@ void StartNow(Service& s) {
     options.approve_client = ApproveClient;
     options.always_allowed = AlwaysAllowed;
     options.confirm = Confirm;
-    options.on_event = OnAiBrokerEvent;
+    options.on_event = OnEvent;
     options.activity_directory = activity;
     auto broker = std::make_unique<ToolBroker>(std::move(options));
     AiToolsHost host;
@@ -254,11 +267,27 @@ Settings ReadAiSettings(bool* malformed) {
     return LoadSettings(malformed);
 }
 
-bool SetAiMcpEnabled(bool enabled, const AiToolsHost& host) {
+bool SetAiMcpEnabled(bool enabled) {
     if (!UpdateAiSettings([enabled](Settings& settings) { settings.mcp_enabled = enabled; })) return false;
-    if (enabled) StartAiServiceAsync(host);
-    else StopAiServiceAsync();
+    if (enabled) {
+        AiToolsHost host;
+        {
+            Service& s = Get();
+            std::lock_guard lock(s.mu);
+            host = s.host;
+        }
+        if (!host.ui_window) return false;   // never started (test instance)
+        StartAiServiceAsync(host);
+    } else {
+        StopAiServiceAsync();
+    }
     return true;
+}
+
+bool IsAiSessionClient(const std::wstring& client) {
+    Service& s = Get();
+    std::lock_guard lock(s.mu);
+    return s.session_clients.count(client) != 0;
 }
 
 void SetAiClientGrant(const std::wstring& client, ClientGrant grant) {

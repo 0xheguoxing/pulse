@@ -72,6 +72,8 @@ ConfirmDialogSpec NormalizeConfirmSpec(ConfirmDialogSpec spec);
 ConfirmTone ResolveConfirmTone(const ConfirmDialogSpec& spec);
 // Rows actually drawn: the items, or the first ones plus an "N more" row.
 std::vector<std::wstring> ConfirmItemRows(const ConfirmDialogSpec& spec);
+// Every item the question is about: items.size(), or items_total if larger.
+size_t ConfirmItemCount(const ConfirmDialogSpec& spec);
 // One item row that fits `width`: paths keep the drive and the last segments
 // ("C:\\…\\fx\\notes.txt"), other text gets a trailing ellipsis.
 std::wstring FitConfirmItemText(const std::wstring& text, float width,

@@ -11,6 +11,7 @@
 #include "content_scope_mode.h"
 #include "content_pack_ui.h"
 #include "ai_pack_ui.h"
+#include "ai_settings_ui.h"
 #include <shellapi.h>
 #include <shlobj.h>
 #include <algorithm>
@@ -311,6 +312,7 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
     case H::SettingsPreviewStore: ui::OpenPreviewCodecStore(s.hwnd,hit.index);break;
     case H::SettingsSysCtx: SysCtxAction(s,hit.index);break;
     case H::SettingsShortcuts: ShortcutsAction(s,hit.index);break;
+    case H::SettingsAi: pulse::AiSettingsAction(s,hit.index);break;
     case H::SettingsPackAction: {
         bool refresh=false;
         switch(static_cast<ui::PackAction>(hit.index)) {
@@ -348,6 +350,7 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
         case ui::PackAction::AiInstall: OfferAiPack(s); InvalidateRect(s.hwnd,nullptr,FALSE); return true;
         case ui::PackAction::AiRemove: ConfirmRemoveAiPack(s); InvalidateRect(s.hwnd,nullptr,FALSE); return true;
         case ui::PackAction::AiCancel: CancelAiPackInstall(); return true;
+        case ui::PackAction::AiManage: OpenSettingsTab(s,9); return true;
         case ui::PackAction::TriggerHover:
         case ui::PackAction::TriggerSpace:
             s.settings.PreviewTrigger(hit.index-static_cast<int>(ui::PackAction::TriggerHover));

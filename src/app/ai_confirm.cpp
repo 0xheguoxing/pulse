@@ -120,42 +120,6 @@ Asked Ask(HWND host, const std::shared_ptr<Question>& q, const std::atomic<bool>
 
 } // namespace
 
-ui::ConfirmDialogSpec ConnectQuestionSpec(const std::wstring& client) {
-    using I = l10n::StringId;
-    ui::ConfirmDialogSpec spec;
-    spec.title = Fill(Text(I::AiConnectTitle), L"{client}", client);
-    spec.message = Text(I::AiConnectMessage);
-    spec.confirm_text = Text(I::AiConnectAllow);
-    spec.secondary_text = Text(I::AiConnectSession);
-    spec.cancel_text = Text(I::AiDeny);
-    spec.note = Text(I::AiConnectNote);
-    spec.tone = ui::ConfirmTone::Question;
-    spec.glyph = L"\xE99A";
-    // Enter alone does not let a new app in.
-    spec.default_choice = ui::ConfirmChoice::Secondary;
-    return spec;
-}
-
-ui::ConfirmDialogSpec CreateZipQuestionSpec(const std::wstring& client, const std::vector<std::wstring>& names,
-                                            size_t total, const std::wstring& archive_name,
-                                            const std::wstring& folder) {
-    using I = l10n::StringId;
-    ui::ConfirmDialogSpec spec;
-    spec.title = Fill(Text(I::AiCreateZipTitle), L"{client}", client);
-    spec.message = Fill(Fill(Text(I::AiCreateZipMessage), L"{name}", archive_name), L"{folder}", folder);
-    for (size_t i = 0; i < names.size() && i < kListedItems; ++i) spec.items.push_back(names[i]);
-    if (total > spec.items.size())
-        spec.items.push_back(Fill(Text(I::AiCreateMore), L"{n}", std::to_wstring(total - spec.items.size())));
-    spec.item_glyph = L"\xE8A5";
-    spec.confirm_text = Text(I::AiCreateAllow);
-    spec.secondary_text = Text(I::AiCreateAlways);
-    spec.cancel_text = Text(I::AiDeny);
-    spec.note = Text(I::AiCreateNote);
-    spec.tone = ui::ConfirmTone::Question;
-    spec.glyph = L"\xF012";
-    return spec;
-}
-
 ConnectAnswer AskToConnect(HWND host, const std::wstring& client, const std::atomic<bool>& stopping,
                            DWORD timeout_ms) {
     auto q = std::make_shared<Question>();

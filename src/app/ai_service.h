@@ -37,7 +37,8 @@ bool UpdateAiSettings(const std::function<void(Settings&)>& change);
 Settings ReadAiSettings(bool* malformed = nullptr);
 
 // Settings > AI 与 MCP.
-bool SetAiMcpEnabled(bool enabled, const AiToolsHost& host);   // saves, then starts or stops
+bool SetAiMcpEnabled(bool enabled);   // saves, then starts (with the host it was started with) or stops
+bool IsAiSessionClient(const std::wstring& client);   // allowed "this time" until Pulse quits
 void SetAiClientGrant(const std::wstring& client, ClientGrant grant);   // Denied also disconnects it
 void ForgetAiClient(const std::wstring& client);   // its record and rules; disconnects it
 void RemoveAiAllowRule(const AllowRule& rule);

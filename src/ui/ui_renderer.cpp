@@ -1877,12 +1877,40 @@ void MainRenderer::DrawTeachBubble(const WindowViewModel& vm, const D2D1_RECT_F&
     text_background_ = saved_bg;
 }
 
-void MainRenderer::DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme) {
+void MainRenderer::DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& full, const Theme& theme) {
     ID2D1DeviceContext* dc = compositor_->Dc();
     IDWriteFactory2* factory = compositor_->DwriteFactory();
     IDWriteTextFormat* small_fmt = compositor_->SmallFormat();
     const StatusBarMetrics sb = MakeStatusBarMetrics(
-        vm, rect, scale_, status_height_, factory, small_fmt);
+        vm, full, scale_, status_height_, factory, small_fmt);
+    // Everything but the AI chip ends left of it (MakeStatusBarMetrics).
+    D2D1_RECT_F rect = full;
+    rect.right = sb.content_right;
+    if (sb.ai_chip.right > sb.ai_chip.left) {
+        // The AI chip (app ai_status.h): what AI clients are doing. Busy and
+        // waiting are tinted with the accent; idle and done stay quiet.
+        const D2D1_RECT_F& c = sb.ai_chip;
+        const StatusAiState state = vm.status.ai_state;
+        const bool hover = IsHovered(vm, HitTestResult::StatusBarAi);
+        const bool waiting = state == StatusAiState::Waiting;
+        const bool active = waiting || state == StatusAiState::Busy;
+        if (active || hover) {
+            D2D1_COLOR_F fill = active ? theme.accent : theme.fill_hover;
+            if (active) fill.a = waiting ? (hover ? 0.36f : 0.26f) : (hover ? 0.26f : 0.14f);
+            MakeBrush(dc, fill, brFillHover_);
+            FillRoundedRect(dc, brFillHover_.get(), c.left, c.top, c.right - c.left, c.bottom - c.top, 5.0f * scale_);
+        }
+        const D2D1_COLOR_F ink = active ? theme.accent : theme.text_secondary;
+        const wchar_t* glyph = state == StatusAiState::Done ? L"\xE73E" : waiting ? L"\xE8BD" : L"\xE99A";
+        const float icon_left = sb.ai_chip_text ? c.left + 8.0f * scale_ : (c.left + c.right) * 0.5f - 8.0f * scale_;
+        DrawIconText(icon_left, sb.bar.top, 16.0f * scale_, status_height_, glyph, L"", ink, 0.7f);
+        if (sb.ai_chip_text) {
+            MakeBrush(dc, ink, brAccentText_);
+            const float text_left = c.left + 30.0f * scale_;
+            DrawTextEndEllipsis(dc, factory, small_fmt, brAccentText_.get(), vm.status.ai_text, text_left, sb.bar.top,
+                (std::max)(0.0f, c.right - 10.0f * scale_ - text_left), status_height_);
+        }
+    }
     const bool centered_progress = vm.status.query_active || vm.status.task_is_update;
     float y = sb.bar.top;
     // Sits on the shared sheet painted by Render(); no own fill or top rule.

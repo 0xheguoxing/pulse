@@ -80,6 +80,7 @@
 #include "tray_controller.h"
 #include "ai_launcher.h"
 #include "ai_service.h"
+#include "ai_settings_ui.h"
 #include "ai_status.h"
 #include "ai_tools.h"
 #include "ai_tools_ui.h"
@@ -229,6 +230,8 @@ static bool g_shot_favorites_bar = false;
 static bool g_shot_toolbar_apps = false;
 // --shot-favorites-hover N: favorite N's ⌄ is hot (-2: the address bar's ★⌄).
 static int g_shot_favorites_hover = -1;
+// --shot-ai N: made-up AI clients and calls (StageAiShot): 0 busy, 1 waiting, 2 done.
+static int g_shot_ai = -1;
 // --shot-favorites-drop N: files are dragged over favorite N.
 static int g_shot_favorites_drop = -1;
 // --shot-favorites-focus N: F6 onto the 收藏栏, then → N times (the focus ring).
@@ -1851,6 +1854,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s) HandleTrayMessage(*s, msg);
         return 0;
 
+    case WM_AI_SNACK_UNDO:
+    case WM_AI_SNACK_OPEN:
+        if (s) pulse::HandleAiSnackMessage(*s, msg);
+        return 0;
+
     case WM_ZIP_COMPRESS:
     case WM_ZIP_CANCEL:
         if (s) HandleZipMessage(*s, msg, wParam, lParam);
@@ -3297,6 +3305,10 @@ int ShotModeMain(AppState& state, HWND hwnd) {
             Sleep(40);
         }
         ApplyShotTrayAction(state); // separate frame: __try forbids unwinding objects
+        if (g_shot_ai >= 0) {
+            pulse::StageAiShot(g_shot_ai);
+            Render(state);   // the snapshot reads the frame before the last Present
+        }
         StageLinkPillShot(state);
         if (state.shot_tooltip) {
             // After the pump: a mouse move during startup would clear this.
@@ -3598,6 +3610,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             g_shot_favorites_bar = true;
         } else if (wcscmp(__wargv[i], L"--shot-toolbar-apps") == 0) {
             g_shot_toolbar_apps = true;
+        } else if (wcscmp(__wargv[i], L"--shot-ai") == 0 && i + 1 < __argc) {
+            g_shot_ai = _wtoi(__wargv[++i]);
         } else if (wcscmp(__wargv[i], L"--shot-favorites-hover") == 0 && i + 1 < __argc) {
             g_shot_favorites_hover = _wtoi(__wargv[++i]);
         } else if (wcscmp(__wargv[i], L"--shot-favorites-drop") == 0 && i + 1 < __argc) {

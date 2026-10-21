@@ -417,12 +417,14 @@ inline bool PrimaryEnabled(bool available, bool installed, bool installing) {
     return available || installed || installing;
 }
 // The AI pack: settings_ai_pack_state holds app::AiPackState (the content
-// pack's values). A bundled host (development build) has no button.
+// pack's values). Usable (bundled or installed): 管理 opens page 9, which
+// holds the uninstall.
 inline const wchar_t* AiSection() { return l10n::Get(l10n::StringId::AiPackSection).c_str(); }
 inline const wchar_t* AiTitle() { return l10n::Get(l10n::StringId::AiPackTitle).c_str(); }
 inline const wchar_t* AiDesc() { return l10n::Get(l10n::StringId::AiPackDesc).c_str(); }
 inline const wchar_t* AiMeta() { return l10n::Get(l10n::StringId::AiPackMeta).c_str(); }
 inline bool AiInstalled(const WindowViewModel& vm) { return vm.settings_ai_pack_state == 1; }
+inline bool AiUsable(const WindowViewModel& vm) { return vm.settings_ai_pack_state == 0 || AiInstalled(vm); }
 inline bool AiAvailable(const WindowViewModel& vm) { return vm.settings_ai_pack_state != 5; }
 inline Badge AiBadge(const WindowViewModel& vm) {
     switch (vm.settings_ai_pack_state) {
@@ -433,12 +435,15 @@ inline Badge AiBadge(const WindowViewModel& vm) {
     }
 }
 inline const wchar_t* AiPrimary(const WindowViewModel& vm) {
-    if (vm.settings_ai_pack_state == 0 && !vm.settings_ai_pack_installing) return L"";
+    if (AiUsable(vm) && !vm.settings_ai_pack_installing) return l10n::Get(l10n::StringId::AiManage).c_str();
     return PrimaryLabel(AiAvailable(vm), AiInstalled(vm), vm.settings_ai_pack_installing);
+}
+inline bool AiPrimaryEnabled(const WindowViewModel& vm) {
+    return AiUsable(vm) || PrimaryEnabled(AiAvailable(vm), AiInstalled(vm), vm.settings_ai_pack_installing);
 }
 inline PackAction AiAction(const WindowViewModel& vm) {
     if (vm.settings_ai_pack_installing) return PackAction::AiCancel;
-    return AiInstalled(vm) ? PackAction::AiRemove : PackAction::AiInstall;
+    return AiUsable(vm) ? PackAction::AiManage : PackAction::AiInstall;
 }
 // "更新到 1.0.2" beside 卸载 while an installed pack is older than the
 // catalog; empty (no button) while it downloads or when it is current.

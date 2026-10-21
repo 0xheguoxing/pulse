@@ -152,13 +152,17 @@ ConfirmTone ResolveConfirmTone(const ConfirmDialogSpec& spec) {
     return spec.danger ? ConfirmTone::Danger : ConfirmTone::Question;
 }
 
+size_t ConfirmItemCount(const ConfirmDialogSpec& spec) {
+    return (std::max)(spec.items.size(), spec.items_total);
+}
+
 std::vector<std::wstring> ConfirmItemRows(const ConfirmDialogSpec& spec) {
-    if (spec.items.size() <= kConfirmMaxItemRows) return spec.items;
-    std::vector<std::wstring> rows(spec.items.begin(),
-                                   spec.items.begin() + (kConfirmMaxItemRows - 1));
+    const size_t count = ConfirmItemCount(spec);
+    if (count <= kConfirmMaxItemRows && count == spec.items.size()) return spec.items;
+    const size_t listed = (std::min)(spec.items.size(), kConfirmMaxItemRows - 1);
+    std::vector<std::wstring> rows(spec.items.begin(), spec.items.begin() + listed);
     wchar_t more[128]{};
-    swprintf_s(more, l10n::Get(l10n::StringId::ConfirmMoreItemsFormat).c_str(),
-               spec.items.size() - (kConfirmMaxItemRows - 1));
+    swprintf_s(more, l10n::Get(l10n::StringId::ConfirmMoreItemsFormat).c_str(), count - listed);
     rows.emplace_back(more);
     return rows;
 }
@@ -185,6 +189,12 @@ std::wstring ConfirmClipboardText(const ConfirmDialogSpec& spec) {
     std::wstring text = spec.title;
     if (!spec.message.empty()) text += L"\r\n\r\n" + spec.message;
     for (const std::wstring& item : spec.items) text += L"\r\n  " + item;
+    if (ConfirmItemCount(spec) > spec.items.size()) {
+        wchar_t more[128]{};
+        swprintf_s(more, l10n::Get(l10n::StringId::ConfirmMoreItemsFormat).c_str(),
+                   ConfirmItemCount(spec) - spec.items.size());
+        text += L"\r\n  " + std::wstring(more);
+    }
     if (!spec.note.empty()) text += L"\r\n\r\n" + spec.note;
     return text;
 }
@@ -343,7 +353,7 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
         }
         const std::wstring_view glyph = spec.item_glyph.empty()
             ? std::wstring_view(L"\xE8A5") : std::wstring_view(spec.item_glyph);
-        const bool truncated = spec.items.size() > rows.size();
+        const bool truncated = ConfirmItemCount(spec) > rows.size();
         for (size_t i = 0; i < rows.size() && i < l.rows.size(); ++i) {
             const D2D1_RECT_F& row = l.rows[i];
             RiseIn in(compositor, visual.rows_in[std::min(i, kConfirmMaxItemRows - 1)], rise);

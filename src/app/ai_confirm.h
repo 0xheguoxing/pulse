@@ -6,7 +6,7 @@
 // stopping the service. A question given up on closes its dialog (WM_CLOSE).
 #pragma once
 #include "ai_broker.h"
-#include "../ui/confirm_dialog.h"
+#include "ai_question_specs.h"
 #include <atomic>
 #include <string>
 #include <vector>
@@ -26,12 +26,5 @@ CreateAnswer AskToCreate(HWND host, const ConfirmRequest& request, const std::at
 // UI thread (the status-bar chip): brings the open question's dialog forward.
 // False when none is open.
 bool BringAiQuestionToFront();
-
-// The dialogs' contents; also drawn by the dialog gallery.
-ui::ConfirmDialogSpec ConnectQuestionSpec(const std::wstring& client);
-// `names`: the items (at most five are listed), `total`: how many there are.
-ui::ConfirmDialogSpec CreateZipQuestionSpec(const std::wstring& client, const std::vector<std::wstring>& names,
-                                            size_t total, const std::wstring& archive_name,
-                                            const std::wstring& folder);
 
 } // namespace pulse::app::ai

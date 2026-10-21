@@ -1897,17 +1897,35 @@ struct StatusBarMetrics {
     D2D1_RECT_F task{};
     D2D1_RECT_F cancel_search{};
     D2D1_RECT_F hint_action{};   // empty unless the hint carries a clickable action
+    D2D1_RECT_F ai_chip{};       // the AI chip at the far right; empty when hidden
+    bool ai_chip_text = false;   // the chip has room for its words (else icon only)
+    float content_right = 0.0f;  // where everything else ends (left of the AI chip)
     float pad = 0.0f;
     float right_reserved = 0.0f;
 };
 
-StatusBarMetrics MakeStatusBarMetrics(const WindowViewModel& vm, const D2D1_RECT_F& rect,
+constexpr float kAiChipMaxTextDip = 240.0f;
+
+StatusBarMetrics MakeStatusBarMetrics(const WindowViewModel& vm, const D2D1_RECT_F& full,
                                       float scale, float status_height,
                                       IDWriteFactory2* factory, IDWriteTextFormat* small_format) {
     const bool centered_progress = vm.status.query_active || vm.status.task_is_update;
     StatusBarMetrics m;
-    m.bar = D2D1::RectF(rect.left, rect.bottom - status_height, rect.right, rect.bottom);
+    m.bar = D2D1::RectF(full.left, full.bottom - status_height, full.right, full.bottom);
     m.pad = kStatusBarPadDip * scale;
+    // The AI chip takes the far right; the rest lays out as if the bar ended
+    // left of it.
+    D2D1_RECT_F rect = full;
+    if (vm.status.ai_state != StatusAiState::Hidden) {
+        m.ai_chip_text = !vm.status.ai_text.empty() && full.right - full.left >= 640.0f * scale && factory && small_format;
+        const float text_w = m.ai_chip_text
+            ? (std::min)(kAiChipMaxTextDip * scale, MeasureTextWidth(factory, small_format, vm.status.ai_text)) : 0.0f;
+        const float width = m.ai_chip_text ? text_w + 40.0f * scale : 28.0f * scale;
+        m.ai_chip = D2D1::RectF(full.right - m.pad - width, m.bar.top + 4.0f * scale, full.right - m.pad,
+                                m.bar.bottom - 4.0f * scale);
+        rect.right = m.ai_chip.left - 8.0f * scale + m.pad;
+    }
+    m.content_right = rect.right;
     m.right_reserved = m.pad;
     const std::wstring* trailing = nullptr;
     if (!centered_progress && !vm.status.performance_text.empty()) {
@@ -2331,6 +2349,7 @@ struct SettingsLayout {
     D2D1_RECT_F ctx_intro{}, ctx_layer[2]{};
     SysCtxLayout sysctx;  // page 6, see LayoutSettingsSysCtx
     ShortcutsLayout shortcuts;  // page 7, see LayoutSettingsShortcuts
+    AiPageLayout ai;            // page 9, see LayoutSettingsAi
     D2D1_RECT_F accent_card{};
     D2D1_RECT_F accent_picker{};
     D2D1_RECT_F effect_card{};
@@ -2483,6 +2502,7 @@ float ReleaseLineHeight(const fluent::Painter* painter, const std::wstring& line
 #include "settings_layout_sections.h"
 #include "settings_sysctx_layout.h"
 #include "settings_shortcuts_layout.h"
+#include "settings_ai_layout.h"
 
 
 SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& rect,
@@ -2877,6 +2897,8 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
         y = LayoutSettingsSysCtx(l, vm, scale, y, painter);
     } else if (vm.settings_page == 7) {
         y = LayoutSettingsShortcuts(l, vm, scale, y, painter);
+    } else if (vm.settings_page == 9) {
+        y = LayoutSettingsAi(l, vm, scale, y, painter);
     } else if (vm.settings_page == 4) {
         const float card_left = l.content.left + pad;
         const float card_right = l.content.right - pad;
@@ -2991,6 +3013,7 @@ HitTestResult::Region StatusBarHitRegion(const WindowViewModel& vm, const D2D1_R
     IDWriteTextFormat* fmt = compositor ? compositor->SmallFormat() : nullptr;
     const StatusBarMetrics sb = MakeStatusBarMetrics(
         vm, rect, scale, status_height, factory, fmt);
+    if (sb.ai_chip.right > sb.ai_chip.left && ContainsPt(sb.ai_chip, x, y)) return HitTestResult::StatusBarAi;
     if (vm.status.query_cancellable && ContainsPt(sb.cancel_search, x, y)) return HitTestResult::StatusBarCancelSearch;
     if (sb.hint_action.right > sb.hint_action.left && ContainsPt(sb.hint_action, x, y))
         return HitTestResult::StatusHintAction;

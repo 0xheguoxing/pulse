@@ -305,6 +305,10 @@ void ToolBroker::Emit(const Connection& c, BrokerEventKind kind, const std::stri
         event.ok = outcome->ok;
         if (!outcome->ok) event.code = outcome->error.code;
         event.changed_files = outcome->changed_files;
+        if (outcome->ok && outcome->changed_files) {
+            event.data = outcome->data;
+            event.undo_group = outcome->undo_group;
+        }
     }
     try {
         options_.on_event(event);

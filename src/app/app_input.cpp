@@ -1,4 +1,5 @@
 #include "reopen_closed.h"
+#include "ai_settings_ui.h"
 #include "folder_alias.h"
 #include "app_wall_hint.h"
 #include "arrival_select.h"
@@ -2733,6 +2734,11 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         }
         if (hit.region == ui::HitTestResult::TagQueryRefine) {
             HandleTagQueryRefine(*s, hit.index, (GetKeyState(VK_SHIFT) & 0x8000) != 0);
+            return 0;
+        }
+        if (hit.region == ui::HitTestResult::StatusBarAi) {   // outside the chain below: C1061
+            pulse::AiChipClicked(*s);
+            InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if (hit.region == ui::HitTestResult::DetailsPreview) {

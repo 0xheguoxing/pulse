@@ -9,6 +9,7 @@
 #include "open_with_icons.h"
 #include "sysctx_view.h"
 #include "shortcuts_view.h"
+#include "ai_settings_view.h"
 #include "view_layout.h"
 #include "column_strip_layout.h"
 #include "panel_metrics.h"
@@ -682,6 +683,9 @@ struct DetailsHitRects {
     float content_height_dip = 0.0f; // unclipped content height for wheel clamp
 };
 
+// The AI chip at the right end of the status bar (app ai_status.h).
+enum class StatusAiState : uint8_t { Hidden, Idle, Busy, Waiting, Done };
+
 struct StatusBarView {
     bool query_active = false;
     bool query_cancellable = false;
@@ -705,6 +709,8 @@ struct StatusBarView {
     bool task_can_open = false;    // finished pill offers 打开 (sub_index 1)
     std::wstring performance_text; // development diagnostics; empty hides it
     std::wstring performance_compact_text;
+    StatusAiState ai_state = StatusAiState::Hidden;
+    std::wstring ai_text;          // the chip's words (Idle: the client, may be empty)
 };
 
 struct PaneSlotView {
@@ -867,6 +873,7 @@ enum class PackAction : int {
     AiInstall,          // AI pack: download / update / repair (asks first)
     AiRemove,           // AI pack: uninstall (asks first)
     AiCancel,           // AI pack: stop the running download
+    AiManage,           // AI pack: open 增强包 > AI 与 MCP (page 9)
 };
 
 // A tab dragged out of another window, over this one (multi-window M7h): the
@@ -1104,12 +1111,14 @@ struct WindowViewModel {
     std::wstring settings_pack_archive_version, settings_pack_archive_notice, settings_pack_archive_update_version;
     int settings_theme = 0; // system, light, dark
     bool settings_open = false;
-    int settings_page = 0; // 0 general, 1 search/index, 2 context menu, 3 about, 4 duplicates, 5 quick look, 6 system menu, 7 shortcuts
+    int settings_page = 0; // 0 general, 1 search/index, 2 context menu, 3 about, 4 duplicates, 5 quick look, 6 system menu, 7 shortcuts, 8 packs, 9 AI and MCP
     // Settings > 系统右键菜单 (page 6): the model's last published view.
     std::shared_ptr<const SysCtxView> settings_sysctx;
     // Settings > 快捷键 (page 7): the page model's last view; the sidebar badge
     // (keys that may not work) is filled on every page.
     std::shared_ptr<const ShortcutsView> settings_shortcuts;
+    // Settings > 增强包 > AI 与 MCP (page 9).
+    std::shared_ptr<const AiPageView> settings_ai;
     int settings_shortcut_issues = 0;
     int settings_pack_updates = 0;   // 增强包 nav badge: packs with a newer release
     int settings_content_pack_state = 2;   // app::ContentPackState (2 = missing)
@@ -1433,6 +1442,8 @@ struct HitTestResult {
         TrayShelf,             // staging tray shelf: index = TrayShelfHit
         StagedBadge,           // "已暂存" pill on a list row: index = entry, path
         PaneWallHint,          // photo wall suggestion: index 0 card, 1 switch, 2 never again
+        StatusBarAi,           // the AI chip at the right end of the status bar
+        SettingsAi,            // Settings > 增强包 > AI 与 MCP: index = AiHit
     } region = None;
     SidebarAddAction sidebar_action = SidebarAddAction::None;
     int index = -1;          // tab/row/sidebar item/tray batch/tray item.
@@ -2146,6 +2157,7 @@ private:
     void DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawSettingsSysCtx(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawSettingsShortcuts(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
+    void DrawSettingsAi(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     // 右键菜单 layer cards, the same on pages 2 and 6: Pulse 右键菜单 | 系统右键菜单.
     void DrawCtxLayerCards(const D2D1_RECT_F& pulse, const D2D1_RECT_F& system, bool system_current,
                            bool other_hovered, const Theme& theme);

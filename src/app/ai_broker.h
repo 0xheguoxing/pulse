@@ -93,6 +93,10 @@ struct BrokerEvent {
     bool ok = false;           // CallFinished
     std::string code;          // CallFinished: the error code when !ok
     bool changed_files = false;
+    // CallFinished with changed_files only (kept small otherwise): the
+    // result's data and undo group, for the notification it gets.
+    json::Value data;
+    uint64_t undo_group = 0;
 };
 
 struct BrokerOptions {
