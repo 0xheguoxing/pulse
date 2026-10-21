@@ -49,7 +49,8 @@ enum class KeyKind : uint8_t {
 enum class KeyAction : uint8_t {
     GlobalSearch,
     Open, Back, Forward, Up, GoToPath, Refresh, MoveFocus,
-    QuickPreview, Copy, Cut, Paste, CopyPath, StageToTray, Undo, Rename, BatchRename, NewFolder, Delete,
+    QuickPreview, Copy, Cut, Paste, CopyPath, StageToTray, Undo, Rename, BatchRename, NewFolder, GroupIntoFolder,
+    DissolveFolder, Delete,
     PermanentDelete, Properties, ContextMenu, ToggleTag, ClearTags, TagPanel,
     SelectAll, InvertSelection, SelectPattern,
     Search, CommandBar, Project, Filter, AdvancedSearch,
@@ -193,7 +194,9 @@ enum class ChordIssue : uint8_t {
 struct ShortcutEnv {
     std::vector<KeyChord> taken;  // chords another program holds
     bool chinese_ime = false;     // a Chinese input method is installed
-    std::vector<KeyChord> ime_ignored;  // 已关闭，不再提示
+    // 已关闭，不再提示: IME warnings and chords another program holds (the
+    // list and the sidebar badge leave them out; recording still warns).
+    std::vector<KeyChord> ime_ignored;
     bool IsTaken(KeyChord chord) const noexcept;
     bool ImeApplies(KeyChord chord) const noexcept;
 };

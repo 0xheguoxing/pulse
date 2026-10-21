@@ -11,6 +11,7 @@
 #include "../app/default_file_manager.h"
 #include "../app/shell_window_plan.h"
 #include "../app/explorer_shortcuts.h"
+#include "../app/keymap.h"
 #include "../app/closed_windows.h"
 #include "../app/last_tab_close.h"
 #include "../app/startup_launch.h"
@@ -523,6 +524,49 @@ bool TestExplorerShortcuts() {
     passed &= Report("explorer keys: Ctrl+N picks the Nth visible tab, Ctrl+9 the last",
         NthVisibleTab(visible, 0) == size_t{0} && NthVisibleTab(visible, 1) == size_t{2} &&
         !NthVisibleTab(visible, 5) && NthVisibleTab(visible, 8) == size_t{3} && !NthVisibleTab({}, 8));
+    passed &= Report("explorer keys: Ctrl+G groups into a folder, Ctrl+Shift+G ungroups, Ctrl+Alt+G nothing",
+        is(L'G', true, false, false, A::GroupIntoFolder) && is(L'G', true, true, false, A::DissolveFolder) &&
+        is(L'G', true, false, true, A::None) && is(L'G', false, false, false, A::None));
+    return passed;
+}
+
+// Settings > 快捷键: the new group / ungroup actions, and dismissing a chord
+// another program holds (it leaves the list and the sidebar badge).
+bool TestShortcutKeymap() {
+    namespace k = pulse::app;
+    using k::KeyAction;
+    using k::KeyChord;
+    auto chord = [](const wchar_t* text) { KeyChord c{}; k::ParseChord(text, c); return c; };
+    bool passed = true;
+    k::Keymap fresh;
+    passed &= Report("keymap: Ctrl+G is 合并到文件夹, Ctrl+Shift+G 解散文件夹 by default",
+        fresh.Find(chord(L"Ctrl+G")).action == KeyAction::GroupIntoFolder &&
+        fresh.Find(chord(L"Ctrl+Shift+G")).action == KeyAction::DissolveFolder &&
+        k::ActionFromId("GroupIntoFolder") == KeyAction::GroupIntoFolder &&
+        k::ActionFromId("DissolveFolder") == KeyAction::DissolveFolder);
+    bool unique = true;
+    for (int i = 0; i < k::kKeyActionCount; ++i) {
+        const auto action = static_cast<KeyAction>(i);
+        if (k::ActionInfo(action).kind == k::KeyKind::Global) continue;
+        for (const KeyChord c : fresh.EffectiveChords(action)) unique = unique && fresh.Find(c).action == action;
+    }
+    passed &= Report("keymap: default keys stay unique", unique);
+    k::Keymap moved = fresh;
+    moved.SetBindings(KeyAction::GroupIntoFolder, {chord(L"Ctrl+Alt+G")});
+    const auto t = moved.Translate(chord(L"Ctrl+Alt+G"));
+    passed &= Report("keymap: a rebound group key reaches the default Ctrl+G handler",
+        t.kind == k::Keymap::Translation::Rewrite && t.target == chord(L"Ctrl+G") &&
+        moved.Translate(chord(L"Ctrl+G")).kind == k::Keymap::Translation::Swallow);
+
+    k::ShortcutEnv env;
+    env.taken = {chord(L"Ctrl+Alt+C"), chord(L"Ctrl+Alt+X")};
+    const auto before = k::CollectIssues(fresh, env);
+    env.ime_ignored = {chord(L"Ctrl+Alt+C")};
+    const auto after = k::CollectIssues(fresh, env);
+    passed &= Report("keymap: a dismissed taken chord leaves the issues list (badge)",
+        before.size() == 2 && after.size() == 1 && after[0].chord == chord(L"Ctrl+Alt+X"));
+    passed &= Report("keymap: a dismissed taken chord still blocks recording it",
+        k::CheckChord(fresh, KeyAction::CopyPath, chord(L"Ctrl+Alt+C"), env).issue == k::ChordIssue::Taken);
     return passed;
 }
 
@@ -2608,6 +2652,7 @@ int wmain(int argc, wchar_t** argv) {
 
     passed &= TestPulseOnlyVisibility();
     passed &= TestExplorerShortcuts();
+    passed &= TestShortcutKeymap();
     passed &= TestClosedWindowStack();
     passed &= TestAddressBarCommands();
     passed &= TestAddressShortcuts();

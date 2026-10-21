@@ -2716,4 +2716,5 @@ BEGIN
     IDS_AI_SNACK_CREATED "{client} 新增了「{name}」"
     IDS_AI_SNACK_UNDONE "{client} 復原了「{name}」"
     IDS_AI_SNACK_OPEN "開啟位置"
+    IDS_NO_MORE_CONFLICT_WARNINGS " 不再提示衝突"
 END

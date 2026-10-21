@@ -4827,6 +4827,9 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             case A::MoveTabToNewWindow: PostMessageW(hwnd, WM_MOVE_TAB_TO_NEW_WINDOW, 0, 0); break;
             // The other windows go away; this one (whose handler runs) stays.
             case A::MergeWindows: MergeAllWindows(*s); break;
+            // The commands check the selection themselves (as their menu rows).
+            case A::GroupIntoFolder: DispatchMenuCommand(*s, app::CmdGroupIntoFolder); break;
+            case A::DissolveFolder: DispatchMenuCommand(*s, app::CmdDissolveFolder); break;
             case A::None: break;
             }
         } else if (ctrl && !shift && !alt && wParam == L'B') {

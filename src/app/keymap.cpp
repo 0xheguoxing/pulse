@@ -43,6 +43,8 @@ constexpr KeyActionInfo kActions[] = {
     {X::Rename, "Rename", G::Files, N::Normal, L"重命名", L"Rename", D(K(0, VK_F2)), 0, 0, 0, false},
     {X::BatchRename, "BatchRename", G::Files, N::Normal, L"批量重命名", L"Batch rename", D(K(C | S, 'R')), 0, 0, 0, false},
     {X::NewFolder, "NewFolder", G::Files, N::Normal, L"新建文件夹", L"New folder", D(K(C | S, 'N'), K(0, VK_F7)), 0, 0, 0, false},
+    {X::GroupIntoFolder, "GroupIntoFolder", G::Files, N::Normal, L"合并到文件夹", L"New folder with selection", D(K(C, 'G')), 0, 0, 0, false},
+    {X::DissolveFolder, "DissolveFolder", G::Files, N::Normal, L"解散文件夹", L"Ungroup folder", D(K(C | S, 'G')), 0, 0, 0, false},
     {X::Delete, "Delete", G::Files, N::Normal, L"删除", L"Delete", D(K(0, VK_DELETE), K(C, 'D')), 0, 0, 0, false},
     {X::PermanentDelete, "PermanentDelete", G::Files, N::Normal, L"永久删除", L"Delete permanently", D(K(S, VK_DELETE), K(C | S, 'D')), 0, 0, 0, false},
     {X::Properties, "Properties", G::Files, N::Normal, L"属性", L"Properties", D(K(A, VK_RETURN)), 0, 0, 0, false},
@@ -686,8 +688,12 @@ std::vector<BindingIssue> CollectIssues(const Keymap& keymap, const ShortcutEnv&
         if (info.kind == KeyKind::Fixed) continue;
         if (info.kind == KeyKind::Global) continue;  // its own registration reports a failure
         for (const KeyChord chord : keymap.EffectiveChords(action)) {
-            if (env.IsTaken(chord)) out.push_back({action, chord, ChordIssue::Taken, ChordLevel::Block});
-            else if (env.ImeApplies(chord)) out.push_back({action, chord, ChordIssue::Ime, ChordLevel::Warn});
+            // A dismissed chord another program holds leaves the list (and
+            // the badge); CheckChord still blocks recording it.
+            if (env.IsTaken(chord)) {
+                if (!Contains(env.ime_ignored, chord))
+                    out.push_back({action, chord, ChordIssue::Taken, ChordLevel::Block});
+            } else if (env.ImeApplies(chord)) out.push_back({action, chord, ChordIssue::Ime, ChordLevel::Warn});
         }
     }
     std::stable_sort(out.begin(), out.end(), [](const BindingIssue& a, const BindingIssue& b) {

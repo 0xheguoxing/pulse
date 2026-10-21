@@ -394,6 +394,7 @@ void ShortcutSettings::BuildPop(ui::ShortcutPopView& p) {
         if (issue && issue->issue == ChordIssue::Taken) {
             p.verdict = ChordDisplay(current) + l10n::Get(l10n::StringId::IsHeldByAnotherProgram).c_str();
             p.detail = l10n::Get(l10n::StringId::AnotherProgramRegisteredItAsAHotkeySoPulseNeverReceivesItPic).c_str();
+            p.can_ignore = true;
         } else if (issue && issue->issue == ChordIssue::Ime) {
             const wchar_t* use = ImeConflictName(current);
             p.verdict = std::wstring(l10n::Get(l10n::StringId::MicrosoftPinyinUsesItFor).c_str()) + Quote(use ? use : L"");
@@ -876,10 +877,12 @@ void ShortcutSettings::Click(int index) {
         const auto chords = DisplayChords(pop_action_);
         if (pop_slot_ < 0 || pop_slot_ >= static_cast<int>(chords.size())) break;
         const KeyChord chord = chords[static_cast<size_t>(pop_slot_)];
+        const bool taken = env_.IsTaken(chord);
         Remember();
         if (!Contains(env_.ime_ignored, chord)) env_.ime_ignored.push_back(chord);
         ClosePop();
-        Changed(ChordDisplay(chord) + l10n::Get(l10n::StringId::NoMoreIMEWarnings).c_str());
+        Changed(ChordDisplay(chord) + l10n::Get(taken ? l10n::StringId::NoMoreConflictWarnings
+                                                      : l10n::StringId::NoMoreIMEWarnings).c_str());
         break;
     }
     case ui::kScPopRecord: {

@@ -2057,6 +2057,7 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         dissolve.command = app::CmdDissolveFolder;
         dissolve.text = l10n::Get(l10n::StringId::UngroupFolder_2).c_str();
         dissolve.glyph = L"\xED25"; // open folder
+        dissolve.shortcut = app::ShownShortcut(L"Ctrl+Shift+G");
         items.insert(items.begin() + 1, std::move(dissolve));
     }
     if (CanGroupSelection(tab)) {
@@ -2064,6 +2065,7 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         group.command = app::CmdGroupIntoFolder;
         group.text = l10n::Get(l10n::StringId::NewFolderWithSelection_2).c_str();
         group.glyph = ui::command_icons::kGlyphGroupFolder;
+        group.shortcut = app::ShownShortcut(L"Ctrl+G");
         items.insert(items.begin() + 1, std::move(group));
     }
     // 别名: one real item can take a display name (after 复制路径).
