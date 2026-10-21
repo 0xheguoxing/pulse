@@ -19,8 +19,6 @@ inline constexpr float kColumnStripMaxDip = 560.0f;
 inline constexpr int kColumnStripChildId = 10000;
 // Divider id of the current folder's list (its right edge).
 inline constexpr int kColumnStripBodyId = 10001;
-// Column id of the trailing preview of the single selected file.
-inline constexpr int kColumnStripPreviewId = 10002;
 // Width slot of the current folder's list (past every ancestor slot).
 inline constexpr size_t kColumnStripBodySlot = 16;
 
@@ -46,19 +44,17 @@ struct ColumnStripLayout {
     float max_scroll_px = 0.0f;  // > 0: ancestors overflow the viewport
     float content_px = 0.0f;     // total ancestor width
     // Left to right: ancestors intersecting the viewport (rects may extend
-    // past it; clip to viewport), then the child or preview column.
+    // past it; clip to viewport), then the child column.
     std::vector<ColumnStripSlot> columns;
 };
 
 // pane_bounds is the full pane rect; column rects span [top, pane bottom).
-// Columns line up from the left; the preview takes what is left on the
-// right. Ancestors never drop out: when they do not fit they scroll
+// Columns line up from the left. Ancestors never drop out: when they do not fit they scroll
 // horizontally. scroll_from_right_dip = 0 keeps the parent visible next to
 // the list.
 ColumnStripLayout LayoutColumnStrip(const D2D1_RECT_F& pane_bounds, float top,
                                     size_t ancestor_count, bool child_slot,
                                     const std::vector<float>& widths_dip,
-                                    float scale, float scroll_from_right_dip = 0.0f,
-                                    bool preview_slot = false) noexcept;
+                                    float scale, float scroll_from_right_dip = 0.0f) noexcept;
 
 } // namespace pulse::ui

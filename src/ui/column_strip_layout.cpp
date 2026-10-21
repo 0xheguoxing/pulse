@@ -20,8 +20,7 @@ size_t ColumnStripWidthSlot(int column_id, size_t ancestor_count) noexcept {
 ColumnStripLayout LayoutColumnStrip(const D2D1_RECT_F& pane_bounds, float top,
                                     size_t ancestor_count, bool child_slot,
                                     const std::vector<float>& widths_dip,
-                                    float scale, float scroll_from_right_dip,
-                                    bool preview_slot) noexcept {
+                                    float scale, float scroll_from_right_dip) noexcept {
     ColumnStripLayout out;
     out.body = pane_bounds;
     const float unit = std::max(0.5f, scale);
@@ -33,10 +32,11 @@ ColumnStripLayout LayoutColumnStrip(const D2D1_RECT_F& pane_bounds, float top,
     float content = 0.0f;
     for (size_t k = 1; k <= ancestor_count; ++k) content += ColumnStripWidthDip(widths_dip, k) * unit;
 
-    // The trailing column (the selected folder's contents, or the selected
-    // file's preview) comes before the ancestors; it narrows to fit.
+    // The selected folder's contents come before the ancestors; the column
+    // narrows to fit. A selected file adds nothing: its properties live in
+    // the details panel.
     float trail_w = 0.0f;
-    if (child_slot || preview_slot) {
+    if (child_slot) {
         const float w = ColumnStripWidthDip(widths_dip, 0) * unit;
         if (body_w + w <= width) trail_w = w;
         else if (width - body_w >= min_w) trail_w = width - body_w;
@@ -64,10 +64,8 @@ ColumnStripLayout LayoutColumnStrip(const D2D1_RECT_F& pane_bounds, float top,
         }
     }
     if (trail_w > 0.0f) {
-        // A preview fills the rest of the pane; a folder column keeps its width.
-        const float right = child_slot ? out.body.right + trail_w : pane_bounds.right;
-        out.columns.push_back({child_slot ? kColumnStripChildId : kColumnStripPreviewId,
-                               D2D1::RectF(out.body.right, top, right, bottom)});
+        out.columns.push_back({kColumnStripChildId,
+                               D2D1::RectF(out.body.right, top, out.body.right + trail_w, bottom)});
     }
     return out;
 }

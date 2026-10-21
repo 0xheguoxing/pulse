@@ -30,19 +30,14 @@ void FillColumnStripView(ui::ColumnStripView& out, const Tab& tab) {
                    state.for_path == tab.current_path;
     out.ancestors.clear();
     out.has_child = false;
-    out.has_preview = false;
     if (!out.eligible) return;
     out.ancestors.reserve(state.ancestors.size());
     for (const ColumnStripColumn& column : state.ancestors) out.ancestors.push_back(ToView(column));
-    // A selected folder gets a column of its contents, a selected file its
-    // preview.
+    // Only a selected folder gets a column; file properties live in the
+    // details panel.
     if (!state.child.path.empty()) {
         out.has_child = true;
         out.child = ToView(state.child);
-    } else if (tab.SelectedCount() == 1 && tab.selected_index >= 0 &&
-               tab.selected_index < static_cast<int>(tab.EntryCount())) {
-        const fs::DirEntry entry = tab.EntryAt(static_cast<size_t>(tab.selected_index));
-        out.has_preview = !entry.is_dir && !entry.change_record_only;
     }
 }
 

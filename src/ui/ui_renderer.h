@@ -174,8 +174,6 @@ struct ColumnStripView {
     // selection show no extra column.
     bool has_child = false;
     ColumnStripColumnView child;
-    // The single selected item is a file: its preview follows the list.
-    bool has_preview = false;
     std::vector<float> widths_dip; // see ColumnStripWidthDip
     float scroll_from_right_dip = 0.0f; // ancestor strip scroll (0 = parent visible)
     int resize_column = -1;       // column id whose divider is being dragged
@@ -2128,7 +2126,6 @@ private:
     void DrawColumnStripColumn(const WindowViewModel& vm, const PaneViewModel& pane,
                                const ColumnStripColumnView& column, int column_id,
                                const D2D1_RECT_F& rc, int pane_index, const Theme& theme);
-    void DrawColumnStripPreview(const PaneViewModel& pane, const D2D1_RECT_F& rc, const Theme& theme);
     void DrawPaneHeaderIcon(const D2D1_RECT_F& rc, PaneHeaderIcon icon, const D2D1_COLOR_F& color);
     // label_at: its left edge is where the size label ends, its middle the label's.
     void DrawPaneSizeSlider(const PaneViewModel& pane, int pane_index, const D2D1_RECT_F& slider,

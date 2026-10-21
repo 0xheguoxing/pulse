@@ -145,7 +145,7 @@ ColumnStripLayout MainRenderer::ColumnStripGeometry(const PaneViewModel& vm,
     }
     return LayoutColumnStrip(pane_bounds, pane_bounds.top + pane_header_height_,
                              cs.ancestors.size(), cs.has_child, cs.widths_dip, scale_,
-                             cs.scroll_from_right_dip, cs.has_preview && !cs.has_child);
+                             cs.scroll_from_right_dip);
 }
 
 D2D1_RECT_F MainRenderer::PaneBodyBounds(const PaneViewModel& vm,
@@ -286,9 +286,7 @@ void MainRenderer::DrawColumnStrip(const WindowViewModel& vm, const PaneViewMode
     for (const ColumnStripSlot& slot : strip.columns) {
         const bool ancestor = IsAncestorId(slot.id);
         if (ancestor) dc->PushAxisAlignedClip(strip.viewport, D2D1_ANTIALIAS_MODE_ALIASED);
-        if (slot.id == kColumnStripPreviewId) {
-            DrawColumnStripPreview(pane, slot.rect, theme);
-        } else if (const ColumnStripColumnView* column = StripColumn(cs, slot.id)) {
+        if (const ColumnStripColumnView* column = StripColumn(cs, slot.id)) {
             DrawColumnStripColumn(vm, pane, *column, slot.id, slot.rect, pane_index, theme);
         }
         if (ancestor) dc->PopAxisAlignedClip();
@@ -487,93 +485,6 @@ void MainRenderer::DrawColumnStripColumn(const WindowViewModel& vm, const PaneVi
         FillRoundedRect(dc, brScrollbar_.get(), rc.right - bar_w - 3.0f * scale_, thumb_y,
                         bar_w, thumb_h, bar_w * 0.5f);
     }
-    dc->PopAxisAlignedClip();
-}
-
-// The single selected file, like Finder's preview column: a large
-// thumbnail (its icon until one is ready, or when there is none), the name
-// and the type / size / date facts under it.
-void MainRenderer::DrawColumnStripPreview(const PaneViewModel& pane, const D2D1_RECT_F& rc,
-                                          const Theme& theme) {
-    if (pane.selected_count != 1 || pane.selected_index < 0) return;
-    const size_t count = pane.snapshot ? pane.snapshot->size() : pane.entries.size();
-    if (static_cast<size_t>(pane.selected_index) >= count) return;
-    const ListEntryView& e = MakeVisibleEntry(pane, static_cast<size_t>(pane.selected_index));
-    if (e.is_dir) return;
-    ID2D1DeviceContext* dc = compositor_->Dc();
-    IDWriteFactory2* factory = compositor_->DwriteFactory();
-    const float pad = 16.0f * scale_;
-    const float inner_w = rc.right - rc.left - 2.0f * pad;
-    if (inner_w < 48.0f * scale_ || rc.bottom <= rc.top) return;
-    dc->PushAxisAlignedClip(rc, D2D1_ANTIALIAS_MODE_ALIASED);
-
-    const float top = rc.top + column_header_height_ + 8.0f * scale_;
-    const float art = std::min({inner_w, 240.0f * scale_,
-                                std::max(64.0f * scale_, (rc.bottom - top) * 0.45f)});
-    const float cx = (rc.left + rc.right) * 0.5f;
-    const D2D1_RECT_F dest = D2D1::RectF(std::round(cx - art * 0.5f), std::round(top),
-                                         std::round(cx + art * 0.5f), std::round(top + art));
-    const uint32_t pixels = art <= 128.0f ? 128u : art <= 256.0f ? 256u : 512u;
-    D2D1_RECT_F drawn = dest;
-    const PreviewDrawResult result = e.record_only || e.cloud_recall
-        ? PreviewDrawResult::Failed
-        : thumbnail_cache_.DrawGridThumbnail(dc, dest, e.path, e.attrs, pixels, pane.view_generation,
-                                             e.modified_value, e.size_value, 1.0f, true, &drawn);
-    if (result != PreviewDrawResult::Bitmap) {
-        const float icon = std::min(art, 96.0f * scale_);
-        const float ix = std::round(cx - icon * 0.5f);
-        const float iy = std::round((dest.top + dest.bottom - icon) * 0.5f);
-        const D2D1_RECT_F icon_rc = D2D1::RectF(ix, iy, ix + icon, iy + icon);
-        if (ID2D1Bitmap* bitmap = icon_cache_.BitmapFor(e.path, e.name, false, e.attrs, icon / scale_)) {
-            dc->DrawBitmap(bitmap, icon_rc, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-        } else {
-            DrawFileIcon(ix, iy, icon, theme, 1.0f);
-        }
-    }
-
-    float y = dest.bottom + 12.0f * scale_;
-    const std::wstring& name = e.alias.empty() ? e.name : e.alias;
-    const float name_max_h = 3.0f * 20.0f * scale_;
-    ComPtr<IDWriteTextLayout> layout;
-    if (factory && compositor_->FileNameFormat() &&
-        SUCCEEDED(factory->CreateTextLayout(name.c_str(), static_cast<UINT32>(name.size()),
-                                            compositor_->FileNameFormat(), inner_w, name_max_h,
-                                            &layout))) {
-        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-        layout->SetWordWrapping(DWRITE_WORD_WRAPPING_EMERGENCY_BREAK);
-        DWRITE_TEXT_METRICS metrics{};
-        layout->GetMetrics(&metrics);
-        MakeBrush(dc, theme.text, brText_);
-        dc->PushAxisAlignedClip(D2D1::RectF(rc.left + pad, y, rc.right - pad, y + name_max_h),
-                                D2D1_ANTIALIAS_MODE_ALIASED);
-        dc->DrawTextLayout({rc.left + pad, y}, layout.get(), brText_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-        dc->PopAxisAlignedClip();
-        y += std::min(metrics.height, name_max_h) + 14.0f * scale_;
-    }
-
-    const std::pair<std::wstring, std::wstring> facts[] = {
-        {l10n::Get(l10n::StringId::ColumnType), e.type_text},
-        {l10n::Get(l10n::StringId::ColumnSize), e.size_text},
-        {pane.date_column_label.empty() ? l10n::Get(l10n::StringId::ColumnModified) : pane.date_column_label,
-         e.date_text}};
-    const float fact_h = 24.0f * scale_;
-    MakeBrush(dc, theme.stroke_divider, brAccent_);
-    dc->FillRectangle(D2D1::RectF(rc.left + pad, y - 6.0f * scale_, rc.right - pad,
-                                  y - 6.0f * scale_ + std::max(1.0f, scale_)), brAccent_.get());
-    for (const auto& [label, value] : facts) {
-        if (value.empty()) continue;
-        MakeBrush(dc, theme.text_secondary, brTextSecondary_);
-        DrawTextEndEllipsis(dc, factory, compositor_->SmallFormat(), brTextSecondary_.get(), label,
-                            rc.left + pad, y, inner_w * 0.4f, fact_h);
-        const float value_w = std::min(inner_w * 0.6f - 8.0f * scale_,
-                                       MeasureTextWidth(factory, compositor_->SmallFormat(), value) + 1.0f);
-        MakeBrush(dc, theme.text, brText_);
-        DrawTextEndEllipsis(dc, factory, compositor_->SmallFormat(), brText_.get(), value,
-                            rc.right - pad - value_w, y, value_w, fact_h);
-        y += fact_h;
-    }
-    MakeBrush(dc, theme.text, brText_);
     dc->PopAxisAlignedClip();
 }
 

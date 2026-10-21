@@ -31,11 +31,6 @@ int main() {
             const auto root = LayoutColumnStrip(bounds, 80 * scale, 0, false, {}, scale);
             check(root.active && root.body.left == bounds.left && root.columns.empty(),
                   "a root folder alone is one column at the left");
-            const auto preview = LayoutColumnStrip(bounds, 80 * scale, 1, false, {}, scale, 0.0f, true);
-            check(preview.columns.empty() ||
-                      (preview.columns.back().id != kColumnStripPreviewId ||
-                       std::abs(preview.columns.back().rect.right - bounds.right) < .01f),
-                  "the preview fills the rest of the pane");
         }
     }
     return failures ? 1 : 0;
