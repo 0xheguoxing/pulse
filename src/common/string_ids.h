@@ -2597,5 +2597,6 @@
 #define IDS_AI_PACK_REMOVE_MESSAGE                                                       3806
 #define IDS_AI_PACK_REMOVE_FAILED                                                        3807
 #define IDS_AI_PACK_REMOVED                                                              3808
+#define IDS_AI_UNDO_CREATE_ZIP                                                           3809
 
 #endif  // PULSE_STRING_IDS_H

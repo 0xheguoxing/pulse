@@ -1197,6 +1197,13 @@ if(TARGET pulse)
     add_dependencies(pulse_ai_mcp_test pulse)
 endif()
 
+# The AI tools' file system side (list, properties, search planning, zip) on
+# fixtures under bench_data.
+add_executable(pulse_ai_tools_test src/bench/ai_tools_test.cpp src/app/ai_tools_fs.cpp src/app/zip_compress.cpp
+    src/common/json_value.cpp)
+target_include_directories(pulse_ai_tools_test PRIVATE "${CMAKE_BINARY_DIR}/generated")
+target_link_libraries(pulse_ai_tools_test PRIVATE shell32 ole32 uuid version)
+
 add_executable(pulse_office_ooxml_test src/bench/office_ooxml_test.cpp src/index/office_ooxml.cpp)
 target_include_directories(pulse_office_ooxml_test PRIVATE src)
 target_link_libraries(pulse_office_ooxml_test PRIVATE ole32 uuid xmllite)

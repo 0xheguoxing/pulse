@@ -2582,6 +2582,7 @@ BEGIN
     IDS_AI_PACK_REMOVE_MESSAGE "将删除 Pulse.AI.exe，AI 与 MCP 随之停用。你的设置和活动记录会保留。"
     IDS_AI_PACK_REMOVE_FAILED "无法卸载：AI 增强包正在使用中。请先断开 AI 应用，再重试。"
     IDS_AI_PACK_REMOVED "AI 增强包已卸载"
+    IDS_AI_UNDO_CREATE_ZIP "新建压缩包（{client}）"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5163,6 +5164,7 @@ BEGIN
     IDS_AI_PACK_REMOVE_MESSAGE "Pulse.AI.exe is deleted and AI and MCP stop working. Your settings and activity log are kept."
     IDS_AI_PACK_REMOVE_FAILED "Couldn't remove it: the AI pack is in use. Disconnect the AI app and try again."
     IDS_AI_PACK_REMOVED "AI pack removed"
+    IDS_AI_UNDO_CREATE_ZIP "New zip by {client}"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

@@ -6,15 +6,17 @@
 // thread: the pack check reads and hashes Pulse.AI.exe, which must not happen
 // on the UI thread.
 //
-// M3 registers no tools yet (M4 does), so every call answers "unsupported";
-// Create would be refused because there is no confirmation UI yet (M5).
+// The tools are ai_tools.h's first batch. Until the confirmation UI (M5),
+// Create calls run only where an always-allow rule in ai.json covers them.
 #pragma once
+#include "ai_tools.h"
 
 namespace pulse::app::ai {
 
 // Starts the broker in the background if the pack and ai.json allow it. Does
 // nothing when it already runs or is starting. Also prunes the activity log.
-void StartAiServiceAsync();
+// `host` (Pulse's host window, operations, index) outlives StopAiService.
+void StartAiServiceAsync(const AiToolsHost& host);
 
 // Stops the broker and waits for its threads: running calls are cancelled and
 // the pipe closes. Safe to call when nothing runs. Called on the way out.

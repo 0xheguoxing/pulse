@@ -78,6 +78,8 @@ bool SameFolder(const std::wstring& a, const std::wstring& b) {
                                   path::StripExtendedPathPrefix(fs::NormalizePath(b)));
 }
 
+} // namespace
+
 // Adds `name` to the selection instead of replacing it: the shell sends one
 // SelectItem per item when a program selects several files.
 void AddNameToSelection(AppState& s, app::Tab& tab, const std::wstring& name) {
@@ -96,8 +98,6 @@ void AddNameToSelection(AppState& s, app::Tab& tab, const std::wstring& name) {
         break;
     }
 }
-
-} // namespace
 
 void SyncShellWindows(AppState& s) {
     SyncExplorerTakeover(s);

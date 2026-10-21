@@ -2592,6 +2592,7 @@ enum class StringId : UINT {
     AiPackRemoveMessage = IDS_AI_PACK_REMOVE_MESSAGE,
     AiPackRemoveFailed = IDS_AI_PACK_REMOVE_FAILED,
     AiPackRemoved = IDS_AI_PACK_REMOVED,
+    AiUndoCreateZip = IDS_AI_UNDO_CREATE_ZIP,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

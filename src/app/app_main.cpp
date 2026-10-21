@@ -80,6 +80,8 @@
 #include "tray_controller.h"
 #include "ai_launcher.h"
 #include "ai_service.h"
+#include "ai_tools.h"
+#include "ai_tools_ui.h"
 #include "global_search_controller.h"
 #include "keymap_input.h"
 #include "shortcut_page.h"
@@ -1519,7 +1521,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (init_core && !s->isolatedTest && !s->shot.active && !s->menushot) {
             app::CleanupAbandonedUpdateStagesAsync();
             // AI clients' tool broker, when the AI pack and ai.json allow it (worker thread).
-            pulse::app::ai::StartAiServiceAsync();
+            pulse::app::ai::StartAiServiceAsync({s->core.host.Hwnd(), &s->core.ops, &s->core.index});
         }
         s->startupComplete = true;
         s->lastFrameTime = std::chrono::steady_clock::now();
@@ -2744,6 +2746,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_INDEX_SEARCH: {
         if (!s) return 0;
         const uint32_t id = static_cast<uint32_t>(wParam);
+        if (pulse::app::ai::ClaimAiIndexResult(id)) return 0;   // an AI client's search (ai_tools.h)
         index::SearchResult result;
         if (!s->index.TakeResult(id, result)) return 0;
         AcceptIndexProviderResult(SearchResultWindow(*s, id), id, std::move(result), false);
@@ -3796,6 +3799,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     const bool host_created = state.core.host.Create(hInstance,
         [&state](HWND host, UINT message, WPARAM wParam, LPARAM lParam) -> std::optional<LRESULT> {
             AppState* const target = state.core.windows.MostRecent();
+            if (message == WM_AI_UI_TASK) {
+                // An AI tool reading or showing something in a window (ai_tools_ui.h).
+                pulse::app::ai::HandleAiUiTask(target, lParam);
+                return 0;
+            }
             if (app::IsHostRoutedMessage(message))
                 return target ? SendMessageW(target->hwnd, message, wParam, lParam) : 0;
             if (const auto kind = app::ClassifySystemBroadcast(message, wParam, lParam);

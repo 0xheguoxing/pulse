@@ -2604,3 +2604,4 @@ AiPackRemoveTitle	IDS_AI_PACK_REMOVE_TITLE	3805	卸载 AI 增强包？	Remove th
 AiPackRemoveMessage	IDS_AI_PACK_REMOVE_MESSAGE	3806	将删除 Pulse.AI.exe，AI 与 MCP 随之停用。你的设置和活动记录会保留。	Pulse.AI.exe is deleted and AI and MCP stop working. Your settings and activity log are kept.	
 AiPackRemoveFailed	IDS_AI_PACK_REMOVE_FAILED	3807	无法卸载：AI 增强包正在使用中。请先断开 AI 应用，再重试。	Couldn't remove it: the AI pack is in use. Disconnect the AI app and try again.	無法解除安裝：AI 增強包正在使用中。請先中斷 AI 應用程式的連線，再重試。
 AiPackRemoved	IDS_AI_PACK_REMOVED	3808	AI 增强包已卸载	AI pack removed	
+AiUndoCreateZip	IDS_AI_UNDO_CREATE_ZIP	3809	新建压缩包（{client}）	New zip by {client}	新增壓縮檔（{client}）

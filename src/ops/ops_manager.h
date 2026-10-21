@@ -349,6 +349,18 @@ public:
     std::wstring UndoLabel() const;   // "撤销移动 xxx" etc; empty if none
     void Undo();
 
+    // An item made outside the queue (an AI client's zip, ai_tools.h): one
+    // undo step like 新建 (undo recycles it), and a completion so the folder
+    // refreshes. Not recorded while an update is being prepared.
+    void RecordExternalCreate(const std::wstring& path, uint64_t group, std::wstring label);
+    // The group of the newest undo step; 0 when there is none or it has none.
+    uint64_t TopUndoGroup() const;
+    enum class GroupUndo { Started, NotOnTop, Pending, Unavailable };
+    // Undo only when the newest step belongs to `group`, decided under the
+    // same lock as the undo itself, so a step the user adds meanwhile is never
+    // undone instead. Pending: part of the group is still queued.
+    GroupUndo UndoGroup(uint64_t group);
+
     OpStatus Status() const;
     std::vector<CompletedOperation> DrainCompletions();
     std::vector<FinishedTask> DrainFinishedTasks();
@@ -418,6 +430,8 @@ private:
     void NotifyStatusChanged();
     void PushUndo(const OpRequest& req, uint64_t task_id,
                   const std::vector<std::wstring>* actual_destinations = nullptr);
+    // Undo's body; with `required_group` only when the newest step is in it.
+    GroupUndo UndoNewest(const uint64_t* required_group);
     void LoadRecoveryJournal();
     void PersistJournal();
     std::wstring JournalJsonLocked() const;

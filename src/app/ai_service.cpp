@@ -17,6 +17,7 @@ struct Service {
     std::thread starter;
     std::unique_ptr<ToolBroker> broker;
     std::shared_ptr<const Settings> settings;    // what the broker's callbacks read
+    AiToolsHost host;
     bool starting = false;
     bool stopping = false;
 };
@@ -38,7 +39,7 @@ bool ApproveClient(const std::wstring& client) {
     for (const ClientRecord& record : settings->clients)
         if (record.name == client) return record.grant != ClientGrant::Denied;
     // Not seen before. M5 asks in Pulse on the first connection; until then a
-    // verified Pulse.AI.exe may connect, and there are no tools that change files.
+    // verified Pulse.AI.exe may connect: Create still needs an always-allow rule.
     return true;
 }
 
@@ -66,14 +67,17 @@ void StartNow(Service& s) {
     options.approve_client = ApproveClient;
     options.always_allowed = AlwaysAllowed;
     options.activity_directory = activity;
-    // No confirm callback until the confirmation UI (M5): Create is refused.
+    // No confirm callback until the confirmation UI (M5): Create runs only
+    // under an always-allow rule.
     auto broker = std::make_unique<ToolBroker>(std::move(options));
-    // M4 registers the tools here.
+    AiToolsHost host;
     {
         std::lock_guard lock(s.mu);
         if (s.stopping) return;
         s.settings = settings;
+        host = s.host;
     }
+    RegisterAiTools(*broker, host);
     DWORD error = ERROR_SUCCESS;
     if (!broker->Start(error)) {
         Event("ai_service_start_failed", {{"error", static_cast<uint64_t>(error)}},
@@ -91,10 +95,11 @@ void StartNow(Service& s) {
 
 } // namespace
 
-void StartAiServiceAsync() {
+void StartAiServiceAsync(const AiToolsHost& host) {
     Service& s = Get();
     std::lock_guard lock(s.mu);
     if (s.broker || s.starting) return;
+    s.host = host;
     if (s.starter.joinable()) s.starter.join();   // a finished earlier attempt
     s.starting = true;
     s.stopping = false;
