@@ -78,6 +78,8 @@
 #include "window_merge.h"
 #include "reopen_closed.h"
 #include "tray_controller.h"
+#include "ai_launcher.h"
+#include "ai_service.h"
 #include "global_search_controller.h"
 #include "keymap_input.h"
 #include "shortcut_page.h"
@@ -807,6 +809,8 @@ static void HandOffAtExit(AppState& s, HWND hwnd) {
     }
     s.searchHistoryWriter.Flush();
     const uint64_t save_ms = timer.Lap();
+    // AI calls end before the operations they could start (cancelled, pipe closed).
+    pulse::app::ai::StopAiService();
     s.ops.Stop();
     ops::ShutdownElevatedTransferHelper();
     const uint64_t ops_ms = timer.Lap();
@@ -1512,8 +1516,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
         // Settings have been loaded (or their own load_failed guard is set),
         // and the saved layouts/undo are now represented by live models.
-        if (init_core && !s->isolatedTest && !s->shot.active && !s->menushot)
+        if (init_core && !s->isolatedTest && !s->shot.active && !s->menushot) {
             app::CleanupAbandonedUpdateStagesAsync();
+            // AI clients' tool broker, when the AI pack and ai.json allow it (worker thread).
+            pulse::app::ai::StartAiServiceAsync();
+        }
         s->startupComplete = true;
         s->lastFrameTime = std::chrono::steady_clock::now();
         s->renderer.SetDetailsPanelVisible(s->showDetailsPanel);
@@ -3442,6 +3449,9 @@ int RunQuickPreviewAuditTest();
 #endif
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
+    // pulse.exe --mcp-stdio, started by AI clients: only the launcher, before
+    // anything of the app (no window, no D2D, no single instance).
+    if (pulse::app::ai::IsMcpStdioLaunch(__argc, __wargv)) return pulse::app::ai::RunMcpStdioLauncher(hInstance);
 #ifdef PULSE_WITH_SELFTEST
     std::optional<CLSID> tag_com_audit_class;
     if (!app::shell_tags::PrepareCommandAudit(__argc, __wargv, tag_com_audit_class)) return 2;

@@ -43,6 +43,11 @@ bool IsAiHostProcess(DWORD process_id);
 // The same for the client of a connected named pipe (the broker's verify_peer).
 bool IsAiHostPipeClient(HANDLE pipe);
 
+// The tool broker's pipe for this session, user and LOCALAPPDATA
+// (ai_tool_protocol.h); empty when the user or LOCALAPPDATA is unknown. The
+// broker in pulse.exe and the --mcp-stdio launcher compute the same name.
+std::wstring AiToolPipeName();
+
 // Drops the cached verification (after an install), releasing the held file.
 void ForgetVerifiedAiPack();
 

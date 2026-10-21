@@ -580,8 +580,10 @@ target_link_libraries(pulse_content PRIVATE advapi32 shlwapi ole32 shell32 bcryp
 pulse_add_version_resource(pulse_content "Pulse content search agent" "Pulse.Content" "Pulse.Content.exe")
 
 # ---- Pulse.AI.exe: MCP server and AI assistant host, shipped in the AI enhancement pack ----
-add_executable(pulse_ai src/ai_host/main.cpp)
+add_executable(pulse_ai src/ai_host/main.cpp src/ai_host/mcp_server.cpp src/ai_host/mcp_tools.cpp
+    src/ai_host/broker_client.cpp src/common/json_value.cpp)
 target_include_directories(pulse_ai PRIVATE "${CMAKE_BINARY_DIR}/generated")
+target_link_libraries(pulse_ai PRIVATE advapi32)
 set_target_properties(pulse_ai PROPERTIES OUTPUT_NAME "Pulse.AI")
 pulse_add_version_resource(pulse_ai "Pulse AI and MCP host" "Pulse.AI" "Pulse.AI.exe")
 
@@ -1180,6 +1182,20 @@ target_compile_definitions(pulse_ai_broker_test PRIVATE PULSE_AI_PACK_NO_CATALOG
 target_include_directories(pulse_ai_broker_test PRIVATE "${CMAKE_BINARY_DIR}/generated")
 target_link_libraries(pulse_ai_broker_test PRIVATE pulse_runtime_log bcrypt cabinet shell32 user32 winhttp crypt32 advapi32)
 add_dependencies(pulse_ai_broker_test pulse_ai)
+
+# Pulse.AI.exe --mcp and pulse.exe --mcp-stdio over real pipes, against a
+# broker in the test; installs this build's real AI pack into a scratch
+# LOCALAPPDATA for the launcher, so it needs pulse, pulse_ai and the pack.
+add_executable(pulse_ai_mcp_test src/bench/ai_mcp_test.cpp src/app/ai_broker.cpp src/app/ai_settings.cpp
+    src/app/ai_activity_log.cpp src/app/content_pack.cpp src/app/pack_installer.cpp src/app/update_installer.cpp
+    src/app/update_transport.cpp src/app/update_download_cleanup.cpp src/common/json_value.cpp)
+target_compile_definitions(pulse_ai_mcp_test PRIVATE PULSE_CONTENT_PACK_NO_CATALOG=1)
+target_include_directories(pulse_ai_mcp_test PRIVATE "${CMAKE_BINARY_DIR}/generated")
+target_link_libraries(pulse_ai_mcp_test PRIVATE pulse_runtime_log bcrypt cabinet shell32 user32 winhttp crypt32 advapi32)
+add_dependencies(pulse_ai_mcp_test pulse_ai pulse_ai_pack)
+if(TARGET pulse)
+    add_dependencies(pulse_ai_mcp_test pulse)
+endif()
 
 add_executable(pulse_office_ooxml_test src/bench/office_ooxml_test.cpp src/index/office_ooxml.cpp)
 target_include_directories(pulse_office_ooxml_test PRIVATE src)

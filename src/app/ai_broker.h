@@ -43,7 +43,7 @@ struct ToolOutcome {
     json::Value data;
     ToolError error;
     bool changed_files = false;
-    uint64_t undo_group = 0;   // remembered as an AI group when ok and non-zero
+    uint64_t undo_group = 0;   // non-zero: remembered as an AI group (also after a late timeout)
     static ToolOutcome Fail(std::string code, std::string message, bool retryable = false) {
         ToolOutcome o;
         o.ok = false;

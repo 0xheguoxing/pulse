@@ -94,7 +94,8 @@ int wmain(int argc, wchar_t** argv) {
     // --- the Pulse.AI.exe shell built beside this test.
     const std::wstring host = ModuleDirectory() + L"\\Pulse.AI.exe";
     Check(Run(L"\"" + host + L"\" --version") == 0, "Pulse.AI.exe --version exits 0");
-    Check(Run(L"\"" + host + L"\" --mcp") == ERROR_CALL_NOT_IMPLEMENTED, "Pulse.AI.exe --mcp: not implemented yet");
+    Check(Run(L"\"" + host + L"\" --mcp") == ERROR_INVALID_PARAMETER, "Pulse.AI.exe --mcp needs --server");
+    Check(Run(L"\"" + host + L"\" --agent") == ERROR_CALL_NOT_IMPLEMENTED, "Pulse.AI.exe --agent: not implemented yet");
     Check(Run(L"\"" + host + L"\"") == ERROR_INVALID_PARAMETER, "Pulse.AI.exe without a mode is refused");
 
     // --- in the build directory the sibling host counts as bundled.

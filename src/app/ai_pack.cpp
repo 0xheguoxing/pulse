@@ -2,6 +2,7 @@
 #include "pack_installer.h"
 #include "../common/preview_packs.h"
 #include "../common/current_user_security.h"
+#include "../ipc/ai_tool_protocol.h"
 #include <mutex>
 #include <vector>
 
@@ -129,6 +130,16 @@ bool IsAiHostProcess(DWORD process_id) {
     if (cache.held.empty()) return !BundledHost().empty();
     BY_HANDLE_FILE_INFORMATION held{};
     return FileId(cache.held.front(), held) && SameFile(running, held);
+}
+
+std::wstring AiToolPipeName() {
+    DWORD session = 0;
+    if (!ProcessIdToSessionId(GetCurrentProcessId(), &session)) return {};
+    const std::wstring sid = CurrentUserSidString();
+    wchar_t local[MAX_PATH]{};
+    const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
+    if (sid.empty() || n == 0 || n >= MAX_PATH) return {};
+    return ipc::ai::ToolPipeName(session, sid, std::wstring_view(local, n));
 }
 
 bool IsAiHostPipeClient(HANDLE pipe) {
