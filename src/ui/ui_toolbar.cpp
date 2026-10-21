@@ -61,11 +61,13 @@ struct GlidePlate {
 // app name, so a pin keeps its state when it moves along the row. Nothing
 // pops on the first paint.
 constexpr float kPinPopFrom = 0.55f;
-// Toolbar icons (统一绘制): command icons in a 20 DIP box, icons inside a
-// field or chip at 16, chevrons and x at 12; every one with this line weight.
-constexpr float kIconStrokeDip = pulse::ui::command_icons::kStroke * 20.0f / pulse::ui::command_icons::kCanvas;
-constexpr float kIconField = 0.8f;
-constexpr float kIconSmall = 0.6f;
+// Toolbar icons (统一绘制): command icons in an 18 DIP box, icons inside a
+// field or chip a little smaller, chevrons and x smaller still; every one with
+// this line weight.
+constexpr float kIconBoxDip = 18.0f;
+constexpr float kIconStrokeDip = 1.4f;
+constexpr float kIconField = 0.85f;
+constexpr float kIconSmall = 0.65f;
 constexpr float kToggleTurnMs = 300.0f;
 constexpr float kToggleTurnDeg = -50.0f;
 
@@ -362,8 +364,12 @@ ToolbarSelectionChip MainRenderer::SelectionChipAt(const ToolbarLayout& layout, 
 }
 void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme) {
     auto* dc = compositor_->Dc();
-    struct IconScope { float* v; ~IconScope() { *v=0.0f; } } icon_scope{&icon_stroke_px_};
+    struct IconScope {
+        float* stroke; float* box;
+        ~IconScope() { *stroke=0.0f; *box=20.0f; }
+    } icon_scope{&icon_stroke_px_,&icon_box_dip_};
     icon_stroke_px_=kIconStrokeDip*scale_;
+    icon_box_dip_=kIconBoxDip;
     const float left = EffectiveSidebarWidth(rect.right);
     const bool compact = rect.right-left < 600*scale_;
     const auto layout = ToolbarLayoutAt(rect.right,NewButtonWidthPx(compact),vm.pane.filter_expand);
@@ -416,7 +422,11 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
             button.bounds = r; button.glyph = nav_glyphs[i];
             button.state.enabled = enabled;
             button.state.hovered = !plates && enabled && IsHovered(vm, nav_hits[i]);
-            painter_.DrawCommandButton(button);
+            // DrawCommandButton's look, with the toolbar's icon size.
+            if (button.state.hovered)
+                painter_.FillRoundedRect(r, theme.radius_control * scale_, theme.fill_hover);
+            DrawIconText(r.left, r.top, r.right - r.left, r.bottom - r.top, nav_glyphs[i], L"",
+                         enabled ? theme.text_secondary : theme.text_disabled);
         }
         // Breadcrumb address bar: segments clickable, empty area -> edit mode.
         D2D1_RECT_F addrRc = AddressBarRect(rect.right);
@@ -597,6 +607,7 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     create.drop_down=true;
     // This PC, a server's shares, Pulse views: nothing can be created there.
     create.state.enabled=vm.pane.can_create;
+    create.skip_glyph=true;   // drawn below at the toolbar's icon size
     painter_.DrawButton(create);
     const bool newMainHot=vm.pane.can_create && IsHovered(vm,HitTestResult::NewButton);
     const bool newArrowHot=IsHovered(vm,HitTestResult::NewButtonArrow);
@@ -607,6 +618,14 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         create.state.hovered=true;
         painter_.DrawButton(create);
         dc->PopAxisAlignedClip();
+    }
+    {
+        // The painter's primary-button glyph colour, in its glyph slot.
+        const D2D1_COLOR_F ink=IsHighContrast() ? (vm.pane.can_create ? theme.accent_text : theme.text_disabled)
+            : !vm.pane.can_create ? D2D1::ColorF(1.0f,1.0f,1.0f,vm.dark ? 0.43f : 0.90f)
+            : vm.dark ? D2D1::ColorF(0.0f,0.0f,0.0f,1.0f) : D2D1::ColorF(1.0f,1.0f,1.0f,1.0f);
+        DrawIconText(layout.create.left+8*scale_,layout.create.top,20*scale_,layout.create.bottom-layout.create.top,
+                     NewButtonGlyph(),L"",ink);
     }
     if (newArrow.right > newArrow.left && newArrow.left > layout.create.left) {
         auto divider=theme.accent_text;
@@ -941,8 +960,12 @@ FavoritesBarLayout MainRenderer::FavoritesBarLayoutAt(const WindowViewModel& vm,
 }
 
 void MainRenderer::DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme) {
-    struct IconScope { float* v; ~IconScope() { *v=0.0f; } } icon_scope{&icon_stroke_px_};
+    struct IconScope {
+        float* stroke; float* box;
+        ~IconScope() { *stroke=0.0f; *box=20.0f; }
+    } icon_scope{&icon_stroke_px_,&icon_box_dip_};
     icon_stroke_px_=kIconStrokeDip*scale_;
+    icon_box_dip_=kIconBoxDip;
     const float bottom=title_bar_height_+toolbar_height_;
     const float top=bottom-kFavoritesBarHeightDip*scale_;
     if (vm.favorites_bar.empty()) {

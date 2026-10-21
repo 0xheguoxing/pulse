@@ -767,7 +767,7 @@ void MainRenderer::DrawIconText(float x, float y, float w, float h,
         if (!paneHeaderStroke_.get()) command_icons::CreateStrokeStyle(dc, &paneHeaderStroke_);
         MakeBrush(dc, color, brText_);
         auto bounds = command_icons::CenteredBounds(D2D1::RectF(x, y, x + w, y + h),
-                                                     20.0f * scale_ * size_factor);
+                                                     icon_box_dip_ * scale_ * size_factor);
         float width = command_icons::kStroke;
         if (icon_stroke_px_ > 0.0f) {
             // Toolbar: the same line weight at every size (chevrons and x a

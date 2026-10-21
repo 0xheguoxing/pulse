@@ -31,8 +31,8 @@ void MainRenderer::DrawPaneHeaderIcon(const D2D1_RECT_F& rc, PaneHeaderIcon icon
     case PaneHeaderIcon::Wall: break;  // drawn below
     }
     MakeBrush(dc, color, brText_);
-    // In the toolbar the layout icons stand with the 20 DIP command icons.
-    const float box_dip = icon_stroke_px_ > 0.0f ? 20.0f : 18.0f;
+    // In the toolbar the layout icons stand with the command icons.
+    const float box_dip = icon_stroke_px_ > 0.0f ? icon_box_dip_ : 18.0f;
     D2D1_RECT_F bounds = command_icons::CenteredBounds(rc, box_dip * scale_);
     if (icon_stroke_px_ > 0.0f) {
         const float side = bounds.right - bounds.left;
