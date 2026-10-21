@@ -1044,7 +1044,105 @@ TreeMoreLayout LayoutTreeMore(const DetailsTreeRow& row, const D2D1_RECT_F& cell
 
 namespace {
 constexpr float kCheckGutterDip = 24.0f;
-constexpr float kCheckBoxDip = 18.0f;  // Painter::DrawCheckBox's indicator
+constexpr float kCheckBoxDip = 16.0f;  // as large as a Details icon, no larger
+
+void EnsureRoundCapStroke(ID2D1DeviceContext* dc, ComPtr<ID2D1StrokeStyle>& stroke) {
+    if (stroke.get() || !dc) return;
+    ID2D1Factory* factory = nullptr;
+    dc->GetFactory(&factory);
+    if (!factory) return;
+    D2D1_STROKE_STYLE_PROPERTIES props{};
+    props.startCap = D2D1_CAP_STYLE_ROUND;
+    props.endCap = D2D1_CAP_STYLE_ROUND;
+    factory->CreateStrokeStyle(props, nullptr, 0, &stroke);
+    factory->Release();
+}
+
+// Item check box (Pulse_复选框重构方案.html, A): a hairline box that stays
+// transparent until checked; checked and mixed fill with the accent and carry
+// a round-capped tick or dash. Antialiased per primitive with the box edges on
+// whole device pixels and the hairline centred on a pixel row, so it stays
+// crisp. state: 0 off, 1 checked, 2 mixed. progress draws the tick in (0..1).
+void DrawItemCheckBox(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* brush, ID2D1StrokeStyle* round,
+                      D2D1_RECT_F box, float scale, const Theme& theme, bool high_contrast,
+                      int state, bool hot, float progress, float alpha) {
+    if (!dc || !brush) return;
+    const D2D1_ANTIALIAS_MODE saved = dc->GetAntialiasMode();
+    dc->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    const float side = std::round(kCheckBoxDip * scale);
+    box.left = std::round(box.left);
+    box.top = std::round(box.top);
+    box.right = box.left + side;
+    box.bottom = box.top + side;
+    const float radius = 4.0f * scale;
+    const bool dark = theme.bg.r < 0.5f;
+    const auto with = [alpha](D2D1_COLOR_F c) { c.a *= alpha; return c; };
+    if (state == 0) {
+        const float px = std::max(1.0f, std::round(scale));
+        const float h = px * 0.5f;
+        brush->SetColor(with(high_contrast ? theme.text
+            : dark ? D2D1::ColorF(1.0f, 1.0f, 1.0f, hot ? 0.66f : 0.42f)
+                   : D2D1::ColorF(0.0f, 0.0f, 0.0f, hot ? 0.56f : 0.36f)));
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(box.left + h, box.top + h, box.right - h, box.bottom - h),
+                                                   radius - h, radius - h), brush, px);
+        dc->SetAntialiasMode(saved);
+        return;
+    }
+    // Dark backgrounds take a lighter accent with a dark tick (contrast > 4.5:1).
+    D2D1_COLOR_F fill = theme.accent;
+    if (dark && !high_contrast) {
+        const float k = hot ? 0.58f : 0.5f;
+        fill = D2D1::ColorF(fill.r + (1.0f - fill.r) * k, fill.g + (1.0f - fill.g) * k,
+                            fill.b + (1.0f - fill.b) * k, 1.0f);
+    } else if (hot && !high_contrast) {
+        fill = D2D1::ColorF(fill.r * 0.9f, fill.g * 0.9f, fill.b * 0.9f, 1.0f);
+    }
+    brush->SetColor(with(fill));
+    dc->FillRoundedRectangle(D2D1::RoundedRect(box, radius, radius), brush);
+    const D2D1_COLOR_F ink = high_contrast ? theme.accent_text
+        : dark ? D2D1::ColorF(0x1A1C2C) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+    brush->SetColor(with(ink));
+    const float u = side / 16.0f;
+    const float stroke = std::max(1.5f, 1.6f * scale);
+    const auto at = [&](float x, float y) { return D2D1::Point2F(box.left + x * u, box.top + y * u); };
+    if (state == 2) {
+        dc->DrawLine(at(4.8f, 8.0f), at(11.2f, 8.0f), brush, stroke, round);
+        dc->SetAntialiasMode(saved);
+        return;
+    }
+    const D2D1_POINT_2F a = at(4.2f, 8.4f), b = at(6.9f, 11.0f), c = at(11.8f, 5.4f);
+    const float l1 = std::hypot(b.x - a.x, b.y - a.y), l2 = std::hypot(c.x - b.x, c.y - b.y);
+    const float p = std::clamp(progress, 0.0f, 1.0f);
+    const float run = (l1 + l2) * (1.0f - (1.0f - p) * (1.0f - p) * (1.0f - p));  // ease-out
+    ID2D1Factory* factory = nullptr;
+    dc->GetFactory(&factory);
+    ComPtr<ID2D1PathGeometry> tick;
+    if (factory && run > 0.01f && SUCCEEDED(factory->CreatePathGeometry(&tick)) && tick.get()) {
+        ComPtr<ID2D1GeometrySink> sink;
+        if (SUCCEEDED(tick->Open(&sink)) && sink.get()) {
+            sink->BeginFigure(a, D2D1_FIGURE_BEGIN_HOLLOW);
+            if (run <= l1) {
+                sink->AddLine(D2D1::Point2F(a.x + (b.x - a.x) * run / l1, a.y + (b.y - a.y) * run / l1));
+            } else {
+                sink->AddLine(b);
+                const float t2 = std::min(1.0f, (run - l1) / l2);
+                sink->AddLine(D2D1::Point2F(b.x + (c.x - b.x) * t2, b.y + (c.y - b.y) * t2));
+            }
+            sink->EndFigure(D2D1_FIGURE_END_OPEN);
+            sink->Close();
+            dc->DrawGeometry(tick.get(), brush, stroke, round);
+        }
+    }
+    if (factory) factory->Release();
+    dc->SetAntialiasMode(saved);
+}
+
+// Ticks draw in when a row becomes checked; keyed by path, so a folder that
+// reloads keeps its rows still.
+std::unordered_map<std::wstring, std::pair<bool, uint64_t>>& CheckTransitions() {
+    static std::unordered_map<std::wstring, std::pair<bool, uint64_t>> seen;
+    return seen;
+}
 }  // namespace
 
 float MainRenderer::CheckGutterDip(const PaneViewModel& vm) const {
@@ -1077,7 +1175,7 @@ D2D1_RECT_F MainRenderer::ItemCheckRect(const PaneViewModel& vm, const D2D1_RECT
 
 D2D1_RECT_F MainRenderer::HeaderCheckRect(float columns_left, float header_top) const {
     const float side = kCheckBoxDip * scale_;
-    const float left = std::round(columns_left + 6.0f * scale_);  // over the rows' boxes
+    const float left = std::round(columns_left + 4.0f * scale_);  // over the rows' boxes
     const float top = std::round(header_top + (column_header_height_ - side) * 0.5f);
     return D2D1::RectF(left, top, left + side, top + side);
 }
@@ -2662,16 +2760,12 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
             const D2D1_RECT_F box = HeaderCheckRect(columns.left, y);
             const size_t total = pane.EntryCount();
             const size_t picked = static_cast<size_t>(std::max(0, pane.selected_count));
-            fluent::ControlState check;
-            check.checked = picked >= total;
-            painter_.DrawCheckBox(box, L"", check);
-            if (picked > 0 && picked < total) {
-                // Some selected: the mixed state's dash.
-                MakeBrush(dc, theme.accent, brTagDot_);
-                const float cyMid = (box.top + box.bottom) * 0.5f;
-                dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(box.left + 4.0f * scale_, cyMid - scale_,
-                    box.right - 4.0f * scale_, cyMid + scale_), scale_, scale_), brTagDot_.get());
-            }
+            const bool hot = vm.hover_region == static_cast<int>(HitTestResult::HeaderCheck) &&
+                             vm.hover_pane_index == pane_index;
+            EnsureRoundCapStroke(dc, roundCapStroke_);
+            MakeBrush(dc, theme.accent, brTagDot_);
+            DrawItemCheckBox(dc, brTagDot_.get(), roundCapStroke_.get(), box, scale_, theme, IsHighContrast(),
+                             picked == 0 ? 0 : picked >= total ? 1 : 2, hot, 1.0f, 1.0f);
         }
         auto drawCol = [&](const std::wstring& label, SortColumn col, float cw, bool right = false) {
             const bool active = !pane.curated_order && pane.sort_column == col;
@@ -4359,7 +4453,9 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 FillRoundedRect(dc, brFillInput_.get(), bg.left + 0.5f * scale_,
                     (bg.top + bg.bottom - bar_h) * 0.5f, 2.5f * scale_, bar_h, 1.25f * scale_);
             }
-            if (draw_shapes && selected) selection_painter.Selected(bg);
+            // A check box already marks the row: no selection bar beside it.
+            if (draw_shapes && selected)
+                selection_painter.Selected(bg, !(item_checks_ && (detailsView || iconGrid) && !morph_item && !morphing));
             if (draw_shapes && mtime_on && mtime.flash && !morph_item && !IsHighContrast() && !e.path.empty() &&
                 e.modified_value && e.modified_value + 3 * kMtimeSecond > mtime_clock.now &&
                 e.modified_value < mtime_clock.now + 2 * kMtimeSecond) {
@@ -4578,14 +4674,25 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                             box.top - 2.0f * scale_, box.right + 2.0f * scale_, box.bottom + 2.0f * scale_),
                             6.0f * scale_, 6.0f * scale_), brTagDot_.get());
                     }
-                    fluent::ControlState check;
-                    check.checked = selected;
+                    float tick = 1.0f;
+                    if (!e.path.empty()) {
+                        auto& seen = CheckTransitions();
+                        if (seen.size() > 4096) seen.clear();
+                        auto [it, added] = seen.try_emplace(e.path, selected, uint64_t{0});
+                        if (!added && it->second.first != selected) it->second = {selected, motion_now_};
+                        if (selected && it->second.second && motion::SystemAnimationsEnabled() && !IsHighContrast()) {
+                            const float t01 = static_cast<float>(motion_now_ - it->second.second) / 140.0f;
+                            if (t01 < 1.0f) {
+                                tick = std::max(0.0f, t01);
+                                list_loading_active_ = true;  // keeps frames coming for the draw-in
+                            }
+                        }
+                    }
+                    EnsureRoundCapStroke(dc, roundCapStroke_);
+                    MakeBrush(dc, theme.accent, brTagDot_);
                     // Shown only because several are selected: faint until hovered.
-                    const bool faint = !hover && !selected && !IsHighContrast();
-                    if (faint) dc->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr,
-                        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), 0.5f), nullptr);
-                    painter_.DrawCheckBox(box, L"", check);
-                    if (faint) dc->PopLayer();
+                    DrawItemCheckBox(dc, brTagDot_.get(), roundCapStroke_.get(), box, scale_, theme, IsHighContrast(),
+                                     selected ? 1 : 0, hover, tick, !hover && !selected ? 0.5f : 1.0f);
                 }
             }
             // Mid-morph the labels are drawn in a second, faded pass.
