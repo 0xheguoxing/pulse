@@ -1648,6 +1648,76 @@ void UpdateSmoothScroll(AppState& s, const HoverPointerApi& api) {
 }
 
 namespace {
+// Blank chrome moves the window (空白处拖动窗口): a press on the toolbar gaps,
+// the sidebar gaps, a lone pane's title strip or the status bar keeps its old
+// meaning, but once the pointer travels past the drag threshold the window
+// moves as from the title bar (snap included). The list's blank space is not
+// part of it: there a drag draws the selection band.
+enum class BlankChrome { None, Drag, DragMaximize };
+
+struct BlankWindowDrag {
+    HWND hwnd = nullptr;
+    POINT start{};
+};
+BlankWindowDrag g_blank_drag;
+
+BlankChrome BlankChromeAt(AppState& s, const ui::HitTestResult& hit, int mx, int my) {
+    if (!s.hwnd) return BlankChrome::None;
+    switch (hit.region) {
+    case ui::HitTestResult::SidebarBlank:
+        return BlankChrome::Drag;
+    case ui::HitTestResult::StatusBar:
+        return BlankChrome::DragMaximize;
+    case ui::HitTestResult::PaneHeader: {
+        // index 0 is the empty strip right of the title; in a split, a drag
+        // there takes the pane out as a window instead (ArmPaneDrag).
+        const app::LayoutTab* const tab = s.window_tabs.Active();
+        if (hit.index != 0 || hit.pane_index < 0 || !tab || tab->VisiblePanes().size() >= 2)
+            return BlankChrome::None;
+        return BlankChrome::Drag;
+    }
+    case ui::HitTestResult::None: {
+        // The title bar is a caption already (WM_NCHITTEST); the content
+        // area's blank space belongs to the list.
+        const float x = static_cast<float>(mx);
+        const float y = static_cast<float>(my);
+        if (y < s.renderer.TitleBarHeight()) return BlankChrome::None;
+        const D2D1_RECT_F content = s.renderer.ContentRect(
+            static_cast<float>(s.compositor.Width()), static_cast<float>(s.compositor.Height()));
+        if (x >= content.left && x < content.right && y >= content.top && y < content.bottom)
+            return BlankChrome::None;
+        return BlankChrome::DragMaximize;
+    }
+    default:
+        return BlankChrome::None;
+    }
+}
+
+void ArmBlankWindowDrag(AppState& s, const ui::HitTestResult& hit, int mx, int my) {
+    g_blank_drag = BlankWindowDrag{};
+    if (BlankChromeAt(s, hit, mx, my) == BlankChrome::None) return;
+    g_blank_drag.hwnd = s.hwnd;
+    g_blank_drag.start = POINT{mx, my};
+}
+
+// True once the window move has started (the system move loop has run).
+bool TryBlankWindowDrag(HWND hwnd, WPARAM wParam, int mx, int my) {
+    if (!g_blank_drag.hwnd || g_blank_drag.hwnd != hwnd) return false;
+    if (!(wParam & MK_LBUTTON)) {
+        g_blank_drag = BlankWindowDrag{};
+        return false;
+    }
+    if (std::abs(mx - g_blank_drag.start.x) < GetSystemMetrics(SM_CXDRAG) &&
+        std::abs(my - g_blank_drag.start.y) < GetSystemMetrics(SM_CYDRAG))
+        return false;
+    g_blank_drag = BlankWindowDrag{};
+    POINT screen{mx, my};
+    ClientToScreen(hwnd, &screen);
+    if (GetCapture() == hwnd) ReleaseCapture();
+    SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, MAKELPARAM(screen.x, screen.y));
+    return true;
+}
+
 // The size tooltip names the old size: drop it while the size changes; it
 // returns with the new one once the pointer rests.
 void ResetSizeTooltip(AppState& s) {
@@ -1695,6 +1765,7 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         if (!s) return DefWindowProcW(hwnd, msg, wParam, lParam);
         int mx = GET_X_LPARAM(lParam);
         int my = GET_Y_LPARAM(lParam);
+        if (TryBlankWindowDrag(hwnd, wParam, mx, my)) return 0;  // blank chrome moves the window
         if (ToolbarPinDragging()) {   // picker T3c: no hover plate or tooltip under the dragged pin
             MoveToolbarPinDrag(*s, POINT{mx, my});
             if (s->hoverRegion != 0 || !s->tooltipText.empty()) HandleMouseLeave(s, hwnd, WM_MOUSELEAVE, 0, 0);
@@ -2765,6 +2836,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             return 0;
         }
         ArmPaneDrag(*s, hit, mx, my);  // the press still does what it did; a drag takes the pane out (M6d)
+        ArmBlankWindowDrag(*s, hit, mx, my);  // likewise: a drag on blank chrome moves the window
         if (HandleChangeClick(*s, hit, POINT{mx, my})) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -3826,6 +3898,12 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
             {"column_layout", double_tab && double_tab->column_layout},
             {"has_index", hit.index >= 0},
             {"item_index", hit.index >= 0 ? static_cast<uint64_t>(hit.index) : 0}});
+        g_blank_drag = BlankWindowDrag{};
+        if (BlankChromeAt(*s, hit, mx, my) == BlankChrome::DragMaximize) {
+            // Toolbar gaps and the status bar act as the title bar here too.
+            SendMessageW(hwnd, WM_SYSCOMMAND, IsZoomed(hwnd) ? SC_RESTORE : SC_MAXIMIZE, 0);
+            return 0;
+        }
         if (hit.region == ui::HitTestResult::PaneSizeSlider) {  // back to the 96 DIP preset
             SetViewMode(*s, ui::ViewMode::LargeIcons);
             return 0;
@@ -3952,6 +4030,7 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
 LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         (void)msg;
         (void)wParam;
+        g_blank_drag = BlankWindowDrag{};
         if (s && ToolbarPinDragging()) {   // picker T3c
             EndToolbarPinDrag(*s, false);
             return 0;
