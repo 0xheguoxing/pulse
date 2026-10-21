@@ -299,6 +299,19 @@ int main(int argc, char** argv) {
         Check(many.picker_folders.size() == pulse::app::kPickerFolderLimit && many.PickerFolder(L"k39") == L"C:\\f" &&
               many.PickerFolder(L"k0").empty(), "PICKER-09 capped; the oldest entry point is dropped");
     }
+    {
+        // #58-7b: picture folders without a saved view open in Large icons.
+        using pulse::app::IsPictureName;
+        using pulse::app::MostlyPictures;
+        Check(IsPictureName(L"IMG_0001.JPG") && IsPictureName(L"a.webp") && IsPictureName(L"shot.HEIC") &&
+              IsPictureName(L"raw.CR3") && IsPictureName(L"x.dng"), "PICTURE-01 photo and camera raw extensions, any case");
+        Check(!IsPictureName(L"notes.txt") && !IsPictureName(L"jpg") && !IsPictureName(L".png") &&
+              !IsPictureName(L"movie.mp4") && !IsPictureName(L"a.jpgxyzw"), "PICTURE-02 other files and bare names are not pictures");
+        Check(MostlyPictures(10, 6) && MostlyPictures(6, 6) && !MostlyPictures(10, 5),
+              "PICTURE-03 60% of the files or more");
+        Check(!MostlyPictures(5, 5) && !MostlyPictures(0, 0) && !MostlyPictures(3, 7),
+              "PICTURE-04 fewer than six pictures (or bad counts) never switch");
+    }
     std::filesystem::remove_all(dir);
     return failures ? 1 : 0;
 }

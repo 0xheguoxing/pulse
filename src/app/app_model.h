@@ -62,6 +62,9 @@ struct Tab {
     // Continuous icon size in DIP (ui::ZoomIconDip); 0 = the mode's preset.
     float icon_dip = 0.0f;
     float last_icon_dip = 0.0f;  // goes with last_icon_mode
+    // #58-7b: this folder has no saved view; once its listing lands, Large
+    // icons replace the default if it is mostly pictures (not saved).
+    bool auto_view_pending = false;
     // Icon views shown as a photo wall (the header's wall button), kept per
     // folder; stays set in other views so returning to the icons brings it back.
     bool wall = false;

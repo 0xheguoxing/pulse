@@ -1288,10 +1288,14 @@ void StartLoadingPath(AppState& s, app::Tab& tab, const std::wstring& path, Path
     tab.virtual_title.clear();
     tab.banner_title.clear();
     tab.banner_message.clear();
+    tab.auto_view_pending = false;
     if (!s.shot.active) {
         const auto saved = s.appPrefs.folder_views.Find(normalized);
         const auto mode = saved.value_or(reason == PathLoadReason::RestoreSession
             ? tab.view_mode : s.appPrefs.folder_views.Default());
+        tab.auto_view_pending = !saved && reason != PathLoadReason::RestoreSession &&
+            mode != ui::ViewMode::LargeIcons && mode != ui::ViewMode::ExtraLargeIcons &&
+            !app::FolderPrefKey(normalized).empty();
         // Migrate older sessions/workspaces so returning later keeps their mode.
         if (!saved && reason == PathLoadReason::RestoreSession)
             s.appPrefs.folder_views.Set(normalized, mode);
@@ -1404,6 +1408,25 @@ static bool ApplyWorkerResultData(AppCore& core, const app::WorkResult& res) {
     return again;
 }
 
+// #58-7b: a folder with no saved view that is mostly pictures opens in Large
+// icons. Not saved: choosing any view there is what the folder remembers.
+static void ApplyPictureFolderView(AppState& s, app::Tab& tab, const std::vector<fs::DirEntry>& entries) {
+    if (s.appPrefs.folder_views.Find(tab.current_path)) return;  // chosen while it loaded
+    size_t files = 0, pictures = 0;
+    for (const auto& entry : entries) {
+        if (entry.is_dir) continue;
+        ++files;
+        if (app::IsPictureName(entry.name)) ++pictures;
+        if (files >= 2000) break;  // a sample is enough
+    }
+    if (!app::MostlyPictures(files, pictures)) return;
+    tab.view_mode = ui::ViewMode::LargeIcons;
+    tab.icon_dip = 0.0f;
+    tab.last_icon_mode = ui::ViewMode::LargeIcons;
+    tab.last_icon_dip = 0.0f;
+    ++tab.view_generation;
+}
+
 static void ShowConnectingBanner(app::Tab& tab) {
     tab.banner_title = l10n::Get(l10n::StringId::Connecting).c_str();
     tab.banner_message = l10n::Get(l10n::StringId::IfTheServerAsksYouToSignInEnterTheUserNameAndPasswordInTheWi).c_str();
@@ -1514,6 +1537,8 @@ static bool ApplyWorkerResultToWindow(AppState& s, app::WorkResult& res, bool ag
             if (keep_order) app::PruneHeldRenames(tab->held_renames, *res.snapshot);
             else tab->held_renames.clear();
             tab->SetSnapshot(listing);
+            if (std::exchange(tab->auto_view_pending, false) && res.snapshot)
+                ApplyPictureFolderView(s, *tab, *res.snapshot);
             tab->git_root = res.git_root;
             tab->loading = false;
             tab->pending_generation = 0;

@@ -2,8 +2,10 @@
 
 #include "../ui/view_layout.h"
 #include <map>
+#include <cstddef>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace pulse::app {
 
@@ -16,6 +18,12 @@ struct FolderLastIcon {
     ui::ViewMode mode = ui::ViewMode::MediumIcons;
     float dip = 0.0f;
 };
+
+// #58-7b: a folder never given a view opens in Large icons when its files
+// are mostly pictures: at least six, and 60% or more of the files (folders
+// do not count). Judged by extension only, from the listing already loaded.
+bool IsPictureName(std::wstring_view name);
+bool MostlyPictures(size_t files, size_t pictures);
 
 // This PC (the empty path) has no folder key but keeps its own choice, like
 // File Explorer; other virtual views are still never remembered.
