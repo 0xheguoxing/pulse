@@ -1,4 +1,5 @@
 #include "content_task_search.h"
+#include "../fs/cloud_state.h"
 #include "content_directory_listing.h"
 #include "content_scope.h"
 #include "document_reader.h"
@@ -341,7 +342,7 @@ bool RunContentTaskSupplement(const ContentIndexConfig &config, const ContentSea
                                 bool read = GetFileAttributesExW(native.c_str(), GetFileExInfoStandard, &data) != FALSE;
                                 if (!read) read_error = GetLastError();
                                 constexpr DWORD unsafe = FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT |
-                                    FILE_ATTRIBUTE_DEVICE | FILE_ATTRIBUTE_OFFLINE | 0x00040000 | 0x00400000;
+                                    FILE_ATTRIBUTE_DEVICE | ::pulse::fs::kCloudPlaceholderAttrs;
                                 read = read && !(data.dwFileAttributes & unsafe);
                                 job.size = (uint64_t(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
                                 job.modified = Time(data.ftLastWriteTime);

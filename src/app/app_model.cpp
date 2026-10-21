@@ -1,6 +1,8 @@
 // app_model.cpp
 #include "app_model.h"
 #include "git_status.h"
+#include "cloud_roots.h"
+#include "../fs/device_source.h"
 #include "folder_alias.h"
 #include "selection_caps.h"
 #include "split_tree_shape.h"
@@ -1303,6 +1305,48 @@ std::vector<SidebarEntry> BuildOneDriveEntries() {
     return out;
 }
 
+// Other cloud folders Explorer pins to its navigation pane (WPS网盘, 百度网盘
+// 同步空间, Dropbox, ...) and Cloud Files sync roots, after the OneDrive rows.
+// Runs on the sidebar refresh thread with the rest of the model; a folder that
+// no longer exists is left out, the same as Explorer does.
+void AppendOtherCloudEntries(std::vector<SidebarEntry>& cloud) {
+    CloudRegistry registry = CloudRegistry::System();
+    // Isolated test instances only: a private HKCU subtree stands in for the
+    // machine's registration, so tests never touch Explorer's own keys.
+    if (GetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", nullptr, 0) > 0) {
+        wchar_t prefix[512]{};
+        const DWORD n = GetEnvironmentVariableW(L"PULSE_TEST_CLOUD_REG", prefix, ARRAYSIZE(prefix));
+        if (n > 0 && n < ARRAYSIZE(prefix)) registry = CloudRegistry::Fixture(prefix, L"S-1-5-21-pulse-test");
+    }
+    std::vector<CloudRoot> roots;
+    for (const auto& entry : cloud) roots.push_back({entry.path, entry.label, {}, CloudRootSource::Seed});
+    const size_t seeded = roots.size();
+    const auto is_directory = [](const std::wstring& path) {
+        const DWORD attrs = GetFileAttributesW(path.c_str());
+        return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    };
+    auto sync_roots = ReadSyncRootCloudRoots(registry);
+    std::vector<std::wstring> cloud_files_roots;
+    for (const auto& root : sync_roots) cloud_files_roots.push_back(root.path);
+    PublishCloudFilesRoots(std::move(cloud_files_roots));
+    MergeCloudRoots(roots, ReadNavigationPaneCloudRoots(registry), is_directory);
+    MergeCloudRoots(roots, std::move(sync_roots), is_directory);
+    PublishCloudRootLabels(roots);  // 下载并预览 names the provider
+    for (size_t i = seeded; i < roots.size(); ++i) {
+        SidebarEntry entry;
+        entry.glyph = L"\xE753";
+        entry.fallback = L"Cloud";
+        entry.color = ui::HexColor(CloudRootColor(roots[i]));
+        entry.path = fs::NormalizePath(roots[i].path);
+        entry.label = roots[i].label;
+        // Explorer's navigation pane shows the program's own icon for its
+        // CLSID (WPS网盘, 百度网盘); the tinted cloud stays as the fallback.
+        if (roots[i].source == CloudRootSource::NavigationPane && !roots[i].id.empty())
+            entry.icon_path = L"::" + roots[i].id;
+        if (!entry.path.empty()) cloud.push_back(std::move(entry));
+    }
+}
+
 std::vector<int> DefaultSidebarOrder() {
     // Mirrors Explorer's navigation pane: the OneDrive accounts lead, the starred
     // root follows next to quick access, and the drive list sits near the bottom
@@ -1446,6 +1490,7 @@ SidebarModel BuildSidebarModel(const fs::RecycleBinInfo* recycle) {
             m.cloud.push_back(std::move(onedrive));
         }
     }
+    AppendOtherCloudEntries(m.cloud);
     SidebarEntry recycle_bin;
     recycle_bin.glyph = L"\xE75C";
     recycle_bin.fallback = L"Bin";
@@ -1498,6 +1543,28 @@ static std::wstring StatusText(const Tab& tab) {
         return count;
     }
     if (tab.loading || !tab.snapshot) return L"";
+    if (tab.current_path.empty()) {
+        // This PC: what is there (2 个磁盘 · 1 个网络盘 · 1 个设备), not
+        // folders and files: phones and program icons are neither.
+        size_t counts[4]{};
+        for (size_t i = 0; i < tab.EntryCount(); ++i) {
+            const fs::DirEntry& e = tab.EntryAt(i);
+            if (e.drive_type) ++counts[e.drive_remote_like ? 1 : 0];
+            else if (e.pc_device & fs::kPcDevicePhone) ++counts[2];
+            else if (e.pc_launcher) ++counts[3];
+        }
+        const l10n::StringId ids[4] = {l10n::StringId::ThisPcStatusDrives, l10n::StringId::ThisPcStatusMounted,
+                                       l10n::StringId::ThisPcStatusDevices, l10n::StringId::ThisPcStatusLaunchers};
+        std::wstring text;
+        for (int k = 0; k < 4; ++k) {
+            if (counts[k] == 0 && k != 0) continue;
+            wchar_t part[96]{};
+            swprintf_s(part, l10n::Get(ids[k]).c_str(), counts[k]);
+            if (!text.empty()) text += L" \u00B7 ";
+            text += part;
+        }
+        return text;
+    }
     wchar_t buf[128];
     swprintf_s(buf, l10n::Get(l10n::StringId::StatusItemsFormat).c_str(),
         tab.directory_count + tab.file_count, tab.directory_count, tab.file_count);
@@ -1541,6 +1608,7 @@ static ui::SidebarGroup ConvertGroup(const std::wstring& header, const std::vect
         it.label = e.label;
         it.detail = e.detail;
         it.icon_glyph = e.glyph;
+        it.icon_path = e.icon_path;
         it.fallback_text = e.fallback;
         it.icon_color = e.color;
         it.danger = e.danger;
@@ -1914,6 +1982,7 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
         ? true
         : (fs::IsVirtualPath(tab->current_path) ? tab->CanGoBack() : !tab->current_path.empty());
     out.is_file_system = !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path);
+    out.cloud_status_column = out.is_file_system && IsUnderCloudFilesRoot(tab->current_path);
     out.can_create = out.is_file_system && !tab->net_readonly && !IsUncServerRoot(tab->current_path);
     out.curated_order = virtual_kind == L"starred" || virtual_kind == L"recent" || virtual_kind == L"changes";
     out.is_starred = virtual_kind == L"starred";
@@ -2544,7 +2613,7 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
                                  sidebar.saved_searches, false);
     // The title is only used by the section menus: the pane itself shows the
     // account rows without a header (see IsHeaderlessSection).
-    cloud = ConvertGroup(L"OneDrive", sidebar.cloud, false);
+    cloud = ConvertGroup(l10n::Get(l10n::StringId::SidebarCloudDrives), sidebar.cloud, false);
     if (places) {
         // Persisted badges win over the freshly rebuilt sidebar model (#41).
         for (auto* group : { &access, &cloud }) {
@@ -2558,6 +2627,9 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
     }
     drives = ConvertGroup(l10n::Get(l10n::StringId::SidebarDrives),
                           sidebar.drives, false);
+    // Phones follow the drives, as in File Explorer's This PC.
+    for (auto& phone : ConvertGroup(std::wstring(), sidebar.devices, false).items)
+        drives.items.push_back(std::move(phone));
     // Section icons: every header section names itself with a glyph, so the wide
     // header and the narrow rail read the same. The PC glyph (monitor on a
     // stand) keeps "This PC" apart from the monitor-only Desktop row.

@@ -1,5 +1,6 @@
 // ui_details_panel.cpp — Details panel draw and content height.
 #include "ui_renderer.h"
+#include "../fs/cloud_state.h"
 #include "preview_footer_layout.h"
 #include "preview_notice.h"
 #include "ui_renderer_internal.h"
@@ -233,7 +234,7 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
         // this selection, which is the whole point of the switch.
         const bool preview_on = d.preview_enabled;
         const bool handlerPreview = preview_on && !vm.safe_mode && !placeholderOnly &&
-            PreviewHandlerHost::CanHost(d.path);
+            !d.cloud_online && PreviewHandlerHost::CanHost(d.path);
         if (!placeholderOnly) {
             MakeBrush(dc, theme.fill_hover, brFillInput_);
             FillRoundedRect(dc, brFillInput_.get(), previewRc.left, previewRc.top,
@@ -399,6 +400,90 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
                  compositor_->SmallFormat(), theme.text_secondary);
         } else if (handlerPreview && handlerState == PreviewHandlerHost::State::Shown) {
             // System preview handler paints into the overlay HWND.
+        } else if (preview_on && d.cloud_online && d.multi_count <= 1 &&
+                   previewResult != PreviewDrawResult::Bitmap) {
+            // 下载并预览 (C4b): what is missing, why Pulse waits, and the one
+            // button that downloads; a progress bar takes its place meanwhile.
+            IDWriteFactory2* dw = compositor_->DwriteFactory();
+            IDWriteTextFormat* fmt = compositor_->SmallFormat();
+            const std::wstring provider = d.cloud_provider.empty()
+                ? pulse::l10n::Get(pulse::l10n::StringId::CloudProviderGeneric) : d.cloud_provider;
+            const auto fill = [](std::wstring str, std::wstring_view key, const std::wstring& value) {
+                if (const size_t at = str.find(key); at != std::wstring::npos) str.replace(at, key.size(), value);
+                return str;
+            };
+            const bool downloading = d.cloud_download_percent >= 0;
+            const std::wstring note = downloading
+                ? fill(fill(pulse::l10n::Get(pulse::l10n::StringId::CloudDownloadingFrom), L"{provider}", provider),
+                       L"{n}", std::to_wstring(d.cloud_download_percent))
+                : fill(fill(pulse::l10n::Get(pulse::l10n::StringId::CloudOnlyNote), L"{size}",
+                            pulse::format::ByteSize(d.size_value, true)), L"{provider}", provider);
+            const bool button = !downloading && hit.cloud_download.right > hit.cloud_download.left;
+            const float bottom = button ? hit.cloud_download.top - 12.0f * s : contentRc.bottom;
+            const float textW = std::max(40.0f * s, (contentRc.right - contentRc.left) - 32.0f * s);
+            const float cx = (contentRc.left + contentRc.right) * 0.5f;
+            ComPtr<IDWriteTextLayout> noteLayout;
+            if (dw && fmt)
+                dw->CreateTextLayout(note.data(), static_cast<UINT32>(note.size()), fmt, textW, 400.0f * s,
+                                     &noteLayout);
+            float textH = 18.0f * s;
+            if (noteLayout.get()) {
+                noteLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                noteLayout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+                noteLayout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+                DWRITE_TEXT_METRICS metrics{};
+                if (SUCCEEDED(noteLayout->GetMetrics(&metrics))) textH = metrics.height;
+            }
+            const float iconH = 30.0f * s, gap = 10.0f * s, barH = 4.0f * s;
+            const float group = iconH + gap + textH + (downloading ? gap + barH : 0.0f);
+            const float top = contentRc.top + std::max(8.0f * s, ((bottom - contentRc.top) - group) * 0.5f);
+            DrawIconText(contentRc.left, top, contentRc.right - contentRc.left, iconH,
+                         downloading ? L"\xE896" : L"\xE753", downloading ? L"\x2193" : L"\x2601",
+                         theme.text_secondary, 1.0f);
+            if (noteLayout.get() && bottom > top + iconH + gap) {
+                dc->PushAxisAlignedClip(D2D1::RectF(contentRc.left, contentRc.top, contentRc.right, bottom),
+                                        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                MakeBrush(dc, theme.text_secondary, brText_);
+                dc->DrawTextLayout(D2D1::Point2F(cx - textW * 0.5f, top + iconH + gap), noteLayout.get(),
+                                   brText_.get());
+                dc->PopAxisAlignedClip();
+            }
+            if (downloading) {
+                const float barW = std::min(220.0f * s, textW);
+                const float by = top + iconH + gap + textH + gap;
+                MakeBrush(dc, theme.fill_hover, brFillHover_);
+                FillRoundedRect(dc, brFillHover_.get(), cx - barW * 0.5f, by, barW, barH, barH * 0.5f);
+                const float done = barW * std::clamp(static_cast<float>(d.cloud_download_percent) / 100.0f, 0.0f, 1.0f);
+                if (done >= barH) {
+                    MakeBrush(dc, theme.accent, brAccent_);
+                    FillRoundedRect(dc, brAccent_.get(), cx - barW * 0.5f, by, done, barH, barH * 0.5f);
+                }
+            } else if (button) {
+                const D2D1_RECT_F& rc = hit.cloud_download;
+                const bool hot = IsHovered(vm, HitTestResult::DetailsCloudDownload);
+                MakeBrush(dc, hot ? theme.accent_hover : theme.accent, brAccent_);
+                FillRoundedRect(dc, brAccent_.get(), rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, 5.0f * s);
+                const std::wstring label = pulse::l10n::Get(pulse::l10n::StringId::CloudDownloadPreview);
+                const float glyphW = 16.0f * s, glyphGap = 6.0f * s;
+                const float labelW = dw && fmt ? MeasureLayoutText(compositor_, dw, fmt, label) : 0.0f;
+                const float startX = std::max(rc.left + 8.0f * s,
+                                              (rc.left + rc.right - (glyphW + glyphGap + labelW)) * 0.5f);
+                DrawIconText(startX, rc.top, glyphW, rc.bottom - rc.top, L"\xE896", L"\x2193",
+                             theme.accent_text, 1.0f);
+                ComPtr<IDWriteTextLayout> labelLayout;
+                const float labelBox = std::max(1.0f, rc.right - 8.0f * s - (startX + glyphW + glyphGap));
+                if (dw && fmt)
+                    dw->CreateTextLayout(label.data(), static_cast<UINT32>(label.size()), fmt, labelBox,
+                                         rc.bottom - rc.top, &labelLayout);
+                if (labelLayout.get()) {
+                    labelLayout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    labelLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                    labelLayout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                    MakeBrush(dc, theme.accent_text, brText_);
+                    dc->DrawTextLayout(D2D1::Point2F(startX + glyphW + glyphGap, rc.top), labelLayout.get(),
+                                       brText_.get());
+                }
+            }
         } else if (preview_on && previewResult != PreviewDrawResult::Bitmap) {
             const bool filePlaceholder = !d.is_dir && d.multi_count <= 1;
             std::wstring state;
@@ -410,8 +495,7 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
                         d.multi_count);
                     state = count;
                 }
-            else if ((d.attrs & (0x00040000u | 0x00400000u)) &&
-                     !(d.attrs & 0x00080000u))
+            else if (pulse::fs::IsCloudPlaceholder(d.attrs))
                 state = pulse::l10n::Get(pulse::l10n::StringId::OnlineToPreview);
             else if (previewResult == PreviewDrawResult::Pending)
                 state = pulse::l10n::Get(pulse::l10n::StringId::PreviewLoading);

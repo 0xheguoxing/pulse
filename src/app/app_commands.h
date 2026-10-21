@@ -207,6 +207,8 @@ void ShowRecyclePlaceMenu(AppState& s, POINT screen_pt);
 // searches). Used on startup, after a language switch, and when the volume set
 // changes (a plugged-in stick, a mounted image).
 void RefreshSidebarModel(AppState& s);
+// "手机连上了却看不到？" (pulse_devices_cloud.html): the three things to check.
+void ShowDeviceHelp(AppState& s);
 // Navigation-pane background menu: show or hide sections, expand or collapse them all.
 void ShowSidebarSectionsMenu(AppState& s, POINT screen_pt);
 // Menu for one section (header or empty space inside it): toggle its built-in
@@ -236,6 +238,10 @@ void HandleQuickPreviewCommand(AppState& s, const ui::QuickPreviewCommand& comma
 // snapshot refresh or directory notification: reloads a changed file,
 // re-anchors after an in-preview delete, closes when the entry is gone.
 void SyncQuickPreview(AppState& s);
+// 下载并预览 (C4b, details well / Quick Look card): brings one cloud-only file
+// onto this device on request; WM_CLOUD_DOWNLOAD reports progress and the end.
+void StartCloudPreviewDownload(AppState& s, const std::wstring& path, uint64_t size);
+void HandleCloudDownloadMessage(AppState& s, WPARAM event, LPARAM job);
 void ApplySettingsEffects(AppState& s, app::SettingsEffect effects);
 app::SettingsTaskCompletion SettingsCompletion(HWND hwnd);
 void SetThemeMode(AppState& s, int mode);

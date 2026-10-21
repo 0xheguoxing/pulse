@@ -38,8 +38,7 @@ constexpr int kHideSection = 32302;
 
 constexpr int kSectionCount = app::kSidebarSectionCount;
 
-// Titles are listed in SidebarSectionId order; the cloud section shows the
-// product name, exactly as its sidebar row does.
+// Titles are listed in SidebarSectionId order.
 constexpr I kSectionTitles[] = {
     I::SidebarWorkspaces,
     I::SidebarQuickAccess,
@@ -54,7 +53,8 @@ static_assert(std::size(kSectionTitles) ==
               "kSectionTitles must cover every header section in id order");
 
 std::wstring SectionTitle(int section) {
-    if (section == static_cast<int>(app::SidebarSectionId::Cloud)) return L"OneDrive";
+    if (section == static_cast<int>(app::SidebarSectionId::Cloud))
+        return l10n::Get(I::SidebarCloudDrives);
     if (section == static_cast<int>(app::SidebarSectionId::Starred))
         return l10n::Get(I::StarredItems);
     if (section < 0 || section >= static_cast<int>(std::size(kSectionTitles))) return {};

@@ -1,4 +1,5 @@
 #include "nt_directory_record.h"
+#include "drive_kind.h"
 #include <mutex>
 #include <atomic>
 #include <condition_variable>
@@ -384,6 +385,7 @@ struct DriveMedia {
     uint64_t total = 0;
     uint64_t free = 0;
     bool locked = false;
+    bool remote_fs = false;  // WinFsp / Dokan / cloud file system name
 };
 
 struct DriveMediaProbe {
@@ -400,8 +402,11 @@ DriveMedia QueryDriveMedia(const wchar_t* root) {
                                              &previous_mode) != FALSE;
     DriveMedia media;
     wchar_t label[MAX_PATH + 1] = {};
-    if (GetVolumeInformationW(root, label, MAX_PATH, nullptr, nullptr, nullptr, nullptr, 0))
+    wchar_t fs_name[MAX_PATH + 1] = {};
+    if (GetVolumeInformationW(root, label, MAX_PATH, nullptr, nullptr, nullptr, fs_name, MAX_PATH)) {
         media.label = label;
+        media.remote_fs = IsRemoteLikeFileSystemName(fs_name);
+    }
     else
         media.locked = IsBitLockerLockedError(GetLastError());
     ULARGE_INTEGER free_bytes{}, total_bytes{};
@@ -493,6 +498,7 @@ static void EnumerateThisPc(std::vector<DirEntry>& out, const std::atomic<bool>*
         e.attrs = FILE_ATTRIBUTE_DIRECTORY;
         // Local metadata only (no media access): the UI shows it as the type.
         e.drive_type = static_cast<uint8_t>(GetDriveTypeW(root));
+        e.drive_remote_like = IsRemoteLikeDrive(root) || (media && media->remote_fs);
         // Same figures as the sidebar drive rows; the tile view draws them.
         if (media) {
             e.drive_total = media->total;

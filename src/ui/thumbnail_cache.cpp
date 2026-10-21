@@ -1,4 +1,5 @@
 #include "thumbnail_cache.h"
+#include "../fs/cloud_state.h"
 #include "../common/utf8_file.h"
 #include "../common/runtime_log.h"
 #include "thumbnail_artwork_layout.h"
@@ -299,7 +300,11 @@ PreviewDrawResult ThumbnailCache::Draw(ID2D1DeviceContext* dc, const D2D1_RECT_F
     if (media_duration_ms) *media_duration_ms = 0;
     if (!dc || path.empty() || pixels < 24) return PreviewDrawResult::Failed;
     if (document && !document->active.load()) return PreviewDrawResult::Failed;
-    const std::wstring document_key = document ? L":document:" + std::to_wstring(document->identity) : L"";
+    std::wstring document_key = document ? L":document:" + std::to_wstring(document->identity) : L"";
+    // A placeholder's answer (Explorer's cached thumbnail, or nothing) is not
+    // the file's: once it is downloaded the attributes change and so does the
+    // key, so the real preview is fetched instead of the cached refusal.
+    if (pulse::fs::IsCloudPlaceholder(attrs)) document_key += L":cloud";
     const std::wstring key = Key(path, pixels, modified, size, frame_index) + document_key;
     {
         std::lock_guard lock(mutex_);
@@ -505,7 +510,8 @@ bool ThumbnailCache::Properties(const std::wstring& path, DWORD attrs, uint64_t 
                                 uint64_t modified, uint64_t size,
                                 std::vector<PreviewProperty>& properties) {
     if (path.empty()) return false;
-    const std::wstring identity = Key(path, 0, modified, size);
+    const std::wstring identity = Key(path, 0, modified, size) +
+        (pulse::fs::IsCloudPlaceholder(attrs) ? L":cloud" : L"");
     const std::wstring key = identity + L":properties";
     std::lock_guard lock(mutex_);
     SelectDetailsLocked(identity);

@@ -1818,11 +1818,12 @@ void QuickPreviewWindow::Render() {
         markdown_shown_ = true;
         toggle_kind_ = ToggleKind::DocHandler;
     }
-    codec_store_rect_ = codec_open_rect_ = codec_pack_rect_ = D2D1_RECT_F{};
+    codec_store_rect_ = codec_open_rect_ = codec_pack_rect_ = cloud_download_rect_ = D2D1_RECT_F{};
     std::wstring status;
     if (offline) {
         native_kind_ = NativeKind::None;
-        status = pulse::l10n::Get(pulse::l10n::StringId::PreviewCloudOnly);
+        if (!DrawCloudCard(dc, ContentRect(), text_brush.get()))
+            status = pulse::l10n::Get(pulse::l10n::StringId::PreviewCloudOnly);
     } else if (video_.active()) {
         native_kind_ = NativeKind::None;
         const auto video = video_.Snapshot();

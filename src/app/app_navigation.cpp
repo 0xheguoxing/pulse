@@ -7,6 +7,8 @@
 #include "tag_query.h"
 #include "network_connect.h"
 #include "../fs/bitlocker_volume.h"
+#include "../fs/device_path.h"
+#include "../fs/device_source.h"
 #include "shell_window_sync.h"
 #include "app_column_view.h"
 #include "app_details_tree.h"
@@ -31,6 +33,8 @@
 #include "../common/diagnostics_exporter.h"
 #include "snapshot_patch.h"
 #include "entry_group.h"
+#include "cloud_roots.h"
+#include <thread>
 #include "reopen_closed.h"
 #include "entry_order_hold.h"
 #include "session.h"
@@ -2059,6 +2063,7 @@ void RestoreNavigationReturnSelection(AppState& s, app::Tab& tab,
 }
 
 void NavigateTo(AppState& s, const std::wstring& path) {
+    if (fs::IsDevicePath(path)) return;  // phone browsing lands with D3
     if (OpenSystemNetworkShortcut(s, path)) return;
     app::Tab* tab = ActiveTab(s);
     if (!tab) return;
@@ -2453,9 +2458,10 @@ void SetGroupBy(AppState& s, int group_by) {
     SyncTagGroups(s);
     if (s.appPrefs.folder_groups.Set(tab->current_path, by)) s.appPrefs.Save();
     group_by = static_cast<int>(by);
-    // Groups are drawn in list-like views; bring an icon view to Details.
-    if (group_by != 0 && tab->view_mode != ui::ViewMode::Details &&
-        tab->view_mode != ui::ViewMode::Content)
+    // Icon grids draw groups too; only List and a photo wall cannot, so those
+    // switch to Details.
+    if (group_by != 0 && (!ui::ShowsGroups(tab->view_mode) ||
+                          (tab->wall && ui::IsZoomIconMode(tab->view_mode))))
         SetViewMode(s, ui::ViewMode::Details);
     const int old_group = tab->EffectiveGroup();
     tab->group_by = group_by;
@@ -2471,6 +2477,45 @@ void SetGroupBy(AppState& s, int group_by) {
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
+// 网盘程序入口 (This PC): a launcher that names a folder opens it here; the
+// others start their program the way Explorer does (shell:::{CLSID}). Test
+// instances only log the request (no real shell actions in tests).
+static void OpenThisPcLauncher(AppState& s, const fs::DirEntry& e) {
+    const std::wstring_view prefix = app::kThisPcLauncherPrefix;
+    if (!std::wstring_view(e.full_path).starts_with(prefix)) return;
+    const std::wstring clsid = e.full_path.substr(prefix.size());
+    for (const auto& launcher : app::CurrentThisPcLaunchers()) {
+        if (_wcsicmp(launcher.clsid.c_str(), clsid.c_str()) != 0) continue;
+        if (!launcher.target.empty()) {
+            NavigateTo(s, launcher.target);
+            return;
+        }
+        break;
+    }
+    wchar_t data[MAX_PATH]{};
+    const DWORD n = GetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", data, ARRAYSIZE(data));
+    if (n > 0 && n < ARRAYSIZE(data)) {
+        const std::wstring log = std::wstring(data) + L"\\launched.txt";
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, log.c_str(), L"a, ccs=UTF-8") == 0 && f) {
+            fwprintf(f, L"%ls\n", e.full_path.c_str());
+            fclose(f);
+        }
+        return;
+    }
+    // Off the UI thread: the shell may take a moment to start the program.
+    std::thread([owner = s.hwnd, file = e.full_path] {
+        const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        SHELLEXECUTEINFOW info{sizeof(info)};
+        info.fMask = SEE_MASK_NOASYNC;
+        info.hwnd = owner;
+        info.lpFile = file.c_str();
+        info.nShow = SW_SHOWNORMAL;
+        ShellExecuteExW(&info);
+        if (SUCCEEDED(co)) CoUninitialize();
+    }).detach();
+}
+
 void OpenSelected(AppState& s) {
     if(DeferContentSelection(s,[=](AppState& v){OpenSelected(v);})) return;
     app::Tab* tab = ActiveTab(s);
@@ -2484,6 +2529,15 @@ void OpenSelected(AppState& s) {
     if (indices.size() == 1) {
         const fs::DirEntry& e = tab->EntryAt(static_cast<size_t>(indices[0]));
         if (e.change_record_only) return;
+        if (e.pc_launcher) {
+            OpenThisPcLauncher(s, e);
+            return;
+        }
+        if (e.pc_device & fs::kPcDevicePlaceholder) {
+            ShowDeviceHelp(s);  // "no phone connected": how to make it show up
+            return;
+        }
+        if (e.pc_device) return;  // phones open once pulse:device: browsing lands (D3)
         if (!e.link_target.empty()) {
             if (e.link_target_is_dir) NavigateTo(s, e.link_target);
             else {
@@ -2502,7 +2556,7 @@ void OpenSelected(AppState& s) {
     }
     for (int index : indices) {
         const fs::DirEntry& e = tab->EntryAt(static_cast<size_t>(index));
-        if (e.change_record_only) continue;
+        if (e.change_record_only || e.pc_launcher || e.pc_device) continue;  // like folders: one at a time
         if (!e.link_target.empty()) {
             if (!e.link_target_is_dir) {
                 s.ops.OpenWith(e.link_target);

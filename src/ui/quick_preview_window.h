@@ -39,6 +39,7 @@ public:
     void OnMediaPackInstalled();
     // The image preview pack offer on the picture cards, and its install.
     void SetImagePackOffer(const MediaPackOffer& offer);
+    void SetCloudDownloadOffer(const CloudDownloadOffer& offer);
     void OnImagePackInstalled();
     void OnExtraPackInstalled();
     void Close();
@@ -109,6 +110,11 @@ private:
     void DrawCodecCard(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
                        const VideoPreview::State& state, ID2D1SolidColorBrush* brush);
     bool CodecCardClick(POINT client);
+    // Cloud-only file: explanation + 下载并预览 (or its progress). False when
+    // the window is too small for the card.
+    bool DrawCloudCard(ID2D1DeviceContext* dc, const D2D1_RECT_F& content, ID2D1SolidColorBrush* brush);
+    CloudDownloadOffer cloud_offer_;
+    D2D1_RECT_F cloud_download_rect_{};
     bool OverCodecButton(POINT client) const;
     // Codec card wording shared by videos and pictures (HEIF / AVIF).
     struct CodecCardText {

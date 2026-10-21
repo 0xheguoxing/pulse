@@ -205,6 +205,7 @@ std::wstring AppPrefs::ToJson() const {
     out += std::to_wstring(folder_sort_mode >= 0 && folder_sort_mode <= 2 ? folder_sort_mode : 0);
     out += L",\n  \"details_columns\":";
     out += std::to_wstring(ui::NormalizeDetailsColumns(details_columns));
+    out += L",\n  \"details_columns_v\":2";
     out += L",\n  \"startup_open\":";
     out += startup_open == 1 ? L"1" : L"0";
     out += L",\n  \"new_tab_open\":";
@@ -436,6 +437,10 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     if (folder_sort_mode < 0 || folder_sort_mode > 2) folder_sort_mode = 0;
     details_columns = ui::NormalizeDetailsColumns(static_cast<uint32_t>(pulse::json::ExtractInt(
         json, L"details_columns", static_cast<int>(ui::kDetailsColumnsDefault))));
+    // v2 added 状态 (cloud folders only) to the default set; masks saved
+    // before it existed get it switched on once.
+    if (pulse::json::ExtractInt(json, L"details_columns_v", 1) < 2)
+        details_columns |= ui::kDetailsColumnStatus;
     startup_open = pulse::json::ExtractInt(json, L"startup_open", 0) == 1 ? 1 : 0;
     new_tab_open = pulse::json::ExtractInt(json, L"new_tab_open", 0) == 1 ? 1 : 0;
     external_open = pulse::json::ExtractInt(json, L"external_open", 0);

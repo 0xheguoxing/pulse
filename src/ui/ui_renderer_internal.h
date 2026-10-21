@@ -7,6 +7,7 @@
 #include "typography.h"
 #include "name_highlight.h"
 #include "../app/places.h"
+#include "../app/device_registry.h"
 #include "../app/folder_alias.h"
 #include "../app/builtin_menu_items.h"
 #include "../app/search_query.h"
@@ -354,7 +355,7 @@ void ClearTextWidthCache() {
         // unknown); it is no longer at its path for a folder-size scan.
         entry.size_text = penetrated
             ? (source.link_target_is_dir ? L"" : pulse::format::ByteSize(source.link_target_size, true))
-            : (source.is_dir && source.recycle_path.empty()
+            : ((source.is_dir && source.recycle_path.empty()) || source.pc_launcher
                    ? L"" : pulse::format::ByteSize(source.size, source.recycle_path.empty() || !source.is_dir));
         // A zero FILETIME means "no time" (drives, servers, index rows without
         // it), not 1601-01-01.
@@ -397,7 +398,8 @@ void ClearTextWidthCache() {
             entry.type_text = FormatListType(
                 penetrated ? fs::StripLnkSuffix(source.name) : source.name, entry.is_dir);
         }
-        if (source.drive_type != 0) entry.type_text = DriveTypeText(source.drive_type);
+        if (source.drive_type != 0)
+            entry.type_text = DriveTypeText(source.drive_remote_like ? static_cast<uint8_t>(DRIVE_REMOTE) : source.drive_type);
         if (source.drive_type != 0 && source.drive_locked)
             entry.type_text += L" \u00B7 " + pulse::l10n::Get(pulse::l10n::StringId::DriveBitLockerLocked);
         if (entry.link_kind != fs::LinkKind::None) entry.type_text = LinkTypeText(entry.link_kind);
@@ -411,6 +413,55 @@ void ClearTextWidthCache() {
                        pulse::format::ByteSize(free_bytes).c_str(),
                        pulse::format::ByteSize(source.drive_total).c_str());
             entry.drive_space_text = space;
+        }
+        entry.drive_mounted = source.drive_type != 0 && source.drive_remote_like;
+        if (source.pc_launcher) {
+            // 网盘程序入口: brand tint, and "打开百度网盘程序" as the type.
+            entry.launcher_rgb = source.pc_launcher == 2 ? 0x2F8CF0u : source.pc_launcher == 3 ? 0x2F6FD6u : 0x60A5FAu;
+            std::wstring text = pulse::l10n::Get(pulse::l10n::StringId::ThisPcLauncherOpensApp);
+            if (const size_t at = text.find(L"{name}"); at != std::wstring::npos) {
+                std::wstring name = source.name;
+                // CJK text around a Latin name gets a space ("打开 WPS网盘程序").
+                const auto latin = [](wchar_t c) { return (c >= L'0' && c <= L'9') || (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z'); };
+                if (!name.empty() && at > 0 && text[at - 1] >= 0x2E80 && latin(name.front())) name.insert(name.begin(), L' ');
+                if (!name.empty() && at + 6 < text.size() && text[at + 6] >= 0x2E80 && latin(name.back())) name.push_back(L' ');
+                text.replace(at, 6, name);
+            }
+            entry.type_text = std::move(text);
+        }
+        if (source.pc_device & fs::kPcDevicePlaceholder) {
+            entry.device = source.pc_device;  // no phone: how to connect one
+            entry.type_text = pulse::l10n::Get(pulse::l10n::StringId::DeviceNoneHint);
+        } else if (source.pc_device) {
+            // Phones: 手机 / iPhone · 只读, then 未解锁 while waiting for Allow / Trust.
+            entry.device = source.pc_device;
+            const bool iphone = (source.pc_device & fs::kPcDeviceIPhone) != 0;
+            entry.type_text = iphone ? L"iPhone \u00B7 " + pulse::l10n::Get(pulse::l10n::StringId::DeviceReadOnlyChip)
+                                     : pulse::l10n::Get(pulse::l10n::StringId::DeviceKindPhone);
+            if (source.pc_device & fs::kPcDeviceLocked)
+                entry.type_text += L" \u00B7 " + pulse::l10n::Get(pulse::l10n::StringId::DeviceLockedChip);
+            // Storages from the registry's listing; This PC re-lists on every change.
+            for (const auto& device : app::DeviceRegistry::Instance().Devices()) {
+                if (fs::FormatDevicePath(fs::DevicePath{device.key, L"", {}}) != source.full_path) continue;
+                for (const auto& storage : device.storages) {
+                    ListEntryView::DeviceBar bar;
+                    bar.label = storage.name;
+                    if (storage.total > 0) {
+                        const uint64_t free_bytes = std::min(storage.free, storage.total);
+                        bar.used = static_cast<float>(static_cast<double>(storage.total - free_bytes) /
+                                                      static_cast<double>(storage.total));
+                        wchar_t left[96]{};
+                        swprintf_s(left, pulse::l10n::Get(pulse::l10n::StringId::DeviceStorageFreeFormat).c_str(),
+                                   pulse::format::ByteSize(free_bytes).c_str());
+                        bar.free_text = left;
+                    }
+                    // FAT32 cards cannot take files over 4 GB (copy checks it, D5).
+                    if (_wcsicmp(storage.file_system.c_str(), L"FAT32") == 0)
+                        bar.free_text += bar.free_text.empty() ? L"FAT32" : L" \u00B7 FAT32";
+                    entry.device_bars.push_back(std::move(bar));
+                }
+                break;
+            }
         }
         entry.record_only = source.change_record_only;
         if (!source.change_type_text.empty()) entry.type_text = source.change_type_text;
@@ -1723,6 +1774,17 @@ void ClearTextWidthCache() {
         return typography::MeasureLine(compositor, format, text);
     }
 
+    // 下载并预览 button: centred near the bottom of the preview well; the
+    // explanation sits above it. Empty when the well is too short for both.
+    inline D2D1_RECT_F DetailsCloudButtonRect(const D2D1_RECT_F& preview, float s, float label_w) {
+        if (preview.bottom - preview.top < 132.0f * s) return {};
+        const float w = std::min(preview.right - preview.left - 24.0f * s, label_w + 16.0f * s + 6.0f * s + 32.0f * s);
+        if (w < 60.0f * s) return {};
+        const float cx = (preview.left + preview.right) * 0.5f;
+        const float bottom = preview.bottom - 16.0f * s;
+        return D2D1::RectF(std::round(cx - w * 0.5f), bottom - 30.0f * s, std::round(cx + w * 0.5f), bottom);
+    }
+
     void LayoutDetailsPanel(const D2D1_RECT_F& panel, float scale,
                             const DetailsPanelView& d, IDWriteFactory2* dwrite,
                             IDWriteTextFormat* small_fmt, Compositor* compositor,
@@ -1736,6 +1798,12 @@ void ClearTextWidthCache() {
         out.preview = D2D1::RectF(x, panel.top + pad, panel.right - pad,
                                   panel.top + pad + preview_h);
         const float previewBottom = panel.top + pad + preview_h;
+        if (d.cloud_online && d.preview_enabled && d.multi_count <= 1 && d.cloud_download_percent < 0) {
+            const std::wstring label = pulse::l10n::Get(pulse::l10n::StringId::CloudDownloadPreview);
+            const float label_w = dwrite && small_fmt
+                ? MeasureLayoutText(compositor, dwrite, small_fmt, label) : 90.0f * s;
+            out.cloud_download = DetailsCloudButtonRect(out.preview, s, label_w);
+        }
         // Preview off: no fold bar and no well to hit up there.
         if (d.preview_enabled) {
             out.preview_toggle = D2D1::RectF(x, previewBottom, panel.right - pad,

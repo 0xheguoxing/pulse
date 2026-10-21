@@ -69,13 +69,16 @@ struct Tab {
     std::vector<CreateRenameIntent> create_rename_intents;
     ui::SortColumn sort_column = ui::SortColumn::Name;
     ui::SortDirection sort_direction = ui::SortDirection::Asc;
-    // "Group by" (app::GroupBy value) for current_path. Only list-like views
-    // draw group headers, so the worker sorts by EffectiveGroup() and icon
-    // views keep the plain order.
+    // "Group by" (app::GroupBy value) for current_path. Views that draw group
+    // headers (ui::ShowsGroups: all but List, and not a photo wall) sort by
+    // EffectiveGroup(); the others keep the plain order.
     int group_by = 0;
     int EffectiveGroup() const {
-        return view_mode == ui::ViewMode::Details || view_mode == ui::ViewMode::Content
-            ? group_by : 0;
+        // This PC always groups its rows (磁盘 / 设备 / 网盘程序入口), as
+        // Explorer does; 7 = app::GroupBy::ThisPc.
+        if (current_path.empty()) return ui::ShowsGroups(view_mode) ? 7 : 0;
+        const bool walled = wall && ui::IsZoomIconMode(view_mode);
+        return ui::ShowsGroups(view_mode) && !walled ? group_by : 0;
     }
     // Collapsed group keys per folder (session only).
     std::map<std::wstring, std::set<std::wstring>> collapsed_groups;
@@ -556,6 +559,7 @@ struct SidebarEntry {
     std::wstring detail;
     std::wstring glyph;
     std::wstring fallback;
+    std::wstring icon_path; // ui::SidebarItem::icon_path
     std::wstring badge;
     uint32_t badge_rgb = 0x0078D4;
     D2D1_COLOR_F color = {};
@@ -640,6 +644,7 @@ struct SidebarModel {
     std::vector<SidebarEntry> drives;
     std::vector<SidebarEntry> cloud;   // OneDrive accounts (empty while signed out)
     std::vector<SidebarEntry> starred; // the "starred items" root row
+    std::vector<SidebarEntry> devices; // phones after the drives (SyncDeviceSidebar)
 };
 
 SidebarModel BuildSidebarModel(const fs::RecycleBinInfo* recycle = nullptr);

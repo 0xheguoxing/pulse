@@ -1,5 +1,6 @@
 // app_runtime.cpp — extracted from app_main.cpp.
 #include "app_window_title.h"
+#include "../fs/drive_kind.h"
 #include "folder_alias.h"
 #include "app_wall_hint.h"
 #include "app_internal.h"
@@ -27,6 +28,9 @@
 #include "../ui/file_operation_dialog.h"
 #include "../ui/batch_rename_dialog.h"
 #include "../ui/quick_preview_window.h"
+#include "../fs/cloud_state.h"
+#include "cloud_download.h"
+#include "cloud_roots.h"
 #include "../ui/typography.h"
 #include "../ui/color_picker.h"
 #include "filter_tag_complete.h"
@@ -344,8 +348,7 @@ static DWORD LaunchArgumentAttributes(const std::wstring& path) {
 }
 
 static DWORD QueryLaunchArgumentAttributes(const std::wstring& path) {
-    const bool remote = fs::IsUncPath(path) || (path.size() >= 2 && path[1] == L':' &&
-        GetDriveTypeW((path.substr(0, 2) + L"\\").c_str()) == DRIVE_REMOTE);
+    const bool remote = fs::IsUncPath(path) || fs::IsRemoteLikeDrive(path);
     if (!remote) return GetFileAttributesW(path.c_str());
     struct Query {
         std::wstring path;
@@ -2583,6 +2586,13 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
         }
         s.quickPreview.SetMediaPackOffer(offer);
         s.quickPreview.SetImagePackOffer(image_offer);
+        ui::CloudDownloadOffer cloud;
+        if (fs::IsCloudPlaceholder(s.quickPreview.item().attrs)) {
+            cloud.path = s.quickPreview.item().path;
+            cloud.percent = app::CloudDownloadPercent(cloud.path);
+            cloud.provider = app::CloudRootLabelFor(cloud.path);
+        }
+        s.quickPreview.SetCloudDownloadOffer(cloud);
     }
     UpdateFolderCompare(s);
     s.changes.visible_paths.clear();
@@ -3015,6 +3025,13 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
             dv.view_generation = tab->view_generation;
             dv.path = penetrated ? e.link_target
                                  : EntryFullPath(*tab, tab->selected_index);
+            // 下载并预览 (C4b): only the entry itself; a shortcut's target is
+            // not what the well would download.
+            dv.cloud_online = !penetrated && !dv.is_dir && fs::IsCloudPlaceholder(e.attrs);
+            if (dv.cloud_online) {
+                dv.cloud_download_percent = app::CloudDownloadPercent(dv.path);
+                dv.cloud_provider = app::CloudRootLabelFor(dv.path);
+            }
             // Directory refreshes replace the snapshot while the selected
             // path stays the same. Keep the details panel's cached metadata
             // aligned with the refreshed entry instead of showing its old
@@ -3179,8 +3196,8 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.wallpaper_blur = s.appPrefs.wallpaper_blur;
     vm.safe_mode = s.safeMode;
     {
-        // Toolbar "Group" button: list-like views of groupable places only
-        // (same rule as the Sort menu's group section).
+        // Toolbar "Group" button: views that draw group headers, in groupable
+        // places only (same rule as the Sort menu's group section).
         int toolbar_group = -1;
         if (const app::Tab* gt = ActiveTab(s)) {
             std::wstring kind;
@@ -3189,9 +3206,9 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
                 ((!gt->current_path.empty() && !fs::IsVirtualPath(gt->current_path)) || kind == L"recent" ||
                  kind == L"search" || kind == L"saved-search" || kind == L"tag" || kind == L"tags" ||
                  kind == L"recycle");
-            const bool list_like = gt->view_mode == ui::ViewMode::Details ||
-                                   gt->view_mode == ui::ViewMode::Content;
-            if (can_group && list_like && !vm.pane.compare_active) toolbar_group = gt->group_by;
+            const bool groups_shown = ui::ShowsGroups(gt->view_mode) &&
+                                      !(gt->wall && ui::IsZoomIconMode(gt->view_mode));
+            if (can_group && groups_shown && !vm.pane.compare_active) toolbar_group = gt->group_by;
         }
         s.renderer.SetToolbarGroup(toolbar_group);
         // A hidden filter or group control still shows while it is in effect.

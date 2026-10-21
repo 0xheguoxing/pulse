@@ -1,5 +1,6 @@
 // transfer_engine.cpp — See transfer_engine.h.
 #include "transfer_engine.h"
+#include "../fs/drive_kind.h"
 #include <winioctl.h>
 #include <algorithm>
 #include <chrono>
@@ -19,6 +20,7 @@ std::wstring VolumeRoot(const std::wstring& path) {
 Storage StorageOf(const std::wstring& path) {
     const std::wstring root = VolumeRoot(path);
     if (root.empty()) return Storage::Unknown;
+    if (::pulse::fs::IsRemoteLikeDrive(root)) return Storage::Remote;  // includes cloud mounts
     switch (GetDriveTypeW(root.c_str())) {
     case DRIVE_REMOTE: return Storage::Remote;
     case DRIVE_REMOVABLE:

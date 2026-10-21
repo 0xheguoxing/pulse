@@ -221,7 +221,20 @@ int wmain(int argc, wchar_t** argv) {
               device(DBT_DEVICEREMOVECOMPLETE, &volume) == SystemBroadcast::Volumes &&
               device(DBT_DEVICEARRIVAL, nullptr) == SystemBroadcast::Volumes,
           "volume arrival and removal rebuild the drive list");
+    DEV_BROADCAST_DEVICEINTERFACE_W phone{};
+    phone.dbcc_size = sizeof(phone);
+    phone.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+    phone.dbcc_classguid = app::kPortableDeviceInterfaceClass;
+    DEV_BROADCAST_DEVICEINTERFACE_W other_interface = phone;
+    other_interface.dbcc_classguid = GUID{0xA5DCBF10, 0x6530, 0x11D2, {0x90, 0x1F, 0x00, 0xC0, 0x4F, 0xB9, 0x51, 0xED}};
+    const auto* phone_header = reinterpret_cast<const DEV_BROADCAST_HDR*>(&phone);
+    Check(device(DBT_DEVICEARRIVAL, phone_header) == SystemBroadcast::Devices &&
+              device(DBT_DEVICEREMOVECOMPLETE, phone_header) == SystemBroadcast::Devices,
+          "portable device (phone) arrival and removal refresh the device list");
     Check(device(DBT_DEVICEARRIVAL, &device_interface) == SystemBroadcast::None &&
+              device(DBT_DEVICEARRIVAL, reinterpret_cast<const DEV_BROADCAST_HDR*>(&other_interface)) ==
+                  SystemBroadcast::None &&
+              device(DBT_DEVICEQUERYREMOVE, phone_header) == SystemBroadcast::None &&
               device(DBT_DEVICEQUERYREMOVE, &volume) == SystemBroadcast::None &&
               device(DBT_DEVNODES_CHANGED, nullptr) == SystemBroadcast::None,
           "other device events are ignored");

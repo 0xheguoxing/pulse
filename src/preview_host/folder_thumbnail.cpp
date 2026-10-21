@@ -1,5 +1,6 @@
 #include "folder_thumbnail.h"
 #include "shell_bitmap.h"
+#include "../fs/cloud_state.h"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <shobjidl.h>
@@ -19,7 +20,7 @@ namespace {
 using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 constexpr DWORD kSkip = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM |
-    FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE | 0x00040000 | 0x00400000;
+    FILE_ATTRIBUTE_REPARSE_POINT | ::pulse::fs::kCloudPlaceholderAttrs;
 constexpr uint64_t kCacheLimit = 64ull * 1024 * 1024;
 #ifdef PULSE_FOLDER_THUMBNAIL_TESTING
 thread_local DWORD test_budget_ms = 450;
@@ -107,7 +108,7 @@ bool LocalFolder(std::wstring path, WIN32_FILE_ATTRIBUTE_DATA& info) {
     for (size_t end = 3; ; ) {
         const auto prefix = std::wstring(L"\\\\?\\") + path.substr(0, end);
         const DWORD attrs = GetFileAttributesW(prefix.c_str());
-        if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE | 0x00040000 | 0x00400000))) return false;
+        if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & (FILE_ATTRIBUTE_REPARSE_POINT | ::pulse::fs::kCloudPlaceholderAttrs))) return false;
         if (end >= path.size()) break;
         end = path.find_first_of(L"\\/", end + 1);
         if (end == std::wstring::npos) end = path.size();
@@ -453,4 +454,3 @@ void SetFolderThumbnailBudgetForTest(DWORD budget_ms, unsigned completed_picture
 }
 #endif
 } // namespace pulse::preview
-

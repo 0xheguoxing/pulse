@@ -34,6 +34,8 @@
 #include "../ui/batch_rename_dialog.h"
 #include "../ui/quick_preview_window.h"
 #include "app_sidebar_refresh.h"
+#include "cloud_sync_probe.h"
+#include "device_registry.h"
 #include "operation_intent_ui.h"
 #include "../ui/typography.h"
 #include "../ui/preview_format_catalog.h"
@@ -143,6 +145,7 @@
 #pragma comment(lib, "uxtheme.lib")
 #pragma comment(lib, "psapi.lib")
 #include "app_internal.h"
+#include "cloud_download.h"
 
 namespace {
 // Default-program changes (thumbnail "opens with" badges): one shell-level
@@ -182,6 +185,10 @@ void UnregisterAssocChangeNotify() {
 #include <dbt.h> // WM_DEVICECHANGE / DEV_BROADCAST_HDR
 
 using namespace pulse;
+namespace pulse {
+void DispatchMenuCommand(AppState& s, int cmd); // app_commands.cpp (--menushot PULSE_TEST_MENU_RUN)
+constexpr UINT_PTR kTimerDeviceHelpTest = 0xD2B1;  // PULSE_TEST_DEVICE_HELP_MS (test instances)
+}
 
 uint64_t FileTimeValue(const FILETIME& value) {
     ULARGE_INTEGER result{};
@@ -849,6 +856,10 @@ static LRESULT HandleSystemBroadcast(AppState& s, app::SystemBroadcast kind, WPA
         RefreshSidebarModel(s);
         app::ForEachWindowSharingCore(s, [](AppState& window) { InvalidateRect(window.hwnd, nullptr, FALSE); });
         return 0;
+    case app::SystemBroadcast::Devices:
+        // Listed on the device thread after 500 ms of quiet (device_registry.h).
+        app::DeviceRegistry::Instance().OnDevicesBroadcast();
+        return 0;
     case app::SystemBroadcast::QueryEndSession:
         // Shutdown/logoff ends the process without WM_DESTROY; store the layout
         // now. session.json holds every window (v8), so it is saved once.
@@ -1353,6 +1364,15 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             if (s->appPrefs.persist) QueueTagAds(*s, {});
             RequestRecycleOccupancy(*s);
             RequestNetworkLocations(*s);
+            // Phones: arrival notifications on the host; listed only when one is present.
+            app::DeviceRegistry::Instance().Start(ServiceWindow(*s));
+            // Verification hook (isolated test instances only): open the phone
+            // help after N ms so its dialog can be captured.
+            if (s->isolatedTest) {
+                wchar_t ms[16]{};
+                if (GetEnvironmentVariableW(L"PULSE_TEST_DEVICE_HELP_MS", ms, 16) > 0 && _wtoi(ms) > 0)
+                    SetTimer(hwnd, kTimerDeviceHelpTest, static_cast<UINT>(_wtoi(ms)), nullptr);
+            }
 
             // Ops layer: queue worker + shell host IPC; notify repaints the status bar.
             const std::wstring data_dir = app::GetPulseDataDir();
@@ -1830,6 +1850,36 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_GIT_RESULT:
         if (s) ReceiveGitResult(*s, lParam);
         return 0;
+    case WM_CLOUD_PIN_DONE:
+        // Toast for 始终保留在此设备上 / 释放空间 (app_commands.cpp RunCloudPin).
+        if (s && s->hwnd) {
+            const bool freed = wParam == 1; // fs::CloudPinAction::Free
+            std::wstring title;
+            ui::SnackIcon icon = ui::SnackIcon::Suggest;
+            if (lParam > 0) {
+                title = l10n::Get(l10n::StringId::CloudPinFailed);
+                if (const size_t at = title.find(L"{n}"); at != std::wstring::npos)
+                    title.replace(at, 3, std::to_wstring(static_cast<long long>(lParam)));
+            } else {
+                title = l10n::Get(freed ? l10n::StringId::CloudFreedToast : l10n::StringId::CloudKeptToast);
+            }
+            s->notification_toast.ShowSnack(s->hwnd, icon, std::move(title), {}, {}, {}, 3000);
+        }
+        return 0;
+
+    case WM_CLOUD_DOWNLOAD:
+        if (s) HandleCloudDownloadMessage(*s, wParam, lParam);
+        return 0;
+
+    case WM_DEVICES_CHANGED:
+        // The phone list changed (DeviceRegistry): sidebar rows and This PC.
+        if (s) app::ForEachWindowSharingCore(*s, [](AppState& window) {
+            SyncDeviceSidebar(window);
+            RefreshPath(window, std::wstring(), RefreshReason::ShellNotification);
+            InvalidateRect(window.hwnd, nullptr, FALSE);
+        });
+        return 0;
+
     case WM_TAG_DROP_UNDO:
         if (s) UndoDropTags(*s);
         return 0;
@@ -1930,6 +1980,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_TIMER: {
+        if (s && wParam == kTimerDeviceHelpTest) {
+            KillTimer(hwnd, kTimerDeviceHelpTest);
+            ShowDeviceHelp(*s);
+            return 0;
+        }
         if (s && wParam == kTimerCloakPoll) {
             if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) {
                 KillTimer(hwnd, kTimerCloakPoll);  // WM_PAINT re-arms once shown again
@@ -1971,6 +2026,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             // New totals re-sort Size-ordered listings, paced (#58).
             if (folderSizeResortWaiting) folderSizeResortWaiting = ResortForFolderSizes(*s);
             DrainDirNotifies(*s);
+            // Sync states of on-screen cloud rows came back: repaint once.
+            if (const uint64_t cloud_sync = app::CloudSyncProbe::Instance().Revision();
+                cloud_sync != s->cloudSyncRevision) {
+                s->cloudSyncRevision = cloud_sync;
+                dirty = true;
+            }
             const ULONGLONG now = GetTickCount64();
             TickUpdates(*s, now);
             TickQuickPreviewSelection(*s, now);
@@ -2924,6 +2985,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             s->framePump.Stop();
             CancelZipJobs(*s);
             if (last_window) {
+                app::CancelCloudDownloads();  // 下载并预览 reads end with the app
+                app::DeviceRegistry::Instance().Stop();
                 HandOffAtExit(*s, hwnd);
                 s->probe_scheduler.Clear();
                 s->probeQueue.clear();
@@ -3073,6 +3136,33 @@ bool WaitForShotReady(AppState& s) {
         ProcessPendingResults(s);
         app::Tab* tab = ActiveTab(s);
         if (tab && !tab->loading && tab->snapshot) {
+            // PULSE_TEST_SHOT_SELECT=name (isolated instances): select that row
+            // with the details panel open, so the shot shows its well;
+            // PULSE_TEST_SHOT_DOWNLOAD=1 then presses 下载并预览 in it. Retried
+            // while settling: the rows can land after the snapshot does.
+            static bool shot_selected = false;
+            const auto select_for_shot = [&s] {
+                wchar_t pick[260]{};
+                const DWORD pick_len = GetEnvironmentVariableW(L"PULSE_TEST_SHOT_SELECT", pick, ARRAYSIZE(pick));
+                if (shot_selected || !s.isolatedTest || pick_len == 0 || pick_len >= ARRAYSIZE(pick)) return;
+                app::Tab* shown = ActiveTab(s);
+                if (!shown || shown->loading || !shown->snapshot) return;
+                for (size_t i = 0; i < shown->EntryCount(); ++i) {
+                    if (shown->EntryAt(i).name != pick) continue;
+                    shot_selected = true;
+                    shown->SelectIndices({static_cast<int>(i)});
+                    s.showDetailsPanel = true;
+                    s.renderer.SetDetailsPanelVisible(true);
+                    if (GetEnvironmentVariableW(L"PULSE_TEST_SHOT_DOWNLOAD", nullptr, 0) > 0) {
+                        std::wstring full = shown->current_path;
+                        if (!full.empty() && full.back() != L'\\') full += L'\\';
+                        StartCloudPreviewDownload(s, full + shown->EntryAt(i).name, shown->EntryAt(i).size);
+                    }
+                    if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+                    return;
+                }
+            };
+            select_for_shot();
             // PULSE_TEST_SHOT_SETTLE_MS: keep pumping after the folder loaded so
             // asynchronous results (thumbnails from the preview host) land in the shot.
             wchar_t settle[16]{};
@@ -3085,6 +3175,7 @@ bool WaitForShotReady(AppState& s) {
                         DispatchMessageW(&msg);
                     }
                     ProcessPendingResults(s);
+                    select_for_shot();
                     if (s.hwnd) RedrawWindow(s.hwnd, nullptr, nullptr, RDW_UPDATENOW | RDW_INTERNALPAINT);
                     Sleep(20);
                 }
@@ -3886,6 +3977,37 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             // BuildFinderItemMenu only checks current_path for the search bit.
             state.pane->ActiveTab()->current_path = L"pulse:search:widgets.json";
         }
+        // PULSE_TEST_MENU_SELECT=name|name...: let the folder on the command line
+        // list, then select those rows, so the shot shows the rows that depend
+        // on the selection (网盘: 始终保留在此设备上 / 释放空间).
+        wchar_t menu_select[512]{};
+        const DWORD select_len = GetEnvironmentVariableW(L"PULSE_TEST_MENU_SELECT", menu_select, ARRAYSIZE(menu_select));
+        if (ok && select_len > 0 && select_len < ARRAYSIZE(menu_select)) {
+            if (!state.shot.path.empty() && app::IsThisPcArgument(state.shot.path))
+                OpenTabAt(state, std::wstring());  // NewTab would open C: for ""
+            else if (!state.shot.path.empty()) NewTab(state, state.shot.path);
+            const ULONGLONG until = GetTickCount64() + 5000;
+            app::Tab* tab = nullptr;
+            while (GetTickCount64() < until) {
+                MSG pending;
+                while (PeekMessageW(&pending, nullptr, 0, 0, PM_REMOVE)) {
+                    TranslateMessage(&pending);
+                    DispatchMessageW(&pending);
+                }
+                ProcessPendingResults(state);
+                tab = ActiveTab(state);
+                if (tab && !tab->loading && tab->snapshot && tab->EntryCount() > 0) break;
+                Sleep(20);
+            }
+            if (tab && tab->snapshot) {
+                const std::wstring wanted = L"|" + std::wstring(menu_select) + L"|";
+                std::vector<int> picks;
+                for (size_t i = 0; i < tab->EntryCount(); ++i)
+                    if (wanted.find(L"|" + tab->EntryAt(i).name + L"|") != std::wstring::npos)
+                        picks.push_back(static_cast<int>(i));
+                tab->SelectIndices(picks);
+            }
+        }
         if (ok) {
             m.SetTheme(state.darkMode, state.accentColor);
             auto debug_items = BuildFinderItemMenu(state, true, L"撤销移动 a.txt");
@@ -3929,6 +4051,22 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
                 debug_items.push_back(std::move(compare));
             }
             ok = m.SaveDebugSnapshot(state.menushot_out.c_str(), std::move(debug_items));
+            // PULSE_TEST_MENU_RUN=<command id>: then run that command on the
+            // selection and keep pumping so its worker reports back (end-to-end
+            // check of 始终保留 / 释放空间 on a fixture folder).
+            wchar_t menu_run[16]{};
+            if (ok && GetEnvironmentVariableW(L"PULSE_TEST_MENU_RUN", menu_run, ARRAYSIZE(menu_run)) > 0) {
+                DispatchMenuCommand(state, _wtoi(menu_run));
+                const ULONGLONG until = GetTickCount64() + 3000;
+                while (GetTickCount64() < until) {
+                    MSG pending;
+                    while (PeekMessageW(&pending, nullptr, 0, 0, PM_REMOVE)) {
+                        TranslateMessage(&pending);
+                        DispatchMessageW(&pending);
+                    }
+                    Sleep(20);
+                }
+            }
         }
         DestroyWindow(hwnd);
         OleUninitialize();
@@ -4106,7 +4244,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             state.window_tabs.items[state.window_tabs.active]->marker_rgb = 0x0078D4;
         }
         if (state.shot_group > 0)
-            if (app::Tab* grouped = ActiveTab(state)) grouped->group_by = state.shot_group;
+            if (app::Tab* grouped = ActiveTab(state)) {
+                grouped->group_by = state.shot_group;
+                RefreshActiveTab(state);  // the listing was requested before: re-sort it grouped
+            }
         if (state.shot_details) {
             state.showDetailsPanel = true;
             state.renderer.SetDetailsPanelVisible(true);

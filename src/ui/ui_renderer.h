@@ -123,6 +123,17 @@ struct ListEntryView {
     // This PC tiles: used fraction (-1 = unknown) and "X free of Y".
     float drive_used = -1.0f;
     std::wstring drive_space_text;
+    bool drive_mounted = false;  // This PC: mapped / user-mode mount (网络盘 chip in tiles)
+    uint32_t launcher_rgb = 0;   // This PC program icon (网盘程序入口): brand tint, 0 = not one
+    // This PC phone: fs::kPcDevice* bits (0 = not a phone) and one capacity
+    // row per storage (used -1 = unknown).
+    uint8_t device = 0;
+    struct DeviceBar {
+        std::wstring label;
+        float used = -1.0f;
+        std::wstring free_text;
+    };
+    std::vector<DeviceBar> device_bars;
 };
 
 struct RowPresentationCache {
@@ -281,6 +292,8 @@ struct PaneViewModel {
     bool is_recent = false;
     bool is_recycle = false;
     bool is_search = false;   // search results add a display-only 路径 column
+    // Folder under a Cloud Files sync root: the Details view adds 状态.
+    bool cloud_status_column = false;
     bool is_query_search = false;
     bool is_content_search = false;
     // Tag views (pulse:tag: / pulse:tags:): the condition bar and 细分 row.
@@ -365,11 +378,11 @@ struct PaneViewModel {
         return view_row;
     }
 
-    // Spans for layout, or null when this view is not drawn grouped. Spans
-    // must cover exactly EntryCount() rows or the layout would drift.
+    // Spans for layout, or null when this view is not drawn grouped (List; a
+    // photo wall gets no spans from the model). Spans must cover exactly
+    // EntryCount() rows or the layout would drift.
     const ListGroups* Groups() const {
-        if (!groups || groups->empty() ||
-            (view_mode != ViewMode::Details && view_mode != ViewMode::Content)) return nullptr;
+        if (!groups || groups->empty() || !ShowsGroups(view_mode)) return nullptr;
         const ListGroup& last = groups->back();
         return static_cast<size_t>(last.first + last.count) == EntryCount() ? groups.get() : nullptr;
     }
@@ -400,6 +413,7 @@ struct SidebarItem {
     std::wstring label;
     std::wstring detail;
     std::wstring icon_glyph;       // Segoe Fluent Icons codepoint string.
+    std::wstring icon_path;        // shell icon drawn instead, once resolved (网盘: "::{CLSID}")
     std::wstring fallback_text;
     std::wstring badge;            // e.g. "Git"
     D2D1_COLOR_F badge_color = {};
@@ -669,6 +683,11 @@ struct DetailsPanelView {
     std::wstring drive_text, fs_text, free_space_text;
     bool size_pending = false;      // folder size still computing
     bool starred = false;
+    // 下载并预览 (C4b): a file whose content is only in the cloud. The well
+    // explains and offers the download instead of a preview.
+    bool cloud_online = false;
+    int cloud_download_percent = -1;   // 0..100 while downloading
+    std::wstring cloud_provider;       // sidebar label of its cloud root
     struct TagChip {
         std::wstring name;
         D2D1_COLOR_F color{};
@@ -682,6 +701,7 @@ struct DetailsPanelView {
 struct DetailsHitRects {
     D2D1_RECT_F open{}, new_tab{}, copy_path{}, more{}, star{}, rename{};
     D2D1_RECT_F tag_add{}, preview{}, preview_toggle{}, preview_enable{};
+    D2D1_RECT_F cloud_download{};   // 下载并预览 inside the preview well
     D2D1_RECT_F attr_readonly{}, attr_hidden{}, attr_advanced{};
     D2D1_RECT_F security_change{};
     std::vector<D2D1_RECT_F> preset_chips;
@@ -1355,6 +1375,7 @@ struct HitTestResult {
         DetailsPreview,
         DetailsPreviewToggle,
         DetailsPreviewEnable,   // preview pane on/off chip inside the well
+        DetailsCloudDownload,   // 下载并预览 button in the well of a cloud-only file
         DetailsResize,
         StatusBar,
         StatusBarTask,
@@ -1817,13 +1838,16 @@ public:
     void ToggleDetailsPreviewFit(float x, float y);
 
     // Date = modified. Values double as details_column_set.h bits: append only.
-    enum class ColumnKind : uint8_t { Name, Path, Date, Type, Size, Created, Accessed };
-    static constexpr size_t kMaxDetailsColumns = 7;
+    // Status: cloud-file state (仅在云端 / 已在本地 / 始终保留), only drawn in
+    // folders under a Cloud Files sync root (PaneViewModel::cloud_status_column).
+    enum class ColumnKind : uint8_t { Name, Path, Date, Type, Size, Created, Accessed, Status };
+    static constexpr size_t kMaxDetailsColumns = 8;
     static_assert(kDetailsColumnModified == 1u << static_cast<uint32_t>(ColumnKind::Date) &&
                   kDetailsColumnType == 1u << static_cast<uint32_t>(ColumnKind::Type) &&
                   kDetailsColumnSize == 1u << static_cast<uint32_t>(ColumnKind::Size) &&
                   kDetailsColumnCreated == 1u << static_cast<uint32_t>(ColumnKind::Created) &&
-                  kDetailsColumnAccessed == 1u << static_cast<uint32_t>(ColumnKind::Accessed));
+                  kDetailsColumnAccessed == 1u << static_cast<uint32_t>(ColumnKind::Accessed) &&
+                  kDetailsColumnStatus == 1u << static_cast<uint32_t>(ColumnKind::Status));
     // Details columns in display order. Name is always first; Path only in
     // wide search views; then the shown metadata columns (modified, created,
     // accessed, type, size). Accessed, created, type, then modified are
@@ -1834,7 +1858,7 @@ public:
         std::array<float, kMaxDetailsColumns> widths{};
         std::array<ColumnKind, kMaxDetailsColumns> kinds{ColumnKind::Name, ColumnKind::Date,
                                         ColumnKind::Type, ColumnKind::Size, ColumnKind::Size,
-                                        ColumnKind::Size, ColumnKind::Size};
+                                        ColumnKind::Size, ColumnKind::Size, ColumnKind::Size};
         int count = 4;
         // Narrow search view: the folder path is drawn under the name.
         bool two_line = false;
@@ -1865,6 +1889,7 @@ public:
     // hit testing and painting always agree.
     struct ColumnAutoWidths {
         float date = 130.0f, type = 128.0f, size = 90.0f, created = 130.0f, accessed = 130.0f;
+        float status = 112.0f;
     };
     ColumnAutoWidths AutoColumnWidths() const;
     float TypeChipWidthDip(const std::wstring& chip) const;
@@ -1909,18 +1934,20 @@ public:
     // columns return to their fitted widths.
     void AutoFitColumnDivider(const D2D1_RECT_F& pane_bounds,
                               DetailsColumnWidths& dividers, bool search_view,
-                              std::array<float, 4>& search_dividers, int divider_index) const;
+                              std::array<float, 4>& search_dividers, int divider_index,
+                              bool status_column = false) const;
     DetailsColumnLayout DetailsColumns(
         const D2D1_RECT_F& pane_bounds,
         const DetailsColumnWidths& dividers = {},
         bool search_view = false,
-        const std::array<float, 4>& search_dividers = {}) const;
+        const std::array<float, 4>& search_dividers = {},
+        bool status_column = false) const;
     DetailsColumnLayout DetailsColumns(const D2D1_RECT_F& pane_bounds,
                                        const PaneViewModel& vm) const;
     DetailsColumnWidths ResizeDetailsColumnDivider(
         const D2D1_RECT_F& pane_bounds,
         const DetailsColumnWidths& dividers,
-        int divider_index, float cursor_x) const;
+        int divider_index, float cursor_x, bool status_column = false) const;
     std::array<float, 4> ResizeSearchColumnDivider(
         const D2D1_RECT_F& pane_bounds,
         const std::array<float, 4>& dividers,
@@ -2219,6 +2246,10 @@ private:
     // drawn image, `icon_size` the item's icon square, both in pixels.
     void DrawThumbnailBadges(const ListEntryView& entry, const D2D1_RECT_F& artwork, float icon_size,
                              uint32_t duration_ms, const Theme& theme);
+    // Cloud-file state on a grid item in a cloud folder: a round plate on the
+    // artwork's bottom-left (shell icons) or inside its top-left (pictures).
+    void DrawCloudBadge(const ListEntryView& entry, const D2D1_RECT_F& artwork, bool picture,
+                        const Theme& theme, float opacity);
     // Photo wall picture tile over its thumbnail: a hairline edge, the dark
     // fade its name sits on while hovered or selected, the selection ring.
     void DrawWallTileChrome(const D2D1_RECT_F& tile, bool hover, bool selected, const Theme& theme);

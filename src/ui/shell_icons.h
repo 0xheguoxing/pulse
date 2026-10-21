@@ -63,6 +63,13 @@ public:
     ID2D1Bitmap* CachedBitmapFor(const std::wstring& path, const std::wstring& name,
                                  bool is_dir, DWORD attrs, float desired_dips);
 
+    // The path's own icon only, never a generic fallback: nullptr while the
+    // lookup is pending or when it failed (the caller keeps its own artwork).
+    // Also takes the program icons of 网盘 entries: "shell:::{CLSID}" (a This
+    // PC launcher) and "::{CLSID}" (a navigation-pane root) resolve to the
+    // icon the program registered for that CLSID, as Explorer shows it.
+    ID2D1Bitmap* ExactBitmapFor(const std::wstring& path, float desired_dips);
+
     // Matches CachedBitmapFor's selected bitmap. Unknown/empty artwork uses
     // the full normalized rectangle; this only inspects cached metadata.
     D2D1_RECT_F CachedArtworkBounds(const std::wstring& path, const std::wstring& name,

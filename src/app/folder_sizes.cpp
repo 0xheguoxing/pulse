@@ -1,4 +1,6 @@
 #include "folder_sizes.h"
+#include "../fs/drive_kind.h"
+#include "../fs/cloud_state.h"
 #include "folder_size_scanner.h"
 #include "folder_size_store.h"
 #include "../fs/fs_enum.h"
@@ -153,8 +155,7 @@ struct FolderSizes::Impl {
     uint8_t ProbeFolder(const std::wstring& key) {
         const auto type = DriveType(key);
         if (type != DRIVE_FIXED && type != DRIVE_RAMDISK) return 0;
-        constexpr DWORD kSkip = FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE |
-            FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS;
+        constexpr DWORD kSkip = FILE_ATTRIBUTE_REPARSE_POINT | ::pulse::fs::kCloudPlaceholderAttrs;
         const DWORD attrs = GetFileAttributesW(key.c_str());
         if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY) || (attrs & kSkip)) return 0;
         WIN32_FIND_DATAW data{};
@@ -226,7 +227,9 @@ struct FolderSizes::Impl {
         const auto root = plain.substr(0, 3);
         const auto found = drive_types.find(root);
         if (found != drive_types.end()) return found->second;
-        return drive_types.emplace(root, GetDriveTypeW(root.c_str())).first->second;
+        // Cloud mounts count as network drives: never walked for sizes.
+        return drive_types.emplace(root, ::pulse::fs::IsRemoteLikeDrive(root) ? static_cast<UINT>(DRIVE_REMOTE)
+                                                                       : GetDriveTypeW(root.c_str())).first->second;
     }
     void Save(const std::wstring& file) {
         if (file.empty()) return;

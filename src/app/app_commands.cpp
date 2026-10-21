@@ -60,6 +60,9 @@
 #include "search_refresh_log.h"
 #include "selection_caps.h"
 #include "drive_verbs.h"
+#include "cloud_roots.h"
+#include "../fs/cloud_pin.h"
+#include "../fs/cloud_state.h"
 #include "bitlocker_unlock.h"
 #include "../fs/bitlocker_volume.h"
 #include "app_navigation.h"
@@ -1506,6 +1509,26 @@ void ApplyDriveVerbResult(AppState& s, const app::DriveVerbResult& result) {
     }
 }
 
+// 始终保留在此设备上 / 释放空间: flip the pin attributes of the selection (and
+// everything under selected folders) off the UI thread, then report back with
+// WM_CLOUD_PIN_DONE. The sync engine does the downloading or freeing; the
+// watcher's attribute notifications redraw the rows as their state moves.
+static void RunCloudPin(AppState& s, fs::CloudPinAction action) {
+    const app::Tab* tab = ActiveTab(s);
+    if (!tab || !app::IsUnderCloudFilesRoot(tab->current_path)) return;
+    std::vector<std::wstring> paths = SelectedFullPaths(*tab);
+    if (paths.empty()) return;
+    const HWND hwnd = s.hwnd;
+    // Its own thread: a large pinned tree must not hold up folder loads queued
+    // on the worker pool.
+    std::thread([hwnd, action, paths = std::move(paths)] {
+        const fs::CloudPinResult result = fs::ApplyCloudPin(paths, action);
+        if (hwnd && IsWindow(hwnd))
+            PostMessageW(hwnd, WM_CLOUD_PIN_DONE, static_cast<WPARAM>(action),
+                         static_cast<LPARAM>(std::min<size_t>(result.failed, 0x7FFFFFFF)));
+    }).detach();
+}
+
 static void FlipToolbarTool(AppState& s, size_t index);
 
 void DispatchMenuCommand(AppState& s, int cmd) {
@@ -1676,6 +1699,8 @@ void DispatchMenuCommand(AppState& s, int cmd) {
     case app::CmdDissolveFolder: DissolveSelectedFolders(s); break;
     case app::CmdSetAlias: ShowAliasOverlay(s); break;
     case app::CmdStageToTray: StageSelection(s); break;
+    case app::CmdCloudKeep: RunCloudPin(s, fs::CloudPinAction::Keep); break;
+    case app::CmdCloudFree: RunCloudPin(s, fs::CloudPinAction::Free); break;
     case app::CmdAdvancedSearch: ShowAdvancedSearch(s); break;
     case app::CmdRestoreRecycle: RestoreSelected(s); break;
     case app::CmdRestoreAllRecycle: RestoreAllRecycle(s); break;
@@ -1871,6 +1896,12 @@ void EraseCommand(std::vector<ui::FluentMenuItem>& items, int command) {
 void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const app::SelectionCaps& caps) {
     if (TerminalTarget(s).empty()) EraseCommand(items, app::CmdOpenTerminal);
     if (caps.kind == app::SelectionKind::Files || caps.kind == app::SelectionKind::None) return;
+    if (caps.kind == app::SelectionKind::Launchers) {
+        // Program icons in This PC: opening the program is all they do.
+        std::erase_if(items, [](const ui::FluentMenuItem& item) { return item.command != app::CmdOpen; });
+        for (auto& item : items) item.separator_after = false;
+        return;
+    }
     // The 剪切 / 复制 / 删除 / 重命名 strip keeps what this selection allows.
     for (auto it = items.begin(); it != items.end(); ++it) {
         if (it->command != app::CmdNone || it->quick_swatches.empty()) continue;
@@ -1934,6 +1965,38 @@ void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const ap
     auto open = std::find_if(items.begin(), items.end(),
                              [](const ui::FluentMenuItem& item) { return item.command == app::CmdOpen; });
     items.insert(open == items.end() ? items.begin() : open + 1, verbs.begin(), verbs.end());
+}
+
+// A selection inside a Cloud Files folder (OneDrive, WPS网盘, ...) gets
+// 始终保留在此设备上 / 释放空间 right after 打开, as Explorer does. Each greys
+// out when it would change nothing for any selected item.
+void AppendCloudPinCommands(const app::Tab& tab, std::vector<ui::FluentMenuItem>& items) {
+    if (!tab.snapshot || tab.SelectedCount() == 0 || !app::IsUnderCloudFilesRoot(tab.current_path)) return;
+    bool can_keep = false, can_free = false, all_remote_files = true;
+    for (int index : tab.SelectedIndices()) {
+        if (index < 0 || index >= static_cast<int>(tab.EntryCount())) continue;
+        const fs::DirEntry entry = tab.EntryAt(static_cast<size_t>(index));
+        const fs::CloudState state = fs::CloudStateFromAttrs(entry.attrs);
+        can_keep |= state != fs::CloudState::Pinned;
+        can_free |= state != fs::CloudState::Online;
+        all_remote_files &= !entry.is_dir && fs::IsCloudPlaceholder(entry.attrs);
+    }
+    ui::FluentMenuItem keep = VerbRow(app::CmdCloudKeep, l10n::Get(l10n::StringId::CloudKeepOnDevice), L"\xE718");
+    keep.enabled = can_keep;
+    ui::FluentMenuItem release = VerbRow(app::CmdCloudFree, l10n::Get(l10n::StringId::CloudFreeUpSpace), L"\xE753");
+    release.enabled = can_free;
+    release.separator_after = true;
+    auto open = std::find_if(items.begin(), items.end(),
+                             [](const ui::FluentMenuItem& item) { return item.command == app::CmdOpen; });
+    if (open != items.end()) {
+        open->separator_after = true;
+        // 打开 is the user asking for the content: the sync engine downloads it
+        // first, so say so (design: 打开 · 会先下载).
+        if (all_remote_files && open->shortcut.empty())
+            open->shortcut = l10n::Get(l10n::StringId::CloudOpenDownloadsFirst);
+    }
+    const ui::FluentMenuItem rows[] = {std::move(keep), std::move(release)};
+    items.insert(open == items.end() ? items.begin() : open + 1, std::begin(rows), std::end(rows));
 }
 } // namespace
 
@@ -2046,6 +2109,7 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         items.insert(items.begin() + 1, std::move(compare));
     }
     if (tab) AdaptItemMenu(s, items, app::ComputeSelectionCaps(*tab, &s.places));
+    if (tab) AppendCloudPinCommands(*tab, items);
     return items;
 }
 
@@ -2292,6 +2356,14 @@ void DiscardCtxLayoutSave() { g_ctx_layout_saver.Discard(); }
 // Fluent menu fades in.
 void StartCtxQuery(AppState& s, std::vector<std::wstring> paths,
                           bool background, const std::wstring& ext) {
+    // 网盘程序入口 rows (shell:::{CLSID}) are programs, not files: no shell
+    // verbs for them, and no leftover verbs of the previous target either.
+    const size_t asked = paths.size();
+    std::erase_if(paths, [](const std::wstring& path) { return std::wstring_view(path).starts_with(L"shell:::"); });
+    if (asked > 0 && paths.empty()) {
+        s.context_menu.Close();
+        return;
+    }
     s.context_menu.StartQuery(s.ctxMenuPrefs, s.hwnd, std::move(paths),
         background, ext, (GetKeyState(VK_SHIFT) & 0x8000) != 0,
         ClipboardPath, [&s](const std::wstring& extension) {
@@ -2989,6 +3061,24 @@ void RefreshSidebarModel(AppState& s) {
     if (s.networkLocations) RequestNetworkLocations(s);
 }
 
+void ShowDeviceHelp(AppState& s) {
+    ui::ConfirmDialogSpec spec;
+    spec.tone = ui::ConfirmTone::Info;
+    spec.glyph = L"\xE8EA";  // CellPhone
+    spec.title = l10n::Get(l10n::StringId::DeviceHelpTitle).c_str();
+    const l10n::StringId steps[] = {l10n::StringId::DeviceHelpStep1, l10n::StringId::DeviceHelpStep2,
+                                    l10n::StringId::DeviceHelpStep3};
+    // One wrapped paragraph per step: card rows are one line, these are sentences.
+    for (int i = 0; i < 3; ++i) {
+        if (i) spec.message += L"\n";
+        spec.message += std::to_wstring(i + 1) + L". " + l10n::Get(steps[i]).c_str();
+    }
+    spec.note = l10n::Get(l10n::StringId::DeviceHelpNote).c_str();
+    spec.confirm_text = l10n::Get(l10n::StringId::TeachGotIt).c_str();
+    spec.single_button = true;
+    (void)ui::ShowConfirmDialog(s.hwnd, spec, s.darkMode, s.accentColor);
+}
+
 app::SidebarEntry* QuickAccessEntryForPath(AppState& s,
                                                    const std::wstring& path) {
     for (auto* group : { &s.sidebar.quick_access, &s.sidebar.cloud, &s.sidebar.starred }) {
@@ -3411,7 +3501,8 @@ void ApplyViewMode(AppState& s, ui::ViewMode mode, float icon_dip, const POINT* 
         tab->icon_dip = icon_dip;
         tab->wall = to_wall;
     }
-    // Grouped order applies to list-like views only; re-sort when that flips.
+    // Grouped order applies where groups are drawn (not List, not a photo
+    // wall); re-sort when that flips.
     if (tab->EffectiveGroup() != old_group && !fs::IsVirtualPath(tab->current_path))
         RefreshActiveTab(s);
     ++tab->view_generation;
@@ -5116,6 +5207,7 @@ namespace {
 bool QuickPreviewItemAt(AppState& s, const app::Tab& tab, int index, ui::QuickPreviewItem& item) {
     if (!tab.snapshot || index < 0 || index >= static_cast<int>(tab.EntryCount())) return false;
     const fs::DirEntry& entry = tab.EntryAt(static_cast<size_t>(index));
+    if (entry.pc_launcher || entry.pc_device) return false;  // 网盘程序入口 / phones: no file to preview
     // Folders preview as a contents listing; not in This PC (whole drives),
     // the recycle bin or other virtual locations.
     if (entry.is_dir && (tab.current_path.empty() || IsRecycleTab(&tab) ||

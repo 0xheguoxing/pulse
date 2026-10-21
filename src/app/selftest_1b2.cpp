@@ -6698,6 +6698,26 @@ void TestOptionalColumns() {
     }
     Check(order_kept && filled,
           L"optional columns: narrowing drops accessed, created, type, then modified");
+    // 状态: chosen by default, drawn only for cloud folders, right after the name.
+    r.SetDetailsColumns(ui::kDetailsColumnsDefault);
+    const auto cloud = r.DetailsColumns(pane(1200.0f), {}, false, {}, true);
+    const auto plain = r.DetailsColumns(pane(1200.0f), {}, false, {}, false);
+    const auto cloud_search = r.DetailsColumns(pane(1200.0f), {}, true, {}, true);
+    Check(cloud.count == 5 && cloud.kinds[1] == K::Status && cloud.kinds[2] == K::Date && fills(cloud) &&
+              !plain.Has(K::Status) && plain.count == 4 && !cloud_search.Has(K::Status),
+          L"cloud status: shown after the name in cloud folders only, never in search results");
+    bool status_order = true;
+    for (float w = 260.0f; w <= 1200.0f; w += 20.0f) {
+        const auto c = r.DetailsColumns(pane(w), {}, false, {}, true);
+        status_order &= fills(c) && (c.Has(K::Status) || !c.Has(K::Type)) && (c.Has(K::Date) || !c.Has(K::Status));
+    }
+    Check(status_order, L"cloud status: narrowing drops type, then status, then modified");
+    ui::DetailsColumnWidths status_widths{};
+    status_widths = r.ResizeDetailsColumnDivider(pane(1200.0f), status_widths, 1,
+                                                 cloud.DividerX(1) + 30.0f * scale, true);
+    Check(status_widths[0] > 1.0f && status_widths[1] <= 1.0f,
+          L"cloud status: the divider after status resizes modified, status keeps its fitted width");
+    r.SetDetailsColumns(ui::kDetailsColumnsAll);
     const auto search = r.DetailsColumns(pane(1600.0f), {}, true);
     Check(!search.Has(K::Created) && !search.Has(K::Accessed) && search.Has(K::Path) &&
           search.Has(K::Date) && fills(search),
@@ -6793,17 +6813,18 @@ void TestOptionalColumns() {
     // Header menu.
     const auto menu = BuildDetailsColumnMenu(ui::kDetailsColumnsDefault);
     const int created_cmd = kDetailsColumnToggleBase + static_cast<int>(K::Created);
-    Check(menu.size() == 7 && menu[0].checked && !menu[0].enabled && menu[1].checked &&
+    Check(menu.size() == 8 && menu[0].checked && !menu[0].enabled && menu[1].checked &&
           menu[2].command == created_cmd && !menu[2].checked && menu[5].checked &&
-          menu[5].separator_after && menu[6].command == kDetailsColumnsReset && !menu[6].enabled,
-          L"optional columns: header menu lists name (fixed), the five columns and reset");
+          menu[6].command == kDetailsColumnToggleBase + static_cast<int>(K::Status) && menu[6].checked &&
+          menu[6].separator_after && menu[7].command == kDetailsColumnsReset && !menu[7].enabled,
+          L"optional columns: header menu lists name (fixed), the six columns and reset");
     const uint32_t with_created = ApplyDetailsColumnCommand(ui::kDetailsColumnsDefault, created_cmd);
     Check(with_created == (ui::kDetailsColumnsDefault | ui::kDetailsColumnCreated) &&
           ApplyDetailsColumnCommand(with_created, created_cmd) == ui::kDetailsColumnsDefault &&
           ApplyDetailsColumnCommand(with_created, kDetailsColumnsReset) == ui::kDetailsColumnsDefault &&
           ApplyDetailsColumnCommand(with_created, kDetailsColumnToggleBase) == with_created &&
           ApplyDetailsColumnCommand(with_created, 0) == with_created &&
-          BuildDetailsColumnMenu(with_created)[2].checked && BuildDetailsColumnMenu(with_created)[6].enabled,
+          BuildDetailsColumnMenu(with_created)[2].checked && BuildDetailsColumnMenu(with_created)[7].enabled,
           L"optional columns: header menu toggles a column, resets, and ignores name / dismiss");
     const uint32_t drawn = (1u << static_cast<uint32_t>(K::Name)) | ui::kDetailsColumnsDefault;
     const auto narrow_menu = BuildDetailsColumnMenu(with_created, drawn, false);
@@ -6814,6 +6835,19 @@ void TestOptionalColumns() {
           search_menu[2].badge_text == l10n::Get(l10n::StringId::DetailsColumnNotInSearch) &&
           BuildDetailsColumnMenu(with_created)[2].badge_text.empty(),
           L"optional columns: a chosen column the pane cannot show says why");
+    const uint32_t drawn_plain = drawn & ~ui::kDetailsColumnStatus;
+    Check(BuildDetailsColumnMenu(with_created, drawn_plain, false)[6].badge_text ==
+              l10n::Get(l10n::StringId::DetailsColumnCloudOnly) &&
+              BuildDetailsColumnMenu(with_created, drawn, false)[6].badge_text.empty(),
+          L"cloud status: outside cloud folders the menu says it is for cloud folders only");
+    AppPrefs legacy;
+    legacy.persist = false;
+    legacy.FromJson(L"{\"details_columns\":28}");
+    AppPrefs current;
+    current.persist = false;
+    current.FromJson(L"{\"details_columns\":28,\"details_columns_v\":2}");
+    Check(legacy.details_columns == (28u | ui::kDetailsColumnStatus) && current.details_columns == 28u,
+          L"cloud status: masks saved before v2 get status once, newer masks are kept");
 
     // Sort menu: the new dates appear for folders, not for search results.
     BackgroundViewOptions folder_options;

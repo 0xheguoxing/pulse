@@ -4,6 +4,7 @@
 
 #include <commoncontrols.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <commctrl.h>
 #include <wincodec.h>
 #include <cwctype>
@@ -28,7 +29,29 @@ std::wstring LowerExt(const std::wstring& name) {
     return ext;
 }
 
+// 网盘 program icons: a CLSID without a registered DefaultIcon would come
+// back from the shell as a generic icon, so such a lookup fails instead.
+bool HasRegisteredIcon(const std::wstring& clsid) {
+    if (clsid.size() != 38 || clsid.front() != L'{' || clsid.back() != L'}') return false;
+    const std::wstring sub = L"CLSID\\" + clsid + L"\\DefaultIcon";
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CLASSES_ROOT, sub.c_str(), 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS)
+        return false;
+    RegCloseKey(key);
+    return true;
+}
+
+// "shell:::{CLSID}" = a This PC launcher row: the regitem under This PC.
+// "::{CLSID}" = a navigation-pane root: the regitem on the desktop. Empty
+// when the program registered no icon (the lookup then fails).
 std::wstring ShellPath(const std::wstring& path) {
+    if (path.starts_with(L"shell:::")) {
+        const std::wstring clsid = path.substr(8);
+        return HasRegisteredIcon(clsid)
+            ? L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\::" + clsid : std::wstring();
+    }
+    if (path.starts_with(L"::{"))
+        return HasRegisteredIcon(path.substr(2)) ? path : std::wstring();
     return pulse::path::StripExtendedPathPrefix(path);
 }
 
@@ -309,7 +332,19 @@ void ShellIconCache::WorkerLoop() {
         } else {
             const UINT flags = SHGFI_SYSICONINDEX | SHGFI_SMALLICON;
             const std::wstring query = ShellPath(path);
-            if (SHGetFileInfoW(query.c_str(), 0, &info, sizeof(info), flags)) {
+            bool found = false;
+            if (query.starts_with(L"::")) {
+                // Regitems parse through the shell namespace, not as a path.
+                PIDLIST_ABSOLUTE pidl = nullptr;
+                if (SUCCEEDED(SHParseDisplayName(query.c_str(), nullptr, &pidl, 0, nullptr)) && pidl) {
+                    found = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(pidl), 0, &info, sizeof(info),
+                                           flags | SHGFI_PIDL) != 0;
+                    CoTaskMemFree(pidl);
+                }
+            } else if (!query.empty()) {
+                found = SHGetFileInfoW(query.c_str(), 0, &info, sizeof(info), flags) != 0;
+            }
+            if (found) {
                 index = info.iIcon;
                 if (info.hIcon) DestroyIcon(info.hIcon);
             }
@@ -482,6 +517,23 @@ ID2D1Bitmap* ShellIconCache::CachedBitmapFor(const std::wstring& path, const std
     (void)attrs;  // generic icons are keyed by extension only (see GenericIndex)
     const auto key = CachedBitmapKey(path, name, is_dir, desired_dips, true);
     return key ? bitmaps_.at(*key).get() : nullptr;
+}
+
+ID2D1Bitmap* ShellIconCache::ExactBitmapFor(const std::wstring& path, float desired_dips) {
+    if (path.empty()) return nullptr;
+    int index = -1;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (const auto it = exact_index_.find(path); it != exact_index_.end()) {
+            index = it->second;
+            last_used_[path] = ++access_clock_;
+        }
+    }
+    if (index < 0) {
+        RequestExact(path);  // throttled: a failed lookup waits before a retry
+        return nullptr;
+    }
+    return BitmapForIndex(index, ImageListId(desired_dips));
 }
 
 D2D1_RECT_F ShellIconCache::CachedArtworkBounds(const std::wstring& path,

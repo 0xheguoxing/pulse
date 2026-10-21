@@ -1,4 +1,5 @@
 #include "edit_host.h"
+#include "../fs/drive_kind.h"
 #include "../common/windows_compat.h"
 #include "folder_picker_dialog.h"
 
@@ -117,7 +118,8 @@ std::vector<SidebarItem> ReadSidebarDrives() {
         item.is_drive = true;
         item.icon_glyph = L"\xE7F1";
         std::wstring label;
-        if (type == DRIVE_FIXED) {
+        const bool remote_like = ::pulse::fs::IsRemoteLikeDrive(root);  // no media query on cloud mounts
+        if (type == DRIVE_FIXED && !remote_like) {
             wchar_t volume[MAX_PATH + 1]{};
             if (GetVolumeInformationW(root.c_str(), volume, MAX_PATH, nullptr, nullptr, nullptr,
                                       nullptr, 0))
@@ -130,7 +132,7 @@ std::vector<SidebarItem> ReadSidebarDrives() {
             }
         }
         if (label.empty()) {
-            label = type == DRIVE_REMOTE ? l10n::Get(l10n::StringId::NetworkDrive).c_str()
+            label = type == DRIVE_REMOTE || remote_like ? l10n::Get(l10n::StringId::NetworkDrive).c_str()
                   : type == DRIVE_CDROM ? l10n::Get(l10n::StringId::CDDrive).c_str()
                   : type == DRIVE_REMOVABLE ? l10n::Get(l10n::StringId::RemovableDisk_2).c_str()
                   : l10n::Get(l10n::StringId::LocalDisk_2).c_str();

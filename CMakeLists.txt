@@ -529,6 +529,7 @@ target_link_options(pulse PRIVATE /MAP)
     target_link_libraries(pulse PRIVATE
         d3d11 d2d1 dwrite dxgi dcomp dwmapi shcore ole32 shell32 uuid comctl32 advapi32 shlwapi version windowscodecs gdi32 netapi32 mpr bcrypt pulse_crash_reporter)
     target_link_libraries(pulse PRIVATE propsys oleaut32)  # shell_window_registry.cpp
+    target_link_libraries(pulse PRIVATE cfgmgr32)  # device_shell.cpp: portable device presence
     target_link_libraries(pulse PRIVATE winhttp crypt32 secur32)
     target_link_libraries(pulse PRIVATE pulse_localization pulse_text)
     pulse_enable_lumatext(pulse)
@@ -853,7 +854,7 @@ target_link_libraries(pulse_persistence_test PRIVATE
 # Multi-window M0: single-window session baseline (session v8 must keep it).
 add_executable(pulse_session_window_test src/bench/session_window_test.cpp
     src/app/session.cpp src/app/session_tab_model.cpp src/app/tab_group_model.cpp src/app/window_identity.cpp
-    src/app/app_model.cpp src/app/places.cpp src/app/entry_group.cpp src/app/tag_ads_sync.cpp
+    src/app/app_model.cpp src/app/cloud_roots.cpp src/app/places.cpp src/app/entry_group.cpp src/app/tag_ads_sync.cpp
     src/app/pane_layout.cpp src/app/column_view_model.cpp src/app/search_query.cpp
     src/app/search_query_rewrite.cpp src/index/index_query.cpp src/index/search_kinds.cpp
     src/index/content_result_store.cpp src/fs/fs_enum.cpp src/ui/view_layout.cpp)
@@ -862,7 +863,7 @@ target_link_libraries(pulse_session_window_test PRIVATE
 # Multi-window M7h: a split tab dropped on a window's edge brings all its panes.
 add_executable(pulse_pane_drop_test src/bench/pane_drop_test.cpp src/app/pane_drop.cpp
     src/app/session.cpp src/app/session_tab_model.cpp src/app/window_identity.cpp
-    src/app/app_model.cpp src/app/places.cpp src/app/entry_group.cpp src/app/tag_ads_sync.cpp
+    src/app/app_model.cpp src/app/cloud_roots.cpp src/app/places.cpp src/app/entry_group.cpp src/app/tag_ads_sync.cpp
     src/app/tab_group_model.cpp src/app/pane_layout.cpp src/app/column_view_model.cpp src/app/search_query.cpp
     src/app/search_query_rewrite.cpp src/index/index_query.cpp src/index/search_kinds.cpp
     src/index/content_result_store.cpp src/fs/fs_enum.cpp src/ui/view_layout.cpp)
@@ -870,7 +871,7 @@ target_link_libraries(pulse_pane_drop_test PRIVATE
     user32 shell32 ole32 uuid advapi32 shlwapi netapi32 secur32 pulse_localization pulse_runtime_log pulse_sqlite)
 # Toolbar / chip / item menu: what a drive, a share or a Recycle Bin item can do.
 add_executable(pulse_selection_caps_test src/bench/selection_caps_test.cpp
-    src/app/app_model.cpp src/app/places.cpp src/app/entry_group.cpp src/app/tag_ads_sync.cpp
+    src/app/app_model.cpp src/app/cloud_roots.cpp src/app/places.cpp src/app/entry_group.cpp src/app/tag_ads_sync.cpp
     src/app/pane_layout.cpp src/app/column_view_model.cpp src/app/search_query.cpp
     src/app/search_query_rewrite.cpp src/index/index_query.cpp src/index/search_kinds.cpp
     src/index/content_result_store.cpp src/fs/fs_enum.cpp src/ui/view_layout.cpp)
@@ -1253,6 +1254,17 @@ target_link_libraries(pulse_link_pill_test PRIVATE user32)
 
 add_executable(pulse_network_locations_test src/bench/network_locations_test.cpp src/app/network_locations.cpp)
 target_link_libraries(pulse_network_locations_test PRIVATE shell32 ole32 oleaut32 uuid)
+# Phones (D1): pulse:device: paths, the fake device source, the device thread.
+add_executable(pulse_device_source_test src/bench/device_source_test.cpp src/fs/device_path.cpp
+    src/fs/device_fake.cpp src/fs/device_shell.cpp src/fs/device_worker.cpp)
+target_link_libraries(pulse_device_source_test PRIVATE shell32 ole32 uuid propsys cfgmgr32 shlwapi advapi32)
+add_executable(pulse_cloud_roots_test src/bench/cloud_roots_test.cpp src/app/cloud_roots.cpp
+    src/app/cloud_sync_probe.cpp src/fs/cloud_pin.cpp src/fs/cloud_hydrate.cpp src/app/cloud_download.cpp)
+target_link_libraries(pulse_cloud_roots_test PRIVATE advapi32 shell32 shlwapi ole32 uuid)
+# The preview host leaves cloud placeholders unread (thumbnail cache only).
+add_executable(pulse_cloud_preview_test src/bench/cloud_preview_test.cpp)
+target_link_libraries(pulse_cloud_preview_test PRIVATE shell32 ole32 uuid)
+add_dependencies(pulse_cloud_preview_test pulse_preview)
 
 add_executable(pulse_archive_integrity_test src/bench/archive_integrity_test.cpp
     src/preview_host/archive_listing.cpp src/preview_host/udf_listing.cpp)

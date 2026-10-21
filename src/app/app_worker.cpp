@@ -4,6 +4,9 @@
 #include "entry_sort.h"
 #include "entry_group.h"
 #include "link_resolve.h"
+#include "cloud_roots.h"
+#include "device_registry.h"
+#include "../common/localization.h"
 #include "../fs/fs_enum.h"
 #include "../fs/bitlocker_volume.h"
 #include "../fs/bounded_enumeration.h"
@@ -223,6 +226,36 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
                     Listing result;
                     fs::EnumerateDirectory(path, result.entries, &cancel);
                     if (cancel) throw fs::EnumerationCancelled();
+                    if (path.empty()) {
+                        // This PC: the program icons Windows shows there (网盘程序入口).
+                        for (auto& launcher : CurrentThisPcLaunchers()) {
+                            fs::DirEntry e;
+                            e.name = std::move(launcher.label);
+                            e.full_path = kThisPcLauncherPrefix + launcher.clsid;
+                            e.attrs = FILE_ATTRIBUTE_NORMAL;
+                            e.pc_launcher = launcher.brand;
+                            result.entries.push_back(std::move(e));
+                        }
+                        // Phones (the device thread's last listing, device_registry.h);
+                        // none: the "no phone connected" tile, which opens the help.
+                        const auto devices = pulse::app::DeviceRegistry::Instance().Devices();
+                        if (devices.empty()) {
+                            fs::DirEntry e;
+                            e.name = l10n::Get(l10n::StringId::DeviceNonePlaceholder);
+                            e.full_path = L"pulse:device:none";
+                            e.attrs = FILE_ATTRIBUTE_NORMAL;
+                            e.pc_device = fs::kPcDevicePlaceholder;
+                            result.entries.push_back(std::move(e));
+                        }
+                        for (const auto& device : devices) {
+                            fs::DirEntry e;
+                            e.name = device.name;
+                            e.full_path = fs::FormatDevicePath(fs::DevicePath{device.key, L"", {}});
+                            e.attrs = FILE_ATTRIBUTE_NORMAL;
+                            e.pc_device = fs::PcDeviceFlags(device);
+                            result.entries.push_back(std::move(e));
+                        }
+                    }
                     fs::QueryDirectoryIdentity(path, result.identity);
                     if (cancel) throw fs::EnumerationCancelled();
                     if (!fs::IsVirtualPath(path) && !fs::IsUncPath(path))

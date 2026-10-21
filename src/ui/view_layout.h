@@ -27,6 +27,9 @@ ViewMode ViewModeFromIndex(int index) noexcept;
 bool ShowsColumnHeader(ViewMode mode) noexcept;
 bool UsesThumbnails(ViewMode mode) noexcept;
 bool ShowsFolderSize(ViewMode mode) noexcept;
+// Views that draw "Group by" headers: every view but List, whose columns run
+// sideways. (A photo wall is not grouped either; that is a tab state.)
+inline bool ShowsGroups(ViewMode mode) noexcept { return mode != ViewMode::List; }
 
 // Ctrl+wheel / touchpad pinch zoom chain: Details <-> Medium <-> Large <-> Extra
 // large icons. List, small icons, tiles and content stay off the chain (menu
@@ -55,8 +58,9 @@ float ZoomIconDip(float dip, int step, float scale) noexcept;
 // Reserve a marquee gutter before the name and before the scrollbar.
 D2D1_RECT_F DetailsContentRect(D2D1_RECT_F bounds, float scale) noexcept;
 
-// "Group by" (details view): contiguous view rows [first, first + count)
-// shown under one header. Groups cover every row, in display order.
+// "Group by": contiguous view rows [first, first + count) shown under one
+// header; in icon grids each group starts a new row. Groups cover every row,
+// in display order.
 struct ListGroup {
     int first = 0;
     int count = 0;
@@ -166,7 +170,7 @@ public:
     ViewLayout(ViewMode mode, D2D1_RECT_F viewport, size_t item_count,
                float scroll_x, float scroll_y, float scale,
                ViewLayoutParams params = {},
-               const ListGroups* groups = nullptr); // single-column views only
+               const ListGroups* groups = nullptr); // ShowsGroups views, not a photo wall
 
     ViewMode Mode() const noexcept { return mode_; }
     const ViewLayoutMetrics& Metrics() const noexcept { return metrics_; }
@@ -207,6 +211,7 @@ public:
 
 private:
     int GroupAtY(float local_y) const noexcept;
+    int GroupedIndexAt(float local_y, bool last) const noexcept;
     int VisibleOrdinal(int index) const noexcept;
     int IndexFromOrdinal(int ordinal) const noexcept;
     ViewMode mode_ = ViewMode::Details;
@@ -221,6 +226,10 @@ private:
     const ListGroups* groups_ = nullptr;
     std::vector<float> group_top_;   // content-space y of each header
     float header_h_ = 0.0f;
+    // Grouped grids: gap between a header and its first row, and after its
+    // last row (0 in single-column views).
+    float band_top_ = 0.0f;
+    float band_bottom_ = 0.0f;
     int visible_rows_ = 0;           // rows outside collapsed groups
     const WallRows* wall_ = nullptr; // photo wall rows (icon grids), not owned
 };

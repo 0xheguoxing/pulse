@@ -17,6 +17,9 @@
 #include "../common/preview_extensions.h"
 #include "wall_aspects.h"
 #include "file_name_breaks.h"
+#include "../fs/cloud_state.h"
+#include "../app/cloud_sync_probe.h"
+#include "cloud_swap.h"
 #include <windowsx.h>
 #include <d2d1effects.h>
 #include <shlwapi.h>
@@ -29,6 +32,66 @@
 #include <unordered_map>
 
 namespace pulse::ui {
+// Cloud-file state glyph (Segoe Fluent) and ink, shared by the Details
+// 状态 column and the grid badge.
+static const wchar_t* CloudStateGlyph(fs::CloudState state) {
+    switch (state) {
+    case fs::CloudState::Online: return L"\xE753";  // Cloud
+    case fs::CloudState::Pinned: return L"\xEC61";  // CompletedSolid
+    default: return L"\xE930";                            // Completed
+    }
+}
+
+static D2D1_COLOR_F CloudStateInk(fs::CloudState state, const Theme& theme) {
+    const bool dark = theme.bg.r < 0.5f;
+    return state == fs::CloudState::Online ? HexColor(dark ? 0x6CB4F0 : 0x3B82C4)
+                                                  : HexColor(dark ? 0x6CC28F : 0x3F8A5F);
+}
+
+// Details 状态 column text for a cloud-file state.
+static std::wstring CloudStateLabel(fs::CloudState state) {
+    using l10n::StringId;
+    switch (state) {
+    case fs::CloudState::Online: return l10n::Get(StringId::CloudStateOnline);
+    case fs::CloudState::Pinned: return l10n::Get(StringId::CloudStatePinned);
+    default: return l10n::Get(StringId::CloudStateLocal);
+    }
+}
+
+// What a drawn cloud row shows: a transfer or problem the sync engine reports
+// (asked only for rows on screen) wins over where the content lives.
+struct CloudLook {
+    const wchar_t* glyph;
+    D2D1_COLOR_F ink;
+    std::wstring label;
+};
+
+static CloudLook CloudLookFor(const ListEntryView& entry, const Theme& theme) {
+    const bool dark = theme.bg.r < 0.5f;
+    // The probe caches by a stamp; folding the attributes in makes 始终保留 /
+    // 释放空间 (attributes only, mtime unchanged) ask the sync engine again.
+    const uint64_t stamp = entry.modified_value ^ (static_cast<uint64_t>(entry.attrs) * 0x9E3779B97F4A7C15ull);
+    switch (app::CloudSyncProbe::Instance().Lookup(entry.path, stamp)) {
+    case fs::CloudSync::Syncing:
+        return {L"\xE895", HexColor(dark ? 0x6CB4F0 : 0x3B82C4), l10n::Get(l10n::StringId::CloudStateSyncing)};
+    case fs::CloudSync::Error:
+        return {L"\xE7BA", HexColor(dark ? 0xF5A06B : 0xC2410C), l10n::Get(l10n::StringId::CloudStateError)};
+    default: break;
+    }
+    const fs::CloudState state = fs::CloudStateFromAttrs(entry.attrs);
+    return {CloudStateGlyph(state), CloudStateInk(state, theme), CloudStateLabel(state)};
+}
+
+// One swap tracker for every window; keys mix in the renderer so two windows
+// showing the same row each animate their own icon (ui/cloud_swap.h).
+static CloudSwapPose CloudSwapFor(const void* owner, const std::wstring& path, int slot, wchar_t glyph,
+                                  uint64_t now) {
+    static CloudSwapTracker tracker;
+    const uint64_t key = std::hash<std::wstring>{}(path) ^
+                         (reinterpret_cast<uintptr_t>(owner) * 0x9E3779B97F4A7C15ull) ^ static_cast<uint64_t>(slot);
+    return tracker.Pose(key, glyph, now, motion::SystemAnimationsEnabled());
+}
+
 
 float MainRenderer::ListRowHeightDip(const PaneViewModel& vm) const {
     if (DetailsShowsSnippet(vm)) return std::max(row_height_dip_, kDetailsSnippetMinRowDip);
@@ -486,7 +549,7 @@ MainRenderer::DetailsColumnLayout MainRenderer::DetailsColumns(
         return name_only;
     }
     auto columns = DetailsColumns(pane_bounds, vm.details_column_dividers, vm.is_search,
-                                  vm.search_column_dividers);
+                                  vm.search_column_dividers, vm.cloud_status_column);
     // Explicit divider positions remain a manual override. A drag starts by
     // capturing this measured layout, so the first movement does not jump.
     const bool manual = vm.is_search
@@ -496,7 +559,8 @@ MainRenderer::DetailsColumnLayout MainRenderer::DetailsColumns(
     // date columns keep their measured automatic widths.
     if (manual || !columns.Has(ColumnKind::Date) || !columns.Has(ColumnKind::Type) ||
         !columns.Has(ColumnKind::Size) || columns.Has(ColumnKind::Created) ||
-        columns.Has(ColumnKind::Accessed) || vm.view_mode != ViewMode::Details ||
+        columns.Has(ColumnKind::Accessed) || columns.Has(ColumnKind::Status) ||
+        vm.view_mode != ViewMode::Details ||
         !compositor_ || !compositor_->FileNameFormat()) return columns;
     const std::array<std::wstring, 3> labels{
         vm.date_column_label.empty() ? l10n::Get(l10n::StringId::ColumnModified)
@@ -574,11 +638,16 @@ MainRenderer::ColumnAutoWidths MainRenderer::AutoColumnWidths() const {
         for (StringId id : kinds) type = std::max(type, measure(fmt, pulse::l10n::Get(id)) + chip);
         type = std::max(type, measure(fmt, L"AutoCAD " + pulse::l10n::Get(StringId::TypeFile)) + chip);
         float size = std::max(header_w(StringId::ColumnSize), measure(fmt, L"1023.9") + kSizeUnitDip);
+        // Status: a 16 DIP glyph, a gap, then the longest state label.
+        float status = header_w(StringId::ColumnStatus);
+        for (StringId id : {StringId::CloudStateOnline, StringId::CloudStateLocal, StringId::CloudStatePinned})
+            status = std::max(status, measure(fmt, pulse::l10n::Get(id)) + 22.0f);
         out.date = std::clamp(date + pad, 72.0f, 176.0f);
         out.created = std::clamp(created + pad, 72.0f, 176.0f);
         out.accessed = std::clamp(accessed + pad, 72.0f, 176.0f);
         out.type = std::clamp(type + pad, 64.0f, 196.0f);
         out.size = std::clamp(size + pad, 60.0f, 112.0f);
+        out.status = std::clamp(status + pad, 72.0f, 160.0f);
     }
     auto_widths_ = out;
     auto_widths_scale_ = scale_;
@@ -654,7 +723,8 @@ MainRenderer::DetailsColumnLayout MainRenderer::DetailsColumns(
     const D2D1_RECT_F& pane_bounds,
     const DetailsColumnWidths& dividers,
     bool search_view,
-    const std::array<float, 4>& search_dividers) const {
+    const std::array<float, 4>& search_dividers,
+    bool status_column) const {
     DetailsColumnLayout out;
     const auto content = DetailsContentRect(pane_bounds, scale_);
     out.left = content.left + margin_;
@@ -668,18 +738,24 @@ MainRenderer::DetailsColumnLayout MainRenderer::DetailsColumns(
     const ColumnAutoWidths fitted = AutoColumnWidths();
     struct Meta { ColumnKind kind; float width; float automatic; };
     std::vector<Meta> meta;
-    meta.reserve(5);
-    // Display order. Search results carry no creation / access times.
+    meta.reserve(6);
+    // Display order. Search results carry no creation / access times. Status
+    // follows the name, as in Explorer, and only in cloud folders; it has no
+    // stored width (always content-fitted).
     const std::pair<ColumnKind, float> shown[] = {
+        {ColumnKind::Status, fitted.status},
         {ColumnKind::Date, fitted.date}, {ColumnKind::Created, fitted.created},
         {ColumnKind::Accessed, fitted.accessed}, {ColumnKind::Type, fitted.type},
         {ColumnKind::Size, fitted.size}};
     for (const auto& [kind, automatic] : shown) {
         if (!(details_columns_ & (1u << static_cast<uint32_t>(kind)))) continue;
+        const bool status = kind == ColumnKind::Status;
+        if (status && (!status_column || search_view)) continue;
         const int slot = ManualColumnSlot(kind, search_view);
-        if (slot < 0) continue;
-        const float manual = ManualWidthDip(search_view ? search_dividers[static_cast<size_t>(slot)]
-                                                        : dividers[static_cast<size_t>(slot)]);
+        if (slot < 0 && !status) continue;
+        const float manual = slot < 0 ? 0.0f
+            : ManualWidthDip(search_view ? search_dividers[static_cast<size_t>(slot)]
+                                         : dividers[static_cast<size_t>(slot)]);
         meta.push_back({kind, (manual > 0.0f ? manual : automatic) * scale_, automatic * scale_});
     }
     auto meta_sum = [&] { float sum = 0.0f; for (const auto& m : meta) sum += m.width; return sum; };
@@ -702,7 +778,7 @@ MainRenderer::DetailsColumnLayout MainRenderer::DetailsColumns(
     // Low-value columns go first when the name would get too narrow.
     while (total - automatic_sum() < min_name + (path_column ? min_path : 0.0f) && meta.size() > 1) {
         if (!drop(ColumnKind::Accessed) && !drop(ColumnKind::Created) && !drop(ColumnKind::Type) &&
-            !drop(ColumnKind::Date)) break;
+            !drop(ColumnKind::Status) && !drop(ColumnKind::Date)) break;
     }
     const float floor_flex = (kDetailsMinNameDip + (path_column ? kDetailsMinPathDip : 0.0f)) * scale_;
     const float available = std::max(0.0f, total - floor_flex);
@@ -772,8 +848,10 @@ int MainRenderer::ManualColumnSlot(ColumnKind kind, bool search_view) noexcept {
 
 void MainRenderer::AutoFitColumnDivider(const D2D1_RECT_F& pane_bounds,
                                         DetailsColumnWidths& dividers, bool search_view,
-                                        std::array<float, 4>& search_dividers, int divider_index) const {
-    const DetailsColumnLayout layout = DetailsColumns(pane_bounds, dividers, search_view, search_dividers);
+                                        std::array<float, 4>& search_dividers, int divider_index,
+                                        bool status_column) const {
+    const DetailsColumnLayout layout =
+        DetailsColumns(pane_bounds, dividers, search_view, search_dividers, status_column);
     if (divider_index < 0 || divider_index >= layout.count - 1) return;
     for (int side : {divider_index, divider_index + 1}) {
         const int slot = ManualColumnSlot(layout.kinds[static_cast<size_t>(side)], search_view);
@@ -918,8 +996,8 @@ std::array<float, N> ResizeColumns(const MainRenderer::DetailsColumnLayout& layo
 DetailsColumnWidths MainRenderer::ResizeDetailsColumnDivider(
     const D2D1_RECT_F& pane_bounds,
     const DetailsColumnWidths& dividers,
-    int divider_index, float cursor_x) const {
-    return ResizeColumns(DetailsColumns(pane_bounds, dividers), dividers, false,
+    int divider_index, float cursor_x, bool status_column) const {
+    return ResizeColumns(DetailsColumns(pane_bounds, dividers, false, {}, status_column), dividers, false,
                          divider_index, cursor_x, scale_);
 }
 
@@ -1068,9 +1146,13 @@ bool MainRenderer::PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& f
                                  scale_, ListRowHeightDip(vm, list), groups);
         const D2D1_RECT_F cell = grouped.ItemRect(view_index);
         if (cell.bottom - cell.top < 0.5f) return false;
-        const float h = name.bottom - name.top;
-        name.top = cell.top + std::max(0.0f, (cell.bottom - cell.top - h) * 0.5f);
-        name.bottom = name.top + h;
+        if (vm.view_mode == ViewMode::Details || vm.view_mode == ViewMode::Content) {
+            const float h = name.bottom - name.top;
+            name.top = cell.top + std::max(0.0f, (cell.bottom - cell.top - h) * 0.5f);
+            name.bottom = name.top + h;
+        } else {
+            name = grouped.NameRect(view_index);  // grids: the cell moved in both axes
+        }
     }
     if (vm.view_mode == ViewMode::Details) {
         const auto actual = DetailsColumns(pane_bounds, vm);
@@ -1369,6 +1451,7 @@ PreviewDrawResult MainRenderer::DrawEntryThumbnail(ID2D1DeviceContext* dc,
     const D2D1_RECT_F& dest, const ListEntryView& entry, ViewMode mode,
     uint64_t generation, uint32_t pixels, float opacity, bool align_bottom,
     D2D1_RECT_F* artwork, uint32_t* duration) {
+    if (entry.launcher_rgb || entry.device) return PreviewDrawResult::Failed;  // no file behind it: DrawEntryIcon
     if (entry.is_dir) {
         const bool grid = mode == ViewMode::MediumIcons || mode == ViewMode::LargeIcons ||
                           mode == ViewMode::ExtraLargeIcons;
@@ -1615,6 +1698,42 @@ void MainRenderer::DrawThumbnailBadges(const ListEntryView& entry, const D2D1_RE
     if (had_fill) brFillInput_->SetColor(previous_fill);
 }
 
+void MainRenderer::DrawCloudBadge(const ListEntryView& entry, const D2D1_RECT_F& artwork, bool picture,
+                                  const Theme& theme, float opacity) {
+    auto* dc = compositor_ ? compositor_->Dc() : nullptr;
+    const float art = std::min(artwork.right - artwork.left, artwork.bottom - artwork.top);
+    if (!dc || art < 24.0f * scale_ || opacity <= 0.0f) return;
+    const CloudLook look = CloudLookFor(entry, theme);
+    const CloudSwapPose pose = CloudSwapFor(this, entry.path, 0, look.glyph[0], motion_now_);
+    if (pose.running) RequestMotionFrame();
+    opacity *= pose.alpha;
+    const float settled = std::round(std::clamp(art * 0.34f, 16.0f * scale_, 22.0f * scale_));
+    // Shell icons: hang off the bottom-left like the prototype's badge.
+    // Pictures fill their slot, so the badge sits inside the top-left corner,
+    // clear of the open-with and duration badges along the bottom.
+    const float inset = 6.0f * scale_;
+    const float settledLeft = picture ? artwork.left + inset : artwork.left - settled * 0.3f;
+    const float settledTop = picture ? artwork.top + inset : artwork.bottom - settled * 0.75f;
+    // Scaled about its own centre while it pops.
+    const float d = settled * pose.scale;
+    const float left = settledLeft + (settled - d) * 0.5f;
+    const float top = settledTop + (settled - d) * 0.5f;
+    const D2D1_ELLIPSE circle = D2D1::Ellipse(D2D1::Point2F(left + d * 0.5f, top + d * 0.5f), d * 0.5f, d * 0.5f);
+    D2D1_COLOR_F plate = theme.surface_flyout;
+    plate.a = opacity;
+    if (picture) {
+        MakeBrush(dc, D2D1::ColorF(0, 0.22f * opacity), brFillInput_);
+        dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(circle.point.x, circle.point.y + std::max(1.0f, scale_)),
+                                      circle.radiusX, circle.radiusY), brFillInput_.get());
+    }
+    MakeBrush(dc, plate, brFillInput_);
+    dc->FillEllipse(circle, brFillInput_.get());
+    MakeBrush(dc, WithAlpha(theme.text, 0.16f * opacity), brFillInput_);
+    dc->DrawEllipse(circle, brFillInput_.get(), std::max(1.0f, scale_));
+    const D2D1_COLOR_F ink = IsHighContrast() ? theme.text : look.ink;
+    DrawIconText(left, top, d, d, look.glyph, L"", WithAlpha(ink, opacity), 0.62f);
+}
+
 void MainRenderer::DrawEntryIcon(const ListEntryView& entry, float x, float y, float size,
                                  const Theme& theme, float opacity) {
     const auto dest = D2D1::RectF(x, y, x + size, y + size);
@@ -1627,6 +1746,46 @@ void MainRenderer::DrawEntryIcon(const ListEntryView& entry, float x, float y, f
         dc->DrawRoundedRectangle(shape, brTextSecondary_.get(), std::max(1.0f, size * 0.045f));
         dc->DrawLine({x + size * 0.36f, y + size * 0.5f},
             {x + size * 0.64f, y + size * 0.5f}, brTextSecondary_.get(), std::max(1.0f, size * 0.045f));
+        return;
+    }
+    if (entry.device && compositor_ && compositor_->Dc()) {
+        auto* dc = compositor_->Dc();
+        // Phones: the phone glyph on a soft plate; an amber lock while the
+        // phone waits for Allow / Trust (pulse_devices_cloud.html .lockt).
+        const bool locked = (entry.device & fs::kPcDeviceLocked) != 0;
+        const bool none = (entry.device & fs::kPcDevicePlaceholder) != 0;  // "no phone connected": faint plug
+        const D2D1_COLOR_F tint = none ? WithAlpha(theme.text_secondary, 0.75f)
+            : locked ? HexColor(theme.bg.r < 0.5f ? 0xE3A846u : 0xB7791Fu) : theme.accent;
+        const float pad = size * 0.08f;
+        MakeBrush(dc, WithAlpha(tint, 0.13f * opacity), brFillInput_);
+        FillRoundedRect(dc, brFillInput_.get(), x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, size * 0.22f);
+        const float quarter = std::round(size * 0.5f / (16.0f * scale_) * 4.0f) / 4.0f;
+        DrawIconText(x, y, size, size, none ? L"\xE88E" : locked ? L"\xE72E" : L"\xE8EA", L"", WithAlpha(tint, opacity),
+                     std::max(0.5f, quarter));
+        return;
+    }
+    if (entry.launcher_rgb && compositor_ && compositor_->Dc()) {
+        auto* dc = compositor_->Dc();
+        // 网盘程序入口: the icon the program registered (as Explorer shows it).
+        if (ID2D1Bitmap* own = icon_cache_.ExactBitmapFor(entry.path, size)) {
+            dc->DrawBitmap(own, &dest, opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+                           nullptr, nullptr);
+            return;
+        }
+        // Not registered (or still resolving): the brand-tinted cloud on a
+        // soft plate, plus the "opens another program" mark once there is room.
+        const D2D1_COLOR_F tint = HexColor(entry.launcher_rgb);
+        const float pad = size * 0.08f;
+        MakeBrush(dc, WithAlpha(tint, 0.13f * opacity), brFillInput_);
+        FillRoundedRect(dc, brFillInput_.get(), x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, size * 0.22f);
+        const float quarter = std::round(size * 0.5f / (16.0f * scale_) * 4.0f) / 4.0f;
+        DrawIconText(x, y, size, size, L"\xE753", L"", WithAlpha(tint, opacity), std::max(0.5f, quarter));
+        if (size >= 40.0f * scale_) {
+            const float mark = std::round(size * 0.3f);
+            const float mf = std::max(0.5f, std::round(mark * 0.55f / (16.0f * scale_) * 4.0f) / 4.0f);
+            DrawIconText(x + size - mark, y + size - mark, mark, mark, L"\xE8A7", L"",
+                         WithAlpha(theme.text_secondary, opacity), mf);
+        }
         return;
     }
     if (compositor_ && compositor_->Dc() &&
@@ -1689,7 +1848,7 @@ void MainRenderer::DrawMorphIcon(const ListEntryView& entry, const PaneViewModel
                             {}, 0.0f, 0.0f, &thumbnail_artwork);
         return;
     }
-    if (entry.record_only) {
+    if (entry.record_only || entry.launcher_rgb || entry.device) {
         DrawEntryIcon(entry, icon.left, icon.top, size, theme, hidden_alpha);
         return;
     }
@@ -1852,6 +2011,10 @@ void MainRenderer::DrawMorphFrom(const PaneViewModel& vm, const motion::ViewMorp
             DrawEntryThumbnail(dc, was.icon, e, mode, vm.view_generation,
                 ThumbnailRequestPixels(mode, size), hidden_alpha, grid, nullptr) == PreviewDrawResult::Bitmap;
         if (thumb) continue;
+        if (e.launcher_rgb || e.device) {  // 网盘程序入口 and phones draw their own icon
+            DrawEntryIcon(e, dest.left, dest.top, size, theme, hidden_alpha);
+            continue;
+        }
         if (ID2D1Bitmap* bitmap = e.record_only ? nullptr
                 : icon_cache_.CachedBitmapFor(e.path, e.name, e.is_dir, e.attrs, size)) {
             dc->DrawBitmap(bitmap, &dest, hidden_alpha, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
@@ -2610,8 +2773,9 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
             painted_columns_[static_cast<size_t>(pane_index)] = mask;
         }
         float cx = columns.left;
-        auto drawCol = [&](const std::wstring& label, SortColumn col, float cw, bool right = false) {
-            const bool active = !pane.curated_order && pane.sort_column == col;
+        auto drawCol = [&](const std::wstring& label, SortColumn col, float cw, bool right = false,
+                           bool sortable = true) {
+            const bool active = sortable && !pane.curated_order && pane.sort_column == col;
             MakeBrush(dc, active ? theme.accent : theme.text, brText_);
             IDWriteTextFormat* fmt = compositor_->HeaderFormat();
             const float textInset = 8.0f * scale_;
@@ -2681,6 +2845,9 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
             case ColumnKind::Accessed:
                 drawCol(pulse::l10n::Get(pulse::l10n::StringId::ColumnAccessed), SortColumn::Accessed, cw, false);
                 break;
+            case ColumnKind::Status:
+                drawCol(pulse::l10n::Get(pulse::l10n::StringId::ColumnStatus), SortColumn::Name, cw, false, false);
+                break;
             }
         }
         const bool divider_active =
@@ -2731,6 +2898,7 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
             case ColumnKind::Size: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnSize); break;
             case ColumnKind::Created: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnCreated); break;
             case ColumnKind::Accessed: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnAccessed); break;
+            case ColumnKind::Status: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnStatus); break;
             }
         } else if (col_badge_.on && col_badge_.pane == pane_index) {
             col_badge_.on = false;
@@ -4282,6 +4450,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 const float bx = (cell.left + cell.right - bw) * 0.5f;
                 DrawChangeBadge(compositor_, painter_, *change, D2D1::RectF(bx, cell.top + 2 * scale_, bx + bw, cell.top + 20 * scale_), theme, scale_);
             }
+            bool drewCloudThumbnail = false;  // the cloud badge goes inside a picture
             if (draw_shapes && morph_item) {
                 DrawMorphIcon(e, vm, morph_sample, row_dx, row_dy, iconRect,
                               static_cast<ViewMode>(morph->FromMode()), theme);
@@ -4347,15 +4516,18 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         hidden_alpha, iconGrid, &artwork,
                         &media_duration_ms)
                         == PreviewDrawResult::Bitmap);
+                drewCloudThumbnail = drewThumbnail;
                 // Photos and videos look alike as thumbnails: say which program
                 // opens the file, and how long a video plays (like Explorer).
                 if (drewThumbnail && thumbnail_badges_ && iconGrid && !e.is_dir && !e.is_link)
                     DrawThumbnailBadges(e, artwork, renderedIconSize, media_duration_ms, theme);
                 if (!drewThumbnail && !empty_folder) {
-                    ID2D1Bitmap* grid_bitmap = iconGrid && !morphing && !e.record_only
+                    // Change records and 网盘程序入口 draw their own icon (DrawEntryIcon).
+                    const bool own_icon = e.record_only || e.launcher_rgb != 0 || e.device != 0;
+                    ID2D1Bitmap* grid_bitmap = iconGrid && !morphing && !own_icon
                         ? icon_cache_.BitmapFor(e.path, e.name, e.is_dir, e.attrs, renderedIconSize) : nullptr;
                     float align_bottom = 0.0f;
-                    if (iconGrid && !e.record_only) {
+                    if (iconGrid && !own_icon) {
                         const auto ink = icon_cache_.CachedArtworkBounds(e.path, e.name, e.is_dir, e.attrs, renderedIconSize);
                         align_bottom = renderedIconSize * (1.0f - ink.bottom);
                         artwork = {iconRect.left + ink.left * renderedIconSize,
@@ -4368,17 +4540,17 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     // An item already settled while others still glide: no
                     // synchronous conversion burst in the tail frames; the
                     // first static frame after the morph converts the rest.
-                    ID2D1Bitmap* settled = grid_bitmap ? grid_bitmap : morphing && !e.record_only
+                    ID2D1Bitmap* settled = grid_bitmap ? grid_bitmap : morphing && !own_icon
                         ? icon_cache_.CachedBitmapFor(e.path, e.name, e.is_dir, e.attrs, renderedIconSize)
                         : nullptr;
-                    if (!settled && morphing && !e.record_only)
+                    if (!settled && morphing && !own_icon)
                         icon_cache_.Prefetch(e.path, e.name, e.is_dir, e.attrs, renderedIconSize);
                     if (settled) {
                         const D2D1_RECT_F dest = D2D1::RectF(iconX, iconY, iconX + renderedIconSize,
                                                              iconY + renderedIconSize);
                         dc->DrawBitmap(settled, &dest, hidden_alpha, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
                                        nullptr, nullptr);
-                    } else if (morphing && !e.record_only) {
+                    } else if (morphing && !own_icon) {
                         if (e.is_dir) DrawFolderIcon(iconX, iconY, renderedIconSize, theme, hidden_alpha);
                         else DrawFileIcon(iconX, iconY, renderedIconSize, theme, hidden_alpha);
                     } else {
@@ -4400,6 +4572,12 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             }
             if (draw_shapes && !morph_item && !e.record_only && IsProtectedSystemEntry(e.attrs))
                 DrawProtectedBadge(dc, iconGrid ? artwork : iconRect, scale_, theme);
+            // Cloud folders: where each item's content lives, as in the 状态 column.
+            if (draw_shapes && !morph_item && !e.record_only && !e.is_link && vm.cloud_status_column &&
+                (iconGrid || wallPic)) {
+                const bool picture = wallPic || (drewCloudThumbnail && !e.is_dir);
+                DrawCloudBadge(e, wallPic ? thumbRect : artwork, picture, theme, cut ? 0.55f : hidden_alpha);
+            }
             if (draw_shapes && wallPic && !morph_item) DrawWallTileChrome(thumbRect, hover && src != vm.rename_index, selected, theme);
             // Mid-morph the labels are drawn in a second, faded pass.
             if (!draw_text) continue;
@@ -4475,7 +4653,20 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             const GitMark gitMark = vm.GitMarkAt(src);
             const bool git_pill = vm.view_mode == ViewMode::Details && !e.is_dir && gitMark != GitMark::None &&
                 !change && e.badge.empty() && !staged_pill;
-            const float badgeW = change && !iconGrid ? ChangeBadgeWidth(*change, scale_, compositor_) : vm.view_mode == ViewMode::Details && !e.badge.empty()
+            // Phone tiles: 手机 / iPhone + 只读 / 未解锁 chips after the name.
+            std::wstring device_chip;
+            std::wstring device_chip2;
+            if (e.device && vm.view_mode == ViewMode::Tiles && !(e.device & fs::kPcDevicePlaceholder)) {
+                if (e.device & fs::kPcDeviceLocked) device_chip = l10n::Get(l10n::StringId::DeviceLockedChip);
+                else if (e.device & fs::kPcDeviceIPhone) {
+                    device_chip = L"iPhone";
+                    device_chip2 = l10n::Get(l10n::StringId::DeviceReadOnlyChip);
+                } else device_chip = l10n::Get(l10n::StringId::DeviceKindPhone);
+            }
+            const float device_chip_w = device_chip.empty() ? 0.0f : painter_.MeasureTagWidth(device_chip);
+            const float device_chip2_w = device_chip2.empty() ? 0.0f : painter_.MeasureTagWidth(device_chip2);
+            const float badgeW = device_chip_w > 0.0f ? device_chip_w + (device_chip2_w > 0.0f ? 4.0f * scale_ + device_chip2_w : 0.0f)
+                : change && !iconGrid ? ChangeBadgeWidth(*change, scale_, compositor_) : vm.view_mode == ViewMode::Details && !e.badge.empty()
                 ? std::min(108.0f * scale_, painter_.MeasureTagWidth(e.badge))
                 : staged_pill ? std::min(108.0f * scale_, painter_.MeasureTagWidth(staged_text))
                 : git_pill ? std::min(108.0f * scale_, painter_.MeasureTagWidth(GitMarkText(gitMark))) : 0.0f;
@@ -4649,6 +4840,24 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 if (!change && !e.badge.empty() && trail.badge.right > trail.badge.left) {
                     painter_.DrawTag({trail.badge, e.badge, e.badge_color});
                 }
+                if (device_chip_w > 0.0f && trail.badge.right > trail.badge.left) {
+                    const bool locked = (e.device & fs::kPcDeviceLocked) != 0;
+                    fluent::TagSpec chip;
+                    chip.bounds = trail.badge;
+                    chip.bounds.right = std::min(trail.badge.right, trail.badge.left + device_chip_w);
+                    chip.text = device_chip;
+                    chip.color = locked ? HexColor(theme.bg.r < 0.5f ? 0xE3A846u : 0xB7791Fu) : theme.accent;
+                    chip.bordered = false;
+                    painter_.DrawTag(chip);
+                    if (device_chip2_w > 0.0f && chip.bounds.right + 4.0f * scale_ + device_chip2_w <= trail.badge.right + 0.5f) {
+                        fluent::TagSpec plain = chip;
+                        plain.bounds.left = chip.bounds.right + 4.0f * scale_;
+                        plain.bounds.right = plain.bounds.left + device_chip2_w;
+                        plain.text = device_chip2;
+                        plain.color = theme.text_secondary;
+                        painter_.DrawTag(plain);
+                    }
+                }
                 if (staged_pill && trail.badge.right > trail.badge.left) {
                     fluent::TagSpec pill;
                     pill.bounds = trail.badge;
@@ -4763,6 +4972,23 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         const std::wstring date = list_smart_date_ && e.modified_value && !e.date_text.empty()
                             ? SmartListDate(e.modified_value) : e.date_text;
                         draw_detail_text(fit(date, avail), left, avail, DWRITE_TEXT_ALIGNMENT_LEADING);
+                        break;
+                    }
+                    case ColumnKind::Status: {
+                        // Read from the attributes the listing already has: no
+                        // extra I/O and nothing that could trigger a download.
+                        const float iconW = 16.0f * scale_;
+                        if (avail < iconW) break;
+                        const CloudLook look = CloudLookFor(e, theme);
+                        const CloudSwapPose pose = CloudSwapFor(this, e.path, 1, look.glyph[0], motion_now_);
+                        if (pose.running) RequestMotionFrame();
+                        DrawIconText(left, cell.top, iconW, cell.bottom - cell.top, look.glyph, L"",
+                                     WithAlpha(look.ink, (cut ? 0.55f : 1.0f) * pose.alpha), 0.8f * pose.scale);
+                        const float textLeft = left + iconW + 6.0f * scale_;
+                        const float textAvail = std::max(0.0f, left + avail - textLeft);
+                        if (textAvail > 1.0f)
+                            draw_detail_text(fit(look.label, textAvail), textLeft, textAvail,
+                                             DWRITE_TEXT_ALIGNMENT_LEADING);
                         break;
                     }
                     case ColumnKind::Created:
@@ -4915,6 +5141,61 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         break;
                     }
                 }
+            } else if (vm.view_mode == ViewMode::Tiles && e.device) {
+                IDWriteTextFormat* device_fmt = compositor_->SmallFormat();
+                const float textW = std::max(0.0f, nameRc.right - nameRc.left);
+                MakeBrush(dc, theme.text_secondary, brTextSecondary_);
+                if (e.device & fs::kPcDevicePlaceholder) {
+                    // No phone: how to connect one (opening the tile shows the help).
+                    DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), device_fmt, brTextSecondary_.get(),
+                        e.type_text, nameRc.left, nameRc.top + 25.0f * scale_, textW, 20.0f * scale_);
+                } else if (e.device & fs::kPcDeviceLocked) {
+                    // What to do on the phone; the tile updates by itself.
+                    DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), device_fmt, brTextSecondary_.get(),
+                        l10n::Get((e.device & fs::kPcDeviceIPhone) ? l10n::StringId::DeviceUnlockHintIPhone
+                                                                   : l10n::StringId::DeviceUnlockHintAndroid),
+                        nameRc.left, nameRc.top + 25.0f * scale_, textW, 20.0f * scale_);
+                } else {
+                    // One row per storage: name, usage, what is left (.pbars).
+                    const float rowH = 16.0f * scale_;
+                    const float labelW = std::min(64.0f * scale_, textW * 0.3f);
+                    const float freeW = std::min(112.0f * scale_, textW * 0.4f);
+                    float rowY = nameRc.top + 24.0f * scale_;
+                    const size_t rows = std::min<size_t>(2, e.device_bars.size());
+                    for (size_t b = 0; b < rows; ++b) {
+                        const auto& bar = e.device_bars[b];
+                        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), device_fmt, brTextSecondary_.get(),
+                            bar.label, nameRc.left, rowY, labelW, rowH);
+                        const float barL = nameRc.left + labelW + 6.0f * scale_;
+                        const float barR = std::max(barL, nameRc.left + textW - freeW - 6.0f * scale_);
+                        const float mid = rowY + rowH * 0.5f;
+                        if (bar.used >= 0.0f && barR - barL > 8.0f * scale_)
+                            painter_.DrawCapacityBar(D2D1::RectF(barL, mid - 2.5f * scale_, barR, mid + 2.5f * scale_),
+                                                     bar.used, theme.accent);
+                        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), device_fmt, brTextSecondary_.get(),
+                            bar.free_text, barR + 6.0f * scale_, rowY, freeW, rowH);
+                        rowY += rowH + 2.0f * scale_;
+                    }
+                }
+            } else if (vm.view_mode == ViewMode::Tiles && e.drive_mounted) {
+                // Mounted drives (CloudDrive, rclone, mapped): no usage bar; the
+                // 网络盘 chip and what Pulse does with them instead.
+                IDWriteTextFormat* chip_fmt = compositor_->SmallFormat();
+                const std::wstring chip = l10n::Get(l10n::StringId::MountedDriveChip);
+                const float chipH = 18.0f * scale_;
+                const float chipW = MeasureLayoutText(compositor_, compositor_->DwriteFactory(), chip_fmt, chip) +
+                                    12.0f * scale_;
+                const float top = nameRc.top + 25.0f * scale_;
+                MakeBrush(dc, WithAlpha(theme.accent, 0.12f), brFillInput_);
+                FillRoundedRect(dc, brFillInput_.get(), nameRc.left, top, chipW, chipH, 4.0f * scale_);
+                MakeBrush(dc, theme.accent, brAccent_);
+                DrawTextRect(dc, chip_fmt, brAccent_.get(), chip, nameRc.left + 6.0f * scale_, top,
+                             chipW - 12.0f * scale_ + 1.0f, chipH);
+                const float noteX = nameRc.left + chipW + 6.0f * scale_;
+                MakeBrush(dc, theme.text_secondary, brTextSecondary_);
+                DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), chip_fmt, brTextSecondary_.get(),
+                    l10n::Get(l10n::StringId::MountedDriveNote), noteX, top,
+                    std::max(0.0f, nameRc.right - noteX), chipH);
             } else if (vm.view_mode == ViewMode::Tiles && e.drive_used >= 0.0f) {
                 // This PC tiles, as in File Explorer: usage bar, then free of total.
                 const float textW = std::max(0.0f, nameRc.right - nameRc.left);
@@ -5147,6 +5428,9 @@ std::wstring MainRenderer::GroupLabel(const PaneViewModel& vm, const ListGroup& 
         return g.label.empty() ? l10n::Get(StringId::GroupUntagged) : g.label;
     case 6:
         return g.label.empty() ? std::wstring(L"-") : g.label;
+    case 7:  // This PC
+        return l10n::Get(g.rank == 2 ? StringId::GroupThisPcLaunchers
+                         : g.rank == 1 ? StringId::GroupThisPcDevices : StringId::GroupThisPcDrives);
     default:
         return {};
     }
@@ -5218,6 +5502,16 @@ void MainRenderer::DrawGroupHeaders(const PaneViewModel& vm, const ViewLayout& l
         if (x + count_w <= text_right)
             DrawTextRect(dc, small_fmt, brTextSecondary_.get(), count_text, x, hr.top, count_w, h);
         x += count_w + 10.0f * scale_;
+        if (vm.group_by == 7 && g.rank == 2) {
+            // 网盘程序入口: say what these icons are, ahead of the rule.
+            const std::wstring note = l10n::Get(l10n::StringId::GroupThisPcLaunchersNote);
+            const float note_w = std::min(std::max(0.0f, text_right - x),
+                                          MeasureLayoutText(compositor_, factory, small_fmt, note) + 1.0f);
+            if (note_w > 48.0f * scale_) {
+                DrawTextEndEllipsis(dc, factory, small_fmt, brTextSecondary_.get(), note, x, hr.top, note_w, h);
+                x += note_w + 10.0f * scale_;
+            }
+        }
 
         float rule_right = text_right;
         if (!show_select && g.bytes > 0) {

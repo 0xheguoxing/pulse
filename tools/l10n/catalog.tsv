@@ -1182,7 +1182,53 @@ NotifyIconNever	IDS_NOTIFY_ICON_NEVER	2511	不显示	Never	不顯示
 ExitPulse	IDS_EXIT_PULSE	2512	退出 Pulse	Exit Pulse	結束 Pulse
 ListSelectionOutline	IDS_LIST_SELECTION_OUTLINE	2513	选中项描边	Outline selected items	選取項目外框
 ListSelectionOutlineDesc	IDS_LIST_SELECTION_OUTLINE_DESC	2514	选中的文件和文件夹外加一圈强调色描边，长列表里更容易分辨	Draw an accent outline around selected items so they stand out in long lists	選取的檔案和資料夾外加一圈強調色外框，在長清單中更容易辨識
-SidebarHideCloud	IDS_SIDEBAR_HIDE_CLOUD	2515	在侧边栏中隐藏 OneDrive	Hide OneDrive in the sidebar	在側邊欄中隱藏 OneDrive
+SidebarHideCloud	IDS_SIDEBAR_HIDE_CLOUD	2515	在侧边栏中隐藏网盘	Hide cloud drives in the sidebar	在側邊欄中隱藏雲端硬碟
+// Header-less cloud section (OneDrive, WPS网盘, 百度网盘同步空间, ...): section menu title and toast.
+SidebarCloudDrives	IDS_SIDEBAR_CLOUD_DRIVES	3810	网盘	Cloud drives	雲端硬碟
+// Details 状态 column (folders under a Cloud Files sync root): header, the three states, menu badge.
+ColumnStatus	IDS_COLUMN_STATUS	3811	状态	Status	狀態
+CloudStateOnline	IDS_CLOUD_STATE_ONLINE	3812	仅在云端	Online only	僅在雲端
+CloudStateLocal	IDS_CLOUD_STATE_LOCAL	3813	已在本地	On this device	已在本機
+CloudStatePinned	IDS_CLOUD_STATE_PINNED	3814	始终保留	Always kept	一律保留
+DetailsColumnCloudOnly	IDS_DETAILS_COLUMN_CLOUD_ONLY	3815	仅网盘文件夹	Cloud folders only	僅限雲端硬碟資料夾
+// Sync engine states for on-screen cloud rows (System.StorageProviderState).
+CloudStateSyncing	IDS_CLOUD_STATE_SYNCING	3816	同步中	Syncing	同步中
+CloudStateError	IDS_CLOUD_STATE_ERROR	3817	同步出错	Sync problem	同步發生問題
+CloudKeepOnDevice	IDS_CLOUD_KEEP_ON_DEVICE	3818	始终保留在此设备上	Always keep on this device	一律保留在此裝置上
+CloudFreeUpSpace	IDS_CLOUD_FREE_UP_SPACE	3819	释放空间	Free up space	釋放空間
+CloudFreedToast	IDS_CLOUD_FREED_TOAST	3820	已释放 · 文件还在云端，需要时再下载	Space freed · the files stay in the cloud and download when needed	已釋放 · 檔案仍在雲端，需要時再下載
+CloudKeptToast	IDS_CLOUD_KEPT_TOAST	3821	已设为始终保留 · 网盘会在后台下载	Kept on this device · the drive downloads them in the background	已設為一律保留 · 雲端硬碟會在背景下載
+CloudPinFailed	IDS_CLOUD_PIN_FAILED	3822	有 {n} 项未能更改	{n} items could not be changed	有 {n} 項無法變更
+CloudOpenDownloadsFirst	IDS_CLOUD_OPEN_DOWNLOADS_FIRST	3823	会先下载	Downloads first	會先下載
+CloudOnlyNote	IDS_CLOUD_ONLY_NOTE	3824	这个文件的内容不在本地（{size}）。Pulse 不会为了预览自动下载；双击打开时，由{provider}下载。	This file's content is not on this device ({size}). Pulse never downloads just to preview; when you open it, {provider} downloads it.	這個檔案的內容不在本機（{size}）。Pulse 不會為了預覽自動下載；按兩下開啟時，由{provider}下載。
+CloudDownloadPreview	IDS_CLOUD_DOWNLOAD_PREVIEW	3825	下载并预览	Download and preview	下載並預覽
+CloudDownloadingFrom	IDS_CLOUD_DOWNLOADING_FROM	3826	正在从{provider}下载… {n}%	Downloading from {provider}… {n}%	正在從{provider}下載… {n}%
+CloudDownloadFailed	IDS_CLOUD_DOWNLOAD_FAILED	3827	未能从{provider}下载这个文件	Could not download this file from {provider}	無法從{provider}下載這個檔案
+CloudProviderGeneric	IDS_CLOUD_PROVIDER_GENERIC	3828	网盘	the cloud provider	雲端硬碟
+GroupThisPcDrives	IDS_GROUP_THISPC_DRIVES	3829	磁盘	Drives	磁碟
+GroupThisPcDevices	IDS_GROUP_THISPC_DEVICES	3830	设备	Devices	裝置
+GroupThisPcLaunchers	IDS_GROUP_THISPC_LAUNCHERS	3831	网盘程序入口	Cloud drive apps	雲端硬碟程式入口
+GroupThisPcLaunchersNote	IDS_GROUP_THISPC_LAUNCHERS_NOTE	3832	系统“此电脑”里的图标，和资源管理器一样显示；双击打开网盘程序。网盘里的文件在侧栏最上方	Icons from Windows' This PC, shown as in File Explorer. Double-click to open the app; your cloud files are at the top of the sidebar.	系統「本機」裡的圖示，和檔案總管一樣顯示；按兩下開啟雲端硬碟程式。雲端硬碟裡的檔案在側欄最上方
+ThisPcLauncherOpensApp	IDS_THISPC_LAUNCHER_OPENS_APP	3833	打开{name}程序	Opens the {name} app	開啟{name}程式
+MountedDriveChip	IDS_MOUNTED_DRIVE_CHIP	3834	网络盘	Network	網路磁碟
+DeviceKindPhone	IDS_DEVICE_KIND_PHONE	3836	手机	Phone	手機
+DeviceReadOnlyChip	IDS_DEVICE_READ_ONLY_CHIP	3837	只读	Read-only	唯讀
+DeviceLockedChip	IDS_DEVICE_LOCKED_CHIP	3838	未解锁	Locked	未解鎖
+DeviceUnlockHintAndroid	IDS_DEVICE_UNLOCK_HINT_ANDROID	3839	在手机上解锁，并在弹窗里选“允许”	Unlock the phone and tap Allow	在手機上解鎖，並在彈窗裡選「允許」
+DeviceUnlockHintIPhone	IDS_DEVICE_UNLOCK_HINT_IPHONE	3840	解锁 iPhone，并在弹窗里点“信任”	Unlock the iPhone and tap Trust	解鎖 iPhone，並在彈窗裡點「信任」
+DeviceStorageFreeFormat	IDS_DEVICE_STORAGE_FREE_FORMAT	3841	剩 %s	%s free	剩 %s
+DeviceNonePlaceholder	IDS_DEVICE_NONE_PLACEHOLDER	3842	没有连接的手机	No phone connected	沒有連接的手機
+DeviceNoneHint	IDS_DEVICE_NONE_HINT	3843	用数据线连接，并在手机上选“文件传输”	Connect with a USB cable and choose File transfer on the phone	用傳輸線連接，並在手機上選「檔案傳輸」
+DeviceHelpTitle	IDS_DEVICE_HELP_TITLE	3844	手机连上了却看不到？	Phone connected but not showing up?	手機連上了卻看不到？
+DeviceHelpStep1	IDS_DEVICE_HELP_STEP1	3845	解锁手机，下拉通知栏，点“USB 用于…”，选“文件传输”（有的手机叫“传输文件 / MTP”）。	Unlock the phone, pull down the notifications, tap the USB notice and choose File transfer (also called Transfer files / MTP).	解鎖手機，下拉通知欄，點「USB 用於…」，選「檔案傳輸」（有的手機叫「傳輸檔案 / MTP」）。
+DeviceHelpStep2	IDS_DEVICE_HELP_STEP2	3846	手机上如果弹出“允许访问设备数据吗”，选“允许”。	If the phone asks whether to allow access to its data, tap Allow.	手機上如果彈出「允許存取裝置資料嗎」，選「允許」。
+DeviceHelpStep3	IDS_DEVICE_HELP_STEP3	3847	换一根能传数据的线，或换个 USB 口；有些线只能充电。	Try a cable that carries data, or another USB port; some cables only charge.	換一條能傳資料的線，或換個 USB 埠；有些線只能充電。
+DeviceHelpNote	IDS_DEVICE_HELP_NOTE	3848	连好后会自动出现在这里，不用刷新。	Once connected it shows up here by itself; no need to refresh.	連好後會自動出現在這裡，不用重新整理。
+ThisPcStatusDrives	IDS_THISPC_STATUS_DRIVES	3849	%zu 个磁盘	%zu drives	%zu 個磁碟
+ThisPcStatusMounted	IDS_THISPC_STATUS_MOUNTED	3850	%zu 个网络盘	%zu network drives	%zu 個網路磁碟
+ThisPcStatusDevices	IDS_THISPC_STATUS_DEVICES	3851	%zu 个设备	%zu devices	%zu 個裝置
+ThisPcStatusLaunchers	IDS_THISPC_STATUS_LAUNCHERS	3852	%zu 个网盘程序入口	%zu cloud drive apps	%zu 個雲端硬碟程式入口
+MountedDriveNote	IDS_MOUNTED_DRIVE_NOTE	3835	挂载盘符 · 不建索引、不算文件夹大小	Mounted drive · not indexed, no folder sizes	掛載的磁碟機 · 不建索引、不計算資料夾大小
 SidebarCloudHiddenHint	IDS_SIDEBAR_CLOUD_HIDDEN_HINT	2516	已从侧边栏隐藏。右键任一分区标题或侧边栏底部空白处，可以重新显示。	Hidden from the sidebar. Right-click any section title or the empty space at the bottom of the sidebar to show it again.	已從側邊欄隱藏。在任一區段標題或側邊欄底部空白處按右鍵，即可重新顯示。
 SidebarShowHidden	IDS_SIDEBAR_SHOW_HIDDEN	2517	显示已隐藏的分区	Show hidden sections	顯示已隱藏的區段
 SettingsDefaultManagerDesc	IDS_SETTINGS_DEFAULT_MANAGER_DESC	1481	文件夹、磁盘、此电脑和 Win+E 都用 Pulse 打开；关闭即恢复资源管理器	Folders, drives, This PC and Win+E open in Pulse; turn off to restore File Explorer	資料夾、磁碟、本機和 Win+E 都用 Pulse 開啟；關閉即恢復檔案總管

@@ -1,5 +1,6 @@
 // fs_recycle.cpp
 #include "fs_recycle.h"
+#include "drive_kind.h"
 #include "../common/recycle_index.h"
 #include "../common/current_user_security.h"
 #include <shellapi.h>
@@ -145,6 +146,7 @@ void EnumerateRecycleBin(std::vector<DirEntry>& out, RecycleBinInfo* info) {
         wchar_t root[4] = { static_cast<wchar_t>(L'A' + i), L':', L'\\', 0 };
         const UINT type = GetDriveTypeW(root);
         if (type != DRIVE_FIXED && type != DRIVE_REMOVABLE) continue;
+        if (IsRemoteLikeDrive(root)) continue;  // cloud mount: no local bin to scan
         const std::wstring bin = NormalizePath(std::wstring(root) + L"$Recycle.Bin");
         if (!EnumerateRecycleBinAtRoot(bin, out)) complete = false;
     }

@@ -1,4 +1,5 @@
 #include "document_protocol.h"
+#include "../fs/cloud_state.h"
 #include "document_filter.h"
 #include "office_ooxml.h"
 #include "pdfium_text.h"
@@ -48,7 +49,7 @@ DWORD Extract(const std::wstring& path, uint64_t maximum_bytes, std::wstring& bo
     if (pulse::index::document::QueryFileVersion(file, info, begin.version)) begin.flags = 1;
     if (!pulse::index::document::FallbackSourceMatches(request, begin)) return ERROR_FILE_INVALID;
     constexpr DWORD unavailable = FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT |
-        FILE_ATTRIBUTE_OFFLINE | 0x00040000 | 0x00400000;
+        ::pulse::fs::kCloudPlaceholderAttrs;
     if (info.dwFileAttributes & unavailable) return ERROR_FILE_OFFLINE;
     const uint64_t file_bytes = (static_cast<uint64_t>(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
     if (file_bytes > (std::min)(maximum_bytes, pulse::index::document::kMaximumFileBytes)) return ERROR_FILE_TOO_LARGE;

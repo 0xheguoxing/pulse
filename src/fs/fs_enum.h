@@ -31,6 +31,12 @@ struct DirEntry {
     DWORD reparse_tag = 0; // Unknown tags, including cloud placeholders, are not links.
     bool cloud_recall = false;
     uint8_t drive_type = 0; // GetDriveTypeW for "This PC" rows, 0 otherwise
+    // "This PC" program icon (网盘程序入口, full_path "shell:::{CLSID}"):
+    // 0 none, 1 other, 2 Baidu, 3 WPS. Never a file operation source.
+    uint8_t pc_launcher = 0;
+    // "This PC" phone (full_path pulse:device:<key>, see device_source.h
+    // kPcDevice*): 0 none. Never a file operation source.
+    uint8_t pc_device = 0;
     std::wstring full_path; // set for virtual views (search/tag); empty = parent+name
     std::wstring recycle_path; // $R payload when listing pulse:recycle; not a .lnk target
     bool change_record_only = false; // Historical deleted/moved-out item, never a file operation source.
@@ -50,6 +56,7 @@ struct DirEntry {
     uint64_t drive_total = 0;
     uint64_t drive_free = 0;
     bool drive_locked = false; // "This PC" rows: BitLocker volume not unlocked yet
+    bool drive_remote_like = false; // "This PC" rows: mapped or user-mode (cloud) mount, see drive_kind.h
 };
 
 // pulse:tag: / pulse:search: / pulse:workspace: — not filesystem paths.

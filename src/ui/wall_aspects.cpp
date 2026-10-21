@@ -1,5 +1,6 @@
 #include "wall_aspects.h"
 #include "../common/preview_extensions.h"
+#include "../fs/cloud_state.h"
 #include <objbase.h>
 #include <propidl.h>
 #include <propsys.h>
@@ -167,6 +168,12 @@ float HeaderAspect(const uint8_t* data, size_t size) noexcept {
 }
 
 float ProbeFileAspect(const std::wstring& path) {
+    // A cloud placeholder's header (or the property handler behind
+    // ShellAspect) is file content: reading it would make the sync engine
+    // download the picture just to size a tile. Unknown keeps the default.
+    if (const DWORD attrs = GetFileAttributesW(path.c_str());
+        attrs != INVALID_FILE_ATTRIBUTES && fs::IsCloudPlaceholder(attrs))
+        return 0.0f;
     if (!HeaderFormat(path)) return ShellAspect(path);
     HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                               nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);

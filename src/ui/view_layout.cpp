@@ -18,6 +18,8 @@ constexpr float kIconGridMinCellDip = 90.0f;  // two lines of a camera file name
 constexpr float kIconGridMaxFillDip = 16.0f;  // leftover a cell may absorb
 constexpr float kIconGridNameGapDip = 4.0f;   // thumbnail to name
 constexpr float kIconGridNameInsetDip = 3.0f; // cell edge to name
+constexpr float kIconGridGroupTopDip = 4.0f;  // group header to its first icon row
+constexpr float kGridGroupGapDip = 8.0f;      // grouped grids: below a group's last row
 // inset + name gap + 2 below the name; the slot and name block come on top.
 constexpr float kIconGridChromeDip = kIconGridInsetDip + kIconGridNameGapDip + 2.0f;
 
@@ -353,21 +355,31 @@ ViewLayout::ViewLayout(ViewMode mode, D2D1_RECT_F viewport, size_t item_count,
         wall_ = params.wall;
         content_height_ = wall_->content_height;
     }
-    if (groups && !groups->empty() && count_ > 0 &&
-        (mode_ == ViewMode::Details || mode_ == ViewMode::Content)) {
+    if (groups && !groups->empty() && count_ > 0 && ShowsGroups(mode_) && !wall_) {
+        // Each group: its header, then its own rows of `columns` cells (one
+        // cell per row in Details / Content). Single-column views keep rows
+        // flush under the header, as before icon grids could group.
         groups_ = groups;
         header_h_ = kGroupHeaderDip * scale_;
+        const bool zoom_grid = mode_ == ViewMode::ExtraLargeIcons || mode_ == ViewMode::LargeIcons ||
+                               mode_ == ViewMode::MediumIcons;
+        const bool single = metrics_.columns <= 1 && (mode_ == ViewMode::Details || mode_ == ViewMode::Content);
+        band_top_ = single ? 0.0f : (zoom_grid ? kIconGridGroupTopDip : kGridGroupGapDip) * scale_;
+        band_bottom_ = single ? 0.0f : kGridGroupGapDip * scale_;
+        const int cols = std::max(1, metrics_.columns);
         group_top_.reserve(groups->size());
         float y = 0.0f;
         for (const ListGroup& g : *groups) {
             group_top_.push_back(y);
             y += header_h_;
-            if (!g.collapsed) {
-                y += static_cast<float>(g.count) * metrics_.cell_height;
+            if (!g.collapsed && g.count > 0) {
+                const int rows = (g.count + cols - 1) / cols;
+                y += band_top_ + static_cast<float>(rows - 1) * metrics_.pitch_y + metrics_.cell_height +
+                     band_bottom_;
                 visible_rows_ += g.count;
             }
         }
-        content_height_ = y;
+        content_height_ = y + (zoom_grid ? kIconGridBottomDip * scale_ : 0.0f);
     }
 }
 
@@ -439,6 +451,20 @@ int ViewLayout::IndexFromOrdinal(int ordinal) const noexcept {
     return -1;
 }
 
+// First (last = false) or last item whose row band can meet content-space y.
+// In a header: the group's first item, or the previous group's last one.
+int ViewLayout::GroupedIndexAt(float local_y, bool last) const noexcept {
+    const int g = GroupAtY(local_y);
+    const ListGroup& grp = (*groups_)[static_cast<size_t>(g)];
+    const float off = local_y - group_top_[static_cast<size_t>(g)] - header_h_ - band_top_;
+    if (grp.collapsed) return last ? grp.first + grp.count - 1 : grp.first;
+    if (off < 0.0f || metrics_.pitch_y <= 0.0f) return last ? std::max(0, grp.first - 1) : grp.first;
+    const int cols = std::max(1, metrics_.columns);
+    const int row = static_cast<int>(off / metrics_.pitch_y);
+    const int k = last ? row * cols + cols - 1 : row * cols;
+    return grp.first + std::min(grp.count - 1, k);
+}
+
 float ViewLayout::MaxScrollX() const noexcept {
     return std::max(0.0f, content_width_ - (viewport_.right - viewport_.left));
 }
@@ -460,9 +486,12 @@ D2D1_RECT_F ViewLayout::ItemRect(int index) const noexcept {
         const int g = GroupOfIndex(index);
         const ListGroup& grp = (*groups_)[static_cast<size_t>(g)];
         const float base = viewport_.top + group_top_[static_cast<size_t>(g)] + header_h_ - scroll_y_;
-        const float left = viewport_.left - scroll_x_;
-        if (grp.collapsed) return D2D1_RECT_F{left, base, left + metrics_.cell_width, base};
-        const float top = base + static_cast<float>(index - grp.first) * metrics_.cell_height;
+        const float left0 = viewport_.left + metrics_.origin_x - scroll_x_;
+        if (grp.collapsed) return D2D1_RECT_F{left0, base, left0 + metrics_.cell_width, base};
+        const int cols = std::max(1, metrics_.columns);
+        const int k = index - grp.first;
+        const float left = left0 + static_cast<float>(k % cols) * metrics_.pitch_x;
+        const float top = base + band_top_ + static_cast<float>(k / cols) * metrics_.pitch_y;
         return D2D1_RECT_F{left, top, left + metrics_.cell_width, top + metrics_.cell_height};
     }
     int row = 0;
@@ -581,10 +610,23 @@ int ViewLayout::HitTest(float x, float y) const noexcept {
     if (groups_) {
         const int g = GroupAtY(local_y);
         const ListGroup& grp = (*groups_)[static_cast<size_t>(g)];
-        const float off = local_y - group_top_[static_cast<size_t>(g)] - header_h_;
-        if (off < 0.0f || grp.collapsed) return -1;
-        const int row = static_cast<int>(off / metrics_.cell_height);
-        return row < grp.count ? grp.first + row : -1;
+        const float off = local_y - group_top_[static_cast<size_t>(g)] - header_h_ - band_top_;
+        if (off < 0.0f || grp.collapsed || metrics_.pitch_y <= 0.0f) return -1;
+        const int cols = std::max(1, metrics_.columns);
+        const int row = static_cast<int>(off / metrics_.pitch_y);
+        int col = 0;
+        if (cols > 1) {
+            const float grid_x = local_x - metrics_.origin_x;
+            if (grid_x < 0.0f || metrics_.pitch_x <= 0.0f) return -1;
+            col = static_cast<int>(grid_x / metrics_.pitch_x);
+            if (col >= cols) return -1;
+        }
+        const int k = row * cols + col;
+        if (k >= grp.count) return -1;
+        const int index = grp.first + k;
+        // Gaps between cells and below the last row belong to no item.
+        const auto bounds = ItemRect(index);
+        return x >= bounds.left && x < bounds.right && y >= bounds.top && y < bounds.bottom ? index : -1;
     }
     const float grid_x = local_x - metrics_.origin_x;
     const float grid_y = local_y - metrics_.origin_y;
@@ -605,15 +647,10 @@ std::pair<int, int> ViewLayout::VisibleRange() const noexcept {
     if (wall_) return RangeForSpan(viewport_.top, viewport_.bottom);
     if (groups_) {
         const float height = viewport_.bottom - viewport_.top;
-        auto index_at = [&](float local_y, bool last) {
-            const int g = GroupAtY(local_y);
-            const ListGroup& grp = (*groups_)[static_cast<size_t>(g)];
-            const float off = local_y - group_top_[static_cast<size_t>(g)] - header_h_;
-            if (grp.collapsed || off < 0.0f) return last ? grp.first + grp.count - 1 : grp.first;
-            return grp.first + std::min(grp.count - 1, static_cast<int>(off / metrics_.cell_height));
-        };
-        const int lo = std::max(0, index_at(scroll_y_, false) - 1);
-        const int hi = std::min(static_cast<int>(count_) - 1, index_at(scroll_y_ + height, true) + 1);
+        auto index_at = [&](float local_y, bool last) { return GroupedIndexAt(local_y, last); };
+        const int margin = std::max(1, metrics_.columns);
+        const int lo = std::max(0, index_at(scroll_y_, false) - margin);
+        const int hi = std::min(static_cast<int>(count_) - 1, index_at(scroll_y_ + height, true) + margin);
         return {lo, hi};
     }
     int first = 0;
@@ -649,14 +686,9 @@ std::pair<int, int> ViewLayout::RangeForSpan(float lo, float hi) const noexcept 
     if (groups_) {
         const float a = std::clamp(lo - viewport_.top + scroll_y_, 0.0f, std::max(0.0f, content_height_));
         const float b = std::clamp(hi - viewport_.top + scroll_y_, a, std::max(a, content_height_));
-        auto index_at = [&](float local_y, bool last) {
-            const int g = GroupAtY(local_y);
-            const ListGroup& grp = (*groups_)[static_cast<size_t>(g)];
-            const float off = local_y - group_top_[static_cast<size_t>(g)] - header_h_;
-            if (grp.collapsed || off < 0.0f) return last ? grp.first + grp.count - 1 : grp.first;
-            return grp.first + std::min(grp.count - 1, static_cast<int>(off / metrics_.cell_height));
-        };
-        return {std::max(0, index_at(a, false) - 1), std::min(last_index, index_at(b, true) + 1)};
+        auto index_at = [&](float local_y, bool last) { return GroupedIndexAt(local_y, last); };
+        const int margin = std::max(1, metrics_.columns);
+        return {std::max(0, index_at(a, false) - margin), std::min(last_index, index_at(b, true) + margin)};
     }
     int first = 0, last = last_index;
     if (metrics_.column_major) {
@@ -684,9 +716,53 @@ int ViewLayout::MoveIndex(int current, int dx, int dy) const noexcept {
     current = std::clamp(current, 0, static_cast<int>(count_) - 1);
     if (groups_) {
         if (visible_rows_ == 0) return current;
-        const int ord = std::clamp(VisibleOrdinal(current) + dy + dx, 0, visible_rows_ - 1);
-        const int idx = IndexFromOrdinal(ord);
-        return idx >= 0 ? idx : current;
+        const int cols = std::max(1, metrics_.columns);
+        const int g0 = GroupOfIndex(current);
+        if (cols == 1 || dy == 0 || (*groups_)[static_cast<size_t>(g0)].collapsed) {
+            // Left / right (and single-column up / down) walk the visible order,
+            // crossing into the next group.
+            const int ord = std::clamp(VisibleOrdinal(current) + dy * cols + dx, 0, visible_rows_ - 1);
+            const int idx = IndexFromOrdinal(ord);
+            return idx >= 0 ? idx : current;
+        }
+        // Up / down by rows; past a group's edge into the next open group's
+        // first (or last) row, keeping the column where that row has one.
+        int g = g0;
+        const int k0 = current - (*groups_)[static_cast<size_t>(g)].first;
+        const int col = k0 % cols;
+        int row = k0 / cols;
+        int idx = current;
+        const int groups = GroupCount();
+        for (int step = 0; step < std::abs(dy); ++step) {
+            const ListGroup& here = (*groups_)[static_cast<size_t>(g)];
+            const int rows = (here.count + cols - 1) / cols;
+            if (dy > 0) {
+                if (row + 1 < rows) {
+                    ++row;
+                } else {
+                    int next = g + 1;
+                    while (next < groups && ((*groups_)[static_cast<size_t>(next)].collapsed ||
+                                             (*groups_)[static_cast<size_t>(next)].count == 0)) ++next;
+                    if (next >= groups) break;
+                    g = next;
+                    row = 0;
+                }
+            } else {
+                if (row > 0) {
+                    --row;
+                } else {
+                    int prev = g - 1;
+                    while (prev >= 0 && ((*groups_)[static_cast<size_t>(prev)].collapsed ||
+                                         (*groups_)[static_cast<size_t>(prev)].count == 0)) --prev;
+                    if (prev < 0) break;
+                    g = prev;
+                    row = ((*groups_)[static_cast<size_t>(g)].count + cols - 1) / cols - 1;
+                }
+            }
+            const ListGroup& at = (*groups_)[static_cast<size_t>(g)];
+            idx = at.first + std::min(row * cols + col, at.count - 1);
+        }
+        return idx;
     }
     if (wall_) {
         if (dy == 0) return std::clamp(current + dx, 0, static_cast<int>(count_) - 1);
