@@ -219,6 +219,9 @@ static std::wstring DropLaunchProgramAt(const app::Tab& tab, int index) {
 // Resolves the drop target under pt (client coords), updates feedback state,
 // and returns the DROPEFFECT_* to report back. Also drives the 800ms
 // spring-loaded folder enter and Esc-back.
+static DWORD FolderDropEffect(DWORD key_state, const std::vector<std::wstring>& sources,
+                              const std::wstring& dest, DWORD allowed, DWORD preferred_effect);
+
 DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
                                POINT pt, DWORD key_state, DWORD allowed,
                                DWORD preferred_effect) {
@@ -554,10 +557,10 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
         return DROPEFFECT_NONE;
     }
 
-    DWORD effect = ui::ComputeDropEffect(key_state, sources.front(), s.dropDestDir,
-                                        allowed & (DROPEFFECT_COPY | DROPEFFECT_MOVE),
-                                        preferred_effect);
-    s.dropBadge = (effect == DROPEFFECT_MOVE ? l10n::Get(l10n::StringId::DropMove).c_str() : l10n::Get(l10n::StringId::DropCopy).c_str()) + destName;
+    DWORD effect = FolderDropEffect(key_state, sources, s.dropDestDir, allowed, preferred_effect);
+    s.dropBadge = (effect == DROPEFFECT_LINK ? l10n::Get(l10n::StringId::DropLink).c_str() :
+                   effect == DROPEFFECT_MOVE ? l10n::Get(l10n::StringId::DropMove).c_str() :
+                   l10n::Get(l10n::StringId::DropCopy).c_str()) + destName;
     // Say how to switch before the drop, not after (Explorer rules: Ctrl copies, Shift moves).
     if (effect == DROPEFFECT_MOVE && (allowed & DROPEFFECT_COPY))
         s.dropBadge += l10n::Get(l10n::StringId::DropAltCopy);
@@ -573,6 +576,58 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
 // Pulse's own drag-out is running (StartDragOut): its sources are never an
 // archive manager's temporary extraction (#55).
 static bool g_internal_drag = false;
+
+// Alt-drop (or Ctrl+Shift, Explorer's keys): a shortcut to each item in
+// `dest`, named "<name> - 快捷方式.lnk" and numbered when that is taken;
+// nothing is copied or moved. True when at least one was created.
+static bool CreateDropShortcuts(AppState& s, const std::vector<std::wstring>& sources,
+                                const std::wstring& dest) {
+    const std::wstring dir = path::StripExtendedPathPrefix(fs::NormalizePath(dest));
+    size_t created = 0, failed = 0;
+    for (const auto& source : sources) {
+        if (source.empty() || fs::IsVirtualPath(source)) continue;
+        const std::wstring target = path::StripExtendedPathPrefix(fs::NormalizePath(source));
+        std::wstring name = fs::StripLnkSuffix(BaseName(target));
+        if (name.empty() && target.size() >= 2 && target[1] == L':') name = target.substr(0, 1);
+        if (name.empty()) { ++failed; continue; }
+        wchar_t base[MAX_PATH]{};
+        swprintf_s(base, l10n::Get(l10n::StringId::ShortcutNameFormat).c_str(), name.c_str());
+        std::wstring file = dir + L"\\" + base + L".lnk";
+        for (int n = 2; GetFileAttributesW(file.c_str()) != INVALID_FILE_ATTRIBUTES && n < 1000; ++n)
+            file = dir + L"\\" + base + L" (" + std::to_wstring(n) + L").lnk";
+        IShellLinkW* link = nullptr;
+        bool ok = SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                                             IID_PPV_ARGS(&link)));
+        if (ok) {
+            ok = SUCCEEDED(link->SetPath(target.c_str()));
+            const DWORD attrs = GetFileAttributesW(target.c_str());
+            if (ok && attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY))
+                link->SetWorkingDirectory(fs::ParentPath(target).c_str());
+            IPersistFile* persist = nullptr;
+            ok = ok && SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&persist)));
+            ok = ok && SUCCEEDED(persist->Save(file.c_str(), TRUE));
+            if (persist) persist->Release();
+            link->Release();
+        }
+        ok ? ++created : ++failed;
+    }
+    if (failed && s.hwnd)
+        s.notification_toast.ShowError(s.hwnd, l10n::Get(l10n::StringId::CannotCreateShortcut),
+                                       l10n::Get(l10n::StringId::OperationFailedMessage));
+    return created > 0;
+}
+
+// The effect of a drop into a folder: Alt or Ctrl+Shift links (shortcuts in
+// the folder) when the source allows it, otherwise Ctrl copies, Shift moves.
+static DWORD FolderDropEffect(DWORD key_state, const std::vector<std::wstring>& sources,
+                              const std::wstring& dest, DWORD allowed, DWORD preferred_effect) {
+    const bool link = (key_state & MK_ALT) != 0 ||
+        ((key_state & MK_CONTROL) != 0 && (key_state & MK_SHIFT) != 0);
+    if (link && (allowed & DROPEFFECT_LINK) && !dest.empty() && !fs::IsVirtualPath(dest))
+        return DROPEFFECT_LINK;
+    return ui::ComputeDropEffect(key_state, sources.front(), dest,
+                                 allowed & (DROPEFFECT_COPY | DROPEFFECT_MOVE), preferred_effect);
+}
 
 DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
                          POINT pt, DWORD key_state, DWORD allowed,
@@ -682,9 +737,7 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
             if (app::Tab* tab = pane->ActiveTab()) dest = tab->current_path;
         }
         if (dest.empty() || fs::IsVirtualPath(dest)) return DROPEFFECT_NONE;
-        effect = ui::ComputeDropEffect(key_state, sources.front(), dest,
-                                       allowed & (DROPEFFECT_COPY | DROPEFFECT_MOVE),
-                                       preferred_effect);
+        effect = FolderDropEffect(key_state, sources, dest, allowed, preferred_effect);
     }
 
     if (tray) {
@@ -704,6 +757,12 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
         const int ti = s.places.FindTagIndex(s.places.ResolveTagRef(rest));
         if (ti >= 0) ApplyDropTags(s, {s.places.tags[static_cast<size_t>(ti)].id}, sources);
         return DROPEFFECT_COPY;
+    }
+    if (effect == DROPEFFECT_LINK && !dest.empty() && !fs::IsVirtualPath(dest) && (allowed & DROPEFFECT_LINK)) {
+        // Alt / Ctrl+Shift: shortcuts in dest; the source keeps its items.
+        if (!CreateDropShortcuts(s, sources, dest)) return DROPEFFECT_NONE;
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        return DROPEFFECT_LINK;
     }
     if (dest.empty() || fs::IsVirtualPath(dest) || !(effect & allowed) ||
         (effect != DROPEFFECT_COPY && effect != DROPEFFECT_MOVE)) return DROPEFFECT_NONE;
