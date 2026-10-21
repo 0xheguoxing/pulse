@@ -495,6 +495,17 @@ if(PULSE_APP_SOURCES)
         target_sources(pulse PRIVATE src/bench/tray_completion_test.cpp)
     endif()
     target_sources(pulse PRIVATE src/app/pulse.rc src/common/ffmpeg_tool.cpp src/bench/file_picker_dialog_test.cpp src/bench/file_picker_operations_test.cpp)
+    # Settings pages, editors and dialogs are not on a hot path: build them
+    # for size (/Os /Oi- is /O1 without the D9025 clash with /O2). Listing,
+    # sorting, drawing the file list and input stay at /O2.
+    set_source_files_properties(
+        src/ui/ui_settings_core.cpp src/ui/ui_settings_view.cpp src/ui/ui_settings_layout.cpp
+        src/ui/ui_settings_context.cpp src/ui/ui_settings_packs.cpp src/ui/ui_settings_shortcuts.cpp
+        src/ui/ui_settings_sysctx.cpp src/ui/file_operation_dialog.cpp src/ui/folder_picker_dialog.cpp
+        src/ui/quick_access_editor.cpp src/ui/shortcut_help.cpp src/ui/tag_manager_panel.cpp
+        src/ui/toolbar_picker.cpp src/app/settings_ui.cpp src/app/settings_controller.cpp
+        src/app/about_info.cpp src/app/shell_integration_registry.cpp src/app/system_ctx_registry.cpp
+        PROPERTIES COMPILE_OPTIONS "/Os;/Oi-")
     include(cmake/release_notes.cmake)
     pulse_embed_release_notes(pulse)
     set_property(SOURCE src/app/pulse.rc APPEND PROPERTY OBJECT_DEPENDS
@@ -1011,6 +1022,12 @@ target_include_directories(pulse_sqlite PUBLIC third_party/sqlite)
 add_library(pulse_sqlite_core STATIC third_party/sqlite/sqlite3.c)
 target_compile_definitions(pulse_sqlite_core PRIVATE ${PULSE_SQLITE_DEFINITIONS})
 target_include_directories(pulse_sqlite_core PUBLIC third_party/sqlite)
+# Off the hot path in pulse.exe (spooling, legacy tables): build it for size.
+# /Os, /Oi- and /Ob1 rather than /O1, which would draw D9025 against /O2; the
+# explicit /Ob2 of the default C release flags goes for the same reason (/O2
+# implies it).
+string(REPLACE "/Ob2" "" CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
+target_compile_options(pulse_sqlite_core PRIVATE /Os /Oi- /Ob1)
 set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_OPTIONS "/W0;/TC")
 
 add_executable(pulse_filename_pinyin_test
