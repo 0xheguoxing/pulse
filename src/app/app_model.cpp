@@ -1403,7 +1403,9 @@ SidebarModel BuildSidebarModel(const fs::RecycleBinInfo* recycle) {
         l10n::StringId label;
         BuiltinQuickAccess builtin;
     } libraries[] = {
-        {FOLDERID_Documents, L"\xE8A5", L"Docs", 0x60A5FA, l10n::StringId::PickerDocuments,
+        // Documents: \xE7C3 (Page), not the file glyph, so the sidebar gives it
+        // its color document icon (FluentSvgIdForGlyph).
+        {FOLDERID_Documents, L"\xE7C3", L"Docs", 0x60A5FA, l10n::StringId::PickerDocuments,
          BuiltinQuickAccess::Documents},
         {FOLDERID_Pictures, L"\xE91B", L"Pics", 0x34D399, l10n::StringId::PickerPictures,
          BuiltinQuickAccess::Pictures},
