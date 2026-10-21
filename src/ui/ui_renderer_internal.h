@@ -2302,6 +2302,10 @@ struct SettingsLayout {
         pack_content_primary{}, pack_content_update{}, pack_content_notice{};
     D2D1_RECT_F pack_ocr_card{}, pack_ocr_badge{}, pack_ocr_enable{}, pack_ocr_primary{}, pack_ocr_update{},
         pack_ocr_notice{};
+    // 增强包 page, AI: the AI pack (MCP server and, later, the assistant).
+    D2D1_RECT_F pack_ai_section{}, pack_ai_card{}, pack_ai_badge{}, pack_ai_enable{}, pack_ai_primary{},
+        pack_ai_update{}, pack_ai_notice{};
+    float pack_ai_desc_h = 0.0f;
     float pack_content_desc_h = 0.0f, pack_ocr_desc_h = 0.0f;   // 增强包 page: 全部更新; 快速预览 page: 管理增强包
     D2D1_RECT_F pack_summary{}, pack_open{}, pack_media_section{}, pack_card{}, pack_badge{}, pack_enable{},
         pack_primary{}, pack_update{}, pack_notice{}, pack_advanced_section{}, pack_custom_row{}, pack_path_row{},

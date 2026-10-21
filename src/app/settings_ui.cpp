@@ -10,6 +10,7 @@
 #include "shortcut_page.h"
 #include "content_scope_mode.h"
 #include "content_pack_ui.h"
+#include "ai_pack_ui.h"
 #include <shellapi.h>
 #include <shlobj.h>
 #include <algorithm>
@@ -344,6 +345,9 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
         case ui::PackAction::ManagePacks: OpenSettingsTab(s,8); return true;
         case ui::PackAction::ContentInstall: OfferContentPack(s); return true;
         case ui::PackAction::ContentManage: OpenSettingsTab(s,1); return true;
+        case ui::PackAction::AiInstall: OfferAiPack(s); InvalidateRect(s.hwnd,nullptr,FALSE); return true;
+        case ui::PackAction::AiRemove: ConfirmRemoveAiPack(s); InvalidateRect(s.hwnd,nullptr,FALSE); return true;
+        case ui::PackAction::AiCancel: CancelAiPackInstall(); return true;
         case ui::PackAction::TriggerHover:
         case ui::PackAction::TriggerSpace:
             s.settings.PreviewTrigger(hit.index-static_cast<int>(ui::PackAction::TriggerHover));

@@ -630,6 +630,11 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     {&lay.pack_manage, PackAction::ManagePacks},
                     {pack_text::ContentAvailable(vm) ? &lay.pack_content_primary : &lay.pack_ocr_enable,   // ocr_enable stays empty
                      pack_text::ContentReady(vm) ? PackAction::ContentManage : PackAction::ContentInstall},
+                    // A bundled host has no button; ai_enable stays empty, so never matches.
+                    {pack_text::PrimaryEnabled(pack_text::AiAvailable(vm), pack_text::AiInstalled(vm),
+                                               vm.settings_ai_pack_installing)
+                         ? &lay.pack_ai_primary : &lay.pack_ai_enable,
+                     pack_text::AiAction(vm)},
                     {&lay.pack_primary, vm.settings_pack_media_installed && !vm.settings_pack_installing
                                             ? PackAction::Remove : PackAction::Install},
                     {&lay.pack_enable, PackAction::Enable},

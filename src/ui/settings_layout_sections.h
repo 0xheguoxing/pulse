@@ -416,6 +416,30 @@ inline const wchar_t* PrimaryLabel(bool available, bool installed, bool installi
 inline bool PrimaryEnabled(bool available, bool installed, bool installing) {
     return available || installed || installing;
 }
+// The AI pack: settings_ai_pack_state holds app::AiPackState (the content
+// pack's values). A bundled host (development build) has no button.
+inline const wchar_t* AiSection() { return l10n::Get(l10n::StringId::AiPackSection).c_str(); }
+inline const wchar_t* AiTitle() { return l10n::Get(l10n::StringId::AiPackTitle).c_str(); }
+inline const wchar_t* AiDesc() { return l10n::Get(l10n::StringId::AiPackDesc).c_str(); }
+inline const wchar_t* AiMeta() { return l10n::Get(l10n::StringId::AiPackMeta).c_str(); }
+inline bool AiInstalled(const WindowViewModel& vm) { return vm.settings_ai_pack_state == 1; }
+inline bool AiAvailable(const WindowViewModel& vm) { return vm.settings_ai_pack_state != 5; }
+inline Badge AiBadge(const WindowViewModel& vm) {
+    switch (vm.settings_ai_pack_state) {
+    case 0: return {l10n::Get(l10n::StringId::ContentPackBundled).c_str(), fluent::BadgeKind::Success};
+    case 1: return {l10n::Get(l10n::StringId::Installed).c_str(), fluent::BadgeKind::Success};
+    case 3: case 4: return {l10n::Get(l10n::StringId::ContentPackRepair).c_str(), fluent::BadgeKind::Warning};
+    default: return {l10n::Get(l10n::StringId::NotInstalled).c_str(), fluent::BadgeKind::Neutral};
+    }
+}
+inline const wchar_t* AiPrimary(const WindowViewModel& vm) {
+    if (vm.settings_ai_pack_state == 0 && !vm.settings_ai_pack_installing) return L"";
+    return PrimaryLabel(AiAvailable(vm), AiInstalled(vm), vm.settings_ai_pack_installing);
+}
+inline PackAction AiAction(const WindowViewModel& vm) {
+    if (vm.settings_ai_pack_installing) return PackAction::AiCancel;
+    return AiInstalled(vm) ? PackAction::AiRemove : PackAction::AiInstall;
+}
 // "更新到 1.0.2" beside 卸载 while an installed pack is older than the
 // catalog; empty (no button) while it downloads or when it is current.
 inline std::wstring UpdateLabel(bool installed, bool installing, const std::wstring& version) {
@@ -745,6 +769,12 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
     card_layout({&l.pack_ocr_card, &l.pack_ocr_badge, &l.pack_ocr_enable, &l.pack_ocr_primary,
                  &l.pack_ocr_update, &l.pack_ocr_notice, &l.pack_ocr_desc_h},
                 false, pack_text::OcrBadge(), pack_text::OcrDesc(), pack_text::ComingSoon(), {}, std::wstring{});
+
+    // AI: the AI pack (MCP server; the assistant comes later).
+    y += 24*scale; l.pack_ai_section = row(28);
+    card_layout({&l.pack_ai_card, &l.pack_ai_badge, &l.pack_ai_enable, &l.pack_ai_primary,
+                 &l.pack_ai_update, &l.pack_ai_notice, &l.pack_ai_desc_h},
+                false, pack_text::AiBadge(vm), pack_text::AiDesc(), pack_text::AiPrimary(vm), {}, std::wstring{});
 
     // Background updates and the uninstall choice remain separate from the media source.
     y += 24*scale; l.pack_advanced_section = row(28);

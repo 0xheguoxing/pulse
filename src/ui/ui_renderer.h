@@ -864,6 +864,9 @@ enum class PackAction : int {
     ManagePacks,        // 快速预览 page: open the 增强包 page
     ContentInstall,     // 内容搜索 module: download (asks first)
     ContentManage,      // 内容搜索 module: the index settings (搜索与索引)
+    AiInstall,          // AI pack: download / update / repair (asks first)
+    AiRemove,           // AI pack: uninstall (asks first)
+    AiCancel,           // AI pack: stop the running download
 };
 
 // A tab dragged out of another window, over this one (multi-window M7h): the
@@ -1110,6 +1113,9 @@ struct WindowViewModel {
     int settings_shortcut_issues = 0;
     int settings_pack_updates = 0;   // 增强包 nav badge: packs with a newer release
     int settings_content_pack_state = 2;   // app::ContentPackState (2 = missing)
+    int settings_ai_pack_state = 2;        // app::AiPackState, the same values
+    bool settings_ai_pack_installing = false;
+    float settings_ai_pack_progress = 0.0f;   // 0..1 while installing
     float settings_scroll = 0.0f;
     bool settings_launch_on_startup = false;
     bool settings_start_in_tray = false;

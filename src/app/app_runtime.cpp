@@ -39,6 +39,8 @@
 #include "text_diff.h"
 #include "content_pack.h"
 #include "content_pack_ui.h"
+#include "ai_pack.h"
+#include "ai_pack_ui.h"
 #include "session.h"
 #include "context_menu.h"
 #include "batch_rename.h"
@@ -658,6 +660,19 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
                     checked_at = now;
                 }
                 vm.settings_content_pack_state = content_state;
+                // The AI pack likewise, and again as soon as a download ends.
+                static uint64_t ai_checked_at = 0;
+                static bool ai_was_installing = false;
+                static int ai_state = static_cast<int>(app::AiPackState::Missing);
+                const bool ai_installing = AiPackInstalling();
+                if (!ai_checked_at || now - ai_checked_at >= 2000 || ai_installing != ai_was_installing) {
+                    ai_state = static_cast<int>(app::QueryAiPackState());
+                    ai_checked_at = now;
+                    ai_was_installing = ai_installing;
+                }
+                vm.settings_ai_pack_state = ai_state;
+                vm.settings_ai_pack_installing = ai_installing;
+                vm.settings_ai_pack_progress = ai_installing ? AiPackInstallProgress() : 0.0f;
             }
             if (vm.settings_page == 5 || vm.settings_page == 8) {
                 // Cached in the controller: the disk is read at most every 2 s.
@@ -2544,6 +2559,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     SyncTaskbarWindowTitle(s);
     if (!s.pane) return {};
     TickContentPackInstall(s);
+    TickAiPackInstall(s);
     // A finished pack download repaints the window once; drop the cached
     // failed thumbnails so the newly supported files are decoded again.
     if (s.settings.TakeMediaPackResult()) {

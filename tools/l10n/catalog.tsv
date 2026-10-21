@@ -2579,3 +2579,28 @@ SelCopyNames	IDS_SEL_COPY_NAMES	3781	复制名称	Copy names	複製名稱
 TagSmartViewNameTaken	IDS_TAG_SMART_VIEW_NAME_TAKEN	3782	已经有叫「%s」的视图了，换个名字	A view named “%s” already exists	已經有叫「%s」的檢視了，換個名稱
 TagSmartViewNotSaved	IDS_TAG_SMART_VIEW_NOT_SAVED	3783	「%s」没能保存：保存的搜索已满	Couldn't save “%s”: the saved searches are full	「%s」無法儲存：儲存的搜尋已滿
 TagDotTip	IDS_TAG_DOT_TIP	3784	「%s」 · 点按只看这个标签	“%s” · click to show only this tag	「%s」 · 點按只看這個標籤
+# AI 增强包: ai_pack_ui.cpp and its card on 设置 › 增强包.
+AiPackSection	IDS_AI_PACK_SECTION	3785	AI	AI	
+AiPackTitle	IDS_AI_PACK_TITLE	3786	AI 与 MCP	AI and MCP	
+AiPackDesc	IDS_AI_PACK_DESC	3787	让 Claude 等支持 MCP 的 AI 应用查找、查看和整理你的文件：只读操作直接执行，改动文件前都要在 Pulse 里确认，并且可以撤销。不用时不运行任何后台程序。	Lets AI apps that support MCP, such as Claude, find, inspect and organize your files: reads run directly, every change is confirmed in Pulse first and can be undone. Nothing runs in the background while it is not in use.	讓 Claude 等支援 MCP 的 AI 應用程式查詢、檢視和整理你的檔案：唯讀操作直接執行，改動檔案前都要在 Pulse 裡確認，並且可以復原。不用時不執行任何背景程式。
+AiPackMeta	IDS_AI_PACK_META	3788	Pulse.AI.exe · MCP · 随 Pulse 同步更新	Pulse.AI.exe · MCP · updates with Pulse	
+AiPackToastTitle	IDS_AI_PACK_TOAST_TITLE	3789	AI 增强包	AI pack	
+AiPackDownloading	IDS_AI_PACK_DOWNLOADING	3790	正在下载（约 %s）	Downloading (about %s)	
+AiPackAskTitle	IDS_AI_PACK_ASK_TITLE	3791	下载 AI 增强包	Download the AI pack	
+AiPackAskMessage	IDS_AI_PACK_ASK_MESSAGE	3792	AI 与 MCP 由增强包提供，需要时才下载，不占用安装包体积。下载约 %s。	AI and MCP come in an enhancement pack that is downloaded only when you want them. The download is about %s.	
+AiPackUpdateTitle	IDS_AI_PACK_UPDATE_TITLE	3793	更新 AI 增强包	Update the AI pack	
+AiPackUpdateMessage	IDS_AI_PACK_UPDATE_MESSAGE	3794	Pulse 已更新，AI 增强包需要更新到相同版本才能使用（约 %s）。	Pulse was updated; the AI pack has to be updated to the same version before it can be used (about %s).	
+AiPackRepairTitle	IDS_AI_PACK_REPAIR_TITLE	3795	修复 AI 增强包	Repair the AI pack	
+AiPackRepairMessage	IDS_AI_PACK_REPAIR_MESSAGE	3796	AI 增强包的文件不完整或已被改动，需要重新下载（约 %s）。	Files of the AI pack are missing or were changed; it has to be downloaded again (about %s).	
+AiPackAskItem	IDS_AI_PACK_ASK_ITEM	3797	Pulse.AI.exe — MCP 服务与 AI 助手	Pulse.AI.exe — MCP server and AI assistant	
+AiPackAskNote	IDS_AI_PACK_ASK_NOTE	3798	从 Pulse 在 GitHub 的同一发布页下载并校验 SHA-256，装在当前用户目录下，不需要管理员权限。装好后默认关闭，不会自动连接任何 AI 服务。	Downloaded from the same GitHub release as Pulse and checked against its SHA-256; installed for the current user, no administrator rights needed. It stays off and contacts no AI service until you turn it on.	
+AiPackNotNow	IDS_AI_PACK_NOT_NOW	3799	暂不	Not now	
+AiPackStartFailed	IDS_AI_PACK_START_FAILED	3800	无法开始下载。	The download could not start.	
+AiPackInstalledTitle	IDS_AI_PACK_INSTALLED_TITLE	3801	AI 增强包已安装	AI pack installed	
+AiPackInstalledMessage	IDS_AI_PACK_INSTALLED_MESSAGE	3802	已安装，默认保持关闭。	Installed; it stays off until you turn it on.	
+AiPackFailedTitle	IDS_AI_PACK_FAILED_TITLE	3803	AI 增强包下载失败	AI pack download failed	
+AiPackFailedMessage	IDS_AI_PACK_FAILED_MESSAGE	3804	请稍后重试，或在设置的增强包中更换下载源。	Try again later, or pick another download source in Settings.	
+AiPackRemoveTitle	IDS_AI_PACK_REMOVE_TITLE	3805	卸载 AI 增强包？	Remove the AI pack?	
+AiPackRemoveMessage	IDS_AI_PACK_REMOVE_MESSAGE	3806	将删除 Pulse.AI.exe，AI 与 MCP 随之停用。你的设置和活动记录会保留。	Pulse.AI.exe is deleted and AI and MCP stop working. Your settings and activity log are kept.	
+AiPackRemoveFailed	IDS_AI_PACK_REMOVE_FAILED	3807	无法卸载：AI 增强包正在使用中。请先断开 AI 应用，再重试。	Couldn't remove it: the AI pack is in use. Disconnect the AI app and try again.	無法解除安裝：AI 增強包正在使用中。請先中斷 AI 應用程式的連線，再重試。
+AiPackRemoved	IDS_AI_PACK_REMOVED	3808	AI 增强包已卸载	AI pack removed	

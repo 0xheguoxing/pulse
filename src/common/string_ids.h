@@ -2572,5 +2572,30 @@
 #define IDS_TAG_SMART_VIEW_NAME_TAKEN                                                    3782
 #define IDS_TAG_SMART_VIEW_NOT_SAVED                                                     3783
 #define IDS_TAG_DOT_TIP                                                                  3784
+// AI 增强包: ai_pack_ui.cpp and its card on 设置 › 增强包.
+#define IDS_AI_PACK_SECTION                                                              3785
+#define IDS_AI_PACK_TITLE                                                                3786
+#define IDS_AI_PACK_DESC                                                                 3787
+#define IDS_AI_PACK_META                                                                 3788
+#define IDS_AI_PACK_TOAST_TITLE                                                          3789
+#define IDS_AI_PACK_DOWNLOADING                                                          3790
+#define IDS_AI_PACK_ASK_TITLE                                                            3791
+#define IDS_AI_PACK_ASK_MESSAGE                                                          3792
+#define IDS_AI_PACK_UPDATE_TITLE                                                         3793
+#define IDS_AI_PACK_UPDATE_MESSAGE                                                       3794
+#define IDS_AI_PACK_REPAIR_TITLE                                                         3795
+#define IDS_AI_PACK_REPAIR_MESSAGE                                                       3796
+#define IDS_AI_PACK_ASK_ITEM                                                             3797
+#define IDS_AI_PACK_ASK_NOTE                                                             3798
+#define IDS_AI_PACK_NOT_NOW                                                              3799
+#define IDS_AI_PACK_START_FAILED                                                         3800
+#define IDS_AI_PACK_INSTALLED_TITLE                                                      3801
+#define IDS_AI_PACK_INSTALLED_MESSAGE                                                    3802
+#define IDS_AI_PACK_FAILED_TITLE                                                         3803
+#define IDS_AI_PACK_FAILED_MESSAGE                                                       3804
+#define IDS_AI_PACK_REMOVE_TITLE                                                         3805
+#define IDS_AI_PACK_REMOVE_MESSAGE                                                       3806
+#define IDS_AI_PACK_REMOVE_FAILED                                                        3807
+#define IDS_AI_PACK_REMOVED                                                              3808
 
 #endif  // PULSE_STRING_IDS_H
