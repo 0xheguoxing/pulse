@@ -99,7 +99,9 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
             if (pane.snapshot) {
                 if (static_cast<size_t>(source) >= pane.snapshot->size()) continue;
                 const auto& entry = (*pane.snapshot)[static_cast<size_t>(source)];
-                if (!entry.is_dir) continue;
+                // Recycle Bin folders carry their size ($I) and are not at
+                // full_path (their original place) to be probed or scanned.
+                if (!entry.is_dir || !entry.recycle_path.empty()) continue;
                 path = entry.full_path.empty() && !pane.is_search ? ChildPath(pane.path, entry.name) : entry.full_path;
             } else {
                 if (static_cast<size_t>(source) >= pane.entries.size()) continue;
@@ -119,7 +121,8 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
             const auto& entries = *pane.snapshot;
             for (size_t i = 0; i < entries.size() && count < kSortRequestLimit; ++i) {
                 const auto& entry = entries[i];
-                if (!entry.is_dir || entry.drive_type != 0 || shown.contains(static_cast<int>(i))) continue;
+                if (!entry.is_dir || entry.drive_type != 0 || !entry.recycle_path.empty() ||
+                    shown.contains(static_cast<int>(i))) continue;
                 const std::wstring path = entry.full_path.empty() ? ChildPath(pane.path, entry.name) : entry.full_path;
                 if (fs::IsVirtualPath(path)) continue;
                 requests.push_back({path, !fs::IsUncPath(path), false});

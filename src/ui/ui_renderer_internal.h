@@ -349,9 +349,12 @@ void ClearTextWidthCache() {
         // Keep the on-disk name, including .lnk. Stripping hid the suffix and
         // made the icon cache treat resolved shortcuts as extensionless files.
         entry.name = source.name;
+        // A folder in the Recycle Bin shows the total its $I record holds, as
+        // Explorer does; it is no longer at its path for a folder-size scan.
         entry.size_text = penetrated
             ? (source.link_target_is_dir ? L"" : pulse::format::ByteSize(source.link_target_size, true))
-            : (source.is_dir ? L"" : pulse::format::ByteSize(source.size, true));
+            : (source.is_dir && source.recycle_path.empty()
+                   ? L"" : pulse::format::ByteSize(source.size, true));
         // A zero FILETIME means "no time" (drives, servers, index rows without
         // it), not 1601-01-01.
         const auto list_time = [](const FILETIME& time) {
