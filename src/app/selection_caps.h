@@ -67,7 +67,12 @@ inline SelectionCaps ComputeSelectionCaps(const Tab& tab, const PlacesCatalog* p
     const int count = tab.SelectedCount();
     if (count <= 0) return caps;
     std::wstring kind;
-    if (ParsePulsePath(tab.current_path, &kind, nullptr) && kind == L"recycle") {
+    if (ParsePulsePath(tab.current_path, &kind, nullptr) && kind == L"device") {
+        // Phone files: browsing only until copy-out and capabilities land (D5, D7).
+        caps.kind = SelectionKind::Launchers;
+        return caps;
+    }
+    if (kind == L"recycle") {
         caps.kind = SelectionKind::Recycle;
         caps.del = true;  // permanent delete, confirmed
         return caps;

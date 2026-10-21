@@ -38,6 +38,10 @@ inline PaneBannerStyle ClassifyPaneBanner(const Tab& tab, bool can_go_up, bool c
         if (is(I::ContentUpdatesPaused)) return with(0, A::Refresh, A::ManageIndex);
         return with(0, A::ManageIndex);
     }
+    // Phones: plug in / allow on the phone, then retry (or it reloads by itself).
+    if (is(I::DeviceDisconnectedTitle) || is(I::DeviceWaitingTitle))
+        return with(2, A::Retry, can_go_up ? A::GoUp : A::None);
+    if (is(I::DeviceNoResponseTitle)) return with(3, A::Retry, can_go_up ? A::GoUp : A::None);
     if (is(I::DriveLockedTitle)) return with(2, A::Unlock);
     if (is(I::Offline)) return with(2, A::Reconnect);
     if (is(I::CannotOpen)) {

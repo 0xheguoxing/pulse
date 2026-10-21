@@ -4,6 +4,10 @@
 
 #include <dbt.h>
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <optional>
 #include <cstdio>
 #include <string>
 
@@ -161,6 +165,8 @@ void DeviceRegistry::Publish(std::vector<fs::DeviceInfo> devices) {
         if (changed) {
             devices_ = devices;
             ++revision_;
+            for (const auto& device : devices_)
+                known_[device.key] = Known{device.name, fs::SkipsStorageLevel(device)};
         }
         revision = revision_;
         notify = notify_;
@@ -176,6 +182,94 @@ void DeviceRegistry::Publish(std::vector<fs::DeviceInfo> devices) {
     }
     if (recheck) ScheduleRefresh(kLockedRecheckMs);
     else if (poll) ScheduleRefresh(kFakePollMs);  // fake phones come and go as folders
+}
+
+fs::DeviceError DeviceRegistry::ListFolder(const std::wstring& path, std::vector<fs::DirEntry>& out,
+                                           const std::function<bool()>& cancelled) {
+    const auto folder = fs::ParseDevicePath(path);
+    if (!folder) return fs::DeviceError::NotFound;
+    std::optional<fs::DeviceInfo> device;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopped_) return fs::DeviceError::Cancelled;
+        for (const auto& d : devices_)
+            if (d.key == folder->device) device = d;
+    }
+    if (!device) return fs::DeviceError::Disconnected;
+    if (device->locked) return fs::DeviceError::Locked;
+    if (folder->IsDeviceRoot()) {
+        // A phone with several storages (phone + SD card): one folder each.
+        for (const auto& storage : device->storages) {
+            fs::DirEntry e;
+            e.name = storage.name;
+            e.full_path = fs::FormatDevicePath(fs::DeviceChild(*folder, storage.name));
+            e.is_dir = true;
+            e.attrs = FILE_ATTRIBUTE_DIRECTORY | (storage.read_only ? FILE_ATTRIBUTE_READONLY : 0);
+            out.push_back(std::move(e));
+        }
+        return fs::DeviceError::None;
+    }
+    // Below a storage: the device thread lists it. The result comes back
+    // through `job`; a stuck call or a cancelled view just stops waiting.
+    struct Job {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool done = false;
+        fs::DeviceError error = fs::DeviceError::None;
+        std::vector<fs::DirEntry> rows;
+        std::atomic_bool cancel{false};
+    };
+    auto job = std::make_shared<Job>();
+    worker_.Post(
+        [this, job, where = *folder] {
+            std::vector<fs::DirEntry> rows;
+            const fs::DeviceError error = SourceOnWorker()->Enumerate(
+                where,
+                [&](std::vector<fs::DirEntry>&& batch) {
+                    for (auto& e : batch) rows.push_back(std::move(e));
+                    return !job->cancel.load();
+                },
+                job->cancel);
+            std::lock_guard<std::mutex> lock(job->mutex);
+            if (job->done) return;
+            job->done = true;
+            job->error = error;
+            job->rows = std::move(rows);
+            job->cv.notify_all();
+        },
+        kListBudgetMs,
+        [job] {
+            std::lock_guard<std::mutex> lock(job->mutex);
+            job->cancel = true;
+            if (job->done) return;
+            job->done = true;
+            job->error = fs::DeviceError::TimedOut;
+            job->cv.notify_all();
+        });
+    std::unique_lock<std::mutex> lock(job->mutex);
+    while (!job->done) {
+        job->cv.wait_for(lock, std::chrono::milliseconds(100));
+        if (job->done) break;
+        lock.unlock();
+        const bool stop = cancelled && cancelled();
+        lock.lock();
+        if (stop && !job->done) {
+            job->cancel = true;
+            job->done = true;  // the task drops its rows when it finishes
+            return fs::DeviceError::Cancelled;
+        }
+    }
+    if (job->error == fs::DeviceError::None) out = std::move(job->rows);
+    return job->error;
+}
+
+bool DeviceRegistry::Describe(const std::wstring& key, std::wstring* name, bool* skips_storage) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = known_.find(key);
+    if (it == known_.end()) return false;
+    if (name) *name = it->second.name;
+    if (skips_storage) *skips_storage = it->second.skips_storage;
+    return true;
 }
 
 std::vector<fs::DeviceInfo> DeviceRegistry::Devices() const {

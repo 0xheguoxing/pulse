@@ -1,6 +1,8 @@
 // ui_renderer.cpp — Chrome orchestration (title, toolbar, status, render).
 #include "legacy_icons.h"
 #include "ui_renderer.h"
+#include "device_crumbs.h"
+#include "../fs/device_path.h"
 #include "snack_style.h"
 #include "command_icons.h"
 #include "toolbar_layout.h"
@@ -406,6 +408,47 @@ const wchar_t* MainRenderer::NewButtonGlyph() const {
     return kNewFolderGlyph;
 }
 
+namespace {
+DeviceCrumbResolver g_device_crumbs = nullptr;
+}  // namespace
+
+void SetDeviceCrumbResolver(DeviceCrumbResolver resolver) { g_device_crumbs = resolver; }
+
+// 此电脑 › Xiaomi 14 › [内部存储] › DCIM › Camera. A one-storage phone skips the
+// storage level: its name segment opens the storage, as This PC does.
+static void AppendDeviceCrumbs(const std::wstring& path, std::vector<BreadcrumbSegment>& out) {
+    BreadcrumbSegment pc;
+    pc.text = pulse::l10n::Get(pulse::l10n::StringId::ThisPc);
+    pc.path = L"";
+    out.push_back(pc);
+    const auto where = fs::ParseDevicePath(path);
+    if (!where) return;
+    DeviceCrumbInfo info;
+    if (g_device_crumbs) info = g_device_crumbs(where->device);
+    fs::DevicePath walk{where->device, L"", {}};
+    BreadcrumbSegment device;
+    device.text = info.known && !info.name.empty()
+        ? info.name : std::wstring(pulse::l10n::Get(pulse::l10n::StringId::DeviceKindPhone));
+    if (info.skips_storage && !where->storage.empty()) walk.storage = where->storage;
+    device.path = fs::FormatDevicePath(walk);
+    out.push_back(device);
+    if (where->storage.empty()) return;
+    walk.storage = where->storage;
+    if (!info.skips_storage) {
+        BreadcrumbSegment storage;
+        storage.text = where->storage;
+        storage.path = fs::FormatDevicePath(walk);
+        out.push_back(storage);
+    }
+    for (const auto& part : where->parts) {
+        walk.parts.push_back(part);
+        BreadcrumbSegment seg;
+        seg.text = part;
+        seg.path = fs::FormatDevicePath(walk);
+        out.push_back(seg);
+    }
+}
+
 std::vector<BreadcrumbSegment> SplitBreadcrumb(const std::wstring& path) {
     std::vector<BreadcrumbSegment> out;
     std::wstring p = path;
@@ -425,6 +468,10 @@ std::vector<BreadcrumbSegment> SplitBreadcrumb(const std::wstring& path) {
     }
     std::wstring pulse_kind, pulse_rest;
     if (app::ParsePulsePath(p, &pulse_kind, &pulse_rest)) {
+        if (pulse_kind == L"device") {
+            AppendDeviceCrumbs(p, out);
+            return out;
+        }
         if (pulse_kind == L"recycle") {
             BreadcrumbSegment pc;
             pc.text = pulse::l10n::Get(pulse::l10n::StringId::ThisPc);

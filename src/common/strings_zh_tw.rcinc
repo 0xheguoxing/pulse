@@ -2624,4 +2624,12 @@ BEGIN
     IDS_THISPC_STATUS_MOUNTED "%zu 個網路磁碟"
     IDS_THISPC_STATUS_DEVICES "%zu 個裝置"
     IDS_THISPC_STATUS_LAUNCHERS "%zu 個雲端硬碟程式入口"
+    IDS_DEVICE_DISCONNECTED_TITLE "手機未連接"
+    IDS_DEVICE_DISCONNECTED_MESSAGE "連上手機後，這裡會自動重新開啟。"
+    IDS_DEVICE_WAITING_TITLE "等手機允許存取"
+    IDS_DEVICE_WAITING_MESSAGE "解鎖手機，在彈出的提示裡點「允許」（iPhone 點「信任」），這裡會自動開啟。"
+    IDS_DEVICE_NO_RESPONSE_TITLE "手機沒有回應"
+    IDS_DEVICE_NO_RESPONSE_MESSAGE "15 秒內沒有讀到這個資料夾。解鎖手機或重新插一下傳輸線，再點「重試」。"
+    IDS_DEVICE_FOLDER_FAILED "讀取手機上的這個資料夾時出錯。"
+    IDS_DEVICE_FOLDER_GONE "手機上已經沒有這個資料夾了。"
 END

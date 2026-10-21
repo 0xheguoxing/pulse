@@ -63,6 +63,7 @@ enum class DeviceError : uint8_t {
     Locked,        // the device is connected but shows no storage yet
     Cancelled,
     Failed,        // any other shell / driver failure
+    TimedOut,      // the call did not return within the budget (driver stuck)
 };
 
 // Rows of one folder, at most kDeviceBatchSize per call; full_path is the

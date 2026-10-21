@@ -2626,6 +2626,14 @@ BEGIN
     IDS_THISPC_STATUS_MOUNTED "%zu 个网络盘"
     IDS_THISPC_STATUS_DEVICES "%zu 个设备"
     IDS_THISPC_STATUS_LAUNCHERS "%zu 个网盘程序入口"
+    IDS_DEVICE_DISCONNECTED_TITLE "手机未连接"
+    IDS_DEVICE_DISCONNECTED_MESSAGE "连上手机后，这里会自动重新打开。"
+    IDS_DEVICE_WAITING_TITLE "等手机允许访问"
+    IDS_DEVICE_WAITING_MESSAGE "解锁手机，在弹出的提示里点“允许”（iPhone 点“信任”），这里会自动打开。"
+    IDS_DEVICE_NO_RESPONSE_TITLE "手机没有响应"
+    IDS_DEVICE_NO_RESPONSE_MESSAGE "15 秒内没有读到这个文件夹。解锁手机或重新插一下数据线，再点“重试”。"
+    IDS_DEVICE_FOLDER_FAILED "读取手机上的这个文件夹时出错。"
+    IDS_DEVICE_FOLDER_GONE "手机上已经没有这个文件夹了。"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5251,6 +5259,14 @@ BEGIN
     IDS_THISPC_STATUS_MOUNTED "%zu network drives"
     IDS_THISPC_STATUS_DEVICES "%zu devices"
     IDS_THISPC_STATUS_LAUNCHERS "%zu cloud drive apps"
+    IDS_DEVICE_DISCONNECTED_TITLE "Phone not connected"
+    IDS_DEVICE_DISCONNECTED_MESSAGE "This opens again by itself once the phone is connected."
+    IDS_DEVICE_WAITING_TITLE "Waiting for the phone to allow access"
+    IDS_DEVICE_WAITING_MESSAGE "Unlock the phone and tap Allow (Trust on an iPhone); this opens by itself."
+    IDS_DEVICE_NO_RESPONSE_TITLE "The phone is not responding"
+    IDS_DEVICE_NO_RESPONSE_MESSAGE "This folder did not load within 15 seconds. Unlock the phone or plug the cable in again, then retry."
+    IDS_DEVICE_FOLDER_FAILED "Something went wrong reading this folder on the phone."
+    IDS_DEVICE_FOLDER_GONE "This folder is no longer on the phone."
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

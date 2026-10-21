@@ -1221,6 +1221,14 @@
 #define IDS_THISPC_STATUS_MOUNTED                                                        3850
 #define IDS_THISPC_STATUS_DEVICES                                                        3851
 #define IDS_THISPC_STATUS_LAUNCHERS                                                      3852
+#define IDS_DEVICE_DISCONNECTED_TITLE                                                    3853
+#define IDS_DEVICE_DISCONNECTED_MESSAGE                                                  3854
+#define IDS_DEVICE_WAITING_TITLE                                                         3855
+#define IDS_DEVICE_WAITING_MESSAGE                                                       3856
+#define IDS_DEVICE_NO_RESPONSE_TITLE                                                     3857
+#define IDS_DEVICE_NO_RESPONSE_MESSAGE                                                   3858
+#define IDS_DEVICE_FOLDER_FAILED                                                         3859
+#define IDS_DEVICE_FOLDER_GONE                                                           3860
 #define IDS_MOUNTED_DRIVE_NOTE                                                           3835
 #define IDS_SIDEBAR_CLOUD_HIDDEN_HINT                                                    2516
 #define IDS_SIDEBAR_SHOW_HIDDEN                                                          2517

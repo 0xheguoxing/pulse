@@ -206,6 +206,21 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
             }
             entries->push_back(std::move(entry));
         }
+    } else if (fs::IsDevicePath(item.path)) {
+        // A phone folder (device_registry.h): listed on the device thread.
+        const fs::DeviceError error = pulse::app::DeviceRegistry::Instance().ListFolder(
+            item.path, *entries, cancelled);
+        if (error == fs::DeviceError::Cancelled) {
+            res.cancelled = true;
+            return res;
+        }
+        if (error != fs::DeviceError::None) {
+            res.cancelled = cancelled();
+            res.error = !res.cancelled;
+            res.device_error = static_cast<uint8_t>(error);
+            res.snapshot = nullptr;
+            return res;
+        }
     } else if (fs::IsRecycleViewPath(item.path)) {
         try {
             fs::EnumerateRecycleBin(*entries, &res.recycle_info);
@@ -294,7 +309,8 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
     }
 
     // Read link destinations on this worker before display (including .lnk targets).
-    if (!fs::IsRecycleViewPath(item.path)) {
+    // Not on a phone: reading a .lnk there means copying it off the device.
+    if (!fs::IsRecycleViewPath(item.path) && !fs::IsDevicePath(item.path)) {
         ResolveLinksInPlace(item.path, *entries, [&] {
             std::lock_guard<std::mutex> lock(mutex_);
             const auto it = current_gen_.find(item.request_key);

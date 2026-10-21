@@ -46,6 +46,7 @@ struct WorkResult {
     bool cancelled = false;
     bool error = false;
     bool bitlocker_locked = false; // error: the drive is a locked BitLocker volume
+    uint8_t device_error = 0;      // error: fs::DeviceError of a pulse:device: listing
     double enum_ms = 0.0;
     double sort_ms = 0.0;
     fs::RecycleBinInfo recycle_info;

@@ -9,6 +9,7 @@
 #include "../fs/bitlocker_volume.h"
 #include "../fs/device_path.h"
 #include "../fs/device_source.h"
+#include "device_registry.h"
 #include "shell_window_sync.h"
 #include "app_column_view.h"
 #include "app_details_tree.h"
@@ -975,6 +976,67 @@ static void FillTagViewRefinements(AppState& s, const app::TagQuery& query,
                                          : std::vector<std::pair<std::wstring, int>>{};
 }
 
+// Phones: what a pulse:device: location is called (tab, window title). The
+// device name for its root, and for the storage of a one-storage phone,
+// which stands in for the device; otherwise the last segment.
+static std::wstring DeviceViewTitle(const std::wstring& path) {
+    const auto where = fs::ParseDevicePath(path);
+    if (!where) return path;
+    std::wstring name;
+    bool skips = false;
+    if (!app::DeviceRegistry::Instance().Describe(where->device, &name, &skips) || name.empty())
+        name = l10n::Get(l10n::StringId::DeviceKindPhone).c_str();
+    if (!where->parts.empty()) return where->parts.back();
+    if (where->IsStorageRoot() && !skips) return where->storage;
+    return name;
+}
+
+// Where Up goes from a phone folder: the parent folder, the device (several
+// storages) or This PC (the device root, or a one-storage phone's storage).
+static std::wstring DeviceUpTarget(const std::wstring& path) {
+    auto where = fs::ParseDevicePath(path);
+    if (!where || where->IsDeviceRoot()) return L"";
+    if (!where->parts.empty()) {
+        where->parts.pop_back();
+        return fs::FormatDevicePath(*where);
+    }
+    bool skips = false;
+    app::DeviceRegistry::Instance().Describe(where->device, nullptr, &skips);
+    if (skips) return L"";
+    where->storage.clear();
+    return fs::FormatDevicePath(*where);
+}
+
+static bool IsDeviceBannerTitle(const std::wstring& title) {
+    using I = l10n::StringId;
+    return !title.empty() && (title == l10n::Get(I::DeviceDisconnectedTitle) ||
+                              title == l10n::Get(I::DeviceWaitingTitle) ||
+                              title == l10n::Get(I::DeviceNoResponseTitle) ||
+                              title == l10n::Get(I::CannotOpen));
+}
+
+void RefreshDeviceViews(AppState& s) {
+    // After the phone list changed: views of a phone that came, went or was
+    // unlocked load again (a waiting banner turns into the folder, an open
+    // folder into 手机未连接); a device root shows the current storages.
+    const auto devices = app::DeviceRegistry::Instance().Devices();
+    std::vector<std::wstring> paths;
+    ForEachPane(s, [&](app::Pane& pane) {
+        app::Tab* tab = pane.ActiveTab();
+        if (!tab || tab->loading || !fs::IsDevicePath(tab->current_path)) return;
+        const auto where = fs::ParseDevicePath(tab->current_path);
+        if (!where) return;
+        const bool present = std::any_of(devices.begin(), devices.end(), [&](const fs::DeviceInfo& d) {
+            return d.key == where->device && !d.locked;
+        });
+        const bool waiting = IsDeviceBannerTitle(tab->banner_title);
+        if (!where->IsDeviceRoot() && !waiting && present) return;  // an open folder: keep it
+        if (std::find(paths.begin(), paths.end(), tab->current_path) == paths.end())
+            paths.push_back(tab->current_path);
+    });
+    for (const auto& path : paths) RefreshPath(s, path, RefreshReason::ShellNotification);
+}
+
 void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathLoadReason reason) {
     CancelUnsharedDirectoryRequest(s, tab);
     tab.explorer_handoff.reset();
@@ -1104,6 +1166,16 @@ void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathL
         tab.pending_generation = s.worker.LoadPaths(
             path, std::move(paths), tab.sort_column, tab.sort_direction, true,
             std::move(opened));
+        return;
+    } else if (kind == L"device") {
+        // A phone folder: listed on the device thread (WorkerPool -> DeviceRegistry).
+        tab.virtual_title = DeviceViewTitle(path);
+        tab.loading = true;
+        tab.SetSnapshot(nullptr);
+        tab.banner_title.clear();
+        tab.banner_message.clear();
+        tab.pending_generation = s.worker.Refresh(
+            path, tab.sort_column, tab.sort_direction, tab.EffectiveGroup());
         return;
     } else if (kind == L"recycle") {
         tab.virtual_title = l10n::Get(l10n::StringId::RecycleBin);
@@ -1354,7 +1426,22 @@ static bool ApplyWorkerResultToWindow(AppState& s, app::WorkResult& res, bool ag
             tab->banner_message = tab->snapshot
                 ? l10n::Get(l10n::StringId::CachedReadOnly)
                 : l10n::Get(l10n::StringId::DirectoryUnavailable);
-            if (res.bitlocker_locked) {
+            if (res.device_error) {
+                // A phone folder that could not be listed: say what to do.
+                using I = l10n::StringId;
+                I title = I::CannotOpen, message = I::DeviceFolderFailed;
+                switch (static_cast<fs::DeviceError>(res.device_error)) {
+                case fs::DeviceError::Disconnected: title = I::DeviceDisconnectedTitle; message = I::DeviceDisconnectedMessage; break;
+                case fs::DeviceError::Locked: title = I::DeviceWaitingTitle; message = I::DeviceWaitingMessage; break;
+                case fs::DeviceError::TimedOut: title = I::DeviceNoResponseTitle; message = I::DeviceNoResponseMessage; break;
+                case fs::DeviceError::NotFound: message = I::DeviceFolderGone; break;
+                default: break;
+                }
+                tab->net_readonly = false;
+                tab->banner_title = l10n::Get(title);
+                tab->banner_message = l10n::Get(message);
+                if (!tab->snapshot) tab->SetSnapshot(std::make_shared<std::vector<fs::DirEntry>>());
+            } else if (res.bitlocker_locked) {
                 tab->banner_title = l10n::Get(l10n::StringId::DriveLockedTitle);
                 tab->banner_message = l10n::Get(l10n::StringId::DriveLockedMessage);
             } else if (tab->net_readonly && app::NetworkConnectPending(res.path)) {
@@ -2063,7 +2150,6 @@ void RestoreNavigationReturnSelection(AppState& s, app::Tab& tab,
 }
 
 void NavigateTo(AppState& s, const std::wstring& path) {
-    if (fs::IsDevicePath(path)) return;  // phone browsing lands with D3
     if (OpenSystemNetworkShortcut(s, path)) return;
     app::Tab* tab = ActiveTab(s);
     if (!tab) return;
@@ -2078,12 +2164,14 @@ void NavigateTo(AppState& s, const std::wstring& path) {
     const std::wstring returnedChild =
         app::NavigationReturnChildName(tab->current_path, normalized);
     tab->NavigateTo(normalized);
-    RecordSearchHistory(s, normalized);
+    // A phone folder is no place to come back to later (the phone moves on).
+    const bool device = fs::IsDevicePath(normalized);
+    if (!device) RecordSearchHistory(s, normalized);
     StartLoadingPath(s, *tab, normalized);
     SyncTaskbarWindowTitle(s);
     RestoreNavigationReturnSelection(s, *tab, returnedChild);
     RememberPath(s, normalized);
-    RecordRecentOpen(s, normalized, app::PlaceItemKind::Folder);
+    if (!device) RecordRecentOpen(s, normalized, app::PlaceItemKind::Folder);
     s.timing.first_frame_recorded = false;
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
@@ -2537,7 +2625,17 @@ void OpenSelected(AppState& s) {
             ShowDeviceHelp(s);  // "no phone connected": how to make it show up
             return;
         }
-        if (e.pc_device) return;  // phones open once pulse:device: browsing lands (D3)
+        if (e.pc_device) {
+            // A phone: its storages, or straight into the only one.
+            const auto where = fs::ParseDevicePath(e.full_path);
+            std::wstring target = e.full_path;
+            for (const auto& device : app::DeviceRegistry::Instance().Devices())
+                if (where && device.key == where->device && !device.locked) target = fs::DeviceOpenTarget(device);
+            NavigateTo(s, target);
+            return;
+        }
+        // Phone files open through a temporary copy (D6); folders browse.
+        if (!e.is_dir && fs::IsDevicePath(e.full_path)) return;
         if (!e.link_target.empty()) {
             if (e.link_target_is_dir) NavigateTo(s, e.link_target);
             else {
@@ -2556,7 +2654,8 @@ void OpenSelected(AppState& s) {
     }
     for (int index : indices) {
         const fs::DirEntry& e = tab->EntryAt(static_cast<size_t>(index));
-        if (e.change_record_only || e.pc_launcher || e.pc_device) continue;  // like folders: one at a time
+        if (e.change_record_only || e.pc_launcher || e.pc_device || fs::IsDevicePath(e.full_path))
+            continue;  // like folders: one at a time; phone files wait for D6
         if (!e.link_target.empty()) {
             if (!e.link_target_is_dir) {
                 s.ops.OpenWith(e.link_target);
@@ -2627,6 +2726,10 @@ void GoUp(AppState& s) {
     if (!tab) return;
     if (IsRecycleTab(tab)) {
         NavigateTo(s, L"");
+        return;
+    }
+    if (fs::IsDevicePath(tab->current_path)) {
+        NavigateTo(s, DeviceUpTarget(tab->current_path));
         return;
     }
     if (fs::IsVirtualPath(tab->current_path)) {

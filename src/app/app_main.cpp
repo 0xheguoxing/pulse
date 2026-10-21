@@ -183,6 +183,7 @@ void UnregisterAssocChangeNotify() {
 #include "host_routing.h"
 #include <commctrl.h>
 #include <dbt.h> // WM_DEVICECHANGE / DEV_BROADCAST_HDR
+#include "../ui/device_crumbs.h"
 
 using namespace pulse;
 namespace pulse {
@@ -1366,6 +1367,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             RequestNetworkLocations(*s);
             // Phones: arrival notifications on the host; listed only when one is present.
             app::DeviceRegistry::Instance().Start(ServiceWindow(*s));
+            ui::SetDeviceCrumbResolver([](const std::wstring& key) {
+                ui::DeviceCrumbInfo info;
+                info.known = app::DeviceRegistry::Instance().Describe(key, &info.name, &info.skips_storage);
+                return info;
+            });
             // Verification hook (isolated test instances only): open the phone
             // help after N ms so its dialog can be captured.
             if (s->isolatedTest) {
@@ -1876,6 +1882,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s) app::ForEachWindowSharingCore(*s, [](AppState& window) {
             SyncDeviceSidebar(window);
             RefreshPath(window, std::wstring(), RefreshReason::ShellNotification);
+            RefreshDeviceViews(window);
             InvalidateRect(window.hwnd, nullptr, FALSE);
         });
         return 0;

@@ -1978,7 +1978,7 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
     out.can_go_forward = tab->CanGoForward();
     std::wstring virtual_kind;
     ParsePulsePath(tab->current_path, &virtual_kind, nullptr);
-    out.can_go_up = virtual_kind == L"recycle"
+    out.can_go_up = virtual_kind == L"recycle" || virtual_kind == L"device"
         ? true
         : (fs::IsVirtualPath(tab->current_path) ? tab->CanGoBack() : !tab->current_path.empty());
     out.is_file_system = !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path);
@@ -2032,6 +2032,8 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
     out.search_snippets = tab->search_snippets;
     out.recent_filter = tab->recent_filter;
     out.recent_total = out.is_recent && places ? places->recent_items.size() : 0;
+    // Phones: the breadcrumb splits the pulse:device: path (此电脑 › 手机 › …).
+    if (virtual_kind == L"device") out.path = tab->current_path;
     if (virtual_kind == L"recycle") {
         out.path = MakeRecyclePath();
         out.date_column_label = l10n::Get(l10n::StringId::ColumnDeleted);

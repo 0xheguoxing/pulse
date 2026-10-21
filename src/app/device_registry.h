@@ -12,7 +12,10 @@
 #pragma once
 #include <windows.h>
 #include <cstdint>
+#include <functional>
+#include <map>
 #include <memory>
+#include <string>
 #include <mutex>
 #include <vector>
 
@@ -40,6 +43,15 @@ public:
     // source must only be used from tasks posted to Worker().
     fs::DeviceWorker& Worker() { return worker_; }
     fs::DeviceSource* SourceOnWorker();
+    // Any thread but the device thread (the worker pool): the rows of a
+    // pulse:device: folder. A device root answers from the list (its
+    // storages); anything below is listed on the device thread within
+    // 15 s. Polls `cancelled` while waiting and gives up on it.
+    fs::DeviceError ListFolder(const std::wstring& path, std::vector<fs::DirEntry>& out,
+                               const std::function<bool()>& cancelled);
+    // Name and storage-level skip of a device seen in this session (it may
+    // be gone now), for the breadcrumb and titles. False if never seen.
+    bool Describe(const std::wstring& key, std::wstring* name, bool* skips_storage) const;
 
 private:
     DeviceRegistry();
@@ -56,6 +68,8 @@ private:
     bool test_source_ = false;  // FakeDeviceSource (isolated test instance)
     std::wstring fake_root_;
     std::vector<fs::DeviceInfo> devices_;
+    struct Known { std::wstring name; bool skips_storage = false; };
+    std::map<std::wstring, Known> known_;  // every device listed this session, by key
     uint64_t revision_ = 0;
     uint32_t locked_checks_ = 0;
     std::unique_ptr<fs::DeviceSource> source_;  // device thread only
