@@ -1042,6 +1042,46 @@ TreeMoreLayout LayoutTreeMore(const DetailsTreeRow& row, const D2D1_RECT_F& cell
 }
 } // namespace
 
+namespace {
+constexpr float kCheckGutterDip = 24.0f;
+constexpr float kCheckBoxDip = 18.0f;  // Painter::DrawCheckBox's indicator
+}  // namespace
+
+float MainRenderer::CheckGutterDip(const PaneViewModel& vm) const {
+    return item_checks_ && vm.view_mode == ViewMode::Details ? kCheckGutterDip : 0.0f;
+}
+
+float MainRenderer::DetailsLeadDip(const PaneViewModel& vm, int view_index) const {
+    if (vm.view_mode != ViewMode::Details) return 0.0f;
+    const DetailsTreeRow* tree_row = vm.tree ? vm.tree->At(view_index) : nullptr;
+    return (tree_row ? TreeOffsetDip(*tree_row) : 0.0f) + CheckGutterDip(vm);
+}
+
+D2D1_RECT_F MainRenderer::ItemCheckRect(const PaneViewModel& vm, const D2D1_RECT_F& cell,
+                                        float details_base_x) const {
+    if (!item_checks_) return {};
+    const float side = kCheckBoxDip * scale_;
+    if (vm.view_mode == ViewMode::Details) {
+        const float left = std::round(details_base_x + 2.0f * scale_);  // clear of the selection bar
+        const float top = std::round(cell.top + (cell.bottom - cell.top - side) * 0.5f);
+        return D2D1::RectF(left, top, left + side, top + side);
+    }
+    if (vm.view_mode == ViewMode::ExtraLargeIcons || vm.view_mode == ViewMode::LargeIcons ||
+        vm.view_mode == ViewMode::MediumIcons) {
+        const float left = std::round(cell.left + 6.0f * scale_);
+        const float top = std::round(cell.top + 6.0f * scale_);
+        return D2D1::RectF(left, top, left + side, top + side);
+    }
+    return {};
+}
+
+D2D1_RECT_F MainRenderer::HeaderCheckRect(float columns_left, float header_top) const {
+    const float side = kCheckBoxDip * scale_;
+    const float left = std::round(columns_left + 6.0f * scale_);  // over the rows' boxes
+    const float top = std::round(header_top + (column_header_height_ - side) * 0.5f);
+    return D2D1::RectF(left, top, left + side, top + side);
+}
+
 bool MainRenderer::PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& full_bounds,
                                    int source_index, float x, float y) const {
     const D2D1_RECT_F pane_bounds = PaneBodyBounds(vm, full_bounds);
@@ -1079,8 +1119,8 @@ bool MainRenderer::PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& f
         const auto defaults = DetailsColumns(pane_bounds, vm.details_column_dividers,
                                             vm.is_search, vm.search_column_dividers);
         name.right += actual.Width(ColumnKind::Name) - defaults.Width(ColumnKind::Name);
-        if (const DetailsTreeRow* tree_row = vm.tree ? vm.tree->At(view_index) : nullptr)
-            name.left = std::min(name.right, name.left + std::round(TreeOffsetDip(*tree_row) * scale_));
+        if (const float lead = DetailsLeadDip(vm, view_index); lead > 0.0f)
+            name.left = std::min(name.right, name.left + std::round(lead * scale_));
     }
     const bool icon_grid = vm.view_mode == ViewMode::ExtraLargeIcons ||
                            vm.view_mode == ViewMode::LargeIcons ||
@@ -1186,8 +1226,8 @@ bool MainRenderer::PointInItemGrip(const PaneViewModel& vm, const D2D1_RECT_F& f
     const D2D1_RECT_F cell = layout.ItemRect(view_index);
     D2D1_RECT_F icon = layout.IconRect(view_index);
     if (vm.view_mode == ViewMode::Details) {
-        if (const DetailsTreeRow* tree_row = vm.tree ? vm.tree->At(view_index) : nullptr) {
-            const float shift = std::round(TreeOffsetDip(*tree_row) * scale_);
+        if (const float lead = DetailsLeadDip(vm, view_index); lead > 0.0f) {
+            const float shift = std::round(lead * scale_);
             icon.left += shift;
             icon.right += shift;
         }
@@ -1208,7 +1248,7 @@ int MainRenderer::TreeChevronAt(const PaneViewModel& vm, const D2D1_RECT_F& full
     const int row = layout.HitTest(x, y);
     const DetailsTreeRow* tree_row = vm.tree->At(row);
     if (!tree_row || tree_row->kind != TreeRowKind::Entry || !tree_row->expandable) return -1;
-    const float left = layout.IconRect(row).left +
+    const float left = layout.IconRect(row).left + CheckGutterDip(vm) * scale_ +
                        static_cast<float>(tree_row->depth) * kTreeIndentDip * scale_;
     return x >= left - 3.0f * scale_ && x < left + kTreeChevronDip * scale_ ? row : -1;
 }
@@ -1223,7 +1263,7 @@ int MainRenderer::TreeMoreActionAt(const PaneViewModel& vm, const D2D1_RECT_F& f
     const ViewLayout layout(vm.view_mode, list, vm.EntryCount(), vm.scroll_x, vm.scroll_y, scale_,
                             ListRowHeightDip(vm, list), vm.Groups());
     const D2D1_RECT_F cell = layout.ItemRect(view_row);
-    const float x0 = layout.IconRect(view_row).left + TreeOffsetDip(*tree_row) * scale_;
+    const float x0 = layout.IconRect(view_row).left + (TreeOffsetDip(*tree_row) + CheckGutterDip(vm)) * scale_;
     const TreeMoreLayout more = LayoutTreeMore(*tree_row, cell, x0, scale_,
                                                compositor_->DwriteFactory(), compositor_->TextFormat());
     for (int k = 0; k < more.count; ++k) {
@@ -2614,13 +2654,33 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
             painted_columns_[static_cast<size_t>(pane_index)] = mask;
         }
         float cx = columns.left;
+        // Item check boxes: a select-all box heads the gutter, the Name label follows it.
+        const bool headerCheck = CheckGutterDip(pane) > 0.0f && !pane.curated_order &&
+                                 !pane.column_strip.Active() && pane.EntryCount() > 0;
+        const float nameLead = headerCheck ? CheckGutterDip(pane) * scale_ : 0.0f;
+        if (headerCheck) {
+            const D2D1_RECT_F box = HeaderCheckRect(columns.left, y);
+            const size_t total = pane.EntryCount();
+            const size_t picked = static_cast<size_t>(std::max(0, pane.selected_count));
+            fluent::ControlState check;
+            check.checked = picked >= total;
+            painter_.DrawCheckBox(box, L"", check);
+            if (picked > 0 && picked < total) {
+                // Some selected: the mixed state's dash.
+                MakeBrush(dc, theme.accent, brTagDot_);
+                const float cyMid = (box.top + box.bottom) * 0.5f;
+                dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(box.left + 4.0f * scale_, cyMid - scale_,
+                    box.right - 4.0f * scale_, cyMid + scale_), scale_, scale_), brTagDot_.get());
+            }
+        }
         auto drawCol = [&](const std::wstring& label, SortColumn col, float cw, bool right = false) {
             const bool active = !pane.curated_order && pane.sort_column == col;
             MakeBrush(dc, active ? theme.accent : theme.text, brText_);
             IDWriteTextFormat* fmt = compositor_->HeaderFormat();
             const float textInset = 8.0f * scale_;
-            const float contentLeft = cx + textInset;
-            const float availableW = std::max(0.0f, cw - textInset * 2.0f);
+            const float lead = col == SortColumn::Name ? nameLead : 0.0f;
+            const float contentLeft = cx + textInset + lead;
+            const float availableW = std::max(0.0f, cw - textInset * 2.0f - lead);
             const float iconW = active ? 12.0f * scale_ : 0.0f;
             const float iconGap = active ? 3.0f * scale_ : 0.0f;
             const float labelAvailable = std::max(0.0f, availableW - iconW - iconGap);
@@ -3542,9 +3602,8 @@ D2D1_RECT_F MainRenderer::RenameFieldRect(const PaneViewModel& vm, const D2D1_RE
     ViewLayout layout(vm.view_mode, list, vm.EntryCount(), vm.scroll_x, vm.scroll_y,
                       scale_, ListRowHeightDip(vm, list), vm.Groups());
     D2D1_RECT_F nameRc = layout.NameRect(view);
-    if (const DetailsTreeRow* tree_row = vm.view_mode == ViewMode::Details && vm.tree
-            ? vm.tree->At(view) : nullptr)
-        nameRc.left = std::min(nameRc.right, nameRc.left + std::round(TreeOffsetDip(*tree_row) * scale_));
+    if (const float lead = DetailsLeadDip(vm, view); lead > 0.0f)
+        nameRc.left = std::min(nameRc.right, nameRc.left + std::round(lead * scale_));
     const bool iconGrid = vm.view_mode == ViewMode::ExtraLargeIcons ||
                           vm.view_mode == ViewMode::LargeIcons ||
                           vm.view_mode == ViewMode::MediumIcons;
@@ -4077,7 +4136,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     // The "more" row takes keyboard focus (Enter shows more).
                     if (draw_shapes && standIn->kind == TreeRowKind::More && vm.IsRowSelected(src))
                         selection_painter.Selected(cell);
-                    if (draw_text) drawTreePlaceholder(*standIn, cell, layout.IconRect(i).left);
+                    if (draw_text) drawTreePlaceholder(*standIn, cell, layout.IconRect(i).left + CheckGutterDip(vm) * scale_);
                     continue;
                 }
             }
@@ -4135,9 +4194,11 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             }
             // Details tree: rows indent by depth after the chevron slot.
             const DetailsTreeRow* treeRow = detailsView && vm.tree ? vm.tree->At(i) : nullptr;
-            const float treeBaseX = iconRect.left;
-            if (treeRow) {
-                const float dx = std::round(TreeOffsetDip(*treeRow) * scale_);
+            // The check box gutter (item_checks_) comes first, then the chevron slot.
+            const float checkBaseX = iconRect.left;
+            const float treeBaseX = iconRect.left + (detailsView ? CheckGutterDip(vm) * scale_ : 0.0f);
+            if (const float lead = detailsView ? DetailsLeadDip(vm, i) : 0.0f; lead > 0.0f) {
+                const float dx = std::round(lead * scale_);
                 iconRect.left += dx;
                 iconRect.right += dx;
                 thumbRect.left += dx;
@@ -4504,6 +4565,29 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 DrawMtimeMark(dc, brTagDot_.get(), mtX, mtY, mtSide, mtimeMark, mtimeColor);
             }
             if (draw_shapes && wallPic && !morph_item) DrawWallTileChrome(thumbRect, hover && src != vm.rename_index, selected, theme);
+            // Item check boxes: on the hovered and selected rows, on every row
+            // while several are selected.
+            if (draw_shapes && item_checks_ && !morph_item && !morphing && src != vm.rename_index &&
+                (hover || selected || vm.selected_count >= 2)) {
+                const D2D1_RECT_F box = ItemCheckRect(vm, cell, checkBaseX);
+                if (box.right > box.left) {
+                    if (!detailsView) {
+                        // Icon grids: a ring in the card colour keeps it off the thumbnail.
+                        MakeBrush(dc, theme.bg, brTagDot_);
+                        dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(box.left - 2.0f * scale_,
+                            box.top - 2.0f * scale_, box.right + 2.0f * scale_, box.bottom + 2.0f * scale_),
+                            6.0f * scale_, 6.0f * scale_), brTagDot_.get());
+                    }
+                    fluent::ControlState check;
+                    check.checked = selected;
+                    // Shown only because several are selected: faint until hovered.
+                    const bool faint = !hover && !selected && !IsHighContrast();
+                    if (faint) dc->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr,
+                        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), 0.5f), nullptr);
+                    painter_.DrawCheckBox(box, L"", check);
+                    if (faint) dc->PopLayer();
+                }
+            }
             // Mid-morph the labels are drawn in a second, faded pass.
             if (!draw_text) continue;
 
@@ -4645,6 +4729,22 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     nameRc.top < rename_card.bottom && nameRc.bottom > rename_card.top)
                     nameColor.a *= 0.38f;
                 MakeBrush(dc, nameColor, brText_);
+                // Single click opens: a highlighter band under the name's lower
+                // half on hover (or a resting 2 px line with "always").
+                if (click_single_ && !iconGrid && !wallPic && trail.name_w > 0.0f && (hover || click_band_ == 1)) {
+                    const float mid = std::round(textY + textH * 0.5f);
+                    D2D1_RECT_F band = D2D1::RectF(trail.name_x - scale_, mid - scale_,
+                                                   trail.name_x + trail.name_w + scale_, mid + 6.0f * scale_);
+                    if (IsHighContrast()) {
+                        band.top = band.bottom - scale_;
+                        MakeBrush(dc, theme.accent, brTagDot_);
+                    } else {
+                        if (!hover) band.top = band.bottom - 2.0f * scale_;
+                        // Dark backgrounds swallow a thin tint: a little more there.
+                        MakeBrush(dc, WithAlpha(theme.accent, theme.bg.r < 0.5f ? 0.34f : 0.24f), brTagDot_);
+                    }
+                    dc->FillRectangle(band, brTagDot_.get());
+                }
                 bool name_truncated = true;
                 if (wallPic) {
                     // Photo wall: no names under the pictures; hovered or

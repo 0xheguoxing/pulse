@@ -5287,6 +5287,7 @@ static void RefreshEditFonts(AppState& s) {
 void ApplySettingsEffects(AppState& s, app::SettingsEffect effects) {
     // Cheap when unchanged; 文件夹最近变化 (ChangeTracking) also feeds it.
     s.renderer.SetMtimeHint(app::MtimeHintFromPrefs(s.appPrefs));
+    s.renderer.SetItemClick(s.appPrefs.single_click_open, s.appPrefs.name_highlight, s.appPrefs.item_checkboxes);
     if (app::HasEffect(effects, app::SettingsEffect::FileVisibility)) {
         ForEachPane(s, [&](app::Pane& pane) {
             if (auto* tab = pane.ActiveTab()) {

@@ -335,6 +335,17 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
         const I density[]={I::SettingsDensityCompact,I::SettingsDensityStandard,I::SettingsDensityRoomy};const int heights[]={28,34,40};
         segmented(lay.density_card,lay.density_row,density,heights,vm.settings_row_height,H::SettingsDensity,I::SettingsRowHeight,I::SettingsRowHeightDesc);divider(lay.density_card);
         toggle(lay.performance_row,I::SettingsShowPerformance,I::SettingsShowPerformanceDesc,L"\xE946",vm.settings_show_performance,4);divider(lay.performance_row);
+        {
+            // 鼠标与选择: the name band and hover selection only mean something with single-click.
+            const I open_modes[]={I::ClickOpenDouble,I::ClickOpenSingle};const int open_values[]={0,1};
+            segmented(lay.click_open_card,lay.click_open_row,open_modes,open_values,vm.settings_single_click ? 1 : 0,H::SettingsClickMode,I::SettingsClickOpen,I::SettingsClickOpenDesc,2,L"\xE8B0");divider(lay.click_open_card);
+            if(vm.settings_single_click) {
+                const I bands[]={I::NameHighlightHover,I::NameHighlightAlways};const int band_values[]={0,1};
+                segmented(lay.name_highlight_card,lay.name_highlight_row,bands,band_values,vm.settings_name_highlight,H::SettingsNameBand,I::SettingsNameHighlight,I::SettingsNameHighlightDesc,2,L"\xE7E6");divider(lay.name_highlight_card);
+                toggle(lay.hover_select_row,I::SettingsHoverSelect,I::SettingsHoverSelectDesc,L"\xE916",vm.settings_hover_select,77);divider(lay.hover_select_row);
+            }
+            toggle(lay.item_checkbox_row,I::SettingsItemCheckboxes,I::SettingsItemCheckboxesDesc,L"\xE73A",vm.settings_item_checkboxes,78);divider(lay.item_checkbox_row);
+        }
         toggle(lay.list_style_row[0],I::ListSmartDate,I::ListSmartDateDesc,L"\xE787",vm.settings_list_smart_date,17);divider(lay.list_style_row[0]);
         toggle(lay.list_style_row[1],I::ListZebraRows,I::ListZebraRowsDesc,L"\xE8FD",vm.settings_list_zebra_rows,18);divider(lay.list_style_row[1]);
         toggle(lay.list_style_row[2],I::ListSizeBar,I::ListSizeBarDesc,L"\xE9D2",vm.settings_list_size_bar,19);divider(lay.list_style_row[2]);

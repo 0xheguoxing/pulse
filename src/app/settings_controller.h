@@ -224,6 +224,7 @@ public:
     void MtimeStyle(int index);     // 修改时间提示: off, dot, bar, text
     void MtimeRange(int index);     // today, 3, 7, 30 days
     void MtimePalette(int index);
+    void ClickMode(int index);      // 鼠标与选择: 0/1 double/single click, 2/3 name band on hover/always
     // Optional Details columns (ui/details_column_set.h bits), every folder.
     void DetailsColumns(uint32_t mask);
     void StartupOpen(int index);

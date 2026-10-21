@@ -65,6 +65,12 @@ struct AppPrefs {
     bool list_mtime_other_views = true;
     bool list_mtime_bold = true;
     bool list_mtime_flash = true;
+    // 鼠标与选择: single-click opens items (0 = double-click), the name band
+    // that hints it (0 on hover, 1 always), hover selection, item check boxes.
+    bool single_click_open = false;
+    int name_highlight = 0;
+    bool hover_select = false;
+    bool item_checkboxes = false;
     // 同步状态: OneDrive placeholders and SVN working copies.
     bool sync_onedrive = true;
     bool sync_svn = true;

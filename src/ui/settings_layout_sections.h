@@ -211,6 +211,12 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
     section(2);
     l.density_card=row(narrow ? 98.0f : 64.0f); segments(l.density_card,l.density_row,3,282);
     l.performance_row=row(64);
+    l.click_open_card=row(narrow ? 98.0f : 64.0f); segments(l.click_open_card,l.click_open_row,2,282);
+    if(vm.settings_single_click) {
+        l.name_highlight_card=row(narrow ? 98.0f : 64.0f); segments(l.name_highlight_card,l.name_highlight_row,2,282);
+        l.hover_select_row=row(64);
+    }
+    l.item_checkbox_row=row(64);
     for(auto& list_row : l.list_style_row) list_row=row(64);
     l.mtime_style_card=row(narrow ? 98.0f : 64.0f); segments(l.mtime_style_card,l.mtime_style_row,4,340);
     if(vm.settings_mtime.style!=0) {

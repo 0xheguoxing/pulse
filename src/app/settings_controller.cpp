@@ -805,6 +805,19 @@ void SettingsController::MtimePalette(int index) {
         SaveAndApply(SettingsEffect::ListStyle);
 }
 
+void SettingsController::ClickMode(int index) {
+    if (!prefs_ || index < 0 || index > 3) return;
+    bool changed = false;
+    if (index < 2) {
+        changed = prefs_->single_click_open != (index == 1);
+        prefs_->single_click_open = index == 1;
+    } else {
+        changed = prefs_->name_highlight != index - 2;
+        prefs_->name_highlight = index - 2;
+    }
+    if (changed) SaveAndApply(SettingsEffect::ListStyle);
+}
+
 void SettingsController::DetailsColumns(uint32_t mask) {
     mask = ui::NormalizeDetailsColumns(mask);
     if (!prefs_ || prefs_->details_columns == mask) return;
@@ -1124,10 +1137,12 @@ void SettingsController::IntegrationAction(int index) {
 void SettingsController::ToggleUi(int index) {
     if (!prefs_ || !context_) return;
     // 修改时间提示 switches and sync status, kept out of the chain below.
-    if (index >= 70 && index <= 76) {
+    // 77, 78: 鼠标与选择 hover selection and item check boxes.
+    if (index >= 70 && index <= 78) {
         bool* const flags[] = {&prefs_->list_mtime_fade, &prefs_->list_mtime_bold, &prefs_->list_mtime_tree,
                                &prefs_->list_mtime_other_views, &prefs_->list_mtime_flash,
-                               &prefs_->sync_onedrive, &prefs_->sync_svn};
+                               &prefs_->sync_onedrive, &prefs_->sync_svn, &prefs_->hover_select,
+                               &prefs_->item_checkboxes};
         bool& flag = *flags[index - 70];
         flag = !flag;
         SaveAndApply(SettingsEffect::ListStyle);

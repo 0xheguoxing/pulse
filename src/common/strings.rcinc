@@ -2622,6 +2622,18 @@ BEGIN
     IDS_ONEDRIVE_ONLINE_ONLY "仅在线可用"
     IDS_ONEDRIVE_ON_DEVICE "本地可用"
     IDS_ONEDRIVE_ALWAYS_KEPT "始终保留在此设备上"
+    IDS_SETTINGS_CLICK_OPEN "打开项目"
+    IDS_SETTINGS_CLICK_OPEN_DESC "用鼠标打开文件和文件夹的方式"
+    IDS_CLICK_OPEN_DOUBLE "双击打开"
+    IDS_CLICK_OPEN_SINGLE "单击打开"
+    IDS_SETTINGS_NAME_HIGHLIGHT "名称底衬"
+    IDS_SETTINGS_NAME_HIGHLIGHT_DESC "单击打开时，名称下半截加一道浅色底衬，提示点一下就会打开"
+    IDS_NAME_HIGHLIGHT_HOVER "悬停时"
+    IDS_NAME_HIGHLIGHT_ALWAYS "始终"
+    IDS_SETTINGS_HOVER_SELECT "悬停选中"
+    IDS_SETTINGS_HOVER_SELECT_DESC "单击打开时，鼠标在某一项上停留约半秒就选中它"
+    IDS_SETTINGS_ITEM_CHECKBOXES "用复选框选择项目"
+    IDS_SETTINGS_ITEM_CHECKBOXES_DESC "每一项前面显示复选框，勾一下就能多选，不用按 Ctrl"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5243,6 +5255,18 @@ BEGIN
     IDS_ONEDRIVE_ONLINE_ONLY "Available when online"
     IDS_ONEDRIVE_ON_DEVICE "Available on this device"
     IDS_ONEDRIVE_ALWAYS_KEPT "Always keep on this device"
+    IDS_SETTINGS_CLICK_OPEN "Open items"
+    IDS_SETTINGS_CLICK_OPEN_DESC "How the mouse opens files and folders"
+    IDS_CLICK_OPEN_DOUBLE "Double-click"
+    IDS_CLICK_OPEN_SINGLE "Single-click"
+    IDS_SETTINGS_NAME_HIGHLIGHT "Name highlight"
+    IDS_SETTINGS_NAME_HIGHLIGHT_DESC "With single-click, a light band under the name shows that one click opens it"
+    IDS_NAME_HIGHLIGHT_HOVER "On hover"
+    IDS_NAME_HIGHLIGHT_ALWAYS "Always"
+    IDS_SETTINGS_HOVER_SELECT "Select on hover"
+    IDS_SETTINGS_HOVER_SELECT_DESC "With single-click, resting the pointer on an item for about half a second selects it"
+    IDS_SETTINGS_ITEM_CHECKBOXES "Use check boxes to select items"
+    IDS_SETTINGS_ITEM_CHECKBOXES_DESC "Show a check box on each item to select several without holding Ctrl"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

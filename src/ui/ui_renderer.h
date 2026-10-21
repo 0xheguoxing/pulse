@@ -1149,6 +1149,10 @@ struct WindowViewModel {
     MtimeHint settings_mtime;            // 修改时间提示
     bool settings_sync_onedrive = true;
     bool settings_sync_svn = true;
+    bool settings_single_click = false;  // 鼠标与选择
+    int settings_name_highlight = 0;
+    bool settings_hover_select = false;
+    bool settings_item_checkboxes = false;
     bool settings_vertical_tabs = false;
     bool settings_tray_hide_empty = false;
     bool settings_show_hints = true;
@@ -1455,6 +1459,10 @@ struct HitTestResult {
         TrayShelf,             // staging tray shelf: index = TrayShelfHit
         StagedBadge,           // "已暂存" pill on a list row: index = entry, path
         PaneWallHint,          // photo wall suggestion: index 0 card, 1 switch, 2 never again
+        SettingsClickMode,     // Settings > 鼠标与选择: 0/1 double/single click
+        SettingsNameBand,      // Settings > 鼠标与选择: name band 0 on hover, 1 always
+        RowCheck,              // check box in front of a list item: index = entry
+        HeaderCheck,           // check box in the Name column header: select all / none
     } region = None;
     SidebarAddAction sidebar_action = SidebarAddAction::None;
     int index = -1;          // tab/row/sidebar item/tray batch/tray item.
@@ -1898,6 +1906,22 @@ public:
     }
     bool ListSmartDate() const { return list_smart_date_; }
     // 修改时间提示 (mtime_hint.h).
+    // 鼠标与选择: single click opens (names show a band), item check boxes.
+    void SetItemClick(bool single_click, int name_band, bool check_boxes) {
+        if (single_click == click_single_ && name_band == click_band_ && check_boxes == item_checks_) return;
+        click_single_ = single_click;
+        click_band_ = name_band;
+        item_checks_ = check_boxes;
+        auto_widths_scale_ = -1.0f;
+    }
+    bool SingleClickOpen() const { return click_single_; }
+    // Details rows keep a gutter for the check box left of the tree chevron.
+    float CheckGutterDip(const PaneViewModel& vm) const;
+    // Tree indent plus the check gutter: how far a Details row's icon and name move right.
+    float DetailsLeadDip(const PaneViewModel& vm, int view_index) const;
+    // The check box of a row (Details: in the gutter at details_base_x; icon grids: the cell's corner).
+    D2D1_RECT_F ItemCheckRect(const PaneViewModel& vm, const D2D1_RECT_F& cell, float details_base_x) const;
+    D2D1_RECT_F HeaderCheckRect(float columns_left, float header_top) const;
     void SetMtimeHint(const MtimeHint& hint) {
         if (hint == mtime_hint_) return;
         mtime_hint_ = hint;
@@ -2467,6 +2491,9 @@ private:
     uint64_t tab_motion_until_ = 0;         // NowMs: keep frames coming until then
     bool tab_anim_on_ = true;
     uint64_t row_leave_until_ = 0;          // NowMs: a deleted row is still fading out
+    bool click_single_ = false;
+    int click_band_ = 0;
+    bool item_checks_ = false;
     MtimeHint mtime_hint_ = MtimeHint{0};  // off until the app applies its prefs (pickers stay plain)
     uint64_t mtime_next_boundary_ = UINT64_MAX;  // FILETIME the next drawn mark changes bucket
     uint64_t mtime_flash_until_ = 0;              // NowMs: a changed row is still glowing

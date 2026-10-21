@@ -81,6 +81,8 @@ void AppPrefs::ResetToDefaults() {
     list_mtime_palette = 0;
     list_mtime_fade = list_mtime_tree = list_mtime_other_views = list_mtime_bold = list_mtime_flash = true;
     sync_onedrive = sync_svn = true;
+    single_click_open = hover_select = item_checkboxes = false;
+    name_highlight = 0;
     folder_sort_mode = 0;
     details_columns = ui::kDetailsColumnsDefault;
     startup_open = 0;
@@ -201,10 +203,13 @@ std::wstring AppPrefs::ToJson() const {
     out += L",\n  \"list_mtime_hint\":" + std::to_wstring(list_mtime_hint);
     out += L",\n  \"list_mtime_range\":" + std::to_wstring(list_mtime_range);
     out += L",\n  \"list_mtime_palette\":" + std::to_wstring(list_mtime_palette);
+    out += L",\n  \"name_highlight\":" + std::to_wstring(name_highlight);
     const std::pair<const wchar_t*, bool> mtime_flags[] = {
         {L"list_mtime_fade", list_mtime_fade}, {L"list_mtime_tree", list_mtime_tree},
         {L"list_mtime_other_views", list_mtime_other_views}, {L"list_mtime_bold", list_mtime_bold},
-        {L"list_mtime_flash", list_mtime_flash}, {L"sync_onedrive", sync_onedrive}, {L"sync_svn", sync_svn}};
+        {L"list_mtime_flash", list_mtime_flash}, {L"sync_onedrive", sync_onedrive}, {L"sync_svn", sync_svn},
+        {L"single_click_open", single_click_open}, {L"hover_select", hover_select},
+        {L"item_checkboxes", item_checkboxes}};
     for (const auto& [name, on] : mtime_flags) {
         out += L",\n  \"";
         out += name;
@@ -457,6 +462,10 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     list_mtime_flash = pulse::json::ExtractBool(json, L"list_mtime_flash", true);
     sync_onedrive = pulse::json::ExtractBool(json, L"sync_onedrive", true);
     sync_svn = pulse::json::ExtractBool(json, L"sync_svn", true);
+    single_click_open = pulse::json::ExtractBool(json, L"single_click_open", false);
+    name_highlight = std::clamp(pulse::json::ExtractInt(json, L"name_highlight", 0), 0, 1);
+    hover_select = pulse::json::ExtractBool(json, L"hover_select", false);
+    item_checkboxes = pulse::json::ExtractBool(json, L"item_checkboxes", false);
     vertical_tabs = pulse::json::ExtractBool(json, L"vertical_tabs", false);
     favorites_bar = pulse::json::ExtractBool(json, L"favorites_bar", false);
     favorites_bar_icon_only = pulse::json::ExtractBool(json, L"favorites_bar_icon_only", false);

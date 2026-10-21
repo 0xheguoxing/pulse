@@ -2626,6 +2626,10 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.settings_mtime.tree = s.appPrefs.list_mtime_tree;   // the switch shows the pref itself
     vm.settings_sync_onedrive = s.appPrefs.sync_onedrive;
     vm.settings_sync_svn = s.appPrefs.sync_svn;
+    vm.settings_single_click = s.appPrefs.single_click_open;
+    vm.settings_name_highlight = s.appPrefs.name_highlight;
+    vm.settings_hover_select = s.appPrefs.hover_select;
+    vm.settings_item_checkboxes = s.appPrefs.item_checkboxes;
     vm.settings_vertical_tabs = s.appPrefs.vertical_tabs;
     vm.settings_tray_hide_empty = s.appPrefs.tray_hide_when_empty;
     vm.settings_show_hints = s.appPrefs.show_hints;

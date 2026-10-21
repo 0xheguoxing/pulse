@@ -2632,6 +2632,18 @@ enum class StringId : UINT {
     OneDriveOnlineOnly = IDS_ONEDRIVE_ONLINE_ONLY,
     OneDriveOnDevice = IDS_ONEDRIVE_ON_DEVICE,
     OneDriveAlwaysKept = IDS_ONEDRIVE_ALWAYS_KEPT,
+    SettingsClickOpen = IDS_SETTINGS_CLICK_OPEN,
+    SettingsClickOpenDesc = IDS_SETTINGS_CLICK_OPEN_DESC,
+    ClickOpenDouble = IDS_CLICK_OPEN_DOUBLE,
+    ClickOpenSingle = IDS_CLICK_OPEN_SINGLE,
+    SettingsNameHighlight = IDS_SETTINGS_NAME_HIGHLIGHT,
+    SettingsNameHighlightDesc = IDS_SETTINGS_NAME_HIGHLIGHT_DESC,
+    NameHighlightHover = IDS_NAME_HIGHLIGHT_HOVER,
+    NameHighlightAlways = IDS_NAME_HIGHLIGHT_ALWAYS,
+    SettingsHoverSelect = IDS_SETTINGS_HOVER_SELECT,
+    SettingsHoverSelectDesc = IDS_SETTINGS_HOVER_SELECT_DESC,
+    SettingsItemCheckboxes = IDS_SETTINGS_ITEM_CHECKBOXES,
+    SettingsItemCheckboxesDesc = IDS_SETTINGS_ITEM_CHECKBOXES_DESC,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

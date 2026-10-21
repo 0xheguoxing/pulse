@@ -19,7 +19,8 @@ bool UpdatePointerHover(AppState& s, const ui::HitTestResult& pointer_hit, POINT
         hit.region == ui::HitTestResult::RowFolderSize ||
         hit.region == ui::HitTestResult::RowNewTab ||
         hit.region == ui::HitTestResult::ChangeBadge ||
-        hit.region == ui::HitTestResult::RowMore) ? hit.index : -1;
+        hit.region == ui::HitTestResult::RowMore ||
+        hit.region == ui::HitTestResult::RowCheck) ? hit.index : -1;
     const int row_pane = on_card ? s.hoverPaneIndex : hit.pane_index;
     const bool row_changed = row != s.hoverRow || row_pane != s.hoverPaneIndex;
     const int crumb = hit.region == ui::HitTestResult::BreadcrumbSegment ? hit.index : -1;

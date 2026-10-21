@@ -2344,6 +2344,10 @@ struct SettingsLayout {
     D2D1_RECT_F mtime_palette_card{}, mtime_palette_row[6]{};
     D2D1_RECT_F mtime_toggle_row[5]{};   // fade, bold, folders, other views, flash
     D2D1_RECT_F sync_row[2]{};           // OneDrive, SVN
+    // 鼠标与选择: open mode; name band and hover selection while single-click; check boxes.
+    D2D1_RECT_F click_open_card{}, click_open_row[2]{};
+    D2D1_RECT_F name_highlight_card{}, name_highlight_row[2]{};
+    D2D1_RECT_F hover_select_row{}, item_checkbox_row{};
     D2D1_RECT_F density_row[3]{};
     D2D1_RECT_F folder_sort_card{};
     D2D1_RECT_F folder_sort_row[3]{};

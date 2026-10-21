@@ -2643,3 +2643,15 @@ GitMarkLocked	IDS_GIT_MARK_LOCKED	3845	已锁定	Locked	已鎖定
 OneDriveOnlineOnly	IDS_ONEDRIVE_ONLINE_ONLY	3846	仅在线可用	Available when online	僅線上可用
 OneDriveOnDevice	IDS_ONEDRIVE_ON_DEVICE	3847	本地可用	Available on this device	本機可用
 OneDriveAlwaysKept	IDS_ONEDRIVE_ALWAYS_KEPT	3848	始终保留在此设备上	Always keep on this device	一律保留在此裝置上
+SettingsClickOpen	IDS_SETTINGS_CLICK_OPEN	3849	打开项目	Open items	開啟項目
+SettingsClickOpenDesc	IDS_SETTINGS_CLICK_OPEN_DESC	3850	用鼠标打开文件和文件夹的方式	How the mouse opens files and folders	用滑鼠開啟檔案和資料夾的方式
+ClickOpenDouble	IDS_CLICK_OPEN_DOUBLE	3851	双击打开	Double-click	按兩下開啟
+ClickOpenSingle	IDS_CLICK_OPEN_SINGLE	3852	单击打开	Single-click	按一下開啟
+SettingsNameHighlight	IDS_SETTINGS_NAME_HIGHLIGHT	3853	名称底衬	Name highlight	名稱底襯
+SettingsNameHighlightDesc	IDS_SETTINGS_NAME_HIGHLIGHT_DESC	3854	单击打开时，名称下半截加一道浅色底衬，提示点一下就会打开	With single-click, a light band under the name shows that one click opens it	按一下開啟時，名稱下半截加一道淺色底襯，提示按一下就會開啟
+NameHighlightHover	IDS_NAME_HIGHLIGHT_HOVER	3855	悬停时	On hover	停留時
+NameHighlightAlways	IDS_NAME_HIGHLIGHT_ALWAYS	3856	始终	Always	一律
+SettingsHoverSelect	IDS_SETTINGS_HOVER_SELECT	3857	悬停选中	Select on hover	停留即選取
+SettingsHoverSelectDesc	IDS_SETTINGS_HOVER_SELECT_DESC	3858	单击打开时，鼠标在某一项上停留约半秒就选中它	With single-click, resting the pointer on an item for about half a second selects it	按一下開啟時，滑鼠在某個項目上停留約半秒就選取它
+SettingsItemCheckboxes	IDS_SETTINGS_ITEM_CHECKBOXES	3859	用复选框选择项目	Use check boxes to select items	使用核取方塊選取項目
+SettingsItemCheckboxesDesc	IDS_SETTINGS_ITEM_CHECKBOXES_DESC	3860	每一项前面显示复选框，勾一下就能多选，不用按 Ctrl	Show a check box on each item to select several without holding Ctrl	每個項目前面顯示核取方塊，勾一下就能多選，不用按 Ctrl

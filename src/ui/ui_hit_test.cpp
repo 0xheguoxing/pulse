@@ -283,6 +283,13 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             if(ContainsPt(lay.menu_acrylic_row,x,y)) {r.region=HitTestResult::SettingsToggle;r.index=36;return r;}
             for(int list_row=0;list_row<6;++list_row)
                 if(ContainsPt(lay.list_style_row[list_row],x,y)) {r.region=HitTestResult::SettingsToggle;r.index=list_row<3 ? 17+list_row : (list_row==3 ? 22 : list_row==4 ? 33 : 34);return r;}
+            // 鼠标与选择 (the rows hidden without single-click are empty rects).
+            for(int i=0;i<2;++i) {
+                if(ContainsPt(lay.click_open_row[i],x,y)) {r.region=HitTestResult::SettingsClickMode;r.index=i;return r;}
+                if(ContainsPt(lay.name_highlight_row[i],x,y)) {r.region=HitTestResult::SettingsNameBand;r.index=i;return r;}
+            }
+            if(ContainsPt(lay.hover_select_row,x,y)) {r.region=HitTestResult::SettingsToggle;r.index=77;return r;}
+            if(ContainsPt(lay.item_checkbox_row,x,y)) {r.region=HitTestResult::SettingsToggle;r.index=78;return r;}
             // 修改时间提示 (the hidden rows are empty rects) and sync status.
             for(int i=0;i<6;++i) {
                 if(i<4 && ContainsPt(lay.mtime_style_row[i],x,y)) {r.region=HitTestResult::SettingsMtimeStyle;r.index=i;return r;}
@@ -1419,6 +1426,15 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 return out;
             }
             const DetailsColumnLayout columns = DetailsColumns(paneRc, paneVm);
+            if (CheckGutterDip(paneVm) > 0.0f && paneVm.EntryCount() > 0) {
+                const D2D1_RECT_F box = HeaderCheckRect(columns.left, columnTop);
+                if (x >= box.left - 3.0f * scale_ && x < box.right + 3.0f * scale_) {
+                    out.region = HitTestResult::HeaderCheck;
+                    out.index = paneIndex;
+                    out.pane_index = paneIndex;
+                    return out;
+                }
+            }
             for (int divider = 0; divider < columns.count - 1; ++divider) {
                 if (std::abs(x - columns.DividerX(divider)) <= 4.0f * scale_) {
                     out.region = HitTestResult::ColumnDivider;
@@ -1542,9 +1558,17 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                                           paneVm.scroll_x, paneVm.scroll_y, scale_,
                                           ListRowHeightDip(paneVm, list), paneVm.Groups());
                         D2D1_RECT_F nameRc = layout.NameRect(viewRow);
-                        if (treeRow && paneVm.view_mode == ViewMode::Details)
-                            nameRc.left = std::min(nameRc.right, nameRc.left + std::round(TreeOffsetDip(*treeRow) * scale_));
+                        if (const float lead = DetailsLeadDip(paneVm, viewRow); lead > 0.0f)
+                            nameRc.left = std::min(nameRc.right, nameRc.left + std::round(lead * scale_));
                         const D2D1_RECT_F cell = layout.ItemRect(viewRow);
+                        if (const D2D1_RECT_F box = ItemCheckRect(paneVm, cell, layout.IconRect(viewRow).left);
+                            box.right > box.left && x >= box.left - 3.0f * scale_ && x < box.right + 3.0f * scale_ &&
+                            y >= box.top - 3.0f * scale_ && y < box.bottom + 3.0f * scale_) {
+                            out.region = HitTestResult::RowCheck;
+                            out.index = idx;
+                            out.pane_index = paneIndex;
+                            return out;
+                        }
                         const ListEntryView& entry = MakeVisibleEntry(paneVm, static_cast<size_t>(idx));
                         const auto folder_size_rect = paneVm.view_mode == ViewMode::Details
                             ? D2D1::RectF(columns.Left(ColumnKind::Size), cell.top,

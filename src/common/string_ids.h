@@ -2636,5 +2636,17 @@
 #define IDS_ONEDRIVE_ONLINE_ONLY                                                         3846
 #define IDS_ONEDRIVE_ON_DEVICE                                                           3847
 #define IDS_ONEDRIVE_ALWAYS_KEPT                                                         3848
+#define IDS_SETTINGS_CLICK_OPEN                                                          3849
+#define IDS_SETTINGS_CLICK_OPEN_DESC                                                     3850
+#define IDS_CLICK_OPEN_DOUBLE                                                            3851
+#define IDS_CLICK_OPEN_SINGLE                                                            3852
+#define IDS_SETTINGS_NAME_HIGHLIGHT                                                      3853
+#define IDS_SETTINGS_NAME_HIGHLIGHT_DESC                                                 3854
+#define IDS_NAME_HIGHLIGHT_HOVER                                                         3855
+#define IDS_NAME_HIGHLIGHT_ALWAYS                                                        3856
+#define IDS_SETTINGS_HOVER_SELECT                                                        3857
+#define IDS_SETTINGS_HOVER_SELECT_DESC                                                   3858
+#define IDS_SETTINGS_ITEM_CHECKBOXES                                                     3859
+#define IDS_SETTINGS_ITEM_CHECKBOXES_DESC                                                3860
 
 #endif  // PULSE_STRING_IDS_H
