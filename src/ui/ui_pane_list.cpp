@@ -3028,8 +3028,18 @@ bool MainRenderer::DrawTruncatedName(const std::wstring& name, float x, float y,
         if (ext_at != std::wstring::npos && SUCCEEDED(dc->CreateSolidColorBrush(ext_color, &ext_brush)))
             highlighted->SetDrawingEffect(ext_brush.get(), {static_cast<UINT32>(ext_at),
                                                             static_cast<UINT32>(shown.size() - ext_at)});
-        DrawNameHighlightBackground(compositor_, highlighted.get(), {x, y}, rc, visible_matches, theme, scale_);
-        dc->DrawTextLayout({x, y}, highlighted.get(), brText_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        // Baseline on a whole pixel row, as the LumaText names beside it.
+        float y_snap = y;
+        DWRITE_TEXT_METRICS text_metrics{};
+        DWRITE_LINE_METRICS line_metrics{};
+        UINT32 line_count = 0;
+        if (SUCCEEDED(highlighted->GetMetrics(&text_metrics)) &&
+            SUCCEEDED(highlighted->GetLineMetrics(&line_metrics, 1, &line_count)) && line_count > 0) {
+            const float baseline = y + text_metrics.top + line_metrics.baseline;
+            y_snap += std::round(baseline) - baseline;
+        }
+        DrawNameHighlightBackground(compositor_, highlighted.get(), {x, y_snap}, rc, visible_matches, theme, scale_);
+        dc->DrawTextLayout({x, y_snap}, highlighted.get(), brText_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
     } else if (IsHighContrast() || !compositor_->DrawLumaText(
             shown, fmt, rc, brText_->GetColor(), theme.bg,
             DWRITE_TEXT_ALIGNMENT_LEADING)) {
