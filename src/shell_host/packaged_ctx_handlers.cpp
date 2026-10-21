@@ -3,6 +3,8 @@
 #include "../common/path_utils.h"
 
 #include <appmodel.h>
+#include <ocidl.h>
+#include <shlobj.h>
 #include <shlwapi.h>
 #include <xmllite.h>
 
@@ -24,6 +26,14 @@ constexpr int kMaxSubCommands = 64;
 std::wstring Lower(std::wstring text) {
     for (auto& c : text) c = static_cast<wchar_t>(std::towlower(c));
     return text;
+}
+
+void SetSiteOf(IUnknown* object, IUnknown* site) {
+    IObjectWithSite* with_site = nullptr;
+    if (object && SUCCEEDED(object->QueryInterface(IID_PPV_ARGS(&with_site))) && with_site) {
+        with_site->SetSite(site);
+        with_site->Release();
+    }
 }
 
 bool Equals(const wchar_t* a, const wchar_t* b) {
@@ -136,10 +146,14 @@ std::vector<PackagedCtxVerb> ScanPackages() {
 
 class ExplorerCommandMenu final : public IContextMenu {
 public:
-    ExplorerCommandMenu(IExplorerCommand* command, IShellItemArray* items)
-        : root_(command), items_(items) {
+    ExplorerCommandMenu(IExplorerCommand* command, IShellItemArray* items, IUnknown* site)
+        : root_(command), items_(items), site_(site) {
         root_->AddRef();
         if (items_) items_->AddRef();
+        if (site_) {
+            site_->AddRef();
+            SetSiteOf(root_, site_);
+        }
     }
 
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
@@ -182,6 +196,10 @@ public:
 private:
     ~ExplorerCommandMenu() {
         ReleaseCommands();
+        if (site_) {
+            SetSiteOf(root_, nullptr);
+            site_->Release();
+        }
         if (items_) items_->Release();
         root_->Release();
     }
@@ -200,6 +218,7 @@ private:
     // for a submenu parent), so InvokeCommand's offset indexes commands_.
     bool AddCommand(HMENU menu, UINT& position, IExplorerCommand* command, UINT last,
                     UINT& next, int depth) {
+        if (site_ && depth > 0) SetSiteOf(command, site_);
         EXPCMDSTATE state = ECS_ENABLED;
         if (FAILED(command->GetState(items_, TRUE, &state))) state = ECS_ENABLED;
         if (state & ECS_HIDDEN) return false;
@@ -271,7 +290,99 @@ private:
     LONG refs_ = 1;
     IExplorerCommand* root_ = nullptr;
     IShellItemArray* items_ = nullptr;
+    IUnknown* site_ = nullptr;
     std::vector<IExplorerCommand*> commands_;
+};
+
+// --- minimal folder view site ------------------------------------------------
+
+class FolderViewSite final : public IServiceProvider, public IFolderView {
+public:
+    explicit FolderViewSite(PIDLIST_ABSOLUTE folder) : folder_(folder) {}
+
+    IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
+        if (!ppv) return E_POINTER;
+        if (riid == IID_IUnknown || riid == IID_IServiceProvider) {
+            *ppv = static_cast<IServiceProvider*>(this);
+        } else if (riid == IID_IFolderView) {
+            *ppv = static_cast<IFolderView*>(this);
+        } else {
+            *ppv = nullptr;
+            return E_NOINTERFACE;
+        }
+        AddRef();
+        return S_OK;
+    }
+    IFACEMETHODIMP_(ULONG) AddRef() override { return InterlockedIncrement(&refs_); }
+    IFACEMETHODIMP_(ULONG) Release() override {
+        const ULONG refs = InterlockedDecrement(&refs_);
+        if (refs == 0) delete this;
+        return refs;
+    }
+
+    // IServiceProvider: only the folder view (SID_SFolderView is IID_IFolderView).
+    IFACEMETHODIMP QueryService(REFGUID service, REFIID riid, void** ppv) override {
+        if (!ppv) return E_POINTER;
+        *ppv = nullptr;
+        if (service == IID_IFolderView) return QueryInterface(riid, ppv);
+        return E_NOINTERFACE;
+    }
+
+    // IFolderView
+    IFACEMETHODIMP GetFolder(REFIID riid, void** ppv) override {
+        if (!ppv) return E_POINTER;
+        *ppv = nullptr;
+        if (riid == IID_IShellItem || riid == IID_IShellItem2)
+            return SHCreateItemFromIDList(folder_, riid, ppv);
+        // IShellFolder and the like: the folder's own handler (the desktop's
+        // for an empty ID list).
+        IShellItem* item = nullptr;
+        HRESULT hr = SHCreateItemFromIDList(folder_, IID_PPV_ARGS(&item));
+        if (SUCCEEDED(hr) && item) {
+            hr = item->BindToHandler(nullptr, BHID_SFObject, riid, ppv);
+            item->Release();
+        }
+        return hr;
+    }
+    IFACEMETHODIMP GetCurrentViewMode(UINT* mode) override {
+        if (!mode) return E_POINTER;
+        *mode = FVM_DETAILS;
+        return S_OK;
+    }
+    IFACEMETHODIMP SetCurrentViewMode(UINT) override { return E_NOTIMPL; }
+    IFACEMETHODIMP Item(int, PITEMID_CHILD* pidl) override {
+        if (pidl) *pidl = nullptr;
+        return E_NOTIMPL;
+    }
+    IFACEMETHODIMP ItemCount(UINT, int* count) override {
+        if (count) *count = 0;
+        return E_NOTIMPL;
+    }
+    IFACEMETHODIMP Items(UINT, REFIID, void** ppv) override {
+        if (ppv) *ppv = nullptr;
+        return E_NOTIMPL;
+    }
+    IFACEMETHODIMP GetSelectionMarkedItem(int* item) override {
+        if (item) *item = -1;
+        return E_NOTIMPL;
+    }
+    IFACEMETHODIMP GetFocusedItem(int* item) override {
+        if (item) *item = -1;
+        return E_NOTIMPL;
+    }
+    IFACEMETHODIMP GetItemPosition(PCUITEMID_CHILD, POINT*) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetSpacing(POINT*) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetDefaultSpacing(POINT*) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetAutoArrange() override { return S_FALSE; }
+    IFACEMETHODIMP SelectItem(int, DWORD) override { return E_NOTIMPL; }
+    IFACEMETHODIMP SelectAndPositionItems(UINT, PCUITEMID_CHILD_ARRAY, POINT*, DWORD) override {
+        return E_NOTIMPL;
+    }
+
+private:
+    ~FolderViewSite() { ILFree(folder_); }
+    LONG refs_ = 1;
+    PIDLIST_ABSOLUTE folder_ = nullptr;
 };
 
 } // namespace
@@ -430,12 +541,27 @@ bool PackagedRowsDuplicate(const std::vector<std::wstring>& packaged_rows,
 }
 
 HRESULT CreateExplorerCommandMenu(IExplorerCommand* command, IShellItemArray* items,
-                                  IContextMenu** out) {
+                                  IContextMenu** out, IUnknown* site) {
     if (!out) return E_POINTER;
     *out = nullptr;
     if (!command) return E_INVALIDARG;
-    *out = new (std::nothrow) ExplorerCommandMenu(command, items);
+    *out = new (std::nothrow) ExplorerCommandMenu(command, items, site);
     return *out ? S_OK : E_OUTOFMEMORY;
+}
+
+HRESULT CreateFolderViewSite(PCIDLIST_ABSOLUTE folder, IUnknown** out) {
+    if (!out) return E_POINTER;
+    *out = nullptr;
+    if (!folder) return E_INVALIDARG;
+    PIDLIST_ABSOLUTE copy = ILCloneFull(folder);
+    if (!copy) return E_OUTOFMEMORY;
+    auto* site = new (std::nothrow) FolderViewSite(copy);
+    if (!site) {
+        ILFree(copy);
+        return E_OUTOFMEMORY;
+    }
+    *out = static_cast<IServiceProvider*>(site);
+    return S_OK;
 }
 
 } // namespace pulse::shell

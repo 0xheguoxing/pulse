@@ -74,7 +74,7 @@ private:
     std::vector<FakeCommand*> items_;
 };
 
-class FakeCommand final : public IExplorerCommand {
+class FakeCommand final : public IExplorerCommand, public IObjectWithSite {
 public:
     FakeCommand(const wchar_t* title, EXPCMDFLAGS flags = ECF_DEFAULT,
                 EXPCMDSTATE state = ECS_ENABLED)
@@ -89,6 +89,11 @@ public:
             AddRef();
             return S_OK;
         }
+        if (riid == IID_IObjectWithSite) {
+            *ppv = static_cast<IObjectWithSite*>(this);
+            AddRef();
+            return S_OK;
+        }
         *ppv = nullptr;
         return E_NOINTERFACE;
     }
@@ -97,6 +102,18 @@ public:
         const ULONG refs = InterlockedDecrement(&refs_);
         if (refs == 0) delete this;
         return refs;
+    }
+    IFACEMETHODIMP SetSite(IUnknown* site) override {
+        if (site) site->AddRef();
+        if (site_) site_->Release();
+        site_ = site;
+        ++site_calls;
+        return S_OK;
+    }
+    IFACEMETHODIMP GetSite(REFIID riid, void** ppv) override {
+        if (!ppv) return E_POINTER;
+        *ppv = nullptr;
+        return site_ ? site_->QueryInterface(riid, ppv) : E_FAIL;
     }
     IFACEMETHODIMP GetTitle(IShellItemArray*, LPWSTR* out) override {
         return SHStrDupW(title_.c_str(), out);
@@ -137,11 +154,15 @@ public:
 
     int invoked = 0;
     IShellItemArray* last_items = nullptr;
+    int site_calls = 0;
+    IUnknown* site() const { return site_; }
 
 private:
     ~FakeCommand() {
         for (auto* child : children_) child->Release();
+        if (site_) site_->Release();
     }
+    IUnknown* site_ = nullptr;
     LONG refs_ = 1;
     std::wstring title_;
     EXPCMDFLAGS flags_;
@@ -280,6 +301,103 @@ void TestAdapter(IShellItemArray* items) {
         menu->Release();
         root->Release();
     }
+}
+
+// #58-6: PowerToys New+ reads its target folder from the view site
+// (QueryService(IFolderView) -> GetFolder(IShellFolder) -> parsing name).
+std::wstring SiteFolderPath(IUnknown* site) {
+    std::wstring path;
+    IServiceProvider* provider = nullptr;
+    if (!site || FAILED(site->QueryInterface(IID_PPV_ARGS(&provider))) || !provider) return path;
+    IFolderView* view = nullptr;
+    if (SUCCEEDED(provider->QueryService(__uuidof(IFolderView), IID_PPV_ARGS(&view))) && view) {
+        IShellFolder* folder = nullptr;
+        if (SUCCEEDED(view->GetFolder(IID_PPV_ARGS(&folder))) && folder) {
+            STRRET name{};
+            LPWSTR text = nullptr;
+            if (SUCCEEDED(folder->GetDisplayNameOf(nullptr, SHGDN_FORPARSING, &name)) &&
+                SUCCEEDED(StrRetToStrW(&name, nullptr, &text)) && text) {
+                path = text;
+                CoTaskMemFree(text);
+            }
+            folder->Release();
+        }
+        view->Release();
+    }
+    provider->Release();
+    return path;
+}
+
+void TestFolderViewSite(IShellItemArray* items, const std::wstring& dir) {
+    constexpr UINT kFirst = 100;
+    int marker = 0;
+    IUnknown* none = reinterpret_cast<IUnknown*>(&marker);
+    Check(CreateFolderViewSite(nullptr, &none) == E_INVALIDARG && none == nullptr,
+          "site: a missing folder is rejected");
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    IUnknown* site = nullptr;
+    if (SUCCEEDED(SHParseDisplayName(dir.c_str(), nullptr, &pidl, 0, nullptr)) && pidl) {
+        CreateFolderViewSite(pidl, &site);
+        CoTaskMemFree(pidl);
+    }
+    Check(site != nullptr, "site: created for the fixture folder");
+    if (!site) return;
+
+    std::wstring expected;
+    IShellItem* dir_item = nullptr;
+    if (SUCCEEDED(SHCreateItemFromParsingName(dir.c_str(), nullptr, IID_PPV_ARGS(&dir_item)))) {
+        LPWSTR text = nullptr;
+        if (SUCCEEDED(dir_item->GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING, &text)) && text) {
+            expected = text;
+            CoTaskMemFree(text);
+        }
+        dir_item->Release();
+    }
+    const std::wstring got = SiteFolderPath(site);
+    Check(!got.empty() && _wcsicmp(got.c_str(), expected.c_str()) == 0,
+          "site: New+'s lookup finds the folder");
+
+    IServiceProvider* provider = nullptr;
+    site->QueryInterface(IID_PPV_ARGS(&provider));
+    IFolderView* view = nullptr;
+    IShellBrowser* browser = nullptr;
+    const bool unknown_refused = provider &&
+        FAILED(provider->QueryService(IID_IShellBrowser, IID_PPV_ARGS(&browser))) && !browser;
+    if (provider) provider->QueryService(__uuidof(IFolderView), IID_PPV_ARGS(&view));
+    IShellItem* folder_item = nullptr;
+    int count = 7;
+    const bool item_ok = view && SUCCEEDED(view->GetFolder(IID_PPV_ARGS(&folder_item))) && folder_item;
+    Check(unknown_refused && item_ok && view && FAILED(view->ItemCount(SVGIO_SELECTION, &count)) &&
+              count == 0,
+          "site: folder as a shell item, other services and views refused");
+    if (folder_item) folder_item->Release();
+    if (view) view->Release();
+    if (provider) provider->Release();
+
+    auto* root = new FakeCommand(L"New+", ECF_HASSUBCOMMANDS);
+    auto* child = new FakeCommand(L"Folders x10");
+    child->AddRef();
+    root->Add(child);
+    IContextMenu* menu = nullptr;
+    CreateExplorerCommandMenu(root, items, &menu, site);
+    const bool root_sited = root->site() != nullptr && SiteFolderPath(root->site()) == got;
+    HMENU popup = CreatePopupMenu();
+    menu->QueryContextMenu(popup, 0, kFirst, kFirst + 50, CMF_NORMAL);
+    Check(root_sited && child->site() != nullptr && SiteFolderPath(child->site()) == got,
+          "site: the command and its sub-commands get the folder site");
+    Check(SUCCEEDED(InvokeOffset(menu, 1)) && child->invoked == 1, "site: sited child still invokes");
+    DestroyMenu(popup);
+    menu->Release();
+    Check(root->site() == nullptr && root->site_calls == 2, "site: taken back when the menu goes");
+
+    auto* plain = new FakeCommand(L"Plain");
+    CreateExplorerCommandMenu(plain, items, &menu);
+    Check(plain->site_calls == 0, "site: none given when there is no folder");
+    menu->Release();
+    plain->Release();
+    root->Release();
+    child->Release();
+    site->Release();
 }
 
 constexpr char kManifest[] = R"(<?xml version="1.0" encoding="utf-8"?>
@@ -595,6 +713,7 @@ int wmain(int argc, wchar_t** argv) {
     Check(items != nullptr, "fixture shell item array");
 
     TestAdapter(items);
+    TestFolderViewSite(items, dir);
     TestManifest();
     TestItemTypes(dir, file);
     TestDuplicates();

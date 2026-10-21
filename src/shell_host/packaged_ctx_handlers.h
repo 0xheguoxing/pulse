@@ -43,8 +43,17 @@ bool PackagedRowsDuplicate(const std::vector<std::wstring>& packaged_rows,
 
 // Hosts an IExplorerCommand in the IContextMenu pipeline: QueryContextMenu
 // inserts its title (sub-commands become a submenu) and InvokeCommand calls
-// IExplorerCommand::Invoke with `items`.
+// IExplorerCommand::Invoke with `items`. A `site` is handed to the command and
+// its sub-commands through IObjectWithSite, as Explorer does, and taken back
+// when the menu is released.
 HRESULT CreateExplorerCommandMenu(IExplorerCommand* command, IShellItemArray* items,
-                                  IContextMenu** out);
+                                  IContextMenu** out, IUnknown* site = nullptr);
+
+// The part of Explorer's view site that verbs read their folder from:
+// IServiceProvider::QueryService(SID_SFolderView) gives an IFolderView whose
+// GetFolder returns `folder` (the folder shown, for a background click the
+// folder itself). PowerToys New+ finds its target this way and did nothing
+// in Pulse without one (#58-6). Everything else reports E_NOTIMPL.
+HRESULT CreateFolderViewSite(PCIDLIST_ABSOLUTE folder, IUnknown** out);
 
 } // namespace pulse::shell

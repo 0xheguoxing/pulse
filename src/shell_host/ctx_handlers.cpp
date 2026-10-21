@@ -910,8 +910,13 @@ HRESULT QueryOneHandler(const CtxHandlerDesc& handler, const CtxBind& bind,
         IShellItemArray* items = nullptr;
         if (bind.data)
             SHCreateShellItemArrayFromDataObject(bind.data, IID_PPV_ARGS(&items));
+        // Explorer's view site: verbs such as PowerToys New+ read the folder
+        // to work in from it, not from the items (#58-6).
+        IUnknown* site = nullptr;
+        if (bind.folder) CreateFolderViewSite(bind.folder, &site);
         if (phase) phase->store(1);
-        hr = items ? CreateExplorerCommandMenu(command, items, &slot.menu) : E_FAIL;
+        hr = items ? CreateExplorerCommandMenu(command, items, &slot.menu, site) : E_FAIL;
+        if (site) site->Release();
         if (items) items->Release();
         command->Release();
     } else {
