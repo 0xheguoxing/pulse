@@ -660,6 +660,15 @@ struct AppState : AppCoreOwner {
     ULONGLONG renameClickDue = 0;
     ULONGLONG renameClickStarted = 0;
     std::wstring renameClickPath;
+    // Single click opens (appPrefs.single_click_open): the row a plain press
+    // landed on opens on release unless the press became a drag or marquee.
+    bool singleOpenCandidate = false;
+    app::Pane* singleOpenPane = nullptr;
+    app::Tab* singleOpenTab = nullptr;
+    int singleOpenIndex = -1;
+    ULONGLONG singleOpenTick = 0;    // the double click right after an open is swallowed
+    ULONGLONG activateClickTick = 0; // WM_MOUSEACTIVATE: that click only brings the window forward
+    ULONGLONG hoverSelectFired = 0;  // ctxHoverSince of the hover that already selected
     // A click on a folder's size label that started a calculation; the
     // double-click it turns into opens the folder and stops that calculation.
     std::wstring folderSizeClickPath;

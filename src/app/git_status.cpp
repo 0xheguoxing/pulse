@@ -10,11 +10,12 @@ using ui::GitMark;
 
 int Rank(GitMark mark) {
     switch (mark) {
-    case GitMark::Added: return 1;
-    case GitMark::Renamed: return 2;
+    case GitMark::Locked: return 1;   // SVN: weaker than any change
+    case GitMark::Added: return 2;
+    case GitMark::Renamed: return 3;
     case GitMark::Modified:
-    case GitMark::Deleted: return 3;
-    case GitMark::Conflict: return 4;
+    case GitMark::Deleted: return 4;
+    case GitMark::Conflict: return 5;
     default: return 0;
     }
 }

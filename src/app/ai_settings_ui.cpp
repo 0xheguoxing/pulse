@@ -10,6 +10,7 @@
 #include "app_messages.h"
 #include "app_navigation.h"
 #include "../common/localization.h"
+#include "../ui/settings_page_ids.h"
 #include "../ui/ui_renderer.h"
 #include <memory>
 
@@ -72,7 +73,7 @@ void Outcome(const ai::AiCallEntry& e, ui::AiCallRowView& row) {
     }
 }
 
-// ai.json as last read, and what page 9 showed (its rows map clicks back).
+// ai.json as last read, and what the AI page showed (its rows map clicks back).
 struct PageCache {
     bool staged = false;   // StageAiShot: never read ai.json
     uint64_t read_at = 0;
@@ -316,7 +317,7 @@ void StageAiShot(int variant) {
 
 void AiChipClicked(AppState& s) {
     if (ai::GetAiChip(GetTickCount64()).state == ai::AiChipState::Waiting && ai::BringAiQuestionToFront()) return;
-    OpenSettingsTab(s, 9);
+    OpenSettingsTab(s, ui::kSettingsPageAi);
 }
 
 void NoteAiChange(AppState& s, const ai::BrokerEvent& event) {

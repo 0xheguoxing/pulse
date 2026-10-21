@@ -60,6 +60,24 @@ struct AppPrefs {
     bool list_selection_outline = false; // accent outline around selected items (#78)
     // Grid thumbnails: default-program badge, plus playing time on videos.
     bool list_thumbnail_badges = true;
+    // 修改时间提示 (ui/mtime_hint.h): 0 off, 1 dots, 2 bars, 3 text only.
+    int list_mtime_hint = 1;
+    int list_mtime_range = 7;         // days: 1, 3, 7, 30
+    int list_mtime_palette = 0;       // 0 accent, then 冷暖 / 青碧 / 琥珀 / 极光 / 石墨
+    bool list_mtime_fade = true;
+    bool list_mtime_tree = true;      // folders follow change tracking's newest change inside
+    bool list_mtime_other_views = true;
+    bool list_mtime_bold = true;
+    bool list_mtime_flash = true;
+    // 鼠标与选择: single-click opens items (0 = double-click), the name band
+    // that hints it (0 on hover, 1 always), hover selection, item check boxes.
+    bool single_click_open = false;
+    int name_highlight = 0;
+    bool hover_select = false;
+    bool item_checkboxes = false;
+    // 同步状态: OneDrive placeholders and SVN working copies.
+    bool sync_onedrive = true;
+    bool sync_svn = true;
     bool vertical_tabs = false;       // tabs as the first sidebar section
     bool tray_hide_when_empty = false; // staging tray folds away while empty (drags still show it)
     bool sidebar_collapsed = false;   // sidebar folded to its icon rail (Ctrl+B)

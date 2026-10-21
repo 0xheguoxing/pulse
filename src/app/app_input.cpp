@@ -1411,6 +1411,73 @@ void CancelRenameClick(AppState& s) {
     s.renameClickPath.clear();
 }
 
+bool TickHoverSelect(AppState& s, ULONGLONG now) {
+    if (!s.appPrefs.single_click_open || !s.appPrefs.hover_select) return false;
+    if (s.hoverRow < 0 || s.ctxHoverSince == 0 || s.hoverSelectFired == s.ctxHoverSince ||
+        now - s.ctxHoverSince < 500) return false;
+    if (s.dragPending || s.marqueePending || s.marqueeActive || s.renameIndex >= 0 || GetCapture() ||
+        (GetKeyState(VK_LBUTTON) & 0x8000) != 0 || (GetKeyState(VK_RBUTTON) & 0x8000) != 0) return false;
+    s.hoverSelectFired = s.ctxHoverSince;
+    if (s.hwnd && GetForegroundWindow() != GetAncestor(s.hwnd, GA_ROOT)) return false;
+    app::Pane* pane = s.hoverPaneIndex >= 0 ? PaneAtSlot(s, s.hoverPaneIndex) : s.pane;
+    if (!pane || pane != s.pane) return false;
+    app::Tab* tab = ActiveTab(s);
+    const int row = s.hoverRow;
+    if (!tab || IsSettingsTab(tab) || row >= tab->CountBound()) return false;
+    if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) {
+        if (tab->IsSelected(row)) return false;
+        tab->ToggleSelect(row);
+        return true;
+    }
+    if (tab->SelectedCount() == 1 && tab->selected_index == row) return false;
+    tab->SelectOnly(row);
+    return true;
+}
+
+// Item check boxes: a row's box toggles it (Shift: the range from the anchor
+// joins), the header's selects everything shown or nothing.
+static bool HandleItemCheckPress(AppState& s, const ui::HitTestResult& hit) {
+    app::Tab* tab = ActiveTab(s);
+    if (!tab || IsSettingsTab(tab)) return false;
+    CancelRenameClick(s);
+    if (hit.region == ui::HitTestResult::HeaderCheck) {
+        std::vector<int> matches;
+        app::CollectFilterMatches(*tab, &s.places, matches);
+        if (!matches.empty() && static_cast<size_t>(tab->SelectedCount()) >= matches.size()) tab->ClearSelection();
+        else tab->SelectIndices(matches);
+        return true;
+    }
+    if (hit.index < 0 || hit.index >= tab->CountBound()) return false;
+    if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) HandleListRowClick(s, hit.index, true, true);
+    else tab->ToggleSelect(hit.index);
+    return true;
+}
+
+// Single click opens: arms the open a plain press on a row does on release.
+static void ArmSingleOpen(AppState& s, const ui::WindowViewModel& vm, const ui::HitTestResult& hit,
+                          app::Tab* tab, bool ctrl, bool shift, bool activates) {
+    s.singleOpenCandidate = false;
+    if (!s.appPrefs.single_click_open || !tab || IsSettingsTab(tab) || ctrl || shift || activates ||
+        (GetKeyState(VK_MENU) & 0x8000) != 0 || hit.index < 0 || hit.index >= tab->CountBound()) return;
+    // Column view: selecting a folder already lists it in the next column.
+    const ui::PaneViewModel& pane = hit.pane_index >= 0 && hit.pane_index < static_cast<int>(vm.pane_slots.size())
+        ? vm.pane_slots[static_cast<size_t>(hit.pane_index)].pane : vm.pane;
+    if (pane.column_strip.Active() && tab->snapshot && hit.index < static_cast<int>(tab->EntryCount()) &&
+        tab->EntryAt(hit.index).is_dir) return;
+    s.singleOpenCandidate = true;
+    s.singleOpenPane = s.pane;
+    s.singleOpenTab = tab;
+    s.singleOpenIndex = hit.index;
+}
+
+static void OpenSingleClickRow(AppState& s, int index) {
+    app::Tab* tab = ActiveTab(s);
+    if (!tab || tab != s.singleOpenTab || s.pane != s.singleOpenPane || index >= tab->CountBound()) return;
+    tab->SelectOnly(index);
+    s.singleOpenTick = GetTickCount64();
+    OpenSelected(s);
+}
+
 bool PointInHitItemName(AppState& s, const ui::WindowViewModel& vm,
                                const ui::HitTestResult& hit, float x, float y) {
     if (hit.region != ui::HitTestResult::Row || hit.index < 0) return false;
@@ -1582,6 +1649,76 @@ void UpdateSmoothScroll(AppState& s, const HoverPointerApi& api) {
 }
 
 namespace {
+// Blank chrome moves the window (空白处拖动窗口): a press on the toolbar gaps,
+// the sidebar gaps, a lone pane's title strip or the status bar keeps its old
+// meaning, but once the pointer travels past the drag threshold the window
+// moves as from the title bar (snap included). The list's blank space is not
+// part of it: there a drag draws the selection band.
+enum class BlankChrome { None, Drag, DragMaximize };
+
+struct BlankWindowDrag {
+    HWND hwnd = nullptr;
+    POINT start{};
+};
+BlankWindowDrag g_blank_drag;
+
+BlankChrome BlankChromeAt(AppState& s, const ui::HitTestResult& hit, int mx, int my) {
+    if (!s.hwnd) return BlankChrome::None;
+    switch (hit.region) {
+    case ui::HitTestResult::SidebarBlank:
+        return BlankChrome::Drag;
+    case ui::HitTestResult::StatusBar:
+        return BlankChrome::DragMaximize;
+    case ui::HitTestResult::PaneHeader: {
+        // index 0 is the empty strip right of the title; in a split, a drag
+        // there takes the pane out as a window instead (ArmPaneDrag).
+        const app::LayoutTab* const tab = s.window_tabs.Active();
+        if (hit.index != 0 || hit.pane_index < 0 || !tab || tab->VisiblePanes().size() >= 2)
+            return BlankChrome::None;
+        return BlankChrome::Drag;
+    }
+    case ui::HitTestResult::None: {
+        // The title bar is a caption already (WM_NCHITTEST); the content
+        // area's blank space belongs to the list.
+        const float x = static_cast<float>(mx);
+        const float y = static_cast<float>(my);
+        if (y < s.renderer.TitleBarHeight()) return BlankChrome::None;
+        const D2D1_RECT_F content = s.renderer.ContentRect(
+            static_cast<float>(s.compositor.Width()), static_cast<float>(s.compositor.Height()));
+        if (x >= content.left && x < content.right && y >= content.top && y < content.bottom)
+            return BlankChrome::None;
+        return BlankChrome::DragMaximize;
+    }
+    default:
+        return BlankChrome::None;
+    }
+}
+
+void ArmBlankWindowDrag(AppState& s, const ui::HitTestResult& hit, int mx, int my) {
+    g_blank_drag = BlankWindowDrag{};
+    if (BlankChromeAt(s, hit, mx, my) == BlankChrome::None) return;
+    g_blank_drag.hwnd = s.hwnd;
+    g_blank_drag.start = POINT{mx, my};
+}
+
+// True once the window move has started (the system move loop has run).
+bool TryBlankWindowDrag(HWND hwnd, WPARAM wParam, int mx, int my) {
+    if (!g_blank_drag.hwnd || g_blank_drag.hwnd != hwnd) return false;
+    if (!(wParam & MK_LBUTTON)) {
+        g_blank_drag = BlankWindowDrag{};
+        return false;
+    }
+    if (std::abs(mx - g_blank_drag.start.x) < GetSystemMetrics(SM_CXDRAG) &&
+        std::abs(my - g_blank_drag.start.y) < GetSystemMetrics(SM_CYDRAG))
+        return false;
+    g_blank_drag = BlankWindowDrag{};
+    POINT screen{mx, my};
+    ClientToScreen(hwnd, &screen);
+    if (GetCapture() == hwnd) ReleaseCapture();
+    SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, MAKELPARAM(screen.x, screen.y));
+    return true;
+}
+
 // The size tooltip names the old size: drop it while the size changes; it
 // returns with the new one once the pointer rests.
 void ResetSizeTooltip(AppState& s) {
@@ -1629,6 +1766,7 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         if (!s) return DefWindowProcW(hwnd, msg, wParam, lParam);
         int mx = GET_X_LPARAM(lParam);
         int my = GET_Y_LPARAM(lParam);
+        if (TryBlankWindowDrag(hwnd, wParam, mx, my)) return 0;  // blank chrome moves the window
         if (ToolbarPinDragging()) {   // picker T3c: no hover plate or tooltip under the dragged pin
             MoveToolbarPinDrag(*s, POINT{mx, my});
             if (s->hoverRegion != 0 || !s->tooltipText.empty()) HandleMouseLeave(s, hwnd, WM_MOUSELEAVE, 0, 0);
@@ -2683,10 +2821,23 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             hit.region != ui::HitTestResult::FilterClear) {
             HideFilterEditor(*s, true);
         }
+        // Single click opens: a press that switches panes or brings the
+        // window forward only selects.
+        s->singleOpenCandidate = false;
+        const bool pressActivates =
+            (hit.pane_index >= 0 && PaneAtSlot(*s, hit.pane_index) != nullptr &&
+             PaneAtSlot(*s, hit.pane_index) != s->pane) ||
+            (s->activateClickTick != 0 && GetTickCount64() - s->activateClickTick < 500);
+        s->activateClickTick = 0;
         if (hit.pane_index >= 0) {
             if (app::Pane* p = PaneAtSlot(*s, hit.pane_index)) FocusPane(*s, p);
         }
+        if (hit.region == ui::HitTestResult::RowCheck || hit.region == ui::HitTestResult::HeaderCheck) {
+            if (HandleItemCheckPress(*s, hit)) InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         ArmPaneDrag(*s, hit, mx, my);  // the press still does what it did; a drag takes the pane out (M6d)
+        ArmBlankWindowDrag(*s, hit, mx, my);  // likewise: a drag on blank chrome moves the window
         if (HandleChangeClick(*s, hit, POINT{mx, my})) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -2927,6 +3078,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
                 s->marqueeRowIndex = hit.index;
                 s->marqueeRowCtrl = ctrl;
                 s->marqueeRowShift = shift;
+                ArmSingleOpen(*s, vm, hit, tab, ctrl, shift, pressActivates);
                 s->blankClickTab = nullptr;
                 s->blankClickPane = s->pane;
                 s->blankClickGeneration = tab->view_generation;
@@ -2942,11 +3094,13 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            const bool renameCandidate = !ctrl && !shift && tab && !tab->net_readonly &&
+            // Single click opens: no slow-click rename (F2 still renames).
+            const bool renameCandidate = !s->appPrefs.single_click_open && !ctrl && !shift && tab && !tab->net_readonly &&
                 s->renameIndex < 0 && tab->SelectedCount() == 1 &&
                 tab->selected_index == hit.index && tab->IsSelected(hit.index) &&
                 PointInHitItemName(*s, vm, hit, static_cast<float>(mx), static_cast<float>(my));
             HandleListRowClick(*s, hit.index, ctrl, shift);
+            ArmSingleOpen(*s, vm, hit, tab, ctrl, shift, pressActivates);
             if (renameCandidate && tab == ActiveTab(*s)) {
                 s->renameClickCandidate = true;
                 s->renameClickStarted = GetTickCount64();
@@ -3039,6 +3193,11 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             s->settings.TextRendering(hit.index);
             InvalidateRect(hwnd, nullptr, FALSE);
         } else if (hit.region == ui::HitTestResult::SettingsFolderSort ||
+                   hit.region == ui::HitTestResult::SettingsMtimeStyle ||
+                   hit.region == ui::HitTestResult::SettingsMtimeRange ||
+                   hit.region == ui::HitTestResult::SettingsMtimePalette ||
+                   hit.region == ui::HitTestResult::SettingsClickMode ||
+                   hit.region == ui::HitTestResult::SettingsNameBand ||
                    hit.region == ui::HitTestResult::SettingsUiFontSize ||
                    hit.region == ui::HitTestResult::SettingsStartupOpen ||
                    hit.region == ui::HitTestResult::SettingsNewTabOpen ||
@@ -3056,6 +3215,11 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             case ui::HitTestResult::SettingsNotifyIcon: s->settings.NotifyIcon(hit.index); break;
             case ui::HitTestResult::SettingsBlankClick: s->settings.BlankClick(hit.index); break;
             case ui::HitTestResult::SettingsHomeFolder: s->settings.HomeFolder(hit.index); break;
+            case ui::HitTestResult::SettingsMtimeStyle: s->settings.MtimeStyle(hit.index); break;
+            case ui::HitTestResult::SettingsMtimeRange: s->settings.MtimeRange(hit.index); break;
+            case ui::HitTestResult::SettingsMtimePalette: s->settings.MtimePalette(hit.index); break;
+            case ui::HitTestResult::SettingsClickMode: s->settings.ClickMode(hit.index); break;
+            case ui::HitTestResult::SettingsNameBand: s->settings.ClickMode(2 + hit.index); break;
             default: s->settings.FolderSort(hit.index); break;
             }
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -3063,8 +3227,10 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             s->settings.TrayIconSize(hit.index);
             InvalidateRect(hwnd, nullptr, FALSE);
         } else if (hit.region == ui::HitTestResult::SettingsWallpaperLook ||
-                   hit.region == ui::HitTestResult::SettingsWallpaperBlur) {
-            const int which = hit.region == ui::HitTestResult::SettingsWallpaperLook ? 0 : 1;
+                   hit.region == ui::HitTestResult::SettingsWallpaperBlur ||
+                   hit.region == ui::HitTestResult::SettingsAccentSlider) {
+            const int which = hit.region == ui::HitTestResult::SettingsWallpaperLook ? 0
+                : hit.region == ui::HitTestResult::SettingsWallpaperBlur ? 1 : 2 + std::clamp(hit.sub_index, 0, 2);
             s->settings.BeginSlider(which);
             s->settings.SliderValue(which, hit.index);
             SetCapture(hwnd);
@@ -3743,6 +3909,12 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
             {"column_layout", double_tab && double_tab->column_layout},
             {"has_index", hit.index >= 0},
             {"item_index", hit.index >= 0 ? static_cast<uint64_t>(hit.index) : 0}});
+        g_blank_drag = BlankWindowDrag{};
+        if (BlankChromeAt(*s, hit, mx, my) == BlankChrome::DragMaximize) {
+            // Toolbar gaps and the status bar act as the title bar here too.
+            SendMessageW(hwnd, WM_SYSCOMMAND, IsZoomed(hwnd) ? SC_RESTORE : SC_MAXIMIZE, 0);
+            return 0;
+        }
         if (hit.region == ui::HitTestResult::PaneSizeSlider) {  // back to the 96 DIP preset
             SetViewMode(*s, ui::ViewMode::LargeIcons);
             return 0;
@@ -3783,9 +3955,17 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
         case ui::HitTestResult::DetailsAttrToggle:
         case ui::HitTestResult::DetailsPreviewToggle:
         case ui::HitTestResult::SettingsToggle:
+        case ui::HitTestResult::RowCheck:
+        case ui::HitTestResult::HeaderCheck:
             return HandleLButtonDown(s, hwnd, WM_LBUTTONDOWN, wParam, lParam);
         default:
             break;
+        }
+        // Single click opens: this press is the second half of a double click
+        // whose first click already opened the item.
+        if (s->singleOpenTick != 0 && GetTickCount64() - s->singleOpenTick <= GetDoubleClickTime()) {
+            s->singleOpenTick = 0;
+            return 0;
         }
         // A second press on a chevron toggles again instead of opening the folder.
         if (HandleDetailsTreeMouseDown(*s, vm, hit, mx, my, (GetKeyState(VK_MENU) & 0x8000) != 0)) {
@@ -3861,6 +4041,7 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
 LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         (void)msg;
         (void)wParam;
+        g_blank_drag = BlankWindowDrag{};
         if (s && ToolbarPinDragging()) {   // picker T3c
             EndToolbarPinDrag(*s, false);
             return 0;
@@ -4119,6 +4300,7 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
+            int singleOpenRow = -1;
             if (s->marqueeActive || s->marqueePending) {
                 const int mx = GET_X_LPARAM(lParam);
                 const int my = GET_Y_LPARAM(lParam);
@@ -4169,6 +4351,7 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                     HandleListRowClick(*s, row_click, row_ctrl, row_shift);
                     FinishListRowClick(*s);
                     goBack = false;
+                    if (s->singleOpenCandidate && row_click == s->singleOpenIndex) singleOpenRow = row_click;
                 }
                 if (goBack) RunBlankDoubleClick(*s, *tab);
             } else if (s->clickCollapseIndex >= 0) {
@@ -4197,6 +4380,8 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 }
             }
             s->clickCollapseIndex = -1;
+            if (s->singleOpenCandidate && s->dragPending) singleOpenRow = s->singleOpenIndex;
+            s->singleOpenCandidate = false;
             s->dragPending = false;
             s->scrollbarDragging = false;
             s->scrollbarHorizontal = false;
@@ -4213,6 +4398,7 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             s->tabDragging = false;
             s->tabDragIndex = -1;
             if (GetCapture() == hwnd) ReleaseCapture();
+            if (singleOpenRow >= 0) OpenSingleClickRow(*s, singleOpenRow);
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         return 0;
@@ -4272,6 +4458,7 @@ LRESULT HandleCaptureChanged(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LP
             if (s->marqueeActive) ApplyMarqueeSelection(*s);
             ResetMarquee(*s);
             s->clickCollapseIndex = -1;
+            s->singleOpenCandidate = false;
             s->dragPending = false;
             s->scrollbarDragging = false;
             s->scrollbarHorizontal = false;

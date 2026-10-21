@@ -5,7 +5,7 @@
 
 namespace pulse::ui {
 
-// Settings > 增强包 > AI 与 MCP (page 9). Geometry: LayoutSettingsAi; texts:
+// Settings > 增强包 > AI 与 MCP (kSettingsPageAi). Geometry: LayoutSettingsAi; texts:
 // ai_text (settings_ai_layout.h); clicks: SettingsAi (AiHit).
 void MainRenderer::DrawSettingsAi(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme) {
     using H = HitTestResult;

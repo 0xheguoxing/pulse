@@ -12,6 +12,7 @@
 #include "ai_settings_view.h"
 #include "view_layout.h"
 #include "git_mark.h"
+#include "mtime_hint.h"
 #include "column_strip_layout.h"
 #include "panel_metrics.h"
 #include "toolbar_layout.h"
@@ -150,6 +151,7 @@ struct ChangeBadge {
     int count = 0;
     bool has_deleted = false;
     int status = 0; // 0 recent, 1 older, 2 unavailable/scanning/offline
+    uint64_t last_change = 0;  // FILETIME of the newest change inside (修改时间提示)
 };
 
 struct ChangePopover {
@@ -280,6 +282,17 @@ struct PaneViewModel {
         if (!git_marks) return GitMark::None;
         const auto it = git_marks->find(source);
         return it == git_marks->end() ? GitMark::None : it->second;
+    }
+    // The folder is inside a OneDrive root: rows show their sync state.
+    bool onedrive_status = false;
+    // Shell sync state per source index (PKEY_StorageProviderState values:
+    // 1 online only ... 7 error, 8 warning, 9 excluded, 10 pending). Rows
+    // without one fall back to their attributes.
+    std::shared_ptr<const std::unordered_map<int, uint8_t>> onedrive_states;
+    uint8_t OneDriveStateAt(int source) const {
+        if (!onedrive_states) return 0;
+        const auto it = onedrive_states->find(source);
+        return it == onedrive_states->end() ? uint8_t{0} : it->second;
     }
     bool loading = false;
     bool search_retaining_results = false;
@@ -902,7 +915,7 @@ enum class PackAction : int {
     AiInstall,          // AI pack: download / update / repair (asks first)
     AiRemove,           // AI pack: uninstall (asks first)
     AiCancel,           // AI pack: stop the running download
-    AiManage,           // AI pack: open 增强包 > AI 与 MCP (page 9)
+    AiManage,           // AI pack: open 增强包 > AI 与 MCP (kSettingsPageAi)
 };
 
 // A tab dragged out of another window, over this one (multi-window M7h): the
@@ -1140,13 +1153,16 @@ struct WindowViewModel {
     std::wstring settings_pack_archive_version, settings_pack_archive_notice, settings_pack_archive_update_version;
     int settings_theme = 0; // system, light, dark
     bool settings_open = false;
-    int settings_page = 0; // 0 general, 1 search/index, 2 context menu, 3 about, 4 duplicates, 5 quick look, 6 system menu, 7 shortcuts, 8 packs, 9 AI and MCP
+    // 0 外观, 1 search/index, 2 context menu, 3 about, 4 duplicates, 5 quick look, 6 system menu,
+    // 7 shortcuts, 8 packs, 9 文件列表, 10 标签页与窗口, 11 启动与集成, 12 文件操作,
+    // 13 AI 与 MCP (kSettingsPageAi, under 增强包)
+    int settings_page = 0;
     // Settings > 系统右键菜单 (page 6): the model's last published view.
     std::shared_ptr<const SysCtxView> settings_sysctx;
     // Settings > 快捷键 (page 7): the page model's last view; the sidebar badge
     // (keys that may not work) is filled on every page.
     std::shared_ptr<const ShortcutsView> settings_shortcuts;
-    // Settings > 增强包 > AI 与 MCP (page 9).
+    // Settings > 增强包 > AI 与 MCP (kSettingsPageAi).
     std::shared_ptr<const AiPageView> settings_ai;
     int settings_shortcut_issues = 0;
     int settings_pack_updates = 0;   // 增强包 nav badge: packs with a newer release
@@ -1168,6 +1184,13 @@ struct WindowViewModel {
     bool settings_list_tag_names = false;
     bool settings_list_selection_outline = false;
     bool settings_list_thumbnail_badges = true;
+    MtimeHint settings_mtime;            // 修改时间提示
+    bool settings_sync_onedrive = true;
+    bool settings_sync_svn = true;
+    bool settings_single_click = false;  // 鼠标与选择
+    int settings_name_highlight = 0;
+    bool settings_hover_select = false;
+    bool settings_item_checkboxes = false;
     bool settings_vertical_tabs = false;
     bool settings_tray_hide_empty = false;
     bool settings_show_hints = true;
@@ -1183,6 +1206,8 @@ struct WindowViewModel {
     std::wstring settings_home_folder; // default location; empty = This PC
     int settings_text_render = 0; // 0 auto, 1 sharp, 2 smooth
     int settings_ui_font_scale = 100; // interface font size: 90 / 100 / 112 / 125
+    // 主题色 › 自定义: hue 0..360, saturation 0..100, lightness 0..100 (settings_expanded bit 5 opens it).
+    int settings_accent_hsl[3] = {220, 60, 50};
     bool settings_open_folders = false;
     bool settings_win_e = false;
     bool settings_this_pc = false;
@@ -1405,6 +1430,9 @@ struct HitTestResult {
         SettingsEffect,
         SettingsWallpaper,
         SettingsDensity,
+        SettingsMtimeStyle,
+        SettingsMtimeRange,
+        SettingsMtimePalette,
         SettingsFolderSort,
         SettingsStartupOpen,
         SettingsNotifyIcon,
@@ -1446,6 +1474,8 @@ struct HitTestResult {
         ColumnStripHScroll,  // ancestor strip scrollbar
         SettingsWallpaperLook,
         SettingsWallpaperBlur,
+        SettingsAccentCustom,  // 主题色 › 自定义 button
+        SettingsAccentSlider,  // sub_index 0 hue, 1 saturation, 2 lightness; index = value
         SidebarToggle,       // title-bar sidebar collapse button
         WindowIdentity,      // title-bar window color dot and name (M7c)
         StatusHintAction,    // clickable action at the end of the status-bar hint
@@ -1474,6 +1504,10 @@ struct HitTestResult {
         PaneWallHint,          // photo wall suggestion: index 0 card, 1 switch, 2 never again
         StatusBarAi,           // the AI chip at the right end of the status bar
         SettingsAi,            // Settings > 增强包 > AI 与 MCP: index = AiHit
+        SettingsClickMode,     // Settings > 鼠标与选择: 0/1 double/single click
+        SettingsNameBand,      // Settings > 鼠标与选择: name band 0 on hover, 1 always
+        RowCheck,              // check box in front of a list item: index = entry
+        HeaderCheck,           // check box in the Name column header: select all / none
     } region = None;
     SidebarAddAction sidebar_action = SidebarAddAction::None;
     int index = -1;          // tab/row/sidebar item/tray batch/tray item.
@@ -1810,6 +1844,7 @@ public:
         if (group_wheel_.Tick(motion_now)) active = true;
         if (motion_now < tab_motion_until_) active = true;
         if (motion_now < row_leave_until_) active = true;
+        if (motion_now < mtime_flash_until_) active = true;
         if (motion_now < splitter_motion_until_) active = true;
         if (motion_now < spring_ring_until_) active = true;
         // Sidebar pill/plate, toolbar plates, column cascade, details sweep:
@@ -1919,6 +1954,39 @@ public:
         auto_widths_scale_ = -1.0f;
     }
     bool ListSmartDate() const { return list_smart_date_; }
+    // 修改时间提示 (mtime_hint.h).
+    // 鼠标与选择: single click opens (names show a band), item check boxes.
+    void SetItemClick(bool single_click, int name_band, bool check_boxes) {
+        if (single_click == click_single_ && name_band == click_band_ && check_boxes == item_checks_) return;
+        click_single_ = single_click;
+        click_band_ = name_band;
+        item_checks_ = check_boxes;
+        auto_widths_scale_ = -1.0f;
+    }
+    bool SingleClickOpen() const { return click_single_; }
+    // Details rows keep a gutter for the check box left of the tree chevron.
+    float CheckGutterDip(const PaneViewModel& vm) const;
+    // Tree indent plus the check gutter: how far a Details row's icon and name move right.
+    float DetailsLeadDip(const PaneViewModel& vm, int view_index) const;
+    // The check box of a row (Details: in the gutter at details_base_x; icon grids: the cell's corner).
+    D2D1_RECT_F ItemCheckRect(const PaneViewModel& vm, const D2D1_RECT_F& cell, float details_base_x) const;
+    D2D1_RECT_F HeaderCheckRect(float columns_left, float header_top) const;
+    void SetMtimeHint(const MtimeHint& hint) {
+        if (hint == mtime_hint_) return;
+        mtime_hint_ = hint;
+        auto_widths_scale_ = -1.0f;
+        mtime_next_boundary_ = 0;
+    }
+    // A drawn mark's bucket changed (5 minutes passed, midnight, ...): repaint.
+    bool MtimeBoundaryDue() {
+        if (mtime_next_boundary_ == UINT64_MAX) return false;
+        FILETIME ft{};
+        GetSystemTimeAsFileTime(&ft);
+        const uint64_t now = (static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+        if (now < mtime_next_boundary_) return false;
+        mtime_next_boundary_ = UINT64_MAX;
+        return true;
+    }
     // Grid thumbnails: default-program badge and video playing time.
     void SetThumbnailBadges(bool on) { thumbnail_badges_ = on; }
     // Default programs changed (SHCNE_ASSOCCHANGED).
@@ -2479,6 +2547,25 @@ private:
     uint64_t tab_motion_until_ = 0;         // NowMs: keep frames coming until then
     bool tab_anim_on_ = true;
     uint64_t row_leave_until_ = 0;          // NowMs: a deleted row is still fading out
+    bool click_single_ = false;
+    int click_band_ = 0;
+    bool item_checks_ = false;
+    MtimeHint mtime_hint_ = MtimeHint{0};  // off until the app applies its prefs (pickers stay plain)
+    uint64_t mtime_next_boundary_ = UINT64_MAX;  // FILETIME the next drawn mark changes bucket
+    uint64_t mtime_flash_until_ = 0;              // NowMs: a changed row is still glowing
+    // Path -> (the modified time that glowed, NowMs it started).
+    std::unordered_map<std::wstring, std::pair<uint64_t, uint64_t>> mtime_flash_started_;
+    bool name_semibold_ = false;                  // DrawTruncatedName: 今天修改的名称加粗
+    ComPtr<IDWriteTextFormat> name_semibold_format_;
+    IDWriteTextFormat* name_semibold_base_ = nullptr;
+    float name_semibold_size_ = 0.0f;
+    // FileNameFormat at semibold (same family, size and fallback).
+    IDWriteTextFormat* NameSemiboldFormat();
+    // Extra date-column width: the dots' lead and room for a semibold date.
+    float MtimeDateExtraDip() const {
+        if (mtime_hint_.style == 0) return 0.0f;
+        return (mtime_hint_.style == 1 ? kMtimeDotLeadDip : 0.0f) + (mtime_hint_.bold ? 6.0f : 0.0f);
+    }
     // Pane dividers (motion 4b): an accent knob springs in on hover and
     // stretches while dragged; snaps flash a guide line.
     struct SplitterKnobMotion {

@@ -1,4 +1,4 @@
-// ai_settings_ui.h - Settings > 增强包 > AI 与 MCP (page 9), the AI chip in
+// ai_settings_ui.h - Settings > 增强包 > AI 与 MCP (kSettingsPageAi), the AI chip in
 // the status bar and the notifications for what AI clients changed: glue
 // between AppState, ai_service.h / ai_status.h and the renderer's views.
 #pragma once
@@ -13,11 +13,11 @@ namespace ui { struct WindowViewModel; }
 // BuildVm, every window: the status bar's AI chip (hidden unless a client is
 // connected or something just ran).
 void FillAiStatusVm(ui::WindowViewModel& vm);
-// BuildVm on page 9: the page view (ai.json is re-read at most every second).
+// BuildVm on the AI page: the page view (ai.json is re-read at most every second).
 void FillAiSettingsVm(AppState& s, ui::WindowViewModel& vm);
-// A click on page 9 (HitTestResult::SettingsAi index, ui::AiHit).
+// A click on the AI page (HitTestResult::SettingsAi index, ui::AiHit).
 void AiSettingsAction(AppState& s, int index);
-// A click on the chip: the open question comes forward, else page 9 opens.
+// A click on the chip: the open question comes forward, else the AI page opens.
 void AiChipClicked(AppState& s);
 // UI thread, after a call that changed files: 「Claude 新建了 x.zip」 with 撤销
 // and 打开位置; after undo_last, what it undid.

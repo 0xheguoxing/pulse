@@ -3,6 +3,7 @@
 #include "ui_renderer_internal.h"
 #include "bloom_accent_picker.h"
 #include "../common/localization.h"
+#include <cmath>
 
 namespace pulse::ui {
 void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme) {
@@ -24,6 +25,7 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
         FillRect(dc,brStrokeDivider_.get(),r.left+16*scale_,r.bottom,r.right-r.left-32*scale_,1);
     };
     auto label=[&](D2D1_RECT_F r,const std::wstring& title,const std::wstring& desc,const wchar_t* icon,float text_right=0.0f,float description_height=21.0f) {
+        if(r.bottom<=r.top) return;
         const float right=text_right>0 ? text_right : r.right-72*scale_;
         DrawIconText(r.left+16*scale_,r.top+17*scale_,24*scale_,24*scale_,icon,L"",theme.text_secondary,0.85f);
         text(title,D2D1::RectF(r.left+54*scale_,r.top+10*scale_,right,r.top+34*scale_));
@@ -43,6 +45,7 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
         }
     };
     auto toggle=[&](D2D1_RECT_F r,I title,I desc,const wchar_t* icon,bool on,int hit) {
+        if(r.bottom<=r.top) return;
         if(IsHovered(vm,H::SettingsToggle,hit)) {
             MakeBrush(dc,theme.fill_hover,brFillHover_);
             FillRoundedRect(dc,brFillHover_.get(),r.left+2*scale_,r.top+2*scale_,r.right-r.left-4*scale_,r.bottom-r.top-4*scale_,6*scale_);
@@ -52,6 +55,7 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
         painter_.DrawSwitch(D2D1::RectF(r.right-60*scale_,r.top+16*scale_,r.right-16*scale_,r.top+48*scale_),L"",state);
     };
     auto button=[&](D2D1_RECT_F r,const std::wstring& value,H::Region region,int index,bool primary=false,bool enabled=true,const wchar_t* glyph=L"") {
+        if(r.bottom<=r.top) return;
         fluent::ControlState st{}; st.enabled=enabled; st.hovered=enabled && IsHovered(vm,region,index);
         painter_.DrawButton({r,value,glyph,primary ? fluent::ButtonKind::Primary : fluent::ButtonKind::Standard,st});
     };
@@ -67,6 +71,7 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
     };
     auto section=[&](int i,I title) { text(l10n::Get(title),lay.section[i]); };
     auto segmented=[&](D2D1_RECT_F card,D2D1_RECT_F const* choices,const I* labels,const int* values,int current,H::Region hit,I title,I desc,int count=3,const wchar_t* icon=L"\xE8A4") {
+        if(card.bottom<=card.top) return;
         const bool stacked=choices[0].left<card.left+100*scale_;
         label(card,l10n::Get(title),l10n::Get(desc),icon,stacked ? card.right-16*scale_ : choices[0].left-12*scale_);
         painter_.DrawSegmentedTrack(D2D1::RectF(choices[0].left,choices[0].top,choices[count-1].right,choices[count-1].bottom));
@@ -80,9 +85,10 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
     // Continuous slider in the segment cells: accent fill, Fluent thumb, preset
     // ticks labelled with the former level names, value at the right.
     auto slider=[&](D2D1_RECT_F card,D2D1_RECT_F const* cells,int value,int max_value,const int* ticks,const I* tick_labels,
-                    H::Region hit,I title,I desc,const wchar_t* unit) {
+                    H::Region hit,I title,I desc,const wchar_t* unit,const wchar_t* icon) {
+        if(card.bottom<=card.top) return;
         const bool stacked=cells[0].left<card.left+100*scale_;
-        label(card,l10n::Get(title),l10n::Get(desc),L"\xE8A4",stacked ? card.right-16*scale_ : cells[0].left-12*scale_);
+        label(card,l10n::Get(title),l10n::Get(desc),icon,stacked ? card.right-16*scale_ : cells[0].left-12*scale_);
         const auto g=SettingsSlider(cells,scale_);
         const bool hot=vm.hover_region==static_cast<int>(hit);
         const float span=(std::max)(1.0f,g.right-g.left);
@@ -114,11 +120,41 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
         painter_.DrawText(std::to_wstring(value)+unit,D2D1::RectF(g.right+10*scale_,g.cy-10*scale_,cells[2].right,g.cy+10*scale_),
             compositor_->TextFormat(),theme.text,fluent::HorizontalAlignment::Right);
     };
-    if(vm.settings_page==0) {
-        section(0,I::SettingsAppearance);section(1,I::SettingsStartupShutdown);section(2,I::SettingsFileList);
+    if(IsGeneralSettingsPage(vm.settings_page)) {
+        const int page=vm.settings_page;
+        for(int i=0;i<lay.section_count;++i) {
+            const auto& r=lay.section[i];
+            painter_.DrawText(l10n::Get(lay.section_title[i]),D2D1::RectF(r.left+2*scale_,r.top+6*scale_,r.right,r.bottom),
+                compositor_->HeaderFormat(),theme.text);
+        }
         for(const auto& group:lay.group) draw_card(group);
+        // Dependent rows: a faint band clipped to the card's corners, with a guide line.
+        for(const auto& band:lay.child_bands) {
+            D2D1_RECT_F card=band;
+            for(const auto& group:lay.group) if(group.top<=band.top && group.bottom>=band.bottom && group.bottom>group.top) card=group;
+            ComPtr<ID2D1Factory> factory; dc->GetFactory(&factory);
+            ComPtr<ID2D1RoundedRectangleGeometry> clip;
+            if(factory.get()) factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(card,8*scale_,8*scale_),&clip);
+            if(clip.get()) dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(),clip.get()),nullptr);
+            MakeBrush(dc,WithAlpha(theme.text,vm.dark ? 0.035f : 0.024f),brFillHover_);
+            dc->FillRectangle(D2D1::RectF(band.left+1,band.top,band.right-1,band.bottom),brFillHover_.get());
+            if(clip.get()) dc->PopLayer();
+            MakeBrush(dc,WithAlpha(theme.text_secondary,0.32f),brTextSecondary_);
+            FillRoundedRect(dc,brTextSecondary_.get(),band.left+29*scale_,band.top+12*scale_,1.5f*scale_,
+                (std::max)(0.0f,band.bottom-band.top-24*scale_),0.75f*scale_);
+        }
+        MakeBrush(dc,theme.stroke_divider,brStrokeDivider_);
+        for(const auto& d:lay.dividers) FillRect(dc,brStrokeDivider_.get(),d.left,d.top,d.right-d.left,1);
+        // Rows that depend on an option that is off: shown, faded and inert.
+        auto dim_begin=[&](bool dim) {
+            if(dim) dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(),nullptr,D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                D2D1::IdentityMatrix(),0.42f,nullptr,D2D1_LAYER_OPTIONS1_NONE),nullptr);
+            return dim;
+        };
+        auto dim_end=[&](bool dim) { if(dim) dc->PopLayer(); };
+        if(page==0) {
         const bool small_theme=lay.theme_tile[0].left<lay.theme_row.left+100*scale_;
-        label(lay.theme_row,l10n::Get(I::SettingsTheme),small_theme ? L"" : l10n::Get(I::SettingsThemeDesc),L"\xE790",
+        label(lay.theme_row,l10n::Get(I::SettingsTheme),small_theme ? L"" : l10n::Get(I::SettingsThemeDesc),L"\xE706",
             small_theme ? lay.theme_row.right-16*scale_ : lay.theme_tile[0].left-12*scale_);
         const I theme_names[]={I::SettingsThemeLight,I::SettingsThemeDark,I::SettingsThemeSystem};
         const int theme_values[]={1,2,0};
@@ -136,20 +172,84 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
             if(selected) DrawIconText(preview.right-23*scale_,preview.top+3*scale_,20*scale_,20*scale_,L"\xE73E",L"",theme.accent,0.7f);
             painter_.DrawText(l10n::Get(theme_names[i]),D2D1::RectF(r.left,preview.bottom+2*scale_,r.right,r.bottom),compositor_->SmallFormat(),theme.text,fluent::HorizontalAlignment::Center);
         }
-        divider(lay.theme_row);
+        
         label(lay.accent_card,l10n::Get(I::SettingsThemeColor),l10n::Get(I::SettingsThemeColorDesc),L"\xE790",lay.accent_picker.left-16*scale_);
         if(vm.settings_bloom) {vm.settings_bloom->SetDisk(lay.accent_picker);vm.settings_bloom->Draw(dc,theme);}
-        divider(lay.accent_card);
+        {
+            // 主题色 › 自定义: hue, saturation and lightness sliders on gradient tracks.
+            const bool open=(vm.settings_expanded&32u)!=0;
+            button(lay.accent_custom_button,l10n::Get(open ? I::AccentCustomDone : I::AccentCustom),H::SettingsAccentCustom,0,false,true,
+                open ? L"\xE70E" : L"\xE9E9");
+            const int* hsl=vm.settings_accent_hsl;
+            const auto color_of=[](float h,float s,float l) { return BloomHsl(h,s/100.0f,l/100.0f); };
+            const auto current=color_of(static_cast<float>(hsl[0]),static_cast<float>(hsl[1]),static_cast<float>(hsl[2]));
+            if(lay.accent_custom_head.bottom>lay.accent_custom_head.top) {
+                const auto& head_row=lay.accent_custom_head;
+                const auto& swatch=lay.accent_custom_swatch;
+                label(head_row,l10n::Get(I::AccentCustomTitle),l10n::Get(I::AccentCustomDesc),L"\xEB3C",swatch.left-12*scale_);
+                const auto chip=D2D1::RectF(swatch.left,swatch.top,swatch.left+(swatch.bottom-swatch.top),swatch.bottom);
+                MakeBrush(dc,current,brAccent_);
+                dc->FillRoundedRectangle(D2D1::RoundedRect(chip,6*scale_,6*scale_),brAccent_.get());
+                MakeBrush(dc,WithAlpha(theme.text,0.14f),brStrokeCard_);
+                dc->DrawRoundedRectangle(D2D1::RoundedRect(chip,6*scale_,6*scale_),brStrokeCard_.get(),1);
+                wchar_t hex[16]{};
+                swprintf_s(hex,L"#%02X%02X%02X",static_cast<unsigned>(std::lround(current.r*255)),
+                    static_cast<unsigned>(std::lround(current.g*255)),static_cast<unsigned>(std::lround(current.b*255)));
+                painter_.DrawText(hex,D2D1::RectF(chip.right+10*scale_,swatch.top+6*scale_,swatch.right,swatch.bottom),compositor_->TextFormat(),theme.text);
+            }
+            const I names[]={I::AccentHue,I::AccentSaturation,I::AccentLightness};
+            for(int i=0;i<3;++i) {
+                const auto& slider_row=lay.accent_slider_row[i];
+                if(slider_row.bottom<=slider_row.top) continue;
+                const auto* cells=lay.accent_slider_cells[i];
+                const bool stacked=cells[0].left<slider_row.left+100*scale_;
+                painter_.DrawText(l10n::Get(names[i]),D2D1::RectF(slider_row.left+54*scale_,slider_row.top+(stacked ? 12.0f : 21.0f)*scale_,
+                    stacked ? slider_row.right-16*scale_ : cells[0].left-12*scale_,slider_row.top+(stacked ? 36.0f : 45.0f)*scale_),compositor_->TextFormat(),theme.text);
+                const auto geom=SettingsSlider(cells,scale_);
+                const float cy=(cells[0].top+cells[0].bottom)*0.5f;
+                const int max_value=i==0 ? 360 : 100;
+                // Saturation and lightness of the hue track stay readable even for greys.
+                const float hs=static_cast<float>((std::max)(hsl[1],55)), hl=static_cast<float>(std::clamp(hsl[2],35,65));
+                D2D1_GRADIENT_STOP stops[7]{};
+                for(int k=0;k<7;++k) {
+                    const float pos=static_cast<float>(k)/6.0f;
+                    stops[k].position=pos;
+                    stops[k].color=i==0 ? color_of(360*pos,hs,hl)
+                        : i==1 ? color_of(static_cast<float>(hsl[0]),100*pos,static_cast<float>(hsl[2]))
+                               : color_of(static_cast<float>(hsl[0]),static_cast<float>(hsl[1]),100*pos);
+                }
+                ComPtr<ID2D1GradientStopCollection> collection;
+                ComPtr<ID2D1LinearGradientBrush> gradient;
+                dc->CreateGradientStopCollection(stops,7,&collection);
+                if(collection.get()) dc->CreateLinearGradientBrush(D2D1::LinearGradientBrushProperties(
+                    D2D1::Point2F(geom.left,cy),D2D1::Point2F(geom.right,cy)),collection.get(),&gradient);
+                const auto track=D2D1::RoundedRect(D2D1::RectF(geom.left-5*scale_,cy-4*scale_,geom.right+5*scale_,cy+4*scale_),4*scale_,4*scale_);
+                if(gradient.get()) dc->FillRoundedRectangle(track,gradient.get());
+                MakeBrush(dc,WithAlpha(theme.text,0.12f),brStrokeCard_);
+                dc->DrawRoundedRectangle(track,brStrokeCard_.get(),1);
+                const float thumb_x=geom.left+(geom.right-geom.left)*std::clamp(static_cast<float>(hsl[i])/static_cast<float>(max_value),0.0f,1.0f);
+                MakeBrush(dc,WithAlpha(theme.surface_card,1.0f),brFillInput_);
+                dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(thumb_x,cy),10*scale_,10*scale_),brFillInput_.get());
+                MakeBrush(dc,theme.stroke_card,brStrokeCard_);
+                dc->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(thumb_x,cy),10*scale_,10*scale_),brStrokeCard_.get(),1);
+                MakeBrush(dc,current,brAccent_);
+                dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(thumb_x,cy),6.5f*scale_,6.5f*scale_),brAccent_.get());
+                const std::wstring value=std::to_wstring(hsl[i])+(i==0 ? L"\x00B0" : L"%");
+                painter_.DrawText(value,D2D1::RectF(geom.right+10*scale_,cy-10*scale_,cells[2].right,cy+10*scale_),
+                    compositor_->TextFormat(),theme.text,fluent::HorizontalAlignment::Right);
+            }
+        }
+        
         const I effects[]={I::EffectNone,I::EffectAcrylic,I::EffectMica,I::EffectMicaAlt};
         const I languages[]={I::LanguageSystem,I::LanguageZhCN,I::LanguageZhTW,I::LanguageEnUS};
         const auto dropdown=[&](D2D1_RECT_F r,D2D1_RECT_F c,I title,I desc,const std::wstring& value,int id) {
-            label(r,l10n::Get(title),l10n::Get(desc),id==0 ? L"\xE790" : L"\xE8C1",c.left<r.left+100*scale_ ? r.right-16*scale_ : c.left-12*scale_);
+            label(r,l10n::Get(title),l10n::Get(desc),id==0 ? L"\xE81E" : L"\xE775",c.left<r.left+100*scale_ ? r.right-16*scale_ : c.left-12*scale_);
             fluent::ButtonSpec control{};
             control.bounds=c; control.text=value; control.drop_down=true;
             control.state.hovered=IsHovered(vm,H::SettingsDropdown,id);
             painter_.DrawButton(control);
         };
-        label(lay.effect_card,l10n::Get(I::SettingsWindowEffect),l10n::Get(compat::ModernWindows() ? I::SettingsWindowEffectDesc : I::EffectUnavailable),L"\xE790",lay.effect_card.right-16*scale_);
+        label(lay.effect_card,l10n::Get(I::SettingsWindowEffect),l10n::Get(compat::ModernWindows() ? I::SettingsWindowEffectDesc : I::EffectUnavailable),L"\xE81E",lay.effect_card.right-16*scale_);
         for(int i=0;i<kWindowEffectCount;++i) {
             const auto r=lay.effect_row[i];
             auto preview=r;preview.bottom-=22*scale_;
@@ -194,15 +294,64 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
                 compositor_->SmallFormat(),!enabled ? theme.text_disabled : selected ? theme.accent : theme.text_secondary,
                 fluent::HorizontalAlignment::Center);
         }
-        divider(lay.effect_card);
-        toggle(lay.menu_acrylic_row,I::MenuAcrylic,I::MenuAcrylicDesc,L"\xE700",vm.settings_menu_acrylic,36);divider(lay.menu_acrylic_row);
-        dropdown(lay.language_card,lay.language_choice,I::SettingsLanguage,I::SettingsLanguageDesc,l10n::Get(languages[vm.settings_language]),1);divider(lay.language_card);
+        
+        toggle(lay.menu_acrylic_row,I::MenuAcrylic,I::MenuAcrylicDesc,L"\xE700",vm.settings_menu_acrylic,36);
+        dropdown(lay.language_card,lay.language_choice,I::SettingsLanguage,I::SettingsLanguageDesc,l10n::Get(languages[vm.settings_language]),1);
         const I text_render[]={I::TextRenderAuto,I::TextRenderSharp,I::TextRenderSmooth};const int text_render_values[]={0,1,2};
-        segmented(lay.text_render_card,lay.text_render_row,text_render,text_render_values,vm.settings_text_render,H::SettingsTextRender,I::SettingsTextRender,I::SettingsTextRenderDesc);divider(lay.text_render_card);
+        segmented(lay.text_render_card,lay.text_render_row,text_render,text_render_values,vm.settings_text_render,H::SettingsTextRender,I::SettingsTextRender,I::SettingsTextRenderDesc,3,L"\xE8D2");
         const I ui_font_size[]={I::UiFontSmall,I::UiFontDefault,I::UiFontLarge,I::UiFontLarger};const int ui_font_size_values[]={90,100,112,125};
-        segmented(lay.ui_font_size_card,lay.ui_font_size_row,ui_font_size,ui_font_size_values,vm.settings_ui_font_scale,H::SettingsUiFontSize,I::SettingsUiFontSize,I::SettingsUiFontSizeDesc,4,L"\xE8D2");
+        segmented(lay.ui_font_size_card,lay.ui_font_size_row,ui_font_size,ui_font_size_values,vm.settings_ui_font_scale,H::SettingsUiFontSize,I::SettingsUiFontSize,I::SettingsUiFontSizeDesc,4,L"\xE8E9");
+        if(lay.wallpaper_card.bottom>lay.wallpaper_card.top) {
+        const auto& preview = lay.wallpaper_preview;
+        MakeBrush(dc, theme.fill_hover, brFillHover_);
+        FillRoundedRect(dc, brFillHover_.get(), preview.left, preview.top,
+                        preview.right - preview.left, preview.bottom - preview.top, 6.0f * scale_);
+        if (!vm.background_image.empty())
+            material_.DrawSourceCover(dc, preview, vm.background_image);
+        MakeBrush(dc, theme.stroke_card, brStrokeCard_);
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(preview, 6.0f * scale_, 6.0f * scale_),
+                                 brStrokeCard_.get(), 1.0f);
+        const float text_left = preview.right + 12.0f * scale_;
+        const bool compact_wallpaper = lay.wallpaper_choose.top >
+            lay.wallpaper_card.top + 64.0f * scale_;
+        const float text_right = compact_wallpaper
+            ? lay.wallpaper_card.right - 16.0f * scale_
+            : lay.wallpaper_choose.left - 12.0f * scale_;
+        MakeBrush(dc, theme.text, brText_);
+        DrawTextRect(dc, compositor_->TextFormat(), brText_.get(),
+                     pulse::l10n::Get(pulse::l10n::StringId::SettingsWallpaper),
+                     text_left, lay.wallpaper_card.top + 18.0f * scale_,
+                     (std::max)(40.0f * scale_, text_right - text_left), 22.0f * scale_);
+        const std::wstring wallpaper_desc = vm.background_image.empty()
+            ? pulse::l10n::Get(pulse::l10n::StringId::SettingsWallpaperDesc)
+            : FileNameOf(vm.background_image);
+        MakeBrush(dc, theme.text_secondary, brTextSecondary_);
+        DrawTextRect(dc, compositor_->SmallFormat(), brTextSecondary_.get(), wallpaper_desc,
+                     text_left, lay.wallpaper_card.top + 42.0f * scale_,
+                     (std::max)(40.0f * scale_, text_right - text_left), 18.0f * scale_);
+        fluent::ControlState choose{};
+        choose.hovered = IsHovered(vm, HitTestResult::SettingsWallpaper, 0);
+        painter_.DrawButton({ lay.wallpaper_choose,
+                              pulse::l10n::Get(pulse::l10n::StringId::ChooseImage), {},
+                              fluent::ButtonKind::Standard, choose });
+        fluent::ControlState clear{};
+        clear.enabled = !vm.background_image.empty();
+        clear.hovered = clear.enabled && IsHovered(vm, HitTestResult::SettingsWallpaper, 1);
+        painter_.DrawButton({ lay.wallpaper_clear,
+                              pulse::l10n::Get(pulse::l10n::StringId::Clear), {},
+                              fluent::ButtonKind::Standard, clear });
+
+
+        }
+            const I looks[]={I::WallpaperLookSubtle,I::WallpaperLookBalanced,I::WallpaperLookVivid};const int look_ticks[]={25,50,75};
+            slider(lay.wallpaper_look_card,lay.wallpaper_look_row,vm.wallpaper_look,kPanelTransparencyMax,look_ticks,looks,H::SettingsWallpaperLook,I::SettingsWallpaperLook,I::SettingsWallpaperLookDesc,L"%",L"\xE7A1");
+            const I blurs[]={I::WallpaperBlurOff,I::WallpaperBlurLight,I::WallpaperBlurStrong};const int blur_ticks[]={0,14,28};
+            const bool blur_dim=dim_begin(vm.background_image.empty());
+            slider(lay.wallpaper_blur_card,lay.wallpaper_blur_row,vm.wallpaper_blur,kWallpaperBlurMax,blur_ticks,blurs,H::SettingsWallpaperBlur,I::SettingsWallpaperBlur,I::SettingsWallpaperBlurDesc,L" px",L"\xEB42");
+            dim_end(blur_dim);
+        }
+        if(page==11) {
         {
-            text(l10n::Get(I::SettingsIntegration),lay.integration_section);
             draw_card(lay.integration_card);
             const bool master_on=vm.settings_integration_enabled;
             auto hover_fill=[&](D2D1_RECT_F r) {
@@ -309,11 +458,18 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
                     (std::max)(40*scale_,t.right-t.left),vm.settings_integration_just_enabled ? theme.text : theme.text_secondary);
             }
         }
-        toggle(lay.startup_row[0],I::SettingsLaunch,I::SettingsLaunchDesc,L"\xE7E8",vm.settings_launch_on_startup,1);divider(lay.startup_row[0]);
-        toggle(lay.start_in_tray_row,I::SettingsStartInTray,I::SettingsStartInTrayDesc,L"\xE921",vm.settings_start_in_tray,27);divider(lay.start_in_tray_row);
-        toggle(lay.startup_row[1],I::SettingsKeepRunning,I::SettingsKeepRunningDesc,L"\xE737",vm.settings_keep_running,2);divider(lay.startup_row[1]);
+        toggle(lay.startup_row[0],I::SettingsLaunch,I::SettingsLaunchDesc,L"\xEC57",vm.settings_launch_on_startup,1);
+        {
+            const bool dim=dim_begin(!vm.settings_launch_on_startup);
+            toggle(lay.start_in_tray_row,I::SettingsStartInTray,I::SettingsStartInTrayDesc,L"\xE896",vm.settings_start_in_tray,27);
+            dim_end(dim);
+        }
+        toggle(lay.startup_row[1],I::SettingsKeepRunning,I::SettingsKeepRunningDesc,L"\xE9F5",vm.settings_keep_running,2);
         const I notify_icon[]={I::NotifyIconAlways,I::NotifyIconBackground,I::NotifyIconNever};const int notify_values[]={0,1,2};
-        segmented(lay.notify_icon_card,lay.notify_icon_row,notify_icon,notify_values,vm.settings_notify_icon,H::SettingsNotifyIcon,I::SettingsNotifyIcon,I::SettingsNotifyIconDesc,3,L"\xE8A1");divider(lay.notify_icon_card);
+        segmented(lay.notify_icon_card,lay.notify_icon_row,notify_icon,notify_values,vm.settings_notify_icon,H::SettingsNotifyIcon,I::SettingsNotifyIcon,I::SettingsNotifyIconDesc,3,L"\xECAA");
+        toggle(lay.shell_tags_row,I::SettingsShellTags,I::SettingsShellTagsDesc,L"\xE838",vm.settings_shell_tags,21);
+        }
+        if(page==10) {
         {
             // Default location: buttons sit beside the text, or below it when narrow.
             const bool below=lay.home_folder_choose.top>lay.home_folder_card.top+40*scale_;
@@ -322,96 +478,110 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
                 below ? lay.home_folder_card.right-16*scale_ : lay.home_folder_choose.left-12*scale_);
             button(lay.home_folder_choose,l10n::Get(I::SettingsHomeFolderPick),H::SettingsHomeFolder,0);
             button(lay.home_folder_reset,l10n::Get(I::ThisPc),H::SettingsHomeFolder,1,false,!vm.settings_home_folder.empty());
-            divider(lay.home_folder_card);
+            
         }
         const I startup_open[]={I::StartupOpenLastTabs,I::OpenDefaultLocation};const int two_values[]={0,1};
-        segmented(lay.startup_open_card,lay.startup_open_row,startup_open,two_values,vm.settings_startup_open,H::SettingsStartupOpen,I::SettingsStartupOpen,I::SettingsStartupOpenDesc,2,L"\xE81C");divider(lay.startup_open_card);
+        segmented(lay.startup_open_card,lay.startup_open_row,startup_open,two_values,vm.settings_startup_open,H::SettingsStartupOpen,I::SettingsStartupOpen,I::SettingsStartupOpenDesc,2,L"\xE81C");
         const I new_tab_open[]={I::NewTabOpenCurrent,I::OpenDefaultLocation};
-        segmented(lay.new_tab_open_card,lay.new_tab_open_row,new_tab_open,two_values,vm.settings_new_tab_open,H::SettingsNewTabOpen,I::SettingsNewTabOpen,I::SettingsNewTabOpenDesc,2,L"\xE710");divider(lay.new_tab_open_card);
+        segmented(lay.new_tab_open_card,lay.new_tab_open_row,new_tab_open,two_values,vm.settings_new_tab_open,H::SettingsNewTabOpen,I::SettingsNewTabOpen,I::SettingsNewTabOpenDesc,2,L"\xECCD");
         const I external_open[]={I::ExternalOpenSmart,I::ExternalOpenTab,I::ExternalOpenWindow};const int external_values[]={0,1,2};
-        segmented(lay.external_open_card,lay.external_open_row,external_open,external_values,vm.settings_external_open,H::SettingsExternalOpen,I::SettingsExternalOpen,I::SettingsExternalOpenDesc,3,L"\xE8A7");divider(lay.external_open_card);
-        toggle(lay.close_last_tab_row,I::SettingsCloseLastTab,I::SettingsCloseLastTabDesc,L"\xE711",vm.settings_close_last_tab,26);divider(lay.close_last_tab_row);
-        toggle(lay.close_tab_double_click_row,I::SettingsCloseTabDoubleClick,I::SettingsCloseTabDoubleClickDesc,L"\xE962",vm.settings_close_tab_double_click,35);
+        segmented(lay.external_open_card,lay.external_open_row,external_open,external_values,vm.settings_external_open,H::SettingsExternalOpen,I::SettingsExternalOpen,I::SettingsExternalOpenDesc,3,L"\xE8AD");
+        toggle(lay.vertical_tabs_row,I::SettingsVerticalTabs,I::SettingsVerticalTabsDesc,L"\xE8A0",vm.settings_vertical_tabs,23);
+        toggle(lay.pinned_names_row,I::PinnedNames,I::PinnedNamesDesc,L"\xE718",vm.show_pinned_tab_names,6);
+        toggle(lay.close_tab_double_click_row,I::SettingsCloseTabDoubleClick,I::SettingsCloseTabDoubleClickDesc,L"\xEA39",vm.settings_close_tab_double_click,35);
+        toggle(lay.close_last_tab_row,I::SettingsCloseLastTab,I::SettingsCloseLastTabDesc,L"\xE89F",vm.settings_close_last_tab,26);
+        }
+        if(page==9) {
         const I density[]={I::SettingsDensityCompact,I::SettingsDensityStandard,I::SettingsDensityRoomy};const int heights[]={28,34,40};
-        segmented(lay.density_card,lay.density_row,density,heights,vm.settings_row_height,H::SettingsDensity,I::SettingsRowHeight,I::SettingsRowHeightDesc);divider(lay.density_card);
-        toggle(lay.performance_row,I::SettingsShowPerformance,I::SettingsShowPerformanceDesc,L"\xE946",vm.settings_show_performance,4);divider(lay.performance_row);
-        toggle(lay.list_style_row[0],I::ListSmartDate,I::ListSmartDateDesc,L"\xE787",vm.settings_list_smart_date,17);divider(lay.list_style_row[0]);
-        toggle(lay.list_style_row[1],I::ListZebraRows,I::ListZebraRowsDesc,L"\xE8FD",vm.settings_list_zebra_rows,18);divider(lay.list_style_row[1]);
-        toggle(lay.list_style_row[2],I::ListSizeBar,I::ListSizeBarDesc,L"\xE9D2",vm.settings_list_size_bar,19);divider(lay.list_style_row[2]);
-        toggle(lay.list_style_row[3],I::ListTagNameColor,I::ListTagNameColorDesc,L"\xE8EC",vm.settings_list_tag_names,22);divider(lay.list_style_row[3]);
-        toggle(lay.list_style_row[4],I::ListSelectionOutline,I::ListSelectionOutlineDesc,L"\xE73E",vm.settings_list_selection_outline,33);divider(lay.list_style_row[4]);
-        toggle(lay.list_style_row[5],I::ListThumbnailBadges,I::ListThumbnailBadgesDesc,L"\xE8B9",vm.settings_list_thumbnail_badges,34);divider(lay.list_style_row[5]);
-        const I folder_sort[]={I::FolderSortTop,I::FolderSortFollow,I::FolderSortMixed};const int folder_sort_values[]={0,1,2};
-        segmented(lay.folder_sort_card,lay.folder_sort_row,folder_sort,folder_sort_values,vm.settings_folder_sort,H::SettingsFolderSort,I::SettingsFolderSort,I::SettingsFolderSortDesc);divider(lay.folder_sort_card);
-        toggle(lay.confirm_delete_row,I::SettingsConfirmDelete,I::SettingsConfirmDeleteDesc,L"\xE74D",vm.settings_confirm_delete,32);
-        disclosure(lay.disclosure[0],I::SettingsAdvanced,I::SettingsAdvancedDesc,L"\xE713",0,true);
-        if(vm.settings_expanded & 1u) {
-        draw_card(lay.wallpaper_card);
-        const auto& preview = lay.wallpaper_preview;
-        MakeBrush(dc, theme.fill_hover, brFillHover_);
-        FillRoundedRect(dc, brFillHover_.get(), preview.left, preview.top,
-                        preview.right - preview.left, preview.bottom - preview.top, 6.0f * scale_);
-        if (!vm.background_image.empty())
-            material_.DrawSourceCover(dc, preview, vm.background_image);
-        MakeBrush(dc, theme.stroke_card, brStrokeCard_);
-        dc->DrawRoundedRectangle(D2D1::RoundedRect(preview, 6.0f * scale_, 6.0f * scale_),
-                                 brStrokeCard_.get(), 1.0f);
-        const float text_left = preview.right + 12.0f * scale_;
-        const bool compact_wallpaper = lay.wallpaper_choose.top >
-            lay.wallpaper_card.top + 64.0f * scale_;
-        const float text_right = compact_wallpaper
-            ? lay.wallpaper_card.right - 16.0f * scale_
-            : lay.wallpaper_choose.left - 12.0f * scale_;
-        MakeBrush(dc, theme.text, brText_);
-        DrawTextRect(dc, compositor_->TextFormat(), brText_.get(),
-                     pulse::l10n::Get(pulse::l10n::StringId::SettingsWallpaper),
-                     text_left, lay.wallpaper_card.top + 18.0f * scale_,
-                     (std::max)(40.0f * scale_, text_right - text_left), 22.0f * scale_);
-        const std::wstring wallpaper_desc = vm.background_image.empty()
-            ? pulse::l10n::Get(pulse::l10n::StringId::SettingsWallpaperDesc)
-            : FileNameOf(vm.background_image);
-        MakeBrush(dc, theme.text_secondary, brTextSecondary_);
-        DrawTextRect(dc, compositor_->SmallFormat(), brTextSecondary_.get(), wallpaper_desc,
-                     text_left, lay.wallpaper_card.top + 42.0f * scale_,
-                     (std::max)(40.0f * scale_, text_right - text_left), 18.0f * scale_);
-        fluent::ControlState choose{};
-        choose.hovered = IsHovered(vm, HitTestResult::SettingsWallpaper, 0);
-        painter_.DrawButton({ lay.wallpaper_choose,
-                              pulse::l10n::Get(pulse::l10n::StringId::ChooseImage), {},
-                              fluent::ButtonKind::Standard, choose });
-        fluent::ControlState clear{};
-        clear.enabled = !vm.background_image.empty();
-        clear.hovered = clear.enabled && IsHovered(vm, HitTestResult::SettingsWallpaper, 1);
-        painter_.DrawButton({ lay.wallpaper_clear,
-                              pulse::l10n::Get(pulse::l10n::StringId::Clear), {},
-                              fluent::ButtonKind::Standard, clear });
-
-
-            const I looks[]={I::WallpaperLookSubtle,I::WallpaperLookBalanced,I::WallpaperLookVivid};const int look_ticks[]={25,50,75};
-            draw_card(lay.wallpaper_look_card);slider(lay.wallpaper_look_card,lay.wallpaper_look_row,vm.wallpaper_look,kPanelTransparencyMax,look_ticks,looks,H::SettingsWallpaperLook,I::SettingsWallpaperLook,I::SettingsWallpaperLookDesc,L"%");
-            const I blurs[]={I::WallpaperBlurOff,I::WallpaperBlurLight,I::WallpaperBlurStrong};const int blur_ticks[]={0,14,28};
-            draw_card(lay.wallpaper_blur_card);slider(lay.wallpaper_blur_card,lay.wallpaper_blur_row,vm.wallpaper_blur,kWallpaperBlurMax,blur_ticks,blurs,H::SettingsWallpaperBlur,I::SettingsWallpaperBlur,I::SettingsWallpaperBlurDesc,L" px");
-            const I sizes[]={I::SettingsTraySmall,I::SettingsTrayStandard,I::SettingsTrayLarge};const int icons[]={40,48,56};
-            draw_card(lay.tray_icon_card);segmented(lay.tray_icon_card,lay.tray_icon_row,sizes,icons,vm.settings_tray_icon,H::SettingsTrayIcon,I::SettingsTrayIcon,I::SettingsTrayIconDesc);
-            draw_card(lay.shell_tags_row);toggle(lay.shell_tags_row,I::SettingsShellTags,I::SettingsShellTagsDesc,L"\xE8EC",vm.settings_shell_tags,21);
-            draw_card(lay.hidden_files_row);toggle(lay.hidden_files_row,I::SettingsShowHidden,I::SettingsShowHiddenDesc,L"\xE890",vm.settings_show_hidden_files,5);
-            // Hidden + system entries: File Explorer keeps these behind a second option.
-            draw_card(lay.protected_files_row);toggle(lay.protected_files_row,I::SettingsShowProtected,I::SettingsShowProtectedDesc,L"\xE72E",vm.settings_show_protected_os_files,16);
-            draw_card(lay.pinned_names_row);toggle(lay.pinned_names_row,I::PinnedNames,I::PinnedNamesDesc,L"\xE718",vm.show_pinned_tab_names,6);
-            draw_card(lay.alias_mark_row);toggle(lay.alias_mark_row,I::AliasMark,I::AliasMarkDesc,L"\xE8EC",vm.settings_alias_mark,39);
-            draw_card(lay.vertical_tabs_row);toggle(lay.vertical_tabs_row,I::SettingsVerticalTabs,I::SettingsVerticalTabsDesc,L"\xE7C4",vm.settings_vertical_tabs,23);
-            draw_card(lay.tray_hide_row);toggle(lay.tray_hide_row,I::TrayHideWhenEmpty,I::TrayHideWhenEmptyDesc,L"\xE7B8",vm.settings_tray_hide_empty,37);
-            draw_card(lay.hints_row);toggle(lay.hints_row,I::SettingsHints,I::SettingsHintsDesc,L"\xE82F",vm.settings_show_hints,24);
-            draw_card(lay.hints_reset_row);label(lay.hints_reset_row,l10n::Get(I::SettingsHintsReset),
-                l10n::Get(vm.settings_tips_seen ? I::SettingsHintsResetDesc : I::HintsResetDone),L"\xE72C",lay.hints_reset_button.left-8*scale_);
-            button(lay.hints_reset_button,l10n::Get(I::HintsResetButton),H::SettingsToggle,25,false,vm.settings_tips_seen);
-            {
-                const I blank_click[]={I::SettingsBlankClickOff,I::Back,I::Up};const int blank_click_values[]={0,1,2};
-                draw_card(lay.blank_click_row);segmented(lay.blank_click_row,lay.blank_click_choice,blank_click,blank_click_values,vm.settings_blank_click_action,H::SettingsBlankClick,I::SettingsBlankClickBack,I::SettingsBlankClickBackDesc,3,L"\xE72B");
+        segmented(lay.density_card,lay.density_row,density,heights,vm.settings_row_height,H::SettingsDensity,I::SettingsRowHeight,I::SettingsRowHeightDesc,3,L"\xECE7");
+        {
+            // 鼠标与选择: the name band and hover selection only mean something with single-click.
+            const I open_modes[]={I::ClickOpenDouble,I::ClickOpenSingle};const int open_values[]={0,1};
+            segmented(lay.click_open_card,lay.click_open_row,open_modes,open_values,vm.settings_single_click ? 1 : 0,H::SettingsClickMode,I::SettingsClickOpen,I::SettingsClickOpenDesc,2,L"\xE8B0");
+            if(vm.settings_single_click) {
+                const I bands[]={I::NameHighlightHover,I::NameHighlightAlways};const int band_values[]={0,1};
+                segmented(lay.name_highlight_card,lay.name_highlight_row,bands,band_values,vm.settings_name_highlight,H::SettingsNameBand,I::SettingsNameHighlight,I::SettingsNameHighlightDesc,2,L"\xE7E6");
+                toggle(lay.hover_select_row,I::SettingsHoverSelect,I::SettingsHoverSelectDesc,L"\xE815",vm.settings_hover_select,77);
             }
-            draw_card(lay.change_tracking_row);toggle(lay.change_tracking_row,I::SettingsChangeTracking,I::SettingsChangeTrackingDesc,L"\xE823",vm.settings_change_tracking,8);
+            toggle(lay.item_checkbox_row,I::SettingsItemCheckboxes,I::SettingsItemCheckboxesDesc,L"\xE73A",vm.settings_item_checkboxes,78);
+            const I blank_click[]={I::SettingsBlankClickOff,I::Back,I::Up};const int blank_click_values[]={0,1,2};
+            segmented(lay.blank_click_row,lay.blank_click_choice,blank_click,blank_click_values,vm.settings_blank_click_action,H::SettingsBlankClick,I::SettingsBlankClickBack,I::SettingsBlankClickBackDesc,3,L"\xE72B");
+        }
+        toggle(lay.hidden_files_row,I::SettingsShowHidden,I::SettingsShowHiddenDesc,L"\xED1A",vm.settings_show_hidden_files,5);
+        // Hidden + system entries: File Explorer keeps these behind a second option.
+        toggle(lay.protected_files_row,I::SettingsShowProtected,I::SettingsShowProtectedDesc,L"\xEA18",vm.settings_show_protected_os_files,16);
+        {
+            const I folder_sorts[]={I::FolderSortTop,I::FolderSortFollow,I::FolderSortMixed};const int folder_sort_values[]={0,1,2};
+            segmented(lay.folder_sort_card,lay.folder_sort_row,folder_sorts,folder_sort_values,vm.settings_folder_sort,H::SettingsFolderSort,I::SettingsFolderSort,I::SettingsFolderSortDesc,3,L"\xE8CB");
+        }
+        toggle(lay.list_style_row[0],I::ListSmartDate,I::ListSmartDateDesc,L"\xE787",vm.settings_list_smart_date,17);
+        toggle(lay.list_style_row[1],I::ListZebraRows,I::ListZebraRowsDesc,L"\xE7BC",vm.settings_list_zebra_rows,18);
+        toggle(lay.list_style_row[2],I::ListSizeBar,I::ListSizeBarDesc,L"\xE9D2",vm.settings_list_size_bar,19);
+        toggle(lay.list_style_row[3],I::ListTagNameColor,I::ListTagNameColorDesc,L"\xE8EC",vm.settings_list_tag_names,22);
+        toggle(lay.list_style_row[4],I::ListSelectionOutline,I::ListSelectionOutlineDesc,L"\xE8B3",vm.settings_list_selection_outline,33);
+        toggle(lay.list_style_row[5],I::ListThumbnailBadges,I::ListThumbnailBadgesDesc,L"\xE8B9",vm.settings_list_thumbnail_badges,34);
+        toggle(lay.alias_mark_row,I::AliasMark,I::AliasMarkDesc,L"\xE8AC",vm.settings_alias_mark,39);
+        if(lay.mtime_style_card.bottom>lay.mtime_style_card.top) {
+            // 修改时间提示: style, then range / colors / switches while it is on.
+            const auto& mt=vm.settings_mtime;
+            const I mt_styles[]={I::MtimeStyleOff,I::MtimeStyleDot,I::MtimeStyleBar,I::MtimeStyleText};const int mt_style_values[]={0,1,2,3};
+            segmented(lay.mtime_style_card,lay.mtime_style_row,mt_styles,mt_style_values,mt.style,H::SettingsMtimeStyle,I::ListMtimeHint,I::ListMtimeHintDesc,4,L"\xE916");
+            if(mt.style!=0) {
+                const I mt_ranges[]={I::MtimeRangeToday,I::MtimeRange3,I::MtimeRange7,I::MtimeRange30};const int mt_range_values[]={1,3,7,30};
+                segmented(lay.mtime_range_card,lay.mtime_range_row,mt_ranges,mt_range_values,mt.range_days,H::SettingsMtimeRange,I::ListMtimeRange,I::ListMtimeRangeDesc,4,L"\xEC92");
+                const I mt_palettes[]={I::MtimePaletteAccent,I::MtimePaletteHeat,I::MtimePaletteTeal,I::MtimePaletteAmber,I::MtimePaletteAurora,I::MtimePaletteGraphite};
+                const int mt_palette_values[]={0,1,2,3,4,5};
+                segmented(lay.mtime_palette_card,lay.mtime_palette_row,mt_palettes,mt_palette_values,mt.palette,H::SettingsMtimePalette,I::ListMtimePalette,I::ListMtimePaletteDesc,6,L"\xE9CA");
+                {
+                    // Live swatch after the title: newest to oldest in the chosen colors.
+                    const auto& card=lay.mtime_palette_card;
+                    const float title_w=typography::MeasureLine(compositor_,compositor_->TextFormat(),l10n::Get(I::ListMtimePalette));
+                    const float mark=7.0f*scale_, step=13.0f*scale_;
+                    float mx=card.left+54*scale_+title_w+12*scale_+mark/2;
+                    const float my=card.top+22*scale_;
+                    const float limit=lay.mtime_palette_row[0].left<card.left+100*scale_ ? card.right-16*scale_ : lay.mtime_palette_row[0].left-12*scale_;
+                    for(int b=0;b<kMtimeBucketNone && mx+mark/2<limit;++b,mx+=step) {
+                        const auto swatch=MtimeColor(mt.palette,b,theme.bg.r<0.5f,theme.accent,IsHighContrast());
+                        MakeBrush(dc,swatch,brTagDot_);
+                        if(mt.style==1) DrawMtimeMark(dc,brTagDot_.get(),mx,my,mark,b,swatch);
+                        else {
+                            FillRoundedRect(dc,brTagDot_.get(),mx-mark/2,my-1.5f*scale_,mark+3*scale_,3*scale_,1.5f*scale_);
+                        }
+                    }
+                }
+                
+                toggle(lay.mtime_toggle_row[0],I::ListMtimeFade,I::ListMtimeFadeDesc,L"\xE793",mt.fade,70);
+                toggle(lay.mtime_toggle_row[1],I::ListMtimeBold,I::ListMtimeBoldDesc,L"\xE8DD",mt.bold,71);
+                if(vm.settings_change_tracking) toggle(lay.mtime_toggle_row[2],I::ListMtimeTree,I::ListMtimeTreeDesc,L"\xE8B7",mt.tree,72);
+                else {
+                    // Folders follow change tracking: shown off and disabled until it is on.
+                    const auto& r=lay.mtime_toggle_row[2];
+                    label(r,l10n::Get(I::ListMtimeTree),l10n::Get(I::ListMtimeTreeNeeds),L"\xE8B7");
+                    fluent::ControlState state{}; state.checked=false; state.enabled=false;
+                    painter_.DrawSwitch(D2D1::RectF(r.right-60*scale_,r.top+16*scale_,r.right-16*scale_,r.top+48*scale_),L"",state);
+                }
+                
+                toggle(lay.mtime_toggle_row[3],I::ListMtimeOtherViews,I::ListMtimeOtherViewsDesc,L"\xE8A9",mt.other_views,73);
+                toggle(lay.mtime_toggle_row[4],I::ListMtimeFlash,I::ListMtimeFlashDesc,L"\xE945",mt.flash,74);
+            }
+            toggle(lay.sync_row[0],I::SyncOneDrive,I::SyncOneDriveDesc,L"\xE753",vm.settings_sync_onedrive,75);
+            toggle(lay.sync_row[1],I::SyncSvn,I::SyncSvnDesc,L"\xE8AB",vm.settings_sync_svn,76);
+        }
+        }
+        if(page==12) {
+        toggle(lay.confirm_delete_row,I::SettingsConfirmDelete,I::SettingsConfirmDeleteDesc,L"\xE897",vm.settings_confirm_delete,32);
+        {
+            const I sizes[]={I::SettingsTraySmall,I::SettingsTrayStandard,I::SettingsTrayLarge};const int icons[]={40,48,56};
+            segmented(lay.tray_icon_card,lay.tray_icon_row,sizes,icons,vm.settings_tray_icon,H::SettingsTrayIcon,I::SettingsTrayIcon,I::SettingsTrayIconDesc,3,L"\xED1E");
+        }
+        toggle(lay.tray_hide_row,I::TrayHideWhenEmpty,I::TrayHideWhenEmptyDesc,L"\xE8F6",vm.settings_tray_hide_empty,37);
+        toggle(lay.change_tracking_row,I::SettingsChangeTracking,I::SettingsChangeTrackingDesc,L"\xE823",vm.settings_change_tracking,8);
+        {
             const I days[]={I::ChangeToday,I::ChangeLast3Days,I::ChangeLast7Days};const int day_values[]={1,3,7};
-            draw_card(lay.change_days_row);segmented(lay.change_days_row,lay.change_days,days,day_values,vm.settings_change_days,H::SettingsChangeDays,I::SettingsChangeDays,I::SettingsChangeTrackingDesc);
+            const bool dim=dim_begin(!vm.settings_change_tracking);
+            segmented(lay.change_days_row,lay.change_days,days,day_values,vm.settings_change_days,H::SettingsChangeDays,I::SettingsChangeDays,I::SettingsChangeDaysDesc,3,L"\xE9D5");
+            dim_end(dim);
+        }
         }
         text(l10n::Get(I::SettingsImmediate),lay.footer,true);
     } else if(!vm.settings_search_enabled) {

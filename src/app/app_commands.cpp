@@ -1,5 +1,6 @@
 #include "tag_color_commands.h"
 #include "git_ui.h"
+#include "mtime_hint_prefs.h"
 #include "tag_ads_sync.h"
 #include "tag_query.h"
 #include "folder_alias.h"
@@ -5433,6 +5434,9 @@ static void RefreshEditFonts(AppState& s) {
 }
 
 void ApplySettingsEffects(AppState& s, app::SettingsEffect effects) {
+    // Cheap when unchanged; 文件夹最近变化 (ChangeTracking) also feeds it.
+    s.renderer.SetMtimeHint(app::MtimeHintFromPrefs(s.appPrefs));
+    s.renderer.SetItemClick(s.appPrefs.single_click_open, s.appPrefs.name_highlight, s.appPrefs.item_checkboxes);
     if (app::HasEffect(effects, app::SettingsEffect::FileVisibility)) {
         ForEachPane(s, [&](app::Pane& pane) {
             if (auto* tab = pane.ActiveTab()) {

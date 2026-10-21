@@ -188,8 +188,10 @@ HRESULT CreateRenderingParams(IDWriteFactory2* factory, HMONITOR monitor,
     }
 
     // Sharp hints glyphs to the pixel grid (GDI-style stems) so small UI text
-    // stays crisp at 100-125% scaling; the default keeps symmetric smoothing.
+    // stays crisp at 100-125% scaling. Auto keeps symmetric smoothing but
+    // grid-fits vertically like the LumaText path; Smooth stays unhinted.
     const bool sharp = CurrentTextRenderMode() == TextRenderMode::Sharp;
+    const bool grid_fit = CurrentTextRenderMode() != TextRenderMode::Smooth;
     IDWriteFactory3* modern = nullptr;
     if (!compat::LegacyMode() && SUCCEEDED(factory->QueryInterface(IID_PPV_ARGS(&modern)))) {
         IDWriteRenderingParams3* modern_params = nullptr;
@@ -197,7 +199,7 @@ HRESULT CreateRenderingParams(IDWriteFactory2* factory, HMONITOR monitor,
             base->GetGamma(), base->GetEnhancedContrast(), grayscale_contrast,
             base->GetClearTypeLevel(), DWRITE_PIXEL_GEOMETRY_FLAT,
             sharp ? DWRITE_RENDERING_MODE1_GDI_CLASSIC : DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
-            sharp ? DWRITE_GRID_FIT_MODE_ENABLED : DWRITE_GRID_FIT_MODE_DISABLED,
+            grid_fit ? DWRITE_GRID_FIT_MODE_ENABLED : DWRITE_GRID_FIT_MODE_DISABLED,
             &modern_params);
         modern->Release();
         if (SUCCEEDED(result) && modern_params) {
@@ -210,7 +212,7 @@ HRESULT CreateRenderingParams(IDWriteFactory2* factory, HMONITOR monitor,
         base->GetGamma(), base->GetEnhancedContrast(), grayscale_contrast,
         base->GetClearTypeLevel(), DWRITE_PIXEL_GEOMETRY_FLAT,
         sharp ? DWRITE_RENDERING_MODE_GDI_CLASSIC : DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC,
-        sharp ? DWRITE_GRID_FIT_MODE_ENABLED : DWRITE_GRID_FIT_MODE_DISABLED, params);
+        grid_fit ? DWRITE_GRID_FIT_MODE_ENABLED : DWRITE_GRID_FIT_MODE_DISABLED, params);
     base->Release();
     return result;
 }

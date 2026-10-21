@@ -15,6 +15,7 @@
 #include "../app/search_query.h"
 #include "../common/text_format.h"
 #include "../common/preview_extensions.h"
+#include "../common/file_placeholder.h"
 #include "wall_aspects.h"
 #include "file_name_breaks.h"
 #include "../fs/cloud_state.h"
@@ -590,7 +591,8 @@ MainRenderer::DetailsColumnLayout MainRenderer::DetailsColumns(
         const std::wstring* values[] = { &entry.date_text, &entry.type_text, &entry.size_text };
         for (size_t i = 0; i < measured.size(); ++i)
             measured[i] = std::max(measured[i],
-                measure(*values[i], compositor_->FileNameFormat()) + 20.0f * scale_);
+                measure(*values[i], compositor_->FileNameFormat()) + 20.0f * scale_ +
+                (i == 0 ? MtimeDateExtraDip() * scale_ : 0.0f));
         measured[1] = std::max(measured[1], measure(entry.type_text, compositor_->FileNameFormat()) +
             (20.0f + TypeChipWidthDip(TypeChipLabel(entry.name, entry.is_dir))) * scale_);
     }
@@ -642,7 +644,7 @@ MainRenderer::ColumnAutoWidths MainRenderer::AutoColumnWidths() const {
         float status = header_w(StringId::ColumnStatus);
         for (StringId id : {StringId::CloudStateOnline, StringId::CloudStateLocal, StringId::CloudStatePinned})
             status = std::max(status, measure(fmt, pulse::l10n::Get(id)) + 22.0f);
-        out.date = std::clamp(date + pad, 72.0f, 176.0f);
+        out.date = std::clamp(date + pad + MtimeDateExtraDip(), 72.0f, 176.0f + MtimeDateExtraDip());
         out.created = std::clamp(created + pad, 72.0f, 176.0f);
         out.accessed = std::clamp(accessed + pad, 72.0f, 176.0f);
         out.type = std::clamp(type + pad, 64.0f, 196.0f);
@@ -1118,6 +1120,144 @@ TreeMoreLayout LayoutTreeMore(const DetailsTreeRow& row, const D2D1_RECT_F& cell
 }
 } // namespace
 
+namespace {
+constexpr float kCheckGutterDip = 24.0f;
+constexpr float kCheckBoxDip = 16.0f;  // as large as a Details icon, no larger
+
+void EnsureRoundCapStroke(ID2D1DeviceContext* dc, ComPtr<ID2D1StrokeStyle>& stroke) {
+    if (stroke.get() || !dc) return;
+    ID2D1Factory* factory = nullptr;
+    dc->GetFactory(&factory);
+    if (!factory) return;
+    D2D1_STROKE_STYLE_PROPERTIES props{};
+    props.startCap = D2D1_CAP_STYLE_ROUND;
+    props.endCap = D2D1_CAP_STYLE_ROUND;
+    factory->CreateStrokeStyle(props, nullptr, 0, &stroke);
+    factory->Release();
+}
+
+// Item check box (Pulse_复选框重构方案.html, A): a hairline box that stays
+// transparent until checked; checked and mixed fill with the accent and carry
+// a round-capped tick or dash. Antialiased per primitive with the box edges on
+// whole device pixels and the hairline centred on a pixel row, so it stays
+// crisp. state: 0 off, 1 checked, 2 mixed. progress draws the tick in (0..1).
+void DrawItemCheckBox(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* brush, ID2D1StrokeStyle* round,
+                      D2D1_RECT_F box, float scale, const Theme& theme, bool high_contrast,
+                      int state, bool hot, float progress, float alpha) {
+    if (!dc || !brush) return;
+    const D2D1_ANTIALIAS_MODE saved = dc->GetAntialiasMode();
+    dc->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    const float side = std::round(kCheckBoxDip * scale);
+    box.left = std::round(box.left);
+    box.top = std::round(box.top);
+    box.right = box.left + side;
+    box.bottom = box.top + side;
+    const float radius = 4.0f * scale;
+    const bool dark = theme.bg.r < 0.5f;
+    const auto with = [alpha](D2D1_COLOR_F c) { c.a *= alpha; return c; };
+    if (state == 0) {
+        const float px = std::max(1.0f, std::round(scale));
+        const float h = px * 0.5f;
+        brush->SetColor(with(high_contrast ? theme.text
+            : dark ? D2D1::ColorF(1.0f, 1.0f, 1.0f, hot ? 0.66f : 0.42f)
+                   : D2D1::ColorF(0.0f, 0.0f, 0.0f, hot ? 0.56f : 0.36f)));
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(box.left + h, box.top + h, box.right - h, box.bottom - h),
+                                                   radius - h, radius - h), brush, px);
+        dc->SetAntialiasMode(saved);
+        return;
+    }
+    // Dark backgrounds take a lighter accent with a dark tick (contrast > 4.5:1).
+    D2D1_COLOR_F fill = theme.accent;
+    if (dark && !high_contrast) {
+        const float k = hot ? 0.58f : 0.5f;
+        fill = D2D1::ColorF(fill.r + (1.0f - fill.r) * k, fill.g + (1.0f - fill.g) * k,
+                            fill.b + (1.0f - fill.b) * k, 1.0f);
+    } else if (hot && !high_contrast) {
+        fill = D2D1::ColorF(fill.r * 0.9f, fill.g * 0.9f, fill.b * 0.9f, 1.0f);
+    }
+    brush->SetColor(with(fill));
+    dc->FillRoundedRectangle(D2D1::RoundedRect(box, radius, radius), brush);
+    const D2D1_COLOR_F ink = high_contrast ? theme.accent_text
+        : dark ? D2D1::ColorF(0x1A1C2C) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+    brush->SetColor(with(ink));
+    const float u = side / 16.0f;
+    const float stroke = std::max(1.5f, 1.6f * scale);
+    const auto at = [&](float x, float y) { return D2D1::Point2F(box.left + x * u, box.top + y * u); };
+    if (state == 2) {
+        dc->DrawLine(at(4.8f, 8.0f), at(11.2f, 8.0f), brush, stroke, round);
+        dc->SetAntialiasMode(saved);
+        return;
+    }
+    const D2D1_POINT_2F a = at(4.2f, 8.4f), b = at(6.9f, 11.0f), c = at(11.8f, 5.4f);
+    const float l1 = std::hypot(b.x - a.x, b.y - a.y), l2 = std::hypot(c.x - b.x, c.y - b.y);
+    const float p = std::clamp(progress, 0.0f, 1.0f);
+    const float run = (l1 + l2) * (1.0f - (1.0f - p) * (1.0f - p) * (1.0f - p));  // ease-out
+    ID2D1Factory* factory = nullptr;
+    dc->GetFactory(&factory);
+    ComPtr<ID2D1PathGeometry> tick;
+    if (factory && run > 0.01f && SUCCEEDED(factory->CreatePathGeometry(&tick)) && tick.get()) {
+        ComPtr<ID2D1GeometrySink> sink;
+        if (SUCCEEDED(tick->Open(&sink)) && sink.get()) {
+            sink->BeginFigure(a, D2D1_FIGURE_BEGIN_HOLLOW);
+            if (run <= l1) {
+                sink->AddLine(D2D1::Point2F(a.x + (b.x - a.x) * run / l1, a.y + (b.y - a.y) * run / l1));
+            } else {
+                sink->AddLine(b);
+                const float t2 = std::min(1.0f, (run - l1) / l2);
+                sink->AddLine(D2D1::Point2F(b.x + (c.x - b.x) * t2, b.y + (c.y - b.y) * t2));
+            }
+            sink->EndFigure(D2D1_FIGURE_END_OPEN);
+            sink->Close();
+            dc->DrawGeometry(tick.get(), brush, stroke, round);
+        }
+    }
+    if (factory) factory->Release();
+    dc->SetAntialiasMode(saved);
+}
+
+// Ticks draw in when a row becomes checked; keyed by path, so a folder that
+// reloads keeps its rows still.
+std::unordered_map<std::wstring, std::pair<bool, uint64_t>>& CheckTransitions() {
+    static std::unordered_map<std::wstring, std::pair<bool, uint64_t>> seen;
+    return seen;
+}
+}  // namespace
+
+float MainRenderer::CheckGutterDip(const PaneViewModel& vm) const {
+    return item_checks_ && vm.view_mode == ViewMode::Details ? kCheckGutterDip : 0.0f;
+}
+
+float MainRenderer::DetailsLeadDip(const PaneViewModel& vm, int view_index) const {
+    if (vm.view_mode != ViewMode::Details) return 0.0f;
+    const DetailsTreeRow* tree_row = vm.tree ? vm.tree->At(view_index) : nullptr;
+    return (tree_row ? TreeOffsetDip(*tree_row) : 0.0f) + CheckGutterDip(vm);
+}
+
+D2D1_RECT_F MainRenderer::ItemCheckRect(const PaneViewModel& vm, const D2D1_RECT_F& cell,
+                                        float details_base_x) const {
+    if (!item_checks_) return {};
+    const float side = kCheckBoxDip * scale_;
+    if (vm.view_mode == ViewMode::Details) {
+        const float left = std::round(details_base_x + 2.0f * scale_);  // clear of the selection bar
+        const float top = std::round(cell.top + (cell.bottom - cell.top - side) * 0.5f);
+        return D2D1::RectF(left, top, left + side, top + side);
+    }
+    if (vm.view_mode == ViewMode::ExtraLargeIcons || vm.view_mode == ViewMode::LargeIcons ||
+        vm.view_mode == ViewMode::MediumIcons) {
+        const float left = std::round(cell.left + 6.0f * scale_);
+        const float top = std::round(cell.top + 6.0f * scale_);
+        return D2D1::RectF(left, top, left + side, top + side);
+    }
+    return {};
+}
+
+D2D1_RECT_F MainRenderer::HeaderCheckRect(float columns_left, float header_top) const {
+    const float side = kCheckBoxDip * scale_;
+    const float left = std::round(columns_left + 4.0f * scale_);  // over the rows' boxes
+    const float top = std::round(header_top + (column_header_height_ - side) * 0.5f);
+    return D2D1::RectF(left, top, left + side, top + side);
+}
+
 bool MainRenderer::PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& full_bounds,
                                    int source_index, float x, float y) const {
     const D2D1_RECT_F pane_bounds = PaneBodyBounds(vm, full_bounds);
@@ -1159,8 +1299,8 @@ bool MainRenderer::PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& f
         const auto defaults = DetailsColumns(pane_bounds, vm.details_column_dividers,
                                             vm.is_search, vm.search_column_dividers);
         name.right += actual.Width(ColumnKind::Name) - defaults.Width(ColumnKind::Name);
-        if (const DetailsTreeRow* tree_row = vm.tree ? vm.tree->At(view_index) : nullptr)
-            name.left = std::min(name.right, name.left + std::round(TreeOffsetDip(*tree_row) * scale_));
+        if (const float lead = DetailsLeadDip(vm, view_index); lead > 0.0f)
+            name.left = std::min(name.right, name.left + std::round(lead * scale_));
     }
     const bool icon_grid = vm.view_mode == ViewMode::ExtraLargeIcons ||
                            vm.view_mode == ViewMode::LargeIcons ||
@@ -1266,8 +1406,8 @@ bool MainRenderer::PointInItemGrip(const PaneViewModel& vm, const D2D1_RECT_F& f
     const D2D1_RECT_F cell = layout.ItemRect(view_index);
     D2D1_RECT_F icon = layout.IconRect(view_index);
     if (vm.view_mode == ViewMode::Details) {
-        if (const DetailsTreeRow* tree_row = vm.tree ? vm.tree->At(view_index) : nullptr) {
-            const float shift = std::round(TreeOffsetDip(*tree_row) * scale_);
+        if (const float lead = DetailsLeadDip(vm, view_index); lead > 0.0f) {
+            const float shift = std::round(lead * scale_);
             icon.left += shift;
             icon.right += shift;
         }
@@ -1288,7 +1428,7 @@ int MainRenderer::TreeChevronAt(const PaneViewModel& vm, const D2D1_RECT_F& full
     const int row = layout.HitTest(x, y);
     const DetailsTreeRow* tree_row = vm.tree->At(row);
     if (!tree_row || tree_row->kind != TreeRowKind::Entry || !tree_row->expandable) return -1;
-    const float left = layout.IconRect(row).left +
+    const float left = layout.IconRect(row).left + CheckGutterDip(vm) * scale_ +
                        static_cast<float>(tree_row->depth) * kTreeIndentDip * scale_;
     return x >= left - 3.0f * scale_ && x < left + kTreeChevronDip * scale_ ? row : -1;
 }
@@ -1303,7 +1443,7 @@ int MainRenderer::TreeMoreActionAt(const PaneViewModel& vm, const D2D1_RECT_F& f
     const ViewLayout layout(vm.view_mode, list, vm.EntryCount(), vm.scroll_x, vm.scroll_y, scale_,
                             ListRowHeightDip(vm, list), vm.Groups());
     const D2D1_RECT_F cell = layout.ItemRect(view_row);
-    const float x0 = layout.IconRect(view_row).left + TreeOffsetDip(*tree_row) * scale_;
+    const float x0 = layout.IconRect(view_row).left + (TreeOffsetDip(*tree_row) + CheckGutterDip(vm)) * scale_;
     const TreeMoreLayout more = LayoutTreeMore(*tree_row, cell, x0, scale_,
                                                compositor_->DwriteFactory(), compositor_->TextFormat());
     for (int k = 0; k < more.count; ++k) {
@@ -1961,11 +2101,13 @@ void MainRenderer::DrawMorphFrom(const PaneViewModel& vm, const motion::ViewMorp
                                         brTextSecondary_.get(), text, x, top, width, height);
                 };
                 switch (columns.kinds[static_cast<size_t>(col)]) {
-                case ColumnKind::Date:
+                case ColumnKind::Date: {
+                    const float lead = mtime_hint_.style == 1 ? kMtimeDotLeadDip * scale_ : 0.0f;
                     draw(list_smart_date_ && e.modified_value && !e.date_text.empty()
                              ? SmartListDate(e.modified_value) : e.date_text,
-                         left, avail, DWRITE_TEXT_ALIGNMENT_LEADING);
+                         left + lead, avail - lead, DWRITE_TEXT_ALIGNMENT_LEADING);
                     break;
+                }
                 case ColumnKind::Created:
                     draw(list_smart_date_ && e.created_value && !e.created_text.empty()
                              ? SmartListDate(e.created_value) : e.created_text,
@@ -2773,14 +2915,30 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
             painted_columns_[static_cast<size_t>(pane_index)] = mask;
         }
         float cx = columns.left;
+        // Item check boxes: a select-all box heads the gutter, the Name label follows it.
+        const bool headerCheck = CheckGutterDip(pane) > 0.0f && !pane.curated_order &&
+                                 !pane.column_strip.Active() && pane.EntryCount() > 0;
+        const float nameLead = headerCheck ? CheckGutterDip(pane) * scale_ : 0.0f;
+        if (headerCheck) {
+            const D2D1_RECT_F box = HeaderCheckRect(columns.left, y);
+            const size_t total = pane.EntryCount();
+            const size_t picked = static_cast<size_t>(std::max(0, pane.selected_count));
+            const bool hot = vm.hover_region == static_cast<int>(HitTestResult::HeaderCheck) &&
+                             vm.hover_pane_index == pane_index;
+            EnsureRoundCapStroke(dc, roundCapStroke_);
+            MakeBrush(dc, theme.accent, brTagDot_);
+            DrawItemCheckBox(dc, brTagDot_.get(), roundCapStroke_.get(), box, scale_, theme, IsHighContrast(),
+                             picked == 0 ? 0 : picked >= total ? 1 : 2, hot, 1.0f, 1.0f);
+        }
         auto drawCol = [&](const std::wstring& label, SortColumn col, float cw, bool right = false,
                            bool sortable = true) {
             const bool active = sortable && !pane.curated_order && pane.sort_column == col;
             MakeBrush(dc, active ? theme.accent : theme.text, brText_);
             IDWriteTextFormat* fmt = compositor_->HeaderFormat();
             const float textInset = 8.0f * scale_;
-            const float contentLeft = cx + textInset;
-            const float availableW = std::max(0.0f, cw - textInset * 2.0f);
+            const float lead = col == SortColumn::Name ? nameLead : 0.0f;
+            const float contentLeft = cx + textInset + lead;
+            const float availableW = std::max(0.0f, cw - textInset * 2.0f - lead);
             const float iconW = active ? 12.0f * scale_ : 0.0f;
             const float iconGap = active ? 3.0f * scale_ : 0.0f;
             const float labelAvailable = std::max(0.0f, availableW - iconW - iconGap);
@@ -2956,6 +3114,41 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
     dc->PopAxisAlignedClip();
 }
 
+IDWriteTextFormat* MainRenderer::NameSemiboldFormat() {
+    IDWriteTextFormat* base = compositor_ ? compositor_->FileNameFormat() : nullptr;
+    IDWriteFactory2* factory = compositor_ ? compositor_->DwriteFactory() : nullptr;
+    if (!base || !factory) return nullptr;
+    if (name_semibold_format_.get() && name_semibold_base_ == base && name_semibold_size_ == base->GetFontSize())
+        return name_semibold_format_.get();
+    name_semibold_format_.reset();
+    name_semibold_base_ = base;
+    name_semibold_size_ = base->GetFontSize();
+    wchar_t family[128]{};
+    wchar_t locale[LOCALE_NAME_MAX_LENGTH]{};
+    if (FAILED(base->GetFontFamilyName(family, ARRAYSIZE(family))) ||
+        FAILED(base->GetLocaleName(locale, ARRAYSIZE(locale))))
+        return nullptr;
+    ComPtr<IDWriteFontCollection> collection;
+    base->GetFontCollection(&collection);
+    if (FAILED(factory->CreateTextFormat(family, collection.get(), DWRITE_FONT_WEIGHT_SEMI_BOLD, base->GetFontStyle(),
+                                         base->GetFontStretch(), base->GetFontSize(), locale, &name_semibold_format_)))
+        return nullptr;
+    IDWriteTextFormat* bold = name_semibold_format_.get();
+    bold->SetParagraphAlignment(base->GetParagraphAlignment());
+    bold->SetWordWrapping(base->GetWordWrapping());
+    DWRITE_LINE_SPACING_METHOD method{};
+    FLOAT spacing = 0.0f, baseline = 0.0f;
+    if (SUCCEEDED(base->GetLineSpacing(&method, &spacing, &baseline))) bold->SetLineSpacing(method, spacing, baseline);
+    // CJK names keep the same fallback fonts as the regular face.
+    ComPtr<IDWriteTextFormat1> base1, bold1;
+    if (SUCCEEDED(base->QueryInterface(__uuidof(IDWriteTextFormat1), reinterpret_cast<void**>(&base1))) &&
+        SUCCEEDED(bold->QueryInterface(__uuidof(IDWriteTextFormat1), reinterpret_cast<void**>(&bold1)))) {
+        ComPtr<IDWriteFontFallback> fallback;
+        if (SUCCEEDED(base1->GetFontFallback(&fallback)) && fallback.get()) bold1->SetFontFallback(fallback.get());
+    }
+    return bold;
+}
+
 bool MainRenderer::DrawTruncatedName(const std::wstring& name, float x, float y, float w, float h,
                                      const Theme& theme, bool selected, const std::vector<NameMatchRange>& matches,
                                      bool dim_extension) {
@@ -2966,7 +3159,9 @@ bool MainRenderer::DrawTruncatedName(const std::wstring& name, float x, float y,
     }
     ID2D1DeviceContext* dc = compositor_->Dc();
     IDWriteFactory2* factory = compositor_->DwriteFactory();
-    IDWriteTextFormat* fmt = compositor_->FileNameFormat();
+    // 今天修改的名称加粗: the caller measured the row with the same format.
+    const bool semibold = name_semibold_ && name_semibold_format_.get();
+    IDWriteTextFormat* fmt = semibold ? name_semibold_format_.get() : compositor_->FileNameFormat();
     MakeBrush(dc, theme.text, brText_);
 
     const auto old_wrap = fmt->GetWordWrapping();
@@ -2990,7 +3185,8 @@ bool MainRenderer::DrawTruncatedName(const std::wstring& name, float x, float y,
     // each substring its own clipping/ellipsis and loses glyph positioning
     // across the boundary (including the dot's ink and the stem's last glyph).
     ComPtr<IDWriteTextLayout> highlighted;
-    if ((!visible_matches.empty() || ext_at != std::wstring::npos) &&
+    // Semibold always takes the layout path: LumaText draws the regular face.
+    if ((!visible_matches.empty() || ext_at != std::wstring::npos || semibold) &&
         SUCCEEDED(factory->CreateTextLayout(shown.c_str(),
         static_cast<UINT32>(shown.size()), fmt, w, h, &highlighted))) {
         highlighted->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -3000,8 +3196,18 @@ bool MainRenderer::DrawTruncatedName(const std::wstring& name, float x, float y,
         if (ext_at != std::wstring::npos && SUCCEEDED(dc->CreateSolidColorBrush(ext_color, &ext_brush)))
             highlighted->SetDrawingEffect(ext_brush.get(), {static_cast<UINT32>(ext_at),
                                                             static_cast<UINT32>(shown.size() - ext_at)});
-        DrawNameHighlightBackground(compositor_, highlighted.get(), {x, y}, rc, visible_matches, theme, scale_);
-        dc->DrawTextLayout({x, y}, highlighted.get(), brText_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        // Baseline on a whole pixel row, as the LumaText names beside it.
+        float y_snap = y;
+        DWRITE_TEXT_METRICS text_metrics{};
+        DWRITE_LINE_METRICS line_metrics{};
+        UINT32 line_count = 0;
+        if (SUCCEEDED(highlighted->GetMetrics(&text_metrics)) &&
+            SUCCEEDED(highlighted->GetLineMetrics(&line_metrics, 1, &line_count)) && line_count > 0) {
+            const float baseline = y + text_metrics.top + line_metrics.baseline;
+            y_snap += std::round(baseline) - baseline;
+        }
+        DrawNameHighlightBackground(compositor_, highlighted.get(), {x, y_snap}, rc, visible_matches, theme, scale_);
+        dc->DrawTextLayout({x, y_snap}, highlighted.get(), brText_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
     } else if (IsHighContrast() || !compositor_->DrawLumaText(
             shown, fmt, rc, brText_->GetColor(), theme.bg,
             DWRITE_TEXT_ALIGNMENT_LEADING)) {
@@ -3668,9 +3874,8 @@ D2D1_RECT_F MainRenderer::RenameFieldRect(const PaneViewModel& vm, const D2D1_RE
     ViewLayout layout(vm.view_mode, list, vm.EntryCount(), vm.scroll_x, vm.scroll_y,
                       scale_, ListRowHeightDip(vm, list), vm.Groups());
     D2D1_RECT_F nameRc = layout.NameRect(view);
-    if (const DetailsTreeRow* tree_row = vm.view_mode == ViewMode::Details && vm.tree
-            ? vm.tree->At(view) : nullptr)
-        nameRc.left = std::min(nameRc.right, nameRc.left + std::round(TreeOffsetDip(*tree_row) * scale_));
+    if (const float lead = DetailsLeadDip(vm, view); lead > 0.0f)
+        nameRc.left = std::min(nameRc.right, nameRc.left + std::round(lead * scale_));
     const bool iconGrid = vm.view_mode == ViewMode::ExtraLargeIcons ||
                           vm.view_mode == ViewMode::LargeIcons ||
                           vm.view_mode == ViewMode::MediumIcons;
@@ -4173,6 +4378,15 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                                     vm.view_mode == ViewMode::MediumIcons) &&
             vm.rename_index >= 0 && vm.ViewIndex(vm.rename_index) >= 0;
         if (rename_covers) rename_card = RenameFieldRect(vm, viewport, vm.rename_index);
+        // 修改时间提示: one clock per pass; the change log's view has its own times.
+        const MtimeHint& mtime = mtime_hint_;
+        const bool mtime_on = mtime.style != 0 && !vm.is_changes && !vm.is_recycle;
+        const MtimeClock mtime_clock = mtime_on ? MtimeClock::Now() : MtimeClock{};
+        const int mtime_last = MtimeRangeLastBucket(mtime.range_days);
+        if (mtime_flash_started_.size() > 256) {
+            for (auto it = mtime_flash_started_.begin(); it != mtime_flash_started_.end();)
+                it = motion_now_ - it->second.second > 10000 ? mtime_flash_started_.erase(it) : std::next(it);
+        }
         for (int i = startIdx; i >= 0 && i <= endIdx; ++i) {
             D2D1_RECT_F cell = layout.ItemRect(i);
             if (cell.right < x || cell.left > x + w || cell.bottom < y || cell.top > y + h) continue;
@@ -4194,7 +4408,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     // The "more" row takes keyboard focus (Enter shows more).
                     if (draw_shapes && standIn->kind == TreeRowKind::More && vm.IsRowSelected(src))
                         selection_painter.Selected(cell);
-                    if (draw_text) drawTreePlaceholder(*standIn, cell, layout.IconRect(i).left);
+                    if (draw_text) drawTreePlaceholder(*standIn, cell, layout.IconRect(i).left + CheckGutterDip(vm) * scale_);
                     continue;
                 }
             }
@@ -4252,9 +4466,11 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             }
             // Details tree: rows indent by depth after the chevron slot.
             const DetailsTreeRow* treeRow = detailsView && vm.tree ? vm.tree->At(i) : nullptr;
-            const float treeBaseX = iconRect.left;
-            if (treeRow) {
-                const float dx = std::round(TreeOffsetDip(*treeRow) * scale_);
+            // The check box gutter (item_checks_) comes first, then the chevron slot.
+            const float checkBaseX = iconRect.left;
+            const float treeBaseX = iconRect.left + (detailsView ? CheckGutterDip(vm) * scale_ : 0.0f);
+            if (const float lead = detailsView ? DetailsLeadDip(vm, i) : 0.0f; lead > 0.0f) {
+                const float dx = std::round(lead * scale_);
                 iconRect.left += dx;
                 iconRect.right += dx;
                 thumbRect.left += dx;
@@ -4361,6 +4577,24 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             bool hover = (src == vm.hover_index) && !vm.marquee_active;
             bool cut = e.record_only || vm.cut_names.contains(e.name);
             const float hidden_alpha = HiddenEntryAlpha(e.attrs);
+            // Text follows the row's own time; the mark may take a folder's
+            // newest change inside (change tracking), so a folder whose files
+            // changed today reads as fresh without bolding its own date.
+            int mtimeOwn = kMtimeBucketNone, mtimeMark = kMtimeBucketNone;
+            uint64_t mtimeMarkTime = 0;
+            if (mtime_on && !e.record_only && e.modified_value) {
+                mtimeOwn = MtimeBucket(e.modified_value, mtime_clock);
+                mtimeMarkTime = e.modified_value;
+                if (mtime.tree && e.is_dir && change && change->last_change > mtimeMarkTime)
+                    mtimeMarkTime = change->last_change;
+                mtimeMark = MtimeBucket(mtimeMarkTime, mtime_clock, &mtime_next_boundary_);
+            }
+            const bool mtimeMarked = mtimeMark <= mtime_last;
+            const bool mtimeFresh = mtime.bold && mtimeOwn <= 1 && mtimeOwn <= mtime_last;
+            const bool mtimeOld = mtime_on && mtime.fade && mtimeOwn > mtime_last && !mtimeMarked;
+            const D2D1_COLOR_F mtimeColor = mtimeMarked
+                ? MtimeColor(mtime.palette, mtimeMark, theme.bg.r < 0.5f, theme.accent, IsHighContrast())
+                : D2D1_COLOR_F{};
             const bool expand_link = e.is_link && !vm.marquee_active && (hover || selected) &&
                 src != vm.rename_index;
             const float link_expansion = e.is_link && pane_index >= 0 && pane_index < 8
@@ -4397,7 +4631,27 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 FillRoundedRect(dc, brFillInput_.get(), bg.left + 0.5f * scale_,
                     (bg.top + bg.bottom - bar_h) * 0.5f, 2.5f * scale_, bar_h, 1.25f * scale_);
             }
-            if (draw_shapes && selected) selection_painter.Selected(bg);
+            // A check box already marks the row: no selection bar beside it.
+            if (draw_shapes && selected)
+                selection_painter.Selected(bg, !(item_checks_ && (detailsView || iconGrid) && !morph_item && !morphing));
+            if (draw_shapes && mtime_on && mtime.flash && !morph_item && !IsHighContrast() && !e.path.empty() &&
+                e.modified_value && e.modified_value + 3 * kMtimeSecond > mtime_clock.now &&
+                e.modified_value < mtime_clock.now + 2 * kMtimeSecond) {
+                // 文件刚被修改时闪一下: a file saved seconds ago glows once. A file
+                // written continuously (a download) does not glow again for 4 s.
+                auto [mtSeen, mtAdded] = mtime_flash_started_.try_emplace(e.path, e.modified_value, motion_now_);
+                if (!mtAdded && mtSeen->second.first != e.modified_value && motion_now_ - mtSeen->second.second > 4000)
+                    mtSeen->second = {e.modified_value, motion_now_};
+                const float mtGlow = static_cast<float>(motion_now_ - mtSeen->second.second) / 1200.0f;
+                if (mtGlow < 1.0f) {
+                    const float mtFade = (1.0f - mtGlow) * (1.0f - mtGlow);
+                    MakeBrush(dc, WithAlpha(theme.accent, 0.22f * mtFade), brFillInput_);
+                    FillRoundedRect(dc, brFillInput_.get(), bg.left + inset, bg.top + scale_,
+                        std::max(0.0f, bg.right - bg.left - inset * 2),
+                        std::max(0.0f, bg.bottom - bg.top - scale_ * 2), theme.radius_control * scale_);
+                    mtime_flash_until_ = std::max(mtime_flash_until_, mtSeen->second.second + 1200);
+                }
+            }
             if (draw_shapes && row_flash > 0.0f && !IsHighContrast()) {
                 // Newly appeared (pasted / created / extracted) row: fading accent wash.
                 MakeBrush(dc, WithAlpha(theme.accent, 0.20f * row_flash), brFillInput_);
@@ -4573,12 +4827,67 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             if (draw_shapes && !morph_item && !e.record_only && IsProtectedSystemEntry(e.attrs))
                 DrawProtectedBadge(dc, iconGrid ? artwork : iconRect, scale_, theme);
             // Cloud folders: where each item's content lives, as in the 状态 column.
+            // On pictures the badge takes the top-left corner (DrawCloudBadge).
+            bool cloudTopLeft = false;
             if (draw_shapes && !morph_item && !e.record_only && !e.is_link && vm.cloud_status_column &&
                 (iconGrid || wallPic)) {
                 const bool picture = wallPic || (drewCloudThumbnail && !e.is_dir);
-                DrawCloudBadge(e, wallPic ? thumbRect : artwork, picture, theme, cut ? 0.55f : hidden_alpha);
+                const D2D1_RECT_F cloudArt = wallPic ? thumbRect : artwork;
+                DrawCloudBadge(e, cloudArt, picture, theme, cut ? 0.55f : hidden_alpha);
+                cloudTopLeft = picture && std::min(cloudArt.right - cloudArt.left, cloudArt.bottom - cloudArt.top) >= 24.0f * scale_;
+            }
+            if (draw_shapes && !morph_item && mtimeMarked && mtime.other_views && mtime.style != 3 &&
+                vm.view_mode != ViewMode::Details) {
+                // Views without a date column: the mark on the icon's top-left
+                // corner (links and protected badges use the bottom corners),
+                // top-right when a picture's cloud badge holds the top-left.
+                const D2D1_RECT_F mtArt = iconGrid ? artwork : iconRect;
+                const float mtSide = std::clamp((mtArt.right - mtArt.left) * 0.2f, 7.0f * scale_, 12.0f * scale_);
+                const float mtX = cloudTopLeft ? mtArt.right - mtSide * 0.5f - scale_ : mtArt.left + mtSide * 0.5f + scale_;
+                const float mtY = mtArt.top + mtSide * 0.5f + scale_;
+                D2D1_COLOR_F mtHalo = theme.bg;
+                mtHalo.a = 0.92f;
+                MakeBrush(dc, mtHalo, brTagDot_);
+                dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(mtX, mtY), mtSide * 0.5f + 1.5f * scale_,
+                                              mtSide * 0.5f + 1.5f * scale_), brTagDot_.get());
+                MakeBrush(dc, mtimeColor, brTagDot_);
+                DrawMtimeMark(dc, brTagDot_.get(), mtX, mtY, mtSide, mtimeMark, mtimeColor);
             }
             if (draw_shapes && wallPic && !morph_item) DrawWallTileChrome(thumbRect, hover && src != vm.rename_index, selected, theme);
+            // Item check boxes: on the hovered and selected rows, on every row
+            // while several are selected.
+            if (draw_shapes && item_checks_ && !morph_item && !morphing && src != vm.rename_index &&
+                (hover || selected || vm.selected_count >= 2)) {
+                const D2D1_RECT_F box = ItemCheckRect(vm, cell, checkBaseX);
+                if (box.right > box.left) {
+                    if (!detailsView) {
+                        // Icon grids: a ring in the card colour keeps it off the thumbnail.
+                        MakeBrush(dc, theme.bg, brTagDot_);
+                        dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(box.left - 2.0f * scale_,
+                            box.top - 2.0f * scale_, box.right + 2.0f * scale_, box.bottom + 2.0f * scale_),
+                            6.0f * scale_, 6.0f * scale_), brTagDot_.get());
+                    }
+                    float tick = 1.0f;
+                    if (!e.path.empty()) {
+                        auto& seen = CheckTransitions();
+                        if (seen.size() > 4096) seen.clear();
+                        auto [it, added] = seen.try_emplace(e.path, selected, uint64_t{0});
+                        if (!added && it->second.first != selected) it->second = {selected, motion_now_};
+                        if (selected && it->second.second && motion::SystemAnimationsEnabled() && !IsHighContrast()) {
+                            const float t01 = static_cast<float>(motion_now_ - it->second.second) / 140.0f;
+                            if (t01 < 1.0f) {
+                                tick = std::max(0.0f, t01);
+                                list_loading_active_ = true;  // keeps frames coming for the draw-in
+                            }
+                        }
+                    }
+                    EnsureRoundCapStroke(dc, roundCapStroke_);
+                    MakeBrush(dc, theme.accent, brTagDot_);
+                    // Shown only because several are selected: faint until hovered.
+                    DrawItemCheckBox(dc, brTagDot_.get(), roundCapStroke_.get(), box, scale_, theme, IsHighContrast(),
+                                     selected ? 1 : 0, hover, tick, !hover && !selected ? 0.5f : 1.0f);
+                }
+            }
             // Mid-morph the labels are drawn in a second, faded pass.
             if (!draw_text) continue;
 
@@ -4601,10 +4910,25 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             const bool showRowActions = vm.view_mode == ViewMode::Details && !stripRow &&
                 src != vm.rename_index &&
                 (hover || (selected && vm.selected_count == 1) || e.starred);
+            // OneDrive: 1 online only, 2 on this device, 3 always kept, 4 waiting
+            // to sync, 5 syncing, 6 sync error, 7 warning, 8 not synced. Details
+            // rows end their name column with it; the hover buttons take its place.
+            int cloudState = 0;
+            if (vm.onedrive_status && !e.record_only && vm.view_mode == ViewMode::Details && !stripRow) {
+                // STORAGEPROVIDERSTATE_* (propkey.h) to the states above.
+                static constexpr int kShellCloudState[11] = {0, 1, 2, 3, 4, 4, 5, 6, 7, 8, 4};
+                const uint8_t shellState = vm.OneDriveStateAt(src);
+                if (shellState > 0 && shellState <= 10) cloudState = kShellCloudState[shellState];
+                else if (e.attrs & files::kAttributePinned) cloudState = 3;
+                else if (e.cloud_recall || files::PreviewWouldRecall(e.attrs))   // recall bits or offline
+                    cloudState = 1;
+                else cloudState = 2;
+            }
+            const float cloudReserve = cloudState != 0 && !showRowActions ? 20.0f * scale_ : 0.0f;
             // A lone name column has no divider: it ends at the layout's right.
             const float nameColRight = (vm.view_mode == ViewMode::Details
                 ? (stripRow ? detailsColumns.right : detailsColumns.DividerX(0) - margin_)
-                : nameRc.right) - (stripChevron ? 18.0f * scale_ : 0.0f);
+                : nameRc.right) - (stripChevron ? 18.0f * scale_ : 0.0f) - cloudReserve;
             if (stripChevron) {
                 DrawIconText(nameColRight + 2.0f * scale_, cell.top, 18.0f * scale_, cell.bottom - cell.top,
                              kIconChevronRight, L">", theme.text_secondary, 0.55f);
@@ -4670,13 +4994,17 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 ? std::min(108.0f * scale_, painter_.MeasureTagWidth(e.badge))
                 : staged_pill ? std::min(108.0f * scale_, painter_.MeasureTagWidth(staged_text))
                 : git_pill ? std::min(108.0f * scale_, painter_.MeasureTagWidth(GitMarkText(gitMark))) : 0.0f;
+            // 今天修改的名称加粗: measured and drawn at semibold, so tags and pills still follow it.
+            IDWriteTextFormat* nameFormat = compositor_->FileNameFormat();
+            if (mtimeFresh && !iconGrid && !wallPic && !has_alias && src != vm.rename_index)
+                if (IDWriteTextFormat* semibold = NameSemiboldFormat()) nameFormat = semibold;
             // List rows: [mark] alias  real name (pulse_alias.html .amark).
             const bool show_mark = has_alias && app::AliasStore::Instance().ShowMark();
             const bool list_mark = show_mark && !iconGrid;
             const NameTrail trail = LayoutNameTrail(
                 list_mark ? nameX + kListAliasMarkDip * scale_ : nameX, textY, textH, nameColRight, cell.top, cell.bottom, scale_,
                 has_alias ? alias_line : e.name, tagDotCount, badgeW, showStar, showNewTab, showMore,
-                compositor_, compositor_->DwriteFactory(), compositor_->FileNameFormat(), change != nullptr,
+                compositor_, compositor_->DwriteFactory(), nameFormat, change != nullptr,
                 vm.view_mode == ViewMode::Details ? (e.is_dir ? 3 : 2) : 0, name_matches, row_actions_);
             if (src == vm.rename_index) {
                 // The rename frame is drawn after every row (below): it can be
@@ -4714,6 +5042,22 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     nameRc.top < rename_card.bottom && nameRc.bottom > rename_card.top)
                     nameColor.a *= 0.38f;
                 MakeBrush(dc, nameColor, brText_);
+                // Single click opens: a highlighter band under the name's lower
+                // half on hover (or a resting 2 px line with "always").
+                if (click_single_ && !iconGrid && !wallPic && trail.name_w > 0.0f && (hover || click_band_ == 1)) {
+                    const float mid = std::round(textY + textH * 0.5f);
+                    D2D1_RECT_F band = D2D1::RectF(trail.name_x - scale_, mid - scale_,
+                                                   trail.name_x + trail.name_w + scale_, mid + 6.0f * scale_);
+                    if (IsHighContrast()) {
+                        band.top = band.bottom - scale_;
+                        MakeBrush(dc, theme.accent, brTagDot_);
+                    } else {
+                        if (!hover) band.top = band.bottom - 2.0f * scale_;
+                        // Dark backgrounds swallow a thin tint: a little more there.
+                        MakeBrush(dc, WithAlpha(theme.accent, theme.bg.r < 0.5f ? 0.34f : 0.24f), brTagDot_);
+                    }
+                    dc->FillRectangle(band, brTagDot_.get());
+                }
                 bool name_truncated = true;
                 if (wallPic) {
                     // Photo wall: no names under the pictures; hovered or
@@ -4805,8 +5149,10 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 } else {
                     Theme name_theme = theme;
                     name_theme.text = nameColor;
+                    name_semibold_ = nameFormat != compositor_->FileNameFormat();
                     name_truncated = DrawTruncatedName(e.name, trail.name_x, textY, trail.name_w, textH, name_theme,
                                                        selected, name_matches, detailsView && !e.is_dir);
+                    name_semibold_ = false;
                     // Icon grids with tag dots keep the name on one line; the
                     // single selected item still shows all of it.
                     if (iconGrid && !wallPic && name_truncated && selected && vm.selected_count == 1 &&
@@ -4826,6 +5172,23 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 if (hover && pane_index >= 0 && pane_index < static_cast<int>(hover_names_.size()))
                     hover_names_[static_cast<size_t>(pane_index)] = {src, name_truncated};
                 if (change && !iconGrid) DrawChangeBadge(compositor_, painter_, *change, trail.badge, theme, scale_);
+                if (cloudReserve > 0.0f) {
+                    const bool darkTheme = theme.bg.r < 0.5f;
+                    const D2D1_COLOR_F blue = darkTheme ? HexColor(0x62ABF5) : HexColor(0x0F6CBD);
+                    const D2D1_COLOR_F green = darkTheme ? HexColor(0x6CCB5F) : HexColor(0x107C10);
+                    const D2D1_COLOR_F red = darkTheme ? HexColor(0xFF99A4) : HexColor(0xC42B1C);
+                    const D2D1_COLOR_F amber = darkTheme ? HexColor(0xFCE100) : HexColor(0x9D5D00);
+                    const D2D1_COLOR_F inks[] = {blue, blue, green, green, theme.text_secondary, blue, red, amber,
+                                                 theme.text_secondary};
+                    const D2D1_COLOR_F ink = IsHighContrast() ? theme.text : inks[std::clamp(cloudState, 0, 8)];
+                    // Cloud outline / circled check / solid circled check / sync arrows /
+                    // error / warning / blocked, as File Explorer shows them.
+                    static constexpr const wchar_t* kCloudGlyphs[] = {L"\xE753", L"\xE753", L"\xE930", L"\xEC61",
+                        L"\xE895", L"\xE895", L"\xEB90", L"\xE7BA", L"\xE733"};
+                    const wchar_t* glyph = kCloudGlyphs[std::clamp(cloudState, 0, 8)];
+                    DrawIconText(nameColRight + 2.0f * scale_, cell.top, 16.0f * scale_, cell.bottom - cell.top,
+                                 glyph, L"", cut ? WithAlpha(ink, 0.55f) : ink, 0.78f);
+                }
                 const float link_left = (trail.tag_n > 0
                     ? trail.tag_x0 + trail.tag_r * 2 + (trail.tag_n - 1) * trail.tag_step
                     : trail.name_x + trail.name_w) + 6.0f * scale_;
@@ -4971,7 +5334,62 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     case ColumnKind::Date: {
                         const std::wstring date = list_smart_date_ && e.modified_value && !e.date_text.empty()
                             ? SmartListDate(e.modified_value) : e.date_text;
-                        draw_detail_text(fit(date, avail), left, avail, DWRITE_TEXT_ALIGNMENT_LEADING);
+                        if (!mtime_on) {
+                            draw_detail_text(fit(date, avail), left, avail, DWRITE_TEXT_ALIGNMENT_LEADING);
+                            break;
+                        }
+                        // 修改时间提示: dots sit in the cell's lead (every row's text
+                        // moves the same, so dates stay aligned); bars run under the text.
+                        const float mtLead = mtime.style == 1 ? kMtimeDotLeadDip * scale_ : 0.0f;
+                        const float mtLeft = left + mtLead;
+                        const float mtAvail = std::max(0.0f, avail - mtLead);
+                        if (mtimeMarked && mtime.style == 1 && mtLead > 0.0f) {
+                            const float mtSide = 8.0f * scale_;
+                            MakeBrush(dc, mtimeColor, brTagDot_);
+                            DrawMtimeMark(dc, brTagDot_.get(), colX + 11.0f * scale_, (cell.top + cell.bottom) * 0.5f,
+                                          mtSide, mtimeMark, cut ? WithAlpha(mtimeColor, 0.55f) : mtimeColor);
+                        }
+                        if (mtimeFresh && mtAvail > 1.0f) {
+                            // Changed today: semibold in the text color.
+                            IDWriteTextFormat* mtBold = NameSemiboldFormat();
+                            ComPtr<IDWriteTextLayout> mtLayout;
+                            const std::wstring mtShown = fit(date, mtAvail * 0.94f);
+                            if (mtBold && SUCCEEDED(compositor_->DwriteFactory()->CreateTextLayout(mtShown.c_str(),
+                                    static_cast<UINT32>(mtShown.size()), mtBold, mtAvail, cell.bottom - cell.top - 2.0f * scale_,
+                                    &mtLayout))) {
+                                mtLayout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                                mtLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                                mtLayout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                                MakeBrush(dc, cut ? WithAlpha(theme.text, 0.55f) : theme.text, brText_);
+                                dc->DrawTextLayout(D2D1::Point2F(mtLeft, cell.top + scale_), mtLayout.get(), brText_.get(),
+                                                   D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                            } else {
+                                draw_detail_text(fit(date, mtAvail), mtLeft, mtAvail, DWRITE_TEXT_ALIGNMENT_LEADING);
+                            }
+                        } else if (mtimeOld) {
+                            // Outside the range: a step lighter, so recent dates lead.
+                            MakeBrush(dc, WithAlpha(secondary, secondary.a * 0.62f), brTextSecondary_);
+                            draw_detail_text(fit(date, mtAvail), mtLeft, mtAvail, DWRITE_TEXT_ALIGNMENT_LEADING);
+                            MakeBrush(dc, secondary, brTextSecondary_);
+                        } else {
+                            draw_detail_text(fit(date, mtAvail), mtLeft, mtAvail, DWRITE_TEXT_ALIGNMENT_LEADING);
+                        }
+                        if (mtimeMarked && mtime.style == 2 && mtAvail > 8.0f * scale_) {
+                            // 时间条: as long as the time left in the range.
+                            const uint64_t mtSpan = mtime.range_days <= 1
+                                ? std::max<uint64_t>(mtime_clock.now - mtime_clock.midnight, kMtimeSecond)
+                                : static_cast<uint64_t>(ClampMtimeRange(mtime.range_days)) * kMtimeDay;
+                            const uint64_t mtAge = mtime_clock.now > mtimeMarkTime ? mtime_clock.now - mtimeMarkTime : 0;
+                            const float mtFrac = std::clamp(1.0f - static_cast<float>(static_cast<double>(mtAge) /
+                                                                                 static_cast<double>(mtSpan)), 0.06f, 1.0f);
+                            const float mtBarW = std::round(std::min(96.0f * scale_, mtAvail) * mtFrac);
+                            D2D1_COLOR_F mtBar = mtimeColor;
+                            if (!IsHighContrast()) mtBar.a *= 0.75f;
+                            if (cut) mtBar.a *= 0.55f;
+                            MakeBrush(dc, mtBar, brTagDot_);
+                            FillRoundedRect(dc, brTagDot_.get(), mtLeft, cell.bottom - 6.0f * scale_, mtBarW,
+                                            2.0f * scale_, 1.0f * scale_);
+                        }
                         break;
                     }
                     case ColumnKind::Status: {

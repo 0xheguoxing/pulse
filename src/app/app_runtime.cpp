@@ -14,6 +14,8 @@
 #include "vertical_tabs.h"
 #include "app_column_view.h"
 #include "git_ui.h"
+#include "sync_status_ui.h"
+#include "mtime_hint_prefs.h"
 #include "app_details_tree.h"
 #include "folder_sizes_ui.h"
 #include "update_status.h"
@@ -32,6 +34,7 @@
 #include "cloud_download.h"
 #include "cloud_roots.h"
 #include "../ui/typography.h"
+#include "../ui/settings_page_ids.h"
 #include "../ui/color_picker.h"
 #include "filter_tag_complete.h"
 #include "../common/localization.h"
@@ -627,7 +630,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             // Search off hides the index maintenance details on the search page.
             vm.settings_expanded = s.appPrefs.search_enabled ? s.settingsExpanded : (s.settingsExpanded & ~2u);
             FillShortcutsVm(s, vm);  // 快捷键: sidebar badge everywhere, the page view on page 7
-            if (vm.settings_page == 9) pulse::FillAiSettingsVm(s, vm);   // 增强包 > AI 与 MCP
+            if (vm.settings_page == ui::kSettingsPageAi) pulse::FillAiSettingsVm(s, vm);   // 增强包 > AI 与 MCP
             if (vm.settings_page == 5) vm.settings_preview_codecs = ui::DetectPreviewCodecs(false, s.hwnd);
             if (vm.settings_page == 6) {
                 // 系统右键菜单: the first visit starts a background scan.
@@ -1166,9 +1169,12 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             if (app::Tab* tab = p->ActiveTab()) {
                 FillChangePane(s, *tab, slot.pane, slot.rect);
                 FillGitPane(s, *tab, slot.pane);
+                FillSyncPane(s, *tab, slot.pane);   // SVN marks (outside Git) and OneDrive states
                 if (slot.focused) {
                     vm.pane.git_marks = slot.pane.git_marks;
+                    vm.pane.onedrive_status = slot.pane.onedrive_status;
                     AppendGitStatusText(*tab, vm.status.status_text);
+                    AppendSvnStatusText(s, *tab, vm.status.status_text);
                 }
                 for (const auto& cutPath : s.cutPaths) {
                     if (fs::ParentPath(cutPath) != tab->current_path) continue;
@@ -2645,6 +2651,14 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.settings_list_tag_names = s.appPrefs.list_tag_name_color;
     vm.settings_list_selection_outline = s.appPrefs.list_selection_outline;
     vm.settings_list_thumbnail_badges = s.appPrefs.list_thumbnail_badges;
+    vm.settings_mtime = app::MtimeHintFromPrefs(s.appPrefs);
+    vm.settings_mtime.tree = s.appPrefs.list_mtime_tree;   // the switch shows the pref itself
+    vm.settings_sync_onedrive = s.appPrefs.sync_onedrive;
+    vm.settings_sync_svn = s.appPrefs.sync_svn;
+    vm.settings_single_click = s.appPrefs.single_click_open;
+    vm.settings_name_highlight = s.appPrefs.name_highlight;
+    vm.settings_hover_select = s.appPrefs.hover_select;
+    vm.settings_item_checkboxes = s.appPrefs.item_checkboxes;
     vm.settings_vertical_tabs = s.appPrefs.vertical_tabs;
     vm.settings_tray_hide_empty = s.appPrefs.tray_hide_when_empty;
     vm.settings_show_hints = s.appPrefs.show_hints;
@@ -2660,6 +2674,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.settings_home_folder = s.appPrefs.home_folder;
     vm.settings_text_render = s.appPrefs.text_render;
     vm.settings_ui_font_scale = s.appPrefs.ui_font_scale;
+    std::copy_n(s.settings.custom_accent(), 3, vm.settings_accent_hsl);
     vm.sidebar_scroll = s.sidebarScroll;
     vm.sidebar_scrollbar_opacity = s.sidebarScrollbarFade.Opacity();
     vm.sidebar_scrollbar_expand = s.sidebarScrollbarFade.Expand();

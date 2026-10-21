@@ -9,7 +9,8 @@
 
 namespace pulse::ui {
 
-enum class GitMark : uint8_t { None = 0, Added, Renamed, Modified, Deleted, Conflict };
+// Locked: SVN only (a lock this working copy holds).
+enum class GitMark : uint8_t { None = 0, Added, Renamed, Modified, Deleted, Conflict, Locked };
 
 inline const std::wstring& GitMarkText(GitMark mark) {
     using l10n::StringId;
@@ -19,6 +20,7 @@ inline const std::wstring& GitMarkText(GitMark mark) {
     case GitMark::Modified: return l10n::Get(StringId::GitMarkModified);
     case GitMark::Deleted: return l10n::Get(StringId::GitMarkDeleted);
     case GitMark::Conflict: return l10n::Get(StringId::GitMarkConflict);
+    case GitMark::Locked: return l10n::Get(StringId::GitMarkLocked);
     default: break;
     }
     static const std::wstring kNone;
@@ -34,6 +36,7 @@ inline D2D1_COLOR_F GitMarkColor(GitMark mark, bool dark) {
     case GitMark::Modified: rgb = dark ? 0xE2C08Du : 0x9A6700u; break;
     case GitMark::Deleted: rgb = dark ? 0xF0827Au : 0xB42318u; break;
     case GitMark::Conflict: rgb = dark ? 0xFF7B72u : 0xCF222Eu; break;
+    case GitMark::Locked: rgb = dark ? 0xB5B9C4u : 0x5F6470u; break;
     default: return D2D1::ColorF(0, 0.0f);
     }
     return D2D1::ColorF(rgb, 1.0f);

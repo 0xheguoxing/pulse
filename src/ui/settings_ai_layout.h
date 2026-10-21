@@ -1,4 +1,4 @@
-// settings_ai_layout.h - Settings > 增强包 > AI 与 MCP (page 9): texts,
+// settings_ai_layout.h - Settings > 增强包 > AI 与 MCP (kSettingsPageAi): texts,
 // geometry and hit testing. Included by ui_renderer_internal.h inside its
 // anonymous namespace after settings_shortcuts_layout.h, so no includes here.
 // Drawing: ui_settings_ai.cpp; clicks: HitTestResult::SettingsAi (AiHit),

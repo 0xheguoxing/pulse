@@ -2260,7 +2260,11 @@ MainRenderer::TabStripMetrics MainRenderer::ComputeTabStrip(
 
     const TitleChrome chrome = MakeTitleChrome(window_w, scale_, title_bar_height_);
     m.x0 = EffectiveSidebarWidth(window_w) + margin_;
-    const float tabsRight = chrome.settings_left - 8.0f * scale_;
+    // However many tabs are open, a stretch of title bar right of the "+"
+    // button stays empty so the window can still be grabbed there; tabs
+    // compact that much earlier instead.
+    constexpr float kTabDragReserveDip = 56.0f;
+    const float tabsRight = chrome.settings_left - (8.0f + kTabDragReserveDip) * scale_;
 
     // Group chips: one at the start of each consecutive same-group run. Their
     // widths come out of the strip budget before tabs are sized; positions

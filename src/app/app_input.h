@@ -53,6 +53,8 @@ void UpdateMarqueeFrame(AppState& s);
 void HandleListRowClick(AppState& s, int index, bool ctrl, bool shift);
 void FinishListRowClick(AppState& s);
 void CancelRenameClick(AppState& s);
+// 悬停选中 (single click mode): resting on a row selects it. True when it did.
+bool TickHoverSelect(AppState& s, ULONGLONG now);
 bool PointInHitItemName(AppState& s, const ui::WindowViewModel& vm,
                                const ui::HitTestResult& hit, float x, float y);
 void CancelScrollAnimation(AppState& s);

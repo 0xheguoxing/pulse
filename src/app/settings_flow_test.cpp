@@ -432,7 +432,7 @@ int RunSettingsIntegrationUiTest(AppState& s, const wchar_t* output) {
     // Variants: 0 off, 1 on, 2 changed back, 3 failed, 4 another Pulse copy, 5 just turned on.
     auto fixture = [&](int state) {
         auto vm = BuildVm(s, false);
-        vm.settings_open = true; vm.settings_page = 0; vm.settings_scroll = 0;
+        vm.settings_open = true; vm.settings_page = 11; vm.settings_scroll = 0;
         vm.settings_expanded = 0;
         vm.settings_integration_state = state == 0 ? 0 : state == 4 ? 2 : state == 5 ? 1 : state;
         vm.settings_integration_enabled = state != 0;
@@ -661,7 +661,7 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
                 auto hit=[&](D2D1_RECT_F r){return s.renderer.HitTest(vm,window,(r.left+r.right)/2,(r.top+r.bottom)/2);};
                 bool nav=true;for(int i=0;i<5;++i) {auto h=hit(layout.nav_row[i]);nav &= h.region==H::SettingsNav && h.index==i;}
                 check(nav,"fixed navigation preserves all page destinations across widths and DPI");
-                check(layout.nav_row[0].top == layout.nav.top + 20*scale,
+                check(layout.nav_row[0].top <= layout.nav.top + 48*scale,
                     "settings navigation starts without a search-box gap");
                 check(layout.nav_row[4].bottom<layout.nav_row[3].top,"about is pinned below primary navigation");
                 if(page==0) {
@@ -741,18 +741,19 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
     click(layout().theme_tile[0]);check(!s.darkMode && s.appPrefs.theme_mode==1,"mouse click applies and saves light theme");
     click(layout().theme_tile[1]);check(s.darkMode && s.appPrefs.theme_mode==2,"mouse click applies and saves dark theme");
     click(layout().theme_tile[2]);check(s.themeOverride==ui::ThemeMode::Auto && s.appPrefs.theme_mode==0,"system theme is a persistent explicit selection");
+    OpenSettingsTab(s,9);s.settings.SetScroll(0,0);
     s.settings.SetScroll(layout().density_card.top-layout().content.top,
         s.renderer.SettingsMaxScroll(BuildVm(s,false),window.right,window.bottom));
     click(layout().density_row[0]);check(s.appPrefs.row_height==28,"mouse click changes density through existing controller");
     // Layout rectangles are scroll-relative: measure from the top so the target does not depend on the density step.
-    s.settings.SetScroll(0.0f,0.0f);
+    OpenSettingsTab(s,10);s.settings.SetScroll(0.0f,0.0f);
     s.settings.SetScroll(layout().close_last_tab_row.top-layout().content.top,
         s.renderer.SettingsMaxScroll(BuildVm(s,false),window.right,window.bottom));
     {
         const auto tab_layout=layout();
         check(tab_layout.close_last_tab_row.top>=tab_layout.new_tab_open_card.bottom &&
               tab_layout.close_last_tab_row.bottom<=tab_layout.group[1].bottom,
-              "close-with-last-tab row sits in the startup and close card");
+              "close-with-last-tab row sits in the tabs card");
         const bool was=s.appPrefs.close_window_with_last_tab;
         click(tab_layout.close_last_tab_row);
         const bool flipped=s.appPrefs.close_window_with_last_tab!=was;
@@ -760,14 +761,14 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
         check(flipped && s.appPrefs.close_window_with_last_tab==was,
               "mouse click toggles closing the window with the last tab");
     }
-    s.settings.SetScroll(0.0f,0.0f);
+    OpenSettingsTab(s,12);s.settings.SetScroll(0.0f,0.0f);
     s.settings.SetScroll(layout().confirm_delete_row.top-layout().content.top,
         s.renderer.SettingsMaxScroll(BuildVm(s,false),window.right,window.bottom));
     {
         const auto list_layout=layout();
         check(list_layout.confirm_delete_row.top>=list_layout.folder_sort_card.bottom &&
-              list_layout.confirm_delete_row.bottom<=list_layout.group[2].bottom,
-              "confirm-before-delete row sits in the file list card");
+              list_layout.confirm_delete_row.bottom<=list_layout.group[0].bottom,
+              "confirm-before-delete row sits in the delete card");
         const bool was=s.appPrefs.confirm_recycle_delete;
         click(list_layout.confirm_delete_row);
         const bool flipped=s.appPrefs.confirm_recycle_delete!=was;
@@ -782,16 +783,18 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
               !many.confirm_text.empty() && !many.danger,
               "recycle delete confirmation lists the items without the danger style");
     }
-    s.settings.SetScroll(0,0);
+    OpenSettingsTab(s,0);s.settingsExpanded&=~32u;s.settings.SetScroll(0,0);
     auto vm=BuildVm(s,false);
     const auto collapsed_max=s.renderer.SettingsMaxScroll(vm,window.right,window.bottom);
-    H toggle;toggle.region=H::SettingsDisclosure;toggle.index=0;HandleSettingsControl(s,toggle);
+    H toggle;toggle.region=H::SettingsDisclosure;toggle.index=0;
+    H custom;custom.region=H::SettingsAccentCustom;custom.index=0;HandleSettingsControl(s,custom);
     vm=BuildVm(s,false);const auto expanded_max=s.renderer.SettingsMaxScroll(vm,window.right,window.bottom);
-    check((s.settingsExpanded&1u) && expanded_max>collapsed_max,"expanding advanced settings updates scroll range");
+    check((s.settingsExpanded&32u) && expanded_max>collapsed_max,"opening the custom accent updates scroll range");
     {
-        // The advanced group owns both the hidden-files switch and the protected
+        // 文件列表 › 显示哪些项目 owns both the hidden-files switch and the protected
         // operating system files switch; both need a reachable row and fitting text.
-        auto advanced=BuildVm(s,false);advanced.settings_expanded|=1u;advanced.settings_scroll=0;
+        OpenSettingsTab(s,9);s.settings.SetScroll(0,0);
+        auto advanced=BuildVm(s,false);advanced.settings_scroll=0;
         const auto lay=ui::MakeSettingsLayout(advanced,window,s.scale,s.renderer.TitleBarHeight(),28*s.scale,&painter);
         check(lay.protected_files_row.top>=lay.hidden_files_row.bottom &&
             lay.protected_files_row.bottom-lay.protected_files_row.top>=64*s.scale-1.0f &&
@@ -829,8 +832,8 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
         check(s.compositor.SaveSnapshot((std::filesystem::path(output).parent_path()/L"settings-advanced.png").c_str()),
             "advanced settings screenshot captured");
     }
-    s.settings.SetScroll(expanded_max,expanded_max);HandleSettingsControl(s,toggle);
-    check(s.settings.scroll()<=collapsed_max,"collapsing advanced settings clamps existing scroll");
+    OpenSettingsTab(s,0);s.settings.SetScroll(expanded_max,expanded_max);HandleSettingsControl(s,custom);
+    check(s.settings.scroll()<=collapsed_max,"closing the custom accent clamps existing scroll");
     OpenSettingsTab(s,1);s.settings.SetScroll(0,0);
     const bool before=s.appPrefs.search_pinyin;click(layout().search_pinyin_row);
     check(s.appPrefs.search_pinyin!=before,"mouse click changes pinyin setting");

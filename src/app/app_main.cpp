@@ -1,5 +1,6 @@
 #include "app_diagnostics.h"
 #include "git_ui.h"
+#include "mtime_hint_prefs.h"
 #include "app_wall_hint.h"
 #include "arrival_select.h"
 #include "zip_compress_ui.h"
@@ -1295,6 +1296,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         s->renderer.SetRowActions(app::RowActionMask(s->ctxMenuPrefs.builtin_hidden,
             s->ctxMenuPrefs.BuiltinOrder(app::BuiltinMenuSurface::RowButtons)));
         s->renderer.SetThumbnailBadges(s->appPrefs.list_thumbnail_badges);
+        s->renderer.SetMtimeHint(app::MtimeHintFromPrefs(s->appPrefs));
+        s->renderer.SetItemClick(s->appPrefs.single_click_open, s->appPrefs.name_highlight, s->appPrefs.item_checkboxes);
         app::SetFolderSortMode(app::FolderSortModeFromInt(s->appPrefs.folder_sort_mode));
         ui::typography::SetTextRenderMode(static_cast<ui::typography::TextRenderMode>(s->appPrefs.text_render));
         s->compositor.UpdateTextRenderingParams(nullptr);
@@ -1764,6 +1767,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s && wParam && !IsIconic(hwnd)) NoteUiActivity(*s, hwnd, true);
         break;
 
+    case WM_MOUSEACTIVATE:
+        // Single click opens: the click that brings the window forward only selects.
+        if (s && LOWORD(lParam) == HTCLIENT && GetForegroundWindow() != GetAncestor(hwnd, GA_ROOT))
+            s->activateClickTick = GetTickCount64();
+        break;
+
     case WM_ACTIVATE:
         if (s && LOWORD(wParam) != WA_INACTIVE) {
             s->core.windows.Touch(hwnd);
@@ -2042,6 +2051,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             SyncUiTimerRate(*s, hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
             bool dirty = false;
             if (TickChangeTracking(*s)) dirty = true;
+            if (s->renderer.MtimeBoundaryDue()) dirty = true;   // 修改时间提示: a mark aged
             static bool folderSizeResortWaiting = false;
             if (s->folderSizes.TakeChanged()) {
                 dirty = true;
@@ -2118,6 +2128,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 CancelRenameClick(*s);
                 if (valid) RenameSelected(*s);
             }
+            if (TickHoverSelect(*s, now)) dirty = true;
             // Search affordance: expand only the focused pane, then reveal
             // the hosted edit once it has enough room for stable text layout.
             for (auto& pane : Panes(*s)) {
@@ -2293,7 +2304,9 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             SetCursor(LoadCursorW(nullptr, IDC_HAND));
             return TRUE;
         }
-        if (hit.region == ui::HitTestResult::SettingsAccent) {
+        if (hit.region == ui::HitTestResult::SettingsAccent ||
+            (hit.region == ui::HitTestResult::Row && s->appPrefs.single_click_open &&
+             !IsSettingsTab(ActiveTab(*s)))) {
             SetCursor(LoadCursorW(nullptr, IDC_HAND));
             return TRUE;
         }

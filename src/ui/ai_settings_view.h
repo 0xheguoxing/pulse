@@ -1,4 +1,4 @@
-// ai_settings_view.h - what Settings > 增强包 > AI 与 MCP (page 9) draws.
+// ai_settings_view.h - what Settings > 增强包 > AI 与 MCP (kSettingsPageAi) draws.
 // Built by app/ai_settings_ui.cpp on the UI thread from ai.json and
 // ai_status.h; immutable once published, shared by the view models.
 #pragma once
@@ -65,7 +65,7 @@ struct AiPageView {
 
 inline constexpr size_t kAiPageCalls = 12;
 
-// Geometry of page 9 (LayoutSettingsAi in settings_ai_layout.h).
+// Geometry of the AI page (LayoutSettingsAi in settings_ai_layout.h).
 struct AiClientRowLayout {
     D2D1_RECT_F row{}, allow{}, deny{}, forget{};
 };

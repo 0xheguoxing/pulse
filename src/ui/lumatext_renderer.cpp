@@ -112,7 +112,9 @@ struct LumaTextRenderer::Impl {
         // surface key at 1/64 creates a new command list for every smooth
         // scroll tick even though the rasterized glyphs are identical.
         std::uint8_t x_phase_8 = 0;
-        std::uint8_t y_phase_8 = 0;
+        // Whole-pixel baseline below the surface origin. Hinted glyphs sit on
+        // whole rows, so the vertical position is an integer, not a phase.
+        std::int32_t baseline_px = 0;
         std::uint32_t foreground = 0;
         std::uint32_t background = 0;
         bool dark = false;
@@ -131,7 +133,7 @@ struct LumaTextRenderer::Impl {
             combine(std::hash<std::int32_t>{}(key.height_64));
             combine(std::hash<std::uint32_t>{}(
                 static_cast<std::uint32_t>(key.x_phase_8) << 24 |
-                static_cast<std::uint32_t>(key.y_phase_8) << 16 |
+                static_cast<std::uint32_t>(key.baseline_px & 0xFFFF) << 8 |
                 (key.dark ? 1u : 0u)));
             combine(std::hash<std::uint32_t>{}(key.foreground));
             combine(std::hash<std::uint32_t>{}(key.background));
@@ -418,6 +420,17 @@ struct LumaTextRenderer::Impl {
         layout_lru.clear();
     }
 
+    // Crisp UI text: exact FreeType coverage (the 4x Mitchell filter spread
+    // every edge over about two pixels) and the font's own vertical hints.
+    // FreeType's v40 interpreter applies those hints in y only, so horizontal
+    // subpixel positioning and the HarfBuzz layout widths are unchanged.
+    static void ApplySharpConfig(lt_render_config& config) noexcept {
+        config.coverage_gamma = 0.85f;
+        config.coverage_contrast = 1.00f;
+        config.raster_filter = LT_RASTER_FILTER_DIRECT;
+        config.flags |= LT_RENDER_CONFIG_HINTED_OUTLINES;
+    }
+
     void FillLayoutDesc(lt_text_layout_desc& desc, const LayoutKey& key,
                         lt_text_style& style, float font_size,
                         LumaText::FontCascade& cascade) const {
@@ -510,9 +523,7 @@ struct LumaTextRenderer::Impl {
 
         auto profile_desc = LumaText::Descriptor<lt_render_profile_desc>();
         profile_desc.light = LumaText::Descriptor<lt_render_config>();
-        profile_desc.light.coverage_gamma = 0.85f;
-        profile_desc.light.coverage_contrast = 1.00f;
-        profile_desc.light.raster_filter = LT_RASTER_FILTER_MITCHELL;
+        ApplySharpConfig(profile_desc.light);
         profile_desc.dark = profile_desc.light;
         profile_desc.regular_optical_weight = 0.0f;
         profile_desc.bold_optical_weight = 0.0f;
@@ -721,20 +732,19 @@ struct LumaTextRenderer::Impl {
             if (metrics.line_count > 1 || metrics.width + ink > width + 0.5f) return false;
         }
         const float floor_x = std::floor(bounds.left);
-        const float floor_y = std::floor(bounds.top);
         const float phase_x = bounds.left - floor_x;
-        const float phase_y = bounds.top - floor_y;
+        // Center the line, then put its baseline on a whole pixel row: a
+        // half-pixel baseline split every horizontal stroke over two rows.
+        const float base_y = std::round(bounds.top);
+        const std::int32_t baseline_px = static_cast<std::int32_t>(std::lround(
+            bounds.top + (height - metrics.height) * 0.5f + metrics.ascent - base_y));
         const auto phase_bucket = [](float phase, int buckets) {
             const long rounded = std::lround(phase * static_cast<float>(buckets));
             return static_cast<std::uint8_t>(std::clamp<long>(
                 rounded, 0l, static_cast<long>(buckets - 1)));
         };
         const std::uint8_t x_phase_8 = phase_bucket(phase_x, 8);
-        // Keep four vertical raster buckets so scrolling preserves more of
-        // LumaText's baseline precision without returning to 1/64 variants.
-        const std::uint8_t y_phase_4 = phase_bucket(phase_y, 4);
         const float cached_phase_x = static_cast<float>(x_phase_8) / 8.0f;
-        const float cached_phase_y = static_cast<float>(y_phase_4) / 4.0f;
         const auto color_byte = [](float value) {
             return static_cast<std::uint32_t>(std::clamp(
                 std::lround(value * 255.0f), 0l, 255l));
@@ -757,7 +767,7 @@ struct LumaTextRenderer::Impl {
             static_cast<std::int32_t>(std::lround(width * 64.0f)),
             static_cast<std::int32_t>(std::lround(height * 64.0f)),
             x_phase_8,
-            y_phase_4,
+            baseline_px,
             packed_foreground,
             packed_background,
             dark,
@@ -765,8 +775,7 @@ struct LumaTextRenderer::Impl {
         if (auto cached = surfaces.find(surface_key); cached != surfaces.end()) {
                 TouchSurface(cached);
                 const auto offset = D2D1::Point2F(
-                    floor_x + phase_x - cached_phase_x,
-                    floor_y + phase_y - cached_phase_y);
+                    floor_x + phase_x - cached_phase_x, base_y);
                 // The command list already contains the canonical text clip;
                 // avoid repeating target clip state changes for every row.
                 dc->DrawImage(cached->second.commands.Get(), &offset, nullptr,
@@ -799,17 +808,15 @@ struct LumaTextRenderer::Impl {
         } else if (alignment == DWRITE_TEXT_ALIGNMENT_TRAILING) {
             draw.origin_x += std::max(0.0f, width - metrics.width);
         }
-        draw.origin_y = cached_phase_y + (height - metrics.height) * 0.5f;
-        draw.clip = {cached_phase_x, cached_phase_y,
-                     cached_phase_x + width, cached_phase_y + height};
+        draw.origin_y = static_cast<float>(baseline_px) - metrics.ascent;
+        draw.clip = {cached_phase_x, 0.0f,
+                     cached_phase_x + width, std::max(1.0f, std::round(height))};
         draw.clip_enabled = true;
         draw.foreground = {foreground.r, foreground.g, foreground.b, foreground.a};
         draw.background = {background.r, background.g, background.b, background.a};
         draw.background_type = LT_BACKGROUND_TRANSPARENT;
         draw.render_config = LumaText::Descriptor<lt_render_config>();
-        draw.render_config.coverage_gamma = 0.85f;
-        draw.render_config.coverage_contrast = 1.00f;
-        draw.render_config.raster_filter = LT_RASTER_FILTER_MITCHELL;
+        ApplySharpConfig(draw.render_config);
         draw.profile = profile.get();
 
         const lt_result result = lt_frame_draw_text_layout(frame.get(), layout->get(), &draw);
@@ -832,9 +839,7 @@ struct LumaTextRenderer::Impl {
             static_cast<std::uint64_t>(std::max(1l, std::lround(std::ceil(height)))) * 4ull;
         StoreSurface(surface_key, commands, estimated_bytes);
 
-        const auto offset = D2D1::Point2F(
-            floor_x + phase_x - cached_phase_x,
-            floor_y + phase_y - cached_phase_y);
+        const auto offset = D2D1::Point2F(floor_x + phase_x - cached_phase_x, base_y);
         dc->DrawImage(commands.Get(), &offset, nullptr,
                       D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
                       D2D1_COMPOSITE_MODE_SOURCE_OVER);

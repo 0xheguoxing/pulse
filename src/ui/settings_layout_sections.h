@@ -57,10 +57,47 @@ inline bool IntegrationCoverActive(const WindowViewModel& vm,int i) {
 
 float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float scale,
                             float y, const fluent::Painter* painter) {
+    using I = l10n::StringId;
     const float left = l.content.left + 20*scale, right = l.content.right - 20*scale;
     const bool narrow = right - left < 560*scale;
-    auto row = [&](float h) { auto r = D2D1::RectF(left, y, right, y+h*scale); y=r.bottom; return r; };
-    auto section = [&](int i) { y+=24*scale; l.section[i]=row(28); };
+    const float seg_h = narrow ? 98.0f : 64.0f;
+    const float child_inset = 28.0f*scale;
+    // Rows stack inside the current group card; a dependent (child) row is inset
+    // and sits on a tinted band, and dividers separate neighbours.
+    int group_index = -1;
+    float group_top = 0.0f;
+    bool group_has_row = false, previous_child = false;
+    float band_top = -1.0f;
+    auto close_band = [&]() {
+        if (band_top >= 0.0f) l.child_bands.push_back(D2D1::RectF(left, band_top, right, y));
+        band_top = -1.0f;
+    };
+    auto end_group = [&]() {
+        close_band();
+        if (group_index >= 0 && group_has_row) l.group[group_index] = D2D1::RectF(left, group_top, right, y);
+        group_has_row = false;
+    };
+    auto section = [&](I title) {
+        end_group();
+        if (l.section_count >= 8) return;
+        y += (l.section_count == 0 ? 22.0f : 26.0f)*scale;
+        group_index = l.section_count++;
+        l.section_title[group_index] = title;
+        l.section[group_index] = D2D1::RectF(left, y, right, y + 30*scale);
+        y += 32*scale;
+        group_top = y;
+    };
+    auto row = [&](float h, bool child = false) {
+        if (group_has_row) {
+            if (child && previous_child) l.dividers.push_back(D2D1::RectF(left + child_inset + 16*scale, y, right - 16*scale, y));
+            else if (!child) { close_band(); l.dividers.push_back(D2D1::RectF(left + 16*scale, y, right - 16*scale, y)); }
+        }
+        if (child && band_top < 0.0f) band_top = y;
+        group_has_row = true; previous_child = child;
+        auto r = D2D1::RectF(child ? left + child_inset : left, y, right, y + h*scale);
+        y = r.bottom;
+        return r;
+    };
     auto choice = [&](D2D1_RECT_F r, float width) {
         return D2D1::RectF(narrow ? r.left+16*scale : r.right-(width+16)*scale,
             r.bottom-44*scale, r.right-16*scale, r.bottom-12*scale);
@@ -69,38 +106,122 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
         auto c=choice(r,width); const float w=(c.right-c.left)/count;
         for(int i=0;i<count;++i) output[i]=D2D1::RectF(c.left+i*w,c.top,c.left+(i+1)*w,c.bottom);
     };
-    section(0);
-    l.theme_row=row(narrow ? 142.0f : 112.0f);
-    const float tw=(std::min)(96*scale,(right-left-32*scale)/3);
-    const float tile_left=narrow ? left+16*scale : right-16*scale-3*tw;
-    for(int i=0;i<3;++i) l.theme_tile[i]=D2D1::RectF(tile_left+i*tw+4*scale,
-        l.theme_row.bottom-90*scale,tile_left+(i+1)*tw-4*scale,l.theme_row.bottom-12*scale);
-    l.accent_card=row(96);
-    const float picker=kBloomPickerDip*scale;
-    l.accent_picker=D2D1::RectF(right-16*scale-picker,l.accent_card.top+(96*scale-picker)/2,
-        right-16*scale,l.accent_card.top+(96*scale+picker)/2);
-    // The tiles reuse SettingsEffect's existing hit regions and controller.
-    // A single tile selector avoids duplicate controls for the same setting.
-    const int effect_columns = right-left < 440*scale ? 2 : 4;
-    const int effect_rows = kWindowEffectCount/effect_columns;
-    const float effect_top = 66.0f;
-    l.effect_card=row(effect_top+82.0f*effect_rows+12.0f);
-    l.effect_choice = {};
-    const float effect_gap=8*scale;
-    const float effect_width=(right-left-32*scale-effect_gap*(effect_columns-1))/effect_columns;
-    for(int i=0;i<kWindowEffectCount;++i) {
-        const float tile_x=left+16*scale+(i%effect_columns)*(effect_width+effect_gap);
-        const float tile_y=l.effect_card.top+effect_top*scale+(i/effect_columns)*82*scale;
-        l.effect_row[i]=D2D1::RectF(tile_x,tile_y,tile_x+effect_width,tile_y+74*scale);
-    }
-    l.menu_acrylic_row=row(64);
-    l.language_card=row(narrow ? 98.0f : 64.0f); l.language_choice=choice(l.language_card,176);
-    l.text_render_card=row(narrow ? 98.0f : 64.0f); segments(l.text_render_card,l.text_render_row,3,282);
-    l.ui_font_size_card=row(narrow ? 98.0f : 64.0f); segments(l.ui_font_size_card,l.ui_font_size_row,4,340);
-    l.group[0]=D2D1::RectF(left,l.theme_row.top,right,y);
-    // Default file manager: a titled card of its own, independent of startup and background running.
-    // The switch says what it does; the tiles below show what actually opens in Pulse.
-    y+=24*scale; l.integration_section=row(28);
+    auto button_w = [&](I id, float fallback) {
+        return painter ? painter->MeasureButtonWidth(l10n::Get(id)) : fallback*scale;
+    };
+    const int page = vm.settings_page;
+    if (page == 0) {
+        section(I::SettingsSecThemeColor);
+        l.theme_row=row(narrow ? 142.0f : 112.0f);
+        const float tw=(std::min)(96*scale,(right-left-32*scale)/3);
+        const float tile_left=narrow ? left+16*scale : right-16*scale-3*tw;
+        for(int i=0;i<3;++i) l.theme_tile[i]=D2D1::RectF(tile_left+i*tw+4*scale,
+            l.theme_row.bottom-90*scale,tile_left+(i+1)*tw-4*scale,l.theme_row.bottom-12*scale);
+        l.accent_card=row(96);
+        const float picker=kBloomPickerDip*scale;
+        l.accent_picker=D2D1::RectF(right-16*scale-picker,l.accent_card.top+(96*scale-picker)/2,
+            right-16*scale,l.accent_card.top+(96*scale+picker)/2);
+        {
+            const bool open=(vm.settings_expanded & 32u)!=0;
+            const float bw=button_w(open ? I::AccentCustomDone : I::AccentCustom,72)+22*scale;
+            const float mid=(l.accent_card.top+l.accent_card.bottom)/2;
+            l.accent_custom_button=D2D1::RectF(l.accent_picker.left-20*scale-bw,mid-16*scale,l.accent_picker.left-20*scale,mid+16*scale);
+            if(open) {
+                l.accent_custom_head=row(64,true);
+                l.accent_custom_swatch=D2D1::RectF(right-16*scale-120*scale,l.accent_custom_head.top+16*scale,
+                    right-16*scale,l.accent_custom_head.top+48*scale);
+                for(int i=0;i<3;++i) {
+                    l.accent_slider_row[i]=row(seg_h,true);
+                    segments(l.accent_slider_row[i],l.accent_slider_cells[i],3,narrow ? 300.0f : 360.0f);
+                }
+            }
+        }
+        // The tiles reuse SettingsEffect's existing hit regions and controller.
+        const int effect_columns = right-left < 440*scale ? 2 : 4;
+        const int effect_rows = kWindowEffectCount/effect_columns;
+        const float effect_top = 66.0f;
+        l.effect_card=row(effect_top+82.0f*effect_rows+12.0f);
+        l.effect_choice = {};
+        const float effect_gap=8*scale;
+        const float effect_width=(right-left-32*scale-effect_gap*(effect_columns-1))/effect_columns;
+        for(int i=0;i<kWindowEffectCount;++i) {
+            const float tile_x=left+16*scale+(i%effect_columns)*(effect_width+effect_gap);
+            const float tile_y=l.effect_card.top+effect_top*scale+(i/effect_columns)*82*scale;
+            l.effect_row[i]=D2D1::RectF(tile_x,tile_y,tile_x+effect_width,tile_y+74*scale);
+        }
+        l.menu_acrylic_row=row(64);
+
+        section(I::SettingsSecBackground);
+        l.wallpaper_card=row(narrow ? 124.0f : 84.0f);
+        l.wallpaper_preview=D2D1::RectF(left+16*scale,l.wallpaper_card.top+14*scale,left+112*scale,l.wallpaper_card.top+70*scale);
+        {
+            const float cw=button_w(I::Clear,80), bw=button_w(I::ChooseImage,120);
+            const float top=narrow ? l.wallpaper_card.bottom-44*scale : (l.wallpaper_card.top+l.wallpaper_card.bottom)/2-16*scale;
+            l.wallpaper_clear=D2D1::RectF(right-16*scale-cw,top,right-16*scale,top+32*scale);
+            l.wallpaper_choose=D2D1::RectF(l.wallpaper_clear.left-8*scale-bw,top,l.wallpaper_clear.left-8*scale,top+32*scale);
+        }
+        l.wallpaper_blur_card=row(seg_h,true); segments(l.wallpaper_blur_card,l.wallpaper_blur_row,3,282);
+        l.wallpaper_look_card=row(seg_h); segments(l.wallpaper_look_card,l.wallpaper_look_row,3,282);
+
+        section(I::SettingsSecTextLanguage);
+        l.language_card=row(seg_h); l.language_choice=choice(l.language_card,176);
+        l.text_render_card=row(seg_h); segments(l.text_render_card,l.text_render_row,3,282);
+        l.ui_font_size_card=row(seg_h); segments(l.ui_font_size_card,l.ui_font_size_row,4,340);
+    } else if (page == 9) {
+        section(I::SettingsSecOpenSelect);
+        l.click_open_card=row(seg_h); segments(l.click_open_card,l.click_open_row,2,282);
+        if(vm.settings_single_click) {
+            l.name_highlight_card=row(seg_h,true); segments(l.name_highlight_card,l.name_highlight_row,2,254);
+            l.hover_select_row=row(64,true);
+        }
+        l.item_checkbox_row=row(64);
+        l.blank_click_row=row(seg_h); segments(l.blank_click_row,l.blank_click_choice,3,282);
+
+        section(I::SettingsSecVisibleItems);
+        l.hidden_files_row=row(64);
+        l.protected_files_row=row(64);
+        l.folder_sort_card=row(seg_h); segments(l.folder_sort_card,l.folder_sort_row,3,282);
+
+        section(I::SettingsSecListLook);
+        l.density_card=row(seg_h); segments(l.density_card,l.density_row,3,282);
+        l.list_style_row[1]=row(64);   // zebra rows
+        l.list_style_row[0]=row(64);   // smart date
+        for(int i=2;i<6;++i) l.list_style_row[i]=row(64);
+        l.alias_mark_row=row(64);
+
+        section(I::ListMtimeHint);
+        l.mtime_style_card=row(seg_h); segments(l.mtime_style_card,l.mtime_style_row,4,340);
+        if(vm.settings_mtime.style!=0) {
+            l.mtime_range_card=row(seg_h,true); segments(l.mtime_range_card,l.mtime_range_row,4,300);
+            l.mtime_palette_card=row(seg_h,true); segments(l.mtime_palette_card,l.mtime_palette_row,6,408);
+            for(auto& mtime_row : l.mtime_toggle_row) mtime_row=row(64,true);
+        }
+
+        section(I::SettingsSecSyncStatus);
+        for(auto& sync : l.sync_row) sync=row(64);
+    } else if (page == 10) {
+        section(I::SettingsSecOpenLocation);
+        l.home_folder_card=row(seg_h);
+        {
+            const float rw=button_w(I::ThisPc,80), cw=button_w(I::SettingsHomeFolderPick,120);
+            l.home_folder_reset=D2D1::RectF(right-16*scale-rw,y-44*scale,right-16*scale,y-12*scale);
+            l.home_folder_choose=D2D1::RectF(l.home_folder_reset.left-8*scale-cw,y-44*scale,l.home_folder_reset.left-8*scale,y-12*scale);
+        }
+        l.startup_open_card=row(seg_h); segments(l.startup_open_card,l.startup_open_row,2,282);
+        l.new_tab_open_card=row(seg_h); segments(l.new_tab_open_card,l.new_tab_open_row,2,282);
+        l.external_open_card=row(seg_h); segments(l.external_open_card,l.external_open_row,3,282);
+
+        section(I::SettingsSecTabs);
+        l.vertical_tabs_row=row(64);
+        l.pinned_names_row=row(64);
+        l.close_tab_double_click_row=row(64);
+        l.close_last_tab_row=row(64);
+    } else if (page == 11) {
+        section(I::SettingsIntegration);
+        end_group();   // the integration card is laid out and drawn on its own
+        l.integration_section=l.section[0];
+        {
+        auto irow = [&](float h) { auto r = D2D1::RectF(left, y, right, y+h*scale); y=r.bottom; return r; };
     const float integration_top=y;
     auto caption_height=[&](std::wstring_view value,float width) {
         return value.empty() ? 0.0f : painter
@@ -115,7 +236,7 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
         if(stacked) text_right=switch_left-12*scale;
         const float desc_h=caption_height(l10n::Get(l10n::StringId::IntegrationMasterDesc),text_right-left-54*scale);
         const float body=35*scale+desc_h+(stacked ? 30*scale : 0.0f)+14*scale;
-        l.default_manager_row=row((std::max)(64.0f,body/scale));
+        l.default_manager_row=irow((std::max)(64.0f,body/scale));
         const float top=l.default_manager_row.top;
         l.integration_badge=stacked
             ? D2D1::RectF(left+54*scale,top+35*scale+desc_h+6*scale,left+54*scale+badge_w,top+35*scale+desc_h+28*scale)
@@ -144,7 +265,7 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
             l.integration_restore=D2D1::RectF(x,top,(std::min)(x+restore_w,button_right),top+32*scale);
         }
     }
-    l.integration_list_head=row(32);
+    l.integration_list_head=irow(32);
     const float item_text_left=left+112*scale, item_text_right=right-16*scale;
     {
         // What opens in Pulse: three read-only tiles that wrap with the width.
@@ -160,10 +281,10 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
         }
         y=top+tile_h+6*scale;
     }
-    l.integration_options_head=row(32);
+    l.integration_options_head=irow(32);
     auto item_row=[&](l10n::StringId desc,float text_right) {
         const float h=caption_height(l10n::Get(desc),text_right-item_text_left);
-        return row((std::max)(52.0f,(31*scale+h+12*scale)/scale));
+        return irow((std::max)(52.0f,(31*scale+h+12*scale)/scale));
     };
     l.recycle_bin_row=item_row(l10n::StringId::SettingsRecycleBinDesc,item_text_right);
     // The takeover is a regular option now: it also carries 兼容打开方式 below.
@@ -192,60 +313,29 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
         y=l.integration_hint.bottom;
     }
     l.integration_card=D2D1::RectF(left,integration_top,right,y);
-    section(1);
-    l.startup_row[0]=row(64); l.start_in_tray_row=row(64); l.startup_row[1]=row(64);
-    l.notify_icon_card=row(narrow ? 98.0f : 64.0f); segments(l.notify_icon_card,l.notify_icon_row,3,282);
-    l.home_folder_card=row(narrow ? 98.0f : 64.0f);
-    {
-        const float rw=painter ? painter->MeasureButtonWidth(l10n::Get(l10n::StringId::ThisPc)) : 80*scale;
-        const float cw=painter ? painter->MeasureButtonWidth(l10n::Get(l10n::StringId::SettingsHomeFolderPick)) : 120*scale;
-        l.home_folder_reset=D2D1::RectF(right-16*scale-rw,y-44*scale,right-16*scale,y-12*scale);
-        l.home_folder_choose=D2D1::RectF(l.home_folder_reset.left-8*scale-cw,y-44*scale,l.home_folder_reset.left-8*scale,y-12*scale);
-    }
-    l.startup_open_card=row(narrow ? 98.0f : 64.0f); segments(l.startup_open_card,l.startup_open_row,2,282);
-    l.new_tab_open_card=row(narrow ? 98.0f : 64.0f); segments(l.new_tab_open_card,l.new_tab_open_row,2,282);
-    l.external_open_card=row(narrow ? 98.0f : 64.0f); segments(l.external_open_card,l.external_open_row,3,282);
-    l.close_last_tab_row=row(64);
-    l.close_tab_double_click_row=row(64);
-    l.group[1]=D2D1::RectF(left,l.startup_row[0].top,right,y);
-    section(2);
-    l.density_card=row(narrow ? 98.0f : 64.0f); segments(l.density_card,l.density_row,3,282);
-    l.performance_row=row(64);
-    for(auto& list_row : l.list_style_row) list_row=row(64);
-    l.folder_sort_card=row(narrow ? 98.0f : 64.0f); segments(l.folder_sort_card,l.folder_sort_row,3,282);
-    l.confirm_delete_row=row(64);
-    l.group[2]=D2D1::RectF(left,l.density_card.top,right,y);
-    y+=18*scale;
-    l.disclosure[0]=row(64);
-    if(vm.settings_expanded & 1u) {
-        y+=10*scale;
-        l.wallpaper_card=row(124);
-        l.wallpaper_preview=D2D1::RectF(left+16*scale,l.wallpaper_card.top+12*scale,left+112*scale,l.wallpaper_card.top+68*scale);
-        const float cw=painter ? painter->MeasureButtonWidth(l10n::Get(l10n::StringId::Clear)) : 80*scale;
-        const float bw=painter ? painter->MeasureButtonWidth(l10n::Get(l10n::StringId::ChooseImage)) : 120*scale;
-        l.wallpaper_clear=D2D1::RectF(right-16*scale-cw,y-44*scale,right-16*scale,y-12*scale);
-        l.wallpaper_choose=D2D1::RectF(l.wallpaper_clear.left-8*scale-bw,y-44*scale,l.wallpaper_clear.left-8*scale,y-12*scale);
-        y+=8*scale; l.wallpaper_look_card=row(narrow ? 98.0f : 64.0f); segments(l.wallpaper_look_card,l.wallpaper_look_row,3,282);
-        y+=8*scale; l.wallpaper_blur_card=row(narrow ? 98.0f : 64.0f); segments(l.wallpaper_blur_card,l.wallpaper_blur_row,3,282);
-        y+=8*scale; l.tray_icon_card=row(narrow ? 98.0f : 64.0f); segments(l.tray_icon_card,l.tray_icon_row,3,282);
-        y+=8*scale; l.shell_tags_row=row(64);
-        y+=8*scale; l.hidden_files_row=row(64);
-        y+=8*scale; l.protected_files_row=row(64);
-        y+=8*scale; l.pinned_names_row=row(64);
-        y+=8*scale; l.alias_mark_row=row(64);
-        y+=8*scale; l.vertical_tabs_row=row(64);
-        y+=8*scale; l.tray_hide_row=row(64);
-        y+=8*scale; l.hints_row=row(64);
-        y+=8*scale; l.hints_reset_row=row(64);
-        {
-            const float rw=painter ? painter->MeasureButtonWidth(l10n::Get(l10n::StringId::HintsResetButton)) : 80*scale;
-            l.hints_reset_button=D2D1::RectF(right-16*scale-rw,l.hints_reset_row.top+16*scale,right-16*scale,l.hints_reset_row.top+48*scale);
         }
-        y+=8*scale; l.blank_click_row=row(narrow ? 98.0f : 64.0f); segments(l.blank_click_row,l.blank_click_choice,3,282);
-        y+=8*scale; l.change_tracking_row=row(64);
-        l.change_days_row=row(narrow ? 98.0f : 64.0f); segments(l.change_days_row,l.change_days,3,282);
+        section(I::SettingsSecStartupTray);
+        l.startup_row[0]=row(64);
+        l.start_in_tray_row=row(64,true);
+        l.startup_row[1]=row(64);
+        l.notify_icon_card=row(seg_h); segments(l.notify_icon_card,l.notify_icon_row,3,282);
+
+        section(I::SettingsSecExplorer);
+        l.shell_tags_row=row(64);
+    } else {
+        section(I::SettingsSecDelete);
+        l.confirm_delete_row=row(64);
+
+        section(I::SettingsSecStaging);
+        l.tray_icon_card=row(seg_h); segments(l.tray_icon_card,l.tray_icon_row,3,282);
+        l.tray_hide_row=row(64);
+
+        section(I::SettingsSecChanges);
+        l.change_tracking_row=row(64);
+        l.change_days_row=row(seg_h,true); segments(l.change_days_row,l.change_days,3,282);
     }
-    y+=12*scale; l.footer=row(28); y+=16*scale;
+    end_group();
+    y+=14*scale; l.footer=D2D1::RectF(left,y,right,y+28*scale); y+=28*scale+16*scale;
     return y;
 }
 
@@ -417,7 +507,7 @@ inline bool PrimaryEnabled(bool available, bool installed, bool installing) {
     return available || installed || installing;
 }
 // The AI pack: settings_ai_pack_state holds app::AiPackState (the content
-// pack's values). Usable (bundled or installed): 管理 opens page 9, which
+// pack's values). Usable (bundled or installed): 管理 opens the AI page (kSettingsPageAi), which
 // holds the uninstall.
 inline const wchar_t* AiSection() { return l10n::Get(l10n::StringId::AiPackSection).c_str(); }
 inline const wchar_t* AiTitle() { return l10n::Get(l10n::StringId::AiPackTitle).c_str(); }
