@@ -2067,7 +2067,7 @@ void MainRenderer::DrawPaneEmptyState(const WindowViewModel& vm, const PaneViewM
             painter_.StrokeRoundedRect(rc, 6.0f * scale_, theme.stroke_card);
             painter_.DrawText(pulse::l10n::Get(action == 0 ? pulse::l10n::StringId::HintActSearchSub
                                                            : pulse::l10n::StringId::EmptyActClearFilter),
-                              rc, compositor_->SmallFormat(), theme.accent_text,
+                              rc, compositor_->SmallFormat(), theme.accent,   // accent_text is for accent fills
                               fluent::HorizontalAlignment::Center);
         }
         return;
@@ -2093,7 +2093,7 @@ void MainRenderer::DrawPaneEmptyState(const WindowViewModel& vm, const PaneViewM
                 actions[i] == app::SearchEmptyAction::ClearFilters ? pulse::l10n::StringId::EmptyActClearFilters :
                 actions[i] == app::SearchEmptyAction::SearchContent ? pulse::l10n::StringId::EmptyActContent :
                 pulse::l10n::StringId::EmptyActEverywhere;
-            painter_.DrawText(pulse::l10n::Get(label), rc, compositor_->SmallFormat(), theme.accent_text,
+            painter_.DrawText(pulse::l10n::Get(label), rc, compositor_->SmallFormat(), theme.accent,
                               fluent::HorizontalAlignment::Center);
         }
         return;
