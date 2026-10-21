@@ -78,7 +78,7 @@ struct Spring1 {
     }
 };
 
-enum class Part { None, Outside, Card, Done, Tab, Search, Tile, Switch, Add, Keys };
+enum class Part { None, Outside, Card, Done, Tab, Search, Tile, Switch, Add, Keys, Break };
 struct Hit {
     Part part = Part::None;
     int index = -1;
@@ -272,6 +272,22 @@ private:
         const float x = o.x + S(t.x.v) + dx, y = o.y + S(t.y.v);
         return D2D1::RectF(x, y, x + S(TileW()), y + S(kTileH));
     }
+    // The separator button, right of the icon: a short bar, accent when set.
+    D2D1_RECT_F BreakRect(const D2D1_RECT_F& tile) const {
+        return D2D1::RectF(tile.right - S(22.0f), tile.top + S(23.0f), tile.right - S(6.0f), tile.top + S(39.0f));
+    }
+    int BreakState(int page, size_t i) const {
+        if (page == kSel || !spec_->break_state || IsAdd(page, i) || i >= Tiles(page).size() ||
+            !Tiles(page)[i].checked)
+            return -1;
+        return spec_->break_state(page, i, Tiles(page)[i].value);
+    }
+    void ToggleBreak(size_t i) {
+        if (BreakState(page_, i) < 0 || !spec_->toggle_break) return;
+        spec_->toggle_break(page_, i, Tiles(page_)[i].value);
+        Frame();
+    }
+
     D2D1_RECT_F SwitchRect(const D2D1_RECT_F& tile) const {
         return D2D1::RectF(tile.left + S(7.0f), tile.top + S(7.0f), tile.left + S(29.0f), tile.top + S(20.0f));
     }
@@ -535,7 +551,7 @@ private:
         int page = -1, tile = -1;
         if (!closing_at_) {
             if (drag_.active) { if (drag_.page == page_) tile = static_cast<int>(drag_.tile); }
-            else if (hover_.part == Part::Tile) tile = hover_.index;
+            else if (hover_.part == Part::Tile || hover_.part == Part::Break) tile = hover_.index;
             if (tile >= 0 && (static_cast<size_t>(tile) >= Tiles(page_).size() || !Tiles(page_)[tile].checked)) tile = -1;
             if (tile >= 0) page = page_;
         }
@@ -737,6 +753,11 @@ private:
                     sw.left -= S(5.0f); sw.top -= S(5.0f); sw.right += S(5.0f); sw.bottom += S(5.0f);
                     if (Inside(sw, x, y)) return Hit{ Part::Switch, static_cast<int>(i) };
                 }
+                if (BreakState(page_, i) >= 0) {
+                    D2D1_RECT_F br = BreakRect(r);
+                    br.left -= S(3.0f); br.top -= S(3.0f); br.right += S(3.0f); br.bottom += S(3.0f);
+                    if (Inside(br, x, y)) return Hit{ Part::Break, static_cast<int>(i) };
+                }
                 return Hit{ Part::Tile, static_cast<int>(i) };
             }
         }
@@ -756,6 +777,7 @@ private:
         case Part::Search: search_focus_ = true; focus_ = hit; Frame(); break;
         case Part::Tile: ToggleTile(page_, static_cast<size_t>(hit.index)); break;
         case Part::Switch: FlipSwitch(static_cast<size_t>(hit.index)); break;
+        case Part::Break: ToggleBreak(static_cast<size_t>(hit.index)); break;
         case Part::Add: AddApp(); break;
         default: break;
         }
@@ -903,7 +925,8 @@ private:
         // A selection action pinned as a tool: the chip leaves it out, the tile says so.
         const bool on_toolbar = OnToolbar(page, i);
         const Hit me{ add ? Part::Add : Part::Tile, static_cast<int>(i) };
-        const bool hot = page == page_ && (hover_ == me || (hover_.part == Part::Switch && hover_.index == static_cast<int>(i)));
+        const bool hot = page == page_ && (hover_ == me || ((hover_.part == Part::Switch || hover_.part == Part::Break) &&
+                                                            hover_.index == static_cast<int>(i)));
         const bool pressed = page == page_ && pressed_ == me && hover_ == me;
 
         D2D1_RECT_F r = base;
@@ -997,6 +1020,21 @@ private:
                 const float rad = S(8.0f) * k;
                 painter_.FillRoundedRect(D2D1::RectF(c.x - rad, c.y - rad, c.x + rad, c.y + rad), rad, Alpha(pal.accent, alpha));
                 Glyph(L"\xE73E", c, S(12.0f) * k, Alpha(pal.accent_text, alpha));
+            }
+        }
+        // Separator after it on the toolbar: a short accent bar when set; a faint
+        // one on the hovered tile offers it.
+        if (t && page == page_) {
+            const int brk = BreakState(page, i);
+            const bool brk_hot = hover_.part == Part::Break && hover_.index == static_cast<int>(i);
+            if (brk == 1 || (brk == 0 && hot)) {
+                const D2D1_RECT_F br = BreakRect(r);
+                if (brk_hot) painter_.FillRoundedRect(br, S(4.0f), Alpha(pal.hover, alpha * 1.6f));
+                else if (brk == 1) painter_.FillRoundedRect(br, S(4.0f), Alpha(pal.accent, alpha * 0.14f));
+                const float cx = std::round((br.left + br.right) * 0.5f);
+                const D2D1_COLOR_F bar = brk == 1 ? pal.accent : brk_hot ? pal.text : pal.faint;
+                painter_.FillRoundedRect(D2D1::RectF(cx - S(1.0f), br.top + S(3.0f), cx + S(1.0f), br.bottom - S(3.0f)),
+                                         S(1.0f), Alpha(bar, alpha));
             }
         }
         // Switch, top left: flips the setting without pinning the tool.
@@ -1162,7 +1200,10 @@ private:
         // Description (or the apps-full note), and the search field on the tools page.
         const float desc_right = page_ == kTools ? SearchRect().left - S(8.0f) : card.right - S(kPadX);
         const bool note = note_until_ && now < note_until_ && page_ == note_page_;
-        const std::wstring& desc = page_ == kTools ? spec_->tools_desc : page_ == kSel ? spec_->sel_desc : spec_->apps_desc;
+        const bool break_hint = hover_.part == Part::Break && BreakState(page_, static_cast<size_t>(hover_.index)) >= 0;
+        const std::wstring& desc = break_hint
+            ? (BreakState(page_, static_cast<size_t>(hover_.index)) == 1 ? spec_->remove_break_text : spec_->add_break_text)
+            : page_ == kTools ? spec_->tools_desc : page_ == kSel ? spec_->sel_desc : spec_->apps_desc;
         const std::wstring& full = page_ == kTools ? spec_->tools_full_text : spec_->apps_full_text;
         painter_.DrawText(note ? full : desc,
                           D2D1::RectF(card.left + S(kPadX), card.top + S(kDescY), desc_right, card.top + S(kDescY + kDescH)),
@@ -1462,6 +1503,10 @@ private:
             break;
         case WM_CHAR:
             if (wparam == L' ' && !search_focus_) return 0;   // Space toggles (WM_KEYDOWN)
+            if (wparam == L'|' && !search_focus_ && focus_.part == Part::Tile) {
+                ToggleBreak(static_cast<size_t>(focus_.index));   // |: separator after the tile
+                return 0;
+            }
             if ((wparam == L't' || wparam == L'T') && !search_focus_ && focus_.part == Part::Tile && page_ == kTools) {
                 FlipSwitch(static_cast<size_t>(focus_.index));   // T: the tile's switch
                 return 0;

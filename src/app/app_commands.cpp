@@ -4414,6 +4414,53 @@ void ShowToolbarCustomize(AppState& s, int page) {
             if (!placed[i]) now.apps_order.push_back(i);
         }
     };
+    // Separators: tools by slot among the pinned tools, apps by path.
+    spec.add_break_text = l10n::Get(l10n::StringId::ToolbarAddSeparator);
+    spec.remove_break_text = l10n::Get(l10n::StringId::ToolbarRemoveSeparator);
+    const auto tool_slot = [&s](size_t index) -> int {
+        if (index >= app::kToolbarToolCount) return -1;
+        const auto only = app::ToolbarToolsOnly(s.appPrefs.toolbar_tools);
+        for (size_t k = 0; k + 1 < only.size(); ++k)
+            if (only[k] == app::kToolbarToolIds[index]) return static_cast<int>(k);
+        return -1;   // not pinned, or the last tool
+    };
+    const auto app_slot = [&s](const std::wstring& value) -> int {
+        const auto& apps = s.appPrefs.toolbar_apps;
+        const size_t n = std::min<size_t>(apps.size(), app::kMaxToolbarApps);
+        for (size_t k = 0; k + 1 < n; ++k)
+            if (_wcsicmp(apps[k].c_str(), value.c_str()) == 0) return static_cast<int>(k);
+        return -1;
+    };
+    spec.break_state = [&s, tool_slot, app_slot](int page, size_t index, const std::wstring& value) -> int {
+        if (page == 0) {
+            const int slot = tool_slot(index);
+            if (slot < 0 || slot + 1 >= 64) return -1;
+            return (app::ToolbarSeparatorMask(s.appPrefs.toolbar_tools) >> (slot + 1) & 1) ? 1 : 0;
+        }
+        if (page == 2 && app_slot(value) >= 0)
+            return app::ToolbarAppBreakAfter(s.appPrefs.toolbar_app_breaks, value) ? 1 : 0;
+        return -1;
+    };
+    spec.toggle_break = [&s, save, tool_slot, app_slot](int page, size_t index, const std::wstring& value) {
+        if (page == 0) {
+            const int slot = tool_slot(index);
+            if (slot < 0) return;
+            const bool on = !(app::ToolbarSeparatorMask(s.appPrefs.toolbar_tools) >> (slot + 1) & 1);
+            s.appPrefs.toolbar_tools = app::SetToolbarSeparatorAfter(s.appPrefs.toolbar_tools, static_cast<size_t>(slot), on);
+        } else if (page == 2 && app_slot(value) >= 0) {
+            auto& breaks = s.appPrefs.toolbar_app_breaks;
+            if (app::ToolbarAppBreakAfter(breaks, value)) {
+                breaks.erase(std::remove_if(breaks.begin(), breaks.end(), [&](const std::wstring& b) {
+                    return _wcsicmp(b.c_str(), value.c_str()) == 0;
+                }), breaks.end());
+            } else {
+                breaks.push_back(value);
+            }
+        } else {
+            return;
+        }
+        save();
+    };
     spec.dark_now = [&s] { return s.darkMode; };
     ui::ShowToolbarPicker(s.hwnd, spec, s.darkMode, s.accentColor);
     g_toolbar_preview = -1;

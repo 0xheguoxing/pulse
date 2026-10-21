@@ -103,6 +103,13 @@ struct ToolbarCustomizeSpec {
     // apps_pinned before they are loaded) and fill apps_order.
     std::function<void(ToolbarCustomizeSpec& spec)> resync;
     std::vector<size_t> apps_order;
+    // Separators (tools and apps pages): break_state says whether a separator
+    // follows the tile on the toolbar (1), not (0), or none can (-1: not on
+    // the toolbar, or its last item); toggle_break adds or removes it.
+    // `value` is the tile's value (apps: the program path).
+    std::function<int(int page, size_t index, const std::wstring& value)> break_state;
+    std::function<void(int page, size_t index, const std::wstring& value)> toggle_break;
+    std::wstring add_break_text, remove_break_text;   // shown while the button is hovered
     // The window's theme after on_switch (the 深色主题 tool), so the popover follows.
     std::function<bool()> dark_now;
 };
