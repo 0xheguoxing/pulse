@@ -505,9 +505,8 @@ std::vector<ui::FluentMenuItem> BuildSplitMenu(int current_preset) {
         it.pictogram = row.pictogram;
         items.push_back(std::move(it));
     }
-    items.back().separator_after = true;
-    items.push_back(Item(CmdCopyToTarget, l10n::Get(l10n::StringId::CopyToTarget).c_str(), kGlyphCopyToPane, L"Ctrl+Alt+C"));
-    items.push_back(Item(CmdMoveToTarget, l10n::Get(l10n::StringId::MoveToTarget).c_str(), kGlyphMoveToPane, L"Ctrl+Alt+X"));
+    // Layouts only (#58-14): 复制到 / 移动到目标栏 act on the selection and
+    // live in the item menu (split only), the selection chip and Ctrl+Alt+C/X.
     return items;
 }
 

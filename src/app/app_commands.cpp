@@ -2095,6 +2095,40 @@ std::vector<ui::FluentMenuItem> BuildFinderItemMenu(
         }
         items.insert(at == items.end() ? items.end() : std::next(at), std::move(stage));
     }
+    // 复制到 / 移动到目标栏 (#58-14, moved here from the layout menu): split
+    // only, right-clicked in a pane that is not the target; greyed when the
+    // target cannot take files, as TransferToTarget would refuse.
+    if (tab && tab->SelectedCount() > 0 && !IsRecycleTab(tab) && s.targetPane && s.targetPane != s.pane &&
+        LiveLayout(s).VisiblePanes().size() > 1) {
+        const app::SelectionCaps caps = SelectionCapsOf(s);
+        const app::Tab* dst = s.targetPane->ActiveTab();
+        const bool writable = dst && !dst->current_path.empty() && !fs::IsVirtualPath(dst->current_path) &&
+            !dst->net_readonly && !app::IsUncServerRoot(dst->current_path);
+        if (caps.copy || caps.cut) {
+            const struct { int command; l10n::StringId label; const wchar_t* glyph; const wchar_t* key; bool enabled; } kRows[] = {
+                {app::CmdCopyToTarget, l10n::StringId::CopyToTarget, ui::command_icons::kGlyphCopyToPane, L"Ctrl+Alt+C",
+                 writable && caps.copy},
+                {app::CmdMoveToTarget, l10n::StringId::MoveToTarget, ui::command_icons::kGlyphMoveToPane, L"Ctrl+Alt+X",
+                 writable && caps.cut},
+            };
+            // After 加入暂存区 / 设置别名 / 复制路径, whichever is last present.
+            auto at = items.end();
+            for (int command : {app::CmdCopyPath, app::CmdSetAlias, app::CmdStageToTray}) {
+                auto found = std::find_if(items.begin(), items.end(),
+                    [command](const ui::FluentMenuItem& item) { return item.command == command; });
+                if (found != items.end()) at = std::next(found);
+            }
+            for (const auto& row : kRows) {
+                ui::FluentMenuItem item;
+                item.command = row.command;
+                item.text = l10n::Get(row.label);
+                item.glyph = row.glyph;
+                item.shortcut = app::ShownShortcut(row.key);
+                item.enabled = row.enabled;
+                at = std::next(items.insert(at, std::move(item)));
+            }
+        }
+    }
     if (tab && tab->SelectedCount() >= 2) {
         ui::FluentMenuItem batch;
         batch.command = app::CmdBatchRename;
