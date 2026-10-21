@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace pulse::fs {
@@ -81,9 +82,19 @@ private:
     size_t resident_bytes_ = 0;
     std::unordered_map<std::wstring, Entry> map_;
     std::list<std::wstring> lru_;
+    // Changed folders with no entry: never listed here, or evicted while a
+    // change was pending (#58-12). A big folder can outgrow the byte budget;
+    // dropping its listing must not drop the mark that asks a listing in
+    // flight to run once more, or the files copied meanwhile never show.
+    std::unordered_set<std::wstring> stale_;
+    static constexpr size_t kStaleLimit = 1024;
 
     static size_t SnapshotBytes(const SnapshotPtr& snapshot);
     void EvictToBudget(const std::wstring* protected_key = nullptr);
+    // Removes one entry (map and LRU); a dirty one leaves its mark in stale_.
+    void Evict(std::unordered_map<std::wstring, Entry>::iterator it);
+    void EvictOldest();
+    void NoteStale(const std::wstring& key);
 };
 
 } // namespace pulse::fs

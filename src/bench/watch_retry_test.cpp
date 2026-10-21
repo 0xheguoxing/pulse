@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -121,6 +122,30 @@ void RunRecovery(const std::filesystem::path& root) {
     CloseHandle(reconciled); CloseHandle(changed);
     DeleteFileW((root / L"recovered.txt").c_str());
 }
+// #58-12: a full change buffer is not a failure. Every overflow asks for one
+// fresh listing; the handle stays open and armed, with no retry backoff.
+void RunOverflow(const std::wstring& path) {
+    injected_error = ERROR_NOTIFY_ENUM_DIR; async_failure = true; attempts = 0; wait_limit = 5;
+    { std::lock_guard lock(delays_mutex); delays.clear(); }
+    ResetEvent(reached); ResetEvent(release_read);
+    std::atomic<int> overflows{0}, details{0};
+    pulse::fs::DirWatch watch;
+    Check(watch.Start(path, [&](bool overflow, auto events) {
+        if (overflow) ++overflows;
+        if (!events.empty()) ++details;
+    }), "OVERFLOW-01 watcher starts");
+    Check(WaitForSingleObject(reached, 3000) == WAIT_OBJECT_0, "OVERFLOW-02 repeated overflows keep reading");
+    Check(watch.Armed(), "OVERFLOW-03 the watch stays armed through an overflow");
+    const auto start = GetTickCount64();
+    watch.Stop();
+    Check(GetTickCount64() - start < 500, "OVERFLOW-04 Stop interrupts the overflow pause");
+    SetEvent(release_read);
+    Drain();
+    std::lock_guard lock(delays_mutex);
+    Check(delays.size() >= 5 && std::all_of(delays.begin(), delays.end(), [](DWORD d) { return d == 100; }),
+          "OVERFLOW-05 only the short overflow pause, no failure backoff");
+    Check(overflows >= 5 && details == 0, "OVERFLOW-06 each overflow asks for a fresh listing");
+}
 void RunQueue() {
     struct Batch { std::wstring path; bool overflow; std::vector<pulse::fs::DirNotifyEvent> events; };
     std::vector<Batch> queue;
@@ -154,6 +179,7 @@ int wmain() {
     RunFailure(root.wstring(), ERROR_INVALID_FUNCTION, true, 4);
     RunFailure(root.wstring(), ERROR_ACCESS_DENIED, true, 7);
     RunRecovery(root);
+    RunOverflow(root.wstring());
     RunQueue();
     CloseHandle(reached); CloseHandle(release_read);
     Check(std::filesystem::remove(root), "owned fixture removed");

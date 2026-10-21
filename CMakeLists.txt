@@ -1609,6 +1609,9 @@ target_compile_definitions(pulse_recycle_metadata_test PRIVATE PULSE_RECYCLE_MET
 add_executable(pulse_path_normalize_test src/bench/path_normalize_test.cpp src/fs/fs_enum.cpp
     src/fs/fs_snapshot.cpp)
 target_link_libraries(pulse_path_normalize_test PRIVATE netapi32 shlwapi pulse_localization)
+add_executable(pulse_snapshot_store_test src/bench/snapshot_store_test.cpp src/fs/fs_enum.cpp
+    src/fs/fs_snapshot.cpp)
+target_link_libraries(pulse_snapshot_store_test PRIVATE netapi32 shlwapi pulse_localization)
 
 add_executable(pulse_unc_probe_sync_test src/bench/unc_probe_sync_test.cpp src/fs/fs_enum.cpp)
 target_link_libraries(pulse_unc_probe_sync_test PRIVATE netapi32 shlwapi pulse_localization)

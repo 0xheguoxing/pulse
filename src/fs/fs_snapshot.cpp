@@ -60,12 +60,27 @@ void SnapshotStore::EvictToBudget(const std::wstring* protected_key) {
             --oldest;
         }
         auto it = map_.find(*oldest);
-        if (it != map_.end()) {
-            resident_bytes_ -= (std::min)(resident_bytes_, it->second.bytes);
-            map_.erase(it);
-        }
-        lru_.erase(oldest);
+        if (it != map_.end()) Evict(it);
+        else lru_.erase(oldest);
     }
+}
+
+void SnapshotStore::NoteStale(const std::wstring& key) {
+    if (stale_.size() >= kStaleLimit) stale_.clear();  // degrade to the old behaviour, never grow
+    stale_.insert(key);
+}
+
+void SnapshotStore::Evict(std::unordered_map<std::wstring, Entry>::iterator it) {
+    resident_bytes_ -= (std::min)(resident_bytes_, it->second.bytes);
+    if (it->second.dirty) NoteStale(it->first);
+    lru_.erase(it->second.lru_it);
+    map_.erase(it);
+}
+
+void SnapshotStore::EvictOldest() {
+    auto old = map_.find(lru_.back());
+    if (old != map_.end()) Evict(old);
+    else lru_.pop_back();
 }
 
 SnapshotPtr SnapshotStore::GetOrStart(const std::wstring& path, uint64_t& out_generation,
@@ -84,19 +99,14 @@ SnapshotPtr SnapshotStore::GetOrStart(const std::wstring& path, uint64_t& out_ge
             return it->second.snapshot;
         }
         it->second.dirty = false;
+        stale_.erase(key);
         out_generation = it->second.generation;
         return nullptr;
     }
 
     // Evict if needed.
-    while (map_.size() >= capacity_ && !lru_.empty()) {
-        const std::wstring& oldest = lru_.back();
-        auto old = map_.find(oldest);
-        if (old != map_.end())
-            resident_bytes_ -= (std::min)(resident_bytes_, old->second.bytes);
-        map_.erase(oldest);
-        lru_.pop_back();
-    }
+    while (map_.size() >= capacity_ && !lru_.empty()) EvictOldest();
+    stale_.erase(key);  // the caller lists it now
 
     Entry e;
     e.generation = 0;
@@ -130,7 +140,7 @@ bool SnapshotStore::IsDirty(const std::wstring& path) const {
     if (!path.empty() && key.empty()) return false;
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = map_.find(key);
-    return it != map_.end() && it->second.dirty;
+    return (it != map_.end() && it->second.dirty) || stale_.contains(key);
 }
 
 void SnapshotStore::Update(const std::wstring& path, uint64_t generation,
@@ -142,13 +152,8 @@ void SnapshotStore::Update(const std::wstring& path, uint64_t generation,
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = map_.find(key);
     if (it == map_.end()) {
-        while (map_.size() >= capacity_ && !lru_.empty()) {
-            auto old = map_.find(lru_.back());
-            if (old != map_.end())
-                resident_bytes_ -= (std::min)(resident_bytes_, old->second.bytes);
-            map_.erase(lru_.back());
-            lru_.pop_back();
-        }
+        while (map_.size() >= capacity_ && !lru_.empty()) EvictOldest();
+        stale_.erase(key);
         Entry e;
         e.generation = generation;
         e.dirty = false;
@@ -163,6 +168,7 @@ void SnapshotStore::Update(const std::wstring& path, uint64_t generation,
         return;
     }
     if (generation < it->second.generation && it->second.snapshot) return;
+    stale_.erase(key);
     resident_bytes_ -= (std::min)(resident_bytes_, it->second.bytes);
     it->second.snapshot = std::move(snapshot);
     it->second.identity = identity;
@@ -182,13 +188,8 @@ uint64_t SnapshotStore::Put(const std::wstring& path, SnapshotPtr snapshot) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = map_.find(key);
     if (it == map_.end()) {
-        while (map_.size() >= capacity_ && !lru_.empty()) {
-            auto old = map_.find(lru_.back());
-            if (old != map_.end())
-                resident_bytes_ -= (std::min)(resident_bytes_, old->second.bytes);
-            map_.erase(lru_.back());
-            lru_.pop_back();
-        }
+        while (map_.size() >= capacity_ && !lru_.empty()) EvictOldest();
+        stale_.erase(key);
         Entry e;
         e.generation = 0;
         e.dirty = false;
@@ -201,6 +202,7 @@ uint64_t SnapshotStore::Put(const std::wstring& path, SnapshotPtr snapshot) {
         EvictToBudget(&key);
         return 0;
     }
+    stale_.erase(key);
     resident_bytes_ -= (std::min)(resident_bytes_, it->second.bytes);
     it->second.snapshot = std::move(snapshot);
     it->second.bytes = bytes;
@@ -217,6 +219,7 @@ void SnapshotStore::MarkDirty(const std::wstring& path) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = map_.find(key);
     if (it != map_.end()) it->second.dirty = true;
+    else NoteStale(key);
 }
 
 void SnapshotStore::BeginRefresh(const std::wstring& path) {
@@ -225,6 +228,7 @@ void SnapshotStore::BeginRefresh(const std::wstring& path) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = map_.find(key);
     if (it != map_.end()) it->second.dirty = false;
+    stale_.erase(key);
 }
 
 size_t SnapshotStore::EntryCount() const {

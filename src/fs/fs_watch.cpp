@@ -47,7 +47,7 @@ std::vector<DirNotifyEvent> ParseNotifyBuffer(const BYTE* data, DWORD bytes,
 
 } // namespace
 
-namespace { std::atomic<unsigned> active_watchers{0}; }
+namespace { std::atomic<unsigned> active_watchers{0}; constexpr DWORD kOverflowPauseMs = 100; }
 
 struct DirWatch::State {
     std::wstring path_;
@@ -327,6 +327,16 @@ void DirWatch::State::WorkerThread() {
         else retry_delay = (std::min)(retry_delay * 2, DWORD{8000});
         return ReopenDirectory();
     };
+    // More changes than the buffer holds (#58-12): a big folder taking a bulk
+    // copy. The handle is fine and the system keeps recording; only the
+    // listing has to be read again. Reopening with the failure backoff here
+    // left the view up to eight seconds behind. The short pause bounds a
+    // provider that reports this on every read.
+    const auto overflowed = [&] {
+        pending_rename_old_.clear();
+        Notify(true, {});
+        return WaitForSingleObject(hStop_, kOverflowPauseMs) == WAIT_TIMEOUT && running_;
+    };
     while (running_) {
         ZeroMemory(&overlapped_, sizeof(overlapped_));
         overlapped_.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -359,6 +369,10 @@ void DirWatch::State::WorkerThread() {
             CloseHandle(overlapped_.hEvent);
             overlapped_.hEvent = nullptr;
             if (!running_) break;
+            if (read_error == ERROR_NOTIFY_ENUM_DIR) {
+                if (!overflowed()) break;
+                continue;
+            }
             if (!retry_failure(read_error)) break;
             newly_armed = true;
             continue;
@@ -458,6 +472,11 @@ void DirWatch::State::WorkerThread() {
             continue;
         }
 
+        if (!got && result_error == ERROR_NOTIFY_ENUM_DIR) {
+            recovered();
+            if (!overflowed()) break;
+            continue;
+        }
         if (!got) {
             if (!retry_failure(result_error)) break;
             newly_armed = true;
