@@ -12,6 +12,7 @@
 #include "tab_spring.h"
 #include "vertical_tabs.h"
 #include "app_column_view.h"
+#include "git_ui.h"
 #include "app_details_tree.h"
 #include "folder_sizes_ui.h"
 #include "update_status.h"
@@ -1144,6 +1145,11 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             slot.pane.staged = StagedHashes(s);
             if (app::Tab* tab = p->ActiveTab()) {
                 FillChangePane(s, *tab, slot.pane, slot.rect);
+                FillGitPane(s, *tab, slot.pane);
+                if (slot.focused) {
+                    vm.pane.git_marks = slot.pane.git_marks;
+                    AppendGitStatusText(*tab, vm.status.status_text);
+                }
                 for (const auto& cutPath : s.cutPaths) {
                     if (fs::ParentPath(cutPath) != tab->current_path) continue;
                     const size_t slash = cutPath.find_last_of(L"\\/");

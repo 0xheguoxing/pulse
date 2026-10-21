@@ -10,6 +10,7 @@
 #include "sysctx_view.h"
 #include "shortcuts_view.h"
 #include "view_layout.h"
+#include "git_mark.h"
 #include "column_strip_layout.h"
 #include "panel_metrics.h"
 #include "toolbar_layout.h"
@@ -262,6 +263,14 @@ struct PaneViewModel {
     std::shared_ptr<const TagDots> tag_dots;
     // Hashes (StagedPathHash) of every staged item: rows show "已暂存".
     std::shared_ptr<const std::unordered_set<uint64_t>> staged;
+    // In-app Git: source index -> working-tree state (git_mark.h). Rows tint
+    // their name; Details files also get a pill in the badge slot.
+    std::shared_ptr<const std::unordered_map<int, GitMark>> git_marks;
+    GitMark GitMarkAt(int source) const {
+        if (!git_marks) return GitMark::None;
+        const auto it = git_marks->find(source);
+        return it == git_marks->end() ? GitMark::None : it->second;
+    }
     bool loading = false;
     bool search_retaining_results = false;
     bool can_go_back = false;

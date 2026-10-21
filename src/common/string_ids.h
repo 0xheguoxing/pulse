@@ -2576,5 +2576,26 @@
 #define IDS_DROP_LINK                                                                    3786
 #define IDS_SHORTCUT_NAME_FORMAT                                                         3787
 #define IDS_CANNOT_CREATE_SHORTCUT                                                       3788
+#define IDS_GIT_MARK_ADDED                                                               3789
+#define IDS_GIT_MARK_RENAMED                                                             3790
+#define IDS_GIT_MARK_MODIFIED                                                            3791
+#define IDS_GIT_MARK_DELETED                                                             3792
+#define IDS_GIT_MARK_CONFLICT                                                            3793
+#define IDS_GIT_PULL                                                                     3794
+#define IDS_GIT_PUSH                                                                     3795
+#define IDS_GIT_REFRESH                                                                  3796
+#define IDS_GIT_PULLING                                                                  3797
+#define IDS_GIT_PUSHING                                                                  3798
+#define IDS_GIT_PULL_DONE                                                                3799
+#define IDS_GIT_PUSH_DONE                                                                3800
+#define IDS_GIT_PULL_FAILED                                                              3801
+#define IDS_GIT_PUSH_FAILED                                                              3802
+#define IDS_GIT_NOT_FOUND                                                                3803
+#define IDS_GIT_NOT_FOUND_DETAIL                                                         3804
+#define IDS_GIT_BUSY                                                                     3805
+#define IDS_GIT_CHANGES                                                                  3806
+#define IDS_GIT_TIMED_OUT                                                                3807
+#define IDS_GIT_PUSH_REJECTED                                                            3808
+#define IDS_GIT_PULL_DIVERGENT                                                           3809
 
 #endif  // PULSE_STRING_IDS_H

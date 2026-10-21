@@ -1,4 +1,5 @@
 #include "reopen_closed.h"
+#include "git_ui.h"
 #include "folder_alias.h"
 #include "app_wall_hint.h"
 #include "arrival_select.h"
@@ -4455,6 +4456,11 @@ LRESULT HandleRButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             ShowCloudPlaceMenu(*s, hit.path, sp);
             shown = true;
         } else if (hit.region == ui::HitTestResult::SidebarItem) {
+            // The 项目 row of the repository the tab is in: its Git menu.
+            if (ShowGitProjectMenu(*s, hit.path, sp)) {
+                s->context_menu.Close();
+                return 0;
+            }
             if (s->places.IsQuickAccessPinned(hit.path)) {
                 ShowQuickAccessMenu(*s, hit.path, sp);
                 s->context_menu.Close();

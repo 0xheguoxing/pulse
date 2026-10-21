@@ -2583,3 +2583,24 @@ HelpMergeWindows	IDS_HELP_MERGE_WINDOWS	3785	合并所有窗口	Merge all window
 DropLink	IDS_DROP_LINK	3786	创建快捷方式到 	Create shortcut in 	建立捷徑到 
 ShortcutNameFormat	IDS_SHORTCUT_NAME_FORMAT	3787	%s - 快捷方式	%s - Shortcut	%s - 捷徑
 CannotCreateShortcut	IDS_CANNOT_CREATE_SHORTCUT	3788	无法创建快捷方式	Couldn't create the shortcut	無法建立捷徑
+GitMarkAdded	IDS_GIT_MARK_ADDED	3789	新增	New	新增
+GitMarkRenamed	IDS_GIT_MARK_RENAMED	3790	重命名	Renamed	重新命名
+GitMarkModified	IDS_GIT_MARK_MODIFIED	3791	已修改	Modified	已修改
+GitMarkDeleted	IDS_GIT_MARK_DELETED	3792	已删除	Deleted	已刪除
+GitMarkConflict	IDS_GIT_MARK_CONFLICT	3793	冲突	Conflict	衝突
+GitPull	IDS_GIT_PULL	3794	拉取	Pull	拉取
+GitPush	IDS_GIT_PUSH	3795	推送	Push	推送
+GitRefresh	IDS_GIT_REFRESH	3796	刷新 Git 状态	Refresh Git status	重新整理 Git 狀態
+GitPulling	IDS_GIT_PULLING	3797	正在拉取…	Pulling…	正在拉取…
+GitPushing	IDS_GIT_PUSHING	3798	正在推送…	Pushing…	正在推送…
+GitPullDone	IDS_GIT_PULL_DONE	3799	已拉取 %s	Pulled %s	已拉取 %s
+GitPushDone	IDS_GIT_PUSH_DONE	3800	已推送 %s	Pushed %s	已推送 %s
+GitPullFailed	IDS_GIT_PULL_FAILED	3801	拉取失败	Couldn't pull	拉取失敗
+GitPushFailed	IDS_GIT_PUSH_FAILED	3802	推送失败	Couldn't push	推送失敗
+GitNotFound	IDS_GIT_NOT_FOUND	3803	找不到 Git	Git wasn't found	找不到 Git
+GitNotFoundDetail	IDS_GIT_NOT_FOUND_DETAIL	3804	请安装 Git for Windows，并确保 git 在 PATH 中。	Install Git for Windows and make sure git is on PATH.	請安裝 Git for Windows，並確保 git 在 PATH 中。
+GitBusy	IDS_GIT_BUSY	3805	Git 还在执行上一个操作	Git is still busy with the last operation	Git 仍在執行上一個操作
+GitChanges	IDS_GIT_CHANGES	3806	%d 处更改	%d changes	%d 處變更
+GitTimedOut	IDS_GIT_TIMED_OUT	3807	git 超过 5 分钟没有响应，已停止。	git didn't respond for 5 minutes and was stopped.	git 超過 5 分鐘沒有回應，已停止。
+GitPushRejected	IDS_GIT_PUSH_REJECTED	3808	远程有本地还没有的提交：请先拉取，再推送。	The remote has commits you don't have yet: pull first, then push.	遠端有本機還沒有的提交：請先拉取，再推送。
+GitPullDivergent	IDS_GIT_PULL_DIVERGENT	3809	本地和远程都有新提交。请在终端里选择合并或变基（git config pull.rebase false / true）后再拉取。	Both your branch and the remote have new commits. Choose merge or rebase in a terminal (git config pull.rebase false / true), then pull again.	本機和遠端都有新提交。請在終端機中選擇合併或重定基底（git config pull.rebase false / true）後再拉取。

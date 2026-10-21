@@ -1,4 +1,5 @@
 #include "app_diagnostics.h"
+#include "git_ui.h"
 #include "app_wall_hint.h"
 #include "arrival_select.h"
 #include "zip_compress_ui.h"
@@ -1825,6 +1826,9 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     case WM_TAG_RULE_ACCEPT:
         if (s) AcceptTagRuleSuggestion(*s);
+        return 0;
+    case WM_GIT_RESULT:
+        if (s) ReceiveGitResult(*s, lParam);
         return 0;
     case WM_TAG_DROP_UNDO:
         if (s) UndoDropTags(*s);

@@ -1575,6 +1575,9 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                             ? std::min(108.0f * scale_, painter_.MeasureTagWidth(entry.badge))
                             : staged_pill ? std::min(108.0f * scale_, painter_.MeasureTagWidth(
                                 pulse::l10n::Get(pulse::l10n::StringId::TrayStagedBadge)))
+                            : paneVm.view_mode == ViewMode::Details && !entry.is_dir &&
+                                paneVm.GitMarkAt(idx) != GitMark::None
+                            ? std::min(108.0f * scale_, painter_.MeasureTagWidth(GitMarkText(paneVm.GitMarkAt(idx))))
                             : 0.0f;
                         const bool rowSnippet = !entry.snippet.empty();
                         const DetailsNameLine nameLine =

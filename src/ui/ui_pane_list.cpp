@@ -4471,9 +4471,14 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             const bool staged_pill = vm.view_mode == ViewMode::Details && !change && e.badge.empty() &&
                 vm.staged && !vm.staged->empty() && vm.staged->contains(StagedPathHash(e.path));
             const std::wstring& staged_text = l10n::Get(l10n::StringId::TrayStagedBadge);
+            // In-app Git: a changed file gets its state pill when the slot is free.
+            const GitMark gitMark = vm.GitMarkAt(src);
+            const bool git_pill = vm.view_mode == ViewMode::Details && !e.is_dir && gitMark != GitMark::None &&
+                !change && e.badge.empty() && !staged_pill;
             const float badgeW = change && !iconGrid ? ChangeBadgeWidth(*change, scale_, compositor_) : vm.view_mode == ViewMode::Details && !e.badge.empty()
                 ? std::min(108.0f * scale_, painter_.MeasureTagWidth(e.badge))
-                : staged_pill ? std::min(108.0f * scale_, painter_.MeasureTagWidth(staged_text)) : 0.0f;
+                : staged_pill ? std::min(108.0f * scale_, painter_.MeasureTagWidth(staged_text))
+                : git_pill ? std::min(108.0f * scale_, painter_.MeasureTagWidth(GitMarkText(gitMark))) : 0.0f;
             // List rows: [mark] alias  real name (pulse_alias.html .amark).
             const bool show_mark = has_alias && app::AliasStore::Instance().ShowMark();
             const bool list_mark = show_mark && !iconGrid;
@@ -4510,6 +4515,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                                                  tint.b + (base.b - tint.b) * k, 1.0f);
                     }
                 }
+                if (gitMark != GitMark::None && !IsHighContrast())
+                    nameColor = GitMarkColor(gitMark, theme.bg.r < 0.5f);
                 if (cut) nameColor = WithAlpha(nameColor, 0.55f);
                 else if (!IsHighContrast()) nameColor = HiddenEntryNameColor(e.attrs, theme, nameColor);
                 if (rename_covers && nameRc.left < rename_card.right && nameRc.right > rename_card.left &&
@@ -4647,6 +4654,14 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     pill.bounds = trail.badge;
                     pill.text = staged_text;
                     pill.color = theme.accent;
+                    pill.bordered = false;
+                    painter_.DrawTag(pill);
+                }
+                if (git_pill && trail.badge.right > trail.badge.left) {
+                    fluent::TagSpec pill;
+                    pill.bounds = trail.badge;
+                    pill.text = GitMarkText(gitMark);
+                    pill.color = GitMarkColor(gitMark, theme.bg.r < 0.5f);
                     pill.bordered = false;
                     painter_.DrawTag(pill);
                 }

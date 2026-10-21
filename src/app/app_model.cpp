@@ -1,5 +1,6 @@
 // app_model.cpp
 #include "app_model.h"
+#include "git_status.h"
 #include "folder_alias.h"
 #include "selection_caps.h"
 #include "split_tree_shape.h"
@@ -2532,7 +2533,9 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
         project.icon_glyph = L"\xE8B7";
         project.fallback_text = L"Repo";
         project.icon_color = ui::HexColor(0x34D399);
-        project.badge = L"Git";
+        // The branch (and how far it is from its upstream) once git answered.
+        const auto git = GitStatusFor(gitRoot);
+        project.badge = git ? GitBadgeText(*git) : std::wstring(L"Git");
         const size_t project_at = (std::min)(first_pin_row, access.items.size());
         access.items.insert(access.items.begin() + static_cast<std::ptrdiff_t>(project_at),
                             std::move(project));

@@ -1,4 +1,5 @@
 #include "tag_color_commands.h"
+#include "git_ui.h"
 #include "tag_ads_sync.h"
 #include "tag_query.h"
 #include "folder_alias.h"
@@ -2545,6 +2546,9 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
         map.separator_after = true;
         base_items.insert(base_items.begin(), std::move(map));
     }
+    // In-app Git: pull / push / refresh for a folder inside a repository.
+    const std::wstring git_root = tab->git_root;
+    if (view_options.filesystem) AppendGitMenu(*tab, base_items);
     s.context_menu.OpenMenu(std::move(base_items));
     auto display = ExplorerMenu(s, s.context_menu.base_items());
 
@@ -2557,6 +2561,7 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     if (RunShellNewCommand(s, cmd, new_templates)) return;
     if (cmd == app::CmdViewRecentChanges) { OpenChangeView(s, recent_changes_path); return; }
     if (cmd == app::CmdMapNetworkDrive) { RunMapNetworkDrive(s, L""); return; }
+    if (HandleGitCommand(s, cmd, git_root)) return;
     if (cmd != app::CmdNone) DispatchMenuCommand(s, cmd);
 }
 
