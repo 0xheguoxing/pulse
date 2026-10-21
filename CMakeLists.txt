@@ -328,6 +328,7 @@ pulse_enable_lumatext(pulse_fluent_gallery)
 add_executable(pulse_dialog_gallery WIN32
     src/bench/dialog_gallery.cpp
     src/bench/dialog_gallery.rc
+    src/app/ai_question_specs.cpp
     src/ui/confirm_dialog.cpp
     src/ui/toolbar_picker.cpp
     src/ui/confirm_dialog_view.cpp
@@ -579,6 +580,14 @@ set_target_properties(pulse_content PROPERTIES OUTPUT_NAME "Pulse.Content")
 target_link_libraries(pulse_content PRIVATE advapi32 shlwapi ole32 shell32 bcrypt pulse_localization
     pulse_crash_reporter pulse_text)
 pulse_add_version_resource(pulse_content "Pulse content search agent" "Pulse.Content" "Pulse.Content.exe")
+
+# ---- Pulse.AI.exe: MCP server and AI assistant host, shipped in the AI enhancement pack ----
+add_executable(pulse_ai src/ai_host/main.cpp src/ai_host/mcp_server.cpp src/ai_host/mcp_tools.cpp
+    src/ai_host/broker_client.cpp src/common/json_value.cpp)
+target_include_directories(pulse_ai PRIVATE "${CMAKE_BINARY_DIR}/generated")
+target_link_libraries(pulse_ai PRIVATE advapi32)
+set_target_properties(pulse_ai PROPERTIES OUTPUT_NAME "Pulse.AI")
+pulse_add_version_resource(pulse_ai "Pulse AI and MCP host" "Pulse.AI" "Pulse.AI.exe")
 
 # ---- Stage 1B-1 ops self test (console; drives pulse_shell.exe over the pipe) ----
 add_executable(pulse_operation_presentation_test src/bench/operation_presentation_test.cpp)
@@ -1138,6 +1147,65 @@ if(TARGET pulse)
     target_include_directories(pulse PRIVATE "${CMAKE_BINARY_DIR}/generated")
 endif()
 
+# The AI enhancement pack: Pulse.AI.exe as an LZMS release asset in
+# build/ai-pack and the catalog pulse.exe checks it against, like the content
+# pack above (same channel, same release).
+set(PULSE_AI_PACK_DIR "${CMAKE_BINARY_DIR}/ai-pack")
+set(PULSE_AI_PACK_CATALOG "${CMAKE_BINARY_DIR}/generated/ai_pack_catalog.h")
+add_custom_command(OUTPUT "${PULSE_AI_PACK_CATALOG}"
+    COMMAND pulse_pack_catalog --key ai --symbol Ai --version "${PULSE_VERSION}"
+        --channel "${PULSE_CONTENT_PACK_CHANNEL}"
+        --base-url "https://github.com/jimmgreen/pulse/releases/download/v${PULSE_VERSION}/"
+        --out-dir "${PULSE_AI_PACK_DIR}" --header "${PULSE_AI_PACK_CATALOG}"
+        "$<TARGET_FILE:pulse_ai>"
+    DEPENDS pulse_pack_catalog pulse_ai "$<TARGET_FILE:pulse_ai>"
+    COMMENT "AI enhancement pack catalog"
+    VERBATIM)
+add_custom_target(pulse_ai_pack DEPENDS "${PULSE_AI_PACK_CATALOG}")
+add_executable(pulse_ai_pack_test src/bench/ai_pack_test.cpp src/app/ai_pack.cpp src/app/content_pack.cpp
+    src/app/pack_installer.cpp src/app/update_installer.cpp src/app/update_transport.cpp
+    src/app/update_download_cleanup.cpp)
+target_compile_definitions(pulse_ai_pack_test PRIVATE PULSE_AI_PACK_NO_CATALOG=1 PULSE_CONTENT_PACK_NO_CATALOG=1)
+target_include_directories(pulse_ai_pack_test PRIVATE "${CMAKE_BINARY_DIR}/generated")
+target_link_libraries(pulse_ai_pack_test PRIVATE pulse_runtime_log bcrypt cabinet shell32 user32 winhttp crypt32 advapi32)
+add_dependencies(pulse_ai_pack_test pulse_pack_catalog pulse_ai)
+if(TARGET pulse)
+    add_dependencies(pulse pulse_ai_pack)
+    target_sources(pulse PRIVATE "${PULSE_AI_PACK_CATALOG}" src/common/json_value.cpp)
+endif()
+
+# The AI tool broker (pipe, permissions, ai.json, activity log) and its JSON DOM.
+add_executable(pulse_ai_json_test src/bench/ai_json_test.cpp src/common/json_value.cpp)
+add_executable(pulse_ai_broker_test src/bench/ai_broker_test.cpp src/app/ai_broker.cpp src/app/ai_settings.cpp
+    src/app/ai_status.cpp src/app/ai_activity_log.cpp src/app/ai_pack.cpp src/app/content_pack.cpp src/app/pack_installer.cpp
+    src/app/update_installer.cpp src/app/update_transport.cpp src/app/update_download_cleanup.cpp
+    src/common/json_value.cpp)
+target_compile_definitions(pulse_ai_broker_test PRIVATE PULSE_AI_PACK_NO_CATALOG=1 PULSE_CONTENT_PACK_NO_CATALOG=1)
+target_include_directories(pulse_ai_broker_test PRIVATE "${CMAKE_BINARY_DIR}/generated")
+target_link_libraries(pulse_ai_broker_test PRIVATE pulse_runtime_log bcrypt cabinet shell32 user32 winhttp crypt32 advapi32)
+add_dependencies(pulse_ai_broker_test pulse_ai)
+
+# Pulse.AI.exe --mcp and pulse.exe --mcp-stdio over real pipes, against a
+# broker in the test; installs this build's real AI pack into a scratch
+# LOCALAPPDATA for the launcher, so it needs pulse, pulse_ai and the pack.
+add_executable(pulse_ai_mcp_test src/bench/ai_mcp_test.cpp src/app/ai_broker.cpp src/app/ai_settings.cpp
+    src/app/ai_activity_log.cpp src/app/content_pack.cpp src/app/pack_installer.cpp src/app/update_installer.cpp
+    src/app/update_transport.cpp src/app/update_download_cleanup.cpp src/common/json_value.cpp)
+target_compile_definitions(pulse_ai_mcp_test PRIVATE PULSE_CONTENT_PACK_NO_CATALOG=1)
+target_include_directories(pulse_ai_mcp_test PRIVATE "${CMAKE_BINARY_DIR}/generated")
+target_link_libraries(pulse_ai_mcp_test PRIVATE pulse_runtime_log bcrypt cabinet shell32 user32 winhttp crypt32 advapi32)
+add_dependencies(pulse_ai_mcp_test pulse_ai pulse_ai_pack)
+if(TARGET pulse)
+    add_dependencies(pulse_ai_mcp_test pulse)
+endif()
+
+# The AI tools' file system side (list, properties, search planning, zip) on
+# fixtures under bench_data.
+add_executable(pulse_ai_tools_test src/bench/ai_tools_test.cpp src/app/ai_tools_fs.cpp src/app/zip_compress.cpp
+    src/common/json_value.cpp)
+target_include_directories(pulse_ai_tools_test PRIVATE "${CMAKE_BINARY_DIR}/generated")
+target_link_libraries(pulse_ai_tools_test PRIVATE shell32 ole32 uuid version)
+
 add_executable(pulse_office_ooxml_test src/bench/office_ooxml_test.cpp src/index/office_ooxml.cpp)
 target_include_directories(pulse_office_ooxml_test PRIVATE src)
 target_link_libraries(pulse_office_ooxml_test PRIVATE ole32 uuid xmllite)
@@ -1433,7 +1501,7 @@ add_executable(pulse_common_persistence_test src/bench/common_persistence_test.c
 target_link_libraries(pulse_common_persistence_test PRIVATE pulse_localization pulse_runtime_log user32 shell32 ole32 uuid advapi32 shlwapi netapi32 psapi)
 
 if(PULSE_RELEASE_SYMBOLS)
-    foreach(payload_target pulse pulse_index pulse_content pulse_document pulse_preview pulse_shell pulse_integration pulse_elevated)
+    foreach(payload_target pulse pulse_index pulse_content pulse_document pulse_ai pulse_preview pulse_shell pulse_integration pulse_elevated)
         target_compile_options(${payload_target} PRIVATE /Z7)
         target_link_options(${payload_target} PRIVATE /DEBUG:FULL /OPT:REF /OPT:ICF)
     endforeach()

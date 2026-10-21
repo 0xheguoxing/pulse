@@ -77,5 +77,9 @@ constexpr UINT WM_GIT_RESULT = WM_APP + 105;  // in-app Git: lParam owns a finis
 constexpr UINT WM_CLOUD_PIN_DONE = WM_APP + 106;  // 始终保留 / 释放空间 finished: wParam CloudPinAction, lParam failed count
 constexpr UINT WM_CLOUD_DOWNLOAD = WM_APP + 107;  // 下载并预览: wParam app::CloudDownloadEvent, lParam job id
 constexpr UINT WM_DEVICES_CHANGED = WM_APP + 108;  // DeviceRegistry: the phone list changed (device_registry.h)
+constexpr UINT WM_AI_UI_TASK = WM_APP + 109;  // host: lParam std::shared_ptr<UiTask>*, an AI tool's UI step (ai_tools_ui.h)
+constexpr UINT WM_AI_STATUS = WM_APP + 110;   // host: what AI clients do changed (ai_status.h)
+constexpr UINT WM_AI_SNACK_UNDO = WM_APP + 111;  // the AI 新建 snack: undo that change (ai_settings_ui.h)
+constexpr UINT WM_AI_SNACK_OPEN = WM_APP + 112;  // the AI 新建 snack: show the new file
 
 }  // namespace pulse

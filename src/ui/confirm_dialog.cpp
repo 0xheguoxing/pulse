@@ -86,6 +86,7 @@ public:
         if (owner_) EnableWindow(owner_, FALSE);
         ShowWindow(hwnd_, SW_SHOW);
         SetForegroundWindow(hwnd_);
+        if (spec_.on_open) spec_.on_open(hwnd_);
 
         MSG message{};
         while (!done_ && GetMessageW(&message, nullptr, 0, 0) > 0) {
@@ -93,6 +94,7 @@ public:
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
+        if (spec_.on_open) spec_.on_open(nullptr);
         if (IsWindow(hwnd_)) { HideComposedDialog(hwnd_, owner_); DestroyWindow(hwnd_); }
         hwnd_ = nullptr;
         if (owner_) EnableWindow(owner_, TRUE);

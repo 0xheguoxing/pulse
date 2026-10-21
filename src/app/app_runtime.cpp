@@ -44,6 +44,9 @@
 #include "text_diff.h"
 #include "content_pack.h"
 #include "content_pack_ui.h"
+#include "ai_pack.h"
+#include "ai_pack_ui.h"
+#include "ai_settings_ui.h"
 #include "session.h"
 #include "context_menu.h"
 #include "batch_rename.h"
@@ -624,6 +627,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             // Search off hides the index maintenance details on the search page.
             vm.settings_expanded = s.appPrefs.search_enabled ? s.settingsExpanded : (s.settingsExpanded & ~2u);
             FillShortcutsVm(s, vm);  // 快捷键: sidebar badge everywhere, the page view on page 7
+            if (vm.settings_page == 9) pulse::FillAiSettingsVm(s, vm);   // 增强包 > AI 与 MCP
             if (vm.settings_page == 5) vm.settings_preview_codecs = ui::DetectPreviewCodecs(false, s.hwnd);
             if (vm.settings_page == 6) {
                 // 系统右键菜单: the first visit starts a background scan.
@@ -662,6 +666,19 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
                     checked_at = now;
                 }
                 vm.settings_content_pack_state = content_state;
+                // The AI pack likewise, and again as soon as a download ends.
+                static uint64_t ai_checked_at = 0;
+                static bool ai_was_installing = false;
+                static int ai_state = static_cast<int>(app::AiPackState::Missing);
+                const bool ai_installing = AiPackInstalling();
+                if (!ai_checked_at || now - ai_checked_at >= 2000 || ai_installing != ai_was_installing) {
+                    ai_state = static_cast<int>(app::QueryAiPackState());
+                    ai_checked_at = now;
+                    ai_was_installing = ai_installing;
+                }
+                vm.settings_ai_pack_state = ai_state;
+                vm.settings_ai_pack_installing = ai_installing;
+                vm.settings_ai_pack_progress = ai_installing ? AiPackInstallProgress() : 0.0f;
             }
             if (vm.settings_page == 5 || vm.settings_page == 8) {
                 // Cached in the controller: the disk is read at most every 2 s.
@@ -2553,6 +2570,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     SyncTaskbarWindowTitle(s);
     if (!s.pane) return {};
     TickContentPackInstall(s);
+    TickAiPackInstall(s);
     // A finished pack download repaints the window once; drop the cached
     // failed thumbnails so the newly supported files are decoded again.
     if (s.settings.TakeMediaPackResult()) {
@@ -2748,6 +2766,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
             }
         }
     }
+    pulse::FillAiStatusVm(vm);   // the AI chip at the right end of the status bar
     // "已暂存" row pills (tray redesign).
     vm.pane.staged = StagedHashes(s);
     // 1B-2 overlays: cut rows, drag feedback, breadcrumb hover.

@@ -3,6 +3,7 @@
 #include <d2d1.h>
 #include <windows.h>
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,9 @@ struct ConfirmDialogSpec {
     std::wstring secondary_text;
     // Optional list shown in a card under the message (one row per item).
     std::vector<std::wstring> items;
+    // Optional: how many items `items` stands for when only the first ones
+    // are listed (0: items.size()). The card then ends with "and N more".
+    size_t items_total = 0;
     std::wstring item_glyph;
     // Optional small print under the card.
     std::wstring note;
@@ -34,6 +38,10 @@ struct ConfirmDialogSpec {
     ConfirmChoice default_choice = ConfirmChoice::Confirm;
     // Information only: just the confirm button (Esc / close still dismiss).
     bool single_button = false;
+    // Optional: called with the dialog once it shows and with null when it
+    // goes, so a question asked for someone else (an AI client) can be
+    // closed from outside with WM_CLOSE, which answers Cancel.
+    std::function<void(HWND)> on_open;
 };
 
 ConfirmChoice ShowConfirmDialogEx(HWND owner, const ConfirmDialogSpec& spec, bool dark,

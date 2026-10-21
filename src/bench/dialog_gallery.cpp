@@ -10,6 +10,7 @@
 
 #include "../common/windows_compat.h"
 #include "../common/localization.h"
+#include "../app/ai_question_specs.h"
 #include "../ui/confirm_dialog.h"
 #include "../ui/confirm_dialog_view.h"
 #include "../ui/fluent_components.h"
@@ -124,6 +125,23 @@ std::vector<ConfirmScene> ConfirmScenes() {
         s.spec.item_glyph = L"\xE7C4";
         s.spec.note = L"关闭程序前请先保存它里面的改动。";
         s.spec.tone = ConfirmTone::Warning;
+        scenes.push_back(std::move(s));
+    }
+    {
+        // AI pack: an MCP client's first connection (只允许这次 is the default).
+        ConfirmScene s{L"ai_connect", pulse::app::ai::ConnectQuestionSpec(L"Claude"), {}};
+        s.visual.focus = kConfirmSecondary;
+        s.visual.show_focus = true;
+        scenes.push_back(std::move(s));
+    }
+    {
+        // AI pack: create_zip asks first; five names, then "and 4 more".
+        ConfirmScene s{L"ai_create_zip",
+                       pulse::app::ai::CreateZipQuestionSpec(
+                           L"Claude", {L"报告 2026.docx", L"预算.xlsx", L"照片", L"notes.md", L"demo.mp4"}, 9,
+                           L"Reports.zip", L"D:\\Projects\\Reports"),
+                       {}};
+        s.visual.hover = kConfirmPrimary;
         scenes.push_back(std::move(s));
     }
     return scenes;

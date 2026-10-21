@@ -630,6 +630,9 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     {&lay.pack_manage, PackAction::ManagePacks},
                     {pack_text::ContentAvailable(vm) ? &lay.pack_content_primary : &lay.pack_ocr_enable,   // ocr_enable stays empty
                      pack_text::ContentReady(vm) ? PackAction::ContentManage : PackAction::ContentInstall},
+                    // A bundled host has no button; ai_enable stays empty, so never matches.
+                    {pack_text::AiPrimaryEnabled(vm) ? &lay.pack_ai_primary : &lay.pack_ai_enable,
+                     pack_text::AiAction(vm)},
                     {&lay.pack_primary, vm.settings_pack_media_installed && !vm.settings_pack_installing
                                             ? PackAction::Remove : PackAction::Install},
                     {&lay.pack_enable, PackAction::Enable},
@@ -687,6 +690,13 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 const int target = HitTestSettingsShortcuts(lay, vm, x, y);
                 if (target >= 0) {
                     r.region = HitTestResult::SettingsShortcuts;
+                    r.index = target;
+                    return r;
+                }
+            } else if (vm.settings_page == 9) {
+                const int target = HitTestSettingsAi(lay, vm, x, y);
+                if (target >= 0) {
+                    r.region = HitTestResult::SettingsAi;
                     r.index = target;
                     return r;
                 }

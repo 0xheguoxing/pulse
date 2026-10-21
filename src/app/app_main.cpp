@@ -81,6 +81,12 @@
 #include "window_merge.h"
 #include "reopen_closed.h"
 #include "tray_controller.h"
+#include "ai_launcher.h"
+#include "ai_service.h"
+#include "ai_settings_ui.h"
+#include "ai_status.h"
+#include "ai_tools.h"
+#include "ai_tools_ui.h"
 #include "global_search_controller.h"
 #include "keymap_input.h"
 #include "shortcut_page.h"
@@ -233,6 +239,8 @@ static bool g_shot_favorites_bar = false;
 static bool g_shot_toolbar_apps = false;
 // --shot-favorites-hover N: favorite N's ⌄ is hot (-2: the address bar's ★⌄).
 static int g_shot_favorites_hover = -1;
+// --shot-ai N: made-up AI clients and calls (StageAiShot): 0 busy, 1 waiting, 2 done.
+static int g_shot_ai = -1;
 // --shot-favorites-drop N: files are dragged over favorite N.
 static int g_shot_favorites_drop = -1;
 // --shot-favorites-focus N: F6 onto the 收藏栏, then → N times (the focus ring).
@@ -816,6 +824,8 @@ static void HandOffAtExit(AppState& s, HWND hwnd) {
     }
     s.searchHistoryWriter.Flush();
     const uint64_t save_ms = timer.Lap();
+    // AI calls end before the operations they could start (cancelled, pipe closed).
+    pulse::app::ai::StopAiService();
     s.ops.Stop();
     ops::ShutdownElevatedTransferHelper();
     const uint64_t ops_ms = timer.Lap();
@@ -1539,8 +1549,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
         // Settings have been loaded (or their own load_failed guard is set),
         // and the saved layouts/undo are now represented by live models.
-        if (init_core && !s->isolatedTest && !s->shot.active && !s->menushot)
+        if (init_core && !s->isolatedTest && !s->shot.active && !s->menushot) {
             app::CleanupAbandonedUpdateStagesAsync();
+            // AI clients' tool broker, when the AI pack and ai.json allow it (worker thread).
+            pulse::app::ai::StartAiServiceAsync({s->core.host.Hwnd(), &s->core.ops, &s->core.index});
+        }
         s->startupComplete = true;
         s->lastFrameTime = std::chrono::steady_clock::now();
         s->renderer.SetDetailsPanelVisible(s->showDetailsPanel);
@@ -1900,6 +1913,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_TRAY_RESTORE:
     case WM_TRAY_TAKE_CLIP:
         if (s) HandleTrayMessage(*s, msg);
+        return 0;
+
+    case WM_AI_SNACK_UNDO:
+    case WM_AI_SNACK_OPEN:
+        if (s) pulse::HandleAiSnackMessage(*s, msg);
         return 0;
 
     case WM_ZIP_COMPRESS:
@@ -2809,6 +2827,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_INDEX_SEARCH: {
         if (!s) return 0;
         const uint32_t id = static_cast<uint32_t>(wParam);
+        if (pulse::app::ai::ClaimAiIndexResult(id)) return 0;   // an AI client's search (ai_tools.h)
         index::SearchResult result;
         if (!s->index.TakeResult(id, result)) return 0;
         AcceptIndexProviderResult(SearchResultWindow(*s, id), id, std::move(result), false);
@@ -3388,6 +3407,10 @@ int ShotModeMain(AppState& state, HWND hwnd) {
             Sleep(40);
         }
         ApplyShotTrayAction(state); // separate frame: __try forbids unwinding objects
+        if (g_shot_ai >= 0) {
+            pulse::StageAiShot(g_shot_ai);
+            Render(state);   // the snapshot reads the frame before the last Present
+        }
         StageLinkPillShot(state);
         if (state.shot_tooltip) {
             // After the pump: a mouse move during startup would clear this.
@@ -3544,6 +3567,9 @@ int RunQuickPreviewAuditTest();
 #endif
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
+    // pulse.exe --mcp-stdio, started by AI clients: only the launcher, before
+    // anything of the app (no window, no D2D, no single instance).
+    if (pulse::app::ai::IsMcpStdioLaunch(__argc, __wargv)) return pulse::app::ai::RunMcpStdioLauncher(hInstance);
 #ifdef PULSE_WITH_SELFTEST
     std::optional<CLSID> tag_com_audit_class;
     if (!app::shell_tags::PrepareCommandAudit(__argc, __wargv, tag_com_audit_class)) return 2;
@@ -3686,6 +3712,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             g_shot_favorites_bar = true;
         } else if (wcscmp(__wargv[i], L"--shot-toolbar-apps") == 0) {
             g_shot_toolbar_apps = true;
+        } else if (wcscmp(__wargv[i], L"--shot-ai") == 0 && i + 1 < __argc) {
+            g_shot_ai = _wtoi(__wargv[++i]);
         } else if (wcscmp(__wargv[i], L"--shot-favorites-hover") == 0 && i + 1 < __argc) {
             g_shot_favorites_hover = _wtoi(__wargv[++i]);
         } else if (wcscmp(__wargv[i], L"--shot-favorites-drop") == 0 && i + 1 < __argc) {
@@ -3888,6 +3916,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     const bool host_created = state.core.host.Create(hInstance,
         [&state](HWND host, UINT message, WPARAM wParam, LPARAM lParam) -> std::optional<LRESULT> {
             AppState* const target = state.core.windows.MostRecent();
+            if (message == WM_AI_UI_TASK) {
+                // An AI tool reading or showing something in a window (ai_tools_ui.h).
+                pulse::app::ai::HandleAiUiTask(target, lParam);
+                return 0;
+            }
+            constexpr UINT_PTR kAiChipTimer = 0x41494348;   // 'AICH'
+            if (message == WM_AI_STATUS || (message == WM_TIMER && wParam == kAiChipTimer)) {
+                // The AI chip in each status bar (ai_status.h); "done" fades by itself.
+                if (message == WM_AI_STATUS) pulse::app::ai::AckAiStatusMessage();
+                else KillTimer(host, kAiChipTimer);
+                state.core.windows.ForEach([](HWND window, AppState&) { InvalidateRect(window, nullptr, FALSE); });
+                if (const uint64_t wait = pulse::app::ai::AiChipSettlesIn(GetTickCount64()))
+                    SetTimer(host, kAiChipTimer, static_cast<UINT>(wait + 50), nullptr);
+                return 0;
+            }
             if (app::IsHostRoutedMessage(message))
                 return target ? SendMessageW(target->hwnd, message, wParam, lParam) : 0;
             if (const auto kind = app::ClassifySystemBroadcast(message, wParam, lParam);

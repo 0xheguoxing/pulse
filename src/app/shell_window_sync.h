@@ -19,5 +19,8 @@ void HandleShellSelect(AppState& s, const app::ShellSelectRequest& request);
 // WM_EXPLORER_TAKEOVER: opens the source folder, then acknowledges the actual load.
 void HandleExplorerTakeover(AppState& s, const app::ExplorerTakeoverRequest& request);
 void CompleteExplorerNavigation(app::Tab& tab, uint64_t generation, bool success);
+// Adds `name` to the tab's selection now when listed, else once its listing
+// lands (a program selecting several files; AI reveal, ai_tools_ui.h).
+void AddNameToSelection(AppState& s, app::Tab& tab, const std::wstring& name);
 
 } // namespace pulse

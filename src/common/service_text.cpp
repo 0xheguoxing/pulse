@@ -185,6 +185,16 @@ constexpr ServicePhrase kServiceExact[] = {
      L"Restore failed (the destination may already exist)"},
     {L"无法唯一确定回收站版本，请在回收站中选择具体条目",
      L"Couldn't identify the Recycle Bin version; select a specific item in the Recycle Bin"},
+
+    // pulse.exe --mcp-stdio (ai_launcher.cpp), written to the AI client's log
+    {L"未安装 AI 增强包。请在 Pulse 的“设置 › 增强包”中安装后重试。",
+     L"The AI pack is not installed. Install it in Pulse under Settings › Enhancement packs, then try again."},
+    {L"AI 增强包需要更新。请在 Pulse 的“设置 › 增强包”中更新后重试。",
+     L"The AI pack needs an update. Update it in Pulse under Settings › Enhancement packs, then try again."},
+    {L"AI 增强包已损坏。请在 Pulse 的“设置 › 增强包”中修复后重试。",
+     L"The AI pack is damaged. Repair it in Pulse under Settings › Enhancement packs, then try again."},
+    {L"这个版本的 Pulse 没有可用的 AI 增强包。", L"No AI pack is available for this version of Pulse."},
+    {L"无法启动 Pulse.AI.exe", L"Could not start Pulse.AI.exe"},
 };
 
 // Segments with captures: {n} = digits/commas only, {} = any non-empty text.

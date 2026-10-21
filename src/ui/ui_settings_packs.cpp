@@ -361,6 +361,19 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
                    kNone, lay.pack_ocr_update, std::wstring{}, PackAction::ContentInstall});
     }
 
+    // AI: the AI pack; its download shows here (progress bar), not in a toast.
+    text(pack_text::AiSection(), lay.pack_ai_section);
+    {
+        static const std::wstring kNone;
+        const PackAction action = pack_text::AiAction(vm);
+        draw_card({lay.pack_ai_card, lay.pack_ai_badge, lay.pack_ai_enable, lay.pack_ai_primary,
+                   lay.pack_ai_notice, L"\xE99A",
+                   pack_text::AiTitle(), pack_text::AiDesc(), pack_text::AiMeta(), pack_text::AiBadge(vm),
+                   false, false, pack_text::AiUsable(vm), vm.settings_ai_pack_installing,
+                   pack_text::AiAvailable(vm), vm.settings_ai_pack_progress, pack_text::AiPrimary(vm),
+                   action, action, action, kNone, lay.pack_ai_update, std::wstring{}, action});
+    }
+
     card(lay.pack_source_group);
     const bool source_switch = pack_text::ShowsEnable(vm);
     const float source_right = source_switch ? lay.pack_enable.left - 14*s : lay.pack_source_status.right - 16*s;

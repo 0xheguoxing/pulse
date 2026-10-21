@@ -76,7 +76,9 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
         if (page == 8) return std::wstring(pack_text::PacksSection());
         return page == 5 ? std::wstring(pack_text::Title()) : pulse::l10n::Get(kNav[page]);
     };
-    const int nav_page = vm.settings_page == 6 ? 2 : vm.settings_page;
+    // Sub-pages keep their parent selected: 系统右键菜单 (6) under 右键菜单,
+    // AI 与 MCP (9) under 增强包.
+    const int nav_page = vm.settings_page == 6 ? 2 : vm.settings_page == 9 ? 8 : vm.settings_page;
     // Hover plate and selection pill glide between rows (ui_motion.h); the
     // accent bar travels with the pill.
     {
@@ -143,7 +145,8 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
     const std::wstring title = vm.settings_page == 2 || vm.settings_page == 6 ? std::wstring(sysctx_text::PageTitle())
         : vm.settings_page == 5 ? std::wstring(pack_text::Title())
         : vm.settings_page == 7 ? std::wstring(shortcuts_text::Title())
-        : vm.settings_page == 8 ? std::wstring(pack_text::PacksSection()) : l10n::Get(page_title_id);
+        : vm.settings_page == 8 ? std::wstring(pack_text::PacksSection())
+        : vm.settings_page == 9 ? std::wstring(ai_text::Title()) : l10n::Get(page_title_id);
     ComPtr<IDWriteTextLayout> title_layout;
     compositor_->DwriteFactory()->CreateTextLayout(title.c_str(), static_cast<UINT32>(title.size()),
         compositor_->HeaderFormat(), lay.content.right-lay.content.left-pad*2, 40*scale_, &title_layout);
@@ -152,8 +155,9 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
         title_layout->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, {0,static_cast<UINT32>(title.size())});
         dc->DrawTextLayout(D2D1::Point2F(lay.content.left+pad,origin+pad),title_layout.get(),brText_.get());
     }
-    if (vm.settings_page == 5 || vm.settings_page == 8)
-        painter_.DrawWrappedCaption(vm.settings_page == 8 ? pack_text::PacksIntro() : pack_text::Intro(),
+    if (vm.settings_page == 5 || vm.settings_page == 8 || vm.settings_page == 9)
+        painter_.DrawWrappedCaption(vm.settings_page == 9 ? ai_text::Intro()
+                                    : vm.settings_page == 8 ? pack_text::PacksIntro() : pack_text::Intro(),
             D2D1::Point2F(lay.content.left+pad, origin+60*scale_),
             lay.content.right-lay.content.left-2*pad, theme.text_secondary);
     if (vm.settings_page == 0 || vm.settings_page == 1)
@@ -872,6 +876,8 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
         DrawSettingsSysCtx(vm, rect, theme);
     } else if (vm.settings_page == 7) {
         DrawSettingsShortcuts(vm, rect, theme);
+    } else if (vm.settings_page == 9) {
+        DrawSettingsAi(vm, rect, theme);
     } else if (vm.settings_page == 4) {
         auto draw_card = [&](const D2D1_RECT_F& card) {
             if (card.right <= card.left || card.bottom <= card.top) return;

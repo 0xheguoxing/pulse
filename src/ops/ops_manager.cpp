@@ -1765,15 +1765,55 @@ bool OpsManager::GroupPendingLocked(uint64_t group) const {
     });
 }
 
-void OpsManager::Undo() {
+void OpsManager::Undo() { UndoNewest(nullptr); }
+
+uint64_t OpsManager::TopUndoGroup() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return undo_.empty() ? 0 : undo_.back().group;
+}
+
+OpsManager::GroupUndo OpsManager::UndoGroup(uint64_t group) {
+    return group ? UndoNewest(&group) : GroupUndo::NotOnTop;
+}
+
+void OpsManager::RecordExternalCreate(const std::wstring& path, uint64_t group, std::wstring label) {
+    // Refresh only: no task of ours made it, so no arrival selection or
+    // rename intent applies.
+    CompletedOperation completed;
+    completed.type = OpType::CreateTextFile;
+    completed.sources.push_back(path);
+    completed.destinations.push_back(path);
+    completed.refresh_only = true;
+    UndoEntry e;
+    e.type = OpType::CreateTextFile;
+    e.sources.push_back(path);
+    e.destinations.push_back(path);
+    e.group = group;
+    e.label = std::move(label);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (update_preparing_) return;
+        completions_.push_back(std::move(completed));
+        undo_.push_back(std::move(e));
+        TrimUndoHistory(undo_);
+    }
+    NotifyStatusChanged();
+}
+
+OpsManager::GroupUndo OpsManager::UndoNewest(const uint64_t* required_group) {
     std::vector<UndoEntry> batch;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (update_preparing_ || undo_.empty()) return;
+        if (update_preparing_ || undo_.empty()) return GroupUndo::Unavailable;
+        if (required_group) {
+            if (undo_.back().group != *required_group) return GroupUndo::NotOnTop;
+            if (!undo_.back().supported) return GroupUndo::Unavailable;
+            if (GroupPendingLocked(*required_group)) return GroupUndo::Pending;
+        }
         if (GroupPendingLocked(undo_.back().group)) {
             // Undoing half an action would strand the rest; wait for it.
             deferred_undo_group_ = undo_.back().group;
-            return;
+            return GroupUndo::Pending;
         }
         if (!undo_.back().supported) {
             // Leave the entry; report why it cannot be undone.
@@ -1790,7 +1830,7 @@ void OpsManager::Undo() {
     }
     if (batch.empty()) {
         if (notify_) notify_();
-        return;
+        return GroupUndo::Unavailable;
     }
 
     for (const UndoEntry& e : batch) {
@@ -1873,6 +1913,7 @@ void OpsManager::Undo() {
         break;
     }
     }
+    return GroupUndo::Started;
 }
 
 // ---------------------------------------------------------------------------

@@ -2658,3 +2658,88 @@ GitChanges	IDS_GIT_CHANGES	3806	%d 处更改	%d changes	%d 處變更
 GitTimedOut	IDS_GIT_TIMED_OUT	3807	git 超过 5 分钟没有响应，已停止。	git didn't respond for 5 minutes and was stopped.	git 超過 5 分鐘沒有回應，已停止。
 GitPushRejected	IDS_GIT_PUSH_REJECTED	3808	远程有本地还没有的提交：请先拉取，再推送。	The remote has commits you don't have yet: pull first, then push.	遠端有本機還沒有的提交：請先拉取，再推送。
 GitPullDivergent	IDS_GIT_PULL_DIVERGENT	3809	本地和远程都有新提交。请在终端里选择合并或变基（git config pull.rebase false / true）后再拉取。	Both your branch and the remote have new commits. Choose merge or rebase in a terminal (git config pull.rebase false / true), then pull again.	本機和遠端都有新提交。請在終端機中選擇合併或重定基底（git config pull.rebase false / true）後再拉取。
+# AI 增强包: ai_pack_ui.cpp and its card on 设置 › 增强包.
+AiPackSection	IDS_AI_PACK_SECTION	3861	AI	AI	
+AiPackTitle	IDS_AI_PACK_TITLE	3862	AI 与 MCP	AI and MCP	
+AiPackDesc	IDS_AI_PACK_DESC	3863	让 Claude 等支持 MCP 的 AI 应用查找、查看和整理你的文件：只读操作直接执行，改动文件前都要在 Pulse 里确认，并且可以撤销。不用时不运行任何后台程序。	Lets AI apps that support MCP, such as Claude, find, inspect and organize your files: reads run directly, every change is confirmed in Pulse first and can be undone. Nothing runs in the background while it is not in use.	讓 Claude 等支援 MCP 的 AI 應用程式查詢、檢視和整理你的檔案：唯讀操作直接執行，改動檔案前都要在 Pulse 裡確認，並且可以復原。不用時不執行任何背景程式。
+AiPackMeta	IDS_AI_PACK_META	3864	Pulse.AI.exe · MCP · 随 Pulse 同步更新	Pulse.AI.exe · MCP · updates with Pulse	
+AiPackToastTitle	IDS_AI_PACK_TOAST_TITLE	3865	AI 增强包	AI pack	
+AiPackDownloading	IDS_AI_PACK_DOWNLOADING	3866	正在下载（约 %s）	Downloading (about %s)	
+AiPackAskTitle	IDS_AI_PACK_ASK_TITLE	3867	下载 AI 增强包	Download the AI pack	
+AiPackAskMessage	IDS_AI_PACK_ASK_MESSAGE	3868	AI 与 MCP 由增强包提供，需要时才下载，不占用安装包体积。下载约 %s。	AI and MCP come in an enhancement pack that is downloaded only when you want them. The download is about %s.	
+AiPackUpdateTitle	IDS_AI_PACK_UPDATE_TITLE	3869	更新 AI 增强包	Update the AI pack	
+AiPackUpdateMessage	IDS_AI_PACK_UPDATE_MESSAGE	3870	Pulse 已更新，AI 增强包需要更新到相同版本才能使用（约 %s）。	Pulse was updated; the AI pack has to be updated to the same version before it can be used (about %s).	
+AiPackRepairTitle	IDS_AI_PACK_REPAIR_TITLE	3871	修复 AI 增强包	Repair the AI pack	
+AiPackRepairMessage	IDS_AI_PACK_REPAIR_MESSAGE	3872	AI 增强包的文件不完整或已被改动，需要重新下载（约 %s）。	Files of the AI pack are missing or were changed; it has to be downloaded again (about %s).	
+AiPackAskItem	IDS_AI_PACK_ASK_ITEM	3873	Pulse.AI.exe — MCP 服务与 AI 助手	Pulse.AI.exe — MCP server and AI assistant	
+AiPackAskNote	IDS_AI_PACK_ASK_NOTE	3874	从 Pulse 在 GitHub 的同一发布页下载并校验 SHA-256，装在当前用户目录下，不需要管理员权限。装好后默认关闭，不会自动连接任何 AI 服务。	Downloaded from the same GitHub release as Pulse and checked against its SHA-256; installed for the current user, no administrator rights needed. It stays off and contacts no AI service until you turn it on.	
+AiPackNotNow	IDS_AI_PACK_NOT_NOW	3875	暂不	Not now	
+AiPackStartFailed	IDS_AI_PACK_START_FAILED	3876	无法开始下载。	The download could not start.	
+AiPackInstalledTitle	IDS_AI_PACK_INSTALLED_TITLE	3877	AI 增强包已安装	AI pack installed	
+AiPackInstalledMessage	IDS_AI_PACK_INSTALLED_MESSAGE	3878	已安装，默认保持关闭。	Installed; it stays off until you turn it on.	
+AiPackFailedTitle	IDS_AI_PACK_FAILED_TITLE	3879	AI 增强包下载失败	AI pack download failed	
+AiPackFailedMessage	IDS_AI_PACK_FAILED_MESSAGE	3880	请稍后重试，或在设置的增强包中更换下载源。	Try again later, or pick another download source in Settings.	
+AiPackRemoveTitle	IDS_AI_PACK_REMOVE_TITLE	3881	卸载 AI 增强包？	Remove the AI pack?	
+AiPackRemoveMessage	IDS_AI_PACK_REMOVE_MESSAGE	3882	将删除 Pulse.AI.exe，AI 与 MCP 随之停用。你的设置和活动记录会保留。	Pulse.AI.exe is deleted and AI and MCP stop working. Your settings and activity log are kept.	
+AiPackRemoveFailed	IDS_AI_PACK_REMOVE_FAILED	3883	无法卸载：AI 增强包正在使用中。请先断开 AI 应用，再重试。	Couldn't remove it: the AI pack is in use. Disconnect the AI app and try again.	無法解除安裝：AI 增強包正在使用中。請先中斷 AI 應用程式的連線，再重試。
+AiPackRemoved	IDS_AI_PACK_REMOVED	3884	AI 增强包已卸载	AI pack removed	
+AiUndoCreateZip	IDS_AI_UNDO_CREATE_ZIP	3885	新建压缩包（{client}）	New zip by {client}	新增壓縮檔（{client}）
+AiConnectTitle	IDS_AI_CONNECT_TITLE	3886	「{client}」想连接 Pulse	{client} wants to connect to Pulse	「{client}」想連線 Pulse
+AiConnectMessage	IDS_AI_CONNECT_MESSAGE	3887	连接后，它可以浏览和搜索你的文件夹、查看文件属性（不读取文件内容），并在 Pulse 里显示文件。新建任何文件之前都会先问你。	Once connected, it can browse and search your folders, look at file properties (never file contents) and show files in Pulse. It asks you before creating anything.	連線後，它可以瀏覽和搜尋你的資料夾、查看檔案屬性（不讀取檔案內容），並在 Pulse 裡顯示檔案。新增任何檔案之前都會先問你。
+AiConnectAllow	IDS_AI_CONNECT_ALLOW	3888	允许	Allow	允許
+AiConnectSession	IDS_AI_CONNECT_SESSION	3889	只允许这次	Allow this time	只允許這次
+AiDeny	IDS_AI_DENY	3890	拒绝	Deny	拒絕
+AiConnectNote	IDS_AI_CONNECT_NOTE	3891	以后可以在「设置 › 增强包 › AI 与 MCP」里更改。	You can change this later in Settings › Enhancement packs › AI and MCP.	之後可以在「設定 › 增強包 › AI 與 MCP」裡變更。
+AiCreateZipTitle	IDS_AI_CREATE_ZIP_TITLE	3892	「{client}」想新建压缩包	{client} wants to create a zip archive	「{client}」想新增壓縮檔
+AiCreateZipMessage	IDS_AI_CREATE_ZIP_MESSAGE	3893	把下面的项目打包成「{name}」，放在「{folder}」。	Pack the items below into “{name}” in “{folder}”.	把下面的項目打包成「{name}」，放在「{folder}」。
+AiCreateMore	IDS_AI_CREATE_MORE	3894	还有 {n} 个	and {n} more	還有 {n} 個
+AiCreateAllow	IDS_AI_CREATE_ALLOW	3895	新建	Create	新增
+AiCreateAlways	IDS_AI_CREATE_ALWAYS	3896	始终允许这个文件夹	Always allow here	一律允許這個資料夾
+AiCreateNote	IDS_AI_CREATE_NOTE	3897	可以撤销：压缩包会移到回收站，原文件不会改动。	You can undo this: the archive goes to the Recycle Bin and the original files stay as they are.	可以復原：壓縮檔會移到資源回收筒，原始檔案不會變更。
+AiCreateGenericMessage	IDS_AI_CREATE_GENERIC_MESSAGE	3898	目标文件夹：「{folder}」	Target folder: “{folder}”	目標資料夾：「{folder}」
+AiManage	IDS_AI_MANAGE	3899	管理	Manage	管理
+AiChipWaiting	IDS_AI_CHIP_WAITING	3900	等你确认	Waiting for you	等你確認
+AiChipDone	IDS_AI_CHIP_DONE	3901	完成 · {n} 次	Done · {n}	完成 · {n} 次
+AiToolGetContext	IDS_AI_TOOL_GET_CONTEXT	3902	查看当前窗口	Current window	查看目前視窗
+AiToolListFolder	IDS_AI_TOOL_LIST_FOLDER	3903	列出文件夹	List folder	列出資料夾
+AiToolSearch	IDS_AI_TOOL_SEARCH	3904	搜索	Search	搜尋
+AiToolProperties	IDS_AI_TOOL_PROPERTIES	3905	查看属性	Properties	查看屬性
+AiToolReveal	IDS_AI_TOOL_REVEAL	3906	在 Pulse 中显示	Show in Pulse	在 Pulse 中顯示
+AiToolCreateZip	IDS_AI_TOOL_CREATE_ZIP	3907	新建压缩包	Create zip	新增壓縮檔
+AiToolUndo	IDS_AI_TOOL_UNDO	3908	撤销	Undo	復原
+AiPageIntro	IDS_AI_PAGE_INTRO	3909	让 Claude 等支持 MCP 的 AI 应用使用 Pulse 查找和整理文件。只读操作直接执行；新建文件前会先在 Pulse 里问你，并且可以撤销。	Let AI apps that support MCP, such as Claude, use Pulse to find and organize files. Reading happens directly; before creating a file they ask you in Pulse, and you can undo it.	讓 Claude 等支援 MCP 的 AI 應用程式使用 Pulse 尋找和整理檔案。唯讀操作直接執行；新增檔案前會先在 Pulse 裡問你，並且可以復原。
+AiEnableTitle	IDS_AI_ENABLE_TITLE	3910	允许 AI 应用连接	Allow AI apps to connect	允許 AI 應用程式連線
+AiEnableOffDesc	IDS_AI_ENABLE_OFF_DESC	3911	已关闭。打开后，配置好的 AI 应用就能连接 Pulse；第一次连接时会先问你。	Off. When it is on, AI apps you set up can connect to Pulse; the first time, Pulse asks you.	已關閉。開啟後，設定好的 AI 應用程式就能連線 Pulse；第一次連線時會先問你。
+AiStatusWaiting	IDS_AI_STATUS_WAITING	3912	正在等待 AI 应用连接	Waiting for AI apps to connect	正在等待 AI 應用程式連線
+AiStatusConnected	IDS_AI_STATUS_CONNECTED	3913	已连接：{clients}	Connected: {clients}	已連線：{clients}
+AiStatusStarting	IDS_AI_STATUS_STARTING	3914	正在准备…	Getting ready…	正在準備…
+AiSetupTitle	IDS_AI_SETUP_TITLE	3915	连接 Claude	Connect Claude	連線 Claude
+AiSetupDesc	IDS_AI_SETUP_DESC	3916	复制配置，加到 Claude Desktop 的 claude_desktop_config.json 或 Claude Code 的 MCP 设置里，然后重启它。	Copy the config into Claude Desktop's claude_desktop_config.json or Claude Code's MCP settings, then restart it.	複製設定，加到 Claude Desktop 的 claude_desktop_config.json 或 Claude Code 的 MCP 設定裡，然後重新啟動它。
+AiCopyConfig	IDS_AI_COPY_CONFIG	3917	复制配置	Copy config	複製設定
+AiConfigCopied	IDS_AI_CONFIG_COPIED	3918	已复制 MCP 配置	MCP config copied	已複製 MCP 設定
+AiAppsSection	IDS_AI_APPS_SECTION	3919	应用	Apps	應用程式
+AiAppsEmpty	IDS_AI_APPS_EMPTY	3920	还没有应用连接过。	No app has connected yet.	還沒有應用程式連線過。
+AiGrantAllowed	IDS_AI_GRANT_ALLOWED	3921	已允许	Allowed	已允許
+AiGrantAsk	IDS_AI_GRANT_ASK	3922	连接时询问	Asks when it connects	連線時詢問
+AiGrantSession	IDS_AI_GRANT_SESSION	3923	允许到 Pulse 退出	Allowed until Pulse quits	允許到 Pulse 結束
+AiGrantDenied	IDS_AI_GRANT_DENIED	3924	已拒绝	Denied	已拒絕
+AiConnectedNow	IDS_AI_CONNECTED_NOW	3925	已连接	Connected	已連線
+AiRemoveEntry	IDS_AI_REMOVE_ENTRY	3926	移除	Remove	移除
+AiRulesSection	IDS_AI_RULES_SECTION	3927	始终允许	Always allowed	一律允許
+AiRulesEmpty	IDS_AI_RULES_EMPTY	3928	没有始终允许的操作。在新建确认里选「始终允许这个文件夹」后会列在这里。	Nothing is always allowed. Choosing “Always allow here” when asked adds it here.	沒有一律允許的操作。在新增確認裡選「一律允許這個資料夾」後會列在這裡。
+AiRecentSection	IDS_AI_RECENT_SECTION	3929	本次运行	Since Pulse started	本次執行
+AiRecentEmpty	IDS_AI_RECENT_EMPTY	3930	Pulse 启动后还没有调用。	No calls since Pulse started.	Pulse 啟動後還沒有呼叫。
+AiOpenLog	IDS_AI_OPEN_LOG	3931	打开活动记录	Open activity log	開啟活動記錄
+AiOutcomeRunning	IDS_AI_OUTCOME_RUNNING	3932	进行中	Running	進行中
+AiOutcomeDenied	IDS_AI_OUTCOME_DENIED	3933	你拒绝了	You declined	你拒絕了
+AiOutcomeTimeout	IDS_AI_OUTCOME_TIMEOUT	3934	没有回答	Not answered	沒有回答
+AiOutcomeCancelled	IDS_AI_OUTCOME_CANCELLED	3935	已取消	Cancelled	已取消
+AiOutcomeFailed	IDS_AI_OUTCOME_FAILED	3936	未完成（{code}）	Not done ({code})	未完成（{code}）
+AiOutcomeDone	IDS_AI_OUTCOME_DONE	3937	完成	Done	完成
+AiMoreCalls	IDS_AI_MORE_CALLS	3938	更早的 {n} 次调用在活动记录里。	{n} earlier calls are in the activity log.	更早的 {n} 次呼叫在活動記錄裡。
+AiUninstallTitle	IDS_AI_UNINSTALL_TITLE	3939	卸载 AI 增强包	Uninstall the AI pack	解除安裝 AI 增強包
+AiUninstallDesc	IDS_AI_UNINSTALL_DESC	3940	之后可以随时在「增强包」页重新下载。	You can download it again any time on the Enhancement packs page.	之後可以隨時在「增強包」頁重新下載。
+AiSettingsBroken	IDS_AI_SETTINGS_BROKEN	3941	ai.json 无法读取，Pulse 不会改动它。修正或删除这个文件后再试。	ai.json cannot be read, so Pulse leaves it alone. Fix or delete the file, then try again.	ai.json 無法讀取，Pulse 不會變更它。修正或刪除這個檔案後再試。
+AiSnackCreated	IDS_AI_SNACK_CREATED	3942	{client} 新建了「{name}」	{client} created “{name}”	{client} 新增了「{name}」
+AiSnackUndone	IDS_AI_SNACK_UNDONE	3943	{client} 撤销了「{name}」	{client} undid “{name}”	{client} 復原了「{name}」
+AiSnackOpen	IDS_AI_SNACK_OPEN	3944	打开位置	Show	開啟位置

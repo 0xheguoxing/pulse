@@ -19,6 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 TABLE = ROOT / "src/common/service_text.cpp"
 SOURCES = [
+    "src/app/ai_launcher.cpp",
     "src/index/index_client.cpp",
     "src/index/index_config.cpp",
     "src/index/index_engine.cpp",

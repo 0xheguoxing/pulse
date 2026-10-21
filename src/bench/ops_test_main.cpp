@@ -371,6 +371,55 @@ int wmain(int argc, wchar_t** argv) {
         return g_fail ? 1 : 0;
     }
 
+    if (argc > 1 && std::wstring_view(argv[1]) == L"--external-undo") {
+        // AI tools (ai_tools.h): an item made outside the queue is one undo
+        // step, and UndoGroup undoes it only while its group is the newest.
+        const auto root = std::filesystem::path(SandboxRoot()).parent_path() /
+            (L"external-undo-" + std::to_wstring(GetCurrentProcessId()));
+        std::filesystem::create_directories(root);
+        const auto zip = root / L"made outside.zip";
+        const auto folder = root / L"user folder";
+        const char content[] = "external create";
+        Check(MakeFile(zip.wstring(), content, sizeof(content)), L"external: fixture created");
+        g_ops.Start([] {});
+        constexpr uint64_t kGroup = 0x8000000000000123ull;
+        g_ops.RecordExternalCreate(zip.wstring(), kGroup, L"新建压缩包（test）");
+        Check(g_ops.TopUndoGroup() == kGroup && g_ops.CanUndo(), L"external: recorded as the newest undo step");
+        Check(g_ops.UndoLabel() == L"撤销新建压缩包（test）", L"external: the undo label is the given one");
+        const auto completions = g_ops.DrainCompletions();
+        Check(completions.size() == 1 && completions[0].refresh_only && completions[0].destinations.size() == 1 &&
+                  completions[0].destinations[0] == zip.wstring(),
+              L"external: one refresh-only completion for the new item");
+        Check(g_ops.UndoGroup(kGroup + 1) == ops::OpsManager::GroupUndo::NotOnTop &&
+                  g_ops.UndoGroup(0) == ops::OpsManager::GroupUndo::NotOnTop && Exists(zip.wstring()),
+              L"external: another group (or none) does not undo it");
+        // A step of the user's on top: the AI group must not undo it.
+        auto status = RunOp(SimpleOp(ops::OpType::CreateFolder, {folder.c_str()}));
+        Check(status.phase == ops::OpPhase::Completed && Exists(folder.wstring()), L"external: a user step on top");
+        Check(g_ops.TopUndoGroup() == 0 && g_ops.UndoGroup(kGroup) == ops::OpsManager::GroupUndo::NotOnTop &&
+                  Exists(folder.wstring()) && Exists(zip.wstring()),
+              L"external: the AI group does not undo the user's step");
+        auto completed = g_ops.Status().completed_ops;
+        g_ops.Undo();
+        Check(WaitOpDone(completed) && !Exists(folder.wstring()), L"external: the user undoes their own step");
+        completed = g_ops.Status().completed_ops;
+        Check(g_ops.UndoGroup(kGroup) == ops::OpsManager::GroupUndo::Started, L"external: now the AI group is on top");
+        Check(WaitOpDone(completed) && !Exists(zip.wstring()), L"external: its undo recycles the item");
+        Check(!g_ops.CanUndo() && g_ops.UndoGroup(kGroup) == ops::OpsManager::GroupUndo::Unavailable,
+              L"external: nothing left to undo");
+        g_ops.DrainCompletions();   // the undo's own recycle completion
+        Check(g_ops.TryPrepareForUpdate(), L"external: update preparation on an idle queue");
+        g_ops.RecordExternalCreate(zip.wstring(), kGroup, L"x");
+        const bool completion_recorded = !g_ops.DrainCompletions().empty();
+        g_ops.CancelUpdatePreparation();
+        // Checked after preparation ends: CanUndo() is false during it anyway.
+        Check(!completion_recorded && !g_ops.CanUndo(), L"external: nothing recorded while preparing an update");
+        g_ops.Stop();
+        std::error_code ignored;
+        std::filesystem::remove_all(root, ignored);
+        return g_fail ? 1 : 0;
+    }
+
     if (argc > 1 && std::wstring(argv[1]) == L"--duplicate-cleanup-audit") {
         const auto base = std::filesystem::path(SandboxRoot()).parent_path();
         const auto fixture = base / (L"duplicate-cleanup-ops-" + std::to_wstring(GetCurrentProcessId()) +
