@@ -1928,7 +1928,7 @@ private:
     mutable ComPtr<IDWriteTextFormat> sysctx_stat_format_;  // 概览 stat numbers: 22 px semibold
     mutable float sysctx_title_scale_ = 0.0f;
     float margin_ = 4.0f;
-    float control_gap_ = 4.0f;
+    float control_gap_ = 0.0f;  // tabs sit flush against each other
     D2D1_COLOR_F text_background_{};
     // Per-frame layer opacity (see ComputeLayerAlphas); 1 when opaque.
     float sheet_alpha_ = 1.0f;

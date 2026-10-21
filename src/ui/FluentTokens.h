@@ -109,7 +109,9 @@ inline D2D1_COLOR_F AutoAccentText(D2D1_COLOR_F accent) noexcept {
 }
 
 // Layout metrics in DIPs at 100% scale. Scaled at use (SetScale, etc.).
-inline constexpr float kTitleBarHeight = 48.0f;
+inline constexpr float kTitleBarHeight = 35.0f;
+// Small breathing gap between the window top edge and the tab strip.
+inline constexpr float kTabStripTopGapDip = 2.0f;
 
 // ---------------------------------------------------------------------------
 // Resolved runtime theme (colors already premultiplied by desired alpha).

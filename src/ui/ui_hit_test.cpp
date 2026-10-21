@@ -125,7 +125,6 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             (vm.address_searching && ContainsPt(SearchBarRect(rect.right), x, y));
     }
     if (y < title_bar_height_ && !titleToolbar) {
-        const float ctrlW = 46.0f * scale_;
         const TitleChrome chrome = MakeTitleChrome(rect.right, scale_, title_bar_height_);
         // Before the toggle: on the rail the window dot sits on its corner (M7c).
         if (ContainsPt(WindowIdentityRect(vm, rect.right), x, y)) {
@@ -210,12 +209,14 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             r.region = HitTestResult::ThemeToggle;
             return r;
         }
-        float ctrlX = rect.right - ctrlW;
-        if (x >= ctrlX) { r.region = HitTestResult::Close; return r; }
-        ctrlX -= ctrlW;
-        if (x >= ctrlX) { r.region = HitTestResult::Maximize; return r; }
-        ctrlX -= ctrlW;
-        if (x >= ctrlX) { r.region = HitTestResult::Minimize; return r; }
+        // Tightened cluster: icon centers at right-29/69/109 dip; the hit
+        // regions split at the midpoints, and the corner still closes.
+        const float close_bound = rect.right - 49.0f * scale_;
+        const float max_bound = rect.right - 89.0f * scale_;
+        const float min_bound = rect.right - 129.0f * scale_;
+        if (x >= close_bound) { r.region = HitTestResult::Close; return r; }
+        if (x >= max_bound) { r.region = HitTestResult::Maximize; return r; }
+        if (x >= min_bound) { r.region = HitTestResult::Minimize; return r; }
         return r;
     }
 

@@ -88,6 +88,22 @@ void FillChromeTab(ID2D1DeviceContext* dc, ID2D1Brush* brush,
     dc->FillGeometry(geometry.get(), brush);
 }
 
+void StrokeChromeTab(ID2D1DeviceContext* dc, ID2D1Brush* brush,
+                     const D2D1_RECT_F& bounds, const ChromeTabShape& shape,
+                     float width) {
+    if (!dc || !brush || !(width > 0.0f)) return;
+    ComPtr<ID2D1Factory> factory;
+    dc->GetFactory(&factory);
+    if (!factory.get()) return;
+
+    ComPtr<ID2D1Geometry> geometry;
+    if (FAILED(CreateChromeTabGeometry(factory.get(), bounds, shape, &geometry)) ||
+        !geometry.get()) {
+        return;
+    }
+    dc->DrawGeometry(geometry.get(), brush, width);
+}
+
 void FillChromeTabAccent(ID2D1DeviceContext* dc, ID2D1Brush* brush,
                          const D2D1_RECT_F& bounds, const ChromeTabShape& shape,
                          float thickness, bool bottom) {

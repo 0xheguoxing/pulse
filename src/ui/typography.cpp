@@ -50,19 +50,22 @@ const wchar_t* ResolveFamily(IDWriteFactory2* factory, FontRole role) {
     const bool traditional = TraditionalChinese();
     const bool chinese = traditional ||
         pulse::l10n::effective_language() == pulse::l10n::Language::ZhCN;
+    // Source Han Sans (思源黑体) is the house UI family; the stock families
+    // stay as fallbacks for machines without it.
     const wchar_t* const text_zh[] = {
-        L"Microsoft YaHei UI", L"Microsoft YaHei", L"Segoe UI", nullptr};
+        L"Source Han Sans SC", L"Microsoft YaHei UI", L"Microsoft YaHei", L"Segoe UI", nullptr};
     // Taiwan glyph forms; YaHei only if JhengHei is missing.
     const wchar_t* const text_tw[] = {
-        L"Microsoft JhengHei UI", L"Microsoft JhengHei", L"Microsoft YaHei UI", L"Segoe UI", nullptr};
+        L"Source Han Sans TC", L"Microsoft JhengHei UI", L"Microsoft JhengHei",
+        L"Microsoft YaHei UI", L"Segoe UI", nullptr};
     const wchar_t* const text_en[] = {
-        L"Segoe UI Variable Text", L"Segoe UI", L"Microsoft YaHei UI",
-        L"Microsoft YaHei", nullptr};
-    const wchar_t* const display_zh[] = {
-        L"Microsoft YaHei UI", L"Microsoft YaHei", L"Segoe UI", nullptr};
-    const wchar_t* const display_en[] = {
-        L"Segoe UI Variable Display", L"Segoe UI Variable Text", L"Segoe UI",
+        L"Source Han Sans SC", L"Segoe UI Variable Text", L"Segoe UI",
         L"Microsoft YaHei UI", L"Microsoft YaHei", nullptr};
+    const wchar_t* const display_zh[] = {
+        L"Source Han Sans SC", L"Microsoft YaHei UI", L"Microsoft YaHei", L"Segoe UI", nullptr};
+    const wchar_t* const display_en[] = {
+        L"Source Han Sans SC", L"Segoe UI Variable Display", L"Segoe UI Variable Text",
+        L"Segoe UI", L"Microsoft YaHei UI", L"Microsoft YaHei", nullptr};
     const wchar_t* const icons[] = {
         L"Segoe Fluent Icons", L"Segoe MDL2 Assets", L"Segoe UI", nullptr};
     const wchar_t* const mono[] = {
@@ -145,11 +148,10 @@ bool HasIconFont(IDWriteFactory2* factory) {
 }
 
 const wchar_t* PreferredTextFamily() noexcept {
-    switch (pulse::l10n::effective_language()) {
-    case pulse::l10n::Language::ZhCN: return L"Microsoft YaHei UI";
-    case pulse::l10n::Language::ZhTW: return L"Microsoft JhengHei UI";
-    default: return L"Segoe UI Variable Text";
-    }
+    // Source Han Sans (思源黑体) is the house UI family; TC gets its glyph forms.
+    return pulse::l10n::effective_language() == pulse::l10n::Language::ZhTW
+        ? L"Source Han Sans TC"
+        : L"Source Han Sans SC";
 }
 
 HRESULT CreateTextFormat(IDWriteFactory2* factory, const TextFormatSpec& spec,

@@ -114,7 +114,7 @@ void MainRenderer::SetScale(float scale) {
     column_header_height_ = 32.0f * scale;
     row_height_ = row_height_dip_ * scale;
     margin_ = 4.0f * scale;
-    control_gap_ = 4.0f * scale;
+    control_gap_ = 0.0f;  // flush tab cluster
     painter_.SetScale(scale);
     icon_cache_.SetScale(scale);
 }
@@ -1080,22 +1080,23 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
     const TabStripMetrics strip = ComputeTabStrip(vm, rect.right);
     const float tabH = strip.h;
     const float tabY = strip.y;
+    ComPtr<ID2D1SolidColorBrush> tabStroke;
+    MakeBrush(dc, WithAlpha(vm.dark ? HexColor(0xFFFFFF) : HexColor(0x000000), 0.40f),
+              tabStroke);
+    const float tabStrokeW = 1.0f / scale_;
     auto drawTab = [&](size_t i, float left, bool raised) {
         const bool active = vm.tabs[i].active;
         const bool pinned = vm.tabs[i].pinned;
         const float tabW = strip.Width(vm, i);
         const bool hovered = IsHovered(vm, HitTestResult::Tab, static_cast<int>(i)) ||
                              IsHovered(vm, HitTestResult::TabClose, static_cast<int>(i));
-        const bool connect = active || raised;
         ChromeTabShape shape;
-        shape.top_radius = theme.radius_control * scale_;
-        // Concentric with the neighboring inactive tab: outer radius = inner + gap.
-        shape.bottom_radius = shape.top_radius + control_gap_;
-        shape.connect_bottom = connect;
+        // Small inward-rounded corners on all four sides.
+        shape.top_radius = 4.0f * scale_;
+        shape.bottom_radius = shape.top_radius;
+        shape.connect_bottom = false;
         const float tabTop = tabY;
-        // Use the same sheet edge for both opacity modes; overlap shifts the arc center.
-        const float tabBottom = connect ? std::round(h)
-                                        : (std::round(h) - control_gap_);
+        const float tabBottom = std::round(h);
         const D2D1_RECT_F tabRc = D2D1::RectF(left, tabTop, left + tabW, tabBottom);
         if (raised) {
             D2D1_RECT_F shadow = tabRc;
@@ -1123,6 +1124,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
             }
             FillChromeTab(dc, brFillHover_.get(), tabRc, shape);
         }
+        if (tabStroke.get()) StrokeChromeTab(dc, tabStroke.get(), tabRc, shape, tabStrokeW);
         if (vm.tabs[i].flash > 0.0f) {
             MakeBrush(dc, WithAlpha(theme.accent, (vm.dark ? 0.34f : 0.26f) * vm.tabs[i].flash), brFillHover_);
             FillChromeTab(dc, brFillHover_.get(), tabRc, shape);
@@ -1392,33 +1394,38 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
     }
 
     // Window controls, right-aligned in Win11 order: min, max/restore, close.
+    // The cluster is tightened around the anchored maximize button (icon
+    // centers at right-29/69/109 dip). Hover paints a 32dip rounded square
+    // over the icon center; the icon itself never moves.
     const float ctrlY = y;
     const float ctrlH = h;
-    float cx = right;
-    cx -= ctrlW;
-    D2D1_RECT_F closeRc = D2D1::RectF(cx, ctrlY, cx + ctrlW, ctrlY + ctrlH);
-    if (IsHovered(vm, HitTestResult::Close)) {
-        MakeBrush(dc, theme.danger, brDanger_);
-        FillRect(dc, brDanger_.get(), closeRc.left, closeRc.top, ctrlW, ctrlH);
-    }
-    DrawIconText(closeRc.left, closeRc.top, ctrlW, ctrlH, kIconClose, L"x",
-        IsHovered(vm, HitTestResult::Close) ? HexColor(0xFFFFFF) : theme.text, 0.66f);
-    cx -= ctrlW;
-    D2D1_RECT_F maxRc = D2D1::RectF(cx, ctrlY, cx + ctrlW, ctrlY + ctrlH);
-    if (IsHovered(vm, HitTestResult::Maximize)) {
-        MakeBrush(dc, theme.fill_hover, brFillHover_);
-        FillRect(dc, brFillHover_.get(), maxRc.left, maxRc.top, ctrlW, ctrlH);
-    }
-    DrawIconText(maxRc.left, maxRc.top, ctrlW, ctrlH,
-        vm.maximized ? kIconRestore : kIconMaximize, vm.maximized ? L"[]" : L"\u25A1",
-        theme.text, 0.66f);
-    cx -= ctrlW;
-    D2D1_RECT_F minRc = D2D1::RectF(cx, ctrlY, cx + ctrlW, ctrlY + ctrlH);
-    if (IsHovered(vm, HitTestResult::Minimize)) {
-        MakeBrush(dc, theme.fill_hover, brFillHover_);
-        FillRect(dc, brFillHover_.get(), minRc.left, minRc.top, ctrlW, ctrlH);
-    }
-    DrawIconText(minRc.left, minRc.top, ctrlW, ctrlH, kIconMinimize, L"_", theme.text, 0.66f);
+    const float ctrlPitch = 40.0f * scale_;
+    const float maxCx = right - 69.0f * scale_;
+    const float closeCx = maxCx + ctrlPitch;
+    const float minCx = maxCx - ctrlPitch;
+    const float square = 28.0f * scale_;
+    const float squareR = 4.0f * scale_;
+    auto hoverSquare = [&](float center_x, const D2D1_COLOR_F& color) {
+        ComPtr<ID2D1SolidColorBrush> brush;
+        MakeBrush(dc, color, brush);
+        FillRoundedRect(dc, brush.get(), center_x - square * 0.5f,
+                        ctrlY + (ctrlH - square) * 0.5f, square, square, squareR);
+    };
+    auto drawCtrl = [&](float center_x, const std::wstring& glyph,
+                        const std::wstring& fallback, bool hovered) {
+        DrawIconText(center_x - ctrlW * 0.5f, ctrlY, ctrlW, ctrlH, glyph, fallback,
+                     hovered ? HexColor(0x1A1A1A) : theme.text, 0.66f);
+    };
+    const bool closeHover = IsHovered(vm, HitTestResult::Close);
+    const bool maxHover = IsHovered(vm, HitTestResult::Maximize);
+    const bool minHover = IsHovered(vm, HitTestResult::Minimize);
+    if (closeHover) hoverSquare(closeCx, HexColor(0xFF5F57));
+    if (maxHover) hoverSquare(maxCx, HexColor(0x28C840));
+    if (minHover) hoverSquare(minCx, HexColor(0xFEBC2E));
+    drawCtrl(closeCx, kIconClose, L"x", closeHover);
+    drawCtrl(maxCx, vm.maximized ? kIconRestore : kIconMaximize,
+             vm.maximized ? L"[]" : L"\u25A1", maxHover);
+    drawCtrl(minCx, kIconMinimize, L"_", minHover);
 }
 
 void MainRenderer::DrawTeachBubble(const WindowViewModel& vm, const D2D1_RECT_F& rect,
@@ -1763,8 +1770,8 @@ MainRenderer::TabStripMetrics MainRenderer::ComputeTabStrip(
         m.active_w = m.active >= 0 ? activeW : m.w;
     }
     if (m.active < 0) m.active_w = m.w;
-    m.y = 4.0f * scale_;
-    m.h = title_bar_height_ - 8.0f * scale_;
+    m.y = kTabStripTopGapDip * scale_;
+    m.h = title_bar_height_ - kTabStripTopGapDip * scale_;
     m.pitch = m.w + control_gap_;
     const float stripLeft = m.x0;
     if (m.overflow) {

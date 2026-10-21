@@ -361,7 +361,7 @@ Drop FindDrop(AppState& moving, POINT cursor, bool content) {
         POINT client = cursor;
         ScreenToClient(below, &client);
         const float scale = target->scale > 0.0f ? target->scale : 1.0f;
-        const LONG caption_buttons = std::lround(3.0f * 46.0f * scale);  // minimize, maximize, close
+        const LONG caption_buttons = std::lround(129.0f * scale);  // tightened min/max/close cluster
         const int index = TabDropIndex(spans.data(), spans.size(), target->window_tabs.items.size(), client,
                                        std::lround(12.0f * scale), std::lround(width) - caption_buttons);
         Drop over;

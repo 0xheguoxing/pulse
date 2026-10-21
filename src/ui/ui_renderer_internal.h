@@ -1868,8 +1868,8 @@ struct TitleChrome {
 
 TitleChrome MakeTitleChrome(float window_w, float scale, float title_h) {
     TitleChrome c;
-    const float ctrl_w = 46.0f * scale;
-    c.chrome_left = window_w - ctrl_w * 3.0f;
+    // Tightened caption cluster: the min/max/close icons span 129 dip.
+    c.chrome_left = window_w - 129.0f * scale;
     c.theme_w = 36.0f * scale;
     c.settings_w = 36.0f * scale;
     const float group_pad = 2.0f * scale;
