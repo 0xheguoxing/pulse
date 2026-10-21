@@ -1167,8 +1167,19 @@ target_link_libraries(pulse_ai_pack_test PRIVATE pulse_runtime_log bcrypt cabine
 add_dependencies(pulse_ai_pack_test pulse_pack_catalog pulse_ai)
 if(TARGET pulse)
     add_dependencies(pulse pulse_ai_pack)
-    target_sources(pulse PRIVATE "${PULSE_AI_PACK_CATALOG}")
+    target_sources(pulse PRIVATE "${PULSE_AI_PACK_CATALOG}" src/common/json_value.cpp)
 endif()
+
+# The AI tool broker (pipe, permissions, ai.json, activity log) and its JSON DOM.
+add_executable(pulse_ai_json_test src/bench/ai_json_test.cpp src/common/json_value.cpp)
+add_executable(pulse_ai_broker_test src/bench/ai_broker_test.cpp src/app/ai_broker.cpp src/app/ai_settings.cpp
+    src/app/ai_activity_log.cpp src/app/ai_pack.cpp src/app/content_pack.cpp src/app/pack_installer.cpp
+    src/app/update_installer.cpp src/app/update_transport.cpp src/app/update_download_cleanup.cpp
+    src/common/json_value.cpp)
+target_compile_definitions(pulse_ai_broker_test PRIVATE PULSE_AI_PACK_NO_CATALOG=1 PULSE_CONTENT_PACK_NO_CATALOG=1)
+target_include_directories(pulse_ai_broker_test PRIVATE "${CMAKE_BINARY_DIR}/generated")
+target_link_libraries(pulse_ai_broker_test PRIVATE pulse_runtime_log bcrypt cabinet shell32 user32 winhttp crypt32 advapi32)
+add_dependencies(pulse_ai_broker_test pulse_ai)
 
 add_executable(pulse_office_ooxml_test src/bench/office_ooxml_test.cpp src/index/office_ooxml.cpp)
 target_include_directories(pulse_office_ooxml_test PRIVATE src)

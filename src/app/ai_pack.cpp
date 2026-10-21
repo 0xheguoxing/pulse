@@ -1,6 +1,7 @@
 #include "ai_pack.h"
 #include "pack_installer.h"
 #include "../common/preview_packs.h"
+#include "../common/current_user_security.h"
 #include <mutex>
 #include <vector>
 
@@ -84,6 +85,55 @@ std::wstring LocateAiHost() {
     std::wstring directory;
     if (VerifyCached(&directory) != AiPackState::Ready) return {};
     return directory + L"\\" + kHostName;
+}
+
+namespace {
+bool FileId(HANDLE file, BY_HANDLE_FILE_INFORMATION& info) {
+    return file != INVALID_HANDLE_VALUE && GetFileInformationByHandle(file, &info) != FALSE;
+}
+bool SameFile(const BY_HANDLE_FILE_INFORMATION& a, const BY_HANDLE_FILE_INFORMATION& b) {
+    return a.dwVolumeSerialNumber == b.dwVolumeSerialNumber && a.nFileIndexHigh == b.nFileIndexHigh &&
+           a.nFileIndexLow == b.nFileIndexLow;
+}
+} // namespace
+
+bool IsAiHostProcess(DWORD process_id) {
+    DWORD own_session = 0, its_session = 0;
+    if (!process_id || !ProcessIdToSessionId(GetCurrentProcessId(), &own_session) ||
+        !ProcessIdToSessionId(process_id, &its_session) || own_session != its_session)
+        return false;
+    const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
+    if (!process) return false;
+    std::wstring image(32768, L'\0');
+    DWORD length = static_cast<DWORD>(image.size());
+    const bool have_image = QueryFullProcessImageNameW(process, 0, image.data(), &length) != FALSE;
+    const std::wstring user = ProcessUserSidString(process);
+    CloseHandle(process);
+    if (!have_image || user.empty() || user != CurrentUserSidString()) return false;
+    image.resize(length);
+    const std::wstring expected = LocateAiHost();
+    if (expected.empty() || CompareStringOrdinal(image.c_str(), static_cast<int>(image.size()), expected.c_str(),
+                                                 static_cast<int>(expected.size()), TRUE) != CSTR_EQUAL)
+        return false;
+    const HANDLE file = CreateFileW(image.c_str(), FILE_READ_ATTRIBUTES,
+                                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0,
+                                    nullptr);
+    BY_HANDLE_FILE_INFORMATION running{};
+    const bool have_running = FileId(file, running);
+    if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+    if (!have_running) return false;
+    // A verified pack: the very file whose handle is held. A bundled host
+    // (development build) has none held; the path match is all there is.
+    Verified& cache = Cache();
+    std::lock_guard lock(cache.mu);
+    if (cache.held.empty()) return !BundledHost().empty();
+    BY_HANDLE_FILE_INFORMATION held{};
+    return FileId(cache.held.front(), held) && SameFile(running, held);
+}
+
+bool IsAiHostPipeClient(HANDLE pipe) {
+    ULONG process_id = 0;
+    return GetNamedPipeClientProcessId(pipe, &process_id) && IsAiHostProcess(process_id);
 }
 
 void ForgetVerifiedAiPack() {

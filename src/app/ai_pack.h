@@ -36,6 +36,13 @@ inline bool AiPackReady(AiPackState state) {
 // Pulse.AI.exe of a verified (or bundled) pack, else empty.
 std::wstring LocateAiHost();
 
+// True when the process runs the located host: same image path as
+// LocateAiHost(), the very file verified (volume serial + file index of the
+// held handle; development builds: the sibling file), same session and user.
+bool IsAiHostProcess(DWORD process_id);
+// The same for the client of a connected named pipe (the broker's verify_peer).
+bool IsAiHostPipeClient(HANDLE pipe);
+
 // Drops the cached verification (after an install), releasing the held file.
 void ForgetVerifiedAiPack();
 
