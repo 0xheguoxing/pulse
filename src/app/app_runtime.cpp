@@ -27,6 +27,7 @@
 #include "../ui/quick_preview_window.h"
 #include "../ui/typography.h"
 #include "../ui/color_picker.h"
+#include "filter_tag_complete.h"
 #include "../common/localization.h"
 #include "../common/text_format.h"
 #include "../common/path_utils.h"
@@ -2761,6 +2762,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.address_suggestions = s.addressSuggest;
     vm.address_suggestion_header = s.addressSuggestHeader;
     vm.address_suggestion_selected = s.addressSuggestSel;
+    FillFilterTagSuggestionsVm(s, vm);
     vm.address_search_current = s.addressSearchCurrent;
     vm.address_search_has_text = s.addressSearching && s.hwndAddressEdit &&
                                 GetWindowTextLengthW(s.hwndAddressEdit) > 0;

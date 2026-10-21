@@ -3,6 +3,7 @@
 // app_hosted_edit.cpp — extracted from app_main.cpp.
 #include "app_internal.h"
 #include "address_bar_command.h"
+#include "filter_tag_complete.h"
 #include "folder_alias.h"
 #include "keymap.h"
 #include "tab_shortcuts.h"
@@ -492,6 +493,7 @@ void ClearPaneFilter(AppState& s) {
 
 void HideFilterEditor(AppState& s, bool commit) {
     if (!s.hwndFilterEdit || !s.filterEditing) return;
+    CloseFilterTagSuggestions(s);
     const bool owned_focus = GetFocus() == s.hwndFilterEdit;
     const bool select_mode = s.filterSelectMode;
     const std::wstring restore = s.filterSelectRestore;
@@ -1057,15 +1059,24 @@ LRESULT CALLBACK FilterEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     if (s && HandleHostedEditMessage(*s, hwnd, msg, wParam, lParam, handled)) return handled;
     switch (msg) {
     case WM_KEYDOWN:
+        // The # completion takes ↑↓ Enter Tab Esc while it is open.
+        if (FilterTagSuggestionsKey(*s, wParam)) return 0;
         if (wParam == VK_RETURN || wParam == VK_ESCAPE) {
             HideFilterEditor(*s, wParam == VK_RETURN);
             return 0;
         }
         break;
+    case WM_KEYUP:
+        if (wParam == VK_LEFT || wParam == VK_RIGHT || wParam == VK_HOME || wParam == VK_END ||
+            wParam == VK_DELETE)
+            UpdateFilterTagSuggestions(*s);
+        break;
     case WM_CHAR:
+        if (FilterTagSuggestionsSwallowChar(wParam)) return 0;
         if (wParam != VK_RETURN && wParam != VK_ESCAPE) {
             LRESULT lr = DefPresentedHostedEditProc(s, hwnd, msg, wParam, lParam);
             SyncFilterEditor(*s);
+            UpdateFilterTagSuggestions(*s);
             return lr;
         }
         break;

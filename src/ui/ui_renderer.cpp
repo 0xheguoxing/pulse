@@ -607,6 +607,65 @@ void MainRenderer::DrawAddressSuggestions(const WindowViewModel& vm, const D2D1_
     text_background_ = saved_bg;
 }
 
+namespace {
+constexpr float kTagSuggestRowDip = 30.0f;
+}
+
+D2D1_RECT_F MainRenderer::FilterTagSuggestionsRect(const D2D1_RECT_F& anchor, float w, size_t count) const {
+    const float width = (std::max)(anchor.right - anchor.left, 240.0f * scale_);
+    const float margin = 8.0f * scale_;
+    float left = anchor.left;
+    if (left + width > w - margin) left = (std::max)(margin, w - margin - width);
+    const float top = anchor.bottom + 4.0f * scale_;
+    const float h = (2.0f * kSuggestPadDip + kTagSuggestRowDip * static_cast<float>(count)) * scale_;
+    return D2D1::RectF(left, top, left + width, top + h);
+}
+
+int MainRenderer::FilterTagSuggestionAt(const D2D1_RECT_F& anchor, float w, size_t count, float x, float y) const {
+    if (count == 0) return -1;
+    const D2D1_RECT_F rc = FilterTagSuggestionsRect(anchor, w, count);
+    if (x < rc.left || x >= rc.right || y < rc.top || y >= rc.bottom) return -1;
+    const int row = static_cast<int>((y - rc.top - kSuggestPadDip * scale_) / (kTagSuggestRowDip * scale_));
+    return y >= rc.top + kSuggestPadDip * scale_ && row >= 0 && row < static_cast<int>(count) ? row : -2;
+}
+
+void MainRenderer::DrawFilterTagSuggestions(const WindowViewModel& vm, const D2D1_RECT_F& rect,
+                                            const Theme& theme) {
+    ID2D1DeviceContext* dc = compositor_->Dc();
+    const size_t count = vm.filter_tag_suggestions.size();
+    const D2D1_RECT_F card = FilterTagSuggestionsRect(vm.filter_tag_anchor, rect.right - rect.left, count);
+    const SnackPalette pal = MakeSnackPalette(theme, IsHighContrast());
+    DrawSnackPlate(dc, card, 8.0f * scale_, pal, scale_, IsHighContrast());
+    const D2D1_COLOR_F saved_bg = text_background_;
+    text_background_ = pal.plate;
+    IDWriteTextFormat* fmt = compositor_->TextFormat();
+    IDWriteTextFormat* small_fmt = compositor_->SmallFormat();
+    const float row_h = kTagSuggestRowDip * scale_;
+    for (size_t i = 0; i < count; ++i) {
+        const FilterTagSuggestionView& item = vm.filter_tag_suggestions[i];
+        const float y = card.top + kSuggestPadDip * scale_ + row_h * static_cast<float>(i);
+        const D2D1_RECT_F row = D2D1::RectF(card.left + 5.0f * scale_, y, card.right - 5.0f * scale_, y + row_h);
+        if (static_cast<int>(i) == vm.filter_tag_selected) {
+            MakeBrush(dc, WithAlpha(theme.accent, 0.16f), brAccent_);
+            FillRoundedRect(dc, brAccent_.get(), row.left, row.top, row.right - row.left, row_h, 6.0f * scale_);
+        }
+        const float dot = 5.0f * scale_;
+        const float cx = row.left + 14.0f * scale_;
+        const float cy = y + row_h * 0.5f;
+        MakeBrush(dc, item.color, brAccent_);
+        FillRoundedRect(dc, brAccent_.get(), cx - dot, cy - dot, dot * 2.0f, dot * 2.0f, dot);
+        const std::wstring number = std::to_wstring(item.count);
+        const float number_w = MeasureLayoutText(compositor_, compositor_->DwriteFactory(), small_fmt, number) + 1.0f;
+        const float right = row.right - 10.0f * scale_;
+        MakeBrush(dc, pal.text_secondary, brText_);
+        DrawTextRect(dc, small_fmt, brText_.get(), number, right - number_w, y, number_w, row_h);
+        const float x = row.left + 30.0f * scale_;
+        MakeBrush(dc, pal.text, brText_);
+        DrawTextRect(dc, fmt, brText_.get(), item.name, x, y, (std::max)(0.0f, right - number_w - 10.0f * scale_ - x), row_h);
+    }
+    text_background_ = saved_bg;
+}
+
 void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
                                     std::vector<BreadcrumbPlaced>& out) const {
     out.clear();
@@ -1019,6 +1078,7 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
     }
     if (vm.address_editing && !vm.address_searching && !vm.address_suggestions.empty())
         DrawAddressSuggestions(vm, rect, theme);
+    if (!vm.filter_tag_suggestions.empty()) DrawFilterTagSuggestions(vm, rect, theme);
     if (vm.teach.visible && vm.drag_badge.empty()) DrawTeachBubble(vm, rect, theme);
     if (!vm.change_popover.visible && vm.drag_badge.empty() && !vm.tooltip_text.empty() &&
         !group_wheel_.Visible() && !window_switcher_.IsOpen() && !window_overview_.IsOpen()) {

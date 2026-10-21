@@ -7,6 +7,7 @@
 #include "quick_access.h"
 #include "tag_manager.h"
 #include "tag_view.h"
+#include "filter_tag_complete.h"
 #include "sidebar_tag_drag.h"
 #include "app_prompts.h"
 #include "vertical_tabs.h"
@@ -2581,6 +2582,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         int mx = GET_X_LPARAM(lParam);
         int my = GET_Y_LPARAM(lParam);
         if (DismissPathEditorOutside(*s, mx, my)) return 0;  // chose a 别名 suggestion
+        if (ClickFilterTagSuggestion(*s, mx, my)) return 0;  // the filter box's # completion
         CancelRenameClick(*s);
         CancelScrollAnimation(*s);
         // Commit explicitly before changing pane/selection; a click on a
