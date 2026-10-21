@@ -4526,11 +4526,16 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             const bool showRowActions = vm.view_mode == ViewMode::Details && !stripRow &&
                 src != vm.rename_index &&
                 (hover || (selected && vm.selected_count == 1) || e.starred);
-            // OneDrive: 1 online only, 2 on this device, 3 always kept. Details
+            // OneDrive: 1 online only, 2 on this device, 3 always kept, 4 waiting
+            // to sync, 5 syncing, 6 sync error, 7 warning, 8 not synced. Details
             // rows end their name column with it; the hover buttons take its place.
             int cloudState = 0;
             if (vm.onedrive_status && !e.record_only && vm.view_mode == ViewMode::Details && !stripRow) {
-                if (e.attrs & files::kAttributePinned) cloudState = 3;
+                // STORAGEPROVIDERSTATE_* (propkey.h) to the states above.
+                static constexpr int kShellCloudState[11] = {0, 1, 2, 3, 4, 4, 5, 6, 7, 8, 4};
+                const uint8_t shellState = vm.OneDriveStateAt(src);
+                if (shellState > 0 && shellState <= 10) cloudState = kShellCloudState[shellState];
+                else if (e.attrs & files::kAttributePinned) cloudState = 3;
                 else if (e.cloud_recall || files::PreviewWouldRecall(e.attrs))   // recall bits or offline
                     cloudState = 1;
                 else cloudState = 2;
@@ -4758,9 +4763,16 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     const bool darkTheme = theme.bg.r < 0.5f;
                     const D2D1_COLOR_F blue = darkTheme ? HexColor(0x62ABF5) : HexColor(0x0F6CBD);
                     const D2D1_COLOR_F green = darkTheme ? HexColor(0x6CCB5F) : HexColor(0x107C10);
-                    const D2D1_COLOR_F ink = IsHighContrast() ? theme.text : cloudState == 1 ? blue : green;
-                    // Cloud outline / circled check / solid circled check, as File Explorer shows them.
-                    const wchar_t* glyph = cloudState == 1 ? L"\xE753" : cloudState == 2 ? L"\xE930" : L"\xEC61";
+                    const D2D1_COLOR_F red = darkTheme ? HexColor(0xFF99A4) : HexColor(0xC42B1C);
+                    const D2D1_COLOR_F amber = darkTheme ? HexColor(0xFCE100) : HexColor(0x9D5D00);
+                    const D2D1_COLOR_F inks[] = {blue, blue, green, green, theme.text_secondary, blue, red, amber,
+                                                 theme.text_secondary};
+                    const D2D1_COLOR_F ink = IsHighContrast() ? theme.text : inks[std::clamp(cloudState, 0, 8)];
+                    // Cloud outline / circled check / solid circled check / sync arrows /
+                    // error / warning / blocked, as File Explorer shows them.
+                    static constexpr const wchar_t* kCloudGlyphs[] = {L"\xE753", L"\xE753", L"\xE930", L"\xEC61",
+                        L"\xE895", L"\xE895", L"\xEB90", L"\xE7BA", L"\xE733"};
+                    const wchar_t* glyph = kCloudGlyphs[std::clamp(cloudState, 0, 8)];
                     DrawIconText(nameColRight + 2.0f * scale_, cell.top, 16.0f * scale_, cell.bottom - cell.top,
                                  glyph, L"", cut ? WithAlpha(ink, 0.55f) : ink, 0.78f);
                 }

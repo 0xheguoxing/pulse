@@ -7,7 +7,11 @@
 #include "sqlite3.h"
 #include <windows.h>
 #include <bcrypt.h>
+#include <shlobj.h>
+#include <shlwapi.h>
+#include <shobjidl.h>
 #include <algorithm>
+#include <cstdlib>
 #include <iterator>
 #include <memory>
 #include <mutex>
@@ -370,6 +374,197 @@ void RequestScan(HWND hwnd, const std::wstring& key, const std::wstring& folder)
     }).detach();
 }
 
+// --- OneDrive: the shell's own sync state per item -------------------------
+
+// One folder's PKEY_StorageProviderState values, as the worker read them.
+struct CloudAnswer {
+    std::wstring folder;
+    std::unordered_map<std::wstring, uint8_t> by_name;   // lowercase child name
+    bool busy = false;   // something is waiting or transferring: ask again soon
+    ULONGLONG cost = 0;
+};
+
+struct CloudFolder {
+    bool running = false;
+    ULONGLONG last_done = 0, last_cost = 0;
+    const void* seen_listing = nullptr;
+    size_t seen_count = 0;
+    std::shared_ptr<const CloudAnswer> answer;
+    std::weak_ptr<const std::vector<fs::DirEntry>> states_listing;
+    size_t states_count = 0;
+    const CloudAnswer* states_answer = nullptr;
+    std::shared_ptr<const std::unordered_map<int, uint8_t>> states;
+};
+
+std::unordered_map<std::wstring, CloudFolder>& CloudFolders() {
+    static std::unordered_map<std::wstring, CloudFolder> folders;
+    return folders;
+}
+std::vector<std::shared_ptr<const CloudAnswer>>& CloudInbox() {
+    static std::vector<std::shared_ptr<const CloudAnswer>> inbox;
+    return inbox;
+}
+
+// System.StorageProviderState ({E77E90DF-6271-4F5B-834F-2DD1F245DDA4}, 3).
+constexpr PROPERTYKEY kStorageProviderState = {
+    {0xE77E90DF, 0x6271, 0x4F5B, {0x83, 0x4F, 0x2D, 0xD1, 0xF2, 0x45, 0xDD, 0xA4}}, 3};
+constexpr bool CloudStateBusy(uint8_t state) { return state == 4 || state == 5 || state == 6 || state == 10; }
+
+// Test fixture (PULSE_TEST_DATA_DIR only): "<name>|<state>" lines in the
+// folder's .pulse_sync_states stand in for a sync engine.
+void ReadTestCloudStates(const std::wstring& folder, CloudAnswer& answer) {
+    if (GetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", nullptr, 0) == 0) return;
+    HANDLE file = CreateFileW(LongPath(folder + L"\\.pulse_sync_states").c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                              OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    std::string bytes(4096, '\0');
+    DWORD got = 0;
+    ReadFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &got, nullptr);
+    CloseHandle(file);
+    bytes.resize(got);
+    size_t at = 0;
+    while (at < bytes.size()) {
+        size_t end = bytes.find('\n', at);
+        if (end == std::string::npos) end = bytes.size();
+        std::string line = bytes.substr(at, end - at);
+        at = end + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        const size_t bar = line.rfind('|');
+        if (bar == std::string::npos || bar == 0) continue;
+        const int state = atoi(line.c_str() + bar + 1);
+        if (state <= 0 || state > 10) continue;
+        answer.by_name[app::GitLowerPath(app::GitUtf8ToWide(line.substr(0, bar)))] = static_cast<uint8_t>(state);
+        answer.busy = answer.busy || CloudStateBusy(static_cast<uint8_t>(state));
+    }
+}
+
+// Reads each child's sync state through the folder's shell view of it (the
+// cloud-files property handler). Runs on a worker thread.
+std::shared_ptr<CloudAnswer> ScanCloudFolder(const std::wstring& key, const std::wstring& folder) {
+    auto answer = std::make_shared<CloudAnswer>();
+    answer->folder = key;
+    const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    // The handler only reports placeholders this thread is allowed to see.
+    using SetThreadMode = CHAR(NTAPI*)(CHAR);
+    if (HMODULE ntdll = GetModuleHandleW(L"ntdll.dll")) {
+        if (auto set = reinterpret_cast<SetThreadMode>(
+                reinterpret_cast<void*>(GetProcAddress(ntdll, "RtlSetThreadPlaceholderCompatibilityMode"))))
+            set(2);   // PHCM_EXPOSE_PLACEHOLDERS
+    }
+    IShellItem* item = nullptr;
+    IShellFolder2* shell_folder = nullptr;
+    IEnumIDList* children = nullptr;
+    if (SUCCEEDED(SHCreateItemFromParsingName(folder.c_str(), nullptr, IID_PPV_ARGS(&item))) &&
+        SUCCEEDED(item->BindToHandler(nullptr, BHID_SFObject, IID_PPV_ARGS(&shell_folder))) &&
+        shell_folder->EnumObjects(nullptr, SHCONTF_FOLDERS | SHCONTF_NONFOLDERS | SHCONTF_INCLUDEHIDDEN |
+                                               SHCONTF_INCLUDESUPERHIDDEN, &children) == S_OK && children) {
+        PITEMID_CHILD child = nullptr;
+        ULONG fetched = 0;
+        for (int budget = 5000; budget > 0 && children->Next(1, &child, &fetched) == S_OK; --budget) {
+            VARIANT value;
+            VariantInit(&value);
+            if (SUCCEEDED(shell_folder->GetDetailsEx(child, &kStorageProviderState, &value)) && value.vt == VT_UI4 &&
+                value.ulVal > 0 && value.ulVal <= 10) {
+                STRRET name{};
+                PWSTR text = nullptr;
+                if (SUCCEEDED(shell_folder->GetDisplayNameOf(child, SHGDN_INFOLDER | SHGDN_FORPARSING, &name)) &&
+                    SUCCEEDED(StrRetToStrW(&name, child, &text)) && text) {
+                    const auto state = static_cast<uint8_t>(value.ulVal);
+                    answer->by_name[app::GitLowerPath(text)] = state;
+                    answer->busy = answer->busy || CloudStateBusy(state);
+                }
+                CoTaskMemFree(text);
+            }
+            VariantClear(&value);
+            CoTaskMemFree(child);
+        }
+    }
+    if (children) children->Release();
+    if (shell_folder) shell_folder->Release();
+    if (item) item->Release();
+    if (SUCCEEDED(co)) CoUninitialize();
+    ReadTestCloudStates(folder, *answer);
+    return answer;
+}
+
+void TakeCloudAnswers() {
+    std::vector<std::shared_ptr<const CloudAnswer>> answers;
+    {
+        std::lock_guard<std::mutex> hold(InboxLock());
+        answers.swap(CloudInbox());
+    }
+    for (auto& answer : answers) {
+        CloudFolder& state = CloudFolders()[answer->folder];
+        state.running = false;
+        state.last_done = GetTickCount64();
+        state.last_cost = answer->cost;
+        state.answer = std::move(answer);
+    }
+}
+
+void RequestCloudScan(HWND hwnd, const std::wstring& key, const std::wstring& folder) {
+    CloudFolder& state = CloudFolders()[key];
+    if (state.running) return;
+    state.running = true;
+    std::thread([hwnd, key, folder] {
+        const ULONGLONG start = GetTickCount64();
+        auto answer = ScanCloudFolder(key, folder);
+        answer->cost = GetTickCount64() - start;
+        const bool busy = answer->busy;
+        {
+            std::lock_guard<std::mutex> hold(InboxLock());
+            CloudInbox().push_back(std::move(answer));
+        }
+        if (!hwnd) return;
+        InvalidateRect(hwnd, nullptr, FALSE);
+        // Syncing: wake the window again so it asks once more (FillSyncPane).
+        if (busy) {
+            Sleep(1600);
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+    }).detach();
+}
+
+// Shell sync states for the listed folder's own rows (pane.onedrive_states).
+void FillCloudStates(AppState& s, const app::Tab& tab, const std::wstring& folder, ui::PaneViewModel& pane) {
+    TakeCloudAnswers();
+    auto& folders = CloudFolders();
+    if (folders.size() > 64) {
+        for (auto it = folders.begin(); it != folders.end();) it = it->second.running ? std::next(it) : folders.erase(it);
+    }
+    const std::wstring key = app::GitLowerPath(folder);
+    CloudFolder& state = folders[key];
+    const ULONGLONG now = GetTickCount64();
+    const bool listing_changed = state.seen_listing != tab.snapshot.get() || state.seen_count != tab.EntryCount();
+    // Syncing: soon again (slow folders wait longer); otherwise now and then.
+    const ULONGLONG stale_after = state.answer && state.answer->busy
+        ? (std::max<ULONGLONG>)(1500, state.last_cost * 4) : (std::max<ULONGLONG>)(30000, state.last_cost * 20);
+    if (!state.running && (state.last_done == 0 || listing_changed || now - state.last_done >= stale_after)) {
+        state.seen_listing = tab.snapshot.get();
+        state.seen_count = tab.EntryCount();
+        RequestCloudScan(s.hwnd, key, folder);
+    }
+    if (!state.answer || state.answer->by_name.empty() || !tab.snapshot) return;
+    if (state.states && state.states_answer == state.answer.get() && state.states_count == tab.EntryCount() &&
+        !state.states_listing.expired() && state.states_listing.lock() == tab.snapshot) {
+        pane.onedrive_states = state.states;
+        return;
+    }
+    auto states = std::make_shared<std::unordered_map<int, uint8_t>>();
+    const size_t count = tab.EntryCount();
+    for (size_t i = 0; i < count; ++i) {
+        const fs::DirEntry entry = tab.EntryAt(i);
+        if (!entry.full_path.empty() && app::GitLowerPath(PlainPath(fs::ParentPath(entry.full_path))) != key) continue;
+        const auto found = state.answer->by_name.find(app::GitLowerPath(entry.name));
+        if (found != state.answer->by_name.end()) (*states)[static_cast<int>(i)] = found->second;
+    }
+    state.states_listing = tab.snapshot;
+    state.states_count = count;
+    state.states_answer = state.answer.get();
+    state.states = std::move(states);
+    pane.onedrive_states = state.states;
+}
+
 bool UnderOneDrive(const AppState& s, const std::wstring& folder) {
     for (const auto& entry : s.sidebar.cloud) {
         std::wstring root = PlainPath(entry.path);
@@ -388,6 +583,7 @@ void FillSyncPane(AppState& s, const app::Tab& tab, ui::PaneViewModel& pane) {
     if (tab.current_path.empty() || fs::IsVirtualPath(tab.current_path)) return;
     const std::wstring folder = PlainPath(tab.current_path);
     if (s.appPrefs.sync_onedrive) pane.onedrive_status = UnderOneDrive(s, folder);
+    if (pane.onedrive_status) FillCloudStates(s, tab, folder, pane);
     if (!s.appPrefs.sync_svn || !tab.git_root.empty() || (pane.git_marks && !pane.git_marks->empty())) return;
     TakeAnswers();
     auto& folders = Folders();

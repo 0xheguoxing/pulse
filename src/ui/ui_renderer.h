@@ -273,6 +273,15 @@ struct PaneViewModel {
     }
     // The folder is inside a OneDrive root: rows show their sync state.
     bool onedrive_status = false;
+    // Shell sync state per source index (PKEY_StorageProviderState values:
+    // 1 online only ... 7 error, 8 warning, 9 excluded, 10 pending). Rows
+    // without one fall back to their attributes.
+    std::shared_ptr<const std::unordered_map<int, uint8_t>> onedrive_states;
+    uint8_t OneDriveStateAt(int source) const {
+        if (!onedrive_states) return 0;
+        const auto it = onedrive_states->find(source);
+        return it == onedrive_states->end() ? uint8_t{0} : it->second;
+    }
     bool loading = false;
     bool search_retaining_results = false;
     bool can_go_back = false;
