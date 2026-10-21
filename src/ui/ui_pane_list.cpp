@@ -15,6 +15,7 @@
 #include "../app/search_query.h"
 #include "../common/text_format.h"
 #include "../common/preview_extensions.h"
+#include "../common/file_placeholder.h"
 #include "wall_aspects.h"
 #include "file_name_breaks.h"
 #include <windowsx.h>
@@ -526,7 +527,8 @@ MainRenderer::DetailsColumnLayout MainRenderer::DetailsColumns(
         const std::wstring* values[] = { &entry.date_text, &entry.type_text, &entry.size_text };
         for (size_t i = 0; i < measured.size(); ++i)
             measured[i] = std::max(measured[i],
-                measure(*values[i], compositor_->FileNameFormat()) + 20.0f * scale_);
+                measure(*values[i], compositor_->FileNameFormat()) + 20.0f * scale_ +
+                (i == 0 ? MtimeDateExtraDip() * scale_ : 0.0f));
         measured[1] = std::max(measured[1], measure(entry.type_text, compositor_->FileNameFormat()) +
             (20.0f + TypeChipWidthDip(TypeChipLabel(entry.name, entry.is_dir))) * scale_);
     }
@@ -574,7 +576,7 @@ MainRenderer::ColumnAutoWidths MainRenderer::AutoColumnWidths() const {
         for (StringId id : kinds) type = std::max(type, measure(fmt, pulse::l10n::Get(id)) + chip);
         type = std::max(type, measure(fmt, L"AutoCAD " + pulse::l10n::Get(StringId::TypeFile)) + chip);
         float size = std::max(header_w(StringId::ColumnSize), measure(fmt, L"1023.9") + kSizeUnitDip);
-        out.date = std::clamp(date + pad, 72.0f, 176.0f);
+        out.date = std::clamp(date + pad + MtimeDateExtraDip(), 72.0f, 176.0f + MtimeDateExtraDip());
         out.created = std::clamp(created + pad, 72.0f, 176.0f);
         out.accessed = std::clamp(accessed + pad, 72.0f, 176.0f);
         out.type = std::clamp(type + pad, 64.0f, 196.0f);
@@ -1802,11 +1804,13 @@ void MainRenderer::DrawMorphFrom(const PaneViewModel& vm, const motion::ViewMorp
                                         brTextSecondary_.get(), text, x, top, width, height);
                 };
                 switch (columns.kinds[static_cast<size_t>(col)]) {
-                case ColumnKind::Date:
+                case ColumnKind::Date: {
+                    const float lead = mtime_hint_.style == 1 ? kMtimeDotLeadDip * scale_ : 0.0f;
                     draw(list_smart_date_ && e.modified_value && !e.date_text.empty()
                              ? SmartListDate(e.modified_value) : e.date_text,
-                         left, avail, DWRITE_TEXT_ALIGNMENT_LEADING);
+                         left + lead, avail - lead, DWRITE_TEXT_ALIGNMENT_LEADING);
                     break;
+                }
                 case ColumnKind::Created:
                     draw(list_smart_date_ && e.created_value && !e.created_text.empty()
                              ? SmartListDate(e.created_value) : e.created_text,
@@ -2788,6 +2792,41 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
     dc->PopAxisAlignedClip();
 }
 
+IDWriteTextFormat* MainRenderer::NameSemiboldFormat() {
+    IDWriteTextFormat* base = compositor_ ? compositor_->FileNameFormat() : nullptr;
+    IDWriteFactory2* factory = compositor_ ? compositor_->DwriteFactory() : nullptr;
+    if (!base || !factory) return nullptr;
+    if (name_semibold_format_.get() && name_semibold_base_ == base && name_semibold_size_ == base->GetFontSize())
+        return name_semibold_format_.get();
+    name_semibold_format_.reset();
+    name_semibold_base_ = base;
+    name_semibold_size_ = base->GetFontSize();
+    wchar_t family[128]{};
+    wchar_t locale[LOCALE_NAME_MAX_LENGTH]{};
+    if (FAILED(base->GetFontFamilyName(family, ARRAYSIZE(family))) ||
+        FAILED(base->GetLocaleName(locale, ARRAYSIZE(locale))))
+        return nullptr;
+    ComPtr<IDWriteFontCollection> collection;
+    base->GetFontCollection(&collection);
+    if (FAILED(factory->CreateTextFormat(family, collection.get(), DWRITE_FONT_WEIGHT_SEMI_BOLD, base->GetFontStyle(),
+                                         base->GetFontStretch(), base->GetFontSize(), locale, &name_semibold_format_)))
+        return nullptr;
+    IDWriteTextFormat* bold = name_semibold_format_.get();
+    bold->SetParagraphAlignment(base->GetParagraphAlignment());
+    bold->SetWordWrapping(base->GetWordWrapping());
+    DWRITE_LINE_SPACING_METHOD method{};
+    FLOAT spacing = 0.0f, baseline = 0.0f;
+    if (SUCCEEDED(base->GetLineSpacing(&method, &spacing, &baseline))) bold->SetLineSpacing(method, spacing, baseline);
+    // CJK names keep the same fallback fonts as the regular face.
+    ComPtr<IDWriteTextFormat1> base1, bold1;
+    if (SUCCEEDED(base->QueryInterface(__uuidof(IDWriteTextFormat1), reinterpret_cast<void**>(&base1))) &&
+        SUCCEEDED(bold->QueryInterface(__uuidof(IDWriteTextFormat1), reinterpret_cast<void**>(&bold1)))) {
+        ComPtr<IDWriteFontFallback> fallback;
+        if (SUCCEEDED(base1->GetFontFallback(&fallback)) && fallback.get()) bold1->SetFontFallback(fallback.get());
+    }
+    return bold;
+}
+
 bool MainRenderer::DrawTruncatedName(const std::wstring& name, float x, float y, float w, float h,
                                      const Theme& theme, bool selected, const std::vector<NameMatchRange>& matches,
                                      bool dim_extension) {
@@ -2798,7 +2837,9 @@ bool MainRenderer::DrawTruncatedName(const std::wstring& name, float x, float y,
     }
     ID2D1DeviceContext* dc = compositor_->Dc();
     IDWriteFactory2* factory = compositor_->DwriteFactory();
-    IDWriteTextFormat* fmt = compositor_->FileNameFormat();
+    // 今天修改的名称加粗: the caller measured the row with the same format.
+    const bool semibold = name_semibold_ && name_semibold_format_.get();
+    IDWriteTextFormat* fmt = semibold ? name_semibold_format_.get() : compositor_->FileNameFormat();
     MakeBrush(dc, theme.text, brText_);
 
     const auto old_wrap = fmt->GetWordWrapping();
@@ -2822,7 +2863,8 @@ bool MainRenderer::DrawTruncatedName(const std::wstring& name, float x, float y,
     // each substring its own clipping/ellipsis and loses glyph positioning
     // across the boundary (including the dot's ink and the stem's last glyph).
     ComPtr<IDWriteTextLayout> highlighted;
-    if ((!visible_matches.empty() || ext_at != std::wstring::npos) &&
+    // Semibold always takes the layout path: LumaText draws the regular face.
+    if ((!visible_matches.empty() || ext_at != std::wstring::npos || semibold) &&
         SUCCEEDED(factory->CreateTextLayout(shown.c_str(),
         static_cast<UINT32>(shown.size()), fmt, w, h, &highlighted))) {
         highlighted->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -4005,6 +4047,15 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                                     vm.view_mode == ViewMode::MediumIcons) &&
             vm.rename_index >= 0 && vm.ViewIndex(vm.rename_index) >= 0;
         if (rename_covers) rename_card = RenameFieldRect(vm, viewport, vm.rename_index);
+        // 修改时间提示: one clock per pass; the change log's view has its own times.
+        const MtimeHint& mtime = mtime_hint_;
+        const bool mtime_on = mtime.style != 0 && !vm.is_changes && !vm.is_recycle;
+        const MtimeClock mtime_clock = mtime_on ? MtimeClock::Now() : MtimeClock{};
+        const int mtime_last = MtimeRangeLastBucket(mtime.range_days);
+        if (mtime_flash_started_.size() > 256) {
+            for (auto it = mtime_flash_started_.begin(); it != mtime_flash_started_.end();)
+                it = motion_now_ - it->second.second > 10000 ? mtime_flash_started_.erase(it) : std::next(it);
+        }
         for (int i = startIdx; i >= 0 && i <= endIdx; ++i) {
             D2D1_RECT_F cell = layout.ItemRect(i);
             if (cell.right < x || cell.left > x + w || cell.bottom < y || cell.top > y + h) continue;
@@ -4193,6 +4244,24 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             bool hover = (src == vm.hover_index) && !vm.marquee_active;
             bool cut = e.record_only || vm.cut_names.contains(e.name);
             const float hidden_alpha = HiddenEntryAlpha(e.attrs);
+            // Text follows the row's own time; the mark may take a folder's
+            // newest change inside (change tracking), so a folder whose files
+            // changed today reads as fresh without bolding its own date.
+            int mtimeOwn = kMtimeBucketNone, mtimeMark = kMtimeBucketNone;
+            uint64_t mtimeMarkTime = 0;
+            if (mtime_on && !e.record_only && e.modified_value) {
+                mtimeOwn = MtimeBucket(e.modified_value, mtime_clock);
+                mtimeMarkTime = e.modified_value;
+                if (mtime.tree && e.is_dir && change && change->last_change > mtimeMarkTime)
+                    mtimeMarkTime = change->last_change;
+                mtimeMark = MtimeBucket(mtimeMarkTime, mtime_clock, &mtime_next_boundary_);
+            }
+            const bool mtimeMarked = mtimeMark <= mtime_last;
+            const bool mtimeFresh = mtime.bold && mtimeOwn <= 1 && mtimeOwn <= mtime_last;
+            const bool mtimeOld = mtime_on && mtime.fade && mtimeOwn > mtime_last && !mtimeMarked;
+            const D2D1_COLOR_F mtimeColor = mtimeMarked
+                ? MtimeColor(mtime.palette, mtimeMark, theme.bg.r < 0.5f, theme.accent, IsHighContrast())
+                : D2D1_COLOR_F{};
             const bool expand_link = e.is_link && !vm.marquee_active && (hover || selected) &&
                 src != vm.rename_index;
             const float link_expansion = e.is_link && pane_index >= 0 && pane_index < 8
@@ -4230,6 +4299,24 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     (bg.top + bg.bottom - bar_h) * 0.5f, 2.5f * scale_, bar_h, 1.25f * scale_);
             }
             if (draw_shapes && selected) selection_painter.Selected(bg);
+            if (draw_shapes && mtime_on && mtime.flash && !morph_item && !IsHighContrast() && !e.path.empty() &&
+                e.modified_value && e.modified_value + 3 * kMtimeSecond > mtime_clock.now &&
+                e.modified_value < mtime_clock.now + 2 * kMtimeSecond) {
+                // 文件刚被修改时闪一下: a file saved seconds ago glows once. A file
+                // written continuously (a download) does not glow again for 4 s.
+                auto [mtSeen, mtAdded] = mtime_flash_started_.try_emplace(e.path, e.modified_value, motion_now_);
+                if (!mtAdded && mtSeen->second.first != e.modified_value && motion_now_ - mtSeen->second.second > 4000)
+                    mtSeen->second = {e.modified_value, motion_now_};
+                const float mtGlow = static_cast<float>(motion_now_ - mtSeen->second.second) / 1200.0f;
+                if (mtGlow < 1.0f) {
+                    const float mtFade = (1.0f - mtGlow) * (1.0f - mtGlow);
+                    MakeBrush(dc, WithAlpha(theme.accent, 0.22f * mtFade), brFillInput_);
+                    FillRoundedRect(dc, brFillInput_.get(), bg.left + inset, bg.top + scale_,
+                        std::max(0.0f, bg.right - bg.left - inset * 2),
+                        std::max(0.0f, bg.bottom - bg.top - scale_ * 2), theme.radius_control * scale_);
+                    mtime_flash_until_ = std::max(mtime_flash_until_, mtSeen->second.second + 1200);
+                }
+            }
             if (draw_shapes && row_flash > 0.0f && !IsHighContrast()) {
                 // Newly appeared (pasted / created / extracted) row: fading accent wash.
                 MakeBrush(dc, WithAlpha(theme.accent, 0.20f * row_flash), brFillInput_);
@@ -4400,6 +4487,22 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             }
             if (draw_shapes && !morph_item && !e.record_only && IsProtectedSystemEntry(e.attrs))
                 DrawProtectedBadge(dc, iconGrid ? artwork : iconRect, scale_, theme);
+            if (draw_shapes && !morph_item && mtimeMarked && mtime.other_views && mtime.style != 3 &&
+                vm.view_mode != ViewMode::Details) {
+                // Views without a date column: the mark on the icon's top-left
+                // corner (links and protected badges use the bottom corners).
+                const D2D1_RECT_F mtArt = iconGrid ? artwork : iconRect;
+                const float mtSide = std::clamp((mtArt.right - mtArt.left) * 0.2f, 7.0f * scale_, 12.0f * scale_);
+                const float mtX = mtArt.left + mtSide * 0.5f + scale_;
+                const float mtY = mtArt.top + mtSide * 0.5f + scale_;
+                D2D1_COLOR_F mtHalo = theme.bg;
+                mtHalo.a = 0.92f;
+                MakeBrush(dc, mtHalo, brTagDot_);
+                dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(mtX, mtY), mtSide * 0.5f + 1.5f * scale_,
+                                              mtSide * 0.5f + 1.5f * scale_), brTagDot_.get());
+                MakeBrush(dc, mtimeColor, brTagDot_);
+                DrawMtimeMark(dc, brTagDot_.get(), mtX, mtY, mtSide, mtimeMark, mtimeColor);
+            }
             if (draw_shapes && wallPic && !morph_item) DrawWallTileChrome(thumbRect, hover && src != vm.rename_index, selected, theme);
             // Mid-morph the labels are drawn in a second, faded pass.
             if (!draw_text) continue;
@@ -4423,10 +4526,20 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             const bool showRowActions = vm.view_mode == ViewMode::Details && !stripRow &&
                 src != vm.rename_index &&
                 (hover || (selected && vm.selected_count == 1) || e.starred);
+            // OneDrive: 1 online only, 2 on this device, 3 always kept. Details
+            // rows end their name column with it; the hover buttons take its place.
+            int cloudState = 0;
+            if (vm.onedrive_status && !e.record_only && vm.view_mode == ViewMode::Details && !stripRow) {
+                if (e.attrs & files::kAttributePinned) cloudState = 3;
+                else if (e.cloud_recall || files::PreviewWouldRecall(e.attrs))   // recall bits or offline
+                    cloudState = 1;
+                else cloudState = 2;
+            }
+            const float cloudReserve = cloudState != 0 && !showRowActions ? 20.0f * scale_ : 0.0f;
             // A lone name column has no divider: it ends at the layout's right.
             const float nameColRight = (vm.view_mode == ViewMode::Details
                 ? (stripRow ? detailsColumns.right : detailsColumns.DividerX(0) - margin_)
-                : nameRc.right) - (stripChevron ? 18.0f * scale_ : 0.0f);
+                : nameRc.right) - (stripChevron ? 18.0f * scale_ : 0.0f) - cloudReserve;
             if (stripChevron) {
                 DrawIconText(nameColRight + 2.0f * scale_, cell.top, 18.0f * scale_, cell.bottom - cell.top,
                              kIconChevronRight, L">", theme.text_secondary, 0.55f);
@@ -4479,13 +4592,17 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 ? std::min(108.0f * scale_, painter_.MeasureTagWidth(e.badge))
                 : staged_pill ? std::min(108.0f * scale_, painter_.MeasureTagWidth(staged_text))
                 : git_pill ? std::min(108.0f * scale_, painter_.MeasureTagWidth(GitMarkText(gitMark))) : 0.0f;
+            // 今天修改的名称加粗: measured and drawn at semibold, so tags and pills still follow it.
+            IDWriteTextFormat* nameFormat = compositor_->FileNameFormat();
+            if (mtimeFresh && !iconGrid && !wallPic && !has_alias && src != vm.rename_index)
+                if (IDWriteTextFormat* semibold = NameSemiboldFormat()) nameFormat = semibold;
             // List rows: [mark] alias  real name (pulse_alias.html .amark).
             const bool show_mark = has_alias && app::AliasStore::Instance().ShowMark();
             const bool list_mark = show_mark && !iconGrid;
             const NameTrail trail = LayoutNameTrail(
                 list_mark ? nameX + kListAliasMarkDip * scale_ : nameX, textY, textH, nameColRight, cell.top, cell.bottom, scale_,
                 has_alias ? alias_line : e.name, tagDotCount, badgeW, showStar, showNewTab, showMore,
-                compositor_, compositor_->DwriteFactory(), compositor_->FileNameFormat(), change != nullptr,
+                compositor_, compositor_->DwriteFactory(), nameFormat, change != nullptr,
                 vm.view_mode == ViewMode::Details ? (e.is_dir ? 3 : 2) : 0, name_matches, row_actions_);
             if (src == vm.rename_index) {
                 // The rename frame is drawn after every row (below): it can be
@@ -4614,8 +4731,10 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 } else {
                     Theme name_theme = theme;
                     name_theme.text = nameColor;
+                    name_semibold_ = nameFormat != compositor_->FileNameFormat();
                     name_truncated = DrawTruncatedName(e.name, trail.name_x, textY, trail.name_w, textH, name_theme,
                                                        selected, name_matches, detailsView && !e.is_dir);
+                    name_semibold_ = false;
                     // Icon grids with tag dots keep the name on one line; the
                     // single selected item still shows all of it.
                     if (iconGrid && !wallPic && name_truncated && selected && vm.selected_count == 1 &&
@@ -4635,6 +4754,16 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 if (hover && pane_index >= 0 && pane_index < static_cast<int>(hover_names_.size()))
                     hover_names_[static_cast<size_t>(pane_index)] = {src, name_truncated};
                 if (change && !iconGrid) DrawChangeBadge(compositor_, painter_, *change, trail.badge, theme, scale_);
+                if (cloudReserve > 0.0f) {
+                    const bool darkTheme = theme.bg.r < 0.5f;
+                    const D2D1_COLOR_F blue = darkTheme ? HexColor(0x62ABF5) : HexColor(0x0F6CBD);
+                    const D2D1_COLOR_F green = darkTheme ? HexColor(0x6CCB5F) : HexColor(0x107C10);
+                    const D2D1_COLOR_F ink = IsHighContrast() ? theme.text : cloudState == 1 ? blue : green;
+                    // Cloud outline / circled check / solid circled check, as File Explorer shows them.
+                    const wchar_t* glyph = cloudState == 1 ? L"\xE753" : cloudState == 2 ? L"\xE930" : L"\xEC61";
+                    DrawIconText(nameColRight + 2.0f * scale_, cell.top, 16.0f * scale_, cell.bottom - cell.top,
+                                 glyph, L"", cut ? WithAlpha(ink, 0.55f) : ink, 0.78f);
+                }
                 const float link_left = (trail.tag_n > 0
                     ? trail.tag_x0 + trail.tag_r * 2 + (trail.tag_n - 1) * trail.tag_step
                     : trail.name_x + trail.name_w) + 6.0f * scale_;
@@ -4762,7 +4891,62 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     case ColumnKind::Date: {
                         const std::wstring date = list_smart_date_ && e.modified_value && !e.date_text.empty()
                             ? SmartListDate(e.modified_value) : e.date_text;
-                        draw_detail_text(fit(date, avail), left, avail, DWRITE_TEXT_ALIGNMENT_LEADING);
+                        if (!mtime_on) {
+                            draw_detail_text(fit(date, avail), left, avail, DWRITE_TEXT_ALIGNMENT_LEADING);
+                            break;
+                        }
+                        // 修改时间提示: dots sit in the cell's lead (every row's text
+                        // moves the same, so dates stay aligned); bars run under the text.
+                        const float mtLead = mtime.style == 1 ? kMtimeDotLeadDip * scale_ : 0.0f;
+                        const float mtLeft = left + mtLead;
+                        const float mtAvail = std::max(0.0f, avail - mtLead);
+                        if (mtimeMarked && mtime.style == 1 && mtLead > 0.0f) {
+                            const float mtSide = 8.0f * scale_;
+                            MakeBrush(dc, mtimeColor, brTagDot_);
+                            DrawMtimeMark(dc, brTagDot_.get(), colX + 11.0f * scale_, (cell.top + cell.bottom) * 0.5f,
+                                          mtSide, mtimeMark, cut ? WithAlpha(mtimeColor, 0.55f) : mtimeColor);
+                        }
+                        if (mtimeFresh && mtAvail > 1.0f) {
+                            // Changed today: semibold in the text color.
+                            IDWriteTextFormat* mtBold = NameSemiboldFormat();
+                            ComPtr<IDWriteTextLayout> mtLayout;
+                            const std::wstring mtShown = fit(date, mtAvail * 0.94f);
+                            if (mtBold && SUCCEEDED(compositor_->DwriteFactory()->CreateTextLayout(mtShown.c_str(),
+                                    static_cast<UINT32>(mtShown.size()), mtBold, mtAvail, cell.bottom - cell.top - 2.0f * scale_,
+                                    &mtLayout))) {
+                                mtLayout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                                mtLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                                mtLayout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                                MakeBrush(dc, cut ? WithAlpha(theme.text, 0.55f) : theme.text, brText_);
+                                dc->DrawTextLayout(D2D1::Point2F(mtLeft, cell.top + scale_), mtLayout.get(), brText_.get(),
+                                                   D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                            } else {
+                                draw_detail_text(fit(date, mtAvail), mtLeft, mtAvail, DWRITE_TEXT_ALIGNMENT_LEADING);
+                            }
+                        } else if (mtimeOld) {
+                            // Outside the range: a step lighter, so recent dates lead.
+                            MakeBrush(dc, WithAlpha(secondary, secondary.a * 0.62f), brTextSecondary_);
+                            draw_detail_text(fit(date, mtAvail), mtLeft, mtAvail, DWRITE_TEXT_ALIGNMENT_LEADING);
+                            MakeBrush(dc, secondary, brTextSecondary_);
+                        } else {
+                            draw_detail_text(fit(date, mtAvail), mtLeft, mtAvail, DWRITE_TEXT_ALIGNMENT_LEADING);
+                        }
+                        if (mtimeMarked && mtime.style == 2 && mtAvail > 8.0f * scale_) {
+                            // 时间条: as long as the time left in the range.
+                            const uint64_t mtSpan = mtime.range_days <= 1
+                                ? std::max<uint64_t>(mtime_clock.now - mtime_clock.midnight, kMtimeSecond)
+                                : static_cast<uint64_t>(ClampMtimeRange(mtime.range_days)) * kMtimeDay;
+                            const uint64_t mtAge = mtime_clock.now > mtimeMarkTime ? mtime_clock.now - mtimeMarkTime : 0;
+                            const float mtFrac = std::clamp(1.0f - static_cast<float>(static_cast<double>(mtAge) /
+                                                                                 static_cast<double>(mtSpan)), 0.06f, 1.0f);
+                            const float mtBarW = std::round(std::min(96.0f * scale_, mtAvail) * mtFrac);
+                            D2D1_COLOR_F mtBar = mtimeColor;
+                            if (!IsHighContrast()) mtBar.a *= 0.75f;
+                            if (cut) mtBar.a *= 0.55f;
+                            MakeBrush(dc, mtBar, brTagDot_);
+                            FillRoundedRect(dc, brTagDot_.get(), mtLeft, cell.bottom - 6.0f * scale_, mtBarW,
+                                            2.0f * scale_, 1.0f * scale_);
+                        }
                         break;
                     }
                     case ColumnKind::Created:

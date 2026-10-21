@@ -283,6 +283,14 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             if(ContainsPt(lay.menu_acrylic_row,x,y)) {r.region=HitTestResult::SettingsToggle;r.index=36;return r;}
             for(int list_row=0;list_row<6;++list_row)
                 if(ContainsPt(lay.list_style_row[list_row],x,y)) {r.region=HitTestResult::SettingsToggle;r.index=list_row<3 ? 17+list_row : (list_row==3 ? 22 : list_row==4 ? 33 : 34);return r;}
+            // 修改时间提示 (the hidden rows are empty rects) and sync status.
+            for(int i=0;i<6;++i) {
+                if(i<4 && ContainsPt(lay.mtime_style_row[i],x,y)) {r.region=HitTestResult::SettingsMtimeStyle;r.index=i;return r;}
+                if(i<4 && ContainsPt(lay.mtime_range_row[i],x,y)) {r.region=HitTestResult::SettingsMtimeRange;r.index=i;return r;}
+                if(ContainsPt(lay.mtime_palette_row[i],x,y)) {r.region=HitTestResult::SettingsMtimePalette;r.index=i;return r;}
+                if(i<5 && (i!=2 || vm.settings_change_tracking) && ContainsPt(lay.mtime_toggle_row[i],x,y)) {r.region=HitTestResult::SettingsToggle;r.index=70+i;return r;}
+                if(i<2 && ContainsPt(lay.sync_row[i],x,y)) {r.region=HitTestResult::SettingsToggle;r.index=75+i;return r;}
+            }
             const D2D1_RECT_F actions[]={lay.content_pause,lay.content_options,lay.content_rebuild};
             for(int i=0;i<3;++i) if(ContainsPt(actions[i],x,y)) {r.region=HitTestResult::SettingsContentAction;r.index=i+1;return r;}
 

@@ -1,5 +1,6 @@
 #include "app_diagnostics.h"
 #include "git_ui.h"
+#include "mtime_hint_prefs.h"
 #include "app_wall_hint.h"
 #include "arrival_select.h"
 #include "zip_compress_ui.h"
@@ -1273,6 +1274,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         s->renderer.SetRowActions(app::RowActionMask(s->ctxMenuPrefs.builtin_hidden,
             s->ctxMenuPrefs.BuiltinOrder(app::BuiltinMenuSurface::RowButtons)));
         s->renderer.SetThumbnailBadges(s->appPrefs.list_thumbnail_badges);
+        s->renderer.SetMtimeHint(app::MtimeHintFromPrefs(s->appPrefs));
         app::SetFolderSortMode(app::FolderSortModeFromInt(s->appPrefs.folder_sort_mode));
         ui::typography::SetTextRenderMode(static_cast<ui::typography::TextRenderMode>(s->appPrefs.text_render));
         s->compositor.UpdateTextRenderingParams(nullptr);
@@ -1961,6 +1963,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             SyncUiTimerRate(*s, hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
             bool dirty = false;
             if (TickChangeTracking(*s)) dirty = true;
+            if (s->renderer.MtimeBoundaryDue()) dirty = true;   // 修改时间提示: a mark aged
             static bool folderSizeResortWaiting = false;
             if (s->folderSizes.TakeChanged()) {
                 dirty = true;

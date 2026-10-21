@@ -1119,6 +1119,11 @@ float MainRenderer::SettingsDestinationOffset(const WindowViewModel& vm, int set
         case I::ListTagNameColor: target=l.list_style_row[3];break;
     case I::ListSelectionOutline: target=l.list_style_row[4];break;
     case I::ListThumbnailBadges: target=l.list_style_row[5];break;
+    case I::ListMtimeHint: target=l.mtime_style_card;break;
+    case I::ListMtimeRange: target=vm.settings_mtime.style ? l.mtime_range_card : l.mtime_style_card;break;
+    case I::ListMtimePalette: target=vm.settings_mtime.style ? l.mtime_palette_card : l.mtime_style_card;break;
+    case I::SyncOneDrive: target=l.sync_row[0];break;
+    case I::SyncSvn: target=l.sync_row[1];break;
     case I::SettingsFolderSort: target=l.folder_sort_card;break;
     case I::SettingsTextRender: target=l.text_render_card;break;
     case I::SettingsUiFontSize: target=l.ui_font_size_card;break;

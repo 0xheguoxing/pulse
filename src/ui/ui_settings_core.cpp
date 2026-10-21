@@ -341,6 +341,52 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
         toggle(lay.list_style_row[3],I::ListTagNameColor,I::ListTagNameColorDesc,L"\xE8EC",vm.settings_list_tag_names,22);divider(lay.list_style_row[3]);
         toggle(lay.list_style_row[4],I::ListSelectionOutline,I::ListSelectionOutlineDesc,L"\xE73E",vm.settings_list_selection_outline,33);divider(lay.list_style_row[4]);
         toggle(lay.list_style_row[5],I::ListThumbnailBadges,I::ListThumbnailBadgesDesc,L"\xE8B9",vm.settings_list_thumbnail_badges,34);divider(lay.list_style_row[5]);
+        {
+            // 修改时间提示: style, then range / colors / switches while it is on.
+            const auto& mt=vm.settings_mtime;
+            const I mt_styles[]={I::MtimeStyleOff,I::MtimeStyleDot,I::MtimeStyleBar,I::MtimeStyleText};const int mt_style_values[]={0,1,2,3};
+            segmented(lay.mtime_style_card,lay.mtime_style_row,mt_styles,mt_style_values,mt.style,H::SettingsMtimeStyle,I::ListMtimeHint,I::ListMtimeHintDesc,4,L"\xE823");divider(lay.mtime_style_card);
+            if(mt.style!=0) {
+                const I mt_ranges[]={I::MtimeRangeToday,I::MtimeRange3,I::MtimeRange7,I::MtimeRange30};const int mt_range_values[]={1,3,7,30};
+                segmented(lay.mtime_range_card,lay.mtime_range_row,mt_ranges,mt_range_values,mt.range_days,H::SettingsMtimeRange,I::ListMtimeRange,I::ListMtimeRangeDesc,4,L"\xE916");divider(lay.mtime_range_card);
+                const I mt_palettes[]={I::MtimePaletteAccent,I::MtimePaletteHeat,I::MtimePaletteTeal,I::MtimePaletteAmber,I::MtimePaletteAurora,I::MtimePaletteGraphite};
+                const int mt_palette_values[]={0,1,2,3,4,5};
+                segmented(lay.mtime_palette_card,lay.mtime_palette_row,mt_palettes,mt_palette_values,mt.palette,H::SettingsMtimePalette,I::ListMtimePalette,I::ListMtimePaletteDesc,6,L"\xE790");
+                {
+                    // Live swatch after the title: newest to oldest in the chosen colors.
+                    const auto& card=lay.mtime_palette_card;
+                    const float title_w=typography::MeasureLine(compositor_,compositor_->TextFormat(),l10n::Get(I::ListMtimePalette));
+                    const float mark=7.0f*scale_, step=13.0f*scale_;
+                    float mx=card.left+54*scale_+title_w+12*scale_+mark/2;
+                    const float my=card.top+22*scale_;
+                    const float limit=lay.mtime_palette_row[0].left<card.left+100*scale_ ? card.right-16*scale_ : lay.mtime_palette_row[0].left-12*scale_;
+                    for(int b=0;b<kMtimeBucketNone && mx+mark/2<limit;++b,mx+=step) {
+                        const auto swatch=MtimeColor(mt.palette,b,theme.bg.r<0.5f,theme.accent,IsHighContrast());
+                        MakeBrush(dc,swatch,brTagDot_);
+                        if(mt.style==1) DrawMtimeMark(dc,brTagDot_.get(),mx,my,mark,b,swatch);
+                        else {
+                            FillRoundedRect(dc,brTagDot_.get(),mx-mark/2,my-1.5f*scale_,mark+3*scale_,3*scale_,1.5f*scale_);
+                        }
+                    }
+                }
+                divider(lay.mtime_palette_card);
+                toggle(lay.mtime_toggle_row[0],I::ListMtimeFade,I::ListMtimeFadeDesc,L"\xE706",mt.fade,70);divider(lay.mtime_toggle_row[0]);
+                toggle(lay.mtime_toggle_row[1],I::ListMtimeBold,I::ListMtimeBoldDesc,L"\xE8DD",mt.bold,71);divider(lay.mtime_toggle_row[1]);
+                if(vm.settings_change_tracking) toggle(lay.mtime_toggle_row[2],I::ListMtimeTree,I::ListMtimeTreeDesc,L"\xE8B7",mt.tree,72);
+                else {
+                    // Folders follow change tracking: shown off and disabled until it is on.
+                    const auto& r=lay.mtime_toggle_row[2];
+                    label(r,l10n::Get(I::ListMtimeTree),l10n::Get(I::ListMtimeTreeNeeds),L"\xE8B7");
+                    fluent::ControlState state{}; state.checked=false; state.enabled=false;
+                    painter_.DrawSwitch(D2D1::RectF(r.right-60*scale_,r.top+16*scale_,r.right-16*scale_,r.top+48*scale_),L"",state);
+                }
+                divider(lay.mtime_toggle_row[2]);
+                toggle(lay.mtime_toggle_row[3],I::ListMtimeOtherViews,I::ListMtimeOtherViewsDesc,L"\xE8A9",mt.other_views,73);divider(lay.mtime_toggle_row[3]);
+                toggle(lay.mtime_toggle_row[4],I::ListMtimeFlash,I::ListMtimeFlashDesc,L"\xE945",mt.flash,74);divider(lay.mtime_toggle_row[4]);
+            }
+            toggle(lay.sync_row[0],I::SyncOneDrive,I::SyncOneDriveDesc,L"\xE753",vm.settings_sync_onedrive,75);divider(lay.sync_row[0]);
+            toggle(lay.sync_row[1],I::SyncSvn,I::SyncSvnDesc,L"\xE8F1",vm.settings_sync_svn,76);divider(lay.sync_row[1]);
+        }
         const I folder_sort[]={I::FolderSortTop,I::FolderSortFollow,I::FolderSortMixed};const int folder_sort_values[]={0,1,2};
         segmented(lay.folder_sort_card,lay.folder_sort_row,folder_sort,folder_sort_values,vm.settings_folder_sort,H::SettingsFolderSort,I::SettingsFolderSort,I::SettingsFolderSortDesc);divider(lay.folder_sort_card);
         toggle(lay.confirm_delete_row,I::SettingsConfirmDelete,I::SettingsConfirmDeleteDesc,L"\xE74D",vm.settings_confirm_delete,32);

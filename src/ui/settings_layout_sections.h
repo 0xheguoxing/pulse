@@ -212,6 +212,13 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
     l.density_card=row(narrow ? 98.0f : 64.0f); segments(l.density_card,l.density_row,3,282);
     l.performance_row=row(64);
     for(auto& list_row : l.list_style_row) list_row=row(64);
+    l.mtime_style_card=row(narrow ? 98.0f : 64.0f); segments(l.mtime_style_card,l.mtime_style_row,4,340);
+    if(vm.settings_mtime.style!=0) {
+        l.mtime_range_card=row(narrow ? 98.0f : 64.0f); segments(l.mtime_range_card,l.mtime_range_row,4,300);
+        l.mtime_palette_card=row(narrow ? 98.0f : 64.0f); segments(l.mtime_palette_card,l.mtime_palette_row,6,408);
+        for(auto& mtime_row : l.mtime_toggle_row) mtime_row=row(64);
+    }
+    for(auto& sync : l.sync_row) sync=row(64);
     l.folder_sort_card=row(narrow ? 98.0f : 64.0f); segments(l.folder_sort_card,l.folder_sort_row,3,282);
     l.confirm_delete_row=row(64);
     l.group[2]=D2D1::RectF(left,l.density_card.top,right,y);

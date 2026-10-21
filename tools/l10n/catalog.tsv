@@ -2604,3 +2604,42 @@ GitChanges	IDS_GIT_CHANGES	3806	%d 处更改	%d changes	%d 處變更
 GitTimedOut	IDS_GIT_TIMED_OUT	3807	git 超过 5 分钟没有响应，已停止。	git didn't respond for 5 minutes and was stopped.	git 超過 5 分鐘沒有回應，已停止。
 GitPushRejected	IDS_GIT_PUSH_REJECTED	3808	远程有本地还没有的提交：请先拉取，再推送。	The remote has commits you don't have yet: pull first, then push.	遠端有本機還沒有的提交：請先拉取，再推送。
 GitPullDivergent	IDS_GIT_PULL_DIVERGENT	3809	本地和远程都有新提交。请在终端里选择合并或变基（git config pull.rebase false / true）后再拉取。	Both your branch and the remote have new commits. Choose merge or rebase in a terminal (git config pull.rebase false / true), then pull again.	本機和遠端都有新提交。請在終端機中選擇合併或重定基底（git config pull.rebase false / true）後再拉取。
+ListMtimeHint	IDS_LIST_MTIME_HINT	3810	修改时间提示	Recently modified marks	修改時間提示
+ListMtimeHintDesc	IDS_LIST_MTIME_HINT_DESC	3811	在“修改日期”旁标出最近改过的文件和文件夹，排序不变	Mark recently changed files and folders by their date, without changing the order	在「修改日期」旁標出最近改過的檔案和資料夾，排序不變
+MtimeStyleOff	IDS_MTIME_STYLE_OFF	3812	关闭	Off	關閉
+MtimeStyleDot	IDS_MTIME_STYLE_DOT	3813	圆点	Dots	圓點
+MtimeStyleBar	IDS_MTIME_STYLE_BAR	3814	时间条	Bars	時間條
+MtimeStyleText	IDS_MTIME_STYLE_TEXT	3815	仅文字	Text only	僅文字
+ListMtimeRange	IDS_LIST_MTIME_RANGE	3816	标记范围	Mark changes within	標記範圍
+ListMtimeRangeDesc	IDS_LIST_MTIME_RANGE_DESC	3817	多久以内改过的项目会被标出，更早的保持原样	How recent a change must be to get a mark; older items stay plain	多久以內改過的項目會被標出，更早的保持原樣
+MtimeRangeToday	IDS_MTIME_RANGE_TODAY	3818	今天	Today	今天
+MtimeRange3	IDS_MTIME_RANGE_3	3819	3 天	3 days	3 天
+MtimeRange7	IDS_MTIME_RANGE_7	3820	7 天	7 days	7 天
+MtimeRange30	IDS_MTIME_RANGE_30	3821	30 天	30 days	30 天
+ListMtimePalette	IDS_LIST_MTIME_PALETTE	3822	配色	Colors	配色
+ListMtimePaletteDesc	IDS_LIST_MTIME_PALETTE_DESC	3823	越新越醒目；标记的形状也随新旧变化，不只靠颜色区分	Newer reads stronger; the mark's shape changes with age too, so color is not the only cue	越新越醒目；標記的形狀也隨新舊變化，不只靠顏色區分
+MtimePaletteAccent	IDS_MTIME_PALETTE_ACCENT	3824	主题色	Accent	主題色
+MtimePaletteHeat	IDS_MTIME_PALETTE_HEAT	3825	冷暖	Warm to cool	冷暖
+MtimePaletteTeal	IDS_MTIME_PALETTE_TEAL	3826	青碧	Teal	青碧
+MtimePaletteAmber	IDS_MTIME_PALETTE_AMBER	3827	琥珀	Amber	琥珀
+MtimePaletteAurora	IDS_MTIME_PALETTE_AURORA	3828	极光	Aurora	極光
+MtimePaletteGraphite	IDS_MTIME_PALETTE_GRAPHITE	3829	石墨	Graphite	石墨
+ListMtimeFade	IDS_LIST_MTIME_FADE	3830	范围外的日期变淡	Dim older dates	範圍外的日期變淡
+ListMtimeFadeDesc	IDS_LIST_MTIME_FADE_DESC	3831	超出标记范围的修改日期用更浅的颜色，新改的更突出	Dates outside the range are lighter, so recent ones stand out	超出標記範圍的修改日期用更淺的顏色，新改的更突出
+ListMtimeBold	IDS_LIST_MTIME_BOLD	3832	今天修改的名称加粗	Bold names changed today	今天修改的名稱加粗
+ListMtimeBoldDesc	IDS_LIST_MTIME_BOLD_DESC	3833	今天改过的文件名和日期用半粗体，扫一眼就能找到	Names and dates changed today are semibold, easy to spot at a glance	今天改過的檔名和日期用半粗體，掃一眼就能找到
+ListMtimeTree	IDS_LIST_MTIME_TREE	3834	文件夹算上里面的变化	Folders count changes inside	資料夾算上裡面的變化
+ListMtimeTreeDesc	IDS_LIST_MTIME_TREE_DESC	3835	文件夹里有文件改动时，文件夹的标记也跟着变新	A folder's mark also follows changes to the files inside it	資料夾裡有檔案變動時，資料夾的標記也跟著變新
+ListMtimeTreeNeeds	IDS_LIST_MTIME_TREE_NEEDS	3836	需要先在下方“更多选项”里开启“文件夹最近变化”	Turn on Recent folder changes under More options first	需要先在下方「更多選項」裡開啟「資料夾最近變化」
+ListMtimeOtherViews	IDS_LIST_MTIME_OTHER_VIEWS	3837	图标和列表视图也显示	Show in icon and list views	圖示和清單檢視也顯示
+ListMtimeOtherViewsDesc	IDS_LIST_MTIME_OTHER_VIEWS_DESC	3838	没有日期列的视图里，标记显示在图标左上角	Views without a date column show the mark on the icon's top-left corner	沒有日期欄的檢視裡，標記顯示在圖示左上角
+ListMtimeFlash	IDS_LIST_MTIME_FLASH	3839	文件刚被修改时闪一下	Flash rows that just changed	檔案剛被修改時閃一下
+ListMtimeFlashDesc	IDS_LIST_MTIME_FLASH_DESC	3840	当前文件夹里有文件被保存或新建时，那一行淡入淡出提示一次	When a file here is saved or created, its row glows once	目前資料夾裡有檔案被儲存或新建時，那一列淡入淡出提示一次
+SyncOneDrive	IDS_SYNC_ONEDRIVE	3841	显示 OneDrive 同步状态	Show OneDrive sync status	顯示 OneDrive 同步狀態
+SyncOneDriveDesc	IDS_SYNC_ONEDRIVE_DESC	3842	在 OneDrive 文件夹里，名称右端标出仅在线、本地可用和始终保留	In OneDrive folders, names end with online-only, on-device or always-kept	在 OneDrive 資料夾裡，名稱右端標出僅線上、本機可用和一律保留
+SyncSvn	IDS_SYNC_SVN	3843	显示 SVN 状态	Show SVN status	顯示 SVN 狀態
+SyncSvnDesc	IDS_SYNC_SVN_DESC	3844	在 SVN 工作副本里像 Git 一样标出已修改、新增、冲突和已锁定，不需要安装 svn 命令行	In SVN working copies, mark modified, added, conflicted and locked files as with Git; no svn command line needed	在 SVN 工作複本裡像 Git 一樣標出已修改、新增、衝突和已鎖定，不需要安裝 svn 命令列
+GitMarkLocked	IDS_GIT_MARK_LOCKED	3845	已锁定	Locked	已鎖定
+OneDriveOnlineOnly	IDS_ONEDRIVE_ONLINE_ONLY	3846	仅在线可用	Available when online	僅線上可用
+OneDriveOnDevice	IDS_ONEDRIVE_ON_DEVICE	3847	本地可用	Available on this device	本機可用
+OneDriveAlwaysKept	IDS_ONEDRIVE_ALWAYS_KEPT	3848	始终保留在此设备上	Always keep on this device	一律保留在此裝置上

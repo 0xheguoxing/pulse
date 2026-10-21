@@ -787,6 +787,24 @@ void SettingsController::FolderSort(int index) {
         SaveAndApply(SettingsEffect::FolderSort);
 }
 
+void SettingsController::MtimeStyle(int index) {
+    static constexpr int values[] = {0, 1, 2, 3};
+    if (prefs_ && SelectValue(index, values, prefs_->list_mtime_hint))
+        SaveAndApply(SettingsEffect::ListStyle);
+}
+
+void SettingsController::MtimeRange(int index) {
+    static constexpr int values[] = {1, 3, 7, 30};
+    if (prefs_ && SelectValue(index, values, prefs_->list_mtime_range))
+        SaveAndApply(SettingsEffect::ListStyle);
+}
+
+void SettingsController::MtimePalette(int index) {
+    static constexpr int values[] = {0, 1, 2, 3, 4, 5};
+    if (prefs_ && SelectValue(index, values, prefs_->list_mtime_palette))
+        SaveAndApply(SettingsEffect::ListStyle);
+}
+
 void SettingsController::DetailsColumns(uint32_t mask) {
     mask = ui::NormalizeDetailsColumns(mask);
     if (!prefs_ || prefs_->details_columns == mask) return;
@@ -1105,6 +1123,16 @@ void SettingsController::IntegrationAction(int index) {
 
 void SettingsController::ToggleUi(int index) {
     if (!prefs_ || !context_) return;
+    // 修改时间提示 switches and sync status, kept out of the chain below.
+    if (index >= 70 && index <= 76) {
+        bool* const flags[] = {&prefs_->list_mtime_fade, &prefs_->list_mtime_bold, &prefs_->list_mtime_tree,
+                               &prefs_->list_mtime_other_views, &prefs_->list_mtime_flash,
+                               &prefs_->sync_onedrive, &prefs_->sync_svn};
+        bool& flag = *flags[index - 70];
+        flag = !flag;
+        SaveAndApply(SettingsEffect::ListStyle);
+        return;
+    }
     if (index == 1) {
         prefs_->ApplyLaunchOnStartup(!prefs_->launch_on_startup);
         SaveAndApply(SettingsEffect::None);

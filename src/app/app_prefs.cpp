@@ -7,6 +7,7 @@
 #include "session.h"
 #include "toolbar_tools.h"
 #include "../ui/panel_metrics.h"
+#include "../ui/mtime_hint.h"
 #include "../common/json_utils.h"
 #include "../common/config_json.h"
 #include "../common/utf8_file.h"
@@ -16,6 +17,7 @@
 #include <shlobj.h>
 #include <algorithm>
 #include <cwctype>
+#include <utility>
 
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "shell32.lib")
@@ -74,6 +76,11 @@ void AppPrefs::ResetToDefaults() {
     photo_wall_hint = true;
     list_selection_outline = false;
     list_thumbnail_badges = true;
+    list_mtime_hint = 1;
+    list_mtime_range = 7;
+    list_mtime_palette = 0;
+    list_mtime_fade = list_mtime_tree = list_mtime_other_views = list_mtime_bold = list_mtime_flash = true;
+    sync_onedrive = sync_svn = true;
     folder_sort_mode = 0;
     details_columns = ui::kDetailsColumnsDefault;
     startup_open = 0;
@@ -191,6 +198,19 @@ std::wstring AppPrefs::ToJson() const {
     out += list_selection_outline ? L"true" : L"false";
     out += L",\n  \"list_thumbnail_badges\":";
     out += list_thumbnail_badges ? L"true" : L"false";
+    out += L",\n  \"list_mtime_hint\":" + std::to_wstring(list_mtime_hint);
+    out += L",\n  \"list_mtime_range\":" + std::to_wstring(list_mtime_range);
+    out += L",\n  \"list_mtime_palette\":" + std::to_wstring(list_mtime_palette);
+    const std::pair<const wchar_t*, bool> mtime_flags[] = {
+        {L"list_mtime_fade", list_mtime_fade}, {L"list_mtime_tree", list_mtime_tree},
+        {L"list_mtime_other_views", list_mtime_other_views}, {L"list_mtime_bold", list_mtime_bold},
+        {L"list_mtime_flash", list_mtime_flash}, {L"sync_onedrive", sync_onedrive}, {L"sync_svn", sync_svn}};
+    for (const auto& [name, on] : mtime_flags) {
+        out += L",\n  \"";
+        out += name;
+        out += L"\":";
+        out += on ? L"true" : L"false";
+    }
     out += L",\n  \"vertical_tabs\":";
     out += vertical_tabs ? L"true" : L"false";
     out += L",\n  \"favorites_bar\":";
@@ -427,6 +447,16 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     list_tag_name_color = pulse::json::ExtractBool(json, L"list_tag_name_color", false);
     list_selection_outline = pulse::json::ExtractBool(json, L"list_selection_outline", false);
     list_thumbnail_badges = pulse::json::ExtractBool(json, L"list_thumbnail_badges", true);
+    list_mtime_hint = std::clamp(pulse::json::ExtractInt(json, L"list_mtime_hint", 1), 0, 3);
+    list_mtime_range = ui::ClampMtimeRange(pulse::json::ExtractInt(json, L"list_mtime_range", 7));
+    list_mtime_palette = std::clamp(pulse::json::ExtractInt(json, L"list_mtime_palette", 0), 0, ui::kMtimePaletteCount - 1);
+    list_mtime_fade = pulse::json::ExtractBool(json, L"list_mtime_fade", true);
+    list_mtime_tree = pulse::json::ExtractBool(json, L"list_mtime_tree", true);
+    list_mtime_other_views = pulse::json::ExtractBool(json, L"list_mtime_other_views", true);
+    list_mtime_bold = pulse::json::ExtractBool(json, L"list_mtime_bold", true);
+    list_mtime_flash = pulse::json::ExtractBool(json, L"list_mtime_flash", true);
+    sync_onedrive = pulse::json::ExtractBool(json, L"sync_onedrive", true);
+    sync_svn = pulse::json::ExtractBool(json, L"sync_svn", true);
     vertical_tabs = pulse::json::ExtractBool(json, L"vertical_tabs", false);
     favorites_bar = pulse::json::ExtractBool(json, L"favorites_bar", false);
     favorites_bar_icon_only = pulse::json::ExtractBool(json, L"favorites_bar_icon_only", false);

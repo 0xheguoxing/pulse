@@ -2338,6 +2338,12 @@ struct SettingsLayout {
     D2D1_RECT_F menu_acrylic_row{};
     D2D1_RECT_F density_card{};
     D2D1_RECT_F list_style_row[6]{};
+    // 修改时间提示: the style picker; range, colors and switches while it is on.
+    D2D1_RECT_F mtime_style_card{}, mtime_style_row[4]{};
+    D2D1_RECT_F mtime_range_card{}, mtime_range_row[4]{};
+    D2D1_RECT_F mtime_palette_card{}, mtime_palette_row[6]{};
+    D2D1_RECT_F mtime_toggle_row[5]{};   // fade, bold, folders, other views, flash
+    D2D1_RECT_F sync_row[2]{};           // OneDrive, SVN
     D2D1_RECT_F density_row[3]{};
     D2D1_RECT_F folder_sort_card{};
     D2D1_RECT_F folder_sort_row[3]{};

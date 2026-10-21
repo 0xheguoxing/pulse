@@ -13,6 +13,8 @@
 #include "vertical_tabs.h"
 #include "app_column_view.h"
 #include "git_ui.h"
+#include "sync_status_ui.h"
+#include "mtime_hint_prefs.h"
 #include "app_details_tree.h"
 #include "folder_sizes_ui.h"
 #include "update_status.h"
@@ -1146,9 +1148,12 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             if (app::Tab* tab = p->ActiveTab()) {
                 FillChangePane(s, *tab, slot.pane, slot.rect);
                 FillGitPane(s, *tab, slot.pane);
+                FillSyncPane(s, *tab, slot.pane);   // SVN marks (outside Git) and OneDrive states
                 if (slot.focused) {
                     vm.pane.git_marks = slot.pane.git_marks;
+                    vm.pane.onedrive_status = slot.pane.onedrive_status;
                     AppendGitStatusText(*tab, vm.status.status_text);
+                    AppendSvnStatusText(s, *tab, vm.status.status_text);
                 }
                 for (const auto& cutPath : s.cutPaths) {
                     if (fs::ParentPath(cutPath) != tab->current_path) continue;
@@ -2617,6 +2622,10 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.settings_list_tag_names = s.appPrefs.list_tag_name_color;
     vm.settings_list_selection_outline = s.appPrefs.list_selection_outline;
     vm.settings_list_thumbnail_badges = s.appPrefs.list_thumbnail_badges;
+    vm.settings_mtime = app::MtimeHintFromPrefs(s.appPrefs);
+    vm.settings_mtime.tree = s.appPrefs.list_mtime_tree;   // the switch shows the pref itself
+    vm.settings_sync_onedrive = s.appPrefs.sync_onedrive;
+    vm.settings_sync_svn = s.appPrefs.sync_svn;
     vm.settings_vertical_tabs = s.appPrefs.vertical_tabs;
     vm.settings_tray_hide_empty = s.appPrefs.tray_hide_when_empty;
     vm.settings_show_hints = s.appPrefs.show_hints;

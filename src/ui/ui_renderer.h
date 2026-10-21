@@ -11,6 +11,7 @@
 #include "shortcuts_view.h"
 #include "view_layout.h"
 #include "git_mark.h"
+#include "mtime_hint.h"
 #include "column_strip_layout.h"
 #include "panel_metrics.h"
 #include "toolbar_layout.h"
@@ -138,6 +139,7 @@ struct ChangeBadge {
     int count = 0;
     bool has_deleted = false;
     int status = 0; // 0 recent, 1 older, 2 unavailable/scanning/offline
+    uint64_t last_change = 0;  // FILETIME of the newest change inside (修改时间提示)
 };
 
 struct ChangePopover {
@@ -269,6 +271,8 @@ struct PaneViewModel {
         const auto it = git_marks->find(source);
         return it == git_marks->end() ? GitMark::None : it->second;
     }
+    // The folder is inside a OneDrive root: rows show their sync state.
+    bool onedrive_status = false;
     bool loading = false;
     bool search_retaining_results = false;
     bool can_go_back = false;
@@ -1133,6 +1137,9 @@ struct WindowViewModel {
     bool settings_list_tag_names = false;
     bool settings_list_selection_outline = false;
     bool settings_list_thumbnail_badges = true;
+    MtimeHint settings_mtime;            // 修改时间提示
+    bool settings_sync_onedrive = true;
+    bool settings_sync_svn = true;
     bool settings_vertical_tabs = false;
     bool settings_tray_hide_empty = false;
     bool settings_show_hints = true;
@@ -1369,6 +1376,9 @@ struct HitTestResult {
         SettingsEffect,
         SettingsWallpaper,
         SettingsDensity,
+        SettingsMtimeStyle,
+        SettingsMtimeRange,
+        SettingsMtimePalette,
         SettingsFolderSort,
         SettingsStartupOpen,
         SettingsNotifyIcon,
@@ -1772,6 +1782,7 @@ public:
         if (group_wheel_.Tick(motion_now)) active = true;
         if (motion_now < tab_motion_until_) active = true;
         if (motion_now < row_leave_until_) active = true;
+        if (motion_now < mtime_flash_until_) active = true;
         if (motion_now < splitter_motion_until_) active = true;
         if (motion_now < spring_ring_until_) active = true;
         // Sidebar pill/plate, toolbar plates, column cascade, details sweep:
@@ -1877,6 +1888,23 @@ public:
         auto_widths_scale_ = -1.0f;
     }
     bool ListSmartDate() const { return list_smart_date_; }
+    // 修改时间提示 (mtime_hint.h).
+    void SetMtimeHint(const MtimeHint& hint) {
+        if (hint == mtime_hint_) return;
+        mtime_hint_ = hint;
+        auto_widths_scale_ = -1.0f;
+        mtime_next_boundary_ = 0;
+    }
+    // A drawn mark's bucket changed (5 minutes passed, midnight, ...): repaint.
+    bool MtimeBoundaryDue() {
+        if (mtime_next_boundary_ == UINT64_MAX) return false;
+        FILETIME ft{};
+        GetSystemTimeAsFileTime(&ft);
+        const uint64_t now = (static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+        if (now < mtime_next_boundary_) return false;
+        mtime_next_boundary_ = UINT64_MAX;
+        return true;
+    }
     // Grid thumbnails: default-program badge and video playing time.
     void SetThumbnailBadges(bool on) { thumbnail_badges_ = on; }
     // Default programs changed (SHCNE_ASSOCCHANGED).
@@ -2430,6 +2458,22 @@ private:
     uint64_t tab_motion_until_ = 0;         // NowMs: keep frames coming until then
     bool tab_anim_on_ = true;
     uint64_t row_leave_until_ = 0;          // NowMs: a deleted row is still fading out
+    MtimeHint mtime_hint_ = MtimeHint{0};  // off until the app applies its prefs (pickers stay plain)
+    uint64_t mtime_next_boundary_ = UINT64_MAX;  // FILETIME the next drawn mark changes bucket
+    uint64_t mtime_flash_until_ = 0;              // NowMs: a changed row is still glowing
+    // Path -> (the modified time that glowed, NowMs it started).
+    std::unordered_map<std::wstring, std::pair<uint64_t, uint64_t>> mtime_flash_started_;
+    bool name_semibold_ = false;                  // DrawTruncatedName: 今天修改的名称加粗
+    ComPtr<IDWriteTextFormat> name_semibold_format_;
+    IDWriteTextFormat* name_semibold_base_ = nullptr;
+    float name_semibold_size_ = 0.0f;
+    // FileNameFormat at semibold (same family, size and fallback).
+    IDWriteTextFormat* NameSemiboldFormat();
+    // Extra date-column width: the dots' lead and room for a semibold date.
+    float MtimeDateExtraDip() const {
+        if (mtime_hint_.style == 0) return 0.0f;
+        return (mtime_hint_.style == 1 ? kMtimeDotLeadDip : 0.0f) + (mtime_hint_.bold ? 6.0f : 0.0f);
+    }
     // Pane dividers (motion 4b): an accent knob springs in on hover and
     // stretches while dragged; snaps flash a guide line.
     struct SplitterKnobMotion {
