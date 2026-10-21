@@ -7,9 +7,9 @@
 #pragma once
 #include "../ui/fluent_menu.h"
 #include "../ui/view_layout.h"
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include "context_menu_prefs.h"
-#include "../index/index_engine.h"
+#include "../index/index_types.h"
 #include <string>
 
 namespace pulse::app {

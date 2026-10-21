@@ -1,6 +1,7 @@
 // index_client.h — UI-side connection to Pulse.Index.exe (never blocks the UI
 // thread on a search: SearchAsync + WM callback).
 #pragma once
+#include "index_config.h"
 #include "index_protocol.h"
 #include <atomic>
 #include <condition_variable>
