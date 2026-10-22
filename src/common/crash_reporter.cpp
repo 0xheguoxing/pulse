@@ -149,19 +149,22 @@ std::wstring EventStemFromFile(std::wstring name) {
     return name;
 }
 
-void RotateDiagnostics(const std::wstring& root, HANDLE stop = nullptr) {
-    if (root.empty()) return;
+// Returns true when the sweep left work behind (a report still being written,
+// a file someone holds open): the maintenance thread tries again later. A
+// sweep another process is running already counts as done.
+bool RotateDiagnostics(const std::wstring& root, HANDLE stop = nullptr) {
+    if (root.empty()) return false;
     ScopedHandle retention_lock{CreateFileW(JoinPath(root, L"retention.lock").c_str(),
         GENERIC_WRITE | DELETE, 0, nullptr, OPEN_ALWAYS,
         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, nullptr)};
-    if (retention_lock.value == INVALID_HANDLE_VALUE) return;
+    if (retention_lock.value == INVALID_HANDLE_VALUE) return false;
     std::map<std::wstring, DiagnosticEvent> grouped;
     WIN32_FIND_DATAW data{};
     HANDLE find = FindFirstFileW(JoinPath(root, L"*").c_str(), &data);
-    if (find == INVALID_HANDLE_VALUE) return;
+    if (find == INVALID_HANDLE_VALUE) return false;
     ScopedFind find_guard{find};
     do {
-        if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0) return;
+        if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0) return false;
         if (data.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) continue;
         const std::wstring name = data.cFileName;
         if (!name.ends_with(L".json") && !name.ends_with(L".dmp") &&
@@ -173,7 +176,7 @@ void RotateDiagnostics(const std::wstring& root, HANDLE stop = nullptr) {
         event.bytes += size.QuadPart;
         event.modified = (std::max)(event.modified, FileTimeValue(data.ftLastWriteTime));
     } while (FindNextFileW(find, &data));
-    if (GetLastError() != ERROR_NO_MORE_FILES) return;
+    if (GetLastError() != ERROR_NO_MORE_FILES) return true;
 
     std::vector<DiagnosticEvent> events;
     events.reserve(grouped.size());
@@ -186,15 +189,16 @@ void RotateDiagnostics(const std::wstring& root, HANDLE stop = nullptr) {
         return left.modified < right.modified;
     });
     size_t remaining = events.size();
+    bool pending = false;
     for (const auto& event : events) {
-        if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0) return;
+        if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0) return false;
         // Keep the newest report even when it alone exceeds the byte budget.
         if (&event == &events.back()) break;
         if (remaining <= kMaxEvents && total <= kMaxDiagnosticBytes) break;
         const std::wstring lock_path = JoinPath(root, event.stem + L".writing");
         HANDLE lock = CreateFileW(lock_path.c_str(), GENERIC_WRITE | DELETE, 0, nullptr,
             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
-        if (lock == INVALID_HANDLE_VALUE) continue;
+        if (lock == INVALID_HANDLE_VALUE) { pending = true; continue; }
         ScopedHandle event_guard{lock};
         // Refresh the group after taking its lease: enumeration may have overlapped
         // a writer that closed its dump before creating the metadata.
@@ -204,14 +208,14 @@ void RotateDiagnostics(const std::wstring& root, HANDLE stop = nullptr) {
         if (scan == INVALID_HANDLE_VALUE) continue;
         ScopedFind scan_guard{scan};
         do {
-        if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0) return;
+            if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0) return false;
             const std::wstring_view name(current.cFileName);
             if (!(current.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) &&
                 (name.ends_with(L".json") || name.ends_with(L".dmp") || name.ends_with(L".log")))
                 paths.push_back(JoinPath(root, name));
         } while (FindNextFileW(scan, &current));
         const DWORD scan_error = GetLastError();
-        if (scan_error != ERROR_NO_MORE_FILES) continue;
+        if (scan_error != ERROR_NO_MORE_FILES) { pending = true; continue; }
         bool removed = true;
         for (const auto& path : paths) {
             WIN32_FILE_ATTRIBUTE_DATA attributes{};
@@ -225,18 +229,25 @@ void RotateDiagnostics(const std::wstring& root, HANDLE stop = nullptr) {
             } else if (GetLastError() != ERROR_FILE_NOT_FOUND) removed = false;
         }
         if (removed) --remaining;
+        else pending = true;
     }
+    return pending;
 }
 
 DWORD WINAPI MaintenanceMain(void* argument) {
     std::unique_ptr<std::shared_ptr<Maintenance>> holder(static_cast<std::shared_ptr<Maintenance>*>(argument));
     auto state = *holder; holder.reset();
     const HANDLE events[]{state->stop, state->wake};
+    // Sleep until a report asks for a sweep. Only a sweep that left files
+    // behind is retried without one, backing off from 1 s to a minute: polling
+    // every second re-created retention.lock in every Pulse process forever.
+    DWORD retry_ms = 0;
     for (;;) {
-        const DWORD wait = WaitForMultipleObjects(2, events, FALSE, 1000);
+        const DWORD wait = WaitForMultipleObjects(2, events, FALSE, retry_ms ? retry_ms : INFINITE);
         if (wait == WAIT_OBJECT_0 || wait == WAIT_FAILED) break;
-        // Retry sharing violations even when no new report requests a sweep.
-        try { RotateDiagnostics(state->root, state->stop); } catch (...) {}
+        bool pending = false;
+        try { pending = RotateDiagnostics(state->root, state->stop); } catch (...) {}
+        retry_ms = !pending ? 0 : retry_ms ? (std::min)(retry_ms * 2, DWORD{60000}) : 1000;
     }
     return 0;
 }
@@ -429,8 +440,9 @@ bool Initialize(const Config& config) noexcept {
     (void)diagnostics::runtime::Initialize(root, component.c_str());
     g_started_tick = GetTickCount64();
     QueryOsVersion();
-    RotateDiagnostics(g_diagnostics_root);
+    const bool rotation_pending = RotateDiagnostics(g_diagnostics_root);
     StartMaintenance();
+    if (rotation_pending) RequestMaintenance();
     g_safe_mode = DetectCrashLoop();
     g_previous_filter = SetUnhandledExceptionFilter(TopLevelFilter);
     std::set_terminate([] { ReportTerminate(); });
