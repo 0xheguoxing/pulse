@@ -398,8 +398,11 @@ static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
     IWICBitmapSource* source = frame.Get();
     unsigned orientation = 1;
     GUID container{};
+    // DNG is TIFF-structured: Orientation sits in IFD0 just like a TIFF's
+    // (an iPhone ProRAW portrait otherwise shows lying on its side).
     if (SUCCEEDED(decoder->GetContainerFormat(&container)) &&
-        (IsEqualGUID(container, GUID_ContainerFormatJpeg) || IsEqualGUID(container, GUID_ContainerFormatTiff))) {
+        (IsEqualGUID(container, GUID_ContainerFormatJpeg) || IsEqualGUID(container, GUID_ContainerFormatTiff) ||
+         IsEqualGUID(container, GUID_ContainerFormatAdng))) {
         ComPtr<IWICMetadataQueryReader> metadata;
         if (SUCCEEDED(frame->GetMetadataQueryReader(&metadata))) {
             PROPVARIANT value{};
