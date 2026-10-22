@@ -263,6 +263,7 @@ private:
     std::vector<std::wstring> footer_parts_;   // this frame's facts (left)
     struct FooterControl { int id = 0; std::wstring text; D2D1_RECT_F rect{}; };
     std::vector<FooterControl> footer_controls_;   // this frame's controls (right)
+    std::wstring footer_hint_;                     // this frame's keyboard hint (right, passive)
     int footer_hover_ = 0;
     ComPtr<IDWriteTextFormat> badge_format_, badge_small_format_, open_format_;
     OpenWithIconCache open_icons_;

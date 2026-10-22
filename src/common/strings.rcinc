@@ -2675,6 +2675,7 @@ BEGIN
     IDS_PREVIEW_HEADINGS "%u 个标题"
     IDS_PREVIEW_ABOUT_WORDS "约 %s 字"
     IDS_PREVIEW_MIXED_EOL "混合换行"
+    IDS_PREVIEW_LATEST_MODIFIED "最近修改 %s"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5349,6 +5350,7 @@ BEGIN
     IDS_PREVIEW_HEADINGS "%u headings"
     IDS_PREVIEW_ABOUT_WORDS "about %s words"
     IDS_PREVIEW_MIXED_EOL "Mixed line endings"
+    IDS_PREVIEW_LATEST_MODIFIED "Modified %s"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

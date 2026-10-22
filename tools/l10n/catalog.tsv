@@ -2696,3 +2696,4 @@ PreviewPageOf	IDS_PREVIEW_PAGE_OF	3898	第 %u / %u 页	Page %u of %u	第 %u / %u
 PreviewHeadings	IDS_PREVIEW_HEADINGS	3899	%u 个标题	%u headings	%u 個標題
 PreviewAboutWords	IDS_PREVIEW_ABOUT_WORDS	3900	约 %s 字	about %s words	約 %s 字
 PreviewMixedEol	IDS_PREVIEW_MIXED_EOL	3901	混合换行	Mixed line endings	混合換行
+PreviewLatestModified	IDS_PREVIEW_LATEST_MODIFIED	3902	最近修改 %s	Modified %s	最近修改 %s

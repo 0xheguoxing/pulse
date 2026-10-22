@@ -575,7 +575,10 @@ void QuickPreviewWindow::ActivateChromeButton(ChromeButton button) {
         PostNavigate(1);
         break;
     case ChromeButton::Open:
-        if (command_message_) PostAction(QuickPreviewAction::Open, &item_);
+        // Folders open in a new tab; the list behind keeps its place.
+        if (command_message_)
+            PostAction((item_.attrs & FILE_ATTRIBUTE_DIRECTORY) ? QuickPreviewAction::OpenInNewTab
+                                                                : QuickPreviewAction::Open, &item_);
         else if (owner_ && open_message_) PostMessageW(owner_, open_message_, 0, 0);
         break;
     case ChromeButton::More: {
@@ -1691,6 +1694,7 @@ void QuickPreviewWindow::Render() {
     const float pad = 20.0f * scale_;
     const float header = HeaderHeight();
     footer_parts_.clear();
+    footer_hint_.clear();
     footer_controls_.clear();
     const D2D1_RECT_F notice_rect = D2D1::RectF(0, header + FindBarHeight(), width, height);
     preview_notice_height_ = DrawPreviewNotice(dc, compositor_.DwriteFactory(), compositor_.SmallFormat(),
@@ -1918,6 +1922,7 @@ void QuickPreviewWindow::Render() {
             native_kind_ = NativeKind::Archive;
             archive_.Draw(dc, &compositor_, content, CurrentTheme(), scale_, true);
             SetFooterParts(archive_.StatusParts());
+            footer_hint_ = archive_.Hint();
         } else if (result == PreviewDrawResult::Markdown && markdown_.SetPayload(text, item_.path) &&
                    (!markdown_.DocFormat().empty() ||
                     !(markdown_.IsNotebook() ? notebook_source_ : markdown_source_))) {

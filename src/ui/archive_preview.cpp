@@ -487,8 +487,20 @@ void ArchivePreview::DrawText(ID2D1DeviceContext* dc, IDWriteTextFormat* format,
                               const std::wstring& text, const D2D1_RECT_F& rect,
                               const D2D1_COLOR_F& color, DWRITE_TEXT_ALIGNMENT align) {
     if (!format || text.empty() || rect.right <= rect.left) return;
-    format->SetTextAlignment(align);
     brush_->SetColor(color);
+    // The same LumaText path as the rest of the window; the layout inherits
+    // the format's trimming and paragraph alignment.
+    Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+    if (compositor_ && factory_ &&
+        SUCCEEDED(factory_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), format,
+                                             rect.right - rect.left, (std::max)(1.0f, rect.bottom - rect.top),
+                                             &layout)) && layout) {
+        layout->SetTextAlignment(align);
+        compositor_->DrawTextLayout(D2D1::Point2F(rect.left, rect.top), layout.Get(), brush_.Get(),
+                                    D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        return;
+    }
+    format->SetTextAlignment(align);
     dc->DrawText(text.c_str(), static_cast<UINT32>(text.size()), format, rect, brush_.Get(),
                  D2D1_DRAW_TEXT_OPTIONS_CLIP);
     format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -827,7 +839,19 @@ void ArchivePreview::Draw(ID2D1DeviceContext* dc, Compositor* compositor, const 
     const float side = (std::min)(300.0f * s, width * 0.34f);
     const D2D1_RECT_F left = R(rect.left + pad, rect.top + pad, rect.left + side, rect.bottom - pad);
     float y = left.top;
-    y += DrawHeader(dc, R(left.left, y, left.right, left.bottom), theme, true) + 16.0f * s;
+    // The window header already names the file, its type and size; only the
+    // lock stays here.
+    if (any_encrypted_) {
+        const std::wstring label = pulse::l10n::Get(StringId::ArcEncrypted);
+        const float w = Measure(small_.Get(), label) + 26.0f * s;
+        const D2D1_RECT_F badge = R(left.left, y, left.left + w, y + 20.0f * s);
+        Fill(dc, badge, 10.0f * s, HexColor(0xD97706, 0.14f));
+        DrawText(dc, icon_.Get(), L"\uE72E", R(badge.left + 6.0f * s, badge.top, badge.left + 20.0f * s, badge.bottom),
+                 HexColor(0xD97706));
+        DrawText(dc, small_.Get(), label, R(badge.left + 20.0f * s, badge.top, badge.right, badge.bottom),
+                 HexColor(0xB45309));
+        y = badge.bottom + 12.0f * s;
+    }
 
     // Stat cards.
     const float gap = 8.0f * s;
@@ -876,7 +900,8 @@ void ArchivePreview::Draw(ID2D1DeviceContext* dc, Compositor* compositor, const 
     const D2D1_RECT_F right = R(divX + pad * 0.5f, rect.top + pad * 0.5f, rect.right - pad * 0.5f, rect.bottom - pad * 0.5f);
     const float headH = 30.0f * s;
     const std::wstring state_note = StateNote();
-    const float footH = 26.0f * s + StateNoteHeight(right.right - right.left - 22.0f * s);
+    const float noteH = StateNoteHeight(right.right - right.left - 22.0f * s);
+    const float footH = noteH > 0.0f ? noteH + 6.0f * s : 0.0f;
     {
         const float w = right.right - right.left;
         const bool showPacked = has_packed_ && w > 560.0f * s;
@@ -895,28 +920,24 @@ void ArchivePreview::Draw(ID2D1DeviceContext* dc, Compositor* compositor, const 
         Fill(dc, R(head.left, head.bottom - 1.0f, head.right, head.bottom), 0.0f, theme.stroke_divider);
     }
     DrawTree(dc, R(right.left, right.top + headH + 2.0f * s, right.right, right.bottom - footH), theme, true);
-    const D2D1_RECT_F foot = R(right.left + 12.0f * s, right.bottom - footH, right.right - 10.0f * s, right.bottom - footH + 26.0f * s);
-    if (!state_note.empty())
-        DrawStateNote(dc, R(foot.left, foot.bottom, foot.right, right.bottom), theme);
-    Fill(dc, R(right.left, foot.top, right.right, foot.top + 1.0f), 0.0f, theme.stroke_divider);
-    std::wstring left_note;
-    if (!filter_.empty())
-        left_note = Fmt2(StringId::ArcMatches, static_cast<int>(filter_hits_), static_cast<int>(file_count_));
-    else
-        left_note = std::to_wstring(file_count_) + L" " + pulse::l10n::Get(StringId::ArcFiles) + L" · " +
-                    std::to_wstring(dir_count_) + L" " + pulse::l10n::Get(StringId::ArcFolders);
-    const std::wstring hint = pulse::l10n::Get(StringId::ArcSearchHint);
-    const float hintW = Measure(small_.Get(), hint) + 4.0f * s;
-    DrawText(dc, small_.Get(), left_note, R(foot.left, foot.top, foot.right - hintW - 12.0f * s, foot.bottom), theme.text_disabled);
-    DrawText(dc, small_.Get(), hint, R(foot.right - hintW, foot.top, foot.right, foot.bottom), theme.text_disabled,
-             DWRITE_TEXT_ALIGNMENT_TRAILING);
+    if (!state_note.empty() && footH > 0.0f) {
+        Fill(dc, R(right.left, right.bottom - footH, right.right, right.bottom - footH + 1.0f), 0.0f, theme.stroke_divider);
+        DrawStateNote(dc, R(right.left + 12.0f * s, right.bottom - footH + 4.0f * s, right.right - 10.0f * s, right.bottom), theme);
+    }
+}
+
+std::wstring ArchivePreview::Hint() const {
+    if (!parsed_ || (file_count_ == 0 && dir_count_ == 0)) return {};
+    return pulse::l10n::Get(StringId::ArcSearchHint);
 }
 
 std::vector<std::wstring> ArchivePreview::StatusParts() const {
     std::vector<std::wstring> parts;
     if (!parsed_) return parts;
     const std::wstring at_least = incomplete_ || counting_ ? L"\x2265 " : L"";
-    const std::wstring files = std::to_wstring(file_count_) + L" " + pulse::l10n::Get(StringId::ArcFiles);
+    const std::wstring files = !filter_.empty()
+        ? Fmt2(StringId::ArcMatches, static_cast<int>(filter_hits_), static_cast<int>(file_count_))
+        : std::to_wstring(file_count_) + L" " + pulse::l10n::Get(StringId::ArcFiles);
     const std::wstring dirs = std::to_wstring(dir_count_) + L" " + pulse::l10n::Get(StringId::ArcFolders);
     if (folder_) {
         parts.push_back(files);
@@ -924,6 +945,15 @@ std::vector<std::wstring> ArchivePreview::StatusParts() const {
         std::wstring total = at_least + pulse::format::ByteSize(unpacked_);
         if (counting_) total += pulse::l10n::Get(pulse::l10n::StringId::Counting_2).c_str();
         parts.push_back(std::move(total));
+        // "YYYY-MM-DD HH:MM" sorts as text.
+        const std::wstring* newest = nullptr;
+        for (const Node& n : nodes_)
+            if (!n.date.empty() && (!newest || n.date > *newest)) newest = &n.date;
+        if (newest) {
+            wchar_t buffer[96];
+            swprintf_s(buffer, pulse::l10n::Get(pulse::l10n::StringId::PreviewLatestModified).c_str(), newest->c_str());
+            parts.push_back(buffer);
+        }
         return parts;
     }
     const bool image = format_ == L"ISO" || format_ == L"ISO/UDF" || format_ == L"UDF";

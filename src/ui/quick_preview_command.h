@@ -20,6 +20,7 @@ enum class QuickPreviewAction : int {
     None = 0, Open, Cut, Copy, CopyPath, ToggleStar, Rename, Delete, Properties,
     InstallMediaPack,   // start (or cancel) the FFmpeg preview pack download
     InstallImagePack,   // start (or cancel) the image preview pack download
+    OpenInNewTab,       // the previewed folder, in a new tab
 };
 
 // A preview pack (FFmpeg or images) as offered on Quick Look's "can't decode"

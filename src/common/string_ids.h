@@ -2689,5 +2689,6 @@
 #define IDS_PREVIEW_HEADINGS                                                             3899
 #define IDS_PREVIEW_ABOUT_WORDS                                                          3900
 #define IDS_PREVIEW_MIXED_EOL                                                            3901
+#define IDS_PREVIEW_LATEST_MODIFIED                                                      3902
 
 #endif  // PULSE_STRING_IDS_H

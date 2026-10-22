@@ -219,7 +219,8 @@ void QuickPreviewWindow::RefreshItemFacts() {
 
 std::wstring QuickPreviewWindow::OpenLabel() const {
     using pulse::l10n::StringId;
-    if (item_.attrs & FILE_ATTRIBUTE_DIRECTORY) return pulse::l10n::Get(StringId::Open);
+    if (item_.attrs & FILE_ATTRIBUTE_DIRECTORY)
+        return command_message_ ? pulse::l10n::Get(StringId::OpenNewTab) : pulse::l10n::Get(StringId::Open);
     if (open_app_.empty()) return pulse::l10n::Get(StringId::ShellOpenWith);
     return Fill(pulse::l10n::Get(StringId::ShellOpenApp), L"{app}", open_app_);
 }
@@ -582,6 +583,15 @@ void QuickPreviewWindow::DrawFooter(ID2D1DeviceContext* dc, const ChromePalette&
         }
         DrawUiText(dc, it->text, format, it->rect, hot && p.high_contrast ? p.on_hover : p.ink2,
                    DWRITE_TEXT_ALIGNMENT_CENTER);
+    }
+    // Then the passive keyboard hint, if there is room for it.
+    if (!footer_hint_.empty()) {
+        const float w = UiTextWidth(footer_hint_, format);
+        if (right - w > bar.left + 360.0f * s) {
+            DrawUiText(dc, footer_hint_, format, D2D1::RectF(right - w, bar.top, right, bar.bottom), p.ink3,
+                       DWRITE_TEXT_ALIGNMENT_TRAILING);
+            right -= w + 12.0f * s;
+        }
     }
     // Left: facts joined by a tertiary middle dot.
     std::vector<std::wstring> parts = footer_parts_;
