@@ -110,9 +110,10 @@ float QuickPreviewWindow::PlaybackHeight() const noexcept {
     return HasPlayback() ? (kVideoChrome ? kChromeBarHeight : kPlaybackHeight) * scale_ : 0.0f;
 }
 D2D1_RECT_F QuickPreviewWindow::PlaybackRect() const {
-    const float height = static_cast<float>(compositor_.Height());
-    return D2D1::RectF(0, height - PlaybackHeight(),
-        static_cast<float>(compositor_.Width()), height);
+    // Directly above the footer.
+    const float bottom = static_cast<float>(compositor_.Height()) - FooterHeight();
+    return D2D1::RectF(0, bottom - PlaybackHeight(),
+        static_cast<float>(compositor_.Width()), bottom);
 }
 QuickPreviewWindow::PlaybackGeometry QuickPreviewWindow::PlaybackLayout() const {
     PlaybackGeometry g;

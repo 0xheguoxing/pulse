@@ -12,8 +12,11 @@
 #include "video_preview.h"
 #include "audio_waveform.h"
 #include "quick_preview_command.h"
+#include "open_with_icons.h"
 
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace pulse::ui {
@@ -33,6 +36,8 @@ public:
               const POINT* zoom_from = nullptr);
     void Update(const QuickPreviewItem& item);
     void SetStarred(bool starred);
+    // The app's accent colour (open button); call before Show.
+    void SetAccent(const D2D1_COLOR_F& accent);
     // The FFmpeg preview pack offer on the codec cards; repaints on change.
     void SetMediaPackOffer(const MediaPackOffer& offer);
     // A pack was installed: a file it can play now is opened again.
@@ -57,7 +62,7 @@ private:
     friend struct PreviewDeadlineProbe;
     // Pages: multi-page PDF / AI read as a continuous scroll (quick_preview_pages.cpp).
     enum class NativeKind { None, Bitmap, Text, Hex, Archive, Pages, Markdown, Table, Tree };
-    enum class ChromeButton { None, Prev, Next, More };
+    enum class ChromeButton { None, Prev, Next, More, Open };
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
     LRESULT HandleMessage(UINT message, WPARAM wparam, LPARAM lparam);
@@ -176,8 +181,8 @@ private:
     void ClampPan(float view_w, float view_h);
     D2D1_RECT_F ImageDest(const D2D1_RECT_F& content) const;
     uint32_t RequestedPixelSize(const D2D1_RECT_F& content) const;
-    void DrawHud(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
-                 ID2D1SolidColorBrush* text_brush);
+    // Image facts and the zoom control in the footer.
+    void SetImageFooter(const D2D1_RECT_F& content);
     void DrawFindBar(ID2D1DeviceContext* dc, const D2D1_RECT_F& bar);
     Theme CurrentTheme() const;
     void EnsureTextLayout(const std::wstring& text, bool hex, float width);
@@ -210,7 +215,58 @@ private:
     void DrawMarkdownToggle(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* text_brush);
     ChromeButton HitChromeButton(POINT client) const;
     void ActivateChromeButton(ChromeButton button);
-    void DrawChromeButtons(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* text_brush);
+
+    // Unified header and footer (quick_preview_chrome.cpp).
+    struct HeaderLayout {
+        D2D1_RECT_F badge{}, name{}, meta{}, tools{}, separator{}, prev{}, counter{}, next{},
+            open{}, more{}, close{};
+        bool meta_visible = true;     // narrow windows drop the meta line first,
+        bool tools_visible = true;    // then fold the type tools into the more menu,
+        bool open_text = true;        // then show only the open button's icon,
+        bool counter_visible = true;  // then hide the position
+        std::wstring counter_text, open_label;
+    };
+    struct ChromePalette {
+        D2D1_COLOR_F bg{}, ink{}, ink2{}, ink3{}, line{}, hover{}, on_hover{}, accent{}, on_accent{};
+        bool high_contrast = false;
+    };
+    static constexpr int kFooterZoom = 1;
+    ChromePalette Palette() const;
+    float HeaderHeight() const noexcept;
+    float FooterHeight() const noexcept;
+    D2D1_RECT_F FooterRect() const;
+    void RefreshItemFacts();
+    std::wstring OpenLabel() const;
+    std::wstring MetaLine() const;
+    void LayoutHeader();
+    bool HeaderInteractive(POINT client) const;
+    void DrawHeader(ID2D1DeviceContext* dc, const ChromePalette& palette);
+    void DrawFooter(ID2D1DeviceContext* dc, const ChromePalette& palette);
+    void SetFooterParts(std::vector<std::wstring> parts);
+    void AddFooterControl(int id, std::wstring text);
+    int HitFooterControl(POINT client) const;   // control id, 0 = none
+    void ActivateFooterControl(int id);
+    void ToggleLabels(const wchar_t* (&labels)[2]) const;
+    float ToggleSegmentWidth(int segment) const;
+    ComPtr<IDWriteTextLayout> UiLayout(std::wstring_view text, IDWriteTextFormat* format,
+                                       float width, float height,
+                                       DWRITE_TEXT_ALIGNMENT alignment = DWRITE_TEXT_ALIGNMENT_LEADING) const;
+    float UiTextWidth(std::wstring_view text, IDWriteTextFormat* format) const;
+    void DrawUiText(ID2D1DeviceContext* dc, std::wstring_view text, IDWriteTextFormat* format,
+                    const D2D1_RECT_F& rect, const D2D1_COLOR_F& color,
+                    DWRITE_TEXT_ALIGNMENT alignment = DWRITE_TEXT_ALIGNMENT_LEADING);
+    HeaderLayout header_;
+    D2D1_COLOR_F accent_ = D2D1::ColorF(0x0078D4);
+    std::wstring title_;       // PreviewTitle(item_)
+    std::wstring type_name_;   // shell type name for the meta line
+    std::wstring open_app_;    // default program's name; empty = none
+    std::unordered_map<std::wstring, std::wstring> open_app_cache_;  // extension -> name, per Show
+    std::vector<std::wstring> footer_parts_;   // this frame's facts (left)
+    struct FooterControl { int id = 0; std::wstring text; D2D1_RECT_F rect{}; };
+    std::vector<FooterControl> footer_controls_;   // this frame's controls (right)
+    int footer_hover_ = 0;
+    ComPtr<IDWriteTextFormat> badge_format_, badge_small_format_, open_format_;
+    OpenWithIconCache open_icons_;
     static LRESULT CALLBACK FindEditProc(HWND hwnd, UINT message, WPARAM wparam,
                                          LPARAM lparam, UINT_PTR id, DWORD_PTR data);
 
@@ -350,12 +406,8 @@ private:
     ComPtr<IDWriteTextFormat> gutter_format_;
     ComPtr<ID2D1SolidColorBrush> syntax_brushes_[16];
     float TextOriginX() const noexcept;
-    void DrawTextStatus(ID2D1DeviceContext* dc, const D2D1_RECT_F& content, bool hex,
-                        uint32_t bytes_read, bool truncated, uint32_t encoding,
-                        ID2D1SolidColorBrush* text_brush);
-    // Status pill centred at the bottom of content; parts joined by " | ".
-    void DrawStatusPill(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
-                        const std::vector<std::wstring>& parts, ID2D1SolidColorBrush* text_brush);
+    // Language | encoding | lines and size, as footer facts.
+    void SetTextFooter(bool hex, uint32_t bytes_read, bool truncated, uint32_t encoding);
     void DrawLineNumbers(ID2D1DeviceContext* dc, const D2D1_RECT_F& content, float origin_y);
     uint32_t sel_anchor_ = 0;
     uint32_t sel_focus_ = 0;

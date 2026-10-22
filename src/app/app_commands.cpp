@@ -5157,7 +5157,19 @@ bool QuickPreviewItemForRow(AppState& s, const app::Tab& tab, int index, ui::Qui
 
 bool SelectedQuickPreviewItem(AppState& s, ui::QuickPreviewItem& item) {
     app::Tab* tab = ActiveTab(s);
-    return tab && QuickPreviewItemAt(s, *tab, tab->selected_index, item);
+    if (!tab || !QuickPreviewItemAt(s, *tab, tab->selected_index, item)) return false;
+    // "6 / 12" in the preview header: the row among the rows on screen.
+    if (s.pane) {
+        ui::PaneViewModel pane;
+        app::FillPaneViewModel(pane, *s.pane, &s.places);
+        const int view = pane.ViewIndex(tab->selected_index);
+        const int count = static_cast<int>(pane.EntryCount());
+        if (view >= 0 && view < count) {
+            item.position = view + 1;
+            item.count = count;
+        }
+    }
+    return true;
 }
 
 void ToggleQuickPreview(AppState& s) {
@@ -5197,6 +5209,7 @@ void ToggleQuickPreview(AppState& s) {
         }
         s.quickPreview.Initialize(s.hwnd, WM_QUICK_PREVIEW_NAVIGATE,
                                   WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND);
+        s.quickPreview.SetAccent(s.accentColor);
         s.quickPreview.Show(item, s.darkMode, effect, s.safeMode, zoom_from);
         s.quickPreviewSelection.Reset(item.path);
     }

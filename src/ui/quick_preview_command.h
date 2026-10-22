@@ -12,6 +12,8 @@ struct QuickPreviewItem {
     uint64_t modified = 0, size = 0;
     bool starred = false;
     bool read_only = false;
+    // 1-based place in the listing and its length; 0 when unknown.
+    int position = 0, count = 0;
 };
 
 enum class QuickPreviewAction : int {
