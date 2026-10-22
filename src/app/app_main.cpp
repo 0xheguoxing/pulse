@@ -255,6 +255,10 @@ constexpr double kDecorativeFrameMs = 1000.0 / 30.0;
 // stop; this polls for the uncloak, then repaints once to pick motion up.
 constexpr UINT_PTR kTimerCloakPoll = 0x434C;  // 'CL'
 constexpr UINT kCloakPollMs = 500;
+// Rebuilding the graphics can fail while displays come and go (a monitor
+// unplugged): try again instead of waiting for something else to repaint.
+constexpr UINT_PTR kTimerGraphicsRetry = 0x4752;  // 'GR'
+constexpr UINT kGraphicsRetryMs = 500;
 // Frames the pump paints (WM_FRAME_PUMP) are not user activity: counting
 // them kept kTimerUi at the display rate for as long as anything moved.
 static thread_local bool t_pump_paint = false;
@@ -424,7 +428,11 @@ void Render(AppState& s) {
     auto t0 = std::chrono::steady_clock::now();
 
     if (s.compositor.NeedsRecovery()) {
-        if (!s.compositor.Recover()) return;
+        if (!s.compositor.Recover()) {
+            if (s.hwnd) SetTimer(s.hwnd, kTimerGraphicsRetry, kGraphicsRetryMs, nullptr);
+            return;
+        }
+        if (s.hwnd) KillTimer(s.hwnd, kTimerGraphicsRetry);
         s.compositor.RecreateTextFormats(s.scale);
         s.renderer.SetCompositor(&s.compositor);
         s.renderer.SetScale(s.scale);
@@ -437,6 +445,8 @@ void Render(AppState& s) {
         int h = rc.bottom;
         if (w != s.compositor.Width() || h != s.compositor.Height()) {
             s.compositor.Resize(w, h);
+            // No target to draw into: the repaint it asked for rebuilds first.
+            if (s.compositor.NeedsRecovery()) return;
         }
     }
 
@@ -2025,6 +2035,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s && wParam == kTimerDeviceHelpTest) {
             KillTimer(hwnd, kTimerDeviceHelpTest);
             ShowDeviceHelp(*s);
+            return 0;
+        }
+        if (s && wParam == kTimerGraphicsRetry) {
+            KillTimer(hwnd, kTimerGraphicsRetry);
+            InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if (s && wParam == kTimerCloakPoll) {

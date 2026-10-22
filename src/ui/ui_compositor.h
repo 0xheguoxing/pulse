@@ -59,6 +59,8 @@ public:
     void Shutdown();
     void Resize(int width, int height);
     void Present();
+    // A lost device, or a swap chain that could not be resized: the next
+    // Recover() rebuilds the window's graphics.
     void NotifyDeviceLost(HRESULT reason);
     bool Recover();
     bool NeedsRecovery() const { return device_lost_; }

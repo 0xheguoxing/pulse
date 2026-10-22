@@ -387,11 +387,24 @@ void Compositor::ResizeSwapChain() {
     held_.reset();
     targetBitmap_.reset();
     dc_->SetTarget(nullptr);
+    // D3D11 destroys released views lazily: the ones D2D made on the back
+    // buffer can still hold it, and ResizeBuffers then fails with
+    // DXGI_ERROR_INVALID_CALL. Flushing first is what Microsoft's
+    // DeviceResources template does for the same reason.
+    {
+        ComPtr<ID3D11DeviceContext> context;
+        if (d3dDevice_.get()) d3dDevice_->GetImmediateContext(&context);
+        if (context.get()) context->Flush();
+    }
+    // A failure below, lost device or not, rebuilds the swap chain: the new
+    // size is already recorded, so nothing would ask for it again and every
+    // frame would draw into no target (a white window after the monitor it
+    // was on went away).
     HRESULT hr = swapChain_->ResizeBuffers(0, (UINT)width_, (UINT)height_,
         DXGI_FORMAT_UNKNOWN, 0);
     if (FAILED(hr)) {
         CheckGraphics(hr, L"ResizeBuffers");
-        if (IsDeviceLost(hr)) NotifyDeviceLost(hr);
+        NotifyDeviceLost(hr);
         return;
     }
 
@@ -399,7 +412,7 @@ void Compositor::ResizeSwapChain() {
     hr = swapChain_->GetBuffer(0, IID_PPV_ARGS(&surface));
     if (FAILED(hr)) {
         CheckGraphics(hr, L"SwapChain GetBuffer");
-        if (IsDeviceLost(hr)) NotifyDeviceLost(hr);
+        NotifyDeviceLost(hr);
         return;
     }
     // Layout, hit-testing, and text formats already apply the window scale.
@@ -414,7 +427,7 @@ void Compositor::ResizeSwapChain() {
     hr = dc_->CreateBitmapFromDxgiSurface(surface.get(), &props, &targetBitmap_);
     if (FAILED(hr)) {
         CheckGraphics(hr, L"CreateBitmapFromDxgiSurface");
-        if (IsDeviceLost(hr)) NotifyDeviceLost(hr);
+        NotifyDeviceLost(hr);
         return;
     }
     dc_->SetTarget(targetBitmap_.get());

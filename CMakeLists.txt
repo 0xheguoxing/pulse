@@ -913,6 +913,17 @@ target_link_libraries(pulse_material_test PRIVATE
     comctl32 pulse_localization)
 pulse_enable_lumatext(pulse_material_test)
 
+# A swap chain that cannot be resized is rebuilt, never left without a target
+# (white window after the monitor it was on went away).
+add_executable(pulse_compositor_resize_test
+    src/bench/compositor_resize_test.cpp
+    src/ui/typography.cpp
+    src/ui/ui_compositor.cpp)
+target_link_libraries(pulse_compositor_resize_test PRIVATE
+    d3d11 d2d1 dwrite dxgi dcomp dwmapi shcore ole32 windowscodecs user32 gdi32
+    comctl32 pulse_localization)
+pulse_enable_lumatext(pulse_compositor_resize_test)
+
 add_executable(pulse_search_history_test
     src/bench/search_history_test.cpp
     src/app/search_history.cpp)
