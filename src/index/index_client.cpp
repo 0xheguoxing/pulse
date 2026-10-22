@@ -58,7 +58,11 @@ void IndexClient::Start(HWND notify, UINT status_msg, UINT search_msg, std::wstr
 }
 
 void IndexClient::Stop() {
-    running_ = false;
+    {
+        // Under mu_ so Writer cannot miss the wake between its check and wait.
+        std::lock_guard<std::mutex> lock(mu_);
+        running_ = false;
+    }
     pinyin_ready_ = false;
     pending_cv_.notify_all();
     HANDLE pipe = INVALID_HANDLE_VALUE;
@@ -264,8 +268,11 @@ bool IndexClient::EnsureConnected() {
         }
         pipe_ = h;
     }
-    { std::lock_guard<std::mutex> lock(mu_); scope_ready_ = false; pending_searches_=subscribed_searches_; have_pending_=!pending_searches_.empty(); }
-    connected_ = true;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        scope_ready_ = false; pending_searches_=subscribed_searches_; have_pending_=!pending_searches_.empty();
+        connected_ = true;
+    }
     pending_cv_.notify_one();
     return true;
 }
@@ -450,7 +457,9 @@ void IndexClient::Writer() {
     while (running_) {
         {
             std::unique_lock<std::mutex> lock(mu_);
-            pending_cv_.wait_for(lock, std::chrono::milliseconds(100),
+            // Every change that can satisfy this is made under mu_ and
+            // notified, so the idle writer sleeps instead of polling.
+            pending_cv_.wait(lock,
                 [this] { return !running_ || (connected_ &&
                     (have_pending_ || !cancelled_sessions_.empty() || volume_refresh_requested_)); });
             if (!running_) return;
