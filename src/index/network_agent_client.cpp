@@ -314,11 +314,19 @@ void NetworkAgentClient::RefreshRoots() {
         root.indexed_items = (static_cast<uint64_t>(hi) << 32) | lo;
         roots.push_back(std::move(root));
     }
+    const auto same = [](const NetworkRootInfo& a, const NetworkRootInfo& b) {
+        return a.path == b.path && a.online == b.online && a.building == b.building &&
+            a.watching == b.watching && a.indexed_items == b.indexed_items &&
+            a.progress == b.progress && a.state == b.state && a.error == b.error;
+    };
+    bool changed = false;
     {
         std::lock_guard<std::mutex> lock(mu_);
+        changed = !std::equal(roots.begin(), roots.end(), roots_.begin(), roots_.end(), same);
         roots_ = std::move(roots);
     }
-    if (notify_ && status_msg_) PostMessageW(notify_, status_msg_, 0, 0);
+    // Polled every second: wake the window only when something changed.
+    if (changed && notify_ && status_msg_) PostMessageW(notify_, status_msg_, 0, 0);
 }
 
 std::vector<NetworkRootInfo> NetworkAgentClient::Roots() const {
