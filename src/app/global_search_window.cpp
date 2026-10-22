@@ -802,7 +802,15 @@ struct GlobalSearchWindow::Impl {
                     }
                 }
             }
-            target->DrawTextLayout({rect.left, rect.top}, layout.Get(), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            if (!icon_face && target.Get() == compositor.Dc())
+                compositor.DrawTextLayout({rect.left, rect.top}, layout.Get(), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            else
+                target->DrawTextLayout({rect.left, rect.top}, layout.Get(), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        } else if (!icon_face && target.Get() == compositor.Dc() && SUCCEEDED(write_factory->CreateTextLayout(text.data(),
+            static_cast<UINT32>(text.size()), format.Get(), std::max(0.0f, rect.right - rect.left),
+            std::max(0.0f, rect.bottom - rect.top), &layout))) {
+            // Same LumaText glyphs as the main window; icon glyphs stay DirectWrite.
+            compositor.DrawTextLayout({rect.left, rect.top}, layout.Get(), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
         } else target->DrawTextW(text.data(), static_cast<UINT32>(text.size()), format.Get(), rect, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
     D2D1_COLOR_F MarkColor() const {
@@ -972,7 +980,10 @@ struct GlobalSearchWindow::Impl {
             painter.DrawTooltip(bounds, metrics.lineCount > 1 ? std::wstring_view{} : std::wstring_view{tip});
             if (metrics.lineCount > 1) {
                 brush->SetColor(theme.text);
-                target->DrawTextLayout({x + 8 * scale, y + 8 * scale}, layout.Get(), brush.Get());
+                if (target.Get() == compositor.Dc())
+                    compositor.DrawTextLayout({x + 8 * scale, y + 8 * scale}, layout.Get(), brush.Get());
+                else
+                    target->DrawTextLayout({x + 8 * scale, y + 8 * scale}, layout.Get(), brush.Get());
             }
         }
         target->SetDpi(96 * scale, 96 * scale);

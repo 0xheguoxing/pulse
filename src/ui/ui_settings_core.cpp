@@ -39,7 +39,7 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
                     description->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
                     description->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
                     MakeBrush(dc,theme.text_secondary,brTextSecondary_);
-                    dc->DrawTextLayout(D2D1::Point2F(bounds.left,bounds.top),description.get(),brTextSecondary_.get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                    compositor_->DrawTextLayout(D2D1::Point2F(bounds.left,bounds.top),description.get(),brTextSecondary_.get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);
                 }
             }
         }

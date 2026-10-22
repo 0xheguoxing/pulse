@@ -297,7 +297,7 @@ void DrawDialogParagraph(Compositor& compositor, IDWriteTextFormat* format,
     layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     ComPtr<ID2D1SolidColorBrush> brush;
     if (FAILED(dc->CreateSolidColorBrush(color, &brush)) || !brush.get()) return;
-    dc->DrawTextLayout(D2D1::Point2F(bounds.left, bounds.top), layout.get(), brush.get());
+    compositor.DrawTextLayout(D2D1::Point2F(bounds.left, bounds.top), layout.get(), brush.get());
 }
 
 void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const Theme& theme,

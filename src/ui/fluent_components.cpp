@@ -214,6 +214,19 @@ const wchar_t* OmnibarHintBadge() {
     return pulse::l10n::Get(pulse::l10n::StringId::Command).c_str();
 }
 
+// Layout text (wrapping, trimming) with the same LumaText glyphs as the
+// single-line path; high contrast keeps DirectWrite.
+void DrawLayoutText(Compositor* compositor, ID2D1DeviceContext* dc, bool high_contrast,
+                    D2D1_POINT_2F origin, IDWriteTextLayout* layout, ID2D1SolidColorBrush* brush,
+                    D2D1_DRAW_TEXT_OPTIONS options = D2D1_DRAW_TEXT_OPTIONS_NONE) {
+    if (!dc || !layout || !brush) return;
+    if (!high_contrast && compositor && compositor->Dc() == dc) {
+        compositor->DrawTextLayout(origin, layout, brush, options);
+    } else {
+        dc->DrawTextLayout(origin, layout, brush, options);
+    }
+}
+
 } // namespace
 
 float EvaluateMotion(const MotionSpec& motion, float elapsed_ms) noexcept {
@@ -519,8 +532,8 @@ void Painter::DrawText(std::wstring_view text, const D2D1_RECT_F& bounds,
     IDWriteTextLayout* layout = GetTextLayout(
         compositor_, format, text, width, height, text_alignment);
     if (!layout) return;
-    dc_->DrawTextLayout(D2D1::Point2F(snapped.left, snapped.top), layout,
-                        ScratchBrush(color), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    DrawLayoutText(compositor_, dc_, high_contrast_, D2D1::Point2F(snapped.left, snapped.top), layout,
+                   ScratchBrush(color), D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
 void Painter::DrawTextWithBrush(std::wstring_view text, const D2D1_RECT_F& bounds,
@@ -549,8 +562,8 @@ void Painter::DrawTextWithBrush(std::wstring_view text, const D2D1_RECT_F& bound
     IDWriteTextLayout* layout = GetTextLayout(
         compositor_, format, text, width, height, text_alignment);
     if (!layout) return;
-    dc_->DrawTextLayout(D2D1::Point2F(snapped.left, snapped.top), layout,
-                        text_brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    DrawLayoutText(compositor_, dc_, high_contrast_, D2D1::Point2F(snapped.left, snapped.top), layout,
+                   text_brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
 float Painter::MeasureWrappedCaptionHeight(std::wstring_view text, float width) const {
@@ -565,7 +578,7 @@ void Painter::DrawWrappedCaption(std::wstring_view text, D2D1_POINT_2F origin, f
     if (!dc_) return;
     IDWriteTextLayout* layout = GetWrappedTextLayout(compositor_, CaptionFormat(), text, width);
     ID2D1SolidColorBrush* brush = ScratchBrush(color);
-    if (layout && brush) dc_->DrawTextLayout(origin, layout, brush);
+    if (layout && brush) DrawLayoutText(compositor_, dc_, high_contrast_, origin, layout, brush);
 }
 
 void Painter::DrawGlyph(std::wstring_view glyph, const D2D1_RECT_F& bounds,
@@ -2930,8 +2943,8 @@ void Painter::DrawInfoBar(const InfoBarSpec& spec) {
                     Width(lay.message), Height(lay.message), &layout))) {
                 layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
                 layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-                dc_->DrawTextLayout(D2D1::Point2F(lay.message.left, lay.message.top),
-                                    layout.get(), ScratchBrush(theme_->text_secondary), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                DrawLayoutText(compositor_, dc_, high_contrast_, D2D1::Point2F(lay.message.left, lay.message.top),
+                               layout.get(), ScratchBrush(theme_->text_secondary), D2D1_DRAW_TEXT_OPTIONS_CLIP);
             }
         } else {
             // One line, cut with an ellipsis rather than wrapped out of sight.
@@ -2948,8 +2961,8 @@ void Painter::DrawInfoBar(const InfoBarSpec& spec) {
                     layout->SetTrimming(&trimming, ellipsis.get());
                 }
                 const D2D1_RECT_F snapped = typography::SnapVerticalBounds(lay.message);
-                dc_->DrawTextLayout(D2D1::Point2F(snapped.left, snapped.top), layout.get(),
-                                    ScratchBrush(theme_->text_secondary), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                DrawLayoutText(compositor_, dc_, high_contrast_, D2D1::Point2F(snapped.left, snapped.top), layout.get(),
+                               ScratchBrush(theme_->text_secondary), D2D1_DRAW_TEXT_OPTIONS_CLIP);
             }
         }
     }

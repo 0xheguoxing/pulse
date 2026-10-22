@@ -487,8 +487,10 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                 fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 MakeBrush(dc, theme.text_secondary, brText_);
-                dc->DrawText(label, static_cast<UINT32>(wcslen(label)), fmt, chip, brText_.get(),
-                             D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                if (IsHighContrast() || !compositor_->DrawLumaText(label, fmt, chip, theme.text_secondary,
+                                                                   theme.bg, DWRITE_TEXT_ALIGNMENT_CENTER))
+                    dc->DrawText(label, static_cast<UINT32>(wcslen(label)), fmt, chip, brText_.get(),
+                                 D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
                 fmt->SetTextAlignment(oldAlign);
                 fmt->SetParagraphAlignment(oldPara);
                 continue;
@@ -545,8 +547,11 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                 fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 MakeBrush(dc, HexColor(0xFFFFFF), brText_);
-                dc->DrawText(num, 1, fmt, b, brText_.get(), D2D1_DRAW_TEXT_OPTIONS_NONE,
-                             DWRITE_MEASURING_MODE_NATURAL);
+                if (IsHighContrast() || !compositor_->DrawLumaText(std::wstring_view(num, 1), fmt, b,
+                                                                   HexColor(0xFFFFFF), theme.bg,
+                                                                   DWRITE_TEXT_ALIGNMENT_CENTER))
+                    dc->DrawText(num, 1, fmt, b, brText_.get(), D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                 DWRITE_MEASURING_MODE_NATURAL);
                 fmt->SetTextAlignment(oldAlign);
                 fmt->SetParagraphAlignment(oldPara);
             }
