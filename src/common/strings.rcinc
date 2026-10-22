@@ -2671,6 +2671,10 @@ BEGIN
     IDS_ACCENT_LIGHTNESS "亮度"
     IDS_ACCENT_CUSTOM_DONE "收起"
     IDS_SETTINGS_CHANGE_DAYS_DESC "文件夹里标出多久以内的增删改"
+    IDS_PREVIEW_PAGE_OF "第 %u / %u 页"
+    IDS_PREVIEW_HEADINGS "%u 个标题"
+    IDS_PREVIEW_ABOUT_WORDS "约 %s 字"
+    IDS_PREVIEW_MIXED_EOL "混合换行"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5341,6 +5345,10 @@ BEGIN
     IDS_ACCENT_LIGHTNESS "Lightness"
     IDS_ACCENT_CUSTOM_DONE "Done"
     IDS_SETTINGS_CHANGE_DAYS_DESC "How far back folder changes are marked"
+    IDS_PREVIEW_PAGE_OF "Page %u of %u"
+    IDS_PREVIEW_HEADINGS "%u headings"
+    IDS_PREVIEW_ABOUT_WORDS "about %s words"
+    IDS_PREVIEW_MIXED_EOL "Mixed line endings"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

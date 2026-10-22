@@ -8,10 +8,13 @@
 // near the viewport are requested; the thumbnail cache keeps them resident.
 #include "quick_preview_window.h"
 #include "../ipc/preview_protocol.h"
+#include "../common/localization.h"
+#include "../common/text_format.h"
 #include <d2d1helper.h>
 #include <algorithm>
 #include <cmath>
 #include <cwchar>
+#include <cwctype>
 
 namespace pulse::ui {
 namespace {
@@ -227,8 +230,7 @@ bool QuickPreviewWindow::PagesKey(WPARAM key) {
     }
 }
 
-void QuickPreviewWindow::DrawPages(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* text_brush,
-                                   ID2D1SolidColorBrush* secondary_brush) {
+void QuickPreviewWindow::DrawPages(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* secondary_brush) {
     if (!dc || !pages_count_) return;
     if (page_aspect_.size() != pages_count_) page_aspect_.resize(pages_count_, 0.0f);
     const PagesLayout layout = ComputePagesLayout();
@@ -389,34 +391,29 @@ void QuickPreviewWindow::DrawPages(ID2D1DeviceContext* dc, ID2D1SolidColorBrush*
                 y + thumb_h), w * 0.5f, w * 0.5f), bar.get());
     }
 
-    // --- Page indicator pill. ---
-    IDWriteTextFormat* small_format = compositor_.SmallFormat();
-    if (small_format) {
-        wchar_t label[64];
-        if (pages_zoom_ != 1.0f)
-            swprintf_s(label, L"%u / %u  \x00B7  %d%%", current + 1, pages_count_,
-                       static_cast<int>(std::lround(pages_zoom_ * 100.0f)));
-        else
-            swprintf_s(label, L"%u / %u", current + 1, pages_count_);
-        const float pill_w = (pages_zoom_ != 1.0f ? 132.0f : 84.0f) * scale_;
-        const float pill_h = 26.0f * scale_;
-        const float cx = layout.view.left + view_w * 0.5f;
-        const D2D1_RECT_F pill = D2D1::RectF(cx - pill_w * 0.5f, layout.view.bottom - pill_h - 12.0f * scale_,
-                                             cx + pill_w * 0.5f, layout.view.bottom - 12.0f * scale_);
-        ComPtr<ID2D1SolidColorBrush> pill_fill, pill_line;
-        dc->CreateSolidColorBrush(dark_ ? D2D1::ColorF(0x2B2B2B, 0.92f)
-                                        : D2D1::ColorF(0xFFFFFF, 0.94f), &pill_fill);
-        dc->CreateSolidColorBrush(dark_ ? D2D1::ColorF(0x454545) : D2D1::ColorF(0xD0D0D0),
-                                  &pill_line);
-        const auto rounded = D2D1::RoundedRect(pill, pill_h * 0.5f, pill_h * 0.5f);
-        if (pill_fill.get()) dc->FillRoundedRectangle(rounded, pill_fill.get());
-        if (pill_line.get()) dc->DrawRoundedRectangle(rounded, pill_line.get(), 1.0f);
-        small_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        small_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        dc->DrawTextW(label, static_cast<UINT32>(wcslen(label)), small_format, pill, text_brush,
-                      D2D1_DRAW_TEXT_OPTIONS_CLIP);
-        small_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        small_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    // --- Page and zoom live in the footer. ---
+    {
+        std::vector<std::wstring> parts;
+        std::wstring ext;
+        if (const size_t dot = item_.name.find_last_of(L'.'); dot != std::wstring::npos && dot + 1 < item_.name.size()) {
+            ext = item_.name.substr(dot + 1);
+            for (wchar_t& c : ext) c = static_cast<wchar_t>(std::towupper(c));
+        }
+        if (!ext.empty()) parts.push_back(std::move(ext));
+        wchar_t label[96];
+        swprintf_s(label, pulse::l10n::Get(pulse::l10n::StringId::PreviewPageOf).c_str(), current + 1, pages_count_);
+        parts.push_back(label);
+        if (item_.size) parts.push_back(pulse::format::ByteSize(item_.size, true));
+        SetFooterParts(std::move(parts));
+        std::wstring zoom;
+        if (pages_zoom_ == 1.0f) {
+            zoom = pulse::l10n::Get(pulse::l10n::StringId::PreviewFit).c_str();
+        } else {
+            wchar_t percent[16];
+            swprintf_s(percent, L"%d%%", static_cast<int>(std::lround(pages_zoom_ * 100.0f)));
+            zoom = percent;
+        }
+        AddFooterControl(kFooterZoom, std::move(zoom));
     }
     dc->PopAxisAlignedClip();
 }

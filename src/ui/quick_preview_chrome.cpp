@@ -551,6 +551,9 @@ void QuickPreviewWindow::ActivateFooterControl(int id) {
     if (id == kFooterZoom && native_kind_ == NativeKind::Bitmap) {
         ToggleFitActual();
         InvalidateRect(hwnd_, nullptr, FALSE);
+    } else if (id == kFooterZoom && native_kind_ == NativeKind::Pages) {
+        TogglePagesFit();
+        InvalidateRect(hwnd_, nullptr, FALSE);
     }
 }
 

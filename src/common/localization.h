@@ -2681,6 +2681,10 @@ enum class StringId : UINT {
     SettingsHoverSelectDesc = IDS_SETTINGS_HOVER_SELECT_DESC,
     SettingsItemCheckboxes = IDS_SETTINGS_ITEM_CHECKBOXES,
     SettingsItemCheckboxesDesc = IDS_SETTINGS_ITEM_CHECKBOXES_DESC,
+    PreviewPageOf = IDS_PREVIEW_PAGE_OF,
+    PreviewHeadings = IDS_PREVIEW_HEADINGS,
+    PreviewAboutWords = IDS_PREVIEW_ABOUT_WORDS,
+    PreviewMixedEol = IDS_PREVIEW_MIXED_EOL,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

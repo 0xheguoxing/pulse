@@ -2685,5 +2685,9 @@
 #define IDS_SETTINGS_HOVER_SELECT_DESC                                                   3858
 #define IDS_SETTINGS_ITEM_CHECKBOXES                                                     3859
 #define IDS_SETTINGS_ITEM_CHECKBOXES_DESC                                                3860
+#define IDS_PREVIEW_PAGE_OF                                                              3898
+#define IDS_PREVIEW_HEADINGS                                                             3899
+#define IDS_PREVIEW_ABOUT_WORDS                                                          3900
+#define IDS_PREVIEW_MIXED_EOL                                                            3901
 
 #endif  // PULSE_STRING_IDS_H

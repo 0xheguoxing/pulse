@@ -231,8 +231,22 @@ void TableView::BuildPlain() {
 std::vector<std::wstring> TableView::StatusParts(uint32_t encoding) const {
     std::vector<std::wstring> parts;
     const Sheet* s = Current();
-    if (!s || spreadsheet_) return parts;
+    if (!s) return parts;
     const bool zh = Zh();
+    const auto shape = [&] {
+        const std::wstring rows = Grouped(BodyRows()), cols = Grouped(s->cols);
+        std::wstring size = zh ? rows + pulse::l10n::Cn(L" \x884C \x00D7 ") + cols + pulse::l10n::Cn(L" \x5217")
+                               : rows + L" rows \x00D7 " + cols + L" columns";
+        if (s->truncated) size = zh ? pulse::l10n::Cn(L"\x524D ") + size + pulse::l10n::Cn(L"\xFF08\x5DF2\x622A\x65AD\xFF09")
+                                    : L"first " + size + L" (truncated)";
+        return size;
+    };
+    if (spreadsheet_) {
+        // The window adds the format and size around: sheet name, then its shape.
+        if (!s->name.empty()) parts.push_back(s->name);
+        parts.push_back(shape());
+        return parts;
+    }
     parts.push_back(s->detail == L"tab" ? L"TSV" : L"CSV");
     std::wstring detail;
     if (s->detail == L"tab") detail = pulse::l10n::Get(pulse::l10n::StringId::Tab).c_str();
@@ -257,14 +271,9 @@ std::vector<std::wstring> TableView::StatusParts(uint32_t encoding) const {
         break;
     default: break;
     }
-    if (!name.empty()) detail += L" \x00B7 " + name;
     parts.push_back(std::move(detail));
-    const std::wstring rows = Grouped(BodyRows()), cols = Grouped(s->cols);
-    std::wstring size = zh ? rows + pulse::l10n::Cn(L" \x884C \x00D7 ") + cols + pulse::l10n::Cn(L" \x5217")
-                           : rows + L" rows \x00D7 " + cols + L" columns";
-    if (s->truncated) size = zh ? pulse::l10n::Cn(L"\x524D ") + size + pulse::l10n::Cn(L"\xFF08\x5DF2\x622A\x65AD\xFF09")
-                                : L"first " + size + L" (truncated)";
-    parts.push_back(std::move(size));
+    if (!name.empty()) parts.push_back(std::move(name));
+    parts.push_back(shape());
     return parts;
 }
 

@@ -152,8 +152,7 @@ private:
     void ScrollToPage(uint32_t page);
     void ZoomPages(float cursor_x, float cursor_y, float factor);
     void TogglePagesFit();
-    void DrawPages(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* text_brush,
-                   ID2D1SolidColorBrush* secondary_brush);
+    void DrawPages(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* secondary_brush);
     bool PagesWheel(POINT client, float steps, bool ctrl, bool shift);
     bool PagesMouseDown(POINT client);
     bool PagesKey(WPARAM key);
@@ -401,13 +400,19 @@ private:
     bool line_numbers_ = true;          // context-menu toggle, per session
     float text_gutter_ = 0.0f;          // pixels reserved left of the text
     uint32_t text_line_count_ = 0;
+    uint8_t text_eol_ = 0;   // 0 none, 1 LF, 2 CRLF, 3 CR, 4 mixed
     std::vector<uint32_t> line_starts_; // filled only while the gutter is shown
     std::wstring syntax_language_;
     ComPtr<IDWriteTextFormat> gutter_format_;
     ComPtr<ID2D1SolidColorBrush> syntax_brushes_[16];
     float TextOriginX() const noexcept;
     // Language | encoding | lines and size, as footer facts.
-    void SetTextFooter(bool hex, uint32_t bytes_read, bool truncated, uint32_t encoding);
+    // show_eol: only raw text keeps its line endings (structured payloads drop CR).
+    void SetTextFooter(bool hex, uint32_t bytes_read, bool truncated, uint32_t encoding,
+                       bool show_eol = false);
+    void SetTableFooter(uint32_t encoding);
+    // Format, picture size (video), duration, extra facts, file size.
+    void SetMediaFooter(const VideoPreview::State& state, std::vector<std::wstring> extra);
     void DrawLineNumbers(ID2D1DeviceContext* dc, const D2D1_RECT_F& content, float origin_y);
     uint32_t sel_anchor_ = 0;
     uint32_t sel_focus_ = 0;

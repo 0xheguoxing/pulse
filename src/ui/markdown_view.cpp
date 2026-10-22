@@ -15,6 +15,28 @@
 namespace pulse::ui {
 namespace {
 
+// Words as a reader counts them: each CJK character is one, a run of letters
+// or digits is another.
+uint32_t CountWords(const std::wstring& text) {
+    uint32_t words = 0;
+    bool in_word = false;
+    for (const wchar_t c : text) {
+        const bool cjk = (c >= 0x3040 && c <= 0x30FF) || (c >= 0x3400 && c <= 0x4DBF) ||
+                         (c >= 0x4E00 && c <= 0x9FFF) || (c >= 0xAC00 && c <= 0xD7AF) ||
+                         (c >= 0xF900 && c <= 0xFAFF);
+        if (cjk) {
+            ++words;
+            in_word = false;
+        } else if (iswalnum(c) || c == L'\'' || c == L'_') {
+            if (!in_word) ++words;
+            in_word = true;
+        } else {
+            in_word = false;
+        }
+    }
+    return words;
+}
+
 template <class T> using WrlPtr = Microsoft::WRL::ComPtr<T>;
 
 enum : uint32_t {
@@ -128,6 +150,7 @@ void MarkdownView::Clear() {
     doc_title_.clear();
     doc_author_.clear();
     words_ = 0;
+    headings_ = 0;
     all_blocks_.clear();
     all_tables_.clear();
     sections_.clear();
@@ -258,6 +281,9 @@ bool MarkdownView::SetPayload(const std::wstring& payload, const std::wstring& f
         plain_ += b.text;
     }
     parsed_ = true;
+    for (const Block& b : blocks_)
+        if (b.kind == L'h') ++headings_;
+    if (format_.empty()) words_ = CountWords(plain_);
     if (!sections_.empty()) {
         if (sections_[0].begin > 0) sections_.insert(sections_.begin(), Section{});
         for (size_t i = 0; i < sections_.size(); ++i)

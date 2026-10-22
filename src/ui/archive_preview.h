@@ -47,6 +47,9 @@ public:
     bool Contains(float x, float y) const noexcept;
     bool HasSelection() const noexcept { return selected_ >= 0; }
     std::wstring StateNote() const;
+    // Footer facts: "ZIP archive", "7 files", "unpacked 29.1 KB", size;
+    // folders: files, folders, total.
+    std::vector<std::wstring> StatusParts() const;
     uint32_t FilterHits() const noexcept { return filter_hits_; }
     // Quick Look folder contents (payload format DIR, folder_listing.h).
     bool IsFolderListing() const noexcept { return parsed_ && folder_; }

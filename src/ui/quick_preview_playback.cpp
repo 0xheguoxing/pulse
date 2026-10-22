@@ -3,6 +3,7 @@
 #include "typography.h"
 #include "ffmpeg_playback.h"
 #include "../common/localization.h"
+#include "../common/text_format.h"
 #include "../common/image_pack_protocol.h"
 #include "../common/preview_extensions.h"
 #include <d2d1helper.h>
@@ -1038,4 +1039,25 @@ void QuickPreviewWindow::DrawCodecCardText(ID2D1DeviceContext* dc, const D2D1_RE
     caption->SetParagraphAlignment(sp);
     brush->SetColor(original);
 }
+void QuickPreviewWindow::SetMediaFooter(const VideoPreview::State& state, std::vector<std::wstring> extra) {
+    std::vector<std::wstring> parts;
+    std::wstring ext;
+    if (const size_t dot = item_.name.find_last_of(L'.'); dot != std::wstring::npos && dot + 1 < item_.name.size()) {
+        ext = item_.name.substr(dot + 1);
+        for (wchar_t& c : ext) c = static_cast<wchar_t>(std::towupper(c));
+    }
+    if (!ext.empty()) parts.push_back(std::move(ext));
+    if (!state.codec_name.empty()) parts.push_back(state.codec_name);
+    if (state.width && state.height) {
+        wchar_t dims[48];
+        swprintf_s(dims, L"%u \x00D7 %u", state.width, state.height);
+        parts.push_back(dims);
+    }
+    if (state.duration > 0) parts.push_back(ShortClock(state.duration, state.duration >= 36000000000LL));
+    for (std::wstring& part : extra)
+        if (!part.empty()) parts.push_back(std::move(part));
+    if (item_.size) parts.push_back(pulse::format::ByteSize(item_.size, true));
+    SetFooterParts(std::move(parts));
+}
+
 } // namespace pulse::ui

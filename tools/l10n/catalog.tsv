@@ -2692,3 +2692,7 @@ SettingsHoverSelect	IDS_SETTINGS_HOVER_SELECT	3857	悬停选中	Select on hover	
 SettingsHoverSelectDesc	IDS_SETTINGS_HOVER_SELECT_DESC	3858	单击打开时，鼠标在某一项上停留约半秒就选中它	With single-click, resting the pointer on an item for about half a second selects it	按一下開啟時，滑鼠在某個項目上停留約半秒就選取它
 SettingsItemCheckboxes	IDS_SETTINGS_ITEM_CHECKBOXES	3859	用复选框选择项目	Use check boxes to select items	使用核取方塊選取項目
 SettingsItemCheckboxesDesc	IDS_SETTINGS_ITEM_CHECKBOXES_DESC	3860	每一项前面显示复选框，勾一下就能多选，不用按 Ctrl	Show a check box on each item to select several without holding Ctrl	每個項目前面顯示核取方塊，勾一下就能多選，不用按 Ctrl
+PreviewPageOf	IDS_PREVIEW_PAGE_OF	3898	第 %u / %u 页	Page %u of %u	第 %u / %u 頁
+PreviewHeadings	IDS_PREVIEW_HEADINGS	3899	%u 个标题	%u headings	%u 個標題
+PreviewAboutWords	IDS_PREVIEW_ABOUT_WORDS	3900	约 %s 字	about %s words	約 %s 字
+PreviewMixedEol	IDS_PREVIEW_MIXED_EOL	3901	混合换行	Mixed line endings	混合換行

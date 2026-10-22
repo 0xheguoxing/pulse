@@ -144,9 +144,13 @@ void QuickPreviewWindow::DrawAudio(ID2D1DeviceContext* dc, const VideoPreview::S
         tech = item_.name.substr(dot + 1);
         for (auto& c : tech) c = static_cast<wchar_t>(std::towupper(c));
     }
+    std::vector<std::wstring> facts;
     for (const wchar_t* label : {L"比特率", L"采样率"})
-        if (const std::wstring value = PropertyValue(properties, label); !value.empty())
+        if (const std::wstring value = PropertyValue(properties, label); !value.empty()) {
             tech += (tech.empty() ? L"" : L" \x00B7 ") + value;
+            facts.push_back(value);
+        }
+    SetMediaFooter(state, std::move(facts));
     const D2D1_RECT_F text_rect = D2D1::RectF(content.left + pad, y, content.right - pad, y + title_h);
     DrawCentered(dc, compositor_.HeaderFormat(), title, text_rect, text_brush);
     y += title_h;

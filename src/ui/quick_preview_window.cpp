@@ -856,6 +856,19 @@ void QuickPreviewWindow::EnsureTextLayout(const std::wstring& text, bool hex, fl
         hex ? DWRITE_WORD_WRAPPING_NO_WRAP : DWRITE_WORD_WRAPPING_WRAP);
     text_line_count_ = 1;
     for (const wchar_t c : text) if (c == L'\n') ++text_line_count_;
+    {
+        bool lf = false, crlf = false, cr = false;
+        for (size_t i = 0; i < text.size(); ++i) {
+            if (text[i] == L'\r') {
+                if (i + 1 < text.size() && text[i + 1] == L'\n') { crlf = true; ++i; }
+                else cr = true;
+            } else if (text[i] == L'\n') {
+                lf = true;
+            }
+        }
+        const int kinds = static_cast<int>(lf) + static_cast<int>(crlf) + static_cast<int>(cr);
+        text_eol_ = kinds > 1 ? 4 : crlf ? 2 : cr ? 3 : lf ? 1 : 0;
+    }
     if (!text.empty() && text.back() == L'\n') --text_line_count_;
     line_starts_.clear();
     text_gutter_ = 0.0f;
@@ -1466,8 +1479,19 @@ void QuickPreviewWindow::DrawTextPreview(ID2D1DeviceContext* dc, const D2D1_RECT
 
 // Footer facts of the text view:
 //   C++  |  UTF-8  |  245 lines \x00B7 8.4 KB
+// CSV: kind, delimiter and encoding, shape. Workbooks: format, sheet, shape, size.
+void QuickPreviewWindow::SetTableFooter(uint32_t encoding) {
+    std::vector<std::wstring> parts = table_.StatusParts(encoding);
+    if (parts.empty()) return;
+    if (table_.IsSpreadsheet()) {
+        parts.insert(parts.begin(), ExtensionLabel(item_.path));
+        if (item_.size) parts.push_back(pulse::format::ByteSize(item_.size, true));
+    }
+    SetFooterParts(std::move(parts));
+}
+
 void QuickPreviewWindow::SetTextFooter(bool hex, uint32_t bytes_read, bool truncated,
-                                       uint32_t encoding) {
+                                       uint32_t encoding, bool show_eol) {
     std::vector<std::wstring> parts;
     if (hex) {
         parts.push_back(pulse::l10n::Get(pulse::l10n::StringId::Hex).c_str());
@@ -1493,12 +1517,27 @@ void QuickPreviewWindow::SetTextFooter(bool hex, uint32_t bytes_read, bool trunc
         default: break;
         }
         if (!name.empty()) parts.push_back(std::move(name));
+        switch (show_eol ? text_eol_ : 0) {
+        case 1: parts.push_back(L"LF"); break;
+        case 2: parts.push_back(L"CRLF"); break;
+        case 3: parts.push_back(L"CR"); break;
+        case 4: parts.push_back(pulse::l10n::Get(pulse::l10n::StringId::PreviewMixedEol).c_str()); break;
+        default: break;
+        }
     }
-    std::wstring size = hex ? std::wstring() : std::to_wstring(text_line_count_) +
-        (pulse::l10n::Get(pulse::l10n::StringId::Lines).c_str());
-    size += pulse::format::ByteSize(bytes_read, true);
-    if (truncated) size += pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str();
-    parts.push_back(std::move(size));
+    // The catalog strings carry their own " · " joints; the footer adds its own.
+    const auto bare = [](std::wstring text) {
+        const auto joint = [](wchar_t c) { return c == L' ' || c == 0x00B7; };
+        while (!text.empty() && joint(text.back())) text.pop_back();
+        size_t start = 0;
+        while (start < text.size() && joint(text[start])) ++start;
+        return text.substr(start);
+    };
+    if (!hex)
+        parts.push_back(std::to_wstring(text_line_count_) + L" " +
+                        bare(pulse::l10n::Get(pulse::l10n::StringId::Lines).c_str()));
+    parts.push_back(pulse::format::ByteSize(bytes_read, true));
+    if (truncated) parts.push_back(bare(pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str()));
     SetFooterParts(std::move(parts));
 }
 
@@ -1716,6 +1755,8 @@ void QuickPreviewWindow::Render() {
         if (codec_card) DrawCodecCard(dc, ContentRect(), video, text_brush.get());
         if (audio && SUCCEEDED(video.error))
             DrawAudio(dc, video, text_brush.get(), secondary_brush.get());
+        else if (!audio)
+            SetMediaFooter(video, {});
         if (codec_card) {
             // The card explains the missing picture.
         } else if (FAILED(video.error))
@@ -1734,7 +1775,7 @@ void QuickPreviewWindow::Render() {
             status = pulse::l10n::Get(pulse::l10n::StringId::PreviewHostUnavailable);
     } else if (pages_count_ > 1) {
         native_kind_ = NativeKind::Pages;
-        DrawPages(dc, text_brush.get(), secondary_brush.get());
+        DrawPages(dc, secondary_brush.get());
     } else {
         std::wstring text;
         std::wstring error;
@@ -1876,6 +1917,7 @@ void QuickPreviewWindow::Render() {
                    archive_.SetPayload(text, PreviewCardName(item_), item_.size)) {
             native_kind_ = NativeKind::Archive;
             archive_.Draw(dc, &compositor_, content, CurrentTheme(), scale_, true);
+            SetFooterParts(archive_.StatusParts());
         } else if (result == PreviewDrawResult::Markdown && markdown_.SetPayload(text, item_.path) &&
                    (!markdown_.DocFormat().empty() ||
                     !(markdown_.IsNotebook() ? notebook_source_ : markdown_source_))) {
@@ -1938,6 +1980,25 @@ void QuickPreviewWindow::Render() {
                 if (!who.empty()) parts.push_back(std::move(who));
                 if (truncated) parts.push_back(pulse::l10n::Get(pulse::l10n::StringId::Truncated_2).c_str());
                 SetFooterParts(std::move(parts));
+            } else if (markdown_.DocFormat().empty()) {
+                // Markdown  |  12 个标题  |  约 3,400 字  |  14 KB
+                std::vector<std::wstring> parts;
+                parts.push_back(L"Markdown");
+                wchar_t buffer[96];
+                if (markdown_.HeadingCount()) {
+                    swprintf_s(buffer, pulse::l10n::Get(pulse::l10n::StringId::PreviewHeadings).c_str(),
+                               markdown_.HeadingCount());
+                    parts.push_back(buffer);
+                }
+                if (markdown_.WordCount()) {
+                    swprintf_s(buffer, pulse::l10n::Get(pulse::l10n::StringId::PreviewAboutWords).c_str(),
+                               GroupedNumber(markdown_.WordCount()).c_str());
+                    parts.push_back(buffer);
+                }
+                std::wstring size = pulse::format::ByteSize(item_.size ? item_.size : bytes_read, true);
+                if (truncated) size += pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str();
+                parts.push_back(std::move(size));
+                SetFooterParts(std::move(parts));
             }
         } else if (result == PreviewDrawResult::Markdown && markdown_.SetPayload(text, item_.path)) {
             // Source mode: the highlighted text view with its status pill.
@@ -1984,8 +2045,7 @@ void QuickPreviewWindow::Render() {
                                      i == find_index_});
                 table_.Draw(dc, compositor_.DwriteFactory(), content, CurrentTheme(), dark_, scale_,
                             background, marks);
-                const auto parts = table_.StatusParts(text_encoding);
-                if (!parts.empty()) SetFooterParts(std::move(parts));
+                SetTableFooter(text_encoding);
             }
         } else if (result == PreviewDrawResult::Tree && tree_.SetPayload(text)) {
             // The Tree | Source pill only when there is a tree to go back to.
@@ -2036,12 +2096,13 @@ void QuickPreviewWindow::Render() {
             EnsureTextLayout(text, result == PreviewDrawResult::Hex,
                              (std::max)(1.0f, width - pad * 2.0f));
             DrawTextPreview(dc, content, text_brush.get());
-            SetTextFooter(result == PreviewDrawResult::Hex, bytes_read, truncated, text_encoding);
+            SetTextFooter(result == PreviewDrawResult::Hex, bytes_read, truncated, text_encoding, true);
         } else if (TableFileKind(item_.path) == 2 && table_.HasData() &&
                    (result == PreviewDrawResult::Pending || result == PreviewDrawResult::Failed)) {
             native_kind_ = NativeKind::Table;
             if (result == PreviewDrawResult::Failed) table_.FailPendingSheetRequest(sheet_request_);
             table_.Draw(dc, compositor_.DwriteFactory(), content, CurrentTheme(), dark_, scale_, background, {});
+            SetTableFooter(text_encoding);
         } else if (result == PreviewDrawResult::Pending && !animation_started_) {
             native_kind_ = NativeKind::None;
             status = pulse::l10n::Get(pulse::l10n::StringId::PreviewLoading);

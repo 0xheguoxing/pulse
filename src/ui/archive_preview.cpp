@@ -912,4 +912,31 @@ void ArchivePreview::Draw(ID2D1DeviceContext* dc, Compositor* compositor, const 
              DWRITE_TEXT_ALIGNMENT_TRAILING);
 }
 
+std::vector<std::wstring> ArchivePreview::StatusParts() const {
+    std::vector<std::wstring> parts;
+    if (!parsed_) return parts;
+    const std::wstring at_least = incomplete_ || counting_ ? L"\x2265 " : L"";
+    const std::wstring files = std::to_wstring(file_count_) + L" " + pulse::l10n::Get(StringId::ArcFiles);
+    const std::wstring dirs = std::to_wstring(dir_count_) + L" " + pulse::l10n::Get(StringId::ArcFolders);
+    if (folder_) {
+        parts.push_back(files);
+        parts.push_back(dirs);
+        std::wstring total = at_least + pulse::format::ByteSize(unpacked_);
+        if (counting_) total += pulse::l10n::Get(pulse::l10n::StringId::Counting_2).c_str();
+        parts.push_back(std::move(total));
+        return parts;
+    }
+    const bool image = format_ == L"ISO" || format_ == L"ISO/UDF" || format_ == L"UDF";
+    parts.push_back(format_ + L" " + (image ? std::wstring(pulse::l10n::Get(pulse::l10n::StringId::Image).c_str())
+                                            : std::wstring(pulse::l10n::Get(StringId::ArcArchive))));
+    parts.push_back(files);
+    if (unpacked_ > 0)
+        parts.push_back((image ? std::wstring(pulse::l10n::Get(pulse::l10n::StringId::LoadedContent).c_str())
+                               : std::wstring(pulse::l10n::Get(StringId::ArcUnpacked))) +
+                        L" " + at_least + pulse::format::ByteSize(unpacked_));
+    if (any_encrypted_) parts.push_back(pulse::l10n::Get(StringId::ArcEncrypted));
+    if (file_size_) parts.push_back(pulse::format::ByteSize(file_size_, true));
+    return parts;
+}
+
 } // namespace pulse::ui

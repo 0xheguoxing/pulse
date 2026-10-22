@@ -44,6 +44,7 @@ public:
     const std::wstring& DocTitle() const noexcept { return doc_title_; }
     const std::wstring& DocAuthor() const noexcept { return doc_author_; }
     uint32_t WordCount() const noexcept { return words_; }
+    uint32_t HeadingCount() const noexcept { return headings_; }
     // Chaptered payloads (P records, EPUB): one section is laid out at a time
     // while PlainText, find, selection and copy still span the whole book.
     int SectionCount() const noexcept { return static_cast<int>(sections_.size()); }
@@ -143,7 +144,8 @@ private:
     std::wstring kernel_;
     uint32_t cells_ = 0;
     std::wstring format_, doc_title_, doc_author_;
-    uint32_t words_ = 0;
+    uint32_t words_ = 0;     // DOCX: from the host; Markdown: counted here
+    uint32_t headings_ = 0;
     // Chapters: every block of the book, and the section now in blocks_.
     std::vector<Block> all_blocks_;
     std::vector<Table> all_tables_;
