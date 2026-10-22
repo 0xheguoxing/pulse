@@ -2682,12 +2682,11 @@ void OpenSelected(AppState& s) {
         }
         // Phone files open through a temporary copy (D6); folders browse.
         if (!e.is_dir && fs::IsDevicePath(e.full_path)) return;
-        if (!e.link_target.empty()) {
-            if (e.link_target_is_dir) NavigateTo(s, e.link_target);
-            else {
-                s.ops.OpenWith(e.link_target);
-                RecordRecentOpen(s, e.link_target, app::PlaceItemKind::File);
-            }
+        // A folder shortcut browses its folder here. A file shortcut opens as
+        // itself, as in Explorer: its arguments, start-in folder, run-as and
+        // Windows Installer's install-on-demand only apply that way.
+        if (!e.link_target.empty() && e.link_target_is_dir) {
+            NavigateTo(s, e.link_target);
             return;
         }
         std::wstring full = EntryFullPath(*tab, indices[0]);
@@ -2702,14 +2701,7 @@ void OpenSelected(AppState& s) {
         const fs::DirEntry& e = tab->EntryAt(static_cast<size_t>(index));
         if (e.change_record_only || e.pc_launcher || e.pc_device || fs::IsDevicePath(e.full_path))
             continue;  // like folders: one at a time; phone files wait for D6
-        if (!e.link_target.empty()) {
-            if (!e.link_target_is_dir) {
-                s.ops.OpenWith(e.link_target);
-                RecordRecentOpen(s, e.link_target, app::PlaceItemKind::File);
-            }
-            continue;
-        }
-        if (e.is_dir) continue;
+        if (e.is_dir || (!e.link_target.empty() && e.link_target_is_dir)) continue;
         std::wstring full = EntryFullPath(*tab, index);
         if (!full.empty()) {
             s.ops.OpenWith(full);

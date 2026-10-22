@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <winioctl.h>
 #include <shobjidl.h>
+#include <shlobj.h>
 #include <wrl/client.h>
 #include <filesystem>
 #include <fstream>
@@ -20,6 +21,27 @@ static bool MakeShortcut(const std::filesystem::path& path, const std::filesyste
     Microsoft::WRL::ComPtr<IShellLinkW> link;
     if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
         IID_PPV_ARGS(&link))) || FAILED(link->SetPath(target.c_str()))) return false;
+    Microsoft::WRL::ComPtr<IPersistFile> file;
+    return SUCCEEDED(link.As(&file)) && SUCCEEDED(file->Save(path.c_str(), TRUE));
+}
+
+// An MSI advertised shortcut as Windows Installer writes it: a Darwin
+// descriptor block plus SLDF_HAS_DARWINID, its path naming the product icon
+// (here an existing fixture file standing in for %windir%\Installer\{..}\x.exe).
+static bool MakeAdvertisedShortcut(const std::filesystem::path& path, const std::filesystem::path& icon) {
+    Microsoft::WRL::ComPtr<IShellLinkW> link;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&link))) || FAILED(link->SetPath(icon.c_str()))) return false;
+    Microsoft::WRL::ComPtr<IShellLinkDataList> data;
+    if (FAILED(link.As(&data))) return false;
+    EXP_DARWIN_LINK block{};
+    block.dbh.cbSize = sizeof(block);
+    block.dbh.dwSignature = EXP_DARWIN_ID_SIG;
+    strcpy_s(block.szDarwinID, "pulse-fixture-not-a-product");
+    wcscpy_s(block.szwDarwinID, L"pulse-fixture-not-a-product");
+    DWORD flags = 0;
+    if (FAILED(data->AddDataBlock(&block)) || FAILED(data->GetFlags(&flags)) ||
+        FAILED(data->SetFlags(flags | SLDF_HAS_DARWINID))) return false;
     Microsoft::WRL::ComPtr<IPersistFile> file;
     return SUCCEEDED(link.As(&file)) && SUCCEEDED(file->Save(path.c_str(), TRUE));
 }
@@ -208,6 +230,26 @@ int main() {
         "deleted target clears prior penetration metadata while retaining saved destination");
     Check(!app::ResolveLink((root / L"bad.lnk").wstring(), reused) && reused.link_destination.empty(),
         "unreadable shortcut clears prior display destination");
+
+    // Opening an advertised shortcut used to start its icon file (「不支持的 16 位应用程序」).
+    std::ofstream(root / L"mainapp.exe") << "icon, not a program";
+    Check(MakeAdvertisedShortcut(root / L"advertised.lnk", root / L"mainapp.exe"),
+        "create advertised (Darwin) shortcut");
+    fs::DirEntry advertised;
+    advertised.link_target = L"stale";
+    Check(!app::ResolveLink((root / L"advertised.lnk").wstring(), advertised) &&
+        advertised.link_target.empty() && advertised.link_destination.empty(),
+        "advertised shortcut of an unknown product never resolves to its icon file");
+    Check(app::IsInstallerCachePath(
+            L"C:\\Windows\\Installer\\{CA3D3898-3825-4F1D-9C8A-D0584671F85E}\\mainapp.exe", L"C:\\Windows") &&
+        app::IsInstallerCachePath(L"c:\\windows\\installer\\x.ico", L"C:\\Windows\\") &&
+        app::IsInstallerCachePath(L"\\\\?\\C:\\Windows\\Installer\\a.msi", L"C:\\Windows"),
+        "files in the Windows Installer cache are recognised");
+    Check(!app::IsInstallerCachePath(L"C:\\Windows\\Installer", L"C:\\Windows") &&
+        !app::IsInstallerCachePath(L"C:\\Windows\\InstallerX\\a.exe", L"C:\\Windows") &&
+        !app::IsInstallerCachePath(L"C:\\Program Files\\App\\app.exe", L"C:\\Windows") &&
+        !app::IsInstallerCachePath(L"C:\\Windows\\Installer\\a.exe", L""),
+        "other paths are not the Windows Installer cache");
     if (junction) RemoveDirectoryW((root / L"junction").c_str());
     if (symlink) DeleteFileW((root / L"relative-link").c_str());
     if (cycle) DeleteFileW((root / L"cycle").c_str());
