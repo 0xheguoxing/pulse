@@ -666,7 +666,8 @@ void ArchivePreview::DrawTree(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, c
     const float colRight = rect.right - 10.0f * s;
 
     if (visible_.empty()) {
-        const std::wstring msg = pulse::l10n::Get(filter_.empty() ? StringId::ArcEmpty : StringId::ArcNoMatch);
+        const std::wstring msg = pulse::l10n::Get(!filter_.empty() ? StringId::ArcNoMatch
+                                                       : folder_ ? StringId::EmptyFolder : StringId::ArcEmpty);
         DrawText(dc, body_.Get(), msg, rect, theme.text_disabled, DWRITE_TEXT_ALIGNMENT_CENTER);
         return;
     }
