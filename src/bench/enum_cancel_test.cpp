@@ -93,12 +93,35 @@ int main() {
     }
     Check(active_network_enumerations == 4, "retired network work capped at four");
     bool refused = false;
-    try { RunBoundedEnumeration<int>(true, [](const std::atomic_bool&) { return 1; }, [] { return false; }); }
-    catch (...) { refused = true; }
-    Check(refused && active_network_enumerations == 4, "exhausted network quota fails promptly");
+    const auto waited_from = GetTickCount64();
+    try {
+        RunBoundedEnumeration<int>(true, [](const std::atomic_bool&) { return 1; }, [] { return false; },
+                                   std::chrono::milliseconds(150));
+    } catch (...) { refused = true; }
+    const auto waited = GetTickCount64() - waited_from;
+    Check(refused && active_network_enumerations == 4, "exhausted network quota still fails at its deadline");
+    Check(waited >= 100 && waited < 1000, "exhausted network quota waits for a slot within the budget");
+    bool cancelled_wait = false;
+    std::atomic_bool stop_waiting{false};
+    std::thread canceller([&] { Sleep(60); stop_waiting = true; });
+    try {
+        RunBoundedEnumeration<int>(true, [](const std::atomic_bool&) { return 1; },
+                                   [&] { return stop_waiting.load(); }, std::chrono::seconds(10));
+    } catch (const EnumerationCancelled&) { cancelled_wait = true; } catch (...) {}
+    canceller.join();
+    Check(cancelled_wait && active_network_enumerations == 4, "a request waiting for a slot can be cancelled");
     Check(RunBoundedEnumeration<int>(false, [](const std::atomic_bool&) { return 7; }, [] { return false; }) == 7,
         "local navigation retains independent capacity");
-    SetEvent(release_provider);
+    // A slot that frees up while a request waits lets that request run (#226:
+    // a share must not look offline only because other listings were stuck).
+    int late = 0;
+    std::thread releaser([] { Sleep(80); SetEvent(release_provider); });
+    try {
+        late = RunBoundedEnumeration<int>(true, [](const std::atomic_bool&) { return 9; }, [] { return false; },
+                                          std::chrono::seconds(5));
+    } catch (...) {}
+    releaser.join();
+    Check(late == 9, "a request waiting for a slot runs once one frees up");
     Check(Drain(), "all retired jobs reclaimed after release");
     bool ran = false;
     try { RunBoundedEnumeration<int>(false, [&](const std::atomic_bool&) { ran = true; return 1; }, [] { return true; }); }

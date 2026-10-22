@@ -13,6 +13,9 @@
 #include "../fs/fs_recycle.h"
 #include "../fs/fs_net_cache.h"
 #include "../common/runtime_log.h"
+#include <cstdlib>
+#include <exception>
+#include <string>
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -147,6 +150,38 @@ void WorkerPool::EnqueueSerialIo(std::function<void()> task) {
     io_queue_.Push(std::move(task), true);
     cv_.notify_one();
 }
+
+namespace {
+
+// Why a listing failed, for navigation_error (#226: error=1 alone could not
+// tell a refusing server from Pulse's own listing quota). fs_enum reports
+// "...error=<win32>" or "...status=0x<ntstatus>"; bounded_enumeration.h
+// reports a timeout or a full quota.
+void LogListingFailure(uint64_t generation, const std::exception_ptr& failure) {
+    std::string what;
+    try {
+        if (failure) std::rethrow_exception(failure);
+    } catch (const std::exception& e) {
+        what = e.what();
+    } catch (...) {
+    }
+    uint64_t reason = 0;  // 0 other, 1 win32 error, 2 NTSTATUS, 3 timed out, 4 listing quota full
+    uint64_t code = 0;
+    if (const size_t at = what.find("error="); at != std::string::npos) {
+        reason = 1;
+        code = std::strtoull(what.c_str() + at + 6, nullptr, 10);
+    } else if (const size_t nt = what.find("status=0x"); nt != std::string::npos) {
+        reason = 2;
+        code = std::strtoull(what.c_str() + nt + 9, nullptr, 16);
+    } else if (what.find("timed out") != std::string::npos) {
+        reason = 3;
+    } else if (what.find("capacity exhausted") != std::string::npos) {
+        reason = 4;
+    }
+    diagnostics::runtime::Event("navigation_error", {{"generation", generation}, {"reason", reason}, {"code", code}});
+}
+
+} // namespace
 
 WorkResult WorkerPool::Process(const WorkItem& item) {
     WorkResult res;
@@ -289,6 +324,7 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
                 const auto current = current_gen_.find(item.request_key);
                 res.cancelled = !running_ || current == current_gen_.end() || current->second != item.generation;
             }
+            if (!res.cancelled) LogListingFailure(item.generation, std::current_exception());
             res.error = !res.cancelled;
             res.bitlocker_locked = res.error && fs::IsBitLockerLocked(item.path);
             res.snapshot = nullptr;
