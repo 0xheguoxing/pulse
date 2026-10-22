@@ -10,6 +10,7 @@
 #include "../fs/bitlocker_volume.h"
 #include "../fs/device_path.h"
 #include "../fs/device_source.h"
+#include "../fs/wsl_path.h"
 #include "device_registry.h"
 #include "shell_window_sync.h"
 #include "app_column_view.h"
@@ -123,7 +124,8 @@ void PumpUncProbe(AppState& s) {
 }
 
 void RequestUncProbe(AppState& s, std::wstring unc) {
-    if (!fs::IsUncPath(unc) || !s.hwnd) return;
+    // A probe of a WSL path starts the distribution (#360); its pin keeps no status.
+    if (!fs::IsUncPath(unc) || fs::IsWslPath(unc) || !s.hwnd) return;
     unc = fs::NormalizePath(unc);
     if (s.probe_scheduler.active_id != 0 && s.probeUnc == unc) return;
     for (const auto& q : s.probeQueue) if (q == unc) return;
@@ -136,7 +138,9 @@ void ProbePinnedNetworks(AppState& s) {
 }
 
 void WarmupUnc(AppState& s, const std::wstring& path) {
-    if (!fs::IsUncPath(path)) return;
+    // Background listings of WSL pins started the distribution at every launch
+    // (#360); a WSL folder is listed only when a tab opens it.
+    if (!fs::IsUncPath(path) || fs::IsWslPath(path)) return;
     RequestUncProbe(s, path);
     uint64_t gen = 0;
     if (s.store.GetOrStart(path, gen)) return;
@@ -351,8 +355,9 @@ static void ApplyLiveNetworkBanner(AppState& s, uint32_t id, const std::wstring&
                 tab->banner_message = l10n::Get(!done ? l10n::StringId::NetworkLiveRunning
                     : drive ? l10n::StringId::NetworkLiveDoneDrive : l10n::StringId::NetworkLiveDone);
                 // A drive-letter scope keeps walking live even once its share
-                // is indexed, so only share paths offer the button.
-                tab->network_live_root = drive ? std::wstring{} : share;
+                // is indexed, so only share paths offer the button. WSL is
+                // never indexed (#360).
+                tab->network_live_root = drive || fs::IsWslPath(share) ? std::wstring{} : share;
             }
         }
         InvalidateRect(s.hwnd, nullptr, FALSE);

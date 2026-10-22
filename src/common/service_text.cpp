@@ -107,6 +107,7 @@ constexpr ServicePhrase kServiceExact[] = {
     {L"无法定位当前用户配置目录", L"Could not locate the current user's settings folder"},
     {L"网络索引配置不是有效的 UTF-8 文件", L"The network index configuration is not a valid UTF-8 file"},
     {L"网络索引配置已损坏", L"The network index configuration is damaged"},
+    {L"WSL 中的文件不能加入网络索引", L"Files in WSL can't be added to the network index"},
     {L"无法将网络索引配置编码为 UTF-8", L"Could not encode the network index configuration as UTF-8"},
     {L"等待服务器校验", L"Waiting for server verification"},
     {L"等待扫描", L"Waiting to scan"},

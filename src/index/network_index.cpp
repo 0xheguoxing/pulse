@@ -1,5 +1,6 @@
 #include "network_index.h"
 #include "../fs/drive_kind.h"
+#include "../fs/wsl_path.h"
 #include "network_crawl_schedule.h"
 #include "index_config.h"
 #include "index_query.h"
@@ -570,6 +571,9 @@ bool LoadNetworkRootsFile(const std::wstring& path, std::vector<std::wstring>& r
             SetError(error, L"网络索引配置包含无效的服务器文件夹");
             return false;
         }
+        // A WSL root added before 1.0.57 is left out: crawling and watching it
+        // kept the distribution running and `wsl --shutdown` waiting (#360).
+        if (pulse::fs::IsWslPath(root)) continue;
         if (std::none_of(parsed.begin(), parsed.end(), [&](const auto& existing) {
                 return EqualPath(existing, root);
             })) parsed.push_back(std::move(root));
@@ -1107,6 +1111,10 @@ bool NetworkIndex::AddRoot(const std::wstring& raw, std::wstring* error) {
     const std::wstring path = NormalizeNetworkRoot(raw);
     if (path.empty()) {
         SetError(error, L"请选择服务器共享中的文件夹（UNC 路径）");
+        return false;
+    }
+    if (pulse::fs::IsWslPath(path)) {
+        SetError(error, L"WSL 中的文件不能加入网络索引");
         return false;
     }
     std::lock_guard<std::mutex> lock(mu_);

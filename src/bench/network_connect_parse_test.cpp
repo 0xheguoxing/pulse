@@ -3,6 +3,7 @@
 #include "../app/lan_device.h"
 #include "../app/network_recent.h"
 #include "../app/server_address.h"
+#include "../fs/wsl_path.h"
 
 #include <cstdio>
 #include <string>
@@ -130,12 +131,26 @@ void LanTests() {
     Check(LanDeviceKind(LanDevice{L"DESKTOP-7", L"DESKTOP-7", L"", L"", 2}) == pulse::app::kLanKindPc, "windows pc");
     Check(LanDeviceKind(LanDevice{L"dsp", L"", L"", L"DSP", 2}) == pulse::app::kLanKindPc, "ds without digit is not a nas");
 }
+void WslTests() {
+    using pulse::fs::IsWslPath;
+    Check(IsWslPath(L"\\\\wsl$\\Ubuntu\\home"), "wsl$ share");
+    Check(IsWslPath(L"\\\\WSL.LocalHost\\Debian"), "wsl.localhost, any case");
+    Check(IsWslPath(L"\\\\?\\UNC\\wsl.localhost\\Ubuntu"), "long UNC form");
+    Check(IsWslPath(L"//wsl$/Ubuntu/etc"), "forward slashes");
+    Check(IsWslPath(L"\\\\wsl$"), "bare server");
+    Check(!IsWslPath(L"\\\\wsl\\share"), "a server named wsl is a server");
+    Check(!IsWslPath(L"\\\\wsl.localhost.example\\x"), "longer host name");
+    Check(!IsWslPath(L"\\\\ds920\\wsl$"), "share named wsl$");
+    Check(!IsWslPath(L"C:\\wsl$"), "local folder");
+    Check(!IsWslPath(L""), "empty");
+}
 }  // namespace
 
 int main() {
     ParseTests();
     RecentTests();
     LanTests();
+    WslTests();
     std::printf("network_connect_parse_test: %d passed, %d failed\n", g_passes, g_failures);
     return g_failures ? 1 : 0;
 }
