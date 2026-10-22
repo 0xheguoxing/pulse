@@ -181,7 +181,7 @@ int main() {
             "broken junction retains its immediate destination");
     }
     auto cancelled = entries;
-    for (auto& entry : cancelled) entry.link_destination.clear();
+    for (auto& entry : cancelled) entry.link_destination = std::wstring();
     app::ResolveLinksInPlace(root.wstring(), cancelled, [] { return true; });
     bool untouched = true;
     for (const auto& entry : cancelled) untouched = untouched && entry.link_destination.empty();
