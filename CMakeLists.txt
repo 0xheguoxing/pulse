@@ -614,6 +614,14 @@ target_link_options(pulse PRIVATE /MAP)
         d3d11 d2d1 dwrite dxgi dcomp dwmapi shcore ole32 shell32 uuid comctl32 advapi32 shlwapi version windowscodecs gdi32 netapi32 mpr bcrypt pulse_crash_reporter)
     target_link_libraries(pulse PRIVATE propsys oleaut32)  # shell_window_registry.cpp
     target_link_libraries(pulse PRIVATE winhttp crypt32 secur32)
+    # System DLLs the first frame never calls: delay-loading them takes them
+    # and their own imports out of the loader's work at every cold start.
+    target_link_libraries(pulse PRIVATE delayimp)
+    target_link_options(pulse PRIVATE
+        /DELAYLOAD:version.dll /DELAYLOAD:netapi32.dll /DELAYLOAD:mpr.dll
+        /DELAYLOAD:winhttp.dll /DELAYLOAD:crypt32.dll /DELAYLOAD:secur32.dll
+        /DELAYLOAD:setupapi.dll /DELAYLOAD:cfgmgr32.dll /DELAYLOAD:rstrtmgr.dll
+        /DELAYLOAD:winmm.dll)
     target_link_libraries(pulse PRIVATE pulse_localization pulse_text)
     pulse_enable_lumatext(pulse)
     pulse_add_version_resource(pulse "Pulse file manager" "pulse" "pulse.exe")
