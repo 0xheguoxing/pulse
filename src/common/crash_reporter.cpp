@@ -149,19 +149,24 @@ std::wstring EventStemFromFile(std::wstring name) {
     return name;
 }
 
-void RotateDiagnostics(const std::wstring& root, HANDLE stop = nullptr) {
-    if (root.empty()) return;
+// Returns false when reports over the budget could not be removed yet (a
+// writer or another sweep holds them) and the sweep should run again.
+bool RotateDiagnostics(const std::wstring& root, HANDLE stop = nullptr) {
+    if (root.empty()) return true;
     ScopedHandle retention_lock{CreateFileW(JoinPath(root, L"retention.lock").c_str(),
         GENERIC_WRITE | DELETE, 0, nullptr, OPEN_ALWAYS,
         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, nullptr)};
-    if (retention_lock.value == INVALID_HANDLE_VALUE) return;
+    if (retention_lock.value == INVALID_HANDLE_VALUE) return false;
     std::map<std::wstring, DiagnosticEvent> grouped;
     WIN32_FIND_DATAW data{};
     HANDLE find = FindFirstFileW(JoinPath(root, L"*").c_str(), &data);
-    if (find == INVALID_HANDLE_VALUE) return;
+    if (find == INVALID_HANDLE_VALUE) {
+        const DWORD error = GetLastError();
+        return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+    }
     ScopedFind find_guard{find};
     do {
-        if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0) return;
+        if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0) return true;
         if (data.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) continue;
         const std::wstring name = data.cFileName;
         if (!name.ends_with(L".json") && !name.ends_with(L".dmp") &&
@@ -173,7 +178,7 @@ void RotateDiagnostics(const std::wstring& root, HANDLE stop = nullptr) {
         event.bytes += size.QuadPart;
         event.modified = (std::max)(event.modified, FileTimeValue(data.ftLastWriteTime));
     } while (FindNextFileW(find, &data));
-    if (GetLastError() != ERROR_NO_MORE_FILES) return;
+    if (GetLastError() != ERROR_NO_MORE_FILES) return false;
 
     std::vector<DiagnosticEvent> events;
     events.reserve(grouped.size());
@@ -186,32 +191,33 @@ void RotateDiagnostics(const std::wstring& root, HANDLE stop = nullptr) {
         return left.modified < right.modified;
     });
     size_t remaining = events.size();
+    bool settled = true;
     for (const auto& event : events) {
-        if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0) return;
+        if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0) return true;
         // Keep the newest report even when it alone exceeds the byte budget.
         if (&event == &events.back()) break;
         if (remaining <= kMaxEvents && total <= kMaxDiagnosticBytes) break;
         const std::wstring lock_path = JoinPath(root, event.stem + L".writing");
         HANDLE lock = CreateFileW(lock_path.c_str(), GENERIC_WRITE | DELETE, 0, nullptr,
             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
-        if (lock == INVALID_HANDLE_VALUE) continue;
+        if (lock == INVALID_HANDLE_VALUE) { settled = false; continue; }
         ScopedHandle event_guard{lock};
         // Refresh the group after taking its lease: enumeration may have overlapped
         // a writer that closed its dump before creating the metadata.
         std::vector<std::wstring> paths;
         WIN32_FIND_DATAW current{};
         HANDLE scan = FindFirstFileW(JoinPath(root, event.stem + L".*").c_str(), &current);
-        if (scan == INVALID_HANDLE_VALUE) continue;
+        if (scan == INVALID_HANDLE_VALUE) { settled = false; continue; }
         ScopedFind scan_guard{scan};
         do {
-        if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0) return;
+        if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0) return true;
             const std::wstring_view name(current.cFileName);
             if (!(current.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) &&
                 (name.ends_with(L".json") || name.ends_with(L".dmp") || name.ends_with(L".log")))
                 paths.push_back(JoinPath(root, name));
         } while (FindNextFileW(scan, &current));
         const DWORD scan_error = GetLastError();
-        if (scan_error != ERROR_NO_MORE_FILES) continue;
+        if (scan_error != ERROR_NO_MORE_FILES) { settled = false; continue; }
         bool removed = true;
         for (const auto& path : paths) {
             WIN32_FILE_ATTRIBUTE_DATA attributes{};
@@ -225,18 +231,22 @@ void RotateDiagnostics(const std::wstring& root, HANDLE stop = nullptr) {
             } else if (GetLastError() != ERROR_FILE_NOT_FOUND) removed = false;
         }
         if (removed) --remaining;
+        else settled = false;
     }
+    return settled;
 }
 
 DWORD WINAPI MaintenanceMain(void* argument) {
     std::unique_ptr<std::shared_ptr<Maintenance>> holder(static_cast<std::shared_ptr<Maintenance>*>(argument));
     auto state = *holder; holder.reset();
     const HANDLE events[]{state->stop, state->wake};
+    bool settled = false;
     for (;;) {
-        const DWORD wait = WaitForMultipleObjects(2, events, FALSE, 1000);
+        // Retry sharing violations each second even when no new report
+        // requests a sweep; once settled, only a new report wakes it.
+        const DWORD wait = WaitForMultipleObjects(2, events, FALSE, settled ? INFINITE : 1000);
         if (wait == WAIT_OBJECT_0 || wait == WAIT_FAILED) break;
-        // Retry sharing violations even when no new report requests a sweep.
-        try { RotateDiagnostics(state->root, state->stop); } catch (...) {}
+        try { settled = RotateDiagnostics(state->root, state->stop); } catch (...) { settled = false; }
     }
     return 0;
 }
