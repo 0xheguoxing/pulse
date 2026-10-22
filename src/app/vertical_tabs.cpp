@@ -4,6 +4,7 @@
 #include "last_tab_close.h"
 #include "favorites_bar.h"
 #include "../common/localization.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 #include <utility>
 #include <cwchar>

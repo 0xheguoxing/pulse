@@ -12,10 +12,12 @@
 #include "../fs/bounded_enumeration.h"
 #include "../fs/fs_recycle.h"
 #include "../fs/fs_net_cache.h"
+#include "../fs/fs_watch.h"
 #include "../common/runtime_log.h"
 #include <cstdlib>
 #include <exception>
 #include <string>
+#include "startup_trace.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -196,6 +198,7 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
     if (item.load_paths && !fs::IsVirtualPath(item.path) && !fs::IsUncPath(item.path))
         res.git_root = FindGitRoot(item.path);
     auto t0 = std::chrono::steady_clock::now();
+    pulse::app::startup_trace::Mark("worker_listing");
     auto entries = std::make_shared<std::vector<fs::DirEntry>>();
     if (item.load_paths) {
         entries->reserve(item.paths.size());
@@ -265,6 +268,10 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
             return res;
         }
     } else {
+        // A watch starting on this folder arms first (briefly bounded): its
+        // arm report then needs no second listing (fs::ArmedAt).
+        fs::WaitForStartingWatch(item.path, 2, fs::IsUncPath(item.path) ? 150 : 10);
+        res.listed_at = fs::WatchClock();
         try {
             struct Listing {
                 std::vector<fs::DirEntry> entries;
@@ -392,6 +399,7 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
         }
     }
 
+    pulse::app::startup_trace::Mark("worker_sorted");
     res.snapshot = std::move(entries);
     if (item.load_paths || fs::IsRecycleViewPath(item.path))
         fs::QueryDirectoryIdentity(item.path, res.identity);

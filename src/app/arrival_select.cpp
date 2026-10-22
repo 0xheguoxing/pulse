@@ -1,6 +1,7 @@
 // arrival_select.cpp - see arrival_select.h.
 #include "arrival_select.h"
 #include "app_internal.h"
+#include "../ui/ui_renderer.h"
 #include "window_registry.h"
 #include "pane_layout.h"
 #include "../common/path_utils.h"

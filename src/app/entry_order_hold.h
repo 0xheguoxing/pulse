@@ -1,6 +1,6 @@
 #pragma once
 #include "../fs/fs_enum.h"
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include <string>
 #include <vector>
 
@@ -48,6 +48,13 @@ std::vector<fs::DirEntry> KeepEntryOrder(const std::vector<fs::DirEntry>& shown,
                                          const std::vector<fs::DirEntry>& fresh,
                                          const std::vector<EntryRename>& renames,
                                          ui::SortColumn col, ui::SortDirection dir);
+
+// True when `fresh` lists the rows shown in the same order and groups, so
+// KeepEntryOrder would return `fresh` unchanged. A rescan of an unchanged
+// folder takes this path instead of rebuilding the listing.
+bool SameEntryOrder(const std::vector<fs::DirEntry>& shown,
+                    const std::vector<fs::DirEntry>& fresh,
+                    ui::SortColumn col, ui::SortDirection dir);
 
 // Points selection names at their new names when `fresh` shows the rename
 // landed (the old name is gone, the new one present), so a refresh that

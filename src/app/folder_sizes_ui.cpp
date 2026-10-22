@@ -7,6 +7,7 @@
 #include "app_runtime.h"
 #include "entry_group.h"
 #include "entry_sort.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 #include <unordered_set>
 
@@ -133,6 +134,7 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
         if ((labels || sorted || probe_rows.size() > probed_before) && !pane.path.empty() && !fs::IsVirtualPath(pane.path))
             roots.push_back(pane.path);
     }
+    s.folderSizes.SetChangeNotify(ServiceWindow(s), WM_UI_KICK);
     if (!s.isolatedTest && !s.shot.active)
         s.folderSizes.SetCachePath([] {
             const auto dir = app::GetPulseDataDir();

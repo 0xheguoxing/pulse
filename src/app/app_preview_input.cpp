@@ -1,4 +1,5 @@
 #include "app_input.h"
+#include "../ui/ui_renderer.h"
 #include <windowsx.h>
 #include "../ui/preview_grab_cursor.h"
 

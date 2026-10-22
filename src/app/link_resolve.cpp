@@ -149,10 +149,10 @@ bool IsInstallerCachePath(const std::wstring& path, const std::wstring& windows_
 }
 
 bool ResolveLink(const std::wstring& lnk_path, fs::DirEntry& e) {
-    e.link_destination.clear();
-    e.link_target.clear();
+    e.link_destination = std::wstring();
+    e.link_target = std::wstring();
     e.link_target_size = 0;
-    e.link_target_mtime = {};
+    e.link_target_mtime = FILETIME{};
     e.link_target_is_dir = false;
     thread_local ThreadCom com;
     if (FAILED(com.hr)) return false;
@@ -210,7 +210,7 @@ void ResolveLinksInPlace(const std::wstring& parent_path,
         fs::DirEntry& e = entries[i];
         const bool reparse = fs::ClassifyLink(e.attrs, e.reparse_tag) != fs::LinkKind::None;
         if (!reparse && (e.is_dir || (!HasLnkSuffix(e.name) && !HasUrlSuffix(e.name)))) continue;
-        e.link_destination.clear();
+        e.link_destination = std::wstring();
         if (e.cloud_recall || e.change_record_only) continue;
         std::wstring full = e.full_path;
         if (full.empty()) {

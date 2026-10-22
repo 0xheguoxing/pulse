@@ -7,6 +7,7 @@
 #include "settings_transfer_ui.h"
 #include "../common/localization.h"
 #include "../common/runtime_log.h"
+#include "../ui/ui_renderer.h"
 #include <cstdio>
 
 namespace pulse {

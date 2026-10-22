@@ -9,6 +9,7 @@
 #include "../ui/command_icons.h"
 #include "../ui/group_wheel.h"
 #include "../ui/ui_motion.h"
+#include "../ui/ui_renderer.h"
 
 #include <windowsx.h>
 #include <algorithm>

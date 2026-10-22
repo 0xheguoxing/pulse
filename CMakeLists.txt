@@ -469,6 +469,44 @@ pulse_enable_lumatext(pulse_file_operation_authorization_dialog_test)
 add_executable(pulse_command_icon_test src/bench/command_icon_test.cpp)
 target_link_libraries(pulse_command_icon_test PRIVATE d2d1 dwrite dwmapi ole32 windowscodecs user32)
 
+# Sources (from the given list) whose includes reach app_state.h. Headers that
+# include it are found transitively, so new wrappers are picked up on configure.
+function(pulse_collect_app_state_sources out_var)
+    file(GLOB _hdrs "${CMAKE_CURRENT_SOURCE_DIR}/src/app/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/*.h")
+    set(_seeds "app_state")
+    set(_grew TRUE)
+    while(_grew)
+        set(_grew FALSE)
+        string(JOIN "|" _alt ${_seeds})
+        foreach(_h IN LISTS _hdrs)
+            get_filename_component(_name "${_h}" NAME_WE)
+            if(NOT _name IN_LIST _seeds)
+                file(STRINGS "${_h}" _hit REGEX "#[ \t]*include[ \t]*\"([^\"]*/)?(${_alt})\\.h\"")
+                if(_hit)
+                    list(APPEND _seeds "${_name}")
+                    set(_grew TRUE)
+                endif()
+            endif()
+        endforeach()
+    endwhile()
+    string(JOIN "|" _alt ${_seeds})
+    set(_out)
+    foreach(_src IN LISTS ARGN)
+        if(_src MATCHES "\\.cpp$")
+            if(IS_ABSOLUTE "${_src}")
+                set(_path "${_src}")
+            else()
+                set(_path "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
+            endif()
+            file(STRINGS "${_path}" _hit REGEX "#[ \t]*include[ \t]*\"([^\"]*/)?(${_alt})\\.h\"")
+            if(_hit)
+                list(APPEND _out "${_src}")
+            endif()
+        endif()
+    endforeach()
+    set(${out_var} "${_out}" PARENT_SCOPE)
+endfunction()
+
 # ---- Pulse.exe: main UI process ----
 file(GLOB_RECURSE PULSE_APP_SOURCES CONFIGURE_DEPENDS
     src/app/*.cpp src/ui/*.cpp src/fs/*.cpp src/ops/*.cpp src/ipc/*.cpp src/index/*.cpp)
@@ -490,6 +528,17 @@ if(NOT PULSE_WITH_SELFTEST)
     list(FILTER PULSE_APP_SOURCES EXCLUDE REGEX "selftest_1b2\\.cpp$")
     list(FILTER PULSE_APP_SOURCES EXCLUDE REGEX "index_(engine|engine_pinyin|visibility|mft|paths|delta|folder_sizes)\\.cpp$")
 endif()
+# GUI probes (PULSE_TEST_*_FLOW with --shot) and the --picker-*-test suites.
+# Development builds keep them even with SELFTEST=OFF because test scripts
+# drive them there; build_release.bat turns them off for the shipped exe.
+option(PULSE_WITH_TEST_HOOKS "Build GUI probes and --picker-*-test suites into Pulse.exe" ON)
+set(PULSE_TEST_HOOKS_EFFECTIVE ${PULSE_WITH_TEST_HOOKS})
+if(PULSE_WITH_SELFTEST)
+    set(PULSE_TEST_HOOKS_EFFECTIVE ON)
+endif()
+if(NOT PULSE_TEST_HOOKS_EFFECTIVE)
+    list(FILTER PULSE_APP_SOURCES EXCLUDE REGEX "(navigation_audit|selection_input|folder_size_experience|folder_thumbnail)_probe\\.cpp$")
+endif()
 list(APPEND PULSE_APP_SOURCES src/index/network_agent_client.cpp)
 if(PULSE_APP_SOURCES)
     add_executable(pulse WIN32 ${PULSE_APP_SOURCES})
@@ -500,7 +549,59 @@ if(PULSE_APP_SOURCES)
         target_sources(pulse PRIVATE src/bench/quick_preview_audit_test.cpp)
         target_sources(pulse PRIVATE src/bench/tray_completion_test.cpp)
     endif()
-    target_sources(pulse PRIVATE src/app/pulse.rc src/common/ffmpeg_tool.cpp src/bench/file_picker_dialog_test.cpp src/bench/file_picker_operations_test.cpp)
+    target_sources(pulse PRIVATE src/app/pulse.rc src/common/ffmpeg_tool.cpp)
+    if(PULSE_TEST_HOOKS_EFFECTIVE)
+        # Only app_main.cpp dispatches to the hooks; scoping the define to it
+        # keeps a toggle from rebuilding every pulse object.
+        set_source_files_properties(src/app/app_main.cpp PROPERTIES COMPILE_DEFINITIONS PULSE_WITH_TEST_HOOKS=1)
+        target_sources(pulse PRIVATE src/bench/file_picker_dialog_test.cpp src/bench/file_picker_operations_test.cpp)
+    endif()
+    # Settings pages, editors and dialogs are not on a hot path: build them
+    # for size (/Os /Oi- is /O1 without the D9025 clash with /O2). Listing,
+    # sorting, drawing the file list and input stay at /O2.
+    set(PULSE_SIZE_SOURCES
+        src/ui/ui_settings_core.cpp src/ui/ui_settings_view.cpp src/ui/ui_settings_layout.cpp
+        src/ui/ui_settings_context.cpp src/ui/ui_settings_packs.cpp src/ui/ui_settings_shortcuts.cpp
+        src/ui/ui_settings_sysctx.cpp src/ui/file_operation_dialog.cpp src/ui/folder_picker_dialog.cpp
+        src/ui/quick_access_editor.cpp src/ui/shortcut_help.cpp src/ui/tag_manager_panel.cpp
+        src/ui/toolbar_picker.cpp src/app/settings_ui.cpp src/app/settings_controller.cpp
+        src/app/about_info.cpp src/app/shell_integration_registry.cpp src/app/system_ctx_registry.cpp)
+    set_source_files_properties(${PULSE_SIZE_SOURCES} PROPERTIES COMPILE_OPTIONS "/Os;/Oi-")
+    # Header parsing is most of pulse.exe's compile time: app-layer sources
+    # re-parse app_state.h (~60 project headers), the rest the SDK and STL.
+    # Two PCHs cover both groups. The grouping only affects speed: a source
+    # outside a group compiles exactly as before, just without that PCH.
+    option(PULSE_USE_PCH "Build pulse.exe with precompiled headers" ON)
+    if(PULSE_USE_PCH)
+        # These redefine NTDDI_VERSION or use INITGUID before <windows.h>. The
+        # size-optimised sources can't share a PCH built at /O2 (C4653).
+        set(_pulse_no_pch src/ui/audio_waveform.cpp src/ui/preview_format_catalog.cpp
+            src/ui/video_preview.cpp src/app/drive_verbs.cpp ${PULSE_SIZE_SOURCES})
+        target_precompile_headers(pulse PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/common/pch_system.h")
+        set_source_files_properties(${_pulse_no_pch} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+        if(CMAKE_GENERATOR MATCHES "Ninja")
+            # CMake allows one PCH per target, so the app_state.h one is wired
+            # by hand. Options are limited to pulse: tests compile some of
+            # these sources too.
+            pulse_collect_app_state_sources(_pulse_app_pch ${PULSE_APP_SOURCES})
+            list(TRANSFORM _pulse_no_pch PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/" OUTPUT_VARIABLE _pulse_no_pch_abs)
+            list(REMOVE_ITEM _pulse_app_pch ${_pulse_no_pch} ${_pulse_no_pch_abs})
+            list(FILTER _pulse_app_pch EXCLUDE REGEX "pch_app_state\\.cpp$")
+            set(_pch_h "${CMAKE_CURRENT_SOURCE_DIR}/src/app/pch_app_state.h")
+            set(_pch_bin "${CMAKE_CURRENT_BINARY_DIR}/pulse_app_state.pch")
+            set(_in_pulse "$<STREQUAL:$<TARGET_PROPERTY:NAME>,pulse>")
+            set_property(SOURCE src/app/pch_app_state.cpp APPEND PROPERTY COMPILE_OPTIONS
+                "$<${_in_pulse}:/Yc${_pch_h}>" "$<${_in_pulse}:/FI${_pch_h}>" "$<${_in_pulse}:/Fp${_pch_bin}>")
+            set_property(SOURCE src/app/pch_app_state.cpp PROPERTY OBJECT_OUTPUTS "${_pch_bin}")
+            set_property(SOURCE ${_pulse_app_pch} APPEND PROPERTY COMPILE_OPTIONS
+                "$<${_in_pulse}:/Yu${_pch_h}>" "$<${_in_pulse}:/FI${_pch_h}>" "$<${_in_pulse}:/Fp${_pch_bin}>")
+            set_property(SOURCE ${_pulse_app_pch} APPEND PROPERTY OBJECT_DEPENDS "${_pch_bin}")
+            set_source_files_properties(src/app/pch_app_state.cpp ${_pulse_app_pch}
+                PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+            list(LENGTH _pulse_app_pch _n)
+            message(STATUS "pulse: ${_n} sources use the app_state.h PCH")
+        endif()
+    endif()
     include(cmake/release_notes.cmake)
     pulse_embed_release_notes(pulse)
     set_property(SOURCE src/app/pulse.rc APPEND PROPERTY OBJECT_DEPENDS
@@ -537,6 +638,14 @@ target_link_options(pulse PRIVATE /MAP)
     target_link_libraries(pulse PRIVATE propsys oleaut32)  # shell_window_registry.cpp
     target_link_libraries(pulse PRIVATE cfgmgr32)  # device_shell.cpp: portable device presence
     target_link_libraries(pulse PRIVATE winhttp crypt32 secur32)
+    # System DLLs the first frame never calls: delay-loading them takes them
+    # and their own imports out of the loader's work at every cold start.
+    target_link_libraries(pulse PRIVATE delayimp)
+    target_link_options(pulse PRIVATE
+        /DELAYLOAD:version.dll /DELAYLOAD:netapi32.dll /DELAYLOAD:mpr.dll
+        /DELAYLOAD:winhttp.dll /DELAYLOAD:crypt32.dll /DELAYLOAD:secur32.dll
+        /DELAYLOAD:setupapi.dll /DELAYLOAD:cfgmgr32.dll /DELAYLOAD:rstrtmgr.dll
+        /DELAYLOAD:winmm.dll)
     target_link_libraries(pulse PRIVATE pulse_localization pulse_text)
     pulse_enable_lumatext(pulse)
     pulse_add_version_resource(pulse "Pulse file manager" "pulse" "pulse.exe")
@@ -1037,6 +1146,12 @@ target_include_directories(pulse_sqlite PUBLIC third_party/sqlite)
 add_library(pulse_sqlite_core STATIC third_party/sqlite/sqlite3.c)
 target_compile_definitions(pulse_sqlite_core PRIVATE ${PULSE_SQLITE_DEFINITIONS})
 target_include_directories(pulse_sqlite_core PUBLIC third_party/sqlite)
+# Off the hot path in pulse.exe (spooling, legacy tables): build it for size.
+# /Os, /Oi- and /Ob1 rather than /O1, which would draw D9025 against /O2; the
+# explicit /Ob2 of the default C release flags goes for the same reason (/O2
+# implies it).
+string(REPLACE "/Ob2" "" CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
+target_compile_options(pulse_sqlite_core PRIVATE /Os /Oi- /Ob1)
 set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_OPTIONS "/W0;/TC")
 
 add_executable(pulse_filename_pinyin_test

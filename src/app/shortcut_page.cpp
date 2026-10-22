@@ -1,4 +1,5 @@
 #include "shortcut_page.h"
+#include "../ui/ui_renderer.h"
 
 #include "app_internal.h"
 #include "global_search_controller.h"

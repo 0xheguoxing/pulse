@@ -1481,8 +1481,8 @@ bool FluentMenu::RenderTip(const std::wstring& text) {
                     (std::max)(1.0f, w - 20.0f * scale_), row_h, &layout)) || !layout.get()) continue;
             layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
             layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            dc->DrawTextLayout(D2D1::Point2F(10.0f * scale_, top), layout.get(), brush.get(),
-                               D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            compositor_->DrawTextLayout(D2D1::Point2F(10.0f * scale_, top), layout.get(), brush.get(),
+                                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
     }
     const HRESULT hr = dc->EndDraw();

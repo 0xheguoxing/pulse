@@ -1,4 +1,5 @@
 #include "window_factory.h"
+#include "../ui/ui_renderer.h"
 
 #include "app_messages.h"
 #include "app_state.h"

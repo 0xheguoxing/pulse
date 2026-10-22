@@ -7,6 +7,7 @@
 #include "app_network_page.h"
 #include "shortcut_page.h"
 #include "keymap.h"
+#include "../ui/ui_renderer.h"
 #include <memory>
 #include <thread>
 #include "system_ctx_model.h"
@@ -260,9 +261,13 @@ void SyncVisibleWatches(AppState& s) {
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
     AppCore& core = s.core;
-    s.watches.Sync(paths, [&core](const std::wstring& path, bool overflow, std::vector<fs::DirNotifyEvent> events) {
+    const HWND service = ServiceWindow(s);
+    s.watches.Sync(paths, [&core, service](const std::wstring& path, bool overflow, std::vector<fs::DirNotifyEvent> events) {
         std::lock_guard<std::mutex> lock(core.notify_mu);
+        const bool first = core.notify_queue.empty();
         app::QueueDirNotify(core.notify_queue, path, overflow, std::move(events));
+        // The tick drains the whole queue, so one wake per batch is enough.
+        if (first) PostMessageW(service, WM_UI_KICK, 0, 0);
     });
 }
 

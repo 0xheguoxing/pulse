@@ -402,12 +402,12 @@ void NotificationToast::Draw(Compositor& compositor, const Theme& theme, float s
                                                 line_mid + icon * 0.5f), pal.plate);
     ComPtr<ID2D1SolidColorBrush> brush;
     if (FAILED(dc->CreateSolidColorBrush(pal.text, &brush))) return;
-    if (title.get()) dc->DrawTextLayout(D2D1::Point2F(card_.left + text_x, top + px(12.0f)), title.get(), brush.get(),
-                                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    if (title.get()) compositor.DrawTextLayout(D2D1::Point2F(card_.left + text_x, top + px(12.0f)), title.get(),
+                                               brush.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
     if (body.get() && body_h > 0.0f) {
         brush->SetColor(pal.text_secondary);
-        dc->DrawTextLayout(D2D1::Point2F(card_.left + text_x, top + px(12.0f) + title_h + px(2.0f)), body.get(),
-                           brush.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        compositor.DrawTextLayout(D2D1::Point2F(card_.left + text_x, top + px(12.0f) + title_h + px(2.0f)),
+                                  body.get(), brush.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
     POINT cursor{};
     float cx = -1.0f, cy = -1.0f;
@@ -501,7 +501,7 @@ void NotificationToast::DrawSnack(Compositor& compositor, const Theme& theme, fl
         layout->SetMaxWidth(w);
         layout->SetMaxHeight(h);
         brush->SetColor(color);
-        dc->DrawTextLayout(D2D1::Point2F(x, y), layout, brush.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        compositor.DrawTextLayout(D2D1::Point2F(x, y), layout, brush.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
     };
 
     float x = left + px(14.0f);
@@ -616,14 +616,14 @@ void NotificationToast::DrawGhosts(Compositor& compositor, const SnackPalette& p
         const float title_w = (std::min)(room, LineWidth(title.get()));
         if (title.get() && title_w > 0.0f) {
             brush->SetColor(pal.text);
-            dc->DrawTextLayout(D2D1::Point2F(x, plate.top), title.get(), brush.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            compositor.DrawTextLayout(D2D1::Point2F(x, plate.top), title.get(), brush.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
         if (!g.detail.empty() && room - title_w > px(24.0f)) {
             auto detail = Line(compositor, L" \u00B7 " + g.detail, compositor.TextFormat(), room - title_w, h, false);
             if (detail.get()) {
                 brush->SetColor(pal.text_secondary);
-                dc->DrawTextLayout(D2D1::Point2F(x + title_w, plate.top), detail.get(), brush.get(),
-                                   D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                compositor.DrawTextLayout(D2D1::Point2F(x + title_w, plate.top), detail.get(), brush.get(),
+                                          D2D1_DRAW_TEXT_OPTIONS_CLIP);
             }
         }
     }

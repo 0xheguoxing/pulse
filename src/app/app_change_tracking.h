@@ -1,6 +1,6 @@
 #pragma once
 #include "../index/change_tracking_client.h"
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include <unordered_map>
 
 namespace pulse {

@@ -5,6 +5,7 @@
 #include "../common/localization.h"
 #include "content_scope_mode.h"
 #include "keymap.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 
 namespace pulse {

@@ -9,6 +9,7 @@
 #include "app_prompts.h"
 #include "content_scope_mode.h"
 #include "content_pack_ui.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>

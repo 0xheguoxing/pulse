@@ -5,7 +5,7 @@
 
 #include "../ui/ui_compositor.h"
 #include "../ui/notification_toast.h"
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include "../ui/fluent_menu.h"
 #include "../ui/drag_drop.h"
 #include "../ui/file_operation_dialog.h"
@@ -252,7 +252,10 @@ struct AppState : AppCoreOwner {
     HWND hwnd = nullptr;
     ui::Compositor compositor;
     ui::NotificationToast notification_toast;
-    ui::MainRenderer renderer{core.render_caches};
+    // Held through a pointer so this header needs only ui_view_model.h; sources
+    // that call the renderer include ui_renderer.h.
+    ui::MainRendererPtr renderer_owner = ui::MakeMainRenderer(core.render_caches);
+    ui::MainRenderer& renderer = *renderer_owner;
     // Vsync-paced frames while highlight glides / list shifts run (frame_pump.h).
     app::FramePump framePump;
     ui::QuickPreviewWindow quickPreview;

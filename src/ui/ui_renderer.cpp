@@ -30,6 +30,14 @@ MainRenderer::MainRenderer()
 
 MainRenderer::MainRenderer(RenderCaches& caches) : caches_(caches) {}
 
+void MainRendererDeleter::operator()(MainRenderer* renderer) const noexcept {
+    delete renderer;
+}
+
+MainRendererPtr MakeMainRenderer(RenderCaches& caches) {
+    return MainRendererPtr(new MainRenderer(caches));
+}
+
 void MainRenderer::SetCompositor(Compositor* comp) {
     paneHeaderStroke_.reset();
     link_arrow_geometry_.reset();
@@ -43,6 +51,8 @@ void MainRenderer::SetCompositor(Compositor* comp) {
     exclude_empty_svg_.reset();
     fluent_svgs_.clear();
     fluent_svg_failed_.clear();
+    fluent_bitmaps_.clear();
+    fluent_raster_dc_.reset();
     empty_state_svg_dc_.reset();
     app_icon_bitmaps_.clear();
     app_icon_dc_ = nullptr;
@@ -872,10 +882,98 @@ void MainRenderer::DrawButton(const D2D1_RECT_F& rc, const Theme& theme, const D
         size_factor);
 }
 
+namespace {
+void UnionInto(D2D1_RECT_F& r, bool& any, const D2D1_RECT_F& a) {
+    if (a.right <= a.left || a.bottom <= a.top) return;
+    if (!any) {
+        r = a;
+        any = true;
+        return;
+    }
+    r.left = std::min(r.left, a.left);
+    r.top = std::min(r.top, a.top);
+    r.right = std::max(r.right, a.right);
+    r.bottom = std::max(r.bottom, a.bottom);
+}
+} // namespace
+
+bool MainRenderer::OverlayUp(const WindowViewModel& vm) const {
+    // Everything the tail of Render floats over the window, and the hover card.
+    return vm.settings_open || vm.pane.marquee_active || vm.content_drop || vm.drag_ghost.on ||
+           !vm.drag_badge.empty() || vm.change_popover.visible ||
+           (vm.address_editing && !vm.address_suggestions.empty()) ||
+           !vm.filter_tag_suggestions.empty() || vm.teach.visible || !vm.tooltip_text.empty() ||
+           group_wheel_.Visible() || window_overview_.IsOpen() || window_switcher_.IsOpen() ||
+           caret_due_ms_ != 0 || hover_frame_ms_ != 0 ||
+           hover_card_rect_.right > hover_card_rect_.left;
+}
+
+bool MainRenderer::NonHoverMotionActive() const {
+    // TickMotion without the list hover plates.
+    const uint64_t m = motion::NowMs();
+    const ULONGLONG now = GetTickCount64();
+    if (sidebar_pill_.Active(m) || settings_nav_pill_.Active(m) || settings_nav_hover_.Active(m) ||
+        collapse_anim_ || details_anim_)
+        return true;
+    for (const auto& motion : list_shift_) if (motion.Active(m)) return true;
+    for (const auto& motion : view_morph_) if (motion.Active(m)) return true;
+    for (const auto& motion : link_pill_motion_) if (motion.Active(m)) return true;
+    if ((task_pill_done_at_ != 0 && now - task_pill_done_at_ < task_pill_hold_ms_ + 400) ||
+        (task_pill_pop_at_ != 0 && now - task_pill_pop_at_ < kTaskPillPopMs + 40))
+        return true;
+    if (ticks_active_ || motion_frame_wanted_) return true;
+    if (m < tab_motion_until_ || m < row_leave_until_ || m < mtime_flash_until_ ||
+        m < splitter_motion_until_ || m < spring_ring_until_)
+        return true;
+    return list_loading_active_ || folder_size_anim_active_ || task_pill_spinning_;
+}
+
+bool MainRenderer::PartialRedrawSafe(const WindowViewModel& vm) const {
+    return !last_frame_overlay_ && !OverlayUp(vm) && !NonHoverMotionActive();
+}
+
+bool MainRenderer::HoverRowDamage(int pane_index, int old_source, int new_source,
+                                  D2D1_RECT_F* out) const {
+    if (!out || pane_index < 0 || pane_index >= static_cast<int>(drawn_rows_.size())) return false;
+    const auto& rows = drawn_rows_[static_cast<size_t>(pane_index)];
+    if (rows.empty()) return false;
+    D2D1_RECT_F r{};
+    bool any = false;
+    for (const int source : {old_source, new_source}) {
+        if (source < 0) continue;
+        const auto it = std::find_if(rows.begin(), rows.end(),
+                                     [&](const auto& row) { return row.first == source; });
+        if (it == rows.end()) return false;
+        UnionInto(r, any, it->second);
+    }
+    UnionInto(r, any, list_hover_motion_[static_cast<size_t>(pane_index)].Span());
+    if (!any) return false;
+    const float margin = 4.0f * scale_;
+    *out = D2D1::RectF(r.left - margin, r.top - margin, r.right + margin, r.bottom + margin);
+    return true;
+}
+
+bool MainRenderer::HoverMotionDamage(D2D1_RECT_F* out) const {
+    if (!out) return false;
+    const uint64_t m = motion::NowMs();
+    D2D1_RECT_F r{};
+    bool any = false;
+    for (size_t i = 0; i < list_hover_motion_.size(); ++i) {
+        if (!list_hover_motion_[i].Active(m)) continue;
+        if (i >= drawn_rows_.size() || drawn_rows_[i].empty()) return false;
+        UnionInto(r, any, list_hover_motion_[i].Span());
+    }
+    if (!any) return false;
+    const float margin = 4.0f * scale_;
+    *out = D2D1::RectF(r.left - margin, r.top - margin, r.right + margin, r.bottom + margin);
+    return true;
+}
+
 void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
                           const Theme& theme) {
     if (!compositor_ || !compositor_->Dc()) return;
     ++motion_frame_;
+    last_frame_overlay_ = OverlayUp(vm);
     folder_thumbnail_cache_.BeginFrame();
     struct FolderFrameScope {
         FolderThumbnailCache& cache;
@@ -1032,7 +1130,7 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
         plate(px, py, pillW, pillH, pillR);
         DrawIconText(px + 10.0f * scale_, py, 16.0f * scale_, pillH, kIconFolder, L"[]", theme.icon_folder, 0.95f);
         MakeBrush(dc, pal.text, brText_);
-        DrawTabTitle(dc, factory, tabFmt, brText_.get(), ghost.title, px + 30.0f * scale_, py, titleW, pillH, scale_);
+        DrawTabTitle(compositor_, tabFmt, brText_.get(), ghost.title, px + 30.0f * scale_, py, titleW, pillH, scale_);
         if (chipW > 0.0f) {
             MakeBrush(dc, pal.accent, brText_);
             DrawTextRect(dc, smallFmt, brText_.get(), panes, px + 30.0f * scale_ + titleW + 7.0f * scale_, py,
@@ -1301,7 +1399,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         dc->FillEllipse(D2D1::Ellipse(identity.dot, identity.dot_radius, identity.dot_radius), brAccent_.get());
         const float text_x = identity.hit.left + 22.0f * scale_;
         MakeBrush(dc, theme.text, brText_);
-        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), compositor_->HeaderFormat(), brText_.get(),
+        DrawTextEndEllipsis(compositor_, compositor_->HeaderFormat(), brText_.get(),
                             vm.window_identity_name, text_x, 0.0f, identity.hit.right - 6.0f * scale_ - text_x, h);
     } else if (x + nameWidth <= brandRight) {
         MakeBrush(dc, theme.text, brText_);
@@ -1431,7 +1529,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         const float closeReserve = show_close ? (closePad + closeSz + 6.0f * scale_)
                                               : 6.0f * scale_;
         const float titleLeft = left + 24.0f * scale_ + markerReserve;
-        DrawTabTitle(dc, compositor_->DwriteFactory(), compositor_->TabFormat(), brText_.get(),
+        DrawTabTitle(compositor_, compositor_->TabFormat(), brText_.get(),
                      vm.tabs[i].title, titleLeft, tabY,
                      std::max(0.0f, tabW - 24.0f * scale_ - markerReserve - closeReserve), tabH, scale_);
         if (show_close) {
@@ -1652,7 +1750,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         DrawIconText(g.left + 6.0f * scale_, tabY, 16.0f * scale_, tabH, kIconFolder, L"[]",
                      theme.text_secondary, 0.85f);
         MakeBrush(dc, theme.text, brText_);
-        DrawTabTitle(dc, compositor_->DwriteFactory(), compositor_->TabFormat(), brText_.get(),
+        DrawTabTitle(compositor_, compositor_->TabFormat(), brText_.get(),
                      it->title, g.left + 24.0f * scale_, tabY,
                      (std::max)(0.0f, gw - 30.0f * scale_), tabH, scale_);
         dc->PopLayer();
@@ -1906,7 +2004,7 @@ void MainRenderer::DrawTeachBubble(const WindowViewModel& vm, const D2D1_RECT_F&
         body->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         body->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         MakeBrush(dc, theme.text_secondary, brTextSecondary_);
-        dc->DrawTextLayout({t.body.left, t.body.top}, body.get(), brTextSecondary_.get(),
+        compositor_->DrawTextLayout({t.body.left, t.body.top}, body.get(), brTextSecondary_.get(),
                            D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
     fluent::ControlState closeState;
@@ -1970,12 +2068,12 @@ void MainRenderer::DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& f
     const std::wstring status_text = path::FriendlyPathText(vm.status.status_text);
     const float statusWidth = std::min(std::max(0.0f, statusLimit - sb.pad),
         MeasureTextWidth(factory, small_fmt, status_text));
-    DrawTextEndEllipsis(dc, factory, small_fmt, brTextSecondary_.get(), status_text,
+    DrawTextEndEllipsis(compositor_, small_fmt, brTextSecondary_.get(), status_text,
         sb.pad, y, statusWidth, status_height_);
     const float selectionLeft = sb.pad + statusWidth + gap;
     const bool hasTask = vm.status.query_active || !vm.status.task_text.empty() || vm.status.task_progress >= 0.0f;
     const float selectionRight = hasTask ? sb.task.left - gap : rect.right - sb.right_reserved - gap;
-    DrawTextEndEllipsis(dc, factory, small_fmt, brTextSecondary_.get(), vm.status.selection_text,
+    DrawTextEndEllipsis(compositor_, small_fmt, brTextSecondary_.get(), vm.status.selection_text,
         selectionLeft, y, std::max(0.0f, selectionRight - selectionLeft), status_height_);
 
     const float rightReserved = sb.right_reserved;
@@ -2032,7 +2130,7 @@ void MainRenderer::DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& f
         const float trackX=taskRight-trackWidth;
         const float textX=std::max(taskX,trackX-queryGap-textWidth);
         MakeBrush(dc,theme.accent,brAccentText_);
-        DrawTextEndEllipsis(dc,factory,small_fmt,brAccentText_.get(),progress_text,
+        DrawTextEndEllipsis(compositor_, small_fmt,brAccentText_.get(),progress_text,
             textX,y,textWidth,status_height_);
         fluent::ProgressSpec progress;
         progress.bounds=D2D1::RectF(trackX,y,std::min(taskRight,trackX+trackWidth),y+status_height_);
@@ -2222,7 +2320,7 @@ void MainRenderer::DrawTaskPill(const WindowViewModel& vm, const D2D1_RECT_F& ar
         MakeBrush(dc, color, brAccentText_);
         const float text_right = actions_w > 0.0f ? pill.right - actions_w
                                                   : area.right - pad_r + 1.0f;
-        DrawTextEndEllipsis(dc, factory, fmt, brAccentText_.get(), text, text_x, area.top,
+        DrawTextEndEllipsis(compositor_, fmt, brAccentText_.get(), text, text_x, area.top,
                             std::max(0.0f, text_right - text_x), status_height_);
     }
     if (actions_w > 0.0f) {
@@ -2246,7 +2344,7 @@ void MainRenderer::DrawTaskPill(const WindowViewModel& vm, const D2D1_RECT_F& ar
                                     bottom - top, 6.0f * scale_);
             }
             MakeBrush(dc, theme.text, brAccentText_);
-            DrawTextEndEllipsis(dc, factory, fmt, brAccentText_.get(), *labels[i], x + action_pad, area.top,
+            DrawTextEndEllipsis(compositor_, fmt, brAccentText_.get(), *labels[i], x + action_pad, area.top,
                                 widths[i] - action_pad * 2.0f + 1.0f, status_height_);
             x += widths[i];
         }

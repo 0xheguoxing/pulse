@@ -9,6 +9,7 @@
 #include "../common/localization.h"
 #include "../ui/confirm_dialog.h"
 #include "../index/index_config.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 #include <thread>
 

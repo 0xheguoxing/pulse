@@ -1,4 +1,5 @@
 #include "sidebar_tag_drag.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 #include <utility>
 #include <vector>

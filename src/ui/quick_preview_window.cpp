@@ -1544,9 +1544,9 @@ void QuickPreviewWindow::DrawStatusPill(ID2D1DeviceContext* dc, const D2D1_RECT_
     if (fill.get()) dc->FillRoundedRectangle(rounded, fill.get());
     if (line.get()) dc->DrawRoundedRectangle(rounded, line.get(), 1.0f);
     dc->PushAxisAlignedClip(pill, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    dc->DrawTextLayout(D2D1::Point2F(cx - metrics.width * 0.5f,
-                                     (pill.top + pill.bottom) * 0.5f - metrics.height * 0.5f),
-                       layout.get(), text_brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    compositor_.DrawTextLayout(D2D1::Point2F(cx - metrics.width * 0.5f,
+                                             (pill.top + pill.bottom) * 0.5f - metrics.height * 0.5f),
+                               layout.get(), text_brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
     dc->PopAxisAlignedClip();
 }
 

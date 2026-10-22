@@ -71,7 +71,12 @@ struct FilenameRenderTest {
                             // then color the extension by UTF-16 range. No substring widths.
                             const auto rc = D2D1::RectF(460 * scale + phase, y, 460 * scale + phase + name_width, y + height);
                             const auto visible = VisibleNameMatchRanges(name, shown, matches);
-                            if (has_extension || !visible.empty()) {
+                            // LumaText colours the extension of its single shaped line by
+                            // clipping at the caret of the dot in that same layout.
+                            const bool split_drawn = has_extension && visible.empty() &&
+                                compositor.DrawLumaTextSplit(shown, fmt, rc, theme.text,
+                                    static_cast<std::uint32_t>(dot), dim->GetColor(), theme.bg);
+                            if (!split_drawn && (has_extension || !visible.empty())) {
                                 ComPtr<IDWriteTextLayout> layout;
                                 factory->CreateTextLayout(shown.c_str(), static_cast<UINT32>(shown.size()), fmt,
                                     name_width, height, &layout);
@@ -82,8 +87,8 @@ struct FilenameRenderTest {
                                 if (has_extension) layout->SetDrawingEffect(dim.get(),
                                     {static_cast<UINT32>(dot), static_cast<UINT32>(shown.size() - dot)});
                                 DrawNameHighlightBackground(&compositor, layout.get(), {rc.left, rc.top}, rc, visible, theme, scale);
-                                dc->DrawTextLayout({rc.left, rc.top}, layout.get(), normal.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-                            } else if (!compositor.DrawLumaText(shown, fmt, rc, theme.text, theme.bg)) {
+                                compositor.DrawTextLayout({rc.left, rc.top}, layout.get(), normal.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                            } else if (!split_drawn && !compositor.DrawLumaText(shown, fmt, rc, theme.text, theme.bg)) {
                                 dc->DrawText(shown.c_str(), static_cast<UINT32>(shown.size()), fmt, rc,
                                     normal.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                             }

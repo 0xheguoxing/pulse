@@ -510,8 +510,10 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                 fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 MakeBrush(dc, theme.text_secondary, brText_);
-                dc->DrawText(label, static_cast<UINT32>(wcslen(label)), fmt, chip, brText_.get(),
-                             D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                if (IsHighContrast() || !compositor_->DrawLumaText(label, fmt, chip, theme.text_secondary,
+                                                                   theme.bg, DWRITE_TEXT_ALIGNMENT_CENTER))
+                    dc->DrawText(label, static_cast<UINT32>(wcslen(label)), fmt, chip, brText_.get(),
+                                 D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
                 fmt->SetTextAlignment(oldAlign);
                 fmt->SetParagraphAlignment(oldPara);
                 continue;
@@ -568,8 +570,11 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                 fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 MakeBrush(dc, HexColor(0xFFFFFF), brText_);
-                dc->DrawText(num, 1, fmt, b, brText_.get(), D2D1_DRAW_TEXT_OPTIONS_NONE,
-                             DWRITE_MEASURING_MODE_NATURAL);
+                if (IsHighContrast() || !compositor_->DrawLumaText(std::wstring_view(num, 1), fmt, b,
+                                                                   HexColor(0xFFFFFF), theme.bg,
+                                                                   DWRITE_TEXT_ALIGNMENT_CENTER))
+                    dc->DrawText(num, 1, fmt, b, brText_.get(), D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                 DWRITE_MEASURING_MODE_NATURAL);
                 fmt->SetTextAlignment(oldAlign);
                 fmt->SetParagraphAlignment(oldPara);
             }
@@ -1281,7 +1286,7 @@ void MainRenderer::DrawTrayDeck(const WindowViewModel& vm, const D2D1_RECT_F& pa
         const float lineName = 18.0f * scale_, lineSub = 16.0f * scale_, lineDir = 15.0f * scale_;
         float ty = (rc.top + rc.bottom) * 0.5f - (lineName + lineSub + lineDir) * 0.5f;
         const float nameW = tw;
-        DrawTextEndEllipsis(dc, factory, nameFmt,
+        DrawTextEndEllipsis(compositor_, nameFmt,
             color(card.missing ? theme.text_disabled : nameColor), card.name, tx, ty, nameW, lineName);
         // Intent chip (bottom-right): what release does with this card's
         // batch. Orange = move, neutral = copy; clickable on the top card.
@@ -1311,7 +1316,7 @@ void MainRenderer::DrawTrayDeck(const WindowViewModel& vm, const D2D1_RECT_F& pa
                 bl->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 bl->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 bl->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, {0, static_cast<UINT32>(chipLabel.size())});
-                dc->DrawTextLayout(D2D1::Point2F(chipRc.left, chipRc.top), bl.get(),
+                compositor_->DrawTextLayout(D2D1::Point2F(chipRc.left, chipRc.top), bl.get(),
                     color(card.cut ? (vm.dark ? rgba(0xFFB454, 1.0f) : rgba(0xB25E00, 1.0f))
                                    : theme.text_secondary));
             }
@@ -1321,7 +1326,7 @@ void MainRenderer::DrawTrayDeck(const WindowViewModel& vm, const D2D1_RECT_F& pa
         if (!card.is_dir && card.size > 0)
             sub = pulse::format::ByteSize(card.size, true) + L" \xB7 ";
         sub += FormatListType(card.name, card.is_dir);
-        DrawTextEndEllipsis(dc, factory, subFmt, color(subColor), sub, tx, ty, tw, lineSub);
+        DrawTextEndEllipsis(compositor_, subFmt, color(subColor), sub, tx, ty, tw, lineSub);
         ty += lineSub;
         if (!card.folder.empty() && factory) {
             auto measure = [&](const std::wstring& s) { return MeasureTextWidth(factory, folderFmt, s); };
@@ -1329,7 +1334,7 @@ void MainRenderer::DrawTrayDeck(const WindowViewModel& vm, const D2D1_RECT_F& pa
             const float dirW = card.batch >= 0
                 ? std::max(0.0f, std::min(tw, chipRc.left - 6.0f * scale_ - tx)) : tw;
             const auto [head, last] = MiddleEllipsisPath(card.folder, dirW, measure);
-            DrawTextEndEllipsis(dc, factory, folderFmt, color(folderColor), head + last,
+            DrawTextEndEllipsis(compositor_, folderFmt, color(folderColor), head + last,
                                 tx, ty, dirW, lineDir);
         }
 

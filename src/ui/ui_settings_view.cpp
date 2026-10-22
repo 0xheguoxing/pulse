@@ -184,7 +184,7 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
     if (title_layout.get()) {
         title_layout->SetFontSize(26*scale_, {0,static_cast<UINT32>(title.size())});
         title_layout->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, {0,static_cast<UINT32>(title.size())});
-        dc->DrawTextLayout(D2D1::Point2F(lay.content.left+pad,origin+pad),title_layout.get(),brText_.get());
+        compositor_->DrawTextLayout(D2D1::Point2F(lay.content.left+pad,origin+pad),title_layout.get(),brText_.get());
     }
     if (vm.settings_page == 5 || vm.settings_page == 8 || vm.settings_page == kSettingsPageAi)
         painter_.DrawWrappedCaption(vm.settings_page == kSettingsPageAi ? ai_text::Intro()

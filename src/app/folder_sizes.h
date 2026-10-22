@@ -1,4 +1,5 @@
 #pragma once
+#include <windows.h>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -80,6 +81,8 @@ public:
     void Probe(std::vector<std::wstring> paths);
     uint8_t Content(const std::wstring& path) const; // FolderContentBits, 0 = unknown
     bool TakeChanged();
+    // The first change after each TakeChanged also posts `message` to `hwnd`.
+    void SetChangeNotify(HWND hwnd, UINT message);
     FolderSizeStats ReadStats() const;
     void Stop();
 private:

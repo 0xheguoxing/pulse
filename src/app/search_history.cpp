@@ -169,8 +169,7 @@ bool SearchHistory::Save() const {
     return !dir.empty() && SaveToFile(dir + L"\\search_history.json");
 }
 
-SearchHistoryWriter::SearchHistoryWriter(std::wstring file) : file_(std::move(file)),
-    thread_([this] { Run(); }) {}
+SearchHistoryWriter::SearchHistoryWriter(std::wstring file) : file_(std::move(file)) {}
 
 SearchHistoryWriter::~SearchHistoryWriter() { Stop(); }
 
@@ -180,6 +179,8 @@ void SearchHistoryWriter::Submit(SearchHistory snapshot) {
         if (stopping_) return;
         pending_ = std::move(snapshot);
         ++submitted_;
+        // Started by the first save: most sessions never change the history.
+        if (!thread_.joinable()) thread_ = std::thread([this] { Run(); });
     }
     wake_.notify_all();
 }
@@ -191,12 +192,14 @@ void SearchHistoryWriter::Flush() {
 }
 
 void SearchHistoryWriter::Stop() {
+    std::thread thread;
     {
         std::lock_guard lock(mutex_);
         stopping_ = true;
+        thread = std::move(thread_);
     }
     wake_.notify_all();
-    if (thread_.joinable()) thread_.join();
+    if (thread.joinable()) thread.join();
 }
 
 void SearchHistoryWriter::Run() {

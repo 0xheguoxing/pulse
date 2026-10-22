@@ -1,6 +1,7 @@
 #include "app_internal.h"
 #include "app_column_view.h"
 #include "../ui/column_strip_layout.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 #include <cwchar>
 

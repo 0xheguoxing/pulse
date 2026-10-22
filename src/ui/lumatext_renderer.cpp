@@ -50,6 +50,19 @@ std::wstring FontPath(const wchar_t* file_name) {
     return (std::filesystem::path(windows) / L"Fonts" / file_name).wstring();
 }
 
+// A font the user installed (per-user first, then for all users). Pulse
+// never ships these faces; it only uses them when they are already present.
+std::wstring InstalledFontPath(const wchar_t* file_name) {
+    wchar_t local[MAX_PATH]{};
+    const DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", local, ARRAYSIZE(local));
+    if (length != 0 && length < ARRAYSIZE(local)) {
+        std::error_code error;
+        const auto user = std::filesystem::path(local) / L"Microsoft" / L"Windows" / L"Fonts" / file_name;
+        if (std::filesystem::exists(user, error)) return user.wstring();
+    }
+    return FontPath(file_name);
+}
+
 std::wstring FontFamily(IDWriteTextFormat* format) {
     if (!format) return {};
     const UINT32 length = format->GetFontFamilyNameLength();
@@ -154,14 +167,20 @@ struct LumaTextRenderer::Impl {
 
     LumaText::Context context;
     LumaText::Renderer renderer;
-    LumaText::RenderProfile profile;
+    // Draws DirectWrite layouts (multi-line text, ranges with their own
+    // colour) straight onto the window target with LumaText glyphs. A second
+    // renderer, because retargeting one would flush its device caches.
+    LumaText::Renderer layout_renderer;
     LumaText::FontFace yahei_regular;
     LumaText::FontFace yahei_bold;
     LumaText::FontFace segoe_regular;
     LumaText::FontFace segoe_semibold;
     LumaText::FontFace segoe_bold;
-    LumaText::FontCascade yahei_cascade;
-    LumaText::FontCascade segoe_cascade;
+    LumaText::FontFace pingfang_regular;
+    LumaText::FontFace pingfang_semibold;
+    // One cascade serves every UI string: Segoe UI Variable for Latin, then
+    // PingFang SC (when installed) and YaHei for CJK, chosen per grapheme.
+    LumaText::FontCascade text_cascade;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> target_dc;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> recording_dc;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> blit_dc;
@@ -420,15 +439,30 @@ struct LumaTextRenderer::Impl {
         layout_lru.clear();
     }
 
-    // Crisp UI text: exact FreeType coverage (the 4x Mitchell filter spread
-    // every edge over about two pixels) and the font's own vertical hints.
-    // FreeType's v40 interpreter applies those hints in y only, so horizontal
-    // subpixel positioning and the HarfBuzz layout widths are unchanged.
-    static void ApplySharpConfig(lt_render_config& config) noexcept {
-        config.coverage_gamma = 0.85f;
+    // CoreText-like UI text: exact FreeType coverage with linear (gamma 1.0)
+    // edges, light autohinting in y only (PingFang's CFF carries no useful
+    // hints; x positions and HarfBuzz widths stay unhinted), and symmetric
+    // outline dilation that grows with the text colour's luminance, the way
+    // CoreGraphics font smoothing thickens light-on-dark text more than
+    // dark-on-light. Constants come from fitting macOS 15 CoreText renders
+    // (strength 0.0145 em dark text .. 0.030 em light text, capped) and are
+    // scaled by 0.92 to offset the extra contrast of hinted rows.
+    static void ApplySharpConfig(lt_render_config& config,
+                                 const D2D1_COLOR_F& foreground) noexcept {
+        config.coverage_gamma = 1.00f;
         config.coverage_contrast = 1.00f;
         config.raster_filter = LT_RASTER_FILTER_DIRECT;
-        config.flags |= LT_RENDER_CONFIG_HINTED_OUTLINES;
+        config.flags |= LT_RENDER_CONFIG_DISABLE_STEM_COMPENSATION |
+                        LT_RENDER_CONFIG_AUTOHINT_LIGHT |
+                        LT_RENDER_CONFIG_DISABLE_OPTICAL_GAMMA;
+        const float luminance = std::clamp(0.2126f * foreground.r + 0.7152f * foreground.g +
+                                           0.0722f * foreground.b, 0.0f, 1.0f);
+        const float level = std::round(luminance * 4.0f) / 4.0f;
+        constexpr float kFit = 0.92f;
+        config.dilation_per_em = static_cast<std::uint8_t>(
+            std::lround((0.0145f + 0.0155f * level) * kFit * 4096.0f));
+        config.dilation_max = static_cast<std::uint8_t>(
+            std::lround((0.45f + 0.20f * level) * kFit * 64.0f));
     }
 
     void FillLayoutDesc(lt_text_layout_desc& desc, const LayoutKey& key,
@@ -484,6 +518,10 @@ struct LumaTextRenderer::Impl {
         if (lt_d2d_renderer_create(context.get(), &renderer_desc, renderer.put()) != LT_OK) {
             return false;
         }
+        renderer_desc.render_target = target_dc.Get();
+        if (lt_d2d_renderer_create(context.get(), &renderer_desc, layout_renderer.put()) != LT_OK) {
+            layout_renderer.reset();
+        }
 
         if (!MakeFace(FontPath(L"msyh.ttc"), yahei_regular) ||
             !MakeFace(FontPath(L"msyhbd.ttc"), yahei_bold)) {
@@ -493,8 +531,10 @@ struct LumaTextRenderer::Impl {
         // Win11's segoeui.ttf is a ~200 KB stub; Segoe UI Variable holds the
         // real outlines. Two faces share one mapped file in LumaText.
         const std::wstring variable = FontPath(L"SegUIVar.ttf");
-        if (!MakeFace(variable, segoe_regular, 400.0f) ||
-            !MakeFace(variable, segoe_bold, 700.0f)) {
+        if (MakeFace(variable, segoe_regular, 400.0f) &&
+            MakeFace(variable, segoe_bold, 700.0f)) {
+            if (!MakeFace(variable, segoe_semibold, 600.0f)) segoe_semibold.reset();
+        } else {
             segoe_regular.reset();
             segoe_bold.reset();
             if (!MakeFace(FontPath(L"segoeui.ttf"), segoe_regular) ||
@@ -503,36 +543,35 @@ struct LumaTextRenderer::Impl {
             }
         }
 
-        std::vector<lt_font_cascade_entry> yahei_entries;
-        PushFace(yahei_entries, yahei_regular, 400);
-        PushFace(yahei_entries, yahei_bold, 600);
-        PushFace(yahei_entries, yahei_bold, 700);
-        if (yahei_entries.empty() || !MakeCascade(yahei_entries, yahei_cascade)) return false;
-
-        std::vector<lt_font_cascade_entry> segoe_entries;
-        PushFace(segoe_entries, segoe_regular, 400);
-        if (segoe_semibold) {
-            PushFace(segoe_entries, segoe_semibold, 600);
-        } else {
-            PushFace(segoe_entries, segoe_bold, 600);
+        // PingFang SC only when the user installed it; YaHei stays behind it
+        // for anything PingFang lacks and on machines without it.
+        if (!MakeFace(InstalledFontPath(L"PingFangSC-Regular.otf"), pingfang_regular) ||
+            !MakeFace(InstalledFontPath(L"PingFangSC-Semibold.otf"), pingfang_semibold)) {
+            pingfang_regular.reset();
+            pingfang_semibold.reset();
         }
-        PushFace(segoe_entries, segoe_bold, 700);
-        PushFace(segoe_entries, yahei_regular, 400);
-        PushFace(segoe_entries, yahei_bold, 700);
-        if (segoe_entries.empty() || !MakeCascade(segoe_entries, segoe_cascade)) return false;
 
-        auto profile_desc = LumaText::Descriptor<lt_render_profile_desc>();
-        profile_desc.light = LumaText::Descriptor<lt_render_config>();
-        ApplySharpConfig(profile_desc.light);
-        profile_desc.dark = profile_desc.light;
-        profile_desc.regular_optical_weight = 0.0f;
-        profile_desc.bold_optical_weight = 0.0f;
+        // Faces are picked per grapheme: nearest weight first, then cascade
+        // order, so Latin lands on Segoe and CJK on PingFang / YaHei.
+        std::vector<lt_font_cascade_entry> entries;
+        const auto push_weight = [&](std::uint16_t weight, const LumaText::FontFace& segoe,
+                                     const LumaText::FontFace& pingfang,
+                                     const LumaText::FontFace& yahei) {
+            PushFace(entries, segoe, weight);
+            PushFace(entries, pingfang, weight);
+            PushFace(entries, yahei, weight);
+        };
+        push_weight(400, segoe_regular, pingfang_regular, yahei_regular);
+        push_weight(600, segoe_semibold ? segoe_semibold : segoe_bold, pingfang_semibold, yahei_bold);
+        push_weight(700, segoe_bold, pingfang_semibold, yahei_bold);
+        if (entries.empty() || !MakeCascade(entries, text_cascade)) return false;
+
 #if defined(PULSE_TEST_LUMATEXT_INIT_FAILURE)
         wchar_t fail_init[2]{};
         if (GetEnvironmentVariableW(L"PULSE_TEST_LUMATEXT_INIT_FAILURE", fail_init, ARRAYSIZE(fail_init)))
             return false;
 #endif
-        return lt_render_profile_create(&profile_desc, profile.put()) == LT_OK;
+        return true;
     }
 
     void ReleasePresent() noexcept {
@@ -646,14 +685,15 @@ struct LumaTextRenderer::Impl {
         blit_w = 0;
         blit_h = 0;
         busy = false;
-        segoe_cascade.reset();
-        yahei_cascade.reset();
+        text_cascade.reset();
+        pingfang_semibold.reset();
+        pingfang_regular.reset();
         segoe_bold.reset();
         segoe_semibold.reset();
         segoe_regular.reset();
         yahei_bold.reset();
         yahei_regular.reset();
-        profile.reset();
+        layout_renderer.reset();
         renderer.reset();
         recording_dc.Reset();
         target_dc.Reset();
@@ -816,8 +856,9 @@ struct LumaTextRenderer::Impl {
         draw.background = {background.r, background.g, background.b, background.a};
         draw.background_type = LT_BACKGROUND_TRANSPARENT;
         draw.render_config = LumaText::Descriptor<lt_render_config>();
-        ApplySharpConfig(draw.render_config);
-        draw.profile = profile.get();
+        ApplySharpConfig(draw.render_config, foreground);
+        // No render profile: it would pick a config by background and drop
+        // the foreground-dependent dilation set above.
 
         const lt_result result = lt_frame_draw_text_layout(frame.get(), layout->get(), &draw);
         auto frame_stats = LumaText::Descriptor<lt_frame_stats>();
@@ -854,6 +895,97 @@ struct LumaTextRenderer::Impl {
                       alignment);
     }
 
+    // A DirectWrite layout keeps its own shaping, fallback fonts, wrapping and
+    // trimming; LumaText only rasterizes the glyph runs. Ranges coloured with
+    // SetDrawingEffect(ID2D1SolidColorBrush) keep their colour.
+    bool DrawLayout(D2D1_POINT_2F origin, IDWriteTextLayout* layout,
+                    const D2D1_COLOR_F& foreground, bool clip) {
+        if (!layout_renderer || !target_dc || !layout) return false;
+        float dpi_x = 96.0f, dpi_y = 96.0f;
+        target_dc->GetDpi(&dpi_x, &dpi_y);
+        auto frame_desc = LumaText::Descriptor<lt_frame_desc>();
+        frame_desc.dpi_x = dpi_x;
+        frame_desc.dpi_y = dpi_y;
+        LumaText::Frame frame;
+        if (lt_frame_begin(layout_renderer.get(), &frame_desc, frame.put()) != LT_OK) return false;
+        auto draw = LumaText::Descriptor<lt_draw_text_desc>();
+        draw.origin_x = origin.x;
+        draw.origin_y = origin.y;
+        draw.clip_enabled = clip;
+        if (clip) {
+            draw.clip = {origin.x, origin.y, origin.x + layout->GetMaxWidth(),
+                         origin.y + layout->GetMaxHeight()};
+        }
+        draw.foreground = {foreground.r, foreground.g, foreground.b, foreground.a};
+        draw.background_type = LT_BACKGROUND_TRANSPARENT;
+        draw.render_config = LumaText::Descriptor<lt_render_config>();
+        ApplySharpConfig(draw.render_config, foreground);
+        const lt_result result = lt_frame_draw_layout(frame.get(), layout, &draw);
+        auto frame_stats = LumaText::Descriptor<lt_frame_stats>();
+        if (result == LT_OK && lt_frame_get_stats(frame.get(), &frame_stats) == LT_OK) {
+            stats.freetype_glyphs += frame_stats.freetype_glyphs;
+            stats.cache_hits += frame_stats.glyph_cache_hits;
+        }
+        const lt_result end_result = lt_frame_end(frame.get());
+        stats.draw_calls++;
+        return result == LT_OK && end_result == LT_OK;
+    }
+
+    // Two colours in one shaped line (a dimmed file extension): the same
+    // layout is drawn twice, clipped at the caret x of `split` in that layout,
+    // so glyph positions never depend on substring widths.
+    bool DrawSplit(std::wstring_view text, IDWriteTextFormat* format,
+                   const D2D1_RECT_F& bounds, const D2D1_COLOR_F& foreground,
+                   std::uint32_t split, const D2D1_COLOR_F& split_foreground,
+                   const D2D1_COLOR_F& background) {
+        ID2D1DeviceContext* dc = target_dc.Get();
+        if (!dc || busy || !renderer || !format || split == 0 || split >= text.size()) return false;
+        std::uint32_t family = 0;
+        LumaText::FontCascade* cascade = nullptr;
+        const float font_size = format->GetFontSize();
+        if (!(font_size > 0.0f) || !ResolveCascade(format, text, family, cascade) || !cascade) {
+            return false;
+        }
+        LayoutKey key;
+        key.text.assign(text);
+        key.family = family;
+        key.weight = static_cast<std::uint16_t>(std::clamp<int>(
+            static_cast<int>(format->GetFontWeight()), 1, 1000));
+        key.size_64 = static_cast<std::int32_t>(std::lround(font_size * 64.0f));
+        key.width_64 = kUnboundedWidth64;
+        key.alignment = DWRITE_TEXT_ALIGNMENT_LEADING;
+        LumaText::TextLayout* layout = GetLayout(key, font_size, *cascade);
+        if (!layout || !*layout) return false;
+        auto metrics = LumaText::Descriptor<lt_text_metrics>();
+        if (lt_text_layout_get_metrics(layout->get(), &metrics) != LT_OK) return false;
+        // DrawOn would ellipsize this line, and the split would no longer
+        // index the drawn glyphs.
+        const float ink = pulse::ui::typography::InkPad(format);
+        if (metrics.width + ink > bounds.right - bounds.left + 0.5f) return false;
+        float split_x = 0.0f, split_y = 0.0f;
+        auto hit = LumaText::Descriptor<lt_hit_test_metrics>();
+        if (lt_text_layout_hit_test_position(layout->get(), split, false,
+                                             &split_x, &split_y, &hit) != LT_OK) {
+            return false;
+        }
+        const float cut = std::round(bounds.left + split_x);
+        const float top = bounds.top - 8.0f, bottom = bounds.bottom + 8.0f;
+        dc->PushAxisAlignedClip(D2D1::RectF(std::floor(bounds.left) - 8.0f, top, cut, bottom),
+                                D2D1_ANTIALIAS_MODE_ALIASED);
+        const bool head = DrawOn(dc, text, format, bounds, foreground, background,
+                                 DWRITE_TEXT_ALIGNMENT_LEADING);
+        dc->PopAxisAlignedClip();
+        if (!head) return false;
+        dc->PushAxisAlignedClip(D2D1::RectF(cut, top, std::ceil(bounds.right) + 8.0f, bottom),
+                                D2D1_ANTIALIAS_MODE_ALIASED);
+        // Same layout and geometry as the head draw; it cannot fail where
+        // that one succeeded short of a device loss, which redraws anyway.
+        DrawOn(dc, text, format, bounds, split_foreground, background,
+               DWRITE_TEXT_ALIGNMENT_LEADING);
+        dc->PopAxisAlignedClip();
+        return true;
+    }
+
     static bool ContainsCjk(std::wstring_view text) noexcept {
         for (const wchar_t c : text) {
             if ((c >= 0x2E80 && c <= 0x9FFF) ||
@@ -875,21 +1007,11 @@ struct LumaTextRenderer::Impl {
                    !Contains(family_name, L"Assets") &&
                    !Contains(family_name, L"Emoji");
         if (!yahei && !segoe_text) return false;
-        // Chinese runs keep YaHei first even when the shell language (and the
-        // DirectWrite family) is English / Segoe.
-        if (ContainsCjk(text) && yahei_cascade.get()) {
-            family = kYaHei;
-            cascade = &yahei_cascade;
-            return true;
-        }
-        if (yahei) {
-            family = kYaHei;
-            cascade = &yahei_cascade;
-            return yahei_cascade.get() != nullptr;
-        }
-        family = kSegoe;
-        cascade = &segoe_cascade;
-        return segoe_cascade.get() != nullptr;
+        // Chinese runs shape as zh-CN even when the shell language (and the
+        // DirectWrite family) is English / Segoe; the faces are the same.
+        family = (yahei || ContainsCjk(text)) ? kYaHei : kSegoe;
+        cascade = &text_cascade;
+        return text_cascade.get() != nullptr;
     }
 
     bool Measure(std::wstring_view text, IDWriteTextFormat* format,
@@ -1671,7 +1793,7 @@ bool LumaTextRenderer::Init(IDWriteFactory* dwrite, ID2D1RenderTarget* target) {
     Shutdown();
     if (!EnvironmentEnabled() || !dwrite || !target || !LoadOptionalLumaText()) return false;
     if (impl_->Init(dwrite, target)) return true;
-    // The renderer is allocated before fonts, cascades and the profile. A late
+    // The renderer is allocated before fonts and cascades. A late
     // failure must not leave Enabled() true and suppress native EDIT painting.
     Shutdown();
     return false;
@@ -1715,6 +1837,38 @@ bool LumaTextRenderer::Draw(std::wstring_view text, IDWriteTextFormat* format,
     (void)foreground;
     (void)background;
     (void)alignment;
+    return false;
+#endif
+}
+
+bool LumaTextRenderer::DrawLayout(D2D1_POINT_2F origin, IDWriteTextLayout* layout,
+                                  const D2D1_COLOR_F& foreground, bool clip) {
+#if defined(PULSE_HAS_LUMATEXT)
+    return impl_ && impl_->DrawLayout(origin, layout, foreground, clip);
+#else
+    (void)origin;
+    (void)layout;
+    (void)foreground;
+    (void)clip;
+    return false;
+#endif
+}
+
+bool LumaTextRenderer::DrawSplit(std::wstring_view text, IDWriteTextFormat* format,
+                                 const D2D1_RECT_F& bounds, const D2D1_COLOR_F& foreground,
+                                 std::uint32_t split, const D2D1_COLOR_F& split_foreground,
+                                 const D2D1_COLOR_F& background) {
+#if defined(PULSE_HAS_LUMATEXT)
+    return impl_ && impl_->DrawSplit(text, format, bounds, foreground, split,
+                                     split_foreground, background);
+#else
+    (void)text;
+    (void)format;
+    (void)bounds;
+    (void)foreground;
+    (void)split;
+    (void)split_foreground;
+    (void)background;
     return false;
 #endif
 }

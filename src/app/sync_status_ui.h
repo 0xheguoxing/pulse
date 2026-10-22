@@ -3,7 +3,7 @@
 // SVN is read straight from the working copy's .svn\wc.db (read-only, off
 // the UI thread), so it works without svn.exe (TortoiseSVN leaves the command
 // line tools out by default). Marks reuse the Git ones (git_mark.h).
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include <string>
 
 namespace pulse {

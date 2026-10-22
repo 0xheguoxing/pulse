@@ -268,6 +268,36 @@ bool Compositor::DrawLumaText(std::wstring_view text, IDWriteTextFormat* format,
     return false;
 }
 
+void Compositor::DrawTextLayout(D2D1_POINT_2F origin, IDWriteTextLayout* layout,
+                                ID2D1SolidColorBrush* brush, D2D1_DRAW_TEXT_OPTIONS options) {
+    if (!dc_.get() || !layout || !brush) return;
+    // Colour fonts (emoji) keep DirectWrite's colour glyph path.
+    if (!(options & D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT) && LumaTextEnabled()) {
+        D2D1_COLOR_F color = brush->GetColor();
+        color.a *= brush->GetOpacity();
+        if (lumaText_->DrawLayout(origin, layout, color,
+                                  (options & D2D1_DRAW_TEXT_OPTIONS_CLIP) != 0)) {
+            return;
+        }
+        lumaText_->RecordFallback();
+    }
+    dc_->DrawTextLayout(origin, layout, brush, options);
+}
+
+bool Compositor::DrawLumaTextSplit(std::wstring_view text, IDWriteTextFormat* format,
+                                   const D2D1_RECT_F& bounds,
+                                   const D2D1_COLOR_F& foreground, std::uint32_t split,
+                                   const D2D1_COLOR_F& split_foreground,
+                                   const D2D1_COLOR_F& background) {
+    if (!lumaText_ || !lumaText_->Enabled() || !typography::UseLumaTextForUi()) return false;
+    if (lumaText_->DrawSplit(text, format, bounds, foreground, split, split_foreground,
+                             background)) {
+        return true;
+    }
+    lumaText_->RecordFallback();
+    return false;
+}
+
 bool Compositor::MeasureLumaText(std::wstring_view text, IDWriteTextFormat* format,
                                  float& width, float* height) {
     if (!lumaText_ || !lumaText_->Enabled() || !typography::UseLumaTextForUi()) return false;
@@ -340,7 +370,8 @@ bool Compositor::CreateSwapChain() {
     desc.SampleDesc.Count = 1;
     desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     desc.BufferCount = 2;
-    desc.SwapEffect = compat::ModernWindows()
+    // Partial redraw needs buffers that keep their pixels between presents.
+    desc.SwapEffect = compat::ModernWindows() && !PartialRedrawEnabled()
         ? DXGI_SWAP_EFFECT_FLIP_DISCARD : DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
     desc.Scaling = DXGI_SCALING_STRETCH;
     desc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
@@ -378,11 +409,23 @@ bool Compositor::CreateSwapChain() {
     }
 
     dxgiDevice_->SetMaximumFrameLatency(1);
+    partial_swap_ = PartialRedrawEnabled() && desc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+    full_next_ = true;
     return true;
+}
+
+bool Compositor::PartialRedrawEnabled() {
+    static const bool enabled = [] {
+        wchar_t value[8]{};
+        const DWORD n = GetEnvironmentVariableW(L"PULSE_PARTIAL_REDRAW", value, ARRAYSIZE(value));
+        return !(n == 1 && value[0] == L'0');
+    }();
+    return enabled;
 }
 
 void Compositor::ResizeSwapChain() {
     if (!swapChain_.get() || width_ <= 0 || height_ <= 0) return;
+    full_next_ = true;
     frameCopy_.reset();
     held_.reset();
     targetBitmap_.reset();
@@ -554,7 +597,7 @@ void Compositor::CopyFrame() {
         frameCopy_.reset();
 }
 
-void Compositor::Present() {
+void Compositor::Present(const RECT* dirty) {
     if (device_lost_) return;
     if (hwnd_) UpdateTextRenderingParams(
         MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST));
@@ -571,7 +614,19 @@ void Compositor::Present() {
         }
     }
     HRESULT hr = S_OK;
-    if (swapChain_.get()) hr = swapChain_->Present(1, 0);
+    if (swapChain_.get()) {
+        if (dirty && CanPresentPartial()) {
+            DXGI_PRESENT_PARAMETERS params{};
+            RECT rect = *dirty;
+            params.DirtyRectsCount = 1;
+            params.pDirtyRects = &rect;
+            hr = swapChain_->Present1(1, 0, &params);
+        } else {
+            hr = swapChain_->Present(1, 0);
+        }
+    }
+    // Only a frame that reached the screen whole lets the next one be partial.
+    full_next_ = FAILED(hr) || hr == DXGI_STATUS_OCCLUDED;
     if (FAILED(hr)) {
         if (IsDeviceLost(hr)) NotifyDeviceLost(hr);
         return;

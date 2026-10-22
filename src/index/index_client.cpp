@@ -58,7 +58,11 @@ void IndexClient::Start(HWND notify, UINT status_msg, UINT search_msg, std::wstr
 }
 
 void IndexClient::Stop() {
-    running_ = false;
+    {
+        // Under mu_ so Writer cannot miss the wake between its check and wait.
+        std::lock_guard<std::mutex> lock(mu_);
+        running_ = false;
+    }
     pinyin_ready_ = false;
     pending_cv_.notify_all();
     HANDLE pipe = INVALID_HANDLE_VALUE;
@@ -264,8 +268,11 @@ bool IndexClient::EnsureConnected() {
         }
         pipe_ = h;
     }
-    { std::lock_guard<std::mutex> lock(mu_); scope_ready_ = false; pending_searches_=subscribed_searches_; have_pending_=!pending_searches_.empty(); }
-    connected_ = true;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        scope_ready_ = false; pending_searches_=subscribed_searches_; have_pending_=!pending_searches_.empty();
+        connected_ = true;
+    }
     pending_cv_.notify_one();
     return true;
 }
@@ -308,20 +315,25 @@ void IndexClient::HandleStatus(const uint8_t* p, size_t n) {
     uint32_t ready = 0, count = 0;
     std::wstring text;
     if (!r.GetU32(ready) || !r.GetU32(count) || !r.GetString(text)) return;
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        status_ = std::move(text);
-    }
     uint32_t pinyin_ready = 0;
     // Optional trailing status field: older hosts remain usable and report unavailable.
     if (!r.GetU32(pinyin_ready)) pinyin_ready = 0;
-    pinyin_ready_.store(pinyin_ready == 1);
-    ready_.store(ready != 0);
-    count_.store(count);
     uint64_t revision = 0; uint32_t version = 0;
     if (r.GetU64(revision) && r.GetU32(version) && version == 1) revision_ = revision;
-    else { std::lock_guard lock(mu_); status_ = L"索引进程版本过旧，请重启 Pulse 和索引服务以启用实时搜索"; }
-    if (notify_ && status_msg_) PostMessageW(notify_, status_msg_, 0, 0);
+    else text = L"索引进程版本过旧，请重启 Pulse 和索引服务以启用实时搜索";
+    bool changed = false;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        changed = status_ != text;
+        status_ = std::move(text);
+    }
+    changed |= pinyin_ready_.exchange(pinyin_ready == 1) != (pinyin_ready == 1);
+    changed |= ready_.exchange(ready != 0) != (ready != 0);
+    changed |= count_.exchange(count) != count;
+    // The host rebroadcasts after every journal batch, mostly with only a new
+    // revision; subscribed searches refresh on their own, so only a change
+    // the window can show is worth waking it for.
+    if (changed && notify_ && status_msg_) PostMessageW(notify_, status_msg_, 0, 0);
 }
 
 void IndexClient::HandleSearch(uint32_t id, const uint8_t* p, size_t n) {
@@ -450,7 +462,9 @@ void IndexClient::Writer() {
     while (running_) {
         {
             std::unique_lock<std::mutex> lock(mu_);
-            pending_cv_.wait_for(lock, std::chrono::milliseconds(100),
+            // Every change that can satisfy this is made under mu_ and
+            // notified, so the idle writer sleeps instead of polling.
+            pending_cv_.wait(lock,
                 [this] { return !running_ || (connected_ &&
                     (have_pending_ || !cancelled_sessions_.empty() || volume_refresh_requested_)); });
             if (!running_) return;

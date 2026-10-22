@@ -58,7 +58,11 @@ void TestUiTimerPacer() {
     Check(!pacer.Update(true, 1500, period), L"activity keeps the fast period without re-arming the timer");
     Check(pacer.Update(true, 1000 + UiTimerPacer::kLingerMs, period) && period == UiTimerPacer::kIdleMs,
           L"quiet window relaxes to the idle poll");
-    Check(!pacer.Update(true, 9000, period), L"idle period is set once, not every tick");
+    Check(!pacer.Update(true, 1000 + UiTimerPacer::kLingerMs + 500, period), L"idle period is set once, not every tick");
+    Check(pacer.Update(true, 1000 + UiTimerPacer::kLingerMs + UiTimerPacer::kQuietAfterMs, period) &&
+              period == UiTimerPacer::kQuietMs,
+          L"a longer quiet spell relaxes to the quiet poll");
+    Check(!pacer.Update(true, 9000, period), L"quiet period is set once, not every tick");
     pacer.NoteActivity(9000);
     Check(pacer.Update(true, 9000, period) && period == UiTimerPacer::kActiveMs,
           L"input or paint restores the fast period at once");
@@ -66,8 +70,9 @@ void TestUiTimerPacer() {
           L"hidden window polls at the hidden period even while active");
     Check(pacer.Update(true, 9002, period) && period == UiTimerPacer::kActiveMs,
           L"showing an active window returns to the fast period");
-    Check(UiTimerPacer::kActiveMs < UiTimerPacer::kIdleMs && UiTimerPacer::kIdleMs < UiTimerPacer::kHiddenMs,
-          L"period ordering: active < idle < hidden");
+    Check(UiTimerPacer::kActiveMs < UiTimerPacer::kIdleMs && UiTimerPacer::kIdleMs < UiTimerPacer::kQuietMs &&
+              UiTimerPacer::kQuietMs < UiTimerPacer::kHiddenMs,
+          L"period ordering: active < idle < quiet < hidden");
 }
 
 } // namespace

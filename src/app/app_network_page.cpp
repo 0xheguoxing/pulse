@@ -2,6 +2,7 @@
 #include "app_network_page.h"
 
 #include "app_internal.h"
+#include "../ui/ui_renderer.h"
 #include "app_network_locations.h"
 #include "app_sidebar_refresh.h"
 #include "context_menu.h"

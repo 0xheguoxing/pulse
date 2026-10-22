@@ -5,7 +5,7 @@
 #include "../fs/fs_recycle.h"
 #include "../fs/fs_snapshot.h"
 #include "../fs/fs_net_cache.h"
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include "entry_sort.h"
 #include <memory>
 #include <windows.h>
@@ -49,6 +49,7 @@ struct WorkResult {
     uint8_t device_error = 0;      // error: fs::DeviceError of a pulse:device: listing
     double enum_ms = 0.0;
     double sort_ms = 0.0;
+    uint64_t listed_at = 0;  // fs::WatchClock when a folder listing began
     fs::RecycleBinInfo recycle_info;
 };
 

@@ -13,6 +13,7 @@
 #include "content_pack_ui.h"
 #include "ai_pack_ui.h"
 #include "ai_settings_ui.h"
+#include "../ui/ui_renderer.h"
 #include <shellapi.h>
 #include <shlobj.h>
 #include <algorithm>

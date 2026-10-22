@@ -203,8 +203,8 @@ void DrawEllipsizedText(Compositor& compositor, IDWriteTextFormat* format,
     }
     ComPtr<ID2D1SolidColorBrush> brush;
     if (FAILED(dc->CreateSolidColorBrush(color, &brush))) return;
-    dc->DrawTextLayout(D2D1::Point2F(bounds.left, bounds.top), layout.get(), brush.get(),
-                       D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    compositor.DrawTextLayout(D2D1::Point2F(bounds.left, bounds.top), layout.get(), brush.get(),
+                              D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
 float TextWidth(IDWriteFactory2* factory, IDWriteTextFormat* format, const std::wstring& text) {

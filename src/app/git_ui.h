@@ -3,7 +3,7 @@
 // thread), row marks for the list, the branch in the status bar, and the
 // pull / push / refresh commands of the folder and project-row menus.
 #include "../ui/fluent_menu.h"
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include <windows.h>
 #include <string>
 #include <vector>

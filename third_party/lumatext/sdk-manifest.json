@@ -4,11 +4,11 @@
   "configuration": "Release",
   "runtime": "MT",
   "toolset": "v143",
-  "snapshot_date": "2026-09-21",
-  "source_base_commit": "c21ea81f31293d51b066402730d7a4eb18ca2ce6",
-  "source_includes_uncommitted_changes": true,
-  "source_snapshot_sha256": "a8b74100d167deaa19e8b64844c00b011d893b55bd39e0af7f3815acb11b2520",
-  "build_note": "Approved LumaText source snapshot; isolated CMake runtime override, Windows 8.1 API baseline with runtime-queried newer DirectWrite interfaces.",
+  "snapshot_date": "2026-10-22",
+  "source_base_commit": "85510d489512411a69c19559f3b63df9b17622f1",
+  "source_includes_uncommitted_changes": false,
+  "source_snapshot_sha256": "b0b1b3afe79f15242f648cb59a4abae4be046300ff0f0484a6f7612f5ad573a7",
+  "build_note": "LumaText feat/coretext-dilation (outline dilation, light autohint, optical-gamma opt-out); static CRT Release via docs/static-runtime-packaging.md; source_snapshot_sha256 is git archive --format=tar of the base commit.",
   "files": [
     {
       "path": ".gitattributes",
@@ -17,13 +17,13 @@
     },
     {
       "path": "bin/lumatext.dll",
-      "bytes": 1811968,
-      "sha256": "e2ea232486ccfe0e3bc382bb7fbc7bd498c99adcad9abd2b737601ba89ee7911"
+      "bytes": 1648640,
+      "sha256": "79ed3cdb9a67bab5718996711d1861f7ea149243fc5eeeb8f129eff8740b39ab"
     },
     {
       "path": "include/lumatext/lumatext.h",
-      "bytes": 11210,
-      "sha256": "0ad38a3bf02667fc50a4c8f49d68adb7d39d9b928c35d6d54b6f6b2997ccf1b5"
+      "bytes": 11877,
+      "sha256": "b4c40787d09aa3a5e77df25c2fb0faaf8022d5bd212d323713b8e3ae41d3cdc1"
     },
     {
       "path": "include/lumatext/lumatext.hpp",
@@ -53,7 +53,7 @@
     {
       "path": "lib/lumatext.lib",
       "bytes": 7520,
-      "sha256": "706c989611e642d46b873b2550c35dbf8f1b2f943f5b3d8e38ee4d94ea0c5f80"
+      "sha256": "550be49cf202371413629605fd83fff5035531899e4f392e4df98670131ab7e7"
     },
     {
       "path": "share/LumaText/licenses/FreeType.txt",

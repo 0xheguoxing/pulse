@@ -10,6 +10,7 @@
 #include "content_results_ui.h"
 #include "content_navigation.h"
 #include "tag_color_commands.h"
+#include "../ui/ui_renderer.h"
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
