@@ -78,6 +78,7 @@ private:
         float num_w = 0.0f;                            // row-number column width
         float measured_scale = 0.0f;
         float sx = 0.0f, sy = 0.0f;                    // scroll
+        std::vector<uint8_t> col_types;                // inferred per column (ColumnType)
     };
     struct Geometry {
         D2D1_RECT_F grid{}, body{}, tabs{};
@@ -124,6 +125,7 @@ private:
     float drag_x_ = 0.0f, drag_y_ = 0.0f;
 
     int hover_tab_ = -1;
+    int hover_row_ = -1, hover_col_ = -1;  // body cell under the pointer (crosshair)
     int tip_row_ = -1, tip_col_ = -1;
     bool tip_shown_ = false;
     float tip_x_ = 0.0f, tip_y_ = 0.0f;

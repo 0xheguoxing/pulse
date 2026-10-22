@@ -2695,6 +2695,12 @@ enum class StringId : UINT {
     PreviewWidthWide = IDS_PREVIEW_WIDTH_WIDE,
     PreviewExpandAll = IDS_PREVIEW_EXPAND_ALL,
     PreviewCollapseAll = IDS_PREVIEW_COLLAPSE_ALL,
+    PreviewColumnText = IDS_PREVIEW_COLUMN_TEXT,
+    PreviewColumnNumber = IDS_PREVIEW_COLUMN_NUMBER,
+    PreviewColumnPercent = IDS_PREVIEW_COLUMN_PERCENT,
+    PreviewColumnDate = IDS_PREVIEW_COLUMN_DATE,
+    PreviewTableAllRows = IDS_PREVIEW_TABLE_ALL_ROWS,
+    PreviewTablePartialRows = IDS_PREVIEW_TABLE_PARTIAL_ROWS,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

@@ -413,7 +413,9 @@ void QuickPreviewWindow::DrawPages(ID2D1DeviceContext* dc, ID2D1SolidColorBrush*
             swprintf_s(percent, L"%d%%", static_cast<int>(std::lround(pages_zoom_ * 100.0f)));
             zoom = percent;
         }
+        AddFooterControl(kFooterZoomOut, L"\x2212");
         AddFooterControl(kFooterZoom, std::move(zoom));
+        AddFooterControl(kFooterZoomIn, L"+");
     }
     dc->PopAxisAlignedClip();
 }

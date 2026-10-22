@@ -2706,3 +2706,9 @@ PreviewWidthMedium	IDS_PREVIEW_WIDTH_MEDIUM	3908	栏宽 中	Width: medium	欄寬
 PreviewWidthWide	IDS_PREVIEW_WIDTH_WIDE	3909	栏宽 宽	Width: wide	欄寬 寬
 PreviewExpandAll	IDS_PREVIEW_EXPAND_ALL	3910	全部展开	Expand all	全部展開
 PreviewCollapseAll	IDS_PREVIEW_COLLAPSE_ALL	3911	全部折叠	Collapse all	全部摺疊
+PreviewColumnText	IDS_PREVIEW_COLUMN_TEXT	3912	文本	Text	文字
+PreviewColumnNumber	IDS_PREVIEW_COLUMN_NUMBER	3913	数字	Number	數字
+PreviewColumnPercent	IDS_PREVIEW_COLUMN_PERCENT	3914	百分比	Percent	百分比
+PreviewColumnDate	IDS_PREVIEW_COLUMN_DATE	3915	日期	Date	日期
+PreviewTableAllRows	IDS_PREVIEW_TABLE_ALL_ROWS	3916	共 %s 行 · 已全部显示	%s rows · all shown	共 %s 列 · 已全部顯示
+PreviewTablePartialRows	IDS_PREVIEW_TABLE_PARTIAL_ROWS	3917	已显示 %s 行 · 其余内容超出预览限制	%s rows shown · the rest exceeds the preview limit	已顯示 %s 列 · 其餘內容超出預覽限制

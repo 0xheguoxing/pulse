@@ -235,6 +235,8 @@ private:
     static constexpr int kFooterReadWidth = 3;  // .txt reading column width
     static constexpr int kFooterCopyPath = 4;   // JSON/XML: copy the current node's path
     static constexpr int kFooterFoldAll = 5;    // JSON/XML: expand all / collapse all
+    static constexpr int kFooterZoomOut = 6;    // pages: zoom out one step
+    static constexpr int kFooterZoomIn = 7;     // pages: zoom in one step
     ChromePalette Palette() const;
     float HeaderHeight() const noexcept;
     float FooterHeight() const noexcept;

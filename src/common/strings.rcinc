@@ -2685,6 +2685,12 @@ BEGIN
     IDS_PREVIEW_WIDTH_WIDE "栏宽 宽"
     IDS_PREVIEW_EXPAND_ALL "全部展开"
     IDS_PREVIEW_COLLAPSE_ALL "全部折叠"
+    IDS_PREVIEW_COLUMN_TEXT "文本"
+    IDS_PREVIEW_COLUMN_NUMBER "数字"
+    IDS_PREVIEW_COLUMN_PERCENT "百分比"
+    IDS_PREVIEW_COLUMN_DATE "日期"
+    IDS_PREVIEW_TABLE_ALL_ROWS "共 %s 行 · 已全部显示"
+    IDS_PREVIEW_TABLE_PARTIAL_ROWS "已显示 %s 行 · 其余内容超出预览限制"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5369,6 +5375,12 @@ BEGIN
     IDS_PREVIEW_WIDTH_WIDE "Width: wide"
     IDS_PREVIEW_EXPAND_ALL "Expand all"
     IDS_PREVIEW_COLLAPSE_ALL "Collapse all"
+    IDS_PREVIEW_COLUMN_TEXT "Text"
+    IDS_PREVIEW_COLUMN_NUMBER "Number"
+    IDS_PREVIEW_COLUMN_PERCENT "Percent"
+    IDS_PREVIEW_COLUMN_DATE "Date"
+    IDS_PREVIEW_TABLE_ALL_ROWS "%s rows · all shown"
+    IDS_PREVIEW_TABLE_PARTIAL_ROWS "%s rows shown · the rest exceeds the preview limit"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

@@ -560,6 +560,11 @@ void QuickPreviewWindow::ActivateFooterControl(int id) {
     } else if (id == kFooterZoom && native_kind_ == NativeKind::Pages) {
         TogglePagesFit();
         InvalidateRect(hwnd_, nullptr, FALSE);
+    } else if ((id == kFooterZoomOut || id == kFooterZoomIn) && native_kind_ == NativeKind::Pages) {
+        const D2D1_RECT_F content = ContentRect();
+        ZoomPages((content.left + content.right) * 0.5f, (content.top + content.bottom) * 0.5f,
+                  id == kFooterZoomIn ? 1.25f : 0.8f);
+        InvalidateRect(hwnd_, nullptr, FALSE);
     } else if (id == kFooterToc) {
         toc_hidden_ = !toc_hidden_;
         InvalidateRect(hwnd_, nullptr, FALSE);

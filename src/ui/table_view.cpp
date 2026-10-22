@@ -91,6 +91,40 @@ std::wstring Grouped(size_t value) {
 
 bool Zh() { return pulse::l10n::IsChinese(); }
 
+// Column types shown under the header: what most filled cells look like.
+enum : uint8_t { kTypeNone = 0, kTypeText, kTypeNumber, kTypePercent, kTypeDate };
+
+bool LooksDate(std::wstring_view s) {
+    while (!s.empty() && s.front() == L' ') s.remove_prefix(1);
+    // 2026-10-22, 2026/10/22, 2026.10.22 (time may follow), or 10/22/2026.
+    size_t digits[3]{}, part = 0, i = 0;
+    wchar_t sep = 0;
+    for (; i < s.size() && part < 3; ++i) {
+        const wchar_t c = s[i];
+        if (c >= L'0' && c <= L'9') { ++digits[part]; continue; }
+        if ((c == L'-' || c == L'/' || c == L'.') && part < 2 && digits[part] && (!sep || c == sep)) {
+            sep = c; ++part; continue;
+        }
+        break;
+    }
+    if (part != 2 || !digits[2]) return false;
+    if (i < s.size() && s[i] != L' ' && s[i] != L'T') return false;
+    const bool ymd = digits[0] == 4 && digits[1] <= 2 && digits[2] <= 2;
+    const bool mdy = digits[0] <= 2 && digits[1] <= 2 && digits[2] == 4;
+    return ymd || mdy;
+}
+
+uint8_t CellType(const std::wstring& text, uint8_t flags) {
+    if (text.empty()) return kTypeNone;
+    if (LooksDate(text)) return kTypeDate;
+    if ((flags & kNumeric) || LooksNumeric(text)) {
+        size_t end = text.size();
+        while (end > 0 && text[end - 1] == L' ') --end;
+        return end > 0 && text[end - 1] == L'%' ? kTypePercent : kTypeNumber;
+    }
+    return kTypeText;
+}
+
 D2D1_RECT_F R(float l, float t, float r, float b) { return D2D1::RectF(l, t, r, b); }
 
 }  // namespace
@@ -336,6 +370,29 @@ float TableView::Estimate(const std::wstring& text) const {
 }
 
 void TableView::EnsureWidths(Sheet& s) {
+    if (s.col_types.size() != s.cols) {
+        // A type wins a column when at least 80% of its filled cells agree.
+        s.col_types.assign(s.cols, kTypeNone);
+        const size_t first = s.header && !s.cells.empty() ? 1 : 0;
+        const size_t last = (std::min)(s.cells.size(), first + kMeasureRows);
+        for (size_t c = 0; c < s.cols; ++c) {
+            size_t counts[5]{};
+            size_t filled = 0;
+            for (size_t r = first; r < last; ++r) {
+                if (c >= s.cells[r].size()) continue;
+                const uint8_t type = CellType(s.cells[r][c], s.flags[r][c]);
+                if (type == kTypeNone) continue;
+                ++counts[type];
+                ++filled;
+            }
+            if (!filled) continue;
+            s.col_types[c] = kTypeText;
+            const size_t numeric = counts[kTypeNumber] + counts[kTypePercent];
+            if (counts[kTypeDate] * 5 >= filled * 4) s.col_types[c] = kTypeDate;
+            else if (counts[kTypePercent] * 5 >= filled * 4) s.col_types[c] = kTypePercent;
+            else if (numeric * 5 >= filled * 4) s.col_types[c] = kTypeNumber;
+        }
+    }
     if (s.measured_scale == scale_ && s.col_x.size() == s.cols + 1) return;
     s.measured_scale = scale_;
     const float pad = 10.0f * scale_;
@@ -366,7 +423,7 @@ TableView::Geometry TableView::Measure() const {
     const Sheet* s = Current();
     const float k = scale_;
     g.row_h = 26.0f * k;
-    g.head_h = 28.0f * k;
+    g.head_h = (s && !s->col_types.empty() ? 42.0f : 28.0f) * k;  // name over the inferred type
     g.pad = 10.0f * k;
     g.grid = view_;
     if (spreadsheet_) {
@@ -377,7 +434,7 @@ TableView::Geometry TableView::Measure() const {
     g.body = R(g.grid.left + s->num_w, g.grid.top + g.head_h, g.grid.right, g.grid.bottom);
     g.content_w = s->col_x.empty() ? 0.0f : s->col_x.back();
     // CSV leaves room under the last row for the status pill.
-    g.content_h = static_cast<float>(BodyRows()) * g.row_h + (spreadsheet_ ? 8.0f : 48.0f) * k;
+    g.content_h = static_cast<float>(BodyRows()) * g.row_h + 48.0f * k;  // room for the end line
     g.max_sx = (std::max)(0.0f, g.content_w - (g.body.right - g.body.left));
     g.max_sy = (std::max)(0.0f, g.content_h - (g.body.bottom - g.body.top));
     return g;
@@ -471,6 +528,15 @@ void TableView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D
     dc->PushAxisAlignedClip(g.body, D2D1_ANTIALIAS_MODE_ALIASED);
     for (size_t r = r0; r < r1; ++r)
         if (r % 2 == 1) fill(R(g.body.left, row_top(r), g.body.right, row_top(r) + g.row_h), zebra);
+    // Crosshair: the hovered row and column, faintly.
+    const D2D1_COLOR_F cross = WithAlpha(sel_line, dark ? 0.07f : 0.05f);
+    const bool crosshair = drag_ == Drag::None && hover_row_ >= 0 && hover_col_ >= 0 &&
+                           static_cast<size_t>(hover_row_) < body_rows && static_cast<size_t>(hover_col_) < s.cols;
+    if (crosshair) {
+        const size_t hr = static_cast<size_t>(hover_row_), hc = static_cast<size_t>(hover_col_);
+        fill(R(g.body.left, row_top(hr), (std::min)(g.body.right, col_left(s.cols)), row_top(hr) + g.row_h), cross);
+        fill(R(col_left(hc), g.body.top, col_left(hc + 1), (std::min)(g.body.bottom, row_top(body_rows))), cross);
+    }
     int sr0 = 0, sr1 = -1, sc0 = 0, sc1 = -1;
     if (sel_valid_) {
         sr0 = (std::min)(sel_r0_, sel_r1_); sr1 = (std::max)(sel_r0_, sel_r1_);
@@ -531,6 +597,17 @@ void TableView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D
         const float x = std::floor(col_left(c + 1)) - 0.5f;
         dc->DrawLine(D2D1::Point2F(x, g.body.top), D2D1::Point2F(x, (std::min)(g.body.bottom, row_top(body_rows))), b, 1.0f);
     }
+    // Below the last row: how many rows there are and whether that is all.
+    if (body_rows > 0 && row_top(body_rows) < g.body.bottom) {
+        wchar_t line[160];
+        swprintf_s(line, pulse::l10n::Get(s.truncated ? pulse::l10n::StringId::PreviewTablePartialRows
+                                                      : pulse::l10n::StringId::PreviewTableAllRows).c_str(),
+                   Grouped(body_rows).c_str());
+        b->SetColor(dim);
+        dc->DrawTextW(line, static_cast<UINT32>(wcslen(line)), small_.Get(),
+                      R(g.body.left + 2.0f * g.pad - s.sx, row_top(body_rows) + 4.0f * k,
+                        g.body.right + 2000.0f * k, row_top(body_rows) + 40.0f * k), b);
+    }
     if (sel_valid_) {
         const D2D1_RECT_F box = R(col_left(static_cast<size_t>(sc0)) + 1.0f * k, row_top(static_cast<size_t>(sr0)) + 1.0f * k,
                                   col_left(static_cast<size_t>(sc1) + 1) - 1.0f * k, row_top(static_cast<size_t>(sr1) + 1) - 1.0f * k);
@@ -549,6 +626,7 @@ void TableView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D
         if (r % 2 == 1) fill(cell, zebra);
         const bool selected = sel_valid_ && static_cast<int>(r) >= sr0 && static_cast<int>(r) <= sr1;
         if (selected) fill(cell, sel_fill);
+        else if (crosshair && static_cast<int>(r) == hover_row_) fill(cell, cross);
         const std::wstring n = std::to_wstring(r + 1);
         b->SetColor(selected ? theme.text : dim);
         dc->DrawTextW(n.data(), static_cast<UINT32>(n.size()), text_right_.Get(),
@@ -567,10 +645,25 @@ void TableView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D
         for (size_t c = c0; c < c1; ++c) {
             const bool selected = sel_valid_ && static_cast<int>(c) >= sc0 && static_cast<int>(c) <= sc1;
             if (selected) fill(R(col_left(c), head.top, col_left(c + 1), head.bottom), sel_fill);
+            else if (crosshair && static_cast<int>(c) == hover_col_)
+                fill(R(col_left(c), head.top, col_left(c + 1), head.bottom), cross);
             const std::wstring label = hdr ? s.cells[0][c] : ColumnName(c);
             const float cw = s.col_x[c + 1] - s.col_x[c] - g.pad * 2.0f;
             auto layout = CellLayout(label, true, false, cw);
-            if (layout) layout->SetMaxHeight(head.bottom - head.top);
+            const bool typed = c < s.col_types.size() && s.col_types[c] != kTypeNone;
+            const float name_h = s.col_types.empty() ? head.bottom - head.top : 28.0f * k;
+            if (layout) layout->SetMaxHeight(name_h);
+            if (typed) {
+                static constexpr pulse::l10n::StringId kTypeNames[] = {
+                    pulse::l10n::StringId::PreviewColumnText, pulse::l10n::StringId::PreviewColumnText,
+                    pulse::l10n::StringId::PreviewColumnNumber, pulse::l10n::StringId::PreviewColumnPercent,
+                    pulse::l10n::StringId::PreviewColumnDate};
+                const std::wstring type = pulse::l10n::Get(kTypeNames[s.col_types[c]]).c_str();
+                b->SetColor(dim);
+                dc->DrawTextW(type.data(), static_cast<UINT32>(type.size()), small_.Get(),
+                              R(col_left(c) + g.pad, head.top + 22.0f * k, col_left(c + 1) - g.pad, head.bottom - 2.0f * k),
+                              b, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            }
             if (hdr && layout) {
                 for (const auto& match : matches) {
                     size_t row = 0, col = 0;
@@ -1015,6 +1108,11 @@ bool TableView::Hover(float x, float y) {
         if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) tab = static_cast<int>(i);
     }
     if (tab != hover_tab_) { hover_tab_ = tab; repaint = true; }
+    {
+        int hr = -1, hc = -1;
+        if (drag_ != Drag::None || !CellAt(x, y, hr, hc, false)) hr = hc = -1;
+        if (hr != hover_row_ || hc != hover_col_) { hover_row_ = hr; hover_col_ = hc; repaint = true; }
+    }
     int r = -1, c = -1;
     if (drag_ != Drag::None || !CellAt(x, y, r, c, false) || !Clipped(r, c)) r = c = -1;
     if (r != tip_row_ || c != tip_col_) {
@@ -1029,8 +1127,8 @@ bool TableView::Hover(float x, float y) {
 }
 
 bool TableView::Leave() {
-    const bool repaint = hover_tab_ >= 0 || tip_shown_;
-    hover_tab_ = tip_row_ = tip_col_ = -1;
+    const bool repaint = hover_tab_ >= 0 || tip_shown_ || hover_row_ >= 0;
+    hover_tab_ = tip_row_ = tip_col_ = hover_row_ = hover_col_ = -1;
     tip_shown_ = false;
     return repaint;
 }

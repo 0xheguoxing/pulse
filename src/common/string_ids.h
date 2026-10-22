@@ -2699,5 +2699,11 @@
 #define IDS_PREVIEW_WIDTH_WIDE                                                           3909
 #define IDS_PREVIEW_EXPAND_ALL                                                           3910
 #define IDS_PREVIEW_COLLAPSE_ALL                                                         3911
+#define IDS_PREVIEW_COLUMN_TEXT                                                          3912
+#define IDS_PREVIEW_COLUMN_NUMBER                                                        3913
+#define IDS_PREVIEW_COLUMN_PERCENT                                                       3914
+#define IDS_PREVIEW_COLUMN_DATE                                                          3915
+#define IDS_PREVIEW_TABLE_ALL_ROWS                                                       3916
+#define IDS_PREVIEW_TABLE_PARTIAL_ROWS                                                   3917
 
 #endif  // PULSE_STRING_IDS_H
