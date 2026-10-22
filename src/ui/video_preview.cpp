@@ -208,6 +208,30 @@ std::wstring LowerExtension(const std::wstring& path) {
     for (auto& c : ext) c = static_cast<wchar_t>(std::towlower(c));
     return ext;
 }
+
+// ".ts" is both MPEG transport stream and TypeScript. A transport stream
+// repeats the 0x47 sync byte every 188 bytes (192 with a BDAV timecode);
+// anything else is source text. The last answer is cached because playback
+// and paint code ask about the same item repeatedly.
+bool TransportStream(const std::wstring& path) {
+    static thread_local std::wstring cached_path;
+    static thread_local bool cached = false;
+    if (path == cached_path) return cached;
+    unsigned char head[4 + 192 + 1]{};
+    DWORD got = 0;
+    const HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (file != INVALID_HANDLE_VALUE) {
+        if (!ReadFile(file, head, sizeof(head), &got, nullptr)) got = 0;
+        CloseHandle(file);
+    }
+    const bool plain = got > 188 && head[0] == 0x47 && head[188] == 0x47;
+    const bool bdav = got > 196 && head[4] == 0x47 && head[196] == 0x47;
+    // An unreadable file keeps the media route (offline placeholders, locks).
+    cached = file == INVALID_HANDLE_VALUE || plain || bdav;
+    cached_path = path;
+    return cached;
+}
 } // namespace
 
 bool VideoPreview::IsAudio(const std::wstring& path) {
@@ -218,6 +242,7 @@ bool VideoPreview::IsAudio(const std::wstring& path) {
 
 bool VideoPreview::Supports(const std::wstring& path) {
     const std::wstring ext = LowerExtension(path);
+    if (ext == L".ts" && !TransportStream(path)) return false;
     return preview::IsVideoExtension(ext) || preview::IsAudioExtension(ext) ||
         ((ffmpeg::IsVideoExtension(ext) || ffmpeg::IsAudioExtension(ext)) && MediaPackPlayable());
 }
@@ -422,8 +447,14 @@ void VideoPreview::Run(std::shared_ptr<Shared> state, std::wstring path) {
     // The FFmpeg preview pack takes over what Media Foundation cannot play:
     // containers it does not know, and videos without an installed decoder.
     const std::wstring pack_ffmpeg = packs::PackToolPath(packs::PackId::Media, L"ffmpeg.exe");
-    const bool mf_format = NativeExtension(LowerExtension(path));
-    if (!pack_ffmpeg.empty() && !state->stop.load() && (!mf_format || state->snapshot.missing_decoder)) {
+    const std::wstring ext = LowerExtension(path);
+    const bool mf_format = NativeExtension(ext);
+    // MPEG program streams: Media Foundation runs the clock and the audio but
+    // presents only a grey picture (MPEG-1 and MPEG-2 alike), so the pack goes
+    // first when it is installed.
+    const bool pack_first = ext == L".mpg" || ext == L".mpeg";
+    if (!pack_ffmpeg.empty() && !state->stop.load() &&
+        (!mf_format || pack_first || state->snapshot.missing_decoder)) {
         if (RunFfmpeg(state, path, pack_ffmpeg)) { CoUninitialize(); return; }
     }
     if (!mf_format) {
