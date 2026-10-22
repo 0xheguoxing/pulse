@@ -1341,8 +1341,11 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             };
             settings_callbacks.pick_folder = [s](std::wstring& path, std::wstring_view title) {
                 const std::wstring owned_title(title);
-                // Each settings row keeps its own history, keyed by its title.
-                return PickFolder(app::CurrentWindow(*s), path, owned_title.c_str(), L"settings:" + owned_title);
+                // Each settings row keeps its own history, keyed by its title;
+                // a path the row passes in is where the picker opens.
+                const std::wstring initial = path;
+                return PickFolder(app::CurrentWindow(*s), path, owned_title.c_str(), L"settings:" + owned_title,
+                                  initial);
             };
             settings_callbacks.apply_effects = [s](app::SettingsEffect effects) {
                 // Every window shows the changed setting.

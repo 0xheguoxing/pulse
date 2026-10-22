@@ -2902,6 +2902,8 @@ BEGIN
     IDS_SETTINGS_CLEAR_NETWORK_DESC "清除最近访问和发现的设备；固定位置、映射驱动器和凭据不受影响。"
     IDS_LAN_DISCOVERY_DISABLED "自动发现已关闭"
     IDS_NETWORK_HISTORY_CLEARED "网络记录已清除"
+    IDS_NETWORK_INDEX_NEEDS_SHARE "这是本机上的文件夹。请选择服务器共享里的文件夹，或映射的网络驱动器；本地磁盘在「本地磁盘」中勾选即可索引。"
+    IDS_NETWORK_INDEX_NO_WSL "WSL 中的文件不能加入网络索引：持续扫描会让 WSL 无法关闭。可以打开该文件夹，把它钉为网络位置。"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5803,6 +5805,8 @@ BEGIN
     IDS_SETTINGS_CLEAR_NETWORK_DESC "Clears recent servers and found devices. Pins, mapped drives and saved credentials stay."
     IDS_LAN_DISCOVERY_DISABLED "Device discovery is off"
     IDS_NETWORK_HISTORY_CLEARED "Network history cleared"
+    IDS_NETWORK_INDEX_NEEDS_SHARE "That's a folder on this PC. Choose a folder on a server share or a mapped network drive. To index a local disk, check it under Local drives."
+    IDS_NETWORK_INDEX_NO_WSL "Files in WSL can't be added to the network index: constant scanning keeps WSL from shutting down. You can open the folder and pin it as a network location instead."
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

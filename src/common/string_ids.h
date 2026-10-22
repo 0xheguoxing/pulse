@@ -2920,5 +2920,7 @@
 #define IDS_SETTINGS_CLEAR_NETWORK_DESC                                                  4126
 #define IDS_LAN_DISCOVERY_DISABLED                                                       4127
 #define IDS_NETWORK_HISTORY_CLEARED                                                      4128
+#define IDS_NETWORK_INDEX_NEEDS_SHARE                                                    4129
+#define IDS_NETWORK_INDEX_NO_WSL                                                         4130
 
 #endif  // PULSE_STRING_IDS_H

@@ -7,6 +7,7 @@
 #include "../index/index_client.h"
 #include "../index/index_config.h"
 #include "../index/network_agent_client.h"
+#include "../fs/wsl_path.h"
 #include "../common/preview_packs.h"
 #include "../common/runtime_log.h"
 #include "system_ctx_model.h"
@@ -1456,6 +1457,16 @@ void SettingsController::IndexAction(int action) {
     StartUiTask(std::move(task));
 }
 
+// The network agent indexes server shares only. This check makes no network
+// calls; it names the problem in the user's language before the agent's
+// generic refusal (#279). The agent still has the final say.
+static bool LooksLikeServerFolder(const std::wstring& path) {
+    if (path.rfind(L"\\\\", 0) == 0 || path.rfind(L"//", 0) == 0) return true;
+    if (path.size() < 2 || path[1] != L':') return false;
+    const wchar_t root[] = {path[0], L':', L'\\', L'\0'};
+    return GetDriveTypeW(root) == DRIVE_REMOTE;
+}
+
 void SettingsController::NetworkAction(int action, bool pin_after_add) {
     if (!network_ || !ui_.task_completion) return;
     if (action == 1) {
@@ -1464,8 +1475,20 @@ void SettingsController::NetworkAction(int action, bool pin_after_add) {
         return;
     }
     if (action != 0 || !ui_.pick_folder) return;
-    std::wstring path;
-    if (!ui_.pick_folder(path, l10n::Get(l10n::StringId::SettingsPickServer).c_str())) return;
+    // Start beside the last added share, not at the last folder picked here:
+    // after a refused local pick, the picker kept reopening there (#279).
+    const auto roots = network_->Roots();
+    std::wstring path = roots.empty() ? std::wstring{} : roots.back().path;
+    if (!ui_.pick_folder(path, l10n::Get(l10n::StringId::SettingsPickServer).c_str()) ||
+        path.empty()) return;
+    if (pulse::fs::IsWslPath(path)) {
+        SetError(l10n::Get(l10n::StringId::NetworkIndexNoWsl).c_str());
+        return;
+    }
+    if (!LooksLikeServerFolder(path)) {
+        SetError(l10n::Get(l10n::StringId::NetworkIndexNeedsShare).c_str());
+        return;
+    }
     ClearError();
     SettingsTask task{SettingsTaskKind::NetworkAdd};
     task.path = std::move(path);

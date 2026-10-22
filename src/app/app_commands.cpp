@@ -5261,11 +5261,13 @@ bool PickToolbarAppFile(AppState& s, HWND owner, std::wstring& path) {
     return true;
 }
 
-bool PickFolder(AppState& s, std::wstring& path, const wchar_t* title, std::wstring_view history_key) {
+bool PickFolder(AppState& s, std::wstring& path, const wchar_t* title, std::wstring_view history_key,
+                std::wstring_view initial) {
     ui::FolderPickerSpec spec = MakePickerSpec(s, ui::PickerMode::Folder);
     spec.title = title ? title : L"";
     // Empty when this entry point has no history: the picker's last folder.
-    spec.initial_path = s.appPrefs.PickerFolder(history_key);
+    spec.initial_path = initial.empty() ? std::wstring(s.appPrefs.PickerFolder(history_key))
+                                        : std::wstring(initial);
     if (!ui::ShowFolderPicker(s.hwnd, spec, s.darkMode, s.accentColor, path)) return false;
     if (!path.empty() && s.appPrefs.RememberPickerFolder(history_key, path)) s.appPrefs.Save();
     return true;
