@@ -57,9 +57,6 @@ private:
     std::mutex request_mu_;
     std::mutex pipe_mu_;
     HANDLE active_pipe_ = INVALID_HANDLE_VALUE;
-    std::mutex status_mu_;
-    std::condition_variable status_cv_;
-    std::thread status_thread_;
     std::mutex search_mu_;
     std::condition_variable search_cv_;
     Query pending_query_;

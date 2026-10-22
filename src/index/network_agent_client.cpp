@@ -184,22 +184,15 @@ void NetworkAgentClient::Start(HWND notify, UINT status_msg, UINT search_msg) {
     status_msg_ = status_msg;
     search_msg_ = search_msg;
     running_ = true;
-    status_thread_ = std::thread([this] {
-        std::unique_lock<std::mutex> lock(status_mu_);
-        while (running_) {
-            lock.unlock();
-            RefreshRoots();
-            lock.lock();
-            if (status_cv_.wait_for(lock, std::chrono::seconds(1),
-                                    [this] { return !running_; })) break;
-        }
-    });
     search_thread_ = std::thread([this] { SearchLoop(); });
 }
 
 void NetworkAgentClient::Stop() {
-    running_ = false;
-    status_cv_.notify_all();
+    {
+        // Under search_mu_ so SearchLoop cannot miss the wake.
+        std::lock_guard<std::mutex> lock(search_mu_);
+        running_ = false;
+    }
     search_cv_.notify_all();
     {
         std::lock_guard<std::mutex> lock(pipe_mu_);
@@ -208,9 +201,7 @@ void NetworkAgentClient::Stop() {
             active_pipe_ = INVALID_HANDLE_VALUE;
         }
     }
-    if (status_thread_.joinable()) CancelSynchronousIo(status_thread_.native_handle());
     if (search_thread_.joinable()) CancelSynchronousIo(search_thread_.native_handle());
-    if (status_thread_.joinable()) status_thread_.join();
     if (search_thread_.joinable()) search_thread_.join();
     std::lock_guard<std::mutex> lock(request_mu_);
     if (agent_process_) {
@@ -232,11 +223,22 @@ void NetworkAgentClient::SearchAsync(const Query& query, uint32_t id) {
     search_cv_.notify_one();
 }
 
+// Serves searches and refreshes the roots once a second. Requests share
+// request_mu_ either way, so one thread delays neither.
 void NetworkAgentClient::SearchLoop() {
+    auto roots_due = std::chrono::steady_clock::now();
     std::unique_lock<std::mutex> lock(search_mu_);
     while (running_) {
-        search_cv_.wait(lock, [this] { return !running_ || have_pending_search_; });
+        if (std::chrono::steady_clock::now() >= roots_due) {
+            lock.unlock();
+            RefreshRoots();
+            lock.lock();
+            roots_due = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            continue;
+        }
+        search_cv_.wait_until(lock, roots_due, [this] { return !running_ || have_pending_search_; });
         if (!running_) break;
+        if (!have_pending_search_) continue;
         auto next=pending_searches_.begin();
         if(next==pending_searches_.end()) {have_pending_search_=false;continue;}
         Query query = std::move(next->second.second);
