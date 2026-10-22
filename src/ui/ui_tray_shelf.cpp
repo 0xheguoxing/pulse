@@ -205,11 +205,13 @@ void DrawShelfIcon(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* br, ShelfIcon i
 }
 
 // Text in a box: one line, end ellipsis, centered vertically.
-void ShelfText(ID2D1DeviceContext* dc, IDWriteFactory2* factory, IDWriteTextFormat* fmt,
+void ShelfText(Compositor* compositor, IDWriteTextFormat* fmt,
                ID2D1SolidColorBrush* br, const std::wstring& text, const D2D1_RECT_F& rc,
                DWRITE_TEXT_ALIGNMENT align = DWRITE_TEXT_ALIGNMENT_LEADING) {
     const float w = rc.right - rc.left, h = rc.bottom - rc.top;
-    if (!dc || !factory || !fmt || text.empty() || w <= 1.0f || h <= 1.0f) return;
+    if (!compositor || !compositor->Dc()) return;
+    IDWriteFactory2* factory = compositor->DwriteFactory();
+    if (!factory || !fmt || text.empty() || w <= 1.0f || h <= 1.0f) return;
     ComPtr<IDWriteTextLayout> layout;
     if (FAILED(factory->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), fmt, w, h,
                                          &layout)) || !layout.get())
@@ -221,7 +223,7 @@ void ShelfText(ID2D1DeviceContext* dc, IDWriteFactory2* factory, IDWriteTextForm
     ComPtr<IDWriteInlineObject> ellipsis;
     factory->CreateEllipsisTrimmingSign(layout.get(), &ellipsis);
     layout->SetTrimming(&trimming, ellipsis.get());
-    dc->DrawTextLayout(D2D1::Point2F(rc.left, rc.top), layout.get(), br, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    compositor->DrawTextLayout(D2D1::Point2F(rc.left, rc.top), layout.get(), br, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
 } // namespace
@@ -357,13 +359,13 @@ void MainRenderer::DrawTrayShelfLayer(const WindowViewModel& vm, int stage, cons
 
     if (stage == static_cast<int>(TrayStage::Strip)) {
         DrawShelfIcon(dc, B(p.acc2), ShelfIcon::Tray, g.strip_icon, 16.0f * s);
-        ShelfText(dc, dw, ShelfFormat(0), B(p.acc2), l10n::Get(StringId::TrayShelfTitle), g.strip_title);
-        ShelfText(dc, dw, ShelfFormat(1), B(p.faint),
+        ShelfText(compositor_, ShelfFormat(0), B(p.acc2), l10n::Get(StringId::TrayShelfTitle), g.strip_title);
+        ShelfText(compositor_, ShelfFormat(1), B(p.faint),
                   l10n::Get(g.strip_hint_short ? StringId::TrayStripHintShort : StringId::TrayStripHint),
                   g.strip_hint);
         if (g.strip_kbd.right > g.strip_kbd.left) {
             fill(g.strip_kbd, 4.0f * s, p.kbd);
-            ShelfText(dc, dw, ShelfFormat(6), B(p.sub), l10n::Get(StringId::TrayStripKbd), g.strip_kbd,
+            ShelfText(compositor_, ShelfFormat(6), B(p.sub), l10n::Get(StringId::TrayStripKbd), g.strip_kbd,
                       DWRITE_TEXT_ALIGNMENT_CENTER);
         }
         if (d.clip_count > 0 && g.strip_clip.right > g.strip_clip.left)
@@ -408,12 +410,12 @@ void MainRenderer::DrawTrayShelfLayer(const WindowViewModel& vm, int stage, cons
             DrawShelfIcon(dc, B(icon_c), mv ? ShelfIcon::Move : ShelfIcon::Copy,
                           D2D1::RectF(cx - 10.0f * s, y, cx + 10.0f * s, y + 20.0f * s), 20.0f * s);
             y += 25.0f * s;
-            ShelfText(dc, dw, ShelfFormat(0), B(b_c),
+            ShelfText(compositor_, ShelfFormat(0), B(b_c),
                       l10n::Get(mv ? StringId::TrayDropMoveTitle : StringId::TrayDropCopyTitle),
                       D2D1::RectF(h.left + 4.0f * s, y, h.right - 4.0f * s, y + 17.0f * s),
                       DWRITE_TEXT_ALIGNMENT_CENTER);
             y += 22.0f * s;
-            ShelfText(dc, dw, ShelfFormat(4), B(p.faint),
+            ShelfText(compositor_, ShelfFormat(4), B(p.faint),
                       l10n::Get(mv ? StringId::TrayDropOrShift : StringId::TrayDropDefault),
                       D2D1::RectF(h.left + 4.0f * s, y, h.right - 4.0f * s, y + 14.0f * s),
                       DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -501,7 +503,7 @@ void MainRenderer::DrawTrayShelfLayer(const WindowViewModel& vm, int stage, cons
                     fill(D2D1::RectF(doc.right - 8.0f * s, doc.top, doc.right, doc.top + 8.0f * s), 2.0f * s,
                          Rgba(0xC3C6CD));
                     if (chip.size() <= 4) {
-                        ShelfText(dc, dw, ShelfFormat(5), B(Rgba(0xFFFFFF)), chip,
+                        ShelfText(compositor_, ShelfFormat(5), B(Rgba(0xFFFFFF)), chip,
                                   D2D1::RectF(strip.left - 2.0f * s, strip.top - 1.0f * s, strip.right + 2.0f * s,
                                               strip.bottom + 1.0f * s), DWRITE_TEXT_ALIGNMENT_CENTER);
                     }
@@ -518,7 +520,7 @@ void MainRenderer::DrawTrayShelfLayer(const WindowViewModel& vm, int stage, cons
         fill(D2D1::RectF(badge.left - ring, badge.top - ring, badge.right + ring, badge.bottom + ring),
              10.0f * s + ring, p.tray);
         fill(badge, 10.0f * s, Mix(p.acc, p.move, d.mode_t));
-        ShelfText(dc, dw, ShelfFormat(5), B(p.on_acc), count, badge, DWRITE_TEXT_ALIGNMENT_CENTER);
+        ShelfText(compositor_, ShelfFormat(5), B(p.on_acc), count, badge, DWRITE_TEXT_ALIGNMENT_CENTER);
         dc->SetTransform(old);
     }
     // r1: meta.
@@ -527,16 +529,16 @@ void MainRenderer::DrawTrayShelfLayer(const WindowViewModel& vm, int stage, cons
         const float y = m.top + 4.0f * s;
         const std::wstring count = Fill(l10n::Get(StringId::TrayItemsFormat), L"{n}", std::to_wstring(std::max(0, d.total_count - d.stale_count)));
         const float cw = std::min(m.right - m.left, MeasureTextWidth(dw, ShelfFormat(3), count) + 1.0f);
-        ShelfText(dc, dw, ShelfFormat(3), B(p.strong), count, D2D1::RectF(m.left, y, m.left + cw, y + 20.0f * s));
+        ShelfText(compositor_, ShelfFormat(3), B(p.strong), count, D2D1::RectF(m.left, y, m.left + cw, y + 20.0f * s));
         if (d.total_size > 0)
-            ShelfText(dc, dw, ShelfFormat(1), B(p.sub), pulse::format::ByteSize(d.total_size, true),
+            ShelfText(compositor_, ShelfFormat(1), B(p.sub), pulse::format::ByteSize(d.total_size, true),
                       D2D1::RectF(m.left + cw + 6.0f * s, y + 1.0f * s, m.right, y + 20.0f * s));
         const D2D1_RECT_F line_b = D2D1::RectF(m.left, y + 21.0f * s, m.right, y + 37.0f * s);
         if (d.stale_count > 0)
-            ShelfText(dc, dw, ShelfFormat(4), B(p.warn),
+            ShelfText(compositor_, ShelfFormat(4), B(p.warn),
                       Fill(l10n::Get(StringId::TrayStaleFormat), L"{n}", std::to_wstring(d.stale_count)), line_b);
         else
-            ShelfText(dc, dw, ShelfFormat(4), B(p.faint), d.sources_text, line_b);
+            ShelfText(compositor_, ShelfFormat(4), B(p.faint), d.sources_text, line_b);
     }
     auto icon_button = [&](const D2D1_RECT_F& r, ShelfIcon icon, bool is_hot, float px) {
         if (is_hot) fill(r, 8.0f * s, p.ib_hot);
@@ -582,7 +584,7 @@ void MainRenderer::DrawTrayShelfLayer(const WindowViewModel& vm, int stage, cons
             const float e = EaseOutBack(lt);
             const D2D1_RECT_F lr = D2D1::RectF(g.go.left + 8.0f * s, g.go.top + 6.0f * s * (1.0f - e),
                                                g.go.right - 8.0f * s, g.go.bottom + 6.0f * s * (1.0f - e));
-            ShelfText(dc, dw, ShelfFormat(2), B(Alpha(p.on_acc, (usable ? 1.0f : 0.75f) * EaseOutCubic(lt))),
+            ShelfText(compositor_, ShelfFormat(2), B(Alpha(p.on_acc, (usable ? 1.0f : 0.75f) * EaseOutCubic(lt))),
                       label, lr, DWRITE_TEXT_ALIGNMENT_CENTER);
         }
         if (d.conflicts > 0 && usable) {
@@ -593,7 +595,7 @@ void MainRenderer::DrawTrayShelfLayer(const WindowViewModel& vm, int stage, cons
             const float ring = 2.5f * s;
             fill(D2D1::RectF(cb.left - ring, cb.top - ring, cb.right + ring, cb.bottom + ring), 8.0f * s + ring, p.tray);
             fill(cb, 8.0f * s, p.warn);
-            ShelfText(dc, dw, ShelfFormat(5), B(Rgba(0x2A1800)), c, cb, DWRITE_TEXT_ALIGNMENT_CENTER);
+            ShelfText(compositor_, ShelfFormat(5), B(Rgba(0x2A1800)), c, cb, DWRITE_TEXT_ALIGNMENT_CENTER);
         }
     }
     // r2: ZIP (ring while compressing) and rename.
@@ -628,7 +630,7 @@ void MainRenderer::DrawTrayShelfLayer(const WindowViewModel& vm, int stage, cons
     icon_button(g.rename, ShelfIcon::Rename, hot(TrayShelfHit::Rename), 16.0f * s);
 
     // r3: 送到 + chips + ＋.
-    ShelfText(dc, dw, ShelfFormat(4), B(p.faint), l10n::Get(StringId::TraySendTo), g.send_label);
+    ShelfText(compositor_, ShelfFormat(4), B(p.faint), l10n::Get(StringId::TraySendTo), g.send_label);
     for (size_t i = 0; i < g.chips.size(); ++i) {
         const D2D1_RECT_F c = g.chips[i];
         const int dest = g.chip_dest[i];
@@ -647,7 +649,7 @@ void MainRenderer::DrawTrayShelfLayer(const WindowViewModel& vm, int stage, cons
         const float fx = c.left + 8.0f * s, fy = (c.top + c.bottom) * 0.5f - 4.0f * s;
         fill(D2D1::RectF(fx, fy - 1.5f * s, fx + 6.0f * s, fy + 2.0f * s), 1.2f * s, Mix(p.folder, Rgba(0xC88A1E), 0.25f));
         fill(D2D1::RectF(fx, fy, fx + 13.0f * s, fy + 10.0f * s), 2.0f * s, p.folder);
-        ShelfText(dc, dw, ShelfFormat(1), B(is_hot ? (vm.dark ? Rgba(0xFFFFFF) : p.strong) : p.text),
+        ShelfText(compositor_, ShelfFormat(1), B(is_hot ? (vm.dark ? Rgba(0xFFFFFF) : p.strong) : p.text),
                   d.dests[static_cast<size_t>(dest)].label,
                   D2D1::RectF(fx + 13.0f * s + 6.0f * s, c.top, c.right - 10.0f * s, c.bottom));
         dc->SetTransform(old);
@@ -655,7 +657,7 @@ void MainRenderer::DrawTrayShelfLayer(const WindowViewModel& vm, int stage, cons
     {
         const bool is_hot = hot(TrayShelfHit::Pick);
         fill(g.pick, 13.0f * s, is_hot ? p.chip_hot : p.chip);
-        ShelfText(dc, dw, ShelfFormat(1), B(is_hot ? p.strong : p.sub), L"\xFF0B", g.pick,
+        ShelfText(compositor_, ShelfFormat(1), B(is_hot ? p.strong : p.sub), L"\xFF0B", g.pick,
                   DWRITE_TEXT_ALIGNMENT_CENTER);
     }
 }
@@ -694,16 +696,16 @@ void MainRenderer::DrawShelfClip(const WindowViewModel& vm, const D2D1_RECT_F& r
     DrawShelfIcon(dc, B(ink), ShelfIcon::Clip, ib, 13.0f * s);
     const std::wstring n = std::to_wstring(d.clip_count);
     if (!row) {
-        ShelfText(dc, dw, ShelfFormat(7), B(ink), Fill(l10n::Get(StringId::TrayClipStrip), L"{n}", n),
+        ShelfText(compositor_, ShelfFormat(7), B(ink), Fill(l10n::Get(StringId::TrayClipStrip), L"{n}", n),
                   D2D1::RectF(ib.right + 5.0f * s, rc.top, rc.right - 8.0f * s, rc.bottom));
     } else {
         const std::wstring take = l10n::Get(StringId::TrayClipTake);
         const float take_w = MeasureTextWidth(dw, ShelfFormat(8), take) + 1.0f * s;
         const D2D1_RECT_F tr = D2D1::RectF(std::max(ib.right, rc.right - 10.0f * s - take_w), rc.top,
                                            rc.right - 10.0f * s, rc.bottom);
-        ShelfText(dc, dw, ShelfFormat(8), B(ink), Fill(l10n::Get(StringId::TrayClipRow), L"{n}", n),
+        ShelfText(compositor_, ShelfFormat(8), B(ink), Fill(l10n::Get(StringId::TrayClipRow), L"{n}", n),
                   D2D1::RectF(ib.right + 7.0f * s, rc.top, tr.left - 6.0f * s, rc.bottom));
-        ShelfText(dc, dw, ShelfFormat(8), B(vm.dark ? Rgba(0xFFFFFF) : p.strong), take, tr,
+        ShelfText(compositor_, ShelfFormat(8), B(vm.dark ? Rgba(0xFFFFFF) : p.strong), take, tr,
                   DWRITE_TEXT_ALIGNMENT_TRAILING);
     }
     if (layered) {
@@ -734,10 +736,10 @@ void MainRenderer::DrawTrayOpen(const WindowViewModel& vm, const D2D1_RECT_F& rc
     dc->GetTransform(&old);
 
     // .oh: 暂存区  N 项 · size              ⌄
-    ShelfText(dc, dw, ShelfFormat(3), B(p.strong), l10n::Get(StringId::TrayShelfTitle), g.title);
+    ShelfText(compositor_, ShelfFormat(3), B(p.strong), l10n::Get(StringId::TrayShelfTitle), g.title);
     std::wstring count = Fill(l10n::Get(StringId::TrayItemsFormat), L"{n}", std::to_wstring(d.total_count));
     if (d.total_size > 0) count += L" \u00B7 " + format::ByteSize(d.total_size, true);
-    ShelfText(dc, dw, ShelfFormat(1), B(p.sub), count, g.count);
+    ShelfText(compositor_, ShelfFormat(1), B(p.sub), count, g.count);
     if (hot(TrayShelfHit::Collapse)) fill(g.collapse, 8.0f * s, p.ib_hot);
     DrawShelfIcon(dc, B(hot(TrayShelfHit::Collapse) ? p.strong : p.sub), ShelfIcon::Down, g.collapse, 14.0f * s);
 
@@ -750,7 +752,7 @@ void MainRenderer::DrawTrayOpen(const WindowViewModel& vm, const D2D1_RECT_F& rc
         const bool h = hot(TrayShelfHit::Filter, f);
         fill(g.filters[i], 12.0f * s, on ? Alpha(p.acc, vm.dark ? 0.26f : 0.18f) : (h ? p.ib_hot : p.chip));
         const std::wstring label = l10n::Get(names[f]) + L" " + std::to_wstring(d.filter_counts[f]);
-        ShelfText(dc, dw, ShelfFormat(on ? 7 : 4), B(on ? (vm.dark ? Rgba(0xE2E6FF) : p.acc) : p.sub), label,
+        ShelfText(compositor_, ShelfFormat(on ? 7 : 4), B(on ? (vm.dark ? Rgba(0xE2E6FF) : p.acc) : p.sub), label,
                   g.filters[i], DWRITE_TEXT_ALIGNMENT_CENTER);
     }
 
@@ -779,10 +781,10 @@ void MainRenderer::DrawTrayOpen(const WindowViewModel& vm, const D2D1_RECT_F& rc
             fill(fo, 2.0f * s, p.folder);
             fill(D2D1::RectF(fo.left, fo.top - 1.5f * s, fo.left + 5.0f * s, fo.top + 2.0f * s), 1.0f * s, p.folder);
             const D2D1_RECT_F& orc = g.head_open[i];
-            ShelfText(dc, dw, ShelfFormat(9), B(p.faint), row.group,
+            ShelfText(compositor_, ShelfFormat(9), B(p.faint), row.group,
                       D2D1::RectF(fo.right + 7.0f * s, hr.top + 8.0f * s, orc.left - 6.0f * s, hr.bottom - 4.0f * s));
             const bool oh = hot(TrayShelfHit::GroupOpen, static_cast<int>(i));
-            ShelfText(dc, dw, ShelfFormat(6), B(oh ? p.acc2 : p.faint), l10n::Get(StringId::TrayGroupOpen),
+            ShelfText(compositor_, ShelfFormat(6), B(oh ? p.acc2 : p.faint), l10n::Get(StringId::TrayGroupOpen),
                       D2D1::RectF(orc.left, hr.top + 8.0f * s, orc.right, hr.bottom - 4.0f * s),
                       DWRITE_TEXT_ALIGNMENT_TRAILING);
         }
@@ -816,9 +818,9 @@ void MainRenderer::DrawTrayOpen(const WindowViewModel& vm, const D2D1_RECT_F& rc
             }
             const float sw = row.size.empty() ? 0.0f : MeasureTextWidth(dw, ShelfFormat(4), row.size) + 2.0f * s;
             const D2D1_RECT_F sr = D2D1::RectF(rr.right - 8.0f * s - sw, rr.top, rr.right - 8.0f * s, rr.bottom);
-            ShelfText(dc, dw, ShelfFormat(10), B(row.exists ? (vm.dark ? Rgba(0xDFE3F0) : p.text) : p.faint), row.name,
+            ShelfText(compositor_, ShelfFormat(10), B(row.exists ? (vm.dark ? Rgba(0xDFE3F0) : p.text) : p.faint), row.name,
                       D2D1::RectF(ix + icon + 9.0f * s, rr.top, sr.left - 9.0f * s, rr.bottom));
-            if (sw > 0.0f) ShelfText(dc, dw, ShelfFormat(4), B(p.faint), row.size, sr, DWRITE_TEXT_ALIGNMENT_TRAILING);
+            if (sw > 0.0f) ShelfText(compositor_, ShelfFormat(4), B(p.faint), row.size, sr, DWRITE_TEXT_ALIGNMENT_TRAILING);
         }
         if (layered) dc->PopLayer();
         dc->SetTransform(old);
@@ -831,18 +833,18 @@ void MainRenderer::DrawTrayOpen(const WindowViewModel& vm, const D2D1_RECT_F& rc
     if (d.checked > 0) {
         std::wstring prefix = Fill(l10n::Get(StringId::TraySelectedFormat), L"{n}", std::to_wstring(d.checked));
         prefix += L" \u00B7 ";
-        ShelfText(dc, dw, ShelfFormat(4), B(p.sub), prefix,
+        ShelfText(compositor_, ShelfFormat(4), B(p.sub), prefix,
                   D2D1::RectF(g.selinfo.left, g.selinfo.top, g.none_link.left + 1.0f * s, g.selinfo.bottom));
-        ShelfText(dc, dw, ShelfFormat(7), B(hot(TrayShelfHit::SelNone) ? p.strong : (vm.dark ? Rgba(0xAAB5F5) : p.acc)),
+        ShelfText(compositor_, ShelfFormat(7), B(hot(TrayShelfHit::SelNone) ? p.strong : (vm.dark ? Rgba(0xAAB5F5) : p.acc)),
                   l10n::Get(StringId::Cancel), D2D1::RectF(g.none_link.left, g.selinfo.top, g.none_link.right + 4.0f * s,
                   g.selinfo.bottom));
     } else {
-        ShelfText(dc, dw, ShelfFormat(4), B(p.sub),
+        ShelfText(compositor_, ShelfFormat(4), B(p.sub),
                   Fill(l10n::Get(StringId::TrayNoneCheckedFormat), L"{n}", std::to_wstring(d.live_total)), g.selinfo);
     }
     if (d.checked == 2) {
         fill(g.cmp, 9.0f * s, Alpha(p.acc, (hot(TrayShelfHit::Compare) || d.cmp_shown) ? 0.5f : 0.3f));
-        ShelfText(dc, dw, ShelfFormat(4), B(vm.dark ? Rgba(0xFFFFFF) : p.strong), l10n::Get(StringId::TrayCompareThese),
+        ShelfText(compositor_, ShelfFormat(4), B(vm.dark ? Rgba(0xFFFFFF) : p.strong), l10n::Get(StringId::TrayCompareThese),
                   g.cmp, DWRITE_TEXT_ALIGNMENT_CENTER);
     }
     {
@@ -876,7 +878,7 @@ void MainRenderer::DrawTrayOpen(const WindowViewModel& vm, const D2D1_RECT_F& rc
         const float e = EaseOutBack(lt);
         const D2D1_RECT_F lr = D2D1::RectF(g.go.left + 8.0f * s, g.go.top + 6.0f * s * (1.0f - e),
                                            g.go.right - 8.0f * s, g.go.bottom + 6.0f * s * (1.0f - e));
-        ShelfText(dc, dw, ShelfFormat(2), B(Alpha(p.on_acc, (usable ? 1.0f : 0.75f) * EaseOutCubic(lt))), label, lr,
+        ShelfText(compositor_, ShelfFormat(2), B(Alpha(p.on_acc, (usable ? 1.0f : 0.75f) * EaseOutCubic(lt))), label, lr,
                   DWRITE_TEXT_ALIGNMENT_CENTER);
         if (d.conflicts > 0 && usable) {
             const std::wstring c = Fill(l10n::Get(StringId::TrayConflictsFormat), L"{n}", std::to_wstring(d.conflicts));
@@ -886,7 +888,7 @@ void MainRenderer::DrawTrayOpen(const WindowViewModel& vm, const D2D1_RECT_F& rc
             const float ring = 2.5f * s;
             fill(D2D1::RectF(cb.left - ring, cb.top - ring, cb.right + ring, cb.bottom + ring), 8.0f * s + ring, p.tray);
             fill(cb, 8.0f * s, p.warn);
-            ShelfText(dc, dw, ShelfFormat(5), B(Rgba(0x2A1800)), c, cb, DWRITE_TEXT_ALIGNMENT_CENTER);
+            ShelfText(compositor_, ShelfFormat(5), B(Rgba(0x2A1800)), c, cb, DWRITE_TEXT_ALIGNMENT_CENTER);
         }
     }
 }
@@ -895,7 +897,6 @@ void MainRenderer::DrawTrayCompareCard(const WindowViewModel& vm, const Theme& t
     const TrayDeckView& d = vm.tray_deck;
     if (!d.cmp_shown || !compositor_ || !compositor_->Dc() || tray_panel_rc_.bottom <= tray_panel_rc_.top) return;
     ID2D1DeviceContext* dc = compositor_->Dc();
-    IDWriteFactory2* dw = compositor_->DwriteFactory();
     const ShelfPalette p = MakeShelfPalette(vm.dark, IsHighContrast(), theme);
     const float s = scale_;
     D2D1_SIZE_F target = dc->GetSize();
@@ -932,7 +933,7 @@ void MainRenderer::DrawTrayCompareCard(const WindowViewModel& vm, const Theme& t
     dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(g.box.left + 0.5f, g.box.top + 0.5f, g.box.right - 0.5f,
         g.box.bottom - 0.5f), r, r), B(vm.dark ? Rgba(0xFFFFFF, 0.08f) : Rgba(0x000000, 0.10f)), 1.0f);
     const TrayCompareView& cv = d.compare;
-    ShelfText(dc, dw, ShelfFormat(0), B(p.strong), L"\u21C4 " + l10n::Get(StringId::TrayCompareTwo), g.title);
+    ShelfText(compositor_, ShelfFormat(0), B(p.strong), L"\u21C4 " + l10n::Get(StringId::TrayCompareTwo), g.title);
     if (hot(TrayShelfHit::CardClose)) fill(g.close, 6.0f * s, p.ib_hot);
     DrawShelfIcon(dc, B(p.sub), ShelfIcon::Close, g.close, 14.0f * s);
     const D2D1_COLOR_F key = vm.dark ? Rgba(0x7D869E) : p.faint;
@@ -947,14 +948,14 @@ void MainRenderer::DrawTrayCompareCard(const WindowViewModel& vm, const Theme& t
     };
     const StringId keys[3] = {StringId::TrayCmpLocation, StringId::TrayCmpModified, StringId::TrayCmpSize};
     for (int row = 1; row <= 3; ++row)
-        ShelfText(dc, dw, ShelfFormat(1), B(key), l10n::Get(keys[row - 1]), cell(row, -1));
+        ShelfText(compositor_, ShelfFormat(1), B(key), l10n::Get(keys[row - 1]), cell(row, -1));
     for (int c = 0; c < 2; ++c) {
-        ShelfText(dc, dw, ShelfFormat(7), B(p.strong), cv.name[c], cell(0, c));
-        ShelfText(dc, dw, ShelfFormat(1), B(val), cv.where[c], cell(1, c));
+        ShelfText(compositor_, ShelfFormat(7), B(p.strong), cv.name[c], cell(0, c));
+        ShelfText(compositor_, ShelfFormat(1), B(val), cv.where[c], cell(1, c));
         const bool nw = cv.newer == c;
-        ShelfText(dc, dw, ShelfFormat(1), B(nw ? newer : val),
+        ShelfText(compositor_, ShelfFormat(1), B(nw ? newer : val),
                   nw ? cv.time[c] + L" \u00B7 " + l10n::Get(StringId::TrayCmpNewer) : cv.time[c], cell(2, c));
-        ShelfText(dc, dw, ShelfFormat(1), B(cv.size_differs ? diff : val), cv.size[c], cell(3, c));
+        ShelfText(compositor_, ShelfFormat(1), B(cv.size_differs ? diff : val), cv.size[c], cell(3, c));
     }
     // .res: the content verdict (clickable while it can do something).
     std::wstring res;
@@ -973,7 +974,7 @@ void MainRenderer::DrawTrayCompareCard(const WindowViewModel& vm, const Theme& t
     }
     if (hot(TrayShelfHit::CardAction)) bg.a = std::min(1.0f, bg.a + 0.1f);
     fill(g.res, 9.0f * s, bg);
-    ShelfText(dc, dw, ShelfFormat(7), B(ink), res,
+    ShelfText(compositor_, ShelfFormat(7), B(ink), res,
               D2D1::RectF(g.res.left + 11.0f * s, g.res.top, g.res.right - 11.0f * s, g.res.bottom));
     if (layered) dc->PopLayer();
     dc->SetTransform(old);
