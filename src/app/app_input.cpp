@@ -130,6 +130,7 @@ bool UpdateSplitterDrag(AppState& s, int mx, int my) {
 }
 void ClearDropFeedback(AppState& s) {
     s.dropLaunchProgram.clear();
+    s.dropLaunchShortcut.clear();
     s.toolbarDropMode = false;
     s.toolbarDropSources.clear();
     s.toolbarDropProgram.clear();
@@ -239,6 +240,7 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
     SetFavoritesBarDropGroup({});
     s.dropDestDir.clear();
     s.dropLaunchProgram.clear();
+    s.dropLaunchShortcut.clear();
     s.dropBadge.clear();
     s.dropBadgeMove = false;
     // Files from outside (or another pane) are over the window: the shelf
@@ -330,6 +332,8 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
             return DROPEFFECT_NONE;
         }
         s.dropLaunchProgram = launch_program;
+        s.dropLaunchShortcut = ui::LooksLikeFolderShortcut(tab->EntryAt(hit.index).name)
+            ? EntryFullPath(*tab, hit.index) : std::wstring();
         s.dropRow = hit.index;
         s.dropPaneIndex = hit.pane_index;
         s.dropBadge = std::wstring(l10n::Get(l10n::StringId::OpenWith).c_str()) +
@@ -640,6 +644,7 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
     DWORD effect = ResolveDropTarget(s, sources, pt, key_state, allowed, preferred_effect);
     std::wstring dest = s.dropDestDir;
     const std::wstring launch_program = s.dropLaunchProgram;
+    const std::wstring launch_shortcut = s.dropLaunchShortcut;
     bool tray = s.dropTray;
     const bool tray_move = s.dropTrayMove;
     const bool header = s.dropHeader;
@@ -668,6 +673,12 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
         return effect;
     }
 
+    if (!launch_program.empty() && !launch_shortcut.empty()) {
+        // Dropped on a program's shortcut: started as the shortcut would be,
+        // its own arguments before the items (read on the ops open thread).
+        s.ops.OpenShortcutProgram(launch_shortcut, launch_program, ui::DropLaunchArguments(sources));
+        return effect;
+    }
     if (!launch_program.empty()) {
         // Launched on the ops open thread, in the program's own folder.
         std::wstring folder = fs::ParentPath(fs::NormalizePath(launch_program));

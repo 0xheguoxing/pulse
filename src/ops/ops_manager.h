@@ -324,6 +324,13 @@ public:
     void OpenProgramIn(const std::wstring& exe, const std::wstring& dir,
                        const std::wstring& args);
 
+    // Items dropped on a program shortcut: `program` (its resolved target)
+    // starts with the shortcut's own arguments, then `args`, in the shortcut's
+    // start-in folder, elevated when the shortcut asks for it. The .lnk is
+    // read on the open thread.
+    void OpenShortcutProgram(const std::wstring& lnk, const std::wstring& program,
+                             const std::wstring& args);
+
     // --- Explorer context-menu sessions (pulse_shell IContextMenu) ---------
     // Runs on a dedicated forwarding thread so a slow pipe reconnect or an
     // in-flight transfer never delays a right-click. The callback fires on the

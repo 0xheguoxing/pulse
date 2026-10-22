@@ -10,6 +10,7 @@
 #include <algorithm>
 #include "../app/link_resolve.h"
 #include "../app/snapshot_patch.h"
+#include "../ops/shortcut_launch.h"
 
 static int failures;
 static void Check(bool ok, const char* label) {
@@ -42,6 +43,21 @@ static bool MakeAdvertisedShortcut(const std::filesystem::path& path, const std:
     DWORD flags = 0;
     if (FAILED(data->AddDataBlock(&block)) || FAILED(data->GetFlags(&flags)) ||
         FAILED(data->SetFlags(flags | SLDF_HAS_DARWINID))) return false;
+    Microsoft::WRL::ComPtr<IPersistFile> file;
+    return SUCCEEDED(link.As(&file)) && SUCCEEDED(file->Save(path.c_str(), TRUE));
+}
+
+// A program shortcut with its own arguments, start-in folder and run-as flag.
+static bool MakeToolShortcut(const std::filesystem::path& path, const std::filesystem::path& target) {
+    Microsoft::WRL::ComPtr<IShellLinkW> link;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&link))) || FAILED(link->SetPath(target.c_str())) ||
+        FAILED(link->SetArguments(L"--profile-directory=\"Profile 2\" %PULSE_LNK_FIXTURE%")) ||
+        FAILED(link->SetWorkingDirectory(L"%PULSE_LNK_FIXTURE%\\work"))) return false;
+    Microsoft::WRL::ComPtr<IShellLinkDataList> data;
+    DWORD flags = 0;
+    if (FAILED(link.As(&data)) || FAILED(data->GetFlags(&flags)) ||
+        FAILED(data->SetFlags(flags | SLDF_RUNAS_USER))) return false;
     Microsoft::WRL::ComPtr<IPersistFile> file;
     return SUCCEEDED(link.As(&file)) && SUCCEEDED(file->Save(path.c_str(), TRUE));
 }
@@ -245,6 +261,26 @@ int main() {
         app::IsInstallerCachePath(L"c:\\windows\\installer\\x.ico", L"C:\\Windows\\") &&
         app::IsInstallerCachePath(L"\\\\?\\C:\\Windows\\Installer\\a.msi", L"C:\\Windows"),
         "files in the Windows Installer cache are recognised");
+    // Items dropped on a program shortcut keep what the shortcut adds (ops::ShortcutLaunch).
+    SetEnvironmentVariableW(L"PULSE_LNK_FIXTURE", L"C:\\fixture");
+    Check(MakeToolShortcut(root / L"tool.lnk", root / L"mainapp.exe"), "create shortcut with arguments");
+    ops::ShortcutLaunch launch;
+    Check(ops::ReadShortcutLaunch((root / L"tool.lnk").wstring(), launch) &&
+        launch.arguments == L"--profile-directory=\"Profile 2\" C:\\fixture" &&
+        launch.directory == L"C:\\fixture\\work" && launch.run_as,
+        "shortcut arguments, start-in folder and run-as are read and expanded");
+    Check(MakeShortcut(root / L"plain-tool.lnk", root / L"mainapp.exe") &&
+        ops::ReadShortcutLaunch((root / L"plain-tool.lnk").wstring(), launch) &&
+        launch.arguments.empty() && launch.directory.empty() && !launch.run_as,
+        "a bare shortcut adds nothing");
+    Check(!ops::ReadShortcutLaunch((root / L"bad.lnk").wstring(), launch) && launch.arguments.empty(),
+        "an unreadable shortcut adds nothing");
+    Check(ops::CombineShortcutArguments(L"--x  ", L" \"C:\\a b.txt\"") == L"--x \"C:\\a b.txt\"" &&
+        ops::CombineShortcutArguments(L"", L"\"f\"") == L"\"f\"" &&
+        ops::CombineShortcutArguments(L"--x", L"") == L"--x" &&
+        ops::CombineShortcutArguments(L" ", L"").empty(),
+        "shortcut arguments come before the dropped items");
+    SetEnvironmentVariableW(L"PULSE_LNK_FIXTURE", nullptr);
     Check(!app::IsInstallerCachePath(L"C:\\Windows\\Installer", L"C:\\Windows") &&
         !app::IsInstallerCachePath(L"C:\\Windows\\InstallerX\\a.exe", L"C:\\Windows") &&
         !app::IsInstallerCachePath(L"C:\\Program Files\\App\\app.exe", L"C:\\Windows") &&

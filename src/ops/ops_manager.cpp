@@ -6,6 +6,7 @@
 #include "transfer_rate_estimator.h"
 #include "transfer_engine.h"
 #include "shell_command.h"
+#include "shortcut_launch.h"
 #include "elevated_transfer.h"
 #include "../ipc/shell_client.h"
 #include "../common/json_utils.h"
@@ -1280,6 +1281,17 @@ void OpsManager::OpenProgramIn(const std::wstring& exe, const std::wstring& dir,
     EnqueueOpen(std::move(item));
 }
 
+void OpsManager::OpenShortcutProgram(const std::wstring& lnk, const std::wstring& program,
+                                     const std::wstring& args) {
+    if (lnk.empty() || program.empty()) return;
+    QueueItem item;
+    item.open_path = lnk;      // read on the open thread, then the start-in folder
+    item.open_file = program;
+    item.open_verb = L"__shortcut";
+    item.open_args = args;
+    EnqueueOpen(std::move(item));
+}
+
 OpsManager::QueueItem* OpsManager::CurrentTransferLocked() {
     QueueItem* item = active_item_ ? &*active_item_ : queue_.empty() ? nullptr : &queue_.front();
     return item && item->open_path.empty() &&
@@ -2055,6 +2067,15 @@ void OpsManager::OpenThread() {
                 OutputDebugStringW(message);
             }
             continue;
+        }
+
+        if (_wcsicmp(item.open_verb.c_str(), L"__shortcut") == 0) {
+            // Dropped on a program shortcut: what the .lnk adds to its program.
+            ShortcutLaunch link;
+            const bool read = ReadShortcutLaunch(item.open_path, link);
+            item.open_args = CombineShortcutArguments(read ? link.arguments : std::wstring(), item.open_args);
+            item.open_path = !link.directory.empty() ? link.directory : ParentOf(item.open_file);
+            item.open_verb = link.run_as ? L"runas" : L"open";
         }
 
         // Association work stays on the dedicated STA, never the UI/transfer

@@ -721,6 +721,7 @@ struct AppState : AppCoreOwner {
     bool teachShownThisSession = false; // at most one tip per launch
     std::wstring dropDestDir;                 // resolved drop destination ("" = none/tray)
     std::wstring dropLaunchProgram;           // program row that opens the dropped items
+    std::wstring dropLaunchShortcut;          // ...when that row is a shortcut: the .lnk
     // Toolbar drop mode (app_toolbar_apps.cpp): while files are dragged over
     // the window the toolbar holds the pinned apps only.
     bool toolbarDropMode = false;

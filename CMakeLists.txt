@@ -1307,6 +1307,9 @@ foreach(runtime_target IN LISTS runtime_targets)
     if("${runtime_sources}" MATCHES "ops_manager\\.cpp" AND NOT "${runtime_sources}" MATCHES "shell_command\\.cpp")
         target_sources(${runtime_target} PRIVATE src/ops/shell_command.cpp)
     endif()
+    if("${runtime_sources}" MATCHES "ops_manager\\.cpp" AND NOT "${runtime_sources}" MATCHES "shortcut_launch\\.cpp")
+        target_sources(${runtime_target} PRIVATE src/ops/shortcut_launch.cpp)
+    endif()
     if("${runtime_sources}" MATCHES "(index_engine|index_delta|filename_timing|update_checker|update_installer|app_worker|app_prefs|ops_manager)\\.cpp")
         target_link_libraries(${runtime_target} PRIVATE pulse_runtime_log)
     endif()
@@ -1318,6 +1321,7 @@ add_executable(pulse_reparse_entry_test src/bench/reparse_entry_test.cpp)
 target_link_libraries(pulse_reparse_entry_test PRIVATE pulse_localization user32 shell32 shlwapi netapi32)
 
 add_executable(pulse_link_destination_test src/bench/link_destination_test.cpp src/app/link_resolve.cpp src/fs/fs_enum.cpp
+    src/ops/shortcut_launch.cpp
     src/app/snapshot_patch.cpp src/app/entry_order_hold.cpp src/app/entry_group.cpp src/app/entry_sort.cpp)
 target_link_libraries(pulse_link_destination_test PRIVATE pulse_localization shell32 shlwapi netapi32 ole32 uuid)
 add_executable(pulse_entry_sort_key_test src/bench/entry_sort_key_test.cpp src/app/entry_group.cpp src/app/entry_sort.cpp)
