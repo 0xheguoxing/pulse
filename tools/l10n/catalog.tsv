@@ -2929,3 +2929,4 @@ LanDiscoveryDisabled	IDS_LAN_DISCOVERY_DISABLED	4127	自动发现已关闭	Devic
 NetworkHistoryCleared	IDS_NETWORK_HISTORY_CLEARED	4128	网络记录已清除	Network history cleared	網路記錄已清除
 NetworkIndexNeedsShare	IDS_NETWORK_INDEX_NEEDS_SHARE	4129	这是本机上的文件夹。请选择服务器共享里的文件夹，或映射的网络驱动器；本地磁盘在「本地磁盘」中勾选即可索引。	That's a folder on this PC. Choose a folder on a server share or a mapped network drive. To index a local disk, check it under Local drives.	這是本機上的資料夾。請選擇伺服器共用中的資料夾，或對應的網路磁碟機；本機磁碟在「本機磁碟」中勾選即可索引。
 NetworkIndexNoWsl	IDS_NETWORK_INDEX_NO_WSL	4130	WSL 中的文件不能加入网络索引：持续扫描会让 WSL 无法关闭。可以打开该文件夹，把它钉为网络位置。	Files in WSL can't be added to the network index: constant scanning keeps WSL from shutting down. You can open the folder and pin it as a network location instead.	WSL 中的檔案不能加入網路索引：持續掃描會讓 WSL 無法關閉。可以開啟該資料夾，把它釘為網路位置。
+DateLastWeekFormat	IDS_DATE_LAST_WEEK_FORMAT	4131	上%s	Last %s	上%s

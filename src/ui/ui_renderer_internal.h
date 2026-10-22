@@ -16,6 +16,7 @@
 #include "../common/display_path.h"
 #include "preview_format_catalog.h"
 #include "link_type_text.h"
+#include "recent_day_label.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -1624,8 +1625,26 @@ void ClearTextWidthCache() {
         return all.substr(start, end == std::wstring::npos ? std::wstring::npos : end - start);
     }
 
+    // The user's first day of the week, Sunday = 0 like SYSTEMTIME::wDayOfWeek.
+    int FirstDayOfWeek() {
+        DWORD value = 0;  // LOCALE_IFIRSTDAYOFWEEK counts from Monday = 0
+        if (!GetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, LOCALE_IFIRSTDAYOFWEEK | LOCALE_RETURN_NUMBER,
+                             reinterpret_cast<LPWSTR>(&value), sizeof(value) / sizeof(wchar_t)) ||
+            value > 6)
+            return 1;
+        return static_cast<int>((value + 1) % 7);
+    }
+
+    std::wstring LastWeekdayName(int day) {
+        wchar_t text[64];
+        swprintf_s(text, pulse::l10n::Get(pulse::l10n::StringId::DateLastWeekFormat).c_str(),
+                   WeekdayName(day).c_str());
+        return text;
+    }
+
     // Recent times read faster relative to today: "今天 14:32", "昨天 09:10",
-    // "周三 18:00", this year "4月13日 22:28", older "2024-04-02".
+    // "周三 18:00" this week, "上周五 18:00" earlier in the last 7 days, this
+    // year "4月13日 22:28", older "2024-04-02".
     std::wstring SmartListDate(uint64_t filetime) {
         if (!filetime) return L"";
         FILETIME ft{static_cast<DWORD>(filetime), static_cast<DWORD>(filetime >> 32)};
@@ -1645,9 +1664,13 @@ void ClearTextWidthCache() {
         wchar_t hm[16];
         swprintf_s(hm, L"%02u:%02u", st.wHour, st.wMinute);
         using pulse::l10n::StringId;
-        if (diff == 0) return pulse::l10n::Get(StringId::DateToday) + L" " + hm;
-        if (diff == 1) return pulse::l10n::Get(StringId::DateYesterday) + L" " + hm;
-        if (diff > 1 && diff < 7) return WeekdayName(st.wDayOfWeek) + L" " + hm;
+        switch (ClassifyRecentDay(diff, now.wDayOfWeek, FirstDayOfWeek())) {
+        case RecentDayLabel::Today: return pulse::l10n::Get(StringId::DateToday) + L" " + hm;
+        case RecentDayLabel::Yesterday: return pulse::l10n::Get(StringId::DateYesterday) + L" " + hm;
+        case RecentDayLabel::ThisWeek: return WeekdayName(st.wDayOfWeek) + L" " + hm;
+        case RecentDayLabel::LastWeek: return LastWeekdayName(st.wDayOfWeek) + L" " + hm;
+        case RecentDayLabel::Date: break;
+        }
         wchar_t text[64];
         if (diff > 0 && st.wYear == now.wYear) {
             swprintf_s(text, pulse::l10n::Get(StringId::DateMonthDayFormat).c_str(), st.wMonth, st.wDay);
@@ -1667,7 +1690,10 @@ void ClearTextWidthCache() {
         std::vector<std::wstring> out{pulse::l10n::Get(StringId::DateToday) + L" 23:59",
                                       pulse::l10n::Get(StringId::DateYesterday) + L" 23:59",
                                       L"2026-12-30"};
-        for (int day = 0; day < 7; ++day) out.push_back(WeekdayName(day) + L" 23:59");
+        for (int day = 0; day < 7; ++day) {
+            out.push_back(WeekdayName(day) + L" 23:59");
+            out.push_back(LastWeekdayName(day) + L" 23:59");
+        }
         wchar_t text[64];
         swprintf_s(text, pulse::l10n::Get(StringId::DateMonthDayFormat).c_str(), 12u, 30u);
         out.push_back(std::wstring(text) + L" 23:59");

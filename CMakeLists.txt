@@ -1339,6 +1339,8 @@ add_executable(pulse_entry_sort_key_test src/bench/entry_sort_key_test.cpp src/a
 target_link_libraries(pulse_entry_sort_key_test PRIVATE pulse_localization shlwapi)
 add_executable(pulse_link_pill_test src/bench/link_pill_test.cpp)
 target_link_libraries(pulse_link_pill_test PRIVATE user32)
+# Smart list dates: which days read as 周三 and which as 上周五 (pure).
+add_executable(pulse_recent_day_label_test src/bench/recent_day_label_test.cpp)
 
 add_executable(pulse_network_locations_test src/bench/network_locations_test.cpp src/app/network_locations.cpp)
 target_link_libraries(pulse_network_locations_test PRIVATE shell32 ole32 oleaut32 uuid)
