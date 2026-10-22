@@ -179,6 +179,7 @@ void UnregisterAssocChangeNotify() {
 #include "shell_window_sync.h"
 #include "host_window.h"
 #include "host_routing.h"
+#include "startup_trace.h"
 #include <commctrl.h>
 #include <dbt.h> // WM_DEVICECHANGE / DEV_BROADCAST_HDR
 
@@ -403,6 +404,7 @@ static void RevealExpandedName(AppState& s) {
 }
 
 void Render(AppState& s) {
+    pulse::app::startup_trace::Mark("frame_begin");
     auto t0 = std::chrono::steady_clock::now();
 
     if (s.compositor.NeedsRecovery()) {
@@ -434,6 +436,7 @@ void Render(AppState& s) {
     UpdateMarqueeFrame(s);
     UpdateProcessMetrics(s);
     ui::WindowViewModel vm = BuildVm(s);
+    pulse::app::startup_trace::Mark("frame_vm");
     vm.backdrop_enabled = !hc && s.compositor.UsesTransparentComposition() && s.backdropActive;
     vm.pane.hover_index = s.hoverRow;
 
@@ -442,14 +445,17 @@ void Render(AppState& s) {
     FillHoverPreviewView(s, vm, hover_card);
     if (hover_card.visible) vm.tooltip_text.clear();  // the card already names the file
     s.renderer.Render(vm, rect, theme);
+    pulse::app::startup_trace::Mark("frame_scene");
     TickDragLanding(s);
     s.renderer.DrawHoverPreview(hover_card, rect, theme, hc);  // also the dwell line, and stops a video
     s.renderer.DrawStarFlight(theme);
     AfterHoverPreviewDraw(s);
     s.notification_toast.Draw(s.compositor, theme, s.scale, hc);
     DrawThemeReveal(s, dc, rect);
+    pulse::app::startup_trace::Mark("frame_overlays");
 
     const HRESULT end_hr = dc->EndDraw();
+    pulse::app::startup_trace::Mark("frame_drawn");
     const auto draw_end = std::chrono::steady_clock::now();
     s.timing.draw_ms = std::chrono::duration<double, std::milli>(draw_end - draw_start).count();
     if (end_hr == D2DERR_RECREATE_TARGET || end_hr == DXGI_ERROR_DEVICE_REMOVED ||
@@ -464,6 +470,7 @@ void Render(AppState& s) {
         hidden_frame[0] == L'1';
     // An occluded flip chain advances to an unpainted buffer after Present.
     if (!hidden_capture) s.compositor.Present();
+    pulse::app::startup_trace::Mark("frame_present");
     const auto present_end = std::chrono::steady_clock::now();
     // Test instances report each window's first presented frame to the
     // debugger output on the QPC clock, so a harness can time Ctrl+N to the
@@ -1037,6 +1044,7 @@ static void StartDeferredServices(AppState& s) {
 }
 
 LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    pulse::app::startup_trace::MessageScope trace_message(msg);
     AppState* s = GetAppState(hwnd);
     // A Chinese / Japanese IME in native mode can report a Ctrl or Alt chord
     // as VK_PROCESSKEY; every shortcut below compares the real key.
@@ -1096,6 +1104,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_CREATE: {
         auto cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
         s = reinterpret_cast<AppState*>(cs->lpCreateParams);
+        pulse::app::startup_trace::Mark("wm_create");
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(s));
         s->hwnd = hwnd;
         s->core.windows.Add(hwnd, s);
@@ -1123,6 +1132,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (startup_fixture) GetEnvironmentVariableW(L"PULSE_TEST_STARTUP_FAIL", startup_fault, ARRAYSIZE(startup_fault));
         if (wcscmp(startup_fault, L"graphics") == 0) return -1;
 #endif
+        pulse::app::startup_trace::Mark("pre_graphics");
         if (!s->compositor.Init(hwnd)) {
             const std::wstring message = L"Failed to initialize D3D/D2D/DWrite\n\n" +
                 s->compositor.InitializationError() + L"\n\nLog: %LOCALAPPDATA%\\Pulse\\pulse_graphics.log";
@@ -1132,7 +1142,9 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 #ifdef PULSE_WITH_SELFTEST
         if (wcscmp(startup_fault, L"after-graphics") == 0) return -1;
 #endif
+        pulse::app::startup_trace::Mark("compositor_init");
         s->compositor.RecreateTextFormats(s->scale);
+        pulse::app::startup_trace::Mark("text_formats");
         if (s->shot.active) {
             wchar_t toast_test[2]{};
             if (GetEnvironmentVariableW(L"PULSE_TEST_TOAST", toast_test, 2) == 1 && toast_test[0] == L'1')
@@ -1153,6 +1165,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
         s->window_tabs.EnsureDefault();
         BindCurrentLayout(*s);
+        pulse::app::startup_trace::Mark("layout_bound");
 #ifdef PULSE_WITH_SELFTEST
         if (StartupRollbackFaultForTest(2)) return -1;
 #endif
@@ -2648,14 +2661,30 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_DEFERRED_STARTUP:
         // Posted by the first window's WM_CREATE, so it runs once the first
-        // frame is on screen. Quick Look and the operations window stay warm
-        // for the first use; both are also built on demand if used earlier.
+        // frame is on screen; wParam is the step. One step per message lets
+        // input and frames through between them (each costs 25-35 ms). Quick
+        // Look and the operations window stay warm for the first use; both
+        // are also built on demand if used earlier.
         if (s) {
-            RegisterAssocChangeNotify(ServiceWindow(*s));
-            s->quickPreview.Initialize(hwnd, WM_QUICK_PREVIEW_NAVIGATE,
-                                       WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND);
-            EnsureOperationWindow(*s);
-            StartTagRules(hwnd);   // 自动规则 watch while Pulse runs
+            switch (wParam) {
+            case 0:
+                pulse::app::startup_trace::Mark("deferred_begin");
+                RegisterAssocChangeNotify(ServiceWindow(*s));
+                pulse::app::startup_trace::Mark("deferred_assoc");
+                break;
+            case 1:
+                s->quickPreview.Initialize(hwnd, WM_QUICK_PREVIEW_NAVIGATE,
+                                           WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND);
+                pulse::app::startup_trace::Mark("deferred_quick_look");
+                break;
+            default:
+                EnsureOperationWindow(*s);
+                StartTagRules(hwnd);   // 自动规则 watch while Pulse runs
+                pulse::app::startup_trace::Mark("deferred_end");
+                pulse::app::startup_trace::ScheduleFlush(hwnd, 3000);
+                return 0;
+            }
+            PostMessageW(hwnd, WM_DEFERRED_STARTUP, wParam + 1, 0);
         }
         return 0;
 
@@ -3075,6 +3104,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 }
 
+// Applies the first window's listing before its first paint, waiting up to
+// `budget` for the worker (a local folder takes a few ms); a slow or network
+// folder paints empty and fills in later.
+static void AwaitFirstListing(AppState& s, std::chrono::milliseconds budget) {
+    const app::Tab* tab = ActiveTab(s);
+    const bool wait = tab && tab->loading && !fs::IsUncPath(tab->current_path);
+    const auto until = std::chrono::steady_clock::now() + budget;
+    while (wait && std::chrono::steady_clock::now() < until) {
+        {
+            std::lock_guard<std::mutex> lock(s.resultMutex);
+            if (!s.results.empty()) break;
+        }
+        Sleep(1);
+    }
+    ProcessPendingResults(s);
+    ClampScroll(s);
+    pulse::app::startup_trace::Mark("first_listing");
+}
+
 bool WaitForShotReady(AppState& s) {
     auto deadline = s.shot.start + std::chrono::seconds(5);
     MSG msg{};
@@ -3459,6 +3507,7 @@ int RunQuickPreviewAuditTest();
 #endif
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
+    pulse::app::startup_trace::Mark("wwinmain");
 #ifdef PULSE_WITH_SELFTEST
     std::optional<CLSID> tag_com_audit_class;
     if (!app::shell_tags::PrepareCommandAudit(__argc, __wargv, tag_com_audit_class)) return 2;
@@ -3476,9 +3525,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     if (__argc >= 3 && wcscmp(__wargv[1], L"--picker-dialog-test") == 0)
         return RunFilePickerDialogTest(__argc - 1, __wargv + 1);
     pulse::crash::Initialize({pulse::crash::ProcessRole::App, false, {}});
+    pulse::app::startup_trace::Mark("crash_handler");
     pulse::compat::EnableDpiAwareness();
     // OLE init (drag & drop + clipboard); implies STA COM init.
     OleInitialize(nullptr);
+    pulse::app::startup_trace::Mark("ole");
     for (int i = 1; i < __argc; ++i) {
         if (wcscmp(__wargv[i], L"--material-selftest") == 0) {
             const int rc = ui::RunMaterialSelfTest();
@@ -3503,6 +3554,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     }
 
     AppState state;
+    pulse::app::startup_trace::Mark("appstate");
     state.safeMode = pulse::crash::SafeModeRequested();
     for (int i = 1; i < __argc; ++i)
         if (wcscmp(__wargv[i], L"--test-instance") == 0) state.isolatedTest = true;
@@ -3563,6 +3615,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         if (state.darkMode) state.themeOverride = ui::ThemeMode::Dark;
     }
 
+    pulse::app::startup_trace::Mark("session");
     // Parse command line.
     for (int i = 1; i < __argc; ++i) {
         if (wcscmp(__wargv[i], L"--shot") == 0 && i + 1 < __argc) {
@@ -3753,6 +3806,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     // uses until the window is shown.
     if (shell_tag) QueueShellTagRequest(state, *shell_tag, true);
     if (shell_tag_com) BeginShellTagComLaunch();
+    pulse::app::startup_trace::Mark("singleton");
     ui::Compositor::PrefetchSharedDevice();
     if (!ShellTagHeadlessLaunch()) ui::ShellIconCache::PrewarmSystemImageList();
     if (!state.isolatedTest && !state.shot.active) app::StartUpdateDownloadCleanup();
@@ -3800,6 +3854,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     // endpoint (Pulse windows do not accept WM_COPYDATA) and forwards the
     // process-level notifications in host_routing.h to the most recently
     // active window (WindowRegistry).
+    pulse::app::startup_trace::Mark("class_registered");
     const bool host_created = state.core.host.Create(hInstance,
         [&state](HWND host, UINT message, WPARAM wParam, LPARAM lParam) -> std::optional<LRESULT> {
             AppState* const target = state.core.windows.MostRecent();
@@ -3832,6 +3887,22 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             return HandleInstanceCopyData(*target, reinterpret_cast<COPYDATASTRUCT*>(lParam));
         });
     if (!host_created) return 1;
+    pulse::app::startup_trace::Mark("host_window");
+    // The first frame goes up before the window is activated: activation
+    // loads the IME's text services (about 90 ms with a Chinese IME, per the
+    // startup trace), which used to sit between ShowWindow and the first
+    // paint. No ShowWindow command maximizes without activating, so a
+    // maximized start is created maximized (WS_MAXIMIZE) and shown as is;
+    // without a saved rect it keeps the old path, since WS_MAXIMIZE would
+    // pin the restored window to 0,0 instead of the default position.
+    if (session.maximized) nCmdShow = SW_SHOWMAXIMIZED;
+    const bool show_before_activate = (nCmdShow != SW_SHOWMAXIMIZED || x != CW_USEDEFAULT) &&
+        !state.shot.active && !state.menushot && !state.colorpickshot &&
+        !state.colorpickdialog && !shell_tag && !shell_tag_com &&
+        !app::StartsHiddenInTray(startup_launch, state.appPrefs.start_in_tray) &&
+        (nCmdShow == SW_SHOWNORMAL || nCmdShow == SW_SHOW || nCmdShow == SW_SHOWDEFAULT ||
+         nCmdShow == SW_SHOWMAXIMIZED);
+    const bool create_maximized = show_before_activate && nCmdShow == SW_SHOWMAXIMIZED;
     HWND hwnd = CreateWindowExW(
         WS_EX_NOREDIRECTIONBITMAP,
         wc.lpszClassName,
@@ -3844,11 +3915,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         // and they show through the Mica title bar behind Pulse's buttons.
         // Minimize / maximize / close commands, Alt+F4 and resizing do not
         // need it.
-        kMainWindowStyle,
+        kMainWindowStyle | (create_maximized ? WS_MAXIMIZE : 0),
         x, y, w, h,
         nullptr, nullptr, hInstance, &state);
 
     if (!hwnd) return 1;
+    pulse::app::startup_trace::Mark("create_window");
     if (!SkipSingletonFromArgv() && !state.single_instance.PublishEndpoint(state.core.host.Hwnd())) {
         DestroyWindow(hwnd);
         return 1;
@@ -3866,7 +3938,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     if (wc.hIcon) SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(wc.hIcon));
     if (wc.hIconSm) SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(wc.hIconSm));
 
-    if (session.maximized) nCmdShow = SW_SHOWMAXIMIZED;
     wchar_t hidden_shot[4]{};
     const bool test_hidden = (state.shot.active || state.menushot || state.colorpickshot) &&
         GetEnvironmentVariableW(L"PULSE_TEST_HIDDEN_SHOT", hidden_shot, ARRAYSIZE(hidden_shot)) == 1 &&
@@ -3888,8 +3959,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         state.tray_controller.StartHidden(nCmdShow == SW_SHOWMAXIMIZED, state.appPrefs.notify_icon_mode != 2);
     if (!start_in_tray)
         ShowWindow(hwnd, test_hidden || shell_tag || shell_tag_com ? SW_HIDE
-                                                  : state.shot.active ? SW_SHOWNORMAL : nCmdShow);
+                                                  : state.shot.active ? SW_SHOWNORMAL
+                                                  : create_maximized ? SW_SHOWNA
+                                                  : show_before_activate ? SW_SHOWNOACTIVATE : nCmdShow);
+    pulse::app::startup_trace::Mark("show_window");
+    // The first listing started in WM_CREATE: put it in the first frame
+    // rather than after WM_DEFERRED_STARTUP. Its WM_WORKER_RESULT then finds
+    // the queue empty.
+    if (show_before_activate) AwaitFirstListing(state, std::chrono::milliseconds(60));
     UpdateWindow(hwnd);
+    pulse::app::startup_trace::Mark("update_window");
+    if (show_before_activate) {
+        SetForegroundWindow(hwnd);
+        pulse::app::startup_trace::Mark("activated");
+    }
 
     if (state.menushot) {
         // Render the built-in item menu to a PNG (GUI verification for 1B-2).

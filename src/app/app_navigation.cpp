@@ -49,6 +49,7 @@
 #include "resource.h"
 #include "../ops/clipboard.h"
 #include "../ipc/ctx_menu_util.h"
+#include "startup_trace.h"
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -1152,6 +1153,7 @@ static bool NormalizeNavigationTarget(AppState& s, app::Tab& tab,
 }
 
 void StartLoadingPath(AppState& s, app::Tab& tab, const std::wstring& path, PathLoadReason reason) {
+    pulse::app::startup_trace::Mark("listing_requested");
     std::wstring normalized;
     if (!NormalizeNavigationTarget(s, tab, path, normalized)) return;
     // Tab history may already have assigned current_path; compare the stored
@@ -1486,6 +1488,7 @@ static bool ApplyWorkerResultToWindow(AppState& s, app::WorkResult& res, bool ag
     s.timing.enum_ms = res.enum_ms;
     s.timing.sort_ms = res.sort_ms;
     s.timing.sort_done_ms = res.enum_ms + res.sort_ms;
+    pulse::app::startup_trace::Mark("listing_applied");
 
     if (s.shot.active) InvalidateRect(s.hwnd, nullptr, FALSE);
     return false;
