@@ -1210,6 +1210,11 @@ private:
     ComPtr<ID2D1SvgDocument> exclude_empty_svg_;
     std::unordered_map<int, ComPtr<ID2D1SvgDocument>> fluent_svgs_;
     std::unordered_set<int> fluent_svg_failed_;
+    // Colour icons rasterized once per size and quarter-pixel offset:
+    // DrawSvgDocument re-tessellates the artwork on every call.
+    ComPtr<ID2D1DeviceContext> fluent_raster_dc_;
+    std::unordered_map<uint64_t, ComPtr<ID2D1Bitmap1>> fluent_bitmaps_;
+    ID2D1Bitmap1* FluentSvgBitmap(int resource_id, ID2D1SvgDocument* svg, int size_q, int fx, int fy);
     ID2D1DeviceContext* logo_dc_ = nullptr;
     float logo_scale_ = 0.0f;
 

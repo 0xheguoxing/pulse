@@ -49,6 +49,8 @@ void MainRenderer::SetCompositor(Compositor* comp) {
     exclude_empty_svg_.reset();
     fluent_svgs_.clear();
     fluent_svg_failed_.clear();
+    fluent_bitmaps_.clear();
+    fluent_raster_dc_.reset();
     empty_state_svg_dc_.reset();
     app_icon_bitmaps_.clear();
     app_icon_dc_ = nullptr;
