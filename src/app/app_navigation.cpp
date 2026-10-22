@@ -1411,9 +1411,12 @@ static bool ApplyWorkerResultToWindow(AppState& s, app::WorkResult& res, bool ag
                 tab->snapshot_path == res.path && !fs::IsVirtualPath(res.path);
             if (keep_order) {
                 const app::ScopedEntryGrouping grouping(tab->EffectiveGroup(), tab->current_path);
-                listing = std::make_shared<std::vector<fs::DirEntry>>(app::KeepEntryOrder(
-                    *tab->snapshot, *res.snapshot, tab->held_renames,
-                    tab->sort_column, tab->sort_direction));
+                // A rescan of an unchanged folder (the watch's first report
+                // after opening) keeps the worker's vector: no 100k-row merge.
+                if (!app::SameEntryOrder(*tab->snapshot, *res.snapshot, tab->sort_column, tab->sort_direction))
+                    listing = std::make_shared<std::vector<fs::DirEntry>>(app::KeepEntryOrder(
+                        *tab->snapshot, *res.snapshot, tab->held_renames,
+                        tab->sort_column, tab->sort_direction));
             }
             tab->order_held = keep_order;
             tab->refresh_keeps_order = false;
