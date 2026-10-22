@@ -522,6 +522,17 @@ if(NOT PULSE_WITH_SELFTEST)
     list(FILTER PULSE_APP_SOURCES EXCLUDE REGEX "selftest_1b2\\.cpp$")
     list(FILTER PULSE_APP_SOURCES EXCLUDE REGEX "index_(engine|engine_pinyin|visibility|mft|paths|delta|folder_sizes)\\.cpp$")
 endif()
+# GUI probes (PULSE_TEST_*_FLOW with --shot) and the --picker-*-test suites.
+# Development builds keep them even with SELFTEST=OFF because test scripts
+# drive them there; build_release.bat turns them off for the shipped exe.
+option(PULSE_WITH_TEST_HOOKS "Build GUI probes and --picker-*-test suites into Pulse.exe" ON)
+set(PULSE_TEST_HOOKS_EFFECTIVE ${PULSE_WITH_TEST_HOOKS})
+if(PULSE_WITH_SELFTEST)
+    set(PULSE_TEST_HOOKS_EFFECTIVE ON)
+endif()
+if(NOT PULSE_TEST_HOOKS_EFFECTIVE)
+    list(FILTER PULSE_APP_SOURCES EXCLUDE REGEX "(navigation_audit|selection_input|folder_size_experience|folder_thumbnail)_probe\\.cpp$")
+endif()
 list(APPEND PULSE_APP_SOURCES src/index/network_agent_client.cpp)
 if(PULSE_APP_SOURCES)
     add_executable(pulse WIN32 ${PULSE_APP_SOURCES})
@@ -532,7 +543,13 @@ if(PULSE_APP_SOURCES)
         target_sources(pulse PRIVATE src/bench/quick_preview_audit_test.cpp)
         target_sources(pulse PRIVATE src/bench/tray_completion_test.cpp)
     endif()
-    target_sources(pulse PRIVATE src/app/pulse.rc src/common/ffmpeg_tool.cpp src/bench/file_picker_dialog_test.cpp src/bench/file_picker_operations_test.cpp)
+    target_sources(pulse PRIVATE src/app/pulse.rc src/common/ffmpeg_tool.cpp)
+    if(PULSE_TEST_HOOKS_EFFECTIVE)
+        # Only app_main.cpp dispatches to the hooks; scoping the define to it
+        # keeps a toggle from rebuilding every pulse object.
+        set_source_files_properties(src/app/app_main.cpp PROPERTIES COMPILE_DEFINITIONS PULSE_WITH_TEST_HOOKS=1)
+        target_sources(pulse PRIVATE src/bench/file_picker_dialog_test.cpp src/bench/file_picker_operations_test.cpp)
+    endif()
     # Settings pages, editors and dialogs are not on a hot path: build them
     # for size (/Os /Oi- is /O1 without the D9025 clash with /O2). Listing,
     # sorting, drawing the file list and input stay at /O2.

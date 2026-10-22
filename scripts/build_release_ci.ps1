@@ -144,8 +144,8 @@ if (-not $liveDone -or $live.ExitCode -ne 0) {
     throw 'Live content selection regression failed'
 }
 Remove-Item Env:PULSE_LUMATEXT
-# Strip the embedded test suite from the shipped executable after verification.
-(Get-Content -LiteralPath $batch -Raw).Replace('-DPULSE_WITH_SELFTEST=ON', '-DPULSE_WITH_SELFTEST=OFF').Replace("--target $testTargets", '--target pulse') |
+# Strip the embedded test suite and GUI probes from the shipped executable after verification.
+(Get-Content -LiteralPath $batch -Raw).Replace('-DPULSE_WITH_SELFTEST=ON', '-DPULSE_WITH_SELFTEST=OFF -DPULSE_WITH_TEST_HOOKS=OFF').Replace("--target $testTargets", '--target pulse') |
     Set-Content -LiteralPath $batch -Encoding ascii
 & $batch
 if ($LASTEXITCODE -ne 0) { throw 'Production compilation failed' }

@@ -3499,8 +3499,10 @@ static bool IsLaunchSwitch(const wchar_t* arg) {
     return false;
 }
 
+#ifdef PULSE_WITH_TEST_HOOKS
 int RunFilePickerDialogTest(int argc, wchar_t** argv);
 int RunFilePickerOperationsTest();
+#endif
 #ifdef PULSE_WITH_SELFTEST
 int RunUiModuleAuditTest();
 int RunQuickPreviewAuditTest();
@@ -3520,10 +3522,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     if (__argc == 2 && wcscmp(__wargv[1], L"--startup-rollback-test") == 0)
         return RunStartupRollbackTest(hInstance, WndProc);
 #endif
+#ifdef PULSE_WITH_TEST_HOOKS
     if (__argc == 2 && wcscmp(__wargv[1], L"--picker-operations-test") == 0)
         return RunFilePickerOperationsTest();
     if (__argc >= 3 && wcscmp(__wargv[1], L"--picker-dialog-test") == 0)
         return RunFilePickerDialogTest(__argc - 1, __wargv + 1);
+#else
+    // Release builds leave the picker suites out; fail fast instead of
+    // opening a window that a test script would wait on.
+    if (__argc >= 2 && (wcscmp(__wargv[1], L"--picker-operations-test") == 0 ||
+                        wcscmp(__wargv[1], L"--picker-dialog-test") == 0))
+        return 2;
+#endif
     pulse::crash::Initialize({pulse::crash::ProcessRole::App, false, {}});
     pulse::app::startup_trace::Mark("crash_handler");
     pulse::compat::EnableDpiAwareness();
@@ -4068,6 +4078,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     }
 #endif
     if (state.shot.active) {
+#ifdef PULSE_WITH_TEST_HOOKS
         wchar_t experience_probe[32768]{};
         if (state.isolatedTest && GetEnvironmentVariableW(L"PULSE_TEST_FOLDER_SIZE_EXPERIENCE", experience_probe, ARRAYSIZE(experience_probe))) {
             extern int RunFolderSizeExperienceProbe(AppState&, const wchar_t*);
@@ -4090,6 +4101,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             OleUninitialize();
             return result;
         }
+#endif
         wchar_t settings_fixture[32]{};
         if (state.isolatedTest && GetEnvironmentVariableW(L"PULSE_TEST_SETTINGS_EXPANDED",settings_fixture,ARRAYSIZE(settings_fixture)))
             state.settingsExpanded=static_cast<unsigned>(wcstoul(settings_fixture,nullptr,10)) & 0x3f0fu;
