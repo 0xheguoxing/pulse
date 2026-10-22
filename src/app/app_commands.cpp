@@ -68,6 +68,7 @@
 #include "../fs/bitlocker_volume.h"
 #include "app_navigation.h"
 #include "app_network_locations.h"
+#include "app_network_page.h"
 #include "app_messages.h"
 #include "../ui/confirm_dialog.h"
 #include <windows.h>
@@ -1348,7 +1349,8 @@ struct SelectedDrive {
 
 std::vector<SelectedDrive> SelectedDrives(const app::Tab& tab) {
     std::vector<SelectedDrive> drives;
-    if (!tab.current_path.empty() || !tab.snapshot) return drives;  // This PC rows only
+    // This PC rows, and the network page's mapped drives (网络驱动器).
+    if ((!tab.current_path.empty() && tab.current_path != kNetworkLocationsPath) || !tab.snapshot) return drives;
     for (int index : tab.SelectedIndices()) {
         if (index < 0 || static_cast<size_t>(index) >= tab.EntryCount()) continue;
         const fs::DirEntry e = tab.EntryAt(static_cast<size_t>(index));
@@ -1533,6 +1535,7 @@ static void RunCloudPin(AppState& s, fs::CloudPinAction action) {
 static void FlipToolbarTool(AppState& s, size_t index);
 
 void DispatchMenuCommand(AppState& s, int cmd) {
+    if (HandleNetworkPageCommand(s, cmd)) return;  // 连接服务器, 最近访问, ...
     if (cmd >= app::CmdToolbarToolBase && cmd < app::CmdNewPrimaryBase &&
         cmd < app::CmdToolbarToolBase + static_cast<int>(app::kToolbarToolCount)) {
         const size_t tool = static_cast<size_t>(cmd - app::CmdToolbarToolBase);
@@ -1819,6 +1822,7 @@ void DispatchMenuCommand(AppState& s, int cmd) {
         if (IsUncPath(root)) {
             s.places.PinNetwork(root, L"");
             RequestUncProbe(s, root);
+            RefreshNetworkPages(s);  // a 最近访问 / 局域网设备 row moves up to 已固定
         }
         break;
     }
@@ -1892,6 +1896,10 @@ void EraseCommand(std::vector<ui::FluentMenuItem>& items, int command) {
     std::erase_if(items, [command](const ui::FluentMenuItem& item) { return item.command == command; });
 }
 
+bool HasCommand(const std::vector<ui::FluentMenuItem>& items, int command) {
+    return std::any_of(items.begin(), items.end(), [command](const ui::FluentMenuItem& item) { return item.command == command; });
+}
+
 // Drives, shares and network locations get their own verbs (弹出, 断开连接,
 // 解锁, 映射网络驱动器, 取消固定) instead of the file ones, as in Explorer.
 void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const app::SelectionCaps& caps) {
@@ -1941,8 +1949,13 @@ void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const ap
                                         l10n::Get(l10n::StringId::DisconnectNetworkDrive).c_str(), L"\xE8CD"));
         }
     } else if (caps.kind == app::SelectionKind::NetworkShares) {
-        if (!SelectedShare(s).empty())
+        const std::wstring share = SelectedShare(s);
+        if (!share.empty())
             verbs.push_back(VerbRow(app::CmdMapNetworkDrive, l10n::Get(l10n::StringId::MapNetworkDrive).c_str(), L"\xE8CE"));
+        // 钉为网络位置 stays reachable under the 标准 menu preset here.
+        if (!share.empty() && s.places.FindNetwork(share) < 0 && !HasCommand(items, app::CmdPinNetwork))
+            verbs.push_back(VerbRow(app::CmdPinNetwork, l10n::Get(l10n::StringId::PinNetwork).c_str(),
+                                    ui::command_icons::kGlyphPinNetwork));
     } else if (caps.kind == app::SelectionKind::NetworkPlaces) {
         // NetHood shortcuts are local .lnk files: don't offer actions that would
         // accidentally pin the shortcut file as a workspace or Quick Access.
@@ -1956,9 +1969,22 @@ void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const ap
             const auto paths = tab ? SelectedFullPaths(*tab) : std::vector<std::wstring>{};
             if (std::none_of(paths.begin(), paths.end(), [](const std::wstring& path) { return fs::IsUncPath(path); }))
                 EraseCommand(items, app::CmdPinNetwork);
+            else if (!HasCommand(items, app::CmdPinNetwork))  // 最近访问 / 局域网设备 rows, any menu preset
+                verbs.push_back(VerbRow(app::CmdPinNetwork, l10n::Get(l10n::StringId::PinNetwork).c_str(),
+                                        ui::command_icons::kGlyphPinNetwork));
         }
         if (!SelectedShare(s).empty())
             verbs.push_back(VerbRow(app::CmdMapNetworkDrive, l10n::Get(l10n::StringId::MapNetworkDrive).c_str(), L"\xE8CE"));
+        if (tab) {
+            // 网络驱动器 rows: 断开连接, as on This PC.
+            const std::vector<SelectedDrive> drives = SelectedDrives(*tab);
+            if (drives.size() == 1 && drives.front().type == DRIVE_REMOTE)
+                verbs.push_back(VerbRow(app::CmdDisconnectDrive,
+                                        l10n::Get(l10n::StringId::DisconnectNetworkDrive).c_str(), L"\xE8CD"));
+            if (SelectionHasNetworkRecent(*tab))
+                verbs.push_back(VerbRow(app::CmdForgetNetworkRecent,
+                                        l10n::Get(l10n::StringId::NetworkForgetRecent).c_str(), L"\xE711"));
+        }
     }
     if (verbs.empty()) return;
     verbs.back().separator_after = true;
@@ -2654,6 +2680,12 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
         auto map = VerbRow(app::CmdMapNetworkDrive, l10n::Get(l10n::StringId::MapNetworkDrive).c_str(), L"\xE8CE");
         map.separator_after = true;
         base_items.insert(base_items.begin(), std::move(map));
+    } else if (IsConnectServerPage(tab->current_path)) {  // the network page, a server's shares
+        auto connect = VerbRow(app::CmdConnectServer, l10n::Get(l10n::StringId::ConnectServerMenu).c_str(), L"\xE968");
+        auto map = VerbRow(app::CmdMapNetworkDrive, l10n::Get(l10n::StringId::MapNetworkDrive).c_str(), L"\xE8CE");
+        map.separator_after = true;
+        base_items.insert(base_items.begin(), std::move(map));
+        base_items.insert(base_items.begin(), std::move(connect));
     }
     // In-app Git: pull / push / refresh for a folder inside a repository.
     const std::wstring git_root = tab->git_root;
@@ -2783,7 +2815,7 @@ bool SituationalSelectionCommand(int command) {
     switch (command) {
     case app::CmdUnlockDrive: case app::CmdEjectDrive: case app::CmdDisconnectDrive: case app::CmdRestoreRecycle:
     case app::CmdMapNetworkDrive: case app::CmdUnpinNetwork: case app::CmdCopyToTarget: case app::CmdMoveToTarget:
-    case app::CmdCompareSideBySide: case app::CmdBatchRename: case app::CmdOpenPath:
+    case app::CmdCompareSideBySide: case app::CmdBatchRename: case app::CmdOpenPath: case app::CmdForgetNetworkRecent:
         return true;
     default:
         return false;
@@ -3559,6 +3591,8 @@ void ApplyViewMode(AppState& s, ui::ViewMode mode, float icon_dip, const POINT* 
     // wall); re-sort when that flips.
     if (tab->EffectiveGroup() != old_group && !fs::IsVirtualPath(tab->current_path))
         RefreshActiveTab(s);
+    else if (tab->EffectiveGroup() != old_group && tab->current_path == kNetworkLocationsPath)
+        FillNetworkLocationsView(s, *tab);  // grouped order on, or off for List
     ++tab->view_generation;
     tab->scroll_x = 0.0f;
     tab->scroll_y = 0.0f;
@@ -3768,7 +3802,8 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
             item.command == app::CmdCompareSideBySide || item.command == app::CmdOpenPath ||
             item.command == app::CmdUnlockDrive || item.command == app::CmdEjectDrive ||
             item.command == app::CmdDisconnectDrive || item.command == app::CmdMapNetworkDrive ||
-            item.command == app::CmdUnpinNetwork || item.command == app::CmdRestoreRecycle;
+            item.command == app::CmdUnpinNetwork || item.command == app::CmdRestoreRecycle ||
+            item.command == app::CmdForgetNetworkRecent;
         if ((builtin == app::BuiltinMenuItem::Count && !selection_row) ||
             builtin == app::BuiltinMenuItem::Undo || builtin == app::BuiltinMenuItem::SelectCommands)
             continue;
@@ -3816,7 +3851,7 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
     const auto rank = [&kept](int command) {
         static constexpr int kContext[] = {
             app::CmdUnlockDrive, app::CmdEjectDrive, app::CmdDisconnectDrive, app::CmdRestoreRecycle,
-            app::CmdMapNetworkDrive, app::CmdUnpinNetwork,
+            app::CmdMapNetworkDrive, app::CmdUnpinNetwork, app::CmdForgetNetworkRecent,
             app::CmdCopyToTarget, app::CmdMoveToTarget, app::CmdCompareSideBySide, app::CmdBatchRename,
             app::CmdOpenPath,
         };

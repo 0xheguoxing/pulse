@@ -6,6 +6,7 @@
 #include "selection_caps.h"
 #include "tag_query.h"
 #include "network_connect.h"
+#include "app_network_page.h"
 #include "../fs/bitlocker_volume.h"
 #include "../fs/device_path.h"
 #include "../fs/device_source.h"
@@ -1058,6 +1059,7 @@ void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathL
     }
     if (kind == L"networks") {
         RequestNetworkLocations(s);
+        RequestLanDiscovery(s, false);  // reuses a recent answer for this network
         FillNetworkLocationsView(s, tab);
         return;
     }
@@ -1623,6 +1625,17 @@ void ApplyWorkerResult(AppState& s, app::WorkResult& res) {
     app::ForEachWindowSharingCore(s, [&](AppState& window) {
         if (ApplyWorkerResultToWindow(window, res, again) && !awaiting) awaiting = &window;
     });
+    // 最近访问 on the network page: a share some window actually shows.
+    if (!res.error && fs::IsUncPath(res.path)) {
+        bool shown = false;
+        app::ForEachWindowSharingCore(s, [&](AppState& window) {
+            ForEachPane(window, [&](app::Pane& pane) {
+                const app::Tab* tab = pane.ActiveTab();
+                shown = shown || (tab && tab->current_path == res.path);
+            });
+        });
+        if (shown) RecordNetworkVisit(s, res.path);
+    }
     // As File Explorer does for a locked drive: ask for the password, then open
     // it (ApplyBitLockerUnlock). One prompt, owned by the window that waits for
     // the drive (or the caller when none does); the result goes to the host and
@@ -1850,6 +1863,9 @@ void RefreshActiveTab(AppState& s, RefreshReason reason) {
     // F5 or a finished file operation must see the share as it is now (#74).
     if (reason == RefreshReason::Explicit || reason == RefreshReason::OperationCompleted)
         DropLiveNetworkSearch(s, tab->search_session_id);
+    // F5 on the network page looks for LAN devices again.
+    if (reason == RefreshReason::Explicit && tab->current_path == kNetworkLocationsPath)
+        RequestLanDiscovery(s, true);
     RefreshPath(s, tab->current_path, reason);
 }
 

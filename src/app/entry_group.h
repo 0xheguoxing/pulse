@@ -16,10 +16,13 @@ namespace pulse::app {
 // (search results, tag views).
 // ThisPc is This PC's fixed grouping (磁盘 / 设备 / 网盘程序入口): never offered
 // in menus and never saved (the prefs only read 0..6).
-enum class GroupBy : uint8_t { None = 0, Name = 1, Date = 2, Type = 3, Size = 4, Tag = 5, Location = 6, ThisPc = 7 };
+// Network is the network page's fixed grouping (已固定 / 网络驱动器 / 局域网设备 /
+// 最近访问, DirEntry::net_group); like ThisPc it is never offered or saved.
+enum class GroupBy : uint8_t { None = 0, Name = 1, Date = 2, Type = 3, Size = 4, Tag = 5, Location = 6, ThisPc = 7,
+                               Network = 8 };
 
 constexpr GroupBy GroupByFromInt(int v) noexcept {
-    return v >= 1 && v <= 7 ? static_cast<GroupBy>(v) : GroupBy::None;
+    return v >= 1 && v <= 8 ? static_cast<GroupBy>(v) : GroupBy::None;
 }
 
 // Parent folder of a virtual-view entry (full_path), without the \\?\ prefix.
@@ -69,6 +72,7 @@ const FILETIME& GroupDateOf(const fs::DirEntry& e, ui::SortColumn sort_column) n
 //             5 large <1G, 6 huge <4G, 7 gigantic.
 // Type ranks: 0 folders, 1 files (files then split by extension).
 // ThisPc ranks: 0 drives, 1 devices (phones), 2 program icons.
+// Network ranks: DirEntry::net_group (1 pinned .. 4 recent).
 int GroupRank(const fs::DirEntry& e, GroupBy g, const GroupClock& clock);
 
 // <0 when a's group is shown before b's, 0 same group.

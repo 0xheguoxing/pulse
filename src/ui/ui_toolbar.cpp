@@ -599,17 +599,22 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     }
     // Split New button: the main part creates a folder (Ctrl+Shift+N), the
     // chevron segment opens the New menu. Each segment gets its own hover.
-    const std::wstring label=NewButtonLabel();
+    // The network page and a server's share list put 连接服务器 in this slot
+    // (same width: the label is no wider than 新建文件夹 in any language).
+    const bool connect=vm.pane.connect_server;
+    const bool primary_enabled=vm.pane.can_create || connect;
+    const std::wstring label=connect ? pulse::l10n::Get(pulse::l10n::StringId::ConnectServer) : NewButtonLabel();
+    const std::wstring primary_glyph=connect ? std::wstring(L"\xE968") : std::wstring(NewButtonGlyph());
     const D2D1_RECT_F newArrow=NewArrowSegment(layout.create,compact);
     fluent::ButtonSpec create;
     create.bounds=layout.create; create.text=compact ? std::wstring_view{} : std::wstring_view{label};
-    create.glyph=NewButtonGlyph(); create.kind=fluent::ButtonKind::Primary;
+    create.glyph=primary_glyph.c_str(); create.kind=fluent::ButtonKind::Primary;
     create.drop_down=true;
-    // This PC, a server's shares, Pulse views: nothing can be created there.
-    create.state.enabled=vm.pane.can_create;
+    // This PC, Pulse views: nothing can be created there.
+    create.state.enabled=primary_enabled;
     create.skip_glyph=true;   // drawn below at the toolbar's icon size
     painter_.DrawButton(create);
-    const bool newMainHot=vm.pane.can_create && IsHovered(vm,HitTestResult::NewButton);
+    const bool newMainHot=primary_enabled && IsHovered(vm,HitTestResult::NewButton);
     const bool newArrowHot=IsHovered(vm,HitTestResult::NewButtonArrow);
     if (newMainHot || newArrowHot) {
         D2D1_RECT_F hot=layout.create;
@@ -621,11 +626,11 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     }
     {
         // The painter's primary-button glyph colour, in its glyph slot.
-        const D2D1_COLOR_F ink=IsHighContrast() ? (vm.pane.can_create ? theme.accent_text : theme.text_disabled)
-            : !vm.pane.can_create ? D2D1::ColorF(1.0f,1.0f,1.0f,vm.dark ? 0.43f : 0.90f)
+        const D2D1_COLOR_F ink=IsHighContrast() ? (primary_enabled ? theme.accent_text : theme.text_disabled)
+            : !primary_enabled ? D2D1::ColorF(1.0f,1.0f,1.0f,vm.dark ? 0.43f : 0.90f)
             : vm.dark ? D2D1::ColorF(0.0f,0.0f,0.0f,1.0f) : D2D1::ColorF(1.0f,1.0f,1.0f,1.0f);
         DrawIconText(layout.create.left+8*scale_,layout.create.top,20*scale_,layout.create.bottom-layout.create.top,
-                     NewButtonGlyph(),L"",ink);
+                     primary_glyph.c_str(),L"",ink);
     }
     if (newArrow.right > newArrow.left && newArrow.left > layout.create.left) {
         auto divider=theme.accent_text;

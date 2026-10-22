@@ -5849,6 +5849,10 @@ std::wstring MainRenderer::GroupLabel(const PaneViewModel& vm, const ListGroup& 
     case 7:  // This PC
         return l10n::Get(g.rank == 2 ? StringId::GroupThisPcLaunchers
                          : g.rank == 1 ? StringId::GroupThisPcDevices : StringId::GroupThisPcDrives);
+    case 8:  // network page (DirEntry::net_group)
+        return l10n::Get(g.rank == 4 ? StringId::GroupNetworkRecent
+                         : g.rank == 3 ? StringId::GroupNetworkDevices
+                         : g.rank == 2 ? StringId::GroupNetworkDrives : StringId::GroupNetworkPinned);
     default:
         return {};
     }

@@ -37,6 +37,9 @@ struct DirEntry {
     // "This PC" phone (full_path pulse:device:<key>, see device_source.h
     // kPcDevice*): 0 none. Never a file operation source.
     uint8_t pc_device = 0;
+    // pulse:networks row group (app::GroupBy::Network): 0 none, 1 pinned,
+    // 2 mapped network drive, 3 device found on this network, 4 recent.
+    uint8_t net_group = 0;
     std::wstring full_path; // set for virtual views (search/tag); empty = parent+name
     std::wstring recycle_path; // $R payload when listing pulse:recycle; not a .lnk target
     bool change_record_only = false; // Historical deleted/moved-out item, never a file operation source.

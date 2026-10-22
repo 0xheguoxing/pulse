@@ -1543,6 +1543,7 @@ static std::wstring StatusText(const Tab& tab) {
         return count;
     }
     if (tab.loading || !tab.snapshot) return L"";
+    if (tab.current_path == L"pulse:networks" && !tab.virtual_status.empty()) return tab.virtual_status;
     if (tab.current_path.empty()) {
         // This PC: what is there (2 个磁盘 · 1 个网络盘 · 1 个设备), not
         // folders and files: phones and program icons are neither.
@@ -1984,6 +1985,8 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
     out.is_file_system = !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path);
     out.cloud_status_column = out.is_file_system && IsUnderCloudFilesRoot(tab->current_path);
     out.can_create = out.is_file_system && !tab->net_readonly && !IsUncServerRoot(tab->current_path);
+    // The network page and a server's share list: 连接服务器 takes 新建's slot.
+    out.connect_server = tab->current_path == L"pulse:networks" || IsUncServerRoot(tab->current_path);
     out.curated_order = virtual_kind == L"starred" || virtual_kind == L"recent" || virtual_kind == L"changes";
     out.is_starred = virtual_kind == L"starred";
     out.is_recent = virtual_kind == L"recent";

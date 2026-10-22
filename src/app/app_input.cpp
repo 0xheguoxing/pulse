@@ -46,6 +46,7 @@
 #include "snapshot_patch.h"
 #include "session.h"
 #include "context_menu.h"
+#include "app_network_page.h"
 #include "batch_rename.h"
 #include "blank_pane_click.h"
 #include "drop_staging.h"
@@ -74,6 +75,19 @@
 using namespace pulse;
 
 namespace pulse {
+// The split New button. On the network page and a server's share list it is
+// 连接服务器 (main part: the address bar, chevron: its menu).
+static void PressNewButton(AppState& s, bool arrow) {
+    const app::Tab* tab = ActiveTab(s);
+    const bool connect = tab && IsConnectServerPage(tab->current_path);
+    if (connect) {
+        if (arrow) ShowConnectServerMenu(s);
+        else BeginConnectServer(s);
+        return;
+    }
+    if (arrow) ShowNewDropdown(s);
+    else CreateNewItem(s, ToolbarNewCreatesFolder(s));
+}
 bool HandleBrowserNavigation(AppState& s, LPARAM command) {
     switch (GET_APPCOMMAND_LPARAM(command)) {
     case APPCOMMAND_BROWSER_BACKWARD:
@@ -3349,8 +3363,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
                    hit.region == ui::HitTestResult::NewButtonArrow) {
             // Split New button: main part creates a folder (inline rename), chevron opens the menu.
             // One branch on purpose: this else-if chain is at MSVC's nesting limit (C1061).
-            if (hit.region == ui::HitTestResult::NewButton) CreateNewItem(*s, ToolbarNewCreatesFolder(*s));
-            else ShowNewDropdown(*s);
+            PressNewButton(*s, hit.region == ui::HitTestResult::NewButtonArrow);
         } else if (hit.region == ui::HitTestResult::BreadcrumbSegment) {
             // The trailing search segment edits the query instead of reloading it.
             const app::Tab* active = ActiveTab(*s);
@@ -3689,7 +3702,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             // Tab rows, the tabs header and the sidebar toggle.
         } else if (hit.region == ui::HitTestResult::SidebarHeaderAction) {
             if (hit.sidebar_action == ui::SidebarAddAction::AddNetwork) {
-                s->settings.NetworkAction(0, true);
+                BeginConnectServer(*s);  // 连接服务器 (pulse_network_design.html)
             } else if (hit.sidebar_action == ui::SidebarAddAction::CreateTag) {
                 POINT point{ mx, my };
                 ClientToScreen(hwnd, &point);

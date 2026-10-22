@@ -80,6 +80,9 @@ struct Tab {
         // This PC always groups its rows (磁盘 / 设备 / 网盘程序入口), as
         // Explorer does; 7 = app::GroupBy::ThisPc.
         if (current_path.empty()) return ui::ShowsGroups(view_mode) ? 7 : 0;
+        // The network page likewise (已固定 / 网络驱动器 / 局域网设备 / 最近访问);
+        // 8 = app::GroupBy::Network, pulse:networks = kNetworkLocationsPath.
+        if (current_path == L"pulse:networks") return ui::ShowsGroups(view_mode) ? 8 : 0;
         const bool walled = wall && ui::IsZoomIconMode(view_mode);
         return ui::ShowsGroups(view_mode) && !walled ? group_by : 0;
     }
@@ -96,6 +99,9 @@ struct Tab {
     std::vector<float> column_widths_dip;
     bool show_protected_os_files = false;
     std::wstring virtual_title; // tag/search views; empty for real folders
+    // The network page's status bar summary (counts, LAN discovery state);
+    // only read while current_path is pulse:networks.
+    std::wstring virtual_status;
     std::wstring banner_title;
     std::wstring banner_message;
     TagAdsNoticeState tag_ads_notice;

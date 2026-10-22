@@ -2869,3 +2869,28 @@ SettingsImportedToast	IDS_SETTINGS_IMPORTED_TOAST	4067	导入的设置已生效�
 SettingsRestoredToast	IDS_SETTINGS_RESTORED_TOAST	4068	已恢复导入前的设置。	Previous settings restored.	已還原匯入前的設定。
 SettingsApplyFailedToast	IDS_SETTINGS_APPLY_FAILED_TOAST	4069	设置导入没有完成，部分内容可能保持原样。如有需要，可在「关于与诊断 › 备份与迁移」中恢复导入前的设置。	The settings import didn't finish; some items may be unchanged. If needed, restore the previous settings under About & diagnostics › Backup & transfer.	設定匯入沒有完成，部分內容可能維持原樣。如有需要，可在「關於與診斷 › 備份與移轉」中還原匯入前的設定。
 ExportSettingsFileName	IDS_EXPORT_SETTINGS_FILE_NAME	4070	Pulse 设置	Pulse settings	Pulse 設定
+GroupNetworkPinned	IDS_GROUP_NETWORK_PINNED	4071	已固定	Pinned	已釘選
+GroupNetworkDrives	IDS_GROUP_NETWORK_DRIVES	4072	网络驱动器	Network drives	網路磁碟機
+GroupNetworkDevices	IDS_GROUP_NETWORK_DEVICES	4073	局域网设备	On this network	區域網路裝置
+GroupNetworkRecent	IDS_GROUP_NETWORK_RECENT	4074	最近访问	Recent	最近存取
+ConnectServer	IDS_CONNECT_SERVER	4075	连接服务器	Connect	連線伺服器
+ConnectServerMenu	IDS_CONNECT_SERVER_MENU	4076	连接服务器…	Connect to server…	連線伺服器…
+ConnectServerHint	IDS_CONNECT_SERVER_HINT	4077	输入 \\\\服务器\\共享、smb://服务器/共享 或 IP 地址，Enter 连接	Type \\\\server\\share, smb://server/share or an IP address, then press Enter	輸入 \\\\伺服器\\共用、smb://伺服器/共用 或 IP 位址，Enter 連線
+NetworkAddWindowsPlace	IDS_NETWORK_ADD_WINDOWS_PLACE	4078	添加 Windows 网络位置…	Add a Windows network location…	新增 Windows 網路位置…
+NetworkSharingSettings	IDS_NETWORK_SHARING_SETTINGS	4079	网络和共享设置	Network and sharing settings	網路和共用設定
+NetworkRescan	IDS_NETWORK_RESCAN	4080	重新发现局域网设备	Look for devices again	重新探索區域網路裝置
+NetworkForgetRecent	IDS_NETWORK_FORGET_RECENT	4081	从最近访问中移除	Remove from Recent	從最近存取中移除
+NetworkDriveDisconnected	IDS_NETWORK_DRIVE_DISCONNECTED	4082	未连接	Disconnected	未連線
+NetworkOnlineMs	IDS_NETWORK_ONLINE_MS	4083	在线 · %u ms	Online · %u ms	線上 · %u ms
+NetworkSlowMs	IDS_NETWORK_SLOW_MS	4084	较慢 · %u ms	Slow · %u ms	較慢 · %u ms
+LanDiscoveryScanning	IDS_LAN_DISCOVERY_SCANNING	4085	正在发现局域网设备…	Looking for devices on this network…	正在探索區域網路裝置…
+LanDiscoveryFoundFormat	IDS_LAN_DISCOVERY_FOUND_FORMAT	4086	局域网 %d 台设备	%d devices on this network	區域網路 %d 台裝置
+LanDiscoveryNone	IDS_LAN_DISCOVERY_NONE	4087	未发现局域网设备	No devices found on this network	未探索到區域網路裝置
+LanDiscoveryPublic	IDS_LAN_DISCOVERY_PUBLIC	4088	公用网络 · 不发现设备	Public network · not looking for devices	公用網路 · 不探索裝置
+LanDiscoveryOffline	IDS_LAN_DISCOVERY_OFFLINE	4089	未连接网络	Not connected to a network	未連線網路
+LanDeviceGeneric	IDS_LAN_DEVICE_GENERIC	4090	网络设备	Network device	網路裝置
+NetworkStatusPinnedFormat	IDS_NETWORK_STATUS_PINNED_FORMAT	4091	%d 个已固定	%d pinned	%d 個已釘選
+NetworkStatusDrivesFormat	IDS_NETWORK_STATUS_DRIVES_FORMAT	4092	%d 个网络驱动器	%d network drives	%d 個網路磁碟機
+NetworkStatusRecentFormat	IDS_NETWORK_STATUS_RECENT_FORMAT	4093	%d 个最近访问	%d recent	%d 個最近存取
+ServerAddressUnsupportedFormat	IDS_SERVER_ADDRESS_UNSUPPORTED_FORMAT	4094	暂不支持 %s:// 地址。可以输入 \\\\服务器\\共享 或 smb://服务器/共享。	%s:// addresses aren't supported yet. Use \\\\server\\share or smb://server/share.	暫不支援 %s:// 位址。可以輸入 \\\\伺服器\\共用 或 smb://伺服器/共用。
+ServerAddressInvalid	IDS_SERVER_ADDRESS_INVALID	4095	无法识别这个服务器地址。	Pulse doesn't recognize this server address.	無法辨識這個伺服器位址。

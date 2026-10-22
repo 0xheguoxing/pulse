@@ -177,6 +177,7 @@ int GroupRank(const fs::DirEntry& e, GroupBy g, const GroupClock& c) {
     }
     case GroupBy::Type: return IsFolder(e) ? 0 : 1;
     case GroupBy::ThisPc: return e.pc_launcher ? 2 : e.pc_device ? 1 : 0;
+    case GroupBy::Network: return e.net_group;
     case GroupBy::Tag: {
         if (!c.tags) return 0;
         if (c.tags->rank_by_name.empty()) return c.tags->untagged;
@@ -222,7 +223,7 @@ std::wstring GroupKey(const fs::DirEntry& e, GroupBy g, const GroupClock& clock)
         for (auto& ch : key) ch = static_cast<wchar_t>(std::towlower(ch));
         return key;
     }
-    static constexpr wchar_t kPrefix[] = L"-ndtsglp";
+    static constexpr wchar_t kPrefix[] = L"-ndtsglpw";
     std::wstring key(1, kPrefix[static_cast<int>(g)]);
     key += std::to_wstring(rank);
     return key;

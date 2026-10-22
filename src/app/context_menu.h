@@ -155,6 +155,12 @@ enum MenuCmd : int {
     CmdToolbarToolBase = 5160,
     // New menu ▸ 「新建」按钮的主操作: + AppPrefs::toolbar_new_primary (0..2).
     CmdNewPrimaryBase = 5180,
+    // Network page (app_network_page.h): 连接服务器 and its ▾ menu, 最近访问.
+    CmdConnectServer = 5190,
+    CmdForgetNetworkRecent = 5191,
+    CmdAddNetworkPlace = 5192,
+    CmdLanRescan = 5193,
+    CmdNetworkSharingSettings = 5194,
     CmdShellStaticBase = 6000,
     CmdShellComBase = 8000,
 };

@@ -41,6 +41,7 @@ inline constexpr UINT kHostRoutedMessages[] = {
     WM_SHELL_VERBS,            // static verb reads (process-wide cache)
     WM_RECYCLE_INFO,           // Recycle Bin occupancy query
     WM_NETWORK_LOCATIONS,      // network locations read
+    WM_LAN_DISCOVERY,          // LAN device discovery (network page)
     WM_UPDATE_RESULT,          // update check
     WM_UPDATE_DOWNLOADED,      // update download
     WM_CHANGE_TRACKING,        // change tracking client

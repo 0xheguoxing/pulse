@@ -153,6 +153,7 @@
 #pragma comment(lib, "uxtheme.lib")
 #pragma comment(lib, "psapi.lib")
 #include "app_internal.h"
+#include "app_network_page.h"
 #include "cloud_download.h"
 
 namespace {
@@ -2482,6 +2483,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s) ApplyNetworkLocations(*s);
         return 0;
 
+    case WM_LAN_DISCOVERY:
+        if (s) ApplyLanDiscovery(*s);
+        return 0;
+
     case WM_DRIVE_VERB: {
         std::unique_ptr<app::DriveVerbResult> result(reinterpret_cast<app::DriveVerbResult*>(lParam));
         if (s && result) ApplyDriveVerbResult(*s, *result);
@@ -3067,6 +3072,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 s->index.Stop();
                 const uint64_t index_ms = timer.Lap();
                 CancelNetworkLocations(*s);
+                CancelLanDiscovery(*s);
                 CancelSidebarRefresh(*s);
                 const uint64_t locations_ms = timer.Lap();
                 s->worker.Stop();

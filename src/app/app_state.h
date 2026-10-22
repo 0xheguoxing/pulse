@@ -173,6 +173,7 @@ struct AppState : AppCoreOwner {
     decltype(AppCore::sidebar)& sidebar = core.sidebar;
     decltype(AppCore::sidebarRefresh)& sidebarRefresh = core.sidebarRefresh;
     decltype(AppCore::networkLocations)& networkLocations = core.networkLocations;
+    decltype(AppCore::networkPage)& networkPage = core.networkPage;
     decltype(AppCore::recycle_info)& recycle_info = core.recycle_info;
     decltype(AppCore::recycle_refresh_at)& recycle_refresh_at = core.recycle_refresh_at;
     decltype(AppCore::recycle_refresh_left)& recycle_refresh_left = core.recycle_refresh_left;
@@ -516,6 +517,8 @@ struct AppState : AppCoreOwner {
     HWND hwndAddressEdit = nullptr;
     bool addressEditing = false;
     bool addressSearching = false;
+    // Opened by 连接服务器: bare host names count as servers (app_network_page.h).
+    bool addressConnectMode = false;
     // 别名 suggestions under the path editor; Up/Down pick, Enter opens.
     std::vector<ui::AddressSuggestionView> addressSuggest;
     std::wstring addressSuggestHeader;

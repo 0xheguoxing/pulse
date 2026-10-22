@@ -2,6 +2,7 @@
 #include "../ui/FluentTokens.h"
 // app_hosted_edit.cpp — extracted from app_main.cpp.
 #include "app_internal.h"
+#include "app_network_page.h"
 #include "address_bar_command.h"
 #include "filter_tag_complete.h"
 #include "folder_alias.h"
@@ -254,6 +255,7 @@ void ShowAddressEditor(AppState& s) {
     if (s.filterEditing) HideFilterEditor(s, true);
     s.addressSearching = false;
     s.addressEditing = true;
+    s.addressConnectMode = false;  // BeginConnectServer sets it after this
     s.addressSuggest.clear();
     s.addressSuggestSel = -1;
     // DestroyWindow synchronously sends WM_KILLFOCUS to the old editor.
@@ -308,8 +310,10 @@ void HideAddressEditor(AppState& s, bool navigate) {
         // cmd / powershell / pwsh / wt open a console here instead of navigating.
         const app::AddressBarCommand command = app::ParseAddressBarCommand(buf);
         if (command.program != app::AddressBarProgram::None) RunAddressBarCommand(s, command);
-        else NavigateTo(s, AddressNavigationTarget(buf));
+        // smb://, a bare IP, or anything typed after 连接服务器 (app_network_page.h).
+        else if (!OpenServerAddressText(s, buf)) NavigateTo(s, AddressNavigationTarget(buf));
     }
+    s.addressConnectMode = false;
     s.addressSuggest.clear();
     s.addressSuggestSel = -1;
     s.addressIgnoreKillFocus = true;
@@ -347,14 +351,16 @@ void UpdateAddressSuggestions(AppState& s) {
     s.addressSuggestHeader.clear();
     s.addressSuggestSel = -1;
     const auto done = [&] { if (before || !s.addressSuggest.empty()) InvalidateRect(s.hwnd, nullptr, FALSE); };
-    if (!s.addressEditing || s.addressSearching || !s.hwndAddressEdit ||
-        app::AliasStore::Instance().Empty()) return done();
+    if (!s.addressEditing || s.addressSearching || !s.hwndAddressEdit) return done();
     const int len = GetWindowTextLengthW(s.hwndAddressEdit);
     if (len <= 0 || len > 260) return done();
     std::wstring text(static_cast<size_t>(len) + 1, L'\0');
     text.resize(static_cast<size_t>(GetWindowTextW(s.hwndAddressEdit, text.data(), len + 1)));
     while (!text.empty() && iswspace(text.back())) text.pop_back();
     while (!text.empty() && iswspace(text.front())) text.erase(text.begin());
+    // "\\..." and 连接服务器: known servers, from memory only (no network).
+    if (FillServerSuggestions(s, text)) return done();
+    if (app::AliasStore::Instance().Empty()) return done();
     // Paths, shell: and %VAR% shortcuts keep the plain editor; "别名\rest"
     // suggests the aliased folder plus the rest (pulse_alias.html).
     if (text.empty() || text.find_first_of(L":%\"") != std::wstring::npos ||

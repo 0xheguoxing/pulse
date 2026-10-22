@@ -1331,6 +1331,9 @@ target_link_libraries(pulse_link_pill_test PRIVATE user32)
 
 add_executable(pulse_network_locations_test src/bench/network_locations_test.cpp src/app/network_locations.cpp)
 target_link_libraries(pulse_network_locations_test PRIVATE shell32 ole32 oleaut32 uuid)
+# Network page: server address parsing, 最近访问, LAN device merging (pure).
+add_executable(pulse_network_connect_parse_test src/bench/network_connect_parse_test.cpp
+    src/app/server_address.cpp src/app/network_recent.cpp src/app/lan_device.cpp)
 # Phones (D1): pulse:device: paths, the fake device source, the device thread.
 add_executable(pulse_device_source_test src/bench/device_source_test.cpp src/fs/device_path.cpp
     src/fs/device_fake.cpp src/fs/device_shell.cpp src/fs/device_worker.cpp)

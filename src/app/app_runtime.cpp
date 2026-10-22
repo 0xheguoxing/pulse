@@ -4,6 +4,7 @@
 #include "folder_alias.h"
 #include "app_wall_hint.h"
 #include "app_internal.h"
+#include "app_network_page.h"
 #include "shortcut_page.h"
 #include "keymap.h"
 #include <memory>
@@ -3431,8 +3432,13 @@ std::wstring TooltipForHover(AppState& s) {
     case R::NavUp: return text(I::Up);
     case R::NavRefresh: return text(I::Refresh);
     case R::NewButton:
+        if (const app::Tab* tab = ActiveTab(s); tab && IsConnectServerPage(tab->current_path))
+            return text(I::ConnectServerHint);
         return ToolbarNewCreatesFolder(s) ? text(I::NewFolder) + L" (Ctrl+Shift+N)" : text(I::NewTextDocument);
-    case R::NewButtonArrow: return text(I::New);
+    case R::NewButtonArrow:
+        if (const app::Tab* tab = ActiveTab(s); tab && IsConnectServerPage(tab->current_path))
+            return text(I::ConnectServerMenu);
+        return text(I::New);
     case R::Cut: return text(I::CutShortcut);
     case R::Copy: return text(I::CopyShortcut);
     case R::Paste: return text(I::PasteShortcut);

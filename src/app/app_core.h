@@ -56,6 +56,7 @@ namespace pulse {
 
 struct SidebarRefreshLoad;
 struct NetworkLocationLoad;
+struct NetworkPageLoad;
 
 struct AppState;
 
@@ -85,6 +86,8 @@ struct AppCore {
     app::SidebarModel sidebar;
     std::shared_ptr<SidebarRefreshLoad> sidebarRefresh;
     std::shared_ptr<NetworkLocationLoad> networkLocations;
+    // The network page's 最近访问 and LAN discovery cache (app_network_page.cpp).
+    std::shared_ptr<NetworkPageLoad> networkPage;
     fs::RecycleBinInfo recycle_info;
     // SHQueryRecycleBin and $I files lag IFileOperation; retry occupancy/list
     // after recycle mutations and ignore occupancy that still matches the

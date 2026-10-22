@@ -300,6 +300,7 @@ struct PaneViewModel {
     bool can_go_forward = false;
     bool can_go_up = false;
     bool can_create = false;
+    bool connect_server = false;  // the New button reads 连接服务器 (network page, \\server)
     bool is_file_system = false;
     bool curated_order = false;
     bool is_starred = false;
