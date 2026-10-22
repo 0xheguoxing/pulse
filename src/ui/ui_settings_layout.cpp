@@ -454,8 +454,12 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
                 ry += 36.0f * scale;
                 if (static_cast<int>(i) != vm.settings_release_expanded) continue;
                 float body = 4.0f * scale;
-                for (const auto& line : notes[i].lines)
-                    body += ReleaseLineHeight(painter, line, text_w, scale) + kReleaseLineGapDip * scale;
+                const ReleaseNoteView& note = notes[i];
+                const ReleaseTagSummary tags = SummarizeReleaseTags(note);
+                const float tag_col = ReleaseTagColumn(painter, note, scale);
+                for (size_t k = 0; k < note.lines.size(); ++k)
+                    body += MeasureReleaseLine(painter, note, k, text_w, tag_col, tags, scale).Total() +
+                            kReleaseLineGapDip * scale;
                 l.release_body = D2D1::RectF(row_left, ry, row_right, ry + body);
                 ry += body + 4.0f * scale;
             }

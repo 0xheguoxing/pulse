@@ -999,18 +999,58 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
                 const float text_w = ReleaseTextWidth(body.right - body.left, scale_);
                 float ly = body.top + 4.0f * scale_;
                 MakeBrush(dc, theme.accent, brAccent_);
+                const ReleaseTagSummary tags = SummarizeReleaseTags(note);
+                const float tag_col = ReleaseTagColumn(&painter_, note, scale_);
+                const float badge_h = kReleaseBadgeHeightDip * scale_;
+                const auto draw_badge = [&](ReleaseTag tag, const std::wstring& label, float x, float y) {
+                    const float bw = painter_.MeasureBadgeWidth(label);
+                    fluent::BadgeSpec spec{};
+                    spec.bounds = D2D1::RectF(x, y, x + bw, y + badge_h);
+                    spec.text = label;
+                    StyleReleaseBadge(spec, tag, vm.dark, painter_.HighContrast());
+                    painter_.DrawBadge(spec);
+                    return bw;
+                };
                 for (size_t k = 0; k < note.lines.size(); ++k) {
                     if (ly > lay.content.bottom) break;
-                    const float h = ReleaseLineHeight(&painter_, note.lines[k], text_w, scale_);
+                    const ReleaseLineBox box = MeasureReleaseLine(&painter_, note, k, text_w, tag_col, tags, scale_);
+                    const float h = box.Total();
                     if (ly + h >= lay.content.top) {
-                        if (k < note.bullets.size() && note.bullets[k]) {
-                            const float r = 2.5f * scale_;
-                            dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(text_x - 12.0f * scale_,
-                                                                        ly + 9.0f * scale_), r, r),
-                                            brAccent_.get());
+                        const float ty = ly + box.gap_above;
+                        if (ReleaseLineHeading(note, k)) {
+                            painter_.DrawWrappedSection(note.lines[k], D2D1::Point2F(text_x, ty), text_w,
+                                                        theme.text);
+                        } else if (tag_col > 0.0f && ReleaseLineTagged(note, k)) {
+                            // Tag in a column of its own; the item wraps beside it.
+                            draw_badge(note.tags[k], note.tag_labels[k], text_x, ty + 1.0f * scale_);
+                            painter_.DrawWrappedCaption(note.lines[k], D2D1::Point2F(text_x + tag_col, ty),
+                                                        (std::max)(40.0f * scale_, text_w - tag_col), theme.text);
+                        } else {
+                            if (k < note.bullets.size() && note.bullets[k]) {
+                                const float r = 2.5f * scale_;
+                                dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(text_x - 12.0f * scale_,
+                                                                            ty + 9.0f * scale_), r, r),
+                                                brAccent_.get());
+                            }
+                            painter_.DrawWrappedCaption(note.lines[k], D2D1::Point2F(text_x, ty), text_w,
+                                                        theme.text);
                         }
-                        painter_.DrawWrappedCaption(note.lines[k], D2D1::Point2F(text_x, ly), text_w,
-                                                    theme.text);
+                        if (box.legend_h > 0.0f) {
+                            // Under the summary: 新功能 10 · 新设置 8 · 改进 19 · 修复 8.
+                            float lx = text_x;
+                            const float legend_y = ty + box.text_h + 6.0f * scale_;
+                            MakeBrush(dc, theme.text_secondary, brTextSecondary_);
+                            for (int t = 1; t < kReleaseTagCount; ++t) {
+                                if (!tags.count[t] || !tags.label[t]) continue;
+                                lx += draw_badge(static_cast<ReleaseTag>(t), *tags.label[t], lx, legend_y) +
+                                      5.0f * scale_;
+                                const std::wstring count = std::to_wstring(tags.count[t]);
+                                const float count_w = measure_small(count);
+                                DrawTextRect(dc, small_fmt, brTextSecondary_.get(), count, lx,
+                                             legend_y - 1.0f * scale_, count_w + 4.0f * scale_, badge_h);
+                                lx += count_w + 16.0f * scale_;
+                            }
+                        }
                     }
                     ly += h + kReleaseLineGapDip * scale_;
                 }

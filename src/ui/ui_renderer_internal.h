@@ -2713,6 +2713,95 @@ float ReleaseLineHeight(const fluent::Painter* painter, const std::wstring& line
     return h > 0.0f ? h : 20.0f * scale;
 }
 
+// Tagged release notes (release_note_tags.h): a badge column in front of the
+// tagged items, headings in the section style with room above them, and a row
+// of per-tag counts under the summary line. Layout and painting both measure
+// through MeasureReleaseLine, so the expanded body is as tall as what is drawn.
+constexpr float kReleaseHeadingGapDip = 8.0f;
+constexpr float kReleaseBadgeHeightDip = 18.0f;
+constexpr float kReleaseBadgeGapDip = 8.0f;
+constexpr float kReleaseLegendHeightDip = 28.0f;
+
+struct ReleaseTagSummary {
+    int count[kReleaseTagCount]{};
+    const std::wstring* label[kReleaseTagCount]{};  // first label of each tag
+    bool any = false;
+};
+
+inline ReleaseTagSummary SummarizeReleaseTags(const ReleaseNoteView& note) {
+    ReleaseTagSummary summary;
+    for (size_t k = 0; k < note.tags.size() && k < note.tag_labels.size(); ++k) {
+        const int tag = static_cast<int>(note.tags[k]);
+        if (tag <= 0 || tag >= kReleaseTagCount) continue;
+        if (summary.count[tag]++ == 0) summary.label[tag] = &note.tag_labels[k];
+        summary.any = true;
+    }
+    return summary;
+}
+
+inline bool ReleaseLineTagged(const ReleaseNoteView& note, size_t k) {
+    return k < note.tags.size() && note.tags[k] != ReleaseTag::None && k < note.tag_labels.size();
+}
+
+inline bool ReleaseLineHeading(const ReleaseNoteView& note, size_t k) {
+    return k < note.headings.size() && note.headings[k];
+}
+
+// The widest tag of the note plus a gap; 0 for an untagged note.
+inline float ReleaseTagColumn(const fluent::Painter* painter, const ReleaseNoteView& note, float scale) {
+    float widest = 0.0f;
+    for (size_t k = 0; painter && k < note.lines.size(); ++k)
+        if (ReleaseLineTagged(note, k))
+            widest = (std::max)(widest, painter->MeasureBadgeWidth(note.tag_labels[k]));
+    return widest > 0.0f ? widest + kReleaseBadgeGapDip * scale : 0.0f;
+}
+
+struct ReleaseLineBox {
+    float gap_above = 0.0f;  // headings after the first line
+    float text_h = 0.0f;
+    float legend_h = 0.0f;   // the count row under the summary line
+    float Total() const { return gap_above + text_h + legend_h; }
+};
+
+inline ReleaseLineBox MeasureReleaseLine(const fluent::Painter* painter, const ReleaseNoteView& note,
+                                         size_t k, float text_w, float tag_col,
+                                         const ReleaseTagSummary& summary, float scale) {
+    ReleaseLineBox box;
+    const std::wstring& line = note.lines[k];
+    if (ReleaseLineHeading(note, k)) {
+        if (k > 0) box.gap_above = kReleaseHeadingGapDip * scale;
+        const float h = painter ? painter->MeasureWrappedSectionHeight(line, text_w) : 0.0f;
+        box.text_h = h > 0.0f ? h : 20.0f * scale;
+    } else if (tag_col > 0.0f && ReleaseLineTagged(note, k)) {
+        const float width = (std::max)(40.0f * scale, text_w - tag_col);
+        box.text_h = (std::max)(kReleaseBadgeHeightDip * scale, ReleaseLineHeight(painter, line, width, scale));
+    } else {
+        box.text_h = ReleaseLineHeight(painter, line, text_w, scale);
+    }
+    const bool plain_first = k == 0 && !(k < note.bullets.size() && note.bullets[k]) && !ReleaseLineHeading(note, k);
+    if (plain_first && summary.any) box.legend_h = kReleaseLegendHeightDip * scale;
+    return box;
+}
+
+// 新功能 accent, 新设置 purple, 改进 green, 修复 amber; high contrast keeps system colours.
+inline void StyleReleaseBadge(fluent::BadgeSpec& spec, ReleaseTag tag, bool dark, bool high_contrast) {
+    spec.use_custom_colors = false;
+    switch (tag) {
+    case ReleaseTag::New: spec.kind = fluent::BadgeKind::Accent; break;
+    case ReleaseTag::Improved: spec.kind = fluent::BadgeKind::Success; break;
+    case ReleaseTag::Fixed: spec.kind = fluent::BadgeKind::Warning; break;
+    case ReleaseTag::Setting:
+        spec.kind = high_contrast ? fluent::BadgeKind::Accent : fluent::BadgeKind::Neutral;
+        if (!high_contrast) {
+            spec.use_custom_colors = true;
+            spec.custom_background = dark ? D2D1::ColorF(0x352A55) : D2D1::ColorF(0xEEE6FF);
+            spec.custom_foreground = dark ? D2D1::ColorF(0xC9AEFF) : D2D1::ColorF(0x6B2FD6);
+        }
+        break;
+    default: spec.kind = fluent::BadgeKind::Neutral; break;
+    }
+}
+
 #include "settings_layout_sections.h"
 #include "settings_sysctx_layout.h"
 #include "settings_shortcuts_layout.h"

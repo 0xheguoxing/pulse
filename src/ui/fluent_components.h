@@ -447,6 +447,11 @@ public:
     float MeasureWrappedCaptionHeight(std::wstring_view text, float width) const;
     void DrawWrappedCaption(std::wstring_view text, D2D1_POINT_2F origin, float width,
                             const D2D1_COLOR_F& color);
+    // The same in the section header style (13px semibold): release-note headings.
+    float MeasureWrappedSectionHeight(std::wstring_view text, float width) const;
+    void DrawWrappedSection(std::wstring_view text, D2D1_POINT_2F origin, float width,
+                            const D2D1_COLOR_F& color);
+    bool HighContrast() const noexcept { return high_contrast_; }
     D2D1_RECT_F FitButtonBounds(D2D1_RECT_F bounds, std::wstring_view text,
                                 std::wstring_view glyph = {},
                                 bool drop_down = false) const;

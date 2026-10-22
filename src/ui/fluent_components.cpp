@@ -581,6 +581,21 @@ void Painter::DrawWrappedCaption(std::wstring_view text, D2D1_POINT_2F origin, f
     if (layout && brush) DrawLayoutText(compositor_, dc_, high_contrast_, origin, layout, brush);
 }
 
+float Painter::MeasureWrappedSectionHeight(std::wstring_view text, float width) const {
+    IDWriteTextLayout* layout = GetWrappedTextLayout(compositor_, SectionFormat(), text, width);
+    DWRITE_TEXT_METRICS metrics{};
+    if (!layout || FAILED(layout->GetMetrics(&metrics))) return 0.0f;
+    return std::ceil(metrics.height);
+}
+
+void Painter::DrawWrappedSection(std::wstring_view text, D2D1_POINT_2F origin, float width,
+                                 const D2D1_COLOR_F& color) {
+    if (!dc_) return;
+    IDWriteTextLayout* layout = GetWrappedTextLayout(compositor_, SectionFormat(), text, width);
+    ID2D1SolidColorBrush* brush = ScratchBrush(color);
+    if (layout && brush) DrawLayoutText(compositor_, dc_, high_contrast_, origin, layout, brush);
+}
+
 void Painter::DrawGlyph(std::wstring_view glyph, const D2D1_RECT_F& bounds,
                         const D2D1_COLOR_F& color) {
     if (!compositor_) {
