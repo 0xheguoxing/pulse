@@ -25,6 +25,7 @@
 #include "selection_caps.h"
 #include "app_input.h"
 #include "app_hover.h"
+#include "partial_redraw.h"
 #include "app_hover_preview.h"
 #include "app_column_view.h"
 #include "app_details_tree.h"
@@ -2685,8 +2686,30 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             hit.pane_index != s->hoverPaneIndex;
         if (target_changed && hit.region == ui::HitTestResult::SidebarItem && fs::IsUncPath(hit.path))
             RequestUncProbe(*s, hit.path);
-        if (UpdatePointerHover(*s, hit, POINT{mx, my}))
-            InvalidateRect(hwnd, nullptr, FALSE);
+        // A move from one row to another of the same details list repaints
+        // those rows and the plate's path only (partial redraw).
+        const auto row_region = [](int region) {
+            using R = ui::HitTestResult;
+            switch (static_cast<R::Region>(region)) {
+            case R::Row: case R::RowStar: case R::RowTagDot: case R::RowFolderSize:
+            case R::RowNewTab: case R::ChangeBadge: case R::RowMore: case R::RowCheck:
+                return true;
+            default:
+                return false;
+            }
+        };
+        const int prev_row = s->hoverRow, prev_pane = s->hoverPaneIndex, prev_region = s->hoverRegion;
+        const int prev_crumb = s->breadcrumbHover;
+        const bool prev_sidebar_hot = s->sidebarScrollbarHot;
+        if (UpdatePointerHover(*s, hit, POINT{mx, my})) {
+            D2D1_RECT_F rows{};
+            if (row_region(prev_region) && row_region(s->hoverRegion) && prev_pane == s->hoverPaneIndex &&
+                prev_crumb == s->breadcrumbHover && prev_sidebar_hot == s->sidebarScrollbarHot &&
+                s->renderer.HoverRowDamage(prev_pane, prev_row, s->hoverRow, &rows))
+                app::InvalidatePartial(hwnd, app::DamagePixels(rows));
+            else
+                InvalidateRect(hwnd, nullptr, FALSE);
+        }
         D2D1_RECT_F content = s->renderer.ContentRect((float)s->compositor.Width(), (float)s->compositor.Height());
         float extra = 0.0f;
         if (app::Tab* tab = ActiveTab(*s); tab) {

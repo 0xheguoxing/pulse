@@ -122,6 +122,19 @@ public:
     bool Active(uint64_t now) const noexcept {
         return visible_ && !settled_ && now - start_ < duration_ + kSettleGraceMs;
     }
+    // Everywhere the plate is or may still pass on its way (empty when not
+    // drawn): a partial redraw repaints this span.
+    D2D1_RECT_F Span() const noexcept {
+        if (!visible_) return D2D1::RectF(0, 0, 0, 0);
+        D2D1_RECT_F r = current_;
+        for (const D2D1_RECT_F& o : {from_, to_}) {
+            r.left = o.left < r.left ? o.left : r.left;
+            r.top = o.top < r.top ? o.top : r.top;
+            r.right = o.right > r.right ? o.right : r.right;
+            r.bottom = o.bottom > r.bottom ? o.bottom : r.bottom;
+        }
+        return r;
+    }
 
 private:
     static bool Same(const D2D1_RECT_F& a, const D2D1_RECT_F& b) noexcept {

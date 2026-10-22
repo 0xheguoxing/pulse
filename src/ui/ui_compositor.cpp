@@ -340,7 +340,8 @@ bool Compositor::CreateSwapChain() {
     desc.SampleDesc.Count = 1;
     desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     desc.BufferCount = 2;
-    desc.SwapEffect = compat::ModernWindows()
+    // Partial redraw needs buffers that keep their pixels between presents.
+    desc.SwapEffect = compat::ModernWindows() && !PartialRedrawEnabled()
         ? DXGI_SWAP_EFFECT_FLIP_DISCARD : DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
     desc.Scaling = DXGI_SCALING_STRETCH;
     desc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
@@ -378,11 +379,23 @@ bool Compositor::CreateSwapChain() {
     }
 
     dxgiDevice_->SetMaximumFrameLatency(1);
+    partial_swap_ = PartialRedrawEnabled() && desc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+    full_next_ = true;
     return true;
+}
+
+bool Compositor::PartialRedrawEnabled() {
+    static const bool enabled = [] {
+        wchar_t value[8]{};
+        const DWORD n = GetEnvironmentVariableW(L"PULSE_PARTIAL_REDRAW", value, ARRAYSIZE(value));
+        return !(n == 1 && value[0] == L'0');
+    }();
+    return enabled;
 }
 
 void Compositor::ResizeSwapChain() {
     if (!swapChain_.get() || width_ <= 0 || height_ <= 0) return;
+    full_next_ = true;
     frameCopy_.reset();
     held_.reset();
     targetBitmap_.reset();
@@ -541,7 +554,7 @@ void Compositor::CopyFrame() {
         frameCopy_.reset();
 }
 
-void Compositor::Present() {
+void Compositor::Present(const RECT* dirty) {
     if (device_lost_) return;
     if (hwnd_) UpdateTextRenderingParams(
         MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST));
@@ -558,7 +571,19 @@ void Compositor::Present() {
         }
     }
     HRESULT hr = S_OK;
-    if (swapChain_.get()) hr = swapChain_->Present(1, 0);
+    if (swapChain_.get()) {
+        if (dirty && CanPresentPartial()) {
+            DXGI_PRESENT_PARAMETERS params{};
+            RECT rect = *dirty;
+            params.DirtyRectsCount = 1;
+            params.pDirtyRects = &rect;
+            hr = swapChain_->Present1(1, 0, &params);
+        } else {
+            hr = swapChain_->Present(1, 0);
+        }
+    }
+    // Only a frame that reached the screen whole lets the next one be partial.
+    full_next_ = FAILED(hr) || hr == DXGI_STATUS_OCCLUDED;
     if (FAILED(hr)) {
         if (IsDeviceLost(hr)) NotifyDeviceLost(hr);
         return;

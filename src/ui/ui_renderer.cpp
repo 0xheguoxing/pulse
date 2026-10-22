@@ -835,10 +835,98 @@ void MainRenderer::DrawButton(const D2D1_RECT_F& rc, const Theme& theme, const D
         size_factor);
 }
 
+namespace {
+void UnionInto(D2D1_RECT_F& r, bool& any, const D2D1_RECT_F& a) {
+    if (a.right <= a.left || a.bottom <= a.top) return;
+    if (!any) {
+        r = a;
+        any = true;
+        return;
+    }
+    r.left = std::min(r.left, a.left);
+    r.top = std::min(r.top, a.top);
+    r.right = std::max(r.right, a.right);
+    r.bottom = std::max(r.bottom, a.bottom);
+}
+} // namespace
+
+bool MainRenderer::OverlayUp(const WindowViewModel& vm) const {
+    // Everything the tail of Render floats over the window, and the hover card.
+    return vm.settings_open || vm.pane.marquee_active || vm.content_drop || vm.drag_ghost.on ||
+           !vm.drag_badge.empty() || vm.change_popover.visible ||
+           (vm.address_editing && !vm.address_suggestions.empty()) ||
+           !vm.filter_tag_suggestions.empty() || vm.teach.visible || !vm.tooltip_text.empty() ||
+           group_wheel_.Visible() || window_overview_.IsOpen() || window_switcher_.IsOpen() ||
+           caret_due_ms_ != 0 || hover_frame_ms_ != 0 ||
+           hover_card_rect_.right > hover_card_rect_.left;
+}
+
+bool MainRenderer::NonHoverMotionActive() const {
+    // TickMotion without the list hover plates.
+    const uint64_t m = motion::NowMs();
+    const ULONGLONG now = GetTickCount64();
+    if (sidebar_pill_.Active(m) || settings_nav_pill_.Active(m) || settings_nav_hover_.Active(m) ||
+        collapse_anim_ || details_anim_)
+        return true;
+    for (const auto& motion : list_shift_) if (motion.Active(m)) return true;
+    for (const auto& motion : view_morph_) if (motion.Active(m)) return true;
+    for (const auto& motion : link_pill_motion_) if (motion.Active(m)) return true;
+    if ((task_pill_done_at_ != 0 && now - task_pill_done_at_ < task_pill_hold_ms_ + 400) ||
+        (task_pill_pop_at_ != 0 && now - task_pill_pop_at_ < kTaskPillPopMs + 40))
+        return true;
+    if (ticks_active_ || motion_frame_wanted_) return true;
+    if (m < tab_motion_until_ || m < row_leave_until_ || m < mtime_flash_until_ ||
+        m < splitter_motion_until_ || m < spring_ring_until_)
+        return true;
+    return list_loading_active_ || folder_size_anim_active_ || task_pill_spinning_;
+}
+
+bool MainRenderer::PartialRedrawSafe(const WindowViewModel& vm) const {
+    return !last_frame_overlay_ && !OverlayUp(vm) && !NonHoverMotionActive();
+}
+
+bool MainRenderer::HoverRowDamage(int pane_index, int old_source, int new_source,
+                                  D2D1_RECT_F* out) const {
+    if (!out || pane_index < 0 || pane_index >= static_cast<int>(drawn_rows_.size())) return false;
+    const auto& rows = drawn_rows_[static_cast<size_t>(pane_index)];
+    if (rows.empty()) return false;
+    D2D1_RECT_F r{};
+    bool any = false;
+    for (const int source : {old_source, new_source}) {
+        if (source < 0) continue;
+        const auto it = std::find_if(rows.begin(), rows.end(),
+                                     [&](const auto& row) { return row.first == source; });
+        if (it == rows.end()) return false;
+        UnionInto(r, any, it->second);
+    }
+    UnionInto(r, any, list_hover_motion_[static_cast<size_t>(pane_index)].Span());
+    if (!any) return false;
+    const float margin = 4.0f * scale_;
+    *out = D2D1::RectF(r.left - margin, r.top - margin, r.right + margin, r.bottom + margin);
+    return true;
+}
+
+bool MainRenderer::HoverMotionDamage(D2D1_RECT_F* out) const {
+    if (!out) return false;
+    const uint64_t m = motion::NowMs();
+    D2D1_RECT_F r{};
+    bool any = false;
+    for (size_t i = 0; i < list_hover_motion_.size(); ++i) {
+        if (!list_hover_motion_[i].Active(m)) continue;
+        if (i >= drawn_rows_.size() || drawn_rows_[i].empty()) return false;
+        UnionInto(r, any, list_hover_motion_[i].Span());
+    }
+    if (!any) return false;
+    const float margin = 4.0f * scale_;
+    *out = D2D1::RectF(r.left - margin, r.top - margin, r.right + margin, r.bottom + margin);
+    return true;
+}
+
 void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
                           const Theme& theme) {
     if (!compositor_ || !compositor_->Dc()) return;
     ++motion_frame_;
+    last_frame_overlay_ = OverlayUp(vm);
     folder_thumbnail_cache_.BeginFrame();
     struct FolderFrameScope {
         FolderThumbnailCache& cache;

@@ -336,8 +336,12 @@ public:
         active = active ||
                  (task_pill_done_at_ != 0 && now - task_pill_done_at_ < task_pill_hold_ms_ + 400) ||
                  (task_pill_pop_at_ != 0 && now - task_pill_pop_at_ < kTaskPillPopMs + 40);
-        if (copy_feedback_.Tick(now)) active = true;
-        if (group_wheel_.Tick(motion_now)) active = true;
+        bool ticked = false;
+        if (copy_feedback_.Tick(now)) ticked = true;
+        if (group_wheel_.Tick(motion_now)) ticked = true;
+        if (folder_thumbnail_cache_.Tick(now)) ticked = true;
+        ticks_active_ = ticked;
+        active = active || ticked;
         if (motion_now < tab_motion_until_) active = true;
         if (motion_now < row_leave_until_) active = true;
         if (motion_now < mtime_flash_until_) active = true;
@@ -346,7 +350,6 @@ public:
         // Sidebar pill/plate, toolbar plates, column cascade, details sweep:
         // their last frame asked for another (RequestMotionFrame).
         if (motion_frame_wanted_) active = true;
-        if (folder_thumbnail_cache_.Tick(now)) active = true;
         // Decoration only: loading placeholders shimmer (and must appear on
         // time) while a pane enumerates, the folder size skeleton and the
         // scanning label breathe, the pill's indeterminate ring spins. These
@@ -358,6 +361,21 @@ public:
     }
     // The last TickMotion found nothing but decorative motion running.
     bool DecorativeMotionOnly() const { return decorative_only_; }
+
+    // Partial redraw (plans/Pulse_局部重绘方案.md). Only a quiet window
+    // redraws part of itself: nothing moves but the list hover plates and no
+    // overlay is up, now or in the frame before. Anything else is a full frame.
+    bool PartialRedrawSafe(const WindowViewModel& vm) const;
+    // Where a row hover change in a details list repaints: both rows as drawn
+    // in the last full frame and the plate's path. False: redraw everything.
+    bool HoverRowDamage(int pane_index, int old_source, int new_source, D2D1_RECT_F* out) const;
+    // A frame while only hover plates glide: their paths. False otherwise.
+    bool HoverMotionDamage(D2D1_RECT_F* out) const;
+    // The frame about to render redraws only `damage` (client px; null: all).
+    void SetFrameDamage(const D2D1_RECT_F* damage) {
+        frame_partial_ = damage != nullptr;
+        if (damage) frame_damage_ = *damage;
+    }
     // Where the rows in PaneViewModel::landing_names were drawn in the last
     // frame (window px: icon left, row top/right/bottom).
     const std::vector<D2D1_RECT_F>& LandingRects() const { return landing_rects_; }
@@ -1078,6 +1096,14 @@ private:
     // sidebar, toolbar, column strip and details panel files); cleared at the
     // start of every frame. Rides the same frame pump as everything else.
     mutable bool motion_frame_wanted_ = false;
+    // Partial redraw state (PartialRedrawSafe and friends).
+    bool ticks_active_ = false;          // copy feedback, group wheel, thumbnails
+    bool frame_partial_ = false;
+    D2D1_RECT_F frame_damage_{};
+    bool last_frame_overlay_ = true;     // the last frame drew a floating overlay
+    std::array<std::vector<std::pair<int, D2D1_RECT_F>>, 8> drawn_rows_{};  // source, cell
+    bool OverlayUp(const WindowViewModel& vm) const;
+    bool NonHoverMotionActive() const;
     mutable std::vector<D2D1_RECT_F> landing_rects_;   // this frame's landing rows (window px)
     void RequestMotionFrame() const { motion_frame_wanted_ = true; }
     static constexpr ULONGLONG kTaskPillDoneMs = 1600;

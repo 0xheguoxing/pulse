@@ -1,4 +1,5 @@
 #include "app_diagnostics.h"
+#include "partial_redraw.h"
 #include "git_ui.h"
 #include "mtime_hint_prefs.h"
 #include "app_wall_hint.h"
@@ -403,6 +404,15 @@ static void RevealExpandedName(AppState& s) {
     else if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
+// WM_PAINT's partial damage for the Render it calls (null: a whole frame).
+static thread_local const RECT* t_paint_damage = nullptr;
+
+// Motion the app runs itself (scrolling, layout, theme): it moves pixels the
+// partial-redraw damage does not know about.
+static bool AppMotion(const AppState& s) {
+    return s.scrollAnimating || s.marqueeAutoScroll || s.themeReveal.start || s.paneLayoutMotion.start;
+}
+
 void Render(AppState& s) {
     pulse::app::startup_trace::Mark("frame_begin");
     auto t0 = std::chrono::steady_clock::now();
@@ -427,11 +437,11 @@ void Render(AppState& s) {
     ID2D1DeviceContext* dc = s.compositor.Dc();
     const auto draw_start = std::chrono::steady_clock::now();
     dc->BeginDraw();
-    dc->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
 
     bool hc = s.shot_high_contrast || ui::IsHighContrast();
     ui::Theme theme = hc ? ui::MakeHighContrastTheme() : ui::MakeTheme(s.darkMode, s.accentColor);
 
+    const bool app_motion = AppMotion(s);  // before this frame's scroll step
     if (s.scrollAnimating) UpdateSmoothScroll(s);
     UpdateMarqueeFrame(s);
     UpdateProcessMetrics(s);
@@ -444,6 +454,22 @@ void Render(AppState& s) {
     ui::HoverPreviewView hover_card;
     FillHoverPreviewView(s, vm, hover_card);
     if (hover_card.visible) vm.tooltip_text.clear();  // the card already names the file
+    // Partial redraw: only a quiet window repaints just the damage; anything
+    // floating or moving besides the hover plates makes it a whole frame.
+    RECT damage_px{};
+    bool partial = t_paint_damage && !app_motion && s.compositor.CanPresentPartial() && !s.shot.active &&
+                   !hover_card.visible && !hover_card.dwell && !s.themeReveal.start &&
+                   s.renameIndex < 0 && !s.notification_toast.IsVisible() &&
+                   s.renderer.PartialRedrawSafe(vm);
+    if (partial) {
+        RECT client{0, 0, s.compositor.Width(), s.compositor.Height()};
+        partial = IntersectRect(&damage_px, t_paint_damage, &client) && !EqualRect(&damage_px, &client);
+    }
+    const D2D1_RECT_F damage = D2D1::RectF(static_cast<float>(damage_px.left), static_cast<float>(damage_px.top),
+                                           static_cast<float>(damage_px.right), static_cast<float>(damage_px.bottom));
+    s.renderer.SetFrameDamage(partial ? &damage : nullptr);
+    if (partial) dc->PushAxisAlignedClip(damage, D2D1_ANTIALIAS_MODE_ALIASED);
+    dc->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
     s.renderer.Render(vm, rect, theme);
     pulse::app::startup_trace::Mark("frame_scene");
     TickDragLanding(s);
@@ -452,6 +478,8 @@ void Render(AppState& s) {
     AfterHoverPreviewDraw(s);
     s.notification_toast.Draw(s.compositor, theme, s.scale, hc);
     DrawThemeReveal(s, dc, rect);
+    if (partial) dc->PopAxisAlignedClip();
+    s.renderer.SetFrameDamage(nullptr);
     pulse::app::startup_trace::Mark("frame_overlays");
 
     const HRESULT end_hr = dc->EndDraw();
@@ -469,7 +497,8 @@ void Render(AppState& s) {
         GetEnvironmentVariableW(L"PULSE_TEST_HIDDEN_SHOT", hidden_frame, ARRAYSIZE(hidden_frame)) == 1 &&
         hidden_frame[0] == L'1';
     // An occluded flip chain advances to an unpainted buffer after Present.
-    if (!hidden_capture) s.compositor.Present();
+    if (!hidden_capture) s.compositor.Present(partial ? &damage_px : nullptr);
+    else s.compositor.ForceFullFrame();
     pulse::app::startup_trace::Mark("frame_present");
     const auto present_end = std::chrono::steady_clock::now();
     // Test instances report each window's first presented frame to the
@@ -521,9 +550,8 @@ void Render(AppState& s) {
     // Motion started or still running: the next frames follow the display
     // clock instead of the 16 ms UI timer (see WM_FRAME_PUMP).
     if (s.framePump.Running()) {
-        const bool app_motion =
-            s.scrollAnimating || s.marqueeAutoScroll || s.themeReveal.start || s.paneLayoutMotion.start;
-        if (s.renderer.TickMotion(GetTickCount64()) || app_motion) ArmMotionFrames(s, app_motion);
+        const bool motion = AppMotion(s);
+        if (s.renderer.TickMotion(GetTickCount64()) || motion) ArmMotionFrames(s, motion);
     }
     if (const UINT caret = s.renderer.CaretBlinkDueMs()) SetTimer(s.hwnd, kTimerDrawnCaret, caret, nullptr);
     else KillTimer(s.hwnd, kTimerDrawnCaret);
@@ -1802,7 +1830,13 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_PAINT: {
         PAINTSTRUCT ps;
         BeginPaint(hwnd, &ps);
-        if (s) Render(*s);
+        RECT damage{};
+        const bool partial = app::TakePartialDamage(hwnd, ps.rcPaint, &damage);
+        if (s) {
+            t_paint_damage = partial ? &damage : nullptr;
+            Render(*s);
+            t_paint_damage = nullptr;
+        }
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -1939,14 +1973,18 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         // while anything still moves. Posted messages outrank input, so when
         // input is waiting the frame becomes an ordinary WM_PAINT instead:
         // a slow frame must never starve the mouse and keyboard.
+        // Only hover plates gliding: their paths are all that changes.
+        D2D1_RECT_F plates{};
+        const bool plates_only = !AppMotion(*s) && s->renderer.HoverMotionDamage(&plates);
+        if (plates_only) app::InvalidatePartial(hwnd, app::DamagePixels(plates));
         if (HIWORD(GetQueueStatus(QS_INPUT)) != 0) {
-            InvalidateRect(hwnd, nullptr, FALSE);
+            if (!plates_only) InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         // Motion can move state the session keeps (a scroll gliding to rest).
         s->core.sessionActivity = GetTickCount64();
         t_pump_paint = true;
-        RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+        RedrawWindow(hwnd, nullptr, nullptr, plates_only ? RDW_UPDATENOW : RDW_INVALIDATE | RDW_UPDATENOW);
         t_pump_paint = false;
         return 0;
     }

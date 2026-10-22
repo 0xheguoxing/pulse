@@ -58,7 +58,15 @@ public:
     const std::wstring& InitializationError() const { return initialization_error_; }
     void Shutdown();
     void Resize(int width, int height);
-    void Present();
+    // dirty: the only client rect this frame drew (partial redraw); null for
+    // a whole frame. Ignored unless CanPresentPartial().
+    void Present(const RECT* dirty = nullptr);
+    // Partial redraw (plans/Pulse_局部重绘方案.md): the swap chain keeps its
+    // buffers (FLIP_SEQUENTIAL) and the last frame reached the screen whole,
+    // so the next one may redraw part of it. PULSE_PARTIAL_REDRAW=0 turns it off.
+    static bool PartialRedrawEnabled();
+    bool CanPresentPartial() const { return partial_swap_ && !full_next_ && !device_lost_; }
+    void ForceFullFrame() { full_next_ = true; }
     void NotifyDeviceLost(HRESULT reason);
     bool Recover();
     bool NeedsRecovery() const { return device_lost_; }
@@ -162,6 +170,8 @@ private:
     int text_params_mode_ = 0;
     bool transparentComposition_ = false;
     bool device_lost_ = false;
+    bool partial_swap_ = false;   // FLIP_SEQUENTIAL: buffers keep their pixels
+    bool full_next_ = true;       // new buffers, a skipped or occluded present
 };
 
 } // namespace pulse::ui

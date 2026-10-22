@@ -4219,12 +4219,23 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             for (auto it = mtime_flash_started_.begin(); it != mtime_flash_started_.end();)
                 it = motion_now_ - it->second.second > 10000 ? mtime_flash_started_.erase(it) : std::next(it);
         }
+        // Partial redraw: a full frame notes where each details row went; a
+        // partial one draws only the rows that meet the damage.
+        auto* drawn_rows = pane_index >= 0 && pane_index < static_cast<int>(drawn_rows_.size())
+            ? &drawn_rows_[static_cast<size_t>(pane_index)] : nullptr;
+        if (drawn_rows && !frame_partial_) drawn_rows->clear();
         for (int i = startIdx; i >= 0 && i <= endIdx; ++i) {
             D2D1_RECT_F cell = layout.ItemRect(i);
             if (cell.right < x || cell.left > x + w || cell.bottom < y || cell.top > y + h) continue;
             if (cell.bottom - cell.top < 0.5f) continue;   // row inside a collapsed group
             const int src = vm.SourceIndex(i);
             if (src < 0) continue;
+            if (frame_partial_) {
+                if (cell.right <= frame_damage_.left || cell.left >= frame_damage_.right ||
+                    cell.bottom <= frame_damage_.top || cell.top >= frame_damage_.bottom) continue;
+            } else if (drawn_rows && detailsView) {
+                drawn_rows->emplace_back(src, cell);
+            }
             if(vm.content_results && !vm.content_results->Ready(static_cast<size_t>(src))) {
                 vm.content_results->Prefetch(static_cast<size_t>(src));
                 if (!draw_text) continue;
