@@ -89,6 +89,10 @@ public:
                       const D2D1_RECT_F& bounds, const D2D1_COLOR_F& foreground,
                       const D2D1_COLOR_F& background,
                       DWRITE_TEXT_ALIGNMENT alignment = DWRITE_TEXT_ALIGNMENT_LEADING);
+    bool DrawLumaTextSplit(std::wstring_view text, IDWriteTextFormat* format,
+                           const D2D1_RECT_F& bounds, const D2D1_COLOR_F& foreground,
+                           std::uint32_t split, const D2D1_COLOR_F& split_foreground,
+                           const D2D1_COLOR_F& background);
     bool MeasureLumaText(std::wstring_view text, IDWriteTextFormat* format,
                          float& width, float* height = nullptr);
     bool PaintLumaEdit(HWND hwnd, HDC hdc, IDWriteTextFormat* format,

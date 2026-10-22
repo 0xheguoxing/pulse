@@ -73,7 +73,12 @@ typedef struct lt_render_config {
   float stem_strength;
   uint32_t flags;
   uint8_t raster_filter;
-  uint8_t reserved[3];
+  // CoreGraphics-style outline dilation, grown evenly on both sides of every
+  // stem and on both axes. Total growth in physical pixels is
+  // min(dilation_max / 64, em_px * dilation_per_em / 4096); zero disables it.
+  uint8_t dilation_per_em;
+  uint8_t dilation_max;
+  uint8_t reserved;
 } lt_render_config;
 
 enum {
@@ -89,7 +94,14 @@ enum {
   LT_RENDER_CONFIG_HINTED_OUTLINES = 1u << 2,
   // Transparent text over a caller-declared uniform, opaque background color.
   // Precomposes in linear light; invalid when background.a != 1.
-  LT_RENDER_CONFIG_KNOWN_BACKGROUND = 1u << 3
+  LT_RENDER_CONFIG_KNOWN_BACKGROUND = 1u << 3,
+  // FreeType light auto-hinting: snaps horizontal edges to the pixel grid,
+  // leaves advances and horizontal shapes alone. Overrides HINTED_OUTLINES.
+  // Intended for LT_RASTER_FILTER_DIRECT.
+  LT_RENDER_CONFIG_AUTOHINT_LIGHT = 1u << 4,
+  // Skips the built-in size-dependent coverage gamma so coverage_gamma is
+  // applied exactly as given.
+  LT_RENDER_CONFIG_DISABLE_OPTICAL_GAMMA = 1u << 5
 };
 
 typedef enum lt_font_source_type {

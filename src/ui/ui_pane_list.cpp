@@ -3016,9 +3016,17 @@ bool MainRenderer::DrawTruncatedName(const std::wstring& name, float x, float y,
     // Shape colored filenames in one layout. Splitting at the extension gives
     // each substring its own clipping/ellipsis and loses glyph positioning
     // across the boundary (including the dot's ink and the stem's last glyph).
+    // LumaText draws its one layout twice, clipped at the extension's caret.
+    bool drawn = false;
+    if (visible_matches.empty() && !IsHighContrast()) {
+        drawn = ext_at != std::wstring::npos
+            ? compositor_->DrawLumaTextSplit(shown, fmt, rc, brText_->GetColor(),
+                  static_cast<std::uint32_t>(ext_at), ext_color, theme.bg)
+            : compositor_->DrawLumaText(shown, fmt, rc, brText_->GetColor(), theme.bg,
+                  DWRITE_TEXT_ALIGNMENT_LEADING);
+    }
     ComPtr<IDWriteTextLayout> highlighted;
-    // Semibold always takes the layout path: LumaText draws the regular face.
-    if ((!visible_matches.empty() || ext_at != std::wstring::npos || semibold) &&
+    if (!drawn && (!visible_matches.empty() || ext_at != std::wstring::npos) &&
         SUCCEEDED(factory->CreateTextLayout(shown.c_str(),
         static_cast<UINT32>(shown.size()), fmt, w, h, &highlighted))) {
         highlighted->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -3040,9 +3048,7 @@ bool MainRenderer::DrawTruncatedName(const std::wstring& name, float x, float y,
         }
         DrawNameHighlightBackground(compositor_, highlighted.get(), {x, y_snap}, rc, visible_matches, theme, scale_);
         dc->DrawTextLayout({x, y_snap}, highlighted.get(), brText_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-    } else if (IsHighContrast() || !compositor_->DrawLumaText(
-            shown, fmt, rc, brText_->GetColor(), theme.bg,
-            DWRITE_TEXT_ALIGNMENT_LEADING)) {
+    } else if (!drawn) {
         dc->DrawText(shown.c_str(), (UINT32)shown.size(), fmt, &rc, brText_.get(),
                      D2D1_DRAW_TEXT_OPTIONS_CLIP, DWRITE_MEASURING_MODE_NATURAL);
     }

@@ -47,6 +47,12 @@ public:
               const D2D1_RECT_F& bounds, const D2D1_COLOR_F& foreground,
               const D2D1_COLOR_F& background,
               DWRITE_TEXT_ALIGNMENT alignment = DWRITE_TEXT_ALIGNMENT_LEADING);
+    // Leading-aligned single line; text from UTF-16 index `split` on uses
+    // split_foreground. False when the line would need an ellipsis.
+    bool DrawSplit(std::wstring_view text, IDWriteTextFormat* format,
+                   const D2D1_RECT_F& bounds, const D2D1_COLOR_F& foreground,
+                   std::uint32_t split, const D2D1_COLOR_F& split_foreground,
+                   const D2D1_COLOR_F& background);
     bool Measure(std::wstring_view text, IDWriteTextFormat* format,
                  float& width, float* height = nullptr);
     bool PaintEdit(HWND hwnd, HDC hdc, IDWriteTextFormat* format,

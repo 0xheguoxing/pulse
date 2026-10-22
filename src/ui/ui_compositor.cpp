@@ -268,6 +268,20 @@ bool Compositor::DrawLumaText(std::wstring_view text, IDWriteTextFormat* format,
     return false;
 }
 
+bool Compositor::DrawLumaTextSplit(std::wstring_view text, IDWriteTextFormat* format,
+                                   const D2D1_RECT_F& bounds,
+                                   const D2D1_COLOR_F& foreground, std::uint32_t split,
+                                   const D2D1_COLOR_F& split_foreground,
+                                   const D2D1_COLOR_F& background) {
+    if (!lumaText_ || !lumaText_->Enabled() || !typography::UseLumaTextForUi()) return false;
+    if (lumaText_->DrawSplit(text, format, bounds, foreground, split, split_foreground,
+                             background)) {
+        return true;
+    }
+    lumaText_->RecordFallback();
+    return false;
+}
+
 bool Compositor::MeasureLumaText(std::wstring_view text, IDWriteTextFormat* format,
                                  float& width, float* height) {
     if (!lumaText_ || !lumaText_->Enabled() || !typography::UseLumaTextForUi()) return false;
