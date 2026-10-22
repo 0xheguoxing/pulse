@@ -7,7 +7,10 @@
 // visible change, and relaxes to a slow poll once the window has been quiet
 // for a moment. Any input, paint or dirty tick restores the fast period at
 // once, so animations still start on the next display-rate tick; only work
-// that begins with no input and no repaint waits for the slow poll.
+// that begins with no input and no repaint waits for the slow poll. After a
+// longer quiet spell the poll slows once more: the producers whose results
+// people wait for (folder changes, folder sizes) wake the window themselves
+// with WM_UI_KICK, so the slower poll only delays the rest.
 #pragma once
 #include <windows.h>
 
@@ -17,6 +20,10 @@ class UiTimerPacer {
 public:
     static constexpr UINT kActiveMs = 16;
     static constexpr UINT kIdleMs = 100;
+    // Each wake of a visible foreground window costs several context
+    // switches beyond the tick itself, so a window left alone polls slower.
+    static constexpr UINT kQuietMs = 500;
+    static constexpr ULONGLONG kQuietAfterMs = 5000;  // after the fast linger
     // Hidden to the tray or minimized: background results only need to be
     // picked up eventually, and showing the window is activity (fast again).
     static constexpr UINT kHiddenMs = 1000;
@@ -27,7 +34,8 @@ public:
 
     UINT Want(bool visible, ULONGLONG now) const noexcept {
         if (!visible) return kHiddenMs;
-        return now < active_until_ ? kActiveMs : kIdleMs;
+        if (now < active_until_) return kActiveMs;
+        return now < active_until_ + kQuietAfterMs ? kIdleMs : kQuietMs;
     }
 
     // True when the period changes; `period` then holds the new value.

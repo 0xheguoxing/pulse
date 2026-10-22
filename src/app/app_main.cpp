@@ -1886,6 +1886,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_GIT_RESULT:
         if (s) ReceiveGitResult(*s, lParam);
         return 0;
+    case WM_UI_KICK:
+        // Results for the shared queues (UiTimerPacer): run the tick now
+        // rather than at the next quiet poll.
+        return s ? WndProcImpl(hwnd, WM_TIMER, kTimerUi, 0) : 0;
     case WM_TAG_DROP_UNDO:
         if (s) UndoDropTags(*s);
         return 0;

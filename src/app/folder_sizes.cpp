@@ -109,7 +109,23 @@ struct FolderSizes::Impl {
     uint64_t probe_events = 0;
     std::function<std::wstring()> cache_path;
     std::thread worker, index_worker;
-    std::atomic<bool> stopping{false}, changed{false};
+    // Set by every thread that changes what the window shows. The first change
+    // after the window took the last batch also wakes it (SetChangeNotify), so
+    // a result does not wait for the window's idle poll.
+    struct ChangeFlag {
+        std::atomic<bool> value{false}, posted{false};
+        std::atomic<HWND> hwnd{nullptr};
+        std::atomic<UINT> message{0};
+        ChangeFlag& operator=(bool set) noexcept {
+            value.store(set);
+            if (set && !posted.exchange(true))
+                if (const HWND target = hwnd.load()) PostMessageW(target, message.load(), 0, 0);
+            return *this;
+        }
+        bool exchange(bool set) noexcept { posted.store(false); return value.exchange(set); }
+    };
+    std::atomic<bool> stopping{false};
+    ChangeFlag changed;
     bool index_enabled = true;
     uint64_t scope = 0, watch_sequence = 0, dirty_revision = 0, saved_revision = 0;
     // Set under mutex with every notify: work arrived since Run's last pass,
@@ -867,6 +883,10 @@ bool FolderLooksEmpty(uint8_t content, bool show_hidden, bool show_protected) {
     return !(show_hidden && show_protected && (content & FolderContentSystem));
 }
 bool FolderSizes::TakeChanged() { return impl_->changed.exchange(false); }
+void FolderSizes::SetChangeNotify(HWND hwnd, UINT message) {
+    impl_->changed.message.store(message);
+    impl_->changed.hwnd.store(hwnd);
+}
 FolderSizeStats FolderSizes::ReadStats() const {
     std::lock_guard lock(impl_->mutex);
     auto stats = impl_->stats; stats.cache_items = impl_->store.entries.size();

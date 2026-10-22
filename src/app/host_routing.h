@@ -53,6 +53,7 @@ inline constexpr UINT kHostRoutedMessages[] = {
     WM_EXPLORER_TAKEOVER,      // Explorer window takeover (opens in the most recent window)
     WM_SHELLCTX_ITEMS,         // shell context menu rows (M4a: the menu is open in the active window)
     WM_NETWORK_LIVE_SEARCH,    // a tab's live network walk (M6f: the tab may have moved to another window)
+    WM_UI_KICK,                // folder changes / folder sizes ready (shared AppCore queues)
     TrayController::kCallbackMessage,  // notification icon (owned by the host)
     WM_HOTKEY,                 // global search hotkey (registered on the host)
 };
