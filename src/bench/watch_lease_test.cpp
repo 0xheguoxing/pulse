@@ -90,7 +90,12 @@ int main() {
         pulse::fs::DirWatch watch;
         watch.Start((root / L"p2" / L"w").wstring(), seen.Callback());
         Check(WaitFor([&] { return watch.Armed(); }, 5000), "a watch arms again on the renamed tree");
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const int before = seen.overflows.load();
         Check(Rename(root / L"p2" / L"w", root / L"p2" / L"w2"), "the watched folder itself can be renamed");
+        // Well inside the 5 s identity backstop: the lease break reports it.
+        Check(WaitFor([&] { return seen.overflows.load() > before; }, 1500),
+              "a watch reports its folder renamed away without waiting for the identity check");
         watch.Stop();
     }
     {
