@@ -36,6 +36,8 @@ public:
     const std::wstring& PlainText() const noexcept { return plain_; }
     // Jupyter notebook converted by the host (I record): kernel and cells.
     bool IsNotebook() const noexcept { return notebook_; }
+    bool HasToc() const noexcept { return !toc_.empty(); }
+    void SetTocHidden(bool hidden) noexcept { toc_hidden_ = hidden; }
     const std::wstring& NotebookKernel() const noexcept { return kernel_; }
     uint32_t NotebookCells() const noexcept { return cells_; }
     // Document facts from the M record (DOCX, EPUB): format is "docx", "epub"
@@ -115,6 +117,7 @@ private:
                       const std::vector<Highlight>& matches);
     void DrawToc(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const Theme& theme, bool dark);
     bool SidebarVisible(float width) const noexcept;
+    bool toc_hidden_ = false;  // the window's session-wide contents toggle
     int ActiveTocEntry() const;
     int TocRowAt(float x, float y) const;
     float BlockTop(int index) const;

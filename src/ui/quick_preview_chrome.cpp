@@ -15,6 +15,7 @@
 #include "typography.h"
 #include "../common/localization.h"
 #include "../common/text_format.h"
+#include "../ops/clipboard.h"
 #include <d2d1helper.h>
 #include <shellapi.h>
 #include <shlwapi.h>
@@ -294,6 +295,10 @@ void QuickPreviewWindow::ToggleLabels(const wchar_t* (&labels)[2]) const {
         labels[0] = pulse::l10n::Get(StringId::Notebook).c_str();
     else if (toggle_kind_ == ToggleKind::DocHandler)
         labels[0] = pulse::l10n::Get(StringId::Document).c_str();
+    else if (toggle_kind_ == ToggleKind::TextReading) {
+        labels[0] = pulse::l10n::Get(StringId::PreviewReadingMode).c_str();
+        labels[1] = pulse::l10n::Get(StringId::PreviewMonospaceMode).c_str();
+    }
     if (toggle_kind_ == ToggleKind::TableHandler || toggle_kind_ == ToggleKind::DocHandler)
         labels[1] = pulse::l10n::Get(StringId::System).c_str();
 }
@@ -554,6 +559,18 @@ void QuickPreviewWindow::ActivateFooterControl(int id) {
         InvalidateRect(hwnd_, nullptr, FALSE);
     } else if (id == kFooterZoom && native_kind_ == NativeKind::Pages) {
         TogglePagesFit();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    } else if (id == kFooterToc) {
+        toc_hidden_ = !toc_hidden_;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    } else if (id == kFooterCopyPath && native_kind_ == NativeKind::Tree) {
+        pulse::ops::WriteClipboardText(tree_.CurrentPath());
+    } else if (id == kFooterFoldAll && native_kind_ == NativeKind::Tree) {
+        tree_.ExpandAll(tree_.AnyCollapsed());
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    } else if (id == kFooterReadWidth) {
+        reading_width_ = (reading_width_ + 1) % 3;
+        text_layout_.reset();
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
 }

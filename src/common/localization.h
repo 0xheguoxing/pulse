@@ -2686,6 +2686,15 @@ enum class StringId : UINT {
     PreviewAboutWords = IDS_PREVIEW_ABOUT_WORDS,
     PreviewMixedEol = IDS_PREVIEW_MIXED_EOL,
     PreviewLatestModified = IDS_PREVIEW_LATEST_MODIFIED,
+    PreviewReadingMode = IDS_PREVIEW_READING_MODE,
+    PreviewMonospaceMode = IDS_PREVIEW_MONOSPACE_MODE,
+    PreviewShowToc = IDS_PREVIEW_SHOW_TOC,
+    PreviewHideToc = IDS_PREVIEW_HIDE_TOC,
+    PreviewWidthNarrow = IDS_PREVIEW_WIDTH_NARROW,
+    PreviewWidthMedium = IDS_PREVIEW_WIDTH_MEDIUM,
+    PreviewWidthWide = IDS_PREVIEW_WIDTH_WIDE,
+    PreviewExpandAll = IDS_PREVIEW_EXPAND_ALL,
+    PreviewCollapseAll = IDS_PREVIEW_COLLAPSE_ALL,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

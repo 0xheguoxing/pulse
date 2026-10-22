@@ -184,7 +184,8 @@ private:
     void SetImageFooter(const D2D1_RECT_F& content);
     void DrawFindBar(ID2D1DeviceContext* dc, const D2D1_RECT_F& bar);
     Theme CurrentTheme() const;
-    void EnsureTextLayout(const std::wstring& text, bool hex, float width);
+    void EnsureTextLayout(const std::wstring& text, bool hex, float width, bool reading = false);
+    bool PlainTextCandidate() const;
     bool HitTestText(float x, float y, uint32_t& index);
     void CopyTextSelection(bool require_selection) const;
     void SelectAllText();
@@ -230,6 +231,10 @@ private:
         bool high_contrast = false;
     };
     static constexpr int kFooterZoom = 1;
+    static constexpr int kFooterToc = 2;        // Markdown/document contents sidebar
+    static constexpr int kFooterReadWidth = 3;  // .txt reading column width
+    static constexpr int kFooterCopyPath = 4;   // JSON/XML: copy the current node's path
+    static constexpr int kFooterFoldAll = 5;    // JSON/XML: expand all / collapse all
     ChromePalette Palette() const;
     float HeaderHeight() const noexcept;
     float FooterHeight() const noexcept;
@@ -312,6 +317,7 @@ private:
     std::wstring codec_store_id_;
     ComPtr<IDWriteTextFormat> close_format_;
     ComPtr<IDWriteTextFormat> preview_text_format_;
+    ComPtr<IDWriteTextFormat> reading_text_format_;  // .txt reading mode: UI font, 1.75 line height
     ComPtr<IDWriteTextLayout> text_layout_;
     QuickPreviewItem item_;
     QuickPreviewCommands commands_;
@@ -345,7 +351,8 @@ private:
     bool markdown_source_ = false;  // session-wide: Markdown shown as source
     bool markdown_shown_ = false;   // this frame drew a Markdown item (toggle visible)
     // Labels of the title-bar pill while markdown_shown_ is set.
-    enum class ToggleKind { Markdown, TableSource, TableHandler, TreeSource, NotebookSource, DocHandler };
+    enum class ToggleKind { Markdown, TableSource, TableHandler, TreeSource, NotebookSource, DocHandler,
+                            TextReading };
     ToggleKind toggle_kind_ = ToggleKind::Markdown;
     TableView table_;
     uint32_t sheet_request_ = 0;
@@ -396,6 +403,18 @@ private:
     float text_layout_width_ = 0.0f;
     float text_layout_scale_ = 0.0f;
     bool text_layout_hex_ = false;
+    bool text_layout_reading_ = false;
+    float text_reading_x_ = 0.0f;   // left edge of the centred reading column
+    bool text_mono_txt_ = false;    // session-wide: .txt shown monospaced instead of reading
+    bool text_mono_other_ = true;   // session-wide: other plain text (.log, no extension)
+    int reading_width_ = 1;         // session-wide: 0 narrow, 1 medium, 2 wide column
+    int hex_hover_ = -1;            // byte under the pointer in the hex view
+    int hex_selected_ = -1;         // byte last clicked in the hex view
+    int HexFocus() const noexcept { return hex_hover_ >= 0 ? hex_hover_ : hex_selected_; }
+    float HexRulerHeight() const noexcept { return text_layout_hex_ ? 22.0f * scale_ : 0.0f; }
+    int HexByteAt(uint32_t index) const noexcept;
+    void DrawHexRuler(ID2D1DeviceContext* dc, const D2D1_RECT_F& content, float origin_x);
+    bool toc_hidden_ = false;       // session-wide: contents sidebar hidden
     // Syntax colouring + line-number gutter (syntax_highlight.h).
     bool text_layout_dark_ = false;
     bool line_numbers_ = true;          // context-menu toggle, per session

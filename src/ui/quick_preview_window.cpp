@@ -196,6 +196,7 @@ void QuickPreviewWindow::ResetTextState() {
     text_layout_width_ = 0.0f;
     text_layout_scale_ = 0.0f;
     text_layout_hex_ = false;
+    hex_hover_ = hex_selected_ = -1;
     sel_anchor_ = sel_focus_ = 0;
     selecting_ = false;
     CloseFind();
@@ -239,6 +240,7 @@ void QuickPreviewWindow::ResetAnimation() {
 void QuickPreviewWindow::RecreateFormats() {
     close_format_.reset();
     preview_text_format_.reset();
+    reading_text_format_.reset();
     text_layout_.reset();
     if (!compositor_.DwriteFactory()) return;
     typography::CreateTextFormat(compositor_.DwriteFactory(),
@@ -253,6 +255,15 @@ void QuickPreviewWindow::RecreateFormats() {
         preview_text_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         preview_text_format_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         preview_text_format_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    }
+    typography::CreateTextFormat(compositor_.DwriteFactory(),
+        {typography::FontRole::Text, 15.0f * scale_}, &reading_text_format_);
+    if (reading_text_format_.get()) {
+        const float line = 15.0f * 1.75f * scale_;
+        reading_text_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        reading_text_format_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        reading_text_format_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+        reading_text_format_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, line, line * 0.78f);
     }
     badge_format_.reset();
     badge_small_format_.reset();
@@ -513,6 +524,8 @@ bool& QuickPreviewWindow::ToggleSecond() noexcept {
     case ToggleKind::TreeSource: return tree_source_;
     case ToggleKind::NotebookSource: return notebook_source_;
     case ToggleKind::DocHandler: return doc_handler_;
+    case ToggleKind::TextReading:
+        return ExtensionLabel(item_.path) == L"TXT" ? text_mono_txt_ : text_mono_other_;
     default: return markdown_source_;
     }
 }
@@ -842,17 +855,25 @@ void QuickPreviewWindow::SetImageFooter(const D2D1_RECT_F& content) {
     AddFooterControl(kFooterZoom, std::move(zoom));
 }
 
-void QuickPreviewWindow::EnsureTextLayout(const std::wstring& text, bool hex, float width) {
+bool QuickPreviewWindow::PlainTextCandidate() const {
+    // Prose-like text gets the 阅读 | 等宽 toggle; code keeps its highlighted view.
+    const std::wstring_view language = SyntaxLanguageName(L"." + ExtensionLabel(item_.path));
+    return language.empty() || language == L"Log";
+}
+
+void QuickPreviewWindow::EnsureTextLayout(const std::wstring& text, bool hex, float width,
+                                          bool reading) {
+    reading = reading && !hex && reading_text_format_.get();
     if (text.empty() || !compositor_.DwriteFactory() || !preview_text_format_.get()) {
         text_layout_.reset();
         return;
     }
     const std::wstring extension = L"." + ExtensionLabel(item_.path);
-    const bool gutter = !hex && line_numbers_ && SyntaxWantsLineNumbers(extension);
+    const bool gutter = !hex && !reading && line_numbers_ && SyntaxWantsLineNumbers(extension);
     if (text_layout_.get() && text == preview_text_ && hex == text_layout_hex_ &&
         std::abs(width - text_layout_width_) < 0.5f &&
         std::abs(scale_ - text_layout_scale_) < 0.001f && dark_ == text_layout_dark_ &&
-        gutter == (text_gutter_ > 0.0f)) return;
+        gutter == (text_gutter_ > 0.0f) && reading == text_layout_reading_) return;
     preview_text_ = text;
     text_layout_.reset();
     preview_text_format_->SetWordWrapping(
@@ -890,11 +911,43 @@ void QuickPreviewWindow::EnsureTextLayout(const std::wstring& text, bool hex, fl
         const size_t digits = std::to_wstring(line_starts_.size()).size();
         text_gutter_ = (static_cast<float>((std::max)(digits, size_t{2})) + 2.0f) * digit;
     }
-    compositor_.DwriteFactory()->CreateTextLayout(
-        text.data(), static_cast<UINT32>(text.size()), preview_text_format_.get(),
-        (std::max)(1.0f, width - text_gutter_), 100000.0f, &text_layout_);
+    text_layout_reading_ = reading;
+    text_reading_x_ = 0.0f;
+    if (reading) {
+        // A centred column capped at 680 px reads like a page rather than a terminal.
+        static constexpr float kColumns[] = {560.0f, 680.0f, 860.0f};
+        const float column = (std::min)(kColumns[std::clamp(reading_width_, 0, 2)] * scale_,
+                                        (std::max)(1.0f, width));
+        text_reading_x_ = 20.0f * scale_ + (std::max)(0.0f, (width - column) * 0.5f);
+        compositor_.DwriteFactory()->CreateTextLayout(
+            text.data(), static_cast<UINT32>(text.size()), reading_text_format_.get(),
+            column, 100000.0f, &text_layout_);
+        // A short first line followed by a blank line is treated as the title.
+        const size_t first = text.find(L'\n');
+        if (text_layout_.get() && first != std::wstring::npos && first > 0) {
+            size_t end = first;
+            if (end > 0 && text[end - 1] == L'\r') --end;
+            size_t next = first + 1;
+            if (next < text.size() && text[next] == L'\r') ++next;
+            bool title = end > 0 && end <= 60 && next < text.size() && text[next] == L'\n';
+            if (title) {
+                bool ink = false;
+                for (size_t i = 0; i < end; ++i) if (!std::iswspace(text[i])) { ink = true; break; }
+                title = ink;
+            }
+            if (title) {
+                const DWRITE_TEXT_RANGE range{0, static_cast<UINT32>(end)};
+                text_layout_->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, range);
+                text_layout_->SetFontSize(18.0f * scale_, range);
+            }
+        }
+    } else {
+        compositor_.DwriteFactory()->CreateTextLayout(
+            text.data(), static_cast<UINT32>(text.size()), preview_text_format_.get(),
+            (std::max)(1.0f, width - text_gutter_), 100000.0f, &text_layout_);
+    }
     syntax_language_ = hex ? std::wstring() : std::wstring(SyntaxLanguageName(extension));
-    if (!hex && text_layout_.get() && compositor_.Dc()) {
+    if (!hex && !reading && text_layout_.get() && compositor_.Dc()) {
         for (auto& brush : syntax_brushes_) brush.reset();
         const auto spans = HighlightSyntax(extension, text);
         for (const SyntaxSpan& span : spans) {
@@ -920,7 +973,7 @@ bool QuickPreviewWindow::HitTestText(float x, float y, uint32_t& index) {
     const D2D1_RECT_F content = ContentRect();
     const float pad = 20.0f * scale_;
     const float origin_x = TextOriginX();
-    const float origin_y = content.top + pad - text_scroll_;
+    const float origin_y = content.top + pad + HexRulerHeight() - text_scroll_;
     BOOL trailing = FALSE;
     BOOL inside = FALSE;
     DWRITE_HIT_TEST_METRICS metrics{};
@@ -1449,11 +1502,12 @@ void QuickPreviewWindow::DrawTextPreview(ID2D1DeviceContext* dc, const D2D1_RECT
     if (!text_layout_.get() || !dc) return;
     const float pad = 20.0f * scale_;
     const float origin_x = TextOriginX();
-    const float origin_y = content.top + pad - text_scroll_;
+    const float origin_y = content.top + pad + HexRulerHeight() - text_scroll_;
     DWRITE_TEXT_METRICS metrics{};
     if (SUCCEEDED(text_layout_->GetMetrics(&metrics))) {
         // A little room below the last line.
-        const float view = (std::max)(1.0f, content.bottom - content.top - pad - 8.0f * scale_);
+        const float view = (std::max)(1.0f, content.bottom - content.top - pad - HexRulerHeight() -
+                                                8.0f * scale_);
         const float max_scroll = (std::max)(0.0f, metrics.height - view);
         text_scroll_ = std::clamp(text_scroll_, 0.0f, max_scroll);
     }
@@ -1475,9 +1529,82 @@ void QuickPreviewWindow::DrawTextPreview(ID2D1DeviceContext* dc, const D2D1_RECT
         dc->CreateSolidColorBrush(D2D1::ColorF(0x0078D4, 0.35f), &sel);
         FillHitRange(dc, text_layout_.get(), a, b - a, origin_x, origin_y, sel.get());
     }
+    if (text_layout_hex_) {
+        // The clicked byte and the byte under the pointer, lit in both the hex
+        // and the character column.
+        const auto light = [&](int byte, float alpha) {
+            if (byte < 0) return;
+            ComPtr<ID2D1SolidColorBrush> tint_brush;
+            D2D1_COLOR_F tint = Palette().accent;
+            tint.a = alpha;
+            dc->CreateSolidColorBrush(tint, &tint_brush);
+            const uint32_t line = static_cast<uint32_t>(byte) / 16u * 76u;
+            const uint32_t column = static_cast<uint32_t>(byte) % 16u;
+            FillHitRange(dc, text_layout_.get(), line + 10u + column * 3u, 2u, origin_x, origin_y, tint_brush.get());
+            FillHitRange(dc, text_layout_.get(), line + 59u + column, 1u, origin_x, origin_y, tint_brush.get());
+        };
+        light(hex_selected_, dark_ ? 0.45f : 0.32f);
+        if (hex_hover_ != hex_selected_) light(hex_hover_, dark_ ? 0.26f : 0.16f);
+    }
     DrawLineNumbers(dc, content, origin_y);
     dc->DrawTextLayout(D2D1::Point2F(origin_x, origin_y), text_layout_.get(), text_brush,
                        D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+    if (text_layout_hex_) DrawHexRuler(dc, content, origin_x);
+}
+
+// Hex dump lines are fixed at 76 characters: an 8-digit offset and two
+// spaces, 16 "XX " cells, a space, 16 characters and the line feed.
+int QuickPreviewWindow::HexByteAt(uint32_t index) const noexcept {
+    if (index >= preview_text_.size()) return -1;
+    const uint32_t line = index / 76u, c = index % 76u;
+    uint32_t column = 0;
+    if (c >= 10u && c < 58u) column = (c - 10u) / 3u;
+    else if (c >= 59u && c < 75u) column = c - 59u;
+    else return -1;
+    const size_t cell = static_cast<size_t>(line) * 76u + 10u + column * 3u;
+    if (cell >= preview_text_.size() || preview_text_[cell] == L' ') return -1;
+    return static_cast<int>(line * 16u + column);
+}
+
+void QuickPreviewWindow::DrawHexRuler(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
+                                      float origin_x) {
+    if (!dc || !preview_text_format_.get() || !compositor_.DwriteFactory()) return;
+    const ChromePalette palette = Palette();
+    const float s = scale_;
+    const float band = content.top + 20.0f * s + HexRulerHeight() - 6.0f * s;
+    ComPtr<ID2D1SolidColorBrush> bg, ink, line;
+    dc->CreateSolidColorBrush(palette.bg, &bg);
+    dc->CreateSolidColorBrush(palette.ink3, &ink);
+    dc->CreateSolidColorBrush(palette.line, &line);
+    if (!bg.get() || !ink.get()) return;
+    dc->FillRectangle(D2D1::RectF(content.left, content.top, content.right, band), bg.get());
+    if (line.get())
+        dc->FillRectangle(D2D1::RectF(content.left, band - (std::max)(1.0f, std::round(s)), content.right, band),
+                          line.get());
+    // Column ruler: 00..0F over the cells and 0..F over the characters, with
+    // the hovered column drawn in full ink.
+    std::wstring ruler(10, L' ');
+    static constexpr wchar_t kDigits[] = L"0123456789ABCDEF";
+    for (int i = 0; i < 16; ++i) { ruler += L'0'; ruler += kDigits[i]; ruler += L' '; }
+    ruler += L' ';
+    ruler += kDigits;
+    ComPtr<IDWriteTextLayout> layout;
+    preview_text_format_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    compositor_.DwriteFactory()->CreateTextLayout(ruler.data(), static_cast<UINT32>(ruler.size()),
+        preview_text_format_.get(), 10000.0f, 100.0f, &layout);
+    preview_text_format_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    if (!layout.get()) return;
+    if (HexFocus() >= 0) {
+        ComPtr<ID2D1SolidColorBrush> strong;
+        dc->CreateSolidColorBrush(palette.ink, &strong);
+        const UINT32 column = static_cast<UINT32>(HexFocus() % 16);
+        if (strong.get()) {
+            layout->SetDrawingEffect(strong.get(), DWRITE_TEXT_RANGE{10u + column * 3u, 2u});
+            layout->SetDrawingEffect(strong.get(), DWRITE_TEXT_RANGE{59u + column, 1u});
+        }
+    }
+    dc->DrawTextLayout(D2D1::Point2F(origin_x, band - 4.0f * s - 18.0f * s), layout.get(), ink.get(),
+                       D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
 // Footer facts of the text view:
@@ -1541,6 +1668,21 @@ void QuickPreviewWindow::SetTextFooter(bool hex, uint32_t bytes_read, bool trunc
                         bare(pulse::l10n::Get(pulse::l10n::StringId::Lines).c_str()));
     parts.push_back(pulse::format::ByteSize(bytes_read, true));
     if (truncated) parts.push_back(bare(pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str()));
+    if (const int focus = HexFocus(); hex && focus >= 0) {
+        // 0x0000001F = 0x41 'A'
+        const size_t cell = static_cast<size_t>(focus) / 16u * 76u + 10u +
+                            static_cast<size_t>(focus % 16) * 3u;
+        if (cell + 1 < preview_text_.size()) {
+            const wchar_t ascii = preview_text_[static_cast<size_t>(focus) / 16u * 76u + 59u +
+                                                static_cast<size_t>(focus % 16)];
+            wchar_t buffer[64];
+            swprintf_s(buffer, L"0x%08X = 0x%c%c", static_cast<unsigned>(focus),
+                       preview_text_[cell], preview_text_[cell + 1]);
+            std::wstring part = buffer;
+            if (ascii != L'.') { part += L" '"; part += ascii; part += L"'"; }
+            parts.push_back(std::move(part));
+        }
+    }
     SetFooterParts(std::move(parts));
 }
 
@@ -1563,6 +1705,7 @@ bool QuickPreviewWindow::OpenListingSelection() {
 }
 
 float QuickPreviewWindow::TextOriginX() const noexcept {
+    if (text_layout_reading_) return text_reading_x_;
     return 20.0f * scale_ + text_gutter_;
 }
 
@@ -1944,6 +2087,10 @@ void QuickPreviewWindow::Render() {
             for (size_t i = 0; i < find_matches_.size(); ++i)
                 marks.push_back({find_matches_[i], static_cast<uint32_t>(find_query_.size()),
                                  i == find_index_});
+            markdown_.SetTocHidden(toc_hidden_);
+            if (markdown_.HasToc() && content.right - content.left >= 640.0f * scale_)
+                AddFooterControl(kFooterToc, pulse::l10n::Get(toc_hidden_
+                    ? pulse::l10n::StringId::PreviewShowToc : pulse::l10n::StringId::PreviewHideToc).c_str());
             if (markdown_.Draw(dc, compositor_.DwriteFactory(), content, CurrentTheme(), dark_,
                                scale_, &thumbnails_, generation_,
                                (std::min)(sel_anchor_, sel_focus_),
@@ -2089,6 +2236,10 @@ void QuickPreviewWindow::Render() {
                     marks.push_back({find_matches_[i], static_cast<uint32_t>(find_query_.size()),
                                      i == find_index_});
                 tree_.Draw(dc, compositor_.DwriteFactory(), content, CurrentTheme(), dark_, scale_, marks);
+                if (tree_.HasCurrent())
+                    AddFooterControl(kFooterCopyPath, pulse::l10n::Get(pulse::l10n::StringId::CopyPath).c_str());
+                AddFooterControl(kFooterFoldAll, pulse::l10n::Get(tree_.AnyCollapsed()
+                    ? pulse::l10n::StringId::PreviewExpandAll : pulse::l10n::StringId::PreviewCollapseAll).c_str());
                 auto parts = tree_.StatusParts();
                 std::wstring size = pulse::format::ByteSize(bytes_read, true);
                 if (truncated) size += pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str();
@@ -2098,10 +2249,23 @@ void QuickPreviewWindow::Render() {
         } else if (result == PreviewDrawResult::Text || result == PreviewDrawResult::Hex ||
                    result == PreviewDrawResult::Archive) {
             native_kind_ = result == PreviewDrawResult::Hex ? NativeKind::Hex : NativeKind::Text;
+            bool reading = false;
+            if (result == PreviewDrawResult::Text && PlainTextCandidate()) {
+                markdown_shown_ = true;
+                toggle_kind_ = ToggleKind::TextReading;
+                reading = !ToggleSecond();
+            }
             EnsureTextLayout(text, result == PreviewDrawResult::Hex,
-                             (std::max)(1.0f, width - pad * 2.0f));
+                             (std::max)(1.0f, width - pad * 2.0f), reading);
             DrawTextPreview(dc, content, text_brush.get());
             SetTextFooter(result == PreviewDrawResult::Hex, bytes_read, truncated, text_encoding, true);
+            if (text_layout_reading_) {
+                static constexpr pulse::l10n::StringId kWidths[] = {
+                    pulse::l10n::StringId::PreviewWidthNarrow, pulse::l10n::StringId::PreviewWidthMedium,
+                    pulse::l10n::StringId::PreviewWidthWide};
+                AddFooterControl(kFooterReadWidth,
+                                 pulse::l10n::Get(kWidths[std::clamp(reading_width_, 0, 2)]).c_str());
+            }
         } else if (TableFileKind(item_.path) == 2 && table_.HasData() &&
                    (result == PreviewDrawResult::Pending || result == PreviewDrawResult::Failed)) {
             native_kind_ = NativeKind::Table;
@@ -2403,6 +2567,7 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
             if (HitTestText(static_cast<float>(point.x), static_cast<float>(point.y), index)) {
                 selecting_ = true;
                 sel_anchor_ = sel_focus_ = index;
+                if (native_kind_ == NativeKind::Hex) hex_selected_ = HexByteAt(index);
                 InvalidateRect(hwnd_, nullptr, FALSE);
             }
         }
@@ -2490,6 +2655,20 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
             if (tree_.Dragging() ? tree_.MouseMove(x, y) : tree_.Hover(x, y))
                 InvalidateRect(hwnd_, nullptr, FALSE);
         }
+        if (native_kind_ == NativeKind::Hex && !selecting_) {
+            const D2D1_RECT_F content = ContentRect();
+            const float x = static_cast<float>(point.x), y = static_cast<float>(point.y);
+            uint32_t index = 0;
+            int hover = -1;
+            if (x >= content.left && x < content.right &&
+                y >= content.top + 20.0f * scale_ + HexRulerHeight() && y < content.bottom &&
+                HitTestText(x, y, index))
+                hover = HexByteAt(index);
+            if (hover != hex_hover_) {
+                hex_hover_ = hover;
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+        }
         if (panning_ && native_kind_ == NativeKind::Pages) {
             pages_pan_x_ = pan_start_x_ - static_cast<float>(point.x - pan_anchor_.x);
             pages_scroll_ = pan_start_y_ - static_cast<float>(point.y - pan_anchor_.y);
@@ -2516,6 +2695,10 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
         KillTimer(hwnd_, kTableTipTimer);
         if (table_.Leave()) InvalidateRect(hwnd_, nullptr, FALSE);
         if (tree_.Leave()) InvalidateRect(hwnd_, nullptr, FALSE);
+        if (hex_hover_ >= 0) {
+            hex_hover_ = -1;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         if (PlaybackHover(POINT{-1, -1})) InvalidateRect(hwnd_, nullptr, FALSE);
         if (chrome_hover_ != ChromeButton::None || footer_hover_ != 0) {
             chrome_hover_ = ChromeButton::None;

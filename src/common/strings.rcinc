@@ -2676,6 +2676,15 @@ BEGIN
     IDS_PREVIEW_ABOUT_WORDS "约 %s 字"
     IDS_PREVIEW_MIXED_EOL "混合换行"
     IDS_PREVIEW_LATEST_MODIFIED "最近修改 %s"
+    IDS_PREVIEW_READING_MODE "阅读"
+    IDS_PREVIEW_MONOSPACE_MODE "等宽"
+    IDS_PREVIEW_SHOW_TOC "显示目录"
+    IDS_PREVIEW_HIDE_TOC "隐藏目录"
+    IDS_PREVIEW_WIDTH_NARROW "栏宽 窄"
+    IDS_PREVIEW_WIDTH_MEDIUM "栏宽 中"
+    IDS_PREVIEW_WIDTH_WIDE "栏宽 宽"
+    IDS_PREVIEW_EXPAND_ALL "全部展开"
+    IDS_PREVIEW_COLLAPSE_ALL "全部折叠"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5351,6 +5360,15 @@ BEGIN
     IDS_PREVIEW_ABOUT_WORDS "about %s words"
     IDS_PREVIEW_MIXED_EOL "Mixed line endings"
     IDS_PREVIEW_LATEST_MODIFIED "Modified %s"
+    IDS_PREVIEW_READING_MODE "Reading"
+    IDS_PREVIEW_MONOSPACE_MODE "Monospace"
+    IDS_PREVIEW_SHOW_TOC "Show contents"
+    IDS_PREVIEW_HIDE_TOC "Hide contents"
+    IDS_PREVIEW_WIDTH_NARROW "Width: narrow"
+    IDS_PREVIEW_WIDTH_MEDIUM "Width: medium"
+    IDS_PREVIEW_WIDTH_WIDE "Width: wide"
+    IDS_PREVIEW_EXPAND_ALL "Expand all"
+    IDS_PREVIEW_COLLAPSE_ALL "Collapse all"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

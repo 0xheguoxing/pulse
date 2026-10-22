@@ -2697,3 +2697,12 @@ PreviewHeadings	IDS_PREVIEW_HEADINGS	3899	%u 个标题	%u headings	%u 個標題
 PreviewAboutWords	IDS_PREVIEW_ABOUT_WORDS	3900	约 %s 字	about %s words	約 %s 字
 PreviewMixedEol	IDS_PREVIEW_MIXED_EOL	3901	混合换行	Mixed line endings	混合換行
 PreviewLatestModified	IDS_PREVIEW_LATEST_MODIFIED	3902	最近修改 %s	Modified %s	最近修改 %s
+PreviewReadingMode	IDS_PREVIEW_READING_MODE	3903	阅读	Reading	閱讀
+PreviewMonospaceMode	IDS_PREVIEW_MONOSPACE_MODE	3904	等宽	Monospace	等寬
+PreviewShowToc	IDS_PREVIEW_SHOW_TOC	3905	显示目录	Show contents	顯示目錄
+PreviewHideToc	IDS_PREVIEW_HIDE_TOC	3906	隐藏目录	Hide contents	隱藏目錄
+PreviewWidthNarrow	IDS_PREVIEW_WIDTH_NARROW	3907	栏宽 窄	Width: narrow	欄寬 窄
+PreviewWidthMedium	IDS_PREVIEW_WIDTH_MEDIUM	3908	栏宽 中	Width: medium	欄寬 中
+PreviewWidthWide	IDS_PREVIEW_WIDTH_WIDE	3909	栏宽 宽	Width: wide	欄寬 寬
+PreviewExpandAll	IDS_PREVIEW_EXPAND_ALL	3910	全部展开	Expand all	全部展開
+PreviewCollapseAll	IDS_PREVIEW_COLLAPSE_ALL	3911	全部折叠	Collapse all	全部摺疊

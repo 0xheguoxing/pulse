@@ -2690,5 +2690,14 @@
 #define IDS_PREVIEW_ABOUT_WORDS                                                          3900
 #define IDS_PREVIEW_MIXED_EOL                                                            3901
 #define IDS_PREVIEW_LATEST_MODIFIED                                                      3902
+#define IDS_PREVIEW_READING_MODE                                                         3903
+#define IDS_PREVIEW_MONOSPACE_MODE                                                       3904
+#define IDS_PREVIEW_SHOW_TOC                                                             3905
+#define IDS_PREVIEW_HIDE_TOC                                                             3906
+#define IDS_PREVIEW_WIDTH_NARROW                                                         3907
+#define IDS_PREVIEW_WIDTH_MEDIUM                                                         3908
+#define IDS_PREVIEW_WIDTH_WIDE                                                           3909
+#define IDS_PREVIEW_EXPAND_ALL                                                           3910
+#define IDS_PREVIEW_COLLAPSE_ALL                                                         3911
 
 #endif  // PULSE_STRING_IDS_H

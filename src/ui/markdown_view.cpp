@@ -297,7 +297,22 @@ bool MarkdownView::SetPayload(const std::wstring& payload, const std::wstring& f
         tables_.clear();
         ShowSection(0);
     } else {
+        // Plain Markdown: a contents list from h1-h3 once there are three of them.
         toc_.clear();
+        int top = 6;
+        for (const Block& b : blocks_)
+            if (b.kind == L'h') top = (std::min)(top, static_cast<int>(ToU32(b.arg)));
+        for (size_t i = 0; i < blocks_.size(); ++i) {
+            const Block& b = blocks_[i];
+            const int level = static_cast<int>(ToU32(b.arg));
+            if (b.kind != L'h' || level > top + 2 || b.text.empty()) continue;
+            TocEntry entry;
+            entry.level = (std::max)(0, level - top);
+            entry.block = static_cast<int>(i);
+            entry.title = b.text;
+            toc_.push_back(std::move(entry));
+        }
+        if (toc_.size() < 3) toc_.clear();
     }
     return true;
 }
@@ -675,7 +690,7 @@ void MarkdownView::DrawRanges(ID2D1DeviceContext* dc, const Block& b, float ox, 
 }
 
 bool MarkdownView::SidebarVisible(float width) const noexcept {
-    return !toc_.empty() && width >= 640.0f * scale_;
+    return !toc_hidden_ && !toc_.empty() && width >= 640.0f * scale_;
 }
 
 bool MarkdownView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D1_RECT_F& rect,
@@ -1200,7 +1215,8 @@ bool MarkdownView::Click(float x, float y) {
         y >= toc_rect_.top && y < toc_rect_.bottom) {
         const int row = TocRowAt(x, y);
         if (row >= 0) {
-            ShowSection(toc_[row].section, toc_[row].block);
+            if (sections_.empty()) pending_block_ = toc_[row].block;
+            else ShowSection(toc_[row].section, toc_[row].block);
             toc_follow_ = false;  // the clicked row is already in view
         }
         return true;
