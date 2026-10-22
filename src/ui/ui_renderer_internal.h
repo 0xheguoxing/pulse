@@ -2017,6 +2017,36 @@ void DrawTextEndEllipsis(ID2D1DeviceContext* dc, IDWriteFactory2* factory,
     dc->DrawTextLayout(D2D1::Point2F(x, y), layout.get(), br, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
+// Main-window variant: LumaText draws the line (with its own end ellipsis)
+// so labels match the file list; otherwise DirectWrite trims a layout whose
+// glyphs LumaText still rasterizes. Paragraph-centred formats only reach
+// LumaText's line path, which always centres vertically.
+void DrawTextEndEllipsis(Compositor* compositor, IDWriteTextFormat* fmt,
+    ID2D1SolidColorBrush* br, const std::wstring& text, float x, float y, float w, float h) {
+    if (!compositor || !compositor->Dc() || !fmt || !br || text.empty() || w <= 1.0f || h <= 0.0f) return;
+    IDWriteFactory2* factory = compositor->DwriteFactory();
+    if (!IsHighContrast() && fmt->GetParagraphAlignment() == DWRITE_PARAGRAPH_ALIGNMENT_CENTER &&
+        compositor->DrawLumaText(text, fmt, D2D1::RectF(x, y, x + w, y + h), br->GetColor(),
+                                 D2D1::ColorF(0, 0.0f), fmt->GetTextAlignment())) {
+        return;
+    }
+    ComPtr<IDWriteTextLayout> layout;
+    if (!factory || FAILED(factory->CreateTextLayout(text.c_str(), (UINT32)text.size(), fmt,
+                                                     w, h, &layout)) || !layout.get()) {
+        DrawTextEndEllipsis(compositor->Dc(), factory, fmt, br, text, x, y, w, h);
+        return;
+    }
+    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    layout->SetTextAlignment(fmt->GetTextAlignment());
+    if (MeasureTextWidth(factory, fmt, text) > w) {
+        DWRITE_TRIMMING trimming{ DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0 };
+        ComPtr<IDWriteInlineObject> ellipsis;
+        factory->CreateEllipsisTrimmingSign(layout.get(), &ellipsis);
+        layout->SetTrimming(&trimming, ellipsis.get());
+    }
+    compositor->DrawTextLayout(D2D1::Point2F(x, y), layout.get(), br, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+
 void DrawTabTitle(ID2D1DeviceContext* dc, IDWriteFactory2* factory,
                          IDWriteTextFormat* fmt, ID2D1SolidColorBrush* br,
                          const std::wstring& text, float x, float y, float w, float h,
@@ -2068,6 +2098,38 @@ void DrawTabTitle(ID2D1DeviceContext* dc, IDWriteFactory2* factory,
         return;
     }
     draw_ellipsis(text, x, w);
+}
+
+// Main-window tab titles through LumaText, keeping the DirectWrite version's
+// rule that a short extension stays visible when the stem is elided.
+void DrawTabTitle(Compositor* compositor, IDWriteTextFormat* fmt, ID2D1SolidColorBrush* br,
+                  const std::wstring& text, float x, float y, float w, float h, float scale) {
+    if (!compositor || !compositor->Dc() || !fmt || !br || text.empty() || w <= 1.0f || h <= 1.0f) return;
+    IDWriteFactory2* factory = compositor->DwriteFactory();
+    const auto luma = [&](const std::wstring& s, float left, float width, DWRITE_TEXT_ALIGNMENT alignment) {
+        return !IsHighContrast() && width > 1.0f &&
+            compositor->DrawLumaText(s, fmt, D2D1::RectF(left, y, left + width, y + h),
+                                     br->GetColor(), D2D1::ColorF(0, 0.0f), alignment);
+    };
+    const size_t dot = text.find_last_of(L'.');
+    if (factory && MeasureTextWidth(factory, fmt, text) > w && dot != std::wstring::npos && dot > 0 &&
+        dot + 1 < text.size() && text.size() - dot <= 12) {
+        const std::wstring ext = text.substr(dot);
+        const float extW = MeasureTextWidth(factory, fmt, ext);
+        if (extW + 20.0f * scale < w &&
+            luma(text.substr(0, dot), x, w - extW, DWRITE_TEXT_ALIGNMENT_LEADING)) {
+            // A little slack: the extension box came from DirectWrite widths.
+            const float pad = 4.0f * scale;
+            if (!luma(ext, x + w - extW - pad, extW + pad, DWRITE_TEXT_ALIGNMENT_TRAILING)) {
+                const D2D1_RECT_F ext_rc = D2D1::RectF(x + w - extW, y, x + w, y + h);
+                compositor->Dc()->DrawText(ext.c_str(), (UINT32)ext.size(), fmt, &ext_rc, br,
+                                           D2D1_DRAW_TEXT_OPTIONS_CLIP, DWRITE_MEASURING_MODE_NATURAL);
+            }
+            return;
+        }
+    }
+    if (luma(text, x, w, fmt->GetTextAlignment())) return;
+    DrawTabTitle(compositor->Dc(), factory, fmt, br, text, x, y, w, h, scale);
 }
 
 void MakeBrush(ID2D1DeviceContext* dc, const D2D1_COLOR_F& c, ComPtr<ID2D1SolidColorBrush>& br) {

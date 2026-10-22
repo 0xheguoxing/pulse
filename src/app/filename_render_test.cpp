@@ -87,7 +87,7 @@ struct FilenameRenderTest {
                                 if (has_extension) layout->SetDrawingEffect(dim.get(),
                                     {static_cast<UINT32>(dot), static_cast<UINT32>(shown.size() - dot)});
                                 DrawNameHighlightBackground(&compositor, layout.get(), {rc.left, rc.top}, rc, visible, theme, scale);
-                                dc->DrawTextLayout({rc.left, rc.top}, layout.get(), normal.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                                compositor.DrawTextLayout({rc.left, rc.top}, layout.get(), normal.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                             } else if (!split_drawn && !compositor.DrawLumaText(shown, fmt, rc, theme.text, theme.bg)) {
                                 dc->DrawText(shown.c_str(), static_cast<UINT32>(shown.size()), fmt, rc,
                                     normal.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);

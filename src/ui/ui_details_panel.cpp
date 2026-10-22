@@ -335,7 +335,7 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
                 if (badgeFill.get() && badgeText.get()) {
                     dc->FillRoundedRectangle(D2D1::RoundedRect(badge, badgeH * 0.5f, badgeH * 0.5f),
                                              badgeFill.get());
-                    dc->DrawTextLayout(D2D1::Point2F(badge.left + padX,
+                    compositor_->DrawTextLayout(D2D1::Point2F(badge.left + padX,
                                                      badge.top + (badgeH - metrics.height) * 0.5f),
                                        badgeLayout.get(), badgeText.get());
                 }
@@ -385,7 +385,7 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
                         metrics.height, false);
                     const auto target = details_viewport_.ContentRect();
                     dc->PushAxisAlignedClip(clipRc, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                    dc->DrawTextLayout(D2D1::Point2F(target.left, target.top), details_text_layout_.get(),
+                    compositor_->DrawTextLayout(D2D1::Point2F(target.left, target.top), details_text_layout_.get(),
                         brText_.get());
                     dc->PopAxisAlignedClip();
                 }
@@ -481,7 +481,7 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
     if (d.preview_only) {
         const std::wstring caption_alias = d.path.empty() ? std::wstring()
                                                           : app::AliasStore::Instance().Shown(d.path);
-        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), compositor_->SmallFormat(),
+        DrawTextEndEllipsis(compositor_, compositor_->SmallFormat(),
             brText_.get(), caption_alias.empty() ? d.name : caption_alias, footer.caption.left, footer.caption.top,
             footer.caption.right - footer.caption.left, footer.caption.bottom - footer.caption.top);
     }
@@ -651,7 +651,7 @@ void MainRenderer::DrawDetailsPanel(const WindowViewModel& vm, const D2D1_RECT_F
                 const DWRITE_TRIMMING trim{ DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0 };
                 tl->SetTrimming(&trim, nullptr);
                 MakeBrush(dc, fg, brText_);
-                dc->DrawTextLayout(D2D1::Point2F(rc.left + 2.0f * s, rc.top + 26.0f * s),
+                compositor_->DrawTextLayout(D2D1::Point2F(rc.left + 2.0f * s, rc.top + 26.0f * s),
                                    tl.get(), brText_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
             }
         };

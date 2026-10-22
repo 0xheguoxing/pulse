@@ -268,6 +268,22 @@ bool Compositor::DrawLumaText(std::wstring_view text, IDWriteTextFormat* format,
     return false;
 }
 
+void Compositor::DrawTextLayout(D2D1_POINT_2F origin, IDWriteTextLayout* layout,
+                                ID2D1SolidColorBrush* brush, D2D1_DRAW_TEXT_OPTIONS options) {
+    if (!dc_.get() || !layout || !brush) return;
+    // Colour fonts (emoji) keep DirectWrite's colour glyph path.
+    if (!(options & D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT) && LumaTextEnabled()) {
+        D2D1_COLOR_F color = brush->GetColor();
+        color.a *= brush->GetOpacity();
+        if (lumaText_->DrawLayout(origin, layout, color,
+                                  (options & D2D1_DRAW_TEXT_OPTIONS_CLIP) != 0)) {
+            return;
+        }
+        lumaText_->RecordFallback();
+    }
+    dc_->DrawTextLayout(origin, layout, brush, options);
+}
+
 bool Compositor::DrawLumaTextSplit(std::wstring_view text, IDWriteTextFormat* format,
                                    const D2D1_RECT_F& bounds,
                                    const D2D1_COLOR_F& foreground, std::uint32_t split,

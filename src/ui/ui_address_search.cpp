@@ -93,7 +93,7 @@ void MainRenderer::DrawAddressSearchChrome(const WindowViewModel& vm, float w, c
                     : vm.address_search_scope_label;
                 MakeBrush(dc, theme.text, brText_);
                 const float text_left = scope.left + 23.0f * scale_;
-                DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), compositor_->SmallFormat(), brText_.get(),
+                DrawTextEndEllipsis(compositor_, compositor_->SmallFormat(), brText_.get(),
                     label, text_left, scope.top, std::max(0.0f, scope.right - 18.0f * scale_ - text_left), h);
             } else {
                 DrawIconText(scope.left, scope.top, scope.right - scope.left, h, glyph, L"",
@@ -117,7 +117,7 @@ void MainRenderer::DrawAddressSearchChrome(const WindowViewModel& vm, float w, c
                 DrawIconText(x0, mode.top, icon_w, h, vm.address_search_content ? L"\xE8A5" : L"\xE8D2", L"",
                              vm.address_search_content ? theme.accent : theme.text_secondary, 0.6f);
                 MakeBrush(dc, theme.text, brText_);
-                DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), compositor_->SmallFormat(), brText_.get(),
+                DrawTextEndEllipsis(compositor_, compositor_->SmallFormat(), brText_.get(),
                     text, x0 + icon_w + gap, mode.top, std::max(0.0f, mode.right - (x0 + icon_w + gap)), h);
             } else {
                 DrawIconText(mode.left, mode.top, mode.right - mode.left, h,
@@ -147,7 +147,7 @@ void MainRenderer::DrawAddressSearchChrome(const WindowViewModel& vm, float w, c
         MakeBrush(compositor_->Dc(),theme.text_secondary,brTextSecondary_);
         const float text_left=field.left+36*scale_;
         const float text_right=field.right-14*scale_-painter_.MeasureBadgeWidth(search.trailing_keycap);
-        DrawTextEndEllipsis(compositor_->Dc(),compositor_->DwriteFactory(),compositor_->TextFormat(),
+        DrawTextEndEllipsis(compositor_, compositor_->TextFormat(),
             brTextSecondary_.get(),std::wstring(search.placeholder),text_left,field.top,
             std::max(0.0f,text_right-text_left),field.bottom-field.top);
     }

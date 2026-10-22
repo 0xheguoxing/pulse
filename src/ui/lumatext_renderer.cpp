@@ -167,6 +167,10 @@ struct LumaTextRenderer::Impl {
 
     LumaText::Context context;
     LumaText::Renderer renderer;
+    // Draws DirectWrite layouts (multi-line text, ranges with their own
+    // colour) straight onto the window target with LumaText glyphs. A second
+    // renderer, because retargeting one would flush its device caches.
+    LumaText::Renderer layout_renderer;
     LumaText::FontFace yahei_regular;
     LumaText::FontFace yahei_bold;
     LumaText::FontFace segoe_regular;
@@ -514,6 +518,10 @@ struct LumaTextRenderer::Impl {
         if (lt_d2d_renderer_create(context.get(), &renderer_desc, renderer.put()) != LT_OK) {
             return false;
         }
+        renderer_desc.render_target = target_dc.Get();
+        if (lt_d2d_renderer_create(context.get(), &renderer_desc, layout_renderer.put()) != LT_OK) {
+            layout_renderer.reset();
+        }
 
         if (!MakeFace(FontPath(L"msyh.ttc"), yahei_regular) ||
             !MakeFace(FontPath(L"msyhbd.ttc"), yahei_bold)) {
@@ -685,6 +693,7 @@ struct LumaTextRenderer::Impl {
         segoe_regular.reset();
         yahei_bold.reset();
         yahei_regular.reset();
+        layout_renderer.reset();
         renderer.reset();
         recording_dc.Reset();
         target_dc.Reset();
@@ -884,6 +893,42 @@ struct LumaTextRenderer::Impl {
               const D2D1_COLOR_F& background, DWRITE_TEXT_ALIGNMENT alignment) {
         return DrawOn(target_dc.Get(), text, format, bounds, foreground, background,
                       alignment);
+    }
+
+    // A DirectWrite layout keeps its own shaping, fallback fonts, wrapping and
+    // trimming; LumaText only rasterizes the glyph runs. Ranges coloured with
+    // SetDrawingEffect(ID2D1SolidColorBrush) keep their colour.
+    bool DrawLayout(D2D1_POINT_2F origin, IDWriteTextLayout* layout,
+                    const D2D1_COLOR_F& foreground, bool clip) {
+        if (!layout_renderer || !target_dc || !layout) return false;
+        float dpi_x = 96.0f, dpi_y = 96.0f;
+        target_dc->GetDpi(&dpi_x, &dpi_y);
+        auto frame_desc = LumaText::Descriptor<lt_frame_desc>();
+        frame_desc.dpi_x = dpi_x;
+        frame_desc.dpi_y = dpi_y;
+        LumaText::Frame frame;
+        if (lt_frame_begin(layout_renderer.get(), &frame_desc, frame.put()) != LT_OK) return false;
+        auto draw = LumaText::Descriptor<lt_draw_text_desc>();
+        draw.origin_x = origin.x;
+        draw.origin_y = origin.y;
+        draw.clip_enabled = clip;
+        if (clip) {
+            draw.clip = {origin.x, origin.y, origin.x + layout->GetMaxWidth(),
+                         origin.y + layout->GetMaxHeight()};
+        }
+        draw.foreground = {foreground.r, foreground.g, foreground.b, foreground.a};
+        draw.background_type = LT_BACKGROUND_TRANSPARENT;
+        draw.render_config = LumaText::Descriptor<lt_render_config>();
+        ApplySharpConfig(draw.render_config, foreground);
+        const lt_result result = lt_frame_draw_layout(frame.get(), layout, &draw);
+        auto frame_stats = LumaText::Descriptor<lt_frame_stats>();
+        if (result == LT_OK && lt_frame_get_stats(frame.get(), &frame_stats) == LT_OK) {
+            stats.freetype_glyphs += frame_stats.freetype_glyphs;
+            stats.cache_hits += frame_stats.glyph_cache_hits;
+        }
+        const lt_result end_result = lt_frame_end(frame.get());
+        stats.draw_calls++;
+        return result == LT_OK && end_result == LT_OK;
     }
 
     // Two colours in one shaped line (a dimmed file extension): the same
@@ -1792,6 +1837,19 @@ bool LumaTextRenderer::Draw(std::wstring_view text, IDWriteTextFormat* format,
     (void)foreground;
     (void)background;
     (void)alignment;
+    return false;
+#endif
+}
+
+bool LumaTextRenderer::DrawLayout(D2D1_POINT_2F origin, IDWriteTextLayout* layout,
+                                  const D2D1_COLOR_F& foreground, bool clip) {
+#if defined(PULSE_HAS_LUMATEXT)
+    return impl_ && impl_->DrawLayout(origin, layout, foreground, clip);
+#else
+    (void)origin;
+    (void)layout;
+    (void)foreground;
+    (void)clip;
     return false;
 #endif
 }

@@ -622,7 +622,7 @@ void MainRenderer::DrawTypeChipLabel(ID2D1DeviceContext* dc, const std::wstring&
     layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     MakeBrush(dc, ink, brTagDot_);
-    dc->DrawTextLayout(D2D1::Point2F(rc.left, rc.top), layout.get(), brTagDot_.get(),
+    compositor_->DrawTextLayout(D2D1::Point2F(rc.left, rc.top), layout.get(), brTagDot_.get(),
                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
@@ -877,7 +877,7 @@ void MainRenderer::DrawColumnBadge(int pane_index, const Theme& theme) {
     if (SUCCEEDED(dc->CreateSolidColorBrush(D2D1::ColorF(ink.r, ink.g, ink.b, ink.a * 0.6f), &quiet)))
         layout->SetDrawingEffect(quiet.get(), DWRITE_TEXT_RANGE{static_cast<UINT32>(b.name.size() + value.size()),
                                                                  static_cast<UINT32>(delta.size())});
-    dc->DrawTextLayout(D2D1::Point2F(left + 9.0f * scale_, top), layout.get(), brFillInput_.get());
+    compositor_->DrawTextLayout(D2D1::Point2F(left + 9.0f * scale_, top), layout.get(), brFillInput_.get());
     dc->SetTransform(saved);
 }
 
@@ -1616,7 +1616,7 @@ void MainRenderer::DrawLinkOverlay(float x, float y, float size, const Theme& th
         const auto [head, leaf] = MiddleEllipsisPath(label, available, [&](const std::wstring& text) {
             return MeasureLayoutText(compositor_, compositor_->DwriteFactory(), format, text);
         });
-        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), format, brFillInput_.get(), head + leaf,
+        DrawTextEndEllipsis(compositor_, format, brFillInput_.get(), head + leaf,
             bounds.left + edge, bounds.top, available, edge);
         format->SetParagraphAlignment(previous_alignment);
         dc->PopAxisAlignedClip();
@@ -1746,7 +1746,7 @@ void MainRenderer::DrawThumbnailBadges(const ListEntryView& entry, const D2D1_RE
             if (!label.empty() && format) {
                 const auto previous_alignment = format->GetParagraphAlignment();
                 format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), format, brFillInput_.get(), label,
+                DrawTextEndEllipsis(compositor_, format, brFillInput_.get(), label,
                     text_x, chip.top, label_w + 2.0f * scale_, chip_h);
                 format->SetParagraphAlignment(previous_alignment);
             }
@@ -1938,7 +1938,7 @@ void MainRenderer::DrawMorphFrom(const PaneViewModel& vm, const motion::ViewMorp
                                       DWRITE_TEXT_ALIGNMENT alignment) {
                     if (text.empty() || width <= 1.0f) return;
                     meta_format->SetTextAlignment(alignment);
-                    DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), meta_format,
+                    DrawTextEndEllipsis(compositor_, meta_format,
                                         brTextSecondary_.get(), text, x, top, width, height);
                 };
                 switch (columns.kinds[static_cast<size_t>(col)]) {
@@ -2191,7 +2191,7 @@ void MainRenderer::DrawPaneEmptyState(const WindowViewModel& vm, const PaneViewM
             DWRITE_TEXT_METRICS metrics{};
             explanation->GetMetrics(&metrics);
             MakeBrush(compositor_->Dc(), theme.text_secondary, brTextSecondary_);
-            compositor_->Dc()->DrawTextLayout({bounds.left + 16 * scale_,
+            compositor_->DrawTextLayout({bounds.left + 16 * scale_,
                 bounds.top + std::max(0.0f, (bounds.bottom - bounds.top - metrics.height) * 0.5f)},
                 explanation.get(), brTextSecondary_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
@@ -2393,7 +2393,7 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
     const float textWidth = (titleBadge.right > titleBadge.left ? titleBadge.left - 4 * scale_ : textRight) - textLeft;
     MakeBrush(dc, split && !focused ? theme.text_secondary : theme.text, brText_);
     if (!sizePopup) {
-        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), compositor_->HeaderFormat(), brText_.get(), title,
+        DrawTextEndEllipsis(compositor_, compositor_->HeaderFormat(), brText_.get(), title,
             textLeft, y, textWidth, pane_header_height_);
         DrawChangeBadge(compositor_, painter_, pane.title_change_badge, titleBadge, theme, scale_);
     }
@@ -2483,7 +2483,7 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
             ChangeBannerLayout(pane, w, scale_, compositor_, explanation);
             if (explanation.get()) {
                 MakeBrush(dc, theme.text_secondary, brTextSecondary_);
-                dc->DrawTextLayout({x + 16 * scale_, y + 8 * scale_}, explanation.get(),
+                compositor_->DrawTextLayout({x + 16 * scale_, y + 8 * scale_}, explanation.get(),
                     brTextSecondary_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
             }
         } else {
@@ -2515,7 +2515,7 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
                     const bool identical = counts[1] + counts[2] + counts[3] + counts[4] == 0;
                     if (identical) {
                         MakeBrush(dc, theme.text_secondary, brTextSecondary_);
-                        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), chip_fmt, brTextSecondary_.get(),
+                        DrawTextEndEllipsis(compositor_, chip_fmt, brTextSecondary_.get(),
                             l10n::Get(l10n::StringId::CompareIdentical), left, cy - line_h * 0.5f,
                             std::max(0.0f, right - left), line_h);
                     } else {
@@ -2545,7 +2545,7 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
                                             brFillInput_.get());
                             cx += dot + 5.0f * scale_;
                             MakeBrush(dc, theme.text_secondary, brTextSecondary_);
-                            DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), chip_fmt, brTextSecondary_.get(),
+                            DrawTextEndEllipsis(compositor_, chip_fmt, brTextSecondary_.get(),
                                 t, cx, cy - line_h * 0.5f, tw + 2.0f * scale_, line_h);
                             cx += tw + gap;
                         }
@@ -2628,7 +2628,7 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
         const auto text = [&](const std::wstring& t, float left, float right, float cy,
                               const D2D1_COLOR_F& color) {
             MakeBrush(dc, color, brText_);
-            DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), fmt, brText_.get(), t, left,
+            DrawTextEndEllipsis(compositor_, fmt, brText_.get(), t, left,
                                 cy - line_h * 0.5f, std::max(0.0f, right - left), line_h);
         };
         const auto dot = [&](float cx, float cy, const D2D1_COLOR_F& color) {
@@ -2734,7 +2734,7 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
         // it, at the header's height so rows line up across the columns.
         const std::wstring& caption = pane.header_text.empty() ? pane.path : pane.header_text;
         MakeBrush(dc, theme.text_secondary, brTextSecondary_);
-        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), compositor_->SmallFormat(),
+        DrawTextEndEllipsis(compositor_, compositor_->SmallFormat(),
                             brTextSecondary_.get(), caption, x + 12.0f * scale_, y,
                             w - 24.0f * scale_, column_header_height_);
         y += column_header_height_;
@@ -2794,7 +2794,7 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
                 ? contentLeft + availableW - groupW : contentLeft;
             fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             if (measuredLabelW > labelAvailable) {
-                DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), fmt, brText_.get(), label,
+                DrawTextEndEllipsis(compositor_, fmt, brText_.get(), label,
                     groupLeft, y, labelW, column_header_height_);
             } else {
                 DrawTextRect(dc, fmt, brText_.get(), label, groupLeft, y,
@@ -3047,7 +3047,7 @@ bool MainRenderer::DrawTruncatedName(const std::wstring& name, float x, float y,
             y_snap += std::round(baseline) - baseline;
         }
         DrawNameHighlightBackground(compositor_, highlighted.get(), {x, y_snap}, rc, visible_matches, theme, scale_);
-        dc->DrawTextLayout({x, y_snap}, highlighted.get(), brText_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        compositor_->DrawTextLayout({x, y_snap}, highlighted.get(), brText_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
     } else if (!drawn) {
         dc->DrawText(shown.c_str(), (UINT32)shown.size(), fmt, &rc, brText_.get(),
                      D2D1_DRAW_TEXT_OPTIONS_CLIP, DWRITE_MEASURING_MODE_NATURAL);
@@ -3499,7 +3499,7 @@ void MainRenderer::DrawPaneWallHint(const PaneViewModel& vm, const D2D1_RECT_F& 
                 layout->SetDrawingEffect(accent.get(), range);
         }
         MakeBrush(dc, faded(theme.text), brText_);
-        dc->DrawTextLayout(D2D1::Point2F(r.text.left, r.text.top), layout.get(), brText_.get(),
+        compositor_->DrawTextLayout(D2D1::Point2F(r.text.left, r.text.top), layout.get(), brText_.get(),
                            D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
     // 切换: the accent button.
@@ -3515,7 +3515,7 @@ void MainRenderer::DrawPaneWallHint(const PaneViewModel& vm, const D2D1_RECT_F& 
         label->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         label->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         MakeBrush(dc, faded(hc ? theme.bg : D2D1::ColorF(1.0f, 1.0f, 1.0f)), brText_);
-        dc->DrawTextLayout(D2D1::Point2F(r.button.left, r.button.top), label.get(), brText_.get());
+        compositor_->DrawTextLayout(D2D1::Point2F(r.button.left, r.button.top), label.get(), brText_.get());
     }
     // ✕: don't show again.
     if (overClose) {
@@ -3603,7 +3603,7 @@ bool MainRenderer::DrawCenteredIconName(const std::wstring& name, const D2D1_REC
     DrawNameHighlightBackground(compositor_, layout.get(), {bounds.left, bounds.top}, bounds, fit.matches, theme, scale_);
     if (dim_extension) DimNameExtension(layout.get(), name, fit.shown, color);
     MakeBrush(compositor_->Dc(), color, brText_);
-    compositor_->Dc()->DrawTextLayout(D2D1::Point2F(bounds.left, bounds.top), layout.get(),
+    compositor_->DrawTextLayout(D2D1::Point2F(bounds.left, bounds.top), layout.get(),
                                       brText_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
     return fit.truncated;
 }
@@ -3689,14 +3689,14 @@ float MainRenderer::DrawExpandedIconName(const std::wstring& name, const D2D1_RE
     DrawNameHighlightBackground(compositor_, layout.get(), {text.left, text.top}, plate, fit.matches, theme, scale_);
     if (dim_extension) DimNameExtension(layout.get(), name, fit.shown, color);
     MakeBrush(dc, color, brText_);
-    dc->DrawTextLayout(D2D1::Point2F(text.left, text.top), layout.get(), brText_.get(),
+    compositor_->DrawTextLayout(D2D1::Point2F(text.left, text.top), layout.get(), brText_.get(),
                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
     if (note_w > 0.0f) {
         auto* format = compositor_->SmallFormat();
         const auto alignment = format->GetTextAlignment();
         format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         MakeBrush(dc, note_color, brTextSecondary_);
-        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), format, brTextSecondary_.get(), note,
+        DrawTextEndEllipsis(compositor_, format, brTextSecondary_.get(), note,
                             plate.left + pad_x, text.top + name_h, plate.right - plate.left - 2.0f * pad_x, line);
         format->SetTextAlignment(alignment);
     }
@@ -3880,7 +3880,7 @@ void MainRenderer::DrawRenameHint(const PaneViewModel& vm, const D2D1_RECT_F& fi
     painter_.FillRoundedRect(D2D1::RectF(card.left, card.top + 4.0f * scale_, card.left + 3.0f * scale_,
                                          card.bottom - 4.0f * scale_), 1.5f * scale_, WithAlpha(theme.accent, a));
     MakeBrush(dc, WithAlpha(theme.text, a), brText_);
-    dc->DrawTextLayout(D2D1::Point2F(card.left + pad, card.top + padY), layout.get(), brText_.get());
+    compositor_->DrawTextLayout(D2D1::Point2F(card.left + pad, card.top + padY), layout.get(), brText_.get());
 }
 
 namespace {
@@ -4160,7 +4160,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x0 + dot + 2.0f * scale_, (cell.top + cell.bottom) * 0.5f),
                                           dot, dot), brFillInput_.get());
             MakeBrush(dc, WithAlpha(theme.text_secondary, theme.text_secondary.a * fade), brTextSecondary_);
-            DrawTextEndEllipsis(dc, factory, fmt, brTextSecondary_.get(),
+            DrawTextEndEllipsis(compositor_, fmt, brTextSecondary_.get(),
                                 l10n::Get(l10n::StringId::LoadingEllipsis), x0 + 14.0f * scale_, cell.top,
                                 std::max(0.0f, textW - 14.0f * scale_), rowH);
             return;
@@ -4168,7 +4168,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
         case TreeRowKind::Empty:
         case TreeRowKind::Failed:
             MakeBrush(dc, theme.text_secondary, brTextSecondary_);
-            DrawTextEndEllipsis(dc, factory, fmt, brTextSecondary_.get(),
+            DrawTextEndEllipsis(compositor_, fmt, brTextSecondary_.get(),
                                 l10n::Get(tr.kind == TreeRowKind::Failed ? l10n::StringId::TreeReadFailed
                                                                          : l10n::StringId::EmptyFolder),
                                 x0, cell.top, textW, rowH);
@@ -4176,7 +4176,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
         case TreeRowKind::More: {
             const TreeMoreLayout more = LayoutTreeMore(tr, cell, x0, scale_, factory, fmt);
             MakeBrush(dc, theme.text_secondary, brTextSecondary_);
-            DrawTextEndEllipsis(dc, factory, fmt, brTextSecondary_.get(), more.label, more.label_x, cell.top,
+            DrawTextEndEllipsis(compositor_, fmt, brTextSecondary_.get(), more.label, more.label_x, cell.top,
                                 std::min(textW, more.label_w + 2.0f * scale_), rowH);
             const float pad = 10.0f * scale_;
             for (int k = 0; k < more.count; ++k) {
@@ -4186,7 +4186,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 FillRoundedRect(dc, brFillInput_.get(), b.left, b.top, b.right - b.left, b.bottom - b.top,
                                 6.0f * scale_);
                 MakeBrush(dc, primary ? theme.accent : theme.text, brTextSecondary_);
-                DrawTextEndEllipsis(dc, factory, fmt, brTextSecondary_.get(), more.texts[k], b.left + pad,
+                DrawTextEndEllipsis(compositor_, fmt, brTextSecondary_.get(), more.texts[k], b.left + pad,
                                     cell.top, std::max(0.0f, b.right - b.left - pad), rowH);
             }
             return;
@@ -4246,7 +4246,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 vm.content_results->Prefetch(static_cast<size_t>(src));
                 if (!draw_text) continue;
                 MakeBrush(dc,theme.text_secondary,brTextSecondary_);
-                DrawTextEndEllipsis(dc,compositor_->DwriteFactory(),compositor_->TextFormat(),brTextSecondary_.get(),
+                DrawTextEndEllipsis(compositor_, compositor_->TextFormat(),brTextSecondary_.get(),
                     l10n::Get(l10n::StringId::LoadingEllipsis),cell.left+40*scale_,cell.top,
                     cell.right-cell.left-40*scale_,cell.bottom-cell.top);
                 continue;
@@ -4955,7 +4955,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                                 real_layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                                 real_layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                                 MakeBrush(dc, faint, brText_);
-                                dc->DrawTextLayout({real_x, textY}, real_layout.get(), brText_.get(),
+                                compositor_->DrawTextLayout({real_x, textY}, real_layout.get(), brText_.get(),
                                                    D2D1_DRAW_TEXT_OPTIONS_CLIP);
                             }
                         }
@@ -5101,7 +5101,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     const auto previous_paragraph = format->GetParagraphAlignment();
                     format->SetTextAlignment(alignment);
                     format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                    DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), format, brTextSecondary_.get(),
+                    DrawTextEndEllipsis(compositor_, format, brTextSecondary_.get(),
                         std::wstring(text), left, text_bounds.top, width, text_bounds.bottom - text_bounds.top);
                     format->SetTextAlignment(previous);
                     format->SetParagraphAlignment(previous_paragraph);
@@ -5164,7 +5164,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                                 mtLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
                                 mtLayout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                                 MakeBrush(dc, cut ? WithAlpha(theme.text, 0.55f) : theme.text, brText_);
-                                dc->DrawTextLayout(D2D1::Point2F(mtLeft, cell.top + scale_), mtLayout.get(), brText_.get(),
+                                compositor_->DrawTextLayout(D2D1::Point2F(mtLeft, cell.top + scale_), mtLayout.get(), brText_.get(),
                                                    D2D1_DRAW_TEXT_OPTIONS_CLIP);
                             } else {
                                 draw_detail_text(fit(date, mtAvail), mtLeft, mtAvail, DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -5352,7 +5352,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 const D2D1_RECT_F bar{ nameRc.left, barTop,
                     nameRc.left + std::min(textW, 240.0f * scale_), barTop + 6.0f * scale_ };
                 painter_.DrawCapacityBar(bar, e.drive_used, theme.accent);
-                DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), compositor_->SmallFormat(),
+                DrawTextEndEllipsis(compositor_, compositor_->SmallFormat(),
                     brTextSecondary_.get(), e.drive_space_text,
                     nameRc.left, bar.bottom + 2.0f * scale_, textW, 20.0f * scale_);
             } else if (vm.view_mode == ViewMode::Tiles || vm.view_mode == ViewMode::Content) {
@@ -5374,7 +5374,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         vm.folder_size_muted.contains(src) || meta == folder_size_scanning ? theme.text_secondary : theme.text;
                     MakeBrush(dc, cut ? WithAlpha(ink, 0.55f) : ink, brTextSecondary_);
                 }
-                DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), compositor_->SmallFormat(),
+                DrawTextEndEllipsis(compositor_, compositor_->SmallFormat(),
                     brTextSecondary_.get(), meta,
                     nameRc.left, nameRc.top + 25.0f * scale_,
                     std::max(0.0f, nameRc.right - nameRc.left), 22.0f * scale_);
@@ -5394,7 +5394,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         vm.folder_size_muted.contains(src) || size->second == folder_size_scanning
                             ? theme.text_secondary : theme.text;
                     MakeBrush(dc, cut ? WithAlpha(ink, 0.55f) : ink, brTextSecondary_);
-                    DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), format,
+                    DrawTextEndEllipsis(compositor_, format,
                         brTextSecondary_.get(), offer ? folder_size_offer : size->second,
                         bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top);
                     format->SetTextAlignment(alignment);
@@ -5636,7 +5636,7 @@ void MainRenderer::DrawGroupHeaders(const PaneViewModel& vm, const ViewLayout& l
         const float label_w = std::min(std::max(0.0f, text_right - x),
                                        MeasureLayoutText(compositor_, factory, label_fmt, label) + 1.0f);
         MakeBrush(dc, theme.accent, brAccent_);
-        DrawTextEndEllipsis(dc, factory, label_fmt, brAccent_.get(), label, x, hr.top, label_w, h);
+        DrawTextEndEllipsis(compositor_, label_fmt, brAccent_.get(), label, x, hr.top, label_w, h);
         x += label_w + 8.0f * scale_;
 
         wchar_t count[64]{};

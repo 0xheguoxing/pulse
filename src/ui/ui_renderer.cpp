@@ -1083,7 +1083,7 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
         plate(px, py, pillW, pillH, pillR);
         DrawIconText(px + 10.0f * scale_, py, 16.0f * scale_, pillH, kIconFolder, L"[]", theme.icon_folder, 0.95f);
         MakeBrush(dc, pal.text, brText_);
-        DrawTabTitle(dc, factory, tabFmt, brText_.get(), ghost.title, px + 30.0f * scale_, py, titleW, pillH, scale_);
+        DrawTabTitle(compositor_, tabFmt, brText_.get(), ghost.title, px + 30.0f * scale_, py, titleW, pillH, scale_);
         if (chipW > 0.0f) {
             MakeBrush(dc, pal.accent, brText_);
             DrawTextRect(dc, smallFmt, brText_.get(), panes, px + 30.0f * scale_ + titleW + 7.0f * scale_, py,
@@ -1352,7 +1352,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         dc->FillEllipse(D2D1::Ellipse(identity.dot, identity.dot_radius, identity.dot_radius), brAccent_.get());
         const float text_x = identity.hit.left + 22.0f * scale_;
         MakeBrush(dc, theme.text, brText_);
-        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), compositor_->HeaderFormat(), brText_.get(),
+        DrawTextEndEllipsis(compositor_, compositor_->HeaderFormat(), brText_.get(),
                             vm.window_identity_name, text_x, 0.0f, identity.hit.right - 6.0f * scale_ - text_x, h);
     } else if (x + nameWidth <= brandRight) {
         MakeBrush(dc, theme.text, brText_);
@@ -1479,7 +1479,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         const float closeReserve = show_close ? (closePad + closeSz + 6.0f * scale_)
                                               : 6.0f * scale_;
         const float titleLeft = left + 24.0f * scale_ + markerReserve;
-        DrawTabTitle(dc, compositor_->DwriteFactory(), compositor_->TabFormat(), brText_.get(),
+        DrawTabTitle(compositor_, compositor_->TabFormat(), brText_.get(),
                      vm.tabs[i].title, titleLeft, tabY,
                      std::max(0.0f, tabW - 24.0f * scale_ - markerReserve - closeReserve), tabH, scale_);
         if (show_close) {
@@ -1700,7 +1700,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         DrawIconText(g.left + 6.0f * scale_, tabY, 16.0f * scale_, tabH, kIconFolder, L"[]",
                      theme.text_secondary, 0.85f);
         MakeBrush(dc, theme.text, brText_);
-        DrawTabTitle(dc, compositor_->DwriteFactory(), compositor_->TabFormat(), brText_.get(),
+        DrawTabTitle(compositor_, compositor_->TabFormat(), brText_.get(),
                      it->title, g.left + 24.0f * scale_, tabY,
                      (std::max)(0.0f, gw - 30.0f * scale_), tabH, scale_);
         dc->PopLayer();
@@ -1954,7 +1954,7 @@ void MainRenderer::DrawTeachBubble(const WindowViewModel& vm, const D2D1_RECT_F&
         body->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         body->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         MakeBrush(dc, theme.text_secondary, brTextSecondary_);
-        dc->DrawTextLayout({t.body.left, t.body.top}, body.get(), brTextSecondary_.get(),
+        compositor_->DrawTextLayout({t.body.left, t.body.top}, body.get(), brTextSecondary_.get(),
                            D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
     fluent::ControlState closeState;
@@ -1990,12 +1990,12 @@ void MainRenderer::DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& r
     const std::wstring status_text = path::FriendlyPathText(vm.status.status_text);
     const float statusWidth = std::min(std::max(0.0f, statusLimit - sb.pad),
         MeasureTextWidth(factory, small_fmt, status_text));
-    DrawTextEndEllipsis(dc, factory, small_fmt, brTextSecondary_.get(), status_text,
+    DrawTextEndEllipsis(compositor_, small_fmt, brTextSecondary_.get(), status_text,
         sb.pad, y, statusWidth, status_height_);
     const float selectionLeft = sb.pad + statusWidth + gap;
     const bool hasTask = vm.status.query_active || !vm.status.task_text.empty() || vm.status.task_progress >= 0.0f;
     const float selectionRight = hasTask ? sb.task.left - gap : rect.right - sb.right_reserved - gap;
-    DrawTextEndEllipsis(dc, factory, small_fmt, brTextSecondary_.get(), vm.status.selection_text,
+    DrawTextEndEllipsis(compositor_, small_fmt, brTextSecondary_.get(), vm.status.selection_text,
         selectionLeft, y, std::max(0.0f, selectionRight - selectionLeft), status_height_);
 
     const float rightReserved = sb.right_reserved;
@@ -2052,7 +2052,7 @@ void MainRenderer::DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& r
         const float trackX=taskRight-trackWidth;
         const float textX=std::max(taskX,trackX-queryGap-textWidth);
         MakeBrush(dc,theme.accent,brAccentText_);
-        DrawTextEndEllipsis(dc,factory,small_fmt,brAccentText_.get(),progress_text,
+        DrawTextEndEllipsis(compositor_, small_fmt,brAccentText_.get(),progress_text,
             textX,y,textWidth,status_height_);
         fluent::ProgressSpec progress;
         progress.bounds=D2D1::RectF(trackX,y,std::min(taskRight,trackX+trackWidth),y+status_height_);
@@ -2242,7 +2242,7 @@ void MainRenderer::DrawTaskPill(const WindowViewModel& vm, const D2D1_RECT_F& ar
         MakeBrush(dc, color, brAccentText_);
         const float text_right = actions_w > 0.0f ? pill.right - actions_w
                                                   : area.right - pad_r + 1.0f;
-        DrawTextEndEllipsis(dc, factory, fmt, brAccentText_.get(), text, text_x, area.top,
+        DrawTextEndEllipsis(compositor_, fmt, brAccentText_.get(), text, text_x, area.top,
                             std::max(0.0f, text_right - text_x), status_height_);
     }
     if (actions_w > 0.0f) {
@@ -2266,7 +2266,7 @@ void MainRenderer::DrawTaskPill(const WindowViewModel& vm, const D2D1_RECT_F& ar
                                     bottom - top, 6.0f * scale_);
             }
             MakeBrush(dc, theme.text, brAccentText_);
-            DrawTextEndEllipsis(dc, factory, fmt, brAccentText_.get(), *labels[i], x + action_pad, area.top,
+            DrawTextEndEllipsis(compositor_, fmt, brAccentText_.get(), *labels[i], x + action_pad, area.top,
                                 widths[i] - action_pad * 2.0f + 1.0f, status_height_);
             x += widths[i];
         }

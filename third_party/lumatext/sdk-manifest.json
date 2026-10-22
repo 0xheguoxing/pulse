@@ -5,9 +5,9 @@
   "runtime": "MT",
   "toolset": "v143",
   "snapshot_date": "2026-10-22",
-  "source_base_commit": "12b702babfc44d076b0a7163de7ddef6ce388e7d",
+  "source_base_commit": "ae58db2d979b1dded2472ac151827ad27bf66f35",
   "source_includes_uncommitted_changes": false,
-  "source_snapshot_sha256": "d1d2409f3eb0f0297e6639234730b3608c97cdc46a099974cd35169fc0e1a62d",
+  "source_snapshot_sha256": "4d7123c1475014b25391826d095260abd07963d7959016edbc57d4abc0a9fce1",
   "build_note": "LumaText feat/coretext-dilation (outline dilation, light autohint, optical-gamma opt-out); static CRT Release via docs/static-runtime-packaging.md; source_snapshot_sha256 is git archive --format=tar of the base commit.",
   "files": [
     {
@@ -18,7 +18,7 @@
     {
       "path": "bin/lumatext.dll",
       "bytes": 1648640,
-      "sha256": "defee505b1dbb6192eb0f0f8bf9331395729adfd2d4fba851ff7463bc2e76fbd"
+      "sha256": "3c505bdbfa3ca167200248e6619e4c9417c739325251d8a26c67edb34d4cc8ba"
     },
     {
       "path": "include/lumatext/lumatext.h",
