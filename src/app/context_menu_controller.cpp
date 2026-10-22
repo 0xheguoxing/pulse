@@ -530,7 +530,7 @@ bool ContextMenuController::ExecuteShellCommand(
                     if (!verb->app_path.empty()) {
                         if (operations_.open_with_app)
                             operations_.open_with_app(verb->app_path, paths_[i]);
-                    } else if (!verb->command.empty()) {
+                    } else if (!verb->command.empty() && !ShellOwnsStaticVerb(verb->verb)) {
                         if (operations_.execute_command)
                             operations_.execute_command(verb->command, paths_[i]);
                     } else if (operations_.execute_verb) {
