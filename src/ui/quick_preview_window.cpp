@@ -2833,9 +2833,13 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
         if (native_kind_ == NativeKind::Markdown && !find_open_ && !ctrl &&
             (wparam == VK_PRIOR || wparam == VK_NEXT || wparam == VK_LEFT || wparam == VK_RIGHT ||
              ((wparam == VK_HOME || wparam == VK_END) && !HasPlayback()))) {
-            markdown_.Key(static_cast<UINT>(wparam));
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            return 0;
+            // Left/Right scroll a wide document sideways; when there is
+            // nothing to scroll they keep stepping through files.
+            const bool moved = markdown_.Key(static_cast<UINT>(wparam));
+            if (moved || (wparam != VK_LEFT && wparam != VK_RIGHT)) {
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
         }
         if (ctrl && wparam == 'F' &&
             (native_kind_ == NativeKind::Text || native_kind_ == NativeKind::Hex ||
