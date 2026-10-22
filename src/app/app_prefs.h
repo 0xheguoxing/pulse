@@ -80,6 +80,11 @@ struct AppPrefs {
     bool sync_svn = true;
     bool vertical_tabs = false;       // tabs as the first sidebar section
     bool tray_hide_when_empty = false; // staging tray folds away while empty (drags still show it)
+    // 网络位置 (Settings → 文件操作): machine-local, not in settings export.
+    bool lan_discovery = true;           // look for LAN devices when the network page opens
+    bool network_recent_enabled = true;  // remember and list 最近访问
+    bool show_hidden_shares = false;     // list C$ / ADMIN$ in a server's shares
+    int lan_cache_mode = 0;              // keep found devices: 0 10 min, 1 1 h, 2 this session
     bool sidebar_collapsed = false;   // sidebar folded to its icon rail (Ctrl+B)
     bool favorites_bar = false;       // 收藏栏 under the command row (Ctrl+Shift+B)
     bool favorites_bar_icon_only = false;

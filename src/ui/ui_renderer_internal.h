@@ -416,6 +416,7 @@ void ClearTextWidthCache() {
             entry.drive_space_text = space;
         }
         entry.drive_mounted = source.drive_type != 0 && source.drive_remote_like;
+        entry.net_kind = source.net_kind;
         if (source.pc_launcher) {
             // 网盘程序入口: brand tint, and "打开百度网盘程序" as the type.
             entry.launcher_rgb = source.pc_launcher == 2 ? 0x2F8CF0u : source.pc_launcher == 3 ? 0x2F6FD6u : 0x60A5FAu;
@@ -1138,6 +1139,7 @@ void ClearTextWidthCache() {
         case PaneBannerAction::ManageIndex: return pulse::l10n::Get(I::ContentManageShort);
         case PaneBannerAction::AddNetworkIndex: return pulse::l10n::Get(I::NetworkLiveAdd);
         case PaneBannerAction::NetworkSettings: return pulse::l10n::Get(I::Settings);
+        case PaneBannerAction::LanRescan: return pulse::l10n::Get(I::HintActLanRescan);
         default: return {};
         }
     }
@@ -2506,6 +2508,9 @@ struct SettingsLayout {
     D2D1_RECT_F alias_mark_row{};
     D2D1_RECT_F vertical_tabs_row{};
     D2D1_RECT_F tray_hide_row{};
+    D2D1_RECT_F lan_discovery_row{}, network_recent_row{}, hidden_shares_row{};
+    D2D1_RECT_F lan_cache_card{}, lan_cache_row[3]{};
+    D2D1_RECT_F network_clear_row{}, network_clear_button{};
     D2D1_RECT_F hints_row{};
     D2D1_RECT_F hints_reset_row{};
     D2D1_RECT_F hints_reset_button{};

@@ -1236,6 +1236,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             }
             s->appPrefs.Load();
             ApplyKeymapPrefs(*s);
+            ApplyNetworkPrefs(*s);  // 显示隐藏共享 reaches fs before any share list
             NoteRunningVersion(*s);
             if (!s->shot.active && s->appPrefs.theme_mode >= 0) {
                 s->themeOverride = s->appPrefs.theme_mode == 1 ? ui::ThemeMode::Light :
@@ -2486,6 +2487,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_LAN_DISCOVERY:
         if (s) ApplyLanDiscovery(*s);
         return 0;
+
+    case WM_NETWORK_MAP_DONE: {
+        std::unique_ptr<NetworkMapResult> result(reinterpret_cast<NetworkMapResult*>(lParam));
+        if (s && result) ApplyNetworkMapDone(*s, *result);
+        return 0;
+    }
 
     case WM_DRIVE_VERB: {
         std::unique_ptr<app::DriveVerbResult> result(reinterpret_cast<app::DriveVerbResult*>(lParam));

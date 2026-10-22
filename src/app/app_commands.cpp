@@ -1414,20 +1414,7 @@ void RunMapNetworkDrive(AppState& s, const std::wstring& share) {
         RefreshAfterDriveChange(s);
         return;
     }
-    if (error == ERROR_CANCELLED || error == static_cast<DWORD>(-1)) return;
-    ui::ConfirmDialogSpec spec;
-    spec.tone = ui::ConfirmTone::Warning;
-    spec.title = l10n::Get(l10n::StringId::CouldNotMapNetworkDrive).c_str();
-    wchar_t* text = nullptr;
-    FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                   nullptr, error, 0, reinterpret_cast<wchar_t*>(&text), 0, nullptr);
-    spec.message = text ? text : l10n::Get(l10n::StringId::WindowsCouldNotOpenTheNetworkDriveDialog).c_str();
-    if (text) LocalFree(text);
-    wchar_t code[64]{};
-    swprintf_s(code, l10n::Get(l10n::StringId::ErrorCodeFormat).c_str(), error);
-    spec.note = code;
-    spec.confirm_text = l10n::Get(l10n::StringId::Close).c_str();
-    (void)ui::ShowConfirmDialog(s.hwnd, spec, s.darkMode, s.accentColor);
+    ShowMapDriveError(s, error);  // app_network_page.cpp; nothing for a cancel
 }
 
 void RunDriveVerb(AppState& s, int cmd) {
@@ -1964,6 +1951,11 @@ void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const ap
         EraseCommand(items, app::CmdUnpinQuickAccess);
         if (caps.any_network_pin) {
             verbs.push_back(VerbRow(app::CmdUnpinNetwork, l10n::Get(l10n::StringId::Unpin), L"\xE77A"));
+            // 重命名: Pulse's name for one pin (the share itself is not renamed).
+            if (!SelectedNetworkPin(s).empty()) {
+                EraseCommand(items, app::CmdRename);
+                verbs.push_back(VerbRow(app::CmdRenameNetwork, l10n::Get(l10n::StringId::Rename), L"\xE8AC"));
+            }
             EraseCommand(items, app::CmdPinNetwork);
         } else {
             const auto paths = tab ? SelectedFullPaths(*tab) : std::vector<std::wstring>{};
@@ -2816,6 +2808,7 @@ bool SituationalSelectionCommand(int command) {
     case app::CmdUnlockDrive: case app::CmdEjectDrive: case app::CmdDisconnectDrive: case app::CmdRestoreRecycle:
     case app::CmdMapNetworkDrive: case app::CmdUnpinNetwork: case app::CmdCopyToTarget: case app::CmdMoveToTarget:
     case app::CmdCompareSideBySide: case app::CmdBatchRename: case app::CmdOpenPath: case app::CmdForgetNetworkRecent:
+    case app::CmdRenameNetwork:
         return true;
     default:
         return false;
@@ -3803,7 +3796,7 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
             item.command == app::CmdUnlockDrive || item.command == app::CmdEjectDrive ||
             item.command == app::CmdDisconnectDrive || item.command == app::CmdMapNetworkDrive ||
             item.command == app::CmdUnpinNetwork || item.command == app::CmdRestoreRecycle ||
-            item.command == app::CmdForgetNetworkRecent;
+            item.command == app::CmdForgetNetworkRecent || item.command == app::CmdRenameNetwork;
         if ((builtin == app::BuiltinMenuItem::Count && !selection_row) ||
             builtin == app::BuiltinMenuItem::Undo || builtin == app::BuiltinMenuItem::SelectCommands)
             continue;
@@ -3851,7 +3844,7 @@ std::vector<ui::SelectionChipAction> SelectionChipActions(AppState& s) {
     const auto rank = [&kept](int command) {
         static constexpr int kContext[] = {
             app::CmdUnlockDrive, app::CmdEjectDrive, app::CmdDisconnectDrive, app::CmdRestoreRecycle,
-            app::CmdMapNetworkDrive, app::CmdUnpinNetwork, app::CmdForgetNetworkRecent,
+            app::CmdMapNetworkDrive, app::CmdUnpinNetwork, app::CmdRenameNetwork, app::CmdForgetNetworkRecent,
             app::CmdCopyToTarget, app::CmdMoveToTarget, app::CmdCompareSideBySide, app::CmdBatchRename,
             app::CmdOpenPath,
         };
@@ -4140,6 +4133,9 @@ void ShowToolbarMore(AppState& s) {
         // then passes none of the selected items).
         items.push_back(std::move(item));
     }
+    // 网络位置: the page's own actions lead (pulse_network_design.html §06),
+    // so ⋯ is a menu there even when every pin fits.
+    if (tab->current_path == kNetworkLocationsPath) AppendNetworkMoreItems(s, items);
     // Everything fits: the button is just 自定义工具栏 (prototype #custBtn).
     if (items.empty()) { ShowToolbarCustomize(s, 0); return; }
     items.back().separator_after=true;

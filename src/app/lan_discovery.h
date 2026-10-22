@@ -16,6 +16,8 @@ namespace pulse::app {
 struct LanDiscoveryResult {
     std::vector<LanDevice> devices;
     std::wstring network_key;     // the connected network's id (cache key), empty when unknown
+    std::wstring network_name;    // INetwork::GetName of that network ("Home-5G"), may be empty
+    uint8_t network_category = 0; // 0 unknown, 1 private, 2 domain, 3 public
     bool public_network = false;  // every connected network is Public: nothing was sent
     bool offline = false;         // no connected network
     bool mdns_unavailable = false;  // DnsServiceBrowse missing (Windows before 10 1809)

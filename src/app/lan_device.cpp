@@ -87,4 +87,36 @@ std::wstring LanDeviceUnc(const LanDevice& device) {
     return {};
 }
 
+namespace {
+std::wstring Lower(std::wstring_view text) {
+    std::wstring out(text);
+    for (auto& c : out) c = static_cast<wchar_t>(towlower(c));
+    return out;
+}
+
+// "ds920+" / "rs1221" / "ts-453d": letters, then a digit (or '-' for QNAP).
+bool ModelPrefix(const std::wstring& model, std::wstring_view prefix, bool dash) {
+    if (model.size() <= prefix.size() || !model.starts_with(prefix)) return false;
+    const wchar_t next = model[prefix.size()];
+    return dash ? next == L'-' : iswdigit(next) != 0;
+}
+}  // namespace
+
+uint8_t LanDeviceKind(const LanDevice& device) {
+    const std::wstring model = Lower(device.model);
+    for (std::wstring_view mac : {L"macmini", L"macbook", L"macpro", L"macstudio", L"imac", L"xserve", L"mac"})
+        if (model.starts_with(mac)) return kLanKindMac;
+    if (ModelPrefix(model, L"ds", false) || ModelPrefix(model, L"rs", false) || ModelPrefix(model, L"dva", false) ||
+        ModelPrefix(model, L"ts", true) || ModelPrefix(model, L"tvs", true) || ModelPrefix(model, L"tbs", true))
+        return kLanKindNas;
+    static constexpr std::wstring_view kNasWords[] = {
+        L"synology", L"diskstation", L"rackstation", L"qnap", L"truenas", L"freenas", L"unraid",
+        L"asustor", L"terramaster", L"readynas", L"nas",
+    };
+    for (const std::wstring& text : {model, Lower(device.name), Lower(device.host)})
+        for (std::wstring_view word : kNasWords)
+            if (text.find(word) != std::wstring::npos) return kLanKindNas;
+    return kLanKindPc;
+}
+
 } // namespace pulse::app

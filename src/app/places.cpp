@@ -1004,6 +1004,17 @@ bool PlacesCatalog::UnpinNetwork(const std::wstring& unc) {
     return true;
 }
 
+bool PlacesCatalog::RenameNetwork(const std::wstring& unc, const std::wstring& name) {
+    const int index = FindNetwork(unc);
+    if (index < 0) return false;
+    auto& place = networks[static_cast<size_t>(index)];
+    const std::wstring next = name.empty() ? FolderTitle(place.unc) : name;
+    if (next == place.name) return false;
+    place.name = next;
+    Save();
+    return true;
+}
+
 void PlacesCatalog::SetNetworkStatus(const std::wstring& unc, fs::NetStatus status, DWORD rtt_ms) {
     const std::wstring n = Norm(unc);
     for (auto& net : networks) {

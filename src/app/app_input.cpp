@@ -76,17 +76,30 @@ using namespace pulse;
 
 namespace pulse {
 // The split New button. On the network page and a server's share list it is
-// 连接服务器 (main part: the address bar, chevron: its menu).
+// 连接服务器 (main part: the dialog, chevron: its menu).
 static void PressNewButton(AppState& s, bool arrow) {
     const app::Tab* tab = ActiveTab(s);
     const bool connect = tab && IsConnectServerPage(tab->current_path);
     if (connect) {
         if (arrow) ShowConnectServerMenu(s);
-        else BeginConnectServer(s);
+        else RunConnectServerDialog(s);
         return;
     }
     if (arrow) ShowNewDropdown(s);
     else CreateNewItem(s, ToolbarNewCreatesFolder(s));
+}
+// Ctrl+Shift+N: 新建文件夹, or 连接服务器 where nothing can be created (the
+// network page, a server's share list) - the New button's slot either way.
+static void NewFolderOrConnect(AppState& s) {
+    const app::Tab* tab = ActiveTab(s);
+    if (tab && IsConnectServerPage(tab->current_path)) RunConnectServerDialog(s);
+    else CreateNewItem(s, true);
+}
+// Settings toggles that belong to the network page (40-42, 46) are handled
+// by app_network_page; the rest by the settings controller.
+static void ToggleSetting(AppState& s, int index) {
+    if (HandleNetworkSettingToggle(s, index)) return;
+    s.settings.ToggleUi(index);
 }
 bool HandleBrowserNavigation(AppState& s, LPARAM command) {
     switch (GET_APPCOMMAND_LPARAM(command)) {
@@ -3200,7 +3213,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
                 // 别名旁显示小图标: kept with the aliases (aliases.json), not app prefs.
                 auto& aliases = app::AliasStore::Instance();
                 aliases.SetShowMark(!aliases.ShowMark());
-            } else s->settings.ToggleUi(hit.index);
+            } else ToggleSetting(*s, hit.index);
             InvalidateRect(hwnd, nullptr, FALSE);
         } else if (hit.region == ui::HitTestResult::SettingsAccent) {
             s->bloom_accent.SetPressed(hit.index);
@@ -3229,7 +3242,8 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
                    hit.region == ui::HitTestResult::SettingsExternalOpen ||
                    hit.region == ui::HitTestResult::SettingsNotifyIcon ||
                    hit.region == ui::HitTestResult::SettingsBlankClick ||
-                   hit.region == ui::HitTestResult::SettingsHomeFolder) {
+                   hit.region == ui::HitTestResult::SettingsHomeFolder ||
+                   hit.region == ui::HitTestResult::SettingsLanCache) {
             // One branch on purpose: this else-if chain sits at MSVC's block
             // nesting limit (C1061), so new settings must not lengthen it.
             switch (hit.region) {
@@ -3240,6 +3254,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             case ui::HitTestResult::SettingsNotifyIcon: s->settings.NotifyIcon(hit.index); break;
             case ui::HitTestResult::SettingsBlankClick: s->settings.BlankClick(hit.index); break;
             case ui::HitTestResult::SettingsHomeFolder: s->settings.HomeFolder(hit.index); break;
+            case ui::HitTestResult::SettingsLanCache: SetLanCacheMode(*s, hit.index); break;
             case ui::HitTestResult::SettingsMtimeStyle: s->settings.MtimeStyle(hit.index); break;
             case ui::HitTestResult::SettingsMtimeRange: s->settings.MtimeRange(hit.index); break;
             case ui::HitTestResult::SettingsMtimePalette: s->settings.MtimePalette(hit.index); break;
@@ -3702,7 +3717,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             // Tab rows, the tabs header and the sidebar toggle.
         } else if (hit.region == ui::HitTestResult::SidebarHeaderAction) {
             if (hit.sidebar_action == ui::SidebarAddAction::AddNetwork) {
-                BeginConnectServer(*s);  // 连接服务器 (pulse_network_design.html)
+                RunConnectServerDialog(*s);  // 连接服务器 (pulse_network_design.html §02)
             } else if (hit.sidebar_action == ui::SidebarAddAction::CreateTag) {
                 POINT point{ mx, my };
                 ClientToScreen(hwnd, &point);
@@ -3828,6 +3843,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             case StatusHintAction::Shortcuts: DispatchMenuCommand(*s, app::CmdShortcutHelp); break;
             case StatusHintAction::OpenPath: DispatchMenuCommand(*s, app::CmdOpenPath); break;
             case StatusHintAction::SearchSubfolders: SearchFilterInSubfolders(*s); break;
+            case StatusHintAction::LanRescan: DispatchMenuCommand(*s, app::CmdLanRescan); break;
             default: break;
             }
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -5001,7 +5017,7 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             switch (explorer.action) {
             case A::Delete: DeleteSelected(*s, explorer.shift); break;
             case A::MarkTarget: MarkTargetPane(*s); break;
-            case A::NewFolder: CreateNewItem(*s, true); break;
+            case A::NewFolder: NewFolderOrConnect(*s); break;
             case A::Search:
                 if (IsAddressSearchResults(tab)) ShowAddressSearch(*s);
                 else ShowFilterEditor(*s);

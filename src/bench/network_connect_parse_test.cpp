@@ -119,6 +119,16 @@ void LanTests() {
     Check(pulse::app::LanDeviceUnc(list[0]) == L"\\\\ds920.local", "unc prefers host");
     Check(pulse::app::LanDeviceUnc(list[1]) == L"\\\\192.168.1.30", "unc falls back to ip");
     Check(!pulse::app::MergeLanDevice(list, LanDevice{}), "empty answer ignored");
+
+    using pulse::app::LanDeviceKind;
+    Check(LanDeviceKind(LanDevice{L"DS920", L"ds920.local", L"", L"DS920+", 1}) == pulse::app::kLanKindNas, "synology model");
+    Check(LanDeviceKind(LanDevice{L"Storage", L"", L"", L"TS-453D", 2}) == pulse::app::kLanKindNas, "qnap model");
+    Check(LanDeviceKind(LanDevice{L"truenas", L"truenas.local", L"", L"", 1}) == pulse::app::kLanKindNas, "nas by name");
+    Check(LanDeviceKind(LanDevice{L"Home-NAS", L"", L"192.168.1.5", L"", 2}) == pulse::app::kLanKindNas, "nas word");
+    Check(LanDeviceKind(LanDevice{L"Mac mini", L"mac-mini.local", L"", L"Macmini9,1", 1}) == pulse::app::kLanKindMac, "mac model");
+    Check(LanDeviceKind(LanDevice{L"Studio", L"", L"", L"iMac21,1", 1}) == pulse::app::kLanKindMac, "imac model");
+    Check(LanDeviceKind(LanDevice{L"DESKTOP-7", L"DESKTOP-7", L"", L"", 2}) == pulse::app::kLanKindPc, "windows pc");
+    Check(LanDeviceKind(LanDevice{L"dsp", L"", L"", L"DSP", 2}) == pulse::app::kLanKindPc, "ds without digit is not a nas");
 }
 }  // namespace
 

@@ -40,6 +40,8 @@ struct DirEntry {
     // pulse:networks row group (app::GroupBy::Network): 0 none, 1 pinned,
     // 2 mapped network drive, 3 device found on this network, 4 recent.
     uint8_t net_group = 0;
+    // pulse:networks device rows (app::LanDeviceKind): 0 none, 1 PC, 2 NAS, 3 Mac.
+    uint8_t net_kind = 0;
     std::wstring full_path; // set for virtual views (search/tag); empty = parent+name
     std::wstring recycle_path; // $R payload when listing pulse:recycle; not a .lnk target
     bool change_record_only = false; // Historical deleted/moved-out item, never a file operation source.
@@ -77,6 +79,9 @@ std::wstring StripLnkSuffix(const std::wstring& name);
 
 // Enumerate a directory into out. Throws std::runtime_error on failure.
 void EnumerateDirectory(const std::wstring& path, std::vector<DirEntry>& out, const std::atomic_bool* cancelled = nullptr);
+// 显示隐藏共享 (Settings → 网络位置): a server's share list also lists the
+// administrative disk shares whose names end in '$' (C$, ADMIN$). Off by default.
+void SetShowHiddenShares(bool show);
 struct EnumerationOptions {
     std::function<bool()> cancelled;
     DWORD timeout_ms = 15000;

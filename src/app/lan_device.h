@@ -33,4 +33,10 @@ bool MergeLanDevice(std::vector<LanDevice>& list, const LanDevice& device);
 // \\host for opening: the host name when known, else the IP.
 std::wstring LanDeviceUnc(const LanDevice& device);
 
+// What a device row looks like (DirEntry::net_kind): NAS brands and model
+// prefixes (Synology DS/RS, QNAP TS/TVS, TrueNAS, Unraid ...), Macs by their
+// _device-info model (MacMini9,1, iMac21,1 ...), everything else a PC.
+enum LanDeviceKindValue : uint8_t { kLanKindNone = 0, kLanKindPc = 1, kLanKindNas = 2, kLanKindMac = 3 };
+uint8_t LanDeviceKind(const LanDevice& device);
+
 } // namespace pulse::app

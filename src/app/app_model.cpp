@@ -109,6 +109,7 @@ void Tab::NavigateTo(const std::wstring& path) {
     scroll_x = 0.0f;
     filter_text.clear();
     virtual_title.clear();
+    virtual_header_note.clear();
     banner_title.clear();
     banner_message.clear();
     net_readonly = false;
@@ -596,6 +597,7 @@ std::wstring Tab::GoBack() {
     scroll_x = 0.0f;
     filter_text.clear();
     virtual_title.clear();
+    virtual_header_note.clear();
     loading = true;
     return current_path;
 }
@@ -616,6 +618,7 @@ std::wstring Tab::GoForward() {
     scroll_x = 0.0f;
     filter_text.clear();
     virtual_title.clear();
+    virtual_header_note.clear();
     loading = true;
     return current_path;
 }
@@ -1533,7 +1536,10 @@ SidebarModel BuildSidebarModel(const fs::RecycleBinInfo* recycle) {
 // Build window view-model
 // ---------------------------------------------------------------------------
 static std::wstring PaneHeaderText(const Tab& tab) {
-    return tab.virtual_title.empty() ? TabTitle(tab.current_path) : tab.virtual_title;
+    std::wstring text = tab.virtual_title.empty() ? TabTitle(tab.current_path) : tab.virtual_title;
+    // 网络位置: the network it lists devices for ("Home-5G · 专用网络").
+    if (!tab.virtual_header_note.empty()) text += L"  \u00B7  " + tab.virtual_header_note;
+    return text;
 }
 
 static std::wstring StatusText(const Tab& tab) {

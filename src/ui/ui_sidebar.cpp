@@ -429,6 +429,29 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                         slot.rc.bottom - slot.rc.top, glyph, fallback,
                         theme.text_secondary, 0.92f);
                 }
+                if (group.badge_count > 0) {
+                    // 网络位置: devices found on this network that the user has
+                    // not looked at yet (pulse_network_design.html §06).
+                    IDWriteTextFormat* fmt = compositor_->SmallFormat();
+                    wchar_t num[4]{};
+                    if (group.badge_count > 9) wcscpy_s(num, L"9+");
+                    else num[0] = static_cast<wchar_t>(L'0' + group.badge_count);
+                    const float d = 14.0f * scale_;
+                    const float badge_w = group.badge_count > 9 ? d * 1.45f : d;
+                    const D2D1_RECT_F b = D2D1::RectF(rail_rc.right - badge_w * 0.4f, rail_rc.top - d * 0.45f,
+                                                      rail_rc.right + badge_w * 0.6f, rail_rc.top + d * 0.55f);
+                    MakeBrush(dc, theme.accent, brAccent_);
+                    dc->FillRoundedRectangle(D2D1::RoundedRect(b, d * 0.5f, d * 0.5f), brAccent_.get());
+                    const DWRITE_TEXT_ALIGNMENT oldAlign = fmt->GetTextAlignment();
+                    const DWRITE_PARAGRAPH_ALIGNMENT oldPara = fmt->GetParagraphAlignment();
+                    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    MakeBrush(dc, theme.accent_text, brText_);
+                    dc->DrawText(num, static_cast<UINT32>(wcslen(num)), fmt, b, brText_.get(),
+                                 D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+                    fmt->SetTextAlignment(oldAlign);
+                    fmt->SetParagraphAlignment(oldPara);
+                }
                 // Tags read as their own group on the rail: a short divider
                 // above the section, and when folded the first tag colors peek
                 // out of the icon's corner so the section never looks empty.

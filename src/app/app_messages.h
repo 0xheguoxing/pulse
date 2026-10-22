@@ -82,5 +82,6 @@ constexpr UINT WM_AI_STATUS = WM_APP + 110;   // host: what AI clients do change
 constexpr UINT WM_AI_SNACK_UNDO = WM_APP + 111;  // the AI 新建 snack: undo that change (ai_settings_ui.h)
 constexpr UINT WM_AI_SNACK_OPEN = WM_APP + 112;  // the AI 新建 snack: show the new file
 constexpr UINT WM_LAN_DISCOVERY = WM_APP + 113;  // host: a LAN device look finished (app_network_page.h)
+constexpr UINT WM_NETWORK_MAP_DONE = WM_APP + 114;  // window: 连接服务器's drive mapping finished (NetworkMapResult*)
 
 }  // namespace pulse

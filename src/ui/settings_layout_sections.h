@@ -333,6 +333,18 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
         section(I::SettingsSecChanges);
         l.change_tracking_row=row(64);
         l.change_days_row=row(seg_h,true); segments(l.change_days_row,l.change_days,3,282);
+
+        section(I::SidebarNetworkLocations);
+        l.lan_discovery_row=row(64);
+        l.lan_cache_card=row(seg_h,true); segments(l.lan_cache_card,l.lan_cache_row,3,282);
+        l.network_recent_row=row(64);
+        l.hidden_shares_row=row(64);
+        l.network_clear_row=row(64);
+        {
+            const float bw=button_w(I::Clear,72);
+            l.network_clear_button=D2D1::RectF(l.network_clear_row.right-16*scale-bw,l.network_clear_row.top+16*scale,
+                                               l.network_clear_row.right-16*scale,l.network_clear_row.top+48*scale);
+        }
     }
     end_group();
     y+=14*scale; l.footer=D2D1::RectF(left,y,right,y+28*scale); y+=28*scale+16*scale;

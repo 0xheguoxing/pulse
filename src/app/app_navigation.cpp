@@ -2750,6 +2750,9 @@ bool HandlePaneBannerPress(AppState& s, const ui::HitTestResult& hit) {
     case A::GoUp:
         GoUp(s);
         break;
+    case A::LanRescan:
+        RequestLanDiscovery(s, true);
+        break;
     case A::NetworkSettings: {
         HINSTANCE opened = ShellExecuteW(s.hwnd, L"open", L"ms-settings:network-advancedsettings",
             nullptr, nullptr, SW_SHOWNORMAL);

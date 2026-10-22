@@ -2124,6 +2124,14 @@ static std::wstring ContextStatusHint(AppState& s, StatusHintAction& action) {
             action = StatusHintAction::SearchSubfolders;
         return l10n::Get(I::HintFiltering);
     }
+    if (tab->current_path == kNetworkLocationsPath) {
+        // 网络位置: what discovery found and when, with 重新发现 (design §06).
+        std::wstring lan = NetworkLanHint(s);
+        if (!lan.empty()) {
+            action = StatusHintAction::LanRescan;
+            return lan;
+        }
+    }
     if (kind == L"search") {
         action = StatusHintAction::Advanced;
         return l10n::Get(I::HintSearchSmart);
@@ -2147,6 +2155,7 @@ static const std::wstring& StatusHintActionText(StatusHintAction action) {
     case StatusHintAction::Shortcuts: return l10n::Get(I::HintActShortcuts);
     case StatusHintAction::OpenPath: return l10n::Get(I::HintActOpenPath);
     case StatusHintAction::SearchSubfolders: return l10n::Get(I::HintActSearchSub);
+    case StatusHintAction::LanRescan: return l10n::Get(I::HintActLanRescan);
     default: break;
     }
     static const std::wstring kEmpty;
@@ -2642,6 +2651,11 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
         s.sidebarQuickAccessHiddenMask);
     if (const app::Tab* tab = ActiveTab(s)) FillWallHint(*tab, vm.pane);  // photo wall suggestion
     app::FillWindowTabStrip(vm, s.window_tabs);
+    // Rail: devices found on this network that no window has shown yet.
+    if (const int badge = NetworkRailBadge(s); badge > 0) {
+        for (auto& group : vm.sidebar)
+            if (group.id == static_cast<int>(app::SidebarSectionId::Networks)) group.badge_count = badge;
+    }
     // Open settings shows as the selected settings button, not as a tab.
     if (s.window_tabs.active < vm.tabs.size() && IsSettingsTab(ActiveTab(s)))
         vm.tabs[s.window_tabs.active].hidden = true;
@@ -2668,6 +2682,10 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.settings_item_checkboxes = s.appPrefs.item_checkboxes;
     vm.settings_vertical_tabs = s.appPrefs.vertical_tabs;
     vm.settings_tray_hide_empty = s.appPrefs.tray_hide_when_empty;
+    vm.settings_lan_discovery = s.appPrefs.lan_discovery;
+    vm.settings_network_recent = s.appPrefs.network_recent_enabled;
+    vm.settings_hidden_shares = s.appPrefs.show_hidden_shares;
+    vm.settings_lan_cache_mode = s.appPrefs.lan_cache_mode;
     vm.settings_show_hints = s.appPrefs.show_hints;
     vm.settings_tips_seen = s.appPrefs.tips_seen != 0;
     vm.settings_folder_sort = s.appPrefs.folder_sort_mode;

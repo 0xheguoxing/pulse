@@ -161,6 +161,10 @@ enum MenuCmd : int {
     CmdAddNetworkPlace = 5192,
     CmdLanRescan = 5193,
     CmdNetworkSharingSettings = 5194,
+    CmdRenameNetwork = 5195,             // a pinned network location's display name
+    CmdNetworkClearRecent = 5196,        // ⋯ 清除最近访问
+    CmdNetworkHiddenShares = 5197,       // ⋯ 显示隐藏共享 (toggle)
+    CmdNetworkDiscoverySettings = 5198,  // ⋯ 局域网发现设置… (Settings → 文件操作)
     CmdShellStaticBase = 6000,
     CmdShellComBase = 8000,
 };

@@ -134,6 +134,7 @@ void FillNetworkLocationsView(AppState& state, app::Tab& tab) {
         if (index == tab.selected_index) focus = selected.back();
     }
     tab.virtual_title = l10n::Get(l10n::StringId::SidebarNetworkLocations);
+    tab.virtual_header_note = NetworkHeaderNote(state);
     tab.SetSnapshot(std::move(entries));
     tab.ClearSelection();
     int focus_index = -1;

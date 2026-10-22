@@ -92,6 +92,10 @@ void AppPrefs::ResetToDefaults() {
     close_tab_on_double_click = false;
     confirm_recycle_delete = false;
     start_in_tray = false;
+    lan_discovery = true;
+    network_recent_enabled = true;
+    show_hidden_shares = false;
+    lan_cache_mode = 0;
     home_folder.clear();
     text_render = 0;
     ui_font_scale = 100;
@@ -246,6 +250,14 @@ std::wstring AppPrefs::ToJson() const {
     out += confirm_recycle_delete ? L"true" : L"false";
     out += L",\n  \"start_in_tray\":";
     out += start_in_tray ? L"true" : L"false";
+    out += L",\n  \"lan_discovery\":";
+    out += lan_discovery ? L"true" : L"false";
+    out += L",\n  \"network_recent_enabled\":";
+    out += network_recent_enabled ? L"true" : L"false";
+    out += L",\n  \"show_hidden_shares\":";
+    out += show_hidden_shares ? L"true" : L"false";
+    out += L",\n  \"lan_cache_mode\":";
+    out += std::to_wstring(lan_cache_mode);
     out += L",\n  \"home_folder\":\"";
     out += escaped_home;
     out += L"\"";
@@ -497,6 +509,10 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     close_tab_on_double_click = pulse::json::ExtractBool(json, L"close_tab_on_double_click", false);
     confirm_recycle_delete = pulse::json::ExtractBool(json, L"confirm_recycle_delete", false);
     start_in_tray = pulse::json::ExtractBool(json, L"start_in_tray", false);
+    lan_discovery = pulse::json::ExtractBool(json, L"lan_discovery", true);
+    network_recent_enabled = pulse::json::ExtractBool(json, L"network_recent_enabled", true);
+    show_hidden_shares = pulse::json::ExtractBool(json, L"show_hidden_shares", false);
+    lan_cache_mode = std::clamp(pulse::json::ExtractInt(json, L"lan_cache_mode", 0), 0, 2);
     home_folder = pulse::json::ExtractString(json, L"home_folder");
     text_render = pulse::json::ExtractInt(json, L"text_render", 0);
     if (text_render < 0 || text_render > 2) text_render = 0;

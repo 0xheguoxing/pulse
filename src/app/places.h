@@ -185,6 +185,8 @@ public:
     int FindNetwork(const std::wstring& unc) const;
     int PinNetwork(const std::wstring& unc, const std::wstring& name);
     bool UnpinNetwork(const std::wstring& unc);
+    // Pulse's display name for a pin; empty goes back to the share's own name.
+    bool RenameNetwork(const std::wstring& unc, const std::wstring& name);
     void SetNetworkStatus(const std::wstring& unc, fs::NetStatus status, DWORD rtt_ms);
 
     void RecordVisit(const std::wstring& path);

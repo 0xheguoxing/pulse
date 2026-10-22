@@ -379,10 +379,23 @@ void ReadLanNetworkIdentity(LanDiscoveryResult& out) {
         any = true;
         NLM_NETWORK_CATEGORY category = NLM_NETWORK_CATEGORY_PUBLIC;
         network->GetCategory(&category);
-        if (category == NLM_NETWORK_CATEGORY_PUBLIC) continue;
+        if (category == NLM_NETWORK_CATEGORY_PUBLIC) {
+            if (out.network_category == 0) {
+                out.network_category = 3;
+                BSTR name = nullptr;
+                if (SUCCEEDED(network->GetName(&name)) && name) out.network_name = name;
+                SysFreeString(name);
+            }
+            continue;
+        }
         if (!any_private) {
             GUID id{};
             if (SUCCEEDED(network->GetNetworkId(&id))) out.network_key = GuidText(id);
+            out.network_category = category == NLM_NETWORK_CATEGORY_DOMAIN_AUTHENTICATED ? 2 : 1;
+            out.network_name.clear();
+            BSTR name = nullptr;
+            if (SUCCEEDED(network->GetName(&name)) && name) out.network_name = name;
+            SysFreeString(name);
         }
         any_private = true;
     }

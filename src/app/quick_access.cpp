@@ -2,6 +2,7 @@
 #include "app_commands.h"
 #include "app_navigation.h"
 #include "app_network_locations.h"
+#include "app_network_page.h"
 #include "../common/localization.h"
 #include "../ui/quick_access_editor.h"
 #include <algorithm>
@@ -320,13 +321,19 @@ void ShowNetworkPlaceMenu(AppState& s, const std::wstring& unc, POINT point) {
     open.command = app::CmdOpen;
     open.text = l10n::Get(l10n::StringId::Open);
     open.glyph = L"\xE8B7";
+    ui::FluentMenuItem rename;
+    rename.command = app::CmdRenameNetwork;
+    rename.text = l10n::Get(l10n::StringId::Rename);
+    rename.glyph = L"\xE8AC";
     ui::FluentMenuItem unpin;
     unpin.command = app::CmdUnpinQuickAccess;
     unpin.text = l10n::Get(l10n::StringId::Unpin);
     unpin.glyph = L"\xE77A";
-    const int command = s.menu->TrackPopup(point, {open, unpin});
+    const int command = s.menu->TrackPopup(point, {open, rename, unpin});
     if (command == app::CmdOpen) {
         NavigateTo(s, unc);
+    } else if (command == app::CmdRenameNetwork) {
+        RenameNetworkPin(s, unc);  // 重命名: Pulse's name only
     } else if (command == app::CmdUnpinQuickAccess && s.places.UnpinNetwork(unc)) {
         // The Network view lists the pins too.
         ForEachPane(s, [&](app::Pane& pane) {

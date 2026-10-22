@@ -582,6 +582,18 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
             segmented(lay.change_days_row,lay.change_days,days,day_values,vm.settings_change_days,H::SettingsChangeDays,I::SettingsChangeDays,I::SettingsChangeDaysDesc,3,L"\xE9D5");
             dim_end(dim);
         }
+        // 网络位置 (pulse_network_design.html §06).
+        toggle(lay.lan_discovery_row,I::SettingsLanDiscovery,I::SettingsLanDiscoveryDesc,L"\xE701",vm.settings_lan_discovery,40);
+        {
+            const I modes[]={I::LanCache10Min,I::LanCache1Hour,I::LanCacheSession};const int mode_values[]={0,1,2};
+            const bool dim=dim_begin(!vm.settings_lan_discovery);
+            segmented(lay.lan_cache_card,lay.lan_cache_row,modes,mode_values,vm.settings_lan_cache_mode,H::SettingsLanCache,I::SettingsLanCache,I::SettingsLanCacheDesc,3,L"\xE916");
+            dim_end(dim);
+        }
+        toggle(lay.network_recent_row,I::SettingsNetworkRecent,I::SettingsNetworkRecentDesc,L"\xE81C",vm.settings_network_recent,41);
+        toggle(lay.hidden_shares_row,I::NetworkShowHiddenShares,I::SettingsHiddenSharesDesc,L"\xED1A",vm.settings_hidden_shares,42);
+        label(lay.network_clear_row,l10n::Get(I::SettingsClearNetwork),l10n::Get(I::SettingsClearNetworkDesc),L"\xE74D",lay.network_clear_button.left-8*scale_);
+        button(lay.network_clear_button,l10n::Get(I::Clear),H::SettingsToggle,46);
         }
         text(l10n::Get(I::SettingsImmediate),lay.footer,true);
     } else if(!vm.settings_search_enabled) {

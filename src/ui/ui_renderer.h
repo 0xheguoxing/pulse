@@ -127,6 +127,7 @@ struct ListEntryView {
     std::wstring drive_space_text;
     bool drive_mounted = false;  // This PC: mapped / user-mode mount (网络盘 chip in tiles)
     uint32_t launcher_rgb = 0;   // This PC program icon (网盘程序入口): brand tint, 0 = not one
+    uint8_t net_kind = 0;        // pulse:networks device row: 1 PC, 2 NAS, 3 Mac (own icon), 0 = not one
     // This PC phone: fs::kPcDevice* bits (0 = not a phone) and one capacity
     // row per storage (used -1 = unknown).
     uint8_t device = 0;
@@ -201,7 +202,7 @@ enum class CompareMark : uint8_t { Same = 0, OnlyHere = 1, Newer = 2, Older = 3,
 // Buttons on the strip above a file list (pane banner), main one first.
 enum class PaneBannerAction : int {
     None = 0, Retry, GoUp, Reconnect, Unlock, Refresh, ManageIndex, AddNetworkIndex, Dismiss,
-    NetworkSettings
+    NetworkSettings, LanRescan
 };
 
 // One chip of a tag view's condition bar or 细分 row.
@@ -472,6 +473,8 @@ struct SidebarGroup {
     bool navigable = false;
     std::wstring navigation_path; // Empty is This PC.
     bool tabs_section = false;     // vertical tabs block: set apart by a divider
+    // Rail mode: a count on the section's icon (网络位置: devices not seen yet), 0 = none.
+    int badge_count = 0;
 };
 
 // Vertical span a section occupies in the laid-out sidebar (header top through
@@ -1194,6 +1197,11 @@ struct WindowViewModel {
     bool settings_item_checkboxes = false;
     bool settings_vertical_tabs = false;
     bool settings_tray_hide_empty = false;
+    // 文件操作 → 网络位置 (AppPrefs lan_discovery ...).
+    bool settings_lan_discovery = true;
+    bool settings_network_recent = true;
+    bool settings_hidden_shares = false;
+    int settings_lan_cache_mode = 0;  // 0 10 min, 1 1 h, 2 this session
     bool settings_show_hints = true;
     bool settings_tips_seen = false;   // any teaching bubble already shown
     int settings_folder_sort = 0; // 0 folders first, 1 follow direction, 2 mixed
@@ -1447,6 +1455,7 @@ struct HitTestResult {
         SettingsExternalOpen,
         SettingsBlankClick,
         SettingsHomeFolder,
+        SettingsLanCache,  // 发现结果保留: 0 10 min, 1 1 h, 2 this session
         SettingsTextRender,
         SettingsUiFontSize,
         SettingsTrayIcon,

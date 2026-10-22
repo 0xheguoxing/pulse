@@ -1591,7 +1591,7 @@ PreviewDrawResult MainRenderer::DrawEntryThumbnail(ID2D1DeviceContext* dc,
     const D2D1_RECT_F& dest, const ListEntryView& entry, ViewMode mode,
     uint64_t generation, uint32_t pixels, float opacity, bool align_bottom,
     D2D1_RECT_F* artwork, uint32_t* duration) {
-    if (entry.launcher_rgb || entry.device) return PreviewDrawResult::Failed;  // no file behind it: DrawEntryIcon
+    if (entry.launcher_rgb || entry.device || entry.net_kind) return PreviewDrawResult::Failed;  // no file behind it: DrawEntryIcon
     if (entry.is_dir) {
         const bool grid = mode == ViewMode::MediumIcons || mode == ViewMode::LargeIcons ||
                           mode == ViewMode::ExtraLargeIcons;
@@ -1904,6 +1904,21 @@ void MainRenderer::DrawEntryIcon(const ListEntryView& entry, float x, float y, f
                      std::max(0.5f, quarter));
         return;
     }
+    if (entry.net_kind && compositor_ && compositor_->Dc()) {
+        auto* dc = compositor_->Dc();
+        // 局域网设备 (pulse_network_design.html §03): PC, NAS or Mac on the
+        // same soft plate as phones; NAS in teal so storage stands apart.
+        const bool dark = theme.bg.r < 0.5f;
+        const D2D1_COLOR_F tint = entry.net_kind == 2 ? HexColor(dark ? 0x4CC2A4u : 0x1F8A70u)
+            : entry.net_kind == 3 ? WithAlpha(theme.text, 0.82f) : theme.accent;
+        const float pad = size * 0.08f;
+        MakeBrush(dc, WithAlpha(tint, 0.13f * opacity), brFillInput_);
+        FillRoundedRect(dc, brFillInput_.get(), x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, size * 0.22f);
+        const float quarter = std::round(size * 0.5f / (16.0f * scale_) * 4.0f) / 4.0f;
+        DrawIconText(x, y, size, size, entry.net_kind == 2 ? L"\xEDA2" : entry.net_kind == 3 ? L"\xE7F8" : L"\xE977", L"",
+                     WithAlpha(tint, opacity), std::max(0.5f, quarter));
+        return;
+    }
     if (entry.launcher_rgb && compositor_ && compositor_->Dc()) {
         auto* dc = compositor_->Dc();
         // 网盘程序入口: the icon the program registered (as Explorer shows it).
@@ -1988,7 +2003,7 @@ void MainRenderer::DrawMorphIcon(const ListEntryView& entry, const PaneViewModel
                             {}, 0.0f, 0.0f, &thumbnail_artwork);
         return;
     }
-    if (entry.record_only || entry.launcher_rgb || entry.device) {
+    if (entry.record_only || entry.launcher_rgb || entry.device || entry.net_kind) {
         DrawEntryIcon(entry, icon.left, icon.top, size, theme, hidden_alpha);
         return;
     }
@@ -2153,7 +2168,7 @@ void MainRenderer::DrawMorphFrom(const PaneViewModel& vm, const motion::ViewMorp
             DrawEntryThumbnail(dc, was.icon, e, mode, vm.view_generation,
                 ThumbnailRequestPixels(mode, size), hidden_alpha, grid, nullptr) == PreviewDrawResult::Bitmap;
         if (thumb) continue;
-        if (e.launcher_rgb || e.device) {  // 网盘程序入口 and phones draw their own icon
+        if (e.launcher_rgb || e.device || e.net_kind) {  // 网盘程序入口, phones and LAN devices draw their own icon
             DrawEntryIcon(e, dest.left, dest.top, size, theme, hidden_alpha);
             continue;
         }
@@ -4777,7 +4792,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     DrawThumbnailBadges(e, artwork, renderedIconSize, media_duration_ms, theme);
                 if (!drewThumbnail && !empty_folder) {
                     // Change records and 网盘程序入口 draw their own icon (DrawEntryIcon).
-                    const bool own_icon = e.record_only || e.launcher_rgb != 0 || e.device != 0;
+                    const bool own_icon = e.record_only || e.launcher_rgb != 0 || e.device != 0 || e.net_kind != 0;
                     ID2D1Bitmap* grid_bitmap = iconGrid && !morphing && !own_icon
                         ? icon_cache_.BitmapFor(e.path, e.name, e.is_dir, e.attrs, renderedIconSize) : nullptr;
                     float align_bottom = 0.0f;

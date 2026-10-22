@@ -61,7 +61,7 @@ void RememberLayoutFocus(AppState& s);
 
 // Clickable follow-up shown at the end of the status-bar context hint.
 enum class StatusHintAction : int { None = 0, Tray, Compare, DiffOnly, ShowAll, Advanced, Shortcuts,
-                                    OpenPath, SearchSubfolders };
+                                    OpenPath, SearchSubfolders, LanRescan };
 // Re-runs the active tab's pane filter as a search of the folder and its subfolders.
 void SearchFilterInSubfolders(AppState& s);
 StatusHintAction CurrentStatusHintAction(AppState& s);

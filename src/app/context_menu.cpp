@@ -675,6 +675,8 @@ std::vector<ui::FluentMenuItem> BuildCommandPalette(const std::wstring& query,
         add_cmd(CmdSettings, l10n::Get(l10n::StringId::Settings).c_str(), kGlyphSettings, nullptr);
         add_cmd(CmdExitPulse, l10n::Get(l10n::StringId::ExitPulse).c_str(), L"\xE7E8", nullptr);
         add_cmd(CmdOpenRecycle, l10n::Get(l10n::StringId::RecycleBin).c_str(), kGlyphRecycle, nullptr);
+        add_cmd(CmdConnectServer, l10n::Get(l10n::StringId::ConnectServerMenu).c_str(), L"\xE968", nullptr);
+        add_cmd(CmdMapNetworkDrive, l10n::Get(l10n::StringId::MapNetworkDrive).c_str(), L"\xE8CE", nullptr);
         add_cmd(CmdBatchRename, l10n::Get(l10n::StringId::BatchRename).c_str(), kGlyphBatchRename, L"Ctrl+Shift+R");
         add_cmd(CmdAdvancedSearch, l10n::Get(l10n::StringId::AdvancedSearch).c_str(), kGlyphAdvSearch, L"Ctrl+Shift+F");
         add_cmd(CmdSelectAll, l10n::Get(l10n::StringId::SelectAll).c_str(), kGlyphSelectAll, L"Ctrl+A");

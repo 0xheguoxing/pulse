@@ -102,6 +102,9 @@ struct Tab {
     // The network page's status bar summary (counts, LAN discovery state);
     // only read while current_path is pulse:networks.
     std::wstring virtual_status;
+    // A short note after the pane header title (network page: the current
+    // network's name and category); cleared with virtual_title.
+    std::wstring virtual_header_note;
     std::wstring banner_title;
     std::wstring banner_message;
     TagAdsNoticeState tag_ads_notice;

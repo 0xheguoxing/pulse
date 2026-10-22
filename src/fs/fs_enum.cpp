@@ -509,10 +509,17 @@ static void EnumerateThisPc(std::vector<DirEntry>& out, const std::atomic<bool>*
     }
 }
 
+namespace {
+std::atomic<bool> g_show_hidden_shares{false};
+}
+
+void SetShowHiddenShares(bool show) { g_show_hidden_shares = show; }
+
 // Server-root view (\\server, normalized as \\?\UNC\server with no further
 // separator): one entry per disk share, enumerated via NetShareEnum. Hidden
-// admin shares (name ends in '$') are skipped. full_path is set so the app
-// layer can navigate into a share without joining parent+name.
+// admin shares (name ends in '$') are skipped unless SetShowHiddenShares(true).
+// full_path is set so the app layer can navigate into a share without joining
+// parent+name.
 static void EnumerateServerShares(const std::wstring& server, std::vector<DirEntry>& out) {
     std::wstring host = L"\\\\" + server;
     BYTE* buf = nullptr;
@@ -526,11 +533,12 @@ static void EnumerateServerShares(const std::wstring& server, std::vector<DirEnt
         throw std::runtime_error(oss.str());
     }
     const auto* infos = reinterpret_cast<const SHARE_INFO_1*>(buf);
+    const bool show_hidden = g_show_hidden_shares.load();
     for (DWORD i = 0; i < read; ++i) {
         const DWORD type = infos[i].shi1_type & ~(STYPE_SPECIAL | STYPE_TEMPORARY);
         if (type != STYPE_DISKTREE) continue;
         std::wstring name = infos[i].shi1_netname;
-        if (name.empty() || name.back() == L'$') continue;
+        if (name.empty() || (name.back() == L'$' && !show_hidden)) continue;
         DirEntry e;
         e.name = name;
         e.full_path = NormalizePath(host + L"\\" + name);

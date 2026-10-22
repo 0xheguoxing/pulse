@@ -2894,3 +2894,36 @@ NetworkStatusDrivesFormat	IDS_NETWORK_STATUS_DRIVES_FORMAT	4092	%d 个网络驱�
 NetworkStatusRecentFormat	IDS_NETWORK_STATUS_RECENT_FORMAT	4093	%d 个最近访问	%d recent	%d 個最近存取
 ServerAddressUnsupportedFormat	IDS_SERVER_ADDRESS_UNSUPPORTED_FORMAT	4094	暂不支持 %s:// 地址。可以输入 \\\\服务器\\共享 或 smb://服务器/共享。	%s:// addresses aren't supported yet. Use \\\\server\\share or smb://server/share.	暫不支援 %s:// 位址。可以輸入 \\\\伺服器\\共用 或 smb://伺服器/共用。
 ServerAddressInvalid	IDS_SERVER_ADDRESS_INVALID	4095	无法识别这个服务器地址。	Pulse doesn't recognize this server address.	無法辨識這個伺服器位址。
+ConnectServerAddressLabel	IDS_CONNECT_SERVER_ADDRESS_LABEL	4096	服务器地址	Server address	伺服器位址
+ConnectServerUnderstoodFormat	IDS_CONNECT_SERVER_UNDERSTOOD_FORMAT	4097	将被理解为 %s	Opens as %s	將被理解為 %s
+ConnectServerHostFormat	IDS_CONNECT_SERVER_HOST_FORMAT	4098	将打开 %s 并列出它的共享	Opens %s and lists its shares	將開啟 %s 並列出它的共用
+ConnectServerPinAfter	IDS_CONNECT_SERVER_PIN_AFTER	4099	连接后固定到网络位置	Pin to network locations	連線後釘選到網路位置
+ConnectServerMapDrive	IDS_CONNECT_SERVER_MAP_DRIVE	4100	同时映射为驱动器	Also map as a drive	同時對應為磁碟機
+ConnectServerNoFreeLetter	IDS_CONNECT_SERVER_NO_FREE_LETTER	4101	没有空闲盘符	No free drive letters	沒有可用的磁碟機代號
+ConnectButton	IDS_CONNECT_BUTTON	4102	连接	Connect	連線
+LanScannedJustNow	IDS_LAN_SCANNED_JUST_NOW	4103	刚刚	just now	剛剛
+LanScannedMinutesFormat	IDS_LAN_SCANNED_MINUTES_FORMAT	4104	%d 分钟前	%d min ago	%d 分鐘前
+HintActLanRescan	IDS_HINT_ACT_LAN_RESCAN	4105	重新发现	Look again	重新探索
+NetworkCategoryPrivate	IDS_NETWORK_CATEGORY_PRIVATE	4106	专用网络	Private network	私人網路
+NetworkCategoryDomain	IDS_NETWORK_CATEGORY_DOMAIN	4107	域网络	Domain network	網域網路
+NetworkCategoryPublic	IDS_NETWORK_CATEGORY_PUBLIC	4108	公用网络	Public network	公用網路
+NetworkRenameTitle	IDS_NETWORK_RENAME_TITLE	4109	重命名网络位置	Rename network location	重新命名網路位置
+NetworkRenameLabel	IDS_NETWORK_RENAME_LABEL	4110	显示名称	Display name	顯示名稱
+NetworkRenameNote	IDS_NETWORK_RENAME_NOTE	4111	只改 Pulse 里显示的名称，服务器上的共享不变。留空则恢复为共享名。	Changes the name shown in Pulse only; the share on the server stays the same. Leave it empty to use the share name.	只變更 Pulse 中顯示的名稱，伺服器上的共用不變。留空則恢復為共用名稱。
+NetworkClearRecent	IDS_NETWORK_CLEAR_RECENT	4112	清除最近访问	Clear recent servers	清除最近存取
+NetworkShowHiddenShares	IDS_NETWORK_SHOW_HIDDEN_SHARES	4113	显示隐藏共享	Show hidden shares	顯示隱藏共用
+NetworkDiscoverySettingsMenu	IDS_NETWORK_DISCOVERY_SETTINGS_MENU	4114	局域网发现设置…	Discovery settings…	區域網路探索設定…
+SettingsLanDiscovery	IDS_SETTINGS_LAN_DISCOVERY	4115	自动发现局域网设备	Find devices on this network	自動探索區域網路裝置
+SettingsLanDiscoveryDesc	IDS_SETTINGS_LAN_DISCOVERY_DESC	4116	打开「网络位置」时用 mDNS 和 WS-Discovery 查找电脑和 NAS；只收应答，不登录、不扫描子网。	Finds PCs and NAS devices with mDNS and WS-Discovery when Network locations opens. Listens only; never signs in.	開啟「網路位置」時用 mDNS 和 WS-Discovery 尋找電腦和 NAS；只收回應，不登入、不掃描子網路。
+SettingsNetworkRecent	IDS_SETTINGS_NETWORK_RECENT	4117	记录最近访问的服务器	Remember recent servers	記錄最近存取的伺服器
+SettingsNetworkRecentDesc	IDS_SETTINGS_NETWORK_RECENT_DESC	4118	保留最近打开过的 20 个网络共享，只保存在本机。	Keeps the last 20 network shares you opened, on this PC only.	保留最近開啟過的 20 個網路共用，只儲存在本機。
+SettingsHiddenSharesDesc	IDS_SETTINGS_HIDDEN_SHARES_DESC	4119	列出以 $ 结尾的共享（如 C$、ADMIN$），通常只有管理员会用到。	Lists shares ending in $ (like C$ and ADMIN$). Usually only administrators need them.	列出以 $ 結尾的共用（如 C$、ADMIN$），通常只有系統管理員會用到。
+SettingsLanCache	IDS_SETTINGS_LAN_CACHE	4120	发现结果保留	Keep found devices	探索結果保留
+SettingsLanCacheDesc	IDS_SETTINGS_LAN_CACHE_DESC	4121	期间回到「网络位置」直接显示上次结果；随时可按 F5 重新发现。	Until then, Network locations shows the last results. Press F5 to look again.	期間回到「網路位置」直接顯示上次結果；隨時可按 F5 重新探索。
+LanCache10Min	IDS_LAN_CACHE_10_MIN	4122	10 分钟	10 min	10 分鐘
+LanCache1Hour	IDS_LAN_CACHE_1_HOUR	4123	1 小时	1 hour	1 小時
+LanCacheSession	IDS_LAN_CACHE_SESSION	4124	本次运行	This session	本次執行
+SettingsClearNetwork	IDS_SETTINGS_CLEAR_NETWORK	4125	清除网络记录	Clear network history	清除網路記錄
+SettingsClearNetworkDesc	IDS_SETTINGS_CLEAR_NETWORK_DESC	4126	清除最近访问和发现的设备；固定位置、映射驱动器和凭据不受影响。	Clears recent servers and found devices. Pins, mapped drives and saved credentials stay.	清除最近存取和探索到的裝置；釘選位置、對應磁碟機和認證不受影響。
+LanDiscoveryDisabled	IDS_LAN_DISCOVERY_DISABLED	4127	自动发现已关闭	Device discovery is off	自動探索已關閉
+NetworkHistoryCleared	IDS_NETWORK_HISTORY_CLEARED	4128	网络记录已清除	Network history cleared	網路記錄已清除
