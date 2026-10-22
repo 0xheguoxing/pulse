@@ -4,6 +4,8 @@
 #include <winioctl.h>
 #include <cfgmgr32.h>
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
 // Also for the tests that compile this file directly.
 #pragma comment(lib, "cfgmgr32.lib")
 
@@ -49,6 +51,43 @@ std::vector<DirNotifyEvent> ParseNotifyBuffer(const BYTE* data, DWORD bytes,
 
 namespace { std::atomic<unsigned> active_watchers{0}; }
 
+namespace {
+// Watches that have neither armed nor given up yet.
+struct StartingWatch {
+    const void* id;
+    std::wstring path;
+    bool running;  // its thread is opening the folder
+};
+std::mutex starting_mutex;
+std::condition_variable starting_cv;
+std::vector<StartingWatch> starting_watches;
+} // namespace
+
+uint64_t WatchClock() noexcept {
+    return static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+}
+
+void WaitForStartingWatch(const std::wstring& path, DWORD start_ms, DWORD arm_ms) {
+    const std::wstring key = NormalizePath(path);
+    if (key.empty()) return;
+    const auto starting = [&](bool include_queued) {
+        return std::any_of(starting_watches.begin(), starting_watches.end(), [&](const StartingWatch& w) {
+            return w.path == key && (include_queued || w.running);
+        });
+    };
+    const auto start_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(start_ms);
+    std::unique_lock lock(starting_mutex);
+    // Polled, not a timed wait: that can oversleep to the next timer tick
+    // (~16 ms), which a startup whose watch thread runs late would pay.
+    while (!starting(false)) {
+        if (!starting(true) || std::chrono::steady_clock::now() >= start_deadline) return;
+        lock.unlock();
+        std::this_thread::yield();
+        lock.lock();
+    }
+    starting_cv.wait_for(lock, std::chrono::milliseconds(arm_ms), [&] { return !starting(false); });
+}
+
 struct DirWatch::State {
     std::wstring path_;
     bool subtree_ = false;
@@ -58,6 +97,30 @@ struct DirWatch::State {
     HANDLE hStop_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     std::atomic<bool> running_{true};
     std::atomic<bool> armed_{false};
+    bool stamp_arm_ = false;
+    std::atomic<bool> starting_{false};  // listed in starting_watches
+    void BeginStarting() {
+        std::lock_guard lock(starting_mutex);
+        starting_watches.push_back({this, path_, false});
+        starting_ = true;
+    }
+    void StartingRuns() {
+        if (!starting_) return;
+        {
+            std::lock_guard lock(starting_mutex);
+            for (auto& w : starting_watches) if (w.id == this) w.running = true;
+        }
+        starting_cv.notify_all();
+    }
+    // Armed, failed or stopped: a listing waiting in WaitForStartingWatch goes on.
+    void EndStarting() {
+        if (!starting_.exchange(false)) return;
+        {
+            std::lock_guard lock(starting_mutex);
+            std::erase_if(starting_watches, [this](const StartingWatch& w) { return w.id == this; });
+        }
+        starting_cv.notify_all();
+    }
     OVERLAPPED overlapped_{};
     BY_HANDLE_FILE_INFORMATION identity_{};
     bool identity_valid_ = false;
@@ -81,6 +144,7 @@ struct DirWatch::State {
     HANDLE released_event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);  // handle closed for it
     HANDLE resume_event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);    // removal failed or done
     ~State() {
+        EndStarting();
         UnwatchRemoval();
         const HANDLE directory = hDir_.load();
         if (directory != INVALID_HANDLE_VALUE) CloseHandle(directory);
@@ -108,7 +172,7 @@ struct DirWatch::State {
 DirWatch::DirWatch() = default;
 DirWatch::~DirWatch() { Stop(); }
 
-bool DirWatch::Start(const std::wstring& path, ChangeCallback cb, bool subtree) {
+bool DirWatch::Start(const std::wstring& path, ChangeCallback cb, bool subtree, bool stamp_arm) {
     Stop();
     if (path.empty()) return false;
     // Bound retired workers even when a network provider ignores cancellation.
@@ -122,8 +186,10 @@ bool DirWatch::Start(const std::wstring& path, ChangeCallback cb, bool subtree) 
     state->path_ = path_;
     state->subtree_ = subtree;
     state->callback_ = std::move(cb);
+    state->stamp_arm_ = stamp_arm;
+    if (stamp_arm) state->BeginStarting();
     try { thread_ = std::thread([state] { state->WorkerThread(); }); }
-    catch (...) { return false; }
+    catch (...) { state->EndStarting(); return false; }
     state_ = std::move(state);
     return true;
 }
@@ -132,6 +198,7 @@ bool DirWatch::Armed() const { return state_ && state_->armed_.load(); }
 
 void DirWatch::Stop() {
     if (!state_) return;
+    state_->EndStarting();
     state_->running_ = false;
     SetEvent(state_->hStop_);
     {
@@ -303,6 +370,11 @@ void DirWatch::State::Notify(bool overflow, std::vector<DirNotifyEvent> events) 
 }
 
 void DirWatch::State::WorkerThread() {
+    struct StartingEnd {
+        State* state;
+        ~StartingEnd() { state->EndStarting(); }
+    } starting_end{this};
+    StartingRuns();
     if (!ReopenDirectory()) return;
     bool newly_armed = true;
     DWORD retry_delay = 250;
@@ -316,6 +388,7 @@ void DirWatch::State::WorkerThread() {
         armed_ = true;
     };
     const auto retry_failure = [&](DWORD error) {
+        EndStarting();
         armed_ = false;
         pending_rename_old_.clear();
         if (!failure_notified) Notify(true, {});
@@ -367,7 +440,15 @@ void DirWatch::State::WorkerThread() {
         // An initial/reopened watch may have missed changes while
         // the handle was opening. Reconcile only after the read is armed.
         if (!failure_notified) armed_ = true;
-        if (newly_armed && !failure_notified) Notify(true, {});
+        if (newly_armed && !failure_notified) {
+            std::vector<DirNotifyEvent> arm;
+            if (stamp_arm_) {
+                // Stamped after the read is queued: any later change is reported.
+                arm.emplace_back().armed_at = WatchClock();
+                EndStarting();
+            }
+            Notify(true, std::move(arm));
+        }
         newly_armed = false;
 
         bool replaced = false;
@@ -507,7 +588,7 @@ void DirWatchSet::Sync(const std::vector<std::wstring>& paths, Callback cb) {
                 invoke = callback_;
             }
             if (invoke) invoke(key, overflow, std::move(events));
-        })) {
+        }, false, true)) {
             continue;
         }
         watches_[path] = std::move(watch);

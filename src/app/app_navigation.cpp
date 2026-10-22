@@ -1302,12 +1302,13 @@ void StartLoadingPath(AppState& s, app::Tab& tab, const std::wstring& path, Path
                 : l10n::Get(l10n::StringId::Refreshing);
         }
     }
+    // Watch first: the listing waits for the watch to arm, so the watch's
+    // first report needs no second listing.
+    SyncVisibleWatches(s);
     tab.pending_generation = shared_generation != 0
         ? shared_generation
         : s.worker.Refresh(normalized, tab.sort_column, tab.sort_direction, tab.EffectiveGroup(),
                            SortFolderSizes(s, tab, normalized));
-
-    SyncVisibleWatches(s);
     if (fs::IsUncPath(normalized)) RequestUncProbe(s, normalized);
 }
 
@@ -1316,10 +1317,12 @@ void StartLoadingPath(AppState& s, app::Tab& tab, const std::wstring& path, Path
 // applies it. Returns whether the folder changed again while it was listed.
 static bool ApplyWorkerResultData(AppCore& core, const app::WorkResult& res) {
     if (res.error) return false;
-    const bool again = res.snapshot && !fs::IsVirtualPath(res.path) &&
-                       core.store.IsDirty(res.path);
+    bool again = false;
     if (res.snapshot && !fs::IsVirtualPath(res.path)) {
-        core.store.Update(res.path, res.generation, res.snapshot, res.identity);
+        // Also again when a watch armed after this listing had begun.
+        const bool arm_missed = core.store.TakeArmMissed(res.path, res.listed_at);
+        again = core.store.IsDirty(res.path) || arm_missed;
+        core.store.Update(res.path, res.generation, res.snapshot, res.identity, res.listed_at);
     }
     if (!fs::IsVirtualPath(res.path)) core.gitRoots[res.path] = res.git_root;
     return again;
@@ -1917,22 +1920,39 @@ static void ApplyDirNotifiesToWindow(AppState& s, const std::vector<AppState::Di
     // single tick. Group the whole drain per folder and patch each folder once.
     std::vector<std::pair<std::wstring, std::vector<fs::DirNotifyEvent>>> structural_by_path;
     std::vector<std::pair<std::wstring, std::vector<std::wstring>>> modified_by_path;
+    std::vector<std::wstring> relisted;  // listings queued by this drain
     for (const auto& item : batch) {
         const std::wstring path = fs::NormalizePath(item.path);
         if (item.overflow) {
+            // A newly armed watch reports one overflow for what it may have
+            // missed while opening; a listing begun after its arm holds it all.
+            const uint64_t armed_at = fs::ArmedAt(item.overflow, item.events);
             if (WindowShowsFolder(s, path)) {
                 shown.push_back(path);
-                DropSizePatches(s, path);
-                s.store.MarkDirty(path);
-                // A scan already in flight (a newly armed watch reports one overflow
-                // while the folder is still loading) finishes and is shown first; the
-                // dirty mark then runs one more pass instead of discarding its work.
-                if (!PathHasPendingRefresh(s, path)) RefreshPath(s, path);
-                changed = true;
+                if (armed_at != 0 && s.store.ListedSince(path, armed_at)) {
+                    // Nothing missed.
+                } else if (armed_at != 0 && PathHasPendingRefresh(s, path)) {
+                    // The running listing decides when it lands (TakeArmMissed).
+                    s.store.NoteArm(path, armed_at);
+                } else {
+                    DropSizePatches(s, path);
+                    s.store.MarkDirty(path);
+                    // A scan already in flight finishes and is shown first; the
+                    // dirty mark then runs one more pass instead of discarding its work.
+                    if (!PathHasPendingRefresh(s, path)) {
+                        RefreshPath(s, path);
+                        relisted.push_back(path);
+                    }
+                    changed = true;
+                }
             }
             // The refresh re-enumerates; this drain's earlier events are moot.
             GroupFor(structural_by_path, path).clear();
             GroupFor(modified_by_path, path).clear();
+            continue;
+        }
+        if (std::find(relisted.begin(), relisted.end(), path) != relisted.end()) {
+            shown.push_back(path);  // reported before that listing was queued
             continue;
         }
         if (PathHasPendingRefresh(s, path)) {

@@ -134,7 +134,7 @@ bool SnapshotStore::IsDirty(const std::wstring& path) const {
 }
 
 void SnapshotStore::Update(const std::wstring& path, uint64_t generation,
-                           SnapshotPtr snapshot, DirectoryIdentity identity) {
+                           SnapshotPtr snapshot, DirectoryIdentity identity, uint64_t listed_at) {
     std::wstring key = NormalizePath(path);
     if (!path.empty() && key.empty()) return;
     // Snapshots are immutable; count large directories before taking the UI-facing lock.
@@ -154,6 +154,7 @@ void SnapshotStore::Update(const std::wstring& path, uint64_t generation,
         e.dirty = false;
         e.snapshot = std::move(snapshot);
         e.identity = identity;
+        e.listed_at = listed_at;
         e.bytes = bytes;
         resident_bytes_ += e.bytes;
         lru_.push_front(key);
@@ -169,6 +170,7 @@ void SnapshotStore::Update(const std::wstring& path, uint64_t generation,
     it->second.bytes = bytes;
     resident_bytes_ += it->second.bytes;
     it->second.generation = generation;
+    it->second.listed_at = listed_at;
     it->second.dirty = false;
     lru_.splice(lru_.begin(), lru_, it->second.lru_it);
     EvictToBudget(&key);
@@ -225,6 +227,34 @@ void SnapshotStore::BeginRefresh(const std::wstring& path) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = map_.find(key);
     if (it != map_.end()) it->second.dirty = false;
+}
+
+bool SnapshotStore::ListedSince(const std::wstring& path, uint64_t armed_at) const {
+    const std::wstring key = NormalizePath(path);
+    if (!path.empty() && key.empty()) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = map_.find(key);
+    return it != map_.end() && it->second.snapshot && !it->second.dirty &&
+           it->second.listed_at != 0 && it->second.listed_at >= armed_at;
+}
+
+void SnapshotStore::NoteArm(const std::wstring& path, uint64_t armed_at) {
+    const std::wstring key = NormalizePath(path);
+    if (!path.empty() && key.empty()) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = map_.find(key);
+    if (it != map_.end()) it->second.arm_pending = (std::max)(it->second.arm_pending, armed_at);
+}
+
+bool SnapshotStore::TakeArmMissed(const std::wstring& path, uint64_t listed_at) {
+    const std::wstring key = NormalizePath(path);
+    if (!path.empty() && key.empty()) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = map_.find(key);
+    if (it == map_.end() || it->second.arm_pending == 0) return false;
+    const bool missed = listed_at == 0 || listed_at < it->second.arm_pending;
+    it->second.arm_pending = 0;
+    return missed;
 }
 
 size_t SnapshotStore::EntryCount() const {

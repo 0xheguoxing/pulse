@@ -48,6 +48,7 @@ struct WorkResult {
     bool bitlocker_locked = false; // error: the drive is a locked BitLocker volume
     double enum_ms = 0.0;
     double sort_ms = 0.0;
+    uint64_t listed_at = 0;  // fs::WatchClock when a folder listing began
     fs::RecycleBinInfo recycle_info;
 };
 

@@ -9,6 +9,7 @@
 #include "../fs/bounded_enumeration.h"
 #include "../fs/fs_recycle.h"
 #include "../fs/fs_net_cache.h"
+#include "../fs/fs_watch.h"
 #include "../common/runtime_log.h"
 #include "startup_trace.h"
 #include <algorithm>
@@ -214,6 +215,10 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
             return res;
         }
     } else {
+        // A watch starting on this folder arms first (briefly bounded): its
+        // arm report then needs no second listing (fs::ArmedAt).
+        fs::WaitForStartingWatch(item.path, 2, fs::IsUncPath(item.path) ? 150 : 10);
+        res.listed_at = fs::WatchClock();
         try {
             struct Listing {
                 std::vector<fs::DirEntry> entries;
