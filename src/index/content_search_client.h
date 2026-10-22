@@ -45,6 +45,7 @@ private:
     friend struct ContentRefreshTestPeer;
     struct Command { uint32_t type; std::vector<uint8_t> payload; };
     void Worker();
+    void EnsureWorker();
     struct ActiveQuery {
         uint64_t session_id = 0, generation = 0;
         HANDLE cancel = nullptr;
@@ -76,6 +77,7 @@ private:
     HANDLE job_ = nullptr;
     HANDLE cancel_event_ = nullptr;
     std::wstring persistent_token_;
+    std::mutex worker_mu_;  // guards worker_ (EnsureWorker, Stop)
     std::thread worker_;
     mutable std::mutex state_mu_;
     std::condition_variable wake_;

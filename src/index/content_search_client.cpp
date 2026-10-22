@@ -180,7 +180,14 @@ void ContentSearchClient::Start(HWND notify, UINT update_message, bool persisten
     if (job_) { JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{}; limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         if (!SetInformationJobObject(job_, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) { CloseHandle(job_); job_ = nullptr; } }
     running_ = true;
-    worker_ = std::thread([this] { Worker(); });
+    // A legacy persistent client polls its agent, so it needs the worker now.
+    if (persistent) EnsureWorker();
+}
+// Started by the first command or search, so a client that is never used
+// (the duplicate scan until it is opened) keeps no idle thread.
+void ContentSearchClient::EnsureWorker() {
+    std::lock_guard lock(worker_mu_);
+    if (running_ && !worker_.joinable()) worker_ = std::thread([this] { Worker(); });
 }
 void ContentSearchClient::Start(HWND notify, UINT update_message, ContentAgentMode mode) {
     // The non-persistent worker waits for a command before the mode is published.
@@ -202,7 +209,10 @@ void ContentSearchClient::Stop() {
     running_ = false;
     if (cancel_event_) SetEvent(cancel_event_);
     Cancel(); wake_.notify_all();
-    if (worker_.joinable()) worker_.join();
+    {
+        std::lock_guard lock(worker_mu_);
+        if (worker_.joinable()) worker_.join();
+    }
     if (cancel_event_) { CloseHandle(cancel_event_); cancel_event_ = nullptr; }
     if (job_) { CloseHandle(job_); job_ = nullptr; }
     std::lock_guard lock(updates_mu_); updates_.clear();
@@ -242,10 +252,12 @@ void ContentSearchClient::SearchAsync(ContentSearchRequest request) {
         pending_requests_.push_back(std::move(request));
     }
     wake_.notify_all();
+    EnsureWorker();
 }
 void ContentSearchClient::Enqueue(Command command) {
     { std::lock_guard lock(state_mu_); commands_.push_back(std::move(command)); }
     wake_.notify_all();
+    EnsureWorker();
 }
 void ContentSearchClient::Configure(const ContentIndexConfig& config) {
     ipc::PayloadWriter writer; content::PutConfig(writer, config);
