@@ -31,28 +31,24 @@ constexpr wchar_t kConflictClass[] = L"PulseFileConflictWindow";
 constexpr wchar_t kDeleteClass[] = L"PulsePermanentDeleteWindow";
 constexpr wchar_t kLockedClass[] = L"PulseLockedItemWindow";
 constexpr UINT_PTR kRenderTimer = 1;
-// Progress card, pulse_ops_dialogs.html §1 (DIPs). The footer stays anchored
-// to the bottom edge; everything above it is laid out from the top.
-constexpr float kDlgW = 468.0f;
-constexpr float kTitleH = 40.0f;      // drag strip; the header tile overlaps it
+// Progress window, Pulse_文件操作对话框_重设计.html §1 (DIPs). The footer
+// stays anchored to the bottom edge; everything above it is laid out from the
+// top: title 8, route 34, percent 62, graph 100–156, rows 166–202.
+constexpr float kDlgW = 440.0f;
+constexpr float kTitleH = 40.0f;      // drag strip
 constexpr float kCaptionH = 36.0f;    // minimize / close buttons
-constexpr float kPadX = 18.0f;
+constexpr float kPadX = 16.0f;
 constexpr float kFooterH = 56.0f;
-constexpr float kCollapsedH = 348.0f;
-constexpr float kDetailsBlockH = 104.0f;
+constexpr float kContentH = 216.0f;   // above the footer, collapsed
+constexpr float kCollapsedH = kContentH + kFooterH;
+constexpr float kDetailsBlockH = 150.0f;
 constexpr float kDetailedH = kCollapsedH + kDetailsBlockH;
-constexpr float kGraphTop = 118.0f;
-constexpr float kGraphH = 72.0f;
-constexpr float kItemTop = 198.0f;
-constexpr float kStatsTop = 226.0f;
-constexpr float kStatsH = 44.0f;
-constexpr float kDetailsTop = 280.0f;
-// Failed items (partial failure) are listed where the stats were; the stats
-// and details move down below the list.
+// Partial failure: the failed items are listed in place of the percent,
+// graph and rows; the window grows or shrinks to fit the list.
+constexpr float kFailListTop = 90.0f;
 constexpr float kFailRowH = 36.0f;
 constexpr size_t kFailMaxRows = 4;
 constexpr float kFailMoreH = 22.0f;
-constexpr float kFailGap = 10.0f;
 constexpr int kHitOpen = 8;
 constexpr int kHitFailRow = 20;   // + visible row
 constexpr size_t kTimeGraphPoints = ops::OpSpeedGraph::kMaxTimePoints;
@@ -133,6 +129,11 @@ TransferLabels MakeTransferLabels(const ops::OpStatus& status, bool detailed,
         labels.cancel_retries = partial.can_retry;
         labels.cancel_primary = partial.can_retry;
         if (partial.can_retry) labels.cancel = l10n::Get(l10n::StringId::OpRetryFailedItems);
+    } else if (!status.active && partial.can_open &&
+               (status.type == ops::OpType::Copy || status.type == ops::OpType::Move) &&
+               (status.phase == ops::OpPhase::Completed || status.phase == ops::OpPhase::Failed)) {
+        labels.show_open = true;
+        labels.open = l10n::Get(l10n::StringId::OpOpenDestination);
     }
     return labels;
 }
@@ -177,7 +178,8 @@ TransferChrome MakeTransferChrome(float scale, float width, float height,
                                          painter.MeasureButtonWidth(labels.retry_reserve, L"\xEA18"));
         chrome.retry = D2D1::RectF(next_right - retry_w, y0, next_right, y1);
     }
-    if (labels.show_details) chrome.details = painter.FitButtonBounds(D2D1::RectF(pad, y0, pad, y1),
+    const float details_x = pad - ScaleDip(scale, 8.0f);
+    if (labels.show_details) chrome.details = painter.FitButtonBounds(D2D1::RectF(details_x, y0, details_x, y1),
                                              labels.details, L"\xE70D");
     return chrome;
 }
@@ -294,11 +296,11 @@ void StrokeArc(ID2D1DeviceContext* dc, D2D1_POINT_2F center, float radius, float
     dc->DrawGeometry(path.get(), brush.get(), stroke, style.get());
 }
 
-// Smoothed speed area: midpoint-x cubic segments, a soft vertical gradient
-// under the curve and a 1.6-DIP line on top (the HTML's svg path).
+// Speed area (the HTML's svg): midpoint-x cubic segments, a flat fill under
+// the curve and a 1.5-DIP line on top.
 void DrawSpeedArea(ID2D1DeviceContext* dc, const D2D1_RECT_F& plot,
-                   const std::vector<D2D1_POINT_2F>& points, D2D1_COLOR_F tone,
-                   float fill_alpha, float scale) {
+                   const std::vector<D2D1_POINT_2F>& points, D2D1_COLOR_F line_color,
+                   D2D1_COLOR_F fill_color, float scale) {
     if (!dc || points.size() < 2) return;
     auto factory = FactoryOf(dc);
     if (!factory.get()) return;
@@ -318,12 +320,9 @@ void DrawSpeedArea(ID2D1DeviceContext* dc, const D2D1_RECT_F& plot,
             add_curve(sink.get());
             sink->AddLine(D2D1::Point2F(points.back().x, plot.bottom));
             sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-            if (SUCCEEDED(sink->Close())) {
-                auto fill = LinearBrush(dc, D2D1::Point2F(0, plot.top), D2D1::Point2F(0, plot.bottom),
-                                        WithAlpha(tone, 0.42f * fill_alpha),
-                                        WithAlpha(tone, 0.02f * fill_alpha));
-                if (fill.get()) dc->FillGeometry(area.get(), fill.get());
-            }
+            ComPtr<ID2D1SolidColorBrush> fill;
+            if (SUCCEEDED(sink->Close()) && SUCCEEDED(dc->CreateSolidColorBrush(fill_color, &fill)))
+                dc->FillGeometry(area.get(), fill.get());
         }
     }
     ComPtr<ID2D1PathGeometry> line;
@@ -333,14 +332,98 @@ void DrawSpeedArea(ID2D1DeviceContext* dc, const D2D1_RECT_F& plot,
             sink->BeginFigure(points.front(), D2D1_FIGURE_BEGIN_HOLLOW);
             add_curve(sink.get());
             sink->EndFigure(D2D1_FIGURE_END_OPEN);
-            if (SUCCEEDED(sink->Close())) {
-                ComPtr<ID2D1SolidColorBrush> brush;
-                if (SUCCEEDED(dc->CreateSolidColorBrush(WithAlpha(tone, 0.95f * fill_alpha + 0.05f), &brush))) {
-                    auto style = RoundStroke(factory.get());
-                    dc->DrawGeometry(line.get(), brush.get(), 1.6f * scale, style.get());
-                }
+            ComPtr<ID2D1SolidColorBrush> brush;
+            if (SUCCEEDED(sink->Close()) && SUCCEEDED(dc->CreateSolidColorBrush(line_color, &brush))) {
+                auto style = RoundStroke(factory.get());
+                dc->DrawGeometry(line.get(), brush.get(), 1.5f * scale, style.get());
             }
         }
+    }
+}
+
+// Clips to a rounded rectangle until PopLayer (the graph track's corners).
+bool PushRoundedClip(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float radius) {
+    auto factory = FactoryOf(dc);
+    if (!factory.get()) return false;
+    ComPtr<ID2D1RoundedRectangleGeometry> geometry;
+    if (FAILED(factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(rect, radius, radius), &geometry)))
+        return false;
+    dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), geometry.get()), nullptr);
+    return true;
+}
+
+enum class StatusIcon { None, Ok, Error, Warning, Shield };
+
+// The HTML's 16-DIP status icons at (x, y) DIPs: a filled circle (triangle
+// for a warning) with a white mark; dark on the light dark-theme colours.
+void DrawStatusIcon(ID2D1DeviceContext* dc, StatusIcon kind, float x, float y, float scale,
+                    D2D1_COLOR_F color, bool dark_mark) {
+    if (!dc || kind == StatusIcon::None) return;
+    auto factory = FactoryOf(dc);
+    if (!factory.get()) return;
+    auto at = [&](float px, float py) { return D2D1::Point2F((x + px) * scale, (y + py) * scale); };
+    auto style = RoundStroke(factory.get());
+    ComPtr<ID2D1SolidColorBrush> fill;
+    ComPtr<ID2D1SolidColorBrush> mark;
+    if (FAILED(dc->CreateSolidColorBrush(color, &fill)) ||
+        FAILED(dc->CreateSolidColorBrush(dark_mark ? HexColor(0x000000, 0.86f) : HexColor(0xFFFFFF), &mark)))
+        return;
+    auto path = [&](std::initializer_list<D2D1_POINT_2F> pts, bool closed) {
+        ComPtr<ID2D1PathGeometry> geometry;
+        if (FAILED(factory->CreatePathGeometry(&geometry))) return geometry;
+        ComPtr<ID2D1GeometrySink> sink;
+        if (FAILED(geometry->Open(&sink))) return ComPtr<ID2D1PathGeometry>();
+        auto it = pts.begin();
+        sink->BeginFigure(*it, closed ? D2D1_FIGURE_BEGIN_FILLED : D2D1_FIGURE_BEGIN_HOLLOW);
+        for (++it; it != pts.end(); ++it) sink->AddLine(*it);
+        sink->EndFigure(closed ? D2D1_FIGURE_END_CLOSED : D2D1_FIGURE_END_OPEN);
+        if (FAILED(sink->Close())) return ComPtr<ID2D1PathGeometry>();
+        return geometry;
+    };
+    const float stroke = 1.4f * scale;
+    if (kind == StatusIcon::Shield) {
+        // Two-tone shield (the UAC mark), built from cubic halves.
+        ComPtr<ID2D1SolidColorBrush> blue;
+        ComPtr<ID2D1SolidColorBrush> gold;
+        if (FAILED(dc->CreateSolidColorBrush(HexColor(0x2F6FD6), &blue)) ||
+            FAILED(dc->CreateSolidColorBrush(HexColor(0xF2B90F), &gold)))
+            return;
+        for (int half = 0; half < 2; ++half) {
+            ComPtr<ID2D1PathGeometry> geometry;
+            if (FAILED(factory->CreatePathGeometry(&geometry))) return;
+            ComPtr<ID2D1GeometrySink> sink;
+            if (FAILED(geometry->Open(&sink))) return;
+            sink->BeginFigure(at(8.0f, 1.5f), D2D1_FIGURE_BEGIN_FILLED);
+            sink->AddLine(at(13.5f, 3.5f));
+            sink->AddLine(at(13.5f, 7.7f));
+            sink->AddBezier(D2D1::BezierSegment(at(13.5f, 11.0f), at(11.2f, 13.6f), at(8.0f, 14.5f)));
+            if (half == 0) {
+                sink->AddBezier(D2D1::BezierSegment(at(4.8f, 13.6f), at(2.5f, 11.0f), at(2.5f, 7.7f)));
+                sink->AddLine(at(2.5f, 3.5f));
+            }
+            sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+            if (FAILED(sink->Close())) return;
+            dc->FillGeometry(geometry.get(), half == 0 ? blue.get() : gold.get());
+        }
+        return;
+    }
+    if (kind == StatusIcon::Warning) {
+        auto triangle = path({ at(8.0f, 1.9f), at(14.6f, 14.1f), at(1.4f, 14.1f) }, true);
+        if (triangle.get()) {
+            dc->FillGeometry(triangle.get(), fill.get());
+            dc->DrawGeometry(triangle.get(), fill.get(), 1.2f * scale, style.get());
+        }
+        dc->DrawLine(at(8.0f, 5.9f), at(8.0f, 9.4f), mark.get(), stroke, style.get());
+        dc->FillEllipse(D2D1::Ellipse(at(8.0f, 11.9f), 0.9f * scale, 0.9f * scale), mark.get());
+        return;
+    }
+    dc->FillEllipse(D2D1::Ellipse(at(8.0f, 8.0f), 7.5f * scale, 7.5f * scale), fill.get());
+    if (kind == StatusIcon::Ok) {
+        auto check = path({ at(4.8f, 8.2f), at(6.9f, 10.3f), at(11.2f, 5.9f) }, false);
+        if (check.get()) dc->DrawGeometry(check.get(), mark.get(), stroke, style.get());
+    } else {
+        dc->DrawLine(at(5.6f, 5.6f), at(10.4f, 10.4f), mark.get(), stroke, style.get());
+        dc->DrawLine(at(10.4f, 5.6f), at(5.6f, 10.4f), mark.get(), stroke, style.get());
     }
 }
 
@@ -2352,13 +2435,13 @@ void FileOperationWindow::CreateCardFormats() {
         out->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     };
-    make(pct_format_, typography::FontRole::Display, 34.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    make(pct_format_, typography::FontRole::Display, 28.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
     make(unit_format_, typography::FontRole::Display, 16.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
-    make(title_format_, typography::FontRole::Text, 15.0f, DWRITE_FONT_WEIGHT_BOLD);
-    make(speed_format_, typography::FontRole::Display, 17.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
-    make(label_format_, typography::FontRole::Text, 11.5f, DWRITE_FONT_WEIGHT_NORMAL);
-    make(value_format_, typography::FontRole::Text, 13.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
-    make(chip_format_, typography::FontRole::Text, 11.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    make(title_format_, typography::FontRole::Text, 14.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    make(speed_format_, typography::FontRole::Text, 14.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    make(label_format_, typography::FontRole::Text, 12.0f, DWRITE_FONT_WEIGHT_NORMAL);
+    make(value_format_, typography::FontRole::Text, 13.0f, DWRITE_FONT_WEIGHT_NORMAL);
+    make(chip_format_, typography::FontRole::Text, 13.0f, DWRITE_FONT_WEIGHT_NORMAL);
     make(glyph_format_, typography::FontRole::Icon, 12.0f, DWRITE_FONT_WEIGHT_NORMAL);
     make(tile_glyph_format_, typography::FontRole::Icon, 18.0f, DWRITE_FONT_WEIGHT_NORMAL);
     if (glyph_format_.get()) glyph_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -2385,9 +2468,9 @@ std::wstring FormatCounts(l10n::StringId id, uint64_t first, uint64_t second = 0
 
 TransferFailureView FileOperationWindow::FailureView() const {
     TransferFailureView view;
+    view.can_open = !status_.destination_dir.empty() && callbacks_.open_folder != nullptr;
     if (!board_) return view;
     view.on = true;
-    view.can_open = !status_.destination_dir.empty() && callbacks_.open_folder != nullptr;
     if (callbacks_.retry_failed)
         view.can_retry = std::any_of(board_->rows.begin(), board_->rows.end(), [](const FailureRow& row) {
             return row.state == FailureRow::State::Failed;
@@ -2406,8 +2489,9 @@ size_t FileOperationWindow::VisibleFailureRows() const {
 
 float FileOperationWindow::FailureBlockDip() const {
     if (!board_) return 0.0f;
-    return static_cast<float>(VisibleFailureRows()) * kFailRowH +
-           (board_->unlisted > 0 ? kFailMoreH : 0.0f) + kFailGap;
+    const float list_h = static_cast<float>(VisibleFailureRows()) * kFailRowH +
+                         (board_->unlisted > 0 ? kFailMoreH : 0.0f) + 2.0f;
+    return kFailListTop + list_h + 14.0f - kContentH;
 }
 
 // The task that failed, with what its retries have fixed since: once nothing
@@ -2787,7 +2871,6 @@ void FileOperationWindow::Render() {
     const float width = static_cast<float>(compositor_.Width());
     const float height = static_cast<float>(compositor_.Height());
     const float dip_w = width / std::max(s, 0.001f);
-    const float dip_h = height / std::max(s, 0.001f);
     const float content_w = dip_w - kPadX * 2.0f;
     auto* factory = compositor_.DwriteFactory();
     const auto labels = MakeTransferLabels(status_, detailed_, FailureView());
@@ -2822,44 +2905,27 @@ void FileOperationWindow::Render() {
     const ops::OpSpeedBasis shown_basis = status_.speed_basis == ops::OpSpeedBasis::None
         ? ops::OpSpeedBasis::Bytes : status_.speed_basis;
 
-    // State colour (spec "状态色"): accent while running, amber paused or
-    // waiting for permission, violet waiting on a conflict, green done.
-    const D2D1_COLOR_F amber = dark_ ? HexColor(0xF0B041) : HexColor(0xC98410);
-    const D2D1_COLOR_F violet = dark_ ? HexColor(0xA78BFA) : HexColor(0x7C5CE6);
-    const D2D1_COLOR_F green = dark_ ? HexColor(0x3CCF8E) : HexColor(0x16A36A);
-    const D2D1_COLOR_F accent2 = dark_ ? HexColor(0x8F9CF0) : theme.accent;
-    D2D1_COLOR_F tone = high_contrast ? theme.accent : accent2;
-    if (failed) tone = theme.danger;
-    else if (completed && !high_contrast) tone = green;
-    else if ((authorization || paused) && !high_contrast) tone = amber;
-    else if (waiting && !high_contrast) tone = violet;
-    const D2D1_COLOR_F faint = WithAlpha(theme.text, dark_ ? 0.42f : 0.45f);
-    const D2D1_COLOR_F well = dark_ ? HexColor(0xFFFFFF, 0.045f) : HexColor(0x000000, 0.035f);
-    const D2D1_COLOR_F well_line = dark_ ? HexColor(0xFFFFFF, 0.06f) : HexColor(0x000000, 0.06f);
+    // Colours (Pulse_文件操作对话框_重设计.html): the accent carries the
+    // progress; paused, waiting and failed turn the graph grey. Status colours
+    // show only in the title icon and the graph's end dot.
+    auto mix = [](D2D1_COLOR_F a, D2D1_COLOR_F b, float t) {
+        return D2D1::ColorF(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, a.a);
+    };
+    const D2D1_COLOR_F accent = high_contrast ? theme.accent
+        : dark_ ? mix(theme.accent, HexColor(0xFFFFFF), 0.28f) : theme.accent;
+    const D2D1_COLOR_F link = high_contrast ? theme.accent
+        : dark_ ? mix(theme.accent, HexColor(0xFFFFFF), 0.45f) : mix(theme.accent, HexColor(0x000000), 0.2f);
+    const D2D1_COLOR_F text3 = WithAlpha(theme.text, dark_ ? 0.544f : 0.446f);
+    const D2D1_COLOR_F ok_color = high_contrast ? theme.accent : dark_ ? HexColor(0x6CCB5F) : HexColor(0x0F7B0F);
+    const D2D1_COLOR_F warn_color = high_contrast ? theme.accent : dark_ ? HexColor(0xFCE100) : HexColor(0x9D5D00);
+    const D2D1_COLOR_F bad_color = high_contrast ? theme.danger : dark_ ? HexColor(0xFF99A4) : HexColor(0xC42B1C);
+    const D2D1_COLOR_F track = high_contrast ? WithAlpha(theme.text, 0.12f)
+        : dark_ ? HexColor(0xFFFFFF, 0.06f) : HexColor(0x000000, 0.045f);
+    const D2D1_COLOR_F stroke = high_contrast ? theme.text
+        : dark_ ? HexColor(0xFFFFFF, 0.0698f) : HexColor(0x000000, 0.0578f);
     const float fraction = status_.percent < 0.0f ? 0.0f
         : std::clamp(status_.percent / 100.0f, 0.0f, 1.0f);
-
-    // 2-DIP progress hairline along the top edge.
-    if (!authorization && (fraction > 0.0f || completed)) {
-        const float bar_w = width * (completed ? 1.0f : fraction);
-        painter_.FillRoundedRect(D2D1::RectF(0, 0, bar_w, ScaleDip(s, 2.0f)), 0, WithAlpha(tone, 0.9f));
-    }
-
-    // --- Header: gradient tile, title, route chips ---------------------------
-    D2D1_COLOR_F tile_top = HexColor(0x7D8CF0), tile_bottom = HexColor(0x5260C0);
-    const wchar_t* tile_glyph = L"\xE8C8";
-    if (moving) { tile_top = HexColor(0xF0A85A); tile_bottom = HexColor(0xC9702A); tile_glyph = L"\xE7C2"; }
-    else if (deleting || emptying) { tile_top = HexColor(0xF07A73); tile_bottom = HexColor(0xC4433D); tile_glyph = L"\xE74D"; }
-    else if (restoring) { tile_top = HexColor(0x4CC2C9); tile_bottom = HexColor(0x2A8F96); tile_glyph = L"\xE777"; }
-    else if (creating) tile_glyph = status_.type == ops::OpType::CreateFolder ? L"\xE8F4" : L"\xE8A5";
-    else if (renaming) tile_glyph = L"\xE8AC";
-    if (authorization) { tile_top = HexColor(0xF0B041); tile_bottom = HexColor(0xC98410); tile_glyph = L"\xEA18"; }
-    else if (failed) { tile_top = HexColor(0xF07A73); tile_bottom = HexColor(0xC4433D); tile_glyph = L"\xE7BA"; }
-    else if (completed) { tile_top = HexColor(0x4FD99C); tile_bottom = HexColor(0x1F9E66); tile_glyph = L"\xE73E"; }
-    const auto tile = Rect(s, kPadX, 14, 40, 40);
-    if (high_contrast) painter_.FillRoundedRect(tile, ScaleDip(s, 11.0f), theme.accent);
-    else FillGradientTile(dc, tile, ScaleDip(s, 11.0f), tile_top, tile_bottom);
-    painter_.DrawGlyphWithFormat(tile_glyph, tile, high_contrast ? theme.accent_text : HexColor(0xFFFFFF), tile_glyph_format_.get());
+    const bool list_mode = board_.has_value() && !authorization;
 
     const uint64_t item_count = status_.total_items > 0 ? status_.total_items
         : (std::max)(status_.completed_items, static_cast<uint64_t>(1));
@@ -2900,49 +2966,53 @@ void FileOperationWindow::Render() {
             : moving ? l10n::StringId::OpMovingPrefix : l10n::StringId::OpCopyingPrefix)
             + pulse::format::GroupedInt(item_count) + items_suffix;
     }
-    const float title_right = chrome.minimize.left / s - 6.0f;
-    DrawEllipsizedText(compositor_, title_format_.get(), Rect(s, 70, 12, title_right - 70.0f, 24),
+    // Title, with a status icon once the task has ended.
+    StatusIcon title_icon = StatusIcon::None;
+    D2D1_COLOR_F icon_color = ok_color;
+    if (authorization) title_icon = StatusIcon::None;
+    else if (partial) { title_icon = StatusIcon::Warning; icon_color = warn_color; }
+    else if (failed) { title_icon = StatusIcon::Error; icon_color = bad_color; }
+    else if (completed) title_icon = StatusIcon::Ok;
+    const float title_x = title_icon == StatusIcon::None ? kPadX : kPadX + 24.0f;
+    const float title_right = chrome.minimize.left / s - 8.0f;
+    if (title_icon != StatusIcon::None)
+        DrawStatusIcon(dc, title_icon, kPadX, 12.0f, s, icon_color, dark_ && !high_contrast);
+    DrawEllipsizedText(compositor_, title_format_.get(), Rect(s, title_x, 8, title_right - title_x, 24),
                        title, theme.text);
 
-    // Route: [folder source] → [folder destination]; single chip otherwise.
+    // Route: one line of text, source → destination.
     const std::wstring src = status_.source_label.empty()
         ? l10n::Get(l10n::StringId::OpSourceShort) : status_.source_label;
     const bool two_ends = !status_.destination_label.empty() && !deleting && !emptying && !restoring
                        && !creating && !renaming;
-    const D2D1_COLOR_F folder = dark_ ? HexColor(0xF0B041) : HexColor(0xD99A1E);
-    auto draw_chip = [&](float x, float max_w, const std::wstring& text) -> float {
-        const float text_w = TextWidth(factory, compositor_.SmallFormat(), text) / s;
-        const float w = (std::min)(max_w, text_w + 28.0f);
-        if (w < 30.0f) return x;
-        const auto chip = Rect(s, x, 37, w, 21);
-        painter_.FillRoundedRect(chip, ScaleDip(s, 6.0f), well);
-        painter_.StrokeRoundedRect(chip, ScaleDip(s, 6.0f), well_line);
-        painter_.DrawGlyphWithFormat(L"\xE8B7", Rect(s, x + 4, 37, 16, 21), folder, glyph_format_.get());
-        DrawEllipsizedText(compositor_, compositor_.SmallFormat(), Rect(s, x + 21, 39, w - 26, 17),
-                           text, theme.text_secondary);
-        return x + w;
-    };
-    if (emptying) {
-        draw_chip(70, dip_w - 70 - kPadX, l10n::Get(l10n::StringId::OpEmptyingSub));
-    } else if (two_ends) {
-        const float avail = dip_w - 70.0f - kPadX - 22.0f;
-        const float first_w = TextWidth(factory, compositor_.SmallFormat(), src) / s + 28.0f;
-        const float second_w = TextWidth(factory, compositor_.SmallFormat(), status_.destination_label) / s + 28.0f;
-        float a = first_w, b = second_w;
-        if (a + b > avail) {
-            const float half = avail * 0.5f;
-            if (a < half) b = avail - a;
-            else if (b < half) a = avail - b;
-            else { a = half; b = half; }
+    {
+        const float y = 34.0f, h = 16.0f;
+        if (emptying) {
+            DrawEllipsizedText(compositor_, label_format_.get(), Rect(s, kPadX, y, content_w, h),
+                               l10n::Get(l10n::StringId::OpEmptyingSub), theme.text_secondary);
+        } else if (two_ends) {
+            const std::wstring arrow = L"\x2192";
+            const float arrow_w = TextWidth(factory, label_format_.get(), arrow) / s + 8.0f;
+            float a = TextWidth(factory, label_format_.get(), src) / s + 1.0f;
+            float b = TextWidth(factory, label_format_.get(), status_.destination_label) / s + 1.0f;
+            const float avail = content_w - arrow_w;
+            if (a + b > avail) {
+                const float half = avail * 0.5f;
+                if (a < half) b = avail - a;
+                else if (b < half) a = avail - b;
+                else { a = half; b = half; }
+            }
+            DrawEllipsizedText(compositor_, label_format_.get(), Rect(s, kPadX, y, a, h), src, theme.text);
+            painter_.DrawText(arrow, Rect(s, kPadX + a, y, arrow_w, h), label_format_.get(), text3,
+                              fluent::HorizontalAlignment::Center);
+            DrawEllipsizedText(compositor_, label_format_.get(), Rect(s, kPadX + a + arrow_w, y, b, h),
+                               status_.destination_label, theme.text);
+        } else {
+            DrawEllipsizedText(compositor_, label_format_.get(), Rect(s, kPadX, y, content_w, h), src, theme.text);
         }
-        const float after = draw_chip(70, a, src);
-        painter_.DrawGlyphWithFormat(L"\xE72A", Rect(s, after + 3, 37, 16, 21), faint, glyph_format_.get());
-        draw_chip(after + 22, b, status_.destination_label);
-    } else {
-        draw_chip(70, dip_w - 70 - kPadX, src);
     }
 
-    // Title-bar buttons, with the auto-close ring around close.
+    // Title-bar buttons. The auto-close countdown drains under 关闭 instead.
     fluent::ControlState minimize{};
     minimize.hovered = hover_ == 2;
     minimize.pressed = pressed_ == 2;
@@ -2952,63 +3022,6 @@ void FileOperationWindow::Render() {
     close.pressed = pressed_ == 1;
     painter_.DrawTitleBarButton(chrome.close, fluent::TitleBarButtonRole::Close, {}, close);
     const bool counting = AutoClosePending() || closing_;
-    if (counting) {
-        const float left = closing_ || countdown_hover_ ? 1.0f
-            : 1.0f - std::clamp(static_cast<float>(now - countdown_base_) / kAutoCloseMs, 0.0f, 1.0f);
-        const D2D1_POINT_2F c = D2D1::Point2F((chrome.close.left + chrome.close.right) * 0.5f,
-                                              (chrome.close.top + chrome.close.bottom) * 0.5f);
-        const float r = ScaleDip(s, 11.0f);
-        StrokeArc(dc, c, r, 0.0f, 360.0f, WithAlpha(green, 0.18f), ScaleDip(s, 2.0f));
-        StrokeArc(dc, c, r, 360.0f * (1.0f - left), 360.0f * left, green, ScaleDip(s, 2.0f));
-    }
-
-    // --- Percent, state chip and speed -----------------------------------
-    float chip_x = kPadX;
-    if (!authorization && status_.percent >= 0.0f) {
-        const int whole = static_cast<int>(std::floor(fraction * 100.0f + (completed ? 0.5f : 0.0f)));
-        const std::wstring pct = std::to_wstring(completed ? 100 : whole);
-        const float pct_w = TextWidth(factory, pct_format_.get(), pct) / s;
-        painter_.DrawText(pct, Rect(s, kPadX - 1, 66, pct_w + 4, 44), pct_format_.get(),
-                          failed ? theme.danger : theme.text);
-        painter_.DrawText(L"%", Rect(s, kPadX + pct_w + 1, 78, 20, 26), unit_format_.get(),
-                          theme.text_secondary);
-        const float unit_w = TextWidth(factory, unit_format_.get(), L"%") / s;
-        chip_x = kPadX + pct_w + unit_w + 12.0f;
-    }
-    std::wstring chip_text;
-    if (authorization) chip_text = l10n::Get(requesting ? l10n::StringId::OpAuthorizationRequesting
-                                                         : l10n::StringId::OpAuthorizationRequired);
-    else if (partial) chip_text = l10n::Get(l10n::StringId::OpPartialBadge);
-    else if (failed) chip_text = l10n::Get(l10n::StringId::OpFailedBadge);
-    else if (completed) chip_text = l10n::Get(emptying ? l10n::StringId::OpEmptied : l10n::StringId::OpCompleted);
-    else if (cancelling) chip_text = l10n::Get(l10n::StringId::OpCancelling);
-    else if (pausing) chip_text = l10n::Get(l10n::StringId::OpPausing);
-    else if (paused) chip_text = l10n::Get(l10n::StringId::OpPaused);
-    else if (waiting) chip_text = l10n::Get(l10n::StringId::OpWaitingConflict);
-    else if (scanning) chip_text = l10n::Get(l10n::StringId::OpPreparing);
-    else if (emptying) chip_text = l10n::Get(l10n::StringId::OpEmptying);
-    else chip_text = l10n::Get(deleting ? l10n::StringId::OpDeleting : restoring ? l10n::StringId::OpRestoringPrefix
-        : moving ? l10n::StringId::OpMoving : l10n::StringId::OpCopying);
-    while (!chip_text.empty() && chip_text.back() == L' ') chip_text.pop_back();
-    {
-        const float text_w = TextWidth(factory, chip_format_.get(), chip_text) / s;
-        const float chip_w = text_w + 26.0f;
-        const auto chip = Rect(s, chip_x, 80, chip_w, 22);
-        painter_.FillRoundedRect(chip, ScaleDip(s, 11.0f), WithAlpha(tone, dark_ ? 0.16f : 0.12f));
-        const D2D1_POINT_2F dot = D2D1::Point2F(ScaleDip(s, chip_x + 11.0f), ScaleDip(s, 91.0f));
-        const bool live = status_.active && !paused && !waiting && !authorization && !cancelling;
-        if (pausing || requesting || scanning) {
-            const float spin = static_cast<float>(now % 900) / 900.0f * 360.0f;
-            StrokeArc(dc, dot, ScaleDip(s, 4.0f), spin, 270.0f, tone, ScaleDip(s, 1.5f));
-        } else {
-            float alpha = 1.0f;
-            if (live) alpha = 0.45f + 0.55f * std::fabs(std::cos(static_cast<float>(now % 1600) / 1600.0f * kPi));
-            painter_.FillRoundedRect(D2D1::RectF(dot.x - ScaleDip(s, 3.0f), dot.y - ScaleDip(s, 3.0f),
-                                                 dot.x + ScaleDip(s, 3.0f), dot.y + ScaleDip(s, 3.0f)),
-                                     ScaleDip(s, 3.0f), WithAlpha(tone, alpha));
-        }
-        painter_.DrawText(chip_text, Rect(s, chip_x + 19, 80, text_w + 4, 22), chip_format_.get(), tone);
-    }
 
     const double live_speed = status_.speed_basis == ops::OpSpeedBasis::Items
         ? status_.items_per_second : status_.bytes_per_second;
@@ -3021,331 +3034,329 @@ void FileOperationWindow::Render() {
     const double done_amount = byte_basis ? static_cast<double>(status_.transferred_bytes)
                                           : static_cast<double>(status_.completed_items);
     const double average = elapsed_s >= 0.25 ? done_amount / elapsed_s : 0.0;
-    if (!authorization) {
-        std::wstring big;
-        std::wstring sub;
-        D2D1_COLOR_F big_color = theme.text;
-        if (completed || partial) {
-            big = average > 0.0 ? l10n::Get(l10n::StringId::OpAverageLead) + FormatSpeedText(shown_basis, average)
-                                : std::wstring();
-            sub = l10n::Get(l10n::StringId::OpTookLead) + FormatElapsed(elapsed_ms / 1000);
-        } else if (scanning) {
-            // Nothing measured yet: the chip already reads 准备中.
-        } else if (status_.speed_basis == ops::OpSpeedBasis::None) {
-            big = l10n::Get(l10n::StringId::OpNoEstimate);
-            big_color = theme.text_secondary;
-        } else if (failed || paused || waiting || cancelling) {
-            big = L"—";
-            big_color = theme.text_secondary;
-            if (peak_speed > 0.0) sub = l10n::Get(l10n::StringId::OpPeak) + FormatSpeedText(shown_basis, peak_speed);
-        } else if (live_speed <= 0.0) {
-            big = l10n::Get(l10n::StringId::OpEstimating);
-            big_color = theme.text_secondary;
-        } else {
-            big = FormatSpeedText(shown_basis, live_speed);
-            if (peak_speed > 0.0) sub = l10n::Get(l10n::StringId::OpPeak) + FormatSpeedText(shown_basis, peak_speed);
-        }
-        const float right_w = 190.0f;
-        painter_.DrawText(big, Rect(s, dip_w - kPadX - right_w, 70, right_w, 24), speed_format_.get(),
-                          big_color, fluent::HorizontalAlignment::Right);
-        painter_.DrawText(sub, Rect(s, dip_w - kPadX - right_w, 94, right_w, 16), label_format_.get(),
-                          theme.text_secondary, fluent::HorizontalAlignment::Right);
+
+    // The engine's first estimates come from a cold start (the file cache, a
+    // slow first file) and can read hours for a copy of seconds. Hold 正在估算
+    // for the first 3 s, and while the estimate is far beyond what the
+    // current rate would take.
+    const uint64_t left_bytes = status_.total_bytes > status_.transferred_bytes
+        ? status_.total_bytes - status_.transferred_bytes : 0;
+    const double rate_eta = byte_basis && status_.bytes_per_second > 0.0
+        ? static_cast<double>(left_bytes) / status_.bytes_per_second : 0.0;
+    const bool eta_unsettled = elapsed_ms < 3000 ||
+        (rate_eta > 0.0 && static_cast<double>(status_.eta_seconds) > rate_eta * 4.0 + 30.0);
+    const std::wstring time_text = partial ? std::wstring(L"\x2014")
+        : failed ? l10n::Get(l10n::StringId::OpIncomplete)
+        : completed ? l10n::Get(l10n::StringId::OpCompleted)
+        : paused ? l10n::Get(l10n::StringId::OpPaused)
+        : waiting ? l10n::Get(l10n::StringId::OpWaiting)
+        : emptying ? l10n::Get(l10n::StringId::OpEmptying)
+        : status_.speed_basis == ops::OpSpeedBasis::None ? l10n::Get(l10n::StringId::OpNoEstimate)
+        : status_.eta_seconds == 0 || eta_unsettled ? l10n::Get(l10n::StringId::OpEstimating)
+        : l10n::Get(l10n::StringId::OpApprox) + FormatDuration(status_.eta_seconds);
+    const uint64_t remain_items = status_.total_items > status_.completed_items
+        ? status_.total_items - status_.completed_items : 0;
+    std::wstring remain_text;
+    if (status_.total_items > 0) {
+        if (byte_basis && status_.total_bytes > 0)
+            remain_text = pulse::format::GroupedInt(remain_items) + l10n::Get(l10n::StringId::OpCountBytes)
+                + pulse::format::ByteSize(left_bytes) + L")";
+        else remain_text = pulse::format::GroupedInt(remain_items) + l10n::Get(l10n::StringId::OpCountSuffix);
     }
+    const std::wstring remain_line = remain_text.empty() ? std::wstring()
+        : l10n::Get(l10n::StringId::OpRemainingShort) + L" " + remain_text;
+    const std::wstring dot = L"  \x00B7  ";
+    const std::wstring took = l10n::Get(l10n::StringId::OpTookLead) + FormatElapsed(elapsed_ms / 1000);
+
+    const float hero_y = 62.0f;
+    const float graph_top = 100.0f;
+    const float graph_h = 56.0f;
+    const float rows_top = 166.0f;
+    const float row_h = 18.0f;
+    const bool indeterminate = scanning || status_.percent < 0.0f;
 
     if (authorization) {
-        // Permission view replaces graph, item line and stats.
-        const auto card = Rect(s, kPadX, kGraphTop, content_w, kStatsTop + kStatsH - kGraphTop);
-        painter_.FillRoundedRect(card, ScaleDip(s, 10.0f), well);
-        painter_.StrokeRoundedRect(card, ScaleDip(s, 10.0f), well_line);
-        const auto badge = Rect(s, kPadX + 16, kGraphTop + 18, 36, 36);
-        painter_.FillRoundedRect(badge, ScaleDip(s, 18.0f), WithAlpha(amber, 0.16f));
-        painter_.DrawGlyphWithFormat(L"\xEA18", badge, amber, tile_glyph_format_.get());
+        // Permission view: one message in place of the numbers and the graph.
+        DrawStatusIcon(dc, StatusIcon::Shield, kPadX, hero_y + 1.0f, s, warn_color, false);
         const std::wstring explanation = requesting
             ? l10n::Get(l10n::StringId::OpAuthorizationPrompt)
             : status_.last_error.empty() ? l10n::Get(l10n::StringId::OpAuthorizationNotGranted)
                                         : l10n::ServiceErrorText(status_.last_error);
-        DrawEllipsizedText(compositor_, compositor_.SmallFormat(),
-            Rect(s, kPadX + 66, kGraphTop + 16, content_w - 84, 42), explanation, theme.text, true);
+        DrawEllipsizedText(compositor_, chip_format_.get(),
+            Rect(s, kPadX + 24, hero_y - 1, content_w - 24, 38), explanation, theme.text, true);
         const std::wstring item = l10n::Get(l10n::StringId::OpItemPrefix) +
             (status_.current_item.empty() ? src : status_.current_item);
-        DrawEllipsizedText(compositor_, compositor_.SmallFormat(),
-            Rect(s, kPadX + 66, kGraphTop + 62, content_w - 84, 20), item, theme.text_secondary);
+        DrawEllipsizedText(compositor_, label_format_.get(),
+            Rect(s, kPadX + 24, hero_y + 39, content_w - 24, row_h), item, theme.text_secondary);
         if (requesting) {
             fluent::ProgressSpec bar;
-            bar.bounds = Rect(s, kPadX + 66, kGraphTop + 96, content_w - 84, 4);
+            bar.bounds = Rect(s, kPadX + 24, hero_y + 70, content_w - 24, 4);
             bar.indeterminate = true;
             bar.animation_progress = static_cast<float>(
                 std::fmod(static_cast<double>(now), 1952.0) / 1952.0);
             painter_.DrawProgressBar(bar);
         }
-    } else {
-        // --- Speed graph ---------------------------------------------------
-        const auto plot = Rect(s, kPadX, kGraphTop, content_w, kGraphH);
-        painter_.FillRoundedRect(plot, ScaleDip(s, 10.0f), well);
-        painter_.StrokeRoundedRect(plot, ScaleDip(s, 10.0f), well_line);
-        const D2D1_RECT_F inner = D2D1::RectF(plot.left + 1.0f, plot.top + 1.0f,
-                                              plot.right - 1.0f, plot.bottom - 1.0f);
-        dc->PushAxisAlignedClip(inner, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        for (int k = 1; k <= 3; ++k) {
-            const float y = plot.top + (plot.bottom - plot.top) * k / 4.0f;
-            painter_.FillRoundedRect(D2D1::RectF(inner.left, y, inner.right, y + 1.0f), 0,
-                                     dark_ ? HexColor(0xFFFFFF, 0.035f) : HexColor(0x000000, 0.04f));
-        }
-        const float plot_w = inner.right - inner.left;
-        const float shown_fraction = completed ? 1.0f : fraction;
-        if (graph_.by_progress && status_.percent >= 0.0f && shown_fraction > 0.0f) {
-            painter_.FillRoundedRect(D2D1::RectF(inner.left, inner.top,
-                                                 inner.left + plot_w * shown_fraction, inner.bottom),
-                                     0, WithAlpha(tone, 0.07f));
-        }
-        double max_value = 0.0;
-        for (const auto& point : graph_.points) max_value = (std::max)(max_value, point.v);
-        if (graph_.points.size() >= 2 && max_value > 0.0) {
-            const float top = inner.top + ScaleDip(s, 16.0f);
-            const float bottom = inner.bottom - ScaleDip(s, 3.0f);
-            const double ceiling = max_value * 1.12;
-            std::vector<D2D1_POINT_2F> points;
-            points.reserve(graph_.points.size());
-            const size_t span = (std::max)(graph_.points.size(), kTimeGraphPoints) - 1;
-            for (size_t i = 0; i < graph_.points.size(); ++i) {
-                const float x = graph_.by_progress ? inner.left + plot_w * graph_.points[i].x
-                    : inner.left + plot_w * static_cast<float>(i) / static_cast<float>(span);
-                const float y = bottom - (bottom - top) * static_cast<float>(graph_.points[i].v / ceiling);
-                points.push_back(D2D1::Point2F(x, y));
+    } else if (!list_mode) {
+        // --- Hero: percent on the left, speed or state on the right --------
+        const D2D1_RECT_F right_box = Rect(s, dip_w - kPadX - 220.0f, hero_y + 10.0f, 220.0f, 20.0f);
+        if (indeterminate) {
+            DrawEllipsizedText(compositor_, value_format_.get(), Rect(s, kPadX, hero_y + 10.0f, content_w * 0.55f, 20.0f),
+                               l10n::Get(scanning ? l10n::StringId::OpScanning : l10n::StringId::OpPreparing),
+                               theme.text_secondary);
+            if (status_.total_items > 0) {
+                std::wstring found = pulse::format::GroupedInt(status_.total_items);
+                found += byte_basis && status_.total_bytes > 0
+                    ? l10n::Get(l10n::StringId::OpCountBytes) + pulse::format::ByteSize(status_.total_bytes) + L")"
+                    : l10n::Get(l10n::StringId::OpCountSuffix);
+                painter_.DrawText(found, right_box, value_format_.get(), theme.text_secondary,
+                                  fluent::HorizontalAlignment::Right);
             }
-            const float strength = (paused || waiting || failed) ? 0.55f : 1.0f;
-            DrawSpeedArea(dc, inner, points, tone, strength, s);
-            ComPtr<ID2D1SolidColorBrush> dot_brush;
-            if (!completed && SUCCEEDED(dc->CreateSolidColorBrush(tone, &dot_brush))) {
-                const auto& last = points.back();
-                dc->FillEllipse(D2D1::Ellipse(last, ScaleDip(s, 3.0f), ScaleDip(s, 3.0f)), dot_brush.get());
-                if (status_.active && !paused && !waiting) {
-                    const float pulse = static_cast<float>(now % 1400) / 1400.0f;
-                    ComPtr<ID2D1SolidColorBrush> halo;
-                    if (SUCCEEDED(dc->CreateSolidColorBrush(WithAlpha(tone, 0.35f * (1.0f - pulse)), &halo)))
-                        dc->FillEllipse(D2D1::Ellipse(last, ScaleDip(s, 3.0f + 6.0f * pulse),
-                                                      ScaleDip(s, 3.0f + 6.0f * pulse)), halo.get());
+        } else {
+            const bool muted = failed || paused || cancelling;
+            const int whole = static_cast<int>(std::floor(fraction * 100.0f + (completed ? 0.5f : 0.0f)));
+            const std::wstring pct = std::to_wstring(completed ? 100 : whole);
+            const float pct_w = TextWidth(factory, pct_format_.get(), pct) / s;
+            painter_.DrawText(pct, Rect(s, kPadX - 1, hero_y, pct_w + 4, 32), pct_format_.get(),
+                              muted ? theme.text_secondary : theme.text);
+            painter_.DrawText(L"%", Rect(s, kPadX + pct_w - 1, hero_y + 7, 20, 24), unit_format_.get(),
+                              theme.text_secondary);
+        }
+        if (!indeterminate) {
+            std::wstring state;
+            if (completed) {
+                if (average > 0.0) {
+                    const std::wstring speed = FormatSpeedText(shown_basis, average);
+                    const float speed_w = TextWidth(factory, speed_format_.get(), speed) / s;
+                    painter_.DrawText(speed, right_box, speed_format_.get(), theme.text,
+                                      fluent::HorizontalAlignment::Right);
+                    painter_.DrawText(l10n::Get(l10n::StringId::OpAverageLead),
+                                      Rect(s, dip_w - kPadX - 220.0f, hero_y + 10.0f, 220.0f - speed_w - 6.0f, 20.0f),
+                                      label_format_.get(), theme.text_secondary, fluent::HorizontalAlignment::Right);
                 }
-            }
-            painter_.DrawText(FormatSpeedText(shown_basis, max_value),
-                              D2D1::RectF(inner.left, inner.top + ScaleDip(s, 2.0f),
-                                          inner.right - ScaleDip(s, 8.0f), inner.top + ScaleDip(s, 16.0f)),
-                              label_format_.get(), faint, fluent::HorizontalAlignment::Right);
+            } else if (failed) state = l10n::Get(l10n::StringId::OpIncomplete);
+            else if (cancelling) state = l10n::Get(l10n::StringId::OpCancelling);
+            else if (pausing) state = l10n::Get(l10n::StringId::OpPausing);
+            else if (paused) state = l10n::Get(l10n::StringId::OpPaused);
+            else if (waiting) state = l10n::Get(l10n::StringId::OpWaiting);
+            else if (status_.speed_basis == ops::OpSpeedBasis::None) state.clear();
+            else if (live_speed <= 0.0) state = l10n::Get(l10n::StringId::OpEstimating);
+            else painter_.DrawText(FormatSpeedText(shown_basis, live_speed), right_box, speed_format_.get(),
+                                   theme.text, fluent::HorizontalAlignment::Right);
+            if (!state.empty())
+                painter_.DrawText(state, right_box, value_format_.get(), theme.text_secondary,
+                                  fluent::HorizontalAlignment::Right);
         }
-        // Progress pointer.
-        if (graph_.by_progress && status_.percent >= 0.0f && shown_fraction > 0.0f && shown_fraction < 1.0f) {
-            const float x = inner.left + plot_w * shown_fraction;
-            painter_.FillRoundedRect(D2D1::RectF(x - 0.5f, inner.top, x + 0.5f + (s > 1.4f ? 0.5f : 0.0f), inner.bottom),
-                                     0, WithAlpha(tone, 0.55f));
-        }
-        dc->PopAxisAlignedClip();
 
-        // --- Current item -------------------------------------------------
-        std::wstring item_line;
-        D2D1_COLOR_F item_color = theme.text;
-        const wchar_t* item_glyph = L"\xE8A5";
-        if (partial) {
-            item_line = FormatCounts(l10n::StringId::OpPartialLine, partial_done, partial_failed);
-            item_color = theme.danger;
-            item_glyph = L"\xE783";
-        } else if (failed) {
+        // --- Speed graph: a flat track, the area up to the progress ---------
+        const auto plot = Rect(s, kPadX, graph_top, content_w, graph_h);
+        const float radius = ScaleDip(s, 4.0f);
+        painter_.FillRoundedRect(plot, radius, track);
+        const bool clipped = PushRoundedClip(dc, plot, radius);
+        if (indeterminate) {
+            // A short bar slides along the bottom edge.
+            const float t = static_cast<float>(now % 1600) / 1600.0f;
+            const float eased = t * t * (3.0f - 2.0f * t);
+            const float bar_w = content_w * 0.3f;
+            const float x = -bar_w + (content_w + bar_w) * eased;
+            painter_.FillRoundedRect(Rect(s, kPadX + x, graph_top + graph_h - 3.0f, bar_w, 3.0f),
+                                     ScaleDip(s, 1.5f), accent);
+        } else {
+            double max_value = 0.0;
+            for (const auto& point : graph_.points) max_value = (std::max)(max_value, point.v);
+            if (graph_.points.size() >= 2 && max_value > 0.0) {
+                const float plot_w = plot.right - plot.left;
+                const float top = plot.top + ScaleDip(s, 8.0f);
+                const float bottom = plot.bottom - ScaleDip(s, 6.0f);
+                const double ceiling = max_value * 1.08;
+                std::vector<D2D1_POINT_2F> points;
+                points.reserve(graph_.points.size());
+                const size_t span = (std::max)(graph_.points.size(), kTimeGraphPoints) - 1;
+                for (size_t i = 0; i < graph_.points.size(); ++i) {
+                    const float x = graph_.by_progress ? plot.left + plot_w * graph_.points[i].x
+                        : plot.left + plot_w * static_cast<float>(i) / static_cast<float>(span);
+                    const float y = bottom - (bottom - top) * static_cast<float>(graph_.points[i].v / ceiling);
+                    points.push_back(D2D1::Point2F(x, y));
+                }
+                const bool grey = paused || waiting || failed || cancelling;
+                const D2D1_COLOR_F line = grey ? text3 : accent;
+                const D2D1_COLOR_F fill = WithAlpha(grey ? theme.text : accent,
+                                                    grey ? 0.10f : (dark_ ? 0.20f : 0.13f));
+                DrawSpeedArea(dc, plot, points, line, fill, s);
+                ComPtr<ID2D1SolidColorBrush> dot_brush;
+                if (!completed && SUCCEEDED(dc->CreateSolidColorBrush(failed ? bad_color : line, &dot_brush)))
+                    dc->FillEllipse(D2D1::Ellipse(points.back(), ScaleDip(s, 3.0f), ScaleDip(s, 3.0f)),
+                                    dot_brush.get());
+            }
+        }
+        if (clipped) dc->PopLayer();
+
+        // --- Rows under the graph -------------------------------------------
+        if (failed) {
             // pulse_shell errors are Simplified; known messages are localized and
             // file names are kept as they are on disk.
-            item_line = status_.last_error.empty() ? l10n::Get(l10n::StringId::OpFailed)
-                                                   : l10n::ServiceErrorText(status_.last_error);
-            item_color = theme.danger;
-            item_glyph = L"\xE783";
-        } else if (completed) {
-            item_line = status_.destination_label.empty() || !two_ends ? src
-                : (src + L"  \x2192  " + status_.destination_label);
-            item_color = theme.text_secondary;
-            item_glyph = L"\xE73E";
-        } else if (scanning) {
-            item_line = l10n::Get(l10n::StringId::OpScanning);
-            item_color = theme.text_secondary;
-        } else if (emptying) {
-            item_line = l10n::Get(l10n::StringId::OpEmptyingSub);
-        } else {
-            item_line = status_.current_item.empty() ? src : status_.current_item;
-        }
-        painter_.DrawGlyphWithFormat(item_glyph, Rect(s, kPadX, kItemTop, 16, 20), failed ? theme.danger : completed ? green : theme.text_secondary, glyph_format_.get());
-        std::wstring counter;
-        if (status_.total_items > 0 && !failed)
-            counter = pulse::format::GroupedInt(status_.completed_items) + L" / " +
-                      pulse::format::GroupedInt(status_.total_items);
-        const float counter_w = counter.empty() ? 0.0f
-            : TextWidth(factory, label_format_.get(), counter) / s + 10.0f;
-        DrawEllipsizedText(compositor_, compositor_.SmallFormat(),
-            Rect(s, kPadX + 22, kItemTop + 1, content_w - 22 - counter_w, 19), item_line, item_color);
-        if (!counter.empty())
-            painter_.DrawText(counter, Rect(s, dip_w - kPadX - counter_w, kItemTop, counter_w, 20),
-                              label_format_.get(), theme.text_secondary, fluent::HorizontalAlignment::Right);
-
-        // --- Failed items (partial failure) ----------------------------------
-        const float fail_block = FailureBlockDip();
-        failure_buttons_.clear();
-        if (board_) {
-            const float list_top = kStatsTop;
-            const size_t visible = VisibleFailureRows();
-            board_scroll_ = (std::min)(board_scroll_, board_->rows.size() - visible);
-            const float list_h = static_cast<float>(visible) * kFailRowH +
-                                 (board_->unlisted > 0 ? kFailMoreH : 0.0f);
-            const auto box = Rect(s, kPadX, list_top, content_w, list_h);
-            const D2D1_COLOR_F bad = theme.danger;
-            // Everything retried: the list turns to the success tone.
-            const bool board_done = status_.failed_items == 0;
-            painter_.FillRoundedRect(box, ScaleDip(s, 9.0f),
-                                     WithAlpha(board_done ? green : bad, board_done ? (dark_ ? 0.10f : 0.08f)
-                                                                                 : (dark_ ? 0.15f : 0.10f)));
-            const std::wstring retry_label = l10n::Get(l10n::StringId::RecoveryRetry);
-            const std::wstring retrying_label = l10n::Get(l10n::StringId::Retrying);
-            const std::wstring done_label = l10n::Get(l10n::StringId::OpCompleted);
-            const float retry_w = TextWidth(factory, label_format_.get(), retry_label) / s + 20.0f;
-            for (size_t v = 0; v < visible; ++v) {
-                const size_t index = board_scroll_ + v;
-                if (index >= board_->rows.size()) break;
-                const FailureRow& row = board_->rows[index];
-                const float y = list_top + kFailRowH * static_cast<float>(v);
-                if (v > 0) {
-                    const float line = ScaleDip(s, y);
-                    painter_.FillRoundedRect(D2D1::RectF(box.left, line, box.right, line + 1.0f), 0,
-                                             WithAlpha(theme.text, dark_ ? 0.07f : 0.08f));
-                }
-                const bool done = row.state == FailureRow::State::Done;
-                const float alpha = done ? 0.6f : 1.0f;
-                painter_.DrawGlyphWithFormat(done ? L"\xE73E" : L"\xE7BA", Rect(s, kPadX + 6, y, 20, kFailRowH), WithAlpha(done ? green : bad, alpha), glyph_format_.get());
-                const std::wstring name = LeafName(row.failure.source);
-                const float name_w = (std::min)(150.0f, TextWidth(factory, chip_format_.get(), name) / s + 2.0f);
-                DrawEllipsizedText(compositor_, chip_format_.get(), Rect(s, kPadX + 30, y, name_w, kFailRowH),
-                                   name, WithAlpha(theme.text, alpha));
-                float action_left = kPadX + content_w - 8.0f;
-                if (row.state == FailureRow::State::Failed && callbacks_.retry_failed) {
-                    const auto button = Rect(s, action_left - retry_w, y + (kFailRowH - 24.0f) * 0.5f, retry_w, 24.0f);
-                    failure_buttons_.push_back({ v, button });
-                    const bool hot = hover_ == kHitFailRow + static_cast<int>(v);
-                    const bool down = pressed_ == kHitFailRow + static_cast<int>(v);
-                    painter_.FillRoundedRect(button, ScaleDip(s, 6.0f),
-                        WithAlpha(theme.text, down ? 0.14f : hot ? 0.10f : (dark_ ? 0.06f : 0.05f)));
-                    painter_.StrokeRoundedRect(button, ScaleDip(s, 6.0f), WithAlpha(theme.text, 0.14f));
-                    painter_.DrawText(retry_label, button, label_format_.get(), theme.text,
-                                      fluent::HorizontalAlignment::Center);
-                    action_left -= retry_w + 8.0f;
-                } else if (row.state == FailureRow::State::Retrying) {
-                    const float w = TextWidth(factory, label_format_.get(), retrying_label) / s + 4.0f;
-                    painter_.DrawText(retrying_label, Rect(s, action_left - w, y, w, kFailRowH),
-                                      label_format_.get(), theme.text_secondary);
-                    action_left -= w + 8.0f;
-                }
-                const float reason_x = kPadX + 30.0f + name_w + 10.0f;
-                if (action_left > reason_x + 8.0f)
-                    DrawEllipsizedText(compositor_, label_format_.get(),
-                                       Rect(s, reason_x, y, action_left - reason_x, kFailRowH),
-                                       done ? done_label : row.failure.reason,
-                                       done ? WithAlpha(green, alpha) : theme.text_secondary);
-            }
-            if (board_->unlisted > 0) {
+            const std::wstring error = status_.last_error.empty() ? l10n::Get(l10n::StringId::OpFailed)
+                                                                  : l10n::ServiceErrorText(status_.last_error);
+            DrawEllipsizedText(compositor_, chip_format_.get(), Rect(s, kPadX, rows_top + 2, content_w, row_h),
+                               error, theme.text);
+            if (!remain_line.empty())
                 DrawEllipsizedText(compositor_, label_format_.get(),
-                    Rect(s, kPadX + 30, list_top + kFailRowH * static_cast<float>(visible), content_w - 40, kFailMoreH),
-                    FormatCounts(l10n::StringId::OpMoreFailures, board_->unlisted), faint);
+                                   Rect(s, kPadX, rows_top + 2 + row_h, content_w, row_h), remain_line,
+                                   theme.text_secondary);
+        } else if (completed) {
+            std::wstring line = took;
+            if (byte_basis && status_.total_bytes > 0) line += dot + pulse::format::ByteSize(status_.total_bytes);
+            DrawEllipsizedText(compositor_, label_format_.get(), Rect(s, kPadX, rows_top, content_w, row_h),
+                               line, theme.text_secondary);
+        } else {
+            std::wstring item_line;
+            if (emptying && status_.current_item.empty()) item_line = l10n::Get(l10n::StringId::OpEmptyingSub);
+            else item_line = status_.current_item.empty() ? src : status_.current_item;
+            std::wstring counter;
+            if (status_.total_items > 0 && !scanning)
+                counter = pulse::format::GroupedInt(status_.completed_items) + L" / " +
+                          pulse::format::GroupedInt(status_.total_items);
+            const float counter_w = counter.empty() ? 0.0f
+                : TextWidth(factory, label_format_.get(), counter) / s + 8.0f;
+            DrawEllipsizedText(compositor_, label_format_.get(),
+                               Rect(s, kPadX, rows_top, content_w - counter_w, row_h), item_line,
+                               scanning ? theme.text_secondary : theme.text);
+            if (!counter.empty())
+                painter_.DrawText(counter, Rect(s, dip_w - kPadX - counter_w, rows_top, counter_w, row_h),
+                                  label_format_.get(), text3, fluent::HorizontalAlignment::Right);
+            std::wstring second;
+            if (!scanning && !remain_line.empty()) {
+                second = remain_line;
+                if (!paused && !waiting && status_.speed_basis != ops::OpSpeedBasis::None) second += dot + time_text;
             }
-            if (board_->rows.size() > visible && visible > 0) {
-                // Wheel-scrolled: a thin thumb shows where the view is.
-                const float track = static_cast<float>(visible) * kFailRowH - 8.0f;
-                const float thumb = (std::max)(16.0f, track * static_cast<float>(visible) /
-                                                          static_cast<float>(board_->rows.size()));
-                const float at = list_top + 4.0f + (track - thumb) * static_cast<float>(board_scroll_) /
-                                 static_cast<float>(board_->rows.size() - visible);
-                painter_.FillRoundedRect(Rect(s, kPadX + content_w - 4.0f, at, 2.5f, thumb), ScaleDip(s, 1.25f),
-                                         WithAlpha(theme.text, 0.25f));
-            }
+            if (!second.empty())
+                DrawEllipsizedText(compositor_, label_format_.get(),
+                                   Rect(s, kPadX, rows_top + row_h, content_w, row_h), second, theme.text_secondary);
         }
-        const float stats_top = kStatsTop + fail_block;
+    }
 
-        // --- Stats: 剩余时间 / 剩余 / 已用时间 --------------------------------
-        // The engine's first estimates come from a cold start (the file cache,
-        // a slow first file) and can read hours for a copy of seconds. Hold
-        // 正在估算 for the first 3 s, and while the estimate is far beyond what
-        // the current rate would take.
-        const uint64_t left_bytes = status_.total_bytes > status_.transferred_bytes
-            ? status_.total_bytes - status_.transferred_bytes : 0;
-        const double rate_eta = byte_basis && status_.bytes_per_second > 0.0
-            ? static_cast<double>(left_bytes) / status_.bytes_per_second : 0.0;
-        const bool eta_unsettled = elapsed_ms < 3000 ||
-            (rate_eta > 0.0 && static_cast<double>(status_.eta_seconds) > rate_eta * 4.0 + 30.0);
-        const std::wstring time_text = partial ? std::wstring(L"\x2014")
-            : failed ? l10n::Get(l10n::StringId::OpIncomplete)
-            : completed ? l10n::Get(l10n::StringId::OpCompleted)
-            : paused ? l10n::Get(l10n::StringId::OpPaused)
-            : waiting ? l10n::Get(l10n::StringId::OpWaiting)
-            : emptying ? l10n::Get(l10n::StringId::OpEmptying)
-            : status_.speed_basis == ops::OpSpeedBasis::None ? l10n::Get(l10n::StringId::OpNoEstimate)
-            : status_.eta_seconds == 0 || eta_unsettled ? l10n::Get(l10n::StringId::OpEstimating)
-            : l10n::Get(l10n::StringId::OpApprox) + FormatDuration(status_.eta_seconds);
-        const uint64_t remain_items = status_.total_items > status_.completed_items
-            ? status_.total_items - status_.completed_items : 0;
-        const uint64_t remain_bytes = status_.total_bytes > status_.transferred_bytes
-            ? status_.total_bytes - status_.transferred_bytes : 0;
-        std::wstring remain_text;
-        if (partial) remain_text = FormatCounts(l10n::StringId::OpFailedCount, partial_failed);
-        else if (completed) remain_text = l10n::Get(l10n::StringId::OpZeroItems);
-        else if (failed && status_.total_items == 0) remain_text = L"—";
-        else if (status_.total_items == 0) remain_text = l10n::Get(l10n::StringId::OpCalculating);
-        else if (byte_basis && status_.total_bytes > 0)
-            remain_text = pulse::format::GroupedInt(remain_items) + l10n::Get(l10n::StringId::OpCountBytes)
-                + pulse::format::ByteSize(remain_bytes) + L")";
-        else remain_text = pulse::format::GroupedInt(remain_items) + l10n::Get(l10n::StringId::OpCountSuffix);
-        const std::wstring stat_labels[3] = {
-            l10n::Get(l10n::StringId::OpRemainingTime), l10n::Get(l10n::StringId::OpRemainingShort),
-            l10n::Get(l10n::StringId::OpElapsed) };
-        const std::wstring stat_values[3] = { time_text, remain_text, FormatElapsed(elapsed_ms / 1000) };
-        const D2D1_COLOR_F stat_colors[3] = {
-            partial ? theme.text_secondary : failed ? theme.danger : completed ? green : paused ? amber : theme.text,
-            partial ? theme.danger : theme.text, theme.text };
-        const float gap = 6.0f;
-        const float box_w = (content_w - gap * 2.0f) / 3.0f;
-        for (int i = 0; i < 3; ++i) {
-            const float x = kPadX + (box_w + gap) * i;
-            const auto box = Rect(s, x, stats_top, box_w, kStatsH);
-            painter_.FillRoundedRect(box, ScaleDip(s, 9.0f), well);
-            painter_.DrawText(stat_labels[i], Rect(s, x + 10, stats_top + 4, box_w - 20, 16),
-                              label_format_.get(), theme.text_secondary);
-            DrawEllipsizedText(compositor_, value_format_.get(),
-                               Rect(s, x + 10, stats_top + 20, box_w - 16, 20), stat_values[i], stat_colors[i]);
-        }
+    // --- Failed items (partial failure) --------------------------------------
+    const float fail_block = FailureBlockDip();
+    failure_buttons_.clear();
+    if (list_mode) {
+        std::wstring summary = took;
+        if (average > 0.0) summary += dot + l10n::Get(l10n::StringId::OpAverageLead) + FormatSpeedText(shown_basis, average);
+        DrawEllipsizedText(compositor_, label_format_.get(), Rect(s, kPadX, hero_y, content_w, row_h),
+                           summary, theme.text_secondary);
 
-        // --- Details: 已处理 / 已传输 / 平均速度 / 峰值速度 ---------------------
-        if (detailed_) {
-            const std::wstring detail_labels[4] = {
-                l10n::Get(l10n::StringId::OpProcessedItems), l10n::Get(l10n::StringId::OpTransferredBytes),
-                l10n::Get(l10n::StringId::OpAverageSpeed), l10n::Get(l10n::StringId::OpPeakSpeed) };
-            const std::wstring detail_values[4] = {
-                status_.total_items > 0
-                    ? pulse::format::GroupedInt(status_.completed_items) + L" / " + pulse::format::GroupedInt(status_.total_items)
-                    : pulse::format::GroupedInt(status_.completed_items),
-                byte_basis && status_.total_bytes > 0
-                    ? pulse::format::ByteSize(status_.transferred_bytes) + L" / " + pulse::format::ByteSize(status_.total_bytes)
-                    : std::wstring(L"—"),
-                average > 0.0 ? FormatSpeedText(shown_basis, average) : std::wstring(L"—"),
-                peak_speed > 0.0 ? FormatSpeedText(shown_basis, peak_speed) : std::wstring(L"—") };
-            const float half_w = (content_w - 8.0f) * 0.5f;
-            for (int i = 0; i < 4; ++i) {
-                const float x = kPadX + (half_w + 8.0f) * (i % 2);
-                const float y = kDetailsTop + fail_block + (kStatsH + 8.0f) * (i / 2);
-                const auto box = Rect(s, x, y, half_w, kStatsH);
-                painter_.FillRoundedRect(box, ScaleDip(s, 9.0f), well);
-                painter_.StrokeRoundedRect(box, ScaleDip(s, 9.0f), well_line);
-                painter_.DrawText(detail_labels[i], Rect(s, x + 12, y + 4, half_w - 24, 16),
-                                  label_format_.get(), theme.text_secondary);
-                DrawEllipsizedText(compositor_, value_format_.get(),
-                                   Rect(s, x + 12, y + 20, half_w - 20, 20), detail_values[i], theme.text);
+        const float list_top = kFailListTop;
+        const size_t visible = VisibleFailureRows();
+        board_scroll_ = (std::min)(board_scroll_, board_->rows.size() - visible);
+        const float list_h = static_cast<float>(visible) * kFailRowH +
+                             (board_->unlisted > 0 ? kFailMoreH : 0.0f);
+        const auto box = Rect(s, kPadX, list_top, content_w, list_h + 2.0f);
+        painter_.StrokeRoundedRect(box, ScaleDip(s, 6.0f), stroke);
+        const std::wstring retry_label = l10n::Get(l10n::StringId::RecoveryRetry);
+        const std::wstring retrying_label = l10n::Get(l10n::StringId::Retrying);
+        const std::wstring done_label = l10n::Get(l10n::StringId::OpCompleted);
+        const float retry_w = TextWidth(factory, label_format_.get(), retry_label) / s + 16.0f;
+        const float rows_y = list_top + 1.0f;
+        for (size_t v = 0; v < visible; ++v) {
+            const size_t index = board_scroll_ + v;
+            if (index >= board_->rows.size()) break;
+            const FailureRow& row = board_->rows[index];
+            const float y = rows_y + kFailRowH * static_cast<float>(v);
+            if (v > 0) {
+                const float line = ScaleDip(s, y);
+                painter_.FillRoundedRect(D2D1::RectF(box.left + 1.0f, line, box.right - 1.0f, line + 1.0f), 0,
+                                         theme.stroke_divider);
             }
+            const bool done = row.state == FailureRow::State::Done;
+            painter_.DrawGlyphWithFormat(L"\xE8A5", Rect(s, kPadX + 8, y, 18, kFailRowH), theme.text_secondary,
+                                         glyph_format_.get());
+            const std::wstring name = LeafName(row.failure.source);
+            const float name_w = (std::min)(170.0f, TextWidth(factory, chip_format_.get(), name) / s + 2.0f);
+            DrawEllipsizedText(compositor_, chip_format_.get(), Rect(s, kPadX + 34, y, name_w, kFailRowH),
+                               name, theme.text);
+            float action_left = kPadX + content_w - 6.0f;
+            if (row.state == FailureRow::State::Failed && callbacks_.retry_failed) {
+                const auto button = Rect(s, action_left - retry_w, y + (kFailRowH - 24.0f) * 0.5f, retry_w, 24.0f);
+                failure_buttons_.push_back({ v, button });
+                const bool hot = hover_ == kHitFailRow + static_cast<int>(v);
+                const bool down = pressed_ == kHitFailRow + static_cast<int>(v);
+                if (hot || down)
+                    painter_.FillRoundedRect(button, ScaleDip(s, 4.0f),
+                                             WithAlpha(theme.text, down ? 0.06f : (dark_ ? 0.06f : 0.037f)));
+                painter_.DrawText(retry_label, button, label_format_.get(), link,
+                                  fluent::HorizontalAlignment::Center);
+                action_left -= retry_w + 4.0f;
+            } else if (row.state == FailureRow::State::Retrying || done) {
+                const std::wstring& label = done ? done_label : retrying_label;
+                const float w = TextWidth(factory, label_format_.get(), label) / s + 2.0f;
+                const D2D1_COLOR_F color = done ? ok_color : theme.text_secondary;
+                const float right = action_left - 2.0f;
+                painter_.DrawText(label, Rect(s, right - w, y, w, kFailRowH), label_format_.get(), color,
+                                  fluent::HorizontalAlignment::Right);
+                if (done)
+                    painter_.DrawGlyphWithFormat(L"\xE73E", Rect(s, right - w - 18.0f, y, 14, kFailRowH), color,
+                                                 glyph_format_.get());
+                action_left = right - w - (done ? 22.0f : 4.0f);
+            }
+            const float reason_x = kPadX + 34.0f + name_w + 10.0f;
+            if (action_left > reason_x + 8.0f)
+                DrawEllipsizedText(compositor_, label_format_.get(),
+                                   Rect(s, reason_x, y, action_left - reason_x - 6.0f, kFailRowH),
+                                   row.failure.reason, theme.text_secondary);
+        }
+        if (board_->unlisted > 0) {
+            const float y = rows_y + kFailRowH * static_cast<float>(visible);
+            const float line = ScaleDip(s, y);
+            painter_.FillRoundedRect(D2D1::RectF(box.left + 1.0f, line, box.right - 1.0f, line + 1.0f), 0,
+                                     theme.stroke_divider);
+            DrawEllipsizedText(compositor_, label_format_.get(), Rect(s, kPadX + 10, y, content_w - 20, kFailMoreH),
+                               FormatCounts(l10n::StringId::OpMoreFailures, board_->unlisted), text3);
+        }
+        if (board_->rows.size() > visible && visible > 0) {
+            // Wheel-scrolled: a thin thumb shows where the view is.
+            const float track_h = static_cast<float>(visible) * kFailRowH - 8.0f;
+            const float thumb = (std::max)(16.0f, track_h * static_cast<float>(visible) /
+                                                      static_cast<float>(board_->rows.size()));
+            const float at = rows_y + 4.0f + (track_h - thumb) * static_cast<float>(board_scroll_) /
+                             static_cast<float>(board_->rows.size() - visible);
+            painter_.FillRoundedRect(Rect(s, kPadX + content_w - 6.0f, at, 2.0f, thumb), ScaleDip(s, 1.0f),
+                                     WithAlpha(theme.text, 0.25f));
+        }
+    }
+
+    // --- Details: a two-column label / value list ------------------------------
+    if (detailed_ && !authorization) {
+        const float top = kContentH + fail_block;
+        painter_.FillRoundedRect(D2D1::RectF(ScaleDip(s, kPadX), ScaleDip(s, top),
+                                             ScaleDip(s, kPadX + content_w), ScaleDip(s, top) + 1.0f),
+                                 0, theme.stroke_divider);
+        const std::wstring detail_labels[6] = {
+            l10n::Get(l10n::StringId::OpProcessedItems), l10n::Get(l10n::StringId::OpTransferredBytes),
+            l10n::Get(l10n::StringId::OpAverageSpeed), l10n::Get(l10n::StringId::OpPeakSpeed),
+            l10n::Get(l10n::StringId::OpElapsed), l10n::Get(l10n::StringId::OpRemainingTime) };
+        const std::wstring detail_values[6] = {
+            status_.total_items > 0
+                ? pulse::format::GroupedInt(status_.completed_items) + L" / " + pulse::format::GroupedInt(status_.total_items)
+                : pulse::format::GroupedInt(status_.completed_items),
+            byte_basis && status_.total_bytes > 0
+                ? pulse::format::ByteSize(status_.transferred_bytes) + L" / " + pulse::format::ByteSize(status_.total_bytes)
+                : std::wstring(L"\x2014"),
+            average > 0.0 ? FormatSpeedText(shown_basis, average) : std::wstring(L"\x2014"),
+            peak_speed > 0.0 ? FormatSpeedText(shown_basis, peak_speed) : std::wstring(L"\x2014"),
+            FormatElapsed(elapsed_ms / 1000), time_text };
+        const float col_w = (content_w - 16.0f) * 0.5f;
+        for (int i = 0; i < 6; ++i) {
+            const float x = kPadX + (col_w + 16.0f) * static_cast<float>(i % 2);
+            const float y = top + 13.0f + 44.0f * static_cast<float>(i / 2);
+            DrawEllipsizedText(compositor_, label_format_.get(), Rect(s, x, y, col_w, 16), detail_labels[i],
+                               theme.text_secondary);
+            DrawEllipsizedText(compositor_, value_format_.get(), Rect(s, x, y + 16, col_w, 18), detail_values[i],
+                               theme.text);
         }
     }
 
     // --- Footer -----------------------------------------------------------
     const float footer_top = height - ScaleDip(s, kFooterH);
     painter_.FillRoundedRect(D2D1::RectF(0, footer_top, width, height), 0,
-        dark_ ? HexColor(0x000000, 0.16f) : HexColor(0x000000, 0.03f));
+        dark_ ? HexColor(0x000000, 0.2f) : HexColor(0x000000, 0.045f));
     painter_.FillRoundedRect(D2D1::RectF(0, footer_top, width, footer_top + 1.0f), 0, theme.stroke_divider);
 
     fluent::ControlState detail_state{};
@@ -3353,13 +3364,6 @@ void FileOperationWindow::Render() {
     detail_state.pressed = pressed_ == 5;
     if (labels.show_details) painter_.DrawButton({ chrome.details, labels.details,
         detailed_ ? L"\xE70E" : L"\xE70D", fluent::ButtonKind::Transparent, detail_state });
-    if (counting && countdown_hover_ && !closing_) {
-        const float hint_x = labels.show_details ? chrome.details.right / s + 6.0f : kPadX;
-        const float hint_right = chrome.cancel.left / s - 8.0f;
-        DrawEllipsizedText(compositor_, label_format_.get(),
-            Rect(s, hint_x, dip_h - kFooterH, hint_right - hint_x, kFooterH),
-            l10n::Get(l10n::StringId::OpHoverKeepsOpen), faint);
-    }
     if (labels.show_pause) {
         fluent::ControlState pause_state{};
         pause_state.enabled = status_.active && !failed && !cancelling && !waiting;
@@ -3396,9 +3400,21 @@ void FileOperationWindow::Render() {
     cancel_state.hovered = hover_ == 4;
     cancel_state.pressed = pressed_ == 4;
     painter_.DrawButton({ chrome.cancel, labels.cancel, {},
-                          completed || labels.cancel_primary ? fluent::ButtonKind::Primary
-                                                             : fluent::ButtonKind::Standard,
+                          labels.cancel_primary ? fluent::ButtonKind::Primary : fluent::ButtonKind::Standard,
                           cancel_state });
+    if (counting) {
+        // Auto-close: a 2-DIP accent bar drains along the bottom of 关闭 over
+        // 2.5 s; hovering holds it full and faint.
+        const float left = closing_ ? 0.0f : countdown_hover_ ? 1.0f
+            : 1.0f - std::clamp(static_cast<float>(now - countdown_base_) / kAutoCloseMs, 0.0f, 1.0f);
+        if (left > 0.0f && PushRoundedClip(dc, chrome.cancel, ScaleDip(s, 4.0f))) {
+            const float bar_w = (chrome.cancel.right - chrome.cancel.left) * left;
+            painter_.FillRoundedRect(D2D1::RectF(chrome.cancel.left, chrome.cancel.bottom - ScaleDip(s, 2.0f),
+                                                 chrome.cancel.left + bar_w, chrome.cancel.bottom),
+                                     0, WithAlpha(accent, countdown_hover_ ? 0.45f : 1.0f));
+            dc->PopLayer();
+        }
+    }
     pulse::ui::EndSurface(compositor_);
 }
 

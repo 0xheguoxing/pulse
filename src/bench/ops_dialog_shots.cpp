@@ -17,7 +17,7 @@ struct FileOperationWindowTestAccess {
     static HWND Handle(FileOperationWindow& window) { return window.hwnd_; }
     static void Size(FileOperationWindow& window, UINT dpi, bool detailed) {
         window.detailed_ = detailed;
-        RECT rect{0, 0, MulDiv(468, dpi, 96), MulDiv(detailed ? 452 : 348, dpi, 96)};
+        RECT rect{0, 0, MulDiv(440, dpi, 96), MulDiv(detailed ? 422 : 272, dpi, 96)};
         SendMessageW(window.hwnd_, WM_DPICHANGED, MAKELONG(dpi, dpi), reinterpret_cast<LPARAM>(&rect));
     }
     static void Graph(FileOperationWindow& window, float upto, double base, bool by_progress = true) {
@@ -172,6 +172,7 @@ int wmain(int argc, wchar_t** argv) {
             auto done = Running(ops::OpType::Copy, 100.0f);
             done.active = false;
             done.phase = ops::OpPhase::Completed;
+            done.destination_dir = L"D:\\Backup\\Projects 2026";
             window.Update(done);
             Access::Graph(window, 1.0f, 212.0 * mb);
             Access::Elapsed(window, 88000, true);
@@ -313,8 +314,8 @@ int wmain(int argc, wchar_t** argv) {
         Access::Graph(window, 1.0f, 212.0 * mb);
         Access::Elapsed(window, 88000, true);
         Check(Access::Board(window), "partial failure lists the failed items");
-        Check(Access::Height(window) == plain_h + MulDiv(4 * 36 + 22 + 10, 96, 96),
-              "card grows by four rows, the more line and a gap");
+        Check(Access::Height(window) == plain_h + MulDiv(90 + 4 * 36 + 22 + 2 + 14 - 216, 96, 96),
+              "window fits four rows and the more line");
         Check(Access::Shown(window).failed_items == 6, "six items still failed");
         Check(!Access::Pending(window), "partial failure does not auto-close");
         Check(Access::CanRetry(window),
