@@ -2674,6 +2674,11 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         EnsureDirectories(req.dest_dir, failure);
     }
 
+    // Source folders a rename into dest_dir has found on another volume.
+    // Whether a rename can work depends only on the two parent folders, so
+    // the other items of such a folder go straight to the per-file path
+    // instead of each paying for a rename that fails the same way.
+    std::unordered_set<std::wstring> rename_other_volume;
     // A single unobstructed same-volume move is an atomic rename and should
     // not be expanded into per-file work.
     if (failure.empty() && !stop_requested() && req.type == OpType::Move && req.sources.size() == 1) {
@@ -2713,6 +2718,8 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             if (move_error != ERROR_NOT_SAME_DEVICE) {
                 failure_hr = HRESULT_FROM_WIN32(move_error);
                 failure = Win32Message(move_error) + L" | " + req.sources.front();
+            } else {
+                rename_other_volume.insert(FoldedPathKey(ParentOf(req.sources.front())));
             }
         }
     }
@@ -2772,14 +2779,19 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             // offers undo for it; anything a rename cannot do (another volume,
             // a lock) takes the per-file path below.
             if (stop_requested()) break;
-            if (req.type == OpType::Move && !root.destination_preexisting &&
-                MoveFileExW(source.c_str(), root.destination.c_str(), 0)) {
-                root.renamed = true;
-                root.completed = true;
-                root.source_removed = true;
-                root_entries[source_index] = entries.size();
-                entries.push_back(root);
-                continue;
+            if (req.type == OpType::Move && !root.destination_preexisting) {
+                std::wstring parent_key = FoldedPathKey(ParentOf(source));
+                if (!rename_other_volume.contains(parent_key)) {
+                    if (MoveFileExW(source.c_str(), root.destination.c_str(), 0)) {
+                        root.renamed = true;
+                        root.completed = true;
+                        root.source_removed = true;
+                        root_entries[source_index] = entries.size();
+                        entries.push_back(root);
+                        continue;
+                    }
+                    if (GetLastError() == ERROR_NOT_SAME_DEVICE) rename_other_volume.insert(std::move(parent_key));
+                }
             }
             root_entries[source_index] = entries.size();
             entries.push_back(root);
