@@ -563,7 +563,7 @@ ListSizeBar	IDS_LIST_SIZE_BAR	2004	大小比例条	Size bars	大小比例條
 ListSizeBarDesc	IDS_LIST_SIZE_BAR_DESC	2005	在大小列下方用细条直观比较文件大小	Draw a thin bar under file sizes for quick comparison	在大小欄下方用細條直觀比較檔案大小
 // File list: folder ordering against files.
 SettingsFolderSort	IDS_SETTINGS_FOLDER_SORT	2007	文件夹优先	Folders first	資料夾優先
-SettingsFolderSortDesc	IDS_SETTINGS_FOLDER_SORT_DESC	2008	决定文件夹相对文件的位置，倒序排列时同样生效	Where folders sit next to files, reversed order included	決定資料夾相對檔案的位置，遞減排列時同樣生效
+SettingsFolderSortDesc	IDS_SETTINGS_FOLDER_SORT_DESC	2008	默认位置；在某个文件夹里改过的会单独记住	The default; a folder you change keeps its own choice	預設位置；在某個資料夾裡改過的會單獨記住
 FolderSortTop	IDS_FOLDER_SORT_TOP	2009	始终置顶	Always on top	始終置頂
 FolderSortFollow	IDS_FOLDER_SORT_FOLLOW	2010	跟随方向	Follow order	跟隨方向
 FolderSortMixed	IDS_FOLDER_SORT_MIXED	2011	不优先	Mixed	不優先
