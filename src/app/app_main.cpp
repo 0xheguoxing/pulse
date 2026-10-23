@@ -2683,18 +2683,14 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                                 completed.sources.end());
                             // Keys equal where _wcsicmp is: one lookup per cut item
                             // rather than a search of everything moved so far.
-                            const auto folded = [](std::wstring path) {
-                                for (wchar_t& c : path) c = static_cast<wchar_t>(std::towlower(c));
-                                return path;
-                            };
                             std::unordered_set<std::wstring> moved;
                             moved.reserve(s->completedCutClipboardPaths.size());
                             for (const auto& actual : s->completedCutClipboardPaths)
-                                moved.insert(folded(actual));
+                                moved.insert(pulse::path::FoldedKey(actual));
                             const bool all_done = std::all_of(
                                 s->pendingCutClipboardPaths.begin(),
                                 s->pendingCutClipboardPaths.end(), [&](const std::wstring& expected) {
-                                    return moved.contains(folded(fs::NormalizePath(expected)));
+                                    return moved.contains(pulse::path::FoldedKey(fs::NormalizePath(expected)));
                                 });
                             if (all_done) {
                                 ops::CompleteCutClipboard(s->pendingCutClipboardSequence,

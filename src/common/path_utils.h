@@ -2,6 +2,7 @@
 // shell_host / index host are separate exes and must not gain link dependencies.
 #pragma once
 
+#include <cwctype>
 #include <string>
 #include <string_view>
 #include <windows.h>
@@ -16,6 +17,14 @@ inline bool Exists(std::wstring_view p) {
 inline bool EqualInsensitive(std::wstring_view left, std::wstring_view right) {
     return CompareStringOrdinal(left.data(), static_cast<int>(left.size()),
                                 right.data(), static_cast<int>(right.size()), TRUE) == CSTR_EQUAL;
+}
+
+// One key for all spellings _wcsicmp calls equal (it lowers each character
+// alike), so paths can go in hash sets.
+inline std::wstring FoldedKey(std::wstring_view p) {
+    std::wstring key(p);
+    for (wchar_t& c : key) c = static_cast<wchar_t>(std::towlower(c));
+    return key;
 }
 
 // Shell APIs (SHCreateItemFromParsingName, IFileOperation, SHGetFileInfo)

@@ -964,15 +964,6 @@ static std::wstring DisplayPath(const std::wstring& path) {
 // ---------------------------------------------------------------------------
 // StagingTray
 // ---------------------------------------------------------------------------
-namespace {
-// Equal keys for paths _wcsicmp calls equal: it lowers each character alike.
-std::wstring TrayPathKey(const std::wstring& path) {
-    std::wstring key = path;
-    for (wchar_t& c : key) c = static_cast<wchar_t>(std::towlower(c));
-    return key;
-}
-}  // namespace
-
 void StagingTray::Collect(const std::vector<std::wstring>& paths, bool move_intent) {
     if (paths.empty()) return;
     TrayBatch batch;
@@ -1045,11 +1036,11 @@ void StagingTray::MarkPendingMove(uint64_t task_id, const std::vector<std::wstri
     std::vector<uint64_t> ids;
     std::unordered_set<std::wstring> wanted;
     wanted.reserve(paths.size());
-    for (const auto& path : paths) wanted.insert(TrayPathKey(fs::NormalizePath(path)));
+    for (const auto& path : paths) wanted.insert(pulse::path::FoldedKey(fs::NormalizePath(path)));
     for (size_t b = 0; b < batches_.size(); ++b) {
         if (batch && b != *batch) continue;
         for (const auto& item : batches_[b].items)
-            if (wanted.contains(TrayPathKey(item.path))) ids.push_back(item.id);
+            if (wanted.contains(pulse::path::FoldedKey(item.path))) ids.push_back(item.id);
     }
     MarkInFlight(task_id, ids, true);
 }
@@ -1135,7 +1126,7 @@ void StagingTray::MarkInFlight(uint64_t task_id, const std::vector<uint64_t>& it
                 item.inflight_move = move;
                 item.inflight_source = item.path;
                 inflight_sources_[task_id].push_back(item.path);
-                ++inflight_keys_[TrayPathKey(item.path)];
+                ++inflight_keys_[pulse::path::FoldedKey(item.path)];
             }
 }
 
@@ -1143,14 +1134,14 @@ void StagingTray::CompleteTask(uint64_t task_id, const std::vector<std::wstring>
     if (!task_id) return;
     if (const auto task = inflight_sources_.find(task_id); task != inflight_sources_.end()) {
         for (const auto& source : task->second) {
-            const auto key = inflight_keys_.find(TrayPathKey(source));
+            const auto key = inflight_keys_.find(pulse::path::FoldedKey(source));
             if (key != inflight_keys_.end() && !--key->second) inflight_keys_.erase(key);
         }
         inflight_sources_.erase(task);
     }
     std::unordered_set<std::wstring> moved;
     moved.reserve(moved_sources.size());
-    for (const auto& source : moved_sources) moved.insert(TrayPathKey(fs::NormalizePath(source)));
+    for (const auto& source : moved_sources) moved.insert(pulse::path::FoldedKey(fs::NormalizePath(source)));
     for (size_t b = batches_.size(); b-- > 0;) {
         auto& batch = batches_[b];
         // Kept items close up in one pass; erasing each consumed one would
@@ -1160,7 +1151,7 @@ void StagingTray::CompleteTask(uint64_t task_id, const std::vector<std::wstring>
             auto& item = batch.items[i];
             bool consume = false;
             if (item.inflight_task == task_id) {
-                consume = item.inflight_move && moved.contains(TrayPathKey(item.inflight_source));
+                consume = item.inflight_move && moved.contains(pulse::path::FoldedKey(item.inflight_source));
                 item.inflight_task = 0;
                 item.inflight_move = false;
                 item.inflight_source.clear();
@@ -1176,7 +1167,7 @@ void StagingTray::CompleteTask(uint64_t task_id, const std::vector<std::wstring>
 }
 
 bool StagingTray::IsInFlight(const std::wstring& path) const {
-    return !inflight_keys_.empty() && inflight_keys_.contains(TrayPathKey(fs::NormalizePath(path)));
+    return !inflight_keys_.empty() && inflight_keys_.contains(pulse::path::FoldedKey(fs::NormalizePath(path)));
 }
 
 void StagingTray::RemoveDeleted(const std::vector<std::wstring>& paths) {
@@ -1184,13 +1175,13 @@ void StagingTray::RemoveDeleted(const std::vector<std::wstring>& paths) {
     std::unordered_set<std::wstring> deleted;
     deleted.reserve(paths.size());
     for (const auto& path : paths)
-        if (!path.empty()) deleted.insert(TrayPathKey(fs::NormalizePath(path)));
+        if (!path.empty()) deleted.insert(pulse::path::FoldedKey(fs::NormalizePath(path)));
     if (deleted.empty()) return;
     // An item goes when it or a folder above it was deleted: look its own path
     // and each parent up (with and without the separator) instead of
     // comparing every item with every deleted path.
     const auto gone = [&](const std::wstring& path) {
-        const std::wstring key = TrayPathKey(path);
+        const std::wstring key = pulse::path::FoldedKey(path);
         if (deleted.contains(key)) return true;
         for (size_t i = key.size(); i-- > 0;) {
             if (key[i] != L'\\') continue;

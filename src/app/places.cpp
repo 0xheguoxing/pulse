@@ -8,6 +8,7 @@
 #include "../common/localization.h"
 #include "../common/utf8_file.h"
 #include "../common/runtime_log.h"
+#include "../common/path_utils.h"
 #include <algorithm>
 #include <chrono>
 #include <sstream>
@@ -1977,13 +1978,6 @@ bool PlacesCatalog::SetQuickAccessPinned(const std::vector<std::wstring>& paths,
     return changed;
 }
 
-// Paths EqualI calls equal give one key (it lowers each character alike).
-static std::wstring FoldedPathKey(const std::wstring& path) {
-    std::wstring key = path;
-    for (auto& c : key) c = static_cast<wchar_t>(std::towlower(c));
-    return key;
-}
-
 namespace {
 // Roots found from a path's own ancestors: PathIsOrDescendant against every
 // root at once instead of one comparison per root.
@@ -1991,17 +1985,17 @@ class PathRoots {
 public:
     // False when an equal root is already there.
     bool Add(const std::wstring& root, size_t index) {
-        return roots_.emplace(FoldedPathKey(root), index).second;
+        return roots_.emplace(pulse::path::FoldedKey(root), index).second;
     }
     bool Empty() const { return roots_.empty(); }
     bool Contains(const std::wstring& path) const {
-        return !roots_.empty() && roots_.contains(FoldedPathKey(path));
+        return !roots_.empty() && roots_.contains(pulse::path::FoldedKey(path));
     }
     // A root the path is or lies under, npos when none. Without `self`, only
     // roots strictly above the path count.
     size_t Find(const std::wstring& path, bool self = true) const {
         if (roots_.empty() || path.empty()) return std::wstring::npos;
-        const std::wstring key = FoldedPathKey(path);
+        const std::wstring key = pulse::path::FoldedKey(path);
         if (self)
             if (const auto found = roots_.find(key); found != roots_.end()) return found->second;
         for (size_t i = key.size(); i-- > 0;) {

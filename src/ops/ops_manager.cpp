@@ -636,13 +636,6 @@ bool ReadEntryMetadata(const std::wstring& path, TransferEntry& entry) {
     return true;
 }
 
-// Equal keys for paths _wcsicmp calls equal: it lowers each character alike.
-std::wstring FoldedPathKey(const std::wstring& path) {
-    std::wstring key = path;
-    for (wchar_t& c : key) c = static_cast<wchar_t>(std::towlower(c));
-    return key;
-}
-
 bool PathExists(const std::wstring& path, bool* directory = nullptr) {
     const DWORD attrs = GetFileAttributesW(path.c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES) return false;
@@ -2343,9 +2336,9 @@ void OpsManager::WorkerThread() {
                 // compared n * n paths here.
                 std::unordered_set<std::wstring> moved;
                 moved.reserve(moved_sources_.size());
-                for (const auto& path : moved_sources_) moved.insert(FoldedPathKey(path));
+                for (const auto& path : moved_sources_) moved.insert(pulse::path::FoldedKey(path));
                 for (const auto& source : item.req.sources)
-                    if (moved.contains(FoldedPathKey(source))) finished.moved_sources.push_back(source);
+                    if (moved.contains(pulse::path::FoldedKey(source))) finished.moved_sources.push_back(source);
             }
             finished_tasks_.push_back(std::move(finished));
             if (!diagnostic_status.active && diagnostic_status.task_id == item.seq) {
@@ -2722,7 +2715,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 failure_hr = HRESULT_FROM_WIN32(move_error);
                 failure = Win32Message(move_error) + L" | " + req.sources.front();
             } else {
-                rename_other_volume.insert(FoldedPathKey(ParentOf(req.sources.front())));
+                rename_other_volume.insert(pulse::path::FoldedKey(ParentOf(req.sources.front())));
             }
         }
     }
@@ -2787,7 +2780,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             // a lock) takes the per-file path below.
             if (stop_requested()) break;
             if (req.type == OpType::Move && !root.destination_preexisting) {
-                std::wstring parent_key = FoldedPathKey(ParentOf(source));
+                std::wstring parent_key = pulse::path::FoldedKey(ParentOf(source));
                 if (!rename_other_volume.contains(parent_key)) {
                     if (MoveFileExW(source.c_str(), root.destination.c_str(), 0)) {
                         target_listing.Added(root_name(source));
