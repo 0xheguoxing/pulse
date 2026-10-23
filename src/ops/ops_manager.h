@@ -80,6 +80,9 @@ struct OpRequest {
     std::wstring dest_dir;    // Copy / Move
     std::wstring new_name;    // Rename, or explicit leaf name for a single-root Move
     std::vector<std::wstring> new_names; // BatchRename, parallel to sources
+    // Status text name for the first source when its file name means nothing
+    // to the user (还原 from the 回收站 view: sources are $R payloads).
+    std::wstring display_name;
     // CreateTextFile from a 新建 (ShellNew) entry: copy this template file, or
     // write these bytes; neither = an empty file.
     std::wstring template_file;

@@ -593,15 +593,19 @@ void RestoreSelected(AppState& s) {
     app::Tab* tab = ActiveTab(s);
     if (!tab || !tab->snapshot || !IsRecycleTab(tab)) return;
     std::vector<std::wstring> paths;
+    std::wstring first_name; // the status names the item, not its $R payload
     for (int index : tab->SelectedIndices()) {
         if (index < 0 || index >= static_cast<int>(tab->EntryCount())) continue;
-        const auto& path = tab->EntryAt(static_cast<size_t>(index)).recycle_path;
-        if (!path.empty()) paths.push_back(path);
+        const auto entry = tab->EntryAt(static_cast<size_t>(index));
+        if (entry.recycle_path.empty()) continue;
+        if (paths.empty()) first_name = entry.name;
+        paths.push_back(entry.recycle_path);
     }
     if (paths.empty()) return;
     ops::OpRequest req;
     req.type = ops::OpType::RestoreRecycle;
     req.sources = std::move(paths);
+    req.display_name = std::move(first_name);
     s.ops.Submit(std::move(req));
 }
 
@@ -611,14 +615,18 @@ void RestoreAllRecycle(AppState& s) {
     std::vector<std::wstring> paths;
     const size_t count = tab->EntryCount();
     paths.reserve(count);
+    std::wstring first_name;
     for (size_t i = 0; i < count; ++i) {
-        std::wstring full = tab->EntryAt(i).recycle_path;
-        if (!full.empty()) paths.push_back(std::move(full));
+        const auto entry = tab->EntryAt(i);
+        if (entry.recycle_path.empty()) continue;
+        if (paths.empty()) first_name = entry.name;
+        paths.push_back(entry.recycle_path);
     }
     if (paths.empty()) return;
     ops::OpRequest req;
     req.type = ops::OpType::RestoreRecycle;
     req.sources = std::move(paths);
+    req.display_name = std::move(first_name);
     s.ops.Submit(std::move(req));
 }
 

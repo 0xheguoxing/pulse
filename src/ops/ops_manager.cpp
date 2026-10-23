@@ -239,7 +239,7 @@ std::wstring Describe(const OpRequest& r) {
     }
     if (r.type == OpType::EmptyRecycle) return s;
     s += L" ";
-    if (!r.sources.empty()) s += FileName(r.sources.front());
+    if (!r.sources.empty()) s += r.display_name.empty() ? FileName(r.sources.front()) : r.display_name;
     if (r.sources.size() > 1) {
         wchar_t buf[32];
         swprintf_s(buf, l10n::Get(l10n::StringId::ZuItems).c_str(), r.sources.size());
