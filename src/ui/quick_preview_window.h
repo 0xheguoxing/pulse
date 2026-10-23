@@ -281,6 +281,9 @@ private:
     std::vector<FooterControl> footer_controls_;   // this frame's controls (right)
     std::wstring footer_hint_;                     // this frame's keyboard hint (right, passive)
     int footer_hover_ = 0;
+    int footer_focus_ = 0;   // keyboard focus (Tab) on a footer control; 0 none
+    // Tab / Shift+Tab through this frame's footer controls; false when there are none.
+    bool CycleFooterFocus(bool backwards);
     ComPtr<IDWriteTextFormat> badge_format_, badge_small_format_, open_format_;
     OpenWithIconCache open_icons_;
     static LRESULT CALLBACK FindEditProc(HWND hwnd, UINT message, WPARAM wparam,
@@ -347,6 +350,8 @@ private:
     void FinishClose(bool restore_focus);
     float scale_ = 1.0f;
     float text_scroll_ = 0.0f;
+    double last_render_ms_ = 0.0;
+    double last_text_ms_ = 0.0;    // of which DrawTextPreview  // CPU time spent building the last frame
     float pan_x_ = 0.0f;
     float pan_y_ = 0.0f;
     bool image_fit_ = true;

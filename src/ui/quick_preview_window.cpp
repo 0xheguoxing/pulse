@@ -1566,9 +1566,10 @@ void QuickPreviewWindow::DrawFindBar(ID2D1DeviceContext* dc, const D2D1_RECT_F& 
 void QuickPreviewWindow::DrawTextPreview(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
                                           ID2D1SolidColorBrush* text_brush) {
     if (!text_layout_.get() || !dc) return;
+    LARGE_INTEGER text_start{};
+    QueryPerformanceCounter(&text_start);
     const float pad = 20.0f * scale_;
     const float origin_x = TextOriginX();
-    const float origin_y = content.top + pad + HexRulerHeight() - text_scroll_;
     DWRITE_TEXT_METRICS metrics{};
     if (SUCCEEDED(text_layout_->GetMetrics(&metrics))) {
         // A little room below the last line.
@@ -1577,6 +1578,8 @@ void QuickPreviewWindow::DrawTextPreview(ID2D1DeviceContext* dc, const D2D1_RECT
         const float max_scroll = (std::max)(0.0f, metrics.height - view);
         text_scroll_ = std::clamp(text_scroll_, 0.0f, max_scroll);
     }
+    // After the clamp: End and wheel overshoot must not draw one frame past the end.
+    const float origin_y = content.top + pad + HexRulerHeight() - text_scroll_;
     if (find_open_ && !find_query_.empty() && !find_matches_.empty()) {
         ComPtr<ID2D1SolidColorBrush> match_brush;
         ComPtr<ID2D1SolidColorBrush> current_brush;
@@ -1616,6 +1619,11 @@ void QuickPreviewWindow::DrawTextPreview(ID2D1DeviceContext* dc, const D2D1_RECT
     dc->DrawTextLayout(D2D1::Point2F(origin_x, origin_y), text_layout_.get(), text_brush,
                        D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
     if (text_layout_hex_) DrawHexRuler(dc, content, origin_x);
+    LARGE_INTEGER now{}, freq{};
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&freq);
+    last_text_ms_ = static_cast<double>(now.QuadPart - text_start.QuadPart) * 1000.0 /
+                    static_cast<double>(freq.QuadPart);
 }
 
 // Hex dump lines are fixed at 76 characters: an 8-digit offset and two
@@ -1874,6 +1882,8 @@ void QuickPreviewWindow::SchedulePreviewDeadline() {
 }
 
 void QuickPreviewWindow::Render() {
+    LARGE_INTEGER render_start{};
+    QueryPerformanceCounter(&render_start);
     thumbnails_.BeginFrame();
     if (!compositor_.Dc()) return;
     if (compositor_.NeedsRecovery()) {
@@ -2422,6 +2432,14 @@ void QuickPreviewWindow::Render() {
     DrawHeader(dc, palette);
     DrawFooter(dc, palette);
     SchedulePreviewDeadline();
+    {
+        // Frame building only; EndDraw's flush and Present wait on the GPU and vsync.
+        LARGE_INTEGER now{}, freq{};
+        QueryPerformanceCounter(&now);
+        QueryPerformanceFrequency(&freq);
+        last_render_ms_ = static_cast<double>(now.QuadPart - render_start.QuadPart) * 1000.0 /
+                          static_cast<double>(freq.QuadPart);
+    }
     const HRESULT result = dc->EndDraw();
     if (result == D2DERR_RECREATE_TARGET || result == DXGI_ERROR_DEVICE_REMOVED ||
         result == DXGI_ERROR_DEVICE_RESET) compositor_.NotifyDeviceLost(result);
@@ -2584,6 +2602,10 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
     case WM_LBUTTONDOWN: {
         POINT point{};
         ClientPoint(lparam, point);
+        if (footer_focus_) {
+            footer_focus_ = 0;   // the pointer takes over from the keyboard
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         if (PlaybackMouseDown(point)) return 0;
         if (const ChromeButton button = HitChromeButton(point); button != ChromeButton::None) {
             if (GetFocus() != hwnd_) SetFocus(hwnd_);  // provider may hold focus
@@ -3015,6 +3037,24 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
     case WM_KEYDOWN: {
         const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        if (wparam == VK_TAB && !find_open_ && !ctrl) {
+            if (CycleFooterFocus(shift)) InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
+        if (footer_focus_ && !find_open_ &&
+            std::any_of(footer_controls_.begin(), footer_controls_.end(),
+                        [this](const FooterControl& c) { return c.id == footer_focus_; })) {
+            if (wparam == VK_RETURN || wparam == VK_SPACE) {
+                if (!(lparam & (1LL << 30))) ActivateFooterControl(footer_focus_);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
+            if (wparam == VK_ESCAPE) {
+                footer_focus_ = 0;
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
+        }
         if (wparam == VK_ESCAPE) {
             if (find_open_) CloseFind();
             else Close();
@@ -3120,6 +3160,18 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
         if ((wparam == VK_F3 || (find_open_ && wparam == VK_RETURN)) && text_kind) {
             if (!find_open_) OpenFind();
             FindNext(shift ? -1 : 1);
+            return 0;
+        }
+        if (!find_open_ && !ctrl && (native_kind_ == NativeKind::Text || native_kind_ == NativeKind::Hex) &&
+            (wparam == VK_PRIOR || wparam == VK_NEXT ||
+             ((wparam == VK_HOME || wparam == VK_END) && !HasPlayback()))) {
+            // Keyboard scrolling; the draw clamps to the document's end.
+            const D2D1_RECT_F content = ContentRect();
+            const float page = (std::max)(40.0f * scale_, (content.bottom - content.top) * 0.9f);
+            if (wparam == VK_PRIOR) text_scroll_ = (std::max)(0.0f, text_scroll_ - page);
+            else if (wparam == VK_NEXT) text_scroll_ += page;
+            else text_scroll_ = wparam == VK_HOME ? 0.0f : 1.0e9f;
+            InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
         if (!find_open_ && !ctrl && PagesKey(wparam)) {

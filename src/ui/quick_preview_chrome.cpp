@@ -562,6 +562,21 @@ int QuickPreviewWindow::HitFooterControl(POINT client) const {
     return 0;
 }
 
+bool QuickPreviewWindow::CycleFooterFocus(bool backwards) {
+    if (footer_controls_.empty()) {
+        footer_focus_ = 0;
+        return false;
+    }
+    const int count = static_cast<int>(footer_controls_.size());
+    int index = -1;
+    for (int i = 0; i < count; ++i)
+        if (footer_controls_[static_cast<size_t>(i)].id == footer_focus_) index = i;
+    // Past either end the focus leaves the footer, like Tab leaving a toolbar.
+    index = index < 0 ? (backwards ? count - 1 : 0) : index + (backwards ? -1 : 1);
+    footer_focus_ = index >= 0 && index < count ? footer_controls_[static_cast<size_t>(index)].id : 0;
+    return true;
+}
+
 void QuickPreviewWindow::ActivateFooterControl(int id) {
     if (id == kFooterZoom && native_kind_ == NativeKind::Bitmap) {
         ToggleFitActual();
@@ -754,6 +769,15 @@ void QuickPreviewWindow::DrawFooter(ID2D1DeviceContext* dc, const ChromePalette&
         }
         DrawUiText(dc, it->text, format, it->rect, hot && p.high_contrast ? p.on_hover : p.ink2,
                    DWRITE_TEXT_ALIGNMENT_CENTER);
+        if (footer_focus_ == it->id) {
+            // Keyboard focus: a 2 px accent ring just outside the chip.
+            ComPtr<ID2D1SolidColorBrush> ring;
+            dc->CreateSolidColorBrush(p.accent, &ring);
+            const float stroke = (std::max)(1.0f, std::round(2.0f * s));
+            const D2D1_RECT_F r = D2D1::RectF(it->rect.left - stroke * 0.5f, it->rect.top - stroke * 0.5f,
+                                              it->rect.right + stroke * 0.5f, it->rect.bottom + stroke * 0.5f);
+            if (ring.get()) dc->DrawRoundedRectangle(D2D1::RoundedRect(r, 7.0f * s, 7.0f * s), ring.get(), stroke);
+        }
     }
     // Then the passive keyboard hint, if there is room for it.
     if (!footer_hint_.empty()) {
