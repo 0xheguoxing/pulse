@@ -17,6 +17,7 @@
 #include "image_pack.h"
 #include "../common/image_pack_protocol.h"
 #include "jpeg_dc_preview.h"
+#include "jpeg_embedded_preview.h"
 #include "tiff_reduce.h"
 #include "raw_pack.h"
 #include "archive_pack.h"
@@ -367,7 +368,8 @@ static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
                         std::vector<uint8_t>& out, UINT& width, UINT& height, UINT& stride,
                         UINT& source_width, UINT& source_height,
                         const std::vector<unsigned char>* embedded = nullptr,
-                        uint32_t frame_index = 0, uint32_t* frame_count = nullptr) {
+                        uint32_t frame_index = 0, uint32_t* frame_count = nullptr,
+                        unsigned orientation_override = 0) {
     if (IsOfflinePlaceholder(attrs)) return false;
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICBitmapDecoder> decoder;
@@ -413,6 +415,8 @@ static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
             PropVariantClear(&value);
         }
     }
+    // A camera's embedded preview carries no orientation of its own.
+    if (orientation_override >= 1 && orientation_override <= 8) orientation = orientation_override;
     // Scale first, straight off the frame: the JPEG decoder then decodes at
     // 1/2, 1/4 or 1/8 (IWICBitmapSourceTransform) instead of full size. A
     // flip-rotator in front of the scaler made every scaler pass re-decode
@@ -1076,6 +1080,63 @@ static bool ImagePackInto(const DecodeRequest& q, UINT cap, DecodeResult& r) {
 
 // WIC images (animated GIF frames included).
 static bool AcceptsImage(const DecodeRequest& q) { return IsDirectImage(q.extension); }
+// Grid pictures: Explorer's thumbnail cache, read only. A folder Explorer has
+// shown at this size answers in a millisecond or two instead of a full decode
+// (63 photos: 0.2-0.45 s against 1.25-1.45 s). A probe that misses costs about
+// as much as a small decode, so a folder whose first probe misses is not
+// probed again; one with hits stops after three misses in a row.
+namespace {
+struct ExplorerCacheFolder { bool hit = false; int misses = 0; };
+std::mutex g_explorer_cache_mutex;
+std::unordered_map<std::wstring, ExplorerCacheFolder> g_explorer_cache_folders;
+
+std::wstring FolderKey(const std::wstring& path) {
+    const size_t slash = path.find_last_of(L"\\/");
+    std::wstring folder = slash == std::wstring::npos ? std::wstring() : path.substr(0, slash);
+    if (!folder.empty()) CharLowerBuffW(folder.data(), static_cast<DWORD>(folder.size()));
+    return folder;
+}
+} // namespace
+
+static bool ExplorerCachedInto(const DecodeRequest& q, UINT cap, DecodeResult& r) {
+    const std::wstring folder = FolderKey(q.path);
+    {
+        std::lock_guard lock(g_explorer_cache_mutex);
+        const auto it = g_explorer_cache_folders.find(folder);
+        if (it != g_explorer_cache_folders.end() && (!it->second.hit || it->second.misses >= 3)) return false;
+    }
+    bool made = false;
+    ComPtr<IShellItem> item;
+    ComPtr<IThumbnailCache> cache;
+    ComPtr<ISharedBitmap> shared;
+    WTS_CACHEFLAGS cache_flags{};
+    HBITMAP shared_bitmap = nullptr;
+    // No WTS_SCALETOREQUESTEDSIZE: a smaller cached size comes back as it is
+    // and is refused below rather than blown up.
+    if (SUCCEEDED(SHCreateItemFromParsingName(ShellPath(q.path).c_str(), nullptr, IID_PPV_ARGS(&item))) &&
+        SUCCEEDED(CoCreateInstance(CLSID_LocalThumbnailCache, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&cache))) &&
+        SUCCEEDED(cache->GetThumbnail(item.Get(), cap, WTS_INCACHEONLY, &shared, &cache_flags, nullptr)) && shared &&
+        SUCCEEDED(shared->GetSharedBitmap(&shared_bitmap)) && shared_bitmap) {
+        WTS_ALPHATYPE alpha = WTSAT_UNKNOWN;
+        if (FAILED(shared->GetFormat(&alpha))) alpha = WTSAT_UNKNOWN;
+        HBITMAP copy = static_cast<HBITMAP>(CopyImage(shared_bitmap, IMAGE_BITMAP, 0, 0, 0));
+        std::vector<uint8_t> canvas;
+        UINT width = 0, height = 0, stride = 0;
+        ComPtr<IWICImagingFactory> factory;
+        made = copy && HbitmapToBgra(copy, true, canvas, width, height, stride, alpha) &&
+            stride == width * 4 && (std::max)(width, height) >= cap &&
+            SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
+            FitCanvas(factory.Get(), canvas, width, height, cap, r.pixels, r.width, r.height, r.stride);
+    }
+    if (!made) ClearBitmap(r);
+    std::lock_guard lock(g_explorer_cache_mutex);
+    if (g_explorer_cache_folders.size() > 256) g_explorer_cache_folders.clear();
+    ExplorerCacheFolder& state = g_explorer_cache_folders[folder];
+    if (made) { state.hit = true; state.misses = 0; }
+    else ++state.misses;
+    return made;
+}
+
 static DecodeStep RunImage(const DecodeRequest& q, DecodeResult& r) {
     uint32_t frame_count = 1, frame_delay = 0, loop_count = 0;
     const bool gif = q.extension == L".gif";
@@ -1133,8 +1194,32 @@ static DecodeStep RunImage(const DecodeRequest& q, DecodeResult& r) {
         made = true;
     } else {
         ClearBitmap(r);
-        made = DecodeImage(q.path, q.request.attrs, cap, r.pixels, r.width, r.height,
-                           r.stride, r.source_width, r.source_height);
+        if (!q.offline && q.grid && q.request.frame_index == 0) {
+            // Camera JPEGs: the preview stored inside the file, when it is
+            // big enough (a few hundred KB read instead of the whole file).
+            preview::JpegEmbeddedPreview embedded;
+            // PULSE_THUMBNAIL_EMBEDDED=0 turns it off for measurements.
+            static const bool embedded_off = [] {
+                wchar_t value[4]{};
+                return GetEnvironmentVariableW(L"PULSE_THUMBNAIL_EMBEDDED", value, 4) > 0 && value[0] == L'0';
+            }();
+            if (!embedded_off && IsOneOf(q.extension, {L".jpg", L".jpeg", L".jpe", L".jfif"}) &&
+                preview::ReadJpegEmbeddedPreview(q.path, cap, embedded)) {
+                made = DecodeImage(q.path, q.request.attrs, cap, r.pixels, r.width, r.height, r.stride,
+                                   r.source_width, r.source_height, &embedded.jpeg, 0, nullptr, embedded.orientation);
+                if (made) {
+                    const bool quarter_turn = embedded.orientation >= 5;
+                    r.source_width = quarter_turn ? embedded.source_height : embedded.source_width;
+                    r.source_height = quarter_turn ? embedded.source_width : embedded.source_height;
+                } else ClearBitmap(r);
+            }
+            if (!made) made = ExplorerCachedInto(q, cap, r);
+        }
+        if (!made) {
+            ClearBitmap(r);
+            made = DecodeImage(q.path, q.request.attrs, cap, r.pixels, r.width, r.height,
+                               r.stride, r.source_width, r.source_height);
+        }
     }
     r.frame_count = frame_count;
     r.frame_delay_ms = frame_delay;

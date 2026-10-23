@@ -790,7 +790,7 @@ add_executable(pulse_preview WIN32 src/preview_host/main.cpp src/preview_host/vi
     src/preview_host/pdf_raster.cpp src/preview_host/dwg_thumb.cpp
     src/preview_host/archive_listing.cpp src/preview_host/udf_listing.cpp src/preview_host/psd_raster.cpp
     src/preview_host/font_raster.cpp src/preview_host/preview_decoders.cpp
-    src/preview_host/jpeg_dc_preview.cpp src/preview_host/tiff_reduce.cpp
+    src/preview_host/jpeg_dc_preview.cpp src/preview_host/jpeg_embedded_preview.cpp src/preview_host/tiff_reduce.cpp
     src/preview_host/preview_properties.cpp src/preview_host/preview_file_utils.cpp
     src/preview_host/zip_entry.cpp src/preview_host/office_model.cpp src/preview_host/office_sketch.cpp
     src/preview_host/folder_listing.cpp src/preview_host/markdown_document.cpp third_party/md4c/md4c.c
