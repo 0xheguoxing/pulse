@@ -2026,9 +2026,16 @@ void MainRenderer::DrawMorphIcon(const ListEntryView& entry, const PaneViewModel
     const auto ink = icon_cache_.CachedArtworkBounds(entry.path, entry.name, entry.is_dir, entry.attrs, locked);
     const float alignment = (is_grid(from_mode) ? 1.0f - sample.progress : 0.0f) +
                             (is_grid(vm.view_mode) ? sample.progress : 0.0f);
-    const float aligned_y = icon.top + size * (1.0f - ink.bottom) * alignment;
+    // An icon with only a small image: at most twice its size, centered
+    // across, resting on the baseline in grids and centered in other views.
+    const float icon_side = bitmap ? IconDrawSide(size,
+        icon_cache_.CachedNativeSide(entry.path, entry.name, entry.is_dir, entry.attrs, locked)) : size;
+    const float icon_inset = std::round((size - icon_side) * 0.5f);
+    const float aligned_y = icon.top + (size - icon_side * ink.bottom) * alignment +
+                            (size - icon_side) * 0.5f * (1.0f - alignment);
     if (bitmap) {
-        const D2D1_RECT_F dest = D2D1::RectF(icon.left, aligned_y, icon.left + size, aligned_y + size);
+        const D2D1_RECT_F dest = D2D1::RectF(icon.left + icon_inset, aligned_y,
+                                             icon.left + icon_inset + icon_side, aligned_y + icon_side);
         dc->DrawBitmap(bitmap, &dest, icon_alpha, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
                        nullptr, nullptr);
     } else if (sample.entering) {
@@ -2040,8 +2047,8 @@ void MainRenderer::DrawMorphIcon(const ListEntryView& entry, const PaneViewModel
         DrawFileIcon(icon.left, aligned_y, size, theme, hidden_alpha);
     }
     if (entry.is_link) {
-        const auto artwork = D2D1::RectF(icon.left + ink.left * size, aligned_y + ink.top * size,
-            icon.left + ink.right * size, aligned_y + ink.bottom * size);
+        const auto artwork = D2D1::RectF(icon.left + icon_inset + ink.left * icon_side, aligned_y + ink.top * icon_side,
+            icon.left + icon_inset + ink.right * icon_side, aligned_y + ink.bottom * icon_side);
         DrawLinkOverlay(icon.left, icon.top, size, theme, sample.opacity * hidden_alpha,
                         {}, 0.0f, 0.0f, &artwork);
     }
@@ -4813,12 +4820,19 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     ID2D1Bitmap* grid_bitmap = iconGrid && !morphing && !own_icon
                         ? icon_cache_.BitmapFor(e.path, e.name, e.is_dir, e.attrs, renderedIconSize) : nullptr;
                     float align_bottom = 0.0f;
+                    // An icon with only a small image is drawn at most twice its
+                    // size, centered, instead of filling the cell.
+                    float icon_side = renderedIconSize;
+                    float icon_inset = 0.0f;
                     if (iconGrid && !own_icon) {
                         const auto ink = icon_cache_.CachedArtworkBounds(e.path, e.name, e.is_dir, e.attrs, renderedIconSize);
-                        align_bottom = renderedIconSize * (1.0f - ink.bottom);
-                        artwork = {iconRect.left + ink.left * renderedIconSize,
-                            iconRect.top + ink.top * renderedIconSize + align_bottom,
-                            iconRect.left + ink.right * renderedIconSize, iconRect.bottom};
+                        icon_side = IconDrawSide(renderedIconSize,
+                            icon_cache_.CachedNativeSide(e.path, e.name, e.is_dir, e.attrs, renderedIconSize));
+                        icon_inset = std::round((renderedIconSize - icon_side) * 0.5f);
+                        align_bottom = renderedIconSize - icon_side * ink.bottom;
+                        artwork = {iconRect.left + icon_inset + ink.left * icon_side,
+                            iconRect.top + ink.top * icon_side + align_bottom,
+                            iconRect.left + icon_inset + ink.right * icon_side, iconRect.bottom};
                     }
                     // Align the actual artwork, not the transparent bitmap square,
                     // to the name baseline. The name/edit/hit rectangles stay fixed.
@@ -4832,8 +4846,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     if (!settled && morphing && !own_icon)
                         icon_cache_.Prefetch(e.path, e.name, e.is_dir, e.attrs, renderedIconSize);
                     if (settled) {
-                        const D2D1_RECT_F dest = D2D1::RectF(iconX, iconY, iconX + renderedIconSize,
-                                                             iconY + renderedIconSize);
+                        const D2D1_RECT_F dest = D2D1::RectF(iconX + icon_inset, iconY,
+                                                             iconX + icon_inset + icon_side, iconY + icon_side);
                         dc->DrawBitmap(settled, &dest, hidden_alpha, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
                                        nullptr, nullptr);
                     } else if (morphing && !own_icon) {

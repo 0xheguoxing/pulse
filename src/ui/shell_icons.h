@@ -75,6 +75,12 @@ public:
     D2D1_RECT_F CachedArtworkBounds(const std::wstring& path, const std::wstring& name,
                                    bool is_dir, DWORD attrs, float desired_dips);
 
+    // For the same bitmap: nonzero when the icon has no image of the size
+    // asked for, only a smaller one of this many pixels a side, which is drawn
+    // at most twice that (IconDrawSide) instead of blurred across the cell.
+    uint32_t CachedNativeSide(const std::wstring& path, const std::wstring& name,
+                              bool is_dir, DWORD attrs, float desired_dips);
+
     // Queues the icon BitmapFor would return for a background conversion
     // (image-list extraction + WIC pixel conversion on the worker thread);
     // the UI thread later only uploads the finished pixels. Cheap to call
@@ -90,7 +96,7 @@ private:
     int GenericIndex(const std::wstring& name, bool is_dir, DWORD attrs);
     void RequestExact(const std::wstring& path);
     ID2D1Bitmap* BitmapForIndex(int index, int list_id);
-    ComPtr<ID2D1Bitmap> BitmapFromIcon(HICON icon, IconArtworkBounds& bounds);
+    ComPtr<ID2D1Bitmap> BitmapFromIcon(HICON icon, IconArtworkBounds& bounds, bool jumbo);
     // Worker-converted pixels for key, uploaded to a D2D bitmap and cached.
     ID2D1Bitmap* UploadReady(uint64_t key);
     ID2D1Bitmap* StoreBitmap(uint64_t key, ComPtr<ID2D1Bitmap> bitmap,

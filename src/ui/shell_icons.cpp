@@ -297,7 +297,11 @@ void ShellIconCache::WorkerLoop() {
             IconPixels pixels;
             const bool ok = ConvertIconPixels(convert_key, worker_lists, worker_wic,
                                               pixels.width, pixels.height, pixels.data);
-            if (ok) pixels.bounds = MeasureIconArtwork(pixels.data, pixels.width, pixels.height);
+            if (ok) {
+                pixels.bounds = MeasureIconArtwork(pixels.data, pixels.width, pixels.height);
+                if (static_cast<int>(static_cast<uint32_t>(convert_key >> 32)) == SHIL_JUMBO)
+                    CropUndersizedIcon(pixels.data, pixels.width, pixels.height, pixels.bounds);
+            }
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 convert_pending_.erase(convert_key);
@@ -380,7 +384,7 @@ void ShellIconCache::WorkerLoop() {
     if (SUCCEEDED(com_hr)) CoUninitialize();
 }
 
-ComPtr<ID2D1Bitmap> ShellIconCache::BitmapFromIcon(HICON icon, IconArtworkBounds& bounds) {
+ComPtr<ID2D1Bitmap> ShellIconCache::BitmapFromIcon(HICON icon, IconArtworkBounds& bounds, bool jumbo) {
     ComPtr<ID2D1Bitmap> bitmap;
     if (!icon || !dc_ || !EnsureWic()) return bitmap;
     ComPtr<IWICBitmap> wicBitmap;
@@ -403,6 +407,7 @@ ComPtr<ID2D1Bitmap> ShellIconCache::BitmapFromIcon(HICON icon, IconArtworkBounds
     if (FAILED(converter->CopyPixels(nullptr, width * 4u,
         static_cast<UINT>(pixels.size()), pixels.data()))) return bitmap;
     bounds = MeasureIconArtwork(pixels, width, height);
+    if (jumbo) CropUndersizedIcon(pixels, width, height, bounds);
     const auto props = D2D1::BitmapProperties(
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
     dc_->CreateBitmap(D2D1::SizeU(width, height), pixels.data(), width * 4u, props, &bitmap);
@@ -422,7 +427,7 @@ ID2D1Bitmap* ShellIconCache::BitmapForIndex(int index, int list_id) {
         return nullptr;
     }
     IconArtworkBounds bounds;
-    ComPtr<ID2D1Bitmap> bitmap = BitmapFromIcon(icon, bounds);
+    ComPtr<ID2D1Bitmap> bitmap = BitmapFromIcon(icon, bounds, list_id == SHIL_JUMBO);
     DestroyIcon(icon);
     return StoreBitmap(key, std::move(bitmap), bounds);
 }
@@ -488,7 +493,22 @@ bool ShellIconCache::Draw(ID2D1DeviceContext* dc, const D2D1_RECT_F& dest,
     const float desired = std::max(dest.right - dest.left, dest.bottom - dest.top);
     ID2D1Bitmap* bitmap = BitmapFor(path, name, is_dir, attrs, desired);
     if (!bitmap) return false;
-    dc->DrawBitmap(bitmap, &dest, opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+    // An icon with only a small image: at most twice its size, centered.
+    D2D1_RECT_F target = dest;
+    for (const auto& [key, cached] : bitmaps_) {
+        if (cached.get() != bitmap) continue;
+        const auto bounds = artwork_bounds_.find(key);
+        if (bounds != artwork_bounds_.end() && bounds->second.native_side) {
+            const float width = dest.right - dest.left, height = dest.bottom - dest.top;
+            const float side = IconDrawSide((std::min)(width, height), bounds->second.native_side);
+            target.left = dest.left + std::round((width - side) * 0.5f);
+            target.top = dest.top + std::round((height - side) * 0.5f);
+            target.right = target.left + side;
+            target.bottom = target.top + side;
+        }
+        break;
+    }
+    dc->DrawBitmap(bitmap, &target, opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
                    nullptr, nullptr);
     return true;
 }
@@ -548,6 +568,15 @@ D2D1_RECT_F ShellIconCache::CachedArtworkBounds(const std::wstring& path,
         }
     }
     return D2D1::RectF(0.0f, 0.0f, 1.0f, 1.0f);
+}
+
+uint32_t ShellIconCache::CachedNativeSide(const std::wstring& path, const std::wstring& name,
+                                          bool is_dir, DWORD attrs, float desired_dips) {
+    (void)attrs;
+    const auto key = CachedBitmapKey(path, name, is_dir, desired_dips, false);
+    if (!key) return 0;
+    const auto it = artwork_bounds_.find(*key);
+    return it == artwork_bounds_.end() ? 0 : it->second.native_side;
 }
 
 std::optional<uint64_t> ShellIconCache::CachedBitmapKey(const std::wstring& path,
