@@ -8,6 +8,7 @@
 #include "shell_command.h"
 #include "shortcut_launch.h"
 #include "elevated_transfer.h"
+#include "source_listing.h"
 #include "../ipc/shell_client.h"
 #include "../common/json_utils.h"
 #include "../common/localization.h"
@@ -633,6 +634,13 @@ bool ReadEntryMetadata(const std::wstring& path, TransferEntry& entry) {
     size.LowPart = data.nFileSizeLow;
     entry.bytes = entry.directory ? 0 : size.QuadPart;
     return true;
+}
+
+// Equal keys for paths _wcsicmp calls equal: it lowers each character alike.
+std::wstring FoldedPathKey(const std::wstring& path) {
+    std::wstring key = path;
+    for (wchar_t& c : key) c = static_cast<wchar_t>(std::towlower(c));
+    return key;
 }
 
 bool PathExists(const std::wstring& path, bool* directory = nullptr) {
@@ -2327,10 +2335,15 @@ void OpsManager::WorkerThread() {
             finished.recycle_refused = std::move(recycle_refused_);
             finished.recycle_refusal = recycle_refusal_;
             recycle_refused_.clear();
-            for (const auto& source : item.req.sources)
-                if (std::any_of(moved_sources_.begin(), moved_sources_.end(), [&](const auto& moved) {
-                    return _wcsicmp(source.c_str(), moved.c_str()) == 0;
-                })) finished.moved_sources.push_back(source);
+            if (!moved_sources_.empty()) {
+                // One set instead of a search per source: a move of n items
+                // compared n * n paths here.
+                std::unordered_set<std::wstring> moved;
+                moved.reserve(moved_sources_.size());
+                for (const auto& path : moved_sources_) moved.insert(FoldedPathKey(path));
+                for (const auto& source : item.req.sources)
+                    if (moved.contains(FoldedPathKey(source))) finished.moved_sources.push_back(source);
+            }
             finished_tasks_.push_back(std::move(finished));
             if (!diagnostic_status.active && diagnostic_status.task_id == item.seq) {
                 final_statuses_.push_back(diagnostic_status);
@@ -2705,8 +2718,13 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
     }
 
     namespace fsys = std::filesystem;
+    // Where each source's own entry is (npos: nothing to do for it). The
+    // commit below looks roots up here instead of searching every entry.
+    std::vector<size_t> root_entries(req.sources.size(), std::wstring::npos);
     if (failure.empty() && !stop_requested()) {
-        for (const auto& source : req.sources) {
+        const SourceListing listing(req.sources);
+        for (size_t source_index = 0; source_index < req.sources.size(); ++source_index) {
+            const std::wstring& source = req.sources[source_index];
 #ifdef PULSE_ELEVATED_TEST_CLIENT
             ObserveTransferScanForReview(*this, source);
 #endif
@@ -2714,7 +2732,15 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             TransferEntry root;
             root.source = source;
             root.destination = JoinPath(req.dest_dir, root_name(source));
-            if (!ReadEntryMetadata(source, root)) {
+            if (const ListedSource* listed = listing.Find(source)) {
+                root.directory = (listed->attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                root.reparse = (listed->attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+                root.attributes = listed->attributes;
+                root.created = listed->created;
+                root.accessed = listed->accessed;
+                root.modified = listed->modified;
+                root.bytes = root.directory ? 0 : listed->bytes;
+            } else if (!ReadEntryMetadata(source, root)) {
                 {
                     const DWORD code = GetLastError();
                     failure_hr = HRESULT_FROM_WIN32(code);
@@ -2722,21 +2748,25 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 }
                 break;
             }
+            // Opening both ends to compare them is only needed when the target
+            // name is taken; most targets are new.
+            bool destination_exists = PathExists(root.destination);
             const bool same_location =
                 _wcsicmp(root.source.c_str(), root.destination.c_str()) == 0 ||
-                SameFileObject(root.source, root.destination);
+                (destination_exists && SameFileObject(root.source, root.destination));
             if (same_location && req.type == OpType::Move) {
                 // Dropping an item onto its current folder is a no-op, like Explorer.
                 continue;
             }
             if (same_location && req.type == OpType::Copy) {
                 root.destination = UniqueCopyPath(root.destination, root.directory);
+                destination_exists = PathExists(root.destination);
             }
             if (root.directory && StartsWithPath(req.dest_dir, root.source)) {
                 failure = l10n::Get(l10n::StringId::CannotCopyOrMoveAFolderIntoItself).c_str() + source;
                 break;
             }
-            root.destination_preexisting = PathExists(root.destination);
+            root.destination_preexisting = destination_exists;
             // On one volume a move is a rename however many items are dropped
             // (#60). Recorded as completed at once so a later failure still
             // offers undo for it; anything a rename cannot do (another volume,
@@ -2747,9 +2777,11 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 root.renamed = true;
                 root.completed = true;
                 root.source_removed = true;
+                root_entries[source_index] = entries.size();
                 entries.push_back(root);
                 continue;
             }
+            root_entries[source_index] = entries.size();
             entries.push_back(root);
             if (!root.directory || root.reparse) continue;
 
@@ -3662,25 +3694,28 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         OpRequest committed = req;
         committed.sources.clear();
         std::vector<std::wstring> committed_destinations;
+        // Each root and what was scanned under it are one run of entries
+        // (pre-order), up to the next root's entry.
         for (size_t root_index = 0; root_index < req.sources.size(); ++root_index) {
-            const auto found = std::find_if(entries.begin(), entries.end(), [&](const TransferEntry& entry) {
-                return _wcsicmp(entry.source.c_str(), req.sources[root_index].c_str()) == 0;
-            });
-            if (found == entries.end()) continue;
+            const size_t first = root_entries[root_index];
+            if (first == std::wstring::npos) continue;
+            const TransferEntry& found = entries[first];
             const std::wstring original_destination = JoinPath(req.dest_dir,
                                                                root_name(req.sources[root_index]));
-            const bool independent_root = !found->destination_preexisting
-                || _wcsicmp(found->destination.c_str(), original_destination.c_str()) != 0;
+            const bool independent_root = !found.destination_preexisting
+                || _wcsicmp(found.destination.c_str(), original_destination.c_str()) != 0;
             if (independent_root) {
                 committed.sources.push_back(req.sources[root_index]);
-                committed_destinations.push_back(found->destination);
+                committed_destinations.push_back(found.destination);
                 continue;
             }
-            for (size_t item = 0; item < completed_sources.size(); ++item) {
-                if (StartsWithPath(completed_sources[item], req.sources[root_index])) {
-                    committed.sources.push_back(completed_sources[item]);
-                    committed_destinations.push_back(completed_destinations[item]);
-                }
+            size_t end = entries.size();
+            for (size_t next = root_index + 1; next < req.sources.size(); ++next)
+                if (root_entries[next] != std::wstring::npos) { end = root_entries[next]; break; }
+            for (size_t item = first; item < end; ++item) {
+                if (!entries[item].completed) continue;
+                committed.sources.push_back(entries[item].source);
+                committed_destinations.push_back(entries[item].destination);
             }
         }
         if (!committed_destinations.empty()) PushUndo(committed, task_id, &committed_destinations);

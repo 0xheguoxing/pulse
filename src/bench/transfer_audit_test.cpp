@@ -3,11 +3,14 @@
 #include "../ops/shell_command_template.h"
 #include "../ops/elevated_transfer.h"
 #include "../ops/elevated_transfer_client.h"
+#include "../ops/source_listing.h"
 #include <aclapi.h>
 #include <shellapi.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <optional>
 
 namespace pulse::ipc {
 std::function<void(ShellClient&, uint32_t, uint32_t)> audit_submit;
@@ -179,6 +182,68 @@ int main() {
         check(!completed.empty() && completed.front().task_id == success &&
               fs::exists(destination / L"tree" / L"new.txt") && fs::exists(destination / L"tree" / L"existing.txt"),
               "precise completions carry origin task ID through merged move");
+    }
+    {
+        // A selection big enough for one folder listing and the indexed
+        // commit: every root copies, moves, is reported and comes back.
+        const auto source = root / L"many-src";
+        const auto copied = root / L"many-copy";
+        const auto moved = root / L"many-move";
+        fs::create_directories(source); fs::create_directory(copied); fs::create_directory(moved);
+        constexpr int kMany = 300;
+        std::vector<std::wstring> paths;
+        for (int i = 0; i < kMany; ++i) {
+            const auto file = source / (L"item-" + std::to_wstring(i) + L".txt");
+            Write(file, ("many " + std::to_string(i)).c_str());
+            paths.push_back(file.wstring());
+        }
+        const SourceListing listing(paths);
+        bool listed_same = true;
+        for (const auto& path : paths) {
+            WIN32_FILE_ATTRIBUTE_DATA data{};
+            const ListedSource* listed = listing.Find(path);
+            listed_same = listed_same && listed &&
+                GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data) &&
+                listed->attributes == data.dwFileAttributes && listed->bytes == data.nFileSizeLow &&
+                CompareFileTime(&listed->modified, &data.ftLastWriteTime) == 0;
+        }
+        std::wstring other_spelling = paths.front();
+        other_spelling.replace(other_spelling.rfind(L"item"), 4, L"ITEM");
+        check(listed_same && !listing.Find(other_spelling) && !listing.Find(source.wstring()),
+              "folder listing matches per-item metadata and leaves other spellings to a query");
+        check(!NeedsShellTransfer(paths, moved.wstring(), true),
+              "moving many items out of a writable folder needs no elevated transfer");
+        OpsManager manager; manager.Start([] {}, false);
+        const auto result_of = [&](uint64_t task) {
+            const auto deadline = GetTickCount64() + 20000;
+            while (GetTickCount64() < deadline) {
+                for (auto& result : manager.DrainTaskResults())
+                    if (result.task_id == task) return std::optional<TaskResult>(std::move(result));
+                Sleep(5);
+            }
+            return std::optional<TaskResult>();
+        };
+        auto copy = Request(OpType::Copy, source, copied); copy.sources = paths;
+        const auto copied_result = result_of(manager.Submit(copy));
+        bool copies_match = copied_result && copied_result->success;
+        for (int i = 0; copies_match && i < kMany; ++i) {
+            const auto name = L"item-" + std::to_wstring(i) + L".txt";
+            copies_match = Read(copied / name) == "many " + std::to_string(i) &&
+                fs::last_write_time(copied / name) == fs::last_write_time(source / name);
+        }
+        check(copies_match, "copy of many items writes every item with its time");
+        auto move = Request(OpType::Move, source, moved); move.sources = paths;
+        const auto moved_result = result_of(manager.Submit(move));
+        check(moved_result && moved_result->success && moved_result->moved_sources == paths &&
+              fs::is_empty(source) &&
+              std::distance(fs::directory_iterator(moved), fs::directory_iterator{}) == kMany,
+              "move of many items reports every root as moved");
+        const auto undo_before = manager.Status().completed_ops;
+        manager.Undo();
+        check(Wait(manager, undo_before) && fs::is_empty(moved) &&
+              Read(source / L"item-299.txt") == "many 299",
+              "undo of a move of many items brings every item back");
+        manager.Stop();
     }
     for (const std::wstring file : {L"C:\\fixture\\%1 %L %l %V %v %*.txt", L"C:\\Unicode 空格\\", L"C:\\ordinary.txt"}) {
         const std::wstring command = ExpandShellCommand(L"viewer.exe \"%1\" %L \"%*\"", file);
