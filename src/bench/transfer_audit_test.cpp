@@ -303,6 +303,47 @@ int main() {
         for (auto dir = made_dirs.rbegin(); dir != made_dirs.rend(); ++dir) RemoveDirectoryW((L"\\\\?\\" + *dir).c_str());
     }
     {
+        // A folder of the target's name that appears after the scan found
+        // the name free (here while a conflict is pending) is merged into, so
+        // undo must take back only what the transfer put there, not the
+        // folder with the other program's file. The undo record is read
+        // instead of run: undoing a copy recycles.
+        const auto source = root / L"late-src";
+        const auto target = root / L"late-into";
+        fs::create_directories(source / L"dup"); fs::create_directory(target);
+        Write(source / L"a.txt", "mine");
+        Write(target / L"a.txt", "theirs");
+        Write(source / L"dup" / L"x.txt", "copied");
+        OpsManager manager; manager.Start([] {}, false);
+        auto copy = Request(OpType::Copy, source / L"a.txt", target);
+        copy.sources.push_back((source / L"dup").wstring());
+        const auto before = manager.Status().completed_ops;
+        manager.Submit(copy);
+        bool asked = false;
+        for (const auto deadline = GetTickCount64() + 10000; !asked && GetTickCount64() < deadline;) {
+            if (const auto conflict = manager.PendingConflict()) {
+                asked = true;
+                fs::create_directory(target / L"dup");
+                Write(target / L"dup" / L"other.txt", "not ours");
+                manager.ResolveConflict(conflict->token, ConflictChoice::Skip, false);
+            } else {
+                Sleep(5);
+            }
+        }
+        const bool copied = asked && Wait(manager, before) && Read(target / L"dup" / L"x.txt") == "copied" &&
+            Read(target / L"a.txt") == "theirs" && Read(target / L"dup" / L"other.txt") == "not ours";
+        const auto quoted = [](const fs::path& path) {
+            std::wstring out = L"\"";
+            for (const wchar_t c : path.wstring()) { if (c == L'\\') out += L'\\'; out += c; }
+            return out + L"\"";
+        };
+        const std::wstring undo = manager.UndoToJson();
+        check(copied && undo.find(quoted(target / L"dup" / L"x.txt")) != std::wstring::npos &&
+              undo.find(quoted(target / L"dup")) == std::wstring::npos,
+              "a folder that appeared after the scan is undone item by item, not as a whole");
+        manager.Stop();
+    }
+    {
         // One listing of a target folder vouches for names that are surely
         // absent; whatever it cannot vouch for is left to a query.
         const auto target = root / L"target-listing";

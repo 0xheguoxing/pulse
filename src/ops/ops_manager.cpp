@@ -3233,6 +3233,10 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         }
         bool destination_is_directory = false;
         bool destination_exists = !fresh_parent && PathExists(entry.destination, &destination_is_directory);
+        // Taken now though the scan found it free (another program, or an
+        // earlier root of this transfer with the same name): what is there
+        // is not this root's to undo as a whole.
+        if (destination_exists) entry.destination_preexisting = true;
         // Source and target can only be one object when the target exists.
         if (destination_exists && SameFileObject(entry.source, entry.destination)) {
             if (entry.directory) skipped_prefixes.push_back(entry.source);
