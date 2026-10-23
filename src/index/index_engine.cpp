@@ -1427,6 +1427,36 @@ SearchResult Engine::Search(const Query& q, const std::atomic<uint32_t>* latest,
         CollectMatchesLocked(cq, prefix_node, q.folders_only, use_attrs, matches, latest, expected);
     }
     if (latest && latest->load() != expected) return out;
+    struct Ranked {
+        int32_t id = -1;
+        int score = 0;
+    };
+    auto better = [](const Ranked& a, const Ranked& b) {
+        if (a.score != b.score) return a.score > b.score;
+        return a.id < b.id;
+    };
+    const bool rank_single_char = QueryIsSimpleName(cq) &&
+        cq.groups[0][0].name_how == NameHow::Substring &&
+        cq.groups[0][0].name.size() == 1;
+    const wchar_t rank_char = rank_single_char ? cq.groups[0][0].name[0] : 0;
+    const bool rank_from_base = map_ && live_.nodes.empty() && patches_.empty() &&
+        tombstones_.empty();
+    auto score_of = [&](int32_t id) {
+        Node n{};
+        std::wstring_view nm;
+        if (rank_from_base && id >= 0 && id < BaseCount()) {
+            n = map_->nodes[static_cast<size_t>(id)];
+            nm = { map_->pool + n.off, n.len };
+        } else {
+            n = NodeAt(id);
+            nm = NameOf(id);
+        }
+        return rank_single_char
+            ? RankSingleCharMatch(nm.data(), static_cast<uint32_t>(nm.size()),
+                                  (n.flags & kFlagDir) != 0, rank_char)
+            : RankName(nm.data(), static_cast<uint32_t>(nm.size()),
+                       (n.flags & kFlagDir) != 0, cq);
+    };
     // Caller filter (#66). The shared cache keeps the caller-independent set;
     // only this result is narrowed to the folders the caller may list.
     MatchSet unfiltered;
@@ -1447,6 +1477,35 @@ SearchResult Engine::Search(const Query& q, const std::atomic<uint32_t>* latest,
             }
             if (last_state > 0) visible.ids.push_back(id);
         });
+        if (!unchecked.empty() && q.rank && cap > 0 && visibility->TopFirst()) {
+            // A broad first query can touch thousands of folders, each one a
+            // kernel open (a disk seek on a cold hard disk). Rank every name
+            // not known to be hidden: only the folders of the best ones decide
+            // this page. When those are all known, the page is final and the
+            // total counts confirmed names only; the host checks the rest.
+            const size_t heap_n = q.offset + cap;
+            std::priority_queue<Ranked, std::vector<Ranked>, decltype(better)> top(better);
+            matches.ForEach([&](int32_t id) {
+                if (latest && latest->load() != expected) return;
+                const int32_t parent = NodeAt(id).parent;
+                if (parent >= 0 && visibility->State(parent) == 0) return;
+                const Ranked candidate{ id, score_of(id) };
+                if (top.size() < heap_n) {
+                    top.push(candidate);
+                } else if (better(candidate, top.top())) {
+                    top.pop();
+                    top.push(candidate);
+                }
+            });
+            if (latest && latest->load() != expected) return SearchResult{};
+            std::vector<int32_t> deciding;
+            for (; !top.empty(); top.pop()) {
+                const int32_t parent = NodeAt(top.top().id).parent;
+                if (parent >= 0 && visibility->State(parent) < 0) deciding.push_back(parent);
+            }
+            if (deciding.empty()) out.partial = true;
+            unchecked = std::move(deciding);
+        }
         if (!unchecked.empty()) {
             std::sort(unchecked.begin(), unchecked.end());
             unchecked.erase(std::unique(unchecked.begin(), unchecked.end()), unchecked.end());
@@ -1492,39 +1551,11 @@ SearchResult Engine::Search(const Query& q, const std::atomic<uint32_t>* latest,
     std::vector<int32_t> chosen;
     chosen.reserve((std::min)(want, matches.total));
     if (q.rank) {
-        struct Ranked {
-            int32_t id = -1;
-            int score = 0;
-        };
-        auto better = [](const Ranked& a, const Ranked& b) {
-            if (a.score != b.score) return a.score > b.score;
-            return a.id < b.id;
-        };
         std::priority_queue<Ranked, std::vector<Ranked>, decltype(better)> top(better);
         const size_t heap_n = start + want;
-        const bool rank_single_char = QueryIsSimpleName(cq) &&
-            cq.groups[0][0].name_how == NameHow::Substring &&
-            cq.groups[0][0].name.size() == 1;
-        const wchar_t rank_char = rank_single_char ? cq.groups[0][0].name[0] : 0;
-        const bool rank_from_base = map_ && live_.nodes.empty() && patches_.empty() &&
-            tombstones_.empty();
         matches.ForEach([&](int32_t id) {
             if (latest && latest->load() != expected) return;
-            Node n{};
-            std::wstring_view nm;
-            if (rank_from_base && id >= 0 && id < BaseCount()) {
-                n = map_->nodes[static_cast<size_t>(id)];
-                nm = { map_->pool + n.off, n.len };
-            } else {
-                n = NodeAt(id);
-                nm = NameOf(id);
-            }
-            const int score = rank_single_char
-                ? RankSingleCharMatch(nm.data(), static_cast<uint32_t>(nm.size()),
-                                      (n.flags & kFlagDir) != 0, rank_char)
-                : RankName(nm.data(), static_cast<uint32_t>(nm.size()),
-                           (n.flags & kFlagDir) != 0, cq);
-            Ranked candidate{ id, score };
+            Ranked candidate{ id, score_of(id) };
             if (top.size() < heap_n) {
                 top.push(candidate);
             } else if (better(candidate, top.top())) {
