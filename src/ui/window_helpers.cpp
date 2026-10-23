@@ -1,11 +1,16 @@
 #include "../common/windows_compat.h"
+#include "../common/os_version.h"
 #include "window_helpers.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <vector>
+#include <commctrl.h>
 #include <dwmapi.h>
 #include <uxtheme.h>
 #include <windowsx.h>
+#include <wrl/client.h>
 
 namespace pulse::ui {
 
@@ -49,8 +54,202 @@ LRESULT BorderlessHitTest(HWND hwnd, LPARAM lparam, float title_height,
     return HTCLIENT;
 }
 
+// ---- Windows 10: corners and shadow of our own ------------------------------
+// Windows 10 neither rounds a window nor gives a borderless one a rounded
+// shadow. The dialogs clip their card to 8 px corners (BeginSurface, the
+// corners stay transparent) and a click-through layered window right behind
+// each dialog draws a soft rounded shadow. Windows 11 does both itself.
+namespace {
+
+constexpr float kCornerRadiusDip = 8.0f;   // DWMWCP_ROUND
+constexpr wchar_t kShadowClass[] = L"PulseDialogShadow";
+constexpr UINT_PTR kShadowSubclassId = 0x50534844;  // 'PSHD'
+
+bool ForcedOwnCorners() {
+    // Lets the Windows 10 path be checked on Windows 11.
+    wchar_t value[4]{};
+    return GetEnvironmentVariableW(L"PULSE_TEST_OWN_CORNERS", value, 4) && value[0] == L'1';
+}
+
+struct WindowShadow {
+    HWND window = nullptr;
+    bool dark = false;
+    bool suppressed = false;   // until the dialog hides (exit animations)
+    int width = 0, height = 0;
+    UINT dpi = 0;
+    bool painted_dark = false;
+};
+
+int ShadowSpread(UINT dpi) { return MulDiv(20, static_cast<int>(dpi), 96); }
+int ShadowDrop(UINT dpi) { return MulDiv(4, static_cast<int>(dpi), 96); }
+
+HWND CreateShadowWindow(HWND dialog) {
+    static const ATOM atom = [] {
+        WNDCLASSEXW cls{ sizeof(cls) };
+        cls.lpfnWndProc = DefWindowProcW;
+        cls.hInstance = GetModuleHandleW(nullptr);
+        cls.lpszClassName = kShadowClass;
+        return RegisterClassExW(&cls);
+    }();
+    if (!atom) return nullptr;
+    // Owned like the dialog, so raising the owner keeps the two together.
+    const DWORD ex = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW |
+        static_cast<DWORD>(GetWindowLongPtrW(dialog, GWL_EXSTYLE) & WS_EX_TOPMOST);
+    return CreateWindowExW(ex, kShadowClass, L"", WS_POPUP, 0, 0, 0, 0,
+                           GetWindow(dialog, GW_OWNER), nullptr, GetModuleHandleW(nullptr), nullptr);
+}
+
+// A black rounded rectangle blurred outward, premultiplied, placed at `origin`.
+void PaintShadow(WindowShadow& shadow, int width, int height, UINT dpi, POINT origin) {
+    const int spread = ShadowSpread(dpi);
+    const int w = width + 2 * spread, h = height + 2 * spread;
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = w;
+    info.bmiHeader.biHeight = -h;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    const HDC screen = GetDC(nullptr);
+    const HDC memory = CreateCompatibleDC(screen);
+    const HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (bitmap && bits && memory) {
+        auto* pixels = static_cast<uint32_t*>(bits);
+        const float radius = kCornerRadiusDip * static_cast<float>(dpi) / 96.0f;
+        const float blur = static_cast<float>(spread);
+        const float peak = shadow.dark ? 0.50f : 0.22f;
+        const float cx = static_cast<float>(w) * 0.5f;
+        const float cy = static_cast<float>(h) * 0.5f + static_cast<float>(ShadowDrop(dpi));
+        const float hx = static_cast<float>(width) * 0.5f - radius;
+        const float hy = static_cast<float>(height) * 0.5f - radius;
+        for (int y = 0; y < h; ++y) {
+            const float qy = std::fabs(static_cast<float>(y) + 0.5f - cy) - hy;
+            for (int x = 0; x < w; ++x) {
+                const float qx = std::fabs(static_cast<float>(x) + 0.5f - cx) - hx;
+                const float ox = (std::max)(qx, 0.0f), oy = (std::max)(qy, 0.0f);
+                // Signed distance to the card's rounded edge.
+                const float d = std::sqrt(ox * ox + oy * oy) + (std::min)((std::max)(qx, qy), 0.0f) - radius;
+                float alpha = 0.0f;
+                if (d <= 0.0f) alpha = peak;
+                else if (d < blur) {
+                    const float t = d / blur;
+                    alpha = peak * std::exp(-4.0f * t * t) * (1.0f - t);
+                }
+                pixels[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] =
+                    static_cast<uint32_t>(alpha * 255.0f + 0.5f) << 24;
+            }
+        }
+        const HGDIOBJ old = SelectObject(memory, bitmap);
+        POINT source{};
+        SIZE size{ w, h };
+        BLENDFUNCTION blend{ AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+        UpdateLayeredWindow(shadow.window, screen, &origin, &size, memory, &source, 0, &blend, ULW_ALPHA);
+        SelectObject(memory, old);
+        shadow.width = width;
+        shadow.height = height;
+        shadow.dpi = dpi;
+        shadow.painted_dark = shadow.dark;
+    }
+    if (bitmap) DeleteObject(bitmap);
+    if (memory) DeleteDC(memory);
+    ReleaseDC(nullptr, screen);
+}
+
+void SyncShadow(HWND dialog, WindowShadow& shadow) {
+    const bool show = !shadow.suppressed && IsWindowVisible(dialog) && !IsIconic(dialog) && !IsZoomed(dialog);
+    if (!show) {
+        if (shadow.window && IsWindowVisible(shadow.window)) ShowWindow(shadow.window, SW_HIDE);
+        return;
+    }
+    if (!shadow.window) shadow.window = CreateShadowWindow(dialog);
+    if (!shadow.window) return;
+    RECT rect{};
+    GetWindowRect(dialog, &rect);
+    const UINT dpi = pulse::compat::WindowDpi(dialog);
+    const int spread = ShadowSpread(dpi);
+    const int width = rect.right - rect.left, height = rect.bottom - rect.top;
+    const POINT origin{ rect.left - spread, rect.top - spread };
+    if (width != shadow.width || height != shadow.height || dpi != shadow.dpi || shadow.dark != shadow.painted_dark)
+        PaintShadow(shadow, width, height, dpi, origin);
+    // Right behind the dialog, moved along with it.
+    SetWindowPos(shadow.window, dialog, origin.x, origin.y, 0, 0,
+                 SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
+}
+
+LRESULT CALLBACK ShadowSubclass(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
+                                UINT_PTR, DWORD_PTR data) {
+    auto* shadow = reinterpret_cast<WindowShadow*>(data);
+    if (message == WM_WINDOWPOSCHANGED) {
+        const LRESULT result = DefSubclassProc(hwnd, message, wparam, lparam);
+        if (reinterpret_cast<const WINDOWPOS*>(lparam)->flags & SWP_HIDEWINDOW) shadow->suppressed = false;
+        SyncShadow(hwnd, *shadow);
+        return result;
+    }
+    if (message == WM_NCDESTROY) {
+        RemoveWindowSubclass(hwnd, ShadowSubclass, kShadowSubclassId);
+        if (shadow->window) DestroyWindow(shadow->window);
+        delete shadow;
+    }
+    return DefSubclassProc(hwnd, message, wparam, lparam);
+}
+
+WindowShadow* FindShadow(HWND hwnd) {
+    DWORD_PTR data = 0;
+    return GetWindowSubclass(hwnd, ShadowSubclass, kShadowSubclassId, &data)
+        ? reinterpret_cast<WindowShadow*>(data) : nullptr;
+}
+
+void AttachWindowShadow(HWND hwnd, bool dark) {
+    if (WindowShadow* shadow = FindShadow(hwnd)) {
+        shadow->dark = dark;
+        SyncShadow(hwnd, *shadow);
+        return;
+    }
+    auto* shadow = new WindowShadow;
+    shadow->dark = dark;
+    if (!SetWindowSubclass(hwnd, ShadowSubclass, kShadowSubclassId, reinterpret_cast<DWORD_PTR>(shadow))) {
+        delete shadow;
+        return;
+    }
+    SyncShadow(hwnd, *shadow);
+}
+
+// BeginSurface's clip and the edge drawn over everything at EndSurface.
+struct OwnCornerFrame {
+    bool layer = false;
+    D2D1_ROUNDED_RECT edge{};
+    D2D1_COLOR_F color{};
+};
+thread_local OwnCornerFrame g_own_corner_frame;
+
+} // namespace
+
+bool DrawsOwnCorners() {
+    static const bool own = pulse::os::TrueWindowsBuild() < 22000 || ForcedOwnCorners();
+    return own;
+}
+
+void SuppressWindowShadow(HWND hwnd) {
+    if (WindowShadow* shadow = FindShadow(hwnd)) {
+        shadow->suppressed = true;
+        SyncShadow(hwnd, *shadow);
+    }
+}
+
 bool ApplyBackdrop(HWND hwnd, bool dark) {
     UpdateWindowTheme(hwnd, dark);
+    if (DrawsOwnCorners()) {
+        // No DWM frame: its square shadow would show around the rounded card.
+        const DWORD corner = DWMWCP_DONOTROUND;
+        DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
+        const DWORD none = DWMSBT_NONE;
+        DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &none, sizeof(none));
+        const DWMNCRENDERINGPOLICY policy = DWMNCRP_DISABLED;
+        DwmSetWindowAttribute(hwnd, DWMWA_NCRENDERING_POLICY, &policy, sizeof(policy));
+        AttachWindowShadow(hwnd, dark);
+        return false;
+    }
     const DWORD corner = DWMWCP_ROUND;
     DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
     const bool high_contrast = IsHighContrast();
@@ -163,14 +362,44 @@ void BeginSurface(Compositor& compositor, fluent::Painter& painter,
     tint.a = high_contrast || !backdrop_enabled ? 1.0f : (dark ? 0.76f : 0.82f);
     const float width = static_cast<float>(compositor.Width());
     const float height = static_cast<float>(compositor.Height());
-    painter.FillRoundedRect(D2D1::RectF(0, 0, width, height), 0, tint);
     const float inset = 0.5f;
+    const float radius = kCornerRadiusDip * scale;
+    g_own_corner_frame = {};
+    if (DrawsOwnCorners()) {
+        // Everything drawn this frame is clipped to the rounded card; the
+        // edge goes on last so footer bands do not cover it.
+        Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+        dc->GetFactory(&factory);
+        Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> shape;
+        if (factory && SUCCEEDED(factory->CreateRoundedRectangleGeometry(
+                D2D1::RoundedRect(D2D1::RectF(0, 0, width, height), radius, radius), &shape))) {
+            dc->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), shape.Get()), nullptr);
+            g_own_corner_frame.layer = true;
+        }
+        g_own_corner_frame.edge = D2D1::RoundedRect(
+            D2D1::RectF(inset, inset, width - inset, height - inset), radius - inset, radius - inset);
+        g_own_corner_frame.color = theme.stroke_card;
+        g_own_corner_frame.color.a = (std::max)(g_own_corner_frame.color.a, dark ? 0.16f : 0.14f);
+        painter.FillRoundedRect(D2D1::RectF(0, 0, width, height), 0, tint);
+        return;
+    }
+    painter.FillRoundedRect(D2D1::RectF(0, 0, width, height), 0, tint);
+    // DWM rounds the window by 8 px and draws its own edge: ours follows the
+    // same curve, or the two part at the corners.
     painter.StrokeRoundedRect(D2D1::RectF(inset, inset, width - inset, height - inset),
-                              12.0f * scale, theme.stroke_card);
+                              radius, theme.stroke_card);
 }
 
 void EndSurface(Compositor& compositor) {
-    const HRESULT hr = compositor.Dc()->EndDraw();
+    auto* dc = compositor.Dc();
+    if (g_own_corner_frame.layer) {
+        dc->PopLayer();
+        Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+        if (SUCCEEDED(dc->CreateSolidColorBrush(g_own_corner_frame.color, &brush)))
+            dc->DrawRoundedRectangle(g_own_corner_frame.edge, brush.Get(), 1.0f);
+    }
+    g_own_corner_frame = {};
+    const HRESULT hr = dc->EndDraw();
     if (hr == D2DERR_RECREATE_TARGET || hr == DXGI_ERROR_DEVICE_REMOVED ||
         hr == DXGI_ERROR_DEVICE_RESET || hr == DXGI_ERROR_DRIVER_INTERNAL_ERROR) {
         compositor.NotifyDeviceLost(hr);

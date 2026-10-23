@@ -2722,6 +2722,7 @@ void FileOperationWindow::BeginAutoClose() {
     const DWORD none = DWMSBT_NONE;
     DwmSetWindowAttribute(hwnd_, DWMWA_SYSTEMBACKDROP_TYPE, &none, sizeof(none));
     backdrop_enabled_ = false;
+    pulse::ui::SuppressWindowShadow(hwnd_);  // Windows 10: it would stay full size
     Render();
     // Toward the bottom-right, where the status pill sits.
     if (!compositor_.PlayZoom(static_cast<float>(compositor_.Width()),
