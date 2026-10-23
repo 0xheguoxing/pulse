@@ -202,6 +202,19 @@ bool ThumbnailCache::Palette(const std::wstring& path, uint32_t pixel_size, uint
     return true;
 }
 
+bool ThumbnailCache::Stats(const std::wstring& path, uint32_t pixel_size, uint64_t modified,
+                           uint64_t size, ImageStats& stats) {
+    std::lock_guard lock(mutex_);
+    auto it = items_.find(Key(path, pixel_size, modified, size, 0));
+    if (it == items_.end() || it->second.failed) {
+        const auto link = still_by_identity_.find(Key(path, 0, modified, size));
+        it = link == still_by_identity_.end() ? items_.end() : items_.find(link->second);
+    }
+    if (it == items_.end() || it->second.failed || !it->second.stats.valid) return false;
+    stats = it->second.stats;
+    return true;
+}
+
 ThumbnailCache::Item* ThumbnailCache::StaleBitmap(const std::wstring& identity,
                                                   const std::wstring& except_key) {
     const auto link = still_by_identity_.find(identity);
@@ -861,9 +874,12 @@ void ThumbnailCache::Worker() {
                     // Audio covers tint Quick Look's waveform. The pixels
                     // are freed on upload, so measure them here, off the UI
                     // thread; at most 48 x 48 samples.
-                    if (quick_look_content_ && response.kind == ipc::PreviewContentKind::Bitmap)
+                    if (quick_look_content_ && response.kind == ipc::PreviewContentKind::Bitmap) {
                         result.palette = ComputeCoverPalette(result.pixels.data(),
                             result.w, result.h, result.stride);
+                        result.stats = ComputeImageStats(result.pixels.data(),
+                            result.w, result.h, result.stride);
+                    }
                 } else fail(9, GetLastError());
                 CloseHandle(map);
             } else fail(8, GetLastError());

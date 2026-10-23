@@ -108,6 +108,9 @@ public:
     // until decoded, and for covers without a usable colour.
     bool Palette(const std::wstring& path, uint32_t pixel_size, uint64_t modified,
                  uint64_t size, CoverPalette& palette);
+    // Quick Look only: histogram and transparency of the same bitmap.
+    bool Stats(const std::wstring& path, uint32_t pixel_size, uint64_t modified,
+               uint64_t size, ImageStats& stats);
 private:
 #ifdef PULSE_WITH_SELFTEST
     friend struct QuickPreviewAuditTest;
@@ -121,6 +124,7 @@ private:
         std::vector<uint8_t> pixels;
         IconArtworkBounds artwork_bounds;
         CoverPalette palette;   // Quick Look content only (see Palette)
+        ImageStats stats;       // Quick Look content only (see Stats)
         std::wstring text;
         std::wstring error;
         std::vector<PreviewProperty> properties;

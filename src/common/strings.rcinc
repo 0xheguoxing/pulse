@@ -2691,6 +2691,16 @@ BEGIN
     IDS_PREVIEW_COLUMN_DATE "日期"
     IDS_PREVIEW_TABLE_ALL_ROWS "共 %s 行 · 已全部显示"
     IDS_PREVIEW_TABLE_PARTIAL_ROWS "已显示 %s 行 · 其余内容超出预览限制"
+    IDS_PREVIEW_BG_AUTO "背景：自动"
+    IDS_PREVIEW_BG_LIGHT "背景：浅色"
+    IDS_PREVIEW_BG_DARK "背景：深色"
+    IDS_PREVIEW_BG_CHECKER "背景：棋盘格"
+    IDS_PREVIEW_INFO_ALPHA "透明"
+    IDS_PREVIEW_INFO_YES "有"
+    IDS_PREVIEW_INFO_NO "无"
+    IDS_PREVIEW_INFO_HISTOGRAM "直方图"
+    IDS_PREVIEW_DECODE_SYSTEM "系统解码"
+    IDS_PREVIEW_DECODE_FFMPEG "FFmpeg 解码"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5381,6 +5391,16 @@ BEGIN
     IDS_PREVIEW_COLUMN_DATE "Date"
     IDS_PREVIEW_TABLE_ALL_ROWS "%s rows · all shown"
     IDS_PREVIEW_TABLE_PARTIAL_ROWS "%s rows shown · the rest exceeds the preview limit"
+    IDS_PREVIEW_BG_AUTO "Background: Auto"
+    IDS_PREVIEW_BG_LIGHT "Background: Light"
+    IDS_PREVIEW_BG_DARK "Background: Dark"
+    IDS_PREVIEW_BG_CHECKER "Background: Checkerboard"
+    IDS_PREVIEW_INFO_ALPHA "Transparency"
+    IDS_PREVIEW_INFO_YES "Yes"
+    IDS_PREVIEW_INFO_NO "None"
+    IDS_PREVIEW_INFO_HISTOGRAM "Histogram"
+    IDS_PREVIEW_DECODE_SYSTEM "System decoder"
+    IDS_PREVIEW_DECODE_FFMPEG "FFmpeg decoder"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

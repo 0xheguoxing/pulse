@@ -161,4 +161,47 @@ inline uint32_t CoverPaletteThemed(uint32_t rgb, bool dark) {
     return FromHsl(c);
 }
 
+// Quick Look's image info drawer: an RGB histogram (64 bins per channel,
+// scaled so the fullest bin is 1000) and whether any pixel is translucent.
+// Measured on at most 256 x 256 samples, off the UI thread.
+struct ImageStats {
+    bool valid = false;
+    bool has_alpha = false;
+    uint16_t r[64]{}, g[64]{}, b[64]{};
+};
+
+inline ImageStats ComputeImageStats(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t stride) {
+    ImageStats out;
+    if (!bgra || !width || !height || stride < width * 4) return out;
+    const uint32_t step_x = (std::max)(1u, width / 256), step_y = (std::max)(1u, height / 256);
+    uint32_t counts[3][64]{};
+    uint32_t samples = 0;
+    for (uint32_t y = 0; y < height; y += step_y) {
+        const uint8_t* row = bgra + static_cast<size_t>(y) * stride;
+        for (uint32_t x = 0; x < width; x += step_x) {
+            const uint8_t* p = row + static_cast<size_t>(x) * 4;
+            const uint32_t a = p[3];
+            if (a < 250) out.has_alpha = true;
+            if (a == 0) continue;
+            // Premultiplied: undo it so a faded edge counts as its real colour.
+            auto channel = [a](uint8_t v) { return a == 255 ? v : (std::min)(255u, v * 255u / a); };
+            ++counts[0][channel(p[2]) >> 2];
+            ++counts[1][channel(p[1]) >> 2];
+            ++counts[2][channel(p[0]) >> 2];
+            ++samples;
+        }
+    }
+    if (!samples) return out;
+    uint32_t peak = 1;
+    for (const auto& channel : counts)
+        for (uint32_t v : channel) peak = (std::max)(peak, v);
+    for (int i = 0; i < 64; ++i) {
+        out.r[i] = static_cast<uint16_t>(counts[0][i] * 1000ull / peak);
+        out.g[i] = static_cast<uint16_t>(counts[1][i] * 1000ull / peak);
+        out.b[i] = static_cast<uint16_t>(counts[2][i] * 1000ull / peak);
+    }
+    out.valid = true;
+    return out;
+}
+
 } // namespace pulse::ui

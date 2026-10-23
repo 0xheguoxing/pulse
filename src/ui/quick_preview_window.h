@@ -182,6 +182,11 @@ private:
     uint32_t RequestedPixelSize(const D2D1_RECT_F& content) const;
     // Image facts and the zoom control in the footer.
     void SetImageFooter(const D2D1_RECT_F& content);
+    // Image info drawer (EXIF rows and a histogram) on the right of the picture.
+    float InfoDrawerWidth() const noexcept;
+    // The backdrop behind a picture; false when the mode draws nothing.
+    bool ImageBackdropWanted();
+    bool DrawImageBackdrop(ID2D1DeviceContext* dc, const D2D1_RECT_F& content, const D2D1_RECT_F& draw);
     void DrawFindBar(ID2D1DeviceContext* dc, const D2D1_RECT_F& bar);
     Theme CurrentTheme() const;
     void EnsureTextLayout(const std::wstring& text, bool hex, float width, bool reading = false);
@@ -236,7 +241,9 @@ private:
     static constexpr int kFooterCopyPath = 4;   // JSON/XML: copy the current node's path
     static constexpr int kFooterFoldAll = 5;    // JSON/XML: expand all / collapse all
     static constexpr int kFooterZoomOut = 6;    // pages: zoom out one step
-    static constexpr int kFooterZoomIn = 7;     // pages: zoom in one step
+    static constexpr int kFooterZoomIn = 7;     // pages and images: zoom in one step
+    static constexpr int kFooterImageBg = 8;    // images: backdrop auto / light / dark / checkerboard
+    static constexpr int kFooterInfo = 9;       // images: the info drawer
     ChromePalette Palette() const;
     float HeaderHeight() const noexcept;
     float FooterHeight() const noexcept;
@@ -248,6 +255,7 @@ private:
     bool HeaderInteractive(POINT client) const;
     void DrawHeader(ID2D1DeviceContext* dc, const ChromePalette& palette);
     void DrawFooter(ID2D1DeviceContext* dc, const ChromePalette& palette);
+    void DrawInfoDrawer(ID2D1DeviceContext* dc, const ChromePalette& palette);
     void SetFooterParts(std::vector<std::wstring> parts);
     void AddFooterControl(int id, std::wstring text);
     int HitFooterControl(POINT client) const;   // control id, 0 = none
@@ -268,7 +276,7 @@ private:
     std::wstring open_app_;    // default program's name; empty = none
     std::unordered_map<std::wstring, std::wstring> open_app_cache_;  // extension -> name, per Show
     std::vector<std::wstring> footer_parts_;   // this frame's facts (left)
-    struct FooterControl { int id = 0; std::wstring text; D2D1_RECT_F rect{}; };
+    struct FooterControl { int id = 0; std::wstring text; D2D1_RECT_F rect{}; bool on = false; };
     std::vector<FooterControl> footer_controls_;   // this frame's controls (right)
     std::wstring footer_hint_;                     // this frame's keyboard hint (right, passive)
     int footer_hover_ = 0;
@@ -343,6 +351,10 @@ private:
     bool image_fit_ = true;
     float image_zoom_ = 1.0f;
     uint32_t preview_pixels_ = 0;
+    bool image_item_ = false;            // the item's extension is a picture (RefreshItemFacts)
+    // Shared by every Quick Look window of this session.
+    static inline int image_backdrop_ = 0;   // 0 auto (checkerboard when translucent), 1 light, 2 dark, 3 checkerboard
+    static inline bool info_open_ = false;
     uint32_t decoded_w_ = 0;
     uint32_t decoded_h_ = 0;
     uint32_t source_w_ = 0;

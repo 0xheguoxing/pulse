@@ -492,7 +492,7 @@ D2D1_RECT_F QuickPreviewWindow::ContentRect() const {
     const float width = static_cast<float>(compositor_.Width());
     const float height = static_cast<float>(compositor_.Height());
     const float header = HeaderHeight();
-    return D2D1::RectF(0, header + FindBarHeight() + preview_notice_height_, width,
+    return D2D1::RectF(0, header + FindBarHeight() + preview_notice_height_, width - InfoDrawerWidth(),
                        (std::max)(header, height - FooterHeight() - PlaybackHeight()));
 }
 
@@ -852,7 +852,69 @@ void QuickPreviewWindow::SetImageFooter(const D2D1_RECT_F& content) {
     swprintf_s(percent, L"%.0f%%", ratio * 100.0f);
     std::wstring zoom = percent;
     if (image_fit_) zoom = std::wstring(pulse::l10n::Get(pulse::l10n::StringId::PreviewFit)) + L" \x00B7 " + zoom;
+    AddFooterControl(kFooterZoomOut, L"\x2212");
     AddFooterControl(kFooterZoom, std::move(zoom));
+    AddFooterControl(kFooterZoomIn, L"+");
+    if (!kImageExtras || !IsIconFile(item_.path)) {
+        using pulse::l10n::StringId;
+        static constexpr StringId kBackdrop[] = {StringId::PreviewBgAuto, StringId::PreviewBgLight,
+                                                 StringId::PreviewBgDark, StringId::PreviewBgChecker};
+        AddFooterControl(kFooterImageBg, pulse::l10n::Get(kBackdrop[image_backdrop_ & 3]));
+    }
+    AddFooterControl(kFooterInfo, pulse::l10n::Get(pulse::l10n::StringId::Information));
+    footer_controls_.back().on = info_open_;
+}
+
+bool QuickPreviewWindow::ImageBackdropWanted() {
+    if (decoded_w_ == 0 || decoded_h_ == 0) return false;
+    if (image_backdrop_ != 0) return true;
+    ImageStats stats;
+    return thumbnails_.Stats(item_.path, preview_pixels_, item_.modified, item_.size, stats) &&
+           stats.has_alpha;
+}
+
+bool QuickPreviewWindow::DrawImageBackdrop(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
+                                           const D2D1_RECT_F& draw) {
+    if (!dc || !ImageBackdropWanted()) return false;
+    if (image_backdrop_ == 1 || image_backdrop_ == 2) {
+        ComPtr<ID2D1SolidColorBrush> fill;
+        dc->CreateSolidColorBrush(D2D1::ColorF(image_backdrop_ == 1 ? 0xF2F2F2 : 0x1C1C1C), &fill);
+        if (!fill.get()) return false;
+        dc->FillRectangle(content, fill.get());
+        return true;
+    }
+    // Checkerboard under the picture only: a 2 x 2 bitmap tiled at 8 DIP cells.
+    D2D1_RECT_F shown = draw;
+    if (image_fit_) {
+        const float aspect = static_cast<float>(decoded_w_) / static_cast<float>(decoded_h_);
+        const float dw = draw.right - draw.left, dh = draw.bottom - draw.top;
+        if (dw <= 0.0f || dh <= 0.0f) return false;
+        if (aspect > dw / dh) {
+            const float h = dw / aspect, cy = (draw.top + draw.bottom) * 0.5f;
+            shown.top = cy - h * 0.5f;
+            shown.bottom = cy + h * 0.5f;
+        } else {
+            const float w = dh * aspect, cx = (draw.left + draw.right) * 0.5f;
+            shown.left = cx - w * 0.5f;
+            shown.right = cx + w * 0.5f;
+        }
+    }
+    const uint32_t a = dark_ ? 0xFF2E2E2Eu : 0xFFFFFFFFu, b = dark_ ? 0xFF3C3C3Cu : 0xFFE6E6E6u;
+    const uint32_t cells[4] = {a, b, b, a};
+    const auto props = D2D1::BitmapProperties(
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    ComPtr<ID2D1Bitmap> tile;
+    ComPtr<ID2D1BitmapBrush> brush;
+    if (FAILED(dc->CreateBitmap(D2D1::SizeU(2, 2), cells, 8, &props, &tile)) || !tile.get() ||
+        FAILED(dc->CreateBitmapBrush(tile.get(), D2D1::BitmapBrushProperties(D2D1_EXTEND_MODE_WRAP,
+            D2D1_EXTEND_MODE_WRAP, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR), &brush)) ||
+        !brush.get())
+        return false;
+    const float cell = std::round(8.0f * scale_);
+    brush->SetTransform(D2D1::Matrix3x2F::Scale(cell, cell) *
+                        D2D1::Matrix3x2F::Translation(std::round(shown.left), std::round(shown.top)));
+    dc->FillRectangle(shown, brush.get());
+    return true;
 }
 
 bool QuickPreviewWindow::PlainTextCandidate() const {
@@ -1902,8 +1964,23 @@ void QuickPreviewWindow::Render() {
         if (codec_card) DrawCodecCard(dc, ContentRect(), video, text_brush.get());
         if (audio && SUCCEEDED(video.error))
             DrawAudio(dc, video, text_brush.get(), secondary_brush.get());
-        else if (!audio)
-            SetMediaFooter(video, {});
+        else if (!audio) {
+            // Codec · size · length, then the frame rate; the decoder on the right.
+            std::vector<PreviewProperty> properties;
+            std::vector<std::wstring> facts;
+            thumbnails_.Properties(item_.path, item_.attrs, generation_, item_.modified, item_.size,
+                                   properties);
+            VideoPreview::State shown = video;
+            for (const PreviewProperty& property : properties) {
+                if (property.value.empty()) continue;
+                if (property.label == L"帧率") facts.push_back(property.value);
+                else if (property.label == L"编码格式" && shown.codec_name.empty()) shown.codec_name = property.value;
+            }
+            SetMediaFooter(shown, std::move(facts));
+            if (video.ready && SUCCEEDED(video.error))
+                footer_hint_ = pulse::l10n::Get(video.ffmpeg ? pulse::l10n::StringId::PreviewDecodeFfmpeg
+                                                             : pulse::l10n::StringId::PreviewDecodeSystem);
+        }
         if (codec_card) {
             // The card explains the missing picture.
         } else if (FAILED(video.error))
@@ -1947,6 +2024,8 @@ void QuickPreviewWindow::Render() {
         }
         const bool icon_unsized = icon && image_fit_ && (!decoded_w_ || !decoded_h_);
         dc->PushAxisAlignedClip(content, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        const bool backdrop = !icon && !folder && image_item_ && pages_count_ <= 1 &&
+                              DrawImageBackdrop(dc, content, draw);
         if (table_.TakePendingSheetRequest(sheet_request_)) {
             preview_text_.clear();
             find_matches_.clear();
@@ -2055,6 +2134,9 @@ void QuickPreviewWindow::Render() {
         if (result == PreviewDrawResult::Bitmap) {
             native_kind_ = NativeKind::Bitmap;
             SetImageFooter(content);
+            // The first decoded frame tells the backdrop where (and whether) to draw.
+            if (!backdrop && !icon && image_item_ && ImageBackdropWanted())
+                InvalidateRect(hwnd_, nullptr, FALSE);
             if (icon) {
                 ParseIconSizes(text);
                 DrawIconSizes(dc, content, text_brush.get());
@@ -2310,6 +2392,7 @@ void QuickPreviewWindow::Render() {
     }
     // The shell stays put while the content slides.
     LayoutHeader();
+    DrawInfoDrawer(dc, palette);
     DrawHeader(dc, palette);
     DrawFooter(dc, palette);
     SchedulePreviewDeadline();
@@ -3026,6 +3109,12 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
             if (wparam == '2' || wparam == VK_NUMPAD2) {
                 SetActualPixels();
                 InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
+            if (!ctrl && (wparam == 'I' || wparam == 'B' || wparam == VK_OEM_PLUS ||
+                          wparam == VK_ADD || wparam == VK_OEM_MINUS || wparam == VK_SUBTRACT)) {
+                ActivateFooterControl(wparam == 'I' ? kFooterInfo : wparam == 'B' ? kFooterImageBg :
+                    (wparam == VK_OEM_PLUS || wparam == VK_ADD) ? kFooterZoomIn : kFooterZoomOut);
                 return 0;
             }
         }

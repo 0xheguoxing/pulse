@@ -14,6 +14,7 @@
 #include "legacy_icons.h"
 #include "typography.h"
 #include "../common/localization.h"
+#include "../common/preview_extensions.h"
 #include "../common/text_format.h"
 #include "../ops/clipboard.h"
 #include <d2d1helper.h>
@@ -185,6 +186,14 @@ void QuickPreviewWindow::RefreshItemFacts() {
     open_app_.clear();
     const bool folder = (item_.attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
     const std::wstring ext = folder ? std::wstring() : LowerExtension(item_.path);
+    {
+        using pulse::preview::PreviewFamily;
+        const std::wstring dotted = L"." + ext;
+        image_item_ = !folder && !ext.empty() &&
+            (pulse::preview::IsImageExtension(dotted) ||
+             pulse::preview::IsFamilyExtension(PreviewFamily::Psd, dotted) ||
+             pulse::preview::IsFamilyExtension(PreviewFamily::Raw, dotted));
+    }
     // A bare probe name: the registry answers, the disk is never touched.
     const std::wstring probe = folder ? std::wstring(L"folder") : L"file." + ext;
     SHFILEINFOW info{};
@@ -560,6 +569,20 @@ void QuickPreviewWindow::ActivateFooterControl(int id) {
     } else if (id == kFooterZoom && native_kind_ == NativeKind::Pages) {
         TogglePagesFit();
         InvalidateRect(hwnd_, nullptr, FALSE);
+    } else if ((id == kFooterZoomOut || id == kFooterZoomIn) && native_kind_ == NativeKind::Bitmap) {
+        const D2D1_RECT_F content = ContentRect();
+        ZoomAt((content.left + content.right) * 0.5f, (content.top + content.bottom) * 0.5f,
+               id == kFooterZoomIn ? 1.25f : 0.8f);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    } else if (id == kFooterImageBg && native_kind_ == NativeKind::Bitmap) {
+        image_backdrop_ = (image_backdrop_ + 1) % 4;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    } else if (id == kFooterInfo && native_kind_ == NativeKind::Bitmap) {
+        // The picture keeps its zoom; the view just gets narrower.
+        info_open_ = !info_open_;
+        const D2D1_RECT_F content = ContentRect();
+        ClampPan(content.right - content.left, content.bottom - content.top);
+        InvalidateRect(hwnd_, nullptr, FALSE);
     } else if ((id == kFooterZoomOut || id == kFooterZoomIn) && native_kind_ == NativeKind::Pages) {
         const D2D1_RECT_F content = ContentRect();
         ZoomPages((content.left + content.right) * 0.5f, (content.top + content.bottom) * 0.5f,
@@ -580,6 +603,122 @@ void QuickPreviewWindow::ActivateFooterControl(int id) {
     }
 }
 
+float QuickPreviewWindow::InfoDrawerWidth() const noexcept {
+    // Only beside a single picture, and only when the picture keeps room.
+    if (!info_open_ || !image_item_ || pages_count_ > 1) return 0.0f;
+    if (native_kind_ != NativeKind::Bitmap && native_kind_ != NativeKind::None) return 0.0f;
+    const float width = 250.0f * scale_;
+    return static_cast<float>(compositor_.Width()) >= width + 320.0f * scale_ ? std::round(width) : 0.0f;
+}
+
+void QuickPreviewWindow::DrawInfoDrawer(ID2D1DeviceContext* dc, const ChromePalette& p) {
+    const float drawer_w = InfoDrawerWidth();
+    if (!dc || drawer_w <= 0.0f || native_kind_ != NativeKind::Bitmap) return;
+    using pulse::l10n::StringId;
+    const float s = scale_;
+    const D2D1_RECT_F content = ContentRect();
+    const D2D1_RECT_F panel = D2D1::RectF(content.right, content.top,
+                                          static_cast<float>(compositor_.Width()), content.bottom);
+    ComPtr<ID2D1SolidColorBrush> bg, line;
+    dc->CreateSolidColorBrush(p.bg, &bg);
+    dc->CreateSolidColorBrush(p.line, &line);
+    if (!bg.get() || !line.get()) return;
+    dc->FillRectangle(panel, bg.get());
+    dc->FillRectangle(D2D1::RectF(panel.left, panel.top, panel.left + (std::max)(1.0f, std::round(s)),
+                                  panel.bottom), line.get());
+    IDWriteTextFormat* fine = compositor_.SmallFormat();
+    IDWriteTextFormat* body = compositor_.TextFormat();
+    if (!fine || !body) return;
+    dc->PushAxisAlignedClip(panel, D2D1_ANTIALIAS_MODE_ALIASED);
+    const float pad = 16.0f * s, left = panel.left + pad, right = panel.right - pad;
+    float y = panel.top + 12.0f * s;
+    DrawUiText(dc, pulse::l10n::Get(StringId::Information), body,
+               D2D1::RectF(left, y, right, y + 28.0f * s), p.ink);
+    y += 34.0f * s;
+
+    // Rows: what Pulse knows itself, then the shell's photo properties.
+    std::vector<std::pair<std::wstring, std::wstring>> rows;
+    const uint32_t shown_w = source_w_ ? source_w_ : decoded_w_;
+    const uint32_t shown_h = source_h_ ? source_h_ : decoded_h_;
+    if (shown_w && shown_h) {
+        wchar_t dims[64];
+        swprintf_s(dims, L"%u \x00D7 %u", shown_w, shown_h);
+        rows.emplace_back(pulse::l10n::ServiceText(L"尺寸"), dims);
+    }
+    std::wstring ext = LowerExtension(item_.path);
+    for (wchar_t& c : ext) c = static_cast<wchar_t>(std::towupper(c));
+    if (!ext.empty()) rows.emplace_back(pulse::l10n::Get(StringId::Format), ext);
+    ImageStats stats;
+    const bool has_stats = thumbnails_.Stats(item_.path, preview_pixels_, item_.modified, item_.size, stats);
+    if (has_stats)
+        rows.emplace_back(pulse::l10n::Get(StringId::PreviewInfoAlpha),
+                          pulse::l10n::Get(stats.has_alpha ? StringId::PreviewInfoYes : StringId::PreviewInfoNo));
+    std::vector<PreviewProperty> properties;
+    thumbnails_.Properties(item_.path, item_.attrs, generation_, item_.modified, item_.size, properties);
+    for (const PreviewProperty& property : properties)
+        if (property.label != L"尺寸" && !property.value.empty())
+            rows.emplace_back(pulse::l10n::ServiceText(property.label), property.value);
+    rows.emplace_back(pulse::l10n::Get(StringId::ColumnSize), pulse::format::ByteSize(item_.size, true));
+    if (item_.modified) {
+        FILETIME time{static_cast<DWORD>(item_.modified & 0xFFFFFFFFull),
+                      static_cast<DWORD>(item_.modified >> 32)};
+        rows.emplace_back(pulse::l10n::Get(StringId::ModifiedTime), pulse::format::LocalFileTime(time));
+    }
+    float label_w = 0.0f;
+    for (const auto& row : rows) label_w = (std::max)(label_w, UiTextWidth(row.first, fine));
+    label_w = (std::min)(label_w, (right - left) * 0.45f);
+    const float row_h = 26.0f * s;
+    for (const auto& row : rows) {
+        DrawUiText(dc, row.first, fine, D2D1::RectF(left, y, left + label_w, y + row_h), p.ink3);
+        DrawUiText(dc, row.second, fine, D2D1::RectF(left + label_w + 10.0f * s, y, right, y + row_h),
+                   p.ink, DWRITE_TEXT_ALIGNMENT_TRAILING);
+        y += row_h;
+    }
+
+    // Histogram: the three channels as translucent areas over a hairline frame.
+    if (!has_stats) {
+        dc->PopAxisAlignedClip();
+        return;
+    }
+    y += 14.0f * s;
+    DrawUiText(dc, pulse::l10n::Get(StringId::PreviewInfoHistogram), fine,
+               D2D1::RectF(left, y, right, y + 22.0f * s), p.ink3);
+    y += 26.0f * s;
+    const float chart_h = 86.0f * s;
+    const D2D1_RECT_F chart = D2D1::RectF(left, y, right, y + chart_h);
+    if (chart.bottom > panel.bottom - 8.0f * s) {
+        dc->PopAxisAlignedClip();
+        return;
+    }
+    dc->DrawRoundedRectangle(D2D1::RoundedRect(chart, 4.0f * s, 4.0f * s), line.get(), (std::max)(1.0f, s));
+    ComPtr<ID2D1Factory> factory;
+    dc->GetFactory(&factory);
+    const D2D1_RECT_F plot = D2D1::RectF(chart.left + 4.0f * s, chart.top + 6.0f * s,
+                                         chart.right - 4.0f * s, chart.bottom - 2.0f * s);
+    const float alpha = p.high_contrast ? 0.9f : (dark_ ? 0.55f : 0.45f);
+    const struct { const uint16_t* bins; uint32_t color; } channels[] = {
+        {stats.r, 0xE5484Du}, {stats.g, 0x30A46Cu}, {stats.b, 0x3E7BFAu}};
+    for (const auto& channel : channels) {
+        ComPtr<ID2D1PathGeometry> path;
+        ComPtr<ID2D1GeometrySink> sink;
+        if (!factory.get() || FAILED(factory->CreatePathGeometry(&path)) || FAILED(path->Open(&sink))) break;
+        sink->BeginFigure(D2D1::Point2F(plot.left, plot.bottom), D2D1_FIGURE_BEGIN_FILLED);
+        const float step = (plot.right - plot.left) / 63.0f;
+        for (int i = 0; i < 64; ++i) {
+            const float v = static_cast<float>(channel.bins[i]) / 1000.0f;
+            sink->AddLine(D2D1::Point2F(plot.left + step * static_cast<float>(i),
+                                        plot.bottom - v * (plot.bottom - plot.top)));
+        }
+        sink->AddLine(D2D1::Point2F(plot.right, plot.bottom));
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+        if (FAILED(sink->Close())) break;
+        ComPtr<ID2D1SolidColorBrush> fill;
+        dc->CreateSolidColorBrush(D2D1::ColorF(channel.color, alpha), &fill);
+        if (fill.get()) dc->FillGeometry(path.get(), fill.get());
+    }
+    dc->PopAxisAlignedClip();
+}
+
 void QuickPreviewWindow::DrawFooter(ID2D1DeviceContext* dc, const ChromePalette& p) {
     if (!dc) return;
     const float s = scale_;
@@ -598,7 +737,7 @@ void QuickPreviewWindow::DrawFooter(ID2D1DeviceContext* dc, const ChromePalette&
         it->rect = D2D1::RectF(right - w, bar.top + 4.0f * s, right, bar.bottom - 4.0f * s);
         right = it->rect.left - 4.0f * s;
         const bool hot = footer_hover_ == it->id;
-        if (hot) {
+        if (hot || it->on) {
             ComPtr<ID2D1SolidColorBrush> hover;
             dc->CreateSolidColorBrush(p.hover, &hover);
             if (hover.get()) dc->FillRoundedRectangle(D2D1::RoundedRect(it->rect, 6.0f * s, 6.0f * s), hover.get());

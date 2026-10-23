@@ -22,22 +22,28 @@ using preview::PreviewPropertyValue;
 
 namespace {
 
-void AddProperty(IPropertyStore* store, REFPROPERTYKEY key, const wchar_t* label,
-                 std::vector<PreviewPropertyValue>& out) {
-    if (!store || out.size() >= 6) return;
+std::wstring FormatProperty(IPropertyStore* store, REFPROPERTYKEY key) {
+    std::wstring display;
+    if (!store) return display;
     PROPVARIANT value{};
     PropVariantInit(&value);
     if (SUCCEEDED(store->GetValue(key, &value)) && value.vt != VT_EMPTY && value.vt != VT_NULL) {
         PWSTR formatted = nullptr;
         if (SUCCEEDED(PSFormatForDisplayAlloc(key, value, PDFF_DEFAULT, &formatted)) &&
-            formatted && *formatted) {
-            const std::wstring display = IsEqualPropertyKey(key, PKEY_Video_Compression)
+            formatted && *formatted)
+            display = IsEqualPropertyKey(key, PKEY_Video_Compression)
                 ? preview::VideoCodecDisplayName(formatted) : std::wstring(formatted);
-            if (!display.empty()) out.push_back({ label, display });
-        }
         CoTaskMemFree(formatted);
     }
     PropVariantClear(&value);
+    return display;
+}
+
+void AddProperty(IPropertyStore* store, REFPROPERTYKEY key, const wchar_t* label,
+                 std::vector<PreviewPropertyValue>& out, size_t max_rows = 6) {
+    if (!store || out.size() >= max_rows) return;
+    std::wstring display = FormatProperty(store, key);
+    if (!display.empty()) out.push_back({ label, std::move(display) });
 }
 
 bool ReadUintProperty(IPropertyStore* store, REFPROPERTYKEY key, uint32_t& value) {
@@ -57,22 +63,35 @@ bool ReadUintProperty(IPropertyStore* store, REFPROPERTYKEY key, uint32_t& value
 
 namespace pulse::preview {
 
-static std::vector<PreviewPropertyValue> ReadShellProperties(const std::wstring& path) {
+static std::vector<PreviewPropertyValue> ReadShellProperties(const std::wstring& path, bool rich) {
     std::vector<PreviewPropertyValue> out;
     const std::wstring shell_path = ShellPath(path);
     ComPtr<IPropertyStore> store;
     if (FAILED(SHGetPropertyStoreFromParsingName(shell_path.c_str(), nullptr, GPS_BESTEFFORT,
                                                  IID_PPV_ARGS(&store)))) return out;
-    return ReadPropertiesFromStore(path, store.Get());
+    return ReadPropertiesFromStore(path, store.Get(), rich);
 }
 
-std::vector<PreviewPropertyValue> ReadPropertiesFromStore(const std::wstring& path, IPropertyStore* store) {
+std::vector<PreviewPropertyValue> ReadPropertiesFromStore(const std::wstring& path, IPropertyStore* store,
+                                                          bool rich) {
     std::vector<PreviewPropertyValue> out;
     const std::wstring extension = ExtensionOf(path);
     if (IsImageExtension(extension)) {
         AddProperty(store, PKEY_Image_Dimensions, L"尺寸", out);
         AddProperty(store, PKEY_Photo_DateTaken, L"拍摄时间", out);
         AddProperty(store, PKEY_Photo_CameraModel, L"相机", out);
+        if (rich) {
+            // Quick Look's info drawer: the exposure on one row.
+            constexpr size_t kRich = 12;
+            AddProperty(store, PKEY_Photo_LensModel, L"镜头", out, kRich);
+            std::wstring exposure;
+            for (const PROPERTYKEY* key : {&PKEY_Photo_FNumber, &PKEY_Photo_ExposureTime, &PKEY_Photo_ISOSpeed})
+                if (std::wstring part = FormatProperty(store, *key); !part.empty())
+                    exposure += (exposure.empty() ? L"" : L" \x00B7 ") + part;
+            if (!exposure.empty()) out.push_back({ L"参数", exposure });
+            AddProperty(store, PKEY_Photo_FocalLength, L"焦距", out, kRich);
+            AddProperty(store, PKEY_Image_BitDepth, L"位深", out, kRich);
+        }
     } else if (IsVideoExtension(extension)) {
         AddProperty(store, PKEY_Media_Duration, L"时长", out);
         uint32_t width = 0, height = 0;
@@ -92,6 +111,12 @@ std::vector<PreviewPropertyValue> ReadPropertiesFromStore(const std::wstring& pa
         AddProperty(store, PKEY_Media_Duration, L"时长", out);
         AddProperty(store, PKEY_Audio_EncodingBitrate, L"比特率", out);
         AddProperty(store, PKEY_Audio_SampleRate, L"采样率", out);
+        if (rich) {
+            constexpr size_t kRich = 12;
+            AddProperty(store, PKEY_Audio_ChannelCount, L"声道", out, kRich);
+            AddProperty(store, PKEY_Music_Genre, L"流派", out, kRich);
+            AddProperty(store, PKEY_Media_Year, L"年份", out, kRich);
+        }
     } else if (IsOneOf(extension, {L".pdf", L".doc", L".docx", L".xls", L".xlsx", L".ppt", L".pptx", L".odt", L".ods", L".odp"})) {
         AddProperty(store, PKEY_Title, L"标题", out);
         AddProperty(store, PKEY_Author, L"作者", out);
@@ -100,8 +125,8 @@ std::vector<PreviewPropertyValue> ReadPropertiesFromStore(const std::wstring& pa
     return out;
 }
 
-std::vector<PreviewPropertyValue> ReadProperties(const std::wstring& path) {
-    std::vector<PreviewPropertyValue> out = ReadShellProperties(path);
+std::vector<PreviewPropertyValue> ReadProperties(const std::wstring& path, bool rich) {
+    std::vector<PreviewPropertyValue> out = ReadShellProperties(path, rich);
     // FFmpeg preview pack: fill in what Windows could not read - containers
     // it has no property handler for (FLV, RMVB, APE...) or streams it has no
     // decoder for. Files the shell describes fully never start ffprobe.

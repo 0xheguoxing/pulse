@@ -2712,3 +2712,13 @@ PreviewColumnPercent	IDS_PREVIEW_COLUMN_PERCENT	3914	百分比	Percent	百分比
 PreviewColumnDate	IDS_PREVIEW_COLUMN_DATE	3915	日期	Date	日期
 PreviewTableAllRows	IDS_PREVIEW_TABLE_ALL_ROWS	3916	共 %s 行 · 已全部显示	%s rows · all shown	共 %s 列 · 已全部顯示
 PreviewTablePartialRows	IDS_PREVIEW_TABLE_PARTIAL_ROWS	3917	已显示 %s 行 · 其余内容超出预览限制	%s rows shown · the rest exceeds the preview limit	已顯示 %s 列 · 其餘內容超出預覽限制
+PreviewBgAuto	IDS_PREVIEW_BG_AUTO	3918	背景：自动	Background: Auto	背景：自動
+PreviewBgLight	IDS_PREVIEW_BG_LIGHT	3919	背景：浅色	Background: Light	背景：淺色
+PreviewBgDark	IDS_PREVIEW_BG_DARK	3920	背景：深色	Background: Dark	背景：深色
+PreviewBgChecker	IDS_PREVIEW_BG_CHECKER	3921	背景：棋盘格	Background: Checkerboard	背景：棋盤格
+PreviewInfoAlpha	IDS_PREVIEW_INFO_ALPHA	3922	透明	Transparency	透明
+PreviewInfoYes	IDS_PREVIEW_INFO_YES	3923	有	Yes	有
+PreviewInfoNo	IDS_PREVIEW_INFO_NO	3924	无	None	無
+PreviewInfoHistogram	IDS_PREVIEW_INFO_HISTOGRAM	3925	直方图	Histogram	直方圖
+PreviewDecodeSystem	IDS_PREVIEW_DECODE_SYSTEM	3926	系统解码	System decoder	系統解碼
+PreviewDecodeFfmpeg	IDS_PREVIEW_DECODE_FFMPEG	3927	FFmpeg 解码	FFmpeg decoder	FFmpeg 解碼

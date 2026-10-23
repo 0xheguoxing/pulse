@@ -2701,6 +2701,16 @@ enum class StringId : UINT {
     PreviewColumnDate = IDS_PREVIEW_COLUMN_DATE,
     PreviewTableAllRows = IDS_PREVIEW_TABLE_ALL_ROWS,
     PreviewTablePartialRows = IDS_PREVIEW_TABLE_PARTIAL_ROWS,
+    PreviewBgAuto = IDS_PREVIEW_BG_AUTO,
+    PreviewBgLight = IDS_PREVIEW_BG_LIGHT,
+    PreviewBgDark = IDS_PREVIEW_BG_DARK,
+    PreviewBgChecker = IDS_PREVIEW_BG_CHECKER,
+    PreviewInfoAlpha = IDS_PREVIEW_INFO_ALPHA,
+    PreviewInfoYes = IDS_PREVIEW_INFO_YES,
+    PreviewInfoNo = IDS_PREVIEW_INFO_NO,
+    PreviewInfoHistogram = IDS_PREVIEW_INFO_HISTOGRAM,
+    PreviewDecodeSystem = IDS_PREVIEW_DECODE_SYSTEM,
+    PreviewDecodeFfmpeg = IDS_PREVIEW_DECODE_FFMPEG,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

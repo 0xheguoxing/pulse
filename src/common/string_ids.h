@@ -2705,5 +2705,15 @@
 #define IDS_PREVIEW_COLUMN_DATE                                                          3915
 #define IDS_PREVIEW_TABLE_ALL_ROWS                                                       3916
 #define IDS_PREVIEW_TABLE_PARTIAL_ROWS                                                   3917
+#define IDS_PREVIEW_BG_AUTO                                                              3918
+#define IDS_PREVIEW_BG_LIGHT                                                             3919
+#define IDS_PREVIEW_BG_DARK                                                              3920
+#define IDS_PREVIEW_BG_CHECKER                                                           3921
+#define IDS_PREVIEW_INFO_ALPHA                                                           3922
+#define IDS_PREVIEW_INFO_YES                                                             3923
+#define IDS_PREVIEW_INFO_NO                                                              3924
+#define IDS_PREVIEW_INFO_HISTOGRAM                                                       3925
+#define IDS_PREVIEW_DECODE_SYSTEM                                                        3926
+#define IDS_PREVIEW_DECODE_FFMPEG                                                        3927
 
 #endif  // PULSE_STRING_IDS_H
