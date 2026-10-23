@@ -147,7 +147,8 @@ void DrawShortcutHelp(Compositor& compositor, bool dark, D2D1_COLOR_F accent,
     };
     auto make_format = [&](float size, bool bold) {
         ComPtr<IDWriteTextFormat> format;
-        const wchar_t* family = typography::PreferredTextFamily();
+        const wchar_t* family = l10n::effective_language() == l10n::Language::ZhTW
+            ? L"Microsoft JhengHei" : L"Microsoft YaHei";
         compositor.DwriteFactory()->CreateTextFormat(family, nullptr,
             bold ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,

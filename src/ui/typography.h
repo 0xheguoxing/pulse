@@ -29,11 +29,6 @@ struct TextFormatSpec {
 
 const wchar_t* LocaleName() noexcept;
 bool HasIconFont(IDWriteFactory2* factory);
-// The family the Text role resolves to on this machine, for the current UI
-// language: MiSans (MiSans TC for traditional Chinese), or the matching stock
-// family when MiSans is missing. Callers that can only pass a name to GDI
-// (CreateFontW) must use it: GDI silently substitutes a default face for an
-// unknown name and reports no error.
 const wchar_t* PreferredTextFamily() noexcept;
 HRESULT CreateTextFormat(IDWriteFactory2* factory, const TextFormatSpec& spec,
                          IDWriteTextFormat** format);

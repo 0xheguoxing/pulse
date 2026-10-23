@@ -2,7 +2,6 @@
 #include "../ui/fluent_components.h"
 #include "../ui/fluent_menu.h"
 #include "../ui/edit_host.h"
-#include "../ui/lumatext_renderer.h"
 #include "../common/localization.h"
 #include <cmath>
 #include <cstdio>
@@ -245,39 +244,6 @@ int wmain(int argc, wchar_t** argv) {
             chevron->GetFontSize() <= FluentMenuModel::kLabelDip &&
             chevron->GetFontSize() < compositor.IconFormat()->GetFontSize(),
             "submenu chevron is no larger than the menu labels");
-        {
-            // The house family must reach the renderer, not only the format.
-            // LumaText draws a family only when it has a cascade for it; a
-            // mismatch sends every run to DirectWrite and the "Auto" text
-            // rendering mode quietly stops doing anything.
-            const auto* before = compositor.GetLumaTextStats();
-            const std::uint64_t draws = before ? before->draw_calls : 0;
-            const std::uint64_t fallbacks = before ? before->fallback_draws : 0;
-            wchar_t family[128]{};
-            if (compositor.TextFormat()) compositor.TextFormat()->GetFontFamilyName(family, 128);
-            bool framed = false;
-            if (ID2D1DeviceContext* dc = compositor.Dc()) {
-                dc->BeginDraw();
-                dc->Clear(theme.bg);
-                framed = painter.BeginFrame(theme);
-                if (framed) {
-                    painter.DrawText(L"文件名 File.txt", D2D1::RectF(10.0f, 10.0f, 280.0f, 30.0f),
-                        compositor.TextFormat(), theme.text);
-                }
-                dc->EndDraw();
-            }
-            const auto* after = compositor.GetLumaTextStats();
-            const std::uint64_t new_draws = after ? after->draw_calls : 0;
-            const std::uint64_t new_fallbacks = after ? after->fallback_draws : 0;
-            std::wprintf(L"house family values: family=%s resolved=%s enabled=%d draws=%llu->%llu "
-                L"fallbacks=%llu->%llu\n", family, typography::PreferredTextFamily(),
-                compositor.LumaTextEnabled() ? 1 : 0, static_cast<unsigned long long>(draws),
-                static_cast<unsigned long long>(new_draws), static_cast<unsigned long long>(fallbacks),
-                static_cast<unsigned long long>(new_fallbacks));
-            Check(framed && std::wstring(family) == typography::PreferredTextFamily() &&
-                new_draws > draws && new_fallbacks == fallbacks,
-                "interface text uses the resolved family and stays on the LumaText path");
-        }
         {
             // An open context menu patches in place or grows below; no shown
             // row moves (右键菜单优化方案 §4.1).

@@ -159,19 +159,6 @@ struct LumaTextRenderer::Impl {
     LumaText::FontFace segoe_bold;
     LumaText::FontCascade yahei_cascade;
     LumaText::FontCascade segoe_cascade;
-    // The house family (MiSans, and MiSans TC for traditional glyph forms)
-    // loads on first use, so a machine without it keeps today's footprint and
-    // the failed attempt is not retried on every frame.
-    LumaText::FontFace mi_sans_regular;
-    LumaText::FontFace mi_sans_semibold;
-    LumaText::FontFace mi_sans_bold;
-    LumaText::FontCascade mi_sans_cascade;
-    LumaText::FontFace mi_sans_tc_regular;
-    LumaText::FontFace mi_sans_tc_semibold;
-    LumaText::FontFace mi_sans_tc_bold;
-    LumaText::FontCascade mi_sans_tc_cascade;
-    bool mi_sans_tried = false;
-    bool mi_sans_tc_tried = false;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> target_dc;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> recording_dc;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> blit_dc;
@@ -256,8 +243,6 @@ struct LumaTextRenderer::Impl {
 
     static constexpr std::uint32_t kYaHei = 1;
     static constexpr std::uint32_t kSegoe = 2;
-    static constexpr std::uint32_t kMiSans = 3;
-    static constexpr std::uint32_t kMiSansTc = 4;
     // Each Compositor owns a renderer. Keep per-window caches deliberately
     // small so opening Quick Look or an operation dialog cannot multiply a
     // large global-looking font cache into the process working set.
@@ -279,118 +264,17 @@ struct LumaTextRenderer::Impl {
     }
 
     bool MakeFace(const std::wstring& path, LumaText::FontFace& face,
-                  float variable_weight = 0.0f, UINT32 face_index = 0) {
+                  float variable_weight = 0.0f) {
         if (path.empty() || !std::filesystem::exists(path)) return false;
         lt_font_axis axis{Tag('w', 'g', 'h', 't'), variable_weight};
         auto desc = LumaText::Descriptor<lt_font_source_desc>();
         desc.source_type = LT_FONT_SOURCE_FILE;
         desc.file_path = path.c_str();
-        desc.face_index = face_index;
         if (variable_weight > 0.0f) {
             desc.axes = &axis;
             desc.axis_count = 1;
         }
         return lt_font_face_create(context.get(), &desc, face.put()) == LT_OK;
-    }
-
-    // Font file behind a family and weight. DirectWrite is the only source that
-    // knows where a face lives: a family may be installed in the per-user font
-    // folder rather than in the Windows one, and the reference key of a font
-    // that came through the font cache carries a file name, not a full path.
-    bool FaceFile(const wchar_t* family, DWRITE_FONT_WEIGHT weight, std::wstring& path,
-                  UINT32& face_index) {
-        path.clear();
-        face_index = 0;
-        if (!dw_factory || !family) return false;
-        Microsoft::WRL::ComPtr<IDWriteFontCollection> collection;
-        if (FAILED(dw_factory->GetSystemFontCollection(&collection, FALSE)) || !collection) return false;
-        UINT32 index = 0;
-        BOOL exists = FALSE;
-        if (FAILED(collection->FindFamilyName(family, &index, &exists)) || !exists) return false;
-        Microsoft::WRL::ComPtr<IDWriteFontFamily> font_family;
-        if (FAILED(collection->GetFontFamily(index, &font_family)) || !font_family) return false;
-        Microsoft::WRL::ComPtr<IDWriteFont> font;
-        if (FAILED(font_family->GetFirstMatchingFont(weight, DWRITE_FONT_STRETCH_NORMAL,
-                DWRITE_FONT_STYLE_NORMAL, &font)) || !font) return false;
-        Microsoft::WRL::ComPtr<IDWriteFontFace> face;
-        if (FAILED(font->CreateFontFace(&face)) || !face) return false;
-        face_index = face->GetIndex();
-        UINT32 count = 0;
-        if (FAILED(face->GetFiles(&count, nullptr)) || count == 0) return false;
-        std::vector<IDWriteFontFile*> files(count, nullptr);
-        if (FAILED(face->GetFiles(&count, files.data()))) count = 0;
-        bool found = false;
-        for (UINT32 i = 0; i < count && !found; ++i) {
-            IDWriteFontFile* file = files[i];
-            if (!file) continue;
-            const void* key = nullptr;
-            UINT32 key_size = 0;
-            if (FAILED(file->GetReferenceKey(&key, &key_size)) || !key || key_size == 0) continue;
-            std::wstring candidate;
-            Microsoft::WRL::ComPtr<IDWriteFontFileLoader> loader;
-            Microsoft::WRL::ComPtr<IDWriteLocalFontFileLoader> local;
-            if (SUCCEEDED(file->GetLoader(&loader)) && loader &&
-                SUCCEEDED(loader->QueryInterface(IID_PPV_ARGS(&local))) && local) {
-                wchar_t buffer[512]{};
-                if (SUCCEEDED(local->GetFilePathFromKey(key, key_size, buffer, ARRAYSIZE(buffer)))) {
-                    candidate.assign(buffer);
-                } else {
-                    // Long or UNC paths exceed the first buffer.
-                    std::vector<wchar_t> longer(32768, L'\0');
-                    if (SUCCEEDED(local->GetFilePathFromKey(key, key_size, longer.data(),
-                            static_cast<UINT32>(longer.size())))) {
-                        candidate.assign(longer.data());
-                    }
-                }
-            }
-            std::error_code error;
-            if (!candidate.empty() && std::filesystem::is_regular_file(candidate, error)) {
-                path = candidate;
-                found = true;
-            }
-        }
-        for (IDWriteFontFile* file : files) {
-            if (file) file->Release();
-        }
-        return found;
-    }
-
-    // Cascade for the house family, built once per family on first use.
-    LumaText::FontCascade* HouseCascade(bool traditional) {
-        LumaText::FontCascade& cascade = traditional ? mi_sans_tc_cascade : mi_sans_cascade;
-        bool& tried = traditional ? mi_sans_tc_tried : mi_sans_tried;
-        if (cascade) return &cascade;
-        if (tried) return nullptr;
-        tried = true;
-        const wchar_t* family = traditional ? L"MiSans TC" : L"MiSans";
-        LumaText::FontFace* faces[3] = {
-            traditional ? &mi_sans_tc_regular : &mi_sans_regular,
-            traditional ? &mi_sans_tc_semibold : &mi_sans_semibold,
-            traditional ? &mi_sans_tc_bold : &mi_sans_bold,
-        };
-        const DWRITE_FONT_WEIGHT weights[3] = {
-            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_WEIGHT_BOLD};
-        LumaText::FontFace* loaded[3] = {nullptr, nullptr, nullptr};
-        for (int i = 0; i < 3; ++i) {
-            std::wstring path;
-            UINT32 face_index = 0;
-            if (!FaceFile(family, weights[i], path, face_index)) continue;
-            // The faces DirectWrite resolved are single-weight files: pass no
-            // axis so the face is the one the format asked for.
-            if (!MakeFace(path, *faces[i], 0.0f, face_index)) continue;
-            loaded[i] = faces[i];
-        }
-        // Without a regular face the family cannot render; without a semibold
-        // or bold the heavier weights fall back the way the stock cascades do.
-        if (!loaded[0]) return nullptr;
-        LumaText::FontFace& semibold = loaded[1] ? *loaded[1] : (loaded[2] ? *loaded[2] : *loaded[0]);
-        LumaText::FontFace& bold = loaded[2] ? *loaded[2] : *loaded[0];
-        std::vector<lt_font_cascade_entry> entries;
-        PushFace(entries, *loaded[0], 400);
-        PushFace(entries, semibold, 600);
-        PushFace(entries, bold, 700);
-        if (entries.empty() || !MakeCascade(entries, cascade)) return nullptr;
-        return &cascade;
     }
 
     bool MakeCascade(const std::vector<lt_font_cascade_entry>& entries,
@@ -697,18 +581,6 @@ struct LumaTextRenderer::Impl {
         blit_w = 0;
         blit_h = 0;
         busy = false;
-        mi_sans_cascade.reset();
-        mi_sans_tc_cascade.reset();
-        mi_sans_bold.reset();
-        mi_sans_semibold.reset();
-        mi_sans_regular.reset();
-        mi_sans_tc_bold.reset();
-        mi_sans_tc_semibold.reset();
-        mi_sans_tc_regular.reset();
-        // A reload after a device loss may resolve another family, so the failed
-        // attempts are forgotten with the faces.
-        mi_sans_tried = false;
-        mi_sans_tc_tried = false;
         segoe_cascade.reset();
         yahei_cascade.reset();
         segoe_bold.reset();
@@ -938,15 +810,6 @@ struct LumaTextRenderer::Impl {
                         std::uint32_t& family, LumaText::FontCascade*& cascade) {
         if (!format) return false;
         const std::wstring family_name = FontFamily(format);
-        // MiSans is the house family. TC carries traditional glyph forms and
-        // must not share the simplified cascade; MiSans L3 holds rare
-        // ideographs only, so it never renders a run of its own.
-        if (Contains(family_name, L"MiSans") && !Contains(family_name, L"L3")) {
-            const bool traditional = Contains(family_name, L"TC");
-            family = traditional ? kMiSansTc : kMiSans;
-            cascade = HouseCascade(traditional);
-            return cascade != nullptr;
-        }
         const bool yahei = Contains(family_name, L"Microsoft YaHei");
         const bool segoe_text = Contains(family_name, L"Segoe UI") &&
                    !Contains(family_name, L"Icons") &&
