@@ -752,6 +752,9 @@ struct GlobalSearchWindow::Impl {
                 static_cast<float>(ui::typography::EditFontPixels(scale, 20.0f)), l10n::LocaleName(), &edit_format);
         }
         SendMessageW(edit, WM_SETFONT, reinterpret_cast<WPARAM>(edit_font), TRUE);
+        // The hint reads lighter than the query: 16 DIP against 20.
+        SetPropW(edit, L"Pulse.EditCueSize",
+            reinterpret_cast<HANDLE>(static_cast<INT_PTR>(ui::typography::EditFontPixels(scale, 16.0f))));
         // One text line plus 4 DIP inside the 44 DIP field; taller fonts grow the header.
         const float line_dip = static_cast<float>(ui::EditLineHeight(edit, edit_font, 1 << 16)) / scale;
         grow = std::max(0.0f, std::ceil(line_dip + 14.0f - kFieldHeight));

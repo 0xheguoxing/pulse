@@ -2738,6 +2738,14 @@ enum class StringId : UINT {
     DialogJumpMore = IDS_DIALOG_JUMP_MORE,
     DialogJumpSearching = IDS_DIALOG_JUMP_SEARCHING,
     DialogJumpNoMatch = IDS_DIALOG_JUMP_NO_MATCH,
+    DialogJumpSearchCueOpen = IDS_DIALOG_JUMP_SEARCH_CUE_OPEN,
+    DialogJumpGroupFolders = IDS_DIALOG_JUMP_GROUP_FOLDERS,
+    DialogJumpGroupFiles = IDS_DIALOG_JUMP_GROUP_FILES,
+    DialogJumpGoHere = IDS_DIALOG_JUMP_GO_HERE,
+    DialogJumpFillOpen = IDS_DIALOG_JUMP_FILL_OPEN,
+    DialogJumpChipCurrent = IDS_DIALOG_JUMP_CHIP_CURRENT,
+    DialogJumpPinned = IDS_DIALOG_JUMP_PINNED,
+    DialogJumpRecent = IDS_DIALOG_JUMP_RECENT,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

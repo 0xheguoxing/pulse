@@ -2743,9 +2743,17 @@ DoubleCtrlSlow	IDS_DOUBLE_CTRL_SLOW	3945	400 毫秒	400 ms	400 毫秒
 GlobalSearchJump	IDS_GLOBAL_SEARCH_JUMP	3946	跳转	Go to	跳轉
 DialogJumpBar	IDS_DIALOG_JUMP_BAR	3947	对话框跳转条	Dialog jump bar	對話方塊跳轉列
 DialogJumpBarDesc	IDS_DIALOG_JUMP_BAR_DESC	3948	在其它程序的打开、保存对话框下方列出 Pulse 里的文件夹，点一下就跳过去；Ctrl+G 跳到当前文件夹	Lists your Pulse folders under other apps' Open and Save dialogs; click one to go there, Ctrl+G jumps to the current folder	在其他程式的開啟、儲存對話方塊下方列出 Pulse 裡的資料夾，點一下就跳過去；Ctrl+G 跳到目前資料夾
-DialogJumpSearchCue	IDS_DIALOG_JUMP_SEARCH_CUE	3949	搜索文件夹	Search folders	搜尋資料夾
-DialogJumpCurrent	IDS_DIALOG_JUMP_CURRENT	3950	当前文件夹	Current folder	目前資料夾
+DialogJumpSearchCue	IDS_DIALOG_JUMP_SEARCH_CUE	3949	跳转到…  拼音也行	Go to…	跳轉到…  拼音也行
+DialogJumpCurrent	IDS_DIALOG_JUMP_CURRENT	3950	跳到 Pulse 当前的文件夹	Go to the current Pulse folder	跳到 Pulse 目前的資料夾
 DialogJumpNone	IDS_DIALOG_JUMP_NONE	3951	Pulse 里还没有打开的文件夹	No folders open in Pulse	Pulse 裡還沒有開啟的資料夾
-DialogJumpMore	IDS_DIALOG_JUMP_MORE	3952	更多位置	More places	更多位置
+DialogJumpMore	IDS_DIALOG_JUMP_MORE	3952	快速访问和最近使用	Quick access and recent	快速存取和最近使用
 DialogJumpSearching	IDS_DIALOG_JUMP_SEARCHING	3953	正在搜索…	Searching…	正在搜尋…
 DialogJumpNoMatch	IDS_DIALOG_JUMP_NO_MATCH	3954	没有匹配的位置	No matching places	沒有符合的位置
+DialogJumpSearchCueOpen	IDS_DIALOG_JUMP_SEARCH_CUE_OPEN	3955	找文件或文件夹…  拼音也行	Find a file or folder…	找檔案或資料夾…  拼音也行
+DialogJumpGroupFolders	IDS_DIALOG_JUMP_GROUP_FOLDERS	3956	文件夹	Folders	資料夾
+DialogJumpGroupFiles	IDS_DIALOG_JUMP_GROUP_FILES	3957	文件	Files	檔案
+DialogJumpGoHere	IDS_DIALOG_JUMP_GO_HERE	3958	跳到这里 ↵	Go here ↵	跳到這裡 ↵
+DialogJumpFillOpen	IDS_DIALOG_JUMP_FILL_OPEN	3959	填入并打开 ↵	Fill in and open ↵	填入並開啟 ↵
+DialogJumpChipCurrent	IDS_DIALOG_JUMP_CHIP_CURRENT	3960	当前	current	目前
+DialogJumpPinned	IDS_DIALOG_JUMP_PINNED	3961	快速访问	Quick access	快速存取
+DialogJumpRecent	IDS_DIALOG_JUMP_RECENT	3962	最近使用	Recent	最近使用

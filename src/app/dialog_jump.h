@@ -25,6 +25,7 @@ namespace pulse::app {
 struct DialogJumpFolder {
     std::wstring path, label;   // label: shown name when it is not the folder name
     bool open = false;          // open in a Pulse tab (shown as a chip)
+    bool pinned = false;        // Quick access (the rest are recent folders)
 };
 struct DialogJumpContext {
     std::vector<DialogJumpFolder> folders;  // most relevant first

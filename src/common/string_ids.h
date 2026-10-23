@@ -2742,5 +2742,13 @@
 #define IDS_DIALOG_JUMP_MORE                                                             3952
 #define IDS_DIALOG_JUMP_SEARCHING                                                        3953
 #define IDS_DIALOG_JUMP_NO_MATCH                                                         3954
+#define IDS_DIALOG_JUMP_SEARCH_CUE_OPEN                                                  3955
+#define IDS_DIALOG_JUMP_GROUP_FOLDERS                                                    3956
+#define IDS_DIALOG_JUMP_GROUP_FILES                                                      3957
+#define IDS_DIALOG_JUMP_GO_HERE                                                          3958
+#define IDS_DIALOG_JUMP_FILL_OPEN                                                        3959
+#define IDS_DIALOG_JUMP_CHIP_CURRENT                                                     3960
+#define IDS_DIALOG_JUMP_PINNED                                                           3961
+#define IDS_DIALOG_JUMP_RECENT                                                           3962
 
 #endif  // PULSE_STRING_IDS_H

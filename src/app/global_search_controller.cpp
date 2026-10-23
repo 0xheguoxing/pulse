@@ -33,15 +33,16 @@ bool HotkeyAllowed(const AppState& s) {
 // shown in a tab.
 std::vector<app::DialogJumpFolder> KnownFolders(const AppState& s) {
     std::vector<app::DialogJumpFolder> folders;
-    auto add = [&](const std::wstring& path, const std::wstring& label, bool open) {
+    auto add = [&](const std::wstring& path, const std::wstring& label, bool open, bool pinned = false) {
         if (path.empty() || fs::IsVirtualPath(path) || folders.size() >= 96) return;
         for (auto& known : folders)
             if (path::EqualInsensitive(known.path, path)) {
                 if (known.label.empty()) known.label = label;
                 known.open = known.open || open;
+                known.pinned = known.pinned || pinned;
                 return;
             }
-        folders.push_back({path, label, open});
+        folders.push_back({path, label, open, pinned});
     };
     if (const auto* pane = s.pane) add(pane->view.current_path, {}, true);
     auto add_window = [&](AppState& window) {
@@ -50,8 +51,8 @@ std::vector<app::DialogJumpFolder> KnownFolders(const AppState& s) {
     add_window(const_cast<AppState&>(s));
     s.core.windows.ForEach([&](HWND, AppState& window) { if (&window != &s) add_window(window); });
     // Quick access rows carry the shown names ("下载" for Downloads).
-    for (const auto& entry : s.sidebar.quick_access) add(entry.path, entry.label, false);
-    for (const auto& path : s.places.quick_access_paths) add(path, {}, false);
+    for (const auto& entry : s.sidebar.quick_access) add(entry.path, entry.label, false, true);
+    for (const auto& path : s.places.quick_access_paths) add(path, {}, false, true);
     for (const auto& item : s.places.RecentItems())
         if (item.kind == app::PlaceItemKind::Folder) add(item.path, {}, false);
     return folders;
