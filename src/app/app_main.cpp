@@ -2658,10 +2658,14 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     } else if (completed.type == ops::OpType::Move ||
                                completed.type == ops::OpType::Rename ||
                                completed.type == ops::OpType::BatchRename) {
+                        // Tags, stars and pins follow in one pass and one save.
+                        std::vector<std::pair<std::wstring, std::wstring>> remaps;
+                        for (size_t i = 0; i < completed.sources.size() &&
+                                           i < completed.destinations.size(); ++i)
+                            remaps.emplace_back(completed.sources[i], completed.destinations[i]);
+                        s->places.RemapPaths(remaps);
                         for (size_t i = 0; i < completed.sources.size() &&
                                            i < completed.destinations.size(); ++i) {
-                            s->places.RemapPaths(completed.sources[i],
-                                                 completed.destinations[i]);
                             // 别名 follow renames, drags, cut-paste and their undo.
                             app::AliasStore::Instance().Move(completed.sources[i],
                                                              completed.destinations[i]);
@@ -2677,15 +2681,20 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                             s->completedCutClipboardPaths.insert(
                                 s->completedCutClipboardPaths.end(), completed.sources.begin(),
                                 completed.sources.end());
+                            // Keys equal where _wcsicmp is: one lookup per cut item
+                            // rather than a search of everything moved so far.
+                            const auto folded = [](std::wstring path) {
+                                for (wchar_t& c : path) c = static_cast<wchar_t>(std::towlower(c));
+                                return path;
+                            };
+                            std::unordered_set<std::wstring> moved;
+                            moved.reserve(s->completedCutClipboardPaths.size());
+                            for (const auto& actual : s->completedCutClipboardPaths)
+                                moved.insert(folded(actual));
                             const bool all_done = std::all_of(
                                 s->pendingCutClipboardPaths.begin(),
                                 s->pendingCutClipboardPaths.end(), [&](const std::wstring& expected) {
-                                    const std::wstring normalized = fs::NormalizePath(expected);
-                                    return std::any_of(s->completedCutClipboardPaths.begin(),
-                                        s->completedCutClipboardPaths.end(),
-                                        [&](const std::wstring& actual) {
-                                            return _wcsicmp(normalized.c_str(), actual.c_str()) == 0;
-                                        });
+                                    return moved.contains(folded(fs::NormalizePath(expected)));
                                 });
                             if (all_done) {
                                 ops::CompleteCutClipboard(s->pendingCutClipboardSequence,
@@ -2697,8 +2706,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                         }
                     } else if (completed.type == ops::OpType::RecycleDelete ||
                                completed.type == ops::OpType::RealDelete) {
-                        for (const auto& source : completed.sources)
-                            s->places.RemoveAssignments(source, true);
+                        s->places.RemoveAssignments(completed.sources, true);
                         s->duplicateScan.RemoveDeleted(completed.sources);
                         s->tray.RemoveDeleted(completed.sources);
                     }

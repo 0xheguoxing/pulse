@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace pulse::app {
 namespace {
@@ -12,18 +13,46 @@ bool SamePath(const std::wstring& left, const std::wstring& right) {
     return CompareStringOrdinal(left.c_str(), -1, right.c_str(), -1, TRUE) == CSTR_EQUAL;
 }
 
-bool IsDeletedPath(const std::wstring& file, const std::wstring& deleted) {
-    std::wstring candidate = path::StripExtendedPathPrefix(file);
-    std::wstring root = path::StripExtendedPathPrefix(deleted);
-    std::replace(candidate.begin(), candidate.end(), L'/', L'\\');
-    std::replace(root.begin(), root.end(), L'/', L'\\');
-    size_t length = root.size();
-    while (length && root[length - 1] == L'\\') --length;
-    if (!length || candidate.size() < length) return false;
-    if (CompareStringOrdinal(candidate.c_str(), static_cast<int>(length), root.c_str(),
-                             static_cast<int>(length), TRUE) != CSTR_EQUAL) return false;
-    return candidate.size() == length || candidate[length] == L'\\';
+// A path as deletion compares it: no \\?\ prefix, backslashes only,
+// no trailing separator, upper-cased the way CompareStringOrdinal ignores case.
+std::wstring DeletedPathKey(const std::wstring& path) {
+    std::wstring key = path::StripExtendedPathPrefix(path);
+    std::replace(key.begin(), key.end(), L'/', L'\\');
+    while (!key.empty() && key.back() == L'\\') key.pop_back();
+    if (key.empty()) return key;
+    std::wstring upper(key.size(), L'\0');
+    const int length = static_cast<int>(key.size());
+    if (LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_UPPERCASE, key.c_str(), length,
+                      upper.data(), length, nullptr, nullptr, 0) == length)
+        key.swap(upper);
+    return key;
 }
+
+// Every deleted path at once: a file is covered when it or one of its
+// folders is in the set (a case-insensitive ordinal match). Checking
+// thousands of files against thousands of deleted paths pair by pair
+// stalled the window.
+class DeletedPaths {
+public:
+    explicit DeletedPaths(const std::vector<std::wstring>& paths) {
+        keys_.reserve(paths.size());
+        for (const auto& path : paths) {
+            std::wstring key = DeletedPathKey(path);
+            if (!key.empty()) keys_.insert(std::move(key));
+        }
+    }
+    bool Covers(const std::wstring& file) const {
+        if (keys_.empty() || file.empty()) return false;
+        const std::wstring key = DeletedPathKey(file);
+        if (keys_.contains(key)) return true;
+        for (size_t i = key.size(); i-- > 1;)
+            if (key[i] == L'\\' && keys_.contains(key.substr(0, i))) return true;
+        return false;
+    }
+
+private:
+    std::unordered_set<std::wstring> keys_;
+};
 
 } // namespace
 
@@ -253,11 +282,11 @@ bool DuplicateScanSession::BuildCleanupRequest(ops::OpRequest& request, size_t s
 void DuplicateScanSession::RemoveDeleted(const std::vector<std::wstring>& paths) {
     if (paths.empty()) return;
     ++result_epoch;
+    const DeletedPaths deleted(paths);
     for (auto& group : groups) {
         const std::wstring kept = group.keep_index < group.files.size()
             ? group.files[group.keep_index].path : std::wstring{};
-        const bool keeper_deleted = std::any_of(paths.begin(), paths.end(),
-            [&](const std::wstring& path) { return IsDeletedPath(kept, path); });
+        const bool keeper_deleted = deleted.Covers(kept);
         if (keeper_deleted) {
             // Do not silently replace the promised retained copy with an old
             // scan result. Only a new scan can make this group actionable again.
@@ -267,10 +296,7 @@ void DuplicateScanSession::RemoveDeleted(const std::vector<std::wstring>& paths)
         }
         group.files.erase(std::remove_if(group.files.begin(), group.files.end(),
                                          [&](const DuplicateFile& file) {
-                                             return std::any_of(paths.begin(), paths.end(),
-                                                                [&](const std::wstring& path) {
-                                                                    return IsDeletedPath(file.path, path);
-                                                                });
+                                             return deleted.Covers(file.path);
                                          }),
                           group.files.end());
         group.keep_index = 0;
@@ -291,10 +317,7 @@ void DuplicateScanSession::RemoveDeleted(const std::vector<std::wstring>& paths)
         it = groups.erase(it);
     }
     for (auto it = pending_groups_.begin(); it != pending_groups_.end();) {
-        const bool deleted = std::any_of(paths.begin(), paths.end(), [&](const std::wstring& path) {
-            return IsDeletedPath(it->second.path, path);
-        });
-        if (deleted) {
+        if (deleted.Covers(it->second.path)) {
             invalidated_groups_.insert(it->first);
             it = pending_groups_.erase(it);
         } else ++it;

@@ -14,6 +14,7 @@
 #include "details_tree.h"
 #include "../index/content_result_store.h"
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <array>
 #include <string>
@@ -561,6 +562,8 @@ private:
     std::vector<TrayBatch> batches_;
     uint64_t next_id_ = 1;
     std::map<uint64_t, std::vector<std::wstring>> inflight_sources_;
+    // The same paths keyed for lookup, counted across tasks.
+    std::unordered_map<std::wstring, size_t> inflight_keys_;
 };
 
 // ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@
 #include <chrono>
 #include <sstream>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <objbase.h>
 #include <cwctype>
@@ -1976,56 +1977,123 @@ bool PlacesCatalog::SetQuickAccessPinned(const std::vector<std::wstring>& paths,
     return changed;
 }
 
-void PlacesCatalog::RemapPaths(const std::wstring& old_path, const std::wstring& new_path) {
-    const std::wstring old_norm = Norm(old_path);
-    const std::wstring new_norm = Norm(new_path);
-    if (old_norm.empty() || new_norm.empty() || EqualI(old_norm, new_norm)) return;
-    bool changed = false;
-    for (auto& tag : tags) {
-        for (auto& path : tag.paths) {
-            if (!PathIsOrDescendant(path, old_norm)) continue;
-            path = new_norm + path.substr(old_norm.size());
-            changed = true;
+// Paths EqualI calls equal give one key (it lowers each character alike).
+static std::wstring FoldedPathKey(const std::wstring& path) {
+    std::wstring key = path;
+    for (auto& c : key) c = static_cast<wchar_t>(std::towlower(c));
+    return key;
+}
+
+namespace {
+// Roots found from a path's own ancestors: PathIsOrDescendant against every
+// root at once instead of one comparison per root.
+class PathRoots {
+public:
+    // False when an equal root is already there.
+    bool Add(const std::wstring& root, size_t index) {
+        return roots_.emplace(FoldedPathKey(root), index).second;
+    }
+    bool Empty() const { return roots_.empty(); }
+    bool Contains(const std::wstring& path) const {
+        return !roots_.empty() && roots_.contains(FoldedPathKey(path));
+    }
+    // A root the path is or lies under, npos when none. Without `self`, only
+    // roots strictly above the path count.
+    size_t Find(const std::wstring& path, bool self = true) const {
+        if (roots_.empty() || path.empty()) return std::wstring::npos;
+        const std::wstring key = FoldedPathKey(path);
+        if (self)
+            if (const auto found = roots_.find(key); found != roots_.end()) return found->second;
+        for (size_t i = key.size(); i-- > 0;) {
+            if (key[i] != L'\\' && key[i] != L'/') continue;
+            // A root ending in a separator ("C:\") covers whatever follows it;
+            // any other root needs a separator right after it.
+            if (key[i] == L'\\' && i + 1 < key.size())
+                if (const auto found = roots_.find(key.substr(0, i + 1)); found != roots_.end())
+                    return found->second;
+            if (i)
+                if (const auto found = roots_.find(key.substr(0, i)); found != roots_.end())
+                    return found->second;
         }
-        std::sort(tag.paths.begin(), tag.paths.end());
-        tag.paths.erase(std::unique(tag.paths.begin(), tag.paths.end()), tag.paths.end());
+        return std::wstring::npos;
     }
-    std::unordered_set<std::wstring> quick_seen;
-    for (auto& path : quick_access_paths) {
-        if (!PathIsOrDescendant(path, old_norm)) continue;
-        path = new_norm + path.substr(old_norm.size());
-        changed = true;
+
+private:
+    std::unordered_map<std::wstring, size_t> roots_;
+};
+}  // namespace
+
+void PlacesCatalog::RemapPaths(const std::wstring& old_path, const std::wstring& new_path) {
+    RemapPaths(std::vector<std::pair<std::wstring, std::wstring>>{{old_path, new_path}});
+}
+
+void PlacesCatalog::RemapPaths(const std::vector<std::pair<std::wstring, std::wstring>>& moves) {
+    std::vector<std::pair<std::wstring, std::wstring>> valid;
+    valid.reserve(moves.size());
+    for (const auto& [old_path, new_path] : moves) {
+        std::wstring old_norm = Norm(old_path);
+        std::wstring new_norm = Norm(new_path);
+        if (old_norm.empty() || new_norm.empty() || EqualI(old_norm, new_norm)) continue;
+        valid.emplace_back(std::move(old_norm), std::move(new_norm));
     }
-    std::erase_if(quick_access_paths, [&](const auto& path) {
-        return !quick_seen.insert(TagKey(path)).second;
-    });
-    for (auto& key : quick_access_order) {
-        if (IsBuiltinQuickAccessKey(key) || !PathIsOrDescendant(key, old_norm)) continue;
-        key = new_norm + key.substr(old_norm.size());
-        changed = true;
-    }
-    std::unordered_set<std::wstring> order_seen;
-    std::erase_if(quick_access_order, [&](const std::wstring& key) {
-        return !order_seen.insert(QuickAccessKeyId(key)).second;
-    });
-    for (auto& item : starred_items) {
-        if (!PathIsOrDescendant(item.path, old_norm)) continue;
-        item.path = new_norm + item.path.substr(old_norm.size());
-        changed = true;
-    }
-    std::unordered_set<std::wstring> badge_seen;
-    for (auto& item : quick_access_badges) {
-        if (!PathIsOrDescendant(item.path, old_norm)) continue;
-        item.path = new_norm + item.path.substr(old_norm.size());
-        changed = true;
-    }
-    std::erase_if(quick_access_badges, [&](const QuickAccessBadge& item) {
-        return !badge_seen.insert(TagKey(item.path)).second;
-    });
-    for (auto& item : recent_items) {
-        if (!PathIsOrDescendant(item.path, old_norm)) continue;
-        item.path = new_norm + item.path.substr(old_norm.size());
-        changed = true;
+    if (valid.empty()) return;
+    // Every path follows the move whose source it is or lies under.
+    const auto apply = [&](const PathRoots& roots) {
+        bool changed = false;
+        const auto remap = [&](std::wstring& path) {
+            const size_t index = roots.Find(path);
+            if (index == std::wstring::npos) return;
+            path = valid[index].second + path.substr(valid[index].first.size());
+            changed = true;
+        };
+        for (auto& tag : tags) {
+            for (auto& path : tag.paths) remap(path);
+            std::sort(tag.paths.begin(), tag.paths.end());
+            tag.paths.erase(std::unique(tag.paths.begin(), tag.paths.end()), tag.paths.end());
+        }
+        std::unordered_set<std::wstring> quick_seen;
+        for (auto& path : quick_access_paths) remap(path);
+        std::erase_if(quick_access_paths, [&](const auto& path) {
+            return !quick_seen.insert(TagKey(path)).second;
+        });
+        for (auto& key : quick_access_order)
+            if (!IsBuiltinQuickAccessKey(key)) remap(key);
+        std::unordered_set<std::wstring> order_seen;
+        std::erase_if(quick_access_order, [&](const std::wstring& key) {
+            return !order_seen.insert(QuickAccessKeyId(key)).second;
+        });
+        for (auto& item : starred_items) remap(item.path);
+        std::unordered_set<std::wstring> badge_seen;
+        for (auto& item : quick_access_badges) remap(item.path);
+        std::erase_if(quick_access_badges, [&](const QuickAccessBadge& item) {
+            return !badge_seen.insert(TagKey(item.path)).second;
+        });
+        for (auto& item : recent_items) remap(item.path);
+        return changed;
+    };
+    // One pass serves every move when no path can meet two of them: no source
+    // inside another, and no source and target inside each other (a move of
+    // many items into one folder). Otherwise each move applies in turn, as
+    // separate calls did. A move of thousands of items sorted every tag and
+    // saved the catalog once per item.
+    PathRoots sources;
+    PathRoots targets;
+    bool independent = true;
+    for (size_t i = 0; i < valid.size() && independent; ++i)
+        independent = sources.Add(valid[i].first, i) && targets.Add(valid[i].second, i);
+    for (size_t i = 0; i < valid.size() && independent; ++i)
+        independent = sources.Find(valid[i].first, false) == std::wstring::npos &&
+                      targets.Find(valid[i].first) == std::wstring::npos &&
+                      sources.Find(valid[i].second) == std::wstring::npos;
+    bool changed = false;
+    if (independent) {
+        changed = apply(sources);
+    } else {
+        for (size_t i = 0; i < valid.size(); ++i) {
+            PathRoots one;
+            one.Add(valid[i].first, i);
+            changed = apply(one) || changed;
+        }
     }
     if (changed) {
         RebuildTagIndex();
@@ -2076,28 +2144,32 @@ void PlacesCatalog::CloneAssignments(const std::wstring& source,
 }
 
 void PlacesCatalog::RemoveAssignments(const std::wstring& path, bool include_descendants) {
-    const std::wstring normalized = Norm(path);
-    if (normalized.empty()) return;
+    RemoveAssignments(std::vector<std::wstring>{path}, include_descendants);
+}
+
+void PlacesCatalog::RemoveAssignments(const std::vector<std::wstring>& paths,
+                                      bool include_descendants) {
+    PathRoots removed;
+    for (size_t i = 0; i < paths.size(); ++i) {
+        const std::wstring normalized = Norm(paths[i]);
+        if (!normalized.empty()) removed.Add(normalized, i);
+    }
+    if (removed.Empty()) return;
+    const auto gone = [&](const std::wstring& candidate) {
+        return include_descendants ? removed.Find(candidate) != std::wstring::npos
+                                   : removed.Contains(candidate);
+    };
     bool changed = false;
     for (auto& tag : tags) {
         const size_t before = tag.paths.size();
-        std::erase_if(tag.paths, [&](const std::wstring& candidate) {
-            return include_descendants ? PathIsOrDescendant(candidate, normalized)
-                                       : EqualI(candidate, normalized);
-        });
+        std::erase_if(tag.paths, gone);
         changed = changed || before != tag.paths.size();
     }
     const size_t starred_before = starred_items.size();
-    std::erase_if(starred_items, [&](const StarredItem& item) {
-        return include_descendants ? PathIsOrDescendant(item.path, normalized)
-                                   : EqualI(item.path, normalized);
-    });
+    std::erase_if(starred_items, [&](const StarredItem& item) { return gone(item.path); });
     changed = changed || starred_before != starred_items.size();
     const size_t recent_before = recent_items.size();
-    std::erase_if(recent_items, [&](const RecentItem& item) {
-        return include_descendants ? PathIsOrDescendant(item.path, normalized)
-                                   : EqualI(item.path, normalized);
-    });
+    std::erase_if(recent_items, [&](const RecentItem& item) { return gone(item.path); });
     changed = changed || recent_before != recent_items.size();
     if (changed) {
         RebuildTagIndex();
