@@ -206,6 +206,8 @@ private:
         uint32_t frame_index = 0;
         uint32_t epoch = 0;
         bool details = false;
+        // Set when taken: on screen and quick, so its host runs a step higher.
+        bool urgent = false;
         uint32_t timeout_ms = 0;
         uint32_t flags = 0;
         uint64_t modified = 0, size = 0;
@@ -281,6 +283,7 @@ private:
     ExtraLane extra_lanes_[kMaxLanes - 1];
     uint32_t lane_count_ = 1;
     bool visible_order_ = false;
+    bool boost_hosts_ = false;
     uint32_t slow_in_flight_ = 0;
     std::atomic<bool> warm_{false};
     uint64_t frame_ = 1;

@@ -186,6 +186,14 @@ void ThumbnailCache::SetParallelism(uint32_t lanes) {
     if (running_) return;
     lane_count_ = std::clamp<uint32_t>(lanes ? lanes : DefaultParallelism(), 1, kMaxLanes);
     visible_order_ = true;
+    // Other programs busy on every core halve the grid's speed: hosts at
+    // normal priority get a fair share at best. On screen thumbnails raise
+    // their host a step, but only while two cores stay free for the UI.
+    // PULSE_THUMBNAIL_BOOST=0 turns it off for measurements.
+    wchar_t boost[4]{};
+    boost_hosts_ = !folder_thumbnail_ &&
+        GetActiveProcessorCount(ALL_PROCESSOR_GROUPS) >= lane_count_ + 2 &&
+        !(GetEnvironmentVariableW(L"PULSE_THUMBNAIL_BOOST", boost, 4) > 0 && boost[0] == L'0');
 }
 
 void ThumbnailCache::AdvanceFrame() {
@@ -241,6 +249,8 @@ bool ThumbnailCache::TakeRequestLocked(Request& out, bool& slow) {
     }
     if (pick == queue_.end()) return false;
     slow = IsSlowRequest(*pick);
+    // Drawn by a frame (prefetch ranks 0) and quick: worth a priority step.
+    pick->urgent = boost_hosts_ && !slow && (pick->details || best.first > 0);
     if (slow) ++slow_in_flight_;
     wanted_.erase(pick->key);
     out = std::move(*pick);
@@ -879,6 +889,9 @@ void ThumbnailCache::Worker(uint32_t lane) {
     HANDLE& lane_pipe = io.pipe;
     PROCESS_INFORMATION& lane_child = io.child;
     const uint32_t lane_token = io.token;
+    // The host's priority class as last set (a new host starts at normal).
+    DWORD boosted_pid = 0;
+    DWORD boosted_class = NORMAL_PRIORITY_CLASS;
     // Explicit isolated-probe tracing; no file is opened in ordinary sessions.
     FILE* trace_file = nullptr;
     wchar_t trace_path[1024]{};
@@ -922,11 +935,12 @@ void ThumbnailCache::Worker(uint32_t lane) {
             memory.cb = sizeof(memory);
             const bool memory_ok = lane_child.hProcess && GetProcessMemoryInfo(lane_child.hProcess,
                 reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory), sizeof(memory));
-            std::fprintf(trace.get(), "pid=%lu id=%u stage=%s elapsed=%llu tick=%llu ok=%d status=%u host=%lu kind=%u flags=%u pixels=%u timeout=%u memory_ok=%d private=%zu working=%zu path=%s\n",
+            std::fprintf(trace.get(), "pid=%lu id=%u stage=%s elapsed=%llu tick=%llu ok=%d status=%u host=%lu kind=%u flags=%u pixels=%u timeout=%u urgent=%d class=%lu memory_ok=%d private=%zu working=%zu path=%s\n",
                 GetCurrentProcessId(), req.id, stage,
                 static_cast<unsigned long long>(GetTickCount64() - request_start),
                 static_cast<unsigned long long>(GetTickCount64()), success, status, lane_child.dwProcessId,
-                static_cast<unsigned>(req.kind), req.flags, req.pixels, req.timeout_ms, memory_ok,
+                static_cast<unsigned>(req.kind), req.flags, req.pixels, req.timeout_ms, req.urgent ? 1 : 0,
+                lane_child.hProcess ? GetPriorityClass(lane_child.hProcess) : 0ul, memory_ok,
                 memory.PrivateUsage, memory.WorkingSetSize, trace_request_path.c_str());
             std::fflush(trace.get());
         };
@@ -997,6 +1011,14 @@ void ThumbnailCache::Worker(uint32_t lane) {
         };
         Item result; bool ok = Connect(lane, req, request_start);
         const bool connected = ok;
+        if (ok && boost_hosts_) {
+            const DWORD wanted_class = req.urgent ? ABOVE_NORMAL_PRIORITY_CLASS : NORMAL_PRIORITY_CLASS;
+            if (lane_child.dwProcessId != boosted_pid || wanted_class != boosted_class) {
+                SetPriorityClass(lane_child.hProcess, wanted_class);
+                boosted_pid = lane_child.dwProcessId;
+                boosted_class = wanted_class;
+            }
+        }
         mark("connected", ok);
         ipc::PreviewRequest wire; wire.request_id=req.id; wire.generation=req.generation;
         wire.kind=req.kind; wire.pixel_size=req.pixels; wire.attrs=req.attrs;
