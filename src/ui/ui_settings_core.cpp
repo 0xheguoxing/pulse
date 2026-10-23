@@ -3,6 +3,7 @@
 #include "ui_renderer_internal.h"
 #include "bloom_accent_picker.h"
 #include "../common/localization.h"
+#include "../common/text_format.h"
 #include <cmath>
 
 namespace pulse::ui {
@@ -520,6 +521,52 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
         toggle(lay.list_style_row[3],I::ListTagNameColor,I::ListTagNameColorDesc,L"\xE8EC",vm.settings_list_tag_names,22);
         toggle(lay.list_style_row[4],I::ListSelectionOutline,I::ListSelectionOutlineDesc,L"\xE8B3",vm.settings_list_selection_outline,33);
         toggle(lay.list_style_row[5],I::ListThumbnailBadges,I::ListThumbnailBadgesDesc,L"\xE8B9",vm.settings_list_thumbnail_badges,34);
+        if(lay.thumb_cache_row.bottom>lay.thumb_cache_row.top) {
+            // 缩略图缓存: usage bar against the 512 MB budget, then 清除缓存.
+            const auto& r=lay.thumb_cache_row;
+            const auto& b=lay.thumb_cache_button;
+            const uint8_t phase=vm.settings_thumb_cache_phase;   // ThumbCacheState::Phase
+            const bool unavailable=phase==4;
+            const float text_right=unavailable ? r.right-16*scale_ : b.left-16*scale_;
+            const bool two_lines=r.bottom-r.top>96*scale_;
+            label(r,l10n::Get(I::ThumbCache),l10n::Get(I::ThumbCacheDesc),L"\xEDA2",text_right,two_lines ? 43.0f : 21.0f);
+            const float line_top=r.bottom-30*scale_, x=r.left+54*scale_;
+            std::wstring usage;
+            wchar_t buffer[160]{};
+            const uint64_t budget=512ull<<20;
+            if(unavailable) usage=l10n::Get(I::ThumbCacheUnavailable);
+            else if(phase==0) usage=l10n::Get(I::ThumbCacheCounting);
+            else if(phase==2) usage=l10n::Get(I::ThumbCacheClearing);
+            else if(phase==3) {
+                swprintf_s(buffer,l10n::Get(I::ThumbCacheCleared).c_str(),pulse::format::ByteSize(vm.settings_thumb_cache_cleared).c_str());
+                usage=buffer;
+            } else if(vm.settings_thumb_cache_bytes==0) usage=l10n::Get(I::ThumbCacheEmpty);
+            else {
+                swprintf_s(buffer,l10n::Get(I::ThumbCacheUsage).c_str(),pulse::format::ByteSize(vm.settings_thumb_cache_bytes).c_str());
+                usage=buffer;
+            }
+            float usage_left=x;
+            if(!unavailable) {
+                const float bar_w=(std::min)(200*scale_,(std::max)(0.0f,(text_right-x)*0.4f));
+                const float bar_h=4*scale_, bar_y=line_top+9*scale_-bar_h/2;
+                MakeBrush(dc,WithAlpha(theme.text_secondary,theme.text_secondary.a*0.22f),brTagDot_);
+                FillRoundedRect(dc,brTagDot_.get(),x,bar_y,bar_w,bar_h,bar_h/2);
+                const uint64_t used=phase==1 ? vm.settings_thumb_cache_bytes : 0;
+                if(used) {
+                    // At least a dot, so a few KB still shows something.
+                    const float fill=(std::max)(bar_h,bar_w*static_cast<float>((std::min)(1.0,static_cast<double>(used)/budget)));
+                    MakeBrush(dc,theme.accent,brTagDot_);
+                    FillRoundedRect(dc,brTagDot_.get(),x,bar_y,fill,bar_h,bar_h/2);
+                }
+                usage_left=x+bar_w+12*scale_;
+            }
+            painter_.DrawText(usage,D2D1::RectF(usage_left,line_top,text_right,line_top+18*scale_),
+                compositor_->SmallFormat(),phase==3 ? theme.text : theme.text_secondary);
+            if(!unavailable) {
+                const I caption=phase==2 ? I::ThumbCacheClearing : phase==3 ? I::ThumbCacheDone : I::ThumbCacheClear;
+                button(b,l10n::Get(caption),H::SettingsThumbCache,0,false,phase==1 && vm.settings_thumb_cache_bytes>0);
+            }
+        }
         toggle(lay.alias_mark_row,I::AliasMark,I::AliasMarkDesc,L"\xE8AC",vm.settings_alias_mark,39);
         if(lay.mtime_style_card.bottom>lay.mtime_style_card.top) {
             // 修改时间提示: style, then range / colors / switches while it is on.

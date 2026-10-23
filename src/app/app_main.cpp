@@ -30,6 +30,7 @@
 #include "../ui/lumatext_renderer.h"
 #include "../ui/ui_renderer.h"
 #include "../ui/preview_grab_cursor.h"
+#include "../ui/thumbnail_disk_cache.h"
 #include "../ui/fluent_menu.h"
 #include "../ui/drag_drop.h"
 #include "../ui/file_operation_dialog.h"
@@ -1379,6 +1380,19 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 if (diagnostics::ClearCrashReports(app::GetPulseDataDir(), &error)) return true;
                 error = l10n::Get(l10n::StringId::DiagnosticsClearFailed);
                 return false;
+            };
+            settings_callbacks.thumb_cache_bytes = [](uint64_t& bytes) {
+                ui::ThumbnailDiskCache& cache = ui::ThumbnailDiskCache::Shared();
+                if (cache.Root().empty()) return false;
+                bytes = cache.BytesOnDisk();
+                return true;
+            };
+            settings_callbacks.clear_thumb_cache = [] {
+                ui::ThumbnailDiskCache& cache = ui::ThumbnailDiskCache::Shared();
+                const uint64_t before = cache.BytesOnDisk();
+                cache.Clear();
+                const uint64_t after = cache.BytesOnDisk();
+                return before > after ? before - after : uint64_t{0};
             };
             settings_callbacks.prepare_diagnostics_export =
                 [s](std::wstring& destination, bool& include_service, bool& include_dumps) {

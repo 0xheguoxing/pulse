@@ -466,6 +466,9 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     r.index = 6;
                     return r;
                 }
+                if (ContainsPt(lay.thumb_cache_button, x, y)) {
+                    r.region = HitTestResult::SettingsThumbCache; r.index = 0; return r;
+                }
                 if (ContainsPt(lay.alias_mark_row, x, y)) {
                     r.region = HitTestResult::SettingsToggle; r.index = 39; return r;
                 }

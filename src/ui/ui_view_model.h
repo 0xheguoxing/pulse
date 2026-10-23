@@ -1135,6 +1135,11 @@ struct WindowViewModel {
     bool settings_list_tag_names = false;
     bool settings_list_selection_outline = false;
     bool settings_list_thumbnail_badges = true;
+    // 缩略图缓存 row: 0 counting, 1 ready, 2 clearing, 3 cleared, 4 no cache
+    // folder (SettingsController::ThumbCacheState).
+    uint8_t settings_thumb_cache_phase = 0;
+    uint64_t settings_thumb_cache_bytes = 0;
+    uint64_t settings_thumb_cache_cleared = 0;
     MtimeHint settings_mtime;            // 修改时间提示
     bool settings_sync_onedrive = true;
     bool settings_sync_svn = true;
@@ -1390,6 +1395,7 @@ struct HitTestResult {
         SettingsExternalOpen,
         SettingsBlankClick,
         SettingsHomeFolder,
+        SettingsThumbCache,
         SettingsTextRender,
         SettingsUiFontSize,
         SettingsTrayIcon,

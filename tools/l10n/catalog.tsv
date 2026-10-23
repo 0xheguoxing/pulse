@@ -2722,3 +2722,14 @@ PreviewInfoNo	IDS_PREVIEW_INFO_NO	3924	无	None	無
 PreviewInfoHistogram	IDS_PREVIEW_INFO_HISTOGRAM	3925	直方图	Histogram	直方圖
 PreviewDecodeSystem	IDS_PREVIEW_DECODE_SYSTEM	3926	系统解码	System decoder	系統解碼
 PreviewDecodeFfmpeg	IDS_PREVIEW_DECODE_FFMPEG	3927	FFmpeg 解码	FFmpeg decoder	FFmpeg 解碼
+ThumbCache	IDS_THUMB_CACHE	3928	缩略图缓存	Thumbnail cache	縮圖快取
+ThumbCacheDesc	IDS_THUMB_CACHE_DESC	3929	视频、HEIC、RAW、PDF 和网络位置的缩略图会保存在本机，再次打开文件夹时立即显示	Thumbnails of videos, HEIC, RAW, PDF and network files are kept on this PC, so folders show them instantly next time	影片、HEIC、RAW、PDF 和網路位置的縮圖會儲存在本機，再次開啟資料夾時立即顯示
+ThumbCacheUsage	IDS_THUMB_CACHE_USAGE	3930	已用 %s / 512 MB · 超出后自动删除最久没用到的	%s of 512 MB used · the least recently used go first when full	已用 %s / 512 MB · 超出後自動刪除最久沒用到的
+ThumbCacheCounting	IDS_THUMB_CACHE_COUNTING	3931	正在计算占用…	Calculating…	正在計算佔用…
+ThumbCacheEmpty	IDS_THUMB_CACHE_EMPTY	3932	暂无缓存	Nothing cached yet	尚無快取
+ThumbCacheClearing	IDS_THUMB_CACHE_CLEARING	3933	正在清除…	Clearing…	正在清除…
+ThumbCacheCleared	IDS_THUMB_CACHE_CLEARED	3934	已清除 %s	Cleared %s	已清除 %s
+ThumbCacheDone	IDS_THUMB_CACHE_DONE	3935	已清除	Cleared	已清除
+ThumbCacheClear	IDS_THUMB_CACHE_CLEAR	3936	清除缓存	Clear cache	清除快取
+ThumbCacheUnavailable	IDS_THUMB_CACHE_UNAVAILABLE	3937	没有可用的缓存文件夹，缩略图只保存在内存中	No cache folder is available; thumbnails stay in memory only	沒有可用的快取資料夾，縮圖只保存在記憶體中
+ThumbCacheTooltip	IDS_THUMB_CACHE_TOOLTIP	3938	删除本机保存的缩略图，文件本身不受影响	Deletes the saved thumbnails; your files are not affected	刪除本機儲存的縮圖，檔案本身不受影響

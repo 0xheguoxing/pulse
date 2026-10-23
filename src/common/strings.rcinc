@@ -2701,6 +2701,17 @@ BEGIN
     IDS_PREVIEW_INFO_HISTOGRAM "直方图"
     IDS_PREVIEW_DECODE_SYSTEM "系统解码"
     IDS_PREVIEW_DECODE_FFMPEG "FFmpeg 解码"
+    IDS_THUMB_CACHE "缩略图缓存"
+    IDS_THUMB_CACHE_DESC "视频、HEIC、RAW、PDF 和网络位置的缩略图会保存在本机，再次打开文件夹时立即显示"
+    IDS_THUMB_CACHE_USAGE "已用 %s / 512 MB · 超出后自动删除最久没用到的"
+    IDS_THUMB_CACHE_COUNTING "正在计算占用…"
+    IDS_THUMB_CACHE_EMPTY "暂无缓存"
+    IDS_THUMB_CACHE_CLEARING "正在清除…"
+    IDS_THUMB_CACHE_CLEARED "已清除 %s"
+    IDS_THUMB_CACHE_DONE "已清除"
+    IDS_THUMB_CACHE_CLEAR "清除缓存"
+    IDS_THUMB_CACHE_UNAVAILABLE "没有可用的缓存文件夹，缩略图只保存在内存中"
+    IDS_THUMB_CACHE_TOOLTIP "删除本机保存的缩略图，文件本身不受影响"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5401,6 +5412,17 @@ BEGIN
     IDS_PREVIEW_INFO_HISTOGRAM "Histogram"
     IDS_PREVIEW_DECODE_SYSTEM "System decoder"
     IDS_PREVIEW_DECODE_FFMPEG "FFmpeg decoder"
+    IDS_THUMB_CACHE "Thumbnail cache"
+    IDS_THUMB_CACHE_DESC "Thumbnails of videos, HEIC, RAW, PDF and network files are kept on this PC, so folders show them instantly next time"
+    IDS_THUMB_CACHE_USAGE "%s of 512 MB used · the least recently used go first when full"
+    IDS_THUMB_CACHE_COUNTING "Calculating…"
+    IDS_THUMB_CACHE_EMPTY "Nothing cached yet"
+    IDS_THUMB_CACHE_CLEARING "Clearing…"
+    IDS_THUMB_CACHE_CLEARED "Cleared %s"
+    IDS_THUMB_CACHE_DONE "Cleared"
+    IDS_THUMB_CACHE_CLEAR "Clear cache"
+    IDS_THUMB_CACHE_UNAVAILABLE "No cache folder is available; thumbnails stay in memory only"
+    IDS_THUMB_CACHE_TOOLTIP "Deletes the saved thumbnails; your files are not affected"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

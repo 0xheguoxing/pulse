@@ -2711,6 +2711,17 @@ enum class StringId : UINT {
     PreviewInfoHistogram = IDS_PREVIEW_INFO_HISTOGRAM,
     PreviewDecodeSystem = IDS_PREVIEW_DECODE_SYSTEM,
     PreviewDecodeFfmpeg = IDS_PREVIEW_DECODE_FFMPEG,
+    ThumbCache = IDS_THUMB_CACHE,
+    ThumbCacheDesc = IDS_THUMB_CACHE_DESC,
+    ThumbCacheUsage = IDS_THUMB_CACHE_USAGE,
+    ThumbCacheCounting = IDS_THUMB_CACHE_COUNTING,
+    ThumbCacheEmpty = IDS_THUMB_CACHE_EMPTY,
+    ThumbCacheClearing = IDS_THUMB_CACHE_CLEARING,
+    ThumbCacheCleared = IDS_THUMB_CACHE_CLEARED,
+    ThumbCacheDone = IDS_THUMB_CACHE_DONE,
+    ThumbCacheClear = IDS_THUMB_CACHE_CLEAR,
+    ThumbCacheUnavailable = IDS_THUMB_CACHE_UNAVAILABLE,
+    ThumbCacheTooltip = IDS_THUMB_CACHE_TOOLTIP,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

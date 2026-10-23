@@ -187,6 +187,15 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
         l.list_style_row[1]=row(64);   // zebra rows
         l.list_style_row[0]=row(64);   // smart date
         for(int i=2;i<6;++i) l.list_style_row[i]=row(64);
+        {
+            // 缩略图缓存: title, description, then the usage bar; the button
+            // is as wide as its longest label so it does not jump.
+            l.thumb_cache_row=row(narrow ? 108.0f : 88.0f);
+            const float bw=(std::max)({button_w(I::ThumbCacheClear,96),button_w(I::ThumbCacheClearing,96),
+                button_w(I::ThumbCacheDone,96)});
+            const float mid=(l.thumb_cache_row.top+l.thumb_cache_row.bottom)/2;
+            l.thumb_cache_button=D2D1::RectF(right-16*scale-bw,mid-16*scale,right-16*scale,mid+16*scale);
+        }
         l.alias_mark_row=row(64);
 
         section(I::ListMtimeHint);

@@ -1486,16 +1486,111 @@ void SettingsController::DiagnosticsAction(int action) {
     StartUiTask(std::move(task));
 }
 
+// ---- 缩略图缓存 ---------------------------------------------------------------
+
+SettingsController::ThumbCacheState SettingsController::ThumbCache(void* notify) {
+    bool count = false;
+    ThumbCacheState state;
+    {
+        std::lock_guard<std::mutex> lock(thumb_cache_->mutex);
+        ThumbCacheJob& job = *thumb_cache_;
+        job.notify = notify;
+        const uint64_t now = GetTickCount64();
+        // The count is kept up to date in process; a recount only catches
+        // what other Pulse processes wrote meanwhile.
+        count = !job.busy && job.state.phase != ThumbCacheState::Cleared &&
+                (!job.checked || now - job.checked >= 10000);
+        if (count) job.checked = now;
+        state = job.state;
+    }
+    if (count) StartThumbCacheJob(false);
+    return state;
+}
+
+void SettingsController::ClearThumbCache() {
+    {
+        std::lock_guard<std::mutex> lock(thumb_cache_->mutex);
+        const ThumbCacheJob& job = *thumb_cache_;
+        if (job.busy || job.state.phase != ThumbCacheState::Ready || !job.state.bytes) return;
+    }
+    StartThumbCacheJob(true);
+}
+
+void SettingsController::StartThumbCacheJob(bool clear) {
+    if (!ui_.thumb_cache_bytes || !ui_.clear_thumb_cache) return;
+    std::lock_guard<std::mutex> workers_lock(workers_mutex_);
+    if (stopping_) return;
+    // busy is cleared as the job's last step, so this join returns at once.
+    if (thumb_cache_worker_.joinable()) thumb_cache_worker_.join();
+    {
+        std::lock_guard<std::mutex> lock(thumb_cache_->mutex);
+        thumb_cache_->busy = true;
+        if (clear) thumb_cache_->state.phase = ThumbCacheState::Clearing;
+    }
+    try {
+        thumb_cache_worker_ = std::thread([job = thumb_cache_, clear, count_bytes = ui_.thumb_cache_bytes,
+                                           clear_cache = ui_.clear_thumb_cache] {
+            const auto repaint = [&job] {
+                void* notify = nullptr;
+                {
+                    std::lock_guard<std::mutex> lock(job->mutex);
+                    notify = job->notify;
+                }
+                if (notify) InvalidateRect(static_cast<HWND>(notify), nullptr, FALSE);
+            };
+            const uint64_t freed = clear ? clear_cache() : 0;
+            uint64_t bytes = 0;
+            const bool available = count_bytes(bytes);
+            {
+                std::lock_guard<std::mutex> lock(job->mutex);
+                job->state.bytes = bytes;
+                job->state.cleared = freed;
+                job->state.phase = !available ? ThumbCacheState::Unavailable
+                    : clear ? ThumbCacheState::Cleared : ThumbCacheState::Ready;
+                job->checked = GetTickCount64();
+                if (!clear) job->busy = false;
+            }
+            repaint();
+            if (!clear) return;
+            // 已清除 stays on the button for 3 s, then the row shows the count.
+            for (int waited = 0; waited < 3000; waited += 50) {
+                {
+                    std::lock_guard<std::mutex> lock(job->mutex);
+                    if (job->stopping) break;
+                }
+                Sleep(50);
+            }
+            {
+                std::lock_guard<std::mutex> lock(job->mutex);
+                if (job->state.phase == ThumbCacheState::Cleared) job->state.phase = ThumbCacheState::Ready;
+                job->busy = false;
+            }
+            repaint();
+        });
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(thumb_cache_->mutex);
+        thumb_cache_->busy = false;
+        if (clear) thumb_cache_->state.phase = ThumbCacheState::Ready;
+    }
+}
+
 void SettingsController::Stop() {
     std::vector<std::thread> workers;
+    std::thread thumb_cache;
+    {
+        std::lock_guard<std::mutex> lock(thumb_cache_->mutex);
+        thumb_cache_->stopping = true;
+    }
     {
         std::lock_guard<std::mutex> lock(workers_mutex_);
         stopping_ = true;
         workers.swap(workers_);
+        thumb_cache.swap(thumb_cache_worker_);
     }
     for (auto& worker : workers) {
         if (worker.joinable()) worker.join();
     }
+    if (thumb_cache.joinable()) thumb_cache.join();
 }
 
 } // namespace pulse::app

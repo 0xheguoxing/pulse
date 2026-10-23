@@ -2479,6 +2479,8 @@ struct SettingsLayout {
     D2D1_RECT_F protected_files_row{};
     D2D1_RECT_F pinned_names_row{};
     D2D1_RECT_F alias_mark_row{};
+    D2D1_RECT_F thumb_cache_row{};     // 缩略图缓存: usage bar and 清除缓存
+    D2D1_RECT_F thumb_cache_button{};
     D2D1_RECT_F vertical_tabs_row{};
     D2D1_RECT_F tray_hide_row{};
     D2D1_RECT_F hints_row{};

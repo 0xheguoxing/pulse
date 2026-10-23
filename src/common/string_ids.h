@@ -2715,5 +2715,16 @@
 #define IDS_PREVIEW_INFO_HISTOGRAM                                                       3925
 #define IDS_PREVIEW_DECODE_SYSTEM                                                        3926
 #define IDS_PREVIEW_DECODE_FFMPEG                                                        3927
+#define IDS_THUMB_CACHE                                                                  3928
+#define IDS_THUMB_CACHE_DESC                                                             3929
+#define IDS_THUMB_CACHE_USAGE                                                            3930
+#define IDS_THUMB_CACHE_COUNTING                                                         3931
+#define IDS_THUMB_CACHE_EMPTY                                                            3932
+#define IDS_THUMB_CACHE_CLEARING                                                         3933
+#define IDS_THUMB_CACHE_CLEARED                                                          3934
+#define IDS_THUMB_CACHE_DONE                                                             3935
+#define IDS_THUMB_CACHE_CLEAR                                                            3936
+#define IDS_THUMB_CACHE_UNAVAILABLE                                                      3937
+#define IDS_THUMB_CACHE_TOOLTIP                                                          3938
 
 #endif  // PULSE_STRING_IDS_H

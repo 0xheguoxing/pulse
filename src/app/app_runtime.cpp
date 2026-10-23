@@ -629,6 +629,12 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             vm.settings_expanded = s.appPrefs.search_enabled ? s.settingsExpanded : (s.settingsExpanded & ~2u);
             FillShortcutsVm(s, vm);  // 快捷键: sidebar badge everywhere, the page view on page 7
             if (vm.settings_page == 5) vm.settings_preview_codecs = ui::DetectPreviewCodecs(false, s.hwnd);
+            if (vm.settings_page == 9) {
+                const auto cache = s.settings.ThumbCache(s.hwnd);
+                vm.settings_thumb_cache_phase = static_cast<uint8_t>(cache.phase);
+                vm.settings_thumb_cache_bytes = cache.bytes;
+                vm.settings_thumb_cache_cleared = cache.cleared;
+            }
             if (vm.settings_page == 6) {
                 // 系统右键菜单: the first visit starts a background scan.
                 auto& sysctx = s.settings.SystemCtx();
@@ -3361,6 +3367,7 @@ std::wstring TooltipForHover(AppState& s) {
     case R::SettingsBlankClick: return text(I::SettingsBlankClickBack);
     case R::SettingsHomeFolder:
         return text(s.hoverControlIndex == 1 ? I::ThisPc : I::SettingsHomeFolderPick);
+    case R::SettingsThumbCache: return text(I::ThumbCacheTooltip);
     case R::SettingsTextRender: return text(I::SettingsTextRender);
     case R::SettingsUiFontSize: return text(I::SettingsUiFontSize);
     case R::SettingsTrayIcon: return text(I::SettingsTrayIcon);
