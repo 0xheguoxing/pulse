@@ -4,11 +4,17 @@
 #include "transfer_rate_estimator.h"
 #include "../common/localization.h"
 #include "../common/runtime_log.h"
+#include "../fs/drive_kind.h"
 #include <sherrors.h>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <climits>
+#include <condition_variable>
 #include <iterator>
+#include <mutex>
+#include <system_error>
+#include <thread>
 #include <vector>
 
 namespace pulse::ops {
@@ -152,6 +158,72 @@ DWORD DeleteNativeItem(const std::wstring& path, DWORD attributes) {
     return code;
 }
 
+// On a share every delete waits for a round trip (open, mark, close), and
+// the server serves several at once: overlapping them is what makes a large
+// delete fast there. A local disk gains nothing from it.
+constexpr unsigned kShareDeleteThreads = 8;
+constexpr size_t kOverlapMinFiles = 32;    // in one folder tree
+constexpr size_t kOverlapMinSources = 8;   // selected items
+
+bool DeletesOverlapOn(const std::wstring& path) {
+    if (path.starts_with(L"\\\\?\\UNC\\")) return true;
+    if (path.starts_with(L"\\\\") && !path.starts_with(L"\\\\?\\") && !path.starts_with(L"\\\\.\\"))
+        return true;
+    return ::pulse::fs::IsRemoteLikeDrive(path);
+}
+
+// Calls work(i) for every i below count on up to `threads` threads until one
+// returns false. The calling thread only waits, calling tick() about every
+// 50 ms: progress is reported from it alone. Without threads, it does the
+// work itself.
+template <typename Work, typename Tick>
+void RunOverlapped(size_t count, unsigned threads, Work&& work, Tick&& tick) {
+    std::atomic<size_t> next{0};
+    std::atomic<bool> stop{false};
+    const auto drain = [&] {
+        while (!stop.load()) {
+            const size_t i = next.fetch_add(1);
+            if (i >= count) break;
+            if (!work(i)) stop.store(true);
+        }
+    };
+    std::mutex mutex;
+    std::condition_variable finished;
+    size_t running = 0;
+    std::vector<std::thread> workers;
+    const size_t wanted = (std::min)(static_cast<size_t>(threads), count);
+    for (size_t t = 0; t < wanted; ++t) {
+        {
+            std::lock_guard lock(mutex);
+            ++running;
+        }
+        try {
+            workers.emplace_back([&] {
+                drain();
+                std::lock_guard lock(mutex);
+                if (--running == 0) finished.notify_all();
+            });
+        } catch (const std::system_error&) {
+            std::lock_guard lock(mutex);
+            --running;
+            break;
+        }
+    }
+    if (workers.empty()) {
+        drain();
+        return;
+    }
+    {
+        std::unique_lock lock(mutex);
+        while (!finished.wait_for(lock, std::chrono::milliseconds(50), [&] { return running == 0; })) {
+            lock.unlock();
+            tick();
+            lock.lock();
+        }
+    }
+    for (auto& worker : workers) worker.join();
+}
+
 struct NativeDeleteOutcome {
     bool done = false;       // the source no longer exists
     bool mutated = false;    // something under it was deleted
@@ -165,9 +237,11 @@ bool NativeInUse(DWORD error) {
 
 // Deletes one source, links as links (never entered). Stops at the first
 // item it cannot delete and leaves the rest, with its error UI, to the Shell
-// path. Lists the tree first so progress has a total.
+// path. Lists the tree first so progress has a total. With threads, the
+// files go first, several at once, then the folders in order.
 template <typename Progress>
-NativeDeleteOutcome DeleteNative(const std::wstring& source, std::atomic<bool>& cancel, Progress&& progress) {
+NativeDeleteOutcome DeleteNative(const std::wstring& source, std::atomic<bool>& cancel, Progress&& progress,
+                                 unsigned threads = 1) {
     NativeDeleteOutcome outcome;
     // Never a volume root; anything that is not a plain path goes to the Shell.
     if (source.size() <= 3 || source.starts_with(L"::") || source.find(L'/') != std::wstring::npos)
@@ -204,10 +278,42 @@ NativeDeleteOutcome DeleteNative(const std::wstring& source, std::atomic<bool>& 
             if (code != ERROR_NO_MORE_FILES) return outcome;
         }
     }
-    // Reverse pre-order: contents before their folder.
     const size_t total = items.size();
+    size_t removed = 0;
+    bool files_removed = false;
+    if (threads > 1) {
+        std::vector<size_t> files;
+        for (size_t i = 0; i < total; ++i)
+            if (!(items[i].attributes & FILE_ATTRIBUTE_DIRECTORY)) files.push_back(i);
+        if (files.size() >= kOverlapMinFiles) {
+            std::atomic<size_t> deleted{0};
+            std::atomic<DWORD> first_error{ERROR_SUCCESS};
+            RunOverlapped(files.size(), threads, [&](size_t k) {
+                if (cancel.load()) return false;
+                const Item& item = items[files[k]];
+                const DWORD code = DeleteNativeItem(item.path, item.attributes);
+                if (code == ERROR_SUCCESS || code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND) {
+                    deleted.fetch_add(1);
+                    return true;
+                }
+                DWORD none = ERROR_SUCCESS;
+                first_error.compare_exchange_strong(none, code);
+                return false;
+            }, [&] { progress(source, static_cast<float>(deleted.load() * 100.0 / total)); });
+            removed = deleted.load();
+            if (removed) outcome.mutated = true;
+            if (cancel.load()) { outcome.cancelled = true; return outcome; }
+            if (first_error.load() != ERROR_SUCCESS) {
+                outcome.error = first_error.load();
+                return outcome;
+            }
+            files_removed = true;
+        }
+    }
+    // Reverse pre-order: contents before their folder.
     ULONGLONG last_report = 0;
     for (size_t i = total; i-- > 0;) {
+        if (files_removed && !(items[i].attributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
         if (cancel.load()) { outcome.cancelled = true; return outcome; }
         const DWORD code = DeleteNativeItem(items[i].path, items[i].attributes);
         if (code != ERROR_SUCCESS && code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND) {
@@ -215,10 +321,11 @@ NativeDeleteOutcome DeleteNative(const std::wstring& source, std::atomic<bool>& 
             return outcome;
         }
         outcome.mutated = true;
+        ++removed;
         const ULONGLONG now = GetTickCount64();
         if (total > 1 && now - last_report >= 50) {
             last_report = now;
-            progress(items[i].path, static_cast<float>((total - i) * 100.0 / total));
+            progress(items[i].path, static_cast<float>(removed * 100.0 / total));
         }
     }
     outcome.done = true;
@@ -263,7 +370,36 @@ void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
     // ordinary per-item progress is throttled.
     bool authorization_shown = false;
     RecycleCache recycle_cache;
-    for (const auto& source : req.sources) {
+    // On a share, several selected items are deleted at once first. Only
+    // what that pass deleted is taken from it; anything else is attempted
+    // again below, in order, with its retries, prompts and errors as before.
+    enum : char { kNotAhead, kMutatedAhead, kDeletedAhead };
+    const unsigned overlap = permanent && !req.sources.empty() && DeletesOverlapOn(req.sources.front())
+        ? kShareDeleteThreads : 1;
+    std::vector<char> ahead(req.sources.size(), kNotAhead);
+    if (overlap > 1 && req.sources.size() >= kOverlapMinSources && !transfer_cancel_.load()) {
+        std::atomic<size_t> deleted_ahead{0};
+        RunOverlapped(req.sources.size(), overlap, [&](size_t i) {
+            if (transfer_cancel_.load()) return false;
+            const auto native = DeleteNative(req.sources[i], transfer_cancel_, [](const std::wstring&, float) {});
+            if (native.done) {
+                ahead[i] = kDeletedAhead;
+                deleted_ahead.fetch_add(1);
+            } else if (native.mutated) {
+                ahead[i] = kMutatedAhead;
+            }
+            return true;
+        }, [&] {
+            const size_t done = deleted_ahead.load();
+            SetProgressStatus([&](OpStatus& status) {
+                status.phase = OpPhase::Running;
+                status.current_item = req.sources[(std::min)(done, req.sources.size() - 1)];
+                status.percent = static_cast<float>(done * 100.0 / req.sources.size());
+            });
+        });
+    }
+    for (size_t index = 0; index < req.sources.size(); ++index) {
+        const std::wstring& source = req.sources[index];
         if (transfer_cancel_.load()) break;
         SetProgressStatus([&](OpStatus& status) {
             status.current_item = source;
@@ -310,7 +446,14 @@ void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
         bool native_mutated = false;
         size_t in_use_retries = 0;
         if (permanent) {
-            auto native = DeleteNative(source, transfer_cancel_, progress);
+            NativeDeleteOutcome native;
+            if (ahead[index] == kDeletedAhead) {
+                native.done = native.mutated = true;
+            } else {
+                native_mutated = ahead[index] == kMutatedAhead;
+                native = DeleteNative(source, transfer_cancel_, progress, overlap);
+            }
+            ahead[index] = kNotAhead;
             // In use for a moment: tried again here, at once, rather than by
             // the Shell, whose attempt takes about a second on an item held.
             while (!native.done && !native.cancelled && NativeInUse(native.error) &&
@@ -320,7 +463,7 @@ void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
                     native.cancelled = true;
                     break;
                 }
-                native = DeleteNative(source, transfer_cancel_, progress);
+                native = DeleteNative(source, transfer_cancel_, progress, overlap);
             }
             native_mutated = native_mutated || native.mutated;
             if (native.done || native.cancelled) {
@@ -413,6 +556,21 @@ void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
         if (item_failures.size() < kMaxReportedFailures)
             item_failures.push_back({source, {}, DeleteError(result), result.hr});
         ++failed_items;
+    }
+    // What the overlapped pass deleted or changed beyond where the loop
+    // stopped is reported all the same.
+    for (size_t index = 0; index < ahead.size(); ++index) {
+        if (ahead[index] == kDeletedAhead) {
+            completed.push_back(req.sources[index]);
+        } else if (ahead[index] == kMutatedAhead) {
+            CompletedOperation refresh;
+            refresh.task_id = task_id;
+            refresh.type = req.type;
+            refresh.sources = {req.sources[index]};
+            refresh.refresh_only = true;
+            std::lock_guard lock(mutex_);
+            completions_.push_back(std::move(refresh));
+        }
     }
     if (!completed.empty()) {
         OpRequest finished = req;

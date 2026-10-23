@@ -5,6 +5,7 @@
 #include "../ops/elevated_transfer_client.h"
 #include "../ops/source_listing.h"
 #include <aclapi.h>
+#include <algorithm>
 #include <shellapi.h>
 #include <filesystem>
 #include <fstream>
@@ -501,6 +502,113 @@ int main() {
         ShutdownElevatedTransferHelper();
     }
 #endif
+    {
+        // On a share several deletes run at once: the selected items, and the
+        // files inside one folder. Marked remote-like, the fixture's drive
+        // takes that path; what fails still gets its retries and prompts.
+        // Last: its protected item starts the authorization helper.
+        const std::wstring drive(1, root.wstring()[0]);
+        fs::create_directories(root / L"test-data");
+        SetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", (root / L"test-data").c_str());
+        SetEnvironmentVariableW(L"PULSE_TEST_REMOTE_LIKE_DRIVES", drive.c_str());
+        const auto share = root / L"share-delete";
+        fs::create_directories(share / L"tree" / L"sub" / L"deeper");
+        OpRequest remove; remove.type = OpType::RealDelete;
+        for (int i = 0; i < 30; ++i) {
+            const auto file = share / (L"file-" + std::to_wstring(i) + L".txt");
+            Write(file, "share");
+            remove.sources.push_back(file.wstring());
+        }
+        SetFileAttributesW((share / L"file-7.txt").c_str(), FILE_ATTRIBUTE_READONLY);
+        for (int i = 0; i < 120; ++i) Write(share / L"tree" / (L"t-" + std::to_wstring(i) + L".txt"), "tree");
+        for (int i = 0; i < 40; ++i) Write(share / L"tree" / L"sub" / (L"s-" + std::to_wstring(i) + L".txt"), "sub");
+        SetFileAttributesW((share / L"tree" / L"sub" / L"s-3.txt").c_str(), FILE_ATTRIBUTE_READONLY);
+        const auto held = share / L"held.txt";
+        Write(held, "held");
+        remove.sources.insert(remove.sources.begin() + 12, held.wstring());
+        remove.sources.push_back((share / L"tree").wstring());
+        HANDLE holder = CreateFileW(held.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        OpsManager manager; manager.Start([] {});
+        const auto result_of = [&](uint64_t task) {
+            const auto deadline = GetTickCount64() + 20000;
+            while (GetTickCount64() < deadline) {
+                for (auto& result : manager.DrainTaskResults())
+                    if (result.task_id == task) return std::optional<TaskResult>(std::move(result));
+                Sleep(5);
+            }
+            return std::optional<TaskResult>();
+        };
+        // What the task reports deleted: its completion, not the request.
+        const auto deleted_by = [&](uint64_t task) {
+            std::vector<std::wstring> deleted;
+            for (const auto& done : manager.DrainCompletions())
+                if (done.task_id == task && !done.refresh_only)
+                    deleted.insert(deleted.end(), done.sources.begin(), done.sources.end());
+            return deleted;
+        };
+        const auto remove_task = manager.Submit(remove);
+        const auto removed = result_of(remove_task);
+        const auto removed_items = deleted_by(remove_task);
+        size_t left = 0;
+        for (const auto& entry : fs::recursive_directory_iterator(share)) { (void)entry; ++left; }
+        check(holder != INVALID_HANDLE_VALUE && removed && removed_items.size() == remove.sources.size() - 1 &&
+              std::find(removed_items.begin(), removed_items.end(), held.wstring()) == removed_items.end() &&
+              left == 1 && fs::exists(held) && manager.Status().failed_items == 1,
+              "deleting on a share at once removes every item but the one in use, read-only ones too");
+        if (holder != INVALID_HANDLE_VALUE) CloseHandle(holder);
+
+        // A folder selected with a folder inside it (search results): both
+        // run at once, and whichever gets there first, all of it goes.
+        const auto nest = root / L"share-nest";
+        fs::create_directories(nest / L"outer" / L"inner");
+        OpRequest nested; nested.type = OpType::RealDelete;
+        for (int i = 0; i < 10; ++i) {
+            const auto file = nest / (L"n-" + std::to_wstring(i) + L".txt");
+            Write(file, "nest");
+            nested.sources.push_back(file.wstring());
+        }
+        for (int i = 0; i < 60; ++i) Write(nest / L"outer" / (L"o-" + std::to_wstring(i) + L".txt"), "outer");
+        for (int i = 0; i < 60; ++i) Write(nest / L"outer" / L"inner" / (L"i-" + std::to_wstring(i) + L".txt"), "inner");
+        nested.sources.push_back((nest / L"outer").wstring());
+        nested.sources.push_back((nest / L"outer" / L"inner").wstring());
+        check(result_of(manager.Submit(nested)) && fs::is_empty(nest),
+              "a folder and a folder inside it deleted on a share at once leave nothing");
+
+        // Protected item: the permission prompt comes as before; skipping it
+        // keeps it, and the items deleted at once around it are reported.
+        const auto plain = root / L"share-plain";
+        const auto guarded = root / L"share-guarded";
+        fs::create_directories(plain); fs::create_directories(guarded);
+        OpRequest mixed; mixed.type = OpType::RealDelete;
+        for (int i = 0; i < 12; ++i) {
+            const auto file = plain / (L"p-" + std::to_wstring(i) + L".txt");
+            Write(file, "plain");
+            mixed.sources.push_back(file.wstring());
+        }
+        const auto locked = guarded / L"locked.txt";
+        Write(locked, "locked");
+        mixed.sources.insert(mixed.sources.begin() + 5, locked.wstring());
+        {
+            DenyAccess parent(guarded, FILE_DELETE_CHILD);
+            DenyAccess item(locked, DELETE);
+            const auto task = manager.Submit(mixed);
+            bool prompted = false;
+            for (const auto deadline = GetTickCount64() + 10000; GetTickCount64() < deadline && !prompted; Sleep(5)) {
+                const auto status = manager.Status();
+                prompted = status.task_id == task && status.authorization == AuthorizationState::ActionRequired &&
+                    status.current_item == locked.wstring();
+            }
+            if (prompted) manager.ResolveAuthorization(task, false);
+            const auto skipped = result_of(task);
+            check(parent.applied && item.applied && prompted && skipped && deleted_by(task).size() == 12 &&
+                  fs::exists(locked) && fs::is_empty(plain),
+                  "a protected item on a share still asks, and skipping it keeps only it");
+        }
+        manager.Stop();
+        ShutdownElevatedTransferHelper();
+        SetEnvironmentVariableW(L"PULSE_TEST_REMOTE_LIKE_DRIVES", nullptr);
+        SetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", nullptr);
+    }
     std::cout << "Fixture: " << root.string() << '\n';
     return failures ? 1 : 0;
 }
