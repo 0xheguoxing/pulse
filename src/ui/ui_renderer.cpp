@@ -927,6 +927,7 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
     if (!compositor_ || !compositor_->Dc()) return;
     ++motion_frame_;
     last_frame_overlay_ = OverlayUp(vm);
+    thumbnail_cache_.AdvanceFrame();
     folder_thumbnail_cache_.BeginFrame();
     struct FolderFrameScope {
         FolderThumbnailCache& cache;
