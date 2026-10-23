@@ -85,6 +85,7 @@ struct RecycleCache::State {
     ComPtr<IShellItem> bin;
     std::wstring transfer_parent;
     ComPtr<ITransferSource> transfer;
+    ComPtr<IShellItem> parent;  // the folder `transfer` serves (transfer_parent)
     std::wstring volume_parent;
     bool volume_checked = false;
     bool available = false;
@@ -95,17 +96,38 @@ struct RecycleCache::State {
 RecycleCache::RecycleCache() : state_(std::make_unique<State>()) {}
 RecycleCache::~RecycleCache() = default;
 
+// Parsing a full path walks it from the namespace root: known folders,
+// libraries and property handlers, 3-17 ms per item under a user profile.
+// Asking the item's own folder for its name skips all of that. Only a plain
+// name is asked for this way; a root, an extended path, a stream or a name
+// Win32 would trim is parsed whole, as before.
+HRESULT CreateItemForPath(const std::wstring& path, IShellItem* folder, IShellItem** item) {
+    if (!item) return E_POINTER;
+    *item = nullptr;
+    if (folder && !path.starts_with(L"\\\\?\\") && path.find(L'/') == std::wstring::npos) {
+        const size_t slash = path.find_last_of(L'\\');
+        if (slash != std::wstring::npos && slash > 0 && slash + 1 < path.size() && path[slash - 1] != L'\\') {
+            const std::wstring leaf = path.substr(slash + 1);
+            if (leaf.find(L':') == std::wstring::npos && leaf.back() != L'.' && leaf.back() != L' ' &&
+                SUCCEEDED(SHCreateItemFromRelativeName(folder, leaf.c_str(), nullptr, IID_PPV_ARGS(item))))
+                return S_OK;
+        }
+    }
+    return SHCreateItemFromParsingName(path::StripExtendedPathPrefix(path).c_str(), nullptr, IID_PPV_ARGS(item));
+}
+
 namespace {
 HRESULT RecycleOnly(const std::wstring& source, std::atomic<bool>& cancel,
                     ShellTransferResult& result, const ShellTransferProgress& progress,
                     RecycleCache* cache) {
     ComPtr<IShellItem> item, parent, bin;
-    HRESULT hr = SHCreateItemFromParsingName(path::StripExtendedPathPrefix(source).c_str(), nullptr, IID_PPV_ARGS(&item));
-    if (FAILED(hr)) return hr;
     ComPtr<ITransferSource> transfer;
     const std::wstring parent_key = cache ? ParentKey(source) : std::wstring{};
-    if (cache && cache->state().transfer && !parent_key.empty() &&
-        cache->state().transfer_parent == parent_key) {
+    const bool same_folder = cache && cache->state().transfer && cache->state().parent &&
+        !parent_key.empty() && cache->state().transfer_parent == parent_key;
+    HRESULT hr = CreateItemForPath(source, same_folder ? cache->state().parent.Get() : nullptr, &item);
+    if (FAILED(hr)) return hr;
+    if (same_folder) {
         transfer = cache->state().transfer;
     } else {
         hr = item->GetParent(&parent);
@@ -114,6 +136,7 @@ HRESULT RecycleOnly(const std::wstring& source, std::atomic<bool>& cancel,
         if (FAILED(hr)) return hr;
         if (cache) {
             cache->state().transfer = transfer;
+            cache->state().parent = parent;
             cache->state().transfer_parent = parent_key;
         }
     }
@@ -145,6 +168,7 @@ HRESULT RecycleOnly(const std::wstring& source, std::atomic<bool>& cancel,
     // A failed transfer source is not trusted with the next item.
     if (cache && FAILED(hr)) {
         cache->state().transfer.Reset();
+        cache->state().parent.Reset();
         cache->state().transfer_parent.clear();
     }
     const DWORD attributes = GetFileAttributesW(source.c_str());

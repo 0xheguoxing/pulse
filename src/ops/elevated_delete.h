@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "elevated_transfer.h"
+#include <shobjidl.h>
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -45,6 +46,10 @@ public:
 private:
     std::unique_ptr<State> state_;
 };
+// The Shell item of a file-system path. With `folder` (the Shell item of the
+// path's parent folder) a plain name is created from it, which skips parsing
+// the whole path; anything else, or a failure, parses the full path.
+HRESULT CreateItemForPath(const std::wstring& path, IShellItem* folder, IShellItem** item);
 ShellTransferResult DeleteWithCurrentToken(const std::vector<std::wstring>& sources,
     bool permanent, HWND owner, std::atomic<bool>& cancel, ShellTransferProgress progress = {},
     RecycleCache* cache = nullptr);
