@@ -69,9 +69,14 @@ inline bool IsUnsetExtra(const FILETIME& value) { return !value.dwLowDateTime &&
 // An out-of-line field keeps its member syntax through an MSVC property:
 // reading an unset one yields its default; writing a non-default value
 // allocates the record. Mutate a field only by assigning it.
+// A read is a call, so a reference into the record does not extend the life
+// of a temporary entry: `const auto& p = tab->EntryAt(i).recycle_path;` was
+// left pointing at freed memory (还原 found no payload and did nothing).
+// Reading a temporary entry therefore yields a copy; a named one, a reference.
 #define PULSE_DIR_ENTRY_EXTRA(Type, field)                                          \
     __declspec(property(get = field##_get, put = field##_put)) Type field;          \
-    const Type& field##_get() const { return extra_.Get().field; }                  \
+    const Type& field##_get() const& { return extra_.Get().field; }                 \
+    Type field##_get() const&& { return extra_.Get().field; }                       \
     void field##_put(Type value) {                                                   \
         if (extra_ || !IsUnsetExtra(value)) extra_.Mutable().field = std::move(value); \
     }

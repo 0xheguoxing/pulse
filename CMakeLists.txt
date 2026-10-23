@@ -1701,6 +1701,7 @@ add_executable(pulse_app_catalog_test src/bench/app_catalog_test.cpp src/app/app
 target_link_libraries(pulse_app_catalog_test PRIVATE ole32 shell32 uuid)
 add_executable(pulse_known_extensions_test src/bench/known_extensions_test.cpp)
 target_link_libraries(pulse_known_extensions_test PRIVATE advapi32 user32)
+add_executable(pulse_dir_entry_extra_test src/bench/dir_entry_extra_test.cpp)
 add_executable(pulse_content_scope_mode_test src/bench/content_scope_mode_test.cpp)
 target_link_libraries(pulse_content_scope_mode_test PRIVATE shell32 ole32)
 add_executable(pulse_network_agent_deadline_test src/bench/network_agent_deadline_test.cpp)
