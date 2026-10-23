@@ -19,6 +19,26 @@ struct ListedSource {
     ULONGLONG bytes = 0;
 };
 
+// The "*" pattern that lists `folder`. A pattern of MAX_PATH or more lists
+// only as an extended path (\\?\), which Windows takes as given, without
+// normalizing it, so only a plain absolute folder (X:\... or
+// \\server\share\...) without . or .. parts is extended. Empty: the folder
+// is left to per-item queries.
+inline std::wstring ListingPattern(std::wstring folder) {
+    if (folder.empty()) return {};
+    if (folder.back() != L'\\') folder += L'\\';
+    folder += L'*';
+    if (folder.size() < MAX_PATH || folder.starts_with(L"\\\\?\\")) return folder;
+    if (folder.find(L'/') != std::wstring::npos || folder.find(L"\\.\\") != std::wstring::npos ||
+        folder.find(L"\\..\\") != std::wstring::npos)
+        return {};
+    if (folder.size() > 3 && folder[1] == L':' && folder[2] == L'\\') return L"\\\\?\\" + folder;
+    if (folder.size() > 3 && folder[0] == L'\\' && folder[1] == L'\\' && folder[2] != L'.' && folder[2] != L'?' &&
+        folder[2] != L'\\')
+        return L"\\\\?\\UNC\\" + folder.substr(2);
+    return {};
+}
+
 // Reads many sources from one listing of each folder they share. Asking the
 // file system about one name costs tens of microseconds (more with an
 // antivirus filter), while a listing returns each name for about one. Only
@@ -40,9 +60,11 @@ public:
             wanted[source.substr(0, slash)].insert(source.substr(slash + 1));
         }
         for (const auto& [folder, names] : wanted) {
-            if (names.size() < kMinSourcesPerFolder || folder.size() + 2 >= MAX_PATH) continue;
+            if (names.size() < kMinSourcesPerFolder) continue;
+            const std::wstring pattern = ListingPattern(folder);
+            if (pattern.empty()) continue;
             WIN32_FIND_DATAW data{};
-            HANDLE find = FindFirstFileExW((folder + L"\\*").c_str(), FindExInfoBasic, &data,
+            HANDLE find = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &data,
                                            FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
             if (find == INVALID_HANDLE_VALUE) continue;
             // A few sources picked from a huge folder: stop before the listing
@@ -91,10 +113,9 @@ private:
 class TargetListing {
 public:
     TargetListing(const std::wstring& folder, size_t items) {
-        if (items < SourceListing::kMinSourcesPerFolder || folder.empty() || folder.size() + 2 >= MAX_PATH) return;
-        std::wstring pattern = folder;
-        if (pattern.back() != L'\\') pattern += L'\\';
-        pattern += L'*';
+        if (items < SourceListing::kMinSourcesPerFolder) return;
+        const std::wstring pattern = ListingPattern(folder);
+        if (pattern.empty()) return;
         WIN32_FIND_DATAW data{};
         HANDLE find = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr,
                                        FIND_FIRST_EX_LARGE_FETCH);

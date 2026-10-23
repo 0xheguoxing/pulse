@@ -262,6 +262,47 @@ int main() {
         manager.Stop();
     }
     {
+        // A folder past MAX_PATH is still listed once, through an extended
+        // path; only a plain absolute folder is extended.
+        std::wstring deep = (root / L"long-listing").wstring();
+        bool made = CreateDirectoryW((L"\\\\?\\" + deep).c_str(), nullptr) != FALSE;
+        std::vector<std::wstring> made_dirs{deep};
+        while (made && deep.size() < 300) {
+            deep += L"\\" + std::wstring(40, L'd');
+            made = CreateDirectoryW((L"\\\\?\\" + deep).c_str(), nullptr) != FALSE;
+            made_dirs.push_back(deep);
+        }
+        std::vector<std::wstring> deep_paths;
+        for (int i = 0; made && i < 20; ++i) {
+            const std::wstring file = deep + L"\\deep-" + std::to_wstring(i) + L".txt";
+            HANDLE handle = CreateFileW((L"\\\\?\\" + file).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                        FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (handle == INVALID_HANDLE_VALUE) { made = false; break; }
+            DWORD written = 0;
+            made = WriteFile(handle, "deep", 4, &written, nullptr) && written == 4;
+            CloseHandle(handle);
+            deep_paths.push_back(file);
+        }
+        const SourceListing deep_listing(deep_paths);
+        bool all_listed = made && deep_paths.size() == 20 && (deep + L"\\*").size() >= MAX_PATH;
+        for (const auto& path : deep_paths) {
+            const ListedSource* listed = deep_listing.Find(path);
+            all_listed = all_listed && listed && listed->bytes == 4;
+        }
+        const TargetListing deep_target(deep, 40);
+        check(all_listed && deep_target.SurelyAbsent(L"new.txt") && !deep_target.SurelyAbsent(L"deep-3.txt"),
+              "folders past MAX_PATH are listed through an extended path");
+        const std::wstring long_name(300, L'y');
+        check(ListingPattern(L"C:\\short") == L"C:\\short\\*" && ListingPattern(L"C:\\") == L"C:\\*" &&
+              ListingPattern(L"C:\\" + long_name) == L"\\\\?\\C:\\" + long_name + L"\\*" &&
+              ListingPattern(L"\\\\srv\\share\\" + long_name) == L"\\\\?\\UNC\\srv\\share\\" + long_name + L"\\*" &&
+              ListingPattern(L"C:\\x\\..\\" + long_name).empty() && ListingPattern(L"C:/x/" + long_name).empty() &&
+              ListingPattern(L"rel\\" + long_name).empty() && ListingPattern(L"").empty(),
+              "only plain absolute long folders are extended");
+        for (const auto& path : deep_paths) DeleteFileW((L"\\\\?\\" + path).c_str());
+        for (auto dir = made_dirs.rbegin(); dir != made_dirs.rend(); ++dir) RemoveDirectoryW((L"\\\\?\\" + *dir).c_str());
+    }
+    {
         // One listing of a target folder vouches for names that are surely
         // absent; whatever it cannot vouch for is left to a query.
         const auto target = root / L"target-listing";
