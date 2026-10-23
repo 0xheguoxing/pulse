@@ -17,6 +17,7 @@
 #include <set>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 namespace pulse::app {
 namespace {
@@ -129,7 +130,11 @@ struct FolderSizes::Impl {
     std::atomic<bool> stopping{false};
     ChangeFlag changed;
     bool index_enabled = true;
+    // dirty_revision counts changes to what the cache file holds; a result
+    // confirmed again only moves its verified time, which waits for the final
+    // save (stamps_dirty) instead of rewriting the file every 3 s.
     uint64_t scope = 0, watch_sequence = 0, dirty_revision = 0, saved_revision = 0;
+    bool stamps_dirty = false;
     // Set under mutex with every notify: work arrived since Run's last pass,
     // which may have been outside the lock when the notify fired.
     bool kick = false;
@@ -233,7 +238,8 @@ struct FolderSizes::Impl {
     }
     void InvalidateLocked(const std::wstring& key, uint64_t delay = 200, bool known_only = false) {
         if (key.empty()) return;
-        if (store.Invalidate(key, GetTickCount64(), delay, known_only)) { changed = true; ++dirty_revision; }
+        // Staleness is not saved: a restored value is unverified until checked.
+        if (store.Invalidate(key, GetTickCount64(), delay, known_only)) changed = true;
     }
     void Invalidate(const std::wstring& path) {
         const auto key = Key(path);
@@ -250,18 +256,22 @@ struct FolderSizes::Impl {
         return drive_types.emplace(root, ::pulse::fs::IsRemoteLikeDrive(root) ? static_cast<UINT>(DRIVE_REMOTE)
                                                                        : GetDriveTypeW(root.c_str())).first->second;
     }
-    void Save(const std::wstring& file) {
+    void Save(const std::wstring& file, bool final = false) {
         if (file.empty()) return;
         folder_size::SavedValues values;
         uint64_t revision = 0;
+        bool stamps = false;
         {
             std::lock_guard lock(mutex);
-            if (dirty_revision == saved_revision) return;
+            if (dirty_revision == saved_revision && !(final && stamps_dirty)) return;
             values = store.Snapshot(); revision = dirty_revision;
+            stamps = std::exchange(stamps_dirty, false);
         }
-        if (folder_size::WriteValues(file, values)) {
-            std::lock_guard lock(mutex); saved_revision = revision;
-        }
+        // The write runs outside the lock: the UI thread reads sizes under it.
+        const bool written = folder_size::WriteValues(file, values);
+        std::lock_guard lock(mutex);
+        if (written) saved_revision = (std::max)(saved_revision, revision);
+        else stamps_dirty |= stamps;
     }
     void UpdateWatches(const std::wstring& cache_key) {
         std::vector<std::shared_ptr<fs::DirWatch>> retired;
@@ -412,6 +422,7 @@ struct FolderSizes::Impl {
                             ++dirty_revision; changed = true;
                         }
                         entry.value.verified_at = folder_size::NowUtcMs();
+                        stamps_dirty = true;
                         entry.index_current = true;
                     } else if (received && i < values.size()) {
                         // Totals may still be building in the service: ask again soon.
@@ -434,6 +445,7 @@ struct FolderSizes::Impl {
         }
         const auto now = GetTickCount64();
         const auto utc = folder_size::NowUtcMs();
+        bool saved_change = false;
         for (auto& subtree : job.completed) {
             const auto key = Key(subtree.path);
             auto* entry = store.Ensure(key, protected_paths);
@@ -442,6 +454,7 @@ struct FolderSizes::Impl {
                 entry->value.state = FolderSizeState::Cached;
                 entry->value.verified = false;
             } else {
+                saved_change |= SavedFieldsDiffer(entry->value, subtree.value);
                 entry->value = subtree.value;
                 entry->value.verified_revision = entry->revision;
                 entry->value.verified_at = subtree.value.has_value ? utc : 0;
@@ -466,7 +479,17 @@ struct FolderSizes::Impl {
                 }
             }
         }
-        ++stats.jobs_completed; ++dirty_revision; changed = true;
+        ++stats.jobs_completed; changed = true;
+        // The same totals found again only refresh their verified time.
+        if (saved_change) ++dirty_revision;
+        else if (!job.completed.empty()) stamps_dirty = true;
+    }
+    // What WriteValues stores, apart from the verified time.
+    static bool SavedFieldsDiffer(const FolderSizeValue& saved, const FolderSizeValue& next) {
+        if (saved.has_value != next.has_value) return true;
+        if (!next.has_value) return false;
+        return saved.bytes != next.bytes || saved.partial != next.partial || saved.source != next.source ||
+            saved.skipped != next.skipped || saved.issues != next.issues;
     }
     // The earliest time something Run skipped becomes due without a notify:
     // backoffs, freshness, unwatched probe ageing, watch leases, the pending
@@ -678,7 +701,7 @@ struct FolderSizes::Impl {
             watches.clear();
         }
         for (auto& watch : retired) watch->Stop();
-        Save(file);
+        Save(file, true);
         SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_END);
     }
 };

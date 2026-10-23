@@ -156,6 +156,69 @@ void FailureAndPersistence(const fs::path& root) {
     Check(Wait([&] { return Exact(restored, path, 108); }), "explicit retry can replace partial cached result with complete metadata scan");
     restored.Stop(); SetFileAttributesW(offline.c_str(), FILE_ATTRIBUTE_DIRECTORY);
 }
+uint64_t FileId(const fs::path& path) {
+    const HANDLE file = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return 0;
+    BY_HANDLE_FILE_INFORMATION info{};
+    const bool ok = GetFileInformationByHandle(file, &info) != FALSE;
+    CloseHandle(file);
+    return ok ? (static_cast<uint64_t>(info.nFileIndexHigh) << 32) | info.nFileIndexLow : 0;
+}
+// Each save replaces the cache with a new file, so a new file id is a rewrite.
+unsigned Rewrites(const fs::path& file, DWORD ms) {
+    unsigned count = 0;
+    auto last = FileId(file);
+    const auto end = GetTickCount64() + ms;
+    while (GetTickCount64() < end) {
+        Sleep(15);
+        const auto id = FileId(file);
+        if (id && id != last) { ++count; last = id; }
+    }
+    return count;
+}
+void CacheWrites(const fs::path& root) {
+    const auto path = root / L"quiet" / L"watched";
+    fs::create_directories(path); File(path / L"one.bin", 41);
+    const auto cache = root / L"quiet" / L"folder_sizes.json";
+    {
+        FolderSizes sizes; sizes.SetIndexEnabled(false);
+        sizes.SetCachePath([file = cache.wstring()] { return file; });
+        sizes.Sync({{path.wstring()}}, {path.wstring()});
+        Check(Wait([&] { return Exact(sizes, path, 41); }), "cache fixture reaches its first total");
+        Check(Wait([&] { return FileId(cache) != 0; }, 8000), "the first total is saved");
+        const DWORD attrs = GetFileAttributesW(cache.c_str());
+        Check(attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_HIDDEN),
+              "the cache is written as a hidden file");
+        const auto id = FileId(cache);
+        const auto jobs = sizes.ReadStats().jobs_completed;
+        sizes.Calculate(path.wstring());
+        Check(Wait([&] { return sizes.ReadStats().jobs_completed > jobs && Exact(sizes, path, 41); }),
+              "a recalculation finishes with the same total");
+        Sleep(3600);
+        Check(FileId(cache) == id, "a recalculation with the same total does not rewrite the cache");
+        File(path / L"one.bin", 77);
+        Check(Wait([&] { return Exact(sizes, path, 77); }), "a real change updates the total");
+        Check(Wait([&] { return FileId(cache) != id; }, 8000), "a changed total is saved");
+        sizes.Stop();
+    }
+    Check(!fs::exists(cache.wstring() + L".tmp"), "no temporary cache file is left behind");
+    // The folder holding Pulse's data folder (%LOCALAPPDATA%) on screen: each
+    // save changed the data folder, whose size was recalculated and saved
+    // again, every 3 s for as long as the folder stayed open.
+    const auto parent = root / L"loop", data = parent / L"Pulse";
+    fs::create_directories(data); File(data / L"session.json", 300);
+    const auto looped = data / L"folder_sizes.json";
+    FolderSizes sizes; sizes.SetIndexEnabled(false);
+    sizes.SetCachePath([file = looped.wstring()] { return file; });
+    sizes.Sync({{data.wstring()}}, {parent.wstring()});
+    Check(Wait([&] { return FileId(looped) != 0; }, 8000), "the data folder total is saved");
+    Sleep(10000);
+    const auto rewrites = Rewrites(looped, 7000);
+    std::printf("[CACHE] rewrites in 7 s with the parent folder shown: %u\n", rewrites);
+    Check(rewrites == 0, "the cache is not rewritten over and over while its parent folder is shown");
+    sizes.Stop();
+}
 void Attributes(const fs::path& path, DWORD attrs) {
     if (!SetFileAttributesW(path.c_str(), attrs)) throw std::runtime_error("attribute fixture failed");
 }
@@ -315,10 +378,13 @@ int wmain(int argc,wchar_t** argv) {
             fs::create_directories(root);
             if (argc == 2 && std::wstring(argv[1]) == L"--probe-only") {
                 EmptinessProbe(root);
+            } else if (argc == 2 && std::wstring(argv[1]) == L"--cache-only") {
+                CacheWrites(root);
             } else if (argc == 2 && std::wstring(argv[1]) == L"--persistence-only") {
                 for (unsigned i = 0; i < 30; ++i) FailureAndPersistence(root / std::to_wstring(i));
             } else {
                 Navigation(root); StableManualAndBudget(root); FailureAndPersistence(root); EmptinessProbe(root);
+                CacheWrites(root);
             }
             std::wprintf(L"[FIXTURE] %ls\n",root.c_str());
         }
