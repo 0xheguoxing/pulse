@@ -635,7 +635,14 @@ void QuickPreviewWindow::DrawFooter(ID2D1DeviceContext* dc, const ChromePalette&
         }
         label += part;
     }
-    const float left = bar.left + 12.0f * s;
+    float left = bar.left + 12.0f * s;
+    if (native_kind_ == NativeKind::Table && table_.IsSpreadsheet() && table_.HasData()) {
+        // Workbook: sheet tabs first, then the facts.
+        const float limit = bar.left + (std::max)(180.0f * s, (right - bar.left) * 0.6f);
+        const float used = table_.DrawTabsIn(dc, compositor_.DwriteFactory(),
+            D2D1::RectF(bar.left + 2.0f * s, bar.top + 1.0f * s, limit, bar.bottom), CurrentTheme(), dark_, false);
+        left = used + 12.0f * s;
+    }
     if (label.empty() || right - left < 24.0f * s) return;
     const ComPtr<IDWriteTextLayout> layout = UiLayout(label, format, right - 8.0f * s - left, bar.bottom - bar.top);
     if (!layout.get()) return;

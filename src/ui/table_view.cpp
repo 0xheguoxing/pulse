@@ -277,7 +277,7 @@ std::vector<std::wstring> TableView::StatusParts(uint32_t encoding) const {
     };
     if (spreadsheet_) {
         // The window adds the format and size around: sheet name, then its shape.
-        if (!s->name.empty()) parts.push_back(s->name);
+        if (!s->name.empty() && !footer_tabs_) parts.push_back(s->name);
         parts.push_back(shape());
         return parts;
     }
@@ -426,7 +426,7 @@ TableView::Geometry TableView::Measure() const {
     g.head_h = (s && !s->col_types.empty() ? 42.0f : 28.0f) * k;  // name over the inferred type
     g.pad = 10.0f * k;
     g.grid = view_;
-    if (spreadsheet_) {
+    if (spreadsheet_ && !footer_tabs_) {
         g.tabs = R(view_.left, view_.bottom - 34.0f * k, view_.right, view_.bottom);
         g.grid.bottom = g.tabs.top;
     }
@@ -719,90 +719,9 @@ void TableView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D
         dc->FillRoundedRectangle(D2D1::RoundedRect(hthumb_, 2.0f * k, 2.0f * k), b);
     }
 
-    // Workbook sheet tabs.
-    tab_rects_.clear();
-    if (spreadsheet_) {
-        fill(g.tabs, dark ? HexColor(0x1B1B1B) : HexColor(0xEBEBEB));
-        b->SetColor(dark ? HexColor(0x333333) : HexColor(0xD6D6D6));
-        dc->DrawLine(D2D1::Point2F(g.tabs.left, g.tabs.top + 0.5f), D2D1::Point2F(g.tabs.right, g.tabs.top + 0.5f), b, 1.0f);
-        // Size on the right.
-        const bool zh = Zh();
-        std::wstring size = std::to_wstring(sheet_ + 1) + L"/" + std::to_wstring(total_sheets_) +
-            (zh ? L" 表 · 已读取 " : L" sheets · read ") + std::to_wstring(loaded_sheets_);
-        if (sheets_.size() < total_sheets_)
-            size += zh ? L" · 列表已截断（容量上限）" : L" · list capped (size limit)";
-        if (s.truncated) size += pulse::l10n::Get(pulse::l10n::StringId::Incomplete).c_str();
-        WrlPtr<IDWriteTextLayout> size_layout;
-        const float status_width = (std::max)(1.0f, (g.tabs.right - g.tabs.left - 100.0f * k) * 0.55f);
-        factory->CreateTextLayout(size.data(), static_cast<UINT32>(size.size()), small_.Get(), status_width, 30.0f * k, &size_layout);
-        float size_w = 0.0f;
-        if (size_layout) {
-            size_layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-            WrlPtr<IDWriteInlineObject> ellipsis;
-            factory->CreateEllipsisTrimmingSign(small_.Get(), &ellipsis);
-            const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
-            size_layout->SetTrimming(&trimming, ellipsis.Get());
-            DWRITE_TEXT_METRICS m{};
-            size_layout->GetMetrics(&m);
-            size_w = (std::min)(m.width, (std::max)(0.0f, (g.tabs.right - g.tabs.left - 100.0f * k) * 0.55f));
-            b->SetColor(dim);
-            dc->PushAxisAlignedClip(R(g.tabs.right - 14.0f * k - size_w, g.tabs.top,
-                                     g.tabs.right - 14.0f * k, g.tabs.bottom), D2D1_ANTIALIAS_MODE_ALIASED);
-            dc->DrawTextLayout(D2D1::Point2F(g.tabs.right - 14.0f * k - size_w,
-                                             (g.tabs.top + g.tabs.bottom) * 0.5f - 15.0f * k), size_layout.Get(), b);
-            dc->PopAxisAlignedClip();
-        }
-        previous_sheet_ = R(g.tabs.left + 4.0f * k, g.tabs.top, g.tabs.left + 30.0f * k, g.tabs.bottom);
-        next_sheet_ = R(g.tabs.left + 30.0f * k, g.tabs.top, g.tabs.left + 56.0f * k, g.tabs.bottom);
-        b->SetColor(sheet_ > 0 ? theme.text : dim);
-        dc->DrawTextW(L"‹", 1, text_.Get(), previous_sheet_, b);
-        b->SetColor(sheet_ + 1 < sheets_.size() ? theme.text : dim);
-        dc->DrawTextW(L"›", 1, text_.Get(), next_sheet_, b);
-        float x = g.tabs.left + 60.0f * k;
-        const float limit = (std::max)(x, g.tabs.right - size_w - 28.0f * k);
-        // Keep earlier tabs visible when they fit; selection is not a scroll origin.
-        std::vector<WrlPtr<IDWriteTextLayout>> layouts(sheets_.size());
-        std::vector<float> widths(sheets_.size(), 24.0f * k);
-        float selected_extent = 0.0f;
-        for (size_t i = 0; i < sheets_.size(); ++i) {
-            const auto& name = sheets_[i].name;
-            factory->CreateTextLayout(name.data(), static_cast<UINT32>(name.size()), small_.Get(),
-                400.0f * k, 24.0f * k, &layouts[i]);
-            if (layouts[i]) {
-                if (i == sheet_) layouts[i]->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD,
-                    DWRITE_TEXT_RANGE{0, static_cast<UINT32>(name.size())});
-                DWRITE_TEXT_METRICS metrics{};
-                layouts[i]->GetMetrics(&metrics);
-                widths[i] = (std::min)(metrics.width, 240.0f * k) + 24.0f * k;
-            }
-            if (i <= sheet_) selected_extent += widths[i] + 2.0f * k;
-        }
-        first_visible_sheet_ = 0;
-        while (first_visible_sheet_ < sheet_ && selected_extent - 2.0f * k > limit - x)
-            selected_extent -= widths[first_visible_sheet_++] + 2.0f * k;
-        dc->PushAxisAlignedClip(R(x, g.tabs.top, limit, g.tabs.bottom), D2D1_ANTIALIAS_MODE_ALIASED);
-        for (size_t i = first_visible_sheet_; i < sheets_.size() && x < limit; ++i) {
-            const bool on = i == sheet_;
-            auto& layout = layouts[i];
-            const float w = widths[i];
-            const D2D1_RECT_F tab = R(x, g.tabs.top + 6.0f * k, x + w, g.tabs.bottom - 5.0f * k);
-            tab_rects_.push_back(R(tab.left, tab.top, (std::min)(tab.right, limit), tab.bottom));
-            if (on || static_cast<int>(i - first_visible_sheet_) == hover_tab_) {
-                b->SetColor(on ? (dark ? D2D1::ColorF(1, 1, 1, 0.09f) : HexColor(0xFFFFFF))
-                               : (dark ? D2D1::ColorF(1, 1, 1, 0.05f) : D2D1::ColorF(0, 0, 0, 0.04f)));
-                dc->FillRoundedRectangle(D2D1::RoundedRect(tab, 5.0f * k, 5.0f * k), b);
-            }
-            b->SetColor(on ? theme.text : WithAlpha(theme.text, 0.7f));
-            if (layout) {
-                layout->SetMaxWidth(w - 24.0f * k);
-                dc->PushAxisAlignedClip(tab, D2D1_ANTIALIAS_MODE_ALIASED);
-                dc->DrawTextLayout(D2D1::Point2F(tab.left + 12.0f * k, (tab.top + tab.bottom) * 0.5f - 12.0f * k), layout.Get(), b);
-                dc->PopAxisAlignedClip();
-            }
-            x += w + 2.0f * k;
-        }
-        dc->PopAxisAlignedClip();
-    }
+    // Workbook sheet tabs (the window may draw them in its footer instead).
+    if (spreadsheet_ && !footer_tabs_) DrawTabsIn(dc, factory, g.tabs, theme, dark, true);
+    else if (!spreadsheet_) tab_rects_.clear();
 
     // Full text of a clipped cell.
     if (tip_shown_ && tip_row_ >= 0 && tip_col_ >= 0 &&
@@ -830,6 +749,104 @@ void TableView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D
         }
     }
     dc->PopAxisAlignedClip();
+}
+
+// Sheet tabs: under the grid (with the sheet count on the right), or in the
+// window's footer when the window hosts them there.
+float TableView::DrawTabsIn(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D1_RECT_F& tabs,
+                            const Theme& theme, bool dark, bool status) {
+    tab_rects_.clear();
+    Sheet* sheet = Current();
+    if (!dc || !factory || !sheet || !brush_ || !small_ || !text_) return tabs.left;
+    const Sheet& s = *sheet;
+    const float k = scale_;
+    ID2D1SolidColorBrush* b = brush_.Get();
+    const auto fill = [&](const D2D1_RECT_F& r, const D2D1_COLOR_F& c) { b->SetColor(c); dc->FillRectangle(r, b); };
+    const D2D1_COLOR_F dim = WithAlpha(theme.text, 0.45f);
+    if (status) {
+        fill(tabs, dark ? HexColor(0x1B1B1B) : HexColor(0xEBEBEB));
+        b->SetColor(dark ? HexColor(0x333333) : HexColor(0xD6D6D6));
+        dc->DrawLine(D2D1::Point2F(tabs.left, tabs.top + 0.5f), D2D1::Point2F(tabs.right, tabs.top + 0.5f), b, 1.0f);
+    }
+    // Size on the right.
+    const bool zh = Zh();
+    std::wstring size = std::to_wstring(sheet_ + 1) + L"/" + std::to_wstring(total_sheets_) +
+        (zh ? L" 表 · 已读取 " : L" sheets · read ") + std::to_wstring(loaded_sheets_);
+    if (sheets_.size() < total_sheets_)
+        size += zh ? L" · 列表已截断（容量上限）" : L" · list capped (size limit)";
+    if (s.truncated) size += pulse::l10n::Get(pulse::l10n::StringId::Incomplete).c_str();
+    WrlPtr<IDWriteTextLayout> size_layout;
+    const float status_width = (std::max)(1.0f, (tabs.right - tabs.left - 100.0f * k) * 0.55f);
+    factory->CreateTextLayout(size.data(), static_cast<UINT32>(size.size()), small_.Get(), status_width, 30.0f * k, &size_layout);
+    float size_w = 0.0f;
+    if (size_layout && status) {
+        size_layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        WrlPtr<IDWriteInlineObject> ellipsis;
+        factory->CreateEllipsisTrimmingSign(small_.Get(), &ellipsis);
+        const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+        size_layout->SetTrimming(&trimming, ellipsis.Get());
+        DWRITE_TEXT_METRICS m{};
+        size_layout->GetMetrics(&m);
+        size_w = (std::min)(m.width, (std::max)(0.0f, (tabs.right - tabs.left - 100.0f * k) * 0.55f));
+        b->SetColor(dim);
+        dc->PushAxisAlignedClip(R(tabs.right - 14.0f * k - size_w, tabs.top,
+                                 tabs.right - 14.0f * k, tabs.bottom), D2D1_ANTIALIAS_MODE_ALIASED);
+        dc->DrawTextLayout(D2D1::Point2F(tabs.right - 14.0f * k - size_w,
+                                         (tabs.top + tabs.bottom) * 0.5f - 15.0f * k), size_layout.Get(), b);
+        dc->PopAxisAlignedClip();
+    }
+    previous_sheet_ = R(tabs.left + 4.0f * k, tabs.top, tabs.left + 30.0f * k, tabs.bottom);
+    next_sheet_ = R(tabs.left + 30.0f * k, tabs.top, tabs.left + 56.0f * k, tabs.bottom);
+    b->SetColor(sheet_ > 0 ? theme.text : dim);
+    dc->DrawTextW(L"‹", 1, text_.Get(), previous_sheet_, b);
+    b->SetColor(sheet_ + 1 < sheets_.size() ? theme.text : dim);
+    dc->DrawTextW(L"›", 1, text_.Get(), next_sheet_, b);
+    float x = tabs.left + 60.0f * k;
+    const float limit = (std::max)(x, tabs.right - size_w - 28.0f * k);
+    // Keep earlier tabs visible when they fit; selection is not a scroll origin.
+    std::vector<WrlPtr<IDWriteTextLayout>> layouts(sheets_.size());
+    std::vector<float> widths(sheets_.size(), 24.0f * k);
+    float selected_extent = 0.0f;
+    for (size_t i = 0; i < sheets_.size(); ++i) {
+        const auto& name = sheets_[i].name;
+        factory->CreateTextLayout(name.data(), static_cast<UINT32>(name.size()), small_.Get(),
+            400.0f * k, 24.0f * k, &layouts[i]);
+        if (layouts[i]) {
+            if (i == sheet_) layouts[i]->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                DWRITE_TEXT_RANGE{0, static_cast<UINT32>(name.size())});
+            DWRITE_TEXT_METRICS metrics{};
+            layouts[i]->GetMetrics(&metrics);
+            widths[i] = (std::min)(metrics.width, 240.0f * k) + 24.0f * k;
+        }
+        if (i <= sheet_) selected_extent += widths[i] + 2.0f * k;
+    }
+    first_visible_sheet_ = 0;
+    while (first_visible_sheet_ < sheet_ && selected_extent - 2.0f * k > limit - x)
+        selected_extent -= widths[first_visible_sheet_++] + 2.0f * k;
+    dc->PushAxisAlignedClip(R(x, tabs.top, limit, tabs.bottom), D2D1_ANTIALIAS_MODE_ALIASED);
+    for (size_t i = first_visible_sheet_; i < sheets_.size() && x < limit; ++i) {
+        const bool on = i == sheet_;
+        auto& layout = layouts[i];
+        const float w = widths[i];
+        const float inset = (std::max)(2.0f * k, (tabs.bottom - tabs.top - 23.0f * k) * 0.5f);
+        const D2D1_RECT_F tab = R(x, tabs.top + inset, x + w, tabs.bottom - inset);
+        tab_rects_.push_back(R(tab.left, tab.top, (std::min)(tab.right, limit), tab.bottom));
+        if (on || static_cast<int>(i - first_visible_sheet_) == hover_tab_) {
+            b->SetColor(on ? (dark ? D2D1::ColorF(1, 1, 1, 0.09f) : HexColor(0xFFFFFF))
+                           : (dark ? D2D1::ColorF(1, 1, 1, 0.05f) : D2D1::ColorF(0, 0, 0, 0.04f)));
+            dc->FillRoundedRectangle(D2D1::RoundedRect(tab, 5.0f * k, 5.0f * k), b);
+        }
+        b->SetColor(on ? theme.text : WithAlpha(theme.text, 0.7f));
+        if (layout) {
+            layout->SetMaxWidth(w - 22.0f * k);  // a hair over the measured width: no false ellipsis
+            dc->PushAxisAlignedClip(tab, D2D1_ANTIALIAS_MODE_ALIASED);
+            dc->DrawTextLayout(D2D1::Point2F(tab.left + 12.0f * k, (tab.top + tab.bottom) * 0.5f - 12.0f * k), layout.Get(), b);
+            dc->PopAxisAlignedClip();
+        }
+        x += w + 2.0f * k;
+    }
+    dc->PopAxisAlignedClip();
+    return (std::min)(x, limit);
 }
 
 // ---------------------------------------------------------------- input
@@ -992,6 +1009,16 @@ void TableView::FailPendingSheetRequest(uint32_t index) {
     sheets_[sheet_].truncated = true;
 }
 
+bool TableView::TabClick(float x, float y) {
+    if (!spreadsheet_) return false;
+    const auto inside = [&](const D2D1_RECT_F& r) { return x >= r.left && x < r.right && y >= r.top && y < r.bottom; };
+    if (inside(previous_sheet_)) { if (sheet_ > 0) SwitchSheet(sheet_ - 1); return true; }
+    if (inside(next_sheet_)) { if (sheet_ + 1 < sheets_.size()) SwitchSheet(sheet_ + 1); return true; }
+    for (size_t i = 0; i < tab_rects_.size(); ++i)
+        if (inside(tab_rects_[i])) { SwitchSheet(first_visible_sheet_ + i); return true; }
+    return false;
+}
+
 bool TableView::MouseDown(float x, float y, bool shift) {
     Sheet* s = Current();
     if (!s) return false;
@@ -1011,7 +1038,7 @@ bool TableView::MouseDown(float x, float y, bool shift) {
     for (size_t i = 0; i < tab_rects_.size(); ++i)
         if (inside(tab_rects_[i], 0.0f)) { SwitchSheet(first_visible_sheet_ + i); return true; }
     const Geometry g = Measure();
-    if (spreadsheet_ && y >= g.tabs.top) return true;
+    if (spreadsheet_ && !footer_tabs_ && y >= g.tabs.top) return true;
     if (vthumb_.bottom > vthumb_.top && inside(vthumb_, 4.0f * scale_)) {
         drag_ = Drag::VThumb; drag_origin_ = y; drag_scroll_ = s->sy; return true;
     }

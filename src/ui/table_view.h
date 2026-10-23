@@ -60,6 +60,13 @@ public:
     bool TipArmed() const noexcept { return tip_row_ >= 0 && !tip_shown_; }
     bool ShowTip();
 
+    // Workbook tabs drawn by the window in its footer instead of under the grid.
+    void SetFooterTabs(bool on) noexcept { footer_tabs_ = on; }
+    // Draws the tabs into rect; returns the right edge actually used.
+    float DrawTabsIn(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D1_RECT_F& rect,
+                     const Theme& theme, bool dark, bool status);
+    bool TabClick(float x, float y);  // ‹ › and tabs; true when it hit one
+
     bool HasSelection() const noexcept { return sel_valid_; }
     void SelectAll();
     bool ClearSelection();
@@ -114,6 +121,7 @@ private:
     size_t response_sheet_ = 0;
     size_t total_sheets_ = 0, loaded_sheets_ = 0;
     bool spreadsheet_ = false;
+    bool footer_tabs_ = false;
     bool lazy_sheets_ = false, awaiting_sheet_ = false, pending_sheet_request_ = false;
 
     // Selection in body rows / columns (anchor and focus corners).

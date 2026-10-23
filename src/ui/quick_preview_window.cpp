@@ -2195,6 +2195,7 @@ void QuickPreviewWindow::Render() {
                 for (size_t i = 0; i < find_matches_.size(); ++i)
                     marks.push_back({find_matches_[i], static_cast<uint32_t>(find_query_.size()),
                                      i == find_index_});
+                table_.SetFooterTabs(true);
                 table_.Draw(dc, compositor_.DwriteFactory(), content, CurrentTheme(), dark_, scale_,
                             background, marks);
                 SetTableFooter(text_encoding);
@@ -2270,6 +2271,7 @@ void QuickPreviewWindow::Render() {
                    (result == PreviewDrawResult::Pending || result == PreviewDrawResult::Failed)) {
             native_kind_ = NativeKind::Table;
             if (result == PreviewDrawResult::Failed) table_.FailPendingSheetRequest(sheet_request_);
+            table_.SetFooterTabs(true);
             table_.Draw(dc, compositor_.DwriteFactory(), content, CurrentTheme(), dark_, scale_, background, {});
             SetTableFooter(text_encoding);
         } else if (result == PreviewDrawResult::Pending && !animation_started_) {
@@ -2506,6 +2508,15 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
             if (point.x >= bar.left && point.x < bar.right &&
                 point.y >= bar.top && point.y < bar.bottom) {
                 if (find_edit_) SetFocus(find_edit_);
+                return 0;
+            }
+        }
+        if (native_kind_ == NativeKind::Table && table_.IsSpreadsheet()) {
+            // Sheet tabs live in the footer.
+            const D2D1_RECT_F bar = FooterRect();
+            if (point.x >= bar.left && point.x < bar.right && point.y >= bar.top && point.y < bar.bottom) {
+                if (table_.TabClick(static_cast<float>(point.x), static_cast<float>(point.y)))
+                    InvalidateRect(hwnd_, nullptr, FALSE);
                 return 0;
             }
         }
