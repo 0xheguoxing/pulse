@@ -2770,5 +2770,10 @@
 #define IDS_OP_SKIP_SHORT                                                                3980
 #define IDS_PERM_DELETE_SWITCH_TO_BIN                                                    3981
 #define IDS_PERM_DELETE_CANT_UNDO                                                        3982
+#define IDS_LOCK_IN_USE_END                                                              3983
+#define IDS_LOCK_CLOSE_LEAD                                                              3984
+#define IDS_LOCK_CLOSE_END                                                               3985
+#define IDS_LOCK_WAITING                                                                 3986
+#define IDS_LOCK_RETRY_NOW                                                               3987
 
 #endif  // PULSE_STRING_IDS_H

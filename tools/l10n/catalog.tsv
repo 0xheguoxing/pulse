@@ -2777,3 +2777,8 @@ OpReplaceShort	IDS_OP_REPLACE_SHORT	3979	替换	Replace	替換
 OpSkipShort	IDS_OP_SKIP_SHORT	3980	跳过	Skip	跳過
 PermDeleteSwitchToBin	IDS_PERM_DELETE_SWITCH_TO_BIN	3981	改为移到回收站	Move to Recycle Bin instead	改為移到資源回收筒
 PermDeleteCantUndo	IDS_PERM_DELETE_CANT_UNDO	3982	删除后无法恢复。	 This can't be undone.	刪除後無法復原。
+LockInUseEnd	IDS_LOCK_IN_USE_END	3983	”正被使用	” is in use	」正被使用
+LockCloseLead	IDS_LOCK_CLOSE_LEAD	3984	在下面的程序里关闭它，	Close it in the program below and it will be 	在下面的程式裡關閉它，
+LockCloseEnd	IDS_LOCK_CLOSE_END	3985	会自动继续。	 automatically.	會自動繼續。
+LockWaiting	IDS_LOCK_WAITING	3986	正在等待文件释放…	Waiting for the file to be released…	正在等待檔案釋放…
+LockRetryNow	IDS_LOCK_RETRY_NOW	3987	立即重试	Retry now	立即重試

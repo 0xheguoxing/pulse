@@ -2754,4 +2754,9 @@ BEGIN
     IDS_OP_SKIP_SHORT "跳過"
     IDS_PERM_DELETE_SWITCH_TO_BIN "改為移到資源回收筒"
     IDS_PERM_DELETE_CANT_UNDO "刪除後無法復原。"
+    IDS_LOCK_IN_USE_END "」正被使用"
+    IDS_LOCK_CLOSE_LEAD "在下面的程式裡關閉它，"
+    IDS_LOCK_CLOSE_END "會自動繼續。"
+    IDS_LOCK_WAITING "正在等待檔案釋放…"
+    IDS_LOCK_RETRY_NOW "立即重試"
 END
