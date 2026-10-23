@@ -125,6 +125,15 @@ void PureChecks() {
     Check(IsLockLikeError(static_cast<HRESULT>(0x80270027L)), "copy engine source sharing violation");
     Check(IsLockLikeError(static_cast<HRESULT>(0x80270028L)), "copy engine destination sharing violation");
     Check(!IsLockLikeError(E_FAIL), "E_FAIL is not lock-like");
+    // One file in use is the item's failure, not the task's (its low word
+    // is ERROR_HANDLE_DISK_FULL's).
+    Check(!IsStopTransferError(static_cast<HRESULT>(0x80270027L)), "copy engine sharing violation goes on");
+    Check(!IsStopTransferError(static_cast<HRESULT>(0x8027003BL)), "copy engine name too long goes on");
+    Check(IsStopTransferError(static_cast<HRESULT>(0x80270032L)), "copy engine disk full stops");
+    Check(IsStopTransferError(HRESULT_FROM_WIN32(ERROR_HANDLE_DISK_FULL)), "Win32 disk full stops");
+    Check(IsStopTransferError(STG_E_MEDIUMFULL), "storage medium full stops");
+    Check(IsStopTransferError(static_cast<HRESULT>(ERROR_DISK_FULL)), "bare Win32 disk full stops");
+    Check(!IsStopTransferError(HRESULT_FROM_WIN32(ERROR_SHARING_VIOLATION)), "Win32 sharing violation goes on");
     Check(!IsLockLikeError(HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)), "not found is not lock-like");
     Check(!IsLockLikeError(S_OK), "success is not lock-like");
 

@@ -965,6 +965,25 @@ void TrimUndoHistory(std::deque<UndoEntry>& undo) {
 // See ops_manager.h.
 bool IsStopTransferError(HRESULT hr) {
     if (hr == E_OUTOFMEMORY) return true;
+    // The Shell's copy engine codes share their low word with unrelated
+    // Win32 codes: COPYENGINE_E_SHARING_VIOLATION_SRC (0x80270027) would read
+    // as ERROR_HANDLE_DISK_FULL and stop a whole task over one file in use.
+    if (HRESULT_FACILITY(hr) == FACILITY_SHELL) {
+        switch (static_cast<uint32_t>(hr)) {
+        case 0x8027000Eu:  // COPYENGINE_E_REMOVABLE_FULL
+        case 0x80270025u:  // COPYENGINE_E_NET_DISCONNECT_SRC
+        case 0x80270026u:  // COPYENGINE_E_NET_DISCONNECT_DEST
+        case 0x80270032u:  // COPYENGINE_E_DISK_FULL
+        case 0x80270033u:  // COPYENGINE_E_DISK_FULL_CLEAN
+            return true;
+        default:
+            return false;
+        }
+    }
+    // Win32 codes, as HRESULTs or bare; STG_E_* mirror them on purpose.
+    if ((static_cast<uint32_t>(hr) & 0xFFFF0000u) != 0 && HRESULT_FACILITY(hr) != FACILITY_WIN32 &&
+        HRESULT_FACILITY(hr) != FACILITY_STORAGE)
+        return false;
     switch (HRESULT_CODE(hr)) {
     case ERROR_DISK_FULL:
     case ERROR_HANDLE_DISK_FULL:
