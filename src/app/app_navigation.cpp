@@ -2159,15 +2159,20 @@ static void ApplyDirNotifiesToWindow(AppState& s, const std::vector<AppState::Di
     if (changed && s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
-void DrainDirNotifies(AppState& s) {
+bool DrainDirNotifies(AppState& s) {
     // The watches, their queue and the size patches are shared by every
     // window: take them once and hand them to each window.
-    std::vector<AppState::DirNotifyBatch> batch;
+    std::vector<AppState::DirNotifyBatch> incoming;
     {
         std::lock_guard<std::mutex> lock(s.notify_mu);
-        batch.swap(s.notify_queue);
+        incoming.swap(s.notify_queue);
     }
     const ULONGLONG now = GetTickCount64();
+    // A folder that keeps changing (a bulk delete reports item by item) is
+    // patched at most once per pace window instead of once per item.
+    std::vector<AppState::DirNotifyBatch> batch;
+    s.core.notify_pacer.Take(incoming, now, batch);
+    const bool holding = s.core.notify_pacer.Holding();
     std::vector<AppState::CoalescedSizePatch> due;
     std::vector<AppState::CoalescedSizePatch> keep;
     due.reserve(s.size_patches.size());
@@ -2200,6 +2205,7 @@ void DrainDirNotifies(AppState& s) {
     }
     for (const auto& patch : due)
         if (!was_shown(patch.path)) s.store.MarkDirty(patch.path);
+    return holding;
 }
 
 void RestoreNavigationReturnSelection(AppState& s, app::Tab& tab,

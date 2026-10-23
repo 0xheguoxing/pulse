@@ -2141,7 +2141,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             }
             // New totals re-sort Size-ordered listings, paced (#58).
             if (folderSizeResortWaiting) folderSizeResortWaiting = ResortForFolderSizes(*s);
-            DrainDirNotifies(*s);
+            if (DrainDirNotifies(*s)) {
+                s->uiTimerPacer.NoteActivity(GetTickCount64());
+                SyncUiTimerRate(*s, hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
+            }
             // Sync states of on-screen cloud rows came back: repaint once.
             if (const uint64_t cloud_sync = app::CloudSyncProbe::Instance().Revision();
                 cloud_sync != s->cloudSyncRevision) {

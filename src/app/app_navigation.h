@@ -71,7 +71,9 @@ bool ApplyNotifyToVisible(AppState& s, const std::wstring& path,
 void DropSizePatches(AppState& s, const std::wstring& path);
 void QueueSizePatch(AppState& s, const std::wstring& path, const std::wstring& name,
                            ULONGLONG due);
-void DrainDirNotifies(AppState& s);
+// True while batches are held for a later tick (DirNotifyPacer): keep the
+// tick fast until they land.
+bool DrainDirNotifies(AppState& s);
 void RestoreNavigationReturnSelection(AppState& s, app::Tab& tab,
                                              const std::wstring& childName);
 void NavigateTo(AppState& s, const std::wstring& path);
