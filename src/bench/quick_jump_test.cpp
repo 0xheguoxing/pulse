@@ -1,6 +1,7 @@
 // Quick jump P1: the double-Ctrl tap logic and the 跳转 folder ranking.
 #include "../app/double_ctrl.h"
 #include "../app/jump_match.h"
+#include "../app/app_catalog.h"
 #include "../app/jump_history.h"
 #include <cmath>
 #include <cstdio>
@@ -108,6 +109,22 @@ int main() {
         Check(h.Size() == JumpHistory::kMaxEntries, "bounded");
         h.Clear();
         Check(h.Size() == 0, "cleared");
+    }
+    {
+        using namespace pulse::app;
+        Check(KeepApp(L"Calculator", L"Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"), "store app kept");
+        Check(KeepApp(L"\x8BB0\x4E8B\x672C", L"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\notepad.exe"), "desktop program kept");
+        Check(!KeepApp(L"Uninstall Foo", L"C:\\Foo\\unins000.exe"), "uninstaller dropped");
+        Check(!KeepApp(L"\x5378\x8F7D Foo", L"C:\\Foo\\u.exe"), "uninstaller (zh) dropped");
+        Check(!KeepApp(L"Foo Help", L"C:\\Foo\\foo.chm"), "help file dropped");
+        Check(!KeepApp(L"Foo Website", L"https://foo.example/"), "web link dropped");
+        Check(!KeepApp(L"Readme", L"C:\\Foo\\readme.txt"), "readme dropped");
+        const auto path = AppPath(L"Microsoft.WindowsCalculator_8wekyb3d8bbwe!App");
+        Check(IsAppPath(path) && !IsAppPath(L"C:\\Windows") && !IsAppPath(L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}") &&
+              !IsAppPath(L"shell:Downloads") && path.rfind(L"shell:AppsFolder\\", 0) == 0, "app paths recognized");
+        const std::vector<JumpCandidate> names{{L"Paint", {}}, {L"\x8BA1\x7B97\x5668", {}}, {L"PowerShell", {}}};
+        const auto order = RankJumpFolders(names, L"jsq", true, 4);
+        Check(order.size() == 1 && order[0] == 1, "app names match by pinyin");
     }
     std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);
     return failures ? 1 : 0;

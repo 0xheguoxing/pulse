@@ -665,6 +665,10 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
                 I::GlobalSearchDoubleCtrlGap,I::GlobalSearchDoubleCtrlGapDesc,3,L"\xE916");
             divider(lay.global_search_gap_card);
             dim_end(dim_gap);
+            const bool dim_apps=dim_begin(!vm.settings_global_search_enabled);
+            toggle(lay.global_search_apps_row,I::GlobalSearchApps,I::GlobalSearchAppsDesc,L"\xE71D",vm.settings_global_search_apps,43);
+            divider(lay.global_search_apps_row);
+            dim_end(dim_apps);
             toggle(lay.dialog_jump_row,I::DialogJumpBar,I::DialogJumpBarDesc,L"\xE8E5",vm.settings_dialog_jump_bar,41);divider(lay.dialog_jump_row);
             const bool dim_auto=dim_begin(!vm.settings_dialog_jump_bar);
             toggle(lay.dialog_jump_auto_row,I::DialogJumpAuto,I::DialogJumpAutoDesc,L"\xE72A",vm.settings_dialog_jump_auto,42);

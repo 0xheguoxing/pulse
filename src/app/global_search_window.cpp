@@ -1,5 +1,7 @@
 #include "global_search_window.h"
 #include "global_search_result_state.h"
+#include "app_catalog.h"
+#include "jump_history.h"
 #include "jump_match.h"
 #include "../ui/FluentTokens.h"
 #include "resource.h"
@@ -35,6 +37,7 @@
 #include <condition_variable>
 #include <cwctype>
 #include <mutex>
+#include <numeric>
 #include <thread>
 #include <tuple>
 
@@ -44,6 +47,7 @@ using Microsoft::WRL::ComPtr;
 using l10n::StringId;
 constexpr UINT kIndexStatus = WM_APP + 181, kIndexResult = WM_APP + 182, kContentResult = WM_APP + 183;
 constexpr UINT kNetworkResult = WM_APP + 184, kThumbnailResult = WM_APP + 185;
+constexpr UINT kAppsReady = WM_APP + 186;  // the Start menu app list is in
 constexpr UINT_PTR kDebounce = 1;
 constexpr UINT_PTR kConnectTimeout = 2;
 constexpr UINT_PTR kScopeTooltipTimer = 3;
@@ -57,6 +61,7 @@ constexpr float kEditCornerRadius = 8;
 constexpr float kMinWidth = 640, kMinHeight = 420, kDefaultWidth = 960, kDefaultHeight = 620;
 constexpr size_t kMaximumResults = 200;
 constexpr size_t kJumpRows = 4;  // 跳转 group: known folders above the index results
+constexpr size_t kAppRows = 4;   // 应用 group: Start menu programs after the best matches
 constexpr size_t kMaximumPinnedScopes = 3, kMaximumNetworkScopes = 2;
 const std::wstring& Text(StringId id) { return l10n::Get(id); }
 std::wstring ParentPath(const std::wstring& path) {
@@ -91,7 +96,17 @@ std::wstring KnownFolder(REFKNOWNFOLDERID id) {
 void OpenResult(std::wstring path, bool location) {
     std::thread([path = std::move(path), location] {
         const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-        if (location) {
+        if (app::IsAppPath(path)) {
+            // Start menu programs (Store apps too) start through their shell item.
+            PIDLIST_ABSOLUTE item = nullptr;
+            if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &item, 0, nullptr))) {
+                SHELLEXECUTEINFOW info{sizeof(info)};
+                info.fMask = SEE_MASK_IDLIST | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+                info.lpIDList = item; info.nShow = SW_SHOWNORMAL;
+                ShellExecuteExW(&info);
+                CoTaskMemFree(item);
+            }
+        } else if (location) {
             PIDLIST_ABSOLUTE item = nullptr;
             if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &item, 0, nullptr))) {
                 SHOpenFolderAndSelectItems(item, 0, nullptr, 0);
@@ -164,6 +179,7 @@ struct GlobalSearchWindow::Impl {
     struct Row {
         std::wstring name, path, snippet; bool directory = false;
         uint64_t size = 0, mtime = 0; bool network = false;
+        bool app = false;  // a Start menu program (path: its AppsFolder item)
     };
     std::vector<Row> rows;
     int selected = 0, first = 0;
@@ -207,6 +223,10 @@ struct GlobalSearchWindow::Impl {
     std::wstring counts_key;
     size_t best_count = 0, folder_count = 0, jump_count = 0;
     std::vector<Row> jump_rows;  // known folders matching the query (跳转)
+    app::AppCatalog app_catalog;
+    std::vector<app::AppEntry> apps;
+    std::vector<Row> app_rows;   // Start menu programs matching the query (应用)
+    size_t app_count = 0;
     wchar_t swallow_char = 0;
     bool stale = false, stale_content_mode = false;
     bool showing_recent = false, keyboard_nav = false, preview_open = false, animations = true;
@@ -284,10 +304,15 @@ struct GlobalSearchWindow::Impl {
         if (content_mode) { out.push_back({StringId::GlobalSearchContentMatches, 0, rows.size()}); return out; }
         const size_t j = (std::min)(jump_count, rows.size());
         if (j) out.push_back({StringId::GlobalSearchJump, 0, j});
-        if (best_count) out.push_back({StringId::GlobalSearchBestMatch, j, best_count});
-        if (folder_count) out.push_back({StringId::Folder, j + best_count, folder_count});
-        const size_t files = rows.size() - j - best_count - folder_count;
-        if (files) out.push_back({StringId::FilterFiles, j + best_count + folder_count, files});
+        // 跳转, 最佳匹配, 应用, then the (long) folder and file lists.
+        const size_t b = (std::min)(best_count, rows.size() - j);
+        if (b) out.push_back({StringId::GlobalSearchBestMatch, j, b});
+        const size_t a = (std::min)(app_count, rows.size() - j - b);
+        if (a) out.push_back({StringId::GlobalSearchGroupApps, j + b, a});
+        const size_t f = (std::min)(folder_count, rows.size() - j - b - a);
+        if (f) out.push_back({StringId::Folder, j + b + a, f});
+        const size_t files = rows.size() - j - b - a - f;
+        if (files) out.push_back({StringId::FilterFiles, j + b + a + f, files});
         return out;
     }
     void BuildLayout() {
@@ -361,7 +386,7 @@ struct GlobalSearchWindow::Impl {
             rows.push_back(std::move(row));
             if (rows.size() >= 6) break;
         }
-        best_count = folder_count = jump_count = 0;
+        best_count = folder_count = jump_count = app_count = 0;
         total = rows.size();
     }
     void Changed() {
@@ -375,11 +400,15 @@ struct GlobalSearchWindow::Impl {
         const bool keep = !query.empty() && !showing_recent && !rows.empty() && content_mode == stale_content_mode;
         stale = keep;
         stale_content_mode = content_mode;
-        if (!keep) { rows.clear(); selected = first = 0; best_count = folder_count = jump_count = 0; scroll = scroll_target = 0; }
+        if (!keep) { rows.clear(); selected = first = 0; best_count = folder_count = jump_count = app_count = 0; scroll = scroll_target = 0; }
         ComputeJump();
-        if (!keep && !jump_rows.empty()) {
-            // Known folders answer at once; the index results join below them.
-            rows = jump_rows; jump_count = rows.size(); selected = 0;
+        ComputeApps();
+        if (!keep && (!jump_rows.empty() || !app_rows.empty())) {
+            // Known folders and programs answer at once; the index results
+            // join around them.
+            rows = jump_rows; jump_count = rows.size();
+            rows.insert(rows.end(), app_rows.begin(), app_rows.end()); app_count = app_rows.size();
+            selected = 0;
         }
         total = 0; error.clear(); truncated = false;
         local_result = {}; network_result = {}; providers = {};
@@ -460,6 +489,26 @@ struct GlobalSearchWindow::Impl {
             jump_rows.push_back(std::move(row));
         }
     }
+    // 应用: Start menu programs whose name matches, the most started first
+    // among equal matches. Only for a plain search everywhere.
+    void ComputeApps() {
+        app_rows.clear();
+        if (!context.show_apps || content_mode || query.empty() || date_filter != 0 || kind_filter != 0 || scope != 0 || apps.empty()) return;
+        std::vector<size_t> order(apps.size());
+        std::iota(order.begin(), order.end(), size_t{0});
+        if (context.history) {
+            std::vector<double> score(apps.size());
+            for (size_t i = 0; i < apps.size(); ++i) score[i] = context.history->Score(apps[i].path, {});
+            std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return score[a] > score[b]; });
+        }
+        std::vector<app::JumpCandidate> candidates;
+        candidates.reserve(order.size());
+        for (size_t i : order) candidates.push_back({apps[i].name, {}});
+        for (const size_t k : app::RankJumpFolders(candidates, query, search_pinyin, kAppRows)) {
+            Row row; row.name = apps[order[k]].name; row.path = apps[order[k]].path; row.app = true;
+            app_rows.push_back(std::move(row));
+        }
+    }
     void GroupRows() {
         std::vector<Row> best, folders, files;
         for (auto& row : rows) {
@@ -509,6 +558,9 @@ struct GlobalSearchWindow::Impl {
         GroupRows();
         rows.insert(rows.begin(), jump_rows.begin(), jump_rows.end());
         jump_count = jump_rows.size();
+        ComputeApps();
+        rows.insert(rows.begin() + static_cast<std::ptrdiff_t>(jump_count + best_count), app_rows.begin(), app_rows.end());
+        app_count = app_rows.size();
         total = (std::max)(merged.total, rows.size());
         truncated = total > rows.size(); busy = providers.Busy();
         error = providers.Error() ? Text(rows.empty() ? StringId::GlobalSearchFailed : StringId::SearchIncomplete) : std::wstring{};
@@ -1197,7 +1249,7 @@ struct GlobalSearchWindow::Impl {
         const float name_top = content_row ? y + 8 : y + 7;
         LabelC(row.name, {text_left, name_top, text_right, name_top + 20}, 14, p.text, false, L"Segoe UI", !showing_recent);
         const float path_top = name_top + 20;
-        std::wstring parent = path::StripExtendedPathPrefix(ParentPath(row.path));
+        std::wstring parent = row.app ? Text(StringId::GlobalSearchGroupApps) : path::StripExtendedPathPrefix(ParentPath(row.path));
         float path_left = text_left;
         if (row.network) {
             LabelC(L"\xE8CE", {text_left, path_top + 2, text_left + 14, path_top + 15}, 10, p.faint, false, L"Segoe Fluent Icons");
@@ -1215,7 +1267,7 @@ struct GlobalSearchWindow::Impl {
         } else {
             const float mid = content_row ? y + 20 : y + h / 2;
             float r = right - 12;
-            r = KeyHint(L"Ctrl \x21B5", Text(StringId::Location), r, mid, p.muted, p.key) - 12;
+            if (!row.app) r = KeyHint(L"Ctrl \x21B5", Text(StringId::Location), r, mid, p.muted, p.key) - 12;
             r = KeyHint(L"\x21B5", Text(StringId::Open), r, mid, p.muted, p.key) - 12;
             if (!row.directory && !preview_open) KeyHint(L"Space", Text(StringId::Preview), r, mid, p.muted, p.key);
         }
@@ -1357,25 +1409,32 @@ struct GlobalSearchWindow::Impl {
         float y = thumb_box.bottom + 14;
         LabelC(row.name, {l, y, r, y + 44}, 15, p.text, true, L"Segoe UI", !showing_recent, DWRITE_TEXT_ALIGNMENT_LEADING, true);
         y += TextWidth(row.name, 15, true) > r - l ? 46 : 24;
-        LabelC(path::StripExtendedPathPrefix(row.path), {l, y, r, y + 36}, 12, p.faint, false, L"Segoe UI", false, DWRITE_TEXT_ALIGNMENT_LEADING, true);
-        y += 44;
+        if (!row.app) {
+            LabelC(path::StripExtendedPathPrefix(row.path), {l, y, r, y + 36}, 12, p.faint, false, L"Segoe UI", false, DWRITE_TEXT_ALIGNMENT_LEADING, true);
+            y += 44;
+        } else {
+            y += 8;
+        }
         auto meta = [&](StringId label, const std::wstring& value) {
             if (value.empty()) return;
             LabelC(Text(label), {l, y, l + 72, y + 20}, 12, p.faint);
             LabelC(value, {l + 76, y, r, y + 20}, 12, p.muted);
             y += 22;
         };
-        meta(StringId::ColumnType, TypeName(row));
+        meta(StringId::ColumnType, row.app ? Text(StringId::GlobalSearchGroupApps) : TypeName(row));
         if (!row.directory && (row.size || row.mtime)) meta(StringId::ColumnSize, FormatSize(row.size));
         meta(StringId::ModifiedTime, FormatTime(row.mtime));
         // actions
         const float b = bottom - 16;
         const D2D1_RECT_F location{l, b - 32, (l + r) / 2 - 3, b};
         const D2D1_RECT_F copy{(l + r) / 2 + 3, b - 32, r, b};
-        const D2D1_RECT_F open{l, b - 70, r, b - 38};
-        AddHot(open, HotPreviewOpen); AddHot(location, HotPreviewLocation); AddHot(copy, HotPreviewCopy);
+        // A program has no location or path to copy: just 打开.
+        const D2D1_RECT_F open = row.app ? D2D1_RECT_F{l, b - 32, r, b} : D2D1_RECT_F{l, b - 70, r, b - 38};
+        AddHot(open, HotPreviewOpen);
         FillC(open, Hovered(HotPreviewOpen) ? Theme().accent_hover : p.accent, 7);
         LabelC(Text(StringId::Open), open, 13, D2D1::ColorF(1, 1, 1, 1), false, L"Segoe UI", false, DWRITE_TEXT_ALIGNMENT_CENTER);
+        if (row.app) return;
+        AddHot(location, HotPreviewLocation); AddHot(copy, HotPreviewCopy);
         for (auto [rect, label, kind] : {std::tuple{location, StringId::HintActOpenPath, HotPreviewLocation}, std::tuple{copy, StringId::CopyPath, HotPreviewCopy}}) {
             FillC(rect, Hovered(kind) ? p.hover : p.chip, 7);
             StrokeC(rect, p.line, 7);
@@ -1604,6 +1663,10 @@ struct GlobalSearchWindow::Impl {
             Invalidate(); return 0;
         case kIndexStatus: Invalidate(); return 0;
         case kThumbnailResult: TakeThumbnail(); return 0;
+        case kAppsReady:
+            apps = app_catalog.Snapshot();
+            if (IsWindowVisible(hwnd) && !query.empty() && !content_mode && !showing_recent && !providers.Busy()) MergeFilenames();
+            return 0;
         case kIndexResult: {
             index::SearchResult result;
             if (filenames.TakeResult(static_cast<uint32_t>(wp), result) && IsWindowVisible(hwnd)) {
@@ -1623,7 +1686,7 @@ struct GlobalSearchWindow::Impl {
             while (contents.TakeUpdate(update)) {
                 if (update.progress.generation != generation || !content_mode || !IsWindowVisible(hwnd)) continue;
                 if (stale) { stale = false; rows.clear(); selected = 0; scroll = scroll_target = 0; }
-                jump_count = 0;
+                jump_count = app_count = 0;
                 const bool had_rows = !rows.empty();
                 for (auto& hit : update.hits) {
                     if (rows.size() >= kMaximumResults) break;
@@ -1707,6 +1770,10 @@ struct GlobalSearchWindow::Impl {
         }
         if (folder_changed && scope > 0 && scope < static_cast<int>(scopes.size()) && scopes[static_cast<size_t>(scope)].kind == ScopeKind::Current) scope = 0;
         BuildScopes();
+        if (context.show_apps) {
+            apps = app_catalog.Snapshot();
+            app_catalog.RefreshIfStale(hwnd, kAppsReady);
+        }
         icons.SetScale(scale);
         ApplyAppearance();
         BOOL is_dark = dark; DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &is_dark, sizeof(is_dark));

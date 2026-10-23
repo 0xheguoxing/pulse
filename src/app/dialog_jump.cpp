@@ -1,4 +1,5 @@
 #include "dialog_jump.h"
+#include "app_catalog.h"
 #include "jump_history.h"
 #include "jump_match.h"
 #include "../common/localization.h"
@@ -808,6 +809,7 @@ void DialogJump::Impl::TakeContext() {
     scores.assign(ctx.folders.size(), 0.0);
     if (ctx.remember && history) {
         for (const auto& path : history->Top(dlg_app, 24)) {
+            if (IsAppPath(path)) continue;  // programs started from quick search
             const std::wstring plain = PlainPath(path);
             if (std::none_of(ctx.folders.begin(), ctx.folders.end(), [&](const auto& f) { return SamePath(f.path, plain); }))
                 ctx.folders.push_back({plain, {}, false, false});

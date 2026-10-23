@@ -1101,9 +1101,9 @@ add_executable(pulse_usn_packet_queue_test src/bench/usn_packet_queue_test.cpp)
 add_executable(pulse_change_tracking_client_test src/bench/change_tracking_client_test.cpp)
 add_executable(pulse_global_search_hotkey_test src/bench/global_search_hotkey_test.cpp src/app/global_search_hotkey.cpp)
 target_link_libraries(pulse_global_search_hotkey_test PRIVATE user32)
-add_executable(pulse_quick_jump_test src/bench/quick_jump_test.cpp src/app/double_ctrl.cpp src/app/jump_match.cpp src/app/jump_history.cpp
+add_executable(pulse_quick_jump_test src/bench/quick_jump_test.cpp src/app/double_ctrl.cpp src/app/jump_match.cpp src/app/jump_history.cpp src/app/app_catalog.cpp
     src/index/filename_pinyin.cpp src/index/index_query.cpp src/index/search_kinds.cpp)
-target_link_libraries(pulse_quick_jump_test PRIVATE user32 shell32)
+target_link_libraries(pulse_quick_jump_test PRIVATE user32 shell32 ole32)
 add_executable(pulse_frame_pump_test src/bench/frame_pump_test.cpp src/app/frame_pump.cpp)
 target_link_libraries(pulse_frame_pump_test PRIVATE dwmapi user32)
 

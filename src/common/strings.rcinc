@@ -2743,7 +2743,7 @@ BEGIN
     IDS_JUMP_HISTORY_CLEAR "清除记录"
     IDS_DIALOG_JUMP_FREQUENT "常去的位置"
     IDS_GLOBAL_SEARCH_APPS "结果里显示应用"
-    IDS_GLOBAL_SEARCH_APPS_DESC "开始菜单里的程序，排在文件之后"
+    IDS_GLOBAL_SEARCH_APPS_DESC "开始菜单里的程序，排在最佳匹配之后"
     IDS_GLOBAL_SEARCH_GROUP_APPS "应用"
 END
 
@@ -5487,7 +5487,7 @@ BEGIN
     IDS_JUMP_HISTORY_CLEAR "Clear history"
     IDS_DIALOG_JUMP_FREQUENT "Frequent places"
     IDS_GLOBAL_SEARCH_APPS "Show apps in results"
-    IDS_GLOBAL_SEARCH_APPS_DESC "Programs from the Start menu, after files"
+    IDS_GLOBAL_SEARCH_APPS_DESC "Programs from the Start menu, right after the best matches"
     IDS_GLOBAL_SEARCH_GROUP_APPS "Apps"
 END
 

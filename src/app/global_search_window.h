@@ -7,6 +7,7 @@
 #include "../ui/window_material.h"
 
 namespace pulse {
+namespace app { class JumpHistory; }
 // What the quick search window hands to the main window when the user asks to
 // continue there (Shift+Enter or the footer link). folder is empty when the
 // search covers every indexed location.
@@ -35,6 +36,10 @@ struct GlobalSearchContext {
     // (跳转 group, above the index results).
     struct JumpFolder { std::wstring path, label; };  // label: shown name when not the folder name
     std::vector<JumpFolder> jump_folders;
+    // 应用 group: Start menu programs right after the best matches, the
+    // most started first among equal matches (history: may be null).
+    bool show_apps = true;
+    std::shared_ptr<app::JumpHistory> history;
     int width = 0, height = 0;                  // DIP; 0 = default
 };
 struct GlobalSearchEvents {

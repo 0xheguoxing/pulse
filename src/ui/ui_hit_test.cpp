@@ -532,6 +532,9 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 for (int i = 0; i < 3; ++i) if (vm.settings_global_search_enabled && vm.settings_global_search_double_ctrl && ContainsPt(lay.global_search_gap[i], x, y)) {
                     r.region = HitTestResult::SettingsDoubleCtrlGap; r.index = i; return r;
                 }
+                if (vm.settings_global_search_enabled && ContainsPt(lay.global_search_apps_row, x, y)) {
+                    r.region = HitTestResult::SettingsToggle; r.index = 43; return r;
+                }
                 if (ContainsPt(lay.dialog_jump_row, x, y)) {
                     r.region = HitTestResult::SettingsToggle; r.index = 41; return r;
                 }

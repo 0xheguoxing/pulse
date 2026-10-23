@@ -1305,6 +1305,9 @@ void SettingsController::ToggleUi(int index) {
     } else if (index == 41) {
         prefs_->dialog_jump_bar = !prefs_->dialog_jump_bar;
         SaveAndApply(SettingsEffect::GlobalSearch);
+    } else if (index == 43) {
+        prefs_->global_search_apps = !prefs_->global_search_apps;
+        SaveAndApply(SettingsEffect::GlobalSearch);
     } else if (index == 42) {
         prefs_->dialog_jump_auto = !prefs_->dialog_jump_auto;
         SaveAndApply(SettingsEffect::GlobalSearch);

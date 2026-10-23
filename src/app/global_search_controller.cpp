@@ -5,6 +5,7 @@
 #include "tray_reveal.h"
 #include "app_runtime.h"
 #include "app_hosted_edit.h"
+#include "app_catalog.h"
 #include "places.h"
 #include "session.h"
 #include "../common/localization.h"
@@ -83,7 +84,7 @@ GlobalSearchContext MakeGlobalSearchContext(const AppState& s) {
     auto folders = KnownFolders(s);
     const auto& history = *s.core.jumpHistory;
     for (const auto& path : history.Top({}, 32)) {
-        if (fs::IsVirtualPath(path)) continue;
+        if (fs::IsVirtualPath(path) || app::IsAppPath(path)) continue;
         if (std::none_of(folders.begin(), folders.end(), [&](const auto& f) { return path::EqualInsensitive(f.path, path); }))
             folders.push_back({path, {}, false, false});
     }
@@ -91,6 +92,8 @@ GlobalSearchContext MakeGlobalSearchContext(const AppState& s) {
     for (size_t i = 0; i < folders.size(); ++i) order.push_back({history.Score(folders[i].path, {}), i});
     std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
     for (const auto& [score, i] : order) context.jump_folders.push_back({std::move(folders[i].path), std::move(folders[i].label)});
+    context.show_apps = s.appPrefs.global_search_apps;
+    context.history = s.core.jumpHistory;
     context.width = s.appPrefs.global_search_width;
     context.height = s.appPrefs.global_search_height;
     return context;
@@ -117,8 +120,11 @@ GlobalSearchEvents MakeGlobalSearchEvents(AppState& s) {
     events.opened = [core](const GlobalSearchHandoff& search, const std::wstring& path, bool directory) {
         AppState* window = core->windows.MostRecent();
         if (!window) return;
-        RecordRecentOpen(*window, path, directory ? app::PlaceItemKind::Folder : app::PlaceItemKind::File);
-        if (directory) core->jumpHistory->Record(path, {});
+        // Programs started from the 应用 group are not files: they only
+        // count for the ranking.
+        const bool program = app::IsAppPath(path);
+        if (!program) RecordRecentOpen(*window, path, directory ? app::PlaceItemKind::Folder : app::PlaceItemKind::File);
+        if (directory || program) core->jumpHistory->Record(path, {});
         if (const auto history = GlobalSearchHandoffPath(search); !history.empty()) RecordSearchHistory(*window, history);
     };
     return events;

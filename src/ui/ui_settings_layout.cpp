@@ -100,6 +100,8 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
                 l.global_search_gap[i] = D2D1::RectF(cl + i*w, y + (h - 44)*scale, cl + (i + 1)*w, y + (h - 12)*scale);
             y += h*scale;
         }
+        l.global_search_apps_row = D2D1::RectF(card_left, y, card_right, y + 68*scale);
+        y += 68*scale;
         l.dialog_jump_row = D2D1::RectF(card_left, y, card_right, y + 68*scale);
         y += 68*scale;
         l.dialog_jump_auto_row = D2D1::RectF(card_left, y, card_right, y + 68*scale);

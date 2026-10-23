@@ -2764,5 +2764,5 @@ JumpHistoryDesc	IDS_JUMP_HISTORY_DESC	3966	把常去的文件夹排在前面；�
 JumpHistoryClear	IDS_JUMP_HISTORY_CLEAR	3967	清除记录	Clear history	清除記錄
 DialogJumpFrequent	IDS_DIALOG_JUMP_FREQUENT	3968	常去的位置	Frequent places	常去的位置
 GlobalSearchApps	IDS_GLOBAL_SEARCH_APPS	3969	结果里显示应用	Show apps in results	結果裡顯示應用程式
-GlobalSearchAppsDesc	IDS_GLOBAL_SEARCH_APPS_DESC	3970	开始菜单里的程序，排在文件之后	Programs from the Start menu, after files	「開始」功能表裡的程式，排在檔案之後
+GlobalSearchAppsDesc	IDS_GLOBAL_SEARCH_APPS_DESC	3970	开始菜单里的程序，排在最佳匹配之后	Programs from the Start menu, right after the best matches	「開始」功能表裡的程式，排在最佳符合之後
 GlobalSearchGroupApps	IDS_GLOBAL_SEARCH_GROUP_APPS	3971	应用	Apps	應用程式

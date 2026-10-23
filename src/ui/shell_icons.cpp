@@ -4,6 +4,7 @@
 
 #include <commoncontrols.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <commctrl.h>
 #include <wincodec.h>
 #include <cwctype>
@@ -309,7 +310,18 @@ void ShellIconCache::WorkerLoop() {
         } else {
             const UINT flags = SHGFI_SYSICONINDEX | SHGFI_SMALLICON;
             const std::wstring query = ShellPath(path);
-            if (SHGetFileInfoW(query.c_str(), 0, &info, sizeof(info), flags)) {
+            if (query.rfind(L"shell:", 0) == 0) {
+                // Shell items without a file path (Start menu apps): only
+                // their item ID list has an icon.
+                PIDLIST_ABSOLUTE item = nullptr;
+                if (SUCCEEDED(SHParseDisplayName(query.c_str(), nullptr, &item, 0, nullptr))) {
+                    if (SHGetFileInfoW(reinterpret_cast<LPCWSTR>(item), 0, &info, sizeof(info), flags | SHGFI_PIDL)) {
+                        index = info.iIcon;
+                        if (info.hIcon) DestroyIcon(info.hIcon);
+                    }
+                    CoTaskMemFree(item);
+                }
+            } else if (SHGetFileInfoW(query.c_str(), 0, &info, sizeof(info), flags)) {
                 index = info.iIcon;
                 if (info.hIcon) DestroyIcon(info.hIcon);
             }

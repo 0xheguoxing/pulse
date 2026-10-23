@@ -2741,6 +2741,6 @@ BEGIN
     IDS_JUMP_HISTORY_CLEAR "清除記錄"
     IDS_DIALOG_JUMP_FREQUENT "常去的位置"
     IDS_GLOBAL_SEARCH_APPS "結果裡顯示應用程式"
-    IDS_GLOBAL_SEARCH_APPS_DESC "「開始」功能表裡的程式，排在檔案之後"
+    IDS_GLOBAL_SEARCH_APPS_DESC "「開始」功能表裡的程式，排在最佳符合之後"
     IDS_GLOBAL_SEARCH_GROUP_APPS "應用程式"
 END
