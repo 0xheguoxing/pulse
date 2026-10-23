@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 namespace pulse::ui {
 
@@ -114,9 +115,17 @@ bool Compositor::IsDeviceLost(HRESULT hr) {
            hr == DXGI_ERROR_DEVICE_RESET || hr == DXGI_ERROR_DRIVER_INTERNAL_ERROR;
 }
 
+namespace {
+// Compositors of this thread (one shared device), for FrameSourceUnder.
+thread_local std::vector<Compositor*> t_compositors;
+std::atomic<Compositor::AcrylicPlateBuilder> g_acrylic_plate_builder{nullptr};
+}
+
 bool Compositor::Init(HWND hwnd) {
     initialization_error_.clear();
     hwnd_ = hwnd;
+    if (std::find(t_compositors.begin(), t_compositors.end(), this) == t_compositors.end())
+        t_compositors.push_back(this);
     device_lost_ = false;
     if (!InitD3D()) return false;
     RECT rc;
@@ -129,6 +138,7 @@ bool Compositor::Init(HWND hwnd) {
 }
 
 void Compositor::Shutdown() {
+    t_compositors.erase(std::remove(t_compositors.begin(), t_compositors.end(), this), t_compositors.end());
     if (!dc_.get() && !d3dDevice_.get()) return; // already shut down
     SharedGraphics* shared = t_shared_graphics;
     if (shared && d3dDevice_.get() && d3dDevice_.get() == shared->d3d.get() &&
@@ -582,6 +592,52 @@ void Compositor::CopyFrame() {
     // GPU to GPU; the frame's drawing has already ended.
     if (FAILED(frameCopy_->CopyFromBitmap(nullptr, targetBitmap_.get(), nullptr)))
         frameCopy_.reset();
+    else
+        ++frameCopySerial_;
+}
+
+void Compositor::SetAcrylicPlateBuilder(AcrylicPlateBuilder builder) noexcept {
+    g_acrylic_plate_builder.store(builder, std::memory_order_relaxed);
+}
+
+Compositor::AcrylicPlateBuilder Compositor::GetAcrylicPlateBuilder() noexcept {
+    return g_acrylic_plate_builder.load(std::memory_order_relaxed);
+}
+
+Compositor* Compositor::FrameSourceUnder(HWND dialog, const RECT& area) {
+    if (!dialog || t_compositors.empty()) return nullptr;
+    // Down the z-order from the dialog: the first window that overlaps it
+    // decides. Ours lends its frame; anything else means no acrylic.
+    int guard = 0;
+    for (HWND w = GetWindow(dialog, GW_HWNDNEXT); w && guard < 1024; w = GetWindow(w, GW_HWNDNEXT), ++guard) {
+        if (!IsWindowVisible(w) || IsIconic(w)) continue;
+        const LONG_PTR ex = GetWindowLongPtrW(w, GWL_EXSTYLE);
+        if ((ex & WS_EX_LAYERED) && (ex & WS_EX_TRANSPARENT)) continue;  // click-through, e.g. dialog shadows
+        BOOL cloaked = FALSE;
+        if (SUCCEEDED(DwmGetWindowAttribute(w, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked) continue;
+        RECT bounds{};
+        RECT overlap{};
+        if (!GetWindowRect(w, &bounds) || !IntersectRect(&overlap, &bounds, &area)) continue;
+        Compositor* best = nullptr;
+        long long best_area = 0;
+        for (Compositor* compositor : t_compositors) {
+            if (!compositor->frameCopy_.get() || !compositor->hwnd_ ||
+                GetAncestor(compositor->hwnd_, GA_ROOT) != w)
+                continue;
+            RECT client{};
+            GetClientRect(compositor->hwnd_, &client);
+            MapWindowPoints(compositor->hwnd_, nullptr, reinterpret_cast<POINT*>(&client), 2);
+            RECT part{};
+            if (!IntersectRect(&part, &client, &area)) continue;
+            const long long size = static_cast<long long>(part.right - part.left) * (part.bottom - part.top);
+            if (size > best_area) {
+                best_area = size;
+                best = compositor;
+            }
+        }
+        return best;
+    }
+    return nullptr;
 }
 
 void Compositor::Present(const RECT* dirty) {

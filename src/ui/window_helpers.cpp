@@ -215,6 +215,104 @@ void AttachWindowShadow(HWND hwnd, bool dark) {
     SyncShadow(hwnd, *shadow);
 }
 
+// ---- Acrylic: the Pulse window under the dialog, blurred -------------------
+// Same material as menu acrylic, on Windows 10 and 11 alike: the plate is
+// built from the frame copy of our window right under the dialog and redone
+// when the dialog moves or (at most 4 times a second) when that window has
+// presented since. Elsewhere the dialog keeps its plain surface.
+constexpr UINT_PTR kAcrylicSubclassId = 0x50414352;  // 'PACR'
+constexpr ULONGLONG kPlateRefreshMs = 250;
+
+struct DialogPlate {
+    HWND hwnd = nullptr;
+    RECT key{};
+    bool dark = false;
+    const Compositor* source = nullptr;
+    unsigned long long serial = 0;
+    ULONGLONG tick = 0;
+    ComPtr<ID2D1Bitmap1> plate;
+};
+thread_local std::vector<DialogPlate> t_dialog_plates;
+
+DialogPlate* FindPlate(HWND hwnd) {
+    for (auto& entry : t_dialog_plates)
+        if (entry.hwnd == hwnd) return &entry;
+    return nullptr;
+}
+
+void DropPlate(HWND hwnd) {
+    t_dialog_plates.erase(std::remove_if(t_dialog_plates.begin(), t_dialog_plates.end(),
+                                         [hwnd](const DialogPlate& entry) { return entry.hwnd == hwnd; }),
+                          t_dialog_plates.end());
+}
+
+LRESULT CALLBACK AcrylicSubclass(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
+                                 UINT_PTR, DWORD_PTR) {
+    if (message == WM_WINDOWPOSCHANGED) {
+        // Moved: what lies under the dialog changed.
+        if (!(reinterpret_cast<const WINDOWPOS*>(lparam)->flags & SWP_NOMOVE) && FindPlate(hwnd))
+            InvalidateRect(hwnd, nullptr, FALSE);
+    } else if (message == WM_NCDESTROY) {
+        RemoveWindowSubclass(hwnd, AcrylicSubclass, kAcrylicSubclassId);
+        DropPlate(hwnd);
+    }
+    return DefSubclassProc(hwnd, message, wparam, lparam);
+}
+
+void TrackAcrylic(HWND hwnd) {
+    DWORD_PTR data = 0;
+    if (!GetWindowSubclass(hwnd, AcrylicSubclass, kAcrylicSubclassId, &data))
+        SetWindowSubclass(hwnd, AcrylicSubclass, kAcrylicSubclassId, 0);
+}
+
+// Called inside BeginDraw before any layer is pushed (the build switches
+// targets). Null: draw the plain surface.
+ID2D1Bitmap1* DialogAcrylicPlate(Compositor& compositor, bool dark, float scale) {
+    const HWND hwnd = compositor.Hwnd();
+    const auto builder = Compositor::GetAcrylicPlateBuilder();
+    if (!hwnd || !builder || !Compositor::FrameCopyEnabled()) {
+        if (hwnd) DropPlate(hwnd);
+        return nullptr;
+    }
+    RECT card{};
+    GetClientRect(hwnd, &card);
+    MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&card), 2);
+    if (card.right <= card.left || card.bottom <= card.top) return nullptr;
+    DialogPlate* entry = FindPlate(hwnd);
+    if (!entry) {
+        t_dialog_plates.push_back({});
+        entry = &t_dialog_plates.back();
+        entry->hwnd = hwnd;
+    }
+    Compositor* source = Compositor::FrameSourceUnder(hwnd, card);
+    if (!source || !source->FrameCopy()) {
+        entry->plate.reset();
+        entry->source = nullptr;
+        return nullptr;
+    }
+    const ULONGLONG now = GetTickCount64();
+    const bool stale = !entry->plate.get() || !EqualRect(&entry->key, &card) || entry->dark != dark ||
+        entry->source != source ||
+        (entry->serial != source->FrameCopySerial() && now - entry->tick >= kPlateRefreshMs);
+    if (stale) {
+        POINT origin{ 0, 0 };
+        ComPtr<ID2D1Bitmap1> plate;
+        if (!ClientToScreen(source->Hwnd(), &origin) ||
+            !builder(compositor.Dc(), source->FrameCopy(), origin, card, scale, dark, plate)) {
+            entry->plate.reset();
+            entry->source = nullptr;
+            return nullptr;
+        }
+        entry->plate = std::move(plate);
+        entry->key = card;
+        entry->dark = dark;
+        entry->source = source;
+        entry->serial = source->FrameCopySerial();
+        entry->tick = now;
+    }
+    return entry->plate.get();
+}
+
 // BeginSurface's clip and the edge drawn over everything at EndSurface.
 struct OwnCornerFrame {
     bool layer = false;
@@ -239,6 +337,7 @@ void SuppressWindowShadow(HWND hwnd) {
 
 bool ApplyBackdrop(HWND hwnd, bool dark) {
     UpdateWindowTheme(hwnd, dark);
+    TrackAcrylic(hwnd);
     if (DrawsOwnCorners()) {
         // No DWM frame: its square shadow would show around the rounded card.
         const DWORD corner = DWMWCP_DONOTROUND;
@@ -356,6 +455,7 @@ void BeginSurface(Compositor& compositor, fluent::Painter& painter,
                   bool backdrop_enabled, float scale) {
     auto* dc = compositor.Dc();
     dc->BeginDraw();
+    ID2D1Bitmap1* plate = high_contrast ? nullptr : DialogAcrylicPlate(compositor, dark, scale);
     dc->Clear(D2D1::ColorF(0, 0.0f));
     painter.BeginFrame(theme, high_contrast);
     D2D1_COLOR_F tint = theme.bg;
@@ -380,10 +480,14 @@ void BeginSurface(Compositor& compositor, fluent::Painter& painter,
             D2D1::RectF(inset, inset, width - inset, height - inset), radius - inset, radius - inset);
         g_own_corner_frame.color = theme.stroke_card;
         g_own_corner_frame.color.a = (std::max)(g_own_corner_frame.color.a, dark ? 0.16f : 0.14f);
-        painter.FillRoundedRect(D2D1::RectF(0, 0, width, height), 0, tint);
+        if (plate) dc->DrawBitmap(plate, D2D1::RectF(0, 0, width, height), 1.0f,
+                                   D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+        else painter.FillRoundedRect(D2D1::RectF(0, 0, width, height), 0, tint);
         return;
     }
-    painter.FillRoundedRect(D2D1::RectF(0, 0, width, height), 0, tint);
+    if (plate) dc->DrawBitmap(plate, D2D1::RectF(0, 0, width, height), 1.0f,
+                                   D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+    else painter.FillRoundedRect(D2D1::RectF(0, 0, width, height), 0, tint);
     // DWM rounds the window by 8 px and draws its own edge: ours follows the
     // same curve, or the two part at the corners.
     painter.StrokeRoundedRect(D2D1::RectF(inset, inset, width - inset, height - inset),

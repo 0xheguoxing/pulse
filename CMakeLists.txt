@@ -415,7 +415,7 @@ target_link_libraries(pulse_file_operation_authorization_dialog_test PRIVATE
 pulse_enable_lumatext(pulse_file_operation_authorization_dialog_test)
 # Progress card states rendered to PNG + the 2.5 s auto-close (pulse_ops_dialogs.html).
 add_executable(pulse_ops_dialog_shots
-    src/bench/ops_dialog_shots.cpp ${PULSE_PERMISSION_UI_SOURCES})
+    src/bench/ops_dialog_shots.cpp ${PULSE_PERMISSION_UI_SOURCES} src/ui/window_material.cpp)
 target_link_libraries(pulse_ops_dialog_shots PRIVATE
     d3d11 d2d1 dwrite dxgi dcomp dwmapi shcore ole32 windowscodecs comctl32 uxtheme gdiplus pulse_localization)
 pulse_enable_lumatext(pulse_ops_dialog_shots)
