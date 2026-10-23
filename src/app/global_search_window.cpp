@@ -1484,6 +1484,10 @@ struct GlobalSearchWindow::Impl {
     }
     void Paint() {
         PAINTSTRUCT paint{}; BeginPaint(hwnd, &paint);
+        Render();
+        EndPaint(hwnd, &paint);
+    }
+    void Render() {
         if (EnsureTarget()) {
             const auto theme = Theme();
             const auto p = MakePalette(theme);
@@ -1517,7 +1521,6 @@ struct GlobalSearchWindow::Impl {
             if (moving) SetTimer(hwnd, kAnimationTimer, 10, nullptr);
             else KillTimer(hwnd, kAnimationTimer);
         }
-        EndPaint(hwnd, &paint);
     }
     const HotSpot* HitAt(float x, float y) const {
         for (auto it = hot.rbegin(); it != hot.rend(); ++it) if (Contains(it->rect, x, y)) return &*it;
@@ -1734,20 +1737,59 @@ struct GlobalSearchWindow::Impl {
         POINT cursor{}; GetCursorPos(&cursor);
         const HMONITOR active_monitor = foreground && foreground != hwnd ? MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST) :
             MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
-        using MonitorDpi = HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
-        if (const HMODULE shcore = LoadLibraryW(L"shcore.dll")) {
-            const auto dpi = reinterpret_cast<MonitorDpi>(GetProcAddress(shcore, "GetDpiForMonitor"));
-            UINT x = 96, y = 96;
-            if (dpi && SUCCEEDED(dpi(active_monitor, 0, &x, &y))) scale = static_cast<float>(x) / 96.0f;
-            FreeLibrary(shcore);
-        }
+        if (const float monitor_scale = MonitorScale(active_monitor); monitor_scale > 0) scale = monitor_scale;
         (void)owner;
         const bool folder_changed = folder != current_folder;
         current_folder = folder;
         current_folder_tip = path::StripExtendedPathPrefix(folder);
         if (folder.empty()) current_only = false;
         HideScopeTooltip();
-        if (!hwnd) {
+        if (!Create()) return false;
+        if (folder_changed && scope > 0 && scope < static_cast<int>(scopes.size()) && scopes[static_cast<size_t>(scope)].kind == ScopeKind::Current) scope = 0;
+        Prepare();
+        BOOL is_dark = dark; DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &is_dark, sizeof(is_dark));
+        const int corner = DWMWCP_ROUND;
+        DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
+        SendMessageW(edit, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(Text(StringId::GlobalSearchPlaceholder).c_str()));
+        MONITORINFO monitor{sizeof(monitor)}; GetMonitorInfoW(active_monitor, &monitor);
+        const RECT place = Placement(monitor.rcWork);
+        SetWindowPos(hwnd, HWND_TOPMOST, place.left, place.top, place.right - place.left, place.bottom - place.top, SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+        Layout(); SetForegroundWindow(hwnd); SetFocus(edit); SendMessageW(edit, EM_SETSEL, 0, -1);
+        Changed(); return true;
+    }
+    static float MonitorScale(HMONITOR monitor) {
+        float result = 0;
+        using MonitorDpi = HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
+        if (const HMODULE shcore = LoadLibraryW(L"shcore.dll")) {
+            const auto dpi = reinterpret_cast<MonitorDpi>(GetProcAddress(shcore, "GetDpiForMonitor"));
+            UINT x = 96, y = 96;
+            if (dpi && SUCCEEDED(dpi(monitor, 0, &x, &y))) result = static_cast<float>(x) / 96.0f;
+            FreeLibrary(shcore);
+        }
+        return result;
+    }
+    // Centred, a quarter down the work area, at the saved size.
+    RECT Placement(const RECT& work) const {
+        const float want_w = context.width > 0 ? static_cast<float>(context.width) : kDefaultWidth;
+        const float want_h = context.height > 0 ? static_cast<float>(context.height) : kDefaultHeight;
+        const int w = std::clamp(Px(want_w), std::min(Px(kMinWidth), static_cast<int>(work.right - work.left) - Px(32)), static_cast<int>(work.right - work.left) - Px(32));
+        const int h = std::clamp(Px(want_h), std::min(Px(kMinHeight), static_cast<int>(work.bottom - work.top) - Px(32)), static_cast<int>(work.bottom - work.top) - Px(32));
+        const int x = work.left + (work.right - work.left - w) / 2, y = work.top + (work.bottom - work.top - h) / 4;
+        return {x, y, x + w, y + h};
+    }
+    // Per show: scopes, the program list and the appearance.
+    void Prepare() {
+        BuildScopes();
+        if (context.show_apps) {
+            apps = app_catalog.Snapshot();
+            app_catalog.RefreshIfStale(hwnd, kAppsReady);
+        }
+        icons.SetScale(scale);
+        ApplyAppearance();
+    }
+    bool Create() {
+        if (hwnd) return true;
+        {
             WNDCLASSEXW cls{sizeof(cls)}; cls.style = CS_DBLCLKS;
             cls.lpfnWndProc = WindowProc; cls.hInstance = GetModuleHandleW(nullptr);
             cls.hCursor = LoadCursorW(nullptr, IDC_ARROW); cls.lpszClassName = L"Pulse.GlobalSearch";
@@ -1768,29 +1810,74 @@ struct GlobalSearchWindow::Impl {
             network.Start(hwnd, kIndexStatus, kNetworkResult);
             contents.Start(hwnd, kContentResult, index::ContentAgentMode::Instant);
         }
-        if (folder_changed && scope > 0 && scope < static_cast<int>(scopes.size()) && scopes[static_cast<size_t>(scope)].kind == ScopeKind::Current) scope = 0;
-        BuildScopes();
-        if (context.show_apps) {
-            apps = app_catalog.Snapshot();
-            app_catalog.RefreshIfStale(hwnd, kAppsReady);
+        return true;
+    }
+    // ---- pre-warming --------------------------------------------------------
+    // The first summon paid for the window, the D2D device, DWM's first show
+    // and a cold first frame (fonts, glyphs, icons): ~90 ms of ~130. They are
+    // done ahead, once, while the user is not busy; the Start menu program
+    // list starts loading too, so the first query already finds programs.
+    // Thread timers carry no context; there is one popup per process.
+    static inline Impl* prewarm_owner = nullptr;
+    UINT_PTR prewarm_timer = 0;
+    int prewarm_tries = 0;
+    std::function<void()> prewarm_prepare;
+    void SchedulePrewarm(uint32_t delay_ms, std::function<void()> prepare) {
+        if (hwnd || prewarm_timer) return;
+        prewarm_prepare = std::move(prepare);
+        prewarm_owner = this;
+        prewarm_timer = SetTimer(nullptr, 0, delay_ms, PrewarmTimer);
+    }
+    static void CALLBACK PrewarmTimer(HWND, UINT, UINT_PTR id, DWORD) {
+        KillTimer(nullptr, id);
+        Impl* self = prewarm_owner;
+        if (!self || self->prewarm_timer != id) return;
+        self->prewarm_timer = 0;
+        self->Prewarm();
+    }
+    void Prewarm() {
+        if (hwnd) return;
+        // Typing, clicking or dragging: try again in a moment.
+        const bool busy_input = HIWORD(GetQueueStatus(QS_INPUT)) != 0 ||
+            GetAsyncKeyState(VK_LBUTTON) < 0 || GetAsyncKeyState(VK_RBUTTON) < 0;
+        if (busy_input && ++prewarm_tries < 20) {
+            prewarm_timer = SetTimer(nullptr, 0, 1000, PrewarmTimer);
+            return;
         }
-        icons.SetScale(scale);
-        ApplyAppearance();
+        if (prewarm_prepare) prewarm_prepare();  // context and appearance, as for a summon
+        prewarm_prepare = nullptr;
+        if (hwnd) return;  // summoned meanwhile
+        POINT cursor{}; GetCursorPos(&cursor);
+        const HMONITOR monitor_handle = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+        if (const float monitor_scale = MonitorScale(monitor_handle); monitor_scale > 0) scale = monitor_scale;
+        animations = ui::motion::SystemAnimationsEnabled();
+        if (!Create()) return;
+        Prepare();
         BOOL is_dark = dark; DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &is_dark, sizeof(is_dark));
         const int corner = DWMWCP_ROUND;
         DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
-        SendMessageW(edit, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(Text(StringId::GlobalSearchPlaceholder).c_str()));
-        MONITORINFO monitor{sizeof(monitor)}; GetMonitorInfoW(active_monitor, &monitor);
-        const auto& work = monitor.rcWork;
-        const float want_w = context.width > 0 ? static_cast<float>(context.width) : kDefaultWidth;
-        const float want_h = context.height > 0 ? static_cast<float>(context.height) : kDefaultHeight;
-        const int w = std::clamp(Px(want_w), std::min(Px(kMinWidth), static_cast<int>(work.right - work.left) - Px(32)), static_cast<int>(work.right - work.left) - Px(32));
-        const int h = std::clamp(Px(want_h), std::min(Px(kMinHeight), static_cast<int>(work.bottom - work.top) - Px(32)), static_cast<int>(work.bottom - work.top) - Px(32));
-        SetWindowPos(hwnd, HWND_TOPMOST, work.left + (work.right - work.left - w) / 2, work.top + (work.bottom - work.top - h) / 4, w, h, SWP_SHOWWINDOW | SWP_FRAMECHANGED);
-        Layout(); SetForegroundWindow(hwnd); SetFocus(edit); SendMessageW(edit, EM_SETSEL, 0, -1);
-        Changed(); return true;
+        MONITORINFO monitor{sizeof(monitor)}; GetMonitorInfoW(monitor_handle, &monitor);
+        const RECT place = Placement(monitor.rcWork);
+        // Cloaked: DWM composes the window once but never shows it, and it
+        // is not activated, so focus stays where it is.
+        BOOL cloak = TRUE;
+        const bool cloaked = SUCCEEDED(DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak)));
+        SetWindowPos(hwnd, HWND_TOPMOST, place.left, place.top, place.right - place.left, place.bottom - place.top,
+                     SWP_NOACTIVATE | SWP_FRAMECHANGED | (cloaked ? SWP_SHOWWINDOW : 0));
+        Layout();
+        Changed();  // the empty-query list, as on a summon
+        Render();
+        KillTimer(hwnd, kAnimationTimer);
+        if (cloaked) {
+            ShowWindow(hwnd, SW_HIDE);
+            cloak = FALSE;
+            DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
+        }
+        Cancel();
     }
     ~Impl() {
+        if (prewarm_timer) KillTimer(nullptr, prewarm_timer);
+        if (prewarm_owner == this) prewarm_owner = nullptr;
         Cancel(); filenames.Stop(); network.Stop(); contents.Stop();
         if (thumbnails) {
             { std::lock_guard lock(thumbnails->mutex); thumbnails->stop = true; thumbnails->notify = nullptr; }
@@ -1826,6 +1913,10 @@ void GlobalSearchWindow::SetEvents(GlobalSearchEvents events) {
     impl_->events = std::move(events);
 }
 void GlobalSearchWindow::Hide() { if (impl_) impl_->Hide(); }
+void GlobalSearchWindow::Prewarm(uint32_t delay_ms, std::function<void()> prepare) {
+    if (!impl_) impl_ = std::make_unique<Impl>();
+    impl_->SchedulePrewarm(delay_ms, std::move(prepare));
+}
 void GlobalSearchWindow::Shutdown() { impl_.reset(); }
 bool GlobalSearchWindow::Visible() const { return impl_ && impl_->hwnd && IsWindowVisible(impl_->hwnd); }
 }

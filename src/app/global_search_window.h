@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -61,6 +62,10 @@ public:
     void SetContext(GlobalSearchContext context);
     void SetEvents(GlobalSearchEvents events);
     void Hide();
+    // Creates the hidden popup and renders one frame `delay_ms` from now,
+    // once and only while no input is pending, so the first summon is warm.
+    // `prepare` runs first, on the UI thread (context and appearance).
+    void Prewarm(uint32_t delay_ms, std::function<void()> prepare);
     void Shutdown();
     bool Visible() const;
 private:

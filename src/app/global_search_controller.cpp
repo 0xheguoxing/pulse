@@ -129,6 +129,19 @@ GlobalSearchEvents MakeGlobalSearchEvents(AppState& s) {
     };
     return events;
 }
+
+// Appearance, context and callbacks: before every summon and the pre-warm.
+void PrepareGlobalSearchWindow(AppState& s) {
+    s.globalSearchWindow.SetAppearance(s.darkMode, ui::WindowEffectFromId(s.appPrefs.window_effect),
+        s.appPrefs.background_image, s.accentColor);
+    // The search window is process-wide and outlives the window that opened
+    // it (M4b): continue in the most recent window when the handoff happens.
+    s.globalSearchWindow.SetHandoffHandler([core = &s.core](const GlobalSearchHandoff& request) {
+        if (AppState* window = core->windows.MostRecent()) ContinueGlobalSearchInMain(*window, request);
+    });
+    s.globalSearchWindow.SetContext(MakeGlobalSearchContext(s));
+    s.globalSearchWindow.SetEvents(MakeGlobalSearchEvents(s));
+}
 }
 
 void ApplyGlobalSearchSettings(AppState& s) {
@@ -150,6 +163,9 @@ void ApplyGlobalSearchSettings(AppState& s) {
     s.core.doubleCtrl.Update(ServiceWindow(s), WM_DOUBLE_CTRL, double_ctrl,
         static_cast<uint32_t>(s.appPrefs.global_search_double_ctrl_ms));
     if (!enabled || (!ok && !double_ctrl)) s.globalSearchWindow.Hide();
+    else s.globalSearchWindow.Prewarm(3000, [core = &s.core] {
+        if (AppState* window = core->windows.MostRecent()) PrepareGlobalSearchWindow(*window);
+    });
     s.tray_controller.SetVisible(WantsTrayIcon(s, s.hidden_to_tray));
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
@@ -252,16 +268,8 @@ void ToggleGlobalSearch(AppState& s, bool double_ctrl) {
         return;
     }
     std::wstring folder;
-    s.globalSearchWindow.SetAppearance(s.darkMode, ui::WindowEffectFromId(s.appPrefs.window_effect),
-        s.appPrefs.background_image, s.accentColor);
     if (const auto* tab = ActiveTab(s); tab && !fs::IsVirtualPath(tab->current_path)) folder = tab->current_path;
-    // The search window is process-wide and outlives the window that opened
-    // it (M4b): continue in the most recent window when the handoff happens.
-    s.globalSearchWindow.SetHandoffHandler([core = &s.core](const GlobalSearchHandoff& request) {
-        if (AppState* window = core->windows.MostRecent()) ContinueGlobalSearchInMain(*window, request);
-    });
-    s.globalSearchWindow.SetContext(MakeGlobalSearchContext(s));
-    s.globalSearchWindow.SetEvents(MakeGlobalSearchEvents(s));
+    PrepareGlobalSearchWindow(s);
     if (!s.globalSearchWindow.Show(s.hwnd, s.darkMode, s.scale, folder, s.appPrefs.search_pinyin)) {
         RevealWindow(s);
         s.notification_toast.ShowError(s.hwnd, l10n::Get(l10n::StringId::GlobalSearch),
