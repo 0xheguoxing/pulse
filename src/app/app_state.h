@@ -572,6 +572,11 @@ struct AppState : AppCoreOwner {
     uint64_t leavingSince = 0;   // ui::motion::NowMs
     uint64_t leavingDoneAt = 0;  // ui::motion::NowMs, 0 while running
     uint64_t leavingTask = 0;
+    // A recycle left these where they were: the Recycle Bin would not keep
+    // them (FinishedTask::recycle_refused). WM_RECYCLE_REFUSED asks whether
+    // to delete them for good.
+    std::vector<std::wstring> recycleRefused;
+    ops::RecycleRefusal recycleRefusal = ops::RecycleRefusal::None;
     // A drag from Pulse dropped into a folder a pane shows: its cards land on
     // the new rows (drag_drop.h LandDragStack). Times are ui::motion::NowMs.
     struct DragLanding {

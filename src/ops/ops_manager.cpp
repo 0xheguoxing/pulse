@@ -390,41 +390,6 @@ std::wstring ErrorWithoutPath(const std::wstring& error) {
     return bar == std::wstring::npos ? error : error.substr(0, bar);
 }
 
-// Failures that are about the target, the device or the session rather than
-// one item: every later item would fail the same way, so the task stops.
-bool IsStopTransferError(HRESULT hr) {
-    if (hr == E_OUTOFMEMORY) return true;
-    switch (HRESULT_CODE(hr)) {
-    case ERROR_DISK_FULL:
-    case ERROR_HANDLE_DISK_FULL:
-    case ERROR_DISK_QUOTA_EXCEEDED:
-    case ERROR_NOT_ENOUGH_QUOTA:
-    case ERROR_NOT_ENOUGH_MEMORY:
-    case ERROR_OUTOFMEMORY:
-    case ERROR_NOT_READY:
-    case ERROR_WRITE_PROTECT:
-    case ERROR_DEV_NOT_EXIST:
-    case ERROR_DEVICE_NOT_CONNECTED:
-    case ERROR_DEVICE_REMOVED:
-    case ERROR_NO_SUCH_DEVICE:
-    case ERROR_NO_MEDIA_IN_DRIVE:
-    case ERROR_MEDIA_CHANGED:
-    case ERROR_IO_DEVICE:
-    case ERROR_BAD_NETPATH:
-    case ERROR_BAD_NET_NAME:
-    case ERROR_NETNAME_DELETED:
-    case ERROR_UNEXP_NET_ERR:
-    case ERROR_NETWORK_UNREACHABLE:
-    case ERROR_SEM_TIMEOUT:
-    case ERROR_OPERATION_ABORTED:
-    case ERROR_REQUEST_ABORTED:
-    case ERROR_CANCELLED:
-        return true;
-    default:
-        return false;
-    }
-}
-
 // Why a new folder or text file could not be created. "没有权限" is the key
 // the UI maps to its write-permission message.
 std::wstring CreateFailureText(DWORD code) {
@@ -997,6 +962,40 @@ void TrimUndoHistory(std::deque<UndoEntry>& undo) {
 
 } // namespace
 
+// See ops_manager.h.
+bool IsStopTransferError(HRESULT hr) {
+    if (hr == E_OUTOFMEMORY) return true;
+    switch (HRESULT_CODE(hr)) {
+    case ERROR_DISK_FULL:
+    case ERROR_HANDLE_DISK_FULL:
+    case ERROR_DISK_QUOTA_EXCEEDED:
+    case ERROR_NOT_ENOUGH_QUOTA:
+    case ERROR_NOT_ENOUGH_MEMORY:
+    case ERROR_OUTOFMEMORY:
+    case ERROR_NOT_READY:
+    case ERROR_WRITE_PROTECT:
+    case ERROR_DEV_NOT_EXIST:
+    case ERROR_DEVICE_NOT_CONNECTED:
+    case ERROR_DEVICE_REMOVED:
+    case ERROR_NO_SUCH_DEVICE:
+    case ERROR_NO_MEDIA_IN_DRIVE:
+    case ERROR_MEDIA_CHANGED:
+    case ERROR_IO_DEVICE:
+    case ERROR_BAD_NETPATH:
+    case ERROR_BAD_NET_NAME:
+    case ERROR_NETNAME_DELETED:
+    case ERROR_UNEXP_NET_ERR:
+    case ERROR_NETWORK_UNREACHABLE:
+    case ERROR_SEM_TIMEOUT:
+    case ERROR_OPERATION_ABORTED:
+    case ERROR_REQUEST_ABORTED:
+    case ERROR_CANCELLED:
+        return true;
+    default:
+        return false;
+    }
+}
+
 OpsManager::~OpsManager() {
     Stop();
 }
@@ -1471,11 +1470,28 @@ std::vector<OpsManager::RetrySpawn> OpsManager::RetryFailedItems(uint64_t task_i
             for (size_t i = 0; i < failures.size(); ++i) chosen.push_back(i);
         // Each item goes back to the folder it was meant for, under the name
         // it was meant to have; items for one folder under their own names
-        // share a request.
+        // share a request. A delete's items all share one.
+        const bool deleting = retry->req.type == OpType::RecycleDelete || retry->req.type == OpType::RealDelete;
         for (size_t i : chosen) {
             if (i >= failures.size()) continue;
             const OpFailure& failed = failures[i];
-            if (failed.source.empty() || failed.destination.empty()) continue;
+            if (failed.source.empty()) continue;
+            if (deleting) {
+                if (requests.empty()) {
+                    OpRequest request = retry->req;
+                    request.sources.clear();
+                    request.lock_retry = false;
+                    request.close_first.clear();
+                    request.is_undo = false;
+                    request.undo_group = 0;
+                    requests.push_back(std::move(request));
+                    spawns.push_back({0, {}});
+                }
+                requests.front().sources.push_back(failed.source);
+                spawns.front().items.push_back(i);
+                continue;
+            }
+            if (failed.destination.empty()) continue;
             const std::wstring folder = ParentOf(failed.destination);
             const bool renamed = _wcsicmp(FileName(failed.source).c_str(),
                                           FileName(failed.destination).c_str()) != 0;
@@ -2263,6 +2279,8 @@ void OpsManager::WorkerThread() {
         const bool run = !skip && ((!item.req.lock_retry && item.req.close_first.empty()) ||
                          PrepareLockRetry(item.req, item.seq));
         moved_sources_.clear();
+        recycle_refused_.clear();
+        recycle_refusal_ = RecycleRefusal::None;
         const auto diagnostic_started = GetTickCount64();
         diagnostics::runtime::Event("file_operation_begin", {{"task", item.seq},
             {"type", static_cast<uint64_t>(item.req.type)}, {"sources", item.req.sources.size()},
@@ -2287,6 +2305,9 @@ void OpsManager::WorkerThread() {
             finished.type = item.req.type;
             finished.sources = item.req.sources;
             finished.success = diagnostic_status.phase == OpPhase::Completed;
+            finished.recycle_refused = std::move(recycle_refused_);
+            finished.recycle_refusal = recycle_refusal_;
+            recycle_refused_.clear();
             for (const auto& source : item.req.sources)
                 if (std::any_of(moved_sources_.begin(), moved_sources_.end(), [&](const auto& moved) {
                     return _wcsicmp(source.c_str(), moved.c_str()) == 0;

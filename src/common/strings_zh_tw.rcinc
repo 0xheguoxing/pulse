@@ -2903,4 +2903,6 @@ BEGIN
     IDS_NETWORK_INDEX_NEEDS_SHARE "這是本機上的資料夾。請選擇伺服器共用中的資料夾，或對應的網路磁碟機；本機磁碟在「本機磁碟」中勾選即可索引。"
     IDS_NETWORK_INDEX_NO_WSL "WSL 中的檔案不能加入網路索引：持續掃描會讓 WSL 無法關閉。可以開啟該資料夾，把它釘為網路位置。"
     IDS_DATE_LAST_WEEK_FORMAT "上%s"
+    IDS_OP_DELETE_PARTIAL_TITLE "已刪除 %s 項，%s 項未成功"
+    IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED "路徑太長，無法移到資源回收筒，未刪除。可用 Shift+Delete 永久刪除"
 END

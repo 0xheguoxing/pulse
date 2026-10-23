@@ -1988,6 +1988,9 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_UNDO_DELETE:
         if (s && s->ops.CanUndo()) s->ops.Undo();
         return 0;
+    case WM_RECYCLE_REFUSED:
+        if (s) OfferPermanentDeleteForRefused(*s);
+        return 0;
 
     case WM_TRAY_UNDO:
     case WM_TRAY_OPEN_DEST:

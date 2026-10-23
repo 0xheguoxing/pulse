@@ -2368,7 +2368,8 @@ void FileOperationWindow::CreateCardFormats() {
 namespace {
 bool IsPartialFailure(const ops::OpStatus& status) {
     return !status.active && status.phase == ops::OpPhase::Failed &&
-           (status.type == ops::OpType::Copy || status.type == ops::OpType::Move) &&
+           (status.type == ops::OpType::Copy || status.type == ops::OpType::Move ||
+            status.type == ops::OpType::RecycleDelete || status.type == ops::OpType::RealDelete) &&
            status.failed_items > 0 && !status.failures.empty();
 }
 
@@ -2415,9 +2416,14 @@ float FileOperationWindow::FailureBlockDip() const {
 ops::OpStatus FileOperationWindow::BoardStatus() const {
     ops::OpStatus status = board_->status;
     uint64_t failed = board_->unlisted;
+    uint64_t retried = 0;
     for (const auto& row : board_->rows)
         if (row.state != FailureRow::State::Done) ++failed;
+        else ++retried;
     status.failed_items = failed;
+    // A delete's title counts what is gone, the retried items included.
+    if (status.type == ops::OpType::RecycleDelete || status.type == ops::OpType::RealDelete)
+        status.completed_items += retried;
     if (failed == 0) {
         status.phase = ops::OpPhase::Completed;
         status.last_error.clear();
@@ -2804,11 +2810,13 @@ void FileOperationWindow::Render() {
     const bool cancelling = status_.phase == ops::OpPhase::Cancelling;
     // Partial failure: the rest went through, the failed items are listed.
     const bool partial = failed && board_.has_value();
-    const uint64_t partial_failed = partial ? status_.failed_items : 0;
-    const uint64_t partial_done = status_.total_items > partial_failed ? status_.total_items - partial_failed : 0;
     const bool moving = status_.type == ops::OpType::Move;
     const bool deleting = status_.type == ops::OpType::RecycleDelete
                        || status_.type == ops::OpType::RealDelete;
+    const uint64_t partial_failed = partial ? status_.failed_items : 0;
+    // A delete counts what it removed: items it skipped are neither.
+    const uint64_t partial_done = deleting ? status_.completed_items
+        : status_.total_items > partial_failed ? status_.total_items - partial_failed : 0;
     const bool restoring = status_.type == ops::OpType::RestoreRecycle;
     const bool emptying = status_.type == ops::OpType::EmptyRecycle;
     // 新建 and 重命名 go through the same window (opened from the status pill)
@@ -2880,7 +2888,8 @@ void FileOperationWindow::Render() {
         title = l10n::Get(creating ? l10n::StringId::OpCreatingPrefix : l10n::StringId::OpRenamingPrefix) +
             pulse::format::GroupedInt(item_count) + items_suffix;
     } else if (partial) {
-        title = FormatCounts(moving ? l10n::StringId::OpMovePartialTitle : l10n::StringId::OpCopyPartialTitle,
+        title = FormatCounts(deleting ? l10n::StringId::OpDeletePartialTitle
+                             : moving ? l10n::StringId::OpMovePartialTitle : l10n::StringId::OpCopyPartialTitle,
                              partial_done, partial_failed);
     } else if (failed) {
         title = l10n::Get(deleting ? l10n::StringId::OpDeleteFailed : restoring ? l10n::StringId::OpRestoreFailed

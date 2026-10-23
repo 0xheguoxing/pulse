@@ -2923,5 +2923,7 @@
 #define IDS_NETWORK_INDEX_NEEDS_SHARE                                                    4129
 #define IDS_NETWORK_INDEX_NO_WSL                                                         4130
 #define IDS_DATE_LAST_WEEK_FORMAT                                                        4131
+#define IDS_OP_DELETE_PARTIAL_TITLE                                                      4132
+#define IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED                                            4133
 
 #endif  // PULSE_STRING_IDS_H

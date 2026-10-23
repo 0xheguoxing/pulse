@@ -2905,6 +2905,8 @@ BEGIN
     IDS_NETWORK_INDEX_NEEDS_SHARE "这是本机上的文件夹。请选择服务器共享里的文件夹，或映射的网络驱动器；本地磁盘在「本地磁盘」中勾选即可索引。"
     IDS_NETWORK_INDEX_NO_WSL "WSL 中的文件不能加入网络索引：持续扫描会让 WSL 无法关闭。可以打开该文件夹，把它钉为网络位置。"
     IDS_DATE_LAST_WEEK_FORMAT "上%s"
+    IDS_OP_DELETE_PARTIAL_TITLE "已删除 %s 项，%s 项未成功"
+    IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED "路径太长，无法移到回收站，未删除。可用 Shift+Delete 永久删除"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5809,6 +5811,8 @@ BEGIN
     IDS_NETWORK_INDEX_NEEDS_SHARE "That's a folder on this PC. Choose a folder on a server share or a mapped network drive. To index a local disk, check it under Local drives."
     IDS_NETWORK_INDEX_NO_WSL "Files in WSL can't be added to the network index: constant scanning keeps WSL from shutting down. You can open the folder and pin it as a network location instead."
     IDS_DATE_LAST_WEEK_FORMAT "Last %s"
+    IDS_OP_DELETE_PARTIAL_TITLE "Deleted %s items, %s didn't go through"
+    IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED "The path is too long for the Recycle Bin, so it was not deleted. Shift+Delete deletes it permanently."
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

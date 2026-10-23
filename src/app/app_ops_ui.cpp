@@ -479,6 +479,17 @@ void NoteDeleteFinished(AppState& s, const ops::FinishedTask& done) {
         if (done.success) s.leavingDoneAt = ui::motion::NowMs();
         else s.leavingPaths.clear();
     }
+    if (done.type == ops::OpType::RecycleDelete && !done.recycle_refused.empty() && s.hwnd) {
+        // Asked from a posted message: this runs inside the ops notification.
+        const bool first = s.recycleRefused.empty();
+        s.recycleRefused.insert(s.recycleRefused.end(), done.recycle_refused.begin(), done.recycle_refused.end());
+        using Refusal = ops::RecycleRefusal;
+        const Refusal why = done.recycle_refusal;
+        if (why == Refusal::Location || s.recycleRefusal == Refusal::None ||
+            (why == Refusal::Disabled && s.recycleRefusal == Refusal::TooLarge))
+            s.recycleRefusal = why;
+        if (first) PostMessageW(s.hwnd, WM_RECYCLE_REFUSED, 0, 0);
+    }
     if (done.type != ops::OpType::RecycleDelete || !done.success || done.sources.empty() ||
         !s.ops.CanUndo() || !s.hwnd)
         return;
@@ -552,6 +563,28 @@ void DeletePaths(AppState& s, std::vector<std::wstring> paths, bool permanent) {
     req.sources = std::move(paths);
     const std::vector<std::wstring> leaving = req.sources;
     MarkLeavingRows(s, leaving, s.ops.Submit(std::move(req)));
+}
+
+void OfferPermanentDeleteForRefused(AppState& s) {
+    std::vector<std::wstring> paths = std::move(s.recycleRefused);
+    const ops::RecycleRefusal refusal = s.recycleRefusal;
+    s.recycleRefused.clear();
+    s.recycleRefusal = ops::RecycleRefusal::None;
+    // What is still there (another task may have dealt with some meanwhile);
+    // a huge list is left to the delete to report.
+    if (paths.size() <= 256)
+        std::erase_if(paths, [](const std::wstring& path) {
+            return GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES;
+        });
+    if (paths.empty()) return;
+    using Reason = ui::PermanentDeleteInfo::NoBinReason;
+    const Reason reason = refusal == ops::RecycleRefusal::Location ? Reason::Location
+        : refusal == ops::RecycleRefusal::Disabled ? Reason::Disabled : Reason::TooLarge;
+    if (ConfirmPermanentDelete(s, paths, true, false, reason) != ui::PermanentDeleteChoice::Delete) return;
+    ops::OpRequest req;
+    req.type = ops::OpType::RealDelete;
+    req.sources = std::move(paths);
+    s.ops.Submit(std::move(req));
 }
 
 // ---------------------------------------------------------------------------

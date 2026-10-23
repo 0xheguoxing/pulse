@@ -13,6 +13,9 @@ void DeletePaths(AppState& s, std::vector<std::wstring> paths, bool permanent);
 // A delete finished: rows that slid out return if it failed; a recycle offers
 // "Deleted N items - Undo" (motion 5b).
 void NoteDeleteFinished(AppState& s, const ops::FinishedTask& done);
+// WM_RECYCLE_REFUSED: offers to delete for good what a recycle left because
+// the Recycle Bin would not keep it, as DeletePaths asks before a delete.
+void OfferPermanentDeleteForRefused(AppState& s);
 // Confirmation shown before Delete moves items to the Recycle Bin (opt-in setting).
 ui::ConfirmDialogSpec BuildRecycleDeleteConfirm(const std::vector<std::wstring>& paths);
 void RestoreSelected(AppState& s);

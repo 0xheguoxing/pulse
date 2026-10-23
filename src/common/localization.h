@@ -2915,6 +2915,8 @@ enum class StringId : UINT {
     NetworkIndexNeedsShare = IDS_NETWORK_INDEX_NEEDS_SHARE,
     NetworkIndexNoWsl = IDS_NETWORK_INDEX_NO_WSL,
     DateLastWeekFormat = IDS_DATE_LAST_WEEK_FORMAT,
+    OpDeletePartialTitle = IDS_OP_DELETE_PARTIAL_TITLE,
+    RecyclePathTooLongNotDeleted = IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

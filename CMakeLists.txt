@@ -752,7 +752,8 @@ target_link_libraries(pulse_create_rename_intent_test PRIVATE ole32 shell32 uuid
 # Locked-item lookup (Restart Manager) + end-process-and-retry through OpsManager.
 add_executable(pulse_file_lock_test src/bench/file_lock_owner_test.cpp
     src/ops/duplicate_cleanup_guard.cpp
-    src/ops/file_lock_owner.cpp src/ops/ops_manager.cpp src/ipc/shell_client.cpp)
+    src/ops/file_lock_owner.cpp src/ops/ops_manager.cpp src/ipc/shell_client.cpp
+    src/bench/localization_test.rc)
 target_link_libraries(pulse_file_lock_test PRIVATE ole32 shell32 uuid bcrypt rstrtmgr pulse_localization)
 
 # ---- Pulse.Shell.exe: COM isolation process (stage 1: recycle bin / IFileOperation) ----

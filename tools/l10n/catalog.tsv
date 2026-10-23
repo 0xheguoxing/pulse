@@ -2930,3 +2930,5 @@ NetworkHistoryCleared	IDS_NETWORK_HISTORY_CLEARED	4128	网络记录已清除	Net
 NetworkIndexNeedsShare	IDS_NETWORK_INDEX_NEEDS_SHARE	4129	这是本机上的文件夹。请选择服务器共享里的文件夹，或映射的网络驱动器；本地磁盘在「本地磁盘」中勾选即可索引。	That's a folder on this PC. Choose a folder on a server share or a mapped network drive. To index a local disk, check it under Local drives.	這是本機上的資料夾。請選擇伺服器共用中的資料夾，或對應的網路磁碟機；本機磁碟在「本機磁碟」中勾選即可索引。
 NetworkIndexNoWsl	IDS_NETWORK_INDEX_NO_WSL	4130	WSL 中的文件不能加入网络索引：持续扫描会让 WSL 无法关闭。可以打开该文件夹，把它钉为网络位置。	Files in WSL can't be added to the network index: constant scanning keeps WSL from shutting down. You can open the folder and pin it as a network location instead.	WSL 中的檔案不能加入網路索引：持續掃描會讓 WSL 無法關閉。可以開啟該資料夾，把它釘為網路位置。
 DateLastWeekFormat	IDS_DATE_LAST_WEEK_FORMAT	4131	上%s	Last %s	上%s
+OpDeletePartialTitle	IDS_OP_DELETE_PARTIAL_TITLE	4132	已删除 %s 项，%s 项未成功	Deleted %s items, %s didn't go through	已刪除 %s 項，%s 項未成功
+RecyclePathTooLongNotDeleted	IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED	4133	路径太长，无法移到回收站，未删除。可用 Shift+Delete 永久删除	The path is too long for the Recycle Bin, so it was not deleted. Shift+Delete deletes it permanently.	路徑太長，無法移到資源回收筒，未刪除。可用 Shift+Delete 永久刪除
