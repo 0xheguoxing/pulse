@@ -2745,6 +2745,15 @@ BEGIN
     IDS_GLOBAL_SEARCH_APPS "结果里显示应用"
     IDS_GLOBAL_SEARCH_APPS_DESC "开始菜单里的程序，排在最佳匹配之后"
     IDS_GLOBAL_SEARCH_GROUP_APPS "应用"
+    IDS_OP_CONFLICT_COPY_FROM "从 "
+    IDS_OP_CONFLICT_COPY_TO " 复制到 "
+    IDS_OP_CONFLICT_MOVE_FROM "从 "
+    IDS_OP_CONFLICT_MOVE_TO " 移动到 "
+    IDS_OP_CONFLICT_INCOMING_COPY "复制过来的"
+    IDS_OP_CONFLICT_INCOMING_MOVE "移动过来的"
+    IDS_OP_CONFLICT_ALREADY_THERE "目标中现有的"
+    IDS_OP_REPLACE_SHORT "替换"
+    IDS_OP_SKIP_SHORT "跳过"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5489,6 +5498,15 @@ BEGIN
     IDS_GLOBAL_SEARCH_APPS "Show apps in results"
     IDS_GLOBAL_SEARCH_APPS_DESC "Programs from the Start menu, right after the best matches"
     IDS_GLOBAL_SEARCH_GROUP_APPS "Apps"
+    IDS_OP_CONFLICT_COPY_FROM "Copying from "
+    IDS_OP_CONFLICT_COPY_TO " to "
+    IDS_OP_CONFLICT_MOVE_FROM "Moving from "
+    IDS_OP_CONFLICT_MOVE_TO " to "
+    IDS_OP_CONFLICT_INCOMING_COPY "Incoming"
+    IDS_OP_CONFLICT_INCOMING_MOVE "Incoming"
+    IDS_OP_CONFLICT_ALREADY_THERE "Already there"
+    IDS_OP_REPLACE_SHORT "Replace"
+    IDS_OP_SKIP_SHORT "Skip"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

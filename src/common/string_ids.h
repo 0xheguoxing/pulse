@@ -2759,5 +2759,14 @@
 #define IDS_GLOBAL_SEARCH_APPS                                                           3969
 #define IDS_GLOBAL_SEARCH_APPS_DESC                                                      3970
 #define IDS_GLOBAL_SEARCH_GROUP_APPS                                                     3971
+#define IDS_OP_CONFLICT_COPY_FROM                                                        3972
+#define IDS_OP_CONFLICT_COPY_TO                                                          3973
+#define IDS_OP_CONFLICT_MOVE_FROM                                                        3974
+#define IDS_OP_CONFLICT_MOVE_TO                                                          3975
+#define IDS_OP_CONFLICT_INCOMING_COPY                                                    3976
+#define IDS_OP_CONFLICT_INCOMING_MOVE                                                    3977
+#define IDS_OP_CONFLICT_ALREADY_THERE                                                    3978
+#define IDS_OP_REPLACE_SHORT                                                             3979
+#define IDS_OP_SKIP_SHORT                                                                3980
 
 #endif  // PULSE_STRING_IDS_H

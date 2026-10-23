@@ -2766,3 +2766,12 @@ DialogJumpFrequent	IDS_DIALOG_JUMP_FREQUENT	3968	常去的位置	Frequent places
 GlobalSearchApps	IDS_GLOBAL_SEARCH_APPS	3969	结果里显示应用	Show apps in results	結果裡顯示應用程式
 GlobalSearchAppsDesc	IDS_GLOBAL_SEARCH_APPS_DESC	3970	开始菜单里的程序，排在最佳匹配之后	Programs from the Start menu, right after the best matches	「開始」功能表裡的程式，排在最佳符合之後
 GlobalSearchGroupApps	IDS_GLOBAL_SEARCH_GROUP_APPS	3971	应用	Apps	應用程式
+OpConflictCopyFrom	IDS_OP_CONFLICT_COPY_FROM	3972	从 	Copying from 	從 
+OpConflictCopyTo	IDS_OP_CONFLICT_COPY_TO	3973	 复制到 	 to 	 複製到 
+OpConflictMoveFrom	IDS_OP_CONFLICT_MOVE_FROM	3974	从 	Moving from 	從 
+OpConflictMoveTo	IDS_OP_CONFLICT_MOVE_TO	3975	 移动到 	 to 	 移動到 
+OpConflictIncomingCopy	IDS_OP_CONFLICT_INCOMING_COPY	3976	复制过来的	Incoming	複製過來的
+OpConflictIncomingMove	IDS_OP_CONFLICT_INCOMING_MOVE	3977	移动过来的	Incoming	移動過來的
+OpConflictAlreadyThere	IDS_OP_CONFLICT_ALREADY_THERE	3978	目标中现有的	Already there	目標中現有的
+OpReplaceShort	IDS_OP_REPLACE_SHORT	3979	替换	Replace	替換
+OpSkipShort	IDS_OP_SKIP_SHORT	3980	跳过	Skip	跳過

@@ -2755,6 +2755,15 @@ enum class StringId : UINT {
     GlobalSearchApps = IDS_GLOBAL_SEARCH_APPS,
     GlobalSearchAppsDesc = IDS_GLOBAL_SEARCH_APPS_DESC,
     GlobalSearchGroupApps = IDS_GLOBAL_SEARCH_GROUP_APPS,
+    OpConflictCopyFrom = IDS_OP_CONFLICT_COPY_FROM,
+    OpConflictCopyTo = IDS_OP_CONFLICT_COPY_TO,
+    OpConflictMoveFrom = IDS_OP_CONFLICT_MOVE_FROM,
+    OpConflictMoveTo = IDS_OP_CONFLICT_MOVE_TO,
+    OpConflictIncomingCopy = IDS_OP_CONFLICT_INCOMING_COPY,
+    OpConflictIncomingMove = IDS_OP_CONFLICT_INCOMING_MOVE,
+    OpConflictAlreadyThere = IDS_OP_CONFLICT_ALREADY_THERE,
+    OpReplaceShort = IDS_OP_REPLACE_SHORT,
+    OpSkipShort = IDS_OP_SKIP_SHORT,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

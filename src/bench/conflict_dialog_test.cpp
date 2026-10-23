@@ -129,10 +129,10 @@ bool SaveShot(HWND dialog, HWND tip, const std::wstring& path) {
 }
 
 // Layout in DIPs (file_operation_dialog.cpp ConflictWindow).
-constexpr float kSourcePathX = 20 + 12 + 100, kDestinationPathX = 298 + 12 + 100, kPathY = 100 + 88 + 8;
+constexpr float kSourcePathX = 24 + 100, kDestinationPathX = 266.5f + 100, kPathY = 82 + 90 + 8;
 constexpr float kRowX = 280;
-float RowY(int index) { return 226 + index * 58.0f + 26; }
-constexpr float kApplyY = 404 + 15;
+float RowY(int index) { return 204 + index * 56.0f + 27; }
+constexpr float kApplyY = 390 + 32;
 
 void Shot(HWND dialog, HWND tip, const wchar_t* name) {
     if (g_shots.empty()) return;
@@ -152,8 +152,8 @@ void StepTips(HWND dialog, UINT_PTR timer) {
         UpdateWindow(dialog);
         RECT client{};
         GetClientRect(dialog, &client);
-        Check(std::abs(client.bottom - static_cast<LONG>(470 * Scale(dialog))) <= 2,
-              "a lone conflict has no apply-to-the-rest row (470 DIP)");
+        Check(std::abs(client.bottom - static_cast<LONG>(454 * Scale(dialog))) <= 2,
+              "a lone conflict is 454 DIP tall");
         Check(TipAt(tip, dialog, source_box) == g_source, "hovering the source path shows it whole");
         Check(TipAt(tip, dialog, destination_box) == g_destination,
               "hovering the destination path shows it whole");
@@ -197,8 +197,8 @@ void StepPreview(HWND dialog, UINT_PTR timer) {
     case 0: {
         RECT client{};
         GetClientRect(dialog, &client);
-        Check(std::abs(client.bottom - static_cast<LONG>(506 * Scale(dialog))) <= 2,
-              "more conflicts add the apply-to-the-rest row (506 DIP)");
+        Check(std::abs(client.bottom - static_cast<LONG>(454 * Scale(dialog))) <= 2,
+              "more conflicts keep the height; the checkbox sits in the footer (454 DIP)");
         Shot(dialog, nullptr, L"idle");
         Key(dialog, VK_TAB);
         return;

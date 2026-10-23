@@ -8,6 +8,9 @@
 
 #include <windowsx.h>
 #include <commctrl.h>
+#include <commoncontrols.h>
+#include <shellapi.h>
+#include <shlobj.h>
 #include <dwmapi.h>
 #include <imm.h>
 #include <wincodec.h>
@@ -488,10 +491,6 @@ std::wstring FormatElapsed(uint64_t seconds) {
     return FormatDuration(seconds);
 }
 
-// File conflict, pulse_ops_dialogs.html §3: source and destination side by
-// side (size, time, 更大 / 较新), three choices that preview their result on
-// hover (replace greys the destination, skip greys the source, keep both
-// shows the new name), R / S / K, and 对其余 N 个冲突执行相同操作 as a switch.
 // Thumbnail colours by extension (images, video, audio, archives,
 // documents, binaries); folders get the folder amber.
 void ThumbColors(const std::wstring& name, bool directory, D2D1_COLOR_F& top,
@@ -525,6 +524,111 @@ void ThumbColors(const std::wstring& name, bool directory, D2D1_COLOR_F& top,
     }
 }
 
+// File conflict, Pulse_文件操作对话框_重设计.html §2: what arrives and what
+// is there side by side (the shell's icon, size, time, 更大 / 较新 in green),
+// then the three choices as list rows. Hover or keyboard focus lights a row
+// with the WinUI selection bar; each row says what it will do (保留两者 names
+// the copy). R / S / K; 对其余 N 个冲突执行相同操作 sits in the footer.
+
+// The shell's icon for a name of that type (no disk access), at least
+// `pixels` tall where the shell has one; null when it has none.
+HICON ShellTypeIcon(const std::wstring& name, bool directory, float pixels) {
+    SHFILEINFOW info{};
+    const DWORD attributes = directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+    if (!SHGetFileInfoW(name.c_str(), attributes, &info, sizeof(info),
+                        SHGFI_SYSICONINDEX | SHGFI_USEFILEATTRIBUTES))
+        return nullptr;
+    IImageList* list = nullptr;
+    if (FAILED(SHGetImageList(pixels <= 32.5f ? SHIL_LARGE : SHIL_EXTRALARGE, __uuidof(IImageList),
+                              reinterpret_cast<void**>(&list))) || !list)
+        return nullptr;
+    HICON icon = nullptr;
+    if (FAILED(list->GetIcon(info.iIcon, ILD_TRANSPARENT, &icon))) icon = nullptr;
+    list->Release();
+    return icon;
+}
+
+// 32-DIP blank page (the HTML's file icon) for when the shell has no icon.
+void DrawPageIcon(ID2D1DeviceContext* dc, float x, float y, float s) {
+    auto factory = FactoryOf(dc);
+    if (!factory.get()) return;
+    auto P = [&](float px, float py) { return D2D1::Point2F(x + px * s, y + py * s); };
+    ComPtr<ID2D1PathGeometry> page;
+    ComPtr<ID2D1PathGeometry> fold;
+    if (FAILED(factory->CreatePathGeometry(&page)) || FAILED(factory->CreatePathGeometry(&fold))) return;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (SUCCEEDED(page->Open(&sink))) {
+        sink->BeginFigure(P(7, 3), D2D1_FIGURE_BEGIN_FILLED);
+        const D2D1_POINT_2F points[] = { P(19, 3), P(26, 10), P(26, 29), P(6, 29), P(6, 3) };
+        sink->AddLines(points, ARRAYSIZE(points));
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+        sink->Close();
+    }
+    sink.reset();
+    if (SUCCEEDED(fold->Open(&sink))) {
+        sink->BeginFigure(P(19, 3), D2D1_FIGURE_BEGIN_FILLED);
+        const D2D1_POINT_2F points[] = { P(19, 10), P(26, 10) };
+        sink->AddLines(points, ARRAYSIZE(points));
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+        sink->Close();
+    }
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(dc->CreateSolidColorBrush(HexColor(0xFFFFFF), &brush))) return;
+    dc->FillGeometry(page.get(), brush.get());
+    brush->SetColor(HexColor(0xE9ECF0));
+    dc->FillGeometry(fold.get(), brush.get());
+    brush->SetColor(HexColor(0x9AA1AB));
+    dc->DrawGeometry(page.get(), brush.get(), s);
+    dc->DrawGeometry(fold.get(), brush.get(), s);
+}
+
+// The choice glyphs (20 DIP, 1.3 stroke): 0 replace, 1 skip, 2 keep both.
+void DrawChoiceGlyph(ID2D1DeviceContext* dc, int index, float x, float y, float s, D2D1_COLOR_F color) {
+    auto factory = FactoryOf(dc);
+    if (!factory.get()) return;
+    auto P = [&](float px, float py) { return D2D1::Point2F(x + px * s, y + py * s); };
+    ComPtr<ID2D1PathGeometry> path;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(factory->CreatePathGeometry(&path)) || FAILED(path->Open(&sink))) return;
+    auto polyline = [&](std::initializer_list<D2D1_POINT_2F> points) {
+        auto it = points.begin();
+        sink->BeginFigure(*it, D2D1_FIGURE_BEGIN_HOLLOW);
+        for (++it; it != points.end(); ++it) sink->AddLine(*it);
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+    };
+    auto arc = [&](D2D1_POINT_2F to) {
+        sink->AddArc(D2D1::ArcSegment(to, D2D1::SizeF(1.5f * s, 1.5f * s), 0.0f,
+                                      D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
+    };
+    if (index == 0) {
+        polyline({ P(4, 7.5f), P(15, 7.5f), P(12, 4.5f) });
+        polyline({ P(16, 12.5f), P(5, 12.5f), P(8, 15.5f) });
+    } else if (index == 1) {
+        polyline({ P(4.5f, 5.5f), P(9, 10), P(4.5f, 14.5f) });
+        polyline({ P(10.5f, 5.5f), P(15, 10), P(10.5f, 14.5f) });
+    } else {
+        // The sheet behind, where the front one does not cover it.
+        sink->BeginFigure(P(7.5f, 6.5f), D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(P(7.5f, 5));
+        arc(P(9, 3.5f));
+        sink->AddLine(P(15, 3.5f));
+        arc(P(16.5f, 5));
+        sink->AddLine(P(16.5f, 12));
+        arc(P(15, 13.5f));
+        sink->AddLine(P(12.5f, 13.5f));
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+    }
+    if (FAILED(sink->Close())) return;
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(dc->CreateSolidColorBrush(color, &brush))) return;
+    auto style = RoundStroke(factory.get());
+    dc->DrawGeometry(path.get(), brush.get(), 1.3f * s, style.get());
+    if (index == 2)
+        dc->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x + 3.5f * s, y + 6.5f * s, x + 12.5f * s, y + 16.5f * s),
+                                                   1.5f * s, 1.5f * s),
+                                 brush.get(), 1.3f * s, style.get());
+}
+
 class ConflictWindow {
 public:
     ConflictDialogResult Show(HWND owner, const ops::ConflictItemInfo& conflict,
@@ -538,6 +642,9 @@ public:
         dark_ = dark;
         accent_ = accent;
         scale_ = static_cast<float>(pulse::compat::WindowDpi(owner)) / 96.0f;
+        icons_[0] = ShellTypeIcon(LeafName(conflict_.source), conflict_.source_is_directory, 32.0f * scale_);
+        icons_[1] = ShellTypeIcon(LeafName(conflict_.destination), conflict_.destination_is_directory,
+                                  32.0f * scale_);
 
         WNDCLASSEXW wc{ sizeof(wc) };
         wc.hInstance = GetModuleHandleW(nullptr);
@@ -553,7 +660,7 @@ public:
             WS_POPUP | WS_THICKFRAME | WS_SYSMENU,
             CW_USEDEFAULT, CW_USEDEFAULT, width, height, owner, nullptr,
             wc.hInstance, this);
-        if (!hwnd_) return result_;
+        if (!hwnd_) { ReleaseIcons(); return result_; }
         pulse::ui::CenterOwnedWindow(hwnd_, owner_, width, height);
         EnableWindow(owner_, FALSE);
         ShowWindow(hwnd_, SW_SHOW);
@@ -570,17 +677,23 @@ public:
         if (IsWindow(hwnd_)) { HideComposedDialog(hwnd_, owner_); DestroyWindow(hwnd_); }
         hwnd_ = nullptr;
         EnableWindow(owner_, TRUE);
+        ReleaseIcons();
         return result_;
     }
 
 private:
-    static constexpr float kConflictW = 560.0f;
-    static constexpr float kCompareTop = 100.0f;
-    static constexpr float kCompareH = 112.0f;
-    static constexpr float kCardW = 242.0f;
-    static constexpr float kActionsTop = 226.0f;
-    static constexpr float kActionH = 52.0f;
-    static constexpr float kFooterH = 56.0f;
+    // Layout in DIPs (the HTML's modal: 24 padding, 18/24 headline at 18,
+    // compare block 82-188, rows 204 / 260 / 316, 64 footer).
+    static constexpr float kConflictW = 500.0f;
+    static constexpr float kPad = 24.0f;
+    static constexpr float kCompareTop = 82.0f;   // labels; items +28, paths +90
+    static constexpr float kCompareH = 106.0f;
+    static constexpr float kColW = 209.5f;        // two columns, 16 gaps around a 1 px rule
+    static constexpr float kActionsTop = 204.0f;
+    static constexpr float kActionH = 54.0f;
+    static constexpr float kActionGap = 2.0f;
+    static constexpr float kFooterH = 64.0f;
+    static constexpr float kHeightDip = 454.0f;
     static constexpr UINT_PTR kAnimTimer = 2;
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -604,7 +717,7 @@ private:
     }
 
     bool ShowsApplyAll() const { return conflict_.remaining > 1; }
-    float HeightDip() const { return ShowsApplyAll() ? 506.0f : 470.0f; }
+    float HeightDip() const { return kHeightDip; }
     size_t Ordinal() const { return (std::max)(conflict_.ordinal, static_cast<size_t>(1)); }
     size_t Total() const {
         return Ordinal() - 1 + (std::max)(conflict_.remaining, static_cast<size_t>(1));
@@ -619,21 +732,22 @@ private:
     bool DestinationNewer() const { return NewerThan(conflict_.destination_modified, conflict_.source_modified); }
     bool Files() const { return !conflict_.source_is_directory && !conflict_.destination_is_directory; }
 
-    D2D1_RECT_F CloseRect() const { return Rect(scale_, kConflictW - 46, 0, 46, 40); }
-    D2D1_RECT_F CardRect(int side) const {
-        return Rect(scale_, side == 0 ? 20.0f : kConflictW - 20.0f - kCardW, kCompareTop, kCardW, kCompareH);
-    }
-    D2D1_RECT_F PathRect(int side) const {
-        const float x = side == 0 ? 20.0f : kConflictW - 20.0f - kCardW;
-        return Rect(scale_, x + 12, kCompareTop + 88, kCardW - 24, 16);
-    }
+    D2D1_RECT_F CloseRect() const { return Rect(scale_, kConflictW - 44, 4, 40, 32); }
+    static float ColumnX(int side) { return side == 0 ? kPad : kConflictW - kPad - kColW; }
+    D2D1_RECT_F PathRect(int side) const { return Rect(scale_, ColumnX(side), kCompareTop + 90, kColW, 16); }
     D2D1_RECT_F ActionRect(int index) const {
-        return Rect(scale_, 20, kActionsTop + index * (kActionH + 6.0f), kConflictW - 40, kActionH);
+        return Rect(scale_, kPad - 8, kActionsTop + index * (kActionH + kActionGap), kConflictW - (kPad - 8) * 2,
+                    kActionH);
     }
-    D2D1_RECT_F ApplyRect() const { return Rect(scale_, 20, 404, kConflictW - 40, 30); }
+    static float FooterTop() { return kHeightDip - kFooterH; }
+    D2D1_RECT_F ApplyRect() const { return Rect(scale_, kPad, FooterTop() + 16, 300, 32); }
     D2D1_RECT_F CancelRect() const {
-        const float h = HeightDip();
-        return Rect(scale_, kConflictW - 20 - 98, h - kFooterH + 11, 98, 34);
+        const float w = (std::max)(painter_.MeasureButtonWidth(l10n::Get(l10n::StringId::Cancel)),
+                                   ScaleDip(scale_, 80.0f));
+        const float h = painter_.MeasureButtonHeight();
+        const float right = (kConflictW - kPad) * scale_;
+        const float top = (FooterTop() + kFooterH * 0.5f) * scale_ - h * 0.5f;
+        return D2D1::RectF(right - w, top, right, top + h);
     }
 
     int Hit(float x, float y) const {
@@ -695,192 +809,130 @@ private:
             out->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         };
-        make(head_format_, typography::FontRole::Text, 15.5f, DWRITE_FONT_WEIGHT_BOLD);
-        make(name_format_, typography::FontRole::Text, 13.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        make(head_format_, typography::FontRole::Display, 18.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        make(sub_format_, typography::FontRole::Text, 13.0f, DWRITE_FONT_WEIGHT_NORMAL);
+        make(name_format_, typography::FontRole::Text, 14.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        make(body_format_, typography::FontRole::Text, 14.0f, DWRITE_FONT_WEIGHT_NORMAL);
         make(meta_format_, typography::FontRole::Text, 12.0f, DWRITE_FONT_WEIGHT_NORMAL);
-        make(meta_bold_format_, typography::FontRole::Text, 12.0f, DWRITE_FONT_WEIGHT_BOLD);
-        make(label_format_, typography::FontRole::Text, 11.0f, DWRITE_FONT_WEIGHT_BOLD);
-        make(tiny_format_, typography::FontRole::Text, 10.5f, DWRITE_FONT_WEIGHT_BOLD);
-        make(ext_format_, typography::FontRole::Text, 8.5f, DWRITE_FONT_WEIGHT_HEAVY);
-        make(glyph_format_, typography::FontRole::Icon, 14.0f, DWRITE_FONT_WEIGHT_NORMAL);
-        make(big_glyph_format_, typography::FontRole::Icon, 18.0f, DWRITE_FONT_WEIGHT_NORMAL);
-        if (glyph_format_.get()) glyph_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        if (big_glyph_format_.get()) big_glyph_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     }
 
-    void DrawCompareCard(const Theme& theme, int side) {
+    void ReleaseIcons() {
+        for (HICON& icon : icons_) {
+            if (icon) DestroyIcon(icon);
+            icon = nullptr;
+        }
+    }
+
+    ID2D1Bitmap* IconBitmap(int side) {
+        if (!icons_[side]) return nullptr;
+        if (icon_bitmaps_[side].get()) return icon_bitmaps_[side].get();
+        if (!wic_.get() && FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                                   IID_PPV_ARGS(&wic_))))
+            return nullptr;
+        ComPtr<IWICBitmap> source;
+        ComPtr<IWICFormatConverter> converter;
+        if (FAILED(wic_->CreateBitmapFromHICON(icons_[side], &source)) ||
+            FAILED(wic_->CreateFormatConverter(&converter)) ||
+            FAILED(converter->Initialize(source.get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone,
+                                         nullptr, 0.0, WICBitmapPaletteTypeMedianCut)) ||
+            FAILED(compositor_.Dc()->CreateBitmapFromWicBitmap(converter.get(), nullptr, &icon_bitmaps_[side]))) {
+            icon_bitmaps_[side].reset();
+            return nullptr;
+        }
+        return icon_bitmaps_[side].get();
+    }
+
+    // One side of the comparison: label, icon, name, size and time (更大 /
+    // 较新 in green after a dot), and the folder it is in.
+    void DrawCompareColumn(const Theme& theme, int side, D2D1_COLOR_F text3, D2D1_COLOR_F ok) {
         auto* dc = compositor_.Dc();
         const bool source = side == 0;
         const float s = scale_;
-        const float x = source ? 20.0f : kConflictW - 20.0f - kCardW;
+        const float x = ColumnX(side);
         const float y = kCompareTop;
-        // Replace greys the destination and nudges the source toward it;
-        // skip greys the source; keep both rings both.
-        const float dim = source ? weight_[2] : weight_[1];
-        const float shift = source ? 6.0f * weight_[1] : 0.0f;
-        const float cx = x + shift;
-        const D2D1_COLOR_F green = dark_ ? HexColor(0x3CCF8E) : HexColor(0x16A36A);
-        const D2D1_COLOR_F sky = dark_ ? HexColor(0x38BDF8) : HexColor(0x0284C7);
-        const D2D1_COLOR_F violet = dark_ ? HexColor(0xA78BFA) : HexColor(0x7C5CE6);
-        const D2D1_COLOR_F red = dark_ ? HexColor(0xF0625B) : HexColor(0xD93D36);
-        const D2D1_COLOR_F well = dark_ ? HexColor(0xFFFFFF, 0.045f) : HexColor(0x000000, 0.035f);
-        const D2D1_COLOR_F line = dark_ ? HexColor(0xFFFFFF, 0.07f) : HexColor(0x000000, 0.07f);
-        const auto card = Rect(s, cx, y, kCardW, kCompareH);
-        painter_.FillRoundedRect(card, ScaleDip(s, 11.0f), well);
-        painter_.StrokeRoundedRect(card, ScaleDip(s, 11.0f), line);
-        const float ring = source ? (std::max)(weight_[1], weight_[3]) : (std::max)(weight_[2], weight_[3]);
-        if (ring > 0.01f) {
-            D2D1_COLOR_F color = weight_[3] > 0.01f ? violet : source ? green : sky;
-            painter_.StrokeRoundedRect(card, ScaleDip(s, 11.0f), WithAlpha(color, ring), 1.5f * s);
-        }
+        const bool moving = conflict_.type == ops::OpType::Move;
+        const l10n::StringId label = !source ? l10n::StringId::OpConflictAlreadyThere
+            : moving ? l10n::StringId::OpConflictIncomingMove : l10n::StringId::OpConflictIncomingCopy;
+        DrawEllipsizedText(compositor_, meta_format_.get(), Rect(s, x, y, kColW, 20), l10n::Get(label),
+                           theme.text_secondary);
+
+        const auto icon = Rect(s, x, y + 28, 32, 32);
+        if (ID2D1Bitmap* bitmap = IconBitmap(side))
+            dc->DrawBitmap(bitmap, icon, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        else
+            DrawPageIcon(dc, icon.left, icon.top, s);
 
         const std::wstring name = LeafName(source ? conflict_.source : conflict_.destination);
         const bool directory = source ? conflict_.source_is_directory : conflict_.destination_is_directory;
-        const float alpha = 1.0f - 0.55f * dim;
-        auto fade = [&](D2D1_COLOR_F c) { c.a *= alpha; return c; };
-
-        painter_.DrawText(l10n::Get(source ? l10n::StringId::OpSource : l10n::StringId::OpExisting),
-                          Rect(s, cx + 12, y + 8, kCardW - 24, 16), label_format_.get(),
-                          fade(WithAlpha(theme.text, 0.45f)));
-
-        // Thumbnail: gradient tile with a folded corner and the extension.
-        D2D1_COLOR_F top{}, bottom{};
-        std::wstring ext;
-        ThumbColors(name, directory, top, bottom, ext);
-        if (dim > 0.01f) {
-            const float grey = (top.r + top.g + top.b) / 3.0f;
-            const float grey2 = (bottom.r + bottom.g + bottom.b) / 3.0f;
-            top = D2D1::ColorF(top.r + (grey - top.r) * dim, top.g + (grey - top.g) * dim, top.b + (grey - top.b) * dim, alpha);
-            bottom = D2D1::ColorF(bottom.r + (grey2 - bottom.r) * dim, bottom.g + (grey2 - bottom.g) * dim,
-                                  bottom.b + (grey2 - bottom.b) * dim, alpha);
-        }
-        const auto thumb = Rect(s, cx + 12, y + 28, 40, 50);
-        FillGradientTile(dc, thumb, ScaleDip(s, 7.0f), top, bottom);
-        if (directory) {
-            painter_.DrawGlyphWithFormat(L"\xE8B7", thumb, fade(HexColor(0xFFFFFF, 0.92f)), big_glyph_format_.get());
-        } else {
-            // Folded corner.
-            auto factory = FactoryOf(dc);
-            ComPtr<ID2D1PathGeometry> corner;
-            if (factory.get() && SUCCEEDED(factory->CreatePathGeometry(&corner))) {
-                ComPtr<ID2D1GeometrySink> sink;
-                if (SUCCEEDED(corner->Open(&sink))) {
-                    const float c = ScaleDip(s, 10.0f);
-                    sink->BeginFigure(D2D1::Point2F(thumb.right - c, thumb.top), D2D1_FIGURE_BEGIN_FILLED);
-                    sink->AddLine(D2D1::Point2F(thumb.right, thumb.top + c));
-                    sink->AddLine(D2D1::Point2F(thumb.right - c, thumb.top + c));
-                    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-                    if (SUCCEEDED(sink->Close())) {
-                        ComPtr<ID2D1SolidColorBrush> brush;
-                        if (SUCCEEDED(dc->CreateSolidColorBrush(HexColor(0xFFFFFF, 0.30f * alpha), &brush)))
-                            dc->FillGeometry(corner.get(), brush.get());
-                    }
-                }
+        const float tx = x + 44.0f;
+        const float tw = kColW - 44.0f;
+        DrawEllipsizedText(compositor_, name_format_.get(), Rect(s, tx, y + 28, tw, 20), name, theme.text);
+        auto meta_line = [&](float row_y, const std::wstring& value, const std::wstring& badge) {
+            if (badge.empty()) {
+                DrawEllipsizedText(compositor_, meta_format_.get(), Rect(s, tx, row_y, tw, 18), value,
+                                   theme.text_secondary);
+                return;
             }
-            if (!ext.empty()) {
-                const float w = TextWidth(compositor_.DwriteFactory(), ext_format_.get(), ext) / s + 7.0f;
-                const auto tag = Rect(s, cx + 16, y + 63, (std::min)(w, 32.0f), 12);
-                painter_.FillRoundedRect(tag, ScaleDip(s, 3.0f), HexColor(0x000000, 0.25f * alpha));
-                painter_.DrawText(ext, tag, ext_format_.get(), fade(HexColor(0xFFFFFF)),
-                                  fluent::HorizontalAlignment::Center);
-            }
-        }
-
-        const float tx = cx + 62;
-        const float tw = kCardW - 74;
-        DrawEllipsizedText(compositor_, name_format_.get(), Rect(s, tx, y + 27, tw, 20), name, fade(theme.text));
-        auto meta_line = [&](float row_y, const std::wstring& value, bool bold, const std::wstring& badge) {
-            IDWriteTextFormat* format = bold ? meta_bold_format_.get() : meta_format_.get();
-            const float w = (std::min)(tw, TextWidth(compositor_.DwriteFactory(), format, value) / s);
-            painter_.DrawText(value, Rect(s, tx, row_y, w + 2, 17), format,
-                              fade(bold ? theme.text : theme.text_secondary));
-            if (!badge.empty()) {
-                const float bw = TextWidth(compositor_.DwriteFactory(), tiny_format_.get(), badge) / s + 12.0f;
-                const auto chip = Rect(s, tx + w + 6, row_y, bw, 17);
-                painter_.FillRoundedRect(chip, ScaleDip(s, 5.0f), WithAlpha(green, (dark_ ? 0.16f : 0.12f) * alpha));
-                painter_.DrawText(badge, chip, tiny_format_.get(), fade(green), fluent::HorizontalAlignment::Center);
-            }
+            const std::wstring dot = L" \x00B7 ";
+            auto* factory = compositor_.DwriteFactory();
+            const float dot_w = TextWidth(factory, meta_format_.get(), dot) / s;
+            const float badge_w = TextWidth(factory, meta_format_.get(), badge) / s;
+            const float value_w = (std::min)(TextWidth(factory, meta_format_.get(), value) / s,
+                                             (std::max)(tw - dot_w - badge_w, 0.0f));
+            DrawEllipsizedText(compositor_, meta_format_.get(), Rect(s, tx, row_y, value_w + 1, 18), value,
+                               theme.text_secondary);
+            painter_.DrawText(dot, Rect(s, tx + value_w, row_y, dot_w + 1, 18), meta_format_.get(),
+                              theme.text_secondary);
+            painter_.DrawText(badge, Rect(s, tx + value_w + dot_w, row_y, badge_w + 2, 18), meta_format_.get(), ok);
         };
         const uint64_t size = source ? conflict_.source_size : conflict_.destination_size;
         const uint64_t other = source ? conflict_.destination_size : conflict_.source_size;
         const bool larger = Files() && size > other;
         const bool newer = source ? SourceNewer() : DestinationNewer();
-        meta_line(y + 49, directory ? l10n::Get(l10n::StringId::OpFolderKind) : pulse::format::ByteSize(size),
-                  !directory, larger ? l10n::Get(l10n::StringId::OpLarger) : std::wstring());
-        meta_line(y + 67, pulse::format::LocalFileTime(source ? conflict_.source_modified : conflict_.destination_modified,
+        meta_line(y + 48, directory ? l10n::Get(l10n::StringId::OpFolderKind) : pulse::format::ByteSize(size),
+                  larger ? l10n::Get(l10n::StringId::OpLarger) : std::wstring());
+        meta_line(y + 66, pulse::format::LocalFileTime(source ? conflict_.source_modified : conflict_.destination_modified,
                                                        l10n::Get(l10n::StringId::OpUnknown).c_str()),
-                  false, newer ? l10n::Get(l10n::StringId::OpNewer) : std::wstring());
-
-        // Path, or for keep-both the name the copy will get.
-        const std::wstring& dir = source ? source_dir_ : destination_dir_;
-        const D2D1_COLOR_F faint = WithAlpha(theme.text, dark_ ? 0.42f : 0.48f);
-        const float ren = source ? weight_[3] : 0.0f;
-        if (ren > 0.01f && !conflict_.keep_both_name.empty()) {
-            DrawEllipsizedText(compositor_, meta_bold_format_.get(), Rect(s, cx + 12, y + 87, kCardW - 24, 17),
-                               l10n::Get(l10n::StringId::OpSaveAsLead) + conflict_.keep_both_name +
-                                   l10n::Get(l10n::StringId::OpQuoteClose),
-                               WithAlpha(violet, ren));
-            if (ren < 0.99f)
-                DrawEllipsizedText(compositor_, label_format_.get(), Rect(s, cx + 12, y + 88, kCardW - 24, 16),
-                                   dir, WithAlpha(faint, faint.a * (1.0f - ren)));
-        } else {
-            DrawEllipsizedText(compositor_, meta_format_.get(), Rect(s, cx + 12, y + 88, kCardW - 24, 16),
-                               dir, fade(faint));
-        }
-
-        // Result tag in the corner: 将被覆盖 on the destination, 不复制 on the source.
-        const float tag_alpha = source ? weight_[2] : weight_[1];
-        if (tag_alpha > 0.01f) {
-            const std::wstring text = source
-                ? l10n::Get(conflict_.type == ops::OpType::Move ? l10n::StringId::OpNotMoved : l10n::StringId::OpNotCopied)
-                : l10n::Get(l10n::StringId::OpWillBeReplaced);
-            const float w = TextWidth(compositor_.DwriteFactory(), tiny_format_.get(), text) / s + 14.0f;
-            const float lift = 3.0f * (1.0f - tag_alpha);
-            const auto tag = Rect(s, cx + kCardW - 10 - w, y + 9 - lift, w, 18);
-            painter_.FillRoundedRect(tag, ScaleDip(s, 5.0f),
-                source ? WithAlpha(dark_ ? HexColor(0x3A3A3E) : HexColor(0xE2E2E6), tag_alpha)
-                       : WithAlpha(red, tag_alpha));
-            painter_.DrawText(text, tag, tiny_format_.get(),
-                              WithAlpha(source ? theme.text : HexColor(0xFFFFFF), tag_alpha),
-                              fluent::HorizontalAlignment::Center);
-        }
+                  newer ? l10n::Get(l10n::StringId::OpNewer) : std::wstring());
+        // Cut to the column; hovering shows it whole (#55).
+        DrawEllipsizedText(compositor_, meta_format_.get(), PathRect(side), source ? source_dir_ : destination_dir_,
+                           text3);
     }
 
-    void DrawAction(const Theme& theme, int index, const std::wstring& title, const std::wstring& subtitle,
-                    const wchar_t* glyph, D2D1_COLOR_F tone, const wchar_t* key, const std::wstring& recommend) {
+    // A choice row: glyph, title over what it will do, the shortcut at the
+    // right. Hover / focus fades in the light fill and the 3-DIP accent bar.
+    void DrawChoice(const Theme& theme, int index, const std::wstring& title, const std::wstring& detail,
+                    const wchar_t* key, D2D1_COLOR_F accent, D2D1_COLOR_F text3, bool high_contrast) {
         const float s = scale_;
-        const auto bounds = ActionRect(index);
-        const bool hovered = hover_ == index + 1;
-        const bool pressed = pressed_ == index + 1;
+        const auto row = ActionRect(index);
+        const float lit = weight_[index + 1];
+        const bool pressed = pressed_ == index + 1 && hover_ == index + 1;
         const bool focused = keyboard_focus_ && focus_ == index;
-        const D2D1_COLOR_F well = dark_ ? HexColor(0xFFFFFF, hovered ? 0.085f : 0.045f)
-                                        : HexColor(0x000000, hovered ? 0.07f : 0.035f);
-        D2D1_RECT_F box = bounds;
-        if (pressed) {
-            const float inset = ScaleDip(s, 1.5f);
-            box = D2D1::RectF(box.left + inset, box.top + inset * 0.5f, box.right - inset, box.bottom - inset * 0.5f);
+        const D2D1_COLOR_F hover_fill = high_contrast ? WithAlpha(theme.text, 0.12f)
+            : dark_ ? HexColor(0xFFFFFF, 0.0605f) : HexColor(0x000000, 0.0373f);
+        const D2D1_COLOR_F press_fill = high_contrast ? WithAlpha(theme.text, 0.08f)
+            : dark_ ? HexColor(0xFFFFFF, 0.0419f) : HexColor(0x000000, 0.0241f);
+        const float radius = ScaleDip(s, 4.0f);
+        if (pressed) painter_.FillRoundedRect(row, radius, press_fill);
+        else if (lit > 0.01f) painter_.FillRoundedRect(row, radius, WithAlpha(hover_fill, hover_fill.a * lit));
+        if (lit > 0.01f) {
+            const float cy = (row.top + row.bottom) * 0.5f;
+            const auto bar = D2D1::RectF(row.left + ScaleDip(s, 2.0f), cy - ScaleDip(s, 8.0f),
+                                         row.left + ScaleDip(s, 5.0f), cy + ScaleDip(s, 8.0f));
+            painter_.FillRoundedRect(bar, ScaleDip(s, 1.5f), WithAlpha(accent, lit));
         }
-        painter_.FillRoundedRect(box, ScaleDip(s, 10.0f), well);
-        painter_.StrokeRoundedRect(box, ScaleDip(s, 10.0f),
-            focused ? (dark_ ? HexColor(0x8F9CF0) : theme.accent)
-                    : (dark_ ? HexColor(0xFFFFFF, 0.07f) : HexColor(0x000000, 0.07f)),
-            focused ? 1.5f * s : 1.0f);
-        const float y = kActionsTop + index * (kActionH + 6.0f);
-        const auto icon = Rect(s, 32, y + 11, 30, 30);
-        painter_.FillRoundedRect(icon, ScaleDip(s, 9.0f), WithAlpha(tone, dark_ ? 0.16f : 0.13f));
-        painter_.DrawGlyphWithFormat(glyph, icon, tone, glyph_format_.get());
-        const float title_w = TextWidth(compositor_.DwriteFactory(), name_format_.get(), title) / s;
-        painter_.DrawText(title, Rect(s, 74, y + 8, title_w + 2, 20), name_format_.get(), theme.text);
-        if (!recommend.empty()) {
-            const D2D1_COLOR_F green = dark_ ? HexColor(0x3CCF8E) : HexColor(0x16A36A);
-            const float w = TextWidth(compositor_.DwriteFactory(), tiny_format_.get(), recommend) / s + 14.0f;
-            const auto chip = Rect(s, 74 + title_w + 8, y + 9, w, 18);
-            painter_.FillRoundedRect(chip, ScaleDip(s, 9.0f), WithAlpha(green, dark_ ? 0.16f : 0.12f));
-            painter_.DrawText(recommend, chip, tiny_format_.get(), green, fluent::HorizontalAlignment::Center);
-        }
-        DrawEllipsizedText(compositor_, meta_format_.get(), Rect(s, 74, y + 28, kConflictW - 40 - 54 - 56, 17),
-                           subtitle, theme.text_secondary);
-        painter_.DrawBadge({ Rect(s, kConflictW - 20 - 12 - 28, y + 15, 28, 22), key, fluent::BadgeKind::Keycap });
+        if (focused) painter_.StrokeRoundedRect(row, radius, theme.text, 2.0f * s);
+
+        const float y = kActionsTop + index * (kActionH + kActionGap);
+        const float left = kPad - 8.0f;
+        const float right = kConflictW - left;
+        DrawChoiceGlyph(compositor_.Dc(), index, (left + 14.0f) * s, (y + 17.0f) * s, s, theme.text_secondary);
+        DrawEllipsizedText(compositor_, body_format_.get(), Rect(s, left + 48, y + 9, right - 40 - left - 48, 20),
+                           title, theme.text);
+        DrawEllipsizedText(compositor_, meta_format_.get(), Rect(s, left + 48, y + 29, right - 40 - left - 48, 16),
+                           detail, theme.text_secondary);
+        painter_.DrawText(key, Rect(s, right - 12 - 16, y + 17, 16, 20), meta_format_.get(), text3,
+                          fluent::HorizontalAlignment::Center);
     }
 
     void Render() {
@@ -890,6 +942,7 @@ private:
             painter_.SetCompositor(&compositor_);
             painter_.SetScale(scale_);
             CreateFormats();
+            for (auto& bitmap : icon_bitmaps_) bitmap.reset();
         }
         if (!compositor_.Dc()) return;
         if (!head_format_.get()) CreateFormats();
@@ -897,53 +950,40 @@ private:
         const bool high_contrast = IsHighContrast();
         const Theme theme = high_contrast ? MakeHighContrastTheme() : MakeTheme(dark_, accent_);
         pulse::ui::BeginSurface(compositor_, painter_, theme, dark_, high_contrast, backdrop_enabled_, s);
-        const D2D1_COLOR_F violet = dark_ ? HexColor(0xA78BFA) : HexColor(0x7C5CE6);
-        const D2D1_COLOR_F green = dark_ ? HexColor(0x3CCF8E) : HexColor(0x16A36A);
-        const D2D1_COLOR_F sky = dark_ ? HexColor(0x38BDF8) : HexColor(0x0284C7);
-        const D2D1_COLOR_F faint = WithAlpha(theme.text, dark_ ? 0.42f : 0.48f);
+        const D2D1_COLOR_F accent = high_contrast || !dark_ ? theme.accent
+            : D2D1::ColorF(theme.accent.r + (1.0f - theme.accent.r) * 0.28f,
+                           theme.accent.g + (1.0f - theme.accent.g) * 0.28f,
+                           theme.accent.b + (1.0f - theme.accent.b) * 0.28f, 1.0f);
+        const D2D1_COLOR_F text3 = WithAlpha(theme.text, dark_ ? 0.544f : 0.446f);
+        const D2D1_COLOR_F ok = high_contrast ? theme.accent : dark_ ? HexColor(0x6CCB5F) : HexColor(0x0F7B0F);
         const bool moving = conflict_.type == ops::OpType::Move;
 
-        // Title strip.
-        painter_.DrawText(l10n::Get(l10n::StringId::OpConflictTitle), Rect(s, 16, 0, 300, 40),
-                          compositor_.SmallFormat(), theme.text_secondary);
         fluent::ControlState close_state{};
         close_state.hovered = hover_ == 7;
         close_state.pressed = pressed_ == 7;
         painter_.DrawTitleBarButton(CloseRect(), fluent::TitleBarButtonRole::Close, {}, close_state);
 
-        // Header: tile, headline, where it happened, n / m.
-        const auto tile = Rect(s, 20, 46, 38, 38);
-        painter_.FillRoundedRect(tile, ScaleDip(s, 11.0f), WithAlpha(violet, dark_ ? 0.16f : 0.13f));
-        painter_.DrawGlyphWithFormat(L"\xE8AB", tile, violet, big_glyph_format_.get());
-        float head_right = kConflictW - 20.0f;
-        if (Total() > 1) {
-            const std::wstring count = l10n::Get(l10n::StringId::OpConflictCountLead) +
-                pulse::format::GroupedInt(Ordinal()) + l10n::Get(l10n::StringId::OpConflictCountSep) +
-                pulse::format::GroupedInt(Total()) + l10n::Get(l10n::StringId::OpConflictCountEnd);
-            const float w = TextWidth(compositor_.DwriteFactory(), tiny_format_.get(), count) / s + 18.0f;
-            const auto chip = Rect(s, kConflictW - 20 - w, 54, w, 22);
-            painter_.FillRoundedRect(chip, ScaleDip(s, 11.0f), WithAlpha(violet, dark_ ? 0.16f : 0.12f));
-            painter_.DrawText(count, chip, tiny_format_.get(), violet, fluent::HorizontalAlignment::Center);
-            head_right = kConflictW - 20 - w - 10;
-        }
-        DrawEllipsizedText(compositor_, head_format_.get(), Rect(s, 70, 44, head_right - 70, 24),
+        // Headline, then where it happened (and n / m when there are more).
+        DrawEllipsizedText(compositor_, head_format_.get(), Rect(s, kPad, 18, kConflictW - kPad - 64, 24),
                            l10n::Get(l10n::StringId::OpConflictLead) + LeafName(conflict_.destination) +
                                l10n::Get(l10n::StringId::OpQuoteClose), theme.text);
-        const std::wstring where = l10n::Get(moving ? l10n::StringId::OpConflictWhileMove
-                                                    : l10n::StringId::OpConflictWhileCopy) +
-            LeafName(source_dir_) + L" \x2192 " + LeafName(destination_dir_) +
-            l10n::Get(l10n::StringId::OpConflictWhileEnd);
-        DrawEllipsizedText(compositor_, meta_format_.get(), Rect(s, 70, 67, head_right - 70, 18), where,
+        std::wstring where = l10n::Get(moving ? l10n::StringId::OpConflictMoveFrom
+                                              : l10n::StringId::OpConflictCopyFrom) +
+            LeafName(source_dir_) +
+            l10n::Get(moving ? l10n::StringId::OpConflictMoveTo : l10n::StringId::OpConflictCopyTo) +
+            LeafName(destination_dir_);
+        if (Total() > 1)
+            where += L"  \x00B7  " + l10n::Get(l10n::StringId::OpConflictCountLead) +
+                pulse::format::GroupedInt(Ordinal()) + l10n::Get(l10n::StringId::OpConflictCountSep) +
+                pulse::format::GroupedInt(Total()) + l10n::Get(l10n::StringId::OpConflictCountEnd);
+        DrawEllipsizedText(compositor_, sub_format_.get(), Rect(s, kPad, 46, kConflictW - kPad * 2, 20), where,
                            theme.text_secondary);
 
-        // Side-by-side comparison with the vs marker between.
-        DrawCompareCard(theme, 0);
-        DrawCompareCard(theme, 1);
-        const auto vs = Rect(s, kConflictW * 0.5f - 13, kCompareTop + kCompareH * 0.5f - 13, 26, 26);
-        painter_.FillRoundedRect(vs, ScaleDip(s, 13.0f), dark_ ? HexColor(0xFFFFFF, 0.08f) : HexColor(0x000000, 0.06f));
-        painter_.DrawGlyphWithFormat(L"\xE8AB", vs, faint, glyph_format_.get());
+        DrawCompareColumn(theme, 0, text3, ok);
+        DrawCompareColumn(theme, 1, text3, ok);
+        painter_.FillRoundedRect(Rect(s, kConflictW * 0.5f - 0.5f, kCompareTop, 1, kCompareH), 0,
+                                 theme.stroke_divider);
 
-        // Choices.
         const bool files = Files();
         std::wstring replace_sub = l10n::Get(l10n::StringId::OpReplaceDesc);
         if (files)
@@ -953,41 +993,39 @@ private:
         const std::wstring keep_sub = conflict_.keep_both_name.empty()
             ? l10n::Get(l10n::StringId::OpKeepBothDesc)
             : l10n::Get(l10n::StringId::OpKeepNameLead) + conflict_.keep_both_name + l10n::Get(l10n::StringId::OpQuoteClose);
-        DrawAction(theme, 0, l10n::Get(l10n::StringId::OpReplaceFile), replace_sub, L"\xE8EE", green, L"R",
-                   files && SourceNewer() ? l10n::Get(l10n::StringId::OpRecommendNewer) : std::wstring());
-        DrawAction(theme, 1, l10n::Get(l10n::StringId::OpSkipFile), l10n::Get(l10n::StringId::OpSkipDesc),
-                   L"\xE893", sky, L"S", {});
-        DrawAction(theme, 2, l10n::Get(l10n::StringId::OpKeepBoth), keep_sub, L"\xE8C8", violet, L"K", {});
+        DrawChoice(theme, 0, l10n::Get(l10n::StringId::OpReplaceShort), replace_sub, L"R", accent, text3,
+                   high_contrast);
+        DrawChoice(theme, 1, l10n::Get(l10n::StringId::OpSkipShort), l10n::Get(l10n::StringId::OpSkipDesc), L"S",
+                   accent, text3, high_contrast);
+        DrawChoice(theme, 2, l10n::Get(l10n::StringId::OpKeepBoth), keep_sub, L"K", accent, text3, high_contrast);
 
-        if (ShowsApplyAll()) {
-            fluent::ControlState toggle{};
-            toggle.checked = apply_all_;
-            toggle.hovered = hover_ == 4;
-            toggle.focused = keyboard_focus_ && focus_ == 3;
-            toggle.keyboard_focus = toggle.focused;
-            const std::wstring label = l10n::Get(l10n::StringId::OpApplyRestLead) +
-                pulse::format::GroupedInt(conflict_.remaining - 1) + l10n::Get(l10n::StringId::OpApplyRestEnd);
-            painter_.DrawSwitch(ApplyRect(), label, toggle);
-        }
-
-        // Footer.
-        const float footer_top = (HeightDip() - kFooterH) * s;
+        // Footer: the same band as the progress window.
         RECT client{};
         GetClientRect(hwnd_, &client);
         const float width = static_cast<float>(client.right);
         const float height = static_cast<float>(client.bottom);
+        const float footer_top = FooterTop() * s;
         painter_.FillRoundedRect(D2D1::RectF(0, footer_top, width, height), 0,
-                                 dark_ ? HexColor(0x000000, 0.16f) : HexColor(0x000000, 0.03f));
+                                 dark_ ? HexColor(0x000000, 0.2f) : HexColor(0x000000, 0.045f));
         painter_.FillRoundedRect(D2D1::RectF(0, footer_top, width, footer_top + 1.0f), 0, theme.stroke_divider);
-        painter_.DrawText(l10n::Get(l10n::StringId::OpHoverPreviewHint),
-                          Rect(s, 20, HeightDip() - kFooterH, 300, kFooterH), meta_format_.get(), faint);
+        if (ShowsApplyAll()) {
+            fluent::ControlState check{};
+            check.checked = apply_all_;
+            check.hovered = hover_ == 4;
+            check.pressed = pressed_ == 4 && hover_ == 4;
+            check.focused = keyboard_focus_ && focus_ == 3;
+            check.keyboard_focus = check.focused;
+            const std::wstring label = l10n::Get(l10n::StringId::OpApplyRestLead) +
+                pulse::format::GroupedInt(conflict_.remaining - 1) + l10n::Get(l10n::StringId::OpApplyRestEnd);
+            painter_.DrawCheckBox(ApplyRect(), label, check);
+        }
         fluent::ControlState cancel_state{};
         cancel_state.hovered = hover_ == 6;
         cancel_state.pressed = pressed_ == 6;
         cancel_state.focused = keyboard_focus_ && focus_ == (ShowsApplyAll() ? 4 : 3);
+        cancel_state.keyboard_focus = cancel_state.focused;
         painter_.DrawButton({ CancelRect(), l10n::Get(l10n::StringId::Cancel), {}, fluent::ButtonKind::Standard,
                               cancel_state });
-        // Paths are cut to their line; hovering one shows it whole (#55).
         SetPathTip(1, PathRect(0));
         SetPathTip(2, PathRect(1));
         pulse::ui::EndSurface(compositor_);
@@ -1183,14 +1221,13 @@ private:
     float weight_[4] = {};
     ULONGLONG anim_tick_ = 0;
     ComPtr<IDWriteTextFormat> head_format_;
+    ComPtr<IDWriteTextFormat> sub_format_;
     ComPtr<IDWriteTextFormat> name_format_;
+    ComPtr<IDWriteTextFormat> body_format_;
     ComPtr<IDWriteTextFormat> meta_format_;
-    ComPtr<IDWriteTextFormat> meta_bold_format_;
-    ComPtr<IDWriteTextFormat> label_format_;
-    ComPtr<IDWriteTextFormat> tiny_format_;
-    ComPtr<IDWriteTextFormat> ext_format_;
-    ComPtr<IDWriteTextFormat> glyph_format_;
-    ComPtr<IDWriteTextFormat> big_glyph_format_;
+    HICON icons_[2] = {};
+    ComPtr<ID2D1Bitmap> icon_bitmaps_[2];
+    ComPtr<IWICImagingFactory> wic_;
 };
 
 // Permanent delete, pulse_ops_dialogs.html §6: the first items fanned out as
