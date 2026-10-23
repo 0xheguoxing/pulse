@@ -574,6 +574,16 @@ void QuickPreviewWindow::ActivateFooterControl(int id) {
         ZoomAt((content.left + content.right) * 0.5f, (content.top + content.bottom) * 0.5f,
                id == kFooterZoomIn ? 1.25f : 0.8f);
         InvalidateRect(hwnd_, nullptr, FALSE);
+    } else if (id == kFooterRotate && native_kind_ == NativeKind::Bitmap && frame_count_ <= 1) {
+        image_turns_ = (image_turns_ + 1) & 3;
+        const float x = pan_x_;
+        pan_x_ = -pan_y_;
+        pan_y_ = x;
+        const D2D1_RECT_F content = ContentRect();
+        if (!image_fit_ && image_zoom_ < FitScale(content.right - content.left, content.bottom - content.top))
+            SetFitMode();
+        ClampPan(content.right - content.left, content.bottom - content.top);
+        InvalidateRect(hwnd_, nullptr, FALSE);
     } else if (id == kFooterImageBg && native_kind_ == NativeKind::Bitmap) {
         image_backdrop_ = (image_backdrop_ + 1) % 4;
         InvalidateRect(hwnd_, nullptr, FALSE);

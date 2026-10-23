@@ -465,10 +465,50 @@ void QuickPreviewWindow::EndPlaybackDrag(bool resume) {
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+float QuickPreviewWindow::PlaybackBarOpacity() {
+    // The pointer is polled: over the video it belongs to the player's window.
+    const uint64_t now = GetTickCount64();
+    POINT cursor{};
+    RECT window{};
+    if (GetCursorPos(&cursor) && GetWindowRect(hwnd_, &window) && PtInRect(&window, cursor) &&
+        (cursor.x != pointer_last_.x || cursor.y != pointer_last_.y)) {
+        pointer_last_ = cursor;
+        pointer_tick_ = now;
+    }
+    const auto state = video_.Snapshot();
+    if (!state.playing || playback_drag_ || playback_hover_x_ >= 0.0f || playback_hover_button_ >= 0 ||
+        VideoPreview::IsAudio(item_.path))
+        pointer_tick_ = now;
+    const uint64_t idle = now - pointer_tick_;
+    if (idle <= 2000) return 1.0f;
+    return (std::max)(0.0f, 1.0f - static_cast<float>(idle - 2000) / 300.0f);
+}
+
 void QuickPreviewWindow::DrawPlayback(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* brush) {
     if (!HasPlayback() || !dc || !brush) return;
     if (kVideoChrome) {
+        const auto state = video_.Snapshot();
+        const bool picture = video_.active() && !VideoPreview::IsAudio(item_.path) && state.ready &&
+            SUCCEEDED(state.error) && !CodecCardVisible(state) && !Palette().high_contrast;
+        if (!picture) {
+            DrawPlaybackChrome(dc, brush);
+            return;
+        }
+        // On the video's black: light ink whatever the theme, fading while the pointer rests.
+        const float opacity = PlaybackBarOpacity();
+        if (opacity <= 0.01f) return;
+        const bool saved_dark = dark_;
+        const D2D1_COLOR_F saved_color = brush->GetColor();
+        dark_ = true;
+        brush->SetColor(D2D1::ColorF(0xF4F4F4));
+        const bool layer = opacity < 0.99f;
+        if (layer)
+            dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr,
+                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), opacity), nullptr);
         DrawPlaybackChrome(dc, brush);
+        if (layer) dc->PopLayer();
+        dark_ = saved_dark;
+        brush->SetColor(saved_color);
         return;
     }
     const auto bar = PlaybackRect();

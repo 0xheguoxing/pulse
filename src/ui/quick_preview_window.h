@@ -244,6 +244,7 @@ private:
     static constexpr int kFooterZoomIn = 7;     // pages and images: zoom in one step
     static constexpr int kFooterImageBg = 8;    // images: backdrop auto / light / dark / checkerboard
     static constexpr int kFooterInfo = 9;       // images: the info drawer
+    static constexpr int kFooterRotate = 10;    // images: a quarter turn clockwise
     ChromePalette Palette() const;
     float HeaderHeight() const noexcept;
     float FooterHeight() const noexcept;
@@ -352,6 +353,14 @@ private:
     float image_zoom_ = 1.0f;
     uint32_t preview_pixels_ = 0;
     bool image_item_ = false;            // the item's extension is a picture (RefreshItemFacts)
+    int image_turns_ = 0;                // quarter turns clockwise (R); reset per item
+    // The decoded picture's size as shown, i.e. after image_turns_.
+    float TurnedW() const noexcept { return static_cast<float>((image_turns_ & 1) ? decoded_h_ : decoded_w_); }
+    float TurnedH() const noexcept { return static_cast<float>((image_turns_ & 1) ? decoded_w_ : decoded_h_); }
+    // Video: the transport bar fades out after the pointer rests for 2 s.
+    uint64_t pointer_tick_ = 0;
+    POINT pointer_last_{};
+    float PlaybackBarOpacity();
     // Shared by every Quick Look window of this session.
     static inline int image_backdrop_ = 0;   // 0 auto (checkerboard when translucent), 1 light, 2 dark, 3 checkerboard
     static inline bool info_open_ = false;

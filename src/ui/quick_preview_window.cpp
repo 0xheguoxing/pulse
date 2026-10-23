@@ -215,6 +215,7 @@ void QuickPreviewWindow::ResetView() {
     pan_y_ = 0.0f;
     image_fit_ = true;
     image_zoom_ = 1.0f;
+    image_turns_ = 0;
     decoded_w_ = decoded_h_ = 0;
     source_w_ = source_h_ = 0;
     native_kind_ = NativeKind::None;
@@ -636,8 +637,8 @@ void QuickPreviewWindow::PostAction(QuickPreviewAction action, const QuickPrevie
 
 float QuickPreviewWindow::FitScale(float view_w, float view_h) const noexcept {
     if (decoded_w_ == 0 || decoded_h_ == 0) return 1.0f;
-    return (std::min)(view_w / static_cast<float>(decoded_w_),
-                      view_h / static_cast<float>(decoded_h_));
+    return (std::min)(view_w / TurnedW(),
+                      view_h / TurnedH());
 }
 
 bool QuickPreviewWindow::CanPanImage() const {
@@ -645,8 +646,8 @@ bool QuickPreviewWindow::CanPanImage() const {
     const D2D1_RECT_F content = ContentRect();
     const float view_w = content.right - content.left;
     const float view_h = content.bottom - content.top;
-    return decoded_w_ * image_zoom_ > view_w + 0.5f ||
-           decoded_h_ * image_zoom_ > view_h + 0.5f;
+    return TurnedW() * image_zoom_ > view_w + 0.5f ||
+           TurnedH() * image_zoom_ > view_h + 0.5f;
 }
 
 void QuickPreviewWindow::SetFitMode() {
@@ -676,8 +677,8 @@ void QuickPreviewWindow::ClampPan(float view_w, float view_h) {
         pan_y_ = 0.0f;
         return;
     }
-    const float draw_w = decoded_w_ * image_zoom_;
-    const float draw_h = decoded_h_ * image_zoom_;
+    const float draw_w = TurnedW() * image_zoom_;
+    const float draw_h = TurnedH() * image_zoom_;
     const float max_x = (std::max)(0.0f, (draw_w - view_w) * 0.5f);
     const float max_y = (std::max)(0.0f, (draw_h - view_h) * 0.5f);
     pan_x_ = std::clamp(pan_x_, -max_x, max_x);
@@ -697,16 +698,16 @@ void QuickPreviewWindow::ZoomAt(float cursor_x, float cursor_y, float factor) {
         SetFitMode();
         return;
     }
-    const float draw_w = decoded_w_ * old_zoom;
-    const float draw_h = decoded_h_ * old_zoom;
+    const float draw_w = TurnedW() * old_zoom;
+    const float draw_h = TurnedH() * old_zoom;
     const float left = content.left + (view_w - draw_w) * 0.5f + pan_x_;
     const float top = content.top + (view_h - draw_h) * 0.5f + pan_y_;
     const float u = (cursor_x - left) / (std::max)(0.001f, old_zoom);
     const float v = (cursor_y - top) / (std::max)(0.001f, old_zoom);
     image_fit_ = false;
     image_zoom_ = next;
-    const float new_w = decoded_w_ * next;
-    const float new_h = decoded_h_ * next;
+    const float new_w = TurnedW() * next;
+    const float new_h = TurnedH() * next;
     pan_x_ = cursor_x - u * next - content.left - (view_w - new_w) * 0.5f;
     pan_y_ = cursor_y - v * next - content.top - (view_h - new_h) * 0.5f;
     ClampPan(view_w, view_h);
@@ -716,8 +717,8 @@ D2D1_RECT_F QuickPreviewWindow::ImageDest(const D2D1_RECT_F& content) const {
     if (image_fit_ || decoded_w_ == 0 || decoded_h_ == 0) return content;
     const float view_w = content.right - content.left;
     const float view_h = content.bottom - content.top;
-    const float draw_w = decoded_w_ * image_zoom_;
-    const float draw_h = decoded_h_ * image_zoom_;
+    const float draw_w = TurnedW() * image_zoom_;
+    const float draw_h = TurnedH() * image_zoom_;
     const float left = content.left + (view_w - draw_w) * 0.5f + pan_x_;
     const float top = content.top + (view_h - draw_h) * 0.5f + pan_y_;
     return D2D1::RectF(left, top, left + draw_w, top + draw_h);
@@ -823,8 +824,9 @@ int QuickPreviewWindow::HitIconSize(POINT client) const {
 // Size · format · bytes on the left; the zoom (click: fit / actual pixels) on the right.
 void QuickPreviewWindow::SetImageFooter(const D2D1_RECT_F& content) {
     if (native_kind_ != NativeKind::Bitmap || decoded_w_ == 0) return;
-    const uint32_t shown_w = source_w_ ? source_w_ : decoded_w_;
-    const uint32_t shown_h = source_h_ ? source_h_ : decoded_h_;
+    uint32_t shown_w = source_w_ ? source_w_ : decoded_w_;
+    uint32_t shown_h = source_h_ ? source_h_ : decoded_h_;
+    if (image_turns_ & 1) std::swap(shown_w, shown_h);
     std::vector<std::wstring> parts;
     wchar_t dims[64];
     swprintf_s(dims, L"%u \x00D7 %u", shown_w, shown_h);
@@ -855,6 +857,8 @@ void QuickPreviewWindow::SetImageFooter(const D2D1_RECT_F& content) {
     AddFooterControl(kFooterZoomOut, L"\x2212");
     AddFooterControl(kFooterZoom, std::move(zoom));
     AddFooterControl(kFooterZoomIn, L"+");
+    if ((!kImageExtras || !IsIconFile(item_.path)) && frame_count_ <= 1)
+        AddFooterControl(kFooterRotate, L"\x21BB");
     if (!kImageExtras || !IsIconFile(item_.path)) {
         using pulse::l10n::StringId;
         static constexpr StringId kBackdrop[] = {StringId::PreviewBgAuto, StringId::PreviewBgLight,
@@ -886,7 +890,7 @@ bool QuickPreviewWindow::DrawImageBackdrop(ID2D1DeviceContext* dc, const D2D1_RE
     // Checkerboard under the picture only: a 2 x 2 bitmap tiled at 8 DIP cells.
     D2D1_RECT_F shown = draw;
     if (image_fit_) {
-        const float aspect = static_cast<float>(decoded_w_) / static_cast<float>(decoded_h_);
+        const float aspect = TurnedW() / TurnedH();
         const float dw = draw.right - draw.left, dh = draw.bottom - draw.top;
         if (dw <= 0.0f || dh <= 0.0f) return false;
         if (aspect > dw / dh) {
@@ -1959,8 +1963,15 @@ void QuickPreviewWindow::Render() {
         const auto video = video_.Snapshot();
         const bool audio = VideoPreview::IsAudio(item_.path);
         const bool codec_card = CodecCardVisible(video);
-        LayoutVideo(dc, video, !audio && !codec_card && video.ready && SUCCEEDED(video.error) &&
-                                   visible());
+        const bool picture = !audio && !codec_card && video.ready && SUCCEEDED(video.error);
+        if (picture && !high_contrast) {
+            // Video sits on black, transport bar included.
+            ComPtr<ID2D1SolidColorBrush> black;
+            dc->CreateSolidColorBrush(D2D1::ColorF(0x000000), &black);
+            if (black.get())
+                dc->FillRectangle(D2D1::RectF(0, ContentRect().top, width, PlaybackRect().bottom), black.get());
+        }
+        LayoutVideo(dc, video, picture && visible());
         if (codec_card) DrawCodecCard(dc, ContentRect(), video, text_brush.get());
         if (audio && SUCCEEDED(video.error))
             DrawAudio(dc, video, text_brush.get(), secondary_brush.get());
@@ -2046,12 +2057,27 @@ void QuickPreviewWindow::Render() {
                                                       (std::min)(y + step, draw.bottom)), cell.get());
         }
         auto draw_at = [&](uint32_t pixels, uint32_t frame) {
-            return thumbnails_.Draw(dc, draw, item_.path, item_.attrs, pixels,
+            // A turned picture draws upright into the unturned box, under a rotation.
+            D2D1_RECT_F box = draw;
+            D2D1_MATRIX_3X2_F saved{};
+            const bool turned = image_turns_ != 0 && !icon && image_item_;
+            if (turned) {
+                dc->GetTransform(&saved);
+                const D2D1_POINT_2F c = D2D1::Point2F((draw.left + draw.right) * 0.5f, (draw.top + draw.bottom) * 0.5f);
+                if (image_turns_ & 1) {
+                    const float hw = (draw.bottom - draw.top) * 0.5f, hh = (draw.right - draw.left) * 0.5f;
+                    box = D2D1::RectF(c.x - hw, c.y - hh, c.x + hw, c.y + hh);
+                }
+                dc->SetTransform(D2D1::Matrix3x2F::Rotation(90.0f * static_cast<float>(image_turns_), c) * saved);
+            }
+            const PreviewDrawResult drawn = thumbnails_.Draw(dc, box, item_.path, item_.attrs, pixels,
                 generation_, item_.modified, item_.size, 1.0f, &text, &truncated,
                 &bytes_read, true, &error, nullptr, nullptr, nullptr, nullptr,
                 frame, &reported_frame_count, &reported_delay_ms, &reported_loop_count,
                 &decoded_w_, &decoded_h_, &source_w_, &source_h_, nullptr, &text_encoding,
                 false, nullptr, nullptr, &integrity);
+            if (turned) dc->SetTransform(saved);
+            return drawn;
         };
         PreviewDrawResult result = draw_at(want, requested);
         if (result == PreviewDrawResult::Pending && preview_pixels_ != 0 &&
@@ -3111,9 +3137,10 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return 0;
             }
-            if (!ctrl && (wparam == 'I' || wparam == 'B' || wparam == VK_OEM_PLUS ||
+            if (!ctrl && (wparam == 'I' || wparam == 'B' || wparam == 'R' || wparam == VK_OEM_PLUS ||
                           wparam == VK_ADD || wparam == VK_OEM_MINUS || wparam == VK_SUBTRACT)) {
                 ActivateFooterControl(wparam == 'I' ? kFooterInfo : wparam == 'B' ? kFooterImageBg :
+                    wparam == 'R' ? kFooterRotate :
                     (wparam == VK_OEM_PLUS || wparam == VK_ADD) ? kFooterZoomIn : kFooterZoomOut);
                 return 0;
             }
