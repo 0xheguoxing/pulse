@@ -75,6 +75,7 @@ constexpr UINT WM_TRAY_TAKE_CLIP = WM_APP + 103;  // stage the Ctrl+C / Ctrl+X o
 constexpr UINT WM_TAG_RULE_ACCEPT = WM_APP + 104;  // the 自动规则 snack's 加上
 constexpr UINT WM_GIT_RESULT = WM_APP + 105;  // in-app Git: lParam owns a finished job (git_ui.cpp)
 constexpr UINT WM_DOUBLE_CTRL = WM_APP + 107;  // two Ctrl taps anywhere: toggle the quick search popup
+constexpr UINT WM_DIALOG_JUMP_CONTEXT = WM_APP + 108;  // the dialog jump bar wants the open folders
 constexpr UINT WM_UI_KICK = WM_APP + 106;  // a background producer has results: run the kTimerUi tick now
 
 }  // namespace pulse

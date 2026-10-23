@@ -623,6 +623,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             vm.settings_global_search_enabled = s.appPrefs.global_search_enabled;
             vm.settings_global_search_double_ctrl = s.appPrefs.global_search_double_ctrl;
             vm.settings_global_search_double_ctrl_ms = s.appPrefs.global_search_double_ctrl_ms;
+            vm.settings_dialog_jump_bar = s.appPrefs.dialog_jump_bar;
             vm.settings_global_search_capturing = s.settings.global_search_hotkey_capturing();
             vm.settings_global_search_hotkey = s.settings.GlobalSearchHotkeyText();
             vm.settings_global_search_error = s.settings.global_search_error();

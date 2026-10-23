@@ -9,5 +9,7 @@ void ToggleGlobalSearch(AppState& s, bool double_ctrl = false);
 void ToggleSearchSwitch(AppState& s);
 void ApplySearchSwitch(AppState& s, bool purge_index);
 void ShutdownGlobalSearch(AppState& s);
+// Answers the Open / Save dialog jump bar: the folders open in Pulse and around.
+void SendDialogJumpContext(AppState& s);
 bool HandleGlobalSearchHotkeyCapture(AppState& s, unsigned key);
 }

@@ -26,6 +26,7 @@
 #include "explorer_window_takeover.h"
 #include "external_open.h"
 #include "folder_sizes.h"
+#include "dialog_jump.h"
 #include "double_ctrl.h"
 #include "global_search_hotkey.h"
 #include "global_search_window.h"
@@ -123,6 +124,7 @@ struct AppCore {
 
     GlobalSearchHotkey globalSearchHotkey;
     DoubleCtrlWatcher doubleCtrl;          // Ctrl Ctrl summons the quick search popup
+    app::DialogJump dialogJump;            // jump bar under other programs' Open / Save dialogs
     GlobalSearchWindow globalSearchWindow;
     app::SingleInstanceCoordinator single_instance;
 

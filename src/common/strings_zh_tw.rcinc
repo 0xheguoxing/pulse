@@ -2718,4 +2718,12 @@ BEGIN
     IDS_DOUBLE_CTRL_NORMAL "300 毫秒"
     IDS_DOUBLE_CTRL_SLOW "400 毫秒"
     IDS_GLOBAL_SEARCH_JUMP "跳轉"
+    IDS_DIALOG_JUMP_BAR "對話方塊跳轉列"
+    IDS_DIALOG_JUMP_BAR_DESC "在其他程式的開啟、儲存對話方塊下方列出 Pulse 裡的資料夾，點一下就跳過去；Ctrl+G 跳到目前資料夾"
+    IDS_DIALOG_JUMP_SEARCH_CUE "搜尋資料夾"
+    IDS_DIALOG_JUMP_CURRENT "目前資料夾"
+    IDS_DIALOG_JUMP_NONE "Pulse 裡還沒有開啟的資料夾"
+    IDS_DIALOG_JUMP_MORE "更多位置"
+    IDS_DIALOG_JUMP_SEARCHING "正在搜尋…"
+    IDS_DIALOG_JUMP_NO_MATCH "沒有符合的位置"
 END

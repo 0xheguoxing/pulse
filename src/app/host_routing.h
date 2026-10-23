@@ -57,6 +57,7 @@ inline constexpr UINT kHostRoutedMessages[] = {
     TrayController::kCallbackMessage,  // notification icon (owned by the host)
     WM_HOTKEY,                 // global search hotkey (registered on the host)
     WM_DOUBLE_CTRL,            // global search double Ctrl (posted to the host)
+    WM_DIALOG_JUMP_CONTEXT,    // Open / Save dialog jump bar context request
 };
 
 constexpr bool IsHostRoutedMessage(UINT message) noexcept {

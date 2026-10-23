@@ -28,6 +28,35 @@ bool HotkeyAllowed(const AppState& s) {
 #endif
 }
 
+// 跳转 candidates: this window's folders first, then other windows, Quick
+// access and recently opened folders; each folder once. `open` marks folders
+// shown in a tab.
+std::vector<app::DialogJumpFolder> KnownFolders(const AppState& s) {
+    std::vector<app::DialogJumpFolder> folders;
+    auto add = [&](const std::wstring& path, const std::wstring& label, bool open) {
+        if (path.empty() || fs::IsVirtualPath(path) || folders.size() >= 96) return;
+        for (auto& known : folders)
+            if (path::EqualInsensitive(known.path, path)) {
+                if (known.label.empty()) known.label = label;
+                known.open = known.open || open;
+                return;
+            }
+        folders.push_back({path, label, open});
+    };
+    if (const auto* pane = s.pane) add(pane->view.current_path, {}, true);
+    auto add_window = [&](AppState& window) {
+        ForEachPane(window, [&](app::Pane& pane) { add(pane.view.current_path, {}, true); });
+    };
+    add_window(const_cast<AppState&>(s));
+    s.core.windows.ForEach([&](HWND, AppState& window) { if (&window != &s) add_window(window); });
+    // Quick access rows carry the shown names ("下载" for Downloads).
+    for (const auto& entry : s.sidebar.quick_access) add(entry.path, entry.label, false);
+    for (const auto& path : s.places.quick_access_paths) add(path, {}, false);
+    for (const auto& item : s.places.RecentItems())
+        if (item.kind == app::PlaceItemKind::Folder) add(item.path, {}, false);
+    return folders;
+}
+
 // What the popup shows with an empty query: the first Quick access pins as
 // scopes, recent searches as chips and recently opened items as rows.
 GlobalSearchContext MakeGlobalSearchContext(const AppState& s) {
@@ -47,28 +76,7 @@ GlobalSearchContext MakeGlobalSearchContext(const AppState& s) {
         if (item.path.empty() || fs::IsVirtualPath(item.path)) continue;
         context.recent_files.push_back({item.path, item.kind == app::PlaceItemKind::Folder});
     }
-    // 跳转 candidates: this window's folders first, then other windows, Quick
-    // access and recently opened folders; each folder once.
-    auto add_jump = [&](const std::wstring& path, const std::wstring& label = {}) {
-        if (path.empty() || fs::IsVirtualPath(path) || context.jump_folders.size() >= 96) return;
-        for (auto& known : context.jump_folders)
-            if (path::EqualInsensitive(known.path, path)) {
-                if (known.label.empty()) known.label = label;
-                return;
-            }
-        context.jump_folders.push_back({path, label});
-    };
-    if (const auto* pane = s.pane) add_jump(pane->view.current_path);
-    auto add_window = [&](AppState& window) {
-        ForEachPane(window, [&](app::Pane& pane) { add_jump(pane.view.current_path); });
-    };
-    add_window(const_cast<AppState&>(s));
-    s.core.windows.ForEach([&](HWND, AppState& window) { if (&window != &s) add_window(window); });
-    // Quick access rows carry the shown names ("下载" for Downloads).
-    for (const auto& entry : s.sidebar.quick_access) add_jump(entry.path, entry.label);
-    for (const auto& path : s.places.quick_access_paths) add_jump(path);
-    for (const auto& item : s.places.RecentItems())
-        if (item.kind == app::PlaceItemKind::Folder) add_jump(item.path);
+    for (auto& folder : KnownFolders(s)) context.jump_folders.push_back({std::move(folder.path), std::move(folder.label)});
     context.width = s.appPrefs.global_search_width;
     context.height = s.appPrefs.global_search_height;
     return context;
@@ -105,6 +113,7 @@ GlobalSearchEvents MakeGlobalSearchEvents(AppState& s) {
 void ApplyGlobalSearchSettings(AppState& s) {
     ApplyKeymapPrefs(s);  // the shortcut conflict checks see the hotkey
     if (!HotkeyAllowed(s)) return;
+    s.core.dialogJump.Update(ServiceWindow(s), WM_DIALOG_JUMP_CONTEXT, s.appPrefs.dialog_jump_bar);
     const bool enabled = s.appPrefs.global_search_enabled && s.appPrefs.search_enabled;
     const bool ok = s.globalSearchHotkey.Update(ServiceWindow(s), enabled,
         s.appPrefs.global_search_modifiers, s.appPrefs.global_search_key);
@@ -175,6 +184,20 @@ void ToggleSearchSwitch(AppState& s) {
     ApplySearchSwitch(s, purge);
 }
 
+void SendDialogJumpContext(AppState& s) {
+    AppState* window = s.core.windows.MostRecent();
+    if (!window) window = &s;
+    app::DialogJumpContext context;
+    context.folders = KnownFolders(*window);
+    if (const auto* tab = ActiveTab(*window); tab && !fs::IsVirtualPath(tab->current_path))
+        context.current = tab->current_path;
+    context.dark = window->darkMode;
+    context.accent = window->accentColor;
+    context.pinyin = window->appPrefs.search_pinyin;
+    context.index = window->appPrefs.search_enabled;
+    s.core.dialogJump.SetContext(std::move(context));
+}
+
 bool HandleGlobalSearchHotkeyCapture(AppState& s, unsigned key) {
     if (!s.settings.global_search_hotkey_capturing()) return false;
     if (!IsSettingsTab(ActiveTab(s))) {
@@ -192,6 +215,8 @@ bool HandleGlobalSearchHotkeyCapture(AppState& s, unsigned key) {
 }
 
 void ToggleGlobalSearch(AppState& s, bool double_ctrl) {
+    // Two Ctrl taps over an Open / Save dialog go to its jump bar.
+    if (double_ctrl && s.core.dialogJump.FocusSearch()) return;
     if (!s.appPrefs.global_search_enabled || !s.appPrefs.search_enabled) return;
     if (double_ctrl ? !s.core.doubleCtrl.Running() : !s.globalSearchHotkey.Registered()) return;
     if (s.globalSearchWindow.Visible()) {
@@ -219,6 +244,7 @@ void ToggleGlobalSearch(AppState& s, bool double_ctrl) {
 void ShutdownGlobalSearch(AppState& s) {
     s.globalSearchHotkey.Reset();
     s.core.doubleCtrl.Stop();
+    s.core.dialogJump.Stop();
     s.globalSearchWindow.Shutdown();
 }
 }

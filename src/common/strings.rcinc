@@ -2720,6 +2720,14 @@ BEGIN
     IDS_DOUBLE_CTRL_NORMAL "300 毫秒"
     IDS_DOUBLE_CTRL_SLOW "400 毫秒"
     IDS_GLOBAL_SEARCH_JUMP "跳转"
+    IDS_DIALOG_JUMP_BAR "对话框跳转条"
+    IDS_DIALOG_JUMP_BAR_DESC "在其它程序的打开、保存对话框下方列出 Pulse 里的文件夹，点一下就跳过去；Ctrl+G 跳到当前文件夹"
+    IDS_DIALOG_JUMP_SEARCH_CUE "搜索文件夹"
+    IDS_DIALOG_JUMP_CURRENT "当前文件夹"
+    IDS_DIALOG_JUMP_NONE "Pulse 里还没有打开的文件夹"
+    IDS_DIALOG_JUMP_MORE "更多位置"
+    IDS_DIALOG_JUMP_SEARCHING "正在搜索…"
+    IDS_DIALOG_JUMP_NO_MATCH "没有匹配的位置"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5439,6 +5447,14 @@ BEGIN
     IDS_DOUBLE_CTRL_NORMAL "300 ms"
     IDS_DOUBLE_CTRL_SLOW "400 ms"
     IDS_GLOBAL_SEARCH_JUMP "Go to"
+    IDS_DIALOG_JUMP_BAR "Dialog jump bar"
+    IDS_DIALOG_JUMP_BAR_DESC "Lists your Pulse folders under other apps' Open and Save dialogs; click one to go there, Ctrl+G jumps to the current folder"
+    IDS_DIALOG_JUMP_SEARCH_CUE "Search folders"
+    IDS_DIALOG_JUMP_CURRENT "Current folder"
+    IDS_DIALOG_JUMP_NONE "No folders open in Pulse"
+    IDS_DIALOG_JUMP_MORE "More places"
+    IDS_DIALOG_JUMP_SEARCHING "Searching…"
+    IDS_DIALOG_JUMP_NO_MATCH "No matching places"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

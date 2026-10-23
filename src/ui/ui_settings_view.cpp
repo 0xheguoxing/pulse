@@ -1252,6 +1252,7 @@ float MainRenderer::SettingsDestinationOffset(const WindowViewModel& vm, int set
     case I::GlobalSearchHotkey: target=l.global_search_hotkey_row;break;
     case I::GlobalSearchDoubleCtrl: target=l.global_search_double_ctrl_row;break;
     case I::GlobalSearchDoubleCtrlGap: target=l.global_search_gap_card;break;
+    case I::DialogJumpBar: target=l.dialog_jump_row;break;
     case I::SearchPinyin: target=l.search_pinyin_row;break;
     case I::ContentIndexManage: target=l.content_header;break;
     case I::IndexLocation: target=l.index_path;break;

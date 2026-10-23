@@ -2730,6 +2730,14 @@ enum class StringId : UINT {
     DoubleCtrlNormal = IDS_DOUBLE_CTRL_NORMAL,
     DoubleCtrlSlow = IDS_DOUBLE_CTRL_SLOW,
     GlobalSearchJump = IDS_GLOBAL_SEARCH_JUMP,
+    DialogJumpBar = IDS_DIALOG_JUMP_BAR,
+    DialogJumpBarDesc = IDS_DIALOG_JUMP_BAR_DESC,
+    DialogJumpSearchCue = IDS_DIALOG_JUMP_SEARCH_CUE,
+    DialogJumpCurrent = IDS_DIALOG_JUMP_CURRENT,
+    DialogJumpNone = IDS_DIALOG_JUMP_NONE,
+    DialogJumpMore = IDS_DIALOG_JUMP_MORE,
+    DialogJumpSearching = IDS_DIALOG_JUMP_SEARCHING,
+    DialogJumpNoMatch = IDS_DIALOG_JUMP_NO_MATCH,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

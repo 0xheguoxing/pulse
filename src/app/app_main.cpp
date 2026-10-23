@@ -2373,6 +2373,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s) ToggleGlobalSearch(*s, true);
         return 0;
 
+    case WM_DIALOG_JUMP_CONTEXT:
+        if (s) SendDialogJumpContext(*s);
+        return 0;
+
     case WM_SYSKEYDOWN:
         if (s && HandleGlobalSearchHotkeyCapture(*s, static_cast<UINT>(wParam))) return 0;
         // 收藏栏 holding the F6 focus: Alt+↓ (the subfolders), Shift+F10.

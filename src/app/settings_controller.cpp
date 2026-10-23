@@ -1302,6 +1302,9 @@ void SettingsController::ToggleUi(int index) {
     } else if (index == 40) {
         prefs_->global_search_double_ctrl = !prefs_->global_search_double_ctrl;
         SaveAndApply(SettingsEffect::GlobalSearch);
+    } else if (index == 41) {
+        prefs_->dialog_jump_bar = !prefs_->dialog_jump_bar;
+        SaveAndApply(SettingsEffect::GlobalSearch);
     } else if (index == 15) {
         prefs_->global_search_enabled = !prefs_->global_search_enabled;
         if (!prefs_->Save()) {

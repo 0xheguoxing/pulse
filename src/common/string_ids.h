@@ -2734,5 +2734,13 @@
 #define IDS_DOUBLE_CTRL_NORMAL                                                           3944
 #define IDS_DOUBLE_CTRL_SLOW                                                             3945
 #define IDS_GLOBAL_SEARCH_JUMP                                                           3946
+#define IDS_DIALOG_JUMP_BAR                                                              3947
+#define IDS_DIALOG_JUMP_BAR_DESC                                                         3948
+#define IDS_DIALOG_JUMP_SEARCH_CUE                                                       3949
+#define IDS_DIALOG_JUMP_CURRENT                                                          3950
+#define IDS_DIALOG_JUMP_NONE                                                             3951
+#define IDS_DIALOG_JUMP_MORE                                                             3952
+#define IDS_DIALOG_JUMP_SEARCHING                                                        3953
+#define IDS_DIALOG_JUMP_NO_MATCH                                                         3954
 
 #endif  // PULSE_STRING_IDS_H
