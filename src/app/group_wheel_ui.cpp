@@ -251,7 +251,9 @@ std::vector<fs::DirEntry> SampleEntries(bool with_path) {
 
 void ApplySort(AppState& s, int value, bool desc, int folder) {
     SetSort(s, static_cast<ui::SortColumn>(value), desc ? ui::SortDirection::Desc : ui::SortDirection::Asc);
-    if (folder != static_cast<int>(s.appPrefs.folder_sort_mode)) s.settings.FolderSort(folder);
+    // This folder only, like the sort column (Settings keeps the default).
+    if (const app::Tab* tab = ActiveTab(s); tab && folder != static_cast<int>(tab->EffectiveFolderSort()))
+        SetFolderSort(s, folder);
 }
 
 void Kick(AppState& s, HWND hwnd) {
@@ -325,7 +327,7 @@ void OpenSortWheel(AppState& s) {
     ui::GroupWheelData data;
     data.sort_controls = true;
     data.desc = tab->sort_direction == ui::SortDirection::Desc;
-    data.folder = std::clamp(static_cast<int>(s.appPrefs.folder_sort_mode), 0, 2);
+    data.folder = std::clamp(static_cast<int>(tab->EffectiveFolderSort()), 0, 2);
     const std::wstring az = L"A\x2192" L"Z", za = L"Z\x2192" L"A";  // split: \x is greedy
     for (const auto& col : kSortColumns) {
         if (col.column == ui::SortColumn::Path && !show_path) continue;

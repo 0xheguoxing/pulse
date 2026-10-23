@@ -23,7 +23,12 @@ public:
     bool Set(const std::wstring& path, FolderSort sort);
     // Order for folders without a saved choice.
     FolderSort Default() const { return default_; }
-    // `sort` becomes the default and per-folder choices are forgotten.
+    // Where folders sit next to files (app::FolderSortMode as 0..2) when
+    // chosen in this folder; others use Settings > Folders first.
+    std::optional<int> FindFolderMode(const std::wstring& path) const;
+    bool SetFolderMode(const std::wstring& path, int mode);
+    // `sort` becomes the default and per-folder choices (folder modes
+    // included) are forgotten.
     void ApplyToAll(FolderSort sort);
     void Clear();
     void AppendJson(std::wstring& out) const;
@@ -34,6 +39,7 @@ private:
         bool operator()(const std::wstring& a, const std::wstring& b) const;
     };
     std::map<std::wstring, FolderSort, PathLess> sorts_;
+    std::map<std::wstring, int, PathLess> folder_modes_;
     FolderSort default_;
 };
 

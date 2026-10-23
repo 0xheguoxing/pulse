@@ -22,6 +22,11 @@ std::wstring JsonKey(int column, int direction) {
            (direction == 0 ? L"_asc" : L"_desc");
 }
 
+// Indexed by app::FolderSortMode; stable JSON names.
+constexpr const wchar_t* kFolderModeKeys[] = { L"sort_folders_top", L"sort_folders_follow",
+                                               L"sort_folders_mixed" };
+constexpr int kFolderModeCount = static_cast<int>(sizeof(kFolderModeKeys) / sizeof(kFolderModeKeys[0]));
+
 FolderSort FromInts(int column, int direction) {
     FolderSort sort{ static_cast<ui::SortColumn>(column), static_cast<ui::SortDirection>(direction) };
     return Valid(sort) ? sort : FolderSort{};
@@ -48,13 +53,29 @@ bool FolderSortPrefs::Set(const std::wstring& path, FolderSort sort) {
     return true;
 }
 
+std::optional<int> FolderSortPrefs::FindFolderMode(const std::wstring& path) const {
+    const auto it = folder_modes_.find(FolderPrefKey(path));
+    return it == folder_modes_.end() ? std::nullopt : std::optional(it->second);
+}
+
+bool FolderSortPrefs::SetFolderMode(const std::wstring& path, int mode) {
+    const auto key = FolderPrefKey(path);
+    if (key.empty() || mode < 0 || mode >= kFolderModeCount) return false;
+    const auto [it, inserted] = folder_modes_.try_emplace(key, mode);
+    if (!inserted && it->second == mode) return false;
+    it->second = mode;
+    return true;
+}
+
 void FolderSortPrefs::ApplyToAll(FolderSort sort) {
     sorts_.clear();
+    folder_modes_.clear();
     default_ = Valid(sort) ? sort : FolderSort{};
 }
 
 void FolderSortPrefs::Clear() {
     sorts_.clear();
+    folder_modes_.clear();
     default_ = {};
 }
 
@@ -78,6 +99,17 @@ void FolderSortPrefs::AppendJson(std::wstring& out) const {
             if (!first) out += L"]";
         }
     }
+    for (int mode = 0; mode < kFolderModeCount; ++mode) {
+        bool first = true;
+        for (const auto& [path, saved] : folder_modes_) {
+            if (saved != mode) continue;
+            out += first ? L",\n  \"" + std::wstring(kFolderModeKeys[mode]) + L"\":[\"" : std::wstring(L",\"");
+            first = false;
+            json::Escape(path, out);
+            out += L"\"";
+        }
+        if (!first) out += L"]";
+    }
 }
 
 void FolderSortPrefs::ReadJson(const std::wstring& input) {
@@ -88,6 +120,9 @@ void FolderSortPrefs::ReadJson(const std::wstring& input) {
         for (int direction = 0; direction <= 1; ++direction)
             for (const auto& path : json::ExtractStringArray(input, JsonKey(column, direction)))
                 Set(path, FromInts(column, direction));
+    for (int mode = 0; mode < kFolderModeCount; ++mode)
+        for (const auto& path : json::ExtractStringArray(input, kFolderModeKeys[mode]))
+            SetFolderMode(path, mode);
 }
 
 } // namespace pulse::app

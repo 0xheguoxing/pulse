@@ -300,6 +300,36 @@ int main(int argc, char** argv) {
               many.PickerFolder(L"k0").empty(), "PICKER-09 capped; the oldest entry point is dropped");
     }
     {
+        // Folders-first is remembered per folder, like the sort column; folders
+        // without a choice follow Settings > Folders first (folder_sort_mode).
+        using pulse::app::AppPrefs;
+        AppPrefs modes; modes.persist = false;
+        modes.folder_sort_mode = 0;
+        auto& sorts = modes.folder_sorts;
+        Check(sorts.SetFolderMode(L"C:\\Work", 2) && !sorts.SetFolderMode(L"C:\\Work", 2) &&
+              sorts.SetFolderMode(L"D:\\Media\\", 1), "FOLDERS-01 a folder keeps its own folders-first mode");
+        Check(sorts.FindFolderMode(L"c:\\work") == 2 && sorts.FindFolderMode(L"D:\\Media") == 1 &&
+              !sorts.FindFolderMode(L"C:\\Other") && !sorts.FindFolderMode(L"C:\\Work\\Sub"),
+              "FOLDERS-02 only that folder (any case, trailing slash); others use the settings default");
+        Check(!sorts.SetFolderMode(L"pulse:recent", 2) && !sorts.SetFolderMode(L"", 1) &&
+              !sorts.SetFolderMode(L"C:\\Work", 3) && !sorts.SetFolderMode(L"C:\\Work", -1) &&
+              sorts.FindFolderMode(L"C:\\Work") == 2, "FOLDERS-03 virtual views and bad modes are not stored");
+        sorts.Set(L"C:\\Work", { pulse::ui::SortColumn::Mtime, pulse::ui::SortDirection::Desc });
+        AppPrefs reread; reread.persist = false;
+        Check(reread.FromJson(modes.ToJson()) && reread.folder_sorts.FindFolderMode(L"C:\\Work") == 2 &&
+              reread.folder_sorts.FindFolderMode(L"D:\\Media") == 1 && !reread.folder_sorts.FindFolderMode(L"C:\\Other") &&
+              reread.folder_sort_mode == 0 && reread.folder_sorts.Find(L"C:\\Work") ==
+                  pulse::app::FolderSort{ pulse::ui::SortColumn::Mtime, pulse::ui::SortDirection::Desc },
+              "FOLDERS-04 per-folder modes round trip with the sort column and the settings default");
+        reread.folder_sorts.ApplyToAll({});
+        Check(!reread.folder_sorts.FindFolderMode(L"C:\\Work") && !reread.folder_sorts.FindFolderMode(L"D:\\Media") &&
+              !reread.folder_sorts.Find(L"C:\\Work"), "FOLDERS-05 apply to all folders forgets per-folder modes too");
+        AppPrefs older; older.persist = false;
+        Check(older.FromJson(LR"({"folder_sort_mode":2,"sort_by_folder_name_desc":["C:\\A"]})") &&
+              older.folder_sort_mode == 2 && !older.folder_sorts.FindFolderMode(L"C:\\A"),
+              "FOLDERS-06 an older settings file: every folder follows the settings default");
+    }
+    {
         // #58-7b: picture folders without a saved view open in Large icons.
         using pulse::app::IsPictureName;
         using pulse::app::MostlyPictures;

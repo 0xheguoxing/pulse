@@ -1620,7 +1620,7 @@ void DispatchMenuCommand(AppState& s, int cmd) {
     case app::CmdFolderSortTop:
     case app::CmdFolderSortFollow:
     case app::CmdFolderSortMixed:
-        s.settings.FolderSort(cmd - app::CmdFolderSortTop);
+        SetFolderSort(s, cmd - app::CmdFolderSortTop);
         break;
     case app::CmdOpen: OpenSelected(s); break;
     case app::CmdViewRecentChanges:
@@ -2614,7 +2614,7 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     view_options.wall = tab->wall;
     view_options.sort_column = tab->sort_column;
     view_options.sort_direction = tab->sort_direction;
-    view_options.folder_sort = s.appPrefs.folder_sort_mode;
+    view_options.folder_sort = static_cast<int>(tab->EffectiveFolderSort());
     view_options.details_panel = s.showDetailsPanel;
     view_options.can_sort = kind != L"starred" && kind != L"recent";
     view_options.indexed_search = (kind == L"search" || kind == L"saved-search") && !tab->content_results;
@@ -3427,9 +3427,24 @@ bool ApplyViewToAllFolders(AppState& s, bool confirm) {
         if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path)) return false;
     }
     // Grouping keeps its own per-folder memory (Downloads defaults to Date).
+    const int folder_mode = static_cast<int>(tab->EffectiveFolderSort());
     s.appPrefs.folder_views.ApplyToAll(tab->view_mode);
     s.appPrefs.folder_sorts.ApplyToAll({ tab->sort_column, tab->sort_direction });
+    // Folders-first goes with the sort: per-folder choices are gone and this
+    // folder's becomes the settings default.
+    std::vector<std::wstring> resort;
+    ForEachPane(s, [&](app::Pane& pane) {
+        app::Tab* shown = pane.ActiveTab();
+        if (!shown || shown->folder_sort < 0 || fs::IsVirtualPath(shown->current_path)) return;
+        if (shown->folder_sort != folder_mode) resort.push_back(shown->current_path);
+        shown->folder_sort = -1;
+    });
     s.appPrefs.Save();
+    if (folder_mode != s.appPrefs.folder_sort_mode) {
+        s.settings.FolderSort(folder_mode);  // saves, then re-sorts every visible folder
+    } else {
+        for (const auto& path : resort) RefreshPath(s, path, RefreshReason::Explicit);
+    }
     return true;
 }
 
@@ -3680,7 +3695,7 @@ void ShowSortDropdown(AppState& s) {
     app::BackgroundViewOptions options;
     options.sort_column = tab->sort_column;
     options.sort_direction = tab->sort_direction;
-    options.folder_sort = s.appPrefs.folder_sort_mode;
+    options.folder_sort = static_cast<int>(tab->EffectiveFolderSort());
     options.can_sort = kind != L"starred" && kind != L"recent";
     options.indexed_search = (kind == L"search" || kind == L"saved-search") && !tab->content_results;
     options.show_path = kind == L"search" || kind == L"saved-search" || kind == L"recycle";

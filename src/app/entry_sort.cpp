@@ -99,6 +99,8 @@ int ItemNameCompare(const fs::DirEntry& a, const fs::DirEntry& b,
 }
 
 std::atomic<FolderSortMode> g_folder_sort_mode{FolderSortMode::FoldersFirst};
+// -1: no ScopedFolderSortMode on this thread.
+thread_local int t_folder_sort_mode = -1;
 
 } // namespace
 
@@ -106,8 +108,20 @@ void SetFolderSortMode(FolderSortMode mode) noexcept {
     g_folder_sort_mode.store(mode, std::memory_order_relaxed);
 }
 
-FolderSortMode CurrentFolderSortMode() noexcept {
+FolderSortMode DefaultFolderSortMode() noexcept {
     return g_folder_sort_mode.load(std::memory_order_relaxed);
+}
+
+FolderSortMode CurrentFolderSortMode() noexcept {
+    return t_folder_sort_mode >= 0 ? static_cast<FolderSortMode>(t_folder_sort_mode) : DefaultFolderSortMode();
+}
+
+ScopedFolderSortMode::ScopedFolderSortMode(FolderSortMode mode) noexcept : previous_(t_folder_sort_mode) {
+    t_folder_sort_mode = static_cast<int>(mode);
+}
+
+ScopedFolderSortMode::~ScopedFolderSortMode() {
+    t_folder_sort_mode = previous_;
 }
 
 bool EntryLess(const fs::DirEntry& a, const fs::DirEntry& b,

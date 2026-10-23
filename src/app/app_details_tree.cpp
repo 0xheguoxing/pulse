@@ -57,7 +57,7 @@ bool Eligible(const app::Tab& tab) {
 int OrderKey(const app::Tab& tab) {
     return ((static_cast<int>(tab.sort_column) * 2 + static_cast<int>(tab.sort_direction)) * 4 +
             (tab.show_hidden_files ? 1 : 0) + (tab.show_protected_os_files ? 2 : 0)) * 4 +
-           static_cast<int>(app::CurrentFolderSortMode());
+           static_cast<int>(tab.EffectiveFolderSort());
 }
 
 bool Expandable(const fs::DirEntry& e) {
@@ -105,7 +105,8 @@ void RequestFolder(AppState& s, const app::Tab& tab, DetailsTreeFolder& f) {
         }
     });
     f.generation = shared != 0 ? shared
-                               : s.worker.Refresh(f.path, tab.sort_column, tab.sort_direction);
+                               : s.worker.Refresh(f.path, tab.sort_column, tab.sort_direction, 0, nullptr,
+                                                  tab.EffectiveFolderSort());
     f.state = FolderState::Loading;
 }
 
@@ -125,6 +126,7 @@ void EnsureOrder(DetailsTreeFolder& f, const app::Tab& tab, int key) {
     }
     const ui::SortColumn col = tab.sort_column;
     const ui::SortDirection dir = tab.sort_direction;
+    const app::ScopedFolderSortMode folder_mode(tab.EffectiveFolderSort());
     const auto less = [&](int a, int b) {
         return app::EntryLess(entries[static_cast<size_t>(a)], entries[static_cast<size_t>(b)], col, dir);
     };
