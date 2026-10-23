@@ -8,6 +8,7 @@
 #include "keymap.h"
 #include "../ui/ui_motion.h"
 #include "../ui/ui_renderer.h"
+#include "../ui/known_extensions.h"
 #include <atomic>
 #include "../ui/shortcut_help.h"
 // app_commands.cpp — extracted from app_main.cpp.
@@ -2748,6 +2749,7 @@ constexpr ToolbarToolDef kToolbarTools[] = {
     {app::CmdSettings, L"\xE713", l10n::StringId::Settings, L"", false},
     {app::CmdCompressZip, L"\xF012", l10n::StringId::ToolbarToolZip, L"", false},
     {app::CmdToggleFolderSizes, L"\xEDA2", l10n::StringId::ToolbarToolFolderSizes, L"", true},
+    {0, L"\xE7C3", l10n::StringId::ToolbarToolExtensions, L"", true},
 };
 static_assert(std::size(kToolbarTools) == app::kToolbarToolCount, "one catalog row per toolbar_tools.h id");
 
@@ -2845,6 +2847,7 @@ bool ToolbarToggleOn(const AppState& s, size_t index) {
     const std::wstring_view id = app::kToolbarToolIds[index];
     const app::AppPrefs& p = s.appPrefs;
     if (id == L"hidden") return p.show_hidden_files;
+    if (id == L"extensions") return p.show_file_extensions;
     if (id == L"protected") return p.show_protected_os_files;
     if (id == L"compact") return p.row_height <= 28;
     if (id == L"zebra") return p.list_zebra_rows;
@@ -4421,7 +4424,7 @@ static int ToolbarToolSection(std::wstring_view id) {
 static std::vector<size_t> ToolbarPinsOrder(const AppState& s) {
     static constexpr std::wstring_view kCatalogOrder[] = {
         L"cut", L"copy", L"paste", L"rename", L"delete", L"undo", L"new_text", L"new_md", L"copy_path",
-        L"properties", L"zip", L"select_all", L"invert", L"select_wild", L"hidden", L"protected", L"folder_size", L"compact",
+        L"properties", L"zip", L"select_all", L"invert", L"select_wild", L"hidden", L"protected", L"extensions", L"folder_size", L"compact",
         L"zebra", L"size_bar", L"smart_date", L"outline", L"theme", L"split", L"details", L"columns",
         L"sidebar", L"apply_all", L"recent", L"terminal", L"search_all", L"adv_search", L"recycle",
         L"map_drive", L"shortcuts", L"settings"};
@@ -4780,6 +4783,7 @@ static void FlipToolbarTool(AppState& s, size_t index) {
     else if (id == L"size_bar") p.list_size_bar = !p.list_size_bar;
     else if (id == L"smart_date") p.list_smart_date = !p.list_smart_date;
     else if (id == L"outline") p.list_selection_outline = !p.list_selection_outline;
+    else if (id == L"extensions") p.show_file_extensions = !p.show_file_extensions;
     else return;
     if (!s.isolatedTest) p.Save();
     ApplySettingsEffects(s, effect);
@@ -5519,6 +5523,7 @@ void ApplySettingsEffects(AppState& s, app::SettingsEffect effects) {
             s.menu->SetRowHeightDip(static_cast<float>(app::MenuRowHeightDip(row_height)));
     }
     if (app::HasEffect(effects, app::SettingsEffect::ListStyle)) {
+        ui::SetHideKnownExtensions(!s.appPrefs.show_file_extensions);
         s.renderer.SetListStyle(s.appPrefs.list_smart_date, s.appPrefs.list_zebra_rows,
                                 s.appPrefs.list_size_bar, s.appPrefs.list_tag_name_color,
                                 s.appPrefs.list_selection_outline);

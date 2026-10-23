@@ -2925,5 +2925,6 @@
 #define IDS_DATE_LAST_WEEK_FORMAT                                                        4131
 #define IDS_OP_DELETE_PARTIAL_TITLE                                                      4132
 #define IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED                                            4133
+#define IDS_TOOLBAR_TOOL_EXTENSIONS                                                      4134
 
 #endif  // PULSE_STRING_IDS_H

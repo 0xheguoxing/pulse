@@ -128,6 +128,9 @@ struct AppPrefs {
     int global_search_width = 0;
     int global_search_height = 0;
     bool show_hidden_files = false;
+    // 文件扩展名 (a toolbar switch): off draws files of a registered type
+    // without their extension, as File Explorer can (ui/known_extensions.h).
+    bool show_file_extensions = true;
     // Hidden + system attributes; File Explorer keeps these behind a separate option.
     bool show_protected_os_files = false;
     // Double click on empty list space: 0 nothing, 1 back, 2 up (blank_pane_click.h).

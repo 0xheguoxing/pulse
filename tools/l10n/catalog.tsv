@@ -2932,3 +2932,4 @@ NetworkIndexNoWsl	IDS_NETWORK_INDEX_NO_WSL	4130	WSL 中的文件不能加入网�
 DateLastWeekFormat	IDS_DATE_LAST_WEEK_FORMAT	4131	上%s	Last %s	上%s
 OpDeletePartialTitle	IDS_OP_DELETE_PARTIAL_TITLE	4132	已删除 %s 项，%s 项未成功	Deleted %s items, %s didn't go through	已刪除 %s 項，%s 項未成功
 RecyclePathTooLongNotDeleted	IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED	4133	路径太长，无法移到回收站，未删除。可用 Shift+Delete 永久删除	The path is too long for the Recycle Bin, so it was not deleted. Shift+Delete deletes it permanently.	路徑太長，無法移到資源回收筒，未刪除。可用 Shift+Delete 永久刪除
+ToolbarToolExtensions	IDS_TOOLBAR_TOOL_EXTENSIONS	4134	文件扩展名	File name extensions	副檔名

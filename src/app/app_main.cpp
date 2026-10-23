@@ -27,6 +27,7 @@
 #include <dwmapi.h>
 // app_main.cpp — Pulse UI process entry point, window, input, shot mode.
 #include "../ui/ui_compositor.h"
+#include "../ui/known_extensions.h"
 #include "../ui/lumatext_renderer.h"
 #include "../ui/ui_renderer.h"
 #include "../ui/preview_grab_cursor.h"
@@ -1351,6 +1352,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         ui::FluentMenu::SetAcrylicEnabled(s->appPrefs.menu_acrylic && !s->safeMode);
         s->renderer.SetRowHeightDip(static_cast<float>(
             app::EffectiveRowHeightDip(s->appPrefs.row_height, s->appPrefs.ui_font_scale)));
+        ui::SetHideKnownExtensions(!s->appPrefs.show_file_extensions);
         s->renderer.SetListStyle(s->appPrefs.list_smart_date, s->appPrefs.list_zebra_rows,
                                  s->appPrefs.list_size_bar, s->appPrefs.list_tag_name_color,
                                  s->appPrefs.list_selection_outline);

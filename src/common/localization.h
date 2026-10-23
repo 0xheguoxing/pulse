@@ -2917,6 +2917,7 @@ enum class StringId : UINT {
     DateLastWeekFormat = IDS_DATE_LAST_WEEK_FORMAT,
     OpDeletePartialTitle = IDS_OP_DELETE_PARTIAL_TITLE,
     RecyclePathTooLongNotDeleted = IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED,
+    ToolbarToolExtensions = IDS_TOOLBAR_TOOL_EXTENSIONS,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

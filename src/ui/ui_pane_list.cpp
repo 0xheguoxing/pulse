@@ -1323,7 +1323,7 @@ bool MainRenderer::PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& f
 
     const std::wstring fitted = FitFileName(
         compositor_, compositor_->DwriteFactory(), compositor_->FileNameFormat(),
-        entry.name, available);
+        ShownName(entry), available);
     const float text_width = MeasureLayoutText(
         compositor_, compositor_->DwriteFactory(), compositor_->FileNameFormat(), fitted);
     float text_left = name.left;
@@ -1370,7 +1370,7 @@ bool MainRenderer::PointInItemGrip(const PaneViewModel& vm, const D2D1_RECT_F& f
         const D2D1_RECT_F name = layout.NameRect(view_index);
         if (x >= pic.left - pad && x < pic.right + pad && y >= pic.top - pad && y < std::max(pic.bottom + pad, name.top))
             return true;
-        const std::wstring& shown = entry.alias.empty() ? entry.name : entry.alias;
+        const std::wstring shown = entry.alias.empty() ? ShownName(entry) : entry.alias;
         if (shown.empty()) return false;
         const std::vector<int>* tag_indices = vm.tag_catalog ? vm.tag_catalog->TagIndicesForPath(entry.path) : nullptr;
         const bool tagged = tag_indices ? !tag_indices->empty()
@@ -2097,10 +2097,10 @@ void MainRenderer::DrawMorphFrom(const PaneViewModel& vm, const motion::ViewMorp
         const D2D1_RECT_F moved = D2D1::RectF(name.left + dx, name.top + dy,
                                               name.right + dx, name.bottom + dy);
         if (grid) {
-            DrawCenteredIconName(e.name, moved, theme.text, theme, kNoMatches, nullptr,
+            DrawCenteredIconName(ShownName(e), moved, theme.text, theme, kNoMatches, nullptr,
                                  layout.Metrics().name_lines);
         } else {
-            DrawTruncatedName(e.name, moved.left, moved.top, std::max(1.0f, moved.right - moved.left),
+            DrawTruncatedName(ShownName(e), moved.left, moved.top, std::max(1.0f, moved.right - moved.left),
                               std::max(1.0f, moved.bottom - moved.top), theme, false, kNoMatches);
         }
         if (details) {
@@ -3401,7 +3401,7 @@ int FolderIconNameLines(Compositor* compositor, const PaneViewModel& vm, float s
     needed.reserve(kSamples);
     for (size_t i = 0; i < total && needed.size() < kSamples; i += step) {
         const ListEntryView& e = MakeVisibleEntry(vm, i);
-        const std::wstring name = e.alias.empty() ? e.name : e.alias;
+        const std::wstring name = e.alias.empty() ? ShownName(e) : e.alias;
         if (name.empty()) continue;
         needed.push_back(static_cast<int>(WrapIconName(compositor->DwriteFactory(), fmt, name, budget,
             static_cast<size_t>(kIconGridMaxNameLines)).size()));
@@ -3926,7 +3926,7 @@ D2D1_RECT_F MainRenderer::RenameFieldRect(const PaneViewModel& vm, const D2D1_RE
         : nameRc.right;
     if (iconGrid && tagDotCount > 0) {
         const float fullNameW = MeasureLayoutText(
-            compositor_, compositor_->DwriteFactory(), compositor_->TextFormat(), e.name);
+            compositor_, compositor_->DwriteFactory(), compositor_->TextFormat(), ShownName(e));
         const float nameGap = 4.0f * scale_;
         const float cellW = nameRc.right - nameRc.left;
         const float leftover = std::max(0.0f, cellW - fullNameW - nameGap);
@@ -4990,18 +4990,20 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 textY = nameLine.y;
                 textH = nameLine.h;
             }
+            // 文件扩展名 off: a known type is drawn without its extension.
+            const std::wstring shown_name = ShownName(e);
             // 别名: the alias leads and the real name follows, quieter.
             const bool has_alias = !e.alias.empty();
             // 只显示别名 drops the real name (the tooltip still has it).
             const bool alias_both = has_alias && app::AliasStore::Instance().Display() == app::AliasDisplay::Both;
             const std::wstring alias_line = !has_alias ? std::wstring()
-                : alias_both ? e.alias + L"\u2003\u2003" + e.name : e.alias;
+                : alias_both ? e.alias + L"\u2003\u2003" + shown_name : e.alias;
             static const std::vector<NameMatchRange> kNoAliasMatches;
-            const auto name_matches = has_alias ? kNoAliasMatches : NameMatchRanges(e.name, highlight_terms);
+            const auto name_matches = has_alias ? kNoAliasMatches : NameMatchRanges(shown_name, highlight_terms);
             if (iconGrid && tagDotCount > 0) {
                 const float fullNameW = MeasureLayoutText(
-                    compositor_, compositor_->DwriteFactory(), compositor_->FileNameFormat(), e.name) +
-                    HighlightPaddingWidth(e.name, e.name, name_matches, scale_);
+                    compositor_, compositor_->DwriteFactory(), compositor_->FileNameFormat(), shown_name) +
+                    HighlightPaddingWidth(shown_name, shown_name, name_matches, scale_);
                 const float nameGap = 4.0f * scale_;
                 const float cellW = nameRc.right - nameRc.left;
                 const float leftover = std::max(0.0f, cellW - fullNameW - nameGap);
@@ -5049,7 +5051,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             const bool list_mark = show_mark && !iconGrid;
             const NameTrail trail = LayoutNameTrail(
                 list_mark ? nameX + kListAliasMarkDip * scale_ : nameX, textY, textH, nameColRight, cell.top, cell.bottom, scale_,
-                has_alias ? alias_line : e.name, tagDotCount, badgeW, showStar, showNewTab, showMore,
+                has_alias ? alias_line : shown_name, tagDotCount, badgeW, showStar, showNewTab, showMore,
                 compositor_, compositor_->DwriteFactory(), nameFormat, change != nullptr,
                 vm.view_mode == ViewMode::Details ? (e.is_dir ? 3 : 2) : 0, name_matches, row_actions_);
             if (src == vm.rename_index) {
@@ -5114,7 +5116,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         if (!IsHighContrast()) on_photo.text = D2D1::ColorF(1.0f, 1.0f, 1.0f, cut ? 0.6f : 1.0f);
                         const float line = std::min(18.0f * scale_, thumbRect.bottom - thumbRect.top);
                         MakeBrush(dc, on_photo.text, brText_);
-                        name_truncated = DrawTruncatedName(has_alias ? alias_line : e.name, thumbRect.left + 6.0f * scale_,
+                        name_truncated = DrawTruncatedName(has_alias ? alias_line : shown_name, thumbRect.left + 6.0f * scale_,
                             thumbRect.bottom - 4.0f * scale_ - line, std::max(1.0f, thumbRect.right - thumbRect.left - 12.0f * scale_),
                             line, on_photo, false, name_matches, false);
                     }
@@ -5122,9 +5124,9 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     // A folder showing its size keeps the last line for it.
                     const bool size_line = e.is_dir && vm.folder_size_labels.contains(src);
                     const int name_lines = wall_rows ? 1 : layout.Metrics().name_lines;
-                    DrawCenteredIconName(has_alias ? e.alias : e.name, nameRc, nameColor, theme, name_matches,
+                    DrawCenteredIconName(has_alias ? e.alias : shown_name, nameRc, nameColor, theme, name_matches,
                                          &name_truncated, size_line ? std::max(1, name_lines - 1) : name_lines,
-                                         nullptr, !e.is_dir && !has_alias);
+                                         nullptr, !e.is_dir && !has_alias && !e.hidden_ext);
                     // The single selected item shows its whole name on top of
                     // the rows below (drawn after every row), a folder's size
                     // under it.
@@ -5132,8 +5134,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         !morphing) {
                         expanded_name.valid = true;
                         expanded_name.source = src;
-                        expanded_name.name = has_alias ? e.alias : e.name;
-                        expanded_name.dim_extension = !e.is_dir && !has_alias;
+                        expanded_name.name = has_alias ? e.alias : shown_name;
+                        expanded_name.dim_extension = !e.is_dir && !has_alias && !e.hidden_ext;
                         expanded_name.bounds = D2D1::RectF(nameRc.left + row_dx, nameRc.top + row_dy,
                                                            nameRc.right + row_dx, nameRc.bottom + row_dy);
                         expanded_name.color = nameColor;
@@ -5172,7 +5174,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         const D2D1_COLOR_F faint = WithAlpha(theme.text_secondary, cut ? 0.35f : 0.62f);
                         ComPtr<IDWriteTextLayout> real_layout;
                         if (small_format && dwrite) {
-                            const std::wstring fitted = FitHighlightedFileName(compositor_, dwrite, small_format, e.name,
+                            const std::wstring fitted = FitHighlightedFileName(compositor_, dwrite, small_format, shown_name,
                                                                                real_w, kNoAliasMatches, scale_);
                             if (SUCCEEDED(dwrite->CreateTextLayout(fitted.c_str(), static_cast<UINT32>(fitted.size()),
                                                                     small_format, real_w, textH, &real_layout))) {
@@ -5187,7 +5189,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         if (!real_layout.get()) {
                             Theme real_theme = theme;
                             real_theme.text = faint;
-                            DrawTruncatedName(e.name, real_x, textY, real_w, textH, real_theme,
+                            DrawTruncatedName(shown_name, real_x, textY, real_w, textH, real_theme,
                                               selected, kNoAliasMatches, false);
                         }
                     }
@@ -5196,8 +5198,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     Theme name_theme = theme;
                     name_theme.text = nameColor;
                     name_semibold_ = nameFormat != compositor_->FileNameFormat();
-                    name_truncated = DrawTruncatedName(e.name, trail.name_x, textY, trail.name_w, textH, name_theme,
-                                                       selected, name_matches, detailsView && !e.is_dir);
+                    name_truncated = DrawTruncatedName(shown_name, trail.name_x, textY, trail.name_w, textH, name_theme,
+                                                       selected, name_matches, detailsView && !e.is_dir && !e.hidden_ext);
                     name_semibold_ = false;
                     // Icon grids with tag dots keep the name on one line; the
                     // single selected item still shows all of it.
@@ -5205,8 +5207,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         !vm.marquee_active && !morphing) {
                         expanded_name.valid = true;
                         expanded_name.source = src;
-                        expanded_name.name = e.name;
-                        expanded_name.dim_extension = !e.is_dir;
+                        expanded_name.name = shown_name;
+                        expanded_name.dim_extension = !e.is_dir && !e.hidden_ext;
                         expanded_name.bounds = D2D1::RectF(nameRc.left + row_dx, nameRc.top + row_dy,
                                                            nameRc.right + row_dx, nameRc.bottom + row_dy);
                         expanded_name.color = nameColor;

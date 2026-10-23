@@ -2907,6 +2907,7 @@ BEGIN
     IDS_DATE_LAST_WEEK_FORMAT "上%s"
     IDS_OP_DELETE_PARTIAL_TITLE "已删除 %s 项，%s 项未成功"
     IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED "路径太长，无法移到回收站，未删除。可用 Shift+Delete 永久删除"
+    IDS_TOOLBAR_TOOL_EXTENSIONS "文件扩展名"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5813,6 +5814,7 @@ BEGIN
     IDS_DATE_LAST_WEEK_FORMAT "Last %s"
     IDS_OP_DELETE_PARTIAL_TITLE "Deleted %s items, %s didn't go through"
     IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED "The path is too long for the Recycle Bin, so it was not deleted. Shift+Delete deletes it permanently."
+    IDS_TOOLBAR_TOOL_EXTENSIONS "File name extensions"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

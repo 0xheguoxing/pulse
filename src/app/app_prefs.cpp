@@ -110,6 +110,7 @@ void AppPrefs::ResetToDefaults() {
     global_search_width = 0;
     global_search_height = 0;
     show_hidden_files = false;
+    show_file_extensions = true;
     show_protected_os_files = false;
     blank_click_action = kBlankClickOff;
     preview_trigger = kPreviewTriggerHover;
@@ -267,6 +268,8 @@ std::wstring AppPrefs::ToJson() const {
     out += std::to_wstring(NormalizeUiFontScale(ui_font_scale));
     out += L",\n  \"show_hidden_files\":";
     out += show_hidden_files ? L"true" : L"false";
+    out += L",\n  \"show_file_extensions\":";
+    out += show_file_extensions ? L"true" : L"false";
     out += L",\n  \"show_protected_os_files\":";
     out += show_protected_os_files ? L"true" : L"false";
     out += L",\n  \"search_pinyin\":";
@@ -527,6 +530,7 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     global_search_width = std::clamp(pulse::json::ExtractInt(json, L"global_search_width", 0), 0, 4000);
     global_search_height = std::clamp(pulse::json::ExtractInt(json, L"global_search_height", 0), 0, 4000);
     show_hidden_files = pulse::json::ExtractBool(json, L"show_hidden_files", false);
+    show_file_extensions = pulse::json::ExtractBool(json, L"show_file_extensions", true);
     show_protected_os_files = pulse::json::ExtractBool(json, L"show_protected_os_files", false);
     // Files from before blank_click_action carry only the on/off flag (= back).
     blank_click_action = NormalizeBlankClickAction(pulse::json::ExtractInt(json, L"blank_click_action",
