@@ -2133,6 +2133,11 @@ void SeedShellVerbCache(AppState& s) {
     const uint32_t generation = ++g_shell_seed_generation;
     const uint32_t cache_generation = s.context_menu.cache_generation();
     std::thread([hwnd, generation, cache_generation] {
+        // Re-reading up to 400 types costs about 2 s of CPU right at startup
+        // (and after every Classes change), when the first screen of
+        // thumbnails is decoding: background CPU and I/O priority lets those
+        // go first. The thread is detached and ends here, so no END call.
+        SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
         // The cache file can be megabytes: read and parse it here, never on
         // the UI thread, which only merges the result (WM_SHELL_VERB_SEED).
         auto seed = std::make_unique<ShellVerbSeed>();
