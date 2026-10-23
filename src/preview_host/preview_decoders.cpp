@@ -26,6 +26,7 @@
 #include "office_sketch.h"
 #include "pdf_raster.h"
 #include "preview_file_utils.h"
+#include "shared_image_file.h"
 #include "psd_raster.h"
 #include "shell_bitmap.h"
 #include "svg_raster.h"
@@ -369,6 +370,7 @@ static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
                         const std::vector<unsigned char>* embedded = nullptr,
                         uint32_t frame_index = 0, uint32_t* frame_count = nullptr) {
     if (IsOfflinePlaceholder(attrs)) return false;
+    preview::SharedImageFile file;  // outlives the decoder
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICBitmapDecoder> decoder;
     ComPtr<IWICBitmapFrameDecode> frame;
@@ -382,8 +384,8 @@ static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
         if (embedded->empty() || embedded->size() > MAXDWORD || FAILED(factory->CreateStream(&stream)) ||
             FAILED(stream->InitializeFromMemory(const_cast<BYTE*>(embedded->data()), static_cast<DWORD>(embedded->size()))) ||
             FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder))) return false;
-    } else if (FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
-                                                         WICDecodeMetadataCacheOnDemand, &decoder))) return false;
+    } else if (FAILED(preview::CreateSharedDecoder(factory.Get(), path, WICDecodeMetadataCacheOnDemand,
+                                                   file, &decoder))) return false;
     if (frame_count) {
         UINT count = 0;
         if (FAILED(decoder->GetFrameCount(&count)) || !count) return false;
@@ -727,11 +729,11 @@ static bool FramePixels(IWICImagingFactory* factory, IWICBitmapSource* frame, st
 // composed frames with their duration. false for still pictures.
 static bool DecodeWebpFrame(const std::wstring& path, UINT pixels, uint32_t frame_index, DecodeResult& r,
                             uint32_t& frame_count, uint32_t& delay_ms, uint32_t& loop_count) {
+    preview::SharedImageFile file;  // outlives the decoder
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICBitmapDecoder> decoder;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
-        FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
-                                                   WICDecodeMetadataCacheOnDemand, &decoder)))
+        FAILED(preview::CreateSharedDecoder(factory.Get(), path, WICDecodeMetadataCacheOnDemand, file, &decoder)))
         return false;
     UINT count = 0;
     if (FAILED(decoder->GetFrameCount(&count)) || count < 2) return false;
@@ -959,12 +961,13 @@ static std::wstring MissingImageCodec(const std::wstring& path, const std::wstri
     const bool heif = extension == L".heic" || extension == L".heif" || extension == L".hif";
     const bool avif = extension == L".avif";
     if (!heif && !avif) return {};
+    preview::SharedImageFile file;  // outlives the decoder
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICBitmapDecoder> decoder;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))))
         return {};
-    const HRESULT hr = factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
-                                                          WICDecodeMetadataCacheOnDemand, &decoder);
+    const HRESULT hr = preview::CreateSharedDecoder(factory.Get(), path, WICDecodeMetadataCacheOnDemand,
+                                                    file, &decoder);
     if (hr == WINCODEC_ERR_COMPONENTNOTFOUND) return avif ? L"av1" : L"heif";
     // The HEIF container opened but its pictures did not decode: HEVC is the
     // separate extension HEIC photos need.
@@ -1028,13 +1031,14 @@ static bool HeifHasThumbnail(const std::wstring& path) {
 
 static bool HeifThumbnailInto(const DecodeRequest& q, UINT cap, DecodeResult& r) {
     if (!HeifHasThumbnail(q.path)) return false;
+    preview::SharedImageFile file;  // outlives the decoder
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICBitmapDecoder> decoder;
     ComPtr<IWICBitmapFrameDecode> frame;
     ComPtr<IWICBitmapSource> thumbnail;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
-        FAILED(factory->CreateDecoderFromFilename(q.path.c_str(), nullptr, GENERIC_READ,
-                                                   WICDecodeMetadataCacheOnDemand, &decoder)) ||
+        FAILED(preview::CreateSharedDecoder(factory.Get(), q.path, WICDecodeMetadataCacheOnDemand, file,
+                                            &decoder)) ||
         FAILED(decoder->GetFrame(0, &frame)) || FAILED(frame->GetThumbnail(&thumbnail)))
         return false;
     std::vector<uint8_t> canvas;
