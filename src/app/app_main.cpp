@@ -2082,6 +2082,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             s->framePump.Disarm();  // WM_PAINT re-arms once shown again
             return 0;
         }
+        // Frames keep the queue busy, so kTimerUi can starve (UiTimerPacer::TickOverdue).
+        if (s->uiTimerPacer.TickOverdue(GetTickCount64())) WndProcImpl(hwnd, WM_TIMER, kTimerUi, 0);
         // Paint now rather than queue a low-priority WM_PAINT; Render re-arms
         // while anything still moves. Posted messages outrank input, so when
         // input is waiting the frame becomes an ordinary WM_PAINT instead:
@@ -2142,6 +2144,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         if (s && wParam == kTimerUi) {
             SyncUiTimerRate(*s, hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
+            s->uiTimerPacer.NoteTick(GetTickCount64());
             bool dirty = false;
             if (TickChangeTracking(*s)) dirty = true;
             if (s->renderer.MtimeBoundaryDue()) dirty = true;   // 修改时间提示: a mark aged

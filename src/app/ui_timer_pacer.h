@@ -49,9 +49,22 @@ public:
 
     UINT Current() const noexcept { return current_; }
 
+    // Windows generates WM_TIMER only once the queue holds nothing else, and
+    // the frame pump posts a message every display frame: a long full-rate
+    // animation could stop the tick for seconds (hover select, tooltips and
+    // slow-click rename waited while the task pill held its finished state).
+    // The frame handler runs the tick itself once it is this late.
+    static constexpr ULONGLONG kOverdueSlackMs = 16;
+
+    void NoteTick(ULONGLONG now) noexcept { last_tick_ = now; }
+    bool TickOverdue(ULONGLONG now) const noexcept {
+        return last_tick_ != 0 && now - last_tick_ >= current_ + kOverdueSlackMs;
+    }
+
 private:
     UINT current_ = kActiveMs;
     ULONGLONG active_until_ = 0;
+    ULONGLONG last_tick_ = 0;
 };
 
 } // namespace pulse::app

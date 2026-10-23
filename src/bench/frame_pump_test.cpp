@@ -73,6 +73,22 @@ void TestUiTimerPacer() {
     Check(UiTimerPacer::kActiveMs < UiTimerPacer::kIdleMs && UiTimerPacer::kIdleMs < UiTimerPacer::kQuietMs &&
               UiTimerPacer::kQuietMs < UiTimerPacer::kHiddenMs,
           L"period ordering: active < idle < quiet < hidden");
+
+    // Starved tick: a frame handler runs it once it is a period plus slack late.
+    UiTimerPacer ticks;
+    Check(!ticks.TickOverdue(5000), L"no tick yet: nothing is overdue");
+    ticks.NoteActivity(5000);
+    ticks.Update(true, 5000, period);
+    ticks.NoteTick(5000);
+    Check(!ticks.TickOverdue(5000 + UiTimerPacer::kActiveMs), L"a tick due on time is not overdue");
+    Check(ticks.TickOverdue(5000 + UiTimerPacer::kActiveMs + UiTimerPacer::kOverdueSlackMs),
+          L"a tick a period plus slack late is overdue");
+    ticks.NoteTick(5040);
+    Check(!ticks.TickOverdue(5041), L"running the tick clears the overdue state");
+    Check(ticks.Update(true, 5000 + UiTimerPacer::kLingerMs, period) && period == UiTimerPacer::kIdleMs &&
+              !ticks.TickOverdue(5040 + UiTimerPacer::kActiveMs + UiTimerPacer::kOverdueSlackMs) &&
+              ticks.TickOverdue(5040 + UiTimerPacer::kIdleMs + UiTimerPacer::kOverdueSlackMs),
+          L"overdue follows the current period (idle poll)");
 }
 
 } // namespace
