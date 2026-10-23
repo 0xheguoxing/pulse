@@ -2734,4 +2734,13 @@ BEGIN
     IDS_DIALOG_JUMP_CHIP_CURRENT "目前"
     IDS_DIALOG_JUMP_PINNED "快速存取"
     IDS_DIALOG_JUMP_RECENT "最近使用"
+    IDS_DIALOG_JUMP_AUTO "開啟對話方塊時自動跳到 Pulse 目前資料夾"
+    IDS_DIALOG_JUMP_AUTO_DESC "只跳一次；手動換了位置後不再干預"
+    IDS_JUMP_HISTORY "記住常去的位置"
+    IDS_JUMP_HISTORY_DESC "把常去的資料夾排在前面；只儲存在本機"
+    IDS_JUMP_HISTORY_CLEAR "清除記錄"
+    IDS_DIALOG_JUMP_FREQUENT "常去的位置"
+    IDS_GLOBAL_SEARCH_APPS "結果裡顯示應用程式"
+    IDS_GLOBAL_SEARCH_APPS_DESC "「開始」功能表裡的程式，排在檔案之後"
+    IDS_GLOBAL_SEARCH_GROUP_APPS "應用程式"
 END

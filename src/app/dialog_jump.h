@@ -4,6 +4,8 @@
 // slim bar sits under it: a search box (folders Pulse knows instantly, then
 // the index, pinyin included), the folders open in Pulse as chips, the
 // current Pulse folder on Ctrl+G and a menu of Quick access / recent places.
+// Jumps are remembered per program (JumpHistory): frequent places rank first
+// and show when the empty search box takes the focus.
 // Picking one moves the dialog there; a typed Save name is kept, and in an
 // Open dialog a file is filled in and opened. The dialog itself is driven
 // through its file name box (or its address bar in folder pickers); no
@@ -22,6 +24,7 @@
 #include <vector>
 
 namespace pulse::app {
+class JumpHistory;
 struct DialogJumpFolder {
     std::wstring path, label;   // label: shown name when it is not the folder name
     bool open = false;          // open in a Pulse tab (shown as a chip)
@@ -34,6 +37,8 @@ struct DialogJumpContext {
     D2D1_COLOR_F accent{0.0f, 0.47f, 0.84f, 1.0f};
     bool pinyin = true;
     bool index = true;                       // search master switch on
+    bool remember = true;                    // record jumps, frequent places first
+    bool auto_jump = false;                  // a new dialog goes to `current` once
 };
 
 class DialogJump {
@@ -47,6 +52,8 @@ public:
     void Update(HWND service, UINT context_message, bool enabled);
     void Stop();
     void SetContext(DialogJumpContext context);
+    // Where jumps are recorded and frequent places come from; set before Update.
+    void SetHistory(std::shared_ptr<JumpHistory> history);
     // Two Ctrl taps while a dialog with a bar is in front: focus the bar's
     // search box instead of opening quick search. True when it did.
     bool FocusSearch();

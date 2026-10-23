@@ -6,6 +6,7 @@
 #include "app_runtime.h"
 #include "app_hosted_edit.h"
 #include "places.h"
+#include "session.h"
 #include "../common/localization.h"
 #include "../common/path_utils.h"
 #include "../ui/confirm_dialog.h"
@@ -77,7 +78,19 @@ GlobalSearchContext MakeGlobalSearchContext(const AppState& s) {
         if (item.path.empty() || fs::IsVirtualPath(item.path)) continue;
         context.recent_files.push_back({item.path, item.kind == app::PlaceItemKind::Folder});
     }
-    for (auto& folder : KnownFolders(s)) context.jump_folders.push_back({std::move(folder.path), std::move(folder.label)});
+    // Frequent places: the most visited first among equal matches, and the
+    // ones not known otherwise as extra candidates.
+    auto folders = KnownFolders(s);
+    const auto& history = *s.core.jumpHistory;
+    for (const auto& path : history.Top({}, 32)) {
+        if (fs::IsVirtualPath(path)) continue;
+        if (std::none_of(folders.begin(), folders.end(), [&](const auto& f) { return path::EqualInsensitive(f.path, path); }))
+            folders.push_back({path, {}, false, false});
+    }
+    std::vector<std::pair<double, size_t>> order;
+    for (size_t i = 0; i < folders.size(); ++i) order.push_back({history.Score(folders[i].path, {}), i});
+    std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (const auto& [score, i] : order) context.jump_folders.push_back({std::move(folders[i].path), std::move(folders[i].label)});
     context.width = s.appPrefs.global_search_width;
     context.height = s.appPrefs.global_search_height;
     return context;
@@ -105,6 +118,7 @@ GlobalSearchEvents MakeGlobalSearchEvents(AppState& s) {
         AppState* window = core->windows.MostRecent();
         if (!window) return;
         RecordRecentOpen(*window, path, directory ? app::PlaceItemKind::Folder : app::PlaceItemKind::File);
+        if (directory) core->jumpHistory->Record(path, {});
         if (const auto history = GlobalSearchHandoffPath(search); !history.empty()) RecordSearchHistory(*window, history);
     };
     return events;
@@ -113,6 +127,11 @@ GlobalSearchEvents MakeGlobalSearchEvents(AppState& s) {
 
 void ApplyGlobalSearchSettings(AppState& s) {
     ApplyKeymapPrefs(s);  // the shortcut conflict checks see the hotkey
+    // Kept in memory only when prefs are not saved.
+    if (!s.core.jumpHistory->IsOpen())
+        s.core.jumpHistory->Open(s.appPrefs.persist ? app::GetPulseDataDir() + L"\\jump_history.tsv" : std::wstring{});
+    s.core.jumpHistory->SetEnabled(s.appPrefs.jump_history);
+    s.core.dialogJump.SetHistory(s.core.jumpHistory);
     if (!HotkeyAllowed(s)) return;
     s.core.dialogJump.Update(ServiceWindow(s), WM_DIALOG_JUMP_CONTEXT, s.appPrefs.dialog_jump_bar);
     const bool enabled = s.appPrefs.global_search_enabled && s.appPrefs.search_enabled;
@@ -196,6 +215,8 @@ void SendDialogJumpContext(AppState& s) {
     context.accent = window->accentColor;
     context.pinyin = window->appPrefs.search_pinyin;
     context.index = window->appPrefs.search_enabled;
+    context.remember = window->appPrefs.jump_history;
+    context.auto_jump = window->appPrefs.dialog_jump_auto;
     s.core.dialogJump.SetContext(std::move(context));
 }
 

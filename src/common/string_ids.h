@@ -2750,5 +2750,14 @@
 #define IDS_DIALOG_JUMP_CHIP_CURRENT                                                     3960
 #define IDS_DIALOG_JUMP_PINNED                                                           3961
 #define IDS_DIALOG_JUMP_RECENT                                                           3962
+#define IDS_DIALOG_JUMP_AUTO                                                             3963
+#define IDS_DIALOG_JUMP_AUTO_DESC                                                        3964
+#define IDS_JUMP_HISTORY                                                                 3965
+#define IDS_JUMP_HISTORY_DESC                                                            3966
+#define IDS_JUMP_HISTORY_CLEAR                                                           3967
+#define IDS_DIALOG_JUMP_FREQUENT                                                         3968
+#define IDS_GLOBAL_SEARCH_APPS                                                           3969
+#define IDS_GLOBAL_SEARCH_APPS_DESC                                                      3970
+#define IDS_GLOBAL_SEARCH_GROUP_APPS                                                     3971
 
 #endif  // PULSE_STRING_IDS_H

@@ -102,7 +102,18 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
         }
         l.dialog_jump_row = D2D1::RectF(card_left, y, card_right, y + 68*scale);
         y += 68*scale;
+        l.dialog_jump_auto_row = D2D1::RectF(card_left, y, card_right, y + 68*scale);
+        y += 68*scale;
         l.search_pinyin_row = D2D1::RectF(card_left, y, card_right, y + 68*scale);
+        y += 68*scale;
+        l.jump_history_row = D2D1::RectF(card_left, y, card_right, y + 68*scale);
+        {
+            // 清除记录 sits left of the switch, sized to its label.
+            float label = 0;
+            for (wchar_t c : pulse::l10n::Get(pulse::l10n::StringId::JumpHistoryClear)) label += c >= 0x2E80 ? 14.0f : 7.5f;
+            const float right = card_right - 72*scale, w = (label + 32) * scale;
+            l.jump_history_clear = D2D1::RectF(right - w, y + 18*scale, right, y + 50*scale);
+        }
         y += 68*scale;
         l.filename_status = D2D1::RectF(card_left, y, card_right, y + 72*scale);
         y += 72*scale;

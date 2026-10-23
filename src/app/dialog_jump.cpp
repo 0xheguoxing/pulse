@@ -1,4 +1,5 @@
 #include "dialog_jump.h"
+#include "jump_history.h"
 #include "jump_match.h"
 #include "../common/localization.h"
 #include "../index/index_client.h"
@@ -22,6 +23,7 @@
 #include <tuple>
 #include <cwctype>
 #include <map>
+#include <numeric>
 
 namespace pulse::app {
 namespace {
@@ -33,7 +35,7 @@ constexpr UINT kMsgFocus = WM_APP + 2;        // FocusSearch
 constexpr UINT kMsgIndexStatus = WM_APP + 3;
 constexpr UINT kMsgIndexResult = WM_APP + 4;
 constexpr UINT kMsgStop = WM_APP + 5;
-constexpr UINT_PTR kTimerRestore = 1, kTimerAddress = 2, kTimerSearch = 3, kTimerProbe = 4, kTimerAnim = 5, kTimerGiveUp = 6;
+constexpr UINT_PTR kTimerRestore = 1, kTimerAddress = 2, kTimerSearch = 3, kTimerProbe = 4, kTimerAnim = 5, kTimerGiveUp = 6, kTimerAuto = 7;
 constexpr int kHotkeyId = 0x5054;
 constexpr uint64_t kSession = 0x50554c53444a4d50ull;
 // Geometry in DIPs, after the approved quick jump mockup (scene A).
@@ -483,6 +485,7 @@ struct DialogJump::Impl {
     // Shared with the UI thread.
     std::mutex mu;
     DialogJumpContext shared_context;
+    std::shared_ptr<JumpHistory> shared_history;
     std::atomic<HWND> service{nullptr};
     std::atomic<UINT> context_message{0};
     std::atomic<HWND> bar_window{nullptr};
@@ -527,6 +530,15 @@ struct DialogJump::Impl {
     HWND probe_target = nullptr;
     int probe_tries = 0;
     DialogJumpContext ctx;
+    // Frequent places: ctx.folders from `history_from` on came from the jump
+    // history only; `scores` (per folder) puts the most visited first and
+    // `exists` caches whether a history-only folder is still there.
+    std::shared_ptr<JumpHistory> history;
+    std::wstring dlg_app;  // exe name of the dialog's program
+    std::vector<double> scores;
+    std::vector<int8_t> exists;
+    size_t history_from = 0;
+    bool auto_pending = false;  // a new dialog waits for its auto-jump
     float scale = 1.0f;
     float width = 0;  // strip width in DIPs
     Placement placement = Placement::Below;
@@ -580,13 +592,16 @@ struct DialogJump::Impl {
     void OnIndexResult(uint32_t id);
     void BuildSearchRows();
     void BuildPlaceRows();
+    bool ShowFrequent();
+    bool Exists(size_t folder);
+    std::vector<size_t> ByScore(std::vector<size_t> folders) const;
     int FirstItem() const;
     void MoveSelection(int delta);
     float ListHeight() const;
     void ShowList();
     void HideList();
     void Pick(size_t row);
-    void Navigate(const std::wstring& path, bool dir);
+    void Navigate(const std::wstring& path, bool dir, bool record = true);
     void NavigateAddressBar(const std::wstring& path);
     void SendAddressKeys();
     void ReturnToDialog();
@@ -739,6 +754,10 @@ void DialogJump::Impl::Attach(const DialogInfo& info) {
         if (edit) SetWindowTextW(edit, L"");
         rows.clear();
         list_mode = ListMode::Hidden;
+        dlg_app = ProcessExeName(info.pid);
+        // Auto-jump once the fresh context is in (or after 700 ms without).
+        auto_pending = true;
+        SetTimer(bar.hwnd, kTimerAuto, 700, nullptr);
     }
     KillTimer(bar.hwnd, kTimerProbe);
     if (const HWND service_window = service.load()) PostMessageW(service_window, context_message.load(), 0, 0);
@@ -756,6 +775,8 @@ void DialogJump::Impl::Attach(const DialogInfo& info) {
 
 void DialogJump::Impl::Detach() {
     KillTimer(bar.hwnd, kTimerAddress);
+    KillTimer(bar.hwnd, kTimerAuto);
+    auto_pending = false;
     KillTimer(bar.hwnd, kTimerAnim);
     if (dialog_hook) {
         UnhookWinEvent(dialog_hook);
@@ -779,9 +800,47 @@ void DialogJump::Impl::TakeContext() {
     {
         std::lock_guard lock(mu);
         ctx = shared_context;
+        history = shared_history;
     }
     ctx.current = PlainPath(ctx.current);
     for (auto& folder : ctx.folders) folder.path = PlainPath(folder.path);
+    history_from = ctx.folders.size();
+    scores.assign(ctx.folders.size(), 0.0);
+    if (ctx.remember && history) {
+        for (const auto& path : history->Top(dlg_app, 24)) {
+            const std::wstring plain = PlainPath(path);
+            if (std::none_of(ctx.folders.begin(), ctx.folders.end(), [&](const auto& f) { return SamePath(f.path, plain); }))
+                ctx.folders.push_back({plain, {}, false, false});
+        }
+        scores.resize(ctx.folders.size());
+        for (size_t i = 0; i < ctx.folders.size(); ++i) scores[i] = history->Score(ctx.folders[i].path, dlg_app);
+    }
+    exists.assign(ctx.folders.size(), 1);
+    for (size_t i = history_from; i < exists.size(); ++i) exists[i] = -1;
+}
+
+// History-only folders may be gone; network ones are not probed (slow).
+bool DialogJump::Impl::Exists(size_t folder) {
+    if (folder >= exists.size()) return false;
+    if (exists[folder] < 0) {
+        const auto& path = ctx.folders[folder].path;
+        bool ok = path.rfind(L"\\\\", 0) == 0;
+        if (!ok && path.size() >= 2 && path[1] == L':') {
+            const wchar_t root[] = {path[0], L':', L'\\', 0};
+            const DWORD attributes = GetDriveTypeW(root) == DRIVE_REMOTE ? FILE_ATTRIBUTE_DIRECTORY : GetFileAttributesW(path.c_str());
+            ok = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY);
+        }
+        exists[folder] = static_cast<int8_t>(ok ? 1 : 0);
+    }
+    return exists[folder] > 0;
+}
+
+// Most visited first; equal scores keep their order.
+std::vector<size_t> DialogJump::Impl::ByScore(std::vector<size_t> folders) const {
+    std::stable_sort(folders.begin(), folders.end(), [&](size_t a, size_t b) {
+        return (a < scores.size() ? scores[a] : 0) > (b < scores.size() ? scores[b] : 0);
+    });
+    return folders;
 }
 
 // --- look ---------------------------------------------------------------------
@@ -1196,14 +1255,27 @@ void DialogJump::Impl::BuildSearchRows() {
 
 void DialogJump::Impl::BuildPlaceRows() {
     rows.clear();
-    std::vector<size_t> pinned, recent;
+    // Quick access, then the most visited of the rest, then recent ones.
+    std::vector<size_t> pinned, frequent, recent;
     for (size_t i = 0; i < ctx.folders.size(); ++i) {
         const auto& folder = ctx.folders[i];
         if (folder.open) continue;
-        (folder.pinned ? pinned : recent).push_back(i);
+        if (folder.pinned) pinned.push_back(i);
+        else if (scores[i] > 0) frequent.push_back(i);
+        else if (i < history_from) recent.push_back(i);
     }
-    if (pinned.size() > kMaxPlaces / 2 + 1 && !recent.empty()) pinned.resize(kMaxPlaces / 2 + 1);
-    if (pinned.size() + recent.size() > kMaxPlaces) recent.resize(kMaxPlaces - std::min(pinned.size(), kMaxPlaces));
+    frequent = ByScore(std::move(frequent));
+    frequent.erase(std::remove_if(frequent.begin(), frequent.end(), [&](size_t i) { return !Exists(i); }), frequent.end());
+    if (frequent.size() > 3) {
+        // The rest of Pulse's recent folders stay under 最近使用.
+        for (size_t k = 3; k < frequent.size(); ++k) if (frequent[k] < history_from) recent.push_back(frequent[k]);
+        std::sort(recent.begin(), recent.end());
+        frequent.resize(3);
+    }
+    const bool others = !frequent.empty() || !recent.empty();
+    if (pinned.size() > kMaxPlaces / 2 + 1 && others) pinned.resize(kMaxPlaces / 2 + 1);
+    if (pinned.size() + frequent.size() + recent.size() > kMaxPlaces)
+        recent.resize(kMaxPlaces - std::min(pinned.size() + frequent.size(), kMaxPlaces));
     auto add = [&](StringId title, const std::vector<size_t>& items) {
         if (items.empty()) return;
         rows.push_back({Row::Kind::Group, l10n::Get(title), {}, true});
@@ -1213,8 +1285,33 @@ void DialogJump::Impl::BuildPlaceRows() {
         }
     };
     add(StringId::DialogJumpPinned, pinned);
+    add(StringId::DialogJumpFrequent, frequent);
     add(StringId::DialogJumpRecent, recent);
     if (rows.empty()) rows.push_back({Row::Kind::Note, l10n::Get(StringId::DialogJumpNoMatch), {}, true});
+}
+
+// The empty search box with the focus: where this program's dialogs usually
+// go. False (and nothing shown) when there is no history.
+bool DialogJump::Impl::ShowFrequent() {
+    if (!ctx.remember || !dlg.dialog) return false;
+    std::vector<size_t> visited;
+    for (size_t i = 0; i < ctx.folders.size(); ++i)
+        if (scores[i] > 0) visited.push_back(i);
+    std::vector<Row> items;
+    for (size_t i : ByScore(std::move(visited))) {
+        if (items.size() >= kMaxRows) break;
+        if (!Exists(i)) continue;
+        const auto& folder = ctx.folders[i];
+        items.push_back({Row::Kind::Item, folder.label.empty() ? Leaf(folder.path) : folder.label, folder.path, true});
+    }
+    if (items.empty()) return false;
+    rows.clear();
+    rows.push_back({Row::Kind::Group, l10n::Get(StringId::DialogJumpFrequent), {}, true});
+    rows.insert(rows.end(), items.begin(), items.end());
+    list_mode = ListMode::Search;
+    selected = -1;  // Enter in an empty box does nothing until a row is chosen
+    ShowList();
+    return true;
 }
 
 void DialogJump::Impl::ShowList() {
@@ -1262,13 +1359,20 @@ void DialogJump::Impl::OnSearchChanged() {
     if (index_started) index_client.CancelSession(kSession);
     searching = false;
     if (query.empty()) {
-        if (list_mode == ListMode::Search) HideList();
+        if (!ShowFrequent() && list_mode == ListMode::Search) HideList();
         return;
     }
+    // Equal matches rank in list order, so the most visited go in first.
+    std::vector<size_t> order(ctx.folders.size());
+    std::iota(order.begin(), order.end(), size_t{0});
+    order = ByScore(std::move(order));
     std::vector<JumpCandidate> candidates;
-    candidates.reserve(ctx.folders.size());
-    for (const auto& folder : ctx.folders) candidates.push_back({folder.path, folder.label});
-    for (size_t index : RankJumpFolders(candidates, query, ctx.pinyin, 5)) {
+    candidates.reserve(order.size());
+    for (size_t i : order) candidates.push_back({ctx.folders[i].path, ctx.folders[i].label});
+    for (size_t ranked : RankJumpFolders(candidates, query, ctx.pinyin, 8)) {
+        if (known.size() >= 5) break;
+        const size_t index = order[ranked];
+        if (!Exists(index)) continue;
         const auto& folder = ctx.folders[index];
         known.push_back({folder.path, folder.label.empty() ? Leaf(folder.path) : folder.label, true});
     }
@@ -1300,7 +1404,7 @@ void DialogJump::Impl::StartIndexSearch() {
 
 void DialogJump::Impl::OnIndexResult(uint32_t id) {
     index::SearchResult result;
-    if (!index_client.TakeResult(id, result) || id != search_id || list_mode != ListMode::Search) return;
+    if (!index_client.TakeResult(id, result) || id != search_id || list_mode != ListMode::Search || query.empty()) return;
     KillTimer(bar.hwnd, kTimerGiveUp);
     searching = false;
     indexed.clear();
@@ -1327,9 +1431,11 @@ void DialogJump::Impl::ReturnToDialog() {
     if (dlg.dialog && GetForegroundWindow() == bar.hwnd) SetForegroundWindow(dlg.dialog);
 }
 
-void DialogJump::Impl::Navigate(const std::wstring& path, bool dir) {
+void DialogJump::Impl::Navigate(const std::wstring& path, bool dir, bool record) {
     HideList();
     if (path.empty() || !dlg.dialog || !IsWindow(dlg.dialog)) return;
+    auto_pending = false;  // the user went somewhere first
+    if (record && ctx.remember && history) history->Record(dir ? path : Parent(path), dlg_app);
     KillTimer(bar.hwnd, kTimerRestore);
     if (dir && (dlg.folder_picker || !dlg.name_edit)) {
         NavigateAddressBar(path);
@@ -1400,7 +1506,10 @@ void DialogJump::Impl::OnEditFocus(bool focused) {
     anim_start = GetTickCount64();
     SetTimer(bar.hwnd, kTimerAnim, 10, nullptr);
     if (!focused && list_mode == ListMode::Search) HideList();
-    if (focused && !query.empty() && list_mode == ListMode::Hidden) OnSearchChanged();
+    if (focused && list_mode == ListMode::Hidden) {
+        if (!query.empty()) OnSearchChanged();
+        else ShowFrequent();
+    }
     if (bar.comp && edit_format) ui::PresentChildEdit(*bar.comp, edit_format.Get(), pal.text, FieldColor(), edit);
     InvalidateRect(bar.hwnd, nullptr, FALSE);
 }
@@ -1409,8 +1518,12 @@ bool DialogJump::Impl::EditKey(WPARAM key) {
     switch (key) {
     case VK_DOWN:
     case VK_UP:
-        if (list_mode == ListMode::Hidden && !query.empty()) OnSearchChanged();
-        else MoveSelection(key == VK_DOWN ? 1 : -1);
+        if (list_mode == ListMode::Hidden) {
+            if (!query.empty()) OnSearchChanged();
+            else ShowFrequent();
+        } else {
+            MoveSelection(key == VK_DOWN ? 1 : -1);
+        }
         return true;
     case VK_RETURN:
         if (list_mode == ListMode::Search && selected >= 0) Pick(static_cast<size_t>(selected));
@@ -1555,6 +1668,12 @@ LRESULT DialogJump::Impl::HandleBar(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             Layout();
             PaintBar();
             ValidateRect(hwnd, nullptr);
+        } else if (wp == kTimerAuto) {
+            // Only once per dialog, and only while nothing was picked yet.
+            KillTimer(hwnd, kTimerAuto);
+            const bool go = auto_pending && ctx.auto_jump && showing && !ctx.current.empty();
+            auto_pending = false;
+            if (go) Navigate(ctx.current, true, false);
         } else if (wp == kTimerSearch) {
             StartIndexSearch();
         } else if (wp == kTimerGiveUp) {
@@ -1609,6 +1728,9 @@ LRESULT DialogJump::Impl::HandleBar(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case kMsgContext: {
+        // A new dialog's context is in: auto-jump shortly, once the dialog
+        // has settled on its own first folder.
+        if (auto_pending) SetTimer(hwnd, kTimerAuto, 150, nullptr);
         const bool dark = ctx.dark;
         const D2D1_COLOR_F accent = ctx.accent;
         TakeContext();
@@ -1617,7 +1739,7 @@ LRESULT DialogJump::Impl::HandleBar(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (dark != ctx.dark || std::memcmp(&accent, &ctx.accent, sizeof(accent)) != 0) Place();
             Layout();
             InvalidateRect(hwnd, nullptr, FALSE);
-            if (list_mode == ListMode::Search && !query.empty()) OnSearchChanged();
+            if (list_mode == ListMode::Search) OnSearchChanged();
             else if (list_mode == ListMode::Places) {
                 BuildPlaceRows();
                 ShowList();
@@ -1731,6 +1853,11 @@ void DialogJump::Stop() {
     PostThreadMessageW(GetThreadId(thread_.native_handle()), kMsgStop, 0, 0);
     thread_.join();
     impl_->showing = false;
+}
+
+void DialogJump::SetHistory(std::shared_ptr<JumpHistory> history) {
+    std::lock_guard lock(impl_->mu);
+    impl_->shared_history = std::move(history);
 }
 
 void DialogJump::SetContext(DialogJumpContext context) {

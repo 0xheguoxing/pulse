@@ -1055,6 +1055,10 @@ struct WindowViewModel {
     bool settings_global_search_double_ctrl = true;
     int settings_global_search_double_ctrl_ms = 300;
     bool settings_dialog_jump_bar = true;
+    bool settings_dialog_jump_auto = false;
+    bool settings_jump_history = true;
+    bool settings_jump_history_empty = true;
+    bool settings_global_search_apps = true;
     bool settings_search_enabled = true;
     bool settings_global_search_capturing = false;
     std::wstring settings_global_search_hotkey;

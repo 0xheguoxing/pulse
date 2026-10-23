@@ -535,8 +535,17 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 if (ContainsPt(lay.dialog_jump_row, x, y)) {
                     r.region = HitTestResult::SettingsToggle; r.index = 41; return r;
                 }
+                if (vm.settings_dialog_jump_bar && ContainsPt(lay.dialog_jump_auto_row, x, y)) {
+                    r.region = HitTestResult::SettingsToggle; r.index = 42; return r;
+                }
                 if (ContainsPt(lay.search_pinyin_row, x, y)) {
                     r.region = HitTestResult::SettingsToggle; r.index = 9; return r;
+                }
+                if (!vm.settings_jump_history_empty && ContainsPt(lay.jump_history_clear, x, y)) {
+                    r.region = HitTestResult::SettingsToggle; r.index = 45; return r;
+                }
+                if (ContainsPt(lay.jump_history_row, x, y)) {
+                    r.region = HitTestResult::SettingsToggle; r.index = 44; return r;
                 }
                 if (ContainsPt(lay.content_index_row, x, y)) {
                     r.region = HitTestResult::SettingsContentIndex; return r;

@@ -1,6 +1,8 @@
 // Quick jump P1: the double-Ctrl tap logic and the 跳转 folder ranking.
 #include "../app/double_ctrl.h"
 #include "../app/jump_match.h"
+#include "../app/jump_history.h"
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -69,6 +71,43 @@ int main() {
         const std::vector<pulse::app::JumpCandidate> paths{{L"D:\\a\\xyz pulse", {}}, {L"D:\\b\\Pulse", {}}, {L"D:\\c\\PulseX", {}}, {L"D:\\d\\other", {}}};
         const auto order = pulse::app::RankJumpFolders(paths, L"pulse", true, 4);
         Check(order.size() == 3 && order[0] == 1 && order[1] == 2 && order[2] == 0, "ranked order");
+    }
+    {
+        // Frecency: two weeks halve a visit; the program's own visits count twice.
+        using pulse::app::JumpHistory;
+        const int64_t day = 24 * 3600, t0 = 1700000000;
+        JumpHistory h;
+        h.Parse(L"");
+        h.Record(L"D:\\Photos", L"Editor.exe", t0);
+        h.Record(L"d:\\photos\\", L"", t0);
+        h.Record(L"\\\\?\\D:\\Photos", L"", t0);
+        Check(h.Size() == 1, "same folder however it is written");
+        Check(std::fabs(h.Score(L"D:\\Photos", L"", t0) - 3.0) < 1e-9, "three visits");
+        Check(std::fabs(h.Score(L"D:\\Photos", L"", t0 + 14 * day) - 1.5) < 1e-6, "half after two weeks");
+        Check(std::fabs(h.Score(L"D:\\Photos", L"editor.exe", t0) - 4.0) < 1e-9, "program visits count again");
+        h.Record(L"D:\\Code", L"", t0 + 30 * day);
+        auto top = h.Top(L"", 5, t0 + 30 * day);
+        Check(top.size() == 2 && top[0] == L"D:\\Code", "a fresh visit beats old ones");
+        h.Record(L"D:\\Code", L"", t0 + 30 * day);
+        top = h.Top(L"editor.exe", 5, t0 + 30 * day);
+        Check(top.size() == 2 && top[0] == L"D:\\Code", "two fresh visits beat 3+1 a month ago");
+        h.Record(L"D:\\Photos", L"editor.exe", t0 + 30 * day);
+        top = h.Top(L"editor.exe", 5, t0 + 30 * day);
+        Check(top[0] == L"D:\\Photos" && h.Top(L"", 5, t0 + 30 * day)[0] == L"D:\\Code", "per-program order differs");
+        const std::wstring saved = h.Serialize();
+        JumpHistory copy;
+        copy.Parse(saved);
+        Check(copy.Size() == 2 && std::fabs(copy.Score(L"D:\\Photos", L"editor.exe", t0 + 30 * day) - h.Score(L"D:\\Photos", L"editor.exe", t0 + 30 * day)) < 1e-3, "round trip");
+        copy.Parse(L"garbage\n\tx\ty\nC:\\A\t1.5\t100\tapp.exe\n");
+        Check(copy.Size() == 1 && copy.Score(L"C:\\A", L"app.exe", 100) > 1.49, "bad lines skipped, short program field ignored");
+        h.SetEnabled(false);
+        h.Record(L"D:\\New", L"", t0);
+        Check(h.Size() == 2 && h.Top(L"", 5).empty() && h.Score(L"D:\\Code", L"") == 0, "off: no records, no scores");
+        h.SetEnabled(true);
+        for (int i = 0; i < 400; ++i) h.Record(L"D:\\many\\" + std::to_wstring(i), L"", t0 + i);
+        Check(h.Size() == JumpHistory::kMaxEntries, "bounded");
+        h.Clear();
+        Check(h.Size() == 0, "cleared");
     }
     std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);
     return failures ? 1 : 0;

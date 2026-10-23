@@ -1253,7 +1253,9 @@ float MainRenderer::SettingsDestinationOffset(const WindowViewModel& vm, int set
     case I::GlobalSearchDoubleCtrl: target=l.global_search_double_ctrl_row;break;
     case I::GlobalSearchDoubleCtrlGap: target=l.global_search_gap_card;break;
     case I::DialogJumpBar: target=l.dialog_jump_row;break;
+    case I::DialogJumpAuto: target=l.dialog_jump_auto_row;break;
     case I::SearchPinyin: target=l.search_pinyin_row;break;
+    case I::JumpHistory: target=l.jump_history_row;break;
     case I::ContentIndexManage: target=l.content_header;break;
     case I::IndexLocation: target=l.index_path;break;
     case I::LocalDrives: if(!l.index_volume_rows.empty()) target=l.index_volume_rows.front();break;
