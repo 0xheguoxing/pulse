@@ -295,7 +295,7 @@ bool ThumbnailDiskCache::Load(const ThumbnailStoreKey& key, StoredThumbnail& out
 void ThumbnailDiskCache::Save(const ThumbnailStoreKey& key, uint32_t decode_ms, const StoredThumbnail& thumb) {
     bool remote = false;
     if (Root().empty() || !Eligible(key.path, key.attrs, remote)) return;
-    if (decode_ms < kMinDecodeMs && !remote && !AlwaysKept(key.path)) return;
+    if (decode_ms < kMinDecodeMs && !remote && !key.keep_always && !AlwaysKept(key.path)) return;
     if (!thumb.width || !thumb.height || thumb.width > kMaxEdge || thumb.height > kMaxEdge ||
         thumb.pixels.size() != static_cast<size_t>(thumb.width) * thumb.height * 4 ||
         key.path.size() > 32767) return;

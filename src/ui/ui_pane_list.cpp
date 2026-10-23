@@ -1529,6 +1529,32 @@ PreviewDrawResult MainRenderer::DrawEntryThumbnail(ID2D1DeviceContext* dc,
         generation, entry.modified_value, entry.size_value, opacity, align_bottom, artwork, duration);
 }
 
+void MainRenderer::PrefetchNextScreen(const PaneViewModel& vm, int first, int last, uint32_t pixels,
+                                      int pane_index) {
+    if (!pixels || first < 0 || last < first || pane_index < 0 ||
+        pane_index >= static_cast<int>(prefetch_signature_.size())) return;
+    const int count = static_cast<int>(vm.EntryCount());
+    const int begin = last + 1;
+    const int end = std::min(count - 1, last + (last - first + 1));
+    if (begin > end) return;
+    // Once per screen position: a frame that drew the same range asks nothing.
+    const uint64_t signature = (vm.view_generation * 0x9E3779B97F4A7C15ull) ^
+        (static_cast<uint64_t>(begin) << 40) ^ (static_cast<uint64_t>(end) << 16) ^ pixels;
+    auto& done = prefetch_signature_[static_cast<size_t>(pane_index)];
+    if (done == signature) return;
+    for (int i = begin; i <= end; ++i) {
+        const int src = vm.SourceIndex(i);
+        if (src < 0) continue;
+        if (vm.content_results && !vm.content_results->Ready(static_cast<size_t>(src))) continue;
+        const ListEntryView& e = MakeVisibleEntry(vm, static_cast<size_t>(src));
+        // Cloud placeholders would download; folders have their own cache.
+        if (e.is_dir || e.is_link || e.record_only || e.cloud_recall) continue;
+        if (!thumbnail_cache_.Prefetch(e.path, e.attrs, pixels, vm.view_generation,
+                                       e.modified_value, e.size_value)) return;  // busy: a later frame
+    }
+    done = signature;
+}
+
 void MainRenderer::DrawFileIcon(float x, float y, float size, const Theme& theme,
                                 float opacity) {
     (void)theme;
@@ -3988,6 +4014,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
         // Directory enumeration is asynchronous. Leave the list quiet for its
         // brief initial frame instead of presenting it like a search request;
         // slow folders get placeholder rows after 150 ms.
+        if (UsesThumbnails(vm.view_mode)) thumbnail_cache_.Warm();
         DrawListSkeleton(D2D1::RectF(x, y, x + w, y + h), theme, pane_index);
         return;
     }
@@ -4230,6 +4257,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
         auto* drawn_rows = pane_index >= 0 && pane_index < static_cast<int>(drawn_rows_.size())
             ? &drawn_rows_[static_cast<size_t>(pane_index)] : nullptr;
         if (drawn_rows && !frame_partial_) drawn_rows->clear();
+        uint32_t prefetch_pixels = 0;  // grid request size, for the next screen
         for (int i = startIdx; i >= 0 && i <= endIdx; ++i) {
             D2D1_RECT_F cell = layout.ItemRect(i);
             if (cell.right < x || cell.left > x + w || cell.bottom < y || cell.top > y + h) continue;
@@ -4612,9 +4640,10 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     DrawEmptyFolderIcon(iconX, iconY + align_bottom, renderedIconSize, theme, hidden_alpha);
                 }
                 if (wallDrawn) media_duration_ms = wall_duration_ms;
+                const uint32_t thumb_pixels = ThumbnailRequestPixels(vm.view_mode, std::max(snappedThumbW, snappedThumbH));
+                if (UsesThumbnails(vm.view_mode) && !wall_rows && !e.is_dir && !e.record_only) prefetch_pixels = thumb_pixels;
                 const bool drewThumbnail = wallDrawn || (!wallPic && !empty_folder && !e.record_only && UsesThumbnails(vm.view_mode) &&
-                    DrawEntryThumbnail(dc, thumbRect, e, vm.view_mode, vm.view_generation,
-                        ThumbnailRequestPixels(vm.view_mode, std::max(snappedThumbW, snappedThumbH)),
+                    DrawEntryThumbnail(dc, thumbRect, e, vm.view_mode, vm.view_generation, thumb_pixels,
                         hidden_alpha, iconGrid, &artwork,
                         &media_duration_ms)
                         == PreviewDrawResult::Bitmap);
@@ -5439,6 +5468,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             }
         }
         if (text_layer) dc->PopLayer();
+        PrefetchNextScreen(vm, startIdx, endIdx, prefetch_pixels, pane_index);
     }
     if (pane_focused) {
         expanded_overflow_px_ = 0.0f;

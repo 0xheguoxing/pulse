@@ -135,6 +135,42 @@ void ThumbnailCache::SetGridStore(ThumbnailStore* store) {
     g_grid_store.store(store, std::memory_order_release);
 }
 
+bool ThumbnailCache::Prefetch(const std::wstring& path, DWORD attrs, uint32_t pixel_size,
+                              uint64_t generation, uint64_t modified, uint64_t size) {
+    if (path.empty() || pixel_size < 24) return true;
+    // Room left for whatever the next frames draw.
+    constexpr size_t kPrefetchQueueLimit = 32;
+    const std::wstring key = Key(path, pixel_size, modified, size);
+    std::lock_guard lock(mutex_);
+    if (!visible_order_ || items_.contains(key) || pending_.contains(key)) return true;
+    if (queue_.size() >= kPrefetchQueueLimit) return false;
+    Request request;
+    request.kind = ipc::PreviewRequestKind::Content;
+    request.timeout_ms = ResponseTimeoutMs(path, request.kind);
+    // A video poster ahead of time would hold a lane for seconds.
+    if (IsSlowRequest(request)) return true;
+    request.id = next_id_++; request.generation = generation;
+    request.pixels = pixel_size; request.attrs = attrs;
+    request.epoch = epoch_.load(std::memory_order_relaxed);
+    request.path = path; request.key = key; request.identity = Key(path, 0, modified, size);
+    request.modified = modified; request.size = size;
+    // Frame 0 ranks behind every drawn request and is dropped first.
+    wanted_[key] = {0, ++draw_sequence_};
+    pending_.insert(key);
+    queue_.push_back(std::move(request));
+    DropOverflowLocked();
+    StartWorkersLocked();
+    cv_.notify_one();
+    return true;
+}
+
+void ThumbnailCache::Warm() {
+    std::lock_guard lock(mutex_);
+    if (!visible_order_ || running_) return;
+    warm_ = true;
+    StartWorkersLocked();
+}
+
 uint32_t ThumbnailCache::DefaultParallelism() {
     // PULSE_THUMBNAIL_LANES=1..4 pins the count for measurements.
     wchar_t forced[8]{};
@@ -855,6 +891,11 @@ void ThumbnailCache::Worker(uint32_t lane) {
     } else if (folder_thumbnail_ && GetEnvironmentVariableW(L"PULSE_TEST_FOLDER_THUMB_TRACE", trace_path,
         ARRAYSIZE(trace_path)) > 0) _wfopen_s(&trace_file, trace_path, L"a");
     std::unique_ptr<FILE, decltype(&std::fclose)> trace(trace_file, &std::fclose);
+    if (warm_) {
+        // Warm(): every lane starts its host now rather than on its first request.
+        Request probe;
+        Connect(lane, probe, GetTickCount64());
+    }
     while (running_) {
         Request req;
         bool slow = false;
@@ -897,6 +938,37 @@ void ThumbnailCache::Worker(uint32_t lane) {
             !folder_thumbnail_ && !(req.flags & ipc::kPreviewRequestFlagFolderThumbnail) &&
             !(req.attrs & FILE_ATTRIBUTE_DIRECTORY) ? g_grid_store.load(std::memory_order_acquire) : nullptr;
         const ThumbnailStoreKey store_key{req.path, req.attrs, req.pixels, req.modified, req.size};
+        // Folder composites: the stored one shows at once and the host is
+        // still asked, since a child can change without touching the
+        // folder's own time.
+        const bool folder_request = folder_thumbnail_ && (req.flags & ipc::kPreviewRequestFlagFolderThumbnail);
+        ThumbnailStore* const folder_store = folder_request ? g_grid_store.load(std::memory_order_acquire) : nullptr;
+        const ThumbnailStoreKey folder_key{req.identity, req.attrs, req.pixels, req.modified, req.size, true};
+        std::vector<uint8_t> folder_shown;
+        if (folder_store && !(req.flags & ipc::kPreviewRequestFlagFolderRefresh)) {
+            bool fresh = false;
+            { std::lock_guard lock(mutex_); fresh = !items_.contains(req.key); }
+            StoredThumbnail kept;
+            if (fresh && folder_store->Load(folder_key, kept)) {
+                folder_shown = kept.pixels;
+                Item hit;
+                hit.kind = ipc::PreviewContentKind::Bitmap;
+                hit.w = kept.width; hit.h = kept.height; hit.stride = kept.width * 4;
+                hit.pixels = std::move(kept.pixels);
+                hit.artwork_bounds = ThumbnailArtworkBounds(req.path, hit.pixels, hit.w, hit.h, hit.stride);
+                hit.frame_count = 1;
+                hit.integrity.state = preview::IntegrityState::Complete;
+                hit.cost = hit.pixels.size();
+                const bool shown = StoreResult(req, std::move(hit));
+                mark("disk-hit", shown);
+                if (shown) {
+                    repaint_.InvalidateAll();
+                    std::lock_guard lock(mutex_);
+                    folder_requests_[req.key] = req.id;
+                    pending_.insert(req.key);
+                }
+            }
+        }
         if (store) {
             StoredThumbnail kept;
             if (store->Load(store_key, kept)) {
@@ -1118,7 +1190,8 @@ void ThumbnailCache::Worker(uint32_t lane) {
         mark("store-begin", ok, response.status);
         // Copied before the item is handed over; written once it is on screen.
         StoredThumbnail keep;
-        const bool keepable = store && !result.failed && !result.transient &&
+        ThumbnailStore* const saver = store ? store : folder_store;
+        const bool keepable = saver && !result.failed && !result.transient &&
             result.kind == ipc::PreviewContentKind::Bitmap && result.frame_count == 1 &&
             result.stride == result.w * 4 && result.integrity.state != preview::IntegrityState::Partial;
         if (keepable) {
@@ -1133,7 +1206,8 @@ void ThumbnailCache::Worker(uint32_t lane) {
         if (!stored) LogFailure(lane, req, request_start, 12, ERROR_CANCELLED, true);
         if (stored) repaint_.InvalidateAll();
         if (!ok) StopChild(lane);
-        if (keepable && stored) store->Save(store_key, decode_ms, keep);
+        if (keepable && stored && !(folder_store && keep.pixels == folder_shown))
+            saver->Save(folder_store ? folder_key : store_key, decode_ms, keep);
     }
 }
 } // namespace pulse::ui

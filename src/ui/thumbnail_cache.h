@@ -38,6 +38,7 @@ struct ThumbnailStoreKey {
     DWORD attrs;
     uint32_t pixels;
     uint64_t modified, size;
+    bool keep_always = false;  // folder composites: kept however quick
 };
 // Second level under the in-memory LRU for thumbnails that were expensive to
 // make (thumbnail_disk_cache.h). Called on the grid cache's worker threads.
@@ -93,6 +94,14 @@ public:
     // The store SetParallelism caches read before asking a host and write
     // after a slow decode; null (tests, tools) keeps memory only.
     static void SetGridStore(ThumbnailStore* store);
+    // Grid caches: queue the thumbnail of an item just past the visible ones,
+    // behind everything drawn. Quick formats only. False when the queue is
+    // too busy to take it now (try again on a later frame).
+    bool Prefetch(const std::wstring& path, DWORD attrs, uint32_t pixel_size,
+                  uint64_t generation, uint64_t modified, uint64_t size);
+    // Grid caches: start the hosts before the first request (a folder shown
+    // as thumbnails is still being listed).
+    void Warm();
     void Reset();
     void Evict();
     void BeginFrame();
@@ -273,6 +282,7 @@ private:
     uint32_t lane_count_ = 1;
     bool visible_order_ = false;
     uint32_t slow_in_flight_ = 0;
+    std::atomic<bool> warm_{false};
     uint64_t frame_ = 1;
     uint64_t draw_sequence_ = 0;
     // Visible order: queued key -> (frame, paint sequence) of its latest draw.
