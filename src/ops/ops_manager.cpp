@@ -2733,6 +2733,9 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
     std::vector<size_t> root_entries(req.sources.size(), std::wstring::npos);
     if (failure.empty() && !stop_requested()) {
         const SourceListing listing(req.sources);
+        // Names a rename below brings in are added, so a later source with
+        // the same name still finds its target taken.
+        TargetListing target_listing(req.dest_dir, req.sources.size());
         for (size_t source_index = 0; source_index < req.sources.size(); ++source_index) {
             const std::wstring& source = req.sources[source_index];
 #ifdef PULSE_ELEVATED_TEST_CLIENT
@@ -2760,7 +2763,8 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             }
             // Opening both ends to compare them is only needed when the target
             // name is taken; most targets are new.
-            bool destination_exists = PathExists(root.destination);
+            bool destination_exists = !target_listing.SurelyAbsent(root_name(source)) &&
+                PathExists(root.destination);
             const bool same_location =
                 _wcsicmp(root.source.c_str(), root.destination.c_str()) == 0 ||
                 (destination_exists && SameFileObject(root.source, root.destination));
@@ -2786,6 +2790,7 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 std::wstring parent_key = FoldedPathKey(ParentOf(source));
                 if (!rename_other_volume.contains(parent_key)) {
                     if (MoveFileExW(source.c_str(), root.destination.c_str(), 0)) {
+                        target_listing.Added(root_name(source));
                         root.renamed = true;
                         root.completed = true;
                         root.source_removed = true;

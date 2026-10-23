@@ -261,10 +261,38 @@ int main() {
         manager.Stop();
     }
     {
+        // One listing of a target folder vouches for names that are surely
+        // absent; whatever it cannot vouch for is left to a query.
+        const auto target = root / L"target-listing";
+        fs::create_directories(target / L"Folder");
+        for (const wchar_t* name : {L"Existing.txt", L"照片.jpg", L"\u00c4rger.txt", L"f\u0131le.txt"})
+            Write(target / name, "listed");
+        const TargetListing few(target.wstring(), 3);
+        const TargetListing listing(target.wstring(), 40);
+        TargetListing grown(target.wstring(), 40);
+        grown.Added(L"arrived.txt");
+        const TargetListing missing((target / L"absent").wstring(), 40);
+        check(!few.SurelyAbsent(L"new.txt") && listing.SurelyAbsent(L"new.txt") &&
+              listing.SurelyAbsent(L"新照片.jpg") && !listing.SurelyAbsent(L"existing.TXT") &&
+              !listing.SurelyAbsent(L"folder") && !listing.SurelyAbsent(L"照片.jpg") &&
+              !listing.SurelyAbsent(L"\u00e4rger.txt") && !listing.SurelyAbsent(L"NEWFIL~1.TXT") &&
+              !listing.SurelyAbsent(L"trailing.") && !listing.SurelyAbsent(L"trailing ") &&
+              !grown.SurelyAbsent(L"ARRIVED.txt") && grown.SurelyAbsent(L"other.txt") &&
+              !missing.SurelyAbsent(L"new.txt"),
+              "target listing vouches only for absent ASCII or caseless names and leaves the rest to a query");
+        bool agrees = true;
+        for (const wchar_t* name : {L"file.txt", L"FILE.TXT", L"existing.txt", L"EXISTING.TXT", L"folder", L"FOLDER",
+                                    L"\u00e4rger.txt", L"\u00c4RGER.TXT", L"照片.jpg", L"new.txt", L"existing"})
+            if (listing.SurelyAbsent(name) && GetFileAttributesW((target / name).c_str()) != INVALID_FILE_ATTRIBUTES)
+                agrees = false;
+        check(agrees, "target listing never calls a name absent that the file system finds");
+
         // Two selected folders with one name: the first is renamed into the
-        // target during the scan, so the second finds it taken and merges
-        // into it. Undo then returns each file to its own folder; sent back
-        // after the first folder, the second's file would travel with it.
+        // target during the scan, so the second must still find it taken and
+        // merge into it. Undo then returns each file to its own folder:
+        // neither folder may carry the other's file along, as the second
+        // would if taken for a folder of its own, or the first if sent back
+        // before the second's file.
         const auto first = root / L"same-name-a";
         const auto second = root / L"same-name-b";
         const auto into = root / L"same-name-into";
