@@ -793,6 +793,8 @@ static void KeepWindowsClosedAlong(AppState& s) {
 static void CloseMainWindow(AppState& s) {
     const HWND hwnd = s.hwnd;
     if (!s.core.windows.IsLastWindow(hwnd)) {
+        // Pinned tabs outlive their window: they join the window used next.
+        if (AppState* next = s.core.windows.MostRecentExcept(hwnd)) MovePinnedTabsInto(s, *next);
         DestroyWindow(hwnd);
         return;
     }

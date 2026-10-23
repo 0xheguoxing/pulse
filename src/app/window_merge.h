@@ -33,6 +33,13 @@ bool MergeWindowInto(AppState& src, AppState& dst, size_t insert_at, const WINDO
 // undo for all of them. Returns how many were merged.
 size_t MergeWindowsInto(const std::vector<HWND>& sources, AppState& dst);
 
+// One of several windows closing: its pinned tabs move, in order, to the end
+// of dst's pinned tabs, except those showing a folder dst already has pinned.
+// dst keeps its active tab. Closing a window used to keep them only among the
+// closed windows, so they were gone after the next restart. Returns how many
+// moved; `src` may be left without tabs (it is about to be destroyed).
+size_t MovePinnedTabsInto(AppState& src, AppState& dst);
+
 // WM_UNDO_WINDOW_MERGE: the windows of the last merge into `dst` open again
 // where they were, with their layouts and their tabs, groups and active tabs.
 void UndoWindowMerge(AppState& dst);

@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -79,6 +80,35 @@ WindowMergeUndo MergeTabsInto(AppState& src, AppState& dst, size_t insert_at) {
     app::NormalizeGroupRuns(to);
     if (undo.active < undo.tabs.size()) Activate(dst, undo.tabs[undo.active]);
     return undo;
+}
+
+size_t MovePinnedTabsInto(AppState& src, AppState& dst) {
+    app::WindowTabs& from = src.window_tabs;
+    app::WindowTabs& to = dst.window_tabs;
+    const app::LayoutTab* const active = to.Active();
+    const auto folder = [](const app::LayoutTab& tab) {
+        const app::Tab* view = tab.ActiveFolder();
+        return view ? view->current_path : std::wstring();
+    };
+    size_t pinned_at = 0;
+    while (pinned_at < to.items.size() && to.items[pinned_at] && to.items[pinned_at]->pinned) ++pinned_at;
+    size_t moved = 0;
+    for (size_t i = 0; i < from.items.size();) {
+        const app::LayoutTab* const tab = from.items[i].get();
+        if (!tab || !tab->pinned) { ++i; continue; }
+        const std::wstring path = folder(*tab);
+        const bool duplicate = !path.empty() &&
+            std::any_of(to.items.begin(), to.items.begin() + static_cast<std::ptrdiff_t>(pinned_at), [&](const auto& other) {
+                const std::wstring other_path = folder(*other);
+                return CompareStringOrdinal(other_path.c_str(), static_cast<int>(other_path.size()), path.c_str(),
+                                            static_cast<int>(path.size()), TRUE) == CSTR_EQUAL;
+            });
+        if (duplicate || !MoveLayoutTab(src, i, dst, pinned_at, TransferSource::Closing)) { ++i; continue; }
+        ++pinned_at;
+        ++moved;
+    }
+    if (moved && active) Activate(dst, active);
+    return moved;
 }
 
 size_t RestoreMergedTabs(AppState& from, AppState& back, const WindowMergeUndo& undo) {
