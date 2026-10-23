@@ -1891,8 +1891,11 @@ OpsManager::GroupUndo OpsManager::UndoNewest(const uint64_t* required_group) {
     for (const UndoEntry& e : batch) {
     switch (e.type) {
     case OpType::Move: {
-        // Move each actual destination back to its exact original name and parent.
-        for (size_t i = 0; i < e.sources.size(); ++i) {
+        // Move each actual destination back to its exact original name and
+        // parent, newest first: an item merged into a folder that an earlier
+        // root of the same move created goes back before that folder does,
+        // instead of travelling with it.
+        for (size_t i = e.sources.size(); i-- > 0;) {
             const auto& src = e.sources[i];
             OpRequest inv;
             inv.type = OpType::Move;

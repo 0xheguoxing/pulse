@@ -113,6 +113,21 @@ bool Wait(OpsManager& manager, uint64_t previous) {
     }
     return false;
 }
+// An undo may run as one task per item, and the manager is briefly inactive
+// between them; settled means inactive for a while, not just once.
+bool WaitSettled(OpsManager& manager, uint64_t previous) {
+    const auto deadline = GetTickCount64() + 10000;
+    ULONGLONG quiet_since = 0;
+    while (GetTickCount64() < deadline) {
+        const auto status = manager.Status();
+        const ULONGLONG now = GetTickCount64();
+        if (status.active || status.completed_ops <= previous) quiet_since = 0;
+        else if (!quiet_since) quiet_since = now;
+        else if (now - quiet_since >= 200) return true;
+        Sleep(5);
+    }
+    return false;
+}
 OpRequest Request(OpType type, const fs::path& source, const fs::path& target) {
     OpRequest request; request.type = type; request.sources = {source.wstring()}; request.dest_dir = target.wstring(); return request;
 }
@@ -240,9 +255,43 @@ int main() {
               "move of many items reports every root as moved");
         const auto undo_before = manager.Status().completed_ops;
         manager.Undo();
-        check(Wait(manager, undo_before) && fs::is_empty(moved) &&
+        check(WaitSettled(manager, undo_before) && fs::is_empty(moved) &&
               Read(source / L"item-299.txt") == "many 299",
               "undo of a move of many items brings every item back");
+        manager.Stop();
+    }
+    {
+        // Two selected folders with one name: the first is renamed into the
+        // target during the scan, so the second finds it taken and merges
+        // into it. Undo then returns each file to its own folder; sent back
+        // after the first folder, the second's file would travel with it.
+        const auto first = root / L"same-name-a";
+        const auto second = root / L"same-name-b";
+        const auto into = root / L"same-name-into";
+        fs::create_directories(first / L"dup"); fs::create_directories(second / L"dup"); fs::create_directory(into);
+        Write(first / L"dup" / L"from-first.txt", "first");
+        Write(second / L"dup" / L"from-second.txt", "second");
+        OpRequest request = Request(OpType::Move, first / L"dup", into);
+        for (int i = 0; i < 20; ++i) {
+            const auto file = first / (L"fill-" + std::to_wstring(i) + L".txt");
+            Write(file, "fill");
+            request.sources.push_back(file.wstring());
+        }
+        request.sources.push_back((second / L"dup").wstring());
+        OpsManager manager; manager.Start([] {}, false);
+        const auto before = manager.Status().completed_ops;
+        manager.Submit(request);
+        check(Wait(manager, before) && manager.Status().phase == OpPhase::Completed &&
+              Read(into / L"dup" / L"from-first.txt") == "first" &&
+              Read(into / L"dup" / L"from-second.txt") == "second" && fs::exists(into / L"fill-19.txt"),
+              "a second selected folder with a name renamed in during the scan merges into it");
+        const auto undo_before = manager.Status().completed_ops;
+        manager.Undo();
+        check(WaitSettled(manager, undo_before) && Read(first / L"dup" / L"from-first.txt") == "first" &&
+              Read(second / L"dup" / L"from-second.txt") == "second" &&
+              !fs::exists(second / L"dup" / L"from-first.txt") && !fs::exists(into / L"dup" / L"from-first.txt") &&
+              fs::exists(first / L"fill-19.txt"),
+              "undo returns each same-name folder's own file to it");
         manager.Stop();
     }
     for (const std::wstring file : {L"C:\\fixture\\%1 %L %l %V %v %*.txt", L"C:\\Unicode 空格\\", L"C:\\ordinary.txt"}) {
