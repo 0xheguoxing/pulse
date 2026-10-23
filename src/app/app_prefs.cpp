@@ -105,6 +105,8 @@ void AppPrefs::ResetToDefaults() {
     global_search_key = 32;
     global_search_width = 0;
     global_search_height = 0;
+    global_search_double_ctrl = true;
+    global_search_double_ctrl_ms = 300;
     show_hidden_files = false;
     show_protected_os_files = false;
     blank_click_action = kBlankClickOff;
@@ -265,6 +267,9 @@ std::wstring AppPrefs::ToJson() const {
     out += L",\n  \"global_search_key\":" + std::to_wstring(global_search_key);
     out += L",\n  \"global_search_width\":" + std::to_wstring(global_search_width);
     out += L",\n  \"global_search_height\":" + std::to_wstring(global_search_height);
+    out += L",\n  \"global_search_double_ctrl\":";
+    out += global_search_double_ctrl ? L"true" : L"false";
+    out += L",\n  \"global_search_double_ctrl_ms\":" + std::to_wstring(global_search_double_ctrl_ms);
     out += L",\n  \"blank_click_action\":";
     out += std::to_wstring(blank_click_action);
     // Kept for older builds, which only know on/off.
@@ -497,6 +502,11 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     global_search_key = key > 0 && key <= 254 ? static_cast<uint32_t>(key) : 32;
     global_search_width = std::clamp(pulse::json::ExtractInt(json, L"global_search_width", 0), 0, 4000);
     global_search_height = std::clamp(pulse::json::ExtractInt(json, L"global_search_height", 0), 0, 4000);
+    global_search_double_ctrl = pulse::json::ExtractBool(json, L"global_search_double_ctrl", true);
+    {
+        const int gap = pulse::json::ExtractInt(json, L"global_search_double_ctrl_ms", 300);
+        global_search_double_ctrl_ms = gap == 200 || gap == 400 ? gap : 300;
+    }
     show_hidden_files = pulse::json::ExtractBool(json, L"show_hidden_files", false);
     show_protected_os_files = pulse::json::ExtractBool(json, L"show_protected_os_files", false);
     // Files from before blank_click_action carry only the on/off flag (= back).

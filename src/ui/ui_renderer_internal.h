@@ -2499,6 +2499,7 @@ struct SettingsLayout {
     D2D1_RECT_F search_pinyin_row{};
     D2D1_RECT_F search_master_section{}, search_master_row{};
     D2D1_RECT_F global_search_row{}, global_search_hotkey_row{}, global_search_hotkey_button{};
+    D2D1_RECT_F global_search_double_ctrl_row{}, global_search_gap_card{}, global_search_gap[3]{};
     D2D1_RECT_F content_index_row{};
     D2D1_RECT_F index_info{};
     D2D1_RECT_F index_status{};

@@ -2722,6 +2722,14 @@ enum class StringId : UINT {
     ThumbCacheClear = IDS_THUMB_CACHE_CLEAR,
     ThumbCacheUnavailable = IDS_THUMB_CACHE_UNAVAILABLE,
     ThumbCacheTooltip = IDS_THUMB_CACHE_TOOLTIP,
+    GlobalSearchDoubleCtrl = IDS_GLOBAL_SEARCH_DOUBLE_CTRL,
+    GlobalSearchDoubleCtrlDesc = IDS_GLOBAL_SEARCH_DOUBLE_CTRL_DESC,
+    GlobalSearchDoubleCtrlGap = IDS_GLOBAL_SEARCH_DOUBLE_CTRL_GAP,
+    GlobalSearchDoubleCtrlGapDesc = IDS_GLOBAL_SEARCH_DOUBLE_CTRL_GAP_DESC,
+    DoubleCtrlFast = IDS_DOUBLE_CTRL_FAST,
+    DoubleCtrlNormal = IDS_DOUBLE_CTRL_NORMAL,
+    DoubleCtrlSlow = IDS_DOUBLE_CTRL_SLOW,
+    GlobalSearchJump = IDS_GLOBAL_SEARCH_JUMP,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

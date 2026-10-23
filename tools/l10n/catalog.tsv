@@ -2733,3 +2733,11 @@ ThumbCacheDone	IDS_THUMB_CACHE_DONE	3935	已清除	Cleared	已清除
 ThumbCacheClear	IDS_THUMB_CACHE_CLEAR	3936	清除缓存	Clear cache	清除快取
 ThumbCacheUnavailable	IDS_THUMB_CACHE_UNAVAILABLE	3937	没有可用的缓存文件夹，缩略图只保存在内存中	No cache folder is available; thumbnails stay in memory only	沒有可用的快取資料夾，縮圖只保存在記憶體中
 ThumbCacheTooltip	IDS_THUMB_CACHE_TOOLTIP	3938	删除本机保存的缩略图，文件本身不受影响	Deletes the saved thumbnails; your files are not affected	刪除本機儲存的縮圖，檔案本身不受影響
+GlobalSearchDoubleCtrl	IDS_GLOBAL_SEARCH_DOUBLE_CTRL	3939	连按两次 Ctrl 呼出	Press Ctrl twice to open	連按兩次 Ctrl 叫出
+GlobalSearchDoubleCtrlDesc	IDS_GLOBAL_SEARCH_DOUBLE_CTRL_DESC	3940	在任何程序里快速按两下 Ctrl；全屏游戏和演示时不响应	Tap Ctrl twice in any app; ignored in full-screen games and presentations	在任何程式裡快速按兩下 Ctrl；全螢幕遊戲和簡報時不回應
+GlobalSearchDoubleCtrlGap	IDS_GLOBAL_SEARCH_DOUBLE_CTRL_GAP	3941	连按间隔	Double-tap speed	連按間隔
+GlobalSearchDoubleCtrlGapDesc	IDS_GLOBAL_SEARCH_DOUBLE_CTRL_GAP_DESC	3942	两次按下之间允许的最长停顿	Longest pause allowed between the two taps	兩次按下之間允許的最長停頓
+DoubleCtrlFast	IDS_DOUBLE_CTRL_FAST	3943	200 毫秒	200 ms	200 毫秒
+DoubleCtrlNormal	IDS_DOUBLE_CTRL_NORMAL	3944	300 毫秒	300 ms	300 毫秒
+DoubleCtrlSlow	IDS_DOUBLE_CTRL_SLOW	3945	400 毫秒	400 ms	400 毫秒
+GlobalSearchJump	IDS_GLOBAL_SEARCH_JUMP	3946	跳转	Go to	跳轉

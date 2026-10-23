@@ -118,6 +118,9 @@ struct AppPrefs {
     // Quick search popup size in DIP after the user resized it; 0 = default.
     int global_search_width = 0;
     int global_search_height = 0;
+    // Two clean Ctrl taps summon the quick search popup too (with global search on).
+    bool global_search_double_ctrl = true;
+    int global_search_double_ctrl_ms = 300; // longest gap between the taps: 200 / 300 / 400
     bool show_hidden_files = false;
     // Hidden + system attributes; File Explorer keeps these behind a separate option.
     bool show_protected_os_files = false;

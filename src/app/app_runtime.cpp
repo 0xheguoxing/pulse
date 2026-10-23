@@ -621,6 +621,8 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             vm.settings_search_pinyin = s.appPrefs.search_pinyin;
             vm.settings_search_enabled = s.appPrefs.search_enabled;
             vm.settings_global_search_enabled = s.appPrefs.global_search_enabled;
+            vm.settings_global_search_double_ctrl = s.appPrefs.global_search_double_ctrl;
+            vm.settings_global_search_double_ctrl_ms = s.appPrefs.global_search_double_ctrl_ms;
             vm.settings_global_search_capturing = s.settings.global_search_hotkey_capturing();
             vm.settings_global_search_hotkey = s.settings.GlobalSearchHotkeyText();
             vm.settings_global_search_error = s.settings.global_search_error();
@@ -3371,6 +3373,7 @@ std::wstring TooltipForHover(AppState& s) {
     case R::SettingsTextRender: return text(I::SettingsTextRender);
     case R::SettingsUiFontSize: return text(I::SettingsUiFontSize);
     case R::SettingsTrayIcon: return text(I::SettingsTrayIcon);
+    case R::SettingsDoubleCtrlGap: return text(I::GlobalSearchDoubleCtrlGap);
     case R::SettingsWallpaperLook: return text(I::SettingsWallpaperLook);
     case R::SettingsWallpaperBlur: return text(I::SettingsWallpaperBlur);
     case R::SettingsAccent:

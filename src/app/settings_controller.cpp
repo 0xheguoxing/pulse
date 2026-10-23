@@ -952,6 +952,12 @@ void SettingsController::TrayIconSize(int index) {
         SaveAndApply(SettingsEffect::TrayDeckIcon);
 }
 
+void SettingsController::DoubleCtrlGap(int index) {
+    static constexpr int values[] = {200, 300, 400};
+    if (prefs_ && SelectValue(index, values, prefs_->global_search_double_ctrl_ms))
+        SaveAndApply(SettingsEffect::GlobalSearch);
+}
+
 // Both only change how the next frame is painted; the caller invalidates.
 // Values snap to the former preset levels unless Shift is held.
 bool SettingsController::SliderValue(int which, int value) {
@@ -1293,6 +1299,9 @@ void SettingsController::ToggleUi(int index) {
     } else if (index == 27) {
         prefs_->start_in_tray = !prefs_->start_in_tray;
         SaveAndApply(SettingsEffect::None);
+    } else if (index == 40) {
+        prefs_->global_search_double_ctrl = !prefs_->global_search_double_ctrl;
+        SaveAndApply(SettingsEffect::GlobalSearch);
     } else if (index == 15) {
         prefs_->global_search_enabled = !prefs_->global_search_enabled;
         if (!prefs_->Save()) {

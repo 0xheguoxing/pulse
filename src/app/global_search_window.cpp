@@ -1,5 +1,6 @@
 #include "global_search_window.h"
 #include "global_search_result_state.h"
+#include "jump_match.h"
 #include "../ui/FluentTokens.h"
 #include "resource.h"
 #include "../ui/empty_state_layout.h"
@@ -55,6 +56,7 @@ constexpr float kFieldLeft = 62, kFieldTop = 14, kFieldHeight = 44, kFieldRight 
 constexpr float kEditCornerRadius = 8;
 constexpr float kMinWidth = 640, kMinHeight = 420, kDefaultWidth = 960, kDefaultHeight = 620;
 constexpr size_t kMaximumResults = 200;
+constexpr size_t kJumpRows = 4;  // 跳转 group: known folders above the index results
 constexpr size_t kMaximumPinnedScopes = 3, kMaximumNetworkScopes = 2;
 const std::wstring& Text(StringId id) { return l10n::Get(id); }
 std::wstring ParentPath(const std::wstring& path) {
@@ -203,7 +205,8 @@ struct GlobalSearchWindow::Impl {
     std::vector<Scope> scopes;
     int scope = 0, kind_filter = 0, date_filter = 0;
     std::wstring counts_key;
-    size_t best_count = 0, folder_count = 0;
+    size_t best_count = 0, folder_count = 0, jump_count = 0;
+    std::vector<Row> jump_rows;  // known folders matching the query (跳转)
     wchar_t swallow_char = 0;
     bool stale = false, stale_content_mode = false;
     bool showing_recent = false, keyboard_nav = false, preview_open = false, animations = true;
@@ -279,10 +282,12 @@ struct GlobalSearchWindow::Impl {
         if (rows.empty()) return out;
         if (showing_recent) { out.push_back({StringId::ColumnRecentOpened, 0, rows.size()}); return out; }
         if (content_mode) { out.push_back({StringId::GlobalSearchContentMatches, 0, rows.size()}); return out; }
-        if (best_count) out.push_back({StringId::GlobalSearchBestMatch, 0, best_count});
-        if (folder_count) out.push_back({StringId::Folder, best_count, folder_count});
-        const size_t files = rows.size() - best_count - folder_count;
-        if (files) out.push_back({StringId::FilterFiles, best_count + folder_count, files});
+        const size_t j = (std::min)(jump_count, rows.size());
+        if (j) out.push_back({StringId::GlobalSearchJump, 0, j});
+        if (best_count) out.push_back({StringId::GlobalSearchBestMatch, j, best_count});
+        if (folder_count) out.push_back({StringId::Folder, j + best_count, folder_count});
+        const size_t files = rows.size() - j - best_count - folder_count;
+        if (files) out.push_back({StringId::FilterFiles, j + best_count + folder_count, files});
         return out;
     }
     void BuildLayout() {
@@ -356,7 +361,7 @@ struct GlobalSearchWindow::Impl {
             rows.push_back(std::move(row));
             if (rows.size() >= 6) break;
         }
-        best_count = folder_count = 0;
+        best_count = folder_count = jump_count = 0;
         total = rows.size();
     }
     void Changed() {
@@ -370,7 +375,12 @@ struct GlobalSearchWindow::Impl {
         const bool keep = !query.empty() && !showing_recent && !rows.empty() && content_mode == stale_content_mode;
         stale = keep;
         stale_content_mode = content_mode;
-        if (!keep) { rows.clear(); selected = first = 0; best_count = folder_count = 0; scroll = scroll_target = 0; }
+        if (!keep) { rows.clear(); selected = first = 0; best_count = folder_count = jump_count = 0; scroll = scroll_target = 0; }
+        ComputeJump();
+        if (!keep && !jump_rows.empty()) {
+            // Known folders answer at once; the index results join below them.
+            rows = jump_rows; jump_count = rows.size(); selected = 0;
+        }
         total = 0; error.clear(); truncated = false;
         local_result = {}; network_result = {}; providers = {};
         if (CountsKey() != counts_key) for (auto& item : scopes) item.counted = false;
@@ -432,6 +442,24 @@ struct GlobalSearchWindow::Impl {
         return name.size() >= word.size() && CompareStringOrdinal(name.data(), static_cast<int>(word.size()),
             word.data(), static_cast<int>(word.size()), TRUE) == CSTR_EQUAL;
     }
+    // 跳转: open tabs, Quick access and recent folders matching the query,
+    // ranked by how they match (name, word start, pinyin, initials).
+    void ComputeJump() {
+        jump_rows.clear();
+        if (content_mode || query.empty() || date_filter != 0) return;
+        const auto kind = kKinds[kind_filter];
+        if (kind != index::SearchKind::Any && kind != index::SearchKind::Folder) return;
+        const auto scope_path = ScopePath();
+        std::vector<app::JumpCandidate> candidates;
+        for (const auto& folder : context.jump_folders)
+            if (UnderFolder(folder.path, scope_path)) candidates.push_back({folder.path, folder.label});
+        for (const size_t i : app::RankJumpFolders(candidates, query, search_pinyin, kJumpRows)) {
+            Row row; row.path = candidates[i].path; row.directory = true;
+            row.name = candidates[i].label.empty() ? LeafName(row.path) : candidates[i].label;
+            row.network = IsNetworkPath(row.path);
+            jump_rows.push_back(std::move(row));
+        }
+    }
     void GroupRows() {
         std::vector<Row> best, folders, files;
         for (auto& row : rows) {
@@ -468,13 +496,20 @@ struct GlobalSearchWindow::Impl {
         request.needle = search_pinyin ? query + FilterTokens() : L"nopinyin: " + query + FilterTokens();
         request.limit = kMaximumResults;
         const auto merged = index::MergeSearchResults(request, local_result, network_result, true);
+        ComputeJump();
         for (const auto& hit : merged.hits) {
+            const bool known = std::any_of(jump_rows.begin(), jump_rows.end(), [&](const Row& j) {
+                return path::EqualInsensitive(path::StripExtendedPathPrefix(j.path), path::StripExtendedPathPrefix(hit.path));
+            });
+            if (known) continue;
             Row row{hit.name, hit.path, {}, hit.is_dir};
             row.size = hit.size; row.mtime = hit.mtime; row.network = IsNetworkPath(hit.path);
             rows.push_back(std::move(row));
         }
         GroupRows();
-        total = merged.total;
+        rows.insert(rows.begin(), jump_rows.begin(), jump_rows.end());
+        jump_count = jump_rows.size();
+        total = (std::max)(merged.total, rows.size());
         truncated = total > rows.size(); busy = providers.Busy();
         error = providers.Error() ? Text(rows.empty() ? StringId::GlobalSearchFailed : StringId::SearchIncomplete) : std::wstring{};
         if (!busy) KillTimer(hwnd, kConnectTimeout);
@@ -1585,6 +1620,7 @@ struct GlobalSearchWindow::Impl {
             while (contents.TakeUpdate(update)) {
                 if (update.progress.generation != generation || !content_mode || !IsWindowVisible(hwnd)) continue;
                 if (stale) { stale = false; rows.clear(); selected = 0; scroll = scroll_target = 0; }
+                jump_count = 0;
                 const bool had_rows = !rows.empty();
                 for (auto& hit : update.hits) {
                     if (rows.size() >= kMaximumResults) break;

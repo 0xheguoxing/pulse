@@ -56,6 +56,7 @@ inline constexpr UINT kHostRoutedMessages[] = {
     WM_UI_KICK,                // folder changes / folder sizes ready (shared AppCore queues)
     TrayController::kCallbackMessage,  // notification icon (owned by the host)
     WM_HOTKEY,                 // global search hotkey (registered on the host)
+    WM_DOUBLE_CTRL,            // global search double Ctrl (posted to the host)
 };
 
 constexpr bool IsHostRoutedMessage(UINT message) noexcept {

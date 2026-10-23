@@ -647,6 +647,25 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
             L"\xE765",lay.global_search_hotkey_row.right-16*scale_);
         button(lay.global_search_hotkey_button,vm.settings_global_search_capturing ? l10n::Get(I::GlobalSearchRecording) : vm.settings_global_search_hotkey,H::SettingsGlobalSearchHotkey,0);
         divider(lay.global_search_hotkey_row);
+        {
+            // Faded and inert while what they depend on is off.
+            auto dim_begin=[&](bool dim) {
+                if(dim) dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(),nullptr,D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                    D2D1::IdentityMatrix(),0.42f,nullptr,D2D1_LAYER_OPTIONS1_NONE),nullptr);
+                return dim;
+            };
+            auto dim_end=[&](bool dim) { if(dim) dc->PopLayer(); };
+            const bool dim=dim_begin(!vm.settings_global_search_enabled);
+            toggle(lay.global_search_double_ctrl_row,I::GlobalSearchDoubleCtrl,I::GlobalSearchDoubleCtrlDesc,L"\xE945",vm.settings_global_search_double_ctrl,40);
+            divider(lay.global_search_double_ctrl_row);
+            dim_end(dim);
+            const bool dim_gap=dim_begin(!vm.settings_global_search_enabled || !vm.settings_global_search_double_ctrl);
+            const I gaps[]={I::DoubleCtrlFast,I::DoubleCtrlNormal,I::DoubleCtrlSlow};const int gap_values[]={200,300,400};
+            segmented(lay.global_search_gap_card,lay.global_search_gap,gaps,gap_values,vm.settings_global_search_double_ctrl_ms,H::SettingsDoubleCtrlGap,
+                I::GlobalSearchDoubleCtrlGap,I::GlobalSearchDoubleCtrlGapDesc,3,L"\xE916");
+            divider(lay.global_search_gap_card);
+            dim_end(dim_gap);
+        }
         toggle(lay.search_pinyin_row,I::SearchPinyin,I::SearchPinyinDesc,L"\xE721",vm.settings_search_pinyin,9);divider(lay.search_pinyin_row);
         label(lay.filename_status,l10n::Get(I::SettingsFilenameIndex),vm.settings_index_status,L"\xE8A5",lay.filename_status.right-16*scale_);divider(lay.filename_status);
         disclosure(lay.disclosure[1],I::SettingsMaintenance,I::SettingsMaintenanceDesc,L"\xE713",1,false);

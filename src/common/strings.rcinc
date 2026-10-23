@@ -2712,6 +2712,14 @@ BEGIN
     IDS_THUMB_CACHE_CLEAR "清除缓存"
     IDS_THUMB_CACHE_UNAVAILABLE "没有可用的缓存文件夹，缩略图只保存在内存中"
     IDS_THUMB_CACHE_TOOLTIP "删除本机保存的缩略图，文件本身不受影响"
+    IDS_GLOBAL_SEARCH_DOUBLE_CTRL "连按两次 Ctrl 呼出"
+    IDS_GLOBAL_SEARCH_DOUBLE_CTRL_DESC "在任何程序里快速按两下 Ctrl；全屏游戏和演示时不响应"
+    IDS_GLOBAL_SEARCH_DOUBLE_CTRL_GAP "连按间隔"
+    IDS_GLOBAL_SEARCH_DOUBLE_CTRL_GAP_DESC "两次按下之间允许的最长停顿"
+    IDS_DOUBLE_CTRL_FAST "200 毫秒"
+    IDS_DOUBLE_CTRL_NORMAL "300 毫秒"
+    IDS_DOUBLE_CTRL_SLOW "400 毫秒"
+    IDS_GLOBAL_SEARCH_JUMP "跳转"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5423,6 +5431,14 @@ BEGIN
     IDS_THUMB_CACHE_CLEAR "Clear cache"
     IDS_THUMB_CACHE_UNAVAILABLE "No cache folder is available; thumbnails stay in memory only"
     IDS_THUMB_CACHE_TOOLTIP "Deletes the saved thumbnails; your files are not affected"
+    IDS_GLOBAL_SEARCH_DOUBLE_CTRL "Press Ctrl twice to open"
+    IDS_GLOBAL_SEARCH_DOUBLE_CTRL_DESC "Tap Ctrl twice in any app; ignored in full-screen games and presentations"
+    IDS_GLOBAL_SEARCH_DOUBLE_CTRL_GAP "Double-tap speed"
+    IDS_GLOBAL_SEARCH_DOUBLE_CTRL_GAP_DESC "Longest pause allowed between the two taps"
+    IDS_DOUBLE_CTRL_FAST "200 ms"
+    IDS_DOUBLE_CTRL_NORMAL "300 ms"
+    IDS_DOUBLE_CTRL_SLOW "400 ms"
+    IDS_GLOBAL_SEARCH_JUMP "Go to"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

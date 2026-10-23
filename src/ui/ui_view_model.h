@@ -1052,6 +1052,8 @@ struct WindowViewModel {
     bool address_search_content = false;
     bool settings_search_pinyin = true;
     bool settings_global_search_enabled = false;
+    bool settings_global_search_double_ctrl = true;
+    int settings_global_search_double_ctrl_ms = 300;
     bool settings_search_enabled = true;
     bool settings_global_search_capturing = false;
     std::wstring settings_global_search_hotkey;
@@ -1399,6 +1401,7 @@ struct HitTestResult {
         SettingsTextRender,
         SettingsUiFontSize,
         SettingsTrayIcon,
+        SettingsDoubleCtrlGap,
         SettingsLanguage,
         SettingsIndexVolume,
         SettingsIndexAction,

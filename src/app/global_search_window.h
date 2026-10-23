@@ -30,6 +30,11 @@ struct GlobalSearchContext {
     std::vector<std::wstring> pinned_folders;   // Quick access pins (first few become scopes)
     std::vector<std::wstring> recent_queries;
     std::vector<GlobalSearchRecentFile> recent_files;
+    // Folders Pulse already knows, most relevant first: open tabs, Quick
+    // access, recently opened folders. Typed text matches them instantly
+    // (跳转 group, above the index results).
+    struct JumpFolder { std::wstring path, label; };  // label: shown name when not the folder name
+    std::vector<JumpFolder> jump_folders;
     int width = 0, height = 0;                  // DIP; 0 = default
 };
 struct GlobalSearchEvents {

@@ -7,6 +7,7 @@
 #include "app_hosted_edit.h"
 #include "places.h"
 #include "../common/localization.h"
+#include "../common/path_utils.h"
 #include "../ui/confirm_dialog.h"
 #include "../index/index_config.h"
 #include "../ui/ui_renderer.h"
@@ -46,6 +47,28 @@ GlobalSearchContext MakeGlobalSearchContext(const AppState& s) {
         if (item.path.empty() || fs::IsVirtualPath(item.path)) continue;
         context.recent_files.push_back({item.path, item.kind == app::PlaceItemKind::Folder});
     }
+    // 跳转 candidates: this window's folders first, then other windows, Quick
+    // access and recently opened folders; each folder once.
+    auto add_jump = [&](const std::wstring& path, const std::wstring& label = {}) {
+        if (path.empty() || fs::IsVirtualPath(path) || context.jump_folders.size() >= 96) return;
+        for (auto& known : context.jump_folders)
+            if (path::EqualInsensitive(known.path, path)) {
+                if (known.label.empty()) known.label = label;
+                return;
+            }
+        context.jump_folders.push_back({path, label});
+    };
+    if (const auto* pane = s.pane) add_jump(pane->view.current_path);
+    auto add_window = [&](AppState& window) {
+        ForEachPane(window, [&](app::Pane& pane) { add_jump(pane.view.current_path); });
+    };
+    add_window(const_cast<AppState&>(s));
+    s.core.windows.ForEach([&](HWND, AppState& window) { if (&window != &s) add_window(window); });
+    // Quick access rows carry the shown names ("下载" for Downloads).
+    for (const auto& entry : s.sidebar.quick_access) add_jump(entry.path, entry.label);
+    for (const auto& path : s.places.quick_access_paths) add_jump(path);
+    for (const auto& item : s.places.RecentItems())
+        if (item.kind == app::PlaceItemKind::Folder) add_jump(item.path);
     context.width = s.appPrefs.global_search_width;
     context.height = s.appPrefs.global_search_height;
     return context;
@@ -88,7 +111,10 @@ void ApplyGlobalSearchSettings(AppState& s) {
     s.settings.SetGlobalSearchError(ok ? std::wstring{} : l10n::Get(
         s.globalSearchHotkey.Error() == ERROR_HOTKEY_ALREADY_REGISTERED
             ? l10n::StringId::GlobalSearchConflict : l10n::StringId::GlobalSearchRegisterFailed));
-    if (!enabled || !ok) s.globalSearchWindow.Hide();
+    const bool double_ctrl = enabled && s.appPrefs.global_search_double_ctrl;
+    s.core.doubleCtrl.Update(ServiceWindow(s), WM_DOUBLE_CTRL, double_ctrl,
+        static_cast<uint32_t>(s.appPrefs.global_search_double_ctrl_ms));
+    if (!enabled || (!ok && !double_ctrl)) s.globalSearchWindow.Hide();
     s.tray_controller.SetVisible(WantsTrayIcon(s, s.hidden_to_tray));
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
@@ -165,8 +191,9 @@ bool HandleGlobalSearchHotkeyCapture(AppState& s, unsigned key) {
     return consumed;
 }
 
-void ToggleGlobalSearch(AppState& s) {
-    if (!s.appPrefs.global_search_enabled || !s.appPrefs.search_enabled || !s.globalSearchHotkey.Registered()) return;
+void ToggleGlobalSearch(AppState& s, bool double_ctrl) {
+    if (!s.appPrefs.global_search_enabled || !s.appPrefs.search_enabled) return;
+    if (double_ctrl ? !s.core.doubleCtrl.Running() : !s.globalSearchHotkey.Registered()) return;
     if (s.globalSearchWindow.Visible()) {
         s.globalSearchWindow.Hide();
         return;
@@ -191,6 +218,7 @@ void ToggleGlobalSearch(AppState& s) {
 
 void ShutdownGlobalSearch(AppState& s) {
     s.globalSearchHotkey.Reset();
+    s.core.doubleCtrl.Stop();
     s.globalSearchWindow.Shutdown();
 }
 }

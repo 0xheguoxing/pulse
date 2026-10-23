@@ -2726,5 +2726,13 @@
 #define IDS_THUMB_CACHE_CLEAR                                                            3936
 #define IDS_THUMB_CACHE_UNAVAILABLE                                                      3937
 #define IDS_THUMB_CACHE_TOOLTIP                                                          3938
+#define IDS_GLOBAL_SEARCH_DOUBLE_CTRL                                                    3939
+#define IDS_GLOBAL_SEARCH_DOUBLE_CTRL_DESC                                               3940
+#define IDS_GLOBAL_SEARCH_DOUBLE_CTRL_GAP                                                3941
+#define IDS_GLOBAL_SEARCH_DOUBLE_CTRL_GAP_DESC                                           3942
+#define IDS_DOUBLE_CTRL_FAST                                                             3943
+#define IDS_DOUBLE_CTRL_NORMAL                                                           3944
+#define IDS_DOUBLE_CTRL_SLOW                                                             3945
+#define IDS_GLOBAL_SEARCH_JUMP                                                           3946
 
 #endif  // PULSE_STRING_IDS_H
