@@ -300,8 +300,9 @@ bool Wizard::CreateFactories() {
                                    reinterpret_cast<IUnknown**>(&dwrite_))))
         return false;
     CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic_));
-    // Segoe UI Variable on Windows 11, Segoe UI otherwise; CJK comes from the
-    // matching UI font so that punctuation and glyph shapes are regional.
+    // The installer follows the application: MiSans where it exists (MiSans TC
+    // for traditional Chinese), then the stock CJK UI faces, then Segoe UI
+    // Variable on Windows 11 and Segoe UI otherwise.
     IDWriteFontCollection* fonts = nullptr;
     dwrite_->GetSystemFontCollection(&fonts);
     auto has = [&](const wchar_t* name) {
@@ -309,10 +310,15 @@ bool Wizard::CreateFactories() {
         BOOL exists = FALSE;
         return fonts && SUCCEEDED(fonts->FindFamilyName(name, &index, &exists)) && exists;
     };
-    if (lang_ == Lang::ZhHans && has(L"Microsoft YaHei UI")) font_family_ = L"Microsoft YaHei UI";
-    else if (lang_ == Lang::ZhHant && has(L"Microsoft JhengHei UI")) font_family_ = L"Microsoft JhengHei UI";
-    else if (has(L"Segoe UI Variable Text")) font_family_ = L"Segoe UI Variable Text";
-    else font_family_ = L"Segoe UI";
+    const wchar_t* cands_hans[] = {L"MiSans", L"Source Han Sans SC", L"Microsoft YaHei UI", nullptr};
+    const wchar_t* cands_hant[] = {L"MiSans TC", L"Microsoft JhengHei UI", nullptr};
+    const wchar_t* cands_other[] = {L"Segoe UI Variable Text", L"Segoe UI", nullptr};
+    const wchar_t* const* cands = lang_ == Lang::ZhHans ? cands_hans
+        : lang_ == Lang::ZhHant ? cands_hant : cands_other;
+    for (size_t i = 0; cands[i] && font_family_.empty(); ++i) {
+        if (has(cands[i])) font_family_ = cands[i];
+    }
+    if (font_family_.empty()) font_family_ = L"Segoe UI";
     SafeRelease(fonts);
     return true;
 }

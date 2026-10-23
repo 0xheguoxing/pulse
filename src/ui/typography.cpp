@@ -20,8 +20,66 @@ IDWriteFactory2* g_fallback_factory = nullptr;
 IDWriteFontFallback* g_fallback = nullptr;
 bool g_fallback_traditional = false;
 
+const wchar_t* ResolveFamily(IDWriteFactory2* factory, FontRole role);
+
+// Candidate chains, most preferred first; the first family that exists wins.
+// MiSans (小米) is the house UI family, with MiSans TC carrying traditional
+// glyph forms. The stock families stay as fallbacks for machines without it,
+// and MiSans L3 backs the rare ideographs no base family carries.
+const wchar_t* const kTextZh[] = {
+    L"MiSans", L"Source Han Sans SC", L"Microsoft YaHei UI", L"Microsoft YaHei", L"Segoe UI", nullptr};
+const wchar_t* const kTextTw[] = {
+    L"MiSans TC", L"Microsoft JhengHei UI", L"Microsoft JhengHei", L"MiSans",
+    L"Microsoft YaHei UI", L"Segoe UI", nullptr};
+// An English shell keeps the Latin side first: Segoe UI Variable Small is the
+// optical size for 8-14 px and so fits the 11-14 DIP interface text, while
+// Segoe UI Variable Text starts at 14 px. Chinese runs inside it fall back per
+// glyph through the CJK mapping built below.
+const wchar_t* const kTextEn[] = {
+    L"Segoe UI Variable Small", L"Segoe UI Variable Text", L"Segoe UI",
+    L"MiSans", L"Source Han Sans SC", L"Microsoft YaHei UI", nullptr};
+const wchar_t* const kDisplayEn[] = {
+    L"Segoe UI Variable Display", L"Segoe UI Variable Text", L"Segoe UI",
+    L"MiSans", L"Source Han Sans SC", L"Microsoft YaHei UI", nullptr};
+const wchar_t* const kIcons[] = {
+    L"Segoe Fluent Icons", L"Segoe MDL2 Assets", L"Segoe UI", nullptr};
+const wchar_t* const kMono[] = {
+    L"Cascadia Mono", L"Consolas", L"Microsoft YaHei UI", L"Segoe UI", nullptr};
+const wchar_t* const kMonoTw[] = {
+    L"Cascadia Mono", L"Consolas", L"Microsoft JhengHei UI", L"Segoe UI", nullptr};
+
 bool TraditionalChinese() noexcept {
     return pulse::l10n::effective_language() == pulse::l10n::Language::ZhTW;
+}
+
+bool ChineseUi() noexcept {
+    return TraditionalChinese() ||
+        pulse::l10n::effective_language() == pulse::l10n::Language::ZhCN;
+}
+
+const wchar_t* const* ChainFor(FontRole role) noexcept {
+    const bool traditional = TraditionalChinese();
+    switch (role) {
+    case FontRole::Display: return traditional ? kTextTw : ChineseUi() ? kTextZh : kDisplayEn;
+    case FontRole::Icon: return kIcons;
+    case FontRole::Monospace: return traditional ? kMonoTw : kMono;
+    default: return traditional ? kTextTw : ChineseUi() ? kTextZh : kTextEn;
+    }
+}
+
+// The process-wide shared factory exists only to answer "does this family
+// exist?". It is created once and kept: DirectWrite hands back one shared
+// instance per process, and GDI callers have no factory of their own.
+IDWriteFactory2* LookupFactory() {
+    static IDWriteFactory2* const factory = []() -> IDWriteFactory2* {
+        IDWriteFactory2* created = nullptr;
+        if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory2),
+                reinterpret_cast<IUnknown**>(&created)))) {
+            return nullptr;
+        }
+        return created;
+    }();
+    return factory;
 }
 std::atomic_uint64_t g_generation{1};
 std::atomic_int g_text_render_mode{0};
@@ -47,39 +105,7 @@ bool FamilyExists(IDWriteFactory2* factory, const wchar_t* family) {
 }
 
 const wchar_t* ResolveFamily(IDWriteFactory2* factory, FontRole role) {
-    const bool traditional = TraditionalChinese();
-    const bool chinese = traditional ||
-        pulse::l10n::effective_language() == pulse::l10n::Language::ZhCN;
-    // Source Han Sans (思源黑体) is the house UI family; the stock families
-    // stay as fallbacks for machines without it.
-    const wchar_t* const text_zh[] = {
-        L"Source Han Sans SC", L"Microsoft YaHei UI", L"Microsoft YaHei", L"Segoe UI", nullptr};
-    // Taiwan glyph forms; YaHei only if JhengHei is missing.
-    const wchar_t* const text_tw[] = {
-        L"Source Han Sans TC", L"Microsoft JhengHei UI", L"Microsoft JhengHei",
-        L"Microsoft YaHei UI", L"Segoe UI", nullptr};
-    const wchar_t* const text_en[] = {
-        L"Source Han Sans SC", L"Segoe UI Variable Text", L"Segoe UI",
-        L"Microsoft YaHei UI", L"Microsoft YaHei", nullptr};
-    const wchar_t* const display_zh[] = {
-        L"Source Han Sans SC", L"Microsoft YaHei UI", L"Microsoft YaHei", L"Segoe UI", nullptr};
-    const wchar_t* const display_en[] = {
-        L"Source Han Sans SC", L"Segoe UI Variable Display", L"Segoe UI Variable Text",
-        L"Segoe UI", L"Microsoft YaHei UI", L"Microsoft YaHei", nullptr};
-    const wchar_t* const icons[] = {
-        L"Segoe Fluent Icons", L"Segoe MDL2 Assets", L"Segoe UI", nullptr};
-    const wchar_t* const mono[] = {
-        L"Cascadia Mono", L"Consolas", L"Microsoft YaHei UI", L"Segoe UI", nullptr};
-    const wchar_t* const mono_tw[] = {
-        L"Cascadia Mono", L"Consolas", L"Microsoft JhengHei UI", L"Segoe UI", nullptr};
-
-    const wchar_t* const* candidates = nullptr;
-    switch (role) {
-    case FontRole::Display: candidates = traditional ? text_tw : chinese ? display_zh : display_en; break;
-    case FontRole::Icon: candidates = icons; break;
-    case FontRole::Monospace: candidates = traditional ? mono_tw : mono; break;
-    default: candidates = traditional ? text_tw : chinese ? text_zh : text_en; break;
-    }
+    const wchar_t* const* candidates = ChainFor(role);
     for (size_t i = 0; candidates[i]; ++i) {
         if (FamilyExists(factory, candidates[i])) return candidates[i];
     }
@@ -93,15 +119,24 @@ bool BuildFallback(IDWriteFactory2* factory, bool traditional, IDWriteFontFallba
     if (FAILED(factory->CreateFontFallbackBuilder(&builder)) || !builder) return false;
 
     const DWRITE_UNICODE_RANGE cjk[] = {
-        {0x2E80, 0x303F}, {0x3400, 0x4DBF}, {0x4E00, 0x9FFF},
-        {0xF900, 0xFAFF}, {0xFF00, 0xFFEF}, {0x20000, 0x2FA1F},
+        {0x2E80, 0x303F}, {0x3040, 0x30FF}, {0x3100, 0x312F}, {0x3400, 0x4DBF},
+        {0x4E00, 0x9FFF}, {0xF900, 0xFAFF}, {0xFE30, 0xFE4F}, {0xFF00, 0xFFEF},
+        {0x20000, 0x2FA1F},
     };
-    const wchar_t* simplified[] = {L"Microsoft YaHei UI", L"Microsoft YaHei"};
-    const wchar_t* hant[] = {L"Microsoft JhengHei UI", L"Microsoft JhengHei",
-                             L"Microsoft YaHei UI", L"Microsoft YaHei"};
+    // MiSans covers 29571 characters, so it leads and the stock families follow
+    // for what it lacks (middle dot, warning sign, rare forms). MiSans L3 holds
+    // the GB18030-2022 L3 ideographs no base family carries; it has no Latin,
+    // so it stays last.
+    const wchar_t* simplified[] = {
+        L"MiSans", L"Microsoft YaHei UI", L"Microsoft YaHei", L"MiSans L3"};
+    const wchar_t* hant[] = {
+        L"MiSans TC", L"Microsoft JhengHei UI", L"Microsoft JhengHei",
+        L"MiSans", L"Microsoft YaHei UI", L"MiSans L3"};
     // Locale must be empty: a zh-CN mapping is skipped when the UI language
     // (and therefore the text format locale) is en-US, so Chinese in an
-    // English shell would miss YaHei.
+    // English shell would fall through to whatever the system picks. Kana,
+    // Bopomofo and the CJK compatibility forms join the ranges so the whole
+    // script stays with one family instead of the system fallback.
     if (traditional)
         builder->AddMapping(cjk, ARRAYSIZE(cjk), hant, ARRAYSIZE(hant), nullptr, nullptr);
     else
@@ -148,10 +183,8 @@ bool HasIconFont(IDWriteFactory2* factory) {
 }
 
 const wchar_t* PreferredTextFamily() noexcept {
-    // Source Han Sans (思源黑体) is the house UI family; TC gets its glyph forms.
-    return pulse::l10n::effective_language() == pulse::l10n::Language::ZhTW
-        ? L"Source Han Sans TC"
-        : L"Source Han Sans SC";
+    IDWriteFactory2* factory = LookupFactory();
+    return factory ? ResolveFamily(factory, FontRole::Text) : kTextZh[0];
 }
 
 HRESULT CreateTextFormat(IDWriteFactory2* factory, const TextFormatSpec& spec,
@@ -278,6 +311,8 @@ int EditFontPixels(float scale, float dip) noexcept {
 
 HFONT CreateEditFont(float scale, float dip) {
     // Grayscale like the DirectWrite text (flat pixel geometry), not ClearType.
+    // The family is the resolved Text family, so the editor matches the
+    // DirectWrite text around it even where GDI would have substituted a face.
     const int height = -EditFontPixels(scale, dip);
     HFONT font = CreateFontW(height, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
