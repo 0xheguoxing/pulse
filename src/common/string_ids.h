@@ -2768,5 +2768,7 @@
 #define IDS_OP_CONFLICT_ALREADY_THERE                                                    3978
 #define IDS_OP_REPLACE_SHORT                                                             3979
 #define IDS_OP_SKIP_SHORT                                                                3980
+#define IDS_PERM_DELETE_SWITCH_TO_BIN                                                    3981
+#define IDS_PERM_DELETE_CANT_UNDO                                                        3982
 
 #endif  // PULSE_STRING_IDS_H

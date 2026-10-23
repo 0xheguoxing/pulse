@@ -2764,6 +2764,8 @@ enum class StringId : UINT {
     OpConflictAlreadyThere = IDS_OP_CONFLICT_ALREADY_THERE,
     OpReplaceShort = IDS_OP_REPLACE_SHORT,
     OpSkipShort = IDS_OP_SKIP_SHORT,
+    PermDeleteSwitchToBin = IDS_PERM_DELETE_SWITCH_TO_BIN,
+    PermDeleteCantUndo = IDS_PERM_DELETE_CANT_UNDO,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

@@ -2775,3 +2775,5 @@ OpConflictIncomingMove	IDS_OP_CONFLICT_INCOMING_MOVE	3977	移动过来的	Incomi
 OpConflictAlreadyThere	IDS_OP_CONFLICT_ALREADY_THERE	3978	目标中现有的	Already there	目標中現有的
 OpReplaceShort	IDS_OP_REPLACE_SHORT	3979	替换	Replace	替換
 OpSkipShort	IDS_OP_SKIP_SHORT	3980	跳过	Skip	跳過
+PermDeleteSwitchToBin	IDS_PERM_DELETE_SWITCH_TO_BIN	3981	改为移到回收站	Move to Recycle Bin instead	改為移到資源回收筒
+PermDeleteCantUndo	IDS_PERM_DELETE_CANT_UNDO	3982	删除后无法恢复。	 This can't be undone.	刪除後無法復原。

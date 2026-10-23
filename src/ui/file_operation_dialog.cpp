@@ -238,37 +238,6 @@ ComPtr<ID2D1StrokeStyle> RoundStroke(ID2D1Factory* factory) {
     return style;
 }
 
-ComPtr<ID2D1LinearGradientBrush> LinearBrush(ID2D1DeviceContext* dc, D2D1_POINT_2F from,
-                                             D2D1_POINT_2F to, D2D1_COLOR_F start,
-                                             D2D1_COLOR_F end) {
-    ComPtr<ID2D1LinearGradientBrush> brush;
-    if (!dc) return brush;
-    const D2D1_GRADIENT_STOP stops[2] = {{0.0f, start}, {1.0f, end}};
-    ComPtr<ID2D1GradientStopCollection> collection;
-    if (FAILED(dc->CreateGradientStopCollection(stops, 2, &collection))) return brush;
-    dc->CreateLinearGradientBrush(D2D1::LinearGradientBrushProperties(from, to),
-                                  collection.get(), &brush);
-    return brush;
-}
-
-// The 40-DIP header tile: a diagonal gradient per operation (copy indigo,
-// move amber, delete red, restore teal; green once done).
-void FillGradientTile(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, float radius,
-                      D2D1_COLOR_F top, D2D1_COLOR_F bottom) {
-    auto brush = LinearBrush(dc, D2D1::Point2F(rect.left, rect.top),
-                             D2D1::Point2F(rect.right, rect.bottom), top, bottom);
-    if (!brush.get()) return;
-    dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), brush.get());
-    // Top-edge highlight that lifts the tile off the card.
-    const D2D1_RECT_F gloss = D2D1::RectF(rect.left, rect.top, rect.right,
-                                          rect.top + (rect.bottom - rect.top) * 0.5f);
-    auto shine = LinearBrush(dc, D2D1::Point2F(rect.left, rect.top),
-                             D2D1::Point2F(rect.left, gloss.bottom),
-                             HexColor(0xFFFFFF, 0.22f), HexColor(0xFFFFFF, 0.0f));
-    if (shine.get())
-        dc->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), shine.get());
-}
-
 // Clockwise arc from `start_deg` (0 = 12 o'clock) spanning `span_deg`.
 void StrokeArc(ID2D1DeviceContext* dc, D2D1_POINT_2F center, float radius, float start_deg,
                float span_deg, D2D1_COLOR_F color, float stroke) {
@@ -491,39 +460,6 @@ std::wstring FormatElapsed(uint64_t seconds) {
     return FormatDuration(seconds);
 }
 
-// Thumbnail colours by extension (images, video, audio, archives,
-// documents, binaries); folders get the folder amber.
-void ThumbColors(const std::wstring& name, bool directory, D2D1_COLOR_F& top,
-                        D2D1_COLOR_F& bottom, std::wstring& label) {
-    top = HexColor(0x5B6170);
-    bottom = HexColor(0x3B404B);
-    label.clear();
-    if (directory) { top = HexColor(0xF5C451); bottom = HexColor(0xD99A1E); return; }
-    const size_t dot = name.find_last_of(L'.');
-    if (dot == std::wstring::npos || dot + 1 >= name.size()) return;
-    std::wstring ext = name.substr(dot + 1);
-    for (auto& c : ext) c = static_cast<wchar_t>(towlower(c));
-    auto any = [&](std::initializer_list<const wchar_t*> list) {
-        for (const auto* e : list) if (ext == e) return true;
-        return false;
-    };
-    label = ext.substr(0, 4);
-    for (auto& c : label) c = static_cast<wchar_t>(towupper(c));
-    if (any({L"jpg", L"jpeg", L"png", L"gif", L"bmp", L"webp", L"heic", L"tif", L"tiff", L"nef", L"cr2", L"cr3", L"arw", L"dng", L"raw", L"svg", L"ico"})) {
-        top = HexColor(0x4CC2C9); bottom = HexColor(0x2A8F96);
-    } else if (any({L"mp4", L"mkv", L"mov", L"avi", L"wmv", L"webm", L"m4v", L"ts"})) {
-        top = HexColor(0xF07A73); bottom = HexColor(0xC4433D);
-    } else if (any({L"mp3", L"flac", L"wav", L"m4a", L"aac", L"ogg", L"opus", L"wma"})) {
-        top = HexColor(0xA78BFA); bottom = HexColor(0x7C5CE6);
-    } else if (any({L"zip", L"7z", L"rar", L"tar", L"gz", L"xz", L"bz2", L"cab", L"iso"})) {
-        top = HexColor(0xF0B041); bottom = HexColor(0xC98410);
-    } else if (any({L"pdf", L"doc", L"docx", L"txt", L"md", L"rtf", L"xls", L"xlsx", L"csv", L"ppt", L"pptx", L"odt"})) {
-        top = HexColor(0x7D8CF0); bottom = HexColor(0x5260C0);
-    } else if (any({L"exe", L"dll", L"bin", L"sys", L"msi", L"json", L"xml", L"cpp", L"h", L"js", L"py", L"cs"})) {
-        top = HexColor(0x8E6CE8); bottom = HexColor(0x5A3FB8);
-    }
-}
-
 // File conflict, Pulse_文件操作对话框_重设计.html §2: what arrives and what
 // is there side by side (the shell's icon, size, time, 更大 / 较新 in green),
 // then the three choices as list rows. Hover or keyboard focus lights a row
@@ -539,13 +475,30 @@ HICON ShellTypeIcon(const std::wstring& name, bool directory, float pixels) {
                         SHGFI_SYSICONINDEX | SHGFI_USEFILEATTRIBUTES))
         return nullptr;
     IImageList* list = nullptr;
-    if (FAILED(SHGetImageList(pixels <= 32.5f ? SHIL_LARGE : SHIL_EXTRALARGE, __uuidof(IImageList),
-                              reinterpret_cast<void**>(&list))) || !list)
+    const int size = pixels <= 16.5f ? SHIL_SMALL : pixels <= 32.5f ? SHIL_LARGE : SHIL_EXTRALARGE;
+    if (FAILED(SHGetImageList(size, __uuidof(IImageList), reinterpret_cast<void**>(&list))) || !list)
         return nullptr;
     HICON icon = nullptr;
     if (FAILED(list->GetIcon(info.iIcon, ILD_TRANSPARENT, &icon))) icon = nullptr;
     list->Release();
     return icon;
+}
+
+// An icon as a bitmap on `dc`; `wic` is created on first use.
+ComPtr<ID2D1Bitmap> BitmapFromIcon(ID2D1DeviceContext* dc, ComPtr<IWICImagingFactory>& wic, HICON icon) {
+    ComPtr<ID2D1Bitmap> bitmap;
+    if (!dc || !icon) return bitmap;
+    if (!wic.get() && FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                              IID_PPV_ARGS(&wic))))
+        return bitmap;
+    ComPtr<IWICBitmap> source;
+    ComPtr<IWICFormatConverter> converter;
+    if (FAILED(wic->CreateBitmapFromHICON(icon, &source)) || FAILED(wic->CreateFormatConverter(&converter)) ||
+        FAILED(converter->Initialize(source.get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone,
+                                     nullptr, 0.0, WICBitmapPaletteTypeMedianCut)) ||
+        FAILED(dc->CreateBitmapFromWicBitmap(converter.get(), nullptr, &bitmap)))
+        bitmap.reset();
+    return bitmap;
 }
 
 // 32-DIP blank page (the HTML's file icon) for when the shell has no icon.
@@ -824,21 +777,7 @@ private:
     }
 
     ID2D1Bitmap* IconBitmap(int side) {
-        if (!icons_[side]) return nullptr;
-        if (icon_bitmaps_[side].get()) return icon_bitmaps_[side].get();
-        if (!wic_.get() && FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-                                                   IID_PPV_ARGS(&wic_))))
-            return nullptr;
-        ComPtr<IWICBitmap> source;
-        ComPtr<IWICFormatConverter> converter;
-        if (FAILED(wic_->CreateBitmapFromHICON(icons_[side], &source)) ||
-            FAILED(wic_->CreateFormatConverter(&converter)) ||
-            FAILED(converter->Initialize(source.get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone,
-                                         nullptr, 0.0, WICBitmapPaletteTypeMedianCut)) ||
-            FAILED(compositor_.Dc()->CreateBitmapFromWicBitmap(converter.get(), nullptr, &icon_bitmaps_[side]))) {
-            icon_bitmaps_[side].reset();
-            return nullptr;
-        }
+        if (!icon_bitmaps_[side].get()) icon_bitmaps_[side] = BitmapFromIcon(compositor_.Dc(), wic_, icons_[side]);
         return icon_bitmaps_[side].get();
     }
 
@@ -1230,9 +1169,11 @@ private:
     ComPtr<IWICImagingFactory> wic_;
 };
 
-// Permanent delete, pulse_ops_dialogs.html §6: the first items fanned out as
-// thumbnails, the first three listed with sizes, a red "can't be undone"
-// line, and 移到回收站 as the way out when the items have a Recycle Bin.
+// Permanent delete, Pulse_文件操作对话框_重设计.html §3: the question as the
+// headline, why it can't be undone under it (a warning line with the reason
+// where there is no Recycle Bin), the first three items in a bordered list
+// with "and N more", then 改为移到回收站 · 取消 · 永久删除. Enter deletes; a
+// focus ring shows only once the keyboard moves focus.
 class PermanentDeleteWindow {
 public:
     PermanentDeleteChoice Show(HWND owner, const PermanentDeleteInfo& info, bool dark, D2D1_COLOR_F accent) {
@@ -1242,6 +1183,8 @@ public:
         accent_ = accent;
         scale_ = static_cast<float>(pulse::compat::WindowDpi(owner)) / 96.0f;
         Measure();
+        for (size_t i = 0; i < items_.size(); ++i)
+            icons_[i] = ShellTypeIcon(items_[i].name, items_[i].directory, 16.0f * scale_);
 
         WNDCLASSEXW wc{ sizeof(wc) };
         wc.hInstance = GetModuleHandleW(nullptr);
@@ -1251,18 +1194,16 @@ public:
         if (!GetClassInfoExW(wc.hInstance, kDeleteClass, &wc)) RegisterClassExW(&wc);
 
         const int width = static_cast<int>(kW * scale_);
-        const int height = static_cast<int>(kH * scale_);
+        const int height = static_cast<int>(HeightDip() * scale_);
         hwnd_ = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP, kDeleteClass,
             l10n::Get(l10n::StringId::PermanentDelete).c_str(), WS_POPUP | WS_THICKFRAME | WS_SYSMENU,
             CW_USEDEFAULT, CW_USEDEFAULT, width, height, owner, nullptr, wc.hInstance, this);
-        if (!hwnd_) return choice_;
+        if (!hwnd_) { ReleaseIcons(); return choice_; }
         pulse::ui::CenterOwnedWindow(hwnd_, owner_, width, height);
         if (owner_) EnableWindow(owner_, FALSE);
         ShowWindow(hwnd_, SW_SHOW);
         SetForegroundWindow(hwnd_);
         SetFocus(hwnd_);
-        opened_ = GetTickCount64();
-        SetTimer(hwnd_, kFanTimer, 15, nullptr);
 
         MSG message{};
         while (!done_ && GetMessageW(&message, nullptr, 0, 0) > 0) {
@@ -1272,18 +1213,19 @@ public:
         if (IsWindow(hwnd_)) { HideComposedDialog(hwnd_, owner_); DestroyWindow(hwnd_); }
         hwnd_ = nullptr;
         if (owner_) EnableWindow(owner_, TRUE);
+        ReleaseIcons();
         return choice_;
     }
 
 private:
-    static constexpr float kW = 460.0f;
-    static constexpr float kH = 310.0f;
-    static constexpr float kStackTop = 100.0f;
-    static constexpr float kWarnTop = 198.0f;
-    static constexpr float kFooterTop = 250.0f;
-    static constexpr UINT_PTR kFanTimer = 3;
-    static constexpr ULONGLONG kFanDelay = 120;
-    static constexpr ULONGLONG kFanMs = 450;
+    // Layout in DIPs: headline 18, reason / warning 46, list from 82 (34-DIP
+    // rows inside a 1 px border), 20 below it, then the 64-DIP footer.
+    static constexpr float kW = 440.0f;
+    static constexpr float kPad = 24.0f;
+    static constexpr float kListTop = 82.0f;
+    static constexpr float kRowH = 34.0f;
+    static constexpr float kFooterH = 64.0f;
+    static constexpr size_t kMaxRows = 3;
 
     struct Item {
         std::wstring name;
@@ -1302,14 +1244,14 @@ private:
         return self ? self->Handle(message, wparam, lparam) : DefWindowProcW(hwnd, message, wparam, lparam);
     }
 
-    // Names and sizes for the list; the total only when every item is a file
-    // (a folder's size would need a walk) and the selection is small.
+    // Names and sizes for the list; the counts only when the selection is
+    // small enough to stat every item (a folder's size would need a walk).
     void Measure() {
         files_ = folders_ = 0;
         total_ = 0;
         const bool stat_all = info_.paths.size() <= 256;
         for (size_t i = 0; i < info_.paths.size(); ++i) {
-            if (!stat_all && i >= 3) break;
+            if (!stat_all && i >= kMaxRows) break;
             Item item;
             item.name = LeafName(info_.paths[i]);
             if (item.name.empty()) item.name = info_.paths[i];
@@ -1323,7 +1265,7 @@ private:
             }
             item.directory ? ++folders_ : ++files_;
             total_ += item.bytes;
-            if (items_.size() < 3) items_.push_back(std::move(item));
+            if (items_.size() < kMaxRows) items_.push_back(std::move(item));
         }
         totals_known_ = stat_all;
     }
@@ -1336,32 +1278,50 @@ private:
                l10n::Get(l10n::StringId::PermDeleteManyEnd);
     }
 
-    std::wstring Summary() const {
-        std::wstring text;
-        if (info_.no_recycle_bin) {
-            using Reason = PermanentDeleteInfo::NoBinReason;
-            text = l10n::Get(info_.no_bin_reason == Reason::Disabled   ? l10n::StringId::RecycleBinOffForDrive
-                             : info_.no_bin_reason == Reason::TooLarge ? l10n::StringId::RecycleBinTooSmallForItem
-                                                                       : l10n::StringId::NetworkLocationsAndRemovableDrivesHaveNoRecycleBin);
-            while (!text.empty() && text.back() == L' ') text.pop_back();
-        }
-        std::wstring counts;
-        if (totals_known_) {
-            if (folders_ == 0) {
-                counts = l10n::Get(l10n::StringId::PermDeleteTotalLead) + pulse::format::ByteSize(total_);
-            } else if (info_.paths.size() > 1) {
-                counts = pulse::format::GroupedInt(folders_) + l10n::Get(l10n::StringId::Folders);
-                if (files_) counts += L" \x00B7 " + pulse::format::GroupedInt(files_) + l10n::Get(l10n::StringId::PermDeleteFiles);
-            }
-        }
-        if (!counts.empty()) text += (text.empty() ? L"" : L" ") + counts;
+    // Why there is no Recycle Bin here; empty when there is one.
+    std::wstring Reason() const {
+        if (!info_.no_recycle_bin) return {};
+        using Reason = PermanentDeleteInfo::NoBinReason;
+        std::wstring text = l10n::Get(info_.no_bin_reason == Reason::Disabled   ? l10n::StringId::RecycleBinOffForDrive
+                                      : info_.no_bin_reason == Reason::TooLarge ? l10n::StringId::RecycleBinTooSmallForItem
+                                                                                : l10n::StringId::NetworkLocationsAndRemovableDrivesHaveNoRecycleBin);
+        while (!text.empty() && text.back() == L' ') text.pop_back();
+        if (info_.no_bin_reason != Reason::Disabled) text += l10n::Get(l10n::StringId::PermDeleteCantUndo);
         return text;
     }
 
-    D2D1_RECT_F CloseRect() const { return Rect(scale_, kW - 46, 0, 46, 40); }
-    D2D1_RECT_F DeleteRect() const { return Rect(scale_, kW - 16 - 136, kFooterTop + 13, 136, 34); }
-    D2D1_RECT_F CancelRect() const { return Rect(scale_, kW - 16 - 136 - 8 - 92, kFooterTop + 13, 92, 34); }
-    D2D1_RECT_F BinRect() const { return Rect(scale_, 16, kFooterTop + 13, 112, 34); }
+    // What the whole selection holds: "共 3.1 MB", or folders · files.
+    std::wstring Counts() const {
+        if (!totals_known_) return {};
+        if (folders_ == 0) return l10n::Get(l10n::StringId::PermDeleteTotalLead) + pulse::format::ByteSize(total_);
+        std::wstring counts = pulse::format::GroupedInt(folders_) + l10n::Get(l10n::StringId::Folders);
+        if (files_) counts += L" \x00B7 " + pulse::format::GroupedInt(files_) + l10n::Get(l10n::StringId::PermDeleteFiles);
+        return counts;
+    }
+
+    size_t MoreCount() const { return info_.paths.size() > items_.size() ? info_.paths.size() - items_.size() : 0; }
+    size_t RowCount() const { return items_.size() + (MoreCount() ? 1 : 0); }
+    float FooterTop() const { return kListTop + 2.0f + static_cast<float>(RowCount()) * kRowH + 20.0f; }
+    float HeightDip() const { return FooterTop() + kFooterH; }
+
+    D2D1_RECT_F CloseRect() const { return Rect(scale_, kW - 44, 4, 40, 32); }
+    // 0 改为移到回收站 (left, flush with the text after its padding), 1 cancel, 2 delete.
+    D2D1_RECT_F ButtonRect(int which) const {
+        const float h = painter_.MeasureButtonHeight();
+        const float top = (FooterTop() + kFooterH * 0.5f) * scale_ - h * 0.5f;
+        auto width = [&](l10n::StringId id) {
+            return (std::max)(painter_.MeasureButtonWidth(l10n::Get(id)), ScaleDip(scale_, 80.0f));
+        };
+        if (which == 0) {
+            const float left = (kPad - 12.0f) * scale_;
+            return D2D1::RectF(left, top, left + width(l10n::StringId::PermDeleteSwitchToBin), top + h);
+        }
+        const float right = (kW - kPad) * scale_;
+        const float delete_w = width(l10n::StringId::PermanentDelete);
+        if (which == 2) return D2D1::RectF(right - delete_w, top, right, top + h);
+        const float cancel_right = right - delete_w - ScaleDip(scale_, 8.0f);
+        return D2D1::RectF(cancel_right - width(l10n::StringId::Cancel), top, cancel_right, top + h);
+    }
 
     // Focus order: [recycle,] cancel, delete. Delete starts focused (Enter).
     int FocusCount() const { return info_.offer_recycle ? 3 : 2; }
@@ -1369,9 +1329,9 @@ private:
 
     int Hit(float x, float y) const {
         if (pulse::ui::ContainsRect(CloseRect(), x, y)) return 4;
-        if (pulse::ui::ContainsRect(DeleteRect(), x, y)) return 3;
-        if (pulse::ui::ContainsRect(CancelRect(), x, y)) return 2;
-        if (info_.offer_recycle && pulse::ui::ContainsRect(BinRect(), x, y)) return 1;
+        if (pulse::ui::ContainsRect(ButtonRect(2), x, y)) return 3;
+        if (pulse::ui::ContainsRect(ButtonRect(1), x, y)) return 2;
+        if (info_.offer_recycle && pulse::ui::ContainsRect(ButtonRect(0), x, y)) return 1;
         return 0;
     }
 
@@ -1400,152 +1360,21 @@ private:
             out->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         };
-        make(head_format_, typography::FontRole::Text, 15.5f, DWRITE_FONT_WEIGHT_BOLD);
-        make(sub_format_, typography::FontRole::Text, 12.5f, DWRITE_FONT_WEIGHT_NORMAL);
-        make(row_format_, typography::FontRole::Text, 12.5f, DWRITE_FONT_WEIGHT_MEDIUM);
-        make(meta_format_, typography::FontRole::Text, 11.5f, DWRITE_FONT_WEIGHT_NORMAL);
-        make(warn_format_, typography::FontRole::Text, 12.3f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
-        make(warn_sub_format_, typography::FontRole::Text, 12.3f, DWRITE_FONT_WEIGHT_NORMAL);
-        make(button_format_, typography::FontRole::Text, 13.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
-        make(kbd_format_, typography::FontRole::Text, 10.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
-        make(ext_format_, typography::FontRole::Text, 9.0f, DWRITE_FONT_WEIGHT_HEAVY);
-        make(glyph_format_, typography::FontRole::Icon, 18.0f, DWRITE_FONT_WEIGHT_NORMAL);
-        make(small_glyph_format_, typography::FontRole::Icon, 12.0f, DWRITE_FONT_WEIGHT_NORMAL);
-        make(thumb_glyph_format_, typography::FontRole::Icon, 20.0f, DWRITE_FONT_WEIGHT_NORMAL);
-        for (auto* f : { glyph_format_.get(), small_glyph_format_.get(), thumb_glyph_format_.get() })
-            if (f) f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        make(head_format_, typography::FontRole::Display, 18.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        make(sub_format_, typography::FontRole::Text, 13.0f, DWRITE_FONT_WEIGHT_NORMAL);
+        make(meta_format_, typography::FontRole::Text, 12.0f, DWRITE_FONT_WEIGHT_NORMAL);
     }
 
-    // Back-out easing, close to the spec's cubic-bezier(.2, 1.3, .3, 1).
-    static float Spring(float t) {
-        t = (std::clamp)(t, 0.0f, 1.0f);
-        const float c1 = 1.70158f * 0.9f;
-        const float c3 = c1 + 1.0f;
-        const float u = t - 1.0f;
-        return 1.0f + c3 * u * u * u + c1 * u * u;
-    }
-
-    float FanProgress() const {
-        const ULONGLONG now = GetTickCount64();
-        if (now < opened_ + kFanDelay) return 0.0f;
-        return Spring(static_cast<float>(now - opened_ - kFanDelay) / static_cast<float>(kFanMs));
-    }
-
-    void DrawThumb(const D2D1_RECT_F& box, const Item& item) {
-        auto* dc = compositor_.Dc();
-        const float s = scale_;
-        D2D1_COLOR_F top{}, bottom{};
-        std::wstring ext;
-        ThumbColors(item.name, item.directory, top, bottom, ext);
-        FillGradientTile(dc, box, ScaleDip(s, 7.0f), top, bottom);
-        StrokeRoundedRect(dc, box, ScaleDip(s, 7.0f), HexColor(0xFFFFFF, 0.08f), 1.0f);
-        if (item.directory) {
-            painter_.DrawGlyphWithFormat(L"\xE8B7", box, HexColor(0xFFFFFF, 0.92f), thumb_glyph_format_.get());
-            return;
-        }
-        auto factory = FactoryOf(dc);
-        ComPtr<ID2D1PathGeometry> corner;
-        if (factory.get() && SUCCEEDED(factory->CreatePathGeometry(&corner))) {
-            ComPtr<ID2D1GeometrySink> sink;
-            if (SUCCEEDED(corner->Open(&sink))) {
-                const float c = ScaleDip(s, 11.0f);
-                sink->BeginFigure(D2D1::Point2F(box.right - c, box.top), D2D1_FIGURE_BEGIN_FILLED);
-                sink->AddLine(D2D1::Point2F(box.right, box.top + c));
-                sink->AddLine(D2D1::Point2F(box.right - c, box.top + c));
-                sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-                if (SUCCEEDED(sink->Close())) {
-                    ComPtr<ID2D1SolidColorBrush> brush;
-                    if (SUCCEEDED(dc->CreateSolidColorBrush(HexColor(0xFFFFFF, 0.28f), &brush)))
-                        dc->FillGeometry(corner.get(), brush.get());
-                }
-            }
-        }
-        if (!ext.empty()) {
-            const float w = TextWidth(compositor_.DwriteFactory(), ext_format_.get(), ext) + ScaleDip(s, 8.0f);
-            const D2D1_RECT_F tag = D2D1::RectF(box.left + ScaleDip(s, 5.0f), box.bottom - ScaleDip(s, 18.0f),
-                                                box.left + ScaleDip(s, 5.0f) + (std::min)(w, box.right - box.left - ScaleDip(s, 8.0f)),
-                                                box.bottom - ScaleDip(s, 5.0f));
-            painter_.FillRoundedRect(tag, ScaleDip(s, 3.0f), HexColor(0x000000, 0.25f));
-            painter_.DrawText(ext, tag, ext_format_.get(), HexColor(0xFFFFFF), fluent::HorizontalAlignment::Center);
+    void ReleaseIcons() {
+        for (HICON& icon : icons_) {
+            if (icon) DestroyIcon(icon);
+            icon = nullptr;
         }
     }
 
-    static void StrokeRoundedRect(ID2D1DeviceContext* dc, const D2D1_RECT_F& r, float radius, D2D1_COLOR_F color, float width) {
-        ComPtr<ID2D1SolidColorBrush> brush;
-        if (dc && SUCCEEDED(dc->CreateSolidColorBrush(color, &brush)))
-            dc->DrawRoundedRectangle(D2D1::RoundedRect(r, radius, radius), brush.get(), width);
-    }
-
-    void DrawFan() {
-        auto* dc = compositor_.Dc();
-        const float s = scale_;
-        const size_t count = (std::min)(items_.size(), static_cast<size_t>(3));
-        if (count == 0) return;
-        const float p = FanProgress();
-        // Back to front: the spec's three cards end at -14 / -2 / +12 degrees.
-        static const float kAngle3[3] = { -14.0f, -2.0f, 12.0f };
-        static const float kShift3[3] = { -14.0f, 0.0f, 14.0f };
-        static const float kAngle2[2] = { -9.0f, 7.0f };
-        static const float kShift2[2] = { -9.0f, 9.0f };
-        D2D1_MATRIX_3X2_F base{};
-        dc->GetTransform(&base);
-        for (size_t i = 0; i < count; ++i) {
-            const float angle = count == 3 ? kAngle3[i] : count == 2 ? kAngle2[i] : 0.0f;
-            const float shift = count == 3 ? kShift3[i] : count == 2 ? kShift2[i] : 0.0f;
-            const float lift = count == 3 && i != 1 ? 4.0f : 0.0f;
-            const auto box = Rect(s, 44, kStackTop + 12, 48, 60);
-            const D2D1_POINT_2F pivot = D2D1::Point2F((box.left + box.right) * 0.5f, box.bottom);
-            const D2D1_MATRIX_3X2_F transform =
-                D2D1::Matrix3x2F::Rotation(angle * p, pivot) *
-                D2D1::Matrix3x2F::Translation(ScaleDip(s, shift * p), ScaleDip(s, lift * p));
-            dc->SetTransform(transform * base);
-            // Soft shadow under each card.
-            const D2D1_RECT_F shadow = D2D1::RectF(box.left + ScaleDip(s, 2.0f), box.top + ScaleDip(s, 5.0f),
-                                                   box.right - ScaleDip(s, 2.0f), box.bottom + ScaleDip(s, 3.0f));
-            painter_.FillRoundedRect(shadow, ScaleDip(s, 8.0f), HexColor(0x000000, dark_ ? 0.30f : 0.14f));
-            DrawThumb(box, items_[i]);
-        }
-        dc->SetTransform(base);
-    }
-
-    void DrawFooterButton(const D2D1_RECT_F& r, const std::wstring& text, const wchar_t* key, int kind,
-                          bool hovered, bool pressed, bool focused, const Theme& theme) {
-        // kind: 0 ghost, 1 standard, 2 danger.
-        const float s = scale_;
-        const D2D1_COLOR_F bad = dark_ ? HexColor(0xF0625B) : HexColor(0xD93D36);
-        D2D1_COLOR_F fill = kind == 2 ? bad
-            : kind == 1 ? (dark_ ? HexColor(0xFFFFFF, hovered ? 0.12f : 0.08f) : HexColor(0xFFFFFF, hovered ? 1.0f : 0.85f))
-                        : (hovered ? (dark_ ? HexColor(0xFFFFFF, 0.07f) : HexColor(0x000000, 0.05f)) : HexColor(0x000000, 0.0f));
-        if (kind == 2 && hovered) fill = D2D1::ColorF((std::min)(1.0f, fill.r * 1.08f), (std::min)(1.0f, fill.g * 1.08f),
-                                                      (std::min)(1.0f, fill.b * 1.08f), 1.0f);
-        D2D1_RECT_F box = r;
-        if (pressed) box = D2D1::RectF(r.left + s, r.top + s, r.right - s, r.bottom - s);
-        if (focused) {
-            const float g = ScaleDip(s, 2.0f);
-            StrokeRoundedRect(compositor_.Dc(), D2D1::RectF(box.left - g, box.top - g, box.right + g, box.bottom + g),
-                              ScaleDip(s, 10.0f), kind == 2 ? WithAlpha(bad, 0.6f) : (dark_ ? HexColor(0x8F9CF0) : theme.accent),
-                              ScaleDip(s, 2.0f));
-        }
-        painter_.FillRoundedRect(box, ScaleDip(s, 8.0f), fill);
-        if (kind == 1)
-            StrokeRoundedRect(compositor_.Dc(), box, ScaleDip(s, 8.0f),
-                              dark_ ? HexColor(0xFFFFFF, 0.08f) : HexColor(0x000000, 0.10f), 1.0f);
-        const D2D1_COLOR_F ink = kind == 2 ? HexColor(0xFFFFFF) : theme.text;
-        const float text_w = TextWidth(compositor_.DwriteFactory(), button_format_.get(), text);
-        float key_w = 0.0f;
-        if (key) key_w = TextWidth(compositor_.DwriteFactory(), kbd_format_.get(), key) + ScaleDip(s, 10.0f);
-        const float gap = key ? ScaleDip(s, 7.0f) : 0.0f;
-        const float left = (box.left + box.right - text_w - gap - key_w) * 0.5f;
-        painter_.DrawText(text, D2D1::RectF(left, box.top, left + text_w + 2.0f, box.bottom), button_format_.get(), ink);
-        if (key) {
-            const float cy = (box.top + box.bottom) * 0.5f;
-            const D2D1_RECT_F chip = D2D1::RectF(left + text_w + gap, cy - ScaleDip(s, 8.5f),
-                                                 left + text_w + gap + key_w, cy + ScaleDip(s, 8.5f));
-            painter_.FillRoundedRect(chip, ScaleDip(s, 5.0f),
-                kind == 2 ? HexColor(0xFFFFFF, 0.18f) : (dark_ ? HexColor(0xFFFFFF, 0.08f) : HexColor(0x000000, 0.06f)));
-            painter_.DrawText(key, chip, kbd_format_.get(), kind == 2 ? HexColor(0xFFFFFF) : theme.text_secondary,
-                              fluent::HorizontalAlignment::Center);
-        }
+    ID2D1Bitmap* IconBitmap(size_t index) {
+        if (!icon_bitmaps_[index].get()) icon_bitmaps_[index] = BitmapFromIcon(compositor_.Dc(), wic_, icons_[index]);
+        return icon_bitmaps_[index].get();
     }
 
     void Render() {
@@ -1555,74 +1384,105 @@ private:
             painter_.SetCompositor(&compositor_);
             painter_.SetScale(scale_);
             CreateFormats();
+            for (auto& bitmap : icon_bitmaps_) bitmap.reset();
         }
-        if (!compositor_.Dc()) return;
+        auto* dc = compositor_.Dc();
+        if (!dc) return;
         if (!head_format_.get()) CreateFormats();
         const float s = scale_;
         const bool high_contrast = IsHighContrast();
         const Theme theme = high_contrast ? MakeHighContrastTheme() : MakeTheme(dark_, accent_);
         pulse::ui::BeginSurface(compositor_, painter_, theme, dark_, high_contrast, backdrop_enabled_, s);
-        const D2D1_COLOR_F bad = dark_ ? HexColor(0xF0625B) : HexColor(0xD93D36);
-        const D2D1_COLOR_F faint = WithAlpha(theme.text, dark_ ? 0.42f : 0.48f);
+        const D2D1_COLOR_F text3 = WithAlpha(theme.text, dark_ ? 0.544f : 0.446f);
+        const D2D1_COLOR_F warn = high_contrast ? theme.accent : dark_ ? HexColor(0xFCE100) : HexColor(0x9D5D00);
+        const D2D1_COLOR_F stroke = high_contrast ? theme.text
+            : dark_ ? HexColor(0xFFFFFF, 0.0698f) : HexColor(0x000000, 0.0578f);
 
-        painter_.DrawText(l10n::Get(l10n::StringId::PermanentDelete), Rect(s, 16, 0, 300, 40),
-                          compositor_.SmallFormat(), theme.text_secondary);
         fluent::ControlState close_state{};
         close_state.hovered = hover_ == 4;
         close_state.pressed = pressed_ == 4;
         painter_.DrawTitleBarButton(CloseRect(), fluent::TitleBarButtonRole::Close, {}, close_state);
 
-        const auto tile = Rect(s, 20, 46, 38, 38);
-        painter_.FillRoundedRect(tile, ScaleDip(s, 11.0f), WithAlpha(bad, dark_ ? 0.16f : 0.12f));
-        painter_.DrawGlyphWithFormat(L"\xE74D", tile, bad, glyph_format_.get());
-        DrawEllipsizedText(compositor_, head_format_.get(), Rect(s, 70, 44, kW - 90, 24), Headline(), theme.text);
-        DrawEllipsizedText(compositor_, sub_format_.get(), Rect(s, 70, 67, kW - 90, 18), Summary(), theme.text_secondary);
+        DrawEllipsizedText(compositor_, head_format_.get(), Rect(s, kPad, 18, kW - kPad - 64, 24), Headline(),
+                           theme.text);
+        const std::wstring reason = Reason();
+        if (reason.empty()) {
+            DrawEllipsizedText(compositor_, sub_format_.get(), Rect(s, kPad, 46, kW - kPad * 2, 20),
+                               l10n::Get(l10n::StringId::PermDeleteWarn), theme.text_secondary);
+        } else {
+            DrawStatusIcon(dc, StatusIcon::Warning, kPad, 48, s, warn, dark_ && !high_contrast);
+            DrawEllipsizedText(compositor_, sub_format_.get(), Rect(s, kPad + 24, 46, kW - kPad * 2 - 24, 20), reason,
+                               theme.text_secondary);
+        }
 
-        DrawFan();
-        // The first three, then "and N more".
-        const size_t rows = items_.size() + (info_.paths.size() > items_.size() ? 1 : 0);
-        float y = kStackTop + (84.0f - rows * 21.0f) * 0.5f;
-        for (const Item& item : items_) {
-            painter_.DrawGlyphWithFormat(item.directory ? L"\xE8B7" : L"\xE8A5", Rect(s, 130, y, 14, 21), item.directory ? HexColor(0xE9B949) : theme.text_secondary, small_glyph_format_.get());
+        // The list: a 1 px border, 34-DIP rows split by dividers.
+        const size_t rows = RowCount();
+        const float list_h = 2.0f + static_cast<float>(rows) * kRowH;
+        const auto box = Rect(s, kPad, kListTop, kW - kPad * 2, list_h);
+        const float half = 0.5f;
+        painter_.StrokeRoundedRect(D2D1::RectF(box.left + half, box.top + half, box.right - half, box.bottom - half),
+                                   ScaleDip(s, 6.0f), stroke, 1.0f);
+        const float x0 = kPad + 1.0f + 12.0f;
+        const float x1 = kW - kPad - 1.0f - 12.0f;
+        for (size_t i = 0; i < rows; ++i) {
+            const float y = kListTop + 1.0f + static_cast<float>(i) * kRowH;
+            if (i > 0) {
+                const float line = std::round(y * s);
+                painter_.FillRoundedRect(D2D1::RectF(box.left + 1.0f, line, box.right - 1.0f, line + 1.0f), 0,
+                                         theme.stroke_divider);
+            }
+            if (i >= items_.size()) {
+                const std::wstring more = l10n::Get(l10n::StringId::PermDeleteMoreLead) +
+                    pulse::format::GroupedInt(MoreCount()) + l10n::Get(l10n::StringId::PermDeleteMoreEnd);
+                const std::wstring counts = Counts();
+                const float more_w = TextWidth(compositor_.DwriteFactory(), meta_format_.get(), more) / s;
+                painter_.DrawText(more, Rect(s, x0, y, more_w + 2, kRowH), meta_format_.get(), theme.text_secondary);
+                if (!counts.empty())
+                    DrawEllipsizedText(compositor_, meta_format_.get(),
+                                       Rect(s, x0 + more_w, y, (std::max)(x1 - x0 - more_w, 0.0f), kRowH),
+                                       L" \x00B7 " + counts, text3);
+                continue;
+            }
+            const Item& item = items_[i];
+            const auto icon = Rect(s, x0, y + 9, 16, 16);
+            if (ID2D1Bitmap* bitmap = IconBitmap(i))
+                dc->DrawBitmap(bitmap, icon, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            else
+                DrawPageIcon(dc, icon.left, icon.top, s * 0.5f);
             const std::wstring size = item.directory ? l10n::Get(l10n::StringId::Folder)
                                     : item.sized ? pulse::format::ByteSize(item.bytes) : std::wstring();
             const float size_w = size.empty() ? 0.0f : TextWidth(compositor_.DwriteFactory(), meta_format_.get(), size) / s;
-            DrawEllipsizedText(compositor_, row_format_.get(), Rect(s, 152, y, kW - 20 - 152 - size_w - 10, 21), item.name, theme.text);
+            DrawEllipsizedText(compositor_, sub_format_.get(),
+                               Rect(s, x0 + 26, y, x1 - x0 - 26 - (size.empty() ? 0.0f : size_w + 12), kRowH),
+                               item.name, theme.text);
             if (!size.empty())
-                painter_.DrawText(size, Rect(s, kW - 20 - size_w - 1, y, size_w + 2, 21), meta_format_.get(), faint);
-            y += 21.0f;
-        }
-        if (info_.paths.size() > items_.size()) {
-            painter_.DrawText(l10n::Get(l10n::StringId::PermDeleteMoreLead) +
-                                  pulse::format::GroupedInt(info_.paths.size() - items_.size()) +
-                                  l10n::Get(l10n::StringId::PermDeleteMoreEnd),
-                              Rect(s, 152, y, kW - 172, 21), sub_format_.get(), theme.text_secondary);
+                painter_.DrawText(size, Rect(s, x1 - size_w - 1, y, size_w + 2, kRowH), meta_format_.get(),
+                                  theme.text_secondary);
         }
 
-        const auto warn = Rect(s, 20, kWarnTop, kW - 40, 36);
-        painter_.FillRoundedRect(warn, ScaleDip(s, 9.0f), WithAlpha(bad, dark_ ? 0.14f : 0.10f));
-        painter_.DrawGlyphWithFormat(L"\xE7BA", Rect(s, 30, kWarnTop, 18, 36), bad, small_glyph_format_.get());
-        const std::wstring warn_text = l10n::Get(l10n::StringId::PermDeleteWarn);
-        const float warn_w = TextWidth(compositor_.DwriteFactory(), warn_format_.get(), warn_text) / s;
-        painter_.DrawText(warn_text, Rect(s, 54, kWarnTop, warn_w + 2, 36), warn_format_.get(), bad);
-        if (info_.offer_recycle)
-            DrawEllipsizedText(compositor_, warn_sub_format_.get(), Rect(s, 54 + warn_w + 2, kWarnTop, kW - 40 - 46 - warn_w, 36),
-                               l10n::Get(l10n::StringId::PermDeleteWarnAlt), theme.text_secondary);
-
+        // Footer: the band all the file-operation dialogs share.
         RECT client{};
         GetClientRect(hwnd_, &client);
-        const float footer = kFooterTop * s;
+        const float footer = FooterTop() * s;
         painter_.FillRoundedRect(D2D1::RectF(0, footer, static_cast<float>(client.right), static_cast<float>(client.bottom)), 0,
-                                 dark_ ? HexColor(0x000000, 0.16f) : HexColor(0x000000, 0.03f));
+                                 dark_ ? HexColor(0x000000, 0.2f) : HexColor(0x000000, 0.045f));
         painter_.FillRoundedRect(D2D1::RectF(0, footer, static_cast<float>(client.right), footer + 1.0f), 0, theme.stroke_divider);
-        const int focus_target = keyboard_focus_ || focus_ == FocusCount() - 1 ? FocusTarget(focus_) : -1;
+        const int focus_target = keyboard_focus_ ? FocusTarget(focus_) : -1;
+        auto state = [&](int hit, int target) {
+            fluent::ControlState st{};
+            st.hovered = hover_ == hit;
+            st.pressed = pressed_ == hit;
+            st.focused = focus_target == target;
+            st.keyboard_focus = st.focused;
+            return st;
+        };
         if (info_.offer_recycle)
-            DrawFooterButton(BinRect(), l10n::Get(l10n::StringId::PermDeleteToBin), nullptr, 0, hover_ == 1, pressed_ == 1,
-                             focus_target == 0, theme);
-        DrawFooterButton(CancelRect(), l10n::Get(l10n::StringId::Cancel), L"Esc", 1, hover_ == 2, pressed_ == 2,
-                         focus_target == 1, theme);
-        DrawFooterButton(DeleteRect(), l10n::Get(l10n::StringId::PermanentDelete), L"Enter", 2, hover_ == 3, pressed_ == 3,
-                         focus_target == 2, theme);
+            painter_.DrawButton({ ButtonRect(0), l10n::Get(l10n::StringId::PermDeleteSwitchToBin), {},
+                                  fluent::ButtonKind::Transparent, state(1, 0) });
+        painter_.DrawButton({ ButtonRect(1), l10n::Get(l10n::StringId::Cancel), {}, fluent::ButtonKind::Standard,
+                              state(2, 1) });
+        painter_.DrawButton({ ButtonRect(2), l10n::Get(l10n::StringId::PermanentDelete), {},
+                              fluent::ButtonKind::Danger, state(3, 2) });
         pulse::ui::EndSurface(compositor_);
     }
 
@@ -1660,13 +1520,6 @@ private:
                          suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOOWNERZORDER);
             return 0;
         }
-        case WM_TIMER:
-            if (wparam == kFanTimer) {
-                if (GetTickCount64() > opened_ + kFanDelay + kFanMs) KillTimer(hwnd_, kFanTimer);
-                InvalidateRect(hwnd_, nullptr, FALSE);
-                return 0;
-            }
-            break;
         case WM_MOUSEMOVE: {
             const int next = Hit(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam)));
             if (next != hover_) { hover_ = next; InvalidateRect(hwnd_, nullptr, FALSE); }
@@ -1731,7 +1584,6 @@ private:
         case WM_ERASEBKGND:
             return 1;
         case WM_DESTROY:
-            KillTimer(hwnd_, kFanTimer);
             compositor_.Shutdown();
             done_ = true;
             return 0;
@@ -1759,19 +1611,12 @@ private:
     int hover_ = 0;
     int pressed_ = 0;
     int focus_ = 0;
-    ULONGLONG opened_ = 0;
     ComPtr<IDWriteTextFormat> head_format_;
     ComPtr<IDWriteTextFormat> sub_format_;
-    ComPtr<IDWriteTextFormat> row_format_;
     ComPtr<IDWriteTextFormat> meta_format_;
-    ComPtr<IDWriteTextFormat> warn_format_;
-    ComPtr<IDWriteTextFormat> warn_sub_format_;
-    ComPtr<IDWriteTextFormat> button_format_;
-    ComPtr<IDWriteTextFormat> kbd_format_;
-    ComPtr<IDWriteTextFormat> ext_format_;
-    ComPtr<IDWriteTextFormat> glyph_format_;
-    ComPtr<IDWriteTextFormat> small_glyph_format_;
-    ComPtr<IDWriteTextFormat> thumb_glyph_format_;
+    HICON icons_[kMaxRows] = {};
+    ComPtr<ID2D1Bitmap> icon_bitmaps_[kMaxRows];
+    ComPtr<IWICImagingFactory> wic_;
 };
 
 // File in use, pulse_ops_dialogs.html §5: one row per program holding the

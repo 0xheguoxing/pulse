@@ -2754,6 +2754,8 @@ BEGIN
     IDS_OP_CONFLICT_ALREADY_THERE "目标中现有的"
     IDS_OP_REPLACE_SHORT "替换"
     IDS_OP_SKIP_SHORT "跳过"
+    IDS_PERM_DELETE_SWITCH_TO_BIN "改为移到回收站"
+    IDS_PERM_DELETE_CANT_UNDO "删除后无法恢复。"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5507,6 +5509,8 @@ BEGIN
     IDS_OP_CONFLICT_ALREADY_THERE "Already there"
     IDS_OP_REPLACE_SHORT "Replace"
     IDS_OP_SKIP_SHORT "Skip"
+    IDS_PERM_DELETE_SWITCH_TO_BIN "Move to Recycle Bin instead"
+    IDS_PERM_DELETE_CANT_UNDO " This can't be undone."
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.
