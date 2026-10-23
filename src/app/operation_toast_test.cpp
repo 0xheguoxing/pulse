@@ -1,6 +1,7 @@
 #ifdef PULSE_WITH_SELFTEST
 #include "operation_toast_test.h"
 #include "app_internal.h"
+#include "../ui/ui_renderer.h"
 #include "../common/localization.h"
 #include <cmath>
 #include <cstdio>

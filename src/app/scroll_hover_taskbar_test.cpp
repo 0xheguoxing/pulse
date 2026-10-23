@@ -4,6 +4,7 @@
 #include "app_input.h"
 #include "app_navigation.h"
 #include "app_window_title.h"
+#include "../ui/ui_renderer.h"
 #include "../common/localization.h"
 #include <chrono>
 #include <cstdio>
