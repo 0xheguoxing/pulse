@@ -948,7 +948,7 @@ void ShowTrayReleaseMenu(AppState& s, POINT screen_pt) {
 void TraySendTo(AppState& s, const std::wstring& dir, bool move) {
     ReleaseTrayTo(s, dir, move);
     s.trayShelf.flash_path = ClipboardPath(fs::NormalizePath(dir));
-    s.trayShelf.flash_at = GetTickCount64();
+    s.trayShelf.flash_at = ui::motion::NowMs();
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 

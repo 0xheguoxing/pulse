@@ -1663,7 +1663,7 @@ void ThrowTrayTop(AppState& s, float dir, float dx, float dy) {
     if (total < 2) return;
     const auto entries = TrayDeckEntries(s.tray, static_cast<size_t>(TrayStackTop(s)), 1);
     if (entries.empty()) return;
-    const ULONGLONG now = GetTickCount64();
+    const ULONGLONG now = ui::motion::NowMs();
     AppState::TrayCardAnim& a = s.trayCards[entries.front().item->path];
     a.dx = dx;
     a.dy = dy;
@@ -1684,7 +1684,7 @@ void ReleaseTrayDrag(AppState& s, bool commit) {
     s.trayDrag = AppState::TrayDrag{};
     if (!drag.active) return;
     float vx = drag.vx;
-    if (GetTickCount64() - drag.last_t > 80) vx = 0.0f; // stopped before letting go
+    if (ui::motion::NowMs() - drag.last_t > 80) vx = 0.0f; // stopped before letting go
     const bool fling = std::abs(drag.dx) > 70.0f || std::abs(vx) > 0.55f;
     if (commit && fling && TrayItemTotalCount(s.tray) > 1) {
         const float dir = std::abs(drag.dx) > 8.0f ? (drag.dx < 0.0f ? -1.0f : 1.0f)
@@ -1698,7 +1698,7 @@ void ReleaseTrayDrag(AppState& s, bool commit) {
         a.dx = drag.dx;
         a.dy = drag.dy * 0.35f;
         a.angle = drag.dx * 0.07f;
-        StartTrayMotion(a, AppState::TrayMotion::Spring, GetTickCount64());
+        StartTrayMotion(a, AppState::TrayMotion::Spring, ui::motion::NowMs());
     }
     if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
 }
@@ -1715,7 +1715,7 @@ void TrayStepBack(AppState& s) {
 
 // Smoke burst at the top card's close badge (renderer anchors it).
 void SpawnTrayPuffs(AppState& s) {
-    const ULONGLONG now = GetTickCount64();
+    const ULONGLONG now = ui::motion::NowMs();
     uint32_t seed = static_cast<uint32_t>(now * 2654435761u);
     auto frand = [&seed]() {
         seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
@@ -1790,7 +1790,7 @@ static void TickTrayOpenRemoval(AppState& s, ULONGLONG now) {
 static bool TickTrayShelf(AppState& s, float elapsed) {
     auto& a = s.trayShelf;
     bool dirty = false;
-    const ULONGLONG now = GetTickCount64();
+    const ULONGLONG now = ui::motion::NowMs();
     const int total = TrayItemTotalCount(s.tray);
     int stage = static_cast<int>(ui::TrayStage::Strip);
     if (total == 0 && s.trayView.open) s.trayView = {};
@@ -1873,8 +1873,11 @@ bool TickTrayDeck(AppState& s) {
     using M = AppState::TrayMotion;
     using X = AppState::TrayExit;
     bool dirty = false;
-    const ULONGLONG now = GetTickCount64();
-    const float elapsed = s.trayLastTick ? static_cast<float>(now - s.trayLastTick) : 16.0f;
+    const ULONGLONG now = ui::motion::NowMs();
+    // After a quiet spell the UI timer polls every 100-500 ms: motion that
+    // starts then begins with one frame's step, not a jump of several.
+    float elapsed = s.trayLastTick ? static_cast<float>(now - s.trayLastTick) : 16.0f;
+    if (elapsed > 50.0f) elapsed = 16.0f;
     s.trayLastTick = now;
     auto ease = [&dirty, elapsed](float& cur, float target, float k) {
         const float timed_k = 1.0f - std::pow(1.0f - k, std::min(elapsed, 100.0f) / 16.0f);
@@ -3033,7 +3036,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
             fill(card, anim);
             deck.cards.push_back(std::move(card));
         }
-        const ULONGLONG now = GetTickCount64();
+        const ULONGLONG now = ui::motion::NowMs();
         for (const auto& p : s.trayPuffs) {
             if (now < p.start) continue;
             ui::TrayPuffView view;

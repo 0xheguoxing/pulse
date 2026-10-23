@@ -660,7 +660,7 @@ void CollectPathsToTray(AppState& s, const std::vector<std::wstring>& paths, boo
     s.trayClip.paths = paths;
     s.trayClip.move = move_intent;
     s.trayClip.seq = GetClipboardSequenceNumber();
-    s.trayClip.at = GetTickCount64();
+    s.trayClip.at = ui::motion::NowMs();
     if (s.hwnd) {
         std::wstring title = l10n::Get(move_intent ? l10n::StringId::TrayCutOffer : l10n::StringId::TrayCopiedOffer);
         title = FillText(std::move(title), L"{n}", std::to_wstring(paths.size()));

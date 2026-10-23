@@ -432,7 +432,8 @@ static thread_local const RECT* t_paint_damage = nullptr;
 // Motion the app runs itself (scrolling, layout, theme): it moves pixels the
 // partial-redraw damage does not know about.
 static bool AppMotion(const AppState& s) {
-    return s.scrollAnimating || s.marqueeAutoScroll || s.themeReveal.start || s.paneLayoutMotion.start;
+    return s.scrollAnimating || s.marqueeAutoScroll || s.themeReveal.start || s.paneLayoutMotion.start ||
+           s.trayAnimating;
 }
 
 void Render(AppState& s) {
@@ -469,6 +470,11 @@ void Render(AppState& s) {
     bool hc = s.shot_high_contrast || ui::IsHighContrast();
     ui::Theme theme = hc ? ui::MakeHighContrastTheme() : ui::MakeTheme(s.darkMode, s.accentColor);
 
+    // The staging tray steps once per frame painted, so motion a click or a
+    // drag-over starts begins with this frame instead of the next UI tick;
+    // the pump keeps the frames coming while it moves.
+    const bool tray_moving = TickTrayDeck(s);
+    s.trayAnimating = tray_moving && s.framePump.Running();
     const bool app_motion = AppMotion(s);  // before this frame's scroll step
     if (s.scrollAnimating) UpdateSmoothScroll(s);
     UpdateMarqueeFrame(s);
@@ -2068,7 +2074,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         if (!IsWindowVisible(hwnd) || IsIconic(hwnd) ||
             (!s->scrollAnimating && !s->marqueeAutoScroll && !s->themeReveal.start && !s->paneLayoutMotion.start &&
-             !s->renderer.TickMotion(GetTickCount64()))) {
+             !s->trayAnimating && !s->renderer.TickMotion(GetTickCount64()))) {
             s->framePump.Disarm();  // WM_PAINT re-arms once shown again
             return 0;
         }
@@ -2267,7 +2273,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 TickTabTransitions(*s);
                 dirty = true;
             }
-            if (TickTrayDeck(*s)) dirty = true;
+            // Without the pump (or until it takes over) the timer steps the tray.
+            if (!s->trayAnimating && TickTrayDeck(*s)) {
+                s->trayAnimating = s->framePump.Running();
+                if (s->trayAnimating) ArmMotionFrames(*s, true);
+                else dirty = true;
+            }
             if (TickTabFlash(*s)) dirty = true;
             if (SyncTagGroups(*s)) {
                 // Tags changed: a tag-grouped folder re-sorts into its new groups,
