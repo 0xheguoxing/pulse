@@ -46,6 +46,10 @@ constexpr float kContentH = 216.0f;   // above the footer, collapsed
 constexpr float kCollapsedH = kContentH + kFooterH;
 constexpr float kDetailsBlockH = 150.0f;
 constexpr float kDetailedH = kCollapsedH + kDetailsBlockH;
+// Permission view (HTML 1j): no numbers, graph or rows, only the title, the
+// route and the shield's message (at most three lines from 62), so the card
+// shrinks to that while Windows asks and grows back afterwards.
+constexpr float kAuthorizationH = 140.0f + kFooterH;
 // Partial failure: the failed items are listed in place of the percent,
 // graph and rows; the window grows or shrinks to fit the list.
 constexpr float kFailListTop = 90.0f;
@@ -2528,6 +2532,8 @@ void FileOperationWindow::Update(const ops::OpStatus& incoming) {
     const bool was_succeeded = !new_task && !status_.active &&
         status_.phase == ops::OpPhase::Completed && status_.last_error.empty();
     if (new_task || status.authorization != status_.authorization) pressed_ = 0;
+    const bool authorization_changed = (status.authorization != ops::AuthorizationState::None) !=
+                                       (status_.authorization != ops::AuthorizationState::None);
     status_ = ops::PresentOperationStatus(status);
     if (new_task) {
         graph_.Reset();
@@ -2550,16 +2556,7 @@ void FileOperationWindow::Update(const ops::OpStatus& incoming) {
              IsWindowVisible(hwnd_) && !IsIconic(hwnd_))
         countdown_base_ = now;
     if (!hwnd_) return;
-    if (status_.authorization != ops::AuthorizationState::None) {
-        RECT rect{};
-        GetWindowRect(hwnd_, &rect);
-        const int min_width = static_cast<int>(kDlgW * scale_);
-        const int min_height = static_cast<int>(kCollapsedH * scale_);
-        if (rect.right - rect.left < min_width || rect.bottom - rect.top < min_height)
-            SetWindowPos(hwnd_, nullptr, 0, 0, std::max(min_width, static_cast<int>(rect.right - rect.left)),
-                         std::max(min_height, static_cast<int>(rect.bottom - rect.top)),
-                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-    }
+    if (authorization_changed) ResizeForDetails(true);
     InvalidateRect(hwnd_, nullptr, FALSE);
     // The render timer stops once an operation ends; restart it for the next
     // one and for the auto-close countdown.
@@ -2628,7 +2625,9 @@ void FileOperationWindow::ResizeForDetails(bool preserve_center) {
     GetWindowRect(hwnd_, &rect);
     const int width = rect.right - rect.left;
     const int old_height = rect.bottom - rect.top;
-    const int height = static_cast<int>(((detailed_ ? kDetailedH : kCollapsedH) + FailureBlockDip()) * scale_);
+    const float height_dip = status_.authorization != ops::AuthorizationState::None
+        ? kAuthorizationH : (detailed_ ? kDetailedH : kCollapsedH) + FailureBlockDip();
+    const int height = static_cast<int>(height_dip * scale_);
     const int y = preserve_center ? rect.top - (height - old_height) / 2 : rect.top;
     SetWindowPos(hwnd_, nullptr, rect.left, y, width, height,
                  SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE);
@@ -3363,7 +3362,7 @@ LRESULT FileOperationWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM l
         if (status_.authorization == ops::AuthorizationState::None) break;
         auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
         info->ptMinTrackSize = { static_cast<LONG>(kDlgW * scale_),
-                                 static_cast<LONG>(kCollapsedH * scale_) };
+                                 static_cast<LONG>(kAuthorizationH * scale_) };
         return 0;
     }
     case WM_SIZE:

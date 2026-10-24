@@ -12,6 +12,12 @@ struct FileOperationWindowTestAccess {
     static void Size(FileOperationWindow& window, UINT dpi) {
         RECT rect{0, 0, MulDiv(468, dpi, 96), MulDiv(348, dpi, 96)};
         SendMessageW(window.hwnd_, WM_DPICHANGED, MAKELONG(dpi, dpi), reinterpret_cast<LPARAM>(&rect));
+        window.ResizeForDetails(false);   // the height the current state asks for
+    }
+    static int ClientHeight(FileOperationWindow& window) {
+        RECT client{};
+        GetClientRect(window.hwnd_, &client);
+        return client.bottom;
     }
     static POINT Button(FileOperationWindow& window, int id, int* pixels = nullptr) {
         const int y = static_cast<int>(window.compositor_.Height() - 26 * window.scale_);
@@ -87,6 +93,8 @@ int wmain(int argc, wchar_t** argv) {
                 for (bool dark : {false, true}) {
                     window.SetTheme(dark, ui::HexColor(0x0078D4));
                     window.Update(status);
+                    Check(std::abs(Access::ClientHeight(window) - MulDiv(196, dpi, 96)) <= 2,
+                        "the permission card is only as tall as its message (196 DIP)");
                     int retry_pixels = 0, skip_pixels = 0;
                     const auto retry_button = Access::Button(window, 6, &retry_pixels);
                     const auto skip_button = Access::Button(window, 7, &skip_pixels);
