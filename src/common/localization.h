@@ -3240,6 +3240,8 @@ enum class StringId : UINT {
     BrPresetEdited = IDS_BR_PRESET_EDITED,
     BrPresetNameHint = IDS_BR_PRESET_NAME_HINT,
     BrSave = IDS_BR_SAVE,
+    BrStReading = IDS_BR_ST_READING,
+    BrSumReading = IDS_BR_SUM_READING,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

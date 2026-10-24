@@ -3248,5 +3248,7 @@
 #define IDS_BR_PRESET_EDITED                                                             4454
 #define IDS_BR_PRESET_NAME_HINT                                                          4455
 #define IDS_BR_SAVE                                                                      4456
+#define IDS_BR_ST_READING                                                                4457
+#define IDS_BR_SUM_READING                                                               4458
 
 #endif  // PULSE_STRING_IDS_H

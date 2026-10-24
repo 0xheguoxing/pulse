@@ -23,6 +23,9 @@
 #include <shobjidl.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <memory>
+#include <thread>
 #include <cstdarg>
 #include <cmath>
 #include <cstdio>
@@ -252,6 +255,7 @@ struct Field {
 
 struct Anim { float from, to; ULONGLONG start; float dur; };
 
+
 enum class Fmt {
     T15b, T14, T135, T135m, T135b, T13, T13m, T13b, T125, T125m, T125b, T12, T12m, T12b,
     T115, T115m, T115b, T11, T11b, Count
@@ -289,6 +293,60 @@ uint64_t LocalTicks(const FILETIME& utc) {
     FILETIME local{};
     if (!FileTimeToLocalFileTime(&utc, &local)) return Ticks(utc);
     return Ticks(local);
+}
+
+// Photo metadata ({拍摄日期}, {尺寸}) read off the UI thread. The job is shared
+// with its worker, which stops early once the dialog cancels it.
+constexpr UINT kMetaMsg = WM_APP + 0x31;   // wparam 1 = done, 0 = progress
+struct MetaJob {
+    bool taken = false, dims = false;
+    std::vector<std::wstring> paths;   // media files only
+    std::vector<size_t> source;        // their index in sources_
+    std::vector<uint64_t> taken_out;
+    std::vector<uint32_t> width_out, height_out;
+    std::atomic<int> done{0};
+    std::atomic<bool> cancel{false};
+};
+
+void ReadMeta(const std::shared_ptr<MetaJob>& job, HWND hwnd) {
+    const HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    ULONGLONG last_post = GetTickCount64();
+    for (size_t i = 0; i < job->paths.size() && !job->cancel.load(); ++i) {
+        IPropertyStore* store = nullptr;
+        const std::wstring& path = job->paths[i];
+        if (SUCCEEDED(SHGetPropertyStoreFromParsingName(path.c_str(), nullptr, GPS_DEFAULT, IID_PPV_ARGS(&store)))) {
+            const bool video = IsVideoExt(ExtOf(path));
+            PROPVARIANT v;
+            if (job->taken) {
+                PropVariantInit(&v);
+                if (SUCCEEDED(store->GetValue(PKEY_Photo_DateTaken, &v)) && v.vt == VT_FILETIME)
+                    job->taken_out[i] = LocalTicks(v.filetime);
+                PropVariantClear(&v);
+                if (!job->taken_out[i] && video) {
+                    PropVariantInit(&v);
+                    if (SUCCEEDED(store->GetValue(PKEY_Media_DateEncoded, &v)) && v.vt == VT_FILETIME)
+                        job->taken_out[i] = LocalTicks(v.filetime);
+                    PropVariantClear(&v);
+                }
+            }
+            if (job->dims) {
+                const PROPERTYKEY* keys[2] = {&PKEY_Image_HorizontalSize, &PKEY_Image_VerticalSize};
+                if (video) { keys[0] = &PKEY_Video_FrameWidth; keys[1] = &PKEY_Video_FrameHeight; }
+                uint32_t* out[2] = {&job->width_out[i], &job->height_out[i]};
+                for (int k = 0; k < 2; ++k) {
+                    PropVariantInit(&v);
+                    if (SUCCEEDED(store->GetValue(*keys[k], &v)) && v.vt == VT_UI4) *out[k] = v.ulVal;
+                    PropVariantClear(&v);
+                }
+            }
+            store->Release();
+        }
+        job->done.store(static_cast<int>(i + 1));
+        const ULONGLONG now = GetTickCount64();
+        if (hwnd && now - last_post >= 120) { last_post = now; PostMessageW(hwnd, kMetaMsg, 0, 0); }
+    }
+    if (SUCCEEDED(init)) CoUninitialize();
+    if (hwnd && !job->cancel.load()) PostMessageW(hwnd, kMetaMsg, 1, 0);
 }
 
 // "**bold**" markers in catalog strings -> runs.
@@ -428,45 +486,64 @@ private:
 
     // Date taken and pixel size come from the shell property store, read
     // once and only when a step or the numbering order needs them.
+    // Starts the background read when a step first needs taken dates or
+    // sizes. Until it lands, rows fall back to the modified date, show 读取中
+    // and 重命名 waits.
     void EnsureMetadata(bool taken, bool dims) {
-        if ((!taken || taken_loaded_) && (!dims || dims_loaded_)) return;
-        const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-        HCURSOR old = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
-        for (auto& s : sources_) {
-            const std::wstring ext = ExtOf(s.name);
+        const bool want_taken = taken && !taken_loaded_, want_dims = dims && !dims_loaded_;
+        if ((!want_taken && !want_dims) || meta_job_) return;
+        auto job = std::make_shared<MetaJob>();
+        job->taken = want_taken;
+        job->dims = want_dims;
+        meta_rank_.assign(sources_.size(), -1);
+        for (size_t i = 0; i < sources_.size(); ++i) {
+            const std::wstring ext = ExtOf(sources_[i].name);
             if (!IsImageExt(ext) && !IsVideoExt(ext)) continue;
-            IPropertyStore* store = nullptr;
-            if (FAILED(SHGetPropertyStoreFromParsingName(s.path.c_str(), nullptr, GPS_DEFAULT, IID_PPV_ARGS(&store))))
-                continue;
-            PROPVARIANT v;
-            if (taken && !taken_loaded_) {
-                PropVariantInit(&v);
-                if (SUCCEEDED(store->GetValue(PKEY_Photo_DateTaken, &v)) && v.vt == VT_FILETIME)
-                    s.taken = LocalTicks(v.filetime);
-                PropVariantClear(&v);
-                if (!s.taken && IsVideoExt(ext)) {
-                    PropVariantInit(&v);
-                    if (SUCCEEDED(store->GetValue(PKEY_Media_DateEncoded, &v)) && v.vt == VT_FILETIME)
-                        s.taken = LocalTicks(v.filetime);
-                    PropVariantClear(&v);
-                }
-            }
-            if (dims && !dims_loaded_) {
-                const PROPERTYKEY* keys[2] = {&PKEY_Image_HorizontalSize, &PKEY_Image_VerticalSize};
-                if (IsVideoExt(ext)) { keys[0] = &PKEY_Video_FrameWidth; keys[1] = &PKEY_Video_FrameHeight; }
-                uint32_t* out[2] = {&s.width, &s.height};
-                for (int k = 0; k < 2; ++k) {
-                    PropVariantInit(&v);
-                    if (SUCCEEDED(store->GetValue(*keys[k], &v)) && v.vt == VT_UI4) *out[k] = v.ulVal;
-                    PropVariantClear(&v);
-                }
-            }
-            store->Release();
+            meta_rank_[i] = static_cast<int>(job->paths.size());
+            job->paths.push_back(sources_[i].path);
+            job->source.push_back(i);
         }
-        SetCursor(old);
-        if (SUCCEEDED(init)) CoUninitialize();
-        if (taken) taken_loaded_ = true;
-        if (dims) dims_loaded_ = true;
+        if (job->paths.empty()) {
+            if (want_taken) taken_loaded_ = true;
+            if (want_dims) dims_loaded_ = true;
+            return;
+        }
+        job->taken_out.assign(job->paths.size(), 0);
+        job->width_out.assign(job->paths.size(), 0);
+        job->height_out.assign(job->paths.size(), 0);
+        if (!hwnd_) {
+            // First Recompute, before the window exists: read inline so the
+            // dialog opens with real names.
+            ReadMeta(job, nullptr);
+            StoreMeta(*job);
+            if (want_taken) taken_loaded_ = true;
+            if (want_dims) dims_loaded_ = true;
+            return;
+        }
+        meta_job_ = job;
+        std::thread([job, hwnd = hwnd_] { ReadMeta(job, hwnd); }).detach();
+    }
+
+    void StoreMeta(const MetaJob& job) {
+        for (size_t k = 0; k < job.source.size(); ++k) {
+            rn::Source& src = sources_[job.source[k]];
+            if (job.taken) src.taken = job.taken_out[k];
+            if (job.dims) { src.width = job.width_out[k]; src.height = job.height_out[k]; }
+        }
+    }
+
+    void OnMeta(bool finished) {
+        if (!meta_job_) return;
+        if (!finished) { InvalidateRect(hwnd_, nullptr, FALSE); return; }
+        StoreMeta(*meta_job_);
+        if (meta_job_->taken) taken_loaded_ = true;
+        if (meta_job_->dims) dims_loaded_ = true;
+        meta_job_.reset();
+        Recompute(true);   // may start the other half (sizes after dates)
+    }
+
+    bool MetaPending(size_t source) const {
+        return meta_job_ && source < meta_rank_.size() && meta_rank_[source] >= meta_job_->done.load();
     }
 
     void Recompute(bool flash) {
@@ -509,7 +586,7 @@ private:
         }
     }
 
-    bool CanApply() const { return plan_.renames > 0 && !plan_.blocked; }
+    bool CanApply() const { return plan_.renames > 0 && !plan_.blocked && !meta_job_; }
 
     void Complete(bool accepted) {
         if (executing_) return;
@@ -552,6 +629,7 @@ private:
 
     void Close() {
         done_ = true;
+        if (meta_job_) { meta_job_->cancel.store(true); meta_job_.reset(); }
         if (hwnd_) { HideComposedDialog(hwnd_, owner_); DestroyWindow(hwnd_); }
     }
 
@@ -920,10 +998,11 @@ private:
     // Tab order: the AI bar, then each visible step field top to bottom.
     void FocusNext(HWND from, int dir) {
         std::vector<HWND> order;
-        if (Field* ai = FindField(-1, 0)) order.push_back(ai->hwnd);
+        if (Field* ai = FindField(kAiField, 0)) order.push_back(ai->hwnd);
         for (const auto& ui : steps_ui_)
             for (int f = 0; f < 4; ++f)
                 if (Field* x = FindField(ui.id, f); x && x->want_visible) order.push_back(x->hwnd);
+        if (Field* name = FindField(kPresetField, 0); name && name->want_visible) order.push_back(name->hwnd);
         if (order.empty()) return;
         auto it = std::find(order.begin(), order.end(), from);
         int idx = it == order.end() ? 0 : static_cast<int>(it - order.begin()) + dir;
@@ -969,6 +1048,8 @@ private:
         Complete(false);
     }
     void OnEnter(HWND from) {
+        // Enter with a menu open only closes it; it never starts the rename.
+        if (menu_ != Menu::None) { menu_ = Menu::None; InvalidateRect(hwnd_, nullptr, FALSE); return; }
         Field* f = from ? FieldOf(from) : nullptr;
         if (f && f->step_id == kPresetField) { CommitPresetName(); return; }
         if (f && f->step_id == kAiField) return;   // the AI bar sends in R4
@@ -1911,15 +1992,49 @@ private:
         return false;
     }
 
+    // The longest prefix of text that fits in width (whole code points).
+    size_t FitPrefix(const std::wstring& text, Fmt f, float width) {
+        size_t lo = 0, hi = text.size();   // prefix lo fits; the answer is in [lo, hi]
+        while (lo < hi) {
+            const size_t mid = (lo + hi + 1) / 2;
+            if (Measure(text.substr(0, mid), f) <= width) lo = mid;
+            else hi = mid - 1;
+        }
+        if (lo > 0 && lo < text.size() && IS_LOW_SURROGATE(text[lo])) --lo;   // keep pairs whole
+        return lo;
+    }
+
+    // A name cut to width with "…", as the design's text-overflow: ellipsis.
+    std::wstring Ellipsize(const std::wstring& text, Fmt f, float width) {
+        if (Measure(text, f) <= width) return text;
+        const std::wstring dots = L"\x2026";
+        return text.substr(0, FitPrefix(text, f, (std::max)(0.0f, width - Measure(dots, f)))) + dots;
+    }
+
     void DrawSegs(const std::vector<rn::Seg>& segs, bool old_side, Fmt seg_fmt, const D2D1_RECT_F& r, D2D1_COLOR_F base) {
         float x = r.left;
+        // Too long for the column: stop at limit and end with "…".
+        float total = 0;
+        for (const auto& seg : segs) {
+            const bool marked = seg.kind == L'-' || seg.kind == L'+';
+            total += Measure(seg.text, HasCjk(seg.text) ? RegularFor(seg_fmt) : seg_fmt) + (marked ? X(2) : 0);
+        }
+        const std::wstring dots = L"\x2026";
+        const bool cut = total > r.right - r.left;
+        const float limit = cut ? r.right - Measure(dots, seg_fmt) : r.right;
         for (const auto& seg : segs) {
             const Fmt f = HasCjk(seg.text) ? RegularFor(seg_fmt) : seg_fmt;
-            if (x >= r.right - X(6)) break;
+            if (x >= limit - X(2)) break;
             const bool marked = seg.kind == L'-' || seg.kind == L'+';
             std::wstring text = seg.text;
             if (marked && text.find_first_not_of(L" \t\x3000") == std::wstring::npos)
                 text.assign(text.size(), L'\x00B7');
+            bool last = false;
+            if (cut && x + Measure(text, f) + (marked ? X(2) : 0) > limit) {
+                text.resize(FitPrefix(text, f, limit - x - (marked ? X(2) : 0)));
+                last = true;
+                if (text.empty()) break;
+            }
             D2D1_COLOR_F color = base;
             if (seg.kind == L'-') color = pal_.del;
             else if (seg.kind == L'+') color = pal_.ins;
@@ -1934,7 +2049,9 @@ private:
                 Fill(D2D1::RectF(box.left + X(1), my - X(0.75f), box.right - X(1), my + X(0.75f)), 0, pal_.del);
             }
             x += w;
+            if (last) break;
         }
+        if (cut) Text(dots, seg_fmt, D2D1::RectF((std::min)(x, limit), r.top, r.right + X(4), r.bottom), base);
     }
 
     void DrawRow(size_t i, const D2D1_RECT_F& r, bool two) {
@@ -1965,8 +2082,8 @@ private:
         const D2D1_RECT_F nc = D2D1::RectF(ac.right, line_top, cr - X(128) - X(6), line_bottom);
         const D2D1_RECT_F sc = D2D1::RectF(cr - X(128), line_top, cr, line_bottom);
         if (same || row.status == rn::RowStatus::Skipped) {
-            Text(src.name, Fmt::T135, oc, pal_.text2);
-            Text(row.new_name, Fmt::T135, nc, pal_.text3);
+            Text(Ellipsize(src.name, Fmt::T135, oc.right - oc.left), Fmt::T135, oc, pal_.text2);
+            Text(Ellipsize(row.new_name, Fmt::T135, nc.right - nc.left), Fmt::T135, nc, pal_.text3);
         } else {
             const auto& d = DiffFor(i);
             DrawSegs(d.first, true, Fmt::T135, oc, pal_.text2);
@@ -1981,6 +2098,7 @@ private:
         const bool applied = (executing_ || result_.executed) && i < exec_rank_.size() && exec_rank_[i] >= 0 &&
                              static_cast<size_t>(exec_rank_[i]) < exec_shown_;
         if (applied) { st = S(StringId::BrStApplied); icon = &kCheck; sc_color = pal_.ok; }
+        else if (MetaPending(row.src)) { st = S(StringId::BrStReading); sc_color = pal_.text3; }
         else switch (row.status) {
         case rn::RowStatus::Same: st = S(StringId::BrTabSame); icon = &kDash; sc_color = pal_.text3; break;
         case rn::RowStatus::Conflict:
@@ -2090,6 +2208,10 @@ private:
 
         // Summary, right aligned before the buttons.
         std::vector<std::pair<std::wstring, D2D1_COLOR_F>> parts;
+        if (meta_job_) {
+            parts.push_back({FmtS(StringId::BrSumReading, meta_job_->done.load(),
+                                  static_cast<int>(meta_job_->paths.size())), pal_.text2});
+        } else {
         parts.push_back({FmtS(StringId::BrSumRename, plan_.renames), pal_.text2});
         int clashes = 0, skipped = 0;
         for (const auto& r : plan_.rows) {
@@ -2104,6 +2226,7 @@ private:
             parts.push_back({FmtS(StringId::BrSumClash, clashes), pal_.amber});
         const int unchanged = plan_.same;
         if (unchanged) parts.push_back({FmtS(StringId::BrSumSame, unchanged), pal_.text2});
+        }
         const std::wstring sep = L" \x00B7 ";
         float total = 0;
         for (size_t p = 0; p < parts.size(); ++p)
@@ -2474,6 +2597,31 @@ private:
             if (compositor_.Dc()) compositor_.Resize(LOWORD(lparam), HIWORD(lparam));
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
+        case kMetaMsg:
+            OnMeta(wparam != 0);
+            return 0;
+        case WM_DPICHANGED: {
+            // Moved to a monitor with another scale: rebuild text and edit
+            // fonts, then take the size Windows suggests (same DIP size).
+#if !defined(PULSE_TEST_BATCH_RENAME_PRESENT)
+            scale_ = static_cast<float>(HIWORD(wparam)) / 96.0f;
+            compositor_.RecreateTextFormats(scale_);
+            painter_.SetScale(scale_);
+            CreateFormats();
+            HFONT old_font = font_, old_ai = font_ai_;
+            font_ = typography::CreateEditFont(scale_, 13.0f);
+            font_ai_ = typography::CreateEditFont(scale_, 14.0f);
+            for (const auto& f : fields_)
+                SendMessageW(f.hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(f.step_id == kAiField ? font_ai_ : font_), FALSE);
+            if (old_font) DeleteObject(old_font);
+            if (old_ai) DeleteObject(old_ai);
+            const auto* rc = reinterpret_cast<const RECT*>(lparam);
+            SetWindowPos(hwnd_, nullptr, rc->left, rc->top, rc->right - rc->left, rc->bottom - rc->top,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+            return 0;
+        }
         case WM_MOVE:
             compositor_.UpdateTextRenderingParams(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST));
             return 0;
@@ -2647,7 +2795,9 @@ private:
     bool naming_ = false;          // the preset row edits a name (保存为预设)
     bool naming_focus_ = false;
     D2D1_RECT_F preset_dd_{};
-    D2D1_RECT_F menu_box_{};       // the open menu, from the last frame
+    D2D1_RECT_F menu_box_{};
+    std::shared_ptr<MetaJob> meta_job_;
+    std::vector<int> meta_rank_;   // source -> order in meta_job_ (-1 = not media)       // the open menu, from the last frame
     BatchRenameDialogOptions options_;
     BatchRenameDialogResult result_;
 

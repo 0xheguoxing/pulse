@@ -3228,4 +3228,6 @@ BEGIN
     IDS_BR_PRESET_EDITED "已修改"
     IDS_BR_PRESET_NAME_HINT "為預設命名"
     IDS_BR_SAVE "儲存"
+    IDS_BR_ST_READING "讀取中…"
+    IDS_BR_SUM_READING "正在讀取相片資訊 **%d**/%d"
 END

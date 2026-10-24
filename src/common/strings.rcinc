@@ -3230,6 +3230,8 @@ BEGIN
     IDS_BR_PRESET_EDITED "已修改"
     IDS_BR_PRESET_NAME_HINT "给预设起个名字"
     IDS_BR_SAVE "保存"
+    IDS_BR_ST_READING "读取中…"
+    IDS_BR_SUM_READING "正在读取照片信息 **%d**/%d"
 END
 
 LANGUAGE 0x09, 0x01
@@ -6459,6 +6461,8 @@ BEGIN
     IDS_BR_PRESET_EDITED "edited"
     IDS_BR_PRESET_NAME_HINT "Name this preset"
     IDS_BR_SAVE "Save"
+    IDS_BR_ST_READING "Reading…"
+    IDS_BR_SUM_READING "Reading photo info **%d**/%d"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

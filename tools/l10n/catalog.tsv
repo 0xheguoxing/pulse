@@ -3255,3 +3255,5 @@ BrPresetMine	IDS_BR_PRESET_MINE	4453	我的预设	My presets	我的預設
 BrPresetEdited	IDS_BR_PRESET_EDITED	4454	已修改	edited	已修改
 BrPresetNameHint	IDS_BR_PRESET_NAME_HINT	4455	给预设起个名字	Name this preset	為預設命名
 BrSave	IDS_BR_SAVE	4456	保存	Save	儲存
+BrStReading	IDS_BR_ST_READING	4457	读取中…	Reading…	讀取中…
+BrSumReading	IDS_BR_SUM_READING	4458	正在读取照片信息 **%d**/%d	Reading photo info **%d**/%d	正在讀取相片資訊 **%d**/%d
