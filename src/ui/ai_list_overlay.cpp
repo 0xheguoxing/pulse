@@ -195,10 +195,21 @@ AiListPainter::RowMotion AiListPainter::Row(const std::wstring& name, const D2D1
     row_seen_ = false;
     row_flash_ = 0.0f;
     row_bump_ = 0.0f;
+    row_done_ = 0.0f;
     row_icon_scale_ = 1.0f;
     if (!o_) return m;
     row_name_ = AiListLower(name);
     const uint64_t now = now_;
+
+    // Renamed: @keyframes flash - accent 0 → 18% at 15% → 0 over 1.4 s.
+    if (auto fl = o_->flash.find(row_name_); fl != o_->flash.end()) {
+        if (now < fl->second) animating_ = true;
+        else if (const float age = static_cast<float>(now - fl->second); age < 1400.0f) {
+            const float t = age / 1400.0f;
+            row_done_ = t < 0.15f ? t / 0.15f : 1.0f - EaseOut((t - 0.15f) / 0.85f);
+            animating_ = true;
+        }
+    }
 
     // Reading.
     if (o_->read_start && now < o_->read_start + o_->read_ms + kSeenTailMs && o_->read_names.count(row_name_)) {
@@ -293,7 +304,7 @@ AiListPainter::RowMotion AiListPainter::Row(const std::wstring& name, const D2D1
 void AiListPainter::Background(const D2D1_RECT_F& bg, float inset, float radius) {
     if (!o_ || row_name_.empty()) return;
     ID2D1DeviceContext* dc = compositor_->Dc();
-    if (row_flash_ <= 0.0f && row_bump_ <= 0.0f) return;
+    if (row_flash_ <= 0.0f && row_bump_ <= 0.0f && row_done_ <= 0.0f) return;
     ID2D1SolidColorBrush* brush = nullptr;
     if (FAILED(dc->CreateSolidColorBrush(theme_.accent, &brush))) return;
     Ctx c{compositor_, dc, brush, s_};
@@ -308,6 +319,7 @@ void AiListPainter::Background(const D2D1_RECT_F& bg, float inset, float radius)
         const bool dark = theme_.bg.r < 0.5f;
         c.Fill(r, radius, Alpha(accent, (dark ? 0.16f : 0.12f) * Ease(in) * out));
     }
+    if (row_done_ > 0.0f) c.Fill(r, radius, Alpha(accent, 0.18f * row_done_));
     if (row_flash_ > 0.0f) {
         // readrow: accent 22% and an inset 3 px accent bar, fading out.
         c.Fill(r, radius, Alpha(accent, 0.22f * row_flash_));

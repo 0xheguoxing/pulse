@@ -2734,6 +2734,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     FinishOperationIntents(*s, finished);
                     NoteArrivalFinished(*s, finished);
                     NoteDeleteFinished(*s, finished);
+                    NoteBatchRenameFinished(*s, finished);
                     NoteTrayReleaseFinished(*s, finished);
                     if (finished.type == ops::OpType::EmptyRecycle)
                         ApplyEmptyRecycleFinished(*s, finished.success);

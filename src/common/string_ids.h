@@ -3235,5 +3235,7 @@
 #define IDS_BR_POS_AFTER_PRE                                                             4441
 #define IDS_BR_POS_AFTER_POST                                                            4442
 #define IDS_BR_NUM_SEP                                                                   4443
+#define IDS_BR_ST_APPLIED                                                                4444
+#define IDS_BR_DONE_SNACK                                                                4445
 
 #endif  // PULSE_STRING_IDS_H

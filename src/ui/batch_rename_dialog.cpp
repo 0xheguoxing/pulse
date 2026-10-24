@@ -511,6 +511,7 @@ private:
     bool CanApply() const { return plan_.renames > 0 && !plan_.blocked; }
 
     void Complete(bool accepted) {
+        if (executing_) return;
         if (accepted) {
             if (!CanApply()) return;
             result_.accepted = true;
@@ -522,9 +523,54 @@ private:
                 item.status = app::BatchRenameStatus::Ok;
                 result_.items.push_back(std::move(item));
             }
+            if (options_.execute && options_.poll && hwnd_) {
+                exec_task_ = options_.execute(result_.items);
+                if (exec_task_) {
+                    result_.executed = true;
+                    result_.task = exec_task_;
+                    executing_ = true;
+                    exec_start_ = GetTickCount64();
+                    exec_rank_.assign(plan_.rows.size(), -1);
+                    for (size_t k = 0; k < plan_.exec_order.size(); ++k)
+                        exec_rank_[plan_.exec_order[k]] = static_cast<int>(k);
+                    menu_ = Menu::None;
+                    for (auto& f : fields_) EnableWindow(f.hwnd, FALSE);
+                    SetFocus(hwnd_);
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+                result_.accepted = false;   // nothing started: leave the names alone
+                result_.items.clear();
+            }
         }
+        Close();
+    }
+
+    void Close() {
         done_ = true;
         if (hwnd_) { HideComposedDialog(hwnd_, owner_); DestroyWindow(hwnd_); }
+    }
+
+    // Per frame while running: how many rows show their check. The checks
+    // follow the task but are spread over at most ~0.6 s, so a fast batch
+    // still reads as going through in order; a slow one is never held back.
+    void TickExecution() {
+        if (!executing_) return;
+        anim_active_ = true;
+        const size_t total = plan_.exec_order.size();
+        const BatchRenameProgress p = options_.poll(exec_task_);
+        const size_t real = p.finished ? total : (std::min)(p.done, total);
+        const ULONGLONG per_row = std::clamp<ULONGLONG>(600 / (std::max<size_t>)(total, 1), 25, 110);
+        const size_t by_time = static_cast<size_t>((now_ - exec_start_) / per_row) + 1;
+        exec_shown_ = (std::min)(real, by_time);
+        if (p.finished && exec_shown_ >= total && !exec_end_) exec_end_ = now_;
+        // Done: hold the last check for a moment (HTML: 380 ms), then close.
+        // Queued behind another job: leave it to the operations UI.
+        const bool stuck = !p.finished && real == 0 && now_ - exec_start_ > 1500;
+        if ((exec_end_ && now_ - exec_end_ >= 380) || stuck) {
+            executing_ = false;
+            PostMessageW(hwnd_, WM_CLOSE, 0, 0);
+        }
     }
 
     // ---------------------------------------------------------------- steps
@@ -962,6 +1008,7 @@ private:
         hits_.clear();
         anim_active_ = false;
         now_ = GetTickCount64();
+        TickExecution();
         for (auto& f : fields_) f.want_visible = false;
 
         W_ = static_cast<float>(compositor_.Width());
@@ -1762,7 +1809,10 @@ private:
         std::wstring st;
         const Icon* icon = nullptr;
         D2D1_COLOR_F sc_color = pal_.amber;
-        switch (row.status) {
+        const bool applied = (executing_ || result_.executed) && i < exec_rank_.size() && exec_rank_[i] >= 0 &&
+                             static_cast<size_t>(exec_rank_[i]) < exec_shown_;
+        if (applied) { st = S(StringId::BrStApplied); icon = &kCheck; sc_color = pal_.ok; }
+        else switch (row.status) {
         case rn::RowStatus::Same: st = S(StringId::BrTabSame); icon = &kDash; sc_color = pal_.text3; break;
         case rn::RowStatus::Conflict:
             icon = &kWarn;
@@ -1817,6 +1867,12 @@ private:
     void DrawFooter() {
         const float top = H_ - X(kFootH);
         Fill(D2D1::RectF(0, top, W_, top + X(1)), 0, pal_.line2);
+        if (executing_ || result_.executed) {
+            // .prog: 2 px accent line on the footer's top edge, width .2 s linear.
+            const float total = static_cast<float>((std::max<size_t>)(plan_.exec_order.size(), 1));
+            const float k = Animate(9ull << 40, static_cast<float>(exec_shown_) / total, 200.0f);
+            if (k > 0) Fill(D2D1::RectF(0, top - X(1), W_ * k, top + X(1)), 0, pal_.accent);
+        }
         const float cy = top + X(kFootH) * 0.5f;
         // 同时修改扩展名.
         float x = X(18);
@@ -1983,6 +2039,7 @@ private:
     }
 
     void Click(const Hit& h) {
+        if (executing_) return;
         const bool had_menu = menu_ != Menu::None;
         const Menu was = menu_;
         if (h.k != H::Menu) menu_ = Menu::None;
@@ -2227,7 +2284,7 @@ private:
             return 0;
         case WM_LBUTTONDOWN: {
             const float x = static_cast<float>(GET_X_LPARAM(lparam)), y = static_cast<float>(GET_Y_LPARAM(lparam));
-            press_ = HitAt(x, y);
+            press_ = executing_ ? Hit{} : HitAt(x, y);
             press_y_ = y;
             if (press_.k == H::Grip) {
                 // Remember where the card started for the grab offset.
@@ -2360,6 +2417,12 @@ private:
     bool content_mode_ = false;
     bool dark_ = false;
     bool done_ = false;
+    // Running (scene 5): the renames go through while the dialog shows them.
+    bool executing_ = false;
+    uint64_t exec_task_ = 0;
+    ULONGLONG exec_start_ = 0, exec_end_ = 0;
+    size_t exec_shown_ = 0;
+    std::vector<int> exec_rank_;   // row -> position in exec_order (-1: not renamed)
     float scale_ = 1.0f;
     D2D1_COLOR_F accent_ = HexColor(0x527D70);
 };

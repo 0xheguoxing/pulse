@@ -1387,6 +1387,24 @@ void AiAgentStop(AppState& s) {
     a.call_index = 0;
 }
 
+void AiListFlashRows(const std::wstring& folder, const std::vector<std::wstring>& names) {
+    if (names.empty() || !ui::motion::SystemAnimationsEnabled()) return;
+    // The assistant is busy in another folder: its overlay wins.
+    if (g_list && !SameDir(g_list->folder, folder) && !g_list->end_ms) return;
+    const bool live = g_list && SameDir(g_list->folder, folder) && !g_list->end_ms;
+    const uint64_t prev_end = g_list && SameDir(g_list->folder, folder) ? g_list->end_ms : 0;
+    ui::AiListOverlay& o = ListOverlay(folder);
+    const uint64_t start = ui::motion::NowMs() + 120;   // after the dialog's exit
+    uint64_t at = start;
+    for (const std::wstring& name : names) {
+        o.flash[ui::AiListLower(name)] = at;
+        at += 30;
+    }
+    // ListOverlay reopened it: close again once the last flash is over, but
+    // an overlay the assistant is still using stays open ended.
+    if (!live) o.end_ms = (std::max)(prev_end, at + 1500);
+}
+
 std::shared_ptr<const ui::AiListOverlay> AiListOverlayFor(const std::wstring& folder) {
     if (!g_list || !SameDir(g_list->folder, folder)) return nullptr;
     if (g_list->end_ms && ui::motion::NowMs() >= g_list->end_ms) {

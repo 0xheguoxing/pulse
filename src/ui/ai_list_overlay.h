@@ -56,6 +56,8 @@ struct AiListOverlay {
     std::unordered_map<std::wstring, std::vector<uint64_t>> bumps;
 
     uint64_t end_ms = 0;                 // nothing left to draw after this (0: open ended)
+    // Rows a batch rename just named (批量重命名 scene 5): name -> flash start.
+    std::unordered_map<std::wstring, uint64_t> flash;
 };
 
 // The walk's k of n at `now` (1..n), the same number the chip and the step show.
@@ -121,6 +123,7 @@ private:
     bool row_seen_ = false;
     float row_flash_ = 0.0f;             // 0..1 read flash strength
     float row_bump_ = 0.0f;              // 0..1 bump progress (0 none)
+    float row_done_ = 0.0f;              // 0..1 renamed-row flash strength
     float row_icon_scale_ = 1.0f;
     int row_ordinal_ = 0;                // display order (for the tag stagger)
 };
@@ -132,4 +135,7 @@ void ReleaseAiListOverlayResources();
 namespace pulse {
 // The overlay for `folder` (case-insensitive), or null. ai_assistant_agent.cpp.
 std::shared_ptr<const ui::AiListOverlay> AiListOverlayFor(const std::wstring& folder);
+// Flashes the rows `names` (file names in `folder`) once, 30 ms apart: the
+// batch rename's "these changed". Leaves the assistant's own work alone.
+void AiListFlashRows(const std::wstring& folder, const std::vector<std::wstring>& names);
 } // namespace pulse

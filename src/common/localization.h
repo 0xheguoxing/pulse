@@ -3227,6 +3227,8 @@ enum class StringId : UINT {
     BrPosAfterPre = IDS_BR_POS_AFTER_PRE,
     BrPosAfterPost = IDS_BR_POS_AFTER_POST,
     BrNumSep = IDS_BR_NUM_SEP,
+    BrStApplied = IDS_BR_ST_APPLIED,
+    BrDoneSnack = IDS_BR_DONE_SNACK,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

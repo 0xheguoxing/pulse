@@ -3215,4 +3215,6 @@ BEGIN
     IDS_BR_POS_AFTER_PRE "在第"
     IDS_BR_POS_AFTER_POST "個字後"
     IDS_BR_NUM_SEP "分隔"
+    IDS_BR_ST_APPLIED "已改"
+    IDS_BR_DONE_SNACK "已重新命名 {n} 個項目"
 END

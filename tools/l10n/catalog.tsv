@@ -3242,3 +3242,5 @@ BrPosIndex	IDS_BR_POS_INDEX	4440	指定位置	At position	指定位置
 BrPosAfterPre	IDS_BR_POS_AFTER_PRE	4441	在第	After	在第
 BrPosAfterPost	IDS_BR_POS_AFTER_POST	4442	个字后	characters	個字後
 BrNumSep	IDS_BR_NUM_SEP	4443	分隔	Separator	分隔
+BrStApplied	IDS_BR_ST_APPLIED	4444	已改	Done	已改
+BrDoneSnack	IDS_BR_DONE_SNACK	4445	已重命名 {n} 个项目	Renamed {n} items	已重新命名 {n} 個項目

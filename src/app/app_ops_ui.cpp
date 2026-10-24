@@ -6,6 +6,7 @@
 #include "../ui/drag_drop.h"
 #include "../ui/file_operation_dialog.h"
 #include "../ui/batch_rename_dialog.h"
+#include "../ui/ai_list_overlay.h"
 #include "../ui/quick_preview_window.h"
 #include "../ui/typography.h"
 #include "../ui/color_picker.h"
@@ -38,6 +39,7 @@
 #include <shobjidl.h>
 #include <shlwapi.h>
 #include <algorithm>
+#include <unordered_map>
 #include <cmath>
 #include <cwctype>
 #include <thread>
@@ -810,9 +812,89 @@ void PinAndShowOperationWindow(AppState& s) {
 // Nothing else changes up front: places and the tray follow the renames that
 // actually succeeded once the operation completes (app_main's completion
 // handler), so a failed or cancelled item never leaves a stale new name behind.
+// A rename task started from the batch rename dialog (scene 5): the dialog
+// shows it going through, then the list flashes the new names and a snack
+// offers undo. One per window; the dialog is modal.
+struct BatchRenameNote {
+    uint64_t task = 0;
+    std::wstring folder;
+    std::vector<std::wstring> names;   // new names
+    bool dialog_open = false;
+    bool finished = false;
+    bool success = false;
+};
+static std::unordered_map<const AppState*, BatchRenameNote> g_batch_rename;
+
+static void ShowBatchRenameDone(AppState& s) {
+    auto it = g_batch_rename.find(&s);
+    if (it == g_batch_rename.end()) return;
+    const BatchRenameNote note = std::move(it->second);
+    g_batch_rename.erase(it);
+    // A failure is reported by the operations UI; the rows that did change
+    // still come back with the list refresh.
+    if (!note.success || !s.hwnd) return;
+    AiListFlashRows(note.folder, note.names);
+    std::wstring title = FillText(l10n::Get(l10n::StringId::BrDoneSnack), L"{n}", std::to_wstring(note.names.size()));
+    std::vector<ui::SnackAction> actions;
+    if (s.ops.CanUndo()) actions.push_back({l10n::Get(l10n::StringId::SnackUndo), WM_UNDO_DELETE});
+    s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Undo, std::move(title), {}, std::move(actions),
+                                   s.ops.CanUndo() ? L"Ctrl+Z" : L"");
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void NoteBatchRenameFinished(AppState& s, const ops::FinishedTask& done) {
+    auto it = g_batch_rename.find(&s);
+    if (it == g_batch_rename.end() || done.task_id != it->second.task) return;
+    it->second.finished = true;
+    it->second.success = done.success;
+    if (!it->second.dialog_open) ShowBatchRenameDone(s);   // else when it closes
+}
+
 static void SubmitBatchRename(AppState& s, const std::vector<std::wstring>& paths, app::Tab* select_in) {
     if (paths.size() < 2) return;
-    const auto result = ui::ShowBatchRenameDialog(s.hwnd, paths, s.darkMode, s.accentColor);
+    ui::BatchRenameDialogOptions options;
+    options.execute = [&s, select_in](const std::vector<app::BatchRenameItem>& items) -> uint64_t {
+        ops::OpRequest req;
+        req.type = ops::OpType::BatchRename;
+        for (const auto& item : items) {
+            if (item.status != app::BatchRenameStatus::Ok) continue;
+            req.sources.push_back(item.source_path);
+            req.new_names.push_back(item.new_name);
+        }
+        if (req.sources.empty()) return 0;
+        if (select_in) {
+            select_in->pending_selected_names = req.new_names;
+            select_in->pending_selected_name = req.new_names.front();
+        }
+        BatchRenameNote note;
+        note.folder = fs::ParentPath(req.sources.front());
+        note.names = req.new_names;
+        note.dialog_open = true;
+        note.task = s.ops.Submit(std::move(req));
+        if (!note.task) return 0;
+        const uint64_t task = note.task;
+        g_batch_rename[&s] = std::move(note);
+        return task;
+    };
+    options.poll = [&s](uint64_t task) {
+        ui::BatchRenameProgress p;
+        if (auto it = g_batch_rename.find(&s); it != g_batch_rename.end() && it->second.task == task)
+            p.finished = it->second.finished;
+        if (!p.finished) {
+            const ops::OpStatus st = s.ops.Status();
+            if (st.task_id == task) p.done = static_cast<size_t>(st.completed_items);
+        }
+        return p;
+    };
+    const auto result = ui::ShowBatchRenameDialog(s.hwnd, paths, s.darkMode, s.accentColor, options);
+    if (result.executed) {
+        if (auto it = g_batch_rename.find(&s); it != g_batch_rename.end()) {
+            it->second.dialog_open = false;
+            if (it->second.finished) ShowBatchRenameDone(s);
+        }
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        return;
+    }
     if (!result.accepted) return;
     ops::OpRequest req;
     req.type = ops::OpType::BatchRename;

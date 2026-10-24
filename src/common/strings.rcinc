@@ -3217,6 +3217,8 @@ BEGIN
     IDS_BR_POS_AFTER_PRE "在第"
     IDS_BR_POS_AFTER_POST "个字后"
     IDS_BR_NUM_SEP "分隔"
+    IDS_BR_ST_APPLIED "已改"
+    IDS_BR_DONE_SNACK "已重命名 {n} 个项目"
 END
 
 LANGUAGE 0x09, 0x01
@@ -6433,6 +6435,8 @@ BEGIN
     IDS_BR_POS_AFTER_PRE "After"
     IDS_BR_POS_AFTER_POST "characters"
     IDS_BR_NUM_SEP "Separator"
+    IDS_BR_ST_APPLIED "Done"
+    IDS_BR_DONE_SNACK "Renamed {n} items"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.
