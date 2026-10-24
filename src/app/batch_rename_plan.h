@@ -9,7 +9,8 @@
 
 namespace pulse::app::rename {
 
-enum class StepType { Replace, Remove, Case, Template, Ext };
+enum class StepType { Replace, Remove, Case, Template, Ext, Insert, Number };
+enum class Where { Start, End, Index };   // Insert / Number position
 enum class CaseMode { Keep, Lower, Upper, Title, Change };
 
 struct Step {
@@ -35,6 +36,11 @@ struct Step {
     int start = 1;
     int digits_n = 3;
     int stride = 1;
+    // Insert (text may use template tokens) and Number (uses start/digits_n/stride)
+    std::wstring text;
+    Where where = Where::End;
+    int at = 1;               // Where::Index: after this many characters
+    std::wstring sep = L" ";  // Number: between the name and the number
 };
 
 enum class Order { List, Taken, Modified, Name };

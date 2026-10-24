@@ -3099,3 +3099,146 @@ AiPeekDone	IDS_AI_PEEK_DONE	4297	Pulse 助手 · 完成	Pulse Assistant · Done	
 AiPeekSorted	IDS_AI_PEEK_SORTED	4298	已把 {n} 个文件整理到 {g} 个新文件夹：{names}。	Sorted {n} files into {g} new folders: {names}.	已把 {n} 個檔案整理到 {g} 個新資料夾：{names}。
 AiPeekSortedAny	IDS_AI_PEEK_SORTED_ANY	4299	已把 {n} 个项目整理到 {g} 个文件夹：{names}。	Sorted {n} items into {g} folders: {names}.	已把 {n} 個項目整理到 {g} 個資料夾：{names}。
 AiPeekOpen	IDS_AI_PEEK_OPEN	4300	打开对话	Open chat	開啟對話
+BrSubtitle	IDS_BR_SUBTITLE	4301	%s · %d 个项目	%s · %d items	%s · %d 個項目
+BrModeRules	IDS_BR_MODE_RULES	4302	规则	Rules	規則
+BrModeContent	IDS_BR_MODE_CONTENT	4303	按内容命名	Name by content	依內容命名
+BrAiPlaceholder	IDS_BR_AI_PLACEHOLDER	4304	用一句话说想怎么改，例如「按拍摄日期，加上 旅行 和三位序号」	Describe it in a sentence, e.g. “date taken, then Trip and a 3-digit number”	用一句話說想怎麼改，例如「按拍攝日期，加上 旅行 和三位序號」
+BrTry	IDS_BR_TRY	4305	试试：	Try:	試試：
+BrEx1	IDS_BR_EX1	4306	去掉 (1) 和多余空格	Drop (1) and extra spaces	去掉 (1) 和多餘空格
+BrEx2	IDS_BR_EX2	4307	按拍摄日期 + 三位序号	Date taken + 3-digit number	按拍攝日期 + 三位序號
+BrEx3	IDS_BR_EX3	4308	全部小写，空格换成 -	Lowercase, spaces to -	全部小寫，空格換成 -
+BrEx4	IDS_BR_EX4	4309	把「最终版」换成日期	Replace “final” with the date	把「最終版」換成日期
+BrEx5	IDS_BR_EX5	4310	按文件夹名编号	Number by folder name	按資料夾名編號
+BrSteps	IDS_BR_STEPS	4311	步骤	Steps	步驟
+BrAddStep	IDS_BR_ADD_STEP	4312	添加步骤	Add step	新增步驟
+BrStepReplace	IDS_BR_STEP_REPLACE	4313	替换	Replace	取代
+BrStepRemove	IDS_BR_STEP_REMOVE	4314	删除	Remove	刪除
+BrStepCase	IDS_BR_STEP_CASE	4315	大小写	Case	大小寫
+BrStepTemplate	IDS_BR_STEP_TEMPLATE	4316	模板	Template	範本
+BrStepExt	IDS_BR_STEP_EXT	4317	扩展名	Extension	副檔名
+BrFind	IDS_BR_FIND	4318	查找	Find	尋找
+BrWith	IDS_BR_WITH	4319	替换为	With	取代為
+BrRegex	IDS_BR_REGEX	4320	正则	Regex	規則運算式
+BrMatchCase	IDS_BR_MATCH_CASE	4321	区分大小写	Match case	區分大小寫
+BrAll	IDS_BR_ALL	4322	全部	All	全部
+BrRmBrackets	IDS_BR_RM_BRACKETS	4323	括号编号 (1)	Numbers like (1)	括號編號 (1)
+BrRmSpaces	IDS_BR_RM_SPACES	4324	多余空格	Extra spaces	多餘空格
+BrRmDigits	IDS_BR_RM_DIGITS	4325	数字	Digits	數字
+BrRmCustom	IDS_BR_RM_CUSTOM	4326	自定义…	Custom…	自訂…
+BrCaseKeep	IDS_BR_CASE_KEEP	4327	不变	Keep	不變
+BrCaseLower	IDS_BR_CASE_LOWER	4328	全小写	lowercase	全小寫
+BrCaseUpper	IDS_BR_CASE_UPPER	4329	全大写	UPPERCASE	全大寫
+BrCaseTitle	IDS_BR_CASE_TITLE	4330	词首大写	Title Case	字首大寫
+BrExtLower	IDS_BR_EXT_LOWER	4331	小写	lower	小寫
+BrExtUpper	IDS_BR_EXT_UPPER	4332	大写	UPPER	大寫
+BrExtChange	IDS_BR_EXT_CHANGE	4333	改为…	Change to…	改為…
+BrTokName	IDS_BR_TOK_NAME	4334	原名	Name	原名
+BrTokNumber	IDS_BR_TOK_NUMBER	4335	序号	Number	序號
+BrTokTaken	IDS_BR_TOK_TAKEN	4336	拍摄日期	Date taken	拍攝日期
+BrTokModified	IDS_BR_TOK_MODIFIED	4337	修改日期	Date modified	修改日期
+BrTokFolder	IDS_BR_TOK_FOLDER	4338	文件夹	Folder	資料夾
+BrTokSize	IDS_BR_TOK_SIZE	4339	尺寸	Dimensions	尺寸
+BrNumFrom	IDS_BR_NUM_FROM	4340	从	From	從
+BrNumDigits	IDS_BR_NUM_DIGITS	4341	位数	Digits	位數
+BrNumStep	IDS_BR_NUM_STEP	4342	步长	Step	間隔
+BrPreset	IDS_BR_PRESET	4343	预设	Preset	預設
+BrPresetNone	IDS_BR_PRESET_NONE	4344	无	None	無
+BrSavePreset	IDS_BR_SAVE_PRESET	4345	保存为预设	Save as preset	另存為預設
+BrAiNote	IDS_BR_AI_NOTE	4346	AI 只把这句话翻译成上面的步骤，**不读取文件内容**；改名在本机执行，可以随时改步骤，改完能一键撤销。	AI only turns the sentence into the steps above and **never reads file contents**. Renaming runs on this PC; edit the steps any time and undo in one go.	AI 只把這句話翻譯成上面的步驟，**不讀取檔案內容**；改名在本機執行，可以隨時改步驟，改完能一鍵復原。
+BrGenerating	IDS_BR_GENERATING	4347	正在生成步骤…	Writing the steps…	正在產生步驟…
+BrTabChange	IDS_BR_TAB_CHANGE	4348	将修改	Will change	將修改
+BrTabIssues	IDS_BR_TAB_ISSUES	4349	需要注意	Needs attention	需要注意
+BrTabSame	IDS_BR_TAB_SAME	4350	无变化	Unchanged	無變化
+BrOrder	IDS_BR_ORDER	4351	编号顺序	Numbering	編號順序
+BrOrderList	IDS_BR_ORDER_LIST	4352	列表顺序	List order	清單順序
+BrOrderTaken	IDS_BR_ORDER_TAKEN	4353	拍摄时间	Date taken	拍攝時間
+BrOrderModified	IDS_BR_ORDER_MODIFIED	4354	修改时间	Date modified	修改時間
+BrOrderName	IDS_BR_ORDER_NAME	4355	名称	Name	名稱
+BrColNew	IDS_BR_COL_NEW	4356	新名	New name	新名
+BrColStatus	IDS_BR_COL_STATUS	4357	状态	Status	狀態
+BrStClashAdded	IDS_BR_ST_CLASH_ADDED	4358	重名，已加 (%d)	Clash, added (%d)	重名，已加 (%d)
+BrStTrailing	IDS_BR_ST_TRAILING	4359	已去掉结尾空格	Trailing space removed	已去掉結尾空格
+BrStNoTaken	IDS_BR_ST_NO_TAKEN	4360	无拍摄日期，用修改日期	No date taken, used modified	無拍攝日期，用修改日期
+BrStSkipped	IDS_BR_ST_SKIPPED	4361	已跳过：重名	Skipped: clash	已略過：重名
+BrStClash	IDS_BR_ST_CLASH	4362	重名	Clash	重名
+BrStInvalid	IDS_BR_ST_INVALID	4363	名字不合法	Invalid name	名稱不合法
+BrStEmpty	IDS_BR_ST_EMPTY	4364	名字为空	Empty name	名稱為空
+BrStSwap	IDS_BR_ST_SWAP	4365	与另一项互换	Swaps with another	與另一項互換
+BrWhyExisting	IDS_BR_WHY_EXISTING	4366	文件夹里**已经有「%s」**（不在这次选择里）	The folder **already has “%s”** (not selected)	資料夾裡**已經有「%s」**（不在這次選擇裡）
+BrWhyBatch	IDS_BR_WHY_BATCH	4367	和「%s」**改出来的名字相同**	**Same new name** as “%s”	和「%s」**改出來的名稱相同**
+BrWhyTrailing	IDS_BR_WHY_TRAILING	4368	Windows 不允许名字以**空格或句点结尾**，已自动去掉	Windows doesn’t allow names **ending in a space or dot**; removed	Windows 不允許名稱以**空格或句點結尾**，已自動去掉
+BrWhyNoTaken	IDS_BR_WHY_NO_TAKEN	4369	没有**拍摄日期**，改用修改日期 %s	No **date taken**; used the modified date %s	沒有**拍攝日期**，改用修改日期 %s
+BrWhyBad	IDS_BR_WHY_BAD	4370	名字里有 Windows **不允许的字符**，或是系统保留名	The name has **characters Windows doesn’t allow**, or is reserved	名稱裡有 Windows **不允許的字元**，或是系統保留名稱
+BrWhyEmpty	IDS_BR_WHY_EMPTY	4371	这些步骤**删光了整个名字**	The steps **removed the whole name**	這些步驟**刪光了整個名稱**
+BrWhySwap	IDS_BR_WHY_SWAP	4372	和另一项**互相交换名字**，请分两次改	**Swaps names** with another item; rename in two passes	和另一項**互相交換名稱**，請分兩次改
+BrIssNote	IDS_BR_ISS_NOTE	4373	这些都已经按左下角的规则处理好，**不会覆盖任何文件**。想换一种处理方式，改「重名时」即可；也可以回到步骤里调整，让名字本身不再重复。	These are handled by the rule at the bottom left; **nothing will be overwritten**. Change “On clash” to handle them differently, or adjust the steps so the names no longer repeat.	這些都已經按左下角的規則處理好，**不會覆寫任何檔案**。想換一種處理方式，改「重名時」即可；也可以回到步驟裡調整，讓名稱本身不再重複。
+BrIssNone	IDS_BR_ISS_NONE	4374	没有需要注意的项目	Nothing needs attention	沒有需要注意的項目
+BrExtToo	IDS_BR_EXT_TOO	4375	同时修改扩展名	Also change extensions	同時修改副檔名
+BrOnClash	IDS_BR_ON_CLASH	4376	重名时	On clash	重名時
+BrPolAuto	IDS_BR_POL_AUTO	4377	自动加序号	Add a number	自動加序號
+BrPolAutoD	IDS_BR_POL_AUTO_D	4378	改成「名字 (2)」，不覆盖任何文件	Becomes “name (2)”; nothing is overwritten	改成「名稱 (2)」，不覆寫任何檔案
+BrPolSkip	IDS_BR_POL_SKIP	4379	跳过这些	Skip them	略過這些
+BrPolSkipD	IDS_BR_POL_SKIP_D	4380	重名的项目保持原名，其余照常	Clashing items keep their names; the rest go ahead	重名的項目保持原名，其餘照常
+BrPolBlock	IDS_BR_POL_BLOCK	4381	先不改，让我处理	Hold off, I’ll fix it	先不改，讓我處理
+BrPolBlockD	IDS_BR_POL_BLOCK_D	4382	有重名时「重命名」按钮不可用	Rename stays disabled while names clash	有重名時「重新命名」按鈕不可用
+BrSumRename	IDS_BR_SUM_RENAME	4383	**%d** 个将被重命名	**%d** will be renamed	**%d** 個將被重新命名
+BrSumAuto	IDS_BR_SUM_AUTO	4384	%d 个重名已自动处理	%d clashes handled	%d 個重名已自動處理
+BrSumSame	IDS_BR_SUM_SAME	4385	%d 个无变化	%d unchanged	%d 個無變化
+BrSumSkip	IDS_BR_SUM_SKIP	4386	%d 个跳过	%d skipped	%d 個略過
+BrSumClash	IDS_BR_SUM_CLASH	4387	%d 个重名待处理	%d clashes to fix	%d 個重名待處理
+BrRenameN	IDS_BR_RENAME_N	4388	重命名 %d 个	Rename %d	重新命名 %d 個
+BrBadRegex	IDS_BR_BAD_REGEX	4389	正则表达式有误	Invalid regular expression	規則運算式有誤
+BrDoneToast	IDS_BR_DONE_TOAST	4390	已重命名 %d 个项目	Renamed %d items	已重新命名 %d 個項目
+BrCmSub	IDS_BR_CM_SUB	4391	AI 读取文字后起名	AI names files from their text	AI 讀取文字後起名
+BrCmFormat	IDS_BR_CM_FORMAT	4392	名字格式	Name format	名稱格式
+BrCmF1	IDS_BR_CM_F1	4393	日期 类型 · 对象	Date Type · Subject	日期 類型 · 對象
+BrCmF2	IDS_BR_CM_F2	4394	类型 - 对象 - 日期	Type - Subject - Date	類型 - 對象 - 日期
+BrCmF3	IDS_BR_CM_F3	4395	保持我的写法	Match my style	保持我的寫法
+BrCmF3E	IDS_BR_CM_F3E	4396	参考文件夹里已有的名字	Learns from names in this folder	參考資料夾裡已有的名稱
+BrCmLang	IDS_BR_CM_LANG	4397	名字语言	Name language	名稱語言
+BrCmLangZh	IDS_BR_CM_LANG_ZH	4398	中文	Chinese	中文
+BrCmLangEn	IDS_BR_CM_LANG_EN	4399	English	English	English
+BrCmLangAuto	IDS_BR_CM_LANG_AUTO	4400	跟随文件内容	Follow the content	跟隨檔案內容
+BrCmRange	IDS_BR_CM_RANGE	4401	读取范围	Read	讀取範圍
+BrCmRangeSub	IDS_BR_CM_RANGE_SUB	4402	只读文字，不上传文件	Text only, files stay here	只讀文字，不上傳檔案
+BrCmR1	IDS_BR_CM_R1	4403	标题和首页	Title and first page	標題和首頁
+BrCmR2	IDS_BR_CM_R2	4404	前 2 页	First 2 pages	前 2 頁
+BrCmR3	IDS_BR_CM_R3	4405	前 10 页	First 10 pages	前 10 頁
+BrCmSupport	IDS_BR_CM_SUPPORT	4406	支持 PDF（含文字层）、Word、Excel、PPT、TXT、Markdown。图片和扫描件没有文字层时会跳过。	Works with PDF (with a text layer), Word, Excel, PowerPoint, TXT and Markdown. Images and scans without text are skipped.	支援 PDF（含文字層）、Word、Excel、PPT、TXT、Markdown。圖片和掃描件沒有文字層時會略過。
+BrCmPrivacy	IDS_BR_CM_PRIVACY	4407	会把这 **%d** 个文件里读到的文字（约 %s 字）发送给 **%s**（你的 %s 连接）。文件本身不离开这台电脑。\n预计用量约 %s tokens。	The text read from these **%d** files (about %s characters) goes to **%s** (your %s connection). The files themselves stay on this PC.\nAbout %s tokens.	會把這 **%d** 個檔案裡讀到的文字（約 %s 字）傳送給 **%s**（你的 %s 連線）。檔案本身不離開這台電腦。\n預計用量約 %s tokens。
+BrCmFootHint	IDS_BR_CM_FOOT_HINT	4408	建议生成后可逐个修改，不满意的取消勾选	Edit any suggestion; uncheck the ones you don’t want	建議產生後可逐個修改，不滿意的取消勾選
+BrCmRegen	IDS_BR_CM_REGEN	4409	全部重新生成	Regenerate all	全部重新產生
+BrCmBasis	IDS_BR_CM_BASIS	4410	依据：	Basis:	依據：
+BrCmAiSuggest	IDS_BR_CM_AI_SUGGEST	4411	AI 建议	AI suggestion	AI 建議
+BrCmSkipped	IDS_BR_CM_SKIPPED	4412	已跳过	Skipped	已略過
+BrCmKeep	IDS_BR_CM_KEEP	4413	保持原名	Kept	保持原名
+BrCmSumChecked	IDS_BR_CM_SUM_CHECKED	4414	**%d** 个建议已勾选	**%d** suggestions checked	**%d** 個建議已勾選
+BrCmSumKeep	IDS_BR_CM_SUM_KEEP	4415	%d 个保持原名	%d kept	%d 個保持原名
+BrCmReading	IDS_BR_CM_READING	4416	正在读取…	Reading…	正在讀取…
+BrCmThinking	IDS_BR_CM_THINKING	4417	正在起名…	Naming…	正在起名…
+BrCmNoText	IDS_BR_CM_NO_TEXT	4418	没有可读取的文字，保持原名	No readable text; name kept	沒有可讀取的文字，保持原名
+BrCmStart	IDS_BR_CM_START	4419	开始生成	Generate	開始產生
+BrAiNoConn	IDS_BR_AI_NO_CONN	4420	先在 AI 助手里连接一个模型	Connect a model in the assistant first	先在 AI 助手裡連線一個模型
+BrAiFailed	IDS_BR_AI_FAILED	4421	没能生成：%s	Couldn’t generate: %s	沒能產生：%s
+BrUndo	IDS_BR_UNDO	4422	撤销	Undo	復原
+BrPresetName	IDS_BR_PRESET_NAME	4423	预设名称	Preset name	預設名稱
+BrDelPreset	IDS_BR_DEL_PRESET	4424	删除预设	Delete preset	刪除預設
+BrStop	IDS_BR_STOP	4425	停止	Stop	停止
+BrCmNameKeep	IDS_BR_CM_NAME_KEEP	4426	名字已经清楚，保持原名	The name is already clear	名稱已經清楚，保持原名
+BrWsSpace	IDS_BR_WS_SPACE	4427	空格	space	空格
+BrWsUnderscore	IDS_BR_WS_UNDERSCORE	4428	下划线	underscore	底線
+BrWsHyphen	IDS_BR_WS_HYPHEN	4429	连字符	hyphen	連字號
+BrWsDot	IDS_BR_WS_DOT	4430	句点	dot	句點
+BrWsSpaces	IDS_BR_WS_SPACES	4431	%d 个空格	%d spaces	%d 個空格
+BrStModDate	IDS_BR_ST_MOD_DATE	4432	用修改日期	Used modified	用修改日期
+BrWithPlaceholder	IDS_BR_WITH_PLACEHOLDER	4433	（留空 = 删除）	(empty = remove)	（留空 = 刪除）
+BrAddStepHint	IDS_BR_ADD_STEP_HINT	4434	添加步骤	Add a step	新增步驟
+BrStepInsert	IDS_BR_STEP_INSERT	4435	插入	Insert	插入
+BrStepNumber	IDS_BR_STEP_NUMBER	4436	编号	Number	編號
+BrInsText	IDS_BR_INS_TEXT	4437	文字	Text	文字
+BrPosStart	IDS_BR_POS_START	4438	开头	Start	開頭
+BrPosEnd	IDS_BR_POS_END	4439	结尾	End	結尾
+BrPosIndex	IDS_BR_POS_INDEX	4440	指定位置	At position	指定位置
+BrPosAfterPre	IDS_BR_POS_AFTER_PRE	4441	在第	After	在第
+BrPosAfterPost	IDS_BR_POS_AFTER_POST	4442	个字后	characters	個字後
+BrNumSep	IDS_BR_NUM_SEP	4443	分隔	Separator	分隔

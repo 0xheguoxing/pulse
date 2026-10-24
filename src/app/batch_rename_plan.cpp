@@ -271,6 +271,28 @@ void ApplyStep(std::wstring& stem, std::wstring& ext, const Step& st, Ctx& ctx) 
         else stem = out;
         break;
     }
+    case StepType::Insert: {
+        if (st.text.empty()) break;
+        Step t = st;
+        t.pattern = st.text;
+        const std::wstring add = ExpandTemplate(t, stem, ext, ctx);
+        if (st.where == Where::Start) stem = add + stem;
+        else if (st.where == Where::End) stem += add;
+        else {
+            size_t pos = static_cast<size_t>(std::max(0, st.at));
+            if (pos > stem.size()) pos = stem.size();
+            // Never split a surrogate pair.
+            if (pos > 0 && pos < stem.size() && stem[pos] >= 0xDC00 && stem[pos] <= 0xDFFF) ++pos;
+            stem.insert(pos, add);
+        }
+        break;
+    }
+    case StepType::Number: {
+        const long long n = static_cast<long long>(ctx.index) * std::max(1, st.stride) + st.start;
+        const std::wstring num = Pad(n, std::clamp(st.digits_n, 1, 9));
+        stem = st.where == Where::Start ? num + st.sep + stem : stem + st.sep + num;
+        break;
+    }
     case StepType::Ext:
         if (st.mode == CaseMode::Lower) ext = MapCase(ext, false);
         else if (st.mode == CaseMode::Upper) ext = MapCase(ext, true);
@@ -312,12 +334,20 @@ bool IsValidComponent(const std::wstring& name) {
     return !IsReservedStem(name);
 }
 
+// Token text of a step: the template pattern or the inserted text.
+static const std::wstring* TokenText(const Step& st) {
+    if (!st.on) return nullptr;
+    if (st.type == StepType::Template) return &st.pattern;
+    if (st.type == StepType::Insert) return &st.text;
+    return nullptr;
+}
+
 bool NeedsTakenDate(const std::vector<Step>& steps, const Options& opts) {
     if (opts.order == Order::Taken) return true;
     for (const auto& st : steps)
-        if (st.on && st.type == StepType::Template &&
-            (st.pattern.find(L"{拍摄日期") != std::wstring::npos || st.pattern.find(L"{拍攝日期") != std::wstring::npos ||
-             st.pattern.find(L"{taken") != std::wstring::npos))
+        if (const std::wstring* p = TokenText(st);
+            p && (p->find(L"{拍摄日期") != std::wstring::npos || p->find(L"{拍攝日期") != std::wstring::npos ||
+                  p->find(L"{taken") != std::wstring::npos))
             return true;
     return false;
 }
@@ -330,8 +360,8 @@ bool UsesNumber(const std::wstring& p) {
 
 bool NeedsDimensions(const std::vector<Step>& steps) {
     for (const auto& st : steps)
-        if (st.on && st.type == StepType::Template &&
-            (st.pattern.find(L"{尺寸") != std::wstring::npos || st.pattern.find(L"{size") != std::wstring::npos))
+        if (const std::wstring* p = TokenText(st);
+            p && (p->find(L"{尺寸") != std::wstring::npos || p->find(L"{size") != std::wstring::npos))
             return true;
     return false;
 }

@@ -61,7 +61,7 @@ void BatchRenameShownForTest(HWND dialog) {
     ++shown;
     std::vector<HWND> edits;
     EnumChildWindows(dialog, Collect, reinterpret_cast<LPARAM>(&edits));
-    Check(edits.size() == 4, "real batch dialog creates four EDIT controls");
+    Check(edits.size() >= 3, "real batch dialog creates the AI field and the default step fields");
     // Identify by geometry: the hidden numeric field retains the initial '1'.
     HWND number = nullptr, pattern = nullptr;
     std::vector<HWND> visible;
@@ -74,7 +74,7 @@ void BatchRenameShownForTest(HWND dialog) {
         if (!IsWindowVisible(edit)) number = edit;
         else visible.push_back(edit);
     }
-    Check(visible.size() == 3 && number, "three initial fields visible; numeric field waits for pattern");
+    Check(visible.size() == 2 && number, "replace step fields visible; AI and custom fields wait hidden");
     LONG bottom = LONG_MIN;
     for (HWND edit : visible) {
         RECT rect{}; GetWindowRect(edit, &rect);
@@ -114,16 +114,20 @@ void BatchRenameShownForTest(HWND dialog) {
         Check(appended,
             "real host WM_CHAR appends text and uploads glyph pixels");
     }
-    if (pattern && number) {
-        SendMessageW(pattern, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(L"{name}_{n}"));
-        Check(IsWindowVisible(number) && uploads[number].count > 0 && uploads[number].ink &&
-            uploads[number].text == L"1", "enabling numeric field uploads its initial digit");
-        const unsigned before = uploads[number].count;
-        SendMessageW(number, EM_SETSEL, 0, -1);
-        SendMessageW(number, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"42"));
-        Check(uploads[number].count > before && uploads[number].ink && uploads[number].text == L"42",
-            "native numeric editing uploads changed digit pixels");
+    // The AI sentence field shows a drawn placeholder while empty; typing
+    // into it must bring the real editor up and upload its glyphs.
+    if (HWND ai = GetDlgItem(dialog, 100)) {
+        Check(!IsWindowVisible(ai), "empty AI field shows the drawn placeholder instead of the editor");
+        SendMessageW(ai, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(L"去掉 (1)"));
+        UpdateWindow(dialog);
+        RedrawWindow(dialog, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+        Check(IsWindowVisible(ai) && uploads[ai].count > 0 && uploads[ai].ink,
+            "typed AI sentence brings the editor up and uploads glyph pixels");
+    } else {
+        Check(false, "AI sentence field exists");
     }
+    (void)pattern;
+    (void)number;
     PostMessageW(dialog, WM_CLOSE, 0, 0);
 }
 }

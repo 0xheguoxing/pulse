@@ -1,11 +1,13 @@
 // ai_panel_icons.cpp — SVG path data -> D2D geometry for the assistant panel.
 #include "ai_panel_icons.h"
+#include "svg_path_icon.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
 #include <iterator>
+#include <unordered_map>
 
 namespace pulse::ui {
 namespace {
@@ -391,21 +393,28 @@ struct Cache {
     ID2D1StrokeStyle* stroke = nullptr;
     ID2D1SolidColorBrush* brush = nullptr;
     ID2D1DeviceContext* brush_dc = nullptr;
+    std::unordered_map<const char*, ID2D1PathGeometry*> svg;
 
     void Release() {
         for (auto& icon : geometry)
             for (auto*& g : icon) if (g) { g->Release(); g = nullptr; }
+        for (auto& kv : svg) if (kv.second) kv.second->Release();
+        svg.clear();
         if (stroke) { stroke->Release(); stroke = nullptr; }
         if (brush) { brush->Release(); brush = nullptr; }
-        brush_dc = nullptr;
+        if (brush_dc) { brush_dc->Release(); brush_dc = nullptr; }
         if (factory) { factory->Release(); factory = nullptr; }
     }
     ~Cache() { Release(); }
+    uint64_t used = 0;
 };
 
-Cache& TheCache() {
-    static Cache cache;
-    return cache;
+// One cache per D2D factory, so windows with their own factory (the AI panel
+// host, the batch rename dialog) don't evict each other every frame.
+constexpr size_t kCacheSlots = 3;
+std::array<Cache, kCacheSlots>& Caches() {
+    static std::array<Cache, kCacheSlots> caches;
+    return caches;
 }
 
 ID2D1PathGeometry* Geometry(Cache& c, AiIcon icon, size_t part) {
@@ -430,21 +439,30 @@ D2D1_COLOR_F Rgb(uint32_t rgb, float alpha) {
 
 } // namespace
 
-void ReleaseAiIcons() { TheCache().Release(); }
+void ReleaseAiIcons() { for (auto& c : Caches()) c.Release(); }
 
-void DrawAiIcon(ID2D1DeviceContext* dc, AiIcon icon, const D2D1_RECT_F& box, D2D1_COLOR_F color,
-                const AiIconPose& pose) {
-    if (!dc || icon >= AiIcon::Count || pose.opacity <= 0.0f) return;
-    Cache& c = TheCache();
+namespace {
+
+// Picks the cache bound to dc's factory (claiming the least recently used
+// slot for a new factory) and makes sure stroke + brush exist.
+Cache* Prepare(ID2D1DeviceContext* dc, D2D1_COLOR_F color) {
+    static uint64_t tick = 0;
     ID2D1Factory* factory = nullptr;
     dc->GetFactory(&factory);
-    if (!factory) return;
-    if (factory != c.factory) {
-        c.Release();
-        c.factory = factory;   // keeps the reference GetFactory added
-    } else {
+    if (!factory) return nullptr;
+    auto& caches = Caches();
+    Cache* hit = nullptr;
+    for (auto& slot : caches) if (slot.factory == factory) hit = &slot;
+    if (hit) {
         factory->Release();
+    } else {
+        hit = &caches[0];
+        for (auto& slot : caches) if (slot.used < hit->used) hit = &slot;
+        hit->Release();
+        hit->factory = factory;   // keeps the reference GetFactory added
     }
+    Cache& c = *hit;
+    c.used = ++tick;
     if (!c.stroke) {
         const D2D1_STROKE_STYLE_PROPERTIES props = D2D1::StrokeStyleProperties(
             D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_LINE_JOIN_ROUND);
@@ -452,9 +470,60 @@ void DrawAiIcon(ID2D1DeviceContext* dc, AiIcon icon, const D2D1_RECT_F& box, D2D
     }
     if (c.brush_dc != dc) {
         if (c.brush) { c.brush->Release(); c.brush = nullptr; }
-        if (FAILED(dc->CreateSolidColorBrush(color, &c.brush))) return;
-        c.brush_dc = dc;
+        if (c.brush_dc) { c.brush_dc->Release(); c.brush_dc = nullptr; }
+        if (FAILED(dc->CreateSolidColorBrush(color, &c.brush))) return nullptr;
+        c.brush_dc = dc;   // held so a recycled address can't match a dead context
+        dc->AddRef();
     }
+    return c.stroke ? &c : nullptr;
+}
+
+ID2D1PathGeometry* SvgGeometry(Cache& c, const char* d) {
+    auto it = c.svg.find(d);
+    if (it != c.svg.end()) return it->second;
+    ID2D1PathGeometry* path = nullptr;
+    if (FAILED(c.factory->CreatePathGeometry(&path))) return nullptr;
+    ID2D1GeometrySink* sink = nullptr;
+    if (FAILED(path->Open(&sink))) { path->Release(); return nullptr; }
+    sink->SetFillMode(D2D1_FILL_MODE_WINDING);
+    PathParser(d, sink).Run();
+    const HRESULT hr = sink->Close();
+    sink->Release();
+    if (FAILED(hr)) { path->Release(); return nullptr; }
+    c.svg.emplace(d, path);
+    return path;
+}
+
+} // namespace
+
+void DrawSvgParts(ID2D1DeviceContext* dc, const SvgPart* parts, size_t count, float view,
+                  const D2D1_RECT_F& box, D2D1_COLOR_F color) {
+    if (!dc || !parts || view <= 0.0f || color.a <= 0.0f) return;
+    Cache* cache = Prepare(dc, color);
+    if (!cache) return;
+    Cache& c = *cache;
+    const float size = (std::min)(box.right - box.left, box.bottom - box.top);
+    if (size <= 0.0f) return;
+    const float k = size / view;
+    D2D1_MATRIX_3X2_F saved;
+    dc->GetTransform(&saved);
+    dc->SetTransform(D2D1::Matrix3x2F::Scale(k, k) * D2D1::Matrix3x2F::Translation(box.left, box.top) * saved);
+    for (size_t i = 0; i < count; ++i) {
+        ID2D1PathGeometry* g = SvgGeometry(c, parts[i].d);
+        if (!g) continue;
+        c.brush->SetColor(D2D1::ColorF(color.r, color.g, color.b, color.a * parts[i].opacity));
+        if (parts[i].fill) dc->FillGeometry(g, c.brush);
+        else dc->DrawGeometry(g, c.brush, parts[i].stroke, c.stroke);
+    }
+    dc->SetTransform(saved);
+}
+
+void DrawAiIcon(ID2D1DeviceContext* dc, AiIcon icon, const D2D1_RECT_F& box, D2D1_COLOR_F color,
+                const AiIconPose& pose) {
+    if (!dc || icon >= AiIcon::Count || pose.opacity <= 0.0f) return;
+    Cache* cache = Prepare(dc, color);
+    if (!cache) return;
+    Cache& c = *cache;
     const float size = (std::min)(box.right - box.left, box.bottom - box.top);
     if (size <= 0.0f) return;
     const float k = size / 24.0f;

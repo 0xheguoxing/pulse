@@ -449,14 +449,14 @@ pulse_enable_lumatext(pulse_file_picker_operations_test)
 # Real batch-rename host on an isolated, never activated desktop.
 add_executable(pulse_batch_rename_present_test
     src/bench/batch_rename_present_test.cpp src/bench/child_edit_test.rc
-    src/ui/batch_rename_dialog.cpp src/app/batch_rename.cpp src/fs/fs_enum.cpp
-    src/ui/dialog_lifecycle.cpp src/ui/fluent_components.cpp src/ui/tab_shape.cpp
+    src/ui/batch_rename_dialog.cpp src/app/batch_rename.cpp src/app/batch_rename_plan.cpp
+    src/ui/ai_panel_icons.cpp src/fs/fs_enum.cpp src/ui/dialog_lifecycle.cpp src/ui/fluent_components.cpp src/ui/tab_shape.cpp
     src/ui/typography.cpp src/ui/ui_compositor.cpp src/ui/window_helpers.cpp src/ui/edit_host.cpp)
 target_compile_definitions(pulse_batch_rename_present_test PRIVATE PULSE_TEST_BATCH_RENAME_PRESENT=1)
 target_link_options(pulse_batch_rename_present_test PRIVATE /MANIFEST:NO)
 target_link_libraries(pulse_batch_rename_present_test PRIVATE
     d3d11 d2d1 dwrite dxgi dcomp dwmapi shcore ole32 windowscodecs comctl32 uxtheme gdiplus
-    shell32 shlwapi netapi32 pulse_localization)
+    shell32 shlwapi netapi32 uuid propsys pulse_localization)
 pulse_enable_lumatext(pulse_batch_rename_present_test)
 
 get_target_property(PULSE_PERMISSION_UI_SOURCES pulse_conflict_dialog_test SOURCES)
