@@ -4,6 +4,7 @@
 // used as DIPs.
 #include "ai_panel_view.h"
 #include "ai_panel_draw.h"
+#include "ai_panel_conn.h"
 
 #include "typography.h"
 #include "ui_compositor.h"
@@ -87,6 +88,7 @@ bool AiPanelView::Tick(uint64_t now_ms) {
     drawn_ = false;
     input_placed_ = false;
     menu_rect_ = {};
+    if (conn_) conn_->key_place = conn_->url_place = false;
     if (dock_anim_) {
         const float target = open_ && mode_ == AiPanelMode::Docked ? 1.0f : 0.0f;
         const float ms = static_cast<float>(now_ms - dock_start_);
@@ -180,6 +182,9 @@ AiPanelView::Palette MakePalette(const Theme& theme, bool dark) {
     p.amber = dark ? Hex(0xe3ab52) : Hex(0xa86c12);
     p.amber_bg = dark ? Hex(0x3a3020) : Hex(0xfbf0d9);
     p.amber_line = dark ? Hex(0x5e4a26) : Hex(0xefd59f);
+    p.bad = dark ? Hex(0xef8a75) : Hex(0xb4442f);
+    p.bad_bg = dark ? Hex(0x3d2622) : Hex(0xfbe9e5);
+    p.bad_line = dark ? Hex(0x62372f) : Hex(0xf0c4ba);
     p.shadow = dark ? Hex(0x000000, 0.55f) : Hex(0x1c2822, 0.20f);
     p.folder_icon = Hex(0xc49a3a);
     // Image, Document, App, Video, Archive, Neutral.
@@ -550,9 +555,19 @@ void AiPanelView::DrawModelMenu(Compositor* compositor, const AiPanelViewModel& 
     menu_model_rects_.clear();
     menu_effort_rects_ = {};
     menu_manage_ = {};
+    if (!conn_) conn_ = std::make_shared<ConnGeom>();
+    ConnGeom& g = *conn_;
+    g.hits.clear();
+    g.key_place = g.url_place = false;
     const float t = animate_ ? std::clamp(static_cast<float>(now_ms - menu_at_) / static_cast<float>(kMenuMs), 0.0f, 1.0f) : 1.0f;
     const float p = menu_shown_ ? EaseDesign(t) : 1.0f - EaseDesign(t);
-    if (p <= 0.0f) return;
+    if (p <= 0.0f) {
+        // Gone: the next opening starts at its own size, as the menu.
+        g.sized = false;
+        g.card = false;
+        g.view.reset();
+        return;
+    }
     if (t < 1.0f) decor_ = true;
     Ctx c{compositor, compositor->Dc(), brush_, s};
     // Geometry: width 300, right = button right + 6, bottom = button top - 8.
@@ -567,9 +582,62 @@ void AiPanelView::DrawModelMenu(Compositor* compositor, const AiPanelViewModel& 
     const float h = pad * 2 + head_h + opt_h * static_cast<float>(vm.models.size()) + sep_h + head_h + seg_h + desc_h + foot_h;
     const float right = model_button_.right + 6.0f * s;
     const float bottom = model_button_.top - 8.0f * s;
-    D2D1_RECT_F m = D2D1::RectF(right - w, bottom - h, right, bottom);
-    if (vm.menu_open) menu_rect_ = m;
-    const D2D1_POINT_2F origin = D2D1::Point2F(m.left + w * 0.85f, m.bottom);
+    // 管理连接: the menu unfolds into the card in place (same corner). The
+    // box eases between the two sizes and follows the card as it grows; the
+    // new content fades in over the move. While the menu fades out the last
+    // card stays.
+    if (menu_shown_) {
+        const bool card = vm.conn != nullptr;
+        if (card) g.view = vm.conn;
+        if (card != g.card) {
+            g.card = card;
+            g.content_at = now_ms;
+            g.content = g.sized ? 0.0f : 1.0f;
+        }
+    }
+    if (g.card && !g.view) g.card = false;
+    const float card_w = 340.0f * s;
+    const float target_w = g.card ? card_w : w;
+    const float target_h = g.card ? DrawConnCard(compositor, vm, pal, D2D1::RectF(right - card_w, 0.0f, right, 0.0f), s, now_ms, false)
+                                  : h;
+    if (!g.sized || !animate_) {
+        g.w = g.to_w = target_w;
+        g.h = g.to_h = target_h;
+        g.moving = false;
+        g.sized = true;
+        g.content = 1.0f;
+    } else if (std::fabs(target_w - g.to_w) > 0.5f || std::fabs(target_h - g.to_h) > 0.5f) {
+        g.from_w = g.w;
+        g.from_h = g.h;
+        g.to_w = target_w;
+        g.to_h = target_h;
+        g.at = now_ms;
+        g.moving = true;
+    }
+    if (g.moving) {
+        const float mt = static_cast<float>(now_ms - g.at) / static_cast<float>(kMenuMs);
+        if (mt >= 1.0f) {
+            g.w = g.to_w;
+            g.h = g.to_h;
+            g.moving = false;
+        } else {
+            const float e = EaseDesign(mt);
+            g.w = g.from_w + (g.to_w - g.from_w) * e;
+            g.h = g.from_h + (g.to_h - g.from_h) * e;
+        }
+        conv_anim_ = true;
+    }
+    if (g.content < 1.0f) {
+        const float ct = static_cast<float>(now_ms - g.content_at) / static_cast<float>(kMenuMs);
+        g.content = ct >= 1.0f ? 1.0f : EaseDesign(ct);
+        conv_anim_ = true;
+    }
+    const D2D1_RECT_F box = D2D1::RectF(std::round(right - g.w), std::round(bottom - g.h), right, bottom);
+    // Content keeps its own size, pinned to the box's top right; the box
+    // clips it while it moves.
+    const D2D1_RECT_F m = D2D1::RectF(right - target_w, box.top, right, box.top + target_h);
+    if (vm.menu_open) menu_rect_ = box;
+    const D2D1_POINT_2F origin = D2D1::Point2F(box.left + (box.right - box.left) * 0.85f, box.bottom);
     const float k = 0.97f + 0.03f * p;
     D2D1_MATRIX_3X2_F saved;
     c.dc->GetTransform(&saved);
@@ -578,9 +646,38 @@ void AiPanelView::DrawModelMenu(Compositor* compositor, const AiPanelViewModel& 
                                            D2D1::IdentityMatrix(), p, nullptr, D2D1_LAYER_OPTIONS1_NONE),
                     nullptr);
     const float radius = 14.0f * s;
-    c.Shadow(m, radius, 40.0f * s, 16.0f * s, pal.shadow);
-    c.Fill(m, radius, pal.card);
-    c.Stroke(m, radius, pal.line);
+    if (g.card) {
+        // .card-form: 0 22 60 rgba(28,40,34,.2), 0 3 10 .08.
+        c.Shadow(box, radius, 48.0f * s, 20.0f * s, pal.shadow);
+        c.Shadow(box, radius, 8.0f * s, 3.0f * s, Alpha(pal.shadow, 0.4f));
+    } else {
+        c.Shadow(box, radius, 40.0f * s, 16.0f * s, pal.shadow);
+    }
+    c.Fill(box, radius, pal.card);
+    ID2D1RoundedRectangleGeometry* clip = nullptr;
+    {
+        ID2D1Factory* factory = nullptr;
+        c.dc->GetFactory(&factory);
+        if (factory) {
+            factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(box, radius, radius), &clip);
+            factory->Release();
+        }
+    }
+    c.dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                           D2D1::IdentityMatrix(), g.content, nullptr, D2D1_LAYER_OPTIONS1_NONE),
+                    nullptr);
+    if (g.card) {
+        g.rect = box;
+        DrawConnCard(compositor, vm, pal, m, s, now_ms, true);
+        // The fields take their EDITs once nothing moves.
+        if (g.moving || g.content < 1.0f || t < 1.0f || !menu_shown_ || !vm.conn) g.key_place = g.url_place = false;
+        c.dc->PopLayer();
+        if (clip) clip->Release();
+        c.Stroke(box, radius, pal.line);
+        c.dc->PopLayer();
+        c.dc->SetTransform(saved);
+        return;
+    }
     float y = m.top + pad;
     const float x0 = m.left + pad, x1 = m.right - pad;
     c.Text(vm.model_heading, formats_.heading, D2D1::RectF(x0 + 10.0f * s, y + 6.0f * s, x1, y + 21.0f * s), pal.text3);
@@ -643,6 +740,9 @@ void AiPanelView::DrawModelMenu(Compositor* compositor, const AiPanelViewModel& 
         D2D1_COLOR_F link = hot ? Mix(pal.accent, pal.text, 0.2f) : pal.accent;
         c.Text(vm.manage_text, formats_.small125b, D2D1::RectF(menu_manage_.left + 2.0f * s, fy, menu_manage_.right, fy + fh), link);
     }
+    c.dc->PopLayer();
+    if (clip) clip->Release();
+    c.Stroke(box, radius, pal.line);
     c.dc->PopLayer();
     c.dc->SetTransform(saved);
 }
@@ -747,6 +847,11 @@ void AiPanelView::DrawStatusChip(Compositor* compositor, const Theme& theme, con
 AiPanelHit AiPanelView::HitTest(float x, float y) const {
     AiPanelHit hit;
     if (!drawn_ || !open_) return hit;
+    if (In(menu_rect_, x, y) && conn_ && conn_->card) {
+        for (auto it = conn_->hits.rbegin(); it != conn_->hits.rend(); ++it)
+            if (In(it->rect, x, y)) return {it->part, -1};
+        return {AiPanelPart::ConnCard, -1};
+    }
     if (In(menu_rect_, x, y)) {
         hit.part = AiPanelPart::Menu;
         for (size_t i = 0; i < menu_model_rects_.size(); ++i)

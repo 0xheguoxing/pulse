@@ -184,6 +184,7 @@ struct FinishedTask {
     std::vector<std::wstring> moved_sources; // Confirmed whole request roots, never descendants alone.
     OpType type = OpType::Copy;
     bool success = false;
+    bool is_undo = false;   // an undo's own step (never on the undo stack)
     std::vector<std::wstring> sources;
 };
 

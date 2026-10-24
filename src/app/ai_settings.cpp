@@ -110,6 +110,9 @@ Settings ParseSettings(std::string_view utf8, bool* malformed) {
             int64_t n = 0;
             if (effort->get_int(n, 0, 3)) s.assistant.effort = static_cast<int>(n);
         }
+        const std::string base_url = a->get_string("base_url");
+        if (base_url.size() <= 512 && (base_url.starts_with("https://") || base_url.starts_with("http://")))
+            s.assistant.base_url = base_url;
     }
     return s;
 }
@@ -152,6 +155,7 @@ std::string SerializeSettings(const Settings& s) {
     assistant.set("dock", s.assistant.floating ? "floating" : "docked");
     assistant.set("model", s.assistant.model);
     assistant.set("effort", s.assistant.effort);
+    if (!s.assistant.base_url.empty()) assistant.set("base_url", s.assistant.base_url);
     root.set("assistant", std::move(assistant));
     return json::Serialize(root) + "\n";
 }

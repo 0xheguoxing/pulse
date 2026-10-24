@@ -82,7 +82,9 @@ void AiChatGroupLook(const std::vector<std::wstring>& names, ui::AiIcon& icon, u
 
 // The agent loop (ai_assistant_agent.cpp).
 bool AiAgentConnected();        // a model key is stored (checked at most every 2 s)
-void AiAgentKeyChanged();       // after the key was saved or removed
+void AiAgentKeyChanged();       // after the key or the address was saved or removed
+std::wstring AiAgentBaseUrl();  // ai.json assistant.base_url, else the default
+std::wstring AiAgentDefaultBaseUrl();   // https://api.deepseek.com
 std::wstring AiAgentHost();     // "api.deepseek.com"
 void AiAgentStart(AppState& s, const std::wstring& prompt, bool with_context);
 void AiAgentStop(AppState& s);   // cancels the request and any tool still running

@@ -3050,3 +3050,47 @@ AiAsstErrEarly	IDS_AI_ASST_ERR_EARLY	4248	回答中途断开了，点「重试�
 AiAsstUndoBusy	IDS_AI_ASST_UNDO_BUSY	4249	整理还没做完，做完再撤销。	The sort is still running; undo once it finishes.	整理還沒做完，做完再復原。
 AiAsstUndoGone	IDS_AI_ASST_UNDO_GONE	4250	这次整理已经不能撤销了：之后又有别的改动。	This sort can no longer be undone: something else changed since.	這次整理已經不能復原了：之後又有別的變更。
 AiAsstMovedSome	IDS_AI_ASST_MOVED_SOME	4251	移动了 {k} / {n} 个，其余的没有成功	Moved {k} of {n}; the rest failed	移動了 {k} / {n} 個，其餘的沒有成功
+AiConnFormat	IDS_AI_CONN_FORMAT	4252	{host} · OpenAI 格式	{host} · OpenAI format	{host} · OpenAI 格式
+AiConnStatusOff	IDS_AI_CONN_STATUS_OFF	4253	未连接	Not connected	未連線
+AiConnStatusOn	IDS_AI_CONN_STATUS_ON	4254	已连接	Connected	已連線
+AiConnStatusBadKey	IDS_AI_CONN_STATUS_BAD_KEY	4255	密钥无效	Invalid key	金鑰無效
+AiConnStatusFailed	IDS_AI_CONN_STATUS_FAILED	4256	连接失败	Connection failed	連線失敗
+AiConnKeyLink	IDS_AI_CONN_KEY_LINK	4257	在哪里获取？	Where do I get one?	在哪裡取得？
+AiConnKeyPlaceholder	IDS_AI_CONN_KEY_PLACEHOLDER	4258	粘贴 sk- 开头的密钥	Paste the key that starts with sk-	貼上 sk- 開頭的金鑰
+AiConnPaste	IDS_AI_CONN_PASTE	4259	粘贴	Paste	貼上
+AiConnChange	IDS_AI_CONN_CHANGE	4260	更换	Change	更換
+AiConnKeyHelp	IDS_AI_CONN_KEY_HELP	4261	在 DeepSeek 开放平台的「API Keys」页面创建。	Create one on the API Keys page of the DeepSeek platform.	在 DeepSeek 開放平台的「API Keys」頁面建立。
+AiConnTesting	IDS_AI_CONN_TESTING	4262	正在连接 {host}…	Connecting to {host}…	正在連線 {host}…
+AiConnOkTitle	IDS_AI_CONN_OK_TITLE	4263	连接正常	Connection works	連線正常
+AiConnOkMs	IDS_AI_CONN_OK_MS	4264	 · {n} 毫秒	 · {n} ms	 · {n} 毫秒
+AiConnCheckedNow	IDS_AI_CONN_CHECKED_NOW	4265	上次检查：刚刚	Last checked: just now	上次檢查：剛剛
+AiConnCheckedMin	IDS_AI_CONN_CHECKED_MIN	4266	上次检查：{n} 分钟前	Last checked: {n} min ago	上次檢查：{n} 分鐘前
+AiConnErrAuth	IDS_AI_CONN_ERR_AUTH	4267	密钥无效（401）	Invalid key (401)	金鑰無效（401）
+AiConnErrAuthSub	IDS_AI_CONN_ERR_AUTH_SUB	4268	检查是否复制完整，或在开放平台重新创建一个。	Check that it was copied whole, or create a new one on the platform.	檢查是否複製完整，或在開放平台重新建立一個。
+AiConnErrBalance	IDS_AI_CONN_ERR_BALANCE	4269	余额不足（402）	Insufficient balance (402)	餘額不足（402）
+AiConnErrBalanceSub	IDS_AI_CONN_ERR_BALANCE_SUB	4270	到 DeepSeek 开放平台充值后再试。	Top up on the DeepSeek platform, then try again.	到 DeepSeek 開放平台儲值後再試。
+AiConnErrRate	IDS_AI_CONN_ERR_RATE	4271	请求太频繁（429）	Too many requests (429)	請求太頻繁（429）
+AiConnErrRateSub	IDS_AI_CONN_ERR_RATE_SUB	4272	稍等片刻再试。	Wait a moment and try again.	稍等片刻再試。
+AiConnErrServer	IDS_AI_CONN_ERR_SERVER	4273	服务暂时不可用（{code}）	Service unavailable ({code})	服務暫時無法使用（{code}）
+AiConnErrServerSub	IDS_AI_CONN_ERR_SERVER_SUB	4274	服务那边出了问题，稍后再试。	The service has a problem; try again later.	服務那邊出了問題，稍後再試。
+AiConnErrNetwork	IDS_AI_CONN_ERR_NETWORK	4275	连不上 {host}	Can't reach {host}	連不上 {host}
+AiConnErrNetworkSub	IDS_AI_CONN_ERR_NETWORK_SUB	4276	检查网络，或在「高级」里核对接口地址。	Check the network, or the address under Advanced.	檢查網路，或在「進階」裡核對介面位址。
+AiConnErrOther	IDS_AI_CONN_ERR_OTHER	4277	连接失败（{code}）	Connection failed ({code})	連線失敗（{code}）
+AiConnErrOtherSub	IDS_AI_CONN_ERR_OTHER_SUB	4278	在「高级」里核对接口地址是否正确。	Check the address under Advanced.	在「進階」裡核對介面位址是否正確。
+AiConnErrSave	IDS_AI_CONN_ERR_SAVE	4279	无法保存密钥	Couldn't save the key	無法儲存金鑰
+AiConnErrSaveSub	IDS_AI_CONN_ERR_SAVE_SUB	4280	Windows 加密存储失败，请再试一次。	Windows encrypted storage failed; try again.	Windows 加密儲存失敗，請再試一次。
+AiConnModels	IDS_AI_CONN_MODELS	4281	可用模型	Available models	可用模型
+AiConnModelFlash	IDS_AI_CONN_MODEL_FLASH	4282	快，日常整理	Fast, everyday tidying	快，日常整理
+AiConnModelPro	IDS_AI_CONN_MODEL_PRO	4283	更强的推理	Stronger reasoning	更強的推理
+AiConnDefault	IDS_AI_CONN_DEFAULT	4284	默认	Default	預設
+AiConnAdvanced	IDS_AI_CONN_ADVANCED	4285	高级	Advanced	進階
+AiConnUrl	IDS_AI_CONN_URL	4286	接口地址	Address	介面位址
+AiConnUrlHelp	IDS_AI_CONN_URL_HELP	4287	兼容 OpenAI 格式的服务都可以，留空用默认地址。	Any OpenAI-format service works; leave empty for the default.	相容 OpenAI 格式的服務都可以，留空用預設位址。
+AiConnSafe	IDS_AI_CONN_SAFE	4288	密钥用 Windows 加密，只保存在这台电脑上，只发给上面的服务。不会写进设置文件或日志。	The key is encrypted by Windows, kept only on this PC and sent only to the service above. It never goes into settings files or logs.	金鑰用 Windows 加密，只儲存在這台電腦上，只傳給上面的服務。不會寫進設定檔或記錄。
+AiConnRemove	IDS_AI_CONN_REMOVE	4289	移除密钥	Remove key	移除金鑰
+AiConnTest	IDS_AI_CONN_TEST	4290	测试连接	Test	測試連線
+AiConnSave	IDS_AI_CONN_SAVE	4291	保存	Save	儲存
+AiConnDone	IDS_AI_CONN_DONE	4292	完成	Done	完成
+AiConnBack	IDS_AI_CONN_BACK	4293	返回	Back	返回
+AiConnShowKey	IDS_AI_CONN_SHOW_KEY	4294	显示密钥	Show key	顯示金鑰
+AiConnHideKey	IDS_AI_CONN_HIDE_KEY	4295	隐藏密钥	Hide key	隱藏金鑰

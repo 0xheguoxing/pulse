@@ -23,6 +23,7 @@
 #include "ai_broker.h"
 #include "ai_model_key.h"
 #include "ai_model_stream.h"
+#include "ai_settings.h"
 #include "ai_tools_fs.h"
 #include "app_internal.h"
 #include "app_navigation.h"
@@ -1060,7 +1061,7 @@ void SendRound(AppState& s) {
         c.think_start = Now();
     }
     app::ai::ModelEndpoint endpoint;
-    endpoint.base_url = kBaseUrl;
+    endpoint.base_url = AiAgentBaseUrl();
     endpoint.key = std::move(key);
     a.stream = app::ai::ModelStream::Start(std::move(endpoint), Body(s, a));
     const uint64_t gen = a.generation;
@@ -1079,6 +1080,8 @@ void SendRound(AppState& s) {
 namespace {
 uint64_t g_key_checked = 0;
 bool g_key_present = false;
+bool g_base_loaded = false;
+std::wstring g_base_url;
 } // namespace
 
 bool AiAgentConnected() {
@@ -1090,9 +1093,23 @@ bool AiAgentConnected() {
     return g_key_present;
 }
 
-void AiAgentKeyChanged() { g_key_checked = 0; }
+void AiAgentKeyChanged() {
+    g_key_checked = 0;
+    g_base_loaded = false;
+}
 
-std::wstring AiAgentHost() { return app::ai::ModelHost(kBaseUrl); }
+std::wstring AiAgentBaseUrl() {
+    if (!g_base_loaded) {
+        g_base_loaded = true;
+        const std::string url = app::ai::LoadSettings().assistant.base_url;
+        g_base_url = url.empty() ? std::wstring(kBaseUrl) : json::Wide(url);
+    }
+    return g_base_url;
+}
+
+std::wstring AiAgentDefaultBaseUrl() { return kBaseUrl; }
+
+std::wstring AiAgentHost() { return app::ai::ModelHost(AiAgentBaseUrl()); }
 
 void AiAgentStart(AppState& s, const std::wstring& prompt, bool with_context) {
     AiAgent& a = Agent(s);

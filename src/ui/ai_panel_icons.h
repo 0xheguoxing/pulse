@@ -46,6 +46,10 @@ enum class AiIcon : uint8_t {
     Tag,
     FolderPlus,
     Search,
+    ChevronLeft,
+    CheckCircle,
+    AlertCircle,
+    EyeOff,
     Count
 };
 

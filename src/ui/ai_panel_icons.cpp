@@ -156,6 +156,23 @@ constexpr IconPart k_search[] = {
     {"M4.5 11A6.5 6.5 0 1 0 17.5 11A6.5 6.5 0 1 0 4.5 11Z", 0, 0x000000u, 1.6f, 1.0f},
     {"M16 16l4.5 4.5", 0, 0x000000u, 1.6f, 1.0f},
 };
+// 管理连接 (plans/ai/Pulse_AI助手_管理连接.html, its 20 px boxes scaled to 24).
+constexpr IconPart k_chevl[] = {
+    {"M15 5.4L8.4 12l6.6 6.6", 0, 0x000000u, 1.9f, 1.0f},
+};
+constexpr IconPart k_okc[] = {
+    {"M3 12A9 9 0 1 0 21 12A9 9 0 1 0 3 12Z", 0, 0x000000u, 1.8f, 1.0f},
+    {"M8.16 12.24l2.64 2.64 5.16-5.52", 0, 0x000000u, 2.16f, 1.0f},
+};
+constexpr IconPart k_alert[] = {
+    {"M3 12A9 9 0 1 0 21 12A9 9 0 1 0 3 12Z", 0, 0x000000u, 1.8f, 1.0f},
+    {"M12 7.44v5.52M12 16.32v.12", 0, 0x000000u, 1.92f, 1.0f},
+};
+constexpr IconPart k_eyeoff[] = {
+    {"M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M9.4 12A2.6 2.6 0 1 0 14.6 12A2.6 2.6 0 1 0 9.4 12Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M4.5 4.5l15 15", 0, 0x000000u, 1.6f, 1.0f},
+};
 
 constexpr IconDef kIcons[] = {
     {k_spark, std::size(k_spark)},
@@ -194,6 +211,10 @@ constexpr IconDef kIcons[] = {
     {k_tag, std::size(k_tag)},
     {k_folderplus, std::size(k_folderplus)},
     {k_search, std::size(k_search)},
+    {k_chevl, std::size(k_chevl)},
+    {k_okc, std::size(k_okc)},
+    {k_alert, std::size(k_alert)},
+    {k_eyeoff, std::size(k_eyeoff)},
 };
 
 static_assert(std::size(kIcons) == static_cast<size_t>(AiIcon::Count), "one table entry per AiIcon");

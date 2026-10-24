@@ -39,6 +39,7 @@ struct AssistantPrefs {
     bool floating = false;                    // "dock": "docked" | "floating"
     std::string model = "deepseek-flash";
     int effort = 2;                           // 0 off, 1 low, 2 medium, 3 high
+    std::string base_url;                     // 管理连接 · 高级; empty: https://api.deepseek.com
 };
 
 struct Settings {

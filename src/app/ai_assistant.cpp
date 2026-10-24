@@ -2,11 +2,11 @@
 #include "ai_assistant.h"
 
 #include "ai_assistant_chat.h"
+#include "ai_assistant_conn.h"
 #include "ai_settings.h"
 #include "app_internal.h"
 #include "app_navigation.h"
 #include "../common/localization.h"
-#include "../ui/settings_page_ids.h"
 #include "../ui/typography.h"
 #include "../ui/ui_motion.h"
 #include "../ui/ui_renderer.h"
@@ -175,6 +175,8 @@ void PaintPlaceholder(AppState& s, HWND hwnd) {
     ReleaseDC(hwnd, hdc);
 }
 
+void CloseMenu(AppState& s);
+
 LRESULT CALLBACK ComposerProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR ref) {
     AppState& s = *reinterpret_cast<AppState*>(ref);
     AiAssistantState& a = s.aiAssistant;
@@ -188,8 +190,7 @@ LRESULT CALLBACK ComposerProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PT
         }
         if (wp == VK_ESCAPE) {
             if (a.menu_open) {
-                a.menu_open = false;
-                a.menu_closed_at = ui::motion::NowMs();
+                CloseMenu(s);
                 Redraw(s);
             } else if (a.chat && a.chat->busy) {
                 AiChatStop(s);
@@ -289,6 +290,7 @@ void HideEdit(AppState& s) {
 
 void CloseMenu(AppState& s) {
     AiAssistantState& a = s.aiAssistant;
+    AiConnClose(s);
     if (!a.menu_open) return;
     a.menu_open = false;
     a.menu_closed_at = ui::motion::NowMs();
@@ -298,7 +300,7 @@ void CloseMenu(AppState& s) {
 bool HasTip(ui::AiPanelPart part) {
     using P = ui::AiPanelPart;
     return part == P::NewChat || part == P::Mode || part == P::Close || part == P::ActCopy || part == P::ActRetry ||
-           part == P::ActThumb;
+           part == P::ActThumb || part == P::ConnBack || part == P::ConnClose || part == P::ConnEye;
 }
 
 void ShowTipLater(AppState& s) {
@@ -311,6 +313,14 @@ void ShowTipLater(AppState& s) {
 void Activate(AppState& s, const ui::AiPanelHit& hit) {
     AiAssistantState& a = s.aiAssistant;
     using P = ui::AiPanelPart;
+    if (bool close_menu = false; AiConnActivate(s, hit, close_menu)) {
+        if (close_menu) {
+            CloseMenu(s);
+            a.focus_pending = true;
+        }
+        Redraw(s);
+        return;
+    }
     switch (hit.part) {
     case P::NewChat:
         CloseMenu(s);
@@ -364,8 +374,8 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
         }
         break;
     case P::MenuManage:
-        CloseMenu(s);
-        OpenSettingsTab(s, ui::kSettingsPageAi);
+        // The menu unfolds into the 管理连接 card in place.
+        AiConnOpen(s);
         break;
     case P::Send:
         CloseMenu(s);
@@ -419,6 +429,7 @@ void AiAssistantClose(AppState& s, bool animate) {
     AiAssistantState& a = s.aiAssistant;
     if (!a.open) return;
     a.open = false;
+    AiConnClose(s);
     a.menu_open = false;
     a.hover = {};
     a.pressed = {};
@@ -507,6 +518,7 @@ void FillAiAssistantVm(AppState& s, ui::WindowViewModel& vm) {
     p.connection_text = p.connected ? Fill(Text(I::AiAsstConnected), L"{host}", AiAgentHost())
                                     : Text(I::AiAsstNotConnected);
     p.manage_text = Text(I::AiAsstManage);
+    AiConnFill(s, p);
 
     p.hover = a.hover;
     p.pressed = a.pressed;
@@ -514,7 +526,11 @@ void FillAiAssistantVm(AppState& s, ui::WindowViewModel& vm) {
     using P = ui::AiPanelPart;
     if (HasTip(a.hover.part) && a.pressed.part == P::None && GetTickCount64() - a.hover_since >= kTipDelayMs) {
         const P part = a.hover.part;
-        vm.tooltip_text = Text(part == P::NewChat ? I::AiAsstNewChat
+        std::wstring conn_tip;
+        if (AiConnTip(s, part, conn_tip)) {
+            // A card part under a pointer that has not moved since ‹ / ⌄.
+            if (AiConnIsOpen(s)) vm.tooltip_text = std::move(conn_tip);
+        } else vm.tooltip_text = Text(part == P::NewChat ? I::AiAsstNewChat
                                : part == P::Close ? I::AiAsstCollapse
                                : part == P::ActCopy ? I::AiAsstCopy
                                : part == P::ActRetry ? I::AiAsstRetry
@@ -527,6 +543,7 @@ void FillAiAssistantVm(AppState& s, ui::WindowViewModel& vm) {
 
 void AiAssistantLayout(AppState& s) {
     AiAssistantState& a = s.aiAssistant;
+    AiConnLayout(s);
     if (!a.edit) return;
     const ui::AiPanelView& view = s.renderer.AiPanel();
     const bool menu_covers = a.menu_open || ui::motion::NowMs() - a.menu_closed_at < kMenuFadeMs;
@@ -634,7 +651,8 @@ bool AiAssistantSetCursor(AppState& s, int x, int y) {
     const AiAssistantState& a = s.aiAssistant;
     if (!a.open || !s.renderer.AiPanel().Contains(static_cast<float>(x), static_cast<float>(y))) return false;
     const ui::AiPanelHit hit = s.renderer.AiPanel().HitTest(static_cast<float>(x), static_cast<float>(y));
-    SetCursor(LoadCursorW(nullptr, hit.part == ui::AiPanelPart::Input ? IDC_IBEAM : IDC_ARROW));
+    const bool text = hit.part == ui::AiPanelPart::Input || AiConnIsField(hit.part);
+    SetCursor(LoadCursorW(nullptr, text ? IDC_IBEAM : IDC_ARROW));
     return true;
 }
 
@@ -655,7 +673,8 @@ bool AiAssistantEscape(AppState& s) {
 
 HBRUSH AiAssistantCtlColor(AppState& s, HDC hdc, HWND edit) {
     AiAssistantState& a = s.aiAssistant;
-    if (!edit || edit != a.edit) return nullptr;
+    if (!edit) return nullptr;
+    if (edit != a.edit) return AiConnCtlColor(s, hdc, edit);
     const ui::AiPanelView& view = s.renderer.AiPanel();
     const COLORREF back = ToColorRef(view.CardColor());
     if (!a.brush || a.brush_color != back) {
@@ -671,6 +690,7 @@ HBRUSH AiAssistantCtlColor(AppState& s, HDC hdc, HWND edit) {
 
 void AiAssistantDpiChanged(AppState& s) {
     AiAssistantState& a = s.aiAssistant;
+    AiConnDpiChanged(s);
     if (!a.edit) return;
     EnsureFont(s);
     ReadComposerMetrics(a);
@@ -680,6 +700,7 @@ void AiAssistantDpiChanged(AppState& s) {
 void AiAssistantDestroy(AppState& s) {
     AiAssistantState& a = s.aiAssistant;
     if (s.hwnd) KillTimer(s.hwnd, kTipTimer);
+    AiConnDestroy(s);
     if (a.edit) DestroyWindow(a.edit);
     a.edit = nullptr;
     if (a.font) DeleteObject(a.font);

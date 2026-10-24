@@ -479,7 +479,10 @@ void NoteDeleteFinished(AppState& s, const ops::FinishedTask& done) {
         if (done.success) s.leavingDoneAt = ui::motion::NowMs();
         else s.leavingPaths.clear();
     }
-    if (done.type != ops::OpType::RecycleDelete || !done.success || done.sources.empty() ||
+    // An undo that recycles what it had created (new folders) is not a
+    // delete the user can take back: its step is not on the undo stack, so
+    // the snack's Undo would undo something else.
+    if (done.type != ops::OpType::RecycleDelete || !done.success || done.sources.empty() || done.is_undo ||
         !s.ops.CanUndo() || !s.hwnd)
         return;
     std::wstring title = l10n::Get(l10n::StringId::DeleteSnackTitle);

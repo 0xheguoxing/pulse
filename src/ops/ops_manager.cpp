@@ -2285,6 +2285,7 @@ void OpsManager::WorkerThread() {
             FinishedTask finished;
             finished.task_id = item.seq;
             finished.type = item.req.type;
+            finished.is_undo = item.req.is_undo;
             finished.sources = item.req.sources;
             finished.success = diagnostic_status.phase == OpPhase::Completed;
             for (const auto& source : item.req.sources)

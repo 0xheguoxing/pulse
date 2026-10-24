@@ -13,12 +13,14 @@
 #include <dwrite.h>
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace pulse::ui {
 
 class Compositor;
+struct AiConnView;   // 管理连接 (ai_panel_conn.h)
 
 enum class AiPanelMode : uint8_t { Docked = 0, Floating = 1 };
 
@@ -56,6 +58,20 @@ enum class AiPanelPart : uint8_t {
     ActCopy,
     ActRetry,
     ActThumb,
+    // 管理连接 card (the model menu unfolded).
+    ConnCard,       // the card's background (swallows the click)
+    ConnBack,
+    ConnClose,
+    ConnLink,       // 在哪里获取？
+    ConnPaste,
+    ConnEye,
+    ConnChange,
+    ConnAdvanced,
+    ConnTest,
+    ConnSave,
+    ConnRemove,
+    ConnKeyField,
+    ConnUrlField,
 };
 
 struct AiPanelHit {
@@ -199,6 +215,8 @@ struct AiPanelViewModel {
     bool connected = false;
     std::wstring connection_text;     // 已连接 api.deepseek.com / 未连接
     std::wstring manage_text;         // 管理连接
+    // 管理连接: non-null while the menu is unfolded into the connection card.
+    std::shared_ptr<const AiConnView> conn;
     // Pointer.
     AiPanelHit hover;
     AiPanelHit pressed;
@@ -259,6 +277,9 @@ public:
     D2D1_COLOR_F TextColor() const noexcept { return text_color_; }
     D2D1_COLOR_F PlaceholderColor() const noexcept { return text3_color_; }
     D2D1_RECT_F ModelButtonRect() const noexcept { return model_button_; }
+    // 管理连接 card: the text box of the key (0) or address (1) field when
+    // the card is settled and that field takes an EDIT this frame.
+    bool ConnFieldRect(int field, D2D1_RECT_F& rect) const;
 
     // The status bar chip; its motion (spinning spark, amber ring) asks for
     // decorative frames like the open panel does.
@@ -304,6 +325,10 @@ private:
                       const D2D1_RECT_F& box, float scale, uint64_t now_ms);
     void DrawModelMenu(Compositor* compositor, const AiPanelViewModel& vm, const Palette& pal,
                        float scale, uint64_t now_ms);
+    // ai_panel_conn.cpp. Lays out (draw = false: only measures) the card in
+    // `card` (its top-left; the width is the card's) and returns its height.
+    float DrawConnCard(Compositor* compositor, const AiPanelViewModel& vm, const Palette& pal,
+                       const D2D1_RECT_F& card, float scale, uint64_t now_ms, bool draw);
 
     bool open_ = false;
     AiPanelMode mode_ = AiPanelMode::Docked;
@@ -338,6 +363,10 @@ private:
     std::vector<D2D1_RECT_F> menu_model_rects_;
     std::array<D2D1_RECT_F, 4> menu_effort_rects_{};
     D2D1_RECT_F menu_manage_{};
+    // 管理连接 card: morph between the menu and the card, its hit rects and
+    // its own text formats (ai_panel_conn.h).
+    struct ConnGeom;
+    std::shared_ptr<ConnGeom> conn_;
     D2D1_RECT_F conversation_rect_{};
     D2D1_COLOR_F card_color_{1, 1, 1, 1};
     D2D1_COLOR_F text_color_{0, 0, 0, 1};

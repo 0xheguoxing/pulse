@@ -13,6 +13,7 @@ namespace pulse {
 struct AppState;
 namespace ui { struct WindowViewModel; }
 struct AiChat;   // the conversation and its driver (ai_assistant_chat.h)
+struct AiConnUi; // 管理连接 card: fields, test, key (ai_assistant_conn.h)
 
 struct AiAssistantState {
     bool open = false;
@@ -45,6 +46,8 @@ struct AiAssistantState {
     // Conversation; created on first use. Opaque here so the driver can
     // change without rebuilding everything that sees AppState.
     std::shared_ptr<AiChat> chat;
+    // 管理连接 card; created when it first opens.
+    std::shared_ptr<AiConnUi> conn;
 };
 
 // The status bar chip: opens or closes the panel (an outside client's open
