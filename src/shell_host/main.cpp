@@ -15,6 +15,7 @@
 #include "packaged_ctx_handlers.h"
 #include "../common/current_user_security.h"
 #include "../common/path_utils.h"
+#include "../common/shell_id.h"
 #include "../common/recycle_index.h"
 #include "../common/crash_reporter.h"
 #include <windows.h>
@@ -322,6 +323,7 @@ bool IsShellNamespacePath(const std::wstring& path) {
 }
 
 HRESULT MakeItem(const std::wstring& path, IShellItem** out) {
+    if (pulse::shell_id::IsPidlId(path)) return pulse::shell_id::CreateItem(path, IID_PPV_ARGS(out));
     const std::wstring parsed = ToParsingPath(path);
     HRESULT hr = SHCreateItemFromParsingName(parsed.c_str(), nullptr, IID_PPV_ARGS(out));
     if (FAILED(hr) && parsed != path)
@@ -616,7 +618,7 @@ HRESULT ShellVerbMenu(const std::vector<std::wstring>& paths, bool background, H
     std::vector<PIDLIST_ABSOLUTE> pidls;
     for (const auto& p : paths) {
         PIDLIST_ABSOLUTE pidl = nullptr;
-        hr = SHParseDisplayName(ToParsingPath(p).c_str(), nullptr, &pidl, 0, nullptr);
+        hr = pulse::shell_id::ParseId(ToParsingPath(p), &pidl);
         if (FAILED(hr) || !pidl) {
             if (SUCCEEDED(hr)) hr = HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
             break;
@@ -698,7 +700,7 @@ HRESULT DropItemsInto(const std::wstring& dir, const std::vector<std::wstring>& 
     HRESULT hr = S_OK;
     for (const auto& item : items) {
         PIDLIST_ABSOLUTE pidl = nullptr;
-        hr = SHParseDisplayName(ToParsingPath(item).c_str(), nullptr, &pidl, 0, nullptr);
+        hr = pulse::shell_id::ParseId(ToParsingPath(item), &pidl);
         if (FAILED(hr) || !pidl) {
             if (SUCCEEDED(hr)) hr = HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
             break;
@@ -1395,7 +1397,7 @@ HRESULT BuildCtxMenu(const CtxSessionData& d, IContextMenu** out_menu, HMENU* ou
         std::vector<PIDLIST_ABSOLUTE> pidls;
         for (const auto& p : d.paths) {
             PIDLIST_ABSOLUTE pidl = nullptr;
-            if (SUCCEEDED(SHParseDisplayName(ToParsingPath(p).c_str(), nullptr, &pidl, 0, nullptr)))
+            if (SUCCEEDED(pulse::shell_id::ParseId(ToParsingPath(p), &pidl)))
                 pidls.push_back(pidl);
         }
         if (pidls.empty()) return E_INVALIDARG;

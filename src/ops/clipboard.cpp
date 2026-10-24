@@ -1,6 +1,7 @@
 // clipboard.cpp — CF_HDROP + CFSTR_PREFERREDDROPEFFECT interop.
 #include "clipboard.h"
 #include "../common/path_utils.h"
+#include "../common/shell_id.h"
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -216,7 +217,7 @@ bool WriteShellItemsClipboard(const std::vector<std::wstring>& shell_ids, bool c
     bool parsed = true;
     for (const auto& id : shell_ids) {
         PIDLIST_ABSOLUTE pidl = nullptr;
-        if (FAILED(SHParseDisplayName(id.c_str(), nullptr, &pidl, 0, nullptr)) || !pidl) {
+        if (FAILED(shell_id::ParseId(id, &pidl)) || !pidl) {
             parsed = false;
             break;
         }
@@ -272,9 +273,13 @@ bool ReadClipboardShellItems(std::vector<std::wstring>& shell_ids, bool& cut) {
             if (FAILED(items->GetItemAt(i, &item)) || !item) continue;
             PWSTR raw = nullptr;
             if (SUCCEEDED(item->GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING, &raw)) && raw) {
-                std::wstring id(raw);
+                const bool namespace_item = raw[0] == L':' && raw[1] == L':';
                 CoTaskMemFree(raw);
-                if (id.size() > 2 && id[0] == L':' && id[1] == L':') shell_ids.push_back(std::move(id));
+                // Kept as its ID list: a phone item's parsing name does not parse back.
+                if (namespace_item) {
+                    std::wstring id = shell_id::FromItem(item);
+                    if (!id.empty()) shell_ids.push_back(std::move(id));
+                }
             }
             item->Release();
         }

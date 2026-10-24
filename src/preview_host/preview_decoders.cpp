@@ -2,6 +2,7 @@
 #include "gif_decoder.h"
 #include "../ipc/preview_protocol.h"
 #include "../common/preview_extensions.h"
+#include "../common/shell_id.h"
 #include "archive_listing.h"
 #include "content_sniff.h"
 #include "docx_document.h"
@@ -2260,7 +2261,7 @@ static DecodeStep RunDeviceItem(const DecodeRequest& q, DecodeResult& r) {
     r.error = L"device-no-thumbnail";
     if (q.is_directory) return DecodeStep::Failed;
     ComPtr<IShellItem> item;
-    if (FAILED(SHCreateItemFromParsingName(q.path.c_str(), nullptr, IID_PPV_ARGS(&item)))) return DecodeStep::Failed;
+    if (FAILED(pulse::shell_id::CreateItem(q.path, IID_PPV_ARGS(&item)))) return DecodeStep::Failed;
     ComPtr<IShellItemImageFactory> factory;
     if (FAILED(item.As(&factory))) return DecodeStep::Failed;
     const SIZE size{static_cast<LONG>(q.cap), static_cast<LONG>(q.cap)};

@@ -11,9 +11,11 @@
 #include "../ipc/shell_client.h"
 #include "../common/localization.h"
 #include "../common/current_user_security.h"
+#include "../common/shell_id.h"
 #include "../ops/recycle_empty.h"
 #include <windows.h>
 #include <oleidl.h>
+#include <shlobj.h>
 #include <winioctl.h>
 #include <chrono>
 #include <cstdio>
@@ -350,6 +352,48 @@ int wmain(int argc, wchar_t** argv) {
               L"shell routing: a shell id on either side picks the shell engine, paths never do");
     }
 
+    // A phone item's id is its ID list ("::pidl:<hex>"): its parsing name does
+    // not parse back below the device (SHParseDisplayName: E_INVALIDARG).
+    {
+        const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        wchar_t windows_dir[MAX_PATH] = {};
+        GetWindowsDirectoryW(windows_dir, MAX_PATH);
+        PIDLIST_ABSOLUTE original = nullptr;
+        PIDLIST_ABSOLUTE decoded = nullptr;
+        std::wstring id;
+        if (SUCCEEDED(SHParseDisplayName(windows_dir, nullptr, &original, 0, nullptr)) && original)
+            id = pulse::shell_id::EncodePidl(original);
+        Check(pulse::shell_id::IsPidlId(id) && ops::IsShellItemId(id) &&
+                  id.find_first_of(L"\\/") == std::wstring::npos &&
+                  SUCCEEDED(pulse::shell_id::ParseId(id, &decoded)) && decoded && ILIsEqual(original, decoded),
+              L"shell id: an ID list round-trips through its id, a shell id with no path separators");
+        CoTaskMemFree(decoded);
+        decoded = nullptr;
+        IShellItem* item = nullptr;
+        LPWSTR path = nullptr;
+        bool same_path = false;
+        if (SUCCEEDED(pulse::shell_id::CreateItem(id, IID_PPV_ARGS(&item))) && item &&
+            SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path)
+            same_path = _wcsicmp(path, windows_dir) == 0;
+        Check(same_path && pulse::shell_id::FromItem(item) == id,
+              L"shell id: the item made from an id is the same item, and gives the same id");
+        if (path) CoTaskMemFree(path);
+        if (item) item->Release();
+        CoTaskMemFree(original);
+        bool all_rejected = true;
+        for (const wchar_t* bad : {L"::pidl:0", L"::pidl:00", L"::pidl:0G00", L"::pidl:0400", L"::pidl:030000",
+                                   L"::pidl:01000000", L"::pidl:0000FF"}) {
+            if (pulse::shell_id::ParseId(bad, &decoded) != E_INVALIDARG || decoded) all_rejected = false;
+            CoTaskMemFree(decoded);
+            decoded = nullptr;
+        }
+        Check(all_rejected, L"shell id: a malformed ID list is refused, never read past its end");
+        Check(SUCCEEDED(pulse::shell_id::ParseId(L"::pidl:0000", &decoded)) && decoded && ILIsEmpty(decoded),
+              L"shell id: the empty ID list (the desktop) decodes");
+        CoTaskMemFree(decoded);
+        if (SUCCEEDED(co)) CoUninitialize();
+    }
+
     if (argc > 1 && std::wstring_view(argv[1]) == L"--shell-transfer") {
         // A phone's operations without a phone: a local folder named by its
         // shell parsing name under This PC is a shell id too, so the same
@@ -417,6 +461,46 @@ int wmain(int argc, wchar_t** argv) {
         status = RunOp(SimpleOp(ops::OpType::RealDelete, {folder_id.c_str()}));
         Check(status.phase == ops::OpPhase::Completed && !Exists((target / L"新建文件夹").wstring()),
               L"shell transfer: delete in a shell folder");
+
+        // The same operations with ID-list ids, as a phone's items travel now.
+        {
+            const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+            const auto pidl_id = [](const std::filesystem::path& path) {
+                PIDLIST_ABSOLUTE pidl = nullptr;
+                std::wstring id;
+                if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr)) && pidl)
+                    id = pulse::shell_id::EncodePidl(pidl);
+                CoTaskMemFree(pidl);
+                return id;
+            };
+            const std::wstring target_pidl = pidl_id(target);
+            Check(pulse::shell_id::IsPidlId(target_pidl), L"shell transfer (ID list): fixture id");
+            g_ops.DrainCompletions();
+            status = RunOp(SimpleOp(ops::OpType::Copy, {(back / L"sample.txt").c_str()}, target_pidl.c_str()));
+            Check(status.phase == ops::OpPhase::Completed && Exists((target / L"sample.txt").wstring()),
+                  L"shell transfer (ID list): copy into a folder named by its ID list");
+            const std::wstring sample_pidl = pidl_id(target / L"sample.txt");
+            status = RunOp(SimpleOp(ops::OpType::Copy, {sample_pidl.c_str()}, target_pidl.c_str()));
+            Check(status.phase == ops::OpPhase::Completed && Exists((target / L"sample - 副本.txt").wstring()),
+                  L"shell transfer (ID list): a copy into its own folder is a copy - 副本, as in Explorer");
+            if (!Exists((target / L"sample - 副本.txt").wstring()))
+                fwprintf(stderr, L"[test] pidl self copy: phase=%d error=%ls\n", static_cast<int>(status.phase),
+                         status.last_error.c_str());
+            const std::wstring copy_pidl = pidl_id(target / L"sample - 副本.txt");
+            status = RunOp(SimpleOp(ops::OpType::Move, {copy_pidl.c_str()}, back.c_str()));
+            Check(status.phase == ops::OpPhase::Completed && Exists((back / L"sample - 副本.txt").wstring()) &&
+                      !Exists((target / L"sample - 副本.txt").wstring()),
+                  L"shell transfer (ID list): move out to a local folder");
+            status = RunOp(SimpleOp(ops::OpType::CreateFolder, {}, target_pidl.c_str(), L"列表文件夹"));
+            Check(status.phase == ops::OpPhase::Completed && Exists((target / L"列表文件夹").wstring()),
+                  L"shell transfer (ID list): new folder");
+            const std::wstring new_folder_pidl = pidl_id(target / L"列表文件夹");
+            status = RunOp(SimpleOp(ops::OpType::RealDelete, {new_folder_pidl.c_str()}));
+            Check(status.phase == ops::OpPhase::Completed && !Exists((target / L"列表文件夹").wstring()),
+                  L"shell transfer (ID list): delete");
+            g_ops.DrainCompletions();
+            if (SUCCEEDED(co)) CoUninitialize();
+        }
         g_ops.Stop();
         std::error_code ignored;
         std::filesystem::remove_all(root, ignored);

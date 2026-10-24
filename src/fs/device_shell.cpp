@@ -3,6 +3,8 @@
 // STA thread only.
 #include "device_source.h"
 
+#include "../common/shell_id.h"
+
 #include <windows.h>
 #include <cfgmgr32.h>
 #include <objbase.h>
@@ -122,7 +124,7 @@ public:
                 if (FAILED(storage_item->GetAttributes(SFGAO_FOLDER, &attrs)) || !(attrs & SFGAO_FOLDER))
                     return true;
                 StorageInfo storage;
-                storage.id = DisplayName(storage_item, SIGDN_DESKTOPABSOLUTEPARSING);
+                storage.id = shell_id::FromItem(storage_item);  // parsing names below the device do not parse back
                 storage.name = DisplayName(storage_item, SIGDN_NORMALDISPLAY);
                 storage.total = UInt64Property(storage_item, PKEY_Capacity);
                 storage.free = UInt64Property(storage_item, PKEY_FreeSpace);
@@ -151,7 +153,7 @@ public:
         // Remembered for ShellId(): the folder just listed is the one the
         // app asks for next (paste into it, its properties).
         last_listed_ = FormatDevicePath(folder);
-        last_listed_id_ = DisplayName(item.Get(), SIGDN_DESKTOPABSOLUTEPARSING);
+        last_listed_id_ = shell_id::FromItem(item.Get());
         std::vector<DirEntry> batch;
         batch.reserve(kDeviceBatchSize);
         bool stopped = false;
@@ -170,7 +172,7 @@ public:
             // be deleted, as in Explorer) is what Pulse offers.
             if (SUCCEEDED(attrs_hr) && !(attrs & (SFGAO_CANDELETE | SFGAO_CANRENAME)))
                 entry.attrs |= FILE_ATTRIBUTE_READONLY;
-            entry.shell_id = DisplayName(child, SIGDN_DESKTOPABSOLUTEPARSING);
+            entry.shell_id = shell_id::FromItem(child);
             ComPtr<IShellItem2> item2;
             if (SUCCEEDED(child->QueryInterface(IID_PPV_ARGS(&item2)))) {
                 ULONGLONG size = 0;
@@ -213,7 +215,7 @@ public:
             return last_listed_id_;
         ComPtr<IShellItem> item;
         if (Resolve(path, &item) != DeviceError::None) return {};
-        return DisplayName(item.Get(), SIGDN_DESKTOPABSOLUTEPARSING);
+        return shell_id::FromItem(item.Get());
     }
 
     HRESULT ShellItem(const DevicePath& path, IShellItem** out) override {
@@ -269,7 +271,7 @@ private:
 
     std::unordered_map<std::wstring, std::wstring> parsing_by_key_;
     std::wstring last_listed_;     // pulse:device: path of the last Enumerate
-    std::wstring last_listed_id_;  // and its shell parsing name
+    std::wstring last_listed_id_;  // and its shell id (ID list)
 };
 
 } // namespace

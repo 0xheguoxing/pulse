@@ -2,6 +2,7 @@
 #include "app_window_title.h"
 #include "../fs/drive_kind.h"
 #include "../fs/device_path.h"
+#include "../common/shell_id.h"
 #include "device_registry.h"
 #include "folder_alias.h"
 #include "app_wall_hint.h"
@@ -3931,7 +3932,7 @@ void UpdateDeviceFolderWatch(AppState& s) {
     std::thread([hwnd, ticket, folder_id] {
         const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
         PIDLIST_ABSOLUTE pidl = nullptr;
-        if (SUCCEEDED(SHParseDisplayName(folder_id.c_str(), nullptr, &pidl, 0, nullptr)) && pidl &&
+        if (SUCCEEDED(shell_id::ParseId(folder_id, &pidl)) && pidl &&
             !PostMessageW(hwnd, WM_DEVICE_WATCH_READY, static_cast<WPARAM>(ticket), reinterpret_cast<LPARAM>(pidl)))
             CoTaskMemFree(pidl);
         if (SUCCEEDED(co)) CoUninitialize();

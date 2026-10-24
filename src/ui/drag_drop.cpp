@@ -1,6 +1,7 @@
 // drag_drop.cpp — See drag_drop.h for the contract.
 #include "drag_drop.h"
 #include "../fs/fs_recycle.h"
+#include "../common/shell_id.h"
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shobjidl.h>
@@ -81,7 +82,7 @@ HRESULT CreateShellFilesDataObject(const std::vector<std::wstring>& paths,
     pidls.reserve(paths.size());
     for (const auto& path : paths) {
         PIDLIST_ABSOLUTE pidl = nullptr;
-        if (FAILED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr)) || !pidl) {
+        if (FAILED(shell_id::ParseId(path, &pidl)) || !pidl) {
             for (auto* p : pidls) CoTaskMemFree(p);
             return E_FAIL;
         }
@@ -256,7 +257,8 @@ bool ExtractShellItemIds(IDataObject* obj, std::vector<std::wstring>& out) {
         LPWSTR name = nullptr;
         if (SUCCEEDED(array->GetItemAt(i, &item)) && item &&
             SUCCEEDED(item->GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING, &name)) && name) {
-            out.emplace_back(name);
+            // A phone item travels as its ID list: its parsing name does not parse back.
+            out.emplace_back(IsShellItemId(name) ? shell_id::FromItem(item) : std::wstring(name));
         }
         if (name) CoTaskMemFree(name);
         if (item) item->Release();
@@ -440,7 +442,7 @@ HGLOBAL FileDataObject::RenderShellIdList() const {
     pidls.reserve(paths_.size());
     for (const auto& path : paths_) {
         PIDLIST_ABSOLUTE pidl = nullptr;
-        if (FAILED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr)) || !pidl) {
+        if (FAILED(shell_id::ParseId(path, &pidl)) || !pidl) {
             for (auto* p : pidls) CoTaskMemFree(p);
             return nullptr;
         }

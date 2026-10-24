@@ -12,6 +12,7 @@
 #include "../common/json_utils.h"
 #include "../common/localization.h"
 #include "../common/path_utils.h"
+#include "../common/shell_id.h"
 #include "../common/rename_filename.h"
 #include "../common/utf8_file.h"
 #include "recycle_empty.h"
@@ -65,7 +66,7 @@ void ShowMultiFilePropertiesAsync(std::vector<std::wstring> paths) {
         for (const auto& path : paths) {
             const std::wstring shell_path = pulse::path::StripExtendedPathPrefix(path);
             PIDLIST_ABSOLUTE pidl = nullptr;
-            if (SUCCEEDED(SHParseDisplayName(shell_path.c_str(), nullptr, &pidl, 0, nullptr)) && pidl)
+            if (SUCCEEDED(shell_id::ParseId(shell_path, &pidl)) && pidl)
                 pidls.push_back(pidl);
         }
         IDataObject* data = nullptr;
@@ -2622,7 +2623,7 @@ std::wstring ShellParsingName(const std::wstring& path) {
 }
 
 HRESULT OpenShellItem(const std::wstring& path, ShellItemRef& out) {
-    return SHCreateItemFromParsingName(ShellParsingName(path).c_str(), nullptr, IID_PPV_ARGS(out.put()));
+    return shell_id::CreateItem(ShellParsingName(path), IID_PPV_ARGS(out.put()));
 }
 
 std::wstring ShellItemName(IShellItem* item, SIGDN form) {
@@ -2680,12 +2681,16 @@ std::unordered_map<std::wstring, ShellEntry> ListShellChildren(IShellItem* folde
     return out;
 }
 
-// The folder a shell parsing name sits in: a phone's object ids nest like
-// paths (\"<folder id>\\<object id>\").
-std::wstring ShellParentId(const std::wstring& id) {
-    if (!IsShellItemId(id)) return ParentOf(id);
-    const size_t slash = id.find_last_of(L'\\');
-    return slash == std::wstring::npos ? std::wstring() : id.substr(0, slash);
+// Whether `item` sits right in `folder`. Compared as shell items: a phone
+// item's id is its ID list, with no path to cut a parent from.
+bool ShellItemInFolder(IShellItem* item, IShellItem* folder) {
+    if (!item || !folder) return false;
+    IShellItem* parent = nullptr;
+    if (FAILED(item->GetParent(&parent)) || !parent) return false;
+    int order = 1;
+    const bool same = SUCCEEDED(parent->Compare(folder, SICHINT_CANONICAL, &order)) && order == 0;
+    parent->Release();
+    return same;
 }
 
 // 保留两者 in a phone folder: the name File Explorer would give the copy
@@ -2818,7 +2823,6 @@ void OpsManager::RunShellTransfer(const OpRequest& req, uint64_t task_id) {
         finish(OpPhase::Failed, Win32Message(static_cast<DWORD>(HRESULT_CODE(hr))));
         return;
     }
-    const std::wstring dest_parsing = ShellItemName(dest.get(), SIGDN_DESKTOPABSOLUTEPARSING);
     shown.dest_dir = dest_shell ? ShellItemName(dest.get(), SIGDN_DESKTOPABSOLUTEEDITING) : req.dest_dir;
     if (shown.dest_dir.empty()) shown.dest_dir = ShellItemName(dest.get(), SIGDN_NORMALDISPLAY);
     std::unordered_map<std::wstring, ShellEntry> dest_children;
@@ -2870,8 +2874,7 @@ void OpsManager::RunShellTransfer(const OpRequest& req, uint64_t task_id) {
         p.entry = ReadShellEntry(item.get());
         p.display = IsShellItemId(source) ? ShellItemName(item.get(), SIGDN_DESKTOPABSOLUTEEDITING) : source;
         if (p.display.empty()) p.display = p.entry.name;
-        const std::wstring parent = ShellParentId(ShellParsingName(source));
-        const bool same_folder = !dest_parsing.empty() && _wcsicmp(parent.c_str(), dest_parsing.c_str()) == 0;
+        const bool same_folder = ShellItemInFolder(item.get(), dest.get());
         if (same_folder) {
             if (req.type == OpType::Move) continue;  // already there
             p.self_copy = true;
@@ -3024,7 +3027,7 @@ void OpsManager::RunShellTransfer(const OpRequest& req, uint64_t task_id) {
         }
         if (sources.empty()) continue;
         const uint32_t id = client.ShellTransfer(op, pass == 1 ? ipc::STF_RENAME_ON_COLLISION : 0u,
-            dest_parsing.empty() ? ShellParsingName(req.dest_dir) : dest_parsing, sources, names,
+            ShellParsingName(req.dest_dir), sources, names,
             [this](uint32_t request) { RegisterShellRequest(request); });
         if (id == 0) {
             failure = l10n::Get(l10n::StringId::TheFileOperationServiceIsNotRunning).c_str();
