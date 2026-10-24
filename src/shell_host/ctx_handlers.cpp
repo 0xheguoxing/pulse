@@ -1103,7 +1103,8 @@ void CollectHandlerItems(const CtxHandlerSlot& slot, bool background,
         }
         if (mii.wID < slot.id_first || mii.wID > slot.id_last) continue;
         const std::wstring verb = CtxVerbOf(slot.menu, mii.wID, slot.id_first);
-        if (IsBuiltinContextVerb(verb, background)) continue;
+        if (IsBuiltinContextVerb(verb, background) &&
+            !(slot.shell_namespace && _wcsicmp(verb.c_str(), L"pintohome") == 0)) continue;
         CtxItemOut item;
         item.id = mii.wID;
         // A Send to row without its flyout cannot send anywhere (#77).

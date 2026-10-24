@@ -105,6 +105,22 @@ namespace {
 // Menu-cache key prefix for phone items: their rows are the shell's, not the
 // registry verbs of a local file with the same extension.
 constexpr wchar_t kDeviceVerbKeyPrefix[] = L"device:";
+// A phone's own row in This PC (one selected): the device's parsing name, so
+// its menu is the shell's (导入图片和视频, 固定到"开始", 创建快捷方式) and 属性
+// opens the device's sheet. Empty for anything else, the "no phone" tile and
+// test phones (no shell item behind them).
+std::wstring PcDeviceShellId(const app::Tab& tab, const std::vector<int>& indices) {
+    if (!tab.current_path.empty() || !tab.snapshot || indices.size() != 1) return {};
+    const int index = indices.front();
+    if (index < 0 || index >= static_cast<int>(tab.EntryCount())) return {};
+    const fs::DirEntry e = tab.EntryAt(static_cast<size_t>(index));
+    if (!e.pc_device || (e.pc_device & fs::kPcDevicePlaceholder)) return {};
+    const auto where = fs::ParseDevicePath(e.full_path);
+    if (!where) return {};
+    for (const auto& device : app::DeviceRegistry::Instance().Devices())
+        if (device.key == where->device && device.id.starts_with(L"::")) return device.id;
+    return {};
+}
 std::wstring TagLabel(l10n::StringId id, const std::wstring& name, size_t count = 0) {
     const auto& pattern = l10n::Get(id);
     const int length = _scwprintf(pattern.c_str(), name.c_str(), count);
@@ -1767,6 +1783,12 @@ void DispatchMenuCommand(AppState& s, int cmd) {
         // Shell properties on the ops open thread. A multi-selection opens one
         // merged sheet (like Explorer) instead of the focused item's sheet.
         std::vector<std::wstring> paths;
+        if (const app::Tab* pc_tab = ActiveTab(s)) {
+            if (std::wstring id = PcDeviceShellId(*pc_tab, pc_tab->SelectedIndices()); !id.empty()) {
+                RunDeviceVerb(s, {std::move(id)}, L"properties");  // the phone itself
+                break;
+            }
+        }
         if (const app::Tab* device_tab = ActiveTab(s); IsDeviceTab(device_tab)) {
             // A phone item's own property sheet, from the shell host.
             RunDeviceVerb(s, SelectedShellIds(*device_tab), L"properties");
@@ -1953,8 +1975,13 @@ void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const ap
     if (!CanPinNetwork(s)) EraseCommand(items, app::CmdPinNetwork);
     if (caps.kind == app::SelectionKind::Files || caps.kind == app::SelectionKind::None) return;
     if (caps.kind == app::SelectionKind::Launchers) {
-        // Program icons in This PC: opening the program is all they do.
-        std::erase_if(items, [](const ui::FluentMenuItem& item) { return item.command != app::CmdOpen; });
+        // Program icons in This PC: opening the program is all they do. A
+        // phone keeps 属性; its other rows are the shell's, from the host.
+        const app::Tab* pc_tab = ActiveTab(s);
+        const bool phone = pc_tab && !PcDeviceShellId(*pc_tab, pc_tab->SelectedIndices()).empty();
+        std::erase_if(items, [phone](const ui::FluentMenuItem& item) {
+            return item.command != app::CmdOpen && !(phone && item.command == app::CmdProperties);
+        });
         for (auto& item : items) item.separator_after = false;
         return;
     }
@@ -2528,6 +2555,10 @@ void MaybePrefetchHoverCtxMenu(AppState& s) {
     std::wstring path = EntryFullPath(*tab, s.hoverRow);
     if (path.empty() || path == s.ctxHoverPrefetched) return;
     s.ctxHoverPrefetched = path;
+    if (std::wstring phone = PcDeviceShellId(*tab, {s.hoverRow}); !phone.empty()) {
+        StartCtxQuery(s, {std::move(phone)}, false, std::wstring(kDeviceVerbKeyPrefix) + L"pc");
+        return;
+    }
     std::vector<std::wstring> paths;
     std::wstring ext;
     if (IsDeviceTab(tab)) {
@@ -2636,9 +2667,12 @@ void ShowItemContextMenu(AppState& s, POINT screen_pt, bool from_chip) {
         tab ? SelectedFullPaths(*tab) : std::vector<std::wstring>{};
     std::vector<std::wstring> device_ids;
     std::wstring device_ext;
+    std::wstring pc_device = tab ? PcDeviceShellId(*tab, tab->SelectedIndices()) : std::wstring{};
     if (tab && !paths.empty() && DeviceCtxTarget(*tab, tab->SelectedIndices(), device_ids, device_ext)) {
         if (!device_ids.empty()) StartCtxQuery(s, device_ids, false, device_ext);
         else s.context_menu.Close();
+    } else if (!pc_device.empty()) {
+        StartCtxQuery(s, {std::move(pc_device)}, false, std::wstring(kDeviceVerbKeyPrefix) + L"pc");
     } else if (tab && !paths.empty() && !IsRecycleTab(tab)) {
         StartCtxQuery(s, paths, false, StaticVerbKey(*tab, tab->SelectedIndices()));
     }

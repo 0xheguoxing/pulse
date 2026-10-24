@@ -1319,8 +1319,10 @@ UINT QueryContextMenuFlags(const CtxSessionData& d) {
 // Walks the populated HMENU via the same nested-flyout rules as per-handler
 // collection so fallback and worker paths cannot drift.
 void CollectCtxItems(IContextMenu* menu, IContextMenu2* menu2, HMENU hmenu,
-                     bool background, std::vector<CtxItemOut>& out) {
+                     bool background, std::vector<CtxItemOut>& out,
+                     bool shell_namespace = false) {
     pulse::shell::CtxHandlerSlot slot;
+    slot.shell_namespace = shell_namespace;
     slot.menu = menu;
     slot.menu2 = menu2;
     slot.hmenu = hmenu;
@@ -1416,11 +1418,12 @@ HRESULT BuildCtxMenu(const CtxSessionData& d, IContextMenu** out_menu, HMENU* ou
         menu->Release();
         return hr;
     }
-    if (!d.background && IsShellNamespacePath(ToParsingPath(d.paths.front()))) LogShellMenuRows(menu, hmenu);
+    const bool phone_items = !d.background && IsShellNamespacePath(ToParsingPath(d.paths.front()));
+    if (phone_items) LogShellMenuRows(menu, hmenu);
     IContextMenu2* menu2 = nullptr;
     menu->QueryInterface(IID_PPV_ARGS(&menu2));
-    CollectCtxItems(menu, menu2, hmenu, d.background, items);
-    if (!d.background && IsShellNamespacePath(ToParsingPath(d.paths.front()))) {
+    CollectCtxItems(menu, menu2, hmenu, d.background, items, phone_items);
+    if (phone_items) {
         wchar_t kept[64];
         swprintf_s(kept, L"phone ctx: %zu rows passed to the app", items.size());
         HostLog(kept);
