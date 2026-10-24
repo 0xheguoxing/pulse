@@ -2001,9 +2001,10 @@ struct StatusBarMetrics {
     D2D1_RECT_F task{};
     D2D1_RECT_F cancel_search{};
     D2D1_RECT_F hint_action{};   // empty unless the hint carries a clickable action
-    D2D1_RECT_F ai_chip{};       // the AI chip at the far right; empty when hidden
-    bool ai_chip_text = false;   // the chip has room for its words (else icon only)
-    float content_right = 0.0f;  // where everything else ends (left of the AI chip)
+    D2D1_RECT_F ai_chip{};       // the AI chip at the far left; empty when hidden
+    bool ai_chip_text = false;   // the chip has room for its words (else "✦ AI" only)
+    float content_left = 0.0f;   // where everything else starts (right of the AI chip)
+    float content_right = 0.0f;  // where everything else ends
     float pad = 0.0f;
     float right_reserved = 0.0f;
 };
@@ -2017,17 +2018,32 @@ StatusBarMetrics MakeStatusBarMetrics(const WindowViewModel& vm, const D2D1_RECT
     StatusBarMetrics m;
     m.bar = D2D1::RectF(full.left, full.bottom - status_height, full.right, full.bottom);
     m.pad = kStatusBarPadDip * scale;
-    // The AI chip takes the far right; the rest lays out as if the bar ended
-    // left of it.
+    // The AI chip (Pulse 助手) takes the far left; the status text starts
+    // right of it.
     D2D1_RECT_F rect = full;
+    m.content_left = m.pad;
     if (vm.status.ai_state != StatusAiState::Hidden) {
-        m.ai_chip_text = !vm.status.ai_text.empty() && full.right - full.left >= 640.0f * scale && factory && small_format;
+        // Widths measured in the small face, scaled to the chip's 12.5 DIP.
+        float k = 1.0f;
+        if (small_format && small_format->GetFontSize() > 0.0f) k = 12.5f * scale / small_format->GetFontSize();
+        const std::wstring label = vm.status.ai_label.empty() ? std::wstring(L"AI") : vm.status.ai_label;
+        const float label_w = factory && small_format ? MeasureTextWidth(factory, small_format, label) * k * 1.06f + 1.0f
+                                                       : 14.0f * scale;
+        m.ai_chip_text = vm.status.ai_state != StatusAiState::Idle && !vm.status.ai_text.empty() &&
+                         full.right - full.left >= 640.0f * scale && factory && small_format;
+        const bool bold_text = vm.status.ai_state == StatusAiState::Waiting || vm.status.ai_state == StatusAiState::Done;
         const float text_w = m.ai_chip_text
-            ? (std::min)(kAiChipMaxTextDip * scale, MeasureTextWidth(factory, small_format, vm.status.ai_text)) : 0.0f;
-        const float width = m.ai_chip_text ? text_w + 40.0f * scale : 28.0f * scale;
-        m.ai_chip = D2D1::RectF(full.right - m.pad - width, m.bar.top + 4.0f * scale, full.right - m.pad,
-                                m.bar.bottom - 4.0f * scale);
-        rect.right = m.ai_chip.left - 8.0f * scale + m.pad;
+            ? (std::min)(kAiChipMaxTextDip * scale,
+                         MeasureTextWidth(factory, small_format, vm.status.ai_text) * k * (bold_text ? 1.06f : 1.0f) + 1.0f)
+            : 0.0f;
+        const float width = AiStatusChipWidth(label_w, text_w, m.ai_chip_text,
+                                              vm.status.ai_state == StatusAiState::Busy && vm.status.ai_progress >= 0.0f,
+                                              scale);
+        const float h = 24.0f * scale;
+        const float top = std::round(m.bar.top + (status_height - h) * 0.5f);
+        const float left = full.left + m.pad - 4.0f * scale;
+        m.ai_chip = D2D1::RectF(left, top, left + width, top + h);
+        m.content_left = m.ai_chip.right + 12.0f * scale;
     }
     m.content_right = rect.right;
     m.right_reserved = m.pad;

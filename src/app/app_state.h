@@ -40,6 +40,7 @@
 #include "context_menu_controller.h"
 #include "shell_verbs.h"
 #include "app_prefs.h"
+#include "ai_assistant.h"
 #include "explorer_window_takeover.h"
 #include "shell_window_registry.h"
 #include "saved_search.h"
@@ -684,6 +685,7 @@ struct AppState : AppCoreOwner {
     bool tagRenameIgnoreKillFocus = false;
     HFONT editFont = nullptr;
     HBRUSH editBrush = nullptr;
+    AiAssistantState aiAssistant;   // Pulse 助手 (ai_assistant.h)
 
     // Stage 1B-2: Fluent menus, OLE drag & drop, breadcrumb segments.
     std::unique_ptr<ui::FluentMenu> menu;

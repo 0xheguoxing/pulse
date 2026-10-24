@@ -2930,3 +2930,94 @@ NetworkHistoryCleared	IDS_NETWORK_HISTORY_CLEARED	4128	网络记录已清除	Net
 NetworkIndexNeedsShare	IDS_NETWORK_INDEX_NEEDS_SHARE	4129	这是本机上的文件夹。请选择服务器共享里的文件夹，或映射的网络驱动器；本地磁盘在「本地磁盘」中勾选即可索引。	That's a folder on this PC. Choose a folder on a server share or a mapped network drive. To index a local disk, check it under Local drives.	這是本機上的資料夾。請選擇伺服器共用中的資料夾，或對應的網路磁碟機；本機磁碟在「本機磁碟」中勾選即可索引。
 NetworkIndexNoWsl	IDS_NETWORK_INDEX_NO_WSL	4130	WSL 中的文件不能加入网络索引：持续扫描会让 WSL 无法关闭。可以打开该文件夹，把它钉为网络位置。	Files in WSL can't be added to the network index: constant scanning keeps WSL from shutting down. You can open the folder and pin it as a network location instead.	WSL 中的檔案不能加入網路索引：持續掃描會讓 WSL 無法關閉。可以開啟該資料夾，把它釘為網路位置。
 DateLastWeekFormat	IDS_DATE_LAST_WEEK_FORMAT	4131	上%s	Last %s	上%s
+AiAsstTitle	IDS_AI_ASST_TITLE	4132	Pulse 助手	Pulse Assistant	Pulse 助手
+AiAsstNewChat	IDS_AI_ASST_NEW_CHAT	4133	新对话	New chat	新對話
+AiAsstFloat	IDS_AI_ASST_FLOAT	4134	浮动	Float	浮動
+AiAsstDock	IDS_AI_ASST_DOCK	4135	停靠	Dock	停靠
+AiAsstCollapse	IDS_AI_ASST_COLLAPSE	4136	收起（Esc）	Collapse (Esc)	收起（Esc）
+AiAsstGreetMorning	IDS_AI_ASST_GREET_MORNING	4137	早上好，想整理点什么？	Good morning. What shall we tidy up?	早安，想整理點什麼？
+AiAsstGreetNoon	IDS_AI_ASST_GREET_NOON	4138	中午好，想整理点什么？	Good day. What shall we tidy up?	午安，想整理點什麼？
+AiAsstGreetAfternoon	IDS_AI_ASST_GREET_AFTERNOON	4139	下午好，想整理点什么？	Good afternoon. What shall we tidy up?	午安，想整理點什麼？
+AiAsstGreetEvening	IDS_AI_ASST_GREET_EVENING	4140	晚上好，想整理点什么？	Good evening. What shall we tidy up?	晚上好，想整理點什麼？
+AiAsstIntro	IDS_AI_ASST_INTRO	4141	我能看到你在 Pulse 里打开的文件夹和选中的项目，可以帮你找文件、整理、重命名、加标签。	I can see the folder open in Pulse and what you have selected, and can help you find, organize, rename and tag files.	我能看到你在 Pulse 裡開啟的資料夾和選取的項目，可以幫你找檔案、整理、重新命名、加標籤。
+AiAsstSugSortTitle	IDS_AI_ASST_SUG_SORT_TITLE	4142	按类型整理「{folder}」	Sort “{folder}” by type	按類型整理「{folder}」
+AiAsstSugSortDetail	IDS_AI_ASST_SUG_SORT_DETAIL	4143	图片、文档、安装包…各放一个文件夹	Pictures, documents, installers… each in a folder	圖片、文件、安裝包…各放一個資料夾
+AiAsstSugSizeTitle	IDS_AI_ASST_SUG_SIZE_TITLE	4144	「{folder}」里什么最占空间？	What takes the most space in “{folder}”?	「{folder}」裡什麼最佔空間？
+AiAsstSugSizeDetail	IDS_AI_ASST_SUG_SIZE_DETAIL	4145	按大小排出最大的文件和文件夹	The largest files and folders, by size	按大小排出最大的檔案和資料夾
+AiAsstSugDupTitle	IDS_AI_ASST_SUG_DUP_TITLE	4146	找出重复的文件	Find duplicate files	找出重複的檔案
+AiAsstSugDupDetail	IDS_AI_ASST_SUG_DUP_DETAIL	4147	只比较内容，不会删除任何东西	Compares contents only; nothing is deleted	只比較內容，不會刪除任何東西
+AiAsstSugPhotoTitle	IDS_AI_ASST_SUG_PHOTO_TITLE	4148	把照片按拍摄日期重命名	Rename photos by date taken	把照片按拍攝日期重新命名
+AiAsstSugPhotoDetail	IDS_AI_ASST_SUG_PHOTO_DETAIL	4149	例如 2026-10-09 旅行 01.jpg	For example 2026-10-09 Trip 01.jpg	例如 2026-10-09 旅行 01.jpg
+AiAsstSafe	IDS_AI_ASST_SAFE	4150	所有修改都会先在 Pulse 里让你确认，做完可以撤销。	Every change is confirmed in Pulse first and can be undone.	所有修改都會先在 Pulse 裡讓你確認，做完可以復原。
+AiAsstPlaceholder	IDS_AI_ASST_PLACEHOLDER	4151	让 Pulse 助手帮你找文件、整理文件夹…	Ask Pulse Assistant to find files, tidy folders…	讓 Pulse 助手幫你找檔案、整理資料夾…
+AiAsstContext	IDS_AI_ASST_CONTEXT	4152	{folder} · {n} 项	{folder} · {n} items	{folder} · {n} 項
+AiAsstAddFiles	IDS_AI_ASST_ADD_FILES	4153	添加文件	Add files	新增檔案
+AiAsstModelHeading	IDS_AI_ASST_MODEL_HEADING	4154	模型	Model	模型
+AiAsstEffortHeading	IDS_AI_ASST_EFFORT_HEADING	4155	思考强度	Thinking	思考強度
+AiAsstModelFlashDetail	IDS_AI_ASST_MODEL_FLASH_DETAIL	4156	快，适合日常整理和查找	Fast; for everyday tidying and finding	快，適合日常整理和尋找
+AiAsstModelProDetail	IDS_AI_ASST_MODEL_PRO_DETAIL	4157	更强，适合复杂的多步任务	Stronger; for complex multi-step tasks	更強，適合複雜的多步任務
+AiAsstEffortOff	IDS_AI_ASST_EFFORT_OFF	4158	关闭	Off	關閉
+AiAsstEffortLow	IDS_AI_ASST_EFFORT_LOW	4159	低	Low	低
+AiAsstEffortMid	IDS_AI_ASST_EFFORT_MID	4160	中	Medium	中
+AiAsstEffortHigh	IDS_AI_ASST_EFFORT_HIGH	4161	高	High	高
+AiAsstEffortOffDetail	IDS_AI_ASST_EFFORT_OFF_DETAIL	4162	不思考，直接回答，最快。	No thinking, answers straight away. Fastest.	不思考，直接回答，最快。
+AiAsstEffortLowDetail	IDS_AI_ASST_EFFORT_LOW_DETAIL	4163	简单任务，略想一下就动手。	Simple tasks: a quick thought, then action.	簡單任務，略想一下就動手。
+AiAsstEffortMidDetail	IDS_AI_ASST_EFFORT_MID_DETAIL	4164	默认。速度和仔细程度平衡。	Default. Balances speed and care.	預設。速度和仔細程度平衡。
+AiAsstEffortHighDetail	IDS_AI_ASST_EFFORT_HIGH_DETAIL	4165	多步整理、复杂查找时更仔细，也更慢、更费 token。	More careful for multi-step tidying and complex searches; slower and uses more tokens.	多步整理、複雜尋找時更仔細，也更慢、更費 token。
+AiAsstConnected	IDS_AI_ASST_CONNECTED	4166	已连接 {host}	Connected to {host}	已連線 {host}
+AiAsstNotConnected	IDS_AI_ASST_NOT_CONNECTED	4167	未连接 · 需要 API 密钥	Not connected · API key needed	未連線 · 需要 API 金鑰
+AiAsstManage	IDS_AI_ASST_MANAGE	4168	管理连接	Manage	管理連線
+AiAsstChipLabel	IDS_AI_ASST_CHIP_LABEL	4169	AI	AI	AI
+AiAsstThinking	IDS_AI_ASST_THINKING	4170	思考中	Thinking	思考中
+AiAsstThought	IDS_AI_ASST_THOUGHT	4171	已思考 {n} 秒	Thought for {n}s	已思考 {n} 秒
+AiAsstSeconds	IDS_AI_ASST_SECONDS	4172	{n} 秒	{n}s	{n} 秒
+AiAsstStepWindow	IDS_AI_ASST_STEP_WINDOW	4173	查看当前窗口	Look at the current window	查看目前視窗
+AiAsstStepWindowRun	IDS_AI_ASST_STEP_WINDOW_RUN	4174	正在读取 Pulse 当前的文件夹和选中项…	Reading Pulse's current folder and selection…	正在讀取 Pulse 目前的資料夾和選取項目…
+AiAsstStepWindowDone	IDS_AI_ASST_STEP_WINDOW_DONE	4175	{folder} · {n} 项 · 未选中	{folder} · {n} items · nothing selected	{folder} · {n} 項 · 未選取
+AiAsstStepRead	IDS_AI_ASST_STEP_READ	4176	读取文件夹	Read folder	讀取資料夾
+AiAsstStepReadRun	IDS_AI_ASST_STEP_READ_RUN	4177	正在看 {n} 个文件…	Looking at {n} files…	正在看 {n} 個檔案…
+AiAsstStepReading	IDS_AI_ASST_STEP_READING	4178	正在读取 {k} / {n}…	Reading {k} / {n}…	正在讀取 {k} / {n}…
+AiAsstStepReadDone	IDS_AI_ASST_STEP_READ_DONE	4179	{n} 个文件 · {size}	{n} files · {size}	{n} 個檔案 · {size}
+AiAsstStepsRead	IDS_AI_ASST_STEPS_READ	4180	查看了当前窗口和「{folder}」 · {n} 个文件	Looked at the window and “{folder}” · {n} files	查看了目前視窗和「{folder}」 · {n} 個檔案
+AiAsstPlanTitle	IDS_AI_ASST_PLAN_TITLE	4181	整理方案	Plan	整理方案
+AiAsstPlanMeta	IDS_AI_ASST_PLAN_META	4182	{g} 个新文件夹 · {n} 个文件	{g} new folders · {n} files	{g} 個新資料夾 · {n} 個檔案
+AiAsstCount	IDS_AI_ASST_COUNT	4183	{n} 个	{n}	{n} 個
+AiAsstNewBadge	IDS_AI_ASST_NEW_BADGE	4184	新建	New	新增
+AiAsstConfirmTitle	IDS_AI_ASST_CONFIRM_TITLE	4185	整理 {n} 个项目到 {g} 个新文件夹？	Sort {n} items into {g} new folders?	整理 {n} 個項目到 {g} 個新資料夾？
+AiAsstConfirmSub	IDS_AI_ASST_CONFIRM_SUB	4186	位置：{folder}。不会覆盖已有文件，做完可以撤销。	In {folder}. Nothing is overwritten, and you can undo it.	位置：{folder}。不會覆寫現有檔案，完成後可以復原。
+AiAsstConfirmHint	IDS_AI_ASST_CONFIRM_HINT	4187	右边的文件列表里已标出每个文件的去向	The file list shows where each file goes	右邊的檔案清單已標出每個檔案的去向
+AiAsstDeny	IDS_AI_ASST_DENY	4188	拒绝	Decline	拒絕
+AiAsstOrganize	IDS_AI_ASST_ORGANIZE	4189	整理	Sort	整理
+AiAsstConfirmed	IDS_AI_ASST_CONFIRMED	4190	你在 Pulse 里确认了：整理 {n} 个项目	You confirmed in Pulse: sort {n} items	你在 Pulse 裡確認了：整理 {n} 個項目
+AiAsstDenied	IDS_AI_ASST_DENIED	4191	你拒绝了：整理 {n} 个项目	You declined: sort {n} items	你拒絕了：整理 {n} 個項目
+AiAsstStepMove	IDS_AI_ASST_STEP_MOVE	4192	整理到文件夹	Sort into folders	整理到資料夾
+AiAsstStepMoveRun	IDS_AI_ASST_STEP_MOVE_RUN	4193	新建 {g} 个文件夹…	Creating {g} folders…	新增 {g} 個資料夾…
+AiAsstStepMoving	IDS_AI_ASST_STEP_MOVING	4194	移动 {k} / {n}	Moving {k} / {n}	移動 {k} / {n}
+AiAsstStepMoveDone	IDS_AI_ASST_STEP_MOVE_DONE	4195	{n} 个项目 → {g} 个新文件夹 · 没有覆盖	{n} items → {g} new folders · nothing overwritten	{n} 個項目 → {g} 個新資料夾 · 沒有覆寫
+AiAsstStepsMove	IDS_AI_ASST_STEPS_MOVE	4196	整理了 {n} 个项目 → {g} 个新文件夹	Sorted {n} items → {g} new folders	整理了 {n} 個項目 → {g} 個新資料夾
+AiAsstResultTitle	IDS_AI_ASST_RESULT_TITLE	4197	已整理 {n} 个项目	Sorted {n} items	已整理 {n} 個項目
+AiAsstResultSub	IDS_AI_ASST_RESULT_SUB	4198	{folder} › {g} 个新文件夹	{folder} › {g} new folders	{folder} › {g} 個新資料夾
+AiAsstUndo	IDS_AI_ASST_UNDO	4199	撤销	Undo	復原
+AiAsstShowInPulse	IDS_AI_ASST_SHOW_IN_PULSE	4200	在 Pulse 中查看	Show in Pulse	在 Pulse 中查看
+AiAsstUndone	IDS_AI_ASST_UNDONE	4201	已撤销	Undone	已復原
+AiAsstUndoneSub	IDS_AI_ASST_UNDONE_SUB	4202	{n} 个文件回到了「{folder}」，新建的 {g} 个文件夹已移到回收站	{n} files are back in “{folder}”; the {g} new folders went to the Recycle Bin	{n} 個檔案回到了「{folder}」，新增的 {g} 個資料夾已移到資源回收筒
+AiAsstUndoNote	IDS_AI_ASST_UNDO_NOTE	4203	你撤销了这次整理	You undid this sort	你復原了這次整理
+AiAsstActsMeta	IDS_AI_ASST_ACTS_META	4204	{model} · 思考 {effort} · {sec} 秒 · {tools} 次工具调用	{model} · thinking {effort} · {sec}s · {tools} tool calls	{model} · 思考 {effort} · {sec} 秒 · {tools} 次工具呼叫
+AiAsstActsMetaOff	IDS_AI_ASST_ACTS_META_OFF	4205	{model} · {sec} 秒 · {tools} 次工具调用	{model} · {sec}s · {tools} tool calls	{model} · {sec} 秒 · {tools} 次工具呼叫
+AiAsstCopy	IDS_AI_ASST_COPY	4206	复制	Copy	複製
+AiAsstRetry	IDS_AI_ASST_RETRY	4207	重试	Retry	重試
+AiAsstHelpful	IDS_AI_ASST_HELPFUL	4208	有用	Helpful	有用
+AiAsstCatImage	IDS_AI_ASST_CAT_IMAGE	4209	图片	Pictures	圖片
+AiAsstCatDocument	IDS_AI_ASST_CAT_DOCUMENT	4210	文档	Documents	文件
+AiAsstCatApp	IDS_AI_ASST_CAT_APP	4211	安装包	Installers	安裝程式
+AiAsstCatVideo	IDS_AI_ASST_CAT_VIDEO	4212	视频	Videos	影片
+AiAsstCatArchive	IDS_AI_ASST_CAT_ARCHIVE	4213	压缩包	Archives	壓縮檔
+AiAsstCatOther	IDS_AI_ASST_CAT_OTHER	4214	其他	Other	其他
+AiAsstChipReading	IDS_AI_ASST_CHIP_READING	4215	读取中 {k}/{n}	Reading {k}/{n}	讀取中 {k}/{n}
+AiAsstChipWaiting	IDS_AI_ASST_CHIP_WAITING	4216	等你确认	Needs you	等你確認
+AiAsstChipOrganizing	IDS_AI_ASST_CHIP_ORGANIZING	4217	正在整理 {k}/{n}	Sorting {k}/{n}	正在整理 {k}/{n}
+AiAsstChipDone	IDS_AI_ASST_CHIP_DONE	4218	完成	Done	完成
+AiAsstChipUndoing	IDS_AI_ASST_CHIP_UNDOING	4219	正在撤销	Undoing	正在復原
+AiAsstDemoNote	IDS_AI_ASST_DEMO_NOTE	4220	演示模式 · 不会改动文件	Demo mode · files are not changed	示範模式 · 不會變更檔案
+AiAsstStopped	IDS_AI_ASST_STOPPED	4221	已停止	Stopped	已停止
+AiAsstNoFolder	IDS_AI_ASST_NO_FOLDER	4222	先打开一个文件夹，我再帮你整理。	Open a folder first and I'll help sort it.	先開啟一個資料夾，我再幫你整理。

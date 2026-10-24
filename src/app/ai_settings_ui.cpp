@@ -1,4 +1,5 @@
 #include "ai_settings_ui.h"
+#include "ai_assistant.h"
 #include "about_info.h"
 #include "ai_confirm.h"
 #include "ai_pack.h"
@@ -317,7 +318,7 @@ void StageAiShot(int variant) {
 
 void AiChipClicked(AppState& s) {
     if (ai::GetAiChip(GetTickCount64()).state == ai::AiChipState::Waiting && ai::BringAiQuestionToFront()) return;
-    OpenSettingsTab(s, ui::kSettingsPageAi);
+    AiAssistantToggle(s);
 }
 
 void NoteAiChange(AppState& s, const ai::BrokerEvent& event) {

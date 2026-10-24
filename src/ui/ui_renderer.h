@@ -16,6 +16,7 @@
 #include "link_pill.h"
 #include "ui_view_morph.h"
 #include "group_wheel.h"
+#include "ai_panel_view.h"
 #include "window_overview_view.h"
 #include "window_switcher_view.h"
 
@@ -88,7 +89,19 @@ public:
     // Layout metrics (DIPs).
     float TitleBarHeight() const { return title_bar_height_; }
     float ToolbarHeight() const { return toolbar_height_; }
+    // Where the panes start: the sidebar plus the docked Pulse 助手 column.
     float EffectiveSidebarWidth(float window_width) const;
+    // The sidebar alone (title bar brand, tab strip, the sidebar itself).
+    float SidebarOwnWidth(float window_width) const;
+    float TitleSidebarWidth(float window_width) const;
+    // Pulse 助手 (ai_panel_view.h). Docked it is a column right of the
+    // sidebar, which folds to its rail while it is open (not persisted).
+    AiPanelView& AiPanel() { return ai_panel_; }
+    const AiPanelView& AiPanel() const { return ai_panel_; }
+    void SetAiPanel(bool open, AiPanelMode mode, bool animate);
+    float AiDockWidth(float window_width) const;
+    D2D1_RECT_F AiColumnRect(float w, float h) const;
+    D2D1_RECT_F AiFloatingArea(float w, float h) const;
     void SetSidebarWidthDip(float width) {
         sidebar_width_dip_ = std::clamp(width, kSidebarMinWidthDip, kPanelWidthMaxDip);
         sidebar_width_ = sidebar_width_dip_ * scale_;
@@ -327,7 +340,8 @@ public:
         // task pill and copy feedback below.
         const uint64_t motion_now = motion::NowMs();
         bool active = sidebar_pill_.Active(motion_now) || settings_nav_pill_.Active(motion_now) ||
-                      settings_nav_hover_.Active(motion_now) || collapse_anim_ || details_anim_;
+                      settings_nav_hover_.Active(motion_now) || collapse_anim_ || details_anim_ ||
+                      ai_panel_.Animating();
         for (const auto& m : list_hover_motion_) active = active || m.Active(motion_now);
         for (const auto& m : list_shift_) active = active || m.Active(motion_now);
         for (const auto& m : view_morph_) active = active || m.Active(motion_now);
@@ -355,7 +369,8 @@ public:
         // scanning label breathe, the pill's indeterminate ring spins. These
         // are fine at 30 fps (DecorativeMotionOnly), so they do not repaint
         // the whole window at the display rate for up to ten seconds.
-        const bool decor = list_loading_active_ || folder_size_anim_active_ || task_pill_spinning_;
+        const bool decor = list_loading_active_ || folder_size_anim_active_ || task_pill_spinning_ ||
+                           ai_panel_.WantsDecorFrame();
         decorative_only_ = decor && !active;
         return active || decor;
     }
@@ -953,7 +968,11 @@ private:
     ID2D1Bitmap* AppIconBitmap(const common::MenuIconRef& pixels);
     int selection_count_ = 0;
     int selection_actions_ = 0;
-    bool sidebar_collapsed_ = false;
+    bool sidebar_collapsed_ = false;   // effective: the user's choice or the docked assistant
+    bool user_sidebar_collapsed_ = false;
+    bool ai_rail_ = false;             // docked Pulse 助手 holds the sidebar on its rail
+    AiPanelView ai_panel_;
+    void ApplySidebarCollapse(bool animate);
     bool sidebar_peek_ = false;
     bool collapse_anim_ = false;
     GroupWheel group_wheel_;

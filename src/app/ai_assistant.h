@@ -1,0 +1,80 @@
+// ai_assistant.h - Pulse 助手, the in-app assistant panel
+// (plans/ai/pulse_ai_assistant_v2.html): open/close and docking, the
+// composer's EDIT, pointer routing for the panel, ai.json "assistant" prefs
+// and the view model ui::AiPanelView draws.
+#pragma once
+
+#include "../ui/ai_panel_view.h"
+#include <windows.h>
+#include <memory>
+#include <string>
+
+namespace pulse {
+struct AppState;
+namespace ui { struct WindowViewModel; }
+struct AiChat;   // the conversation and its driver (ai_assistant_chat.h)
+
+struct AiAssistantState {
+    bool open = false;
+    bool floating = false;
+    bool prefs_loaded = false;
+    int model = 0;                 // index into the model list
+    int effort = 2;                // 0 off .. 3 high
+    bool menu_open = false;
+    uint64_t menu_closed_at = 0;   // the menu's fade-out still covers the input
+    // The context chip was removed for this folder.
+    std::wstring context_removed_for;
+    // Pointer.
+    ui::AiPanelHit hover;
+    ui::AiPanelHit pressed;
+    POINT hover_point{};
+    uint64_t hover_since = 0;
+    bool captured = false;
+    // Composer EDIT.
+    HWND edit = nullptr;
+    HFONT font = nullptr;
+    float font_scale = 0.0f;
+    HBRUSH brush = nullptr;
+    COLORREF brush_color = 0;
+    bool edit_visible = false;
+    bool focus_pending = false;
+    bool focused = false;
+    int lines = 1;
+    int text_len = 0;
+    int line_px = 0;
+    // Conversation; created on first use. Opaque here so the driver can
+    // change without rebuilding everything that sees AppState.
+    std::shared_ptr<AiChat> chat;
+};
+
+// The status bar chip: opens or closes the panel (an outside client's open
+// question still comes forward first).
+void AiAssistantToggle(AppState& s);
+void AiAssistantOpen(AppState& s, bool animate = true);
+void AiAssistantClose(AppState& s, bool animate = true);
+bool AiAssistantIsOpen(const AppState& s);
+
+// BuildVm: the panel and the chip's open/idle look.
+void FillAiAssistantVm(AppState& s, ui::WindowViewModel& vm);
+// After every frame: the composer EDIT follows the drawn input box.
+void AiAssistantLayout(AppState& s);
+
+// Pointer messages in client pixels; true when the panel took them.
+bool AiAssistantMouseMove(AppState& s, int x, int y);
+bool AiAssistantMouseDown(AppState& s, int x, int y);
+bool AiAssistantMouseUp(AppState& s, int x, int y);
+bool AiAssistantMouseOther(AppState& s, int x, int y);   // dblclick, right button
+// Wheel over the panel scrolls the conversation; true when the panel took it.
+bool AiAssistantWheel(AppState& s, int x, int y, int delta);
+void AiAssistantMouseLeave(AppState& s);
+bool AiAssistantSetCursor(AppState& s, int x, int y);
+// Esc with the main window focused: closes the menu, else stops a running
+// turn.
+bool AiAssistantEscape(AppState& s);
+
+// WM_CTLCOLOREDIT for the composer; nullptr for any other EDIT.
+HBRUSH AiAssistantCtlColor(AppState& s, HDC hdc, HWND edit);
+void AiAssistantDpiChanged(AppState& s);
+void AiAssistantDestroy(AppState& s);
+
+} // namespace pulse

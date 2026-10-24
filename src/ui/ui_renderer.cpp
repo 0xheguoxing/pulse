@@ -56,6 +56,8 @@ void MainRenderer::SetCompositor(Compositor* comp) {
     empty_state_svg_dc_.reset();
     app_icon_bitmaps_.clear();
     app_icon_dc_ = nullptr;
+    ai_panel_.ReleaseDeviceResources();
+    ReleaseAiIcons();
     compositor_ = comp;
     material_.SetCompositor(comp);
     painter_.SetCompositor(comp);
@@ -141,7 +143,7 @@ void MainRenderer::SetEmbedded(float top_dip, float bottom_dip) {
     SetScale(scale_);
 }
 
-float MainRenderer::EffectiveSidebarWidth(float window_width) const {
+float MainRenderer::SidebarOwnWidth(float window_width) const {
     const float window_dip = window_width / scale_;
     const float rail = kSidebarRailWidthDip * scale_;
     if (window_dip < kSidebarRailWindowDip || collapse_value_ >= 1.0f) return rail;
@@ -149,7 +151,44 @@ float MainRenderer::EffectiveSidebarWidth(float window_width) const {
     return collapse_value_ <= 0.0f ? full : full + (rail - full) * collapse_value_;
 }
 
+float MainRenderer::EffectiveSidebarWidth(float window_width) const {
+    return SidebarOwnWidth(window_width) + AiDockWidth(window_width);
+}
+
+// The title bar (brand, toggle, tabs) keeps the user's sidebar: the docked
+// assistant folding the sidebar to its rail does not move it.
+float MainRenderer::TitleSidebarWidth(float window_width) const {
+    if (ai_rail_ && !user_sidebar_collapsed_ && window_width / scale_ >= kSidebarRailWindowDip)
+        return SidebarFullWidth(window_width);
+    return SidebarOwnWidth(window_width);
+}
+
+float MainRenderer::AiDockWidth(float window_width) const {
+    return ai_panel_.DockWidth(window_width, kSidebarRailWidthDip * scale_, scale_);
+}
+
+D2D1_RECT_F MainRenderer::AiColumnRect(float w, float h) const {
+    const float left = SidebarOwnWidth(w);
+    return D2D1::RectF(left, title_bar_height_, left + AiDockWidth(w), h - status_height_);
+}
+
+D2D1_RECT_F MainRenderer::AiFloatingArea(float w, float h) const {
+    return D2D1::RectF(0.0f, title_bar_height_, w, h - status_height_);
+}
+
+void MainRenderer::SetAiPanel(bool open, AiPanelMode mode, bool animate) {
+    ai_panel_.SetState(open, mode, animate);
+    ai_rail_ = open && mode == AiPanelMode::Docked;
+    ApplySidebarCollapse(animate);
+}
+
 void MainRenderer::SetSidebarCollapsed(bool on, bool animate) {
+    user_sidebar_collapsed_ = on;
+    ApplySidebarCollapse(animate);
+}
+
+void MainRenderer::ApplySidebarCollapse(bool animate) {
+    const bool on = user_sidebar_collapsed_ || ai_rail_;
     if (on == sidebar_collapsed_) return;
     sidebar_collapsed_ = on;
     if (on) sidebar_peek_ = false;
@@ -318,11 +357,11 @@ D2D1_RECT_F MainRenderer::SidebarToggleRect(float w) const {
     if (w / scale_ < kSidebarRailWindowDip) return {};
     const float size = 32.0f * scale_;
     const float top = (title_bar_height_ - size) * 0.5f;
-    if (sidebar_collapsed_) {
+    if (user_sidebar_collapsed_) {
         const float left = (kSidebarRailWidthDip * scale_ - size) * 0.5f;
         return D2D1::RectF(left, top, left + size, top + size);
     }
-    const float right = EffectiveSidebarWidth(w) - 8.0f * scale_;
+    const float right = TitleSidebarWidth(w) - 8.0f * scale_;
     return D2D1::RectF(right - size, top, right, top + size);
 }
 
@@ -336,9 +375,9 @@ MainRenderer::WindowIdentityGeometry MainRenderer::WindowIdentityLayout(const Wi
     if (!vm.window_identity || vm.window_identity_name.empty() || !compositor_) return g;
     const D2D1_RECT_F toggle = SidebarToggleRect(w);
     const bool has_toggle = toggle.right > toggle.left;
-    if (!(has_toggle && sidebar_collapsed_)) {
+    if (!(has_toggle && user_sidebar_collapsed_)) {
         const float left = (12.0f + 24.0f + 4.0f) * scale_;
-        float limit = EffectiveSidebarWidth(w) - 8.0f * scale_;
+        float limit = TitleSidebarWidth(w) - 8.0f * scale_;
         if (has_toggle) limit = (std::min)(limit, toggle.left - 4.0f * scale_);
         const float text = MeasureLayoutText(compositor_, compositor_->DwriteFactory(), compositor_->HeaderFormat(),
                                              vm.window_identity_name);
@@ -354,7 +393,7 @@ MainRenderer::WindowIdentityGeometry MainRenderer::WindowIdentityLayout(const Wi
     }
     g.compact = true;
     g.dot_radius = 4.0f * scale_;
-    if (has_toggle && sidebar_collapsed_) {
+    if (has_toggle && user_sidebar_collapsed_) {
         g.dot = D2D1::Point2F(toggle.right - 3.0f * scale_, toggle.bottom - 3.0f * scale_);
         const float reach = g.dot_radius + 3.0f * scale_;
         g.hit = D2D1::RectF(g.dot.x - reach, g.dot.y - reach, g.dot.x + reach, g.dot.y + reach);
@@ -904,6 +943,7 @@ bool MainRenderer::OverlayUp(const WindowViewModel& vm) const {
            (vm.address_editing && !vm.address_suggestions.empty()) ||
            !vm.filter_tag_suggestions.empty() || vm.teach.visible || !vm.tooltip_text.empty() ||
            group_wheel_.Visible() || window_overview_.IsOpen() || window_switcher_.IsOpen() ||
+           ai_panel_.FloatingVisible() ||
            caret_due_ms_ != 0 || hover_frame_ms_ != 0 ||
            hover_card_rect_.right > hover_card_rect_.left;
 }
@@ -913,7 +953,7 @@ bool MainRenderer::NonHoverMotionActive() const {
     const uint64_t m = motion::NowMs();
     const ULONGLONG now = GetTickCount64();
     if (sidebar_pill_.Active(m) || settings_nav_pill_.Active(m) || settings_nav_hover_.Active(m) ||
-        collapse_anim_ || details_anim_)
+        collapse_anim_ || details_anim_ || ai_panel_.Animating() || ai_panel_.WantsDecorFrame())
         return true;
     for (const auto& motion : list_shift_) if (motion.Active(m)) return true;
     for (const auto& motion : view_morph_) if (motion.Active(m)) return true;
@@ -999,6 +1039,8 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
             collapse_value_ = std::clamp(collapse_from_ + (target - collapse_from_) * p, 0.0f, 1.0f);
         }
     }
+    // Pulse 助手: the docked column width is frame-stable like the sidebar's.
+    ai_panel_.Tick(motion_now_);
     if (details_anim_) {
         const float ms = static_cast<float>(motion_now_ - details_anim_start_);
         const float target = details_visible_ ? 1.0f : 0.0f;
@@ -1074,6 +1116,11 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
         if (vm.details_visible) DrawDetailsPanel(vm, rect, theme);
         else preview_handler_.Sync(notify_hwnd_, {}, L"", 0, 0, 0, 0, vm.dark,
                                    theme.bg, theme.text, false);
+        if (ai_panel_.Visible()) {
+            ai_panel_.Draw(compositor_, vm.ai_panel, theme, AiColumnRect(rect.right, rect.bottom),
+                           AiPanelView::DockTargetWidth(rect.right, kSidebarRailWidthDip * scale_, scale_),
+                           AiFloatingArea(rect.right, rect.bottom), scale_, motion_now_);
+        }
         if (peek) DrawSidebarPeek(vm, rect, theme);
         if (!embedded_) DrawStatusBar(vm, rect, theme);
         if (!peek) DrawTrayCompareCard(vm, theme);
@@ -1352,7 +1399,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         MakeBrush(dc, theme.text_secondary, brTextSecondary_);
         dc->DrawRoundedRectangle(D2D1::RoundedRect(frame, 2.75f * scale_, 2.75f * scale_),
                                  brTextSecondary_.get(), stroke);
-        const bool expanded = !sidebar_collapsed_ || SidebarPeekVisible(right);
+        const bool expanded = !user_sidebar_collapsed_ || SidebarPeekVisible(right);
         const float divider = frame.left + (expanded ? 5.0f : 3.75f) * scale_;
         const float inset = expanded ? 0.0f : 3.25f * scale_;
         dc->DrawLine({divider, frame.top + inset}, {divider, frame.bottom - inset},
@@ -1363,7 +1410,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
                                 brTextSecondary_.get());
         }
     }
-    if (hasToggle && sidebar_collapsed_) {
+    if (hasToggle && user_sidebar_collapsed_) {
         // Rail: the toggle stands in for the brand mark.
     } else if (ID2D1Bitmap* logo = LogoBitmap()) {
         dc->DrawBitmap(logo, D2D1::RectF(x, markY, x + mark, markY + mark), 1.0f,
@@ -1384,7 +1431,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         }
     }
     x += mark + 8.0f * scale_;
-    const float brandRight = EffectiveSidebarWidth(right) - 12.0f * scale_;
+    const float brandRight = TitleSidebarWidth(right) - 12.0f * scale_;
     const float nameWidth = MeasureLayoutText(compositor_, compositor_->DwriteFactory(),
         compositor_->HeaderFormat(), L"Pulse");
     const WindowIdentityGeometry identity = WindowIdentityLayout(vm, right);
@@ -2035,29 +2082,25 @@ void MainRenderer::DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& f
     D2D1_RECT_F rect = full;
     rect.right = sb.content_right;
     if (sb.ai_chip.right > sb.ai_chip.left) {
-        // The AI chip (app ai_status.h): what AI clients are doing. Busy and
-        // waiting are tinted with the accent; idle and done stay quiet.
-        const D2D1_RECT_F& c = sb.ai_chip;
-        const StatusAiState state = vm.status.ai_state;
-        const bool hover = IsHovered(vm, HitTestResult::StatusBarAi);
-        const bool waiting = state == StatusAiState::Waiting;
-        const bool active = waiting || state == StatusAiState::Busy;
-        if (active || hover) {
-            D2D1_COLOR_F fill = active ? theme.accent : theme.fill_hover;
-            if (active) fill.a = waiting ? (hover ? 0.36f : 0.26f) : (hover ? 0.26f : 0.14f);
-            MakeBrush(dc, fill, brFillHover_);
-            FillRoundedRect(dc, brFillHover_.get(), c.left, c.top, c.right - c.left, c.bottom - c.top, 5.0f * scale_);
+        // The AI chip (ai_panel_view.h): "✦ AI", what the assistant or an
+        // outside client is doing, and whether Pulse 助手 is open.
+        AiStatusChipView chip;
+        chip.label = vm.status.ai_label;
+        chip.text = vm.status.ai_text;
+        chip.words = sb.ai_chip_text;
+        switch (vm.status.ai_state) {
+        case StatusAiState::Busy: chip.state = AiChipState::Busy; break;
+        case StatusAiState::Waiting: chip.state = AiChipState::Waiting; break;
+        case StatusAiState::Done: chip.state = AiChipState::Done; break;
+        default: chip.state = AiChipState::Idle; break;
         }
-        const D2D1_COLOR_F ink = active ? theme.accent : theme.text_secondary;
-        const wchar_t* glyph = state == StatusAiState::Done ? L"\xE73E" : waiting ? L"\xE8BD" : L"\xE99A";
-        const float icon_left = sb.ai_chip_text ? c.left + 8.0f * scale_ : (c.left + c.right) * 0.5f - 8.0f * scale_;
-        DrawIconText(icon_left, sb.bar.top, 16.0f * scale_, status_height_, glyph, L"", ink, 0.7f);
-        if (sb.ai_chip_text) {
-            MakeBrush(dc, ink, brAccentText_);
-            const float text_left = c.left + 30.0f * scale_;
-            DrawTextEndEllipsis(dc, factory, small_fmt, brAccentText_.get(), vm.status.ai_text, text_left, sb.bar.top,
-                (std::max)(0.0f, c.right - 10.0f * scale_ - text_left), status_height_);
-        }
+        chip.progress = vm.status.ai_progress;
+        chip.open = vm.status.ai_open;
+        chip.unread = vm.status.ai_unread;
+        chip.hover = IsHovered(vm, HitTestResult::StatusBarAi);
+        chip.pressed = chip.hover && vm.status.ai_pressed;
+        chip.dark = vm.dark;
+        ai_panel_.DrawStatusChip(compositor_, theme, chip, sb.ai_chip, scale_, motion_now_);
     }
     const bool centered_progress = vm.status.query_active || vm.status.task_is_update;
     float y = sb.bar.top;
@@ -2066,11 +2109,11 @@ void MainRenderer::DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& f
     const float gap = 16.0f * scale_;
     const float statusLimit = centered_progress ? std::min(rect.right * 0.30f, sb.task.left - gap) : rect.right * 0.30f;
     const std::wstring status_text = path::FriendlyPathText(vm.status.status_text);
-    const float statusWidth = std::min(std::max(0.0f, statusLimit - sb.pad),
+    const float statusWidth = std::min(std::max(0.0f, statusLimit - sb.content_left),
         MeasureTextWidth(factory, small_fmt, status_text));
     DrawTextEndEllipsis(compositor_, small_fmt, brTextSecondary_.get(), status_text,
-        sb.pad, y, statusWidth, status_height_);
-    const float selectionLeft = sb.pad + statusWidth + gap;
+        sb.content_left, y, statusWidth, status_height_);
+    const float selectionLeft = sb.content_left + statusWidth + gap;
     const bool hasTask = vm.status.query_active || !vm.status.task_text.empty() || vm.status.task_progress >= 0.0f;
     const float selectionRight = hasTask ? sb.task.left - gap : rect.right - sb.right_reserved - gap;
     DrawTextEndEllipsis(compositor_, small_fmt, brTextSecondary_.get(), vm.status.selection_text,
@@ -2357,7 +2400,7 @@ MainRenderer::TabStripMetrics MainRenderer::ComputeTabStrip(
     TabStripMetrics m;
 
     const TitleChrome chrome = MakeTitleChrome(window_w, scale_, title_bar_height_);
-    m.x0 = EffectiveSidebarWidth(window_w) + margin_;
+    m.x0 = TitleSidebarWidth(window_w) + margin_;
     // However many tabs are open, a stretch of title bar right of the "+"
     // button stays empty so the window can still be grabbed there; tabs
     // compact that much earlier instead.

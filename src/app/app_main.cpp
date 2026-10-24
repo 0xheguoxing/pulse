@@ -87,6 +87,7 @@
 #include "ai_launcher.h"
 #include "ai_service.h"
 #include "ai_settings_ui.h"
+#include "ai_assistant.h"
 #include "ai_status.h"
 #include "ai_tools.h"
 #include "ai_tools_ui.h"
@@ -547,6 +548,7 @@ void Render(AppState& s) {
     if (!s.tagRenameId.empty()) LayoutTagRenameOverlay(s);
     if (s.addressEditing) LayoutAddressEditor(s);
     if (s.filterEditing) LayoutFilterEditor(s);
+    AiAssistantLayout(s);
     SyncShellWindows(s);
 
     if (s.shot.active && !s.timing.first_frame_recorded) {
@@ -1800,6 +1802,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s->hwndAddressEdit) SendMessageW(s->hwndAddressEdit, WM_SETFONT, (WPARAM)s->editFont, TRUE);
         if (s->hwndRenameEdit) SendMessageW(s->hwndRenameEdit, WM_SETFONT, (WPARAM)s->editFont, TRUE);
         if (s->hwndTagRenameEdit) SendMessageW(s->hwndTagRenameEdit, WM_SETFONT, (WPARAM)s->editFont, TRUE);
+        AiAssistantDpiChanged(*s);
         if (s->addressEditing) LayoutAddressEditor(*s);
         if (!s->tagRenameId.empty()) LayoutTagRenameOverlay(*s);
         InvalidateRect(hwnd, nullptr, FALSE);
@@ -1906,6 +1909,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_CTLCOLOREDIT: {
         if (!s) break;
+        if (HBRUSH brush = AiAssistantCtlColor(*s, reinterpret_cast<HDC>(wParam), reinterpret_cast<HWND>(lParam)))
+            return reinterpret_cast<LRESULT>(brush);
         EnsureEditVisuals(*s);
         HDC hdc = reinterpret_cast<HDC>(wParam);
         SetTextColor(hdc, ui::EditTextColor(s->darkMode));
@@ -2315,6 +2320,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         POINT pt{};
         GetCursorPos(&pt);
         ScreenToClient(hwnd, &pt);
+        if (!s->sidebarResizing && AiAssistantSetCursor(*s, pt.x, pt.y)) return TRUE;
         if (s->sidebarResizing || SidebarResizeHit(*s, pt.x, pt.y)) {
             SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
             return TRUE;
@@ -3227,6 +3233,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 DestroyWindow(s->hwndFilterEdit);
                 s->hwndFilterEdit = nullptr;
             }
+            AiAssistantDestroy(*s);
             if (s->editFont) {
                 DeleteObject(s->editFont);
                 s->editFont = nullptr;

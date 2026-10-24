@@ -10,6 +10,7 @@
 #include "sysctx_view.h"
 #include "shortcuts_view.h"
 #include "ai_settings_view.h"
+#include "ai_panel_view.h"
 #include "view_layout.h"
 #include "git_mark.h"
 #include "mtime_hint.h"
@@ -716,7 +717,7 @@ struct DetailsHitRects {
     float content_height_dip = 0.0f; // unclipped content height for wheel clamp
 };
 
-// The AI chip at the right end of the status bar (app ai_status.h).
+// The AI chip at the left end of the status bar (app ai_status.h, Pulse 助手).
 enum class StatusAiState : uint8_t { Hidden, Idle, Busy, Waiting, Done };
 
 struct StatusBarView {
@@ -744,6 +745,11 @@ struct StatusBarView {
     std::wstring performance_compact_text;
     StatusAiState ai_state = StatusAiState::Hidden;
     std::wstring ai_text;          // the chip's words (Idle: the client, may be empty)
+    std::wstring ai_label;         // "AI"
+    bool ai_open = false;          // Pulse 助手 is open (accent-soft chip)
+    bool ai_unread = false;        // finished while closed: green dot
+    bool ai_pressed = false;       // mouse down on the chip
+    float ai_progress = -1.0f;     // 0..1 while a plan runs; negative hides the bar
 };
 
 struct PaneSlotView {
@@ -939,6 +945,7 @@ struct FilterTagSuggestionView {
 };
 
 struct WindowViewModel {
+    AiPanelViewModel ai_panel;   // Pulse 助手 (ai_panel_view.h)
     std::wstring window_title;
     // Multi-window M7c: with two or more windows the title bar shows this
     // window's color dot and name in place of the product name.

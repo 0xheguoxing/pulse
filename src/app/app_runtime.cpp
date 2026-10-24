@@ -52,6 +52,7 @@
 #include "ai_pack.h"
 #include "ai_pack_ui.h"
 #include "ai_settings_ui.h"
+#include "ai_assistant.h"
 #include "session.h"
 #include "context_menu.h"
 #include "batch_rename.h"
@@ -2811,7 +2812,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
             }
         }
     }
-    pulse::FillAiStatusVm(vm);   // the AI chip at the right end of the status bar
+    pulse::FillAiStatusVm(vm);   // the AI chip at the left end of the status bar
     // "已暂存" row pills (tray redesign).
     vm.pane.staged = StagedHashes(s);
     // 1B-2 overlays: cut rows, drag feedback, breadcrumb hover.
@@ -3251,6 +3252,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     }
     vm.tooltip_x = static_cast<float>(s.hoverPoint.x);
     vm.tooltip_y = static_cast<float>(s.hoverPoint.y);
+    pulse::FillAiAssistantVm(s, vm);   // Pulse 助手 and its chip (after FillAiStatusVm, may set a tip)
     FillPaneSlots(s, vm);
     FillChangePopover(s, vm);
     FillFolderSizes(s, vm);

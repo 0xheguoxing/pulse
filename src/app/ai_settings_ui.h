@@ -17,7 +17,8 @@ void FillAiStatusVm(ui::WindowViewModel& vm);
 void FillAiSettingsVm(AppState& s, ui::WindowViewModel& vm);
 // A click on the AI page (HitTestResult::SettingsAi index, ui::AiHit).
 void AiSettingsAction(AppState& s, int index);
-// A click on the chip: the open question comes forward, else the AI page opens.
+// A click on the chip: an outside client's open question comes forward, else
+// Pulse 助手 opens or closes (ai_assistant.h).
 void AiChipClicked(AppState& s);
 // UI thread, after a call that changed files: 「Claude 新建了 x.zip」 with 撤销
 // and 打开位置; after undo_last, what it undid.

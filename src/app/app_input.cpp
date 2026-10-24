@@ -1,6 +1,7 @@
 #include "reopen_closed.h"
 #include "git_ui.h"
 #include "ai_settings_ui.h"
+#include "ai_assistant.h"
 #include "folder_alias.h"
 #include "app_wall_hint.h"
 #include "arrival_select.h"
@@ -1806,6 +1807,11 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         if (!s) return DefWindowProcW(hwnd, msg, wParam, lParam);
         int mx = GET_X_LPARAM(lParam);
         int my = GET_Y_LPARAM(lParam);
+        if (AiAssistantMouseMove(*s, mx, my)) {   // Pulse 助手 owns its panel
+            if (s->hoverRegion != 0 || s->hoverRow >= 0 || !s->tooltipText.empty())
+                HandleMouseLeave(s, hwnd, WM_MOUSELEAVE, 0, 0);
+            return 0;
+        }
         if (TryBlankWindowDrag(hwnd, wParam, mx, my)) return 0;  // blank chrome moves the window
         if (ToolbarPinDragging()) {   // picker T3c: no hover plate or tooltip under the dragged pin
             MoveToolbarPinDrag(*s, POINT{mx, my});
@@ -2775,6 +2781,7 @@ LRESULT HandleMouseLeave(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM
         (void)wParam;
         (void)lParam;
         if (s) {
+            AiAssistantMouseLeave(*s);
             if (s->renderer.ReleaseTabWidths()) InvalidateRect(hwnd, nullptr, FALSE);
             s->scrollbarHovered = false;
             s->sidebarScrollbarHot = false;
@@ -2843,6 +2850,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         s->blankDoublePending = false;
         int mx = GET_X_LPARAM(lParam);
         int my = GET_Y_LPARAM(lParam);
+        if (AiAssistantMouseDown(*s, mx, my)) return 0;   // Pulse 助手
         if (DismissPathEditorOutside(*s, mx, my)) return 0;  // chose a 别名 suggestion
         if (ClickFilterTagSuggestion(*s, mx, my)) return 0;  // the filter box's # completion
         CancelRenameClick(*s);
@@ -3947,6 +3955,11 @@ static bool HandlePaneHeaderBlankDoubleClick(AppState& s, const ui::HitTestResul
 
 LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (!s) return DefWindowProcW(hwnd, msg, wParam, lParam);
+        // Pulse 助手: a double click is a second click on its buttons.
+        if (AiAssistantMouseOther(*s, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) {
+            AiAssistantMouseDown(*s, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            return 0;
+        }
         if (ColumnStripSwallowDoubleClick(*s)) {
             s->stripClickTick = 0;
             return 0;
@@ -4106,6 +4119,7 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         (void)msg;
         (void)wParam;
         g_blank_drag = BlankWindowDrag{};
+        if (s && AiAssistantMouseUp(*s, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;   // Pulse 助手
         if (s && ToolbarPinDragging()) {   // picker T3c
             EndToolbarPinDrag(*s, false);
             return 0;
@@ -4539,6 +4553,7 @@ LRESULT HandleCaptureChanged(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LP
 
 LRESULT HandleRButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (!s) return DefWindowProcW(hwnd, msg, wParam, lParam);
+        if (AiAssistantMouseOther(*s, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;   // Pulse 助手
         DismissPathEditorOutside(*s, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         if (s->filterEditing) HideFilterEditor(*s, true);
         s->blankClickTab = nullptr;
@@ -4581,6 +4596,7 @@ LRESULT HandleRButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
 
 LRESULT HandleRButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (!s) return DefWindowProcW(hwnd, msg, wParam, lParam);
+        if (AiAssistantMouseOther(*s, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;   // Pulse 助手
         int mx = GET_X_LPARAM(lParam);
         int my = GET_Y_LPARAM(lParam);
         ui::WindowViewModel vm = BuildVm(*s);
@@ -4788,6 +4804,12 @@ LRESULT HandleRButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 
 LRESULT HandleMouseWheel(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (!s) return DefWindowProcW(hwnd, msg, wParam, lParam);
+        {
+            POINT wp{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            ScreenToClient(hwnd, &wp);
+            if (AiAssistantWheel(*s, wp.x, wp.y, msg == WM_MOUSEWHEEL ? GET_WHEEL_DELTA_WPARAM(wParam) : 0))
+                return 0;   // Pulse 助手's conversation scrolls
+        }
         s->blankClickTab = nullptr;
         CancelRenameClick(*s);
         {
@@ -4959,6 +4981,7 @@ void ShowKeyboardContextMenu(AppState& s) {
 
 LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (!s) return DefWindowProcW(hwnd, msg, wParam, lParam);
+        if (wParam == VK_ESCAPE && AiAssistantEscape(*s)) return 0;   // Pulse 助手's model menu
         if (wParam == VK_ESCAPE && SysCtxPreviewDragCancel(*s)) return 0;
         if (wParam == VK_ESCAPE && CancelMarquee(*s)) {
             InvalidateRect(hwnd, nullptr, FALSE);

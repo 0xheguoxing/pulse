@@ -102,6 +102,15 @@ Settings ParseSettings(std::string_view utf8, bool* malformed) {
             s.allow.push_back(std::move(rule));
         }
     }
+    if (const auto* a = root.find("assistant"); a && a->is_object()) {
+        s.assistant.floating = a->get_string("dock") == "floating";
+        const std::string model = a->get_string("model");
+        if (!model.empty() && model.size() <= kMaxName) s.assistant.model = model;
+        if (const auto* effort = a->find("effort")) {
+            int64_t n = 0;
+            if (effort->get_int(n, 0, 3)) s.assistant.effort = static_cast<int>(n);
+        }
+    }
     return s;
 }
 
@@ -139,6 +148,11 @@ std::string SerializeSettings(const Settings& s) {
         allow.push(std::move(v));
     }
     root.set("allow", std::move(allow));
+    json::Value assistant = json::Value::Object();
+    assistant.set("dock", s.assistant.floating ? "floating" : "docked");
+    assistant.set("model", s.assistant.model);
+    assistant.set("effort", s.assistant.effort);
+    root.set("assistant", std::move(assistant));
     return json::Serialize(root) + "\n";
 }
 

@@ -34,11 +34,19 @@ struct AllowRule {
     std::wstring folder;   // absolute; covers its subfolders
 };
 
+// Pulse 助手 (ai_assistant.h): where its panel sits and the model last used.
+struct AssistantPrefs {
+    bool floating = false;                    // "dock": "docked" | "floating"
+    std::string model = "deepseek-flash";
+    int effort = 2;                           // 0 off, 1 low, 2 medium, 3 high
+};
+
 struct Settings {
     bool mcp_enabled = false;
     int log_days = 30;     // 1..365
     std::vector<ClientRecord> clients;
     std::vector<AllowRule> allow;
+    AssistantPrefs assistant;
 };
 
 std::wstring AiDirectory();          // %LOCALAPPDATA%\Pulse\ai, empty without LOCALAPPDATA
