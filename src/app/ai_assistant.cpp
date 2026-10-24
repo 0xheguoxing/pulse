@@ -563,6 +563,24 @@ void AiAssistantLayout(AppState& s) {
     MapWindowPoints(nullptr, s.hwnd, reinterpret_cast<POINT*>(&cur), 2);
     const bool placed = cur.left == x && cur.top == y && cur.right - cur.left == w && cur.bottom - cur.top == h;
     if (!placed || !a.edit_visible) {
+        if (!placed) {
+            // The send button's busy arc (.send.busy::after, inset -4, 2 px)
+            // reaches 4 px above the controls row, into the bottom-right corner
+            // of the input box. The page's textarea is transparent; the EDIT
+            // is not, so cut a circle out of it around the arc (+1 px).
+            // Send: 32 round, right-aligned 2 px right of / 2 + 16 px below
+            // the input rect.
+            const float sc = s.scale;
+            const float cx = r.right + 2.0f * sc - 16.0f * sc - r.left;
+            const float cy = r.bottom + 2.0f * sc + 16.0f * sc - r.top;
+            const float cr = 21.0f * sc;
+            HRGN rgn = CreateRectRgn(0, 0, w, h);
+            HRGN hole = CreateEllipticRgn(static_cast<int>(std::floor(cx - cr)), static_cast<int>(std::floor(cy - cr)),
+                                          static_cast<int>(std::ceil(cx + cr)) + 1, static_cast<int>(std::ceil(cy + cr)) + 1);
+            if (rgn && hole) CombineRgn(rgn, rgn, hole, RGN_DIFF);
+            if (hole) DeleteObject(hole);
+            if (rgn && !SetWindowRgn(a.edit, rgn, TRUE)) DeleteObject(rgn);
+        }
         SetWindowPos(a.edit, HWND_TOP, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
         a.edit_visible = true;
         Redraw(s);   // the panel stops drawing the text itself
