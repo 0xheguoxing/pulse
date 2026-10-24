@@ -12,11 +12,13 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace pulse {
 struct AppState;
+struct AiAgent;   // the DeepSeek agent loop (ai_assistant_agent.cpp)
 
 struct AiChat {
     std::vector<ui::AiBlockView> blocks;
@@ -47,9 +49,12 @@ struct AiChat {
     // Paused at a confirmation card until the user answers.
     uint32_t confirm_id = 0;
     std::function<void(AppState&, bool)> on_confirm;
-    // The latest result card's undo.
+    // The latest result card's undo and 在 Pulse 中查看.
     uint32_t result_id = 0;
     std::function<void(AppState&)> on_undo;
+    std::function<void(AppState&)> on_show;
+    // The model conversation; created by the first real turn.
+    std::shared_ptr<AiAgent> agent;
 
     ui::AiBlockView* Find(uint32_t id);
     ui::AiBlockView& Add(ui::AiBlockKind kind, uint64_t now_ms);
@@ -62,5 +67,24 @@ void AiChatStop(AppState& s);
 void AiChatReset(AppState& s);
 // Conversation parts the panel reports (block index into blocks).
 void AiChatActivate(AppState& s, ui::AiPanelPart part, int block);
+
+// Shared by the demo driver and the agent loop.
+void AiChatPush(AppState& s, uint32_t delay, std::function<int(AppState&)> run);   // queues and schedules
+void AiChatSetChip(AiChat& c, ui::StatusAiState state, std::wstring text, float progress = -1.0f);
+void AiChatFinish(AppState& s, bool done_chip);   // ends the turn
+std::wstring AiChatEffortName(const AppState& s);
+std::wstring AiChatModelId(const AppState& s);
+std::wstring AiChatFormatSize(uint64_t bytes);
+// The turn's acts row: copy / retry / helpful and "model · effort · s · tools".
+void AiChatAddActs(AppState& s, int tools);
+// A plan group's icon and tint from the kinds of its items.
+void AiChatGroupLook(const std::vector<std::wstring>& names, ui::AiIcon& icon, ui::AiTint& tint);
+
+// The agent loop (ai_assistant_agent.cpp).
+bool AiAgentConnected();        // a model key is stored (checked at most every 2 s)
+void AiAgentKeyChanged();       // after the key was saved or removed
+std::wstring AiAgentHost();     // "api.deepseek.com"
+void AiAgentStart(AppState& s, const std::wstring& prompt, bool with_context);
+void AiAgentStop(AppState& s);   // cancels the request and any tool still running
 
 } // namespace pulse

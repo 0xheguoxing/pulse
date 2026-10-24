@@ -591,6 +591,45 @@ void StartOrganize(AppState& s, AiChat& c, const std::wstring& prompt) {
 
 } // namespace
 
+void AiChatPush(AppState& s, uint32_t delay, std::function<int(AppState&)> run) {
+    Push(Chat(s), delay, std::move(run));
+    Schedule(s);
+}
+
+void AiChatSetChip(AiChat& c, ui::StatusAiState state, std::wstring text, float progress) {
+    SetChip(c, state, std::move(text), progress);
+}
+
+void AiChatFinish(AppState& s, bool done_chip) { Finish(s, done_chip); }
+std::wstring AiChatEffortName(const AppState& s) { return EffortName(s); }
+std::wstring AiChatModelId(const AppState& s) { return ModelName(s); }
+std::wstring AiChatFormatSize(uint64_t bytes) { return FormatSize(bytes); }
+
+void AiChatAddActs(AppState& s, int tools) {
+    AiChat& c = Chat(s);
+    AiBlockView& a = c.Add(AiBlockKind::Acts, Now());
+    const double secs = static_cast<double>(Now() - c.turn_start) / 1000.0;
+    wchar_t buf[16];
+    swprintf_s(buf, L"%.1f", secs);
+    const bool off = s.aiAssistant.effort == 0;
+    std::wstring meta = Text(off ? I::AiAsstActsMetaOff : I::AiAsstActsMeta);
+    meta = Fill(meta, L"{model}", ModelName(s));
+    if (!off) meta = Fill(meta, L"{effort}", EffortName(s));
+    a.meta = Fill(Fill(meta, L"{sec}", buf), L"{tools}", std::to_wstring(tools));
+}
+
+void AiChatGroupLook(const std::vector<std::wstring>& names, ui::AiIcon& icon, ui::AiTint& tint) {
+    // The most common kind, when it is at least half the group; else other.
+    int counts[static_cast<int>(Cat::Count)] = {};
+    for (const std::wstring& n : names) ++counts[static_cast<int>(CatOf(n))];
+    int best = 0;
+    for (int k = 1; k < static_cast<int>(Cat::Other); ++k)
+        if (counts[k] > counts[best]) best = k;
+    if (counts[best] == 0 || counts[best] * 2 < static_cast<int>(names.size())) best = static_cast<int>(Cat::Other);
+    icon = best == static_cast<int>(Cat::Other) ? ui::AiIcon::Folder : kCats[best].icon;
+    tint = kCats[best].tint;
+}
+
 AiBlockView* AiChat::Find(uint32_t id) {
     if (!id) return nullptr;
     for (AiBlockView& b : blocks)
@@ -616,6 +655,29 @@ void AiChatSubmit(AppState& s, const std::wstring& prompt, const std::wstring& c
     AiChat& c = Chat(s);
     if (c.busy) return;
     const uint64_t now = Now();
+    // PULSE_AI_DEMO=1 plays the local demo (screenshots, no key); otherwise
+    // the turn goes to the model.
+    static const bool demo = [] {
+        wchar_t v[8]{};
+        return GetEnvironmentVariableW(L"PULSE_AI_DEMO", v, 8) > 0 && v[0] == L'1';
+    }();
+    if (!demo) {
+        AiBlockView& u = c.Add(AiBlockKind::User, now);
+        u.text = prompt;
+        u.context = context;
+        c.last_prompt = prompt;
+        c.busy = true;
+        c.unread = false;
+        c.turn_start = now;
+        c.queue.clear();
+        c.result_id = 0;
+        SetChip(c, ui::StatusAiState::Busy, Text(I::AiAsstThinking));
+        s.renderer.AiPanel().ScrollToEnd();
+        AiAgentStart(s, prompt, !context.empty());
+        Schedule(s);
+        Redraw(s);
+        return;
+    }
     if (!c.noted) {
         // A2: say plainly that this is the demo driver.
         AiBlockView& note = c.Add(AiBlockKind::Note, 0);
@@ -640,6 +702,7 @@ void AiChatSubmit(AppState& s, const std::wstring& prompt, const std::wstring& c
 void AiChatStop(AppState& s) {
     AiChat& c = Chat(s);
     if (!c.busy) return;
+    AiAgentStop(s);
     c.queue.clear();
     if (s.hwnd) KillTimer(s.hwnd, kRunTimer);
     for (AiBlockView& b : c.blocks) {
@@ -704,7 +767,10 @@ void AiChatActivate(AppState& s, ui::AiPanelPart part, int block) {
         }
         break;
     case P::ResultShow:
-        // A3 opens the new folders; the demo made none.
+        if (b.id == c.result_id && c.on_show) {
+            auto fn = c.on_show;
+            fn(s);
+        }
         break;
     case P::ActCopy: {
         // The answer of this turn: Text blocks back to its user bubble.

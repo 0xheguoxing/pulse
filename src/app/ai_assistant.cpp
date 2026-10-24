@@ -502,9 +502,9 @@ void FillAiAssistantVm(AppState& s, ui::WindowViewModel& vm) {
     p.model = model;
     for (size_t i = 0; i < 4; ++i) p.effort_names[i] = Text(kEffortNames[i]);
     p.effort_detail = Text(kEffortDetails[p.effort]);
-    // A3 stores the DeepSeek key; until then the panel says it is not connected.
-    p.connected = false;
-    p.connection_text = p.connected ? Fill(Text(I::AiAsstConnected), L"{host}", L"api.deepseek.com")
+    // Connected once a DeepSeek key is stored (ai_model_key.h).
+    p.connected = AiAgentConnected();
+    p.connection_text = p.connected ? Fill(Text(I::AiAsstConnected), L"{host}", AiAgentHost())
                                     : Text(I::AiAsstNotConnected);
     p.manage_text = Text(I::AiAsstManage);
 

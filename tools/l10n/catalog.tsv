@@ -3021,3 +3021,32 @@ AiAsstChipUndoing	IDS_AI_ASST_CHIP_UNDOING	4219	正在撤销	Undoing	正在復�
 AiAsstDemoNote	IDS_AI_ASST_DEMO_NOTE	4220	演示模式 · 不会改动文件	Demo mode · files are not changed	示範模式 · 不會變更檔案
 AiAsstStopped	IDS_AI_ASST_STOPPED	4221	已停止	Stopped	已停止
 AiAsstNoFolder	IDS_AI_ASST_NO_FOLDER	4222	先打开一个文件夹，我再帮你整理。	Open a folder first and I'll help sort it.	先開啟一個資料夾，我再幫你整理。
+AiAsstStepWindowSel	IDS_AI_ASST_STEP_WINDOW_SEL	4223	{folder} · {n} 项 · 选中 {k} 项	{folder} · {n} items · {k} selected	{folder} · {n} 項 · 選取 {k} 項
+AiAsstStepWindowNone	IDS_AI_ASST_STEP_WINDOW_NONE	4224	没有打开的文件夹	No folder is open	沒有開啟的資料夾
+AiAsstStepReadWait	IDS_AI_ASST_STEP_READ_WAIT	4225	正在读取…	Reading…	正在讀取…
+AiAsstStepReadDoneDirs	IDS_AI_ASST_STEP_READ_DONE_DIRS	4226	{n} 个文件 · {d} 个文件夹 · {size}	{n} files · {d} folders · {size}	{n} 個檔案 · {d} 個資料夾 · {size}
+AiAsstStepProps	IDS_AI_ASST_STEP_PROPS	4227	查看属性	Read properties	查看屬性
+AiAsstStepPropsRun	IDS_AI_ASST_STEP_PROPS_RUN	4228	正在读取 {n} 项的属性…	Reading properties of {n} items…	正在讀取 {n} 項的屬性…
+AiAsstStepPropsDone	IDS_AI_ASST_STEP_PROPS_DONE	4229	{n} 项	{n} items	{n} 項
+AiAsstStepFailed	IDS_AI_ASST_STEP_FAILED	4230	没有成功：{reason}	Failed: {reason}	沒有成功：{reason}
+AiAsstStepsUsed	IDS_AI_ASST_STEPS_USED	4231	用了 {n} 次工具	Used {n} tools	用了 {n} 次工具
+AiAsstChipReadingAny	IDS_AI_ASST_CHIP_READING_ANY	4232	读取中	Reading	讀取中
+AiAsstPlanMetaAny	IDS_AI_ASST_PLAN_META_ANY	4233	{g} 个文件夹 · {n} 个文件	{g} folders · {n} files	{g} 個資料夾 · {n} 個檔案
+AiAsstConfirmTitleAny	IDS_AI_ASST_CONFIRM_TITLE_ANY	4234	整理 {n} 个项目到 {g} 个文件夹？	Sort {n} items into {g} folders?	整理 {n} 個項目到 {g} 個資料夾？
+AiAsstStepMoveDoneAny	IDS_AI_ASST_STEP_MOVE_DONE_ANY	4235	{n} 个项目 → {g} 个文件夹 · 没有覆盖	{n} items → {g} folders · nothing replaced	{n} 個項目 → {g} 個資料夾 · 沒有覆寫
+AiAsstStepsMoveAny	IDS_AI_ASST_STEPS_MOVE_ANY	4236	整理了 {n} 个项目 → {g} 个文件夹	Sorted {n} items → {g} folders	整理了 {n} 個項目 → {g} 個資料夾
+AiAsstResultSubAny	IDS_AI_ASST_RESULT_SUB_ANY	4237	{folder} › {g} 个文件夹	{folder} › {g} folders	{folder} › {g} 個資料夾
+AiAsstUndoneSubAny	IDS_AI_ASST_UNDONE_SUB_ANY	4238	{n} 个文件回到了「{folder}」	{n} files are back in “{folder}”	{n} 個檔案回到了「{folder}」
+AiAsstUndoLabel	IDS_AI_ASST_UNDO_LABEL	4239	Pulse 助手整理	Pulse Assistant sort	Pulse 助手整理
+AiAsstErrNoKey	IDS_AI_ASST_ERR_NO_KEY	4240	还没有连接模型。点输入框下方的模型名称，选「管理连接」，填上 DeepSeek 的 API Key 就能用了。	No model is connected yet. Click the model name under the input box, choose Manage connection and enter your DeepSeek API key.	還沒有連線模型。點輸入框下方的模型名稱，選「管理連線」，填上 DeepSeek 的 API Key 就能用了。
+AiAsstErrAuth	IDS_AI_ASST_ERR_AUTH	4241	API Key 无效或已过期。去「管理连接」换一个再试。	The API key is invalid or expired. Replace it in Manage connection and try again.	API Key 無效或已過期。到「管理連線」換一個再試。
+AiAsstErrBalance	IDS_AI_ASST_ERR_BALANCE	4242	DeepSeek 账户余额不足，充值后再试。	Your DeepSeek balance is too low. Top up and try again.	DeepSeek 帳戶餘額不足，儲值後再試。
+AiAsstErrRate	IDS_AI_ASST_ERR_RATE	4243	请求太频繁了，稍等一会儿再试。	Too many requests. Wait a moment and try again.	請求太頻繁了，稍等一會兒再試。
+AiAsstErrServer	IDS_AI_ASST_ERR_SERVER	4244	DeepSeek 服务暂时出错（{code}），稍后重试。	DeepSeek had a problem ({code}). Try again later.	DeepSeek 服務暫時出錯（{code}），稍後重試。
+AiAsstErrNetwork	IDS_AI_ASST_ERR_NETWORK	4245	连不上 {host}，检查一下网络或代理。（错误 {code}）	Can't reach {host}. Check your network or proxy. (error {code})	連不上 {host}，檢查一下網路或 Proxy。（錯誤 {code}）
+AiAsstErrBadRequest	IDS_AI_ASST_ERR_BAD_REQUEST	4246	请求被拒绝（{code}）：{detail}	The request was refused ({code}): {detail}	請求被拒絕（{code}）：{detail}
+AiAsstErrTooMany	IDS_AI_ASST_ERR_TOO_MANY	4247	步骤太多了，先停在这里。可以换个说法再试。	That took too many steps, so I stopped here. Try asking another way.	步驟太多了，先停在這裡。可以換個說法再試。
+AiAsstErrEarly	IDS_AI_ASST_ERR_EARLY	4248	回答中途断开了，点「重试」再来一次。	The answer was cut off. Click Retry to try again.	回答中途斷開了，點「重試」再來一次。
+AiAsstUndoBusy	IDS_AI_ASST_UNDO_BUSY	4249	整理还没做完，做完再撤销。	The sort is still running; undo once it finishes.	整理還沒做完，做完再復原。
+AiAsstUndoGone	IDS_AI_ASST_UNDO_GONE	4250	这次整理已经不能撤销了：之后又有别的改动。	This sort can no longer be undone: something else changed since.	這次整理已經不能復原了：之後又有別的變更。
+AiAsstMovedSome	IDS_AI_ASST_MOVED_SOME	4251	移动了 {k} / {n} 个，其余的没有成功	Moved {k} of {n}; the rest failed	移動了 {k} / {n} 個，其餘的沒有成功
