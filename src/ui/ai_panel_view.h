@@ -72,6 +72,11 @@ enum class AiPanelPart : uint8_t {
     ConnRemove,
     ConnKeyField,
     ConnUrlField,
+    // The bubble above the chip once the panel is closed.
+    PeekCard,
+    PeekClose,
+    PeekUndo,
+    PeekOpen,
 };
 
 struct AiPanelHit {
@@ -175,6 +180,16 @@ struct AiStatusChipView {
 // spark 15, gap 6, bar 38.
 float AiStatusChipWidth(float label_w, float text_w, bool words, bool progress, float scale);
 
+// .peek: above the status bar chip when the panel is closed and the
+// assistant finished (or needs you); 撤销 and 打开对话.
+struct AiPeekView {
+    bool on = false;
+    std::wstring title;               // Pulse 助手 · 完成
+    std::wstring text;                // 已把 12 个文件整理到 5 个新文件夹：…
+    std::wstring undo;                // 撤销 (empty: no button)
+    std::wstring open;                // 打开对话
+};
+
 struct AiPanelViewModel {
     bool dark = false;
     bool high_contrast = false;
@@ -220,6 +235,7 @@ struct AiPanelViewModel {
     // Pointer.
     AiPanelHit hover;
     AiPanelHit pressed;
+    AiPeekView peek;
 };
 
 class AiPanelView {
@@ -243,7 +259,7 @@ public:
 
     // Once per frame before layout: samples the motion. True while it runs.
     bool Tick(uint64_t now_ms);
-    bool Animating() const noexcept { return dock_anim_ || float_anim_ || conv_anim_; }
+    bool Animating() const noexcept { return dock_anim_ || float_anim_ || conv_anim_ || peek_anim_; }
     // Decorative motion of the open panel (the breathing spark, spinners).
     bool WantsDecorFrame() const noexcept { return (open_ && (decor_ || conv_decor_)) || chip_decor_; }
 
@@ -285,6 +301,12 @@ public:
     // decorative frames like the open panel does.
     void DrawStatusChip(Compositor* compositor, const Theme& theme, const AiStatusChipView& chip,
                         const D2D1_RECT_F& rect, float scale, uint64_t now_ms);
+    // The peek bubble over the chip (`chip`: its rect this frame); it fades
+    // and rises in and out on its own (ai_panel_peek.cpp).
+    void DrawPeek(Compositor* compositor, const AiPanelViewModel& vm, const Theme& theme, const D2D1_RECT_F& chip,
+                  float scale, uint64_t now_ms);
+    AiPanelHit PeekHitTest(float x, float y) const;
+    bool PeekVisible() const noexcept { return peek_value_ > 0.0f; }
 
     void ReleaseDeviceResources();
 
@@ -344,6 +366,13 @@ private:
     uint64_t menu_at_ = 0;
     bool decor_ = false;
     bool chip_decor_ = false;
+    // Peek bubble.
+    float peek_value_ = 0.0f;         // 0..1 shown
+    bool peek_target_ = false;
+    uint64_t peek_t0_ = 0;            // its last turn started
+    float peek_from_ = 0.0f;
+    bool peek_anim_ = false;
+    D2D1_RECT_F peek_rect_{}, peek_close_{}, peek_undo_{}, peek_open_{};
     bool chip_waiting_ = false;
     uint64_t chip_since_ = 0;
     bool EnsureBrush(ID2D1DeviceContext* dc);

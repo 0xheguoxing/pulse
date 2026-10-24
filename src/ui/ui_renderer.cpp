@@ -2101,6 +2101,8 @@ void MainRenderer::DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& f
         chip.pressed = chip.hover && vm.status.ai_pressed;
         chip.dark = vm.dark;
         ai_panel_.DrawStatusChip(compositor_, theme, chip, sb.ai_chip, scale_, motion_now_);
+        // Pulse 助手 closed and done: the bubble over the chip (.peek).
+        ai_panel_.DrawPeek(compositor_, vm.ai_panel, theme, sb.ai_chip, scale_, motion_now_);
     }
     const bool centered_progress = vm.status.query_active || vm.status.task_is_update;
     float y = sb.bar.top;

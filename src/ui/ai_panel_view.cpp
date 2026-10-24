@@ -903,6 +903,8 @@ void AiPanelView::DrawStatusChip(Compositor* compositor, const Theme& theme, con
     dc->SetTransform(saved);
 }
 
+AiPanelView::Palette AiPanelPalette(const Theme& theme, bool dark) { return MakePalette(theme, dark); }
+
 AiPanelHit AiPanelView::HitTest(float x, float y) const {
     AiPanelHit hit;
     if (!drawn_ || !open_) return hit;

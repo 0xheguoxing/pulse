@@ -25,6 +25,8 @@ using ui::AiBlockKind;
 using ui::AiBlockView;
 
 constexpr UINT_PTR kRunTimer = 0x4152;   // 'AR'
+constexpr UINT_PTR kPeekTimer = 0x4156;  // the peek bubble's in and out
+constexpr uint64_t kPeekMs = 4200;
 
 std::wstring Text(I id) { return l10n::Get(id).c_str(); }
 
@@ -166,10 +168,7 @@ void CopyText(HWND hwnd, const std::wstring& text) {
 
 void Schedule(AppState& s);
 
-void CALLBACK RunTimer(HWND hwnd, UINT, UINT_PTR id, DWORD) {
-    KillTimer(hwnd, id);
-    auto* s = reinterpret_cast<AppState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    if (!s || !s->aiAssistant.chat) return;
+void RunDue(AppState* s) {
     AiChat& c = *s->aiAssistant.chat;
     bool changed = false;
     // Run every step that is due (a slow frame may owe several).
@@ -186,6 +185,13 @@ void CALLBACK RunTimer(HWND hwnd, UINT, UINT_PTR id, DWORD) {
     }
     if (changed) Redraw(*s);
     Schedule(*s);
+}
+
+void CALLBACK RunTimer(HWND hwnd, UINT, UINT_PTR id, DWORD) {
+    KillTimer(hwnd, id);
+    auto* s = reinterpret_cast<AppState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!s || !s->aiAssistant.chat) return;
+    RunDue(s);
 }
 
 void Schedule(AppState& s) {
@@ -229,7 +235,10 @@ void Finish(AppState& s, bool done_chip) {
     c.think_id = 0;
     if (done_chip) {
         SetChip(c, ui::StatusAiState::Done, Text(I::AiAsstChipDone));
-        if (!s.aiAssistant.open) c.unread = true;
+        if (!s.aiAssistant.open) {
+            c.unread = true;
+            AiChatPeek(s, 650);
+        }
     } else {
         SetChip(c, ui::StatusAiState::Idle, L"");
     }
@@ -594,6 +603,13 @@ void AiChatPush(AppState& s, uint32_t delay, std::function<int(AppState&)> run) 
     Schedule(s);
 }
 
+void AiChatRunDue(AppState& s) {
+    if (!s.aiAssistant.chat) return;
+    const AiChat& c = *s.aiAssistant.chat;
+    if (c.queue.empty() || Now() < c.next_at) return;
+    RunDue(&s);
+}
+
 void AiChatSetChip(AiChat& c, ui::StatusAiState state, std::wstring text, float progress) {
     SetChip(c, state, std::move(text), progress);
 }
@@ -614,6 +630,73 @@ void AiChatAddActs(AppState& s, int tools) {
     meta = Fill(meta, L"{model}", ModelName(s));
     if (!off) meta = Fill(meta, L"{effort}", EffortName(s));
     a.meta = Fill(Fill(meta, L"{sec}", buf), L"{tools}", std::to_wstring(tools));
+}
+
+namespace {
+void CALLBACK PeekTimer(HWND hwnd, UINT, UINT_PTR id, DWORD) {
+    KillTimer(hwnd, id);
+    auto* s = reinterpret_cast<AppState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!s || !s->aiAssistant.chat) return;
+    AiChat& c = *s->aiAssistant.chat;
+    Redraw(*s);
+    const uint64_t now = Now();
+    const uint64_t next = c.peek_at > now ? c.peek_at : c.peek_until > now ? c.peek_until : 0;
+    if (next) SetTimer(hwnd, kPeekTimer, static_cast<UINT>(next - now + 1), PeekTimer);
+}
+}  // namespace
+
+void AiChatPeek(AppState& s, uint32_t delay) {
+    AiChat& c = Chat(s);
+    if (s.aiAssistant.open || c.busy || c.chip != ui::StatusAiState::Done || !c.turn_start) return;
+    if (c.peek_turn == c.turn_start) return;   // once per turn
+    if (c.peek_text.empty()) {
+        // No summary of its own: the start of the answer.
+        for (auto it = c.blocks.rbegin(); it != c.blocks.rend(); ++it) {
+            if (it->kind == AiBlockKind::User) break;
+            if (it->kind != AiBlockKind::Text) continue;
+            std::wstring t = Plain(it->text);
+            for (wchar_t& ch : t)
+                if (ch == L'\n' || ch == L'\r') ch = L' ';
+            if (t.size() > 80) t = t.substr(0, 78) + L"\u2026";
+            c.peek_text = t;
+            break;
+        }
+    }
+    if (c.peek_text.empty()) return;
+    c.peek_turn = c.turn_start;
+    c.peek_at = Now() + delay;
+    c.peek_until = c.peek_at + kPeekMs;
+    if (s.hwnd) SetTimer(s.hwnd, kPeekTimer, delay + 1, PeekTimer);
+}
+
+void AiChatHidePeek(AppState& s) {
+    AiChat& c = Chat(s);
+    if (!c.peek_at) return;
+    c.peek_at = 0;
+    c.peek_until = 0;
+    Redraw(s);
+}
+
+void AiChatFillPeek(AppState& s, bool panel_open, ui::AiPeekView& peek) {
+    AiChat& c = Chat(s);
+    if (c.peek_text.empty() || !c.peek_turn) return;
+    const uint64_t now = Now();
+    peek.on = !panel_open && c.peek_at && now >= c.peek_at && now < c.peek_until;
+    peek.title = Text(I::AiPeekDone);
+    peek.text = c.peek_text;
+    bool can_undo = c.peek_undo && c.on_undo;
+    if (const AiBlockView* r = c.Find(c.result_id); !r || r->done) can_undo = false;
+    peek.undo = can_undo ? Text(I::AiAsstUndo) : std::wstring();
+    peek.open = Text(I::AiPeekOpen);
+}
+
+void AiChatUndoLast(AppState& s) {
+    AiChat& c = Chat(s);
+    for (size_t i = 0; i < c.blocks.size(); ++i)
+        if (c.blocks[i].id == c.result_id) {
+            AiChatActivate(s, ui::AiPanelPart::ResultUndo, static_cast<int>(i));
+            return;
+        }
 }
 
 void AiChatGroupLook(const std::vector<std::wstring>& names, ui::AiIcon& icon, ui::AiTint& tint) {
@@ -669,6 +752,9 @@ void AiChatSubmit(AppState& s, const std::wstring& prompt, const std::wstring& c
         c.turn_start = now;
         c.queue.clear();
         c.result_id = 0;
+        c.peek_text.clear();
+        c.peek_undo = false;
+        c.peek_at = c.peek_until = 0;
         SetChip(c, ui::StatusAiState::Busy, Text(I::AiAsstThinking));
         s.renderer.AiPanel().ScrollToEnd();
         AiAgentStart(s, prompt, !context.empty());
@@ -689,6 +775,9 @@ void AiChatSubmit(AppState& s, const std::wstring& prompt, const std::wstring& c
     c.busy = true;
     c.unread = false;
     c.turn_start = now;
+    c.peek_text.clear();
+    c.peek_undo = false;
+    c.peek_at = c.peek_until = 0;
     c.queue.clear();
     SetChip(c, ui::StatusAiState::Busy, Text(I::AiAsstThinking));
     s.renderer.AiPanel().ScrollToEnd();

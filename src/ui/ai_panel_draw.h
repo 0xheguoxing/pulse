@@ -22,6 +22,9 @@ struct AiPanelView::Palette {
     std::array<D2D1_COLOR_F, 6> tint_fg, tint_bg;
 };
 
+// The panel's colors for `theme` (ai_panel_view.cpp).
+AiPanelView::Palette AiPanelPalette(const Theme& theme, bool dark);
+
 namespace ai_draw {
 
 inline D2D1_COLOR_F Hex(uint32_t rgb, float a = 1.0f) {

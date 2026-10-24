@@ -328,9 +328,35 @@ void ShowTipLater(AppState& s) {
     });
 }
 
+bool IsPeekPart(ui::AiPanelPart part) {
+    using P = ui::AiPanelPart;
+    return part == P::PeekCard || part == P::PeekClose || part == P::PeekUndo || part == P::PeekOpen;
+}
+
+// The peek bubble first (it floats over the list), then the panel.
+ui::AiPanelHit HitAt(AppState& s, int x, int y) {
+    const ui::AiPanelView& view = s.renderer.AiPanel();
+    const ui::AiPanelHit peek = view.PeekHitTest(static_cast<float>(x), static_cast<float>(y));
+    if (peek.part != ui::AiPanelPart::None) return peek;
+    return view.HitTest(static_cast<float>(x), static_cast<float>(y));
+}
+
+bool Reachable(AppState& s) { return s.aiAssistant.open || s.renderer.AiPanel().PeekVisible(); }
+
 void Activate(AppState& s, const ui::AiPanelHit& hit) {
     AiAssistantState& a = s.aiAssistant;
     using P = ui::AiPanelPart;
+    if (IsPeekPart(hit.part)) {
+        if (hit.part == P::PeekCard) return;
+        AiChatHidePeek(s);
+        if (hit.part == P::PeekUndo) AiChatUndoLast(s);
+        if (hit.part == P::PeekOpen) {
+            AiAssistantOpen(s);
+            s.renderer.AiPanel().ScrollToEnd();
+        }
+        Redraw(s);
+        return;
+    }
     if (bool close_menu = false; AiConnActivate(s, hit, close_menu)) {
         if (close_menu) {
             CloseMenu(s);
@@ -444,6 +470,7 @@ void AiAssistantOpen(AppState& s, bool animate) {
     a.open = true;
     a.focus_pending = true;
     if (a.chat) a.chat->unread = false;
+    if (a.chat) AiChatHidePeek(s);
     EnsureEdit(s);
     ApplyPanel(s, animate);
 }
@@ -460,6 +487,8 @@ void AiAssistantClose(AppState& s, bool animate) {
     a.captured = false;
     HideEdit(s);
     ApplyPanel(s, animate);
+    // Closed on a finished turn: the bubble over the chip says what happened.
+    if (a.chat) AiChatPeek(s, 650);
 }
 
 void AiAssistantToggle(AppState& s) {
@@ -480,6 +509,12 @@ void FillAiAssistantVm(AppState& s, ui::WindowViewModel& vm) {
         vm.status.ai_text = a.chat->chip_text;
         vm.status.ai_progress = a.chat->chip_progress;
         vm.status.ai_unread = a.chat->unread;
+    }
+    if (a.chat) {
+        AiChatFillPeek(s, a.open, vm.ai_panel.peek);
+        vm.ai_panel.dark = vm.dark;
+        vm.ai_panel.hover = a.hover;
+        vm.ai_panel.pressed = a.pressed;
     }
     if (!a.open && !s.renderer.AiPanel().Visible()) return;
     LoadPrefs(a);
@@ -625,8 +660,14 @@ void AiAssistantLayout(AppState& s) {
 
 bool AiAssistantMouseMove(AppState& s, int x, int y) {
     AiAssistantState& a = s.aiAssistant;
-    if (!a.open) return false;
-    const ui::AiPanelHit hit = s.renderer.AiPanel().HitTest(static_cast<float>(x), static_cast<float>(y));
+    if (!Reachable(s) && !a.captured) {
+        if (a.hover.part != ui::AiPanelPart::None) {
+            a.hover = {};
+            Redraw(s);
+        }
+        return false;
+    }
+    const ui::AiPanelHit hit = HitAt(s, x, y);
     if (!(hit == a.hover)) {
         a.hover = hit;
         a.hover_since = GetTickCount64();
@@ -643,8 +684,8 @@ bool AiAssistantMouseMove(AppState& s, int x, int y) {
 
 bool AiAssistantMouseDown(AppState& s, int x, int y) {
     AiAssistantState& a = s.aiAssistant;
-    if (!a.open) return false;
-    const ui::AiPanelHit hit = s.renderer.AiPanel().HitTest(static_cast<float>(x), static_cast<float>(y));
+    if (!Reachable(s)) return false;
+    const ui::AiPanelHit hit = HitAt(s, x, y);
     if (hit.part == ui::AiPanelPart::None) {
         // Outside: the menu folds away and the click goes on to Pulse.
         if (a.menu_open) {
@@ -668,22 +709,26 @@ bool AiAssistantMouseUp(AppState& s, int x, int y) {
     if (GetCapture() == s.hwnd) ReleaseCapture();
     const ui::AiPanelHit pressed = a.pressed;
     a.pressed = {};
-    const ui::AiPanelHit hit = s.renderer.AiPanel().HitTest(static_cast<float>(x), static_cast<float>(y));
+    const ui::AiPanelHit hit = HitAt(s, x, y);
     a.hover = hit;
-    if (a.open && hit == pressed) Activate(s, hit);
+    if ((a.open || IsPeekPart(hit.part)) && hit == pressed) Activate(s, hit);
     Redraw(s);
     return true;
 }
 
 bool AiAssistantMouseOther(AppState& s, int x, int y) {
     const AiAssistantState& a = s.aiAssistant;
-    return a.open && s.renderer.AiPanel().Contains(static_cast<float>(x), static_cast<float>(y));
+    const ui::AiPanelView& view = s.renderer.AiPanel();
+    return (a.open && view.Contains(static_cast<float>(x), static_cast<float>(y))) ||
+           view.PeekHitTest(static_cast<float>(x), static_cast<float>(y)).part != ui::AiPanelPart::None;
 }
 
 std::wstring AiAssistantModelName(const AppState&) { return json::Wide(CurrentModel()); }
 
 bool AiAssistantWheel(AppState& s, int x, int y, int delta) {
     if (!AiAssistantMouseOther(s, x, y)) return false;
+    if (s.renderer.AiPanel().PeekHitTest(static_cast<float>(x), static_cast<float>(y)).part != ui::AiPanelPart::None)
+        return true;   // over the bubble: nothing to scroll
     if (delta != 0) {
         // Three 16 px lines a notch, like the page's list.
         s.renderer.AiPanel().ScrollBy(-static_cast<float>(delta) / WHEEL_DELTA * 48.0f * s.scale);

@@ -1,6 +1,7 @@
 #include "file_item_selection.h"
 // ui_pane_list.cpp — Pane, list, empty states, columns, and icons.
 #include "ui_renderer.h"
+#include "ai_list_overlay.h"
 #include "file_item_selection.h"
 #include "ui_renderer_internal.h"
 #include "../common/localization.h"
@@ -33,6 +34,19 @@
 #include <unordered_map>
 
 namespace pulse::ui {
+
+namespace {
+// Pulse 助手's list overlay of the pane DrawSinglePane is drawing (it owns
+// the painter: the spark and the title pill are drawn outside the list's clip).
+AiListPainter* g_ai_list_painter = nullptr;
+int g_ai_list_pane = -1;
+// How a row looked when its card started to fly (the row is gone soon after).
+std::unordered_map<std::wstring, ListEntryView>& AiGhostEntries() {
+    static std::unordered_map<std::wstring, ListEntryView> entries;
+    return entries;
+}
+}  // namespace
+
 // Cloud-file state glyph (Segoe Fluent) and ink, shared by the Details
 // 状态 column and the grid badge.
 static const wchar_t* CloudStateGlyph(fs::CloudState state) {
@@ -3085,9 +3099,21 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
         DrawPaneEmptyState(vm, pane, D2D1::RectF(x, y, x + w, bottom), pane_index, theme);
     else
         group_hover_pane_ = vm.hover_pane_index;
-        DrawList(pane, x, y, w, listH, theme, vm.hover_region, vm.hover_control_index, focused || !split,
-                 pane_index);
+    // Pulse 助手's overlay: DrawList draws the rows' part; the spark, the line
+    // under the column header and the title row's pill come after the clip.
+    AiListPainter ai_list(pane.ai_list.get(), compositor_, theme, scale_, motion_now_, pane_index);
+    g_ai_list_painter = &ai_list;
+    g_ai_list_pane = pane_index;
+    DrawList(pane, x, y, w, listH, theme, vm.hover_region, vm.hover_control_index, focused || !split,
+             pane_index);
+    g_ai_list_painter = nullptr;
+    g_ai_list_pane = -1;
     dc->PopAxisAlignedClip();
+    if (ai_list.On()) {
+        ai_list.Margin(D2D1::RectF(x, y, x + w, bottom));
+        ai_list.Watch(detailsRc.left - 10.0f * scale_, y0, pane_header_height_, x + 90.0f * scale_);
+        if (ai_list.Animating()) RequestMotionFrame();
+    }
     if (col_badge_.pane == pane_index) DrawColumnBadge(pane_index, theme);
     if (focused && pane.wall_hint_since)
         DrawPaneWallHint(pane, pane_rect, vm.hover_region, vm.hover_control_index, theme);
@@ -4302,6 +4328,10 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
     // stalling the glide mid-flight.
     const float text_alpha = morphing ? morph->TextOpacity() : 1.0f;
     const int passes = morphing ? 2 : 1;
+    AiListPainter* const ai_painter = g_ai_list_pane == pane_index && g_ai_list_painter && g_ai_list_painter->On() &&
+                                      !morphing ? g_ai_list_painter : nullptr;
+    if (!ai_painter && !AiGhostEntries().empty() && g_ai_list_pane == pane_index) AiGhostEntries().clear();
+    float ai_icon_dx = 8.0f * scale_, ai_icon_size = 16.0f * scale_, ai_name_dx = 34.0f * scale_;
     struct {
         bool valid = false;
         std::wstring name;
@@ -4457,6 +4487,13 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 if (row_leave >= 1.0f) continue;
                 row_leave_until_ = motion_now_ + 60;
             }
+            // Pulse 助手: read walk, destination tags, items sliding into folders.
+            AiListPainter::RowMotion ai_row;
+            if (ai_painter) {
+                ai_row = ai_painter->Row(e.name, cell);
+                if (ai_row.gone) continue;
+                if (ai_row.fly) AiGhostEntries()[AiListLower(e.name)] = e;
+            }
 
             const bool iconGrid = vm.view_mode == ViewMode::ExtraLargeIcons ||
                                   vm.view_mode == ViewMode::LargeIcons ||
@@ -4548,7 +4585,7 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             const bool morph_item = morphing && morph_sample.animating;
             // Whole-pixel offset keeps text crisp while the row slides or morphs.
             const float row_dx = std::round(row_shift.x + morph_sample.cell.left - cell.left -
-                                            14.0f * scale_ * row_leave * row_leave);
+                                            14.0f * scale_ * row_leave * row_leave + ai_row.dx);
             const float row_dy = std::round(row_shift.y + morph_sample.cell.top - cell.top);
             // Nav entry: smooth spring, 40 ms + 9 ms per visible row (max 90).
             float nav_dx = 0.0f, nav_dy = 0.0f, nav_alpha = 1.0f;
@@ -4563,7 +4600,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             }
             const float row_appear = shift ? shift->Appear(row_key) : 1.0f;
             const RowShiftTransform row_transform(dc, row_dx + std::round(nav_dx), row_dy + std::round(nav_dy));
-            const float row_opacity = (1.0f - row_leave) * (1.0f - row_land_hide) * nav_alpha * row_appear;
+            const float row_opacity = (1.0f - row_leave) * (1.0f - row_land_hide) * nav_alpha * row_appear *
+                                      ai_row.opacity;
             if (nav_alpha <= 0.0f || row_appear <= 0.0f) continue;
             struct RowFade {
                 ID2D1DeviceContext* dc;
@@ -4692,6 +4730,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     std::max(0.0f, bg.bottom - bg.top - scale_ * 2),
                     theme.radius_control * scale_);
             }
+            if (draw_shapes && ai_painter && !IsHighContrast())
+                ai_painter->Background(bg, inset, theme.radius_control * scale_);
             if (draw_shapes && src == vm.drop_target_index) {
                 D2D1_RECT_F rc = D2D1::RectF(bg.left + inset, bg.top + scale_,
                                              bg.right - inset, bg.bottom - scale_);
@@ -4753,6 +4793,21 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 thumbRect.top = std::round(thumbRect.top);
                 thumbRect.right = thumbRect.left + snappedThumbW;
                 thumbRect.bottom = thumbRect.top + snappedThumbH;
+                // Pulse 助手: the icon pops as the row is read, bumps as an item lands.
+                struct AiIconScale {
+                    ID2D1DeviceContext* dc;
+                    D2D1::Matrix3x2F prev;
+                    bool on;
+                    AiIconScale(ID2D1DeviceContext* d, float k, const D2D1_RECT_F& r) : dc(d), prev(), on(k > 1.001f) {
+                        if (!on) return;
+                        dc->GetTransform(&prev);
+                        dc->SetTransform(D2D1::Matrix3x2F::Scale(k, k, D2D1::Point2F((r.left + r.right) * 0.5f,
+                                                                                      (r.top + r.bottom) * 0.5f)) * prev);
+                    }
+                    ~AiIconScale() { if (on) dc->SetTransform(prev); }
+                    AiIconScale(const AiIconScale&) = delete;
+                    AiIconScale& operator=(const AiIconScale&) = delete;
+                } ai_icon_scale(dc, ai_painter && !iconGrid ? ai_painter->IconScale() : 1.0f, iconRect);
                 // Photo wall picture: the picture fills the tile; until it is
                 // decoded a soft plate with the file's icon in the middle.
                 bool wallDrawn = false;
@@ -4843,6 +4898,11 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                         DrawEntryIcon(e, iconX, iconY, renderedIconSize, theme, hidden_alpha);
                     }
                 }
+            }
+            if (draw_shapes && ai_painter && !morph_item && !iconGrid) {
+                ai_painter->IconDecor(iconRect);
+                ai_icon_dx = iconRect.left - cell.left;
+                ai_icon_size = iconRect.right - iconRect.left;
             }
             if (draw_shapes && !morph_item && !e.record_only && e.is_link) {
                 const bool expand_on_icon = iconGrid;
@@ -5225,6 +5285,10 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     ? trail.tag_x0 + trail.tag_r * 2 + (trail.tag_n - 1) * trail.tag_step
                     : trail.name_x + trail.name_w) + 6.0f * scale_;
                 const float link_right = std::min(link_left + 220.0f * scale_, trail.name_x + trail.line_w);
+                if (ai_painter && !iconGrid) {
+                    ai_painter->AfterName(link_left, link_right, textY, textH);
+                    ai_name_dx = trail.name_x - cell.left;
+                }
                 if (inline_link && link_right - link_left >= 36.0f * scale_) {
                     const float diameter = std::min(18.0f * scale_, textH);
                     const auto anchor = D2D1::RectF(link_left, textY + (textH - diameter) * 0.5f,
@@ -5740,6 +5804,20 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             }
         }
         if (text_layer) dc->PopLayer();
+    }
+    if (ai_painter) {
+        // Cards of the items flying into their folders (.ghost).
+        ai_painter->Flights(D2D1::RectF(x, y, x + w, y + h), [&](const std::wstring& key, const D2D1_RECT_F& r) {
+            auto it = AiGhostEntries().find(key);
+            if (it == AiGhostEntries().end()) return;
+            const ListEntryView& ge = it->second;
+            const float iy = std::round((r.top + r.bottom - ai_icon_size) * 0.5f);
+            DrawEntryIcon(ge, std::round(r.left + ai_icon_dx), iy, ai_icon_size, theme, 1.0f);
+            static const std::vector<NameMatchRange> kNoMatches;
+            const float nx = r.left + ai_name_dx;
+            DrawTruncatedName(ge.name, nx, r.top, std::max(1.0f, r.right - nx - 12.0f * scale_), r.bottom - r.top,
+                              theme, false, kNoMatches, !ge.is_dir);
+        });
     }
     if (pane_focused) {
         expanded_overflow_px_ = 0.0f;

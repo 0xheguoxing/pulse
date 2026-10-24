@@ -3087,5 +3087,10 @@
 #define IDS_AI_CONN_BACK                                                                 4293
 #define IDS_AI_CONN_SHOW_KEY                                                             4294
 #define IDS_AI_CONN_HIDE_KEY                                                             4295
+#define IDS_AI_LIST_WATCH                                                                4296
+#define IDS_AI_PEEK_DONE                                                                 4297
+#define IDS_AI_PEEK_SORTED                                                               4298
+#define IDS_AI_PEEK_SORTED_ANY                                                           4299
+#define IDS_AI_PEEK_OPEN                                                                 4300
 
 #endif  // PULSE_STRING_IDS_H

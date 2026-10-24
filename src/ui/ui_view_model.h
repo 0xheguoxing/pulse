@@ -202,6 +202,8 @@ struct TagQueryChipView {
     int count = -1;         // 细分 chips: the items it keeps
 };
 
+struct AiListOverlay;
+
 struct PaneViewModel {
     using FilterMap = std::vector<int>;
     using TagDots = std::unordered_map<int, std::vector<D2D1_COLOR_F>>;
@@ -252,6 +254,9 @@ struct PaneViewModel {
     // Rows being deleted: they slide out and fade from leaving_since (NowMs).
     std::unordered_set<std::wstring> leaving_names;
     uint64_t leaving_since = 0;
+    // Pulse 助手 working on this folder: read walk, destination tags, the
+    // sort's motion (ai_list_overlay.h).
+    std::shared_ptr<const AiListOverlay> ai_list;
     // Rows a drag just dropped here: hidden while the drag's cards fly to
     // them, faded in from landing_reveal_at (NowMs; 0 = cards not sent yet).
     std::unordered_set<std::wstring> landing_names;

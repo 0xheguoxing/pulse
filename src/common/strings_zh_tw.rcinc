@@ -3067,4 +3067,9 @@ BEGIN
     IDS_AI_CONN_BACK "返回"
     IDS_AI_CONN_SHOW_KEY "顯示金鑰"
     IDS_AI_CONN_HIDE_KEY "隱藏金鑰"
+    IDS_AI_LIST_WATCH "Pulse 助手正在讀取 {k}/{n}"
+    IDS_AI_PEEK_DONE "Pulse 助手 · 完成"
+    IDS_AI_PEEK_SORTED "已把 {n} 個檔案整理到 {g} 個新資料夾：{names}。"
+    IDS_AI_PEEK_SORTED_ANY "已把 {n} 個項目整理到 {g} 個資料夾：{names}。"
+    IDS_AI_PEEK_OPEN "開啟對話"
 END

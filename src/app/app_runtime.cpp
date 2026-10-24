@@ -36,6 +36,7 @@
 #include "cloud_download.h"
 #include "cloud_roots.h"
 #include "../ui/typography.h"
+#include "../ui/ai_list_overlay.h"
 #include "../ui/settings_page_ids.h"
 #include "../ui/color_picker.h"
 #include "filter_tag_complete.h"
@@ -1196,6 +1197,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
                         ? cutPath : cutPath.substr(slash + 1));
                 }
                 if (!slot.focused) FillLeavingRows(s, tab->current_path, slot.pane);
+                slot.pane.ai_list = AiListOverlayFor(tab->current_path);   // Pulse 助手 at work here
                 if (!slot.focused) FillLandingRows(s, p, tab->current_path, slot.pane);
             }
             if (static_cast<int>(i) == s.hoverPaneIndex) slot.pane.hover_index = s.hoverRow;
@@ -2830,6 +2832,7 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     if (!s.leavingPaths.empty()) {
         if (app::Tab* tab = ActiveTab(s)) FillLeavingRows(s, tab->current_path, vm.pane);
     }
+    if (app::Tab* tab = ActiveTab(s)) vm.pane.ai_list = AiListOverlayFor(tab->current_path);   // Pulse 助手
     if (!s.dragLanding.names.empty()) {
         if (app::Tab* tab = ActiveTab(s)) FillLandingRows(s, s.pane, tab->current_path, vm.pane);
     }

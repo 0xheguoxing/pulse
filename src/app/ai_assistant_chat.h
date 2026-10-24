@@ -55,6 +55,12 @@ struct AiChat {
     std::function<void(AppState&)> on_show;
     // The model conversation; created by the first real turn.
     std::shared_ptr<AiAgent> agent;
+    // The peek bubble over the chip once the panel is closed (.peek).
+    uint64_t peek_at = 0;         // shows from (0: none)
+    uint64_t peek_until = 0;      // hides at
+    uint64_t peek_turn = 0;       // turn_start of the turn it was shown for
+    std::wstring peek_text;       // the turn's summary (organize_files sets it)
+    bool peek_undo = false;       // the turn's result card can still undo
 
     ui::AiBlockView* Find(uint32_t id);
     ui::AiBlockView& Add(ui::AiBlockKind kind, uint64_t now_ms);
@@ -70,6 +76,9 @@ void AiChatActivate(AppState& s, ui::AiPanelPart part, int block);
 
 // Shared by the demo driver and the agent loop.
 void AiChatPush(AppState& s, uint32_t delay, std::function<int(AppState&)> run);   // queues and schedules
+// Runs the steps that are due. The frame pump calls it: while motion runs its
+// posted frames outrank WM_TIMER, which would hold the queue back for seconds.
+void AiChatRunDue(AppState& s);
 void AiChatSetChip(AiChat& c, ui::StatusAiState state, std::wstring text, float progress = -1.0f);
 void AiChatFinish(AppState& s, bool done_chip);   // ends the turn
 std::wstring AiChatEffortName(const AppState& s);
@@ -79,6 +88,12 @@ std::wstring AiChatFormatSize(uint64_t bytes);
 void AiChatAddActs(AppState& s, int tools);
 // A plan group's icon and tint from the kinds of its items.
 void AiChatGroupLook(const std::vector<std::wstring>& names, ui::AiIcon& icon, ui::AiTint& tint);
+// The peek bubble: shows `delay` ms from now for 4.2 s, once per turn, when
+// the turn is done and the panel is closed.
+void AiChatPeek(AppState& s, uint32_t delay);
+void AiChatHidePeek(AppState& s);
+void AiChatFillPeek(AppState& s, bool panel_open, ui::AiPeekView& peek);
+void AiChatUndoLast(AppState& s);   // the latest result card's 撤销
 
 // The agent loop (ai_assistant_agent.cpp).
 bool AiAgentConnected();        // a model key is stored (checked at most every 2 s)

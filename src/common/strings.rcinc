@@ -3069,6 +3069,11 @@ BEGIN
     IDS_AI_CONN_BACK "返回"
     IDS_AI_CONN_SHOW_KEY "显示密钥"
     IDS_AI_CONN_HIDE_KEY "隐藏密钥"
+    IDS_AI_LIST_WATCH "Pulse 助手正在读取 {k}/{n}"
+    IDS_AI_PEEK_DONE "Pulse 助手 · 完成"
+    IDS_AI_PEEK_SORTED "已把 {n} 个文件整理到 {g} 个新文件夹：{names}。"
+    IDS_AI_PEEK_SORTED_ANY "已把 {n} 个项目整理到 {g} 个文件夹：{names}。"
+    IDS_AI_PEEK_OPEN "打开对话"
 END
 
 LANGUAGE 0x09, 0x01
@@ -6137,6 +6142,11 @@ BEGIN
     IDS_AI_CONN_BACK "Back"
     IDS_AI_CONN_SHOW_KEY "Show key"
     IDS_AI_CONN_HIDE_KEY "Hide key"
+    IDS_AI_LIST_WATCH "Pulse Assistant is reading {k}/{n}"
+    IDS_AI_PEEK_DONE "Pulse Assistant · Done"
+    IDS_AI_PEEK_SORTED "Sorted {n} files into {g} new folders: {names}."
+    IDS_AI_PEEK_SORTED_ANY "Sorted {n} items into {g} folders: {names}."
+    IDS_AI_PEEK_OPEN "Open chat"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

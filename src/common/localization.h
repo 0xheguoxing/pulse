@@ -3079,6 +3079,11 @@ enum class StringId : UINT {
     AiConnBack = IDS_AI_CONN_BACK,
     AiConnShowKey = IDS_AI_CONN_SHOW_KEY,
     AiConnHideKey = IDS_AI_CONN_HIDE_KEY,
+    AiListWatch = IDS_AI_LIST_WATCH,
+    AiPeekDone = IDS_AI_PEEK_DONE,
+    AiPeekSorted = IDS_AI_PEEK_SORTED,
+    AiPeekSortedAny = IDS_AI_PEEK_SORTED_ANY,
+    AiPeekOpen = IDS_AI_PEEK_OPEN,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

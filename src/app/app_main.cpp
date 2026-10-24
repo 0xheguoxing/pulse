@@ -88,6 +88,7 @@
 #include "ai_service.h"
 #include "ai_settings_ui.h"
 #include "ai_assistant.h"
+#include "ai_assistant_chat.h"
 #include "ai_status.h"
 #include "ai_tools.h"
 #include "ai_tools_ui.h"
@@ -2074,6 +2075,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             s->framePump.Disarm();  // WM_PAINT re-arms once shown again
             return 0;
         }
+        // The assistant's queued steps keep time while frames run.
+        AiChatRunDue(*s);
         // Paint now rather than queue a low-priority WM_PAINT; Render re-arms
         // while anything still moves. Posted messages outrank input, so when
         // input is waiting the frame becomes an ordinary WM_PAINT instead:

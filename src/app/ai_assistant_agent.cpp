@@ -30,6 +30,7 @@
 #include "../common/json_value.h"
 #include "../common/localization.h"
 #include "../fs/fs_enum.h"
+#include "../ui/ai_list_overlay.h"
 #include "../ui/ui_motion.h"
 #include "../ui/ui_renderer.h"
 
@@ -118,6 +119,52 @@ std::wstring Leaf(const std::wstring& path) {
 std::wstring FolderLabel(const std::wstring& path) {
     std::wstring label = app::TabTitle(path);
     return label.empty() ? Leaf(path) : label;
+}
+
+// ------------------------------------------------- the list overlay (A4) --
+// What the file list shows of the assistant's work (ui/ai_list_overlay.h).
+std::shared_ptr<ui::AiListOverlay> g_list;
+
+// Tabs keep the \\?\ form of long paths; tool arguments come back without
+// it (CheckPathArg) or with it (the model echoes get_context).
+std::wstring NormDir(std::wstring p) {
+    for (wchar_t& c : p)
+        if (c == L'/') c = L'\\';
+    if (p.rfind(L"\\\\?\\UNC\\", 0) == 0) p = L"\\\\" + p.substr(8);
+    else if (p.rfind(L"\\\\?\\", 0) == 0) p.erase(0, 4);
+    while (p.size() > 3 && p.back() == L'\\') p.pop_back();
+    return p;
+}
+
+bool SameDir(const std::wstring& a, const std::wstring& b) {
+    return !a.empty() && _wcsicmp(NormDir(a).c_str(), NormDir(b).c_str()) == 0;
+}
+
+// The folder is on screen: the active tab shows it and motion is on.
+bool Shown(AppState& s, const std::wstring& folder) {
+    app::Tab* tab = ActiveTab(s);
+    return tab && SameDir(tab->current_path, folder) && ui::motion::SystemAnimationsEnabled();
+}
+
+ui::AiListOverlay& ListOverlay(const std::wstring& folder) {
+    if (!g_list || !SameDir(g_list->folder, folder)) {
+        g_list = std::make_shared<ui::AiListOverlay>();
+        g_list->folder = NormDir(folder);
+    }
+    g_list->end_ms = 0;
+    return *g_list;
+}
+
+ui::AiListOverlay* OverlayOf(const std::wstring& folder) {
+    return g_list && SameDir(g_list->folder, folder) ? g_list.get() : nullptr;
+}
+
+// A sort still feeding its requests; Stop submits the rest at once (the
+// user confirmed the whole plan).
+std::function<void(AppState&)> g_flush_sort;
+
+void EndOverlay(uint64_t in_ms) {
+    if (g_list) g_list->end_ms = ui::motion::NowMs() + in_ms;
 }
 
 bool IsDirectory(const std::wstring& path) {
@@ -439,7 +486,7 @@ void ToolListFolder(AppState& s, const app::ai::ModelToolCall& call, json::Value
     if (!args.find("limit")) args.set("limit", 200);
     const std::string id = call.id;
     RunJob(s, [args](const std::atomic<bool>& cancelled) { return app::ai::ListFolder(args, cancelled); },
-           [id, label](AppState& st, const ToolOutcome& out) {
+           [id, label, path](AppState& st, const ToolOutcome& out) {
                AiAgent& ag = Agent(st);
                std::wstring sub;
                if (out.ok) {
@@ -461,11 +508,49 @@ void ToolListFolder(AppState& s, const app::ai::ModelToolCall& call, json::Value
                } else {
                    sub = Fill(Text(I::AiAsstStepFailed), L"{reason}", json::Wide(out.error.message));
                }
-               EndStep(st, ag, out.ok, sub);
-               AiChatSetChip(Chat(st), ui::StatusAiState::Busy, Text(I::AiAsstThinking));
                AddToolResult(ag, id, out);
                ++ag.call_index;
-               AiChatPush(st, 250, [](AppState& s2) { NextTool(s2); return -1; });
+               // The folder is on screen: a spark walks the rows it read, the
+               // step and the chip count along (scene 3).
+               std::unordered_set<std::wstring> names;
+               if (const json::Value* items = out.ok ? out.data.find("items") : nullptr; items && items->is_array())
+                   for (const json::Value& it : items->items())
+                       names.insert(ui::AiListLower(json::Wide(it.get_string("name"))));
+               names.erase(std::wstring());
+               if (names.empty() || !Shown(st, path)) {
+                   EndStep(st, ag, out.ok, sub);
+                   AiChatSetChip(Chat(st), ui::StatusAiState::Busy, Text(I::AiAsstThinking));
+                   AiChatPush(st, 250, [](AppState& s2) { NextTool(s2); return -1; });
+                   return;
+               }
+               ui::AiListOverlay& o = ListOverlay(path);
+               const uint64_t n = names.size();
+               o.read_total = names.size();
+               o.read_names = std::move(names);
+               o.read_ms = (std::min<uint64_t>)(185, (std::max<uint64_t>)(12, 2400 / n)) * n;
+               o.read_start = Now() + 300;   // the title pill comes in first
+               o.watch_text = Text(I::AiListWatch);
+               std::shared_ptr<const ui::AiListOverlay> ov = g_list;
+               const uint64_t gen = ag.generation;
+               const bool ok = out.ok;
+               AiChatPush(st, 0, [ov, gen, ok, sub](AppState& s2) {
+                   AiAgent& a2 = Agent(s2);
+                   if (a2.generation != gen) return -1;
+                   const uint64_t now = Now();
+                   if (const size_t k = ui::AiListReadK(*ov, now)) {
+                       const std::wstring kk = Num(k), nn = Num(ov->read_total);
+                       if (ui::AiStepView* step = LastStep(s2, a2))
+                           step->sub = Fill(Fill(Text(I::AiAsstStepReading), L"{k}", kk), L"{n}", nn);
+                       AiChatSetChip(Chat(s2), ui::StatusAiState::Busy,
+                                     Fill(Fill(Text(I::AiAsstChipReading), L"{k}", kk), L"{n}", nn),
+                                     static_cast<float>(k) / static_cast<float>(ov->read_total));
+                   }
+                   if (now < ov->read_start + ov->read_ms + 300) return 50;
+                   EndStep(s2, a2, ok, sub);
+                   AiChatSetChip(Chat(s2), ui::StatusAiState::Busy, Text(I::AiAsstThinking));
+                   AiChatPush(s2, 350, [](AppState& s3) { NextTool(s3); return -1; });
+                   return -1;
+               });
            });
 }
 
@@ -623,32 +708,94 @@ std::wstring GroupsText(const OrganizePlan& plan, I all_new, I any) {
 
 void SettleOrganize(AppState& s, std::shared_ptr<OrganizePlan> plan, const std::string& call_id, size_t moved);
 
+// One request of the sort: a new folder, one item, or a whole group.
+struct OrganizeAct {
+    enum Kind { Create, MoveOne, MoveGroup } kind = Create;
+    size_t group = 0;
+    size_t item = 0;
+    uint32_t delay = 0;   // ms after the previous one
+};
+
+void SubmitAct(AppState& s, const OrganizePlan& plan, const OrganizeAct& act, const std::wstring& undo_label,
+               ui::AiListOverlay* ov) {
+    const OrganizePlan::Group& g = plan.groups[act.group];
+    const uint64_t now = Now();
+    ops::OpRequest r;
+    r.undo_group = plan.undo_group;   // one undo step for the whole sort, like 合并到文件夹
+    r.undo_label = undo_label;
+    if (act.kind == OrganizeAct::Create) {
+        r.type = ops::OpType::CreateFolder;
+        r.sources.push_back(g.path);
+        if (ov) ov->new_folders[ui::AiListLower(g.name)] = now;
+    } else {
+        r.type = ops::OpType::Move;
+        r.dest_dir = g.path;
+        r.collision_policy = ops::CollisionPolicy::KeepBoth;
+        const size_t first = act.kind == OrganizeAct::MoveOne ? act.item : 0;
+        const size_t last = act.kind == OrganizeAct::MoveOne ? act.item + 1 : g.items.size();
+        for (size_t i = first; i < last; ++i) {
+            r.sources.push_back(JoinPath(plan.folder, g.items[i]));
+            if (ov) ov->leaving[ui::AiListLower(g.items[i])] = now;
+        }
+        // The folder bumps as the card lands (organizeAnim: +470 ms).
+        if (ov) ov->bumps[ui::AiListLower(g.name)].push_back(now + 470);
+    }
+    s.ops.Submit(std::move(r));
+}
+
 void RunOrganize(AppState& s, std::shared_ptr<OrganizePlan> plan, const std::string& call_id) {
     AiAgent& a = Agent(s);
     AiChat& c = Chat(s);
     a.organized = true;
-    // One undo step for the whole sort, like 合并到文件夹.
     FILETIME ft{};
     GetSystemTimeAsFileTime(&ft);
     plan->undo_group = (static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
     const std::wstring undo_label = Text(I::AiAsstUndoLabel);
-    for (const auto& g : plan->groups) {
-        if (!g.exists) {
-            ops::OpRequest create;
-            create.type = ops::OpType::CreateFolder;
-            create.sources.push_back(g.path);
-            create.undo_group = plan->undo_group;
-            create.undo_label = undo_label;
-            s.ops.Submit(std::move(create));
+    // On screen the sort plays like the design (scene 5): the new folders
+    // open 120 ms apart, then the items slide into them one by one; a big
+    // sort, or one off screen, moves a group at a time.
+    std::shared_ptr<ui::AiListOverlay> ov;
+    if (Shown(s, plan->folder)) {
+        ListOverlay(plan->folder);
+        ov = g_list;
+        ov->new_badge = Text(I::AiAsstNewBadge);
+        ov->new_folders.clear();
+        ov->leaving.clear();
+        ov->target.clear();
+        ov->targets.clear();
+        ov->bumps.clear();
+        for (const auto& g : plan->groups) {
+            const std::wstring folder = ui::AiListLower(g.name);
+            ov->targets.insert(folder);
+            for (const auto& name : g.items) ov->target[ui::AiListLower(name)] = folder;
         }
-        ops::OpRequest move;
-        move.type = ops::OpType::Move;
-        for (const auto& name : g.items) move.sources.push_back(JoinPath(plan->folder, name));
-        move.dest_dir = g.path;
-        move.collision_policy = ops::CollisionPolicy::KeepBoth;
-        move.undo_group = plan->undo_group;
-        move.undo_label = undo_label;
-        s.ops.Submit(std::move(move));
+    }
+    auto acts = std::make_shared<std::vector<OrganizeAct>>();
+    for (size_t gi = 0; gi < plan->groups.size(); ++gi)
+        if (!plan->groups[gi].exists)
+            acts->push_back({OrganizeAct::Create, gi, 0, ov ? (acts->empty() ? 300u : 120u) : 0u});
+    const uint32_t first_move = ov ? (acts->empty() ? 300u : 120u + 420u) : 0u;
+    if (ov && plan->total <= 60) {
+        // Items in list order (the snapshot's), each its own request.
+        std::vector<std::pair<size_t, size_t>> order;
+        for (size_t gi = 0; gi < plan->groups.size(); ++gi)
+            for (size_t ii = 0; ii < plan->groups[gi].items.size(); ++ii) order.push_back({gi, ii});
+        if (app::Tab* tab = ActiveTab(s); tab && tab->EntryCount() <= 20000) {
+            std::unordered_map<std::wstring, size_t> at;
+            for (size_t i = 0; i < tab->EntryCount(); ++i) at.emplace(ui::AiListLower(tab->EntryAt(i).name), i);
+            auto rank = [&](const std::pair<size_t, size_t>& p) {
+                auto it = at.find(ui::AiListLower(plan->groups[p.first].items[p.second]));
+                return it == at.end() ? SIZE_MAX : it->second;
+            };
+            std::stable_sort(order.begin(), order.end(),
+                             [&](const auto& l, const auto& r) { return rank(l) < rank(r); });
+        }
+        const uint32_t step = (std::max)(20u, (std::min)(190u, static_cast<uint32_t>(3000 / (std::max<size_t>)(plan->total, 1))));
+        for (size_t k = 0; k < order.size(); ++k)
+            acts->push_back({OrganizeAct::MoveOne, order[k].first, order[k].second, k == 0 ? first_move : step});
+    } else {
+        for (size_t gi = 0; gi < plan->groups.size(); ++gi)
+            acts->push_back({OrganizeAct::MoveGroup, gi, 0, gi == 0 ? first_move : (ov ? 190u : 0u)});
     }
     // The progress step.
     FoldSteps(s, a);
@@ -661,37 +808,63 @@ void RunOrganize(AppState& s, std::shared_ptr<OrganizePlan> plan, const std::str
         size_t moved = 0;
         uint64_t last_change = 0;
         uint64_t started = 0;
+        uint64_t polled = 0;
+        size_t next = 0;        // the next act
+        uint64_t next_at = 0;
     };
     auto w = std::make_shared<Watch>();
     w->started = w->last_change = Now();
+    w->next_at = Now() + (acts->empty() ? 0 : acts->front().delay);
     const uint64_t gen = a.generation;
-    AiChatPush(s, 200, [plan, call_id, w, gen](AppState& st2) {
+    g_flush_sort = [plan, w, acts, undo_label](AppState& st2) {
+        while (w->next < acts->size()) SubmitAct(st2, *plan, (*acts)[w->next++], undo_label, nullptr);
+    };
+    AiChatPush(s, 0, [plan, call_id, w, gen, acts, ov, undo_label](AppState& st2) {
         AiAgent& ag = Agent(st2);
-        if (ag.generation != gen) return -1;
-        size_t gone = 0;
-        for (const auto& src : plan->sources)
-            if (!Exists(src)) ++gone;
-        const uint64_t now = Now();
-        if (gone != w->moved) {
-            w->moved = gone;
-            w->last_change = now;
-        }
-        const float p = plan->total ? static_cast<float>(gone) / static_cast<float>(plan->total) : 1.0f;
-        if (ui::AiStepView* step = LastStep(st2, ag)) {
-            step->progress = p;
-            if (gone) step->sub = Fill(Fill(Text(I::AiAsstStepMoving), L"{k}", Num(gone)), L"{n}", Num(plan->total));
-        }
-        AiChatSetChip(Chat(st2), ui::StatusAiState::Busy,
-                      Fill(Fill(Text(I::AiAsstChipOrganizing), L"{k}", Num(gone)), L"{n}", Num(plan->total)), p);
-        const bool idle = !st2.ops.Status().active;
-        const bool all = gone >= plan->total;
-        // Everything moved; or the queue went quiet with no progress (a
-        // failure or a skipped item); or ten minutes passed.
-        if (all || (idle && now - w->last_change > 2500) || now - w->started > 600000) {
-            SettleOrganize(st2, plan, call_id, gone);
+        if (ag.generation != gen) {
+            while (w->next < acts->size()) SubmitAct(st2, *plan, (*acts)[w->next++], undo_label, nullptr);
             return -1;
         }
-        return 150;
+        const uint64_t now = Now();
+        // Submit what is due.
+        while (w->next < acts->size() && now >= w->next_at) {
+            SubmitAct(st2, *plan, (*acts)[w->next], undo_label, ov.get());
+            ++w->next;
+            if (w->next < acts->size()) w->next_at = now + (*acts)[w->next].delay;
+            w->last_change = now;
+        }
+        const bool fed = w->next >= acts->size();
+        if (fed) g_flush_sort = nullptr;
+        if (now - w->polled >= 150 || fed) {
+            w->polled = now;
+            size_t gone = 0;
+            for (const auto& src : plan->sources)
+                if (!Exists(src)) ++gone;
+            if (gone != w->moved) {
+                w->moved = gone;
+                w->last_change = now;
+            }
+            const float p = plan->total ? static_cast<float>(gone) / static_cast<float>(plan->total) : 1.0f;
+            if (ui::AiStepView* step = LastStep(st2, ag)) {
+                step->progress = p;
+                if (gone) step->sub = Fill(Fill(Text(I::AiAsstStepMoving), L"{k}", Num(gone)), L"{n}", Num(plan->total));
+            }
+            AiChatSetChip(Chat(st2), ui::StatusAiState::Busy,
+                          Fill(Fill(Text(I::AiAsstChipOrganizing), L"{k}", Num(gone)), L"{n}", Num(plan->total)), p);
+            const bool idle = !st2.ops.Status().active;
+            const bool all = gone >= plan->total;
+            // Everything moved; or the queue went quiet with no progress (a
+            // failure or a skipped item); or ten minutes passed.
+            if (fed && (all || (idle && now - w->last_change > 2500) || now - w->started > 600000)) {
+                // Let the last card land and its folder bump (organizeAnim: +650 ms).
+                if (ov && all && now - w->last_change < 650) return 650 - static_cast<int>(now - w->last_change);
+                SettleOrganize(st2, plan, call_id, gone);
+                return -1;
+            }
+        }
+        uint64_t wait = 150;
+        if (!fed) wait = (std::min)(wait, w->next_at > now ? w->next_at - now : 1);
+        return static_cast<int>(wait);
     });
 }
 
@@ -710,6 +883,22 @@ std::function<void(AppState&)> MakeUndo(std::shared_ptr<OrganizePlan> plan) {
             return;
         }
         AiChatSetChip(c2, ui::StatusAiState::Busy, Text(I::AiAsstChipUndoing), 0.5f);
+        c2.peek_undo = false;
+        AiChatHidePeek(st);
+        if (ui::AiListOverlay* o = OverlayOf(plan->folder)) {
+            // undoAnim: the folders the sort made slide out; the items come
+            // back with the list's own appear motion.
+            const uint64_t now = Now();
+            o->dests.clear();
+            o->new_folders.clear();
+            o->target.clear();
+            o->targets.clear();
+            o->bumps.clear();
+            o->leaving.clear();
+            for (const auto& g : plan->groups)
+                if (!g.exists) o->leaving[ui::AiListLower(g.name)] = now;
+            o->end_ms = now + 4000;
+        }
         auto started = std::make_shared<uint64_t>(Now());
         AiChatPush(st, 300, [plan, started](AppState& s3) {
             size_t back = 0;
@@ -767,6 +956,18 @@ void SettleOrganize(AppState& s, std::shared_ptr<OrganizePlan> plan, const std::
     c.result_id = r.id;
     c.on_show = [plan](AppState& st) { NavigateTo(st, plan->folder); };
     c.on_undo = MakeUndo(plan);
+    // The peek bubble's line (shown if the panel is closed when the turn ends).
+    std::wstring names;
+    for (const auto& g : plan->groups) {
+        if (!names.empty()) names += L"、";
+        names += g.name;
+    }
+    c.peek_text = Fill(Fill(Fill(Text(plan->created == plan->groups.size() ? I::AiPeekSorted : I::AiPeekSortedAny),
+                                 L"{n}", Num(moved)),
+                            L"{g}", Num(plan->groups.size())),
+                       L"{names}", names);
+    c.peek_undo = moved > 0;
+    if (ui::AiListOverlay* o = OverlayOf(plan->folder)) o->end_ms = Now() + 6000;
     // Back to the model.
     ToolOutcome out;
     out.data = json::Value::Object();
@@ -845,6 +1046,20 @@ void ToolOrganize(AppState& s, const app::ai::ModelToolCall& call, const json::V
         cf.deny = Text(I::AiAsstDeny);
         cf.accept = Text(I::AiAsstOrganize);
         ch.confirm_id = cf.id;
+        // Each item shows its folder in the list before you decide (scene 4).
+        if (Shown(st, plan->folder)) {
+            ui::AiListOverlay& o = ListOverlay(plan->folder);
+            o.dests.clear();
+            for (const auto& g : plan->groups) {
+                ui::AiIcon icon = ui::AiIcon::Folder;
+                ui::AiTint tint = ui::AiTint::Neutral;
+                AiChatGroupLook(g.items, icon, tint);
+                for (const auto& name : g.items)
+                    o.dests[ui::AiListLower(name)] = {g.name, static_cast<uint8_t>(tint)};
+            }
+            o.dest_start = Now();
+            o.dest_end = 0;
+        }
         ch.on_confirm = [plan, plan_id, call_id, gen](AppState& s2, bool accept) {
             AiChat& c2 = Chat(s2);
             AiAgent& a2 = Agent(s2);
@@ -860,6 +1075,10 @@ void ToolOrganize(AppState& s, const app::ai::ModelToolCall& call, const json::V
             c2.on_confirm = nullptr;
             if (a2.generation != gen) return;
             if (!accept) {
+                if (ui::AiListOverlay* o = OverlayOf(plan->folder)) {
+                    o->dest_end = Now();
+                    o->end_ms = Now() + 500;
+                }
                 AddToolResult(a2, call_id,
                               ToolOutcome::Fail("user_denied",
                                                 "The user declined this plan in Pulse; nothing moved. Do not propose "
@@ -1150,6 +1369,12 @@ void AiAgentStop(AppState& s) {
     a.stream.reset();
     if (a.job) a.job->cancelled.store(true);
     a.job.reset();
+    if (g_flush_sort) {
+        auto flush = std::move(g_flush_sort);
+        g_flush_sort = nullptr;
+        flush(s);
+    }
+    EndOverlay(400);
     if (a.history.size() > a.turn_history) {
         json::Value kept = json::Value::Array();
         for (size_t i = 0; i < a.turn_history; ++i) kept.push(a.history.at(i));
@@ -1160,6 +1385,15 @@ void AiAgentStop(AppState& s) {
     a.think_id = a.text_id = a.steps_id = 0;
     a.calls.clear();
     a.call_index = 0;
+}
+
+std::shared_ptr<const ui::AiListOverlay> AiListOverlayFor(const std::wstring& folder) {
+    if (!g_list || !SameDir(g_list->folder, folder)) return nullptr;
+    if (g_list->end_ms && ui::motion::NowMs() >= g_list->end_ms) {
+        g_list.reset();
+        return nullptr;
+    }
+    return g_list;
 }
 
 } // namespace pulse

@@ -3094,3 +3094,8 @@ AiConnDone	IDS_AI_CONN_DONE	4292	完成	Done	完成
 AiConnBack	IDS_AI_CONN_BACK	4293	返回	Back	返回
 AiConnShowKey	IDS_AI_CONN_SHOW_KEY	4294	显示密钥	Show key	顯示金鑰
 AiConnHideKey	IDS_AI_CONN_HIDE_KEY	4295	隐藏密钥	Hide key	隱藏金鑰
+AiListWatch	IDS_AI_LIST_WATCH	4296	Pulse 助手正在读取 {k}/{n}	Pulse Assistant is reading {k}/{n}	Pulse 助手正在讀取 {k}/{n}
+AiPeekDone	IDS_AI_PEEK_DONE	4297	Pulse 助手 · 完成	Pulse Assistant · Done	Pulse 助手 · 完成
+AiPeekSorted	IDS_AI_PEEK_SORTED	4298	已把 {n} 个文件整理到 {g} 个新文件夹：{names}。	Sorted {n} files into {g} new folders: {names}.	已把 {n} 個檔案整理到 {g} 個新資料夾：{names}。
+AiPeekSortedAny	IDS_AI_PEEK_SORTED_ANY	4299	已把 {n} 个项目整理到 {g} 个文件夹：{names}。	Sorted {n} items into {g} folders: {names}.	已把 {n} 個項目整理到 {g} 個資料夾：{names}。
+AiPeekOpen	IDS_AI_PEEK_OPEN	4300	打开对话	Open chat	開啟對話
