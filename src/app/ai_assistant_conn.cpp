@@ -4,6 +4,7 @@
 #include "ai_assistant.h"
 #include "ai_assistant_chat.h"
 #include "ai_model_key.h"
+#include "ai_model_list.h"
 #include "ai_model_stream.h"
 #include "ai_settings.h"
 #include "app_internal.h"
@@ -57,6 +58,7 @@ struct AiConnUi {
     app::ai::ModelProbe probe;
     uint64_t tested_at = 0;
     std::wstring probe_host;
+    std::wstring probe_url;   // the address that was probed
 };
 
 namespace {
@@ -165,6 +167,8 @@ void ProbeDone(AppState& s, AiConnUi& u, app::ai::ModelProbe result) {
     u.save_failed = false;
     const bool ok = u.probe.http_status == 200;
     u.test = ok ? ui::AiConnTest::Ok : ui::AiConnTest::Bad;
+    // The service's models, for the model menu (they do not depend on the key).
+    if (ok) app::ai::StoreListedModels(u.probe_url, u.probe.models);
     if (ok && u.save_after && Editing(u)) {
         std::wstring key = Trim(EditText(u.key_edit));
         if (!key.empty() && app::ai::SaveModelKey(key)) {
@@ -215,6 +219,7 @@ void StartProbe(AppState& s, AiConnUi& u, bool save_after) {
     u.save_after = save_after;
     u.tested_saved = !editing;
     u.probe_host = app::ai::ModelHost(endpoint.base_url);
+    u.probe_url = endpoint.base_url;
     auto job = std::make_shared<AiConnUi::Job>();
     job->gen = ++u.gen;
     u.job = job;
@@ -560,14 +565,29 @@ void AiConnFill(AppState& s, ui::AiPanelViewModel& p) {
     }
     if (u.test == ui::AiConnTest::Ok) {
         v->models_heading = Text(I::AiConnModels);
-        struct Known { const char* id; I desc; bool def; };
-        constexpr Known kKnown[] = {{"deepseek-flash", I::AiConnModelFlash, true}, {"deepseek-v4-pro", I::AiConnModelPro, false}};
+        // The ids the service lists, in its order and as it names them; the
+        // official DeepSeek two get a line. 默认 marks the one requests use.
+        // A long list shows its first rows (the model menu has them all).
+        struct Known { const char* id; I desc; };
+        constexpr Known kKnown[] = {{"deepseek-flash", I::AiConnModelFlash}, {"deepseek-v4-pro", I::AiConnModelPro}};
+        constexpr size_t kRows = 5;
         const auto& listed = u.probe.models;
-        for (const Known& k : kKnown)
-            if (listed.empty() || std::find(listed.begin(), listed.end(), k.id) != listed.end())
-                v->models.push_back({json::Wide(k.id), Text(k.desc), k.def ? Text(I::AiConnDefault) : std::wstring()});
-        // Another OpenAI-format service: its own ids.
-        for (size_t i = 0; v->models.empty() && i < listed.size() && i < 4; ++i) v->models.push_back({json::Wide(listed[i]), {}, {}});
+        const std::wstring current = AiAssistantModelName(s);
+        std::vector<size_t> rows;
+        for (size_t i = 0; i < listed.size() && rows.size() < kRows; ++i) rows.push_back(i);
+        if (listed.size() > kRows) {
+            for (size_t i = kRows; i < listed.size(); ++i)
+                if (json::Wide(listed[i]) == current) rows.back() = i;
+            v->models_heading += L" \u00B7 " + std::to_wstring(listed.size());
+        }
+        for (const size_t i : rows) {
+            std::wstring desc;
+            for (const Known& k : kKnown)
+                if (listed[i] == k.id) desc = Text(k.desc);
+            std::wstring name = json::Wide(listed[i]);
+            std::wstring tag = name == current ? Text(I::AiConnDefault) : std::wstring();
+            v->models.push_back({std::move(name), std::move(desc), std::move(tag)});
+        }
         if (v->models.empty()) v->models_heading.clear();
     }
 

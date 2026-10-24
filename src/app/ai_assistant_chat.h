@@ -86,6 +86,7 @@ void AiAgentKeyChanged();       // after the key or the address was saved or rem
 std::wstring AiAgentBaseUrl();  // ai.json assistant.base_url, else the default
 std::wstring AiAgentDefaultBaseUrl();   // https://api.deepseek.com
 std::wstring AiAgentHost();     // "api.deepseek.com"
+std::wstring AiAssistantModelName(const AppState& s);   // the model a request uses, as the service names it
 void AiAgentStart(AppState& s, const std::wstring& prompt, bool with_context);
 void AiAgentStop(AppState& s);   // cancels the request and any tool still running
 

@@ -220,9 +220,7 @@ std::wstring EffortName(const AppState& s) {
     return Text(kNames[std::clamp(s.aiAssistant.effort, 0, 3)]);
 }
 
-std::wstring ModelName(const AppState& s) {
-    return s.aiAssistant.model == 1 ? L"deepseek-v4-pro" : L"deepseek-flash";
-}
+std::wstring ModelName(const AppState& s) { return AiAssistantModelName(s); }
 
 // Ends the turn: the send button and the chip settle.
 void Finish(AppState& s, bool done_chip) {

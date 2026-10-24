@@ -289,7 +289,9 @@ float AiPanelView::DrawConnCard(Compositor* compositor, const AiPanelViewModel& 
                     tag_left = tr.left - 8.0f * s;
                 }
                 c.Text(m.name, formats_.body13b, D2D1::RectF(nx, ry, tag_left, ry + row_h), pal.text);
-                c.Text(m.desc, formats_.caption, D2D1::RectF(nx + nw + 10.0f * s, ry + 1.0f * s, tag_left, ry + row_h), pal.text3);
+                if (!m.desc.empty() && nx + nw + 40.0f * s < tag_left)
+                    c.Text(m.desc, formats_.caption, D2D1::RectF(nx + nw + 10.0f * s, ry + 1.0f * s, tag_left, ry + row_h),
+                           pal.text3);
             }
         }
         y = box.bottom;

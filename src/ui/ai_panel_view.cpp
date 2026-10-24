@@ -526,7 +526,8 @@ void AiPanelView::DrawComposer(Compositor* compositor, const AiPanelViewModel& v
     // Model button: label (medium) + effort (text2) + chevron 12, padding 0 8,
     // 6 px left of the send button.
     {
-        const float lw = c.Measure(vm.model_label, formats_.model);
+        // A long id is cut with an ellipsis (the menu shows it whole).
+        const float lw = (std::min)(c.Measure(vm.model_label, formats_.model), 180.0f * s);
         const float ew = vm.effort_label.empty() ? 0.0f : c.Measure(vm.effort_label, formats_.small125);
         const float w = (8.0f + 4.0f + 12.0f + 8.0f) * s + lw + ew;
         const float r = send_button_.left - 6.0f * s;
@@ -547,6 +548,7 @@ void AiPanelView::DrawComposer(Compositor* compositor, const AiPanelViewModel& v
 
 void AiPanelView::DrawModelMenu(Compositor* compositor, const AiPanelViewModel& vm, const Palette& pal, float s,
                                 uint64_t now_ms) {
+    const bool opening = vm.menu_open && !menu_shown_;
     if (vm.menu_open != menu_shown_) {
         menu_shown_ = vm.menu_open;
         menu_at_ = now_ms;
@@ -574,12 +576,28 @@ void AiPanelView::DrawModelMenu(Compositor* compositor, const AiPanelViewModel& 
     const float w = 300.0f * s;
     const float pad = 6.0f * s;
     const float head_h = 25.0f * s;
+    // Model rows: name + line (51), or the name alone for a model Pulse has
+    // no line for (36). A long list scrolls inside 312.
     const float opt_h = 51.0f * s;
+    const float opt1_h = 36.0f * s;
+    auto row_h = [&](size_t i) { return vm.models[i].detail.empty() ? opt1_h : opt_h; };
+    float list_h = 0.0f, chosen_top = 0.0f, chosen_h = 0.0f;
+    for (size_t i = 0; i < vm.models.size(); ++i) {
+        if (static_cast<int>(i) == vm.model) {
+            chosen_top = list_h;
+            chosen_h = row_h(i);
+        }
+        list_h += row_h(i);
+    }
+    const float list_box_h = (std::min)(list_h, 312.0f * s);
+    g.menu_scroll_max = list_h - list_box_h;
+    if (opening) g.menu_scroll = chosen_h > 0.0f ? chosen_top + chosen_h * 0.5f - list_box_h * 0.5f : 0.0f;
+    g.menu_scroll = std::clamp(g.menu_scroll, 0.0f, g.menu_scroll_max);
     const float sep_h = 13.0f * s;
     const float seg_h = 36.0f * s;
     const float desc_h = 28.0f * s;
     const float foot_h = 36.0f * s;
-    const float h = pad * 2 + head_h + opt_h * static_cast<float>(vm.models.size()) + sep_h + head_h + seg_h + desc_h + foot_h;
+    const float h = pad * 2 + head_h + list_box_h + sep_h + head_h + seg_h + desc_h + foot_h;
     const float right = model_button_.right + 6.0f * s;
     const float bottom = model_button_.top - 8.0f * s;
     // 管理连接: the menu unfolds into the card in place (same corner). The
@@ -682,19 +700,60 @@ void AiPanelView::DrawModelMenu(Compositor* compositor, const AiPanelViewModel& 
     const float x0 = m.left + pad, x1 = m.right - pad;
     c.Text(vm.model_heading, formats_.heading, D2D1::RectF(x0 + 10.0f * s, y + 6.0f * s, x1, y + 21.0f * s), pal.text3);
     y += head_h;
+    const D2D1_RECT_F list_box = D2D1::RectF(x0, y, x1, y + list_box_h);
+    const bool scrolls = g.menu_scroll_max > 0.0f;
+    if (scrolls) c.dc->PushAxisAlignedClip(list_box, D2D1_ANTIALIAS_MODE_ALIASED);
+    float ry = y - g.menu_scroll;
     for (size_t i = 0; i < vm.models.size(); ++i) {
-        const D2D1_RECT_F r = D2D1::RectF(x0, y, x1, y + opt_h);
-        menu_model_rects_.push_back(r);
+        const float rh = row_h(i);
+        const D2D1_RECT_F r = D2D1::RectF(x0, ry, x1, ry + rh);
+        ry += rh;
+        // Hits only where the row shows.
+        const D2D1_RECT_F shown = D2D1::RectF(r.left, (std::max)(r.top, list_box.top), r.right,
+                                              (std::min)(r.bottom, list_box.bottom));
+        menu_model_rects_.push_back(shown.bottom > shown.top ? shown : D2D1_RECT_F{});
+        if (r.bottom <= list_box.top || r.top >= list_box.bottom) continue;
         const bool hot = vm.hover.part == AiPanelPart::MenuModel && vm.hover.index == static_cast<int>(i);
         if (hot) c.Fill(r, 9.0f * s, pal.hover);
-        c.Text(vm.models[i].name, formats_.body13b, D2D1::RectF(r.left + 10.0f * s, r.top + 8.0f * s, r.right - 36.0f * s,
-                                                              r.top + 26.0f * s), pal.text);
-        c.Text(vm.models[i].detail, formats_.caption, D2D1::RectF(r.left + 10.0f * s, r.top + 26.0f * s, r.right - 36.0f * s,
-                                                              r.top + 43.0f * s), pal.text3);
+        const float text_right = r.right - (scrolls ? 40.0f : 36.0f) * s;
+        if (vm.models[i].detail.empty()) {
+            c.Text(vm.models[i].name, formats_.body13b, D2D1::RectF(r.left + 10.0f * s, r.top, text_right, r.bottom), pal.text);
+        } else {
+            c.Text(vm.models[i].name, formats_.body13b, D2D1::RectF(r.left + 10.0f * s, r.top + 8.0f * s, text_right,
+                                                                  r.top + 26.0f * s), pal.text);
+            c.Text(vm.models[i].detail, formats_.caption, D2D1::RectF(r.left + 10.0f * s, r.top + 26.0f * s, text_right,
+                                                                    r.top + 43.0f * s), pal.text3);
+        }
         if (static_cast<int>(i) == vm.model)
-            c.Icon(AiIcon::Check, r.right - 26.0f * s, (r.top + r.bottom) * 0.5f - 8.0f * s, 16.0f * s, pal.accent);
-        y += opt_h;
+            c.Icon(AiIcon::Check, text_right + 10.0f * s, (r.top + r.bottom) * 0.5f - 8.0f * s, 16.0f * s, pal.accent);
     }
+    if (scrolls) {
+        // Rows slide under 10 px fades at an edge that has more beyond it.
+        auto fade = [&](float edge, float inner) {
+            const D2D1_COLOR_F solid = pal.card;
+            D2D1_COLOR_F clear = pal.card;
+            clear.a = 0.0f;
+            const D2D1_GRADIENT_STOP stops[] = {{0.0f, solid}, {1.0f, clear}};
+            ID2D1GradientStopCollection* col = nullptr;
+            if (FAILED(c.dc->CreateGradientStopCollection(stops, 2, &col))) return;
+            ID2D1LinearGradientBrush* brush = nullptr;
+            if (SUCCEEDED(c.dc->CreateLinearGradientBrush(
+                    D2D1::LinearGradientBrushProperties(D2D1::Point2F(x0, edge), D2D1::Point2F(x0, inner)), col, &brush))) {
+                c.dc->FillRectangle(D2D1::RectF(x0, (std::min)(edge, inner), x1, (std::max)(edge, inner)), brush);
+                brush->Release();
+            }
+            col->Release();
+        };
+        if (g.menu_scroll > 0.5f) fade(list_box.top, list_box.top + 10.0f * s);
+        if (g.menu_scroll < g.menu_scroll_max - 0.5f) fade(list_box.bottom, list_box.bottom - 10.0f * s);
+        c.dc->PopAxisAlignedClip();
+        // A thin thumb at the right edge, like an overlay scrollbar.
+        const float track = list_box_h - 8.0f * s;
+        const float thumb = (std::max)(24.0f * s, track * list_box_h / list_h);
+        const float top = list_box.top + 4.0f * s + (track - thumb) * (g.menu_scroll / g.menu_scroll_max);
+        c.Fill(D2D1::RectF(x1 - 5.0f * s, top, x1 - 2.0f * s, top + thumb), 1.5f * s, pal.line);
+    }
+    y += list_box_h;
     c.Fill(D2D1::RectF(x0 + 4.0f * s, y + 6.0f * s, x1 - 4.0f * s, y + 7.0f * s), 0.0f, pal.line2);
     y += sep_h;
     c.Text(vm.effort_heading, formats_.heading, D2D1::RectF(x0 + 10.0f * s, y + 6.0f * s, x1, y + 21.0f * s), pal.text3);

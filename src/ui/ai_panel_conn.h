@@ -79,6 +79,8 @@ struct AiPanelView::ConnGeom {
     std::shared_ptr<const AiConnView> view;
     // Morph: the shown box eases from `from` to the target size.
     bool card = false;             // the card (else the menu) is the target
+    float menu_scroll = 0.0f;      // the menu's model list, when it is longer than its box
+    float menu_scroll_max = 0.0f;
     bool sized = false;
     float w = 0.0f, h = 0.0f;      // shown size (px)
     float from_w = 0.0f, from_h = 0.0f;

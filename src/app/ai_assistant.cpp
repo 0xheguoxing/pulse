@@ -3,9 +3,11 @@
 
 #include "ai_assistant_chat.h"
 #include "ai_assistant_conn.h"
+#include "ai_model_list.h"
 #include "ai_settings.h"
 #include "app_internal.h"
 #include "app_navigation.h"
+#include "../common/json_value.h"
 #include "../common/localization.h"
 #include "../ui/typography.h"
 #include "../ui/ui_motion.h"
@@ -28,12 +30,29 @@ constexpr UINT_PTR kTipTimer = 0x4154;           // 'AT'
 constexpr UINT kTipDelayMs = 520;
 constexpr uint64_t kMenuFadeMs = 240;
 
-struct ModelInfo { const char* id; const wchar_t* name; I detail; };
-constexpr ModelInfo kModels[] = {
-    {"deepseek-flash", L"deepseek-flash", I::AiAsstModelFlashDetail},
-    {"deepseek-v4-pro", L"deepseek-v4-pro", I::AiAsstModelProDetail},
+// Models come from the connected service (ai_model_list.h) and are shown
+// and sent as it names them. The two official DeepSeek ones get a line.
+struct KnownModel { const char* id; I detail; };
+constexpr KnownModel kKnownModels[] = {
+    {"deepseek-flash", I::AiAsstModelFlashDetail},
+    {"deepseek-v4-pro", I::AiAsstModelProDetail},
 };
-constexpr int kModelCount = static_cast<int>(sizeof(kModels) / sizeof(kModels[0]));
+std::string g_model = "deepseek-flash";   // the chosen id (ai.json assistant.model)
+
+const std::vector<std::string>& Listed() { return ai::ListedModels(AiAgentBaseUrl()); }
+
+// The chosen model's place in the list: -1 when the service does not list it.
+int ChosenIndex(const std::vector<std::string>& list) {
+    const auto it = std::find(list.begin(), list.end(), g_model);
+    return it == list.end() ? -1 : static_cast<int>(it - list.begin());
+}
+
+// The id a request uses: the chosen one if listed, else the service's first.
+const std::string& CurrentModel() {
+    const std::vector<std::string>& list = Listed();
+    if (list.empty() || ChosenIndex(list) >= 0) return g_model;
+    return list.front();
+}
 constexpr I kEffortNames[] = {I::AiAsstEffortOff, I::AiAsstEffortLow, I::AiAsstEffortMid, I::AiAsstEffortHigh};
 constexpr I kEffortDetails[] = {I::AiAsstEffortOffDetail, I::AiAsstEffortLowDetail, I::AiAsstEffortMidDetail,
                                 I::AiAsstEffortHighDetail};
@@ -61,8 +80,7 @@ void LoadPrefs(AiAssistantState& a) {
     a.floating = settings.assistant.floating;
     a.effort = std::clamp(settings.assistant.effort, 0, 3);
     a.model = 0;
-    for (int i = 0; i < kModelCount; ++i)
-        if (settings.assistant.model == kModels[i].id) a.model = i;
+    if (!settings.assistant.model.empty()) g_model = settings.assistant.model;
 }
 
 void SavePrefs(const AiAssistantState& a) {
@@ -70,7 +88,7 @@ void SavePrefs(const AiAssistantState& a) {
     ai::Settings settings = ai::LoadSettings(&malformed);
     if (malformed) return;   // never overwrite a file we could not read
     settings.assistant.floating = a.floating;
-    settings.assistant.model = kModels[std::clamp(a.model, 0, kModelCount - 1)].id;
+    settings.assistant.model = g_model;
     settings.assistant.effort = a.effort;
     (void)ai::SaveSettings(settings);
 }
@@ -356,16 +374,21 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
     }
     case P::ModelButton:
         if (a.menu_open) CloseMenu(s);
-        else a.menu_open = true;
+        else {
+            a.menu_open = true;
+            if (AiAgentConnected()) ai::RefreshListedModels(s.hwnd, AiAgentBaseUrl());
+        }
         break;
-    case P::MenuModel:
-        if (hit.index >= 0 && hit.index < kModelCount && hit.index != a.model) {
-            a.model = hit.index;
+    case P::MenuModel: {
+        const std::vector<std::string>& list = Listed();
+        if (hit.index >= 0 && hit.index < static_cast<int>(list.size()) && list[hit.index] != CurrentModel()) {
+            g_model = list[hit.index];
             SavePrefs(a);
         }
         CloseMenu(s);
         a.focus_pending = true;
         break;
+    }
     case P::MenuEffort:
         // The menu stays open to show the chosen strength's line.
         if (hit.index >= 0 && hit.index < 4 && hit.index != a.effort) {
@@ -500,8 +523,8 @@ void FillAiAssistantVm(AppState& s, ui::WindowViewModel& vm) {
     }
     p.placeholder = Text(I::AiAsstPlaceholder);
     p.add_files = Text(I::AiAsstAddFiles);
-    const int model = std::clamp(a.model, 0, kModelCount - 1);
-    p.model_label = kModels[model].name;
+    const std::vector<std::string>& listed = Listed();
+    p.model_label = json::Wide(CurrentModel());
     p.effort = std::clamp(a.effort, 0, 3);
     p.effort_label = p.effort == 0 ? std::wstring() : L" \u00B7 " + Text(kEffortNames[p.effort]);
     p.send = chat.busy ? ui::AiSendState::Busy : p.composer_empty ? ui::AiSendState::Dim : ui::AiSendState::Ready;
@@ -509,8 +532,17 @@ void FillAiAssistantVm(AppState& s, ui::WindowViewModel& vm) {
     p.menu_open = a.menu_open;
     p.model_heading = Text(I::AiAsstModelHeading);
     p.effort_heading = Text(I::AiAsstEffortHeading);
-    for (const ModelInfo& m : kModels) p.models.push_back({m.name, Text(m.detail)});
-    p.model = model;
+    // Before the service listed anything: the chosen one alone.
+    const std::vector<std::string> alone{CurrentModel()};
+    const std::vector<std::string>& rows = listed.empty() ? alone : listed;
+    for (const std::string& id : rows) {
+        std::wstring detail;
+        for (const KnownModel& k : kKnownModels)
+            if (id == k.id) detail = Text(k.detail);
+        p.models.push_back({json::Wide(id), std::move(detail)});
+    }
+    const auto chosen = std::find(rows.begin(), rows.end(), CurrentModel());
+    p.model = chosen == rows.end() ? -1 : static_cast<int>(chosen - rows.begin());
     for (size_t i = 0; i < 4; ++i) p.effort_names[i] = Text(kEffortNames[i]);
     p.effort_detail = Text(kEffortDetails[p.effort]);
     // Connected once a DeepSeek key is stored (ai_model_key.h).
@@ -647,6 +679,8 @@ bool AiAssistantMouseOther(AppState& s, int x, int y) {
     const AiAssistantState& a = s.aiAssistant;
     return a.open && s.renderer.AiPanel().Contains(static_cast<float>(x), static_cast<float>(y));
 }
+
+std::wstring AiAssistantModelName(const AppState&) { return json::Wide(CurrentModel()); }
 
 bool AiAssistantWheel(AppState& s, int x, int y, int delta) {
     if (!AiAssistantMouseOther(s, x, y)) return false;
