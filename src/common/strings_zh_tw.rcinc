@@ -3230,4 +3230,11 @@ BEGIN
     IDS_BR_SAVE "儲存"
     IDS_BR_ST_READING "讀取中…"
     IDS_BR_SUM_READING "正在讀取相片資訊 **%d**/%d"
+    IDS_BR_AI_GENERATING "正在把這句話變成步驟…"
+    IDS_BR_AI_ERR_REPLY "回覆看不懂，換個說法再試試"
+    IDS_BR_AI_ERR_NETWORK "連不上 AI 服務，檢查一下網路"
+    IDS_BR_AI_ERR_KEY "金鑰無效或已過期"
+    IDS_BR_AI_ERR_BUSY "服務繁忙，稍後再試"
+    IDS_BR_AI_ERR_BALANCE "帳戶餘額不足"
+    IDS_BR_AI_ERR_HTTP "服務回傳了錯誤 %d"
 END

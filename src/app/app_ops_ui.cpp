@@ -18,6 +18,9 @@
 #include "session.h"
 #include "context_menu.h"
 #include "batch_rename.h"
+#include "ai_assistant_chat.h"
+#include "ai_model_key.h"
+#include "ai_model_stream.h"
 #include "link_resolve.h"
 #include "locked_item_prompt.h"
 #include "selection_caps.h"
@@ -850,9 +853,67 @@ void NoteBatchRenameFinished(AppState& s, const ops::FinishedTask& done) {
     if (!it->second.dialog_open) ShowBatchRenameDone(s);   // else when it closes
 }
 
+// 一句话生成步骤: one streamed request to the assistant's model service.
+class BatchRenameAiRequest : public ui::BatchRenameAiTask {
+public:
+    explicit BatchRenameAiRequest(std::shared_ptr<app::ai::ModelStream> stream) : stream_(std::move(stream)) {}
+    ~BatchRenameAiRequest() override { if (stream_) stream_->Cancel(); }
+
+    bool Poll(std::string& reply, std::wstring& error) override {
+        std::vector<app::ai::ModelEvent> events;
+        stream_->Drain(events);
+        for (auto& e : events) {
+            switch (e.kind) {
+            case app::ai::ModelEvent::Kind::Content: text_ += e.text; break;
+            case app::ai::ModelEvent::Kind::Finished:
+                reply = e.content.empty() ? text_ : e.content;
+                return true;
+            case app::ai::ModelEvent::Kind::Failed:
+                error = Reason(e);
+                return true;
+            default: break;
+            }
+        }
+        if (stream_->Ended()) { error = l10n::Get(l10n::StringId::BrAiErrNetwork); return true; }
+        return false;
+    }
+    void Cancel() override { stream_->Cancel(); }
+
+private:
+    static std::wstring Reason(const app::ai::ModelEvent& e) {
+        switch (e.http_status) {
+        case 0: return l10n::Get(l10n::StringId::BrAiErrNetwork);
+        case 401: case 403: return l10n::Get(l10n::StringId::BrAiErrKey);
+        case 402: return l10n::Get(l10n::StringId::BrAiErrBalance);
+        case 429: case 500: case 502: case 503: return l10n::Get(l10n::StringId::BrAiErrBusy);
+        default: {
+            wchar_t buf[128]{};
+            _snwprintf_s(buf, _TRUNCATE, l10n::Get(l10n::StringId::BrAiErrHttp).c_str(), e.http_status);
+            return buf;
+        }
+        }
+    }
+    std::shared_ptr<app::ai::ModelStream> stream_;
+    std::string text_;
+};
+
 static void SubmitBatchRename(AppState& s, const std::vector<std::wstring>& paths, app::Tab* select_in) {
     if (paths.size() < 2) return;
     ui::BatchRenameDialogOptions options;
+    // The assistant's connection and model (ids shown and sent as listed).
+    if (AiAgentConnected()) {
+        options.ai_model = AiChatModelId(s);
+        options.ai_start = [](const std::string& body, std::wstring& error) -> std::shared_ptr<ui::BatchRenameAiTask> {
+            std::wstring key;
+            if (!app::ai::LoadModelKey(key)) { error = l10n::Get(l10n::StringId::BrAiNoConn); return nullptr; }
+            app::ai::ModelEndpoint endpoint;
+            endpoint.base_url = AiAgentBaseUrl();
+            endpoint.key = std::move(key);
+            auto stream = app::ai::ModelStream::Start(std::move(endpoint), body);
+            if (!stream) { error = l10n::Get(l10n::StringId::BrAiErrNetwork); return nullptr; }
+            return std::make_shared<BatchRenameAiRequest>(std::move(stream));
+        };
+    }
     options.execute = [&s, select_in](const std::vector<app::BatchRenameItem>& items) -> uint64_t {
         ops::OpRequest req;
         req.type = ops::OpType::BatchRename;

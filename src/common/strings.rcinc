@@ -3232,6 +3232,13 @@ BEGIN
     IDS_BR_SAVE "保存"
     IDS_BR_ST_READING "读取中…"
     IDS_BR_SUM_READING "正在读取照片信息 **%d**/%d"
+    IDS_BR_AI_GENERATING "正在把这句话变成步骤…"
+    IDS_BR_AI_ERR_REPLY "回复看不懂，换个说法再试试"
+    IDS_BR_AI_ERR_NETWORK "连不上 AI 服务，检查一下网络"
+    IDS_BR_AI_ERR_KEY "密钥无效或已过期"
+    IDS_BR_AI_ERR_BUSY "服务繁忙，稍后再试"
+    IDS_BR_AI_ERR_BALANCE "账户余额不足"
+    IDS_BR_AI_ERR_HTTP "服务返回了错误 %d"
 END
 
 LANGUAGE 0x09, 0x01
@@ -6463,6 +6470,13 @@ BEGIN
     IDS_BR_SAVE "Save"
     IDS_BR_ST_READING "Reading…"
     IDS_BR_SUM_READING "Reading photo info **%d**/%d"
+    IDS_BR_AI_GENERATING "Turning the sentence into steps…"
+    IDS_BR_AI_ERR_REPLY "couldn’t read the reply; try rewording it"
+    IDS_BR_AI_ERR_NETWORK "can’t reach the AI service; check the network"
+    IDS_BR_AI_ERR_KEY "the key is invalid or has expired"
+    IDS_BR_AI_ERR_BUSY "the service is busy; try again shortly"
+    IDS_BR_AI_ERR_BALANCE "the account balance has run out"
+    IDS_BR_AI_ERR_HTTP "the service returned error %d"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

@@ -8,6 +8,7 @@
 #include "batch_rename_dialog.h"
 #include "../app/batch_rename_plan.h"
 #include "../app/batch_rename_presets.h"
+#include "../app/batch_rename_ai.h"
 #include "FluentTokens.h"
 #include "fluent_components.h"
 #include "svg_path_icon.h"
@@ -24,6 +25,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <map>
 #include <memory>
 #include <thread>
 #include <cstdarg>
@@ -298,6 +300,7 @@ uint64_t LocalTicks(const FILETIME& utc) {
 // Photo metadata ({拍摄日期}, {尺寸}) read off the UI thread. The job is shared
 // with its worker, which stops early once the dialog cancels it.
 constexpr UINT kMetaMsg = WM_APP + 0x31;   // wparam 1 = done, 0 = progress
+constexpr UINT kAiMsg = WM_APP + 0x32;     // the AI request finished
 struct MetaJob {
     bool taken = false, dims = false;
     std::vector<std::wstring> paths;   // media files only
@@ -629,8 +632,96 @@ private:
 
     void Close() {
         done_ = true;
+        if (ai_task_) { ai_task_->Cancel(); ai_task_.reset(); }
         if (meta_job_) { meta_job_->cancel.store(true); meta_job_.reset(); }
         if (hwnd_) { HideComposedDialog(hwnd_, owner_); DestroyWindow(hwnd_); }
+    }
+
+    // ---------------------------------------------------------------- AI
+
+    // English tokens from the model -> the UI language's, as the chips show.
+    static std::wstring UiTokens(std::wstring s) {
+        static const wchar_t* const en[] = {L"{name}", L"{n}", L"{taken}", L"{modified}", L"{folder}", L"{size}"};
+        for (int i = 0; i < 6; ++i) {
+            const std::wstring from = en[i], to = TokenText(i);
+            for (size_t at = s.find(from); at != std::wstring::npos; at = s.find(from, at + to.size()))
+                s.replace(at, from.size(), to);
+        }
+        return s;
+    }
+
+    void ShowAiError(const std::wstring& why) {
+        ai_note_ = AiNote::Error;
+        ai_error_ = FmtS(StringId::BrAiFailed, why.c_str());
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    // Send, or stop while a request runs.
+    void SendAi() {
+        if (ai_task_) {
+            ai_task_->Cancel();
+            ai_task_.reset();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        std::wstring q = ai_text_;
+        while (!q.empty() && iswspace(q.back())) q.pop_back();
+        while (!q.empty() && iswspace(q.front())) q.erase(0, 1);
+        if (q.empty()) return;
+        if (options_.ai_model.empty() || !options_.ai_start) { ShowAiError(S(StringId::BrAiNoConn)); return; }
+        rn::AiAsk ask;
+        ask.sentence = q;
+        ask.model = options_.ai_model;
+        ask.files = sources_.size();
+        std::map<std::wstring, size_t> counts;
+        for (const auto& src : sources_) ++counts[rn::Lower(ExtOf(src.name))];
+        ask.exts.assign(counts.begin(), counts.end());
+        std::stable_sort(ask.exts.begin(), ask.exts.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+        std::wstring error;
+        auto task = options_.ai_start(rn::AiRequestBody(ask), error);
+        if (!task) { ShowAiError(error.empty() ? S(StringId::BrAiNoConn) : error); return; }
+        ai_task_ = std::move(task);
+        ai_note_ = AiNote::None;
+        ai_started_ = GetTickCount64();
+        steps_scroll_ = 0;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    // Per frame: poll the request; the finished reply is applied from a
+    // posted message (it rebuilds the step fields, not a thing to do mid-paint).
+    void TickAi() {
+        if (!ai_task_ || ai_done_) return;
+        anim_active_ = true;
+        if (!ai_task_->Poll(ai_reply_, ai_failure_)) return;
+        ai_done_ = true;
+        PostMessageW(hwnd_, kAiMsg, 0, 0);
+    }
+
+    void OnAiDone() {
+        if (!ai_task_ || !ai_done_) return;
+        ai_task_.reset();
+        ai_done_ = false;
+        const std::string reply = std::move(ai_reply_);
+        const std::wstring failure = std::move(ai_failure_);
+        ai_reply_.clear();
+        ai_failure_.clear();
+        if (!failure.empty()) { ShowAiError(failure); return; }
+        rn::AiReply r;
+        if (!rn::ParseAiReply(reply, r)) { ShowAiError(S(StringId::BrAiErrReply)); return; }
+        if (r.steps.empty()) { ShowAiError(r.note.empty() ? S(StringId::BrAiErrReply) : r.note); return; }
+        for (auto& st : r.steps) {
+            st.pattern = UiTokens(st.pattern);
+            st.text = UiTokens(st.text);
+        }
+        rn::Preset p;
+        p.steps = std::move(r.steps);
+        p.opts = opts_;
+        if (r.has_order) p.opts.order = r.order;
+        ApplyPreset(p, true, 260);   // the cards come in one by one, as in the design
+        preset_name_.clear();
+        preset_key_.clear();
+        ai_note_ = AiNote::Info;
+        Recompute(true);
     }
 
     // ---------------------------------------------------------------- presets
@@ -683,7 +774,8 @@ private:
         return out;
     }
 
-    void ApplyPreset(const rn::Preset& p, bool animate) {
+    void ApplyPreset(const rn::Preset& p, bool animate, ULONGLONG stagger = 40) {
+        ai_note_ = AiNote::None;
         for (auto it = fields_.begin(); it != fields_.end();) {
             if (it->step_id >= 0) { DestroyWindow(it->hwnd); it = fields_.erase(it); }
             else ++it;
@@ -696,7 +788,7 @@ private:
             StepUi ui;
             ui.id = next_step_id_++;
             if (st.type == rn::StepType::Remove && !st.custom.empty()) { ui.custom_on = true; ui.custom_text = st.custom; }
-            if (animate) enter_[ui.id] = now + 40 * steps_ui_.size();
+            if (animate) enter_[ui.id] = now + stagger * steps_ui_.size();
             steps_ui_.push_back(ui);
         }
         opts_ = p.opts;
@@ -1045,6 +1137,7 @@ private:
     void OnEscape() {
         if (menu_ != Menu::None) { menu_ = Menu::None; InvalidateRect(hwnd_, nullptr, FALSE); return; }
         if (naming_) { EndNaming(); return; }
+        if (ai_task_) { SendAi(); return; }   // Esc stops the request first
         Complete(false);
     }
     void OnEnter(HWND from) {
@@ -1052,7 +1145,7 @@ private:
         if (menu_ != Menu::None) { menu_ = Menu::None; InvalidateRect(hwnd_, nullptr, FALSE); return; }
         Field* f = from ? FieldOf(from) : nullptr;
         if (f && f->step_id == kPresetField) { CommitPresetName(); return; }
-        if (f && f->step_id == kAiField) return;   // the AI bar sends in R4
+        if (f && f->step_id == kAiField) { SendAi(); return; }
         Complete(true);
     }
 
@@ -1220,6 +1313,7 @@ private:
         anim_active_ = false;
         now_ = GetTickCount64();
         TickExecution();
+        TickAi();
         for (auto& f : fields_) f.want_visible = false;
 
         W_ = static_cast<float>(compositor_.Width());
@@ -1294,6 +1388,12 @@ private:
 
     void DrawAiBar() {
         const D2D1_RECT_F outer = R(X(18), X(kTitleH), W_ - X(36), X(48));
+        const bool busy = ai_task_ != nullptr;
+        // Busy: a soft violet halo around the bar (.d-ai.busy).
+        const float halo = Animate(10ull << 40, busy ? 1.0f : 0.0f, 300.0f);
+        if (halo > 0.01f)
+            Fill(D2D1::RectF(outer.left - X(4), outer.top - X(4), outer.right + X(4), outer.bottom + X(4)), X(16),
+                 Alpha(pal_.ai, 0.14f * halo));
         // 1 px gradient ring (AI violet -> accent), card inside.
         ID2D1GradientStopCollection* stops = nullptr;
         const D2D1_GRADIENT_STOP gs[2] = {{0.0f, Alpha(pal_.ai, 0.55f)}, {1.0f, Alpha(pal_.accent, 0.55f)}};
@@ -1315,9 +1415,15 @@ private:
 
         // Send button + model name, right aligned.
         const D2D1_RECT_F go = R(in.right - X(6 + 34), in.top + X(6), X(34), X(34));
-        const bool can_send = !ai_text_.empty() && !options_.ai_model.empty();
-        Fill(go, X(9), can_send ? (Hov({H::AiSend}) ? pal_.accent_h : pal_.accent) : Alpha(pal_.accent, 0.45f));
-        Ico(kSend, go.left + X(9), go.top + X(9), X(16), pal_.on_accent);
+        const bool can_send = !ai_text_.empty() && !options_.ai_model.empty() && options_.ai_start;
+        if (busy) {
+            // Stop (.go.stop).
+            Fill(go, X(9), Hov({H::AiSend}) ? Alpha(pal_.text2, 0.85f) : pal_.text2);
+            Ico(kStop, go.left + X(9), go.top + X(9), X(16), pal_.card);
+        } else {
+            Fill(go, X(9), can_send ? (Hov({H::AiSend}) ? pal_.accent_h : pal_.accent) : Alpha(pal_.accent, 0.45f));
+            Ico(kSend, go.left + X(9), go.top + X(9), X(16), pal_.on_accent);
+        }
         Reg(go, {H::AiSend});
         float right = go.left - X(10);
         if (!options_.ai_model.empty()) {
@@ -1443,6 +1549,16 @@ private:
         float content = 0;
         for (size_t i = 0; i < steps_.size(); ++i) content += StepH(i) + 8.0f;
         content = X(content + 4.0f);
+        // AI: the "thinking" card above the steps, the note card under them.
+        const bool generating = ai_task_ != nullptr;
+        const float gen_h = generating ? X(84 + 8) : 0.0f;
+        std::wstring note;
+        if (ai_note_ == AiNote::Info) note = S(StringId::BrAiNote);
+        else if (ai_note_ == AiNote::Error) note = ai_error_;
+        const float note_text_w = qa_w - X(11 + 14 + 8 + 11);
+        const float note_h = note.empty() ? 0.0f
+            : Para(note, Fmt::T12, Fmt::T12b, R(0, 0, note_text_w, X(400)), pal_.text2, X(17), false) + X(18 + 8);
+        content += gen_h + note_h;
         // Full chip panel only when it fits without scrolling; otherwise a one-line bar.
         const bool qa_full = content + qa_h <= list_bottom - list_top;
         if (!qa_full) qa_h = X(38);
@@ -1450,7 +1566,7 @@ private:
         const float max_scroll = (std::max)(0.0f, content - (list_bottom - list_top));
         if (reveal_step_ >= 0) {
             // Keep the edited card (target layout, not the animated one) fully visible.
-            float cy = 0;
+            float cy = gen_h;
             for (size_t i = 0; i < steps_.size(); ++i) {
                 const float h = X(StepH(i));
                 if (steps_ui_[i].id == reveal_step_) {
@@ -1469,6 +1585,35 @@ private:
 
         dc_->PushAxisAlignedClip(steps_view_, D2D1_ANTIALIAS_MODE_ALIASED);
         float y = list_top - steps_scroll_;
+        if (generating) {
+            // .gen: a violet shimmer sweeping across, 1.4 s per pass.
+            const D2D1_RECT_F g = R(X(12), y + X(4), qa_w, X(84));
+            Fill(g, X(10), pal_.card);
+            const float w = g.right - g.left;
+            const float phase = static_cast<float>((now_ - ai_started_) % 1400) / 1400.0f;
+            const float cx = g.left - w * 0.5f + phase * w * 2.0f;
+            ID2D1GradientStopCollection* stops = nullptr;
+            D2D1_COLOR_F mid = pal_.card;
+            mid.r += (pal_.ai.r - mid.r) * 0.10f;
+            mid.g += (pal_.ai.g - mid.g) * 0.10f;
+            mid.b += (pal_.ai.b - mid.b) * 0.10f;
+            const D2D1_GRADIENT_STOP gs[3] = {{0.0f, pal_.card}, {0.5f, mid}, {1.0f, pal_.card}};
+            if (SUCCEEDED(dc_->CreateGradientStopCollection(gs, 3, &stops))) {
+                ID2D1LinearGradientBrush* sweep = nullptr;
+                if (SUCCEEDED(dc_->CreateLinearGradientBrush(
+                        D2D1::LinearGradientBrushProperties(D2D1::Point2F(cx - w * 0.6f, g.top), D2D1::Point2F(cx + w * 0.6f, g.top)),
+                        stops, &sweep))) {
+                    dc_->FillRoundedRectangle(D2D1::RoundedRect(g, X(10), X(10)), sweep);
+                    sweep->Release();
+                }
+                stops->Release();
+            }
+            Stroke(g, X(10), pal_.line);
+            Ico(kSpark, g.left + X(16), (g.top + g.bottom) * 0.5f - X(8), X(16), pal_.ai);
+            Text(S(StringId::BrAiGenerating), Fmt::T13, D2D1::RectF(g.left + X(42), g.top, g.right - X(16), g.bottom), pal_.text2);
+            anim_active_ = true;
+            y += gen_h;
+        }
         const size_t dragging = drag_index_ >= 0 ? static_cast<size_t>(drag_index_) : SIZE_MAX;
         for (size_t i = 0; i < steps_.size(); ++i) {
             const int id = steps_ui_[i].id;
@@ -1476,6 +1621,16 @@ private:
             const float slot = Animate((1ull << 40) | static_cast<uint64_t>(id), y + steps_scroll_, 300.0f) - steps_scroll_;
             if (i != dragging) DrawStepCard(i, slot, h, std::abs(slot - y) < 0.5f);
             y += h + X(8);
+        }
+        if (!note.empty()) {
+            // .ainote (what AI did and did not see) or the reason it failed.
+            const bool info = ai_note_ == AiNote::Info;
+            const float ny = Animate(11ull << 40, y + steps_scroll_, 300.0f) - steps_scroll_;
+            const D2D1_RECT_F nb = R(X(12), ny, qa_w, note_h - X(8));
+            Fill(nb, X(9), info ? pal_.ai_bg : pal_.amber_bg);
+            Ico(info ? kInfo : kWarn, nb.left + X(11), nb.top + X(10), X(14), info ? pal_.ai : pal_.amber);
+            Para(note, Fmt::T12, Fmt::T12b, D2D1::RectF(nb.left + X(33), nb.top + X(9), nb.right - X(11), nb.bottom), pal_.text2, X(17));
+            y += note_h;
         }
         {
             const float qy = Animate(1ull << 41, y + steps_scroll_, 300.0f) - steps_scroll_;
@@ -2411,13 +2566,19 @@ private:
         case H::Example: {
             static const StringId ex[] = {StringId::BrEx1, StringId::BrEx2, StringId::BrEx3, StringId::BrEx4, StringId::BrEx5};
             if (Field* f = FindField(-1, 0)) {
+                if (ai_task_) break;
                 ai_text_ = S(ex[h.a]);
+                // Full width first, or the edit scrolls to the caret while narrow.
+                f->want_visible = true;
+                PlaceFields();
                 SetWindowTextW(f->hwnd, ai_text_.c_str());
                 SetFocus(f->hwnd);
                 SendMessageW(f->hwnd, EM_SETSEL, ai_text_.size(), ai_text_.size());
+                SendAi();   // an example is a whole request: send it
             }
             break;
         }
+        case H::AiSend: SendAi(); break;
         case H::AiInput:
             if (Field* f = FindField(-1, 0)) { f->want_visible = true; PlaceFields(); SetFocus(f->hwnd); }
             break;
@@ -2599,6 +2760,9 @@ private:
             return 0;
         case kMetaMsg:
             OnMeta(wparam != 0);
+            return 0;
+        case kAiMsg:
+            OnAiDone();
             return 0;
         case WM_DPICHANGED: {
             // Moved to a monitor with another scale: rebuild text and edit
@@ -2789,6 +2953,14 @@ private:
     int changed_ = 0, same_ = 0, issues_ = 0;
     std::vector<Field> fields_;
     std::wstring ai_text_;
+    enum class AiNote { None, Info, Error };
+    AiNote ai_note_ = AiNote::None;
+    std::wstring ai_error_;
+    std::shared_ptr<BatchRenameAiTask> ai_task_;
+    bool ai_done_ = false;          // finished, waiting for kAiMsg
+    std::string ai_reply_;
+    std::wstring ai_failure_;
+    ULONGLONG ai_started_ = 0;
     std::wstring preset_name_;
     std::string preset_key_;       // StepsKey when the preset was applied or saved
     rn::PresetStore store_;

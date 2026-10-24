@@ -5,6 +5,7 @@
 #include <d2d1.h>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -24,8 +25,20 @@ struct BatchRenameProgress {
     size_t done = 0;   // items handled so far
 };
 
+// One request to the model for 一句话生成步骤, run by the caller.
+struct BatchRenameAiTask {
+    virtual ~BatchRenameAiTask() = default;
+    // UI thread, every frame while it runs. True once finished; then either
+    // reply (the model's text, UTF-8) or error (shown to the user) is set.
+    virtual bool Poll(std::string& reply, std::wstring& error) = 0;
+    virtual void Cancel() = 0;
+};
+
 struct BatchRenameDialogOptions {
-    std::wstring ai_model;   // shown in the AI bar; empty = no connection
+    std::wstring ai_model;   // shown in the AI bar and sent as "model"; empty = no connection
+    // Starts a chat/completions request with this body. Null (with error
+    // set) when it cannot start. Unset: the AI bar cannot send.
+    std::function<std::shared_ptr<BatchRenameAiTask>(const std::string& body, std::wstring& error)> ai_start;
     // When set, Enter runs the renames while the dialog shows them going
     // through (progress line, a check per row) and closes when they are done.
     // Returns the task id (0: nothing started). Unset: the caller runs items.

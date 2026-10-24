@@ -3250,5 +3250,12 @@
 #define IDS_BR_SAVE                                                                      4456
 #define IDS_BR_ST_READING                                                                4457
 #define IDS_BR_SUM_READING                                                               4458
+#define IDS_BR_AI_GENERATING                                                             4459
+#define IDS_BR_AI_ERR_REPLY                                                              4460
+#define IDS_BR_AI_ERR_NETWORK                                                            4461
+#define IDS_BR_AI_ERR_KEY                                                                4462
+#define IDS_BR_AI_ERR_BUSY                                                               4463
+#define IDS_BR_AI_ERR_BALANCE                                                            4464
+#define IDS_BR_AI_ERR_HTTP                                                               4465
 
 #endif  // PULSE_STRING_IDS_H

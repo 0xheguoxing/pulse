@@ -3257,3 +3257,10 @@ BrPresetNameHint	IDS_BR_PRESET_NAME_HINT	4455	给预设起个名字	Name this pr
 BrSave	IDS_BR_SAVE	4456	保存	Save	儲存
 BrStReading	IDS_BR_ST_READING	4457	读取中…	Reading…	讀取中…
 BrSumReading	IDS_BR_SUM_READING	4458	正在读取照片信息 **%d**/%d	Reading photo info **%d**/%d	正在讀取相片資訊 **%d**/%d
+BrAiGenerating	IDS_BR_AI_GENERATING	4459	正在把这句话变成步骤…	Turning the sentence into steps…	正在把這句話變成步驟…
+BrAiErrReply	IDS_BR_AI_ERR_REPLY	4460	回复看不懂，换个说法再试试	couldn’t read the reply; try rewording it	回覆看不懂，換個說法再試試
+BrAiErrNetwork	IDS_BR_AI_ERR_NETWORK	4461	连不上 AI 服务，检查一下网络	can’t reach the AI service; check the network	連不上 AI 服務，檢查一下網路
+BrAiErrKey	IDS_BR_AI_ERR_KEY	4462	密钥无效或已过期	the key is invalid or has expired	金鑰無效或已過期
+BrAiErrBusy	IDS_BR_AI_ERR_BUSY	4463	服务繁忙，稍后再试	the service is busy; try again shortly	服務繁忙，稍後再試
+BrAiErrBalance	IDS_BR_AI_ERR_BALANCE	4464	账户余额不足	the account balance has run out	帳戶餘額不足
+BrAiErrHttp	IDS_BR_AI_ERR_HTTP	4465	服务返回了错误 %d	the service returned error %d	服務回傳了錯誤 %d
