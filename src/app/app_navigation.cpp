@@ -1552,6 +1552,7 @@ static bool ApplyWorkerResultToWindow(AppState& s, app::WorkResult& res, bool ag
             if (keep_order) app::PruneHeldRenames(tab->held_renames, *res.snapshot);
             else tab->held_renames.clear();
             tab->SetSnapshot(listing);
+            if (focusedTab) UpdateDeviceFolderWatch(s);
             if (std::exchange(tab->auto_view_pending, false) && res.snapshot)
                 ApplyPictureFolderView(s, *tab, *res.snapshot);
             tab->git_root = res.git_root;
@@ -2501,7 +2502,17 @@ void TransferToTarget(AppState& s, bool move) {
     const app::SelectionCaps caps = app::ComputeSelectionCaps(*src, &s.places);
     if (!(move ? caps.cut : caps.copy)) return;
     app::Tab* dst = s.targetPane->ActiveTab();
-    if (!dst || dst->current_path.empty() || fs::IsVirtualPath(dst->current_path) || dst->net_readonly ||
+    if (!dst || dst->current_path.empty()) return;
+    // A phone on either side: Explorer's engine, as a Pulse task.
+    if (IsDeviceTab(src) || IsDeviceTab(dst)) {
+        uint64_t task = 0;
+        std::vector<std::wstring> items = IsDeviceTab(src) ? SelectedShellIds(*src) : SelectedFullPaths(*src);
+        if (!items.empty() && SubmitDeviceTransfer(s, std::move(items), dst->current_path, move, &task) &&
+            !IsDeviceTab(dst))
+            ArmArrivalSelection(s, s.targetPane, task, 0);
+        return;
+    }
+    if (fs::IsVirtualPath(dst->current_path) || dst->net_readonly ||
         app::IsUncServerRoot(dst->current_path)) return;
     std::vector<std::wstring> paths = SelectedFullPaths(*src);
     if (paths.empty()) return;
@@ -2526,8 +2537,10 @@ std::vector<std::wstring> WindowTransferFolders(AppState& s) {
         for (app::Pane* pane : VisiblePanes(window)) shown.push_back(pane ? pane->ActiveTab() : nullptr);
         for (const app::Tab* tab : shown) {
             if (folders.size() >= app::kMaxWindowTransferTargets) return;
-            if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path) || tab->net_readonly ||
-                app::IsUncServerRoot(tab->current_path)) continue;
+            // A writable phone folder takes items too (SubmitDeviceTransfer).
+            const bool phone = IsDeviceTab(tab) && app::DeviceRegistry::Instance().FolderWritable(tab->current_path);
+            if (!tab || tab->current_path.empty() || (fs::IsVirtualPath(tab->current_path) && !phone) ||
+                tab->net_readonly || app::IsUncServerRoot(tab->current_path)) continue;
             const auto same = [&](const std::wstring& path) { return _wcsicmp(path.c_str(), tab->current_path.c_str()) == 0; };
             if (same(here) || std::any_of(folders.begin(), folders.end(), same)) continue;
             folders.push_back(tab->current_path);
@@ -2539,9 +2552,16 @@ std::vector<std::wstring> WindowTransferFolders(AppState& s) {
 void TransferSelectionToFolder(AppState& s, const std::wstring& folder, bool move) {
     if (DeferContentSelection(s, [=](AppState& v) { TransferSelectionToFolder(v, folder, move); })) return;
     app::Tab* src = ActiveTab(s);
-    if (!src || folder.empty() || fs::IsVirtualPath(folder) || app::IsUncServerRoot(folder)) return;
+    if (!src || folder.empty()) return;
     const app::SelectionCaps caps = app::ComputeSelectionCaps(*src, &s.places);
     if (!(move ? caps.cut : caps.copy)) return;
+    // A phone on either side: Explorer's engine, as a Pulse task.
+    if (IsDeviceTab(src) || fs::IsDevicePath(folder)) {
+        std::vector<std::wstring> items = IsDeviceTab(src) ? SelectedShellIds(*src) : SelectedFullPaths(*src);
+        if (!items.empty()) SubmitDeviceTransfer(s, std::move(items), folder, move);
+        return;
+    }
+    if (fs::IsVirtualPath(folder) || app::IsUncServerRoot(folder)) return;
     std::vector<std::wstring> paths = SelectedFullPaths(*src);
     if (paths.empty()) return;
     ops::OpRequest req;

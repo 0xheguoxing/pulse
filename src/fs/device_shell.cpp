@@ -152,7 +152,6 @@ public:
         // app asks for next (paste into it, its properties).
         last_listed_ = FormatDevicePath(folder);
         last_listed_id_ = DisplayName(item.Get(), SIGDN_DESKTOPABSOLUTEPARSING);
-        const bool apple = Lower(DeviceId(folder.device)).find(L"vid_05ac") != std::wstring::npos;
         std::vector<DirEntry> batch;
         batch.reserve(kDeviceBatchSize);
         bool stopped = false;
@@ -166,9 +165,10 @@ public:
             entry.is_dir = (attrs & SFGAO_FOLDER) && !(attrs & SFGAO_STREAM);
             entry.attrs = entry.is_dir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
             if (attrs & SFGAO_HIDDEN) entry.attrs |= FILE_ATTRIBUTE_HIDDEN;
-            // Read-only = the shell offers neither delete nor rename (an
-            // iPhone's DCIM never does): the app then hides both.
-            if (apple || (SUCCEEDED(attrs_hr) && !(attrs & (SFGAO_CANDELETE | SFGAO_CANRENAME))))
+            // Read-only = the shell offers neither delete nor rename: the app
+            // then hides both. What the shell grants (an iPhone's photos can
+            // be deleted, as in Explorer) is what Pulse offers.
+            if (SUCCEEDED(attrs_hr) && !(attrs & (SFGAO_CANDELETE | SFGAO_CANRENAME)))
                 entry.attrs |= FILE_ATTRIBUTE_READONLY;
             entry.shell_id = DisplayName(child, SIGDN_DESKTOPABSOLUTEPARSING);
             ComPtr<IShellItem2> item2;
@@ -199,9 +199,7 @@ public:
         if (path.IsDeviceRoot() || Resolve(path, &item) != DeviceError::None) return caps;
         SFGAOF attrs = 0;
         item->GetAttributes(SFGAO_CANDELETE | SFGAO_CANRENAME | SFGAO_FOLDER | SFGAO_READONLY, &attrs);
-        const bool apple = Lower(DeviceId(path.device)).find(L"vid_05ac") != std::wstring::npos;
         caps.can_copy = true;
-        if (apple) return caps;  // iPhone: read-only
         caps.can_delete = (attrs & SFGAO_CANDELETE) != 0 && !path.IsStorageRoot();
         caps.can_rename = (attrs & SFGAO_CANRENAME) != 0 && !path.IsStorageRoot();
         caps.can_create = (attrs & SFGAO_FOLDER) != 0 && !(attrs & SFGAO_READONLY);

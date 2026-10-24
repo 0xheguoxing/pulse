@@ -884,19 +884,26 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
     const bool device_dest = DeviceDropFolder(dest);
     if ((device_dest || ShellItemDrag(sources)) && (effect == DROPEFFECT_COPY || effect == DROPEFFECT_MOVE) &&
         (effect & allowed)) {
-        // Into a phone, or a phone's items into a folder: the shell's own
-        // transfer (WPD), run in the host like Explorer's drop. The source
-        // never deletes: a move is reported as optimized (the target moves).
+        // Into a phone, or a phone's items into a folder: a Pulse task run by
+        // Explorer's engine (WPD), with Pulse's progress and conflict dialog.
+        // The source never deletes: a move is reported as optimized (the
+        // task moves the items itself).
         if (!device_dest && (dest.empty() || fs::IsVirtualPath(dest))) return DROPEFFECT_NONE;
         if (ui::DropIntoOwnFolder(sources, dest)) return DROPEFFECT_NONE;
-        std::vector<std::wstring> items;
-        items.reserve(sources.size() + 1);
-        items.push_back(device_dest ? app::DeviceRegistry::Instance().FolderShellId(dest)
-                                    : ClipboardPath(dest));
-        for (const auto& source : sources) items.push_back(ClipboardPath(source));
-        if (!s.ops.RunShellVerb(std::move(items), effect == DROPEFFECT_MOVE ? L"drop:move" : L"drop:copy",
-                                true, s.hwnd))
-            return DROPEFFECT_NONE;
+        uint64_t task = 0;
+        if (!SubmitDeviceTransfer(s, sources, dest, effect == DROPEFFECT_MOVE, &task)) {
+            // Foreign shell items (not a phone's): the folder's own drop target.
+            if (!device_dest) return DROPEFFECT_NONE;
+            std::vector<std::wstring> items;
+            items.reserve(sources.size() + 1);
+            items.push_back(app::DeviceRegistry::Instance().FolderShellId(dest));
+            for (const auto& source : sources) items.push_back(ClipboardPath(source));
+            if (!s.ops.RunShellVerb(std::move(items), effect == DROPEFFECT_MOVE ? L"drop:move" : L"drop:copy",
+                                    true, s.hwnd))
+                return DROPEFFECT_NONE;
+            return effect;
+        }
+        if (!device_dest) ArmArrivalSelection(s, nullptr, task, 0);
         return effect;
     }
     if (dest.empty() || fs::IsVirtualPath(dest) || !(effect & allowed) ||

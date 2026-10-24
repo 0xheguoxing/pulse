@@ -2090,6 +2090,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_TIMER: {
+        if (s && wParam == 0x4457) {  // kTimerDeviceWatch (app_runtime.cpp)
+            FireDeviceFolderWatch(*s);
+            return 0;
+        }
         if (s && wParam == kTimerDeviceHelpTest) {
             KillTimer(hwnd, kTimerDeviceHelpTest);
             ShowDeviceHelp(*s);
@@ -2861,6 +2865,13 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s && s->dropTarget) RegisterDragDrop(hwnd, s->dropTarget);
         return 0;
 
+    case WM_DEVICE_WATCH_READY:
+        if (s) OnDeviceWatchReady(*s, wParam, lParam);
+        else CoTaskMemFree(reinterpret_cast<void*>(lParam));
+        return 0;
+    case WM_DEVICE_FOLDER_CHANGED:
+        if (s) OnDeviceFolderChanged(*s, wParam, lParam);
+        return 0;
     case WM_ASSOC_CHANGED:
         // Another program (or Settings > Default apps) took over a file type:
         // resolve the thumbnail badges again. Bursts only bump an epoch.
@@ -3128,6 +3139,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         break;
 
     case WM_DESTROY: {
+        ReleaseDeviceFolderWatch(hwnd);
         // Closing one of several windows (M3f) tears down what the window
         // owns; services, saved state and the shared caches go with the last.
         const bool last_window = !s || s->core.windows.IsLastWindow(hwnd);

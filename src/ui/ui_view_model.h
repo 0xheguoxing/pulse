@@ -90,6 +90,9 @@ struct ListEntryView {
     std::wstring date_text;
     std::wstring type_text;
     std::wstring path;
+    // A phone's file: its shell id, which its thumbnail is read from (the
+    // pulse:device: path names no file). Empty = path.
+    std::wstring thumb_path;
     std::wstring created_text;   // empty when the source has no creation time
     std::wstring accessed_text;
     DWORD attrs = 0;

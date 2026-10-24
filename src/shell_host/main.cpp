@@ -63,7 +63,10 @@ struct Request {
     std::wstring new_name;  // REQ_SHELL_VERB: the verb
     std::vector<std::wstring> sources;
     uint32_t owner = 0;     // REQ_SHELL_VERB: owner window for the shell's dialogs
-    uint32_t flags = 0;     // REQ_SHELL_VERB: SVF_*
+    uint32_t flags = 0;     // REQ_SHELL_VERB: SVF_*; REQ_SHELL_TRANSFER: STF_*
+    uint32_t op = 0;        // REQ_SHELL_TRANSFER: STO_*
+    std::wstring dest;      // REQ_SHELL_TRANSFER: target folder
+    std::vector<std::wstring> names;  // REQ_SHELL_TRANSFER: new leaf names
 };
 
 struct HostState {
@@ -223,7 +226,10 @@ public:
         return CheckCancel();
     }
     IFACEMETHODIMP PreNewItem(DWORD, IShellItem*, LPCWSTR) override { return CheckCancel(); }
-    IFACEMETHODIMP PostNewItem(DWORD, IShellItem*, LPCWSTR, LPCWSTR, DWORD, HRESULT, IShellItem*) override { return CheckCancel(); }
+    IFACEMETHODIMP PostNewItem(DWORD, IShellItem*, LPCWSTR, LPCWSTR, DWORD, HRESULT hr, IShellItem*) override {
+        NoteItemResult(hr);
+        return CheckCancel();
+    }
 
     IFACEMETHODIMP UpdateProgress(UINT work_total, UINT work_done) override {
         if (work_total > 0) {
@@ -241,6 +247,10 @@ public:
     HRESULT item_failure() const { return item_failure_; }
     void NoteSetupFailure(const std::wstring& src) { last_failed_item_ = src; }
     void set_recycle_only(bool value) { recycle_only_ = value; }
+    // A transfer reports the whole operation's work (UpdateProgress), which
+    // covers the files inside folders too; item counts then grow past the
+    // top-level count instead of being capped by it.
+    void set_work_progress(bool value) { work_progress_ = value; }
 
 private:
     HRESULT CheckCancel() {
@@ -258,6 +268,7 @@ private:
     }
     void RememberName(LPCWSTR name) { current_item_ = name ? name : L""; }
     bool recycle_only_ = false;
+    bool work_progress_ = false;
     void NoteItemResult(HRESULT hr) {
         if (FAILED(hr) && hr != HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
             if (SUCCEEDED(item_failure_)) item_failure_ = hr;
@@ -270,6 +281,11 @@ private:
         if (!force && now - last_send_ < 50) return;
         last_send_ = now;
         float pct;
+        if (work_progress_) {
+            pct = has_byte_progress_ ? byte_percent_ : 0.0f;
+            SendProgress(req_id_, pct, current_item_, items_done_, (std::max)(items_done_, total_items_));
+            return;
+        }
         if (has_byte_progress_ && total_items_ == 1) {
             pct = byte_percent_;
         } else {
@@ -946,6 +962,119 @@ bool ClientIsExpected() {
     return true;
 }
 
+// REQ_SHELL_TRANSFER: one IFileOperation on its own STA thread, so a long
+// copy off (or onto) a phone never holds the main thread's requests (open,
+// properties, rename). Explorer's own engine: the same WPD path, the same
+// speed. Conflicts were settled by Pulse before the request (its dialog);
+// what still collides is overwritten, or renamed with STF_RENAME_ON_COLLISION.
+void ExecuteShellTransfer(const Request& req) {
+    const bool create = req.op == STO_NEW_FOLDER || req.op == STO_NEW_FILE;
+    const bool remove = req.op == STO_DELETE;
+    HRESULT hr = S_OK;
+    IShellItem* dest = nullptr;
+    if (!remove) hr = req.dest.empty() ? E_INVALIDARG : MakeItem(req.dest, &dest);
+    if (SUCCEEDED(hr) && !create && req.sources.empty()) hr = E_INVALIDARG;
+    if (SUCCEEDED(hr) && create && (req.names.empty() || req.names.front().empty())) hr = E_INVALIDARG;
+    IFileOperation* op = nullptr;
+    if (SUCCEEDED(hr))
+        hr = CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&op));
+    ProgressSink sink(req.id, create ? 1 : req.sources.size());
+    sink.set_work_progress(true);
+    DWORD sink_cookie = 0;
+    if (SUCCEEDED(hr)) {
+        // No UI of the shell's: Pulse asked about conflicts and deletes, and
+        // shows the progress and the errors itself.
+        DWORD flags = FOF_SILENT | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_NOCONFIRMMKDIR;
+        if (req.flags & STF_RENAME_ON_COLLISION) flags |= FOF_RENAMEONCOLLISION;
+        hr = op->SetOperationFlags(flags);
+        if (SUCCEEDED(hr)) op->Advise(&sink, &sink_cookie);
+    }
+    bool setup_failed = FAILED(hr);
+    if (SUCCEEDED(hr) && create) {
+        hr = op->NewItem(dest, req.op == STO_NEW_FOLDER ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL,
+                         req.names.front().c_str(), nullptr, nullptr);
+        setup_failed = FAILED(hr);
+    } else if (SUCCEEDED(hr)) {
+        for (size_t i = 0; i < req.sources.size(); ++i) {
+            IShellItem* item = nullptr;
+            hr = MakeItem(req.sources[i], &item);
+            if (FAILED(hr)) {
+                sink.NoteSetupFailure(req.sources[i]);
+                break;
+            }
+            const wchar_t* name = i < req.names.size() && !req.names[i].empty() ? req.names[i].c_str() : nullptr;
+            switch (req.op) {
+            case STO_COPY: hr = op->CopyItem(item, dest, name, nullptr); break;
+            case STO_MOVE: hr = op->MoveItem(item, dest, name, nullptr); break;
+            case STO_DELETE: hr = op->DeleteItem(item, nullptr); break;
+            default: hr = E_INVALIDARG; break;
+            }
+            item->Release();
+            if (FAILED(hr)) break;
+        }
+        setup_failed = FAILED(hr);
+    }
+    bool cancelled = false;
+    if (SUCCEEDED(hr)) {
+        hr = op->PerformOperations();
+        BOOL aborted = FALSE;
+        op->GetAnyOperationsAborted(&aborted);
+        cancelled = g.cancel_id.load() == req.id || hr == HRESULT_FROM_WIN32(ERROR_CANCELLED) ||
+                    (aborted && SUCCEEDED(hr) && SUCCEEDED(sink.item_failure()));
+        if (SUCCEEDED(hr) && FAILED(sink.item_failure())) hr = sink.item_failure();
+    }
+    if (op) {
+        if (sink_cookie) op->Unadvise(sink_cookie);
+        op->Release();
+    }
+    if (dest) dest->Release();
+    std::wstring error;
+    if (FAILED(hr) && !cancelled) {
+        error = DescribeHresult(hr);
+        if (!sink.last_failed_item().empty()) {
+            if (!error.empty()) error += L" | ";
+            error += sink.last_failed_item();
+        }
+        wchar_t line[160];
+        swprintf_s(line, L"shell transfer op=%u items=%zu failed hr=0x%08lX setup=%d", req.op,
+                   req.sources.size(), static_cast<unsigned long>(hr), setup_failed ? 1 : 0);
+        HostLog(line);
+    }
+    SendDone(req.id, cancelled ? S_OK : hr, cancelled, error);
+}
+
+DWORD WINAPI ShellTransferThread(LPVOID param) {
+    std::unique_ptr<Request> req(static_cast<Request*>(param));
+    const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    ExecuteShellTransfer(*req);
+    if (SUCCEEDED(co)) CoUninitialize();
+    g.requests_in_flight.fetch_sub(1);
+    PostMessageW(g.hwnd_msg, WM_RECYCLE_CHECK, 0, 0);
+    return 0;
+}
+
+void StartShellTransfer(uint32_t id, const uint8_t* payload, size_t size) {
+    auto req = std::make_unique<Request>();
+    req->type = REQ_SHELL_TRANSFER;
+    req->id = id;
+    PayloadReader r(payload, size);
+    if (!r.GetU32(req->op) || !r.GetU32(req->flags) || !r.GetString(req->dest) ||
+        !r.GetStringArray(req->sources) || !r.GetStringArray(req->names) || req->op > STO_DELETE) {
+        SendDone(id, E_INVALIDARG, false, L"malformed transfer request");
+        return;
+    }
+    g.requests_in_flight.fetch_add(1);
+    HANDLE thread = CreateThread(nullptr, 0, ShellTransferThread, req.get(), 0, nullptr);
+    if (!thread) {
+        const HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
+        g.requests_in_flight.fetch_sub(1);
+        SendDone(id, hr, false, DescribeHresult(hr));
+        return;
+    }
+    req.release();  // the thread owns it now
+    CloseHandle(thread);
+}
+
 DWORD WINAPI ReaderThread(LPVOID) {
     __try {
         return ReaderThreadImpl();
@@ -1009,6 +1138,10 @@ DWORD WINAPI ReaderThreadImpl() {
             }
             case REQ_CTX_QUERY: {
                 StartCtxSession(h.request_id, payload.data(), payload.size());
+                break;
+            }
+            case REQ_SHELL_TRANSFER: {
+                StartShellTransfer(h.request_id, payload.data(), payload.size());
                 break;
             }
             case REQ_CTX_INVOKE: {
@@ -1202,6 +1335,41 @@ void CollectCtxItems(IContextMenu* menu, IContextMenu2* menu2, HMENU hmenu,
     slot.hmenu = nullptr;
 }
 
+// A phone item's menu, as the shell gave it (before Pulse drops the rows it
+// draws itself): one host log line per row, so a user's log tells whether a
+// row Explorer shows never came or was lost on the way to the app.
+void LogShellMenuRows(IContextMenu* menu, HMENU hmenu) {
+    const int count = GetMenuItemCount(hmenu);
+    wchar_t head[64];
+    swprintf_s(head, L"phone ctx: %d native rows", count);
+    HostLog(head);
+    for (int i = 0; i < count; ++i) {
+        wchar_t text[128]{};
+        MENUITEMINFOW mii{sizeof(mii)};
+        mii.fMask = MIIM_ID | MIIM_FTYPE | MIIM_SUBMENU | MIIM_STRING | MIIM_STATE;
+        mii.dwTypeData = text;
+        mii.cch = ARRAYSIZE(text);
+        if (!GetMenuItemInfoW(hmenu, static_cast<UINT>(i), TRUE, &mii)) continue;
+        if (mii.fType & MFT_SEPARATOR) {
+            HostLog(L"phone ctx:   ----");
+            continue;
+        }
+        wchar_t verb[64]{};
+        if (!mii.hSubMenu && mii.wID >= kCtxIdFirst && mii.wID <= kCtxIdLast &&
+            FAILED(menu->GetCommandString(mii.wID - kCtxIdFirst, GCS_VERBW, nullptr,
+                                          reinterpret_cast<LPSTR>(verb), ARRAYSIZE(verb))))
+            verb[0] = L'\0';
+        verb[ARRAYSIZE(verb) - 1] = L'\0';
+        std::wstring line = L"phone ctx:   [";
+        line += verb;
+        line += L"] ";
+        line += text;
+        if (mii.hSubMenu) line += L" >";
+        if (mii.fState & MFS_DISABLED) line += L" (disabled)";
+        HostLog(line.c_str());
+    }
+}
+
 HRESULT BuildCtxMenu(const CtxSessionData& d, IContextMenu** out_menu, HMENU* out_hmenu,
                      std::vector<CtxItemOut>& items) {
     *out_menu = nullptr;
@@ -1248,9 +1416,15 @@ HRESULT BuildCtxMenu(const CtxSessionData& d, IContextMenu** out_menu, HMENU* ou
         menu->Release();
         return hr;
     }
+    if (!d.background && IsShellNamespacePath(ToParsingPath(d.paths.front()))) LogShellMenuRows(menu, hmenu);
     IContextMenu2* menu2 = nullptr;
     menu->QueryInterface(IID_PPV_ARGS(&menu2));
     CollectCtxItems(menu, menu2, hmenu, d.background, items);
+    if (!d.background && IsShellNamespacePath(ToParsingPath(d.paths.front()))) {
+        wchar_t kept[64];
+        swprintf_s(kept, L"phone ctx: %zu rows passed to the app", items.size());
+        HostLog(kept);
+    }
     if (menu2) menu2->Release();
     *out_menu = menu;
     *out_hmenu = hmenu;

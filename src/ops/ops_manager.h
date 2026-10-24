@@ -104,7 +104,27 @@ struct OpRequest {
     bool lock_retry = false;
     bool duplicate_cleanup = false;
     std::vector<DuplicateCleanupGroup> duplicate_groups;
+    // Phone operations (IsShellTransferRequest): Pulse folders to re-list
+    // when the task ends (a pulse:device: folder, a local target). A phone
+    // folder has no change notifications Pulse can follow.
+    std::vector<std::wstring> refresh_directories;
 };
+
+// A phone's items (MTP / PTP) have no path, only a shell parsing name
+// ("::{20D04FE0-...}\\\\?\\usb#..."). Requests naming one run through the
+// shell host's IFileOperation, Explorer's own engine (REQ_SHELL_TRANSFER):
+// Copy / Move with sources or dest_dir a shell id; CreateFolder /
+// CreateTextFile with dest_dir the phone folder and new_name the leaf (no
+// sources); RealDelete with shell id sources (a phone has no Recycle Bin).
+inline bool IsShellItemId(const std::wstring& path) {
+    return path.size() > 2 && path[0] == L':' && path[1] == L':';
+}
+inline bool IsShellTransferRequest(const OpRequest& req) {
+    if (IsShellItemId(req.dest_dir)) return true;
+    for (const auto& source : req.sources)
+        if (IsShellItemId(source)) return true;
+    return false;
+}
 
 struct UndoEntry {
     OpType type = OpType::Copy;
@@ -410,6 +430,15 @@ private:
     };
 
     QueueItem* CurrentTransferLocked(); // mutex_ held; active request or queue front
+    // Phone operations (IsShellTransferRequest), on the worker thread: the
+    // conflicts are settled with Pulse's own dialog first, then the shell
+    // host's IFileOperation does the transfer with progress and cancel.
+    void RunShellTransfer(const OpRequest& req, uint64_t task_id);
+    void RunShellItemOp(const OpRequest& req, uint64_t task_id);
+    // Completion of a phone operation: re-list its folders (refresh only, no
+    // undo step: Pulse cannot put a phone's files back).
+    void CompleteShellRequest(const OpRequest& req, uint64_t task_id,
+                              std::vector<std::wstring> destinations);
 
     struct MenuJob {
         enum class Kind { Query, Invoke, Close, Verb, Rename } kind = Kind::Query;

@@ -2248,7 +2248,33 @@ static DecodeStep RunCloudCached(const DecodeRequest& q, DecodeResult& r) {
     return DecodeStep::Next;
 }
 
+// A phone's file (MTP / PTP), named by its shell parsing name: only the
+// picture the device or Explorer's cache already has (SIIGBF_THUMBNAILONLY),
+// never the file itself - reading it would copy the whole photo or video off
+// the phone for one tile. A miss leaves the type icon; no other decoder can
+// open such a name.
+static bool AcceptsDeviceItem(const DecodeRequest& q) {
+    return q.path.size() > 2 && q.path[0] == L':' && q.path[1] == L':';
+}
+static DecodeStep RunDeviceItem(const DecodeRequest& q, DecodeResult& r) {
+    r.error = L"device-no-thumbnail";
+    if (q.is_directory) return DecodeStep::Failed;
+    ComPtr<IShellItem> item;
+    if (FAILED(SHCreateItemFromParsingName(q.path.c_str(), nullptr, IID_PPV_ARGS(&item)))) return DecodeStep::Failed;
+    ComPtr<IShellItemImageFactory> factory;
+    if (FAILED(item.As(&factory))) return DecodeStep::Failed;
+    const SIZE size{static_cast<LONG>(q.cap), static_cast<LONG>(q.cap)};
+    HBITMAP bitmap = nullptr;
+    if (FAILED(factory->GetImage(size, static_cast<SIIGBF>(SIIGBF_BIGGERSIZEOK | SIIGBF_RESIZETOFIT |
+            SIIGBF_THUMBNAILONLY), &bitmap)) || !bitmap)
+        return DecodeStep::Failed;
+    if (!HbitmapToBgra(bitmap, true, r.pixels, r.width, r.height, r.stride)) return DecodeStep::Failed;
+    r.error.clear();
+    return MadeBitmap(r);
+}
+
 static const preview::DecoderEntry kDecoders[] = {
+    { "device",          AcceptsDeviceItem,   RunDeviceItem },
     { "cloud-cached",    AcceptsCloudCached,  RunCloudCached },
     { "folder",          AcceptsFolder,       RunFolder },
     { "shortcut",        AcceptsShortcut,     RunShortcut },

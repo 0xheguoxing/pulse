@@ -12,6 +12,8 @@
 #include "../ui/ui_renderer.h"
 #include <memory>
 #include <thread>
+#include <shlobj.h>
+#include <unordered_map>
 #include "system_ctx_model.h"
 #include "pane_layout.h"
 #include "tab_spring.h"
@@ -3756,6 +3758,33 @@ bool RunDeviceVerb(AppState& s, std::vector<std::wstring> shell_ids, const wchar
     return s.ops.RunShellVerb(std::move(shell_ids), verb ? verb : L"", background, s.hwnd);
 }
 
+bool SubmitDeviceTransfer(AppState& s, std::vector<std::wstring> sources, const std::wstring& dest,
+                          bool move, uint64_t* task) {
+    if (task) *task = 0;
+    if (sources.empty() || dest.empty()) return false;
+    ops::OpRequest req;
+    req.type = move ? ops::OpType::Move : ops::OpType::Copy;
+    if (fs::IsDevicePath(dest)) {
+        auto& devices = app::DeviceRegistry::Instance();
+        if (!devices.FolderWritable(dest)) return false;
+        req.dest_dir = devices.FolderShellId(dest);
+    } else if (!fs::IsVirtualPath(dest)) {
+        req.dest_dir = ClipboardPath(dest);
+    }
+    if (req.dest_dir.empty()) return false;
+    req.sources.reserve(sources.size());
+    for (auto& source : sources)
+        req.sources.push_back(ops::IsShellItemId(source) ? std::move(source) : ClipboardPath(source));
+    if (!ops::IsShellTransferRequest(req)) return false;
+    // Both ends re-list: the target, and the phone folder a move empties.
+    req.refresh_directories.push_back(dest);
+    if (const app::Tab* tab = ActiveTab(s); IsDeviceTab(tab) && _wcsicmp(tab->current_path.c_str(), dest.c_str()) != 0)
+        req.refresh_directories.push_back(tab->current_path);
+    const uint64_t id = s.ops.Submit(std::move(req));
+    if (task) *task = id;
+    return id != 0;
+}
+
 std::wstring DeviceFriendlyPath(const std::wstring& path) {
     const auto where = fs::ParseDevicePath(path);
     if (!where) return path;
@@ -3864,6 +3893,90 @@ void SyncSavedSearchSidebar(AppState& s) {
         entry.path = L"pulse:saved-search:" + std::to_wstring(i);
         s.sidebar.saved_searches.push_back(std::move(entry));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Phone folder watch (UpdateDeviceFolderWatch). UI thread only, but for the
+// worker that parses the folder's PIDL and posts it back.
+// ---------------------------------------------------------------------------
+namespace {
+struct DeviceFolderWatch {
+    std::wstring path;   // the pulse:device: folder watched (or being parsed)
+    ULONG id = 0;        // SHChangeNotifyRegister registration, 0 = none yet
+    uint64_t ticket = 0; // matches the worker's answer to this path
+};
+std::unordered_map<HWND, DeviceFolderWatch> g_device_folder_watches;
+uint64_t g_device_folder_ticket = 0;
+// A copy of many files raises one notification per file: one re-list after
+// the burst instead.
+constexpr UINT_PTR kTimerDeviceWatch = 0x4457;  // 'DW'
+constexpr UINT kDeviceWatchSettleMs = 400;
+}  // namespace
+
+void UpdateDeviceFolderWatch(AppState& s) {
+    if (!s.hwnd) return;
+    const app::Tab* tab = ActiveTab(s);
+    const std::wstring wanted = IsDeviceTab(tab) ? tab->current_path : std::wstring();
+    const auto found = g_device_folder_watches.find(s.hwnd);
+    if (found != g_device_folder_watches.end() && _wcsicmp(found->second.path.c_str(), wanted.c_str()) == 0) return;
+    ReleaseDeviceFolderWatch(s.hwnd);
+    if (wanted.empty()) return;
+    const std::wstring folder_id = app::DeviceRegistry::Instance().FolderShellId(wanted);
+    if (folder_id.empty()) return;
+    DeviceFolderWatch& watch = g_device_folder_watches[s.hwnd];
+    watch.path = wanted;
+    watch.ticket = ++g_device_folder_ticket;
+    const HWND hwnd = s.hwnd;
+    const uint64_t ticket = watch.ticket;
+    std::thread([hwnd, ticket, folder_id] {
+        const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        PIDLIST_ABSOLUTE pidl = nullptr;
+        if (SUCCEEDED(SHParseDisplayName(folder_id.c_str(), nullptr, &pidl, 0, nullptr)) && pidl &&
+            !PostMessageW(hwnd, WM_DEVICE_WATCH_READY, static_cast<WPARAM>(ticket), reinterpret_cast<LPARAM>(pidl)))
+            CoTaskMemFree(pidl);
+        if (SUCCEEDED(co)) CoUninitialize();
+    }).detach();
+}
+
+void OnDeviceWatchReady(AppState& s, WPARAM ticket, LPARAM pidl_param) {
+    auto pidl = reinterpret_cast<PIDLIST_ABSOLUTE>(pidl_param);
+    const auto found = g_device_folder_watches.find(s.hwnd);
+    if (found != g_device_folder_watches.end() && found->second.ticket == static_cast<uint64_t>(ticket) &&
+        !found->second.id && pidl) {
+        SHChangeNotifyEntry entry{pidl, FALSE};
+        found->second.id = SHChangeNotifyRegister(s.hwnd, SHCNRF_ShellLevel | SHCNRF_NewDelivery,
+            SHCNE_CREATE | SHCNE_DELETE | SHCNE_MKDIR | SHCNE_RMDIR | SHCNE_RENAMEITEM | SHCNE_RENAMEFOLDER |
+                SHCNE_UPDATEDIR | SHCNE_UPDATEITEM,
+            WM_DEVICE_FOLDER_CHANGED, 1, &entry);
+    }
+    if (pidl) CoTaskMemFree(pidl);  // the registration keeps its own copy
+}
+
+void OnDeviceFolderChanged(AppState& s, WPARAM wparam, LPARAM lparam) {
+    PIDLIST_ABSOLUTE* pidls = nullptr;
+    LONG event = 0;
+    if (HANDLE lock = SHChangeNotification_Lock(reinterpret_cast<HANDLE>(wparam), static_cast<DWORD>(lparam),
+                                                &pidls, &event))
+        SHChangeNotification_Unlock(lock);
+    if (g_device_folder_watches.contains(s.hwnd)) SetTimer(s.hwnd, kTimerDeviceWatch, kDeviceWatchSettleMs, nullptr);
+}
+
+void FireDeviceFolderWatch(AppState& s) {
+    KillTimer(s.hwnd, kTimerDeviceWatch);
+    const auto found = g_device_folder_watches.find(s.hwnd);
+    if (found == g_device_folder_watches.end() || found->second.path.empty()) return;
+    s.store.MarkDirty(found->second.path);
+    const app::Tab* tab = ActiveTab(s);
+    if (tab && _wcsicmp(tab->current_path.c_str(), found->second.path.c_str()) == 0)
+        RefreshActiveTab(s, RefreshReason::ShellNotification);
+}
+
+void ReleaseDeviceFolderWatch(HWND hwnd) {
+    const auto found = g_device_folder_watches.find(hwnd);
+    if (found == g_device_folder_watches.end()) return;
+    if (found->second.id) SHChangeNotifyDeregister(found->second.id);
+    g_device_folder_watches.erase(found);
+    KillTimer(hwnd, kTimerDeviceWatch);
 }
 
 } // namespace pulse

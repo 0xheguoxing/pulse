@@ -336,6 +336,93 @@ int wmain(int argc, wchar_t** argv) {
     l10n::SetLanguage(L"zh-CN");
     fprintf(stderr, "[test] start\n");
 
+    // Which requests Explorer's engine runs (a phone's items: shell ids).
+    {
+        const std::wstring phone = L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\\\?\\usb#vid_04e8&pid_6860#x#{6ac27878-a6fa-4155-ba85-f98f491d4f33}\\SID-{10001,,1}\\{A}";
+        Check(ops::IsShellItemId(phone) && !ops::IsShellItemId(L"C:\\x") && !ops::IsShellItemId(L"::") &&
+                  !ops::IsShellItemId(L"pulse:device:k\\s"),
+              L"shell routing: only a parsing name starting with :: is a shell item");
+        Check(ops::IsShellTransferRequest(SimpleOp(ops::OpType::Copy, {L"C:\\a.txt"}, phone.c_str())) &&
+                  ops::IsShellTransferRequest(SimpleOp(ops::OpType::Move, {phone.c_str()}, L"C:\\dest")) &&
+                  ops::IsShellTransferRequest(SimpleOp(ops::OpType::CreateFolder, {}, phone.c_str(), L"x")) &&
+                  !ops::IsShellTransferRequest(SimpleOp(ops::OpType::Copy, {L"C:\\a.txt"}, L"D:\\dest")) &&
+                  !ops::IsShellTransferRequest(SimpleOp(ops::OpType::CreateFolder, {L"C:\\new"})),
+              L"shell routing: a shell id on either side picks the shell engine, paths never do");
+    }
+
+    if (argc > 1 && std::wstring_view(argv[1]) == L"--shell-transfer") {
+        // A phone's operations without a phone: a local folder named by its
+        // shell parsing name under This PC is a shell id too, so the same
+        // path runs (OpsManager -> REQ_SHELL_TRANSFER -> IFileOperation),
+        // with Pulse's conflict prompts. Sandbox only.
+        const auto root = std::filesystem::path(SandboxRoot()).parent_path() /
+            (L"shell-transfer-" + std::to_wstring(GetCurrentProcessId()));
+        const auto source = root / L"source";
+        const auto target = root / L"target";
+        const auto back = root / L"back";
+        std::filesystem::create_directories(source);
+        std::filesystem::create_directories(target);
+        std::filesystem::create_directories(back);
+        const auto shell_id = [](const std::filesystem::path& path) {
+            return L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\" + path.wstring();
+        };
+        const auto file = source / L"sample.txt";
+        const char content[] = "shell transfer";
+        Check(MakeFile(file.wstring(), content, sizeof(content)), L"shell transfer: fixture");
+        g_ops.Start([] {});
+        g_ops.DrainCompletions();
+        const std::wstring target_id = shell_id(target);
+        auto status = RunOp(SimpleOp(ops::OpType::Copy, {file.c_str()}, target_id.c_str()));
+        Check(status.phase == ops::OpPhase::Completed && Exists((target / L"sample.txt").wstring()) &&
+                  Exists(file.wstring()) && !status.can_pause,
+              L"shell transfer: copy into a shell folder");
+        auto completions = g_ops.DrainCompletions();
+        Check(completions.size() == 1 && completions[0].refresh_only, L"shell transfer: a shell target only re-lists");
+        size_t prompts = 0;
+        status = RunConflictOp(SimpleOp(ops::OpType::Copy, {file.c_str()}, target_id.c_str()),
+                               ops::ConflictChoice::KeepBoth, false, &prompts);
+        Check(status.phase == ops::OpPhase::Completed && prompts == 1 &&
+                  Exists((target / L"sample.txt").wstring()) && Exists((target / L"sample (2).txt").wstring()),
+              L"shell transfer: a name taken asks Pulse's dialog, keep both names it as Explorer does");
+        if (!Exists((target / L"sample (2).txt").wstring())) {
+            fwprintf(stderr, L"[test] keep both: phase=%d prompts=%zu error=%ls\n", static_cast<int>(status.phase),
+                     prompts, status.last_error.c_str());
+            for (const auto& entry : std::filesystem::directory_iterator(target))
+                fwprintf(stderr, L"[test]   target has: %ls\n", entry.path().filename().c_str());
+        }
+        status = RunConflictOp(SimpleOp(ops::OpType::Copy, {file.c_str()}, target_id.c_str()),
+                               ops::ConflictChoice::Skip, false, &prompts);
+        Check(prompts == 1 && !Exists((target / L"sample (3).txt").wstring()),
+              L"shell transfer: skip copies nothing");
+        g_ops.DrainCompletions();
+        const std::wstring item_id = shell_id(target / L"sample.txt");
+        status = RunOp(SimpleOp(ops::OpType::Move, {item_id.c_str()}, back.c_str()));
+        completions = g_ops.DrainCompletions();
+        Check(status.phase == ops::OpPhase::Completed && Exists((back / L"sample.txt").wstring()) &&
+                  !Exists((target / L"sample.txt").wstring()),
+              L"shell transfer: move from a shell folder to a local one");
+        Check(completions.size() == 1 && !completions[0].refresh_only && completions[0].destinations.size() == 1 &&
+                  _wcsicmp(completions[0].destinations[0].c_str(), (back / L"sample.txt").c_str()) == 0,
+              L"shell transfer: a local target names its arrivals");
+        auto create = SimpleOp(ops::OpType::CreateFolder, {}, target_id.c_str(), L"新建文件夹");
+        create.refresh_directories.push_back(L"pulse:device:test\\storage");
+        status = RunOp(std::move(create));
+        completions = g_ops.DrainCompletions();
+        Check(status.phase == ops::OpPhase::Completed && Exists((target / L"新建文件夹").wstring()),
+              L"shell transfer: new folder in a shell folder");
+        Check(completions.size() == 1 && completions[0].destinations.size() == 1 &&
+                  completions[0].destinations[0] == L"pulse:device:test\\storage\\新建文件夹",
+              L"shell transfer: the new folder is named by its Pulse path (rename in place)");
+        const std::wstring folder_id = shell_id(target / L"新建文件夹");
+        status = RunOp(SimpleOp(ops::OpType::RealDelete, {folder_id.c_str()}));
+        Check(status.phase == ops::OpPhase::Completed && !Exists((target / L"新建文件夹").wstring()),
+              L"shell transfer: delete in a shell folder");
+        g_ops.Stop();
+        std::error_code ignored;
+        std::filesystem::remove_all(root, ignored);
+        return g_fail ? 1 : 0;
+    }
+
     if (argc > 1 && std::wstring_view(argv[1]) == L"--transfer-routing") {
         const auto root = std::filesystem::path(SandboxRoot()).parent_path() /
             (L"transfer-routing-" + std::to_wstring(GetCurrentProcessId()));

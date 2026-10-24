@@ -146,8 +146,38 @@ void CopySelectedPath(AppState& s) {
 
 // Creates "新建文件夹"/"新建文本文档.txt" via the ops layer, then (on the next
 // snapshot) selects it and enters the rename overlay.
+// 新建文件夹 in a writable phone folder: named apart from the rows listed,
+// made by Explorer's engine, then renamed in place like a local one (the
+// completion names its pulse:device: path). A phone takes no empty files.
+static void CreateDeviceFolder(AppState& s, app::Tab& tab) {
+    auto& devices = app::DeviceRegistry::Instance();
+    if (!devices.FolderWritable(tab.current_path)) return;
+    const std::wstring parent_id = devices.FolderShellId(tab.current_path);
+    if (parent_id.empty()) return;
+    const std::wstring base = l10n::Get(l10n::StringId::NewFolder).c_str();
+    const auto taken = [&](const std::wstring& name) {
+        for (size_t i = 0; i < tab.EntryCount(); ++i)
+            if (_wcsicmp(tab.EntryAt(i).name.c_str(), name.c_str()) == 0) return true;
+        return false;
+    };
+    std::wstring name = base;
+    for (unsigned index = 2; taken(name) && index < 10000; ++index)
+        name = base + L" (" + std::to_wstring(index) + L")";
+    ops::OpRequest req;
+    req.type = ops::OpType::CreateFolder;
+    req.dest_dir = parent_id;
+    req.new_name = name;
+    req.refresh_directories.push_back(tab.current_path);
+    const auto task_id = s.ops.Submit(std::move(req));
+    app::QueueCreateRenameIntent(tab.create_rename_intents, task_id, tab.current_path, tab.view_generation);
+}
+
 void CreateNewItem(AppState& s, bool folder) {
     app::Tab* tab = ActiveTab(s);
+    if (folder && IsDeviceTab(tab)) {
+        CreateDeviceFolder(s, *tab);
+        return;
+    }
     if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path) || tab->net_readonly ||
         app::IsUncServerRoot(tab->current_path))
         return;
@@ -2623,10 +2653,9 @@ void ShowItemContextMenu(AppState& s, POINT screen_pt, bool from_chip) {
         app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs, app::BuiltinMenuSurface::Item);
         if (!paths.empty()) window_folders = WindowTransferFolders(s);
         const app::SelectionCaps caps = SelectionCapsOf(s);
-        // Pulse's own copy engine reads real paths: phone items copy through
-        // the clipboard (复制 / 粘贴) instead.
-        app::AppendWindowTransferCommands(base_items, window_folders,
-                                          tab && caps.kind != app::SelectionKind::Device && (caps.copy || caps.cut));
+        // Phone items go to another window's folder through Explorer's
+        // engine (SubmitDeviceTransfer), like local ones.
+        app::AppendWindowTransferCommands(base_items, window_folders, tab && (caps.copy || caps.cut));
     } else {
         app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs);
     }
@@ -2744,7 +2773,10 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     // take no new items or pastes, and have no folder of their own to open a
     // terminal in or pin as a workspace.
     if (!can_create_here) {
-        for (int command : {app::CmdNewFolder, app::CmdNewTextFile}) EraseCommand(base_items, command);
+        // A writable phone folder takes new folders (not empty files).
+        const bool phone_folder = IsDeviceTab(tab) && app::DeviceRegistry::Instance().FolderWritable(tab->current_path);
+        EraseCommand(base_items, app::CmdNewTextFile);
+        if (!phone_folder) EraseCommand(base_items, app::CmdNewFolder);
         if (!CanPasteHere(tab)) EraseCommand(base_items, app::CmdPaste);  // a phone folder takes pastes
     }
     if (!view_options.filesystem || app::IsUncServerRoot(tab->current_path)) {

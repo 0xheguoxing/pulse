@@ -48,6 +48,20 @@ inline bool ClipboardHasPasteableFiles() {
 // its own progress. For what ReadClipboard cannot read. UI thread (OLE).
 bool PasteShellClipboard(const std::wstring& dir);
 
+// A phone's items (shell parsing names, "::{...}") on the clipboard the
+// way Explorer puts them there: the shell's own data object for the items
+// (Shell IDList Array, file contents) with the copy / cut effect. Owned by
+// this process, so it stays pasteable while Pulse runs, wherever the paste
+// happens (Pulse, Explorer, the desktop). UI thread (OLE).
+bool WriteShellItemsClipboard(const std::vector<std::wstring>& shell_ids, bool cut);
+
+// Shell items on the clipboard with no CF_HDROP paths (a phone's, copied in
+// Pulse or in Explorer): their parsing names and the cut flag. False when
+// there are no such items, or when CF_HDROP paths are there (ReadClipboard).
+// Only "::" shell ids are returned: zip contents and other virtual files
+// stay with PasteShellClipboard. UI thread (OLE).
+bool ReadClipboardShellItems(std::vector<std::wstring>& shell_ids, bool& cut);
+
 // Clears a completed cut only if the clipboard still contains the exact cut
 // captured by ReadClipboard. This never clears a newer clipboard value.
 bool CompleteCutClipboard(uint32_t sequence, const std::vector<std::wstring>& expected_paths);
