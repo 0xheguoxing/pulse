@@ -58,6 +58,8 @@
 #include "resource.h"
 #include "../ops/clipboard.h"
 #include "../ipc/ctx_menu_util.h"
+#include "../fs/device_path.h"
+#include "device_registry.h"
 #include "shell_registry_watch.h"
 #include "search_refresh_log.h"
 #include "selection_caps.h"
@@ -100,6 +102,9 @@ app::ShellRegistryWatcher g_shell_watcher;
 std::atomic<uint32_t> g_shell_seed_generation{0};
 
 namespace {
+// Menu-cache key prefix for phone items: their rows are the shell's, not the
+// registry verbs of a local file with the same extension.
+constexpr wchar_t kDeviceVerbKeyPrefix[] = L"device:";
 std::wstring TagLabel(l10n::StringId id, const std::wstring& name, size_t count = 0) {
     const auto& pattern = l10n::Get(id);
     const int length = _scwprintf(pattern.c_str(), name.c_str(), count);
@@ -134,7 +139,7 @@ void CopySelectedPath(AppState& s) {
     std::wstring text;
     for (size_t i = 0; i < paths.size(); ++i) {
         if (i) text += L"\r\n";
-        text += ClipboardPath(paths[i]);
+        text += fs::IsDevicePath(paths[i]) ? DeviceFriendlyPath(paths[i]) : ClipboardPath(paths[i]);
     }
     ops::WriteClipboardText(text);
 }
@@ -171,6 +176,12 @@ namespace {
 bool CanCreateHere(const app::Tab* tab) {
     return tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path) && !tab->net_readonly &&
         !app::IsUncServerRoot(tab->current_path);  // \\server lists shares, not files
+}
+
+// Paste also reaches a phone folder (the shell host drops the clipboard on it).
+bool CanPasteHere(const app::Tab* tab) {
+    return CanCreateHere(tab) ||
+        (IsDeviceTab(tab) && app::DeviceRegistry::Instance().FolderWritable(tab->current_path));
 }
 
 std::wstring JoinChild(std::wstring dir, const std::wstring& name) {
@@ -1581,9 +1592,12 @@ void DispatchMenuCommand(AppState& s, int cmd) {
         }
         break;
     case app::CmdFolderProperties:
-        if (const auto* tab = ActiveTab(s); tab && !tab->current_path.empty() &&
-            !fs::IsVirtualPath(tab->current_path))
+        if (const auto* tab = ActiveTab(s); IsDeviceTab(tab)) {
+            const std::wstring id = app::DeviceRegistry::Instance().FolderShellId(tab->current_path);
+            if (!id.empty()) RunDeviceVerb(s, {id}, L"properties");
+        } else if (tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path)) {
             s.ops.ShowProperties(ClipboardPath(tab->current_path));
+        }
         break;
     case app::CmdSortName:
     case app::CmdSortModified:
@@ -1723,6 +1737,11 @@ void DispatchMenuCommand(AppState& s, int cmd) {
         // Shell properties on the ops open thread. A multi-selection opens one
         // merged sheet (like Explorer) instead of the focused item's sheet.
         std::vector<std::wstring> paths;
+        if (const app::Tab* device_tab = ActiveTab(s); IsDeviceTab(device_tab)) {
+            // A phone item's own property sheet, from the shell host.
+            RunDeviceVerb(s, SelectedShellIds(*device_tab), L"properties");
+            break;
+        }
         if (const app::Tab* tab = ActiveTab(s); IsRecycleTab(tab) && tab->snapshot) {
             for (int index : tab->SelectedIndices()) {
                 if (index < 0 || index >= static_cast<int>(tab->EntryCount())) continue;
@@ -1754,7 +1773,8 @@ void DispatchMenuCommand(AppState& s, int cmd) {
             break;
         }
         std::wstring full = tab ? tab->current_path : L"";
-        if (!full.empty()) ops::WriteClipboardText(ClipboardPath(full));
+        if (!full.empty())
+            ops::WriteClipboardText(fs::IsDevicePath(full) ? DeviceFriendlyPath(full) : ClipboardPath(full));
         break;
     }
     case app::CmdUndo:
@@ -1888,10 +1908,19 @@ bool HasCommand(const std::vector<ui::FluentMenuItem>& items, int command) {
     return std::any_of(items.begin(), items.end(), [command](const ui::FluentMenuItem& item) { return item.command == command; });
 }
 
+// 固定到网络 pins what CmdPinNetwork would: a share or a folder on one that is
+// not pinned yet. Elsewhere (local folders, phones, Pulse views) it did
+// nothing, so it is not offered.
+bool CanPinNetwork(AppState& s) {
+    const std::wstring root = PinCandidate(s);
+    return fs::IsUncPath(root) && s.places.FindNetwork(root) < 0;
+}
+
 // Drives, shares and network locations get their own verbs (弹出, 断开连接,
 // 解锁, 映射网络驱动器, 取消固定) instead of the file ones, as in Explorer.
 void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const app::SelectionCaps& caps) {
     if (TerminalTarget(s).empty()) EraseCommand(items, app::CmdOpenTerminal);
+    if (!CanPinNetwork(s)) EraseCommand(items, app::CmdPinNetwork);
     if (caps.kind == app::SelectionKind::Files || caps.kind == app::SelectionKind::None) return;
     if (caps.kind == app::SelectionKind::Launchers) {
         // Program icons in This PC: opening the program is all they do.
@@ -1916,6 +1945,16 @@ void AdaptItemMenu(AppState& s, std::vector<ui::FluentMenuItem>& items, const ap
     EraseCommand(items, app::CmdBatchRename);
     EraseCommand(items, app::CmdGroupIntoFolder);
     EraseCommand(items, app::CmdDissolveFolder);
+    if (caps.kind == app::SelectionKind::Device) {
+        // A phone item: what Explorer offers for it. Pulse's own path-based
+        // features (pins, aliases, terminal, history, zip) need a real path.
+        for (int command : {app::CmdOpenTerminal, app::CmdPinWorkspace, app::CmdPinQuickAccess,
+                            app::CmdUnpinQuickAccess, app::CmdPinNetwork, app::CmdViewRecentChanges,
+                            app::CmdCompareSideBySide, app::CmdSetAlias, app::CmdStageToTray,
+                            app::CmdCompressZip, app::CmdOpenPath, app::CmdCloudKeep, app::CmdCloudFree})
+            EraseCommand(items, command);
+        return;
+    }
     std::vector<ui::FluentMenuItem> verbs;
     const app::Tab* tab = ActiveTab(s);
     if (caps.kind == app::SelectionKind::Drives && tab) {
@@ -2423,8 +2462,28 @@ void StartCtxQuery(AppState& s, std::vector<std::wstring> paths,
     s.context_menu.StartQuery(s.ctxMenuPrefs, s.hwnd, std::move(paths),
         background, ext, (GetKeyState(VK_SHIFT) & 0x8000) != 0,
         ClipboardPath, [&s](const std::wstring& extension) {
-            PrefetchStaticVerbs(s, extension);
+            // A phone's menu is the shell's own: no registry verbs to read.
+            if (!std::wstring_view(extension).starts_with(kDeviceVerbKeyPrefix)) PrefetchStaticVerbs(s, extension);
         });
+}
+
+// Phone items go to the host as shell ids; their menu rows are cached apart
+// from local files of the same type ("device:.jpg").
+static bool DeviceCtxTarget(const app::Tab& tab, const std::vector<int>& indices,
+                            std::vector<std::wstring>& paths, std::wstring& ext) {
+    if (!IsDeviceTab(&tab)) return false;
+    paths.clear();
+    for (int index : indices) {
+        if (index < 0 || index >= static_cast<int>(tab.EntryCount())) continue;
+        const std::wstring& id = tab.EntryAt(static_cast<size_t>(index)).shell_id;
+        if (id.empty()) {  // a row without its shell id gets no shell rows at all
+            paths.clear();
+            break;
+        }
+        paths.push_back(id);
+    }
+    ext = std::wstring(kDeviceVerbKeyPrefix) + StaticVerbKey(tab, indices);
+    return true;
 }
 
 void MaybePrefetchHoverCtxMenu(AppState& s) {
@@ -2434,14 +2493,17 @@ void MaybePrefetchHoverCtxMenu(AppState& s) {
     if (s.ctxHoverSince == 0 || now - s.ctxHoverSince < 150) return;
     app::Pane* pane = s.hoverPaneIndex >= 0 ? PaneAtSlot(s, s.hoverPaneIndex) : s.pane;
     app::Tab* tab = pane ? pane->ActiveTab() : nullptr;
-    if (!tab || !tab->snapshot || fs::IsVirtualPath(tab->current_path)) return;
+    if (!tab || !tab->snapshot || (fs::IsVirtualPath(tab->current_path) && !IsDeviceTab(tab))) return;
     if (s.hoverRow >= tab->CountBound()) return;
     std::wstring path = EntryFullPath(*tab, s.hoverRow);
     if (path.empty() || path == s.ctxHoverPrefetched) return;
     s.ctxHoverPrefetched = path;
     std::vector<std::wstring> paths;
     std::wstring ext;
-    if (tab->IsSelected(s.hoverRow)) {
+    if (IsDeviceTab(tab)) {
+        DeviceCtxTarget(*tab, tab->IsSelected(s.hoverRow) ? tab->SelectedIndices() : std::vector<int>{s.hoverRow},
+                        paths, ext);
+    } else if (tab->IsSelected(s.hoverRow)) {
         paths = SelectedFullPaths(*tab);
         ext = StaticVerbKey(*tab, tab->SelectedIndices());
     } else {
@@ -2542,8 +2604,14 @@ void ShowItemContextMenu(AppState& s, POINT screen_pt, bool from_chip) {
     app::Tab* tab = ActiveTab(s);
     const std::vector<std::wstring> paths =
         tab ? SelectedFullPaths(*tab) : std::vector<std::wstring>{};
-    if (tab && !paths.empty() && !IsRecycleTab(tab))
+    std::vector<std::wstring> device_ids;
+    std::wstring device_ext;
+    if (tab && !paths.empty() && DeviceCtxTarget(*tab, tab->SelectedIndices(), device_ids, device_ext)) {
+        if (!device_ids.empty()) StartCtxQuery(s, device_ids, false, device_ext);
+        else s.context_menu.Close();
+    } else if (tab && !paths.empty() && !IsRecycleTab(tab)) {
         StartCtxQuery(s, paths, false, StaticVerbKey(*tab, tab->SelectedIndices()));
+    }
     s.context_menu.SeedComItemsFromCache();
     const bool seeded = s.context_menu.com_predicted();
 
@@ -2555,7 +2623,10 @@ void ShowItemContextMenu(AppState& s, POINT screen_pt, bool from_chip) {
         app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs, app::BuiltinMenuSurface::Item);
         if (!paths.empty()) window_folders = WindowTransferFolders(s);
         const app::SelectionCaps caps = SelectionCapsOf(s);
-        app::AppendWindowTransferCommands(base_items, window_folders, tab && (caps.copy || caps.cut));
+        // Pulse's own copy engine reads real paths: phone items copy through
+        // the clipboard (复制 / 粘贴) instead.
+        app::AppendWindowTransferCommands(base_items, window_folders,
+                                          tab && caps.kind != app::SelectionKind::Device && (caps.copy || caps.cut));
     } else {
         app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs);
     }
@@ -2636,7 +2707,13 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
         if (cmd != app::CmdNone) DispatchMenuCommand(s, cmd);
         return;
     }
-    if (tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path)) {
+    const std::wstring device_folder_id =
+        IsDeviceTab(tab) ? app::DeviceRegistry::Instance().FolderShellId(tab->current_path) : std::wstring();
+    if (!device_folder_id.empty()) {
+        // A phone folder's background menu is the shell's own.
+        StartCtxQuery(s, { device_folder_id }, true, std::wstring(kDeviceVerbKeyPrefix) + ipc::kBackgroundVerbKey);
+        s.context_menu.SeedComItemsFromCache();
+    } else if (tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path)) {
         StartCtxQuery(s, { tab->current_path }, true, ipc::kBackgroundVerbKey);
         s.context_menu.SeedComItemsFromCache();
     } else {
@@ -2653,6 +2730,9 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     app::AppendRecentChangesCommand(base_items, recent_changes_path);
     app::AppendBackgroundViewCommands(base_items, view_options);
     ApplyWorkspacePinLabel(base_items, s);
+    if (!CanPinNetwork(s)) EraseCommand(base_items, app::CmdPinNetwork);
+    // This PC has no path of its own to copy (Explorer offers none there).
+    if (tab->current_path.empty()) EraseCommand(base_items, app::CmdCopyPath);
     const auto quick_paths = QuickAccessTargets(tab, true);
     AppendQuickAccessCommand(s, base_items, quick_paths);
     app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs, app::BuiltinMenuSurface::Background);
@@ -2664,7 +2744,8 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     // take no new items or pastes, and have no folder of their own to open a
     // terminal in or pin as a workspace.
     if (!can_create_here) {
-        for (int command : {app::CmdNewFolder, app::CmdNewTextFile, app::CmdPaste}) EraseCommand(base_items, command);
+        for (int command : {app::CmdNewFolder, app::CmdNewTextFile}) EraseCommand(base_items, command);
+        if (!CanPasteHere(tab)) EraseCommand(base_items, app::CmdPaste);  // a phone folder takes pastes
     }
     if (!view_options.filesystem || app::IsUncServerRoot(tab->current_path)) {
         for (int command : {app::CmdOpenTerminal, app::CmdPinWorkspace}) EraseCommand(base_items, command);
@@ -4311,7 +4392,8 @@ std::vector<ui::SelectionChipAction> ToolbarPinActions(AppState& s) {
             break;
         }
         case app::CmdPaste:
-            action.enabled = CanCreateHere(tab) && (!s.tray.batches().empty() || ClipboardHasFiles());
+            action.enabled = CanCreateHere(tab) ? (!s.tray.batches().empty() || ClipboardHasFiles())
+                                                : CanPasteHere(tab) && ClipboardHasFiles();
             break;
         case app::CmdSelectAll: case app::CmdInvertSelection: case app::CmdSelectWildcard:
             action.enabled = tab->snapshot && tab->EntryCount() > 0;

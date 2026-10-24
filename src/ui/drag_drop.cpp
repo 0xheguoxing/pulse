@@ -240,6 +240,35 @@ bool ExtractHDropPaths(IDataObject* obj, std::vector<std::wstring>& out) {
     return !out.empty();
 }
 
+bool IsShellItemId(const std::wstring& path) {
+    return path.size() > 2 && path[0] == L':' && path[1] == L':';
+}
+
+bool ExtractShellItemIds(IDataObject* obj, std::vector<std::wstring>& out) {
+    out.clear();
+    if (!obj) return false;
+    IShellItemArray* array = nullptr;
+    if (FAILED(SHCreateShellItemArrayFromDataObject(obj, IID_PPV_ARGS(&array))) || !array) return false;
+    DWORD count = 0;
+    if (FAILED(array->GetCount(&count))) count = 0;
+    for (DWORD i = 0; i < count; ++i) {
+        IShellItem* item = nullptr;
+        LPWSTR name = nullptr;
+        if (SUCCEEDED(array->GetItemAt(i, &item)) && item &&
+            SUCCEEDED(item->GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING, &name)) && name) {
+            out.emplace_back(name);
+        }
+        if (name) CoTaskMemFree(name);
+        if (item) item->Release();
+        if (out.size() != i + 1 || !IsShellItemId(out.back())) {
+            out.clear();
+            break;
+        }
+    }
+    array->Release();
+    return !out.empty();
+}
+
 DWORD PreferredDropEffect(IDataObject* obj) {
     if (!obj) return 0;
     FORMATETC fmt{ (CLIPFORMAT)PreferredEffectFormat(), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
@@ -635,6 +664,9 @@ DWORD DoFileDragDrop(const std::vector<std::wstring>& paths, DWORD allowed_effec
     IDataObject* data = nullptr;
     FileDataObject* fallback = nullptr;
     if (FAILED(CreateShellFilesDataObject(paths, &data)) || !data) {
+        // Shell item ids have no CF_HDROP form: without the shell's object
+        // there is nothing a target could read.
+        if (IsShellItemId(paths.front())) return DROPEFFECT_NONE;
         fallback = FileDataObject::Create(paths);
         data = fallback;
     } else {
@@ -724,7 +756,7 @@ HRESULT WindowDropTarget::DragEnter(IDataObject* obj, DWORD key_state, POINTL pt
     if (!effect) return E_POINTER;
     sources_.clear();
     preferred_ = 0;
-    if (!ExtractHDropPaths(obj, sources_)) {
+    if (!ExtractHDropPaths(obj, sources_) && !ExtractShellItemIds(obj, sources_)) {
         *effect = DROPEFFECT_NONE;
         return S_OK;
     }
@@ -758,7 +790,7 @@ HRESULT WindowDropTarget::Drop(IDataObject* obj, DWORD key_state, POINTL pt, DWO
     if (!effect) return E_POINTER;
     const DWORD allowed = *effect & (DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK);
     std::vector<std::wstring> sources;
-    if (!allowed || !ExtractHDropPaths(obj, sources)) {
+    if (!allowed || (!ExtractHDropPaths(obj, sources) && !ExtractShellItemIds(obj, sources))) {
         *effect = DROPEFFECT_NONE;
         DragLeave();
         return S_OK;

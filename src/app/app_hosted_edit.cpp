@@ -26,6 +26,7 @@
 #include "../common/localization.h"
 #include "../common/text_format.h"
 #include "../common/path_utils.h"
+#include "../fs/device_path.h"
 #include "../common/diagnostics_exporter.h"
 #include "snapshot_patch.h"
 #include "session.h"
@@ -779,7 +780,16 @@ void HideRenameOverlay(AppState& s, bool commit) {
             std::wstring full = EntryFullPath(*tab, index);
             // As the note under the field said: trimmed, numbered if taken.
             const std::wstring target = RenameTarget(*tab, index, buf);
-            if (!full.empty() && !target.empty() && target != tab->EntryAt(index).name) {
+            const std::wstring shell_id = tab->EntryAt(index).shell_id;
+            if (fs::IsDevicePath(full) && !target.empty() && target != tab->EntryAt(index).name) {
+                // A phone file: the shell host renames it (no undo, as in Explorer).
+                if (s.ops.RenameShellItem(shell_id, target)) {
+                    tab->pending_selected_name = target;
+                    tab->pending_selected_names = { target };
+                    tab->pending_selection_revision = tab->selection_revision;
+                    tab->held_renames.push_back({tab->EntryAt(index).name, target});
+                }
+            } else if (!full.empty() && !target.empty() && target != tab->EntryAt(index).name) {
                 ops::OpRequest req;
                 req.type = ops::OpType::Rename;
                 req.sources.push_back(full);

@@ -57,6 +57,8 @@
 #include "resource.h"
 #include "../ops/clipboard.h"
 #include "../ipc/ctx_menu_util.h"
+#include "../fs/device_path.h"
+#include "device_registry.h"
 #include "window_identity_ui.h"
 #include "window_switcher_ui.h"
 #include <windows.h>
@@ -254,9 +256,73 @@ static std::wstring DropLaunchProgramAt(const app::Tab& tab, int index) {
 static DWORD FolderDropEffect(DWORD key_state, const std::vector<std::wstring>& sources,
                               const std::wstring& dest, DWORD allowed, DWORD preferred_effect);
 
+// The phone folder Pulse's own drag-out started in (StartDragOut): its rows
+// released over that same folder are not a target, as in Explorer.
+static std::wstring g_drag_device_dir;
+
+// A phone folder that takes a drop: the shell copies into it (MTP), run in
+// the host by DropExecute. False for a phone's root, a read-only storage, an
+// iPhone and folders whose shell item is not known yet.
+static bool DeviceDropFolder(const std::wstring& dest) {
+    if (!fs::IsDevicePath(dest)) return false;
+    const auto& devices = app::DeviceRegistry::Instance();
+    return devices.FolderWritable(dest) && !devices.FolderShellId(dest).empty();
+}
+
+// Drag of a phone's items (shell item ids, no CF_HDROP): only the shell can
+// read them, so they land in a folder and nowhere else.
+static bool ShellItemDrag(const std::vector<std::wstring>& sources) {
+    return !sources.empty() && ui::IsShellItemId(sources.front());
+}
+
+// Drops the target ResolveDropTargetImpl picked; the toolbar keeps its mode.
+static DWORD RejectDropTarget(AppState& s) {
+    s.dropRow = -1;
+    s.dropPaneIndex = -1;
+    s.dropHeader = false;
+    s.dropBreadcrumb = -1;
+    s.dropSidebar = -1;
+    s.dropTray = false;
+    s.dropQuickAccess = false;
+    s.dropFavorite = -1;
+    s.dropFavoriteAdd = false;
+    SetFavoritesBarDropGroup({});
+    s.dropToolbarApp = -1;
+    s.dropToolbarPin = false;
+    s.dropDestDir.clear();
+    s.dropLaunchProgram.clear();
+    s.dropLaunchShortcut.clear();
+    s.dropBadge.clear();
+    s.dropBadgeMove = false;
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+    return DROPEFFECT_NONE;
+}
+
+static DWORD ResolveDropTargetImpl(AppState& s, const std::vector<std::wstring>& sources,
+                                   POINT pt, DWORD key_state, DWORD allowed,
+                                   DWORD preferred_effect);
+
 DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
-                               POINT pt, DWORD key_state, DWORD allowed,
-                               DWORD preferred_effect) {
+                        POINT pt, DWORD key_state, DWORD allowed,
+                        DWORD preferred_effect) {
+    const DWORD effect = ResolveDropTargetImpl(s, sources, pt, key_state, allowed, preferred_effect);
+    if (effect == DROPEFFECT_NONE) return effect;
+    if (!g_drag_device_dir.empty() && _wcsicmp(g_drag_device_dir.c_str(), s.dropDestDir.c_str()) == 0)
+        return RejectDropTarget(s);
+    if (!ShellItemDrag(sources)) return effect;
+    // A phone's items: copied or moved into a folder by the shell, never
+    // staged, starred, pinned, tagged, opened with an app or as a pane title.
+    const bool folder = !s.dropDestDir.empty() && !s.dropTray && !s.dropQuickAccess &&
+        !s.dropFavoriteAdd && FavoritesBarDropGroup().empty() && !s.dropHeader &&
+        s.dropLaunchProgram.empty() && s.dropToolbarApp < 0 && !s.dropToolbarPin &&
+        (!fs::IsVirtualPath(s.dropDestDir) || DeviceDropFolder(s.dropDestDir));
+    if (!folder || (effect != DROPEFFECT_COPY && effect != DROPEFFECT_MOVE)) return RejectDropTarget(s);
+    return effect;
+}
+
+static DWORD ResolveDropTargetImpl(AppState& s, const std::vector<std::wstring>& sources,
+                                   POINT pt, DWORD key_state, DWORD allowed,
+                                   DWORD preferred_effect) {
     s.dropRow = -1;
     s.dropPaneIndex = -1;
     s.dropHeader = false;
@@ -275,7 +341,7 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
     // Files from outside (or another pane) are over the window: the shelf
     // opens its 复制暂存 / 移动暂存 halves. Shift picks the move half anywhere.
     const bool shift = (key_state & MK_SHIFT) != 0;
-    if (!s.trayDragOut && !sources.empty()) {
+    if (!s.trayDragOut && !sources.empty() && !ShellItemDrag(sources)) {
         if (!s.dragFilesOver) InvalidateRect(s.hwnd, nullptr, FALSE);
         s.dragFilesOver = true;
         s.dropTrayMove = shift && (allowed & DROPEFFECT_MOVE) != 0;
@@ -579,6 +645,14 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
         InvalidateRect(s.hwnd, nullptr, FALSE);
         return DROPEFFECT_COPY;
     }
+    // A view with no folder behind it (search results, Recent, This PC, the
+    // Recycle Bin) takes nothing: show "no drop" rather than a copy badge for
+    // a drop that DropExecute refuses. Tag views take tags; a writable phone
+    // folder takes files through the shell.
+    if (fs::IsVirtualPath(s.dropDestDir) && !s.dropDestDir.starts_with(L"pulse:tag:") &&
+        !DeviceDropFolder(s.dropDestDir)) {
+        return RejectDropTarget(s);
+    }
     // A folder released on its own row (or into its own subtree) is not a
     // target: Explorer shows "no drop" there, and the move would fail.
     if (!s.dropDestDir.starts_with(L"pulse:") && ui::DropIntoOwnFolder(sources, s.dropDestDir)) {
@@ -658,7 +732,8 @@ static DWORD FolderDropEffect(DWORD key_state, const std::vector<std::wstring>& 
                               const std::wstring& dest, DWORD allowed, DWORD preferred_effect) {
     const bool link = (key_state & MK_ALT) != 0 ||
         ((key_state & MK_CONTROL) != 0 && (key_state & MK_SHIFT) != 0);
-    if (link && (allowed & DROPEFFECT_LINK) && !dest.empty() && !fs::IsVirtualPath(dest))
+    if (link && (allowed & DROPEFFECT_LINK) && !dest.empty() && !fs::IsVirtualPath(dest) &&
+        !ShellItemDrag(sources))
         return DROPEFFECT_LINK;
     return ui::ComputeDropEffect(key_state, sources.front(), dest,
                                  allowed & (DROPEFFECT_COPY | DROPEFFECT_MOVE), preferred_effect);
@@ -806,6 +881,24 @@ DWORD DropExecute(AppState& s, const std::vector<std::wstring>& sources,
         InvalidateRect(s.hwnd, nullptr, FALSE);
         return DROPEFFECT_LINK;
     }
+    const bool device_dest = DeviceDropFolder(dest);
+    if ((device_dest || ShellItemDrag(sources)) && (effect == DROPEFFECT_COPY || effect == DROPEFFECT_MOVE) &&
+        (effect & allowed)) {
+        // Into a phone, or a phone's items into a folder: the shell's own
+        // transfer (WPD), run in the host like Explorer's drop. The source
+        // never deletes: a move is reported as optimized (the target moves).
+        if (!device_dest && (dest.empty() || fs::IsVirtualPath(dest))) return DROPEFFECT_NONE;
+        if (ui::DropIntoOwnFolder(sources, dest)) return DROPEFFECT_NONE;
+        std::vector<std::wstring> items;
+        items.reserve(sources.size() + 1);
+        items.push_back(device_dest ? app::DeviceRegistry::Instance().FolderShellId(dest)
+                                    : ClipboardPath(dest));
+        for (const auto& source : sources) items.push_back(ClipboardPath(source));
+        if (!s.ops.RunShellVerb(std::move(items), effect == DROPEFFECT_MOVE ? L"drop:move" : L"drop:copy",
+                                true, s.hwnd))
+            return DROPEFFECT_NONE;
+        return effect;
+    }
     if (dest.empty() || fs::IsVirtualPath(dest) || !(effect & allowed) ||
         (effect != DROPEFFECT_COPY && effect != DROPEFFECT_MOVE)) return DROPEFFECT_NONE;
     if (ui::DropIntoOwnFolder(sources, dest)) return DROPEFFECT_NONE;
@@ -883,16 +976,24 @@ void StartDragOut(AppState& s) {
     if (!tab || !tab->snapshot || IsRecycleTab(tab)) return;
     const app::SelectionCaps caps = app::ComputeSelectionCaps(*tab, &s.places);
     if (!caps.copy && !caps.cut) return;
-    std::vector<std::wstring> paths = SelectedFullPaths(*tab);
+    const bool device = IsDeviceTab(tab);
+    // A phone's rows drag their shell items (Explorer's MTP data object), so
+    // the desktop, Explorer and Pulse's own panes all copy them over WPD.
+    std::vector<std::wstring> paths = device ? SelectedShellIds(*tab) : SelectedFullPaths(*tab);
     if (paths.empty()) return;
-    for (auto& path : paths) path = ClipboardPath(path);
+    if (!device)
+        for (auto& path : paths) path = ClipboardPath(path);
 
     s.clickCollapseIndex = -1;
     CancelScrollAnimation(s); // DoDragDrop's modal loop coexists with on-demand render
     g_internal_drag = true;
-    DWORD effect = ui::DoFileDragDrop(paths, DROPEFFECT_COPY | DROPEFFECT_MOVE,
+    if (device) g_drag_device_dir = tab->current_path;
+    // A phone's read-only storage (or its root) gives a copy only.
+    const DWORD allowed = device && !caps.cut ? DROPEFFECT_COPY : DROPEFFECT_COPY | DROPEFFECT_MOVE;
+    DWORD effect = ui::DoFileDragDrop(paths, allowed,
         [&s] { return s.springEntered; }, tab->current_path); // Esc = 退回 when spring-entered
     g_internal_drag = false;
+    g_drag_device_dir.clear();
     s.springEntered = false;
     ClearDropFeedback(s);
     if (effect == DROPEFFECT_MOVE) {

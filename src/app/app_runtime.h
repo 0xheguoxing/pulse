@@ -137,6 +137,16 @@ std::wstring TooltipForHover(AppState& s);
 void ApplyHoverTarget(AppState& s, const ui::HitTestResult& hit);
 std::wstring EntryFullPath(const app::Tab& tab, int index);
 std::vector<std::wstring> SelectedFullPaths(const app::Tab& tab);
+// Phone folders (pulse:device:): their file commands are Explorer's own verbs,
+// run by the shell host on the rows' shell ids (DirEntry::shell_id).
+bool IsDeviceTab(const app::Tab* tab);
+// Shell ids of the selected rows; empty if any selected row has none.
+std::vector<std::wstring> SelectedShellIds(const app::Tab& tab);
+// Queues the verb (empty = the default verb); false when nothing was queued.
+bool RunDeviceVerb(AppState& s, std::vector<std::wstring> shell_ids, const wchar_t* verb,
+                   bool background = false);
+// What Explorer's 复制路径 gives for a phone item: 此电脑\Xiaomi 14\内部存储\DCIM\a.jpg.
+std::wstring DeviceFriendlyPath(const std::wstring& path);
 std::wstring TagDiscoveryKey(std::wstring path);
 void QueueVisibleTagDiscovery(AppState& s);
 void ApplyTagAdsDiscoveries(AppState& s, const std::vector<TagAdsDiscovery>& discoveries);

@@ -4,6 +4,7 @@
 #include "../app/layout_pane_selection.h"
 #include "../app/network_sidebar.h"
 #include "../app/context_menu_controller.h"
+#include "../ipc/ctx_menu_util.h"
 #include "../app/single_instance_coordinator.h"
 #include "../app/tray_controller.h"
 #include "../app/blank_pane_click.h"
@@ -2451,6 +2452,21 @@ int wmain(int argc, wchar_t** argv) {
         !context_menu.RequestStaticPrefetch(L".txt"));
     context_menu.CompleteStaticVerbs(
         L".txt", { { L"edit", L"Edit text", L"" } }, context_menu.cache_generation());
+
+    {
+        pulse::ipc::StaticVerbRegFlags command_only;
+        command_only.has_command = true;
+        pulse::ipc::StaticVerbRegFlags delegated_command;
+        delegated_command.has_command = true;
+        delegated_command.has_delegate_execute = true;
+        pulse::ipc::StaticVerbRegFlags explorer_command;
+        explorer_command.has_command = true;
+        explorer_command.has_explorer_command = true;
+        passed &= Report("delegated static verbs invoke their Shell handler, not a command placeholder",
+            pulse::ipc::UseStaticVerbCommand(command_only) &&
+            !pulse::ipc::UseStaticVerbCommand(delegated_command) &&
+            !pulse::ipc::UseStaticVerbCommand(explorer_command));
+    }
     {
         // The registry changes while .doc is being read: the late result of the
         // old read must not refill the invalidated cache or cancel the new read.

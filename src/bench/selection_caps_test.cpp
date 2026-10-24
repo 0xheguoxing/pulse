@@ -212,6 +212,47 @@ int main() {
         Check(!caps.rename && !caps.del && !caps.cut, "drive + phone: still none");
     }
 
+    {
+        // Inside a phone: Explorer's file commands, run on the shell ids.
+        fs::DirEntry photo = Entry(L"IMG_1.jpg", L"pulse:device:0123456789ab\\Internal\\DCIM\\IMG_1.jpg");
+        photo.is_dir = false;
+        photo.attrs = FILE_ATTRIBUTE_NORMAL;
+        fs::DirEntry video = photo;
+        video.name = L"VID_2.mp4";
+        video.full_path = L"pulse:device:0123456789ab\\Internal\\DCIM\\VID_2.mp4";
+        Fill(tab, L"pulse:device:0123456789ab\\Internal\\DCIM", {photo, video});
+        tab.ToggleSelect(0);
+        caps = ComputeSelectionCaps(tab, &places);
+        Check(caps.kind == SelectionKind::Device && caps.cut && caps.copy && caps.del && caps.rename && !caps.tags,
+              "phone file: cut, copy, delete, rename; no tags");
+        tab.ToggleSelect(1);
+        caps = ComputeSelectionCaps(tab, &places);
+        Check(caps.cut && caps.copy && caps.del && !caps.rename, "two phone files: no single rename");
+
+        // An iPhone (or a file the shell will not delete): copy only.
+        fs::DirEntry locked_photo = photo;
+        locked_photo.attrs |= FILE_ATTRIBUTE_READONLY;
+        Fill(tab, L"pulse:device:0123456789ab\\Internal\\DCIM", {locked_photo});
+        tab.ToggleSelect(0);
+        caps = ComputeSelectionCaps(tab, &places);
+        Check(caps.kind == SelectionKind::Device && caps.copy && !caps.cut && !caps.del && !caps.rename,
+              "read-only phone file: copy only");
+
+        // A device root lists storages: copy only, never delete / rename.
+        Fill(tab, L"pulse:device:0123456789ab", {Entry(L"Internal", L"pulse:device:0123456789ab\\Internal")});
+        tab.ToggleSelect(0);
+        caps = ComputeSelectionCaps(tab, &places);
+        Check(caps.kind == SelectionKind::Device && caps.copy && !caps.cut && !caps.del && !caps.rename,
+              "phone storage: copy only");
+
+        // Mixed selection: one read-only item keeps delete off for all.
+        Fill(tab, L"pulse:device:0123456789ab\\Internal\\DCIM", {locked_photo, video});
+        tab.ToggleSelect(0);
+        tab.ToggleSelect(1);
+        caps = ComputeSelectionCaps(tab, &places);
+        Check(caps.copy && !caps.del && !caps.cut, "read-only + writable phone files: copy only");
+    }
+
     std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "OK", g_failures, g_failures == 1 ? "" : "s");
     return g_failures ? 1 : 0;
 }

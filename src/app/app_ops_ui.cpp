@@ -28,6 +28,7 @@
 #include "../ops/clipboard.h"
 #include "../ops/elevated_delete.h"
 #include "../ipc/ctx_menu_util.h"
+#include "device_registry.h"
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -338,6 +339,15 @@ void HandleTrayMessage(AppState& s, UINT message) {
 // (pulse_tray_redesign.html); Ctrl+C no longer stages.
 void PasteIntoCurrent(AppState& s) {
     app::Tab* tab = ActiveTab(s);
+    if (IsDeviceTab(tab)) {
+        // A phone folder: the shell host drops the clipboard on it, as
+        // Explorer's 粘贴 does (with the shell's own progress and conflicts).
+        auto& devices = app::DeviceRegistry::Instance();
+        if (!devices.FolderWritable(tab->current_path) || !ops::ClipboardHasPasteableFiles()) return;
+        const std::wstring folder_id = devices.FolderShellId(tab->current_path);
+        if (!folder_id.empty()) RunDeviceVerb(s, {folder_id}, L"paste", true);
+        return;
+    }
     if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path) || tab->net_readonly ||
         app::IsUncServerRoot(tab->current_path))
         return;
@@ -357,9 +367,12 @@ void PasteIntoCurrent(AppState& s) {
             if (cb.cut) TrackCutClipboard(s, cb);
         }
     } else if (shell_files) {
-        // Virtual files: the shell writes them with no task to follow.
+        // Virtual files (a phone's, a zip's): the shell writes them with no
+        // task to follow. The shell host runs the drop so a long copy off a
+        // phone never holds this thread; in process only if it is not there.
         ArmArrivalSelection(s, nullptr, 0, 8000);
-        ops::PasteShellClipboard(tab->current_path);
+        if (!s.ops.RunShellVerb({ClipboardPath(tab->current_path)}, L"paste", true, s.hwnd))
+            ops::PasteShellClipboard(tab->current_path);
     }
 }
 
@@ -421,6 +434,11 @@ void DeleteSelected(AppState& s, bool permanent) {
         return;
     }
     if (!caps.del) return;
+    if (caps.kind == app::SelectionKind::Device) {
+        // A phone has no Recycle Bin: Explorer's own delete asks and deletes.
+        RunDeviceVerb(s, SelectedShellIds(*tab), L"delete");
+        return;
+    }
     std::vector<std::wstring> paths = SelectedFullPaths(*tab);
     DeletePaths(s, std::move(paths), permanent);
 }
@@ -608,6 +626,17 @@ void CollectToTray(AppState& s, bool move_intent) {
     // A drive or a share is not copied as a whole by Ctrl+C / Ctrl+X.
     const app::SelectionCaps caps = SelectionCapsOf(s);
     if (!(move_intent ? caps.cut : caps.copy)) return;
+    if (caps.kind == app::SelectionKind::Device) {
+        // Phone items: Explorer's copy / cut puts them on the clipboard (the
+        // shell host owns that data); paste anywhere then reads them out.
+        if (!RunDeviceVerb(s, SelectedShellIds(*tab), move_intent ? L"cut" : L"copy")) return;
+        s.cutPaths = move_intent ? SelectedFullPaths(*tab) : std::vector<std::wstring>{};
+        s.trayClipboardBatchId = 0;
+        s.trayClipboardSequence = 0;
+        s.trayClip = {};
+        if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+        return;
+    }
     std::vector<std::wstring> paths = SelectedFullPaths(*tab);
     CollectPathsToTray(s, paths, move_intent);
 }
@@ -684,7 +713,9 @@ void StageSelection(AppState& s) {
     app::Tab* tab = ActiveTab(s);
     std::vector<std::wstring> paths;
     // Same reach as Ctrl+C: drives and shares are not staged as a whole.
-    if (tab && tab->snapshot && !IsRecycleTab(tab) && SelectionCapsOf(s).copy) paths = SelectedFullPaths(*tab);
+    // Phone items are not staged: the tray releases through Pulse's own copy.
+    if (tab && tab->snapshot && !IsRecycleTab(tab) && !IsDeviceTab(tab) && SelectionCapsOf(s).copy)
+        paths = SelectedFullPaths(*tab);
     if (paths.empty()) {
         if (s.hwnd)
             s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Suggest, l10n::Get(l10n::StringId::TraySelectFirst),

@@ -2612,6 +2612,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 ScheduleRecycleRefresh(*s);
                 RefreshRecycleViews(*s, false);
             }
+            // A phone verb the shell could not run (device gone, no app for
+            // the type): say so instead of doing nothing.
+            if (std::wstring error = s->ops.TakeShellVerbError(); !error.empty())
+                s->notification_toast.ShowSnack(hwnd, ui::SnackIcon::Suggest, std::move(error), {}, {}, {}, 4000);
             // Take terminal IDs first: a success queued between these drains
             // must still be applied before its matching intent is released.
             const auto finished_tasks = s->ops.DrainFinishedTasks();

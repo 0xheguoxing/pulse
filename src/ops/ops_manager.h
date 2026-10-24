@@ -349,6 +349,19 @@ public:
     // True if a context-menu InvokeCommand finished since the last take
     // (UI uses this to refresh the folder the verb may have mutated).
     bool TakeCtxInvokeDone();
+    // Explorer's own verb on shell items (phone files: open, copy, cut,
+    // delete, properties; "paste" with `background` into a folder), run by
+    // the shell host. Empty verb = the default one. "drop:copy" / "drop:move"
+    // with `background`: the folder, then the dropped paths or shell items,
+    // which the folder's own drop target transfers. A delete / paste / drop /
+    // rename completion counts as a context-menu invoke (TakeCtxInvokeDone: the
+    // folder refreshes); a failure leaves its message for TakeShellVerbError.
+    // False when it could not be queued.
+    bool RunShellVerb(std::vector<std::wstring> shell_ids, std::wstring verb, bool background,
+                      void* owner_hwnd);
+    // Renames one shell item (a phone file) through the host, same completion.
+    bool RenameShellItem(std::wstring shell_id, std::wstring new_name);
+    std::wstring TakeShellVerbError();
 
     bool CanUndo() const;
     // The newest undo step belongs to this task (the pill's 撤销).
@@ -399,7 +412,7 @@ private:
     QueueItem* CurrentTransferLocked(); // mutex_ held; active request or queue front
 
     struct MenuJob {
-        enum class Kind { Query, Invoke, Close } kind = Kind::Query;
+        enum class Kind { Query, Invoke, Close, Verb, Rename } kind = Kind::Query;
         uint32_t token = 0;
         uint32_t item_id = 0;
         uint32_t owner_hwnd = 0;
@@ -541,6 +554,8 @@ private:
     std::map<uint32_t, uint32_t> menu_token_by_session_;  // query req id -> token
     std::set<uint32_t> ctx_invoke_ids_;                   // in-flight invoke req ids
     std::atomic<uint32_t> ctx_invoke_done_{0};
+    std::map<uint32_t, bool> shell_verb_ids_;             // in-flight RunShellVerb / RenameShellItem -> refresh
+    std::wstring shell_verb_error_;                       // last failure, until taken (menu_mutex_)
 
     // ShellExecute / properties: dedicated STA thread so opens never
     // serialize behind transfers (SEE_MASK_NOASYNC on the transfer

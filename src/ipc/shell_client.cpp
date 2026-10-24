@@ -260,6 +260,17 @@ uint32_t ShellClient::Rename(const std::wstring& path, const std::wstring& new_n
     return Submit(REQ_RENAME, w.data(), accepted);
 }
 
+uint32_t ShellClient::ShellVerb(const std::vector<std::wstring>& paths, uint32_t owner_hwnd,
+                                bool background, const std::wstring& verb, const Accepted& accepted) {
+    if (paths.empty()) return 0;
+    PayloadWriter w;
+    w.PutU32(owner_hwnd);
+    w.PutU32(background ? SVF_BACKGROUND : 0u);
+    w.PutString(verb);
+    w.PutStringArray(paths);
+    return Submit(REQ_SHELL_VERB, w.data(), accepted);
+}
+
 uint32_t ShellClient::CreateFolder(const std::wstring& path, const Accepted& accepted) {
     PayloadWriter w;
     w.PutString(path);

@@ -85,6 +85,10 @@ public:
                                const std::wstring& verb = {},
                                const std::wstring& text = {}, const Accepted& accepted = {});
     void CloseContextMenu(uint32_t session_id);
+    // One of Explorer's verbs on shell items (REQ_SHELL_VERB); empty verb =
+    // the default one. Completes via Callbacks::done.
+    uint32_t ShellVerb(const std::vector<std::wstring>& paths, uint32_t owner_hwnd, bool background,
+                       const std::wstring& verb, const Accepted& accepted = {});
 
 private:
 #ifdef PULSE_SHELL_CLIENT_TEST

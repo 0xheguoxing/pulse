@@ -1,6 +1,8 @@
 // app_runtime.cpp — extracted from app_main.cpp.
 #include "app_window_title.h"
 #include "../fs/drive_kind.h"
+#include "../fs/device_path.h"
+#include "device_registry.h"
 #include "folder_alias.h"
 #include "app_wall_hint.h"
 #include "app_internal.h"
@@ -3728,6 +3730,41 @@ std::vector<std::wstring> SelectedFullPaths(const app::Tab& tab) {
         std::wstring full = EntryFullPath(tab, index);
         if (!full.empty()) out.push_back(std::move(full));
     }
+    return out;
+}
+
+bool IsDeviceTab(const app::Tab* tab) {
+    return tab && fs::IsDevicePath(tab->current_path);
+}
+
+std::vector<std::wstring> SelectedShellIds(const app::Tab& tab) {
+    std::vector<std::wstring> out;
+    if (!tab.snapshot) return out;
+    const auto indices = tab.SelectedIndices();
+    out.reserve(indices.size());
+    for (int index : indices) {
+        if (index < 0 || index >= static_cast<int>(tab.EntryCount())) continue;
+        const std::wstring& id = tab.EntryAt(static_cast<size_t>(index)).shell_id;
+        if (id.empty()) return {};
+        out.push_back(id);
+    }
+    return out;
+}
+
+bool RunDeviceVerb(AppState& s, std::vector<std::wstring> shell_ids, const wchar_t* verb, bool background) {
+    if (shell_ids.empty()) return false;
+    return s.ops.RunShellVerb(std::move(shell_ids), verb ? verb : L"", background, s.hwnd);
+}
+
+std::wstring DeviceFriendlyPath(const std::wstring& path) {
+    const auto where = fs::ParseDevicePath(path);
+    if (!where) return path;
+    std::wstring name;
+    if (!app::DeviceRegistry::Instance().Describe(where->device, &name, nullptr) || name.empty())
+        name = where->device;
+    std::wstring out = std::wstring(l10n::Get(l10n::StringId::ThisPc).c_str()) + L"\\" + name;
+    if (!where->storage.empty()) out += L"\\" + where->storage;
+    for (const auto& part : where->parts) out += L"\\" + part;
     return out;
 }
 

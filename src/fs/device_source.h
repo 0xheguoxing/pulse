@@ -82,6 +82,10 @@ public:
     // The shell item behind a path, for copies and thumbnails. *out is
     // AddRef'd on success.
     virtual HRESULT ShellItem(const DevicePath& item, IShellItem** out) = 0;
+    // The shell parsing name of a storage or folder (what DirEntry::shell_id
+    // holds for its rows), so the shell host can paste into it or show its
+    // properties. Empty if it cannot be resolved.
+    virtual std::wstring ShellId(const DevicePath&) { return {}; }
 };
 
 std::unique_ptr<DeviceSource> MakeShellDeviceSource();

@@ -148,6 +148,11 @@ public:
         ComPtr<IShellItem> item;
         const DeviceError resolved = Resolve(folder, &item);
         if (resolved != DeviceError::None) return resolved;
+        // Remembered for ShellId(): the folder just listed is the one the
+        // app asks for next (paste into it, its properties).
+        last_listed_ = FormatDevicePath(folder);
+        last_listed_id_ = DisplayName(item.Get(), SIGDN_DESKTOPABSOLUTEPARSING);
+        const bool apple = Lower(DeviceId(folder.device)).find(L"vid_05ac") != std::wstring::npos;
         std::vector<DirEntry> batch;
         batch.reserve(kDeviceBatchSize);
         bool stopped = false;
@@ -156,10 +161,16 @@ public:
             entry.name = ItemName(child);
             if (entry.name.empty()) return true;
             SFGAOF attrs = 0;
-            child->GetAttributes(SFGAO_FOLDER | SFGAO_STREAM | SFGAO_HIDDEN, &attrs);
+            const HRESULT attrs_hr = child->GetAttributes(
+                SFGAO_FOLDER | SFGAO_STREAM | SFGAO_HIDDEN | SFGAO_CANDELETE | SFGAO_CANRENAME, &attrs);
             entry.is_dir = (attrs & SFGAO_FOLDER) && !(attrs & SFGAO_STREAM);
             entry.attrs = entry.is_dir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
             if (attrs & SFGAO_HIDDEN) entry.attrs |= FILE_ATTRIBUTE_HIDDEN;
+            // Read-only = the shell offers neither delete nor rename (an
+            // iPhone's DCIM never does): the app then hides both.
+            if (apple || (SUCCEEDED(attrs_hr) && !(attrs & (SFGAO_CANDELETE | SFGAO_CANRENAME))))
+                entry.attrs |= FILE_ATTRIBUTE_READONLY;
+            entry.shell_id = DisplayName(child, SIGDN_DESKTOPABSOLUTEPARSING);
             ComPtr<IShellItem2> item2;
             if (SUCCEEDED(child->QueryInterface(IID_PPV_ARGS(&item2)))) {
                 ULONGLONG size = 0;
@@ -195,6 +206,16 @@ public:
         caps.can_rename = (attrs & SFGAO_CANRENAME) != 0 && !path.IsStorageRoot();
         caps.can_create = (attrs & SFGAO_FOLDER) != 0 && !(attrs & SFGAO_READONLY);
         return caps;
+    }
+
+    std::wstring ShellId(const DevicePath& path) override {
+        if (path.IsDeviceRoot()) return {};
+        const std::wstring formatted = FormatDevicePath(path);
+        if (!last_listed_id_.empty() && _wcsicmp(formatted.c_str(), last_listed_.c_str()) == 0)
+            return last_listed_id_;
+        ComPtr<IShellItem> item;
+        if (Resolve(path, &item) != DeviceError::None) return {};
+        return DisplayName(item.Get(), SIGDN_DESKTOPABSOLUTEPARSING);
     }
 
     HRESULT ShellItem(const DevicePath& path, IShellItem** out) override {
@@ -249,6 +270,8 @@ private:
     }
 
     std::unordered_map<std::wstring, std::wstring> parsing_by_key_;
+    std::wstring last_listed_;     // pulse:device: path of the last Enumerate
+    std::wstring last_listed_id_;  // and its shell parsing name
 };
 
 } // namespace

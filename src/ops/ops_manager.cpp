@@ -31,6 +31,7 @@
 #include <memory>
 #include <thread>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 #include <winioctl.h>
 
@@ -2110,6 +2111,21 @@ void OpsManager::OpenThread() {
 }
 
 void OpsManager::RecordShellDone(uint32_t id, uint32_t hr, bool cancelled, std::wstring error) {
+        {
+            std::unique_lock<std::mutex> lock(menu_mutex_);
+            if (const auto verb = shell_verb_ids_.find(id); verb != shell_verb_ids_.end()) {
+                const bool refresh = verb->second;
+                shell_verb_ids_.erase(verb);
+                if (FAILED(static_cast<HRESULT>(hr)) && !cancelled)
+                    shell_verb_error_ = error.empty() ? l10n::Get(l10n::StringId::OpFailed).c_str() : error;
+                lock.unlock();
+                // Copy / open / properties change nothing on the phone: no
+                // re-listing of a big DCIM for them.
+                if (refresh) ctx_invoke_done_.fetch_add(1, std::memory_order_acq_rel);
+                if (notify_) notify_();
+                return;
+            }
+        }
         if (ConsumeCtxInvokeDone(id)) {
             ctx_invoke_done_.fetch_add(1, std::memory_order_acq_rel);
             if (notify_) notify_();
@@ -2372,6 +2388,46 @@ void OpsManager::CloseShellMenu(uint32_t token) {
     menu_cv_.notify_one();
 }
 
+bool OpsManager::RunShellVerb(std::vector<std::wstring> shell_ids, std::wstring verb, bool background,
+                              void* owner_hwnd) {
+    if (shell_ids.empty() || std::any_of(shell_ids.begin(), shell_ids.end(),
+                                         [](const std::wstring& id) { return id.empty(); }))
+        return false;
+    MenuJob job;
+    job.kind = MenuJob::Kind::Verb;
+    job.owner_hwnd = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(owner_hwnd));
+    job.background = background;
+    job.paths = std::move(shell_ids);
+    job.verb = std::move(verb);
+    {
+        std::scoped_lock lock(mutex_, menu_mutex_);
+        if (update_preparing_ || !menu_running_) return false;
+        menu_queue_.push_back(std::move(job));
+    }
+    menu_cv_.notify_one();
+    return true;
+}
+
+bool OpsManager::RenameShellItem(std::wstring shell_id, std::wstring new_name) {
+    if (shell_id.empty() || new_name.empty()) return false;
+    MenuJob job;
+    job.kind = MenuJob::Kind::Rename;
+    job.paths.push_back(std::move(shell_id));
+    job.text = std::move(new_name);
+    {
+        std::scoped_lock lock(mutex_, menu_mutex_);
+        if (update_preparing_ || !menu_running_) return false;
+        menu_queue_.push_back(std::move(job));
+    }
+    menu_cv_.notify_one();
+    return true;
+}
+
+std::wstring OpsManager::TakeShellVerbError() {
+    std::lock_guard<std::mutex> lock(menu_mutex_);
+    return std::exchange(shell_verb_error_, std::wstring());
+}
+
 bool OpsManager::ConsumeCtxQueryDone(uint32_t id) {
     ShellMenuCallback cb;
     uint32_t token = 0;
@@ -2465,6 +2521,27 @@ void OpsManager::DispatchMenuJob(const MenuJob& job) {
             menu_token_by_session_.erase(session);
         }
         client.CloseContextMenu(session);
+        break;
+    }
+    case MenuJob::Kind::Verb:
+    case MenuJob::Kind::Rename: {
+        const bool refresh = job.kind == MenuJob::Kind::Rename || _wcsicmp(job.verb.c_str(), L"delete") == 0 ||
+                             _wcsicmp(job.verb.c_str(), L"paste") == 0 ||
+                             _wcsnicmp(job.verb.c_str(), L"drop:", 5) == 0;
+        const auto accepted = [this, refresh](uint32_t request) {
+            std::lock_guard<std::mutex> lock(menu_mutex_);
+            shell_verb_ids_[request] = refresh;
+        };
+        const uint32_t id = job.kind == MenuJob::Kind::Verb
+            ? client.ShellVerb(job.paths, job.owner_hwnd, job.background, job.verb, accepted)
+            : client.Rename(job.paths.front(), job.text, accepted);
+        if (id == 0) {
+            {
+                std::lock_guard<std::mutex> lock(menu_mutex_);
+                shell_verb_error_ = l10n::Get(l10n::StringId::TheFileOperationServiceIsNotRunning).c_str();
+            }
+            if (notify_) notify_();
+        }
         break;
     }
     }
