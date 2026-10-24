@@ -2775,5 +2775,10 @@
 #define IDS_LOCK_CLOSE_END                                                               3985
 #define IDS_LOCK_WAITING                                                                 3986
 #define IDS_LOCK_RETRY_NOW                                                               3987
+#define IDS_OP_AUTH_TITLE_COPY                                                           3988
+#define IDS_OP_AUTH_TITLE_MOVE                                                           3989
+#define IDS_OP_AUTH_TITLE_DELETE                                                         3990
+#define IDS_OP_AUTH_NOT_GRANTED_SHORT                                                    3991
+#define IDS_OP_AUTHORIZATION_ONCE                                                        3992
 
 #endif  // PULSE_STRING_IDS_H

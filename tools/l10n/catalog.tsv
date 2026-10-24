@@ -2782,3 +2782,8 @@ LockCloseLead	IDS_LOCK_CLOSE_LEAD	3984	在下面的程序里关闭它，	Close i
 LockCloseEnd	IDS_LOCK_CLOSE_END	3985	会自动继续。	 automatically.	會自動繼續。
 LockWaiting	IDS_LOCK_WAITING	3986	正在等待文件释放…	Waiting for the file to be released…	正在等待檔案釋放…
 LockRetryNow	IDS_LOCK_RETRY_NOW	3987	立即重试	Retry now	立即重試
+OpAuthTitleCopy	IDS_OP_AUTH_TITLE_COPY	3988	复制到这里需要管理员权限	Copying here needs administrator permission	複製到這裡需要系統管理員權限
+OpAuthTitleMove	IDS_OP_AUTH_TITLE_MOVE	3989	移动到这里需要管理员权限	Moving here needs administrator permission	移動到這裡需要系統管理員權限
+OpAuthTitleDelete	IDS_OP_AUTH_TITLE_DELETE	3990	删除这些项目需要管理员权限	Deleting these items needs administrator permission	刪除這些項目需要系統管理員權限
+OpAuthNotGrantedShort	IDS_OP_AUTH_NOT_GRANTED_SHORT	3991	没有获得管理员权限。	Administrator permission wasn't granted.	沒有取得系統管理員權限。
+OpAuthorizationOnce	IDS_OP_AUTHORIZATION_ONCE	3992	确认一次即可，本次操作的其余项目不会再问。	You only need to approve once; the rest of this operation won't ask again.	確認一次即可，本次操作的其餘項目不會再詢問。

@@ -2771,6 +2771,11 @@ enum class StringId : UINT {
     LockCloseEnd = IDS_LOCK_CLOSE_END,
     LockWaiting = IDS_LOCK_WAITING,
     LockRetryNow = IDS_LOCK_RETRY_NOW,
+    OpAuthTitleCopy = IDS_OP_AUTH_TITLE_COPY,
+    OpAuthTitleMove = IDS_OP_AUTH_TITLE_MOVE,
+    OpAuthTitleDelete = IDS_OP_AUTH_TITLE_DELETE,
+    OpAuthNotGrantedShort = IDS_OP_AUTH_NOT_GRANTED_SHORT,
+    OpAuthorizationOnce = IDS_OP_AUTHORIZATION_ONCE,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

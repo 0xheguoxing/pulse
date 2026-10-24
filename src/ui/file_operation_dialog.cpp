@@ -171,17 +171,16 @@ TransferChrome MakeTransferChrome(float scale, float width, float height,
         chrome.open = D2D1::RectF(next_right - open_w, y0, next_right, y1);
         next_right = chrome.open.left - gap;
     }
-    if (labels.show_skip) {
-        const float skip_w = painter.MeasureButtonWidth(labels.skip);
-        chrome.skip = D2D1::RectF(next_right - skip_w, y0, next_right, y1);
-        next_right = chrome.skip.left - gap;
-    }
     if (labels.show_retry) {
-        const float retry_w = (std::max)(painter.MeasureButtonWidth(labels.retry, L"\xEA18"),
-                                         painter.MeasureButtonWidth(labels.retry_reserve, L"\xEA18"));
+        const float retry_w = (std::max)(painter.MeasureButtonWidth(labels.retry),
+                                         painter.MeasureButtonWidth(labels.retry_reserve));
         chrome.retry = D2D1::RectF(next_right - retry_w, y0, next_right, y1);
     }
     const float details_x = pad - ScaleDip(scale, 8.0f);
+    // The permission view has no details: 跳过此项 takes that slot, a ghost
+    // button like the other dialogs' way out.
+    if (labels.show_skip)
+        chrome.skip = D2D1::RectF(details_x, y0, details_x + painter.MeasureButtonWidth(labels.skip), y1);
     if (labels.show_details) chrome.details = painter.FitButtonBounds(D2D1::RectF(details_x, y0, details_x, y1),
                                              labels.details, L"\xE70D");
     return chrome;
@@ -2852,6 +2851,12 @@ void FileOperationWindow::Render() {
         title = l10n::Get(deleting ? l10n::StringId::OpDeletedPrefix : restoring ? l10n::StringId::OpRestoredPrefix
             : moving ? l10n::StringId::OpMovedPrefix : l10n::StringId::OpCopiedPrefix)
             + pulse::format::GroupedInt(status_.completed_items) + items_suffix;
+    } else if (authorization) {
+        // Pulse_文件操作对话框_重设计.html 1j: the title says what needs it.
+        title = l10n::Get(status_.type == ops::OpType::Copy ? l10n::StringId::OpAuthTitleCopy
+            : moving ? l10n::StringId::OpAuthTitleMove
+            : deleting ? l10n::StringId::OpAuthTitleDelete
+                       : l10n::StringId::OpAuthorizationRequired);
     } else if (paused && !pausing) {
         title = l10n::Get(deleting ? l10n::StringId::OpDeletePaused : restoring ? l10n::StringId::OpRestorePaused
             : moving ? l10n::StringId::OpMovePaused : l10n::StringId::OpCopyPaused);
@@ -2972,26 +2977,26 @@ void FileOperationWindow::Render() {
     const bool indeterminate = scanning || status_.percent < 0.0f;
 
     if (authorization) {
-        // Permission view: one message in place of the numbers and the graph.
-        DrawStatusIcon(dc, StatusIcon::Shield, kPadX, hero_y + 1.0f, s, warn_color, false);
+        // Permission view (HTML 1j): the shield beside a two-line message in
+        // place of the numbers and the graph. The first line says what is
+        // needed or what went wrong; the second, while Windows asks, that it
+        // asks once for the whole operation, otherwise which item is waiting.
+        DrawStatusIcon(dc, StatusIcon::Shield, kPadX, hero_y + 2.0f, s, warn_color, false);
         const std::wstring explanation = requesting
             ? l10n::Get(l10n::StringId::OpAuthorizationPrompt)
-            : status_.last_error.empty() ? l10n::Get(l10n::StringId::OpAuthorizationNotGranted)
+            : status_.last_error.empty() ? l10n::Get(l10n::StringId::OpAuthNotGrantedShort)
                                         : l10n::ServiceErrorText(status_.last_error);
         DrawEllipsizedText(compositor_, chip_format_.get(),
-            Rect(s, kPadX + 24, hero_y - 1, content_w - 24, 38), explanation, theme.text, true);
-        const std::wstring item = l10n::Get(l10n::StringId::OpItemPrefix) +
-            (status_.current_item.empty() ? src : status_.current_item);
+            Rect(s, kPadX + 24, hero_y, content_w - 24, 20), explanation, theme.text);
+        const std::wstring detail = requesting
+            ? l10n::Get(l10n::StringId::OpAuthorizationOnce)
+            : l10n::Get(l10n::StringId::OpItemPrefix) + (status_.current_item.empty() ? src : status_.current_item);
         DrawEllipsizedText(compositor_, label_format_.get(),
-            Rect(s, kPadX + 24, hero_y + 39, content_w - 24, row_h), item, theme.text_secondary);
-        if (requesting) {
-            fluent::ProgressSpec bar;
-            bar.bounds = Rect(s, kPadX + 24, hero_y + 70, content_w - 24, 4);
-            bar.indeterminate = true;
-            bar.animation_progress = static_cast<float>(
-                std::fmod(static_cast<double>(now), 1952.0) / 1952.0);
-            painter_.DrawProgressBar(bar);
-        }
+            Rect(s, kPadX + 24, hero_y + 22, content_w - 24, row_h), detail, theme.text_secondary);
+        if (requesting && !status_.current_item.empty())
+            DrawEllipsizedText(compositor_, label_format_.get(),
+                Rect(s, kPadX + 24, hero_y + 22 + row_h, content_w - 24, row_h),
+                l10n::Get(l10n::StringId::OpItemPrefix) + status_.current_item, text3);
     } else if (!list_mode) {
         // --- Hero: percent on the left, speed or state on the right --------
         const D2D1_RECT_F right_box = Rect(s, dip_w - kPadX - 220.0f, hero_y + 10.0f, 220.0f, 20.0f);
@@ -3274,7 +3279,7 @@ void FileOperationWindow::Render() {
         retry_state.hovered = hover_ == 6;
         retry_state.pressed = pressed_ == 6;
         retry_state.enabled = labels.actions_enabled;
-        painter_.DrawButton({ chrome.retry, labels.retry, L"\xEA18",
+        painter_.DrawButton({ chrome.retry, labels.retry, {},
                               fluent::ButtonKind::Primary, retry_state });
     }
     if (labels.show_skip) {
@@ -3283,7 +3288,7 @@ void FileOperationWindow::Render() {
         skip_state.pressed = pressed_ == 7;
         skip_state.enabled = labels.actions_enabled;
         painter_.DrawButton({ chrome.skip, labels.skip, {},
-                              fluent::ButtonKind::Standard, skip_state });
+                              fluent::ButtonKind::Transparent, skip_state });
     }
     if (labels.show_open) {
         fluent::ControlState open_state{};

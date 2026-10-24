@@ -91,9 +91,10 @@ int wmain(int argc, wchar_t** argv) {
                     const auto retry_button = Access::Button(window, 6, &retry_pixels);
                     const auto skip_button = Access::Button(window, 7, &skip_pixels);
                     const auto cancel_button = Access::Button(window, 4);
-                    Check(retry_button.x >= 0 && retry_button.x < skip_button.x &&
-                        skip_button.x < cancel_button.x &&
-                        retry_pixels >= std::floor(Access::Width(window, l10n::StringId::OpRetryAuthorization, true)) &&
+                    // 跳过此项 on the left, then 重试授权 and 取消 on the right.
+                    Check(skip_button.x >= 0 && skip_button.x < retry_button.x &&
+                        retry_button.x < cancel_button.x &&
+                        retry_pixels >= std::floor(Access::Width(window, l10n::StringId::OpRetryAuthorization)) &&
                         skip_pixels >= std::floor(Access::Width(window, l10n::StringId::OpSkipAuthorization)),
                         "authorization buttons fit minimum width without overlap");
                     Check(Access::Button(window, 3).x < 0 && Access::Button(window, 5).x < 0,

@@ -16,35 +16,18 @@ namespace {
 constexpr float kMinWidth = 420.0f;
 constexpr float kMaxWidth = 540.0f;
 constexpr float kPad = 24.0f;
-constexpr float kTitleBar = 36.0f;
-constexpr float kCloseW = 46.0f;
-constexpr float kIcon = 40.0f;
-constexpr float kIconGap = 16.0f;
-constexpr float kRowH = 36.0f;
-constexpr float kButtonMinW = 96.0f;
+// Pulse_文件操作对话框_重设计.html: the same modal as the file-operation
+// dialogs. Headline at 18, the message under it, items in a bordered list of
+// 34-DIP rows, then a 64-DIP footer band with the buttons on the right.
+constexpr float kTitleBar = 40.0f;
+constexpr float kRowH = 34.0f;
+constexpr float kButtonMinW = 80.0f;
 constexpr float kButtonGap = 8.0f;
-constexpr float kFooterPadY = 18.0f;
+constexpr float kFooterH = 64.0f;
 // Prefer a wider dialog over a message that wraps into a tall column.
 constexpr float kComfortableLines = 4.0f;
 
 float Dip(float scale, float value) { return value * scale; }
-
-D2D1_COLOR_F ToneColor(ConfirmTone tone, const Theme& theme, bool dark) {
-    switch (tone) {
-    case ConfirmTone::Danger: return theme.danger;
-    case ConfirmTone::Warning: return dark ? HexColor(0xFCE100) : HexColor(0x9D5D00);
-    default: return theme.accent;
-    }
-}
-
-const wchar_t* ToneGlyph(ConfirmTone tone) {
-    switch (tone) {
-    case ConfirmTone::Danger:
-    case ConfirmTone::Warning: return L"\xE7BA";   // Warning
-    case ConfirmTone::Info: return L"\xE946";      // Info
-    default: return L"\xE9CE";                     // Unknown (question)
-    }
-}
 
 float ButtonWidth(const fluent::Painter& painter, const std::wstring& text, float scale) {
     return std::max(painter.MeasureButtonWidth(text), Dip(scale, kButtonMinW));
@@ -123,8 +106,8 @@ bool ConfirmDialogFormats::Create(IDWriteFactory2* factory, float scale) {
     if (!factory) return false;
     typography::CreateTextFormat(factory,
         {typography::FontRole::Display, 18.0f * scale, DWRITE_FONT_WEIGHT_SEMI_BOLD}, &title);
-    typography::CreateTextFormat(factory, {typography::FontRole::Text, 14.0f * scale}, &body);
-    typography::CreateTextFormat(factory, {typography::FontRole::Text, 12.5f * scale}, &note);
+    typography::CreateTextFormat(factory, {typography::FontRole::Text, 13.0f * scale}, &body);
+    typography::CreateTextFormat(factory, {typography::FontRole::Text, 12.0f * scale}, &note);
     for (IDWriteTextFormat* format : {title.get(), body.get(), note.get()}) {
         if (!format) return false;
         format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
@@ -203,7 +186,7 @@ ConfirmDialogLayout LayoutConfirmDialog(const ConfirmDialogSpec& spec,
         ? 0.0f : ButtonWidth(painter, spec.secondary_text, scale);
     const float buttons_w = primary_w + cancel_w +
         (secondary_w > 0.0f ? secondary_w + gap : 0.0f) + gap;
-    const float text_x = pad + Dip(scale, kIcon + kIconGap);
+    const float text_x = pad;
 
     // Widen until the message fits in a few lines or the cap is reached.
     float width = std::max(Dip(scale, kMinWidth), buttons_w + pad * 2.0f);
@@ -220,44 +203,48 @@ ConfirmDialogLayout LayoutConfirmDialog(const ConfirmDialogSpec& spec,
     const float text_w = width - text_x - pad;
 
     l.title_bar = Dip(scale, kTitleBar);
-    l.close = D2D1::RectF(width - Dip(scale, kCloseW), 0, width, l.title_bar);
-    float y = Dip(scale, 28.0f);
-    l.icon = D2D1::RectF(pad, y, pad + Dip(scale, kIcon), y + Dip(scale, kIcon));
-    const float title_h = std::max(Wrapped(factory, formats.title.get(), spec.title, text_w),
+    l.close = D2D1::RectF(width - Dip(scale, 44.0f), Dip(scale, 4.0f), width - Dip(scale, 4.0f),
+                          Dip(scale, 36.0f));
+    l.icon = D2D1::RectF(0, 0, 0, 0);
+    // The headline keeps clear of the close button.
+    float y = Dip(scale, 18.0f);
+    const float title_w = width - text_x - Dip(scale, 48.0f);
+    const float title_h = std::max(Wrapped(factory, formats.title.get(), spec.title, title_w),
                                    Dip(scale, 24.0f));
-    // A one-line title sits centred on the icon; a long one grows downwards.
-    const float title_top = title_h < Dip(scale, kIcon)
-        ? y + (Dip(scale, kIcon) - title_h) * 0.5f : y;
-    l.title = D2D1::RectF(text_x, title_top, width - pad, title_top + title_h);
-    y = std::max(l.icon.bottom, l.title.bottom) + Dip(scale, 10.0f);
+    l.title = D2D1::RectF(text_x, y, text_x + title_w, y + title_h);
+    y = l.title.bottom + Dip(scale, 4.0f);
 
     const float msg_h = Wrapped(factory, formats.body.get(), spec.message, text_w);
     l.message = D2D1::RectF(text_x, y, width - pad, y + msg_h);
     if (msg_h > 0.0f) y = l.message.bottom;
+    float after = 24.0f;
 
     const std::vector<std::wstring> rows = ConfirmItemRows(spec);
     if (!rows.empty()) {
-        y += Dip(scale, 14.0f);
+        y += Dip(scale, 16.0f);
         const float row_h = Dip(scale, kRowH);
+        const float border = 1.0f;
         l.card = D2D1::RectF(text_x, y, width - pad,
-                             y + row_h * static_cast<float>(rows.size()));
+                             y + row_h * static_cast<float>(rows.size()) + border * 2.0f);
         for (size_t i = 0; i < rows.size(); ++i) {
-            const float top = y + row_h * static_cast<float>(i);
+            const float top = y + border + row_h * static_cast<float>(i);
             l.rows.push_back(D2D1::RectF(l.card.left, top, l.card.right, top + row_h));
         }
         y = l.card.bottom;
+        after = 20.0f;
     }
     if (!spec.note.empty()) {
         y += Dip(scale, 12.0f);
         const float note_h = Wrapped(factory, formats.note.get(), spec.note, text_w);
         l.note = D2D1::RectF(text_x, y, width - pad, y + note_h);
         y = l.note.bottom;
+        after = 24.0f;
     }
 
-    y += Dip(scale, 24.0f);
-    const float footer_h = btn_h + Dip(scale, kFooterPadY) * 2.0f;
+    y = std::round(y + Dip(scale, after));
+    const float footer_h = Dip(scale, kFooterH);
     l.footer = D2D1::RectF(0, y, width, y + footer_h);
-    const float by = y + Dip(scale, kFooterPadY);
+    const float by = y + (footer_h - btn_h) * 0.5f;
     float right = width - pad;
     l.primary = D2D1::RectF(right - primary_w, by, right, by + btn_h);
     right = l.primary.left - gap;
@@ -305,25 +292,11 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
                        const ConfirmDialogFormats& formats, const ConfirmDialogVisual& visual,
                        bool dark, bool high_contrast) {
     const float scale = painter.Scale();
-    const ConfirmTone tone = ResolveConfirmTone(spec);
-    const D2D1_COLOR_F tone_color = high_contrast ? theme.text : ToneColor(tone, theme, dark);
 
     fluent::ControlState close_state{};
     close_state.hovered = visual.hover == kConfirmClose;
     close_state.pressed = visual.pressed == kConfirmClose;
     painter.DrawTitleBarButton(l.close, fluent::TitleBarButtonRole::Close, {}, close_state);
-
-    // Icon tile: the tone colour at low opacity behind its glyph.
-    {
-        AroundCentre pop(compositor, Centre(l.icon), visual.icon_scale, 0.0f);
-        D2D1_COLOR_F tile = tone_color;
-        tile.a = high_contrast ? 0.0f : (dark ? 0.18f : 0.12f);
-        painter.FillRoundedRect(l.icon, Dip(scale, 10.0f), tile);
-        if (high_contrast) painter.StrokeRoundedRect(l.icon, Dip(scale, 10.0f), theme.text);
-        AroundCentre turn(compositor, Centre(l.icon), 1.0f, visual.icon_turn);
-        painter.DrawGlyph(spec.glyph.empty() ? ToneGlyph(tone) : spec.glyph.c_str(), l.icon,
-                          tone_color);
-    }
 
     const float rise = Dip(scale, 6.0f);
     {
@@ -335,11 +308,13 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
 
     const std::vector<std::wstring> rows = ConfirmItemRows(spec);
     if (!rows.empty()) {
-        const float radius = Dip(scale, theme.radius_control);
+        const D2D1_COLOR_F stroke = high_contrast ? theme.text
+            : dark ? HexColor(0xFFFFFF, 0.0698f) : HexColor(0x000000, 0.0578f);
         {
             RiseIn in(compositor, visual.rows_in[0], rise);
-            painter.FillRoundedRect(l.card, radius, theme.surface_card);
-            painter.StrokeRoundedRect(l.card, radius, theme.stroke_card);
+            painter.StrokeRoundedRect(D2D1::RectF(l.card.left + 0.5f, l.card.top + 0.5f,
+                                                  l.card.right - 0.5f, l.card.bottom - 0.5f),
+                                      Dip(scale, 6.0f), stroke, 1.0f);
         }
         const std::wstring_view glyph = spec.item_glyph.empty()
             ? std::wstring_view(L"\xE8A5") : std::wstring_view(spec.item_glyph);
@@ -348,19 +323,20 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
             const D2D1_RECT_F& row = l.rows[i];
             RiseIn in(compositor, visual.rows_in[std::min(i, kConfirmMaxItemRows - 1)], rise);
             if (i > 0) {
-                painter.FillRoundedRect(D2D1::RectF(row.left + Dip(scale, 12.0f), row.top,
-                                                    row.right - Dip(scale, 12.0f),
-                                                    row.top + 1.0f),
+                const float line = std::round(row.top);
+                painter.FillRoundedRect(D2D1::RectF(row.left + 1.0f, line, row.right - 1.0f,
+                                                    line + 1.0f),
                                         0, theme.stroke_divider);
             }
             const bool more_row = truncated && i + 1 == rows.size();
             if (!more_row) {
-                painter.DrawGlyph(glyph, D2D1::RectF(row.left + Dip(scale, 10.0f), row.top,
+                painter.DrawGlyph(glyph, D2D1::RectF(row.left + Dip(scale, 12.0f), row.top,
                                                      row.left + Dip(scale, 30.0f), row.bottom),
                                   theme.text_secondary);
             }
-            const D2D1_RECT_F text_rect = D2D1::RectF(row.left + Dip(scale, 40.0f), row.top,
-                                                      row.right - Dip(scale, 12.0f), row.bottom);
+            const D2D1_RECT_F text_rect = D2D1::RectF(
+                row.left + Dip(scale, more_row ? 13.0f : 39.0f), row.top,
+                row.right - Dip(scale, 13.0f), row.bottom);
             const std::wstring text = more_row ? rows[i] : FitConfirmItemText(
                 rows[i], text_rect.right - text_rect.left,
                 [&](std::wstring_view s) {
@@ -368,8 +344,7 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
                 });
             painter.DrawText(text, text_rect,
                              compositor.TextFormat(),
-                             more_row ? theme.text_secondary : theme.text,
-                             fluent::HorizontalAlignment::Left, theme.surface_card);
+                             more_row ? theme.text_secondary : theme.text);
         }
     }
     {
@@ -378,8 +353,9 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
                             high_contrast ? theme.text : theme.text_secondary);
     }
 
-    // Footer band: one layer up from the body, like the main window's sheet.
-    painter.FillRoundedRect(l.footer, 0, theme.surface_sheet);
+    // Footer band: the one the file-operation dialogs share.
+    painter.FillRoundedRect(l.footer, 0, high_contrast ? theme.bg
+                            : dark ? HexColor(0x000000, 0.2f) : HexColor(0x000000, 0.045f));
     painter.FillRoundedRect(D2D1::RectF(l.footer.left, l.footer.top, l.footer.right,
                                         l.footer.top + 1.0f),
                             0, theme.stroke_divider);
@@ -431,10 +407,6 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
         }
     }
 
-    // The footer band covers the surface outline; draw it again on top.
-    const float inset = 0.5f;
-    painter.StrokeRoundedRect(D2D1::RectF(inset, inset, l.width - inset, l.height - inset),
-                              Dip(scale, 12.0f), theme.stroke_card);
 }
 
 } // namespace pulse::ui
