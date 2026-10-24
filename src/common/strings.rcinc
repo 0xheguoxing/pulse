@@ -3219,6 +3219,17 @@ BEGIN
     IDS_BR_NUM_SEP "分隔"
     IDS_BR_ST_APPLIED "已改"
     IDS_BR_DONE_SNACK "已重命名 {n} 个项目"
+    IDS_BR_PRESET_CLEAN "清理下载的文件名"
+    IDS_BR_PRESET_PHOTO "照片：拍摄日期 + 序号"
+    IDS_BR_PRESET_KEBAB "全部小写，空格换成 -"
+    IDS_BR_PRESET_FOLDER "按文件夹名编号"
+    IDS_BR_PRESET_DATE "名字前加修改日期"
+    IDS_BR_PRESET_LAST "上次使用"
+    IDS_BR_PRESET_COMMON "常用"
+    IDS_BR_PRESET_MINE "我的预设"
+    IDS_BR_PRESET_EDITED "已修改"
+    IDS_BR_PRESET_NAME_HINT "给预设起个名字"
+    IDS_BR_SAVE "保存"
 END
 
 LANGUAGE 0x09, 0x01
@@ -6437,6 +6448,17 @@ BEGIN
     IDS_BR_NUM_SEP "Separator"
     IDS_BR_ST_APPLIED "Done"
     IDS_BR_DONE_SNACK "Renamed {n} items"
+    IDS_BR_PRESET_CLEAN "Clean up downloaded names"
+    IDS_BR_PRESET_PHOTO "Photos: date taken + number"
+    IDS_BR_PRESET_KEBAB "Lowercase, spaces to -"
+    IDS_BR_PRESET_FOLDER "Number by folder name"
+    IDS_BR_PRESET_DATE "Prefix the modified date"
+    IDS_BR_PRESET_LAST "Last used"
+    IDS_BR_PRESET_COMMON "Common"
+    IDS_BR_PRESET_MINE "My presets"
+    IDS_BR_PRESET_EDITED "edited"
+    IDS_BR_PRESET_NAME_HINT "Name this preset"
+    IDS_BR_SAVE "Save"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

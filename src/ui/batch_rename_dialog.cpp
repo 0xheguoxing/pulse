@@ -7,6 +7,7 @@
 #include "../common/windows_compat.h"
 #include "batch_rename_dialog.h"
 #include "../app/batch_rename_plan.h"
+#include "../app/batch_rename_presets.h"
 #include "FluentTokens.h"
 #include "fluent_components.h"
 #include "svg_path_icon.h"
@@ -222,7 +223,8 @@ struct StepUi {
 
 enum class H : uint8_t {
     None, Close, ModeRules, ModeContent, AiInput, AiSend, AiModel, Example, AddStep, AddItem,
-    Grip, Toggle, Delete, Card, Field, Chip, Seg, Token, PresetDD, PresetSave, Tab, OrderDD,
+    Grip, Toggle, Delete, Card, Field, Chip, Seg, Token, PresetDD, PresetSave, PresetItem, PresetDel, PresetOk,
+    PresetCancel, Tab, OrderDD,
     OrderItem, Row, ExtToggle, PolicyDD, PolicyItem, Cancel, Apply, Menu, StepsArea, Preview,
 };
 
@@ -236,11 +238,12 @@ struct Hit {
 
 struct HitRect { D2D1_RECT_F r; Hit h; };
 
-enum class Menu { None, AddStep, Order, Policy };
+enum class Menu { None, AddStep, Order, Policy, Preset };
+constexpr int kAiField = -1, kPresetField = -2;
 
 struct Field {
     HWND hwnd = nullptr;
-    int step_id = -1;         // -1 = the AI bar
+    int step_id = -1;         // -1 = the AI bar, -2 = the preset name
     int field = 0;
     bool numeric = false;
     D2D1_RECT_F want{};       // field box in client px
@@ -324,14 +327,12 @@ public:
 #endif
         result_ = {};
         LoadSources();
-        // A fresh dialog opens with the cleanup most people start from.
-        AddStep(rn::StepType::Replace, false);
-        steps_.back().find = L"_";
-        steps_.back().with = L" ";
-        AddStep(rn::StepType::Remove, false);
-        steps_.back().brackets = true;
-        steps_.back().spaces = true;
-        AddStep(rn::StepType::Case, false);   // Title, as in the design's first scene
+#ifndef PULSE_TEST_BATCH_RENAME_PRESENT
+        store_ = rn::LoadPresets();
+#endif
+        // A fresh dialog opens with the cleanup most people start from (the
+        // design's first scene).
+        ApplyPreset(Builtins().front(), false);
         Recompute(false);
 
         WNDCLASSEXW wc{sizeof(wc)};
@@ -515,6 +516,9 @@ private:
         if (accepted) {
             if (!CanApply()) return;
             result_.accepted = true;
+            store_.last = {S(StringId::BrPresetLast), steps_, opts_};
+            store_.has_last = true;
+            SaveStore();
             for (size_t i : plan_.exec_order) {
                 app::BatchRenameItem item;
                 item.source_path = sources_[i].path;
@@ -549,6 +553,129 @@ private:
     void Close() {
         done_ = true;
         if (hwnd_) { HideComposedDialog(hwnd_, owner_); DestroyWindow(hwnd_); }
+    }
+
+    // ---------------------------------------------------------------- presets
+
+    // Built-in presets: the same jobs as the AI examples, without AI. Tokens
+    // follow the UI language.
+    static std::vector<rn::Preset> Builtins() {
+        std::vector<rn::Preset> out;
+        auto step = [](rn::StepType t) { rn::Step st; st.type = t; return st; };
+        {
+            rn::Preset p;
+            p.name = S(StringId::BrPresetClean);
+            rn::Step a = step(rn::StepType::Replace); a.find = L"_"; a.with = L" ";
+            rn::Step b = step(rn::StepType::Remove); b.brackets = true; b.spaces = true;
+            rn::Step c = step(rn::StepType::Case); c.mode = rn::CaseMode::Title;
+            p.steps = {a, b, c};
+            out.push_back(std::move(p));
+        }
+        {
+            rn::Preset p;
+            p.name = S(StringId::BrPresetPhoto);
+            rn::Step t = step(rn::StepType::Template); t.pattern = TokenText(2) + L" " + TokenText(1);
+            p.steps = {t};
+            p.opts.order = rn::Order::Taken;
+            out.push_back(std::move(p));
+        }
+        {
+            rn::Preset p;
+            p.name = S(StringId::BrPresetKebab);
+            rn::Step a = step(rn::StepType::Remove); a.spaces = true;
+            rn::Step b = step(rn::StepType::Replace); b.find = L" "; b.with = L"-";
+            rn::Step c = step(rn::StepType::Case); c.mode = rn::CaseMode::Lower;
+            p.steps = {a, b, c};
+            out.push_back(std::move(p));
+        }
+        {
+            rn::Preset p;
+            p.name = S(StringId::BrPresetFolder);
+            rn::Step t = step(rn::StepType::Template); t.pattern = TokenText(4) + L" " + TokenText(1);
+            p.steps = {t};
+            out.push_back(std::move(p));
+        }
+        {
+            rn::Preset p;
+            p.name = S(StringId::BrPresetDate);
+            rn::Step t = step(rn::StepType::Insert); t.text = TokenText(3) + L" "; t.where = rn::Where::Start;
+            p.steps = {t};
+            out.push_back(std::move(p));
+        }
+        return out;
+    }
+
+    void ApplyPreset(const rn::Preset& p, bool animate) {
+        for (auto it = fields_.begin(); it != fields_.end();) {
+            if (it->step_id >= 0) { DestroyWindow(it->hwnd); it = fields_.erase(it); }
+            else ++it;
+        }
+        steps_.clear();
+        steps_ui_.clear();
+        const ULONGLONG now = GetTickCount64();
+        for (const rn::Step& st : p.steps) {
+            steps_.push_back(st);
+            StepUi ui;
+            ui.id = next_step_id_++;
+            if (st.type == rn::StepType::Remove && !st.custom.empty()) { ui.custom_on = true; ui.custom_text = st.custom; }
+            if (animate) enter_[ui.id] = now + 40 * steps_ui_.size();
+            steps_ui_.push_back(ui);
+        }
+        opts_ = p.opts;
+        preset_name_ = p.name;
+        preset_key_ = rn::StepsKey(steps_, opts_);
+        focus_step_ = -1;
+        steps_scroll_ = 0;
+        if (hwnd_) { EnsureFields(); SetFocus(hwnd_); }
+    }
+
+    bool PresetEdited() const { return !preset_name_.empty() && rn::StepsKey(steps_, opts_) != preset_key_; }
+
+    bool IsMine(const std::wstring& name) const {
+        for (const auto& p : store_.presets) if (p.name == name) return true;
+        return false;
+    }
+
+    void StartNaming() {
+        if (naming_) return;
+        naming_ = true;
+        naming_focus_ = true;
+        CreateField(kPresetField, 0, IsMine(preset_name_) ? preset_name_ : std::wstring(), false);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    void EndNaming() {
+        naming_ = false;
+        for (auto it = fields_.begin(); it != fields_.end();) {
+            if (it->step_id == kPresetField) { DestroyWindow(it->hwnd); it = fields_.erase(it); }
+            else ++it;
+        }
+        SetFocus(hwnd_);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    void SaveStore() {
+#ifndef PULSE_TEST_BATCH_RENAME_PRESENT
+        rn::SavePresets(store_);
+#endif
+    }
+
+    void CommitPresetName() {
+        Field* f = FindField(kPresetField, 0);
+        if (!f) return;
+        std::wstring name = EditText(f->hwnd);
+        while (!name.empty() && iswspace(name.back())) name.pop_back();
+        while (!name.empty() && iswspace(name.front())) name.erase(0, 1);
+        if (name.empty() || steps_.empty()) { MessageBeep(MB_OK); return; }
+        rn::Preset p{name, steps_, opts_};
+        auto it = std::find_if(store_.presets.begin(), store_.presets.end(),
+                               [&](const rn::Preset& x) { return x.name == name; });
+        if (it != store_.presets.end()) *it = std::move(p);
+        else store_.presets.push_back(std::move(p));
+        SaveStore();
+        preset_name_ = name;
+        preset_key_ = rn::StepsKey(steps_, opts_);
+        EndNaming();
     }
 
     // Per frame while running: how many rows show their check. The checks
@@ -672,8 +799,8 @@ private:
     void CreateField(int step_id, int field, const std::wstring& text, bool numeric) {
         HWND edit = CreateChildEdit(hwnd_, text.c_str(), numeric ? (ES_NUMBER | ES_CENTER) : 0);
         if (!edit) return;
-        if (step_id < 0) SetWindowLongPtrW(edit, GWLP_ID, kAiEditId);
-        HFONT font = step_id < 0 ? font_ai_ : font_;
+        if (step_id == kAiField) SetWindowLongPtrW(edit, GWLP_ID, kAiEditId);
+        HFONT font = step_id == kAiField ? font_ai_ : font_;
         if (font) SendMessageW(edit, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         if (numeric) SendMessageW(edit, EM_SETLIMITTEXT, 4, 0);
         SetWindowSubclass(edit, EditProc, 1, reinterpret_cast<DWORD_PTR>(this));
@@ -690,8 +817,8 @@ private:
         fields_.clear();
     }
 
-    D2D1_COLOR_F FieldBack(const Field& f) const { return f.step_id < 0 ? pal_.card : pal_.field; }
-    IDWriteTextFormat* FieldFormat(const Field& f) const { return f.step_id < 0 ? F(Fmt::T14) : F(Fmt::T13); }
+    D2D1_COLOR_F FieldBack(const Field& f) const { return f.step_id == kAiField ? pal_.card : pal_.field; }
+    IDWriteTextFormat* FieldFormat(const Field& f) const { return f.step_id == kAiField ? F(Fmt::T14) : F(Fmt::T13); }
 
     // Positions every EDIT where the last frame put its box; hidden boxes and
     // boxes outside the steps viewport hide the control.
@@ -705,12 +832,12 @@ private:
                 }
                 continue;
             }
-            const float pad_l = (f.step_id < 0 ? 0.0f : (f.numeric ? 3.0f : 9.0f)) * scale_;
-            const float pad_r = (f.step_id < 0 ? 0.0f : (f.numeric ? 3.0f : (HintFor(f).empty() ? 9.0f : 62.0f))) * scale_;
+            const float pad_l = (f.step_id == kAiField ? 0.0f : (f.numeric ? 3.0f : 9.0f)) * scale_;
+            const float pad_r = (f.step_id == kAiField ? 0.0f : (f.numeric ? 3.0f : (HintFor(f).empty() ? 9.0f : 62.0f))) * scale_;
             const int x = static_cast<int>(std::lround(f.want.left + pad_l));
             const int w = (std::max)(16, static_cast<int>(std::lround(f.want.right - f.want.left - pad_l - pad_r)));
             const int box_h = (std::max)(12, static_cast<int>(std::lround(f.want.bottom - f.want.top)));
-            const int line_h = EditLineHeight(f.hwnd, f.step_id < 0 ? font_ai_ : font_, box_h - 2);
+            const int line_h = EditLineHeight(f.hwnd, f.step_id == kAiField ? font_ai_ : font_, box_h - 2);
             const int y = static_cast<int>(std::lround(f.want.top)) + (std::max)(0, (box_h - line_h) / 2);
             RECT prev{};
             GetWindowRect(f.hwnd, &prev);
@@ -755,7 +882,8 @@ private:
         Field* f = FieldOf(hwnd);
         if (!f) return;
         const std::wstring text = EditText(hwnd);
-        if (f->step_id < 0) { ai_text_ = text; InvalidateRect(hwnd_, nullptr, FALSE); return; }
+        if (f->step_id == kAiField) { ai_text_ = text; InvalidateRect(hwnd_, nullptr, FALSE); return; }
+        if (f->step_id == kPresetField) { InvalidateRect(hwnd_, nullptr, FALSE); return; }
         const int i = StepIndex(f->step_id);
         if (i < 0) return;
         rn::Step& st = steps_[static_cast<size_t>(i)];
@@ -826,7 +954,7 @@ private:
         Field* f = self->FieldOf(hwnd);
         const D2D1_COLOR_F back = f ? self->FieldBack(*f) : self->pal_.field;
         IDWriteTextFormat* fmt = f ? self->FieldFormat(*f) : self->F(Fmt::T13);
-        HBRUSH brush = f && f->step_id < 0 ? self->brush_ai_ : self->brush_field_;
+        HBRUSH brush = f && f->step_id == kAiField ? self->brush_ai_ : self->brush_field_;
         LRESULT result = 0;
         if (!HandleChildEditMessage(self->compositor_, fmt, self->pal_.text, back, brush, hwnd, msg, wparam, lparam,
                                     result))
@@ -837,11 +965,13 @@ private:
 
     void OnEscape() {
         if (menu_ != Menu::None) { menu_ = Menu::None; InvalidateRect(hwnd_, nullptr, FALSE); return; }
+        if (naming_) { EndNaming(); return; }
         Complete(false);
     }
     void OnEnter(HWND from) {
         Field* f = from ? FieldOf(from) : nullptr;
-        if (f && f->step_id < 0) return;   // the AI bar sends in R4
+        if (f && f->step_id == kPresetField) { CommitPresetName(); return; }
+        if (f && f->step_id == kAiField) return;   // the AI bar sends in R4
         Complete(true);
     }
 
@@ -1314,17 +1444,51 @@ private:
         Fill(D2D1::RectF(0, pr.top, pr.right, pr.top + X(1)), 0, pal_.line2);
         x = X(16);
         x += Text(S(StringId::BrPreset), Fmt::T125, D2D1::RectF(x, pr.top, pr.right, pr.bottom), pal_.text2) + X(8);
-        const std::wstring preset = preset_name_.empty() ? S(StringId::BrPresetNone) : preset_name_;
-        const float dw = Measure(preset, Fmt::T125) + X(8 + 4 + 12 + 8);
-        const D2D1_RECT_F dd = R(x, pr.top + X(8), dw, X(28));
-        Fill(dd, X(7), Hov({H::PresetDD}) ? pal_.hover : pal_.card);
-        Stroke(dd, X(7), pal_.line);
-        Text(preset, Fmt::T125, D2D1::RectF(dd.left + X(8), dd.top, dd.right, dd.bottom), pal_.text);
-        Ico(kChev, dd.right - X(8 + 12), dd.top + X(8), X(12), pal_.text3);
-        Reg(dd, {H::PresetDD});
+        if (naming_) {
+            // 保存为预设: the name field with 保存 / 取消 in place of the dropdown.
+            const std::wstring ok = S(StringId::BrSave), no = S(StringId::Cancel);
+            const float ow = Measure(ok, Fmt::T125m) + X(16), nw = Measure(no, Fmt::T125) + X(16);
+            const D2D1_RECT_F cancel = R(pr.right - X(8) - nw, pr.top + X(8), nw, X(28));
+            const D2D1_RECT_F save = R(cancel.left - X(2) - ow, pr.top + X(8), ow, X(28));
+            const D2D1_RECT_F box = D2D1::RectF(x, pr.top + X(8), save.left - X(6), pr.top + X(36));
+            Field* f = FindField(kPresetField, 0);
+            const bool focus = f && GetFocus() == f->hwnd;
+            Fill(box, X(7), pal_.field);
+            Stroke(box, X(7), focus ? pal_.accent : pal_.field_line);
+            if (focus) Fill(D2D1::RectF(box.left + X(1), box.bottom - X(2.5f), box.right - X(1), box.bottom - X(1)), 0, pal_.accent);
+            if (f) {
+                f->want = box;
+                f->want_visible = true;
+                if (GetWindowTextLengthW(f->hwnd) == 0 && !focus)
+                    Text(S(StringId::BrPresetNameHint), Fmt::T125, D2D1::RectF(box.left + X(9), box.top, box.right, box.bottom), pal_.text3);
+            }
+            if (Hov({H::PresetOk})) Fill(save, X(7), pal_.hover);
+            Text(ok, Fmt::T125m, save, pal_.accent, DWRITE_TEXT_ALIGNMENT_CENTER);
+            Reg(save, {H::PresetOk});
+            if (Hov({H::PresetCancel})) Fill(cancel, X(7), pal_.hover);
+            Text(no, Fmt::T125, cancel, pal_.text2, DWRITE_TEXT_ALIGNMENT_CENTER);
+            Reg(cancel, {H::PresetCancel});
+            return;
+        }
         const std::wstring save = S(StringId::BrSavePreset);
         const float sw = Measure(save, Fmt::T125m);
         const D2D1_RECT_F sv = R(pr.right - X(14) - sw, pr.top + X(8), sw, X(28));
+        const std::wstring preset = preset_name_.empty() ? S(StringId::BrPresetNone) : preset_name_;
+        const bool edited = PresetEdited();
+        const std::wstring mark = edited ? L" \x00B7 " + S(StringId::BrPresetEdited) : std::wstring();
+        const float max_w = sv.left - X(12) - x;
+        const float mw = edited ? Measure(mark, Fmt::T12) : 0.0f;
+        const float dw = (std::min)(Measure(preset, Fmt::T125) + mw + X(8 + 4 + 12 + 8), max_w);
+        const D2D1_RECT_F dd = R(x, pr.top + X(8), dw, X(28));
+        preset_dd_ = dd;
+        Fill(dd, X(7), Hov({H::PresetDD}) || menu_ == Menu::Preset ? pal_.hover : pal_.card);
+        Stroke(dd, X(7), pal_.line);
+        const float text_right = dd.right - X(8 + 12 + 4);
+        const float nw = (std::min)(Measure(preset, Fmt::T125), text_right - dd.left - X(8) - mw);
+        Text(preset, Fmt::T125, D2D1::RectF(dd.left + X(8), dd.top, dd.left + X(8) + nw, dd.bottom), pal_.text);
+        if (edited) Text(mark, Fmt::T12, D2D1::RectF(dd.left + X(8) + nw, dd.top, text_right, dd.bottom), pal_.text3);
+        Ico(kChev, dd.right - X(8 + 12), dd.top + X(8), X(12), pal_.text3);
+        Reg(dd, {H::PresetDD});
         Text(save, Fmt::T125m, sv, Hov({H::PresetSave}) ? pal_.accent_h : pal_.accent);
         Reg(sv, {H::PresetSave});
     }
@@ -1353,7 +1517,8 @@ private:
         // Enter: fade + rise 10 px over 300 ms.
         float enter = 1.0f;
         if (auto it = enter_.find(ui.id); it != enter_.end()) {
-            enter = EaseOut(static_cast<float>(now_ - it->second) / 300.0f);
+            // A preset's cards come in one after another (start may be ahead).
+            enter = now_ < it->second ? 0.0f : EaseOut(static_cast<float>(now_ - it->second) / 300.0f);
             if (enter < 1.0f) anim_active_ = true;
             else enter_.erase(it);
         }
@@ -1419,7 +1584,11 @@ private:
             if (!f) return;
             const bool inside = r.top >= steps_view_.top && r.bottom <= steps_view_.bottom;
             f->want = r;
-            f->want_visible = show_fields && inside;
+            // Edit windows sit above the canvas: under an open menu they hide
+            // and the card draws their text instead.
+            const bool covered = menu_ != Menu::None && r.right > menu_box_.left && r.left < menu_box_.right &&
+                                 r.bottom > menu_box_.top && r.top < menu_box_.bottom;
+            f->want_visible = show_fields && inside && !covered;
             if (!f->want_visible) {
                 const std::wstring v = FieldValue(si, field);
                 if (!v.empty())
@@ -1955,10 +2124,11 @@ private:
         Fill(r, X(10), pal_.card);
         Stroke(r, X(10), pal_.line);
         Reg(r, {H::Menu});
+        menu_box_ = r;
     }
 
     void DrawMenus() {
-        if (menu_ == Menu::None) return;
+        if (menu_ == Menu::None) { menu_box_ = {}; return; }
         const float t = Animate(4ull << 40 | static_cast<uint64_t>(menu_), 1.0f, 200.0f);
         const float saved = fade_;
         fade_ = t;
@@ -1999,6 +2169,51 @@ private:
                 Text(S(l[i]), Fmt::T13, D2D1::RectF(it.left + X(34), it.top, it.right, it.bottom), pal_.text);
                 Reg(it, {H::OrderItem, i});
             }
+        } else if (menu_ == Menu::Preset) {
+            // Opens upward from the dropdown: 上次使用, 常用 (built in), 我的预设.
+            struct Entry { int kind; int index; std::wstring name; bool header; };
+            std::vector<Entry> list;
+            if (store_.has_last) list.push_back({0, 0, S(StringId::BrPresetLast), false});
+            list.push_back({-1, 0, S(StringId::BrPresetCommon), true});
+            const auto builtins = Builtins();
+            for (size_t i = 0; i < builtins.size(); ++i) list.push_back({1, static_cast<int>(i), builtins[i].name, false});
+            if (!store_.presets.empty()) {
+                list.push_back({-1, 0, S(StringId::BrPresetMine), true});
+                for (size_t i = 0; i < store_.presets.size(); ++i)
+                    list.push_back({2, static_cast<int>(i), store_.presets[i].name, false});
+            }
+            float mh = X(10);
+            for (const Entry& e : list) mh += e.header ? X(26) : X(34);
+            const float room = preset_dd_.top - X(4) - X(kBodyTop) - X(8);
+            mh = (std::min)(mh, room);
+            const D2D1_RECT_F r = R(preset_dd_.left, preset_dd_.top - X(4) - mh, X(280), mh);
+            dc_->SetTransform(D2D1::Matrix3x2F::Translation(0, X(6) * (1 - t)) * m);
+            MenuFrame(r);
+            dc_->PushAxisAlignedClip(r, D2D1_ANTIALIAS_MODE_ALIASED);
+            float y = r.top + X(5);
+            for (const Entry& e : list) {
+                if (e.header) {
+                    Text(e.name, Fmt::T115, R(r.left + X(15), y + X(6), r.right - r.left - X(30), X(20)), pal_.text3);
+                    y += X(26);
+                    continue;
+                }
+                const D2D1_RECT_F it = R(r.left + X(5), y, r.right - r.left - X(10), X(34));
+                const Hit hit{H::PresetItem, e.index, e.kind};
+                const bool on = e.name == preset_name_;
+                const bool hov = Hov(hit) || (e.kind == 2 && Hov({H::PresetDel, e.index}));
+                if (hov || on) Fill(it, X(7), pal_.hover);
+                if (on) Ico(kCheck, it.left + X(10), it.top + X(10), X(14), pal_.accent);
+                Text(e.name, Fmt::T13, D2D1::RectF(it.left + X(34), it.top, it.right - X(30), it.bottom), pal_.text);
+                Reg(it, hit);
+                if (e.kind == 2) {   // × shows on hover; its spot always deletes
+                    const D2D1_RECT_F del = R(it.right - X(30), it.top + X(5), X(24), X(24));
+                    if (Hov({H::PresetDel, e.index})) Fill(del, X(6), Alpha(pal_.text, 0.08f));
+                    if (hov) Ico(kX, del.left + X(6), del.top + X(6), X(12), pal_.text2);
+                    Reg(del, {H::PresetDel, e.index});
+                }
+                y += X(34);
+            }
+            dc_->PopAxisAlignedClip();
         } else if (menu_ == Menu::Policy) {
             static const StringId l[] = {StringId::BrPolAuto, StringId::BrPolSkip, StringId::BrPolBlock};
             static const StringId d[] = {StringId::BrPolAutoD, StringId::BrPolSkipD, StringId::BrPolBlockD};
@@ -2045,6 +2260,28 @@ private:
         if (h.k != H::Menu) menu_ = Menu::None;
         switch (h.k) {
         case H::Close: case H::Cancel: Complete(false); return;
+        case H::PresetDD: menu_ = was == Menu::Preset ? Menu::None : Menu::Preset; break;
+        case H::PresetItem: {
+            if (h.b == 0 && store_.has_last) ApplyPreset(store_.last, true);
+            else if (h.b == 1) {
+                const auto builtins = Builtins();
+                if (h.a >= 0 && h.a < static_cast<int>(builtins.size())) ApplyPreset(builtins[static_cast<size_t>(h.a)], true);
+            } else if (h.b == 2 && h.a >= 0 && h.a < static_cast<int>(store_.presets.size()))
+                ApplyPreset(store_.presets[static_cast<size_t>(h.a)], true);
+            Recompute(true);
+            break;
+        }
+        case H::PresetDel:
+            if (h.a >= 0 && h.a < static_cast<int>(store_.presets.size())) {
+                if (store_.presets[static_cast<size_t>(h.a)].name == preset_name_) preset_name_.clear();
+                store_.presets.erase(store_.presets.begin() + h.a);
+                SaveStore();
+            }
+            menu_ = Menu::Preset;   // keep the list open
+            break;
+        case H::PresetSave: StartNaming(); break;
+        case H::PresetOk: CommitPresetName(); break;
+        case H::PresetCancel: EndNaming(); break;
         case H::Apply: Complete(true); return;
         case H::ModeRules: content_mode_ = false; break;
         case H::ModeContent: break;   // R5
@@ -2152,6 +2389,13 @@ private:
     }
 
     void ApplyPendingFocus() {
+        if (naming_focus_) {
+            if (Field* f = FindField(kPresetField, 0); f && f->want_visible) {
+                SetFocus(f->hwnd);
+                SendMessageW(f->hwnd, EM_SETSEL, 0, -1);
+                naming_focus_ = false;
+            }
+        }
         if (pending_focus_.first < 0) return;
         if (Field* f = FindField(pending_focus_.first, pending_focus_.second); f && f->want_visible) {
             SetFocus(f->hwnd);
@@ -2236,7 +2480,7 @@ private:
         case WM_CTLCOLOREDIT: {
             const HDC hdc = reinterpret_cast<HDC>(wparam);
             Field* f = FieldOf(reinterpret_cast<HWND>(lparam));
-            const bool ai = f && f->step_id < 0;
+            const bool ai = f && f->step_id == kAiField;
             SetTextColor(hdc, Ref(pal_.text));
             SetBkColor(hdc, Ref(ai ? pal_.card : pal_.field));
             return reinterpret_cast<LRESULT>(ai ? brush_ai_ : brush_field_);
@@ -2398,6 +2642,12 @@ private:
     std::vector<Field> fields_;
     std::wstring ai_text_;
     std::wstring preset_name_;
+    std::string preset_key_;       // StepsKey when the preset was applied or saved
+    rn::PresetStore store_;
+    bool naming_ = false;          // the preset row edits a name (保存为预设)
+    bool naming_focus_ = false;
+    D2D1_RECT_F preset_dd_{};
+    D2D1_RECT_F menu_box_{};       // the open menu, from the last frame
     BatchRenameDialogOptions options_;
     BatchRenameDialogResult result_;
 

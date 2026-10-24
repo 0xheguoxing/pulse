@@ -3229,6 +3229,17 @@ enum class StringId : UINT {
     BrNumSep = IDS_BR_NUM_SEP,
     BrStApplied = IDS_BR_ST_APPLIED,
     BrDoneSnack = IDS_BR_DONE_SNACK,
+    BrPresetClean = IDS_BR_PRESET_CLEAN,
+    BrPresetPhoto = IDS_BR_PRESET_PHOTO,
+    BrPresetKebab = IDS_BR_PRESET_KEBAB,
+    BrPresetFolder = IDS_BR_PRESET_FOLDER,
+    BrPresetDate = IDS_BR_PRESET_DATE,
+    BrPresetLast = IDS_BR_PRESET_LAST,
+    BrPresetCommon = IDS_BR_PRESET_COMMON,
+    BrPresetMine = IDS_BR_PRESET_MINE,
+    BrPresetEdited = IDS_BR_PRESET_EDITED,
+    BrPresetNameHint = IDS_BR_PRESET_NAME_HINT,
+    BrSave = IDS_BR_SAVE,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

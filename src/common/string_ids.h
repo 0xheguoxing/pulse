@@ -3237,5 +3237,16 @@
 #define IDS_BR_NUM_SEP                                                                   4443
 #define IDS_BR_ST_APPLIED                                                                4444
 #define IDS_BR_DONE_SNACK                                                                4445
+#define IDS_BR_PRESET_CLEAN                                                              4446
+#define IDS_BR_PRESET_PHOTO                                                              4447
+#define IDS_BR_PRESET_KEBAB                                                              4448
+#define IDS_BR_PRESET_FOLDER                                                             4449
+#define IDS_BR_PRESET_DATE                                                               4450
+#define IDS_BR_PRESET_LAST                                                               4451
+#define IDS_BR_PRESET_COMMON                                                             4452
+#define IDS_BR_PRESET_MINE                                                               4453
+#define IDS_BR_PRESET_EDITED                                                             4454
+#define IDS_BR_PRESET_NAME_HINT                                                          4455
+#define IDS_BR_SAVE                                                                      4456
 
 #endif  // PULSE_STRING_IDS_H

@@ -3244,3 +3244,14 @@ BrPosAfterPost	IDS_BR_POS_AFTER_POST	4442	个字后	characters	個字後
 BrNumSep	IDS_BR_NUM_SEP	4443	分隔	Separator	分隔
 BrStApplied	IDS_BR_ST_APPLIED	4444	已改	Done	已改
 BrDoneSnack	IDS_BR_DONE_SNACK	4445	已重命名 {n} 个项目	Renamed {n} items	已重新命名 {n} 個項目
+BrPresetClean	IDS_BR_PRESET_CLEAN	4446	清理下载的文件名	Clean up downloaded names	清理下載的檔名
+BrPresetPhoto	IDS_BR_PRESET_PHOTO	4447	照片：拍摄日期 + 序号	Photos: date taken + number	照片：拍攝日期 + 序號
+BrPresetKebab	IDS_BR_PRESET_KEBAB	4448	全部小写，空格换成 -	Lowercase, spaces to -	全部小寫，空格換成 -
+BrPresetFolder	IDS_BR_PRESET_FOLDER	4449	按文件夹名编号	Number by folder name	按資料夾名稱編號
+BrPresetDate	IDS_BR_PRESET_DATE	4450	名字前加修改日期	Prefix the modified date	名稱前加修改日期
+BrPresetLast	IDS_BR_PRESET_LAST	4451	上次使用	Last used	上次使用
+BrPresetCommon	IDS_BR_PRESET_COMMON	4452	常用	Common	常用
+BrPresetMine	IDS_BR_PRESET_MINE	4453	我的预设	My presets	我的預設
+BrPresetEdited	IDS_BR_PRESET_EDITED	4454	已修改	edited	已修改
+BrPresetNameHint	IDS_BR_PRESET_NAME_HINT	4455	给预设起个名字	Name this preset	為預設命名
+BrSave	IDS_BR_SAVE	4456	保存	Save	儲存
