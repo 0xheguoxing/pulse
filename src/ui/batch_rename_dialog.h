@@ -39,6 +39,16 @@ struct BatchRenameDialogOptions {
     // Starts a chat/completions request with this body. Null (with error
     // set) when it cannot start. Unset: the AI bar cannot send.
     std::function<std::shared_ptr<BatchRenameAiTask>(const std::string& body, std::wstring& error)> ai_start;
+    std::wstring ai_provider;   // the connection's service, as the privacy note names it
+    // 按内容命名. can_read: whether text can be read from this extension
+    // (".pdf"). read_texts runs on a worker thread: reads up to max_chars of
+    // text from each path in order and calls done(i, text) for each (empty:
+    // nothing readable); stops when cancelled() turns true. Unset: content
+    // naming skips every file.
+    std::function<bool(const std::wstring& ext)> can_read;
+    std::function<void(const std::vector<std::wstring>& paths, size_t max_chars, const std::function<bool()>& cancelled,
+                       const std::function<void(size_t, std::wstring)>& done)>
+        read_texts;
     // When set, Enter runs the renames while the dialog shows them going
     // through (progress line, a check per row) and closes when they are done.
     // Returns the task id (0: nothing started). Unset: the caller runs items.

@@ -450,7 +450,7 @@ pulse_enable_lumatext(pulse_file_picker_operations_test)
 add_executable(pulse_batch_rename_present_test
     src/bench/batch_rename_present_test.cpp src/bench/child_edit_test.rc
     src/ui/batch_rename_dialog.cpp src/app/batch_rename.cpp src/app/batch_rename_plan.cpp
-    src/app/batch_rename_presets.cpp src/app/batch_rename_ai.cpp src/common/json_value.cpp
+    src/app/batch_rename_presets.cpp src/app/batch_rename_ai.cpp src/app/batch_rename_content.cpp src/common/json_value.cpp
     src/ui/ai_panel_icons.cpp src/fs/fs_enum.cpp src/ui/dialog_lifecycle.cpp src/ui/fluent_components.cpp src/ui/tab_shape.cpp
     src/ui/typography.cpp src/ui/ui_compositor.cpp src/ui/window_helpers.cpp src/ui/edit_host.cpp)
 target_compile_definitions(pulse_batch_rename_present_test PRIVATE PULSE_TEST_BATCH_RENAME_PRESENT=1)

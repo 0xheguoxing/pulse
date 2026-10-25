@@ -9,6 +9,7 @@
 #include "../app/batch_rename_plan.h"
 #include "../app/batch_rename_presets.h"
 #include "../app/batch_rename_ai.h"
+#include "../app/batch_rename_content.h"
 #include "FluentTokens.h"
 #include "fluent_components.h"
 #include "svg_path_icon.h"
@@ -27,6 +28,7 @@
 #include <atomic>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <cstdarg>
 #include <cmath>
@@ -231,6 +233,7 @@ enum class H : uint8_t {
     Grip, Toggle, Delete, Card, Field, Chip, Seg, Token, PresetDD, PresetSave, PresetItem, PresetDel, PresetOk,
     PresetCancel, Tab, OrderDD,
     OrderItem, Row, ExtToggle, PolicyDD, PolicyItem, Cancel, Apply, Menu, StepsArea, Preview,
+    CFormat, CLang, CRange, CStart, CRegen, CPick, CName,   // 按内容命名
 };
 
 struct Hit {
@@ -244,7 +247,7 @@ struct Hit {
 struct HitRect { D2D1_RECT_F r; Hit h; };
 
 enum class Menu { None, AddStep, Order, Policy, Preset };
-constexpr int kAiField = -1, kPresetField = -2;
+constexpr int kAiField = -1, kPresetField = -2, kRowField = -3;   // kRowField: field = row index
 
 struct Field {
     HWND hwnd = nullptr;
@@ -351,6 +354,20 @@ void ReadMeta(const std::shared_ptr<MetaJob>& job, HWND hwnd) {
     if (SUCCEEDED(init)) CoUninitialize();
     if (hwnd && !job->cancel.load()) PostMessageW(hwnd, kMetaMsg, 1, 0);
 }
+
+// 按内容命名: text read off the UI thread through Options::read_texts. Each
+// file read posts kContentMsg (wparam 0); the end of reading posts wparam 1;
+// a finished model reply wparam 2. lparam carries the run so stale posts
+// from a stopped run are ignored.
+constexpr UINT kContentMsg = WM_APP + 0x33;
+struct ContentJob {
+    std::vector<std::wstring> paths;
+    std::vector<size_t> source;                           // index in sources_
+    std::mutex m;
+    std::vector<std::pair<size_t, std::wstring>> ready;   // (k, text), guarded by m
+    std::atomic<size_t> done{0};
+    std::atomic<bool> cancel{false};
+};
 
 // "**bold**" markers in catalog strings -> runs.
 struct Run { std::wstring text; bool bold; };
@@ -462,8 +479,10 @@ private:
             selected[rn::Lower(ParentOf(p))].insert(rn::Lower(FileNameOf(p)));
         }
         folder_label_ = sources_.empty() ? std::wstring() : sources_.front().folder;
+        c_lang_ = pulse::l10n::effective_language() == pulse::l10n::Language::EnUS ? 1 : 0;
         // Names already in each folder that are not part of the selection.
         existing_.clear();
+        folder_samples_.clear();
         for (const auto& kv : selected) {
             auto& names = existing_[kv.first];
             const std::wstring dir = ParentOf(paths_[IndexWithParent(kv.first)]);
@@ -475,7 +494,10 @@ private:
                 if (fd.cFileName[0] == L'.' && (!fd.cFileName[1] || (fd.cFileName[1] == L'.' && !fd.cFileName[2])))
                     continue;
                 std::wstring lower = rn::Lower(fd.cFileName);
-                if (!kv.second.count(lower)) names.insert(std::move(lower));
+                if (kv.second.count(lower)) continue;
+                if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && folder_samples_.size() < 40)
+                    folder_samples_.push_back(fd.cFileName);
+                names.insert(std::move(lower));
             } while (FindNextFileW(h, &fd));
             FindClose(h);
         }
@@ -550,20 +572,29 @@ private:
     }
 
     void Recompute(bool flash) {
-        EnsureMetadata(rn::NeedsTakenDate(steps_, opts_), rn::NeedsDimensions(steps_));
+        if (!content_mode_) EnsureMetadata(rn::NeedsTakenDate(steps_, opts_), rn::NeedsDimensions(steps_));
         std::vector<std::wstring> before;
         before.reserve(plan_.rows.size());
         for (const auto& r : plan_.rows) before.push_back(r.new_name);
-        plan_ = rn::Run(sources_, steps_, opts_, [this](const std::wstring& source, const std::wstring& lower) {
+        const auto exists = [this](const std::wstring& source, const std::wstring& lower) {
             auto it = existing_.find(rn::Lower(ParentOf(source)));
             return it != existing_.end() && it->second.count(lower) > 0;
-        });
+        };
+        if (content_mode_) {
+            // Checked suggestions take the same checks (clashes, validity, order) as steps.
+            std::vector<std::wstring> names(sources_.size());
+            for (size_t i = 0; i < sources_.size() && i < crows_.size(); ++i)
+                if (crows_[i].st == CSt::Ok && crows_[i].pick) names[i] = crows_[i].name + ExtOf(sources_[i].name);
+            plan_ = rn::RunNames(sources_, names, opts_, exists);
+        } else {
+            plan_ = rn::Run(sources_, steps_, opts_, exists);
+        }
         diffs_.assign(plan_.rows.size(), {});
         changed_ = same_ = issues_ = 0;
         for (const auto& r : plan_.rows) {
-            if (r.status == rn::RowStatus::Same || r.status == rn::RowStatus::Skipped) ++same_;
-            else ++changed_;
-            if (IsIssue(r)) ++issues_;
+            changed_ += RowIn(r, 1) ? 1 : 0;
+            issues_ += RowIn(r, 2) ? 1 : 0;
+            same_ += RowIn(r, 3) ? 1 : 0;
         }
         const ULONGLONG now = GetTickCount64();
         if (flash && before.size() == plan_.rows.size())
@@ -580,8 +611,18 @@ private:
         }
     }
 
-    bool RowVisible(const rn::Row& r) const {
-        switch (filter_) {
+    bool RowVisible(const rn::Row& r) const { return RowIn(r, filter_); }
+    bool RowIn(const rn::Row& r, int tab) const {
+        if (content_mode_ && r.src < crows_.size()) {
+            const CRow& c = crows_[r.src];
+            switch (tab) {
+            case 1: return r.status != rn::RowStatus::Same;
+            case 2: return IsIssue(r) || c.st == CSt::Fail;
+            case 3: return c.st == CSt::Keep || c.st == CSt::Skip || (c.st == CSt::Ok && !c.pick);
+            default: return true;
+            }
+        }
+        switch (tab) {
         case 1: return r.status != rn::RowStatus::Same && r.status != rn::RowStatus::Skipped;
         case 2: return IsIssue(r);
         case 3: return r.status == rn::RowStatus::Same || r.status == rn::RowStatus::Skipped;
@@ -589,16 +630,21 @@ private:
         }
     }
 
-    bool CanApply() const { return plan_.renames > 0 && !plan_.blocked && !meta_job_; }
+    bool CanApply() const {
+        return plan_.renames > 0 && !plan_.blocked && !meta_job_ && !(content_mode_ && ContentRunning());
+    }
 
     void Complete(bool accepted) {
         if (executing_) return;
         if (accepted) {
+            CommitRowEdit(true);
             if (!CanApply()) return;
             result_.accepted = true;
-            store_.last = {S(StringId::BrPresetLast), steps_, opts_};
-            store_.has_last = true;
-            SaveStore();
+            if (!content_mode_) {
+                store_.last = {S(StringId::BrPresetLast), steps_, opts_};
+                store_.has_last = true;
+                SaveStore();
+            }
             for (size_t i : plan_.exec_order) {
                 app::BatchRenameItem item;
                 item.source_path = sources_[i].path;
@@ -634,6 +680,8 @@ private:
         done_ = true;
         if (ai_task_) { ai_task_->Cancel(); ai_task_.reset(); }
         if (meta_job_) { meta_job_->cancel.store(true); meta_job_.reset(); }
+        if (c_job_) { c_job_->cancel.store(true); c_job_.reset(); }
+        if (c_task_) { c_task_->Cancel(); c_task_.reset(); }
         if (hwnd_) { HideComposedDialog(hwnd_, owner_); DestroyWindow(hwnd_); }
     }
 
@@ -668,6 +716,7 @@ private:
         while (!q.empty() && iswspace(q.back())) q.pop_back();
         while (!q.empty() && iswspace(q.front())) q.erase(0, 1);
         if (q.empty()) return;
+        LeaveContentMode();   // a sentence describes steps
         if (options_.ai_model.empty() || !options_.ai_start) { ShowAiError(S(StringId::BrAiNoConn)); return; }
         rn::AiAsk ask;
         ask.sentence = q;
@@ -721,6 +770,253 @@ private:
         preset_name_.clear();
         preset_key_.clear();
         ai_note_ = AiNote::Info;
+        Recompute(true);
+    }
+
+
+    // ---------------------------------------------------------------- 按内容命名
+
+    bool ContentRunning() const { return c_job_ != nullptr || c_task_ != nullptr; }
+    size_t RangeBudget() const {
+        static const size_t k[] = {1200, 2500, 12000};   // 标题和首页 / 前 2 页 / 前 10 页, in characters
+        return k[std::clamp(c_range_, 0, 2)];
+    }
+    bool Readable(size_t i) const {
+        const std::wstring ext = rn::Lower(ExtOf(sources_[i].name));
+        return options_.can_read && options_.read_texts && !ext.empty() && !IsImageExt(ext) && !IsVideoExt(ext) &&
+               options_.can_read(ext);
+    }
+    int ReadableCount() const {
+        int n = 0;
+        for (size_t i = 0; i < sources_.size(); ++i) n += Readable(i) ? 1 : 0;
+        return n;
+    }
+
+    void EnterContentMode() {
+        if (content_mode_) return;
+        CommitRowEdit(true);
+        if (naming_) EndNaming();
+        content_mode_ = true;
+        if (crows_.size() != sources_.size()) ResetContentRows();
+        menu_ = Menu::None;
+        filter_ = 0;
+        rows_scroll_ = 0;
+        Recompute(false);
+    }
+    void LeaveContentMode() {
+        if (!content_mode_) return;
+        CommitRowEdit(false);
+        StopContent();
+        content_mode_ = false;
+        filter_ = 0;
+        rows_scroll_ = 0;
+        Recompute(false);
+    }
+
+    void ResetContentRows() {
+        crows_.assign(sources_.size(), {});
+        for (size_t i = 0; i < sources_.size(); ++i) {
+            if (Readable(i)) continue;
+            crows_[i].st = CSt::Skip;
+            crows_[i].basis = S(IsImageExt(rn::Lower(ExtOf(sources_[i].name))) ? StringId::BrCmSkipImage
+                                                                                 : StringId::BrCmSkipType);
+        }
+    }
+
+    // 开始生成建议 / 重新生成: nothing is read or sent before this.
+    void StartContent() {
+        CommitRowEdit(false);
+        StopContent();
+        c_error_.clear();
+        if (options_.ai_model.empty() || !options_.ai_start) {
+            c_error_ = S(StringId::BrAiNoConn);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        ResetContentRows();
+        auto job = std::make_shared<ContentJob>();
+        for (size_t i = 0; i < crows_.size(); ++i)
+            if (crows_[i].st == CSt::Wait) { job->paths.push_back(sources_[i].path); job->source.push_back(i); }
+        c_ran_ = true;
+        filter_ = 0;
+        rows_scroll_ = 0;
+        if (job->paths.empty()) { Recompute(false); return; }
+        crows_[job->source.front()].st = CSt::Read;
+        c_budget_ = RangeBudget();
+        c_job_ = job;
+        const LPARAM gen = ++c_gen_;
+        auto read = options_.read_texts;   // a copy: the worker may outlive the dialog
+        std::thread([job, read, budget = c_budget_, hwnd = hwnd_, gen] {
+            read(job->paths, budget, [job] { return job->cancel.load(); }, [job, hwnd, gen](size_t k, std::wstring text) {
+                {
+                    std::lock_guard<std::mutex> lock(job->m);
+                    job->ready.emplace_back(k, std::move(text));
+                }
+                job->done.fetch_add(1);
+                if (!job->cancel.load()) PostMessageW(hwnd, kContentMsg, 0, gen);
+            });
+            if (!job->cancel.load()) PostMessageW(hwnd, kContentMsg, 1, gen);
+        }).detach();
+        Recompute(false);
+    }
+
+    // 停止: rows without an answer go back to 等待读取.
+    void StopContent() {
+        if (c_job_) { c_job_->cancel.store(true); c_job_.reset(); }
+        if (c_task_) { c_task_->Cancel(); c_task_.reset(); }
+        c_task_done_ = false;
+        c_inflight_.clear();
+        c_reply_.clear();
+        c_failure_.clear();
+        for (auto& r : crows_)
+            if (r.st == CSt::Read || r.st == CSt::Think) { r.st = CSt::Wait; r.text.clear(); r.sent = false; }
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    void OnContentMsg(WPARAM what, LPARAM gen) {
+        if (what == 2) { OnContentReply(); return; }
+        if (!c_job_ || gen != c_gen_) return;
+        std::vector<std::pair<size_t, std::wstring>> got;
+        {
+            std::lock_guard<std::mutex> lock(c_job_->m);
+            got.swap(c_job_->ready);
+        }
+        for (auto& [k, text] : got) {
+            if (k >= c_job_->source.size()) continue;
+            CRow& r = crows_[c_job_->source[k]];
+            r.text = rn::CompactText(text, c_budget_);
+            if (r.text.empty()) { r.st = CSt::Skip; r.basis = S(StringId::BrCmNoText); }
+            else r.st = CSt::Think;
+        }
+        const size_t next = c_job_->done.load();
+        if (what == 1) c_job_.reset();
+        else if (next < c_job_->source.size() && crows_[c_job_->source[next]].st == CSt::Wait)
+            crows_[c_job_->source[next]].st = CSt::Read;
+        PumpContent();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    // One request at a time: up to 5 files / ~9000 characters. While files
+    // are still being read, a group waits until it is full.
+    void PumpContent() {
+        if (c_task_) return;
+        std::vector<size_t> group;
+        size_t chars = 0;
+        bool full = false;
+        for (size_t i = 0; i < crows_.size(); ++i) {
+            const CRow& r = crows_[i];
+            if (r.st != CSt::Think || r.sent) continue;
+            if (!group.empty() && (group.size() >= 5 || chars + r.text.size() > 9000)) { full = true; break; }
+            group.push_back(i);
+            chars += r.text.size();
+        }
+        if (group.empty() || (c_job_ && !full && group.size() < 5)) return;
+        rn::ContentAsk ask;
+        ask.model = options_.ai_model;
+        ask.format = static_cast<rn::NameFormat>(c_format_);
+        if (ask.format == rn::NameFormat::LikeFolder && folder_samples_.empty()) ask.format = rn::NameFormat::DateTypeSubject;
+        ask.language = static_cast<rn::NameLanguage>(c_lang_);
+        switch (pulse::l10n::effective_language()) {
+        case pulse::l10n::Language::EnUS: ask.reason_language = "English"; break;
+        case pulse::l10n::Language::ZhTW: ask.reason_language = "Traditional Chinese (Taiwan)"; break;
+        default: ask.reason_language = "Simplified Chinese"; break;
+        }
+        ask.folder_names = folder_samples_;
+        for (size_t i : group) {
+            ask.files.push_back({static_cast<int>(i) + 1, sources_[i].name, crows_[i].text});
+            crows_[i].sent = true;
+        }
+        std::wstring error;
+        auto task = options_.ai_start(rn::ContentRequestBody(ask), error);
+        if (!task) { FailContent(error.empty() ? S(StringId::BrAiNoConn) : error, group); return; }
+        c_task_ = std::move(task);
+        c_inflight_ = std::move(group);
+    }
+
+    // A request that could not run: the connection is the problem, so the
+    // whole pass stops and says why.
+    void FailContent(const std::wstring& why, const std::vector<size_t>& group) {
+        for (size_t i : group) { crows_[i].st = CSt::Fail; crows_[i].basis = why; crows_[i].text.clear(); }
+        for (auto& r : crows_)
+            if (r.st == CSt::Think && !r.sent) { r.st = CSt::Fail; r.basis = why; r.text.clear(); }
+        c_error_ = FmtS(StringId::BrAiFailed, why.c_str());
+        StopContent();
+        Recompute(true);
+    }
+
+    void TickContent() {
+        if (!c_task_ || c_task_done_) return;
+        anim_active_ = true;
+        if (!c_task_->Poll(c_reply_, c_failure_)) return;
+        c_task_done_ = true;
+        PostMessageW(hwnd_, kContentMsg, 2, 0);
+    }
+
+    void OnContentReply() {
+        if (!c_task_ || !c_task_done_) return;
+        c_task_.reset();
+        c_task_done_ = false;
+        const std::string reply = std::move(c_reply_);
+        const std::wstring failure = std::move(c_failure_);
+        c_reply_.clear();
+        c_failure_.clear();
+        std::vector<size_t> group = std::move(c_inflight_);
+        c_inflight_.clear();
+        if (!failure.empty()) { FailContent(failure, group); return; }
+        std::vector<rn::ContentSuggestion> out;
+        const bool parsed = rn::ParseContentReply(reply, out);
+        std::vector<bool> answered(crows_.size(), false);
+        for (const auto& sug : out) {
+            const size_t i = static_cast<size_t>(sug.id - 1);
+            if (sug.id < 1 || i >= crows_.size() || std::find(group.begin(), group.end(), i) == group.end()) continue;
+            CRow& r = crows_[i];
+            answered[i] = true;
+            r.text.clear();
+            r.basis = sug.basis;
+            // A "new" name equal to the current one is a keep too.
+            if (sug.keep || rn::Lower(sug.name + ExtOf(sources_[i].name)) == rn::Lower(sources_[i].name)) {
+                r.st = CSt::Keep;
+                if (r.basis.empty()) r.basis = S(StringId::BrCmNameKeep);
+            } else {
+                r.st = CSt::Ok;
+                r.name = sug.name;
+                r.pick = true;
+            }
+        }
+        for (size_t i : group)
+            if (!answered[i]) {
+                crows_[i].st = CSt::Fail;
+                crows_[i].basis = S(parsed ? StringId::BrCmMissing : StringId::BrAiErrReply);
+                crows_[i].text.clear();
+            }
+        PumpContent();
+        Recompute(true);
+    }
+
+    // Inline edit of a suggestion (click its name).
+    void BeginRowEdit(size_t i) {
+        if (i >= crows_.size() || crows_[i].st != CSt::Ok || executing_) return;
+        CommitRowEdit(true);
+        c_edit_ = static_cast<int>(i);
+        crows_[i].pick = true;
+        CreateField(kRowField, c_edit_, crows_[i].name, false);
+        pending_row_focus_ = true;   // focused once the first layout placed it
+        Recompute(false);
+    }
+    void CommitRowEdit(bool keep) {
+        if (c_edit_ < 0) return;
+        const size_t i = static_cast<size_t>(c_edit_);
+        if (Field* f = FindField(kRowField, c_edit_)) {
+            if (keep && i < crows_.size()) {
+                const std::wstring name = rn::CleanName(EditText(f->hwnd), 120);
+                if (!name.empty()) crows_[i].name = name;
+            }
+            const bool had_focus = GetFocus() == f->hwnd;
+            DestroyWindow(f->hwnd);
+            fields_.erase(fields_.begin() + (f - fields_.data()));
+            if (had_focus && hwnd_) SetFocus(hwnd_);
+        }
+        c_edit_ = -1;
         Recompute(true);
     }
 
@@ -1053,7 +1349,7 @@ private:
         if (!f) return;
         const std::wstring text = EditText(hwnd);
         if (f->step_id == kAiField) { ai_text_ = text; InvalidateRect(hwnd_, nullptr, FALSE); return; }
-        if (f->step_id == kPresetField) { InvalidateRect(hwnd_, nullptr, FALSE); return; }
+        if (f->step_id == kPresetField || f->step_id == kRowField) { InvalidateRect(hwnd_, nullptr, FALSE); return; }
         const int i = StepIndex(f->step_id);
         if (i < 0) return;
         rn::Step& st = steps_[static_cast<size_t>(i)];
@@ -1089,6 +1385,7 @@ private:
 
     // Tab order: the AI bar, then each visible step field top to bottom.
     void FocusNext(HWND from, int dir) {
+        if (Field* row = FieldOf(from); row && row->step_id == kRowField) { CommitRowEdit(true); return; }
         std::vector<HWND> order;
         if (Field* ai = FindField(kAiField, 0)) order.push_back(ai->hwnd);
         for (const auto& ui : steps_ui_)
@@ -1137,7 +1434,9 @@ private:
     void OnEscape() {
         if (menu_ != Menu::None) { menu_ = Menu::None; InvalidateRect(hwnd_, nullptr, FALSE); return; }
         if (naming_) { EndNaming(); return; }
+        if (c_edit_ >= 0) { CommitRowEdit(false); return; }
         if (ai_task_) { SendAi(); return; }   // Esc stops the request first
+        if (content_mode_ && ContentRunning()) { StopContent(); Recompute(false); return; }
         Complete(false);
     }
     void OnEnter(HWND from) {
@@ -1146,6 +1445,7 @@ private:
         Field* f = from ? FieldOf(from) : nullptr;
         if (f && f->step_id == kPresetField) { CommitPresetName(); return; }
         if (f && f->step_id == kAiField) { SendAi(); return; }
+        if (f && f->step_id == kRowField) { CommitRowEdit(true); return; }
         Complete(true);
     }
 
@@ -1314,6 +1614,7 @@ private:
         now_ = GetTickCount64();
         TickExecution();
         TickAi();
+        TickContent();
         for (auto& f : fields_) f.want_visible = false;
 
         W_ = static_cast<float>(compositor_.Width());
@@ -1324,7 +1625,8 @@ private:
         DrawTitle();
         DrawAiBar();
         DrawExamples();
-        DrawSteps();
+        if (content_mode_) DrawContentPane();
+        else DrawSteps();
         DrawPreview();
         DrawFooter();
         DrawMenus();
@@ -1333,6 +1635,16 @@ private:
         brush_ = nullptr;
         pulse::ui::EndSurface(compositor_);
         PlaceFields();
+        if (pending_row_focus_) {
+            Field* f = FindField(kRowField, c_edit_);
+            if (!f) pending_row_focus_ = false;
+            else if (IsWindowVisible(f->hwnd)) {
+                pending_row_focus_ = false;
+                SetFocus(f->hwnd);
+                SendMessageW(f->hwnd, EM_SETSEL, 0, -1);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+        }
         if (anim_active_) SetTimer(hwnd_, kAnimTimer, 15, nullptr);
         else KillTimer(hwnd_, kAnimTimer);
     }
@@ -1729,6 +2041,192 @@ private:
         Reg(sv, {H::PresetSave});
     }
 
+    // ---------------------------------------------------------------- 按内容命名 (left pane)
+
+    void Ring(float cx, float cy, float r, D2D1_COLOR_F c, float w) {
+        dc_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), r, r), B(c), w);
+    }
+
+    // .spin: a ring at 25% with a quarter arc turning once per 0.8 s.
+    void Spinner(float cx, float cy, float size, D2D1_COLOR_F c) {
+        const float w = X(1.8f), r = size * 0.5f - w * 0.5f;
+        Ring(cx, cy, r, Alpha(c, 0.25f), w);
+        anim_active_ = true;
+        ID2D1Factory* factory = nullptr;
+        dc_->GetFactory(&factory);
+        if (!factory) return;
+        ID2D1PathGeometry* path = nullptr;
+        if (SUCCEEDED(factory->CreatePathGeometry(&path))) {
+            ID2D1GeometrySink* sink = nullptr;
+            if (SUCCEEDED(path->Open(&sink))) {
+                const float a0 = static_cast<float>(now_ % 800) / 800.0f * 6.2831853f - 1.5707963f;
+                const float a1 = a0 + 1.5707963f;
+                sink->BeginFigure(D2D1::Point2F(cx + r * std::cos(a0), cy + r * std::sin(a0)), D2D1_FIGURE_BEGIN_HOLLOW);
+                sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(cx + r * std::cos(a1), cy + r * std::sin(a1)), D2D1::SizeF(r, r),
+                                              0.0f, D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
+                sink->EndFigure(D2D1_FIGURE_END_OPEN);
+                sink->Close();
+                sink->Release();
+                dc_->DrawGeometry(path, B(c), w);
+            }
+            path->Release();
+        }
+        factory->Release();
+    }
+
+    // .seg2 at (x, y); disabled: dimmed and not clickable.
+    void SegRow(const StringId* labels, int n, int on, float x, float y, H kind, bool enabled) {
+        float w = X(4);
+        for (int m = 0; m < n; ++m) w += Measure(S(labels[m]), Fmt::T12) + X(18) + (m ? X(2) : 0);
+        Fill(R(x, y, w, X(28)), X(7), pal_.hover);
+        float sx = x + X(2);
+        for (int m = 0; m < n; ++m) {
+            const std::wstring label = S(labels[m]);
+            const float iw = Measure(label, Fmt::T12) + X(18);
+            const D2D1_RECT_F item = R(sx, y + X(2), iw, X(24));
+            if (m == on) {
+                Shadow(item, X(5), X(2), X(1), Hex(0x000000, 0.08f));
+                Fill(item, X(5), pal_.card);
+            }
+            const D2D1_COLOR_F tc = m == on ? pal_.text : pal_.text2;
+            Text(label, Fmt::T12, item, enabled ? tc : Alpha(tc, 0.55f), DWRITE_TEXT_ALIGNMENT_CENTER);
+            if (enabled) Reg(item, {kind, m});
+            sx += iw + X(2);
+        }
+    }
+
+    void DrawContentPane() {
+        const float top = X(kBodyTop), bottom = H_ - X(kFootH);
+        const D2D1_RECT_F pane = D2D1::RectF(0, top, X(kStepsW), bottom);
+        Fill(pane, 0, pal_.pane);
+        Fill(D2D1::RectF(0, top, W_, top + X(1)), 0, pal_.line2);
+        Fill(D2D1::RectF(pane.right - X(1), top, pane.right, bottom), 0, pal_.line2);
+        Reg(pane, {H::StepsArea});
+
+        // Header: 按内容命名 · AI 读取文字后起名.
+        const D2D1_RECT_F head = D2D1::RectF(0, top, pane.right, top + X(kPaneHeadH));
+        float hx = X(16);
+        hx += Text(S(StringId::BrModeContent), Fmt::T13b, D2D1::RectF(hx, head.top, pane.right, head.bottom), pal_.text) + X(8);
+        Text(S(StringId::BrCmSub), Fmt::T13, D2D1::RectF(hx, head.top, pane.right - X(14), head.bottom), pal_.text3);
+
+        const bool busy = ContentRunning();
+        const float list_top = head.bottom + X(2), list_bottom = bottom - X(kPresetH);
+        steps_view_ = D2D1::RectF(0, list_top, pane.right, list_bottom);
+        const float view_h = list_bottom - list_top;
+        c_scroll_ = std::clamp(c_scroll_, 0.0f, (std::max)(0.0f, c_content_h_ - view_h));
+        const float l = X(14), w = pane.right - X(1) - X(28);
+        dc_->PushAxisAlignedClip(steps_view_, D2D1_ANTIALIAS_MODE_ALIASED);
+        float y = list_top - c_scroll_;
+        auto group_label = [&](StringId label, const std::wstring& sub) {
+            const float lw = Text(S(label), Fmt::T125b, R(l, y, w, X(17)), pal_.text);
+            if (!sub.empty()) Text(sub, Fmt::T125, R(l + lw + X(6), y, w - lw - X(6), X(17)), pal_.text3);
+            y += X(17 + 5);
+        };
+
+        // 名字格式: three radio cards.
+        group_label(StringId::BrCmFormat, {});
+        static const StringId formats[] = {StringId::BrCmF1, StringId::BrCmF2, StringId::BrCmF3};
+        static const StringId examples[] = {StringId::BrCmF1E, StringId::BrCmF2E, StringId::BrCmF3E};
+        for (int k = 0; k < 3; ++k) {
+            const D2D1_RECT_F card = R(l, y, w, X(32));
+            const bool on = c_format_ == k;
+            const bool hov = !busy && !on && Hov({H::CFormat, k});
+            Fill(card, X(9), on ? Mix(pal_.card, pal_.accent_tint, 0.6f) : hov ? Mix(pal_.card, pal_.hover, 0.5f) : pal_.card);
+            Stroke(card, X(9), on ? pal_.accent : pal_.line, on ? X(1.5f) : X(1.0f));
+            const float cx = card.left + X(10 + 8), cy = (card.top + card.bottom) * 0.5f;
+            if (on) Ring(cx, cy, X(5.5f), pal_.accent, X(5.0f));
+            else Ring(cx, cy, X(7.25f), pal_.text3, X(1.5f));
+            const float lx = card.left + X(10 + 16 + 10), rx = card.right - X(10);
+            const float lw = Text(S(formats[k]), Fmt::T13, D2D1::RectF(lx, card.top, rx, card.bottom), pal_.text);
+            const float ex = lx + lw + X(10);
+            if (ex < rx - X(24))
+                Text(Ellipsize(S(examples[k]), Fmt::T12, rx - ex), Fmt::T12, D2D1::RectF(ex, card.top, rx, card.bottom),
+                     pal_.text3, DWRITE_TEXT_ALIGNMENT_TRAILING);
+            if (!busy) Reg(card, {H::CFormat, k});
+            y += X(32 + 5);
+        }
+        y += X(8 - 5);
+
+        // 名字语言.
+        group_label(StringId::BrCmLang, {});
+        static const StringId langs[] = {StringId::BrCmLangZh, StringId::BrCmLangEn, StringId::BrCmLangAuto};
+        SegRow(langs, 3, c_lang_, l, y, H::CLang, !busy);
+        y += X(28 + 10);
+
+        // 读取范围 + what can be read.
+        group_label(StringId::BrCmRange, S(StringId::BrCmRangeSub));
+        static const StringId ranges[] = {StringId::BrCmR1, StringId::BrCmR2, StringId::BrCmR3};
+        SegRow(ranges, 3, c_range_, l, y, H::CRange, !busy);
+        y += X(28 + 6);
+        y += Para(S(StringId::BrCmSupport), Fmt::T12, Fmt::T12b, R(l, y, w, 0), pal_.text3, X(17)) + X(8);
+
+        // What is sent, to whom, and roughly how much.
+        const int n = ReadableCount();
+        size_t name_chars = 0;
+        for (size_t i = 0; i < sources_.size(); ++i)
+            if (Readable(i)) name_chars += sources_[i].name.size();
+        const size_t chars = static_cast<size_t>(n) * (busy ? c_budget_ : RangeBudget()) + name_chars;
+        const size_t batches = (static_cast<size_t>(n) + 4) / 5;
+        const size_t tokens = chars * 7 / 10 + batches * 600 + static_cast<size_t>(n) * 40;
+        auto qty = [](size_t v) { return FmtS(StringId::BrCmQtyK, (std::max)(1, static_cast<int>((v + 500) / 1000))); };
+        std::wstring privacy;
+        if (options_.ai_model.empty() || !options_.ai_start) privacy = S(StringId::BrAiNoConn);
+        else {
+            const std::wstring provider = options_.ai_provider.empty() ? std::wstring(L"AI") : options_.ai_provider;
+            privacy = FmtS(StringId::BrCmPrivacy, n, qty(chars).c_str(), options_.ai_model.c_str(), provider.c_str(),
+                           qty(tokens).c_str());
+            for (size_t at = privacy.find(L"\\n"); at != std::wstring::npos; at = privacy.find(L"\\n", at)) privacy.replace(at, 2, L"\n");
+        }
+        const float pw = w - X(11 + 15 + 9 + 11);
+        const float ph = Para(privacy, Fmt::T12, Fmt::T12b, D2D1::RectF(0, 0, pw, 0), pal_.text2, X(16.5f), false);
+        const D2D1_RECT_F card = R(l, y, w, ph + X(18));
+        Fill(card, X(9), pal_.amber_bg);
+        Stroke(card, X(9), pal_.amber_line);
+        Ico(kShield, card.left + X(11), card.top + X(10), X(15), pal_.amber);
+        Para(privacy, Fmt::T12, Fmt::T12b, R(card.left + X(35), card.top + X(9), pw, ph), pal_.text2, X(16.5f));
+        y = card.bottom;
+        if (!c_error_.empty()) {
+            y += X(8);
+            y += Para(c_error_, Fmt::T12, Fmt::T12b, R(l, y, w, 0), pal_.amber, X(17));
+        }
+        y += X(2);
+        c_content_h_ = y + c_scroll_ - list_top;
+        dc_->PopAxisAlignedClip();
+        const float max_scroll = (std::max)(0.0f, c_content_h_ - view_h);
+        if (max_scroll > 0) {
+            const float th = (std::max)(X(24), view_h * view_h / c_content_h_);
+            const float ty = list_top + (view_h - th) * (c_scroll_ / max_scroll);
+            Fill(R(pane.right - X(6), ty, X(3), th), X(1.5f), Alpha(pal_.text3, 0.35f));
+        }
+
+        // 开始生成建议 / 停止 / 重新生成, pinned where the presets sit in 规则 so
+        // it is always in view right under the privacy note.
+        const D2D1_RECT_F pr = D2D1::RectF(0, list_bottom, pane.right - X(1), bottom);
+        if (max_scroll > 0) Fill(D2D1::RectF(0, pr.top, pr.right, pr.top + X(1)), 0, pal_.line2);
+        const D2D1_RECT_F btn = D2D1::RectF(l, pr.top + X(4), l + w, pr.bottom - X(8));
+        const bool can = n > 0;
+        const bool hov = Hov({H::CStart});
+        std::wstring label;
+        const Icon* icon = nullptr;
+        D2D1_COLOR_F fg{};
+        if (busy) {
+            Fill(btn, X(8), hov ? Alpha(pal_.text2, 0.85f) : pal_.text2);
+            label = S(StringId::BrStop);
+            icon = &kStop;
+            fg = pal_.card;
+        } else {
+            Fill(btn, X(8), can ? (hov ? pal_.accent_h : pal_.accent) : Alpha(pal_.accent, 0.45f));
+            label = S(c_ran_ ? StringId::BrCmRegenShort : StringId::BrCmStart);
+            icon = &kSpark;
+            fg = pal_.on_accent;
+        }
+        const float tw = Measure(label, Fmt::T135b);
+        const float bx = (btn.left + btn.right - (X(16 + 6) + tw)) * 0.5f;
+        Ico(*icon, bx, (btn.top + btn.bottom) * 0.5f - X(8), X(16), fg);
+        Text(label, Fmt::T135b, D2D1::RectF(bx + X(22), btn.top, btn.right, btn.bottom), fg);
+        if (busy || can) Reg(btn, {H::CStart});
+    }
+
     void DashedBox(const D2D1_RECT_F& r, float radius) {
         ID2D1Factory* factory = nullptr;
         dc_->GetFactory(&factory);
@@ -2050,6 +2548,18 @@ private:
             Reg(tab, {H::Tab, i});
             x += w + X(4);
         }
+        if (content_mode_) {
+            // ✦ 全部重新生成 in place of the numbering order.
+            if (c_ran_ && !ContentRunning()) {
+                const std::wstring rg = S(StringId::BrCmRegen);
+                const float rw = X(8 + 14 + 5) + Measure(rg, Fmt::T125m) + X(8);
+                const D2D1_RECT_F link = R(W_ - X(14) - rw, top + X(8), rw, X(28));
+                if (Hov({H::CRegen})) Fill(link, X(7), pal_.hover);
+                Ico(kSpark, link.left + X(8), link.top + X(7), X(14), pal_.ai);
+                Text(rg, Fmt::T125m, D2D1::RectF(link.left + X(27), link.top, link.right, link.bottom), pal_.ai);
+                Reg(link, {H::CRegen});
+            }
+        } else {
         // Numbering order.
         static const StringId orders[] = {StringId::BrOrderList, StringId::BrOrderTaken, StringId::BrOrderModified,
                                           StringId::BrOrderName};
@@ -2063,39 +2573,59 @@ private:
         Ico(kChev, order.right - X(8 + 12), order.top + X(8), X(12), pal_.text3);
         Reg(order, {H::OrderDD});
         order_dd_ = order;
+        }
 
         // Column header: 28 | 1fr | 22 | 1fr | 128 with 14 / 16 padding.
         const float hy = top + X(kPaneHeadH);
         const D2D1_RECT_F head = D2D1::RectF(left, hy, W_, hy + X(30));
         Fill(D2D1::RectF(left, head.bottom - X(1), W_, head.bottom), 0, pal_.line2);
         const float cl = left + X(14), cr = W_ - X(16);
-        const float fr = (cr - cl - X(28 + 22 + 128)) / 2.0f;
+        const float st_w = X(content_mode_ ? 104.0f : 128.0f);
+        const float fr = (cr - cl - X(28 + 22) - st_w) / (content_mode_ ? 2.25f : 2.0f);
         Text(S(StringId::BrTokName), Fmt::T12, D2D1::RectF(cl + X(28), head.top, cl + X(28) + fr, head.bottom), pal_.text3);
-        Text(S(StringId::BrColNew), Fmt::T12, D2D1::RectF(cl + X(50) + fr, head.top, cr - X(128), head.bottom), pal_.text3);
-        Text(S(StringId::BrColStatus), Fmt::T12, D2D1::RectF(cr - X(128), head.top, cr, head.bottom), pal_.text3,
+        Text(S(StringId::BrColNew), Fmt::T12, D2D1::RectF(cl + X(50) + fr, head.top, cr - st_w, head.bottom), pal_.text3);
+        Text(S(StringId::BrColStatus), Fmt::T12, D2D1::RectF(cr - st_w, head.top, cr, head.bottom), pal_.text3,
              DWRITE_TEXT_ALIGNMENT_TRAILING);
 
         // Rows.
         const D2D1_RECT_F view = D2D1::RectF(left, head.bottom, W_, bottom);
         rows_view_ = view;
-        const bool two = filter_ == 2;
+        const bool two = filter_ == 2 || content_mode_;
+        const bool show_note = filter_ == 2 && !content_mode_;
         std::vector<size_t> vis;
         for (size_t i = 0; i < plan_.rows.size(); ++i) if (RowVisible(plan_.rows[i])) vis.push_back(i);
         const float rh = X(two ? kTallH + 4 : kRowH);
         float note_h = 0;
         const float note_w = view.right - view.left - X(16) - X(28 + 14);
-        if (two && !vis.empty()) note_h = X(10) + X(24) + Para(S(StringId::BrIssNote), Fmt::T125, Fmt::T125b,
+        if (show_note && !vis.empty()) note_h = X(10) + X(24) + Para(S(StringId::BrIssNote), Fmt::T125, Fmt::T125b,
                                                                 D2D1::RectF(0, 0, note_w, 0), pal_.text2, X(19), false);
-        const float content = X(8) + rh * static_cast<float>(vis.size()) + note_h;
+        // 按内容命名: only rows with a 依据 line are tall.
+        auto row_h = [&](size_t i) {
+            if (!content_mode_) return rh;
+            const CSt cst = crows_[i].st;
+            const bool tall = !crows_[i].basis.empty() && cst != CSt::Wait && cst != CSt::Read && cst != CSt::Think;
+            return tall ? X(kTallH + 4) : X(kRowH);
+        };
+        float rows_h = 0;
+        for (size_t i : vis) rows_h += row_h(i);
+        const float content = X(8) + rows_h + note_h;
         const float max_scroll = (std::max)(0.0f, content - (view.bottom - view.top));
         rows_scroll_ = std::clamp(rows_scroll_, 0.0f, max_scroll);
         dc_->PushAxisAlignedClip(view, D2D1_ANTIALIAS_MODE_ALIASED);
         float y = view.top + X(4) - rows_scroll_;
         for (size_t i : vis) {
-            if (y + rh >= view.top && y <= view.bottom) DrawRow(i, D2D1::RectF(left + X(8), y, W_ - X(8), y + (two ? X(kTallH) : rh)), two);
-            y += rh;
+            const float hi = row_h(i);
+            const bool tall_row = content_mode_ ? hi > X(kRowH) : two;
+            if (y + hi >= view.top && y <= view.bottom) {
+                const D2D1_RECT_F rr = D2D1::RectF(left + X(8), y, W_ - X(8), y + (tall_row ? X(kTallH) : hi));
+                if (content_mode_) DrawContentRow(i, rr);
+                else DrawRow(i, rr, two);
+            } else if (content_mode_ && c_edit_ == static_cast<int>(i)) {
+                if (Field* f = FindField(kRowField, c_edit_)) f->want_visible = false;
+            }
+            y += hi;
         }
-        if (two && !vis.empty()) {
+        if (show_note && !vis.empty()) {
             const D2D1_RECT_F note = D2D1::RectF(left + X(16), y + X(10) - X(4), W_ - X(16), y + note_h - X(4));
             Fill(note, X(10), pal_.pane);
             Stroke(note, X(10), pal_.line2);
@@ -2282,6 +2812,113 @@ private:
         }
     }
 
+    // 按内容命名 row (.pr.tall): 28 | 1fr | 22 | 1.25fr | 104, 依据 underneath.
+    void DrawContentRow(size_t i, const D2D1_RECT_F& r) {
+        const CRow& c = crows_[i];
+        const rn::Row& row = plan_.rows[i];
+        const rn::Source& src = sources_[i];
+        const int ri = static_cast<int>(i);
+        if (Hov({H::Row, ri}) || Hov({H::CPick, ri}) || Hov({H::CName, ri})) Fill(r, X(8), pal_.hover);
+        if (auto it = flash_.find(i); it != flash_.end()) {
+            const float t = static_cast<float>(now_ - it->second) / 500.0f;
+            if (t < 1.0f) { Fill(r, X(8), Alpha(pal_.accent, 0.16f * (1.0f - t))); anim_active_ = true; }
+            else flash_.erase(it);
+        }
+        Reg(r, {H::Row, ri});
+        const bool tall = r.bottom - r.top > X(kRowH + 1);
+        const float lt = tall ? r.top + X(2) : r.top, lb = tall ? r.top + X(32) : r.bottom, cy = (lt + lb) * 0.5f;
+        const std::wstring ext = ExtOf(src.name);
+        const bool img = IsImageExt(ext), vid = IsVideoExt(ext);
+        const D2D1_RECT_F g = R(r.left + X(6), cy - X(10), X(20), X(20));
+        Fill(g, X(5), img ? pal_.s_img : vid ? pal_.s_vid : pal_.s_doc);
+        Ico(img ? kFtImg : vid ? kFtVid : kFtDoc, g.left + X(3.5f), g.top + X(3.5f), X(13), img ? pal_.c_img : vid ? pal_.c_vid : pal_.c_doc);
+
+        const float cl = r.left + X(6), cr = r.right - X(8);
+        const float fr = (cr - cl - X(28 + 22 + 104)) / 2.25f;
+        const D2D1_RECT_F oc = D2D1::RectF(cl + X(28), lt, cl + X(28) + fr - X(4), lb);
+        const D2D1_RECT_F ac = D2D1::RectF(oc.right + X(4), lt, oc.right + X(26), lb);
+        const D2D1_RECT_F nc = D2D1::RectF(ac.right, lt, cr - X(104) - X(6), lb);
+        const D2D1_RECT_F sc = D2D1::RectF(cr - X(104), lt, cr, lb);
+        Text(Ellipsize(src.name, Fmt::T135, oc.right - oc.left), Fmt::T135, oc, pal_.text2);
+        Ico(kArrow, (ac.left + ac.right) * 0.5f - X(6), cy - X(6), X(12), pal_.text3);
+
+        std::wstring st;
+        const Icon* icon = nullptr;
+        D2D1_COLOR_F scol = pal_.text3;
+        bool spin = false;
+        auto muted = [&](const std::wstring& t) { Text(Ellipsize(t, Fmt::T135, nc.right - nc.left), Fmt::T135, nc, pal_.text3); };
+        switch (c.st) {
+        case CSt::Wait: muted(S(StringId::BrCmWait)); break;
+        case CSt::Read: muted(S(StringId::BrCmReading)); st = S(StringId::BrStReading); spin = true; scol = pal_.ai; break;
+        case CSt::Think: muted(S(StringId::BrCmThinking)); spin = true; scol = pal_.ai; break;
+        case CSt::Ok: {
+            const D2D1_RECT_F cb = R(nc.left, cy - X(8), X(16), X(16));
+            if (c.pick) {
+                Fill(cb, X(4), pal_.accent);
+                Ico(kCheck, cb.left + X(2.5f), cb.top + X(2.5f), X(11), pal_.on_accent);
+            } else {
+                Stroke(cb, X(4), pal_.text3, X(1.5f));
+            }
+            Reg(D2D1::RectF(cb.left - X(4), lt, cb.right + X(4), lb), {H::CPick, ri});
+            const D2D1_RECT_F name = D2D1::RectF(cb.right + X(8), lt, nc.right, lb);
+            Field* f = c_edit_ == ri ? FindField(kRowField, ri) : nullptr;
+            if (f) {
+                const D2D1_RECT_F box = D2D1::RectF(name.left - X(4), lt + X(1), name.right, lb - X(1));
+                const bool focus = GetFocus() == f->hwnd;
+                Fill(box, X(7), pal_.field);
+                Stroke(box, X(7), focus ? pal_.accent : pal_.field_line);
+                if (focus) Fill(D2D1::RectF(box.left + X(1), box.bottom - X(2.5f), box.right - X(1), box.bottom - X(1)), 0, pal_.accent);
+                f->want = box;
+                f->want_visible = box.top >= rows_view_.top && box.bottom <= rows_view_.bottom;
+            } else {
+                const std::wstring nn = c.pick ? row.new_name : c.name + ext;
+                const Fmt nf = HasCjk(nn) ? Fmt::T135 : Fmt::T135m;
+                Text(Ellipsize(nn, nf, name.right - name.left), nf, name, c.pick ? pal_.text : pal_.text3);
+                Reg(name, {H::CName, ri});
+            }
+            if (c.pick && row.status == rn::RowStatus::Conflict) {
+                icon = &kWarn;
+                scol = pal_.amber;
+                st = row.why == rn::Why::ClashCycle ? S(StringId::BrStSwap)
+                     : row.added_n > 0 ? FmtS(StringId::BrStClashAdded, row.added_n) : S(StringId::BrStClash);
+            } else if (c.pick && (row.status == rn::RowStatus::Invalid || row.status == rn::RowStatus::Empty)) {
+                icon = &kWarn;
+                scol = pal_.bad;
+                st = S(StringId::BrStInvalid);
+            } else {
+                icon = &kSpark;
+                scol = pal_.ai;
+                st = S(StringId::BrCmAiSuggest);
+            }
+            break;
+        }
+        case CSt::Keep: muted(src.name); icon = &kDash; st = S(StringId::BrCmKeep); break;
+        case CSt::Skip: muted(src.name); icon = &kDash; st = S(StringId::BrCmSkipped); break;
+        case CSt::Fail: muted(src.name); icon = &kWarn; scol = pal_.amber; st = S(StringId::BrCmFailed); break;
+        }
+        const bool applied = (executing_ || result_.executed) && i < exec_rank_.size() && exec_rank_[i] >= 0 &&
+                             static_cast<size_t>(exec_rank_[i]) < exec_shown_;
+        if (applied) { st = S(StringId::BrStApplied); icon = &kCheck; scol = pal_.ok; spin = false; }
+        float sx = sc.right;
+        if (!st.empty()) {
+            const float tw = (std::min)(Measure(st, Fmt::T12), X(104 - 18));
+            sx = sc.right - tw;
+            Text(st, Fmt::T12, D2D1::RectF(sx, sc.top, sc.right + X(2), sc.bottom), scol);
+        }
+        if (spin) Spinner(sx - X(5 + 6.5f), cy, X(13), pal_.ai);
+        else if (icon) Ico(*icon, sx - X(5 + 13), cy - X(6.5f), X(13), scol);
+
+        // 依据：the words the name rests on (quoted), or why the name stays.
+        if (tall && !c.basis.empty()) {
+            const D2D1_RECT_F br = D2D1::RectF(oc.left, r.top + X(32), sc.right, r.top + X(50));
+            const float lw = Text(S(StringId::BrCmBasis), Fmt::T115, br, pal_.text3);
+            const bool en = pulse::l10n::effective_language() == pulse::l10n::Language::EnUS;
+            const std::wstring q = c.st == CSt::Ok ? (en ? L"\u201C" + c.basis + L"\u201D" : L"\u300C" + c.basis + L"\u300D") : c.basis;
+            Text(Ellipsize(q, Fmt::T115, br.right - br.left - lw - X(4)), Fmt::T115,
+                 D2D1::RectF(br.left + lw + X(2), br.top, br.right, br.bottom), c.st == CSt::Fail ? pal_.amber : pal_.text2);
+        }
+    }
+
     std::wstring WhyText(size_t i) const {
         const rn::Row& row = plan_.rows[i];
         switch (row.why) {
@@ -2316,8 +2953,9 @@ private:
             if (k > 0) Fill(D2D1::RectF(0, top - X(1), W_ * k, top + X(1)), 0, pal_.accent);
         }
         const float cy = top + X(kFootH) * 0.5f;
-        // 同时修改扩展名.
+        // 同时修改扩展名 (rules only: suggestions keep the extension).
         float x = X(18);
+        if (!content_mode_) {
         const D2D1_RECT_F tg = R(x, cy - X(9), X(34), X(18));
         const float k = Animate(3ull << 40, opts_.ext_too ? 1.0f : 0.0f, 200.0f);
         if (k > 0) Fill(tg, X(9), Alpha(pal_.accent, k));
@@ -2329,6 +2967,7 @@ private:
         x = tg.right + X(8) + ew + X(14);
         Fill(R(x, cy - X(11), X(1), X(22)), 0, pal_.line);
         x += X(15);
+        }
         // 重名时 [policy].
         x += Text(S(StringId::BrOnClash), Fmt::T13, R(x, top, X(120), X(kFootH)), pal_.text2) + X(8);
         static const StringId pols[] = {StringId::BrPolAuto, StringId::BrPolSkip, StringId::BrPolBlock};
@@ -2363,7 +3002,30 @@ private:
 
         // Summary, right aligned before the buttons.
         std::vector<std::pair<std::wstring, D2D1_COLOR_F>> parts;
-        if (meta_job_) {
+        if (content_mode_) {
+            int readable = 0, read = 0, skipped = 0, kept = 0;
+            for (size_t i = 0; i < crows_.size(); ++i) {
+                const CSt cst = crows_[i].st;
+                if (Readable(i)) {
+                    ++readable;
+                    if (cst != CSt::Wait && cst != CSt::Read) ++read;
+                }
+                if (cst == CSt::Skip || cst == CSt::Fail) ++skipped;
+                if (cst == CSt::Keep) ++kept;
+            }
+            if (ContentRunning()) {
+                if (c_job_) parts.push_back({FmtS(StringId::BrCmReadN, read, readable), pal_.text2});
+                else parts.push_back({S(StringId::BrCmThinking), pal_.text2});
+            } else if (!c_ran_) {
+                parts.push_back({S(StringId::BrCmFootHint), pal_.text3});
+            } else {
+                parts.push_back({FmtS(StringId::BrCmSumChecked, plan_.renames), pal_.text2});
+                if (plan_.auto_fixed && opts_.policy == rn::Policy::AutoNumber)
+                    parts.push_back({FmtS(StringId::BrSumAuto, plan_.auto_fixed), pal_.amber});
+                parts.push_back({FmtS(StringId::BrSumSkip, skipped), pal_.text2});
+                parts.push_back({FmtS(StringId::BrCmSumKeep, kept), pal_.text2});
+            }
+        } else if (meta_job_) {
             parts.push_back({FmtS(StringId::BrSumReading, meta_job_->done.load(),
                                   static_cast<int>(meta_job_->paths.size())), pal_.text2});
         } else {
@@ -2533,6 +3195,7 @@ private:
 
     void Click(const Hit& h) {
         if (executing_) return;
+        if (c_edit_ >= 0 && !(h.k == H::CName && h.a == c_edit_)) CommitRowEdit(true);
         const bool had_menu = menu_ != Menu::None;
         const Menu was = menu_;
         if (h.k != H::Menu) menu_ = Menu::None;
@@ -2561,8 +3224,23 @@ private:
         case H::PresetOk: CommitPresetName(); break;
         case H::PresetCancel: EndNaming(); break;
         case H::Apply: Complete(true); return;
-        case H::ModeRules: content_mode_ = false; break;
-        case H::ModeContent: break;   // R5
+        case H::ModeRules: LeaveContentMode(); break;
+        case H::ModeContent: EnterContentMode(); break;
+        case H::CFormat: c_format_ = h.a; break;
+        case H::CLang: c_lang_ = h.a; break;
+        case H::CRange: c_range_ = h.a; break;
+        case H::CStart:
+            if (ContentRunning()) { StopContent(); Recompute(false); }
+            else StartContent();
+            break;
+        case H::CRegen: StartContent(); break;
+        case H::CPick:
+            if (h.a >= 0 && static_cast<size_t>(h.a) < crows_.size()) {
+                crows_[static_cast<size_t>(h.a)].pick = !crows_[static_cast<size_t>(h.a)].pick;
+                Recompute(false);
+            }
+            break;
+        case H::CName: if (h.a >= 0) BeginRowEdit(static_cast<size_t>(h.a)); break;
         case H::Example: {
             static const StringId ex[] = {StringId::BrEx1, StringId::BrEx2, StringId::BrEx3, StringId::BrEx4, StringId::BrEx5};
             if (Field* f = FindField(-1, 0)) {
@@ -2764,6 +3442,9 @@ private:
         case kAiMsg:
             OnAiDone();
             return 0;
+        case kContentMsg:
+            OnContentMsg(wparam, lparam);
+            return 0;
         case WM_DPICHANGED: {
             // Moved to a monitor with another scale: rebuild text and edit
             // fonts, then take the size Windows suggests (same DIP size).
@@ -2807,8 +3488,8 @@ private:
             POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
             ScreenToClient(hwnd_, &pt);
             const float delta = -static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) / WHEEL_DELTA * X(kRowH * 3);
-            if (In(steps_view_, static_cast<float>(pt.x), static_cast<float>(pt.y))) steps_scroll_ += delta;
-            else rows_scroll_ += delta;
+            if (In(steps_view_, static_cast<float>(pt.x), static_cast<float>(pt.y))) (content_mode_ ? c_scroll_ : steps_scroll_) += delta;
+            else { CommitRowEdit(true); rows_scroll_ += delta; }
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
@@ -2987,6 +3668,32 @@ private:
     int drag_index_ = -1;
     float drag_y_ = 0, drag_grab_ = 0, drag_card_top_ = 0;
     bool content_mode_ = false;
+    // 按内容命名: one row per source.
+    enum class CSt : uint8_t { Wait, Read, Think, Ok, Keep, Skip, Fail };
+    struct CRow {
+        CSt st = CSt::Wait;
+        std::wstring name;    // suggested name without extension (Ok)
+        std::wstring basis;   // 依据, or why it keeps / skips / failed
+        std::wstring text;    // compacted text, until sent
+        bool pick = true;
+        bool sent = false;
+    };
+    std::vector<CRow> crows_;
+    int c_format_ = 0, c_lang_ = 0, c_range_ = 1;
+    size_t c_budget_ = 2500;              // chars per file for the running pass
+    std::shared_ptr<ContentJob> c_job_;   // reading
+    LPARAM c_gen_ = 0;                    // run number, echoed in kContentMsg
+    std::shared_ptr<BatchRenameAiTask> c_task_;
+    std::vector<size_t> c_inflight_;
+    bool c_task_done_ = false;
+    std::string c_reply_;
+    std::wstring c_failure_;
+    bool c_ran_ = false;
+    std::wstring c_error_;
+    int c_edit_ = -1;                     // row whose name is being edited
+    std::vector<std::wstring> folder_samples_;   // other names in the folder (保持我的写法)
+    float c_scroll_ = 0, c_content_h_ = 0;
+    bool pending_row_focus_ = false;
     bool dark_ = false;
     bool done_ = false;
     // Running (scene 5): the renames go through while the dialog shows them.

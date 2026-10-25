@@ -29,6 +29,7 @@
 #include "paste_source.h"
 #include "arrival_select.h"
 #include "resource.h"
+#include "../index/document_reader.h"
 #include "../ops/clipboard.h"
 #include "../ops/elevated_delete.h"
 #include "../ipc/ctx_menu_util.h"
@@ -913,7 +914,32 @@ static void SubmitBatchRename(AppState& s, const std::vector<std::wstring>& path
             if (!stream) { error = l10n::Get(l10n::StringId::BrAiErrNetwork); return nullptr; }
             return std::make_shared<BatchRenameAiRequest>(std::move(stream));
         };
+        options.ai_provider = L"DeepSeek";   // the only service the connection speaks to (管理连接)
     }
+    // 按内容命名: text through the content-search reader (PDF and Office in
+    // the sandboxed parser), never the file itself.
+    options.can_read = [](const std::wstring& ext) { return index::IsIndexedContentExtension(ext); };
+    options.read_texts = [](const std::vector<std::wstring>& paths, size_t max_chars,
+                            const std::function<bool()>& cancelled, const std::function<void(size_t, std::wstring)>& done) {
+        index::DocumentReadSession session;   // one warm parser for the whole pass
+        for (size_t i = 0; i < paths.size(); ++i) {
+            if (cancelled()) return;
+            const std::wstring& path = paths[i];
+            const size_t dot = path.find_last_of(L".\\/");
+            const std::wstring ext = dot != std::wstring::npos && path[dot] == L'.' ? path.substr(dot) : std::wstring();
+            // Documents: the reader's own size limit; plain text: 16 MB.
+            const uint64_t cap = index::IsExtractedDocumentExtension(ext) ? UINT64_MAX : (16ull << 20);
+            std::wstring text;
+            uint64_t bytes = 0;
+            DWORD error = 0;
+            if (!index::ReadSearchableDocument(path, cap, text, bytes, &error, text::Encoding::Auto, cancelled)) text.clear();
+            if (text.size() > max_chars * 2) {
+                text.resize(max_chars * 2);
+                if (text.back() >= 0xD800 && text.back() <= 0xDBFF) text.pop_back();
+            }
+            done(i, std::move(text));
+        }
+    };
     options.execute = [&s, select_in](const std::vector<app::BatchRenameItem>& items) -> uint64_t {
         ops::OpRequest req;
         req.type = ops::OpType::BatchRename;

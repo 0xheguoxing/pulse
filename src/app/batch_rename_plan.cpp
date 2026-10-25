@@ -366,8 +366,24 @@ bool NeedsDimensions(const std::vector<Step>& steps) {
     return false;
 }
 
+namespace {
+Plan Resolve(const std::vector<Source>& sources, const std::vector<Step>& steps, const std::vector<std::wstring>* names,
+             const Options& opts, const ExistsFn& exists);
+} // namespace
+
 Plan Run(const std::vector<Source>& sources, const std::vector<Step>& steps,
          const Options& opts, const ExistsFn& exists) {
+    return Resolve(sources, steps, nullptr, opts, exists);
+}
+
+Plan RunNames(const std::vector<Source>& sources, const std::vector<std::wstring>& names,
+              const Options& opts, const ExistsFn& exists) {
+    return Resolve(sources, {}, &names, opts, exists);
+}
+
+namespace {
+Plan Resolve(const std::vector<Source>& sources, const std::vector<Step>& steps, const std::vector<std::wstring>* names,
+             const Options& opts, const ExistsFn& exists) {
     Plan plan;
     const size_t n = sources.size();
     plan.rows.resize(n);
@@ -398,7 +414,11 @@ Plan Run(const std::vector<Source>& sources, const std::vector<Step>& steps,
         ctx.src = &s;
         ctx.index = index_of[i];
         ctx.ext_too = opts.ext_too;
-        for (const auto& st : steps) if (st.on) ApplyStep(stem, ext, st, ctx);
+        if (names) {
+            if (i < names->size() && !(*names)[i].empty()) Split((*names)[i], stem, ext);
+        } else {
+            for (const auto& st : steps) if (st.on) ApplyStep(stem, ext, st, ctx);
+        }
         if (ctx.bad_regex) plan.bad_regex = true;
 
         bool fixed = false;
@@ -560,6 +580,7 @@ Plan Run(const std::vector<Source>& sources, const std::vector<Step>& steps,
     if (plan.bad_regex) plan.blocked = true;
     return plan;
 }
+} // namespace
 
 // ---------------------------------------------------------------- diff
 

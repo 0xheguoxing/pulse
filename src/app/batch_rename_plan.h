@@ -114,6 +114,10 @@ using ExistsFn = std::function<bool(const std::wstring& source_path, const std::
 
 Plan Run(const std::vector<Source>& sources, const std::vector<Step>& steps,
          const Options& opts, const ExistsFn& exists);
+// The same checks (validity, clashes, order) for names chosen another way
+// (按内容命名): names[i] is the whole new name; empty keeps the source's.
+Plan RunNames(const std::vector<Source>& sources, const std::vector<std::wstring>& names,
+              const Options& opts, const ExistsFn& exists);
 
 bool NeedsTakenDate(const std::vector<Step>& steps, const Options& opts);
 bool NeedsDimensions(const std::vector<Step>& steps);

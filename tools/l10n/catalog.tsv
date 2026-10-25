@@ -3204,8 +3204,8 @@ BrCmRangeSub	IDS_BR_CM_RANGE_SUB	4402	只读文字，不上传文件	Text only, 
 BrCmR1	IDS_BR_CM_R1	4403	标题和首页	Title and first page	標題和首頁
 BrCmR2	IDS_BR_CM_R2	4404	前 2 页	First 2 pages	前 2 頁
 BrCmR3	IDS_BR_CM_R3	4405	前 10 页	First 10 pages	前 10 頁
-BrCmSupport	IDS_BR_CM_SUPPORT	4406	支持 PDF（含文字层）、Word、Excel、PPT、TXT、Markdown。图片和扫描件没有文字层时会跳过。	Works with PDF (with a text layer), Word, Excel, PowerPoint, TXT and Markdown. Images and scans without text are skipped.	支援 PDF（含文字層）、Word、Excel、PPT、TXT、Markdown。圖片和掃描件沒有文字層時會略過。
-BrCmPrivacy	IDS_BR_CM_PRIVACY	4407	会把这 **%d** 个文件里读到的文字（约 %s 字）发送给 **%s**（你的 %s 连接）。文件本身不离开这台电脑。\n预计用量约 %s tokens。	The text read from these **%d** files (about %s characters) goes to **%s** (your %s connection). The files themselves stay on this PC.\nAbout %s tokens.	會把這 **%d** 個檔案裡讀到的文字（約 %s 字）傳送給 **%s**（你的 %s 連線）。檔案本身不離開這台電腦。\n預計用量約 %s tokens。
+BrCmSupport	IDS_BR_CM_SUPPORT	4406	支持 PDF（含文字层）、Word、Excel、PPT、TXT、Markdown。**图片和扫描件没有文字层时会跳过**。	Works with PDF (with a text layer), Word, Excel, PowerPoint, TXT and Markdown. **Images and scans without text are skipped.**	支援 PDF（含文字層）、Word、Excel、PPT、TXT、Markdown。**圖片和掃描件沒有文字層時會略過**。
+BrCmPrivacy	IDS_BR_CM_PRIVACY	4407	会把这 **%d** 个文件的名字和读到的文字（最多约 %s 字）发送给 **%s**（你的 %s 连接）。文件本身不离开这台电脑。\n预计用量最多约 %s tokens。	The names of these **%d** files and the text read from them (up to about %s characters) go to **%s** (your %s connection). The files themselves stay on this PC.\nUp to about %s tokens.	會把這 **%d** 個檔案的名稱和讀到的文字（最多約 %s 字）傳送給 **%s**（你的 %s 連線）。檔案本身不離開這台電腦。\n預計用量最多約 %s tokens。
 BrCmFootHint	IDS_BR_CM_FOOT_HINT	4408	建议生成后可逐个修改，不满意的取消勾选	Edit any suggestion; uncheck the ones you don’t want	建議產生後可逐個修改，不滿意的取消勾選
 BrCmRegen	IDS_BR_CM_REGEN	4409	全部重新生成	Regenerate all	全部重新產生
 BrCmBasis	IDS_BR_CM_BASIS	4410	依据：	Basis:	依據：
@@ -3217,7 +3217,7 @@ BrCmSumKeep	IDS_BR_CM_SUM_KEEP	4415	%d 个保持原名	%d kept	%d 個保持原�
 BrCmReading	IDS_BR_CM_READING	4416	正在读取…	Reading…	正在讀取…
 BrCmThinking	IDS_BR_CM_THINKING	4417	正在起名…	Naming…	正在起名…
 BrCmNoText	IDS_BR_CM_NO_TEXT	4418	没有可读取的文字，保持原名	No readable text; name kept	沒有可讀取的文字，保持原名
-BrCmStart	IDS_BR_CM_START	4419	开始生成	Generate	開始產生
+BrCmStart	IDS_BR_CM_START	4419	开始生成建议	Generate suggestions	開始產生建議
 BrAiNoConn	IDS_BR_AI_NO_CONN	4420	先在 AI 助手里连接一个模型	Connect a model in the assistant first	先在 AI 助手裡連線一個模型
 BrAiFailed	IDS_BR_AI_FAILED	4421	没能生成：%s	Couldn’t generate: %s	沒能產生：%s
 BrUndo	IDS_BR_UNDO	4422	撤销	Undo	復原
@@ -3264,3 +3264,13 @@ BrAiErrKey	IDS_BR_AI_ERR_KEY	4462	密钥无效或已过期	the key is invalid or
 BrAiErrBusy	IDS_BR_AI_ERR_BUSY	4463	服务繁忙，稍后再试	the service is busy; try again shortly	服務繁忙，稍後再試
 BrAiErrBalance	IDS_BR_AI_ERR_BALANCE	4464	账户余额不足	the account balance has run out	帳戶餘額不足
 BrAiErrHttp	IDS_BR_AI_ERR_HTTP	4465	服务返回了错误 %d	the service returned error %d	服務回傳了錯誤 %d
+BrCmWait	IDS_BR_CM_WAIT	4466	等待读取	Waiting	等待讀取
+BrCmReadN	IDS_BR_CM_READ_N	4467	正在读取 **%d**/%d	Reading **%d**/%d	正在讀取 **%d**/%d
+BrCmSkipImage	IDS_BR_CM_SKIP_IMAGE	4468	图片里没有文字层，跳过	Images have no text layer; skipped	圖片裡沒有文字層，略過
+BrCmSkipType	IDS_BR_CM_SKIP_TYPE	4469	这种文件读不了文字，跳过	No text can be read from this kind of file; skipped	這種檔案讀不了文字，略過
+BrCmFailed	IDS_BR_CM_FAILED	4470	没能生成	Not generated	沒能產生
+BrCmRegenShort	IDS_BR_CM_REGEN_SHORT	4471	重新生成	Regenerate	重新產生
+BrCmQtyK	IDS_BR_CM_QTY_K	4472	%d 千	%dk	%d 千
+BrCmMissing	IDS_BR_CM_MISSING	4473	没有收到这个文件的建议	No suggestion came back for this file	沒有收到這個檔案的建議
+BrCmF1E	IDS_BR_CM_F1E	4474	2026-03 发票 · 星河科技	2026-03 Invoice · Acme	2026-03 發票 · 星河科技
+BrCmF2E	IDS_BR_CM_F2E	4475	发票 - 星河科技 - 202603	Invoice - Acme - 202603	發票 - 星河科技 - 202603

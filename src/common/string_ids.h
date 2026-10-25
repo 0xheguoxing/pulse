@@ -3257,5 +3257,15 @@
 #define IDS_BR_AI_ERR_BUSY                                                               4463
 #define IDS_BR_AI_ERR_BALANCE                                                            4464
 #define IDS_BR_AI_ERR_HTTP                                                               4465
+#define IDS_BR_CM_WAIT                                                                   4466
+#define IDS_BR_CM_READ_N                                                                 4467
+#define IDS_BR_CM_SKIP_IMAGE                                                             4468
+#define IDS_BR_CM_SKIP_TYPE                                                              4469
+#define IDS_BR_CM_FAILED                                                                 4470
+#define IDS_BR_CM_REGEN_SHORT                                                            4471
+#define IDS_BR_CM_QTY_K                                                                  4472
+#define IDS_BR_CM_MISSING                                                                4473
+#define IDS_BR_CM_F1E                                                                    4474
+#define IDS_BR_CM_F2E                                                                    4475
 
 #endif  // PULSE_STRING_IDS_H
