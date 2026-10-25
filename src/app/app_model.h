@@ -99,6 +99,7 @@ struct Tab {
     std::vector<float> column_widths_dip;
     bool show_protected_os_files = false;
     std::wstring virtual_title; // tag/search views; empty for real folders
+    std::wstring virtual_type_column; // the assistant's lists: the 类型 column's name (empty: 原因)
     // The network page's status bar summary (counts, LAN discovery state);
     // only read while current_path is pulse:networks.
     std::wstring virtual_status;

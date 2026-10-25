@@ -76,6 +76,12 @@ enum class AiPanelPart : uint8_t {
     CleanLink,         // index = block index * 32 + row (查看)
     CleanFile,         // index = (block index * 32 + row) * 32 + file (a file's box)
     ResultPurge,       // 永久删除这些… on a result card
+    // Second batch, flow E (duplicates).
+    FunnelToggle,      // 比对过程 card header
+    DupToggle,         // 重复文件 card header
+    DupFile,           // index = block index * 64 + group * 8 + file (that copy stays)
+    DupRule,           // 改规则 (block index)
+    DupMore,           // 在 Pulse 中查看全部 (block index)
     // 管理连接 card (the model menu unfolded).
     ConnCard,       // the card's background (swallows the click)
     ConnBack,
@@ -135,6 +141,8 @@ enum class AiBlockKind : uint8_t {
     Task,       // 任务计划 card: numbered steps (they are the progress), summary
     Disk,       // 本地磁盘 (C:) card: used / free, segmented bar, the biggest places
     Clean,      // 清理建议 card: categories with boxes, reasons, 查看, the total
+    Funnel,     // 比对过程 card: three local stages with counts and bars (flow E)
+    Dup,        // 重复文件 card: keep rules, groups (保留 / 副本), the total
 };
 
 // Error card tone: Err needs the user (red, red border), Warn is temporary
@@ -323,6 +331,65 @@ struct AiCleanView {
     std::wstring keep;                // 留着 (a file left out)
 };
 
+// 比对过程 card (flow E): one row per stage. The number counts from 0 to
+// `value` over `count_dur` ms from `count_ms`; the bar grows to `bar`.
+enum class AiFunnelState : uint8_t { Wait, Run, Ok };
+
+struct AiFunnelStageView {
+    std::wstring label;               // 按大小分组
+    std::wstring sub;                 // 6,842 个文件里大小相同的
+    std::wstring unit;                // 个 / 个 · 41 组
+    std::wstring time;                // 0.1 秒 · 索引
+    uint64_t value = 0;
+    uint64_t count_ms = 0;
+    uint32_t count_dur = 650;
+    float bar = 0.0f;                 // 0..1 of the row
+    AiFunnelState state = AiFunnelState::Wait;
+    uint64_t state_ms = 0;
+};
+
+struct AiFunnelView {
+    std::vector<AiFunnelStageView> stages;
+    std::wstring foot;                // 全部在这台电脑上算，文件内容不发给模型
+};
+
+// 重复文件 card (flow E): the rules, up to four groups, the total.
+struct AiDupFileView {
+    std::wstring dir;                 // 图片 › 2026 杭州 ›  (text3)
+    std::wstring name;                // IMG_2041.jpg
+    std::wstring date;                // 10月9日
+    bool keep = false;                // 保留 (else 副本, struck through)
+    uint64_t swap_ms = 0;             // the badge just changed (flash)
+};
+
+struct AiDupGroupView {
+    AiIcon icon = AiIcon::File;
+    AiTint tint = AiTint::Neutral;
+    std::wstring name;                // IMG_2041.jpg
+    std::wstring meta;                // 3 份 · 每份 4.2 MB
+    std::wstring why;                 // 按 ①：留在整理过的文件夹里的
+    bool both = false;                // 都留 (amber tag and line)
+    std::vector<AiDupFileView> files;
+    std::wstring more;                // 还有 3 份
+    uint64_t in_ms = 0;
+};
+
+struct AiDupView {
+    std::vector<std::wstring> rules;  // 在整理过的文件夹里 / 名字不带 (1)、副本 / 最早的那份
+    std::wstring change;              // 改规则
+    uint64_t rule_ms = 0;             // the third rule changed (flash)
+    std::wstring both_tag;            // 都留
+    std::wstring keep_tag, extra_tag; // 保留 / 副本
+    std::vector<AiDupGroupView> groups;
+    std::wstring more;                // 还有 37 组，都按同样的规则
+    std::wstring more_link;           // 在 Pulse 中查看全部
+    // .cl-sum: text runs, numbers in the 15/600 face.
+    std::vector<std::pair<std::wstring, bool>> sum;
+    uint64_t sum_bump_ms = 0;
+    std::wstring safe;                // 每组至少留 1 份
+    bool settled = false;             // moved: the copies fade to .45
+};
+
 struct AiBlockView {
     AiBlockKind kind = AiBlockKind::Text;
     uint32_t id = 0;                  // stable while the block lives (motion)
@@ -397,6 +464,12 @@ struct AiBlockView {
     std::wstring purge;
     bool gone = false;
     bool freed = false;
+    // Flow E. Funnel / Dup cards; Confirm: `hint1` a line between hint and
+    // hint2 with its own icon (移到回收站，可以撤销).
+    AiFunnelView funnel;
+    AiDupView dup;
+    std::wstring hint1;
+    AiIcon hint1_icon = AiIcon::Undo;
 };
 
 // The status bar chip (left end): "✦ AI" plus what the assistant is doing.

@@ -1009,6 +1009,8 @@ void AiChatActivate(AppState& s, ui::AiPanelPart part, int block) {
     case P::TaskToggle:
     case P::DiskToggle:
     case P::CleanToggle:
+    case P::FunnelToggle:
+    case P::DupToggle:
         b.collapsed = !b.collapsed;
         break;
     case P::ResultPurge:
@@ -1091,6 +1093,19 @@ void AiChatClean(AppState& s, ui::AiPanelPart part, int index) {
         ui::AiCleanRowView& r = b.clean.rows[static_cast<size_t>(row)];
         r.open = !r.open && !r.files.empty();
     }
+    Redraw(s);
+}
+
+void AiChatDup(AppState& s, ui::AiPanelPart part, int index) {
+    AiChat& c = Chat(s);
+    if (index < 0) return;
+    const bool file = part == ui::AiPanelPart::DupFile;
+    const int block = file ? index / 64 : index;
+    if (block >= static_cast<int>(c.blocks.size())) return;
+    const AiBlockView& b = c.blocks[static_cast<size_t>(block)];
+    if (b.kind != AiBlockKind::Dup || b.id != c.dup_id || !c.on_dup) return;
+    auto fn = c.on_dup;
+    fn(s, part, file ? (index % 64) / 8 : -1, file ? index % 8 : -1);
     Redraw(s);
 }
 

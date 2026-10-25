@@ -509,6 +509,8 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
     case P::TaskToggle:
     case P::DiskToggle:
     case P::CleanToggle:
+    case P::FunnelToggle:
+    case P::DupToggle:
     case P::ResultPurge:
     case P::RenameMore:
     case P::ConfirmExtra:
@@ -524,6 +526,12 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
     case P::CleanFile:
         CloseMenu(s);
         AiChatClean(s, hit.part, hit.index);
+        break;
+    case P::DupFile:
+    case P::DupRule:
+    case P::DupMore:
+        CloseMenu(s);
+        AiChatDup(s, hit.part, hit.index);
         break;
     case P::QueryChipRemove:
         CloseMenu(s);

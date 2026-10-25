@@ -113,8 +113,14 @@ struct AiListRow {
     FILETIME mtime{};
     bool dir = false;
     bool on = true;
+    // Duplicates (flow E): rows of one group share `group` (1..254) and its
+    // header `group_label`; 0 lists flat.
+    uint8_t group = 0;
+    std::wstring group_label;
 };
-void PutAiList(uint32_t id, std::wstring title, std::vector<AiListRow> rows);
+// `column` names the 类型 column (empty: 原因).
+void PutAiList(uint32_t id, std::wstring title, std::vector<AiListRow> rows, std::wstring column = {});
 bool GetAiList(uint32_t id, std::wstring& title, std::vector<AiListRow>& rows);
+std::wstring AiListColumn(uint32_t id);
 
 }  // namespace pulse::app::ai

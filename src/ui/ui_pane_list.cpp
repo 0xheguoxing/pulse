@@ -6022,6 +6022,8 @@ std::wstring MainRenderer::GroupLabel(const PaneViewModel& vm, const ListGroup& 
         return l10n::Get(g.rank == 4 ? StringId::GroupNetworkRecent
                          : g.rank == 3 ? StringId::GroupNetworkDevices
                          : g.rank == 2 ? StringId::GroupNetworkDrives : StringId::GroupNetworkPinned);
+    case 9:  // the assistant's duplicates list: the group's file name
+        return g.label;
     default:
         return {};
     }

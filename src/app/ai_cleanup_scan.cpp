@@ -772,6 +772,7 @@ namespace {
 struct AiList {
     std::wstring title;
     std::vector<AiListRow> rows;
+    std::wstring column;
 };
 std::map<uint32_t, AiList>& AiLists() {
     static std::map<uint32_t, AiList> lists;
@@ -779,11 +780,17 @@ std::map<uint32_t, AiList>& AiLists() {
 }
 }  // namespace
 
-void PutAiList(uint32_t id, std::wstring title, std::vector<AiListRow> rows) {
+void PutAiList(uint32_t id, std::wstring title, std::vector<AiListRow> rows, std::wstring column) {
     auto& lists = AiLists();
     // A long session keeps only the latest few.
-    while (lists.size() >= 16) lists.erase(lists.begin());
-    lists[id] = {std::move(title), std::move(rows)};
+    while (lists.size() >= 16 && !lists.contains(id)) lists.erase(lists.begin());
+    lists[id] = {std::move(title), std::move(rows), std::move(column)};
+}
+
+std::wstring AiListColumn(uint32_t id) {
+    const auto& lists = AiLists();
+    const auto it = lists.find(id);
+    return it == lists.end() ? std::wstring() : it->second.column;
 }
 
 bool GetAiList(uint32_t id, std::wstring& title, std::vector<AiListRow>& rows) {

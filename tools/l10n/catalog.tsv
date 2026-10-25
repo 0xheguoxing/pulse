@@ -3625,3 +3625,86 @@ AiClChipFreed	IDS_AI_CL_CHIP_FREED	4823	{d} 盘可用 {gb} GB	{d}: {gb} GB free	
 AiClFreedTitle	IDS_AI_CL_FREED_TITLE	4824	已释放 {gb} GB	Freed {gb} GB	已釋放 {gb} GB
 AiClFreedSub	IDS_AI_CL_FREED_SUB	4825	{n} 个文件已永久删除 · 回收站里其他 {k} 项没动	{n} files deleted for good · the other {k} items in the bin stay	{n} 個檔案已永久刪除 · 資源回收筒裡其他 {k} 項沒動
 AiClGoneSub	IDS_AI_CL_GONE_SUB	4826	已永久删除，不能再撤销	Deleted for good; can no longer undo	已永久刪除，無法再復原
+AiDupStep	IDS_AI_DUP_STEP	4827	找重复文件	Find duplicates	找重複檔案
+AiDupStepSub	IDS_AI_DUP_STEP_SUB	4828	Pulse 正在本机比对…	Pulse is comparing on this PC…	Pulse 正在本機比對…
+AiDupStepDone	IDS_AI_DUP_STEP_DONE	4829	{g} 组 · {n} 个文件 · {t} 秒	{g} groups · {n} files · {t} s	{g} 組 · {n} 個檔案 · {t} 秒
+AiDupStepNone	IDS_AI_DUP_STEP_NONE	4830	没有重复的文件 · 比对了 {n} 个 · {t} 秒	No duplicates · {n} files compared · {t} s	沒有重複的檔案 · 比對了 {n} 個 · {t} 秒
+AiDupSteps	IDS_AI_DUP_STEPS	4831	比对了{where} · {g} 组重复	Compared {where} · {g} duplicate groups	比對了{where} · {g} 組重複
+AiDupStepsNone	IDS_AI_DUP_STEPS_NONE	4832	比对了{where} · 没有重复	Compared {where} · no duplicates	比對了{where} · 沒有重複
+AiDupChipRun	IDS_AI_DUP_CHIP_RUN	4833	比对中 · 第 {i}/3 轮	Comparing · pass {i}/3	比對中 · 第 {i}/3 輪
+AiDupChipDone	IDS_AI_DUP_CHIP_DONE	4834	{g} 组重复	{g} duplicate groups	{g} 組重複
+AiDupChipNone	IDS_AI_DUP_CHIP_NONE	4835	没有重复文件	No duplicates	沒有重複檔案
+AiDupFunnel	IDS_AI_DUP_FUNNEL	4836	比对过程	How Pulse compared	比對過程
+AiDupFunnelMeta	IDS_AI_DUP_FUNNEL_META	4837	本机 · {t} 秒	This PC · {t} s	本機 · {t} 秒
+AiDupFunnelFoot	IDS_AI_DUP_FUNNEL_FOOT	4838	全部在这台电脑上算，文件内容不发给模型	All done on this PC; file contents never go to the model	全部在這台電腦上算，檔案內容不傳給模型
+AiDupS1	IDS_AI_DUP_S1	4839	按大小分组	Group by size	按大小分組
+AiDupS1Sub	IDS_AI_DUP_S1_SUB	4840	{n} 个文件里大小相同的	Same size, out of {n} files	{n} 個檔案裡大小相同的
+AiDupS1Run	IDS_AI_DUP_S1_RUN	4841	已看 {n} 个文件…	{n} files looked at…	已看 {n} 個檔案…
+AiDupS2	IDS_AI_DUP_S2	4842	比较开头 64 KB	Compare the first 64 KB	比較開頭 64 KB
+AiDupS2Sub	IDS_AI_DUP_S2_SUB	4843	开头就不一样的排除掉	Files that differ early drop out	開頭就不一樣的排除掉
+AiDupS3	IDS_AI_DUP_S3	4844	完整比对	Compare in full	完整比對
+AiDupS3Sub	IDS_AI_DUP_S3_SUB	4845	逐字节一样才算重复	Only byte-for-byte equal counts	逐位元組一樣才算重複
+AiDupSRun	IDS_AI_DUP_SRUN	4846	{k} / {n} 个…	{k} / {n}…	{k} / {n} 個…
+AiDupUnit	IDS_AI_DUP_UNIT	4847	个	files	個
+AiDupUnitGroups	IDS_AI_DUP_UNIT_GROUPS	4848	个 · {g} 组	files · {g} groups	個 · {g} 組
+AiDupSec	IDS_AI_DUP_SEC	4849	{t} 秒	{t} s	{t} 秒
+AiDupSecRead	IDS_AI_DUP_SEC_READ	4850	{t} 秒 · 读 {size}	{t} s · read {size}	{t} 秒 · 讀 {size}
+AiDupTitle	IDS_AI_DUP_TITLE	4851	重复文件 · {g} 组	Duplicates · {g} groups	重複檔案 · {g} 組
+AiDupMeta	IDS_AI_DUP_META	4852	多出 {n} 份 · {size}	{n} extra copies · {size}	多出 {n} 份 · {size}
+AiDupRule1	IDS_AI_DUP_RULE1	4853	在整理过的文件夹里	In an organised folder	在整理過的資料夾裡
+AiDupRule2	IDS_AI_DUP_RULE2	4854	名字不带 (1)、副本	No (1) or copy in the name	名稱不帶 (1)、副本
+AiDupRule3	IDS_AI_DUP_RULE3	4855	最早的那份	The earliest	最早的那份
+AiDupRule3New	IDS_AI_DUP_RULE3_NEW	4856	最新的那份	The newest	最新的那份
+AiDupChange	IDS_AI_DUP_CHANGE	4857	改规则	Change rule	改規則
+AiDupBoth	IDS_AI_DUP_BOTH	4858	都留	Keep all	都留
+AiDupKeep	IDS_AI_DUP_KEEP	4859	保留	Keep	保留
+AiDupExtra	IDS_AI_DUP_EXTRA	4860	副本	Copy	副本
+AiDupGroupMeta	IDS_AI_DUP_GROUP_META	4861	{k} 份 · 每份 {size}	{k} copies · {size} each	{k} 份 · 每份 {size}
+AiDupWhy1	IDS_AI_DUP_WHY1	4862	按 ①：留在整理过的文件夹里的	By ①: keep the one in an organised folder	按 ①：留在整理過的資料夾裡的
+AiDupWhy2	IDS_AI_DUP_WHY2	4863	按 ②：留名字不带 (1)、副本的	By ②: keep the one without (1) or copy	按 ②：留名稱不帶 (1)、副本的
+AiDupWhy3	IDS_AI_DUP_WHY3	4864	按 ③：留最早的那份	By ③: keep the earliest	按 ③：留最早的那份
+AiDupWhy3New	IDS_AI_DUP_WHY3_NEW	4865	按 ③：留最新的那份	By ③: keep the newest	按 ③：留最新的那份
+AiDupWhyBoth	IDS_AI_DUP_WHY_BOTH	4866	{k} 份在不同的文件夹里，删掉一份可能缺文件，都留着	{k} copies in different folders; removing one may break something, so all stay	{k} 份在不同的資料夾裡，刪掉一份可能缺檔案，都留著
+AiDupWhyPicked	IDS_AI_DUP_WHY_PICKED	4867	你选了这份	You picked this one	你選了這份
+AiDupFileMore	IDS_AI_DUP_FILE_MORE	4868	还有 {n} 份	{n} more copies	還有 {n} 份
+AiDupMore	IDS_AI_DUP_MORE	4869	还有 {n} 组，都按同样的规则	{n} more groups, same rules	還有 {n} 組，都按同樣的規則
+AiDupMoreLink	IDS_AI_DUP_MORE_LINK	4870	在 Pulse 中查看全部	See all in Pulse	在 Pulse 中檢視全部
+AiDupSumPre	IDS_AI_DUP_SUM_PRE	4871	留	Keep	留
+AiDupSumMid	IDS_AI_DUP_SUM_MID	4872	份 · 移走	· move	份 · 移走
+AiDupSumMid2	IDS_AI_DUP_SUM_MID2	4873	份 ·	·	份 ·
+AiDupSafe	IDS_AI_DUP_SAFE	4874	每组至少留 1 份	At least 1 per group stays	每組至少留 1 份
+AiDupListTab	IDS_AI_DUP_LIST_TAB	4875	重复文件 · {g} 组	Duplicates · {g} groups	重複檔案 · {g} 組
+AiDupColumn	IDS_AI_DUP_COLUMN	4876	状态	Status	狀態
+AiDupDate	IDS_AI_DUP_DATE	4877	{m}月{d}日	{m}/{d}	{m}月{d}日
+AiDupDateY	IDS_AI_DUP_DATE_Y	4878	{y}年{m}月{d}日	{y}/{m}/{d}	{y}年{m}月{d}日
+AiDupRootDownloads	IDS_AI_DUP_ROOT_DOWNLOADS	4879	下载	Downloads	下載
+AiDupRootPictures	IDS_AI_DUP_ROOT_PICTURES	4880	图片	Pictures	圖片
+AiDupRootDesktop	IDS_AI_DUP_ROOT_DESKTOP	4881	桌面	Desktop	桌面
+AiDupRootDocuments	IDS_AI_DUP_ROOT_DOCUMENTS	4882	文档	Documents	文件
+AiDupRootVideos	IDS_AI_DUP_ROOT_VIDEOS	4883	视频	Videos	影片
+AiDupRootMusic	IDS_AI_DUP_ROOT_MUSIC	4884	音乐	Music	音樂
+AiDupConfirmTitle	IDS_AI_DUP_CONFIRM_TITLE	4885	把 {n} 个副本移到回收站？	Move {n} copies to the Recycle Bin?	把 {n} 個副本移到資源回收筒？
+AiDupConfirmSub	IDS_AI_DUP_CONFIRM_SUB	4886	共 {size}。{g} 组里每组都留 1 份。	{size} in all. Each of the {g} groups keeps 1.	共 {size}。{g} 組裡每組都留 1 份。
+AiDupConfirmSubBoth	IDS_AI_DUP_CONFIRM_SUB_BOTH	4887	共 {size}。{g} 组里每组都留 1 份；{name} {k} 份都留。	{size} in all. Each of the {g} groups keeps 1; all {k} of {name} stay.	共 {size}。{g} 組裡每組都留 1 份；{name} {k} 份都留。
+AiDupConfirmSubBothN	IDS_AI_DUP_CONFIRM_SUB_BOTH_N	4888	共 {size}。{g} 组里每组都留 1 份；{name} 等 {b} 组都留。	{size} in all. Each of the {g} groups keeps 1; {name} and {b} more groups keep all.	共 {size}。{g} 組裡每組都留 1 份；{name} 等 {b} 組都留。
+AiDupLockHint	IDS_AI_DUP_LOCK_HINT	4889	先锁住要留的那份，核对内容没变才移走副本	Pulse locks the kept file and re-checks the content before moving copies	先鎖住要留的那份，核對內容沒變才移走副本
+AiDupUndoHint	IDS_AI_DUP_UNDO_HINT	4890	移到回收站，可以撤销	Goes to the Recycle Bin; you can undo	移到資源回收筒，可以復原
+AiDupConfirmed	IDS_AI_DUP_CONFIRMED	4891	你确认了：把 {n} 个副本移到回收站	You confirmed: move {n} copies to the Recycle Bin	你確認了：把 {n} 個副本移到資源回收筒
+AiDupDenied	IDS_AI_DUP_DENIED	4892	你没有同意，副本都没动	You declined; no copy was moved	你沒有同意，副本都沒動
+AiDupRecSteps	IDS_AI_DUP_REC_STEPS	4893	移到回收站 · {n} 个副本	To the Recycle Bin · {n} copies	移到資源回收筒 · {n} 個副本
+AiDupRecSub	IDS_AI_DUP_REC_SUB	4894	核对并移走 {k} / {n}	Checking and moving {k} / {n}	核對並移走 {k} / {n}
+AiDupRecVerify	IDS_AI_DUP_REC_VERIFY	4895	锁住要留的文件，核对内容…	Locking the kept files, checking content…	鎖住要留的檔案，核對內容…
+AiDupRecDone	IDS_AI_DUP_REC_DONE	4896	{n} 个 · {size} · 用时 {t} 秒	{n} files · {size} · {t} s	{n} 個 · {size} · 用時 {t} 秒
+AiDupResTitle	IDS_AI_DUP_RES_TITLE	4897	已把 {n} 个副本移到回收站	Moved {n} copies to the Recycle Bin	已把 {n} 個副本移到資源回收筒
+AiDupResSub	IDS_AI_DUP_RES_SUB	4898	{g} 组各留 1 份 · {size} · 可以撤销	{g} groups keep 1 each · {size} · can undo	{g} 組各留 1 份 · {size} · 可以復原
+AiDupResUnit	IDS_AI_DUP_RES_UNIT	4899	份	copies	份
+AiDupResKept	IDS_AI_DUP_RES_KEPT	4900	留下的 {n} 个文件一个没动	The {n} kept files were not touched	留下的 {n} 個檔案一個沒動
+AiDupResSkipped	IDS_AI_DUP_RES_SKIPPED	4901	{g} 组在比对后改动过，没有动	{g} groups changed after the compare and were left alone	{g} 組在比對後改動過，沒有動
+AiDupResStill	IDS_AI_DUP_RES_STILL	4902	在回收站里时还占空间，清空后释放 {size}	Still takes space while in the Recycle Bin; emptying frees {size}	在資源回收筒裡時還佔空間，清空後釋放 {size}
+AiDupGuardNote	IDS_AI_DUP_GUARD_NOTE	4903	有文件在比对后改动过，Pulse 没有移动任何副本。重新比对一次再清理。	Files changed after the compare, so Pulse moved no copies. Compare again first.	有檔案在比對後改動過，Pulse 沒有移動任何副本。重新比對一次再清理。
+AiDupUndoneSub	IDS_AI_DUP_UNDONE_SUB	4904	{n} 个副本都从回收站还原了	All {n} copies are back from the Recycle Bin	{n} 個副本都從資源回收筒還原了
+AiDupPeek	IDS_AI_DUP_PEEK	4905	清掉 {n} 个副本 · {size}	{n} copies cleared · {size}	清掉 {n} 個副本 · {size}
+AiDupChipVerify	IDS_AI_DUP_CHIP_VERIFY	4906	核对内容	Checking content	核對內容
+AiDupUndoLabel	IDS_AI_DUP_UNDO_LABEL	4907	移走重复的副本	Remove duplicate copies	移走重複的副本
+AiDupChipReady	IDS_AI_DUP_CHIP_READY	4908	移走 {n} 个副本？	Move {n} copies?	移走 {n} 個副本？
+AiDupRecArg	IDS_AI_DUP_REC_ARG	4909	{n} 个 · {size}	{n} copies · {size}	{n} 個 · {size}

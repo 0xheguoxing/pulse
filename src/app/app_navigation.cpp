@@ -1054,6 +1054,7 @@ void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathL
     tab.loading = false;
     tab.pending_generation = 0;
     tab.virtual_title.clear();
+    tab.virtual_type_column.clear();
     tab.tag_refine.clear();
     tab.tag_locations.clear();
     SyncVisibleWatches(s);
@@ -1071,6 +1072,7 @@ void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathL
         std::vector<app::ai::AiListRow> rows;
         auto entries = std::make_shared<std::vector<fs::DirEntry>>();
         std::vector<int> picked;
+        bool grouped = false;
         if (app::ai::GetAiList(static_cast<uint32_t>(wcstoul(rest.c_str(), nullptr, 10)), title, rows)) {
             for (const auto& row : rows) {
                 // Moved to the Recycle Bin (or elsewhere) since the scan.
@@ -1084,12 +1086,20 @@ void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathL
                 e.is_dir = row.dir;
                 e.attrs = row.dir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
                 e.change_type_text = row.reason;
+                if (row.group) {
+                    // Duplicates: one header per group (GroupBy::AiDup).
+                    e.net_group = row.group;
+                    e.change_old_path = row.group_label;
+                    grouped = true;
+                }
                 if (row.on) picked.push_back(static_cast<int>(entries->size()));
                 entries->push_back(std::move(e));
             }
         }
         tab.virtual_title = title.empty() ? l10n::Get(l10n::StringId::AiClListTitle) : title;
+        tab.virtual_type_column = app::ai::AiListColumn(static_cast<uint32_t>(wcstoul(rest.c_str(), nullptr, 10)));
         tab.view_mode = ui::ViewMode::Details;
+        tab.group_by = grouped ? static_cast<int>(app::GroupBy::AiDup) : 0;
         tab.ClearSelection();
         tab.SetSnapshot(entries);
         tab.scroll_y = 0;

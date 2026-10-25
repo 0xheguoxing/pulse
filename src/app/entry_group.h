@@ -18,11 +18,13 @@ namespace pulse::app {
 // in menus and never saved (the prefs only read 0..6).
 // Network is the network page's fixed grouping (已固定 / 网络驱动器 / 局域网设备 /
 // 最近访问, DirEntry::net_group); like ThisPc it is never offered or saved.
+// AiDup is the assistant's 重复文件 list: one group per set of identical
+// files (DirEntry::net_group = its ordinal, change_old_path = its title).
 enum class GroupBy : uint8_t { None = 0, Name = 1, Date = 2, Type = 3, Size = 4, Tag = 5, Location = 6, ThisPc = 7,
-                               Network = 8 };
+                               Network = 8, AiDup = 9 };
 
 constexpr GroupBy GroupByFromInt(int v) noexcept {
-    return v >= 1 && v <= 8 ? static_cast<GroupBy>(v) : GroupBy::None;
+    return v >= 1 && v <= 9 ? static_cast<GroupBy>(v) : GroupBy::None;
 }
 
 // Parent folder of a virtual-view entry (full_path), without the \\?\ prefix.

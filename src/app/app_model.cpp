@@ -2000,7 +2000,8 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
     out.is_recycle = virtual_kind == L"recycle";
     // Tag views list items from many folders too: they get the 路径 column.
     out.is_search = virtual_kind == L"search" || virtual_kind == L"saved-search"
-        || virtual_kind == L"recycle" || virtual_kind == L"changes" || IsTagViewKind(virtual_kind);
+        || virtual_kind == L"recycle" || virtual_kind == L"changes" || virtual_kind == L"ai-list"
+        || IsTagViewKind(virtual_kind);
     out.is_tag_query = places && IsTagViewKind(virtual_kind);
     if (out.is_tag_query) FillTagQueryBar(*places, *tab, out);
     out.is_query_search = virtual_kind == L"search";
@@ -2052,7 +2053,10 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
             ? l10n::StringId::ColumnRecentOpened : l10n::StringId::ColumnModified);
     }
     // The assistant's cleanup lists (查看): each row's reason in the 类型 column.
-    if (virtual_kind == L"ai-list") out.type_column_label = l10n::Get(l10n::StringId::AiClReasonColumn);
+    // The duplicates list names it 状态 (保留 / 副本).
+    if (virtual_kind == L"ai-list")
+        out.type_column_label = tab->virtual_type_column.empty() ? l10n::Get(l10n::StringId::AiClReasonColumn)
+                                                                 : tab->virtual_type_column;
     out.selected_index = tab->selected_index;
     out.selected_count = tab->SelectedCount();
     // A lone details-tree "more" row is keyboard focus, not a selection.
@@ -2197,6 +2201,7 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
                         g.color_rgb = tag_catalog->tags[static_cast<size_t>(g.rank)].rgb;
                     }
                     if (by == GroupBy::Location) g.label = GroupLocationLabel(e);
+                    if (by == GroupBy::AiDup) g.label = e.change_old_path;
                     if (!seen.insert(g.key).second) {
                         contiguous = false;
                         break;
