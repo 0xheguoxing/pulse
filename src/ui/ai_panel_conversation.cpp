@@ -234,6 +234,7 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
     Ctx c{compositor, compositor->Dc(), brush_, s};
     ID2D1DeviceContext* dc = c.dc;
     const bool motion_on = motion::SystemAnimationsEnabled();
+    was_empty_ = false;
     for (auto& kv : tweens_) kv.second.used = false;
 
     // Scroll position for this frame (content height is last frame's; a

@@ -448,6 +448,7 @@ private:
     uint64_t scroll_start_ = 0;
     bool scroll_anim_ = false;
     bool follow_ = true;
+    bool was_empty_ = false;    // the welcome was drawn last frame (it starts at the top)
     float content_h_ = 0.0f, view_h_ = 0.0f;
     struct ConvHit {
         D2D1_RECT_F rect;

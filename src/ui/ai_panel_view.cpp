@@ -346,10 +346,25 @@ void AiPanelView::DrawHeader(Compositor* compositor, const AiPanelViewModel& vm,
 void AiPanelView::DrawEmptyState(Compositor* compositor, const AiPanelViewModel& vm, const Palette& pal,
                                  const D2D1_RECT_F& area, float s, uint64_t now_ms) {
     Ctx c{compositor, compositor->Dc(), brush_, s};
+    // .conv scrolls (overflow auto): in a short window the welcome scrolls
+    // like the conversation instead of running under the composer.
+    if (!was_empty_) {
+        scroll_ = 0.0f;   // a new chat starts at the top
+        scroll_anim_ = false;
+    }
+    was_empty_ = true;
+    view_h_ = area.bottom - area.top;
+    if (scroll_anim_) {
+        const float p = std::clamp(static_cast<float>(now_ms - scroll_start_) / 160.0f, 0.0f, 1.0f);
+        scroll_ = scroll_from_ + (scroll_to_ - scroll_from_) * EaseDesign(p);
+        if (p >= 1.0f) scroll_anim_ = false;
+        else conv_anim_ = true;
+    }
+    const float top = area.top - scroll_;
     // .conv padding 16 18 10, .empty padding 26 6 0.
     const float x0 = area.left + 24.0f * s;
     const float x1 = area.right - 24.0f * s;
-    float y = area.top + (16.0f + 26.0f) * s;
+    float y = top + (16.0f + 26.0f) * s;
     // Breathing spark: scale .88 and 45 deg at the middle of a 3.2 s cycle.
     {
         // Nine breaths after opening, then it rests (a 30 fps repaint for as
@@ -379,7 +394,11 @@ void AiPanelView::DrawEmptyState(Compositor* compositor, const AiPanelViewModel&
     for (size_t i = 0; i < vm.suggestions.size(); ++i) {
         const AiSuggestionView& sug = vm.suggestions[i];
         const D2D1_RECT_F r = D2D1::RectF(x0, y, x1, y + 60.0f * s);
-        suggestion_rects_.push_back(r);
+        // Hits only where the card shows (indices stay aligned).
+        D2D1_RECT_F v = r;
+        v.top = (std::max)(v.top, area.top);
+        v.bottom = (std::min)(v.bottom, area.bottom);
+        suggestion_rects_.push_back(v.bottom > v.top ? v : D2D1_RECT_F{});
         const bool hot = vm.hover.part == AiPanelPart::Suggestion && vm.hover.index == static_cast<int>(i);
         const bool down = hot && vm.pressed.part == AiPanelPart::Suggestion;
         D2D1_MATRIX_3X2_F saved;
@@ -407,6 +426,17 @@ void AiPanelView::DrawEmptyState(Compositor* compositor, const AiPanelViewModel&
     y += 6.0f * s;
     c.Icon(AiIcon::Shield, x0 + 2.0f * s, y + 2.0f * s, 14.0f * s, pal.text3);
     c.Text(vm.safe_note, formats_.caption, D2D1::RectF(x0 + 23.0f * s, y, x1, y + 18.0f * s), pal.text3);
+    // Height for the wheel (.conv padding-bottom 10) and the overlay bar.
+    content_h_ = y + 18.0f * s + 10.0f * s - top;
+    const float max_scroll = (std::max)(0.0f, content_h_ - view_h_);
+    if (scroll_ > max_scroll) scroll_ = max_scroll;
+    if (max_scroll > 0.5f) {
+        const float track = view_h_ - 8.0f * s;
+        const float thumb = (std::max)(28.0f * s, track * view_h_ / content_h_);
+        const float ty = area.top + 4.0f * s + (track - thumb) * (scroll_ / max_scroll);
+        c.Fill(D2D1::RectF(area.right - 7.0f * s, ty, area.right - 3.0f * s, ty + thumb), 2.0f * s,
+               Alpha(pal.text3, 0.35f));
+    }
 }
 
 namespace {
