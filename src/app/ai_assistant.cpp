@@ -506,6 +506,7 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
     case P::ResultUndo:
     case P::ResultShow:
     case P::RenameToggle:
+    case P::TaskToggle:
     case P::RenameMore:
     case P::ConfirmExtra:
     case P::ActCopy:

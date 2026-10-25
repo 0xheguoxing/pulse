@@ -34,8 +34,11 @@ std::wstring ZipPathFor(const std::vector<std::wstring>& sources, const std::wst
 // half-written archive and a failure leaves nothing behind. Folders recurse;
 // entry names are relative to the sources' parent. `progress` (optional) gets
 // bytes read so far and the total, from the worker thread.
+// `names` (optional, parallel to `sources`): each source's entry name in the
+// archive instead of its leaf, "/" between folders ("2026-01/a.pdf").
 ZipCompressResult CompressToZip(const std::vector<std::wstring>& sources, const std::wstring& zip_path,
                                 const std::atomic<bool>* cancel,
-                                const std::function<void(uint64_t, uint64_t)>& progress);
+                                const std::function<void(uint64_t, uint64_t)>& progress,
+                                const std::vector<std::wstring>* names = nullptr);
 
 } // namespace pulse::app

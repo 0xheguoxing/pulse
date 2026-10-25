@@ -3425,3 +3425,94 @@ AiRnStepRead	IDS_AI_RN_STEP_READ	4623	读取拍摄时间	Reading dates taken	讀
 AiRnStepReadDone	IDS_AI_RN_STEP_READ_DONE	4624	{k} 张有拍摄时间 · {m} 张没有	{k} with a date taken · {m} without	{k} 張有拍攝時間 · {m} 張沒有
 AiRnSugTitle	IDS_AI_RN_SUG_TITLE	4625	把选中的照片按拍摄日期重命名	Rename the selected photos by date taken	把選取的照片按拍攝日期重新命名
 AiRnSugDetail	IDS_AI_RN_SUG_DETAIL	4626	只出规则，Pulse 在本机改名	The AI writes a rule; Pulse renames on this PC	只出規則，Pulse 在本機改名
+AiTkPlanLabel	IDS_AI_TK_PLAN_LABEL	4627	任务计划	Task plan	任務計畫
+AiTkPlanMeta	IDS_AI_TK_PLAN_META	4628	{n} 步 · 第 1 步已完成	{n} steps · step 1 done	{n} 步 · 第 1 步已完成
+AiTkPlanMetaRun	IDS_AI_TK_PLAN_META_RUN	4629	{n} 步 · 正在做第 {k} 步	{n} steps · on step {k}	{n} 步 · 正在做第 {k} 步
+AiTkPlanMetaDone	IDS_AI_TK_PLAN_META_DONE	4630	{n} 步 · 已完成	{n} steps · done	{n} 步 · 已完成
+AiTkPlanMetaSkip	IDS_AI_TK_PLAN_META_SKIP	4631	{n} 步 · 已完成，跳过 {k} 个文件	{n} steps · done, {k} skipped	{n} 步 · 已完成，略過 {k} 個檔案
+AiTkPlanMetaUndone	IDS_AI_TK_PLAN_META_UNDONE	4632	{n} 步 · 已撤销	{n} steps · undone	{n} 步 · 已復原
+AiTkStepFind	IDS_AI_TK_STEP_FIND	4633	搜索{label}	Find {label}	搜尋{label}
+AiTkStepSel	IDS_AI_TK_STEP_SEL	4634	使用选中的文件	Use the selected files	使用選取的檔案
+AiTkStepsFound	IDS_AI_TK_STEPS_FOUND	4635	搜索了{label} · {n} 个	Found {label} · {n}	搜尋了{label} · {n} 個
+AiTkStepsSel	IDS_AI_TK_STEPS_SEL	4636	读取了选中的 {n} 个文件	Read the {n} selected files	讀取了選取的 {n} 個檔案
+AiTkFindDone	IDS_AI_TK_FIND_DONE	4637	{n} 个 · {where} · {t} 秒	{n} · {where} · {t} s	{n} 個 · {where} · {t} 秒
+AiTkTagReadDone	IDS_AI_TK_TAG_READ_DONE	4638	只读 · 已完成	Read-only · done	唯讀 · 已完成
+AiTkFindDesc	IDS_AI_TK_FIND_DESC	4639	{n} 个文件 · {where}	{n} files · {where}	{n} 個檔案 · {where}
+AiTkStepFolder	IDS_AI_TK_STEP_FOLDER	4640	新建文件夹	Create the folder	新增資料夾
+AiTkStepFoldersMonth	IDS_AI_TK_STEP_FOLDERS_MONTH	4641	新建月份文件夹	Create month folders	新增月份資料夾
+AiTkStepFoldersYear	IDS_AI_TK_STEP_FOLDERS_YEAR	4642	新建年份文件夹	Create year folders	新增年份資料夾
+AiTkStepFoldersType	IDS_AI_TK_STEP_FOLDERS_TYPE	4643	新建类型文件夹	Create folders by kind	新增類型資料夾
+AiTkFoldersDesc	IDS_AI_TK_FOLDERS_DESC	4644	{n} 个：{names}	{n}: {names}	{n} 個：{names}
+AiTkListSep	IDS_AI_TK_LIST_SEP	4645	、	, 	、
+AiTkStepMove	IDS_AI_TK_STEP_MOVE	4646	移动 {n} 个文件	Move {n} files	移動 {n} 個檔案
+AiTkMoveDescMonth	IDS_AI_TK_MOVE_DESC_MONTH	4647	按修改月份放进对应的文件夹	Into the folder of the month each was modified	按修改月份放進對應的資料夾
+AiTkMoveDescYear	IDS_AI_TK_MOVE_DESC_YEAR	4648	按修改年份放进对应的文件夹	Into the folder of the year each was modified	按修改年份放進對應的資料夾
+AiTkMoveDescType	IDS_AI_TK_MOVE_DESC_TYPE	4649	按类型放进对应的文件夹	Into a folder for each kind of file	按類型放進對應的資料夾
+AiTkMoveDescNone	IDS_AI_TK_MOVE_DESC_NONE	4650	放进 {folder}	Into {folder}	放進 {folder}
+AiTkMoveClash	IDS_AI_TK_MOVE_CLASH	4651	；{n} 个重名的会自动加序号	; {n} with a taken name get a number	；{n} 個重名的會自動加序號
+AiTkStepZip	IDS_AI_TK_STEP_ZIP	4652	打包	Zip	壓縮
+AiTkZipDesc	IDS_AI_TK_ZIP_DESC	4653	放在 {folder}，原文件保留	Saved in {folder}; the files stay	放在 {folder}，原檔案保留
+AiTkZipDescStay	IDS_AI_TK_ZIP_DESC_STAY	4654	放在 {folder}，文件留在原处	Saved in {folder}; the files stay where they are	放在 {folder}，檔案留在原處
+AiTkSumFolders	IDS_AI_TK_SUM_FOLDERS	4655	新建 {n} 个文件夹	{n} new folders	新增 {n} 個資料夾
+AiTkSumMove	IDS_AI_TK_SUM_MOVE	4656	移动 {n} 个文件	move {n} files	移動 {n} 個檔案
+AiTkSumZip	IDS_AI_TK_SUM_ZIP	4657	新建 {n} 个压缩包	{n} new zip	新增 {n} 個壓縮檔
+AiTkSafe	IDS_AI_TK_SAFE	4658	不删除 · 不覆盖	Nothing deleted · nothing overwritten	不刪除 · 不覆寫
+AiTkConfirmTitle	IDS_AI_TK_CONFIRM_TITLE	4659	执行这个任务？	Run this task?	執行這個任務？
+AiTkConfirmSub	IDS_AI_TK_CONFIRM_SUB	4660	{what}。不删除、不覆盖。	{what}. Nothing is deleted or overwritten.	{what}。不刪除、不覆寫。
+AiTkConfirmHint	IDS_AI_TK_CONFIRM_HINT	4661	整个任务算一步撤销；出问题会先停下来问你	The whole task undoes in one step; if anything goes wrong it stops and asks you	整個任務算一步復原；出問題會先停下來問你
+AiTkRun	IDS_AI_TK_RUN	4662	执行	Run	執行
+AiTkConfirmed	IDS_AI_TK_CONFIRMED	4663	你在 Pulse 里确认了：执行任务计划	You confirmed in Pulse: run the task plan	你在 Pulse 裡確認了：執行任務計畫
+AiTkDenied	IDS_AI_TK_DENIED	4664	你拒绝了这个任务，什么都没改	You declined the task; nothing changed	你拒絕了這個任務，什麼都沒改
+AiTkCreating	IDS_AI_TK_CREATING	4665	正在新建… {k} / {n}	Creating… {k} of {n}	正在新增… {k} / {n}
+AiTkFoldersDone	IDS_AI_TK_FOLDERS_DONE	4666	已新建 {n} 个	{n} created	已新增 {n} 個
+AiTkMoving	IDS_AI_TK_MOVING	4667	已移动 {k} / {n}	{k} of {n} moved	已移動 {k} / {n}
+AiTkMovePaused	IDS_AI_TK_MOVE_PAUSED	4668	已移动 {k} / {n} · 卡在 {name}	{k} of {n} moved · stuck on {name}	已移動 {k} / {n} · 卡在 {name}
+AiTkMoveDone	IDS_AI_TK_MOVE_DONE	4669	已移动 {n} 个	{n} moved	已移動 {n} 個
+AiTkTagSkipped	IDS_AI_TK_TAG_SKIPPED	4670	跳过 {n} 个	{n} skipped	略過 {n} 個
+AiTkZipping	IDS_AI_TK_ZIPPING	4671	正在打包… {p}%	Zipping… {p}%	正在壓縮… {p}%
+AiTkZipFailed	IDS_AI_TK_ZIP_FAILED	4672	没能打包：{reason}	Could not zip: {reason}	無法壓縮：{reason}
+AiTkZipNothing	IDS_AI_TK_ZIP_NOTHING	4673	没有可打包的文件	No files to zip	沒有可壓縮的檔案
+AiTkChipStep	IDS_AI_TK_CHIP_STEP	4674	第 {k}/{n} 步	Step {k}/{n}	第 {k}/{n} 步
+AiTkChipOf	IDS_AI_TK_CHIP_OF	4675	{k}/{n}	{k}/{n}	{k}/{n}
+AiTkChipZip	IDS_AI_TK_CHIP_ZIP	4676	打包	zipping	壓縮
+AiTkChipPaused	IDS_AI_TK_CHIP_PAUSED	4677	需要你决定	Needs you	需要你決定
+AiTkPausedLock	IDS_AI_TK_PAUSED_LOCK	4678	有 1 个文件正被占用，任务暂停了	A file is in use, so the task paused	有 1 個檔案正被使用，任務暫停了
+AiTkPausedFail	IDS_AI_TK_PAUSED_FAIL	4679	有 1 个文件没能移动，任务暂停了	A file could not be moved, so the task paused	有 1 個檔案無法移動，任務暫停了
+AiTkPausedSub	IDS_AI_TK_PAUSED_SUB	4680	前 {d} 步已完成，第 {k} 步移动了 {m} / {n} 个。	The first {d} steps are done; step {k} moved {m} of {n}.	前 {d} 步已完成，第 {k} 步移動了 {m} / {n} 個。
+AiTkPausedFolderSub	IDS_AI_TK_PAUSED_FOLDER_SUB	4681	文件夹没能新建，还没有移动任何文件。	A folder could not be created; no file has moved yet.	資料夾無法新增，還沒有移動任何檔案。
+AiTkInUse	IDS_AI_TK_IN_USE	4682	{app} 正在使用	Open in {app}	{app} 正在使用
+AiTkInUseAny	IDS_AI_TK_IN_USE_ANY	4683	另一个程序正在使用	Open in another program	另一個程式正在使用
+AiTkBtnSkip	IDS_AI_TK_BTN_SKIP	4684	跳过它继续	Skip it and go on	略過它繼續
+AiTkBtnUndo	IDS_AI_TK_BTN_UNDO	4685	撤销已做的	Undo what was done	復原已做的
+AiTkChoseRetry	IDS_AI_TK_CHOSE_RETRY	4686	你选择了重试 {name}	You chose to retry {name}	你選擇了重試 {name}
+AiTkChoseSkip	IDS_AI_TK_CHOSE_SKIP	4687	你选择了跳过 {name}	You chose to skip {name}	你選擇了略過 {name}
+AiTkChoseUndo	IDS_AI_TK_CHOSE_UNDO	4688	你选择了撤销已做的	You chose to undo what was done	你選擇了復原已做的
+AiTkAborted	IDS_AI_TK_ABORTED	4689	已撤销做过的部分，任务停止了	What was done is undone; the task stopped	已復原做過的部分，任務停止了
+AiTkDoneTitle	IDS_AI_TK_DONE_TITLE	4690	任务完成	Task done	任務完成
+AiTkDoneSub	IDS_AI_TK_DONE_SUB	4691	{folder} · 用时 {t} 秒	{folder} · took {t} s	{folder} · 用時 {t} 秒
+AiTkFiles	IDS_AI_TK_FILES	4692	文件	files	檔案
+AiTkLnFound	IDS_AI_TK_LN_FOUND	4693	找到 {n} 个{noun}	Found {n} {noun}	找到 {n} 個{noun}
+AiTkLnSel	IDS_AI_TK_LN_SEL	4694	使用选中的 {n} 个{noun}	Used {n} selected {noun}	使用選取的 {n} 個{noun}
+AiTkLnFolders	IDS_AI_TK_LN_FOLDERS	4695	新建 {n} 个文件夹	Created {n} folders	新增 {n} 個資料夾
+AiTkLnFoldersMonth	IDS_AI_TK_LN_FOLDERS_MONTH	4696	新建 {n} 个月份文件夹	Created {n} month folders	新增 {n} 個月份資料夾
+AiTkLnFoldersYear	IDS_AI_TK_LN_FOLDERS_YEAR	4697	新建 {n} 个年份文件夹	Created {n} year folders	新增 {n} 個年份資料夾
+AiTkLnFoldersType	IDS_AI_TK_LN_FOLDERS_TYPE	4698	新建 {n} 个类型文件夹	Created {n} folders by kind	新增 {n} 個類型資料夾
+AiTkLnMoved	IDS_AI_TK_LN_MOVED	4699	移动 {n} 个文件	Moved {n} files	移動 {n} 個檔案
+AiTkLnSkipped	IDS_AI_TK_LN_SKIPPED	4700	移动 {n} 个，跳过 {k} 个（{reason}）	Moved {n}, skipped {k} ({reason})	移動 {n} 個，略過 {k} 個（{reason}）
+AiTkReasonLock	IDS_AI_TK_REASON_LOCK	4701	正被占用	in use	正被使用
+AiTkReasonFail	IDS_AI_TK_REASON_FAIL	4702	无法移动	could not move	無法移動
+AiTkLnZip	IDS_AI_TK_LN_ZIP	4703	打包成 {name}（{size}）	Zipped into {name} ({size})	壓縮成 {name}（{size}）
+AiTkLnZipFail	IDS_AI_TK_LN_ZIP_FAIL	4704	没能打包 {name}（{reason}）	Could not make {name} ({reason})	無法壓縮 {name}（{reason}）
+AiTkUndoAll	IDS_AI_TK_UNDO_ALL	4705	撤销全部	Undo all	全部復原
+AiTkUndoLabel	IDS_AI_TK_UNDO_LABEL	4706	Pulse 助手任务：{label}	Pulse Assistant task: {label}	Pulse 助手任務：{label}
+AiTkUndoneSub	IDS_AI_TK_UNDONE_SUB	4707	{n} 个文件回到了原处，新建的文件夹和压缩包已移到回收站	{n} files are back where they were; the new folders and zip went to the Recycle Bin	{n} 個檔案回到了原處，新增的資料夾和壓縮檔已移到資源回收筒
+AiTkPeek	IDS_AI_TK_PEEK	4708	任务完成：{n} 个文件已放进 {folder}	Task done: {n} files filed into {folder}	任務完成：{n} 個檔案已放進 {folder}
+AiTkTooMany	IDS_AI_TK_TOO_MANY	4709	结果太多，请缩小条件	Too many results; narrow the conditions	結果太多，請縮小條件
+AiTkTypeDocs	IDS_AI_TK_TYPE_DOCS	4710	文档	Documents	文件
+AiTkTypeImages	IDS_AI_TK_TYPE_IMAGES	4711	图片	Pictures	圖片
+AiTkTypeVideos	IDS_AI_TK_TYPE_VIDEOS	4712	视频	Videos	影片
+AiTkTypeAudio	IDS_AI_TK_TYPE_AUDIO	4713	音频	Audio	音訊
+AiTkTypeArchives	IDS_AI_TK_TYPE_ARCHIVES	4714	压缩包	Archives	壓縮檔
+AiTkTypeCode	IDS_AI_TK_TYPE_CODE	4715	代码	Code	程式碼
+AiTkTypeOther	IDS_AI_TK_TYPE_OTHER	4716	其他	Other	其他
+AiTkUndoNote	IDS_AI_TK_UNDO_NOTE	4717	你撤销了这个任务	You undid this task	你復原了這個任務

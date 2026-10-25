@@ -50,6 +50,9 @@ struct AiChat {
     uint32_t confirm_id = 0;
     std::function<void(AppState&, bool)> on_confirm;
     std::function<void(AppState&)> on_extra;      // the confirmation's link button
+    // A paused task (flow C): its card and what its buttons do.
+    uint32_t pause_id = 0;
+    std::function<void(AppState&, ui::AiErrAct)> on_task_act;
     // The latest result card's undo and 在 Pulse 中查看.
     uint32_t result_id = 0;
     std::function<void(AppState&)> on_undo;

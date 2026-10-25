@@ -796,6 +796,15 @@ void AiChatErrRun(AppState& s, int index) {
     case ui::AiErrAct::CopyDetail:
         CopyText(s.hwnd, b.title + (b.detail.empty() ? L"" : L"\r\n" + b.detail));
         break;
+    case ui::AiErrAct::TaskRetry:
+    case ui::AiErrAct::TaskSkip:
+    case ui::AiErrAct::TaskUndo:
+        // A paused task's card (flow C); the handler clears itself.
+        if (b.id == c.pause_id && c.on_task_act) {
+            auto fn = c.on_task_act;
+            fn(s, act);
+        }
+        break;
     default:
         break;
     }
@@ -958,10 +967,17 @@ void AiChatStop(AppState& s) {
             b.done = true;
             b.title = Text(I::AiAsstStopped);
         }
+        if (b.kind == AiBlockKind::Error && !b.done && b.id == c.pause_id) {
+            b.done = true;
+            b.icon = ui::AiIcon::Stop;
+            b.title = Text(I::AiAsstStopped);
+        }
     }
     c.confirm_id = 0;
     c.on_confirm = nullptr;
     c.on_extra = nullptr;
+    c.pause_id = 0;
+    c.on_task_act = nullptr;
     AiBlockView& note = c.Add(AiBlockKind::Note, Now());
     note.text = Text(I::AiAsstStopped);
     Finish(s, false);
@@ -990,6 +1006,7 @@ void AiChatActivate(AppState& s, ui::AiPanelPart part, int block) {
         break;
     case P::PlanToggle:
     case P::RenameToggle:
+    case P::TaskToggle:
         b.collapsed = !b.collapsed;
         break;
     case P::RenameMore:

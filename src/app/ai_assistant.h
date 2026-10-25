@@ -6,6 +6,7 @@
 
 #include "../ui/ai_panel_view.h"
 #include <windows.h>
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -85,5 +86,9 @@ bool AiAssistantEscape(AppState& s);
 HBRUSH AiAssistantCtlColor(AppState& s, HDC hdc, HWND edit);
 void AiAssistantDpiChanged(AppState& s);
 void AiAssistantDestroy(AppState& s);
+// The assistant's multi-step task submitted this operation: when it fails the
+// task pauses and asks in the panel, so the lock prompt and failure window
+// stay closed.
+bool AiAssistantOwnsTask(uint64_t task_id);
 
 } // namespace pulse

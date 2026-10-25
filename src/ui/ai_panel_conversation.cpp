@@ -809,7 +809,8 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             const float title_h = (std::max)(20.0f * s, wrapped_h(b.title, formats_.body_b, text_w, 20.0f * s));
             const float sub_h = b.sub.empty() ? 0.0f : 2.0f * s + wrapped_h(b.sub, formats_.caption, text_w, 18.0f * s);
             const float top_h = 12.0f * s + (std::max)(30.0f * s, title_h + sub_h) + 4.0f * s;
-            const float hint_h = b.hint.empty() ? 0.0f : 6.0f * s + 18.0f * s;
+            const float hint_w = ir - 12.0f * s - (tx + 19.0f * s);
+            const float hint_h = b.hint.empty() ? 0.0f : 6.0f * s + wrapped_h(b.hint, formats_.caption, hint_w, 18.0f * s);
             // .lktip: max-height 0 → 40 and opacity while the link is hovered
             // (.3 s / .25 s); padding 0 12 10 52, margin-top -4.
             const float tip_k = b.extra_tip.empty() ? 0.0f
@@ -829,9 +830,9 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                 float yy = r.top + 1.0f * s + top_h;
                 if (!b.hint.empty()) {
                     yy += 6.0f * s;
-                    c.Icon(AiIcon::Eye, tx, yy + 2.5f * s, 13.0f * s, pal.text3);
-                    line(b.hint, formats_.caption, tx + 19.0f * s, yy, ir - 12.0f * s, 18.0f * s, pal.text3);
-                    yy += 18.0f * s;
+                    c.Icon(b.hint_icon, tx, yy + 2.5f * s, 13.0f * s, pal.text3);
+                    wrapped(b.hint, formats_.caption, tx + 19.0f * s, yy, hint_w, 18.0f * s, pal.text3);
+                    yy += hint_h - 6.0f * s;
                 }
                 yy += 12.0f * s;
                 float bx = ir - 12.0f * s;
@@ -897,8 +898,13 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                 }
                 tags_h = 10.0f * s + ty2 + 22.0f * s;
             }
+            // .r-ln: margin 10 0 0 40, gap 4, 12.5 text2 lh 18, icon 13 (ok / amber).
+            const float lines_h = b.done || b.lines.empty()
+                                      ? 0.0f
+                                      : 10.0f * s + 18.0f * s * static_cast<float>(b.lines.size()) +
+                                            4.0f * s * static_cast<float>(b.lines.size() - 1);
             const bool buttons = !b.done && (!b.deny.empty() || !b.accept.empty());
-            const float h = 2.0f * s + 24.0f * s + top_h + tags_h + (buttons ? 44.0f * s : 0.0f);
+            const float h = 2.0f * s + 24.0f * s + top_h + lines_h + tags_h + (buttons ? 44.0f * s : 0.0f);
             const D2D1_RECT_F r = D2D1::RectF(x0, top + y, x1, top + y + h);
             if (visible(r.top, r.bottom)) {
                 card(r, pal.line);
@@ -910,6 +916,22 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                 wrapped(b.title, formats_.body_b, tx, iy, text_w, 20.0f * s, pal.text);
                 if (!b.sub.empty()) wrapped(b.sub, formats_.caption, tx, iy + title_h + 2.0f * s, text_w, 18.0f * s, pal.text2);
                 float yy = iy + top_h;
+                if (lines_h > 0.0f) {
+                    yy += 10.0f * s;
+                    for (size_t i = 0; i < b.lines.size(); ++i) {
+                        const AiResultLine& ln = b.lines[i];
+                        c.Icon(ln.warn ? AiIcon::Warn : AiIcon::Check, tx, yy + 2.5f * s, 13.0f * s, ln.warn ? pal.amber : pal.ok);
+                        float lx = tx + 20.0f * s;
+                        const float w1 = c.Measure(ln.before, formats_.small125);
+                        line(ln.before, formats_.small125, lx, yy, ir, 18.0f * s, pal.text2);
+                        lx += w1;
+                        const float w2 = c.Measure(ln.bold, formats_.small125b);
+                        line(ln.bold, formats_.small125b, lx, yy, ir, 18.0f * s, pal.text);
+                        lx += w2;
+                        line(ln.after, formats_.small125, lx, yy, ir, 18.0f * s, pal.text2);
+                        yy += 18.0f * s + (i + 1 < b.lines.size() ? 4.0f * s : 0.0f);
+                    }
+                }
                 if (!tags.empty()) {
                     yy += 10.0f * s;
                     for (size_t i = 0; i < tags.size(); ++i) {
@@ -927,7 +949,15 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                     yy += 12.0f * s;
                     // Buttons flow left to right from the text column.
                     const float uw = 28.0f * s + 20.0f * s + c.Measure(b.deny, formats_.body13);
-                    float bx = tx + uw;
+                    // Too tight for both from the text column: start them
+                    // further left (down to the card's padding) before
+                    // shortening the second one.
+                    float bx0 = tx;
+                    if (!b.accept.empty()) {
+                        const float need = uw + 8.0f * s + 28.0f * s + 20.0f * s + c.Measure(b.accept, formats_.body13);
+                        if (need > text_w) bx0 = (std::max)(il + 12.0f * s, tx + text_w - need);
+                    }
+                    float bx = bx0 + uw;
                     button(bx, yy, b.deny, false, AiIcon::Undo, true, AiPanelPart::ResultUndo, index);
                     if (!b.accept.empty()) {
                         const float left = bx + 8.0f * s;
@@ -986,6 +1016,23 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             // .e-i 30 tile (radius 8, icon 17); .e-t 13.5/600 lh 20; .e-s 12 lh 18
             // margin-top 2. .e-d / .e-h / .e-b margin-left 40.
             place(0.0f);
+            if (b.done) {
+                // .err.done (a paused task decided): padding 9 12, .e-i 24 on
+                // hover (icon 14 text2), .e-t 13 regular text2 lh 24.
+                const float h = 2.0f * s + 42.0f * s;
+                const D2D1_RECT_F r = D2D1::RectF(x0, top + y, x1, top + y + h);
+                if (visible(r.top, r.bottom)) {
+                    card(r, pal.line);
+                    const float il = x0 + 1.0f * s + 12.0f * s;
+                    const float iy = r.top + 1.0f * s + 9.0f * s;
+                    c.Fill(D2D1::RectF(il, iy, il + 24.0f * s, iy + 24.0f * s), 8.0f * s, pal.hover);
+                    c.Icon(b.icon, il + 5.0f * s, iy + 5.0f * s, 14.0f * s, pal.text2);
+                    line(b.title, formats_.body13, il + 34.0f * s, iy, x1 - 13.0f * s, 24.0f * s, pal.text2);
+                }
+                y += h;
+                pending = 12.0f * s;
+                break;
+            }
             const bool live = !b.gone_ms;
             const float il = x0 + 1.0f * s + 12.0f * s;
             const float ir = x1 - 1.0f * s - 12.0f * s;
@@ -1004,6 +1051,9 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             const float hint_w = text_w - 19.0f * s;
             const float hint_h = b.hint.empty() ? 0.0f : (std::max)(18.0f * s, wrapped_h(b.hint, formats_.caption, hint_w, 18.0f * s));
             const float hint_box = b.hint.empty() ? 0.0f : 8.0f * s + hint_h;
+            // .e-f: the file a paused task is stuck on; margin 8 0 0 40,
+            // padding 6 10, radius 8, chrome, border line2, 12.
+            const float file_box = b.file.empty() ? 0.0f : 8.0f * s + 30.0f * s;
             // .e-b: gap 8; buttons wrap when the panel is narrow.
             struct BtnPos { float x, y, w; };
             std::vector<BtnPos> btns;
@@ -1016,15 +1066,18 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                 bx += bw + 8.0f * s;
             }
             const float btn_h = btns.empty() ? 0.0f : 12.0f * s + by + 32.0f * s;
-            const float h = 2.0f * s + 24.0f * s + top_h + detail_box + hint_box + btn_h;
+            const float h = 2.0f * s + 24.0f * s + top_h + detail_box + hint_box + file_box + btn_h;
             const D2D1_RECT_F r = D2D1::RectF(x0, top + y, x1, top + y + h);
-            if (visible(r.top, r.bottom)) {
+            if (visible(r.top - 4.0f * s, r.bottom + 4.0f * s)) {
                 const D2D1_COLOR_F ink = b.tone == AiErrTone::Err ? pal.bad : b.tone == AiErrTone::Warn ? pal.amber : pal.accent;
                 const D2D1_COLOR_F tile = b.tone == AiErrTone::Err    ? pal.bad_bg
                                           : b.tone == AiErrTone::Warn ? pal.amber_bg
                                                                       : pal.accent_soft;
-                // Only the red tone takes a tinted border.
-                card(r, b.tone == AiErrTone::Err ? pal.bad_line : pal.line);
+                // Only the red tone takes a tinted border; a paused task (a
+                // file row) asks like a confirmation: amber line + 3 px ring.
+                const bool pause = !b.file.empty() && live;
+                if (pause) c.Fill(Inflate(r, 3.0f * s), 15.0f * s, Alpha(pal.amber, 0.12f));
+                card(r, b.tone == AiErrTone::Err ? pal.bad_line : pause ? pal.amber_line : pal.line);
                 const float iy = r.top + 1.0f * s + 12.0f * s;
                 const D2D1_RECT_F tr = D2D1::RectF(il, iy, il + 30.0f * s, iy + 30.0f * s);
                 c.Fill(tr, 8.0f * s, tile);
@@ -1048,6 +1101,28 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                     c.Icon(AiIcon::Warn, tx, yy + 2.5f * s, 13.0f * s, pal.text3);
                     wrapped(b.hint, formats_.caption, tx + 19.0f * s, yy, hint_w, 18.0f * s, pal.text3);
                     yy += hint_h;
+                }
+                if (!b.file.empty()) {
+                    yy += 8.0f * s;
+                    const D2D1_RECT_F fr = D2D1::RectF(tx, yy, ir, yy + 30.0f * s);
+                    c.Fill(fr, 8.0f * s, Mix(pal.pane, pal.hover, 0.45f));
+                    c.Stroke(fr, 8.0f * s, pal.line2);
+                    float note_l = fr.right - 10.0f * s;
+                    if (!b.file_note.empty()) {
+                        // The name comes first: the note gets what is left,
+                        // but never less than 40% of the row.
+                        const float nw = c.Measure(b.file_note, formats_.caption) + 16.0f * s;
+                        const float name_w = c.Measure(b.file, formats_.caption_b);
+                        const float row_l = fr.left + 34.0f * s, row_r = fr.right - 10.0f * s;
+                        const float room = row_r - row_l - 12.0f * s;
+                        const float note_w = (std::min)(nw, (std::max)(room - name_w, room * 0.4f));
+                        note_l = row_r - note_w;
+                        c.Icon(AiIcon::Lock, note_l, yy + 9.0f * s, 12.0f * s, pal.text3);
+                        line(b.file_note, formats_.caption, note_l + 16.0f * s, yy, fr.right - 10.0f * s, 30.0f * s, pal.text3);
+                    }
+                    c.Icon(AiIcon::Document, fr.left + 10.0f * s, yy + 7.0f * s, 16.0f * s, pal.text2);
+                    line(b.file, formats_.caption_b, fr.left + 34.0f * s, yy, note_l - 8.0f * s, 30.0f * s, pal.text);
+                    yy = fr.bottom;
                 }
                 if (!btns.empty()) {
                     yy += 12.0f * s;
@@ -1542,6 +1617,171 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                 }
             }
             hit(hr, AiPanelPart::RenameToggle, index);
+            y += h;
+            pending = 12.0f * s;
+            break;
+        }
+        case AiBlockKind::Task: {
+            // .card .plan: .card-h 40 (tasks icon), .card-b border-top line2.
+            // .ps padding 9 12, gap 10: .pn 24 circle (600 12), .pt 13/600
+            // lh 18 with .arg (12, hover, r 5, 0 6) and .tg (10.5/600 lh 17,
+            // r 8, 0 6), .pd 12 text2 lh 18 margin-top 2, .pg 4 bar margin-top
+            // 6 (running / paused). .ps+.ps::before: 2 px line at x 23, -9..9.
+            // .p-sum: border-top line2, padding 9 12 10, 12 text2, items
+            // (icon 13 accent, gap 5) wrap with gap 4 12; .sf (ok) on its own line.
+            place(0.0f);
+            const float il = x0 + 1.0f * s, ir = x1 - 1.0f * s;
+            const float pl = il + 12.0f * s, pr = ir - 12.0f * s;
+            const float mx = pl + 24.0f * s + 10.0f * s;   // .pm
+            const float mw = (std::max)(1.0f, pr - mx);
+            struct StepBox { float h, desc_h; bool bar; };
+            std::vector<StepBox> boxes;
+            float steps_h = 0.0f;
+            for (const AiTaskStepView& st : b.task) {
+                StepBox sb{};
+                sb.desc_h = st.desc.empty() ? 0.0f : 2.0f * s + wrapped_h(st.desc, formats_.caption, mw, 18.0f * s);
+                sb.bar = st.state == AiTaskState::Running || st.state == AiTaskState::Paused;
+                sb.h = 9.0f * s + (std::max)(24.0f * s, 18.0f * s + sb.desc_h + (sb.bar ? 10.0f * s : 0.0f)) + 9.0f * s;
+                boxes.push_back(sb);
+                steps_h += sb.h;
+            }
+            // Summary items, flex-wrap.
+            struct SumPos { float x, y, w; };
+            std::vector<SumPos> sums;
+            float sum_h = 0.0f;
+            if (!b.sums.empty() || !b.safe.empty()) {
+                float sx = pl, sy = 0.0f;
+                for (const AiTaskSumView& it : b.sums) {
+                    const float w = 13.0f * s + 5.0f * s + c.Measure(it.before, formats_.caption) +
+                                    c.Measure(it.bold, formats_.caption_b) + c.Measure(it.after, formats_.caption);
+                    if (sx > pl && sx + w > pr) { sx = pl; sy += 22.0f * s; }
+                    sums.push_back({sx, sy, (std::min)(w, pr - pl)});
+                    sx += w + 12.0f * s;
+                }
+                float lines_h = sums.empty() ? 0.0f : sy + 18.0f * s;
+                if (!b.safe.empty()) lines_h += (sums.empty() ? 0.0f : 4.0f * s) + 18.0f * s;
+                sum_h = 2.0f * s + 1.0f * s + 9.0f * s + lines_h + 10.0f * s;
+            }
+            float h = 2.0f * s + 40.0f * s;
+            if (!b.collapsed) h += 1.0f * s + 6.0f * s + steps_h + sum_h;
+            const D2D1_RECT_F r = D2D1::RectF(x0, top + y, x1, top + y + h);
+            const float col_k = TweenTo(key + 1, b.collapsed ? 1.0f : 0.0f, 250, now_ms);
+            const D2D1_RECT_F hr = D2D1::RectF(il, r.top + 1.0f, ir, r.top + 1.0f + 40.0f * s);
+            if (visible(r.top, r.bottom)) {
+                card(r, pal.line);
+                if (hot(AiPanelPart::TaskToggle, index)) {
+                    dc->PushAxisAlignedClip(hr, D2D1_ANTIALIAS_MODE_ALIASED);
+                    c.Fill(Inflate(r, -1.0f), 11.0f * s, Alpha(pal.hover, 0.6f));
+                    dc->PopAxisAlignedClip();
+                }
+                const float cy = hr.top + 20.0f * s;
+                c.Icon(AiIcon::Tasks, hr.left + 12.0f * s, cy - 8.0f * s, 16.0f * s, pal.accent);
+                float hx = hr.left + 36.0f * s;
+                const float tw = c.Measure(b.label, formats_.body13b);
+                line(b.label, formats_.body13b, hx, hr.top, hx + tw + 1.0f, 40.0f * s, pal.text);
+                hx += tw + 8.0f * s;
+                line(b.meta, formats_.caption, hx, hr.top, hr.right - 33.0f * s, 40.0f * s, pal.text3);
+                chevron(hr.right - 25.0f * s, cy, -90.0f * col_k, pal.text3, AiIcon::ChevronDown);
+                if (!b.collapsed) {
+                    float yy = hr.bottom;
+                    c.Fill(D2D1::RectF(il, yy, ir, yy + 1.0f * s), 0.0f, pal.line2);
+                    yy += 1.0f * s + 6.0f * s;
+                    const D2D1_COLOR_F on_state = pal.on_accent;
+                    for (size_t i = 0; i < b.task.size(); ++i) {
+                        const AiTaskStepView& st = b.task[i];
+                        const StepBox& sb = boxes[i];
+                        const D2D1_RECT_F rowr = D2D1::RectF(il, yy, ir, yy + sb.h);
+                        // State colours fade over .3 s (background / circle).
+                        const float k = st.state_ms && motion_on
+                                            ? std::clamp(static_cast<float>(now_ms - st.state_ms) / 300.0f, 0.0f, 1.0f)
+                                            : 1.0f;
+                        if (k < 1.0f) conv_anim_ = true;
+                        if (st.state == AiTaskState::Running) c.Fill(rowr, 0.0f, Alpha(pal.accent_tint, k));
+                        else if (st.state == AiTaskState::Paused) c.Fill(rowr, 0.0f, Alpha(pal.amber_bg, k));
+                        if (i > 0)
+                            c.Fill(D2D1::RectF(pl + 11.0f * s, yy - 9.0f * s, pl + 13.0f * s, yy + 9.0f * s), 0.0f, pal.line);
+                        const float py = yy + 9.0f * s;
+                        const D2D1_POINT_2F mid = D2D1::Point2F(pl + 12.0f * s, py + 12.0f * s);
+                        D2D1_COLOR_F circle = pal.hover, ink = pal.text2;
+                        if (st.state == AiTaskState::Done) { circle = pal.ok; ink = on_state; }
+                        else if (st.state == AiTaskState::Running) { circle = pal.accent; ink = on_state; }
+                        else if (st.state == AiTaskState::Paused) { circle = pal.amber; ink = on_state; }
+                        if (k < 1.0f) {
+                            circle = Mix(pal.hover, circle, k);
+                            ink = Mix(pal.text2, ink, k);
+                        }
+                        c.dc->FillEllipse(D2D1::Ellipse(mid, 12.0f * s, 12.0f * s), c.B(circle));
+                        if (st.state == AiTaskState::Done) {
+                            c.Icon(AiIcon::Check, mid.x - 6.5f * s, mid.y - 6.5f * s, 13.0f * s, ink);
+                        } else {
+                            TextOptions o;
+                            o.align = DWRITE_TEXT_ALIGNMENT_CENTER;
+                            o.ellipsis = false;
+                            const std::wstring n = st.state == AiTaskState::Paused ? std::wstring(L"!") : std::to_wstring(i + 1);
+                            c.Text(n, formats_.caption_b, D2D1::RectF(mid.x - 12.0f * s, mid.y - 9.0f * s, mid.x + 12.0f * s, mid.y + 9.0f * s), ink, o);
+                        }
+                        // .pt: title, then the arg pill and the tag on the same line.
+                        float tx2 = mx;
+                        const float ttw = (std::min)(c.Measure(st.title, formats_.body13b), mw);
+                        line(st.title, formats_.body13b, tx2, py, mx + mw, 18.0f * s, pal.text);
+                        tx2 += ttw + 6.0f * s;
+                        if (!st.arg.empty() && tx2 + 30.0f * s < pr) {
+                            const float aw = (std::min)(c.Measure(st.arg, formats_.caption) + 12.0f * s, pr - tx2);
+                            const D2D1_RECT_F ar = D2D1::RectF(tx2, py, tx2 + aw, py + 18.0f * s);
+                            c.Fill(ar, 5.0f * s, pal.hover);
+                            line(st.arg, formats_.caption, ar.left + 6.0f * s, py, ar.right - 4.0f * s, 18.0f * s, pal.text2);
+                            tx2 += aw + 6.0f * s;
+                        }
+                        if (!st.tag.empty() && tx2 + 30.0f * s < pr) {
+                            const float gw = (std::min)(c.Measure(st.tag, formats_.badge) + 12.0f * s, pr - tx2);
+                            const D2D1_RECT_F gr = D2D1::RectF(tx2, py + 0.5f * s, tx2 + gw, py + 17.5f * s);
+                            const bool ok_tag = !st.tag_warn;
+                            c.Fill(gr, 8.0f * s, ok_tag ? pal.accent_soft : pal.amber_bg);
+                            line(st.tag, formats_.badge, gr.left + 6.0f * s, gr.top, gr.right - 4.0f * s, 17.0f * s,
+                                 ok_tag ? pal.ok : pal.amber);
+                        }
+                        float dy = py + 18.0f * s;
+                        if (!st.desc.empty()) {
+                            wrapped(st.desc, formats_.caption, mx, dy + 2.0f * s, mw, 18.0f * s, pal.text2);
+                            dy += sb.desc_h;
+                        }
+                        if (sb.bar) {
+                            const D2D1_RECT_F br2 = D2D1::RectF(mx, dy + 6.0f * s, mx + mw, dy + 10.0f * s);
+                            c.Fill(br2, 2.0f * s, pal.line);
+                            const float p = std::clamp(TweenTo(key + 8 + static_cast<int>(i), st.progress, 250, now_ms), 0.0f, 1.0f);
+                            if (p > 0.0f)
+                                c.Fill(D2D1::RectF(br2.left, br2.top, br2.left + (br2.right - br2.left) * p, br2.bottom), 2.0f * s,
+                                       st.state == AiTaskState::Paused ? pal.amber : pal.accent);
+                        }
+                        yy += sb.h;
+                    }
+                    if (sum_h > 0.0f) {
+                        yy += 2.0f * s;
+                        c.Fill(D2D1::RectF(il, yy, ir, yy + 1.0f * s), 0.0f, pal.line2);
+                        yy += 1.0f * s + 9.0f * s;
+                        for (size_t i = 0; i < sums.size(); ++i) {
+                            const AiTaskSumView& it = b.sums[i];
+                            const float sy = yy + sums[i].y;
+                            const float right = sums[i].x + sums[i].w;
+                            c.Icon(it.icon, sums[i].x, sy + 2.5f * s, 13.0f * s, pal.accent);
+                            float sx = sums[i].x + 18.0f * s;
+                            const float w1 = c.Measure(it.before, formats_.caption);
+                            line(it.before, formats_.caption, sx, sy, right, 18.0f * s, pal.text2);
+                            sx += w1;
+                            const float w2 = c.Measure(it.bold, formats_.caption_b);
+                            line(it.bold, formats_.caption_b, sx, sy, right, 18.0f * s, pal.text);
+                            sx += w2;
+                            line(it.after, formats_.caption, sx, sy, right + 1.0f, 18.0f * s, pal.text2);
+                        }
+                        if (!b.safe.empty()) {
+                            const float sy = yy + (sums.empty() ? 0.0f : sums.back().y + 18.0f * s + 4.0f * s);
+                            c.Icon(AiIcon::Shield, pl, sy + 2.5f * s, 13.0f * s, pal.ok);
+                            line(b.safe, formats_.caption, pl + 17.0f * s, sy, pr, 18.0f * s, pal.ok);
+                        }
+                    }
+                }
+            }
+            hit(hr, AiPanelPart::TaskToggle, index);
             y += h;
             pending = 12.0f * s;
             break;

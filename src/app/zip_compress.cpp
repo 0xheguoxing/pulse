@@ -175,7 +175,8 @@ std::wstring ZipPathFor(const std::vector<std::wstring>& sources, const std::wst
 
 ZipCompressResult CompressToZip(const std::vector<std::wstring>& sources, const std::wstring& zip_path,
                                 const std::atomic<bool>* cancel,
-                                const std::function<void(uint64_t, uint64_t)>& progress) {
+                                const std::function<void(uint64_t, uint64_t)>& progress,
+                                const std::vector<std::wstring>* names) {
     ZipCompressResult result;
     const WriterApi& api = Api();
     if (!api.ready) {
@@ -184,7 +185,8 @@ ZipCompressResult CompressToZip(const std::vector<std::wstring>& sources, const 
     }
     std::vector<Item> items;
     uint64_t total = 0;
-    for (const auto& source : sources) {
+    for (size_t si = 0; si < sources.size(); ++si) {
+        const std::wstring& source = sources[si];
         WIN32_FILE_ATTRIBUTE_DATA data{};
         if (!GetFileAttributesExW(LongPath(source).c_str(), GetFileExInfoStandard, &data)) {
             result.error = Leaf(source) + L": " + SystemMessage(GetLastError());
@@ -192,7 +194,8 @@ ZipCompressResult CompressToZip(const std::vector<std::wstring>& sources, const 
         }
         std::wstring path = source;
         while (path.size() > 3 && (path.back() == L'\\' || path.back() == L'/')) path.pop_back();
-        Collect(path, Leaf(path), data, items, total, cancel);
+        const bool named = names && si < names->size() && !(*names)[si].empty();
+        Collect(path, named ? (*names)[si] : Leaf(path), data, items, total, cancel);
     }
     if (cancel && cancel->load()) {
         result.cancelled = true;

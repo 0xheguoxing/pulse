@@ -1051,6 +1051,16 @@ void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog) {
         }
     }
 
+    // A failure inside the assistant's task: the panel asks instead.
+    if (!status.active && status.phase == ops::OpPhase::Failed && status.task_id != 0 &&
+        status.task_id != s.lockPromptTaskId && AiAssistantOwnsTask(status.task_id)) {
+        s.lockPromptTaskId = status.task_id;
+        s.operationDismissedTaskId = status.task_id;
+        s.operationPinnedByUser = false;
+        HideOperationWindow(s);
+        return;
+    }
+
     // Failed on an item other processes hold: name them and offer the retry
     // instead of the plain failure window (the token guards modal re-entry).
     const bool locked_failure = !status.active && status.phase == ops::OpPhase::Failed

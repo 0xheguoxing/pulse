@@ -68,6 +68,7 @@ enum class AiPanelPart : uint8_t {
     RenameToggle,      // the card's header (folds the card)
     RenameMore,        // 还有 4 个 / 收起
     ConfirmExtra,      // 在批量重命名中调整… on the confirmation
+    TaskToggle,        // 任务计划 card header (flow C)
     // 管理连接 card (the model menu unfolded).
     ConnCard,       // the card's background (swallows the click)
     ConnBack,
@@ -124,6 +125,7 @@ enum class AiBlockKind : uint8_t {
     Query,      // 搜索条件 card: condition chips, count, where the results are
     Follow,     // 接着做: chips that put a next step into the composer
     Rename,     // 重命名方案 card: rule, old → new rows, checks, foot
+    Task,       // 任务计划 card: numbered steps (they are the progress), summary
 };
 
 // Error card tone: Err needs the user (red, red border), Warn is temporary
@@ -131,7 +133,9 @@ enum class AiBlockKind : uint8_t {
 enum class AiErrTone : uint8_t { Err, Warn, Accent };
 
 // What an error card button does (app/ai_assistant_chat.cpp).
-enum class AiErrAct : uint8_t { Retry, ManageConn, TopUp, SwitchModel, CopyDetail, Connect };
+enum class AiErrAct : uint8_t { Retry, ManageConn, TopUp, SwitchModel, CopyDetail, Connect,
+                               // A paused task (flow C): 重试 / 跳过它继续 / 撤销已做的.
+                               TaskRetry, TaskSkip, TaskUndo };
 
 struct AiErrButton {
     AiErrAct act = AiErrAct::Retry;
@@ -207,6 +211,32 @@ struct AiCheckView {
     bool warn = false;
 };
 
+// 任务计划 (flow C): one numbered step. The card is the task's progress.
+enum class AiTaskState : uint8_t { Todo, Running, Done, Paused };
+
+struct AiTaskStepView {
+    std::wstring title;               // 新建月份文件夹
+    std::wstring arg;                 // grey pill: 文档 › 发票
+    std::wstring tag;                 // 只读 · 已完成 / 跳过 1 个
+    bool tag_warn = false;            // amber tag (else ok on accent-soft)
+    std::wstring desc;                // 6 个：2026-01、02…
+    AiTaskState state = AiTaskState::Todo;
+    float progress = 0.0f;            // the bar, while running or paused
+    uint64_t state_ms = 0;            // the circle's colour change
+};
+
+// The summary line under the steps: icon, then before **bold** after.
+struct AiTaskSumView {
+    AiIcon icon = AiIcon::FolderPlus;
+    std::wstring before, bold, after;
+};
+
+// 任务完成: one line per step (warn = amber, a step that skipped items).
+struct AiResultLine {
+    bool warn = false;
+    std::wstring before, bold, after;
+};
+
 struct AiBlockView {
     AiBlockKind kind = AiBlockKind::Text;
     uint32_t id = 0;                  // stable while the block lives (motion)
@@ -253,6 +283,16 @@ struct AiBlockView {
     std::vector<AiRuleToken> rule;
     std::vector<AiRenameRow> rows;
     std::vector<AiCheckView> checks;
+    // Task: label 任务计划, meta 4 步 · 第 1 步已完成, the steps, the summary
+    // and `safe` (不删除 · 不覆盖, shield in ok). Result: `lines` under the
+    // title. Error (a paused task): `file` + `file_note` (.e-f row); `done`
+    // folds it to the chosen line. Confirm: the hint's icon.
+    std::vector<AiTaskStepView> task;
+    std::vector<AiTaskSumView> sums;
+    std::wstring safe;
+    std::vector<AiResultLine> lines;
+    std::wstring file, file_note;
+    AiIcon hint_icon = AiIcon::Eye;
 };
 
 // The status bar chip (left end): "✦ AI" plus what the assistant is doing.
