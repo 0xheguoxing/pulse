@@ -1035,6 +1035,8 @@ static BOOL HandleInstanceCopyData(AppState& s, COPYDATASTRUCT* cds) {
 // key is swallowed, with the character message it produces. Recorders see
 // the raw keys.
 LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+// WM_MOUSEACTIVATE on the tab strip: the next caption press only brings the window forward.
+static ULONGLONG g_caption_activate_tick = 0;
 static int g_shortcut_remap_depth = 0;
 static bool g_shortcut_eat_char = false;
 
@@ -1735,6 +1737,26 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         // and the filter box alike, as a press in the client area does.
         if (s->addressEditing) HideAddressEditor(*s, false);
         if (s->filterEditing) HideFilterEditor(*s, true);
+        if (wParam == HTCAPTION) {
+            // 点空白取消选择 on the tab strip: the system move loop returns on
+            // release; a click that neither moved the window nor the pointer
+            // (and did not just bring the window forward) clears the selection.
+            const bool activates = g_caption_activate_tick != 0 && GetTickCount64() - g_caption_activate_tick < 500;
+            g_caption_activate_tick = 0;
+            RECT before{};
+            GetWindowRect(hwnd, &before);
+            POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            const LRESULT result = DefWindowProcW(hwnd, msg, wParam, lParam);
+            if (activates || !IsWindow(hwnd)) return result;
+            RECT after{};
+            POINT now{};
+            GetWindowRect(hwnd, &after);
+            GetCursorPos(&now);
+            if (EqualRect(&before, &after) && std::abs(now.x - at.x) < GetSystemMetrics(SM_CXDRAG) &&
+                std::abs(now.y - at.y) < GetSystemMetrics(SM_CYDRAG) && ScreenToClient(hwnd, &at))
+                BlankClickDeselect(*s, at);
+            return result;
+        }
         if (wParam == HTMINBUTTON) {
             ShowWindow(hwnd, SW_MINIMIZE);
             return 0;
@@ -1749,6 +1771,14 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         break;
     }
+
+    case WM_NCLBUTTONDBLCLK:
+        // The tab strip's double click maximizes: undo its first click's deselect.
+        if (s && wParam == HTCAPTION) {
+            POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (ScreenToClient(hwnd, &at)) RestoreBlankDeselect(*s, at);
+        }
+        break;
 
     case WM_CLOSE:
         if (!s) break;
@@ -1836,6 +1866,9 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         // Single click opens: the click that brings the window forward only selects.
         if (s && LOWORD(lParam) == HTCLIENT && GetForegroundWindow() != GetAncestor(hwnd, GA_ROOT))
             s->activateClickTick = GetTickCount64();
+        // Likewise on the tab strip: that click does not clear the selection.
+        if (s && LOWORD(lParam) == HTCAPTION && GetForegroundWindow() != GetAncestor(hwnd, GA_ROOT))
+            g_caption_activate_tick = GetTickCount64();
         break;
 
     case WM_ACTIVATE:

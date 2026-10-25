@@ -74,6 +74,7 @@
 #include <cwctype>
 #include <thread>
 #include <unordered_set>
+#include <utility>
 
 using namespace pulse;
 
@@ -1814,6 +1815,86 @@ void PressPaneSize(AppState& s, HWND hwnd, const ui::HitTestResult& hit, int mx)
 }
 } // namespace
 
+namespace {
+// 点空白取消选择. A press on blank chrome arms it; the release clears the
+// selection only when the pointer has not moved (a drag there moves the
+// window or takes a pane out instead).
+struct BlankDeselect {
+    bool armed = false;
+    bool maximize = false;   // a double click there maximizes
+    POINT start{};
+};
+BlankDeselect g_blank_deselect;
+
+// What the last blank click cleared, for the double click that maximizes.
+struct BlankDeselectUndo {
+    app::Tab* tab = nullptr;   // compared with the active tab, never read on its own
+    app::Pane* pane = nullptr;
+    uint64_t generation = 0;
+    DWORD tick = 0;
+    POINT point{};
+    bool maximize = false;
+    std::unordered_set<int> selected;
+    bool all = false;
+    int index = -1;
+};
+BlankDeselectUndo g_blank_undo;
+
+bool BlankDeselectRegion(AppState& s, const ui::HitTestResult& hit, int mx, int my) {
+    if (BlankChromeAt(s, hit, mx, my) != BlankChrome::None) return true;
+    // The pane title strip in a split too (a drag there takes the pane out).
+    return hit.region == ui::HitTestResult::PaneHeader && hit.index == 0 && hit.pane_index >= 0;
+}
+
+void ArmBlankDeselect(AppState& s, const ui::HitTestResult& hit, int mx, int my, bool activates) {
+    g_blank_deselect = BlankDeselect{};
+    if (activates || !BlankDeselectRegion(s, hit, mx, my)) return;
+    g_blank_deselect.armed = true;
+    g_blank_deselect.maximize = BlankChromeAt(s, hit, mx, my) == BlankChrome::DragMaximize;
+    g_blank_deselect.start = POINT{mx, my};
+}
+
+bool BlankDeselectMoved(POINT a, int mx, int my) {
+    return std::abs(mx - a.x) >= GetSystemMetrics(SM_CXDRAG) || std::abs(my - a.y) >= GetSystemMetrics(SM_CYDRAG);
+}
+} // namespace
+
+bool BlankClickDeselect(AppState& s, POINT client, bool maximize) {
+    app::Tab* tab = ActiveTab(s);
+    if (!tab || IsSettingsTab(tab) || (!tab->all_selected && tab->selected.empty())) return false;
+    g_blank_undo = BlankDeselectUndo{};
+    g_blank_undo.tab = tab;
+    g_blank_undo.pane = s.pane;
+    g_blank_undo.generation = tab->view_generation;
+    g_blank_undo.tick = GetTickCount();
+    g_blank_undo.point = client;
+    g_blank_undo.maximize = maximize;
+    g_blank_undo.selected = tab->selected;
+    g_blank_undo.all = tab->all_selected;
+    g_blank_undo.index = tab->selected_index;
+    tab->ClearSelection();
+    if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+    return true;
+}
+
+bool RestoreBlankDeselect(AppState& s, POINT client, bool maximizing) {
+    if (maximizing && !g_blank_undo.maximize) return false;
+    BlankDeselectUndo undo = std::move(g_blank_undo);
+    g_blank_undo = BlankDeselectUndo{};
+    app::Tab* tab = ActiveTab(s);
+    if (!undo.tab || tab != undo.tab || s.pane != undo.pane || tab->view_generation != undo.generation) return false;
+    if (GetTickCount() - undo.tick > GetDoubleClickTime() ||
+        std::abs(client.x - undo.point.x) > GetSystemMetrics(SM_CXDOUBLECLK) / 2 ||
+        std::abs(client.y - undo.point.y) > GetSystemMetrics(SM_CYDOUBLECLK) / 2)
+        return false;
+    ++tab->selection_revision;
+    tab->all_selected = undo.all;
+    tab->selected = std::move(undo.selected);
+    tab->selected_index = undo.index;
+    if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+    return true;
+}
+
 LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (!s) return DefWindowProcW(hwnd, msg, wParam, lParam);
         int mx = GET_X_LPARAM(lParam);
@@ -1823,6 +1904,8 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 HandleMouseLeave(s, hwnd, WM_MOUSELEAVE, 0, 0);
             return 0;
         }
+        if (g_blank_deselect.armed && BlankDeselectMoved(g_blank_deselect.start, mx, my))
+            g_blank_deselect = BlankDeselect{};   // a drag, not a click
         if (TryBlankWindowDrag(hwnd, wParam, mx, my)) return 0;  // blank chrome moves the window
         if (ToolbarPinDragging()) {   // picker T3c: no hover plate or tooltip under the dragged pin
             MoveToolbarPinDrag(*s, POINT{mx, my});
@@ -2919,6 +3002,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         }
         ArmPaneDrag(*s, hit, mx, my);  // the press still does what it did; a drag takes the pane out (M6d)
         ArmBlankWindowDrag(*s, hit, mx, my);  // likewise: a drag on blank chrome moves the window
+        ArmBlankDeselect(*s, hit, mx, my, pressActivates);  // ...and a click there clears the selection
         if (HandleChangeClick(*s, hit, POINT{mx, my})) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -3975,6 +4059,15 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
             s->stripClickTick = 0;
             return 0;
         }
+        // The second click on a toolbar gap or the status bar after the first
+        // cleared the selection: the toolbar and the status hints have changed
+        // under the pointer since, so do not hit-test again. Put the selection
+        // back and maximize, as the double click there means.
+        if (RestoreBlankDeselect(*s, POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}, true)) {
+            g_blank_drag = BlankWindowDrag{};
+            SendMessageW(hwnd, WM_SYSCOMMAND, IsZoomed(hwnd) ? SC_RESTORE : SC_MAXIMIZE, 0);
+            return 0;
+        }
         app::Tab* double_tab = ActiveTab(*s);
         const bool blank_double = s->blankDoubleTab && double_tab == s->blankDoubleTab &&
             s->pane == s->blankDoublePane && double_tab->view_generation == s->blankDoubleGeneration &&
@@ -4130,6 +4223,9 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         (void)msg;
         (void)wParam;
         g_blank_drag = BlankWindowDrag{};
+        if (const BlankDeselect armed = std::exchange(g_blank_deselect, BlankDeselect{});
+            s && armed.armed && !BlankDeselectMoved(armed.start, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)))
+            BlankClickDeselect(*s, POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}, armed.maximize);
         if (s && AiAssistantMouseUp(*s, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) return 0;   // Pulse 助手
         if (s && ToolbarPinDragging()) {   // picker T3c
             EndToolbarPinDrag(*s, false);
