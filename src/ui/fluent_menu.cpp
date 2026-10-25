@@ -1078,9 +1078,9 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
             const D2D1_RECT_F mask = D2D1::RectF(lerp(morph_from_.left, to.left), lerp(morph_from_.top, to.top),
                                                  lerp(morph_from_.right, to.right), lerp(morph_from_.bottom, to.bottom));
             const float r0 = (morph_from_.bottom - morph_from_.top) * 0.5f;
-            const float radius = (std::max)(0.0f, lerp(r0, 8.0f * scale_));
+            const float clip_r = (std::max)(0.0f, lerp(r0, 8.0f * scale_));
             ComPtr<ID2D1RoundedRectangleGeometry> geo;
-            if (SUCCEEDED(factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(mask, radius, radius), &geo)) &&
+            if (SUCCEEDED(factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(mask, clip_r, clip_r), &geo)) &&
                 geo.get()) {
                 dc->SetTarget(s.scaled.get());
                 dc->BeginDraw();

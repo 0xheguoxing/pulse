@@ -1856,11 +1856,11 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
             // Placeholder rows hint at the folder the window will show.
             MakeBrush(dc, WithAlpha(theme.text_secondary, 0.16f * e), brFillHover_);
             for (int row = 0; row < 3; ++row) {
-                const float y = tabY + tabH + dy + (14.0f + 18.0f * static_cast<float>(row)) * scale_ * e;
-                if (y + 6.0f * scale_ > body.bottom - 6.0f * scale_) break;
-                dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(body.left + 12.0f * scale_, y,
+                const float rowY = tabY + tabH + dy + (14.0f + 18.0f * static_cast<float>(row)) * scale_ * e;
+                if (rowY + 6.0f * scale_ > body.bottom - 6.0f * scale_) break;
+                dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(body.left + 12.0f * scale_, rowY,
                     body.left + 12.0f * scale_ + (body.right - body.left - 24.0f * scale_) * (0.8f - 0.2f * row),
-                    y + 6.0f * scale_), 3.0f * scale_, 3.0f * scale_), brFillHover_.get());
+                    rowY + 6.0f * scale_), 3.0f * scale_, 3.0f * scale_), brFillHover_.get());
             }
             D2D1_MATRIX_3X2_F cur{};
             dc->GetTransform(&cur);
