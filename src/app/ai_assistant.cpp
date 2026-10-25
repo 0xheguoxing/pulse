@@ -746,6 +746,9 @@ void AiAssistantLayout(AppState& s) {
         a.edit_visible = true;
         Redraw(s);   // the panel stops drawing the text itself
     }
+    // A theme switch changes the card colour on the next frame, but the EDIT
+    // keeps its old pixels until something repaints it.
+    if (a.brush && a.brush_color != ToColorRef(view.CardColor())) InvalidateRect(a.edit, nullptr, TRUE);
     if (a.focus_pending) {
         a.focus_pending = false;
         if (GetForegroundWindow() == s.hwnd || GetForegroundWindow() == GetAncestor(s.hwnd, GA_ROOT)) SetFocus(a.edit);
