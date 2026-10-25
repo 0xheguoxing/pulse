@@ -213,6 +213,11 @@ void AiPanelView::ScrollBy(float dy) {
         conn_->menu_scroll = std::clamp(conn_->menu_scroll + dy, 0.0f, conn_->menu_scroll_max);
         return;
     }
+    // So does the connection card's body, in a short window.
+    if (menu_shown_ && conn_ && conn_->card && conn_->card_scroll_max > 0.0f) {
+        conn_->card_scroll = std::clamp(conn_->card_scroll + dy, 0.0f, conn_->card_scroll_max);
+        return;
+    }
     const float max_scroll = (std::max)(0.0f, content_h_ - view_h_);
     const float base = scroll_anim_ ? scroll_to_ : scroll_;
     const float to = std::clamp(base + dy, 0.0f, max_scroll);

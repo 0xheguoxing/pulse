@@ -96,8 +96,22 @@ float AiPanelView::DrawConnCard(Compositor* compositor, const AiPanelViewModel& 
         g.hits.clear();
         g.key_place = g.url_place = false;
     }
+    // While the body scrolls it draws inside `body_clip`; what is outside
+    // takes no clicks.
+    bool clip_on = false;
+    D2D1_RECT_F body_clip{};
+    auto inside = [&](const D2D1_RECT_F& r) {
+        return r.top >= body_clip.top - 0.5f && r.bottom <= body_clip.bottom + 0.5f;
+    };
     auto hit = [&](const D2D1_RECT_F& r, AiPanelPart part) {
-        if (draw) g.hits.push_back({r, part});
+        if (!draw) return;
+        if (clip_on) {
+            if (r.bottom <= body_clip.top || r.top >= body_clip.bottom) return;
+            g.hits.push_back({D2D1::RectF(r.left, (std::max)(r.top, body_clip.top), r.right,
+                                          (std::min)(r.bottom, body_clip.bottom)), part});
+            return;
+        }
+        g.hits.push_back({r, part});
     };
     auto hot = [&](AiPanelPart part) { return vm.hover.part == part; };
     const float left = card.left, right = card.right, top = card.top;
@@ -124,6 +138,13 @@ float AiPanelView::DrawConnCard(Compositor* compositor, const AiPanelViewModel& 
     }
     // .body: padding 12 14 4.
     const float x0 = left + 14.0f * s, x1 = right - 14.0f * s;
+    const float foot_h = 55.0f * s;   // .foot: 1 + 10 + 32 + 12
+    if (draw && g.card_scroll_max > 0.0f) {
+        clip_on = true;
+        body_clip = D2D1::RectF(left, y, right, top + g.card_view_h - foot_h);
+        c.dc->PushAxisAlignedClip(body_clip, D2D1_ANTIALIAS_MODE_ALIASED);
+        y -= g.card_scroll;
+    }
     y += 12.0f * s;
     // .svc (transparent in the card): padding 2 0 4; 36 px logo, gap 12.
     {
@@ -352,6 +373,38 @@ float AiPanelView::DrawConnCard(Compositor* compositor, const AiPanelViewModel& 
         y += h;
     }
     y += 4.0f * s;
+    if (clip_on) {
+        // Rows slide under 14 px fades at an edge that has more beyond it,
+        // like the menu's list.
+        auto fade = [&](float edge, float inner) {
+            D2D1_COLOR_F clear = pal.card;
+            clear.a = 0.0f;
+            const D2D1_GRADIENT_STOP stops[] = {{0.0f, pal.card}, {1.0f, clear}};
+            ID2D1GradientStopCollection* col = nullptr;
+            if (FAILED(c.dc->CreateGradientStopCollection(stops, 2, &col))) return;
+            ID2D1LinearGradientBrush* brush = nullptr;
+            if (SUCCEEDED(c.dc->CreateLinearGradientBrush(
+                    D2D1::LinearGradientBrushProperties(D2D1::Point2F(left, edge), D2D1::Point2F(left, inner)), col, &brush))) {
+                c.dc->FillRectangle(D2D1::RectF(left, (std::min)(edge, inner), right, (std::max)(edge, inner)), brush);
+                brush->Release();
+            }
+            col->Release();
+        };
+        if (g.card_scroll > 0.5f) fade(body_clip.top, body_clip.top + 14.0f * s);
+        if (g.card_scroll < g.card_scroll_max - 0.5f) fade(body_clip.bottom, body_clip.bottom - 14.0f * s);
+        c.dc->PopAxisAlignedClip();
+        // A field scrolled (partly) away has no EDIT over it.
+        if (g.key_place && !inside(g.key_text)) g.key_place = false;
+        if (g.url_place && !inside(g.url_text)) g.url_place = false;
+        // A thin thumb at the right edge, like the menu's list.
+        const float track = body_clip.bottom - body_clip.top - 8.0f * s;
+        const float total = track + g.card_scroll_max;
+        const float thumb = (std::max)(24.0f * s, track * track / total);
+        const float ty = body_clip.top + 4.0f * s + (track - thumb) * (g.card_scroll / g.card_scroll_max);
+        c.Fill(D2D1::RectF(right - 6.0f * s, ty, right - 3.0f * s, ty + thumb), 1.5f * s, pal.line);
+        clip_on = false;
+        y = body_clip.bottom;
+    }
     // .foot: border-top line2, padding 10 14 12, 32 px buttons, gap 8.
     {
         if (draw) c.Fill(D2D1::RectF(left, y, right, y + 1.0f * s), 0.0f, pal.line2);

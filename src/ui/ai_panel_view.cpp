@@ -640,8 +640,8 @@ void AiPanelView::DrawModelMenu(Compositor* compositor, const AiPanelViewModel& 
     const float desc_h = 28.0f * s;
     const float foot_h = 36.0f * s;
     const float h = pad * 2 + head_h + list_box_h + sep_h + head_h + seg_h + desc_h + foot_h;
-    const float right = model_button_.right + 6.0f * s;
-    const float bottom = model_button_.top - 8.0f * s;
+    const float anchor = model_button_.right + 6.0f * s;
+    const float bottom0 = model_button_.top - 8.0f * s;
     // 管理连接: the menu unfolds into the card in place (same corner). The
     // box eases between the two sizes and follows the card as it grows; the
     // new content fades in over the move. While the menu fades out the last
@@ -651,6 +651,7 @@ void AiPanelView::DrawModelMenu(Compositor* compositor, const AiPanelViewModel& 
         if (card) g.view = vm.conn;
         if (card != g.card) {
             g.card = card;
+            g.card_scroll = 0.0f;
             g.content_at = now_ms;
             g.content = g.sized ? 0.0f : 1.0f;
         }
@@ -658,8 +659,18 @@ void AiPanelView::DrawModelMenu(Compositor* compositor, const AiPanelViewModel& 
     if (g.card && !g.view) g.card = false;
     const float card_w = 340.0f * s;
     const float target_w = g.card ? card_w : w;
-    const float target_h = g.card ? DrawConnCard(compositor, vm, pal, D2D1::RectF(right - card_w, 0.0f, right, 0.0f), s, now_ms, false)
-                                  : h;
+    float target_h = h;
+    g.card_scroll_max = 0.0f;
+    if (g.card) {
+        // The whole card when it fits between the panel's top and the button;
+        // else its body scrolls (head, foot and a little body stay).
+        const float natural = DrawConnCard(compositor, vm, pal, D2D1::RectF(anchor - card_w, 0.0f, anchor, 0.0f), s, now_ms, false);
+        const float room = (std::max)(bottom0 - panel_rect_.top - 8.0f * s, 180.0f * s);
+        target_h = (std::min)(natural, std::floor(room));
+        g.card_view_h = target_h;
+        g.card_scroll_max = natural - target_h;
+        g.card_scroll = std::clamp(g.card_scroll, 0.0f, g.card_scroll_max);
+    }
     if (!g.sized || !animate_) {
         g.w = g.to_w = target_w;
         g.h = g.to_h = target_h;
@@ -692,6 +703,12 @@ void AiPanelView::DrawModelMenu(Compositor* compositor, const AiPanelViewModel& 
         g.content = ct >= 1.0f ? 1.0f : EaseDesign(ct);
         conv_anim_ = true;
     }
+    // Right-aligned to the model button, but never past the panel's left
+    // edge: in a narrow docked panel the 340 card would leave the window, so
+    // it reaches further right (over the list) instead.
+    const float min_left = panel_rect_.left + 8.0f * s;
+    const float right = std::round((std::max)(anchor, min_left + g.w));
+    const float bottom = bottom0;
     const D2D1_RECT_F box = D2D1::RectF(std::round(right - g.w), std::round(bottom - g.h), right, bottom);
     // Content keeps its own size, pinned to the box's top right; the box
     // clips it while it moves.
