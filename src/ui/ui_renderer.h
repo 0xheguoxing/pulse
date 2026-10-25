@@ -584,10 +584,12 @@ public:
     bool PointInItemName(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,
                          int source_index, float x, float y) const;
     // The item's drag handle: icon + name in Details / List / Small icons
-    // (the rest of the row starts a marquee, like File Explorer); the whole
-    // cell in the other views.
+    // (the rest of the row starts a marquee, like File Explorer). Icon grids
+    // and the photo wall: an unselected item drags from the middle of its
+    // picture and its name text, a selected one from the whole picture.
+    // The whole cell in the other views.
     bool PointInItemGrip(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,
-                         int source_index, float x, float y) const;
+                         int source_index, float x, float y, bool selected = false) const;
     // Details tree: view row whose chevron is under (x, y), else -1.
     int TreeChevronAt(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,
                       float x, float y) const;

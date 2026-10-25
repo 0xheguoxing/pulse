@@ -1533,12 +1533,23 @@ bool PointInHitItemName(AppState& s, const ui::WindowViewModel& vm,
 static bool PointInHitItemGrip(AppState& s, const ui::WindowViewModel& vm,
                                const ui::HitTestResult& hit, float x, float y) {
     if (hit.region != ui::HitTestResult::Row || hit.index < 0) return true;
+    // Icon grids: a selected item drags from its whole picture.
+    const app::Tab* tab = ActiveTab(s);
+    const bool selected = tab && tab->IsSelected(hit.index);
     if (hit.pane_index >= 0 &&
         hit.pane_index < static_cast<int>(vm.pane_slots.size())) {
         const auto& slot = vm.pane_slots[static_cast<size_t>(hit.pane_index)];
-        return s.renderer.PointInItemGrip(slot.pane, slot.rect, hit.index, x, y);
+        return s.renderer.PointInItemGrip(slot.pane, slot.rect, hit.index, x, y, selected);
     }
-    return s.renderer.PointInItemGrip(vm.pane, FocusedPaneRect(s), hit.index, x, y);
+    return s.renderer.PointInItemGrip(vm.pane, FocusedPaneRect(s), hit.index, x, y, selected);
+}
+
+// How far a press in the file list moves before it becomes a marquee or a
+// drag. SM_CXDRAG stays 4 px at every DPI, a hand's tremor at 150 %; scale
+// it, and give dragging the files away 2 DIP more than the marquee.
+static int ListDragSlop(const AppState& s, int metric, bool drag) {
+    const float px = static_cast<float>(GetSystemMetrics(metric)) * s.scale + (drag ? 2.0f * s.scale : 0.0f);
+    return (std::max)(1, static_cast<int>(std::lround(px)));
 }
 
 // Esc during a marquee puts this selection back.
@@ -2583,8 +2594,8 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                     (GetKeyState(VK_MENU) & 0x8000) != 0)
                     s->blankClickTab = nullptr;
                 if (!s->marqueeActive &&
-                    (std::abs(mx - s->marqueeStart.x) >= GetSystemMetrics(SM_CXDRAG) ||
-                     std::abs(my - s->marqueeStart.y) >= GetSystemMetrics(SM_CYDRAG))) {
+                    (std::abs(mx - s->marqueeStart.x) >= ListDragSlop(*s, SM_CXDRAG, false) ||
+                     std::abs(my - s->marqueeStart.y) >= ListDragSlop(*s, SM_CYDRAG, false))) {
                     s->marqueeActive = true;
                     s->marqueePending = false;
                     s->tooltipText.clear();  // the hover tip of the pressed row would ride along
@@ -2611,8 +2622,8 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 s->dragPending = false;
                 if (s->renameClickCandidate && s->renameClickDue == 0)
                     CancelRenameClick(*s);
-            } else if (std::abs(mx - s->dragStartPt.x) >= GetSystemMetrics(SM_CXDRAG) ||
-                       std::abs(my - s->dragStartPt.y) >= GetSystemMetrics(SM_CYDRAG)) {
+            } else if (std::abs(mx - s->dragStartPt.x) >= ListDragSlop(*s, SM_CXDRAG, true) ||
+                       std::abs(my - s->dragStartPt.y) >= ListDragSlop(*s, SM_CYDRAG, true)) {
                 s->dragPending = false;
                 CancelRenameClick(*s);
                 StartDragOut(*s);

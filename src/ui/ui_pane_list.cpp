@@ -1362,12 +1362,18 @@ D2D1_SIZE_F IconGridNameSize(Compositor* compositor, const std::wstring& name, f
 } // namespace
 
 bool MainRenderer::PointInItemGrip(const PaneViewModel& vm, const D2D1_RECT_F& full_bounds,
-                                   int source_index, float x, float y) const {
+                                   int source_index, float x, float y, bool selected) const {
     if (vm.view_mode == ViewMode::MediumIcons || vm.view_mode == ViewMode::LargeIcons ||
         vm.view_mode == ViewMode::ExtraLargeIcons) {
-        // File Explorer icon views: the picture and the name drag the item; the rest
-        // of its cell (beside a narrow icon, under a short name) starts a marquee, and
-        // a click there still selects the item on release.
+        // Icon views: the picture and the name drag the item; the rest of its
+        // cell starts a marquee, and a click there still selects the item on
+        // release. Cells sit 6 DIP apart and pictures fill their slot, so an
+        // unselected item keeps a ring of its picture (12 %, at least 8 DIP)
+        // for the marquee too; once selected, the whole picture drags it.
+        const auto ring = [&](const D2D1_RECT_F& r) {
+            const float side = (std::min)(r.right - r.left, r.bottom - r.top);
+            return (std::min)((std::max)(8.0f * scale_, 0.12f * side), 0.3f * side);
+        };
         const int view_index = vm.ViewIndex(source_index);
         if (view_index < 0 || !compositor_) return false;
         const D2D1_RECT_F pane_bounds = PaneBodyBounds(vm, full_bounds);
@@ -1375,15 +1381,27 @@ bool MainRenderer::PointInItemGrip(const PaneViewModel& vm, const D2D1_RECT_F& f
         const D2D1_RECT_F list = PaneListRect(pane_bounds, extra, vm.view_mode);
         const ViewLayout layout(vm.view_mode, list, vm.EntryCount(), vm.scroll_x, vm.scroll_y, scale_,
                                 ListRowHeightDip(vm, list), vm.Groups());
-        if (layout.Wall()) return true;  // photo wall: the tile is the picture
+        if (layout.Wall()) {
+            // Photo wall: the tile is the picture.
+            if (selected) return true;
+            const D2D1_RECT_F tile = layout.ItemRect(view_index);
+            const float k = ring(tile);
+            return x >= tile.left + k && x < tile.right - k && y >= tile.top + k && y < tile.bottom - k;
+        }
         const ListEntryView& entry = MakeVisibleEntry(vm, static_cast<size_t>(source_index));
-        const float pad = 3.0f * scale_;
+        const float pad = (selected ? 3.0f : 1.0f) * scale_;
         // Pictures and videos fill the thumbnail slot; other icons keep their square.
         const D2D1_RECT_F pic = IsWallPicture(entry.name, entry.is_dir) ? layout.ThumbnailRect(view_index)
                                                                         : layout.IconRect(view_index);
         const D2D1_RECT_F name = layout.NameRect(view_index);
-        if (x >= pic.left - pad && x < pic.right + pad && y >= pic.top - pad && y < std::max(pic.bottom + pad, name.top))
+        if (selected) {
+            if (x >= pic.left - pad && x < pic.right + pad && y >= pic.top - pad &&
+                y < std::max(pic.bottom + pad, name.top))
+                return true;
+        } else if (const float k = ring(pic);
+                   x >= pic.left + k && x < pic.right - k && y >= pic.top + k && y < pic.bottom - k) {
             return true;
+        }
         const std::wstring& shown = entry.alias.empty() ? entry.name : entry.alias;
         if (shown.empty()) return false;
         const std::vector<int>* tag_indices = vm.tag_catalog ? vm.tag_catalog->TagIndicesForPath(entry.path) : nullptr;
