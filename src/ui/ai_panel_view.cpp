@@ -43,6 +43,7 @@ void AiPanelView::Formats::Release() {
     SafeRelease(small125);
     SafeRelease(small125b);
     SafeRelease(mono);
+    SafeRelease(mono125);
     SafeRelease(model);
     SafeRelease(heading);
     SafeRelease(body_b);
@@ -158,6 +159,8 @@ void AiPanelView::EnsureFormats(Compositor* compositor, float scale) {
         spec.role = typography::FontRole::Monospace;
         spec.size = 11.5f * scale;
         typography::CreateTextFormat(f, spec, &formats_.mono);
+        spec.size = 12.5f * scale;
+        typography::CreateTextFormat(f, spec, &formats_.mono125);
     }
     formats_.scale = scale;
     formats_.font_scale = font_scale;

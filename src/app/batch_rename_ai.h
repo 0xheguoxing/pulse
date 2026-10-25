@@ -11,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+namespace pulse::json { class Value; }
+
 namespace pulse::app::rename {
 
 struct AiAsk {
@@ -27,11 +29,15 @@ struct AiReply {
     std::vector<Step> steps;   // ai = true; template tokens are the English ones
     bool has_order = false;
     Order order = Order::List;
+    bool daily = false;        // numbers start over each day
     std::wstring note;         // the model's reason when it cannot do it
 };
 
 // False when the reply is not the expected JSON (or lists no usable step and
 // gives no reason).
 bool ParseAiReply(const std::string& utf8, AiReply& out);
+// The same from an object already parsed (Pulse 助手's rename_files call):
+// "steps", "order", "daily" and "note".
+bool ReadAiSteps(const json::Value& root, AiReply& out);
 
 } // namespace pulse::app::rename

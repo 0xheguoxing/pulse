@@ -14,7 +14,7 @@ using json::Value;
 constexpr const char* kPrompt =
     "You turn one sentence about renaming files into steps for a batch rename tool. "
     "Reply with exactly one JSON object and nothing else:\n"
-    "{\"steps\":[...],\"order\":\"list\",\"note\":\"\"}\n"
+    "{\"steps\":[...],\"order\":\"list\",\"daily\":false,\"note\":\"\"}\n"
     "\n"
     "Steps run top to bottom on the name without its extension (only \"ext\" touches the extension). "
     "Step objects:\n"
@@ -35,7 +35,9 @@ constexpr const char* kPrompt =
     "stride come from the step), {taken} date taken as yyyy-MM-dd (falls back to the modified date), "
     "{modified} modified date yyyy-MM-dd, {folder} parent folder name, {size} image size WxH.\n"
     "\"order\" is the numbering order: list (as shown), taken, modified or name. Use taken when photos are "
-    "numbered by date; otherwise leave list.\n"
+    "numbered by date; otherwise leave list. "
+    "\"daily\":true starts the number again each day (by date taken), e.g. 2026-10-03_01, 2026-10-03_02, "
+    "2026-10-04_01.\n"
     "\n"
     "Rules: use as few steps as possible; copy literal words exactly as the user wrote them; when spaces "
     "become another character, put a remove step with spaces:true first so a run of spaces gives one "
@@ -180,6 +182,12 @@ bool ParseAiReply(const std::string& utf8, AiReply& out) {
     if (a == std::string::npos || b == std::string::npos || b < a) return false;
     Value root;
     if (!json::Parse(std::string_view(utf8).substr(a, b - a + 1), root) || !root.is_object()) return false;
+    return ReadAiSteps(root, out);
+}
+
+bool ReadAiSteps(const json::Value& root, AiReply& out) {
+    out = AiReply{};
+    if (!root.is_object()) return false;
     out.note = json::Wide(root.get_string("note"));
     if (const Value* steps = root.find("steps"); steps && steps->is_array()) {
         for (const Value& v : steps->items()) {
@@ -193,6 +201,7 @@ bool ParseAiReply(const std::string& utf8, AiReply& out) {
     else if (order == "modified") { out.has_order = true; out.order = Order::Modified; }
     else if (order == "name") { out.has_order = true; out.order = Order::Name; }
     else if (order == "list") { out.has_order = true; out.order = Order::List; }
+    out.daily = root.get_bool("daily");
     return !out.steps.empty() || !out.note.empty();
 }
 

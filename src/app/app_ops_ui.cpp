@@ -898,9 +898,12 @@ private:
     std::string text_;
 };
 
-static void SubmitBatchRename(AppState& s, const std::vector<std::wstring>& paths, app::Tab* select_in) {
-    if (paths.size() < 2) return;
+static size_t SubmitBatchRename(AppState& s, const std::vector<std::wstring>& paths, app::Tab* select_in,
+                                const app::rename::Preset* preset = nullptr) {
+    if (paths.size() < 2) return 0;
     ui::BatchRenameDialogOptions options;
+    if (preset) options.preset = *preset;
+    size_t renamed = 0;
     // The assistant's connection and model (ids shown and sent as listed).
     if (AiAgentConnected()) {
         options.ai_model = AiChatModelId(s);
@@ -940,7 +943,7 @@ static void SubmitBatchRename(AppState& s, const std::vector<std::wstring>& path
             done(i, std::move(text));
         }
     };
-    options.execute = [&s, select_in](const std::vector<app::BatchRenameItem>& items) -> uint64_t {
+    options.execute = [&s, select_in, &renamed](const std::vector<app::BatchRenameItem>& items) -> uint64_t {
         ops::OpRequest req;
         req.type = ops::OpType::BatchRename;
         for (const auto& item : items) {
@@ -960,6 +963,7 @@ static void SubmitBatchRename(AppState& s, const std::vector<std::wstring>& path
         note.task = s.ops.Submit(std::move(req));
         if (!note.task) return 0;
         const uint64_t task = note.task;
+        renamed = note.names.size();
         g_batch_rename[&s] = std::move(note);
         return task;
     };
@@ -980,9 +984,9 @@ static void SubmitBatchRename(AppState& s, const std::vector<std::wstring>& path
             if (it->second.finished) ShowBatchRenameDone(s);
         }
         InvalidateRect(s.hwnd, nullptr, FALSE);
-        return;
+        return renamed;
     }
-    if (!result.accepted) return;
+    if (!result.accepted) return 0;
     ops::OpRequest req;
     req.type = ops::OpType::BatchRename;
     for (const auto& item : result.items) {
@@ -990,13 +994,15 @@ static void SubmitBatchRename(AppState& s, const std::vector<std::wstring>& path
         req.sources.push_back(item.source_path);
         req.new_names.push_back(item.new_name);
     }
-    if (req.sources.empty()) return;
+    if (req.sources.empty()) return 0;
     if (select_in) {
         select_in->pending_selected_names = req.new_names;
         select_in->pending_selected_name = req.new_names.front();
     }
+    renamed = req.sources.size();
     s.ops.Submit(std::move(req));
     InvalidateRect(s.hwnd, nullptr, FALSE);
+    return renamed;
 }
 
 void ShowBatchRename(AppState& s) {
@@ -1009,6 +1015,10 @@ void ShowBatchRename(AppState& s) {
 }
 void ShowBatchRenamePaths(AppState& s, const std::vector<std::wstring>& paths) {
     SubmitBatchRename(s, paths, nullptr);
+}
+size_t ShowBatchRenameWith(AppState& s, const std::vector<std::wstring>& paths, const app::rename::Preset& preset,
+                           app::Tab* select_in) {
+    return SubmitBatchRename(s, paths, select_in, &preset);
 }
 
 void UpdateOperationWindow(AppState& s, bool allow_conflict_dialog) {

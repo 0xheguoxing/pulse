@@ -5111,8 +5111,11 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             // List rows: [mark] alias  real name (pulse_alias.html .amark).
             const bool show_mark = has_alias && app::AliasStore::Instance().ShowMark();
             const bool list_mark = show_mark && !iconGrid;
+            // A batch rename's new-name pill takes its room from the name (≤ 60%).
+            const float ai_reserve = ai_painter && !iconGrid
+                ? (std::min)(ai_painter->AfterNameReserve(), (nameColRight - nameX) * 0.6f) : 0.0f;
             const NameTrail trail = LayoutNameTrail(
-                list_mark ? nameX + kListAliasMarkDip * scale_ : nameX, textY, textH, nameColRight, cell.top, cell.bottom, scale_,
+                list_mark ? nameX + kListAliasMarkDip * scale_ : nameX, textY, textH, nameColRight - ai_reserve, cell.top, cell.bottom, scale_,
                 has_alias ? alias_line : e.name, tagDotCount, badgeW, showStar, showNewTab, showMore,
                 compositor_, compositor_->DwriteFactory(), nameFormat, change != nullptr,
                 vm.view_mode == ViewMode::Details ? (e.is_dir ? 3 : 2) : 0, name_matches, row_actions_);
@@ -5260,8 +5263,31 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                     Theme name_theme = theme;
                     name_theme.text = nameColor;
                     name_semibold_ = nameFormat != compositor_->FileNameFormat();
-                    name_truncated = DrawTruncatedName(e.name, trail.name_x, textY, trail.name_w, textH, name_theme,
-                                                       selected, name_matches, detailsView && !e.is_dir);
+                    const AiListPainter::NameMorph nm =
+                        ai_painter && !iconGrid ? ai_painter->Morph() : AiListPainter::NameMorph{};
+                    if (nm.was) {
+                        // An assistant rename on its way: the old name until its turn.
+                        name_truncated = DrawTruncatedName(*nm.was, trail.name_x, textY, trail.name_w, textH, name_theme,
+                                                           selected, {}, detailsView && !e.is_dir);
+                    } else if (nm.alpha < 1.0f) {
+                        // ...then the new one rises into place (inside the row).
+                        D2D1_MATRIX_3X2_F before;
+                        dc->GetTransform(&before);
+                        dc->PushLayer(D2D1::LayerParameters1(D2D1::RectF(trail.name_x - 2.0f * scale_, cell.top,
+                                                                         trail.name_x + trail.name_w + 2.0f * scale_, cell.bottom),
+                                                             nullptr, D2D1_ANTIALIAS_MODE_ALIASED, D2D1::IdentityMatrix(),
+                                                             std::max(nm.alpha, 1.0f / 255.0f), nullptr,
+                                                             D2D1_LAYER_OPTIONS1_NONE),
+                                      nullptr);
+                        dc->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, nm.dy) * before);
+                        name_truncated = DrawTruncatedName(e.name, trail.name_x, textY, trail.name_w, textH, name_theme,
+                                                           selected, name_matches, detailsView && !e.is_dir);
+                        dc->SetTransform(before);
+                        dc->PopLayer();
+                    } else {
+                        name_truncated = DrawTruncatedName(e.name, trail.name_x, textY, trail.name_w, textH, name_theme,
+                                                           selected, name_matches, detailsView && !e.is_dir);
+                    }
                     name_semibold_ = false;
                     // Icon grids with tag dots keep the name on one line; the
                     // single selected item still shows all of it.
@@ -5302,7 +5328,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                 const float link_left = (trail.tag_n > 0
                     ? trail.tag_x0 + trail.tag_r * 2 + (trail.tag_n - 1) * trail.tag_step
                     : trail.name_x + trail.name_w) + 6.0f * scale_;
-                const float link_right = std::min(link_left + 220.0f * scale_, trail.name_x + trail.line_w);
+                const float link_right = ai_reserve > 0.0f ? (std::min)(link_left + ai_reserve, nameColRight)
+                    : std::min(link_left + 220.0f * scale_, trail.name_x + trail.line_w);
                 if (ai_painter && !iconGrid) {
                     ai_painter->AfterName(link_left, link_right, textY, textH);
                     ai_name_dx = trail.name_x - cell.left;

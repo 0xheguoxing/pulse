@@ -1,11 +1,13 @@
 // batch_rename_dialog.h — Modal 批量重命名 dialog (steps + live preview).
 #pragma once
 #include "../app/batch_rename.h"
+#include "../app/batch_rename_presets.h"
 #include <windows.h>
 #include <d2d1.h>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -54,6 +56,9 @@ struct BatchRenameDialogOptions {
     // Returns the task id (0: nothing started). Unset: the caller runs items.
     std::function<uint64_t(const std::vector<app::BatchRenameItem>&)> execute;
     std::function<BatchRenameProgress(uint64_t)> poll;
+    // Opens with these steps instead of the usual first preset (Pulse 助手's
+    // 在批量重命名中调整…). Template tokens may be the English ones.
+    std::optional<app::rename::Preset> preset;
 };
 
 BatchRenameDialogResult ShowBatchRenameDialog(HWND owner,

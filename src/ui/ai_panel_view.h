@@ -64,6 +64,10 @@ enum class AiPanelPart : uint8_t {
     QueryChipRemove,   // index = block index * 16 + chip (the chip's ×)
     QueryAdd,          // + 条件
     FollowItem,        // index = block index * 8 + item (接着做 chips)
+    // Rename plan card and its confirmation (first batch, flow B).
+    RenameToggle,      // the card's header (folds the card)
+    RenameMore,        // 还有 4 个 / 收起
+    ConfirmExtra,      // 在批量重命名中调整… on the confirmation
     // 管理连接 card (the model menu unfolded).
     ConnCard,       // the card's background (swallows the click)
     ConnBack,
@@ -119,6 +123,7 @@ enum class AiBlockKind : uint8_t {
     Cut,        // amber strip under a partial answer: 回答中途断开了 · 重试
     Query,      // 搜索条件 card: condition chips, count, where the results are
     Follow,     // 接着做: chips that put a next step into the composer
+    Rename,     // 重命名方案 card: rule, old → new rows, checks, foot
 };
 
 // Error card tone: Err needs the user (red, red border), Warn is temporary
@@ -179,6 +184,29 @@ struct AiFollowView {
     std::wstring text;                // 打包这 7 个
 }; 
 
+// 重命名方案 (flow B). The rule as chips (tokens), literal text (mono) and
+// plain words (换成, 开头加 in text3).
+struct AiRuleToken {
+    std::wstring text;
+    bool token = false;
+    bool word = false;
+};
+
+// One old → new row; the new stem in parts (token parts in accent).
+struct AiRenameRow {
+    std::wstring old_name;
+    std::vector<AiRuleToken> parts;
+    std::wstring ext;                 // ".jpg" (shown in text3)
+    bool warn = false;                // amber dot: no date taken
+    bool sample = false;              // shown while the list is folded
+    uint64_t in_ms = 0;               // slides in (0: not yet)
+};
+
+struct AiCheckView {
+    std::wstring text;
+    bool warn = false;
+};
+
 struct AiBlockView {
     AiBlockKind kind = AiBlockKind::Text;
     uint32_t id = 0;                  // stable while the block lives (motion)
@@ -213,6 +241,18 @@ struct AiBlockView {
     std::wstring add;
     uint64_t bump_ms = 0;             // the count changed (bump)
     uint64_t re_ms = 0;               // 0: no rerun note
+    // Confirm: a link button on the left (在批量重命名中调整…) and the line
+    // that opens under the card while it is hovered.
+    std::wstring extra, extra_tip;
+    // Result: the icon of the second button (在 Pulse 中查看 / 在批量重命名中打开).
+    AiIcon accept_icon = AiIcon::Open;
+    // Rename: label 重命名方案, meta 8 个文件, rule_label 规则 + rule, hint
+    // 扩展名不变, rows (folded: the sample ones, then `more`; open: all,
+    // then `less`), checks, sub = the foot line. `collapsed` folds the card.
+    std::wstring rule_label, more, less;
+    std::vector<AiRuleToken> rule;
+    std::vector<AiRenameRow> rows;
+    std::vector<AiCheckView> checks;
 };
 
 // The status bar chip (left end): "✦ AI" plus what the assistant is doing.
@@ -392,6 +432,7 @@ private:
         IDWriteTextFormat* badge = nullptr;     // 10.5 semibold
         IDWriteTextFormat* meta = nullptr;      // 11.5
         IDWriteTextFormat* mono = nullptr;      // 11.5 Cascadia Mono / Consolas
+        IDWriteTextFormat* mono125 = nullptr;   // 12.5 (the rename rule's literal text)
         IDWriteTextFormat* num22 = nullptr;     // 22 semibold (the Query card's count)
         void Release();
     };

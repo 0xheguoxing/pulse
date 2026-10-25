@@ -40,7 +40,7 @@ struct AiListOverlay {
     // Destination tags before the confirmation.
     struct Dest {
         std::wstring label;              // the folder's name
-        uint8_t tint = 5;                // AiTint (Image .. Neutral)
+        uint8_t tint = 5;                // AiTint (Image .. Neutral); kDestAccent: a new name
     };
     std::unordered_map<std::wstring, Dest> dests;
     uint64_t dest_start = 0;             // tags fade in (70 ms apart in list order)
@@ -58,6 +58,15 @@ struct AiListOverlay {
     uint64_t end_ms = 0;                 // nothing left to draw after this (0: open ended)
     // Rows a batch rename just named (批量重命名 scene 5): name -> flash start.
     std::unordered_map<std::wstring, uint64_t> flash;
+    // AI batch rename (flow B): rows by the name they have now -> the name
+    // they show until `at`, when the new one slides in (.45 s) and the row's
+    // accent ring flashes (1.3 s).
+    struct Morph {
+        std::wstring was;
+        uint64_t at = 0;
+    };
+    std::unordered_map<std::wstring, Morph> morph;
+    static constexpr uint8_t kDestAccent = 255;
 };
 
 // The walk's k of n at `now` (1..n), the same number the chip and the step show.
@@ -96,6 +105,17 @@ public:
     // After the name: the destination tag or the 新建 pill, inside
     // [left, right] and centred on the text line.
     void AfterName(float left, float right, float text_top, float text_h);
+    // Width the row's new-name pill (batch rename) wants after the name,
+    // gap included; the list takes it from the name so the pill shows.
+    float AfterNameReserve() const;
+    // The row's name while a batch rename lands: `was` (non-null) until its
+    // turn, then the real name fading in from `dy` px below.
+    struct NameMorph {
+        const std::wstring* was = nullptr;
+        float alpha = 1.0f;
+        float dy = 0.0f;
+    };
+    NameMorph Morph() const noexcept { return row_morph_; }
 
     // After the rows, inside the list's clip: the flying cards. `content`
     // draws a row's icon and name into a rect (the card's).
@@ -124,6 +144,8 @@ private:
     float row_flash_ = 0.0f;             // 0..1 read flash strength
     float row_bump_ = 0.0f;              // 0..1 bump progress (0 none)
     float row_done_ = 0.0f;              // 0..1 renamed-row flash strength
+    float row_ring_ = 0.0f;              // 0..1 renamed-row accent ring (flow B)
+    NameMorph row_morph_;
     float row_icon_scale_ = 1.0f;
     int row_ordinal_ = 0;                // display order (for the tag stagger)
 };

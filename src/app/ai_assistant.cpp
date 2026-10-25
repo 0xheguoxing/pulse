@@ -113,9 +113,9 @@ std::vector<ui::AiSuggestionView> Suggestions(AppState& s) {
     struct Sug { ui::AiIcon icon; ui::AiTint tint; I title; I detail; bool folder; };
     static constexpr Sug kSugs[] = {
         {ui::AiIcon::Search, ui::AiTint::Document, I::AiQSugTitle, I::AiQSugDetail, false},
-        {ui::AiIcon::Move, ui::AiTint::Image, I::AiAsstSugSortTitle, I::AiAsstSugSortDetail, true},
+        {ui::AiIcon::Rename, ui::AiTint::Image, I::AiRnSugTitle, I::AiRnSugDetail, false},
+        {ui::AiIcon::Move, ui::AiTint::App, I::AiAsstSugSortTitle, I::AiAsstSugSortDetail, true},
         {ui::AiIcon::Size, ui::AiTint::Archive, I::AiAsstSugSizeTitle, I::AiAsstSugSizeDetail, true},
-        {ui::AiIcon::Camera, ui::AiTint::Video, I::AiAsstSugPhotoTitle, I::AiAsstSugPhotoDetail, false},
     };
     std::vector<ui::AiSuggestionView> out;
     for (const Sug& sug : kSugs) {
@@ -505,6 +505,9 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
     case P::ConfirmAccept:
     case P::ResultUndo:
     case P::ResultShow:
+    case P::RenameToggle:
+    case P::RenameMore:
+    case P::ConfirmExtra:
     case P::ActCopy:
     case P::ActRetry:
     case P::ActThumb:

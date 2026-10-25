@@ -100,6 +100,7 @@ Value PresetToJson(const Preset& p) {
     o.set("ext_too", p.opts.ext_too);
     o.set("order", static_cast<int>(p.opts.order));
     o.set("policy", static_cast<int>(p.opts.policy));
+    if (p.opts.daily) o.set("daily", true);
     Value steps = Value::Array();
     for (const Step& st : p.steps) steps.push(StepToJson(st));
     o.set("steps", std::move(steps));
@@ -112,6 +113,7 @@ bool PresetFromJson(const Value& o, Preset& p) {
     p.opts.ext_too = o.get_bool("ext_too", false);
     p.opts.order = static_cast<Order>(GetInt(o, "order", 0, 0, static_cast<int>(Order::Name)));
     p.opts.policy = static_cast<Policy>(GetInt(o, "policy", 0, 0, static_cast<int>(Policy::Block)));
+    p.opts.daily = o.get_bool("daily", false);
     p.steps.clear();
     if (const Value* steps = o.find("steps"); steps && steps->is_array())
         for (const Value& s : steps->items()) {

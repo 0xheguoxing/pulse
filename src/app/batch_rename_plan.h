@@ -50,6 +50,7 @@ struct Options {
     bool ext_too = false;      // replace/case also touch the extension
     Order order = Order::List;
     Policy policy = Policy::AutoNumber;
+    bool daily = false;        // numbers start over each day (date taken, else modified)
 };
 
 // One selected file. Times are FILETIME ticks (100 ns since 1601), 0 = unknown.

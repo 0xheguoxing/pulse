@@ -232,7 +232,7 @@ enum class H : uint8_t {
     None, Close, ModeRules, ModeContent, AiInput, AiSend, AiModel, Example, AddStep, AddItem,
     Grip, Toggle, Delete, Card, Field, Chip, Seg, Token, PresetDD, PresetSave, PresetItem, PresetDel, PresetOk,
     PresetCancel, Tab, OrderDD,
-    OrderItem, Row, ExtToggle, PolicyDD, PolicyItem, Cancel, Apply, Menu, StepsArea, Preview,
+    OrderItem, OrderDaily, Row, ExtToggle, PolicyDD, PolicyItem, Cancel, Apply, Menu, StepsArea, Preview,
     CFormat, CLang, CRange, CStart, CRegen, CPick, CName,   // 按内容命名
 };
 
@@ -320,7 +320,11 @@ void ReadMeta(const std::shared_ptr<MetaJob>& job, HWND hwnd) {
     for (size_t i = 0; i < job->paths.size() && !job->cancel.load(); ++i) {
         IPropertyStore* store = nullptr;
         const std::wstring& path = job->paths[i];
-        if (SUCCEEDED(SHGetPropertyStoreFromParsingName(path.c_str(), nullptr, GPS_DEFAULT, IID_PPV_ARGS(&store)))) {
+        // The shell parses no \\?\ paths (tabs keep the prefix).
+        std::wstring shell_path = path;
+        if (shell_path.rfind(L"\\\\?\\UNC\\", 0) == 0) shell_path = L"\\\\" + shell_path.substr(8);
+        else if (shell_path.rfind(L"\\\\?\\", 0) == 0) shell_path.erase(0, 4);
+        if (SUCCEEDED(SHGetPropertyStoreFromParsingName(shell_path.c_str(), nullptr, GPS_DEFAULT, IID_PPV_ARGS(&store)))) {
             const bool video = IsVideoExt(ExtOf(path));
             PROPVARIANT v;
             if (job->taken) {
@@ -409,8 +413,17 @@ public:
         store_ = rn::LoadPresets();
 #endif
         // A fresh dialog opens with the cleanup most people start from (the
-        // design's first scene).
-        ApplyPreset(Builtins().front(), false);
+        // design's first scene), or with the steps it was handed.
+        if (options_.preset) {
+            rn::Preset p = *options_.preset;
+            for (auto& st : p.steps) {
+                st.pattern = UiTokens(st.pattern);
+                st.text = UiTokens(st.text);
+            }
+            ApplyPreset(p, false);
+        } else {
+            ApplyPreset(Builtins().front(), false);
+        }
         Recompute(false);
 
         WNDCLASSEXW wc{sizeof(wc)};
@@ -766,6 +779,7 @@ private:
         p.steps = std::move(r.steps);
         p.opts = opts_;
         if (r.has_order) p.opts.order = r.order;
+        p.opts.daily = r.daily;
         ApplyPreset(p, true, 260);   // the cards come in one by one, as in the design
         preset_name_.clear();
         preset_key_.clear();
@@ -2563,7 +2577,9 @@ private:
         // Numbering order.
         static const StringId orders[] = {StringId::BrOrderList, StringId::BrOrderTaken, StringId::BrOrderModified,
                                           StringId::BrOrderName};
-        const std::wstring ol = S(StringId::BrOrder), ov = S(orders[static_cast<int>(opts_.order)]);
+        const std::wstring ol = S(StringId::BrOrder),
+                           ov = S(orders[static_cast<int>(opts_.order)]) +
+                                (opts_.daily ? L" \u00B7 " + S(StringId::BrOrderDailyShort) : std::wstring());
         const float ow = X(8) + Measure(ol, Fmt::T125) + X(4) + Measure(ov, Fmt::T125m) + X(4 + 12 + 8);
         const D2D1_RECT_F order = R(W_ - X(14) - ow, top + X(8), ow, X(28));
         if (Hov({H::OrderDD}) || menu_ == Menu::Order) Fill(order, X(7), pal_.hover);
@@ -3098,7 +3114,8 @@ private:
         } else if (menu_ == Menu::Order) {
             static const StringId l[] = {StringId::BrOrderList, StringId::BrOrderTaken, StringId::BrOrderModified,
                                          StringId::BrOrderName};
-            const D2D1_RECT_F r = R(order_dd_.right - X(200), order_dd_.bottom + X(4), X(200), X(10 + 4 * 34));
+            // The four orders, a rule, then 每天从头编号 (a check of its own).
+            const D2D1_RECT_F r = R(order_dd_.right - X(200), order_dd_.bottom + X(4), X(200), X(10 + 5 * 34 + 9));
             dc_->SetTransform(D2D1::Matrix3x2F::Translation(0, -X(6) * (1 - t)) * m);
             MenuFrame(r);
             for (int i = 0; i < 4; ++i) {
@@ -3109,6 +3126,14 @@ private:
                 Text(S(l[i]), Fmt::T13, D2D1::RectF(it.left + X(34), it.top, it.right, it.bottom), pal_.text);
                 Reg(it, {H::OrderItem, i});
             }
+            const float rule_y = r.top + X(5 + 4 * 34 + 4);
+            Fill(D2D1::RectF(r.left + X(10), rule_y, r.right - X(10), rule_y + X(1)), 0, pal_.line2);
+            const D2D1_RECT_F daily = R(r.left + X(5), rule_y + X(5), r.right - r.left - X(10), X(34));
+            if (Hov({H::OrderDaily})) Fill(daily, X(7), pal_.hover);
+            if (opts_.daily) Ico(kCheck, daily.left + X(10), daily.top + X(10), X(14), pal_.accent);
+            Text(S(StringId::BrOrderDaily), Fmt::T13, D2D1::RectF(daily.left + X(34), daily.top, daily.right, daily.bottom),
+                 pal_.text);
+            Reg(daily, {H::OrderDaily});
         } else if (menu_ == Menu::Preset) {
             // Opens upward from the dropdown: 上次使用, 常用 (built in), 我的预设.
             struct Entry { int kind; int index; std::wstring name; bool header; };
@@ -3305,6 +3330,7 @@ private:
         case H::Tab: filter_ = h.a; rows_scroll_ = 0; break;
         case H::OrderDD: menu_ = was == Menu::Order ? Menu::None : Menu::Order; break;
         case H::OrderItem: opts_.order = static_cast<rn::Order>(h.a); Recompute(true); break;
+        case H::OrderDaily: opts_.daily = !opts_.daily; Recompute(true); break;
         case H::PolicyDD: menu_ = was == Menu::Policy ? Menu::None : Menu::Policy; break;
         case H::PolicyItem: opts_.policy = static_cast<rn::Policy>(h.a); Recompute(true); break;
         case H::ExtToggle: opts_.ext_too = !opts_.ext_too; Recompute(true); break;

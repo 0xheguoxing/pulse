@@ -4,6 +4,8 @@
 #include <optional>
 #include "../ui/confirm_dialog.h"
 
+namespace pulse::app::rename { struct Preset; }
+
 namespace pulse {
 bool SubmitWithConflictResolution(AppState& s, ops::OpRequest request, uint64_t* task_id = nullptr);
 void ReleaseTrayBatch(AppState& s, size_t idx);
@@ -57,6 +59,11 @@ void RemoveTrayItems(AppState& s, const std::vector<uint64_t>& ids);
 void UnstagePath(AppState& s, const std::wstring& path);
 // Batch rename an explicit path list (staging tray); tray entries follow.
 void ShowBatchRenamePaths(AppState& s, const std::vector<std::wstring>& paths);
+// Batch rename opened with `preset` filled in (Pulse 助手's 在批量重命名中调整…);
+// `select_in` keeps the renamed items selected. Returns how many files it
+// renamed (0: closed without renaming).
+size_t ShowBatchRenameWith(AppState& s, const std::vector<std::wstring>& paths, const app::rename::Preset& preset,
+                           app::Tab* select_in);
 // Builds this window's operations window the first time it has to show it.
 bool EnsureOperationWindow(AppState& s);
 void PinAndShowOperationWindow(AppState& s);

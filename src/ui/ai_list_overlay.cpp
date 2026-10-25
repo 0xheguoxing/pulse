@@ -196,6 +196,8 @@ AiListPainter::RowMotion AiListPainter::Row(const std::wstring& name, const D2D1
     row_flash_ = 0.0f;
     row_bump_ = 0.0f;
     row_done_ = 0.0f;
+    row_ring_ = 0.0f;
+    row_morph_ = {};
     row_icon_scale_ = 1.0f;
     if (!o_) return m;
     row_name_ = AiListLower(name);
@@ -208,6 +210,28 @@ AiListPainter::RowMotion AiListPainter::Row(const std::wstring& name, const D2D1
             const float t = age / 1400.0f;
             row_done_ = t < 0.15f ? t / 0.15f : 1.0f - EaseOut((t - 0.15f) / 0.85f);
             animating_ = true;
+        }
+    }
+
+    // Renamed by the assistant: .nw rnin .45 s cubic-bezier(.3,.7,.2,1) from
+    // translateY(10) and opacity 0; .row.rn @keyframes flash 1.3 s - an inset
+    // 2 px accent ring, in by 25 %, held to 70 %.
+    if (!o_->morph.empty()) {
+        if (auto mo = o_->morph.find(row_name_); mo != o_->morph.end()) {
+            const float age = Since(now, mo->second.at);
+            if (age < 0.0f) {
+                row_morph_.was = &mo->second.was;
+                animating_ = true;
+            } else if (age < 1300.0f) {
+                if (age < 450.0f) {
+                    const float e = Bezier(0.3f, 0.7f, 0.2f, 1.0f, age / 450.0f);
+                    row_morph_.alpha = e;
+                    row_morph_.dy = 10.0f * s_ * (1.0f - e);
+                }
+                const float t = age / 1300.0f;
+                row_ring_ = t < 0.25f ? Ease(t / 0.25f) : t < 0.7f ? 1.0f : 1.0f - Ease((t - 0.7f) / 0.3f);
+                animating_ = true;
+            }
         }
     }
 
@@ -304,7 +328,7 @@ AiListPainter::RowMotion AiListPainter::Row(const std::wstring& name, const D2D1
 void AiListPainter::Background(const D2D1_RECT_F& bg, float inset, float radius) {
     if (!o_ || row_name_.empty()) return;
     ID2D1DeviceContext* dc = compositor_->Dc();
-    if (row_flash_ <= 0.0f && row_bump_ <= 0.0f && row_done_ <= 0.0f) return;
+    if (row_flash_ <= 0.0f && row_bump_ <= 0.0f && row_done_ <= 0.0f && row_ring_ <= 0.0f) return;
     ID2D1SolidColorBrush* brush = nullptr;
     if (FAILED(dc->CreateSolidColorBrush(theme_.accent, &brush))) return;
     Ctx c{compositor_, dc, brush, s_};
@@ -320,6 +344,7 @@ void AiListPainter::Background(const D2D1_RECT_F& bg, float inset, float radius)
         c.Fill(r, radius, Alpha(accent, (dark ? 0.16f : 0.12f) * Ease(in) * out));
     }
     if (row_done_ > 0.0f) c.Fill(r, radius, Alpha(accent, 0.18f * row_done_));
+    if (row_ring_ > 0.0f) c.Stroke(r, radius, Alpha(accent, row_ring_), 2.0f * s_);
     if (row_flash_ > 0.0f) {
         // readrow: accent 22% and an inset 3 px accent bar, fading out.
         c.Fill(r, radius, Alpha(accent, 0.22f * row_flash_));
@@ -407,18 +432,45 @@ void AiListPainter::AfterName(float left, float right, float text_top, float tex
     Ctx c{compositor_, dc, brush, s_};
     // 11.5 semibold, h 20, r 10, padding 0 8 0 6, arrow 12, gap 4; 10 after the name.
     const float tw = c.Measure(d->second.label, f.tag);
-    const float w = 6.0f * s_ + 12.0f * s_ + 4.0f * s_ + tw + 8.0f * s_;
+    const float full_w = 6.0f * s_ + 12.0f * s_ + 4.0f * s_ + tw + 8.0f * s_;
     const float x = left + 4.0f * s_ - 6.0f * s_ * (1.0f - e);
+    // A new name may be cut (…) to its reserved room; others need it all.
+    float w = full_w;
+    if (d->second.tint == AiListOverlay::kDestAccent && x + w > right + 1.0f && right - x >= 60.0f * s_) w = right - x;
     if (x + w <= right + 1.0f) {
         const float top = std::round(mid - 10.0f * s_);
         const D2D1_RECT_F r = D2D1::RectF(x, top, x + w, top + 20.0f * s_);
         const int tint = d->second.tint;
-        c.Fill(r, 10.0f * s_, Alpha(TintBg(tint, dark), e));
-        const D2D1_COLOR_F fg = Alpha(TintFg(tint, dark), e);
+        D2D1_COLOR_F bgc, fgc;
+        if (tint == AiListOverlay::kDestAccent) {
+            // .dest.nm2: accent on accent-soft.
+            fgc = theme_.accent;
+            fgc.a = 1.0f;
+            bgc = Mix(Over(theme_.surface_card, theme_.bg), fgc, dark ? 0.20f : 0.13f);
+        } else {
+            bgc = TintBg(tint, dark);
+            fgc = TintFg(tint, dark);
+        }
+        c.Fill(r, 10.0f * s_, Alpha(bgc, e));
+        const D2D1_COLOR_F fg = Alpha(fgc, e);
         c.Icon(AiIcon::Arrow, x + 6.0f * s_, top + 4.0f * s_, 12.0f * s_, fg);
         c.Text(d->second.label, f.tag, D2D1::RectF(x + 22.0f * s_, top, r.right - 6.0f * s_, r.bottom), fg);
     }
     brush->Release();
+}
+
+float AiListPainter::AfterNameReserve() const {
+    if (!o_ || row_name_.empty() || !o_->dest_start) return 0.0f;
+    auto d = o_->dests.find(row_name_);
+    if (d == o_->dests.end() || d->second.tint != AiListOverlay::kDestAccent) return 0.0f;
+    const Formats& f = EnsureFormats(compositor_, s_);
+    if (!f.tag) return 0.0f;
+    ID2D1SolidColorBrush* brush = nullptr;
+    if (FAILED(compositor_->Dc()->CreateSolidColorBrush(theme_.accent, &brush))) return 0.0f;
+    Ctx c{compositor_, compositor_->Dc(), brush, s_};
+    const float w = 6.0f * s_ + 12.0f * s_ + 4.0f * s_ + c.Measure(d->second.label, f.tag) + 8.0f * s_;
+    brush->Release();
+    return 6.0f * s_ + 4.0f * s_ + w;
 }
 
 void AiListPainter::Flights(const D2D1_RECT_F& list,

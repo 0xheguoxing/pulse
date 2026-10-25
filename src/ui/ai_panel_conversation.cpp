@@ -337,10 +337,11 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
     };
     // .b2 button (h 32, padding 0 14, radius 8); returns its width.
     const auto button = [&](float x_right, float y, const std::wstring& text, bool primary, AiIcon icon, bool with_icon,
-                            AiPanelPart part, int index) {
+                            AiPanelPart part, int index, float max_w = 0.0f) {
         IDWriteTextFormat* fmt = primary ? formats_.body13b : formats_.body13;
         const float tw = c.Measure(text, fmt);
-        const float bw = 28.0f * s + tw + (with_icon ? 20.0f * s : 0.0f);
+        float bw = 28.0f * s + tw + (with_icon ? 20.0f * s : 0.0f);
+        if (max_w > 0.0f && bw > max_w) bw = max_w;   // a narrow panel: the text ends in …
         const D2D1_RECT_F r = D2D1::RectF(x_right - bw, y, x_right, y + 32.0f * s);
         const bool h = hot(part, index), d = down(part, index);
         D2D1_MATRIX_3X2_F before;
@@ -361,7 +362,7 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             c.Icon(icon, tx, y + 9.0f * s, 14.0f * s, ink);
             tx += 20.0f * s;
         }
-        line(text, fmt, tx, y, r.right, 32.0f * s, ink);
+        line(text, fmt, tx, y, r.right - 10.0f * s, 32.0f * s, ink);
         dc->SetTransform(before);
         hit(r, part, index);
         return bw;
@@ -809,7 +810,12 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             const float sub_h = b.sub.empty() ? 0.0f : 2.0f * s + wrapped_h(b.sub, formats_.caption, text_w, 18.0f * s);
             const float top_h = 12.0f * s + (std::max)(30.0f * s, title_h + sub_h) + 4.0f * s;
             const float hint_h = b.hint.empty() ? 0.0f : 6.0f * s + 18.0f * s;
-            const float h = 2.0f * s + top_h + hint_h + 56.0f * s;
+            // .lktip: max-height 0 → 40 and opacity while the link is hovered
+            // (.3 s / .25 s); padding 0 12 10 52, margin-top -4.
+            const float tip_k = b.extra_tip.empty() ? 0.0f
+                                                    : TweenTo(key + 2, hot(AiPanelPart::ConfirmExtra, index) ? 1.0f : 0.0f, 300, now_ms);
+            const float tip_h = tip_k * (18.0f * s + 10.0f * s - 4.0f * s);
+            const float h = 2.0f * s + top_h + hint_h + 56.0f * s + tip_h;
             const D2D1_RECT_F r = D2D1::RectF(x0, top + y, x1, top + y + h);
             if (visible(r.top - 4.0f * s, r.bottom + 4.0f * s)) {
                 // box-shadow 0 0 0 3px amber 12%.
@@ -830,7 +836,37 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                 yy += 12.0f * s;
                 float bx = ir - 12.0f * s;
                 bx -= button(bx, yy, b.accept, true, AiIcon::Check, false, AiPanelPart::ConfirmAccept, index) + 8.0f * s;
-                button(bx, yy, b.deny, false, AiIcon::Close, false, AiPanelPart::ConfirmDeny, index);
+                bx -= button(bx, yy, b.deny, false, AiIcon::Close, false, AiPanelPart::ConfirmDeny, index);
+                if (!b.extra.empty()) {
+                    // .lk: margin-right auto, no border or fill, accent 600,
+                    // padding 0 8, sliders icon 14, gap 6; hover fill. In a
+                    // narrow panel the text ends in … (only the icon when tight).
+                    const float room = bx - 8.0f * s - (il + 12.0f * s);
+                    float lw = 8.0f * s + 14.0f * s + 6.0f * s + c.Measure(b.extra, formats_.body13b) + 8.0f * s;
+                    if (lw > room) lw = room >= 8.0f * s + 14.0f * s + 6.0f * s + 40.0f * s + 8.0f * s ? room : 30.0f * s;
+                    const D2D1_RECT_F lr = D2D1::RectF(il + 12.0f * s, yy, il + 12.0f * s + lw, yy + 32.0f * s);
+                    const bool lh = hot(AiPanelPart::ConfirmExtra, index);
+                    D2D1_MATRIX_3X2_F before;
+                    dc->GetTransform(&before);
+                    if (down(AiPanelPart::ConfirmExtra, index) && motion_on) {
+                        const D2D1_POINT_2F mid = D2D1::Point2F((lr.left + lr.right) * 0.5f, (lr.top + lr.bottom) * 0.5f);
+                        dc->SetTransform(D2D1::Matrix3x2F::Scale(0.94f, 0.94f, mid) * before);
+                    }
+                    if (lh) c.Fill(lr, 8.0f * s, pal.hover);
+                    c.Icon(AiIcon::Sliders, lr.left + 8.0f * s, yy + 9.0f * s, 14.0f * s, pal.accent);
+                    if (lw > 30.0f * s)
+                        line(b.extra, formats_.body13b, lr.left + 28.0f * s, yy, lr.right - 8.0f * s, 32.0f * s, pal.accent);
+                    dc->SetTransform(before);
+                    hit(lr, AiPanelPart::ConfirmExtra, index);
+                }
+                if (tip_k > 0.0f) {
+                    const float ty = yy + 32.0f * s + 12.0f * s - 4.0f * s;
+                    const D2D1_RECT_F clip = D2D1::RectF(il, ty, ir, ty + tip_h);
+                    dc->PushAxisAlignedClip(clip, D2D1_ANTIALIAS_MODE_ALIASED);
+                    line(b.extra_tip, formats_.meta, il + 52.0f * s - 1.0f * s, ty, ir - 12.0f * s, 18.0f * s,
+                         Alpha(pal.text3, std::clamp(tip_k * 1.2f, 0.0f, 1.0f)));
+                    dc->PopAxisAlignedClip();
+                }
             }
             y += h;
             pending = 12.0f * s;
@@ -894,8 +930,10 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                     float bx = tx + uw;
                     button(bx, yy, b.deny, false, AiIcon::Undo, true, AiPanelPart::ResultUndo, index);
                     if (!b.accept.empty()) {
-                        bx += 8.0f * s + 28.0f * s + 20.0f * s + c.Measure(b.accept, formats_.body13);
-                        button(bx, yy, b.accept, false, AiIcon::Open, true, AiPanelPart::ResultShow, index);
+                        const float left = bx + 8.0f * s;
+                        const float room = tx + text_w - left;
+                        const float aw = (std::min)(28.0f * s + 20.0f * s + c.Measure(b.accept, formats_.body13), room);
+                        button(left + aw, yy, b.accept, false, b.accept_icon, true, AiPanelPart::ResultShow, index, aw);
                     }
                 }
             }
@@ -1324,6 +1362,186 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                     hit(fr, AiPanelPart::FollowItem, fi);
                 }
             }
+            y += h;
+            pending = 12.0f * s;
+            break;
+        }
+        case AiBlockKind::Rename: {
+            // .card: .card-h 40 (icon 16 accent, title 13 semibold, .mu 12
+            // text3, chevron); .card-b border-top line2, padding 6 0, holding
+            // .rule (margin 6 12 6, padding 8 10, radius 9, chrome), the .rnr
+            // rows (padding 5 12, lh 18; old .78fr | 14 | new 1.3fr, gap 8),
+            // .rn-more (padding 3 12 7), .checks (border-top, padding 8 12 6,
+            // gap 3) and .foot (padding 2 12 10).
+            place(0.0f);
+            const float il = x0 + 1.0f * s, ir = x1 - 1.0f * s;
+            const float bl = il + 12.0f * s, br = ir - 12.0f * s;
+            const D2D1_COLOR_F chrome = Mix(pal.pane, pal.hover, 0.45f);
+            // The rule's pieces (flex-wrap, gap 4, 22 high): 规则, chips and
+            // literal text, then 扩展名不变 pushed to the right.
+            struct Piece { float x, y, w; int kind; size_t i; };   // 0 label, 1 chip, 2 literal, 3 note, 4 word
+            std::vector<Piece> pieces;
+            const float rx0 = bl + 10.0f * s, rx1 = br - 10.0f * s;
+            float px = rx0, py = 0.0f;
+            const auto put = [&](float w, int kind, size_t i, float gap) {
+                if (px > rx0 && px + w > rx1) { px = rx0; py += 26.0f * s; }
+                pieces.push_back({px, py, (std::min)(w, rx1 - rx0), kind, i});
+                px += w + gap;
+            };
+            if (!b.rule_label.empty()) put(c.Measure(b.rule_label, formats_.meta), 0, 0, 10.0f * s);
+            for (size_t i = 0; i < b.rule.size(); ++i) {
+                const AiRuleToken& t = b.rule[i];
+                if (t.token) put(c.Measure(t.text, formats_.caption_b) + 14.0f * s, 1, i, 4.0f * s);
+                else if (t.word) put(c.Measure(t.text, formats_.meta), 4, i, 4.0f * s);
+                else put(c.Measure(t.text, formats_.mono125), 2, i, 4.0f * s);
+            }
+            if (!b.hint.empty()) {
+                const float w = c.Measure(b.hint, formats_.meta);
+                if (px + w > rx1 + 0.5f) { px = rx0; py += 26.0f * s; }
+                pieces.push_back({rx1 - w, py, w, 3, 0});
+            }
+            const float rule_h = 8.0f * s + py + 22.0f * s + 8.0f * s;
+            std::vector<size_t> shown;
+            for (size_t i = 0; i < b.rows.size(); ++i)
+                if (b.open || b.rows[i].sample) shown.push_back(i);
+            const std::wstring& toggle = b.open ? b.less : b.more;
+            const float more_h = toggle.empty() ? 0.0f : 28.0f * s;
+            const float checks_h =
+                b.checks.empty() ? 0.0f
+                                 : 1.0f * s + 8.0f * s + 18.0f * s * static_cast<float>(b.checks.size()) +
+                                       3.0f * s * static_cast<float>(b.checks.size() - 1) + 6.0f * s;
+            const float foot_h = b.sub.empty() ? 0.0f : 30.0f * s;
+            float h = 2.0f * s + 40.0f * s;
+            if (!b.collapsed)
+                h += 1.0f * s + 6.0f * s + 6.0f * s + rule_h + 6.0f * s + 28.0f * s * static_cast<float>(shown.size()) + more_h + checks_h + foot_h +
+                     6.0f * s;
+            const D2D1_RECT_F r = D2D1::RectF(x0, top + y, x1, top + y + h);
+            const float col_k = TweenTo(key + 1, b.collapsed ? 1.0f : 0.0f, 250, now_ms);
+            const D2D1_RECT_F hr = D2D1::RectF(il, r.top + 1.0f, ir, r.top + 1.0f + 40.0f * s);
+            if (visible(r.top, r.bottom)) {
+                card(r, pal.line);
+                if (hot(AiPanelPart::RenameToggle, index)) {
+                    dc->PushAxisAlignedClip(hr, D2D1_ANTIALIAS_MODE_ALIASED);
+                    c.Fill(Inflate(r, -1.0f), 11.0f * s, Alpha(pal.hover, 0.6f));
+                    dc->PopAxisAlignedClip();
+                }
+                const float cy = hr.top + 20.0f * s;
+                c.Icon(AiIcon::Rename, hr.left + 12.0f * s, cy - 8.0f * s, 16.0f * s, pal.accent);
+                float hx = hr.left + 36.0f * s;
+                const float tw = c.Measure(b.label, formats_.body13b);
+                line(b.label, formats_.body13b, hx, hr.top, hx + tw + 1.0f, 40.0f * s, pal.text);
+                hx += tw + 8.0f * s;
+                line(b.meta, formats_.caption, hx, hr.top, hr.right - 33.0f * s, 40.0f * s, pal.text3);
+                chevron(hr.right - 25.0f * s, cy, -90.0f * col_k, pal.text3, AiIcon::ChevronDown);
+                if (!b.collapsed) {
+                    float yy = hr.bottom;
+                    c.Fill(D2D1::RectF(il, yy, ir, yy + 1.0f * s), 0.0f, pal.line2);
+                    yy += 1.0f * s + 6.0f * s + 6.0f * s;
+                    // .rule
+                    const D2D1_RECT_F rb = D2D1::RectF(bl, yy, br, yy + rule_h);
+                    c.Fill(rb, 9.0f * s, chrome);
+                    for (const Piece& p : pieces) {
+                        const float pyy = rb.top + 8.0f * s + p.y;
+                        if (p.kind == 0) {
+                            line(b.rule_label, formats_.meta, p.x, pyy, p.x + p.w + 1.0f, 22.0f * s, pal.text3);
+                        } else if (p.kind == 3) {
+                            line(b.hint, formats_.meta, p.x, pyy, p.x + p.w + 1.0f, 22.0f * s, pal.text3);
+                        } else if (p.kind == 4) {
+                            line(b.rule[p.i].text, formats_.meta, p.x, pyy, p.x + p.w + 1.0f, 22.0f * s, pal.text3);
+                        } else if (p.kind == 1) {
+                            const D2D1_RECT_F tr = D2D1::RectF(p.x, pyy, p.x + p.w, pyy + 22.0f * s);
+                            c.Fill(tr, 6.0f * s, pal.accent_soft);
+                            line(b.rule[p.i].text, formats_.caption_b, tr.left + 7.0f * s, tr.top, tr.right - 6.0f * s, 22.0f * s,
+                                 pal.accent);
+                        } else {
+                            line(b.rule[p.i].text, formats_.mono125, p.x, pyy, p.x + p.w + 1.0f, 22.0f * s, pal.text);
+                        }
+                    }
+                    yy = rb.bottom + 6.0f * s;
+                    // .rnr rows
+                    const float fr = (br - bl - 14.0f * s - 16.0f * s) / 2.08f;
+                    const float old_r = bl + 0.78f * fr;
+                    const float arrow_x = old_r + 8.0f * s;
+                    const float nx0 = arrow_x + 14.0f * s + 8.0f * s;
+                    for (size_t k : shown) {
+                        const AiRenameRow& row = b.rows[k];
+                        // .rnr: opacity 0 + translateY(4) until .in (.3 s).
+                        float ra = 0.0f, rdy = 4.0f * s;
+                        if (row.in_ms) {
+                            const float t = motion_on ? std::clamp(static_cast<float>(now_ms - row.in_ms) / 300.0f, 0.0f, 1.0f) : 1.0f;
+                            if (t < 1.0f) conv_anim_ = true;
+                            const float e = CubicBezier(0.25f, 0.1f, 0.25f, 1.0f, t);
+                            ra = e;
+                            rdy = 4.0f * s * (1.0f - e);
+                        }
+                        if (ra > 0.0f && visible(yy, yy + 28.0f * s)) {
+                            const bool rp = push_entrance({ra, rdy});
+                            const float ty = yy + 5.0f * s;
+                            // Old name: text3, struck through (55 % text3).
+                            const float ow = (std::min)(c.Measure(row.old_name, formats_.small125), old_r - bl);
+                            line(row.old_name, formats_.small125, bl, ty, old_r, 18.0f * s, pal.text3);
+                            const float sy = std::round(ty + 9.5f * s);
+                            c.Fill(D2D1::RectF(bl, sy, bl + ow, sy + (std::max)(1.0f, std::round(1.0f * s))), 0.0f,
+                                   Alpha(pal.text3, 0.55f));
+                            c.Icon(AiIcon::Arrow, arrow_x, ty + 3.0f * s, 12.0f * s, pal.text3);
+                            // New name: semibold, token parts in accent, the
+                            // extension regular text3, then the amber dot.
+                            float nx = nx0;
+                            const float nr = br - (row.warn ? 12.0f * s : 0.0f);
+                            for (const AiRuleToken& part : row.parts) {
+                                if (nx >= nr) break;
+                                const float pw = c.Measure(part.text, formats_.small125b);
+                                line(part.text, formats_.small125b, nx, ty, nr, 18.0f * s, part.token ? pal.accent : pal.text);
+                                nx += pw;
+                            }
+                            if (nx < nr && !row.ext.empty()) {
+                                const float ew = c.Measure(row.ext, formats_.small125);
+                                line(row.ext, formats_.small125, nx, ty, nr, 18.0f * s, pal.text3);
+                                nx += ew;
+                            }
+                            if (row.warn) {
+                                const float dx = (std::min)(nx, nr) + 6.0f * s + 3.0f * s;
+                                c.dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dx, ty + 9.5f * s), 3.0f * s, 3.0f * s),
+                                                  c.B(pal.amber));
+                            }
+                            pop_entrance(rp);
+                        }
+                        yy += 28.0f * s;
+                    }
+                    // .rn-more
+                    if (!toggle.empty()) {
+                        const float mw = 16.0f * s + c.Measure(toggle, formats_.caption_b);
+                        const D2D1_RECT_F mr = D2D1::RectF(bl, yy + 3.0f * s, bl + mw, yy + 21.0f * s);
+                        const bool mh = hot(AiPanelPart::RenameMore, index);
+                        AiIconPose pose;
+                        pose.rotate_deg = b.open ? 180.0f : 0.0f;
+                        const D2D1_COLOR_F ink = mh ? Mix(pal.accent, pal.text, 0.25f) : pal.accent;
+                        c.Icon(AiIcon::ChevronDown, mr.left, mr.top + 3.0f * s, 12.0f * s, ink, pose);
+                        line(toggle, formats_.caption_b, mr.left + 16.0f * s, mr.top, mr.right + 1.0f, 18.0f * s, ink);
+                        hit(Inflate(mr, 4.0f * s), AiPanelPart::RenameMore, index);
+                        yy += 28.0f * s;
+                    }
+                    // .checks
+                    if (!b.checks.empty()) {
+                        c.Fill(D2D1::RectF(il, yy, ir, yy + 1.0f * s), 0.0f, pal.line2);
+                        yy += 1.0f * s + 8.0f * s;
+                        for (size_t i = 0; i < b.checks.size(); ++i) {
+                            const AiCheckView& ck = b.checks[i];
+                            c.Icon(ck.warn ? AiIcon::Warn : AiIcon::Check, bl, yy + 2.5f * s, 13.0f * s, ck.warn ? pal.amber : pal.ok);
+                            line(ck.text, formats_.caption, bl + 20.0f * s, yy, br, 18.0f * s, pal.text2);
+                            yy += 18.0f * s + (i + 1 < b.checks.size() ? 3.0f * s : 0.0f);
+                        }
+                        yy += 6.0f * s;
+                    }
+                    // .foot
+                    if (!b.sub.empty()) {
+                        yy += 2.0f * s;
+                        c.Icon(AiIcon::Bolt, bl, yy + 2.5f * s, 13.0f * s, pal.accent);
+                        line(b.sub, formats_.meta, bl + 19.0f * s, yy, br, 18.0f * s, pal.text3);
+                    }
+                }
+            }
+            hit(hr, AiPanelPart::RenameToggle, index);
             y += h;
             pending = 12.0f * s;
             break;

@@ -961,6 +961,7 @@ void AiChatStop(AppState& s) {
     }
     c.confirm_id = 0;
     c.on_confirm = nullptr;
+    c.on_extra = nullptr;
     AiBlockView& note = c.Add(AiBlockKind::Note, Now());
     note.text = Text(I::AiAsstStopped);
     Finish(s, false);
@@ -988,7 +989,17 @@ void AiChatActivate(AppState& s, ui::AiPanelPart part, int block) {
         if (b.collapsed) b.open = !b.open;
         break;
     case P::PlanToggle:
+    case P::RenameToggle:
         b.collapsed = !b.collapsed;
+        break;
+    case P::RenameMore:
+        b.open = !b.open;
+        break;
+    case P::ConfirmExtra:
+        if (b.id == c.confirm_id && c.on_extra) {
+            auto fn = c.on_extra;   // may open a modal dialog; the handler clears itself
+            fn(s);
+        }
         break;
     case P::ConfirmAccept:
     case P::ConfirmDeny:

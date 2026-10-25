@@ -343,7 +343,7 @@ static const std::wstring* TokenText(const Step& st) {
 }
 
 bool NeedsTakenDate(const std::vector<Step>& steps, const Options& opts) {
-    if (opts.order == Order::Taken) return true;
+    if (opts.order == Order::Taken || opts.daily) return true;
     for (const auto& st : steps)
         if (const std::wstring* p = TokenText(st);
             p && (p->find(L"{拍摄日期") != std::wstring::npos || p->find(L"{拍攝日期") != std::wstring::npos ||
@@ -402,6 +402,12 @@ Plan Resolve(const std::vector<Source>& sources, const std::vector<Step>& steps,
                          [&](size_t a, size_t b) { return Lower(sources[a].name) < Lower(sources[b].name); });
     std::vector<size_t> index_of(n);
     for (size_t j = 0; j < n; ++j) index_of[order[j]] = j;
+    if (opts.daily) {
+        // Each day counts from the start again, in the same order.
+        constexpr uint64_t kDay = 864000000000ull;   // FILETIME ticks
+        std::unordered_map<uint64_t, size_t> seen;
+        for (size_t j = 0; j < n; ++j) index_of[order[j]] = seen[when(order[j]) / kDay]++;
+    }
 
     // 1) Apply the steps.
     for (size_t i = 0; i < n; ++i) {

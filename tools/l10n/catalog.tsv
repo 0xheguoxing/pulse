@@ -3365,3 +3365,63 @@ AiFollowCopied	IDS_AI_FOLLOW_COPIED	4563	已复制 {n} 个路径	Copied {n} path
 AiQSugTitle	IDS_AI_Q_SUG_TITLE	4564	找上个月的发票	Find last month's invoices	找上個月的發票
 AiQSugDetail	IDS_AI_Q_SUG_DETAIL	4565	用 Pulse 索引搜所有位置，结果列在右边	Searches everywhere with Pulse's index; results open in the list	用 Pulse 索引搜所有位置，結果列在右邊
 AiQSugPrompt	IDS_AI_Q_SUG_PROMPT	4566	找一下上个月的发票，PDF 和图片都算	Find last month's invoices, PDFs and pictures both	找一下上個月的發票，PDF 和圖片都算
+BrOrderDaily	IDS_BR_ORDER_DAILY	4567	每天从头编号	Start again each day	每天從頭編號
+BrOrderDailyShort	IDS_BR_ORDER_DAILY_SHORT	4568	每天从头	daily	每天從頭
+AiRnTitle	IDS_AI_RN_TITLE	4569	重命名方案	Rename plan	重新命名方案
+AiRnMeta	IDS_AI_RN_META	4570	{n} 个文件	{n} files	{n} 個檔案
+AiRnRule	IDS_AI_RN_RULE	4571	规则	Rule	規則
+AiRnExtKeep	IDS_AI_RN_EXT_KEEP	4572	扩展名不变	Extension unchanged	副檔名不變
+AiRnExtTo	IDS_AI_RN_EXT_TO	4573	扩展名改为 {ext}	Extension becomes {ext}	副檔名改為 {ext}
+AiRnExtLower	IDS_AI_RN_EXT_LOWER	4574	扩展名改小写	Lower-case extension	副檔名改小寫
+AiRnExtUpper	IDS_AI_RN_EXT_UPPER	4575	扩展名改大写	Upper-case extension	副檔名改大寫
+AiRnMore	IDS_AI_RN_MORE	4576	还有 {n} 个	{n} more	還有 {n} 個
+AiRnLess	IDS_AI_RN_LESS	4577	收起	Show less	收起
+AiRnCheckOk	IDS_AI_RN_CHECK_OK	4578	没有重名，也不和文件夹里的其他文件冲突	No duplicate names and no clash with other files in the folder	沒有重名，也不和資料夾裡的其他檔案衝突
+AiRnCheckClash	IDS_AI_RN_CHECK_CLASH	4579	{n} 个名字和已有文件冲突，自动加了 (2) 这样的编号	{n} names clashed with existing files and got a number such as (2)	{n} 個名稱和既有檔案衝突，自動加了 (2) 這樣的編號
+AiRnCheckCams	IDS_AI_RN_CHECK_CAMS	4580	{n} 台相机的照片按拍摄时间合并编号	Photos from {n} cameras are numbered together by time taken	{n} 台相機的照片按拍攝時間合併編號
+AiRnCheckNoTaken	IDS_AI_RN_CHECK_NO_TAKEN	4581	{n} 张没有拍摄时间（{name}），用了修改时间	{n} without a date taken ({name}): used the date modified	{n} 張沒有拍攝時間（{name}），用了修改時間
+AiRnCheckNoTakenMany	IDS_AI_RN_CHECK_NO_TAKEN_MANY	4582	{n} 张没有拍摄时间，用了修改时间	{n} without a date taken: used the date modified	{n} 張沒有拍攝時間，用了修改時間
+AiRnCheckSame	IDS_AI_RN_CHECK_SAME	4583	{n} 个文件名字不变，不会改动	{n} names stay the same and are left alone	{n} 個檔案名稱不變，不會改動
+AiRnCheckBad	IDS_AI_RN_CHECK_BAD	4584	{n} 个新名字不能用，会跳过	{n} new names are not allowed and are skipped	{n} 個新名稱不能用，會略過
+AiRnFoot	IDS_AI_RN_FOOT	4585	AI 只给规则，名字由 Pulse 在本机按规则生成	The AI only gives the rule; Pulse makes the names on this PC	AI 只給規則，名稱由 Pulse 在本機依規則產生
+AiRnTokNum	IDS_AI_RN_TOK_NUM	4586	序号 {s}	Number {s}	序號 {s}
+AiRnTokNumDaily	IDS_AI_RN_TOK_NUM_DAILY	4587	当天序号 {s}	Daily number {s}	當天序號 {s}
+AiRnStepReplace	IDS_AI_RN_STEP_REPLACE	4588	换成	→	換成
+AiRnStepRemove	IDS_AI_RN_STEP_REMOVE	4589	删除	Remove	刪除
+AiRnStepBrackets	IDS_AI_RN_STEP_BRACKETS	4590	删除 (1) 这类编号	Remove copy numbers like (1)	刪除 (1) 這類編號
+AiRnStepSpaces	IDS_AI_RN_STEP_SPACES	4591	合并多余空格	Tidy spaces	合併多餘空格
+AiRnStepDigits	IDS_AI_RN_STEP_DIGITS	4592	删除数字	Remove digits	刪除數字
+AiRnStepStart	IDS_AI_RN_STEP_START	4593	开头加	At the start	開頭加
+AiRnStepEnd	IDS_AI_RN_STEP_END	4594	末尾加	At the end	結尾加
+AiRnStepAt	IDS_AI_RN_STEP_AT	4595	第 {n} 个字后加	After {n} characters	第 {n} 個字後加
+AiRnStepLower	IDS_AI_RN_STEP_LOWER	4596	全部小写	lower case	全部小寫
+AiRnStepUpper	IDS_AI_RN_STEP_UPPER	4597	全部大写	UPPER CASE	全部大寫
+AiRnStepTitleCase	IDS_AI_RN_STEP_TITLE_CASE	4598	首字母大写	Title Case	首字母大寫
+AiRnConfirmTitle	IDS_AI_RN_CONFIRM_TITLE	4599	重命名这 {n} 个文件？	Rename these {n} files?	重新命名這 {n} 個檔案？
+AiRnConfirmSub	IDS_AI_RN_CONFIRM_SUB	4600	位置：{folder}。不会覆盖已有文件，做完可以撤销。	In {folder}. Nothing is overwritten, and you can undo it.	位置：{folder}。不會覆寫既有檔案，完成後可以復原。
+AiRnFolders	IDS_AI_RN_FOLDERS	4601	{n} 个文件夹	{n} folders	{n} 個資料夾
+AiRnHintRight	IDS_AI_RN_HINT_RIGHT	4602	右边列表里已标出每个文件的新名字	The list on the right shows each file's new name	右邊清單裡已標出每個檔案的新名稱
+AiRnHint	IDS_AI_RN_HINT	4603	列表里已标出每个文件的新名字	The list shows each file's new name	清單裡已標出每個檔案的新名稱
+AiRnAccept	IDS_AI_RN_ACCEPT	4604	重命名	Rename	重新命名
+AiRnAdjust	IDS_AI_RN_ADJUST	4605	在批量重命名中调整…	Adjust in Batch rename…	在批次重新命名中調整…
+AiRnAdjustTip	IDS_AI_RN_ADJUST_TIP	4606	打开批量重命名，规则已经填好，可以继续加步骤	Opens Batch rename with this rule filled in, ready for more steps	開啟批次重新命名，規則已經填好，可以繼續加步驟
+AiRnConfirmed	IDS_AI_RN_CONFIRMED	4607	你在 Pulse 里确认了：重命名 {n} 个文件	You confirmed in Pulse: rename {n} files	你在 Pulse 裡確認了：重新命名 {n} 個檔案
+AiRnDenied	IDS_AI_RN_DENIED	4608	你拒绝了：重命名 {n} 个文件	You declined: rename {n} files	你拒絕了：重新命名 {n} 個檔案
+AiRnAdjusted	IDS_AI_RN_ADJUSTED	4609	你在批量重命名中调整后改了 {n} 个文件	You adjusted it in Batch rename and renamed {n} files	你在批次重新命名中調整後改了 {n} 個檔案
+AiRnAdjustClosed	IDS_AI_RN_ADJUST_CLOSED	4610	你打开了批量重命名，没有改名	You opened Batch rename and renamed nothing	你開啟了批次重新命名，沒有改名
+AiRnSteps	IDS_AI_RN_STEPS	4611	重命名了 {n} 个文件	Renamed {n} files	重新命名了 {n} 個檔案
+AiRnStep	IDS_AI_RN_STEP	4612	重命名	Rename	重新命名
+AiRnStepDone	IDS_AI_RN_STEP_DONE	4613	{n} 个文件 · 没有冲突	{n} files · no clashes	{n} 個檔案 · 沒有衝突
+AiRnStepSome	IDS_AI_RN_STEP_SOME	4614	改了 {k} 个，共 {n} 个	Renamed {k} of {n}	改了 {k} 個，共 {n} 個
+AiRnChipRun	IDS_AI_RN_CHIP_RUN	4615	正在重命名 {k}/{n}	Renaming {k}/{n}	正在重新命名 {k}/{n}
+AiRnResultTitle	IDS_AI_RN_RESULT_TITLE	4616	已重命名 {n} 个文件	Renamed {n} files	已重新命名 {n} 個檔案
+AiRnDay	IDS_AI_RN_DAY	4617	{m}月{d}日 {n} 张	{m}/{d}: {n}	{m}月{d}日 {n} 張
+AiRnUndoLabel	IDS_AI_RN_UNDO_LABEL	4618	Pulse 助手重命名	Pulse Assistant rename	Pulse 助手重新命名
+AiRnOpenDialog	IDS_AI_RN_OPEN_DIALOG	4619	在批量重命名中打开	Open in Batch rename	在批次重新命名中開啟
+AiRnUndoneSub	IDS_AI_RN_UNDONE_SUB	4620	{n} 个文件换回了原来的名字	{n} files have their old names back	{n} 個檔案換回了原來的名稱
+AiRnUndoNote	IDS_AI_RN_UNDO_NOTE	4621	你撤销了这次重命名	You undid this rename	你復原了這次重新命名
+AiPeekRenamed	IDS_AI_PEEK_RENAMED	4622	已重命名 {n} 个文件，例如 {name}。	Renamed {n} files, e.g. {name}.	已重新命名 {n} 個檔案，例如 {name}。
+AiRnStepRead	IDS_AI_RN_STEP_READ	4623	读取拍摄时间	Reading dates taken	讀取拍攝時間
+AiRnStepReadDone	IDS_AI_RN_STEP_READ_DONE	4624	{k} 张有拍摄时间 · {m} 张没有	{k} with a date taken · {m} without	{k} 張有拍攝時間 · {m} 張沒有
+AiRnSugTitle	IDS_AI_RN_SUG_TITLE	4625	把选中的照片按拍摄日期重命名	Rename the selected photos by date taken	把選取的照片按拍攝日期重新命名
+AiRnSugDetail	IDS_AI_RN_SUG_DETAIL	4626	只出规则，Pulse 在本机改名	The AI writes a rule; Pulse renames on this PC	只出規則，Pulse 在本機改名
