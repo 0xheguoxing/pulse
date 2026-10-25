@@ -111,9 +111,9 @@ std::vector<ui::AiSuggestionView> Suggestions(AppState& s) {
     const bool has_folder = CurrentFolder(s, path, folder, count);
     struct Sug { ui::AiIcon icon; ui::AiTint tint; I title; I detail; bool folder; };
     static constexpr Sug kSugs[] = {
+        {ui::AiIcon::Search, ui::AiTint::Document, I::AiQSugTitle, I::AiQSugDetail, false},
         {ui::AiIcon::Move, ui::AiTint::Image, I::AiAsstSugSortTitle, I::AiAsstSugSortDetail, true},
         {ui::AiIcon::Size, ui::AiTint::Archive, I::AiAsstSugSizeTitle, I::AiAsstSugSizeDetail, true},
-        {ui::AiIcon::Duplicate, ui::AiTint::Document, I::AiAsstSugDupTitle, I::AiAsstSugDupDetail, false},
         {ui::AiIcon::Camera, ui::AiTint::Video, I::AiAsstSugPhotoTitle, I::AiAsstSugPhotoDetail, false},
     };
     std::vector<ui::AiSuggestionView> out;
@@ -416,8 +416,12 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
     case P::Suggestion: {
         CloseMenu(s);
         const std::vector<ui::AiSuggestionView> suggestions = Suggestions(s);
-        if (hit.index >= 0 && hit.index < static_cast<int>(suggestions.size()))
-            Submit(s, suggestions[static_cast<size_t>(hit.index)].title);
+        if (hit.index >= 0 && hit.index < static_cast<int>(suggestions.size())) {
+            const std::wstring& title = suggestions[static_cast<size_t>(hit.index)].title;
+            // 找上个月的发票 only fills the composer: "last month" is easy to change.
+            if (title == Text(I::AiQSugTitle)) AiAssistantFillComposer(s, Text(I::AiQSugPrompt));
+            else Submit(s, title);
+        }
         break;
     }
     case P::ContextRemove: {
@@ -475,6 +479,18 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
         CloseMenu(s);
         AiChatActivate(s, hit.part, hit.index);
         break;
+    case P::QueryChipRemove:
+        CloseMenu(s);
+        AiAgentQueryChip(s, hit.index / 16, hit.index % 16);
+        break;
+    case P::QueryAdd:
+        CloseMenu(s);
+        AiAgentQueryAdd(s, hit.index);
+        break;
+    case P::FollowItem:
+        CloseMenu(s);
+        AiAgentFollow(s, hit.index / 8, hit.index % 8);
+        break;
     case P::ErrAction: {
         // The error card's buttons: connection and model open the menu in
         // place; retry, top up and copy are the chat's.
@@ -508,6 +524,18 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
 }
 
 } // namespace
+
+void AiAssistantFillComposer(AppState& s, const std::wstring& text) {
+    AiAssistantState& a = s.aiAssistant;
+    EnsureEdit(s);
+    if (!a.edit) return;
+    SetWindowTextW(a.edit, text.c_str());
+    const int end = static_cast<int>(text.size());
+    SendMessageW(a.edit, EM_SETSEL, static_cast<WPARAM>(end), static_cast<LPARAM>(end));
+    ReadComposerMetrics(a);
+    a.focus_pending = true;
+    Redraw(s);
+}
 
 bool AiAssistantIsOpen(const AppState& s) { return s.aiAssistant.open; }
 

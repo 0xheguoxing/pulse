@@ -3309,3 +3309,59 @@ AiPeekFailUndo	IDS_AI_PEEK_FAIL_UNDO	4507	「{p}」没能完成。已经完成�
 AiPeekServer	IDS_AI_PEEK_SERVER	4508	服务暂时出错	The service had a problem	服務暫時出錯
 AiPeekNet	IDS_AI_PEEK_NET	4509	连不上服务	Can't reach the service	連不上服務
 AiChipTip	IDS_AI_CHIP_TIP	4510	Pulse 助手  Ctrl+J	Pulse Assistant  Ctrl+J	Pulse 助手  Ctrl+J
+AiQStep	IDS_AI_Q_STEP	4511	搜索	Search	搜尋
+AiQStepRun	IDS_AI_Q_STEP_RUN	4512	正在查 Pulse 索引…	Searching Pulse's index…	正在查 Pulse 索引…
+AiQStepDone	IDS_AI_Q_STEP_DONE	4513	{n} 个结果 · 用时 {t} 秒 · 不读文件内容	{n} results · {t} s · no file contents read	{n} 個結果 · 用時 {t} 秒 · 不讀檔案內容
+AiQStepsLabel	IDS_AI_Q_STEPS_LABEL	4514	在 Pulse 索引里搜索 · {n} 个结果	Searched Pulse's index · {n} results	在 Pulse 索引裡搜尋 · {n} 個結果
+AiQNoAnswer	IDS_AI_Q_NO_ANSWER	4515	搜索没有完成	the search did not finish	搜尋沒有完成
+AiQChipSearching	IDS_AI_Q_CHIP_SEARCHING	4516	搜索中	Searching	搜尋中
+AiQChipFound	IDS_AI_Q_CHIP_FOUND	4517	找到 {n} 个	Found {n}	找到 {n} 個
+AiQPeek	IDS_AI_Q_PEEK	4518	找到 {n} 个结果，已列在 Pulse 里	Found {n} results, listed in Pulse	找到 {n} 個結果，已列在 Pulse 裡
+AiQTitle	IDS_AI_Q_TITLE	4519	搜索条件	Search conditions	搜尋條件
+AiQMeta	IDS_AI_Q_META	4520	Pulse 索引 · {t} 秒	Pulse index · {t} s	Pulse 索引 · {t} 秒
+AiQAdd	IDS_AI_Q_ADD	4521	条件	Condition	條件
+AiQFiles	IDS_AI_Q_FILES	4522	个文件 · {size}	files · {size}	個檔案 · {size}
+AiQItems	IDS_AI_Q_ITEMS	4523	个项目 · {size}	items · {size}	個項目 · {size}
+AiQRerun	IDS_AI_Q_RERUN	4524	本机重新搜索，没有再问模型	Searched again here, no model call	本機重新搜尋，沒有再問模型
+AiQOther	IDS_AI_Q_OTHER	4525	其他	Other	其他
+AiQKeyName	IDS_AI_Q_KEY_NAME	4526	名称	Name	名稱
+AiQKeyExclude	IDS_AI_Q_KEY_EXCLUDE	4527	排除	Exclude	排除
+AiQKeyType	IDS_AI_Q_KEY_TYPE	4528	类型	Type	類型
+AiQKeyContent	IDS_AI_Q_KEY_CONTENT	4529	内容	Content	內容
+AiQKeyDate	IDS_AI_Q_KEY_DATE	4530	修改	Modified	修改
+AiQKeySize	IDS_AI_Q_KEY_SIZE	4531	大小	Size	大小
+AiQKeyFolder	IDS_AI_Q_KEY_FOLDER	4532	位置	In	位置
+AiQContains	IDS_AI_Q_CONTAINS	4533	含「{x}」	“{x}”	含「{x}」
+AiQNotContains	IDS_AI_Q_NOT_CONTAINS	4534	不含「{x}」	not “{x}”	不含「{x}」
+AiQEverywhere	IDS_AI_Q_EVERYWHERE	4535	所有位置	Everywhere	所有位置
+AiQListSep	IDS_AI_Q_LIST_SEP	4536	、	, 	、
+AiQDay	IDS_AI_Q_DAY	4537	{m}月{d}日	{m}/{d}	{m}月{d}日
+AiQDayYear	IDS_AI_Q_DAY_YEAR	4538	{y}年{m}月{d}日	{m}/{d}/{y}	{y}年{m}月{d}日
+AiQAfter	IDS_AI_Q_AFTER	4539	{d} 以后	after {d}	{d} 以後
+AiQBefore	IDS_AI_Q_BEFORE	4540	{d} 以前	before {d}	{d} 以前
+AiQToday	IDS_AI_Q_TODAY	4541	今天	Today	今天
+AiQYesterday	IDS_AI_Q_YESTERDAY	4542	昨天	Yesterday	昨天
+AiQThisWeek	IDS_AI_Q_THIS_WEEK	4543	本周	This week	本週
+AiQThisMonth	IDS_AI_Q_THIS_MONTH	4544	本月	This month	本月
+AiQThisYear	IDS_AI_Q_THIS_YEAR	4545	今年	This year	今年
+AiQLarger	IDS_AI_Q_LARGER	4546	大于 {a}	over {a}	大於 {a}
+AiQSmaller	IDS_AI_Q_SMALLER	4547	小于 {a}	under {a}	小於 {a}
+AiQKindFolder	IDS_AI_Q_KIND_FOLDER	4548	文件夹	Folders	資料夾
+AiQKindDoc	IDS_AI_Q_KIND_DOC	4549	文档	Documents	文件
+AiQKindImage	IDS_AI_Q_KIND_IMAGE	4550	图片	Pictures	圖片
+AiQKindVideo	IDS_AI_Q_KIND_VIDEO	4551	视频	Videos	影片
+AiQKindAudio	IDS_AI_Q_KIND_AUDIO	4552	音频	Audio	音訊
+AiQKindArchive	IDS_AI_Q_KIND_ARCHIVE	4553	压缩包	Archives	壓縮檔
+AiQKindCode	IDS_AI_Q_KIND_CODE	4554	代码	Code	程式碼
+AiFollowLabel	IDS_AI_FOLLOW_LABEL	4555	接着做	Next	接著做
+AiFollowZip	IDS_AI_FOLLOW_ZIP	4556	打包这 {n} 个	Zip these {n}	打包這 {n} 個
+AiFollowZipPrompt	IDS_AI_FOLLOW_ZIP_PROMPT	4557	把这 {n} 个文件打包成 zip	Zip these {n} files	把這 {n} 個檔案打包成 zip
+AiFollowMonth	IDS_AI_FOLLOW_MONTH	4558	按月份归档	File by month	按月份歸檔
+AiFollowMonthPrompt	IDS_AI_FOLLOW_MONTH_PROMPT	4559	把这些文件按修改月份归档到文件夹	File these by the month they were modified, one folder per month	把這些檔案按修改月份歸檔到資料夾
+AiFollowRename	IDS_AI_FOLLOW_RENAME	4560	批量重命名	Rename all	批次重新命名
+AiFollowRenamePrompt	IDS_AI_FOLLOW_RENAME_PROMPT	4561	把这些文件批量重命名，规则是：	Rename these files with this rule: 	把這些檔案批次重新命名，規則是：
+AiFollowCopy	IDS_AI_FOLLOW_COPY	4562	复制路径	Copy paths	複製路徑
+AiFollowCopied	IDS_AI_FOLLOW_COPIED	4563	已复制 {n} 个路径	Copied {n} paths	已複製 {n} 個路徑
+AiQSugTitle	IDS_AI_Q_SUG_TITLE	4564	找上个月的发票	Find last month's invoices	找上個月的發票
+AiQSugDetail	IDS_AI_Q_SUG_DETAIL	4565	用 Pulse 索引搜所有位置，结果列在右边	Searches everywhere with Pulse's index; results open in the list	用 Pulse 索引搜所有位置，結果列在右邊
+AiQSugPrompt	IDS_AI_Q_SUG_PROMPT	4566	找一下上个月的发票，PDF 和图片都算	Find last month's invoices, PDFs and pictures both	找一下上個月的發票，PDF 和圖片都算

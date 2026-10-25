@@ -60,6 +60,14 @@ enum class AiIcon : uint8_t {
     Gear,
     Swap,
     Warn,
+    // First batch of extensions (plans/ai/Pulse_AI助手_第一批扩展.html).
+    Bolt,
+    Package,
+    Rename,
+    Tasks,
+    Lock,
+    Skip,
+    Sliders,
     Count
 };
 

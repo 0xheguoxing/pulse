@@ -60,6 +60,10 @@ enum class AiPanelPart : uint8_t {
     ActThumb,
     ErrAction,      // index = block index * 4 + button (AiBlockView::actions)
     CutRetry,       // the 重试 link on the 回答中途断开了 strip
+    // Search conditions card (first batch, flow A).
+    QueryChipRemove,   // index = block index * 16 + chip (the chip's ×)
+    QueryAdd,          // + 条件
+    FollowItem,        // index = block index * 8 + item (接着做 chips)
     // 管理连接 card (the model menu unfolded).
     ConnCard,       // the card's background (swallows the click)
     ConnBack,
@@ -113,6 +117,8 @@ enum class AiBlockKind : uint8_t {
     Note,       // centred line between rules (你撤销了这次整理)
     Error,      // the turn failed: tile + title + sub (+ detail, hint) + buttons
     Cut,        // amber strip under a partial answer: 回答中途断开了 · 重试
+    Query,      // 搜索条件 card: condition chips, count, where the results are
+    Follow,     // 接着做: chips that put a next step into the composer
 };
 
 // Error card tone: Err needs the user (red, red border), Warn is temporary
@@ -155,7 +161,23 @@ struct AiGroupView {
 struct AiTagView {
     AiTint tint = AiTint::Neutral;
     std::wstring text;                // 图片 3
+    std::wstring bold;                // Query locations: the count after the name
 };
+
+// A search condition on the Query card: 名称 含「发票」 ×.
+struct AiQueryChipView {
+    std::wstring key;                 // 名称 (accent, semibold)
+    std::wstring value;               // 含「发票」
+    bool fixed = false;               // no × (所有位置, the last condition)
+    uint64_t in_ms = 0;               // pops in (0: no entrance)
+    uint64_t out_ms = 0;              // removed: shrinks and fades, then goes
+};
+
+// 接着做: one chip that fills the composer.
+struct AiFollowView {
+    AiIcon icon = AiIcon::Package;
+    std::wstring text;                // 打包这 7 个
+}; 
 
 struct AiBlockView {
     AiBlockKind kind = AiBlockKind::Text;
@@ -182,6 +204,15 @@ struct AiBlockView {
     std::wstring detail;
     std::vector<AiErrButton> actions;
     uint64_t gone_ms = 0;             // Error / Cut: fading out (retry)
+    // Query: title 搜索条件, meta "Pulse 索引 · 0.02 秒", tags = locations,
+    // label = "个文件 · 4.2 MB" after the count, hint = 本机重新搜索… (shown
+    // from re_ms), add = 条件. Follow: label 接着做 and the chips.
+    std::vector<AiQueryChipView> chips;
+    std::vector<AiFollowView> follow;
+    std::wstring count;               // 7
+    std::wstring add;
+    uint64_t bump_ms = 0;             // the count changed (bump)
+    uint64_t re_ms = 0;               // 0: no rerun note
 };
 
 // The status bar chip (left end): "✦ AI" plus what the assistant is doing.
@@ -359,6 +390,7 @@ private:
         IDWriteTextFormat* badge = nullptr;     // 10.5 semibold
         IDWriteTextFormat* meta = nullptr;      // 11.5
         IDWriteTextFormat* mono = nullptr;      // 11.5 Cascadia Mono / Consolas
+        IDWriteTextFormat* num22 = nullptr;     // 22 semibold (the Query card's count)
         void Release();
     };
 

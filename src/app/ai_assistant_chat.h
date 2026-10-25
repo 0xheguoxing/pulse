@@ -129,5 +129,13 @@ std::wstring AiAgentHost();     // "api.deepseek.com"
 std::wstring AiAssistantModelName(const AppState& s);   // the model a request uses, as the service names it
 void AiAgentStart(AppState& s, const std::wstring& prompt, bool with_context);
 void AiAgentStop(AppState& s);   // cancels the request and any tool still running
+// Flow A: the 搜索条件 card's chip × and + 条件 search again in Pulse without
+// the model; 接着做 fills the composer (复制路径 copies at once).
+void AiAgentQueryChip(AppState& s, int block, int chip);
+void AiAgentQueryAdd(AppState& s, int block);
+void AiAgentFollow(AppState& s, int block, int item);
+// Puts `text` into the composer without sending it and focuses it (ai_assistant.cpp).
+void AiAssistantFillComposer(AppState& s, const std::wstring& text);
+void AiChatCopyText(HWND hwnd, const std::wstring& text);
 
 } // namespace pulse

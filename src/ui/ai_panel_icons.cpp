@@ -219,6 +219,36 @@ constexpr IconPart k_warn[] = {
     {"M12 10v4M12 17v.1", 0, 0x000000u, 1.8f, 1.0f},
 };
 
+// First batch of extensions (plans/ai/Pulse_AI助手_第一批扩展.html, 24 px boxes).
+constexpr IconPart k_bolt[] = {
+    {"M13 3L5 13.5h6L10 21l8-10.5h-6z", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_pkg[] = {
+    {"M4 7.8L12 4l8 3.8v8.4L12 20l-8-3.8z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M4 7.8l8 3.9 8-3.9M12 11.7V20", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_rename[] = {
+    {"M4 20h4L19 9l-4-4L4 16z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M13 7l4 4", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_tasks[] = {
+    {"M10 6h10M10 12h10M10 18h10", 0, 0x000000u, 1.6f, 1.0f},
+    {"M3.5 6l1.4 1.4L7.5 4.8M3.5 12l1.4 1.4 2.6-2.6M3.5 18l1.4 1.4 2.6-2.6", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_lock[] = {
+    {"M7 10.5H17A2 2 0 0 1 19 12.5V18.5A2 2 0 0 1 17 20.5H7A2 2 0 0 1 5 18.5V12.5A2 2 0 0 1 7 10.5Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M8 10.5V8a4 4 0 0 1 8 0v2.5", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_skip[] = {
+    {"M5.5 6.5l8 5.5-8 5.5z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M17.5 6.5v11", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_sliders[] = {
+    {"M4 7h9M17 7h3M4 17h3M11 17h9", 0, 0x000000u, 1.6f, 1.0f},
+    {"M13 7A2 2 0 1 0 17 7A2 2 0 1 0 13 7Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M7 17A2 2 0 1 0 11 17A2 2 0 1 0 7 17Z", 0, 0x000000u, 1.6f, 1.0f},
+};
+
 constexpr IconDef kIcons[] = {
     {k_spark, std::size(k_spark)},
     {k_folder, std::size(k_folder)},
@@ -269,6 +299,13 @@ constexpr IconDef kIcons[] = {
     {k_gear, std::size(k_gear)},
     {k_swap, std::size(k_swap)},
     {k_warn, std::size(k_warn)},
+    {k_bolt, std::size(k_bolt)},
+    {k_pkg, std::size(k_pkg)},
+    {k_rename, std::size(k_rename)},
+    {k_tasks, std::size(k_tasks)},
+    {k_lock, std::size(k_lock)},
+    {k_skip, std::size(k_skip)},
+    {k_sliders, std::size(k_sliders)},
 };
 
 static_assert(std::size(kIcons) == static_cast<size_t>(AiIcon::Count), "one table entry per AiIcon");

@@ -620,6 +620,7 @@ void AiChatFinish(AppState& s, bool done_chip) { Finish(s, done_chip); }
 std::wstring AiChatEffortName(const AppState& s) { return EffortName(s); }
 std::wstring AiChatModelId(const AppState& s) { return ModelName(s); }
 std::wstring AiChatFormatSize(uint64_t bytes) { return FormatSize(bytes); }
+void AiChatCopyText(HWND hwnd, const std::wstring& text) { CopyText(hwnd, text); }
 
 void AiChatAddActs(AppState& s, int tools, bool failed) {
     AiChat& c = Chat(s);
