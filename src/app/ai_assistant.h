@@ -37,6 +37,10 @@ struct AiAssistantState {
     float font_scale = 0.0f;
     HBRUSH brush = nullptr;
     COLORREF brush_color = 0;
+    // Card / text colours the composer was last presented with (both paths).
+    COLORREF edit_back = CLR_INVALID;
+    COLORREF edit_fore = CLR_INVALID;
+    std::wstring edit_cue;   // placeholder text the EDIT's "Pulse.EditCue" points at
     bool edit_visible = false;
     bool focus_pending = false;
     bool focused = false;

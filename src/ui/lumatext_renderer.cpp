@@ -227,15 +227,27 @@ struct LumaTextRenderer::Impl {
     // Enter still commits and no line break can be typed or pasted; only the
     // presentation, hit-testing and Up/Down are line-aware.
     static bool EditWraps(HWND hwnd) {
-        return hwnd && GetPropW(hwnd, L"Pulse.EditWrap") != nullptr;
+        return hwnd && (GetPropW(hwnd, L"Pulse.EditWrap") != nullptr || EditMultilineLine(hwnd) > 0.0f);
     }
+    // A real multi-line EDIT (the assistant's composer) sets its line height
+    // here, in 1/64 px. It wraps like body text: left-aligned, top-aligned,
+    // ordinary word breaks, one uniform line height so the owner's measured
+    // height and the painted lines agree. Line breaks are the EDIT's own.
+    static float EditMultilineLine(HWND hwnd) {
+        if (!hwnd) return 0.0f;
+        const auto given = reinterpret_cast<UINT_PTR>(GetPropW(hwnd, L"Pulse.EditMultiline"));
+        return given ? static_cast<float>(given) / 64.0f : 0.0f;
+    }
+    // Text padding: a multi-line field lines its text up with the owner's
+    // drawn text, so it has none.
+    static float EditPad(HWND hwnd) { return EditMultilineLine(hwnd) > 0.0f ? 0.0f : kEditPad; }
     // Line width of a wrapped field. The owner may give it exactly (in
     // 1/64 px, "Pulse.EditWrapW"): the window's whole-pixel size can lose a
     // pixel against the name it replaces and move a break.
     static float EditWrapWidth(HWND hwnd, float client_w) {
         const auto given = reinterpret_cast<UINT_PTR>(GetPropW(hwnd, L"Pulse.EditWrapW"));
         if (given) return std::max(1.0f, static_cast<float>(given) / 64.0f);
-        return std::max(1.0f, client_w - 2.0f * kEditPad);
+        return std::max(1.0f, client_w - 2.0f * EditPad(hwnd));
     }
     // Last painted wrapped layout and its origin, shared by mouse hit-testing
     // and Up/Down so both act on the lines actually on screen.
@@ -307,6 +319,7 @@ struct LumaTextRenderer::Impl {
         float baseline = 0;
         float tab_stop = 0;
         float wrap = 0;
+        float multiline = 0;
     };
     std::array<EditLayoutSlot, 4> edit_layouts;
     size_t next_edit_layout = 0;
@@ -1052,7 +1065,8 @@ struct LumaTextRenderer::Impl {
 
     Microsoft::WRL::ComPtr<IDWriteTextLayout> DwEditLayout(std::wstring_view text,
                                                            IDWriteTextFormat* format,
-                                                           float height, float wrap_width = 0.0f) {
+                                                           float height, float wrap_width = 0.0f,
+                                                           float multiline = 0.0f) {
         Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
         if (!dw_factory || !format || text.size() > UINT32_MAX) return layout;
         const float line_height = std::max(1.0f, height);
@@ -1073,7 +1087,8 @@ struct LumaTextRenderer::Impl {
                     entry.height == line_height && entry.font_size == font_size && entry.reading == reading &&
                     entry.flow == flow && entry.spacing_method == spacing_method &&
                     entry.line_spacing == line_spacing && entry.baseline == baseline &&
-                    entry.tab_stop == tab_stop && entry.wrap == wrap_width && entry.text == text) {
+                    entry.tab_stop == tab_stop && entry.wrap == wrap_width && entry.multiline == multiline &&
+                    entry.text == text) {
                     ++stats.edit_layout_cache_hits;
                     return entry.layout;
                 }
@@ -1082,18 +1097,25 @@ struct LumaTextRenderer::Impl {
         // Wrapped fields break where the icon grid breaks the same name:
         // same rules, same DirectWrite measure, same one-pixel spare.
         pulse::ui::BrokenFileName broken;
-        if (wrap_width > 0.0f) {
+        const bool names = wrap_width > 0.0f && multiline <= 0.0f;
+        if (names) {
             broken = pulse::ui::BreakFileName([&](const std::wstring& part) {
                 return pulse::ui::typography::MeasureAdvance(dw_factory.Get(), format, part);
             }, std::wstring(text), std::max(1.0f, wrap_width - 1.0f));
         }
-        const std::wstring_view laid = wrap_width > 0.0f ? std::wstring_view(broken.text) : text;
+        const std::wstring_view laid = names ? std::wstring_view(broken.text) : text;
         if (FAILED(dw_factory->CreateTextLayout(laid.data(), static_cast<UINT32>(laid.size()),
                 format, wrap_width > 0.0f ? wrap_width : 1.0e6f, line_height, &layout)) || !layout) {
             return nullptr;
         }
         if (!broken.breaks.empty()) RememberBreaks(layout.Get(), broken);
-        if (wrap_width > 0.0f) {
+        if (multiline > 0.0f) {
+            // Body text: wraps at word breaks, starts at the reading edge, one
+            // uniform line height (baseline as the panel's own text, 0.78).
+            layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+            layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, multiline, multiline * 0.78f);
+        } else if (wrap_width > 0.0f) {
             // Wrapped fields center their lines like the icon names they edit.
             layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
             layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -1113,7 +1135,7 @@ struct LumaTextRenderer::Impl {
             auto& entry = edit_layouts[next_edit_layout];
             next_edit_layout = (next_edit_layout + 1) % edit_layouts.size();
             entry = {std::wstring(text), format, layout, generation, line_height, font_size, reading, flow,
-                spacing_method, line_spacing, baseline, tab_stop, wrap_width};
+                spacing_method, line_spacing, baseline, tab_stop, wrap_width, multiline};
         }
         return layout;
     }
@@ -1278,7 +1300,7 @@ struct LumaTextRenderer::Impl {
         const int length = static_cast<int>(text.size());
         const bool wraps = EditWraps(hwnd);
         const auto dw = DwEditLayout(text, format, static_cast<float>(rc.bottom - rc.top),
-                                     wraps ? EditWrapWidth(hwnd, width) : 0.0f);
+                                     wraps ? EditWrapWidth(hwnd, width) : 0.0f, EditMultilineLine(hwnd));
         if (!dw) return;
         const float caret_x = DwCaretX(dw.Get(), caret_for_scroll, length);
         // Hit-test against the offset last painted, not one re-derived from
@@ -1290,7 +1312,7 @@ struct LumaTextRenderer::Impl {
         float text_y = 1.0f;
         if (wraps) {
             const auto shown = edit_painted.find(hwnd);
-            const float origin_x = shown != edit_painted.end() ? shown->second.x : kEditPad;
+            const float origin_x = shown != edit_painted.end() ? shown->second.x : EditPad(hwnd);
             const float origin_y = shown != edit_painted.end() ? shown->second.y : 0.0f;
             text_x = static_cast<float>(GET_X_LPARAM(lParam)) - origin_x;
             text_y = static_cast<float>(GET_Y_LPARAM(lParam)) - origin_y;
@@ -1429,14 +1451,15 @@ struct LumaTextRenderer::Impl {
 
         const bool wraps = EditWraps(hwnd);
         const float wrap_width = wraps ? EditWrapWidth(hwnd, static_cast<float>(w)) : 0.0f;
-        const auto dw_layout = DwEditLayout(text, format, static_cast<float>(h), wrap_width);
+        const float multiline = EditMultilineLine(hwnd);
+        const auto dw_layout = DwEditLayout(text, format, static_cast<float>(h), wrap_width, multiline);
         IDWriteRenderingParams* params = DwParams(hwnd);
         if (!dw_layout || !params) return false;
         const auto caret_origin = [&](int position) {
             return DwCaretX(dw_layout.Get(), position, static_cast<int>(text.size()));
         };
         float caret_x = caret_origin(caret);
-        const float pad = kEditPad;
+        const float pad = EditPad(hwnd);
         // Wrapped fields never scroll: every line is visible, and the caret
         // and selection carry the line's vertical position instead.
         float caret_top = 2.0f;
@@ -1444,13 +1467,16 @@ struct LumaTextRenderer::Impl {
         float wrap_y = 0.0f;
         if (wraps) {
             DWRITE_TEXT_METRICS wrapped{};
+            // Multi-line text starts at the top like the owner's own text.
             if (SUCCEEDED(dw_layout->GetMetrics(&wrapped)))
-                wrap_y = std::round((static_cast<float>(h) - wrapped.height) * 0.5f) - wrapped.top;
+                wrap_y = multiline > 0.0f ? -wrapped.top
+                                          : std::round((static_cast<float>(h) - wrapped.height) * 0.5f) - wrapped.top;
             float line_y = 0.0f, line_h = 0.0f;
             DwCaretPoint(dw_layout.Get(), caret, static_cast<int>(text.size()), caret_x, line_y, line_h);
             // Taller than the field (the rename field stops at six lines): the
             // lines scroll inside it, keeping the caret's line in view.
-            const float view_h = static_cast<float>(h) - 2.0f;
+            const float inset = multiline > 0.0f ? 0.0f : 1.0f;
+            const float view_h = static_cast<float>(h) - 2.0f * inset;
             if (wrapped.height > view_h) {
                 const auto saved = edit_vscrolls.find(hwnd);
                 float scroll_y = saved != edit_vscrolls.end() ? saved->second : 0.0f;
@@ -1459,7 +1485,7 @@ struct LumaTextRenderer::Impl {
                 if (line_top + line_h > scroll_y + view_h) scroll_y = line_top + line_h - view_h;
                 scroll_y = std::clamp(scroll_y, 0.0f, wrapped.height - view_h);
                 edit_vscrolls[hwnd] = scroll_y;
-                wrap_y = 1.0f - scroll_y - wrapped.top;
+                wrap_y = inset - scroll_y - wrapped.top;
             } else {
                 edit_vscrolls.erase(hwnd);
             }
@@ -1501,7 +1527,17 @@ struct LumaTextRenderer::Impl {
         D2D1_COLOR_F visible_color = foreground;
         if (visible.empty()) {
             wchar_t cue[256]{};
-            if (SendMessageW(hwnd, EM_GETCUEBANNER, reinterpret_cast<WPARAM>(cue),
+            // A multi-line EDIT has no cue banner; its owner hands the text over.
+            const auto* owner_cue = static_cast<const wchar_t*>(GetPropW(hwnd, L"Pulse.EditCue"));
+            if (multiline > 0.0f && owner_cue && owner_cue[0] != 0) {
+                visible = owner_cue;
+                // The owner's placeholder colour (0x01BBGGRR), else 45 % text.
+                const auto cue_rgb = reinterpret_cast<UINT_PTR>(GetPropW(hwnd, L"Pulse.EditCueColor"));
+                visible_color = cue_rgb
+                    ? D2D1::ColorF(GetRValue(cue_rgb) / 255.0f, GetGValue(cue_rgb) / 255.0f,
+                                   GetBValue(cue_rgb) / 255.0f, 1.0f)
+                    : D2D1::ColorF(foreground.r, foreground.g, foreground.b, foreground.a * 0.45f);
+            } else if (SendMessageW(hwnd, EM_GETCUEBANNER, reinterpret_cast<WPARAM>(cue),
                              ARRAYSIZE(cue)) && cue[0] != 0) {
                 visible = cue;
                 visible_color = D2D1::ColorF(foreground.r, foreground.g, foreground.b,
@@ -1512,7 +1548,8 @@ struct LumaTextRenderer::Impl {
         if (!visible.empty()) {
             // Same layout, params and grayscale AA as the surrounding UI text.
             const auto visible_layout = visible == text && dw_layout
-                ? dw_layout : DwEditLayout(visible, format, static_cast<float>(h));
+                ? dw_layout
+                : DwEditLayout(visible, format, static_cast<float>(h), multiline > 0.0f ? wrap_width : 0.0f, multiline);
             if (visible_layout && brush) {
                 DWRITE_TEXT_METRICS metrics{};
                 if (FAILED(visible_layout->GetMetrics(&metrics))) {
@@ -1520,8 +1557,9 @@ struct LumaTextRenderer::Impl {
                     blit_dc->SetTarget(nullptr);
                     return false;
                 }
-                const float y = wraps && visible == text
-                    ? wrap_y : std::round((static_cast<float>(h) - metrics.height) * 0.5f) - metrics.top;
+                const float y = wraps && visible == text ? wrap_y
+                    : multiline > 0.0f ? -metrics.top
+                    : std::round((static_cast<float>(h) - metrics.height) * 0.5f) - metrics.top;
                 brush->SetColor(visible_color);
                 // A wrapped file name dims its extension like the icon grid.
                 DWRITE_TEXT_RANGE ext_range{0, 0};

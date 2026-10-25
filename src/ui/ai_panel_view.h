@@ -351,6 +351,8 @@ public:
     D2D1_COLOR_F CardColor() const noexcept { return card_color_; }
     D2D1_COLOR_F TextColor() const noexcept { return text_color_; }
     D2D1_COLOR_F PlaceholderColor() const noexcept { return text3_color_; }
+    // The composer's text face (13.5), for the LumaText-presented EDIT.
+    IDWriteTextFormat* ComposerFormat() const noexcept { return formats_.body; }
     D2D1_RECT_F ModelButtonRect() const noexcept { return model_button_; }
     // 管理连接 card: the text box of the key (0) or address (1) field when
     // the card is settled and that field takes an EDIT this frame.

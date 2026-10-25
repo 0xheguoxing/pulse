@@ -10,6 +10,7 @@
 #include "keymap.h"
 #include "../common/json_value.h"
 #include "../common/localization.h"
+#include "../ui/edit_host.h"
 #include "../ui/typography.h"
 #include "../ui/ui_motion.h"
 #include "../ui/ui_renderer.h"
@@ -199,6 +200,21 @@ void CloseMenu(AppState& s);
 LRESULT CALLBACK ComposerProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR ref) {
     AppState& s = *reinterpret_cast<AppState*>(ref);
     AiAssistantState& a = s.aiAssistant;
+    // Text, caret, selection and the placeholder are presented by LumaText
+    // like every other Pulse field (edit_host.h), in the panel's own body face
+    // and colours; native painting stays as the fallback.
+    const ui::AiPanelView& view = s.renderer.AiPanel();
+    IDWriteTextFormat* format = view.ComposerFormat() ? view.ComposerFormat() : s.compositor.TextFormat();
+    const D2D1_COLOR_F fore = view.TextColor();
+    const D2D1_COLOR_F back = view.CardColor();
+    const auto presented = [&](LRESULT& out) {
+        const bool handled = ui::HandleChildEditMessage(s.compositor, format, fore, back, a.brush, hwnd, msg, wp, lp, out);
+        if (handled || msg == WM_PAINT) {
+            a.edit_back = ToColorRef(back);
+            a.edit_fore = ToColorRef(fore);
+        }
+        return handled;
+    };
     switch (msg) {
     case WM_GETDLGCODE:
         return DefSubclassProc(hwnd, msg, wp, lp) | DLGC_WANTALLKEYS;
@@ -247,23 +263,35 @@ LRESULT CALLBACK ComposerProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PT
         break;
     case WM_SETFOCUS:
     case WM_KILLFOCUS: {
-        const LRESULT r = DefSubclassProc(hwnd, msg, wp, lp);
+        LRESULT r = 0;
+        if (!presented(r)) r = DefSubclassProc(hwnd, msg, wp, lp);
         a.focused = msg == WM_SETFOCUS;
         Redraw(s);
         return r;
     }
     case WM_PAINT: {
-        const LRESULT r = DefSubclassProc(hwnd, msg, wp, lp);
+        LRESULT r = 0;
+        if (presented(r)) return r;
+        r = DefSubclassProc(hwnd, msg, wp, lp);
         if (GetWindowTextLengthW(hwnd) == 0) PaintPlaceholder(s, hwnd);
         return r;
     }
-    case WM_NCDESTROY:
+    case WM_NCDESTROY: {
+        LRESULT ignored = 0;
+        presented(ignored);
+        RemovePropW(hwnd, L"Pulse.EditMultiline");
+        RemovePropW(hwnd, L"Pulse.EditCue");
+        RemovePropW(hwnd, L"Pulse.EditCueColor");
         RemoveWindowSubclass(hwnd, ComposerProc, kComposerSubclass);
         break;
-    default:
+    }
+    default: {
+        LRESULT r = 0;
+        if (presented(r)) return r;
         break;
     }
-    const LRESULT r = DefSubclassProc(hwnd, msg, wp, lp);
+    }
+    const LRESULT r = ui::DefPresentedChildEditProc(s.compositor, format, fore, back, hwnd, msg, wp, lp);
     switch (msg) {
     case WM_CHAR: case WM_KEYDOWN: case WM_PASTE: case WM_CUT: case WM_CLEAR: case WM_UNDO:
     case EM_UNDO: case WM_SETTEXT: case EM_REPLACESEL: case WM_SIZE:
@@ -294,6 +322,11 @@ void EnsureFont(AppState& s) {
         SelectObject(hdc, old);
         ReleaseDC(s.hwnd, hdc);
         a.line_px = static_cast<int>(tm.tmHeight);
+    }
+    if (a.edit && a.line_px > 0) {
+        // LumaText lays the text out at the same line height the composer is
+        // measured with (1/64 px), and draws the placeholder itself.
+        SetPropW(a.edit, L"Pulse.EditMultiline", reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(a.line_px) * 64u));
     }
 }
 
@@ -748,7 +781,20 @@ void AiAssistantLayout(AppState& s) {
     }
     // A theme switch changes the card colour on the next frame, but the EDIT
     // keeps its old pixels until something repaints it.
-    if (a.brush && a.brush_color != ToColorRef(view.CardColor())) InvalidateRect(a.edit, nullptr, TRUE);
+    if (const std::wstring cue = Text(I::AiAsstPlaceholder); cue != a.edit_cue || !GetPropW(a.edit, L"Pulse.EditCue")) {
+        a.edit_cue = cue;
+        SetPropW(a.edit, L"Pulse.EditCue", const_cast<wchar_t*>(a.edit_cue.c_str()));
+        InvalidateRect(a.edit, nullptr, TRUE);
+    }
+    // The placeholder in the panel's text3, as the panel draws it itself.
+    const UINT_PTR cue_rgb = 0x01000000u | ToColorRef(view.PlaceholderColor());
+    if (reinterpret_cast<UINT_PTR>(GetPropW(a.edit, L"Pulse.EditCueColor")) != cue_rgb) {
+        SetPropW(a.edit, L"Pulse.EditCueColor", reinterpret_cast<HANDLE>(cue_rgb));
+        InvalidateRect(a.edit, nullptr, TRUE);
+    }
+    if (a.edit_back != CLR_INVALID &&
+        (a.edit_back != ToColorRef(view.CardColor()) || a.edit_fore != ToColorRef(view.TextColor())))
+        InvalidateRect(a.edit, nullptr, TRUE);
     if (a.focus_pending) {
         a.focus_pending = false;
         if (GetForegroundWindow() == s.hwnd || GetForegroundWindow() == GetAncestor(s.hwnd, GA_ROOT)) SetFocus(a.edit);
