@@ -13,6 +13,8 @@
 #include "../ui/ui_motion.h"
 #include "../ui/ui_renderer.h"
 
+#include <shellapi.h>
+
 #include <algorithm>
 #include <cstring>
 #include <cwctype>
@@ -653,7 +655,8 @@ void CALLBACK PeekTimer(HWND hwnd, UINT, UINT_PTR id, DWORD) {
 
 void AiChatPeek(AppState& s, uint32_t delay) {
     AiChat& c = Chat(s);
-    if (s.aiAssistant.open || c.busy || c.chip != ui::StatusAiState::Done || !c.turn_start) return;
+    if (s.aiAssistant.open || c.busy || !c.turn_start) return;
+    if (c.chip != ui::StatusAiState::Done && !c.peek_failed) return;
     if (c.peek_turn == c.turn_start) return;   // once per turn
     if (c.peek_text.empty()) {
         // No summary of its own: the start of the answer.
@@ -688,8 +691,16 @@ void AiChatFillPeek(AppState& s, bool panel_open, ui::AiPeekView& peek) {
     if (c.peek_text.empty() || !c.peek_turn) return;
     const uint64_t now = Now();
     peek.on = !panel_open && c.peek_at && now >= c.peek_at && now < c.peek_until;
-    peek.title = Text(I::AiPeekDone);
     peek.text = c.peek_text;
+    if (c.peek_failed) {
+        peek.failed = true;
+        peek.tone = c.peek_tone;
+        peek.title = c.peek_title;
+        peek.undo = Text(c.peek_tone == ui::AiErrTone::Accent ? I::AiErrBtnConnect : I::AiAsstRetry);
+        peek.open = Text(I::AiPeekOpen);
+        return;
+    }
+    peek.title = Text(I::AiPeekDone);
     bool can_undo = c.peek_undo && c.on_undo;
     if (const AiBlockView* r = c.Find(c.result_id); !r || r->done) can_undo = false;
     peek.undo = can_undo ? Text(I::AiAsstUndo) : std::wstring();
@@ -703,6 +714,137 @@ void AiChatUndoLast(AppState& s) {
             AiChatActivate(s, ui::AiPanelPart::ResultUndo, static_cast<int>(i));
             return;
         }
+}
+
+void AiChatFail(AppState& s, AiChatError err) {
+    AiChat& c = Chat(s);
+    const uint64_t now = Now();
+    // A partial answer after the user's bubble stays; an amber strip says so.
+    bool partial = false;
+    for (auto it = c.blocks.rbegin(); it != c.blocks.rend(); ++it) {
+        if (it->kind == AiBlockKind::User) break;
+        if (it->kind == AiBlockKind::Text && !Plain(it->text).empty()) { partial = true; break; }
+    }
+    if (err.cut && partial) {
+        AiBlockView& b = c.Add(AiBlockKind::Cut, now);
+        b.title = Text(I::AiErrCutT);
+        b.sub = Text(I::AiErrCutS);
+        b.accept = Text(I::AiAsstRetry);
+    } else {
+        AiBlockView& b = c.Add(AiBlockKind::Error, now);
+        b.tone = err.tone;
+        b.icon = err.icon;
+        b.title = err.title;
+        b.sub = err.sub;
+        b.detail = err.detail;
+        b.hint = err.hint;
+        b.actions = err.buttons;
+        b.meta = ModelName(s);
+    }
+    c.busy = false;
+    c.think_id = 0;
+    // The peek: the card's title; nothing moved, or what did can be undone.
+    c.peek_failed = true;
+    c.peek_tone = err.tone;
+    c.peek_title = !err.peek_title.empty() ? err.peek_title : err.title;
+    std::wstring what = c.last_prompt;
+    for (wchar_t& ch : what)
+        if (ch == L'\n' || ch == L'\r') ch = L' ';
+    if (what.size() > 16) what = what.substr(0, 15) + L"\u2026";
+    const AiBlockView* r = c.Find(c.result_id);
+    c.peek_text = Fill(Text(r && !r->done ? I::AiPeekFailUndo : I::AiPeekFail), L"{p}", what);
+    c.peek_undo = false;
+    // The chip: red needs you, amber will pass; not connected is no error.
+    // With the panel open the card says it all.
+    if (s.aiAssistant.open || err.tone == ui::AiErrTone::Accent) {
+        SetChip(c, ui::StatusAiState::Idle, L"");
+    } else {
+        const bool red = err.tone == ui::AiErrTone::Err;
+        SetChip(c, red ? ui::StatusAiState::Error : ui::StatusAiState::Warn,
+                Text(red ? I::AiChipError : I::AiChipUnfinished));
+        c.unread = true;
+    }
+    if (!s.aiAssistant.open) AiChatPeek(s, 650);
+    Redraw(s);
+}
+
+bool AiChatErrAction(AppState& s, int index, ui::AiErrAct& act) {
+    AiChat& c = Chat(s);
+    if (index < 0) return false;
+    const size_t block = static_cast<size_t>(index / 4), button = static_cast<size_t>(index % 4);
+    if (block >= c.blocks.size()) return false;
+    const AiBlockView& b = c.blocks[block];
+    if (b.kind != AiBlockKind::Error || b.gone_ms || button >= b.actions.size()) return false;
+    act = b.actions[button].act;
+    return true;
+}
+
+void AiChatErrRun(AppState& s, int index) {
+    ui::AiErrAct act{};
+    if (!AiChatErrAction(s, index, act)) return;
+    AiChat& c = Chat(s);
+    const AiBlockView& b = c.blocks[static_cast<size_t>(index / 4)];
+    switch (act) {
+    case ui::AiErrAct::Retry:
+        AiChatRetryTurn(s);
+        break;
+    case ui::AiErrAct::TopUp:
+        // Only offered for the official service.
+        ShellExecuteW(s.hwnd, L"open", L"https://platform.deepseek.com/top_up", nullptr, nullptr, SW_SHOWNORMAL);
+        break;
+    case ui::AiErrAct::CopyDetail:
+        CopyText(s.hwnd, b.title + (b.detail.empty() ? L"" : L"\r\n" + b.detail));
+        break;
+    default:
+        break;
+    }
+    Redraw(s);
+}
+
+void AiChatRetryTurn(AppState& s) {
+    AiChat& c = Chat(s);
+    if (c.busy || c.last_prompt.empty()) return;
+    size_t user = c.blocks.size();
+    for (size_t i = c.blocks.size(); i-- > 0;)
+        if (c.blocks[i].kind == AiBlockKind::User) { user = i; break; }
+    if (user == c.blocks.size()) return;
+    // An organize that already ran keeps its card (and its undo): then the
+    // retry is a new turn as before.
+    for (size_t i = user + 1; i < c.blocks.size(); ++i)
+        if (c.blocks[i].kind == AiBlockKind::Result) {
+            const std::wstring context = c.blocks[user].context;
+            AiChatSubmit(s, c.last_prompt, context);
+            return;
+        }
+    const uint64_t now = Now();
+    const bool motion_on = ui::motion::SystemAnimationsEnabled();
+    // The card fades out (.25 s), then the failed turn goes and the prompt
+    // is sent again under the same bubble.
+    for (size_t i = user + 1; i < c.blocks.size(); ++i)
+        if (c.blocks[i].kind == AiBlockKind::Error || c.blocks[i].kind == AiBlockKind::Cut) c.blocks[i].gone_ms = now;
+    c.busy = true;
+    c.unread = false;
+    c.turn_start = now;
+    c.queue.clear();
+    c.result_id = 0;
+    c.peek_text.clear();
+    c.peek_undo = false;
+    c.peek_failed = false;
+    c.peek_at = c.peek_until = 0;
+    SetChip(c, ui::StatusAiState::Busy, Text(I::AiAsstThinking));
+    const uint32_t user_id = c.blocks[user].id;
+    Push(c, motion_on ? 260u : 0u, std::function<void(AppState&)>([user_id](AppState& st) {
+             AiChat& ch = Chat(st);
+             size_t at = ch.blocks.size();
+             for (size_t i = 0; i < ch.blocks.size(); ++i)
+                 if (ch.blocks[i].id == user_id) { at = i; break; }
+             if (at == ch.blocks.size()) return;
+             ch.blocks.erase(ch.blocks.begin() + static_cast<std::ptrdiff_t>(at + 1), ch.blocks.end());
+             st.renderer.AiPanel().ScrollToEnd();
+             AiAgentStart(st, ch.last_prompt, !ch.blocks[at].context.empty());
+         }));
+    Schedule(s);
+    Redraw(s);
 }
 
 void AiChatGroupLook(const std::vector<std::wstring>& names, ui::AiIcon& icon, ui::AiTint& tint) {
@@ -760,6 +902,7 @@ void AiChatSubmit(AppState& s, const std::wstring& prompt, const std::wstring& c
         c.result_id = 0;
         c.peek_text.clear();
         c.peek_undo = false;
+        c.peek_failed = false;
         c.peek_at = c.peek_until = 0;
         SetChip(c, ui::StatusAiState::Busy, Text(I::AiAsstThinking));
         s.renderer.AiPanel().ScrollToEnd();
@@ -783,6 +926,7 @@ void AiChatSubmit(AppState& s, const std::wstring& prompt, const std::wstring& c
     c.turn_start = now;
     c.peek_text.clear();
     c.peek_undo = false;
+    c.peek_failed = false;
     c.peek_at = c.peek_until = 0;
     c.queue.clear();
     SetChip(c, ui::StatusAiState::Busy, Text(I::AiAsstThinking));
@@ -876,6 +1020,9 @@ void AiChatActivate(AppState& s, ui::AiPanelPart part, int block) {
         CopyText(s.hwnd, text);
         break;
     }
+    case P::CutRetry:
+        AiChatRetryTurn(s);
+        break;
     case P::ActRetry:
         if (!c.busy && !c.last_prompt.empty()) {
             std::wstring context;

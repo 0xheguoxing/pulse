@@ -42,6 +42,7 @@ void AiPanelView::Formats::Release() {
     SafeRelease(caption);
     SafeRelease(small125);
     SafeRelease(small125b);
+    SafeRelease(mono);
     SafeRelease(model);
     SafeRelease(heading);
     SafeRelease(body_b);
@@ -150,6 +151,12 @@ void AiPanelView::EnsureFormats(Compositor* compositor, float scale) {
     make(12.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, formats_.caption_b);
     make(10.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD, formats_.badge);
     make(11.5f, DWRITE_FONT_WEIGHT_NORMAL, formats_.meta);
+    {
+        typography::TextFormatSpec spec;
+        spec.role = typography::FontRole::Monospace;
+        spec.size = 11.5f * scale;
+        typography::CreateTextFormat(f, spec, &formats_.mono);
+    }
     formats_.scale = scale;
     formats_.font_scale = font_scale;
 }
@@ -836,6 +843,9 @@ void AiPanelView::DrawStatusChip(Compositor* compositor, const Theme& theme, con
     const bool busy = chip.state == AiChipState::Busy;
     const bool waiting = chip.state == AiChipState::Waiting;
     const bool done = chip.state == AiChipState::Done;
+    // A failed turn (plans/ai/Pulse_AI助手_错误与快捷键.html .chip.e / .chip.w).
+    const bool failed = chip.state == AiChipState::Error;
+    const bool unfinished = chip.state == AiChipState::Warn;
     const bool anim = motion::SystemAnimationsEnabled();
     if (waiting != chip_waiting_) { chip_waiting_ = waiting; chip_since_ = now_ms; }
     const D2D1_COLOR_F amber = chip.dark ? Hex(0xe3ab52) : Hex(0xa86c12);
@@ -846,11 +856,17 @@ void AiPanelView::DrawStatusChip(Compositor* compositor, const Theme& theme, con
     const D2D1_POINT_2F mid = D2D1::Point2F((rect.left + rect.right) * 0.5f, (rect.top + rect.bottom) * 0.5f);
     if (chip.pressed) dc->SetTransform(D2D1::Matrix3x2F::Scale(0.94f, 0.94f, mid) * saved);
     const float radius = (rect.bottom - rect.top) * 0.5f;
+    const D2D1_COLOR_F err = pal.bad;
+    const D2D1_COLOR_F err_bg = pal.bad_bg;
+    // The tone's ink: spark, words and the unread dot.
+    const bool toned = waiting || unfinished || failed;
+    const D2D1_COLOR_F tone = failed ? err : amber;
     D2D1_COLOR_F fill{0, 0, 0, 0};
-    if (waiting) fill = amber_bg;
+    if (failed) fill = err_bg;
+    else if (waiting || unfinished) fill = amber_bg;
     else if (busy || chip.open) fill = pal.accent_soft;
     else if (chip.hover) fill = pal.hover;
-    if (fill.a > 0.0f && chip.hover && (busy || chip.open || waiting)) fill = Mix(fill, pal.text, 0.05f);
+    if (fill.a > 0.0f && chip.hover && (busy || chip.open || toned)) fill = Mix(fill, pal.text, 0.05f);
     c.Fill(rect, radius, fill);
     if (waiting && anim) {
         // ::after ring: inset -3, 2 px amber, scale .96 -> 1.18, fading (1.6 s).
@@ -874,15 +890,15 @@ void AiPanelView::DrawStatusChip(Compositor* compositor, const Theme& theme, con
         pose.scale = 1.0f - 0.22f * std::sin(t * kPi);
         chip_decor_ = true;
     }
-    c.Icon(AiIcon::Spark, x, mid.y - sp * 0.5f, sp, waiting ? amber : pal.accent, pose);
+    c.Icon(AiIcon::Spark, x, mid.y - sp * 0.5f, sp, toned ? tone : pal.accent, pose);
     x += sp + 6.0f * s;
     const std::wstring& label = chip.label.empty() ? std::wstring(L"AI") : chip.label;
     const float lw = c.Measure(label, formats_.small125b);
     c.Text(label, formats_.small125b, D2D1::RectF(x, rect.top, x + lw + 2.0f, rect.bottom), waiting ? amber : pal.text);
     x += lw + 6.0f * s;
     if (chip.words && !chip.text.empty()) {
-        IDWriteTextFormat* f = waiting || done ? formats_.small125b : formats_.small125;
-        const D2D1_COLOR_F ink = waiting ? amber : done ? pal.ok : pal.text2;
+        IDWriteTextFormat* f = toned || done ? formats_.small125b : formats_.small125;
+        const D2D1_COLOR_F ink = toned ? tone : done ? pal.ok : pal.text2;
         const float bar = busy && chip.progress >= 0.0f ? (6.0f + 38.0f) * s : 0.0f;
         const float tr = rect.right - 10.0f * s - bar;
         c.Text(chip.text, f, D2D1::RectF(x, rect.top, (std::max)(x, tr), rect.bottom), ink);
@@ -898,7 +914,7 @@ void AiPanelView::DrawStatusChip(Compositor* compositor, const Theme& theme, con
         // 8 px ok dot at right 3 / top 2 with a 2 px ring of the bar color.
         const D2D1_POINT_2F d = D2D1::Point2F(rect.right - 3.0f * s - 4.0f * s, rect.top + 2.0f * s + 4.0f * s);
         dc->FillEllipse(D2D1::Ellipse(d, 6.0f * s, 6.0f * s), c.B(Over(theme.bg, pal.bg)));
-        dc->FillEllipse(D2D1::Ellipse(d, 4.0f * s, 4.0f * s), c.B(pal.ok));
+        dc->FillEllipse(D2D1::Ellipse(d, 4.0f * s, 4.0f * s), c.B(failed ? err : unfinished ? amber : pal.ok));
     }
     dc->SetTransform(saved);
 }

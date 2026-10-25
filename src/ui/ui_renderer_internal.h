@@ -2031,7 +2031,8 @@ StatusBarMetrics MakeStatusBarMetrics(const WindowViewModel& vm, const D2D1_RECT
                                                        : 14.0f * scale;
         m.ai_chip_text = vm.status.ai_state != StatusAiState::Idle && !vm.status.ai_text.empty() &&
                          full.right - full.left >= 640.0f * scale && factory && small_format;
-        const bool bold_text = vm.status.ai_state == StatusAiState::Waiting || vm.status.ai_state == StatusAiState::Done;
+        const bool bold_text = vm.status.ai_state == StatusAiState::Waiting || vm.status.ai_state == StatusAiState::Done ||
+                               vm.status.ai_state == StatusAiState::Error || vm.status.ai_state == StatusAiState::Warn;
         const float text_w = m.ai_chip_text
             ? (std::min)(kAiChipMaxTextDip * scale,
                          MeasureTextWidth(factory, small_format, vm.status.ai_text) * k * (bold_text ? 1.06f : 1.0f) + 1.0f)

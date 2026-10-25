@@ -53,6 +53,8 @@ struct AiAssistantState {
 // The status bar chip: opens or closes the panel (an outside client's open
 // question still comes forward first).
 void AiAssistantToggle(AppState& s);
+// The keymap's Pulse 助手 key (Ctrl+J): open + focus, focus, or collapse.
+void AiAssistantHotkey(AppState& s);
 void AiAssistantOpen(AppState& s, bool animate = true);
 void AiAssistantClose(AppState& s, bool animate = true);
 bool AiAssistantIsOpen(const AppState& s);

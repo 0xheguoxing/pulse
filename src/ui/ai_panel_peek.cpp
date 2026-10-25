@@ -133,7 +133,11 @@ void AiPanelView::DrawPeek(Compositor* compositor, const AiPanelViewModel& vm, c
     // Title: spark 16 accent, gap 8, 13 semibold; × 14 text3 at the right.
     float y = box.top + pad;
     const float x0 = box.left + pad;
-    c.Icon(AiIcon::Spark, x0, y + 1.0f * s, 16.0f * s, pal.accent);
+    // A failed turn: the spark takes the card's tone (err / amber / accent).
+    D2D1_COLOR_F spark = pal.accent;
+    if (vm.peek.failed && vm.peek.tone == AiErrTone::Err) spark = pal.bad;
+    else if (vm.peek.failed && vm.peek.tone == AiErrTone::Warn) spark = pal.amber;
+    c.Icon(AiIcon::Spark, x0, y + 1.0f * s, 16.0f * s, spark);
     c.Text(vm.peek.title, formats_.body13b, D2D1::RectF(x0 + 24.0f * s, y, box.right - pad - 22.0f * s, y + title_h),
            pal.text);
     const D2D1_RECT_F xr = D2D1::RectF(box.right - pad - 18.0f * s, y - 2.0f * s, box.right - pad + 4.0f * s, y + 20.0f * s);
@@ -153,7 +157,7 @@ void AiPanelView::DrawPeek(Compositor* compositor, const AiPanelViewModel& vm, c
 
     // Buttons (.b2 h 32 r 8 0 14, 13; .wi icon 14 gap 6; .pri accent).
     float bx = x0 + 24.0f * s;
-    const auto button = [&](const std::wstring& text, bool primary, bool with_icon, AiPanelPart part) {
+    const auto button = [&](const std::wstring& text, bool primary, AiIcon icon, bool with_icon, AiPanelPart part) {
         IDWriteTextFormat* fmt = primary ? formats_.body13b : formats_.body13;
         const float tw = c.Measure(text, fmt);
         const float bw = 28.0f * s + tw + (with_icon ? 20.0f * s : 0.0f);
@@ -173,7 +177,7 @@ void AiPanelView::DrawPeek(Compositor* compositor, const AiPanelViewModel& vm, c
         const D2D1_COLOR_F ink = primary ? pal.on_accent : pal.text;
         float tx = r.left + 14.0f * s;
         if (with_icon) {
-            c.Icon(AiIcon::Undo, tx, y + 9.0f * s, 14.0f * s, ink);
+            c.Icon(icon, tx, y + 9.0f * s, 14.0f * s, ink);
             tx += 20.0f * s;
         }
         c.Text(text, fmt, D2D1::RectF(tx, y, r.right, y + 32.0f * s), ink);
@@ -181,8 +185,15 @@ void AiPanelView::DrawPeek(Compositor* compositor, const AiPanelViewModel& vm, c
         bx += bw + 8.0f * s;
         return r;
     };
-    peek_undo_ = vm.peek.undo.empty() ? D2D1_RECT_F{} : button(vm.peek.undo, false, true, AiPanelPart::PeekUndo);
-    peek_open_ = button(vm.peek.open, true, false, AiPanelPart::PeekOpen);
+    if (vm.peek.failed) {
+        // 重试 (or 连接模型) leads; 打开对话 follows as the quiet one.
+        const AiIcon lead = vm.peek.tone == AiErrTone::Accent ? AiIcon::Plug : AiIcon::Retry;
+        peek_undo_ = vm.peek.undo.empty() ? D2D1_RECT_F{} : button(vm.peek.undo, true, lead, true, AiPanelPart::PeekUndo);
+        peek_open_ = button(vm.peek.open, false, AiIcon::Open, false, AiPanelPart::PeekOpen);
+    } else {
+        peek_undo_ = vm.peek.undo.empty() ? D2D1_RECT_F{} : button(vm.peek.undo, false, AiIcon::Undo, true, AiPanelPart::PeekUndo);
+        peek_open_ = button(vm.peek.open, true, AiIcon::Open, false, AiPanelPart::PeekOpen);
+    }
 
     dc->PopLayer();
     dc->SetTransform(before);

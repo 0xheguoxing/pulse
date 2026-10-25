@@ -175,6 +175,49 @@ constexpr IconPart k_eyeoff[] = {
     {"M9.4 12A2.6 2.6 0 1 0 14.6 12A2.6 2.6 0 1 0 9.4 12Z", 0, 0x000000u, 1.6f, 1.0f},
     {"M4.5 4.5l15 15", 0, 0x000000u, 1.6f, 1.0f},
 };
+// Error cards (plans/ai/Pulse_AI助手_错误与快捷键.html, 24 px boxes).
+constexpr IconPart k_key[] = {
+    {"M4 15A4 4 0 1 0 12 15A4 4 0 1 0 4 15Z", 0, 0x000000u, 1.7f, 1.0f},
+    {"M11 12l9-9M17 6l3 3M15 8l2 2", 0, 0x000000u, 1.7f, 1.0f},
+};
+constexpr IconPart k_wallet[] = {
+    {"M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3", 0, 0x000000u, 1.7f, 1.0f},
+    {"M6.5 8H17.5A2.5 2.5 0 0 1 20 10.5V16.5A2.5 2.5 0 0 1 17.5 19H6.5A2.5 2.5 0 0 1 4 16.5V10.5A2.5 2.5 0 0 1 6.5 8Z",
+     0, 0x000000u, 1.7f, 1.0f},
+    {"M14.8 13.5A1.2 1.2 0 1 0 17.2 13.5A1.2 1.2 0 1 0 14.8 13.5Z", 1, 0x000000u, 1.7f, 1.0f},
+};
+constexpr IconPart k_cloud[] = {
+    {"M7 18.5h10a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.2 9.3A4.6 4.6 0 0 0 7 18.5z", 0, 0x000000u, 1.7f, 1.0f},
+    {"M12 11v3.2M12 16.6v.1", 0, 0x000000u, 1.7f, 1.0f},
+};
+constexpr IconPart k_ban[] = {
+    {"M3.5 12A8.5 8.5 0 1 0 20.5 12A8.5 8.5 0 1 0 3.5 12Z", 0, 0x000000u, 1.7f, 1.0f},
+    {"M6 6l12 12", 0, 0x000000u, 1.7f, 1.0f},
+};
+constexpr IconPart k_wifioff[] = {
+    {"M3.5 9a12.5 12.5 0 0 1 17 0M6.5 12.3a8 8 0 0 1 11 0M9.5 15.5a3.6 3.6 0 0 1 5 0", 0, 0x000000u, 1.7f, 1.0f},
+    {"M11.1 18.6A0.9 0.9 0 1 0 12.9 18.6A0.9 0.9 0 1 0 11.1 18.6Z", 1, 0x000000u, 1.7f, 1.0f},
+    {"M4 4l16 16", 0, 0x000000u, 1.7f, 1.0f},
+};
+constexpr IconPart k_plug[] = {
+    {"M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0zM12 16v5", 0, 0x000000u, 1.7f, 1.0f},
+};
+constexpr IconPart k_gear[] = {
+    {"M9 12A3 3 0 1 0 15 12A3 3 0 1 0 9 12Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21"
+     "a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8"
+     " 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8"
+     "l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3"
+     "l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z",
+     0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_swap[] = {
+    {"M7 7h12M15 3l4 4-4 4M17 17H5M9 13l-4 4 4 4", 0, 0x000000u, 1.7f, 1.0f},
+};
+constexpr IconPart k_warn[] = {
+    {"M12 4l9 16H3z", 0, 0x000000u, 1.7f, 1.0f},
+    {"M12 10v4M12 17v.1", 0, 0x000000u, 1.8f, 1.0f},
+};
 
 constexpr IconDef kIcons[] = {
     {k_spark, std::size(k_spark)},
@@ -217,6 +260,15 @@ constexpr IconDef kIcons[] = {
     {k_okc, std::size(k_okc)},
     {k_alert, std::size(k_alert)},
     {k_eyeoff, std::size(k_eyeoff)},
+    {k_key, std::size(k_key)},
+    {k_wallet, std::size(k_wallet)},
+    {k_cloud, std::size(k_cloud)},
+    {k_ban, std::size(k_ban)},
+    {k_wifioff, std::size(k_wifioff)},
+    {k_plug, std::size(k_plug)},
+    {k_gear, std::size(k_gear)},
+    {k_swap, std::size(k_swap)},
+    {k_warn, std::size(k_warn)},
 };
 
 static_assert(std::size(kIcons) == static_cast<size_t>(AiIcon::Count), "one table entry per AiIcon");

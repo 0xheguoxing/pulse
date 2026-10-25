@@ -7,6 +7,7 @@
 #include "ai_settings.h"
 #include "app_internal.h"
 #include "app_navigation.h"
+#include "keymap.h"
 #include "../common/json_value.h"
 #include "../common/localization.h"
 #include "../ui/typography.h"
@@ -214,6 +215,15 @@ LRESULT CALLBACK ComposerProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PT
             Redraw(s);
             return 0;
         }
+        if (wp != VK_CONTROL && wp != VK_SHIFT && wp != VK_MENU) {
+            // Pulse 助手's own key (Ctrl+J unless rebound) collapses from here.
+            const app::KeyChord chord = app::CurrentChord(static_cast<UINT>(wp));
+            for (const app::KeyChord bound : app::ActiveKeymap().EffectiveChords(app::KeyAction::AiAssistant))
+                if (bound == chord) {
+                    AiAssistantHotkey(s);
+                    return 0;
+                }
+        }
         if (wp == VK_ESCAPE) {
             if (a.menu_open) {
                 CloseMenu(s);
@@ -357,7 +367,18 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
     if (IsPeekPart(hit.part)) {
         if (hit.part == P::PeekCard) return;
         AiChatHidePeek(s);
-        if (hit.part == P::PeekUndo) AiChatUndoLast(s);
+        if (hit.part == P::PeekUndo && a.chat && a.chat->peek_failed) {
+            // A failed turn: 重试 in place, or 连接模型 opens 管理连接.
+            if (a.chat->peek_tone == ui::AiErrTone::Accent) {
+                AiAssistantOpen(s);
+                a.menu_open = true;
+                AiConnOpen(s);
+            } else {
+                AiChatRetryTurn(s);
+            }
+        } else if (hit.part == P::PeekUndo) {
+            AiChatUndoLast(s);
+        }
         if (hit.part == P::PeekOpen) {
             AiAssistantOpen(s);
             s.renderer.AiPanel().ScrollToEnd();
@@ -450,9 +471,28 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
     case P::ActCopy:
     case P::ActRetry:
     case P::ActThumb:
+    case P::CutRetry:
         CloseMenu(s);
         AiChatActivate(s, hit.part, hit.index);
         break;
+    case P::ErrAction: {
+        // The error card's buttons: connection and model open the menu in
+        // place; retry, top up and copy are the chat's.
+        ui::AiErrAct act{};
+        if (!AiChatErrAction(s, hit.index, act)) break;
+        if (act == ui::AiErrAct::ManageConn || act == ui::AiErrAct::Connect) {
+            a.menu_open = true;
+            AiConnOpen(s);
+        } else if (act == ui::AiErrAct::SwitchModel) {
+            a.menu_open = true;
+            if (AiAgentConnected()) ai::RefreshListedModels(s.hwnd, AiAgentBaseUrl());
+        } else {
+            CloseMenu(s);
+            AiChatErrRun(s, hit.index);
+            a.focus_pending = true;
+        }
+        break;
+    }
     case P::AddFiles:
     case P::ContextChip:
     case P::Input:
@@ -478,6 +518,9 @@ void AiAssistantOpen(AppState& s, bool animate) {
     a.open = true;
     a.focus_pending = true;
     if (a.chat) a.chat->unread = false;
+    // Seen: the card in the panel says it now.
+    if (a.chat && (a.chat->chip == ui::StatusAiState::Error || a.chat->chip == ui::StatusAiState::Warn))
+        AiChatSetChip(*a.chat, ui::StatusAiState::Idle, L"");
     if (a.chat) AiChatHidePeek(s);
     EnsureEdit(s);
     ApplyPanel(s, animate);
@@ -502,6 +545,21 @@ void AiAssistantClose(AppState& s, bool animate) {
 void AiAssistantToggle(AppState& s) {
     if (s.aiAssistant.open) AiAssistantClose(s);
     else AiAssistantOpen(s);
+}
+
+void AiAssistantHotkey(AppState& s) {
+    AiAssistantState& a = s.aiAssistant;
+    // Closed: open and type. Open with the focus elsewhere: back to the
+    // composer. In the composer: collapse (ComposerProc), focus to the list.
+    if (!a.open) {
+        AiAssistantOpen(s);
+    } else if (a.edit && GetFocus() == a.edit) {
+        AiAssistantClose(s);
+        if (s.hwnd) SetFocus(s.hwnd);
+    } else {
+        a.focus_pending = true;
+        Redraw(s);
+    }
 }
 
 void FillAiAssistantVm(AppState& s, ui::WindowViewModel& vm) {

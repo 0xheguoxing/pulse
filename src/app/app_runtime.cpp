@@ -3396,6 +3396,7 @@ std::wstring TooltipForHover(AppState& s) {
     }
     case R::TabNew: return text(s.appPrefs.show_hints ? I::TipxNewTab : I::TooltipNewTab);
     case R::ThemeToggle: return text(I::TooltipToggleTheme);
+    case R::StatusBarAi: return text(I::AiChipTip);   // Pulse 助手  Ctrl+J
     case R::SettingsButton: return text(I::Settings);
     case R::SettingsFind: return text(I::SettingsFind);
     case R::SettingsNav: {

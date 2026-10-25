@@ -723,7 +723,7 @@ struct DetailsHitRects {
 };
 
 // The AI chip at the left end of the status bar (app ai_status.h, Pulse 助手).
-enum class StatusAiState : uint8_t { Hidden, Idle, Busy, Waiting, Done };
+enum class StatusAiState : uint8_t { Hidden, Idle, Busy, Waiting, Done, Error, Warn };
 
 struct StatusBarView {
     bool query_active = false;

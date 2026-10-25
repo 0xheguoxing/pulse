@@ -3274,3 +3274,38 @@ BrCmQtyK	IDS_BR_CM_QTY_K	4472	%d 千	%dk	%d 千
 BrCmMissing	IDS_BR_CM_MISSING	4473	没有收到这个文件的建议	No suggestion came back for this file	沒有收到這個檔案的建議
 BrCmF1E	IDS_BR_CM_F1E	4474	2026-03 发票 · 星河科技	2026-03 Invoice · Acme	2026-03 發票 · 星河科技
 BrCmF2E	IDS_BR_CM_F2E	4475	发票 - 星河科技 - 202603	Invoice - Acme - 202603	發票 - 星河科技 - 202603
+AiErrAuthT	IDS_AI_ERR_AUTH_T	4476	API Key 无效或已过期	The API key is invalid or expired	API Key 無效或已過期
+AiErrAuthS	IDS_AI_ERR_AUTH_S	4477	{name} 不认这个 Key。到「管理连接」换一个新的，再点重试。	{name} rejected this key. Replace it in Manage connection, then retry.	{name} 不認這個 Key。到「管理連線」換一個新的，再點重試。
+AiErrBalanceOfficialT	IDS_AI_ERR_BALANCE_OFFICIAL_T	4478	DeepSeek 账户余额不足	Your DeepSeek balance is too low	DeepSeek 帳戶餘額不足
+AiErrBalanceT	IDS_AI_ERR_BALANCE_T	4479	账户余额不足	Balance too low	帳戶餘額不足
+AiErrBalanceS	IDS_AI_ERR_BALANCE_S	4480	充值后点重试，这段对话会接着进行。	Top up, then retry and the chat picks up where it stopped.	儲值後點重試，這段對話會接著進行。
+AiErrBalanceHostS	IDS_AI_ERR_BALANCE_HOST_S	4481	{host} 返回余额不足。充值后点重试。	{host} says the balance is too low. Top up, then retry.	{host} 回報餘額不足。儲值後點重試。
+AiErrRateT	IDS_AI_ERR_RATE_T	4482	请求太频繁	Too many requests	請求太頻繁
+AiErrRateS	IDS_AI_ERR_RATE_S	4483	{name} 暂时限制了请求速度，等几秒再试。	{name} is limiting requests for now. Wait a few seconds and retry.	{name} 暫時限制了請求速度，等幾秒再試。
+AiErrServerT	IDS_AI_ERR_SERVER_T	4484	{name} 服务暂时出错（{code}）	{name} had a problem ({code})	{name} 服務暫時出錯（{code}）
+AiErrServerS	IDS_AI_ERR_SERVER_S	4485	不是你的设置问题，稍后重试即可。	Your settings are fine. Try again in a moment.	不是你的設定問題，稍後重試即可。
+AiErrBadT	IDS_AI_ERR_BAD_T	4486	请求被拒绝（{code}）	The request was refused ({code})	請求被拒絕（{code}）
+AiErrBadS	IDS_AI_ERR_BAD_S	4487	服务返回：	The service said:	服務回應：
+AiErrBadHint	IDS_AI_ERR_BAD_HINT	4488	常见原因：所选模型不支持工具调用，换一个模型再试。	Often the chosen model can't call tools. Try another model.	常見原因：所選模型不支援工具呼叫，換一個模型再試。
+AiErrBadHint404	IDS_AI_ERR_BAD_HINT404	4489	常见原因：服务上没有这个模型，换一个模型再试。	Often the service doesn't have this model. Try another one.	常見原因：服務上沒有這個模型，換一個模型再試。
+AiErrNetT	IDS_AI_ERR_NET_T	4490	连不上 {host}	Can't reach {host}	連不上 {host}
+AiErrNetS	IDS_AI_ERR_NET_S	4491	检查网络或代理设置。（错误 {code}）	Check your network or proxy settings. (error {code})	檢查網路或 Proxy 設定。（錯誤 {code}）
+AiErrNoKeyT	IDS_AI_ERR_NO_KEY_T	4492	还没连接模型	No model connected yet	還沒連線模型
+AiErrNoKeyS	IDS_AI_ERR_NO_KEY_S	4493	连接 DeepSeek 或其他兼容 OpenAI 的服务后就能开始对话。Key 只保存在这台电脑上。	Connect DeepSeek or another OpenAI-compatible service to start. The key stays on this PC.	連線 DeepSeek 或其他相容 OpenAI 的服務後就能開始對話。Key 只儲存在這台電腦上。
+AiErrCutT	IDS_AI_ERR_CUT_T	4494	回答中途断开了	The answer was cut off	回答中途斷開了
+AiErrCutS	IDS_AI_ERR_CUT_S	4495	已收到的内容保留	What arrived is kept	已收到的內容保留
+AiErrEarlyS	IDS_AI_ERR_EARLY_S	4496	连接在回答出来之前断开了，重试一次就好。	The connection dropped before the answer came. Retry.	連線在回答出來之前斷開了，重試一次就好。
+AiErrTooManyT	IDS_AI_ERR_TOO_MANY_T	4497	步骤太多，先停在这里	Too many steps, so I stopped	步驟太多，先停在這裡
+AiErrTooManyS	IDS_AI_ERR_TOO_MANY_S	4498	换个说法再试，或者把任务拆小一点。	Try asking another way, or split the task up.	換個說法再試，或者把任務拆小一點。
+AiErrBtnManage	IDS_AI_ERR_BTN_MANAGE	4499	管理连接	Manage connection	管理連線
+AiErrBtnTopUp	IDS_AI_ERR_BTN_TOP_UP	4500	去充值	Top up	去儲值
+AiErrBtnSwitch	IDS_AI_ERR_BTN_SWITCH	4501	换模型	Switch model	換模型
+AiErrBtnCopy	IDS_AI_ERR_BTN_COPY	4502	复制详情	Copy details	複製詳細資料
+AiErrBtnConnect	IDS_AI_ERR_BTN_CONNECT	4503	连接模型	Connect a model	連線模型
+AiChipError	IDS_AI_CHIP_ERROR	4504	出错	Error	出錯
+AiChipUnfinished	IDS_AI_CHIP_UNFINISHED	4505	没完成	Not finished	沒完成
+AiPeekFail	IDS_AI_PEEK_FAIL	4506	「{p}」没能完成，文件没有任何改动。	“{p}” didn't finish. No files were changed.	「{p}」沒能完成，檔案沒有任何變更。
+AiPeekFailUndo	IDS_AI_PEEK_FAIL_UNDO	4507	「{p}」没能完成。已经完成的改动可以在对话里撤销。	“{p}” didn't finish. What was already changed can be undone in the chat.	「{p}」沒能完成。已經完成的變更可以在對話裡復原。
+AiPeekServer	IDS_AI_PEEK_SERVER	4508	服务暂时出错	The service had a problem	服務暫時出錯
+AiPeekNet	IDS_AI_PEEK_NET	4509	连不上服务	Can't reach the service	連不上服務
+AiChipTip	IDS_AI_CHIP_TIP	4510	Pulse 助手  Ctrl+J	Pulse Assistant  Ctrl+J	Pulse 助手  Ctrl+J

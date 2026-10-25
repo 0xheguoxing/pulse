@@ -2092,6 +2092,8 @@ void MainRenderer::DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& f
         case StatusAiState::Busy: chip.state = AiChipState::Busy; break;
         case StatusAiState::Waiting: chip.state = AiChipState::Waiting; break;
         case StatusAiState::Done: chip.state = AiChipState::Done; break;
+        case StatusAiState::Error: chip.state = AiChipState::Error; break;
+        case StatusAiState::Warn: chip.state = AiChipState::Warn; break;
         default: chip.state = AiChipState::Idle; break;
         }
         chip.progress = vm.status.ai_progress;

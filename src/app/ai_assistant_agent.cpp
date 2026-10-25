@@ -308,7 +308,7 @@ std::string Body(AppState& s, const AiAgent& a) {
 
 void SendRound(AppState& s);
 void NextTool(AppState& s);
-void Fail(AppState& s, const std::wstring& message);
+void Fail(AppState& s, AiChatError error);
 
 AiBlockView* Block(AppState& s, uint32_t id) { return Chat(s).Find(id); }
 
@@ -1127,22 +1127,128 @@ void NextTool(AppState& s) {
 
 // ---------------------------------------------------------------- stream --
 
-std::wstring ErrorText(const ModelEvent& ev) {
+// Error card A (plans/ai/Pulse_AI助手_错误与快捷键.html): red needs the user,
+// amber passes on its own. "DeepSeek" only for the official service; a custom
+// address is named by its host.
+using ui::AiErrAct;
+using ui::AiErrTone;
+using ui::AiIcon;
+
+ui::AiErrButton Btn(AiErrAct act, AiIcon icon, I text, bool primary) {
+    ui::AiErrButton b;
+    b.act = act;
+    b.icon = icon;
+    b.text = Text(text);
+    b.primary = primary;
+    return b;
+}
+
+bool Official() { return AiAgentBaseUrl() == AiAgentDefaultBaseUrl(); }
+std::wstring ServiceName() { return Official() ? std::wstring(L"DeepSeek") : AiAgentHost(); }
+
+AiChatError CutError() {
+    AiChatError e;
+    e.cut = true;
+    e.tone = AiErrTone::Warn;
+    e.icon = AiIcon::Cloud;
+    e.title = Text(I::AiErrCutT);
+    e.sub = Text(I::AiErrEarlyS);
+    e.buttons = {Btn(AiErrAct::Retry, AiIcon::Retry, I::AiAsstRetry, true)};
+    return e;
+}
+
+AiChatError BuildError(const ModelEvent& ev) {
+    AiChatError e;
+    const std::wstring name = ServiceName();
+    const ui::AiErrButton retry = Btn(AiErrAct::Retry, AiIcon::Retry, I::AiAsstRetry, false);
+    const ui::AiErrButton retry_pri = Btn(AiErrAct::Retry, AiIcon::Retry, I::AiAsstRetry, true);
     switch (ev.http_status) {
-    case 401: return Text(I::AiAsstErrAuth);
-    case 402: return Text(I::AiAsstErrBalance);
-    case 429: return Text(I::AiAsstErrRate);
+    case 401:
+    case 403:
+        e.tone = AiErrTone::Err;
+        e.icon = AiIcon::Key;
+        e.title = Text(I::AiErrAuthT);
+        e.sub = Fill(Text(I::AiErrAuthS), L"{name}", name);
+        e.buttons = {Btn(AiErrAct::ManageConn, AiIcon::Gear, I::AiErrBtnManage, true), retry};
+        return e;
+    case 402:
+        e.tone = AiErrTone::Err;
+        e.icon = AiIcon::Wallet;
+        e.peek_title = Text(I::AiErrBalanceT);
+        if (Official()) {
+            e.title = Text(I::AiErrBalanceOfficialT);
+            e.sub = Text(I::AiErrBalanceS);
+            e.buttons = {Btn(AiErrAct::TopUp, AiIcon::Open, I::AiErrBtnTopUp, true), retry};
+        } else {
+            e.title = Text(I::AiErrBalanceT);
+            e.sub = Fill(Text(I::AiErrBalanceHostS), L"{host}", AiAgentHost());
+            e.buttons = {retry_pri};
+        }
+        return e;
+    case 429:
+        // No automatic retry: it would only keep sending refused requests.
+        e.tone = AiErrTone::Warn;
+        e.icon = AiIcon::Clock;
+        e.title = Text(I::AiErrRateT);
+        e.sub = Fill(Text(I::AiErrRateS), L"{name}", name);
+        e.buttons = {retry_pri};
+        return e;
     case 0:
-        if (ev.error_type == "incomplete") return Text(I::AiAsstErrEarly);
-        return Fill(Fill(Text(I::AiAsstErrNetwork), L"{host}", AiAgentHost()), L"{code}",
-                    std::to_wstring(ev.win32_error));
-    default: break;
+        if (ev.error_type == "incomplete") return CutError();
+        e.tone = AiErrTone::Warn;
+        e.icon = AiIcon::WifiOff;
+        e.title = Fill(Text(I::AiErrNetT), L"{host}", AiAgentHost());
+        e.sub = Fill(Text(I::AiErrNetS), L"{code}", std::to_wstring(ev.win32_error));
+        e.peek_title = Text(I::AiPeekNet);
+        e.buttons = {retry_pri, Btn(AiErrAct::ManageConn, AiIcon::Gear, I::AiErrBtnManage, false)};
+        return e;
+    default:
+        break;
     }
-    if (ev.http_status >= 500)
-        return Fill(Text(I::AiAsstErrServer), L"{code}", std::to_wstring(ev.http_status));
+    const std::wstring code = std::to_wstring(ev.http_status);
+    if (ev.http_status >= 500) {
+        e.tone = AiErrTone::Warn;
+        e.icon = AiIcon::Cloud;
+        e.title = Fill(Fill(Text(I::AiErrServerT), L"{name}", name), L"{code}", code);
+        e.sub = Text(I::AiErrServerS);
+        e.peek_title = Text(I::AiPeekServer);
+        e.buttons = {retry_pri};
+        return e;
+    }
+    // Refused (400, 404, 422 …): the service's words in the grey box.
     std::wstring detail = json::Wide(ev.error_message);
     if (detail.size() > 300) detail = detail.substr(0, 300) + L"\u2026";
-    return Fill(Fill(Text(I::AiAsstErrBadRequest), L"{code}", std::to_wstring(ev.http_status)), L"{detail}", detail);
+    e.tone = AiErrTone::Err;
+    e.icon = AiIcon::Ban;
+    e.title = Fill(Text(I::AiErrBadT), L"{code}", code);
+    if (!detail.empty()) e.sub = Text(I::AiErrBadS);
+    e.detail = detail;
+    if (ev.http_status == 404) e.hint = Text(I::AiErrBadHint404);
+    else if (ev.http_status == 400 || ev.http_status == 422) e.hint = Text(I::AiErrBadHint);
+    e.buttons = {Btn(AiErrAct::SwitchModel, AiIcon::Swap, I::AiErrBtnSwitch, true), retry};
+    if (!detail.empty()) e.buttons.push_back(Btn(AiErrAct::CopyDetail, AiIcon::Copy, I::AiErrBtnCopy, false));
+    return e;
+}
+
+AiChatError TooManyError() {
+    AiChatError e;
+    e.tone = AiErrTone::Warn;
+    e.icon = AiIcon::AlertCircle;
+    e.title = Text(I::AiErrTooManyT);
+    e.sub = Text(I::AiErrTooManyS);
+    e.buttons = {Btn(AiErrAct::Retry, AiIcon::Retry, I::AiAsstRetry, true)};
+    return e;
+}
+
+AiChatError NoKeyError() {
+    // Not an error: accent, one button.
+    AiChatError e;
+    e.tone = AiErrTone::Accent;
+    e.icon = AiIcon::Plug;
+    e.title = Text(I::AiErrNoKeyT);
+    e.sub = Text(I::AiErrNoKeyS);
+    e.buttons = {Btn(AiErrAct::Connect, AiIcon::Plug, I::AiErrBtnConnect, true)};
+    return e;
 }
 
 void EndTurn(AppState& s) {
@@ -1154,7 +1260,7 @@ void EndTurn(AppState& s) {
     AiChatFinish(s, true);
 }
 
-void Fail(AppState& s, const std::wstring& message) {
+void Fail(AppState& s, AiChatError error) {
     AiAgent& a = Agent(s);
     FoldThinking(s, a);
     if (AiBlockView* t = Block(s, a.text_id)) t->streaming = false;
@@ -1172,12 +1278,9 @@ void Fail(AppState& s, const std::wstring& message) {
         for (ui::AiStepView& st : b.steps)
             if (st.state == ui::AiStepState::Running) { st.state = ui::AiStepState::Failed; st.progress = -1.0f; }
     FoldSteps(s, a);
-    AiBlockView& t = Chat(s).Add(AiBlockKind::Text, Now());
-    t.text = message;
     a.stream.reset();
-    AiChatAddActs(s, a.tool_count, true);
-    AiChatFinish(s, false);
-    Redraw(s);
+    // The card ends the turn; no acts row under a failed one.
+    AiChatFail(s, std::move(error));
 }
 
 // One drained event batch. Returns false when the round ended.
@@ -1244,12 +1347,12 @@ bool Pump(AppState& s) {
             return false;
         }
         case ModelEvent::Kind::Failed:
-            Fail(s, ErrorText(ev));
+            Fail(s, BuildError(ev));
             return false;
         }
     }
     if (a.stream && a.stream->Ended()) {
-        Fail(s, Text(I::AiAsstErrEarly));
+        Fail(s, CutError());
         return false;
     }
     return true;
@@ -1259,12 +1362,12 @@ void SendRound(AppState& s) {
     AiAgent& a = Agent(s);
     AiChat& c = Chat(s);
     if (++a.rounds > kMaxRounds) {
-        Fail(s, Text(I::AiAsstErrTooMany));
+        Fail(s, TooManyError());
         return;
     }
     std::wstring key;
     if (!app::ai::LoadModelKey(key)) {
-        Fail(s, Text(I::AiAsstErrNoKey));
+        Fail(s, NoKeyError());
         return;
     }
     a.reasoning.clear();

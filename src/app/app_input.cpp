@@ -5112,6 +5112,8 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             case A::DissolveFolder: DispatchMenuCommand(*s, app::CmdDissolveFolder); break;
             case A::None: break;
             }
+        } else if (ctrl && !shift && !alt && wParam == L'J') {
+            AiAssistantHotkey(*s);   // Pulse 助手: open + focus, focus, or collapse
         } else if (ctrl && !shift && !alt && wParam == L'B') {
             ToggleSidebarCollapsed(*s);
         } else if (ctrl && shift && !alt && wParam == L'B') {

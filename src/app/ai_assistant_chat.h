@@ -61,9 +61,24 @@ struct AiChat {
     uint64_t peek_turn = 0;       // turn_start of the turn it was shown for
     std::wstring peek_text;       // the turn's summary (organize_files sets it)
     bool peek_undo = false;       // the turn's result card can still undo
+    // The turn failed: the peek leads with 重试 (连接模型) in the card's tone.
+    bool peek_failed = false;
+    ui::AiErrTone peek_tone = ui::AiErrTone::Err;
+    std::wstring peek_title;
 
     ui::AiBlockView* Find(uint32_t id);
     ui::AiBlockView& Add(ui::AiBlockKind kind, uint64_t now_ms);
+};
+
+// A failed turn (the agent builds it from the stream's error; error card A in
+// plans/ai/Pulse_AI助手_错误与快捷键.html).
+struct AiChatError {
+    ui::AiErrTone tone = ui::AiErrTone::Err;
+    ui::AiIcon icon = ui::AiIcon::AlertCircle;
+    std::wstring title, sub, detail, hint;
+    std::vector<ui::AiErrButton> buttons;
+    std::wstring peek_title;      // shorter title for the bubble (empty: title)
+    bool cut = false;             // cut off: a partial answer keeps an amber strip
 };
 
 AiChat& Chat(AppState& s);
@@ -95,6 +110,15 @@ void AiChatPeek(AppState& s, uint32_t delay);
 void AiChatHidePeek(AppState& s);
 void AiChatFillPeek(AppState& s, bool panel_open, ui::AiPeekView& peek);
 void AiChatUndoLast(AppState& s);   // the latest result card's 撤销
+// Ends the turn on `err`: the card (or the cut strip), the error chip and,
+// with the panel closed, the peek.
+void AiChatFail(AppState& s, AiChatError err);
+// Sends the last prompt again in place of the failed turn (no second bubble).
+void AiChatRetryTurn(AppState& s);
+// The error card button behind an ErrAction hit (false: none).
+bool AiChatErrAction(AppState& s, int index, ui::AiErrAct& act);
+// Runs the chat's own error buttons: 重试, 去充值, 复制详情.
+void AiChatErrRun(AppState& s, int index);
 
 // The agent loop (ai_assistant_agent.cpp).
 bool AiAgentConnected();        // a model key is stored (checked at most every 2 s)

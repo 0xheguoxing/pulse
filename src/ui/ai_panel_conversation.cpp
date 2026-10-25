@@ -408,6 +408,14 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             // .acts fades in (opacity .3s), no slide.
             enter = entrance(b.born_ms, 0.0f, 300);
         }
+        if (b.gone_ms && motion_on) {
+            // .err.gone: opacity 0, translateY(-4px) over .25 s (then removed).
+            const float t = now_ms <= b.gone_ms ? 0.0f
+                                                : std::clamp(static_cast<float>(now_ms - b.gone_ms) / 250.0f, 0.0f, 1.0f);
+            enter.opacity *= 1.0f - t;
+            enter.dy -= 4.0f * s * t;
+            conv_anim_ = true;
+        }
         const bool pushed = push_entrance(enter);
         switch (b.kind) {
         case AiBlockKind::User: {
@@ -932,6 +940,134 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             }
             y += 28.0f * s;
             pending = 6.0f * s;
+            break;
+        }
+        case AiBlockKind::Error: {
+            // .err: border 1, radius 12, padding 12, margin 0 0 12. .e-top gap 10:
+            // .e-i 30 tile (radius 8, icon 17); .e-t 13.5/600 lh 20; .e-s 12 lh 18
+            // margin-top 2. .e-d / .e-h / .e-b margin-left 40.
+            place(0.0f);
+            const bool live = !b.gone_ms;
+            const float il = x0 + 1.0f * s + 12.0f * s;
+            const float ir = x1 - 1.0f * s - 12.0f * s;
+            const float tx = il + 40.0f * s;
+            const float text_w = (std::max)(1.0f, ir - tx);
+            const float title_h = (std::max)(20.0f * s, wrapped_h(b.title, formats_.body_b, text_w, 20.0f * s));
+            const float sub_h = b.sub.empty() ? 0.0f : 2.0f * s + wrapped_h(b.sub, formats_.caption, text_w, 18.0f * s);
+            const float top_h = (std::max)(30.0f * s, title_h + sub_h);
+            // .e-d: padding 7 10, border 1 line2, radius 8, mono 11.5/17, at most 3 lines.
+            const float dw = text_w - 22.0f * s;
+            const float detail_h =
+                b.detail.empty() ? 0.0f
+                                 : (std::min)(51.0f * s, (std::max)(17.0f * s, wrapped_h(b.detail, formats_.mono, dw, 17.0f * s)));
+            const float detail_box = b.detail.empty() ? 0.0f : 8.0f * s + detail_h + 16.0f * s;
+            // .e-h: warn 13, gap 6, 12 text3.
+            const float hint_w = text_w - 19.0f * s;
+            const float hint_h = b.hint.empty() ? 0.0f : (std::max)(18.0f * s, wrapped_h(b.hint, formats_.caption, hint_w, 18.0f * s));
+            const float hint_box = b.hint.empty() ? 0.0f : 8.0f * s + hint_h;
+            // .e-b: gap 8; buttons wrap when the panel is narrow.
+            struct BtnPos { float x, y, w; };
+            std::vector<BtnPos> btns;
+            float bx = tx, by = 0.0f;
+            for (const AiErrButton& eb : b.actions) {
+                IDWriteTextFormat* fmt = eb.primary ? formats_.body13b : formats_.body13;
+                const float bw = 28.0f * s + 20.0f * s + c.Measure(eb.text, fmt);
+                if (bx > tx && bx + bw > ir) { bx = tx; by += 40.0f * s; }
+                btns.push_back({bx, by, bw});
+                bx += bw + 8.0f * s;
+            }
+            const float btn_h = btns.empty() ? 0.0f : 12.0f * s + by + 32.0f * s;
+            const float h = 2.0f * s + 24.0f * s + top_h + detail_box + hint_box + btn_h;
+            const D2D1_RECT_F r = D2D1::RectF(x0, top + y, x1, top + y + h);
+            if (visible(r.top, r.bottom)) {
+                const D2D1_COLOR_F ink = b.tone == AiErrTone::Err ? pal.bad : b.tone == AiErrTone::Warn ? pal.amber : pal.accent;
+                const D2D1_COLOR_F tile = b.tone == AiErrTone::Err    ? pal.bad_bg
+                                          : b.tone == AiErrTone::Warn ? pal.amber_bg
+                                                                      : pal.accent_soft;
+                // Only the red tone takes a tinted border.
+                card(r, b.tone == AiErrTone::Err ? pal.bad_line : pal.line);
+                const float iy = r.top + 1.0f * s + 12.0f * s;
+                const D2D1_RECT_F tr = D2D1::RectF(il, iy, il + 30.0f * s, iy + 30.0f * s);
+                c.Fill(tr, 8.0f * s, tile);
+                c.Icon(b.icon, il + 6.5f * s, iy + 6.5f * s, 17.0f * s, ink);
+                wrapped(b.title, formats_.body_b, tx, iy, text_w, 20.0f * s, pal.text);
+                if (!b.sub.empty()) wrapped(b.sub, formats_.caption, tx, iy + title_h + 2.0f * s, text_w, 18.0f * s, pal.text2);
+                float yy = iy + top_h;
+                if (!b.detail.empty()) {
+                    yy += 8.0f * s;
+                    const D2D1_RECT_F dr = D2D1::RectF(tx, yy, ir, yy + detail_h + 16.0f * s);
+                    c.Fill(dr, 8.0f * s, pal.pane);
+                    c.Stroke(dr, 8.0f * s, pal.line2);
+                    dc->PushAxisAlignedClip(D2D1::RectF(dr.left, dr.top + 7.0f * s, dr.right, dr.top + 7.0f * s + detail_h + 1.0f),
+                                            D2D1_ANTIALIAS_MODE_ALIASED);
+                    wrapped(b.detail, formats_.mono, dr.left + 11.0f * s, dr.top + 8.0f * s, dw, 17.0f * s, pal.text2);
+                    dc->PopAxisAlignedClip();
+                    yy = dr.bottom;
+                }
+                if (!b.hint.empty()) {
+                    yy += 8.0f * s;
+                    c.Icon(AiIcon::Warn, tx, yy + 2.5f * s, 13.0f * s, pal.text3);
+                    wrapped(b.hint, formats_.caption, tx + 19.0f * s, yy, hint_w, 18.0f * s, pal.text3);
+                    yy += hint_h;
+                }
+                if (!btns.empty()) {
+                    yy += 12.0f * s;
+                    for (size_t i = 0; i < btns.size(); ++i) {
+                        const AiErrButton& eb = b.actions[i];
+                        const int hi = live ? index * 4 + static_cast<int>(i) : -1;
+                        button(btns[i].x + btns[i].w, yy + btns[i].y, eb.text, eb.primary, eb.icon, true,
+                               AiPanelPart::ErrAction, hi);
+                    }
+                    // .e-m: the model, pushed right; only with fewer than 3 buttons.
+                    if (b.actions.size() < 3 && b.tone != AiErrTone::Accent && !b.meta.empty() && by == 0.0f) {
+                        const float last = btns.back().x + btns.back().w + 12.0f * s;
+                        const float mw = c.Measure(b.meta, formats_.meta);
+                        if (last + mw <= ir)
+                            line(b.meta, formats_.meta, ir - mw, yy, ir + 2.0f, 32.0f * s, pal.text3);
+                    }
+                }
+            }
+            y += h;
+            pending = 12.0f * s;
+            break;
+        }
+        case AiBlockKind::Cut: {
+            // .cut: h 34, padding 0 6 0 10, margin -2 0 12, radius 9, amber-bg,
+            // amber 12.5; warn 15 gap 8; .t 600; .lnk h 26 padding 0 10 radius 7.
+            place(-2.0f * s);
+            const D2D1_RECT_F r = D2D1::RectF(x0, top + y, x1, top + y + 34.0f * s);
+            if (visible(r.top, r.bottom)) {
+                c.Fill(r, 9.0f * s, pal.amber_bg);
+                float x = r.left + 10.0f * s;
+                c.Icon(AiIcon::Warn, x, r.top + 9.5f * s, 15.0f * s, pal.amber);
+                x += 15.0f * s + 8.0f * s;
+                // The link at the right first, so the words know their room.
+                const float lw = b.accept.empty() ? 0.0f : 20.0f * s + 13.0f * s + 5.0f * s + c.Measure(b.accept, formats_.small125b);
+                const D2D1_RECT_F lr = D2D1::RectF(r.right - 6.0f * s - lw, r.top + 4.0f * s, r.right - 6.0f * s, r.top + 30.0f * s);
+                const float room = (lr.left - 8.0f * s);
+                const float tw = c.Measure(b.title, formats_.small125b);
+                line(b.title, formats_.small125b, x, r.top, room, 34.0f * s, pal.amber);
+                x += tw + 8.0f * s;
+                if (!b.sub.empty() && x + c.Measure(b.sub, formats_.small125) <= room)
+                    line(b.sub, formats_.small125, x, r.top, room, 34.0f * s, pal.amber);
+                if (lw > 0.0f) {
+                    const int hi = b.gone_ms ? -1 : index;
+                    const bool h = hot(AiPanelPart::CutRetry, hi), d = down(AiPanelPart::CutRetry, hi);
+                    D2D1_MATRIX_3X2_F before;
+                    dc->GetTransform(&before);
+                    if (d && motion_on) {
+                        const D2D1_POINT_2F mid = D2D1::Point2F((lr.left + lr.right) * 0.5f, (lr.top + lr.bottom) * 0.5f);
+                        dc->SetTransform(D2D1::Matrix3x2F::Scale(0.94f, 0.94f, mid) * before);
+                    }
+                    if (h) c.Fill(lr, 7.0f * s, Alpha(pal.amber, 0.14f));
+                    c.Icon(AiIcon::Retry, lr.left + 10.0f * s, lr.top + 6.5f * s, 13.0f * s, pal.amber);
+                    line(b.accept, formats_.small125b, lr.left + 28.0f * s, lr.top, lr.right, 26.0f * s, pal.amber);
+                    dc->SetTransform(before);
+                    if (hi >= 0) hit(lr, AiPanelPart::CutRetry, hi);
+                }
+            }
+            y += 34.0f * s;
+            pending = 12.0f * s;
             break;
         }
         case AiBlockKind::Note: {

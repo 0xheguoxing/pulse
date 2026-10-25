@@ -50,6 +50,16 @@ enum class AiIcon : uint8_t {
     CheckCircle,
     AlertCircle,
     EyeOff,
+    // Error cards (plans/ai/Pulse_AI助手_错误与快捷键.html).
+    Key,
+    Wallet,
+    Cloud,
+    Ban,
+    WifiOff,
+    Plug,
+    Gear,
+    Swap,
+    Warn,
     Count
 };
 

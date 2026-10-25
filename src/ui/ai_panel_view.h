@@ -58,6 +58,8 @@ enum class AiPanelPart : uint8_t {
     ActCopy,
     ActRetry,
     ActThumb,
+    ErrAction,      // index = block index * 4 + button (AiBlockView::actions)
+    CutRetry,       // the 重试 link on the 回答中途断开了 strip
     // 管理连接 card (the model menu unfolded).
     ConnCard,       // the card's background (swallows the click)
     ConnBack,
@@ -109,6 +111,22 @@ enum class AiBlockKind : uint8_t {
     Acts,       // copy / retry / thumb + meta under a finished answer
     Working,    // ✦ shimmer line while waiting for the next thing
     Note,       // centred line between rules (你撤销了这次整理)
+    Error,      // the turn failed: tile + title + sub (+ detail, hint) + buttons
+    Cut,        // amber strip under a partial answer: 回答中途断开了 · 重试
+};
+
+// Error card tone: Err needs the user (red, red border), Warn is temporary
+// (amber), Accent is not an error (没连接模型).
+enum class AiErrTone : uint8_t { Err, Warn, Accent };
+
+// What an error card button does (app/ai_assistant_chat.cpp).
+enum class AiErrAct : uint8_t { Retry, ManageConn, TopUp, SwitchModel, CopyDetail, Connect };
+
+struct AiErrButton {
+    AiErrAct act = AiErrAct::Retry;
+    AiIcon icon = AiIcon::Retry;
+    std::wstring text;
+    bool primary = false;
 };
 
 enum class AiStepState : uint8_t { Running, Done, Failed };
@@ -158,10 +176,16 @@ struct AiBlockView {
     std::vector<AiTagView> tags;
     std::wstring deny, accept;        // Confirm buttons; Result: undo, show
     bool done = false;                // Confirm decided; Result undone
+    // Error: tone, tile icon, the service's own words (mono box) and buttons.
+    AiErrTone tone = AiErrTone::Err;
+    AiIcon icon = AiIcon::AlertCircle;
+    std::wstring detail;
+    std::vector<AiErrButton> actions;
+    uint64_t gone_ms = 0;             // Error / Cut: fading out (retry)
 };
 
 // The status bar chip (left end): "✦ AI" plus what the assistant is doing.
-enum class AiChipState : uint8_t { Idle, Busy, Waiting, Done };
+enum class AiChipState : uint8_t { Idle, Busy, Waiting, Done, Error, Warn };
 
 struct AiStatusChipView {
     std::wstring label;               // AI
@@ -188,6 +212,10 @@ struct AiPeekView {
     std::wstring text;                // 已把 12 个文件整理到 5 个新文件夹：…
     std::wstring undo;                // 撤销 (empty: no button)
     std::wstring open;                // 打开对话
+    // A failed turn: the spark takes the tone; `undo` is then 重试 (primary,
+    // retry icon) or 连接模型.
+    bool failed = false;
+    AiErrTone tone = AiErrTone::Err;
 };
 
 struct AiPanelViewModel {
@@ -330,6 +358,7 @@ private:
         IDWriteTextFormat* caption_b = nullptr; // 12 semibold
         IDWriteTextFormat* badge = nullptr;     // 10.5 semibold
         IDWriteTextFormat* meta = nullptr;      // 11.5
+        IDWriteTextFormat* mono = nullptr;      // 11.5 Cascadia Mono / Consolas
         void Release();
     };
 
