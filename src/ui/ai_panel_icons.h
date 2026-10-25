@@ -68,6 +68,11 @@ enum class AiIcon : uint8_t {
     Lock,
     Skip,
     Sliders,
+    // Second batch (plans/ai/Pulse_AI助手_第二批扩展.html).
+    Hdd,
+    Install,
+    Temp,
+    Trash,
     Count
 };
 

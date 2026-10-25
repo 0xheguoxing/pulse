@@ -565,6 +565,15 @@ MainRenderer::DetailsColumnLayout MainRenderer::DetailsColumns(
     }
     auto columns = DetailsColumns(pane_bounds, vm.details_column_dividers, vm.is_search,
                                   vm.search_column_dividers, vm.cloud_status_column);
+    // An AI cleanup list explains each row in the type column (原因). When the
+    // pane is too narrow for both, the reason outranks the modified date.
+    if (!vm.type_column_label.empty() && !columns.Has(ColumnKind::Type)) {
+        for (int i = 0; i < columns.count; ++i) {
+            if (columns.kinds[static_cast<size_t>(i)] != ColumnKind::Date) continue;
+            columns.kinds[static_cast<size_t>(i)] = ColumnKind::Type;
+            break;
+        }
+    }
     // Explicit divider positions remain a manual override. A drag starts by
     // capturing this measured layout, so the first movement does not jump.
     const bool manual = vm.is_search
@@ -3039,7 +3048,9 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
                         SortColumn::Mtime, cw, false);
                 break;
             case ColumnKind::Type:
-                drawCol(pulse::l10n::Get(pulse::l10n::StringId::ColumnType), SortColumn::Type, cw, false);
+                drawCol(pane.type_column_label.empty() ? pulse::l10n::Get(pulse::l10n::StringId::ColumnType)
+                                                       : pane.type_column_label,
+                        SortColumn::Type, cw, false);
                 break;
             case ColumnKind::Size:
                 drawCol(pulse::l10n::Get(pulse::l10n::StringId::ColumnSize), SortColumn::Size, cw, true);
@@ -3099,7 +3110,10 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
                 b.name = pane.date_column_label.empty() ? pulse::l10n::Get(pulse::l10n::StringId::ColumnModified)
                                                         : pane.date_column_label;
                 break;
-            case ColumnKind::Type: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnType); break;
+            case ColumnKind::Type:
+                b.name = pane.type_column_label.empty() ? pulse::l10n::Get(pulse::l10n::StringId::ColumnType)
+                                                        : pane.type_column_label;
+                break;
             case ColumnKind::Size: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnSize); break;
             case ColumnKind::Created: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnCreated); break;
             case ColumnKind::Accessed: b.name = pulse::l10n::Get(pulse::l10n::StringId::ColumnAccessed); break;

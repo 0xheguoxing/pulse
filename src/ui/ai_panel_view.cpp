@@ -51,6 +51,11 @@ void AiPanelView::Formats::Release() {
     SafeRelease(badge);
     SafeRelease(meta);
     SafeRelease(num22);
+    SafeRelease(num20);
+    SafeRelease(num16);
+    SafeRelease(num15);
+    SafeRelease(num14);
+    SafeRelease(small11);
     scale = 0.0f;
 }
 
@@ -154,6 +159,11 @@ void AiPanelView::EnsureFormats(Compositor* compositor, float scale) {
     make(10.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD, formats_.badge);
     make(11.5f, DWRITE_FONT_WEIGHT_NORMAL, formats_.meta);
     make(22.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, formats_.num22);
+    make(20.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, formats_.num20);
+    make(16.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, formats_.num16);
+    make(15.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, formats_.num15);
+    make(14.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, formats_.num14);
+    make(11.0f, DWRITE_FONT_WEIGHT_NORMAL, formats_.small11);
     {
         typography::TextFormatSpec spec;
         spec.role = typography::FontRole::Monospace;
@@ -197,6 +207,11 @@ AiPanelView::Palette MakePalette(const Theme& theme, bool dark) {
     p.bad = dark ? Hex(0xef8a75) : Hex(0xb4442f);
     p.bad_bg = dark ? Hex(0x3d2622) : Hex(0xfbe9e5);
     p.bad_line = dark ? Hex(0x62372f) : Hex(0xf0c4ba);
+    // Second batch: system parts of the disk bar, the red delete-for-good card.
+    p.sys = dark ? Hex(0x97a3b1) : Hex(0x7a8796);
+    p.red = dark ? Hex(0xf0768a) : Hex(0xc4314b);
+    p.red_bg = dark ? Hex(0x3d2328) : Hex(0xfbe9ec);
+    p.red_line = dark ? Hex(0x6a3540) : Hex(0xefc2ca);
     p.shadow = dark ? Hex(0x000000, 0.55f) : Hex(0x1c2822, 0.20f);
     p.folder_icon = Hex(0xc49a3a);
     // Image, Document, App, Video, Archive, Neutral.

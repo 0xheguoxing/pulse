@@ -17,6 +17,7 @@ struct AiPanelView::Palette {
     D2D1_COLOR_F ok;
     D2D1_COLOR_F amber, amber_bg, amber_line;
     D2D1_COLOR_F bad, bad_bg, bad_line;
+    D2D1_COLOR_F sys, red, red_bg, red_line;
     D2D1_COLOR_F shadow;
     D2D1_COLOR_F folder_icon;
     std::array<D2D1_COLOR_F, 6> tint_fg, tint_bg;

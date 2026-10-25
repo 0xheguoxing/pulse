@@ -1007,7 +1007,15 @@ void AiChatActivate(AppState& s, ui::AiPanelPart part, int block) {
     case P::PlanToggle:
     case P::RenameToggle:
     case P::TaskToggle:
+    case P::DiskToggle:
+    case P::CleanToggle:
         b.collapsed = !b.collapsed;
+        break;
+    case P::ResultPurge:
+        if (b.id == c.result_id && c.on_purge && !b.done && !b.gone) {
+            auto fn = c.on_purge;   // asks first (a red confirmation card)
+            fn(s);
+        }
         break;
     case P::RenameMore:
         b.open = !b.open;
@@ -1062,6 +1070,26 @@ void AiChatActivate(AppState& s, ui::AiPanelPart part, int block) {
         break;
     default:
         break;
+    }
+    Redraw(s);
+}
+
+void AiChatClean(AppState& s, ui::AiPanelPart part, int index) {
+    AiChat& c = Chat(s);
+    if (index < 0) return;
+    const bool file = part == ui::AiPanelPart::CleanFile;
+    const int row_key = file ? index / 32 : index;
+    const int block = row_key / 32, row = row_key % 32, f = file ? index % 32 : -1;
+    if (block >= static_cast<int>(c.blocks.size())) return;
+    AiBlockView& b = c.blocks[static_cast<size_t>(block)];
+    if (b.kind != AiBlockKind::Clean || row >= static_cast<int>(b.clean.rows.size())) return;
+    if (b.id == c.clean_id && c.on_clean) {
+        auto fn = c.on_clean;
+        fn(s, part, row, f);
+    } else if (part == ui::AiPanelPart::CleanLink) {
+        // A settled card still unfolds its list.
+        ui::AiCleanRowView& r = b.clean.rows[static_cast<size_t>(row)];
+        r.open = !r.open && !r.files.empty();
     }
     Redraw(s);
 }

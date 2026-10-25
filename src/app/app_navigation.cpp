@@ -7,6 +7,7 @@
 #include "tag_query.h"
 #include "network_connect.h"
 #include "app_network_page.h"
+#include "ai_cleanup_scan.h"
 #include "../fs/bitlocker_volume.h"
 #include "../fs/device_path.h"
 #include "../fs/device_source.h"
@@ -1061,6 +1062,38 @@ void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathL
     app::ParsePulsePath(path, &kind, &rest);
     if (kind == L"changes") {
         LoadChangeView(s, tab, rest);
+        return;
+    }
+    if (kind == L"ai-list") {
+        // The assistant's 查看 on a cleanup category: its files with their
+        // reasons; the ones still checked on the card open selected.
+        std::wstring title;
+        std::vector<app::ai::AiListRow> rows;
+        auto entries = std::make_shared<std::vector<fs::DirEntry>>();
+        std::vector<int> picked;
+        if (app::ai::GetAiList(static_cast<uint32_t>(wcstoul(rest.c_str(), nullptr, 10)), title, rows)) {
+            for (const auto& row : rows) {
+                // Moved to the Recycle Bin (or elsewhere) since the scan.
+                if (GetFileAttributesW(row.path.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
+                fs::DirEntry e;
+                e.full_path = row.path;
+                const auto slash = row.path.find_last_of(L"\\/");
+                e.name = row.path.substr(slash == std::wstring::npos ? 0 : slash + 1);
+                e.size = row.dir ? 0 : row.bytes;
+                e.mtime = row.mtime;
+                e.is_dir = row.dir;
+                e.attrs = row.dir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+                e.change_type_text = row.reason;
+                if (row.on) picked.push_back(static_cast<int>(entries->size()));
+                entries->push_back(std::move(e));
+            }
+        }
+        tab.virtual_title = title.empty() ? l10n::Get(l10n::StringId::AiClListTitle) : title;
+        tab.view_mode = ui::ViewMode::Details;
+        tab.ClearSelection();
+        tab.SetSnapshot(entries);
+        tab.scroll_y = 0;
+        if (!picked.empty()) tab.SelectIndices(picked);
         return;
     }
     if (kind == L"networks") {

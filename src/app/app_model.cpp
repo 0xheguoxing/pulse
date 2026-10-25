@@ -1993,7 +1993,8 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
     out.can_create = out.is_file_system && !tab->net_readonly && !IsUncServerRoot(tab->current_path);
     // The network page and a server's share list: 连接服务器 takes 新建's slot.
     out.connect_server = tab->current_path == L"pulse:networks" || IsUncServerRoot(tab->current_path);
-    out.curated_order = virtual_kind == L"starred" || virtual_kind == L"recent" || virtual_kind == L"changes";
+    out.curated_order = virtual_kind == L"starred" || virtual_kind == L"recent" || virtual_kind == L"changes" ||
+                        virtual_kind == L"ai-list";
     out.is_starred = virtual_kind == L"starred";
     out.is_recent = virtual_kind == L"recent";
     out.is_recycle = virtual_kind == L"recycle";
@@ -2050,6 +2051,8 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
         out.date_column_label = l10n::Get(out.is_recent
             ? l10n::StringId::ColumnRecentOpened : l10n::StringId::ColumnModified);
     }
+    // The assistant's cleanup lists (查看): each row's reason in the 类型 column.
+    if (virtual_kind == L"ai-list") out.type_column_label = l10n::Get(l10n::StringId::AiClReasonColumn);
     out.selected_index = tab->selected_index;
     out.selected_count = tab->SelectedCount();
     // A lone details-tree "more" row is keyboard focus, not a selection.

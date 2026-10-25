@@ -248,6 +248,22 @@ constexpr IconPart k_sliders[] = {
     {"M13 7A2 2 0 1 0 17 7A2 2 0 1 0 13 7Z", 0, 0x000000u, 1.6f, 1.0f},
     {"M7 17A2 2 0 1 0 11 17A2 2 0 1 0 7 17Z", 0, 0x000000u, 1.6f, 1.0f},
 };
+constexpr IconPart k_hdd[] = {
+    {"M5.5 5h13A2.5 2.5 0 0 1 21 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5v-9A2.5 2.5 0 0 1 5.5 5z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M3 14h18", 0, 0x000000u, 1.6f, 1.0f},
+    {"M16.2 16.5a.8 .8 0 1 0 1.6 0a.8 .8 0 1 0-1.6 0z", 1, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_install[] = {
+    {"M12 3v11M7.5 9.5L12 14l4.5-4.5", 0, 0x000000u, 1.6f, 1.0f},
+    {"M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_temp[] = {
+    {"M4 7h16M6 7l1 13h10l1-13", 0, 0x000000u, 1.6f, 1.0f},
+    {"M9.5 11.5l5 5M14.5 11.5l-5 5", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_trash[] = {
+    {"M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3", 0, 0x000000u, 1.6f, 1.0f},
+};
 
 constexpr IconDef kIcons[] = {
     {k_spark, std::size(k_spark)},
@@ -306,6 +322,10 @@ constexpr IconDef kIcons[] = {
     {k_lock, std::size(k_lock)},
     {k_skip, std::size(k_skip)},
     {k_sliders, std::size(k_sliders)},
+    {k_hdd, std::size(k_hdd)},
+    {k_install, std::size(k_install)},
+    {k_temp, std::size(k_temp)},
+    {k_trash, std::size(k_trash)},
 };
 
 static_assert(std::size(kIcons) == static_cast<size_t>(AiIcon::Count), "one table entry per AiIcon");

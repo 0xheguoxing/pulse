@@ -57,6 +57,11 @@ struct AiChat {
     uint32_t result_id = 0;
     std::function<void(AppState&)> on_undo;
     std::function<void(AppState&)> on_show;
+    std::function<void(AppState&)> on_purge;      // 永久删除这些… (flow D)
+    // The cleanup card (flow D) while it can still change: its checkboxes,
+    // 查看 links and file rows (row, file; file -1 for a category).
+    uint32_t clean_id = 0;
+    std::function<void(AppState&, ui::AiPanelPart, int, int)> on_clean;
     // The model conversation; created by the first real turn.
     std::shared_ptr<AiAgent> agent;
     // The peek bubble over the chip once the panel is closed (.peek).
@@ -92,6 +97,9 @@ void AiChatStop(AppState& s);
 void AiChatReset(AppState& s);
 // Conversation parts the panel reports (block index into blocks).
 void AiChatActivate(AppState& s, ui::AiPanelPart part, int block);
+// The cleanup card's rows: part CleanCheck / CleanLink (index block * 32 +
+// row) or CleanFile ((block * 32 + row) * 32 + file).
+void AiChatClean(AppState& s, ui::AiPanelPart part, int index);
 
 // Shared by the demo driver and the agent loop.
 void AiChatPush(AppState& s, uint32_t delay, std::function<int(AppState&)> run);   // queues and schedules

@@ -3516,3 +3516,112 @@ AiTkTypeArchives	IDS_AI_TK_TYPE_ARCHIVES	4714	压缩包	Archives	壓縮檔
 AiTkTypeCode	IDS_AI_TK_TYPE_CODE	4715	代码	Code	程式碼
 AiTkTypeOther	IDS_AI_TK_TYPE_OTHER	4716	其他	Other	其他
 AiTkUndoNote	IDS_AI_TK_UNDO_NOTE	4717	你撤销了这个任务	You undid this task	你復原了這個任務
+AiDkStep	IDS_AI_DK_STEP	4718	统计占用	Measure space	統計佔用
+AiDkStepRun	IDS_AI_DK_STEP_RUN	4719	正在读 Pulse 索引…	Reading Pulse's index…	正在讀取 Pulse 索引…
+AiDkStepDone	IDS_AI_DK_STEP_DONE	4720	已用 {used} GB / {total} GB · {t} · 没有扫描磁盘	{used} GB used of {total} GB · {t} · no disk scan	已用 {used} GB / {total} GB · {t} · 沒有掃描磁碟
+AiDkStepDonePlain	IDS_AI_DK_STEP_DONE_PLAIN	4721	已用 {used} GB / {total} GB · {t}	{used} GB used of {total} GB · {t}	已用 {used} GB / {total} GB · {t}
+AiDkChipMeasuring	IDS_AI_DK_CHIP_MEASURING	4722	统计中	Measuring	統計中
+AiDkChipDone	IDS_AI_DK_CHIP_DONE	4723	已统计	Measured	已統計
+AiDkTitle	IDS_AI_DK_TITLE	4724	本地磁盘 ({d}:)	Local Disk ({d}:)	本機磁碟 ({d}:)
+AiDkMetaIndex	IDS_AI_DK_META_INDEX	4725	Pulse 索引 · {t}	Pulse index · {t}	Pulse 索引 · {t}
+AiDkMetaNoIndex	IDS_AI_DK_META_NO_INDEX	4726	索引里没有文件夹大小	No folder sizes in the index	索引中沒有資料夾大小
+AiDkUsedOf	IDS_AI_DK_USED_OF	4727	GB 已用 / {total} GB	GB used of {total} GB	GB 已用 / {total} GB
+AiDkFreeUnit	IDS_AI_DK_FREE_UNIT	4728	GB 可用	GB free	GB 可用
+AiDkLegSys	IDS_AI_DK_LEG_SYS	4729	系统 {gb}	System {gb}	系統 {gb}
+AiDkLegProg	IDS_AI_DK_LEG_PROG	4730	程序 {gb}	Programs {gb}	程式 {gb}
+AiDkLegUser	IDS_AI_DK_LEG_USER	4731	用户 {name} {gb}	User {name} {gb}	使用者 {name} {gb}
+AiDkLegOther	IDS_AI_DK_LEG_OTHER	4732	其他 {gb}	Other {gb}	其他 {gb}
+AiDkLegRecycle	IDS_AI_DK_LEG_RECYCLE	4733	回收站中 {gb}	In Recycle Bin {gb}	資源回收筒中 {gb}
+AiDkLegFree	IDS_AI_DK_LEG_FREE	4734	可用	Free	可用
+AiDkTop	IDS_AI_DK_TOP	4735	最占地方的	Biggest	最佔空間的
+AiDkSubUser	IDS_AI_DK_SUB_USER	4736	用户 › {name}	User › {name}	使用者 › {name}
+AiDkSubSystem	IDS_AI_DK_SUB_SYSTEM	4737	系统 · 不动	System · left alone	系統 · 不動
+AiDkSubPrograms	IDS_AI_DK_SUB_PROGRAMS	4738	程序 · 不动	Programs · left alone	程式 · 不動
+AiDkSubHiber	IDS_AI_DK_SUB_HIBER	4739	休眠文件 · 系统 · 不动	Hibernation file · system · left alone	休眠檔 · 系統 · 不動
+AiDkSubPage	IDS_AI_DK_SUB_PAGE	4740	页面文件 · 系统 · 不动	Page file · system · left alone	分頁檔 · 系統 · 不動
+AiClStep	IDS_AI_CL_STEP	4741	找可以清理的	Find what can go	找可以清理的
+AiClStage0	IDS_AI_CL_STAGE0	4742	核对安装包对应的程序…	Matching installers to installed programs…	核對安裝檔對應的程式…
+AiClStage1	IDS_AI_CL_STAGE1	4743	核对压缩包和解压文件夹…	Matching archives to extracted folders…	核對壓縮檔和解壓縮資料夾…
+AiClStage2	IDS_AI_CL_STAGE2	4744	比对 (1)(2) 副本的内容…	Comparing (1)(2) copies…	比對 (1)(2) 副本的內容…
+AiClStage3	IDS_AI_CL_STAGE3	4745	检查 Temp 里有没有程序在用…	Checking nothing uses the Temp files…	檢查 Temp 裡有沒有程式在用…
+AiClStage4	IDS_AI_CL_STAGE4	4746	找很久没打开的大视频…	Looking for big videos left unopened…	找很久沒開啟的大影片…
+AiClStepDone	IDS_AI_CL_STEP_DONE	4747	{k} 类 · {n} 个文件 · {gb} GB	{k} kinds · {n} files · {gb} GB	{k} 類 · {n} 個檔案 · {gb} GB
+AiClStepNone	IDS_AI_CL_STEP_NONE	4748	没找到可以放心清理的文件	Nothing that is safe to clean	沒找到可以放心清理的檔案
+AiClStepsLabel	IDS_AI_CL_STEPS_LABEL	4749	找到 {k} 类可清理的文件	Found {k} kinds of files to clean	找到 {k} 類可清理的檔案
+AiClChipFinding	IDS_AI_CL_CHIP_FINDING	4750	找可清理的	Finding	找可清理的
+AiClChipReady	IDS_AI_CL_CHIP_READY	4751	可清理 {gb} GB	{gb} GB to clean	可清理 {gb} GB
+AiClTitle	IDS_AI_CL_TITLE	4752	清理建议	Cleanup	清理建議
+AiClMeta	IDS_AI_CL_META	4753	只读分析 · 还没有动任何文件	Read only · nothing changed yet	唯讀分析 · 還沒有動任何檔案
+AiClCatInstaller	IDS_AI_CL_CAT_INSTALLER	4754	装过的安装包	Installers already used	裝過的安裝檔
+AiClCatExtracted	IDS_AI_CL_CAT_EXTRACTED	4755	解压过的压缩包	Archives already extracted	解壓縮過的壓縮檔
+AiClCatCopy	IDS_AI_CL_CAT_COPY	4756	重复下载的副本	Duplicate downloads	重複下載的副本
+AiClCatTemp	IDS_AI_CL_CAT_TEMP	4757	临时文件	Temporary files	暫存檔案
+AiClCatVideo	IDS_AI_CL_CAT_VIDEO	4758	一年没打开的大视频	Big videos unopened for a year	一年沒開啟的大影片
+AiClDescInstaller	IDS_AI_CL_DESC_INSTALLER	4759	{where} · 对应的程序都已经装好了	{where} · the programs are installed	{where} · 對應的程式都已經裝好了
+AiClDescExtracted	IDS_AI_CL_DESC_EXTRACTED	4760	{where} · 旁边已有对得上的解压文件夹	{where} · a matching extracted folder is next to each	{where} · 旁邊已有對得上的解壓縮資料夾
+AiClDescCopy	IDS_AI_CL_DESC_COPY	4761	{where} · 带 (1)(2)，和原件内容相同	{where} · (1)(2) copies identical to the original	{where} · 帶 (1)(2)，和原檔內容相同
+AiClDescTemp	IDS_AI_CL_DESC_TEMP	4762	Temp · 7 天以上没动，也没程序在用	Temp · untouched for 7+ days, not in use	Temp · 7 天以上沒動，也沒程式在用
+AiClDescVideo	IDS_AI_CL_DESC_VIDEO	4763	{where} · 可能还想留着，默认不选	{where} · you may want these; unchecked	{where} · 可能還想留著，預設不選
+AiClTagLook	IDS_AI_CL_TAG_LOOK	4764	看一眼	Have a look	看一眼
+AiClView	IDS_AI_CL_VIEW	4765	查看	View	檢視
+AiClUnitN	IDS_AI_CL_UNIT_N	4766	个	files	個
+AiClSumPre	IDS_AI_CL_SUM_PRE	4767	选中	Selected	選取
+AiClSumMid	IDS_AI_CL_SUM_MID	4768	个 ·	files ·	個 ·
+AiClSafe	IDS_AI_CL_SAFE	4769	移到回收站，可撤销	To the Recycle Bin, undoable	移到資源回收筒，可復原
+AiClKeep	IDS_AI_CL_KEEP	4770	留着	Kept	留著
+AiClNote	IDS_AI_CL_NOTE	4771	不碰系统文件和程序目录。	System files and program folders are never touched.	不碰系統檔案和程式目錄。
+AiClNoteHiber	IDS_AI_CL_NOTE_HIBER	4772	休眠文件 hiberfil.sys 占 {gb} GB，如果从不用休眠，可以在系统设置里关掉。	 The hibernation file hiberfil.sys takes {gb} GB; if you never hibernate, you can turn it off in Windows settings.	休眠檔 hiberfil.sys 佔 {gb} GB，如果從不使用休眠，可以在系統設定裡關閉。
+AiClMore	IDS_AI_CL_MORE	4773	还有 {n} 个 · 「查看」列出全部	{n} more · View lists them all	還有 {n} 個 · 「檢視」列出全部
+AiClWhyInstaller	IDS_AI_CL_WHY_INSTALLER	4774	{app} 已安装	{app} is installed	{app} 已安裝
+AiClWhyExtracted	IDS_AI_CL_WHY_EXTRACTED	4775	已解压到 {folder}	Extracted to {folder}	已解壓縮到 {folder}
+AiClWhyCopy	IDS_AI_CL_WHY_COPY	4776	和 {name} 内容相同	Same as {name}	和 {name} 內容相同
+AiClWhyTemp	IDS_AI_CL_WHY_TEMP	4777	{n} 天没动	Untouched for {n} days	{n} 天沒動
+AiClWhyVideo	IDS_AI_CL_WHY_VIDEO	4778	{n} 天没打开	Unopened for {n} days	{n} 天沒開啟
+AiClListTitle	IDS_AI_CL_LIST_TITLE	4779	清理建议	Cleanup	清理建議
+AiClListTab	IDS_AI_CL_LIST_TAB	4780	清理 · {cat}	Cleanup · {cat}	清理 · {cat}
+AiClReasonColumn	IDS_AI_CL_REASON_COLUMN	4781	原因	Reason	原因
+AiClConfirmTitle	IDS_AI_CL_CONFIRM_TITLE	4782	把 {n} 个文件移到回收站？	Move {n} files to the Recycle Bin?	把 {n} 個檔案移到資源回收筒？
+AiClTagDelete	IDS_AI_CL_TAG_DELETE	4783	删除类	Delete	刪除類
+AiClConfirmSub	IDS_AI_CL_CONFIRM_SUB	4784	共 {gb} GB：{what}。不碰系统文件和程序目录。	{gb} GB in all: {what}. System files and program folders are not touched.	共 {gb} GB：{what}。不碰系統檔案和程式目錄。
+AiClConfirmHint	IDS_AI_CL_CONFIRM_HINT	4785	移到回收站，可以撤销	They go to the Recycle Bin; you can undo	移到資源回收筒，可以復原
+AiClBinOk	IDS_AI_CL_BIN_OK	4786	回收站放得下：上限 {max} GB，已用 {used} GB	The Recycle Bin has room: {used} GB of {max} GB used	資源回收筒放得下：上限 {max} GB，已用 {used} GB
+AiClBinFull	IDS_AI_CL_BIN_FULL	4787	回收站放不下：上限 {max} GB，已用 {used} GB。少选一些，或先清空回收站	The Recycle Bin is too small: {used} GB of {max} GB used. Tick fewer, or empty it first	資源回收筒放不下：上限 {max} GB，已用 {used} GB。少選一些，或先清空資源回收筒
+AiClBinOff	IDS_AI_CL_BIN_OFF	4788	这个盘没有回收站，文件会被直接删除，所以这里不清理	This drive has no Recycle Bin, so nothing is cleaned here	這個磁碟沒有資源回收筒，檔案會被直接刪除，所以這裡不清理
+AiClAccept	IDS_AI_CL_ACCEPT	4789	移到回收站	Move to Recycle Bin	移到資源回收筒
+AiClConfirmed	IDS_AI_CL_CONFIRMED	4790	你在 Pulse 里确认了：把 {n} 个文件移到回收站	You confirmed in Pulse: move {n} files to the Recycle Bin	你在 Pulse 中確認了：把 {n} 個檔案移到資源回收筒
+AiClDenied	IDS_AI_CL_DENIED	4791	你没有同意清理，什么都没动	You declined; nothing changed	你沒有同意清理，什麼都沒動
+AiClRecStep	IDS_AI_CL_REC_STEP	4792	移到回收站	Move to Recycle Bin	移到資源回收筒
+AiClRecArg	IDS_AI_CL_REC_ARG	4793	{n} 个 · {gb} GB	{n} files · {gb} GB	{n} 個 · {gb} GB
+AiClRecSteps	IDS_AI_CL_REC_STEPS	4794	移到回收站 · {n} 个	To the Recycle Bin · {n} files	移到資源回收筒 · {n} 個
+AiClRecSub	IDS_AI_CL_REC_SUB	4795	{k} / {n} · {name}	{k} / {n} · {name}	{k} / {n} · {name}
+AiClRecDone	IDS_AI_CL_REC_DONE	4796	{n} 个 · {gb} GB	{n} files · {gb} GB	{n} 個 · {gb} GB
+AiClRecSkip	IDS_AI_CL_REC_SKIP	4797	，{k} 个没能移走	, {k} could not move	，{k} 個沒能移走
+AiClChipRec	IDS_AI_CL_CHIP_REC	4798	移到回收站 · {p}%	To Recycle Bin · {p}%	移到資源回收筒 · {p}%
+AiClUndoLabel	IDS_AI_CL_UNDO_LABEL	4799	清理	Cleanup	清理
+AiClResTitle	IDS_AI_CL_RES_TITLE	4800	已移到回收站 · {n} 个文件	In the Recycle Bin · {n} files	已移到資源回收筒 · {n} 個檔案
+AiClResSub	IDS_AI_CL_RES_SUB	4801	{gb} GB · 可以撤销	{gb} GB · undoable	{gb} GB · 可以復原
+AiClResLineAfter	IDS_AI_CL_RES_LINE_AFTER	4802	 个 · {gb} GB	 files · {gb} GB	 個 · {gb} GB
+AiClResSkipped	IDS_AI_CL_RES_SKIPPED	4803	{k} 个没能移走（正被占用或没有权限）	{k} could not move (in use or no permission)	{k} 個沒能移走（正在使用或沒有權限）
+AiClResStill	IDS_AI_CL_RES_STILL	4804	还在回收站里，所以还占着 {d} 盘	Still in the Recycle Bin, so still on {d}:	還在資源回收筒裡，所以還佔著 {d} 槽
+AiClMiniFree	IDS_AI_CL_MINI_FREE	4805	{d} 盘可用	{d}: free	{d} 槽可用
+AiClMiniUsed	IDS_AI_CL_MINI_USED	4806	已用	Used	已用
+AiClMiniUsedN	IDS_AI_CL_MINI_USED_N	4807	已用 {gb} GB	Used {gb} GB	已用 {gb} GB
+AiClMiniFreeN	IDS_AI_CL_MINI_FREE_N	4808	可用 {gb} GB	Free {gb} GB	可用 {gb} GB
+AiClMiniFrom	IDS_AI_CL_MINI_FROM	4809	{gb} GB →	{gb} GB →	{gb} GB →
+AiClPurge	IDS_AI_CL_PURGE	4810	永久删除这些…	Delete these permanently…	永久刪除這些…
+AiClPeek	IDS_AI_CL_PEEK	4811	{n} 个文件已移到回收站 · {gb} GB	{n} files in the Recycle Bin · {gb} GB	{n} 個檔案已移到資源回收筒 · {gb} GB
+AiClUndoneSub	IDS_AI_CL_UNDONE_SUB	4812	{n} 个文件都从回收站还原到了原来的位置	{n} files are back where they were	{n} 個檔案都從資源回收筒還原到原來的位置
+AiClUndoNote	IDS_AI_CL_UNDO_NOTE	4813	你撤销了这次清理	You undid this cleanup	你復原了這次清理
+AiClPurgeTitle	IDS_AI_CL_PURGE_TITLE	4814	永久删除这 {n} 个文件？	Permanently delete these {n} files?	永久刪除這 {n} 個檔案？
+AiClPurgeSub	IDS_AI_CL_PURGE_SUB	4815	从回收站彻底删除，释放 {gb} GB。无法撤销。回收站里其他 {k} 项不动。	They leave the Recycle Bin for good and free {gb} GB. This cannot be undone. The other {k} items in the bin stay.	從資源回收筒徹底刪除，釋放 {gb} GB。無法復原。資源回收筒裡其他 {k} 項不動。
+AiClPurgeHint	IDS_AI_CL_PURGE_HINT	4816	只有这一步不能撤销	Only this step cannot be undone	只有這一步不能復原
+AiClPurgeAccept	IDS_AI_CL_PURGE_ACCEPT	4817	永久删除	Delete permanently	永久刪除
+AiClPurgeConfirmed	IDS_AI_CL_PURGE_CONFIRMED	4818	你在 Pulse 里确认了：永久删除这 {n} 个文件	You confirmed in Pulse: permanently delete these {n} files	你在 Pulse 中確認了：永久刪除這 {n} 個檔案
+AiClPurgeDenied	IDS_AI_CL_PURGE_DENIED	4819	没有永久删除，文件还在回收站里	Not deleted; the files stay in the Recycle Bin	沒有永久刪除，檔案還在資源回收筒裡
+AiClPurgeMissing	IDS_AI_CL_PURGE_MISSING	4820	回收站里找不到这批文件了，可能已被清空或还原	These files are no longer in the Recycle Bin; it may have been emptied or they were restored	資源回收筒裡找不到這批檔案了，可能已被清空或還原
+AiClChipInBin	IDS_AI_CL_CHIP_IN_BIN	4821	已移到回收站	In the Recycle Bin	已移到資源回收筒
+AiClChipPurge	IDS_AI_CL_CHIP_PURGE	4822	永久删除	Deleting	永久刪除
+AiClChipFreed	IDS_AI_CL_CHIP_FREED	4823	{d} 盘可用 {gb} GB	{d}: {gb} GB free	{d} 槽可用 {gb} GB
+AiClFreedTitle	IDS_AI_CL_FREED_TITLE	4824	已释放 {gb} GB	Freed {gb} GB	已釋放 {gb} GB
+AiClFreedSub	IDS_AI_CL_FREED_SUB	4825	{n} 个文件已永久删除 · 回收站里其他 {k} 项没动	{n} files deleted for good · the other {k} items in the bin stay	{n} 個檔案已永久刪除 · 資源回收筒裡其他 {k} 項沒動
+AiClGoneSub	IDS_AI_CL_GONE_SUB	4826	已永久删除，不能再撤销	Deleted for good; can no longer undo	已永久刪除，無法再復原

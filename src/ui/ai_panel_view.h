@@ -69,6 +69,13 @@ enum class AiPanelPart : uint8_t {
     RenameMore,        // 还有 4 个 / 收起
     ConfirmExtra,      // 在批量重命名中调整… on the confirmation
     TaskToggle,        // 任务计划 card header (flow C)
+    // Second batch, flow D (space).
+    DiskToggle,        // 本地磁盘 card header
+    CleanToggle,       // 清理建议 card header
+    CleanCheck,        // index = block index * 32 + row (the category's box)
+    CleanLink,         // index = block index * 32 + row (查看)
+    CleanFile,         // index = (block index * 32 + row) * 32 + file (a file's box)
+    ResultPurge,       // 永久删除这些… on a result card
     // 管理连接 card (the model menu unfolded).
     ConnCard,       // the card's background (swallows the click)
     ConnBack,
@@ -126,6 +133,8 @@ enum class AiBlockKind : uint8_t {
     Follow,     // 接着做: chips that put a next step into the composer
     Rename,     // 重命名方案 card: rule, old → new rows, checks, foot
     Task,       // 任务计划 card: numbered steps (they are the progress), summary
+    Disk,       // 本地磁盘 (C:) card: used / free, segmented bar, the biggest places
+    Clean,      // 清理建议 card: categories with boxes, reasons, 查看, the total
 };
 
 // Error card tone: Err needs the user (red, red border), Warn is temporary
@@ -237,6 +246,83 @@ struct AiResultLine {
     std::wstring before, bold, after;
 };
 
+// 本地磁盘 (C:) card (second batch, flow D). Numbers in GB; the used and
+// free figures count from *_from to their value over .9 s from count_ms.
+struct AiDiskRowView {
+    bool file = false;                // hiberfil.sys: the file icon
+    bool sys = false;                 // grey bar, 不动 in the sub line
+    std::wstring name;                // 下载 / AppData › Local
+    std::wstring sub;                 // 用户 › SS / 系统 · 不动
+    std::wstring value;               // 31.2
+    float frac = 0.0f;                // bar width against the biggest row
+};
+
+struct AiDiskView {
+    float used_gb = 0.0f, free_gb = 0.0f;
+    float used_from = 0.0f, free_from = 0.0f;
+    uint64_t count_ms = 0;
+    bool free_ok = false;             // after a purge the free figure turns ok
+    std::wstring used_of;             // GB 已用 / 238 GB
+    std::wstring free_unit;           // GB 可用
+    float seg[5]{};                   // share of the drive: 系统 程序 用户 其他 回收站中
+    std::wstring legend[4];           // 系统 52.2 …
+    std::wstring legend_recycle;      // 回收站中 11.7 (shown while seg[4] > 0)
+    std::wstring legend_free;         // 可用 (the free figure follows)
+    std::wstring top_label;           // 最占地方的
+    std::vector<AiDiskRowView> rows;
+    uint64_t grow_ms = 0;             // the bar grows, then the rows come in
+};
+
+// The small disk box on a result card: 「C 盘可用 17.0 GB」 (or 「17.0 GB →
+// 28.7 GB」 counting), the used / recycled bar and its legend.
+struct AiMiniDiskView {
+    bool on = false;
+    std::wstring label;               // C 盘可用
+    std::wstring from;                // 17.0 GB → (empty: no arrow)
+    float value = 0.0f, value_from = 0.0f;
+    uint64_t count_ms = 0;
+    std::wstring unit;                // GB
+    float used = 0.0f;                // share of the drive in use, without the bin part
+    float recycle = 0.0f, recycle_from = 0.0f;   // hatched part, tweens from recycle_from
+    std::wstring leg_used, leg_recycle, leg_free;
+};
+
+// 清理建议 card: one category per row.
+struct AiCleanFileView {
+    std::wstring name;                // DockerDesktopInstaller.exe
+    std::wstring size;                // 612 MB
+    bool on = true;                   // off: grey, 留着
+    AiIcon icon = AiIcon::File;
+    AiTint tint = AiTint::Neutral;
+};
+
+struct AiCleanRowView {
+    AiIcon icon = AiIcon::Install;
+    AiTint tint = AiTint::App;
+    std::wstring title;               // 装过的安装包
+    std::wstring tag;                 // 看一眼 (amber), may be empty
+    std::wstring count, size;         // 23 · 6.8 (个 / GB come from the card)
+    std::wstring desc;                // 下载 · 对应的程序都已经装好了
+    std::wstring link;                // 查看
+    bool on = true;
+    bool open = false;                // the file list below is unfolded
+    std::vector<AiCleanFileView> files;
+    std::wstring more;                // 还有 18 个 · 右边已列出全部
+    uint64_t in_ms = 0;               // fades in
+    uint64_t bump_ms = 0;             // the numbers changed
+};
+
+struct AiCleanView {
+    std::vector<AiCleanRowView> rows;
+    std::wstring unit_n, unit_gb;     // 个 / GB after a row's numbers
+    std::wstring sum_pre, sum_mid, sum_unit;   // 选中 … 个 · … GB
+    std::wstring sum_n, sum_gb;
+    uint64_t sum_bump_ms = 0;
+    std::wstring safe;                // 移到回收站，可撤销
+    std::wstring note;                // 不碰系统文件和程序目录。…
+    std::wstring keep;                // 留着 (a file left out)
+};
+
 struct AiBlockView {
     AiBlockKind kind = AiBlockKind::Text;
     uint32_t id = 0;                  // stable while the block lives (motion)
@@ -293,6 +379,24 @@ struct AiBlockView {
     std::vector<AiResultLine> lines;
     std::wstring file, file_note;
     AiIcon hint_icon = AiIcon::Eye;
+    // Second batch, flow D. Disk: label 本地磁盘 (C:), meta Pulse 索引 · 0.4
+    // 秒. Clean: label 清理建议, meta 只读分析…. Confirm: `tag` (删除类, red)
+    // after the title, `hint2` a second hint (ok check, or amber warn when
+    // `hint2_warn`), `danger` the red card, `accept_off` a disabled primary.
+    // Result: `mini` the disk box, `purge` a third (red) button, `gone` (the
+    // batch was deleted for good: no buttons, no disk box, no warn lines),
+    // `freed` (no buttons; the ok icon).
+    AiDiskView disk;
+    AiCleanView clean;
+    std::wstring tag;
+    std::wstring hint2;
+    bool hint2_warn = false;
+    bool danger = false;
+    bool accept_off = false;
+    AiMiniDiskView mini;
+    std::wstring purge;
+    bool gone = false;
+    bool freed = false;
 };
 
 // The status bar chip (left end): "✦ AI" plus what the assistant is doing.
@@ -474,6 +578,11 @@ private:
         IDWriteTextFormat* mono = nullptr;      // 11.5 Cascadia Mono / Consolas
         IDWriteTextFormat* mono125 = nullptr;   // 12.5 (the rename rule's literal text)
         IDWriteTextFormat* num22 = nullptr;     // 22 semibold (the Query card's count)
+        IDWriteTextFormat* num20 = nullptr;     // 20 semibold (the disk card's used figure)
+        IDWriteTextFormat* num16 = nullptr;     // 16 semibold (a result card's free figure)
+        IDWriteTextFormat* num15 = nullptr;     // 15 semibold (the cleanup total)
+        IDWriteTextFormat* num14 = nullptr;     // 14 semibold (the disk card's free figure)
+        IDWriteTextFormat* small11 = nullptr;   // 11 (sub lines, the small legend)
         void Release();
     };
 

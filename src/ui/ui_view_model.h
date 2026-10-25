@@ -319,6 +319,7 @@ struct PaneViewModel {
     int recent_filter = 0;
     size_t recent_total = 0;
     std::wstring date_column_label;
+    std::wstring type_column_label;   // empty: 类型 (pulse:ai-list: 原因)
     int selected_index = -1;
     int selected_count = 0;
     bool all_selected = false;
