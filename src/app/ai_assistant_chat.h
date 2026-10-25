@@ -85,7 +85,8 @@ std::wstring AiChatEffortName(const AppState& s);
 std::wstring AiChatModelId(const AppState& s);
 std::wstring AiChatFormatSize(uint64_t bytes);
 // The turn's acts row: copy / retry / helpful and "model · effort · s · tools".
-void AiChatAddActs(AppState& s, int tools);
+// failed: the turn ended on an error; the row shows only the model and no rating.
+void AiChatAddActs(AppState& s, int tools, bool failed = false);
 // A plan group's icon and tint from the kinds of its items.
 void AiChatGroupLook(const std::vector<std::wstring>& names, ui::AiIcon& icon, ui::AiTint& tint);
 // The peek bubble: shows `delay` ms from now for 4.2 s, once per turn, when

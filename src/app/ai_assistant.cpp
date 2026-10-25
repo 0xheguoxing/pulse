@@ -206,6 +206,14 @@ LRESULT CALLBACK ComposerProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PT
             SubmitComposer(s);
             return 0;
         }
+        if (wp == VK_TAB && (GetKeyState(VK_CONTROL) & 0x8000) == 0) {
+            // Tab / Shift+Tab leave the panel for the file list (the panel's
+            // other controls are drawn, not focusable).
+            if (a.menu_open) CloseMenu(s);
+            if (s.hwnd) SetFocus(s.hwnd);
+            Redraw(s);
+            return 0;
+        }
         if (wp == VK_ESCAPE) {
             if (a.menu_open) {
                 CloseMenu(s);
@@ -221,7 +229,7 @@ LRESULT CALLBACK ComposerProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PT
     case WM_CHAR:
         // Enter sends (WM_KEYDOWN); Shift+Enter is a new line. No beeps.
         if ((wp == L'\r' || wp == L'\n') && (GetKeyState(VK_SHIFT) & 0x8000) == 0) return 0;
-        if (wp == 27) return 0;
+        if (wp == 27 || wp == L'\t') return 0;
         if (wp == 1) {   // Ctrl+A: select all (a multiline EDIT does not)
             SendMessageW(hwnd, EM_SETSEL, 0, -1);
             return 0;

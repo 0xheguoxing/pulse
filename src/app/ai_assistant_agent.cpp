@@ -1175,7 +1175,7 @@ void Fail(AppState& s, const std::wstring& message) {
     AiBlockView& t = Chat(s).Add(AiBlockKind::Text, Now());
     t.text = message;
     a.stream.reset();
-    AiChatAddActs(s, a.tool_count);
+    AiChatAddActs(s, a.tool_count, true);
     AiChatFinish(s, false);
     Redraw(s);
 }

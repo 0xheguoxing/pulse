@@ -906,6 +906,7 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                     {AiPanelPart::ActThumb, AiIcon::Thumb},
                 };
                 for (const auto& it : items) {
+                    if (it.part == AiPanelPart::ActThumb && b.done) continue;   // failed turn
                     const D2D1_RECT_F br = D2D1::RectF(x, ay, x + 28.0f * s, ay + 28.0f * s);
                     const bool h = hot(it.part, index);
                     if (h) c.Fill(br, 8.0f * s, down(it.part, index) ? Mix(pal.hover, pal.text, 0.06f) : pal.hover);

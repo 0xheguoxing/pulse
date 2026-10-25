@@ -619,9 +619,15 @@ std::wstring AiChatEffortName(const AppState& s) { return EffortName(s); }
 std::wstring AiChatModelId(const AppState& s) { return ModelName(s); }
 std::wstring AiChatFormatSize(uint64_t bytes) { return FormatSize(bytes); }
 
-void AiChatAddActs(AppState& s, int tools) {
+void AiChatAddActs(AppState& s, int tools, bool failed) {
     AiChat& c = Chat(s);
     AiBlockView& a = c.Add(AiBlockKind::Acts, Now());
+    if (failed) {
+        // An error: effort, 0.0 秒 and 0 次 say nothing; Acts.done drops 👍.
+        a.meta = ModelName(s);
+        a.done = true;
+        return;
+    }
     const double secs = static_cast<double>(Now() - c.turn_start) / 1000.0;
     wchar_t buf[16];
     swprintf_s(buf, L"%.1f", secs);
