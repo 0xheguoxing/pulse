@@ -29,13 +29,22 @@
 #include "ai_settings.h"
 #include "ai_tools_fs.h"
 #include "app_commands.h"
+#include "app_hosted_edit.h"
 #include "app_internal.h"
+#include "app_messages.h"
 #include "app_navigation.h"
 #include "app_ops_ui.h"
 #include "batch_rename_ai.h"
 #include "batch_rename_plan.h"
 #include "batch_rename_presets.h"
+#include "favorites_bar.h"
+#include "keymap.h"
 #include "places.h"
+#include "tab_transfer.h"
+#include "vertical_tabs.h"
+#include "window_factory.h"
+#include "window_overview_ui.h"
+#include "window_placement.h"
 #include "zip_compress.h"
 #include "../common/json_value.h"
 #include "../common/localization.h"
@@ -332,7 +341,25 @@ const json::Value& Tools() {
  "description":"Finds files with exactly the same content in the given folders. Pulse compares them on this PC (size, the first 64 KB, then every byte; contents never leave the PC), picks the copy each group keeps (in an organised folder > a name without (1) or copy > the earliest, or the newest with prefer=newest; copies in two organised folders all stay), shows the groups, checks the Recycle Bin has room and asks the user; only after they accept in Pulse are the extra copies moved to the Recycle Bin (undoable), with each kept file locked and re-checked first. Returns what was moved, or that the user declined.",
  "parameters":{"type":"object","properties":{
    "folders":{"type":"array","items":{"type":"string"},"description":"Known folders downloads, pictures, desktop, documents, videos, music, or full folder paths; empty for the current folder. When the user names 下载 / 图片 / 桌面 / 文档 / 视频 / 音乐, pass the known folder name even if the open folder has the same name, unless they point at the open folder (这里 / 当前文件夹)"},
-   "prefer":{"type":"string","enum":["earliest","newest"],"description":"Which copy the last rule keeps (default earliest)"}}}}}
+   "prefer":{"type":"string","enum":["earliest","newest"],"description":"Which copy the last rule keeps (default earliest)"}}}}},
+{"type":"function","function":{"name":"control_pulse",
+ "description":"Changes Pulse itself at once, without asking: splits the window into panes and opens folders in them, opens new windows, moves the tab or one pane to a window of its own, merges windows, opens the window overview, switches the view, sort or grouping of the active folder, collapses or expands the sidebar, shows or hides the favorites bar, and organizes items inside Pulse (staging tray, tags, favorites). Files are never moved, changed or deleted. Pulse shows every action as a step and one result card with an Undo button (all actions of the call undo together) and the user's own shortcuts for what was done. Returns each action's outcome.",
+ "parameters":{"type":"object","properties":{
+   "actions":{"type":"array","description":"The actions in order (at most 12)","items":{"type":"object","properties":{
+     "do":{"type":"string","enum":["layout","open","new_window","tab_to_window","pane_to_window","merge_windows","window_overview","view","sort","group","sidebar","favorites_bar","tray","tag","favorite"]},
+     "layout":{"type":"string","enum":["single","two_vertical","two_horizontal","three","four"],"description":"layout: two_vertical = left | right, two_horizontal = top / bottom"},
+     "panes":{"type":"array","items":{"type":"string"},"description":"layout: a folder for each pane in order (left or top first); \"\" leaves a pane as it is"},
+     "path":{"type":"string","description":"open / new_window: a folder: absolute, a drive such as D:, or a known folder (Downloads, Desktop, Documents, Pictures, Videos, Music). new_window without it opens the current folder"},
+     "pane":{"type":"integer","description":"open / pane_to_window: the pane, 1 = left or top; default the focused pane"},
+     "view":{"type":"string","enum":["extra_large_icons","large_icons","medium_icons","small_icons","list","details","tiles","content"]},
+     "sort":{"type":"string","enum":["name","modified","type","size","created"]},
+     "desc":{"type":"boolean","description":"sort: newest or largest first (default true for modified, size and created)"},
+     "group":{"type":"string","enum":["none","name","date","type","size"]},
+     "show":{"type":"boolean","description":"sidebar: true expands it, false collapses it; favorites_bar: show or hide"},
+     "items":{"type":"array","items":{"type":"string"},"description":"tray / tag / favorite: full paths; omit for the items selected in the active tab (favorite: the current folder)"},
+     "tag":{"type":"string","description":"tag: the tag's name; made if it does not exist"}},
+    "required":["do"]}}},
+  "required":["actions"]}}}
 ])JSON";
         json::Value v;
         json::Parse(kTools, v);
@@ -387,6 +414,13 @@ std::string SystemPrompt() {
          "the card's numbers. Afterwards say in one or two sentences how many copies went to the Recycle Bin, name a "
          "group where all copies stayed, and that the copies still take space until the user clicks "
          "\xE6\xB0\xB8\xE4\xB9\x85\xE5\x88\xA0\xE9\x99\xA4\xE8\xBF\x99\xE4\xBA\x9B on the card.\n"
+         "- To change Pulse itself (split into panes and open folders in them, new windows, move a tab or pane to its own "
+         "window, merge windows, view, sort, grouping, sidebar, favorites bar) or to put items on the staging tray, tag them "
+         "or add them to favorites, call control_pulse once with every action in order. For left/right or top/bottom "
+         "folders use layout with panes. It acts at once (the user undoes it on the card, which also shows their "
+         "shortcuts), so never ask for confirmation first and never list the shortcuts. Afterwards say in one short "
+         "sentence what changed and, when useful, how to use it (e.g. drag files between the panes); name actions that "
+         "failed and why. Never say something changed unless control_pulse returned it ok.\n"
          "- You cannot delete, overwrite or read file contents yourself; only find_cleanup and find_duplicates move "
          "files to the Recycle Bin, and only after the user accepts in Pulse.\n"
          "- Reply in the user's language and keep it brief. Format with short paragraphs, lists whose lines start "
@@ -5661,6 +5695,926 @@ void ToolFindDuplicates(AppState& s, const app::ai::ModelToolCall& call, const j
     });
 }
 
+// ------------------------------------------------------- control_pulse --
+// Third batch, flow F (plans/ai/Pulse_AI助手_第三批_操控Pulse与语音.html):
+// Pulse's layout, windows and view, and its own organizing (tray, tags,
+// favorites), done at once without asking. Each action is a step; the result
+// card undoes them all as one group and shows the user's own keys for them.
+
+struct CtlRun {
+    std::string call_id;
+    uint64_t gen = 0;
+    std::vector<json::Value> queue;     // the actions; a layout's panes add opens
+    size_t index = 0;
+    // 撤销, in reverse order. Each checks that what it restores still exists.
+    std::vector<std::function<void(AppState&)>> undo;
+    std::vector<ui::AiKeyRowView> keys;
+    std::vector<ui::AiResultLine> lines;
+    json::Value report = json::Value::Array();
+    size_t ok = 0;
+    // What kinds were done (title, undo text).
+    bool layout = false, open = false, window = false, other = false;
+    size_t organize = 0;
+    std::vector<std::wstring> window_names;   // the new windows
+    HWND last_window = nullptr;               // the newest of them: the next cascades from it
+    std::vector<std::wstring> back_parts;     // 桌面回到右栏 / D 盘窗口已关闭
+    std::vector<std::wstring> organize_kinds; // 托盘 / 标签 / 收藏夹
+    bool single_back = false;                 // a pane left: the window is one pane again
+    app::LayoutPreset first_layout = app::LayoutPreset::Single;
+    bool has_first_layout = false;
+    std::wstring single_title;                // one plain action: its done line
+    bool merged = false;
+};
+
+const wchar_t* PresetName(app::LayoutPreset p) {
+    switch (p) {
+    case app::LayoutPreset::Single: return l10n::Get(I::AiCtlLayoutSingle).c_str();
+    case app::LayoutPreset::TwoVertical: return l10n::Get(I::AiCtlLayoutTwoV).c_str();
+    case app::LayoutPreset::TwoHorizontal: return l10n::Get(I::AiCtlLayoutTwoH).c_str();
+    case app::LayoutPreset::Three: return l10n::Get(I::AiCtlLayoutThree).c_str();
+    case app::LayoutPreset::FourGrid: return l10n::Get(I::AiCtlLayoutFour).c_str();
+    default: return l10n::Get(I::AiCtlLayoutCustom).c_str();
+    }
+}
+
+std::vector<app::Pane*> ShownPanes(AppState& s) {
+    std::vector<app::Pane*> v;
+    if (Root(s)) Root(s)->CollectPanes(v);
+    return v;
+}
+
+bool PaneAlive(AppState& s, const app::Pane* p) {
+    if (!p) return false;
+    for (const auto& owned : Panes(s))
+        if (owned.get() == p) return true;
+    return false;
+}
+
+// 左栏 / 右栏, 上栏 / 下栏, 第 3 栏; empty with one pane.
+std::wstring PanePos(AppState& s, size_t i) {
+    const size_t n = ShownPanes(s).size();
+    if (n < 2) return {};
+    const app::LayoutPreset p = LayoutOf(s);
+    if (n == 2 && p == app::LayoutPreset::TwoVertical) return Text(i == 0 ? I::AiCtlPaneLeft : I::AiCtlPaneRight);
+    if (n == 2 && p == app::LayoutPreset::TwoHorizontal) return Text(i == 0 ? I::AiCtlPaneTop : I::AiCtlPaneBottom);
+    return Fill(Text(I::AiCtlPaneN), L"{n}", Num(i + 1));
+}
+
+size_t PaneIndex(AppState& s, const app::Pane* p) {
+    const auto v = ShownPanes(s);
+    for (size_t i = 0; i < v.size(); ++i)
+        if (v[i] == p) return i;
+    return 0;
+}
+
+std::wstring PlaceLabel(const std::wstring& path) {
+    if (path.empty()) return Text(I::AiCtlThisPc);
+    return FolderLabel(path);
+}
+
+// 左栏 下载 · 右栏 桌面
+std::wstring PanesLine(AppState& s) {
+    std::wstring out;
+    const auto v = ShownPanes(s);
+    for (size_t i = 0; i < v.size(); ++i) {
+        const app::Tab* t = v[i]->ActiveTab();
+        if (!out.empty()) out += L" \u00B7 ";
+        out += PanePos(s, i) + L" " + PlaceLabel(t ? t->current_path : std::wstring());
+    }
+    return out;
+}
+
+// The keys now bound to `action` (a range action: its `position`th chord).
+std::vector<std::wstring> KeysFor(app::KeyAction action, int position = -1) {
+    const app::Keymap& km = app::ActiveKeymap();
+    if (position >= 0) {
+        const auto chords = km.RangeChords(action, km.RangeMods(action));
+        if (static_cast<size_t>(position) < chords.size()) return app::ChordCaps(chords[static_cast<size_t>(position)]);
+        return {};
+    }
+    const auto& chords = km.Bindings(action);
+    return chords.empty() ? std::vector<std::wstring>() : app::ChordCaps(chords.front());
+}
+
+void AddKeys(CtlRun& run, std::wstring label, std::vector<std::wstring> caps) {
+    if (caps.empty() || run.keys.size() >= 4) return;
+    for (const auto& k : run.keys)
+        if (k.label == label) return;
+    run.keys.push_back({std::move(label), std::move(caps)});
+}
+
+// A folder the model named: absolute, a drive (D:), or a known folder.
+std::wstring CtlFolder(const std::string& utf8) {
+    std::wstring p = ResolveTaskDest(json::Wide(utf8));
+    if (p.empty() || !IsDirectory(p)) return {};
+    return p;
+}
+
+std::vector<std::wstring> CtlItems(AppState& s, const json::Value& act) {
+    std::vector<std::wstring> out;
+    if (const json::Value* v = act.find("items"); v && v->is_array()) {
+        for (size_t i = 0; i < v->size() && out.size() < 500; ++i) {
+            if (!v->at(i).is_string()) continue;
+            std::wstring p = json::Wide(v->at(i).as_string());
+            if (p.empty() || fs::IsVirtualPath(p)) continue;
+            if (const std::wstring known = ResolveTaskDest(p); !known.empty()) p = known;
+            if (Exists(p)) out.push_back(NormDir(p));
+        }
+        return out;
+    }
+    app::Tab* tab = ActiveTab(s);
+    if (tab && tab->snapshot && !fs::IsVirtualPath(tab->current_path)) out = SelectedFullPaths(*tab);
+    return out;
+}
+
+struct CtlStep {
+    ui::AiIcon icon = ui::AiIcon::Window;
+    std::wstring title, arg, sub;
+    bool ok = false;
+    std::string error;               // back to the model when !ok
+    app::Pane* wait = nullptr;       // the sub is the item count once it loads
+    bool skip = false;               // nothing to do (already so): no step
+};
+
+// Runs `fn` with `p` focused, then gives the focus back.
+template <class Fn>
+void WithPane(AppState& s, app::Pane* p, Fn&& fn) {
+    app::Pane* before = s.pane;
+    if (p && p != s.pane) FocusPane(s, p);
+    fn();
+    if (before && before != s.pane && PaneAlive(s, before)) FocusPane(s, before);
+}
+
+// The windows of one call cascade from each other instead of all opening on
+// the same spot next to this one.
+HWND CtlOpenWindow(AppState& s, CtlRun& run, WindowInit init) {
+    RECT last{};
+    MONITORINFO mi{sizeof(mi)};
+    if (run.last_window && IsWindow(run.last_window) && !IsZoomed(run.last_window) && !IsIconic(run.last_window) &&
+        GetWindowRect(run.last_window, &last) &&
+        GetMonitorInfoW(MonitorFromWindow(run.last_window, MONITOR_DEFAULTTONEAREST), &mi))
+        init.rect = app::CascadeWindowRect(last, mi.rcWork, static_cast<int>(std::lround(32.0f * (s.scale > 0.0f ? s.scale : 1.0f))));
+    const HWND h = OpenPulseWindow(s, init);
+    if (h) run.last_window = h;
+    return h;
+}
+
+CtlStep CtlLayout(AppState& s, CtlRun& run, const json::Value& act) {
+    CtlStep st;
+    st.icon = ui::AiIcon::Split;
+    st.title = Text(I::AiCtlStepLayout);
+    static const struct { const char* id; app::LayoutPreset p; int key; } kMap[] = {
+        {"single", app::LayoutPreset::Single, 0},       {"two_vertical", app::LayoutPreset::TwoVertical, 1},
+        {"two_horizontal", app::LayoutPreset::TwoHorizontal, -1}, {"three", app::LayoutPreset::Three, 2},
+        {"four", app::LayoutPreset::FourGrid, 3},
+    };
+    const std::string want = act.get_string("layout");
+    const auto* m = std::find_if(std::begin(kMap), std::end(kMap), [&](const auto& e) { return want == e.id; });
+    if (m == std::end(kMap)) {
+        st.error = "unknown layout";
+        return st;
+    }
+    st.arg = PresetName(m->p);
+    const app::LayoutPreset before = LayoutOf(s);
+    app::Pane* focus = s.pane;
+    const app::LayoutTab* lt = s.window_tabs.Active();
+    if (before != m->p) {
+        ApplyLayoutPreset(s, m->p);
+        if (LayoutOf(s) != m->p) {
+            st.error = "this tab cannot be split (a settings page)";
+            return st;
+        }
+        if (before != app::LayoutPreset::Custom)
+            run.undo.push_back([before, focus, lt](AppState& st2) {
+                if (st2.window_tabs.Active() != lt) return;
+                if (PaneAlive(st2, focus)) FocusPane(st2, focus);
+                ApplyLayoutPreset(st2, before);
+            });
+        if (!run.has_first_layout) {
+            run.first_layout = before;
+            run.has_first_layout = true;
+        }
+    }
+    st.ok = true;
+    st.sub = PanesLine(s);
+    run.layout = true;
+    AddKeys(run, PresetName(m->p), m->key >= 0 ? KeysFor(app::KeyAction::Layout, m->key) : std::vector<std::wstring>());
+    if (ShownPanes(s).size() > 1)
+        AddKeys(run, Text(ShownPanes(s).size() == 2 ? I::AiCtlKeyNextPane2 : I::AiCtlKeyNextPane), KeysFor(app::KeyAction::NextPane));
+    // panes: one open per named folder, right after this step.
+    if (const json::Value* v = act.find("panes"); v && v->is_array()) {
+        std::vector<json::Value> opens;
+        for (size_t i = 0; i < v->size() && i < 4; ++i) {
+            if (!v->at(i).is_string() || v->at(i).as_string().empty()) continue;
+            json::Value o = json::Value::Object();
+            o.set("do", "open");
+            o.set("path", v->at(i).as_string());
+            o.set("pane", static_cast<uint64_t>(i + 1));
+            opens.push_back(std::move(o));
+        }
+        run.queue.insert(run.queue.begin() + static_cast<std::ptrdiff_t>(run.index + 1), opens.begin(), opens.end());
+    }
+    return st;
+}
+
+CtlStep CtlOpen(AppState& s, CtlRun& run, const json::Value& act) {
+    CtlStep st;
+    st.icon = ui::AiIcon::Folder;
+    const std::wstring path = CtlFolder(act.get_string("path"));
+    const auto panes = ShownPanes(s);
+    int64_t n = 0;
+    app::Pane* p = s.pane;
+    if (const json::Value* v = act.find("pane"); v && v->get_int(n, 1, 4) && static_cast<size_t>(n) <= panes.size())
+        p = panes[static_cast<size_t>(n - 1)];
+    const std::wstring pos = PanePos(s, PaneIndex(s, p));
+    st.title = pos.empty() ? Text(I::AiCtlStepOpen) : Fill(Text(I::AiCtlStepOpenIn), L"{pane}", pos);
+    if (path.empty()) {
+        st.arg = json::Wide(act.get_string("path"));
+        st.error = "no such folder";
+        return st;
+    }
+    st.arg = PlaceLabel(path);
+    if (_wcsicmp(NormDir(path).c_str(), KnownFolder(FOLDERID_Desktop).c_str()) == 0) st.icon = ui::AiIcon::Desktop;
+    app::Tab* tab = p ? p->ActiveTab() : nullptr;
+    if (!tab) {
+        st.error = "no pane";
+        return st;
+    }
+    if (SameDir(tab->current_path, path)) {
+        st.skip = true;
+        st.ok = true;
+        return st;
+    }
+    const std::wstring old = tab->current_path;
+    WithPane(s, p, [&] { NavigateTo(s, path); });
+    const std::wstring now = tab->current_path;
+    run.undo.push_back([p, old, now](AppState& st2) {
+        if (!PaneAlive(st2, p) || !p->ActiveTab() || p->ActiveTab()->current_path != now) return;
+        WithPane(st2, p, [&] { NavigateTo(st2, old); });
+    });
+    st.ok = true;
+    st.wait = p;
+    run.open = true;
+    return st;
+}
+
+CtlStep CtlNewWindow(AppState& s, CtlRun& run, const json::Value& act) {
+    CtlStep st;
+    st.icon = ui::AiIcon::NewWindow;
+    st.title = Text(I::AiCtlStepNewWindow);
+    std::wstring path;
+    if (!act.get_string("path").empty()) {
+        path = CtlFolder(act.get_string("path"));
+        if (path.empty()) {
+            st.arg = json::Wide(act.get_string("path"));
+            st.error = "no such folder";
+            return st;
+        }
+    } else if (const app::Tab* tab = ActiveTab(s)) {
+        path = tab->current_path;
+    }
+    st.arg = PlaceLabel(path);
+    const HWND h = CtlOpenWindow(s, run, WindowInit{path});
+    if (!h) {
+        st.error = "the window could not be opened";
+        return st;
+    }
+    AppCore* core = &s.core;
+    run.undo.push_back([h, core](AppState& st) {
+        if (!core->windows.Lookup(h)) return;
+        ShowWindow(h, SW_HIDE);
+        // Undo takes back a window the assistant opened: it is not one the
+        // user closed, so no 已关闭窗口 entry and no 恢复 toast.
+        const uint64_t seq = core->closed_windows.LatestSeq();
+        DestroyWindow(h);
+        if (core->closed_windows.LatestSeq() != seq) {
+            core->closed_windows.TakeLatest();
+            st.notification_toast.DismissFor(st.hwnd, WM_REOPEN_CLOSED_WINDOW);
+        }
+    });
+    st.ok = true;
+    st.sub = Fill(Text(I::AiCtlNewWindowN), L"{n}", Num(s.core.windows.Count()));
+    run.window = true;
+    run.window_names.push_back(st.arg);
+    run.back_parts.push_back(Fill(Text(I::AiCtlBackClosed), L"{name}", st.arg));
+    AddKeys(run, Text(I::AiCtlKeyNewWindow), KeysFor(app::KeyAction::NewWindow));
+    return st;
+}
+
+// The tab (tab_to_window) or one pane of the split (pane_to_window) moves
+// to a window of its own; 撤销 puts it back where it was.
+CtlStep CtlToWindow(AppState& s, CtlRun& run, const json::Value& act, bool pane_only) {
+    CtlStep st;
+    st.icon = ui::AiIcon::NewWindow;
+    AppCore* core = &s.core;
+    AppState* self = &s;
+    auto panes = ShownPanes(s);
+    if (!pane_only && s.window_tabs.items.size() < 2 && panes.size() >= 2) pane_only = true;   // the focused pane
+    if (pane_only) {
+        int64_t n = 0;
+        app::Pane* p = s.pane;
+        if (const json::Value* v = act.find("pane"); v && v->get_int(n, 1, 4) && static_cast<size_t>(n) <= panes.size())
+            p = panes[static_cast<size_t>(n - 1)];
+        const std::wstring pos = PanePos(s, PaneIndex(s, p));
+        const std::wstring label = PlaceLabel(p && p->ActiveTab() ? p->ActiveTab()->current_path : std::wstring());
+        st.title = Text(I::AiCtlStepTabToWindow);
+        st.arg = label;
+        if (panes.size() < 2 || !p) {
+            st.error = "the window shows one pane; use tab_to_window or new_window";
+            return st;
+        }
+        app::LayoutTab* into = s.window_tabs.Active();
+        auto origin = std::make_shared<app::PaneOrigin>();
+        const std::optional<size_t> tab_index = SplitPaneIntoTab(s, p, *origin);
+        if (!tab_index) {
+            st.error = "this pane cannot leave the split";
+            return st;
+        }
+        WindowInit init;
+        if (p->ActiveTab()) init.path = p->ActiveTab()->current_path;
+        init.adopt_from = &s;
+        init.adopt_index = *tab_index;
+        const HWND h = CtlOpenWindow(s, run, init);
+        // The split it left shows again here.
+        for (size_t i = 0; i < s.window_tabs.items.size(); ++i)
+            if (s.window_tabs.items[i].get() == into) {
+                if (s.window_tabs.active != i) SwitchTab(s, i);
+                break;
+            }
+        if (!h) {
+            st.error = "the window could not be opened";
+            return st;
+        }
+        run.undo.push_back([h, core, self, into, origin](AppState&) {
+            AppState* moved = core->windows.Lookup(h);
+            if (!moved || moved->window_tabs.items.size() != 1) return;
+            ShowWindow(h, SW_HIDE);
+            if (ReturnTabAsPane(*moved, 0, *self, into, *origin, TransferSource::Closing)) DestroyWindow(h);
+            else ShowWindow(h, SW_SHOWNORMAL);
+        });
+        st.ok = true;
+        st.sub = Fill(Text(I::AiCtlNewWindowN), L"{n}", Num(s.core.windows.Count()));
+        if (ShownPanes(s).size() == 1) run.single_back = true;
+        run.window = true;
+        run.window_names.push_back(label);
+        run.back_parts.push_back(Fill(Fill(Text(I::AiCtlBackPane), L"{name}", label), L"{pane}", pos));
+        AddKeys(run, Text(I::AiCtlKeyTabToWindow), KeysFor(app::KeyAction::TabToWindow));
+        return st;
+    }
+    auto& tabs = s.window_tabs;
+    const size_t index = tabs.active;
+    const std::wstring label = PlaceLabel(ActiveTab(s) ? ActiveTab(s)->current_path : std::wstring());
+    st.title = Text(I::AiCtlStepTabToWindow);
+    st.arg = label;
+    if (tabs.items.size() < 2 || index >= tabs.items.size()) {
+        st.error = "the window has one tab; use new_window, or pane_to_window for a pane";
+        return st;
+    }
+    WindowInit init;
+    if (const app::Tab* view = ActiveTab(s)) init.path = view->current_path;
+    init.adopt_from = &s;
+    init.adopt_index = index;
+    const size_t before = tabs.items.size();
+    const HWND h = CtlOpenWindow(s, run, init);
+    if (!h || s.window_tabs.items.size() == before) {
+        st.error = "the window could not be opened";
+        return st;
+    }
+    run.undo.push_back([h, core, self, index](AppState&) {
+        AppState* moved = core->windows.Lookup(h);
+        if (!moved || moved->window_tabs.items.size() != 1) return;
+        ShowWindow(h, SW_HIDE);
+        if (MoveLayoutTab(*moved, 0, *self, index, TransferSource::Closing)) DestroyWindow(h);
+        else ShowWindow(h, SW_SHOWNORMAL);
+    });
+    st.ok = true;
+    st.sub = Fill(Text(I::AiCtlNewWindowN), L"{n}", Num(s.core.windows.Count()));
+    run.window = true;
+    run.window_names.push_back(label);
+    run.back_parts.push_back(Fill(Text(I::AiCtlBackTab), L"{name}", label));
+    AddKeys(run, Text(I::AiCtlKeyTabToWindow), KeysFor(app::KeyAction::TabToWindow));
+    return st;
+}
+
+const wchar_t* ViewName(ui::ViewMode m) {
+    static const I kNames[] = {I::AiCtlViewXl, I::AiCtlViewL, I::AiCtlViewM, I::AiCtlViewS,
+                               I::AiCtlViewList, I::AiCtlViewDetails, I::AiCtlViewTiles, I::AiCtlViewContent};
+    const int i = ui::ViewModeIndex(m);
+    return l10n::Get(kNames[i >= 0 && i < 8 ? i : 5]).c_str();
+}
+
+// A result line from a sentence with `key` in it: the value goes in bold.
+ui::AiResultLine SplitLine(const std::wstring& text, std::wstring_view key, const std::wstring& value) {
+    ui::AiResultLine ln;
+    const size_t at = key.empty() ? std::wstring::npos : text.find(key);
+    if (at == std::wstring::npos) {
+        ln.before = text;
+        return ln;
+    }
+    ln.before = text.substr(0, at);
+    ln.bold = value;
+    ln.after = text.substr(at + key.size());
+    return ln;
+}
+
+void AddLine(CtlRun& run, ui::AiResultLine ln) {
+    run.single_title = ln.before + ln.bold + ln.after;
+    run.lines.push_back(std::move(ln));
+}
+
+// One plain action (view, sort, bars, windows) done: its line.
+void PlainDone(CtlRun& run, ui::AiResultLine ln) {
+    run.other = true;
+    AddLine(run, std::move(ln));
+}
+
+CtlStep CtlView(AppState& s, CtlRun& run, const json::Value& act) {
+    CtlStep st;
+    st.icon = ui::AiIcon::Rows;
+    st.title = Text(I::AiCtlStepView);
+    static const char* kIds[] = {"extra_large_icons", "large_icons", "medium_icons", "small_icons",
+                                 "list", "details", "tiles", "content"};
+    const std::string want = act.get_string("view");
+    int idx = -1;
+    for (int i = 0; i < 8; ++i)
+        if (want == kIds[i]) idx = i;
+    app::Tab* tab = ActiveTab(s);
+    if (idx < 0 || !tab) {
+        st.error = idx < 0 ? "unknown view" : "no tab";
+        return st;
+    }
+    const ui::ViewMode mode = ui::ViewModeFromIndex(idx);
+    st.arg = ViewName(mode);
+    st.ok = true;
+    st.sub = Fill(Text(I::AiCtlViewDone), L"{view}", st.arg);
+    AddKeys(run, st.arg, KeysFor(app::KeyAction::ViewMode, idx));
+    if (tab->view_mode == mode) {
+        st.skip = true;
+        return st;
+    }
+    const ui::ViewMode old = tab->view_mode;
+    app::Pane* p = s.pane;
+    ChooseViewMode(s, mode);
+    run.undo.push_back([p, old](AppState& st2) {
+        if (PaneAlive(st2, p)) WithPane(st2, p, [&] { ChooseViewMode(st2, old); });
+    });
+    PlainDone(run, SplitLine(Text(I::AiCtlLineView), L"{view}", st.arg));
+    return st;
+}
+
+CtlStep CtlSort(AppState& s, CtlRun& run, const json::Value& act) {
+    CtlStep st;
+    st.icon = ui::AiIcon::Sliders;
+    st.title = Text(I::AiCtlStepSort);
+    static const struct { const char* id; ui::SortColumn col; I name; } kCols[] = {
+        {"name", ui::SortColumn::Name, I::AiCtlSortName},   {"modified", ui::SortColumn::Mtime, I::AiCtlSortModified},
+        {"type", ui::SortColumn::Type, I::AiCtlSortType},   {"size", ui::SortColumn::Size, I::AiCtlSortSize},
+        {"created", ui::SortColumn::Created, I::AiCtlSortCreated},
+    };
+    const std::string want = act.get_string("sort");
+    const auto* m = std::find_if(std::begin(kCols), std::end(kCols), [&](const auto& e) { return want == e.id; });
+    app::Tab* tab = ActiveTab(s);
+    if (m == std::end(kCols) || !tab) {
+        st.error = tab ? "unknown sort" : "no tab";
+        return st;
+    }
+    const bool desc = act.get_bool("desc", m->col == ui::SortColumn::Mtime || m->col == ui::SortColumn::Size ||
+                                               m->col == ui::SortColumn::Created);
+    st.arg = Text(m->name) + L" \u00B7 " + Text(desc ? I::AiCtlSortDesc : I::AiCtlSortAsc);
+    st.ok = true;
+    st.sub = Text(I::AiCtlApplied);
+    const ui::SortDirection dir = desc ? ui::SortDirection::Desc : ui::SortDirection::Asc;
+    if (tab->sort_column == m->col && tab->sort_direction == dir) {
+        st.skip = true;
+        return st;
+    }
+    const ui::SortColumn old_col = tab->sort_column;
+    const ui::SortDirection old_dir = tab->sort_direction;
+    app::Pane* p = s.pane;
+    SetSort(s, m->col, dir);
+    run.undo.push_back([p, old_col, old_dir](AppState& st2) {
+        if (PaneAlive(st2, p)) WithPane(st2, p, [&] { SetSort(st2, old_col, old_dir); });
+    });
+    PlainDone(run, SplitLine(Text(I::AiCtlLineSort), L"{by}", st.arg));
+    return st;
+}
+
+CtlStep CtlGroup(AppState& s, CtlRun& run, const json::Value& act) {
+    CtlStep st;
+    st.icon = ui::AiIcon::Rows;
+    st.title = Text(I::AiCtlStepGroup);
+    static const struct { const char* id; int v; I name; } kBy[] = {
+        {"none", 0, I::AiCtlGroupNone}, {"name", 1, I::AiCtlSortName}, {"date", 2, I::AiCtlGroupDate},
+        {"type", 3, I::AiCtlSortType},  {"size", 4, I::AiCtlSortSize},
+    };
+    const std::string want = act.get_string("group");
+    const auto* m = std::find_if(std::begin(kBy), std::end(kBy), [&](const auto& e) { return want == e.id; });
+    app::Tab* tab = ActiveTab(s);
+    if (m == std::end(kBy) || !tab) {
+        st.error = tab ? "unknown group" : "no tab";
+        return st;
+    }
+    st.arg = Text(m->name);
+    st.ok = true;
+    st.sub = Text(I::AiCtlApplied);
+    if (tab->group_by == m->v) {
+        st.skip = true;
+        return st;
+    }
+    const int old = tab->group_by;
+    app::Pane* p = s.pane;
+    SetGroupBy(s, m->v);
+    run.undo.push_back([p, old](AppState& st2) {
+        if (PaneAlive(st2, p)) WithPane(st2, p, [&] { SetGroupBy(st2, old); });
+    });
+    PlainDone(run, m->v == 0 ? SplitLine(Text(I::AiCtlLineGroupOff), {}, {})
+                             : SplitLine(Text(I::AiCtlLineGroup), L"{by}", st.arg));
+    return st;
+}
+
+// sidebar / favorites_bar: show (true) or hide.
+CtlStep CtlBar(AppState& s, CtlRun& run, const json::Value& act, bool favorites) {
+    CtlStep st;
+    st.icon = favorites ? ui::AiIcon::Star : ui::AiIcon::Dock;
+    st.title = Text(favorites ? I::AiCtlStepFavBar : I::AiCtlStepSidebar);
+    const bool show = act.get_bool("show", true);
+    st.arg = Text(favorites ? (show ? I::AiCtlShow : I::AiCtlHide) : (show ? I::AiCtlExpand : I::AiCtlCollapse));
+    st.ok = true;
+    st.sub = Text(I::AiCtlApplied);
+    AddKeys(run, Text(favorites ? I::AiCtlKeyFavBar : I::AiCtlKeySidebar),
+            KeysFor(favorites ? app::KeyAction::FavoritesBar : app::KeyAction::Sidebar));
+    const auto shown = [favorites](AppState& st2) {
+        return favorites ? st2.appPrefs.favorites_bar : !st2.appPrefs.sidebar_collapsed;
+    };
+    if (shown(s) == show) {
+        st.skip = true;
+        return st;
+    }
+    if (favorites) ToggleFavoritesBar(s);
+    else ToggleSidebarCollapsed(s);
+    run.undo.push_back([favorites, show, shown](AppState& st2) {
+        if (shown(st2) != show) return;
+        if (favorites) ToggleFavoritesBar(st2);
+        else ToggleSidebarCollapsed(st2);
+    });
+    PlainDone(run, SplitLine(Text(favorites ? (show ? I::AiCtlFavBarShown : I::AiCtlFavBarHidden)
+                                            : (show ? I::AiCtlSidebarShown : I::AiCtlSidebarHidden)),
+                             {}, {}));
+    return st;
+}
+
+CtlStep CtlTray(AppState& s, CtlRun& run, const json::Value& act) {
+    CtlStep st;
+    st.icon = ui::AiIcon::Tray;
+    st.title = Text(I::AiCtlStepTray);
+    const std::vector<std::wstring> paths = CtlItems(s, act);
+    st.arg = Fill(Text(I::AiCtlItems), L"{n}", Num(paths.size()));
+    if (paths.empty()) {
+        st.error = "no items (select some, or pass full paths)";
+        return st;
+    }
+    std::vector<uint64_t> before;
+    for (const auto& b : s.tray.batches())
+        for (const auto& it : b.items) before.push_back(it.id);
+    StagePaths(s, paths, std::nullopt);
+    std::vector<uint64_t> added;
+    size_t total = 0;
+    for (const auto& b : s.tray.batches())
+        for (const auto& it : b.items) {
+            ++total;
+            if (std::find(before.begin(), before.end(), it.id) == before.end()) added.push_back(it.id);
+        }
+    st.ok = true;
+    st.sub = Fill(Text(I::AiCtlTrayNow), L"{n}", Num(total));
+    if (!added.empty())
+        run.undo.push_back([added](AppState& st2) { RemoveTrayItems(st2, added); });
+    ++run.organize;
+    run.organize_kinds.push_back(Text(I::AiCtlKindTray));
+    AddLine(run, SplitLine(Text(I::AiCtlLineTray), L"{items}", st.arg));
+    AddKeys(run, Text(I::AiCtlKeyTray), KeysFor(app::KeyAction::StageToTray));
+    return st;
+}
+
+CtlStep CtlTag(AppState& s, CtlRun& run, const json::Value& act) {
+    CtlStep st;
+    st.icon = ui::AiIcon::Tag;
+    st.title = Text(I::AiCtlStepTag);
+    std::wstring name = json::Wide(act.get_string("tag"));
+    while (!name.empty() && std::iswspace(name.back())) name.pop_back();
+    while (!name.empty() && std::iswspace(name.front())) name.erase(0, 1);
+    const std::vector<std::wstring> paths = CtlItems(s, act);
+    st.arg = name;
+    if (name.empty() || name.size() > 40) {
+        st.error = "a tag name is needed";
+        return st;
+    }
+    if (paths.empty()) {
+        st.error = "no items (select some, or pass full paths)";
+        return st;
+    }
+    app::TagId id;
+    for (const auto& t : s.places.tags)
+        if (_wcsicmp(t.name.c_str(), name.c_str()) == 0) {
+            id = t.id;
+            name = t.name;
+        }
+    bool created = false;
+    if (id.empty()) {
+        const std::vector<uint32_t>& palette = TagColorPalette(s);
+        id = s.places.CreateTag(name, palette.empty() ? 0xEF4444u : palette[s.places.tags.size() % palette.size()]);
+        created = !id.empty();
+        st.arg = Fill(Text(I::AiCtlTagNew), L"{name}", name);
+    }
+    const int index = s.places.FindTagIndex(id);
+    if (index < 0) {
+        st.error = "the tag could not be made";
+        return st;
+    }
+    std::vector<std::wstring> fresh;
+    for (const auto& p : paths)
+        if (!s.places.PathHasTag(p, index)) fresh.push_back(p);
+    if (!fresh.empty() && !ToggleTagForSelection(s, id, fresh)) {
+        if (created) DeleteTagAndRefreshViews(s, id);
+        st.error = "these items cannot take tags";
+        return st;
+    }
+    run.undo.push_back([id, fresh, created](AppState& st2) {
+        if (!st2.places.FindTag(id)) return;
+        if (!fresh.empty() && st2.places.GetSelectionState(id, fresh) == app::TagSelectionState::All)
+            ToggleTagForSelection(st2, id, fresh);
+        if (created && st2.places.PathsForTag(id).empty()) DeleteTagAndRefreshViews(st2, id);
+    });
+    st.ok = true;
+    const std::wstring on = Fill(Text(I::AiCtlTagOn), L"{n}", Num(paths.size()));
+    st.sub = created ? Fill(Text(I::AiCtlTagNewDone), L"{name}", name) + L" \u00B7 " + on : on;
+    ++run.organize;
+    run.organize_kinds.push_back(Text(I::AiCtlKindTag));
+    AddLine(run, SplitLine(Fill(Text(created ? I::AiCtlLineTagNew : I::AiCtlLineTag), L"{n}", Num(paths.size())),
+                           L"{name}", name));
+    return st;
+}
+
+CtlStep CtlFavorite(AppState& s, CtlRun& run, const json::Value& act) {
+    CtlStep st;
+    st.icon = ui::AiIcon::Star;
+    st.title = Text(I::AiCtlStepFavorite);
+    std::vector<std::wstring> paths;
+    if (act.find("items")) paths = CtlItems(s, act);
+    else if (const app::Tab* tab = ActiveTab(s); tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path))
+        paths.push_back(tab->current_path);
+    if (paths.empty()) {
+        st.error = "nothing to add (pass full paths)";
+        return st;
+    }
+    std::wstring names;
+    for (size_t i = 0; i < paths.size() && i < 3; ++i) names += (names.empty() ? L"" : Text(I::AiTkListSep)) + PlaceLabel(paths[i]);
+    if (paths.size() > 3) names += Fill(Text(I::AiCtlAndMore), L"{n}", Num(paths.size()));
+    st.arg = names;
+    std::vector<std::wstring> added;
+    for (const auto& p : paths) {
+        if (s.places.IsStarred(p)) continue;
+        if (ToggleStarred(s, p, IsDirectory(p) ? app::PlaceItemKind::Folder : app::PlaceItemKind::File)) added.push_back(p);
+    }
+    if (!added.empty())
+        run.undo.push_back([added](AppState& st2) {
+            for (const auto& p : added)
+                if (st2.places.IsStarred(p)) ToggleStarred(st2, p, app::PlaceItemKind::Unknown);
+        });
+    st.ok = true;
+    st.sub = Text(I::AiCtlFavIn) + L" \u203A " + names;
+    ++run.organize;
+    run.organize_kinds.push_back(Text(I::AiCtlKindFav));
+    AddLine(run, SplitLine(Text(I::AiCtlLineFav), L"{name}", names));
+    return st;
+}
+
+CtlStep CtlMerge(AppState& s, CtlRun& run) {
+    CtlStep st;
+    st.icon = ui::AiIcon::Tiles;
+    st.title = Text(I::AiCtlStepMerge);
+    const size_t before = s.core.windows.Count();
+    if (before < 2 || !MergeAllWindows(s)) {
+        st.error = "there is only one window";
+        return st;
+    }
+    st.ok = true;
+    st.sub = Fill(Text(I::AiCtlMerged), L"{n}", Num(before - s.core.windows.Count()));
+    run.merged = true;
+    PlainDone(run, SplitLine(st.sub, {}, {}));
+    AddKeys(run, Text(I::AiCtlKeyMerge), KeysFor(app::KeyAction::MergeWindows));
+    return st;
+}
+
+CtlStep CtlOverview(AppState& s, CtlRun& run) {
+    CtlStep st;
+    st.icon = ui::AiIcon::Tiles;
+    st.title = Text(I::AiCtlStepOverview);
+    if (!s.overview.open) ToggleWindowOverview(s);
+    st.ok = true;
+    st.sub = Text(I::AiCtlApplied);
+    PlainDone(run, SplitLine(Text(I::AiCtlLineOverview), {}, {}));
+    AddKeys(run, Text(I::AiCtlStepOverview), KeysFor(app::KeyAction::Overview));
+    return st;
+}
+
+void CtlNext(AppState& s, std::shared_ptr<CtlRun> run);
+
+void CtlFinish(AppState& s, std::shared_ptr<CtlRun> run) {
+    AiAgent& a = Agent(s);
+    AiChat& c = Chat(s);
+    const size_t undoable = run->undo.size();
+    if (AiBlockView* b = Block(s, a.steps_id)) {
+        b->label = Fill(Text(I::AiCtlStepsLabel), L"{n}", Num(run->ok));
+        if (run->window && !run->layout && !run->other && !run->organize)
+            b->label = Fill(Text(I::AiCtlStepsWindows), L"{n}", Num(run->window_names.size()));
+        else if ((run->layout || run->open) && !run->window && !run->other && !run->organize)
+            b->label = Fill(Text(I::AiCtlStepsLayout), L"{n}", Num(run->ok));
+        b->collapsed = true;
+        b->open = false;
+    }
+    a.steps_id = 0;
+    ToolOutcome out;
+    out.data = json::Value::Object();
+    out.data.set("ok", run->ok > 0);
+    out.data.set("actions", std::move(run->report));
+    // Only a call that changed something gets a card (all "already so": the
+    // model hears it, nothing to show or undo).
+    const bool changed = !run->undo.empty() || run->merged || run->window || !run->lines.empty();
+    if (run->ok > 0 && changed) {
+        AiBlockView& r = c.Add(AiBlockKind::Result, Now());
+        const size_t things = run->organize + (run->other ? 1 : 0) + (run->window ? 1 : 0) + ((run->layout || run->open) ? 1 : 0);
+        // The title: what the turn was about.
+        if (run->window && !run->other && !run->organize) {
+            r.title = Fill(Text(I::AiCtlResWindows), L"{n}", Num(run->window_names.size()));
+            for (const auto& n : run->window_names) r.sub += (r.sub.empty() ? L"" : L" \u00B7 ") + n;
+            if (run->single_back) r.sub += Text(I::AiCtlResMainSingle);
+        } else if ((run->layout || run->open) && !run->other && !run->organize) {
+            const app::LayoutPreset p = LayoutOf(s);
+            const I t = p == app::LayoutPreset::Single          ? I::AiCtlResSingle
+                        : p == app::LayoutPreset::TwoVertical   ? I::AiCtlResTwoV
+                        : p == app::LayoutPreset::TwoHorizontal ? I::AiCtlResTwoH
+                        : p == app::LayoutPreset::Three         ? I::AiCtlResThree
+                        : p == app::LayoutPreset::FourGrid      ? I::AiCtlResFour
+                                                                : I::AiCtlResLayout;
+            r.title = run->layout ? Text(t) : Text(I::AiCtlResOpened);
+            r.sub = PanesLine(s);
+        } else if (things == 1 && run->lines.size() == 1) {
+            r.title = run->single_title;
+            if (run->organize) r.sub = Text(I::AiCtlResOrganizeSub);
+        } else {
+            r.title = Fill(Text(I::AiCtlResThings), L"{n}", Num(run->lines.size() + (run->window ? 1 : 0) + ((run->layout || run->open) ? 1 : 0)));
+            if (run->organize && !run->other && !run->window && !run->layout && !run->open) r.sub = Text(I::AiCtlResOrganizeSub);
+            r.lines = run->lines;
+        }
+        // Keys only where they help: layout, windows, view; the organize
+        // lines say enough.
+        if (run->layout || run->window || run->other) r.keys = run->keys;
+        if (run->window && run->keys.size() < 4) {
+            ui::AiKeyRowView merge{Text(I::AiCtlKeyMerge), KeysFor(app::KeyAction::MergeWindows)};
+            bool have = false;
+            for (const auto& k : r.keys) have |= k.label == merge.label;
+            if (!have && !merge.caps.empty()) r.keys.push_back(std::move(merge));
+        }
+        if (undoable) r.deny = Text(undoable > 1 && run->lines.size() > 1 ? I::AiCtlUndoAll : I::AiAsstUndo);
+        if (run->window) {
+            r.accept = Text(I::AiCtlOverview);
+            r.accept_icon = ui::AiIcon::Tiles;
+        }
+        c.result_id = r.id;
+        c.on_show = run->window ? std::function<void(AppState&)>([](AppState& st) {
+            if (!st.overview.open) ToggleWindowOverview(st);
+        })
+                                : std::function<void(AppState&)>();
+        if (undoable) {
+            c.on_undo = [run](AppState& st) {
+                HideRenameOverlay(st, true);   // a rename field must not stay over a moved pane
+                for (auto it = run->undo.rbegin(); it != run->undo.rend(); ++it) (*it)(st);
+                AiChat& c2 = Chat(st);
+                c2.peek_undo = false;
+                AiChatHidePeek(st);
+                if (AiBlockView* rr = c2.Find(c2.result_id)) {
+                    rr->done = true;
+                    std::wstring t;
+                    if (run->window) {
+                        for (const auto& p : run->back_parts) t += (t.empty() ? L"" : Text(I::AiCtlBackSep)) + p;
+                    } else if ((run->layout || run->open) && !run->other && !run->organize) {
+                        t = run->has_first_layout ? Fill(Text(I::AiCtlUndoneLayout), L"{layout}", PresetName(run->first_layout))
+                                                  : Text(I::AiCtlUndoneOpen);
+                    } else if (run->organize && !run->other) {
+                        std::wstring kinds;
+                        for (size_t i = 0; i < run->organize_kinds.size(); ++i) {
+                            if (std::find(run->organize_kinds.begin(), run->organize_kinds.begin() + static_cast<std::ptrdiff_t>(i),
+                                          run->organize_kinds[i]) != run->organize_kinds.begin() + static_cast<std::ptrdiff_t>(i))
+                                continue;
+                            kinds += (kinds.empty() ? L"" : Text(I::AiTkListSep)) + run->organize_kinds[i];
+                        }
+                        t = Fill(Text(run->organize_kinds.size() > 1 ? I::AiCtlUndoneKinds : I::AiCtlUndoneKind), L"{kinds}", kinds);
+                    } else {
+                        t = Text(I::AiCtlUndoneAll);
+                    }
+                    rr->title = Text(I::AiAsstUndone);
+                    rr->sub = t;   // the panel hides lines / keys / warn of a done card
+                }
+                AiBlockView& note = c2.Add(AiBlockKind::Note, Now());
+                note.text = run->window && !run->other && !run->organize ? Text(I::AiCtlNoteWindows)
+                            : (run->layout || run->open) && !run->other && !run->organize && !run->window
+                                ? Text(I::AiCtlNoteLayout)
+                                : Fill(Text(I::AiCtlNoteThings), L"{n}", Num(run->ok));
+                AiChatSetChip(c2, ui::StatusAiState::Done, Text(I::AiAsstUndone));
+                if (c2.agent)
+                    c2.agent->pending_note =
+                        L"(The user clicked Undo in Pulse: every action of the last control_pulse call was reversed.)";
+                Redraw(st);
+            };
+        } else {
+            c.on_undo = nullptr;
+        }
+        c.peek_text = r.title;
+        c.peek_undo = undoable > 0;
+        AiChatSetChip(c, ui::StatusAiState::Busy, r.title, 0.95f);
+    }
+    AddToolResult(a, run->call_id, out);
+    ++a.call_index;
+    NextTool(s);
+}
+
+void CtlNext(AppState& s, std::shared_ptr<CtlRun> run) {
+    AiAgent& a = Agent(s);
+    if (a.generation != run->gen) return;
+    while (run->index < run->queue.size()) {
+        const json::Value act = run->queue[run->index];
+        const std::string what = act.get_string("do");
+        CtlStep st;
+        if (what == "layout") st = CtlLayout(s, *run, act);
+        else if (what == "open") st = CtlOpen(s, *run, act);
+        else if (what == "new_window") st = CtlNewWindow(s, *run, act);
+        else if (what == "tab_to_window") st = CtlToWindow(s, *run, act, false);
+        else if (what == "pane_to_window") st = CtlToWindow(s, *run, act, true);
+        else if (what == "merge_windows") st = CtlMerge(s, *run);
+        else if (what == "window_overview") st = CtlOverview(s, *run);
+        else if (what == "view") st = CtlView(s, *run, act);
+        else if (what == "sort") st = CtlSort(s, *run, act);
+        else if (what == "group") st = CtlGroup(s, *run, act);
+        else if (what == "sidebar") st = CtlBar(s, *run, act, false);
+        else if (what == "favorites_bar") st = CtlBar(s, *run, act, true);
+        else if (what == "tray") st = CtlTray(s, *run, act);
+        else if (what == "tag") st = CtlTag(s, *run, act);
+        else if (what == "favorite") st = CtlFavorite(s, *run, act);
+        else st.error = "unknown action " + what;
+        json::Value rep = json::Value::Object();
+        rep.set("do", what);
+        rep.set("ok", st.ok);
+        if (!st.ok) rep.set("error", st.error);
+        else if (st.wait) rep.set("result", Utf8(L"opened " + st.arg));
+        else if (!st.sub.empty()) rep.set("result", Utf8(st.sub));
+        if (st.skip) rep.set("already", true);   // nothing to do: it was so already
+        run->report.push(std::move(rep));
+        ++run->index;
+        if (st.ok) ++run->ok;
+        if (st.skip) continue;
+        AddStep(s, a, st.icon, st.title.empty() ? Display(what) : st.title, st.arg, {});
+        AiChatSetChip(Chat(s), ui::StatusAiState::Busy, st.title,
+                      static_cast<float>(run->index) / static_cast<float>(run->queue.size() + 1));
+        Redraw(s);
+        const uint64_t started = Now();
+        AiChatPush(s, 450, [run, st, started](AppState& s2) {
+            AiAgent& ag = Agent(s2);
+            if (ag.generation != run->gen) return -1;
+            std::wstring sub = st.ok ? st.sub : Text(I::AiCtlFailed);
+            if (st.wait) {
+                // The folder's item count once it has loaded (1.5 s at most).
+                const app::Tab* t = PaneAlive(s2, st.wait) ? st.wait->ActiveTab() : nullptr;
+                if (t && t->loading && Now() - started < 1500) return 60;
+                sub = t && !t->loading ? Fill(Text(I::AiCtlItemsIn), L"{n}", Num(t->EntryCount())) : Text(I::AiCtlApplied);
+            }
+            EndStep(s2, ag, st.ok, sub);
+            CtlNext(s2, run);
+            return -1;
+        });
+        return;
+    }
+    CtlFinish(s, run);
+}
+
+void ToolControl(AppState& s, const app::ai::ModelToolCall& call, const json::Value& args) {
+    AiAgent& a = Agent(s);
+    auto run = std::make_shared<CtlRun>();
+    run->call_id = call.id;
+    run->gen = a.generation;
+    if (const json::Value* v = args.find("actions"); v && v->is_array())
+        for (size_t i = 0; i < v->size() && i < 12; ++i)
+            if (v->at(i).is_object()) run->queue.push_back(v->at(i));
+    if (run->queue.empty()) {
+        AddToolResult(a, call.id, ToolOutcome::Fail("invalid_args", "actions is empty"));
+        ++a.call_index;
+        NextTool(s);
+        return;
+    }
+    HideRenameOverlay(s, true);   // panes and windows are about to move: end a rename like a click elsewhere
+    FoldSteps(s, a);
+    CtlNext(s, run);
+}
+
 void NextTool(AppState& s) {
     AiAgent& a = Agent(s);
     if (a.call_index >= a.calls.size()) {
@@ -5688,6 +6642,7 @@ void NextTool(AppState& s) {
     else if (call.name == "disk_usage") ToolDiskUsage(s, call, args);
     else if (call.name == "find_cleanup") ToolFindCleanup(s, call, args);
     else if (call.name == "find_duplicates") ToolFindDuplicates(s, call, args);
+    else if (call.name == "control_pulse") ToolControl(s, call, args);
     else {
         AddToolResult(a, call.id, ToolOutcome::Fail("unknown_tool", "no tool named " + call.name));
         ++a.call_index;

@@ -1045,7 +1045,13 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             const float tx = il + 40.0f * s;
             const float text_w = ir - tx;
             const float title_h = (std::max)(20.0f * s, wrapped_h(b.title, formats_.body_b, text_w, 20.0f * s));
-            const float sub_h = b.sub.empty() ? 0.0f : 2.0f * s + wrapped_h(b.sub, formats_.caption, text_w, 18.0f * s);
+            // A sub of two parts (an ideographic space between) that does not
+            // fit one line breaks between the parts, not inside the second.
+            std::wstring sub_text = b.sub;
+            if (const size_t gap = sub_text.find(L'\u3000');
+                gap != std::wstring::npos && c.Measure(sub_text, formats_.caption) > text_w)
+                sub_text[gap] = L'\n';
+            const float sub_h = sub_text.empty() ? 0.0f : 2.0f * s + wrapped_h(sub_text, formats_.caption, text_w, 18.0f * s);
             const float top_h = (std::max)(30.0f * s, title_h + sub_h);
             // Tag rows (flex-wrap).
             struct TagPos { float x, y, w; };
@@ -1079,6 +1085,20 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             }
             float lines_h = shown_lines.empty() ? 0.0f : 10.0f * s + 4.0f * s * static_cast<float>(shown_lines.size() - 1);
             for (const float lh : line_hs) lines_h += lh;
+            // Third batch. .r-chg: margin 10 0 0 40, border 1 line2, r 9; rows
+            // padding 8 10 (12.5 lh 18), a line2 rule between them.
+            const float chg_n = static_cast<float>(b.changes.size());
+            const float chg_h = b.changes.empty() ? 0.0f : 10.0f * s + 2.0f * s + 34.0f * s * chg_n + 1.0f * s * (chg_n - 1.0f);
+            // .r-warn: margin 8 0 0 40, warn 13 (amber), gap 7, 12 text2 lh 18.
+            const float warn_w = (std::max)(1.0f, text_w - 20.0f * s);
+            const float warn_h = b.done || b.gone || b.warn.empty()
+                                     ? 0.0f
+                                     : 8.0f * s + (std::max)(18.0f * s, wrapped_h(b.warn, formats_.caption, warn_w, 18.0f * s));
+            // .r-tip: margin 10 0 0 40, kbd 14 (text3, margin 4 2 0 0), gap 5;
+            // .ktab rows lh 22, gap 4: the name (min 112, 12 text2), key caps.
+            const bool keys = !b.done && !b.keys.empty();
+            const float keys_n = static_cast<float>(b.keys.size());
+            const float keys_h = keys ? 10.0f * s + 22.0f * s * keys_n + 4.0f * s * (keys_n - 1.0f) : 0.0f;
             // .r-disk: margin 10 0 0 40, padding 9 10 8, r 9, pane, line2 border.
             const bool mini = b.mini.on && !b.gone && !b.done;
             const float mini_h = mini ? 10.0f * s + 2.0f * s + 9.0f * s + 20.0f * s + 6.0f * s + 8.0f * s + 6.0f * s + 15.0f * s + 8.0f * s : 0.0f;
@@ -1087,7 +1107,7 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             const float purge_w = b.purge.empty() ? 0.0f : 28.0f * s + 20.0f * s + c.Measure(b.purge, formats_.body13);
             const float undo_w = 28.0f * s + 20.0f * s + c.Measure(b.deny, formats_.body13);
             const bool purge_wraps = buttons && !b.purge.empty() && undo_w + 8.0f * s + purge_w > text_w + 0.5f;
-            const float h = 2.0f * s + 24.0f * s + top_h + lines_h + tags_h + mini_h +
+            const float h = 2.0f * s + 24.0f * s + top_h + lines_h + chg_h + warn_h + keys_h + tags_h + mini_h +
                             (buttons ? 44.0f * s + (purge_wraps ? 40.0f * s : 0.0f) : 0.0f);
             const D2D1_RECT_F r = D2D1::RectF(x0, top + y, x1, top + y + h);
             if (visible(r.top, r.bottom)) {
@@ -1098,7 +1118,7 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                 c.Icon(b.done ? AiIcon::Undo : AiIcon::Check, mid.x - 8.0f * s, mid.y - 8.0f * s, 16.0f * s,
                        b.done || b.gone ? pal.text2 : pal.ok);
                 wrapped(b.title, formats_.body_b, tx, iy, text_w, 20.0f * s, pal.text);
-                if (!b.sub.empty()) wrapped(b.sub, formats_.caption, tx, iy + title_h + 2.0f * s, text_w, 18.0f * s, pal.text2);
+                if (!sub_text.empty()) wrapped(sub_text, formats_.caption, tx, iy + title_h + 2.0f * s, text_w, 18.0f * s, pal.text2);
                 float yy = iy + top_h;
                 if (lines_h > 0.0f) {
                     yy += 10.0f * s;
@@ -1120,6 +1140,59 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                         }
                         yy += line_hs[n] + (n + 1 < shown_lines.size() ? 4.0f * s : 0.0f);
                     }
+                }
+                if (chg_h > 0.0f) {
+                    // .chg: the name (semibold) and its tag, then old → new at
+                    // the right. Undone: the old value comes back (text), the
+                    // new one is struck (text3), the tag goes.
+                    yy += 10.0f * s;
+                    const D2D1_RECT_F box = D2D1::RectF(tx, yy, ir, yy + chg_h - 10.0f * s);
+                    c.Stroke(Inflate(box, -0.5f), 8.5f * s, pal.line2);
+                    const float cl = box.left + 1.0f * s + 10.0f * s, cr = box.right - 1.0f * s - 10.0f * s;
+                    const float rule = (std::max)(1.0f, std::round(1.0f * s));
+                    float ry = box.top + 1.0f * s;
+                    for (size_t n = 0; n < b.changes.size(); ++n) {
+                        const AiChangeView& ch = b.changes[n];
+                        if (n > 0) {
+                            c.Fill(D2D1::RectF(box.left + 1.0f * s, ry, box.right - 1.0f * s, ry + rule), 0.0f, pal.line2);
+                            ry += 1.0f * s;
+                        }
+                        const float ty = ry + 8.0f * s;
+                        const float sy = std::round(ty + 9.5f * s);
+                        const float to_w = c.Measure(ch.to, formats_.small125b);
+                        float vx = cr - to_w - 14.0f * s;
+                        if (!b.done) c.Fill(D2D1::RectF(vx, ty, cr, ty + 18.0f * s), 6.0f * s, pal.accent_soft);
+                        line(ch.to, formats_.small125b, vx + 7.0f * s, ty, cr - 7.0f * s + 1.0f, 18.0f * s,
+                             b.done ? pal.text3 : pal.accent);
+                        if (b.done)
+                            c.Fill(D2D1::RectF(vx + 7.0f * s, sy, vx + 7.0f * s + to_w, sy + rule), 0.0f, Alpha(pal.text3, 0.7f));
+                        vx -= 6.0f * s + 12.0f * s;
+                        c.Icon(AiIcon::Arrow, vx, ty + 3.0f * s, 12.0f * s, pal.text3);
+                        const float from_w = c.Measure(ch.from, formats_.small125);
+                        vx -= 6.0f * s + from_w;
+                        line(ch.from, formats_.small125, vx, ty, vx + from_w + 1.0f, 18.0f * s, b.done ? pal.text : pal.text3);
+                        if (!b.done) c.Fill(D2D1::RectF(vx, sy, vx + from_w, sy + rule), 0.0f, Alpha(pal.text3, 0.7f));
+                        // .tg.w: 10.5/600 lh 17, padding 0 6, r 8, amber.
+                        const bool tagged = !b.done && !ch.tag.empty();
+                        const float tag_w = tagged ? c.Measure(ch.tag, formats_.badge) + 12.0f * s : 0.0f;
+                        const float name_r = vx - 8.0f * s - (tagged ? tag_w + 6.0f * s : 0.0f);
+                        const float name_w = (std::min)(c.Measure(ch.name, formats_.small125b), (std::max)(0.0f, name_r - cl));
+                        line(ch.name, formats_.small125b, cl, ty, cl + name_w + 1.0f, 18.0f * s, pal.text);
+                        if (tagged) {
+                            const D2D1_RECT_F tr = D2D1::RectF(cl + name_w + 6.0f * s, ty + 0.5f * s, cl + name_w + 6.0f * s + tag_w,
+                                                               ty + 17.5f * s);
+                            c.Fill(tr, 8.0f * s, pal.amber_bg);
+                            line(ch.tag, formats_.badge, tr.left + 6.0f * s, tr.top, tr.right - 6.0f * s + 1.0f, 17.0f * s, pal.amber);
+                        }
+                        ry += 34.0f * s;
+                    }
+                    yy = box.bottom;
+                }
+                if (warn_h > 0.0f) {
+                    yy += 8.0f * s;
+                    c.Icon(AiIcon::Warn, tx, yy + 2.5f * s, 13.0f * s, pal.amber);
+                    wrapped(b.warn, formats_.caption, tx + 20.0f * s, yy, warn_w, 18.0f * s, pal.text2);
+                    yy += warn_h - 8.0f * s;
                 }
                 if (mini) {
                     // .rd-top: label, then (.ar 17.0 GB →) the 16/600 figure
@@ -1198,6 +1271,43 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                         line(t.text, formats_.caption_b, tr.left + 24.0f * s, tr.top, tr.right, 22.0f * s, pal.tint_fg[ti]);
                     }
                     yy += tags_h - 10.0f * s;
+                }
+                if (keys) {
+                    // .ktab: each row's name (min 112), gap 4, then the caps
+                    // (.k: 11/600 lh 18, padding 0 6, border 1 line with a 2
+                    // px bottom, r 5, bg), gap 4.
+                    yy += 10.0f * s;
+                    c.Icon(AiIcon::Keyboard, tx, yy + 4.0f * s, 14.0f * s, pal.text3);
+                    const float kx = tx + 21.0f * s;
+                    for (size_t n = 0; n < b.keys.size(); ++n) {
+                        const AiKeyRowView& k = b.keys[n];
+                        const float ry = yy + 26.0f * s * static_cast<float>(n);
+                        // The name column gives way (down to the name itself)
+                        // before a cap is dropped in a narrow panel.
+                        // One name column for every row, so the caps line up.
+                        float name_w = 0.0f, caps_w = 0.0f;
+                        for (const AiKeyRowView& row : b.keys) {
+                            name_w = (std::max)(name_w, c.Measure(row.label, formats_.caption));
+                            float row_w = 0.0f;
+                            for (const std::wstring& cap : row.caps) row_w += c.Measure(cap, formats_.small11b) + 14.0f * s + 4.0f * s;
+                            caps_w = (std::max)(caps_w, row_w);
+                        }
+                        const float lw = (std::max)(name_w, (std::min)(112.0f * s, ir - kx - 4.0f * s - caps_w));
+                        line(k.label, formats_.caption, kx, ry, (std::min)(kx + lw + 1.0f, ir), 22.0f * s, pal.text2);
+                        float cx = kx + lw + 4.0f * s;
+                        for (const std::wstring& cap : k.caps) {
+                            const float cw = c.Measure(cap, formats_.small11b) + 14.0f * s;
+                            if (cx + cw > ir + 0.5f) break;
+                            const D2D1_RECT_F kr = D2D1::RectF(cx, ry + 0.5f * s, cx + cw, ry + 21.5f * s);
+                            c.Fill(kr, 5.0f * s, pal.line);
+                            c.Fill(D2D1::RectF(kr.left + 1.0f * s, kr.top + 1.0f * s, kr.right - 1.0f * s, kr.bottom - 2.0f * s),
+                                   4.0f * s, pal.bg);
+                            line(cap, formats_.small11b, kr.left + 7.0f * s, kr.top + 1.0f * s, kr.right - 7.0f * s + 1.0f, 18.0f * s,
+                                 pal.text);
+                            cx += cw + 4.0f * s;
+                        }
+                    }
+                    yy += keys_h - 10.0f * s;
                 }
                 if (buttons) {
                     yy += 12.0f * s;
@@ -1315,6 +1425,21 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             // .e-f: the file a paused task is stuck on; margin 8 0 0 40,
             // padding 6 10, radius 8, chrome, border line2, 12.
             const float file_box = b.file.empty() ? 0.0f : 8.0f * s + 30.0f * s;
+            // .deny-l: margin 8 0 0 40, wrap, gap 6; pills 11.5 lh 20, padding
+            // 0 8, r 7, hover, text2.
+            struct PillPos { float x, y, w; };
+            std::vector<PillPos> pills;
+            float pills_h = 0.0f;
+            if (!b.pills.empty()) {
+                float px = tx, py = 0.0f;
+                for (const std::wstring& t : b.pills) {
+                    const float pw = (std::min)(c.Measure(t, formats_.meta) + 16.0f * s, text_w);
+                    if (px > tx && px + pw > ir) { px = tx; py += 26.0f * s; }
+                    pills.push_back({px, py, pw});
+                    px += pw + 6.0f * s;
+                }
+                pills_h = 8.0f * s + py + 20.0f * s;
+            }
             // .e-b: gap 8; buttons wrap when the panel is narrow.
             struct BtnPos { float x, y, w; };
             std::vector<BtnPos> btns;
@@ -1327,7 +1452,7 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                 bx += bw + 8.0f * s;
             }
             const float btn_h = btns.empty() ? 0.0f : 12.0f * s + by + 32.0f * s;
-            const float h = 2.0f * s + 24.0f * s + top_h + detail_box + hint_box + file_box + btn_h;
+            const float h = 2.0f * s + 24.0f * s + top_h + detail_box + hint_box + pills_h + file_box + btn_h;
             const D2D1_RECT_F r = D2D1::RectF(x0, top + y, x1, top + y + h);
             if (visible(r.top - 4.0f * s, r.bottom + 4.0f * s)) {
                 const D2D1_COLOR_F ink = b.tone == AiErrTone::Err ? pal.bad : b.tone == AiErrTone::Warn ? pal.amber : pal.accent;
@@ -1359,9 +1484,19 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                 }
                 if (!b.hint.empty()) {
                     yy += 8.0f * s;
-                    c.Icon(AiIcon::Warn, tx, yy + 2.5f * s, 13.0f * s, pal.text3);
+                    c.Icon(b.pills.empty() ? AiIcon::Warn : b.hint_icon, tx, yy + 2.5f * s, 13.0f * s, pal.text3);
                     wrapped(b.hint, formats_.caption, tx + 19.0f * s, yy, hint_w, 18.0f * s, pal.text3);
                     yy += hint_h;
+                }
+                if (!pills.empty()) {
+                    yy += 8.0f * s;
+                    for (size_t i = 0; i < pills.size(); ++i) {
+                        const D2D1_RECT_F pr = D2D1::RectF(pills[i].x, yy + pills[i].y, pills[i].x + pills[i].w,
+                                                           yy + pills[i].y + 20.0f * s);
+                        c.Fill(pr, 7.0f * s, pal.hover);
+                        line(b.pills[i], formats_.meta, pr.left + 8.0f * s, pr.top, pr.right - 8.0f * s + 1.0f, 20.0f * s, pal.text2);
+                    }
+                    yy += pills_h - 8.0f * s;
                 }
                 if (!b.file.empty()) {
                     yy += 8.0f * s;

@@ -3708,3 +3708,116 @@ AiDupChipVerify	IDS_AI_DUP_CHIP_VERIFY	4906	核对内容	Checking content	核對
 AiDupUndoLabel	IDS_AI_DUP_UNDO_LABEL	4907	移走重复的副本	Remove duplicate copies	移走重複的副本
 AiDupChipReady	IDS_AI_DUP_CHIP_READY	4908	移走 {n} 个副本？	Move {n} copies?	移走 {n} 個副本？
 AiDupRecArg	IDS_AI_DUP_REC_ARG	4909	{n} 个 · {size}	{n} copies · {size}	{n} 個 · {size}
+AiCtlAndMore	IDS_AI_CTL_AND_MORE	4910	等 {n} 项	and {n} in all	等 {n} 項
+AiCtlApplied	IDS_AI_CTL_APPLIED	4911	已生效	Applied	已生效
+AiCtlBackClosed	IDS_AI_CTL_BACK_CLOSED	4912	{name} 窗口已关闭	{name} window closed	{name} 視窗已關閉
+AiCtlBackPane	IDS_AI_CTL_BACK_PANE	4913	{name}回到{pane}	{name} is back in the {pane}	{name}回到{pane}
+AiCtlBackSep	IDS_AI_CTL_BACK_SEP	4914	，	, 	，
+AiCtlBackTab	IDS_AI_CTL_BACK_TAB	4915	{name}回到了这个窗口	{name} is back in this window	{name}回到了這個視窗
+AiCtlCollapse	IDS_AI_CTL_COLLAPSE	4916	收起	Collapse	收起
+AiCtlExpand	IDS_AI_CTL_EXPAND	4917	展开	Expand	展開
+AiCtlFailed	IDS_AI_CTL_FAILED	4918	没做成	Didn't work	沒做成
+AiCtlFavBarHidden	IDS_AI_CTL_FAV_BAR_HIDDEN	4919	收藏栏已隐藏	Favorites bar hidden	收藏列已隱藏
+AiCtlFavBarShown	IDS_AI_CTL_FAV_BAR_SHOWN	4920	收藏栏已显示	Favorites bar shown	收藏列已顯示
+AiCtlFavIn	IDS_AI_CTL_FAV_IN	4921	收藏夹	Favorites	收藏夾
+AiCtlGroupDate	IDS_AI_CTL_GROUP_DATE	4922	日期	Date	日期
+AiCtlGroupNone	IDS_AI_CTL_GROUP_NONE	4923	不分组	No groups	不分組
+AiCtlHide	IDS_AI_CTL_HIDE	4924	隐藏	Hide	隱藏
+AiCtlItems	IDS_AI_CTL_ITEMS	4925	{n} 项	{n} items	{n} 項
+AiCtlItemsIn	IDS_AI_CTL_ITEMS_IN	4926	{n} 个项目	{n} items	{n} 個項目
+AiCtlKeyFavBar	IDS_AI_CTL_KEY_FAV_BAR	4927	显示或隐藏收藏栏	Show or hide the favorites bar	顯示或隱藏收藏列
+AiCtlKeyMerge	IDS_AI_CTL_KEY_MERGE	4928	合并所有窗口	Merge all windows	合併所有視窗
+AiCtlKeyNewWindow	IDS_AI_CTL_KEY_NEW_WINDOW	4929	新建窗口	New window	新增視窗
+AiCtlKeyNextPane	IDS_AI_CTL_KEY_NEXT_PANE	4930	在各栏之间切换	Move between panes	在各欄之間切換
+AiCtlKeyNextPane2	IDS_AI_CTL_KEY_NEXT_PANE2	4931	在两栏之间切换	Move between the panes	在兩欄之間切換
+AiCtlKeySidebar	IDS_AI_CTL_KEY_SIDEBAR	4932	收起或展开侧栏	Collapse or expand the sidebar	收起或展開側欄
+AiCtlKeyTabToWindow	IDS_AI_CTL_KEY_TAB_TO_WINDOW	4933	标签页移到新窗口	Move tab to a new window	分頁移到新視窗
+AiCtlKeyTray	IDS_AI_CTL_KEY_TRAY	4934	放进暂存托盘	Put on the staging tray	放進暫存托盤
+AiCtlKindFav	IDS_AI_CTL_KIND_FAV	4935	收藏夹	favorites	收藏夾
+AiCtlKindTag	IDS_AI_CTL_KIND_TAG	4936	标签	tags	標籤
+AiCtlKindTray	IDS_AI_CTL_KIND_TRAY	4937	托盘	tray	托盤
+AiCtlLayoutCustom	IDS_AI_CTL_LAYOUT_CUSTOM	4938	自定布局	Custom layout	自訂版面
+AiCtlLayoutFour	IDS_AI_CTL_LAYOUT_FOUR	4939	四宫格	Four panes	四宮格
+AiCtlLayoutSingle	IDS_AI_CTL_LAYOUT_SINGLE	4940	单栏	Single pane	單欄
+AiCtlLayoutThree	IDS_AI_CTL_LAYOUT_THREE	4941	三栏	Three panes	三欄
+AiCtlLayoutTwoH	IDS_AI_CTL_LAYOUT_TWO_H	4942	上下分屏	Top and bottom	上下分割
+AiCtlLayoutTwoV	IDS_AI_CTL_LAYOUT_TWO_V	4943	左右分屏	Side by side	左右分割
+AiCtlLineFav	IDS_AI_CTL_LINE_FAV	4944	{name}加到了收藏夹	{name} added to favorites	{name}加到了收藏夾
+AiCtlLineGroup	IDS_AI_CTL_LINE_GROUP	4945	按{by}分组	Grouped by {by}	按{by}分組
+AiCtlLineGroupOff	IDS_AI_CTL_LINE_GROUP_OFF	4946	取消了分组	Groups turned off	取消了分組
+AiCtlLineOverview	IDS_AI_CTL_LINE_OVERVIEW	4947	打开了窗口总览	Window overview opened	打開了視窗總覽
+AiCtlLineSort	IDS_AI_CTL_LINE_SORT	4948	按{by}排序	Sorted by {by}	按{by}排序
+AiCtlLineTag	IDS_AI_CTL_LINE_TAG	4949	给 {n} 项打上标签{name}	Tagged {n} items {name}	給 {n} 項加上標籤{name}
+AiCtlLineTagNew	IDS_AI_CTL_LINE_TAG_NEW	4950	新建标签{name}，打在 {n} 项上	New tag {name}, on {n} items	新增標籤{name}，加在 {n} 項上
+AiCtlLineTray	IDS_AI_CTL_LINE_TRAY	4951	{items}放进了暂存托盘	{items} put on the staging tray	{items}放進了暫存托盤
+AiCtlLineView	IDS_AI_CTL_LINE_VIEW	4952	视图换成了{view}	View is now {view}	檢視換成了{view}
+AiCtlMerged	IDS_AI_CTL_MERGED	4953	合并了 {n} 个窗口	Merged {n} windows	合併了 {n} 個視窗
+AiCtlNewWindowN	IDS_AI_CTL_NEW_WINDOW_N	4954	新窗口 {n}	Window {n}	新視窗 {n}
+AiCtlNoteLayout	IDS_AI_CTL_NOTE_LAYOUT	4955	你撤销了分栏	You undid the layout change	你復原了分欄
+AiCtlNoteThings	IDS_AI_CTL_NOTE_THINGS	4956	你撤销了这 {n} 件事	You undid these {n} changes	你復原了這 {n} 件事
+AiCtlNoteWindows	IDS_AI_CTL_NOTE_WINDOWS	4957	你撤销了开窗口	You undid the new windows	你復原了開視窗
+AiCtlOverview	IDS_AI_CTL_OVERVIEW	4958	窗口总览	Window overview	視窗總覽
+AiCtlPaneBottom	IDS_AI_CTL_PANE_BOTTOM	4959	下栏	bottom pane	下欄
+AiCtlPaneLeft	IDS_AI_CTL_PANE_LEFT	4960	左栏	left pane	左欄
+AiCtlPaneN	IDS_AI_CTL_PANE_N	4961	第 {n} 栏	pane {n}	第 {n} 欄
+AiCtlPaneRight	IDS_AI_CTL_PANE_RIGHT	4962	右栏	right pane	右欄
+AiCtlPaneTop	IDS_AI_CTL_PANE_TOP	4963	上栏	top pane	上欄
+AiCtlResFour	IDS_AI_CTL_RES_FOUR	4964	已分成四格	Split into four panes	已分成四格
+AiCtlResLayout	IDS_AI_CTL_RES_LAYOUT	4965	布局已调整	Layout changed	版面已調整
+AiCtlResMainSingle	IDS_AI_CTL_RES_MAIN_SINGLE	4966	　主窗口回到单栏	　the main window has one pane again	　主視窗回到單欄
+AiCtlResOpened	IDS_AI_CTL_RES_OPENED	4967	已打开	Opened	已打開
+AiCtlResOrganizeSub	IDS_AI_CTL_RES_ORGANIZE_SUB	4968	都只改 Pulse 的整理信息，文件没动	Only Pulse's own organizing changed; the files were not touched	都只改 Pulse 的整理資訊，檔案沒動
+AiCtlResSingle	IDS_AI_CTL_RES_SINGLE	4969	已回到单栏	Back to a single pane	已回到單欄
+AiCtlResThings	IDS_AI_CTL_RES_THINGS	4970	做好了 {n} 件事	Done: {n} changes	做好了 {n} 件事
+AiCtlResThree	IDS_AI_CTL_RES_THREE	4971	已分成三栏	Split into three panes	已分成三欄
+AiCtlResTwoH	IDS_AI_CTL_RES_TWO_H	4972	已分成上下两栏	Split top and bottom	已分成上下兩欄
+AiCtlResTwoV	IDS_AI_CTL_RES_TWO_V	4973	已分成左右两栏	Split side by side	已分成左右兩欄
+AiCtlResWindows	IDS_AI_CTL_RES_WINDOWS	4974	开了 {n} 个新窗口	Opened {n} new windows	開了 {n} 個新視窗
+AiCtlShow	IDS_AI_CTL_SHOW	4975	显示	Show	顯示
+AiCtlSidebarHidden	IDS_AI_CTL_SIDEBAR_HIDDEN	4976	侧栏已收起	Sidebar collapsed	側欄已收起
+AiCtlSidebarShown	IDS_AI_CTL_SIDEBAR_SHOWN	4977	侧栏已展开	Sidebar expanded	側欄已展開
+AiCtlSortAsc	IDS_AI_CTL_SORT_ASC	4978	从小到大	ascending	從小到大
+AiCtlSortCreated	IDS_AI_CTL_SORT_CREATED	4979	创建日期	date created	建立日期
+AiCtlSortDesc	IDS_AI_CTL_SORT_DESC	4980	从大到小	descending	從大到小
+AiCtlSortModified	IDS_AI_CTL_SORT_MODIFIED	4981	修改日期	date modified	修改日期
+AiCtlSortName	IDS_AI_CTL_SORT_NAME	4982	名称	name	名稱
+AiCtlSortSize	IDS_AI_CTL_SORT_SIZE	4983	大小	size	大小
+AiCtlSortType	IDS_AI_CTL_SORT_TYPE	4984	类型	type	類型
+AiCtlStepFavBar	IDS_AI_CTL_STEP_FAV_BAR	4985	收藏栏	Favorites bar	收藏列
+AiCtlStepFavorite	IDS_AI_CTL_STEP_FAVORITE	4986	加到收藏夹	Add to favorites	加到收藏夾
+AiCtlStepGroup	IDS_AI_CTL_STEP_GROUP	4987	分组	Group by	分組
+AiCtlStepLayout	IDS_AI_CTL_STEP_LAYOUT	4988	切换布局	Change layout	切換版面
+AiCtlStepMerge	IDS_AI_CTL_STEP_MERGE	4989	合并所有窗口	Merge all windows	合併所有視窗
+AiCtlStepNewWindow	IDS_AI_CTL_STEP_NEW_WINDOW	4990	新建窗口	New window	新增視窗
+AiCtlStepOpen	IDS_AI_CTL_STEP_OPEN	4991	打开	Open	打開
+AiCtlStepOpenIn	IDS_AI_CTL_STEP_OPEN_IN	4992	在{pane}打开	Open in the {pane}	在{pane}打開
+AiCtlStepOverview	IDS_AI_CTL_STEP_OVERVIEW	4993	窗口总览	Window overview	視窗總覽
+AiCtlStepSidebar	IDS_AI_CTL_STEP_SIDEBAR	4994	侧栏	Sidebar	側欄
+AiCtlStepSort	IDS_AI_CTL_STEP_SORT	4995	排序	Sort	排序
+AiCtlStepTabToWindow	IDS_AI_CTL_STEP_TAB_TO_WINDOW	4996	标签页移到新窗口	Move tab to a new window	分頁移到新視窗
+AiCtlStepTag	IDS_AI_CTL_STEP_TAG	4997	打标签	Tag	加標籤
+AiCtlStepTray	IDS_AI_CTL_STEP_TRAY	4998	放进暂存托盘	Put on the tray	放進暫存托盤
+AiCtlStepView	IDS_AI_CTL_STEP_VIEW	4999	切换视图	Change view	切換檢視
+AiCtlStepsLabel	IDS_AI_CTL_STEPS_LABEL	5000	做了 {n} 件事	Made {n} changes	做了 {n} 件事
+AiCtlStepsLayout	IDS_AI_CTL_STEPS_LAYOUT	5001	调整了布局 · {n} 步	Changed the layout · {n} steps	調整了版面 · {n} 步
+AiCtlStepsWindows	IDS_AI_CTL_STEPS_WINDOWS	5002	开了 {n} 个窗口	Opened {n} windows	開了 {n} 個視窗
+AiCtlTagNew	IDS_AI_CTL_TAG_NEW	5003	{name}（新建）	{name} (new)	{name}（新增）
+AiCtlTagNewDone	IDS_AI_CTL_TAG_NEW_DONE	5004	新建标签「{name}」	New tag “{name}”	新增標籤「{name}」
+AiCtlTagOn	IDS_AI_CTL_TAG_ON	5005	打在 {n} 项上	on {n} items	加在 {n} 項上
+AiCtlThisPc	IDS_AI_CTL_THIS_PC	5006	此电脑	This PC	本機
+AiCtlTrayNow	IDS_AI_CTL_TRAY_NOW	5007	托盘里现在有 {n} 项	{n} items on the tray now	托盤裡現在有 {n} 項
+AiCtlUndoAll	IDS_AI_CTL_UNDO_ALL	5008	全部撤销	Undo all	全部復原
+AiCtlUndoneAll	IDS_AI_CTL_UNDONE_ALL	5009	都恢复了	Everything is back	都恢復了
+AiCtlUndoneKind	IDS_AI_CTL_UNDONE_KIND	5010	{kinds}恢复了	{kinds} restored	{kinds}恢復了
+AiCtlUndoneKinds	IDS_AI_CTL_UNDONE_KINDS	5011	{kinds}都恢复了	{kinds} all restored	{kinds}都恢復了
+AiCtlUndoneLayout	IDS_AI_CTL_UNDONE_LAYOUT	5012	已恢复成{layout}	Back to {layout}	已恢復成{layout}
+AiCtlUndoneOpen	IDS_AI_CTL_UNDONE_OPEN	5013	已回到原来的文件夹	Back to the previous folders	已回到原來的資料夾
+AiCtlViewContent	IDS_AI_CTL_VIEW_CONTENT	5014	内容	Content	內容
+AiCtlViewDetails	IDS_AI_CTL_VIEW_DETAILS	5015	详细信息	Details	詳細資料
+AiCtlViewDone	IDS_AI_CTL_VIEW_DONE	5016	{view}	{view}	{view}
+AiCtlViewL	IDS_AI_CTL_VIEW_L	5017	大图标	Large icons	大圖示
+AiCtlViewList	IDS_AI_CTL_VIEW_LIST	5018	列表	List	清單
+AiCtlViewM	IDS_AI_CTL_VIEW_M	5019	中等图标	Medium icons	中圖示
+AiCtlViewS	IDS_AI_CTL_VIEW_S	5020	小图标	Small icons	小圖示
+AiCtlViewTiles	IDS_AI_CTL_VIEW_TILES	5021	平铺	Tiles	並排
+AiCtlViewXl	IDS_AI_CTL_VIEW_XL	5022	超大图标	Extra large icons	超大圖示

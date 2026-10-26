@@ -73,6 +73,17 @@ enum class AiIcon : uint8_t {
     Install,
     Temp,
     Trash,
+    // Third batch (plans/ai/Pulse_AI助手_第三批_操控Pulse与语音.html).
+    Split,
+    NewWindow,
+    Desktop,
+    Tray,
+    Star,
+    Keyboard,
+    Tiles,
+    Mic,
+    Monitor,
+    Rocket,
     Count
 };
 

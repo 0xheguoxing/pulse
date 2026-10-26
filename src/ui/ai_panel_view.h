@@ -254,6 +254,19 @@ struct AiResultLine {
     std::wstring before, bold, after;
 };
 
+// Third batch. A result card's 快捷键 row: what was done and the user's own
+// keys for it (key caps, modifiers first).
+struct AiKeyRowView {
+    std::wstring label;               // 左右分屏
+    std::vector<std::wstring> caps;   // Ctrl / Alt / 2
+};
+
+// A result card's 设置 row: name, the old value (struck through) → the new
+// one (accent chip), an amber tag after the name (影响系统).
+struct AiChangeView {
+    std::wstring name, from, to, tag;
+};
+
 // 本地磁盘 (C:) card (second batch, flow D). Numbers in GB; the used and
 // free figures count from *_from to their value over .9 s from count_ms.
 struct AiDiskRowView {
@@ -470,6 +483,14 @@ struct AiBlockView {
     AiDupView dup;
     std::wstring hint1;
     AiIcon hint1_icon = AiIcon::Undo;
+    // Third batch. Result: `keys` (.r-tip, hidden once undone), `changes`
+    // (.r-chg; undone: the old value comes back, the new one is struck) and
+    // `warn` (.r-warn, an amber icon and text2). Error: `pills` (.deny-l)
+    // under the hint, whose icon is `hint_icon` when `pills` is not empty.
+    std::vector<AiKeyRowView> keys;
+    std::vector<AiChangeView> changes;
+    std::wstring warn;
+    std::vector<std::wstring> pills;
 };
 
 // The status bar chip (left end): "✦ AI" plus what the assistant is doing.
@@ -656,6 +677,7 @@ private:
         IDWriteTextFormat* num15 = nullptr;     // 15 semibold (the cleanup total)
         IDWriteTextFormat* num14 = nullptr;     // 14 semibold (the disk card's free figure)
         IDWriteTextFormat* small11 = nullptr;   // 11 (sub lines, the small legend)
+        IDWriteTextFormat* small11b = nullptr;  // 11 semibold (key caps)
         void Release();
     };
 

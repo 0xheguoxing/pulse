@@ -265,6 +265,49 @@ constexpr IconPart k_trash[] = {
     {"M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3", 0, 0x000000u, 1.6f, 1.0f},
 };
 
+constexpr IconPart k_split[] = {
+    {"M5.5 5h13a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-13a2 2 0 0 1 -2 -2v-10a2 2 0 0 1 2 -2Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M12 5v14", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_newwin[] = {
+    {"M5.5 8h8.5a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h-8.5a2 2 0 0 1 -2 -2v-7a2 2 0 0 1 2 -2Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M8 8V6a1.5 1.5 0 0 1 1.5-1.5H19A1.5 1.5 0 0 1 20.5 6v8a1.5 1.5 0 0 1-1.5 1.5h-3", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_desktop[] = {
+    {"M4.5 4.5h15a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1 -1.5 1.5h-15a1.5 1.5 0 0 1 -1.5 -1.5v-9a1.5 1.5 0 0 1 1.5 -1.5Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M9 20h6M12 16.5V20", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_tray[] = {
+    {"M4 13.5l2.2-7.2A1.8 1.8 0 0 1 7.9 5h8.2a1.8 1.8 0 0 1 1.7 1.3l2.2 7.2V18a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M4 13.5h4.5l1 2h5l1-2H20", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_star[] = {
+    {"M12 3.5l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.8l-5.2 2.7 1-5.8L3.6 9.6l5.8-.8z", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_kbd[] = {
+    {"M5 6.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-7a2 2 0 0 1 2 -2Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M7 10h.01M10.3 10h.01M13.7 10h.01M17 10h.01M8 14h8", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_tiles[] = {
+    {"M4.5 5h5a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1 -1.5 1.5h-5a1.5 1.5 0 0 1 -1.5 -1.5v-3a1.5 1.5 0 0 1 1.5 -1.5Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M14.5 5h5a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1 -1.5 1.5h-5a1.5 1.5 0 0 1 -1.5 -1.5v-3a1.5 1.5 0 0 1 1.5 -1.5Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M4.5 13h5a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1 -1.5 1.5h-5a1.5 1.5 0 0 1 -1.5 -1.5v-3a1.5 1.5 0 0 1 1.5 -1.5Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M14.5 13h5a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1 -1.5 1.5h-5a1.5 1.5 0 0 1 -1.5 -1.5v-3a1.5 1.5 0 0 1 1.5 -1.5Z", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_mic[] = {
+    {"M12 3.5h0a3 3 0 0 1 3 3v5a3 3 0 0 1 -3 3h-0a3 3 0 0 1 -3 -3v-5a3 3 0 0 1 3 -3Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_monitor[] = {
+    {"M5.5 4.5h13a2 2 0 0 1 2 2v7.5a2 2 0 0 1 -2 2h-13a2 2 0 0 1 -2 -2v-7.5a2 2 0 0 1 2 -2Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M9 20h6M12 16v4", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_rocket[] = {
+    {"M12 3.5c3.4 2 5 5.4 5 9.4l-2.2 3.1H9.2L7 12.9c0-4 1.6-7.4 5-9.4z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M10.3 10A1.7 1.7 0 1 0 13.7 10A1.7 1.7 0 1 0 10.3 10Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M10 19.5h4", 0, 0x000000u, 1.6f, 1.0f},
+};
+
 constexpr IconDef kIcons[] = {
     {k_spark, std::size(k_spark)},
     {k_folder, std::size(k_folder)},
@@ -326,6 +369,16 @@ constexpr IconDef kIcons[] = {
     {k_install, std::size(k_install)},
     {k_temp, std::size(k_temp)},
     {k_trash, std::size(k_trash)},
+    {k_split, std::size(k_split)},
+    {k_newwin, std::size(k_newwin)},
+    {k_desktop, std::size(k_desktop)},
+    {k_tray, std::size(k_tray)},
+    {k_star, std::size(k_star)},
+    {k_kbd, std::size(k_kbd)},
+    {k_tiles, std::size(k_tiles)},
+    {k_mic, std::size(k_mic)},
+    {k_monitor, std::size(k_monitor)},
+    {k_rocket, std::size(k_rocket)},
 };
 
 static_assert(std::size(kIcons) == static_cast<size_t>(AiIcon::Count), "one table entry per AiIcon");

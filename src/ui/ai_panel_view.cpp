@@ -56,6 +56,7 @@ void AiPanelView::Formats::Release() {
     SafeRelease(num15);
     SafeRelease(num14);
     SafeRelease(small11);
+    SafeRelease(small11b);
     scale = 0.0f;
 }
 
@@ -164,6 +165,7 @@ void AiPanelView::EnsureFormats(Compositor* compositor, float scale) {
     make(15.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, formats_.num15);
     make(14.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, formats_.num14);
     make(11.0f, DWRITE_FONT_WEIGHT_NORMAL, formats_.small11);
+    make(11.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, formats_.small11b);
     {
         typography::TextFormatSpec spec;
         spec.role = typography::FontRole::Monospace;
