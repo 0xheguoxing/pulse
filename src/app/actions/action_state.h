@@ -43,6 +43,10 @@ json::Value StateSnapshot(AppState& s);
 // The visible panes of a layout tab numbered the way the user names them:
 // left to right, then top to bottom (pane 1 is the first).
 std::vector<Pane*> PanesOnScreen(const LayoutTab& layout);
+// A "pane" argument: absent or "focused", 1-4 (screen order), "target" or
+// "all" (every pane on screen, in screen order). False with a short English
+// `error` when it names no pane.
+bool PanesForArg(AppState& s, const json::Value* pane, std::vector<Pane*>& out, std::string& error);
 
 // ---- Selector -------------------------------------------------------------
 

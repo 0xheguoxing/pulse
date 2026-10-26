@@ -45,6 +45,9 @@ struct ActionView {
     // Non-empty: pick one. A row with a command runs that menu command; a
     // row with command 0 runs RunAction(index, its position).
     std::vector<ui::FluentMenuItem> choices;
+    // False: the assistant's only (it takes arguments the palette has no
+    // field for, and another row already does it by hand).
+    bool palette = true;
 };
 
 // Every action the palette offers, as of now.
@@ -56,6 +59,9 @@ bool RunAction(AppState& s, int index, int choice = -1);
 int ActionOfMenuCommand(AppState& s, int command);
 
 // ---- The palette's rows (pure; the selftests feed made-up views) ----------
+// How well `needle` names the view: 6 whole title, 5 title start, 4 / 3
+// pinyin from the start, 2 contains, 1 a choice or the id's words; 0 none.
+int ActionMatchTier(const ActionView& view, std::wstring_view needle);
 enum class PaletteMode {
     Commands,  // ">": every match, grouped under headings
     Mixed,     // commands before files: the best three, no headings

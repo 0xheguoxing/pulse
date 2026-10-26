@@ -272,6 +272,7 @@ struct AiTaskSumView {
 // 任务完成: one line per step (warn = amber, a step that skipped items).
 struct AiResultLine {
     bool warn = false;
+    bool mute = false;                // P3: a step that was not done (text3, a dash)
     std::wstring before, bold, after;
 };
 
@@ -280,6 +281,9 @@ struct AiResultLine {
 struct AiKeyRowView {
     std::wstring label;               // 左右分屏
     std::vector<std::wstring> caps;   // Ctrl / Alt / 2
+    // P3: no key for it: the caps are what to type in the command palette
+    // (>详情面板), drawn as accent pills; a row of only these shows a search icon.
+    bool palette = false;
 };
 
 // A result card's 设置 row: name, the old value (struck through) → the new
@@ -517,6 +521,12 @@ struct AiBlockView {
     // after the buttons in any tone.
     std::vector<AiCheckView> checklist;
     std::wstring note;
+    // P3 (plans/ai/P3_AI接入动作表.html). Result: `partial` some step failed
+    // (the amber warn icon). Confirm: `cf_icon` the tile's icon, `tag_amber`
+    // the tag in amber (外部效果), `file` + `file_note` the .cf-file row.
+    bool partial = false;
+    AiIcon cf_icon = AiIcon::Shield;
+    bool tag_amber = false;
 };
 
 // 语音输入: the composer while the microphone listens, and the mic button.

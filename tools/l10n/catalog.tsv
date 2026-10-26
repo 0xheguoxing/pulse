@@ -3969,3 +3969,66 @@ ActProject	IDS_ACT_PROJECT	5168	跳到项目	Go to a project	跳到專案
 ActQuickPreview	IDS_ACT_QUICK_PREVIEW	5169	快速预览	Quick Look	快速預覽
 ActMapDrive	IDS_ACT_MAP_DRIVE	5170	映射网络驱动器	Map network drive	對應網路磁碟機
 ActOpenSettings	IDS_ACT_OPEN_SETTINGS	5171	打开设置	Open settings	開啟設定
+ActGoAddress	IDS_ACT_GO_ADDRESS	5172	转到地址栏	Go to the address bar	前往網址列
+ActOpenSelected	IDS_ACT_OPEN_SELECTED	5173	打开所选项目	Open the selected items	開啟所選項目
+ActPaneToWindow	IDS_ACT_PANE_TO_WINDOW	5174	把这一栏移到新窗口	Move this pane to a new window	將這一欄移至新視窗
+ActSelectNone	IDS_ACT_SELECT_NONE	5175	取消选择	Select none	取消選取
+ActToggleTag	IDS_ACT_TOGGLE_TAG	5176	添加或去掉标签	Add or remove a tag	加入或移除標籤
+ActAddFavorite	IDS_ACT_ADD_FAVORITE	5177	加入收藏夹	Add to favorites	加入收藏夾
+ActSelectWhere	IDS_ACT_SELECT_WHERE	5178	按条件选择	Select by conditions	依條件選取
+ActReadSettings	IDS_ACT_READ_SETTINGS	5179	查看设置	Read settings	查看設定
+ActWhyNoTags	IDS_ACT_WHY_NO_TAGS	5180	还没有标签	No tags yet	還沒有標籤
+AiActStepFind	IDS_AI_ACT_STEP_FIND	5181	找功能	Find a feature	找功能
+AiActFound	IDS_AI_ACT_FOUND	5182	找到 {n} 个：{names}	Found {n}: {names}	找到 {n} 個：{names}
+AiActFoundNone	IDS_AI_ACT_FOUND_NONE	5183	没找到相关功能	Nothing matched	沒找到相關功能
+AiActStepSelect	IDS_AI_ACT_STEP_SELECT	5184	选中	Select	選取
+AiActLineSelect	IDS_AI_ACT_LINE_SELECT	5185	选中了 {items}	Selected {items}	選取了 {items}
+AiActLineSelectIn	IDS_AI_ACT_LINE_SELECT_IN	5186	在{pane}选中了 {items}	Selected {items} in the {pane}	在{pane}選取了 {items}
+AiActLineClear	IDS_AI_ACT_LINE_CLEAR	5187	取消了选择	Cleared the selection	取消了選取
+AiActLineValue	IDS_AI_ACT_LINE_VALUE	5188	{title} {from} → {to}	{title} {from} → {to}	{title} {from} → {to}
+AiActPalette	IDS_AI_ACT_PALETTE	5189	也可以自己输入	Or type	也可以自己輸入
+AiActPartial	IDS_AI_ACT_PARTIAL	5190	做好了 {ok} 件，{bad} 件没做成	{ok} done, {bad} didn't work	做好了 {ok} 件，{bad} 件沒做成
+AiActPartialSub	IDS_AI_ACT_PARTIAL_SUB	5191	停在没做成的那一步，后面的没有继续	Stopped at the step that didn't work; the rest wasn't done	停在沒做成的那一步，後面的沒有繼續
+AiActNotRun	IDS_AI_ACT_NOT_RUN	5192	{title}：没有做	{title}: not done	{title}：沒有做
+AiActFailLine	IDS_AI_ACT_FAIL_LINE	5193	{title}：{why}	{title}: {why}	{title}：{why}
+AiActWhyNoFolder	IDS_AI_ACT_WHY_NO_FOLDER	5194	找不到这个文件夹	Can't find this folder	找不到這個資料夾
+AiActWhyNoFile	IDS_AI_ACT_WHY_NO_FILE	5195	找不到这个文件	Can't find this file	找不到這個檔案
+AiActWhyUnknown	IDS_AI_ACT_WHY_UNKNOWN	5196	Pulse 里没有这个功能	Pulse has no such feature	Pulse 裡沒有這個功能
+AiActWhyLater	IDS_AI_ACT_WHY_LATER	5197	移动、改名和删除要先给你看计划	Moves, renames and deletes show you a plan first	移動、重新命名和刪除要先給你看計畫
+AiActWhyFailed	IDS_AI_ACT_WHY_FAILED	5198	Pulse 没能完成	Pulse couldn't do it	Pulse 沒能完成
+AiActWhyNoItems	IDS_AI_ACT_WHY_NO_ITEMS	5199	没有可用的项目	No items to use	沒有可用的項目
+AiActWhyOneWindow	IDS_AI_ACT_WHY_ONE_WINDOW	5200	只有一个窗口	There's only one window	只有一個視窗
+AiActWhyNoMatch	IDS_AI_ACT_WHY_NO_MATCH	5201	没有符合条件的项目	No items match	沒有符合條件的項目
+AiActWhyLoading	IDS_AI_ACT_WHY_LOADING	5202	这一栏还在加载	This pane is still loading	這一欄還在載入
+AiActWhyLocked	IDS_AI_ACT_WHY_LOCKED	5203	这一项只能你自己操作	Only you can do this	這一項只能你自己操作
+AiActWhyDeclined	IDS_AI_ACT_WHY_DECLINED	5204	你没有同意	You declined	你沒有同意
+AiActRunTitle	IDS_AI_ACT_RUN_TITLE	5205	运行这个程序？	Run this program?	執行這個程式？
+AiActRunSub	IDS_AI_ACT_RUN_SUB	5206	程序会在 Pulse 之外运行，Pulse 不知道它会改动什么，也无法撤销。	The program runs outside Pulse. Pulse can't tell what it will change and can't undo it.	程式會在 Pulse 之外執行，Pulse 不知道它會變更什麼，也無法復原。
+AiActRunDeny	IDS_AI_ACT_RUN_DENY	5207	不运行	Don't run	不執行
+AiActRunAccept	IDS_AI_ACT_RUN_ACCEPT	5208	运行	Run	執行
+AiActConfirmHint	IDS_AI_ACT_CONFIRM_HINT	5209	这类操作每次都会问你，不能设为始终允许	Pulse asks every time for this; it can't be always allowed	這類操作每次都會問你，不能設為一律允許
+AiActTagExternal	IDS_AI_ACT_TAG_EXTERNAL	5210	外部效果	Outside Pulse	外部效果
+AiActSysTitle	IDS_AI_ACT_SYS_TITLE	5211	{title}？	{title}?	{title}？
+AiActSysSub	IDS_AI_ACT_SYS_SUB	5212	这会改动 Windows 的设置，不只是 Pulse。	This changes Windows settings, not only Pulse.	這會變更 Windows 的設定，不只是 Pulse。
+AiActSysAccept	IDS_AI_ACT_SYS_ACCEPT	5213	继续	Continue	繼續
+AiActMoreSteps	IDS_AI_ACT_MORE_STEPS	5214	确认后会和另外 {n} 步一起做	Done together with {n} more steps once you confirm	確認後會和另外 {n} 步一起做
+AiActConfirmedRun	IDS_AI_ACT_CONFIRMED_RUN	5215	已运行 {name}	Ran {name}	已執行 {name}
+AiActConfirmedSys	IDS_AI_ACT_CONFIRMED_SYS	5216	已同意：{title}	Allowed: {title}	已同意：{title}
+AiActDeniedRun	IDS_AI_ACT_DENIED_RUN	5217	没有运行 {name}	Didn't run {name}	沒有執行 {name}
+AiActDenied	IDS_AI_ACT_DENIED	5218	没有做：{title}	Not done: {title}	沒有做：{title}
+AiActLineOpened	IDS_AI_ACT_LINE_OPENED	5219	打开了 {name}	Opened {name}	開啟了 {name}
+AiActLineNewFolder	IDS_AI_ACT_LINE_NEW_FOLDER	5220	新建了文件夹 {name}	Made the folder {name}	新增了資料夾 {name}
+AiActAllPanes	IDS_AI_ACT_ALL_PANES	5221	全部 {n} 栏	all {n} panes	全部 {n} 欄
+AiActLineLayout	IDS_AI_ACT_LINE_LAYOUT	5222	布局 {from} → {to}：{panes}	Layout {from} → {to}: {panes}	版面 {from} → {to}：{panes}
+AiActLineLayoutTo	IDS_AI_ACT_LINE_LAYOUT_TO	5223	布局 {to}：{panes}	Layout {to}: {panes}	版面 {to}：{panes}
+AiActResSub	IDS_AI_ACT_RES_SUB	5224	都只改 Pulse 的界面和整理信息，文件没动	Only Pulse's view and organizing changed; no files were touched	都只改 Pulse 的介面和整理資訊，檔案沒動
+AiActLineSort	IDS_AI_ACT_LINE_SORT	5225	按 {by} 排，{dir}	Sorted by {by}, {dir}	按 {by} 排，{dir}
+AiActLineSortAll	IDS_AI_ACT_LINE_SORT_ALL	5226	{panes}都按 {by} 排，{dir}	{panes} sorted by {by}, {dir}	{panes}都按 {by} 排，{dir}
+AiActBothPanes	IDS_AI_ACT_BOTH_PANES	5227	两栏	Both panes	兩欄
+AiActSortNew	IDS_AI_ACT_SORT_NEW	5228	新的在前	newest first	新的在前
+AiActSortOld	IDS_AI_ACT_SORT_OLD	5229	旧的在前	oldest first	舊的在前
+AiActSortBig	IDS_AI_ACT_SORT_BIG	5230	大的在前	largest first	大的在前
+AiActSortSmall	IDS_AI_ACT_SORT_SMALL	5231	小的在前	smallest first	小的在前
+AiActSortAZ	IDS_AI_ACT_SORT_AZ	5232	A → Z	A → Z	A → Z
+AiActSortZA	IDS_AI_ACT_SORT_ZA	5233	Z → A	Z → A	Z → A
+AiActNoteOne	IDS_AI_ACT_NOTE_ONE	5234	你撤销了这件事	You undid this	你復原了這件事

@@ -48,6 +48,8 @@
 #include "window_overview_ui.h"
 #include "window_placement.h"
 #include "zip_compress.h"
+#include "actions/action_params.h"
+#include "actions/action_policy.h"
 #include "actions/action_settings.h"
 #include "actions/action_state.h"
 #include "../common/path_utils.h"
@@ -349,35 +351,20 @@ const json::Value& Tools() {
  "parameters":{"type":"object","properties":{
    "folders":{"type":"array","items":{"type":"string"},"description":"Known folders downloads, pictures, desktop, documents, videos, music, or full folder paths; empty for the current folder. When the user names 下载 / 图片 / 桌面 / 文档 / 视频 / 音乐, pass the known folder name even if the open folder has the same name, unless they point at the open folder (这里 / 当前文件夹)"},
    "prefer":{"type":"string","enum":["earliest","newest"],"description":"Which copy the last rule keeps (default earliest)"}}}}},
-{"type":"function","function":{"name":"control_pulse",
- "description":"Changes Pulse itself at once, without asking: splits the window into panes and opens folders in them, opens new windows, moves the tab or one pane to a window of its own, merges windows, opens the window overview, switches the view, sort or grouping of the active folder, collapses or expands the sidebar, shows or hides the favorites bar, and organizes items inside Pulse (staging tray, tags, favorites). Files are never moved, changed or deleted. Pulse shows every action as a step and one result card with an Undo button (all actions of the call undo together) and the user's own shortcuts for what was done. Returns each action's outcome.",
+)JSON" R"JSON({"type":"function","function":{"name":"find_actions",
+ "description":"Looks up Pulse's actions (its menu commands, panels, view options, settings) for run_actions, when what the user wants is not in run_actions' common list. Matches words in Chinese, pinyin or English. Returns up to 8, best first: id, title, args, the current value (now), whether it can run now (enabled false with why), its risk, and the user's shortcut. domain settings lists every setting with its key, values and current value.",
  "parameters":{"type":"object","properties":{
-   "actions":{"type":"array","description":"The actions in order (at most 12)","items":{"type":"object","properties":{
-     "do":{"type":"string","enum":["layout","open","new_window","tab_to_window","pane_to_window","merge_windows","window_overview","view","sort","group","sidebar","favorites_bar","tray","tag","favorite"]},
-     "layout":{"type":"string","enum":["single","two_vertical","two_horizontal","three","four"],"description":"layout: two_vertical = left | right, two_horizontal = top / bottom"},
-     "panes":{"type":"array","items":{"type":"string"},"description":"layout: a folder for each pane in order (left or top first); \"\" leaves a pane as it is"},
-     "path":{"type":"string","description":"open / new_window: a folder: absolute, a drive such as D:, or a known folder (Downloads, Desktop, Documents, Pictures, Videos, Music). new_window without it opens the current folder"},
-     "pane":{"type":"integer","description":"open / pane_to_window: the pane, 1 = left or top; default the focused pane"},
-     "view":{"type":"string","enum":["extra_large_icons","large_icons","medium_icons","small_icons","list","details","tiles","content"]},
-     "sort":{"type":"string","enum":["name","modified","type","size","created"]},
-     "desc":{"type":"boolean","description":"sort: newest or largest first (default true for modified, size and created)"},
-     "group":{"type":"string","enum":["none","name","date","type","size"]},
-     "show":{"type":"boolean","description":"sidebar: true expands it, false collapses it; favorites_bar: show or hide"},
-     "items":{"type":"array","items":{"type":"string"},"description":"tray / tag / favorite: full paths; omit for the items selected in the active tab (favorite: the current folder)"},
-     "tag":{"type":"string","description":"tag: the tag's name; made if it does not exist"}},
-    "required":["do"]}}},
-  "required":["actions"]}}},
-{"type":"function","function":{"name":"read_settings",
- "description":"Returns the current value of every Pulse setting the assistant may change (ids as in change_settings).",
- "parameters":{"type":"object","properties":{}}}},
-{"type":"function","function":{"name":"change_settings",
- "description":"Changes Pulse settings at once, without asking (the user sees old -> new on a card and can undo it). Switches take true/false; the others one of the values listed. Settings: appearance: theme light|dark|system, window_effect none|acrylic|mica|mica_alt, text_rendering auto|sharp|smooth, font_size small|default|large|larger, language system|zh-CN|zh-TW|en-US, menu_acrylic. File list: row_height compact|standard|roomy, click_to_open double|single, name_highlight hover|always (single-click only), hover_select (single-click only), item_checkboxes, blank_double_click nothing|back|up, show_hidden, show_protected (system files), folders_first top|follow|mixed, smart_dates, zebra_rows, size_bars, tag_name_color, selection_outline, thumbnail_app_badges, alias_mark, mtime_marks off|dots|bars|text, mtime_range today|3|7|30, mtime_dim_older, mtime_bold_today, mtime_folders, mtime_other_views, mtime_flash, onedrive_status, svn_status. Tabs and windows: startup_open last_tabs|default_location, new_tab_open current|default_location, external_open smart|tab|window, vertical_tabs, pinned_tab_names, double_click_closes_tab, close_window_with_last_tab. Startup and integration: launch_at_signin (affects Windows), start_in_tray, keep_running, tray_icon always|background|never, explorer_tag_menu (affects Windows), open_folders_with_pulse (makes Pulse the default file manager for folders, drives, This PC and Win+E; affects Windows). File operations: staging_icon_size small|standard|large, staging_hide_when_empty, change_tracking, change_days today|3|7, lan_discovery, network_recent, hidden_shares, confirm_delete (can only be turned on). Search: global_search (affects Windows), pinyin_search. Locked, only the user changes them in Settings: confirm_delete off, assistant_permissions, always_allow, connections (and API keys); asking for one shows the user why.",
+   "query":{"type":"string","description":"A few words naming the action, e.g. 详情面板 文件夹大小"},
+   "domain":{"type":"string","enum":["settings"],"description":"settings: list all settings instead of searching"}}}}},
+{"type":"function","function":{"name":"run_actions",
+ "description":"Does things in Pulse itself, in order, as one undo group (at most 12 steps): panes and the folders in them, windows, tabs, view, sort, grouping, panels, selection, the staging tray, tags, favorites, new folders, opening files, settings, and any action find_actions returns. View, organize and settings steps act at once: Pulse shows each step and one result card with old -> new, Undo and the user's own shortcuts. Opening a program or script and system actions show the user a confirm card first (Pulse asks, not you). Files are never moved, renamed or deleted here: use organize_files, rename_files, run_task, find_cleanup or find_duplicates. Locked settings show the user why. Stops at the first step that fails; earlier steps stay done. Returns each step's outcome.\nCommon actions (args): window.layout {layout: single|side_by_side|stacked|three|four, panes: [a folder per pane, left or top first; \"\" leaves one]}, nav.go {path, pane}, window.new {path}, tab.new {path}, tab.close, tab.to_window, pane.to_window {pane}, window.merge, window.overview, nav.back, nav.up, view.mode {view: extra_large_icons|large_icons|medium_icons|small_icons|list|details|tiles|content, pane}, view.sort {by: name|modified|type|size|created, desc, pane}, view.group {by: none|name|date|type|size, pane}, sidebar.toggle {show}, favbar.toggle {show}, details.toggle {show}, select.items {pane, name, extensions, items, type: folder|document|image|video|audio|archive|code, modified: today|yesterday|this_week|last_7_days|this_month|last_month|{after, before}, size: {larger_than, smaller_than}, tag, selected, mode: replace|add|remove}, select.all, select.clear, tray.add {items}, tag.toggle {tag, items} (a new tag is made), fav.add {path or items}, file.new_folder {name} (in the open folder), nav.open {path} (a file or program), settings.set {key, value}, edit.undo. pane: 1-4 in screen order as in get_state, focused, target, or all (view / sort / group). Paths: absolute, a drive (D:) or a known folder (Downloads, Desktop, Documents, Pictures, Videos, Music). items: full paths; omitted = the selection.\nSettings (settings.set key and values; switches take true/false): theme light|dark|system, window_effect none|acrylic|mica|mica_alt, text_rendering auto|sharp|smooth, font_size small|default|large|larger, language system|zh-CN|zh-TW|en-US, menu_acrylic, row_height compact|standard|roomy, click_to_open double|single, name_highlight hover|always, hover_select, item_checkboxes, blank_double_click nothing|back|up, show_hidden, show_protected, folders_first top|follow|mixed, smart_dates, zebra_rows, size_bars, tag_name_color, selection_outline, thumbnail_app_badges, alias_mark, mtime_marks off|dots|bars|text, mtime_range today|3|7|30, mtime_dim_older, mtime_bold_today, mtime_folders, mtime_other_views, mtime_flash, onedrive_status, svn_status, startup_open last_tabs|default_location, new_tab_open current|default_location, external_open smart|tab|window, vertical_tabs, pinned_tab_names, double_click_closes_tab, close_window_with_last_tab, launch_at_signin (Windows), start_in_tray, keep_running, tray_icon always|background|never, explorer_tag_menu (Windows), open_folders_with_pulse (default file manager; Windows), staging_icon_size small|standard|large, staging_hide_when_empty, change_tracking, change_days today|3|7, lan_discovery, network_recent, hidden_shares, confirm_delete (can only be turned on), global_search (Windows), pinyin_search. Locked (only the user, in Settings): confirm_delete off, assistant_permissions, always_allow, connections, api_key.",
  "parameters":{"type":"object","properties":{
-   "changes":{"type":"array","description":"The settings to change","items":{"type":"object","properties":{
-     "id":{"type":"string"},
-     "value":{"description":"true / false for a switch, else one of the setting's values"}},
-    "required":["id","value"]}}},
-  "required":["changes"]}}}
+   "steps":{"type":"array","description":"The steps in order (at most 12)","items":{"type":"object","properties":{
+     "action":{"type":"string","description":"An action id, e.g. view.sort"},
+     "args":{"type":"object","description":"The action's arguments"},
+     "wait":{"type":"string","enum":["listing_loaded","op_finished","preview_open"],"description":"Wait for this before the step (a selection waits for its folder by itself)"}},
+    "required":["action"]}}},
+  "required":["steps"]}}}
 ])JSON";
         json::Value v;
         json::Parse(kTools, v);
@@ -432,20 +419,20 @@ std::string SystemPrompt() {
          "the card's numbers. Afterwards say in one or two sentences how many copies went to the Recycle Bin, name a "
          "group where all copies stayed, and that the copies still take space until the user clicks "
          "\xE6\xB0\xB8\xE4\xB9\x85\xE5\x88\xA0\xE9\x99\xA4\xE8\xBF\x99\xE4\xBA\x9B on the card.\n"
-         "- To change Pulse itself (split into panes and open folders in them, new windows, move a tab or pane to its own "
-         "window, merge windows, view, sort, grouping, sidebar, favorites bar) or to put items on the staging tray, tag them "
-         "or add them to favorites, call control_pulse once with every action in order. For left/right or top/bottom "
-         "folders use layout with panes. It acts at once (the user undoes it on the card, which also shows their "
-         "shortcuts), so never ask for confirmation first and never list the shortcuts. Afterwards say in one short "
-         "sentence what changed and, when useful, how to use it (e.g. drag files between the panes); name actions that "
-         "failed and why. Never say something changed unless control_pulse returned it ok.\n"
-         "- To change a Pulse setting call change_settings with every change at once (read_settings first when you need "
-         "the current values). It acts at once and the card shows old -> new with Undo, so never ask first. Afterwards "
-         "say in one or two short sentences what is different now. Some settings are locked (the delete confirmation "
-         "cannot be turned off; your own permissions, the Always allow list, connections and API keys): still call "
-         "change_settings so Pulse shows the user why. Then, in two short sentences, say the step is there so a "
-         "misunderstanding of yours can never delete their files (or that you cannot give yourself permissions), and "
-         "that for moves and renames they can check Always allow on the confirm card. Add no other reasons.\n"
+         "- To change Pulse itself (panes and the folders in them, windows, tabs, view, sort, grouping, panels, "
+         "selection, the staging tray, tags, favorites, new folders, opening a file or program, settings) call "
+         "run_actions once with every step in order. Use its common actions; call find_actions first only for anything "
+         "else (domain settings gives current setting values). For left/right or top/bottom folders use window.layout "
+         "with panes; to pick files by name, type, date or size use select.items. View, organize and settings steps act "
+         "at once (the card shows old -> new, Undo and the user's shortcuts), so never ask for confirmation first and "
+         "never list the shortcuts; Pulse itself asks before running a program. Afterwards say in one short sentence "
+         "what changed and, when useful, how to use it (e.g. drag files between the panes). If a step failed, say which "
+         "and why and what was not done. Never say something changed unless run_actions returned it ok.\n"
+         "- Some settings are locked (the delete confirmation cannot be turned off; your own permissions, the Always "
+         "allow list, connections and API keys): still call run_actions with settings.set so Pulse shows the user why. "
+         "Then, in two short sentences, say the step is there so a misunderstanding of yours can never delete their "
+         "files (or that you cannot give yourself permissions), and that for moves and renames they can check Always "
+         "allow on the confirm card. Add no other reasons.\n"
          "- You cannot delete, overwrite or read file contents yourself; only find_cleanup and find_duplicates move "
          "files to the Recycle Bin, and only after the user accepts in Pulse.\n"
          "- Reply in the user's language and keep it brief. Format with short paragraphs, lists whose lines start "
@@ -5718,11 +5705,15 @@ void ToolFindDuplicates(AppState& s, const app::ai::ModelToolCall& call, const j
     });
 }
 
-// ------------------------------------------------------- control_pulse --
-// Third batch, flow F (plans/ai/Pulse_AI助手_第三批_操控Pulse与语音.html):
-// Pulse's layout, windows and view, and its own organizing (tray, tags,
-// favorites), done at once without asking. Each action is a step; the result
-// card undoes them all as one group and shows the user's own keys for them.
+// --------------------------------------------------------- run_actions --
+// P3 (plans/ai/P3_AI接入动作表.html), grown from the third batch's
+// control_pulse (flow F): the assistant runs actions of the action table
+// (actions/action_registry.h) by id, in order. View, organize and create
+// actions run at once; programs and system actions ask first (one confirm
+// card for the call); moving and deleting files stays with the flow tools
+// (P4). Each action is a step; the result card undoes the call as one group
+// and shows the user's own keys (or what to type in the palette). The call
+// stops at the first step that fails; what was done stays done and undoable.
 
 struct CtlRun {
     std::string call_id;
@@ -5747,6 +5738,13 @@ struct CtlRun {
     bool has_first_layout = false;
     std::wstring single_title;                // one plain action: its done line
     bool merged = false;
+    // P3.
+    bool locked = false, deny_delete = false;   // a locked setting: the lock card
+    std::wstring fail_title, fail_arg, fail_why; // the step that failed
+    std::vector<std::wstring> not_run;          // titles of the steps after it
+    size_t waited = SIZE_MAX;                   // the step whose wait is over
+    bool touched = false;                       // a file was made or opened: no 文件没动 line
+    size_t undo_steps = 0;                      // steps 撤销 reverses (a selection is not one)
 };
 
 const wchar_t* PresetName(app::LayoutPreset p) {
@@ -5760,10 +5758,10 @@ const wchar_t* PresetName(app::LayoutPreset p) {
     }
 }
 
+// The panes in screen order, numbered as get_state numbers them.
 std::vector<app::Pane*> ShownPanes(AppState& s) {
-    std::vector<app::Pane*> v;
-    if (Root(s)) Root(s)->CollectPanes(v);
-    return v;
+    if (!Root(s)) return {};
+    return app::actions::PanesOnScreen(LiveLayout(s));
 }
 
 bool PaneAlive(AppState& s, const app::Pane* p) {
@@ -5857,6 +5855,8 @@ struct CtlStep {
     std::string error;               // back to the model when !ok
     app::Pane* wait = nullptr;       // the sub is the item count once it loads
     bool skip = false;               // nothing to do (already so): no step
+    std::wstring why;                // !ok: the reason the card shows (找不到这个文件夹)
+    json::Value data;                // more for the model (a selection's report)
 };
 
 // Runs `fn` with `p` focused, then gives the focus back.
@@ -5886,10 +5886,12 @@ CtlStep CtlLayout(AppState& s, CtlRun& run, const json::Value& act) {
     CtlStep st;
     st.icon = ui::AiIcon::Split;
     st.title = Text(I::AiCtlStepLayout);
+    // get_state's names; control_pulse's old ones still work.
     static const struct { const char* id; app::LayoutPreset p; int key; } kMap[] = {
-        {"single", app::LayoutPreset::Single, 0},       {"two_vertical", app::LayoutPreset::TwoVertical, 1},
-        {"two_horizontal", app::LayoutPreset::TwoHorizontal, -1}, {"three", app::LayoutPreset::Three, 2},
-        {"four", app::LayoutPreset::FourGrid, 3},
+        {"single", app::LayoutPreset::Single, 0},       {"side_by_side", app::LayoutPreset::TwoVertical, 1},
+        {"stacked", app::LayoutPreset::TwoHorizontal, -1}, {"three", app::LayoutPreset::Three, 2},
+        {"four", app::LayoutPreset::FourGrid, 3},       {"two_vertical", app::LayoutPreset::TwoVertical, 1},
+        {"two_horizontal", app::LayoutPreset::TwoHorizontal, -1},
     };
     const std::string want = act.get_string("layout");
     const auto* m = std::find_if(std::begin(kMap), std::end(kMap), [&](const auto& e) { return want == e.id; });
@@ -5905,6 +5907,7 @@ CtlStep CtlLayout(AppState& s, CtlRun& run, const json::Value& act) {
         ApplyLayoutPreset(s, m->p);
         if (LayoutOf(s) != m->p) {
             st.error = "this tab cannot be split (a settings page)";
+            st.why = Text(I::AiActWhyFailed);
             return st;
         }
         if (before != app::LayoutPreset::Custom)
@@ -5929,10 +5932,12 @@ CtlStep CtlLayout(AppState& s, CtlRun& run, const json::Value& act) {
         std::vector<json::Value> opens;
         for (size_t i = 0; i < v->size() && i < 4; ++i) {
             if (!v->at(i).is_string() || v->at(i).as_string().empty()) continue;
+            json::Value args = json::Value::Object();
+            args.set("path", v->at(i).as_string());
+            args.set("pane", static_cast<uint64_t>(i + 1));
             json::Value o = json::Value::Object();
-            o.set("do", "open");
-            o.set("path", v->at(i).as_string());
-            o.set("pane", static_cast<uint64_t>(i + 1));
+            o.set("action", "nav.go");
+            o.set("args", std::move(args));
             opens.push_back(std::move(o));
         }
         run.queue.insert(run.queue.begin() + static_cast<std::ptrdiff_t>(run.index + 1), opens.begin(), opens.end());
@@ -5944,16 +5949,25 @@ CtlStep CtlOpen(AppState& s, CtlRun& run, const json::Value& act) {
     CtlStep st;
     st.icon = ui::AiIcon::Folder;
     const std::wstring path = CtlFolder(act.get_string("path"));
-    const auto panes = ShownPanes(s);
-    int64_t n = 0;
+    std::vector<app::Pane*> picked;
+    std::string pane_error;
     app::Pane* p = s.pane;
-    if (const json::Value* v = act.find("pane"); v && v->get_int(n, 1, 4) && static_cast<size_t>(n) <= panes.size())
-        p = panes[static_cast<size_t>(n - 1)];
+    if (const json::Value* v = act.find("pane"); v && !(v->is_string() && v->as_string() == "all")) {
+        if (!app::actions::PanesForArg(s, v, picked, pane_error)) {
+            st.title = Text(I::AiCtlStepOpen);
+            st.arg = json::Wide(act.get_string("path"));
+            st.error = pane_error;
+            st.why = Text(I::AiActWhyFailed);
+            return st;
+        }
+        p = picked.front();
+    }
     const std::wstring pos = PanePos(s, PaneIndex(s, p));
     st.title = pos.empty() ? Text(I::AiCtlStepOpen) : Fill(Text(I::AiCtlStepOpenIn), L"{pane}", pos);
     if (path.empty()) {
         st.arg = json::Wide(act.get_string("path"));
         st.error = "no such folder";
+        st.why = Text(I::AiActWhyNoFolder);
         return st;
     }
     st.arg = PlaceLabel(path);
@@ -5991,6 +6005,7 @@ CtlStep CtlNewWindow(AppState& s, CtlRun& run, const json::Value& act) {
         if (path.empty()) {
             st.arg = json::Wide(act.get_string("path"));
             st.error = "no such folder";
+            st.why = Text(I::AiActWhyNoFolder);
             return st;
         }
     } else if (const app::Tab* tab = ActiveTab(s)) {
@@ -6151,37 +6166,63 @@ void PlainDone(CtlRun& run, ui::AiResultLine ln) {
     AddLine(run, std::move(ln));
 }
 
+// The panes a view / sort / group step changes (the "pane" argument; "all"
+// is every pane on screen). False: st has the error.
+bool StepPanes(AppState& s, const json::Value& act, CtlStep& st, std::vector<app::Pane*>& out) {
+    std::string error;
+    if (app::actions::PanesForArg(s, act.find("pane"), out, error)) {
+        std::erase_if(out, [](app::Pane* p) { return !p || !p->ActiveTab(); });
+        if (!out.empty()) return true;
+        error = "no tab";
+    }
+    st.error = error;
+    st.why = Text(I::AiActWhyFailed);
+    return false;
+}
+
+// "全部 2 栏" after the argument when the step changed more than one pane.
+void AllPanesArg(CtlStep& st, size_t n) {
+    if (n > 1) st.arg += L" \u00B7 " + Fill(Text(I::AiActAllPanes), L"{n}", Num(n));
+}
+
 CtlStep CtlView(AppState& s, CtlRun& run, const json::Value& act) {
     CtlStep st;
     st.icon = ui::AiIcon::Rows;
     st.title = Text(I::AiCtlStepView);
     static const char* kIds[] = {"extra_large_icons", "large_icons", "medium_icons", "small_icons",
                                  "list", "details", "tiles", "content"};
-    const std::string want = act.get_string("view");
+    const std::string want = act.get_string("view", act.get_string("mode"));
     int idx = -1;
     for (int i = 0; i < 8; ++i)
         if (want == kIds[i]) idx = i;
-    app::Tab* tab = ActiveTab(s);
-    if (idx < 0 || !tab) {
-        st.error = idx < 0 ? "unknown view" : "no tab";
+    if (idx < 0) {
+        st.error = "unknown view";
+        st.why = Text(I::AiActWhyFailed);
         return st;
     }
+    std::vector<app::Pane*> panes;
+    if (!StepPanes(s, act, st, panes)) return st;
     const ui::ViewMode mode = ui::ViewModeFromIndex(idx);
     st.arg = ViewName(mode);
+    AllPanesArg(st, panes.size());
     st.ok = true;
-    st.sub = Fill(Text(I::AiCtlViewDone), L"{view}", st.arg);
-    AddKeys(run, st.arg, KeysFor(app::KeyAction::ViewMode, idx));
-    if (tab->view_mode == mode) {
+    st.sub = Fill(Text(I::AiCtlViewDone), L"{view}", ViewName(mode));
+    AddKeys(run, ViewName(mode), KeysFor(app::KeyAction::ViewMode, idx));
+    bool changed = false;
+    for (app::Pane* p : panes) {
+        const ui::ViewMode old = p->ActiveTab()->view_mode;
+        if (old == mode) continue;
+        WithPane(s, p, [&] { ChooseViewMode(s, mode); });
+        run.undo.push_back([p, old](AppState& st2) {
+            if (PaneAlive(st2, p)) WithPane(st2, p, [&] { ChooseViewMode(st2, old); });
+        });
+        changed = true;
+    }
+    if (!changed) {
         st.skip = true;
         return st;
     }
-    const ui::ViewMode old = tab->view_mode;
-    app::Pane* p = s.pane;
-    ChooseViewMode(s, mode);
-    run.undo.push_back([p, old](AppState& st2) {
-        if (PaneAlive(st2, p)) WithPane(st2, p, [&] { ChooseViewMode(st2, old); });
-    });
-    PlainDone(run, SplitLine(Text(I::AiCtlLineView), L"{view}", st.arg));
+    PlainDone(run, SplitLine(Text(I::AiCtlLineView), L"{view}", ViewName(mode)));
     return st;
 }
 
@@ -6194,31 +6235,49 @@ CtlStep CtlSort(AppState& s, CtlRun& run, const json::Value& act) {
         {"type", ui::SortColumn::Type, I::AiCtlSortType},   {"size", ui::SortColumn::Size, I::AiCtlSortSize},
         {"created", ui::SortColumn::Created, I::AiCtlSortCreated},
     };
-    const std::string want = act.get_string("sort");
+    const std::string want = act.get_string("by", act.get_string("sort"));
     const auto* m = std::find_if(std::begin(kCols), std::end(kCols), [&](const auto& e) { return want == e.id; });
-    app::Tab* tab = ActiveTab(s);
-    if (m == std::end(kCols) || !tab) {
-        st.error = tab ? "unknown sort" : "no tab";
+    if (m == std::end(kCols)) {
+        st.error = "unknown sort";
+        st.why = Text(I::AiActWhyFailed);
         return st;
     }
+    std::vector<app::Pane*> panes;
+    if (!StepPanes(s, act, st, panes)) return st;
     const bool desc = act.get_bool("desc", m->col == ui::SortColumn::Mtime || m->col == ui::SortColumn::Size ||
                                                m->col == ui::SortColumn::Created);
-    st.arg = Text(m->name) + L" \u00B7 " + Text(desc ? I::AiCtlSortDesc : I::AiCtlSortAsc);
+    // The direction in the column's own words: 新的在前, 大的在前, A → Z.
+    const bool dated = m->col == ui::SortColumn::Mtime || m->col == ui::SortColumn::Created;
+    const std::wstring dir_text = Text(dated ? (desc ? I::AiActSortNew : I::AiActSortOld)
+                                       : m->col == ui::SortColumn::Size ? (desc ? I::AiActSortBig : I::AiActSortSmall)
+                                                                        : (desc ? I::AiActSortZA : I::AiActSortAZ));
+    const std::wstring by = Text(m->name);
+    st.arg = by + L" \u00B7 " + dir_text;
+    AllPanesArg(st, panes.size());
     st.ok = true;
     st.sub = Text(I::AiCtlApplied);
     const ui::SortDirection dir = desc ? ui::SortDirection::Desc : ui::SortDirection::Asc;
-    if (tab->sort_column == m->col && tab->sort_direction == dir) {
+    bool changed = false;
+    for (app::Pane* p : panes) {
+        const app::Tab* tab = p->ActiveTab();
+        if (tab->sort_column == m->col && tab->sort_direction == dir) continue;
+        const ui::SortColumn old_col = tab->sort_column;
+        const ui::SortDirection old_dir = tab->sort_direction;
+        WithPane(s, p, [&] { SetSort(s, m->col, dir); });
+        run.undo.push_back([p, old_col, old_dir](AppState& st2) {
+            if (PaneAlive(st2, p)) WithPane(st2, p, [&] { SetSort(st2, old_col, old_dir); });
+        });
+        changed = true;
+    }
+    if (!changed) {
         st.skip = true;
         return st;
     }
-    const ui::SortColumn old_col = tab->sort_column;
-    const ui::SortDirection old_dir = tab->sort_direction;
-    app::Pane* p = s.pane;
-    SetSort(s, m->col, dir);
-    run.undo.push_back([p, old_col, old_dir](AppState& st2) {
-        if (PaneAlive(st2, p)) WithPane(st2, p, [&] { SetSort(st2, old_col, old_dir); });
-    });
-    PlainDone(run, SplitLine(Text(I::AiCtlLineSort), L"{by}", st.arg));
+    const std::wstring which = panes.size() == 2 ? Text(I::AiActBothPanes)
+                                                 : Fill(Text(I::AiActAllPanes), L"{n}", Num(panes.size()));
+    PlainDone(run, SplitLine(Fill(Fill(Text(panes.size() > 1 ? I::AiActLineSortAll : I::AiActLineSort), L"{panes}", which),
+                                  L"{dir}", dir_text),
+                             L"{by}", by));
     return st;
 }
 
@@ -6230,28 +6289,35 @@ CtlStep CtlGroup(AppState& s, CtlRun& run, const json::Value& act) {
         {"none", 0, I::AiCtlGroupNone}, {"name", 1, I::AiCtlSortName}, {"date", 2, I::AiCtlGroupDate},
         {"type", 3, I::AiCtlSortType},  {"size", 4, I::AiCtlSortSize},
     };
-    const std::string want = act.get_string("group");
+    const std::string want = act.get_string("by", act.get_string("group"));
     const auto* m = std::find_if(std::begin(kBy), std::end(kBy), [&](const auto& e) { return want == e.id; });
-    app::Tab* tab = ActiveTab(s);
-    if (m == std::end(kBy) || !tab) {
-        st.error = tab ? "unknown group" : "no tab";
+    if (m == std::end(kBy)) {
+        st.error = "unknown group";
+        st.why = Text(I::AiActWhyFailed);
         return st;
     }
+    std::vector<app::Pane*> panes;
+    if (!StepPanes(s, act, st, panes)) return st;
     st.arg = Text(m->name);
+    AllPanesArg(st, panes.size());
     st.ok = true;
     st.sub = Text(I::AiCtlApplied);
-    if (tab->group_by == m->v) {
+    bool changed = false;
+    for (app::Pane* p : panes) {
+        const int old = p->ActiveTab()->group_by;
+        if (old == m->v) continue;
+        WithPane(s, p, [&] { SetGroupBy(s, m->v); });
+        run.undo.push_back([p, old](AppState& st2) {
+            if (PaneAlive(st2, p)) WithPane(st2, p, [&] { SetGroupBy(st2, old); });
+        });
+        changed = true;
+    }
+    if (!changed) {
         st.skip = true;
         return st;
     }
-    const int old = tab->group_by;
-    app::Pane* p = s.pane;
-    SetGroupBy(s, m->v);
-    run.undo.push_back([p, old](AppState& st2) {
-        if (PaneAlive(st2, p)) WithPane(st2, p, [&] { SetGroupBy(st2, old); });
-    });
     PlainDone(run, m->v == 0 ? SplitLine(Text(I::AiCtlLineGroupOff), {}, {})
-                             : SplitLine(Text(I::AiCtlLineGroup), L"{by}", st.arg));
+                             : SplitLine(Text(I::AiCtlLineGroup), L"{by}", Text(m->name)));
     return st;
 }
 
@@ -6294,6 +6360,7 @@ CtlStep CtlTray(AppState& s, CtlRun& run, const json::Value& act) {
     st.arg = Fill(Text(I::AiCtlItems), L"{n}", Num(paths.size()));
     if (paths.empty()) {
         st.error = "no items (select some, or pass full paths)";
+        st.why = Text(I::AiActWhyNoItems);
         return st;
     }
     std::vector<uint64_t> before;
@@ -6333,6 +6400,7 @@ CtlStep CtlTag(AppState& s, CtlRun& run, const json::Value& act) {
     }
     if (paths.empty()) {
         st.error = "no items (select some, or pass full paths)";
+        st.why = Text(I::AiActWhyNoItems);
         return st;
     }
     app::TagId id;
@@ -6383,10 +6451,15 @@ CtlStep CtlFavorite(AppState& s, CtlRun& run, const json::Value& act) {
     st.title = Text(I::AiCtlStepFavorite);
     std::vector<std::wstring> paths;
     if (act.find("items")) paths = CtlItems(s, act);
-    else if (const app::Tab* tab = ActiveTab(s); tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path))
+    else if (const std::wstring one = json::Wide(act.get_string("path")); !one.empty()) {
+        std::wstring p = ResolveTaskDest(one);
+        if (p.empty()) p = one;
+        if (Exists(p)) paths.push_back(NormDir(p));
+    } else if (const app::Tab* tab = ActiveTab(s); tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path))
         paths.push_back(tab->current_path);
     if (paths.empty()) {
         st.error = "nothing to add (pass full paths)";
+        st.why = Text(I::AiActWhyNoItems);
         return st;
     }
     std::wstring names;
@@ -6418,6 +6491,7 @@ CtlStep CtlMerge(AppState& s, CtlRun& run) {
     const size_t before = s.core.windows.Count();
     if (before < 2 || !MergeAllWindows(s)) {
         st.error = "there is only one window";
+        st.why = Text(I::AiActWhyOneWindow);
         return st;
     }
     st.ok = true;
@@ -6440,6 +6514,388 @@ CtlStep CtlOverview(AppState& s, CtlRun& run) {
     return st;
 }
 
+// ---- P3: steps beyond the third batch's ----------------------------------
+
+// The caps of a shown shortcut ("Ctrl+Shift+O" → Ctrl / Shift / O).
+std::vector<std::wstring> CapsOf(const std::wstring& shortcut) {
+    std::vector<std::wstring> caps;
+    size_t at = 0;
+    while (at < shortcut.size()) {
+        size_t end = shortcut.find(L'+', at + 1);   // "Ctrl++" keeps its plus
+        if (end == std::wstring::npos) end = shortcut.size();
+        caps.push_back(shortcut.substr(at, end - at));
+        at = end + 1;
+    }
+    return caps;
+}
+
+// No key for it: the card says what to type in the command palette, one
+// row for the whole call (也可以自己输入 >详情面板 >文件夹大小).
+void AddPaletteKey(CtlRun& run, const std::wstring& title) {
+    const std::wstring cap = L">" + title;
+    for (auto& k : run.keys)
+        if (k.palette) {
+            if (k.caps.size() < 3 && std::find(k.caps.begin(), k.caps.end(), cap) == k.caps.end()) k.caps.push_back(cap);
+            return;
+        }
+    if (run.keys.size() >= 4) return;
+    ui::AiKeyRowView row{Text(I::AiActPalette), {cap}};
+    row.palette = true;
+    run.keys.push_back(std::move(row));
+}
+
+// select.items: P2's selector on one pane, like the user's own selection
+// (not part of the undo). Waits for the listing first (CtlNext).
+CtlStep CtlSelect(AppState& s, CtlRun& run, const json::Value& act) {
+    CtlStep st;
+    st.icon = ui::AiIcon::CheckCircle;
+    st.title = Text(I::AiActStepSelect);
+    FILETIME ft{};
+    GetSystemTimeAsFileTime(&ft);
+    app::actions::Selector sel;
+    std::string error;
+    if (!app::actions::ParseSelector(act, app::actions::FileTimeTicks(ft), sel, error)) {
+        st.error = error;
+        st.why = Text(I::AiActWhyFailed);
+        return st;
+    }
+    const app::actions::SelectorMatch m = app::actions::ResolveSelector(s, sel);
+    const size_t index = m.pane ? PaneIndex(s, m.pane) : 0;
+    const std::wstring pos = m.pane ? PanePos(s, index) : std::wstring();
+    const app::Tab* tab = m.pane ? m.pane->ActiveTab() : nullptr;
+    st.arg = !pos.empty() ? pos : PlaceLabel(tab ? tab->current_path : std::wstring());
+    st.data = app::actions::ApplySelection(s, m);
+    if (!m.reason.empty()) {
+        st.error = m.reason;
+        st.why = Text(m.reason == "loading" ? I::AiActWhyLoading
+                      : m.reason == "no_match" || m.reason == "filter_hides" || m.reason == "unknown_tag"
+                          ? I::AiActWhyNoMatch
+                          : I::AiActWhyFailed);
+        return st;
+    }
+    st.ok = true;
+    const std::wstring items = Fill(Text(I::AiCtlItems), L"{n}", Num(m.matched.size()));
+    st.sub = m.bytes > 0 ? items + L" \u00B7 " + AiChatFormatSize(m.bytes) : items;
+    run.other = true;
+    AddLine(run, pos.empty() ? SplitLine(Fill(Text(I::AiActLineSelect), L"{items}", items), items, items)
+                             : SplitLine(Fill(Fill(Text(I::AiActLineSelectIn), L"{pane}", pos), L"{items}", items),
+                                         items, items));
+    return st;
+}
+
+CtlStep CtlSelectNone(AppState& s, CtlRun& run) {
+    CtlStep st;
+    st.icon = ui::AiIcon::CheckCircle;
+    st.title = Text(I::ActSelectNone);
+    app::Tab* tab = ActiveTab(s);
+    st.ok = true;
+    st.sub = Text(I::AiCtlApplied);
+    if (!tab || tab->SelectedCount() == 0) {
+        st.skip = true;
+        return st;
+    }
+    tab->ClearSelection();
+    run.other = true;
+    AddLine(run, SplitLine(Text(I::AiActLineClear), {}, {}));
+    return st;
+}
+
+// The file nav.open opens: a full path, a name in the open folder, or the
+// one selected item.
+std::wstring OpenTarget(AppState& s, const json::Value& act) {
+    std::wstring p = json::Wide(act.get_string("path"));
+    const app::Tab* tab = ActiveTab(s);
+    if (p.empty()) {
+        if (tab && tab->snapshot && tab->SelectedCount() == 1) {
+            const auto sel = SelectedFullPaths(*tab);
+            if (!sel.empty()) return sel.front();
+        }
+        return {};
+    }
+    if (const std::wstring known = ResolveTaskDest(p); !known.empty()) return known;
+    if (Exists(p)) return p;
+    if (tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path) &&
+        p.find_first_of(L"\\/:") == std::wstring::npos) {
+        const std::wstring in = NormDir(tab->current_path) + L"\\" + p;
+        if (Exists(in)) return in;
+    }
+    return {};
+}
+
+std::wstring LeafName(const std::wstring& path) {
+    const size_t slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? path : path.substr(slash + 1);
+}
+
+CtlStep CtlOpenFile(AppState& s, CtlRun& run, const json::Value& act) {
+    CtlStep st;
+    st.icon = ui::AiIcon::Open;
+    st.title = Text(I::AiCtlStepOpen);
+    const std::wstring path = OpenTarget(s, act);
+    if (path.empty()) {
+        st.arg = json::Wide(act.get_string("path"));
+        st.error = "no such file (pass a full path, a name in the open folder, or select one item)";
+        st.why = Text(I::AiActWhyNoFile);
+        return st;
+    }
+    st.arg = LeafName(path);
+    if (IsDirectory(path)) {
+        json::Value go = json::Value::Object();
+        go.set("path", Utf8(path));
+        return CtlOpen(s, run, go);
+    }
+    OpenPath(s, path);
+    st.ok = true;
+    st.sub = Text(I::AiCtlApplied);
+    run.other = run.touched = true;
+    AddLine(run, SplitLine(Fill(Text(I::AiActLineOpened), L"{name}", st.arg), st.arg, st.arg));
+    return st;
+}
+
+// file.new_folder with a name: made in the open folder at once (a free name:
+// 报销 (2) when 报销 exists); 撤销 removes it while it is still empty.
+CtlStep CtlNewFolder(AppState& s, CtlRun& run, const json::Value& act) {
+    CtlStep st;
+    st.icon = ui::AiIcon::FolderPlus;
+    st.title = Text(I::NewFolder);
+    std::wstring name = json::Wide(act.get_string("name"));
+    while (!name.empty() && (std::iswspace(name.back()) || name.back() == L'.')) name.pop_back();
+    while (!name.empty() && std::iswspace(name.front())) name.erase(0, 1);
+    st.arg = name;
+    const app::Tab* tab = ActiveTab(s);
+    if (name.empty() || name.size() > 120 || name.find_first_of(L"\\/:*?\"<>|") != std::wstring::npos) {
+        st.error = "a folder name is needed (no \\ / : * ? \" < > |)";
+        st.why = Text(I::AiActWhyFailed);
+        return st;
+    }
+    if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path)) {
+        st.error = "the active tab shows no folder";
+        st.why = Text(I::ActWhyNotFolder);
+        return st;
+    }
+    const std::wstring base = NormDir(tab->current_path) + L"\\";
+    std::wstring made = name;
+    for (int n = 2; Exists(base + made) && n < 100; ++n) made = name + L" (" + std::to_wstring(n) + L")";
+    const std::wstring full = base + made;
+    if (Exists(full) || !CreateDirectoryW(full.c_str(), nullptr)) {
+        st.error = "the folder could not be made";
+        st.why = Text(I::AiActWhyFailed);
+        return st;
+    }
+    run.undo.push_back([full](AppState&) { RemoveDirectoryW(full.c_str()); });   // fails unless empty
+    run.touched = true;
+    st.ok = true;
+    st.arg = made;
+    st.sub = Text(I::AiCtlApplied);
+    st.data = json::Value::Object();
+    st.data.set("path", Utf8(full));
+    run.other = true;
+    AddLine(run, SplitLine(Fill(Text(I::AiActLineNewFolder), L"{name}", made), made, made));
+    AddKeys(run, Text(I::NewFolder), KeysFor(app::KeyAction::NewFolder));
+    return st;
+}
+
+// A setting's value from the model: a switch takes true / false, a choice
+// its key (numbers such as 7 may come as numbers). -1: invalid.
+int SettingIndex(const app::actions::SetDef& d, const json::Value* val) {
+    int index = -1;
+    if (app::actions::IsSwitch(d)) {
+        if (val && val->is_bool()) index = val->as_bool() ? 1 : 0;
+        else if (val && val->is_string()) {
+            const std::string& t = val->as_string();
+            index = t == "true" || t == "on" ? 1 : t == "false" || t == "off" ? 0 : -1;
+        }
+    } else if (val) {
+        std::string key = val->is_string() ? val->as_string()
+                          : val->is_number() ? std::to_string(static_cast<int>(val->as_number())) : std::string();
+        if (key == "mica-alt") key = "mica_alt";
+        for (size_t k = 0; k < d.choices.size(); ++k)
+            if (d.choices[k].key && key == d.choices[k].key) index = static_cast<int>(k);
+    }
+    return index;
+}
+
+bool LockedSettingKey(std::string_view id) {
+    return id == "assistant_permissions" || id == "always_allow" || id == "connections" || id == "api_key";
+}
+
+// settings.set among other steps: one line old → new; a call of only
+// settings gets the settings card instead (ToolChangeSettings).
+CtlStep CtlSetting(AppState& s, CtlRun& run, const json::Value& act) {
+    CtlStep st;
+    st.icon = ui::AiIcon::Gear;
+    st.title = Text(I::AiSetStep);
+    const std::string id = act.get_string("key", act.get_string("id"));
+    st.arg = json::Wide(id);
+    if (LockedSettingKey(id)) {
+        run.locked = true;
+        st.error = "locked: only the user can change this in Pulse's settings; Pulse showed them why";
+        st.why = Text(I::AiActWhyLocked);
+        return st;
+    }
+    const app::actions::SetDef* d = app::actions::FindSetting(id);
+    if (!d) {
+        st.error = "unknown setting";
+        st.why = Text(I::AiActWhyUnknown);
+        return st;
+    }
+    st.arg = Text(d->label);
+    const int index = SettingIndex(*d, act.find("value"));
+    if (index < 0) {
+        st.error = "invalid value";
+        st.why = Text(I::AiActWhyFailed);
+        return st;
+    }
+    if (id == "confirm_delete" && index == 0) {
+        run.locked = run.deny_delete = true;
+        st.error = "locked: the delete confirmation can never be turned off by the assistant; Pulse showed the user why";
+        st.why = Text(I::AiActWhyLocked);
+        return st;
+    }
+    const int from = d->get(s);
+    const int raw_theme = s.appPrefs.theme_mode;
+    const int want = app::actions::IsSwitch(*d) ? index : d->choices[static_cast<size_t>(index)].value;
+    st.ok = true;
+    if (from == want) {
+        st.skip = true;
+        st.sub = app::actions::SettingText(*d, from);
+        return st;
+    }
+    app::actions::ApplySetting(s, *d, index);
+    const int to = d->get(s);
+    if (to != want) {
+        if (to != from) app::actions::ApplySetting(s, *d, app::actions::ChoiceIndex(*d, from));
+        st.ok = false;
+        st.error = "Pulse could not change it";
+        st.why = Text(I::AiActWhyFailed);
+        return st;
+    }
+    const std::wstring old_text = app::actions::SettingText(*d, from), new_text = app::actions::SettingText(*d, to);
+    st.sub = old_text + L" \u2192 " + new_text;
+    if (d->flags & app::actions::kSetSys) st.sub += L" \u00B7 " + Text(I::AiSetSys);
+    st.data = json::Value::Object();
+    st.data.set("from", Utf8(old_text));
+    st.data.set("to", Utf8(new_text));
+    if (d->flags & app::actions::kSetSys) st.data.set("affects_windows", true);
+    run.undo.push_back([d, from, to, raw_theme](AppState& st2) {
+        if (d->get(st2) != to) return;
+        const int idx = app::actions::ChoiceIndex(*d, from);
+        if (idx >= 0) app::actions::ApplySetting(st2, *d, idx);
+        if (std::string_view(d->id) == "theme" && raw_theme < 0) {
+            st2.appPrefs.theme_mode = raw_theme;   // the legacy session theme stays legacy
+            st2.appPrefs.Save();
+        }
+    });
+    run.other = true;
+    const std::wstring label = Text(d->label);
+    AddLine(run, SplitLine(Fill(Fill(Fill(Text(I::AiActLineValue), L"{title}", label), L"{from}", old_text), L"{to}",
+                                new_text),
+                           new_text, new_text));
+    return st;
+}
+
+// Any other row of the action table: what its menu row or palette row does.
+// "choice" picks one of its choices (title or position); "show" (or "on")
+// sets an on / off row. A switch or a choice undoes; the rest do not.
+CtlStep CtlGeneric(AppState& s, CtlRun& run, const std::string& id, const json::Value& act) {
+    CtlStep st;
+    st.icon = ui::AiIcon::Bolt;
+    const auto views = app::actions::ListActions(s);
+    const auto find = [&](const std::vector<app::actions::ActionView>& list) -> const app::actions::ActionView* {
+        for (const auto& v : list)
+            if (v.id == id && v.key.empty()) return &v;
+        return nullptr;
+    };
+    const app::actions::ActionView* v = find(views);
+    if (!v) {
+        st.title = Display(id);
+        st.error = "unknown action (find_actions lists them)";
+        st.why = Text(I::AiActWhyUnknown);
+        return st;
+    }
+    st.title = v->title;
+    if (!v->enabled) {
+        st.error = "not available now: " + Utf8(v->why);
+        st.why = v->why;
+        return st;
+    }
+    int choice = -1;
+    if (const json::Value* c = act.find("choice")) {
+        int64_t n = 0;
+        if (c->get_int(n, 0, static_cast<int64_t>(v->choices.size()) - 1)) choice = static_cast<int>(n);
+        else if (c->is_string()) {
+            const std::wstring want = json::Wide(c->as_string());
+            for (size_t i = 0; i < v->choices.size() && choice < 0; ++i)
+                if (_wcsicmp(v->choices[i].text.c_str(), want.c_str()) == 0) choice = static_cast<int>(i);
+            for (size_t i = 0; i < v->choices.size() && choice < 0; ++i)
+                if (!want.empty() && v->choices[i].text.find(want) != std::wstring::npos) choice = static_cast<int>(i);
+        }
+        if (choice < 0) {
+            st.error = "no such choice (find_actions lists them)";
+            st.why = Text(I::AiActWhyFailed);
+            return st;
+        }
+        st.arg = v->choices[static_cast<size_t>(choice)].text;
+    } else if (!v->choices.empty()) {
+        std::string labels;
+        for (const auto& c2 : v->choices) labels += (labels.empty() ? "" : " | ") + Utf8(c2.text);
+        st.error = "choose one with \"choice\": " + labels;
+        st.why = Text(I::AiActWhyFailed);
+        return st;
+    }
+    const std::wstring on = Text(I::AiSetOn), off = Text(I::AiSetOff);
+    const bool is_switch = v->value == on || v->value == off;
+    const json::Value* show = act.find("show");
+    if (!show) show = act.find("on");
+    if (is_switch && show && show->is_bool() && (v->value == on) == show->as_bool()) {
+        st.ok = true;
+        st.skip = true;
+        st.sub = v->value;
+        return st;
+    }
+    const std::wstring before = v->value, title = v->title, shortcut = v->shortcut;
+    const int index = v->index;
+    const auto old_choice = [&]() -> int {
+        for (size_t i = 0; i < v->choices.size(); ++i)
+            if (v->choices[i].radio) return static_cast<int>(i);
+        return -1;
+    }();
+    if (!app::actions::RunAction(s, index, choice)) {
+        st.error = "Pulse could not run it now";
+        st.why = Text(I::AiActWhyFailed);
+        return st;
+    }
+    const auto after_views = app::actions::ListActions(s);
+    const app::actions::ActionView* now = find(after_views);
+    const std::wstring after = now ? now->value : std::wstring();
+    st.ok = true;
+    if (!before.empty() && !after.empty() && before != after) {
+        st.sub = before + L" \u2192 " + after;
+        AddLine(run, SplitLine(Fill(Fill(Fill(Text(I::AiActLineValue), L"{title}", title), L"{from}", before), L"{to}", after),
+                               after, after));
+        st.data = json::Value::Object();
+        st.data.set("from", Utf8(before));
+        st.data.set("to", Utf8(after));
+        if (is_switch)
+            run.undo.push_back([index, id, after](AppState& st2) {
+                for (const auto& w : app::actions::ListActions(st2))
+                    if (w.index == index && w.id == id && w.value == after) app::actions::RunAction(st2, index);
+            });
+        else if (old_choice >= 0)
+            run.undo.push_back([index, id, after, old_choice](AppState& st2) {
+                for (const auto& w : app::actions::ListActions(st2))
+                    if (w.index == index && w.id == id && w.value == after) app::actions::RunAction(st2, index, old_choice);
+            });
+    } else {
+        st.sub = Text(I::AiCtlApplied);
+        AddLine(run, SplitLine(st.arg.empty() ? title : title + L" \u00B7 " + st.arg, {}, {}));
+    }
+    run.other = true;
+    if (!shortcut.empty()) AddKeys(run, title, CapsOf(shortcut));
+    else AddPaletteKey(run, title);
+    return st;
+}
+
 void CtlNext(AppState& s, std::shared_ptr<CtlRun> run);
 
 void CtlFinish(AppState& s, std::shared_ptr<CtlRun> run) {
@@ -6456,18 +6912,49 @@ void CtlFinish(AppState& s, std::shared_ptr<CtlRun> run) {
         b->open = false;
     }
     a.steps_id = 0;
+    const bool failed = !run->fail_title.empty();
     ToolOutcome out;
     out.data = json::Value::Object();
-    out.data.set("ok", run->ok > 0);
-    out.data.set("actions", std::move(run->report));
+    out.data.set("ok", run->ok > 0 && !failed);
+    out.data.set("done", static_cast<uint64_t>(run->ok));
+    if (failed) out.data.set("stopped", "at the step that failed; later steps were not run, earlier ones stay done");
+    out.data.set("steps", std::move(run->report));
+    if (run->locked) {
+        // A locked setting: why, and where the user changes it (third batch).
+        AiBlockView& e = c.Add(AiBlockKind::Error, Now());
+        e.tone = ui::AiErrTone::Warn;
+        e.icon = ui::AiIcon::Lock;
+        e.title = Text(run->deny_delete ? I::AiSetDenyT : I::AiSetLockT);
+        e.sub = Text(run->deny_delete ? I::AiSetDenyS : I::AiSetLockS);
+        e.hint = Text(I::AiSetLockHint);
+        e.hint_icon = ui::AiIcon::Shield;
+        e.pills = {Text(I::AiSetPillPerm), Text(I::AiSetPillAllow), Text(I::AiSetPillConn)};
+    }
     // Only a call that changed something gets a card (all "already so": the
     // model hears it, nothing to show or undo).
     const bool changed = !run->undo.empty() || run->merged || run->window || !run->lines.empty();
-    if (run->ok > 0 && changed) {
+    if (run->ok > 0 && changed && !(failed && run->locked && run->lines.empty())) {
         AiBlockView& r = c.Add(AiBlockKind::Result, Now());
         const size_t things = run->organize + (run->other ? 1 : 0) + (run->window ? 1 : 0) + ((run->layout || run->open) ? 1 : 0);
         // The title: what the turn was about.
-        if (run->window && !run->other && !run->organize) {
+        if (failed) {
+            // 做好了 1 件，1 件没做成: what was done, the step that failed, what was not done.
+            r.partial = true;
+            r.title = Fill(Fill(Text(I::AiActPartial), L"{ok}", Num(run->ok)), L"{bad}", Num(1));
+            r.sub = Text(I::AiActPartialSub);
+            r.lines = run->lines;
+            ui::AiResultLine bad = SplitLine(Fill(Fill(Fill(Text(I::AiActFailLine), L"{title}", run->fail_title), L"{why}",
+                                                       run->fail_why),
+                                                  L"{arg}", run->fail_arg),
+                                             run->fail_arg, run->fail_arg);
+            bad.warn = true;
+            r.lines.push_back(std::move(bad));
+            for (const auto& t : run->not_run) {
+                ui::AiResultLine ln = SplitLine(Fill(Text(I::AiActNotRun), L"{title}", t), {}, {});
+                ln.mute = true;
+                r.lines.push_back(std::move(ln));
+            }
+        } else if (run->window && !run->other && !run->organize) {
             r.title = Fill(Text(I::AiCtlResWindows), L"{n}", Num(run->window_names.size()));
             for (const auto& n : run->window_names) r.sub += (r.sub.empty() ? L"" : L" \u00B7 ") + n;
             if (run->single_back) r.sub += Text(I::AiCtlResMainSingle);
@@ -6485,14 +6972,32 @@ void CtlFinish(AppState& s, std::shared_ptr<CtlRun> run) {
             r.title = run->single_title;
             if (run->organize) r.sub = Text(I::AiCtlResOrganizeSub);
         } else {
-            r.title = Fill(Text(I::AiCtlResThings), L"{n}", Num(run->lines.size() + (run->window ? 1 : 0) + ((run->layout || run->open) ? 1 : 0)));
-            if (run->organize && !run->other && !run->window && !run->layout && !run->open) r.sub = Text(I::AiCtlResOrganizeSub);
             r.lines = run->lines;
+            if (run->layout) {
+                // 布局 单栏 → 左右两栏：下载 | 文档, first: the rest happened in it.
+                const app::LayoutPreset now_layout = LayoutOf(s);
+                std::wstring folders;
+                for (app::Pane* p : ShownPanes(s)) {
+                    const app::Tab* t = p->ActiveTab();
+                    folders += (folders.empty() ? L"" : L" | ") + PlaceLabel(t ? t->current_path : std::wstring());
+                }
+                const std::wstring to = PresetName(now_layout);
+                const std::wstring from = run->has_first_layout && run->first_layout != now_layout
+                                              ? std::wstring(PresetName(run->first_layout))
+                                              : std::wstring();
+                std::wstring text = Fill(Fill(Text(from.empty() ? I::AiActLineLayoutTo : I::AiActLineLayout), L"{from}", from),
+                                         L"{panes}", folders);
+                r.lines.insert(r.lines.begin(), SplitLine(Fill(text, L"{to}", to), to, to));
+            }
+            r.title = Fill(Text(I::AiCtlResThings), L"{n}",
+                           Num(r.lines.size() + (run->window ? 1 : 0) + ((run->open && !run->layout) ? 1 : 0)));
+            if (run->organize && !run->other && !run->window && !run->layout && !run->open) r.sub = Text(I::AiCtlResOrganizeSub);
+            else if (!run->touched) r.sub = Text(I::AiActResSub);
         }
         // Keys only where they help: layout, windows, view; the organize
         // lines say enough.
-        if (run->layout || run->window || run->other) r.keys = run->keys;
-        if (run->window && run->keys.size() < 4) {
+        if (!failed && (run->layout || run->window || run->other)) r.keys = run->keys;
+        if (!failed && run->window && run->keys.size() < 4) {
             ui::AiKeyRowView merge{Text(I::AiCtlKeyMerge), KeysFor(app::KeyAction::MergeWindows)};
             bool have = false;
             for (const auto& k : r.keys) have |= k.label == merge.label;
@@ -6542,11 +7047,12 @@ void CtlFinish(AppState& s, std::shared_ptr<CtlRun> run) {
                 note.text = run->window && !run->other && !run->organize ? Text(I::AiCtlNoteWindows)
                             : (run->layout || run->open) && !run->other && !run->organize && !run->window
                                 ? Text(I::AiCtlNoteLayout)
-                                : Fill(Text(I::AiCtlNoteThings), L"{n}", Num(run->ok));
+                            : run->undo_steps <= 1 ? Text(I::AiActNoteOne)
+                                                   : Fill(Text(I::AiCtlNoteThings), L"{n}", Num(run->undo_steps));
                 AiChatSetChip(c2, ui::StatusAiState::Done, Text(I::AiAsstUndone));
                 if (c2.agent)
                     c2.agent->pending_note =
-                        L"(The user clicked Undo in Pulse: every action of the last control_pulse call was reversed.)";
+                        L"(The user clicked Undo in Pulse: the changes of the last run_actions call were reversed; a selection stays as it was.)";
                 Redraw(st);
             };
         } else {
@@ -6561,39 +7067,177 @@ void CtlFinish(AppState& s, std::shared_ptr<CtlRun> run) {
     NextTool(s);
 }
 
+// The step's action id; control_pulse's "do" names still work.
+std::string StepAction(const json::Value& step) {
+    std::string id = step.get_string("action");
+    if (!id.empty()) return id;
+    static const std::pair<const char*, const char*> kOld[] = {
+        {"layout", "window.layout"},      {"open", "nav.go"},           {"new_window", "window.new"},
+        {"tab_to_window", "tab.to_window"}, {"pane_to_window", "pane.to_window"}, {"merge_windows", "window.merge"},
+        {"window_overview", "window.overview"}, {"view", "view.mode"},  {"sort", "view.sort"},
+        {"group", "view.group"},          {"sidebar", "sidebar.toggle"}, {"favorites_bar", "favbar.toggle"},
+        {"tray", "tray.add"},             {"tag", "tag.toggle"},        {"favorite", "fav.add"},
+    };
+    const std::string old = step.get_string("do");
+    for (const auto& [from, to] : kOld)
+        if (old == from) return to;
+    return old;
+}
+
+// Its arguments: "args", or (control_pulse) the step itself.
+const json::Value& StepArgs(const json::Value& step) {
+    const json::Value* args = step.find("args");
+    return args && args->is_object() ? *args : step;
+}
+
+// The title a step shows when it was not done (排序：没有做).
+std::wstring StepTitle(AppState& s, const std::string& id) {
+    if (id == "settings.set") return Text(I::AiSetStep);
+    if (id == "nav.go") return Text(I::AiCtlStepOpen);
+    for (const auto& v : app::actions::ListActions(s))
+        if (v.id == id && v.key.empty()) return v.title;
+    return Display(id);
+}
+
+CtlStep CtlRunStep(AppState& s, CtlRun& run, const std::string& id, const json::Value& act) {
+    if (!app::actions::FindAction(id)) {
+        CtlStep st;
+        st.title = Display(id);
+        st.error = "unknown action (find_actions lists them)";
+        st.why = Text(I::AiActWhyUnknown);
+        return st;
+    }
+    const app::actions::Policy policy = app::actions::AiPolicy(id);
+    if (policy.gate == app::actions::Gate::Later || policy.gate == app::actions::Gate::Locked) {
+        CtlStep st;
+        st.title = StepTitle(s, id);
+        st.icon = policy.gate == app::actions::Gate::Locked ? ui::AiIcon::Lock : ui::AiIcon::Move;
+        st.error = policy.gate == app::actions::Gate::Later
+                       ? "moving, renaming and deleting files is not done by run_actions: use organize_files, "
+                         "rename_files, run_task, find_cleanup or find_duplicates (they show the user a plan)"
+                       : "locked: only the user can do this";
+        st.why = Text(policy.gate == app::actions::Gate::Later ? I::AiActWhyLater : I::AiActWhyLocked);
+        return st;
+    }
+    if (id == "window.layout") return CtlLayout(s, run, act);
+    if (id == "nav.go") return CtlOpen(s, run, act);
+    if (id == "window.new") return CtlNewWindow(s, run, act);
+    if (id == "tab.to_window") return CtlToWindow(s, run, act, false);
+    if (id == "pane.to_window") return CtlToWindow(s, run, act, true);
+    if (id == "window.merge") return CtlMerge(s, run);
+    if (id == "window.overview") return CtlOverview(s, run);
+    if (id == "view.mode") return CtlView(s, run, act);
+    if (id == "view.sort") return CtlSort(s, run, act);
+    if (id == "view.group") return CtlGroup(s, run, act);
+    if (id == "sidebar.toggle") return CtlBar(s, run, act, false);
+    if (id == "favbar.toggle") return CtlBar(s, run, act, true);
+    if (id == "tray.add") return CtlTray(s, run, act);
+    if (id == "tag.toggle") return CtlTag(s, run, act);
+    if (id == "fav.add") return CtlFavorite(s, run, act);
+    if (id == "select.items") return CtlSelect(s, run, act);
+    if (id == "select.clear") return CtlSelectNone(s, run);
+    if (id == "nav.open") return CtlOpenFile(s, run, act);
+    if (id == "settings.set") return CtlSetting(s, run, act);
+    if (id == "file.new_folder" && act.find("name")) return CtlNewFolder(s, run, act);
+    if (id == "tab.new" && !act.get_string("path").empty()) {
+        CtlStep st;
+        st.icon = ui::AiIcon::Plus;
+        st.title = Text(I::TooltipNewTab);
+        const std::wstring path = CtlFolder(act.get_string("path"));
+        st.arg = path.empty() ? json::Wide(act.get_string("path")) : PlaceLabel(path);
+        if (path.empty()) {
+            st.error = "no such folder";
+            st.why = Text(I::AiActWhyNoFolder);
+            return st;
+        }
+        OpenTabAt(s, path);
+        st.ok = true;
+        st.sub = Text(I::AiCtlApplied);
+        run.other = true;
+        AddLine(run, SplitLine(Fill(Text(I::AiActLineOpened), L"{name}", st.arg), st.arg, st.arg));
+        AddKeys(run, Text(I::TooltipNewTab), KeysFor(app::KeyAction::NewTab));
+        return st;
+    }
+    return CtlGeneric(s, run, id, act);
+}
+
+// A wait the step asks for ("wait"), or the listing a selection needs.
+bool StepWait(const json::Value& step, const std::string& id, app::actions::WaitSpec& spec) {
+    const json::Value& args = StepArgs(step);
+    if (const json::Value* w = step.find("wait")) {
+        json::Value obj = json::Value::Object();
+        if (w->is_object()) obj = *w;
+        else if (w->is_string()) obj.set("wait", w->as_string());
+        if (!obj.find("pane"))
+            if (const json::Value* pane = args.find("pane"); pane && !(pane->is_string() && pane->as_string() == "all"))
+                obj.set("pane", *pane);
+        std::string error;
+        return app::actions::ParseWait(obj, spec, error);
+    }
+    if (id != "select.items") return false;
+    spec = {};
+    spec.kind = app::actions::WaitKind::ListingLoaded;
+    spec.timeout_ms = 5000;
+    int64_t n = 0;
+    if (const json::Value* pane = args.find("pane")) {
+        if (pane->is_string() && pane->as_string() == "target") spec.pane = -1;
+        else if (pane->get_int(n, 1, 4)) spec.pane = static_cast<int>(n);
+    }
+    return true;
+}
+
 void CtlNext(AppState& s, std::shared_ptr<CtlRun> run) {
     AiAgent& a = Agent(s);
     if (a.generation != run->gen) return;
     while (run->index < run->queue.size()) {
-        const json::Value act = run->queue[run->index];
-        const std::string what = act.get_string("do");
-        CtlStep st;
-        if (what == "layout") st = CtlLayout(s, *run, act);
-        else if (what == "open") st = CtlOpen(s, *run, act);
-        else if (what == "new_window") st = CtlNewWindow(s, *run, act);
-        else if (what == "tab_to_window") st = CtlToWindow(s, *run, act, false);
-        else if (what == "pane_to_window") st = CtlToWindow(s, *run, act, true);
-        else if (what == "merge_windows") st = CtlMerge(s, *run);
-        else if (what == "window_overview") st = CtlOverview(s, *run);
-        else if (what == "view") st = CtlView(s, *run, act);
-        else if (what == "sort") st = CtlSort(s, *run, act);
-        else if (what == "group") st = CtlGroup(s, *run, act);
-        else if (what == "sidebar") st = CtlBar(s, *run, act, false);
-        else if (what == "favorites_bar") st = CtlBar(s, *run, act, true);
-        else if (what == "tray") st = CtlTray(s, *run, act);
-        else if (what == "tag") st = CtlTag(s, *run, act);
-        else if (what == "favorite") st = CtlFavorite(s, *run, act);
-        else st.error = "unknown action " + what;
+        const json::Value step = run->queue[run->index];
+        const std::string what = StepAction(step);
+        if (run->waited != run->index) {
+            run->waited = run->index;
+            app::actions::WaitSpec spec;
+            json::Value ready;
+            if (StepWait(step, what, spec) && !app::actions::WaitReady(s, spec, ready)) {
+                AppState* self = &s;
+                app::actions::WaitFor(s, spec, [self, run] { return Agent(*self).generation != run->gen; },
+                                      [run](AppState& s2, json::Value) { CtlNext(s2, run); });
+                return;
+            }
+        }
+        const size_t undo_before = run->undo.size();
+        CtlStep st = CtlRunStep(s, *run, what, StepArgs(step));
+        // A layout's folders are part of the layout line, not things of their own.
+        if (run->undo.size() > undo_before && !(what == "nav.go" && run->layout)) ++run->undo_steps;
+        if (!st.ok && st.why.empty()) st.why = Text(I::AiActWhyFailed);
         json::Value rep = json::Value::Object();
-        rep.set("do", what);
+        rep.set("action", what);
         rep.set("ok", st.ok);
         if (!st.ok) rep.set("error", st.error);
         else if (st.wait) rep.set("result", Utf8(L"opened " + st.arg));
         else if (!st.sub.empty()) rep.set("result", Utf8(st.sub));
         if (st.skip) rep.set("already", true);   // nothing to do: it was so already
+        if (!st.data.is_null())
+            for (size_t k = 0; k < st.data.keys().size(); ++k) rep.set(st.data.keys()[k], st.data.items()[k]);
         run->report.push(std::move(rep));
         ++run->index;
         if (st.ok) ++run->ok;
+        if (!st.ok) {
+            // Stop here: later steps often build on this one.
+            run->fail_title = st.title;
+            run->fail_arg = st.arg;
+            run->fail_why = st.why;
+            json::Value skipped = json::Value::Array();
+            for (size_t k = run->index; k < run->queue.size(); ++k) {
+                const std::string id = StepAction(run->queue[k]);
+                run->not_run.push_back(StepTitle(s, id));
+                skipped.push(id);
+            }
+            if (skipped.size()) {
+                json::Value rep2 = json::Value::Object();
+                rep2.set("not_run", std::move(skipped));
+                run->report.push(std::move(rep2));
+            }
+            run->index = run->queue.size();
+        }
         if (st.skip) continue;
         AddStep(s, a, st.icon, st.title.empty() ? Display(what) : st.title, st.arg, {});
         AiChatSetChip(Chat(s), ui::StatusAiState::Busy, st.title,
@@ -6603,7 +7247,7 @@ void CtlNext(AppState& s, std::shared_ptr<CtlRun> run) {
         AiChatPush(s, 450, [run, st, started](AppState& s2) {
             AiAgent& ag = Agent(s2);
             if (ag.generation != run->gen) return -1;
-            std::wstring sub = st.ok ? st.sub : Text(I::AiCtlFailed);
+            std::wstring sub = st.ok ? st.sub : st.why;
             if (st.wait) {
                 // The folder's item count once it has loaded (1.5 s at most).
                 const app::Tab* t = PaneAlive(s2, st.wait) ? st.wait->ActiveTab() : nullptr;
@@ -6619,23 +7263,183 @@ void CtlNext(AppState& s, std::shared_ptr<CtlRun> run) {
     CtlFinish(s, run);
 }
 
-void ToolControl(AppState& s, const app::ai::ModelToolCall& call, const json::Value& args) {
+void ToolChangeSettings(AppState& s, const app::ai::ModelToolCall& call, const json::Value& args);
+
+// A step that asks first: a program or script (nav.open), or a System action.
+struct AskStep {
+    size_t index = SIZE_MAX;
+    std::string id;
+    std::wstring target;   // nav.open: the file
+    size_t count = 0;      // how many steps of the call ask
+};
+
+AskStep FirstAsk(AppState& s, const std::vector<json::Value>& queue) {
+    AskStep ask;
+    for (size_t i = 0; i < queue.size(); ++i) {
+        const std::string id = StepAction(queue[i]);
+        const std::wstring target = id == "nav.open" ? OpenTarget(s, StepArgs(queue[i])) : std::wstring();
+        if (app::actions::AiPolicy(id, target).gate != app::actions::Gate::Confirm) continue;
+        ++ask.count;
+        if (ask.index != SIZE_MAX) continue;
+        ask.index = i;
+        ask.id = id;
+        ask.target = target;
+    }
+    return ask;
+}
+
+void ToolRunActions(AppState& s, const app::ai::ModelToolCall& call, const json::Value& args) {
     AiAgent& a = Agent(s);
     auto run = std::make_shared<CtlRun>();
     run->call_id = call.id;
     run->gen = a.generation;
-    if (const json::Value* v = args.find("actions"); v && v->is_array())
+    if (const json::Value* v = args.find("steps"); v && v->is_array())
         for (size_t i = 0; i < v->size() && i < 12; ++i)
             if (v->at(i).is_object()) run->queue.push_back(v->at(i));
     if (run->queue.empty()) {
-        AddToolResult(a, call.id, ToolOutcome::Fail("invalid_args", "actions is empty"));
+        AddToolResult(a, call.id, ToolOutcome::Fail("invalid_args", "steps is empty"));
         ++a.call_index;
         NextTool(s);
         return;
     }
+    // Only settings: the settings card of the third batch (old -> new, 显示).
+    bool only_settings = true;
+    for (const auto& step : run->queue) only_settings = only_settings && StepAction(step) == "settings.set";
+    if (only_settings) {
+        json::Value changes = json::Value::Array();
+        for (const auto& step : run->queue) {
+            const json::Value& sa = StepArgs(step);
+            json::Value ch = json::Value::Object();
+            ch.set("id", sa.get_string("key", sa.get_string("id")));
+            if (const json::Value* val = sa.find("value")) ch.set("value", *val);
+            changes.push(std::move(ch));
+        }
+        json::Value wrapped = json::Value::Object();
+        wrapped.set("changes", std::move(changes));
+        ToolChangeSettings(s, call, wrapped);
+        return;
+    }
     HideRenameOverlay(s, true);   // panes and windows are about to move: end a rename like a click elsewhere
     FoldSteps(s, a);
-    CtlNext(s, run);
+    const AskStep ask = FirstAsk(s, run->queue);
+    if (ask.index == SIZE_MAX) {
+        CtlNext(s, run);
+        return;
+    }
+    // One confirm card for the call, before any step runs.
+    AiChat& ch = Chat(s);
+    AiChatSetChip(ch, ui::StatusAiState::Waiting, Text(I::AiAsstChipWaiting));
+    AiBlockView& cf = ch.Add(AiBlockKind::Confirm, Now());
+    const bool program = ask.id == "nav.open";
+    const std::wstring name = program ? LeafName(ask.target) : StepTitle(s, ask.id);
+    cf.tag_amber = true;
+    if (program) {
+        cf.title = Text(I::AiActRunTitle);
+        cf.tag = Text(I::AiActTagExternal);
+        cf.sub = Text(I::AiActRunSub);
+        cf.cf_icon = ui::AiIcon::Package;
+        cf.file = name;
+        WIN32_FILE_ATTRIBUTE_DATA fa{};
+        const size_t slash = ask.target.find_last_of(L"\\/");
+        const std::wstring folder = slash == std::wstring::npos ? std::wstring() : FolderLabel(ask.target.substr(0, slash));
+        if (GetFileAttributesExW(ask.target.c_str(), GetFileExInfoStandard, &fa))
+            cf.file_note = AiChatFormatSize((static_cast<uint64_t>(fa.nFileSizeHigh) << 32) | fa.nFileSizeLow) +
+                           (folder.empty() ? L"" : L" \u00B7 " + folder);
+        cf.deny = Text(I::AiActRunDeny);
+        cf.accept = Text(I::AiActRunAccept);
+    } else {
+        cf.title = Fill(Text(I::AiActSysTitle), L"{title}", name);
+        cf.tag = Text(I::AiSetSys);
+        cf.sub = Text(I::AiActSysSub);
+        cf.cf_icon = ui::AiIcon::WinSettings;
+        cf.deny = Text(I::AiAsstDeny);
+        cf.accept = Text(I::AiActSysAccept);
+    }
+    cf.hint = Text(I::AiActConfirmHint);
+    cf.hint_icon = ui::AiIcon::Shield;
+    if (run->queue.size() > 1) {
+        cf.hint1 = Fill(Text(I::AiActMoreSteps), L"{n}", Num(run->queue.size() - 1));
+        cf.hint1_icon = ui::AiIcon::Tasks;
+    }
+    ch.confirm_id = cf.id;
+    ch.on_confirm = [run, program, name](AppState& s3, bool accept) {
+        AiChat& c3 = Chat(s3);
+        if (AiBlockView* card = c3.Find(c3.confirm_id)) {
+            card->done = true;
+            card->title = accept ? Fill(Text(program ? I::AiActConfirmedRun : I::AiActConfirmedSys),
+                                        program ? L"{name}" : L"{title}", name)
+                                 : Fill(Text(program ? I::AiActDeniedRun : I::AiActDenied),
+                                        program ? L"{name}" : L"{title}", name);
+        }
+        c3.confirm_id = 0;
+        c3.on_confirm = nullptr;
+        AiAgent& a3 = Agent(s3);
+        if (a3.generation != run->gen) return;
+        if (!accept) {
+            AiChatSetChip(c3, ui::StatusAiState::Done, Text(I::AiActWhyDeclined));
+            ToolOutcome out;
+            out.data = json::Value::Object();
+            out.data.set("ok", false);
+            out.data.set("declined", true);
+            out.data.set("message", "The user declined in Pulse; no step of this call was done.");
+            AddToolResult(a3, run->call_id, out);
+            ++a3.call_index;
+            Redraw(s3);
+            NextTool(s3);
+            return;
+        }
+        AiChatSetChip(c3, ui::StatusAiState::Busy, Text(I::AiCtlApplied), 0.2f);
+        CtlNext(s3, run);
+    };
+    Redraw(s);
+}
+
+// find_actions: the action table for what the common list lacks; domain
+// "settings" lists every setting with its value (read_settings before P3).
+json::Value SettingJson(const app::actions::SetDef& d, int v);
+
+void ToolFindActions(AppState& s, const app::ai::ModelToolCall& call, const json::Value& args) {
+    AiAgent& a = Agent(s);
+    const std::string domain = args.get_string("domain");
+    const std::wstring query = json::Wide(args.get_string("query"));
+    const auto views = app::actions::ListActions(s);
+    json::Value rows = json::Value::Array();
+    std::wstring names;
+    size_t found = 0;
+    const auto add = [&](const app::actions::ActionView& v) {
+        json::Value row = app::actions::ActionJson(v);
+        if (!v.key.empty())
+            if (const app::actions::SetDef* d = app::actions::FindSetting(v.key)) row.set("value", SettingJson(*d, d->get(s)));
+        rows.push(std::move(row));
+        if (found < 3) names += (names.empty() ? L"" : Text(I::AiTkListSep)) + v.title;
+        ++found;
+    };
+    if (domain == "settings") {
+        for (const auto& v : views)
+            if (!v.key.empty()) add(v);
+    } else {
+        for (const app::actions::ActionView* v : app::actions::FindActions(views, query, 8)) add(*v);
+    }
+    ToolOutcome out;
+    out.data = json::Value::Object();
+    out.data.set("actions", std::move(rows));
+    if (!found) out.data.set("note", "nothing matched; try other words (Chinese or English) or domain settings");
+    AddStep(s, a, ui::AiIcon::Search, Text(I::AiActStepFind), domain == "settings" ? Text(I::AiSetStep) : query, {});
+    AddToolResult(a, call.id, out);
+    const std::wstring sub = !found       ? Text(I::AiActFoundNone)
+                             : found > 3 ? Fill(Fill(Text(I::AiActFound), L"{n}", Num(found)), L"{names}",
+                                                names + Text(I::AiTkListSep) + L"\u2026")
+                                         : Fill(Fill(Text(I::AiActFound), L"{n}", Num(found)), L"{names}", names);
+    const uint64_t gen = a.generation;
+    AiChatPush(s, 350, [gen, sub, found](AppState& st) {
+        AiAgent& ag = Agent(st);
+        if (ag.generation != gen) return -1;
+        EndStep(st, ag, found > 0, sub);
+        ++ag.call_index;
+        NextTool(st);
+        return -1;
+    });
+    Redraw(s);
 }
 
 // ---- Third batch, flow S: Pulse's settings ----------------------------------
@@ -6658,16 +7462,6 @@ json::Value SettingJson(const SetDef& d, int v) {
     return json::Value(static_cast<double>(v));   // a value no choice has (an old row height)
 }
 
-
-void ToolReadSettings(AppState& s, const app::ai::ModelToolCall& call) {
-    AiAgent& a = Agent(s);
-    ToolOutcome out;
-    out.data = json::Value::Object();
-    for (const SetDef& d : app::actions::SettingDefs()) out.data.set(d.id, SettingJson(d, d.get(s)));
-    AddToolResult(a, call.id, out);
-    ++a.call_index;
-    NextTool(s);
-}
 
 struct SetChange {
     const SetDef* def = nullptr;
@@ -6869,7 +7663,7 @@ void ToolChangeSettings(AppState& s, const app::ai::ModelToolCall& call, const j
             AiChatSetChip(c3, ui::StatusAiState::Done, Text(I::AiAsstUndone));
             if (c3.agent)
                 c3.agent->pending_note =
-                    L"(The user clicked Undo in Pulse: every setting of the last change_settings call is back as it was.)";
+                    L"(The user clicked Undo in Pulse: every setting of the last run_actions call is back as it was.)";
             Redraw(st);
         };
         AddToolResult(ag, call_id, out);
@@ -6907,9 +7701,8 @@ void NextTool(AppState& s) {
     else if (call.name == "disk_usage") ToolDiskUsage(s, call, args);
     else if (call.name == "find_cleanup") ToolFindCleanup(s, call, args);
     else if (call.name == "find_duplicates") ToolFindDuplicates(s, call, args);
-    else if (call.name == "control_pulse") ToolControl(s, call, args);
-    else if (call.name == "read_settings") ToolReadSettings(s, call);
-    else if (call.name == "change_settings") ToolChangeSettings(s, call, args);
+    else if (call.name == "find_actions") ToolFindActions(s, call, args);
+    else if (call.name == "run_actions") ToolRunActions(s, call, args);
     else {
         AddToolResult(a, call.id, ToolOutcome::Fail("unknown_tool", "no tool named " + call.name));
         ++a.call_index;

@@ -92,6 +92,11 @@ ui::FluentMenuItem Heading(std::wstring text) {
 
 } // namespace
 
+int ActionMatchTier(const ActionView& view, std::wstring_view needle) {
+    const std::wstring folded = Fold(Trim(needle));
+    return folded.empty() ? 0 : MatchView(view, folded).tier;
+}
+
 ui::FluentMenuItem PaletteRow(const ActionView& view) {
     ui::FluentMenuItem row;
     row.command = PaletteCommand(view.index);
@@ -158,6 +163,7 @@ std::vector<ui::FluentMenuItem> PaletteRows(const std::vector<ActionView>& views
     };
     std::vector<Hit> hits;
     for (const auto& v : views) {
+        if (!v.palette) continue;
         const Match m = MatchView(v, needle);
         if (!m.tier) continue;
         const auto it = std::find(used.begin(), used.end(), v.index);

@@ -524,6 +524,33 @@ std::vector<Pane*> PanesOnScreen(const LayoutTab& layout) {
     return out;
 }
 
+bool PanesForArg(AppState& s, const json::Value* pane, std::vector<Pane*>& out, std::string& error) {
+    out.clear();
+    int number = 0;
+    int64_t n = 0;
+    if (!pane || pane->is_null() || (pane->is_string() && pane->as_string() == "focused")) {
+        number = 0;
+    } else if (pane->is_string() && pane->as_string() == "all") {
+        out = PanesOnScreen(LiveLayout(s));
+        if (out.empty()) error = "no pane";
+        return !out.empty();
+    } else if (pane->is_string() && pane->as_string() == "target") {
+        number = -1;
+    } else if (pane->get_int(n, 1, 4)) {
+        number = static_cast<int>(n);
+    } else {
+        error = "pane: 1-4, \"focused\", \"target\" or \"all\"";
+        return false;
+    }
+    Pane* p = PaneByNumber(s, number, nullptr);
+    if (!p) {
+        error = number < 0 ? "no target pane is marked" : "there is no such pane on screen";
+        return false;
+    }
+    out.push_back(p);
+    return true;
+}
+
 json::Value StateSnapshot(AppState& s) {
     json::Value out = json::Value::Object();
     LayoutTab& layout = LiveLayout(s);

@@ -13,7 +13,11 @@
 #include "../favorites_bar.h"
 #include "../keymap.h"
 #include "../places.h"
+#include "../app_hosted_edit.h"
+#include "../app_navigation.h"
 #include "../reopen_closed.h"
+#include "../tab_transfer.h"
+#include "../window_factory.h"
 #include "../tag_query.h"
 #include "../tag_view.h"
 #include "../vertical_tabs.h"
@@ -99,6 +103,7 @@ BackgroundViewOptions ViewOptions(AppState& s, const Tab& tab) {
 
 using Run = void (*)(AppState&);
 using Fill = void (*)(AppState&, ActionView&);
+using Pick = void (*)(AppState&, int);
 
 struct Def {
     std::string_view id;
@@ -110,6 +115,8 @@ struct Def {
     int command;           // the MenuCmd it runs, or 0 for `run`
     Run run;
     Fill fill;             // enabled / why / value / choices; nullptr: always on
+    Pick pick = nullptr;   // runs a choice without a menu command (its position)
+    bool hidden = false;   // the assistant's only (ActionView::palette)
 };
 
 void Post(AppState& s, UINT message) {
@@ -204,6 +211,71 @@ void FillOne(AppState& s, ActionView& v) { NeedOne(s, v); }
 void FillFolder(AppState& s, ActionView& v) { NeedFolder(s, v); }
 void FillPanes(AppState& s, ActionView& v) { NeedPanes(s, v); }
 
+void FillSelectionOrFolder(AppState& s, ActionView& v) {
+    const Tab* tab = ActiveTab(s);
+    if (!(tab && tab->SelectedCount() > 0) && !InFolder(s)) Off(v, I::ActWhyNotFolder);
+}
+
+// 添加或去掉标签 ›: one row per tag, in the sidebar's order.
+void FillTags(AppState& s, ActionView& v) {
+    if (!NeedSelection(s, v)) return;
+    if (s.places.tags.empty()) { Off(v, I::ActWhyNoTags); return; }
+    for (const auto& tag : s.places.tags) {
+        ui::FluentMenuItem row;
+        row.text = tag.name;
+        v.choices.push_back(std::move(row));
+    }
+}
+
+void PickTag(AppState& s, int choice) {
+    const Tab* tab = ActiveTab(s);
+    if (!tab || choice < 0 || static_cast<size_t>(choice) >= s.places.tags.size()) return;
+    ToggleTagWithUndo(s, s.places.tags[static_cast<size_t>(choice)].id, SelectedFullPaths(*tab));
+}
+
+// The selected items, or the open folder, join the favorites (never leave them).
+void AddFavorites(AppState& s) {
+    const Tab* tab = ActiveTab(s);
+    if (!tab) return;
+    std::vector<std::wstring> paths;
+    if (tab->SelectedCount() > 0) paths = SelectedFullPaths(*tab);
+    else if (InFolder(s)) paths.push_back(tab->current_path);
+    for (const auto& p : paths) {
+        if (p.empty() || fs::IsVirtualPath(p) || s.places.IsStarred(p)) continue;
+        const DWORD attrs = GetFileAttributesW(p.c_str());
+        if (attrs == INVALID_FILE_ATTRIBUTES) continue;
+        ToggleStarred(s, p, (attrs & FILE_ATTRIBUTE_DIRECTORY) ? PlaceItemKind::Folder : PlaceItemKind::File);
+    }
+}
+
+// The focused pane leaves the split for a window of its own (the split it
+// left stays on screen here).
+void PaneToWindow(AppState& s) {
+    Pane* pane = s.pane;
+    if (!pane || LiveLayout(s).VisiblePanes().size() < 2) return;
+    LayoutTab* into = s.window_tabs.Active();
+    PaneOrigin origin;
+    const std::optional<size_t> tab_index = SplitPaneIntoTab(s, pane, origin);
+    if (!tab_index) return;
+    WindowInit init;
+    if (pane->ActiveTab()) init.path = pane->ActiveTab()->current_path;
+    init.adopt_from = &s;
+    init.adopt_index = *tab_index;
+    OpenPulseWindow(s, init);
+    for (size_t i = 0; i < s.window_tabs.items.size(); ++i)
+        if (s.window_tabs.items[i].get() == into) {
+            if (s.window_tabs.active != i) SwitchTab(s, i);
+            break;
+        }
+}
+
+void SelectNone(AppState& s) {
+    Tab* tab = ActiveTab(s);
+    if (!tab) return;
+    tab->ClearSelection();
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
 constexpr const wchar_t* kNoKey = nullptr;
 constexpr Run kNoRun = nullptr;
 constexpr Fill kAlways = nullptr;
@@ -219,6 +291,10 @@ constexpr Def kDefs[] = {
     {"nav.refresh", I::Refresh, I::ActDomNav, L"\xE72C", P::None, L"F5", CmdRefresh, kNoRun, kAlways},
     {"nav.recent_changes", I::ActRecentChanges, I::ActDomNav, L"\xE81C", P::None, kNoKey,
      CmdViewRecentChanges, kNoRun, FillFolder},
+    {"nav.go", I::ActGoAddress, I::ActDomNav, L"\xE8AD", P::None, L"Ctrl+L", 0,
+     +[](AppState& s) { ShowAddressEditor(s); }, kAlways},
+    {"nav.open", I::ActOpenSelected, I::ActDomNav, L"\xE8E5", P::None, L"Enter", 0,
+     +[](AppState& s) { OpenSelected(s); }, FillSelection},
     {"nav.recycle_bin", I::ActOpenRecycle, I::ActDomNav, L"\xE75C", P::None, kNoKey,
      CmdOpenRecycle, kNoRun, kAlways},
     // 标签页
@@ -235,6 +311,8 @@ constexpr Def kDefs[] = {
      kNoRun, FillLayout},
     {"pane.mark_target", I::ActMarkTarget, I::ActDomWindow, L"\xE7C1", P::None, L"Ctrl+Alt+D", 0,
      +[](AppState& s) { MarkTargetPane(s); }, FillPanes},
+    {"pane.to_window", I::ActPaneToWindow, I::ActDomWindow, L"\xE8A7", P::None, kNoKey, 0, PaneToWindow,
+     FillPanes},
     {"window.new", I::ActNewWindow, I::ActDomWindow, L"\xE78B", P::None, L"Ctrl+N", 0,
      +[](AppState& s) { Post(s, WM_NEW_WINDOW); }, kAlways},
     {"window.close", I::ActCloseWindow, I::ActDomWindow, L"\xE8BB", P::None, L"Ctrl+Shift+W", 0,
@@ -273,6 +351,12 @@ constexpr Def kDefs[] = {
      CmdInvertSelection, kNoRun, kAlways},
     {"select.pattern", I::ActSelectPattern, I::ActDomSelect, L"\xF5B4", P::None, L"Ctrl+Shift+A",
      CmdSelectWildcard, kNoRun, kAlways},
+    {"select.clear", I::ActSelectNone, I::ActDomSelect, L"\xE8E6", P::None, kNoKey, 0, SelectNone, FillSelection},
+    // The assistant's selector (action_state.h); by hand it is 按模式选择.
+    {"select.items", I::ActSelectWhere, I::ActDomSelect, L"\xF5B4", P::None, kNoKey, CmdSelectWildcard, kNoRun,
+     kAlways, nullptr, true},
+    {"settings.read", I::ActReadSettings, I::ActDomApp, L"\xE713", P::None, kNoKey, CmdSettings, kNoRun, kAlways,
+     nullptr, true},
     // 文件
     {"edit.undo", I::Undo, I::ActDomFiles, L"\xE7A7", P::None, L"Ctrl+Z", CmdUndo, kNoRun, FillUndo},
     {"file.copy", I::ActCopy, I::ActDomFiles, L"\xE8C8", P::None, L"Ctrl+C", CmdCopy, kNoRun, FillSelection},
@@ -309,6 +393,9 @@ constexpr Def kDefs[] = {
     {"tag.clear", I::ActClearTags, I::ActDomTags, L"\xE8EC", P::None, L"Alt+0", 0,
      +[](AppState& s) { if (const Tab* tab = ActiveTab(s)) ClearTagsWithUndo(s, SelectedFullPaths(*tab)); },
      FillSelection},
+    {"tag.toggle", I::ActToggleTag, I::ActDomTags, L"\xE8EC", P::None, kNoKey, 0, kNoRun, FillTags, PickTag},
+    {"fav.add", I::ActAddFavorite, I::ActDomTags, L"\xE734", P::None, kNoKey, 0, AddFavorites,
+     FillSelectionOrFolder},
     {"workspace.pin", I::PinWorkspace, I::ActDomTags, L"\xF5BE", P::None, kNoKey, CmdPinWorkspace,
      kNoRun, kAlways},
     {"quick_access.pin", I::PinQuickAccess, I::ActDomTags, L"\xF5BD", P::None, kNoKey, CmdPinQuickAccess,
@@ -425,6 +512,7 @@ std::vector<ActionView> ListActions(AppState& s) {
         if (d.glyph) v.glyph = d.glyph;
         v.pictogram = d.pictogram;
         if (d.chord) v.shortcut = ShownShortcut(d.chord);
+        v.palette = !d.hidden;
         if (d.fill) d.fill(s, v);
         out.push_back(std::move(v));
     }
@@ -456,7 +544,12 @@ bool RunAction(AppState& s, int index, int choice) {
     if (choice >= 0) {
         if (choice >= static_cast<int>(v.choices.size())) return false;
         const auto& row = v.choices[static_cast<size_t>(choice)];
-        if (!row.enabled || row.command == CmdNone) return false;
+        if (!row.enabled) return false;
+        if (row.command == CmdNone) {
+            if (!d.pick) return false;
+            d.pick(s, choice);
+            return true;
+        }
         DispatchMenuCommand(s, row.command);
         return true;
     }

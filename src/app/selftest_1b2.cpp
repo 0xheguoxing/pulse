@@ -42,6 +42,8 @@
 #include "details_column_menu.h"
 #include "entry_group.h"
 #include "context_menu.h"
+#include "actions/action_params.h"
+#include "actions/action_policy.h"
 #include "actions/action_registry.h"
 #include "actions/action_state.h"
 #include "context_menu_controller.h"
@@ -5506,6 +5508,85 @@ bool AsPump(const std::function<bool()>& done, DWORD ms, const std::function<voi
 
 } // namespace
 
+// P3: the assistant's gate per action and find_actions' rows
+// (plans/ai/P3_AI接入动作表.html).
+void TestActionPolicy() {
+    namespace act = app::actions;
+    const auto gate = [](std::string_view id, std::wstring_view target = {}) { return act::AiPolicy(id, target).gate; };
+    Check(gate("view.sort") == act::Gate::Direct, L"policy: a view action runs at once");
+    Check(gate("tag.toggle") == act::Gate::Direct, L"policy: organizing runs at once");
+    Check(gate("settings.set") == act::Gate::Direct, L"policy: settings run at once (the card says old -> new)");
+    Check(gate("file.new_folder") == act::Gate::Direct, L"policy: a new folder runs at once and undoes");
+    Check(gate("file.move_to") == act::Gate::Later && gate("file.rename") == act::Gate::Later,
+          L"policy: moves and renames go through the planned tools");
+    Check(gate("file.recycle") == act::Gate::Later, L"policy: deleting goes through the planned tools");
+    Check(gate("app.exit") == act::Gate::Locked, L"policy: exiting Pulse is the user's only");
+    Check(gate("no.such.action") == act::Gate::Locked, L"policy: unknown ids are locked");
+    Check(gate("index.install_full") == act::Gate::Confirm, L"policy: a system action asks first");
+    Check(gate("nav.open", L"C:\\AsT\\setup.exe") == act::Gate::Confirm &&
+              gate("nav.open", L"C:\\AsT\\run.PS1") == act::Gate::Confirm &&
+              gate("nav.open", L"C:\\AsT\\app.lnk") == act::Gate::Confirm,
+          L"policy: programs, scripts and shortcuts ask first");
+    Check(gate("nav.open", L"C:\\AsT\\report.pdf") == act::Gate::Direct &&
+              gate("nav.open", L"C:\\AsT\\photo.jpg") == act::Gate::Direct,
+          L"policy: documents and media open at once");
+    Check(act::IsProgramPath(L"x.msi") && act::IsProgramPath(L"x.BAT") && !act::IsProgramPath(L"x.txt") &&
+              !act::IsProgramPath(L"exe"),
+          L"policy: program extensions");
+
+    // find_actions: the best rows first, runnable before the rest.
+    std::vector<act::ActionView> views;
+    auto add = [&](std::string_view id, const wchar_t* title, bool enabled = true) -> act::ActionView& {
+        act::ActionView v;
+        v.index = static_cast<int>(views.size());
+        v.id = id;
+        v.title = title;
+        v.enabled = enabled;
+        if (!enabled) v.why = L"先选中一个文件";
+        views.push_back(std::move(v));
+        return views.back();
+    };
+    add("details.toggle", L"详情面板").value = L"关";
+    add("view.sort", L"排序方式");
+    add("file.rename", L"重命名", false);
+    add("settings.set", L"显示文件夹大小").key = "size_bars";
+    add("settings.set", L"显示隐藏的文件").key = "show_hidden";
+    add("settings.set", L"列表行高").key = "row_height";
+    {
+        const auto hits = act::FindActions(views, L"详情面板", 8);
+        Check(!hits.empty() && hits.front()->id == "details.toggle", L"find_actions: a title finds its action");
+    }
+    {
+        const auto hits = act::FindActions(views, L"文件夹大小", 8);
+        Check(!hits.empty() && hits.front()->key == "size_bars", L"find_actions: a setting is found by the words naming it");
+    }
+    {
+        const auto hits = act::FindActions(views, L"文件夹大小 列表", 8);
+        Check(!hits.empty() && hits.front()->key == "size_bars", L"find_actions: the longer, more specific word ranks first");
+    }
+    Check(act::FindActions(views, L"zzqqxx", 8).empty(), L"find_actions: nothing for unrelated words");
+    Check(act::FindActions(views, L"详情 排序 重命名 文件", 2).size() <= 2, L"find_actions: at most max rows");
+    {
+        const json::Value row = act::ActionJson(views[0]);
+        Check(row.get_string("id") == "details.toggle" && row.get_string("now") == "\xE5\x85\xB3" && row.find("args"),
+              L"find_actions: a row has its id, current value and args");
+        const json::Value off = act::ActionJson(views[2]);
+        const json::Value* enabled = off.find("enabled");
+        Check(enabled && enabled->is_bool() && !enabled->as_bool() && !off.get_string("why").empty(),
+              L"find_actions: a row that cannot run says why");
+        const json::Value set = act::ActionJson(views[4]);
+        Check(set.get_string("id") == "settings.set" && set.get_string("key") == "show_hidden" &&
+                  set.get_string("values") == "true|false",
+              L"find_actions: a setting row has its key and values");
+    }
+    {
+        const json::Value spec = act::ArgSpecJson(act::ArgSpec("view.sort"));
+        Check(spec.get_string("by") == "name|modified|type|size|created" && spec.get_string("desc") == "bool",
+              L"find_actions: view.sort's args");
+        Check(act::ArgSpec("window.overview").empty(), L"find_actions: an action without args has no spec");
+    }
+}
+
 void TestActionState() {
     namespace act = app::actions;
     auto owner = std::make_unique<AppState>();
@@ -8865,6 +8946,7 @@ int RunSelfTest1B2() {
     if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
         wcscmp(test_case, L"action-state") == 0) {
         TestActionState();
+        TestActionPolicy();
         if (g_log) { fclose(g_log); g_log = nullptr; }
         return g_fail ? 1 : 0;
     }
@@ -9013,6 +9095,7 @@ int RunSelfTest1B2() {
     TestMultiSelect();
     TestSplitLayout();
     TestActionState();
+    TestActionPolicy();
     TestViewLayouts();
     TestListColumns();
     TestOptionalColumns();

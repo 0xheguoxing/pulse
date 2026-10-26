@@ -953,12 +953,15 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             const float hint2_h = b.hint2.empty() ? 0.0f : (any_hint ? 3.0f * s : 6.0f * s) +
                                                                wrapped_h(b.hint2, formats_.caption, hint_w, 18.0f * s);
             const float hint_h = hint0_h + hint1_h + hint2_h;
+            // P3 .cf-file: margin 8 12 0 52, padding 7 10, r 8, pane, line2
+            // border; file icon 15, the name 12.5, the note text3 at the right.
+            const float file_h = b.file.empty() ? 0.0f : 8.0f * s + 34.0f * s;
             // .lktip: max-height 0 → 40 and opacity while the link is hovered
             // (.3 s / .25 s); padding 0 12 10 52, margin-top -4.
             const float tip_k = b.extra_tip.empty() ? 0.0f
                                                     : TweenTo(key + 2, hot(AiPanelPart::ConfirmExtra, index) ? 1.0f : 0.0f, 300, now_ms);
             const float tip_h = tip_k * (18.0f * s + 10.0f * s - 4.0f * s);
-            const float h = 2.0f * s + top_h + hint_h + 56.0f * s + tip_h;
+            const float h = 2.0f * s + top_h + file_h + hint_h + 56.0f * s + tip_h;
             const D2D1_RECT_F r = D2D1::RectF(x0, top + y, x1, top + y + h);
             if (visible(r.top - 4.0f * s, r.bottom + 4.0f * s)) {
                 // box-shadow 0 0 0 3px amber 12% (.danger: red).
@@ -966,17 +969,33 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                 card(r, b.danger ? pal.red_line : pal.amber_line);
                 const float iy = r.top + 1.0f * s + 12.0f * s;
                 c.Fill(D2D1::RectF(il + 12.0f * s, iy, il + 42.0f * s, iy + 30.0f * s), 8.0f * s, b.danger ? pal.red_bg : pal.amber_bg);
-                c.Icon(b.danger ? AiIcon::Trash : AiIcon::Shield, il + 18.5f * s, iy + 6.5f * s, 17.0f * s, b.danger ? pal.red : pal.amber);
+                c.Icon(b.danger ? AiIcon::Trash : b.cf_icon, il + 18.5f * s, iy + 6.5f * s, 17.0f * s, b.danger ? pal.red : pal.amber);
                 wrapped(b.title, formats_.body_b, tx, iy, text_w, 20.0f * s, pal.text);
                 if (!b.tag.empty()) {
                     const float gx = tag_inline ? tx + title_w1 + 6.0f * s : tx;
                     const float gy = tag_inline ? iy + 1.5f * s : iy + title_h - 20.0f * s + 1.5f * s;
                     const D2D1_RECT_F gr = D2D1::RectF(gx, gy, gx + tag_w, gy + 17.0f * s);
-                    c.Fill(gr, 8.0f * s, pal.red_bg);
-                    line(b.tag, formats_.badge, gr.left + 6.0f * s, gr.top, gr.right - 4.0f * s, 17.0f * s, pal.red);
+                    c.Fill(gr, 8.0f * s, b.tag_amber ? pal.amber_bg : pal.red_bg);
+                    line(b.tag, formats_.badge, gr.left + 6.0f * s, gr.top, gr.right - 4.0f * s, 17.0f * s,
+                         b.tag_amber ? pal.amber : pal.red);
                 }
                 if (!b.sub.empty()) wrapped(b.sub, formats_.caption, tx, iy + title_h + 2.0f * s, text_w, 18.0f * s, pal.text2);
                 float yy = r.top + 1.0f * s + top_h;
+                if (!b.file.empty()) {
+                    yy += 8.0f * s;
+                    const D2D1_RECT_F fr = D2D1::RectF(tx, yy, ir - 12.0f * s, yy + 34.0f * s);
+                    c.Fill(fr, 8.0f * s, pal.line2);
+                    c.Fill(D2D1::RectF(fr.left + 1.0f * s, fr.top + 1.0f * s, fr.right - 1.0f * s, fr.bottom - 1.0f * s),
+                           7.0f * s, pal.pane);
+                    c.Icon(AiIcon::File, fr.left + 10.0f * s, fr.top + 9.5f * s, 15.0f * s, pal.text2);
+                    const float note_w = b.file_note.empty() ? 0.0f : c.Measure(b.file_note, formats_.caption) + 1.0f;
+                    const float name_r = fr.right - 10.0f * s - (note_w > 0.0f ? note_w + 10.0f * s : 0.0f);
+                    line(b.file, formats_.small125, fr.left + 33.0f * s, fr.top + 8.0f * s, name_r, 18.0f * s, pal.text);
+                    if (note_w > 0.0f)
+                        line(b.file_note, formats_.caption, fr.right - 10.0f * s - note_w, fr.top + 8.0f * s,
+                             fr.right - 10.0f * s + 1.0f, 18.0f * s, pal.text3);
+                    yy += 34.0f * s;
+                }
                 if (!b.hint.empty()) {
                     yy += 6.0f * s;
                     c.Icon(b.hint_icon, tx, yy + 2.5f * s, 13.0f * s, pal.text3);
@@ -1114,9 +1133,11 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                 card(r, pal.line);
                 const float iy = r.top + 1.0f * s + 12.0f * s;
                 const D2D1_POINT_2F mid = D2D1::Point2F(il + 15.0f * s, iy + 15.0f * s);
-                c.dc->FillEllipse(D2D1::Ellipse(mid, 15.0f * s, 15.0f * s), c.B(b.done || b.gone ? pal.hover : pal.accent_soft));
-                c.Icon(b.done ? AiIcon::Undo : AiIcon::Check, mid.x - 8.0f * s, mid.y - 8.0f * s, 16.0f * s,
-                       b.done || b.gone ? pal.text2 : pal.ok);
+                const bool partial = b.partial && !b.done && !b.gone;
+                c.dc->FillEllipse(D2D1::Ellipse(mid, 15.0f * s, 15.0f * s),
+                                  c.B(b.done || b.gone ? pal.hover : partial ? pal.amber_bg : pal.accent_soft));
+                c.Icon(b.done ? AiIcon::Undo : partial ? AiIcon::Warn : AiIcon::Check, mid.x - 8.0f * s, mid.y - 8.0f * s,
+                       16.0f * s, b.done || b.gone ? pal.text2 : partial ? pal.amber : pal.ok);
                 wrapped(b.title, formats_.body_b, tx, iy, text_w, 20.0f * s, pal.text);
                 if (!sub_text.empty()) wrapped(sub_text, formats_.caption, tx, iy + title_h + 2.0f * s, text_w, 18.0f * s, pal.text2);
                 float yy = iy + top_h;
@@ -1124,8 +1145,11 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                     yy += 10.0f * s;
                     for (size_t n = 0; n < shown_lines.size(); ++n) {
                         const AiResultLine& ln = b.lines[shown_lines[n]];
-                        const D2D1_COLOR_F ink = ln.warn ? pal.amber : pal.text2;
-                        c.Icon(ln.warn ? AiIcon::Warn : AiIcon::Check, tx, yy + 2.5f * s, 13.0f * s, ln.warn ? pal.amber : pal.ok);
+                        const D2D1_COLOR_F ink = ln.warn ? pal.amber : ln.mute ? pal.text3 : pal.text2;
+                        if (ln.mute)   // the mock's dash: 6 → 18 of 24 at 1.6
+                            c.Fill(D2D1::RectF(tx + 3.25f * s, yy + 8.2f * s, tx + 9.75f * s, yy + 9.8f * s), 0.8f * s, pal.text3);
+                        else
+                            c.Icon(ln.warn ? AiIcon::Warn : AiIcon::Check, tx, yy + 2.5f * s, 13.0f * s, ln.warn ? pal.amber : pal.ok);
                         float lx = tx + 20.0f * s;
                         if (ln.bold.empty() && ln.after.empty()) {
                             wrapped(ln.before, formats_.small125, lx, yy, ln_w, 18.0f * s, ink);
@@ -1134,7 +1158,8 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                             line(ln.before, formats_.small125, lx, yy, ir, 18.0f * s, ink);
                             lx += w1;
                             const float w2 = c.Measure(ln.bold, formats_.small125b);
-                            line(ln.bold, formats_.small125b, lx, yy, ir, 18.0f * s, ln.warn ? pal.amber : pal.text);
+                            line(ln.bold, formats_.small125b, lx, yy, ir, 18.0f * s,
+                                 ln.warn ? pal.amber : ln.mute ? pal.text3 : pal.text);
                             lx += w2;
                             line(ln.after, formats_.small125, lx, yy, ir, 18.0f * s, ink);
                         }
@@ -1277,7 +1302,9 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                     // (.k: 11/600 lh 18, padding 0 6, border 1 line with a 2
                     // px bottom, r 5, bg), gap 4.
                     yy += 10.0f * s;
-                    c.Icon(AiIcon::Keyboard, tx, yy + 4.0f * s, 14.0f * s, pal.text3);
+                    bool only_palette = true;
+                    for (const AiKeyRowView& row : b.keys) only_palette = only_palette && row.palette;
+                    c.Icon(only_palette ? AiIcon::Search : AiIcon::Keyboard, tx, yy + 4.0f * s, 14.0f * s, pal.text3);
                     const float kx = tx + 21.0f * s;
                     for (size_t n = 0; n < b.keys.size(); ++n) {
                         const AiKeyRowView& k = b.keys[n];
@@ -1299,6 +1326,15 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                             const float cw = c.Measure(cap, formats_.small11b) + 14.0f * s;
                             if (cx + cw > ir + 0.5f) break;
                             const D2D1_RECT_F kr = D2D1::RectF(cx, ry + 0.5f * s, cx + cw, ry + 21.5f * s);
+                            if (k.palette) {
+                                // .pk: accent-soft, accent 600, r 5, no border.
+                                const D2D1_RECT_F pr = D2D1::RectF(kr.left, ry + 2.0f * s, kr.right, ry + 20.0f * s);
+                                c.Fill(pr, 5.0f * s, pal.accent_soft);
+                                line(cap, formats_.small11b, pr.left + 7.0f * s, pr.top, pr.right - 7.0f * s + 1.0f, 18.0f * s,
+                                     pal.accent);
+                                cx += cw + 4.0f * s;
+                                continue;
+                            }
                             c.Fill(kr, 5.0f * s, pal.line);
                             c.Fill(D2D1::RectF(kr.left + 1.0f * s, kr.top + 1.0f * s, kr.right - 1.0f * s, kr.bottom - 2.0f * s),
                                    4.0f * s, pal.bg);
