@@ -808,6 +808,7 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             vm.settings_integration_other_exe = s.appPrefs.integration_other_exe;
             vm.settings_shell_tags = s.appPrefs.shell_tag_menu;
             vm.settings_alias_mark = app::AliasStore::Instance().ShowMark();
+            vm.settings_ai_marks = s.settings.AssistantMarks();
             vm.settings_blank_click_action = s.appPrefs.blank_click_action;
             vm.settings_preview_trigger = s.appPrefs.preview_trigger;
             vm.settings_hover_delay_ms = s.appPrefs.hover_preview_delay_ms;

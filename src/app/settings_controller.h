@@ -135,6 +135,10 @@ public:
 
     void SelectPage(int page) noexcept;
     int page() const noexcept { return page_; }
+    // The titles of the rows the 助手 changed last (「助手刚改的」); cleared
+    // when it undoes them.
+    void SetAssistantMarks(std::vector<std::wstring> titles) { assistant_marks_ = std::move(titles); }
+    const std::vector<std::wstring>& AssistantMarks() const noexcept { return assistant_marks_; }
     // Settings lives in its title-bar button, not in the tab strip: the tab
     // to go back to when the button closes it (compared, never dereferenced).
     const void* return_tab() const noexcept { return return_tab_; }
@@ -316,6 +320,7 @@ public:
     void DiagnosticsAction(int action);
 
 private:
+    std::vector<std::wstring> assistant_marks_;
     const void* return_tab_ = nullptr;
     int context_tab_ = 0;
     std::shared_ptr<SystemCtxModel> sysctx_;  // shared_ptr: fine with the forward declaration

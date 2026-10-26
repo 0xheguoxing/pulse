@@ -33,11 +33,13 @@
 #include "app_internal.h"
 #include "app_messages.h"
 #include "app_navigation.h"
+#include "app_network_page.h"
 #include "app_ops_ui.h"
 #include "batch_rename_ai.h"
 #include "batch_rename_plan.h"
 #include "batch_rename_presets.h"
 #include "favorites_bar.h"
+#include "folder_alias.h"
 #include "keymap.h"
 #include "places.h"
 #include "tab_transfer.h"
@@ -53,8 +55,10 @@
 #include "../ui/ai_list_overlay.h"
 #include "../ui/ui_motion.h"
 #include "../ui/ui_renderer.h"
+#include "../ui/window_material.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cwctype>
@@ -359,7 +363,18 @@ const json::Value& Tools() {
      "items":{"type":"array","items":{"type":"string"},"description":"tray / tag / favorite: full paths; omit for the items selected in the active tab (favorite: the current folder)"},
      "tag":{"type":"string","description":"tag: the tag's name; made if it does not exist"}},
     "required":["do"]}}},
-  "required":["actions"]}}}
+  "required":["actions"]}}},
+{"type":"function","function":{"name":"read_settings",
+ "description":"Returns the current value of every Pulse setting the assistant may change (ids as in change_settings).",
+ "parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"change_settings",
+ "description":"Changes Pulse settings at once, without asking (the user sees old -> new on a card and can undo it). Switches take true/false; the others one of the values listed. Settings: appearance: theme light|dark|system, window_effect none|acrylic|mica|mica_alt, text_rendering auto|sharp|smooth, font_size small|default|large|larger, language system|zh-CN|zh-TW|en-US, menu_acrylic. File list: row_height compact|standard|roomy, click_to_open double|single, name_highlight hover|always (single-click only), hover_select (single-click only), item_checkboxes, blank_double_click nothing|back|up, show_hidden, show_protected (system files), folders_first top|follow|mixed, smart_dates, zebra_rows, size_bars, tag_name_color, selection_outline, thumbnail_app_badges, alias_mark, mtime_marks off|dots|bars|text, mtime_range today|3|7|30, mtime_dim_older, mtime_bold_today, mtime_folders, mtime_other_views, mtime_flash, onedrive_status, svn_status. Tabs and windows: startup_open last_tabs|default_location, new_tab_open current|default_location, external_open smart|tab|window, vertical_tabs, pinned_tab_names, double_click_closes_tab, close_window_with_last_tab. Startup and integration: launch_at_signin (affects Windows), start_in_tray, keep_running, tray_icon always|background|never, explorer_tag_menu (affects Windows), open_folders_with_pulse (makes Pulse the default file manager for folders, drives, This PC and Win+E; affects Windows). File operations: staging_icon_size small|standard|large, staging_hide_when_empty, change_tracking, change_days today|3|7, lan_discovery, network_recent, hidden_shares, confirm_delete (can only be turned on). Search: global_search (affects Windows), pinyin_search. Locked, only the user changes them in Settings: confirm_delete off, assistant_permissions, always_allow, connections (and API keys); asking for one shows the user why.",
+ "parameters":{"type":"object","properties":{
+   "changes":{"type":"array","description":"The settings to change","items":{"type":"object","properties":{
+     "id":{"type":"string"},
+     "value":{"description":"true / false for a switch, else one of the setting's values"}},
+    "required":["id","value"]}}},
+  "required":["changes"]}}}
 ])JSON";
         json::Value v;
         json::Parse(kTools, v);
@@ -421,6 +436,13 @@ std::string SystemPrompt() {
          "shortcuts), so never ask for confirmation first and never list the shortcuts. Afterwards say in one short "
          "sentence what changed and, when useful, how to use it (e.g. drag files between the panes); name actions that "
          "failed and why. Never say something changed unless control_pulse returned it ok.\n"
+         "- To change a Pulse setting call change_settings with every change at once (read_settings first when you need "
+         "the current values). It acts at once and the card shows old -> new with Undo, so never ask first. Afterwards "
+         "say in one or two short sentences what is different now. Some settings are locked (the delete confirmation "
+         "cannot be turned off; your own permissions, the Always allow list, connections and API keys): still call "
+         "change_settings so Pulse shows the user why. Then, in two short sentences, say the step is there so a "
+         "misunderstanding of yours can never delete their files (or that you cannot give yourself permissions), and "
+         "that for moves and renames they can check Always allow on the confirm card. Add no other reasons.\n"
          "- You cannot delete, overwrite or read file contents yourself; only find_cleanup and find_duplicates move "
          "files to the Recycle Bin, and only after the user accepts in Pulse.\n"
          "- Reply in the user's language and keep it brief. Format with short paragraphs, lists whose lines start "
@@ -6615,6 +6637,425 @@ void ToolControl(AppState& s, const app::ai::ModelToolCall& call, const json::Va
     CtlNext(s, run);
 }
 
+// ---- Third batch, flow S: Pulse's settings ----------------------------------
+// One row per setting the assistant may change. A row changes the setting the
+// way the user's click does (the same ToggleUi index or controller setter), so
+// saving and applying stay in one place. Choices hold the prefs' values; the
+// setters take the choice's index like the segmented control's hit index.
+
+struct SetChoice {
+    const char* key = nullptr;
+    I label{};
+    int value = 0;
+};
+
+constexpr uint8_t kSetSys = 1;   // 影响系统: Windows sees it (registry, shell)
+
+struct SetDef {
+    const char* id;
+    I label;
+    int page;                                // settings page (SelectPage)
+    uint8_t flags;
+    int toggle;                              // a switch: the click's index; -1 uses set (0 / 1)
+    int (*get)(AppState&);
+    void (*set)(AppState&, int);             // the choice's index (switch: 0 off, 1 on)
+    std::array<SetChoice, 4> choices;        // none: a switch
+};
+
+void SetSwitchByClick(AppState& s, int index) {
+    // app_input's ToggleSetting: network switches first, then the controller.
+    if (HandleNetworkSettingToggle(s, index)) return;
+    s.settings.ToggleUi(index);
+}
+
+int LanguageIndex(const std::wstring& id) {
+    return id == L"zh-CN" ? 1 : id == L"zh-TW" ? 2 : id == L"en-US" ? 3 : 0;
+}
+
+#define SET_GET(expr) +[](AppState& s) -> int { return static_cast<int>(expr); }
+#define SET_SW(id, label, page, flags, index, field) \
+    {id, I::label, page, flags, index, SET_GET(s.appPrefs.field), nullptr, {}}
+
+const SetDef kSettingDefs[] = {
+    // 外观
+    {"theme", I::SettingsTheme, 0, 0, -1,
+     SET_GET(s.themeOverride == ui::ThemeMode::Light ? 1 : s.themeOverride == ui::ThemeMode::Dark ? 2 : 0),
+     +[](AppState& s, int i) { static constexpr int modes[] = {1, 2, 0}; SetThemeMode(s, modes[i]); },
+     {{{"light", I::SettingsThemeLight, 1}, {"dark", I::SettingsThemeDark, 2}, {"system", I::SettingsThemeSystem, 0}}}},
+    {"window_effect", I::SettingsWindowEffect, 0, 0, -1, SET_GET(ui::WindowEffectFromId(s.appPrefs.window_effect)),
+     +[](AppState& s, int i) { s.settings.WindowEffect(ui::WindowEffectId(static_cast<ui::WindowEffect>(i))); },
+     {{{"none", I::EffectNone, 0}, {"acrylic", I::EffectAcrylic, 1}, {"mica", I::EffectMica, 2}, {"mica_alt", I::EffectMicaAlt, 3}}}},
+    {"text_rendering", I::SettingsTextRender, 0, 0, -1, SET_GET(s.appPrefs.text_render),
+     +[](AppState& s, int i) { s.settings.TextRendering(i); },
+     {{{"auto", I::TextRenderAuto, 0}, {"sharp", I::TextRenderSharp, 1}, {"smooth", I::TextRenderSmooth, 2}}}},
+    {"font_size", I::SettingsUiFontSize, 0, 0, -1, SET_GET(s.appPrefs.ui_font_scale),
+     +[](AppState& s, int i) { s.settings.UiFontSize(i); },
+     {{{"small", I::UiFontSmall, 90}, {"default", I::UiFontDefault, 100}, {"large", I::UiFontLarge, 112}, {"larger", I::UiFontLarger, 125}}}},
+    {"language", I::SettingsLanguage, 0, 0, -1, SET_GET(LanguageIndex(s.appPrefs.language)),
+     +[](AppState& s, int i) { static constexpr const wchar_t* ids[] = {L"system", L"zh-CN", L"zh-TW", L"en-US"}; s.settings.Language(ids[i]); },
+     {{{"system", I::LanguageSystem, 0}, {"zh-CN", I::LanguageZhCN, 1}, {"zh-TW", I::LanguageZhTW, 2}, {"en-US", I::LanguageEnUS, 3}}}},
+    SET_SW("menu_acrylic", MenuAcrylic, 0, 0, 36, menu_acrylic),
+    // 文件列表
+    {"row_height", I::SettingsRowHeight, 9, 0, -1, SET_GET(s.appPrefs.row_height),
+     +[](AppState& s, int i) { s.settings.RowHeight(i); },
+     {{{"compact", I::SettingsDensityCompact, 28}, {"standard", I::SettingsDensityStandard, 34}, {"roomy", I::SettingsDensityRoomy, 40}}}},
+    {"click_to_open", I::SettingsClickOpen, 9, 0, -1, SET_GET(s.appPrefs.single_click_open ? 1 : 0),
+     +[](AppState& s, int i) { s.settings.ClickMode(i); },
+     {{{"double", I::ClickOpenDouble, 0}, {"single", I::ClickOpenSingle, 1}}}},
+    {"name_highlight", I::SettingsNameHighlight, 9, 0, -1, SET_GET(s.appPrefs.name_highlight),
+     +[](AppState& s, int i) { s.settings.ClickMode(2 + i); },
+     {{{"hover", I::NameHighlightHover, 0}, {"always", I::NameHighlightAlways, 1}}}},
+    SET_SW("hover_select", SettingsHoverSelect, 9, 0, 77, hover_select),
+    SET_SW("item_checkboxes", SettingsItemCheckboxes, 9, 0, 78, item_checkboxes),
+    {"blank_double_click", I::SettingsBlankClickBack, 9, 0, -1, SET_GET(s.appPrefs.blank_click_action),
+     +[](AppState& s, int i) { s.settings.BlankClick(i); },
+     {{{"nothing", I::SettingsBlankClickOff, 0}, {"back", I::Back, 1}, {"up", I::Up, 2}}}},
+    SET_SW("show_hidden", SettingsShowHidden, 9, 0, 5, show_hidden_files),
+    SET_SW("show_protected", SettingsShowProtected, 9, 0, 16, show_protected_os_files),
+    {"folders_first", I::SettingsFolderSort, 9, 0, -1, SET_GET(s.appPrefs.folder_sort_mode),
+     +[](AppState& s, int i) { s.settings.FolderSort(i); },
+     {{{"top", I::FolderSortTop, 0}, {"follow", I::FolderSortFollow, 1}, {"mixed", I::FolderSortMixed, 2}}}},
+    SET_SW("smart_dates", ListSmartDate, 9, 0, 17, list_smart_date),
+    SET_SW("zebra_rows", ListZebraRows, 9, 0, 18, list_zebra_rows),
+    SET_SW("size_bars", ListSizeBar, 9, 0, 19, list_size_bar),
+    SET_SW("tag_name_color", ListTagNameColor, 9, 0, 22, list_tag_name_color),
+    SET_SW("selection_outline", ListSelectionOutline, 9, 0, 33, list_selection_outline),
+    SET_SW("thumbnail_app_badges", ListThumbnailBadges, 9, 0, 34, list_thumbnail_badges),
+    {"alias_mark", I::AliasMark, 9, 0, -1, +[](AppState&) -> int { return app::AliasStore::Instance().ShowMark() ? 1 : 0; },
+     +[](AppState&, int i) { app::AliasStore::Instance().SetShowMark(i != 0); }, {}},
+    {"mtime_marks", I::ListMtimeHint, 9, 0, -1, SET_GET(s.appPrefs.list_mtime_hint),
+     +[](AppState& s, int i) { s.settings.MtimeStyle(i); },
+     {{{"off", I::MtimeStyleOff, 0}, {"dots", I::MtimeStyleDot, 1}, {"bars", I::MtimeStyleBar, 2}, {"text", I::MtimeStyleText, 3}}}},
+    {"mtime_range", I::ListMtimeRange, 9, 0, -1, SET_GET(s.appPrefs.list_mtime_range),
+     +[](AppState& s, int i) { s.settings.MtimeRange(i); },
+     {{{"today", I::MtimeRangeToday, 1}, {"3", I::MtimeRange3, 3}, {"7", I::MtimeRange7, 7}, {"30", I::MtimeRange30, 30}}}},
+    SET_SW("mtime_dim_older", ListMtimeFade, 9, 0, 70, list_mtime_fade),
+    SET_SW("mtime_bold_today", ListMtimeBold, 9, 0, 71, list_mtime_bold),
+    SET_SW("mtime_folders", ListMtimeTree, 9, 0, 72, list_mtime_tree),
+    SET_SW("mtime_other_views", ListMtimeOtherViews, 9, 0, 73, list_mtime_other_views),
+    SET_SW("mtime_flash", ListMtimeFlash, 9, 0, 74, list_mtime_flash),
+    SET_SW("onedrive_status", SyncOneDrive, 9, 0, 75, sync_onedrive),
+    SET_SW("svn_status", SyncSvn, 9, 0, 76, sync_svn),
+    // 标签页与窗口
+    {"startup_open", I::SettingsStartupOpen, 10, 0, -1, SET_GET(s.appPrefs.startup_open),
+     +[](AppState& s, int i) { s.settings.StartupOpen(i); },
+     {{{"last_tabs", I::StartupOpenLastTabs, 0}, {"default_location", I::OpenDefaultLocation, 1}}}},
+    {"new_tab_open", I::SettingsNewTabOpen, 10, 0, -1, SET_GET(s.appPrefs.new_tab_open),
+     +[](AppState& s, int i) { s.settings.NewTabOpen(i); },
+     {{{"current", I::NewTabOpenCurrent, 0}, {"default_location", I::OpenDefaultLocation, 1}}}},
+    {"external_open", I::SettingsExternalOpen, 10, 0, -1, SET_GET(s.appPrefs.external_open),
+     +[](AppState& s, int i) { s.settings.ExternalOpen(i); },
+     {{{"smart", I::ExternalOpenSmart, 0}, {"tab", I::ExternalOpenTab, 1}, {"window", I::ExternalOpenWindow, 2}}}},
+    SET_SW("vertical_tabs", SettingsVerticalTabs, 10, 0, 23, vertical_tabs),
+    SET_SW("pinned_tab_names", PinnedNames, 10, 0, 6, show_pinned_tab_names),
+    SET_SW("double_click_closes_tab", SettingsCloseTabDoubleClick, 10, 0, 35, close_tab_on_double_click),
+    SET_SW("close_window_with_last_tab", SettingsCloseLastTab, 10, 0, 26, close_window_with_last_tab),
+    // 启动与集成
+    SET_SW("launch_at_signin", SettingsLaunch, 11, kSetSys, 1, launch_on_startup),
+    SET_SW("start_in_tray", SettingsStartInTray, 11, 0, 27, start_in_tray),
+    SET_SW("keep_running", SettingsKeepRunning, 11, 0, 2, keep_running_on_close),
+    {"tray_icon", I::SettingsNotifyIcon, 11, 0, -1, SET_GET(s.appPrefs.notify_icon_mode),
+     +[](AppState& s, int i) { s.settings.NotifyIcon(i); },
+     {{{"always", I::NotifyIconAlways, 0}, {"background", I::NotifyIconBackground, 1}, {"never", I::NotifyIconNever, 2}}}},
+    SET_SW("explorer_tag_menu", SettingsShellTags, 11, kSetSys, 21, shell_tag_menu),
+    // The integration card's master switch (H::SettingsIntegration 0).
+    {"open_folders_with_pulse", I::IntegrationMaster, 11, kSetSys, -1, SET_GET(s.appPrefs.integration_enabled),
+     +[](AppState& s, int i) { if ((i != 0) != s.appPrefs.integration_enabled) s.settings.IntegrationAction(0); }, {}},
+    // 文件操作
+    {"staging_icon_size", I::SettingsTrayIcon, 12, 0, -1, SET_GET(s.appPrefs.tray_icon_size),
+     +[](AppState& s, int i) { s.settings.TrayIconSize(i); },
+     {{{"small", I::SettingsTraySmall, 40}, {"standard", I::SettingsTrayStandard, 48}, {"large", I::SettingsTrayLarge, 56}}}},
+    SET_SW("staging_hide_when_empty", TrayHideWhenEmpty, 12, 0, 37, tray_hide_when_empty),
+    SET_SW("change_tracking", SettingsChangeTracking, 12, 0, 8, change_tracking_enabled),
+    {"change_days", I::SettingsChangeDays, 12, 0, -1, SET_GET(s.appPrefs.change_tracking_days),
+     +[](AppState& s, int i) { static constexpr int days[] = {1, 3, 7}; s.settings.ChangeTrackingDays(days[i]); },
+     {{{"today", I::ChangeToday, 1}, {"3", I::ChangeLast3Days, 3}, {"7", I::ChangeLast7Days, 7}}}},
+    SET_SW("lan_discovery", SettingsLanDiscovery, 12, 0, 40, lan_discovery),
+    SET_SW("network_recent", SettingsNetworkRecent, 12, 0, 41, network_recent_enabled),
+    SET_SW("hidden_shares", NetworkShowHiddenShares, 12, 0, 42, show_hidden_shares),
+    SET_SW("confirm_delete", SettingsConfirmDelete, 12, 0, 32, confirm_recycle_delete),
+    // 搜索与索引
+    SET_SW("global_search", GlobalSearch, 1, kSetSys, 15, global_search_enabled),
+    SET_SW("pinyin_search", SearchPinyin, 1, 0, 9, search_pinyin),
+};
+
+#undef SET_SW
+#undef SET_GET
+
+const SetDef* FindSetting(std::string_view id) {
+    for (const SetDef& d : kSettingDefs)
+        if (id == d.id) return &d;
+    return nullptr;
+}
+
+bool IsSwitch(const SetDef& d) { return d.choices[0].key == nullptr; }
+
+// The value as the model sees it.
+json::Value SettingJson(const SetDef& d, int v) {
+    if (IsSwitch(d)) return json::Value(v != 0);
+    for (const SetChoice& c : d.choices)
+        if (c.key && c.value == v) return json::Value(std::string(c.key));
+    return json::Value(static_cast<double>(v));   // a value no choice has (an old row height)
+}
+
+// The value as the card shows it: 开 / 关, or the control's own label.
+std::wstring SettingText(const SetDef& d, int v) {
+    if (IsSwitch(d)) return Text(v ? I::AiSetOn : I::AiSetOff);
+    for (const SetChoice& c : d.choices)
+        if (c.key && c.value == v) return Text(c.label);
+    return std::to_wstring(v);
+}
+
+std::wstring SettingsPageTitle(int page) {
+    switch (page) {
+    case 0: return Text(I::SettingsAppearance);
+    case 1: return Text(I::SettingsSearchIndex);
+    case 9: return Text(I::SettingsFileList);
+    case 10: return Text(I::SettingsPageTabs);
+    case 11: return Text(I::SettingsPageSystem);
+    case 12: return Text(I::SettingsPageFileOps);
+    default: return Text(I::SettingsGeneral);
+    }
+}
+
+// Sets d to the choice at `index` (switch: 0 / 1) the way a click would.
+void ApplySetting(AppState& s, const SetDef& d, int index) {
+    if (IsSwitch(d) && d.toggle >= 0) {
+        if ((d.get(s) != 0) != (index != 0)) SetSwitchByClick(s, d.toggle);
+    } else {
+        d.set(s, index);
+    }
+}
+
+// The choice index of a prefs value (-1: none).
+int ChoiceIndex(const SetDef& d, int v) {
+    if (IsSwitch(d)) return v != 0 ? 1 : 0;
+    for (size_t i = 0; i < d.choices.size(); ++i)
+        if (d.choices[i].key && d.choices[i].value == v) return static_cast<int>(i);
+    return -1;
+}
+
+void ToolReadSettings(AppState& s, const app::ai::ModelToolCall& call) {
+    AiAgent& a = Agent(s);
+    ToolOutcome out;
+    out.data = json::Value::Object();
+    for (const SetDef& d : kSettingDefs) out.data.set(d.id, SettingJson(d, d.get(s)));
+    AddToolResult(a, call.id, out);
+    ++a.call_index;
+    NextTool(s);
+}
+
+struct SetChange {
+    const SetDef* def = nullptr;
+    int from = 0, to = 0;          // prefs values
+    int theme_raw = 0;             // theme: prefs.theme_mode before (-1: the legacy session theme)
+};
+
+void ToolChangeSettings(AppState& s, const app::ai::ModelToolCall& call, const json::Value& args) {
+    AiAgent& a = Agent(s);
+    AiChat& c = Chat(s);
+    json::Value report = json::Value::Array();
+    std::vector<SetChange> done;
+    bool deny_delete = false, deny_own = false;
+    const json::Value* list = args.find("changes");
+    if (!list || !list->is_array() || list->size() == 0) {
+        AddToolResult(a, call.id, ToolOutcome::Fail("invalid_args", "changes is empty"));
+        ++a.call_index;
+        NextTool(s);
+        return;
+    }
+    HideRenameOverlay(s, true);
+    FoldSteps(s, a);
+    for (size_t i = 0; i < list->size() && i < 24; ++i) {
+        const json::Value& ch = list->at(i);
+        if (!ch.is_object()) continue;
+        const json::Value* idv = ch.find("id");
+        const json::Value* val = ch.find("value");
+        const std::string id = idv && idv->is_string() ? idv->as_string() : std::string();
+        json::Value rep = json::Value::Object();
+        rep.set("id", id);
+        auto fail = [&](const char* why) {
+            rep.set("ok", false);
+            rep.set("error", why);
+            report.push(std::move(rep));
+        };
+        if (id == "assistant_permissions" || id == "always_allow" || id == "connections" || id == "api_key") {
+            deny_own = true;
+            fail("locked: only the user can change this in Pulse's settings; Pulse showed them why");
+            continue;
+        }
+        const SetDef* d = FindSetting(id);
+        if (!d) { fail("unknown setting"); continue; }
+        // The value: a switch takes true / false, a choice its key (numbers
+        // such as 7 may come as numbers).
+        int index = -1;
+        if (IsSwitch(*d)) {
+            if (val && val->is_bool()) index = val->as_bool() ? 1 : 0;
+            else if (val && val->is_string()) {
+                const std::string& t = val->as_string();
+                index = t == "true" || t == "on" ? 1 : t == "false" || t == "off" ? 0 : -1;
+            }
+        } else if (val) {
+            std::string key = val->is_string() ? val->as_string()
+                              : val->is_number() ? std::to_string(static_cast<int>(val->as_number())) : std::string();
+            if (key == "mica-alt") key = "mica_alt";
+            for (size_t k = 0; k < d->choices.size(); ++k)
+                if (d->choices[k].key && key == d->choices[k].key) index = static_cast<int>(k);
+        }
+        if (index < 0) { fail("invalid value"); continue; }
+        if (id == "confirm_delete" && index == 0) {
+            deny_delete = true;
+            fail("locked: the delete confirmation can never be turned off by the assistant; Pulse showed the user why");
+            continue;
+        }
+        SetChange sc;
+        sc.def = d;
+        sc.from = d->get(s);
+        sc.theme_raw = s.appPrefs.theme_mode;
+        const int want = IsSwitch(*d) ? index : d->choices[static_cast<size_t>(index)].value;
+        if (sc.from == want) {
+            rep.set("ok", true);
+            rep.set("already", true);
+            rep.set("value", SettingJson(*d, want));
+            report.push(std::move(rep));
+            continue;
+        }
+        ApplySetting(s, *d, index);
+        sc.to = d->get(s);
+        if (sc.to != want) {
+            // The setter refused (a hidden prerequisite, a failed registry write).
+            if (sc.to != sc.from) ApplySetting(s, *d, ChoiceIndex(*d, sc.from));
+            fail("Pulse could not change it");
+            continue;
+        }
+        rep.set("ok", true);
+        rep.set("from", SettingJson(*d, sc.from));
+        rep.set("to", SettingJson(*d, sc.to));
+        if (d->flags & kSetSys) rep.set("affects_windows", true);
+        report.push(std::move(rep));
+        done.push_back(sc);
+    }
+    ToolOutcome out;
+    out.data = json::Value::Object();
+    out.data.set("ok", !done.empty());
+    out.data.set("changes", std::move(report));
+    if (deny_delete || deny_own) {
+        AiBlockView& e = c.Add(AiBlockKind::Error, Now());
+        e.tone = ui::AiErrTone::Warn;
+        e.icon = ui::AiIcon::Lock;
+        e.title = Text(deny_delete ? I::AiSetDenyT : I::AiSetLockT);
+        e.sub = Text(deny_delete ? I::AiSetDenyS : I::AiSetLockS);
+        e.hint = Text(I::AiSetLockHint);
+        e.hint_icon = ui::AiIcon::Shield;
+        e.pills = {Text(I::AiSetPillPerm), Text(I::AiSetPillAllow), Text(I::AiSetPillConn)};
+    }
+    if (done.empty()) {
+        AddToolResult(a, call.id, out);
+        ++a.call_index;
+        Redraw(s);
+        NextTool(s);
+        return;
+    }
+    // The pages, in the order of the changes.
+    std::vector<int> pages;
+    for (const SetChange& sc : done)
+        if (std::find(pages.begin(), pages.end(), sc.def->page) == pages.end()) pages.push_back(sc.def->page);
+    std::wstring page_names;
+    for (int p : pages) page_names += (page_names.empty() ? L"" : Text(I::AiTkListSep)) + SettingsPageTitle(p);
+    std::vector<std::wstring> marks;
+    for (const SetChange& sc : done) marks.push_back(Text(sc.def->label));
+    s.settings.SetAssistantMarks(marks);
+    AddStep(s, a, ui::AiIcon::Gear, Text(I::AiSetStep),
+            Fill(Fill(Text(I::AiSetStepArg), L"{page}", page_names), L"{n}", Num(done.size())), {});
+    AiChatSetChip(c, ui::StatusAiState::Busy, Text(I::AiSetStep), 0.5f);
+    Redraw(s);
+    const uint64_t gen = a.generation;
+    const std::string call_id = call.id;
+    auto changes = std::make_shared<std::vector<SetChange>>(std::move(done));
+    AiChatPush(s, 350, [gen, call_id, changes, pages, page_names, out](AppState& s2) mutable {
+        AiAgent& ag = Agent(s2);
+        if (ag.generation != gen) return -1;
+        EndStep(s2, ag, true, Text(I::AiSetApplied));
+        const std::wstring title =
+            changes->size() == 1 ? Text(I::AiSetResTitle1) : Fill(Text(I::AiSetResTitle), L"{n}", Num(changes->size()));
+        // The folded steps say what the turn did, like the card (改了 2 项设置).
+        const auto steps_id = ag.steps_id;
+        FoldSteps(s2, ag);
+        if (AiBlockView* sb = Block(s2, steps_id)) sb->label = title;
+        AiChat& c2 = Chat(s2);
+        AiBlockView& r = c2.Add(AiBlockKind::Result, Now());
+        r.title = title;
+        r.sub = Fill(Text(I::AiSetResSub), L"{page}", page_names);
+        bool fm_on = false;
+        for (const SetChange& sc : *changes) {
+            ui::AiChangeView v;
+            v.name = Text(sc.def->label);
+            v.from = SettingText(*sc.def, sc.from);
+            v.to = SettingText(*sc.def, sc.to);
+            if (sc.def->flags & kSetSys) v.tag = Text(I::AiSetSys);
+            r.changes.push_back(std::move(v));
+            fm_on |= std::string_view(sc.def->id) == "open_folders_with_pulse" && sc.to != 0;
+        }
+        if (fm_on) r.warn = Text(I::AiSetWarnFm);
+        r.deny = Text(I::AiAsstUndo);
+        r.accept = Text(I::AiSetShow);
+        r.accept_icon = ui::AiIcon::Gear;
+        c2.result_id = r.id;
+        const int first_page = pages.front();
+        c2.on_show = [first_page](AppState& st) { OpenSettingsTab(st, first_page); };
+        c2.on_undo = [changes](AppState& st) {
+            bool fm_back = false;
+            for (auto it = changes->rbegin(); it != changes->rend(); ++it) {
+                const SetDef& d = *it->def;
+                const int now = d.get(st);
+                if (now == it->from) continue;
+                const int idx = ChoiceIndex(d, it->from);
+                if (idx >= 0) ApplySetting(st, d, idx);
+                else {
+                    // A size off the choices (a custom row height): put the number back.
+                    const std::string_view id = d.id;
+                    if (id == "row_height") st.appPrefs.row_height = it->from;
+                    else if (id == "font_size") st.appPrefs.ui_font_scale = it->from;
+                    else if (id == "staging_icon_size") st.appPrefs.tray_icon_size = it->from;
+                    st.appPrefs.Save();
+                    ApplySettingsEffects(st, app::SettingsEffect::RowHeight);
+                    ApplySettingsEffects(st, app::SettingsEffect::TrayDeckIcon);
+                }
+                if (std::string_view(d.id) == "theme" && it->theme_raw < 0) {
+                    st.appPrefs.theme_mode = it->theme_raw;   // the legacy session theme stays legacy
+                    st.appPrefs.Save();
+                }
+                fm_back |= std::string_view(d.id) == "open_folders_with_pulse" && it->to != 0;
+            }
+            st.settings.SetAssistantMarks({});
+            AiChat& c3 = Chat(st);
+            c3.peek_undo = false;
+            AiChatHidePeek(st);
+            if (AiBlockView* rr = c3.Find(c3.result_id)) {
+                rr->done = true;
+                rr->title = Text(I::AiAsstUndone);
+                std::wstring t = changes->size() == 1 ? Text(I::AiSetUndone1)
+                                 : changes->size() == 2 ? Text(I::AiSetUndone2)
+                                                        : Fill(Text(I::AiSetUndoneN), L"{n}", Num(changes->size()));
+                if (fm_back) t += Text(I::AiSetUndoneFm);
+                rr->sub = t;
+            }
+            AiBlockView& note = c3.Add(AiBlockKind::Note, Now());
+            note.text = Text(I::AiSetNote);
+            AiChatSetChip(c3, ui::StatusAiState::Done, Text(I::AiAsstUndone));
+            if (c3.agent)
+                c3.agent->pending_note =
+                    L"(The user clicked Undo in Pulse: every setting of the last change_settings call is back as it was.)";
+            Redraw(st);
+        };
+        AddToolResult(ag, call_id, out);
+        ++ag.call_index;
+        Redraw(s2);
+        NextTool(s2);
+        return -1;
+    });
+}
+
 void NextTool(AppState& s) {
     AiAgent& a = Agent(s);
     if (a.call_index >= a.calls.size()) {
@@ -6643,6 +7084,8 @@ void NextTool(AppState& s) {
     else if (call.name == "find_cleanup") ToolFindCleanup(s, call, args);
     else if (call.name == "find_duplicates") ToolFindDuplicates(s, call, args);
     else if (call.name == "control_pulse") ToolControl(s, call, args);
+    else if (call.name == "read_settings") ToolReadSettings(s, call);
+    else if (call.name == "change_settings") ToolChangeSettings(s, call, args);
     else {
         AddToolResult(a, call.id, ToolOutcome::Fail("unknown_tool", "no tool named " + call.name));
         ++a.call_index;

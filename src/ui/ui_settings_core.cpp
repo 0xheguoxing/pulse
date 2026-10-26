@@ -1,8 +1,10 @@
 #include "../common/windows_compat.h"
 #include "ui_renderer.h"
 #include "ui_renderer_internal.h"
+#include "ai_panel_icons.h"
 #include "bloom_accent_picker.h"
 #include "../common/localization.h"
+#include <algorithm>
 #include <cmath>
 
 namespace pulse::ui {
@@ -27,8 +29,45 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
     auto label=[&](D2D1_RECT_F r,const std::wstring& title,const std::wstring& desc,const wchar_t* icon,float text_right=0.0f,float description_height=21.0f) {
         if(r.bottom<=r.top) return;
         const float right=text_right>0 ? text_right : r.right-72*scale_;
+        // 「助手刚改的」 (plans/ai batch 3, .sv-row.ai): accent tint, a 3px
+        // bar on the left, a spark pill after the title.
+        const bool ai_mark=!vm.settings_ai_marks.empty() &&
+            std::find(vm.settings_ai_marks.begin(),vm.settings_ai_marks.end(),title)!=vm.settings_ai_marks.end();
+        if(ai_mark) {
+            MakeBrush(dc,WithAlpha(theme.accent,0.08f),brFillHover_);
+            FillRoundedRect(dc,brFillHover_.get(),r.left+1*scale_,r.top+1*scale_,r.right-r.left-2*scale_,r.bottom-r.top-2*scale_,7*scale_);
+            MakeBrush(dc,theme.accent,brAccent_);
+            dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(r.left+1*scale_,r.top+9*scale_,r.left+4*scale_,(std::min)(r.bottom,r.top+56*scale_)-9*scale_),
+                1.5f*scale_,1.5f*scale_),brAccent_.get());
+        }
         DrawIconText(r.left+16*scale_,r.top+17*scale_,24*scale_,24*scale_,icon,L"",theme.text_secondary,0.85f);
         text(title,D2D1::RectF(r.left+54*scale_,r.top+10*scale_,right,r.top+34*scale_));
+        if(ai_mark) {
+            // .aib: 10.5px semibold accent on accent-soft, radius 8, line 17,
+            // padding 0 6 0 4, spark 11 + gap 3; 6 after the title.
+            ComPtr<IDWriteTextLayout> tl,pl;
+            const std::wstring mark=l10n::Get(I::AiSetMark);
+            auto* dw=compositor_->DwriteFactory();
+            if(SUCCEEDED(dw->CreateTextLayout(title.c_str(),static_cast<UINT32>(title.size()),compositor_->TextFormat(),4000.0f,40*scale_,&tl)) &&
+               SUCCEEDED(dw->CreateTextLayout(mark.c_str(),static_cast<UINT32>(mark.size()),compositor_->SmallFormat(),4000.0f,20*scale_,&pl))) {
+                pl->SetFontSize(10.5f*scale_,{0,static_cast<UINT32>(mark.size())});
+                pl->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD,{0,static_cast<UINT32>(mark.size())});
+                pl->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                DWRITE_TEXT_METRICS tm{},pm{};
+                tl->GetMetrics(&tm);pl->GetMetrics(&pm);
+                const float x=r.left+54*scale_+tm.widthIncludingTrailingWhitespace+6*scale_;
+                const float w=4*scale_+11*scale_+3*scale_+pm.widthIncludingTrailingWhitespace+6*scale_;
+                const float h=17*scale_,y=r.top+22*scale_-h/2;
+                if(x+w<=right) {
+                    MakeBrush(dc,WithAlpha(theme.accent,0.16f),brFillHover_);
+                    dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x,y,x+w,y+h),8*scale_,8*scale_),brFillHover_.get());
+                    DrawAiIcon(dc,AiIcon::Spark,D2D1::RectF(x+4*scale_,y+3*scale_,x+15*scale_,y+14*scale_),theme.accent);
+                    pl->SetMaxHeight(h);
+                    MakeBrush(dc,theme.accent,brAccent_);
+                    compositor_->DrawTextLayout(D2D1::Point2F(x+18*scale_,y),pl.get(),brAccent_.get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                }
+            }
+        }
         if(!desc.empty()) {
             const auto bounds=D2D1::RectF(r.left+54*scale_,r.top+35*scale_,right,r.top+(35+description_height)*scale_);
             if(description_height<=21.0f) text(desc,bounds,true);

@@ -3821,3 +3821,28 @@ AiCtlViewM	IDS_AI_CTL_VIEW_M	5019	中等图标	Medium icons	中圖示
 AiCtlViewS	IDS_AI_CTL_VIEW_S	5020	小图标	Small icons	小圖示
 AiCtlViewTiles	IDS_AI_CTL_VIEW_TILES	5021	平铺	Tiles	並排
 AiCtlViewXl	IDS_AI_CTL_VIEW_XL	5022	超大图标	Extra large icons	超大圖示
+AiSetOn	IDS_AI_SET_ON	5023	开	On	開
+AiSetOff	IDS_AI_SET_OFF	5024	关	Off	關
+AiSetStep	IDS_AI_SET_STEP	5025	修改设置	Change settings	修改設定
+AiSetStepArg	IDS_AI_SET_STEP_ARG	5026	{page} · {n} 项	{page} · {n}	{page} · {n} 項
+AiSetApplied	IDS_AI_SET_APPLIED	5027	已生效	Applied	已生效
+AiSetResTitle	IDS_AI_SET_RES_TITLE	5028	改了 {n} 项设置	Changed {n} settings	改了 {n} 項設定
+AiSetResTitle1	IDS_AI_SET_RES_TITLE_1	5029	改了 1 项设置	Changed 1 setting	改了 1 項設定
+AiSetResSub	IDS_AI_SET_RES_SUB	5030	{page} · 已生效	{page} · applied	{page} · 已生效
+AiSetSys	IDS_AI_SET_SYS	5031	影响系统	Affects Windows	影響系統
+AiSetShow	IDS_AI_SET_SHOW	5032	在设置中查看	Show in Settings	在設定中查看
+AiSetWarnFm	IDS_AI_SET_WARN_FM	5033	文件夹、磁盘、此电脑和 Win+E 现在都用 Pulse 打开。撤销或在设置里关掉，就恢复资源管理器。	Folders, drives, This PC and Win+E now open in Pulse. Undo it or turn it off in Settings to go back to File Explorer.	資料夾、磁碟、本機和 Win+E 現在都用 Pulse 開啟。復原或在設定裡關掉，就恢復檔案總管。
+AiSetUndone1	IDS_AI_SET_UNDONE_1	5034	设置已改回	The setting is back	設定已改回
+AiSetUndone2	IDS_AI_SET_UNDONE_2	5035	两项设置已改回	Both settings are back	兩項設定已改回
+AiSetUndoneN	IDS_AI_SET_UNDONE_N	5036	{n} 项设置已改回	{n} settings are back	{n} 項設定已改回
+AiSetUndoneFm	IDS_AI_SET_UNDONE_FM	5037	，Win+E 还给了资源管理器	, and Win+E opens File Explorer again	，Win+E 還給了檔案總管
+AiSetNote	IDS_AI_SET_NOTE	5038	你撤销了设置修改	You undid the settings change	你復原了設定修改
+AiSetMark	IDS_AI_SET_MARK	5039	助手刚改的	Changed by the assistant	助手剛改的
+AiSetDenyT	IDS_AI_SET_DENY_T	5040	删除前的确认不能关	The delete confirmation stays on	刪除前的確認不能關
+AiSetDenyS	IDS_AI_SET_DENY_S	5041	移到回收站、永久删除，每次都要你在 Pulse 里点确认，助手关不掉这一步。	Moving to the Recycle Bin and deleting for good always wait for your OK in Pulse. The assistant cannot turn this step off.	移到資源回收筒、永久刪除，每次都要你在 Pulse 裡點確認，助手關不掉這一步。
+AiSetLockT	IDS_AI_SET_LOCK_T	5042	这项只能你自己改	Only you can change this	這項只能你自己改
+AiSetLockS	IDS_AI_SET_LOCK_S	5043	助手不能改自己的权限和连接，免得它给自己放行。	The assistant cannot change its own permissions or connections, so it can never let itself through.	助手不能改自己的權限和連線，免得它給自己放行。
+AiSetLockHint	IDS_AI_SET_LOCK_HINT	5044	这些也只能你自己在设置里改：	Only you can change these in Settings:	這些也只能你自己在設定裡改：
+AiSetPillPerm	IDS_AI_SET_PILL_PERM	5045	助手的权限	The assistant's permissions	助手的權限
+AiSetPillAllow	IDS_AI_SET_PILL_ALLOW	5046	「总是允许」列表	The Always allow list	「總是允許」清單
+AiSetPillConn	IDS_AI_SET_PILL_CONN	5047	连接和 API key	Connections and API keys	連線和 API key
