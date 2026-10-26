@@ -81,8 +81,10 @@ struct SelectorMatch {
     std::vector<int> result;      // the selection the mode leads to
     size_t hidden_by_filter = 0;  // matches the filter box hides
     uint64_t bytes = 0;           // matched files
-    // Empty, or why nothing matched: no_pane, loading, search_results,
-    // unknown_tag, filter_hides, no_match.
+    size_t folders = 0;           // the folders the matches are in
+    bool results = false;         // the pane shows search results (P4d)
+    // Empty, or why nothing matched: no_pane, loading, unknown_tag,
+    // tag_in_results, filter_hides, no_match, changed.
     std::string reason;
 };
 
@@ -92,20 +94,34 @@ SelectorMatch ResolveSelector(AppState& s, const Selector& selector);
 // scrolls the first match into view. Nothing changes when nothing matched.
 // Returns the report the AI gets back.
 json::Value ApplySelection(AppState& s, const SelectorMatch& match);
+// A content search keeps its results in a store off the UI thread, so
+// matching them takes a moment. False when the pane shows no such results
+// (use ResolveSelector); else `done` runs once on the UI thread with the
+// match, or never when the window goes away. Tags are not matched there
+// (tag_in_results): the tag list lives on the UI thread.
+bool ResolveSelectorAsync(AppState& s, const Selector& selector,
+                          std::function<void(AppState&, SelectorMatch)> done);
+// The tab is a search page (name or content search).
+bool IsSearchTab(const Tab& tab);
+// The pane (as Selector::pane) shows a search page.
+bool PaneShowsSearch(AppState& s, int pane);
 
 // ---- Waiting ---------------------------------------------------------------
 
-enum class WaitKind { ListingLoaded, OpFinished, PreviewOpen };
+// SearchDone: a search page has every result (a name search loads the
+// pages it has not shown yet; P4d).
+enum class WaitKind { ListingLoaded, OpFinished, PreviewOpen, SearchDone };
 
 struct WaitSpec {
     WaitKind kind = WaitKind::ListingLoaded;
-    int pane = 0;           // listing_loaded: as Selector::pane
+    int pane = 0;           // listing_loaded, search_done: as Selector::pane
     uint64_t task = 0;      // op_finished: 0 = whatever runs now
     uint32_t timeout_ms = 5000;
 };
 
 // {"wait":"listing_loaded","pane":2,"timeout_ms":8000}. Timeouts default to
-// 5 s / 10 s / 3 s and are capped at 30 s / 60 s / 10 s.
+// 5 s / 10 s / 3 s / 10 s and are capped at 30 s / 60 s / 10 s / 30 s
+// (listing_loaded, op_finished, preview_open, search_done).
 bool ParseWait(const json::Value& args, WaitSpec& out, std::string& error);
 // True when waiting is over (the state is there, or it cannot come: a
 // conflict dialog, an unknown task); `out` says which.

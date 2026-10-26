@@ -4256,3 +4256,11 @@ AiFoLineRecycle	IDS_AI_FO_LINE_RECYCLE	5455	{n} 项已移到回收站	{n} items 
 AiFoLinePurge	IDS_AI_FO_LINE_PURGE	5456	{n} 项已永久删除	{n} items permanently deleted	{n} 項已永久刪除
 AiFoLineRestore	IDS_AI_FO_LINE_RESTORE	5457	{n} 项已还原到原位置	{n} items restored	{n} 項已還原到原位置
 AiFoLineEmpty	IDS_AI_FO_LINE_EMPTY	5458	回收站已清空（{n} 项）	Recycle Bin emptied ({n} items)	資源回收筒已清空（{n} 項）
+AiActStepWait	IDS_AI_ACT_STEP_WAIT	5459	等待	Wait for	等待
+AiActArgSearchDone	IDS_AI_ACT_ARG_SEARCH_DONE	5460	搜索完成	the search	搜尋完成
+AiActWaitedSub	IDS_AI_ACT_WAITED_SUB	5461	{items} · 用了 {s} 秒	{items} · took {s} s	{items} · 用了 {s} 秒
+AiActWaitedPartial	IDS_AI_ACT_WAITED_PARTIAL	5462	已有 {items} · 10 秒内没搜完	{items} so far · not done in 10 s	已有 {items} · 10 秒內沒搜完
+AiActArgResults	IDS_AI_ACT_ARG_RESULTS	5463	搜索结果	search results	搜尋結果
+AiActResSelectResults	IDS_AI_ACT_RES_SELECT_RESULTS	5464	在搜索结果里选中了 {items}	Selected {items} in the search results	在搜尋結果裡選取了 {items}
+AiActResFolders	IDS_AI_ACT_RES_FOLDERS	5465	分布在 {n} 个文件夹	In {n} folders	分布在 {n} 個資料夾
+AiActCountExts	IDS_AI_ACT_COUNT_EXTS	5466	{n} 个 {exts}	{n} {exts} files	{n} 個 {exts}

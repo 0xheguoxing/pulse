@@ -6076,6 +6076,119 @@ void TestActionState() {
                   AsInt(report.find("bytes")) == static_cast<int64_t>(300 * kb + 3 * mb + 2 * mb),
               L"selector: the report gives matches, the selection, names and bytes");
     }
+    {
+        // P4d: a name search's results come from all over. search_done is
+        // over once every page is in; the match counts their folders.
+        Tab& right = lt.panes[1]->view;
+        const std::wstring keep_path = right.current_path;
+        const fs::SnapshotPtr keep_rows = right.snapshot;
+        right.current_path = L"pulse:search:发票";
+        auto hits = std::make_shared<std::vector<fs::DirEntry>>();
+        for (const wchar_t* path : { L"C:\\AsT\\A\\发票1.pdf", L"C:\\AsT\\B\\发票2.PDF", L"C:\\AsT\\B\\发票3.pdf",
+                                     L"C:\\AsT\\C\\发票.xlsx" }) {
+            fs::DirEntry e = AsEntry(wcsrchr(path, L'\\') + 1, 10 * kb, now);
+            e.full_path = path;
+            hits->push_back(std::move(e));
+        }
+        right.search_entries = hits;
+        right.SetSnapshot(hits);
+        right.search_total = hits->size();
+        right.search_next_offset = hits->size();
+        act::WaitSpec spec;
+        spec.kind = act::WaitKind::SearchDone;
+        spec.pane = 2;
+        json::Value out;
+        Check(act::WaitReady(s, spec, out) && out.get_bool("ok") && out.get_bool("complete") &&
+                  AsInt(out.find("results")) == 4,
+              L"wait: search_done is over once a name search has every result");
+        right.search_total = 9;            // five more than scrolling loaded
+        right.search_loading_more = true;  // and their page is on its way
+        out = json::Value::Object();
+        Check(!act::WaitReady(s, spec, out) && AsInt(out.find("total")) == 9,
+              L"wait: search_done waits while results are still coming");
+        right.search_loading_more = false;
+        right.search_total = 4;
+        spec.pane = 1;
+        out = json::Value::Object();
+        Check(act::WaitReady(s, spec, out) && out.get_bool("ok") && !out.find("results"),
+              L"wait: search_done in a folder has nothing to wait for");
+        Check(act::PaneShowsSearch(s, 2) && !act::PaneShowsSearch(s, 1), L"selector: a search page is told from a folder");
+        json::Value args;
+        act::Selector sel;
+        std::string error;
+        json::Parse(R"({"pane":2,"extensions":["pdf"]})", args);
+        act::ParseSelector(args, now, sel, error);
+        const act::SelectorMatch m = act::ResolveSelector(s, sel);
+        Check(m.results && m.reason.empty() && m.matched == std::vector<int>({0, 1, 2}) && m.folders == 2 &&
+                  m.bytes == 30 * kb,
+              L"selector: in search results it matches every result and counts their folders");
+        json::Parse(R"({"wait":"search_done","timeout_ms":99999})", args);
+        Check(act::ParseWait(args, spec, error) && spec.kind == act::WaitKind::SearchDone && spec.timeout_ms == 30000,
+              L"wait: search_done is capped at 30 s");
+        right.search_entries.reset();
+        right.search_total = right.search_next_offset = 0;
+        right.current_path = keep_path;
+        right.SetSnapshot(keep_rows);
+    }
+    {
+        // P4d: a content search's results live in a store; they are matched
+        // on its thread and handed back from a timer, never at once.
+        Tab& right = lt.panes[1]->view;
+        const std::wstring keep_path = right.current_path;
+        const fs::SnapshotPtr keep_rows = right.snapshot;
+        right.current_path = L"pulse:search?content:ZX2026";
+        auto store = std::make_shared<index::ContentResultStore>(nullptr, 0);
+        std::vector<index::ContentHit> hits;
+        for (const wchar_t* path : { L"C:\\AsT\\甲\\记录1.txt", L"C:\\AsT\\乙\\记录2.txt", L"C:\\AsT\\乙\\备注.md",
+                                     L"C:\\AsT\\丙\\记录3.txt" }) {
+            index::ContentHit hit;
+            hit.path = path;
+            hit.name = wcsrchr(path, L'\\') + 1;
+            hit.size = 100;
+            hit.modified = now;
+            hits.push_back(std::move(hit));
+        }
+        const bool filled = store->Append(hits);
+        right.content_results = store;
+        right.SetSnapshot(std::make_shared<const std::vector<fs::DirEntry>>());
+        right.ClearSelection();
+        json::Value args;
+        act::Selector sel;
+        std::string error;
+        json::Parse(R"({"pane":2,"extensions":["txt"]})", args);
+        act::ParseSelector(args, now, sel, error);
+        bool called = false;
+        act::SelectorMatch got;
+        const bool started = act::ResolveSelectorAsync(s, sel, [&](AppState&, act::SelectorMatch m) {
+            called = true;
+            got = std::move(m);
+        });
+        const bool later = !called;
+        AsPump([&] { return called; }, 5000);
+        Check(filled && started && later && called && got.reason.empty() && got.results && got.matched.size() == 3 &&
+                  got.folders == 3 && got.bytes == 300,
+              L"selector: content search results are matched off the UI thread, with their folders and bytes");
+        act::ApplySelection(s, got);
+        Check(right.SelectedCount() == 3, L"selector: the match of content search results is selected");
+        json::Parse(R"({"pane":2,"tag":"AsT 重要"})", args);
+        act::ParseSelector(args, now, sel, error);
+        called = false;
+        act::ResolveSelectorAsync(s, sel, [&](AppState&, act::SelectorMatch m) {
+            called = true;
+            got = std::move(m);
+        });
+        AsPump([&] { return called; }, 3000);
+        Check(called && got.reason == "tag_in_results" && right.SelectedCount() == 3,
+              L"selector: a tag in content search results says why and changes nothing");
+        json::Parse(R"({"pane":1,"name":"a"})", args);
+        act::ParseSelector(args, now, sel, error);
+        Check(!act::ResolveSelectorAsync(s, sel, [](AppState&, act::SelectorMatch) {}),
+              L"selector: a folder is matched at once, not through the store");
+        right.ClearSelection();
+        right.content_results.reset();
+        right.current_path = keep_path;
+        right.SetSnapshot(keep_rows);
+    }
 
     // ---- Caps -----------------------------------------------------------------
     {

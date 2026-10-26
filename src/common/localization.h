@@ -4241,6 +4241,14 @@ enum class StringId : UINT {
     AiFoLinePurge = IDS_AI_FO_LINE_PURGE,
     AiFoLineRestore = IDS_AI_FO_LINE_RESTORE,
     AiFoLineEmpty = IDS_AI_FO_LINE_EMPTY,
+    AiActStepWait = IDS_AI_ACT_STEP_WAIT,
+    AiActArgSearchDone = IDS_AI_ACT_ARG_SEARCH_DONE,
+    AiActWaitedSub = IDS_AI_ACT_WAITED_SUB,
+    AiActWaitedPartial = IDS_AI_ACT_WAITED_PARTIAL,
+    AiActArgResults = IDS_AI_ACT_ARG_RESULTS,
+    AiActResSelectResults = IDS_AI_ACT_RES_SELECT_RESULTS,
+    AiActResFolders = IDS_AI_ACT_RES_FOLDERS,
+    AiActCountExts = IDS_AI_ACT_COUNT_EXTS,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

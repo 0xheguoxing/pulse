@@ -75,6 +75,13 @@ constexpr std::pair<std::string_view, std::string_view> kSpecs[] = {
     {"file.dissolve", "items:paths"},
     {"file.recycle", "items:paths"},
     {"file.delete_permanent", "items:paths"},
+    // Runners that take no arguments (check_actions.py holds every runner
+    // to a spec here; empty is the same as none for find_actions).
+    {"index.status", ""},
+    {"git.refresh", ""},
+    {"git.push", ""},
+    {"git.pull", ""},
+    {"shell.verbs", ""},
 };
 
 std::wstring Fold(std::wstring_view text) {

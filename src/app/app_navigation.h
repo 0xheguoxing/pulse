@@ -40,6 +40,9 @@ void AcceptLiveNetworkProgress(AppState& s, const std::shared_ptr<LiveNetworkSea
 void DropLiveNetworkSearch(AppState& s, uint64_t session_id);
 void AddLiveNetworkRoot(AppState& s, app::Tab& tab);
 void MaybePrefetchSearchPage(AppState& s);
+// A name search's results scrolling has not loaded yet, in one request (P4d).
+// True while a page is on its way; false when nothing more can come.
+bool RequestAllSearchResults(AppState& s, app::Tab& tab);
 void CancelActiveContentSearch(AppState& s, app::Tab& tab);
 enum class PathLoadReason { Navigate, RestoreSession, History };
 void MarkContentSearchStopped(app::Tab& tab);

@@ -4229,4 +4229,12 @@ BEGIN
     IDS_AI_FO_LINE_PURGE "{n} 項已永久刪除"
     IDS_AI_FO_LINE_RESTORE "{n} 項已還原到原位置"
     IDS_AI_FO_LINE_EMPTY "資源回收筒已清空（{n} 項）"
+    IDS_AI_ACT_STEP_WAIT "等待"
+    IDS_AI_ACT_ARG_SEARCH_DONE "搜尋完成"
+    IDS_AI_ACT_WAITED_SUB "{items} · 用了 {s} 秒"
+    IDS_AI_ACT_WAITED_PARTIAL "已有 {items} · 10 秒內沒搜完"
+    IDS_AI_ACT_ARG_RESULTS "搜尋結果"
+    IDS_AI_ACT_RES_SELECT_RESULTS "在搜尋結果裡選取了 {items}"
+    IDS_AI_ACT_RES_FOLDERS "分布在 {n} 個資料夾"
+    IDS_AI_ACT_COUNT_EXTS "{n} 個 {exts}"
 END

@@ -2,6 +2,7 @@
 #include "action_state.h"
 
 #include "../app_internal.h"
+#include "../app_navigation.h"
 #include "../entry_group.h"
 #include "../favorites_bar.h"
 #include "../places.h"
@@ -13,6 +14,8 @@
 #include <cmath>
 #include <cwctype>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <set>
 #include <utility>
 
@@ -202,12 +205,19 @@ json::Value PaneState(AppState& s, const Pane& pane, int number, bool focused, b
     json::Value items = json::Value::Object();
     if (tab.content_results) {
         items.set("shown", static_cast<uint64_t>(tab.EntryCount()));
+        items.set("search_complete", tab.content_count_final && !tab.search_content_active);
     } else {
         std::vector<int> shown;
         CollectFilterMatches(tab, &s.places, shown);
         items.set("folders", static_cast<uint64_t>(tab.directory_count));
         items.set("files", static_cast<uint64_t>(tab.file_count));
         items.set("shown", static_cast<uint64_t>(shown.size()));
+        if (IsSearchTab(tab)) {
+            // Scrolling loads the rest; select.items waits for all of it.
+            items.set("search_total", static_cast<uint64_t>(tab.search_total));
+            items.set("search_complete", !tab.loading && !tab.search_awaiting_content &&
+                                             tab.search_next_offset >= tab.search_total);
+        }
     }
     out.set("items", std::move(items));
 
@@ -365,8 +375,9 @@ bool ReadStrings(const json::Value* v, std::vector<std::wstring>& out, bool stri
     return true;
 }
 
-bool Matches(const Selector& sel, const Tab& tab, const fs::DirEntry& e, const PlacesCatalog& places,
-             int tag_index, const std::vector<std::wstring>& kind_exts) {
+// Every condition but the tag; touches nothing but its arguments, so a
+// content search's store can run it on its own thread.
+bool MatchesEntry(const Selector& sel, const fs::DirEntry& e, const std::vector<std::wstring>& kind_exts) {
     const std::wstring name = Fold(e.name);
     if (!sel.names.empty()) {
         bool any = false;
@@ -395,8 +406,58 @@ bool Matches(const Selector& sel, const Tab& tab, const fs::DirEntry& e, const P
         const uint64_t t = FileTimeTicks(e.mtime);
         if (t < sel.modified_from || t >= sel.modified_to) return false;
     }
-    if (tag_index >= 0 && !places.PathHasTag(EntryPath(tab, e), tag_index)) return false;
     return true;
+}
+
+bool Matches(const Selector& sel, const Tab& tab, const fs::DirEntry& e, const PlacesCatalog& places,
+             int tag_index, const std::vector<std::wstring>& kind_exts) {
+    if (!MatchesEntry(sel, e, kind_exts)) return false;
+    return tag_index < 0 || places.PathHasTag(EntryPath(tab, e), tag_index);
+}
+
+// The extensions a type condition means (none for any / folder).
+std::vector<std::wstring> KindExts(const Selector& sel) {
+    std::vector<std::wstring> kind_exts;
+    if (sel.kind == index::SearchKind::Any || sel.kind == index::SearchKind::Folder) return kind_exts;
+    const std::wstring list = index::KindExtensions(sel.kind);
+    size_t start = 0;
+    while (start <= list.size()) {
+        const size_t end = list.find(L';', start);
+        const std::wstring ext = list.substr(start, end == std::wstring::npos ? std::wstring::npos : end - start);
+        if (!ext.empty()) kind_exts.push_back(Fold(ext));
+        if (end == std::wstring::npos) break;
+        start = end + 1;
+    }
+    return kind_exts;
+}
+
+// The folder a result is in (search rows carry full paths).
+std::wstring ParentOf(const std::wstring& path) {
+    const size_t slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? std::wstring() : path.substr(0, slash);
+}
+
+// The selection a mode leads to, from what matched and what was selected.
+std::vector<int> ModeResult(SelectMode mode, const std::vector<int>& matched, const std::vector<int>& current) {
+    std::vector<int> result;
+    switch (mode) {
+    case SelectMode::Replace:
+        result = matched;
+        break;
+    case SelectMode::Add: {
+        std::set<int> all(current.begin(), current.end());
+        all.insert(matched.begin(), matched.end());
+        result.assign(all.begin(), all.end());
+        break;
+    }
+    case SelectMode::Remove: {
+        const std::set<int> drop(matched.begin(), matched.end());
+        for (int index : current)
+            if (!drop.count(index)) result.push_back(index);
+        break;
+    }
+    }
+    return result;
 }
 
 // ---- Waiting ---------------------------------------------------------------
@@ -696,37 +757,44 @@ bool ParseSelector(const json::Value& args, uint64_t now_utc, Selector& out, std
     return true;
 }
 
+bool IsSearchTab(const Tab& tab) {
+    if (tab.content_results) return true;
+    std::wstring kind;
+    return ParsePulsePath(tab.current_path, &kind, nullptr) && (kind == L"search" || kind == L"saved-search");
+}
+
+bool PaneShowsSearch(AppState& s, int pane) {
+    const Pane* p = PaneByNumber(s, pane, nullptr);
+    return p && IsSearchTab(p->view);
+}
+
+// The tag a selector names: its index, -1 for none, -2 when unknown.
+static int TagIndex(const AppState& s, const Selector& sel) {
+    if (sel.tag.empty()) return -1;
+    const std::wstring want = Fold(sel.tag);
+    for (size_t i = 0; i < s.places.tags.size(); ++i)
+        if (Fold(s.places.tags[i].name) == want) return static_cast<int>(i);
+    return -2;
+}
+
 SelectorMatch ResolveSelector(AppState& s, const Selector& sel) {
     SelectorMatch m;
     m.pane = PaneByNumber(s, sel.pane, &m.pane_number);
     if (!m.pane) { m.reason = "no_pane"; return m; }
     Tab& tab = m.pane->view;
+    m.results = IsSearchTab(tab);
     if (tab.loading) { m.reason = "loading"; return m; }  // an old listing may still be up
+    // Its rows come page by page from a store: ResolveSelectorAsync.
     if (tab.content_results) { m.reason = "search_results"; return m; }
-    int tag_index = -1;
-    if (!sel.tag.empty()) {
-        const std::wstring want = Fold(sel.tag);
-        for (size_t i = 0; i < s.places.tags.size(); ++i)
-            if (Fold(s.places.tags[i].name) == want) tag_index = static_cast<int>(i);
-        if (tag_index < 0) { m.reason = "unknown_tag"; return m; }
-    }
-    std::vector<std::wstring> kind_exts;
-    if (sel.kind != index::SearchKind::Any && sel.kind != index::SearchKind::Folder) {
-        const std::wstring list = index::KindExtensions(sel.kind);
-        size_t start = 0;
-        while (start <= list.size()) {
-            const size_t end = list.find(L';', start);
-            const std::wstring ext = list.substr(start, end == std::wstring::npos ? std::wstring::npos : end - start);
-            if (!ext.empty()) kind_exts.push_back(Fold(ext));
-            if (end == std::wstring::npos) break;
-            start = end + 1;
-        }
-    }
+    const int tag_index = TagIndex(s, sel);
+    if (tag_index == -2) { m.reason = "unknown_tag"; return m; }
+    const std::vector<std::wstring> kind_exts = KindExts(sel);
     std::vector<int> shown;
     CollectFilterMatches(tab, &s.places, shown);
     const std::set<int> visible(shown.begin(), shown.end());
     const std::vector<int> current = tab.SelectedIndices();
     const std::set<int> chosen(current.begin(), current.end());
+    std::set<std::wstring> folders;
     const size_t n = tab.EntryCount();
     for (size_t i = 0; i < n; ++i) {
         const int index = static_cast<int>(i);
@@ -737,29 +805,146 @@ SelectorMatch ResolveSelector(AppState& s, const Selector& sel) {
         if (!visible.count(index)) { ++m.hidden_by_filter; continue; }
         m.matched.push_back(index);
         if (!e.is_dir) m.bytes += e.size;
+        if (m.results) folders.insert(Fold(ParentOf(e.full_path)));
     }
+    m.folders = m.results ? folders.size() : (m.matched.empty() ? 0 : 1);
     if (m.matched.empty()) {
         m.reason = m.hidden_by_filter ? "filter_hides" : "no_match";
         return m;
     }
-    switch (sel.mode) {
-    case SelectMode::Replace:
-        m.result = m.matched;
-        break;
-    case SelectMode::Add: {
-        std::set<int> all(current.begin(), current.end());
-        all.insert(m.matched.begin(), m.matched.end());
-        m.result.assign(all.begin(), all.end());
-        break;
-    }
-    case SelectMode::Remove: {
-        const std::set<int> drop(m.matched.begin(), m.matched.end());
-        for (int index : current)
-            if (!drop.count(index)) m.result.push_back(index);
-        break;
-    }
-    }
+    m.result = ModeResult(sel.mode, m.matched, current);
     return m;
+}
+
+namespace {
+
+// A content search's match: the store's thread fills it, the UI thread reads
+// it once `done` is set (the mutex orders the two).
+struct MatchSlot {
+    std::mutex mutex;
+    bool done = false;
+    std::string reason;                    // set before the match: why not
+    index::ContentResultStore::Selection result;
+    std::vector<uint64_t> sizes;           // per match, in order
+    std::vector<std::wstring> parents;
+};
+
+struct MatchJob {
+    HWND hwnd = nullptr;
+    AppState* state = nullptr;
+    Pane* pane = nullptr;
+    int pane_number = 0;
+    std::weak_ptr<index::ContentResultStore> store;
+    uint64_t order = 0;
+    Selector sel;
+    std::shared_ptr<MatchSlot> slot;
+    std::function<void(AppState&, SelectorMatch)> done;
+};
+
+std::map<UINT_PTR, MatchJob>& MatchJobs() {
+    static std::map<UINT_PTR, MatchJob> jobs;
+    return jobs;
+}
+
+void CALLBACK MatchTick(HWND, UINT, UINT_PTR id, DWORD) {
+    auto& jobs = MatchJobs();
+    const auto it = jobs.find(id);
+    if (it == jobs.end()) { KillTimer(nullptr, id); return; }
+    if (it->second.hwnd && !IsWindow(it->second.hwnd)) {
+        KillTimer(nullptr, id);
+        jobs.erase(it);
+        return;
+    }
+    {
+        std::lock_guard lock(it->second.slot->mutex);
+        if (!it->second.slot->done) return;
+    }
+    KillTimer(nullptr, id);
+    MatchJob job = std::move(it->second);
+    jobs.erase(it);
+    AppState& s = *job.state;
+    MatchSlot& slot = *job.slot;
+    SelectorMatch m;
+    m.results = true;
+    m.pane_number = job.pane_number;
+    int number = 0;
+    Pane* pane = PaneByNumber(s, job.pane_number, &number);
+    const auto store = job.store.lock();
+    // The pane, its search or the order of its rows changed meanwhile.
+    if (pane != job.pane || !store || pane->view.content_results != store || store->OrderRevision() != job.order) {
+        m.reason = "changed";
+        job.done(s, std::move(m));
+        return;
+    }
+    m.pane = pane;
+    if (!slot.reason.empty() || slot.result.error) {
+        m.reason = !slot.reason.empty() ? slot.reason : "search_failed";
+        job.done(s, std::move(m));
+        return;
+    }
+    Tab& tab = pane->view;
+    const std::vector<int> current = tab.SelectedIndices();
+    const std::set<int> chosen(current.begin(), current.end());
+    std::set<std::wstring> folders;
+    const std::vector<int>& found = slot.result.matches;
+    for (size_t i = 0; i < found.size(); ++i) {
+        if (job.sel.within_selection && !chosen.count(found[i])) continue;
+        m.matched.push_back(found[i]);
+        if (i < slot.sizes.size()) m.bytes += slot.sizes[i];
+        if (i < slot.parents.size()) folders.insert(Fold(slot.parents[i]));
+    }
+    m.folders = folders.size();
+    if (m.matched.empty()) m.reason = "no_match";   // the filter box already shaped the rows
+    else m.result = ModeResult(job.sel.mode, m.matched, current);
+    job.done(s, std::move(m));
+}
+
+} // namespace
+
+bool ResolveSelectorAsync(AppState& s, const Selector& sel, std::function<void(AppState&, SelectorMatch)> done) {
+    int number = 0;
+    Pane* pane = PaneByNumber(s, sel.pane, &number);
+    if (!pane || !pane->view.content_results) return false;
+    Tab& tab = pane->view;
+    auto slot = std::make_shared<MatchSlot>();
+    const auto store = tab.content_results;
+    if (!sel.tag.empty()) slot->reason = "tag_in_results";
+    else if (tab.loading) slot->reason = "loading";
+    slot->done = !slot->reason.empty();
+    MatchJob job;
+    job.hwnd = s.hwnd;
+    job.state = &s;
+    job.pane = pane;
+    job.pane_number = number;
+    job.store = store;
+    job.order = store->OrderRevision();
+    job.sel = sel;
+    job.slot = slot;
+    job.done = std::move(done);
+    // Always from the timer, never from here: callers go on after this returns.
+    const UINT_PTR id = SetTimer(nullptr, 0, 30, MatchTick);
+    if (!id) return false;
+    MatchJobs()[id] = std::move(job);
+    if (slot->done) return true;
+    // Its own copies only: the filter runs on the store's thread.
+    const bool hidden = tab.show_hidden_files;
+    const bool system = tab.show_protected_os_files;
+    store->Match(
+        [sel, kinds = KindExts(sel), slot, hidden, system](const fs::DirEntry& e) {
+            if (e.name.empty()) return false;
+            if ((e.attrs & FILE_ATTRIBUTE_HIDDEN) && (!hidden || ((e.attrs & FILE_ATTRIBUTE_SYSTEM) && !system)))
+                return false;   // as Tab::AllowsAttributes
+            if (!MatchesEntry(sel, e, kinds)) return false;
+            slot->sizes.push_back(e.is_dir ? 0 : e.size);
+            slot->parents.push_back(ParentOf(e.full_path));
+            return true;
+        },
+        [slot](index::ContentResultStore::Selection result) {
+            std::lock_guard lock(slot->mutex);
+            slot->result = std::move(result);
+            slot->done = true;
+        });
+    return true;
 }
 
 json::Value ApplySelection(AppState& s, const SelectorMatch& m) {
@@ -783,10 +968,12 @@ json::Value ApplySelection(AppState& s, const SelectorMatch& m) {
         json::Value names = json::Value::Array();
         for (int index : m.matched) {
             if (names.items().size() >= kSelectionNames) break;
-            names.push(U8(tab.EntryAt(static_cast<size_t>(index)).name));
+            const fs::DirEntry e = tab.EntryAt(static_cast<size_t>(index));
+            if (!e.name.empty()) names.push(U8(e.name));   // a search row not fetched yet
         }
         out.set("names", std::move(names));
         out.set("bytes", m.bytes);
+        if (m.results) out.set("folders", static_cast<uint64_t>(m.folders));
     } else {
         out.set("reason", m.reason);
         if (m.hidden_by_filter) out.set("hidden_by_filter", static_cast<uint64_t>(m.hidden_by_filter));
@@ -802,7 +989,8 @@ bool ParseWait(const json::Value& args, WaitSpec& out, std::string& error) {
     if (kind == "listing_loaded") { out.kind = WaitKind::ListingLoaded; out.timeout_ms = 5000; max_ms = 30000; }
     else if (kind == "op_finished") { out.kind = WaitKind::OpFinished; out.timeout_ms = 10000; max_ms = 60000; }
     else if (kind == "preview_open") { out.kind = WaitKind::PreviewOpen; out.timeout_ms = 3000; max_ms = 10000; }
-    else { error = "wait: listing_loaded, op_finished or preview_open"; return false; }
+    else if (kind == "search_done") { out.kind = WaitKind::SearchDone; out.timeout_ms = 10000; max_ms = 30000; }
+    else { error = "wait: listing_loaded, op_finished, preview_open or search_done"; return false; }
     if (const json::Value* pane = args.find("pane")) {
         int64_t n = 0;
         if (!pane->get_int(n, 1, 4)) { error = "pane: 1-4"; return false; }
@@ -837,6 +1025,35 @@ bool WaitReady(AppState& s, const WaitSpec& spec, json::Value& out) {
         out.set("loaded", static_cast<uint64_t>(tab.EntryCount()));
         if (tab.loading || (!tab.snapshot && !tab.content_results)) return false;
         out.set("ok", true);
+        return true;
+    }
+    case WaitKind::SearchDone: {
+        int number = 0;
+        Pane* pane = PaneByNumber(s, spec.pane, &number);
+        if (!pane) {
+            out.set("ok", false);
+            out.set("reason", "no_pane");
+            return true;
+        }
+        Tab& tab = pane->view;
+        out.set("pane", number);
+        out.set("ok", true);
+        if (!IsSearchTab(tab)) return true;   // a folder: nothing to wait for
+        out.set("results", static_cast<uint64_t>(tab.EntryCount()));
+        if (tab.content_results) {
+            out.set("total", static_cast<uint64_t>(tab.content_results->Count()));
+            if (tab.loading || tab.search_awaiting_content || tab.search_content_active ||
+                tab.content_results->Filtering() || tab.content_results->Sorting() ||
+                tab.content_order_revision != tab.content_results->OrderRevision())
+                return false;
+            out.set("complete", tab.content_count_final);
+            return true;
+        }
+        out.set("total", static_cast<uint64_t>(tab.search_total));
+        if (tab.loading || tab.search_awaiting_content || tab.search_content_active) return false;
+        // Loads the pages scrolling has not (a side effect of asking).
+        if (RequestAllSearchResults(s, tab)) return false;
+        out.set("complete", !tab.search_content_stopped && tab.search_next_offset >= tab.search_total);
         return true;
     }
     case WaitKind::OpFinished: {

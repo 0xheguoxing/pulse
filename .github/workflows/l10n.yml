@@ -7,12 +7,14 @@ on:
       - 'src/**'
       - 'tools/l10n/**'
       - 'tools/zh_tw/**'
+      - 'tools/actions/**'
       - '.github/workflows/l10n.yml'
   pull_request:
     paths:
       - 'src/**'
       - 'tools/l10n/**'
       - 'tools/zh_tw/**'
+      - 'tools/actions/**'
       - '.github/workflows/l10n.yml'
 
 jobs:
@@ -31,3 +33,5 @@ jobs:
         run: python tools/l10n/check_service_text.py
       - name: No new Pick() literals in product code
         run: python tools/l10n/check_no_pick.py
+      - name: Every action is registered for menus, palette and the assistant
+        run: python tools/actions/check_actions.py --strict

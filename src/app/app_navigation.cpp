@@ -934,6 +934,39 @@ void MaybePrefetchSearchPage(AppState& s) {
     } else RequestSearchPage(s, *tab, rest, false);
 }
 
+// Every result of a name search at once (the assistant selects among all of
+// them, P4d): one request for what scrolling has not loaded yet.
+bool RequestAllSearchResults(AppState& s, app::Tab& tab) {
+    if (tab.content_results || tab.search_content_stopped || tab.search_awaiting_content ||
+        tab.search_content_active) return false;
+    if (tab.loading || tab.search_loading_more || tab.pending_generation) return true;
+    const size_t want = (std::min)(index::kSearchPageCap, tab.search_total);
+    if (tab.search_next_offset >= want) return false;
+    std::wstring kind, rest;
+    if (!app::ParsePulsePath(tab.current_path, &kind, &rest)) return false;
+    index::Query query;
+    if (kind == L"saved-search") {
+        wchar_t* end = nullptr;
+        const auto saved_index = wcstoull(rest.c_str(), &end, 10);
+        if (!end || *end || saved_index >= s.savedSearches.items().size()) return false;
+        const auto& saved = s.savedSearches.items()[static_cast<size_t>(saved_index)];
+        if (saved.mode != app::SavedSearchMode::Name) return false;
+        query = MakeSearchPageQuery(tab, saved.query, 0);
+        query.path_prefix = saved.root;
+    } else if (kind == L"search") {
+        query = MakeSearchPageQuery(tab, rest, 0);
+    } else {
+        return false;
+    }
+    query.limit = want;
+    query.session_id = tab.search_session_id; query.subscribe = true;
+    const auto id = ++s.nextIndexReq;
+    tab.pending_generation = id; tab.filename_live_generation = id;
+    tab.pending_search_offset = 0; tab.search_loading_more = true;
+    DispatchIndexSearch(s, query, id);
+    return true;
+}
+
 void CancelActiveContentSearch(AppState& s, app::Tab& tab) {
     s.addressLiveDue = 0;
     if (tab.search_session_id) s.contentSearch.Cancel(tab.search_session_id);

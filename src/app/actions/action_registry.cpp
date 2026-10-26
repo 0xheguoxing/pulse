@@ -599,6 +599,19 @@ void ShowToolbarAppMenu(AppState& s) {
 constexpr Run kNoRun = nullptr;
 constexpr Fill kAlways = nullptr;
 
+// Inventory actions with no row in kDefs, and why (check_actions.py).
+constexpr std::pair<std::string_view, std::string_view> kNoRow[] = {
+    {"search.files", "the search_files tool runs it"},
+    {"settings.set", "one row per setting, from action_settings (SettingView)"},
+};
+
+constexpr bool NoRowKnown() {
+    for (const auto& [id, why] : kNoRow)
+        if (!FindAction(id) || why.empty()) return false;
+    return true;
+}
+static_assert(NoRowKnown(), "kNoRow: an id is missing from action_inventory.h, or has no reason");
+
 constexpr Def kDefs[] = {
     // 导航
     {"nav.back", I::Back, I::ActDomNav, L"\xE72B", P::None, L"Alt+Left", 0,

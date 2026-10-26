@@ -4231,6 +4231,14 @@ BEGIN
     IDS_AI_FO_LINE_PURGE "{n} 项已永久删除"
     IDS_AI_FO_LINE_RESTORE "{n} 项已还原到原位置"
     IDS_AI_FO_LINE_EMPTY "回收站已清空（{n} 项）"
+    IDS_AI_ACT_STEP_WAIT "等待"
+    IDS_AI_ACT_ARG_SEARCH_DONE "搜索完成"
+    IDS_AI_ACT_WAITED_SUB "{items} · 用了 {s} 秒"
+    IDS_AI_ACT_WAITED_PARTIAL "已有 {items} · 10 秒内没搜完"
+    IDS_AI_ACT_ARG_RESULTS "搜索结果"
+    IDS_AI_ACT_RES_SELECT_RESULTS "在搜索结果里选中了 {items}"
+    IDS_AI_ACT_RES_FOLDERS "分布在 {n} 个文件夹"
+    IDS_AI_ACT_COUNT_EXTS "{n} 个 {exts}"
 END
 
 LANGUAGE 0x09, 0x01
@@ -8461,6 +8469,14 @@ BEGIN
     IDS_AI_FO_LINE_PURGE "{n} items permanently deleted"
     IDS_AI_FO_LINE_RESTORE "{n} items restored"
     IDS_AI_FO_LINE_EMPTY "Recycle Bin emptied ({n} items)"
+    IDS_AI_ACT_STEP_WAIT "Wait for"
+    IDS_AI_ACT_ARG_SEARCH_DONE "the search"
+    IDS_AI_ACT_WAITED_SUB "{items} · took {s} s"
+    IDS_AI_ACT_WAITED_PARTIAL "{items} so far · not done in 10 s"
+    IDS_AI_ACT_ARG_RESULTS "search results"
+    IDS_AI_ACT_RES_SELECT_RESULTS "Selected {items} in the search results"
+    IDS_AI_ACT_RES_FOLDERS "In {n} folders"
+    IDS_AI_ACT_COUNT_EXTS "{n} {exts} files"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

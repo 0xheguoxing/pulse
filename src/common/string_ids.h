@@ -4249,5 +4249,13 @@
 #define IDS_AI_FO_LINE_PURGE                                                             5456
 #define IDS_AI_FO_LINE_RESTORE                                                           5457
 #define IDS_AI_FO_LINE_EMPTY                                                             5458
+#define IDS_AI_ACT_STEP_WAIT                                                             5459
+#define IDS_AI_ACT_ARG_SEARCH_DONE                                                       5460
+#define IDS_AI_ACT_WAITED_SUB                                                            5461
+#define IDS_AI_ACT_WAITED_PARTIAL                                                        5462
+#define IDS_AI_ACT_ARG_RESULTS                                                           5463
+#define IDS_AI_ACT_RES_SELECT_RESULTS                                                    5464
+#define IDS_AI_ACT_RES_FOLDERS                                                           5465
+#define IDS_AI_ACT_COUNT_EXTS                                                            5466
 
 #endif  // PULSE_STRING_IDS_H

@@ -360,7 +360,7 @@ const json::Value& Tools() {
    "query":{"type":"string","description":"A few words naming the action, e.g. 详情面板 文件夹大小"},
    "domain":{"type":"string","enum":["settings"],"description":"settings: list all settings instead of searching"}}}}},
 {"type":"function","function":{"name":"run_actions",
- "description":"Does things in Pulse itself, in order, as one undo group (at most 12 steps): panes and the folders in them, windows, tabs, view, sort, grouping, panels, selection, the staging tray, tags, favorites, new folders, opening files, settings, and any action find_actions returns. View, organize and settings steps act at once: Pulse shows each step and one result card with old -> new, Undo and the user's own shortcuts. Opening a program or script, Git push / pull, shell menu items, other programs and system actions (cloud keep / free, eject) show the user a confirm card first, every time (Pulse asks, not you): read first with git.refresh / shell.verbs in a call of their own, then ask for the action in the next call. File steps never run at once: file.copy_to / file.move_to {items, dest}, file.paste, file.rename {item, name}, file.group_into_folder {items, name}, file.dissolve {items}, file.recycle {items}, file.delete_permanent {items}, recycle.restore, recycle.empty - Pulse shows the user a plan card (what goes where; Recycle Bin room; a permanent delete takes two clicks) and does them only after they confirm, so do not ask first. One file step per call; a step that opens the folder it makes (window.layout panes, nav.go) goes after it in the same call, and Pulse runs it after the confirm. items: absolute paths, or leave them out for the selection (select.items first); dest: an absolute folder or a known folder (Documents\\Invoices), made if missing; without dest a copy or move goes to the other pane. Use file.delete_permanent and recycle.empty only when the user asks to delete permanently. To sort many files into several folders use organize_files; to rename several, rename_files. Locked settings and actions only the user does (unlocking a BitLocker drive, quitting Pulse, your own permissions) show the user why and where to do it; do not retry them. Stops at the first step that fails; earlier steps stay done. Returns each step's outcome.\nCommon actions (args): window.layout {layout: single|side_by_side|stacked|three|four, panes: [a folder per pane, left or top first; \"\" leaves one]}, nav.go {path, pane}, window.new {path}, tab.new {path}, tab.close, tab.to_window, pane.to_window {pane}, window.merge, window.overview, nav.back, nav.up, view.mode {view: extra_large_icons|large_icons|medium_icons|small_icons|list|details|tiles|content, pane}, view.sort {by: name|modified|type|size|created, desc, pane}, view.group {by: none|name|date|type|size, pane}, sidebar.toggle {show}, favbar.toggle {show}, details.toggle {show}, select.items {pane, name, extensions, items, type: folder|document|image|video|audio|archive|code, modified: today|yesterday|this_week|last_7_days|this_month|last_month|{after, before}, size: {larger_than, smaller_than}, tag, selected, mode: replace|add|remove}, select.all, select.clear, tray.add {items}, tag.toggle {tag, items} (a new tag is made), fav.add {path or items}, file.new_folder {name} (in the open folder), nav.open {path} (a file or program), settings.set {key, value}, edit.undo, tab.pin {tab, pin}, tab.color {tab, color: red|orange|yellow|green|teal|blue|purple|pink|none}, tab.rename {tab, name}, tab.group {tab, group}, tab.activate {tab}, tag.create {name, color, group}, keymap.set {action, keys} (keymap.read lists the actions), git.refresh (the open folder's repository: branch, ahead / behind, changes), git.push, git.pull, shell.verbs (the selection's context menu items), shell.run_verb {verb: an item shell.verbs listed; in a submenu \"Parent ▸ Item\"}, toolbar.open_with {app: a program pinned to the toolbar}, cloud.keep, cloud.free, preview.cloud_download {path}, drive.eject {drive: E:}, drive.disconnect {drive}, file.context_menu and toolbar.customize (Pulse opens them; the user chooses). tab: 1 = first as in get_state, a title, \"all\" or a list - several tabs go in ONE step. Words: 标签 is a tag (tag.create, then tag.toggle to put it on items; 加标签 / 打标签 = tag.toggle), 标签页 is a tab (tab.*), 托盘 / 暂存 is the staging tray (only when the user says so). pane: 1-4 in screen order as in get_state, focused, target, or all (view / sort / group). Paths: absolute, a drive (D:) or a known folder (Downloads, Desktop, Documents, Pictures, Videos, Music). items: full paths; omitted = the selection.\nSettings (settings.set key and values; switches take true/false): theme light|dark|system, window_effect none|acrylic|mica|mica_alt, text_rendering auto|sharp|smooth, font_size small|default|large|larger, language system|zh-CN|zh-TW|en-US, menu_acrylic, row_height compact|standard|roomy, click_to_open double|single, name_highlight hover|always, hover_select, item_checkboxes, blank_double_click nothing|back|up, show_hidden, show_protected, folders_first top|follow|mixed, smart_dates, zebra_rows, size_bars, tag_name_color, selection_outline, thumbnail_app_badges, alias_mark, mtime_marks off|dots|bars|text, mtime_range today|3|7|30, mtime_dim_older, mtime_bold_today, mtime_folders, mtime_other_views, mtime_flash, onedrive_status, svn_status, startup_open last_tabs|default_location, new_tab_open current|default_location, external_open smart|tab|window, vertical_tabs, pinned_tab_names, double_click_closes_tab, close_window_with_last_tab, launch_at_signin (Windows), start_in_tray, keep_running, tray_icon always|background|never, explorer_tag_menu (Windows), open_folders_with_pulse (default file manager; Windows), staging_icon_size small|standard|large, staging_hide_when_empty, change_tracking, change_days today|3|7, lan_discovery, network_recent, hidden_shares, confirm_delete (can only be turned on), global_search (Windows), pinyin_search. Locked (only the user, in Settings): confirm_delete off, assistant_permissions, always_allow, connections, api_key.",
+ "description":"Does things in Pulse itself, in order, as one undo group (at most 12 steps): panes and the folders in them, windows, tabs, view, sort, grouping, panels, selection, the staging tray, tags, favorites, new folders, opening files, settings, and any action find_actions returns. View, organize and settings steps act at once: Pulse shows each step and one result card with old -> new, Undo and the user's own shortcuts. Opening a program or script, Git push / pull, shell menu items, other programs and system actions (cloud keep / free, eject) show the user a confirm card first, every time (Pulse asks, not you): read first with git.refresh / shell.verbs in a call of their own, then ask for the action in the next call. File steps never run at once: file.copy_to / file.move_to {items, dest}, file.paste, file.rename {item, name}, file.group_into_folder {items, name}, file.dissolve {items}, file.recycle {items}, file.delete_permanent {items}, recycle.restore, recycle.empty - Pulse shows the user a plan card (what goes where; Recycle Bin room; a permanent delete takes two clicks) and does them only after they confirm, so do not ask first. One file step per call; a step that opens the folder it makes (window.layout panes, nav.go) goes after it in the same call, and Pulse runs it after the confirm. items: absolute paths, or leave them out for the selection (select.items first); dest: an absolute folder or a known folder (Documents\\Invoices), made if missing; without dest a copy or move goes to the other pane. Use file.delete_permanent and recycle.empty only when the user asks to delete permanently. To sort many files into several folders use organize_files; to rename several, rename_files. Locked settings and actions only the user does (unlocking a BitLocker drive, quitting Pulse, your own permissions) show the user why and where to do it; do not retry them. Stops at the first step that fails; earlier steps stay done. Returns each step's outcome.\nCommon actions (args): window.layout {layout: single|side_by_side|stacked|three|four, panes: [a folder per pane, left or top first; \"\" leaves one]}, nav.go {path, pane}, window.new {path}, tab.new {path}, tab.close, tab.to_window, pane.to_window {pane}, window.merge, window.overview, nav.back, nav.up, view.mode {view: extra_large_icons|large_icons|medium_icons|small_icons|list|details|tiles|content, pane}, view.sort {by: name|modified|type|size|created, desc, pane}, view.group {by: none|name|date|type|size, pane}, sidebar.toggle {show}, favbar.toggle {show}, details.toggle {show}, select.items {pane, name, extensions, items, type: folder|document|image|video|audio|archive|code, modified: today|yesterday|this_week|last_7_days|this_month|last_month|{after, before}, size: {larger_than, smaller_than}, tag, selected, mode: replace|add|remove} (on a search tab Pulse first waits for the search to finish, 10 s at most, then picks among all its results; tag does not work on content search results), select.all, select.clear, tray.add {items}, tag.toggle {tag, items} (a new tag is made), fav.add {path or items}, file.new_folder {name} (in the open folder), nav.open {path} (a file or program), settings.set {key, value}, edit.undo, tab.pin {tab, pin}, tab.color {tab, color: red|orange|yellow|green|teal|blue|purple|pink|none}, tab.rename {tab, name}, tab.group {tab, group}, tab.activate {tab}, tag.create {name, color, group}, keymap.set {action, keys} (keymap.read lists the actions), git.refresh (the open folder's repository: branch, ahead / behind, changes), git.push, git.pull, shell.verbs (the selection's context menu items), shell.run_verb {verb: an item shell.verbs listed; in a submenu \"Parent ▸ Item\"}, toolbar.open_with {app: a program pinned to the toolbar}, cloud.keep, cloud.free, preview.cloud_download {path}, drive.eject {drive: E:}, drive.disconnect {drive}, file.context_menu and toolbar.customize (Pulse opens them; the user chooses). tab: 1 = first as in get_state, a title, \"all\" or a list - several tabs go in ONE step. Words: 标签 is a tag (tag.create, then tag.toggle to put it on items; 加标签 / 打标签 = tag.toggle), 标签页 is a tab (tab.*), 托盘 / 暂存 is the staging tray (only when the user says so). pane: 1-4 in screen order as in get_state, focused, target, or all (view / sort / group). Paths: absolute, a drive (D:) or a known folder (Downloads, Desktop, Documents, Pictures, Videos, Music). items: full paths; omitted = the selection.\nSettings (settings.set key and values; switches take true/false): theme light|dark|system, window_effect none|acrylic|mica|mica_alt, text_rendering auto|sharp|smooth, font_size small|default|large|larger, language system|zh-CN|zh-TW|en-US, menu_acrylic, row_height compact|standard|roomy, click_to_open double|single, name_highlight hover|always, hover_select, item_checkboxes, blank_double_click nothing|back|up, show_hidden, show_protected, folders_first top|follow|mixed, smart_dates, zebra_rows, size_bars, tag_name_color, selection_outline, thumbnail_app_badges, alias_mark, mtime_marks off|dots|bars|text, mtime_range today|3|7|30, mtime_dim_older, mtime_bold_today, mtime_folders, mtime_other_views, mtime_flash, onedrive_status, svn_status, startup_open last_tabs|default_location, new_tab_open current|default_location, external_open smart|tab|window, vertical_tabs, pinned_tab_names, double_click_closes_tab, close_window_with_last_tab, launch_at_signin (Windows), start_in_tray, keep_running, tray_icon always|background|never, explorer_tag_menu (Windows), open_folders_with_pulse (default file manager; Windows), staging_icon_size small|standard|large, staging_hide_when_empty, change_tracking, change_days today|3|7, lan_discovery, network_recent, hidden_shares, confirm_delete (can only be turned on), global_search (Windows), pinyin_search. Locked (only the user, in Settings): confirm_delete off, assistant_permissions, always_allow, connections, api_key.",
  "parameters":{"type":"object","properties":{
    "steps":{"type":"array","description":"The steps in order (at most 12)","items":{"type":"object","properties":{
      "action":{"type":"string","description":"An action id, e.g. view.sort"},
@@ -5763,8 +5763,14 @@ struct CtlRun {
     std::wstring arg_new_tag;   // tag.create's name: a tag.toggle right after it joins its line
     // P4c: the call's file step (action_files.h). 1 = its card is up or its
     // tasks run; 2 = over, `file_step` is how it went (CtlNext takes it).
+    // A select.items on a content search's results waits for its match the
+    // same way (P4d).
     int file_state = 0;
     std::shared_ptr<CtlStep> file_step;
+    // P4d: the card says only its title and sub (在搜索结果里选中了 41 项 /
+    // 分布在 9 个文件夹), not the same line again.
+    bool override_alone = false;
+    bool search_partial = false;   // the search was not done within the wait
 };
 
 const wchar_t* PresetName(app::LayoutPreset p) {
@@ -6575,29 +6581,39 @@ void AddPaletteKey(CtlRun& run, const std::wstring& title) {
     run.keys.push_back(std::move(row));
 }
 
-// select.items: P2's selector on one pane, like the user's own selection
-// (not part of the undo). Waits for the listing first (CtlNext).
-CtlStep CtlSelect(AppState& s, CtlRun& run, const json::Value& act) {
+// PDF / JPG: the extensions a selector names, for its step row.
+std::wstring ExtsLabel(const app::actions::Selector& sel) {
+    std::wstring out;
+    for (size_t i = 0; i < sel.extensions.size(); ++i) {
+        if (i == 3) { out += L"\u2026"; break; }
+        std::wstring up = sel.extensions[i];
+        for (wchar_t& c : up) c = static_cast<wchar_t>(std::towupper(c));
+        out += (out.empty() ? L"" : L"/") + up;
+    }
+    return out;
+}
+
+// The step a selector's match makes: selects it (not part of the undo) and
+// says so. In search results: 选中 搜索结果 · PDF · 41 项 · 12.6 MB, and the
+// card 在搜索结果里选中了 41 项 / 分布在 9 个文件夹 (P4 scene 5).
+CtlStep SelectStep(AppState& s, CtlRun& run, const app::actions::Selector& sel,
+                   const app::actions::SelectorMatch& m) {
     CtlStep st;
     st.icon = ui::AiIcon::CheckCircle;
     st.title = Text(I::AiActStepSelect);
-    FILETIME ft{};
-    GetSystemTimeAsFileTime(&ft);
-    app::actions::Selector sel;
-    std::string error;
-    if (!app::actions::ParseSelector(act, app::actions::FileTimeTicks(ft), sel, error)) {
-        st.error = error;
-        st.why = Text(I::AiActWhyFailed);
-        return st;
-    }
-    const app::actions::SelectorMatch m = app::actions::ResolveSelector(s, sel);
     const size_t index = m.pane ? PaneIndex(s, m.pane) : 0;
     const std::wstring pos = m.pane ? PanePos(s, index) : std::wstring();
     const app::Tab* tab = m.pane ? m.pane->ActiveTab() : nullptr;
-    st.arg = !pos.empty() ? pos : PlaceLabel(tab ? tab->current_path : std::wstring());
+    st.arg = m.results ? Text(I::AiActArgResults)
+             : !pos.empty() ? pos
+                            : PlaceLabel(tab ? tab->current_path : std::wstring());
     st.data = app::actions::ApplySelection(s, m);
+    if (m.results && run.search_partial) st.data.set("search_complete", false);
     if (!m.reason.empty()) {
-        st.error = m.reason;
+        st.error = m.reason == "tag_in_results"
+                       ? "tag_in_results: tags are not matched in content search results; search with the tag instead"
+                   : m.reason == "changed" ? "changed: the search results changed while matching; try again"
+                                           : m.reason;
         st.why = Text(m.reason == "loading" ? I::AiActWhyLoading
                       : m.reason == "no_match" || m.reason == "filter_hides" || m.reason == "unknown_tag"
                           ? I::AiActWhyNoMatch
@@ -6608,10 +6624,69 @@ CtlStep CtlSelect(AppState& s, CtlRun& run, const json::Value& act) {
     const std::wstring items = Fill(Text(I::AiCtlItems), L"{n}", Num(m.matched.size()));
     st.sub = m.bytes > 0 ? items + L" \u00B7 " + AiChatFormatSize(m.bytes) : items;
     run.other = true;
+    if (m.results) {
+        const std::wstring exts = ExtsLabel(sel);
+        if (!exts.empty()) st.sub = exts + L" \u00B7 " + st.sub;
+        run.title_override = Fill(Text(I::AiActResSelectResults), L"{items}", items);
+        run.sub_override = Fill(Text(I::AiActResFolders), L"{n}", Num(m.folders));
+        if (exts.empty()) {
+            // Nothing the title does not say already.
+            AddLine(run, SplitLine(run.title_override, items, items));
+            run.override_alone = true;
+        } else {
+            // 选中了 41 个 PDF under it.
+            const std::wstring what = Fill(Fill(Text(I::AiActCountExts), L"{n}", Num(m.matched.size())), L"{exts}", exts);
+            AddLine(run, SplitLine(Fill(Text(I::AiActLineSelect), L"{items}", what), what, what));
+        }
+        return st;
+    }
     AddLine(run, pos.empty() ? SplitLine(Fill(Text(I::AiActLineSelect), L"{items}", items), items, items)
                              : SplitLine(Fill(Fill(Text(I::AiActLineSelectIn), L"{pane}", pos), L"{items}", items),
                                          items, items));
     return st;
+}
+
+bool ParseStepSelector(const json::Value& act, app::actions::Selector& sel, std::string& error) {
+    FILETIME ft{};
+    GetSystemTimeAsFileTime(&ft);
+    return app::actions::ParseSelector(act, app::actions::FileTimeTicks(ft), sel, error);
+}
+
+// select.items: P2's selector on one pane, like the user's own selection
+// (not part of the undo). Waits for the listing first (CtlNext); a search
+// page for all its results (P4d).
+CtlStep CtlSelect(AppState& s, CtlRun& run, const json::Value& act) {
+    app::actions::Selector sel;
+    std::string error;
+    if (!ParseStepSelector(act, sel, error)) {
+        CtlStep st;
+        st.icon = ui::AiIcon::CheckCircle;
+        st.title = Text(I::AiActStepSelect);
+        st.error = error;
+        st.why = Text(I::AiActWhyFailed);
+        return st;
+    }
+    return SelectStep(s, run, sel, app::actions::ResolveSelector(s, sel));
+}
+
+void CtlNext(AppState& s, std::shared_ptr<CtlRun> run);
+
+// select.items on a content search's results: the store matches them on its
+// own thread (P4d); run->file_step then holds the step. False: not such a
+// pane (or a bad selector), CtlSelect does it.
+bool SelectAsk(AppState& s, std::shared_ptr<CtlRun> run, const json::Value& act) {
+    app::actions::Selector sel;
+    std::string error;
+    if (!ParseStepSelector(act, sel, error)) return false;
+    const bool started = app::actions::ResolveSelectorAsync(
+        s, sel, [run, sel](AppState& s2, app::actions::SelectorMatch m) {
+            if (Agent(s2).generation != run->gen) return;
+            run->file_step = std::make_shared<CtlStep>(SelectStep(s2, *run, sel, m));
+            run->file_state = 2;
+            CtlNext(s2, run);
+        });
+    if (started) run->file_state = 1;
+    return started;
 }
 
 CtlStep CtlSelectNone(AppState& s, CtlRun& run) {
@@ -7013,7 +7088,7 @@ void CtlFinish(AppState& s, std::shared_ptr<CtlRun> run) {
         } else if (things == 1 && run->lines.size() == 1 && !run->title_override.empty()) {
             r.title = run->title_override;
             r.sub = run->sub_override;
-            r.lines = run->lines;
+            if (!run->override_alone) r.lines = run->lines;
         } else if (things == 1 && run->lines.size() == 1) {
             r.title = run->single_title;
             if (run->organize) r.sub = Text(I::AiCtlResOrganizeSub);
@@ -7776,7 +7851,7 @@ CtlStep CtlRunStep(AppState& s, CtlRun& run, const std::string& id, const json::
 }
 
 // A wait the step asks for ("wait"), or the listing a selection needs.
-bool StepWait(const json::Value& step, const std::string& id, app::actions::WaitSpec& spec) {
+bool StepWait(AppState& s, const json::Value& step, const std::string& id, app::actions::WaitSpec& spec) {
     const json::Value& args = StepArgs(step);
     if (const json::Value* w = step.find("wait")) {
         json::Value obj = json::Value::Object();
@@ -7797,7 +7872,29 @@ bool StepWait(const json::Value& step, const std::string& id, app::actions::Wait
         if (pane->is_string() && pane->as_string() == "target") spec.pane = -1;
         else if (pane->get_int(n, 1, 4)) spec.pane = static_cast<int>(n);
     }
+    // A search page: all its results first, 10 s at most (P4 decision 4).
+    if (app::actions::PaneShowsSearch(s, spec.pane)) {
+        spec.kind = app::actions::WaitKind::SearchDone;
+        spec.timeout_ms = 10000;
+    }
     return true;
+}
+
+// 等待 搜索完成 · 186 项 · 用了 1.2 秒 (or 已有 120 项 · 10 秒内没搜完).
+void SearchWaited(AppState& s, CtlRun& run, const json::Value& out) {
+    AiAgent& a = Agent(s);
+    if (a.generation != run.gen) return;
+    int64_t results = 0, waited = 0;
+    if (const json::Value* v = out.find("results")) v->get_int(results, 0);
+    if (const json::Value* v = out.find("waited_ms")) v->get_int(waited, 0);
+    run.search_partial = out.get_bool("timed_out");
+    const std::wstring items = Fill(Text(I::AiCtlItems), L"{n}", Num(static_cast<size_t>(results)));
+    wchar_t secs[16]{};
+    swprintf_s(secs, L"%.1f", static_cast<double>(waited) / 1000.0);
+    EndStep(s, a, true,
+            run.search_partial ? Fill(Text(I::AiActWaitedPartial), L"{items}", items)
+                               : Fill(Fill(Text(I::AiActWaitedSub), L"{items}", items), L"{s}", secs));
+    Redraw(s);
 }
 
 void CtlNext(AppState& s, std::shared_ptr<CtlRun> run) {
@@ -7810,15 +7907,26 @@ void CtlNext(AppState& s, std::shared_ptr<CtlRun> run) {
             run->waited = run->index;
             app::actions::WaitSpec spec;
             json::Value ready;
-            if (StepWait(step, what, spec) && !app::actions::WaitReady(s, spec, ready)) {
+            if (StepWait(s, step, what, spec) && !app::actions::WaitReady(s, spec, ready)) {
                 AppState* self = &s;
+                const bool search = spec.kind == app::actions::WaitKind::SearchDone;
+                if (search) {
+                    AddStep(s, a, ui::AiIcon::Clock, Text(I::AiActStepWait), Text(I::AiActArgSearchDone), {});
+                    AiChatSetChip(Chat(s), ui::StatusAiState::Busy, Text(I::AiActStepWait),
+                                  static_cast<float>(run->index) / static_cast<float>(run->queue.size() + 1));
+                    Redraw(s);
+                }
                 app::actions::WaitFor(s, spec, [self, run] { return Agent(*self).generation != run->gen; },
-                                      [run](AppState& s2, json::Value) { CtlNext(s2, run); });
+                                      [run, search](AppState& s2, json::Value out) {
+                                          if (search) SearchWaited(s2, *run, out);
+                                          CtlNext(s2, run);
+                                      });
                 return;
             }
         }
         // A file step: its card first; the call goes on from FoDone (P4c).
         if (run->file_state == 0 && app::actions::IsFileOp(what) && FoAsk(s, run, what, StepArgs(step))) return;
+        if (run->file_state == 0 && what == "select.items" && SelectAsk(s, run, StepArgs(step))) return;
         if (run->file_state == 1) return;   // its card is up or its tasks run
         const size_t undo_before = run->undo.size();
         CtlStep st;
