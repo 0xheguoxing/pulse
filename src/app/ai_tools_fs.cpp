@@ -1,5 +1,6 @@
 #include "ai_tools_fs.h"
 #include "zip_compress.h"
+#include "../common/path_utils.h"
 #include <objbase.h>
 #include <propsys.h>
 #include <shlobj.h>
@@ -108,7 +109,9 @@ constexpr GUID kSummaryFmt = {0xF29F85E0, 0x4FF9, 0x1068, {0xAB, 0x91, 0x08, 0x0
 class Properties {
 public:
     explicit Properties(const std::wstring& path) {
-        if (FAILED(SHGetPropertyStoreFromParsingName(path.c_str(), nullptr, GPS_DEFAULT | GPS_BESTEFFORT,
+        // The shell rejects \\?\ paths, which the fs layer hands out.
+        const std::wstring shell_path = path::StripExtendedPathPrefix(path);
+        if (FAILED(SHGetPropertyStoreFromParsingName(shell_path.c_str(), nullptr, GPS_DEFAULT | GPS_BESTEFFORT,
                                                      IID_PPV_ARGS(&store_))))
             store_ = nullptr;
     }

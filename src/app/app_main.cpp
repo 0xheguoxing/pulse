@@ -2780,6 +2780,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     s->store.MarkDirty(tab->current_path);
                     RefreshActiveTab(*s, RefreshReason::OperationCompleted);
                 }
+                // The assistant's 查看 tabs have no watch; Ctrl+Z brings files back too.
+                if (refresh && !finished_tasks.empty()) AiAssistantRefreshLists(*s);
                 // A drag's cards are waiting over another pane: list the
                 // dropped rows now rather than on the watcher's next beat.
                 if (refresh && !s->dragLanding.names.empty() && !s->dragLanding.reveal_at) {

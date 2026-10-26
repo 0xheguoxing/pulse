@@ -48,6 +48,7 @@
 #include "window_overview_ui.h"
 #include "window_placement.h"
 #include "zip_compress.h"
+#include "../common/path_utils.h"
 #include "../common/json_value.h"
 #include "../common/localization.h"
 #include "../fs/fs_enum.h"
@@ -4055,7 +4056,22 @@ void FillDiskCard(AiBlockView& b, const app::ai::DiskUsage& du) {
         case P::Programs: r.sys = true; r.sub = Text(I::AiDkSubPrograms); break;
         case P::Hibernate: r.sys = true; r.sub = Text(I::AiDkSubHiber); break;
         case P::Pagefile: r.sys = true; r.sub = Text(I::AiDkSubPage); break;
-        default: r.sub = app::ai::ParentFolder(t.path); break;
+        default: {
+            // Where it sits, as a trail like 用户 › SS: 本地磁盘 (C:) › Games
+            // rather than a bare C:\ for things at the root.
+            const std::wstring parent = app::ai::ParentFolder(path::StripExtendedPathPrefix(t.path));
+            if (parent.size() >= 3 && parent[1] == L':' && parent[2] == L'\\') {
+                r.sub = Fill(Text(I::AiDkTitle), L"{d}", std::wstring(1, static_cast<wchar_t>(std::towupper(parent[0]))));
+                for (size_t at = 3; at < parent.size();) {
+                    const size_t next = (std::min)(parent.find(L'\\', at), parent.size());
+                    if (next > at) r.sub += L" \u203A " + parent.substr(at, next - at);
+                    at = next + 1;
+                }
+            } else {
+                r.sub = parent;
+            }
+            break;
+        }
         }
         r.value = Gb1(t.bytes);
         r.frac = static_cast<float>(static_cast<double>(t.bytes) / static_cast<double>(biggest));
@@ -4341,12 +4357,7 @@ uint64_t CleanFilesOf(const SpaceClean& sc, const std::wstring& path) {
 }
 
 // A 查看 tab lists files by path; reload it once they moved or came back.
-void RefreshCleanLists(AppState& s) {
-    app::Tab* tab = ActiveTab(s);
-    std::wstring kind, rest;
-    if (tab && app::ParsePulsePath(tab->current_path, &kind, &rest) && kind == L"ai-list")
-        RefreshPath(s, tab->current_path);
-}
+void RefreshCleanLists(AppState& s) { AiAssistantRefreshLists(s); }
 
 std::function<void(AppState&)> MakeCleanUndo(std::shared_ptr<SpaceClean> sc) {
     return [sc](AppState& st) {
@@ -7496,5 +7507,17 @@ std::shared_ptr<const ui::AiListOverlay> AiListOverlayFor(const std::wstring& fo
 }
 
 bool AiAssistantOwnsTask(uint64_t task_id) { return task_id != 0 && g_task_ops.count(task_id) != 0; }
+
+void AiAssistantRefreshLists(AppState& s) {
+    std::vector<std::wstring> paths;
+    ForEachPane(s, [&](app::Pane& pane) {
+        const app::Tab* tab = pane.ActiveTab();
+        std::wstring kind, rest;
+        if (tab && app::ParsePulsePath(tab->current_path, &kind, &rest) && kind == L"ai-list" &&
+            std::find(paths.begin(), paths.end(), tab->current_path) == paths.end())
+            paths.push_back(tab->current_path);
+    });
+    for (const std::wstring& path : paths) RefreshPath(s, path);
+}
 
 } // namespace pulse

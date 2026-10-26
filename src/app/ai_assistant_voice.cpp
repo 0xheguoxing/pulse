@@ -160,6 +160,17 @@ AiVoiceUi& Ui(AppState& s) {
 
 AiVoiceUi* Peek(const AppState& s) { return s.aiAssistant.voice.get(); }
 
+// Another Pulse window may have saved or removed the connection since this
+// one read ai.json: read it again when the user reaches for the mic, unless
+// the connection card here is open with edits of its own.
+void Reload(AiVoiceUi& u) {
+    if (u.card_open || u.rec) return;
+    bool malformed = false;
+    const ai::Settings settings = ai::LoadSettings(&malformed);
+    if (!malformed) u.prefs = settings.assistant.voice;
+    u.key_saved = ai::HasVoiceKey();
+}
+
 bool Connected(const AiVoiceUi& u) { return u.prefs.Configured() && u.key_saved; }
 
 void SavePrefs(const AiVoiceUi& u) {
@@ -413,9 +424,18 @@ void Tick(AppState& s, AiVoiceUi& u) {
                 const std::wstring host = ai::ModelHost(Trim(EditText(u.url_edit)));
                 if (bad.http_status == 0) u.test_error = Fill(Text(I::AiVoiceErrNet), L"{host}", host);
                 else if (bad.http_status == 401) u.test_error = Text(I::AiVoiceErrKey);
-                else
+                else {
+                    // Cut the service's message in UTF-16, never inside a UTF-8
+                    // sequence or a surrogate pair.
+                    std::wstring msg = json::Wide(bad.error_message);
+                    if (msg.size() > 120) {
+                        size_t n = 119;
+                        if (IS_HIGH_SURROGATE(msg[n - 1])) --n;
+                        msg = msg.substr(0, n) + L"\u2026";
+                    }
                     u.test_error = Fill(Fill(Text(I::AiVoiceErrHttp), L"{code}", std::to_wstring(bad.http_status)), L"{msg}",
-                                        json::Wide(bad.error_message.substr(0, 120)));
+                                        msg);
+                }
             }
         }
         redraw = true;
@@ -997,12 +1017,14 @@ bool AiVoiceActivate(AppState& s, const ui::AiPanelHit& hit) {
     switch (hit.part) {
     case P::Mic:
         if (u.menu_open) AiVoiceCloseMenu(s);
+        Reload(u);
         MicClick(s, u);
         return true;
     case P::MicMenu:
         if (u.menu_open) {
             AiVoiceCloseMenu(s);
         } else if (!u.rec) {
+            Reload(u);
             u.mics = ai::ListVoiceMics(&u.default_mic);
             u.menu_open = true;
         }

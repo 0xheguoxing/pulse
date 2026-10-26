@@ -2360,7 +2360,14 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             }
             const float note_w = br - (bl + 20.0f * s);
             const float note_h = cv.note.empty() ? 0.0f : wrapped_h(cv.note, formats_.meta, note_w, 16.0f * s) + 10.0f * s;
-            const float sum_h = 1.0f * s + 10.0f * s + 20.0f * s + 10.0f * s;
+            // 移到回收站，可撤销 sits right of the total, or on its own line
+            // below it when the panel is too narrow; it is never dropped.
+            const float clean_sum_w = c.Measure(cv.sum_pre + L" ", formats_.small125) + c.Measure(cv.sum_n, formats_.num15) +
+                                      c.Measure(L" " + cv.sum_mid + L" ", formats_.small125) +
+                                      c.Measure(cv.sum_gb, formats_.num15) + c.Measure(L" " + cv.sum_unit, formats_.small125);
+            const float clean_safe_w = cv.safe.empty() ? 0.0f : c.Measure(cv.safe, formats_.meta) + 17.0f * s;
+            const bool clean_safe_below = !cv.safe.empty() && br - clean_safe_w <= bl + clean_sum_w + 8.0f * s;
+            const float sum_h = 1.0f * s + 10.0f * s + 20.0f * s + 10.0f * s + (clean_safe_below ? 20.0f * s : 0.0f);
             const float h = 2.0f * s + 40.0f * s + (b.collapsed ? 0.0f : rows_h + sum_h + note_h);
             const D2D1_RECT_F r = D2D1::RectF(x0, top + y, x1, top + y + h);
             const D2D1_RECT_F hr = D2D1::RectF(il, r.top + 1.0f, ir, r.top + 1.0f + 40.0f * s);
@@ -2416,11 +2423,16 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                                 dc->SetTransform(before);
                             }
                             const float title_r = br - nw - 8.0f * s;
-                            const float tw = (std::min)(c.Measure(row.title, formats_.body13b), title_r - mx);
-                            line(row.title, formats_.body13b, mx, ty, title_r, 18.0f * s, row.on ? pal.text : pal.text2);
-                            if (!row.tag.empty() && mx + tw + 6.0f * s + 30.0f * s < title_r) {
+                            // 看一眼 keeps its place in a narrow panel: the title
+                            // gives way (ellipsis) while it keeps about 4 characters.
+                            const float tag_w = row.tag.empty() ? 0.0f : c.Measure(row.tag, formats_.badge) + 12.0f * s;
+                            const bool tag_fits = tag_w > 0.0f && title_r - mx >= tag_w + 6.0f * s + 56.0f * s;
+                            const float title_max = tag_fits ? title_r - mx - tag_w - 6.0f * s : title_r - mx;
+                            const float tw = (std::min)(c.Measure(row.title, formats_.body13b), title_max);
+                            line(row.title, formats_.body13b, mx, ty, mx + title_max, 18.0f * s, row.on ? pal.text : pal.text2);
+                            if (tag_fits) {
                                 const float gx = mx + tw + 6.0f * s;
-                                const float gw = (std::min)(c.Measure(row.tag, formats_.badge) + 12.0f * s, title_r - gx);
+                                const float gw = tag_w;
                                 const D2D1_RECT_F gr = D2D1::RectF(gx, ty + 0.5f * s, gx + gw, ty + 17.5f * s);
                                 c.Fill(gr, 8.0f * s, pal.amber_bg);
                                 line(row.tag, formats_.badge, gr.left + 6.0f * s, gr.top, gr.right - 4.0f * s, 17.0f * s, pal.amber);
@@ -2500,12 +2512,15 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                         part(cv.sum_gb, true);
                         part(L" " + cv.sum_unit, false);
                         const float sfw = c.Measure(cv.safe, formats_.meta);
-                        if (br - sfw - 17.0f * s > sx + 8.0f * s) {
+                        if (clean_safe_below) {
+                            c.Icon(AiIcon::Shield, bl, yy + 20.0f * s + 4.0f * s, 12.0f * s, pal.accent);
+                            line(cv.safe, formats_.meta, bl + 17.0f * s, yy + 20.0f * s, br + 1.0f, 20.0f * s, pal.text3);
+                        } else if (!cv.safe.empty()) {
                             c.Icon(AiIcon::Shield, br - sfw - 17.0f * s, yy + 4.0f * s, 12.0f * s, pal.accent);
                             line(cv.safe, formats_.meta, br - sfw, yy, br + 1.0f, 20.0f * s, pal.text3);
                         }
                     }
-                    yy += 20.0f * s + 10.0f * s;
+                    yy += 20.0f * s + 10.0f * s + (clean_safe_below ? 20.0f * s : 0.0f);
                     if (!cv.note.empty()) {
                         c.Icon(AiIcon::Shield, bl, yy + 2.0f * s, 13.0f * s, pal.text3);
                         wrapped(cv.note, formats_.meta, bl + 20.0f * s, yy, note_w, 16.0f * s, pal.text3);
@@ -2650,7 +2665,13 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             float groups_h = 0.0f;
             for (const AiDupGroupView& g : dv.groups) groups_h += group_h(g);
             const float more_h = dv.more.empty() ? 0.0f : 1.0f * s + 8.0f * s + 18.0f * s + 10.0f * s;
-            const float sum_h = dv.sum.empty() ? 0.0f : 1.0f * s + 10.0f * s + 20.0f * s + 10.0f * s;
+            // 每组至少留 1 份: right of the total, or below it when narrow.
+            float dup_sum_w = 0.0f;
+            for (const auto& [t, num] : dv.sum) dup_sum_w += c.Measure(t, num ? formats_.num15 : formats_.small125);
+            const float dup_safe_w = dv.safe.empty() ? 0.0f : c.Measure(dv.safe, formats_.meta) + 17.0f * s;
+            const bool dup_safe_below = !dv.safe.empty() && br - dup_safe_w <= bl + dup_sum_w + 8.0f * s;
+            const float sum_h = dv.sum.empty() ? 0.0f
+                                               : 1.0f * s + 10.0f * s + 20.0f * s + 10.0f * s + (dup_safe_below ? 20.0f * s : 0.0f);
             const float h = 2.0f * s + 40.0f * s + (b.collapsed ? 0.0f : rules_h + groups_h + more_h + sum_h);
             const D2D1_RECT_F r = D2D1::RectF(x0, top + y, x1, top + y + h);
             const D2D1_RECT_F hr = D2D1::RectF(il, r.top + 1.0f, ir, r.top + 1.0f + 40.0f * s);
@@ -2824,7 +2845,10 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                             sx += w;
                         }
                         const float sfw = c.Measure(dv.safe, formats_.meta);
-                        if (!dv.safe.empty() && br - sfw - 17.0f * s > sx + 8.0f * s) {
+                        if (dup_safe_below) {
+                            c.Icon(AiIcon::Shield, bl, yy + 20.0f * s + 4.0f * s, 12.0f * s, pal.accent);
+                            line(dv.safe, formats_.meta, bl + 17.0f * s, yy + 20.0f * s, br + 1.0f, 20.0f * s, pal.text3);
+                        } else if (!dv.safe.empty()) {
                             c.Icon(AiIcon::Shield, br - sfw - 17.0f * s, yy + 4.0f * s, 12.0f * s, pal.accent);
                             line(dv.safe, formats_.meta, br - sfw, yy, br + 1.0f, 20.0f * s, pal.text3);
                         }

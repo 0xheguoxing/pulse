@@ -98,4 +98,9 @@ void AiAssistantDestroy(AppState& s);
 // stay closed.
 bool AiAssistantOwnsTask(uint64_t task_id);
 
+// The assistant's 查看 tabs (pulse:ai-list) list files by path and have no
+// folder watch: reload every visible one after files moved or came back,
+// whichever pane it is in and however the operation was started (Ctrl+Z).
+void AiAssistantRefreshLists(AppState& s);
+
 } // namespace pulse
