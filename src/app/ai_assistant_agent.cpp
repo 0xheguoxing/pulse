@@ -50,6 +50,7 @@
 #include "ai_tools_ui.h"
 #include "zip_compress.h"
 #include "actions/action_args.h"
+#include "actions/action_files.h"
 #include "actions/action_params.h"
 #include "actions/action_policy.h"
 #include "actions/action_settings.h"
@@ -359,7 +360,7 @@ const json::Value& Tools() {
    "query":{"type":"string","description":"A few words naming the action, e.g. 详情面板 文件夹大小"},
    "domain":{"type":"string","enum":["settings"],"description":"settings: list all settings instead of searching"}}}}},
 {"type":"function","function":{"name":"run_actions",
- "description":"Does things in Pulse itself, in order, as one undo group (at most 12 steps): panes and the folders in them, windows, tabs, view, sort, grouping, panels, selection, the staging tray, tags, favorites, new folders, opening files, settings, and any action find_actions returns. View, organize and settings steps act at once: Pulse shows each step and one result card with old -> new, Undo and the user's own shortcuts. Opening a program or script, Git push / pull, shell menu items, other programs and system actions (cloud keep / free, eject) show the user a confirm card first, every time (Pulse asks, not you): read first with git.refresh / shell.verbs in a call of their own, then ask for the action in the next call. Files are never moved, renamed or deleted here: use organize_files, rename_files, run_task, find_cleanup or find_duplicates. Locked settings and actions only the user does (unlocking a BitLocker drive, quitting Pulse, your own permissions) show the user why and where to do it; do not retry them. Stops at the first step that fails; earlier steps stay done. Returns each step's outcome.\nCommon actions (args): window.layout {layout: single|side_by_side|stacked|three|four, panes: [a folder per pane, left or top first; \"\" leaves one]}, nav.go {path, pane}, window.new {path}, tab.new {path}, tab.close, tab.to_window, pane.to_window {pane}, window.merge, window.overview, nav.back, nav.up, view.mode {view: extra_large_icons|large_icons|medium_icons|small_icons|list|details|tiles|content, pane}, view.sort {by: name|modified|type|size|created, desc, pane}, view.group {by: none|name|date|type|size, pane}, sidebar.toggle {show}, favbar.toggle {show}, details.toggle {show}, select.items {pane, name, extensions, items, type: folder|document|image|video|audio|archive|code, modified: today|yesterday|this_week|last_7_days|this_month|last_month|{after, before}, size: {larger_than, smaller_than}, tag, selected, mode: replace|add|remove}, select.all, select.clear, tray.add {items}, tag.toggle {tag, items} (a new tag is made), fav.add {path or items}, file.new_folder {name} (in the open folder), nav.open {path} (a file or program), settings.set {key, value}, edit.undo, tab.pin {tab, pin}, tab.color {tab, color: red|orange|yellow|green|teal|blue|purple|pink|none}, tab.rename {tab, name}, tab.group {tab, group}, tab.activate {tab}, tag.create {name, color, group}, keymap.set {action, keys} (keymap.read lists the actions), git.refresh (the open folder's repository: branch, ahead / behind, changes), git.push, git.pull, shell.verbs (the selection's context menu items), shell.run_verb {verb: an item shell.verbs listed; in a submenu \"Parent ▸ Item\"}, toolbar.open_with {app: a program pinned to the toolbar}, cloud.keep, cloud.free, preview.cloud_download {path}, drive.eject {drive: E:}, drive.disconnect {drive}, file.context_menu and toolbar.customize (Pulse opens them; the user chooses). tab: 1 = first as in get_state, a title, \"all\" or a list - several tabs go in ONE step. Words: 标签 is a tag (tag.create, then tag.toggle to put it on items; 加标签 / 打标签 = tag.toggle), 标签页 is a tab (tab.*), 托盘 / 暂存 is the staging tray (only when the user says so). pane: 1-4 in screen order as in get_state, focused, target, or all (view / sort / group). Paths: absolute, a drive (D:) or a known folder (Downloads, Desktop, Documents, Pictures, Videos, Music). items: full paths; omitted = the selection.\nSettings (settings.set key and values; switches take true/false): theme light|dark|system, window_effect none|acrylic|mica|mica_alt, text_rendering auto|sharp|smooth, font_size small|default|large|larger, language system|zh-CN|zh-TW|en-US, menu_acrylic, row_height compact|standard|roomy, click_to_open double|single, name_highlight hover|always, hover_select, item_checkboxes, blank_double_click nothing|back|up, show_hidden, show_protected, folders_first top|follow|mixed, smart_dates, zebra_rows, size_bars, tag_name_color, selection_outline, thumbnail_app_badges, alias_mark, mtime_marks off|dots|bars|text, mtime_range today|3|7|30, mtime_dim_older, mtime_bold_today, mtime_folders, mtime_other_views, mtime_flash, onedrive_status, svn_status, startup_open last_tabs|default_location, new_tab_open current|default_location, external_open smart|tab|window, vertical_tabs, pinned_tab_names, double_click_closes_tab, close_window_with_last_tab, launch_at_signin (Windows), start_in_tray, keep_running, tray_icon always|background|never, explorer_tag_menu (Windows), open_folders_with_pulse (default file manager; Windows), staging_icon_size small|standard|large, staging_hide_when_empty, change_tracking, change_days today|3|7, lan_discovery, network_recent, hidden_shares, confirm_delete (can only be turned on), global_search (Windows), pinyin_search. Locked (only the user, in Settings): confirm_delete off, assistant_permissions, always_allow, connections, api_key.",
+ "description":"Does things in Pulse itself, in order, as one undo group (at most 12 steps): panes and the folders in them, windows, tabs, view, sort, grouping, panels, selection, the staging tray, tags, favorites, new folders, opening files, settings, and any action find_actions returns. View, organize and settings steps act at once: Pulse shows each step and one result card with old -> new, Undo and the user's own shortcuts. Opening a program or script, Git push / pull, shell menu items, other programs and system actions (cloud keep / free, eject) show the user a confirm card first, every time (Pulse asks, not you): read first with git.refresh / shell.verbs in a call of their own, then ask for the action in the next call. File steps never run at once: file.copy_to / file.move_to {items, dest}, file.paste, file.rename {item, name}, file.group_into_folder {items, name}, file.dissolve {items}, file.recycle {items}, file.delete_permanent {items}, recycle.restore, recycle.empty - Pulse shows the user a plan card (what goes where; Recycle Bin room; a permanent delete takes two clicks) and does them only after they confirm, so do not ask first. One file step per call; a step that opens the folder it makes (window.layout panes, nav.go) goes after it in the same call, and Pulse runs it after the confirm. items: absolute paths, or leave them out for the selection (select.items first); dest: an absolute folder or a known folder (Documents\\Invoices), made if missing; without dest a copy or move goes to the other pane. Use file.delete_permanent and recycle.empty only when the user asks to delete permanently. To sort many files into several folders use organize_files; to rename several, rename_files. Locked settings and actions only the user does (unlocking a BitLocker drive, quitting Pulse, your own permissions) show the user why and where to do it; do not retry them. Stops at the first step that fails; earlier steps stay done. Returns each step's outcome.\nCommon actions (args): window.layout {layout: single|side_by_side|stacked|three|four, panes: [a folder per pane, left or top first; \"\" leaves one]}, nav.go {path, pane}, window.new {path}, tab.new {path}, tab.close, tab.to_window, pane.to_window {pane}, window.merge, window.overview, nav.back, nav.up, view.mode {view: extra_large_icons|large_icons|medium_icons|small_icons|list|details|tiles|content, pane}, view.sort {by: name|modified|type|size|created, desc, pane}, view.group {by: none|name|date|type|size, pane}, sidebar.toggle {show}, favbar.toggle {show}, details.toggle {show}, select.items {pane, name, extensions, items, type: folder|document|image|video|audio|archive|code, modified: today|yesterday|this_week|last_7_days|this_month|last_month|{after, before}, size: {larger_than, smaller_than}, tag, selected, mode: replace|add|remove}, select.all, select.clear, tray.add {items}, tag.toggle {tag, items} (a new tag is made), fav.add {path or items}, file.new_folder {name} (in the open folder), nav.open {path} (a file or program), settings.set {key, value}, edit.undo, tab.pin {tab, pin}, tab.color {tab, color: red|orange|yellow|green|teal|blue|purple|pink|none}, tab.rename {tab, name}, tab.group {tab, group}, tab.activate {tab}, tag.create {name, color, group}, keymap.set {action, keys} (keymap.read lists the actions), git.refresh (the open folder's repository: branch, ahead / behind, changes), git.push, git.pull, shell.verbs (the selection's context menu items), shell.run_verb {verb: an item shell.verbs listed; in a submenu \"Parent ▸ Item\"}, toolbar.open_with {app: a program pinned to the toolbar}, cloud.keep, cloud.free, preview.cloud_download {path}, drive.eject {drive: E:}, drive.disconnect {drive}, file.context_menu and toolbar.customize (Pulse opens them; the user chooses). tab: 1 = first as in get_state, a title, \"all\" or a list - several tabs go in ONE step. Words: 标签 is a tag (tag.create, then tag.toggle to put it on items; 加标签 / 打标签 = tag.toggle), 标签页 is a tab (tab.*), 托盘 / 暂存 is the staging tray (only when the user says so). pane: 1-4 in screen order as in get_state, focused, target, or all (view / sort / group). Paths: absolute, a drive (D:) or a known folder (Downloads, Desktop, Documents, Pictures, Videos, Music). items: full paths; omitted = the selection.\nSettings (settings.set key and values; switches take true/false): theme light|dark|system, window_effect none|acrylic|mica|mica_alt, text_rendering auto|sharp|smooth, font_size small|default|large|larger, language system|zh-CN|zh-TW|en-US, menu_acrylic, row_height compact|standard|roomy, click_to_open double|single, name_highlight hover|always, hover_select, item_checkboxes, blank_double_click nothing|back|up, show_hidden, show_protected, folders_first top|follow|mixed, smart_dates, zebra_rows, size_bars, tag_name_color, selection_outline, thumbnail_app_badges, alias_mark, mtime_marks off|dots|bars|text, mtime_range today|3|7|30, mtime_dim_older, mtime_bold_today, mtime_folders, mtime_other_views, mtime_flash, onedrive_status, svn_status, startup_open last_tabs|default_location, new_tab_open current|default_location, external_open smart|tab|window, vertical_tabs, pinned_tab_names, double_click_closes_tab, close_window_with_last_tab, launch_at_signin (Windows), start_in_tray, keep_running, tray_icon always|background|never, explorer_tag_menu (Windows), open_folders_with_pulse (default file manager; Windows), staging_icon_size small|standard|large, staging_hide_when_empty, change_tracking, change_days today|3|7, lan_discovery, network_recent, hidden_shares, confirm_delete (can only be turned on), global_search (Windows), pinyin_search. Locked (only the user, in Settings): confirm_delete off, assistant_permissions, always_allow, connections, api_key.",
  "parameters":{"type":"object","properties":{
    "steps":{"type":"array","description":"The steps in order (at most 12)","items":{"type":"object","properties":{
      "action":{"type":"string","description":"An action id, e.g. view.sort"},
@@ -433,10 +434,10 @@ std::string SystemPrompt() {
          "- Some settings are locked (the delete confirmation cannot be turned off; your own permissions, the Always "
          "allow list, connections and API keys): still call run_actions with settings.set so Pulse shows the user why. "
          "Then, in two short sentences, say the step is there so a misunderstanding of yours can never delete their "
-         "files (or that you cannot give yourself permissions), and that for moves and renames they can check Always "
-         "allow on the confirm card. Add no other reasons.\n"
-         "- You cannot delete, overwrite or read file contents yourself; only find_cleanup and find_duplicates move "
-         "files to the Recycle Bin, and only after the user accepts in Pulse.\n"
+         "files (or that you cannot give yourself permissions). Add no other reasons.\n"
+         "- You cannot overwrite files or read their contents. Files are moved, renamed or deleted only through steps "
+         "the user confirms on Pulse's card (run_actions file steps, organize_files, rename_files, run_task, "
+         "find_cleanup, find_duplicates); delete permanently only when the user asks for exactly that.\n"
          "- Reply in the user's language and keep it brief. Format with short paragraphs, lists whose lines start "
          "with \"- \", and **bold**. No headings, tables, code blocks or links.\n"
          "- Names of folders you create: short, in the user's language, no special characters.";
@@ -5717,6 +5718,8 @@ void ToolFindDuplicates(AppState& s, const app::ai::ModelToolCall& call, const j
 // and shows the user's own keys (or what to type in the palette). The call
 // stops at the first step that fails; what was done stays done and undoable.
 
+struct CtlStep;
+
 struct CtlRun {
     std::string call_id;
     uint64_t gen = 0;
@@ -5758,6 +5761,10 @@ struct CtlRun {
     size_t arg_tally = 0;
     bool arg_last_pin = false;
     std::wstring arg_new_tag;   // tag.create's name: a tag.toggle right after it joins its line
+    // P4c: the call's file step (action_files.h). 1 = its card is up or its
+    // tasks run; 2 = over, `file_step` is how it went (CtlNext takes it).
+    int file_state = 0;
+    std::shared_ptr<CtlStep> file_step;
 };
 
 const wchar_t* PresetName(app::LayoutPreset p) {
@@ -7294,6 +7301,405 @@ CtlStep CtlChooser(AppState& s, const std::string& id) {
     return st;
 }
 
+// ------------------------------------------------------ file steps (P4c) --
+// plans/ai/P4_全部领域接入.html ② ③: a move, copy, rename or delete in
+// run_actions shows its plan card (the first batch's 整理计划 row for moves,
+// the second batch's Recycle Bin card, the red two-click card for a permanent
+// delete); only after 确认 does Pulse queue the menus' own requests, under one
+// undo group, and the call goes on once they are done.
+
+namespace fo = app::actions;
+
+uint64_t FoGroup() {
+    FILETIME ft{};
+    GetSystemTimeAsFileTime(&ft);
+    return (static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+}
+
+std::wstring FoWhat(const fo::FilePlan& p) {
+    if (p.count == 1 && !p.rows.empty()) return Fill(Text(I::AiFoOneName), L"{name}", p.rows[0].name);
+    return Fill(Text(p.files_only ? I::AiFoNFiles : I::AiFoNItems), L"{n}", Num(p.count));
+}
+
+std::wstring FoLeaf(const std::wstring& path) {
+    std::wstring p = path;
+    while (p.size() > 3 && p.back() == L'\\') p.pop_back();
+    const size_t slash = p.find_last_of(L'\\');
+    return slash == std::wstring::npos || p.size() <= 3 ? p : p.substr(slash + 1);
+}
+
+// A destination short enough for a card row: …\财务\2026 past ~22 characters.
+std::wstring FoShort(const std::wstring& path) {
+    std::wstring p = path;
+    while (p.size() > 3 && p.back() == L'\\') p.pop_back();
+    if (p.size() <= 22) return p;
+    const size_t last = p.find_last_of(L'\\');
+    if (last == std::wstring::npos || last == 0) return p;
+    const size_t prev = p.find_last_of(L'\\', last - 1);
+    if (prev == std::wstring::npos || prev < 3) return p;
+    return L"\u2026" + p.substr(prev);
+}
+
+// The step's verb: 移动 / 复制 / 重命名 / 合并到文件夹 / … (its row and card).
+std::wstring FoVerb(fo::FileOp op) {
+    switch (op) {
+    case fo::FileOp::Move: return Text(I::AiFoAcceptMove);
+    case fo::FileOp::Copy: return Text(I::Copy);
+    case fo::FileOp::Rename: return Text(I::Rename);
+    case fo::FileOp::Group: return Text(I::ActGroupIntoFolder);
+    case fo::FileOp::Dissolve: return Text(I::ActDissolveFolder);
+    case fo::FileOp::Recycle: return Text(I::AiClAccept);
+    case fo::FileOp::Purge: return Text(I::PermanentDelete);
+    case fo::FileOp::Restore: return Text(I::Restore);
+    case fo::FileOp::EmptyBin: return Text(I::EmptyRecycleBin);
+    case fo::FileOp::None: break;
+    }
+    return {};
+}
+
+// 移动 6 项 (the 整理计划 row's argument; the card's done line).
+std::wstring FoArg(const fo::FilePlan& p) {
+    switch (p.op) {
+    case fo::FileOp::Move: return Fill(Text(I::AiFoArgMove), L"{n}", Num(p.count));
+    case fo::FileOp::Copy: return Fill(Text(I::AiFoArgCopy), L"{n}", Num(p.count));
+    case fo::FileOp::Rename: return Fill(Text(I::AiFoArgRename), L"{name}", p.new_name);
+    case fo::FileOp::Group: return Fill(Text(I::AiFoArgGroup), L"{n}", Num(p.count));
+    case fo::FileOp::Dissolve: return Fill(Text(I::AiFoArgDissolve), L"{n}", Num(p.count));
+    case fo::FileOp::EmptyBin: return Fill(Text(I::AiFoNItems), L"{n}", Num(p.count));
+    default: return FoWhat(p);
+    }
+}
+
+// 右栏打开 D:\财务\2026: a later step of the call, for 确认后会和另外 1 步一起做.
+std::wstring FoLater(AppState& s, const json::Value& step) {
+    const std::string id = StepAction(step);
+    const json::Value& args = StepArgs(step);
+    if (id == "nav.go") {
+        std::wstring pane;
+        std::vector<app::Pane*> panes;
+        std::string error;
+        if (args.find("pane") && app::actions::PanesForArg(s, args.find("pane"), panes, error) && panes.size() == 1)
+            pane = PanePos(s, PaneIndex(s, panes[0]));
+        const std::wstring path = json::Wide(args.get_string("path"));
+        const std::wstring shown = ResolveTaskDest(path).empty() ? path : ResolveTaskDest(path);
+        return Fill(Fill(Text(I::AiFoLaterOpen), L"{pane}", pane), L"{path}", FoShort(shown));
+    }
+    // window.layout with panes: 右栏打开 …\财务\2026 for each folder that
+    // changes, named by the layout it asks for.
+    if (const json::Value* v = args.find("panes"); id == "window.layout" && v && v->is_array()) {
+        const std::string layout = args.get_string("layout");
+        const app::Tab* tab = ActiveTab(s);
+        const std::wstring here = tab ? pulse::path::StripExtendedPathPrefix(tab->current_path) : std::wstring();
+        std::wstring out;
+        for (size_t i = 0; i < v->size() && i < 4; ++i) {
+            if (!v->at(i).is_string() || v->at(i).as_string().empty()) continue;
+            const std::wstring path = json::Wide(v->at(i).as_string());
+            const std::wstring shown = ResolveTaskDest(path).empty() ? path : ResolveTaskDest(path);
+            if (!here.empty() && _wcsicmp(shown.c_str(), here.c_str()) == 0) continue;
+            std::wstring pane;
+            if (layout == "side_by_side" && i < 2) pane = Text(i == 0 ? I::AiCtlPaneLeft : I::AiCtlPaneRight);
+            else if (layout == "stacked" && i < 2) pane = Text(i == 0 ? I::AiCtlPaneTop : I::AiCtlPaneBottom);
+            else pane = Fill(Text(I::AiCtlPaneN), L"{n}", Num(i + 1));
+            out += (out.empty() ? L"" : Text(I::AiTkListSep)) +
+                   Fill(Fill(Text(I::AiFoLaterOpen), L"{pane}", pane), L"{path}", FoShort(shown));
+        }
+        if (!out.empty()) return out;
+    }
+    return StepTitle(s, id);
+}
+
+void FoCard(AppState& s, CtlRun& run, const fo::FilePlan& p, AiBlockView& cf) {
+    const std::wstring what = FoWhat(p);
+    const std::wstring folder = FoLeaf(p.dest);
+    std::wstring later;
+    size_t n_later = 0;
+    for (size_t k = run.index + 1; k < run.queue.size(); ++k, ++n_later)
+        later += (later.empty() ? L"" : Text(I::AiTkListSep)) + FoLater(s, run.queue[k]);
+    const std::wstring more = n_later ? Fill(Fill(Text(I::AiFoMoreSteps), L"{n}", Num(n_later)), L"{steps}", later) : std::wstring();
+    cf.deny = Text(I::Cancel);
+    cf.accept = FoVerb(p.op);
+    cf.hint_icon = ui::AiIcon::Undo;
+    size_t show = 3;
+    switch (p.op) {
+    case fo::FileOp::Move:
+    case fo::FileOp::Copy:
+        cf.cf_icon = p.op == fo::FileOp::Move ? ui::AiIcon::Move : ui::AiIcon::Copy;
+        cf.title = Fill(Fill(Text(p.op == fo::FileOp::Move ? I::AiFoTitleMove : I::AiFoTitleCopy), L"{what}", what), L"{folder}", folder);
+        cf.sub = !more.empty() ? more : Fill(Text(p.dest_exists ? I::AiFoSubTo : I::AiFoSubNewDest), L"{dest}", p.dest);
+        cf.hint = Text(p.op == fo::FileOp::Move ? I::AiFoHintMove : I::AiFoHintCopy);
+        if (p.clashes) {
+            cf.hint2 = Fill(Text(I::AiFoClash), L"{n}", Num(p.clashes));
+            cf.hint2_warn = true;
+        }
+        break;
+    case fo::FileOp::Rename:
+        cf.cf_icon = ui::AiIcon::Rename;
+        cf.title = Fill(Fill(Text(I::AiFoTitleRename), L"{old}", p.rows.empty() ? std::wstring() : p.rows[0].name), L"{name}", p.new_name);
+        cf.sub = more;
+        cf.hint = Text(I::AiFoHintRename);
+        break;
+    case fo::FileOp::Group:
+        cf.cf_icon = ui::AiIcon::FolderPlus;
+        cf.title = Fill(Fill(Text(I::AiFoTitleGroup), L"{what}", what), L"{name}", p.new_name);
+        cf.sub = !more.empty() ? more : Fill(Text(I::AiFoSubIn), L"{folder}", folder);
+        cf.hint = Text(I::AiFoHintUndo);
+        break;
+    case fo::FileOp::Dissolve:
+        cf.cf_icon = ui::AiIcon::Folder;
+        cf.title = Fill(Text(I::AiFoTitleDissolve), L"{n}", Num(p.count));
+        cf.sub = !more.empty() ? more : Fill(Fill(Text(I::AiFoSubDissolve), L"{n}", Num(p.inner)), L"{folder}", folder);
+        cf.hint = Text(I::AiFoHintUndo);
+        break;
+    case fo::FileOp::Recycle:
+        // 把 5 个文件移到回收站？ / rows with sizes / 回收站放得下 (P4 scene 3).
+        cf.cf_icon = ui::AiIcon::Trash;
+        cf.title = Fill(Text(I::AiFoTitleRecycle), L"{what}", what);
+        cf.sub = !more.empty() ? more : Text(I::AiFoSubRecycle);
+        cf.cf_bin = Fill(Fill(Text(I::AiClBinOk), L"{max}", Gb1(p.bin_max)), L"{used}", Gb1(p.bin_used));
+        cf.hint = Text(I::AiFoHintDelete);
+        cf.hint_icon = ui::AiIcon::Shield;
+        show = 2;
+        break;
+    case fo::FileOp::Purge:
+    case fo::FileOp::EmptyBin:
+        // The red card; the first click only arms it (再点一次，永久删除).
+        cf.danger = true;
+        cf.tag = Text(I::PermanentDelete);
+        cf.title = p.op == fo::FileOp::Purge ? Fill(Text(I::AiFoTitlePurge), L"{what}", what) : Text(I::AiFoTitleEmpty);
+        cf.sub = p.op == fo::FileOp::Purge
+                     ? Fill(Text(I::AiFoSubPurge), L"{n}", Num(p.count))
+                     : Fill(Fill(Text(I::AiFoSubEmpty), L"{n}", Num(p.count)), L"{size}", AiChatFormatSize(p.bytes));
+        if (!more.empty()) {
+            cf.hint1 = more;
+            cf.hint1_icon = ui::AiIcon::Tasks;
+        }
+        cf.hint = Text(I::AiFoHintArm);
+        cf.hint_icon = ui::AiIcon::Shield;
+        cf.arm = Text(I::AiFoArm);
+        show = 2;
+        break;
+    case fo::FileOp::Restore:
+        cf.cf_icon = ui::AiIcon::Undo;
+        cf.title = Fill(Text(I::AiFoTitleRestore), L"{what}", what);
+        cf.sub = !more.empty() ? more : Text(I::AiFoSubRestore);
+        cf.hint = Text(I::AiFoHintRestore);
+        cf.hint_icon = ui::AiIcon::Shield;
+        if (p.clashes) {
+            cf.hint2 = Fill(Text(I::AiFoRestoreClash), L"{n}", Num(p.clashes));
+            cf.hint2_warn = true;
+        }
+        break;
+    case fo::FileOp::None: break;
+    }
+    // 把「a.txt」移到 / 永久删除「a.txt」: no space before a quoted name.
+    for (size_t at = cf.title.find(L" \u300C"); at != std::wstring::npos; at = cf.title.find(L" \u300C", at)) cf.title.erase(at, 1);
+    if (p.op == fo::FileOp::EmptyBin) return;   // no rows: the bin as a whole
+    if (p.rows.size() <= show + 1) show = p.rows.size();   // never 还有 1 个
+    for (size_t k = 0; k < show; ++k) {
+        const fo::FileRow& r = p.rows[k];
+        ui::AiConfirmRow row;
+        row.name = r.name;
+        row.folder = r.folder;
+        switch (p.op) {
+        case fo::FileOp::Recycle:
+        case fo::FileOp::Purge: row.to = r.folder ? std::wstring() : AiChatFormatSize(r.bytes); break;
+        case fo::FileOp::Dissolve: row.to = Fill(Text(I::AiFoNItems), L"{n}", Num(static_cast<size_t>(r.bytes))); break;
+        case fo::FileOp::Restore: row.to = r.skip ? Text(I::AiFoRowTaken) : L"\u2192 " + FoShort(r.to); break;
+        case fo::FileOp::Rename: row.to = L"\u2192 " + r.to; break;
+        default: row.to = L"\u2192 " + FoShort(r.to); break;
+        }
+        cf.cf_rows.push_back(std::move(row));
+    }
+    if (p.rows.size() > show) {
+        const size_t left = p.rows.size() - show;
+        cf.cf_more = p.files_only && p.bytes
+                         ? Fill(Fill(Text(I::AiFoMoreSize), L"{n}", Num(left)), L"{size}", AiChatFormatSize(p.bytes))
+                         : Fill(Text(I::AiFoMore), L"{n}", Num(left));
+    }
+}
+
+// The finished tasks' outcome: 6 项已移到「2026」, or why not.
+void FoDone(AppState& s, std::shared_ptr<CtlRun> run, std::shared_ptr<fo::FilePlan> plan, uint64_t group, bool failed,
+            std::wstring error) {
+    AiAgent& a = Agent(s);
+    auto st = std::make_shared<CtlStep>();
+    st->icon = ui::AiIcon::Move;
+    st->title = FoVerb(plan->op);
+    st->arg = FoArg(*plan);
+    st->quiet = true;   // its row is up already
+    st->data = json::Value::Object();
+    if (failed) {
+        st->error = "Pulse could not finish it: " + Utf8(error);
+        st->why = error.empty() ? Text(I::AiActWhyFailed) : error;
+        EndStep(s, a, false, st->why);
+    } else {
+        st->ok = true;
+        const std::wstring folder = FoLeaf(plan->dest);
+        std::wstring line;
+        switch (plan->op) {
+        case fo::FileOp::Move: line = Fill(Fill(Text(I::AiFoLineMove), L"{n}", Num(plan->count)), L"{folder}", folder); break;
+        case fo::FileOp::Copy: line = Fill(Fill(Text(I::AiFoLineCopy), L"{n}", Num(plan->count)), L"{folder}", folder); break;
+        case fo::FileOp::Rename:
+            line = Fill(Fill(Text(I::AiFoLineRename), L"{old}", plan->rows.empty() ? std::wstring() : plan->rows[0].name), L"{name}",
+                        plan->new_name);
+            break;
+        case fo::FileOp::Group: line = Fill(Fill(Text(I::AiFoLineGroup), L"{n}", Num(plan->count)), L"{name}", plan->new_name); break;
+        case fo::FileOp::Dissolve:
+            line = Fill(Fill(Fill(Text(I::AiFoLineDissolve), L"{n}", Num(plan->count)), L"{k}", Num(plan->inner)), L"{folder}", folder);
+            break;
+        case fo::FileOp::Recycle: line = Fill(Text(I::AiFoLineRecycle), L"{n}", Num(plan->count)); break;
+        case fo::FileOp::Purge: line = Fill(Text(I::AiFoLinePurge), L"{n}", Num(plan->count)); break;
+        case fo::FileOp::Restore: line = Fill(Text(I::AiFoLineRestore), L"{n}", Num(plan->sources.size())); break;
+        case fo::FileOp::EmptyBin: line = Fill(Text(I::AiFoLineEmpty), L"{n}", Num(plan->count)); break;
+        case fo::FileOp::None: break;
+        }
+        st->sub = line;
+        EndStep(s, a, true, line);
+        run->touched = true;
+        PlainDone(*run, SplitLine(line, {}, {}));
+        if (fo::FileOpUndoes(plan->op) && group) {
+            run->undo.push_back([group](AppState& st2) { st2.ops.UndoGroup(group); });
+            ++run->undo_steps;
+        }
+        if (plan->op == fo::FileOp::Purge || plan->op == fo::FileOp::EmptyBin) recycle_empty::NotifyShell();
+        st->data.set("done", static_cast<uint64_t>(plan->op == fo::FileOp::Restore ? plan->sources.size() : plan->count));
+        if (!plan->dest.empty() && (plan->op == fo::FileOp::Move || plan->op == fo::FileOp::Copy)) st->data.set("dest", Utf8(plan->dest));
+        if (plan->clashes && plan->op == fo::FileOp::Restore) st->data.set("left_in_bin", static_cast<uint64_t>(plan->clashes));
+        if (plan->clashes && plan->op != fo::FileOp::Restore) st->data.set("renamed_to_keep_both", static_cast<uint64_t>(plan->clashes));
+        st->data.set("undoable", fo::FileOpUndoes(plan->op));
+    }
+    run->file_step = st;
+    run->file_state = 2;
+    Redraw(s);
+    CtlNext(s, run);
+}
+
+// Waits for the queued tasks (the progress dialog shows them as for the menus).
+void FoWait(AppState& s, std::shared_ptr<CtlRun> run, std::shared_ptr<fo::FilePlan> plan, std::vector<uint64_t> tasks,
+            uint64_t group) {
+    const uint64_t started = Now();
+    AiChatPush(s, 150, [run, plan, tasks, group, started](AppState& s2) {
+        if (Agent(s2).generation != run->gen) return -1;
+        bool all = true, failed = false;
+        std::wstring error;
+        for (uint64_t id : tasks) {
+            const std::optional<ops::OpStatus> fs2 = s2.ops.FinalStatus(id);
+            if (!fs2) {
+                all = false;
+                continue;
+            }
+            if (fs2->phase == ops::OpPhase::Failed || fs2->failed_items > 0) {
+                failed = true;
+                if (error.empty()) error = !fs2->failures.empty() ? fs2->failures[0].reason : fs2->last_error;
+            }
+        }
+        // A task the manager no longer lists (more than 16 since): over.
+        if (!all && !(Now() - started > 3000 && !s2.ops.Status().active)) return 150;
+        FoDone(s2, run, plan, group, failed, error);
+        return -1;
+    });
+}
+
+// The card of the step at run->index. False: no card (the plan failed or
+// there is nothing to do); run->file_step then says so.
+bool FoAsk(AppState& s, std::shared_ptr<CtlRun> run, const std::string& id, const json::Value& args) {
+    AiAgent& a = Agent(s);
+    auto plan = std::make_shared<fo::FilePlan>(fo::PlanFileOp(s, id, args, &ResolveTaskDest));
+    if (!plan->ok || plan->skip) {
+        auto st = std::make_shared<CtlStep>();
+        st->icon = ui::AiIcon::Move;
+        st->title = StepTitle(s, id);
+        st->ok = plan->ok;
+        st->skip = plan->skip;
+        st->error = plan->error;
+        st->why = plan->why;
+        st->sub = plan->why;
+        if (plan->skip && !plan->why.empty()) {
+            st->data = json::Value::Object();
+            st->data.set("note", Utf8(plan->why));
+        }
+        run->file_step = st;
+        run->file_state = 2;
+        return false;
+    }
+    run->file_state = 1;
+    // 整理计划 · 移动 6 项 / 到 D:\财务\2026 · 文件夹已存在 (P4 scene 2).
+    const bool plan_row = plan->op == fo::FileOp::Move || plan->op == fo::FileOp::Copy || plan->op == fo::FileOp::Group ||
+                          plan->op == fo::FileOp::Dissolve || plan->op == fo::FileOp::Rename;
+    if (plan_row) {
+        std::wstring sub;
+        if (plan->op == fo::FileOp::Move || plan->op == fo::FileOp::Copy)
+            sub = Fill(Text(plan->dest_exists ? I::AiFoStepDest : I::AiFoStepNewDest), L"{dest}", plan->dest);
+        else
+            sub = Fill(Text(I::AiFoSubIn), L"{folder}", FoLeaf(plan->dest));
+        AddStep(s, a, ui::AiIcon::Tasks, Text(I::AiFoPlanStep), FoArg(*plan), {});
+        EndStep(s, a, true, sub);
+    }
+    AiChat& ch = Chat(s);
+    AiChatSetChip(ch, ui::StatusAiState::Waiting, Text(I::AiAsstChipWaiting));
+    if (!s.aiAssistant.open) ch.unread = true;
+    AiBlockView& cf = ch.Add(AiBlockKind::Confirm, Now());
+    FoCard(s, *run, *plan, cf);
+    const std::wstring done_title = FoVerb(plan->op) + L" \u00B7 " + FoArg(*plan);
+    ch.confirm_id = cf.id;
+    ch.on_confirm = [run, plan, done_title](AppState& s3, bool accept) {
+        AiChat& c3 = Chat(s3);
+        if (AiBlockView* card = c3.Find(c3.confirm_id)) {
+            const uint64_t now2 = Now();
+            if (now2 > card->born_ms) c3.turn_start += now2 - card->born_ms;
+            card->done = true;
+            card->tag.clear();
+            card->title = Fill(Text(accept ? I::AiActConfirmedSys : I::AiActDenied), L"{title}", done_title);
+        }
+        c3.confirm_id = 0;
+        c3.on_confirm = nullptr;
+        AiAgent& a3 = Agent(s3);
+        if (a3.generation != run->gen) return;
+        if (!accept) {
+            if (run->ok == 0) {
+                // Nothing of the call is done yet: none of it is (as FirstAsk).
+                AiChatSetChip(c3, ui::StatusAiState::Done, Text(I::AiActWhyDeclined));
+                ToolOutcome out;
+                out.data = json::Value::Object();
+                out.data.set("ok", false);
+                out.data.set("declined", true);
+                out.data.set("message", "The user declined the file step in Pulse; no step of this call was done. "
+                                        "Do not ask again the same way; ask what they want instead.");
+                AddToolResult(a3, run->call_id, out);
+                ++a3.call_index;
+                Redraw(s3);
+                NextTool(s3);
+                return;
+            }
+            auto st = std::make_shared<CtlStep>();
+            st->icon = ui::AiIcon::Move;
+            st->title = FoVerb(plan->op);
+            st->arg = FoArg(*plan);
+            st->error = "the user declined this step in Pulse; the steps before it stay done";
+            st->why = Text(I::AiActWhyDeclined);
+            run->file_step = st;
+            run->file_state = 2;
+            CtlNext(s3, run);
+            return;
+        }
+        AiChatSetChip(c3, ui::StatusAiState::Busy, FoVerb(plan->op), 0.5f);
+        const uint64_t group = fo::FileOpUndoes(plan->op) ? FoGroup() : 0;
+        AddStep(s3, a3, plan->op == fo::FileOp::Recycle || plan->op == fo::FileOp::Purge || plan->op == fo::FileOp::EmptyBin
+                            ? ui::AiIcon::Trash
+                            : ui::AiIcon::Move,
+                FoVerb(plan->op), FoArg(*plan), {});
+        const std::vector<uint64_t> tasks = fo::SubmitFilePlan(s3, *plan, group, Text(I::AiAsstUndoLabel));
+        Redraw(s3);
+        if (tasks.empty()) {
+            FoDone(s3, run, plan, group, true, Text(I::AiActWhyFailed));
+            return;
+        }
+        FoWait(s3, run, plan, tasks, group);
+    };
+    Redraw(s);
+    return true;
+}
+
 CtlStep CtlRunStep(AppState& s, CtlRun& run, const std::string& id, const json::Value& act) {
     if (!app::actions::FindAction(id)) {
         CtlStep st;
@@ -7303,15 +7709,16 @@ CtlStep CtlRunStep(AppState& s, CtlRun& run, const std::string& id, const json::
         return st;
     }
     const app::actions::Policy policy = app::actions::AiPolicy(id);
-    if (policy.gate == app::actions::Gate::Later || policy.gate == app::actions::Gate::Locked) {
+    // Plan without a file step of its own (tray.send_to): the flow tools.
+    if (policy.gate == app::actions::Gate::Plan || policy.gate == app::actions::Gate::Locked) {
         CtlStep st;
         st.title = StepTitle(s, id);
         st.icon = policy.gate == app::actions::Gate::Locked ? ui::AiIcon::Lock : ui::AiIcon::Move;
-        st.error = policy.gate == app::actions::Gate::Later
-                       ? "moving, renaming and deleting files is not done by run_actions: use organize_files, "
-                         "rename_files, run_task, find_cleanup or find_duplicates (they show the user a plan)"
+        st.error = policy.gate == app::actions::Gate::Plan
+                       ? "this move is not a run_actions step: use organize_files, rename_files, run_task, find_cleanup "
+                         "or find_duplicates (they show the user a plan)"
                        : "locked: only the user can do this";
-        st.why = Text(policy.gate == app::actions::Gate::Later ? I::AiActWhyLater : I::AiActWhyLocked);
+        st.why = Text(policy.gate == app::actions::Gate::Plan ? I::AiActWhyLater : I::AiActWhyLocked);
         if (policy.gate == app::actions::Gate::Locked && app::actions::HasLockText(id)) {
             // 解锁 E 盘, 退出 Pulse: the lock card says why and where; as the
             // call's first step it is the whole answer, so no step row.
@@ -7410,8 +7817,18 @@ void CtlNext(AppState& s, std::shared_ptr<CtlRun> run) {
                 return;
             }
         }
+        // A file step: its card first; the call goes on from FoDone (P4c).
+        if (run->file_state == 0 && app::actions::IsFileOp(what) && FoAsk(s, run, what, StepArgs(step))) return;
+        if (run->file_state == 1) return;   // its card is up or its tasks run
         const size_t undo_before = run->undo.size();
-        CtlStep st = CtlRunStep(s, *run, what, StepArgs(step));
+        CtlStep st;
+        if (run->file_state == 2 && run->file_step) {
+            st = *run->file_step;
+            run->file_step.reset();
+            run->file_state = 0;
+        } else {
+            st = CtlRunStep(s, *run, what, StepArgs(step));
+        }
         // A layout's folders are part of the layout line, not things of their own.
         if (run->undo.size() > undo_before && !(what == "nav.go" && run->layout)) ++run->undo_steps;
         if (!st.ok && st.why.empty()) st.why = Text(I::AiActWhyFailed);
@@ -7550,6 +7967,16 @@ void ToolRunActions(AppState& s, const app::ai::ModelToolCall& call, const json:
         json::Value wrapped = json::Value::Object();
         wrapped.set("changes", std::move(changes));
         ToolChangeSettings(s, call, wrapped);
+        return;
+    }
+    size_t file_steps = 0;
+    for (const auto& step : run->queue) file_steps += app::actions::IsFileOp(StepAction(step)) ? 1 : 0;
+    if (file_steps > 1) {
+        AddToolResult(a, call.id, ToolOutcome::Fail("invalid_args", "one file step (move, copy, rename, delete, restore) per "
+                                                                    "run_actions call: call again for the next, or use "
+                                                                    "organize_files / run_task for many"));
+        ++a.call_index;
+        NextTool(s);
         return;
     }
     HideRenameOverlay(s, true);   // panes and windows are about to move: end a rename like a click elsewhere

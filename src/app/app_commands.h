@@ -105,6 +105,10 @@ bool HandleShellMenuCommand(AppState& s, int cmd);
 void ShowItemContextMenu(AppState& s, POINT screen_pt, bool from_chip = false);
 // Shift+F10 / Apps key: the item menu under the focused item, else the background menu.
 void ShowKeyboardContextMenu(AppState& s);
+// 解散文件夹 of these folders (each into its own parent) under one undo
+// group; returns the tasks (the assistant's file.dissolve waits for them).
+std::vector<uint64_t> DissolveFolders(AppState& s, app::Tab& tab, const std::vector<std::wstring>& folders,
+                                      uint64_t group, const std::wstring& label);
 void ShowBackgroundContextMenu(AppState& s, POINT screen_pt);
 void ShowBreadcrumbMenu(AppState& s, std::wstring path, POINT screen_pt);
 void ShowNewDropdown(AppState& s);

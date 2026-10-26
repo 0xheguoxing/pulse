@@ -228,6 +228,13 @@ void FillOne(AppState& s, ActionView& v) { NeedOne(s, v); }
 void FillFolder(AppState& s, ActionView& v) { NeedFolder(s, v); }
 void FillPanes(AppState& s, ActionView& v) { NeedPanes(s, v); }
 
+// 还原: items selected in the Recycle Bin.
+void FillRestore(AppState& s, ActionView& v) {
+    const Tab* tab = ActiveTab(s);
+    if (!tab || !IsRecycleTab(tab)) { Off(v, I::AiFoNotBin); return; }
+    NeedSelection(s, v);
+}
+
 void FillSelectionOrFolder(AppState& s, ActionView& v) {
     const Tab* tab = ActiveTab(s);
     if (!(tab && tab->SelectedCount() > 0) && !InFolder(s)) Off(v, I::ActWhyNotFolder);
@@ -695,6 +702,13 @@ constexpr Def kDefs[] = {
      FillSelection},
     {"file.recycle", I::Delete, I::ActDomFiles, L"\xE74D", P::None, L"Delete", CmdDelete, kNoRun,
      FillSelection},
+    // Shift+Delete's dialog by hand; the assistant's card asks twice, in red.
+    {"file.delete_permanent", I::PermanentDelete, I::ActDomFiles, L"\xE74D", P::None, L"Shift+Delete", 0,
+     +[](AppState& s) { DeleteSelected(s, true); }, FillSelection},
+    {"recycle.restore", I::Restore, I::ActDomFiles, L"\xE7A7", P::None, kNoKey, CmdRestoreRecycle, kNoRun,
+     FillRestore},
+    {"recycle.empty", I::EmptyRecycleBin, I::ActDomFiles, L"\xE74D", P::None, kNoKey, CmdEmptyRecycle, kNoRun,
+     kAlways},
     {"file.properties", I::Properties, I::ActDomFiles, L"\xE946", P::None, L"Alt+Enter", CmdProperties,
      kNoRun, kAlways},
     {"file.terminal", I::OpenInTerminal, I::ActDomFiles, L"\xE756", P::None, kNoKey, CmdOpenTerminal,

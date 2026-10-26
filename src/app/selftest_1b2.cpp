@@ -43,6 +43,8 @@
 #include "entry_group.h"
 #include "context_menu.h"
 #include "actions/action_args.h"
+#include "actions/action_files.h"
+#include "ai_cleanup_scan.h"
 #include "actions/action_params.h"
 #include "actions/action_policy.h"
 #include "actions/action_registry.h"
@@ -59,6 +61,7 @@
 #include "../index/index_engine.h"
 #include "../fs/fs_enum.h"
 #include "../fs/fs_recycle.h"
+#include "../ops/elevated_delete.h"
 #include "../common/current_user_security.h"
 #include "../fs/fs_snapshot.h"
 #include "../fs/fs_watch.h"
@@ -5518,9 +5521,10 @@ void TestActionPolicy() {
     Check(gate("tag.toggle") == act::Gate::Direct, L"policy: organizing runs at once");
     Check(gate("settings.set") == act::Gate::Direct, L"policy: settings run at once (the card says old -> new)");
     Check(gate("file.new_folder") == act::Gate::Direct, L"policy: a new folder runs at once and undoes");
-    Check(gate("file.move_to") == act::Gate::Later && gate("file.rename") == act::Gate::Later,
-          L"policy: moves and renames go through the planned tools");
-    Check(gate("file.recycle") == act::Gate::Later, L"policy: deleting goes through the planned tools");
+    Check(gate("file.move_to") == act::Gate::Plan && gate("file.rename") == act::Gate::Plan,
+          L"policy: moves and renames show a plan first");
+    Check(gate("file.recycle") == act::Gate::Plan && gate("recycle.empty") == act::Gate::Plan,
+          L"policy: deleting shows its card first");
     Check(gate("app.exit") == act::Gate::Locked, L"policy: exiting Pulse is the user's only");
     Check(gate("no.such.action") == act::Gate::Locked, L"policy: unknown ids are locked");
     Check(gate("index.install_full") == act::Gate::Confirm, L"policy: a system action asks first");
@@ -5590,6 +5594,120 @@ void TestActionPolicy() {
 
 // P4: actions run with arguments (action_args.h) - the tab, tag, name or
 // keys the model gave; each says what changed and undoes it.
+// P4c: what a file step would do, before its card (action_files.h). Plans
+// only: nothing is queued.
+void TestFilePlans() {
+    namespace act = app::actions;
+    // Next to the exe: %TEMP% may be C:\Windows\Temp, which the plans refuse.
+    wchar_t exe[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exe, ARRAYSIZE(exe));
+    std::wstring base = exe;
+    base.resize(base.find_last_of(L'\\') + 1);
+    const std::wstring root = base + L"PulseFilePlans-" + std::to_wstring(GetCurrentProcessId());
+    const std::wstring a = root + L"\\a.txt", b = root + L"\\b.txt", sub = root + L"\\sub";
+    CreateDirectoryW(root.c_str(), nullptr);
+    CreateDirectoryW(sub.c_str(), nullptr);
+    const auto write = [](const std::wstring& path, const char* text) {
+        HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return;
+        DWORD n = 0;
+        WriteFile(h, text, static_cast<DWORD>(strlen(text)), &n, nullptr);
+        CloseHandle(h);
+    };
+    write(a, "12345");
+    write(b, "123");
+    write(sub + L"\\x.txt", "x");
+    write(sub + L"\\y.txt", "y");
+
+    auto owner = std::make_unique<AppState>();
+    AppState& s = *owner;
+    s.places.persist = false;
+    s.appPrefs.persist = false;
+    s.isolatedTest = true;
+    const auto with = [](std::initializer_list<std::wstring> items, const char* key = nullptr, const std::wstring& value = {}) {
+        json::Value v = json::Value::Object();
+        json::Value list = json::Value::Array();
+        for (const auto& i : items) list.push(json::Utf8(i));
+        v.set("items", std::move(list));
+        if (key) v.set(key, json::Utf8(value));
+        return v;
+    };
+
+    Check(act::FileOpOf("file.move_to") == act::FileOp::Move && act::FileOpOf("file.paste") == act::FileOp::Move &&
+              act::FileOpOf("recycle.empty") == act::FileOp::EmptyBin && !act::IsFileOp("file.copy"),
+          L"file plans: the file steps are known");
+    Check(act::FileOpUndoes(act::FileOp::Recycle) && !act::FileOpUndoes(act::FileOp::Purge) &&
+              !act::FileOpUndoes(act::FileOp::Restore) && !act::FileOpUndoes(act::FileOp::EmptyBin),
+          L"file plans: permanent deletes and restores do not undo");
+    Check(act::AiPolicy("file.delete_permanent").gate == act::Gate::Plan && act::AiPolicy("recycle.restore").gate == act::Gate::Plan &&
+              act::FindAction("recycle.empty") != nullptr,
+          L"file plans: the new rows show a plan first");
+
+    act::FilePlan p = act::PlanFileOp(s, "file.move_to", with({a, b}, "dest", root + L"\\new"), nullptr);
+    Check(p.ok && !p.skip && !p.dest_exists && p.count == 2 && p.bytes == 8 && p.files_only && p.rows.size() == 2 &&
+              p.rows[0].name == L"a.txt" && p.rows[0].to == root + L"\\new",
+          L"file plans: a move lists each item and makes a missing folder");
+    p = act::PlanFileOp(s, "file.move_to", with({a}, "dest", root), nullptr);
+    Check(p.ok && p.skip, L"file plans: a move into its own folder does nothing");
+    p = act::PlanFileOp(s, "file.copy_to", with({sub}, "dest", sub + L"\\inner"), nullptr);
+    Check(!p.ok && !p.why.empty(), L"file plans: a folder never goes into itself");
+    p = act::PlanFileOp(s, "file.copy_to", with({a}, "dest", root + L"\\sub"), nullptr);
+    Check(p.ok && p.dest_exists && p.clashes == 0, L"file plans: a copy into an existing folder");
+    p = act::PlanFileOp(s, "file.move_to", with({a}), nullptr);
+    Check(!p.ok && !p.why.empty(), L"file plans: no destination and no other pane is refused");
+
+    p = act::PlanFileOp(s, "file.rename", with({a}, "name", L"b.txt"), nullptr);
+    Check(!p.ok, L"file plans: a rename onto a taken name fails");
+    p = act::PlanFileOp(s, "file.rename", with({a}, "name", L"bad:name"), nullptr);
+    Check(!p.ok, L"file plans: a rename to an invalid name fails");
+    p = act::PlanFileOp(s, "file.rename", with({a}, "name", L"a.txt"), nullptr);
+    Check(p.ok && p.skip, L"file plans: the same name does nothing");
+    p = act::PlanFileOp(s, "file.rename", with({a}, "name", L"c.txt"), nullptr);
+    Check(p.ok && p.new_name == L"c.txt" && p.rows.size() == 1 && p.rows[0].to == L"c.txt", L"file plans: a rename");
+    p = act::PlanFileOp(s, "file.rename", with({a, b}, "name", L"c.txt"), nullptr);
+    Check(!p.ok, L"file plans: a rename is one item");
+
+    p = act::PlanFileOp(s, "file.group_into_folder", with({a, b}, "name", L"sub"), nullptr);
+    Check(!p.ok, L"file plans: a group into a taken name fails");
+    p = act::PlanFileOp(s, "file.group_into_folder", with({a, b}, "name", L"grp"), nullptr);
+    Check(p.ok && p.dest == root && p.new_name == L"grp" && p.count == 2, L"file plans: a group into a new folder");
+    p = act::PlanFileOp(s, "file.dissolve", with({a}), nullptr);
+    Check(!p.ok, L"file plans: only folders dissolve");
+    p = act::PlanFileOp(s, "file.dissolve", with({sub}), nullptr);
+    Check(p.ok && p.inner == 2 && p.dest == root, L"file plans: a dissolve counts what moves up");
+
+    wchar_t win[MAX_PATH]{};
+    GetWindowsDirectoryW(win, ARRAYSIZE(win));
+    p = act::PlanFileOp(s, "file.move_to", with({std::wstring(win) + L"\\System32"}, "dest", root), nullptr);
+    Check(!p.ok && !p.why.empty(), L"file plans: system folders are never touched");
+    p = act::PlanFileOp(s, "file.copy_to", with({a}, "dest", std::wstring(win) + L"\\Temp"), nullptr);
+    Check(!p.ok, L"file plans: nothing goes into a system folder");
+    p = act::PlanFileOp(s, "file.recycle", with({std::wstring(win).substr(0, 3)}), nullptr);
+    Check(!p.ok, L"file plans: a drive itself is refused");
+    p = act::PlanFileOp(s, "file.recycle", with({root + L"\\missing.txt"}), nullptr);
+    Check(!p.ok, L"file plans: a missing item is refused");
+    p = act::PlanFileOp(s, "file.recycle", json::Value::Object(), nullptr);
+    Check(!p.ok && !p.why.empty(), L"file plans: no items and no selection is refused");
+    p = act::PlanFileOp(s, "file.recycle", with({a, b}), nullptr);
+    Check(p.ok == app::ai::ReadBin(root[0]).available && (!p.ok || (p.count == 2 && p.bytes == 8 && p.bin_max > 0)),
+          L"file plans: a recycle checks its drive's bin");
+    Check(app::ai::ReadBin(root[0]).available || !ops::RecycleBinAvailable(root.substr(0, 3)),
+          L"file plans: the bin check agrees with the delete's");
+    {
+        act::FilePlan q = act::PlanFileOp(s, "file.recycle", with({L"\\\\?\\" + a}), nullptr);
+        Check(q.ok == p.ok && (q.sources.empty() || q.sources[0] == a),
+              L"file plans: a \\\\?\\ path plans as the plain path");
+    }
+    p = act::PlanFileOp(s, "file.delete_permanent", with({a, sub}), nullptr);
+    Check(p.ok && p.count == 2 && !p.files_only, L"file plans: a permanent delete lists its items");
+    p = act::PlanFileOp(s, "recycle.restore", json::Value::Object(), nullptr);
+    Check(!p.ok, L"file plans: a restore needs the Recycle Bin open");
+
+    for (const wchar_t* f : {L"\\a.txt", L"\\b.txt", L"\\sub\\x.txt", L"\\sub\\y.txt"}) DeleteFileW((root + f).c_str());
+    RemoveDirectoryW(sub.c_str());
+    RemoveDirectoryW(root.c_str());
+}
+
 void TestActionArgs() {
     namespace act = app::actions;
     auto owner = std::make_unique<AppState>();
@@ -9115,6 +9233,7 @@ int RunSelfTest1B2() {
         TestActionState();
         TestActionPolicy();
         TestActionArgs();
+        TestFilePlans();
         if (g_log) { fclose(g_log); g_log = nullptr; }
         return g_fail ? 1 : 0;
     }
@@ -9265,6 +9384,7 @@ int RunSelfTest1B2() {
     TestActionState();
     TestActionPolicy();
     TestActionArgs();
+    TestFilePlans();
     TestViewLayouts();
     TestListColumns();
     TestOptionalColumns();

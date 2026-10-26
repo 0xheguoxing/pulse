@@ -958,12 +958,18 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             // P3 .cf-file: margin 8 12 0 52, padding 7 10, r 8, pane, line2
             // border; file icon 15, the name 12.5, the note text3 at the right.
             const float file_h = b.file.empty() ? 0.0f : 8.0f * s + 34.0f * s;
+            // P4c .cf-rows: margin 8 12 0 52, line2 border r8, pane; rows
+            // padding 7 10 at 12.5 with a line2 rule between, .to text3 12 at
+            // the right; .more text3. .cf-bin: margin-top 8, accent 12.5, check 14.
+            const size_t cf_n = b.cf_rows.size() + (b.cf_more.empty() ? 0 : 1);
+            const float rows_h = cf_n ? 8.0f * s + 2.0f * s + static_cast<float>(cf_n) * 32.0f * s : 0.0f;
+            const float bin_h = b.cf_bin.empty() ? 0.0f : 8.0f * s + wrapped_h(b.cf_bin, formats_.small125, text_w - 20.0f * s, 18.0f * s);
             // .lktip: max-height 0 → 40 and opacity while the link is hovered
             // (.3 s / .25 s); padding 0 12 10 52, margin-top -4.
             const float tip_k = b.extra_tip.empty() ? 0.0f
                                                     : TweenTo(key + 2, hot(AiPanelPart::ConfirmExtra, index) ? 1.0f : 0.0f, 300, now_ms);
             const float tip_h = tip_k * (18.0f * s + 10.0f * s - 4.0f * s);
-            const float h = 2.0f * s + top_h + file_h + hint_h + 56.0f * s + tip_h;
+            const float h = 2.0f * s + top_h + file_h + rows_h + bin_h + hint_h + 56.0f * s + tip_h;
             const D2D1_RECT_F r = D2D1::RectF(x0, top + y, x1, top + y + h);
             if (visible(r.top - 4.0f * s, r.bottom + 4.0f * s)) {
                 // box-shadow 0 0 0 3px amber 12% (.danger: red).
@@ -997,6 +1003,38 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                         line(b.file_note, formats_.caption, fr.right - 10.0f * s - note_w, fr.top + 8.0f * s,
                              fr.right - 10.0f * s + 1.0f, 18.0f * s, pal.text3);
                     yy += 34.0f * s;
+                }
+                if (cf_n) {
+                    yy += 8.0f * s;
+                    const D2D1_RECT_F fr = D2D1::RectF(tx, yy, ir - 12.0f * s, yy + rows_h - 8.0f * s);
+                    c.Fill(fr, 8.0f * s, pal.line2);
+                    c.Fill(D2D1::RectF(fr.left + 1.0f * s, fr.top + 1.0f * s, fr.right - 1.0f * s, fr.bottom - 1.0f * s),
+                           7.0f * s, pal.pane);
+                    float ry = fr.top + 1.0f * s;
+                    for (size_t k = 0; k < cf_n; ++k) {
+                        if (k > 0)
+                            c.Fill(D2D1::RectF(fr.left + 1.0f * s, ry - 0.5f * s, fr.right - 1.0f * s, ry + 0.5f * s), 0.0f, pal.line2);
+                        if (k < b.cf_rows.size()) {
+                            const AiConfirmRow& row = b.cf_rows[k];
+                            c.Icon(row.folder ? AiIcon::Folder : AiIcon::File, fr.left + 10.0f * s, ry + 8.5f * s, 14.0f * s, pal.text2);
+                            const float to_w = row.to.empty() ? 0.0f : (std::min)(c.Measure(row.to, formats_.caption) + 1.0f, (fr.right - fr.left) * 0.45f);
+                            const float name_r = fr.right - 10.0f * s - (to_w > 0.0f ? to_w + 8.0f * s : 0.0f);
+                            line(row.name, formats_.small125, fr.left + 32.0f * s, ry + 7.0f * s, name_r, 18.0f * s, pal.text);
+                            if (to_w > 0.0f)
+                                line(row.to, formats_.caption, fr.right - 10.0f * s - to_w, ry + 7.0f * s, fr.right - 10.0f * s + 1.0f,
+                                     18.0f * s, pal.text3);
+                        } else {
+                            line(b.cf_more, formats_.small125, fr.left + 10.0f * s, ry + 7.0f * s, fr.right - 10.0f * s, 18.0f * s, pal.text3);
+                        }
+                        ry += 32.0f * s;
+                    }
+                    yy += rows_h - 8.0f * s;
+                }
+                if (!b.cf_bin.empty()) {
+                    yy += 8.0f * s;
+                    c.Icon(AiIcon::Check, tx, yy + 2.0f * s, 14.0f * s, pal.accent);
+                    wrapped(b.cf_bin, formats_.small125, tx + 20.0f * s, yy, text_w - 20.0f * s, 18.0f * s, pal.accent);
+                    yy += bin_h - 8.0f * s;
                 }
                 if (!b.hint.empty()) {
                     yy += 6.0f * s;

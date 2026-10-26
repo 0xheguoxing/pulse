@@ -48,7 +48,7 @@ Policy AiPolicy(std::string_view id, std::wstring_view target) noexcept {
     case ActionRisk::External: return {Gate::Confirm, risk};
     case ActionRisk::Move:
     case ActionRisk::Delete:
-    case ActionRisk::PermanentDelete: return {Gate::Later, risk};
+    case ActionRisk::PermanentDelete: return {Gate::Plan, risk};
     case ActionRisk::UserOnly: break;
     }
     return {Gate::Locked, risk};

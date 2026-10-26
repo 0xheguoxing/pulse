@@ -430,6 +430,13 @@ struct AiDupView {
     bool settled = false;             // moved: the copies fade to .45
 };
 
+// P4c .cf-rows: one item of a file step's card, and where it goes (→
+// D:\财务\2026, → 新名字) or its size (88.0 MB).
+struct AiConfirmRow {
+    std::wstring name, to;
+    bool folder = false;
+};
+
 struct AiBlockView {
     AiBlockKind kind = AiBlockKind::Text;
     uint32_t id = 0;                  // stable while the block lives (motion)
@@ -529,6 +536,14 @@ struct AiBlockView {
     bool partial = false;
     AiIcon cf_icon = AiIcon::Shield;
     bool tag_amber = false;
+    // P4c (plans/ai/P4_全部领域接入.html ② ③). Confirm: `cf_rows` the items
+    // (.cf-rows, at most 3), `cf_more` its grey last row (还有 3 个 · 共 18.4
+    // MB), `cf_bin` the accent line with a check under it (.cf-bin: 回收站放得
+    // 下…). `arm`: the card takes two clicks (a permanent delete); the first
+    // swaps it into `accept` (再点一次，永久删除) and sets `armed`.
+    std::vector<AiConfirmRow> cf_rows;
+    std::wstring cf_more, cf_bin, arm;
+    bool armed = false;
 };
 
 // 语音输入: the composer while the microphone listens, and the mic button.

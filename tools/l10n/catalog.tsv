@@ -4183,3 +4183,76 @@ AiActOpenedForYou	IDS_AI_ACT_OPENED_FOR_YOU	5382	已打开，由你来选	Opened
 AiActTargetMany	IDS_AI_ACT_TARGET_MANY	5383	{name} 等 {n} 项	{name} and others ({n} items)	{name} 等 {n} 項
 AiOpenWithDeny	IDS_AI_OPEN_WITH_DENY	5384	不打开	Don't open	不開啟
 ActOpenWithOther	IDS_ACT_OPEN_WITH_OTHER	5385	用固定的软件打开…	Open with a pinned app…	用釘選的軟體開啟…
+AiFoNoItems	IDS_AI_FO_NO_ITEMS	5386	没有选中要处理的文件	Nothing is selected to work on	沒有選取要處理的檔案
+AiFoGone	IDS_AI_FO_GONE	5387	找不到「{name}」，它可能已被移走或删除	Can't find “{name}”; it may have been moved or deleted	找不到「{name}」，它可能已被移走或刪除
+AiFoTooMany	IDS_AI_FO_TOO_MANY	5388	一次最多处理 {n} 项，请分几次做	At most {n} items at a time; do it in parts	一次最多處理 {n} 項，請分幾次做
+AiFoDriveRoot	IDS_AI_FO_DRIVE_ROOT	5389	不能移动、改名或删除整个磁盘	A whole drive can't be moved, renamed or deleted	不能移動、改名或刪除整個磁碟
+AiFoSystem	IDS_AI_FO_SYSTEM	5390	{folder} 是系统或程序目录，Pulse 不会动里面的东西	{folder} is a system or program folder; Pulse doesn't touch it	{folder} 是系統或程式目錄，Pulse 不會動裡面的東西
+AiFoNoDest	IDS_AI_FO_NO_DEST	5391	没有目标文件夹：请说要放到哪里	No destination folder: say where they should go	沒有目標資料夾：請說要放到哪裡
+AiFoClipEmpty	IDS_AI_FO_CLIP_EMPTY	5392	剪贴板里没有文件	The clipboard holds no files	剪貼簿裡沒有檔案
+AiFoBadDest	IDS_AI_FO_BAD_DEST	5393	「{dest}」不是可以放文件的文件夹	“{dest}” isn't a folder files can go to	「{dest}」不是可以放檔案的資料夾
+AiFoIntoItself	IDS_AI_FO_INTO_ITSELF	5394	不能把文件夹放进它自己里面	A folder can't go inside itself	不能把資料夾放進它自己裡面
+AiFoSameFolder	IDS_AI_FO_SAME_FOLDER	5395	它们已经在「{folder}」里了	They're in “{folder}” already	它們已經在「{folder}」裡了
+AiFoOneItem	IDS_AI_FO_ONE_ITEM	5396	重命名一次只改一个；多个请用批量重命名	Rename changes one item; use Batch rename for several	重新命名一次只改一個；多個請用批次重新命名
+AiFoBadName	IDS_AI_FO_BAD_NAME	5397	「{name}」不能作为文件名	“{name}” can't be a file name	「{name}」不能作為檔名
+AiFoNameTaken	IDS_AI_FO_NAME_TAKEN	5398	这里已经有「{name}」了	“{name}” is already there	這裡已經有「{name}」了
+AiFoOneFolder	IDS_AI_FO_ONE_FOLDER	5399	这些项目要在同一个文件夹里	The items must be in one folder	這些項目要在同一個資料夾裡
+AiFoNotFolders	IDS_AI_FO_NOT_FOLDERS	5400	只有文件夹可以解散	Only folders can be dissolved	只有資料夾可以解散
+AiFoBinOff	IDS_AI_FO_BIN_OFF	5401	这里没有回收站，删除就是永久删除，请你自己决定后再删	There's no Recycle Bin here, so deleting is permanent; delete it yourself if you're sure	這裡沒有資源回收筒，刪除就是永久刪除，請你自己決定後再刪
+AiFoInBin	IDS_AI_FO_IN_BIN	5402	回收站里的项目请用「清空回收站」，或自己删除	For items in the Recycle Bin, use Empty Recycle Bin or delete them yourself	資源回收筒裡的項目請用「清空資源回收筒」，或自己刪除
+AiFoNotBin	IDS_AI_FO_NOT_BIN	5403	先打开回收站并选中要还原的项目	Open the Recycle Bin and select the items first	先開啟資源回收筒並選取要還原的項目
+AiFoRestoreTaken	IDS_AI_FO_RESTORE_TAKEN	5404	这些项目的原位置都已有同名项目，没有可以还原的	Every item's original place is taken; nothing can be restored	這些項目的原位置都已有同名項目，沒有可以還原的
+AiFoBinEmpty	IDS_AI_FO_BIN_EMPTY	5405	回收站已经是空的	The Recycle Bin is empty already	資源回收筒已經是空的
+AiFoOneName	IDS_AI_FO_ONE_NAME	5406	「{name}」	“{name}”	「{name}」
+AiFoNFiles	IDS_AI_FO_N_FILES	5407	{n} 个文件	{n} files	{n} 個檔案
+AiFoNItems	IDS_AI_FO_N_ITEMS	5408	{n} 项	{n} items	{n} 項
+AiFoAcceptMove	IDS_AI_FO_ACCEPT_MOVE	5409	移动	Move	移動
+AiFoPlanStep	IDS_AI_FO_PLAN_STEP	5410	整理计划	Plan	整理計畫
+AiFoArgMove	IDS_AI_FO_ARG_MOVE	5411	移动 {n} 项	move {n} items	移動 {n} 項
+AiFoArgCopy	IDS_AI_FO_ARG_COPY	5412	复制 {n} 项	copy {n} items	複製 {n} 項
+AiFoArgRename	IDS_AI_FO_ARG_RENAME	5413	改名为 {name}	rename to {name}	改名為 {name}
+AiFoArgGroup	IDS_AI_FO_ARG_GROUP	5414	合并 {n} 项	group {n} items	合併 {n} 項
+AiFoArgDissolve	IDS_AI_FO_ARG_DISSOLVE	5415	解散 {n} 个文件夹	dissolve {n} folders	解散 {n} 個資料夾
+AiFoStepDest	IDS_AI_FO_STEP_DEST	5416	到 {dest} · 文件夹已存在	to {dest} · the folder exists	到 {dest} · 資料夾已存在
+AiFoStepNewDest	IDS_AI_FO_STEP_NEW_DEST	5417	到 {dest} · 会先新建这个文件夹	to {dest} · the folder is made first	到 {dest} · 會先新建這個資料夾
+AiFoLaterOpen	IDS_AI_FO_LATER_OPEN	5418	{pane}打开 {path}	open {path} {pane}	{pane}開啟 {path}
+AiFoMoreSteps	IDS_AI_FO_MORE_STEPS	5419	确认后会和另外 {n} 步一起做：{steps}	Done with {n} more steps once you confirm: {steps}	確認後會和另外 {n} 步一起做：{steps}
+AiFoTitleMove	IDS_AI_FO_TITLE_MOVE	5420	把 {what}移到「{folder}」？	Move {what} to “{folder}”?	把 {what}移到「{folder}」？
+AiFoTitleCopy	IDS_AI_FO_TITLE_COPY	5421	把 {what}复制到「{folder}」？	Copy {what} to “{folder}”?	把 {what}複製到「{folder}」？
+AiFoSubTo	IDS_AI_FO_SUB_TO	5422	到 {dest}	To {dest}	到 {dest}
+AiFoSubNewDest	IDS_AI_FO_SUB_NEW_DEST	5423	{dest} 还没有，Pulse 会先新建它	{dest} doesn't exist yet; Pulse makes it first	{dest} 還沒有，Pulse 會先新建它
+AiFoHintMove	IDS_AI_FO_HINT_MOVE	5424	移动可以撤销	Moves can be undone	移動可以復原
+AiFoHintCopy	IDS_AI_FO_HINT_COPY	5425	复制可以撤销	Copies can be undone	複製可以復原
+AiFoClash	IDS_AI_FO_CLASH	5426	{n} 项在那里已有同名，会保留两份，不覆盖	{n} names are taken there; both are kept, nothing is overwritten	{n} 項在那裡已有同名，會保留兩份，不覆蓋
+AiFoTitleRename	IDS_AI_FO_TITLE_RENAME	5427	把「{old}」重命名为「{name}」？	Rename “{old}” to “{name}”?	把「{old}」重新命名為「{name}」？
+AiFoHintRename	IDS_AI_FO_HINT_RENAME	5428	重命名可以撤销	Renames can be undone	重新命名可以復原
+AiFoTitleGroup	IDS_AI_FO_TITLE_GROUP	5429	把 {what}放进新文件夹「{name}」？	Put {what} in a new folder “{name}”?	把 {what}放進新資料夾「{name}」？
+AiFoSubIn	IDS_AI_FO_SUB_IN	5430	在「{folder}」里	In “{folder}”	在「{folder}」裡
+AiFoHintUndo	IDS_AI_FO_HINT_UNDO	5431	可以撤销，撤销后一切回到原样	Can be undone; undo puts everything back	可以復原，復原後一切回到原樣
+AiFoTitleDissolve	IDS_AI_FO_TITLE_DISSOLVE	5432	解散 {n} 个文件夹？	Dissolve {n} folders?	解散 {n} 個資料夾？
+AiFoSubDissolve	IDS_AI_FO_SUB_DISSOLVE	5433	里面的 {n} 项会移到「{folder}」，空文件夹进回收站	The {n} items inside move to “{folder}”; the empty folders go to the Recycle Bin	裡面的 {n} 項會移到「{folder}」，空資料夾進資源回收筒
+AiFoTitleRecycle	IDS_AI_FO_TITLE_RECYCLE	5434	把 {what}移到回收站？	Move {what} to the Recycle Bin?	把 {what}移到資源回收筒？
+AiFoSubRecycle	IDS_AI_FO_SUB_RECYCLE	5435	移到回收站，可以撤销。	They go to the Recycle Bin; you can undo.	移到資源回收筒，可以復原。
+AiFoHintDelete	IDS_AI_FO_HINT_DELETE	5436	删除每次都会问你，不能设为始终允许	Deleting always asks; it can't be set to always allow	刪除每次都會問你，不能設為一律允許
+AiFoTitlePurge	IDS_AI_FO_TITLE_PURGE	5437	永久删除 {what}？	Permanently delete {what}?	永久刪除 {what}？
+AiFoSubPurge	IDS_AI_FO_SUB_PURGE	5438	这 {n} 项不进回收站，会被永久删除，不能撤销，Pulse 也找不回来。	These {n} items skip the Recycle Bin and are deleted for good; this can't be undone and Pulse can't get them back.	這 {n} 項不進資源回收筒，會被永久刪除，不能復原，Pulse 也找不回來。
+AiFoTitleEmpty	IDS_AI_FO_TITLE_EMPTY	5439	清空回收站？	Empty the Recycle Bin?	清空資源回收筒？
+AiFoSubEmpty	IDS_AI_FO_SUB_EMPTY	5440	回收站里的 {n} 个文件（{size}）会被永久删除，不能撤销，Pulse 也找不回来。	The {n} files in the Recycle Bin ({size}) are deleted for good; this can't be undone and Pulse can't get them back.	資源回收筒裡的 {n} 個檔案（{size}）會被永久刪除，不能復原，Pulse 也找不回來。
+AiFoHintArm	IDS_AI_FO_HINT_ARM	5441	永久删除每次都要点两次：第一次点后按钮变成「再点一次，永久删除」	A permanent delete always takes two clicks: after the first, the button says “Click again to delete permanently”	永久刪除每次都要點兩次：第一次點後按鈕變成「再點一次，永久刪除」
+AiFoArm	IDS_AI_FO_ARM	5442	再点一次，永久删除	Click again to delete permanently	再點一次，永久刪除
+AiFoTitleRestore	IDS_AI_FO_TITLE_RESTORE	5443	把 {what}还原到原来的位置？	Restore {what} to where they were?	把 {what}還原到原來的位置？
+AiFoSubRestore	IDS_AI_FO_SUB_RESTORE	5444	它们会回到删除前所在的文件夹。	They go back to the folders they were deleted from.	它們會回到刪除前所在的資料夾。
+AiFoHintRestore	IDS_AI_FO_HINT_RESTORE	5445	还原不能撤销；需要时可以再删除	A restore can't be undone; delete them again if needed	還原不能復原；需要時可以再刪除
+AiFoRestoreClash	IDS_AI_FO_RESTORE_CLASH	5446	{n} 项的原位置已有同名项目，会留在回收站	{n} items' places are taken; they stay in the Recycle Bin	{n} 項的原位置已有同名項目，會留在資源回收筒
+AiFoRowTaken	IDS_AI_FO_ROW_TAKEN	5447	原位置已有同名，跳过	place taken, skipped	原位置已有同名，略過
+AiFoMore	IDS_AI_FO_MORE	5448	还有 {n} 个	{n} more	還有 {n} 個
+AiFoMoreSize	IDS_AI_FO_MORE_SIZE	5449	还有 {n} 个 · 共 {size}	{n} more · {size} in all	還有 {n} 個 · 共 {size}
+AiFoLineMove	IDS_AI_FO_LINE_MOVE	5450	{n} 项已移到「{folder}」	{n} items moved to “{folder}”	{n} 項已移到「{folder}」
+AiFoLineCopy	IDS_AI_FO_LINE_COPY	5451	{n} 项已复制到「{folder}」	{n} items copied to “{folder}”	{n} 項已複製到「{folder}」
+AiFoLineRename	IDS_AI_FO_LINE_RENAME	5452	「{old}」已改名为「{name}」	“{old}” renamed to “{name}”	「{old}」已改名為「{name}」
+AiFoLineGroup	IDS_AI_FO_LINE_GROUP	5453	{n} 项已放进新文件夹「{name}」	{n} items put in the new folder “{name}”	{n} 項已放進新資料夾「{name}」
+AiFoLineDissolve	IDS_AI_FO_LINE_DISSOLVE	5454	已解散 {n} 个文件夹，{k} 项移到「{folder}」	{n} folders dissolved; {k} items moved to “{folder}”	已解散 {n} 個資料夾，{k} 項移到「{folder}」
+AiFoLineRecycle	IDS_AI_FO_LINE_RECYCLE	5455	{n} 项已移到回收站	{n} items moved to the Recycle Bin	{n} 項已移到資源回收筒
+AiFoLinePurge	IDS_AI_FO_LINE_PURGE	5456	{n} 项已永久删除	{n} items permanently deleted	{n} 項已永久刪除
+AiFoLineRestore	IDS_AI_FO_LINE_RESTORE	5457	{n} 项已还原到原位置	{n} items restored	{n} 項已還原到原位置
+AiFoLineEmpty	IDS_AI_FO_LINE_EMPTY	5458	回收站已清空（{n} 项）	Recycle Bin emptied ({n} items)	資源回收筒已清空（{n} 項）

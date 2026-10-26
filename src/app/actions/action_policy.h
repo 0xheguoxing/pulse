@@ -5,8 +5,11 @@
 //            old -> new and undoes the call as one group
 //   Confirm  External (programs, scripts) and System: a confirm card first,
 //            every time (never "always allow")
-//   Later    Move / Delete / PermanentDelete: not through run_actions yet
-//            (P4); the flow tools with their own plan cards do these
+//   Plan     Move / Delete / PermanentDelete: the file steps of
+//            action_files.h show the user a plan card first (P4c): the first
+//            batch's for moves, the Recycle Bin card, the red two-click card
+//            for a permanent delete; other moves (tray.send_to) stay with
+//            the flow tools that have their own cards
 //   Locked   UserOnly and the assistant's own limits: Pulse shows the user
 //            why and where to change it themselves
 #pragma once
@@ -18,7 +21,7 @@
 
 namespace pulse::app::actions {
 
-enum class Gate : uint8_t { Direct, Confirm, Later, Locked };
+enum class Gate : uint8_t { Direct, Confirm, Plan, Locked };
 
 struct Policy {
     Gate gate = Gate::Locked;

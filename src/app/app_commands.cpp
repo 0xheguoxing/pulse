@@ -299,11 +299,27 @@ void DissolveSelectedFolders(AppState& s) {
     if (!CanDissolveSelection(tab)) return;
     std::vector<std::wstring> folders;
     for (int index : GroupableSelection(*tab)) folders.push_back(EntryFullPath(*tab, index));
+    DissolveFolders(s, *tab, folders, NewUndoGroup(), l10n::Get(l10n::StringId::UngroupFolder).c_str());
+}
+
+// Each folder's items move up into its parent; when that is tab's folder they
+// are selected there. The assistant's file.dissolve passes its own undo group
+// and label (P4c) and waits for the returned tasks.
+std::vector<uint64_t> DissolveFolders(AppState& s, app::Tab& tab_ref, const std::vector<std::wstring>& folders,
+                                      uint64_t group, const std::wstring& label) {
+    app::Tab* tab = &tab_ref;
+    std::vector<uint64_t> tasks;
     std::vector<std::wstring> select;
     std::vector<std::wstring> children;
-    const uint64_t group = NewUndoGroup();
-    const std::wstring label = l10n::Get(l10n::StringId::UngroupFolder).c_str();
+    bool in_tab = false;
     for (const std::wstring& folder : folders) {
+        // Each folder's own parent (the assistant's items need not be in tab).
+        const size_t cut = folder.find_last_of(L"\\/");
+        if (cut == std::wstring::npos) continue;
+        std::wstring parent = folder.substr(0, cut);
+        if (parent.size() == 2 && parent[1] == L':') parent += L'\\';
+        const bool here = _wcsicmp(parent.c_str(), tab->current_path.c_str()) == 0;
+        in_tab = in_tab || here;
         if (!ListFolderChildren(folder, children)) continue;
         if (children.empty()) {
             ops::OpRequest recycle;
@@ -312,7 +328,8 @@ void DissolveSelectedFolders(AppState& s) {
             recycle.undo_group = group;
             recycle.undo_label = label;
             const auto recycle_id = s.ops.Submit(std::move(recycle));
-            s.dissolveSteps.push_back({recycle_id, tab->current_path});
+            tasks.push_back(recycle_id);
+            s.dissolveSteps.push_back({recycle_id, parent});
             continue;
         }
         const size_t slash = folder.find_last_of(L"\\/");
@@ -322,27 +339,27 @@ void DissolveSelectedFolders(AppState& s) {
             return _wcsicmp(name.c_str(), leaf.c_str()) == 0;
         });
         if (clash) {
-            const std::wstring aside = app::UniqueChildName(tab->current_path, leaf, L"");
+            const std::wstring aside = app::UniqueChildName(parent, leaf, L"");
             ops::OpRequest rename;
             rename.type = ops::OpType::Rename;
             rename.sources.push_back(folder);
             rename.new_name = aside;
             rename.undo_group = group;
             rename.undo_label = label;
-            s.ops.Submit(std::move(rename));
-            container = JoinChild(tab->current_path, aside);
+            tasks.push_back(s.ops.Submit(std::move(rename)));
+            container = JoinChild(parent, aside);
         }
         ops::OpRequest move;
         move.type = ops::OpType::Move;
         for (const auto& name : children) {
             move.sources.push_back(JoinChild(container, name));
-            select.push_back(name);
+            if (here) select.push_back(name);
         }
-        move.dest_dir = tab->current_path;
+        move.dest_dir = parent;
         move.collision_policy = ops::CollisionPolicy::KeepBoth;
         move.undo_group = group;
         move.undo_label = label;
-        s.ops.Submit(std::move(move));
+        tasks.push_back(s.ops.Submit(std::move(move)));
         // Queued with the move so one undo always sees the whole action; a
         // child that could not move out keeps its folder.
         ops::OpRequest recycle;
@@ -352,13 +369,15 @@ void DissolveSelectedFolders(AppState& s) {
         recycle.undo_group = group;
         recycle.undo_label = label;
         const auto recycle_id = s.ops.Submit(std::move(recycle));
-        s.dissolveSteps.push_back({recycle_id, tab->current_path});
+        tasks.push_back(recycle_id);
+        s.dissolveSteps.push_back({recycle_id, parent});
     }
-    if (!select.empty()) {
+    if (in_tab && !select.empty()) {
         tab->pending_selected_name = select.front();
         tab->pending_selected_names = std::move(select);
         tab->pending_selection_revision = tab->selection_revision;
     }
+    return tasks;
 }
 
 void QueueTagAds(AppState& s, std::vector<app::TagAdsUpdate> updates) {

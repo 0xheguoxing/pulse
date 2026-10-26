@@ -1030,6 +1030,12 @@ void AiChatActivate(AppState& s, ui::AiPanelPart part, int block) {
         break;
     case P::ConfirmAccept:
     case P::ConfirmDeny:
+        if (part == P::ConfirmAccept && b.id == c.confirm_id && c.on_confirm && !b.arm.empty() && !b.armed) {
+            // A permanent delete: the first click only arms the button (P4c).
+            b.armed = true;
+            std::swap(b.accept, b.arm);
+            break;
+        }
         if (b.id == c.confirm_id && c.on_confirm) {
             auto fn = c.on_confirm;   // the handler clears itself
             fn(s, part == P::ConfirmAccept);

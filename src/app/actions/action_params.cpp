@@ -1,6 +1,8 @@
 // action_params.cpp - Argument specs and the assistant's action lookup.
 #include "action_params.h"
 
+#include "action_files.h"
+
 #include "action_inventory.h"
 #include "action_policy.h"
 #include "action_settings.h"
@@ -65,6 +67,14 @@ constexpr std::pair<std::string_view, std::string_view> kSpecs[] = {
     {"preview.cloud_download", "path:string"},
     {"drive.eject", "drive:string"},
     {"drive.disconnect", "drive:string"},
+    // P4c: the file steps (action_files.h). Without items: the selection.
+    {"file.copy_to", "items:paths dest:folder"},
+    {"file.move_to", "items:paths dest:folder"},
+    {"file.rename", "item:path name:string"},
+    {"file.group_into_folder", "items:paths name:string"},
+    {"file.dissolve", "items:paths"},
+    {"file.recycle", "items:paths"},
+    {"file.delete_permanent", "items:paths"},
 };
 
 std::wstring Fold(std::wstring_view text) {
@@ -206,7 +216,8 @@ json::Value ActionJson(const ActionView& v) {
     const Policy p = AiPolicy(v.id);
     row.set("risk", RiskName(p.risk));
     if (p.gate == Gate::Confirm) row.set("asks_user", true);
-    else if (p.gate == Gate::Later) row.set("use_instead", "organize_files / rename_files / run_task / find_cleanup");
+    else if (p.gate == Gate::Plan && IsFileOp(v.id)) row.set("shows_plan", true);   // Pulse asks with a plan card
+    else if (p.gate == Gate::Plan) row.set("use_instead", "organize_files / rename_files / run_task / find_cleanup");
     else if (p.gate == Gate::Locked) row.set("locked", true);
     if (!v.shortcut.empty()) row.set("shortcut", Utf8Of(v.shortcut));
     return row;
