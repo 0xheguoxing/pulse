@@ -1162,12 +1162,13 @@ std::wstring ColorName(int index) {
 bool HasArgRunner(std::string_view id) noexcept {
     for (const auto& [k, _] : kRunners)
         if (k == id) return true;
-    return false;
+    return HasExtRunner(id);
 }
 
 ArgRun RunWithArgs(AppState& s, std::string_view id, const json::Value& args) {
     for (const auto& [k, run] : kRunners)
         if (k == id) return run(s, args);
+    if (HasExtRunner(id)) return RunExt(s, id, args);
     return Fail("unknown action", I::AiActWhyUnknown);
 }
 

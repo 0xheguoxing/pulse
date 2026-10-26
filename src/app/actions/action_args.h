@@ -11,6 +11,7 @@
 
 #include "../../common/json_value.h"
 
+#include <cstdint>
 #include <functional>
 #include <vector>
 #include <string>
@@ -25,6 +26,7 @@ namespace pulse::app::actions {
 struct ArgRun {
     bool ok = false;
     bool skip = false;           // nothing to do: it was so already
+    std::wstring title;          // the step's title when not the row's (Git 状态)
     std::string error;           // for the model (English)
     std::wstring why;            // !ok: the step card's reason
     std::wstring arg;            // the step's chip (报销, 3 个)
@@ -43,6 +45,37 @@ struct ArgRun {
 // plain menu row).
 bool HasArgRunner(std::string_view id) noexcept;
 ArgRun RunWithArgs(AppState& s, std::string_view id, const json::Value& args);
+
+// The confirm card of an action that asks each time (P4b): 外部效果 for Git,
+// shell verbs and other programs, 影响系统 for cloud files and drives. The
+// agent draws it; the runner does the action once the user accepted.
+enum class AskIcon : uint8_t { System, Push, Pull, Verb, OpenWith, Cloud, Eject, Disconnect };
+struct ArgAsk {
+    // Skip / Fail: no card. Nothing to do, or it cannot run; the runner then
+    // says so in its step (没有要推送的提交, 这里不是 Git 仓库).
+    enum class State : uint8_t { Ask, Skip, Fail } state = State::Ask;
+    bool external = false;       // 外部效果; else 影响系统
+    AskIcon icon = AskIcon::System;
+    std::wstring title, sub;     // 推送到远端？ / 会把 feat/report 上的 3 个提交推到 origin。…
+    std::wstring file, file_note;  // pulse-docs · feat/report → origin / 3 个提交
+    std::wstring deny, accept;   // 不推送 / 推送
+};
+// True when `id` has its own card words (the rest use the generic cards).
+bool HasAskText(std::string_view id) noexcept;
+ArgAsk AskFor(AppState& s, std::string_view id, const json::Value& args);
+
+// An action only the user does (UserOnly): why the assistant does not, and
+// where the user does it (此电脑 → 双击 E 盘). The agent's lock card.
+struct ArgLock {
+    std::wstring title, sub, where;
+};
+bool HasLockText(std::string_view id) noexcept;
+ArgLock LockFor(AppState& s, std::string_view id, const json::Value& args);
+
+// The P4b runners (action_args_ext.cpp): Git, shell verbs, toolbar apps,
+// cloud files and drives. HasArgRunner / RunWithArgs include them.
+bool HasExtRunner(std::string_view id) noexcept;
+ArgRun RunExt(AppState& s, std::string_view id, const json::Value& args);
 
 // Color words the runners take: red orange yellow green teal blue purple
 // pink none; index into TabController::Palette(), -1 none, -2 unknown.

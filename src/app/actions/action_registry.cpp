@@ -10,6 +10,10 @@
 #include "action_state.h"
 #include "action_settings.h"
 #include "../app_internal.h"
+#include "../app_commands.h"
+#include "../cloud_roots.h"
+#include "../drive_verbs.h"
+#include "../git_ui.h"
 #include "../app_messages.h"
 #include "../context_menu.h"
 #include "../favorites_bar.h"
@@ -31,6 +35,8 @@
 #include "../vertical_tabs.h"
 #include "../window_overview_ui.h"
 #include "../../common/localization.h"
+#include "../../fs/bitlocker_volume.h"
+#include "../../fs/cloud_state.h"
 #include "../../fs/fs_enum.h"
 #include "../../ui/ui_renderer.h"
 
@@ -515,6 +521,74 @@ void FillPreviewStep(AppState&, ActionView& v) {
 void PickPreviewStep(AppState& s, int choice) { NavigateQuickPreview(s, choice == 0 ? -1 : 1); }
 
 constexpr const wchar_t* kNoKey = nullptr;
+// ---- P4b: Git, cloud files, drives, the toolbar's apps -----------------------
+
+void FillGit(AppState& s, ActionView& v) {
+    const Tab* tab = ActiveTab(s);
+    if (!tab || tab->git_root.empty()) Off(v, I::AiGitNotRepo);
+}
+
+void FillCloudPin(AppState& s, ActionView& v) {
+    if (!NeedSelection(s, v)) return;
+    if (!IsUnderCloudFilesRoot(ActiveTab(s)->current_path)) Off(v, I::AiCloudNotCloud);
+}
+
+// 下载并预览: one selected file that is online-only now.
+void FillCloudFile(AppState& s, ActionView& v) {
+    if (!NeedOne(s, v)) return;
+    const std::vector<std::wstring> paths = SelectedFullPaths(*ActiveTab(s));
+    const DWORD attrs = paths.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(paths[0].c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY) || !fs::IsCloudPlaceholder(attrs))
+        Off(v, I::AiCloudDlLocal);
+}
+
+// The one drive selected in This PC (eject / disconnect / unlock act on it).
+bool OneDrive(AppState& s, fs::DirEntry& e, std::wstring& root) {
+    const Tab* tab = ActiveTab(s);
+    if (!tab || !tab->snapshot) return false;
+    const std::vector<int> sel = tab->SelectedIndices();
+    if (sel.size() != 1 || sel[0] < 0 || static_cast<size_t>(sel[0]) >= tab->EntryCount()) return false;
+    e = tab->EntryAt(static_cast<size_t>(sel[0]));
+    if (!e.drive_type) return false;
+    root = fs::DriveRootOf(EntryFullPath(*tab, sel[0]));
+    return !root.empty();
+}
+
+void FillEject(AppState& s, ActionView& v) {
+    fs::DirEntry e;
+    std::wstring root;
+    if (!OneDrive(s, e, root) || !DriveEjectable(root, e.drive_type)) Off(v, I::AiDriveWhich);
+}
+
+void FillDisconnect(AppState& s, ActionView& v) {
+    fs::DirEntry e;
+    std::wstring root;
+    if (!OneDrive(s, e, root) || e.drive_type != DRIVE_REMOTE) Off(v, I::AiDriveWhich);
+}
+
+void FillUnlock(AppState& s, ActionView& v) {
+    fs::DirEntry e;
+    std::wstring root;
+    if (!OneDrive(s, e, root) || !e.drive_locked) Off(v, I::AiDriveWhich);
+}
+
+void FillToolbarOpen(AppState& s, ActionView& v) {
+    if (!NeedSelection(s, v)) return;
+    if (s.appPrefs.toolbar_apps.empty()) Off(v, I::AiOpenWithEmpty);
+}
+
+void RunGitCommand(AppState& s, int command) {
+    if (const Tab* tab = ActiveTab(s)) HandleGitCommand(s, command, tab->git_root);
+}
+
+// 用其他程序打开: the toolbar's 用 … 打开 rows for the selection, to pick from.
+void ShowToolbarAppMenu(AppState& s) {
+    std::vector<ui::FluentMenuItem> items = ToolbarAppMenuItems(s);
+    if (items.empty() || !EnsureMenu(s)) return;
+    const int cmd = s.menu->TrackPopup(BelowAddress(s), std::move(items));
+    if (cmd) RunToolbarAppMenuCommand(s, cmd);
+}
+
 constexpr Run kNoRun = nullptr;
 constexpr Fill kAlways = nullptr;
 
@@ -729,6 +803,40 @@ constexpr Def kDefs[] = {
     // P4: 快捷键
     {"keymap.read", I::ActKeymapRead, I::ActDomApp, L"\xE765", P::None, kNoKey, 0, kNoRun, kAlways, nullptr, true},
     {"keymap.set", I::ActKeymapSet, I::ActDomApp, L"\xE765", P::None, kNoKey, 0, kNoRun, kAlways, nullptr, true},
+    // P4b: 右键菜单与其他程序
+    {"file.context_menu", I::ContextMenu, I::ActDomFiles, L"\xE712", P::None, L"Shift+F10", 0,
+     +[](AppState& s) { ShowKeyboardContextMenu(s); }, kAlways},
+    {"shell.verbs", I::ActShellVerbs, I::ActDomFiles, L"\xE712", P::None, kNoKey, 0, kNoRun, kAlways, nullptr, true},
+    {"shell.run_verb", I::ActShellRunVerb, I::ActDomFiles, L"\xE768", P::None, kNoKey, 0, kNoRun, kAlways, nullptr,
+     true},
+    {"toolbar.open_with", I::ActOpenWithOther, I::ActDomFiles, L"\xE7AC", P::None, kNoKey, 0, ShowToolbarAppMenu,
+     FillToolbarOpen},
+    {"toolbar.customize", I::CustomizeToolbarMenu, I::ActDomApp, L"\xE9E9", P::None, kNoKey, CmdCustomizeToolbar,
+     kNoRun, kAlways},
+    {"toolbar.pin_app", I::PinToToolbar, I::ActDomApp, L"\xE718", P::None, kNoKey, CmdCustomizeToolbar, kNoRun,
+     kAlways, nullptr, true},
+    {"toolbar.tools", I::ActToolbarTools, I::ActDomApp, L"\xE9E9", P::None, kNoKey, CmdCustomizeToolbar, kNoRun,
+     kAlways, nullptr, true},
+    // P4b: Git
+    {"git.refresh", I::GitRefresh, I::ActDomFiles, L"\xE72C", P::None, kNoKey, 0,
+     +[](AppState& s) { RunGitCommand(s, kCmdGitRefresh); }, FillGit},
+    {"git.pull", I::GitPull, I::ActDomFiles, L"\xE896", P::None, kNoKey, 0,
+     +[](AppState& s) { RunGitCommand(s, kCmdGitPull); }, FillGit},
+    {"git.push", I::GitPush, I::ActDomFiles, L"\xE898", P::None, kNoKey, 0,
+     +[](AppState& s) { RunGitCommand(s, kCmdGitPush); }, FillGit},
+    // P4b: 云盘与驱动器
+    {"cloud.keep", I::CloudKeepOnDevice, I::ActDomFiles, L"\xE718", P::None, kNoKey, CmdCloudKeep, kNoRun,
+     FillCloudPin},
+    {"cloud.free", I::CloudFreeUpSpace, I::ActDomFiles, L"\xE753", P::None, kNoKey, CmdCloudFree, kNoRun,
+     FillCloudPin},
+    {"preview.cloud_download", I::CloudDownloadPreview, I::ActDomPreview, L"\xE753", P::None, kNoKey, 0,
+     +[](AppState& s) { RunWithArgs(s, "preview.cloud_download", json::Value::Object()); }, FillCloudFile},
+    {"drive.eject", I::Eject, I::ActDomFiles, L"\xE88E", P::None, kNoKey, CmdEjectDrive, kNoRun, FillEject},
+    {"drive.disconnect", I::DisconnectNetworkDrive, I::ActDomFiles, L"\xE8CD", P::None, kNoKey, CmdDisconnectDrive, kNoRun,
+     FillDisconnect},
+    {"drive.unlock", I::UnlockDrive, I::ActDomFiles, L"\xE785", P::None, kNoKey, CmdUnlockDrive, kNoRun, FillUnlock},
+    {"assistant.prefs", I::ActAssistantPrefs, I::ActDomApp, L"\xE713", P::None, kNoKey, 0,
+     +[](AppState& s) { OpenSettingsTab(s, 13); }, kAlways},
     // 应用
     {"app.settings_page", I::ActOpenSettings, I::ActDomApp, L"\xE713", P::None, kNoKey, CmdSettings,
      kNoRun, kAlways},

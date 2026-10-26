@@ -47,6 +47,7 @@
 #include "window_factory.h"
 #include "window_overview_ui.h"
 #include "window_placement.h"
+#include "ai_tools_ui.h"
 #include "zip_compress.h"
 #include "actions/action_args.h"
 #include "actions/action_params.h"
@@ -358,7 +359,7 @@ const json::Value& Tools() {
    "query":{"type":"string","description":"A few words naming the action, e.g. 详情面板 文件夹大小"},
    "domain":{"type":"string","enum":["settings"],"description":"settings: list all settings instead of searching"}}}}},
 {"type":"function","function":{"name":"run_actions",
- "description":"Does things in Pulse itself, in order, as one undo group (at most 12 steps): panes and the folders in them, windows, tabs, view, sort, grouping, panels, selection, the staging tray, tags, favorites, new folders, opening files, settings, and any action find_actions returns. View, organize and settings steps act at once: Pulse shows each step and one result card with old -> new, Undo and the user's own shortcuts. Opening a program or script and system actions show the user a confirm card first (Pulse asks, not you). Files are never moved, renamed or deleted here: use organize_files, rename_files, run_task, find_cleanup or find_duplicates. Locked settings show the user why. Stops at the first step that fails; earlier steps stay done. Returns each step's outcome.\nCommon actions (args): window.layout {layout: single|side_by_side|stacked|three|four, panes: [a folder per pane, left or top first; \"\" leaves one]}, nav.go {path, pane}, window.new {path}, tab.new {path}, tab.close, tab.to_window, pane.to_window {pane}, window.merge, window.overview, nav.back, nav.up, view.mode {view: extra_large_icons|large_icons|medium_icons|small_icons|list|details|tiles|content, pane}, view.sort {by: name|modified|type|size|created, desc, pane}, view.group {by: none|name|date|type|size, pane}, sidebar.toggle {show}, favbar.toggle {show}, details.toggle {show}, select.items {pane, name, extensions, items, type: folder|document|image|video|audio|archive|code, modified: today|yesterday|this_week|last_7_days|this_month|last_month|{after, before}, size: {larger_than, smaller_than}, tag, selected, mode: replace|add|remove}, select.all, select.clear, tray.add {items}, tag.toggle {tag, items} (a new tag is made), fav.add {path or items}, file.new_folder {name} (in the open folder), nav.open {path} (a file or program), settings.set {key, value}, edit.undo, tab.pin {tab, pin}, tab.color {tab, color: red|orange|yellow|green|teal|blue|purple|pink|none}, tab.rename {tab, name}, tab.group {tab, group}, tab.activate {tab}, tag.create {name, color, group}, keymap.set {action, keys} (keymap.read lists the actions). tab: 1 = first as in get_state, a title, \"all\" or a list - several tabs go in ONE step. Words: 标签 is a tag (tag.create, then tag.toggle to put it on items; 加标签 / 打标签 = tag.toggle), 标签页 is a tab (tab.*), 托盘 / 暂存 is the staging tray (only when the user says so). pane: 1-4 in screen order as in get_state, focused, target, or all (view / sort / group). Paths: absolute, a drive (D:) or a known folder (Downloads, Desktop, Documents, Pictures, Videos, Music). items: full paths; omitted = the selection.\nSettings (settings.set key and values; switches take true/false): theme light|dark|system, window_effect none|acrylic|mica|mica_alt, text_rendering auto|sharp|smooth, font_size small|default|large|larger, language system|zh-CN|zh-TW|en-US, menu_acrylic, row_height compact|standard|roomy, click_to_open double|single, name_highlight hover|always, hover_select, item_checkboxes, blank_double_click nothing|back|up, show_hidden, show_protected, folders_first top|follow|mixed, smart_dates, zebra_rows, size_bars, tag_name_color, selection_outline, thumbnail_app_badges, alias_mark, mtime_marks off|dots|bars|text, mtime_range today|3|7|30, mtime_dim_older, mtime_bold_today, mtime_folders, mtime_other_views, mtime_flash, onedrive_status, svn_status, startup_open last_tabs|default_location, new_tab_open current|default_location, external_open smart|tab|window, vertical_tabs, pinned_tab_names, double_click_closes_tab, close_window_with_last_tab, launch_at_signin (Windows), start_in_tray, keep_running, tray_icon always|background|never, explorer_tag_menu (Windows), open_folders_with_pulse (default file manager; Windows), staging_icon_size small|standard|large, staging_hide_when_empty, change_tracking, change_days today|3|7, lan_discovery, network_recent, hidden_shares, confirm_delete (can only be turned on), global_search (Windows), pinyin_search. Locked (only the user, in Settings): confirm_delete off, assistant_permissions, always_allow, connections, api_key.",
+ "description":"Does things in Pulse itself, in order, as one undo group (at most 12 steps): panes and the folders in them, windows, tabs, view, sort, grouping, panels, selection, the staging tray, tags, favorites, new folders, opening files, settings, and any action find_actions returns. View, organize and settings steps act at once: Pulse shows each step and one result card with old -> new, Undo and the user's own shortcuts. Opening a program or script, Git push / pull, shell menu items, other programs and system actions (cloud keep / free, eject) show the user a confirm card first, every time (Pulse asks, not you): read first with git.refresh / shell.verbs in a call of their own, then ask for the action in the next call. Files are never moved, renamed or deleted here: use organize_files, rename_files, run_task, find_cleanup or find_duplicates. Locked settings and actions only the user does (unlocking a BitLocker drive, quitting Pulse, your own permissions) show the user why and where to do it; do not retry them. Stops at the first step that fails; earlier steps stay done. Returns each step's outcome.\nCommon actions (args): window.layout {layout: single|side_by_side|stacked|three|four, panes: [a folder per pane, left or top first; \"\" leaves one]}, nav.go {path, pane}, window.new {path}, tab.new {path}, tab.close, tab.to_window, pane.to_window {pane}, window.merge, window.overview, nav.back, nav.up, view.mode {view: extra_large_icons|large_icons|medium_icons|small_icons|list|details|tiles|content, pane}, view.sort {by: name|modified|type|size|created, desc, pane}, view.group {by: none|name|date|type|size, pane}, sidebar.toggle {show}, favbar.toggle {show}, details.toggle {show}, select.items {pane, name, extensions, items, type: folder|document|image|video|audio|archive|code, modified: today|yesterday|this_week|last_7_days|this_month|last_month|{after, before}, size: {larger_than, smaller_than}, tag, selected, mode: replace|add|remove}, select.all, select.clear, tray.add {items}, tag.toggle {tag, items} (a new tag is made), fav.add {path or items}, file.new_folder {name} (in the open folder), nav.open {path} (a file or program), settings.set {key, value}, edit.undo, tab.pin {tab, pin}, tab.color {tab, color: red|orange|yellow|green|teal|blue|purple|pink|none}, tab.rename {tab, name}, tab.group {tab, group}, tab.activate {tab}, tag.create {name, color, group}, keymap.set {action, keys} (keymap.read lists the actions), git.refresh (the open folder's repository: branch, ahead / behind, changes), git.push, git.pull, shell.verbs (the selection's context menu items), shell.run_verb {verb: an item shell.verbs listed; in a submenu \"Parent ▸ Item\"}, toolbar.open_with {app: a program pinned to the toolbar}, cloud.keep, cloud.free, preview.cloud_download {path}, drive.eject {drive: E:}, drive.disconnect {drive}, file.context_menu and toolbar.customize (Pulse opens them; the user chooses). tab: 1 = first as in get_state, a title, \"all\" or a list - several tabs go in ONE step. Words: 标签 is a tag (tag.create, then tag.toggle to put it on items; 加标签 / 打标签 = tag.toggle), 标签页 is a tab (tab.*), 托盘 / 暂存 is the staging tray (only when the user says so). pane: 1-4 in screen order as in get_state, focused, target, or all (view / sort / group). Paths: absolute, a drive (D:) or a known folder (Downloads, Desktop, Documents, Pictures, Videos, Music). items: full paths; omitted = the selection.\nSettings (settings.set key and values; switches take true/false): theme light|dark|system, window_effect none|acrylic|mica|mica_alt, text_rendering auto|sharp|smooth, font_size small|default|large|larger, language system|zh-CN|zh-TW|en-US, menu_acrylic, row_height compact|standard|roomy, click_to_open double|single, name_highlight hover|always, hover_select, item_checkboxes, blank_double_click nothing|back|up, show_hidden, show_protected, folders_first top|follow|mixed, smart_dates, zebra_rows, size_bars, tag_name_color, selection_outline, thumbnail_app_badges, alias_mark, mtime_marks off|dots|bars|text, mtime_range today|3|7|30, mtime_dim_older, mtime_bold_today, mtime_folders, mtime_other_views, mtime_flash, onedrive_status, svn_status, startup_open last_tabs|default_location, new_tab_open current|default_location, external_open smart|tab|window, vertical_tabs, pinned_tab_names, double_click_closes_tab, close_window_with_last_tab, launch_at_signin (Windows), start_in_tray, keep_running, tray_icon always|background|never, explorer_tag_menu (Windows), open_folders_with_pulse (default file manager; Windows), staging_icon_size small|standard|large, staging_hide_when_empty, change_tracking, change_days today|3|7, lan_discovery, network_recent, hidden_shares, confirm_delete (can only be turned on), global_search (Windows), pinyin_search. Locked (only the user, in Settings): confirm_delete off, assistant_permissions, always_allow, connections, api_key.",
  "parameters":{"type":"object","properties":{
    "steps":{"type":"array","description":"The steps in order (at most 12)","items":{"type":"object","properties":{
      "action":{"type":"string","description":"An action id, e.g. view.sort"},
@@ -5741,6 +5742,7 @@ struct CtlRun {
     bool merged = false;
     // P3.
     bool locked = false, deny_delete = false;   // a locked setting: the lock card
+    std::wstring lock_title, lock_sub, lock_where;   // P4b: an only-you action's own lock card
     std::wstring fail_title, fail_arg, fail_why; // the step that failed
     std::vector<std::wstring> not_run;          // titles of the steps after it
     size_t waited = SIZE_MAX;                   // the step whose wait is over
@@ -5868,6 +5870,7 @@ struct CtlStep {
     bool skip = false;               // nothing to do (already so): no step
     std::wstring why;                // !ok: the reason the card shows (找不到这个文件夹)
     json::Value data;                // more for the model (a selection's report)
+    bool quiet = false;              // no step row: the card that follows says it (the lock card)
 };
 
 // Runs `fn` with `p` focused, then gives the focus back.
@@ -6949,11 +6952,18 @@ void CtlFinish(AppState& s, std::shared_ptr<CtlRun> run) {
         AiBlockView& e = c.Add(AiBlockKind::Error, Now());
         e.tone = ui::AiErrTone::Warn;
         e.icon = ui::AiIcon::Lock;
-        e.title = Text(run->deny_delete ? I::AiSetDenyT : I::AiSetLockT);
-        e.sub = Text(run->deny_delete ? I::AiSetDenyS : I::AiSetLockS);
-        e.hint = Text(I::AiSetLockHint);
-        e.hint_icon = ui::AiIcon::Shield;
-        e.pills = {Text(I::AiSetPillPerm), Text(I::AiSetPillAllow), Text(I::AiSetPillConn)};
+        if (!run->lock_title.empty()) {
+            // 这一项只能你自己操作 / why / 此电脑 → 双击 E 盘 (P4 scene 6).
+            e.title = run->lock_title;
+            e.sub = run->lock_sub;
+            if (!run->lock_where.empty()) e.pills = {run->lock_where};
+        } else {
+            e.title = Text(run->deny_delete ? I::AiSetDenyT : I::AiSetLockT);
+            e.sub = Text(run->deny_delete ? I::AiSetDenyS : I::AiSetLockS);
+            e.hint = Text(I::AiSetLockHint);
+            e.hint_icon = ui::AiIcon::Shield;
+            e.pills = {Text(I::AiSetPillPerm), Text(I::AiSetPillAllow), Text(I::AiSetPillConn)};
+        }
     }
     // Only a call that changed something gets a card (all "already so": the
     // model hears it, nothing to show or undo).
@@ -7150,6 +7160,10 @@ ui::AiIcon ArgIcon(std::string_view id) {
         {"view.icon_size", ui::AiIcon::Size},  {"smartview.save", ui::AiIcon::Star},
         {"recent.remove", ui::AiIcon::Clock},  {"alias.set", ui::AiIcon::Rename},
         {"index.status", ui::AiIcon::Search},  {"net.place", ui::AiIcon::Plug},
+        {"git.push", ui::AiIcon::Push},        {"git.pull", ui::AiIcon::Pull},
+        {"shell.verbs", ui::AiIcon::Package},  {"shell.run_verb", ui::AiIcon::Package},
+        {"toolbar.open_with", ui::AiIcon::Open}, {"drive.eject", ui::AiIcon::Eject},
+        {"drive.disconnect", ui::AiIcon::Plug}, {"preview.cloud_download", ui::AiIcon::Cloud},
     };
     for (const Pair& p : kExact)
         if (p.id == id) return p.icon;
@@ -7157,6 +7171,8 @@ ui::AiIcon ArgIcon(std::string_view id) {
     if (id.starts_with("tray.")) return ui::AiIcon::Tray;
     if (id.starts_with("search.")) return ui::AiIcon::Search;
     if (id.starts_with("keymap.")) return ui::AiIcon::Keyboard;
+    if (id.starts_with("git.")) return ui::AiIcon::Git;
+    if (id.starts_with("cloud.")) return ui::AiIcon::Cloud;
     return ui::AiIcon::Bolt;
 }
 
@@ -7172,6 +7188,7 @@ CtlStep CtlArgs(AppState& s, CtlRun& run, const std::string& id, const json::Val
     st.icon = ArgIcon(id);
     st.title = StepTitle(s, id);
     app::actions::ArgRun r = app::actions::RunWithArgs(s, id, act);
+    if (!r.title.empty()) st.title = std::move(r.title);   // Git 状态
     st.arg = std::move(r.arg);
     st.sub = std::move(r.sub);
     st.data = std::move(r.data);
@@ -7183,6 +7200,9 @@ CtlStep CtlArgs(AppState& s, CtlRun& run, const std::string& id, const json::Val
     st.ok = true;
     st.skip = r.skip;
     if (r.skip || r.read_only) return st;
+    // Git, shell items, programs, drives: the effect is outside Pulse, so no
+    // 文件没动 line under the result.
+    if (app::actions::HasAskText(id)) run.touched = true;
     ui::AiResultLine ln;
     ln.before = std::move(r.line_before);
     ln.bold = std::move(r.line_bold);
@@ -7230,6 +7250,50 @@ CtlStep CtlArgs(AppState& s, CtlRun& run, const std::string& id, const json::Val
     return st;
 }
 
+// Rows that open a choose-yourself UI (the selection's context menu, 自定义
+// 工具栏): Pulse opens it and the user picks; the assistant never picks for
+// them (P4 decision 6).
+bool IsChooser(std::string_view id) {
+    return id == "file.context_menu" || id == "toolbar.customize" || id == "toolbar.pin_app" || id == "toolbar.tools";
+}
+
+CtlStep CtlChooser(AppState& s, const std::string& id) {
+    CtlStep st;
+    st.icon = id == "file.context_menu" ? ui::AiIcon::Rows : ui::AiIcon::Sliders;
+    const auto views = app::actions::ListActions(s);
+    const auto v = std::find_if(views.begin(), views.end(),
+                                [&](const app::actions::ActionView& w) { return w.id == id && w.key.empty(); });
+    if (v == views.end()) {
+        st.title = Display(id);
+        st.error = "unknown action (find_actions lists them)";
+        st.why = Text(I::AiActWhyUnknown);
+        return st;
+    }
+    st.title = v->title;
+    if (!v->enabled) {
+        st.error = "not available now: " + Utf8(v->why);
+        st.why = v->why;
+        return st;
+    }
+    // A menu runs a modal loop: open it once this step is over, not inside it.
+    const int index = v->index;
+    const HWND hwnd = s.hwnd;
+    const bool posted = app::ai::PostAiUiTask(ServiceWindow(s), [index, hwnd](AppState* target) {
+        if (target && target->hwnd == hwnd) app::actions::RunAction(*target, index);
+    });
+    if (!posted) {
+        st.error = "Pulse could not open it now";
+        st.why = Text(I::AiActWhyFailed);
+        return st;
+    }
+    st.ok = true;
+    st.sub = Text(I::AiActOpenedForYou);
+    st.data = json::Value::Object();
+    st.data.set("opened", true);
+    st.data.set("note", "Pulse opened it for the user to choose; you cannot pick in it for them");
+    return st;
+}
+
 CtlStep CtlRunStep(AppState& s, CtlRun& run, const std::string& id, const json::Value& act) {
     if (!app::actions::FindAction(id)) {
         CtlStep st;
@@ -7248,8 +7312,19 @@ CtlStep CtlRunStep(AppState& s, CtlRun& run, const std::string& id, const json::
                          "rename_files, run_task, find_cleanup or find_duplicates (they show the user a plan)"
                        : "locked: only the user can do this";
         st.why = Text(policy.gate == app::actions::Gate::Later ? I::AiActWhyLater : I::AiActWhyLocked);
+        if (policy.gate == app::actions::Gate::Locked && app::actions::HasLockText(id)) {
+            // 解锁 E 盘, 退出 Pulse: the lock card says why and where; as the
+            // call's first step it is the whole answer, so no step row.
+            const app::actions::ArgLock lock = app::actions::LockFor(s, id, act);
+            run.locked = true;
+            run.lock_title = lock.title;
+            run.lock_sub = lock.sub;
+            run.lock_where = lock.where;
+            st.quiet = run.ok == 0;
+        }
         return st;
     }
+    if (IsChooser(id)) return CtlChooser(s, id);
     if (id == "window.layout") return CtlLayout(s, run, act);
     if (id == "nav.go") return CtlOpen(s, run, act);
     if (id == "window.new") return CtlNewWindow(s, run, act);
@@ -7370,7 +7445,7 @@ void CtlNext(AppState& s, std::shared_ptr<CtlRun> run) {
             }
             run->index = run->queue.size();
         }
-        if (st.skip) continue;
+        if (st.skip || st.quiet) continue;
         AddStep(s, a, st.icon, st.title.empty() ? Display(what) : st.title, st.arg, {});
         AiChatSetChip(Chat(s), ui::StatusAiState::Busy, st.title,
                       static_cast<float>(run->index) / static_cast<float>(run->queue.size() + 1));
@@ -7403,6 +7478,8 @@ struct AskStep {
     std::string id;
     std::wstring target;   // nav.open: the file
     size_t count = 0;      // how many steps of the call ask
+    bool has_text = false; // P4b: the action's own card words (推送到远端？)
+    app::actions::ArgAsk text;
 };
 
 AskStep FirstAsk(AppState& s, const std::vector<json::Value>& queue) {
@@ -7411,13 +7488,37 @@ AskStep FirstAsk(AppState& s, const std::vector<json::Value>& queue) {
         const std::string id = StepAction(queue[i]);
         const std::wstring target = id == "nav.open" ? OpenTarget(s, StepArgs(queue[i])) : std::wstring();
         if (app::actions::AiPolicy(id, target).gate != app::actions::Gate::Confirm) continue;
+        app::actions::ArgAsk text;
+        const bool has_text = app::actions::HasAskText(id);
+        if (has_text) {
+            // Nothing to push, no repository: no card; the step says why.
+            text = app::actions::AskFor(s, id, StepArgs(queue[i]));
+            if (text.state != app::actions::ArgAsk::State::Ask) continue;
+        }
         ++ask.count;
         if (ask.index != SIZE_MAX) continue;
         ask.index = i;
         ask.id = id;
         ask.target = target;
+        ask.has_text = has_text;
+        ask.text = std::move(text);
     }
     return ask;
+}
+
+ui::AiIcon AskIconOf(app::actions::AskIcon icon) {
+    using K = app::actions::AskIcon;
+    switch (icon) {
+    case K::Push: return ui::AiIcon::Push;
+    case K::Pull: return ui::AiIcon::Pull;
+    case K::Verb: return ui::AiIcon::Package;
+    case K::OpenWith: return ui::AiIcon::Open;
+    case K::Cloud: return ui::AiIcon::Cloud;
+    case K::Eject: return ui::AiIcon::Eject;
+    case K::Disconnect: return ui::AiIcon::Plug;
+    case K::System: break;
+    }
+    return ui::AiIcon::WinSettings;
 }
 
 void ToolRunActions(AppState& s, const app::ai::ModelToolCall& call, const json::Value& args) {
@@ -7479,6 +7580,17 @@ void ToolRunActions(AppState& s, const app::ai::ModelToolCall& call, const json:
                            (folder.empty() ? L"" : L" \u00B7 " + folder);
         cf.deny = Text(I::AiActRunDeny);
         cf.accept = Text(I::AiActRunAccept);
+    } else if (ask.has_text) {
+        // 推送到远端？ 外部效果 / 会把 feat/report 上的 3 个提交推到 origin。… (P4 scene 4)
+        const app::actions::ArgAsk& k = ask.text;
+        cf.title = k.title;
+        cf.tag = Text(k.external ? I::AiActTagExternal : I::AiSetSys);
+        cf.sub = k.sub;
+        cf.cf_icon = AskIconOf(k.icon);
+        cf.file = k.file;
+        cf.file_note = k.file_note;
+        cf.deny = k.deny.empty() ? Text(I::AiAsstDeny) : k.deny;
+        cf.accept = k.accept.empty() ? Text(I::AiActSysAccept) : k.accept;
     } else {
         cf.title = Fill(Text(I::AiActSysTitle), L"{title}", name);
         cf.tag = Text(I::AiSetSys);

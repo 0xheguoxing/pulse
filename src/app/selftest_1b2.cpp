@@ -5707,6 +5707,51 @@ void TestActionArgs() {
           L"args: keymap.set needs a known action");
     Check(!act::RunWithArgs(s, "keymap.set", args(R"({"action":"NewFolder","keys":"Ctrl+Banana"})")).ok,
           L"args: keymap.set rejects keys it cannot read");
+
+    // ---- P4b: what asks, what is locked, and their words ---------------------------
+    bool ext_words = true, locks = true, ask_gate = true;
+    for (const act::ActionEntry& e : act::kActions) {
+        if (e.risk == act::ActionRisk::External) ext_words = ext_words && act::HasAskText(e.id);
+        if (e.risk == act::ActionRisk::UserOnly) locks = locks && act::HasLockText(e.id);
+        if (e.risk == act::ActionRisk::External || e.risk == act::ActionRisk::System)
+            ask_gate = ask_gate && act::AiPolicy(e.id).gate == act::Gate::Confirm;
+    }
+    Check(ext_words, L"args: every External action has its own confirm words");
+    Check(locks, L"args: every only-you action says why and where");
+    Check(ask_gate, L"args: External and System actions ask every time");
+    Check(act::AiPolicy("assistant.prefs").gate == act::Gate::Locked && act::AiPolicy("drive.unlock").gate == act::Gate::Locked,
+          L"args: the assistant's own settings and BitLocker unlock are the user's");
+    bool runners = true;
+    for (const char* id : {"git.refresh", "git.push", "git.pull", "shell.verbs", "shell.run_verb", "toolbar.open_with",
+                           "preview.cloud_download", "drive.eject", "drive.disconnect"})
+        runners = runners && act::HasArgRunner(id);
+    Check(runners && act::AiPolicy("git.refresh").gate == act::Gate::Direct &&
+              act::AiPolicy("shell.verbs").gate == act::Gate::Direct,
+          L"args: P4b runners exist; the reads run at once");
+    {
+        const act::ArgLock e_drive = act::LockFor(s, "drive.unlock", args(R"({"drive":"E:"})"));
+        const act::ArgLock any = act::LockFor(s, "drive.unlock", args("{}"));
+        Check(!e_drive.title.empty() && !e_drive.sub.empty() && e_drive.where.find(L'E') != std::wstring::npos &&
+                  !any.where.empty() && any.where != e_drive.where,
+              L"args: the unlock lock card names the drive the user double-clicks");
+        Check(!act::LockFor(s, "app.exit", args("{}")).where.empty() &&
+                  !act::LockFor(s, "assistant.prefs", args("{}")).where.empty(),
+              L"args: exit and the assistant's settings say where the user does them");
+    }
+    // No repository, no drive, nothing selected: no card, and the runner says why.
+    Check(act::AskFor(s, "git.push", args("{}")).state == act::ArgAsk::State::Fail &&
+              !act::RunWithArgs(s, "git.push", args("{}")).ok && !act::RunWithArgs(s, "git.refresh", args("{}")).ok,
+          L"args: git outside a repository asks nothing and fails with a reason");
+    Check(act::AskFor(s, "drive.eject", args(R"({"drive":"?"})")).state == act::ArgAsk::State::Fail &&
+              !act::RunWithArgs(s, "drive.eject", args(R"({"drive":"?"})")).ok,
+          L"args: eject needs a real drive");
+    Check(act::AskFor(s, "shell.run_verb", args(R"({"verb":"打印"})")).state == act::ArgAsk::State::Fail &&
+              !act::RunWithArgs(s, "shell.run_verb", args("{}")).ok,
+          L"args: a shell item needs a selection and a name");
+    Check(!act::RunWithArgs(s, "toolbar.open_with", args(R"({"app":"no such app"})")).ok,
+          L"args: open_with names a pinned app");
+    Check(act::AskFor(s, "view.sort", args("{}")).title.empty() && !act::HasAskText("view.sort"),
+          L"args: actions without words use the generic card");
 }
 
 void TestActionState() {

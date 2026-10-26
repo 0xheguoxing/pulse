@@ -59,6 +59,12 @@ constexpr std::pair<std::string_view, std::string_view> kSpecs[] = {
     {"net.place", "path:string name:string pin:bool"},
     {"keymap.read", "action:string"},
     {"keymap.set", "action:string keys:string"},
+    // P4b
+    {"shell.run_verb", "verb:string"},
+    {"toolbar.open_with", "app:string"},
+    {"preview.cloud_download", "path:string"},
+    {"drive.eject", "drive:string"},
+    {"drive.disconnect", "drive:string"},
 };
 
 std::wstring Fold(std::wstring_view text) {

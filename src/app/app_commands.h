@@ -103,6 +103,8 @@ void RefreshOpenCtxMenu(AppState& s);
 bool HandleShellMenuCommand(AppState& s, int cmd);
 // from_chip: the selection chip's ⋯ (adds the pinned-app rows on top).
 void ShowItemContextMenu(AppState& s, POINT screen_pt, bool from_chip = false);
+// Shift+F10 / Apps key: the item menu under the focused item, else the background menu.
+void ShowKeyboardContextMenu(AppState& s);
 void ShowBackgroundContextMenu(AppState& s, POINT screen_pt);
 void ShowBreadcrumbMenu(AppState& s, std::wstring path, POINT screen_pt);
 void ShowNewDropdown(AppState& s);
@@ -173,6 +175,8 @@ void EndToolbarPinDrag(AppState& s, bool cancel);
 std::vector<ui::WindowViewModel::ToolbarAppPin> ToolbarAppPins(AppState& s);
 // Click: opens the selected items the app takes, or just starts it.
 void RunToolbarApp(AppState& s, size_t app);
+// Its display name ("" past the last pin): the assistant's toolbar.open_with.
+std::wstring ToolbarAppName(AppState& s, size_t app);
 // Opens `items` with pinned app `app`: only the types it opens unless `all`.
 void OpenWithToolbarApp(AppState& s, size_t app, const std::vector<std::wstring>& items, bool all);
 // The same for files dropped on the app's pin: the pin gulps, a note follows.

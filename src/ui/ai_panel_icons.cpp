@@ -331,6 +331,19 @@ constexpr IconPart k_git[] = {
     {"M15.5 9A2 2 0 1 0 19.5 9A2 2 0 1 0 15.5 9Z", 0, 0x000000u, 1.6f, 1.0f},
     {"M6.5 8v8M17.5 11c0 3-3 4-9 5", 0, 0x000000u, 1.6f, 1.0f},
 };
+// P4b. Push: the HTML's arrow up onto a line; pull mirrors it.
+constexpr IconPart k_push[] = {
+    {"M12 19V6M6.5 11.5L12 6l5.5 5.5", 0, 0x000000u, 1.6f, 1.0f},
+    {"M5 20h14", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_pull[] = {
+    {"M12 4v13M6.5 11.5L12 17l5.5-5.5", 0, 0x000000u, 1.6f, 1.0f},
+    {"M5 20h14", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_eject[] = {
+    {"M12 5l7 8.5H5z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M5 18.5h14", 0, 0x000000u, 1.6f, 1.0f},
+};
 
 constexpr IconDef kIcons[] = {
     {k_spark, std::size(k_spark)},
@@ -407,6 +420,9 @@ constexpr IconDef kIcons[] = {
     {k_pin, std::size(k_pin)},
     {k_palette, std::size(k_palette)},
     {k_git, std::size(k_git)},
+    {k_push, std::size(k_push)},
+    {k_pull, std::size(k_pull)},
+    {k_eject, std::size(k_eject)},
 };
 
 static_assert(std::size(kIcons) == static_cast<size_t>(AiIcon::Count), "one table entry per AiIcon");

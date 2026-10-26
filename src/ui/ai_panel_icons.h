@@ -89,6 +89,10 @@ enum class AiIcon : uint8_t {
     Pin,
     Palette,
     Git,
+    // P4b: Git push / pull, eject.
+    Push,
+    Pull,
+    Eject,
     Count
 };
 

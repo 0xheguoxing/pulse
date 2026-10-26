@@ -242,6 +242,10 @@ void RunToolbarApp(AppState& s, size_t app) {
     OpenWithToolbarApp(s, app, selected, false);
 }
 
+std::wstring ToolbarAppName(AppState& s, size_t app) {
+    return app < s.appPrefs.toolbar_apps.size() ? AppNow(s, app).name : std::wstring();
+}
+
 bool PinToolbarApp(AppState& s, const std::wstring& path) {
     if (!app::AddToolbarAppPath(s.appPrefs.toolbar_apps, path)) return false;
     if (!s.isolatedTest) s.appPrefs.Save();

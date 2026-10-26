@@ -204,7 +204,7 @@ inline constexpr ActionEntry kActions[] = {
     {"settings.set", ActionRisk::View, true},
     {"keymap.read", ActionRisk::Read},
     {"keymap.set", ActionRisk::Organize},
-    {"assistant.prefs", ActionRisk::Organize},
+    {"assistant.prefs", ActionRisk::UserOnly},   // its own permissions and connections: only the user
 };
 
 // In KeyAction order, one per action (checked at compile time).
