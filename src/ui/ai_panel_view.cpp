@@ -228,6 +228,32 @@ AiPanelView::Palette MakePalette(const Theme& theme, bool dark) {
     return p;
 }
 
+// The docked column over a wallpaper or Mica (see Palette::glass): the
+// pane card's fill at `a` and its frame; the welcome cards a little firmer
+// (light +30%, dark 5.5% white), the resting composer firmer still.
+void ApplyGlass(AiPanelView::Palette& p, const Theme& theme, bool dark, float a, D2D1_COLOR_F frame) {
+    p.glass = true;
+    p.glass_panel = theme.surface_card;
+    p.glass_panel.a = std::clamp(a, 0.0f, 1.0f);
+    p.glass_panel_line = frame;
+    const D2D1_COLOR_F white = Hex(0xffffff);
+    if (dark) {
+        p.glass_card = Alpha(white, 0.055f);
+        p.glass_card_line = Alpha(white, 0.08f);
+        p.glass_input = Alpha(white, 0.06f);
+        p.glass_input_line = Alpha(white, 0.10f);
+        p.glass_line = Alpha(white, 0.07f);
+        p.glass_hover = Alpha(white, 0.08f);
+    } else {
+        p.glass_card = Alpha(white, (std::min)(1.0f, a + 0.30f));
+        p.glass_card_line = Alpha(white, 0.70f);
+        p.glass_input = Alpha(white, (std::min)(1.0f, a + 0.40f));
+        p.glass_input_line = Alpha(white, 0.80f);
+        p.glass_line = Hex(0x303b50, 0.09f);
+        p.glass_hover = Hex(0x303b50, 0.08f);
+    }
+}
+
 } // namespace
 
 void AiPanelView::Draw(Compositor* compositor, const AiPanelViewModel& vm, const Theme& theme,
@@ -251,16 +277,51 @@ void AiPanelView::Draw(Compositor* compositor, const AiPanelViewModel& vm, const
     const float s = scale;
     Ctx c{compositor, dc, brush_, s};
 
+    glass_drawn_ = false;
     if (dock_value_ > 0.0f && column.right > column.left) {
         // The column: pane color, a hairline on the right; content laid out at
         // its full width and clipped while the column grows.
         D2D1_RECT_F full = column;
         full.right = column.left + column_content_width;
         dc->PushAxisAlignedClip(column, D2D1_ANTIALIAS_MODE_ALIASED);
-        c.Fill(column, 0.0f, pal.pane);
-        DrawContent(compositor, vm, pal, full, s, now_ms);
+        if (glass_) {
+            // Over a wallpaper: a card on the sheet like the pane, inset 6 from
+            // the rail and the title strip, 2 from its right edge, 4 above the
+            // status bar.
+            Palette gp = pal;
+            ApplyGlass(gp, theme, vm.dark, glass_alpha_, glass_frame_);
+            const D2D1_RECT_F card = D2D1::RectF(std::round(column.left + 6.0f * s), std::round(column.top + 6.0f * s),
+                                                 std::round(column.right - 2.0f * s), std::round(column.bottom - 4.0f * s));
+            const float radius = theme.radius_control * s;
+            if (card.right - card.left > 2.0f * radius && card.bottom > card.top) {
+                D2D1_RECT_F inner = card;
+                inner.right = card.left + column_content_width - 8.0f * s;
+                c.Fill(card, radius, gp.glass_panel);
+                ID2D1RoundedRectangleGeometry* clip = nullptr;
+                ID2D1Factory* factory = nullptr;
+                dc->GetFactory(&factory);
+                if (factory) {
+                    factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(card, radius, radius), &clip);
+                    factory->Release();
+                }
+                if (clip) {
+                    dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE),
+                                  nullptr);
+                }
+                DrawContent(compositor, vm, gp, inner, s, now_ms);
+                if (clip) {
+                    dc->PopLayer();
+                    clip->Release();
+                }
+                c.Stroke(card, radius, gp.glass_panel_line);
+            }
+            glass_drawn_ = true;
+        } else {
+            c.Fill(column, 0.0f, pal.pane);
+            DrawContent(compositor, vm, pal, full, s, now_ms);
+        }
         dc->PopAxisAlignedClip();
-        c.Fill(D2D1::RectF(column.right - 1.0f, column.top, column.right, column.bottom), 0.0f, pal.line);
+        if (!glass_drawn_) c.Fill(D2D1::RectF(column.right - 1.0f, column.top, column.right, column.bottom), 0.0f, pal.line);
         panel_rect_ = column;
         input_placed_ = mode_ == AiPanelMode::Docked && !dock_anim_ && open_;
         drawn_ = true;
@@ -362,12 +423,14 @@ void AiPanelView::DrawHeader(Compositor* compositor, const AiPanelViewModel& vm,
     for (const Button& b : buttons) {
         const bool hot = vm.hover.part == b.part;
         const bool down = hot && vm.pressed.part == b.part;
-        if (hot) c.Fill(*b.r, 8.0f * s, down ? Mix(pal.hover, pal.text, 0.06f) : pal.hover);
+        const D2D1_COLOR_F hover = pal.glass ? pal.glass_hover : pal.hover;
+        if (hot) c.Fill(*b.r, 8.0f * s, down ? Mix(hover, pal.text, 0.06f) : hover);
         const float is = 17.0f * s;
         c.Icon(b.icon, (b.r->left + b.r->right - is) * 0.5f, (b.r->top + b.r->bottom - is) * 0.5f, is,
                hot ? pal.text : pal.text2);
     }
-    c.Fill(D2D1::RectF(panel.left, head_rect_.bottom - 1.0f, panel.right, head_rect_.bottom), 0.0f, pal.line2);
+    c.Fill(D2D1::RectF(panel.left, head_rect_.bottom - 1.0f, panel.right, head_rect_.bottom), 0.0f,
+           pal.glass ? pal.glass_line : pal.line2);
 }
 
 void AiPanelView::DrawEmptyState(Compositor* compositor, const AiPanelViewModel& vm, const Palette& pal,
@@ -434,8 +497,14 @@ void AiPanelView::DrawEmptyState(Compositor* compositor, const AiPanelViewModel&
             const D2D1_POINT_2F mid = D2D1::Point2F((r.left + r.right) * 0.5f, (r.top + r.bottom) * 0.5f);
             c.dc->SetTransform(D2D1::Matrix3x2F::Scale(0.98f, 0.98f, mid) * saved);
         }
-        c.Fill(r, 11.0f * s, hot ? pal.accent_tint : pal.card);
-        c.Stroke(r, 11.0f * s, hot ? pal.accent : pal.line);
+        if (pal.glass) {
+            c.Fill(r, 11.0f * s, pal.glass_card);
+            if (hot) c.Fill(r, 11.0f * s, Alpha(pal.accent, vm.dark ? 0.12f : 0.08f));
+            c.Stroke(r, 11.0f * s, hot ? pal.accent : pal.glass_card_line);
+        } else {
+            c.Fill(r, 11.0f * s, hot ? pal.accent_tint : pal.card);
+            c.Stroke(r, 11.0f * s, hot ? pal.accent : pal.line);
+        }
         const int tint = static_cast<int>(sug.tint);
         const D2D1_RECT_F tile = D2D1::RectF(r.left + 12.0f * s, (r.top + r.bottom) * 0.5f - 15.0f * s,
                                              r.left + 42.0f * s, (r.top + r.bottom) * 0.5f + 15.0f * s);
@@ -480,20 +549,27 @@ float AiPanelView::ComposerHeight(const AiPanelViewModel& vm, float s) const {
     return std::round((2.0f + 10.0f + (vm.context_visible ? 30.0f : 0.0f) + 32.0f + 8.0f) * s) + InputHeight(vm, InputLines(vm), s);
 }
 
-void AiPanelView::DrawComposer(Compositor* compositor, const AiPanelViewModel& vm, const Palette& pal,
+void AiPanelView::DrawComposer(Compositor* compositor, const AiPanelViewModel& vm, const Palette& base,
                                const D2D1_RECT_F& box, float s, uint64_t now_ms) {
     Ctx c{compositor, compositor->Dc(), brush_, s};
+    // Glass: translucent at rest (the panel draws the text); solid while the
+    // EDIT has focus, since the EDIT paints an opaque background.
+    const bool clear = base.glass && !vm.composer_focused;
+    Palette pal = base;
+    if (clear) pal.hover = base.glass_hover;
     composer_rect_ = box;
     const float radius = 16.0f * s;
     const bool ring = vm.composer_focused || vm.voice.listening;   // .composer.listen: the same ring
     if (ring) {
-        // Focus: accent border and a 3 px ring at 16%.
-        c.Fill(Inflate(box, 3.0f * s), radius + 3.0f * s, Alpha(pal.accent, 0.16f));
-    } else {
+        // Focus: accent border and a 3 px ring at 16%; only outside the box
+        // when the box lets the panel through.
+        if (clear) c.Stroke(Inflate(box, 3.0f * s), radius + 3.0f * s, Alpha(pal.accent, 0.16f), 3.0f * s);
+        else c.Fill(Inflate(box, 3.0f * s), radius + 3.0f * s, Alpha(pal.accent, 0.16f));
+    } else if (!clear) {
         c.Shadow(box, radius, 8.0f * s, 2.0f * s, Hex(0x000000, vm.dark ? 0.20f : 0.05f));
     }
-    c.Fill(box, radius, pal.card);
-    c.Stroke(box, radius, ring ? pal.accent : pal.line);
+    c.Fill(box, radius, clear ? pal.glass_input : pal.card);
+    c.Stroke(box, radius, ring ? pal.accent : clear ? pal.glass_input_line : pal.line);
     const float left = box.left + 1.0f * s + 12.0f * s;
     const float right = box.right - 1.0f * s - 10.0f * s;
     float y = box.top + 1.0f * s + 10.0f * s;
@@ -504,8 +580,8 @@ void AiPanelView::DrawComposer(Compositor* compositor, const AiPanelViewModel& v
         const float tw = c.Measure(vm.context_text, formats_.caption);
         const float w = (7.0f + 13.0f + 6.0f) * s + tw + (6.0f + 11.0f + 9.0f) * s;
         context_chip_ = D2D1::RectF(left, y, left + w, y + 24.0f * s);
-        c.Fill(context_chip_, 12.0f * s, pal.card);
-        c.Stroke(context_chip_, 12.0f * s, pal.line);
+        c.Fill(context_chip_, 12.0f * s, clear ? pal.glass_card : pal.card);
+        c.Stroke(context_chip_, 12.0f * s, clear ? pal.glass_card_line : pal.line);
         c.Icon(AiIcon::FolderFilled, left + 7.0f * s, y + 5.5f * s, 13.0f * s, pal.folder_icon);
         c.Text(vm.context_text, formats_.caption, D2D1::RectF(left + 26.0f * s, y, left + 26.0f * s + tw + 1.0f, y + 24.0f * s),
                pal.text2);

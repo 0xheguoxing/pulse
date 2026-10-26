@@ -1102,6 +1102,9 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
     }
 
     if (!embedded_) DrawTitleBar(vm, rect, theme);
+    // Over a wallpaper or Mica the docked AI panel is a card like the pane.
+    ai_panel_.SetGlass(!embedded_ && card_alpha_ < 0.999f && !IsHighContrast(), card_alpha_,
+                       CardFrameColor(theme, vm.dark, card_alpha_));
     if (vm.settings_open) {
         preview_handler_.Sync(notify_hwnd_, {}, L"", 0, 0, 0, 0, vm.dark,
                               theme.bg, theme.text, false);

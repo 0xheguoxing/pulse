@@ -21,6 +21,18 @@ struct AiPanelView::Palette {
     D2D1_COLOR_F shadow;
     D2D1_COLOR_F folder_icon;
     std::array<D2D1_COLOR_F, 6> tint_fg, tint_bg;
+    // Docked over a wallpaper or Mica: the column is a translucent card like
+    // the pane, and the welcome cards and the resting composer let it show
+    // through. Menus, cards in the conversation and the focused composer
+    // keep the solid colors above.
+    bool glass = false;
+    D2D1_COLOR_F glass_panel{}, glass_panel_line{};
+    D2D1_COLOR_F glass_card{}, glass_card_line{};
+    D2D1_COLOR_F glass_input{}, glass_input_line{};
+    // Hover and hairline for what sits right on the glass (the header, the
+    // resting composer's buttons); `hover` and `line2` stay opaque because
+    // cards mix them with other colors.
+    D2D1_COLOR_F glass_hover{}, glass_line{};
 };
 
 // The panel's colors for `theme` (ai_panel_view.cpp).

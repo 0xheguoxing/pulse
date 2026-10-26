@@ -45,6 +45,10 @@ struct AiAssistantState {
     std::wstring edit_cue;   // placeholder text the EDIT's "Pulse.EditCue" points at
     bool edit_visible = false;
     bool focus_pending = false;
+    // A click on the composer text the panel drew (the glass panel hides the
+    // EDIT at rest): the caret goes there once the EDIT takes focus.
+    bool focus_click_set = false;
+    POINT focus_click{};
     bool focused = false;
     int lines = 1;
     int text_len = 0;

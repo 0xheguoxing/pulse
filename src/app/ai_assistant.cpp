@@ -802,8 +802,15 @@ void AiAssistantLayout(AppState& s) {
     const ui::AiPanelView& view = s.renderer.AiPanel();
     const bool menu_fading = !a.menu_open && ui::motion::NowMs() - a.menu_closed_at < kMenuFadeMs;
     const bool menu_covers = a.menu_open || menu_fading || AiVoiceCovers(s);
-    if (!a.open || !view.InputPlaced() || menu_covers) {
+    // Glass panel: the composer rests translucent with the text drawn by the
+    // panel; the opaque EDIT shows only while it has (or is about to take)
+    // focus.
+    const bool resting = view.Glass() && !a.focus_pending && GetFocus() != a.edit;
+    if (!a.open || !view.InputPlaced() || menu_covers || resting) {
+        const bool was_visible = a.edit_visible;
         HideEdit(s);
+        // The panel draws the text from the next frame on.
+        if (was_visible && a.open) Redraw(s);
         // Show it again after the model menu's fade; AiVoiceLayout times the
         // voice menu's and card's own fades.
         if (a.open && menu_fading) Redraw(s);
@@ -860,7 +867,17 @@ void AiAssistantLayout(AppState& s) {
         InvalidateRect(a.edit, nullptr, TRUE);
     if (a.focus_pending) {
         a.focus_pending = false;
-        if (GetForegroundWindow() == s.hwnd || GetForegroundWindow() == GetAncestor(s.hwnd, GA_ROOT)) SetFocus(a.edit);
+        if (GetForegroundWindow() == s.hwnd || GetForegroundWindow() == GetAncestor(s.hwnd, GA_ROOT)) {
+            SetFocus(a.edit);
+            if (a.focus_click_set) {
+                POINT pt = a.focus_click;
+                MapWindowPoints(s.hwnd, a.edit, &pt, 1);
+                const LRESULT hit = SendMessageW(a.edit, EM_CHARFROMPOS, 0, MAKELPARAM(pt.x, pt.y));
+                const WPARAM ch = LOWORD(hit);
+                SendMessageW(a.edit, EM_SETSEL, ch, static_cast<LPARAM>(ch));
+            }
+        }
+        a.focus_click_set = false;
     }
 }
 
@@ -917,6 +934,10 @@ bool AiAssistantMouseUp(AppState& s, int x, int y) {
     a.pressed = {};
     const ui::AiPanelHit hit = HitAt(s, x, y);
     a.hover = hit;
+    if (hit.part == ui::AiPanelPart::Input && hit == pressed && !a.edit_visible && a.text_len > 0) {
+        a.focus_click = {x, y};
+        a.focus_click_set = true;
+    }
     if ((a.open || IsPeekPart(hit.part)) && hit == pressed) Activate(s, hit);
     Redraw(s);
     return true;

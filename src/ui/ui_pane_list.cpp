@@ -3151,7 +3151,7 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
         DrawPaneWallHint(pane, pane_rect, vm.hover_region, vm.hover_control_index, theme);
 
     const float radius = theme.radius_control * scale_;
-    D2D1_COLOR_F frameColor = theme.stroke_card;
+    D2D1_COLOR_F frameColor = CardFrameColor(theme, vm.dark, card_alpha_);
     if (focused) frameColor = IsHighContrast() ? theme.accent : WithAlpha(theme.accent, 0.24f);
     else if (target) frameColor = WithAlpha(theme.accent, 0.22f);
     const float strokeW = focused && IsHighContrast() ? 1.5f * scale_ : 1.0f * scale_;

@@ -670,6 +670,17 @@ public:
     // The composer's input is visible and settled (place the EDIT there).
     bool InputPlaced() const noexcept { return input_placed_; }
     D2D1_COLOR_F CardColor() const noexcept { return card_color_; }
+    // Set by the renderer before Draw: the pane card's opacity over a
+    // wallpaper or Mica (`on`) and its frame color. The docked column then
+    // draws as the same translucent card; the composer rests translucent and
+    // turns solid while its EDIT has focus.
+    void SetGlass(bool on, float card_alpha, D2D1_COLOR_F frame) noexcept {
+        glass_ = on;
+        glass_alpha_ = card_alpha;
+        glass_frame_ = frame;
+    }
+    // The docked column was last drawn as glass.
+    bool Glass() const noexcept { return glass_drawn_; }
     D2D1_COLOR_F BgColor() const noexcept { return bg_color_; }   // the voice card's fields
     D2D1_COLOR_F TextColor() const noexcept { return text_color_; }
     D2D1_COLOR_F PlaceholderColor() const noexcept { return text3_color_; }
@@ -797,6 +808,10 @@ private:
     D2D1_RECT_F context_chip_{}, context_remove_{};
     D2D1_RECT_F input_rect_{};
     bool input_placed_ = false;
+    bool glass_ = false;
+    bool glass_drawn_ = false;
+    float glass_alpha_ = 1.0f;
+    D2D1_COLOR_F glass_frame_{};
     D2D1_RECT_F add_files_{}, model_button_{}, send_button_{};
     D2D1_RECT_F mic_button_{}, mic_menu_{};
     // 语音输入: menu and card motion, hit rects and formats (ai_panel_voice.h).

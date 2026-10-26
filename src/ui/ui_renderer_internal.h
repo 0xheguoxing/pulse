@@ -120,16 +120,20 @@ void ClearTextWidthCache() {
                 static constexpr float cover[5] = {0.85f, 0.70f, 0.55f, 0.40f, 0.25f};
                 return {LerpStops(t, cover), 0.0f, 0.0f};
             }
-            static constexpr float kTitle[5] = {0.70f, 0.60f, 0.50f, 0.40f, 0.30f};
-            static constexpr float kSheet[5] = {0.80f, 0.68f, 0.55f, 0.45f, 0.35f};
-            static constexpr float kCard[5] = {0.97f, 0.94f, 0.90f, 0.85f, 0.78f};
+            // Light: the pane card stays thin so the middle reads about as
+            // see-through as the dark scrim (60, unblurred: title 42%, sheet 46%,
+            // card 26%).
+            static constexpr float kTitle[5] = {0.62f, 0.50f, 0.40f, 0.30f, 0.22f};
+            static constexpr float kSheet[5] = {0.66f, 0.54f, 0.42f, 0.32f, 0.24f};
+            static constexpr float kCard[5] = {0.55f, 0.38f, 0.24f, 0.15f, 0.08f};
             a.title = LerpStops(t, kTitle);
             a.sheet = LerpStops(t, kSheet);
             a.card = LerpStops(t, kCard);
-            // Sidebar text sits directly on the sheet; unblurred detail needs more cover.
+            // Text sits on these layers; unblurred detail needs a little more cover.
             if (wallpaper_blur <= 0) {
-                a.title = (std::min)(1.0f, a.title + 0.10f);
-                a.sheet = (std::min)(1.0f, a.sheet + 0.12f);
+                a.title = (std::min)(1.0f, a.title + 0.06f);
+                a.sheet = (std::min)(1.0f, a.sheet + 0.08f);
+                a.card = (std::min)(1.0f, a.card + 0.06f);
             }
             return a;
         }
@@ -143,6 +147,13 @@ void ClearTextWidthCache() {
             a.card = (std::min)(1.0f, (dark ? 0.72f : 0.78f) * k);
         }
         return a;
+    }
+    // The unfocused frame of a pane card (and the docked AI panel's card):
+    // a thin light card over a wallpaper takes a soft white edge instead of
+    // the gray one, which reads as a dirty line on the image.
+    inline D2D1_COLOR_F CardFrameColor(const Theme& theme, bool dark, float card_alpha) noexcept {
+        if (!dark && card_alpha < 0.9f) return D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f);
+        return theme.stroke_card;
     }
     inline float WallpaperBlurDip(int wallpaper_blur) noexcept {
         return static_cast<float>(std::clamp(wallpaper_blur, 0, 40));
