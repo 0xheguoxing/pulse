@@ -43,6 +43,7 @@
 #include "entry_group.h"
 #include "context_menu.h"
 #include "actions/action_registry.h"
+#include "actions/action_state.h"
 #include "context_menu_controller.h"
 #include "context_menu_prefs.h"
 #include "global_search_handoff.h"
@@ -5434,6 +5435,416 @@ void TestSplitLayout() {
 // 兼容打开方式 (settings index 9): the folder verb stays unregistered while the
 // scope stays selected, the state reads healthy, and the choice survives a save.
 // persist = false keeps every Apply* away from the registry.
+// get_state, the selector and waiting (actions/action_state.h), on panes
+// filled by hand; the wait for a finished task runs a real copy in the sandbox.
+namespace {
+
+uint64_t AsLocalTicks(int y, int m, int d, int h, int mi) {
+    SYSTEMTIME local{}, utc{};
+    local.wYear = static_cast<WORD>(y);
+    local.wMonth = static_cast<WORD>(m);
+    local.wDay = static_cast<WORD>(d);
+    local.wHour = static_cast<WORD>(h);
+    local.wMinute = static_cast<WORD>(mi);
+    FILETIME ft{};
+    TzSpecificLocalTimeToSystemTime(nullptr, &local, &utc);
+    SystemTimeToFileTime(&utc, &ft);
+    return app::actions::FileTimeTicks(ft);
+}
+
+fs::DirEntry AsEntry(const wchar_t* name, uint64_t size, uint64_t mtime, bool dir = false, DWORD attrs = 0) {
+    fs::DirEntry e;
+    e.name = name;
+    e.size = size;
+    e.mtime.dwLowDateTime = static_cast<DWORD>(mtime & 0xFFFFFFFFu);
+    e.mtime.dwHighDateTime = static_cast<DWORD>(mtime >> 32);
+    e.is_dir = dir;
+    e.attrs = attrs | (dir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_ARCHIVE);
+    return e;
+}
+
+int64_t AsInt(const json::Value* v) {
+    int64_t n = -1;
+    if (v) v->get_int(n, -(int64_t{1} << 53), int64_t{1} << 53);
+    return n;
+}
+
+const json::Value& AsPane(const json::Value& state, size_t i) {
+    static const json::Value none;
+    const json::Value* panes = state.find("panes");
+    return panes && i < panes->items().size() ? panes->items()[i] : none;
+}
+
+std::vector<int> AsPick(AppState& s, const char* selector_json, uint64_t now, std::string* reason = nullptr) {
+    namespace act = app::actions;
+    json::Value args;
+    act::Selector sel;
+    std::string error;
+    if (!json::Parse(selector_json, args) || !act::ParseSelector(args, now, sel, error)) return {-99};
+    const act::SelectorMatch m = act::ResolveSelector(s, sel);
+    if (reason) *reason = m.reason;
+    act::ApplySelection(s, m);
+    return m.matched;
+}
+
+// Runs the message loop until `done` or `ms` pass; `tick` runs each turn.
+bool AsPump(const std::function<bool()>& done, DWORD ms, const std::function<void(ULONGLONG)>& tick = {}) {
+    const ULONGLONG start = GetTickCount64();
+    while (!done()) {
+        const ULONGLONG elapsed = GetTickCount64() - start;
+        if (elapsed > ms) return false;
+        if (tick) tick(elapsed);
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        Sleep(5);
+    }
+    return true;
+}
+
+} // namespace
+
+void TestActionState() {
+    namespace act = app::actions;
+    auto owner = std::make_unique<AppState>();
+    AppState& s = *owner;
+    s.places.persist = false;
+    s.appPrefs.persist = false;
+    s.isolatedTest = true;
+
+    // ---- Panes in screen order -------------------------------------------
+    app::LayoutTab& lt = LiveLayout(s);
+    lt.panes.clear();
+    for (int i = 0; i < 4; ++i) lt.panes.push_back(std::make_unique<Pane>());
+    std::vector<Pane*> four;
+    for (auto& p : lt.panes) four.push_back(p.get());
+    lt.layout = LayoutPreset::FourGrid;
+    lt.root = MakePresetTree(LayoutPreset::FourGrid, four);
+    lt.focused_index = 3;
+    lt.target_index = 1;
+    const wchar_t* folders[] = { L"C:\\AsT\\One", L"C:\\AsT\\Two", L"\\\\?\\C:\\AsT\\Three", L"C:\\AsT\\Four" };
+    for (int i = 0; i < 4; ++i) {
+        four[static_cast<size_t>(i)]->view.current_path = folders[i];
+        four[static_cast<size_t>(i)]->view.SetSnapshot(std::make_shared<std::vector<fs::DirEntry>>());
+    }
+    {
+        std::vector<std::pair<Pane*, D2D1_RECT_F>> laid;
+        LayoutSplitTree(*lt.root, D2D1::RectF(0, 0, 1000, 800), 8.0f, laid);
+        const std::vector<Pane*> order = act::PanesOnScreen(lt);
+        bool reading = order.size() == 4 && laid.size() == 4;
+        auto rect_of = [&](Pane* p) {
+            for (const auto& entry : laid)
+                if (entry.first == p) return entry.second;
+            return D2D1::RectF();
+        };
+        if (reading) {
+            const D2D1_RECT_F r0 = rect_of(order[0]), r1 = rect_of(order[1]), r2 = rect_of(order[2]), r3 = rect_of(order[3]);
+            reading = r0.left < r1.left && r0.top == r1.top && r2.top > r0.top && r2.left < r3.left && r2.top == r3.top;
+        }
+        Check(reading, L"state: four panes are numbered left to right, then top to bottom");
+        // A custom tree whose tree order is not reading order: [A over B] | C.
+        Pane a, b, c;
+        app::LayoutTab custom;
+        std::vector<Pane*> left_pair{ &a, &b };
+        custom.root = SplitContainer::Join(SplitOrientation::Vertical, 0.5f,
+                                           MakePresetTree(LayoutPreset::TwoHorizontal, left_pair),
+                                           SplitContainer::CreateLeaf(&c));
+        const std::vector<Pane*> mixed = act::PanesOnScreen(custom);
+        Check(mixed.size() == 3 && mixed[0] == &a && mixed[1] == &c && mixed[2] == &b,
+              L"state: a custom split is numbered by position, not tree order");
+    }
+    {
+        const json::Value state = act::StateSnapshot(s);
+        const std::vector<Pane*> order = act::PanesOnScreen(lt);
+        bool fields = state.find("panes") && state.find("panes")->items().size() == 4;
+        for (size_t i = 0; fields && i < 4; ++i) {
+            const json::Value& p = AsPane(state, i);
+            const bool is_focused = order[i] == lt.panes[3].get();
+            const bool is_target = order[i] == lt.panes[1].get();
+            fields = AsInt(p.find("pane")) == static_cast<int64_t>(i) + 1 &&
+                     p.get_bool("focused") == is_focused && p.get_bool("target") == is_target;
+        }
+        Check(fields, L"state: pane numbers, the focused pane and the target pane");
+        Check(AsPane(state, 2).get_string("folder") == "C:\\AsT\\Three",
+              L"state: folders are shown without the \\\\?\\ prefix");
+        Check(state.find("tab") && state.find("tab")->get_string("layout") == "four" &&
+              state.find("window") && state.find("window")->get_string("title") == "Four",
+              L"state: the tab's layout and the window title from the focused folder");
+        Check(state.find("preview") && state.find("preview")->is_null() && state.find("dialog") &&
+              state.find("dialog")->is_null() && state.find("panels") && state.find("file_ops") &&
+              !state.find("file_ops")->get_bool("active"),
+              L"state: no preview, dialog or file task when none is open");
+    }
+
+    // ---- One pane, the selector's fixture ----------------------------------
+    lt.panes.resize(2);
+    std::vector<Pane*> two{ lt.panes[0].get(), lt.panes[1].get() };
+    lt.layout = LayoutPreset::TwoVertical;
+    lt.root = MakePresetTree(LayoutPreset::TwoVertical, two);
+    lt.focused_index = 0;
+    lt.target_index = 1;
+    Tab& tab = lt.panes[0]->view;
+    tab.current_path = L"C:\\AsT\\Downloads";
+    tab.view_mode = ui::ViewMode::Tiles;
+    tab.sort_column = ui::SortColumn::Size;
+    tab.sort_direction = ui::SortDirection::Desc;
+    // "Now" is Wednesday 2026-10-28 15:00 local; the week began on Monday the 26th.
+    const uint64_t now = AsLocalTicks(2026, 10, 28, 15, 0);
+    const uint64_t kb = 1024, mb = 1024 * 1024;
+    auto entries = std::make_shared<std::vector<fs::DirEntry>>();
+    entries->push_back(AsEntry(L"发票-10月.pdf", 300 * kb, AsLocalTicks(2026, 10, 28, 10, 0)));     // 0
+    entries->push_back(AsEntry(L"合同扫描.PDF", 3 * mb, AsLocalTicks(2026, 10, 28, 9, 0)));         // 1
+    entries->push_back(AsEntry(L"截图.png", 1 * mb, AsLocalTicks(2026, 10, 28, 8, 0)));             // 2
+    entries->push_back(AsEntry(L"素材包.zip", 48 * mb, AsLocalTicks(2026, 10, 27, 21, 0)));         // 3
+    entries->push_back(AsEntry(L"说明书.pdf", 2 * mb, AsLocalTicks(2026, 10, 25, 12, 0)));          // 4
+    entries->push_back(AsEntry(L"视频.mp4", 150 * mb, AsLocalTicks(2026, 9, 14, 12, 0)));           // 5
+    entries->push_back(AsEntry(L"资料", 0, AsLocalTicks(2026, 10, 28, 7, 0), true));                // 6
+    entries->push_back(AsEntry(L"隐藏.pdf", 1 * kb, AsLocalTicks(2026, 10, 28, 7, 0), false,
+                               FILE_ATTRIBUTE_HIDDEN));                                             // 7
+    entries->push_back(AsEntry(L"logo.png", 20 * kb, AsLocalTicks(2026, 10, 26, 11, 0)));           // 8
+    tab.SetSnapshot(entries);
+
+    Check(AsPick(s, R"({"extensions":["pdf"],"modified":"today"})", now) == std::vector<int>({0, 1}) &&
+              tab.SelectedIndices() == std::vector<int>({0, 1}),
+          L"selector: today's PDFs are selected; hidden files are never candidates");
+    Check(AsPick(s, R"({"name":"*.pdf"})", now) == std::vector<int>({0, 1, 4}),
+          L"selector: a wildcard name matches whole names, ignoring case");
+    Check(AsPick(s, R"({"name":["发票","logo"]})", now) == std::vector<int>({0, 8}),
+          L"selector: names without wildcards match what they contain, any of them");
+    Check(AsPick(s, R"({"type":"image"})", now) == std::vector<int>({2, 8}) &&
+              AsPick(s, R"({"type":"folder"})", now) == std::vector<int>({6}),
+          L"selector: type uses search_files' kinds");
+    Check(AsPick(s, R"({"size":{"larger_than":"100MB"}})", now) == std::vector<int>({5}) &&
+              AsPick(s, R"({"size":{"smaller_than":"1MB"}})", now) == std::vector<int>({0, 8}),
+          L"selector: sizes compare files only, never folders");
+    Check(AsPick(s, R"({"modified":"yesterday"})", now) == std::vector<int>({3}) &&
+              AsPick(s, R"({"modified":"this_week"})", now) == std::vector<int>({0, 1, 2, 3, 6, 8}) &&
+              AsPick(s, R"({"modified":"last_month"})", now) == std::vector<int>({5}) &&
+              AsPick(s, R"({"modified":{"after":"2026-10-25","before":"2026-10-25"}})", now) ==
+                  std::vector<int>({4}),
+          L"selector: date presets start on Monday and include the whole last day");
+    AsPick(s, R"({"extensions":["pdf"],"modified":"today"})", now);
+    AsPick(s, R"({"items":["LOGO.png"],"mode":"add"})", now);
+    Check(tab.SelectedIndices() == std::vector<int>({0, 1, 8}), L"selector: add keeps the selection and adds");
+    tab.SelectIndices({0, 6});
+    AsPick(s, R"({"selected":true,"type":"folder","mode":"remove"})", now);
+    Check(tab.SelectedIndices() == std::vector<int>({0}), L"selector: remove drops matches within the selection");
+    {
+        const app::TagId id = s.places.CreateTag(L"AsT 重要", 0xE81123);
+        int tag_index = -1;
+        for (size_t i = 0; i < s.places.tags.size(); ++i)
+            if (s.places.tags[i].id == id) tag_index = static_cast<int>(i);
+        s.places.SetTagged(tag_index, L"C:\\AsT\\Downloads\\说明书.pdf", true);
+        std::string reason;
+        Check(tag_index >= 0 && AsPick(s, R"({"tag":"ast 重要"})", now) == std::vector<int>({4}),
+              L"selector: a tag's name selects the items carrying it");
+        AsPick(s, R"({"tag":"没有这个标签"})", now, &reason);
+        Check(reason == "unknown_tag", L"selector: an unknown tag says so");
+    }
+    {
+        tab.SelectIndices({2});
+        std::string reason;
+        const auto none = AsPick(s, R"({"name":"不存在"})", now, &reason);
+        Check(none.empty() && reason == "no_match" && tab.SelectedIndices() == std::vector<int>({2}),
+              L"selector: nothing matched leaves the selection alone and says why");
+        tab.filter_text = L"发票";
+        const auto hidden = AsPick(s, R"({"name":"*.png"})", now, &reason);
+        json::Value args;
+        act::Selector sel;
+        std::string error;
+        json::Parse(R"({"name":"*.png"})", args);
+        act::ParseSelector(args, now, sel, error);
+        const act::SelectorMatch m = act::ResolveSelector(s, sel);
+        Check(hidden.empty() && reason == "filter_hides" && m.hidden_by_filter == 2 &&
+                  tab.SelectedIndices() == std::vector<int>({2}),
+              L"selector: items the filter box hides are not selected, only counted");
+        tab.filter_text.clear();
+        tab.loading = true;
+        AsPick(s, R"({"name":"*.png"})", now, &reason);
+        Check(reason == "loading", L"selector: a pane still loading asks to wait");
+        tab.loading = false;
+    }
+    {
+        Tab& right = lt.panes[1]->view;
+        right.current_path = L"C:\\AsT\\Desktop";
+        auto r = std::make_shared<std::vector<fs::DirEntry>>();
+        r->push_back(AsEntry(L"a.txt", 1, now));
+        r->push_back(AsEntry(L"b.mp4", 200 * mb, now));
+        right.SetSnapshot(r);
+        Check(AsPick(s, R"({"pane":2,"type":"video","size":{"larger_than":"100MB"}})", now) ==
+                  std::vector<int>({1}) &&
+                  AsPick(s, R"({"pane":"target","name":"a.txt"})", now) == std::vector<int>({0}) &&
+                  right.SelectedIndices() == std::vector<int>({0}),
+              L"selector: pane numbers and the target pane pick the pane");
+    }
+    {
+        json::Value args;
+        act::Selector sel;
+        std::string error;
+        int bad = 0;
+        for (const char* text : { R"({})", R"({"mode":"swap","name":"a"})", R"({"type":"car"})",
+                                  R"({"modified":"tomorrow"})", R"({"size":{"larger_than":"lots"}})",
+                                  R"({"pane":5,"name":"a"})", R"({"modified":{"after":"2026-13-01"}})" })
+            if (json::Parse(text, args) && !act::ParseSelector(args, now, sel, error) && !error.empty()) ++bad;
+        Check(bad == 7, L"selector: invalid conditions are rejected with a reason");
+        uint64_t bytes = 0;
+        Check(act::ParseByteSize(L"1.5 GB", bytes) && bytes == 1610612736ull &&
+                  act::ParseByteSize(L"500k", bytes) && bytes == 512000 &&
+                  act::ParseByteSize(L"2048", bytes) && bytes == 2048 && !act::ParseByteSize(L"abc", bytes),
+              L"selector: byte sizes in B, KB, MB and GB");
+        Check(act::WildcardMatch(L"aXXbc.txt", L"A*B?.TXT") && act::WildcardMatch(L"", L"*") &&
+                  !act::WildcardMatch(L"x.pdf.bak", L"*.pdf") && act::WildcardMatch(L"报告-最终.docx", L"报告*.docx"),
+              L"selector: wildcards * and ?, ignoring case");
+    }
+    {
+        json::Value args;
+        act::Selector sel;
+        std::string error;
+        json::Parse(R"({"extensions":["pdf"]})", args);
+        act::ParseSelector(args, now, sel, error);
+        const json::Value report = act::ApplySelection(s, act::ResolveSelector(s, sel));
+        Check(AsInt(report.find("matched")) == 3 && AsInt(report.find("selected")) == 3 &&
+                  report.find("names") && report.find("names")->items().size() == 3 &&
+                  AsInt(report.find("bytes")) == static_cast<int64_t>(300 * kb + 3 * mb + 2 * mb),
+              L"selector: the report gives matches, the selection, names and bytes");
+    }
+
+    // ---- Caps -----------------------------------------------------------------
+    {
+        auto many = std::make_shared<std::vector<fs::DirEntry>>();
+        for (int i = 0; i < 250; ++i)
+            many->push_back(AsEntry((L"f" + std::to_wstring(1000 + i) + L".txt").c_str(), 1, now));
+        tab.SetSnapshot(many);
+        tab.SelectAll();
+        Tab& right = lt.panes[1]->view;
+        right.SetSnapshot(many);
+        right.SelectAll();
+        const std::wstring dir = kOpsTestRoot + L"\\action_state";
+        CreateDirectoryW(kOpsTestRoot.c_str(), nullptr);
+        CreateDirectoryW(dir.c_str(), nullptr);
+        std::vector<std::wstring> staged;
+        for (int i = 0; i < 12; ++i) {
+            const std::wstring p = dir + L"\\tray" + std::to_wstring(i) + L".txt";
+            HANDLE h = CreateFileW(p.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+            staged.push_back(p);
+        }
+        s.tray.Collect(staged, false);
+        const json::Value state = act::StateSnapshot(s);
+        const json::Value& left = AsPane(state, 0);
+        const json::Value& other = AsPane(state, 1);
+        const json::Value* lsel = left.find("selected");
+        const json::Value* osel = other.find("selected");
+        Check(lsel && AsInt(lsel->find("count")) == 250 && lsel->find("paths") &&
+                  lsel->find("paths")->items().size() == act::kStateFocusedPaths &&
+                  lsel->find("paths")->items()[0].as_string() == "C:\\AsT\\Downloads\\f1000.txt",
+              L"state: the focused pane lists 200 of 250 selected paths and the count");
+        Check(osel && AsInt(osel->find("count")) == 250 && osel->find("names") &&
+                  osel->find("names")->items().size() == act::kStateOtherNames && !osel->find("paths"),
+              L"state: other panes list 20 names");
+        const json::Value* tray = state.find("tray");
+        Check(tray && AsInt(tray->find("count")) == 12 && tray->find("names") &&
+                  tray->find("names")->items().size() == act::kStateTrayNames,
+              L"state: the tray gives its count and 10 names");
+        Check(left.get_string("view") == "tiles" && left.find("sort") &&
+                  left.find("sort")->items().size() == 2 && left.find("sort")->items()[0].as_string() == "size" &&
+                  left.find("sort")->items()[1].as_string() == "desc" && state.find("tab") &&
+                  state.find("tab")->get_string("layout") == "side_by_side",
+              L"state: view, sort and layout use the names get_state documents");
+        s.tray.Clear();
+        for (const std::wstring& p : staged) DeleteFileW(p.c_str());
+        RemoveDirectoryW(dir.c_str());
+    }
+
+    // ---- Waiting ----------------------------------------------------------------
+    {
+        act::WaitSpec spec;
+        std::string error;
+        json::Value args;
+        json::Parse(R"({"wait":"preview_open","timeout_ms":99999})", args);
+        Check(act::ParseWait(args, spec, error) && spec.kind == act::WaitKind::PreviewOpen && spec.timeout_ms == 10000,
+              L"wait: timeouts are capped per kind");
+        json::Parse(R"({"wait":"listing_loaded"})", args);
+        Check(act::ParseWait(args, spec, error) && spec.timeout_ms == 5000, L"wait: listing_loaded waits 5 s by default");
+        json::Parse(R"({"wait":"soon"})", args);
+        Check(!act::ParseWait(args, spec, error), L"wait: an unknown kind is rejected");
+
+        tab.loading = true;
+        spec = {};
+        spec.kind = act::WaitKind::ListingLoaded;
+        spec.timeout_ms = 3000;
+        bool called = false;
+        json::Value got;
+        ULONGLONG loaded_at = 0;
+        act::WaitFor(s, spec, nullptr, [&](AppState&, json::Value out) { called = true; got = std::move(out); });
+        const bool returned_at_once = !called;
+        AsPump([&] { return called; }, 4000, [&](ULONGLONG elapsed) {
+            if (elapsed >= 150 && tab.loading) { tab.loading = false; loaded_at = GetTickCount64(); }
+        });
+        Check(returned_at_once && called && got.get_bool("ok") && AsInt(got.find("loaded")) == 250 &&
+                  loaded_at && GetTickCount64() - loaded_at < 1000,
+              L"wait: listing_loaded returns soon after the listing arrives, without blocking");
+
+        tab.loading = true;
+        spec.timeout_ms = 200;
+        called = false;
+        act::WaitFor(s, spec, nullptr, [&](AppState&, json::Value out) { called = true; got = std::move(out); });
+        AsPump([&] { return called; }, 3000);
+        Check(called && !got.get_bool("ok") && got.get_bool("timed_out") && AsInt(got.find("loaded")) == 250,
+              L"wait: a timeout reports how far it got, not an error");
+        tab.loading = false;
+
+        spec = {};
+        spec.kind = act::WaitKind::OpFinished;
+        called = false;
+        act::WaitFor(s, spec, nullptr, [&](AppState&, json::Value out) { called = true; got = std::move(out); });
+        Check(called && got.get_bool("ok"), L"wait: op_finished with nothing running returns at once");
+    }
+    {
+        const std::wstring dir = kOpsTestRoot + L"\\action_state_ops";
+        CreateDirectoryW(kOpsTestRoot.c_str(), nullptr);
+        CreateDirectoryW(dir.c_str(), nullptr);
+        CreateDirectoryW((dir + L"\\dst").c_str(), nullptr);
+        const std::wstring src = dir + L"\\copy-me.bin";
+        HANDLE h = CreateFileW(src.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h != INVALID_HANDLE_VALUE) {
+            std::vector<char> block(1 << 20, 'p');
+            DWORD written = 0;
+            for (int i = 0; i < 4; ++i) WriteFile(h, block.data(), static_cast<DWORD>(block.size()), &written, nullptr);
+            CloseHandle(h);
+        }
+        s.ops.Start([] {});
+        Sleep(800);  // the ops worker brings up pulse_shell.exe
+        ops::OpRequest r;
+        r.type = ops::OpType::Copy;
+        r.sources.push_back(src);
+        r.dest_dir = dir + L"\\dst";
+        const uint64_t task = s.ops.Submit(std::move(r));
+        act::WaitSpec spec;
+        spec.kind = act::WaitKind::OpFinished;
+        spec.task = task;
+        spec.timeout_ms = 30000;
+        bool called = false;
+        json::Value got;
+        act::WaitFor(s, spec, nullptr, [&](AppState&, json::Value out) { called = true; got = std::move(out); });
+        AsPump([&] { return called; }, 35000);
+        Check(task && called && got.get_bool("ok") && got.get_string("phase") == "completed" &&
+                  AsInt(got.find("task")) == static_cast<int64_t>(task) && Exists(dir + L"\\dst\\copy-me.bin"),
+              L"wait: op_finished returns a real copy's result");
+        spec.task = 1;  // long gone or never this run's
+        called = false;
+        act::WaitFor(s, spec, nullptr, [&](AppState&, json::Value out) { called = true; got = std::move(out); });
+        Check(task <= 1 || (called && !got.get_bool("ok")), L"wait: an old task number does not hang");
+        s.ops.Stop();
+        DeleteFileW((dir + L"\\dst\\copy-me.bin").c_str());
+        DeleteFileW(src.c_str());
+        RemoveDirectoryW((dir + L"\\dst").c_str());
+        RemoveDirectoryW(dir.c_str());
+    }
+}
+
 void TestIntegrationCompat() {
     AppPrefs prefs;
     prefs.persist = false;
@@ -8452,6 +8863,12 @@ int RunSelfTest1B2() {
         return g_fail ? 1 : 0;
     }
     if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
+        wcscmp(test_case, L"action-state") == 0) {
+        TestActionState();
+        if (g_log) { fclose(g_log); g_log = nullptr; }
+        return g_fail ? 1 : 0;
+    }
+    if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
         wcscmp(test_case, L"tray-stack") == 0) {
         TestTrayStack();
         if (g_log) { fclose(g_log); g_log = nullptr; }
@@ -8595,6 +9012,7 @@ int RunSelfTest1B2() {
     TestUniqueName();
     TestMultiSelect();
     TestSplitLayout();
+    TestActionState();
     TestViewLayouts();
     TestListColumns();
     TestOptionalColumns();

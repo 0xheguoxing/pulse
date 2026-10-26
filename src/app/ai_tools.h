@@ -1,6 +1,6 @@
 // ai_tools.h - The first batch of AI tools, registered on the tool broker.
 //
-//   pulse.get_context     Read    the active tab's folder and selection (UI thread)
+//   pulse.get_context     Read    the window's state, as get_state      (UI thread)
 //   pulse.list_folder     Read    a folder's items, paged             (ai_tools_fs.h)
 //   pulse.search          Read    Pulse's file name index
 //   pulse.get_properties  Read    file system and shell properties    (ai_tools_fs.h)

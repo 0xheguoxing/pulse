@@ -23,7 +23,8 @@ void HandleAiUiTask(AppState* target, LPARAM lparam);
 // the most recently active window or null.
 bool PostAiUiTask(HWND host, std::function<void(AppState*)> work);
 
-// pulse.get_context: the active tab's folder and up to 200 selected paths.
+// pulse.get_context: the get_state snapshot (actions/action_state.h): tabs,
+// panes in screen order, up to 200 selected paths, tray, preview, dialog.
 ToolOutcome GetContextTool(HWND host, const ToolCall& call);
 // pulse.reveal {paths[]}: opens the first item's folder (the client's reveal
 // tab when it still exists, else a tab already showing it, else a new one)

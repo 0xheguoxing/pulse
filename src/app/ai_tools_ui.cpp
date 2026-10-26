@@ -4,6 +4,7 @@
 #include "app_navigation.h"
 #include "app_runtime.h"
 #include "app_state.h"
+#include "actions/action_state.h"
 #include "shell_window_sync.h"
 #include "tray_reveal.h"
 #include "../fs/fs_enum.h"
@@ -18,7 +19,6 @@ namespace pulse::app::ai {
 namespace {
 
 constexpr DWORD kUiWaitMs = 5000;
-constexpr size_t kMaxContextPaths = 200;
 constexpr ULONGLONG kRevealSpacingMs = 500;   // at most two reveals a second
 
 struct UiTask {
@@ -67,35 +67,14 @@ ToolOutcome NoWindow() {
     return ToolOutcome::Fail("unsupported", "Pulse has no window open right now; ask the user to open Pulse.", true);
 }
 
+// The same snapshot the assistant's get_state returns (action_state.h).
 void ReadContext(AppState* s, json::Value& out) {
-    out = json::Value::Object();
-    json::Value selected = json::Value::Array();
-    app::Tab* tab = s ? ActiveTab(*s) : nullptr;
-    out.set("window", tab != nullptr);
-    if (!tab) {
-        out.set("folder", nullptr);
-        out.set("selected", std::move(selected));
-        out.set("selected_count", 0);
+    if (!s) {
+        out = json::Value::Object();
+        out.set("window", nullptr);
         return;
     }
-    const std::wstring& folder = tab->current_path;
-    if (folder.empty()) {
-        out.set("folder", nullptr);
-        out.set("view", "This PC");
-    } else if (fs::IsVirtualPath(folder)) {
-        out.set("folder", nullptr);
-        out.set("view", json::Utf8(folder));   // a search, tag or other view, not a folder
-    } else {
-        out.set("folder", json::Utf8(folder));
-    }
-    std::vector<int> indices;
-    if (tab->snapshot) indices = tab->SelectedIndices();
-    std::sort(indices.begin(), indices.end());
-    for (size_t i = 0; i < indices.size() && i < kMaxContextPaths; ++i)
-        selected.push(json::Utf8(EntryFullPath(*tab, indices[i])));
-    out.set("selected", std::move(selected));
-    out.set("selected_count", static_cast<uint64_t>(indices.size()));
-    if (indices.size() > kMaxContextPaths) out.set("truncated", true);
+    out = actions::StateSnapshot(*s);
 }
 
 struct RevealJob {

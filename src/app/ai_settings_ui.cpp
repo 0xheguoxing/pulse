@@ -30,7 +30,7 @@ std::wstring Fill(std::wstring text, std::wstring_view key, const std::wstring& 
 
 std::wstring ToolLabel(std::string tool) {
     if (tool.rfind("pulse.", 0) == 0) tool.erase(0, 6);
-    if (tool == "get_context") return Text(I::AiToolGetContext);
+    if (tool == "get_context" || tool == "get_state") return Text(I::AiToolGetContext);
     if (tool == "list_folder") return Text(I::AiToolListFolder);
     if (tool == "search") return Text(I::AiToolSearch);
     if (tool == "get_properties") return Text(I::AiToolProperties);

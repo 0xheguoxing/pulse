@@ -10,8 +10,10 @@ std::vector<ToolDef> MakeTools() {
     const char* kPathsNote = "Absolute Windows paths, e.g. C:\\Users\\me\\Documents\\report.pdf.";
     std::vector<ToolDef> tools;
     tools.push_back({"get_context", "Current Pulse view",
-        "Returns the folder open in Pulse's active tab and the items the user has selected there (up to 200 "
-        "paths). Use it to find out what \"this folder\" or \"these files\" refers to.",
+        "Returns what the user sees in Pulse: the panes of the active tab in screen order (pane 1 is the left "
+        "or top one) with each folder, view, filter and selection (up to 200 paths for the focused pane), the "
+        "other tabs, the staging tray, the preview and any open dialog. Use it to find out what \"this folder\", "
+        "\"these files\" or \"the right pane\" refers to.",
         true, false, true, {}});
     tools.push_back({"list_folder", "List a folder",
         "Lists the items in a folder: name, size, modified time and whether each is a folder. File contents are "

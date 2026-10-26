@@ -6,7 +6,7 @@
 // the same conversation blocks the design shows:
 //
 //   reasoning_content   -> the thinking block (folds into 已思考 N 秒)
-//   get_context         -> step 查看当前窗口 (UI thread)
+//   get_state           -> step 查看当前窗口 (UI thread; actions/action_state.h)
 //   list_folder         -> step 读取文件夹 (worker thread, ai_tools_fs.h)
 //   get_properties      -> step 查看属性 (worker thread)
 //   organize_files      -> plan card + amber confirm card; on 整理 the moves
@@ -49,6 +49,7 @@
 #include "window_placement.h"
 #include "zip_compress.h"
 #include "actions/action_settings.h"
+#include "actions/action_state.h"
 #include "../common/path_utils.h"
 #include "../common/json_value.h"
 #include "../common/localization.h"
@@ -176,7 +177,7 @@ std::wstring FolderLabel(const std::wstring& path) {
 std::shared_ptr<ui::AiListOverlay> g_list;
 
 // Tabs keep the \\?\ form of long paths; tool arguments come back without
-// it (CheckPathArg) or with it (the model echoes get_context).
+// it (CheckPathArg) or with it (the model echoes get_state).
 std::wstring NormDir(std::wstring p) {
     for (wchar_t& c : p)
         if (c == L'/') c = L'\\';
@@ -270,8 +271,8 @@ std::string Utf8(const std::wstring& w) { return json::Utf8(w); }
 const json::Value& Tools() {
     static const json::Value tools = [] {
         static constexpr char kTools[] = R"JSON([
-{"type":"function","function":{"name":"get_context",
- "description":"The active Pulse tab: its folder (null for This PC or a virtual view such as a search), how many items it shows, and up to 200 selected paths.",
+{"type":"function","function":{"name":"get_state",
+ "description":"What the user sees in this Pulse window: the panes of the active tab in screen order (pane 1 is the left or top one; focused marks the one in use, target the Ctrl+Alt+D destination) with each folder (null for This PC or a virtual view such as a search, named in location), view, sort, filter, item counts and selection (up to 200 full paths for the focused pane, 20 names for the others), plus the other tabs and windows by title, the staging tray, the preview, an open dialog and the running file task.",
  "parameters":{"type":"object","properties":{}}}},
 {"type":"function","function":{"name":"search_files",
  "description":"Finds files and folders anywhere with Pulse's file index in milliseconds (no disk walk, never reads contents). Pulse opens the results in the active tab as a search and shows the conditions to the user as chips they can edit. Returns the count, total size, the folders they are in and the first items. Use it whenever the user wants to find files by name, type, date or size, even without saying where.",
@@ -397,7 +398,7 @@ std::string SystemPrompt() {
          "You help the user find, understand and organize files with the tools provided.\n"
          "Rules:\n"
          "- Base every statement about files on tool results; never invent files, sizes or folders.\n"
-         "- When the request is about this folder, the selection or what is open, call get_context first; "
+         "- When the request is about this folder, the selection or what is open, call get_state first; "
          "use list_folder to see a folder's items.\n"
          "- To find files by name, type, date or size, call search_files once with the conditions (work out dates "
          "such as last month from today's date; without a place, search everywhere). Pulse lists the results itself, "
@@ -611,35 +612,23 @@ void RunJob(AppState& s, std::function<ToolOutcome(const std::atomic<bool>&)> wo
 
 // --------------------------------------------------------------- tools --
 
-void ToolGetContext(AppState& s, const app::ai::ModelToolCall& call) {
+void ToolGetState(AppState& s, const app::ai::ModelToolCall& call) {
     AiAgent& a = Agent(s);
     AddStep(s, a, ui::AiIcon::Window, Text(I::AiAsstStepWindow), {}, Text(I::AiAsstStepWindowRun));
-    json::Value out = json::Value::Object();
+    json::Value out = app::actions::StateSnapshot(s);
+    // The step card reads the focused pane, as before.
     std::wstring sub;
     app::Tab* tab = ActiveTab(s);
     const std::wstring folder = tab ? tab->current_path : std::wstring();
     if (!tab || folder.empty() || fs::IsVirtualPath(folder)) {
-        out.set("folder", nullptr);
-        if (tab && !folder.empty()) out.set("view", Utf8(folder));
-        else out.set("view", "This PC");
         sub = Text(I::AiAsstStepWindowNone);
     } else {
-        out.set("folder", Utf8(folder));
-        out.set("folder_display_name", Utf8(FolderLabel(folder)));
-        out.set("items", static_cast<uint64_t>(tab->EntryCount()));
-        std::vector<int> picked;
-        if (tab->snapshot) picked = tab->SelectedIndices();
-        std::sort(picked.begin(), picked.end());
-        json::Value selected = json::Value::Array();
-        for (size_t i = 0; i < picked.size() && i < 200; ++i)
-            selected.push(Utf8(JoinPath(folder, tab->EntryAt(static_cast<size_t>(picked[i])).name)));
-        out.set("selected", std::move(selected));
-        out.set("selected_count", static_cast<uint64_t>(picked.size()));
+        const size_t picked = static_cast<size_t>((std::max)(0, tab->SelectedCount()));
         const std::wstring label = FolderLabel(folder);
-        sub = picked.empty()
+        sub = picked == 0
                   ? Fill(Fill(Text(I::AiAsstStepWindowDone), L"{folder}", label), L"{n}", Num(tab->EntryCount()))
                   : Fill(Fill(Fill(Text(I::AiAsstStepWindowSel), L"{folder}", label), L"{n}", Num(tab->EntryCount())),
-                         L"{k}", Num(picked.size()));
+                         L"{k}", Num(picked));
     }
     ToolOutcome result;
     result.data = std::move(out);
@@ -6908,7 +6897,7 @@ void NextTool(AppState& s) {
         NextTool(s);
         return;
     }
-    if (call.name == "get_context") ToolGetContext(s, call);
+    if (call.name == "get_state") ToolGetState(s, call);
     else if (call.name == "search_files") ToolSearch(s, call, args);
     else if (call.name == "list_folder") ToolListFolder(s, call, std::move(args));
     else if (call.name == "get_properties") ToolGetProperties(s, call, args);
