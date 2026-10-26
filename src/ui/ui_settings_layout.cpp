@@ -37,6 +37,22 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
         if (needed() > avail) headings = false;
         if (needed() > avail) { pitch = 40.0f; row_h = 36.0f; }
         if (needed() > avail) { pitch = 36.0f; row_h = 33.0f; top_pad = 6.0f; }
+        // Still too short (a low window): 关于 joins the list as its last row
+        // after a separator and the version line gives way (关于 shows it), then
+        // rows and separators tighten, and as a last resort share the height.
+        float sep = 13.0f;
+        const bool about_in_list = needed() > avail;
+        if (about_in_list) {
+            const float room = (l.nav.bottom - l.nav.top) / scale - 6.0f;
+            auto fits = [&]() { return top_pad + (rows + 1) * pitch + kSettingsNavGroups * sep <= room; };
+            if (!fits()) { pitch = 34.0f; row_h = 31.0f; sep = 11.0f; }
+            if (!fits()) { pitch = 32.0f; row_h = 30.0f; sep = 9.0f; top_pad = 4.0f; }
+            if (!fits()) { pitch = 30.0f; row_h = 28.0f; sep = 7.0f; }
+            if (!fits()) {
+                pitch = (std::max)(26.0f, (room - top_pad - kSettingsNavGroups * sep) / static_cast<float>(rows + 1));
+                row_h = pitch - 2.0f;
+            }
+        }
         float y = l.nav.top + top_pad * scale;
         int group = 0;
         for (int k = 0; k < rows; ++k) {
@@ -45,8 +61,9 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
                     l.nav_group_label[group] = D2D1::RectF(l.nav.left + 20*scale, y + 6*scale, l.nav.right - 12*scale, y + head*scale);
                     y += head * scale;
                 } else if (group > 0) {
-                    l.nav_separator[group] = D2D1::RectF(l.nav.left + 16*scale, y + 6*scale, l.nav.right - 16*scale, y + 7*scale);
-                    y += 13.0f * scale;
+                    const float mid = std::floor(sep * 0.5f);
+                    l.nav_separator[group] = D2D1::RectF(l.nav.left + 16*scale, y + mid*scale, l.nav.right - 16*scale, y + (mid + 1.0f)*scale);
+                    y += sep * scale;
                 }
                 ++group;
             }
@@ -54,6 +71,12 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
             const float top = y + (pitch - row_h) * 0.5f * scale;
             l.nav_row[page] = D2D1::RectF(l.nav.left + 8*scale, top, l.nav.right - 8*scale, top + row_h*scale);
             y += pitch * scale;
+        }
+        if (about_in_list) {
+            // The divider above 关于 is drawn 12 px over its row (settings view).
+            y += sep * scale;
+            const float top = (std::max)(y + (pitch - row_h) * 0.5f * scale, y - sep * scale + 13.0f * scale);
+            l.nav_row[3] = D2D1::RectF(l.nav.left + 8*scale, top, l.nav.right - 8*scale, top + row_h*scale);
         }
         l.nav_row[6] = {};
     }

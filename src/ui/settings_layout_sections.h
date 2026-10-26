@@ -175,7 +175,22 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
             l.hover_select_row=row(64,true);
         }
         l.item_checkbox_row=row(64);
-        l.blank_click_row=row(seg_h); segments(l.blank_click_row,l.blank_click_choice,3,282);
+        {
+            // Its description is long: when it would not fit on one line left
+            // of the choices, the choices go under it (aligned with the text)
+            // instead of cutting it off.
+            const float text_w=right-left-54*scale-(282+16)*scale-12*scale;
+            const std::wstring desc=l10n::Get(I::SettingsBlankClickBackDesc);
+            const bool stack=!narrow && painter && text_w>0 &&
+                painter->MeasureWrappedCaptionHeight(desc,text_w)>painter->MeasureWrappedCaptionHeight(L"\x4E2D",text_w)+0.5f*scale;
+            l.blank_click_row=row(stack ? 98.0f : seg_h);
+            if(stack) {
+                const float x0=l.blank_click_row.left+54*scale,w=(std::min)(282*scale,l.blank_click_row.right-16*scale-x0)/3;
+                for(int i=0;i<3;++i) l.blank_click_choice[i]=D2D1::RectF(x0+i*w,l.blank_click_row.bottom-44*scale,x0+(i+1)*w,l.blank_click_row.bottom-12*scale);
+            } else {
+                segments(l.blank_click_row,l.blank_click_choice,3,282);
+            }
+        }
 
         section(I::SettingsSecVisibleItems);
         l.hidden_files_row=row(64);

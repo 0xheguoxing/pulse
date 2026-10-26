@@ -49,7 +49,8 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
     MakeBrush(dc, theme.stroke_divider, brStrokeDivider_);
     FillRect(dc, brStrokeDivider_.get(), lay.nav.left+16*scale_, lay.nav_row[3].top-12*scale_,
         lay.nav.right-lay.nav.left-32*scale_, 1);
-    if (!compact_nav) painter_.DrawText(L"Pulse " + vm.settings_version,
+    // A low window lists 关于 with the other rows; the version line gives way.
+    if (!compact_nav && lay.nav_row[3].bottom + 4*scale_ <= lay.nav.bottom-40*scale_) painter_.DrawText(L"Pulse " + vm.settings_version,
         D2D1::RectF(lay.nav.left+20*scale_,lay.nav.bottom-40*scale_,lay.nav.right-12*scale_,lay.nav.bottom-16*scale_),
         compositor_->SmallFormat(),theme.text_secondary);
 
