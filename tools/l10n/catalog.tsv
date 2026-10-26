@@ -4032,3 +4032,83 @@ AiActSortSmall	IDS_AI_ACT_SORT_SMALL	5231	小的在前	smallest first	小的在�
 AiActSortAZ	IDS_AI_ACT_SORT_AZ	5232	A → Z	A → Z	A → Z
 AiActSortZA	IDS_AI_ACT_SORT_ZA	5233	Z → A	Z → A	Z → A
 AiActNoteOne	IDS_AI_ACT_NOTE_ONE	5234	你撤销了这件事	You undid this	你復原了這件事
+ActOpenInNewTab	IDS_ACT_OPEN_IN_NEW_TAB	5235	在新标签页打开	Open in a new tab	在新分頁開啟
+ActTabActivate	IDS_ACT_TAB_ACTIVATE	5236	切换到标签页	Switch to a tab	切換到分頁
+ActTabGroup	IDS_ACT_TAB_GROUP	5237	标签页分组	Group tabs	分頁分組
+ActPaneFocus	IDS_ACT_PANE_FOCUS	5238	切换到另一栏	Focus a pane	切換到另一欄
+ActWindowActivate	IDS_ACT_WINDOW_ACTIVATE	5239	切换到另一个窗口	Switch to a window	切換到另一個視窗
+ActSidebarSection	IDS_ACT_SIDEBAR_SECTION	5240	展开或收起侧栏分区	Expand or fold a sidebar section	展開或收合側欄分區
+ActIconSize	IDS_ACT_ICON_SIZE	5241	图标大小	Icon size	圖示大小
+ActIconBigger	IDS_ACT_ICON_BIGGER	5242	放大图标	Larger icons	放大圖示
+ActIconSmaller	IDS_ACT_ICON_SMALLER	5243	缩小图标	Smaller icons	縮小圖示
+ActFoldersFirst	IDS_ACT_FOLDERS_FIRST	5244	文件夹排在前面	Folders first	資料夾排在前面
+ActTagCreate	IDS_ACT_TAG_CREATE	5245	新建标签	New tag	新增標籤
+ActTagEdit	IDS_ACT_TAG_EDIT	5246	改标签的名字或颜色	Rename or recolor a tag	修改標籤名稱或顏色
+ActTagGroup	IDS_ACT_TAG_GROUP	5247	标签分组	Group a tag	標籤分組
+ActSmartViewSave	IDS_ACT_SMART_VIEW_SAVE	5248	保存为智能视图	Save as a smart view	儲存為智慧檢視
+ActAliasDisplay	IDS_ACT_ALIAS_DISPLAY	5249	别名显示方式	How aliases show	別名顯示方式
+ActTrayRemove	IDS_ACT_TRAY_REMOVE	5250	从暂存区移除	Remove from the tray	從暫存區移除
+ActTrayFindStale	IDS_ACT_TRAY_FIND_STALE	5251	找出暂存区里已不在的项	Find missing tray items	找出暫存區中已不存在的項目
+ActTraySendTo	IDS_ACT_TRAY_SEND_TO	5252	把暂存区发送到文件夹	Send the tray to a folder	把暫存區傳送到資料夾
+ActTrayZip	IDS_ACT_TRAY_ZIP	5253	把暂存区打包成压缩包	Zip the tray	把暫存區壓縮
+ActTrayCompare	IDS_ACT_TRAY_COMPARE	5254	比较暂存区的文件	Compare tray files	比較暫存區的檔案
+ActTrayTextDiff	IDS_ACT_TRAY_TEXT_DIFF	5255	比较两个文本文件	Compare two text files	比較兩個文字檔
+ActSearchOpen	IDS_ACT_SEARCH_OPEN	5256	搜索	Search	搜尋
+ActIndexStatus	IDS_ACT_INDEX_STATUS	5257	索引状态	Index status	索引狀態
+ActPreviewStep	IDS_ACT_PREVIEW_STEP	5258	预览上一个或下一个	Previous or next in preview	預覽上一個或下一個
+ActPrevious	IDS_ACT_PREVIOUS	5259	上一个	Previous	上一個
+ActNext	IDS_ACT_NEXT	5260	下一个	Next	下一個
+ActNetPlace	IDS_ACT_NET_PLACE	5261	固定或改名网络位置	Pin or rename a network place	釘選或重新命名網路位置
+ActKeymapRead	IDS_ACT_KEYMAP_READ	5262	查看快捷键	See shortcuts	檢視快速鍵
+ActKeymapSet	IDS_ACT_KEYMAP_SET	5263	改快捷键	Change a shortcut	變更快速鍵
+ActWhyNoTray	IDS_ACT_WHY_NO_TRAY	5264	暂存区是空的	The tray is empty	暫存區是空的
+ActWhyNoPreview	IDS_ACT_WHY_NO_PREVIEW	5265	预览没有打开	Preview isn't open	預覽沒有開啟
+ActWhyNotRecent	IDS_ACT_WHY_NOT_RECENT	5266	这里不是最近使用	Not in Recent	這裡不是最近使用
+ActWhyNoAliases	IDS_ACT_WHY_NO_ALIASES	5267	还没有别名	No aliases yet	還沒有別名
+ActWhyOneTab	IDS_ACT_WHY_ONE_TAB	5268	只有一个标签页	Only one tab	只有一個分頁
+ActColorRed	IDS_ACT_COLOR_RED	5269	红色	red	紅色
+ActColorOrange	IDS_ACT_COLOR_ORANGE	5270	橙色	orange	橙色
+ActColorYellow	IDS_ACT_COLOR_YELLOW	5271	黄色	yellow	黃色
+ActColorGreen	IDS_ACT_COLOR_GREEN	5272	绿色	green	綠色
+ActColorTeal	IDS_ACT_COLOR_TEAL	5273	青色	teal	青色
+ActColorBlue	IDS_ACT_COLOR_BLUE	5274	蓝色	blue	藍色
+ActColorPurple	IDS_ACT_COLOR_PURPLE	5275	紫色	purple	紫色
+ActColorPink	IDS_ACT_COLOR_PINK	5276	粉色	pink	粉色
+ActColorNone	IDS_ACT_COLOR_NONE	5277	无	none	無
+AiActLinePinned	IDS_AI_ACT_LINE_PINNED	5278	固定了 {tabs}	Pinned {tabs}	釘選了 {tabs}
+AiActLineUnpinned	IDS_AI_ACT_LINE_UNPINNED	5279	取消固定了 {tabs}	Unpinned {tabs}	取消釘選了 {tabs}
+AiActNTabs	IDS_AI_ACT_N_TABS	5280	{n} 个标签页	{n} tabs	{n} 個分頁
+AiActLineTagNew	IDS_AI_ACT_LINE_TAG_NEW	5281	新建了标签 {name}	Made the tag {name}	新增了標籤 {name}
+AiActLineTagDeleted	IDS_AI_ACT_LINE_TAG_DELETED	5282	删除了标签 {name}，{n} 项上的标记一起去掉	Deleted the tag {name} and took it off {n} items	刪除了標籤 {name}，{n} 個項目上的標記一起移除
+AiActLineRenamed	IDS_AI_ACT_LINE_RENAMED	5283	{from} 改名为 {to}	Renamed {from} to {to}	{from} 改名為 {to}
+AiActLineGrouped	IDS_AI_ACT_LINE_GROUPED	5284	{name} 放进了「{group}」组	Put {name} in the group {group}	{name} 放進了「{group}」群組
+AiActLineUngrouped	IDS_AI_ACT_LINE_UNGROUPED	5285	{name} 移出了分组	Took {name} out of its group	{name} 移出了群組
+AiActLineSwitched	IDS_AI_ACT_LINE_SWITCHED	5286	切换到了 {name}	Switched to {name}	切換到了 {name}
+AiActLineTrayRemoved	IDS_AI_ACT_LINE_TRAY_REMOVED	5287	从暂存区移除了 {items}	Removed {items} from the tray	從暫存區移除了 {items}
+AiActLineRecentRemoved	IDS_AI_ACT_LINE_RECENT_REMOVED	5288	从最近使用中移除了 {items}	Removed {items} from Recent	從最近使用中移除了 {items}
+AiActLineAlias	IDS_AI_ACT_LINE_ALIAS	5289	{name} 的别名设为 {alias}	Set the alias of {name} to {alias}	{name} 的別名設為 {alias}
+AiActLineAliasOff	IDS_AI_ACT_LINE_ALIAS_OFF	5290	去掉了 {name} 的别名	Removed the alias of {name}	移除了 {name} 的別名
+AiActLineSearch	IDS_AI_ACT_LINE_SEARCH	5291	搜索 {query}	Searched for {query}	搜尋 {query}
+AiActLineClosedTabs	IDS_AI_ACT_LINE_CLOSED_TABS	5292	关闭了 {n} 个其他标签页	Closed {n} other tabs	關閉了 {n} 個其他分頁
+AiActLineDuplicated	IDS_AI_ACT_LINE_DUPLICATED	5293	复制了标签页 {name}	Duplicated the tab {name}	複製了分頁 {name}
+AiActLineSection	IDS_AI_ACT_LINE_SECTION	5294	侧栏 {name} {from} → {to}	Sidebar {name} {from} → {to}	側欄 {name} {from} → {to}
+AiActExpanded	IDS_AI_ACT_EXPANDED	5295	展开	expanded	展開
+AiActFolded	IDS_AI_ACT_FOLDED	5296	收起	folded	收合
+AiActLineNetPinned	IDS_AI_ACT_LINE_NET_PINNED	5297	固定了网络位置 {name}	Pinned the network place {name}	釘選了網路位置 {name}
+AiActLineNetUnpinned	IDS_AI_ACT_LINE_NET_UNPINNED	5298	取消固定了网络位置 {name}	Unpinned the network place {name}	取消釘選了網路位置 {name}
+AiActLineKey	IDS_AI_ACT_LINE_KEY	5299	{title} {from} → {to}	{title} {from} → {to}	{title} {from} → {to}
+AiActWhyKeyTaken	IDS_AI_ACT_WHY_KEY_TAKEN	5300	{keys} 已经给了「{name}」	{keys} is already used by {name}	{keys} 已經給了「{name}」
+AiActWhyKeyFixed	IDS_AI_ACT_WHY_KEY_FIXED	5301	这个快捷键不能改	This shortcut can't be changed	這個快速鍵不能變更
+AiActWhyKeyBad	IDS_AI_ACT_WHY_KEY_BAD	5302	这个按键组合不能用	This key combination can't be used	這個按鍵組合不能使用
+AiActKeyFree	IDS_AI_ACT_KEY_FREE	5303	{keys} 没有被占用	{keys} is free	{keys} 沒有被佔用
+AiActWhyNoTab	IDS_AI_ACT_WHY_NO_TAB	5304	找不到这个标签页	Can't find this tab	找不到這個分頁
+AiActWhyNoTagNamed	IDS_AI_ACT_WHY_NO_TAG_NAMED	5305	找不到这个标签	Can't find this tag	找不到這個標籤
+AiActWhyNoWindow	IDS_AI_ACT_WHY_NO_WINDOW	5306	找不到这个窗口	Can't find this window	找不到這個視窗
+AiActWhyTagExists	IDS_AI_ACT_WHY_TAG_EXISTS	5307	已经有这个标签	This tag already exists	已經有這個標籤
+AiActWhyNoName	IDS_AI_ACT_WHY_NO_NAME	5308	缺少名字	A name is missing	缺少名稱
+AiActTagIn	IDS_AI_ACT_TAG_IN	5309	{color} · 在「{group}」分组	{color} · in {group}	{color} · 在「{group}」群組
+AiActKeysDone	IDS_AI_ACT_KEYS_DONE	5310	{title}的快捷键改好了	The {title} shortcut is changed	{title}的快速鍵改好了
+AiActKeymapSub	IDS_AI_ACT_KEYMAP_SUB	5311	只影响 Pulse	Only affects Pulse	只影響 Pulse
+AiCtlStepsNone	IDS_AI_CTL_STEPS_NONE	5312	没有改动	Nothing changed	沒有變更
+AiActWhyKeyHeld	IDS_AI_ACT_WHY_KEY_HELD	5313	{keys} 被别的程序占用了，在 Pulse 里可能不起作用	{keys} is held by another program and may not work in Pulse	{keys} 被其他程式佔用，在 Pulse 裡可能沒有作用
+AiActWhyKeyIme	IDS_AI_ACT_WHY_KEY_IME	5314	{keys} 是中文输入法的快捷键，可能不起作用	The Chinese input method uses {keys}; it may not work	{keys} 是中文輸入法的快速鍵，可能沒有作用

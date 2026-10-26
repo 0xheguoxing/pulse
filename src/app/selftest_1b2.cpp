@@ -42,6 +42,7 @@
 #include "details_column_menu.h"
 #include "entry_group.h"
 #include "context_menu.h"
+#include "actions/action_args.h"
 #include "actions/action_params.h"
 #include "actions/action_policy.h"
 #include "actions/action_registry.h"
@@ -5587,6 +5588,127 @@ void TestActionPolicy() {
     }
 }
 
+// P4: actions run with arguments (action_args.h) - the tab, tag, name or
+// keys the model gave; each says what changed and undoes it.
+void TestActionArgs() {
+    namespace act = app::actions;
+    auto owner = std::make_unique<AppState>();
+    AppState& s = *owner;
+    s.places.persist = false;
+    s.appPrefs.persist = false;
+    s.isolatedTest = true;
+    const auto args = [](const char* text) {
+        json::Value v;
+        json::Parse(text, v);
+        return v;
+    };
+
+    const char* ids[] = {"tab.pin", "tab.color", "tab.rename", "tab.group", "tab.duplicate", "tab.close_others",
+                         "tab.activate", "pane.focus", "window.activate", "sidebar.section", "view.icon_size",
+                         "tag.create", "tag.edit", "tag.delete", "tag.group", "smartview.save", "recent.remove",
+                         "alias.set", "tray.remove", "search.open", "index.status", "net.place", "keymap.read",
+                         "keymap.set"};
+    bool all = true, direct = true;
+    for (const char* id : ids) {
+        all = all && act::HasArgRunner(id);
+        direct = direct && act::AiPolicy(id).gate == act::Gate::Direct;
+    }
+    Check(all && !act::HasArgRunner("view.sort") && !act::HasArgRunner("no.such"), L"args: every P4a action has a runner");
+    Check(direct, L"args: P4a actions run at once (they undo)");
+
+    bool round = true;
+    for (const char* w : {"red", "orange", "yellow", "green", "teal", "blue", "purple", "pink"}) {
+        const int i = act::ColorIndex(w);
+        round = round && i >= 0 && !act::ColorName(i).empty();
+    }
+    Check(round && act::ColorIndex("none") == -1 && act::ColorIndex("plaid") == -2, L"args: color words");
+
+    // ---- Tabs: pin, color, rename, each undone ------------------------------
+    s.window_tabs.items.clear();
+    for (const wchar_t* t : {L"发票", L"合同", L"报销单"}) {
+        auto tab = std::make_unique<LayoutTab>();
+        tab->title = t;
+        s.window_tabs.items.push_back(std::move(tab));
+    }
+    s.window_tabs.active = 0;
+    LayoutTab* invoice = s.window_tabs.items[0].get();
+    LayoutTab* contract = s.window_tabs.items[1].get();
+    LayoutTab* claims = s.window_tabs.items[2].get();
+    {
+        act::ArgRun r = act::RunWithArgs(s, "tab.pin", args(R"({"tab":["发票","合同"]})"));
+        Check(r.ok && !r.skip && invoice->pinned && contract->pinned && !claims->pinned && !r.line_bold.empty() && r.undo,
+              L"args: tab.pin pins the tabs named");
+        act::ArgRun again = act::RunWithArgs(s, "tab.pin", args(R"({"tab":["发票","合同"]})"));
+        Check(again.ok && again.skip, L"args: pinning pinned tabs is already so");
+        r.undo(s);
+        Check(!invoice->pinned && !contract->pinned, L"args: tab.pin undoes");
+        Check(invoice->marker_rgb == 0 && contract->marker_rgb == 0, L"args: undoing a pin takes back the color it gave");
+        Check(s.window_tabs.items[0].get() == invoice && s.window_tabs.items[1].get() == contract &&
+                  s.window_tabs.items[2].get() == claims,
+              L"args: undoing a pin puts the tabs back in place");
+    }
+    {
+        // Pin one tab (it gets a color), then color it: the line says 无 → 蓝色.
+        act::ArgRun pin = act::RunWithArgs(s, "tab.pin", args(R"({"tab":"报销单"})"));
+        act::ArgRun color = act::RunWithArgs(s, "tab.color", args(R"({"tab":"报销单","color":"blue"})"));
+        Check(pin.ok && color.ok && color.data.get_string("from") == json::Utf8(l10n::Get(l10n::StringId::ActColorNone)),
+              L"args: a pin's own color counts as none");
+        if (color.undo) color.undo(s);
+        if (pin.undo) pin.undo(s);
+        Check(!claims->pinned && claims->marker_rgb == 0 && s.window_tabs.items[2].get() == claims,
+              L"args: pin then color undoes to where it was");
+    }
+    {
+        act::ArgRun bad = act::RunWithArgs(s, "tab.color", args(R"({"tab":"发票"})"));
+        Check(!bad.ok && !bad.error.empty() && !bad.why.empty(), L"args: tab.color needs a color");
+        const uint32_t before = claims->marker_rgb;
+        act::ArgRun r = act::RunWithArgs(s, "tab.color", args(R"({"tab":3,"color":"blue"})"));
+        Check(r.ok && claims->marker_rgb == TabController::Palette()[act::ColorIndex("blue")] && r.arg == act::ColorName(act::ColorIndex("blue")),
+              L"args: tab.color by number (1 = first)");
+        if (r.undo) r.undo(s);
+        Check(claims->marker_rgb == before, L"args: tab.color undoes");
+    }
+    {
+        act::ArgRun r = act::RunWithArgs(s, "tab.rename", args(R"({"tab":"合同","name":"  报销  "})"));
+        Check(r.ok && contract->title == L"报销", L"args: tab.rename trims the name");
+        if (r.undo) r.undo(s);
+        Check(contract->title == L"合同", L"args: tab.rename undoes");
+    }
+    Check(!act::RunWithArgs(s, "tab.activate", args(R"({"tab":99})")).ok &&
+              !act::RunWithArgs(s, "tab.pin", args(R"({"tab":"没有这个"})")).ok,
+          L"args: a tab that is not there fails with a reason");
+
+    // ---- Tags: create, delete, undo brings it back ----------------------------
+    {
+        const size_t before = s.places.tags.size();
+        act::ArgRun r = act::RunWithArgs(s, "tag.create", args(R"({"name":"P4测试","color":"blue"})"));
+        Check(r.ok && s.places.tags.size() == before + 1 && r.arg == L"P4测试", L"args: tag.create makes the tag");
+        Check(!act::RunWithArgs(s, "tag.create", args(R"({"name":"P4测试"})")).ok, L"args: tag.create refuses a name in use");
+        Check(!act::RunWithArgs(s, "tag.create", args(R"({"name":"  "})")).ok, L"args: tag.create needs a name");
+        act::ArgRun del = act::RunWithArgs(s, "tag.delete", args(R"({"tag":"P4测试"})"));
+        Check(del.ok && s.places.tags.size() == before && del.undo, L"args: tag.delete deletes it");
+        del.undo(s);
+        bool back = false;
+        for (const ColorTag& t : s.places.tags) back = back || t.name == L"P4测试";
+        Check(back, L"args: undoing tag.delete brings the tag back");
+        // The brought-back tag has a new id: undoing the create (old id) leaves it.
+        if (r.undo) r.undo(s);
+        Check(s.places.tags.size() == before + 1, L"args: an old undo does not touch a tag made since");
+        act::ArgRun made = act::RunWithArgs(s, "tag.create", args(R"({"name":"P4临时"})"));
+        if (made.undo) made.undo(s);
+        bool gone = true;
+        for (const ColorTag& t : s.places.tags) gone = gone && t.name != L"P4临时";
+        Check(made.ok && gone, L"args: undoing tag.create removes the tag");
+        act::RunWithArgs(s, "tag.delete", args(R"({"tag":"P4测试"})"));
+    }
+
+    // ---- Keymap: bad input changes nothing --------------------------------------
+    Check(!act::RunWithArgs(s, "keymap.set", args(R"({"action":"no_such","keys":"Ctrl+Shift+F"})")).ok,
+          L"args: keymap.set needs a known action");
+    Check(!act::RunWithArgs(s, "keymap.set", args(R"({"action":"NewFolder","keys":"Ctrl+Banana"})")).ok,
+          L"args: keymap.set rejects keys it cannot read");
+}
+
 void TestActionState() {
     namespace act = app::actions;
     auto owner = std::make_unique<AppState>();
@@ -8947,6 +9069,7 @@ int RunSelfTest1B2() {
         wcscmp(test_case, L"action-state") == 0) {
         TestActionState();
         TestActionPolicy();
+        TestActionArgs();
         if (g_log) { fclose(g_log); g_log = nullptr; }
         return g_fail ? 1 : 0;
     }
@@ -9096,6 +9219,7 @@ int RunSelfTest1B2() {
     TestSplitLayout();
     TestActionState();
     TestActionPolicy();
+    TestActionArgs();
     TestViewLayouts();
     TestListColumns();
     TestOptionalColumns();

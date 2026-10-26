@@ -755,7 +755,9 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                         c.Fill(Inflate(r, -1.0f), 11.0f * s, Alpha(pal.hover, 0.6f));
                         dc->PopAxisAlignedClip();
                     }
-                    c.Icon(AiIcon::Check, hr.left + 12.0f * s, yy + 11.5f * s, 15.0f * s, pal.ok);
+                    // Nothing done (没有改动): a muted skip mark.
+                    c.Icon(b.partial ? AiIcon::Skip : AiIcon::Check, hr.left + 12.0f * s, yy + 11.5f * s, 15.0f * s,
+                           b.partial ? pal.text3 : pal.ok);
                     line(b.label, formats_.body13, hr.left + 35.0f * s, yy, hr.right - 33.0f * s, 38.0f * s, pal.text2);
                     chevron(hr.right - 25.0f * s, yy + 19.0f * s, 180.0f * open_k, pal.text3, AiIcon::ChevronDown);
                     hit(hr, AiPanelPart::StepsToggle, index);
@@ -1095,12 +1097,26 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             // A plain line (no bold part) wraps like the HTML's flex text; a
             // split line stays on one row.
             const float ln_w = (std::max)(1.0f, ir - (tx + 20.0f * s));
+            // Key caps (改快捷键): old caps → new caps; when that is wider
+            // than the line, → and the new caps go on a second row.
+            const std::wstring caps_arrow = L"\u2192 ";
+            const auto cap_row_w = [&](const std::vector<std::wstring>& keys) {
+                float w = 0.0f;
+                for (const std::wstring& cap : keys) w += c.Measure(cap, formats_.small11b) + 12.0f * s + 3.0f * s;
+                return w;
+            };
+            const auto caps_two_rows = [&](const AiResultLine& ln) {
+                if (ln.caps_to.empty() || ln.caps_from.empty()) return false;
+                return c.Measure(ln.before, formats_.small125) + cap_row_w(ln.caps_from) + c.Measure(caps_arrow, formats_.small125) +
+                           cap_row_w(ln.caps_to) > ln_w + 0.5f;
+            };
             std::vector<float> line_hs;
             for (const size_t i : shown_lines) {
                 const AiResultLine& ln = b.lines[i];
-                line_hs.push_back(ln.bold.empty() && ln.after.empty()
+                line_hs.push_back(ln.bold.empty() && ln.after.empty() && ln.caps_to.empty()
                                       ? (std::max)(18.0f * s, wrapped_h(ln.before, formats_.small125, ln_w, 18.0f * s))
-                                      : 18.0f * s);
+                                  : caps_two_rows(ln) ? 40.0f * s
+                                                      : 18.0f * s);
             }
             float lines_h = shown_lines.empty() ? 0.0f : 10.0f * s + 4.0f * s * static_cast<float>(shown_lines.size() - 1);
             for (const float lh : line_hs) lines_h += lh;
@@ -1151,7 +1167,41 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                         else
                             c.Icon(ln.warn ? AiIcon::Warn : AiIcon::Check, tx, yy + 2.5f * s, 13.0f * s, ln.warn ? pal.amber : pal.ok);
                         float lx = tx + 20.0f * s;
-                        if (ln.bold.empty() && ln.after.empty()) {
+                        if (!ln.caps_to.empty()) {
+                            // .r-ln .k: 600 11/18, padding 0 6, border line (2 below), r 5, margin-right 3.
+                            line(ln.before, formats_.small125, lx, yy, ir, 18.0f * s, ink);
+                            lx += c.Measure(ln.before, formats_.small125);
+                            const float caps_left = lx;
+                            const bool two_rows = caps_two_rows(ln);
+                            float ky = yy;
+                            const auto caps = [&](const std::vector<std::wstring>& keys) {
+                                for (const std::wstring& cap : keys) {
+                                    const float cw = c.Measure(cap, formats_.small11b) + 12.0f * s;
+                                    if (lx + cw > ir + 0.5f) return;
+                                    const D2D1_RECT_F kr = D2D1::RectF(lx, ky, lx + cw, ky + 18.0f * s);
+                                    c.Fill(kr, 5.0f * s, pal.line);
+                                    c.Fill(D2D1::RectF(kr.left + 1.0f * s, kr.top + 1.0f * s, kr.right - 1.0f * s,
+                                                       kr.bottom - 2.0f * s),
+                                           4.0f * s, pal.bg);
+                                    line(cap, formats_.small11b, kr.left + 6.0f * s, kr.top, kr.right - 6.0f * s + 1.0f,
+                                         17.0f * s, pal.text);
+                                    lx += cw + 3.0f * s;
+                                }
+                            };
+                            caps(ln.caps_from);
+                            if (two_rows) {
+                                // The new caps under the old ones, → hanging before them; from
+                                // the line's start when that is too narrow.
+                                ky = yy + 22.0f * s;
+                                const float hang = caps_left - c.Measure(caps_arrow, formats_.small125);
+                                lx = hang >= tx + 20.0f * s && caps_left + cap_row_w(ln.caps_to) <= ir + 0.5f ? hang : tx + 20.0f * s;
+                            }
+                            if (!ln.caps_from.empty()) {
+                                line(caps_arrow, formats_.small125, lx, ky, ir, 18.0f * s, pal.text3);
+                                lx += c.Measure(caps_arrow, formats_.small125);
+                            }
+                            caps(ln.caps_to);
+                        } else if (ln.bold.empty() && ln.after.empty()) {
                             wrapped(ln.before, formats_.small125, lx, yy, ln_w, 18.0f * s, ink);
                         } else {
                             const float w1 = c.Measure(ln.before, formats_.small125);

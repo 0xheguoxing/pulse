@@ -444,6 +444,8 @@ void CALLBACK WaitTick(HWND, UINT, UINT_PTR id, DWORD) {
 
 } // namespace
 
+std::wstring TabStripTitle(const LayoutTab& layout) { return LayoutTitle(layout); }
+
 uint64_t FileTimeTicks(const FILETIME& ft) noexcept {
     return (static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
 }

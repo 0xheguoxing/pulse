@@ -5,7 +5,9 @@
 // the inventory joins in P4. Rows only call what their menu row or key calls.
 #include "action_registry.h"
 
+#include "action_args.h"
 #include "action_inventory.h"
+#include "action_state.h"
 #include "action_settings.h"
 #include "../app_internal.h"
 #include "../app_messages.h"
@@ -14,10 +16,16 @@
 #include "../keymap.h"
 #include "../places.h"
 #include "../app_hosted_edit.h"
+#include "../app_ops_ui.h"
+#include "../app_runtime.h"
+#include "../folder_alias.h"
+#include "../global_search_controller.h"
+#include "../tab_controller.h"
 #include "../app_navigation.h"
 #include "../reopen_closed.h"
 #include "../tab_transfer.h"
 #include "../window_factory.h"
+#include "../window_registry.h"
 #include "../tag_query.h"
 #include "../tag_view.h"
 #include "../vertical_tabs.h"
@@ -124,12 +132,15 @@ void Post(AppState& s, UINT message) {
     PostMessageW(s.hwnd, message, 0, 0);
 }
 
-void ShowTagPickerBelowAddress(AppState& s) {
+// Where a palette row opens its menu: below the address bar's left end.
+POINT BelowAddress(AppState& s) {
     const D2D1_RECT_F addr = s.renderer.AddressBarRect(static_cast<float>(s.compositor.Width()));
     POINT pt{static_cast<LONG>(addr.left), static_cast<LONG>(addr.bottom)};
     ClientToScreen(s.hwnd, &pt);
-    ShowTagPicker(s, pt);
+    return pt;
 }
+
+void ShowTagPickerBelowAddress(AppState& s) { ShowTagPicker(s, BelowAddress(s)); }
 
 void FillViewMode(AppState& s, ActionView& v) {
     const Tab* tab = ActiveTab(s);
@@ -276,6 +287,233 @@ void SelectNone(AppState& s) {
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
+// ---- P4: the rest of the inventory -------------------------------------------
+
+ui::FluentMenuItem ChoiceRow(std::wstring text, bool radio = false) {
+    ui::FluentMenuItem row;
+    row.text = std::move(text);
+    row.radio_group = true;
+    row.radio = radio;
+    return row;
+}
+
+int ActiveTabIndex(AppState& s) {
+    return s.window_tabs.Active() ? static_cast<int>(s.window_tabs.active) : -1;
+}
+
+void RunTab(AppState& s, int command) { s.tabs.RunTabCommand(s.window_tabs, ActiveTabIndex(s), command); }
+
+void FillTabPin(AppState& s, ActionView& v) {
+    const LayoutTab* lt = s.window_tabs.Active();
+    v.value = OnOff(lt && lt->pinned);
+}
+
+void FillTabColor(AppState& s, ActionView& v) {
+    const LayoutTab* lt = s.window_tabs.Active();
+    const uint32_t* palette = TabController::Palette();
+    for (int i = 0; i < static_cast<int>(TabController::PaletteSize()); ++i)
+        v.choices.push_back(ChoiceRow(ColorName(i), lt && lt->marker_rgb == palette[i]));
+    v.choices.push_back(ChoiceRow(ColorName(-1), lt && lt->marker_rgb == 0));
+    v.value = Current(v.choices);
+}
+
+void PickTabColor(AppState& s, int choice) {
+    RunTab(s, choice < static_cast<int>(TabController::PaletteSize()) ? CmdTabColorBase + choice : CmdTabColorNone);
+}
+
+// 新组, the groups to join, 移出分组.
+void FillTabGroup(AppState& s, ActionView& v) {
+    const LayoutTab* lt = s.window_tabs.Active();
+    if (!lt || lt->pinned) { Off(v, I::ActWhyNotFolder); return; }
+    v.choices.push_back(ChoiceRow(Text(s.window_tabs.tab_groups.empty() ? I::TabCreateGroup : I::TabNewGroup)));
+    for (const auto& g : s.window_tabs.tab_groups)
+        v.choices.push_back(ChoiceRow(g.name.empty() ? Text(I::TabUnnamedGroup) : g.name, lt->tab_group == g.id));
+    if (lt->tab_group != 0) v.choices.push_back(ChoiceRow(Text(I::TabRemoveGroup)));
+}
+
+void PickTabGroup(AppState& s, int choice) {
+    const int groups = static_cast<int>(s.window_tabs.tab_groups.size());
+    if (choice == 0) {
+        if (!s.tabs.RunTabCommand(s.window_tabs, ActiveTabIndex(s), CmdTabAddToNewGroup) ||
+            s.window_tabs.tab_groups.empty())
+            return;
+        s.tabs.ShowGroupMenu(s.window_tabs, s.window_tabs.tab_groups.back().id, BelowAddress(s), *s.menu);
+    } else if (choice <= groups) {
+        RunTab(s, CmdTabJoinGroupBase + choice - 1);
+    } else {
+        RunTab(s, CmdTabRemoveFromGroup);
+    }
+}
+
+void FillManyTabs(AppState& s, ActionView& v) {
+    if (s.window_tabs.items.size() < 2) Off(v, I::ActWhyOneTab);
+}
+
+void FillTabList(AppState& s, ActionView& v) {
+    FillManyTabs(s, v);
+    for (size_t i = 0; i < s.window_tabs.items.size(); ++i)
+        v.choices.push_back(ChoiceRow(TabStripTitle(*s.window_tabs.items[i]), i == s.window_tabs.active));
+}
+
+void PickTab(AppState& s, int choice) {
+    if (choice >= 0 && static_cast<size_t>(choice) < s.window_tabs.items.size()) SwitchTab(s, static_cast<size_t>(choice));
+}
+
+void FillPaneList(AppState& s, ActionView& v) {
+    if (!NeedPanes(s, v)) return;
+    const auto panes = PanesOnScreen(LiveLayout(s));
+    for (size_t i = 0; i < panes.size(); ++i) {
+        const Tab* t = panes[i]->ActiveTab();
+        std::wstring name = t ? TabTitle(t->current_path) : std::wstring();
+        v.choices.push_back(ChoiceRow(std::to_wstring(i + 1) + L" \u00B7 " + name, panes[i] == s.pane));
+    }
+}
+
+void PickPane(AppState& s, int choice) {
+    const auto panes = PanesOnScreen(LiveLayout(s));
+    if (choice >= 0 && static_cast<size_t>(choice) < panes.size()) FocusPane(s, panes[static_cast<size_t>(choice)]);
+}
+
+std::vector<HWND> OtherWindows(AppState& s, std::vector<std::wstring>* titles = nullptr) {
+    std::vector<HWND> out;
+    ForEachWindowSharingCore(s, [&](AppState& w) {
+        if (&w == &s || !w.hwnd) return;
+        out.push_back(w.hwnd);
+        if (titles) titles->push_back(w.window_tabs.Active() ? TabStripTitle(*w.window_tabs.Active()) : std::wstring());
+    });
+    return out;
+}
+
+void FillWindowList(AppState& s, ActionView& v) {
+    std::vector<std::wstring> titles;
+    if (OtherWindows(s, &titles).empty()) { Off(v, I::AiActWhyOneWindow); return; }
+    for (auto& t : titles) v.choices.push_back(ChoiceRow(std::move(t)));
+}
+
+void PickWindow(AppState& s, int choice) {
+    const auto windows = OtherWindows(s);
+    if (choice < 0 || static_cast<size_t>(choice) >= windows.size()) return;
+    HWND h = windows[static_cast<size_t>(choice)];
+    if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
+    SetForegroundWindow(h);
+}
+
+constexpr std::pair<SidebarSectionId, I> kSectionRows[] = {
+    {SidebarSectionId::Workspaces, I::SidebarWorkspaces}, {SidebarSectionId::QuickAccess, I::SidebarQuickAccess},
+    {SidebarSectionId::SavedSearches, I::SidebarSavedSearches}, {SidebarSectionId::Drives, I::SidebarDrives},
+    {SidebarSectionId::Tags, I::SidebarTags}, {SidebarSectionId::Networks, I::SidebarNetworkLocations},
+};
+
+void FillSections(AppState& s, ActionView& v) {
+    for (const auto& [id, name] : kSectionRows) {
+        ui::FluentMenuItem row;
+        row.text = Text(name);
+        row.checked = ((s.sidebarCollapsedMask >> static_cast<int>(id)) & 1u) == 0;
+        v.choices.push_back(std::move(row));
+    }
+}
+
+void PickSection(AppState& s, int choice) {
+    if (choice >= 0 && static_cast<size_t>(choice) < std::size(kSectionRows))
+        ToggleSidebarSection(s, static_cast<int>(kSectionRows[static_cast<size_t>(choice)].first));
+}
+
+void FillIconSize(AppState& s, ActionView& v) {
+    const Tab* tab = ActiveTab(s);
+    if (!tab) { Off(v, I::ActWhyNotFolder); return; }
+    v.choices.push_back(ChoiceRow(Text(I::ActIconBigger)));
+    v.choices.push_back(ChoiceRow(Text(I::ActIconSmaller)));
+}
+
+void PickIconSize(AppState& s, int choice) { ZoomIconSize(s, choice == 0 ? 1 : -1); }
+
+void FillWall(AppState& s, ActionView& v) {
+    const Tab* tab = ActiveTab(s);
+    if (!tab) { Off(v, I::ActWhyNotFolder); return; }
+    v.value = OnOff(tab->wall);
+}
+
+// 始终置顶 / 跟随方向 / 不优先: the sort menu's own rows.
+void FillFoldersFirst(AppState& s, ActionView& v) {
+    const Tab* tab = ActiveTab(s);
+    if (!tab) { Off(v, I::ActWhyNotFolder); return; }
+    const BackgroundViewOptions o = ViewOptions(s, *tab);
+    if (!o.can_sort) { Off(v, I::ActWhyNoSort); return; }
+    for (auto& row : BuildSortMenu(o))
+        if (row.command >= CmdFolderSortTop && row.command <= CmdFolderSortMixed) {
+            row.separator_after = false;
+            v.choices.push_back(std::move(row));
+        }
+    v.value = Current(v.choices);
+}
+
+bool InRecent(AppState& s) {
+    const Tab* tab = ActiveTab(s);
+    std::wstring kind;
+    if (tab) ParsePulsePath(tab->current_path, &kind, nullptr);
+    return kind == L"recent";
+}
+
+void FillRecentRemove(AppState& s, ActionView& v) {
+    if (!InRecent(s)) { Off(v, I::ActWhyNotRecent); return; }
+    NeedSelection(s, v);
+}
+
+void RunRecentRemove(AppState& s) { RunWithArgs(s, "recent.remove", json::Value::Object()); }
+
+void FillAliasDisplay(AppState&, ActionView& v) {
+    if (AliasStore::Instance().Empty()) { Off(v, I::ActWhyNoAliases); return; }
+    constexpr I labels[] = {I::AliasDisplayBoth, I::AliasDisplayOnly, I::AliasDisplayReal};
+    const int current = static_cast<int>(AliasStore::Instance().Display());
+    for (int i = 0; i < 3; ++i) {
+        ui::FluentMenuItem row = ChoiceRow(Text(labels[i]), current == i);
+        row.command = CmdAliasDisplayBase + i;
+        v.choices.push_back(std::move(row));
+    }
+    v.value = Current(v.choices);
+}
+
+void FillAliases(AppState&, ActionView& v) {
+    if (AliasStore::Instance().Empty()) Off(v, I::ActWhyNoAliases);
+}
+
+void ExportAliases(AppState& s) {
+    std::wstring file;
+    if (PickJsonFile(s.hwnd, true, L"aliases.json", file)) AliasStore::Instance().ExportTo(file);
+}
+
+bool TrayEmpty(AppState& s) {
+    for (const auto& b : s.tray.batches())
+        if (!b.items.empty()) return false;
+    return true;
+}
+
+void FillTray(AppState& s, ActionView& v) {
+    if (TrayEmpty(s)) Off(v, I::ActWhyNoTray);
+}
+
+void FillComputeSize(AppState& s, ActionView& v) {
+    const Tab* tab = ActiveTab(s);
+    if (!tab || tab->SelectedCount() != 1) { Off(v, I::ActWhySelectOne); return; }
+}
+
+void ComputeSize(AppState& s) {
+    const Tab* tab = ActiveTab(s);
+    if (!tab) return;
+    const auto paths = SelectedFullPaths(*tab);
+    if (paths.size() == 1) StartDetailsSizeWalk(s, paths[0]);
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void FillIndexStatus(AppState& s, ActionView& v) { v.value = ContentIndexStatusText(s); }
+
+void FillPreviewStep(AppState&, ActionView& v) {
+    v.choices.push_back(ChoiceRow(Text(I::ActPrevious)));
+    v.choices.push_back(ChoiceRow(Text(I::ActNext)));
+}
+
+void PickPreviewStep(AppState& s, int choice) { NavigateQuickPreview(s, choice == 0 ? -1 : 1); }
+
 constexpr const wchar_t* kNoKey = nullptr;
 constexpr Run kNoRun = nullptr;
 constexpr Fill kAlways = nullptr;
@@ -420,6 +658,77 @@ constexpr Def kDefs[] = {
      CmdConnectServer, kNoRun, kAlways},
     {"net.map_drive", I::ActMapDrive, I::ActDomNetwork, L"\xE8CE", P::None, kNoKey, CmdMapNetworkDrive,
      kNoRun, kAlways},
+    // P4: 标签页与窗口
+    {"tab.pin", I::TabPin, I::ActDomTabs, L"\xE718", P::None, kNoKey, 0,
+     +[](AppState& s) { RunTab(s, CmdTabPin); }, FillTabPin},
+    {"tab.color", I::TabColor, I::ActDomTabs, L"\xE790", P::None, kNoKey, 0, kNoRun, FillTabColor, PickTabColor},
+    {"tab.rename", I::TabRename, I::ActDomTabs, L"\xE8AC", P::None, kNoKey, 0,
+     +[](AppState& s) { s.tabs.ShowTabMenu(s.window_tabs, ActiveTabIndex(s), BelowAddress(s), *s.menu); }, kAlways},
+    {"tab.group", I::ActTabGroup, I::ActDomTabs, L"\xF168", P::None, kNoKey, 0, kNoRun, FillTabGroup, PickTabGroup},
+    {"tab.duplicate", I::TabDuplicate, I::ActDomTabs, L"\xE8C8", P::None, kNoKey, 0,
+     +[](AppState& s) { RunTab(s, CmdTabDuplicate); }, kAlways},
+    {"tab.close_others", I::TabCloseOthers, I::ActDomTabs, L"\xE711", P::None, kNoKey, 0,
+     +[](AppState& s) { RunTab(s, CmdTabCloseOthers); }, FillManyTabs},
+    {"tab.activate", I::ActTabActivate, I::ActDomTabs, L"\xE7C4", P::None, L"Ctrl+Tab", 0, kNoRun, FillTabList, PickTab},
+    {"pane.focus", I::ActPaneFocus, I::ActDomWindow, L"\xE7C4", P::None, L"Tab", 0, kNoRun, FillPaneList, PickPane},
+    {"window.activate", I::ActWindowActivate, I::ActDomWindow, L"\xE78B", P::None, kNoKey, 0, kNoRun, FillWindowList,
+     PickWindow},
+    {"sidebar.section", I::ActSidebarSection, I::ActDomWindow, L"\xE700", P::None, kNoKey, 0, kNoRun, FillSections,
+     PickSection},
+    {"nav.open_in_new_tab", I::ActOpenInNewTab, I::ActDomNav, L"\xE8A7", P::None, kNoKey, CmdOpenInNewTab, kNoRun,
+     FillSelection},
+    {"nav.reveal", I::HintActOpenPath, I::ActDomNav, L"\xE8DA", P::None, kNoKey, CmdOpenPath, kNoRun, FillOne},
+    // P4: 视图
+    {"view.icon_size", I::ActIconSize, I::ActDomView, L"\xE71E", P::None, kNoKey, 0, kNoRun, FillIconSize, PickIconSize},
+    {"view.wall", I::PhotoWall, I::ActDomView, L"\xEB9F", P::None, kNoKey, CmdViewWall, kNoRun, FillWall},
+    {"view.folders_first", I::ActFoldersFirst, I::ActDomView, L"\xE8B7", P::None, kNoKey, 0, kNoRun, FillFoldersFirst},
+    // P4: 标签、别名与最近
+    {"tag.create", I::ActTagCreate, I::ActDomTags, L"\xE8EC", P::None, kNoKey, 0,
+     +[](AppState& s) { ShowCreateTagPicker(s, BelowAddress(s)); }, kAlways},
+    {"tag.edit", I::ActTagEdit, I::ActDomTags, L"\xE8EC", P::None, kNoKey, 0, kNoRun, kAlways, nullptr, true},
+    {"tag.delete", I::TagDelete, I::ActDomTags, L"\xE8EC", P::None, kNoKey, 0, kNoRun, kAlways, nullptr, true},
+    {"tag.group", I::ActTagGroup, I::ActDomTags, L"\xE8EC", P::None, kNoKey, 0, kNoRun, kAlways, nullptr, true},
+    {"smartview.save", I::ActSmartViewSave, I::ActDomTags, L"\xE8EC", P::None, kNoKey, 0, kNoRun, kAlways, nullptr,
+     true},
+    {"recent.remove", I::RemoveRecent, I::ActDomTags, L"\xE81C", P::None, kNoKey, 0, RunRecentRemove,
+     FillRecentRemove},
+    {"alias.set", I::SetAliasEllipsis, I::ActDomTags, L"\xE8AC", P::None, kNoKey, CmdSetAlias, kNoRun, FillOne},
+    {"alias.display", I::ActAliasDisplay, I::ActDomTags, L"\xE8EC", P::None, kNoKey, 0, kNoRun, FillAliasDisplay},
+    {"alias.export", I::ExportAliasesEllipsis, I::ActDomTags, L"\xEDE1", P::None, kNoKey, 0, ExportAliases,
+     FillAliases},
+    // P4: 暂存区
+    {"tray.remove", I::ActTrayRemove, I::ActDomTray, L"\xE711", P::None, kNoKey, 0, kNoRun, FillTray, nullptr, true},
+    {"tray.find_stale", I::ActTrayFindStale, I::ActDomTray, L"\xE721", P::None, kNoKey, 0,
+     +[](AppState& s) { TrayFindStale(s); }, FillTray},
+    {"tray.compare", I::ActTrayCompare, I::ActDomTray, L"\xF5B5", P::None, kNoKey, 0,
+     +[](AppState& s) { TrayToggleCompare(s); }, FillTray},
+    {"tray.text_diff", I::ActTrayTextDiff, I::ActDomTray, L"\xE8A5", P::None, kNoKey, 0,
+     +[](AppState& s) { TrayOpenTextDiff(s); }, FillTray},
+    {"tray.zip", I::ActTrayZip, I::ActDomTray, L"\xF012", P::None, kNoKey, 0, +[](AppState& s) { TrayShelfZip(s); },
+     FillTray},
+    {"tray.send_to", I::ActTraySendTo, I::ActDomTray, L"\xE8DE", P::None, kNoKey, 0,
+     +[](AppState& s) { ShowTrayReleaseMenu(s, BelowAddress(s)); }, FillTray},
+    // P4: 搜索与预览
+    {"search.open", I::ActSearchOpen, I::ActDomSearch, L"\xE721", P::None, kNoKey, 0, kNoRun, kAlways, nullptr,
+     true},
+    {"search.global", I::GlobalSearch, I::ActDomSearch, L"\xE721", P::None, kNoKey, 0,
+     +[](AppState& s) { ToggleGlobalSearch(s); }, kAlways},
+    {"index.status", I::ActIndexStatus, I::ActDomSearch, L"\xE9D9", P::None, kNoKey, 0, kNoRun, FillIndexStatus,
+     nullptr, true},
+    {"file.compute_size", I::ComputeSize, I::ActDomFiles, L"\xE8B7", P::None, kNoKey, 0, ComputeSize,
+     FillComputeSize},
+    {"preview.step", I::ActPreviewStep, I::ActDomPreview, L"\xE8FF", P::None, kNoKey, 0, kNoRun, FillPreviewStep,
+     PickPreviewStep},
+    // P4: 网络
+    {"net.place", I::ActNetPlace, I::ActDomNetwork, L"\xE968", P::None, kNoKey, 0, kNoRun, kAlways, nullptr, true},
+    {"net.recent", I::NetworkClearRecent, I::ActDomNetwork, L"\xE81C", P::None, kNoKey, CmdNetworkClearRecent,
+     kNoRun, kAlways},
+    {"net.rescan", I::NetworkRescan, I::ActDomNetwork, L"\xE72C", P::None, kNoKey, CmdLanRescan, kNoRun, kAlways},
+    {"net.system_settings", I::NetworkSharingSettings, I::ActDomNetwork, L"\xE713", P::None, kNoKey,
+     CmdNetworkSharingSettings, kNoRun, kAlways},
+    // P4: 快捷键
+    {"keymap.read", I::ActKeymapRead, I::ActDomApp, L"\xE765", P::None, kNoKey, 0, kNoRun, kAlways, nullptr, true},
+    {"keymap.set", I::ActKeymapSet, I::ActDomApp, L"\xE765", P::None, kNoKey, 0, kNoRun, kAlways, nullptr, true},
     // 应用
     {"app.settings_page", I::ActOpenSettings, I::ActDomApp, L"\xE713", P::None, kNoKey, CmdSettings,
      kNoRun, kAlways},

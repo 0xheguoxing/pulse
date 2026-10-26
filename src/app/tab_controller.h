@@ -32,6 +32,12 @@ public:
     void ShowGroupMenu(WindowTabs& tabs, int group_id, POINT screen_pt, ui::FluentMenu& menu);
     void ShowTabMenu(WindowTabs& tabs, int tab_index, POINT screen_pt, ui::FluentMenu& menu);
 
+    // A tab menu command on tab `tab_index` without the menu (the action
+    // table: the command palette and the assistant). CmdTabNameSave and
+    // CmdTabAddToNewGroup take `text` (the name; empty resets / leaves the new
+    // group unnamed). False when the command does not apply to that tab.
+    bool RunTabCommand(WindowTabs& tabs, int tab_index, int command, const std::wstring& text = {});
+
     static const uint32_t* Palette() noexcept;
     static constexpr size_t PaletteSize() noexcept { return 8; }
 

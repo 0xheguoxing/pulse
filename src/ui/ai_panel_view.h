@@ -274,6 +274,8 @@ struct AiResultLine {
     bool warn = false;
     bool mute = false;                // P3: a step that was not done (text3, a dash)
     std::wstring before, bold, after;
+    // P4: key caps after `before` (改快捷键: 新建文件夹 Ctrl Shift N → Ctrl Shift F).
+    std::vector<std::wstring> caps_from, caps_to;
 };
 
 // Third batch. A result card's 快捷键 row: what was done and the user's own

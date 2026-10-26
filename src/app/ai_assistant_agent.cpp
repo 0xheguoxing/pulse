@@ -48,6 +48,7 @@
 #include "window_overview_ui.h"
 #include "window_placement.h"
 #include "zip_compress.h"
+#include "actions/action_args.h"
 #include "actions/action_params.h"
 #include "actions/action_policy.h"
 #include "actions/action_settings.h"
@@ -357,7 +358,7 @@ const json::Value& Tools() {
    "query":{"type":"string","description":"A few words naming the action, e.g. 详情面板 文件夹大小"},
    "domain":{"type":"string","enum":["settings"],"description":"settings: list all settings instead of searching"}}}}},
 {"type":"function","function":{"name":"run_actions",
- "description":"Does things in Pulse itself, in order, as one undo group (at most 12 steps): panes and the folders in them, windows, tabs, view, sort, grouping, panels, selection, the staging tray, tags, favorites, new folders, opening files, settings, and any action find_actions returns. View, organize and settings steps act at once: Pulse shows each step and one result card with old -> new, Undo and the user's own shortcuts. Opening a program or script and system actions show the user a confirm card first (Pulse asks, not you). Files are never moved, renamed or deleted here: use organize_files, rename_files, run_task, find_cleanup or find_duplicates. Locked settings show the user why. Stops at the first step that fails; earlier steps stay done. Returns each step's outcome.\nCommon actions (args): window.layout {layout: single|side_by_side|stacked|three|four, panes: [a folder per pane, left or top first; \"\" leaves one]}, nav.go {path, pane}, window.new {path}, tab.new {path}, tab.close, tab.to_window, pane.to_window {pane}, window.merge, window.overview, nav.back, nav.up, view.mode {view: extra_large_icons|large_icons|medium_icons|small_icons|list|details|tiles|content, pane}, view.sort {by: name|modified|type|size|created, desc, pane}, view.group {by: none|name|date|type|size, pane}, sidebar.toggle {show}, favbar.toggle {show}, details.toggle {show}, select.items {pane, name, extensions, items, type: folder|document|image|video|audio|archive|code, modified: today|yesterday|this_week|last_7_days|this_month|last_month|{after, before}, size: {larger_than, smaller_than}, tag, selected, mode: replace|add|remove}, select.all, select.clear, tray.add {items}, tag.toggle {tag, items} (a new tag is made), fav.add {path or items}, file.new_folder {name} (in the open folder), nav.open {path} (a file or program), settings.set {key, value}, edit.undo. pane: 1-4 in screen order as in get_state, focused, target, or all (view / sort / group). Paths: absolute, a drive (D:) or a known folder (Downloads, Desktop, Documents, Pictures, Videos, Music). items: full paths; omitted = the selection.\nSettings (settings.set key and values; switches take true/false): theme light|dark|system, window_effect none|acrylic|mica|mica_alt, text_rendering auto|sharp|smooth, font_size small|default|large|larger, language system|zh-CN|zh-TW|en-US, menu_acrylic, row_height compact|standard|roomy, click_to_open double|single, name_highlight hover|always, hover_select, item_checkboxes, blank_double_click nothing|back|up, show_hidden, show_protected, folders_first top|follow|mixed, smart_dates, zebra_rows, size_bars, tag_name_color, selection_outline, thumbnail_app_badges, alias_mark, mtime_marks off|dots|bars|text, mtime_range today|3|7|30, mtime_dim_older, mtime_bold_today, mtime_folders, mtime_other_views, mtime_flash, onedrive_status, svn_status, startup_open last_tabs|default_location, new_tab_open current|default_location, external_open smart|tab|window, vertical_tabs, pinned_tab_names, double_click_closes_tab, close_window_with_last_tab, launch_at_signin (Windows), start_in_tray, keep_running, tray_icon always|background|never, explorer_tag_menu (Windows), open_folders_with_pulse (default file manager; Windows), staging_icon_size small|standard|large, staging_hide_when_empty, change_tracking, change_days today|3|7, lan_discovery, network_recent, hidden_shares, confirm_delete (can only be turned on), global_search (Windows), pinyin_search. Locked (only the user, in Settings): confirm_delete off, assistant_permissions, always_allow, connections, api_key.",
+ "description":"Does things in Pulse itself, in order, as one undo group (at most 12 steps): panes and the folders in them, windows, tabs, view, sort, grouping, panels, selection, the staging tray, tags, favorites, new folders, opening files, settings, and any action find_actions returns. View, organize and settings steps act at once: Pulse shows each step and one result card with old -> new, Undo and the user's own shortcuts. Opening a program or script and system actions show the user a confirm card first (Pulse asks, not you). Files are never moved, renamed or deleted here: use organize_files, rename_files, run_task, find_cleanup or find_duplicates. Locked settings show the user why. Stops at the first step that fails; earlier steps stay done. Returns each step's outcome.\nCommon actions (args): window.layout {layout: single|side_by_side|stacked|three|four, panes: [a folder per pane, left or top first; \"\" leaves one]}, nav.go {path, pane}, window.new {path}, tab.new {path}, tab.close, tab.to_window, pane.to_window {pane}, window.merge, window.overview, nav.back, nav.up, view.mode {view: extra_large_icons|large_icons|medium_icons|small_icons|list|details|tiles|content, pane}, view.sort {by: name|modified|type|size|created, desc, pane}, view.group {by: none|name|date|type|size, pane}, sidebar.toggle {show}, favbar.toggle {show}, details.toggle {show}, select.items {pane, name, extensions, items, type: folder|document|image|video|audio|archive|code, modified: today|yesterday|this_week|last_7_days|this_month|last_month|{after, before}, size: {larger_than, smaller_than}, tag, selected, mode: replace|add|remove}, select.all, select.clear, tray.add {items}, tag.toggle {tag, items} (a new tag is made), fav.add {path or items}, file.new_folder {name} (in the open folder), nav.open {path} (a file or program), settings.set {key, value}, edit.undo, tab.pin {tab, pin}, tab.color {tab, color: red|orange|yellow|green|teal|blue|purple|pink|none}, tab.rename {tab, name}, tab.group {tab, group}, tab.activate {tab}, tag.create {name, color, group}, keymap.set {action, keys} (keymap.read lists the actions). tab: 1 = first as in get_state, a title, \"all\" or a list - several tabs go in ONE step. Words: 标签 is a tag (tag.create, then tag.toggle to put it on items; 加标签 / 打标签 = tag.toggle), 标签页 is a tab (tab.*), 托盘 / 暂存 is the staging tray (only when the user says so). pane: 1-4 in screen order as in get_state, focused, target, or all (view / sort / group). Paths: absolute, a drive (D:) or a known folder (Downloads, Desktop, Documents, Pictures, Videos, Music). items: full paths; omitted = the selection.\nSettings (settings.set key and values; switches take true/false): theme light|dark|system, window_effect none|acrylic|mica|mica_alt, text_rendering auto|sharp|smooth, font_size small|default|large|larger, language system|zh-CN|zh-TW|en-US, menu_acrylic, row_height compact|standard|roomy, click_to_open double|single, name_highlight hover|always, hover_select, item_checkboxes, blank_double_click nothing|back|up, show_hidden, show_protected, folders_first top|follow|mixed, smart_dates, zebra_rows, size_bars, tag_name_color, selection_outline, thumbnail_app_badges, alias_mark, mtime_marks off|dots|bars|text, mtime_range today|3|7|30, mtime_dim_older, mtime_bold_today, mtime_folders, mtime_other_views, mtime_flash, onedrive_status, svn_status, startup_open last_tabs|default_location, new_tab_open current|default_location, external_open smart|tab|window, vertical_tabs, pinned_tab_names, double_click_closes_tab, close_window_with_last_tab, launch_at_signin (Windows), start_in_tray, keep_running, tray_icon always|background|never, explorer_tag_menu (Windows), open_folders_with_pulse (default file manager; Windows), staging_icon_size small|standard|large, staging_hide_when_empty, change_tracking, change_days today|3|7, lan_discovery, network_recent, hidden_shares, confirm_delete (can only be turned on), global_search (Windows), pinyin_search. Locked (only the user, in Settings): confirm_delete off, assistant_permissions, always_allow, connections, api_key.",
  "parameters":{"type":"object","properties":{
    "steps":{"type":"array","description":"The steps in order (at most 12)","items":{"type":"object","properties":{
      "action":{"type":"string","description":"An action id, e.g. view.sort"},
@@ -5745,6 +5746,16 @@ struct CtlRun {
     size_t waited = SIZE_MAX;                   // the step whose wait is over
     bool touched = false;                       // a file was made or opened: no 文件没动 line
     size_t undo_steps = 0;                      // steps 撤销 reverses (a selection is not one)
+    // P4: one step whose card has its own words (改快捷键), and where 在设置中查看 goes.
+    std::wstring title_override, sub_override;
+    int settings_page = -1;
+    // P4: the last runner step's line, so the same action one tab at a time
+    // reads as one line (固定了 3 个标签页).
+    std::string arg_last_id;
+    size_t arg_last_line = SIZE_MAX;
+    size_t arg_tally = 0;
+    bool arg_last_pin = false;
+    std::wstring arg_new_tag;   // tag.create's name: a tag.toggle right after it joins its line
 };
 
 const wchar_t* PresetName(app::LayoutPreset p) {
@@ -6438,10 +6449,20 @@ CtlStep CtlTag(AppState& s, CtlRun& run, const json::Value& act) {
     st.ok = true;
     const std::wstring on = Fill(Text(I::AiCtlTagOn), L"{n}", Num(paths.size()));
     st.sub = created ? Fill(Text(I::AiCtlTagNewDone), L"{name}", name) + L" \u00B7 " + on : on;
+    // tag.create just made it: 新建标签报销，打在 1 项上 - one line, one thing.
+    const bool joins = !created && run.arg_last_id == "tag.create" && run.arg_last_line + 1 == run.lines.size() &&
+                       _wcsicmp(run.arg_new_tag.c_str(), name.c_str()) == 0;
+    ui::AiResultLine line = SplitLine(Fill(Text(created || joins ? I::AiCtlLineTagNew : I::AiCtlLineTag), L"{n}", Num(paths.size())),
+                                      L"{name}", name);
+    if (joins) {
+        run.single_title = line.before + line.bold + line.after;
+        run.lines.back() = std::move(line);
+        run.arg_last_id.clear();
+        return st;
+    }
     ++run.organize;
     run.organize_kinds.push_back(Text(I::AiCtlKindTag));
-    AddLine(run, SplitLine(Fill(Text(created ? I::AiCtlLineTagNew : I::AiCtlLineTag), L"{n}", Num(paths.size())),
-                           L"{name}", name));
+    AddLine(run, std::move(line));
     return st;
 }
 
@@ -6908,6 +6929,10 @@ void CtlFinish(AppState& s, std::shared_ptr<CtlRun> run) {
             b->label = Fill(Text(I::AiCtlStepsWindows), L"{n}", Num(run->window_names.size()));
         else if ((run->layout || run->open) && !run->window && !run->other && !run->organize)
             b->label = Fill(Text(I::AiCtlStepsLayout), L"{n}", Num(run->ok));
+        if (run->ok == 0) {
+            b->label = Text(I::AiCtlStepsNone);   // not 做了 0 件事
+            b->partial = true;                    // a muted mark, not the green check
+        }
         b->collapsed = true;
         b->open = false;
     }
@@ -6968,6 +6993,10 @@ void CtlFinish(AppState& s, std::shared_ptr<CtlRun> run) {
                                                                 : I::AiCtlResLayout;
             r.title = run->layout ? Text(t) : Text(I::AiCtlResOpened);
             r.sub = PanesLine(s);
+        } else if (things == 1 && run->lines.size() == 1 && !run->title_override.empty()) {
+            r.title = run->title_override;
+            r.sub = run->sub_override;
+            r.lines = run->lines;
         } else if (things == 1 && run->lines.size() == 1) {
             r.title = run->single_title;
             if (run->organize) r.sub = Text(I::AiCtlResOrganizeSub);
@@ -7007,12 +7036,17 @@ void CtlFinish(AppState& s, std::shared_ptr<CtlRun> run) {
         if (run->window) {
             r.accept = Text(I::AiCtlOverview);
             r.accept_icon = ui::AiIcon::Tiles;
+        } else if (run->settings_page >= 0 && !failed) {
+            r.accept = Text(I::AiSetShow);
+            r.accept_icon = ui::AiIcon::Gear;
         }
         c.result_id = r.id;
+        const int page = run->settings_page;
         c.on_show = run->window ? std::function<void(AppState&)>([](AppState& st) {
             if (!st.overview.open) ToggleWindowOverview(st);
         })
-                                : std::function<void(AppState&)>();
+                    : page >= 0 && !failed ? std::function<void(AppState&)>([page](AppState& st) { OpenSettingsTab(st, page); })
+                                           : std::function<void(AppState&)>();
         if (undoable) {
             c.on_undo = [run](AppState& st) {
                 HideRenameOverlay(st, true);   // a rename field must not stay over a moved pane
@@ -7099,6 +7133,103 @@ std::wstring StepTitle(AppState& s, const std::string& id) {
     return Display(id);
 }
 
+// P4: an action with a runner (action_args.h) - the tab, tag, name or keys
+// the model gave. The runner says what changed in the card's words; here
+// it becomes the step, the result line and the undo.
+ui::AiIcon ArgIcon(std::string_view id) {
+    struct Pair {
+        std::string_view id;
+        ui::AiIcon icon;
+    };
+    static constexpr Pair kExact[] = {
+        {"tab.pin", ui::AiIcon::Pin},          {"tab.color", ui::AiIcon::Palette},
+        {"tab.rename", ui::AiIcon::Rename},    {"tab.group", ui::AiIcon::Tiles},
+        {"tab.duplicate", ui::AiIcon::Duplicate}, {"tab.close_others", ui::AiIcon::Close},
+        {"tab.activate", ui::AiIcon::Window},  {"pane.focus", ui::AiIcon::Split},
+        {"window.activate", ui::AiIcon::NewWindow}, {"sidebar.section", ui::AiIcon::Rows},
+        {"view.icon_size", ui::AiIcon::Size},  {"smartview.save", ui::AiIcon::Star},
+        {"recent.remove", ui::AiIcon::Clock},  {"alias.set", ui::AiIcon::Rename},
+        {"index.status", ui::AiIcon::Search},  {"net.place", ui::AiIcon::Plug},
+    };
+    for (const Pair& p : kExact)
+        if (p.id == id) return p.icon;
+    if (id.starts_with("tag.")) return ui::AiIcon::Tag;
+    if (id.starts_with("tray.")) return ui::AiIcon::Tray;
+    if (id.starts_with("search.")) return ui::AiIcon::Search;
+    if (id.starts_with("keymap.")) return ui::AiIcon::Keyboard;
+    return ui::AiIcon::Bolt;
+}
+
+// Organize rows (tags, aliases, the tray, recent, smart views): the card
+// says 只改 Pulse 的整理信息.
+bool ArgOrganizes(std::string_view id) {
+    return id.starts_with("tag.") || id.starts_with("alias.") || id.starts_with("tray.") || id == "recent.remove" ||
+           id == "smartview.save";
+}
+
+CtlStep CtlArgs(AppState& s, CtlRun& run, const std::string& id, const json::Value& act) {
+    CtlStep st;
+    st.icon = ArgIcon(id);
+    st.title = StepTitle(s, id);
+    app::actions::ArgRun r = app::actions::RunWithArgs(s, id, act);
+    st.arg = std::move(r.arg);
+    st.sub = std::move(r.sub);
+    st.data = std::move(r.data);
+    if (!r.ok) {
+        st.error = r.error.empty() ? std::string("Pulse could not do it now") : r.error;
+        st.why = r.why.empty() ? Text(I::AiActWhyFailed) : r.why;
+        return st;
+    }
+    st.ok = true;
+    st.skip = r.skip;
+    if (r.skip || r.read_only) return st;
+    ui::AiResultLine ln;
+    ln.before = std::move(r.line_before);
+    ln.bold = std::move(r.line_bold);
+    ln.after = std::move(r.line_after);
+    ln.caps_from = std::move(r.caps_from);
+    ln.caps_to = std::move(r.caps_to);
+    if (ln.before.empty() && ln.bold.empty() && ln.after.empty()) ln.before = st.arg.empty() ? st.title : st.title + L" \u00B7 " + st.arg;
+    // The same action again, right after itself: one line.
+    const bool follows = run.arg_last_id == id && run.arg_last_line + 1 == run.lines.size();
+    const ui::AiResultLine* prev = follows ? &run.lines.back() : nullptr;
+    int64_t tabs = 0;
+    if (const json::Value* n = st.data.is_object() ? st.data.find("tabs") : nullptr) n->get_int(tabs, 0, 1000);
+    const bool pin = st.data.is_object() && st.data.get_bool("pin", false);
+    if (prev && prev->before == ln.before && prev->bold == ln.bold && prev->after == ln.after && ln.caps_to.empty()) {
+        // 标签页颜色 无 → 蓝色 again: said already.
+    } else if (prev && id == "tab.pin" && tabs > 0 && pin == run.arg_last_pin) {
+        run.arg_tally += static_cast<size_t>(tabs);
+        const std::wstring what = Fill(Text(I::AiActNTabs), L"{n}", Num(run.arg_tally));
+        ui::AiResultLine merged = SplitLine(Fill(Text(pin ? I::AiActLinePinned : I::AiActLineUnpinned), L"{tabs}", what), what, what);
+        run.single_title = merged.before + merged.bold + merged.after;
+        run.lines.back() = std::move(merged);
+    } else {
+        run.arg_tally = static_cast<size_t>((std::max)(int64_t{1}, tabs));
+        run.arg_last_pin = pin;
+        if (ArgOrganizes(id)) {
+            ++run.organize;
+            run.organize_kinds.push_back(st.title);
+            AddLine(run, std::move(ln));
+        } else {
+            PlainDone(run, std::move(ln));
+        }
+    }
+    run.arg_last_id = id;
+    run.arg_last_line = run.lines.size() - 1;
+    if (id == "tag.create") run.arg_new_tag = st.arg;
+    if (r.undo) run.undo.push_back(std::move(r.undo));
+    if (id == "keymap.set") {
+        // 新建文件夹的快捷键改好了 / 只影响 Pulse, 在设置中查看.
+        run.title_override = Fill(Text(I::AiActKeysDone), L"{title}", st.arg);
+        run.sub_override = Text(I::AiActKeymapSub);
+        run.settings_page = 7;
+    } else {
+        AddPaletteKey(run, st.title);
+    }
+    return st;
+}
+
 CtlStep CtlRunStep(AppState& s, CtlRun& run, const std::string& id, const json::Value& act) {
     if (!app::actions::FindAction(id)) {
         CtlStep st;
@@ -7158,6 +7289,7 @@ CtlStep CtlRunStep(AppState& s, CtlRun& run, const std::string& id, const json::
         AddKeys(run, Text(I::TooltipNewTab), KeysFor(app::KeyAction::NewTab));
         return st;
     }
+    if (app::actions::HasArgRunner(id)) return CtlArgs(s, run, id, act);
     return CtlGeneric(s, run, id, act);
 }
 

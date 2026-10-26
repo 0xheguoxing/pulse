@@ -85,6 +85,10 @@ enum class AiIcon : uint8_t {
     Monitor,
     Rocket,
     WinSettings,
+    // P4 (plans/ai/P4_全部领域接入.html).
+    Pin,
+    Palette,
+    Git,
     Count
 };
 

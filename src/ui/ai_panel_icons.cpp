@@ -313,6 +313,25 @@ constexpr IconPart k_rocket[] = {
     {"M10 19.5h4", 0, 0x000000u, 1.6f, 1.0f},
 };
 
+// P4 (plans/ai/P4_全部领域接入.html).
+constexpr IconPart k_pin[] = {
+    {"M9 4h6l-1 5 3 3v2H7v-2l3-3z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M12 14v6", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_palette[] = {
+    {"M3.5 12A8.5 8.5 0 1 0 20.5 12A8.5 8.5 0 1 0 3.5 12Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M7.3 10A1.2 1.2 0 1 0 9.7 10A1.2 1.2 0 1 0 7.3 10Z", 1, 0x000000u, 1.6f, 1.0f},
+    {"M10.8 7.8A1.2 1.2 0 1 0 13.2 7.8A1.2 1.2 0 1 0 10.8 7.8Z", 1, 0x000000u, 1.6f, 1.0f},
+    {"M14.3 10A1.2 1.2 0 1 0 16.7 10A1.2 1.2 0 1 0 14.3 10Z", 1, 0x000000u, 1.6f, 1.0f},
+    {"M12 20.5c-1.2 0-1.8-.9-1.4-1.9.5-1.2-.3-2.1-1.5-2.1", 0, 0x000000u, 1.6f, 1.0f},
+};
+constexpr IconPart k_git[] = {
+    {"M4.5 6A2 2 0 1 0 8.5 6A2 2 0 1 0 4.5 6Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M4.5 18A2 2 0 1 0 8.5 18A2 2 0 1 0 4.5 18Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M15.5 9A2 2 0 1 0 19.5 9A2 2 0 1 0 15.5 9Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M6.5 8v8M17.5 11c0 3-3 4-9 5", 0, 0x000000u, 1.6f, 1.0f},
+};
+
 constexpr IconDef kIcons[] = {
     {k_spark, std::size(k_spark)},
     {k_folder, std::size(k_folder)},
@@ -385,6 +404,9 @@ constexpr IconDef kIcons[] = {
     {k_monitor, std::size(k_monitor)},
     {k_rocket, std::size(k_rocket)},
     {k_winset, std::size(k_winset)},
+    {k_pin, std::size(k_pin)},
+    {k_palette, std::size(k_palette)},
+    {k_git, std::size(k_git)},
 };
 
 static_assert(std::size(kIcons) == static_cast<size_t>(AiIcon::Count), "one table entry per AiIcon");

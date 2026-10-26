@@ -324,9 +324,7 @@ void TabController::ShowTabMenu(WindowTabs& tabs, int tab_index, POINT screen_pt
     items.push_back(MenuItem(CmdTabCloseRight, TabText(Text::TabCloseRight)));
 
     const int command = menu.TrackPopup(screen_pt, std::move(items));
-    if (command == CmdTabDuplicate) {
-        DuplicateTab(tabs, static_cast<size_t>(tab_index));
-    } else if (command == CmdTabNewRight) {
+    if (command == CmdTabNewRight) {
         const Tab* current = tabs.Active() ? tabs.Active()->ActiveFolder() : nullptr;
         OpenCreatedTab(tabs, static_cast<size_t>(tab_index) + 1,
                        current ? current->current_path : L"C:\\");
@@ -344,40 +342,69 @@ void TabController::ShowTabMenu(WindowTabs& tabs, int tab_index, POINT screen_pt
         const int choice = menu.TrackPopup(screen_pt, build(draft), build);
         menu.SetFilterPlaceholder(TabText(Text::TabMenuSearch));
         menu.SetFilterMinWidth(0.0f);
-        if (choice == CmdTabNameSave) {
-            const size_t first = draft.find_first_not_of(L" \t\r\n");
-            tab.title = first == std::wstring::npos ? L""
-                : draft.substr(first, draft.find_last_not_of(L" \t\r\n") - first + 1);
-        } else if (choice == CmdTabNameReset) {
-            tab.title.clear();
-        }
-    } else if (command >= CmdTabColorBase && command < CmdTabColorBase + static_cast<int>(std::size(kPalette))) {
+        if (choice == CmdTabNameSave || choice == CmdTabNameReset)
+            RunTabCommand(tabs, tab_index, CmdTabNameSave, choice == CmdTabNameSave ? draft : std::wstring());
+    } else if (command == CmdTabAddToNewGroup) {
+        CreateGroupAndEdit(tabs, tab_index, screen_pt, menu);
+        return;
+    } else if (command == CmdTabClose) {
+        if (closes_window) callbacks_.close_window();
+        else CloseTabs(tabs, tab_index, tab_index);
+    } else if (command != 0) {
+        RunTabCommand(tabs, tab_index, command);
+        return;
+    }
+    Changed();
+}
+
+bool TabController::RunTabCommand(WindowTabs& tabs, int tab_index, int command, const std::wstring& text) {
+    if (tab_index < 0 || tab_index >= static_cast<int>(tabs.items.size())) return false;
+    LayoutTab& tab = *tabs.items[static_cast<size_t>(tab_index)];
+    const int colors = static_cast<int>(std::size(kPalette));
+    const int groups = static_cast<int>(tabs.tab_groups.size());
+    if (command == CmdTabDuplicate) {
+        DuplicateTab(tabs, static_cast<size_t>(tab_index));
+    } else if (command == CmdTabNameSave) {
+        const size_t first = text.find_first_not_of(L" \t\r\n");
+        tab.title = first == std::wstring::npos ? L""
+            : text.substr(first, text.find_last_not_of(L" \t\r\n") - first + 1);
+    } else if (command == CmdTabNameReset) {
+        tab.title.clear();
+    } else if (command >= CmdTabColorBase && command < CmdTabColorBase + colors) {
         tab.marker_rgb = kPalette[command - CmdTabColorBase];
     } else if (command == CmdTabColorNone) {
         tab.marker_rgb = 0;
     } else if (command == CmdTabPin) {
         TogglePin(tabs, tab_index);
-        return;
+        return true;
     } else if (command == CmdTabAddToNewGroup) {
-        CreateGroupAndEdit(tabs, tab_index, screen_pt, menu);
-        return;
+        if (tab.pinned) return false;
+        TabGroup group;
+        group.id = tabs.next_tab_group_id++;
+        group.name = text;
+        group.color_rgb = FirstUnusedColor(tabs);
+        tabs.tab_groups.push_back(group);
+        SetTabGroup(tabs, static_cast<size_t>(tab_index), group.id);
     } else if (command == CmdTabRemoveFromGroup) {
+        if (tab.tab_group == 0) return false;
         tab.tab_group = 0;
         NormalizeGroupRuns(tabs);
         PruneEmptyGroups(tabs);
-    } else if (command == CmdTabClose) {
-        if (closes_window) callbacks_.close_window();
-        else CloseTabs(tabs, tab_index, tab_index);
     } else if (command == CmdTabCloseOthers) {
+        if (tabs.items.size() < 2) return false;
         CloseTabs(tabs, 0, static_cast<int>(tabs.items.size()) - 1, tab_index);
     } else if (command == CmdTabCloseRight) {
+        if (tab_index + 1 >= static_cast<int>(tabs.items.size())) return false;
         CloseTabs(tabs, tab_index + 1, static_cast<int>(tabs.items.size()) - 1);
-    } else if (command >= CmdTabJoinGroupBase &&
-               command < CmdTabJoinGroupBase + static_cast<int>(tabs.tab_groups.size())) {
+    } else if (command >= CmdTabJoinGroupBase && command < CmdTabJoinGroupBase + groups) {
+        if (tab.pinned) return false;
         SetTabGroup(tabs, static_cast<size_t>(tab_index),
                     tabs.tab_groups[static_cast<size_t>(command - CmdTabJoinGroupBase)].id);
+    } else {
+        return false;
     }
     Changed();
+    return true;
 }
 
 } // namespace pulse::app

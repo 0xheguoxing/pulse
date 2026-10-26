@@ -35,6 +35,30 @@ constexpr std::pair<std::string_view, std::string_view> kSpecs[] = {
     {"nav.open", "path:path"},
     {"file.new_folder", "name:string"},
     {"settings.set", "key:setting value:any"},
+    // P4. "tab": a number (get_state), a title, "all" or a list of these.
+    {"tab.pin", "tab:tab pin:bool"},
+    {"tab.color", "tab:tab color:red|orange|yellow|green|teal|blue|purple|pink|none"},
+    {"tab.rename", "tab:tab name:string"},
+    {"tab.group", "tab:tab group:string"},
+    {"tab.duplicate", "tab:tab"},
+    {"tab.close_others", "tab:tab"},
+    {"tab.activate", "tab:tab"},
+    {"pane.focus", "pane:pane"},
+    {"window.activate", "window:string"},
+    {"sidebar.section", "section:workspaces|quick_access|saved_searches|drives|tags|networks open:bool"},
+    {"view.icon_size", "size:bigger|smaller|16-512"},
+    {"tag.create", "name:string color:red|orange|yellow|green|teal|blue|purple|pink group:string"},
+    {"tag.edit", "tag:string name:string color:red|orange|yellow|green|teal|blue|purple|pink"},
+    {"tag.delete", "tag:string"},
+    {"tag.group", "tag:string group:string"},
+    {"smartview.save", "name:string"},
+    {"recent.remove", "items:paths"},
+    {"alias.set", "path:path alias:string"},
+    {"tray.remove", "items:paths|all"},
+    {"search.open", "query:string"},
+    {"net.place", "path:string name:string pin:bool"},
+    {"keymap.read", "action:string"},
+    {"keymap.set", "action:string keys:string"},
 };
 
 std::wstring Fold(std::wstring_view text) {
@@ -89,7 +113,14 @@ json::Value ArgSpecJson(std::string_view spec) {
         if (end == std::string_view::npos) end = spec.size();
         const std::string_view word = spec.substr(at, end - at);
         const size_t colon = word.find(':');
-        if (colon != std::string_view::npos) out.set(word.substr(0, colon), std::string(word.substr(colon + 1)));
+        if (colon == std::string_view::npos) {
+            at = end + 1;
+            continue;
+        }
+        std::string type(word.substr(colon + 1));
+        // P4: say what a tab may be, so several tabs go in one step.
+        if (type == "tab") type = "number (1 = first, as get_state) | title | \"all\" | a list of these - several tabs in ONE step";
+        out.set(word.substr(0, colon), type);
         at = end + 1;
     }
     return out;
