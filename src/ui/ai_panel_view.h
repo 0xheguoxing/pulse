@@ -21,6 +21,8 @@ namespace pulse::ui {
 
 class Compositor;
 struct AiConnView;   // 管理连接 (ai_panel_conn.h)
+struct AiVoiceMenuView;   // 语音设置 menu (ai_panel_voice.h)
+struct AiVoiceCardView;   // 语音识别连接 card (ai_panel_voice.h)
 
 enum class AiPanelMode : uint8_t { Docked = 0, Floating = 1 };
 
@@ -96,6 +98,23 @@ enum class AiPanelPart : uint8_t {
     ConnRemove,
     ConnKeyField,
     ConnUrlField,
+    // 语音输入 (third batch, flow V): the composer's microphone and its menu.
+    Mic,
+    MicMenu,        // the small chevron beside it
+    VoiceMenu,      // the menu's background
+    VoiceManage,    // 管理连接 / 添加 in the menu
+    VoiceMicPick,   // the microphone dropdown
+    VoicePause,     // index 0..2: 1 秒 / 2 秒 / 手动
+    // 语音识别连接 card.
+    VoiceCard,      // the card's background
+    VoiceClose,
+    VoiceService,   // index 0..2: 硅基流动 / OpenAI / 自定义
+    VoiceUrlField,
+    VoiceKeyField,
+    VoiceModel,     // the model dropdown
+    VoiceCancel,
+    VoiceSave,
+    VoiceRemove,
     // The bubble above the chip once the panel is closed.
     PeekCard,
     PeekClose,
@@ -152,7 +171,9 @@ enum class AiErrTone : uint8_t { Err, Warn, Accent };
 // What an error card button does (app/ai_assistant_chat.cpp).
 enum class AiErrAct : uint8_t { Retry, ManageConn, TopUp, SwitchModel, CopyDetail, Connect,
                                // A paused task (flow C): 重试 / 跳过它继续 / 撤销已做的.
-                               TaskRetry, TaskSkip, TaskUndo };
+                               TaskRetry, TaskSkip, TaskUndo,
+                               // Voice input (flow V): 添加语音连接 / 打开 Windows 设置 / 再试一次 / 管理连接.
+                               VoiceAdd, VoiceSettings, VoiceRetry, VoiceManage };
 
 struct AiErrButton {
     AiErrAct act = AiErrAct::Retry;
@@ -491,6 +512,27 @@ struct AiBlockView {
     std::vector<AiChangeView> changes;
     std::wstring warn;
     std::vector<std::wstring> pills;
+    // Flow V. Error: `checklist` (.e-l: ok rows text2 with a check, `warn`
+    // rows text with a red ×) between the sub and the hint, and `note` (.e-m)
+    // after the buttons in any tone.
+    std::vector<AiCheckView> checklist;
+    std::wstring note;
+};
+
+// 语音输入: the composer while the microphone listens, and the mic button.
+struct AiVoiceView {
+    bool available = false;           // the mic button is there
+    bool listening = false;           // .composer.listen: the filled mic and its ring
+    bool menu_open = false;           // the chevron's menu
+    uint64_t shake_at = 0;            // the mic shakes (a precheck failed), ms
+    std::array<float, 14> levels{};   // the waveform, oldest first, 0..1
+    std::wstring time;                // 0:03
+    std::wstring service;             // 硅基流动 · SenseVoiceSmall
+    std::wstring hint;                // 说完停顿一下就会识别，或再点一次麦克风
+    bool recognizing = false;         // 识别中… after the text
+    std::wstring recognizing_text;
+    std::shared_ptr<const AiVoiceMenuView> menu;   // non-null while the menu is open
+    std::shared_ptr<const AiVoiceCardView> card;   // non-null while the card is open
 };
 
 // The status bar chip (left end): "✦ AI" plus what the assistant is doing.
@@ -569,6 +611,7 @@ struct AiPanelViewModel {
     std::wstring manage_text;         // 管理连接
     // 管理连接: non-null while the menu is unfolded into the connection card.
     std::shared_ptr<const AiConnView> conn;
+    AiVoiceView voice;
     // Pointer.
     AiPanelHit hover;
     AiPanelHit pressed;
@@ -627,6 +670,7 @@ public:
     // The composer's input is visible and settled (place the EDIT there).
     bool InputPlaced() const noexcept { return input_placed_; }
     D2D1_COLOR_F CardColor() const noexcept { return card_color_; }
+    D2D1_COLOR_F BgColor() const noexcept { return bg_color_; }   // the voice card's fields
     D2D1_COLOR_F TextColor() const noexcept { return text_color_; }
     D2D1_COLOR_F PlaceholderColor() const noexcept { return text3_color_; }
     // The composer's text face (13.5), for the LumaText-presented EDIT.
@@ -635,6 +679,12 @@ public:
     // 管理连接 card: the text box of the key (0) or address (1) field when
     // the card is settled and that field takes an EDIT this frame.
     bool ConnFieldRect(int field, D2D1_RECT_F& rect) const;
+    // 语音识别连接 card: the address (0) or key (1) field's text box when it
+    // takes an EDIT this frame.
+    bool VoiceFieldRect(int field, D2D1_RECT_F& rect) const;
+    // Where a voice dropdown opens: the card's model box (VoiceModel) or the
+    // menu's microphone box (VoiceMicPick), last frame.
+    bool VoiceAnchor(AiPanelPart part, D2D1_RECT_F& rect) const;
 
     // The status bar chip; its motion (spinning spark, amber ring) asks for
     // decorative frames like the open panel does.
@@ -699,6 +749,18 @@ private:
     // `card` (its top-left; the width is the card's) and returns its height.
     float DrawConnCard(Compositor* compositor, const AiPanelViewModel& vm, const Palette& pal,
                        const D2D1_RECT_F& card, float scale, uint64_t now_ms, bool draw);
+    // ai_panel_voice.cpp: the mic button (in the composer row), the composer
+    // while it listens, the 语音设置 menu and the 语音识别连接 card.
+    void DrawMic(Compositor* compositor, const AiPanelViewModel& vm, const Palette& pal, float scale, uint64_t now_ms);
+    void DrawVoiceInput(Compositor* compositor, const AiPanelViewModel& vm, const Palette& pal, float line,
+                        float scale, uint64_t now_ms);
+    void DrawVoiceMenu(Compositor* compositor, const AiPanelViewModel& vm, const Palette& pal, float scale,
+                       uint64_t now_ms);
+    void DrawVoiceCard(Compositor* compositor, const AiPanelViewModel& vm, const Palette& pal, float scale,
+                       uint64_t now_ms);
+    // The input's lines: the EDIT's, or while listening the recording lines.
+    int InputLines(const AiPanelViewModel& vm) const;
+    AiPanelHit VoiceHitTest(float x, float y) const;
 
     bool open_ = false;
     AiPanelMode mode_ = AiPanelMode::Docked;
@@ -736,6 +798,10 @@ private:
     D2D1_RECT_F input_rect_{};
     bool input_placed_ = false;
     D2D1_RECT_F add_files_{}, model_button_{}, send_button_{};
+    D2D1_RECT_F mic_button_{}, mic_menu_{};
+    // 语音输入: menu and card motion, hit rects and formats (ai_panel_voice.h).
+    struct VoiceGeom;
+    std::shared_ptr<VoiceGeom> voice_;
     D2D1_RECT_F menu_rect_{};
     std::vector<D2D1_RECT_F> menu_model_rects_;
     std::array<D2D1_RECT_F, 4> menu_effort_rects_{};
@@ -746,6 +812,7 @@ private:
     std::shared_ptr<ConnGeom> conn_;
     D2D1_RECT_F conversation_rect_{};
     D2D1_COLOR_F card_color_{1, 1, 1, 1};
+    D2D1_COLOR_F bg_color_{1, 1, 1, 1};
     D2D1_COLOR_F text_color_{0, 0, 0, 1};
     D2D1_COLOR_F text3_color_{0.5f, 0.5f, 0.5f, 1};
 

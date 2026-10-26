@@ -3846,3 +3846,73 @@ AiSetLockHint	IDS_AI_SET_LOCK_HINT	5044	这些也只能你自己在设置里改�
 AiSetPillPerm	IDS_AI_SET_PILL_PERM	5045	助手的权限	The assistant's permissions	助手的權限
 AiSetPillAllow	IDS_AI_SET_PILL_ALLOW	5046	「总是允许」列表	The Always allow list	「總是允許」清單
 AiSetPillConn	IDS_AI_SET_PILL_CONN	5047	连接和 API key	Connections and API keys	連線和 API key
+AiVoiceMic	IDS_AI_VOICE_MIC	5048	语音输入	Voice input	語音輸入
+AiVoiceOptions	IDS_AI_VOICE_OPTIONS	5049	语音输入选项	Voice input options	語音輸入選項
+AiVoiceHeading	IDS_AI_VOICE_HEADING	5050	语音识别	Speech recognition	語音辨識
+AiVoiceAdd	IDS_AI_VOICE_ADD	5051	添加	Add	新增
+AiVoiceNoConn	IDS_AI_VOICE_NO_CONN	5052	还没有语音连接	No voice connection yet	還沒有語音連線
+AiVoiceConnected	IDS_AI_VOICE_CONNECTED	5053	{model} · 已连接	{model} · Connected	{model} · 已連線
+AiVoiceNotConn	IDS_AI_VOICE_NOT_CONN	5054	点「添加」连一个语音识别服务	Click Add to connect a speech service	點「新增」連一個語音辨識服務
+AiVoiceMicLabel	IDS_AI_VOICE_MIC_LABEL	5055	麦克风	Microphone	麥克風
+AiVoiceMicDefault	IDS_AI_VOICE_MIC_DEFAULT	5056	系统默认	System default	系統預設
+AiVoiceMicNone	IDS_AI_VOICE_MIC_NONE	5057	没有找到	None found	沒有找到
+AiVoicePauseHeading	IDS_AI_VOICE_PAUSE_HEADING	5058	停顿多久算说完	Pause that ends a sentence	停頓多久算說完
+AiVoicePause1	IDS_AI_VOICE_PAUSE1	5059	1 秒	1 s	1 秒
+AiVoicePause2	IDS_AI_VOICE_PAUSE2	5060	2 秒	2 s	2 秒
+AiVoicePauseManual	IDS_AI_VOICE_PAUSE_MANUAL	5061	手动	Manual	手動
+AiVoiceMenuNote	IDS_AI_VOICE_MENU_NOTE	5062	只在点麦克风时录音，录完上传给语音服务识别，Pulse 不保存录音。文字填进输入框，按 Enter 才发送。	Records only after you click the mic. The audio goes to the speech service for recognition; Pulse keeps no recordings. The words go into the box and are sent only when you press Enter.	只在點麥克風時錄音，錄完上傳給語音服務辨識，Pulse 不儲存錄音。文字填進輸入框，按 Enter 才傳送。
+AiVoiceCardAdd	IDS_AI_VOICE_CARD_ADD	5063	添加语音识别连接	Add a speech recognition connection	新增語音辨識連線
+AiVoiceCardManage	IDS_AI_VOICE_CARD_MANAGE	5064	语音识别连接	Speech recognition connection	語音辨識連線
+AiVoiceCardSub	IDS_AI_VOICE_CARD_SUB	5065	DeepSeek 不能识别语音，需要另接一个语音识别服务（OpenAI 兼容的 /audio/transcriptions 接口）。	DeepSeek can't recognize speech, so voice input needs a separate speech recognition service (an OpenAI-compatible /audio/transcriptions endpoint).	DeepSeek 不能辨識語音，需要另接一個語音辨識服務（OpenAI 相容的 /audio/transcriptions 介面）。
+AiVoiceService	IDS_AI_VOICE_SERVICE	5066	服务	Service	服務
+AiVoiceSiliconFlow	IDS_AI_VOICE_SILICON_FLOW	5067	硅基流动	SiliconFlow	矽基流動
+AiVoiceCustom	IDS_AI_VOICE_CUSTOM	5068	自定义	Custom	自訂
+AiVoiceUrl	IDS_AI_VOICE_URL	5069	地址	Address	位址
+AiVoiceKeyNote	IDS_AI_VOICE_KEY_NOTE	5070	只存在本机	Stored only on this PC	只存在本機
+AiVoiceKeyPlaceholder	IDS_AI_VOICE_KEY_PLACEHOLDER	5071	粘贴 API key	Paste API key	貼上 API key
+AiVoiceModel	IDS_AI_VOICE_MODEL	5072	模型	Model	模型
+AiVoiceModelNote	IDS_AI_VOICE_MODEL_NOTE	5073	已从服务读取	Read from the service	已從服務讀取
+AiVoiceModelPlaceholder	IDS_AI_VOICE_MODEL_PLACEHOLDER	5074	填好 key 后从服务读取	Read from the service once the key is in	填好 key 後從服務讀取
+AiVoiceTesting	IDS_AI_VOICE_TESTING	5075	正在读取模型并测试识别…	Reading models and testing recognition…	正在讀取模型並測試辨識…
+AiVoiceTestOk	IDS_AI_VOICE_TEST_OK	5076	已连接 · 测试音频识别用了 {s} 秒	Connected · the test audio took {s} s to recognize	已連線 · 測試音訊辨識用了 {s} 秒
+AiVoiceErrKey	IDS_AI_VOICE_ERR_KEY	5077	服务不接受这个 key（401）。检查后重新粘贴。	The service rejected this key (401). Check it and paste it again.	服務不接受這個 key（401）。檢查後重新貼上。
+AiVoiceErrNet	IDS_AI_VOICE_ERR_NET	5078	连不上 {host}。检查网络和地址。	Can't reach {host}. Check the network and the address.	連不上 {host}。檢查網路和位址。
+AiVoiceErrHttp	IDS_AI_VOICE_ERR_HTTP	5079	服务返回了错误 {code}。{msg}	The service returned error {code}. {msg}	服務傳回了錯誤 {code}。{msg}
+AiVoiceErrNoModel	IDS_AI_VOICE_ERR_NO_MODEL	5080	这个服务没有列出语音识别模型。	This service lists no speech recognition models.	這個服務沒有列出語音辨識模型。
+AiVoiceErrSave	IDS_AI_VOICE_ERR_SAVE	5081	key 没能保存到本机，再试一次。	The key couldn't be saved on this PC. Try again.	key 沒能儲存到本機，再試一次。
+AiVoicePrivacy	IDS_AI_VOICE_PRIVACY	5082	只在你点麦克风时录音，录完上传给这个服务识别。Pulse 不保存录音。	Records only after you click the mic, then uploads it to this service for recognition. Pulse keeps no recordings.	只在你點麥克風時錄音，錄完上傳給這個服務辨識。Pulse 不儲存錄音。
+AiVoiceCancel	IDS_AI_VOICE_CANCEL	5083	取消	Cancel	取消
+AiVoiceSave	IDS_AI_VOICE_SAVE	5084	保存	Save	儲存
+AiVoiceRemove	IDS_AI_VOICE_REMOVE	5085	移除连接	Remove connection	移除連線
+AiVoiceAdded	IDS_AI_VOICE_ADDED	5086	已添加语音连接：{name}	Voice connection added: {name}	已新增語音連線：{name}
+AiVoiceRemoved	IDS_AI_VOICE_REMOVED	5087	已移除语音连接	Voice connection removed	已移除語音連線
+AiVoiceNeedTitle	IDS_AI_VOICE_NEED_TITLE	5088	语音输入需要一个语音识别连接	Voice input needs a speech recognition connection	語音輸入需要一個語音辨識連線
+AiVoiceNeedSub	IDS_AI_VOICE_NEED_SUB	5089	DeepSeek 不能识别语音。推荐硅基流动的 SenseVoiceSmall：中文好，国内直接能用。也可以用 OpenAI 或其他兼容的服务。	DeepSeek can't recognize speech. SiliconFlow's SenseVoiceSmall is recommended: good with Chinese and reachable in mainland China. OpenAI or any compatible service works too.	DeepSeek 不能辨識語音。推薦矽基流動的 SenseVoiceSmall：中文好，國內直接能用。也可以用 OpenAI 或其他相容的服務。
+AiVoiceNeedButton	IDS_AI_VOICE_NEED_BUTTON	5090	添加语音连接	Add voice connection	新增語音連線
+AiVoiceNeedNote	IDS_AI_VOICE_NEED_NOTE	5091	现有的 DeepSeek 连接不受影响	Your DeepSeek connection stays as it is	現有的 DeepSeek 連線不受影響
+AiVoiceDeniedTitle	IDS_AI_VOICE_DENIED_TITLE	5092	Windows 不允许 Pulse 使用麦克风	Windows doesn't let Pulse use the microphone	Windows 不允許 Pulse 使用麥克風
+AiVoiceDeniedSub	IDS_AI_VOICE_DENIED_SUB	5093	打开下面这个开关后，再点一次麦克风。	Turn on the switch below, then click the mic again.	開啟下面這個開關後，再點一次麥克風。
+AiVoiceCheckMic	IDS_AI_VOICE_CHECK_MIC	5094	找到麦克风：{name}	Microphone found: {name}	找到麥克風：{name}
+AiVoiceCheckDesktop	IDS_AI_VOICE_CHECK_DESKTOP	5095	允许桌面应用访问麦克风：已关闭	Let desktop apps access your microphone: Off	允許桌面應用程式存取麥克風：已關閉
+AiVoiceCheckAll	IDS_AI_VOICE_CHECK_ALL	5096	麦克风访问权限：已关闭	Microphone access: Off	麥克風存取權：已關閉
+AiVoiceCheckConn	IDS_AI_VOICE_CHECK_CONN	5097	语音连接：{name} · 可用	Voice connection: {name} · Ready	語音連線：{name} · 可用
+AiVoiceCheckNoMic	IDS_AI_VOICE_CHECK_NO_MIC	5098	找到麦克风：没有	Microphone found: none	找到麥克風：沒有
+AiVoiceDeniedHint	IDS_AI_VOICE_DENIED_HINT	5099	设置 › 隐私和安全性 › 麦克风	Settings › Privacy & security › Microphone	設定 › 隱私權與安全性 › 麥克風
+AiVoiceNoMicTitle	IDS_AI_VOICE_NO_MIC_TITLE	5100	没找到麦克风	No microphone found	沒找到麥克風
+AiVoiceNoMicSub	IDS_AI_VOICE_NO_MIC_SUB	5101	插上或打开麦克风后，再点一次麦克风。	Plug in or turn on a microphone, then click the mic again.	插上或開啟麥克風後，再點一次麥克風。
+AiVoiceNoMicHint	IDS_AI_VOICE_NO_MIC_HINT	5102	设置 › 系统 › 声音 › 输入	Settings › System › Sound › Input	設定 › 系統 › 音效 › 輸入
+AiVoiceOpenSettings	IDS_AI_VOICE_OPEN_SETTINGS	5103	打开 Windows 设置	Open Windows Settings	開啟 Windows 設定
+AiVoiceRetry	IDS_AI_VOICE_RETRY	5104	再试一次	Try again	再試一次
+AiVoiceTypeInstead	IDS_AI_VOICE_TYPE_INSTEAD	5105	也可以直接打字	You can also just type	也可以直接打字
+AiVoiceMicFailTitle	IDS_AI_VOICE_MIC_FAIL_TITLE	5106	麦克风打不开	Couldn't open the microphone	麥克風打不開
+AiVoiceMicFailSub	IDS_AI_VOICE_MIC_FAIL_SUB	5107	可能被别的程序占用，或刚被拔出（{code}）。	Another app may be using it, or it was just unplugged ({code}).	可能被別的程式佔用，或剛被拔出（{code}）。
+AiVoiceFailTitle	IDS_AI_VOICE_FAIL_TITLE	5108	这一句没识别出来	This sentence wasn't recognized	這一句沒辨識出來
+AiVoiceFailNet	IDS_AI_VOICE_FAIL_NET	5109	连不上 {host}，检查网络后再说一遍。录音没有保存。	Couldn't reach {host}. Check the network and say it again. The recording wasn't kept.	連不上 {host}，檢查網路後再說一遍。錄音沒有儲存。
+AiVoiceFailKey	IDS_AI_VOICE_FAIL_KEY	5110	语音服务不接受 key（401），可能已失效。录音没有保存。	The speech service rejected the key (401); it may have expired. The recording wasn't kept.	語音服務不接受 key（401），可能已失效。錄音沒有儲存。
+AiVoiceFailOther	IDS_AI_VOICE_FAIL_OTHER	5111	语音服务返回了错误 {code}。录音没有保存。	The speech service returned error {code}. The recording wasn't kept.	語音服務傳回了錯誤 {code}。錄音沒有儲存。
+AiVoiceSayAgain	IDS_AI_VOICE_SAY_AGAIN	5112	再说一遍	Say it again	再說一遍
+AiVoiceListening	IDS_AI_VOICE_LISTENING	5113	正在听	Listening	正在聽
+AiVoiceRecognizingChip	IDS_AI_VOICE_RECOGNIZING_CHIP	5114	识别中	Recognizing	辨識中
+AiVoiceHint	IDS_AI_VOICE_HINT	5115	说完停顿一下就会识别，或再点一次麦克风	Pause when you're done and it's recognized, or click the mic again	說完停頓一下就會辨識，或再點一次麥克風
+AiVoiceHintManual	IDS_AI_VOICE_HINT_MANUAL	5116	说完再点一次麦克风	Click the mic again when you're done	說完再點一次麥克風
+AiVoiceRecognizing	IDS_AI_VOICE_RECOGNIZING	5117	识别中…	Recognizing…	辨識中…

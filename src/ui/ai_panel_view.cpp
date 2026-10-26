@@ -245,6 +245,7 @@ void AiPanelView::Draw(Compositor* compositor, const AiPanelViewModel& vm, const
     if (!EnsureBrush(dc)) return;
     const Palette pal = MakePalette(theme, vm.dark);
     card_color_ = pal.card;
+    bg_color_ = pal.bg;
     text_color_ = pal.text;
     text3_color_ = pal.text3;
     const float s = scale;
@@ -309,7 +310,11 @@ void AiPanelView::Draw(Compositor* compositor, const AiPanelViewModel& vm, const
             drawn_ = true;
         }
     }
-    if (drawn_ && open_) DrawModelMenu(compositor, vm, pal, s, now_ms);
+    if (drawn_ && open_) {
+        DrawModelMenu(compositor, vm, pal, s, now_ms);
+        DrawVoiceMenu(compositor, vm, pal, s, now_ms);
+        DrawVoiceCard(compositor, vm, pal, s, now_ms);
+    }
 }
 
 void AiPanelView::DrawContent(Compositor* compositor, const AiPanelViewModel& vm, const Palette& pal,
@@ -463,8 +468,8 @@ void AiPanelView::DrawEmptyState(Compositor* compositor, const AiPanelViewModel&
 
 namespace {
 // .cp-in: min-height 42, 21 px lines, padding 2; grows to six lines.
-float InputHeight(const AiPanelViewModel& vm, float s) {
-    const int lines = std::clamp(vm.composer_lines, 1, 6);
+float InputHeight(const AiPanelViewModel& vm, int input_lines, float s) {
+    const int lines = std::clamp(input_lines, 1, 6);
     const float line = vm.composer_line_px > 0.0f ? vm.composer_line_px : 21.0f * s;
     return std::round((std::max)(42.0f * s, line * static_cast<float>(lines) + 4.0f * s));
 }
@@ -472,7 +477,7 @@ float InputHeight(const AiPanelViewModel& vm, float s) {
 
 float AiPanelView::ComposerHeight(const AiPanelViewModel& vm, float s) const {
     // padding 10 / 8, context row 24 + 6, input, controls row 32, 1 px borders.
-    return std::round((2.0f + 10.0f + (vm.context_visible ? 30.0f : 0.0f) + 32.0f + 8.0f) * s) + InputHeight(vm, s);
+    return std::round((2.0f + 10.0f + (vm.context_visible ? 30.0f : 0.0f) + 32.0f + 8.0f) * s) + InputHeight(vm, InputLines(vm), s);
 }
 
 void AiPanelView::DrawComposer(Compositor* compositor, const AiPanelViewModel& vm, const Palette& pal,
@@ -480,14 +485,15 @@ void AiPanelView::DrawComposer(Compositor* compositor, const AiPanelViewModel& v
     Ctx c{compositor, compositor->Dc(), brush_, s};
     composer_rect_ = box;
     const float radius = 16.0f * s;
-    if (vm.composer_focused) {
+    const bool ring = vm.composer_focused || vm.voice.listening;   // .composer.listen: the same ring
+    if (ring) {
         // Focus: accent border and a 3 px ring at 16%.
         c.Fill(Inflate(box, 3.0f * s), radius + 3.0f * s, Alpha(pal.accent, 0.16f));
     } else {
         c.Shadow(box, radius, 8.0f * s, 2.0f * s, Hex(0x000000, vm.dark ? 0.20f : 0.05f));
     }
     c.Fill(box, radius, pal.card);
-    c.Stroke(box, radius, vm.composer_focused ? pal.accent : pal.line);
+    c.Stroke(box, radius, ring ? pal.accent : pal.line);
     const float left = box.left + 1.0f * s + 12.0f * s;
     const float right = box.right - 1.0f * s - 10.0f * s;
     float y = box.top + 1.0f * s + 10.0f * s;
@@ -510,12 +516,14 @@ void AiPanelView::DrawComposer(Compositor* compositor, const AiPanelViewModel& v
         c.Icon(AiIcon::Close, xx, y + 6.5f * s, 11.0f * s, hot ? pal.text : pal.text3);
         y += 30.0f * s;
     }
-    const float input_h = InputHeight(vm, s);
+    const float input_h = InputHeight(vm, InputLines(vm), s);
     // .cp-in padding 2: the EDIT sits inside; the placeholder is drawn here
     // too, for the frames the EDIT is hidden (opening, model menu).
     input_rect_ = D2D1::RectF(left + 2.0f * s, y + 2.0f * s, right - 2.0f * s, y + input_h - 2.0f * s);
     const float line = vm.composer_line_px > 0.0f ? vm.composer_line_px : 21.0f * s;
-    if (vm.composer_empty) {
+    if (vm.voice.listening && vm.voice.available) {
+        DrawVoiceInput(compositor, vm, pal, line, s, now_ms);
+    } else if (vm.composer_empty) {
         c.Text(vm.placeholder, formats_.body, D2D1::RectF(input_rect_.left, input_rect_.top, input_rect_.right,
                                                          input_rect_.top + line), pal.text3);
     } else if (vm.draw_composer_text) {
@@ -527,17 +535,28 @@ void AiPanelView::DrawComposer(Compositor* compositor, const AiPanelViewModel& v
         c.dc->PopAxisAlignedClip();
     }
     y += input_h;
-    // Controls row (height 32): 添加文件 · model button · send.
+    // Controls row (height 32): 添加文件 · model button · (mic) · send. In a
+    // narrow panel 添加文件 drops its label first, then the model name shortens.
     const float row_mid = y + 16.0f * s;
+    const float model_r = vm.voice.available ? right - 32.0f * s - 10.0f * s - 46.0f * s - 10.0f * s
+                                             : right - 32.0f * s - 6.0f * s;
+    const float model_lw = (std::min)(c.Measure(vm.model_label, formats_.model), 180.0f * s);
+    const float model_ew = vm.effort_label.empty() ? 0.0f : c.Measure(vm.effort_label, formats_.small125);
+    const float model_pad = (8.0f + 4.0f + 12.0f + 8.0f) * s;
+    float model_fit = model_lw;
     {
         const float tw = c.Measure(vm.add_files, formats_.caption);
-        add_files_ = D2D1::RectF(left - 4.0f * s, row_mid - 14.0f * s, left - 4.0f * s + (8.0f + 14.0f + 5.0f + 8.0f) * s + tw,
-                                 row_mid + 14.0f * s);
+        const float full = (8.0f + 14.0f + 5.0f + 8.0f) * s + tw;
+        const bool compact = left - 4.0f * s + full + 6.0f * s + model_pad + model_lw + model_ew > model_r;
+        const float w = compact ? 30.0f * s : full;
+        add_files_ = D2D1::RectF(left - 4.0f * s, row_mid - 14.0f * s, left - 4.0f * s + w, row_mid + 14.0f * s);
+        model_fit = std::clamp(model_r - (add_files_.right + 6.0f * s) - model_pad - model_ew, 30.0f * s, model_lw);
         const bool hot = vm.hover.part == AiPanelPart::AddFiles;
         if (hot) c.Fill(add_files_, 8.0f * s, pal.hover);
         c.Icon(AiIcon::At, add_files_.left + 8.0f * s, row_mid - 7.0f * s, 14.0f * s, pal.text2);
-        c.Text(vm.add_files, formats_.caption, D2D1::RectF(add_files_.left + 27.0f * s, add_files_.top,
-                                                         add_files_.right, add_files_.bottom), pal.text2);
+        if (!compact)
+            c.Text(vm.add_files, formats_.caption, D2D1::RectF(add_files_.left + 27.0f * s, add_files_.top,
+                                                             add_files_.right, add_files_.bottom), pal.text2);
     }
     // Send: 32 round.
     send_button_ = D2D1::RectF(right - 32.0f * s, row_mid - 16.0f * s, right, row_mid + 16.0f * s);
@@ -582,14 +601,24 @@ void AiPanelView::DrawComposer(Compositor* compositor, const AiPanelViewModel& v
         }
         c.dc->SetTransform(saved);
     }
-    // Model button: label (medium) + effort (text2) + chevron 12, padding 0 8,
-    // 6 px left of the send button.
+    // .vsel (the mic 30 + its chevron 16, height 30): margin-right 6 + the
+    // row's gap 4 left of the send button; the model button 10 left of it.
+    float model_right = send_button_.left - 6.0f * s;
+    mic_button_ = mic_menu_ = {};
+    if (vm.voice.available) {
+        const float r = send_button_.left - 10.0f * s;
+        mic_menu_ = D2D1::RectF(r - 16.0f * s, row_mid - 15.0f * s, r, row_mid + 15.0f * s);
+        mic_button_ = D2D1::RectF(mic_menu_.left - 30.0f * s, row_mid - 15.0f * s, mic_menu_.left, row_mid + 15.0f * s);
+        DrawMic(compositor, vm, pal, s, now_ms);
+        model_right = mic_button_.left - 10.0f * s;
+    }
+    // Model button: label (medium) + effort (text2) + chevron 12, padding 0 8.
     {
         // A long id is cut with an ellipsis (the menu shows it whole).
-        const float lw = (std::min)(c.Measure(vm.model_label, formats_.model), 180.0f * s);
-        const float ew = vm.effort_label.empty() ? 0.0f : c.Measure(vm.effort_label, formats_.small125);
-        const float w = (8.0f + 4.0f + 12.0f + 8.0f) * s + lw + ew;
-        const float r = send_button_.left - 6.0f * s;
+        const float lw = model_fit;
+        const float ew = model_ew;
+        const float w = model_pad + lw + ew;
+        const float r = model_right;
         model_button_ = D2D1::RectF(r - w, row_mid - 14.0f * s, r, row_mid + 14.0f * s);
         const bool hot = vm.hover.part == AiPanelPart::ModelButton;
         if (hot || vm.menu_open) c.Fill(model_button_, 8.0f * s, pal.hover);
@@ -993,6 +1022,7 @@ AiPanelView::Palette AiPanelPalette(const Theme& theme, bool dark) { return Make
 AiPanelHit AiPanelView::HitTest(float x, float y) const {
     AiPanelHit hit;
     if (!drawn_ || !open_) return hit;
+    if (const AiPanelHit v = VoiceHitTest(x, y); v.part != AiPanelPart::None) return v;
     if (In(menu_rect_, x, y) && conn_ && conn_->card) {
         for (auto it = conn_->hits.rbegin(); it != conn_->hits.rend(); ++it)
             if (In(it->rect, x, y)) return {it->part, -1};
@@ -1022,13 +1052,15 @@ AiPanelHit AiPanelView::HitTest(float x, float y) const {
     if (In(context_chip_, x, y)) return {AiPanelPart::ContextChip, -1};
     if (In(add_files_, x, y)) return {AiPanelPart::AddFiles, -1};
     if (In(model_button_, x, y)) return {AiPanelPart::ModelButton, -1};
+    if (In(mic_button_, x, y)) return {AiPanelPart::Mic, -1};
+    if (In(mic_menu_, x, y)) return {AiPanelPart::MicMenu, -1};
     if (In(send_button_, x, y)) return {AiPanelPart::Send, -1};
     if (In(input_rect_, x, y)) return {AiPanelPart::Input, -1};
     return {AiPanelPart::Panel, -1};
 }
 
 bool AiPanelView::Contains(float x, float y) const {
-    return drawn_ && open_ && (In(panel_rect_, x, y) || In(menu_rect_, x, y));
+    return drawn_ && open_ && (In(panel_rect_, x, y) || In(menu_rect_, x, y) || VoiceHitTest(x, y).part != AiPanelPart::None);
 }
 
 } // namespace pulse::ui

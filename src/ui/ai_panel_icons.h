@@ -84,6 +84,7 @@ enum class AiIcon : uint8_t {
     Mic,
     Monitor,
     Rocket,
+    WinSettings,
     Count
 };
 

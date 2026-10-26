@@ -34,12 +34,29 @@ struct AllowRule {
     std::wstring folder;   // absolute; covers its subfolders
 };
 
+// 语音输入 (third batch, flow V): the speech recognition service the composer's
+// microphone uploads to (OpenAI format, POST {base}/audio/transcriptions), the
+// microphone and how long a pause ends a sentence. The key is in
+// voice_key.bin (ai_model_key.h). Written only once it differs from the
+// defaults, so an ai.json without voice input stays as it was.
+struct VoicePrefs {
+    std::string service;   // "siliconflow" | "openai" | "custom"; empty: no voice connection
+    std::string base_url;  // https://api.siliconflow.cn/v1
+    std::string model;     // FunAudioLLM/SenseVoiceSmall
+    int pause = 1;         // seconds of quiet that end a sentence: 1, 2; 0 = manual
+    std::string mic;       // capture endpoint id (UTF-8); empty: the system default
+
+    bool Configured() const { return !service.empty() && !base_url.empty() && !model.empty(); }
+    bool IsDefault() const { return service.empty() && base_url.empty() && model.empty() && pause == 1 && mic.empty(); }
+};
+
 // Pulse 助手 (ai_assistant.h): where its panel sits and the model last used.
 struct AssistantPrefs {
     bool floating = false;                    // "dock": "docked" | "floating"
     std::string model = "deepseek-flash";
     int effort = 2;                           // 0 off, 1 low, 2 medium, 3 high
     std::string base_url;                     // 管理连接 · 高级; empty: https://api.deepseek.com
+    VoicePrefs voice;                         // "voice": {...}
 };
 
 struct Settings {

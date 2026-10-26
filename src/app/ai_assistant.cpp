@@ -3,6 +3,7 @@
 
 #include "ai_assistant_chat.h"
 #include "ai_assistant_conn.h"
+#include "ai_assistant_voice.h"
 #include "ai_model_list.h"
 #include "ai_settings.h"
 #include "app_internal.h"
@@ -359,6 +360,7 @@ void HideEdit(AppState& s) {
 
 void CloseMenu(AppState& s) {
     AiAssistantState& a = s.aiAssistant;
+    AiVoiceCloseMenu(s);
     AiConnClose(s);
     if (!a.menu_open) return;
     a.menu_open = false;
@@ -369,7 +371,7 @@ void CloseMenu(AppState& s) {
 bool HasTip(ui::AiPanelPart part) {
     using P = ui::AiPanelPart;
     return part == P::NewChat || part == P::Mode || part == P::Close || part == P::ActCopy || part == P::ActRetry ||
-           part == P::ActThumb || part == P::ConnBack || part == P::ConnClose || part == P::ConnEye;
+           part == P::ActThumb || part == P::ConnBack || part == P::ConnClose || part == P::ConnEye || AiVoiceHasTip(part);
 }
 
 void ShowTipLater(AppState& s) {
@@ -427,6 +429,16 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
         Redraw(s);
         return;
     }
+    // The mic, its menu and the voice card. The model menu gives way to them.
+    if ((hit.part == P::Mic || hit.part == P::MicMenu) && a.menu_open) {
+        AiConnClose(s);
+        a.menu_open = false;
+        a.menu_closed_at = ui::motion::NowMs();
+    }
+    if (AiVoiceActivate(s, hit)) {
+        Redraw(s);
+        return;
+    }
     switch (hit.part) {
     case P::NewChat:
         CloseMenu(s);
@@ -467,6 +479,7 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
     case P::ModelButton:
         if (a.menu_open) CloseMenu(s);
         else {
+            AiVoiceCloseMenu(s);
             a.menu_open = true;
             if (AiAgentConnected()) ai::RefreshListedModels(s.hwnd, AiAgentBaseUrl());
         }
@@ -494,7 +507,10 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
         break;
     case P::Send:
         CloseMenu(s);
-        if (a.chat && a.chat->busy) AiChatStop(s);
+        // While the mic listens 发送 only stops it: the last words are still
+        // coming, and nothing is sent without a look.
+        if (AiVoiceBusy(s)) AiVoiceStop(s);
+        else if (a.chat && a.chat->busy) AiChatStop(s);
         else SubmitComposer(s);
         a.focus_pending = true;
         break;
@@ -550,6 +566,7 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
         // place; retry, top up and copy are the chat's.
         ui::AiErrAct act{};
         if (!AiChatErrAction(s, hit.index, act)) break;
+        if (AiVoiceErrAct(s, act, hit.index)) break;
         if (act == ui::AiErrAct::ManageConn || act == ui::AiErrAct::Connect) {
             a.menu_open = true;
             AiConnOpen(s);
@@ -578,6 +595,23 @@ void Activate(AppState& s, const ui::AiPanelHit& hit) {
 }
 
 } // namespace
+
+void AiAssistantAppendComposer(AppState& s, const std::wstring& words) {
+    AiAssistantState& a = s.aiAssistant;
+    EnsureEdit(s);
+    if (!a.edit || words.empty()) return;
+    auto word = [](wchar_t ch) { return (ch >= L'0' && ch <= L'9') || (ch >= L'A' && ch <= L'Z') || (ch >= L'a' && ch <= L'z'); };
+    std::wstring text = ComposerText(a);
+    if (!text.empty() && word(text.back()) && word(words.front())) text += L' ';
+    text += words;
+    SetWindowTextW(a.edit, text.c_str());
+    const int end = static_cast<int>(text.size());
+    SendMessageW(a.edit, EM_SETSEL, static_cast<WPARAM>(end), static_cast<LPARAM>(end));
+    SendMessageW(a.edit, EM_SCROLLCARET, 0, 0);
+    ReadComposerMetrics(a);
+    a.focus_pending = true;
+    Redraw(s);
+}
 
 void AiAssistantFillComposer(AppState& s, const std::wstring& text) {
     AiAssistantState& a = s.aiAssistant;
@@ -613,6 +647,7 @@ void AiAssistantClose(AppState& s, bool animate) {
     if (!a.open) return;
     a.open = false;
     AiConnClose(s);
+    AiVoiceStop(s);
     a.menu_open = false;
     a.hover = {};
     a.pressed = {};
@@ -700,7 +735,7 @@ void FillAiAssistantVm(AppState& s, ui::WindowViewModel& vm) {
     p.composer_lines = a.lines;
     p.composer_line_px = static_cast<float>(a.line_px);
     const bool menu_covers = a.menu_open || ui::motion::NowMs() - a.menu_closed_at < kMenuFadeMs;
-    if (!p.composer_empty && (!a.edit_visible || menu_covers)) {
+    if (!p.composer_empty && (!a.edit_visible || menu_covers || AiVoiceCovers(s))) {
         p.draw_composer_text = true;
         p.composer_text = ComposerText(a);
     }
@@ -734,6 +769,7 @@ void FillAiAssistantVm(AppState& s, ui::WindowViewModel& vm) {
                                     : Text(I::AiAsstNotConnected);
     p.manage_text = Text(I::AiAsstManage);
     AiConnFill(s, p);
+    AiVoiceFill(s, vm);
 
     p.hover = a.hover;
     p.pressed = a.pressed;
@@ -742,7 +778,9 @@ void FillAiAssistantVm(AppState& s, ui::WindowViewModel& vm) {
     if (HasTip(a.hover.part) && a.pressed.part == P::None && GetTickCount64() - a.hover_since >= kTipDelayMs) {
         const P part = a.hover.part;
         std::wstring conn_tip;
-        if (AiConnTip(s, part, conn_tip)) {
+        if (AiVoiceHasTip(part)) {
+            if (AiVoiceTip(s, part, conn_tip)) vm.tooltip_text = std::move(conn_tip);
+        } else if (AiConnTip(s, part, conn_tip)) {
             // A card part under a pointer that has not moved since ‹ / ⌄.
             if (AiConnIsOpen(s)) vm.tooltip_text = std::move(conn_tip);
         } else vm.tooltip_text = Text(part == P::NewChat ? I::AiAsstNewChat
@@ -759,12 +797,16 @@ void FillAiAssistantVm(AppState& s, ui::WindowViewModel& vm) {
 void AiAssistantLayout(AppState& s) {
     AiAssistantState& a = s.aiAssistant;
     AiConnLayout(s);
+    AiVoiceLayout(s);
     if (!a.edit) return;
     const ui::AiPanelView& view = s.renderer.AiPanel();
-    const bool menu_covers = a.menu_open || ui::motion::NowMs() - a.menu_closed_at < kMenuFadeMs;
+    const bool menu_fading = !a.menu_open && ui::motion::NowMs() - a.menu_closed_at < kMenuFadeMs;
+    const bool menu_covers = a.menu_open || menu_fading || AiVoiceCovers(s);
     if (!a.open || !view.InputPlaced() || menu_covers) {
         HideEdit(s);
-        if (a.open && menu_covers && !a.menu_open) Redraw(s);   // show it again after the fade
+        // Show it again after the model menu's fade; AiVoiceLayout times the
+        // voice menu's and card's own fades.
+        if (a.open && menu_fading) Redraw(s);
         return;
     }
     EnsureFont(s);
@@ -851,8 +893,8 @@ bool AiAssistantMouseDown(AppState& s, int x, int y) {
     if (!Reachable(s)) return false;
     const ui::AiPanelHit hit = HitAt(s, x, y);
     if (hit.part == ui::AiPanelPart::None) {
-        // Outside: the menu folds away and the click goes on to Pulse.
-        if (a.menu_open) {
+        // Outside: the menus fold away and the click goes on to Pulse.
+        if (a.menu_open || AiVoiceMenuOpen(s)) {
             CloseMenu(s);
             Redraw(s);
         }
@@ -912,7 +954,7 @@ bool AiAssistantSetCursor(AppState& s, int x, int y) {
     const AiAssistantState& a = s.aiAssistant;
     if (!a.open || !s.renderer.AiPanel().Contains(static_cast<float>(x), static_cast<float>(y))) return false;
     const ui::AiPanelHit hit = s.renderer.AiPanel().HitTest(static_cast<float>(x), static_cast<float>(y));
-    const bool text = hit.part == ui::AiPanelPart::Input || AiConnIsField(hit.part);
+    const bool text = hit.part == ui::AiPanelPart::Input || AiConnIsField(hit.part) || AiVoiceIsField(hit.part);
     SetCursor(LoadCursorW(nullptr, text ? IDC_IBEAM : IDC_ARROW));
     return true;
 }
@@ -925,6 +967,7 @@ bool AiAssistantEscape(AppState& s) {
         Redraw(s);
         return true;
     }
+    if (AiVoiceEscape(s)) return true;   // the voice card, its menu, listening
     if (a.chat && a.chat->busy) {
         AiChatStop(s);
         return true;
@@ -935,7 +978,10 @@ bool AiAssistantEscape(AppState& s) {
 HBRUSH AiAssistantCtlColor(AppState& s, HDC hdc, HWND edit) {
     AiAssistantState& a = s.aiAssistant;
     if (!edit) return nullptr;
-    if (edit != a.edit) return AiConnCtlColor(s, hdc, edit);
+    if (edit != a.edit) {
+        if (HBRUSH voice = AiVoiceCtlColor(s, hdc, edit)) return voice;
+        return AiConnCtlColor(s, hdc, edit);
+    }
     const ui::AiPanelView& view = s.renderer.AiPanel();
     const COLORREF back = ToColorRef(view.CardColor());
     if (!a.brush || a.brush_color != back) {
@@ -952,6 +998,7 @@ HBRUSH AiAssistantCtlColor(AppState& s, HDC hdc, HWND edit) {
 void AiAssistantDpiChanged(AppState& s) {
     AiAssistantState& a = s.aiAssistant;
     AiConnDpiChanged(s);
+    AiVoiceDpiChanged(s);
     if (!a.edit) return;
     EnsureFont(s);
     ReadComposerMetrics(a);
@@ -962,6 +1009,7 @@ void AiAssistantDestroy(AppState& s) {
     AiAssistantState& a = s.aiAssistant;
     if (s.hwnd) KillTimer(s.hwnd, kTipTimer);
     AiConnDestroy(s);
+    AiVoiceDestroy(s);
     if (a.edit) DestroyWindow(a.edit);
     a.edit = nullptr;
     if (a.font) DeleteObject(a.font);

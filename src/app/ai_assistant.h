@@ -15,6 +15,7 @@ struct AppState;
 namespace ui { struct WindowViewModel; }
 struct AiChat;   // the conversation and its driver (ai_assistant_chat.h)
 struct AiConnUi; // 管理连接 card: fields, test, key (ai_assistant_conn.h)
+struct AiVoiceUi; // 语音输入: listening, menu, connection card (ai_assistant_voice.h)
 
 struct AiAssistantState {
     bool open = false;
@@ -53,6 +54,8 @@ struct AiAssistantState {
     std::shared_ptr<AiChat> chat;
     // 管理连接 card; created when it first opens.
     std::shared_ptr<AiConnUi> conn;
+    // 语音输入; created on the first frame with the panel.
+    std::shared_ptr<AiVoiceUi> voice;
 };
 
 // The status bar chip: opens or closes the panel (an outside client's open

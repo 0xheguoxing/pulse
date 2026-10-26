@@ -113,6 +113,21 @@ Settings ParseSettings(std::string_view utf8, bool* malformed) {
         const std::string base_url = a->get_string("base_url");
         if (base_url.size() <= 512 && (base_url.starts_with("https://") || base_url.starts_with("http://")))
             s.assistant.base_url = base_url;
+        if (const auto* v = a->find("voice"); v && v->is_object()) {
+            VoicePrefs& voice = s.assistant.voice;
+            const std::string service = v->get_string("service");
+            if (service == "siliconflow" || service == "openai" || service == "custom") voice.service = service;
+            const std::string url = v->get_string("base_url");
+            if (url.size() <= 512 && (url.starts_with("https://") || url.starts_with("http://"))) voice.base_url = url;
+            const std::string voice_model = v->get_string("model");
+            if (voice_model.size() <= kMaxName) voice.model = voice_model;
+            if (const auto* pause = v->find("pause")) {
+                int64_t n = 0;
+                if (pause->get_int(n, 0, 2)) voice.pause = static_cast<int>(n);
+            }
+            const std::string mic = v->get_string("mic");
+            if (mic.size() <= 512) voice.mic = mic;
+        }
     }
     return s;
 }
@@ -156,6 +171,15 @@ std::string SerializeSettings(const Settings& s) {
     assistant.set("model", s.assistant.model);
     assistant.set("effort", s.assistant.effort);
     if (!s.assistant.base_url.empty()) assistant.set("base_url", s.assistant.base_url);
+    if (const VoicePrefs& vp = s.assistant.voice; !vp.IsDefault()) {
+        json::Value voice = json::Value::Object();
+        if (!vp.service.empty()) voice.set("service", vp.service);
+        if (!vp.base_url.empty()) voice.set("base_url", vp.base_url);
+        if (!vp.model.empty()) voice.set("model", vp.model);
+        voice.set("pause", vp.pause);
+        if (!vp.mic.empty()) voice.set("mic", vp.mic);
+        assistant.set("voice", std::move(voice));
+    }
     root.set("assistant", std::move(assistant));
     return json::Serialize(root) + "\n";
 }

@@ -1418,6 +1418,13 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                 b.detail.empty() ? 0.0f
                                  : (std::min)(51.0f * s, (std::max)(17.0f * s, wrapped_h(b.detail, formats_.mono, dw, 17.0f * s)));
             const float detail_box = b.detail.empty() ? 0.0f : 8.0f * s + detail_h + 16.0f * s;
+            // .e-l: margin-top 8, rows 12 lh 18 gap 3; 13 px icons, gap 7.
+            const float list_w = text_w - 20.0f * s;
+            float list_h = 0.0f;
+            for (const AiCheckView& ck : b.checklist)
+                list_h += (list_h > 0.0f ? 3.0f * s : 0.0f) +
+                          (std::max)(18.0f * s, wrapped_h(ck.text, formats_.caption, list_w, 18.0f * s));
+            const float list_box = b.checklist.empty() ? 0.0f : 8.0f * s + list_h;
             // .e-h: warn 13, gap 6, 12 text3.
             const float hint_w = text_w - 19.0f * s;
             const float hint_h = b.hint.empty() ? 0.0f : (std::max)(18.0f * s, wrapped_h(b.hint, formats_.caption, hint_w, 18.0f * s));
@@ -1446,13 +1453,22 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
             float bx = tx, by = 0.0f;
             for (const AiErrButton& eb : b.actions) {
                 IDWriteTextFormat* fmt = eb.primary ? formats_.body13b : formats_.body13;
-                const float bw = 28.0f * s + 20.0f * s + c.Measure(eb.text, fmt);
+                // AiIcon::Count: a plain button (the voice cards).
+                const float bw = 28.0f * s + (eb.icon == AiIcon::Count ? 0.0f : 20.0f * s) + c.Measure(eb.text, fmt);
                 if (bx > tx && bx + bw > ir) { bx = tx; by += 40.0f * s; }
                 btns.push_back({bx, by, bw});
                 bx += bw + 8.0f * s;
             }
             const float btn_h = btns.empty() ? 0.0f : 12.0f * s + by + 32.0f * s;
-            const float h = 2.0f * s + 24.0f * s + top_h + detail_box + hint_box + pills_h + file_box + btn_h;
+            // .e-m: the model (or the card's `note`, in any tone), pushed right
+            // of the buttons; a `note` that does not fit there gets its own line.
+            const std::wstring& em = !b.note.empty() ? b.note : b.tone != AiErrTone::Accent ? b.meta : b.note;
+            const bool em_on = !em.empty() && !btns.empty() && b.actions.size() < 3 && by == 0.0f;
+            const float em_w = em_on ? c.Measure(em, formats_.meta) : 0.0f;
+            const bool em_right = em_on && btns.back().x + btns.back().w + 12.0f * s + em_w <= ir;
+            const bool em_below = em_on && !em_right && !b.note.empty();
+            const float em_h = em_below ? 4.0f * s + 18.0f * s : 0.0f;
+            const float h = 2.0f * s + 24.0f * s + top_h + detail_box + list_box + hint_box + pills_h + file_box + btn_h + em_h;
             const D2D1_RECT_F r = D2D1::RectF(x0, top + y, x1, top + y + h);
             if (visible(r.top - 4.0f * s, r.bottom + 4.0f * s)) {
                 const D2D1_COLOR_F ink = b.tone == AiErrTone::Err ? pal.bad : b.tone == AiErrTone::Warn ? pal.amber : pal.accent;
@@ -1482,9 +1498,21 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                     dc->PopAxisAlignedClip();
                     yy = dr.bottom;
                 }
+                if (!b.checklist.empty()) {
+                    yy += 8.0f * s;
+                    bool first_row = true;
+                    for (const AiCheckView& ck : b.checklist) {
+                        if (!first_row) yy += 3.0f * s;
+                        first_row = false;
+                        const float rh = (std::max)(18.0f * s, wrapped_h(ck.text, formats_.caption, list_w, 18.0f * s));
+                        c.Icon(ck.warn ? AiIcon::Close : AiIcon::Check, tx, yy + 2.5f * s, 13.0f * s, ck.warn ? pal.bad : pal.ok);
+                        wrapped(ck.text, formats_.caption, tx + 20.0f * s, yy, list_w, 18.0f * s, ck.warn ? pal.text : pal.text2);
+                        yy += rh;
+                    }
+                }
                 if (!b.hint.empty()) {
                     yy += 8.0f * s;
-                    c.Icon(b.pills.empty() ? AiIcon::Warn : b.hint_icon, tx, yy + 2.5f * s, 13.0f * s, pal.text3);
+                    c.Icon(b.pills.empty() && b.checklist.empty() ? AiIcon::Warn : b.hint_icon, tx, yy + 2.5f * s, 13.0f * s, pal.text3);
                     wrapped(b.hint, formats_.caption, tx + 19.0f * s, yy, hint_w, 18.0f * s, pal.text3);
                     yy += hint_h;
                 }
@@ -1525,16 +1553,11 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                     for (size_t i = 0; i < btns.size(); ++i) {
                         const AiErrButton& eb = b.actions[i];
                         const int hi = live ? index * 4 + static_cast<int>(i) : -1;
-                        button(btns[i].x + btns[i].w, yy + btns[i].y, eb.text, eb.primary, eb.icon, true,
+                        button(btns[i].x + btns[i].w, yy + btns[i].y, eb.text, eb.primary, eb.icon, eb.icon != AiIcon::Count,
                                AiPanelPart::ErrAction, hi);
                     }
-                    // .e-m: the model, pushed right; only with fewer than 3 buttons.
-                    if (b.actions.size() < 3 && b.tone != AiErrTone::Accent && !b.meta.empty() && by == 0.0f) {
-                        const float last = btns.back().x + btns.back().w + 12.0f * s;
-                        const float mw = c.Measure(b.meta, formats_.meta);
-                        if (last + mw <= ir)
-                            line(b.meta, formats_.meta, ir - mw, yy, ir + 2.0f, 32.0f * s, pal.text3);
-                    }
+                    if (em_right) line(em, formats_.meta, ir - em_w, yy, ir + 2.0f, 32.0f * s, pal.text3);
+                    if (em_below) line(em, formats_.meta, tx, yy + 36.0f * s, ir, 18.0f * s, pal.text3);
                 }
             }
             y += h;

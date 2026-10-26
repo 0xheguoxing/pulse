@@ -302,6 +302,11 @@ constexpr IconPart k_monitor[] = {
     {"M5.5 4.5h13a2 2 0 0 1 2 2v7.5a2 2 0 0 1 -2 2h-13a2 2 0 0 1 -2 -2v-7.5a2 2 0 0 1 2 -2Z", 0, 0x000000u, 1.6f, 1.0f},
     {"M9 20h6M12 16v4", 0, 0x000000u, 1.6f, 1.0f},
 };
+constexpr IconPart k_winset[] = {
+    {"M5.5 4h13a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-13a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2Z", 0, 0x000000u, 1.6f, 1.0f},
+    {"M3.5 8.5h17", 0, 0x000000u, 1.6f, 1.0f},
+    {"M9.7 14A2.3 2.3 0 1 0 14.3 14A2.3 2.3 0 1 0 9.7 14Z", 0, 0x000000u, 1.6f, 1.0f},
+};
 constexpr IconPart k_rocket[] = {
     {"M12 3.5c3.4 2 5 5.4 5 9.4l-2.2 3.1H9.2L7 12.9c0-4 1.6-7.4 5-9.4z", 0, 0x000000u, 1.6f, 1.0f},
     {"M10.3 10A1.7 1.7 0 1 0 13.7 10A1.7 1.7 0 1 0 10.3 10Z", 0, 0x000000u, 1.6f, 1.0f},
@@ -379,6 +384,7 @@ constexpr IconDef kIcons[] = {
     {k_mic, std::size(k_mic)},
     {k_monitor, std::size(k_monitor)},
     {k_rocket, std::size(k_rocket)},
+    {k_winset, std::size(k_winset)},
 };
 
 static_assert(std::size(kIcons) == static_cast<size_t>(AiIcon::Count), "one table entry per AiIcon");

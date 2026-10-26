@@ -155,6 +155,9 @@ void AiAgentQueryAdd(AppState& s, int block);
 void AiAgentFollow(AppState& s, int block, int item);
 // Puts `text` into the composer without sending it and focuses it (ai_assistant.cpp).
 void AiAssistantFillComposer(AppState& s, const std::wstring& text);
+// 语音输入: recognized words go after what is there (a space only between
+// letters or digits), the caret at the end. Never sends.
+void AiAssistantAppendComposer(AppState& s, const std::wstring& words);
 void AiChatCopyText(HWND hwnd, const std::wstring& text);
 
 } // namespace pulse
