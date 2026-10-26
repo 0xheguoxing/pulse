@@ -5232,7 +5232,7 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         } else if (ctrl && !shift && wParam == L'T') {
             OpenNewTab(*s);
         } else if (ctrl && wParam == L'K') {
-            if (shift) ShowOmnibar(*s, OmnibarMode::Mixed);
+            if (shift) ShowOmnibar(*s, OmnibarMode::Command);  // 命令栏: the ">" palette
             else ShowAddressSearch(*s);
         } else if (ctrl && wParam == L'P') {
             ShowOmnibar(*s, OmnibarMode::Project);

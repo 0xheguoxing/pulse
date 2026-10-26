@@ -314,8 +314,11 @@ struct OmnibarQuery {
 OmnibarQuery ParseOmnibarQuery(const std::wstring& query, bool project_only = false);
 bool LooksLikeFilesystemPath(const std::wstring& text);
 
-std::vector<ui::FluentMenuItem> BuildCommandPalette(const std::vector<std::wstring>& recent_paths);
+// `commands` are the action registry's rows for the query
+// (actions::PaletteRows); they lead, then index hits and recent folders.
+// Command mode ("> ...") lists the commands only.
 std::vector<ui::FluentMenuItem> BuildCommandPalette(const std::wstring& query,
+                                                    std::vector<ui::FluentMenuItem> commands,
                                                     const std::vector<std::wstring>& recent_paths,
                                                     const std::vector<index::Hit>& hits,
                                                     bool project_only,

@@ -639,11 +639,8 @@ bool LooksLikeFilesystemPath(const std::wstring& text) {
     return t.find(L'\\') != std::wstring::npos;
 }
 
-std::vector<ui::FluentMenuItem> BuildCommandPalette(const std::vector<std::wstring>& recent_paths) {
-    return BuildCommandPalette(L"", recent_paths, {}, false);
-}
-
 std::vector<ui::FluentMenuItem> BuildCommandPalette(const std::wstring& query,
+                                                    std::vector<ui::FluentMenuItem> commands,
                                                     const std::vector<std::wstring>& recent_paths,
                                                     const std::vector<index::Hit>& hits,
                                                     bool project_only,
@@ -656,32 +653,8 @@ std::vector<ui::FluentMenuItem> BuildCommandPalette(const std::wstring& query,
     const bool search_mode = parsed.kind == OmnibarQuery::Kind::Search;
     const bool path_like = parsed.kind == OmnibarQuery::Kind::Mixed &&
                            LooksLikeFilesystemPath(needle);
-    auto add_cmd = [&](int cmd, const wchar_t* text, const wchar_t* glyph, const wchar_t* shortcut,
-                       ui::fluent::MenuPictogram pictogram = ui::fluent::MenuPictogram::None) {
-        if (!ContainsI(text, needle)) return;
-        items.push_back(Item(cmd, text, glyph, shortcut));
-        items.back().pictogram = pictogram;
-    };
     if (!project_only && !search_mode && !path_like) {
-        add_cmd(CmdLayoutTwoVertical, l10n::Get(l10n::StringId::LayoutVertical).c_str(), L"", L"Ctrl+Alt+2",
-                ui::fluent::MenuPictogram::LayoutSideBySide);
-        add_cmd(CmdLayoutFourGrid, l10n::Get(l10n::StringId::LayoutFour).c_str(), L"", L"Ctrl+Alt+4",
-                ui::fluent::MenuPictogram::LayoutFour);
-        add_cmd(CmdCopyToTarget, l10n::Get(l10n::StringId::CopyToTarget).c_str(), kGlyphCopyToPane, L"Ctrl+Alt+C");
-        add_cmd(CmdNewFolder, l10n::Get(l10n::StringId::NewFolder).c_str(), kGlyphNewFolder, L"Ctrl+Shift+N");
-        add_cmd(CmdPinWorkspace, l10n::Get(l10n::StringId::PinWorkspace).c_str(), kGlyphPinWorkspace, nullptr);
-        add_cmd(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphCopyPath, L"Ctrl+Shift+C");
-        add_cmd(CmdInstallFullIndex, l10n::Get(l10n::StringId::EnableFullIndex).c_str(), kGlyphSearch, nullptr);
-        add_cmd(CmdSettings, l10n::Get(l10n::StringId::Settings).c_str(), kGlyphSettings, nullptr);
-        add_cmd(CmdExitPulse, l10n::Get(l10n::StringId::ExitPulse).c_str(), L"\xE7E8", nullptr);
-        add_cmd(CmdOpenRecycle, l10n::Get(l10n::StringId::RecycleBin).c_str(), kGlyphRecycle, nullptr);
-        add_cmd(CmdConnectServer, l10n::Get(l10n::StringId::ConnectServerMenu).c_str(), L"\xE968", nullptr);
-        add_cmd(CmdMapNetworkDrive, l10n::Get(l10n::StringId::MapNetworkDrive).c_str(), L"\xE8CE", nullptr);
-        add_cmd(CmdBatchRename, l10n::Get(l10n::StringId::BatchRename).c_str(), kGlyphBatchRename, L"Ctrl+Shift+R");
-        add_cmd(CmdAdvancedSearch, l10n::Get(l10n::StringId::AdvancedSearch).c_str(), kGlyphAdvSearch, L"Ctrl+Shift+F");
-        add_cmd(CmdSelectAll, l10n::Get(l10n::StringId::SelectAll).c_str(), kGlyphSelectAll, L"Ctrl+A");
-        add_cmd(CmdInvertSelection, l10n::Get(l10n::StringId::InvertSelection).c_str(), kGlyphInvert, L"Ctrl+I");
-        add_cmd(CmdSelectWildcard, l10n::Get(l10n::StringId::SelectWildcard).c_str(), kGlyphSelectWild, L"Ctrl+Shift+A");
+        items = std::move(commands);
     }
     std::unordered_set<std::wstring> seen_paths;
     const bool has_content = index::QueryHasContent(index::ParseQuery(needle));
@@ -711,7 +684,8 @@ std::vector<ui::FluentMenuItem> BuildCommandPalette(const std::wstring& query,
     constexpr size_t kMaxRecent = 6;
     size_t recent_added = 0;
     bool recent_sep = false;
-    for (size_t i = 0; i < recent_paths.size() && recent_added < kMaxRecent; ++i) {
+    // The command palette (">") lists commands only, as its mock shows.
+    for (size_t i = 0; i < recent_paths.size() && recent_added < kMaxRecent && !command_mode; ++i) {
         const std::wstring n = fs::NormalizePath(recent_paths[i]);
         if (n.empty() || !seen_paths.insert(n).second) continue;
         if (!current_n.empty() && n == current_n) continue;

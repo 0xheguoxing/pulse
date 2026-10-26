@@ -38,6 +38,8 @@ enum class Icon {
     Reset, TextName, Package, Unpin, Stack, Video, Cloud, Error, Merge, Pause, Play,
     Send, VBar, Move, Power, Bulb, Pointer, Import, Export, Bolt, Camera, FavBar,
     FullScreen, Save, Unlock, Eject, Skip, Disconnect, Music, Wrench, Timer, Help, Puzzle,
+    // The Pulse assistant (command palette hand-off), filled in the accent.
+    Sparkle,
     Count
 };
 
@@ -59,6 +61,7 @@ inline constexpr const wchar_t* kGlyphPinWorkspace = L"\xF5BE";
 inline constexpr const wchar_t* kGlyphPinNetwork = L"\xF5BF";
 inline constexpr const wchar_t* kGlyphPinToolbar = L"\xF5C0";
 inline constexpr const wchar_t* kGlyphFolderList = L"\xF5C1";   // a 收藏栏 group
+inline constexpr const wchar_t* kGlyphSparkle = L"\xF5C2";
 
 inline constexpr bool IsPinned(Icon icon) noexcept {
     return icon >= Icon::PinFavorites && icon <= Icon::PinToolbar;
@@ -77,7 +80,7 @@ inline constexpr Icon PinnedBase(Icon icon) noexcept {
 inline constexpr float FillOpacity(Icon icon) noexcept {
     switch (icon) {
     case Icon::StarFilled: case Icon::More: case Icon::Contrast: case Icon::SizeBar:
-    case Icon::Pause: case Icon::Play: return 1.0f;
+    case Icon::Pause: case Icon::Play: case Icon::Sparkle: return 1.0f;
     case Icon::Invert: return 0.35f;
     case Icon::Zebra: return 0.28f;
     default: return 0.0f;
@@ -161,6 +164,7 @@ inline Icon FromGlyph(std::wstring_view glyph) noexcept {
     case L'\xF5BF': return Icon::PinNetwork;
     case L'\xF5C0': return Icon::PinToolbar;
     case L'\xF5C1': return Icon::FolderList;
+    case L'\xF5C2': return Icon::Sparkle;
     case L'\xF168': return Icon::GroupBy;
     case L'\xE8F1': return Icon::FolderList;
     case L'\xE777': return Icon::Reset;
@@ -273,7 +277,7 @@ inline ID2D1PathGeometry* BuildGeometry(ID2D1Factory* factory, Icon icon) noexce
     }
     const auto begin = [&](float x, float y) {
         sink->BeginFigure({x,y}, (icon == Icon::StarFilled || icon == Icon::More || icon == Icon::SizeBar ||
-                                  icon == Icon::Pause || icon == Icon::Play) ?
+                                  icon == Icon::Pause || icon == Icon::Play || icon == Icon::Sparkle) ?
             D2D1_FIGURE_BEGIN_FILLED : D2D1_FIGURE_BEGIN_HOLLOW);
     };
     // A figure that is filled (at FillOpacity) as well as outlined.
@@ -610,6 +614,13 @@ inline ID2D1PathGeometry* BuildGeometry(ID2D1Factory* factory, Icon icon) noexce
     case Icon::Export: begin(11,3.5f); to(5.5f,3.5f); curve(4.4f,3.5f,3.5f,4.4f,3.5f,5.5f); to(3.5f,18.5f);
         curve(3.5f,19.6f,4.4f,20.5f,5.5f,20.5f); to(11,20.5f); end(); line(9.5f,12,20.5f,12);
         path({{17,8.5f},{20.5f,12},{17,15.5f}}); break;
+    // The assistant mark of the AI panel (ai_panel_icons.cpp k_spark), same path.
+    case Icon::Sparkle: begin(11,3.2f); curve(11.7f,8.1f,14.1f,10.5f,19,11.2f);
+        curve(14.1f,11.9f,11.7f,14.3f,11,19.2f); curve(10.3f,14.3f,7.9f,11.9f,3,11.2f);
+        curve(7.9f,10.5f,10.3f,8.1f,11,3.2f); end(true);
+        begin(19,2.6f); curve(19.25f,4.3f,20.05f,5.1f,21.75f,5.35f);
+        curve(20.05f,5.6f,19.25f,6.4f,19,8.1f); curve(18.75f,6.4f,17.95f,5.6f,16.25f,5.35f);
+        curve(17.95f,5.1f,18.75f,4.3f,19,2.6f); end(true); break;
     case Icon::Bolt: path({{13,2.5f},{4.5f,13.5f},{12,13.5f},{11,21.5f},{19.5f,10.5f},{12,10.5f},{13,2.5f}}); break;
     case Icon::Camera: box(2.5f,7,21.5f,19.5f,2.5f); path({{8,7},{9.5f,4.5f},{14.5f,4.5f},{16,7}});
         circle(12,13,3.5f); break;

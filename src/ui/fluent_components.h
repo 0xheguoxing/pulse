@@ -116,11 +116,17 @@ struct MenuItemSpec {
     MenuPictogram pictogram = MenuPictogram::None;
     D2D1_COLOR_F swatch_color{};
     float glyph_scale = 1.0f;
+    bool accent_glyph = false;     // glyph in the accent colour (assistant hand-off)
     bool shortcut_inline = false;
     float inline_label_width = 0.0f;
     // Explorer-style app icon (premultiplied, same device as the painter's
     // context); wins over glyph/pictogram and is drawn 16 DIP like Explorer's.
     ID2D1Bitmap* icon_bitmap = nullptr;
+    // Command palette: a section caption row, and the label characters the
+    // query matched (semibold; plain when the label must ellipsize).
+    bool heading = false;
+    uint16_t match_start = 0;
+    uint16_t match_length = 0;
 };
 
 struct ScrollbarSpec {

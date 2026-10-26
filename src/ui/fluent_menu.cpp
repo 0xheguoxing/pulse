@@ -101,6 +101,8 @@ bool DisplayEqualItem(const FluentMenuItem& a, const FluentMenuItem& b) {
     if (a.text != b.text || a.enabled != b.enabled ||
         a.toggle != b.toggle || a.secondary != b.secondary || a.checked != b.checked ||
         a.shortcut_inline != b.shortcut_inline || a.shortcut != b.shortcut ||
+        a.heading != b.heading || a.match_start != b.match_start ||
+        a.match_length != b.match_length || a.accent_glyph != b.accent_glyph ||
         a.separator_after != b.separator_after || a.tooltip != b.tooltip ||
         (a.trailing_command != 0) != (b.trailing_command != 0) ||
         a.children.size() != b.children.size() ||
@@ -147,7 +149,8 @@ bool FluentMenuModel::PatchCommands(const std::vector<FluentMenuItem>& src) {
 bool FluentMenuModel::PatchInPlace(std::vector<FluentMenuItem> src, IDWriteFactory2* dwrite) {
     if (src.size() != items_.size()) return false;
     for (size_t i = 0; i < src.size(); ++i)
-        if (src[i].separator_after != items_[i].separator_after) return false;
+        if (src[i].separator_after != items_[i].separator_after ||
+            src[i].heading != items_[i].heading) return false;
     const int height = height_;
     items_ = std::move(src);
     locked_width_ = width_;
@@ -159,6 +162,8 @@ bool FluentMenuModel::PatchInPlace(std::vector<FluentMenuItem> src, IDWriteFacto
 bool FluentMenuModel::PatchGrow(std::vector<FluentMenuItem> src, IDWriteFactory2* dwrite) {
     const size_t shown = items_.size();
     if (shown == 0 || src.size() <= shown) return false;
+    for (size_t i = 0; i < shown; ++i)
+        if (src[i].heading != items_[i].heading) return false;
     for (size_t i = 0; i + 1 < shown; ++i)
         if (src[i].separator_after != items_[i].separator_after) return false;
     if (items_[shown - 1].separator_after && !src[shown - 1].separator_after) return false;
@@ -177,6 +182,7 @@ void FluentMenuModel::Layout(IDWriteFactory2* dwrite, float scale, float min_wid
     row_h_ = row_dip_ * scale_;  // theme.row_menu
     pad_v_ = 4.0f * scale_;
     sep_h_ = 5.0f * scale_;
+    heading_h_ = std::round(26.0f * scale_);
 
     auto body = MakeFormat(dwrite, kLabelDip * scale_);
     auto caption = MakeFormat(dwrite, 12.0f * scale_);
@@ -202,9 +208,8 @@ void FluentMenuModel::Layout(IDWriteFactory2* dwrite, float scale, float min_wid
         float w = radio_col + left_chrome + text_w + right_chrome;
         if (it.trailing_command) w += 32.0f * scale_;
         if (it.toggle) w += 52.0f * scale_;
-        if (!it.children.empty()) {
-            w += 26.0f * scale_; // 22px chevron column + 4px gap
-        } else if (!it.badge_text.empty()) {
+        if (!it.children.empty()) w += 26.0f * scale_; // 22px chevron column + 4px gap
+        if (it.children.empty() && !it.badge_text.empty()) {
             w += shortcut_gap + MeasureWidth(dwrite, caption.get(), it.badge_text) + 14.0f * scale_;
         } else if (!it.shortcut.empty()) {
             // DrawMenuItem keeps >= 80dip for the label plus an 8dip gap before
@@ -236,7 +241,7 @@ void FluentMenuModel::Layout(IDWriteFactory2* dwrite, float scale, float min_wid
 
     float h = pad_v_ * 2.0f;
     for (const auto& it : items_) {
-        h += row_h_;
+        h += it.heading ? heading_h_ : row_h_;
         if (it.separator_after) h += sep_h_;
     }
     height_ = (int)std::ceil(h);
@@ -250,10 +255,15 @@ bool FluentMenuModel::Truncated(int i) const {
     return i >= 0 && i < (int)truncated_.size() && truncated_[static_cast<size_t>(i)] != 0;
 }
 
+float FluentMenuModel::RowHeightPx(int i) const {
+    const FluentMenuItem* it = At(i);
+    return it && it->heading ? heading_h_ : row_h_;
+}
+
 float FluentMenuModel::RowTopPx(int i) const {
     float y = pad_v_;
     for (int k = 0; k < i && k < (int)items_.size(); ++k) {
-        y += row_h_;
+        y += RowHeightPx(k);
         if (items_[k].separator_after) y += sep_h_;
     }
     return y;
@@ -262,8 +272,9 @@ float FluentMenuModel::RowTopPx(int i) const {
 int FluentMenuModel::HitTestRow(float y_px) const {
     float y = pad_v_;
     for (int i = 0; i < (int)items_.size(); ++i) {
-        if (y_px >= y && y_px < y + row_h_) return i;
-        y += row_h_;
+        const float row = RowHeightPx(i);
+        if (y_px >= y && y_px < y + row) return i;
+        y += row;
         if (items_[i].separator_after) {
             if (y_px >= y && y_px < y + sep_h_) return -1; // dead zone
             y += sep_h_;
@@ -337,6 +348,8 @@ FluentMenu::~FluentMenu() {
     if (tooltip_) DestroyWindow(tooltip_);
     HideFilterEdit();
     if (edit_) {
+        filter_lead_.clear();
+        ApplyFilterLead();
         DestroyWindow(edit_);
         edit_ = nullptr;
     }
@@ -936,7 +949,7 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
                 float right = static_cast<float>(kShadowMargin + cw) - 6.0f * scale_;
                 if (model.At(plate_row)->trailing_command) right -= 32.0f * scale_;
                 const D2D1_RECT_F target = D2D1::RectF(static_cast<float>(kShadowMargin) + 6.0f * scale_,
-                    top + 2.0f * scale_, right, top + model.RowHeightPx() - 2.0f * scale_);
+                    top + 2.0f * scale_, right, top + model.RowHeightPx(plate_row) - 2.0f * scale_);
                 const uint64_t ctx = main ? plate_context_
                     : plate_context_ * 1315423911ull + static_cast<uint64_t>(sub_parent_row_ + 2);
                 const D2D1_RECT_F r = pm.Update(ctx, plate_row, target, ++pf, ::pulse::ui::motion::NowMs(), ::pulse::ui::motion::spring::Plate);
@@ -962,10 +975,14 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
             y += rise;
             fluent::MenuItemSpec spec;
             spec.bounds = D2D1::RectF((float)kShadowMargin, y,
-                                      (float)(kShadowMargin + cw), y + model.RowHeightPx());
+                                      (float)(kShadowMargin + cw), y + model.RowHeightPx(i));
             spec.text = it->text;
+            spec.heading = it->heading;
+            spec.match_start = it->match_start;
+            spec.match_length = it->match_length;
             spec.glyph = it->glyph;
             spec.glyph_scale = it->glyph_scale;
+            spec.accent_glyph = it->accent_glyph;
             spec.shortcut = it->shortcut;
             spec.shortcut_inline = it->shortcut_inline;
             spec.inline_label_width = model.InlineLabelWidthPx();
@@ -990,7 +1007,7 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
             painter_.DrawMenuItem(spec);
             if (it->trailing_command && i == hover_row && it->enabled) {
                 const float right = static_cast<float>(kShadowMargin + cw) - 8.0f * scale_;
-                const float glyph_top = y + (model.RowHeightPx() - 20.0f * scale_) * 0.5f;
+                const float glyph_top = y + (model.RowHeightPx(i) - 20.0f * scale_) * 0.5f;
                 painter_.DrawGlyph(L"\xE711", D2D1::RectF(right - 20.0f * scale_,
                     glyph_top, right, glyph_top + 20.0f * scale_), theme.text_secondary);
             }
@@ -1027,7 +1044,7 @@ bool FluentMenu::RenderSurface(const FluentMenuModel& model, int hover_row, int 
             }
             y -= rise;
             if (layered) dc->PopLayer();
-            y += model.RowHeightPx();
+            y += model.RowHeightPx(i);
             if (it->separator_after) y += 5.0f * scale_;
         }
         dc->PopAxisAlignedClip();
@@ -1544,10 +1561,13 @@ void FluentMenu::UpdateHover(int row, int swatch) {
     hover_swatch_ = swatch;
     if (row >= 0 && Scrollable()) {
         const float top = model_.RowTopPx(row);
-        if (top < scroll_y_) scroll_y_ = top <= model_.RowTopPx(0) + 0.5f ? 0.0f : top;
-        if (top + model_.RowHeightPx() > scroll_y_ + ViewportPx())
+        // The first row of a palette group brings its heading along.
+        const FluentMenuItem* above = model_.At(row - 1);
+        const float reveal = above && above->heading ? model_.RowTopPx(row - 1) : top;
+        if (reveal < scroll_y_) scroll_y_ = reveal <= model_.RowTopPx(0) + 0.5f ? 0.0f : reveal;
+        if (top + model_.RowHeightPx(row) > scroll_y_ + ViewportPx())
             scroll_y_ = row == model_.Count() - 1 ? MaxScrollPx()
-                                                  : top + model_.RowHeightPx() - ViewportPx();
+                                                  : top + model_.RowHeightPx(row) - ViewportPx();
     }
     if (Render()) Present(present_alpha_, present_offset_);
 }
@@ -1691,6 +1711,26 @@ bool FluentMenu::EnsureFilterEdit() {
     return true;
 }
 
+void FluentMenu::ApplyFilterLead() {
+    if (!edit_) return;
+    if (filter_lead_.empty()) {
+        RemovePropW(edit_, L"Pulse.EditLead");
+        RemovePropW(edit_, L"Pulse.EditLeadColor");
+        RemovePropW(edit_, L"Pulse.EditTail");
+        return;
+    }
+    // Dark: the accent lifted toward white, as accent text reads there.
+    const float lift = dark_ ? 0.45f : 0.0f;
+    const auto channel = [lift](float c) {
+        return static_cast<UINT_PTR>(std::lround((c + (1.0f - c) * lift) * 255.0f)) & 0xFFu;
+    };
+    const UINT_PTR rgb = 0x01000000u | channel(accent_.r) | (channel(accent_.g) << 8) | (channel(accent_.b) << 16);
+    SetPropW(edit_, L"Pulse.EditLead", const_cast<wchar_t*>(filter_lead_.c_str()));
+    SetPropW(edit_, L"Pulse.EditLeadColor", reinterpret_cast<HANDLE>(rgb));
+    if (filter_lead_hint_.empty()) RemovePropW(edit_, L"Pulse.EditTail");
+    else SetPropW(edit_, L"Pulse.EditTail", const_cast<wchar_t*>(filter_lead_hint_.c_str()));
+}
+
 void FluentMenu::PlaceFilterEdit(int y_offset_px) {
     if (!edit_ || !filter_fn_ || external_edit_) return;
     const float s = scale_;
@@ -1782,6 +1822,10 @@ LRESULT CALLBACK FluentMenu::FilterEditProc(HWND hwnd, UINT msg, WPARAM wParam, 
         return 0;
     }
     if (msg == WM_CHAR && (wParam == VK_RETURN || wParam == VK_ESCAPE)) return 0;
+    // ← → open and close a row's flyout; otherwise they move the caret.
+    if (msg == WM_KEYDOWN && !self->filter_composing_ && (wParam == VK_LEFT || wParam == VK_RIGHT) &&
+        self->HandleFilterKey(msg, wParam))
+        return 0;
     // Everything visual is the shared hosted-edit handling: LumaText
     // presentation, the caret timer, and the switch back to the native EDIT
     // when a layered present fails (so the filter never turns invisible).
@@ -1846,6 +1890,46 @@ bool FluentMenu::HandleFilterKey(UINT msg, WPARAM wParam) {
         HideSubWindow();
         if (hwnd_) ShowWindow(hwnd_, SW_HIDE);
         return true;
+    }
+    // A row's flyout (the palette's 排序方式 ›): → or Enter opens it, ↑ ↓
+    // move in it, Enter runs the choice, ← or Esc closes only the flyout.
+    if (sub_parent_row_ >= 0 && sub_hover_ >= 0) {
+        if (wParam == VK_ESCAPE || wParam == VK_LEFT) {
+            CloseSubmenu();
+            return true;
+        }
+        if (wParam == VK_DOWN || wParam == VK_UP) {
+            sub_hover_ = sub_model_.NextEnabled(sub_hover_, wParam == VK_DOWN ? 1 : -1);
+            if (RenderSub()) PresentSub(255);
+            return true;
+        }
+        if (wParam == VK_RETURN) {
+            const FluentMenuItem* child = sub_model_.At(sub_hover_);
+            if (child && child->enabled && child->command != 0) {
+                result_ = child->command;
+                Dismiss();
+            }
+            return true;
+        }
+    }
+    if (wParam == VK_RIGHT || wParam == VK_RETURN) {
+        const FluentMenuItem* row = hover_row_ >= 0 ? model_.At(hover_row_) : nullptr;
+        bool caret_at_end = true;  // → still moves the caret inside the text
+        if (wParam == VK_RIGHT) {
+            const HWND edit = external_edit_ ? external_edit_ : edit_;
+            if (edit) {
+                DWORD lo = 0, hi = 0;
+                SendMessageW(edit, EM_GETSEL, reinterpret_cast<WPARAM>(&lo), reinterpret_cast<LPARAM>(&hi));
+                caret_at_end = lo == hi && static_cast<int>(hi) >= GetWindowTextLengthW(edit);
+            }
+        }
+        if (row && row->enabled && !row->children.empty() && caret_at_end) {
+            if (sub_parent_row_ != hover_row_) OpenSubmenu(hover_row_);
+            sub_hover_ = sub_model_.FirstEnabled();
+            if (RenderSub()) PresentSub(255);
+            return true;
+        }
+        if (wParam == VK_RIGHT) return false;
     }
     if (wParam == VK_ESCAPE) {
         UpdateTooltip(-1);
@@ -2266,6 +2350,7 @@ int FluentMenu::TrackPopup(POINT screen_pt, std::vector<FluentMenuItem> items,
         HideFilterEdit();
         SetWindowSubclass(external_edit_, ExternalFilterEditProc, 2, reinterpret_cast<DWORD_PTR>(this));
     } else if (filter_fn_ && EnsureFilterEdit()) {
+        ApplyFilterLead();
         SetWindowTextW(edit_, filter_query_.c_str());
         PlaceFilterEdit(slide);
         SetForegroundWindow(GetAncestor(edit_, GA_ROOT));
@@ -2289,6 +2374,9 @@ int FluentMenu::TrackPopup(POINT screen_pt, std::vector<FluentMenuItem> items,
     external_edit_ = nullptr;
     UpdateTooltip(-1);
     initial_filter_text_.clear();
+    filter_lead_.clear();
+    filter_lead_hint_.clear();
+    ApplyFilterLead();
     filter_min_width_ = 0.0f;
     empty_filter_keys_.clear();
     max_visible_rows_ = 0;

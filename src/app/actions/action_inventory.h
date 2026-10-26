@@ -98,6 +98,7 @@ inline constexpr ActionEntry kActions[] = {
     {"details.toggle", ActionRisk::View},
     {"app.settings_page", ActionRisk::View},
     {"app.shortcut_help", ActionRisk::View},
+    {"app.exit", ActionRisk::UserOnly},    // the palette only: the assistant never quits Pulse
     // 视图
     {"view.mode", ActionRisk::View},
     {"view.icon_size", ActionRisk::View},
@@ -366,7 +367,7 @@ inline constexpr MenuCmdLink kMenuCmdLinks[] = {
     {CmdApplyGroupToAllFolders, {"view.apply_all"}},
     {CmdCustomizeToolbar, {"toolbar.customize"}},
     {CmdNewMarkdownFile, {"file.new_file"}},
-    {CmdExitPulse, {"", "quits Pulse: command palette only, never the assistant"}},
+    {CmdExitPulse, {"app.exit"}},
     {CmdRecentBase, {"nav.go"}},
     {CmdEjectDrive, {"drive.eject"}},
     {CmdDisconnectDrive, {"drive.disconnect"}},

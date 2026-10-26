@@ -44,6 +44,9 @@
 #include "entry_sort.h"
 #include "session.h"
 #include "context_menu.h"
+#include "actions/action_registry.h"
+#include "ai_assistant.h"
+#include "ai_assistant_chat.h"
 #include "system_ctx_registry.h"
 #include "shell_verbs.h"
 #include "toolbar_apps.h"
@@ -4117,6 +4120,7 @@ void ShowToolbarMore(AppState& s) {
         if (id==L"split") {   // the split menu itself, as a flyout
             item.command=app::CmdNone;
             item.checked=false;
+            item.shortcut.clear();   // a flyout row would show it before the chevron
             item.children=app::BuildSplitMenu(static_cast<int>(LayoutOf(s)));
         }
         items.push_back(std::move(item));
@@ -5041,6 +5045,25 @@ void ShowAliasManager(AppState& s) {
     }
 }
 
+namespace {
+
+// The command palette's 这次用过的: actions run from it this session, newest
+// first. Memory only, shared by the windows of this process.
+std::vector<int>& PaletteUsed() {
+    static std::vector<int> used;
+    return used;
+}
+
+void RememberPaletteAction(int action) {
+    if (action < 0) return;
+    auto& used = PaletteUsed();
+    used.erase(std::remove(used.begin(), used.end(), action), used.end());
+    used.insert(used.begin(), action);
+    if (used.size() > 8) used.resize(8);
+}
+
+} // namespace
+
 void ShowOmnibar(AppState& s, OmnibarMode mode) {
     // Editing a path is navigation, not a palette search with an empty-result row.
     if (mode == OmnibarMode::Path) {
@@ -5078,6 +5101,11 @@ void ShowOmnibar(AppState& s, OmnibarMode mode) {
     s.menu->SetInitialFilterText(prefill);
     s.menu->SetSelectAllOnOpen(select_all);
     s.menu->SetHoverFirstOnOpen(hover_first);
+    // ">": twelve rows, then the list scrolls.
+    if (mode == OmnibarMode::Command) s.menu->SetMaxVisibleRows(12);
+    // A typed ">" switches any omnibar but the project list to commands.
+    if (mode != OmnibarMode::Project)
+        s.menu->SetFilterLead(L">", l10n::Get(l10n::StringId::OmnibarCommand));
     s.menu->SetFilterPlaceholder(l10n::Get(
         mode == OmnibarMode::Command ? l10n::StringId::OmnibarCommand :
         mode == OmnibarMode::Project ? l10n::StringId::OmnibarProject :
@@ -5085,7 +5113,9 @@ void ShowOmnibar(AppState& s, OmnibarMode mode) {
 
     const bool project_only = mode == OmnibarMode::Project;
     std::vector<std::wstring> alias_paths;
-    auto rebuild = [&s, project_only, &alias_paths](const std::wstring& query) {
+    // What every action is now; nothing changes while the palette is open.
+    const std::vector<app::actions::ActionView> actions = app::actions::ListActions(s);
+    auto rebuild = [&s, project_only, &alias_paths, &actions](const std::wstring& query) {
         const auto parsed = app::ParseOmnibarQuery(query, project_only);
         s.paletteQuery = query;
         bool folders_only = parsed.kind == app::OmnibarQuery::Kind::Project;
@@ -5133,8 +5163,15 @@ void ShowOmnibar(AppState& s, OmnibarMode mode) {
             s.paletteSearching = false;
         }
         const std::wstring current = ActiveTab(s) ? ActiveTab(s)->current_path : L"";
-        auto items = app::BuildCommandPalette(query, s.places.RecentFolderPaths(), s.paletteHits,
-                                              project_only, s.paletteTotal, current);
+        std::vector<ui::FluentMenuItem> commands;
+        if (parsed.kind == app::OmnibarQuery::Kind::Command ||
+            (parsed.kind == app::OmnibarQuery::Kind::Mixed && !app::LooksLikeFilesystemPath(parsed.needle)))
+            commands = app::actions::PaletteRows(actions, parsed.needle,
+                parsed.kind == app::OmnibarQuery::Kind::Command ? app::actions::PaletteMode::Commands
+                                                                : app::actions::PaletteMode::Mixed,
+                PaletteUsed());
+        auto items = app::BuildCommandPalette(query, std::move(commands), s.places.RecentFolderPaths(),
+                                              s.paletteHits, project_only, s.paletteTotal, current);
         // 别名: aliased folders lead ("fbb" or 发布包 → that folder).
         alias_paths.clear();
         if (parsed.kind == app::OmnibarQuery::Kind::Mixed && !parsed.needle.empty() &&
@@ -5185,7 +5222,23 @@ void ShowOmnibar(AppState& s, OmnibarMode mode) {
         if (index < alias_paths.size()) NavigateTo(s, alias_paths[index]);
         return;
     }
+    if (cmd == app::actions::kPaletteAskAssistant) {
+        // Fills the assistant's box; the user reads it and presses Enter.
+        const auto q = app::ParseOmnibarQuery(s.paletteQuery, project_only);
+        AiAssistantOpen(s);
+        AiAssistantFillComposer(s, q.needle);
+        return;
+    }
+    if (cmd >= app::actions::kPaletteCmdBase && cmd < app::actions::kPaletteCmdEnd) {
+        const int offset = cmd - app::actions::kPaletteCmdBase;
+        const int action = offset / app::actions::kPaletteStride;
+        RememberPaletteAction(action);
+        app::actions::RunAction(s, action, offset % app::actions::kPaletteStride - 1);
+        return;
+    }
     if (cmd != app::CmdNone) {
+        // A choice row (排序 → 名称) runs its menu command as it is.
+        RememberPaletteAction(app::actions::ActionOfMenuCommand(s, cmd));
         DispatchMenuCommand(s, cmd);
         return;
     }

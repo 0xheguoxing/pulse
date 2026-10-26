@@ -505,7 +505,7 @@ Offline	IDS_OFFLINE	1264	离线	Offline	離線
 CannotOpen	IDS_CANNOT_OPEN	1265	无法打开	Could not open	無法開啟
 CachedReadOnly	IDS_CACHED_READ_ONLY	1266	只读浏览上次快照	Browsing the last snapshot read-only	唯讀瀏覽上次快照
 DirectoryUnavailable	IDS_DIRECTORY_UNAVAILABLE	1267	这个文件夹打不开：可能不存在、已被移走，或者没有访问权限。	This folder can't be opened. It may not exist, may have moved, or you may not have access.	這個資料夾打不開：可能不存在、已被移走，或者沒有存取權限。
-OmnibarCommand	IDS_OMNIBAR_COMMAND	1268	输入命令...	Enter a command...	輸入命令...
+OmnibarCommand	IDS_OMNIBAR_COMMAND	1268	输入命令，支持拼音和首字母	Type a command (pinyin and initials work)	輸入命令，支援拼音和首字母
 OmnibarProject	IDS_OMNIBAR_PROJECT	1269	跳转到项目文件夹...	Go to a project folder...	跳至項目資料夾...
 OmnibarDefault	IDS_OMNIBAR_DEFAULT	1270	路径、命令（>）或搜索（?）...	Path, command (>) or search (?)...	路徑、命令（>）或搜尋（?）...
 Searching	IDS_SEARCHING	1271	搜索中...	Searching...	搜尋中...
@@ -3916,3 +3916,56 @@ AiVoiceRecognizingChip	IDS_AI_VOICE_RECOGNIZING_CHIP	5114	识别中	Recognizing	
 AiVoiceHint	IDS_AI_VOICE_HINT	5115	说完停顿一下就会识别，或再点一次麦克风	Pause when you're done and it's recognized, or click the mic again	說完停頓一下就會辨識，或再點一次麥克風
 AiVoiceHintManual	IDS_AI_VOICE_HINT_MANUAL	5116	说完再点一次麦克风	Click the mic again when you're done	說完再點一次麥克風
 AiVoiceRecognizing	IDS_AI_VOICE_RECOGNIZING	5117	识别中…	Recognizing…	辨識中…
+ActDomNav	IDS_ACT_DOM_NAV	5118	导航	Navigation	導覽
+ActDomTabs	IDS_ACT_DOM_TABS	5119	标签页	Tabs	分頁
+ActDomWindow	IDS_ACT_DOM_WINDOW	5120	窗口	Window	視窗
+ActDomView	IDS_ACT_DOM_VIEW	5121	视图	View	檢視
+ActDomSelect	IDS_ACT_DOM_SELECT	5122	选择	Selection	選取
+ActDomFiles	IDS_ACT_DOM_FILES	5123	文件	Files	檔案
+ActDomTags	IDS_ACT_DOM_TAGS	5124	标签与收藏	Tags and favorites	標籤與收藏
+ActDomTray	IDS_ACT_DOM_TRAY	5125	暂存区	Staging tray	暫存區
+ActDomSearch	IDS_ACT_DOM_SEARCH	5126	搜索	Search	搜尋
+ActDomPreview	IDS_ACT_DOM_PREVIEW	5127	预览	Preview	預覽
+ActDomNetwork	IDS_ACT_DOM_NETWORK	5128	网络	Network	網路
+ActDomApp	IDS_ACT_DOM_APP	5129	应用	App	應用程式
+ActDomSettings	IDS_ACT_DOM_SETTINGS	5130	设置 · %s	Settings · %s	設定 · %s
+ActPalUsed	IDS_ACT_PAL_USED	5131	这次用过的	Used this session	這次用過的
+ActPalCommon	IDS_ACT_PAL_COMMON	5132	常用	Frequent	常用
+ActPalUnavailable	IDS_ACT_PAL_UNAVAILABLE	5133	现在不能用	Not available now	目前無法使用
+ActPalNoCommand	IDS_ACT_PAL_NO_COMMAND	5135	没有叫这个名字的命令	No command by that name	沒有這個名稱的命令
+ActPalAskAssistant	IDS_ACT_PAL_ASK_ASSISTANT	5136	交给 Pulse 助手：「%s」	Ask Pulse Assistant: "%s"	交給 Pulse 助手：「%s」
+ActWhySelect	IDS_ACT_WHY_SELECT	5137	先选中文件	Select items first	先選取項目
+ActWhySelectOne	IDS_ACT_WHY_SELECT_ONE	5138	先选中一个文件	Select one item first	先選取一個項目
+ActWhyOnePane	IDS_ACT_WHY_ONE_PANE	5139	现在只有一栏	Only one pane now	目前只有一欄
+ActWhyNotFolder	IDS_ACT_WHY_NOT_FOLDER	5140	这里不是文件夹	Not in a folder	這裡不是資料夾
+ActWhyNoUndo	IDS_ACT_WHY_NO_UNDO	5141	没有可撤销的操作	Nothing to undo	沒有可復原的操作
+ActWhyNoPaste	IDS_ACT_WHY_NO_PASTE	5142	剪贴板里没有文件	No files on the clipboard	剪貼簿中沒有檔案
+ActWhyNoSort	IDS_ACT_WHY_NO_SORT	5143	这里不能排序	Can't sort here	這裡無法排序
+ActWhyNoGroup	IDS_ACT_WHY_NO_GROUP	5144	这里不能分组	Can't group here	這裡無法分組
+ActRecentChanges	IDS_ACT_RECENT_CHANGES	5145	打开最近更改	Open recent changes	開啟最近變更
+ActOpenRecycle	IDS_ACT_OPEN_RECYCLE	5146	打开回收站	Open the Recycle Bin	開啟資源回收筒
+ActReopenClosed	IDS_ACT_REOPEN_CLOSED	5147	重新打开关闭的窗口	Reopen what was closed	重新開啟關閉的視窗
+ActTabToWindow	IDS_ACT_TAB_TO_WINDOW	5148	标签页移到新窗口	Move tab to a new window	分頁移到新視窗
+ActLayout	IDS_ACT_LAYOUT	5149	分栏布局	Pane layout	分欄配置
+ActMarkTarget	IDS_ACT_MARK_TARGET	5150	设为目标栏	Mark as target pane	設為目標欄
+ActNewWindow	IDS_ACT_NEW_WINDOW	5151	新建窗口	New window	新增視窗
+ActCloseWindow	IDS_ACT_CLOSE_WINDOW	5152	关闭窗口	Close window	關閉視窗
+ActMergeWindows	IDS_ACT_MERGE_WINDOWS	5153	合并所有窗口	Merge all windows	合併所有視窗
+ActMaximize	IDS_ACT_MAXIMIZE	5154	最大化 / 还原	Maximize / restore	最大化 / 還原
+ActSidebar	IDS_ACT_SIDEBAR	5155	折叠侧栏	Collapse the sidebar	摺疊側欄
+ActFavoritesBar	IDS_ACT_FAVORITES_BAR	5156	显示收藏栏	Show the favorites bar	顯示收藏列
+ActViewMode	IDS_ACT_VIEW_MODE	5157	视图模式	View mode	檢視模式
+ActSortDirection	IDS_ACT_SORT_DIRECTION	5158	切换排序方向	Reverse the sort order	切換排序方向
+ActFolderSizes	IDS_ACT_FOLDER_SIZES	5159	显示文件夹大小	Show folder sizes	顯示資料夾大小
+ActCompare	IDS_ACT_COMPARE	5160	比较两栏	Compare the two panes	比較兩欄
+ActSelectPattern	IDS_ACT_SELECT_PATTERN	5161	按规则选择…	Select by pattern…	依規則選取…
+ActCopy	IDS_ACT_COPY	5162	复制	Copy	複製
+ActGroupIntoFolder	IDS_ACT_GROUP_INTO_FOLDER	5163	合并到文件夹	New folder with selection	合併到資料夾
+ActDissolveFolder	IDS_ACT_DISSOLVE_FOLDER	5164	解散文件夹	Ungroup folder	解散資料夾
+ActTagPanel	IDS_ACT_TAG_PANEL	5165	添加标签…	Add tags…	新增標籤…
+ActClearTags	IDS_ACT_CLEAR_TAGS	5166	清除所有标签	Clear all tags	清除所有標籤
+ActStageToTray	IDS_ACT_STAGE_TO_TRAY	5167	加入暂存区	Add to staging tray	加入暫存區
+ActProject	IDS_ACT_PROJECT	5168	跳到项目	Go to a project	跳到專案
+ActQuickPreview	IDS_ACT_QUICK_PREVIEW	5169	快速预览	Quick Look	快速預覽
+ActMapDrive	IDS_ACT_MAP_DRIVE	5170	映射网络驱动器	Map network drive	對應網路磁碟機
+ActOpenSettings	IDS_ACT_OPEN_SETTINGS	5171	打开设置	Open settings	開啟設定

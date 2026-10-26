@@ -358,6 +358,11 @@ void UpdateAddressSuggestions(AppState& s) {
     std::wstring text(static_cast<size_t>(len) + 1, L'\0');
     text.resize(static_cast<size_t>(GetWindowTextW(s.hwndAddressEdit, text.data(), len + 1)));
     while (!text.empty() && iswspace(text.back())) text.pop_back();
+    if (text == L">") {
+        // ">" opens the command palette; posted, as this runs inside EN_CHANGE.
+        PostMessageW(s.hwnd, WM_COMMAND_PALETTE, 0, 0);
+        return done();
+    }
     while (!text.empty() && iswspace(text.front())) text.erase(text.begin());
     // "\\..." and 连接服务器: known servers, from memory only (no network).
     if (FillServerSuggestions(s, text)) return done();
@@ -987,7 +992,7 @@ LRESULT CALLBACK AddressEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 return 0;
             }
             HideAddressEditor(*s, false);
-            ShowOmnibar(*s, wParam == L'K' ? OmnibarMode::Mixed : OmnibarMode::Path);
+            ShowOmnibar(*s, wParam == L'K' ? OmnibarMode::Command : OmnibarMode::Path);
             return 0;
         }
         if (s->addressSearching && wParam == VK_TAB) {

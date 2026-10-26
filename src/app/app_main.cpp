@@ -3030,6 +3030,9 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s && s->addressSearching && GetFocus() == s->hwndAddressEdit)
             ShowAddressSearchHistory(*s);
         return 0;
+    case WM_COMMAND_PALETTE:
+        if (s && s->addressEditing && !s->addressSearching) ShowOmnibar(*s, OmnibarMode::Command);
+        return 0;
     case WM_UPDATE_INSTALL:
         if (s) InstallUpdate(*s);
         return 0;

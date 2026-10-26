@@ -1576,12 +1576,45 @@ struct LumaTextRenderer::Impl {
                         }
                     }
                 }
+                // A leading marker the owner names (the command palette's ">")
+                // takes the owner's colour; a hint follows it while nothing
+                // else is typed. Colour only, so the caret metrics hold.
+                const auto* lead = static_cast<const wchar_t*>(GetPropW(hwnd, L"Pulse.EditLead"));
+                const size_t lead_n = lead ? wcslen(lead) : 0;
+                const bool lead_on = !wraps && multiline <= 0.0f && visible == text && lead_n > 0 &&
+                                     text.compare(0, lead_n, lead) == 0;
+                DWRITE_TEXT_RANGE lead_range{0, 0};
+                Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> lead_brush;
+                if (lead_on) {
+                    const auto rgb = reinterpret_cast<UINT_PTR>(GetPropW(hwnd, L"Pulse.EditLeadColor"));
+                    const UINT32 hi = ToLayoutPos(visible_layout.Get(), static_cast<int>(lead_n));
+                    if (rgb && hi > 0 && SUCCEEDED(blit_dc->CreateSolidColorBrush(D2D1::ColorF(
+                            GetRValue(rgb) / 255.0f, GetGValue(rgb) / 255.0f, GetBValue(rgb) / 255.0f, 1.0f),
+                            &lead_brush))) {
+                        lead_range = {0, hi};
+                        visible_layout->SetDrawingEffect(lead_brush.Get(), lead_range);
+                    }
+                }
                 blit_dc->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
                 blit_dc->SetTextRenderingParams(params);
                 blit_dc->DrawTextLayout(D2D1::Point2F(std::round(pad - scroll), y), visible_layout.Get(),
                                         brush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
                 // The layout is cached and shared: leave no brush on it.
                 if (ext_range.length) visible_layout->SetDrawingEffect(nullptr, ext_range);
+                if (lead_range.length) visible_layout->SetDrawingEffect(nullptr, lead_range);
+                const auto* tail = static_cast<const wchar_t*>(GetPropW(hwnd, L"Pulse.EditTail"));
+                if (lead_on && text.size() == lead_n && tail && tail[0] != 0) {
+                    const auto tail_layout = DwEditLayout(tail, format, static_cast<float>(h), 0.0f, 0.0f);
+                    DWRITE_TEXT_METRICS tm{};
+                    if (tail_layout && SUCCEEDED(tail_layout->GetMetrics(&tm))) {
+                        const float gap = std::round(format->GetFontSize() * 0.5f);
+                        const float tx = std::round(pad - scroll + metrics.widthIncludingTrailingWhitespace + gap);
+                        const float ty = std::round((static_cast<float>(h) - tm.height) * 0.5f) - tm.top;
+                        brush->SetColor(D2D1::ColorF(foreground.r, foreground.g, foreground.b, foreground.a * 0.45f));
+                        blit_dc->DrawTextLayout(D2D1::Point2F(tx, ty), tail_layout.Get(), brush.Get(),
+                                                D2D1_DRAW_TEXT_OPTIONS_NONE);
+                    }
+                }
                 blit_dc->SetTextRenderingParams(nullptr);
                 text_drawn = true;
             }

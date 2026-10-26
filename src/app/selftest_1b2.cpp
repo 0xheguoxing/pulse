@@ -42,6 +42,7 @@
 #include "details_column_menu.h"
 #include "entry_group.h"
 #include "context_menu.h"
+#include "actions/action_registry.h"
 #include "context_menu_controller.h"
 #include "context_menu_prefs.h"
 #include "global_search_handoff.h"
@@ -2182,7 +2183,7 @@ void TestMenuModel() {
         {L"C:\\Users\\TestUser\\.codex", L".codex", true},
         {L"C:\\Users\\TestUser\\plugins\\.codex-plugin", L".codex-plugin", true}
     };
-    auto path_items = BuildCommandPalette(L".codex", {}, path_hits, false, path_hits.size());
+    auto path_items = BuildCommandPalette(L".codex", {}, {}, path_hits, false, path_hits.size());
     Check(path_items.size() >= 3 && path_items[0].shortcut_inline &&
           path_items[1].shortcut_inline && !path_items.back().shortcut_inline,
           L"menu: search paths use inline captions, result count remains trailing");
@@ -5162,19 +5163,82 @@ void TestSplitLayout() {
           splitMenu[3].pictogram == ui::fluent::MenuPictogram::LayoutThree &&
           splitMenu[4].pictogram == ui::fluent::MenuPictogram::LayoutFour,
           L"menu: split presets use distinct layout pictograms");
-    auto pal = BuildCommandPalette({ L"C:\\Users" });
+    // The palette's command rows come from the action registry; these views
+    // stand in for ListActions (an app state is not needed for the rows).
+    namespace act = app::actions;
+    std::vector<act::ActionView> fake_actions;
+    auto add_fake = [&](std::string_view id, const wchar_t* title, const wchar_t* domain,
+                        bool enabled = true) -> act::ActionView& {
+        act::ActionView v;
+        v.index = static_cast<int>(fake_actions.size());
+        v.id = id;
+        v.title = title;
+        v.domain = domain;
+        v.enabled = enabled;
+        if (!enabled) v.why = L"先选中一个文件";
+        fake_actions.push_back(std::move(v));
+        return fake_actions.back();
+    };
+    {
+        auto& layout = add_fake("window.layout", L"分栏布局", L"窗口");          // 0
+        for (const wchar_t* choice : { L"单栏", L"左右两栏", L"四宫格" }) {
+            ui::FluentMenuItem row;
+            row.command = CmdLayoutSingle;
+            row.text = choice;
+            layout.choices.push_back(std::move(row));
+        }
+        layout.choices[2].command = CmdLayoutFourGrid;
+    }
+    add_fake("file.new_folder", L"新建文件夹", L"文件");                          // 1
+    add_fake("tab.new", L"新建标签页", L"标签页").shortcut = L"Ctrl+T";          // 2
+    add_fake("file.rename", L"重命名", L"文件", false);                           // 3
+    add_fake("file.batch_rename", L"批量重命名", L"文件");                        // 4
+    add_fake("app.exit", l10n::Get(l10n::StringId::ExitPulse).c_str(), L"应用");  // 5
+    add_fake("settings.set", L"显示隐藏的文件", L"设置 · 文件列表").key = "show_hidden";  // 6
+    const auto mixed_rows = [&](const wchar_t* needle) {
+        return act::PaletteRows(fake_actions, needle, act::PaletteMode::Mixed, {});
+    };
+    const auto command_rows = [&](const wchar_t* needle, const std::vector<int>& used = {}) {
+        return act::PaletteRows(fake_actions, needle, act::PaletteMode::Commands, used);
+    };
+    auto pal = BuildCommandPalette(L"", {}, { L"C:\\Users" }, {}, false);
     Check(!pal.empty() && pal.back().command == CmdRecentBase, L"menu: command palette recent");
     Check(pal.back().badge_text == L"历史路径" && pal.back().shortcut.empty(),
           L"menu: recent rows use 历史路径 badge");
-    auto palQ = BuildCommandPalette(L"四宫", { L"C:\\Users" }, {}, false);
-    Check(!palQ.empty() && palQ[0].command == CmdLayoutFourGrid, L"menu: palette filters by query");
+    auto palQ = BuildCommandPalette(L"四宫", mixed_rows(L"四宫"), { L"C:\\Users" }, {}, false);
+    Check(!palQ.empty() && palQ[0].text == L"分栏布局" && palQ[0].children.size() == 3 &&
+          palQ[0].children[2].command == CmdLayoutFourGrid,
+          L"menu: a choice's label finds its action (四宫 → 分栏布局 ›)");
     {
         bool offers_exit = false;
-        for (const auto& it : BuildCommandPalette(l10n::Get(l10n::StringId::ExitPulse), {}, {}, false))
-            offers_exit = offers_exit || it.command == CmdExitPulse;
+        for (const auto& it : command_rows(l10n::Get(l10n::StringId::ExitPulse).c_str()))
+            offers_exit = offers_exit || it.command == act::PaletteCommand(5);
         Check(offers_exit, L"menu: the palette offers Exit Pulse (#57)");
     }
-    auto palLong = BuildCommandPalette(L"", { L"\\\\?\\C:\\Users\\TestUser" }, {}, false);
+    {
+        const auto rows = command_rows(L"xj");
+        bool initials = false;
+        for (const auto& it : rows)
+            if (it.text == L"新建文件夹") initials = it.match_start == 0 && it.match_length == 2;
+        Check(initials, L"palette: pinyin initials match and mark the matched characters");
+        const auto renames = command_rows(L"重命名");
+        Check(renames.size() == 4 && renames[0].heading && renames[0].text == L"文件" &&
+              renames[1].text == L"批量重命名" && renames[1].match_start == 2 &&
+              renames[1].match_length == 3 && renames[2].heading && renames[3].text == L"重命名" &&
+              !renames[3].enabled && renames[3].shortcut == L"先选中一个文件",
+              L"palette: unavailable actions come last, under their heading, with the reason");
+        const auto none = command_rows(L"把上个月的截图挪到图片");
+        Check(none.size() == 2 && !none[0].enabled && none[1].command == act::kPaletteAskAssistant &&
+              none[1].text.find(L"把上个月的截图挪到图片") != std::wstring::npos,
+              L"palette: no match offers the assistant with the words");
+        const auto start = command_rows(L"", { 4 });
+        Check(start.size() >= 4 && start[0].heading && start[1].command == act::PaletteCommand(4) &&
+              start[2].heading,
+              L"palette: an empty > lists this session's actions, then 常用");
+        Check(mixed_rows(L"").empty() && mixed_rows(L"新建").size() == 2,
+              L"palette: mixed mode adds only the best few commands");
+    }
+    auto palLong = BuildCommandPalette(L"", {}, { L"\\\\?\\C:\\Users\\TestUser" }, {}, false);
     bool recent_ok = false;
     for (const auto& it : palLong) {
         if (it.command != CmdRecentBase) continue;
@@ -5210,20 +5274,22 @@ void TestSplitLayout() {
     Check(LooksLikeFilesystemPath(L"C:\\Windows") && LooksLikeFilesystemPath(L"\\\\server\\share") &&
           !LooksLikeFilesystemPath(L"新建文件夹"),
           L"omnibar: path-like detection");
-    auto palCmd = BuildCommandPalette(L">新建", { L"C:\\新建" }, {}, false);
-    Check(!palCmd.empty() && palCmd[0].command == CmdNewFolder, L"omnibar: >新建 matches 新建文件夹");
-    bool cmd_has_layout = false;
-    for (const auto& it : palCmd)
-        if (it.command == CmdLayoutFourGrid) cmd_has_layout = true;
+    auto palCmd = BuildCommandPalette(L">新建", command_rows(L"新建"), { L"C:\\新建" }, {}, false);
+    bool cmd_has_folder = false, cmd_has_layout = false, cmd_has_recent = false;
+    for (const auto& it : palCmd) {
+        cmd_has_folder = cmd_has_folder || it.command == act::PaletteCommand(1);
+        cmd_has_layout = cmd_has_layout || it.text == L"分栏布局";
+        cmd_has_recent = cmd_has_recent || it.command == CmdRecentBase;
+    }
+    Check(cmd_has_folder, L"omnibar: >新建 matches 新建文件夹");
     Check(!cmd_has_layout, L"omnibar: >新建 does not keep unrelated commands");
-    Check(palCmd.back().command == CmdRecentBase && palCmd.back().badge_text == L"历史路径",
-          L"omnibar: command mode still lists recents at the end");
-    auto palSearch = BuildCommandPalette(L"?foo", { L"C:\\Users" }, {}, false);
+    Check(!cmd_has_recent, L"omnibar: the > palette lists commands only");
+    auto palSearch = BuildCommandPalette(L"?foo", mixed_rows(L"新建"), { L"C:\\Users" }, {}, false);
     bool search_has_cmd = false;
     for (const auto& it : palSearch)
-        if (it.command == CmdSettings || it.command == CmdNewFolder) search_has_cmd = true;
+        if (it.command >= act::kPaletteCmdBase && it.command < act::kPaletteCmdEnd) search_has_cmd = true;
     Check(!search_has_cmd, L"omnibar: ? search hides commands");
-    auto palDup = BuildCommandPalette(L"", { L"C:\\A", L"C:\\A", L"C:\\B" }, {}, false, 0, L"C:\\B");
+    auto palDup = BuildCommandPalette(L"", {}, { L"C:\\A", L"C:\\A", L"C:\\B" }, {}, false, 0, L"C:\\B");
     int recent_n = 0;
     int recent_idx = -1;
     for (const auto& it : palDup) {
@@ -5237,7 +5303,7 @@ void TestSplitLayout() {
     hit.name = L"Users";
     hit.path = L"C:\\Users";
     hit.is_dir = true;
-    auto palSkipHit = BuildCommandPalette(L"", { L"C:\\Users" }, { hit }, false);
+    auto palSkipHit = BuildCommandPalette(L"", {}, { L"C:\\Users" }, { hit }, false);
     bool recent_after_hit = false;
     for (const auto& it : palSkipHit)
         if (it.command == CmdRecentBase) recent_after_hit = true;

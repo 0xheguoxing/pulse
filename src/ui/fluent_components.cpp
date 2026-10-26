@@ -65,6 +65,22 @@ float MeasureTextWidth(Compositor* compositor, IDWriteTextFormat* format,
     return typography::MeasureLine(compositor, format, text);
 }
 
+// Where the next run starts: the plain advance, without the ink pad
+// MeasureLine adds so a box does not clip the last glyph.
+float RunAdvance(Compositor* compositor, IDWriteTextFormat* format, std::wstring_view text) {
+    IDWriteFactory2* factory = compositor ? compositor->DwriteFactory() : nullptr;
+    if (!factory || !format || text.empty()) return 0.0f;
+    IDWriteTextLayout* layout = nullptr;
+    if (FAILED(factory->CreateTextLayout(text.data(), static_cast<UINT32>(text.size()), format,
+                                         10000.0f, 100.0f, &layout)) || !layout)
+        return MeasureTextWidth(compositor, format, text);
+    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    DWRITE_TEXT_METRICS metrics{};
+    const HRESULT hr = layout->GetMetrics(&metrics);
+    layout->Release();
+    return SUCCEEDED(hr) ? metrics.widthIncludingTrailingWhitespace : MeasureTextWidth(compositor, format, text);
+}
+
 D2D1_COLOR_F TextFieldFillColor(const Theme& theme, const ControlState& state,
                                 bool /*dark*/, bool high_contrast,
                                 bool hosted_edit) noexcept {
@@ -1385,6 +1401,21 @@ void Painter::DrawMenuItem(const MenuItemSpec& spec) {
     if (!theme_ || !compositor_) {
         return;
     }
+    if (spec.heading) {
+        // Caption at the icon column's edge, sitting on the group's first row.
+        auto caption = spec.bounds;
+        caption.left += Px(16.0f);
+        caption.right -= Px(16.0f);
+        caption.top += Px(6.0f);
+        DrawText(spec.text, caption, CaptionFormat(), theme_->text_secondary);
+        if (spec.separator_after) {
+            const float y = spec.bounds.bottom - 0.5f;
+            dc_->DrawLine(D2D1::Point2F(spec.bounds.left + Px(12.0f), y),
+                          D2D1::Point2F(spec.bounds.right - Px(12.0f), y),
+                          Brush(BrushId::Divider), 1.0f);
+        }
+        return;
+    }
     auto item = Inset(spec.bounds, Px(6.0f));
     item.top = spec.bounds.top + Px(2.0f);
     item.bottom = spec.bounds.bottom - Px(2.0f);
@@ -1437,10 +1468,12 @@ void Painter::DrawMenuItem(const MenuItemSpec& spec) {
     const auto icon_bounds = D2D1::RectF(content.left, content.top,
                                          content.left + icon_width, content.bottom);
     auto draw_glyph = [&]() {
+        const D2D1_COLOR_F glyph_color =
+            spec.accent_glyph && spec.state.enabled ? theme_->accent : foreground;
         const float glyph_scale = std::clamp(spec.glyph_scale, 0.6f, 1.2f);
         IDWriteTextFormat* iconFormat = MenuIconFormat();
         if (std::abs(glyph_scale - 1.0f) < 0.001f || spec.glyph.empty()) {
-            DrawGlyphWithFormat(spec.glyph, icon_bounds, foreground, iconFormat);
+            DrawGlyphWithFormat(spec.glyph, icon_bounds, glyph_color, iconFormat);
             return;
         }
         ComPtr<IDWriteTextLayout> glyphLayout;
@@ -1454,10 +1487,10 @@ void Painter::DrawMenuItem(const MenuItemSpec& spec) {
             glyphLayout->SetFontSize(iconFormat->GetFontSize() * glyph_scale,
                                      DWRITE_TEXT_RANGE{0, length});
             dc_->DrawTextLayout(D2D1::Point2F(icon_bounds.left, icon_bounds.top),
-                                glyphLayout.get(), ScratchBrush(foreground),
+                                glyphLayout.get(), ScratchBrush(glyph_color),
                                 D2D1_DRAW_TEXT_OPTIONS_CLIP);
         } else {
-            DrawGlyphWithFormat(spec.glyph, icon_bounds, foreground, iconFormat);
+            DrawGlyphWithFormat(spec.glyph, icon_bounds, glyph_color, iconFormat);
         }
     };
     if (spec.icon_bitmap) {
@@ -1493,7 +1526,10 @@ void Painter::DrawMenuItem(const MenuItemSpec& spec) {
                                         content.right, content.bottom),
                             foreground, MenuChevronFormat());
         content.right -= chevron + Px(4.0f);
-    } else if (!spec.badge_text.empty()) {
+    }
+    // A flyout row may still show its current value before the chevron
+    // (the command palette's 名称 ↑ ›): it takes the shortcut column.
+    if (!spec.has_submenu && !spec.badge_text.empty()) {
         const float text_w = MeasureTextWidth(
             compositor_->DwriteFactory(), CaptionFormat(), spec.badge_text);
         const float badge_width = std::max(Px(28.0f), std::ceil(text_w) + Px(14.0f));
@@ -1558,7 +1594,35 @@ void Painter::DrawMenuItem(const MenuItemSpec& spec) {
         DWRITE_TRIMMING trim{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
         body->SetTrimming(&trim, sign);
     }
-    DrawText(spec.text, content, body, foreground);
+    bool drawn = false;
+    const size_t match_end = static_cast<size_t>(spec.match_start) + spec.match_length;
+    IDWriteTextFormat* strong = SectionFormat();
+    if (spec.match_length > 0 && match_end <= spec.text.size() && body && strong &&
+        !high_contrast_) {
+        // Three runs side by side; the label must fit, or it ellipsizes plain.
+        const std::wstring_view before = spec.text.substr(0, spec.match_start);
+        const std::wstring_view hit = spec.text.substr(spec.match_start, spec.match_length);
+        const std::wstring_view after = spec.text.substr(match_end);
+        const float w_before = before.empty() ? 0.0f : MeasureTextWidth(compositor_, body, before);
+        const float w_hit = MeasureTextWidth(compositor_, strong, hit);
+        const float w_after = after.empty() ? 0.0f : MeasureTextWidth(compositor_, body, after);
+        if (w_before + w_hit + w_after + Px(2.0f) <= Width(content)) {
+            float x = content.left;
+            // Each run's box is its padded width; the next run starts at the
+            // plain advance, so the bold part sits flush with its neighbours.
+            const auto run = [&](std::wstring_view text, IDWriteTextFormat* format, float w) {
+                if (text.empty()) return;
+                DrawText(text, D2D1::RectF(x, content.top, x + w + Px(6.0f), content.bottom),
+                         format, foreground);
+                x += RunAdvance(compositor_, format, text);
+            };
+            run(before, body, w_before);
+            run(hit, strong, w_hit);
+            run(after, body, w_after);
+            drawn = true;
+        }
+    }
+    if (!drawn) DrawText(spec.text, content, body, foreground);
     if (body) {
         body->SetTrimming(&old_trim, old_sign.get());
         body->SetWordWrapping(old_wrap);

@@ -66,6 +66,7 @@ struct FluentMenuItem {
     // returns a command. Children may not nest further.
     std::vector<FluentMenuItem> children;
     float glyph_scale = 1.0f;      // Per-item visual scale inside the fixed icon slot.
+    bool accent_glyph = false;     // Glyph drawn in the accent colour (assistant hand-off).
     bool shortcut_inline = false; // Search paths follow a shared, compact filename column.
     int trailing_command = 0;     // Optional hover-revealed close action at the right edge.
     std::wstring tooltip;
@@ -75,6 +76,11 @@ struct FluentMenuItem {
     // App icon of an Explorer row (handler bitmap / registry verb icon), drawn
     // in place of the glyph like Explorer does. Does not affect layout.
     common::MenuIconRef icon;
+    // Command palette: a section caption (a short row, never selectable) and
+    // the label characters the query matched, drawn semibold.
+    bool heading = false;
+    uint16_t match_start = 0;
+    uint16_t match_length = 0;
 };
 
 // Access key of a row: explicit mnemonic, else trailing "(X)" / "（X）" in text
@@ -113,6 +119,7 @@ public:
     int HeightPx() const { return height_; }
     float InlineLabelWidthPx() const { return inline_label_width_; }
     float RowHeightPx() const { return row_h_; }
+    float RowHeightPx(int i) const;   // row i's height: heading rows are shorter
     int Count() const { return (int)items_.size(); }
     const std::vector<FluentMenuItem>& Items() const { return items_; }
     const FluentMenuItem* At(int i) const;
@@ -142,6 +149,7 @@ private:
     float row_h_ = 32.0f;
     float pad_v_ = 4.0f;      // surface inner padding (DIP*scale)
     float sep_h_ = 5.0f;      // separator slot height (line + gaps)
+    float heading_h_ = 26.0f; // a heading row (26 DIP)
     float inline_label_width_ = 0.0f;
     int width_ = 0;
     int locked_width_ = 0;    // PatchInPlace: Layout keeps this width
@@ -199,6 +207,12 @@ public:
     bool LastFilterCommitted() const { return filter_committed_; }
     // Prefill the filter edit on the next TrackPopup (used as a rename field).
     void SetInitialFilterText(std::wstring text) { initial_filter_text_ = std::move(text); }
+    // The next TrackPopup draws `lead` (">") at the start of the filter in the
+    // accent colour and `hint` after it while nothing else is typed.
+    void SetFilterLead(std::wstring lead, std::wstring hint) {
+        filter_lead_ = std::move(lead);
+        filter_lead_hint_ = std::move(hint);
+    }
     void SetSelectAllOnOpen(bool select_all) { select_all_on_open_ = select_all; }
     void SetHoverFirstOnOpen(bool hover_first) { hover_first_on_open_ = hover_first; }
     // Align the next TrackPopup to this screen rect (address bar). The filter
@@ -260,6 +274,7 @@ private:
 
     bool EnsureWindow();
     bool EnsureFilterEdit();
+    void ApplyFilterLead();   // SetFilterLead's props on edit_ (none: removed)
     void PlaceFilterEdit(int y_offset_px);
     void HideFilterEdit();
     void SyncFilterFromEdit();
@@ -333,6 +348,8 @@ private:
     std::wstring filter_query_;
     std::wstring filter_placeholder_;
     std::wstring initial_filter_text_;   // prefilled into the edit on open
+    std::wstring filter_lead_;           // SetFilterLead; one popup only
+    std::wstring filter_lead_hint_;
     float filter_min_width_ = 0.0f;      // dips; <= 0 = palette default (440)
     std::vector<std::pair<wchar_t, int>> empty_filter_keys_;
     bool select_all_on_open_ = true;
