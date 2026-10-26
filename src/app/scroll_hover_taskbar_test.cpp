@@ -1,5 +1,6 @@
 #ifdef PULSE_WITH_SELFTEST
 #include "scroll_hover_taskbar_test.h"
+#include "../ui/ui_renderer.h"
 #include "app_hover.h"
 #include "app_input.h"
 #include "app_navigation.h"

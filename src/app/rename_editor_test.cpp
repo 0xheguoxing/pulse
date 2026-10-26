@@ -2,6 +2,7 @@
 #include "rename_editor_test.h"
 #include "app_hosted_edit.h"
 #include "app_input.h"
+#include "../ui/ui_renderer.h"
 #include "../ui/lumatext_renderer.h"
 #include "../ui/fluent_menu.h"
 #include <cstdio>

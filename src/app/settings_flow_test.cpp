@@ -1,4 +1,5 @@
 #include "app_internal.h"
+#include "../ui/ui_renderer.h"
 #include "app_input.h"
 #include "app_ops_ui.h"
 #include "../ui/ui_renderer_internal.h"
@@ -787,7 +788,7 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
     auto vm=BuildVm(s,false);
     const auto collapsed_max=s.renderer.SettingsMaxScroll(vm,window.right,window.bottom);
     H toggle;toggle.region=H::SettingsDisclosure;toggle.index=0;
-    H custom;custom.region=H::SettingsAccentCustom;custom.index=0;HandleSettingsControl(s,custom);
+    H accent_custom;accent_custom.region=H::SettingsAccentCustom;accent_custom.index=0;HandleSettingsControl(s,accent_custom);
     vm=BuildVm(s,false);const auto expanded_max=s.renderer.SettingsMaxScroll(vm,window.right,window.bottom);
     check((s.settingsExpanded&32u) && expanded_max>collapsed_max,"opening the custom accent updates scroll range");
     {
@@ -832,7 +833,7 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
         check(s.compositor.SaveSnapshot((std::filesystem::path(output).parent_path()/L"settings-advanced.png").c_str()),
             "advanced settings screenshot captured");
     }
-    OpenSettingsTab(s,0);s.settings.SetScroll(expanded_max,expanded_max);HandleSettingsControl(s,custom);
+    OpenSettingsTab(s,0);s.settings.SetScroll(expanded_max,expanded_max);HandleSettingsControl(s,accent_custom);
     check(s.settings.scroll()<=collapsed_max,"closing the custom accent clamps existing scroll");
     OpenSettingsTab(s,1);s.settings.SetScroll(0,0);
     const bool before=s.appPrefs.search_pinyin;click(layout().search_pinyin_row);

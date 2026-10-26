@@ -1,4 +1,5 @@
 #include "app_internal.h"
+#include "../ui/ui_renderer.h"
 #include "app_input.h"
 #include "app_hosted_edit.h"
 #include "keymap.h"

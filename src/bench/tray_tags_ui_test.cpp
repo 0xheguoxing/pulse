@@ -1,5 +1,6 @@
 #ifdef PULSE_WITH_SELFTEST
 #include "../app/app_internal.h"
+#include "../ui/ui_renderer.h"
 #include <filesystem>
 #include <fstream>
 #include <set>
