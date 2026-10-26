@@ -1106,6 +1106,15 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
         preview_handler_.Sync(notify_hwnd_, {}, L"", 0, 0, 0, 0, vm.dark,
                               theme.bg, theme.text, false);
         DrawSettings(vm, rect, theme);
+        if (ai_panel_.Visible()) {
+            // Docked: the column at the left edge, Settings moved right of it
+            // (vm.settings_inset_left); floating: over Settings as elsewhere.
+            const float dock = AiDockWidth(rect.right);
+            ai_panel_.Draw(compositor_, vm.ai_panel, theme,
+                           D2D1::RectF(rect.left, title_bar_height_, rect.left + dock, rect.bottom - status_height_),
+                           AiPanelView::DockTargetWidth(rect.right, kSidebarRailWidthDip * scale_, scale_),
+                           AiFloatingArea(rect.right, rect.bottom), scale_, motion_now_);
+        }
         DrawStatusBar(vm, rect, theme);
     } else {
         DrawToolbar(vm, rect, theme);

@@ -8,9 +8,12 @@
 
 namespace pulse::ui {
 
-SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& rect,
+SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& window,
                                   float scale, float title_h, float status_h,
                                   const fluent::Painter* painter) {
+    // The docked 助手 column takes the left edge (vm.settings_inset_left).
+    const D2D1_RECT_F rect = D2D1::RectF((std::min)(window.right, window.left + vm.settings_inset_left),
+                                         window.top, window.right, window.bottom);
     SettingsLayout l;
     l.body = D2D1::RectF(rect.left, title_h, rect.right, rect.bottom - status_h);
     const float nav_width = (rect.right - rect.left < 760 * scale ? 64.0f :

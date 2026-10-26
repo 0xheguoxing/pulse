@@ -809,6 +809,11 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             vm.settings_shell_tags = s.appPrefs.shell_tag_menu;
             vm.settings_alias_mark = app::AliasStore::Instance().ShowMark();
             vm.settings_ai_marks = s.settings.AssistantMarks();
+            // Settings moves right of the docked 助手 like the panes do, so its
+            // result card (撤销) stays beside the rows it changed.
+            RECT client{};
+            if (s.hwnd && GetClientRect(s.hwnd, &client))
+                vm.settings_inset_left = s.renderer.AiDockWidth(static_cast<float>(client.right));
             vm.settings_blank_click_action = s.appPrefs.blank_click_action;
             vm.settings_preview_trigger = s.appPrefs.preview_trigger;
             vm.settings_hover_delay_ms = s.appPrefs.hover_preview_delay_ms;
