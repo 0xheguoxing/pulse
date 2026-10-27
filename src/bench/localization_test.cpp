@@ -340,7 +340,7 @@ int main(int argc, char** argv) {
     }
     SetLanguage(L"en-US");
     passed &= Report("Pick serves English outside Chinese UI",
-        Pick(L"未登记的软件", L"fallback") == L"fallback");
+        std::wstring_view(Pick(L"未登记的软件", L"fallback")) == L"fallback");
     SetLanguage(L"zh-CN");
 
     passed &= CheckSystemLanguage();

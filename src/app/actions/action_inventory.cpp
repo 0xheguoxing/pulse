@@ -12,7 +12,7 @@ namespace pulse::app::actions {
 namespace {
 
 constexpr bool KeyLinksInOrder() {
-    if (std::size(kKeyActionLinks) != static_cast<size_t>(kKeyActionCount)) return false;
+    if constexpr (std::size(kKeyActionLinks) != static_cast<size_t>(kKeyActionCount)) return false;
     for (int i = 0; i < kKeyActionCount; ++i)
         if (static_cast<int>(kKeyActionLinks[i].key) != i) return false;
     return true;
