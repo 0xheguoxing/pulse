@@ -21,7 +21,9 @@
 #include <string>
 #include <vector>
 
+namespace pulse {
 struct AppState;
+}
 
 namespace pulse::app {
 struct Pane;
