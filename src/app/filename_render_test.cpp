@@ -3,6 +3,7 @@
 #include "../common/windows_compat.h"
 #include "../ui/ui_renderer_internal.h"
 #include "../ui/typography.h"
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 
@@ -86,8 +87,18 @@ struct FilenameRenderTest {
                                 layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                                 if (has_extension) layout->SetDrawingEffect(dim.get(),
                                     {static_cast<UINT32>(dot), static_cast<UINT32>(shown.size() - dot)});
-                                DrawNameHighlightBackground(&compositor, layout.get(), {rc.left, rc.top}, rc, visible, theme, scale);
-                                compositor.DrawTextLayout({rc.left, rc.top}, layout.get(), normal.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                                // Production puts the baseline on a whole pixel row, as LumaText does.
+                                float top = rc.top;
+                                DWRITE_TEXT_METRICS text_metrics{};
+                                DWRITE_LINE_METRICS line_metrics{};
+                                UINT32 line_count = 0;
+                                if (SUCCEEDED(layout->GetMetrics(&text_metrics)) &&
+                                    SUCCEEDED(layout->GetLineMetrics(&line_metrics, 1, &line_count)) && line_count > 0) {
+                                    const float baseline = rc.top + text_metrics.top + line_metrics.baseline;
+                                    top += std::round(baseline) - baseline;
+                                }
+                                DrawNameHighlightBackground(&compositor, layout.get(), {rc.left, top}, rc, visible, theme, scale);
+                                compositor.DrawTextLayout({rc.left, top}, layout.get(), normal.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                             } else if (!split_drawn && !compositor.DrawLumaText(shown, fmt, rc, theme.text, theme.bg)) {
                                 dc->DrawText(shown.c_str(), static_cast<UINT32>(shown.size()), fmt, rc,
                                     normal.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);

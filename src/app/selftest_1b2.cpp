@@ -74,6 +74,8 @@
 #include "../ui/fluent_menu.h"
 #include "../ui/advanced_search_dialog.h"
 #include "../ui/typography.h"
+#include "../ui/ui_motion.h"
+#include <map>
 #include "../ui/color_picker.h"
 #include "../ui/bloom_accent_picker.h"
 #include "../ui/drag_drop.h"
@@ -1366,6 +1368,12 @@ void TestNotificationToast() {
         Check(toast.HandleMessage(window, WM_LBUTTONDOWN, 0, body), L"toast: body blocks underlying click");
         Check(toast.HandleMessage(window, WM_LBUTTONUP, 0, MAKELPARAM(0, 0)) && GetCapture() != window && toast.IsVisible(),
               L"toast: releasing outside clears capture without dismissing");
+        // With system animations on, the first frame of the entrance draws no
+        // content and places no close button yet: draw the settled frame first.
+        Sleep(ui::motion::SpringSettleMs(ui::motion::spring::Pop) + 50);
+        compositor.Dc()->BeginDraw();
+        toast.Draw(compositor, ui::MakeTheme(false, D2D1::ColorF(0x0078D4)), 1.0f, false);
+        compositor.Dc()->EndDraw();
         const auto close = MAKELPARAM(static_cast<int>(bounds.right - 16), static_cast<int>((bounds.top + bounds.bottom) / 2));
         toast.HandleMessage(window, WM_LBUTTONDOWN, 0, close);
         toast.HandleMessage(window, WM_LBUTTONUP, 0, close);
@@ -2129,7 +2137,7 @@ void TestMenuModel() {
     Check(folder_items.size() == 10, L"menu: folder item menu adds 在新标签打开");
     Check(folder_items.size() > 3 &&
           folder_items[2].command == CmdOpenInNewTab &&
-          folder_items[2].text == L"在新标签打开" &&
+          folder_items[2].text == L"在新标签页打开" &&
           folder_items[3].command == CmdCopyPath,
           L"menu: 在新标签打开 sits before 复制路径");
     Check(!items.back().enabled, L"menu: undo disabled without a stack");
@@ -2287,9 +2295,10 @@ void TestMenuModel() {
     options.sort_direction = ui::SortDirection::Desc;
     options.details_panel = true;
     AppendBackgroundViewCommands(bg, options);
-    // Real folders end the view submenu with "apply to all folders".
-    Check(bg[0].children.size() == 10 && bg[0].children[1].radio &&
-          bg[0].children[8].command == CmdDetailsPanel && bg[0].children[8].checked &&
+    // Real folders end the view submenu with "apply to all folders"; 照片墙
+    // follows the eight view modes.
+    Check(bg[0].children.size() == 11 && bg[0].children[1].radio &&
+          bg[0].children[9].command == CmdDetailsPanel && bg[0].children[9].checked &&
           bg[0].children.back().command == CmdApplyViewToAllFolders,
           L"menu: background reflects view and details pane");
     const auto& sort = bg[1].children;
@@ -4688,16 +4697,21 @@ void TestSnapshotPatchBatch() {
         event.old_name = old_name;
         return event;
     };
+    // New rows go to their sort position (2bef32f). One at a time, that
+    // position depends on rows a later rename holds out of order (#13), so
+    // the rows that move (new files, alpha changing its size group) arrive
+    // last here; the batch merges them in after all renames either way.
     const std::vector<fs::DirNotifyEvent> events = {
-        ev(FILE_ACTION_ADDED, L"file3.txt"), ev(FILE_ACTION_MODIFIED, L"file3.txt"),
         ev(FILE_ACTION_REMOVED, L"beta.log"),
         ev(FILE_ACTION_RENAMED_NEW_NAME, L"omega.txt", L"delta.txt"),
         ev(FILE_ACTION_RENAMED_NEW_NAME, L"gamma.txt", L"Gamma.txt"),
         ev(FILE_ACTION_ADDED, L"temp.tmp"), ev(FILE_ACTION_REMOVED, L"temp.tmp"),
-        ev(FILE_ACTION_MODIFIED, L"zeta.txt"), ev(FILE_ACTION_ADDED, L"file20.txt"),
+        ev(FILE_ACTION_MODIFIED, L"zeta.txt"),
         ev(FILE_ACTION_ADDED, L"ghost.txt"), ev(FILE_ACTION_REMOVED, L"missing.txt"),
+        ev(FILE_ACTION_RENAMED_NEW_NAME, L"epsilon.txt", L"epsilon.md"),
         ev(FILE_ACTION_MODIFIED, L"alpha.txt"),
-        ev(FILE_ACTION_RENAMED_NEW_NAME, L"epsilon.txt", L"epsilon.md")};
+        ev(FILE_ACTION_ADDED, L"file3.txt"), ev(FILE_ACTION_MODIFIED, L"file3.txt"),
+        ev(FILE_ACTION_ADDED, L"file20.txt")};
 
     bool same = true;
     const ui::SortColumn cols[] = {ui::SortColumn::Name, ui::SortColumn::Size,
@@ -4723,16 +4737,25 @@ void TestSnapshotPatchBatch() {
                 same = false;
                 continue;
             }
-            for (size_t i = 0; i < seq.size(); ++i) {
-                if (seq[i].name != batch[i].name || seq[i].size != batch[i].size ||
-                    seq[i].is_dir != batch[i].is_dir)
+            // Grouped, a row that changes group moves like a new one, and one
+            // at a time its spot depends on the rows held in place around it
+            // then; the batch places it after the whole burst. Same rows there.
+            std::vector<fs::DirEntry> seq_rows = seq, batch_rows = batch;
+            if (group != static_cast<int>(GroupBy::None)) {
+                const auto by_name = [](const fs::DirEntry& a, const fs::DirEntry& b) { return a.name < b.name; };
+                std::sort(seq_rows.begin(), seq_rows.end(), by_name);
+                std::sort(batch_rows.begin(), batch_rows.end(), by_name);
+            }
+            for (size_t i = 0; i < seq_rows.size(); ++i) {
+                if (seq_rows[i].name != batch_rows[i].name || seq_rows[i].size != batch_rows[i].size ||
+                    seq_rows[i].is_dir != batch_rows[i].is_dir)
                     same = false;
             }
             last = batch;
         }
     }
     }
-    Check(same, L"patch batch: identical to per-event patching for every sort order and grouping");
+    Check(same, L"patch batch: matches per-event patching (same order ungrouped, same rows grouped)");
     const auto has = [&](const wchar_t* name) {
         return std::any_of(last.begin(), last.end(),
                            [&](const fs::DirEntry& e) { return e.name == name; });
@@ -8189,144 +8212,59 @@ void TestTrayStack() {
               std::abs(deck.cards[2].depth - 2.0f) < 0.05f,
               L"tray stack: top card first, two layers peek underneath");
 
-        // Scan the panel: only the top card is interactive, the close zone
-        // addresses its batch item, and the footer pager is present.
-        const D2D1_RECT_F panel = state->renderer.StagingTrayRect(vm, 1000.0f, 700.0f);
-        Check(panel.bottom - panel.top > 60.0f, L"tray stack: panel has room for the stack");
-        float cx0 = 1e9f, cy0 = 1e9f, cx1 = -1e9f, cy1 = -1e9f;
-        POINT close_pt{-1, -1}, prev_pt{-1, -1}, next_pt{-1, -1};
-        bool foreign_card = false, close_ok = true;
-        for (float y = panel.top; y < panel.bottom; y += 2.0f) {
-            for (float x = panel.left; x < panel.right; x += 2.0f) {
-                const auto hit = state->renderer.HitTest(vm, D2D1::RectF(0, 0, 1000, 700), x, y);
-                if (hit.region == ui::HitTestResult::TrayCard) {
-                    if (hit.index != 0) foreign_card = true;
-                    cx0 = std::min(cx0, x); cy0 = std::min(cy0, y);
-                    cx1 = std::max(cx1, x); cy1 = std::max(cy1, y);
-                } else if (hit.region == ui::HitTestResult::TrayItemRemove) {
-                    if (hit.index != deck.cards[0].batch || hit.sub_index != deck.cards[0].sub)
-                        close_ok = false;
-                    if (close_pt.x < 0) close_pt = POINT{ static_cast<LONG>(x + 3), static_cast<LONG>(y + 3) };
-                } else if (hit.region == ui::HitTestResult::TrayPrev && prev_pt.x < 0) {
-                    prev_pt = POINT{ static_cast<LONG>(x + 3), static_cast<LONG>(y + 3) };
-                } else if (hit.region == ui::HitTestResult::TrayNext && next_pt.x < 0) {
-                    next_pt = POINT{ static_cast<LONG>(x + 3), static_cast<LONG>(y + 3) };
-                }
-            }
-        }
-        Check(cx1 > cx0 + 100.0f && cy1 > cy0 + 30.0f && !foreign_card,
-              L"tray stack: only the top card hit-tests as a card");
-        Check(close_pt.x >= 0 && close_ok && close_pt.y < (cy0 + cy1) * 0.5f &&
-              close_pt.x > (cx0 + cx1) * 0.5f,
-              L"tray stack: close badge sits top-right and addresses the top item");
-        Check(prev_pt.x >= 0 && next_pt.x > prev_pt.x, L"tray stack: footer pager present");
-
-        const int mx = static_cast<int>((cx0 + cx1) * 0.5f);
-        const int my = static_cast<int>((cy0 + cy1) * 0.5f);
+        // The panel is the shelf (b7b1cd5): a fan of the staged items to drag
+        // out, the release split button, and a chevron that lists every item.
         BYTE saved_keys[256]{};
         GetKeyboardState(saved_keys);
-        BYTE drag_keys[256]{};
-        memcpy(drag_keys, saved_keys, sizeof(drag_keys));
-        drag_keys[VK_LBUTTON] |= 0x80;
-
-        // Short drag, then stop: springs home, order unchanged.
-        SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(mx, my));
-        Check(state->trayDrag.pending && GetCapture() == hwnd,
-              L"tray stack: pressing the top card arms the gesture");
-        SetKeyboardState(drag_keys);
-        SendMessageW(hwnd, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(mx + 20, my + 4));
-        Check(state->trayDrag.active && std::abs(state->trayDrag.dx - 20.0f) < 0.5f,
-              L"tray stack: card follows the pointer past the slop");
-        Sleep(120);
-        SetKeyboardState(saved_keys);
-        SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(mx + 20, my + 4));
-        Check(TrayStackTop(*state) == 0 && !state->trayDrag.active && GetCapture() != hwnd &&
-              state->trayCards[deck.cards[0].path].motion == AppState::TrayMotion::Spring,
-              L"tray stack: a short drag springs back without reordering");
-        TrayStackSettle(*state, 500);
-
-        // Fling to the right: the top card goes to the back. The pointer stays
-        // inside the sidebar: leaving it turns the gesture into a real OLE
-        // drag-out, whose modal loop never ends under synthetic input.
-        const std::wstring thrown = deck.cards[0].path;
-        RECT fling_client{};
-        GetClientRect(hwnd, &fling_client);
-        const int sidebar_right = static_cast<int>(state->renderer.SidebarRect(
-            static_cast<float>(fling_client.right), static_cast<float>(fling_client.bottom)).right);
-        const int fling_step = std::clamp((sidebar_right - 4 - mx) / 6, 8, 25);
-        SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(mx, my));
-        SetKeyboardState(drag_keys);
-        for (int step = 1; step <= 6; ++step) {
-            Sleep(10);
-            SendMessageW(hwnd, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(mx + step * fling_step, my + step * 2));
-        }
-        SetKeyboardState(saved_keys);
-        SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(mx + 6 * fling_step, my + 12));
-        Check(TrayStackTop(*state) == 1 &&
-              state->trayCards[thrown].motion == AppState::TrayMotion::ThrowOut,
-              L"tray stack: fling sends the top card to the back");
-        Check(state->trayCards[thrown].to_fly > 1.0f, L"tray stack: fling direction follows the drag");
-        TrayStackSettle(*state, 900);
+        const auto scan_shelf = [&](const ui::WindowViewModel& model, std::map<int, D2D1_RECT_F>& zones) {
+            zones.clear();
+            const D2D1_RECT_F area = state->renderer.StagingTrayRect(model, 1000.0f, 700.0f);
+            for (float y = area.top; y < area.bottom; y += 2.0f) {
+                for (float x = area.left; x < area.right; x += 2.0f) {
+                    const auto hit = state->renderer.HitTest(model, D2D1::RectF(0, 0, 1000, 700), x, y);
+                    if (hit.region != ui::HitTestResult::TrayShelf) continue;
+                    auto [it, fresh] = zones.emplace(hit.index, D2D1::RectF(x, y, x, y));
+                    if (!fresh) {
+                        it->second.left = std::min(it->second.left, x); it->second.top = std::min(it->second.top, y);
+                        it->second.right = std::max(it->second.right, x); it->second.bottom = std::max(it->second.bottom, y);
+                    }
+                }
+            }
+        };
+        const auto zone_list = [](const std::map<int, D2D1_RECT_F>& zones) {
+            std::wstring text;
+            for (const auto& [k, rc] : zones) text += L" " + std::to_wstring(k);
+            return text;
+        };
+        const auto has_zone = [](const std::map<int, D2D1_RECT_F>& zones, ui::TrayShelfHit h) {
+            return zones.count(static_cast<int>(h)) != 0;
+        };
+        const auto click_zone = [&](const std::map<int, D2D1_RECT_F>& zones, ui::TrayShelfHit h) {
+            const auto it = zones.find(static_cast<int>(h));
+            if (it == zones.end()) return;
+            const LPARAM pt = MAKELPARAM(static_cast<int>((it->second.left + it->second.right) * 0.5f),
+                                         static_cast<int>((it->second.top + it->second.bottom) * 0.5f));
+            SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, pt);
+            SendMessageW(hwnd, WM_LBUTTONUP, 0, pt);
+        };
+        const D2D1_RECT_F panel = state->renderer.StagingTrayRect(vm, 1000.0f, 700.0f);
+        Check(panel.bottom - panel.top > 60.0f, L"tray stack: panel has room for the stack");
+        std::map<int, D2D1_RECT_F> zones;
+        scan_shelf(vm, zones);
+        Check(has_zone(zones, ui::TrayShelfHit::Fan) && has_zone(zones, ui::TrayShelfHit::Release) &&
+              has_zone(zones, ui::TrayShelfHit::ReleaseMenu) && has_zone(zones, ui::TrayShelfHit::Expand),
+              (L"tray shelf: fan, release split button and expand hit-test (zones" + zone_list(zones) + L")").c_str());
+        click_zone(zones, ui::TrayShelfHit::Expand);
+        Check(state->trayView.open, L"tray shelf: expand opens the item list");
+        TrayStackSettle(*state, 600);
         vm = BuildVm(*state, false);
-        const auto second = TrayDeckEntries(state->tray, 1, 1);
-        Check(!second.empty() && vm.tray_deck.cards[0].path == second.front().item->path &&
-              vm.tray_deck.cards[0].depth < 0.05f,
-              L"tray stack: next card rises into the top slot");
-
-        // Wheel: up brings the thrown card back, down throws again.
-        const LPARAM wheel_pt = MAKELPARAM(mx, my);
-        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), wheel_pt);
-        Check(TrayStackTop(*state) == 0 && state->trayRaisePath == thrown,
-              L"tray stack: wheel up brings the last card back on top");
-        TrayStackSettle(*state, 700);
-        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL,
-                         MAKEWPARAM(0, static_cast<WORD>(-WHEEL_DELTA)), wheel_pt);
-        Check(TrayStackTop(*state) == 1, L"tray stack: wheel down throws the top card");
-        TrayStackSettle(*state, 900);
-
-        // Footer pager.
+        scan_shelf(vm, zones);
+        Check(has_zone(zones, ui::TrayShelfHit::Row) && has_zone(zones, ui::TrayShelfHit::Collapse),
+              (L"tray shelf: open list shows item rows and collapse (zones" + zone_list(zones) + L")").c_str());
+        click_zone(zones, ui::TrayShelfHit::Collapse);
+        Check(!state->trayView.open, L"tray shelf: collapse returns to the shelf");
+        TrayStackSettle(*state, 600);
         vm = BuildVm(*state, false);
-        SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(prev_pt.x, prev_pt.y));
-        SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(prev_pt.x, prev_pt.y));
-        Check(TrayStackTop(*state) == 0, L"tray stack: previous button steps back");
-        TrayStackSettle(*state, 700);
-        SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(next_pt.x, next_pt.y));
-        SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(next_pt.x, next_pt.y));
-        Check(TrayStackTop(*state) == 1, L"tray stack: next button throws the top card");
-        TrayStackSettle(*state, 900);
-        state->trayDeckOffset = 0;
-        TrayStackSettle(*state, 900);
-
-        // Dismiss with the close badge: item removed, tumbling ghost + smoke.
-        vm = BuildVm(*state, false);
-        const std::wstring dismissed = vm.tray_deck.cards[0].path;
-        state->hoverRegion = ui::HitTestResult::TrayCard;
-        SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(close_pt.x, close_pt.y));
-        SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(close_pt.x, close_pt.y));
-        Check(TrayItemTotalCount(state->tray) == 4 && state->trayPuffs.size() == 10,
-              L"tray stack: close badge dismisses the top item with smoke");
-        Sleep(70); // puffs start staggered over the first 60 ms
-        TickTrayDeck(*state);
-        vm = BuildVm(*state, false);
-        bool tumbling = false;
-        for (const auto& c : vm.tray_deck.cards)
-            if (c.ghost && c.path == dismissed) tumbling = true;
-        {
-            int ghost_n = 0;
-            for (const auto& c : vm.tray_deck.cards) if (c.ghost) ++ghost_n;
-            Check(tumbling, (L"tray stack: dismissed card leaves as a ghost (ghosts=" +
-                  std::to_wstring(ghost_n) + L" cards=" + std::to_wstring(vm.tray_deck.cards.size()) +
-                  L" anims=" + std::to_wstring(state->trayCards.size()) + L")").c_str());
-            Check(!vm.tray_deck.puffs.empty(), (L"tray stack: smoke plays (state puffs=" +
-                  std::to_wstring(state->trayPuffs.size()) + L")").c_str());
-            Check(vm.tray_deck.total_count == 4, L"tray stack: footer count drops to four");
-        }
-        TrayStackSettle(*state, 1000);
-        vm = BuildVm(*state, false);
-        bool lingering = false;
-        for (const auto& c : vm.tray_deck.cards)
-            if (c.ghost) lingering = true;
-        Check(!lingering && vm.tray_deck.puffs.empty(), L"tray stack: exit animations finish");
 
         // Clear: every visible card tumbles off, staggered; nothing lingers.
         std::vector<std::wstring> all;
