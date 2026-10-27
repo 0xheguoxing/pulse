@@ -27,6 +27,16 @@ inline const wchar_t* RulesEmpty() { return T(l10n::StringId::AiRulesEmpty); }
 inline const wchar_t* RecentSection() { return T(l10n::StringId::AiRecentSection); }
 inline const wchar_t* RecentEmpty() { return T(l10n::StringId::AiRecentEmpty); }
 inline const wchar_t* OpenLog() { return T(l10n::StringId::AiOpenLog); }
+inline const wchar_t* GroupsSection() { return T(l10n::StringId::AiMcpGroupsSection); }
+inline const wchar_t* GroupsFoot() { return T(l10n::StringId::AiMcpGroupsFoot); }
+inline const wchar_t* GroupTag(AiGroupTag tag) {
+    switch (tag) {
+        case AiGroupTag::DefaultOn: return T(l10n::StringId::AiMcpTagDefaultOn);
+        case AiGroupTag::Asks:
+        case AiGroupTag::AsksOutside: return T(l10n::StringId::AiMcpTagAsks);
+        default: return L"";
+    }
+}
 inline const wchar_t* PackSection() { return T(l10n::StringId::AiPackToastTitle); }
 inline const wchar_t* UninstallTitle() { return T(l10n::StringId::AiUninstallTitle); }
 inline const wchar_t* UninstallDesc() { return T(l10n::StringId::AiUninstallDesc); }
@@ -100,6 +110,21 @@ inline float LayoutSettingsAi(SettingsLayout& l, const WindowViewModel& vm, floa
     }
     o.main_card = D2D1::RectF(left, card_top, right, y);
 
+    // AI 应用可以做的事: a switch per group (the whole row toggles); 只能你自己做 has none.
+    if (!v->groups.empty()) {
+        o.groups_section = section();
+        const float groups_top = y;
+        for (const AiGroupRowView& g : v->groups) {
+            const auto r = text_row(g.desc, g.locked ? inner_right : inner_right - 42.0f * s);
+            o.groups.push_back(r);
+            o.group_toggles.push_back(g.locked ? D2D1_RECT_F{} : centered(r, inner_right, 42.0f * s));
+        }
+        o.groups_card = D2D1::RectF(left, groups_top, right, y);
+        const float h = caption_h(ai_text::GroupsFoot(), right - left - 4.0f * s);
+        o.groups_foot = D2D1::RectF(left + 2.0f * s, y + 8.0f * s, right, y + 8.0f * s + h);
+        y = o.groups_foot.bottom;
+    }
+
     // 应用: one row per client that has connected.
     o.apps_section = section();
     const float apps_top = y;
@@ -154,7 +179,8 @@ inline float LayoutSettingsAi(SettingsLayout& l, const WindowViewModel& vm, floa
     } else {
         y += 6.0f * s;
         for (size_t i = 0; i < v->calls.size(); ++i) {
-            const auto r = D2D1::RectF(left, y, right, y + 36.0f * s);
+            // Two lines when it has a summary (选中 6 项 → 移动到 D:\财务\2026).
+            const auto r = D2D1::RectF(left, y, right, y + (v->calls[i].summary.empty() ? 36.0f : 54.0f) * s);
             y = r.bottom;
             o.calls.push_back(r);
         }
@@ -183,6 +209,8 @@ inline int HitTestSettingsAi(const SettingsLayout& l, const WindowViewModel& vm,
     auto in = [&](const D2D1_RECT_F& r) { return r.right > r.left && x >= r.left && x < r.right && y >= r.top && y < r.bottom; };
     if (in(o.copy)) return kAiCopyConfig;
     if (in(o.enable_row)) return kAiToggle;   // the whole row, like the other switch rows
+    for (size_t i = 0; i < o.groups.size() && i < v->groups.size(); ++i)
+        if (!v->groups[i].locked && in(o.groups[i])) return kAiGroupBase + static_cast<int>(i);
     if (in(o.open_log)) return kAiOpenLog;
     if (in(o.uninstall)) return kAiUninstall;
     for (size_t i = 0; i < o.clients.size(); ++i) {

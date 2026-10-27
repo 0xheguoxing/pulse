@@ -102,6 +102,17 @@ Settings ParseSettings(std::string_view utf8, bool* malformed) {
             s.allow.push_back(std::move(rule));
         }
     }
+    if (const auto* groups = root.find("mcp_allow"); groups && groups->is_array()) {
+        s.mcp_allow_set = true;
+        for (const auto& g : groups->items()) {
+            if (!g.is_string()) continue;
+            const std::string& key = g.as_string();
+            if (key.empty() || key.size() > 32 || key == "locked" || s.mcp_allow.size() >= 16) continue;
+            bool seen = false;
+            for (const auto& have : s.mcp_allow) seen |= have == key;
+            if (!seen) s.mcp_allow.push_back(key);
+        }
+    }
     if (const auto* a = root.find("assistant"); a && a->is_object()) {
         s.assistant.floating = a->get_string("dock") == "floating";
         const std::string model = a->get_string("model");
@@ -166,6 +177,11 @@ std::string SerializeSettings(const Settings& s) {
         allow.push(std::move(v));
     }
     root.set("allow", std::move(allow));
+    if (s.mcp_allow_set) {
+        json::Value groups = json::Value::Array();
+        for (const auto& g : s.mcp_allow) groups.push(g);
+        root.set("mcp_allow", std::move(groups));
+    }
     json::Value assistant = json::Value::Object();
     assistant.set("dock", s.assistant.floating ? "floating" : "docked");
     assistant.set("model", s.assistant.model);
@@ -191,6 +207,29 @@ bool SaveSettings(const Settings& settings) {
     CreateDirectoryW(pulse_dir.c_str(), nullptr);
     CreateDirectoryW(dir.c_str(), nullptr);
     return WriteUtf8FileAtomic(SettingsPath(), json::Wide(SerializeSettings(settings)));
+}
+
+bool McpAllows(const Settings& settings, std::string_view group) {
+    if (group.empty() || group == "locked") return false;
+    if (!settings.mcp_allow_set) {
+        for (const char* key : kMcpDefaultAllow)
+            if (group == key) return true;
+        return false;
+    }
+    for (const auto& have : settings.mcp_allow)
+        if (have == group) return true;
+    return false;
+}
+
+void SetMcpAllow(Settings& settings, std::string_view group, bool on) {
+    if (group.empty() || group == "locked") return;
+    if (!settings.mcp_allow_set) {
+        settings.mcp_allow_set = true;
+        settings.mcp_allow.clear();
+        for (const char* key : kMcpDefaultAllow) settings.mcp_allow.emplace_back(key);
+    }
+    std::erase_if(settings.mcp_allow, [&](const std::string& have) { return have == group; });
+    if (on) settings.mcp_allow.emplace_back(group);
 }
 
 bool IsAlwaysAllowed(const Settings& settings, PermissionClass cls, std::wstring_view client, std::string_view tool,

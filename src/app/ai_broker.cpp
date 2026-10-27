@@ -305,6 +305,7 @@ void ToolBroker::Emit(const Connection& c, BrokerEventKind kind, const std::stri
         event.ok = outcome->ok;
         if (!outcome->ok) event.code = outcome->error.code;
         event.changed_files = outcome->changed_files;
+        event.summary = outcome->summary;
         if (outcome->ok && outcome->changed_files) {
             event.data = outcome->data;
             event.undo_group = outcome->undo_group;
@@ -361,9 +362,12 @@ void ToolBroker::RunCall(std::shared_ptr<Connection> c, std::shared_ptr<Call> ca
             // The handler runs on its own thread so a slow one can be timed out.
             // A timeout or cancel is answered at once; the call (its id and its
             // slot) stays taken until the handler really returns.
-            auto task = std::async(std::launch::async, [&spec, &c, &call]() -> ToolOutcome {
+            auto task = std::async(std::launch::async, [this, &spec, &c, &call]() -> ToolOutcome {
                 try {
-                    return spec.run(ToolCall{c->client, call->args, call->cancelled});
+                    return spec.run(ToolCall{c->client, call->args, call->cancelled, [this, &c, &call] {
+                                                 Send(*c, proto::MakeProgress(call->id, proto::kWaitingUser));
+                                                 Emit(*c, BrokerEventKind::WaitingUser, call->tool, call->id);
+                                             }});
                 } catch (...) {
                     return ToolOutcome::Fail("internal", "The tool failed unexpectedly.");
                 }

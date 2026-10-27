@@ -145,6 +145,15 @@ private:
             MessageBeep(MB_OK);
             return;
         }
+        if (id == kConfirmPrimary && !spec_.confirm_again_text.empty() && !armed_) {
+            // The first of two presses: the button and the note say so.
+            armed_ = true;
+            spec_.confirm_text = spec_.confirm_again_text;
+            if (!spec_.confirm_again_note.empty()) spec_.note = spec_.confirm_again_note;
+            SizeToContent();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
         if (id == kConfirmPrimary) Complete(ConfirmChoice::Confirm);
         else if (id == kConfirmSecondary) Complete(ConfirmChoice::Secondary);
         else if (id == kConfirmCancel || id == kConfirmClose) Complete(ConfirmChoice::Cancel);
@@ -390,6 +399,7 @@ private:
     bool backdrop_enabled_ = false;
     bool done_ = false;
     bool sizing_ = false;
+    bool armed_ = false;   // confirm_again_text: the first press is in
     bool animations_ = true;
     uint64_t opened_at_ = 0;
     uint64_t frame_ = 0;

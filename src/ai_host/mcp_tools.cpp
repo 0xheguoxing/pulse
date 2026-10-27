@@ -6,6 +6,75 @@ namespace {
 
 constexpr int64_t kMaxPath = 32767;
 
+constexpr int64_t kMaxSteps = 12;
+constexpr const char* kStepWaits[] = {"listing_loaded", "op_finished", "preview_open"};
+
+// run_actions' description: what it does, then the common actions and the
+// settings, as the assistant's run_actions tells its model. Built from
+// pieces: one literal may not pass MSVC's limit.
+const char* RunActionsDescription() {
+    static const std::string text = std::string(
+        "Does things in Pulse itself, in order, as one undo group (at most 12 steps): panes and the folders in them, wi"
+        "ndows, tabs, view, sort, grouping, panels, selection, the staging tray, tags, favorites, settings, new folders"
+        ", opening files, file operations, and any action find_actions returns. What AI apps may do is the user's choic"
+        "e in Pulse (Settings > \345\242\236\345\274\272\345\214\205 > AI \344\270\216 MCP > AI \345\272\224"
+        "\347\224\250\345\217\257\344\273\245\345\201\232\347\232\204\344\272\213): view steps by default; organize, cr"
+        "eate, file steps and effects outside Pulse only when switched on. Pulse checks every step before running any: "
+        "when one is not allowed nothing runs and the error not_allowed names the step, the switch and where it is - te"
+        "ll the user, do not retry or work around it. View and organize steps (including settings.set) act at once. New"
+        " files and folders ask the user in Pulse unless they always allow that folder. File steps (file.copy_to / file"
+        ".move_to {items, dest}, file.paste, file.rename {item, name}, file.group_into_folder {items, name}, file.disso"
+        "lve {items}, file.recycle {items}, file.delete_permanent {items}, recycle.restore, recycle.empty) and effects "
+        "outside Pulse (opening a program or script, git.push / git.pull, shell.run_verb, toolbar.open_with, cloud.keep"
+        " / cloud.free, drive.eject) show the user a confirm dialog in Pulse every time, with the plan (what goes where"
+        "; a permanent delete takes two clicks); do not ask first yourself. A denial returns user_denied and no answer "
+        "within 2 minutes user_timeout: nothing of the call after it runs. One file step per call; steps before it (sel"
+        "ect.items) run before the dialog. items: absolute paths, or leave them out for the selection; dest: an absolut"
+        "e folder or a known folder, made if missing. Locked actions (quitting Pulse, unlocking a BitLocker drive, the "
+        "AI permissions, turning off delete confirmation) are only the user's. Stops at the first step that fails; earl"
+        "ier steps stay done. undo_last undoes the whole call. Returns each step's outcome.\n") + std::string(
+        "Common actions (args): window.layout {layout: single|side_by_side|stacked|three|four, panes: [a folder per pan"
+        "e, left or top first; \"\" leaves one]}, nav.go {path, pane}, window.new {path}, tab.new {path}, tab.close, ta"
+        "b.to_window, pane.to_window {pane}, window.merge, window.overview, nav.back, nav.up, view.mode {view: extra_la"
+        "rge_icons|large_icons|medium_icons|small_icons|list|details|tiles|content, pane}, view.sort {by: name|modified"
+        "|type|size|created, desc, pane}, view.group {by: none|name|date|type|size, pane}, sidebar.toggle {show}, favba"
+        "r.toggle {show}, details.toggle {show}, select.items {pane, name, extensions, items, type: folder|document|ima"
+        "ge|video|audio|archive|code, modified: today|yesterday|this_week|last_7_days|this_month|last_month|{after, bef"
+        "ore}, size: {larger_than, smaller_than}, tag, selected, mode: replace|add|remove} (on a search tab Pulse first"
+        " waits for the search to finish, 10 s at most, then picks among all its results; tag does not work on content "
+        "search results), select.all, select.clear, tray.add {items}, tag.toggle {tag, items} (a new tag is made), fav."
+        "add {path or items}, file.new_folder {name} (in the open folder), nav.open {path} (a file or program), setting"
+        "s.set {key, value}, edit.undo, tab.pin {tab, pin}, tab.color {tab, color: red|orange|yellow|green|teal|blue|pu"
+        "rple|pink|none}, tab.rename {tab, name}, tab.group {tab, group}, tab.activate {tab}, tag.create {name, color, "
+        "group}, keymap.set {action, keys} (keymap.read lists the actions), git.refresh (the open folder's repository: "
+        "branch, ahead / behind, changes), git.push, git.pull, shell.verbs (the selection's context menu items), shell."
+        "run_verb {verb: an item shell.verbs listed; in a submenu \"Parent \342\226\270 Item\"}, toolbar.open_with {app"
+        ": a program pinned to the toolbar}, cloud.keep, cloud.free, preview.cloud_download {path}, drive.eject {drive:"
+        " E:}, drive.disconnect {drive}, file.context_menu and toolbar.customize (Pulse opens them; the user chooses). "
+        "tab: 1 = first as in get_state, a title, \"all\" or a list - several tabs go in ONE step. Words: \346\240\207"
+        "\347\255\276 is a tag (tag.create, then tag.toggle to put it on items; \345\212\240\346\240\207\347\255\276 / "
+        "\346\211\223\346\240\207\347\255\276 = tag.toggle), \346\240\207\347\255\276\351\241\265 is a tab (tab.*), "
+        "\346\211\230\347\233\230 / \346\232\202\345\255\230 is the staging tray (only when the user says so). pane: 1-"
+        "4 in screen order as in get_state, focused, target, or all (view / sort / group). Paths: absolute, a drive (D:"
+        ") or a known folder (Downloads, Desktop, Documents, Pictures, Videos, Music). items: full paths; omitted = the"
+        " selection.\n") + std::string(
+        "Settings (settings.set key and values; switches take true/false): theme light|dark|system, window_effect none|"
+        "acrylic|mica|mica_alt, text_rendering auto|sharp|smooth, font_size small|default|large|larger, language system"
+        "|zh-CN|zh-TW|en-US, menu_acrylic, row_height compact|standard|roomy, click_to_open double|single, name_highlig"
+        "ht hover|always, hover_select, item_checkboxes, blank_double_click nothing|back|up, show_hidden, show_protecte"
+        "d, folders_first top|follow|mixed, smart_dates, zebra_rows, size_bars, tag_name_color, selection_outline, thum"
+        "bnail_app_badges, alias_mark, mtime_marks off|dots|bars|text, mtime_range today|3|7|30, mtime_dim_older, mtime"
+        "_bold_today, mtime_folders, mtime_other_views, mtime_flash, onedrive_status, svn_status, startup_open last_tab"
+        "s|default_location, new_tab_open current|default_location, external_open smart|tab|window, vertical_tabs, pinn"
+        "ed_tab_names, double_click_closes_tab, close_window_with_last_tab, launch_at_signin (Windows), start_in_tray, "
+        "keep_running, tray_icon always|background|never, explorer_tag_menu (Windows), open_folders_with_pulse (default"
+        " file manager; Windows), staging_icon_size small|standard|large, staging_hide_when_empty, change_tracking, cha"
+        "nge_days today|3|7, lan_discovery, network_recent, hidden_shares, confirm_delete (can only be turned on), glob"
+        "al_search (Windows), pinyin_search. Locked (only the user, in Settings): confirm_delete off, the AI permission"
+        "s, always allow rules, connections, the API key.");
+    return text.c_str();
+}
+
 std::vector<ToolDef> MakeTools() {
     const char* kPathsNote = "Absolute Windows paths, e.g. C:\\Users\\me\\Documents\\report.pdf.";
     std::vector<ToolDef> tools;
@@ -51,9 +120,23 @@ std::vector<ToolDef> MakeTools() {
          {"dest_folder", ParamKind::String, false, 1, kMaxPath,
           "Folder for the archive (default: the folder of the first item)."},
          {"name", ParamKind::String, false, 1, 255, "File name of the archive; .zip is added if missing."}}});
+    tools.push_back({"find_actions", "Find Pulse actions",
+        "Looks up Pulse's actions (menu commands, panels, view options, settings, file operations) for run_actions. Mat"
+        "ches words in Chinese, pinyin or English. Returns up to 8, best first: id, title, args, the current value (now"
+        "), whether it can run now (enabled false with why), its risk, the user's shortcut, and allowed: false when the"
+        " user has not switched its group on for AI apps in Pulse - then why_not_allowed says which switch and where; t"
+        "ell the user instead of calling run_actions. domain settings lists every setting with its key, values and curr"
+        "ent value.",
+        true, false, true,
+        {{"query", ParamKind::String, false, 1, 200, "A few words naming the action, e.g. \350\257\246\346\203\205\351\235\242\346\235\277 (details panel)."},
+         {"domain", ParamKind::String, false, 1, 16, "settings: list all settings instead of searching.", {"settings"}}}});
+    tools.push_back({"run_actions", "Do things in Pulse",
+        RunActionsDescription(),
+        false, true, false,
+        {{"steps", ParamKind::Steps, true, 1, kMaxSteps, "The steps in order (at most 12)."}}});
     tools.push_back({"undo_last", "Undo the last AI change",
-        "Undoes the most recent change an AI client made through Pulse (for example a zip it created, which goes "
-        "to the Recycle Bin). Refuses when the user's own last operation is on top.",
+        "Undoes the most recent change an AI client made through Pulse: a zip it created (it goes to the Recycle "
+        "Bin) or a whole run_actions call. Refuses when the user's own last operation is on top.",
         false, true, false, {}});
     return tools;
 }
@@ -61,7 +144,8 @@ std::vector<ToolDef> MakeTools() {
 const char* KindType(ParamKind kind) {
     switch (kind) {
         case ParamKind::Integer: return "integer";
-        case ParamKind::StringArray: return "array";
+        case ParamKind::StringArray:
+        case ParamKind::Steps: return "array";
         default: return "string";
     }
 }
@@ -107,6 +191,33 @@ std::string CheckString(const Param& p, const json::Value& v, const std::string&
     return {};
 }
 
+// run_actions' steps: objects with an action id, maybe args and a wait.
+std::string CheckSteps(const Param& p, const json::Value& v, const std::string& where) {
+    if (!v.is_array()) return where + " must be an array of steps";
+    const auto count = static_cast<int64_t>(v.size());
+    if (count < p.minimum) return where + " must not be empty";
+    if (count > p.maximum) return where + " has too many steps (at most " + std::to_string(p.maximum) + ")";
+    for (size_t i = 0; i < v.size(); ++i) {
+        const json::Value& step = v.at(i);
+        const std::string at = where + "[" + std::to_string(i) + "]";
+        if (!step.is_object()) return at + " must be an object {action, args}";
+        for (const std::string& key : step.keys())
+            if (key != "action" && key != "args" && key != "wait")
+                return at + ": unknown member \"" + key + "\" (put the action's arguments in args)";
+        const json::Value* action = step.find("action");
+        if (!action) return at + ".action is required";
+        const Param id{"action", ParamKind::String, true, 1, 64, ""};
+        if (std::string reason = CheckString(id, *action, at + ".action"); !reason.empty()) return reason;
+        if (const json::Value* step_args = step.find("args"); step_args && !step_args->is_object())
+            return at + ".args must be an object";
+        if (const json::Value* wait = step.find("wait")) {
+            const Param w{"wait", ParamKind::String, true, 1, 32, "", {kStepWaits[0], kStepWaits[1], kStepWaits[2]}};
+            if (std::string reason = CheckString(w, *wait, at + ".wait"); !reason.empty()) return reason;
+        }
+    }
+    return {};
+}
+
 } // namespace
 
 const std::vector<ToolDef>& Tools() {
@@ -137,6 +248,35 @@ json::Value InputSchema(const ToolDef& tool) {
                 items.set("type", "string");
                 items.set("minLength", 1);
                 prop.set("items", std::move(items));
+                prop.set("minItems", p.minimum);
+                prop.set("maxItems", p.maximum);
+                break;
+            }
+            case ParamKind::Steps: {
+                json::Value step = json::Value::Object();
+                step.set("type", "object");
+                json::Value fields = json::Value::Object();
+                json::Value action = json::Value::Object();
+                action.set("type", "string");
+                action.set("description", "An action id, e.g. view.sort (find_actions lists them).");
+                fields.set("action", std::move(action));
+                json::Value step_args = json::Value::Object();
+                step_args.set("type", "object");
+                step_args.set("description", "The action's arguments.");
+                fields.set("args", std::move(step_args));
+                json::Value wait = json::Value::Object();
+                wait.set("type", "string");
+                json::Value waits = json::Value::Array();
+                for (const char* w : kStepWaits) waits.push(w);
+                wait.set("enum", std::move(waits));
+                wait.set("description", "Wait for this before the step (a selection waits for its folder by itself).");
+                fields.set("wait", std::move(wait));
+                step.set("properties", std::move(fields));
+                json::Value need = json::Value::Array();
+                need.push("action");
+                step.set("required", std::move(need));
+                step.set("additionalProperties", false);
+                prop.set("items", std::move(step));
                 prop.set("minItems", p.minimum);
                 prop.set("maxItems", p.maximum);
                 break;
@@ -220,6 +360,11 @@ std::string ValidateArguments(const ToolDef& tool, const json::Value& args) {
                     std::string reason = CheckString(item, v->at(i), where + "[" + std::to_string(i) + "]");
                     if (!reason.empty()) return reason;
                 }
+                break;
+            }
+            case ParamKind::Steps: {
+                std::string reason = CheckSteps(p, *v, where);
+                if (!reason.empty()) return reason;
                 break;
             }
             case ParamKind::String:

@@ -44,6 +44,9 @@ struct ToolOutcome {
     ToolError error;
     bool changed_files = false;
     uint64_t undo_group = 0;   // non-zero: remembered as an AI group (also after a late timeout)
+    // 本次运行 (settings): the call's summary in the user's words. Text before
+    // a '\n' follows the tool's name (· 2 步), the rest is the line under it.
+    std::wstring summary;
     static ToolOutcome Fail(std::string code, std::string message, bool retryable = false) {
         ToolOutcome o;
         o.ok = false;
@@ -56,6 +59,9 @@ struct ToolCall {
     std::wstring client;
     const json::Value& args;
     const std::atomic<bool>& cancelled;
+    // A tool that asks the user itself (run_actions) calls this when its
+    // question opens: the client hears waiting_user and the status bar says so.
+    std::function<void()> waiting_user = {};
 };
 
 struct ToolSpec {
@@ -97,6 +103,7 @@ struct BrokerEvent {
     // result's data and undo group, for the notification it gets.
     json::Value data;
     uint64_t undo_group = 0;
+    std::wstring summary;      // CallFinished: ToolOutcome::summary
 };
 
 struct BrokerOptions {

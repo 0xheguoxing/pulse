@@ -16,6 +16,7 @@
 
 #include "action_inventory.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 
@@ -39,5 +40,18 @@ bool IsProgramPath(std::wstring_view path) noexcept;
 Policy AiPolicy(std::string_view id, std::wstring_view target = {}) noexcept;
 
 const char* RiskName(ActionRisk risk) noexcept;   // "view", "organize", ...
+
+// The switch in 设置 › 增强包 › AI 与 MCP that lets AI apps (MCP) run an
+// action (plans/ai/P5_外部AI与收尾.html §2): 查看与界面 (read and view),
+// 整理 Pulse (organize and settings), 新建, 移动、重命名和删除 (the file
+// steps), Pulse 之外的效果 (programs, Git, shell verbs, system); Locked
+// actions are only the user's, whatever is switched on.
+enum class McpGroup : uint8_t { View, Organize, Create, Files, External, Locked };
+inline constexpr size_t kMcpGroupCount = 6;
+
+McpGroup McpGroupOf(std::string_view id, std::wstring_view target = {}) noexcept;
+McpGroup McpGroupOfRisk(ActionRisk risk) noexcept;
+const char* McpGroupKey(McpGroup group) noexcept;   // "view", "organize", "create", "files", "external", "locked"
+bool McpGroupFromKey(std::string_view key, McpGroup& group) noexcept;
 
 } // namespace pulse::app::actions

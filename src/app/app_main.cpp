@@ -179,6 +179,28 @@ void UnregisterAssocChangeNotify() {
     if (g_assocNotify) SHChangeNotifyDeregister(g_assocNotify);
     g_assocNotify = 0;
 }
+
+// --test-ai-broker (test builds): a --test-instance that still serves AI
+// clients, for live MCP tests. Only while LOCALAPPDATA points somewhere else
+// than the user's own folder: the pipe name and ai.json follow it, so a test
+// never answers on the user's pipe or reads their AI settings.
+bool TestAiBroker() {
+#ifdef PULSE_WITH_TEST_HOOKS
+    bool asked = false;
+    for (int i = 1; i < __argc; ++i) asked = asked || wcscmp(__wargv[i], L"--test-ai-broker") == 0;
+    if (!asked) return false;
+    wchar_t env[MAX_PATH]{};
+    const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", env, MAX_PATH);
+    PWSTR real = nullptr;
+    bool elsewhere = false;
+    if (n > 0 && n < MAX_PATH && SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &real)))
+        elsewhere = _wcsicmp(env, real) != 0;
+    CoTaskMemFree(real);
+    return elsewhere;
+#else
+    return false;
+#endif
+}
 } // namespace
 #include "group_wheel_ui.h"
 #include "window_overview_ui.h"
@@ -1623,6 +1645,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (init_core && !s->isolatedTest && !s->shot.active && !s->menushot) {
             app::CleanupAbandonedUpdateStagesAsync();
             // AI clients' tool broker, when the AI pack and ai.json allow it (worker thread).
+            pulse::app::ai::StartAiServiceAsync({s->core.host.Hwnd(), &s->core.ops, &s->core.index});
+        } else if (init_core && s->isolatedTest && ::TestAiBroker()) {
             pulse::app::ai::StartAiServiceAsync({s->core.host.Hwnd(), &s->core.ops, &s->core.index});
         }
         s->startupComplete = true;
@@ -3976,7 +4000,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             state.shot.force_dark = false;
             state.themeOverride = ui::ThemeMode::Light;
         } else if (wcscmp(__wargv[i], L"--test-instance") == 0 || wcscmp(__wargv[i], L"--content-index-observer") == 0 ||
-                   wcscmp(__wargv[i], L"--hang-watch") == 0 || wcscmp(__wargv[i], app::kStartupArgument) == 0) {
+                   wcscmp(__wargv[i], L"--hang-watch") == 0 || wcscmp(__wargv[i], L"--test-ai-broker") == 0 ||
+                   wcscmp(__wargv[i], app::kStartupArgument) == 0) {
             continue;
 #ifdef PULSE_WITH_SELFTEST
         } else if ((wcscmp(__wargv[i], L"--tag-com-audit-class") == 0 ||

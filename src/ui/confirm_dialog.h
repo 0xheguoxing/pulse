@@ -43,6 +43,11 @@ struct ConfirmDialogSpec {
     ConfirmChoice default_choice = ConfirmChoice::Confirm;
     // Information only: just the confirm button (Esc / close still dismiss).
     bool single_button = false;
+    // Optional: the confirm button must be pressed twice (a permanent delete
+    // asked for an AI app). The first press only turns its text into
+    // confirm_again_text and the note into confirm_again_note.
+    std::wstring confirm_again_text;
+    std::wstring confirm_again_note;
     // Optional: called with the dialog once it shows and with null when it
     // goes, so a question asked for someone else (an AI client) can be
     // closed from outside with WM_CLOSE, which answers Cancel.

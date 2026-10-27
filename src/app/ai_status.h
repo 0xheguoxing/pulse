@@ -22,6 +22,7 @@ struct AiCallEntry {
     bool ok = false;
     std::string code;          // the error code when it failed
     bool changed_files = false;
+    std::wstring summary;      // ToolOutcome::summary
 };
 
 enum class AiChipState : uint8_t {

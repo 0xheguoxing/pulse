@@ -126,17 +126,21 @@ bool ApproveClient(const std::wstring& client) {
     return false;
 }
 
+// 始终允许这个文件夹: once per client, tool and folder.
+void AddAllowRule(const AllowRule& add) {
+    UpdateAiSettings([&](Settings& settings) {
+        for (const AllowRule& rule : settings.allow)
+            if (rule.client == add.client && rule.tool == add.tool && _wcsicmp(rule.folder.c_str(), add.folder.c_str()) == 0)
+                return;
+        settings.allow.push_back(add);
+    });
+}
+
 Decision Confirm(const ConfirmRequest& request, const std::atomic<bool>& cancelled, DWORD timeout_ms) {
     switch (AskToCreate(HostWindow(), request, cancelled, Get().asking_stop, timeout_ms)) {
         case CreateAnswer::Allow: return Decision::Allow;
         case CreateAnswer::AlwaysHere:
-            UpdateAiSettings([&](Settings& settings) {
-                for (const AllowRule& rule : settings.allow)
-                    if (rule.client == request.client && rule.tool == request.tool &&
-                        _wcsicmp(rule.folder.c_str(), request.folder.c_str()) == 0)
-                        return;
-                settings.allow.push_back({request.client, request.tool, request.folder});
-            });
+            AddAllowRule({request.client, request.tool, request.folder});
             return Decision::Allow;
         case CreateAnswer::Timeout: return Decision::Timeout;
         case CreateAnswer::Deny: break;
@@ -177,6 +181,10 @@ void StartNow(Service& s) {
         s.settings = settings;
         host = s.host;
     }
+    // The tools read the switches as they are now (run_actions, reveal) and
+    // store 始终允许这个文件夹 from Pulse's own questions (run_actions).
+    host.settings = CurrentSettings;
+    host.add_rule = AddAllowRule;
     RegisterAiTools(*broker, host);
     DWORD error = ERROR_SUCCESS;
     if (!broker->Start(error)) {

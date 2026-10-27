@@ -43,6 +43,9 @@
 #include "entry_group.h"
 #include "context_menu.h"
 #include "actions/action_args.h"
+#include "ai_mcp_run.h"
+#include "ai_settings.h"
+#include "actions/action_inventory.h"
 #include "actions/action_files.h"
 #include "ai_cleanup_scan.h"
 #include "actions/action_params.h"
@@ -5872,6 +5875,94 @@ void TestActionArgs() {
           L"args: actions without words use the generic card");
 }
 
+// P5: what AI apps (MCP) may run - the groups behind the settings switches,
+// ai.json's mcp_allow, and the checks run_actions makes before any step runs.
+void TestMcpRunActions() {
+    namespace act = app::actions;
+    namespace ai = app::ai;
+    using G = act::McpGroup;
+    size_t counts[act::kMcpGroupCount] = {};
+    for (const act::ActionEntry& e : act::kActions) ++counts[static_cast<size_t>(act::McpGroupOf(e.id))];
+    size_t total = 0;
+    for (size_t n : counts) total += n;
+    Check(total == std::size(act::kActions) && counts[static_cast<size_t>(G::View)] > 0 &&
+              counts[static_cast<size_t>(G::Locked)] == 3 && counts[static_cast<size_t>(G::Files)] == 11,
+          L"mcp: every action is in one group; 3 are only the user's, 11 change files");
+    Check(act::McpGroupOf("nav.back") == G::View && act::McpGroupOf("settings.set") == G::Organize &&
+              act::McpGroupOf("file.new_folder") == G::Create && act::McpGroupOf("file.recycle") == G::Files &&
+              act::McpGroupOf("file.delete_permanent") == G::Files && act::McpGroupOf("git.push") == G::External &&
+              act::McpGroupOf("app.exit") == G::Locked && act::McpGroupOf("assistant.prefs") == G::Locked,
+          L"mcp: sample actions sit in the groups the settings page names");
+    bool files_are_files = true;
+    for (const act::ActionEntry& e : act::kActions)
+        if (act::IsFileOp(e.id)) files_are_files = files_are_files && act::McpGroupOf(e.id) == G::Files;
+    Check(files_are_files, L"mcp: every file step is behind the 移动、重命名和删除 switch");
+
+    // ai.json: no mcp_allow = view and create; the switches write the list; locked never.
+    ai::Settings fresh;
+    Check(ai::McpAllows(fresh, "view") && ai::McpAllows(fresh, "create") && !ai::McpAllows(fresh, "organize") &&
+              !ai::McpAllows(fresh, "files") && !ai::McpAllows(fresh, "external") && !ai::McpAllows(fresh, "locked"),
+          L"mcp: without mcp_allow only 查看与界面 and 新建 are on");
+    ai::Settings edited;
+    ai::SetMcpAllow(edited, "organize", true);
+    ai::SetMcpAllow(edited, "view", false);
+    ai::SetMcpAllow(edited, "locked", true);
+    const ai::Settings back = ai::ParseSettings(ai::SerializeSettings(edited));
+    Check(back.mcp_allow_set && ai::McpAllows(back, "organize") && !ai::McpAllows(back, "view") &&
+              ai::McpAllows(back, "create") && !ai::McpAllows(back, "locked"),
+          L"mcp: switches survive ai.json; turning one on keeps the defaults; locked cannot be switched on");
+    bool malformed = true;
+    const ai::Settings old_file = ai::ParseSettings(R"({"mcp_enabled":true,"log_days":30,"clients":[],"allow":[]})", &malformed);
+    Check(!malformed && !old_file.mcp_allow_set && ai::McpAllows(old_file, "view") && !ai::McpAllows(old_file, "files"),
+          L"mcp: an ai.json from before P5 reads as the defaults");
+
+    // run_actions from an AI app: refused before any step when a step is unknown,
+    // only the user's, switched off, or a second file step. Nothing runs.
+    auto owner = std::make_unique<AppState>();
+    AppState& s = *owner;
+    s.places.persist = false;
+    s.appPrefs.persist = false;
+    s.isolatedTest = true;
+    auto run_of = [&](const char* steps_json, std::initializer_list<G> on) {
+        auto run = std::make_shared<ai::McpActionsRun>();
+        run->client = L"Selftest";
+        json::Value steps;
+        json::Parse(steps_json, steps);
+        for (size_t i = 0; i < steps.size(); ++i) run->steps.push_back(steps.at(i));
+        for (G g : on) run->allowed[static_cast<size_t>(g)] = true;
+        ai::StartMcpRunActions(s, run);
+        return run;
+    };
+    auto code_of = [](const std::shared_ptr<ai::McpActionsRun>& run) {
+        std::lock_guard lock(run->mu);
+        return run->done ? (run->outcome.ok ? std::string("ok") : run->outcome.error.code) : std::string("running");
+    };
+    const auto off = run_of(R"([{"action":"settings.set","args":{"key":"x","value":1}}])", {G::View});
+    Check(code_of(off) == "not_allowed" && off->outcome.error.message.find("step 1 (settings.set)") != std::string::npos &&
+              off->outcome.summary.find(L'\n') != std::wstring::npos,
+          L"mcp: a step whose group is off: not_allowed naming the step, with 本次运行's summary");
+    const auto locked = run_of(R"([{"action":"app.exit"}])", {G::View, G::Organize, G::Create, G::Files, G::External});
+    Check(code_of(locked) == "locked", L"mcp: an only-you action is refused (locked) with every switch on");
+    const auto unknown = run_of(R"([{"action":"no.such.action"}])", {G::View});
+    Check(code_of(unknown) == "invalid_args", L"mcp: an unknown action: invalid_args, nothing done");
+    const auto two_files = run_of(R"([{"action":"file.recycle"},{"action":"file.move_to","args":{"folder":"C:\\x"}}])",
+                                  {G::View, G::Files});
+    Check(code_of(two_files) == "invalid_args", L"mcp: two file steps in one call are refused before either runs");
+    const auto later_off = run_of(R"([{"action":"nav.back"},{"action":"git.push"}])", {G::View});
+    Check(code_of(later_off) == "not_allowed" && later_off->undo.empty(),
+          L"mcp: a later step switched off stops the call before the first step runs");
+    Check(code_of(run_of("[]", {G::View})) == "invalid_args", L"mcp: no steps: invalid_args");
+    // A new folder is asked about (and made) in the folder shown now.
+    const auto no_folder = run_of(R"([{"action":"file.new_folder","args":{"name":"A"}}])", {G::View, G::Create});
+    Check(code_of(no_folder) == "invalid_args" && no_folder->outcome.error.message.find("shows no folder") != std::string::npos,
+          L"mcp: a new folder with no folder open is refused before Pulse asks");
+    const auto moved = run_of(R"([{"action":"nav.go","args":{"path":"C:\\"}},{"action":"file.new_folder","args":{"name":"A"}}])",
+                              {G::View, G::Create});
+    Check(code_of(moved) == "invalid_args" && moved->outcome.error.message.find("step 1 (nav.go)") != std::string::npos &&
+              moved->undo.empty(),
+          L"mcp: a new folder after a step that changes the folder is refused before anything runs");
+}
+
 void TestActionState() {
     namespace act = app::actions;
     auto owner = std::make_unique<AppState>();
@@ -9347,6 +9438,7 @@ int RunSelfTest1B2() {
         TestActionPolicy();
         TestActionArgs();
         TestFilePlans();
+        TestMcpRunActions();
         if (g_log) { fclose(g_log); g_log = nullptr; }
         return g_fail ? 1 : 0;
     }
@@ -9498,6 +9590,7 @@ int RunSelfTest1B2() {
     TestActionPolicy();
     TestActionArgs();
     TestFilePlans();
+    TestMcpRunActions();
     TestViewLayouts();
     TestListColumns();
     TestOptionalColumns();

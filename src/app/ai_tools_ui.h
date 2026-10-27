@@ -7,6 +7,7 @@
 // thread first.
 #pragma once
 #include "ai_broker.h"
+#include <atomic>
 #include <functional>
 #include <windows.h>
 
@@ -22,6 +23,10 @@ void HandleAiUiTask(AppState* target, LPARAM lparam);
 // For callers that track completion themselves (ai_confirm.h); `work` gets
 // the most recently active window or null.
 bool PostAiUiTask(HWND host, std::function<void(AppState*)> work);
+// Runs `work` on the UI thread and waits for it (short work only). False
+// without a host window, or when cancelled or not started within 5 s (then
+// it never runs, so `work` may capture the caller's locals by reference).
+bool RunOnAiUiThread(HWND host, std::function<void(AppState*)> work, const std::atomic<bool>& cancelled);
 
 // pulse.get_context: the get_state snapshot (actions/action_state.h): tabs,
 // panes in screen order, up to 200 selected paths, tray, preview, dialog.

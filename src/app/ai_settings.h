@@ -59,13 +59,28 @@ struct AssistantPrefs {
     VoicePrefs voice;                         // "voice": {...}
 };
 
+// What AI apps (MCP) may do in Pulse (P5, 设置 › 增强包 › AI 与 MCP › AI
+// 应用可以做的事): the switched-on groups of actions/action_policy.h McpGroup
+// by key ("view", "organize", "create", "files", "external"). Without the
+// key in ai.json: view and create, which is what the first batch's tools
+// did (reveal; create_zip asking first). Written only once the user changed
+// a switch, so older files stay as they are.
+inline constexpr const char* kMcpDefaultAllow[] = {"view", "create"};
+
 struct Settings {
     bool mcp_enabled = false;
     int log_days = 30;     // 1..365
     std::vector<ClientRecord> clients;
     std::vector<AllowRule> allow;
     AssistantPrefs assistant;
+    bool mcp_allow_set = false;          // "mcp_allow" is in the file
+    std::vector<std::string> mcp_allow;  // only when mcp_allow_set
 };
+
+// True when the group (a McpGroup key) is switched on; "locked" never is.
+bool McpAllows(const Settings& settings, std::string_view group);
+// Switches a group on or off; the first change writes the defaults out too.
+void SetMcpAllow(Settings& settings, std::string_view group, bool on);
 
 std::wstring AiDirectory();          // %LOCALAPPDATA%\Pulse\ai, empty without LOCALAPPDATA
 std::wstring SettingsPath();         // ...\ai.json

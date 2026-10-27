@@ -398,7 +398,7 @@ int main() {
         c.Send(Request(3, "tools/list"));
         bool shape = c.Response(3, r) && r.find("result") && r.find("result")->find("tools");
         const json::Value* tools = shape ? r.find("result")->find("tools") : nullptr;
-        shape = shape && tools->size() == 7 && tools->at(0).get_string("name") == "get_context";
+        shape = shape && tools->size() == 9 && tools->at(0).get_string("name") == "get_context";
         std::string names;
         for (size_t i = 0; shape && i < tools->size(); ++i) {
             const json::Value& t = tools->at(i);
@@ -410,8 +410,10 @@ int main() {
                      !schema->find("additionalProperties")->as_bool(true) && !t.get_string("description").empty() &&
                      t.find("annotations") != nullptr;
         }
-        Check(shape && names == "get_context list_folder search get_properties reveal create_zip undo_last ",
-              "tools/list: the 7 first-batch tools in a fixed order, plain names, strict object schemas");
+        Check(shape && names == "get_context list_folder search get_properties reveal create_zip find_actions run_actions "
+                                "undo_last ",
+              "tools/list: the 9 tools (P5 adds find_actions, run_actions) in a fixed order, plain names, strict "
+              "object schemas");
         bool zip_hints = false;
         for (size_t i = 0; tools && i < tools->size(); ++i)
             if (tools->at(i).get_string("name") == "create_zip")
@@ -457,6 +459,61 @@ int main() {
         bad_args.set("arguments", "C:\\x");
         c.Send(Request(14, "tools/call", bad_args));
         Check(c.Response(14, r) && ErrorCode(r) == -32602, "arguments that are not an object: -32602");
+
+        // run_actions (P5): Pulse.AI.exe checks the steps' shape before the broker sees them.
+        auto step = [](const char* action) {
+            json::Value v = json::Value::Object();
+            v.set("action", action);
+            return v;
+        };
+        auto steps_args = [](json::Value steps) {
+            json::Value a = json::Value::Object();
+            a.set("steps", std::move(steps));
+            return a;
+        };
+        c.Send(Request(16, "tools/call", CallParams("run_actions", steps_args(json::Value::Array()))));
+        Check(c.Response(16, r) && ToolErrorIs(r, "invalid_args") && ToolText(r).find("empty") != std::string::npos,
+              "run_actions: an empty steps array is refused");
+        {
+            json::Value steps = json::Value::Array();
+            json::Value no_action = json::Value::Object();
+            no_action.set("args", json::Value::Object());
+            steps.push(std::move(no_action));
+            c.Send(Request(17, "tools/call", CallParams("run_actions", steps_args(std::move(steps)))));
+        }
+        Check(c.Response(17, r) && ToolErrorIs(r, "invalid_args") && ToolText(r).find("action is required") != std::string::npos,
+              "run_actions: a step without action is refused, naming it");
+        {
+            json::Value steps = json::Value::Array();
+            json::Value odd = step("view.details");
+            odd.set("path", "C:\\x");
+            steps.push(std::move(odd));
+            c.Send(Request(18, "tools/call", CallParams("run_actions", steps_args(std::move(steps)))));
+        }
+        Check(c.Response(18, r) && ToolErrorIs(r, "invalid_args") && ToolText(r).find("put the action's arguments in args") != std::string::npos,
+              "run_actions: a stray member in a step is refused with a hint to use args");
+        {
+            json::Value steps = json::Value::Array();
+            for (int i = 0; i < 13; ++i) steps.push(step("nav.back"));
+            c.Send(Request(19, "tools/call", CallParams("run_actions", steps_args(std::move(steps)))));
+        }
+        Check(c.Response(19, r) && ToolErrorIs(r, "invalid_args") && ToolText(r).find("at most 12") != std::string::npos,
+              "run_actions: more than 12 steps are refused");
+        {
+            json::Value steps = json::Value::Array();
+            json::Value waits = step("nav.go");
+            waits.set("wait", "forever");
+            steps.push(std::move(waits));
+            c.Send(Request(90, "tools/call", CallParams("run_actions", steps_args(std::move(steps)))));
+        }
+        Check(c.Response(90, r) && ToolErrorIs(r, "invalid_args"), "run_actions: a wait outside its values is refused");
+        {
+            json::Value steps = json::Value::Array();
+            steps.push(step("view.details"));
+            c.Send(Request(91, "tools/call", CallParams("run_actions", steps_args(std::move(steps)))));
+        }
+        Check(c.Response(91, r) && ToolErrorIs(r, "unsupported"),
+              "run_actions: well-formed steps reach the broker (the test broker has no such tool)");
 
         // Progress while Pulse asks the user.
         json::Value zip_params = CallParams("create_zip", Args({{"paths", Strings({"C:\\Data\\a.txt"})}}));
@@ -536,7 +593,7 @@ int main() {
         list_modern.set("_meta", ModernMeta());
         c.Send(Request(50, "tools/list", list_modern));
         Check(c.Response(50, r) && r.find("result")->get_string("resultType") == "complete" &&
-                  r.find("result")->find("tools")->size() == 7 && r.find("result")->find("ttlMs"),
+                  r.find("result")->find("tools")->size() == 9 && r.find("result")->find("ttlMs"),
               "modern tools/list: resultType and ttlMs");
         json::Value call_modern = CallParams("list_folder", Args({{"path", "C:\\m"}}));
         call_modern.set("_meta", ModernMeta());
@@ -563,7 +620,7 @@ int main() {
         c.Send(Request(1, "initialize", init));
         if (!c.Response(1, r)) return false;
         c.Send(Request(2, "tools/list"));
-        if (!c.Response(2, r) || r.find("result")->find("tools")->size() != 7) return false;
+        if (!c.Response(2, r) || r.find("result")->find("tools")->size() != 9) return false;
         c.Send(Request(3, "tools/call", CallParams("list_folder", Args({{"path", "C:\\Data"}}))));
         return c.Response(3, r, nullptr, 15000);
     };

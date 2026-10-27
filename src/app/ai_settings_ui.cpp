@@ -10,9 +10,13 @@
 #include "app_internal.h"
 #include "app_messages.h"
 #include "app_navigation.h"
+#include "actions/action_inventory.h"
+#include "actions/action_policy.h"
+#include "actions/action_registry.h"
 #include "../common/localization.h"
 #include "../ui/settings_page_ids.h"
 #include "../ui/ui_renderer.h"
+#include <array>
 #include <memory>
 
 namespace pulse {
@@ -37,6 +41,8 @@ std::wstring ToolLabel(std::string tool) {
     if (tool == "reveal") return Text(I::AiToolReveal);
     if (tool == "create_zip") return Text(I::AiToolCreateZip);
     if (tool == "undo_last") return Text(I::AiToolUndo);
+    if (tool == "find_actions") return Text(I::AiToolFindActions);
+    if (tool == "run_actions") return Text(I::AiToolRunActions);
     return json::Wide(tool);
 }
 
@@ -65,6 +71,12 @@ void Outcome(const ai::AiCallEntry& e, ui::AiCallRowView& row) {
     } else if (e.code == "user_timeout") {
         row.outcome = Text(I::AiOutcomeTimeout);
         row.tone = T::Declined;
+    } else if (e.code == "not_allowed") {
+        row.outcome = Text(I::AiOutcomeBlocked);
+        row.tone = T::Declined;
+    } else if (e.code == "locked") {
+        row.outcome = Text(I::AiMcpGroupLocked);
+        row.tone = T::Declined;
     } else if (e.code == "cancelled") {
         row.outcome = Text(I::AiOutcomeCancelled);
         row.tone = T::Declined;
@@ -90,6 +102,49 @@ PageCache& Cache() {
 }
 
 void Reread() { Cache().read_at = 0; }
+
+namespace A = app::actions;
+
+// AI 应用可以做的事: how many actions each group has (the inventory by McpGroupOf).
+const std::array<size_t, A::kMcpGroupCount>& GroupCounts() {
+    static const std::array<size_t, A::kMcpGroupCount> counts = [] {
+        std::array<size_t, A::kMcpGroupCount> c{};
+        for (const A::ActionEntry& e : A::kActions) ++c[static_cast<size_t>(A::McpGroupOf(e.id))];
+        return c;
+    }();
+    return counts;
+}
+
+void FillGroups(const ai::Settings& settings, ui::AiPageView& view) {
+    using G = A::McpGroup;
+    using Tag = ui::AiGroupTag;
+    const struct {
+        G group;
+        I title, desc;
+        Tag tag;
+        const wchar_t* icon;
+    } rows[] = {
+        {G::View, I::AiMcpGroupView, I::AiMcpDescView, Tag::DefaultOn, L"\xE7B3"},
+        {G::Organize, I::AiMcpGroupOrganize, I::AiMcpDescOrganize, Tag::None, L"\xE8EC"},
+        {G::Create, I::AiMcpGroupCreate, I::AiMcpDescCreate, Tag::Asks, L"\xE8F4"},
+        {G::Files, I::AiMcpGroupFiles, I::AiMcpDescFiles, Tag::Asks, L"\xE8DE"},
+        {G::External, I::AiMcpGroupExternal, I::AiMcpDescExternal, Tag::AsksOutside, L"\xE945"},
+        {G::Locked, I::AiMcpGroupLocked, I::AiMcpDescLocked, Tag::None, L"\xE72E"},
+    };
+    for (const auto& r : rows) {
+        ui::AiGroupRowView row;
+        row.group = static_cast<int>(r.group);
+        row.icon = r.icon;
+        row.title = Text(r.title);
+        const std::wstring n = std::to_wstring(GroupCounts()[static_cast<size_t>(r.group)]);
+        row.count = Fill(Text(r.group == G::View ? I::AiMcpCountFirst : I::AiMcpCount), L"{n}", n);
+        row.desc = Text(r.desc);
+        row.tag = r.tag;
+        row.locked = r.group == G::Locked;
+        row.on = !row.locked && ai::McpAllows(settings, A::McpGroupKey(r.group));
+        view.groups.push_back(std::move(row));
+    }
+}
 
 // The 新建 notification's target: its undo group and the archive.
 struct SnackTarget {
@@ -155,7 +210,7 @@ void FillAiStatusVm(ui::WindowViewModel& vm) {
     }
 }
 
-void FillAiSettingsVm(AppState&, ui::WindowViewModel& vm) {
+void FillAiSettingsVm(AppState& s, ui::WindowViewModel& vm) {
     PageCache& cache = Cache();
     const uint64_t now = GetTickCount64();
     if (!cache.staged && (!cache.read_at || now - cache.read_at >= 1000)) {
@@ -216,14 +271,33 @@ void FillAiSettingsVm(AppState&, ui::WindowViewModel& vm) {
         row.grant = ai::IsAiSessionClient(name) ? ui::AiGrantView::Session : ui::AiGrantView::Ask;
         view->clients.push_back(std::move(row));
     }
-    for (const ai::AllowRule& rule : cache.settings.allow)
-        view->rules.push_back({rule.client, rule.tool, ToolLabel(rule.tool), rule.folder});
+    FillGroups(cache.settings, *view);
+    // A run_actions rule names its action (pulse.file.new_folder): show the
+    // action's title, as the palette does. Listed only when such a rule exists.
+    std::vector<app::actions::ActionView> actions;
+    for (const ai::AllowRule& rule : cache.settings.allow) {
+        std::wstring label = ToolLabel(rule.tool);
+        if (rule.tool.rfind("pulse.", 0) == 0 && app::actions::FindAction(std::string_view(rule.tool).substr(6))) {
+            if (actions.empty()) actions = app::actions::ListActions(s);
+            for (const app::actions::ActionView& v : actions)
+                if (v.key.empty() && v.id == std::string_view(rule.tool).substr(6)) {
+                    label = v.title;
+                    break;
+                }
+        }
+        view->rules.push_back({rule.client, rule.tool, std::move(label), rule.folder});
+    }
     for (const ai::AiCallEntry& e : status.recent) {
         if (view->calls.size() >= ui::kAiPageCalls) break;
         ui::AiCallRowView row;
         row.time = LocalTime(e.started_ms);
         row.client = e.client;
         row.tool_label = ToolLabel(e.tool);
+        // "2 步\n选中 6 项 → …": the head follows the tool's name, the rest goes under it.
+        const size_t cut = e.summary.find(L'\n');
+        const std::wstring head = cut == std::wstring::npos ? std::wstring() : e.summary.substr(0, cut);
+        row.summary = cut == std::wstring::npos ? e.summary : e.summary.substr(cut + 1);
+        if (!head.empty()) row.tool_label += L" \u00B7 " + head;
         Outcome(e, row);
         view->calls.push_back(std::move(row));
     }
@@ -239,7 +313,18 @@ void AiSettingsAction(AppState& s, int index) {
         const int row = index - base;
         return row >= 0 && static_cast<size_t>(row) < view->clients.size() ? &view->clients[static_cast<size_t>(row)] : nullptr;
     };
-    if (index == ui::kAiToggle) {
+    if (index >= ui::kAiGroupBase && index < ui::kAiGroupBase + ui::kAiRowLimit) {
+        // AI 应用可以做的事: the next call reads it (run_actions, find_actions, reveal).
+        const int row = index - ui::kAiGroupBase;
+        if (!view->broken && row >= 0 && static_cast<size_t>(row) < view->groups.size()) {
+            const ui::AiGroupRowView& g = view->groups[static_cast<size_t>(row)];
+            if (!g.locked) {
+                const char* key = A::McpGroupKey(static_cast<A::McpGroup>(g.group));
+                const bool on = !g.on;
+                ai::UpdateAiSettings([&](ai::Settings& settings) { ai::SetMcpAllow(settings, key, on); });
+            }
+        }
+    } else if (index == ui::kAiToggle) {
         if (!view->broken) ai::SetAiMcpEnabled(!view->enabled);
     } else if (index == ui::kAiCopyConfig) {
         if (app::CopyTextToClipboard(s.hwnd, AiMcpConfigText()))
@@ -308,6 +393,31 @@ void StageAiShot(int variant) {
         event(K::CallFinished, 1, L"Claude", d.tool, id, d.ok, d.code);
         ++id;
     }
+    // P5: 执行 Pulse 动作 with its summary, and one the switches stopped.
+    {
+        event(K::CallStarted, 1, L"Claude", "pulse.find_actions", id);
+        ai::BrokerEvent e;
+        e.kind = K::CallFinished;
+        e.connection = 1;
+        e.client = L"Claude";
+        e.tool = "pulse.find_actions";
+        e.call = id++;
+        e.ok = true;
+        e.summary = L"\n\u201C\u79FB\u52A8\u201D \u2192 file.move_to\u3001file.copy_to\u3001tray.send_to";
+        ai::OnAiBrokerEvent(e);
+        event(K::CallStarted, 1, L"Claude", "pulse.run_actions", id);
+        e.tool = "pulse.run_actions";
+        e.call = id++;
+        e.summary = L"2 \u6B65\n\u9009\u4E2D 6 \u9879 \u2192 6 \u9879\u5DF2\u79FB\u5230\u300C2026\u300D \u00B7 "
+                    L"\u4F60\u70B9\u4E86\u300C\u79FB\u52A8\u300D";
+        ai::OnAiBrokerEvent(e);
+        event(K::CallStarted, 1, L"Claude", "pulse.run_actions", id);
+        e.call = id++;
+        e.ok = false;
+        e.code = "not_allowed";
+        e.summary = L"1 \u6B65\n\u52A0\u6807\u7B7E \u00B7 \u6574\u7406 Pulse \u672A\u6253\u5F00";
+        ai::OnAiBrokerEvent(e);
+    }
     if (variant == 0) {
         event(K::CallStarted, 1, L"Claude", "pulse.search", id);
     } else if (variant == 1) {
@@ -337,6 +447,23 @@ void NoteAiChange(AppState& s, const ai::BrokerEvent& event) {
             actions.push_back({l10n::Get(I::SnackUndo), WM_AI_SNACK_UNDO});
         actions.push_back({Text(I::AiSnackOpen), WM_AI_SNACK_OPEN});
         s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Undo, std::move(text), {}, std::move(actions));
+    } else if (tool == "run_actions") {
+        // The file step's line: 「Claude：6 项已移到「2026」」 with 撤销 and 打开.
+        const json::Value* summary = event.data.find("summary");
+        if (!summary || !summary->is_string()) return;
+        SnackTarget& target = Snack();
+        target.undo_group = event.undo_group;
+        target.folder.clear();
+        target.name.clear();
+        if (const json::Value* open = event.data.find("open"); open && open->is_string())
+            target.folder = json::Wide(open->as_string());
+        std::wstring text = Fill(Fill(Text(I::AiSnackRunDone), L"{client}", event.client), L"{summary}",
+                                 json::Wide(summary->as_string()));
+        std::vector<ui::SnackAction> actions;
+        if (event.undo_group && s.ops.CanUndo() && s.ops.TopUndoGroup() == event.undo_group)
+            actions.push_back({l10n::Get(I::SnackUndo), WM_AI_SNACK_UNDO});
+        if (!target.folder.empty()) actions.push_back({Text(I::AiSnackOpen), WM_AI_SNACK_OPEN});
+        s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Undo, std::move(text), {}, std::move(actions));
     } else if (tool == "undo_last") {
         const json::Value* undone = event.data.find("undone");
         const std::wstring label = undone && undone->is_string() ? json::Wide(undone->as_string()) : std::wstring();
@@ -355,7 +482,7 @@ void HandleAiSnackMessage(AppState& s, UINT message) {
     } else if (message == WM_AI_SNACK_OPEN) {
         if (target.folder.empty()) return;
         NavigateTo(s, target.folder);
-        if (app::Tab* tab = ActiveTab(s)) SelectNameInTab(s, *tab, target.name);
+        if (app::Tab* tab = ActiveTab(s); tab && !target.name.empty()) SelectNameInTab(s, *tab, target.name);
     }
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }

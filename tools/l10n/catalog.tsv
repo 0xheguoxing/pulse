@@ -4264,3 +4264,39 @@ AiActArgResults	IDS_AI_ACT_ARG_RESULTS	5463	搜索结果	search results	搜尋�
 AiActResSelectResults	IDS_AI_ACT_RES_SELECT_RESULTS	5464	在搜索结果里选中了 {items}	Selected {items} in the search results	在搜尋結果裡選取了 {items}
 AiActResFolders	IDS_AI_ACT_RES_FOLDERS	5465	分布在 {n} 个文件夹	In {n} folders	分布在 {n} 個資料夾
 AiActCountExts	IDS_AI_ACT_COUNT_EXTS	5466	{n} 个 {exts}	{n} {exts} files	{n} 個 {exts}
+AiMcpGroupView	IDS_AI_MCP_GROUP_VIEW	5467	查看与界面	View and layout	檢視與介面
+AiMcpGroupOrganize	IDS_AI_MCP_GROUP_ORGANIZE	5468	整理 Pulse	Organize Pulse	整理 Pulse
+AiMcpGroupCreate	IDS_AI_MCP_GROUP_CREATE	5469	新建	Create	新增
+AiMcpGroupFiles	IDS_AI_MCP_GROUP_FILES	5470	移动、重命名和删除	Move, rename and delete	移動、重新命名和刪除
+AiMcpGroupExternal	IDS_AI_MCP_GROUP_EXTERNAL	5471	Pulse 之外的效果	Effects outside Pulse	Pulse 之外的效果
+AiMcpGroupLocked	IDS_AI_MCP_GROUP_LOCKED	5472	只能你自己做	Only you can do these	只能你自己做
+AiMcpWhere	IDS_AI_MCP_WHERE	5473	设置 › 增强包 › AI 与 MCP › AI 应用可以做的事	Settings › Enhancement packs › AI and MCP › What AI apps can do	設定 › 增強包 › AI 與 MCP › AI 應用可以做的事
+AiMcpUndoLabel	IDS_AI_MCP_UNDO_LABEL	5474	{client} 的操作	Changes by {client}	{client} 的操作
+AiMcpAskFrom	IDS_AI_MCP_ASK_FROM	5475	来自「{client}」的请求 · 2 分钟内不回答就算拒绝	Asked by {client} · no answer within 2 minutes counts as no	來自「{client}」的請求 · 2 分鐘內不回答就算拒絕
+AiMcpArmNote	IDS_AI_MCP_ARM_NOTE	5476	永久删除无法撤销。再点一次按钮才会删除。	A permanent delete can't be undone. Click the button again to delete.	永久刪除無法復原。再點一次按鈕才會刪除。
+AiMcpCreateTitle	IDS_AI_MCP_CREATE_TITLE	5477	允许「{client}」{title}？	Allow {client}: {title}?	允許「{client}」{title}？
+AiUndoRunLabel	IDS_AI_UNDO_RUN_LABEL	5478	刚才的一组操作	the last group of changes	剛才的一組操作
+AiMcpGroupsSection	IDS_AI_MCP_GROUPS_SECTION	5479	AI 应用可以做的事	What AI apps can do	AI 應用可以做的事
+AiMcpGroupsFoot	IDS_AI_MCP_GROUPS_FOOT	5480	只对 AI 应用（MCP）生效，Pulse 助手的规则不变。锁定的设置（关闭删除确认、助手权限、连接、API 密钥）任何开关都不会放开。	These apply to AI apps (MCP) only; Pulse Assistant's rules stay the same. No switch unlocks the locked settings (turning off delete confirmation, assistant permissions, connections, API keys).	只對 AI 應用（MCP）生效，Pulse 助手的規則不變。鎖定的設定（關閉刪除確認、助手權限、連線、API 金鑰）任何開關都不會放開。
+AiMcpCountFirst	IDS_AI_MCP_COUNT_FIRST	5481	{n} 个动作	{n} actions	{n} 個動作
+AiMcpCount	IDS_AI_MCP_COUNT	5482	{n} 个	{n}	{n} 個
+AiMcpTagDefaultOn	IDS_AI_MCP_TAG_DEFAULT_ON	5483	默认打开	On by default	預設開啟
+AiMcpTagAsks	IDS_AI_MCP_TAG_ASKS	5484	每次问	Asks each time	每次問
+AiMcpDescView	IDS_AI_MCP_DESC_VIEW	5485	看 Pulse 现在的样子、查找文件、打开文件夹、切换视图和排序、选中项目。不改动任何文件。	See what Pulse shows, find files, open folders, switch views and sorting, select items. Changes no files.	看 Pulse 現在的樣子、尋找檔案、開啟資料夾、切換檢視和排序、選取項目。不變更任何檔案。
+AiMcpDescOrganize	IDS_AI_MCP_DESC_ORGANIZE	5486	标签、收藏、暂存托盘、标签页固定和颜色、快捷键、Pulse 的设置。直接做，AI 应用可以用 undo_last 撤销。	Tags, favorites, the tray, pinned and colored tabs, shortcuts, Pulse's settings. Done directly; the AI app can undo with undo_last.	標籤、收藏、暫存托盤、分頁固定和顏色、快速鍵、Pulse 的設定。直接做，AI 應用可以用 undo_last 復原。
+AiMcpDescCreate	IDS_AI_MCP_DESC_CREATE	5487	新建文件夹、文件和压缩包。每次先在 Pulse 里问你，可以选「始终允许这个文件夹」。	New folders, files and archives. Pulse asks you first each time; you can choose “Always allow here”.	新增資料夾、檔案和壓縮檔。每次先在 Pulse 裡問你，可以選「一律允許這個資料夾」。
+AiMcpDescFiles	IDS_AI_MCP_DESC_FILES	5488	先在 Pulse 里给你看计划（什么去哪里、回收站够不够），你点了才做；永久删除要点两次。没有「始终允许」。	Pulse shows you the plan first (what goes where, whether the Recycle Bin has room) and acts only when you click; a permanent delete takes two clicks. No “always allow”.	先在 Pulse 裡給你看計畫（什麼去哪裡、資源回收筒夠不夠），你點了才做；永久刪除要點兩次。沒有「一律允許」。
+AiMcpDescExternal	IDS_AI_MCP_DESC_EXTERNAL	5489	Git 推送 / 拉取、第三方右键菜单、打开程序和脚本、云盘保留 / 释放、弹出驱动器。每次都问你。	Git push / pull, third-party context menu items, opening programs and scripts, keeping or freeing cloud files, ejecting drives. Asks you every time.	Git 推送 / 拉取、第三方右鍵選單、開啟程式和指令碼、雲端硬碟保留 / 釋放、退出磁碟機。每次都問你。
+AiMcpDescLocked	IDS_AI_MCP_DESC_LOCKED	5490	退出 Pulse、解锁 BitLocker 盘、改助手权限。AI 应用调用时只会得到原因和去哪里操作。	Quitting Pulse, unlocking BitLocker drives, changing the assistant's permissions. An AI app that asks only gets the reason and where you do it.	結束 Pulse、解鎖 BitLocker 磁碟、變更助手權限。AI 應用呼叫時只會得到原因和去哪裡操作。
+AiToolFindActions	IDS_AI_TOOL_FIND_ACTIONS	5491	查找动作	Find actions	尋找動作
+AiToolRunActions	IDS_AI_TOOL_RUN_ACTIONS	5492	执行 Pulse 动作	Run Pulse actions	執行 Pulse 動作
+AiOutcomeBlocked	IDS_AI_OUTCOME_BLOCKED	5493	被设置拦下	Blocked by settings	被設定擋下
+AiMcpSumSteps	IDS_AI_MCP_SUM_STEPS	5494	{n} 步	{n} steps	{n} 步
+AiMcpSumClicked	IDS_AI_MCP_SUM_CLICKED	5495	你点了「{button}」	You chose “{button}”	你點了「{button}」
+AiMcpSumFailed	IDS_AI_MCP_SUM_FAILED	5496	「{title}」没做成	“{title}” didn't work	「{title}」沒做成
+AiMcpSumOff	IDS_AI_MCP_SUM_OFF	5497	{group} 未打开	{group} is off	{group} 未開啟
+AiMcpSumLocked	IDS_AI_MCP_SUM_LOCKED	5498	{group}	{group}	{group}
+AiMcpSumSettings	IDS_AI_MCP_SUM_SETTINGS	5499	设置 · {n} 项	Settings · {n}	設定 · {n} 項
+AiMcpSumNone	IDS_AI_MCP_SUM_NONE	5500	没有找到	nothing found	沒有找到
+AiSnackRunDone	IDS_AI_SNACK_RUN_DONE	5501	{client}：{summary}	{client}: {summary}	{client}：{summary}
+AiMcpSumByRule	IDS_AI_MCP_SUM_BY_RULE	5502	按「始终允许」	per “Always allow”	按「始終允許」

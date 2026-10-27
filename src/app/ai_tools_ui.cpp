@@ -138,6 +138,10 @@ bool PostAiUiTask(HWND host, std::function<void(AppState*)> work) {
     return false;
 }
 
+bool RunOnAiUiThread(HWND host, std::function<void(AppState*)> work, const std::atomic<bool>& cancelled) {
+    return RunOnUiThread(host, std::move(work), cancelled);
+}
+
 void HandleAiUiTask(AppState* target, LPARAM lparam) {
     std::unique_ptr<std::shared_ptr<UiTask>> holder(reinterpret_cast<std::shared_ptr<UiTask>*>(lparam));
     if (!holder || !*holder) return;

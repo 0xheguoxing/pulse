@@ -120,6 +120,7 @@ void OnAiBrokerEvent(const BrokerEvent& event) {
                     e->ok = event.ok;
                     e->code = event.code;
                     e->changed_files = event.changed_files;
+                    e->summary = event.summary;
                     if (s.running) --s.running;
                     ++s.burst_calls;
                     s.last_finished_tick = GetTickCount64();

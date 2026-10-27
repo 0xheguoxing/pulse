@@ -21,6 +21,7 @@ enum AiHit : int {
     kAiClientDenyBase = 200,    // + client row: 拒绝 (and disconnect)
     kAiClientForgetBase = 300,  // + client row: 移除
     kAiRuleRemoveBase = 400,    // + rule row: 移除
+    kAiGroupBase = 500,         // + group row: its switch (AI 应用可以做的事)
     kAiRowLimit = 99,           // rows per list that get buttons
 };
 
@@ -48,7 +49,21 @@ struct AiCallRowView {
     std::wstring client;
     std::wstring tool_label;
     std::wstring outcome;
+    std::wstring summary;      // the line under it (选中 6 项 → 移动到 D:\财务\2026); may be empty
     AiCallTone tone = AiCallTone::Done;
+};
+
+// AI 应用可以做的事 (P5): one switch per group of actions (action_policy.h
+// McpGroup); the last row, 只能你自己做, has none.
+enum class AiGroupTag : uint8_t { None, DefaultOn, Asks, AsksOutside };
+
+struct AiGroupRowView {
+    int group = 0;             // McpGroup
+    std::wstring icon;         // Segoe Fluent glyph
+    std::wstring title, count, desc;
+    AiGroupTag tag = AiGroupTag::None;
+    bool on = false;
+    bool locked = false;       // no switch
 };
 
 struct AiPageView {
@@ -59,6 +74,7 @@ struct AiPageView {
     std::wstring status;       // under the switch
     std::vector<AiClientRowView> clients;
     std::vector<AiRuleRowView> rules;
+    std::vector<AiGroupRowView> groups;
     std::vector<AiCallRowView> calls;   // newest first, at most kAiPageCalls
     size_t more_calls = 0;              // older calls not listed
 };
@@ -71,6 +87,8 @@ struct AiClientRowLayout {
 };
 struct AiPageLayout {
     D2D1_RECT_F main_card{}, enable_row{}, toggle{}, setup_row{}, copy{}, broken{};
+    D2D1_RECT_F groups_section{}, groups_card{}, groups_foot{};
+    std::vector<D2D1_RECT_F> groups, group_toggles;   // group_toggles empty for the locked row
     D2D1_RECT_F apps_section{}, apps_card{}, apps_empty{};
     std::vector<AiClientRowLayout> clients;
     D2D1_RECT_F rules_section{}, rules_card{}, rules_empty{};

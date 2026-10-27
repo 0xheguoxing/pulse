@@ -54,6 +54,45 @@ Policy AiPolicy(std::string_view id, std::wstring_view target) noexcept {
     return {Gate::Locked, risk};
 }
 
+McpGroup McpGroupOfRisk(ActionRisk risk) noexcept {
+    switch (risk) {
+    case ActionRisk::Read:
+    case ActionRisk::View: return McpGroup::View;
+    case ActionRisk::Organize: return McpGroup::Organize;
+    case ActionRisk::Create: return McpGroup::Create;
+    case ActionRisk::Move:
+    case ActionRisk::Delete:
+    case ActionRisk::PermanentDelete: return McpGroup::Files;
+    case ActionRisk::System:
+    case ActionRisk::External: return McpGroup::External;
+    case ActionRisk::UserOnly: break;
+    }
+    return McpGroup::Locked;
+}
+
+McpGroup McpGroupOf(std::string_view id, std::wstring_view target) noexcept {
+    const ActionEntry* e = FindAction(id);
+    if (!e) return McpGroup::Locked;
+    if (id == "settings.set") return McpGroup::Organize;   // the locked settings refuse themselves
+    if (id == "nav.open" && IsProgramPath(target)) return McpGroup::External;
+    return McpGroupOfRisk(e->risk);
+}
+
+const char* McpGroupKey(McpGroup group) noexcept {
+    static constexpr const char* kKeys[] = {"view", "organize", "create", "files", "external", "locked"};
+    const size_t i = static_cast<size_t>(group);
+    return i < std::size(kKeys) ? kKeys[i] : "locked";
+}
+
+bool McpGroupFromKey(std::string_view key, McpGroup& group) noexcept {
+    for (size_t i = 0; i < kMcpGroupCount; ++i)
+        if (key == McpGroupKey(static_cast<McpGroup>(i))) {
+            group = static_cast<McpGroup>(i);
+            return true;
+        }
+    return false;
+}
+
 const char* RiskName(ActionRisk risk) noexcept {
     static constexpr const char* kNames[] = {"read", "view", "organize", "create", "move", "system",
                                              "external", "delete", "permanent_delete", "user_only"};

@@ -16,7 +16,8 @@
 
 namespace pulse::ai_host {
 
-enum class ParamKind : uint8_t { String, Integer, StringArray, Date };
+// Steps: run_actions' list of {action, args?, wait?} objects.
+enum class ParamKind : uint8_t { String, Integer, StringArray, Date, Steps };
 
 struct Param {
     const char* name;

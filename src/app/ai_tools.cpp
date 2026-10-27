@@ -1,6 +1,8 @@
 #include "ai_tools.h"
 #include "ai_tools_fs.h"
+#include "ai_tools_actions.h"
 #include "ai_tools_ui.h"
+#include "app_state.h"
 #include "../common/localization.h"
 #include "../index/index_client.h"
 #include "../ops/ops_manager.h"
@@ -98,6 +100,38 @@ uint64_t NewAiUndoGroup() {
     }
 }
 
+// What AI clients changed, newest last, for undo_last: a zip (its ops undo
+// group) or a run_actions call (what it undoes on the UI thread, and its file
+// step's group, which must still be the newest in Pulse's undo list).
+struct AiUndoRecord {
+    uint64_t ops_group = 0;
+    std::shared_ptr<McpActionsRun> run;
+    HWND window = nullptr;   // run: the window it changed
+};
+
+struct AiUndoList {
+    std::mutex mu;
+    std::vector<AiUndoRecord> records;
+};
+
+AiUndoList& UndoList() {
+    static auto* list = new AiUndoList;   // process lifetime, like Waits()
+    return *list;
+}
+
+void KeepUndo(AiUndoRecord record) {
+    AiUndoList& list = UndoList();
+    std::lock_guard lock(list.mu);
+    list.records.push_back(std::move(record));
+    if (list.records.size() > 32) list.records.erase(list.records.begin());
+}
+
+std::shared_ptr<const Settings> SettingsNow(const AiToolsHost& host) {
+    if (host.settings)
+        if (auto settings = host.settings()) return settings;
+    return std::make_shared<const Settings>();
+}
+
 ToolOutcome CreateZip(const AiToolsHost& host, const ToolCall& call) {
     ZipPlan plan;
     ToolOutcome error;
@@ -110,12 +144,73 @@ ToolOutcome CreateZip(const AiToolsHost& host, const ToolCall& call) {
         if (const size_t at = label.find(L"{client}"); at != std::wstring::npos) label.replace(at, 8, call.client);
         host.ops->RecordExternalCreate(plan.zip_path, group, std::move(label));
         out.undo_group = group;
+        KeepUndo({group, nullptr, nullptr});
         out.data.set("undo", "undo_last moves the archive to the Recycle Bin");
     }
     return out;
 }
 
-ToolOutcome UndoLast(const AiToolsHost& host, ToolBroker& broker) {
+// The newest run_actions call, when it is the newest AI change: its steps
+// are undone backwards on the UI thread in the window they changed.
+bool UndoRun(const AiToolsHost& host, ToolBroker& broker, const ToolCall& call, ToolOutcome& out) {
+    AiUndoRecord record;
+    {
+        AiUndoList& list = UndoList();
+        std::lock_guard lock(list.mu);
+        if (list.records.empty() || !list.records.back().run) return false;
+        record = list.records.back();
+    }
+    if (record.ops_group && host.ops &&
+        (!host.ops->CanUndo() || host.ops->TopUndoGroup() != record.ops_group)) {
+        out = ToolOutcome::Fail("not_ai_operation",
+                                "The newest change in Pulse was not made by an AI client; only the user can undo it.");
+        return true;
+    }
+    bool window = false;
+    const std::shared_ptr<McpActionsRun> run = record.run;
+    const HWND changed = record.window;
+    const bool ran = RunOnAiUiThread(host.ui_window, [&](AppState* s) {
+        if (!s) return;
+        AppState* target = changed ? s->core.windows.Lookup(changed) : s;
+        if (!target) return;
+        window = true;
+        std::vector<std::function<void(AppState&)>> undo;
+        {
+            std::lock_guard lock(run->mu);
+            undo.swap(run->undo);
+        }
+        for (auto it = undo.rbegin(); it != undo.rend(); ++it) (*it)(*target);
+    }, call.cancelled);
+    if (call.cancelled) {
+        out = Cancelled();
+        return true;
+    }
+    if (!ran) {
+        out = ToolOutcome::Fail("busy", "Pulse did not answer in time; try again shortly.", true);
+        return true;
+    }
+    {
+        AiUndoList& list = UndoList();
+        std::lock_guard lock(list.mu);
+        std::erase_if(list.records, [&](const AiUndoRecord& r) { return r.run == run; });
+    }
+    if (record.ops_group) broker.ForgetAiUndoGroup(record.ops_group);
+    if (!window) {
+        out = ToolOutcome::Fail("not_ai_operation", "The window that call changed is closed; nothing was undone.");
+        return true;
+    }
+    out = ToolOutcome{};
+    out.changed_files = record.ops_group != 0;
+    out.data = json::Value::Object();
+    // The notification shows it: Claude 撤销了「刚才的一组操作」.
+    out.data.set("undone", json::Utf8(l10n::Get(l10n::StringId::AiUndoRunLabel).c_str()));
+    out.data.set("what", "the last run_actions call");
+    out.data.set("note", "Each step was put back as it was where that is still possible; a selection stays as it is.");
+    return true;
+}
+
+ToolOutcome UndoLast(const AiToolsHost& host, ToolBroker& broker, const ToolCall& call) {
+    if (ToolOutcome run_out; UndoRun(host, broker, call, run_out)) return run_out;
     if (!host.ops) return ToolOutcome::Fail("unsupported", "Undo is not available.");
     const uint64_t top = host.ops->TopUndoGroup();
     if (!host.ops->CanUndo())
@@ -134,6 +229,11 @@ ToolOutcome UndoLast(const AiToolsHost& host, ToolBroker& broker) {
             return ToolOutcome::Fail("not_ai_operation", "That change can no longer be undone.");
     }
     broker.ForgetAiUndoGroup(top);
+    {
+        AiUndoList& list = UndoList();
+        std::lock_guard lock(list.mu);
+        std::erase_if(list.records, [&](const AiUndoRecord& r) { return r.ops_group == top; });
+    }
     ToolOutcome out;
     out.changed_files = true;
     out.data = json::Value::Object();
@@ -166,16 +266,43 @@ void RegisterAiTools(ToolBroker& broker, const AiToolsHost& host) {
     broker.Register({"pulse.get_properties", PermissionClass::Read,
                      [](const ToolCall& call) { return GetProperties(call.args, call.cancelled); }, 60000, {}});
     broker.Register({"pulse.reveal", PermissionClass::View,
-                     [window](const ToolCall& call) { return RevealTool(window, call); }, 15000, {}});
+                     [window, host](const ToolCall& call) {
+                         if (!McpAllows(*SettingsNow(host), "view"))
+                             return McpNotAllowed(actions::McpGroup::View, "reveal");
+                         return RevealTool(window, call);
+                     }, 15000, {}});
     broker.Register({"pulse.create_zip", PermissionClass::Create,
                      [host](const ToolCall& call) { return CreateZip(host, call); }, 10 * 60 * 1000,
                      [](const json::Value& args) { return ZipTargetFolder(args); },
-                     [](const json::Value& args, ToolOutcome& error) {
+                     [host](const json::Value& args, ToolOutcome& error) {
+                         // Before anyone is asked: 新建 must be on (P5).
+                         if (!McpAllows(*SettingsNow(host), "create")) {
+                             error = McpNotAllowed(actions::McpGroup::Create, "create_zip");
+                             return false;
+                         }
                          ZipPlan plan;
                          return PlanZip(args, plan, error);
                      }});
     broker.Register({"pulse.undo_last", PermissionClass::Undo,
-                     [host, &broker](const ToolCall&) { return UndoLast(host, broker); }, 10000, {}});
+                     [host, &broker](const ToolCall& call) { return UndoLast(host, broker, call); }, 10000, {}});
+    broker.Register({"pulse.find_actions", PermissionClass::Read,
+                     [host](const ToolCall& call) { return FindActionsTool(host.ui_window, call, *SettingsNow(host)); },
+                     10000, {}});
+    // View: run_actions checks and asks for each step itself (ai_mcp_run.h);
+    // long enough for a few questions of 2 minutes and a file step.
+    broker.Register({"pulse.run_actions", PermissionClass::View,
+                     [host](const ToolCall& call) {
+                         std::shared_ptr<McpActionsRun> run;
+                         ToolOutcome out = RunActionsTool(host.ui_window, call, *SettingsNow(host), host.add_rule, run);
+                         if (run) {
+                             std::lock_guard lock(run->mu);
+                             if (!run->undo.empty()) {
+                                 KeepUndo({run->file_group, run, run->window});
+                                 out.undo_group = run->file_group;
+                             }
+                         }
+                         return out;
+                     }, 20 * 60 * 1000, {}});
 }
 
 } // namespace pulse::app::ai

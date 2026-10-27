@@ -88,6 +88,58 @@ void MainRenderer::DrawSettingsAi(const WindowViewModel& vm, const D2D1_RECT_F& 
                                     n.right - n.left - 12*s, theme.text);
     }
 
+    // AI 应用可以做的事: icon, title with its count and tag (查看与界面 81 个动作 默认打开),
+    // what it covers, the switch; 只能你自己做 dimmed without one.
+    if (!o.groups.empty()) {
+        text(ai_text::GroupsSection(), o.groups_section);
+        card(o.groups_card);
+        for (size_t i = 0; i < o.groups.size() && i < v->groups.size(); ++i) {
+            const AiGroupRowView& g = v->groups[i];
+            const auto& r = o.groups[i];
+            const int target = kAiGroupBase + static_cast<int>(i);
+            if (!g.locked && hovered(target)) {
+                MakeBrush(dc, theme.fill_hover, brFillHover_);
+                FillRoundedRect(dc, brFillHover_.get(), r.left + 4*s, r.top + 4*s, r.right - r.left - 8*s, r.bottom - r.top - 6*s, 4*s);
+            }
+            const float controls = g.locked ? r.right - 16*s : o.group_toggles[i].left;
+            const float right = controls - 14*s;
+            DrawIconText(r.left + 16*s, r.top + 20*s, 24*s, 24*s, g.icon.c_str(), L"", theme.text_secondary, g.locked ? 0.6f : 0.85f);
+            float x = r.left + 54*s;
+            painter_.DrawText(g.title, D2D1::RectF(x, r.top + 12*s, right, r.top + 36*s), compositor_->TextFormat(),
+                              g.locked ? theme.text_secondary : theme.text);
+            x += MeasureTextWidth(compositor_->DwriteFactory(), compositor_->TextFormat(), g.title) + 8*s;
+            if (!g.count.empty() && x < right) {
+                const float w = MeasureTextWidth(compositor_->DwriteFactory(), compositor_->SmallFormat(), g.count);
+                painter_.DrawText(g.count, D2D1::RectF(x, r.top + 13*s, (std::min)(right, x + w + 2*s), r.top + 35*s),
+                                  compositor_->SmallFormat(), theme.text_secondary);
+                x += w + 8*s;
+            }
+            if (g.tag != AiGroupTag::None) {
+                const wchar_t* label = ai_text::GroupTag(g.tag);
+                const float w = painter_.MeasureBadgeWidth(label);
+                if (x + w <= right) {
+                    fluent::BadgeSpec badge;
+                    badge.bounds = D2D1::RectF(x, r.top + 14*s, x + w, r.top + 34*s);
+                    badge.text = label;
+                    badge.kind = g.tag == AiGroupTag::DefaultOn ? fluent::BadgeKind::Accent
+                               : g.tag == AiGroupTag::AsksOutside ? fluent::BadgeKind::Danger : fluent::BadgeKind::Warning;
+                    painter_.DrawBadge(badge);
+                }
+            }
+            painter_.DrawWrappedCaption(g.desc, D2D1::Point2F(r.left + 54*s, r.top + 36*s), right - r.left - 54*s,
+                                        theme.text_secondary);
+            if (!g.locked) {
+                fluent::ControlState state{};
+                state.checked = g.on;
+                state.hovered = hovered(target);
+                painter_.DrawSwitch(o.group_toggles[i], L"", state);
+            }
+            if (i + 1 < o.groups.size()) divider_below(r);
+        }
+        painter_.DrawWrappedCaption(ai_text::GroupsFoot(), D2D1::Point2F(o.groups_foot.left, o.groups_foot.top),
+                                    o.groups_foot.right - o.groups_foot.left, theme.text_secondary);
+    }
+
     // 应用.
     text(ai_text::AppsSection(), o.apps_section);
     card(o.apps_card);
@@ -137,13 +189,17 @@ void MainRenderer::DrawSettingsAi(const WindowViewModel& vm, const D2D1_RECT_F& 
         const AiCallRowView& call = v->calls[i];
         const auto& r = o.calls[i];
         const float outcome_w = (std::min)(200*s, (r.right - r.left) * 0.32f);
-        text(call.time, D2D1::RectF(r.left + 16*s, r.top + 8*s, r.left + 96*s, r.bottom - 8*s), true);
+        // The first line keeps the one-line row's place; the summary goes under it.
+        const float line_bottom = call.summary.empty() ? r.bottom - 8*s : r.top + 28*s;
+        text(call.time, D2D1::RectF(r.left + 16*s, r.top + 8*s, r.left + 96*s, line_bottom), true);
         text(call.client + L"  \u00B7  " + call.tool_label,
-             D2D1::RectF(r.left + 100*s, r.top + 8*s, r.right - 16*s - outcome_w - 8*s, r.bottom - 8*s));
+             D2D1::RectF(r.left + 100*s, r.top + 8*s, r.right - 16*s - outcome_w - 8*s, line_bottom));
+        if (!call.summary.empty())
+            text(call.summary, D2D1::RectF(r.left + 100*s, r.top + 28*s, r.right - 16*s, r.bottom - 6*s), true);
         const D2D1_COLOR_F tone = call.tone == AiCallTone::Running ? theme.accent
                                 : call.tone == AiCallTone::Failed ? theme.danger
                                 : call.tone == AiCallTone::Declined ? warning : theme.text_secondary;
-        painter_.DrawText(call.outcome, D2D1::RectF(r.right - 16*s - outcome_w, r.top + 8*s, r.right - 16*s, r.bottom - 8*s),
+        painter_.DrawText(call.outcome, D2D1::RectF(r.right - 16*s - outcome_w, r.top + 8*s, r.right - 16*s, line_bottom),
                           compositor_->SmallFormat(), tone, fluent::HorizontalAlignment::Right);
     }
     if (o.more_calls.bottom > o.more_calls.top)
