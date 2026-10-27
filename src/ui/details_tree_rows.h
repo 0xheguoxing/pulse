@@ -66,4 +66,73 @@ inline float TreeOffsetDip(const DetailsTreeRow& row) {
     return kTreeChevronDip + static_cast<float>(row.depth) * kTreeIndentDip;
 }
 
+// Guide lines: the line of a depth-k folder ("level k") runs down from under
+// its chevron to its last child; each child joins it with a short tick, the
+// last one with a rounded elbow.
+inline constexpr int kTreeGuideMaxLevels = 64;
+
+struct TreeGuideRow {
+    uint64_t through = 0;  // levels drawn through the whole row (an ancestor with more below)
+    int join = -1;         // level of the row's own folder, -1 at depth 0
+    bool last = false;     // no later sibling: the join ends here in an elbow
+};
+
+struct TreeGuides {
+    std::vector<TreeGuideRow> rows;  // view rows first..last
+    int first = 0;
+    // The focus row's folder: its line is highlighted on hi_first..hi_last.
+    int hi_level = -1;
+    int hi_first = -1, hi_last = -1;
+    bool Highlighted(int view_row, int level) const {
+        return level == hi_level && view_row >= hi_first && view_row <= hi_last;
+    }
+};
+
+// Guides for view rows first..last; focus_row (-1: none) picks the
+// highlighted line. Reads only the depths, so it costs a scan of the rows
+// after `last` until every open level has been decided.
+inline TreeGuides BuildTreeGuides(const DetailsTreeRows& tree, int first, int last, int focus_row) {
+    TreeGuides g;
+    const int n = static_cast<int>(tree.rows.size());
+    first = first < 0 ? 0 : first;
+    last = last >= n ? n - 1 : last;
+    if (first > last) return g;
+    g.first = first;
+    const auto bit = [](int level) { return uint64_t{1} << level; };
+    const auto below = [](int level) {  // levels 0..level-1
+        return level >= kTreeGuideMaxLevels ? ~uint64_t{0} : (uint64_t{1} << level) - 1;
+    };
+    // Levels with a child still to come after `last`.
+    uint64_t more = 0;
+    int limit = 1 << 30;
+    for (int j = last + 1; j < n && limit > 0; ++j) {
+        const int d = tree.rows[static_cast<size_t>(j)].depth;
+        if (d > limit) continue;
+        if (d >= 1 && d - 1 < kTreeGuideMaxLevels) more |= bit(d - 1);
+        limit = d;
+    }
+    g.rows.resize(static_cast<size_t>(last - first + 1));
+    for (int r = last; r >= first; --r) {
+        const int d = tree.rows[static_cast<size_t>(r)].depth;
+        TreeGuideRow& out = g.rows[static_cast<size_t>(r - first)];
+        if (d >= 1 && d - 1 < kTreeGuideMaxLevels) {
+            out.through = more & below(d - 1);
+            out.join = d - 1;
+            out.last = (more & bit(d - 1)) == 0;
+        }
+        more &= below(d);  // this row closes every level at or below its depth
+        if (d >= 1 && d - 1 < kTreeGuideMaxLevels) more |= bit(d - 1);
+    }
+    const int parent = tree.ParentRow(focus_row);
+    if (parent >= 0) {
+        g.hi_level = tree.rows[static_cast<size_t>(parent)].depth;
+        g.hi_first = parent + 1;
+        g.hi_last = parent;
+        for (int j = parent + 1; j < n && j <= last &&
+             tree.rows[static_cast<size_t>(j)].depth > g.hi_level; ++j)
+            g.hi_last = j;
+    }
+    return g;
+}
+
 } // namespace pulse::ui

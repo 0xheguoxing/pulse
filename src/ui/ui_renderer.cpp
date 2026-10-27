@@ -975,6 +975,7 @@ bool MainRenderer::PartialRedrawSafe(const WindowViewModel& vm) const {
 bool MainRenderer::HoverRowDamage(int pane_index, int old_source, int new_source,
                                   D2D1_RECT_F* out) const {
     if (!out || pane_index < 0 || pane_index >= static_cast<int>(drawn_rows_.size())) return false;
+    if (tree_guides_drawn_[static_cast<size_t>(pane_index)]) return false;
     const auto& rows = drawn_rows_[static_cast<size_t>(pane_index)];
     if (rows.empty()) return false;
     D2D1_RECT_F r{};
@@ -1569,9 +1570,9 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
                 std::min(28*scale_, tabW - 24*scale_), 2*scale_, scale_);
         }
         if (part == 1) return;
-        if ((pinned && !vm.show_pinned_tab_names) || (strip.compact && !pinned && !active)) {
-            // Chrome pinned tab, or a crowded inactive tab: centered icon, no
-            // title, no close button (the tooltip names it).
+        if (pinned && !vm.show_pinned_tab_names) {
+            // Chrome pinned tab: centered icon, no title, no close button
+            // (the tooltip names it).
             DrawIconText(left, tabY, tabW, tabH,
                 vm.tabs[i].title.empty() ? kIconFolder
                     : vm.tabs[i].title == pulse::l10n::Get(pulse::l10n::StringId::Settings)
@@ -1599,9 +1600,9 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         const float closeReserve = show_close ? (closePad + closeSz + 6.0f * scale_)
                                               : 6.0f * scale_;
         const float titleLeft = left + 24.0f * scale_ + markerReserve;
-        DrawTabTitle(compositor_, compositor_->TabFormat(), brText_.get(),
-                     vm.tabs[i].title, titleLeft, tabY,
-                     std::max(0.0f, tabW - 24.0f * scale_ - markerReserve - closeReserve), tabH, scale_);
+        DrawTabTitleFaded(compositor_, compositor_->TabFormat(), brText_.get(),
+                          vm.tabs[i].title, titleLeft, tabY,
+                          std::max(0.0f, tabW - 24.0f * scale_ - markerReserve - closeReserve), tabH, scale_);
         if (show_close) {
             const float closeY = tabY + (tabH - closeSz) * 0.5f;
             const float closeX = left + tabW - closePad - closeSz;
@@ -2483,21 +2484,16 @@ MainRenderer::TabStripMetrics MainRenderer::ComputeTabStrip(
         // Recently closed: keep the widths the pointer was aiming at.
         m.w = tab_freeze_w_;
         m.active_w = tab_freeze_active_w_;
-        m.compact = tab_freeze_compact_;
     } else if (visibleCount == 0 || normalW >= minW) {
         m.w = visibleCount == 0 ? 0.0f : std::min(kTabMaxW * scale_, normalW);
         m.active_w = m.w;
     } else {
-        // Crowded: inactive tabs keep only their icon, the active one its title.
-        const float activeW = m.active >= 0 ? kTabActiveMinW * scale_ : 0.0f;
-        const size_t rest = visibleCount - (m.active >= 0 ? 1 : 0);
-        float iconW = rest == 0 ? minW
-            : (spare - (m.active >= 0 ? activeW + control_gap_ : 0.0f)) / static_cast<float>(rest) - control_gap_;
-        iconW = std::min(iconW, minW);
-        m.compact = true;
-        m.overflow = iconW < kTabCompactW * scale_;
-        m.w = m.overflow ? kTabCompactW * scale_ : iconW;
-        m.active_w = m.active >= 0 ? activeW : m.w;
+        // Crowded: tabs stop shrinking at the minimum and keep their titles;
+        // the strip scrolls instead (Edge's scrollable tab strip). The active
+        // tab always shows close, so it gets that room on top.
+        m.w = minW;
+        m.active_w = m.active >= 0 ? kTabActiveMinW * scale_ : m.w;
+        m.overflow = true;
     }
     if (m.active < 0) m.active_w = m.w;
     m.y = 4.0f * scale_;
@@ -2583,7 +2579,6 @@ void MainRenderer::FreezeTabWidths(const WindowViewModel& vm, float window_w) {
     for (const auto& t : vm.tabs) if (!t.hidden && !t.pinned) ++count;
     tab_freeze_w_ = m.w;
     tab_freeze_active_w_ = m.active_w;
-    tab_freeze_compact_ = m.compact;
     tab_freeze_count_ = count;
 }
 

@@ -119,13 +119,12 @@ void ClearTextWidthCache() {
         const float t = std::clamp((x - g.left) / (std::max)(1.0f, g.right - g.left), 0.0f, 1.0f);
         return static_cast<int>(t * static_cast<float>(max_value) + 0.5f);
     }
-    constexpr float kTabMinW = 72.0f;
+    constexpr float kTabMinW = 96.0f;  // crowded tabs stop here and the strip scrolls
     constexpr float kTabMaxW = 240.0f;
     constexpr float kTabPinnedW = 36.0f; // Chrome pinned tab: icon-only square
     constexpr float kTabPinnedNamedW = 112.0f;
-    constexpr float kTabCloseAlwaysW = 96.0f;
-    constexpr float kTabCompactW = 40.0f;     // icon-only inactive tab when crowded
-    constexpr float kTabActiveMinW = 120.0f;  // active tab keeps its title and close
+    constexpr float kTabCloseAlwaysW = 140.0f; // narrower inactive tabs show close on hover
+    constexpr float kTabActiveMinW = 120.0f;  // crowded active tab: minimum + room for close
     constexpr float kTabScrollArrowW = 24.0f;
     constexpr float kTabClosePadDip = 10.0f;
     constexpr float kTabCloseSizeDip = 16.0f;
@@ -2221,6 +2220,37 @@ void DrawTabTitle(Compositor* compositor, IDWriteTextFormat* fmt, ID2D1SolidColo
     }
     if (luma(text, x, w, fmt->GetTextAlignment())) return;
     DrawTabTitle(compositor->Dc(), factory, fmt, br, text, x, y, w, h, scale);
+}
+
+// Edge-style: a title too long for its tab fades out over its last few
+// pixels instead of ending in "...", so narrow tabs keep more of the name.
+void DrawTabTitleFaded(Compositor* compositor, IDWriteTextFormat* fmt, ID2D1SolidColorBrush* br,
+                       const std::wstring& text, float x, float y, float w, float h, float scale) {
+    if (!compositor || !compositor->Dc() || !fmt || !br || text.empty() || w <= 1.0f || h <= 1.0f) return;
+    IDWriteFactory2* factory = compositor->DwriteFactory();
+    ID2D1DeviceContext* dc = compositor->Dc();
+    const float fullW = factory ? MeasureTextWidth(factory, fmt, text) : 0.0f;
+    const float fade = std::min(20.0f * scale, w * 0.4f);
+    ComPtr<ID2D1GradientStopCollection> stops;
+    ComPtr<ID2D1LinearGradientBrush> mask;
+    if (fullW > w && !IsHighContrast() && fmt->GetReadingDirection() == DWRITE_READING_DIRECTION_LEFT_TO_RIGHT) {
+        const D2D1_GRADIENT_STOP s[] = {{0.0f, D2D1::ColorF(0, 0, 0, 1.0f)},
+                                        {(w - fade) / w, D2D1::ColorF(0, 0, 0, 1.0f)},
+                                        {1.0f, D2D1::ColorF(0, 0, 0, 0.0f)}};
+        if (SUCCEEDED(dc->CreateGradientStopCollection(s, 3, &stops)) && stops.get())
+            dc->CreateLinearGradientBrush(D2D1::LinearGradientBrushProperties(
+                D2D1::Point2F(x, 0.0f), D2D1::Point2F(x + w, 0.0f)), stops.get(), &mask);
+    }
+    if (!mask.get()) {
+        DrawTabTitle(compositor, fmt, br, text, x, y, w, h, scale);
+        return;
+    }
+    dc->PushLayer(D2D1::LayerParameters1(D2D1::RectF(x, y, x + w, y + h), nullptr,
+                                         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(),
+                                         1.0f, mask.get(), D2D1_LAYER_OPTIONS1_NONE), nullptr);
+    // Laid out at full width so nothing trims; the layer clips and fades it.
+    DrawTabTitle(compositor, fmt, br, text, x, y, fullW + 8.0f * scale, h, scale);
+    dc->PopLayer();
 }
 
 void MakeBrush(ID2D1DeviceContext* dc, const D2D1_COLOR_F& c, ComPtr<ID2D1SolidColorBrush>& br) {

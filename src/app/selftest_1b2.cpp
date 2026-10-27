@@ -26,6 +26,7 @@
 #include "app_sidebar_refresh.h"
 #include "../ui/address_search_layout.h"
 #include "../ui/layer_alphas.h"
+#include "../ui/details_tree_rows.h"
 #include "search_query.h"
 #include "../common/localization.h"
 #include "app_model.h"
@@ -3092,6 +3093,45 @@ void TestBloomAccentGeometry() {
     const uint32_t sat = ui::BloomDotRgb(7);
     Check(pastel != sat && pastel != 0xFFFFFFu && sat != 0xFFFFFFu,
           L"bloom: pastel and saturated dots differ");
+}
+
+void TestTreeGuides() {
+    // 树状引线: a / b(open) / b1, b2(open) / b21 / b3, then c; and a
+    // placeholder row under an open folder counts as its child.
+    ui::DetailsTreeRows t;
+    const auto add = [&](uint16_t depth, bool open, ui::TreeRowKind kind = ui::TreeRowKind::Entry) {
+        ui::DetailsTreeRow r;
+        r.depth = depth; r.kind = kind; r.expandable = open; r.expanded = open;
+        t.rows.push_back(r);
+    };
+    add(0, false); add(0, true); add(1, false); add(1, true); add(2, false); add(1, false); add(0, false);
+    const ui::TreeGuides all = ui::BuildTreeGuides(t, 0, 6, -1);
+    Check(all.rows.size() == 7 && all.rows[0].join < 0 && all.rows[1].join < 0 && all.rows[6].join < 0,
+          L"tree guides: top-level rows join no line");
+    Check(all.rows[2].join == 0 && !all.rows[2].last && all.rows[3].join == 0 && !all.rows[3].last &&
+          all.rows[5].join == 0 && all.rows[5].last,
+          L"tree guides: children tick into their folder's line, the last one ends it in an elbow");
+    Check(all.rows[4].join == 1 && all.rows[4].last && all.rows[4].through == 1u,
+          L"tree guides: a grandchild's own line ends while its grandparent's runs on past it");
+    const ui::TreeGuides top = ui::BuildTreeGuides(t, 0, 3, -1);
+    Check(top.rows.size() == 4 && !top.rows[3].last,
+          L"tree guides: a line continues past the last visible row when more children follow");
+    const ui::TreeGuides mid = ui::BuildTreeGuides(t, 4, 5, -1);
+    Check(mid.rows[0].through == 1u && mid.rows[1].last,
+          L"tree guides: rows scrolled into the middle still know their ancestors' lines");
+    const ui::TreeGuides hi = ui::BuildTreeGuides(t, 0, 6, 4);
+    Check(hi.hi_level == 1 && hi.hi_first == 4 && hi.hi_last == 4 && hi.Highlighted(4, 1) &&
+          !hi.Highlighted(4, 0) && !hi.Highlighted(2, 0),
+          L"tree guides: the focus row's folder line is the highlighted one");
+    const ui::TreeGuides hi2 = ui::BuildTreeGuides(t, 0, 6, 2);
+    Check(hi2.hi_level == 0 && hi2.hi_first == 2 && hi2.hi_last == 5 && hi2.Highlighted(4, 0),
+          L"tree guides: highlighting a folder line covers its whole subtree");
+    Check(ui::BuildTreeGuides(t, 0, 6, 1).hi_level < 0 && ui::BuildTreeGuides(t, 0, 6, -1).hi_level < 0,
+          L"tree guides: a top-level or missing focus row highlights nothing");
+    add(1, false, ui::TreeRowKind::Loading);
+    t.rows[6].expandable = t.rows[6].expanded = true;
+    const ui::TreeGuides ph = ui::BuildTreeGuides(t, 6, 7, -1);
+    Check(ph.rows[1].join == 0 && ph.rows[1].last, L"tree guides: a loading row joins its folder's line");
 }
 
 void TestLayerAlphas() {
@@ -9696,6 +9736,7 @@ int RunSelfTest1B2() {
     TestBloomAccentGeometry();
     TestBloomSpring();
     TestLayerAlphas();
+    TestTreeGuides();
     TestOpsThroughShell();
 
     // Cleanup: real-delete the whole sandbox via the ops layer is overkill;

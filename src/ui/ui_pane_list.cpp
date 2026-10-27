@@ -1086,6 +1086,95 @@ void DrawTreeChevron(ID2D1DeviceContext* dc, ID2D1Brush* brush, float cx, float 
     dc->DrawGeometry(path.Get(), brush, stroke);
 }
 
+// Details tree guide lines over rows first..last (BuildTreeGuides): long
+// vertical runs per level, a tick into each child and a rounded elbow into
+// the last one. Two geometries, the plain lines and the highlighted folder's.
+template <class CellOf>
+void DrawTreeGuides(ID2D1DeviceContext* dc, const DetailsTreeRows& tree, const TreeGuides& g,
+                    CellOf cell_of, float base_x, float scale, ID2D1Brush* plain, ID2D1Brush* hi,
+                    float plain_w, float hi_w) {
+    Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+    dc->GetFactory(&factory);
+    if (!factory || g.rows.empty()) return;
+    Microsoft::WRL::ComPtr<ID2D1PathGeometry> paths[2];
+    Microsoft::WRL::ComPtr<ID2D1GeometrySink> sinks[2];
+    for (int k = 0; k < 2; ++k)
+        if (FAILED(factory->CreatePathGeometry(&paths[k])) || FAILED(paths[k]->Open(&sinks[k]))) return;
+    const auto bit = [](int level) { return uint64_t{1} << level; };
+    const auto level_x = [&](int level) {
+        return std::floor(base_x + (static_cast<float>(level) * kTreeIndentDip + kTreeChevronDip * 0.5f) * scale) + 0.5f;
+    };
+    std::array<float, kTreeGuideMaxLevels> run_top{};
+    std::array<bool, kTreeGuideMaxLevels> run_hi{};
+    uint64_t open = 0;
+    float prev_bottom = 0.0f;
+    const auto line = [&](bool highlighted, D2D1_POINT_2F a, D2D1_POINT_2F b) {
+        ID2D1GeometrySink* s = sinks[highlighted ? 1 : 0].Get();
+        s->BeginFigure(a, D2D1_FIGURE_BEGIN_HOLLOW);
+        s->AddLine(b);
+        s->EndFigure(D2D1_FIGURE_END_OPEN);
+    };
+    const auto close_run = [&](int level, float y_end) {
+        const float x = level_x(level);
+        if (y_end > run_top[static_cast<size_t>(level)])
+            line(run_hi[static_cast<size_t>(level)], D2D1::Point2F(x, run_top[static_cast<size_t>(level)]),
+                 D2D1::Point2F(x, y_end));
+        open &= ~bit(level);
+    };
+    for (size_t idx = 0; idx < g.rows.size(); ++idx) {
+        const int row = g.first + static_cast<int>(idx);
+        const TreeGuideRow& gr = g.rows[idx];
+        const D2D1_RECT_F cell = cell_of(row);
+        if (cell.bottom - cell.top < 0.5f) continue;
+        uint64_t want = gr.through;
+        if (gr.join >= 0) want |= bit(gr.join);
+        for (int l = 0; l < kTreeGuideMaxLevels && (open >> l); ++l)
+            if ((open & bit(l)) && (!(want & bit(l)) || run_hi[static_cast<size_t>(l)] != g.Highlighted(row, l)))
+                close_run(l, prev_bottom);
+        for (int l = 0; l < kTreeGuideMaxLevels && (want >> l); ++l) {
+            if (!(want & bit(l)) || (open & bit(l))) continue;
+            run_top[static_cast<size_t>(l)] = cell.top;
+            run_hi[static_cast<size_t>(l)] = g.Highlighted(row, l);
+            open |= bit(l);
+        }
+        if (gr.join >= 0) {
+            const int l = gr.join;
+            const float x = level_x(l);
+            const float mid = std::round((cell.top + cell.bottom) * 0.5f) + 0.5f;
+            const DetailsTreeRow* tr = tree.At(row);
+            const bool folder = tr && tr->kind == TreeRowKind::Entry && tr->expandable;
+            // Short of the child's chevron, or of its icon past the empty slot.
+            const float x_end = x + (folder ? 8.5f : 13.5f) * scale;
+            const bool h = run_hi[static_cast<size_t>(l)];
+            if (gr.last) {
+                const float top = run_top[static_cast<size_t>(l)];
+                const float r = std::min(5.0f * scale, mid - top);
+                ID2D1GeometrySink* s = sinks[h ? 1 : 0].Get();
+                s->BeginFigure(D2D1::Point2F(x, top), D2D1_FIGURE_BEGIN_HOLLOW);
+                if (r >= 0.5f) {
+                    s->AddLine(D2D1::Point2F(x, mid - r));
+                    s->AddArc(D2D1::ArcSegment(D2D1::Point2F(x + r, mid), D2D1::SizeF(r, r), 0.0f,
+                                               D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
+                } else {
+                    s->AddLine(D2D1::Point2F(x, mid));
+                }
+                s->AddLine(D2D1::Point2F(x_end, mid));
+                s->EndFigure(D2D1_FIGURE_END_OPEN);
+                open &= ~bit(l);
+            } else {
+                line(h, D2D1::Point2F(x, mid), D2D1::Point2F(x_end, mid));
+            }
+        }
+        prev_bottom = cell.bottom;
+    }
+    for (int l = 0; l < kTreeGuideMaxLevels && (open >> l); ++l)
+        if (open & bit(l)) close_run(l, prev_bottom);
+    for (int k = 0; k < 2; ++k)
+        if (FAILED(sinks[k]->Close())) return;
+    dc->DrawGeometry(paths[0].Get(), plain, plain_w);
+    dc->DrawGeometry(paths[1].Get(), hi, hi_w);
+}
+
 // Details tree "more" row: "showing X of Y", then show more / show all / open
 // in a new tab. Shared by DrawList and TreeMoreActionAt so they never disagree.
 struct TreeMoreLayout {
@@ -4380,16 +4469,28 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
         bool dim_extension = false;
         int source = -1;
     } expanded_name;
-    // Details tree (inline folder expansion): chevrons and the rows that stand
-    // in for a folder's children (loading, empty, failed, more). Like Finder,
-    // depth shows through indentation alone: guide lines broke up against
-    // zebra stripes and selection fills.
+    // Details tree (inline folder expansion): chevrons, guide lines and the
+    // rows that stand in for a folder's children (loading, empty, failed,
+    // more). The guides go on after every row fill (see below), so zebra
+    // stripes and selection fills no longer break them up. The hovered or
+    // focused row's folder gets an accent line and chevron.
+    TreeGuides tree_guides;
+    int tree_hi_row = -1;
+    if (detailsView && vm.tree && !vm.Groups() && startIdx >= 0 && endIdx >= startIdx) {
+        const int focus_src = vm.hover_index >= 0 && !vm.marquee_active ? vm.hover_index
+            : vm.focus_ring_source >= 0 ? vm.focus_ring_source : vm.selected_index;
+        tree_guides = BuildTreeGuides(*vm.tree, startIdx, endIdx, vm.ViewIndex(focus_src));
+        if (tree_guides.hi_level >= 0) tree_hi_row = tree_guides.hi_first - 1;
+    }
+    if (pane_index >= 0 && pane_index < static_cast<int>(tree_guides_drawn_.size()))
+        tree_guides_drawn_[static_cast<size_t>(pane_index)] = !tree_guides.rows.empty();
     const auto drawTreeChevron = [&](const DetailsTreeRow& tr, const D2D1_RECT_F& cell, float baseX,
-                                     bool strong) {
+                                     bool strong, bool accent) {
         const float cx = baseX + (static_cast<float>(tr.depth) * kTreeIndentDip +
                                   kTreeChevronDip * 0.5f) * scale_;
         const float cy = (cell.top + cell.bottom) * 0.5f;
-        MakeBrush(dc, strong ? theme.text : theme.text_secondary, brFillInput_);
+        MakeBrush(dc, accent && !IsHighContrast() ? theme.accent : strong ? theme.text : theme.text_secondary,
+                  brFillInput_);
         DrawTreeChevron(dc, brFillInput_.get(), cx, cy, 3.5f * scale_, 1.4f * scale_, tr.expanded);
     };
     const auto drawTreePlaceholder = [&](const DetailsTreeRow& tr, const D2D1_RECT_F& cell, float baseX) {
@@ -4806,7 +4907,8 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             }
 
             if (draw_shapes && treeRow) {
-                if (treeRow->expandable) drawTreeChevron(*treeRow, cell, treeBaseX, hover || selected);
+                if (treeRow->expandable)
+                    drawTreeChevron(*treeRow, cell, treeBaseX, hover || selected, i == tree_hi_row);
             }
             if (draw_text && change && iconGrid) {
                 const float bw = std::min(ChangeBadgeWidth(*change, scale_, compositor_), cell.right - cell.left - 12 * scale_);
@@ -5865,6 +5967,23 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
                                 theme.text_secondary, 0.9f);
                 if (trail.show_more)
                     draw_action(trail.more, moreHot, L"\xE712", L"...", theme.text_secondary, 0.72f);
+            }
+        }
+        if (draw_shapes && !morphing && !tree_guides.rows.empty()) {
+            const bool guideHc = IsHighContrast();
+            D2D1_COLOR_F guideColor = theme.text;
+            guideColor.a = guideHc ? 1.0f : (theme.bg.r < 0.5f ? 0.17f : 0.16f);
+            ComPtr<ID2D1SolidColorBrush> plainBr, hiBr;
+            dc->CreateSolidColorBrush(guideColor, &plainBr);
+            dc->CreateSolidColorBrush(guideHc ? theme.text : theme.accent, &hiBr);
+            const float lineW = std::max(1.0f, std::floor(scale_));
+            if (plainBr.get() && hiBr.get()) {
+                dc->PushAxisAlignedClip(viewport, D2D1_ANTIALIAS_MODE_ALIASED);
+                const D2D1_RECT_F guideIcon = layout.IconRect(tree_guides.first);
+                DrawTreeGuides(dc, *vm.tree, tree_guides, [&](int row) { return layout.ItemRect(row); },
+                               guideIcon.left + CheckGutterDip(vm) * scale_, scale_, plainBr.get(), hiBr.get(),
+                               lineW, lineW * 1.5f);
+                dc->PopAxisAlignedClip();
             }
         }
         if (text_layer) dc->PopLayer();

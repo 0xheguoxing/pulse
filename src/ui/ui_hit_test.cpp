@@ -178,8 +178,7 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             }
             if (x < tabLeft || x >= tabLeft + tabW) return false;
             r.index = i;
-            const bool compact = strip.compact && !vm.tabs[static_cast<size_t>(i)].pinned && i != strip.active;
-            const bool show_close = !compact && TabCloseVisible(vm, i, tabW, scale_);
+            const bool show_close = TabCloseVisible(vm, i, tabW, scale_);
             const float close_hit = (kTabClosePadDip + kTabCloseSizeDip) * scale_;
             r.region = show_close && x >= tabLeft + tabW - close_hit
                 ? HitTestResult::TabClose : HitTestResult::Tab;

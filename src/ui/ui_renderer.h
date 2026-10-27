@@ -731,13 +731,12 @@ private:
             int group = -1; // index into WindowViewModel::tab_groups
         };
         std::vector<Chip> chips;  // one chip at the start of each same-group run
-        // Too many tabs for the strip: inactive tabs shrink to their icon
-        // (`compact`) while the active one keeps its title (`active_w`); past
-        // that the strip scrolls between the two arrows (`overflow`).
+        // Too many tabs for the strip: they stop at the minimum width with
+        // their titles, the active one a little wider (`active_w`) for its
+        // close button, and the strip scrolls between two arrows (`overflow`).
         int active = -1;          // visible, unpinned active tab, or -1
         float active_w = 0.0f;
         float pinned_w = 0.0f;
-        bool compact = false;
         bool overflow = false;
         float view_left = 0.0f, view_right = 0.0f; // tab clip span when overflowing
         float arrow_w = 0.0f;
@@ -1053,7 +1052,6 @@ private:
     mutable int tab_scroll_active_ = -1;
     float tab_freeze_w_ = 0.0f, tab_freeze_active_w_ = 0.0f;
     size_t tab_freeze_count_ = 0;
-    bool tab_freeze_compact_ = false;
     std::array<uint64_t, 8> folder_size_pending_since_{};
     bool folder_size_anim_active_ = false;
     bool decorative_only_ = false;   // TickMotion: only the shimmer/skeleton/spinner run
@@ -1134,6 +1132,9 @@ private:
     D2D1_RECT_F frame_damage_{};
     bool last_frame_overlay_ = true;     // the last frame drew a floating overlay
     std::array<std::vector<std::pair<int, D2D1_RECT_F>>, 8> drawn_rows_{};  // source, cell
+    // Panes whose last frame drew tree guides: a hover moves the highlighted
+    // line, which spans rows outside the two that changed.
+    std::array<bool, 8> tree_guides_drawn_{};
     bool OverlayUp(const WindowViewModel& vm) const;
     bool NonHoverMotionActive() const;
     mutable std::vector<D2D1_RECT_F> landing_rects_;   // this frame's landing rows (window px)
