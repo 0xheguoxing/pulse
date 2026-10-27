@@ -4353,7 +4353,7 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
             }
             s->folderSizeClickPath.clear();
             if (tab) tab->SelectOnly(hit.index);
-            OpenSelected(*s);
+            OpenSelected(*s, (wParam & MK_SHIFT) != 0);
         } else if (hit.region == ui::HitTestResult::AddressBar ||
                    hit.region == ui::HitTestResult::BreadcrumbSegment) {
             ShowOmnibar(*s, OmnibarMode::Path);

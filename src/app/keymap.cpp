@@ -73,7 +73,8 @@ constexpr KeyActionInfo kActions[] = {
     {X::Sidebar, "Sidebar", G::Tabs, N::Normal, L"折叠侧栏", L"Collapse the sidebar", D(K(C, 'B')), 0, 0, 0, false},
     {X::FavoritesBar, "FavoritesBar", G::Tabs, N::Normal, L"显示收藏栏", L"Show the favorites bar", D(K(C | S, 'B')), 0, 0, 0, false},
     {X::Maximize, "Maximize", G::Tabs, N::Normal, L"最大化", L"Maximize", D(K(0, VK_F11)), 0, 0, 0, false},
-    {X::NewWindow, "NewWindow", G::Windows, N::Normal, L"新建窗口", L"New window", D(K(C, 'N')), 0, 0, 0, false},
+    // Windows dispatches this through the configured shell integration.
+    {X::NewWindow, "NewWindow", G::Windows, N::Fixed, L"新建窗口", L"New window", D(K(kKeyWin, 'E')), 0, 0, 0, false},
     {X::CloseWindow, "CloseWindow", G::Windows, N::Normal, L"关闭窗口", L"Close window", D(K(C | S, 'W')), 0, 0, 0, false},
     {X::TabToWindow, "TabToWindow", G::Windows, N::Normal, L"标签页移到新窗口", L"Move tab to a new window", D(K(C | S, 'M')), 0, 0, 0, false},
     {X::ReopenClosed, "ReopenClosed", G::Windows, N::Normal, L"重新打开关闭的窗口", L"Reopen what was closed", D(K(C | S, 'T')), 0, 0, 0, false},

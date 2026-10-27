@@ -15,7 +15,7 @@
 //   Backspace            back (Alt+Up stays "up one level")
 //   Shift+F10, Apps key  context menu
 //   F11                  maximize / restore
-//   Ctrl+N               new window at the current folder (multi-window M4b)
+//   Win+E                new window through Windows shell integration
 //   Ctrl+Shift+W         close this window (Ctrl+W, without Shift, closes the tab)
 //   Ctrl+Shift+M         move the current tab to a new window (multi-window M4e)
 //   Ctrl+G, Ctrl+Shift+G 合并到文件夹 / 解散文件夹 (group / ungroup, as in design tools)
@@ -48,7 +48,6 @@ inline ExplorerKeyCommand ExplorerShortcut(UINT key, bool ctrl, bool shift, bool
     if (ctrl && alt && !shift && key == L'D') return {A::MarkTarget};
     if (ctrl && !alt && key == L'D') return {A::Delete, 0, shift};
     if (ctrl && shift && !alt && key == L'N') return {A::NewFolder};
-    if (ctrl && !shift && !alt && key == L'N') return {A::NewWindow};
     if (ctrl && shift && !alt && key == L'W') return {A::CloseWindow};
     if (ctrl && shift && !alt && key == L'M') return {A::MoveTabToNewWindow};
     if (ctrl && shift && !alt && key == L'J') return {A::MergeWindows};

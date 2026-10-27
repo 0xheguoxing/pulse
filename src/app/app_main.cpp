@@ -3298,7 +3298,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_NEW_WINDOW:
-        // Another window at this window's current folder (M4a; Ctrl+N in M4b).
+        // Another window at this window's current folder.
         if (s && s->startupComplete && !s->shot.active && !s->menushot) {
             const app::Tab* tab = ActiveTab(*s);
             OpenPulseWindow(*s, WindowInit{tab ? tab->current_path : std::wstring()});

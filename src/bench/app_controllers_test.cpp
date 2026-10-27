@@ -495,8 +495,8 @@ bool TestExplorerShortcuts() {
     passed &= Report("explorer keys: Ctrl+Shift+N new folder, Ctrl+E / F3 search",
         is(L'N', true, true, false, A::NewFolder) && is(L'E', true, false, false, A::Search) &&
         is(VK_F3, false, false, false, A::Search));
-    passed &= Report("explorer keys: Ctrl+N new window, Ctrl+Shift+W closes the window (multi-window M4b)",
-        is(L'N', true, false, false, A::NewWindow) && is(L'W', true, true, false, A::CloseWindow) &&
+    passed &= Report("explorer keys: Ctrl+N is unassigned, Ctrl+Shift+W closes the window",
+        is(L'N', true, false, false, A::None) && is(L'W', true, true, false, A::CloseWindow) &&
         is(L'N', true, false, true, A::None) && is(L'N', false, false, false, A::None));
     passed &= Report("explorer keys: Ctrl+Shift+M moves the tab to a new window, Ctrl+M and Ctrl+Alt+Shift+M do not (M4e)",
         is(L'M', true, true, false, A::MoveTabToNewWindow) && is(L'M', true, false, false, A::None) &&

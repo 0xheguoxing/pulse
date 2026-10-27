@@ -85,7 +85,7 @@ std::vector<HelpGroup> HelpGroups() {
             {Id::Maximize, L"F11", {K::Maximize}},
         }},
         {Id::HelpGroupWindows, {
-            {Id::HelpNewWindow, L"Ctrl N", {K::NewWindow}},
+            {Id::HelpNewWindow, L"Win E", {K::NewWindow}},
             {Id::HelpCloseWindow, L"Ctrl Shift W / Alt F4", {K::CloseWindow}},
             {Id::HelpTabToWindow, L"Ctrl Shift M", {K::TabToWindow}},
             {Id::HelpReopenClosed, L"Ctrl Shift T", {K::ReopenClosed}},

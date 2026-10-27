@@ -2,6 +2,7 @@
 #include "app_window_title.h"
 // app_navigation.cpp — extracted from app_main.cpp.
 #include "app_internal.h"
+#include "window_factory.h"
 #include "bitlocker_unlock.h"
 #include "selection_caps.h"
 #include "tag_query.h"
@@ -2842,8 +2843,8 @@ static void OpenThisPcLauncher(AppState& s, const fs::DirEntry& e) {
     }).detach();
 }
 
-void OpenSelected(AppState& s) {
-    if(DeferContentSelection(s,[=](AppState& v){OpenSelected(v);})) return;
+void OpenSelected(AppState& s, bool folder_in_new_window) {
+    if(DeferContentSelection(s,[=](AppState& v){OpenSelected(v, folder_in_new_window);})) return;
     app::Tab* tab = ActiveTab(s);
     if (!tab || !tab->snapshot) return;
     if (IsRecycleTab(tab)) {
@@ -2852,6 +2853,10 @@ void OpenSelected(AppState& s) {
     }
     const auto indices = tab->SelectedIndices();
     if (indices.empty()) return;
+    const auto open_folder = [&](const std::wstring& path) {
+        if (folder_in_new_window) OpenPulseWindow(s, WindowInit{path});
+        else NavigateTo(s, path);
+    };
     if (indices.size() == 1) {
         const fs::DirEntry& e = tab->EntryAt(static_cast<size_t>(indices[0]));
         if (e.change_record_only) return;
@@ -2882,11 +2887,11 @@ void OpenSelected(AppState& s) {
         // itself, as in Explorer: its arguments, start-in folder, run-as and
         // Windows Installer's install-on-demand only apply that way.
         if (!e.link_target.empty() && e.link_target_is_dir) {
-            NavigateTo(s, e.link_target);
+            open_folder(e.link_target);
             return;
         }
         std::wstring full = EntryFullPath(*tab, indices[0]);
-        if (e.is_dir) NavigateTo(s, full);
+        if (e.is_dir) open_folder(full);
         else {
             s.ops.OpenWith(full);
             RecordRecentOpen(s, full, app::PlaceItemKind::File);
