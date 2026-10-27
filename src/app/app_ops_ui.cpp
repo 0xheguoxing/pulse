@@ -485,6 +485,17 @@ void NoteDeleteFinished(AppState& s, const ops::FinishedTask& done) {
         if (done.success) s.leavingDoneAt = ui::motion::NowMs();
         else s.leavingPaths.clear();
     }
+    if (done.type == ops::OpType::RecycleDelete && !done.recycle_refused.empty() && s.hwnd) {
+        // Asked from a posted message: this runs inside the ops notification.
+        const bool first = s.recycleRefused.empty();
+        s.recycleRefused.insert(s.recycleRefused.end(), done.recycle_refused.begin(), done.recycle_refused.end());
+        using Refusal = ops::RecycleRefusal;
+        const Refusal why = done.recycle_refusal;
+        if (why == Refusal::Location || s.recycleRefusal == Refusal::None ||
+            (why == Refusal::Disabled && s.recycleRefusal == Refusal::TooLarge))
+            s.recycleRefusal = why;
+        if (first) PostMessageW(s.hwnd, WM_RECYCLE_REFUSED, 0, 0);
+    }
     // An undo that recycles what it had created (new folders) is not a
     // delete the user can take back: its step is not on the undo stack, so
     // the snack's Undo would undo something else.
@@ -563,21 +574,47 @@ void DeletePaths(AppState& s, std::vector<std::wstring> paths, bool permanent) {
     MarkLeavingRows(s, leaving, s.ops.Submit(std::move(req)));
 }
 
+void OfferPermanentDeleteForRefused(AppState& s) {
+    std::vector<std::wstring> paths = std::move(s.recycleRefused);
+    const ops::RecycleRefusal refusal = s.recycleRefusal;
+    s.recycleRefused.clear();
+    s.recycleRefusal = ops::RecycleRefusal::None;
+    // What is still there (another task may have dealt with some meanwhile);
+    // a huge list is left to the delete to report.
+    if (paths.size() <= 256)
+        std::erase_if(paths, [](const std::wstring& path) {
+            return GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES;
+        });
+    if (paths.empty()) return;
+    using Reason = ui::PermanentDeleteInfo::NoBinReason;
+    const Reason reason = refusal == ops::RecycleRefusal::Location ? Reason::Location
+        : refusal == ops::RecycleRefusal::Disabled ? Reason::Disabled : Reason::TooLarge;
+    if (ConfirmPermanentDelete(s, paths, true, false, reason) != ui::PermanentDeleteChoice::Delete) return;
+    ops::OpRequest req;
+    req.type = ops::OpType::RealDelete;
+    req.sources = std::move(paths);
+    s.ops.Submit(std::move(req));
+}
+
 // ---------------------------------------------------------------------------
 // Stage 1B-2: built-in Fluent context menu + new-item dropdown.
 void RestoreSelected(AppState& s) {
     app::Tab* tab = ActiveTab(s);
     if (!tab || !tab->snapshot || !IsRecycleTab(tab)) return;
     std::vector<std::wstring> paths;
+    std::wstring first_name; // the status names the item, not its $R payload
     for (int index : tab->SelectedIndices()) {
         if (index < 0 || index >= static_cast<int>(tab->EntryCount())) continue;
-        const auto& path = tab->EntryAt(static_cast<size_t>(index)).recycle_path;
-        if (!path.empty()) paths.push_back(path);
+        const auto entry = tab->EntryAt(static_cast<size_t>(index));
+        if (entry.recycle_path.empty()) continue;
+        if (paths.empty()) first_name = entry.name;
+        paths.push_back(entry.recycle_path);
     }
     if (paths.empty()) return;
     ops::OpRequest req;
     req.type = ops::OpType::RestoreRecycle;
     req.sources = std::move(paths);
+    req.display_name = std::move(first_name);
     s.ops.Submit(std::move(req));
 }
 
@@ -587,14 +624,18 @@ void RestoreAllRecycle(AppState& s) {
     std::vector<std::wstring> paths;
     const size_t count = tab->EntryCount();
     paths.reserve(count);
+    std::wstring first_name;
     for (size_t i = 0; i < count; ++i) {
-        std::wstring full = tab->EntryAt(i).recycle_path;
-        if (!full.empty()) paths.push_back(std::move(full));
+        const auto entry = tab->EntryAt(i);
+        if (entry.recycle_path.empty()) continue;
+        if (paths.empty()) first_name = entry.name;
+        paths.push_back(entry.recycle_path);
     }
     if (paths.empty()) return;
     ops::OpRequest req;
     req.type = ops::OpType::RestoreRecycle;
     req.sources = std::move(paths);
+    req.display_name = std::move(first_name);
     s.ops.Submit(std::move(req));
 }
 
@@ -636,7 +677,7 @@ void CollectPathsToTray(AppState& s, const std::vector<std::wstring>& paths, boo
     s.trayClip.paths = paths;
     s.trayClip.move = move_intent;
     s.trayClip.seq = GetClipboardSequenceNumber();
-    s.trayClip.at = GetTickCount64();
+    s.trayClip.at = ui::motion::NowMs();
     if (s.hwnd) {
         std::wstring title = l10n::Get(move_intent ? l10n::StringId::TrayCutOffer : l10n::StringId::TrayCopiedOffer);
         title = FillText(std::move(title), L"{n}", std::to_wstring(paths.size()));

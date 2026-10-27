@@ -30,6 +30,8 @@ inline constexpr std::wstring_view kToolbarToolIds[] = {
     L"search_all", L"adv_search", L"recycle", L"map_drive", L"shortcuts", L"settings",
     // 压缩 (native zip) and the 文件夹大小 switch.
     L"zip", L"folder_size",
+    // The 文件扩展名 switch.
+    L"extensions",
 };
 inline constexpr size_t kToolbarToolCount = std::size(kToolbarToolIds);
 inline constexpr size_t kLegacyToolbarPins = 5;

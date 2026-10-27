@@ -58,7 +58,100 @@ static bool TestArtworkBounds() {
              "landscape thumbnail bottom alignment preserves aspect ratio");
     geometry(100, 200, {}, true, 35, 20, 85, 120,
              "portrait thumbnail bottom alignment preserves horizontal centering");
+
+    // The 256-pixel list's frame around an icon that has only a small image.
+    using pulse::ui::UndersizedIconSide;
+    using pulse::ui::CropUndersizedIcon;
+    const auto frame = [](size_t side, size_t from, size_t to) {
+        std::vector<uint8_t> bgra(side * side * 4, 0);
+        for (size_t y = from; y < to; ++y)
+            for (size_t x = from; x < to; ++x) {
+                const size_t at = (y * side + x) * 4;
+                bgra[at] = static_cast<uint8_t>(x); bgra[at + 1] = static_cast<uint8_t>(y);
+                bgra[at + 2] = 7; bgra[at + 3] = 255;
+            }
+        return bgra;
+    };
+    const auto side_of = [&](size_t side, size_t from, size_t to) {
+        const auto bgra = frame(side, from, to);
+        return UndersizedIconSide(MeasureIconArtwork(bgra, side, side), side, side);
+    };
+    const bool sides = side_of(256, 0, 48) == 48 && side_of(256, 4, 44) == 48 && side_of(256, 0, 32) == 32 &&
+                       side_of(256, 2, 30) == 32 && side_of(256, 0, 16) == 16 && side_of(256, 0, 128) == 128 &&
+                       side_of(256, 0, 129) == 0 && side_of(256, 0, 256) == 0 && side_of(256, 40, 200) == 0 &&
+                       side_of(256, 100, 120) == 128 && side_of(48, 0, 20) == 0 && side_of(64, 0, 24) == 0 &&
+                       UndersizedIconSide({}, 256, 256) == 0 &&
+                       UndersizedIconSide({0, 0, .1f, .1f}, 256, 128) == 0;
+    std::printf("[%s] %s\n", sides ? "PASS" : "FAIL",
+                "only a small image in the top-left of a large frame is taken for an undersized icon");
+    ok &= sides;
+    {
+        auto bgra = frame(256, 4, 44);
+        uint32_t width = 256, height = 256;
+        auto bounds = MeasureIconArtwork(bgra, width, height);
+        CropUndersizedIcon(bgra, width, height, bounds);
+        const size_t at = (10 * 48 + 20) * 4;
+        const bool cropped = width == 48 && height == 48 && bgra.size() == 48u * 48u * 4u &&
+            bounds.native_side == 48 && bounds.left == 4.0f / 48 && bounds.top == 4.0f / 48 &&
+            bounds.right == 44.0f / 48 && bounds.bottom == 44.0f / 48 &&
+            bgra[at] == 20 && bgra[at + 1] == 10 && bgra[at + 3] == 255 && bgra[3] == 0;
+        std::printf("[%s] %s\n", cropped ? "PASS" : "FAIL",
+                    "an undersized icon is cut to its own image with its margins and artwork kept");
+        ok &= cropped;
+        auto full = frame(256, 0, 256);
+        uint32_t full_width = 256, full_height = 256;
+        auto full_bounds = MeasureIconArtwork(full, full_width, full_height);
+        CropUndersizedIcon(full, full_width, full_height, full_bounds);
+        const bool kept = full_width == 256 && full.size() == 256u * 256u * 4u && full_bounds.native_side == 0;
+        std::printf("[%s] %s\n", kept ? "PASS" : "FAIL", "a real large icon is left as it is");
+        ok &= kept;
+    }
+    using pulse::ui::IconDrawSide;
+    const bool draw_sides = IconDrawSide(256, 48) == 96 && IconDrawSide(80, 48) == 80 && IconDrawSide(96, 48) == 96 &&
+                            IconDrawSide(256, 32) == 64 && IconDrawSide(256, 0) == 256 && IconDrawSide(40, 0) == 40;
+    std::printf("[%s] %s\n", draw_sides ? "PASS" : "FAIL",
+                "an undersized icon is drawn at most twice its size, anything else fills the cell");
+    ok &= draw_sides;
     return ok;
+}
+
+// A generated .ico with only 32- and 48-pixel images: the Shell shows an .ico
+// file as its own icon, like a program without a large icon.
+static bool WriteSmallIco(const std::wstring& path) {
+    std::vector<uint8_t> out;
+    const auto put16 = [&](uint32_t v) { out.push_back(static_cast<uint8_t>(v)); out.push_back(static_cast<uint8_t>(v >> 8)); };
+    const auto put32 = [&](uint32_t v) { put16(v & 0xffff); put16(v >> 16); };
+    const uint32_t sides[] = {32, 48};
+    put16(0); put16(1); put16(2);
+    uint32_t offset = 6 + 16 * 2;
+    std::vector<std::vector<uint8_t>> images;
+    for (const uint32_t side : sides) {
+        std::vector<uint8_t> image;
+        const auto i16 = [&](uint32_t v) { image.push_back(static_cast<uint8_t>(v)); image.push_back(static_cast<uint8_t>(v >> 8)); };
+        const auto i32 = [&](uint32_t v) { i16(v & 0xffff); i16(v >> 16); };
+        i32(40); i32(side); i32(side * 2); i16(1); i16(32); i32(0); i32(0); i32(0); i32(0); i32(0); i32(0);
+        for (uint32_t y = 0; y < side; ++y)
+            for (uint32_t x = 0; x < side; ++x) {
+                const bool ink = x >= side / 8 && x < side - side / 8 && y >= side / 8 && y < side - side / 8;
+                image.push_back(ink ? 200 : 0); image.push_back(ink ? 80 : 0);
+                image.push_back(ink ? 30 : 0); image.push_back(ink ? 255 : 0);
+            }
+        const uint32_t mask_row = ((side + 31) / 32) * 4;
+        image.insert(image.end(), static_cast<size_t>(mask_row) * side, 0);
+        out.push_back(static_cast<uint8_t>(side)); out.push_back(static_cast<uint8_t>(side));
+        out.push_back(0); out.push_back(0); put16(1); put16(32);
+        put32(static_cast<uint32_t>(image.size())); put32(offset);
+        offset += static_cast<uint32_t>(image.size());
+        images.push_back(std::move(image));
+    }
+    for (const auto& image : images) out.insert(out.end(), image.begin(), image.end());
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    const bool wrote = WriteFile(file, out.data(), static_cast<DWORD>(out.size()), &written, nullptr) &&
+                       written == out.size();
+    CloseHandle(file);
+    return wrote;
 }
 
 namespace pulse::ui {
@@ -189,6 +282,32 @@ struct ShellIconCacheTestAccess {
                       "icons still convert after the first window's context is released");
                 cache.SetDeviceContext(second.get());
             }
+            // A file whose icon has no large image: cut to it at the large
+            // size and marked to be drawn at most twice that; untouched at
+            // its own size, and a folder's real large icon stays whole.
+            wchar_t temp[MAX_PATH]{};
+            GetTempPathW(MAX_PATH, temp);
+            const std::wstring ico_dir = std::wstring(temp) + L"pulse_icon_test_" + std::to_wstring(GetCurrentProcessId());
+            const std::wstring ico = ico_dir + L"\\small only.ico";
+            CreateDirectoryW(ico_dir.c_str(), nullptr);
+            check(WriteSmallIco(ico), "generated an icon file with only 32- and 48-pixel images");
+            cache.RequestExact(ico);
+            check(Wait(cache), "the generated icon file's own icon resolves");
+            auto* const large = cache.BitmapFor(ico, L"small only.ico", false, FILE_ATTRIBUTE_NORMAL, 256);
+            const auto large_px = large ? large->GetPixelSize() : D2D1_SIZE_U{};
+            const uint32_t large_native = cache.CachedNativeSide(ico, L"small only.ico", false, FILE_ATTRIBUTE_NORMAL, 256);
+            std::printf("small-only icon at 256: bitmap %ux%u native %u\n", large_px.width, large_px.height, large_native);
+            check(large && large_px.width == 48 && large_px.height == 48 && large_native == 48,
+                  "an icon without a large image is cut to its 48-pixel image at the large size");
+            auto* const own = cache.BitmapFor(ico, L"small only.ico", false, FILE_ATTRIBUTE_NORMAL, 48);
+            check(own && cache.CachedNativeSide(ico, L"small only.ico", false, FILE_ATTRIBUTE_NORMAL, 48) == 0,
+                  "the same icon at its own size is drawn as it is");
+            auto* const folder = cache.BitmapFor(L"", L"", true, FILE_ATTRIBUTE_DIRECTORY, 256);
+            check(folder && folder->GetPixelSize().width == 256 &&
+                      cache.CachedNativeSide(L"", L"", true, FILE_ATTRIBUTE_DIRECTORY, 256) == 0,
+                  "a folder's real large icon stays whole");
+            DeleteFileW(ico.c_str());
+            RemoveDirectoryW(ico_dir.c_str());
             cache.SetDeviceContext(nullptr);
             check(cache.artwork_bounds_.empty(), "device replacement clears artwork metadata");
             if (!context.get()) context = std::move(second);

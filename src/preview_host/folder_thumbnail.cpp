@@ -1,5 +1,6 @@
 #include "folder_thumbnail.h"
 #include "shell_bitmap.h"
+#include "shared_image_file.h"
 #include "../fs/cloud_state.h"
 #include <objidl.h>
 #include <gdiplus.h>
@@ -167,11 +168,12 @@ bool CachedPicture(IWICImagingFactory* factory, const std::wstring& path, UINT c
         Pixels(factory, source.Get(), cap, out);
 }
 bool ReadPicture(IWICImagingFactory* factory, const std::wstring& path, UINT cap, Picture& out) {
+    pulse::preview::SharedImageFile file;  // outlives the decoder
     ComPtr<IWICBitmapDecoder> decoder;
     ComPtr<IWICBitmapFrameDecode> frame;
     Trace("wic_decoder_begin");
-    const HRESULT decoded = factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
-        WICDecodeMetadataCacheOnDemand, &decoder);
+    const HRESULT decoded = pulse::preview::CreateSharedDecoder(factory, path,
+        WICDecodeMetadataCacheOnDemand, file, &decoder);
     Trace("wic_decoder_end", static_cast<uint32_t>(decoded));
     if (FAILED(decoded)) return false;
     Trace("wic_frame_begin");

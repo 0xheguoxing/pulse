@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace pulse;
@@ -149,6 +150,47 @@ int main() {
         const auto ms = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
         std::printf("  %zu rows by name: std::sort+EntryLess %.0f ms, SortEntries %.0f ms\n", rows.size(), ms(t1 - t0), ms(t2 - t1));
         Check(same, "100k rows: SortEntries matches std::sort with EntryLess");
+    }
+    {
+        // A folder's own folders-first mode for the sorts on this thread.
+        const auto entry = [](const wchar_t* name, bool dir) {
+            fs::DirEntry e;
+            e.name = name;
+            e.is_dir = dir;
+            return e;
+        };
+        const std::vector<fs::DirEntry> rows = {entry(L"c", false), entry(L"b", true), entry(L"a", false)};
+        const auto order = [&](ui::SortDirection dir) {
+            auto sorted = rows;
+            app::SortEntries(sorted, ui::SortColumn::Name, dir);
+            std::wstring names;
+            for (const auto& e : sorted) names += e.name;
+            return names;
+        };
+        app::SetFolderSortMode(app::FolderSortMode::FoldersFirst);
+        Check(order(ui::SortDirection::Asc) == L"bac" && order(ui::SortDirection::Desc) == L"bca",
+              "without a scope the settings default sorts");
+        bool scoped = false, nested = false, restored = false, other_thread = false;
+        {
+            const app::ScopedFolderSortMode mixed_mode(app::FolderSortMode::Mixed);
+            scoped = app::CurrentFolderSortMode() == app::FolderSortMode::Mixed &&
+                     app::DefaultFolderSortMode() == app::FolderSortMode::FoldersFirst &&
+                     order(ui::SortDirection::Asc) == L"abc" &&
+                     app::EntryLess(rows[2], rows[1], ui::SortColumn::Name, ui::SortDirection::Asc);
+            {
+                const app::ScopedFolderSortMode follow_mode(app::FolderSortMode::FollowDirection);
+                nested = order(ui::SortDirection::Asc) == L"bac" && order(ui::SortDirection::Desc) == L"cab";
+            }
+            restored = app::CurrentFolderSortMode() == app::FolderSortMode::Mixed;
+            std::thread([&] {
+                other_thread = app::CurrentFolderSortMode() == app::FolderSortMode::FoldersFirst;
+            }).join();
+        }
+        Check(scoped, "a folder's own mode sorts its rows; the settings default is unchanged");
+        Check(nested && restored, "scopes nest and restore the outer mode");
+        Check(other_thread, "a scope stays on its own thread");
+        Check(app::CurrentFolderSortMode() == app::FolderSortMode::FoldersFirst && order(ui::SortDirection::Asc) == L"bac",
+              "leaving the scope returns to the settings default");
     }
     std::printf("== entry sort key tests: %s ==\n", failures ? "FAIL" : "PASS");
     return failures ? 1 : 0;

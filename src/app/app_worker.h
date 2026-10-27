@@ -31,6 +31,8 @@ struct WorkItem {
     bool preserve_order = false;
     std::vector<std::wstring> paths;
     int group_by = 0;
+    // The folder's own folders-first mode (Tab::EffectiveFolderSort).
+    FolderSortMode folder_sort = FolderSortMode::FoldersFirst;
     std::vector<uint64_t> display_times;
     // Known folder totals for a Size sort (#58); null sorts folders as 0 bytes.
     std::shared_ptr<const FolderSizeLookup> folder_sizes;
@@ -65,16 +67,19 @@ public:
     void CancelGeneration(uint64_t generation);
 
     // Enqueue a refresh for path. Returns the generation assigned.
+    // `folders` defaults to Settings > Folders first; a tab passes its own.
     uint64_t Refresh(const std::wstring& path, ui::SortColumn col, ui::SortDirection dir,
                      int group_by = 0,
-                     std::shared_ptr<const FolderSizeLookup> folder_sizes = nullptr);
+                     std::shared_ptr<const FolderSizeLookup> folder_sizes = nullptr,
+                     FolderSortMode folders = DefaultFolderSortMode());
 
     // Independent consumer request; cancel an obsolete request by generation.
     uint64_t LoadPaths(const std::wstring& view_path, std::vector<std::wstring> paths,
                        ui::SortColumn col, ui::SortDirection dir,
                        bool preserve_order = false,
                        std::vector<uint64_t> display_times = {},
-                       int group_by = 0);
+                       int group_by = 0,
+                       FolderSortMode folders = DefaultFolderSortMode());
 
     void EnqueueIo(std::function<void()> task);
     void EnqueueSerialIo(std::function<void()> task);

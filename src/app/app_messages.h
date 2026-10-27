@@ -85,5 +85,6 @@ constexpr UINT WM_LAN_DISCOVERY = WM_APP + 113;  // host: a LAN device look fini
 constexpr UINT WM_NETWORK_MAP_DONE = WM_APP + 114;  // window: 连接服务器's drive mapping finished (NetworkMapResult*)
 constexpr UINT WM_UI_KICK = WM_APP + 115;  // a background producer has results: run the kTimerUi tick now
 constexpr UINT WM_COMMAND_PALETTE = WM_APP + 116;  // the address editor got ">": open the command palette
+constexpr UINT WM_RECYCLE_REFUSED = WM_APP + 117;  // window: a recycle left items the bin would not keep (AppState::recycleRefused)
 
 }  // namespace pulse

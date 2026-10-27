@@ -8,6 +8,7 @@
 #include "keymap.h"
 #include "../ui/ui_motion.h"
 #include "../ui/ui_renderer.h"
+#include "../ui/known_extensions.h"
 #include <atomic>
 #include "../ui/shortcut_help.h"
 // app_commands.cpp — extracted from app_main.cpp.
@@ -970,7 +971,7 @@ void ShowTrayReleaseMenu(AppState& s, POINT screen_pt) {
 void TraySendTo(AppState& s, const std::wstring& dir, bool move) {
     ReleaseTrayTo(s, dir, move);
     s.trayShelf.flash_path = ClipboardPath(fs::NormalizePath(dir));
-    s.trayShelf.flash_at = GetTickCount64();
+    s.trayShelf.flash_at = ui::motion::NowMs();
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
@@ -1642,7 +1643,7 @@ void DispatchMenuCommand(AppState& s, int cmd) {
     case app::CmdFolderSortTop:
     case app::CmdFolderSortFollow:
     case app::CmdFolderSortMixed:
-        s.settings.FolderSort(cmd - app::CmdFolderSortTop);
+        SetFolderSort(s, cmd - app::CmdFolderSortTop);
         break;
     case app::CmdOpen: OpenSelected(s); break;
     case app::CmdViewRecentChanges:
@@ -2636,7 +2637,7 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     view_options.wall = tab->wall;
     view_options.sort_column = tab->sort_column;
     view_options.sort_direction = tab->sort_direction;
-    view_options.folder_sort = s.appPrefs.folder_sort_mode;
+    view_options.folder_sort = static_cast<int>(tab->EffectiveFolderSort());
     view_options.details_panel = s.showDetailsPanel;
     view_options.can_sort = kind != L"starred" && kind != L"recent";
     view_options.indexed_search = (kind == L"search" || kind == L"saved-search") && !tab->content_results;
@@ -2770,6 +2771,7 @@ constexpr ToolbarToolDef kToolbarTools[] = {
     {app::CmdSettings, L"\xE713", l10n::StringId::Settings, L"", false},
     {app::CmdCompressZip, L"\xF012", l10n::StringId::ToolbarToolZip, L"", false},
     {app::CmdToggleFolderSizes, L"\xEDA2", l10n::StringId::ToolbarToolFolderSizes, L"", true},
+    {0, L"\xE7C3", l10n::StringId::ToolbarToolExtensions, L"", true},
 };
 static_assert(std::size(kToolbarTools) == app::kToolbarToolCount, "one catalog row per toolbar_tools.h id");
 
@@ -2867,6 +2869,7 @@ bool ToolbarToggleOn(const AppState& s, size_t index) {
     const std::wstring_view id = app::kToolbarToolIds[index];
     const app::AppPrefs& p = s.appPrefs;
     if (id == L"hidden") return p.show_hidden_files;
+    if (id == L"extensions") return p.show_file_extensions;
     if (id == L"protected") return p.show_protected_os_files;
     if (id == L"compact") return p.row_height <= 28;
     if (id == L"zebra") return p.list_zebra_rows;
@@ -3449,9 +3452,24 @@ bool ApplyViewToAllFolders(AppState& s, bool confirm) {
         if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path)) return false;
     }
     // Grouping keeps its own per-folder memory (Downloads defaults to Date).
+    const int folder_mode = static_cast<int>(tab->EffectiveFolderSort());
     s.appPrefs.folder_views.ApplyToAll(tab->view_mode);
     s.appPrefs.folder_sorts.ApplyToAll({ tab->sort_column, tab->sort_direction });
+    // Folders-first goes with the sort: per-folder choices are gone and this
+    // folder's becomes the settings default.
+    std::vector<std::wstring> resort;
+    ForEachPane(s, [&](app::Pane& pane) {
+        app::Tab* shown = pane.ActiveTab();
+        if (!shown || shown->folder_sort < 0 || fs::IsVirtualPath(shown->current_path)) return;
+        if (shown->folder_sort != folder_mode) resort.push_back(shown->current_path);
+        shown->folder_sort = -1;
+    });
     s.appPrefs.Save();
+    if (folder_mode != s.appPrefs.folder_sort_mode) {
+        s.settings.FolderSort(folder_mode);  // saves, then re-sorts every visible folder
+    } else {
+        for (const auto& path : resort) RefreshPath(s, path, RefreshReason::Explicit);
+    }
     return true;
 }
 
@@ -3702,7 +3720,7 @@ void ShowSortDropdown(AppState& s) {
     app::BackgroundViewOptions options;
     options.sort_column = tab->sort_column;
     options.sort_direction = tab->sort_direction;
-    options.folder_sort = s.appPrefs.folder_sort_mode;
+    options.folder_sort = static_cast<int>(tab->EffectiveFolderSort());
     options.can_sort = kind != L"starred" && kind != L"recent";
     options.indexed_search = (kind == L"search" || kind == L"saved-search") && !tab->content_results;
     options.show_path = kind == L"search" || kind == L"saved-search" || kind == L"recycle";
@@ -4429,7 +4447,7 @@ static int ToolbarToolSection(std::wstring_view id) {
 static std::vector<size_t> ToolbarPinsOrder(const AppState& s) {
     static constexpr std::wstring_view kCatalogOrder[] = {
         L"cut", L"copy", L"paste", L"rename", L"delete", L"undo", L"new_text", L"new_md", L"copy_path",
-        L"properties", L"zip", L"select_all", L"invert", L"select_wild", L"hidden", L"protected", L"folder_size", L"compact",
+        L"properties", L"zip", L"select_all", L"invert", L"select_wild", L"hidden", L"protected", L"extensions", L"folder_size", L"compact",
         L"zebra", L"size_bar", L"smart_date", L"outline", L"theme", L"split", L"details", L"columns",
         L"sidebar", L"apply_all", L"recent", L"terminal", L"search_all", L"adv_search", L"recycle",
         L"map_drive", L"shortcuts", L"settings"};
@@ -4788,6 +4806,7 @@ static void FlipToolbarTool(AppState& s, size_t index) {
     else if (id == L"size_bar") p.list_size_bar = !p.list_size_bar;
     else if (id == L"smart_date") p.list_smart_date = !p.list_smart_date;
     else if (id == L"outline") p.list_selection_outline = !p.list_selection_outline;
+    else if (id == L"extensions") p.show_file_extensions = !p.show_file_extensions;
     else return;
     if (!s.isolatedTest) p.Save();
     ApplySettingsEffects(s, effect);
@@ -5576,6 +5595,7 @@ void ApplySettingsEffects(AppState& s, app::SettingsEffect effects) {
             s.menu->SetRowHeightDip(static_cast<float>(app::MenuRowHeightDip(row_height)));
     }
     if (app::HasEffect(effects, app::SettingsEffect::ListStyle)) {
+        ui::SetHideKnownExtensions(!s.appPrefs.show_file_extensions);
         s.renderer.SetListStyle(s.appPrefs.list_smart_date, s.appPrefs.list_zebra_rows,
                                 s.appPrefs.list_size_bar, s.appPrefs.list_tag_name_color,
                                 s.appPrefs.list_selection_outline);

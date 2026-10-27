@@ -4322,5 +4322,8 @@
 #define IDS_ADV_TRY                                                                      5530
 #define IDS_ADV_WHOLE_WORD_SHORT                                                         5531
 #define IDS_ADV_LABEL_VALUE_FORMAT                                                       5532
+#define IDS_OP_DELETE_PARTIAL_TITLE                                                      5533
+#define IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED                                            5534
+#define IDS_TOOLBAR_TOOL_EXTENSIONS                                                      5535
 
 #endif  // PULSE_STRING_IDS_H

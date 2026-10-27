@@ -573,6 +573,11 @@ struct AppState : AppCoreOwner {
     uint64_t leavingSince = 0;   // ui::motion::NowMs
     uint64_t leavingDoneAt = 0;  // ui::motion::NowMs, 0 while running
     uint64_t leavingTask = 0;
+    // A recycle left these where they were: the Recycle Bin would not keep
+    // them (FinishedTask::recycle_refused). WM_RECYCLE_REFUSED asks whether
+    // to delete them for good.
+    std::vector<std::wstring> recycleRefused;
+    ops::RecycleRefusal recycleRefusal = ops::RecycleRefusal::None;
     // A drag from Pulse dropped into a folder a pane shows: its cards land on
     // the new rows (drag_drop.h LandDragStack). Times are ui::motion::NowMs.
     struct DragLanding {
@@ -857,7 +862,13 @@ struct AppState : AppCoreOwner {
     std::wstring trayRaisePath; // stepping back: this card drops in on top
     float trayOpen = 0.0f;      // eased drag-over highlight
     float traySpread = 0.0f;    // eased stack fan-out while hovered
+    // The tray's motion runs on ui::motion::NowMs (QueryPerformanceCounter):
+    // GetTickCount64 moves in 15.6 ms steps, so display-rate frames got no
+    // progress or a double step. Every tray timestamp below uses that clock.
     ULONGLONG trayLastTick = 0;
+    // The tray is moving and the frame pump paints it once per display frame
+    // (Render advances it); the UI timer only notices that motion starts.
+    bool trayAnimating = false;
     int trayDeckOffset = 0;     // cyclic index of the top card (newest-first order)
     int trayWheelAccum = 0;     // sub-notch wheel delta accumulator
     size_t trayDeckLastTotal = 0; // collect detection (stack resets to newest)

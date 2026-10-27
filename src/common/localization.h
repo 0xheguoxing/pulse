@@ -4314,6 +4314,9 @@ enum class StringId : UINT {
     AdvTry = IDS_ADV_TRY,
     AdvWholeWordShort = IDS_ADV_WHOLE_WORD_SHORT,
     AdvLabelValueFormat = IDS_ADV_LABEL_VALUE_FORMAT,
+    OpDeletePartialTitle = IDS_OP_DELETE_PARTIAL_TITLE,
+    RecyclePathTooLongNotDeleted = IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED,
+    ToolbarToolExtensions = IDS_TOOLBAR_TOOL_EXTENSIONS,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

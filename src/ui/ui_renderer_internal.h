@@ -26,6 +26,7 @@
 #include <unordered_map>
 #include <vector>
 #include <wrl/client.h>
+#include "known_extensions.h"
 
 namespace pulse::ui {
 
@@ -291,9 +292,12 @@ void ClearTextWidthCache() {
         if (!vm.row_cache) vm.row_cache = std::make_shared<RowPresentationCache>();
         auto& cache = *vm.row_cache;
         const uint64_t alias_revision = app::AliasStore::Instance().Revision();
-        if (cache.snapshot != vm.snapshot || cache.alias_revision != alias_revision) {
+        const uint64_t extension_revision = KnownExtensionsRevision();
+        if (cache.snapshot != vm.snapshot || cache.alias_revision != alias_revision ||
+            cache.extension_revision != extension_revision) {
             cache.snapshot = vm.snapshot;
             cache.alias_revision = alias_revision;
+            cache.extension_revision = extension_revision;
             cache.rows.clear();
             cache.order.clear();
         }
@@ -339,6 +343,7 @@ void ClearTextWidthCache() {
         entry.modified_value = (static_cast<uint64_t>(source.mtime.dwHighDateTime) << 32) |
                                source.mtime.dwLowDateTime;
         entry.is_dir = penetrated ? source.link_target_is_dir : source.is_dir;
+        entry.hidden_ext = HiddenExtensionLength(entry.name, entry.is_dir);
         entry.is_reparse = source.is_reparse;
         entry.link_kind = fs::ClassifyLink(source.attrs, source.reparse_tag);
         entry.is_link = entry.link_kind != fs::LinkKind::None ||

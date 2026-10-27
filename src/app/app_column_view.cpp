@@ -69,7 +69,8 @@ void RequestColumn(AppState& s, const app::Tab& tab, app::ColumnStripColumn& col
         }
     });
     col.generation = shared != 0 ? shared
-                                 : s.worker.Refresh(col.path, tab.sort_column, tab.sort_direction);
+                                 : s.worker.Refresh(col.path, tab.sort_column, tab.sort_direction, 0, nullptr,
+                                                    tab.EffectiveFolderSort());
 }
 
 void RebuildRows(app::ColumnStripColumn& col, const app::Tab& tab) {

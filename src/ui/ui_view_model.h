@@ -87,6 +87,7 @@ struct ListEntryView {
     std::wstring link_destination;
     std::wstring name;
     std::wstring alias;   // 别名 shown instead of the name (empty = none)
+    size_t hidden_ext = 0;  // trailing characters of name not drawn (文件扩展名 off)
     std::wstring size_text;
     std::wstring date_text;
     std::wstring type_text;
@@ -127,9 +128,15 @@ struct ListEntryView {
     std::vector<DeviceBar> device_bars;
 };
 
+// The name as drawn: without a known extension while 文件扩展名 is off.
+inline std::wstring ShownName(const ListEntryView& e) {
+    return e.hidden_ext && e.hidden_ext < e.name.size() ? e.name.substr(0, e.name.size() - e.hidden_ext) : e.name;
+}
+
 struct RowPresentationCache {
     fs::SnapshotPtr snapshot;
     uint64_t alias_revision = 0;   // rows rebuild when an alias changes
+    uint64_t extension_revision = 0;  // ... or when 文件扩展名 is switched
     std::unordered_map<size_t, ListEntryView> rows;
     std::deque<size_t> order;
 };

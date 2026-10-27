@@ -828,7 +828,7 @@ BEGIN
     IDS_LIST_SIZE_BAR_DESC "在大小列下方用细条直观比较文件大小"
     IDS_COLUMN_LAYOUT "分栏视图"
     IDS_SETTINGS_FOLDER_SORT "文件夹优先"
-    IDS_SETTINGS_FOLDER_SORT_DESC "决定文件夹相对文件的位置，倒序排列时同样生效"
+    IDS_SETTINGS_FOLDER_SORT_DESC "默认位置；在某个文件夹里改过的会单独记住"
     IDS_FOLDER_SORT_TOP "始终置顶"
     IDS_FOLDER_SORT_FOLLOW "跟随方向"
     IDS_FOLDER_SORT_MIXED "不优先"
@@ -4304,6 +4304,9 @@ BEGIN
     IDS_ADV_TRY "试试"
     IDS_ADV_WHOLE_WORD_SHORT "全字"
     IDS_ADV_LABEL_VALUE_FORMAT "%s：%s"
+    IDS_OP_DELETE_PARTIAL_TITLE "已删除 %s 项，%s 项未成功"
+    IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED "路径太长，无法移到回收站，未删除。可用 Shift+Delete 永久删除"
+    IDS_TOOLBAR_TOOL_EXTENSIONS "文件扩展名"
 END
 
 LANGUAGE 0x09, 0x01
@@ -5131,7 +5134,7 @@ BEGIN
     IDS_LIST_SIZE_BAR_DESC "Draw a thin bar under file sizes for quick comparison"
     IDS_COLUMN_LAYOUT "Column view"
     IDS_SETTINGS_FOLDER_SORT "Folders first"
-    IDS_SETTINGS_FOLDER_SORT_DESC "Where folders sit next to files, reversed order included"
+    IDS_SETTINGS_FOLDER_SORT_DESC "The default; a folder you change keeps its own choice"
     IDS_FOLDER_SORT_TOP "Always on top"
     IDS_FOLDER_SORT_FOLLOW "Follow order"
     IDS_FOLDER_SORT_MIXED "Mixed"
@@ -8607,6 +8610,9 @@ BEGIN
     IDS_ADV_TRY "Try"
     IDS_ADV_WHOLE_WORD_SHORT "Whole word"
     IDS_ADV_LABEL_VALUE_FORMAT "%s: %s"
+    IDS_OP_DELETE_PARTIAL_TITLE "Deleted %s items, %s didn't go through"
+    IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED "The path is too long for the Recycle Bin, so it was not deleted. Shift+Delete deletes it permanently."
+    IDS_TOOLBAR_TOOL_EXTENSIONS "File name extensions"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

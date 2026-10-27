@@ -303,6 +303,7 @@ bool ResortForFolderSizes(AppState& s) {
         auto sorted = std::make_shared<std::vector<fs::DirEntry>>(*tab->snapshot);
         {
             const app::ScopedEntryGrouping grouping(tab->EffectiveGroup(), tab->current_path);
+            const app::ScopedFolderSortMode folder_mode(tab->EffectiveFolderSort());
             app::SortEntriesBySize(*sorted, tab->sort_direction, sizes);
         }
         if (std::equal(sorted->begin(), sorted->end(), tab->snapshot->begin(), tab->snapshot->end(),

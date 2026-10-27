@@ -27,7 +27,7 @@ namespace pulse::app {
 namespace {
 
 std::wstring WorkKey(const std::wstring& path, ui::SortColumn col,
-                     ui::SortDirection dir, int group_by = 0) {
+                     ui::SortDirection dir, int group_by, FolderSortMode folders) {
     std::wstring key = path;
     key.push_back(L'\x1f');
     key += std::to_wstring(static_cast<int>(col));
@@ -37,6 +37,8 @@ std::wstring WorkKey(const std::wstring& path, ui::SortColumn col,
         key.push_back(L'g');
         key += std::to_wstring(group_by);
     }
+    key.push_back(L'f');
+    key += std::to_wstring(static_cast<int>(folders));
     return key;
 }
 
@@ -88,10 +90,11 @@ void WorkerPool::CancelGeneration(uint64_t generation) {
 
 uint64_t WorkerPool::Refresh(const std::wstring& path, ui::SortColumn col,
                              ui::SortDirection dir, int group_by,
-                             std::shared_ptr<const FolderSizeLookup> folder_sizes) {
+                             std::shared_ptr<const FolderSizeLookup> folder_sizes,
+                             FolderSortMode folders) {
     std::lock_guard<std::mutex> lock(mutex_);
     uint64_t gen = ++global_gen_;
-    const std::wstring key = WorkKey(path, col, dir, group_by);
+    const std::wstring key = WorkKey(path, col, dir, group_by, folders);
     current_gen_[key] = gen;
     // Only supersede the same path+sort request. Separate panes may show the
     // same directory with different sort orders.
@@ -105,6 +108,7 @@ uint64_t WorkerPool::Refresh(const std::wstring& path, ui::SortColumn col,
     WorkItem work{ path, key, gen, col, dir };
     work.cache_write = fs::BeginNetSnapshotWrite(path);
     work.group_by = group_by;
+    work.folder_sort = folders;
     work.folder_sizes = std::move(folder_sizes);
     queue_.push_back(std::move(work));
     diagnostics::runtime::Event("navigation_request", {{"generation", gen}, {"load_paths", 0}});
@@ -117,18 +121,19 @@ uint64_t WorkerPool::LoadPaths(const std::wstring& view_path,
                                ui::SortColumn col, ui::SortDirection dir,
                                bool preserve_order,
                                std::vector<uint64_t> display_times,
-                               int group_by) {
+                               int group_by, FolderSortMode folders) {
     std::lock_guard<std::mutex> lock(mutex_);
     const uint64_t gen = ++global_gen_;
     // Virtual consumers can share a path/sort but have different Recent
     // filters and payloads. Each request owns its cancellation identity.
-    const std::wstring key = WorkKey(view_path, col, dir, group_by) +
+    const std::wstring key = WorkKey(view_path, col, dir, group_by, folders) +
         L"\x1fpaths:" + std::to_wstring(gen);
     current_gen_[key] = gen;
     WorkItem item{ view_path, key, gen, col, dir };
     item.load_paths = true;
     item.preserve_order = preserve_order;
     item.group_by = group_by;
+    item.folder_sort = folders;
     item.paths = std::move(paths);
     item.display_times = std::move(display_times);
     queue_.push_back(std::move(item));
@@ -368,6 +373,7 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
     struct SortCancelled {};
     if (!item.preserve_order) {
         const ScopedEntryGrouping grouping(item.group_by, item.path);
+        const ScopedFolderSortMode folder_mode(item.folder_sort);
         const auto tick = [&] {
             if ((++comparisons & 8191u) == 0) {
                 std::lock_guard<std::mutex> lock(mutex_);

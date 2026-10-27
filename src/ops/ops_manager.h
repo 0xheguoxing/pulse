@@ -80,6 +80,9 @@ struct OpRequest {
     std::wstring dest_dir;    // Copy / Move
     std::wstring new_name;    // Rename, or explicit leaf name for a single-root Move
     std::vector<std::wstring> new_names; // BatchRename, parallel to sources
+    // Status text name for the first source when its file name means nothing
+    // to the user (还原 from the 回收站 view: sources are $R payloads).
+    std::wstring display_name;
     // CreateTextFile from a 新建 (ShellNew) entry: copy this template file, or
     // write these bytes; neither = an empty file.
     std::wstring template_file;
@@ -118,8 +121,8 @@ struct UndoEntry {
     uint64_t task_id = 0;     // the task that recorded it (session only)
 };
 
-// One item a copy or move could not handle while the rest went on
-// (pulse_ops_dialogs.html, partial failure).
+// One item a copy, move or delete could not handle while the rest went on
+// (pulse_ops_dialogs.html, partial failure). A delete's has no destination.
 struct OpFailure {
     std::wstring source;
     std::wstring destination;
@@ -179,6 +182,10 @@ struct CompletedOperation {
     std::vector<std::wstring> refresh_directories;
 };
 
+// Why a recycle left items untouched: the Shell would have deleted them for
+// good. The UI then asks, as Explorer does, whether to delete them anyway.
+enum class RecycleRefusal { None, TooLarge, Disabled, Location };
+
 struct FinishedTask {
     uint64_t task_id = 0;
     std::vector<std::wstring> moved_sources; // Confirmed whole request roots, never descendants alone.
@@ -186,7 +193,16 @@ struct FinishedTask {
     bool success = false;
     bool is_undo = false;   // an undo's own step (never on the undo stack)
     std::vector<std::wstring> sources;
+    // Recycle delete: sources the Recycle Bin would not take, untouched, and
+    // the reason that covers them all (Location over Disabled over TooLarge).
+    std::vector<std::wstring> recycle_refused;
+    RecycleRefusal recycle_refusal = RecycleRefusal::None;
 };
+
+// Failures about the target, the device or the session rather than one item:
+// every later item would fail the same way, so the task stops on them instead
+// of going on with the next item.
+bool IsStopTransferError(HRESULT hr);
 
 using TaskResult = FinishedTask;
 
@@ -279,9 +295,9 @@ public:
     // The locked item is one of several top-level sources, so the rest can go
     // on without it (an item inside a source folder cannot be left out).
     bool CanSkipLockedItem(uint64_t task_id) const;
-    // Re-queue failed items of a finished copy or move (indices into
+    // Re-queue failed items of a finished copy, move or delete (indices into
     // status.failures of task_id): each goes back to the folder it was meant
-    // for. Empty `indices` = all of them, once. Returns the queued tasks and
+    // for (a delete's go as one request). Empty `indices` = all of them, once. Returns the queued tasks and
     // the items each covers; empty when that task's failures are gone (the
     // last few tasks with failures are kept).
     struct RetrySpawn {
@@ -492,6 +508,8 @@ private:
     std::deque<CompletedOperation> completions_;
     std::deque<FinishedTask> finished_tasks_;
     std::vector<std::wstring> moved_sources_; // Worker-owned until terminal publication.
+    std::vector<std::wstring> recycle_refused_;     // same; see FinishedTask
+    RecycleRefusal recycle_refusal_ = RecycleRefusal::None;
 
     std::thread thread_;
     bool running_ = false;

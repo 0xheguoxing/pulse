@@ -20,7 +20,7 @@
 namespace pulse::ops {
 
 // Copy threads for a transfer from `source` into `dest_dir`: several on
-// solid-state storage, 2 on a spinning disk or a share, 1 on a removable
+// solid-state storage, 4 on a share, 2 on a spinning disk, 1 on a removable
 // drive. When the storage cannot be identified, 2.
 unsigned TransferThreadCount(const std::wstring& source, const std::wstring& dest_dir);
 

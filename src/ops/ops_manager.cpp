@@ -8,6 +8,7 @@
 #include "shell_command.h"
 #include "shortcut_launch.h"
 #include "elevated_transfer.h"
+#include "source_listing.h"
 #include "../ipc/shell_client.h"
 #include "../common/json_utils.h"
 #include "../common/localization.h"
@@ -238,7 +239,7 @@ std::wstring Describe(const OpRequest& r) {
     }
     if (r.type == OpType::EmptyRecycle) return s;
     s += L" ";
-    if (!r.sources.empty()) s += FileName(r.sources.front());
+    if (!r.sources.empty()) s += r.display_name.empty() ? FileName(r.sources.front()) : r.display_name;
     if (r.sources.size() > 1) {
         wchar_t buf[32];
         swprintf_s(buf, l10n::Get(l10n::StringId::ZuItems).c_str(), r.sources.size());
@@ -388,41 +389,6 @@ std::wstring ErrorWithoutPath(const std::wstring& error) {
         return FailureReason(folder, detail);
     }
     return bar == std::wstring::npos ? error : error.substr(0, bar);
-}
-
-// Failures that are about the target, the device or the session rather than
-// one item: every later item would fail the same way, so the task stops.
-bool IsStopTransferError(HRESULT hr) {
-    if (hr == E_OUTOFMEMORY) return true;
-    switch (HRESULT_CODE(hr)) {
-    case ERROR_DISK_FULL:
-    case ERROR_HANDLE_DISK_FULL:
-    case ERROR_DISK_QUOTA_EXCEEDED:
-    case ERROR_NOT_ENOUGH_QUOTA:
-    case ERROR_NOT_ENOUGH_MEMORY:
-    case ERROR_OUTOFMEMORY:
-    case ERROR_NOT_READY:
-    case ERROR_WRITE_PROTECT:
-    case ERROR_DEV_NOT_EXIST:
-    case ERROR_DEVICE_NOT_CONNECTED:
-    case ERROR_DEVICE_REMOVED:
-    case ERROR_NO_SUCH_DEVICE:
-    case ERROR_NO_MEDIA_IN_DRIVE:
-    case ERROR_MEDIA_CHANGED:
-    case ERROR_IO_DEVICE:
-    case ERROR_BAD_NETPATH:
-    case ERROR_BAD_NET_NAME:
-    case ERROR_NETNAME_DELETED:
-    case ERROR_UNEXP_NET_ERR:
-    case ERROR_NETWORK_UNREACHABLE:
-    case ERROR_SEM_TIMEOUT:
-    case ERROR_OPERATION_ABORTED:
-    case ERROR_REQUEST_ABORTED:
-    case ERROR_CANCELLED:
-        return true;
-    default:
-        return false;
-    }
 }
 
 // Why a new folder or text file could not be created. "没有权限" is the key
@@ -997,6 +963,59 @@ void TrimUndoHistory(std::deque<UndoEntry>& undo) {
 
 } // namespace
 
+// See ops_manager.h.
+bool IsStopTransferError(HRESULT hr) {
+    if (hr == E_OUTOFMEMORY) return true;
+    // The Shell's copy engine codes share their low word with unrelated
+    // Win32 codes: COPYENGINE_E_SHARING_VIOLATION_SRC (0x80270027) would read
+    // as ERROR_HANDLE_DISK_FULL and stop a whole task over one file in use.
+    if (HRESULT_FACILITY(hr) == FACILITY_SHELL) {
+        switch (static_cast<uint32_t>(hr)) {
+        case 0x8027000Eu:  // COPYENGINE_E_REMOVABLE_FULL
+        case 0x80270025u:  // COPYENGINE_E_NET_DISCONNECT_SRC
+        case 0x80270026u:  // COPYENGINE_E_NET_DISCONNECT_DEST
+        case 0x80270032u:  // COPYENGINE_E_DISK_FULL
+        case 0x80270033u:  // COPYENGINE_E_DISK_FULL_CLEAN
+            return true;
+        default:
+            return false;
+        }
+    }
+    // Win32 codes, as HRESULTs or bare; STG_E_* mirror them on purpose.
+    if ((static_cast<uint32_t>(hr) & 0xFFFF0000u) != 0 && HRESULT_FACILITY(hr) != FACILITY_WIN32 &&
+        HRESULT_FACILITY(hr) != FACILITY_STORAGE)
+        return false;
+    switch (HRESULT_CODE(hr)) {
+    case ERROR_DISK_FULL:
+    case ERROR_HANDLE_DISK_FULL:
+    case ERROR_DISK_QUOTA_EXCEEDED:
+    case ERROR_NOT_ENOUGH_QUOTA:
+    case ERROR_NOT_ENOUGH_MEMORY:
+    case ERROR_OUTOFMEMORY:
+    case ERROR_NOT_READY:
+    case ERROR_WRITE_PROTECT:
+    case ERROR_DEV_NOT_EXIST:
+    case ERROR_DEVICE_NOT_CONNECTED:
+    case ERROR_DEVICE_REMOVED:
+    case ERROR_NO_SUCH_DEVICE:
+    case ERROR_NO_MEDIA_IN_DRIVE:
+    case ERROR_MEDIA_CHANGED:
+    case ERROR_IO_DEVICE:
+    case ERROR_BAD_NETPATH:
+    case ERROR_BAD_NET_NAME:
+    case ERROR_NETNAME_DELETED:
+    case ERROR_UNEXP_NET_ERR:
+    case ERROR_NETWORK_UNREACHABLE:
+    case ERROR_SEM_TIMEOUT:
+    case ERROR_OPERATION_ABORTED:
+    case ERROR_REQUEST_ABORTED:
+    case ERROR_CANCELLED:
+        return true;
+    default:
+        return false;
+    }
+}
+
 OpsManager::~OpsManager() {
     Stop();
 }
@@ -1471,11 +1490,28 @@ std::vector<OpsManager::RetrySpawn> OpsManager::RetryFailedItems(uint64_t task_i
             for (size_t i = 0; i < failures.size(); ++i) chosen.push_back(i);
         // Each item goes back to the folder it was meant for, under the name
         // it was meant to have; items for one folder under their own names
-        // share a request.
+        // share a request. A delete's items all share one.
+        const bool deleting = retry->req.type == OpType::RecycleDelete || retry->req.type == OpType::RealDelete;
         for (size_t i : chosen) {
             if (i >= failures.size()) continue;
             const OpFailure& failed = failures[i];
-            if (failed.source.empty() || failed.destination.empty()) continue;
+            if (failed.source.empty()) continue;
+            if (deleting) {
+                if (requests.empty()) {
+                    OpRequest request = retry->req;
+                    request.sources.clear();
+                    request.lock_retry = false;
+                    request.close_first.clear();
+                    request.is_undo = false;
+                    request.undo_group = 0;
+                    requests.push_back(std::move(request));
+                    spawns.push_back({0, {}});
+                }
+                requests.front().sources.push_back(failed.source);
+                spawns.front().items.push_back(i);
+                continue;
+            }
+            if (failed.destination.empty()) continue;
             const std::wstring folder = ParentOf(failed.destination);
             const bool renamed = _wcsicmp(FileName(failed.source).c_str(),
                                           FileName(failed.destination).c_str()) != 0;
@@ -1848,8 +1884,11 @@ OpsManager::GroupUndo OpsManager::UndoNewest(const uint64_t* required_group) {
     for (const UndoEntry& e : batch) {
     switch (e.type) {
     case OpType::Move: {
-        // Move each actual destination back to its exact original name and parent.
-        for (size_t i = 0; i < e.sources.size(); ++i) {
+        // Move each actual destination back to its exact original name and
+        // parent, newest first: an item merged into a folder that an earlier
+        // root of the same move created goes back before that folder does,
+        // instead of travelling with it.
+        for (size_t i = e.sources.size(); i-- > 0;) {
             const auto& src = e.sources[i];
             OpRequest inv;
             inv.type = OpType::Move;
@@ -2263,6 +2302,8 @@ void OpsManager::WorkerThread() {
         const bool run = !skip && ((!item.req.lock_retry && item.req.close_first.empty()) ||
                          PrepareLockRetry(item.req, item.seq));
         moved_sources_.clear();
+        recycle_refused_.clear();
+        recycle_refusal_ = RecycleRefusal::None;
         const auto diagnostic_started = GetTickCount64();
         diagnostics::runtime::Event("file_operation_begin", {{"task", item.seq},
             {"type", static_cast<uint64_t>(item.req.type)}, {"sources", item.req.sources.size()},
@@ -2288,10 +2329,18 @@ void OpsManager::WorkerThread() {
             finished.is_undo = item.req.is_undo;
             finished.sources = item.req.sources;
             finished.success = diagnostic_status.phase == OpPhase::Completed;
-            for (const auto& source : item.req.sources)
-                if (std::any_of(moved_sources_.begin(), moved_sources_.end(), [&](const auto& moved) {
-                    return _wcsicmp(source.c_str(), moved.c_str()) == 0;
-                })) finished.moved_sources.push_back(source);
+            finished.recycle_refused = std::move(recycle_refused_);
+            finished.recycle_refusal = recycle_refusal_;
+            recycle_refused_.clear();
+            if (!moved_sources_.empty()) {
+                // One set instead of a search per source: a move of n items
+                // compared n * n paths here.
+                std::unordered_set<std::wstring> moved;
+                moved.reserve(moved_sources_.size());
+                for (const auto& path : moved_sources_) moved.insert(pulse::path::FoldedKey(path));
+                for (const auto& source : item.req.sources)
+                    if (moved.contains(pulse::path::FoldedKey(source))) finished.moved_sources.push_back(source);
+            }
             finished_tasks_.push_back(std::move(finished));
             if (!diagnostic_status.active && diagnostic_status.task_id == item.seq) {
                 final_statuses_.push_back(diagnostic_status);
@@ -2622,6 +2671,11 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         EnsureDirectories(req.dest_dir, failure);
     }
 
+    // Source folders a rename into dest_dir has found on another volume.
+    // Whether a rename can work depends only on the two parent folders, so
+    // the other items of such a folder go straight to the per-file path
+    // instead of each paying for a rename that fails the same way.
+    std::unordered_set<std::wstring> rename_other_volume;
     // A single unobstructed same-volume move is an atomic rename and should
     // not be expanded into per-file work.
     if (failure.empty() && !stop_requested() && req.type == OpType::Move && req.sources.size() == 1) {
@@ -2661,13 +2715,23 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             if (move_error != ERROR_NOT_SAME_DEVICE) {
                 failure_hr = HRESULT_FROM_WIN32(move_error);
                 failure = Win32Message(move_error) + L" | " + req.sources.front();
+            } else {
+                rename_other_volume.insert(pulse::path::FoldedKey(ParentOf(req.sources.front())));
             }
         }
     }
 
     namespace fsys = std::filesystem;
+    // Where each source's own entry is (npos: nothing to do for it). The
+    // commit below looks roots up here instead of searching every entry.
+    std::vector<size_t> root_entries(req.sources.size(), std::wstring::npos);
     if (failure.empty() && !stop_requested()) {
-        for (const auto& source : req.sources) {
+        const SourceListing listing(req.sources);
+        // Names a rename below brings in are added, so a later source with
+        // the same name still finds its target taken.
+        TargetListing target_listing(req.dest_dir, req.sources.size());
+        for (size_t source_index = 0; source_index < req.sources.size(); ++source_index) {
+            const std::wstring& source = req.sources[source_index];
 #ifdef PULSE_ELEVATED_TEST_CLIENT
             ObserveTransferScanForReview(*this, source);
 #endif
@@ -2675,7 +2739,15 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
             TransferEntry root;
             root.source = source;
             root.destination = JoinPath(req.dest_dir, root_name(source));
-            if (!ReadEntryMetadata(source, root)) {
+            if (const ListedSource* listed = listing.Find(source)) {
+                root.directory = (listed->attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                root.reparse = (listed->attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+                root.attributes = listed->attributes;
+                root.created = listed->created;
+                root.accessed = listed->accessed;
+                root.modified = listed->modified;
+                root.bytes = root.directory ? 0 : listed->bytes;
+            } else if (!ReadEntryMetadata(source, root)) {
                 {
                     const DWORD code = GetLastError();
                     failure_hr = HRESULT_FROM_WIN32(code);
@@ -2683,34 +2755,47 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
                 }
                 break;
             }
+            // Opening both ends to compare them is only needed when the target
+            // name is taken; most targets are new.
+            bool destination_exists = !target_listing.SurelyAbsent(root_name(source)) &&
+                PathExists(root.destination);
             const bool same_location =
                 _wcsicmp(root.source.c_str(), root.destination.c_str()) == 0 ||
-                SameFileObject(root.source, root.destination);
+                (destination_exists && SameFileObject(root.source, root.destination));
             if (same_location && req.type == OpType::Move) {
                 // Dropping an item onto its current folder is a no-op, like Explorer.
                 continue;
             }
             if (same_location && req.type == OpType::Copy) {
                 root.destination = UniqueCopyPath(root.destination, root.directory);
+                destination_exists = PathExists(root.destination);
             }
             if (root.directory && StartsWithPath(req.dest_dir, root.source)) {
                 failure = l10n::Get(l10n::StringId::CannotCopyOrMoveAFolderIntoItself).c_str() + source;
                 break;
             }
-            root.destination_preexisting = PathExists(root.destination);
+            root.destination_preexisting = destination_exists;
             // On one volume a move is a rename however many items are dropped
             // (#60). Recorded as completed at once so a later failure still
             // offers undo for it; anything a rename cannot do (another volume,
             // a lock) takes the per-file path below.
             if (stop_requested()) break;
-            if (req.type == OpType::Move && !root.destination_preexisting &&
-                MoveFileExW(source.c_str(), root.destination.c_str(), 0)) {
-                root.renamed = true;
-                root.completed = true;
-                root.source_removed = true;
-                entries.push_back(root);
-                continue;
+            if (req.type == OpType::Move && !root.destination_preexisting) {
+                std::wstring parent_key = pulse::path::FoldedKey(ParentOf(source));
+                if (!rename_other_volume.contains(parent_key)) {
+                    if (MoveFileExW(source.c_str(), root.destination.c_str(), 0)) {
+                        target_listing.Added(root_name(source));
+                        root.renamed = true;
+                        root.completed = true;
+                        root.source_removed = true;
+                        root_entries[source_index] = entries.size();
+                        entries.push_back(root);
+                        continue;
+                    }
+                    if (GetLastError() == ERROR_NOT_SAME_DEVICE) rename_other_volume.insert(std::move(parent_key));
+                }
             }
+            root_entries[source_index] = entries.size();
             entries.push_back(root);
             if (!root.directory || root.reparse) continue;
 
@@ -3142,6 +3227,10 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         }
         bool destination_is_directory = false;
         bool destination_exists = !fresh_parent && PathExists(entry.destination, &destination_is_directory);
+        // Taken now though the scan found it free (another program, or an
+        // earlier root of this transfer with the same name): what is there
+        // is not this root's to undo as a whole.
+        if (destination_exists) entry.destination_preexisting = true;
         // Source and target can only be one object when the target exists.
         if (destination_exists && SameFileObject(entry.source, entry.destination)) {
             if (entry.directory) skipped_prefixes.push_back(entry.source);
@@ -3623,25 +3712,28 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
         OpRequest committed = req;
         committed.sources.clear();
         std::vector<std::wstring> committed_destinations;
+        // Each root and what was scanned under it are one run of entries
+        // (pre-order), up to the next root's entry.
         for (size_t root_index = 0; root_index < req.sources.size(); ++root_index) {
-            const auto found = std::find_if(entries.begin(), entries.end(), [&](const TransferEntry& entry) {
-                return _wcsicmp(entry.source.c_str(), req.sources[root_index].c_str()) == 0;
-            });
-            if (found == entries.end()) continue;
+            const size_t first = root_entries[root_index];
+            if (first == std::wstring::npos) continue;
+            const TransferEntry& found = entries[first];
             const std::wstring original_destination = JoinPath(req.dest_dir,
                                                                root_name(req.sources[root_index]));
-            const bool independent_root = !found->destination_preexisting
-                || _wcsicmp(found->destination.c_str(), original_destination.c_str()) != 0;
+            const bool independent_root = !found.destination_preexisting
+                || _wcsicmp(found.destination.c_str(), original_destination.c_str()) != 0;
             if (independent_root) {
                 committed.sources.push_back(req.sources[root_index]);
-                committed_destinations.push_back(found->destination);
+                committed_destinations.push_back(found.destination);
                 continue;
             }
-            for (size_t item = 0; item < completed_sources.size(); ++item) {
-                if (StartsWithPath(completed_sources[item], req.sources[root_index])) {
-                    committed.sources.push_back(completed_sources[item]);
-                    committed_destinations.push_back(completed_destinations[item]);
-                }
+            size_t end = entries.size();
+            for (size_t next = root_index + 1; next < req.sources.size(); ++next)
+                if (root_entries[next] != std::wstring::npos) { end = root_entries[next]; break; }
+            for (size_t item = first; item < end; ++item) {
+                if (!entries[item].completed) continue;
+                committed.sources.push_back(entries[item].source);
+                committed_destinations.push_back(entries[item].destination);
             }
         }
         if (!committed_destinations.empty()) PushUndo(committed, task_id, &committed_destinations);

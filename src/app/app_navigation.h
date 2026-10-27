@@ -74,7 +74,9 @@ bool ApplyNotifyToVisible(AppState& s, const std::wstring& path,
 void DropSizePatches(AppState& s, const std::wstring& path);
 void QueueSizePatch(AppState& s, const std::wstring& path, const std::wstring& name,
                            ULONGLONG due);
-void DrainDirNotifies(AppState& s);
+// True while batches are held for a later tick (DirNotifyPacer): keep the
+// tick fast until they land.
+bool DrainDirNotifies(AppState& s);
 void RestoreNavigationReturnSelection(AppState& s, app::Tab& tab,
                                              const std::wstring& childName);
 void NavigateTo(AppState& s, const std::wstring& path);
@@ -101,6 +103,9 @@ void CycleFocus(AppState& s);
 void MarkTargetPane(AppState& s);
 void SortBy(AppState& s, ui::SortColumn col);
 void SetSort(AppState& s, ui::SortColumn col, ui::SortDirection direction);
+// Where folders sit next to files (app::FolderSortMode 0..2) in the active
+// tab; a real folder remembers it, the way it remembers its sort column.
+void SetFolderSort(AppState& s, int mode);
 // "Group by" for the active folder (remembered per folder); 0 turns it off.
 void SetGroupBy(AppState& s, int group_by);
 void OpenSelected(AppState& s);

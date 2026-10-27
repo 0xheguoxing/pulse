@@ -986,7 +986,7 @@ static void HandleTrayShelfPress(AppState& s, HWND hwnd, const ui::HitTestResult
     case ui::TrayShelfHit::Expand:
         s.trayView = {};
         s.trayView.open = true;
-        s.trayView.opened_at = ui::motion::SystemAnimationsEnabled() ? GetTickCount64() : 0;
+        s.trayView.opened_at = ui::motion::SystemAnimationsEnabled() ? ui::motion::NowMs() : 0;
         break;
     case ui::TrayShelfHit::Collapse:
         s.trayView.open = false;
@@ -1023,7 +1023,7 @@ static void HandleTrayShelfPress(AppState& s, HWND hwnd, const ui::HitTestResult
         break;
     case ui::TrayShelfHit::Compare:
         s.trayView.compare = !s.trayView.compare;
-        s.trayView.compare_at = ui::motion::SystemAnimationsEnabled() ? GetTickCount64() : 0;
+        s.trayView.compare_at = ui::motion::SystemAnimationsEnabled() ? ui::motion::NowMs() : 0;
         break;
     case ui::TrayShelfHit::CardClose:
         s.trayView.compare = false;
@@ -1986,7 +1986,7 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             const float dy = static_cast<float>(my - s->trayDrag.y0) / sc;
             if (!s->trayDrag.active && std::abs(dx) + std::abs(dy) > 3.0f)
                 s->trayDrag.active = true;
-            const ULONGLONG now = GetTickCount64();
+            const ULONGLONG now = ui::motion::NowMs();
             const float dt = static_cast<float>(std::max<ULONGLONG>(1, now - s->trayDrag.last_t));
             const float inst = static_cast<float>(mx - s->trayDrag.last_x) / sc / dt;
             s->trayDrag.vx = s->trayDrag.vx * 0.4f + inst * 0.6f;
@@ -3066,7 +3066,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
                 s->trayDrag.x0 = mx;
                 s->trayDrag.y0 = my;
                 s->trayDrag.last_x = mx;
-                s->trayDrag.last_t = GetTickCount64();
+                s->trayDrag.last_t = ui::motion::NowMs();
                 SetCapture(hwnd);
                 return 0;
             }
@@ -5186,7 +5186,7 @@ LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             }
             if (wParam == VK_DELETE && !shift && !s->trayView.checked.empty()) {
                 s->trayView.removing = s->trayView.checked;
-                s->trayView.remove_at = GetTickCount64();
+                s->trayView.remove_at = ui::motion::NowMs();
                 s->trayView.compare = false;
                 if (!ui::motion::SystemAnimationsEnabled()) s->trayView.remove_at -= 320;
                 InvalidateRect(hwnd, nullptr, FALSE);

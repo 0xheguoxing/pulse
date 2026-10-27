@@ -1163,7 +1163,8 @@ void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathL
             query.all.push_back(tag.id);
             FillTagViewRefinements(s, query, tag.paths, tab);
             tab.pending_generation = s.worker.LoadPaths(
-                tab.current_path, tag.paths, tab.sort_column, tab.sort_direction, false, {}, tab.EffectiveGroup());
+                tab.current_path, tag.paths, tab.sort_column, tab.sort_direction, false, {}, tab.EffectiveGroup(),
+                tab.EffectiveFolderSort());
             return;
         }
         tab.virtual_title = l10n::Get(l10n::StringId::TagDeleted).c_str();
@@ -1179,7 +1180,8 @@ void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathL
         std::vector<std::wstring> paths = app::TagQueryPaths(s.places, query);
         FillTagViewRefinements(s, query, paths, tab);
         tab.pending_generation = s.worker.LoadPaths(
-            tab.current_path, std::move(paths), tab.sort_column, tab.sort_direction, false, {}, tab.EffectiveGroup());
+            tab.current_path, std::move(paths), tab.sort_column, tab.sort_direction, false, {}, tab.EffectiveGroup(),
+            tab.EffectiveFolderSort());
         return;
     } else if (kind == L"search") {
         wchar_t title[512]{};
@@ -1259,7 +1261,7 @@ void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathL
         tab.banner_title.clear();
         tab.banner_message.clear();
         tab.pending_generation = s.worker.Refresh(
-            path, tab.sort_column, tab.sort_direction, tab.EffectiveGroup());
+            path, tab.sort_column, tab.sort_direction, tab.EffectiveGroup(), nullptr, tab.EffectiveFolderSort());
         return;
     } else if (kind == L"recycle") {
         tab.virtual_title = l10n::Get(l10n::StringId::RecycleBin);
@@ -1269,7 +1271,7 @@ void LoadVirtualView(AppState& s, app::Tab& tab, const std::wstring& path, PathL
         tab.banner_title = l10n::Get(l10n::StringId::RecycleBin);
         tab.banner_message = RecycleOccupancyText(s.recycle_info);
         tab.pending_generation = s.worker.Refresh(
-            path, tab.sort_column, tab.sort_direction, tab.EffectiveGroup());
+            path, tab.sort_column, tab.sort_direction, tab.EffectiveGroup(), nullptr, tab.EffectiveFolderSort());
         return;
     } else if (kind == L"settings") {
         tab.virtual_title = l10n::Get(l10n::StringId::Settings);
@@ -1410,6 +1412,7 @@ void StartLoadingPath(AppState& s, app::Tab& tab, const std::wstring& path, Path
             .value_or(s.appPrefs.folder_sorts.Default());
         tab.sort_column = sort.column;
         tab.sort_direction = sort.direction;
+        tab.folder_sort = s.appPrefs.folder_sorts.FindFolderMode(normalized).value_or(-1);
     }
     tab.net_readonly = false;
     tab.cache_unix = 0;
@@ -1436,7 +1439,8 @@ void StartLoadingPath(AppState& s, app::Tab& tab, const std::wstring& path, Path
             other->pending_generation == 0 ||
             other->sort_column != tab.sort_column ||
             other->sort_direction != tab.sort_direction ||
-            other->EffectiveGroup() != tab.EffectiveGroup()) {
+            other->EffectiveGroup() != tab.EffectiveGroup() ||
+            other->EffectiveFolderSort() != tab.EffectiveFolderSort()) {
             return;
         }
         shared_generation = other->pending_generation;
@@ -1476,7 +1480,7 @@ void StartLoadingPath(AppState& s, app::Tab& tab, const std::wstring& path, Path
     tab.pending_generation = shared_generation != 0
         ? shared_generation
         : s.worker.Refresh(normalized, tab.sort_column, tab.sort_direction, tab.EffectiveGroup(),
-                           SortFolderSizes(s, tab, normalized));
+                           SortFolderSizes(s, tab, normalized), tab.EffectiveFolderSort());
     if (fs::IsUncPath(normalized)) RequestUncProbe(s, normalized);
 }
 
@@ -1616,6 +1620,7 @@ static bool ApplyWorkerResultToWindow(AppState& s, app::WorkResult& res, bool ag
                 tab->snapshot_path == res.path && !fs::IsVirtualPath(res.path);
             if (keep_order) {
                 const app::ScopedEntryGrouping grouping(tab->EffectiveGroup(), tab->current_path);
+                const app::ScopedFolderSortMode folder_mode(tab->EffectiveFolderSort());
                 // A rescan of an unchanged folder (the watch's first report
                 // after opening) keeps the worker's vector: no 100k-row merge.
                 if (!app::SameEntryOrder(*tab->snapshot, *res.snapshot, tab->sort_column, tab->sort_direction))
@@ -1822,7 +1827,8 @@ void RefreshPath(AppState& s, const std::wstring& path, RefreshReason reason) {
             if (other == tab || other->pending_generation == 0) continue;
             if (other->sort_column == tab->sort_column &&
                 other->sort_direction == tab->sort_direction &&
-                other->EffectiveGroup() == tab->EffectiveGroup()) {
+                other->EffectiveGroup() == tab->EffectiveGroup() &&
+                other->EffectiveFolderSort() == tab->EffectiveFolderSort()) {
                 tab->pending_generation = other->pending_generation;
                 break;
             }
@@ -1834,7 +1840,7 @@ void RefreshPath(AppState& s, const std::wstring& path, RefreshReason reason) {
             s.store.BeginRefresh(normalized);
             tab->pending_generation = s.worker.Refresh(
                 normalized, tab->sort_column, tab->sort_direction, tab->EffectiveGroup(),
-                SortFolderSizes(s, *tab, normalized));
+                SortFolderSizes(s, *tab, normalized), tab->EffectiveFolderSort());
         }
     }
 }
@@ -1990,6 +1996,7 @@ static bool ApplyNotifiesToVisible(AppState& s, const std::wstring& path,
         if (!tab || tab->current_path != path || !tab->snapshot) return;
         auto copy = std::make_shared<std::vector<fs::DirEntry>>(*tab->snapshot);
         const app::ScopedEntryGrouping grouping(tab->EffectiveGroup(), tab->current_path);
+        const app::ScopedFolderSortMode folder_mode(tab->EffectiveFolderSort());
         if (app::ApplyDirNotifyBatch(*copy, path, events, tab->sort_column, tab->sort_direction) ==
             app::NotifyPatch::NeedFullEnum) {
             need_full = true;
@@ -2235,15 +2242,20 @@ static void ApplyDirNotifiesToWindow(AppState& s, const std::vector<AppState::Di
     if (changed && s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
-void DrainDirNotifies(AppState& s) {
+bool DrainDirNotifies(AppState& s) {
     // The watches, their queue and the size patches are shared by every
     // window: take them once and hand them to each window.
-    std::vector<AppState::DirNotifyBatch> batch;
+    std::vector<AppState::DirNotifyBatch> incoming;
     {
         std::lock_guard<std::mutex> lock(s.notify_mu);
-        batch.swap(s.notify_queue);
+        incoming.swap(s.notify_queue);
     }
     const ULONGLONG now = GetTickCount64();
+    // A folder that keeps changing (a bulk delete reports item by item) is
+    // patched at most once per pace window instead of once per item.
+    std::vector<AppState::DirNotifyBatch> batch;
+    s.core.notify_pacer.Take(incoming, now, batch);
+    const bool holding = s.core.notify_pacer.Holding();
     std::vector<AppState::CoalescedSizePatch> due;
     std::vector<AppState::CoalescedSizePatch> keep;
     due.reserve(s.size_patches.size());
@@ -2276,6 +2288,7 @@ void DrainDirNotifies(AppState& s) {
     }
     for (const auto& patch : due)
         if (!was_shown(patch.path)) s.store.MarkDirty(patch.path);
+    return holding;
 }
 
 void RestoreNavigationReturnSelection(AppState& s, app::Tab& tab,
@@ -2695,6 +2708,26 @@ void SetSort(AppState& s, ui::SortColumn col, ui::SortDirection direction) {
         // Apply the chosen order when the first result store arrives.
         tab->content_sort_override = true;
     } else RefreshActiveTab(s);
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+void SetFolderSort(AppState& s, int mode) {
+    app::Tab* tab = ActiveTab(s);
+    if (!tab || mode < 0 || mode > 2) return;
+    std::wstring kind;
+    if (app::ParsePulsePath(tab->current_path, &kind, nullptr) &&
+        (kind == L"starred" || kind == L"recent")) {
+        return;
+    }
+    const app::FolderSortMode before = tab->EffectiveFolderSort();
+    tab->folder_sort = mode;
+    // Only this folder: other folders keep their own choice or the settings
+    // default. Virtual views are rejected by the key and keep it on the tab.
+    if (!tab->content_results && !tab->search_content_active &&
+        s.appPrefs.folder_sorts.SetFolderMode(tab->current_path, mode))
+        s.appPrefs.Save();
+    // Content search results take their order from the index.
+    if (tab->EffectiveFolderSort() != before && !tab->content_results && !tab->search_content_active)
+        RefreshActiveTab(s);
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 void SetGroupBy(AppState& s, int group_by) {

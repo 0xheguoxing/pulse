@@ -189,6 +189,7 @@ DWORD FolderOpenError(const std::wstring& path) {
 struct FolderReadOptions {
     ui::SortColumn sort_column = ui::SortColumn::Name;
     ui::SortDirection sort_direction = ui::SortDirection::Asc;
+    app::FolderSortMode folder_sort = app::FolderSortMode::FoldersFirst;
     bool show_hidden = false;
     bool show_protected = false;
     bool drive = false;
@@ -284,6 +285,7 @@ void ReadFolder(const std::shared_ptr<HoverFolderJob>& job, const FolderReadOpti
         }
     }
     try {
+        const app::ScopedFolderSortMode folder_mode(options.folder_sort);
         app::SortEntries(entries, options.sort_column, options.sort_direction, [&cancelled] {
             if (cancelled()) throw SortCancelled{};
         });
@@ -399,6 +401,7 @@ void StartFolderJob(AppState& s, const app::Tab& tab, const fs::DirEntry& entry,
     FolderReadOptions options;
     options.sort_column = tab.sort_column;
     options.sort_direction = tab.sort_direction;
+    options.folder_sort = tab.EffectiveFolderSort();
     options.show_hidden = tab.show_hidden_files;
     options.show_protected = tab.show_protected_os_files;
     options.drive = entry.drive_type != 0;

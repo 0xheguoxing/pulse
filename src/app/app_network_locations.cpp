@@ -121,6 +121,7 @@ void FillNetworkLocationsView(AppState& state, app::Tab& tab) {
     AppendNetworkPageEntries(state, *entries);
     {
         const app::ScopedEntryGrouping grouping(tab.EffectiveGroup(), tab.current_path);
+        const app::ScopedFolderSortMode folder_mode(tab.EffectiveFolderSort());
         std::stable_sort(entries->begin(), entries->end(), [&](const auto& a, const auto& b) {
             return app::EntryLess(a, b, tab.sort_column, tab.sort_direction);
         });

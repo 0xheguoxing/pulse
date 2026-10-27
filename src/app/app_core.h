@@ -22,6 +22,7 @@
 #include "closed_windows.h"
 #include "context_menu_controller.h"
 #include "context_menu_prefs.h"
+#include "dir_notify_queue.h"
 #include "duplicate_scan.h"
 #include "explorer_window_takeover.h"
 #include "external_open.h"
@@ -75,6 +76,9 @@ struct AppCore {
     };
     std::mutex notify_mu;
     std::vector<DirNotifyBatch> notify_queue;
+    // Taken from notify_queue on the UI thread (DrainDirNotifies); holds the
+    // batches of folders that were patched moments ago.
+    app::DirNotifyPacer<DirNotifyBatch> notify_pacer;
     struct CoalescedSizePatch {
         std::wstring path;
         std::wstring name;

@@ -27,6 +27,7 @@
 #include <dwmapi.h>
 // app_main.cpp — Pulse UI process entry point, window, input, shot mode.
 #include "../ui/ui_compositor.h"
+#include "../ui/known_extensions.h"
 #include "../ui/lumatext_renderer.h"
 #include "../ui/ui_renderer.h"
 #include "../ui/preview_grab_cursor.h"
@@ -490,7 +491,8 @@ static thread_local const RECT* t_paint_damage = nullptr;
 // Motion the app runs itself (scrolling, layout, theme): it moves pixels the
 // partial-redraw damage does not know about.
 static bool AppMotion(const AppState& s) {
-    return s.scrollAnimating || s.marqueeAutoScroll || s.themeReveal.start || s.paneLayoutMotion.start;
+    return s.scrollAnimating || s.marqueeAutoScroll || s.themeReveal.start || s.paneLayoutMotion.start ||
+           s.trayAnimating;
 }
 
 void Render(AppState& s) {
@@ -532,6 +534,11 @@ void Render(AppState& s) {
     bool hc = s.shot_high_contrast || ui::IsHighContrast();
     ui::Theme theme = hc ? ui::MakeHighContrastTheme() : ui::MakeTheme(s.darkMode, s.accentColor);
 
+    // The staging tray steps once per frame painted, so motion a click or a
+    // drag-over starts begins with this frame instead of the next UI tick;
+    // the pump keeps the frames coming while it moves.
+    const bool tray_moving = TickTrayDeck(s);
+    s.trayAnimating = tray_moving && s.framePump.Running();
     const bool app_motion = AppMotion(s);  // before this frame's scroll step
     if (s.scrollAnimating) UpdateSmoothScroll(s);
     UpdateMarqueeFrame(s);
@@ -855,6 +862,8 @@ static void KeepWindowsClosedAlong(AppState& s) {
 static void CloseMainWindow(AppState& s) {
     const HWND hwnd = s.hwnd;
     if (!s.core.windows.IsLastWindow(hwnd)) {
+        // Pinned tabs outlive their window: they join the window used next.
+        if (AppState* next = s.core.windows.MostRecentExcept(hwnd)) MovePinnedTabsInto(s, *next);
         DestroyWindow(hwnd);
         return;
     }
@@ -1413,6 +1422,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         ui::FluentMenu::SetAcrylicEnabled(s->appPrefs.menu_acrylic && !s->safeMode);
         s->renderer.SetRowHeightDip(static_cast<float>(
             app::EffectiveRowHeightDip(s->appPrefs.row_height, s->appPrefs.ui_font_scale)));
+        ui::SetHideKnownExtensions(!s->appPrefs.show_file_extensions);
         s->renderer.SetListStyle(s->appPrefs.list_smart_date, s->appPrefs.list_zebra_rows,
                                  s->appPrefs.list_size_bar, s->appPrefs.list_tag_name_color,
                                  s->appPrefs.list_selection_outline);
@@ -2095,6 +2105,9 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_UNDO_DELETE:
         if (s && s->ops.CanUndo()) s->ops.Undo();
         return 0;
+    case WM_RECYCLE_REFUSED:
+        if (s) OfferPermanentDeleteForRefused(*s);
+        return 0;
 
     case WM_TRAY_UNDO:
     case WM_TRAY_OPEN_DEST:
@@ -2176,13 +2189,15 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         if (!IsWindowVisible(hwnd) || IsIconic(hwnd) ||
             (!s->scrollAnimating && !s->marqueeAutoScroll && !s->themeReveal.start && !s->paneLayoutMotion.start &&
-             !s->renderer.TickMotion(GetTickCount64()))) {
+             !s->trayAnimating && !s->renderer.TickMotion(GetTickCount64()))) {
             s->framePump.Disarm();  // WM_PAINT re-arms once shown again
             return 0;
         }
         // The assistant's queued steps keep time while frames run.
         AiChatRunDue(*s);
         AiVoiceRunDue(*s);
+        // Frames keep the queue busy, so kTimerUi can starve (UiTimerPacer::TickOverdue).
+        if (s->uiTimerPacer.TickOverdue(GetTickCount64())) WndProcImpl(hwnd, WM_TIMER, kTimerUi, 0);
         // Paint now rather than queue a low-priority WM_PAINT; Render re-arms
         // while anything still moves. Posted messages outrank input, so when
         // input is waiting the frame becomes an ordinary WM_PAINT instead:
@@ -2243,6 +2258,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         if (s && wParam == kTimerUi) {
             SyncUiTimerRate(*s, hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
+            s->uiTimerPacer.NoteTick(GetTickCount64());
             bool dirty = false;
             if (TickChangeTracking(*s)) dirty = true;
             if (s->renderer.MtimeBoundaryDue()) dirty = true;   // 修改时间提示: a mark aged
@@ -2255,7 +2271,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             }
             // New totals re-sort Size-ordered listings, paced (#58).
             if (folderSizeResortWaiting) folderSizeResortWaiting = ResortForFolderSizes(*s);
-            DrainDirNotifies(*s);
+            if (DrainDirNotifies(*s)) {
+                s->uiTimerPacer.NoteActivity(GetTickCount64());
+                SyncUiTimerRate(*s, hwnd, IsWindowVisible(hwnd) && !IsIconic(hwnd));
+            }
             // Sync states of on-screen cloud rows came back: repaint once.
             if (const uint64_t cloud_sync = app::CloudSyncProbe::Instance().Revision();
                 cloud_sync != s->cloudSyncRevision) {
@@ -2375,7 +2394,12 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 TickTabTransitions(*s);
                 dirty = true;
             }
-            if (TickTrayDeck(*s)) dirty = true;
+            // Without the pump (or until it takes over) the timer steps the tray.
+            if (!s->trayAnimating && TickTrayDeck(*s)) {
+                s->trayAnimating = s->framePump.Running();
+                if (s->trayAnimating) ArmMotionFrames(*s, true);
+                else dirty = true;
+            }
             if (TickTabFlash(*s)) dirty = true;
             if (SyncTagGroups(*s)) {
                 // Tags changed: a tag-grouped folder re-sorts into its new groups,
@@ -2769,10 +2793,14 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     } else if (completed.type == ops::OpType::Move ||
                                completed.type == ops::OpType::Rename ||
                                completed.type == ops::OpType::BatchRename) {
+                        // Tags, stars and pins follow in one pass and one save.
+                        std::vector<std::pair<std::wstring, std::wstring>> remaps;
+                        for (size_t i = 0; i < completed.sources.size() &&
+                                           i < completed.destinations.size(); ++i)
+                            remaps.emplace_back(completed.sources[i], completed.destinations[i]);
+                        s->places.RemapPaths(remaps);
                         for (size_t i = 0; i < completed.sources.size() &&
                                            i < completed.destinations.size(); ++i) {
-                            s->places.RemapPaths(completed.sources[i],
-                                                 completed.destinations[i]);
                             // 别名 follow renames, drags, cut-paste and their undo.
                             app::AliasStore::Instance().Move(completed.sources[i],
                                                              completed.destinations[i]);
@@ -2788,15 +2816,16 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                             s->completedCutClipboardPaths.insert(
                                 s->completedCutClipboardPaths.end(), completed.sources.begin(),
                                 completed.sources.end());
+                            // Keys equal where _wcsicmp is: one lookup per cut item
+                            // rather than a search of everything moved so far.
+                            std::unordered_set<std::wstring> moved;
+                            moved.reserve(s->completedCutClipboardPaths.size());
+                            for (const auto& actual : s->completedCutClipboardPaths)
+                                moved.insert(pulse::path::FoldedKey(actual));
                             const bool all_done = std::all_of(
                                 s->pendingCutClipboardPaths.begin(),
                                 s->pendingCutClipboardPaths.end(), [&](const std::wstring& expected) {
-                                    const std::wstring normalized = fs::NormalizePath(expected);
-                                    return std::any_of(s->completedCutClipboardPaths.begin(),
-                                        s->completedCutClipboardPaths.end(),
-                                        [&](const std::wstring& actual) {
-                                            return _wcsicmp(normalized.c_str(), actual.c_str()) == 0;
-                                        });
+                                    return moved.contains(pulse::path::FoldedKey(fs::NormalizePath(expected)));
                                 });
                             if (all_done) {
                                 ops::CompleteCutClipboard(s->pendingCutClipboardSequence,
@@ -2808,8 +2837,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                         }
                     } else if (completed.type == ops::OpType::RecycleDelete ||
                                completed.type == ops::OpType::RealDelete) {
-                        for (const auto& source : completed.sources)
-                            s->places.RemoveAssignments(source, true);
+                        s->places.RemoveAssignments(completed.sources, true);
                         s->duplicateScan.RemoveDeleted(completed.sources);
                         s->tray.RemoveDeleted(completed.sources);
                     }

@@ -1,6 +1,7 @@
 #include "global_search_window.h"
 #include "global_search_result_state.h"
 #include "app_catalog.h"
+#include "folder_alias.h"
 #include "../ui/FluentTokens.h"
 #include "resource.h"
 #include "../ui/empty_state_layout.h"
@@ -14,6 +15,7 @@
 #include <uxtheme.h>
 #include "../common/localization.h"
 #include "../index/index_client.h"
+#include "../index/index_query.h"
 #include "../index/content_search_client.h"
 #include "content_scope_mode.h"
 #include "content_pack_ui.h"
@@ -58,6 +60,8 @@ constexpr float kMinWidth = 640, kMinHeight = 420, kDefaultWidth = 960, kDefault
 constexpr size_t kMaximumResults = 200;
 // Start menu apps lead the results (#58-1), a handful at most.
 constexpr size_t kMaximumApps = 4;
+// Aliased folders listed ahead of the best matches.
+constexpr size_t kMaximumAliases = 3;
 constexpr size_t kMaximumPinnedScopes = 3, kMaximumNetworkScopes = 2;
 const std::wstring& Text(StringId id) { return l10n::Get(id); }
 std::wstring ParentPath(const std::wstring& path) {
@@ -166,6 +170,7 @@ struct GlobalSearchWindow::Impl {
         std::wstring name, path, snippet; bool directory = false;
         uint64_t size = 0, mtime = 0; bool network = false;
         bool app = false;  // a Start menu app; path is shell:AppsFolder\<id>
+        std::wstring alias;  // a folder found by its alias, shown as 「alias · name」
     };
     std::vector<Row> rows;
     int selected = 0, first = 0;
@@ -447,10 +452,13 @@ struct GlobalSearchWindow::Impl {
         return name.size() >= word.size() && CompareStringOrdinal(name.data(), static_cast<int>(word.size()),
             word.data(), static_cast<int>(word.size()), TRUE) == CSTR_EQUAL;
     }
-    void GroupRows() {
-        std::vector<Row> best, folders, files;
+    // Aliased folders lead the best matches; up to three names starting with
+    // the query follow.
+    void GroupRows(std::vector<Row> aliases = {}) {
+        std::vector<Row> best = std::move(aliases), folders, files;
+        const size_t best_limit = best.size() + 3;
         for (auto& row : rows) {
-            if (best.size() < 3 && StartsWithQuery(row.name)) best.push_back(std::move(row));
+            if (best.size() < best_limit && StartsWithQuery(row.name)) best.push_back(std::move(row));
             else if (row.directory) folders.push_back(std::move(row));
             else files.push_back(std::move(row));
         }
@@ -490,6 +498,38 @@ struct GlobalSearchWindow::Impl {
         }
         return out;
     }
+    // Folders whose alias (folder_alias.h) matches the query, as the omnibar
+    // ranks them. Only the alias counts: the index finds folder names itself.
+    // They obey the scope and the kind and date chips like any result.
+    std::vector<Row> AliasRows() const {
+        std::vector<Row> out;
+        if (content_mode || showing_recent || query.empty()) return out;
+        const auto kind = kKinds[kind_filter];
+        if (kind != index::SearchKind::Any && kind != index::SearchKind::Folder) return out;
+        const std::wstring scope_path = ScopePath();
+        const index::CompiledQuery dates = index::ParseQuery(kDateTokens[date_filter]);
+        const auto in_dates = [&](const std::wstring& path, const std::wstring& name, uint64_t mtime) {
+            if (dates.groups.empty()) return true;
+            return std::any_of(dates.groups.begin(), dates.groups.end(), [&](const auto& group) {
+                return std::all_of(group.begin(), group.end(),
+                                   [&](const index::Term& term) { return index::MatchTerm(path, name, true, 0, mtime, term); });
+            });
+        };
+        for (auto& [rank, entry] : app::AliasStore::Instance().SuggestRanked(query, kMaximumAliases + 4)) {
+            if (out.size() == kMaximumAliases) break;
+            if (rank > 3 || (rank == 2 && !search_pinyin)) continue;  // 4: the folder's own name
+            if (!UnderFolder(entry.path, scope_path)) continue;
+            Row row{LeafName(entry.path), entry.path, {}, true};
+            WIN32_FILE_ATTRIBUTE_DATA data{};
+            if (GetFileAttributesExW(entry.path.c_str(), GetFileExInfoStandard, &data))
+                row.mtime = (static_cast<uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime;
+            if (!in_dates(entry.path, row.name, row.mtime)) continue;
+            row.alias = std::move(entry.alias);
+            row.network = IsNetworkPath(entry.path);
+            out.push_back(std::move(row));
+        }
+        return out;
+    }
     // Swaps the leading app rows for the current matches.
     void ReplaceAppRows() {
         const size_t old = std::min(app_count, rows.size());
@@ -525,15 +565,26 @@ struct GlobalSearchWindow::Impl {
         request.needle = search_pinyin ? query + FilterTokens() : L"nopinyin: " + query + FilterTokens();
         request.limit = kMaximumResults;
         const auto merged = index::MergeSearchResults(request, local_result, network_result, true);
+        auto aliases = AliasRows();
+        const auto same = [](const std::wstring& l, const std::wstring& r) {
+            const auto a = path::StripExtendedPathPrefix(l), b = path::StripExtendedPathPrefix(r);
+            return CompareStringOrdinal(a.data(), static_cast<int>(a.size()), b.data(), static_cast<int>(b.size()), TRUE) == CSTR_EQUAL;
+        };
+        size_t duplicates = 0;
         for (const auto& hit : merged.hits) {
+            if (std::any_of(aliases.begin(), aliases.end(), [&](const Row& alias) { return same(alias.path, hit.path); })) {
+                ++duplicates;  // already listed under its alias
+                continue;
+            }
             Row row{hit.name, hit.path, {}, hit.is_dir};
             row.size = hit.size; row.mtime = hit.mtime; row.network = IsNetworkPath(hit.path);
             rows.push_back(std::move(row));
         }
+        const size_t alias_count = aliases.size();
         app_count = 0;
-        GroupRows();
+        GroupRows(std::move(aliases));
         ReplaceAppRows();
-        total = merged.total + app_count;
+        total = merged.total - std::min(merged.total, duplicates) + alias_count + app_count;
         truncated = total > rows.size(); busy = providers.Busy();
         error = providers.Error() ? Text(rows.empty() ? StringId::GlobalSearchFailed : StringId::SearchIncomplete) : std::wstring{};
         if (!busy) KillTimer(hwnd, kConnectTimeout);
@@ -1222,7 +1273,8 @@ struct GlobalSearchWindow::Impl {
         const float meta_w = sel ? 0.0f : 112.0f;
         const float text_right = right - 12 - std::max(hints_w, meta_w);
         const float name_top = content_row ? y + 8 : y + 7;
-        LabelC(row.name, {text_left, name_top, text_right, name_top + 20}, 14, p.text, false, L"Segoe UI", !showing_recent);
+        LabelC(row.alias.empty() ? row.name : row.alias + L" \x00B7 " + row.name, {text_left, name_top, text_right, name_top + 20}, 14,
+               p.text, false, L"Segoe UI", !showing_recent);
         const float path_top = name_top + 20;
         std::wstring parent = row.app ? Text(StringId::TypeApplication) : path::StripExtendedPathPrefix(ParentPath(row.path));
         float path_left = text_left;

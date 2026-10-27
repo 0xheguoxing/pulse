@@ -9,11 +9,13 @@
 #include "column_view_model.h"
 #include "explorer_handoff.h"
 #include "entry_order_hold.h"
+#include "entry_sort.h"
 #include "create_rename_intent.h"
 #include "pane_header_animation.h"
 #include "details_tree.h"
 #include "../index/content_result_store.h"
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <array>
 #include <string>
@@ -85,6 +87,13 @@ struct Tab {
         if (current_path == L"pulse:networks") return ui::ShowsGroups(view_mode) ? 8 : 0;
         const bool walled = wall && ui::IsZoomIconMode(view_mode);
         return ui::ShowsGroups(view_mode) && !walled ? group_by : 0;
+    }
+    // Where folders sit next to files (app::FolderSortMode) when chosen for
+    // current_path, remembered per folder like the sort column; -1 follows
+    // Settings > Folders first. Virtual views keep the tab's choice.
+    int folder_sort = -1;
+    FolderSortMode EffectiveFolderSort() const {
+        return folder_sort >= 0 ? FolderSortModeFromInt(folder_sort) : DefaultFolderSortMode();
     }
     // Collapsed group keys per folder (session only).
     std::map<std::wstring, std::set<std::wstring>> collapsed_groups;
@@ -562,6 +571,8 @@ private:
     std::vector<TrayBatch> batches_;
     uint64_t next_id_ = 1;
     std::map<uint64_t, std::vector<std::wstring>> inflight_sources_;
+    // The same paths keyed for lookup, counted across tasks.
+    std::unordered_map<std::wstring, size_t> inflight_keys_;
 };
 
 // ---------------------------------------------------------------------------

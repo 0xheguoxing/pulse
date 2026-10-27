@@ -18,6 +18,9 @@ void NoteDeleteFinished(AppState& s, const ops::FinishedTask& done);
 // The batch rename dialog's task ended: flash the renamed rows and offer undo
 // (once the dialog has closed).
 void NoteBatchRenameFinished(AppState& s, const ops::FinishedTask& done);
+// WM_RECYCLE_REFUSED: offers to delete for good what a recycle left because
+// the Recycle Bin would not keep it, as DeletePaths asks before a delete.
+void OfferPermanentDeleteForRefused(AppState& s);
 // Confirmation shown before Delete moves items to the Recycle Bin (opt-in setting).
 ui::ConfirmDialogSpec BuildRecycleDeleteConfirm(const std::vector<std::wstring>& paths);
 void RestoreSelected(AppState& s);

@@ -20,6 +20,7 @@
 #include "../common/text_format.h"
 #include "../fs/drive_label.h"
 #include "../ops/clipboard.h"
+#include "../ops/source_listing.h"
 #include <commctrl.h>
 #include <prsht.h>
 #include <shlobj.h>
@@ -30,6 +31,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cwctype>
+#include <unordered_set>
 #include <utility>
 
 namespace pulse::app {
@@ -968,13 +970,24 @@ void StagingTray::Collect(const std::vector<std::wstring>& paths, bool move_inte
     batch.id = next_id_++;
     batch.move_intent = move_intent;
     batch.total_size = 0;
-    for (const auto& p : paths) {
+    std::vector<std::wstring> normalized;
+    normalized.reserve(paths.size());
+    for (const auto& p : paths) normalized.push_back(fs::NormalizePath(p));
+    // Thousands of items from one folder come from one listing of it.
+    const ops::SourceListing listing(normalized);
+    for (auto& path : normalized) {
         TrayItem it;
         it.id = next_id_++;
-        it.path = fs::NormalizePath(p);
+        it.path = std::move(path);
         // One probe covers existence, icon attrs and the rough size sum.
         WIN32_FILE_ATTRIBUTE_DATA fad{};
-        if (GetFileAttributesExW(it.path.c_str(), GetFileExInfoStandard, &fad)) {
+        const ops::ListedSource* listed = listing.Find(it.path);
+        if (listed) {
+            fad.dwFileAttributes = listed->attributes;
+            fad.nFileSizeLow = static_cast<DWORD>(listed->bytes);
+            fad.nFileSizeHigh = static_cast<DWORD>(listed->bytes >> 32);
+        }
+        if (listed || GetFileAttributesExW(it.path.c_str(), GetFileExInfoStandard, &fad)) {
             it.exists = true;
             it.attrs = fad.dwFileAttributes;
             it.is_dir = (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
@@ -1021,12 +1034,13 @@ void StagingTray::ReplacePath(const std::wstring& from, const std::wstring& to) 
 void StagingTray::MarkPendingMove(uint64_t task_id, const std::vector<std::wstring>& paths,
                                   std::optional<size_t> batch) {
     std::vector<uint64_t> ids;
+    std::unordered_set<std::wstring> wanted;
+    wanted.reserve(paths.size());
+    for (const auto& path : paths) wanted.insert(pulse::path::FoldedKey(fs::NormalizePath(path)));
     for (size_t b = 0; b < batches_.size(); ++b) {
         if (batch && b != *batch) continue;
         for (const auto& item : batches_[b].items)
-            if (std::any_of(paths.begin(), paths.end(), [&](const auto& path) {
-                return _wcsicmp(item.path.c_str(), fs::NormalizePath(path).c_str()) == 0;
-            })) ids.push_back(item.id);
+            if (wanted.contains(pulse::path::FoldedKey(item.path))) ids.push_back(item.id);
     }
     MarkInFlight(task_id, ids, true);
 }
@@ -1104,64 +1118,91 @@ void StagingTray::Clear() { batches_.clear(); }
 
 void StagingTray::MarkInFlight(uint64_t task_id, const std::vector<uint64_t>& item_ids, bool move) {
     if (!task_id) return;
+    const std::unordered_set<uint64_t> wanted(item_ids.begin(), item_ids.end());
     for (auto& batch : batches_)
         for (auto& item : batch.items)
-            if (!item.inflight_task && std::find(item_ids.begin(), item_ids.end(), item.id) != item_ids.end()) {
+            if (!item.inflight_task && wanted.contains(item.id)) {
                 item.inflight_task = task_id;
                 item.inflight_move = move;
                 item.inflight_source = item.path;
                 inflight_sources_[task_id].push_back(item.path);
+                ++inflight_keys_[pulse::path::FoldedKey(item.path)];
             }
 }
 
 void StagingTray::CompleteTask(uint64_t task_id, const std::vector<std::wstring>& moved_sources) {
     if (!task_id) return;
-    inflight_sources_.erase(task_id);
+    if (const auto task = inflight_sources_.find(task_id); task != inflight_sources_.end()) {
+        for (const auto& source : task->second) {
+            const auto key = inflight_keys_.find(pulse::path::FoldedKey(source));
+            if (key != inflight_keys_.end() && !--key->second) inflight_keys_.erase(key);
+        }
+        inflight_sources_.erase(task);
+    }
+    std::unordered_set<std::wstring> moved;
+    moved.reserve(moved_sources.size());
+    for (const auto& source : moved_sources) moved.insert(pulse::path::FoldedKey(fs::NormalizePath(source)));
     for (size_t b = batches_.size(); b-- > 0;) {
         auto& batch = batches_[b];
-        for (size_t i = batch.items.size(); i-- > 0;) {
+        // Kept items close up in one pass; erasing each consumed one would
+        // shift the rest every time.
+        size_t kept = 0;
+        for (size_t i = 0; i < batch.items.size(); ++i) {
             auto& item = batch.items[i];
-            if (item.inflight_task != task_id) continue;
-            const bool consume = item.inflight_move && std::any_of(moved_sources.begin(), moved_sources.end(),
-                [&](const auto& source) {
-                    return _wcsicmp(fs::NormalizePath(source).c_str(), item.inflight_source.c_str()) == 0;
-                });
-            item.inflight_task = 0;
-            item.inflight_move = false;
-            item.inflight_source.clear();
-            if (consume) {
-                batch.total_size -= std::min(batch.total_size, item.size);
-                batch.items.erase(batch.items.begin() + static_cast<std::ptrdiff_t>(i));
+            bool consume = false;
+            if (item.inflight_task == task_id) {
+                consume = item.inflight_move && moved.contains(pulse::path::FoldedKey(item.inflight_source));
+                item.inflight_task = 0;
+                item.inflight_move = false;
+                item.inflight_source.clear();
+                if (consume) batch.total_size -= std::min(batch.total_size, item.size);
             }
+            if (consume) continue;
+            if (kept != i) batch.items[kept] = std::move(item);
+            ++kept;
         }
+        batch.items.erase(batch.items.begin() + static_cast<std::ptrdiff_t>(kept), batch.items.end());
         if (batch.items.empty()) batches_.erase(batches_.begin() + static_cast<std::ptrdiff_t>(b));
     }
 }
 
 bool StagingTray::IsInFlight(const std::wstring& path) const {
-    const auto normalized = fs::NormalizePath(path);
-    for (const auto& [task, sources] : inflight_sources_) {
-        (void)task;
-        for (const auto& source : sources)
-            if (_wcsicmp(source.c_str(), normalized.c_str()) == 0) return true;
-    }
-    return false;
+    return !inflight_keys_.empty() && inflight_keys_.contains(pulse::path::FoldedKey(fs::NormalizePath(path)));
 }
 
 void StagingTray::RemoveDeleted(const std::vector<std::wstring>& paths) {
-    for (const auto& path : paths) {
-        if (path.empty()) continue;
-        const std::wstring deleted = fs::NormalizePath(path);
-        for (size_t b = batches_.size(); b-- > 0;) {
-            for (size_t i = batches_[b].items.size(); i-- > 0;) {
-                const auto& candidate = batches_[b].items[i].path;
-                const bool same = _wcsicmp(candidate.c_str(), deleted.c_str()) == 0;
-                const bool child = candidate.size() > deleted.size() &&
-                    _wcsnicmp(candidate.c_str(), deleted.c_str(), deleted.size()) == 0 &&
-                    (deleted.back() == L'\\' || candidate[deleted.size()] == L'\\');
-                if (same || child) RemoveItem(b, i);
-            }
+    if (batches_.empty()) return;
+    std::unordered_set<std::wstring> deleted;
+    deleted.reserve(paths.size());
+    for (const auto& path : paths)
+        if (!path.empty()) deleted.insert(pulse::path::FoldedKey(fs::NormalizePath(path)));
+    if (deleted.empty()) return;
+    // An item goes when it or a folder above it was deleted: look its own path
+    // and each parent up (with and without the separator) instead of
+    // comparing every item with every deleted path.
+    const auto gone = [&](const std::wstring& path) {
+        const std::wstring key = pulse::path::FoldedKey(path);
+        if (deleted.contains(key)) return true;
+        for (size_t i = key.size(); i-- > 0;) {
+            if (key[i] != L'\\') continue;
+            if (deleted.contains(key.substr(0, i + 1)) || (i && deleted.contains(key.substr(0, i)))) return true;
         }
+        return false;
+    };
+    for (size_t b = batches_.size(); b-- > 0;) {
+        auto& batch = batches_[b];
+        size_t kept = 0;
+        for (size_t i = 0; i < batch.items.size(); ++i) {
+            if (gone(batch.items[i].path)) {
+                batch.total_size -= std::min(batch.total_size, batch.items[i].size);
+                continue;
+            }
+            if (kept != i) batch.items[kept] = std::move(batch.items[i]);
+            ++kept;
+        }
+        if (kept == batch.items.size()) continue;
+        batch.items.erase(batch.items.begin() + static_cast<std::ptrdiff_t>(kept), batch.items.end());
+        if (batch.items.empty()) batches_.erase(batches_.begin() + static_cast<std::ptrdiff_t>(b));
     }
 }
 

@@ -3,12 +3,14 @@
 // Every fixture lives under bench_data\file-lock-<pid>. Lock holders are copies
 // of this executable started with --hold, so the test never touches user
 // processes or files.
+#include "../common/localization.h"
 #include "../ops/file_lock_owner.h"
 #include "../ops/ops_manager.h"
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace pulse::ops;
@@ -76,6 +78,17 @@ const LockOwner* FindPid(const std::vector<LockOwner>& owners, DWORD pid) {
     return nullptr;
 }
 
+std::string Utf8(const std::wstring& text) {
+    if (text.empty()) return {};
+    const int size = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0,
+                                         nullptr, nullptr);
+    std::string out(static_cast<size_t>(size > 0 ? size : 0), '\0');
+    if (size > 0)
+        WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), out.data(), size, nullptr,
+                            nullptr);
+    return out;
+}
+
 bool WaitDone(OpsManager& ops, uint64_t before) {
     const ULONGLONG deadline = GetTickCount64() + 20000;
     while (GetTickCount64() < deadline) {
@@ -112,6 +125,15 @@ void PureChecks() {
     Check(IsLockLikeError(static_cast<HRESULT>(0x80270027L)), "copy engine source sharing violation");
     Check(IsLockLikeError(static_cast<HRESULT>(0x80270028L)), "copy engine destination sharing violation");
     Check(!IsLockLikeError(E_FAIL), "E_FAIL is not lock-like");
+    // One file in use is the item's failure, not the task's (its low word
+    // is ERROR_HANDLE_DISK_FULL's).
+    Check(!IsStopTransferError(static_cast<HRESULT>(0x80270027L)), "copy engine sharing violation goes on");
+    Check(!IsStopTransferError(static_cast<HRESULT>(0x8027003BL)), "copy engine name too long goes on");
+    Check(IsStopTransferError(static_cast<HRESULT>(0x80270032L)), "copy engine disk full stops");
+    Check(IsStopTransferError(HRESULT_FROM_WIN32(ERROR_HANDLE_DISK_FULL)), "Win32 disk full stops");
+    Check(IsStopTransferError(STG_E_MEDIUMFULL), "storage medium full stops");
+    Check(IsStopTransferError(static_cast<HRESULT>(ERROR_DISK_FULL)), "bare Win32 disk full stops");
+    Check(!IsStopTransferError(HRESULT_FROM_WIN32(ERROR_SHARING_VIOLATION)), "Win32 sharing violation goes on");
     Check(!IsLockLikeError(HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)), "not found is not lock-like");
     Check(!IsLockLikeError(S_OK), "success is not lock-like");
 
@@ -150,6 +172,8 @@ void PureChecks() {
 int wmain(int argc, wchar_t** argv) {
     if (argc == 4 && std::wstring(argv[1]) == L"--hold") return HoldMode(argv[2], argv[3]);
     setvbuf(stdout, nullptr, _IONBF, 0);
+    // Failure reasons are localized text, as in the app.
+    pulse::l10n::Initialize(GetModuleHandleW(nullptr), L"zh-CN");
 
     PureChecks();
 
@@ -362,6 +386,72 @@ int wmain(int argc, wchar_t** argv) {
         st = Retry(ops, st.task_id, true);
         Check(st.phase == OpPhase::Completed && !fsys::exists(locked) && !fsys::exists(free_file),
               "delete retry completes and skips items already gone");
+    }
+    {
+        // A bulk delete goes past items in use: the rest are deleted, the
+        // held ones are listed with their owner, and 重试失败项 deletes them
+        // once released.
+        std::vector<fsys::path> files;
+        for (int i = 0; i < 6; ++i) {
+            files.push_back(root / L"bulk" / (L"f" + std::to_wstring(i) + L".txt"));
+            Touch(files.back());
+        }
+        Holder first, second;
+        Check(StartHolder(first, files[1]) && StartHolder(second, files[4]), "bulk delete holders started");
+        OpRequest del;
+        del.type = OpType::RealDelete;
+        for (const auto& file : files) del.sources.push_back(file.wstring());
+        OpStatus st = Run(ops, del);
+        std::printf("[INFO] bulk delete phase=%d failed=%llu completed=%llu\n", static_cast<int>(st.phase),
+                    static_cast<unsigned long long>(st.failed_items),
+                    static_cast<unsigned long long>(st.completed_items));
+        const bool rest_gone = !fsys::exists(files[0]) && !fsys::exists(files[2]) && !fsys::exists(files[3]) &&
+            !fsys::exists(files[5]);
+        Check(st.phase == OpPhase::Failed && rest_gone && fsys::exists(files[1]) && fsys::exists(files[4]),
+              "bulk delete goes past items in use");
+        Check(st.failed_items == 2 && st.failures.size() == 2 && st.completed_items == 4,
+              "bulk delete lists the items it could not delete");
+        Check(st.failures.size() == 2 && _wcsicmp(st.failures[0].source.c_str(), files[1].c_str()) == 0 &&
+              _wcsicmp(st.failures[1].source.c_str(), files[4].c_str()) == 0 && st.failures[0].destination.empty(),
+              "failed delete items keep their order and have no destination");
+        const auto owners = FindLockOwners({files[1].wstring()}, exe_dir);
+        const LockOwner* owner = FindPid(owners, first.pi.dwProcessId);
+        const std::wstring owner_name = !owner ? std::wstring{}
+            : owner->app_name.empty() ? owner->image_name : owner->app_name;
+        if (!st.failures.empty())
+            std::printf("[INFO] bulk failure hr=0x%08X reason=%s owner=%s\n",
+                        static_cast<unsigned>(st.failures[0].hr), Utf8(st.failures[0].reason).c_str(),
+                        Utf8(owner_name).c_str());
+        Check(st.failures.size() == 2 && !owner_name.empty() &&
+              st.failures[0].reason.find(owner_name) != std::wstring::npos,
+              "a failed delete item names the program holding it");
+        first.Stop();
+        second.Stop();
+        const uint64_t before = ops.Status().completed_ops;
+        const auto spawns = ops.RetryFailedItems(st.task_id);
+        Check(spawns.size() == 1 && spawns[0].items.size() == 2, "failed delete items retry as one task");
+        if (!WaitDone(ops, before)) std::printf("[INFO] failed-items retry timed out\n");
+        st = ops.Status();
+        Check(st.phase == OpPhase::Completed && !fsys::exists(files[1]) && !fsys::exists(files[4]),
+              "retried delete items are gone");
+    }
+    {
+        // Held for a moment only (a thumbnail being made): tried again shortly.
+        const fsys::path brief = root / L"brief" / L"b.txt";
+        Touch(brief);
+        HANDLE held = CreateFileW(brief.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+        Check(held != INVALID_HANDLE_VALUE, "brief holder opened");
+        std::thread release([held] {
+            Sleep(150);
+            CloseHandle(held);
+        });
+        OpRequest del;
+        del.type = OpType::RealDelete;
+        del.sources = {brief.wstring()};
+        const OpStatus st = Run(ops, del);
+        release.join();
+        Check(st.phase == OpPhase::Completed && st.failed_items == 0 && !fsys::exists(brief),
+              "an item in use for a moment is deleted on a later try");
     }
     {
         // Unrelated failures carry no lock info and cannot be lock-retried.

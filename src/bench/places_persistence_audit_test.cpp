@@ -148,6 +148,64 @@ static void QuickAccessLayout() {
     Check(c.quick_access_order == Keys{L"builtin:recent", L"builtin:desktop"},
           "QA layout: unpinning removes the folder from the order");
 }
+static void BatchedAssignments() {
+    // Batch calls must leave what one call per path left.
+    const auto N = [](const wchar_t* path) { return pulse::fs::NormalizePath(path); };
+    const auto seed = [&](PlacesCatalog& c) {
+        c.persist = false;
+        c.tags.clear(); c.starred_items.clear(); c.recent_items.clear();
+        ColorTag tag; tag.id = L"batch"; tag.name = L"batch";
+        for (const wchar_t* path : {L"C:\\src\\a.jpg", L"C:\\src\\b.jpg", L"C:\\src\\dir\\c.jpg",
+                                    L"C:\\src\\dir", L"C:\\keep\\d.jpg", L"C:\\src\\ab.jpg"}) {
+            tag.paths.push_back(N(path));
+            StarredItem star; star.path = N(path); c.starred_items.push_back(star);
+            RecentItem recent; recent.path = N(path); c.recent_items.push_back(recent);
+        }
+        c.tags.push_back(tag);
+    };
+    const auto same = [](const PlacesCatalog& left, const PlacesCatalog& right) {
+        if (left.tags.size() != right.tags.size() || left.starred_items.size() != right.starred_items.size() ||
+            left.recent_items.size() != right.recent_items.size()) return false;
+        for (size_t i = 0; i < left.tags.size(); ++i)
+            if (left.tags[i].paths != right.tags[i].paths) return false;
+        for (size_t i = 0; i < left.starred_items.size(); ++i)
+            if (left.starred_items[i].path != right.starred_items[i].path) return false;
+        for (size_t i = 0; i < left.recent_items.size(); ++i)
+            if (left.recent_items[i].path != right.recent_items[i].path) return false;
+        return true;
+    };
+    using Moves = std::vector<std::pair<std::wstring, std::wstring>>;
+    for (const Moves& moves : {
+             Moves{{L"C:\\src\\a.jpg", L"C:\\dst\\a.jpg"}, {L"c:\\SRC\\DIR", L"C:\\dst\\dir"},
+                   {L"C:\\src\\b.jpg", L"C:\\dst\\b.jpg"}},
+             // A chain and nested sources fall back to one move after another.
+             Moves{{L"C:\\src\\a.jpg", L"C:\\src\\b.jpg"}, {L"C:\\src\\b.jpg", L"C:\\other\\b.jpg"}},
+             Moves{{L"C:\\src", L"C:\\moved"}, {L"C:\\src\\dir", L"C:\\elsewhere\\dir"}}}) {
+        PlacesCatalog batch, single;
+        seed(batch); seed(single);
+        batch.RemapPaths(moves);
+        for (const auto& [from, to] : moves) single.RemapPaths(from, to);
+        Check(same(batch, single), "batched remap leaves what one remap per item left");
+    }
+    {
+        PlacesCatalog batch;
+        seed(batch);
+        batch.RemapPaths(Moves{{L"C:\\src\\a.jpg", L"C:\\dst\\a.jpg"}, {L"C:\\src\\dir", L"C:\\dst\\dir"}});
+        Check(batch.starred_items[0].path == N(L"C:\\dst\\a.jpg") &&
+                  batch.starred_items[2].path == N(L"C:\\dst\\dir\\c.jpg") &&
+                  batch.starred_items[5].path == N(L"C:\\src\\ab.jpg"),
+              "batched remap moves items and descendants but not name prefixes");
+    }
+    for (bool descendants : {true, false}) {
+        const std::vector<std::wstring> removed = {L"c:\\SRC\\A.JPG", L"C:\\src\\dir", L"C:\\missing"};
+        PlacesCatalog batch, single;
+        seed(batch); seed(single);
+        batch.RemoveAssignments(removed, descendants);
+        for (const auto& path : removed) single.RemoveAssignments(path, descendants);
+        Check(same(batch, single) && batch.starred_items.size() == (descendants ? 3u : 4u),
+              "batched removal leaves what one removal per item left");
+    }
+}
 int main(int argc, char** argv) {
     const auto root = std::filesystem::absolute(L"bench_data/places-audit-" + std::to_wstring(GetCurrentProcessId()));
     if (std::filesystem::exists(root)) return 2;
@@ -160,6 +218,7 @@ int main(int argc, char** argv) {
     }
     Menu();
     QuickAccessLayout();
+    BatchedAssignments();
     {
         PlacesCatalog c;
         c.quick_access_paths = {L"C:\\old"};

@@ -753,7 +753,8 @@ target_link_libraries(pulse_create_rename_intent_test PRIVATE ole32 shell32 uuid
 # Locked-item lookup (Restart Manager) + end-process-and-retry through OpsManager.
 add_executable(pulse_file_lock_test src/bench/file_lock_owner_test.cpp
     src/ops/duplicate_cleanup_guard.cpp
-    src/ops/file_lock_owner.cpp src/ops/ops_manager.cpp src/ipc/shell_client.cpp)
+    src/ops/file_lock_owner.cpp src/ops/ops_manager.cpp src/ipc/shell_client.cpp
+    src/bench/localization_test.rc)
 target_link_libraries(pulse_file_lock_test PRIVATE ole32 shell32 uuid bcrypt rstrtmgr pulse_localization)
 
 # ---- Pulse.Shell.exe: COM isolation process (stage 1: recycle bin / IFileOperation) ----
@@ -1699,6 +1700,9 @@ add_executable(pulse_global_search_state_test src/bench/global_search_state_test
 add_executable(pulse_app_catalog_test src/bench/app_catalog_test.cpp src/app/app_catalog.cpp
     src/index/index_query.cpp src/index/search_kinds.cpp src/index/filename_pinyin.cpp)
 target_link_libraries(pulse_app_catalog_test PRIVATE ole32 shell32 uuid)
+add_executable(pulse_known_extensions_test src/bench/known_extensions_test.cpp)
+target_link_libraries(pulse_known_extensions_test PRIVATE advapi32 user32)
+add_executable(pulse_dir_entry_extra_test src/bench/dir_entry_extra_test.cpp)
 add_executable(pulse_content_scope_mode_test src/bench/content_scope_mode_test.cpp)
 target_link_libraries(pulse_content_scope_mode_test PRIVATE shell32 ole32)
 add_executable(pulse_network_agent_deadline_test src/bench/network_agent_deadline_test.cpp)

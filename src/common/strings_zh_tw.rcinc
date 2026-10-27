@@ -826,7 +826,7 @@ BEGIN
     IDS_LIST_SIZE_BAR_DESC "在大小欄下方用細條直觀比較檔案大小"
     IDS_COLUMN_LAYOUT "分欄檢視"
     IDS_SETTINGS_FOLDER_SORT "資料夾優先"
-    IDS_SETTINGS_FOLDER_SORT_DESC "決定資料夾相對檔案的位置，遞減排列時同樣生效"
+    IDS_SETTINGS_FOLDER_SORT_DESC "預設位置；在某個資料夾裡改過的會單獨記住"
     IDS_FOLDER_SORT_TOP "始終置頂"
     IDS_FOLDER_SORT_FOLLOW "跟隨方向"
     IDS_FOLDER_SORT_MIXED "不優先"
@@ -4302,4 +4302,7 @@ BEGIN
     IDS_ADV_TRY "試試"
     IDS_ADV_WHOLE_WORD_SHORT "全字"
     IDS_ADV_LABEL_VALUE_FORMAT "%s：%s"
+    IDS_OP_DELETE_PARTIAL_TITLE "已刪除 %s 項，%s 項未成功"
+    IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED "路徑太長，無法移到資源回收筒，未刪除。可用 Shift+Delete 永久刪除"
+    IDS_TOOLBAR_TOOL_EXTENSIONS "副檔名"
 END

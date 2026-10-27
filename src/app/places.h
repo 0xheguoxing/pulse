@@ -215,8 +215,12 @@ public:
     TagSelectionState GetSelectionState(const TagId& id,
                                         const std::vector<std::wstring>& paths) const;
     void RemapPaths(const std::wstring& old_path, const std::wstring& new_path);
+    // The same as one call per pair in order, with one save at the end.
+    void RemapPaths(const std::vector<std::pair<std::wstring, std::wstring>>& moves);
     void CloneAssignments(const std::wstring& source, const std::wstring& destination);
     void RemoveAssignments(const std::wstring& path, bool include_descendants);
+    // The same as one call per path, with one save at the end.
+    void RemoveAssignments(const std::vector<std::wstring>& paths, bool include_descendants);
 
     bool IsQuickAccessPinned(const std::wstring& path) const;
     bool SetQuickAccessPinned(const std::vector<std::wstring>& paths, bool pinned);

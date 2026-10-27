@@ -3,11 +3,15 @@
 #include "../ops/shell_command_template.h"
 #include "../ops/elevated_transfer.h"
 #include "../ops/elevated_transfer_client.h"
+#include "../ops/source_listing.h"
 #include <aclapi.h>
+#include <algorithm>
 #include <shellapi.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <optional>
 
 namespace pulse::ipc {
 std::function<void(ShellClient&, uint32_t, uint32_t)> audit_submit;
@@ -110,6 +114,21 @@ bool Wait(OpsManager& manager, uint64_t previous) {
     }
     return false;
 }
+// An undo may run as one task per item, and the manager is briefly inactive
+// between them; settled means inactive for a while, not just once.
+bool WaitSettled(OpsManager& manager, uint64_t previous) {
+    const auto deadline = GetTickCount64() + 10000;
+    ULONGLONG quiet_since = 0;
+    while (GetTickCount64() < deadline) {
+        const auto status = manager.Status();
+        const ULONGLONG now = GetTickCount64();
+        if (status.active || status.completed_ops <= previous) quiet_since = 0;
+        else if (!quiet_since) quiet_since = now;
+        else if (now - quiet_since >= 200) return true;
+        Sleep(5);
+    }
+    return false;
+}
 OpRequest Request(OpType type, const fs::path& source, const fs::path& target) {
     OpRequest request; request.type = type; request.sources = {source.wstring()}; request.dest_dir = target.wstring(); return request;
 }
@@ -179,6 +198,212 @@ int main() {
         check(!completed.empty() && completed.front().task_id == success &&
               fs::exists(destination / L"tree" / L"new.txt") && fs::exists(destination / L"tree" / L"existing.txt"),
               "precise completions carry origin task ID through merged move");
+    }
+    {
+        // A selection big enough for one folder listing and the indexed
+        // commit: every root copies, moves, is reported and comes back.
+        const auto source = root / L"many-src";
+        const auto copied = root / L"many-copy";
+        const auto moved = root / L"many-move";
+        fs::create_directories(source); fs::create_directory(copied); fs::create_directory(moved);
+        constexpr int kMany = 300;
+        std::vector<std::wstring> paths;
+        for (int i = 0; i < kMany; ++i) {
+            const auto file = source / (L"item-" + std::to_wstring(i) + L".txt");
+            Write(file, ("many " + std::to_string(i)).c_str());
+            paths.push_back(file.wstring());
+        }
+        const SourceListing listing(paths);
+        bool listed_same = true;
+        for (const auto& path : paths) {
+            WIN32_FILE_ATTRIBUTE_DATA data{};
+            const ListedSource* listed = listing.Find(path);
+            listed_same = listed_same && listed &&
+                GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data) &&
+                listed->attributes == data.dwFileAttributes && listed->bytes == data.nFileSizeLow &&
+                CompareFileTime(&listed->modified, &data.ftLastWriteTime) == 0;
+        }
+        std::wstring other_spelling = paths.front();
+        other_spelling.replace(other_spelling.rfind(L"item"), 4, L"ITEM");
+        check(listed_same && !listing.Find(other_spelling) && !listing.Find(source.wstring()),
+              "folder listing matches per-item metadata and leaves other spellings to a query");
+        check(!NeedsShellTransfer(paths, moved.wstring(), true),
+              "moving many items out of a writable folder needs no elevated transfer");
+        OpsManager manager; manager.Start([] {}, false);
+        const auto result_of = [&](uint64_t task) {
+            const auto deadline = GetTickCount64() + 20000;
+            while (GetTickCount64() < deadline) {
+                for (auto& result : manager.DrainTaskResults())
+                    if (result.task_id == task) return std::optional<TaskResult>(std::move(result));
+                Sleep(5);
+            }
+            return std::optional<TaskResult>();
+        };
+        auto copy = Request(OpType::Copy, source, copied); copy.sources = paths;
+        const auto copied_result = result_of(manager.Submit(copy));
+        bool copies_match = copied_result && copied_result->success;
+        for (int i = 0; copies_match && i < kMany; ++i) {
+            const auto name = L"item-" + std::to_wstring(i) + L".txt";
+            copies_match = Read(copied / name) == "many " + std::to_string(i) &&
+                fs::last_write_time(copied / name) == fs::last_write_time(source / name);
+        }
+        check(copies_match, "copy of many items writes every item with its time");
+        auto move = Request(OpType::Move, source, moved); move.sources = paths;
+        const auto moved_result = result_of(manager.Submit(move));
+        check(moved_result && moved_result->success && moved_result->moved_sources == paths &&
+              fs::is_empty(source) &&
+              std::distance(fs::directory_iterator(moved), fs::directory_iterator{}) == kMany,
+              "move of many items reports every root as moved");
+        const auto undo_before = manager.Status().completed_ops;
+        manager.Undo();
+        check(WaitSettled(manager, undo_before) && fs::is_empty(moved) &&
+              Read(source / L"item-299.txt") == "many 299",
+              "undo of a move of many items brings every item back");
+        manager.Stop();
+    }
+    {
+        // A folder past MAX_PATH is still listed once, through an extended
+        // path; only a plain absolute folder is extended.
+        std::wstring deep = (root / L"long-listing").wstring();
+        bool made = CreateDirectoryW((L"\\\\?\\" + deep).c_str(), nullptr) != FALSE;
+        std::vector<std::wstring> made_dirs{deep};
+        while (made && deep.size() < 300) {
+            deep += L"\\" + std::wstring(40, L'd');
+            made = CreateDirectoryW((L"\\\\?\\" + deep).c_str(), nullptr) != FALSE;
+            made_dirs.push_back(deep);
+        }
+        std::vector<std::wstring> deep_paths;
+        for (int i = 0; made && i < 20; ++i) {
+            const std::wstring file = deep + L"\\deep-" + std::to_wstring(i) + L".txt";
+            HANDLE handle = CreateFileW((L"\\\\?\\" + file).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                        FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (handle == INVALID_HANDLE_VALUE) { made = false; break; }
+            DWORD written = 0;
+            made = WriteFile(handle, "deep", 4, &written, nullptr) && written == 4;
+            CloseHandle(handle);
+            deep_paths.push_back(file);
+        }
+        const SourceListing deep_listing(deep_paths);
+        bool all_listed = made && deep_paths.size() == 20 && (deep + L"\\*").size() >= MAX_PATH;
+        for (const auto& path : deep_paths) {
+            const ListedSource* listed = deep_listing.Find(path);
+            all_listed = all_listed && listed && listed->bytes == 4;
+        }
+        const TargetListing deep_target(deep, 40);
+        check(all_listed && deep_target.SurelyAbsent(L"new.txt") && !deep_target.SurelyAbsent(L"deep-3.txt"),
+              "folders past MAX_PATH are listed through an extended path");
+        const std::wstring long_name(300, L'y');
+        check(ListingPattern(L"C:\\short") == L"C:\\short\\*" && ListingPattern(L"C:\\") == L"C:\\*" &&
+              ListingPattern(L"C:\\" + long_name) == L"\\\\?\\C:\\" + long_name + L"\\*" &&
+              ListingPattern(L"\\\\srv\\share\\" + long_name) == L"\\\\?\\UNC\\srv\\share\\" + long_name + L"\\*" &&
+              ListingPattern(L"C:\\x\\..\\" + long_name).empty() && ListingPattern(L"C:/x/" + long_name).empty() &&
+              ListingPattern(L"rel\\" + long_name).empty() && ListingPattern(L"").empty(),
+              "only plain absolute long folders are extended");
+        for (const auto& path : deep_paths) DeleteFileW((L"\\\\?\\" + path).c_str());
+        for (auto dir = made_dirs.rbegin(); dir != made_dirs.rend(); ++dir) RemoveDirectoryW((L"\\\\?\\" + *dir).c_str());
+    }
+    {
+        // A folder of the target's name that appears after the scan found
+        // the name free (here while a conflict is pending) is merged into, so
+        // undo must take back only what the transfer put there, not the
+        // folder with the other program's file. The undo record is read
+        // instead of run: undoing a copy recycles.
+        const auto source = root / L"late-src";
+        const auto target = root / L"late-into";
+        fs::create_directories(source / L"dup"); fs::create_directory(target);
+        Write(source / L"a.txt", "mine");
+        Write(target / L"a.txt", "theirs");
+        Write(source / L"dup" / L"x.txt", "copied");
+        OpsManager manager; manager.Start([] {}, false);
+        auto copy = Request(OpType::Copy, source / L"a.txt", target);
+        copy.sources.push_back((source / L"dup").wstring());
+        const auto before = manager.Status().completed_ops;
+        manager.Submit(copy);
+        bool asked = false;
+        for (const auto deadline = GetTickCount64() + 10000; !asked && GetTickCount64() < deadline;) {
+            if (const auto conflict = manager.PendingConflict()) {
+                asked = true;
+                fs::create_directory(target / L"dup");
+                Write(target / L"dup" / L"other.txt", "not ours");
+                manager.ResolveConflict(conflict->token, ConflictChoice::Skip, false);
+            } else {
+                Sleep(5);
+            }
+        }
+        const bool copied = asked && Wait(manager, before) && Read(target / L"dup" / L"x.txt") == "copied" &&
+            Read(target / L"a.txt") == "theirs" && Read(target / L"dup" / L"other.txt") == "not ours";
+        const auto quoted = [](const fs::path& path) {
+            std::wstring out = L"\"";
+            for (const wchar_t c : path.wstring()) { if (c == L'\\') out += L'\\'; out += c; }
+            return out + L"\"";
+        };
+        const std::wstring undo = manager.UndoToJson();
+        check(copied && undo.find(quoted(target / L"dup" / L"x.txt")) != std::wstring::npos &&
+              undo.find(quoted(target / L"dup")) == std::wstring::npos,
+              "a folder that appeared after the scan is undone item by item, not as a whole");
+        manager.Stop();
+    }
+    {
+        // One listing of a target folder vouches for names that are surely
+        // absent; whatever it cannot vouch for is left to a query.
+        const auto target = root / L"target-listing";
+        fs::create_directories(target / L"Folder");
+        for (const wchar_t* name : {L"Existing.txt", L"照片.jpg", L"\u00c4rger.txt", L"f\u0131le.txt"})
+            Write(target / name, "listed");
+        const TargetListing few(target.wstring(), 3);
+        const TargetListing listing(target.wstring(), 40);
+        TargetListing grown(target.wstring(), 40);
+        grown.Added(L"arrived.txt");
+        const TargetListing missing((target / L"absent").wstring(), 40);
+        check(!few.SurelyAbsent(L"new.txt") && listing.SurelyAbsent(L"new.txt") &&
+              listing.SurelyAbsent(L"新照片.jpg") && !listing.SurelyAbsent(L"existing.TXT") &&
+              !listing.SurelyAbsent(L"folder") && !listing.SurelyAbsent(L"照片.jpg") &&
+              !listing.SurelyAbsent(L"\u00e4rger.txt") && !listing.SurelyAbsent(L"NEWFIL~1.TXT") &&
+              !listing.SurelyAbsent(L"trailing.") && !listing.SurelyAbsent(L"trailing ") &&
+              !grown.SurelyAbsent(L"ARRIVED.txt") && grown.SurelyAbsent(L"other.txt") &&
+              !missing.SurelyAbsent(L"new.txt"),
+              "target listing vouches only for absent ASCII or caseless names and leaves the rest to a query");
+        bool agrees = true;
+        for (const wchar_t* name : {L"file.txt", L"FILE.TXT", L"existing.txt", L"EXISTING.TXT", L"folder", L"FOLDER",
+                                    L"\u00e4rger.txt", L"\u00c4RGER.TXT", L"照片.jpg", L"new.txt", L"existing"})
+            if (listing.SurelyAbsent(name) && GetFileAttributesW((target / name).c_str()) != INVALID_FILE_ATTRIBUTES)
+                agrees = false;
+        check(agrees, "target listing never calls a name absent that the file system finds");
+
+        // Two selected folders with one name: the first is renamed into the
+        // target during the scan, so the second must still find it taken and
+        // merge into it. Undo then returns each file to its own folder:
+        // neither folder may carry the other's file along, as the second
+        // would if taken for a folder of its own, or the first if sent back
+        // before the second's file.
+        const auto first = root / L"same-name-a";
+        const auto second = root / L"same-name-b";
+        const auto into = root / L"same-name-into";
+        fs::create_directories(first / L"dup"); fs::create_directories(second / L"dup"); fs::create_directory(into);
+        Write(first / L"dup" / L"from-first.txt", "first");
+        Write(second / L"dup" / L"from-second.txt", "second");
+        OpRequest request = Request(OpType::Move, first / L"dup", into);
+        for (int i = 0; i < 20; ++i) {
+            const auto file = first / (L"fill-" + std::to_wstring(i) + L".txt");
+            Write(file, "fill");
+            request.sources.push_back(file.wstring());
+        }
+        request.sources.push_back((second / L"dup").wstring());
+        OpsManager manager; manager.Start([] {}, false);
+        const auto before = manager.Status().completed_ops;
+        manager.Submit(request);
+        check(Wait(manager, before) && manager.Status().phase == OpPhase::Completed &&
+              Read(into / L"dup" / L"from-first.txt") == "first" &&
+              Read(into / L"dup" / L"from-second.txt") == "second" && fs::exists(into / L"fill-19.txt"),
+              "a second selected folder with a name renamed in during the scan merges into it");
+        const auto undo_before = manager.Status().completed_ops;
+        manager.Undo();
+        check(WaitSettled(manager, undo_before) && Read(first / L"dup" / L"from-first.txt") == "first" &&
+              Read(second / L"dup" / L"from-second.txt") == "second" &&
+              !fs::exists(second / L"dup" / L"from-first.txt") && !fs::exists(into / L"dup" / L"from-first.txt") &&
+              fs::exists(first / L"fill-19.txt"),
+              "undo returns each same-name folder's own file to it");
+        manager.Stop();
     }
     for (const std::wstring file : {L"C:\\fixture\\%1 %L %l %V %v %*.txt", L"C:\\Unicode 空格\\", L"C:\\ordinary.txt"}) {
         const std::wstring command = ExpandShellCommand(L"viewer.exe \"%1\" %L \"%*\"", file);
@@ -359,6 +584,113 @@ int main() {
         ShutdownElevatedTransferHelper();
     }
 #endif
+    {
+        // On a share several deletes run at once: the selected items, and the
+        // files inside one folder. Marked remote-like, the fixture's drive
+        // takes that path; what fails still gets its retries and prompts.
+        // Last: its protected item starts the authorization helper.
+        const std::wstring drive(1, root.wstring()[0]);
+        fs::create_directories(root / L"test-data");
+        SetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", (root / L"test-data").c_str());
+        SetEnvironmentVariableW(L"PULSE_TEST_REMOTE_LIKE_DRIVES", drive.c_str());
+        const auto share = root / L"share-delete";
+        fs::create_directories(share / L"tree" / L"sub" / L"deeper");
+        OpRequest remove; remove.type = OpType::RealDelete;
+        for (int i = 0; i < 30; ++i) {
+            const auto file = share / (L"file-" + std::to_wstring(i) + L".txt");
+            Write(file, "share");
+            remove.sources.push_back(file.wstring());
+        }
+        SetFileAttributesW((share / L"file-7.txt").c_str(), FILE_ATTRIBUTE_READONLY);
+        for (int i = 0; i < 120; ++i) Write(share / L"tree" / (L"t-" + std::to_wstring(i) + L".txt"), "tree");
+        for (int i = 0; i < 40; ++i) Write(share / L"tree" / L"sub" / (L"s-" + std::to_wstring(i) + L".txt"), "sub");
+        SetFileAttributesW((share / L"tree" / L"sub" / L"s-3.txt").c_str(), FILE_ATTRIBUTE_READONLY);
+        const auto held = share / L"held.txt";
+        Write(held, "held");
+        remove.sources.insert(remove.sources.begin() + 12, held.wstring());
+        remove.sources.push_back((share / L"tree").wstring());
+        HANDLE holder = CreateFileW(held.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        OpsManager manager; manager.Start([] {});
+        const auto result_of = [&](uint64_t task) {
+            const auto deadline = GetTickCount64() + 20000;
+            while (GetTickCount64() < deadline) {
+                for (auto& result : manager.DrainTaskResults())
+                    if (result.task_id == task) return std::optional<TaskResult>(std::move(result));
+                Sleep(5);
+            }
+            return std::optional<TaskResult>();
+        };
+        // What the task reports deleted: its completion, not the request.
+        const auto deleted_by = [&](uint64_t task) {
+            std::vector<std::wstring> deleted;
+            for (const auto& done : manager.DrainCompletions())
+                if (done.task_id == task && !done.refresh_only)
+                    deleted.insert(deleted.end(), done.sources.begin(), done.sources.end());
+            return deleted;
+        };
+        const auto remove_task = manager.Submit(remove);
+        const auto removed = result_of(remove_task);
+        const auto removed_items = deleted_by(remove_task);
+        size_t left = 0;
+        for (const auto& entry : fs::recursive_directory_iterator(share)) { (void)entry; ++left; }
+        check(holder != INVALID_HANDLE_VALUE && removed && removed_items.size() == remove.sources.size() - 1 &&
+              std::find(removed_items.begin(), removed_items.end(), held.wstring()) == removed_items.end() &&
+              left == 1 && fs::exists(held) && manager.Status().failed_items == 1,
+              "deleting on a share at once removes every item but the one in use, read-only ones too");
+        if (holder != INVALID_HANDLE_VALUE) CloseHandle(holder);
+
+        // A folder selected with a folder inside it (search results): both
+        // run at once, and whichever gets there first, all of it goes.
+        const auto nest = root / L"share-nest";
+        fs::create_directories(nest / L"outer" / L"inner");
+        OpRequest nested; nested.type = OpType::RealDelete;
+        for (int i = 0; i < 10; ++i) {
+            const auto file = nest / (L"n-" + std::to_wstring(i) + L".txt");
+            Write(file, "nest");
+            nested.sources.push_back(file.wstring());
+        }
+        for (int i = 0; i < 60; ++i) Write(nest / L"outer" / (L"o-" + std::to_wstring(i) + L".txt"), "outer");
+        for (int i = 0; i < 60; ++i) Write(nest / L"outer" / L"inner" / (L"i-" + std::to_wstring(i) + L".txt"), "inner");
+        nested.sources.push_back((nest / L"outer").wstring());
+        nested.sources.push_back((nest / L"outer" / L"inner").wstring());
+        check(result_of(manager.Submit(nested)) && fs::is_empty(nest),
+              "a folder and a folder inside it deleted on a share at once leave nothing");
+
+        // Protected item: the permission prompt comes as before; skipping it
+        // keeps it, and the items deleted at once around it are reported.
+        const auto plain = root / L"share-plain";
+        const auto guarded = root / L"share-guarded";
+        fs::create_directories(plain); fs::create_directories(guarded);
+        OpRequest mixed; mixed.type = OpType::RealDelete;
+        for (int i = 0; i < 12; ++i) {
+            const auto file = plain / (L"p-" + std::to_wstring(i) + L".txt");
+            Write(file, "plain");
+            mixed.sources.push_back(file.wstring());
+        }
+        const auto locked = guarded / L"locked.txt";
+        Write(locked, "locked");
+        mixed.sources.insert(mixed.sources.begin() + 5, locked.wstring());
+        {
+            DenyAccess parent(guarded, FILE_DELETE_CHILD);
+            DenyAccess item(locked, DELETE);
+            const auto task = manager.Submit(mixed);
+            bool prompted = false;
+            for (const auto deadline = GetTickCount64() + 10000; GetTickCount64() < deadline && !prompted; Sleep(5)) {
+                const auto status = manager.Status();
+                prompted = status.task_id == task && status.authorization == AuthorizationState::ActionRequired &&
+                    status.current_item == locked.wstring();
+            }
+            if (prompted) manager.ResolveAuthorization(task, false);
+            const auto skipped = result_of(task);
+            check(parent.applied && item.applied && prompted && skipped && deleted_by(task).size() == 12 &&
+                  fs::exists(locked) && fs::is_empty(plain),
+                  "a protected item on a share still asks, and skipping it keeps only it");
+        }
+        manager.Stop();
+        ShutdownElevatedTransferHelper();
+        SetEnvironmentVariableW(L"PULSE_TEST_REMOTE_LIKE_DRIVES", nullptr);
+        SetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", nullptr);
+    }
     std::cout << "Fixture: " << root.string() << '\n';
     return failures ? 1 : 0;
 }
