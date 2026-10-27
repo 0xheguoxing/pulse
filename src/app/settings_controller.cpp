@@ -993,6 +993,16 @@ bool SettingsController::SliderValue(int which, int value) {
         Apply(SettingsEffect::Accent);
         return true;
     }
+    if (which == 5) {
+        // 侧边栏与标题栏: snaps to the old look (10) and the ends unless Shift is held.
+        if (!prefs_) return false;
+        value = std::clamp(value, 0, 100);
+        if (GetKeyState(VK_SHIFT) >= 0)
+            for (int level : {0, 10, 50, 100}) if (std::abs(value - level) <= 2) value = level;
+        if (prefs_->frame_transparency == value) return false;
+        prefs_->frame_transparency = value;
+        return true;
+    }
     if (!prefs_ || which < 0 || which > 1) return false;
     const bool snap = GetKeyState(VK_SHIFT) >= 0;
     int& target = which == 0 ? prefs_->wallpaper_look : prefs_->wallpaper_blur;

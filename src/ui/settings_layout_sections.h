@@ -149,6 +149,7 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
             const float tile_y=l.effect_card.top+effect_top*scale+(i/effect_columns)*82*scale;
             l.effect_row[i]=D2D1::RectF(tile_x,tile_y,tile_x+effect_width,tile_y+74*scale);
         }
+        l.frame_look_card=row(seg_h,true); segments(l.frame_look_card,l.frame_look_row,3,282);
         l.menu_acrylic_row=row(64);
 
         section(I::SettingsSecBackground);

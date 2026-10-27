@@ -1178,6 +1178,10 @@ private:
     // Per-frame layer opacity (see ComputeLayerAlphas); 1 when opaque.
     float sheet_alpha_ = 1.0f;
     float card_alpha_ = 1.0f;
+    // Pane cards over DWM material: copy-blended with pane_color_ (alpha
+    // pane_alpha_); pane_alpha_ < 0 when they blend with card_alpha_.
+    float pane_alpha_ = -1.0f;
+    D2D1_COLOR_F pane_color_{1.0f, 1.0f, 1.0f, 1.0f};
     bool details_visible_ = false;
     bool details_anim_ = false;
     float details_value_ = 0.0f;   // 0 closed .. 1 open (frame-stable while animating)

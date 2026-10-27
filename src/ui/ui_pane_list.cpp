@@ -2582,10 +2582,15 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
     dc->PushAxisAlignedClip(bounds, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
     // Each pane is a card on the shared sheet; the frame below outlines it.
-    MakeBrush(dc, WithAlpha(theme.surface_card, card_alpha_), brFillHover_);
+    // Over DWM material it replaces the title tint and sheet under it, so
+    // its opacity is the interface transparency's whatever the sidebar's.
+    const bool pane_cut = pane_alpha_ >= 0.0f;
+    MakeBrush(dc, pane_cut ? pane_color_ : WithAlpha(theme.surface_card, card_alpha_), brFillHover_);
+    if (pane_cut) dc->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_COPY);
     FillRoundedRect(dc, brFillHover_.get(), pane_rect.left, pane_rect.top,
                     pane_rect.right - pane_rect.left, pane_rect.bottom - pane_rect.top,
                     theme.radius_control * scale_);
+    if (pane_cut) dc->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
 
     float y = y0;
     const std::wstring& title = pane.header_text;
@@ -3151,7 +3156,7 @@ void MainRenderer::DrawSinglePane(const WindowViewModel& vm, const PaneViewModel
         DrawPaneWallHint(pane, pane_rect, vm.hover_region, vm.hover_control_index, theme);
 
     const float radius = theme.radius_control * scale_;
-    D2D1_COLOR_F frameColor = CardFrameColor(theme, vm.dark, card_alpha_);
+    D2D1_COLOR_F frameColor = CardFrameColor(theme, vm.dark, pane_alpha_ >= 0.0f ? pane_alpha_ : card_alpha_);
     if (focused) frameColor = IsHighContrast() ? theme.accent : WithAlpha(theme.accent, 0.24f);
     else if (target) frameColor = WithAlpha(theme.accent, 0.22f);
     const float strokeW = focused && IsHighContrast() ? 1.5f * scale_ : 1.0f * scale_;

@@ -124,6 +124,7 @@ void AppPrefs::ResetToDefaults() {
     background_image.clear();
     wallpaper_look = 50;
     wallpaper_blur = 14;
+    frame_transparency = 10;
     row_height = 34;
     sidebar_width = 224;
     address_search_current = false;
@@ -372,6 +373,7 @@ std::wstring AppPrefs::ToJson() const {
     out += std::to_wstring(wallpaper_blur <= 0 ? 0 : (wallpaper_blur <= 21 ? 1 : 2));
     out += L",\n  \"panel_transparency\":" + std::to_wstring(wallpaper_look);
     out += L",\n  \"wallpaper_blur_px\":" + std::to_wstring(wallpaper_blur);
+    out += L",\n  \"frame_transparency\":" + std::to_wstring(frame_transparency);
     out += L",\n  \"accent_rgb\":\"";
     {
         std::wstring escaped_accent;
@@ -614,6 +616,8 @@ bool AppPrefs::FromJson(const std::wstring& json) {
         if (legacy < 0 || legacy > 2) legacy = 1;
         wallpaper_blur = pulse::json::ExtractInt(json, L"wallpaper_blur_px", kBlurLevels[legacy]);
         if (wallpaper_blur < 0 || wallpaper_blur > 40) wallpaper_blur = kBlurLevels[legacy];
+        frame_transparency = pulse::json::ExtractInt(json, L"frame_transparency", 10);
+        if (frame_transparency < 0 || frame_transparency > 100) frame_transparency = 10;
     }
     accent_rgb = pulse::json::ExtractString(json, L"accent_rgb");
     accent_follow_system = pulse::json::ExtractInt(json, L"accent_follow_system", 0) != 0;

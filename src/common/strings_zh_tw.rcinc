@@ -4288,4 +4288,10 @@ BEGIN
     IDS_AI_UNDO_WINDOW_CLOSED "那次變更所在的視窗已經關閉"
     IDS_AI_UNDO_NOT_NEWEST "之後又有了新的變更"
     IDS_AI_MCP_SUM_ALREADY "都已經是這樣，沒有變更"
+    IDS_SETTINGS_FRAME_LOOK "側邊欄與標題列"
+    IDS_SETTINGS_FRAME_LOOK_DESC "透出視窗效果的程度"
+    IDS_SETTINGS_FRAME_LOOK_OFF "選壓克力、Mica 或 Mica Alt 時可調"
+    IDS_FRAME_LOOK_SOLID "實色"
+    IDS_FRAME_LOOK_HALF "半透"
+    IDS_FRAME_LOOK_CLEAR "通透"
 END

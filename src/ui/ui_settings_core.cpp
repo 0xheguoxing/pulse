@@ -143,11 +143,15 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
             const float tx=x_of(ticks[i]);
             MakeBrush(dc,WithAlpha(theme.text_secondary,value==ticks[i] ? 0.9f : 0.55f),brTextSecondary_);
             if(ticks[i]>0) dc->FillRectangle(D2D1::RectF(tx-0.5f*scale_,g.cy+5*scale_,tx+0.5f*scale_,g.cy+8*scale_),brTextSecondary_.get());
+            // The ends align to the track's ends; the others centre on their tick.
+            const bool at_end=ticks[i]>=max_value;
             const auto lr=ticks[i]==0 ? D2D1::RectF(g.left-9*scale_,g.cy+8*scale_,g.left+60*scale_,g.cy+22*scale_)
-                                      : D2D1::RectF(tx-34*scale_,g.cy+8*scale_,tx+34*scale_,g.cy+22*scale_);
+                         : at_end ? D2D1::RectF(g.right-60*scale_,g.cy+8*scale_,g.right+9*scale_,g.cy+22*scale_)
+                                  : D2D1::RectF(tx-34*scale_,g.cy+8*scale_,tx+34*scale_,g.cy+22*scale_);
             painter_.DrawText(l10n::Get(tick_labels[i]),lr,compositor_->SmallFormat(),
                 value==ticks[i] ? theme.text : theme.text_secondary,
-                ticks[i]==0 ? fluent::HorizontalAlignment::Left : fluent::HorizontalAlignment::Center);
+                ticks[i]==0 ? fluent::HorizontalAlignment::Left : at_end ? fluent::HorizontalAlignment::Right
+                                                                    : fluent::HorizontalAlignment::Center);
         }
         MakeBrush(dc,WithAlpha(theme.surface_card,1.0f),brFillInput_);
         MakeBrush(dc,theme.stroke_card,brStrokeCard_);
@@ -334,6 +338,15 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
                 fluent::HorizontalAlignment::Center);
         }
         
+        {
+            // 窗口效果 › 侧边栏与标题栏: only Acrylic / Mica have a frame to see through.
+            const I frames[]={I::FrameLookSolid,I::FrameLookHalf,I::FrameLookClear};const int frame_ticks[]={0,50,100};
+            const bool no_material=vm.window_effect==WindowEffect::None || !vm.backdrop_enabled;
+            const bool frame_dim=dim_begin(no_material);
+            slider(lay.frame_look_card,lay.frame_look_row,vm.frame_transparency,kFrameTransparencyMax,frame_ticks,frames,H::SettingsFrameLook,
+                   I::SettingsFrameLook,no_material ? I::SettingsFrameLookOff : I::SettingsFrameLookDesc,L"%",L"\xE90C");
+            dim_end(frame_dim);
+        }
         toggle(lay.menu_acrylic_row,I::MenuAcrylic,I::MenuAcrylicDesc,L"\xE700",vm.settings_menu_acrylic,36);
         dropdown(lay.language_card,lay.language_choice,I::SettingsLanguage,I::SettingsLanguageDesc,l10n::Get(languages[vm.settings_language]),1);
         const I text_render[]={I::TextRenderAuto,I::TextRenderSharp,I::TextRenderSmooth};const int text_render_values[]={0,1,2};

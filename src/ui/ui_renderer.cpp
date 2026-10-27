@@ -1076,7 +1076,7 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
             (vm.window_effect == WindowEffect::None) ? std::wstring{} : vm.background_image);
     }
     const LayerAlphas layers = ComputeLayerAlphas(image_mode, backdrop_drawn,
-        vm.backdrop_enabled, vm.dark, vm.wallpaper_look, vm.wallpaper_blur);
+        vm.backdrop_enabled, vm.dark, vm.wallpaper_look, vm.wallpaper_blur, vm.frame_transparency);
     if (!backdrop_drawn && !vm.backdrop_enabled) {
         // Lower pane opacity must reveal the theme canvas when no material or
         // wallpaper exists, instead of exposing an unpainted transparent base.
@@ -1085,6 +1085,17 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
     }
     sheet_alpha_ = layers.sheet;
     card_alpha_ = layers.card;
+    pane_alpha_ = layers.pane;
+    if (pane_alpha_ >= 0.0f) {
+        // The colour the stacked layers would have given the card.
+        const float w = layers.pane_mix[0] + layers.pane_mix[1] + layers.pane_mix[2];
+        const auto mix = [&](float D2D1_COLOR_F::*c) {
+            return w > 0.0f ? (layers.pane_mix[0] * (theme.surface_title.*c) + layers.pane_mix[1] * (theme.surface_sheet.*c) +
+                               layers.pane_mix[2] * (theme.surface_card.*c)) / w
+                            : theme.surface_card.*c;
+        };
+        pane_color_ = D2D1::ColorF(mix(&D2D1_COLOR_F::r), mix(&D2D1_COLOR_F::g), mix(&D2D1_COLOR_F::b), pane_alpha_);
+    }
     auto tint_background = [&](D2D1_RECT_F bounds, D2D1_COLOR_F color, float alpha) {
         if (bounds.right <= bounds.left || bounds.bottom <= bounds.top || alpha <= 0) return;
         MakeBrush(dc, WithAlpha(color, alpha), brBg_);

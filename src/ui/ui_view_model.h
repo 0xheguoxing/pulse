@@ -1086,6 +1086,7 @@ struct WindowViewModel {
     std::wstring background_image;
     int wallpaper_look = 50; // interface transparency 0..90 (AppPrefs::wallpaper_look)
     int wallpaper_blur = 14; // wallpaper blur in DIPs 0..40
+    int frame_transparency = 10; // 侧边栏与标题栏 0..100 (AppPrefs::frame_transparency)
     bool safe_mode = false;
     bool address_editing = false;
     bool address_searching = false;
@@ -1492,6 +1493,7 @@ struct HitTestResult {
         ColumnStripHScroll,  // ancestor strip scrollbar
         SettingsWallpaperLook,
         SettingsWallpaperBlur,
+        SettingsFrameLook,     // 窗口效果 › 侧边栏与标题栏 slider; index = value
         SettingsAccentCustom,  // 主题色 › 自定义 button
         SettingsAccentSlider,  // sub_index 0 hue, 1 saturation, 2 lightness; index = value
         SidebarToggle,       // title-bar sidebar collapse button

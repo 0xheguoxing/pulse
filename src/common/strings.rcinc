@@ -4290,6 +4290,12 @@ BEGIN
     IDS_AI_UNDO_WINDOW_CLOSED "那次改动所在的窗口已经关闭"
     IDS_AI_UNDO_NOT_NEWEST "之后又有了新的改动"
     IDS_AI_MCP_SUM_ALREADY "都已经是这样，没有改动"
+    IDS_SETTINGS_FRAME_LOOK "侧边栏与标题栏"
+    IDS_SETTINGS_FRAME_LOOK_DESC "透出窗口效果的程度"
+    IDS_SETTINGS_FRAME_LOOK_OFF "选亚克力、Mica 或 Mica Alt 时可调"
+    IDS_FRAME_LOOK_SOLID "实色"
+    IDS_FRAME_LOOK_HALF "半透"
+    IDS_FRAME_LOOK_CLEAR "通透"
 END
 
 LANGUAGE 0x09, 0x01
@@ -8579,6 +8585,12 @@ BEGIN
     IDS_AI_UNDO_WINDOW_CLOSED "The window it changed is closed"
     IDS_AI_UNDO_NOT_NEWEST "A newer change came after it"
     IDS_AI_MCP_SUM_ALREADY "Already so; nothing changed"
+    IDS_SETTINGS_FRAME_LOOK "Sidebar and title bar"
+    IDS_SETTINGS_FRAME_LOOK_DESC "How see-through the frame is"
+    IDS_SETTINGS_FRAME_LOOK_OFF "Available with Acrylic, Mica or Mica Alt"
+    IDS_FRAME_LOOK_SOLID "Solid"
+    IDS_FRAME_LOOK_HALF "Half"
+    IDS_FRAME_LOOK_CLEAR "Clear"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

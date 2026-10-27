@@ -38,7 +38,13 @@ void MainRenderer::DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& re
     const SettingsLayout lay = MakeSettingsLayout(vm, rect, scale_, title_bar_height_,
                                                   status_height_, &painter_);
     D2D1_COLOR_F nav_bg = theme.tab_bg;
-    if (vm.backdrop_enabled) nav_bg.a = vm.dark ? 0.62f : 0.70f;
+    if (vm.backdrop_enabled) {
+        // Follows 侧边栏与标题栏: as before at 10, solid at 0, gone at 100.
+        nav_bg.a = vm.dark ? 0.62f : 0.70f;
+        const int v = std::clamp(vm.frame_transparency, 0, 100);
+        nav_bg.a = v <= 10 ? nav_bg.a + (1.0f - nav_bg.a) * static_cast<float>(10 - v) / 10.0f
+                           : nav_bg.a * static_cast<float>(100 - v) / 90.0f;
+    }
     MakeBrush(dc, nav_bg, brFillHover_);
     FillRect(dc, brFillHover_.get(), lay.nav.left, lay.nav.top,
              lay.nav.right - lay.nav.left, lay.nav.bottom - lay.nav.top);
@@ -1326,6 +1332,7 @@ float MainRenderer::SettingsDestinationOffset(const WindowViewModel& vm, int set
     case I::SettingsWallpaper: target=l.wallpaper_card;break;
     case I::SettingsWallpaperLook: target=l.wallpaper_look_card;break;
     case I::SettingsWallpaperBlur: target=l.wallpaper_blur_card;break;
+    case I::SettingsFrameLook: target=l.frame_look_card;break;
     case I::SettingsTrayIcon: target=l.tray_icon_card;break;
     case I::SettingsShowHidden: target=l.hidden_files_row;break;
     case I::SettingsShowProtected: target=l.protected_files_row;break;

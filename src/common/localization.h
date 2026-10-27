@@ -4300,6 +4300,12 @@ enum class StringId : UINT {
     AiUndoWindowClosed = IDS_AI_UNDO_WINDOW_CLOSED,
     AiUndoNotNewest = IDS_AI_UNDO_NOT_NEWEST,
     AiMcpSumAlready = IDS_AI_MCP_SUM_ALREADY,
+    SettingsFrameLook = IDS_SETTINGS_FRAME_LOOK,
+    SettingsFrameLookDesc = IDS_SETTINGS_FRAME_LOOK_DESC,
+    SettingsFrameLookOff = IDS_SETTINGS_FRAME_LOOK_OFF,
+    FrameLookSolid = IDS_FRAME_LOOK_SOLID,
+    FrameLookHalf = IDS_FRAME_LOOK_HALF,
+    FrameLookClear = IDS_FRAME_LOOK_CLEAR,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

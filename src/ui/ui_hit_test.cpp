@@ -84,9 +84,11 @@ int MainRenderer::SettingsSliderValueAt(const WindowViewModel& vm, const D2D1_RE
                                         int which, float x) const {
     const SettingsLayout lay = MakeSettingsLayout(vm, rect, scale_, title_bar_height_,
                                                   status_height_, &painter_);
-    // 0 look, 1 blur, 2..4 the custom accent's hue / saturation / lightness.
+    // 0 look, 1 blur, 2..4 the custom accent's hue / saturation / lightness,
+    // 5 侧边栏与标题栏.
     if (which >= 2 && which <= 4)
         return SettingsSliderValue(SettingsSlider(lay.accent_slider_cells[which - 2], scale_), x, which == 2 ? 360 : 100);
+    if (which == 5) return SettingsSliderValue(SettingsSlider(lay.frame_look_row, scale_), x, kFrameTransparencyMax);
     return which == 0
         ? SettingsSliderValue(SettingsSlider(lay.wallpaper_look_row, scale_), x, kPanelTransparencyMax)
         : SettingsSliderValue(SettingsSlider(lay.wallpaper_blur_row, scale_), x, kWallpaperBlurMax);
@@ -441,6 +443,13 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     return D2D1::RectF(cells[0].left - 12.0f * scale_, cells[0].top - 8.0f * scale_,
                                        cells[2].right, cells[2].bottom + 8.0f * scale_);
                 };
+                if (vm.window_effect != WindowEffect::None && vm.backdrop_enabled &&
+                    ContainsPt(slider_zone(lay.frame_look_row), x, y)) {
+                    r.region = HitTestResult::SettingsFrameLook;
+                    r.index = SettingsSliderValue(SettingsSlider(lay.frame_look_row, scale_), x,
+                                                  kFrameTransparencyMax);
+                    return r;
+                }
                 if (ContainsPt(slider_zone(lay.wallpaper_look_row), x, y)) {
                     r.region = HitTestResult::SettingsWallpaperLook;
                     r.index = SettingsSliderValue(SettingsSlider(lay.wallpaper_look_row, scale_), x,

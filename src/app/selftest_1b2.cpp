@@ -25,6 +25,7 @@
 #include "app_runtime.h"
 #include "app_sidebar_refresh.h"
 #include "../ui/address_search_layout.h"
+#include "../ui/layer_alphas.h"
 #include "search_query.h"
 #include "../common/localization.h"
 #include "app_model.h"
@@ -3091,6 +3092,61 @@ void TestBloomAccentGeometry() {
     const uint32_t sat = ui::BloomDotRgb(7);
     Check(pastel != sat && pastel != 0xFFFFFFu && sat != 0xFFFFFFu,
           L"bloom: pastel and saturated dots differ");
+}
+
+void TestLayerAlphas() {
+    // 侧边栏与标题栏 over DWM Acrylic / Mica (backdrop on, not drawn by Pulse).
+    const auto close_to = [](float a, float b) { return std::fabs(a - b) < 1e-4f; };
+    const auto old_layers = [](bool dark, int look, float& title, float& sheet, float& card) {
+        static constexpr float kScale[5] = {1.40f, 1.20f, 1.0f, 0.80f, 0.60f};
+        const float k = ui::LerpStops(static_cast<float>(look) / 100.0f, kScale);
+        title = dark ? 0.72f : 0.78f;
+        sheet = (std::min)(1.0f, (dark ? 0.55f : 0.60f) * k);
+        card = (std::min)(1.0f, (dark ? 0.72f : 0.78f) * k);
+    };
+    bool same = true, mixed = true;
+    for (int dark = 0; dark < 2; ++dark) {
+        for (int look = 0; look <= 60; ++look) {
+            float t = 0, sh = 0, c = 0;
+            old_layers(dark != 0, look, t, sh, c);
+            const ui::LayerAlphas a = ui::ComputeLayerAlphas(false, false, true, dark != 0, look, 14, 10);
+            same = same && close_to(a.title, t) && close_to(a.sheet, sh) && close_to(a.card, c);
+            const float stacked = 1.0f - (1.0f - t) * (1.0f - sh) * (1.0f - c);
+            mixed = mixed && close_to(a.pane, stacked) &&
+                    close_to(a.pane_mix[0] + a.pane_mix[1] + a.pane_mix[2], stacked);
+        }
+    }
+    Check(same, L"layers: 侧边栏与标题栏 at 10 gives the old title, sheet and card up to 60");
+    Check(mixed, L"layers: a cut-through pane card has the old stacked opacity and colour weights");
+    const ui::LayerAlphas vivid = ui::ComputeLayerAlphas(false, false, true, false, 90, 14, 10);
+    Check(close_to(vivid.pane, 0.80f), L"layers: interface transparency 90 leaves the file list 80% opaque");
+    const auto side = [](const ui::LayerAlphas& a) { return 1.0f - (1.0f - a.title) * (1.0f - a.sheet); };
+    const ui::LayerAlphas solid = ui::ComputeLayerAlphas(false, false, true, false, 50, 14, 0);
+    Check(close_to(solid.title, 1.0f) && close_to(solid.sheet, 1.0f) && close_to(solid.card, 1.0f),
+          L"layers: 侧边栏与标题栏 0 is solid like no window effect (the active tab keeps its colour)");
+    bool clear = true;
+    for (int dark = 0; dark < 2; ++dark) {
+        const ui::LayerAlphas a = ui::ComputeLayerAlphas(false, false, true, dark != 0, 50, 14, 100);
+        clear = clear && close_to(a.title, 0.0f) && close_to(side(a), 0.30f) && a.sheet > 0.25f;
+    }
+    Check(clear, L"layers: at 100 the title strip is the material and the sheet keeps 30% for the active tab");
+    bool falling = true;
+    float last_side = 2.0f;
+    for (int v = 0; v <= 100; v += 5) {
+        const ui::LayerAlphas a = ui::ComputeLayerAlphas(false, false, true, false, 60, 14, v);
+        const float content = 1.0f - (1.0f - side(a)) * (1.0f - a.card);
+        falling = falling && side(a) <= last_side + 1e-5f && a.title <= side(a) + 1e-5f &&
+                  content >= a.pane - 1e-4f &&
+                  close_to(a.pane, ui::ComputeLayerAlphas(false, false, true, false, 60, 14, 10).pane);
+        last_side = side(a);
+    }
+    Check(falling, L"layers: the sidebar clears steadily; the file list and Settings cards never get thinner");
+    const ui::LayerAlphas image = ui::ComputeLayerAlphas(true, true, true, false, 50, 14, 100);
+    const ui::LayerAlphas image10 = ui::ComputeLayerAlphas(true, true, true, false, 50, 14, 10);
+    const ui::LayerAlphas drawn = ui::ComputeLayerAlphas(false, true, true, false, 50, 14, 100);
+    Check(close_to(image.title, image10.title) && close_to(image.sheet, image10.sheet) && image.pane < 0.0f &&
+              drawn.pane < 0.0f,
+          L"layers: a background image ignores 侧边栏与标题栏; a sampled material never cuts through");
 }
 
 void TestBloomSpring() {
@@ -9639,6 +9695,7 @@ int RunSelfTest1B2() {
     TestColorPickerModel();
     TestBloomAccentGeometry();
     TestBloomSpring();
+    TestLayerAlphas();
     TestOpsThroughShell();
 
     // Cleanup: real-delete the whole sandbox via the ops layer is overkill;

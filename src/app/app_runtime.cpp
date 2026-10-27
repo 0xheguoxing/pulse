@@ -3269,6 +3269,11 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.background_image = s.appPrefs.background_image;
     vm.wallpaper_look = s.appPrefs.wallpaper_look;
     vm.wallpaper_blur = s.appPrefs.wallpaper_blur;
+    vm.frame_transparency = s.appPrefs.frame_transparency;
+    // Also set here (not only when painting) so hit testing sees the
+    // same enabled 侧边栏与标题栏 slider as the frame that drew it.
+    vm.backdrop_enabled = !(s.shot_high_contrast || ui::IsHighContrast()) &&
+                          s.compositor.UsesTransparentComposition() && s.backdropActive;
     vm.safe_mode = s.safeMode;
     {
         // Toolbar "Group" button: views that draw group headers, in groupable
@@ -3440,6 +3445,7 @@ std::wstring TooltipForHover(AppState& s) {
     case R::SettingsTrayIcon: return text(I::SettingsTrayIcon);
     case R::SettingsWallpaperLook: return text(I::SettingsWallpaperLook);
     case R::SettingsWallpaperBlur: return text(I::SettingsWallpaperBlur);
+    case R::SettingsFrameLook: return text(I::SettingsFrameLook);
     case R::SettingsAccent:
         return text(s.hoverControlIndex == 0 ? I::TooltipFollowAccent : I::SettingsThemeColor);
     case R::SettingsToggle:

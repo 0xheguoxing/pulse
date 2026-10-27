@@ -154,6 +154,9 @@ struct AppPrefs {
     // former subtle/balanced/vivid levels; applies to image, Acrylic and Mica.
     int wallpaper_look = 50;
     int wallpaper_blur = 14; // wallpaper blur in DIPs 0..40 (json wallpaper_blur_px)
+    // 侧边栏与标题栏 0..100 under Acrylic / Mica (json frame_transparency):
+    // 0 solid, 10 the look from before the setting, 100 the material itself.
+    int frame_transparency = 10;
     int row_height = 34; // file-list row height in DIPs (24..48)
     int sidebar_width = 224; // DIPs
     bool address_search_current = false;

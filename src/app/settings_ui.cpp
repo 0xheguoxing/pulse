@@ -55,7 +55,7 @@ int Dropdown(AppState& s, int index, std::vector<ui::FluentMenuItem> items) {
 struct SettingDestination { I title;int page;unsigned expanded; };
 constexpr SettingDestination destinations[]={
     // 0 外观
-    {I::SettingsTheme,0,0},{I::SettingsThemeColor,0,0},{I::AccentCustomTitle,0,32},{I::SettingsWindowEffect,0,0},{I::MenuAcrylic,0,0},
+    {I::SettingsTheme,0,0},{I::SettingsThemeColor,0,0},{I::AccentCustomTitle,0,32},{I::SettingsWindowEffect,0,0},{I::SettingsFrameLook,0,0},{I::MenuAcrylic,0,0},
     {I::SettingsWallpaper,0,0},{I::SettingsWallpaperLook,0,0},{I::SettingsWallpaperBlur,0,0},
     {I::SettingsLanguage,0,0},{I::SettingsTextRender,0,0},{I::SettingsUiFontSize,0,0},
     // 9 文件列表

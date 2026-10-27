@@ -1,6 +1,7 @@
 // ui_renderer_internal.h — Draw + HitTest shared geometry (not a public API).
 #pragma once
 #include "ui_renderer.h"
+#include "layer_alphas.h"
 #include "empty_state_layout.h"
 #include "bloom_accent_picker.h"
 #include "../common/localization.h"
@@ -94,60 +95,6 @@ void ClearTextWidthCache() {
     // Split panes reserve room before the title for the focused-pane dot, in
     // every pane so titles do not shift when focus moves.
 
-    // Opacity of the three window layers: title strip, the sheet shared by the
-    // active tab/toolbar/sidebar/status bar, and the pane/details cards. The
-    // active tab and the sheet must use the same value so they read as one.
-    struct LayerAlphas { float title = 1.0f, sheet = 1.0f, card = 1.0f; };
-    // Piecewise-linear lookup at t = 0, .25, .5, .75, 1.
-    inline float LerpStops(float t, const float (&v)[5]) noexcept {
-        t = std::clamp(t, 0.0f, 1.0f) * 4.0f;
-        const int i = (std::min)(3, static_cast<int>(t));
-        return v[i] + (v[i + 1] - v[i]) * (t - static_cast<float>(i));
-    }
-    // transparency: 0..90 slider; 25/50/75 reproduce the former
-    // subtle/balanced/vivid tables exactly.
-    inline LayerAlphas ComputeLayerAlphas(bool image_mode, bool backdrop_drawn,
-                                          bool backdrop_enabled, bool dark,
-                                          int transparency, int wallpaper_blur) noexcept {
-        LayerAlphas a;
-        const float t = static_cast<float>(std::clamp(transparency, 0, 90)) / 100.0f;
-        if (image_mode) {
-            // Decode failure stays opaque rather than exposing the desktop.
-            if (!backdrop_drawn) return a;
-            // Dark wallpaper uses the legacy single scrim. Balanced restores
-            // its 55% cover; blur affects image detail, not the tint strength.
-            if (dark) {
-                static constexpr float cover[5] = {0.85f, 0.70f, 0.55f, 0.40f, 0.25f};
-                return {LerpStops(t, cover), 0.0f, 0.0f};
-            }
-            // Light: the pane card stays thin so the middle reads about as
-            // see-through as the dark scrim (60, unblurred: title 42%, sheet 46%,
-            // card 26%).
-            static constexpr float kTitle[5] = {0.62f, 0.50f, 0.40f, 0.30f, 0.22f};
-            static constexpr float kSheet[5] = {0.66f, 0.54f, 0.42f, 0.32f, 0.24f};
-            static constexpr float kCard[5] = {0.55f, 0.38f, 0.24f, 0.15f, 0.08f};
-            a.title = LerpStops(t, kTitle);
-            a.sheet = LerpStops(t, kSheet);
-            a.card = LerpStops(t, kCard);
-            // Text sits on these layers; unblurred detail needs a little more cover.
-            if (wallpaper_blur <= 0) {
-                a.title = (std::min)(1.0f, a.title + 0.06f);
-                a.sheet = (std::min)(1.0f, a.sheet + 0.08f);
-                a.card = (std::min)(1.0f, a.card + 0.06f);
-            }
-            return a;
-        }
-        if (backdrop_drawn) a.title = 0.0f;
-        else if (backdrop_enabled) a.title = dark ? 0.72f : 0.78f;
-        if (backdrop_enabled) {
-            // Acrylic / Mica: the slider scales the default (t = .5) opacities.
-            static constexpr float kScale[5] = {1.40f, 1.20f, 1.0f, 0.80f, 0.60f};
-            const float k = LerpStops(t, kScale);
-            a.sheet = (std::min)(1.0f, (dark ? 0.55f : 0.60f) * k);
-            a.card = (std::min)(1.0f, (dark ? 0.72f : 0.78f) * k);
-        }
-        return a;
-    }
     // The unfocused frame of a pane card (and the docked AI panel's card):
     // a thin light card over a wallpaper takes a soft white edge instead of
     // the gray one, which reads as a dirty line on the image.
@@ -160,6 +107,7 @@ void ClearTextWidthCache() {
     }
     constexpr int kPanelTransparencyMax = 90;
     constexpr int kWallpaperBlurMax = 40;
+    constexpr int kFrameTransparencyMax = 100;
     // Settings slider track inside the three segment cells the layout reserves;
     // the right 50 DIPs hold the value label.
     struct SettingsSliderGeom { float left = 0.0f, right = 0.0f, cy = 0.0f; };
@@ -2622,6 +2570,8 @@ struct SettingsLayout {
     D2D1_RECT_F wallpaper_look_row[3]{};
     D2D1_RECT_F wallpaper_blur_card{};
     D2D1_RECT_F wallpaper_blur_row[3]{};
+    D2D1_RECT_F frame_look_card{};     // 窗口效果 › 侧边栏与标题栏
+    D2D1_RECT_F frame_look_row[3]{};
     D2D1_RECT_F startup_row[3]{};
     D2D1_RECT_F hidden_files_row{};
     D2D1_RECT_F protected_files_row{};

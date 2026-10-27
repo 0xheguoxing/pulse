@@ -4308,5 +4308,11 @@
 #define IDS_AI_UNDO_WINDOW_CLOSED                                                        5515
 #define IDS_AI_UNDO_NOT_NEWEST                                                           5516
 #define IDS_AI_MCP_SUM_ALREADY                                                           5517
+#define IDS_SETTINGS_FRAME_LOOK                                                          5518
+#define IDS_SETTINGS_FRAME_LOOK_DESC                                                     5519
+#define IDS_SETTINGS_FRAME_LOOK_OFF                                                      5520
+#define IDS_FRAME_LOOK_SOLID                                                             5521
+#define IDS_FRAME_LOOK_HALF                                                              5522
+#define IDS_FRAME_LOOK_CLEAR                                                             5523
 
 #endif  // PULSE_STRING_IDS_H
