@@ -1771,8 +1771,11 @@ PreviewDrawResult MainRenderer::DrawEntryThumbnail(ID2D1DeviceContext* dc,
             generation, entry.modified_value, entry.size_value, opacity, align_bottom, artwork,
             mode == ViewMode::MediumIcons);
     }
-    return thumbnail_cache_.DrawGridThumbnail(dc, dest, entry.path, entry.attrs, pixels,
-        generation, entry.modified_value, entry.size_value, opacity, align_bottom, artwork, duration);
+    // A phone's file is asked for by its shell id: the preview host takes
+    // the device's own thumbnail (never the file).
+    return thumbnail_cache_.DrawGridThumbnail(dc, dest, entry.thumb_path.empty() ? entry.path : entry.thumb_path,
+        entry.attrs, pixels, generation, entry.modified_value, entry.size_value, opacity, align_bottom, artwork,
+        duration);
 }
 
 void MainRenderer::DrawFileIcon(float x, float y, float size, const Theme& theme,

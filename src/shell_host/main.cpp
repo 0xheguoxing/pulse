@@ -15,6 +15,7 @@
 #include "packaged_ctx_handlers.h"
 #include "../common/current_user_security.h"
 #include "../common/path_utils.h"
+#include "../common/shell_id.h"
 #include "../common/recycle_index.h"
 #include "../common/crash_reporter.h"
 #include <windows.h>
@@ -60,8 +61,13 @@ void PostCtxMessage(uint32_t session_id, UINT message, WPARAM wParam, LPARAM lPa
 struct Request {
     uint32_t type = 0;
     uint32_t id = 0;
-    std::wstring new_name;
+    std::wstring new_name;  // REQ_SHELL_VERB: the verb
     std::vector<std::wstring> sources;
+    uint32_t owner = 0;     // REQ_SHELL_VERB: owner window for the shell's dialogs
+    uint32_t flags = 0;     // REQ_SHELL_VERB: SVF_*; REQ_SHELL_TRANSFER: STF_*
+    uint32_t op = 0;        // REQ_SHELL_TRANSFER: STO_*
+    std::wstring dest;      // REQ_SHELL_TRANSFER: target folder
+    std::vector<std::wstring> names;  // REQ_SHELL_TRANSFER: new leaf names
 };
 
 struct HostState {
@@ -221,7 +227,10 @@ public:
         return CheckCancel();
     }
     IFACEMETHODIMP PreNewItem(DWORD, IShellItem*, LPCWSTR) override { return CheckCancel(); }
-    IFACEMETHODIMP PostNewItem(DWORD, IShellItem*, LPCWSTR, LPCWSTR, DWORD, HRESULT, IShellItem*) override { return CheckCancel(); }
+    IFACEMETHODIMP PostNewItem(DWORD, IShellItem*, LPCWSTR, LPCWSTR, DWORD, HRESULT hr, IShellItem*) override {
+        NoteItemResult(hr);
+        return CheckCancel();
+    }
 
     IFACEMETHODIMP UpdateProgress(UINT work_total, UINT work_done) override {
         if (work_total > 0) {
@@ -239,6 +248,10 @@ public:
     HRESULT item_failure() const { return item_failure_; }
     void NoteSetupFailure(const std::wstring& src) { last_failed_item_ = src; }
     void set_recycle_only(bool value) { recycle_only_ = value; }
+    // A transfer reports the whole operation's work (UpdateProgress), which
+    // covers the files inside folders too; item counts then grow past the
+    // top-level count instead of being capped by it.
+    void set_work_progress(bool value) { work_progress_ = value; }
 
 private:
     HRESULT CheckCancel() {
@@ -256,6 +269,7 @@ private:
     }
     void RememberName(LPCWSTR name) { current_item_ = name ? name : L""; }
     bool recycle_only_ = false;
+    bool work_progress_ = false;
     void NoteItemResult(HRESULT hr) {
         if (FAILED(hr) && hr != HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
             if (SUCCEEDED(item_failure_)) item_failure_ = hr;
@@ -268,6 +282,11 @@ private:
         if (!force && now - last_send_ < 50) return;
         last_send_ = now;
         float pct;
+        if (work_progress_) {
+            pct = has_byte_progress_ ? byte_percent_ : 0.0f;
+            SendProgress(req_id_, pct, current_item_, items_done_, (std::max)(items_done_, total_items_));
+            return;
+        }
         if (has_byte_progress_ && total_items_ == 1) {
             pct = byte_percent_;
         } else {
@@ -296,7 +315,15 @@ std::wstring ToParsingPath(std::wstring path) {
     return pulse::path::StripExtendedPathPrefix(path);
 }
 
+// "::{CLSID}\..." parsing names: shell items with no filesystem path (a
+// phone's storage and files). They have no file type for the handler
+// enumeration and no directory to run in.
+bool IsShellNamespacePath(const std::wstring& path) {
+    return path.size() > 2 && path[0] == L':' && path[1] == L':';
+}
+
 HRESULT MakeItem(const std::wstring& path, IShellItem** out) {
+    if (pulse::shell_id::IsPidlId(path)) return pulse::shell_id::CreateItem(path, IID_PPV_ARGS(out));
     const std::wstring parsed = ToParsingPath(path);
     HRESULT hr = SHCreateItemFromParsingName(parsed.c_str(), nullptr, IID_PPV_ARGS(out));
     if (FAILED(hr) && parsed != path)
@@ -551,7 +578,224 @@ HRESULT ExecuteRestore(const std::vector<std::wstring>& paths, std::wstring& err
     return HRESULT_FROM_WIN32(ERROR_PARTIAL_COPY);
 }
 
+// ---------------------------------------------------------------------------
+// REQ_SHELL_VERB: one of Explorer's own verbs, run the way Explorer runs it.
+// Main STA thread: a copy / cut leaves its data object on the clipboard, and
+// this thread (message loop, alive for the session) keeps serving it.
+// ---------------------------------------------------------------------------
+std::wstring DescribeHresult(HRESULT hr) {
+    std::wstring text;
+    LPWSTR msg = nullptr;
+    const DWORD win_error = HRESULT_FACILITY(hr) == FACILITY_WIN32
+        ? HRESULT_CODE(hr) : static_cast<DWORD>(hr);
+    if (FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+                       nullptr, win_error, 0, (LPWSTR)&msg, 0, nullptr) && msg) {
+        text = msg;
+        LocalFree(msg);
+        while (!text.empty() && (text.back() == L'\r' || text.back() == L'\n'))
+            text.pop_back();
+    }
+    return text;
+}
+
+HRESULT ShellVerbMenu(const std::vector<std::wstring>& paths, bool background, HWND owner,
+                      IContextMenu** out) {
+    *out = nullptr;
+    if (paths.empty()) return E_INVALIDARG;
+    HRESULT hr = S_OK;
+    if (background) {
+        IShellItem* folder = nullptr;
+        IShellFolder* sf = nullptr;
+        hr = MakeItem(paths.front(), &folder);
+        if (SUCCEEDED(hr)) hr = folder->BindToHandler(nullptr, BHID_SFObject, IID_PPV_ARGS(&sf));
+        if (SUCCEEDED(hr))
+            hr = sf->CreateViewObject(owner, IID_IContextMenu, reinterpret_cast<void**>(out));
+        if (sf) sf->Release();
+        if (folder) folder->Release();
+        return SUCCEEDED(hr) && !*out ? E_FAIL : hr;
+    }
+    // Every item or none: a verb never runs on part of the selection.
+    std::vector<PIDLIST_ABSOLUTE> pidls;
+    for (const auto& p : paths) {
+        PIDLIST_ABSOLUTE pidl = nullptr;
+        hr = pulse::shell_id::ParseId(ToParsingPath(p), &pidl);
+        if (FAILED(hr) || !pidl) {
+            if (SUCCEEDED(hr)) hr = HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+            break;
+        }
+        pidls.push_back(pidl);
+    }
+    if (SUCCEEDED(hr)) {
+        IShellItemArray* array = nullptr;
+        hr = SHCreateShellItemArrayFromIDLists(static_cast<UINT>(pidls.size()),
+            const_cast<PCIDLIST_ABSOLUTE_ARRAY>(pidls.data()), &array);
+        if (SUCCEEDED(hr)) {
+            hr = array->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(out));
+            array->Release();
+        }
+    }
+    for (auto pidl : pidls) CoTaskMemFree(pidl);
+    return SUCCEEDED(hr) && !*out ? E_FAIL : hr;
+}
+
+// Paste = a simulated drop of the clipboard on the folder's drop target, as
+// Explorer's paste does (works for a phone folder and a local one alike).
+// Drops `data` on the folder `dir` the way Explorer would: the folder's own
+// drop target runs the transfer (an MTP phone copies over WPD). `wanted` is
+// DROPEFFECT_COPY or DROPEFFECT_MOVE.
+HRESULT DropDataInto(IDataObject* data, const std::wstring& dir, DWORD wanted) {
+    IShellItem* folder = nullptr;
+    IDropTarget* drop = nullptr;
+    HRESULT hr = MakeItem(dir, &folder);
+    if (SUCCEEDED(hr)) hr = folder->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&drop));
+    if (folder) folder->Release();
+    if (SUCCEEDED(hr) && drop) {
+        POINTL pt{ 0, 0 };
+        DWORD effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+        hr = drop->DragEnter(data, MK_LBUTTON, pt, &effect);
+        // A target that cannot move (some phones) still takes a copy: the
+        // source stays, nothing is lost.
+        if (SUCCEEDED(hr) && !(effect & wanted)) wanted = effect & DROPEFFECT_COPY;
+        if (SUCCEEDED(hr) && wanted) {
+            effect = wanted;
+            hr = drop->Drop(data, wanted == DROPEFFECT_MOVE ? MK_LBUTTON | MK_SHIFT : MK_LBUTTON,
+                            pt, &effect);
+        } else {
+            drop->DragLeave();
+            if (SUCCEEDED(hr)) hr = HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
+        }
+    } else if (SUCCEEDED(hr)) {
+        hr = E_NOINTERFACE;
+    }
+    if (drop) drop->Release();
+    return hr;
+}
+
+HRESULT PasteClipboardInto(const std::wstring& dir) {
+    IDataObject* data = nullptr;
+    HRESULT hr = OleGetClipboard(&data);
+    if (FAILED(hr) || !data) return FAILED(hr) ? hr : E_FAIL;
+    DWORD wanted = DROPEFFECT_COPY;  // a cut moves, anything else copies
+    FORMATETC fmt{ static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT)),
+                   nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+    STGMEDIUM medium{};
+    if (SUCCEEDED(data->GetData(&fmt, &medium))) {
+        if (const DWORD* preferred = static_cast<const DWORD*>(GlobalLock(medium.hGlobal))) {
+            if (*preferred & DROPEFFECT_MOVE) wanted = DROPEFFECT_MOVE;
+            GlobalUnlock(medium.hGlobal);
+        }
+        ReleaseStgMedium(&medium);
+    }
+    hr = DropDataInto(data, dir, wanted);
+    data->Release();
+    return hr;
+}
+
+// A drag released in Pulse that the shell must carry out: files dropped on a
+// phone folder, or a phone's items dropped on a PC folder. `items` are paths
+// or "::{CLSID}\..." parsing names.
+HRESULT DropItemsInto(const std::wstring& dir, const std::vector<std::wstring>& items, bool move) {
+    if (items.empty()) return E_INVALIDARG;
+    std::vector<PIDLIST_ABSOLUTE> pidls;
+    HRESULT hr = S_OK;
+    for (const auto& item : items) {
+        PIDLIST_ABSOLUTE pidl = nullptr;
+        hr = pulse::shell_id::ParseId(ToParsingPath(item), &pidl);
+        if (FAILED(hr) || !pidl) {
+            if (SUCCEEDED(hr)) hr = HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+            break;
+        }
+        pidls.push_back(pidl);
+    }
+    IShellItemArray* array = nullptr;
+    IDataObject* data = nullptr;
+    if (SUCCEEDED(hr))
+        hr = SHCreateShellItemArrayFromIDLists(static_cast<UINT>(pidls.size()),
+                                               const_cast<PCIDLIST_ABSOLUTE_ARRAY>(pidls.data()), &array);
+    for (auto* pidl : pidls) CoTaskMemFree(pidl);
+    if (SUCCEEDED(hr) && array) hr = array->BindToHandler(nullptr, BHID_DataObject, IID_PPV_ARGS(&data));
+    if (array) array->Release();
+    if (SUCCEEDED(hr) && data) hr = DropDataInto(data, dir, move ? DROPEFFECT_MOVE : DROPEFFECT_COPY);
+    else if (SUCCEEDED(hr)) hr = E_NOINTERFACE;
+    if (data) data->Release();
+    return hr;
+}
+
+void ExecuteShellVerb(Request* req) {
+    // Copy / cut / paste go through the OLE clipboard, which needs OLE (not
+    // just COM) on this thread. Kept for the process: the clipboard data a
+    // copy leaves must outlive the request.
+    static const HRESULT ole = OleInitialize(nullptr);
+    const bool background = (req->flags & SVF_BACKGROUND) != 0;
+    const HWND owner = reinterpret_cast<HWND>(static_cast<uintptr_t>(req->owner));
+    const std::wstring& verb = req->new_name;
+    HRESULT hr = FAILED(ole) ? ole : S_OK;
+    if (SUCCEEDED(hr) && req->sources.empty()) hr = E_INVALIDARG;
+    const bool drop_copy = _wcsicmp(verb.c_str(), L"drop:copy") == 0;
+    const bool drop_move = _wcsicmp(verb.c_str(), L"drop:move") == 0;
+    if (SUCCEEDED(hr) && background && _wcsicmp(verb.c_str(), L"paste") == 0) {
+        hr = PasteClipboardInto(req->sources.front());
+    } else if (SUCCEEDED(hr) && background && (drop_copy || drop_move)) {
+        // sources: the target folder, then the dropped items.
+        hr = DropItemsInto(req->sources.front(),
+                           std::vector<std::wstring>(req->sources.begin() + 1, req->sources.end()),
+                           drop_move);
+    } else if (SUCCEEDED(hr)) {
+        IContextMenu* menu = nullptr;
+        hr = ShellVerbMenu(req->sources, background, owner, &menu);
+        HMENU hmenu = SUCCEEDED(hr) ? CreatePopupMenu() : nullptr;
+        if (SUCCEEDED(hr) && !hmenu) hr = HRESULT_FROM_WIN32(GetLastError());
+        constexpr UINT kFirst = 1;
+        constexpr UINT kLast = 0x7FFF;
+        if (SUCCEEDED(hr)) {
+            UINT flags = verb.empty() ? CMF_DEFAULTONLY : CMF_NORMAL;
+            if (!background) flags |= CMF_ITEMMENU;
+            hr = menu->QueryContextMenu(hmenu, 0, kFirst, kLast, flags);
+        }
+        std::string verb_a;
+        UINT default_id = 0;
+        if (SUCCEEDED(hr) && verb.empty()) {
+            const UINT id = GetMenuDefaultItem(hmenu, FALSE, 0);
+            if (id == static_cast<UINT>(-1) || id < kFirst || id > kLast)
+                hr = HRESULT_FROM_WIN32(ERROR_NO_ASSOCIATION);
+            else default_id = id - kFirst;
+        } else if (SUCCEEDED(hr)) {
+            for (wchar_t c : verb) verb_a.push_back(c < 0x80 ? static_cast<char>(c) : '?');
+        }
+        if (SUCCEEDED(hr)) {
+            CMINVOKECOMMANDINFOEX info{};
+            info.cbSize = sizeof(info);
+            info.fMask = CMIC_MASK_UNICODE;
+            info.hwnd = owner;
+            if (verb.empty()) {
+                info.lpVerb = MAKEINTRESOURCEA(default_id);
+                info.lpVerbW = MAKEINTRESOURCEW(default_id);
+            } else {
+                info.lpVerb = verb_a.c_str();
+                info.lpVerbW = verb.c_str();
+            }
+            info.nShow = SW_SHOWNORMAL;
+            hr = menu->InvokeCommand(reinterpret_cast<CMINVOKECOMMANDINFO*>(&info));
+        }
+        if (hmenu) DestroyMenu(hmenu);
+        if (menu) menu->Release();
+    }
+    const bool cancelled = hr == HRESULT_FROM_WIN32(ERROR_CANCELLED);
+    if (FAILED(hr) && !cancelled) {
+        wchar_t line[160];
+        _snwprintf_s(line, _TRUNCATE, L"shell verb '%.64ls' failed hr=0x%08lX",
+                     verb.empty() ? L"(default)" : verb.c_str(), static_cast<unsigned long>(hr));
+        HostLog(line);
+    }
+    SendDone(req->id, cancelled ? S_OK : hr, cancelled, FAILED(hr) && !cancelled ? DescribeHresult(hr) : L"");
+    delete req;
+}
+
 void ExecuteRequest(Request* req) {
+    if (req->type == REQ_SHELL_VERB) {
+        ExecuteShellVerb(req);
+        return;
+    }
     if (req->type == REQ_NEW_FOLDER || req->type == REQ_NEW_FILE) {
         HRESULT hr = req->sources.empty() ? E_INVALIDARG
                                           : ExecuteCreate(req->type, req->sources.front());
@@ -720,6 +964,119 @@ bool ClientIsExpected() {
     return true;
 }
 
+// REQ_SHELL_TRANSFER: one IFileOperation on its own STA thread, so a long
+// copy off (or onto) a phone never holds the main thread's requests (open,
+// properties, rename). Explorer's own engine: the same WPD path, the same
+// speed. Conflicts were settled by Pulse before the request (its dialog);
+// what still collides is overwritten, or renamed with STF_RENAME_ON_COLLISION.
+void ExecuteShellTransfer(const Request& req) {
+    const bool create = req.op == STO_NEW_FOLDER || req.op == STO_NEW_FILE;
+    const bool remove = req.op == STO_DELETE;
+    HRESULT hr = S_OK;
+    IShellItem* dest = nullptr;
+    if (!remove) hr = req.dest.empty() ? E_INVALIDARG : MakeItem(req.dest, &dest);
+    if (SUCCEEDED(hr) && !create && req.sources.empty()) hr = E_INVALIDARG;
+    if (SUCCEEDED(hr) && create && (req.names.empty() || req.names.front().empty())) hr = E_INVALIDARG;
+    IFileOperation* op = nullptr;
+    if (SUCCEEDED(hr))
+        hr = CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&op));
+    ProgressSink sink(req.id, create ? 1 : req.sources.size());
+    sink.set_work_progress(true);
+    DWORD sink_cookie = 0;
+    if (SUCCEEDED(hr)) {
+        // No UI of the shell's: Pulse asked about conflicts and deletes, and
+        // shows the progress and the errors itself.
+        DWORD flags = FOF_SILENT | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_NOCONFIRMMKDIR;
+        if (req.flags & STF_RENAME_ON_COLLISION) flags |= FOF_RENAMEONCOLLISION;
+        hr = op->SetOperationFlags(flags);
+        if (SUCCEEDED(hr)) op->Advise(&sink, &sink_cookie);
+    }
+    bool setup_failed = FAILED(hr);
+    if (SUCCEEDED(hr) && create) {
+        hr = op->NewItem(dest, req.op == STO_NEW_FOLDER ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL,
+                         req.names.front().c_str(), nullptr, nullptr);
+        setup_failed = FAILED(hr);
+    } else if (SUCCEEDED(hr)) {
+        for (size_t i = 0; i < req.sources.size(); ++i) {
+            IShellItem* item = nullptr;
+            hr = MakeItem(req.sources[i], &item);
+            if (FAILED(hr)) {
+                sink.NoteSetupFailure(req.sources[i]);
+                break;
+            }
+            const wchar_t* name = i < req.names.size() && !req.names[i].empty() ? req.names[i].c_str() : nullptr;
+            switch (req.op) {
+            case STO_COPY: hr = op->CopyItem(item, dest, name, nullptr); break;
+            case STO_MOVE: hr = op->MoveItem(item, dest, name, nullptr); break;
+            case STO_DELETE: hr = op->DeleteItem(item, nullptr); break;
+            default: hr = E_INVALIDARG; break;
+            }
+            item->Release();
+            if (FAILED(hr)) break;
+        }
+        setup_failed = FAILED(hr);
+    }
+    bool cancelled = false;
+    if (SUCCEEDED(hr)) {
+        hr = op->PerformOperations();
+        BOOL aborted = FALSE;
+        op->GetAnyOperationsAborted(&aborted);
+        cancelled = g.cancel_id.load() == req.id || hr == HRESULT_FROM_WIN32(ERROR_CANCELLED) ||
+                    (aborted && SUCCEEDED(hr) && SUCCEEDED(sink.item_failure()));
+        if (SUCCEEDED(hr) && FAILED(sink.item_failure())) hr = sink.item_failure();
+    }
+    if (op) {
+        if (sink_cookie) op->Unadvise(sink_cookie);
+        op->Release();
+    }
+    if (dest) dest->Release();
+    std::wstring error;
+    if (FAILED(hr) && !cancelled) {
+        error = DescribeHresult(hr);
+        if (!sink.last_failed_item().empty()) {
+            if (!error.empty()) error += L" | ";
+            error += sink.last_failed_item();
+        }
+        wchar_t line[160];
+        swprintf_s(line, L"shell transfer op=%u items=%zu failed hr=0x%08lX setup=%d", req.op,
+                   req.sources.size(), static_cast<unsigned long>(hr), setup_failed ? 1 : 0);
+        HostLog(line);
+    }
+    SendDone(req.id, cancelled ? S_OK : hr, cancelled, error);
+}
+
+DWORD WINAPI ShellTransferThread(LPVOID param) {
+    std::unique_ptr<Request> req(static_cast<Request*>(param));
+    const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    ExecuteShellTransfer(*req);
+    if (SUCCEEDED(co)) CoUninitialize();
+    g.requests_in_flight.fetch_sub(1);
+    PostMessageW(g.hwnd_msg, WM_RECYCLE_CHECK, 0, 0);
+    return 0;
+}
+
+void StartShellTransfer(uint32_t id, const uint8_t* payload, size_t size) {
+    auto req = std::make_unique<Request>();
+    req->type = REQ_SHELL_TRANSFER;
+    req->id = id;
+    PayloadReader r(payload, size);
+    if (!r.GetU32(req->op) || !r.GetU32(req->flags) || !r.GetString(req->dest) ||
+        !r.GetStringArray(req->sources) || !r.GetStringArray(req->names) || req->op > STO_DELETE) {
+        SendDone(id, E_INVALIDARG, false, L"malformed transfer request");
+        return;
+    }
+    g.requests_in_flight.fetch_add(1);
+    HANDLE thread = CreateThread(nullptr, 0, ShellTransferThread, req.get(), 0, nullptr);
+    if (!thread) {
+        const HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
+        g.requests_in_flight.fetch_sub(1);
+        SendDone(id, hr, false, DescribeHresult(hr));
+        return;
+    }
+    req.release();  // the thread owns it now
+    CloseHandle(thread);
+}
+
 DWORD WINAPI ReaderThread(LPVOID) {
     __try {
         return ReaderThreadImpl();
@@ -785,6 +1142,10 @@ DWORD WINAPI ReaderThreadImpl() {
                 StartCtxSession(h.request_id, payload.data(), payload.size());
                 break;
             }
+            case REQ_SHELL_TRANSFER: {
+                StartShellTransfer(h.request_id, payload.data(), payload.size());
+                break;
+            }
             case REQ_CTX_INVOKE: {
                 PayloadReader r(payload.data(), payload.size());
                 uint32_t session = 0, item = 0;
@@ -813,13 +1174,18 @@ DWORD WINAPI ReaderThreadImpl() {
             case REQ_RENAME:
             case REQ_NEW_FOLDER:
             case REQ_NEW_FILE:
-            case REQ_RESTORE_RECYCLE: {
+            case REQ_RESTORE_RECYCLE:
+            case REQ_SHELL_VERB: {
                 auto* req = new Request();
                 req->type = h.type;
                 req->id = h.request_id;
                 PayloadReader r(payload.data(), payload.size());
                 bool ok = true;
-                if (req->type == REQ_RENAME) {
+                if (req->type == REQ_SHELL_VERB) {
+                    ok = r.GetU32(req->owner) && r.GetU32(req->flags) &&
+                         r.GetString(req->new_name) && r.GetStringArray(req->sources) &&
+                         !req->sources.empty();
+                } else if (req->type == REQ_RENAME) {
                     std::wstring path;
                     ok = r.GetString(path) && r.GetString(req->new_name);
                     req->sources.push_back(std::move(path));
@@ -955,8 +1321,10 @@ UINT QueryContextMenuFlags(const CtxSessionData& d) {
 // Walks the populated HMENU via the same nested-flyout rules as per-handler
 // collection so fallback and worker paths cannot drift.
 void CollectCtxItems(IContextMenu* menu, IContextMenu2* menu2, HMENU hmenu,
-                     bool background, std::vector<CtxItemOut>& out) {
+                     bool background, std::vector<CtxItemOut>& out,
+                     bool shell_namespace = false) {
     pulse::shell::CtxHandlerSlot slot;
+    slot.shell_namespace = shell_namespace;
     slot.menu = menu;
     slot.menu2 = menu2;
     slot.hmenu = hmenu;
@@ -969,6 +1337,41 @@ void CollectCtxItems(IContextMenu* menu, IContextMenu2* menu2, HMENU hmenu,
     slot.menu2 = nullptr;
     slot.menu3 = nullptr;
     slot.hmenu = nullptr;
+}
+
+// A phone item's menu, as the shell gave it (before Pulse drops the rows it
+// draws itself): one host log line per row, so a user's log tells whether a
+// row Explorer shows never came or was lost on the way to the app.
+void LogShellMenuRows(IContextMenu* menu, HMENU hmenu) {
+    const int count = GetMenuItemCount(hmenu);
+    wchar_t head[64];
+    swprintf_s(head, L"phone ctx: %d native rows", count);
+    HostLog(head);
+    for (int i = 0; i < count; ++i) {
+        wchar_t text[128]{};
+        MENUITEMINFOW mii{sizeof(mii)};
+        mii.fMask = MIIM_ID | MIIM_FTYPE | MIIM_SUBMENU | MIIM_STRING | MIIM_STATE;
+        mii.dwTypeData = text;
+        mii.cch = ARRAYSIZE(text);
+        if (!GetMenuItemInfoW(hmenu, static_cast<UINT>(i), TRUE, &mii)) continue;
+        if (mii.fType & MFT_SEPARATOR) {
+            HostLog(L"phone ctx:   ----");
+            continue;
+        }
+        wchar_t verb[64]{};
+        if (!mii.hSubMenu && mii.wID >= kCtxIdFirst && mii.wID <= kCtxIdLast &&
+            FAILED(menu->GetCommandString(mii.wID - kCtxIdFirst, GCS_VERBW, nullptr,
+                                          reinterpret_cast<LPSTR>(verb), ARRAYSIZE(verb))))
+            verb[0] = L'\0';
+        verb[ARRAYSIZE(verb) - 1] = L'\0';
+        std::wstring line = L"phone ctx:   [";
+        line += verb;
+        line += L"] ";
+        line += text;
+        if (mii.hSubMenu) line += L" >";
+        if (mii.fState & MFS_DISABLED) line += L" (disabled)";
+        HostLog(line.c_str());
+    }
 }
 
 HRESULT BuildCtxMenu(const CtxSessionData& d, IContextMenu** out_menu, HMENU* out_hmenu,
@@ -994,7 +1397,7 @@ HRESULT BuildCtxMenu(const CtxSessionData& d, IContextMenu** out_menu, HMENU* ou
         std::vector<PIDLIST_ABSOLUTE> pidls;
         for (const auto& p : d.paths) {
             PIDLIST_ABSOLUTE pidl = nullptr;
-            if (SUCCEEDED(SHParseDisplayName(ToParsingPath(p).c_str(), nullptr, &pidl, 0, nullptr)))
+            if (SUCCEEDED(pulse::shell_id::ParseId(ToParsingPath(p), &pidl)))
                 pidls.push_back(pidl);
         }
         if (pidls.empty()) return E_INVALIDARG;
@@ -1017,9 +1420,16 @@ HRESULT BuildCtxMenu(const CtxSessionData& d, IContextMenu** out_menu, HMENU* ou
         menu->Release();
         return hr;
     }
+    const bool phone_items = !d.background && IsShellNamespacePath(ToParsingPath(d.paths.front()));
+    if (phone_items) LogShellMenuRows(menu, hmenu);
     IContextMenu2* menu2 = nullptr;
     menu->QueryInterface(IID_PPV_ARGS(&menu2));
-    CollectCtxItems(menu, menu2, hmenu, d.background, items);
+    CollectCtxItems(menu, menu2, hmenu, d.background, items, phone_items);
+    if (phone_items) {
+        wchar_t kept[64];
+        swprintf_s(kept, L"phone ctx: %zu rows passed to the app", items.size());
+        HostLog(kept);
+    }
     if (menu2) menu2->Release();
     *out_menu = menu;
     *out_hmenu = hmenu;
@@ -1058,7 +1468,9 @@ void CtxInvoke(const CtxSessionData& d, IContextMenu* menu, UINT id_first,
         }
     }
     std::wstring dir = ToParsingPath(d.paths.front());
-    if (!d.background) {
+    if (IsShellNamespacePath(dir)) {
+        dir.clear();  // a phone item has no directory to run in
+    } else if (!d.background) {
         const auto slash = dir.find_last_of(L'\\');
         if (slash != std::wstring::npos && slash > 2) dir.resize(slash);
     }
@@ -1068,7 +1480,7 @@ void CtxInvoke(const CtxSessionData& d, IContextMenu* menu, UINT id_first,
     info.hwnd = d.owner;
     info.lpVerb = MAKEINTRESOURCEA(item_id - id_first);
     info.lpVerbW = MAKEINTRESOURCEW(item_id - id_first);
-    info.lpDirectoryW = dir.c_str();
+    info.lpDirectoryW = dir.empty() ? nullptr : dir.c_str();
     info.nShow = SW_SHOWNORMAL;
     const HRESULT hr = menu->InvokeCommand(reinterpret_cast<CMINVOKECOMMANDINFO*>(&info));
     SendDone(invoke_req_id, hr, false,
@@ -1323,8 +1735,12 @@ DWORD CtxSessionThreadImpl(LPVOID param, const CtxSessionApi& api = {}) {
             pending_invoke.reset(reinterpret_cast<CtxInvokeMsg*>(m.lParam));
     };
 
-    auto handlers = api.enumerate(
-        data->background, data->paths.front(), data->disabled_clsids);
+    // A phone's items ("::{...}" parsing names) have no file type to read
+    // handlers for: their menu is the shell's own, the fallback menu below,
+    // exactly what Explorer shows for them.
+    auto handlers = IsShellNamespacePath(data->paths.front())
+        ? decltype(api.enumerate(data->background, data->paths.front(), data->disabled_clsids)){}
+        : api.enumerate(data->background, data->paths.front(), data->disabled_clsids);
     // Enumeration touches the target (GetFileAttributes on a sleeping disk or
     // an offline share) and the package catalog; a user log had it take 22 s.
     // Logged on its own so such a stall is not mistaken for the extensions.

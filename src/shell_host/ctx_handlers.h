@@ -58,6 +58,9 @@ struct CtxHandlerSlot {
     // Destinations in the SendTo folder. Explorer's 发送到 lists them from
     // posted messages, so collection pumps until the flyout holds them all.
     int send_to_expected = 0;
+    // A phone item's menu (the shell's own). Pulse has no 固定到快速访问 row
+    // for it (its pins need a real path), so the native row stays.
+    bool shell_namespace = false;
 };
 
 struct CtxBind {

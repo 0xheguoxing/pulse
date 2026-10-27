@@ -1,6 +1,7 @@
 #include "app_internal.h"
 #include "context_menu.h"
 #include "../fs/fs_enum.h"
+#include "../fs/device_path.h"
 #include "../ops/clipboard.h"
 #include "../common/localization.h"
 
@@ -21,7 +22,8 @@ void RunPathCommand(AppState& s, const std::wstring& path, bool filesystem, int 
         NavigateTo(s, path);
         break;
     case app::CmdCopyPath:
-        ops::WriteClipboardText(shell_path);
+        // A phone folder: the path Explorer's address bar shows, not Pulse's.
+        ops::WriteClipboardText(fs::IsDevicePath(path) ? DeviceFriendlyPath(path) : shell_path);
         break;
     case app::CmdCopy:
         if (filesystem) ops::WriteClipboard({shell_path}, false);

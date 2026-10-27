@@ -24,6 +24,7 @@ enum class SelectionKind : uint8_t {
     NetworkShares,  // the share list of \\server
     NetworkPlaces,  // pulse:networks (pinned and system network locations)
     Recycle,        // Recycle Bin items
+    Device,         // a phone's files and storages: Explorer's verbs via the shell host
 };
 
 struct SelectionCaps {
@@ -67,9 +68,25 @@ inline SelectionCaps ComputeSelectionCaps(const Tab& tab, const PlacesCatalog* p
     const int count = tab.SelectedCount();
     if (count <= 0) return caps;
     std::wstring kind;
-    if (ParsePulsePath(tab.current_path, &kind, nullptr) && kind == L"device") {
-        // Phone files: browsing only until copy-out and capabilities land (D5, D7).
-        caps.kind = SelectionKind::Launchers;
+    std::wstring rest;
+    if (ParsePulsePath(tab.current_path, &kind, &rest) && kind == L"device") {
+        // Phone files: what Explorer offers for them, run by the shell host
+        // on their shell ids. A device root lists its storages: copy only.
+        caps.kind = SelectionKind::Device;
+        caps.copy = true;
+        if (rest.find(L'\\') == std::wstring::npos) return caps;
+        caps.cut = true;
+        bool read_only = false;
+        for (int index : tab.SelectedIndices()) {
+            if (index < 0 || static_cast<size_t>(index) >= tab.EntryCount()) continue;
+            if (tab.EntryAt(static_cast<size_t>(index)).attrs & FILE_ATTRIBUTE_READONLY) {
+                read_only = true;
+                break;
+            }
+        }
+        caps.cut = !read_only;  // a cut deletes the source afterwards
+        caps.del = !read_only;
+        caps.rename = count == 1 && !read_only;
         return caps;
     }
     if (kind == L"recycle") {

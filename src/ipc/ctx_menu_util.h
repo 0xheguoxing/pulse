@@ -150,6 +150,15 @@ inline bool KeepStaticVerb(const StaticVerbRegFlags& flags) {
            flags.has_extended_subcommands_key;
 }
 
+// A delegate/Explorer command is the real Shell action; a sibling
+// command value can be only a placeholder (e.g. Explorer.exe for the
+// Windows Set as desktop background verb). Never launch that fallback
+// directly when a Shell handler is registered.
+inline bool UseStaticVerbCommand(const StaticVerbRegFlags& flags) {
+    return flags.has_command && !flags.has_delegate_execute &&
+           !flags.has_explorer_command;
+}
+
 // One row in a COM flyout after QueryContextMenu. Nested submenus are flattened
 // one extra level into leaves so share apps (泛泰快传) are not dropped.
 struct CtxFlyoutChild {

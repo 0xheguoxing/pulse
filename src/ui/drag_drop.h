@@ -58,6 +58,11 @@ std::wstring DropLaunchArguments(const std::vector<std::wstring>& sources);
 // IDataObject inspection (drop-in side).
 // ---------------------------------------------------------------------------
 bool ExtractHDropPaths(IDataObject* obj, std::vector<std::wstring>& out);
+// Items with no filesystem path (a phone's files): their "::{CLSID}\..."
+// parsing names, only when every item is one. False for anything else.
+bool ExtractShellItemIds(IDataObject* obj, std::vector<std::wstring>& out);
+// A "::{CLSID}\..." parsing name: a shell item with no filesystem path.
+bool IsShellItemId(const std::wstring& path);
 DWORD PreferredDropEffect(IDataObject* obj); // 0 when absent
 
 // ---------------------------------------------------------------------------
@@ -171,7 +176,8 @@ DWORD DoFileDragDrop(const std::vector<std::wstring>& paths, DWORD allowed_effec
 // Drop-in target.
 // ---------------------------------------------------------------------------
 struct DropTargetCallbacks {
-    // pt in client coordinates; sources already extracted from CF_HDROP.
+    // pt in client coordinates; sources already extracted from CF_HDROP, or
+    // shell item ids (ExtractShellItemIds) when the drag has no CF_HDROP.
     // Return the DROPEFFECT_* to show (badge + cursor follow it). allowed is
     // the source's effect mask, preferred its Preferred DropEffect (0 when
     // absent), so the badge matches what the drop will actually do.

@@ -1,6 +1,7 @@
 // shell_icons.cpp
 #include "shell_icons.h"
 #include "../common/path_utils.h"
+#include "../common/shell_id.h"
 
 #include <commoncontrols.h>
 #include <shellapi.h>
@@ -341,7 +342,7 @@ void ShellIconCache::WorkerLoop() {
                 // Regitems and shell: monikers (Start menu apps, "shell:AppsFolder\<id>")
                 // parse through the shell namespace, not as a path.
                 PIDLIST_ABSOLUTE pidl = nullptr;
-                if (SUCCEEDED(SHParseDisplayName(query.c_str(), nullptr, &pidl, 0, nullptr)) && pidl) {
+                if (SUCCEEDED(shell_id::ParseId(query, &pidl)) && pidl) {
                     found = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(pidl), 0, &info, sizeof(info),
                                            flags | SHGFI_PIDL) != 0;
                     CoTaskMemFree(pidl);

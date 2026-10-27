@@ -107,7 +107,27 @@ struct OpRequest {
     bool lock_retry = false;
     bool duplicate_cleanup = false;
     std::vector<DuplicateCleanupGroup> duplicate_groups;
+    // Phone operations (IsShellTransferRequest): Pulse folders to re-list
+    // when the task ends (a pulse:device: folder, a local target). A phone
+    // folder has no change notifications Pulse can follow.
+    std::vector<std::wstring> refresh_directories;
 };
+
+// A phone's items (MTP / PTP) have no path, only a shell parsing name
+// ("::{20D04FE0-...}\\\\?\\usb#..."). Requests naming one run through the
+// shell host's IFileOperation, Explorer's own engine (REQ_SHELL_TRANSFER):
+// Copy / Move with sources or dest_dir a shell id; CreateFolder /
+// CreateTextFile with dest_dir the phone folder and new_name the leaf (no
+// sources); RealDelete with shell id sources (a phone has no Recycle Bin).
+inline bool IsShellItemId(const std::wstring& path) {
+    return path.size() > 2 && path[0] == L':' && path[1] == L':';
+}
+inline bool IsShellTransferRequest(const OpRequest& req) {
+    if (IsShellItemId(req.dest_dir)) return true;
+    for (const auto& source : req.sources)
+        if (IsShellItemId(source)) return true;
+    return false;
+}
 
 struct UndoEntry {
     OpType type = OpType::Copy;
@@ -366,6 +386,19 @@ public:
     // True if a context-menu InvokeCommand finished since the last take
     // (UI uses this to refresh the folder the verb may have mutated).
     bool TakeCtxInvokeDone();
+    // Explorer's own verb on shell items (phone files: open, copy, cut,
+    // delete, properties; "paste" with `background` into a folder), run by
+    // the shell host. Empty verb = the default one. "drop:copy" / "drop:move"
+    // with `background`: the folder, then the dropped paths or shell items,
+    // which the folder's own drop target transfers. A delete / paste / drop /
+    // rename completion counts as a context-menu invoke (TakeCtxInvokeDone: the
+    // folder refreshes); a failure leaves its message for TakeShellVerbError.
+    // False when it could not be queued.
+    bool RunShellVerb(std::vector<std::wstring> shell_ids, std::wstring verb, bool background,
+                      void* owner_hwnd);
+    // Renames one shell item (a phone file) through the host, same completion.
+    bool RenameShellItem(std::wstring shell_id, std::wstring new_name);
+    std::wstring TakeShellVerbError();
 
     bool CanUndo() const;
     // The newest undo step belongs to this task (the pill's 撤销).
@@ -414,9 +447,18 @@ private:
     };
 
     QueueItem* CurrentTransferLocked(); // mutex_ held; active request or queue front
+    // Phone operations (IsShellTransferRequest), on the worker thread: the
+    // conflicts are settled with Pulse's own dialog first, then the shell
+    // host's IFileOperation does the transfer with progress and cancel.
+    void RunShellTransfer(const OpRequest& req, uint64_t task_id);
+    void RunShellItemOp(const OpRequest& req, uint64_t task_id);
+    // Completion of a phone operation: re-list its folders (refresh only, no
+    // undo step: Pulse cannot put a phone's files back).
+    void CompleteShellRequest(const OpRequest& req, uint64_t task_id,
+                              std::vector<std::wstring> destinations);
 
     struct MenuJob {
-        enum class Kind { Query, Invoke, Close } kind = Kind::Query;
+        enum class Kind { Query, Invoke, Close, Verb, Rename } kind = Kind::Query;
         uint32_t token = 0;
         uint32_t item_id = 0;
         uint32_t owner_hwnd = 0;
@@ -560,6 +602,8 @@ private:
     std::map<uint32_t, uint32_t> menu_token_by_session_;  // query req id -> token
     std::set<uint32_t> ctx_invoke_ids_;                   // in-flight invoke req ids
     std::atomic<uint32_t> ctx_invoke_done_{0};
+    std::map<uint32_t, bool> shell_verb_ids_;             // in-flight RunShellVerb / RenameShellItem -> refresh
+    std::wstring shell_verb_error_;                       // last failure, until taken (menu_mutex_)
 
     // ShellExecute / properties: dedicated STA thread so opens never
     // serialize behind transfers (SEE_MASK_NOASYNC on the transfer

@@ -338,6 +338,7 @@ void ClearTextWidthCache() {
         entry.path = !source.full_path.empty() ? source.full_path
                      : (fs::IsVirtualPath(vm.path) ? L"" : JoinDirName(vm.path, source.name));
         if (!entry.path.empty()) entry.alias = app::AliasStore::Instance().Shown(entry.path);
+        entry.thumb_path = !source.is_dir && fs::IsDevicePath(entry.path) ? source.shell_id : std::wstring();
         entry.attrs = source.attrs;
         entry.size_value = source.size;
         entry.modified_value = (static_cast<uint64_t>(source.mtime.dwHighDateTime) << 32) |

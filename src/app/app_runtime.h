@@ -137,6 +137,31 @@ std::wstring TooltipForHover(AppState& s);
 void ApplyHoverTarget(AppState& s, const ui::HitTestResult& hit);
 std::wstring EntryFullPath(const app::Tab& tab, int index);
 std::vector<std::wstring> SelectedFullPaths(const app::Tab& tab);
+// Phone folders (pulse:device:): their file commands are Explorer's own verbs,
+// run by the shell host on the rows' shell ids (DirEntry::shell_id).
+bool IsDeviceTab(const app::Tab* tab);
+// Shell ids of the selected rows; empty if any selected row has none.
+std::vector<std::wstring> SelectedShellIds(const app::Tab& tab);
+// Queues the verb (empty = the default verb); false when nothing was queued.
+bool RunDeviceVerb(AppState& s, std::vector<std::wstring> shell_ids, const wchar_t* verb,
+                   bool background = false);
+// Copy / move into or out of a phone (ops::IsShellTransferRequest): sources
+// are phone rows' shell ids or paths, dest a Pulse folder (pulse:device: or
+// local). Pulse's task: progress card, conflicts in Pulse's dialog, the
+// folders re-listed when it ends. False when nothing was queued.
+bool SubmitDeviceTransfer(AppState& s, std::vector<std::wstring> sources, const std::wstring& dest,
+                          bool move, uint64_t* task = nullptr);
+// The phone folder the window's active tab shows is watched like Explorer
+// watches it (SHChangeNotifyRegister): what another program or the phone's
+// own shell changes there re-lists it. Called when a listing is applied; the
+// folder's PIDL is parsed off the UI thread (the device may be slow).
+void UpdateDeviceFolderWatch(AppState& s);
+void OnDeviceWatchReady(AppState& s, WPARAM ticket, LPARAM pidl);
+void OnDeviceFolderChanged(AppState& s, WPARAM wparam, LPARAM lparam);
+void FireDeviceFolderWatch(AppState& s);   // kTimerDeviceWatch: the burst settled
+void ReleaseDeviceFolderWatch(HWND hwnd);
+// What Explorer's 复制路径 gives for a phone item: 此电脑\Xiaomi 14\内部存储\DCIM\a.jpg.
+std::wstring DeviceFriendlyPath(const std::wstring& path);
 std::wstring TagDiscoveryKey(std::wstring path);
 void QueueVisibleTagDiscovery(AppState& s);
 void ApplyTagAdsDiscoveries(AppState& s, const std::vector<TagAdsDiscovery>& discoveries);

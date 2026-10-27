@@ -13,6 +13,7 @@
 #include "../common/json_utils.h"
 #include "../common/localization.h"
 #include "../common/path_utils.h"
+#include "../common/shell_id.h"
 #include "../common/rename_filename.h"
 #include "../common/utf8_file.h"
 #include "recycle_empty.h"
@@ -31,7 +32,9 @@
 #include <system_error>
 #include <memory>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 #include <winioctl.h>
 
@@ -64,7 +67,7 @@ void ShowMultiFilePropertiesAsync(std::vector<std::wstring> paths) {
         for (const auto& path : paths) {
             const std::wstring shell_path = pulse::path::StripExtendedPathPrefix(path);
             PIDLIST_ABSOLUTE pidl = nullptr;
-            if (SUCCEEDED(SHParseDisplayName(shell_path.c_str(), nullptr, &pidl, 0, nullptr)) && pidl)
+            if (SUCCEEDED(shell_id::ParseId(shell_path, &pidl)) && pidl)
                 pidls.push_back(pidl);
         }
         IDataObject* data = nullptr;
@@ -1091,6 +1094,9 @@ std::wstring OpsManager::JournalJsonLocked() const {
     bool first = true;
     auto append = [&](const QueueItem& item, bool active) {
         if (item.req.sources.empty() && item.req.type != OpType::EmptyRecycle) return;
+        // A phone operation is not resumed after a restart: the device may be
+        // gone, and a half-done copy is left for the user to look at.
+        if (IsShellTransferRequest(item.req)) return;
         if (!first) out += L",";
         first = false;
         out += L"\n    {\"seq\":" + JsonString(std::to_wstring(item.seq)) +
@@ -2149,6 +2155,21 @@ void OpsManager::OpenThread() {
 }
 
 void OpsManager::RecordShellDone(uint32_t id, uint32_t hr, bool cancelled, std::wstring error) {
+        {
+            std::unique_lock<std::mutex> lock(menu_mutex_);
+            if (const auto verb = shell_verb_ids_.find(id); verb != shell_verb_ids_.end()) {
+                const bool refresh = verb->second;
+                shell_verb_ids_.erase(verb);
+                if (FAILED(static_cast<HRESULT>(hr)) && !cancelled)
+                    shell_verb_error_ = error.empty() ? l10n::Get(l10n::StringId::OpFailed).c_str() : error;
+                lock.unlock();
+                // Copy / open / properties change nothing on the phone: no
+                // re-listing of a big DCIM for them.
+                if (refresh) ctx_invoke_done_.fetch_add(1, std::memory_order_acq_rel);
+                if (notify_) notify_();
+                return;
+            }
+        }
         if (ConsumeCtxInvokeDone(id)) {
             ctx_invoke_done_.fetch_add(1, std::memory_order_acq_rel);
             if (notify_) notify_();
@@ -2176,7 +2197,10 @@ void OpsManager::ConfigureShellCallbacks() {
     // countdown, so this estimator drops the byte-transfer floor.
     shell_item_rate->SetEtaFloor(0.0);
     auto shell_rate_task = std::make_shared<uint64_t>(0);
-    cb.progress = [this, shell_item_rate, shell_rate_task](
+    // A phone transfer (RunShellTransfer) reports a percent of its bytes.
+    auto shell_byte_rate = std::make_shared<TransferRateEstimator>();
+    auto shell_byte_task = std::make_shared<uint64_t>(0);
+    cb.progress = [this, shell_item_rate, shell_rate_task, shell_byte_rate, shell_byte_task](
                       uint32_t id, float pct, std::wstring item,
                       uint32_t items_done, uint32_t total_items) {
         if (id != current_req_id_.load()) return;
@@ -2198,6 +2222,18 @@ void OpsManager::ConfigureShellCallbacks() {
                 st.peak_items_per_second = (std::max)(st.peak_items_per_second,
                                                       st.items_per_second);
                 st.eta_seconds = shell_item_rate->eta_seconds();
+            } else if (st.speed_basis == OpSpeedBasis::Bytes && st.total_bytes > 0 && pct >= 0.0f) {
+                const double share = (std::min)(100.0, static_cast<double>(pct)) / 100.0;
+                st.transferred_bytes = static_cast<uint64_t>(static_cast<double>(st.total_bytes) * share);
+                const ULONGLONG now = GetTickCount64();
+                if (*shell_byte_task != st.task_id) {
+                    *shell_byte_task = st.task_id;
+                    shell_byte_rate->Reset(now, st.transferred_bytes);
+                }
+                shell_byte_rate->Observe(now, st.transferred_bytes, st.total_bytes);
+                st.bytes_per_second = shell_byte_rate->speed();
+                st.peak_bytes_per_second = (std::max)(st.peak_bytes_per_second, st.bytes_per_second);
+                st.eta_seconds = shell_byte_rate->eta_seconds();
             }
             if (!item.empty()) {
                 std::wstring base = st.summary;
@@ -2422,6 +2458,46 @@ void OpsManager::CloseShellMenu(uint32_t token) {
     menu_cv_.notify_one();
 }
 
+bool OpsManager::RunShellVerb(std::vector<std::wstring> shell_ids, std::wstring verb, bool background,
+                              void* owner_hwnd) {
+    if (shell_ids.empty() || std::any_of(shell_ids.begin(), shell_ids.end(),
+                                         [](const std::wstring& id) { return id.empty(); }))
+        return false;
+    MenuJob job;
+    job.kind = MenuJob::Kind::Verb;
+    job.owner_hwnd = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(owner_hwnd));
+    job.background = background;
+    job.paths = std::move(shell_ids);
+    job.verb = std::move(verb);
+    {
+        std::scoped_lock lock(mutex_, menu_mutex_);
+        if (update_preparing_ || !menu_running_) return false;
+        menu_queue_.push_back(std::move(job));
+    }
+    menu_cv_.notify_one();
+    return true;
+}
+
+bool OpsManager::RenameShellItem(std::wstring shell_id, std::wstring new_name) {
+    if (shell_id.empty() || new_name.empty()) return false;
+    MenuJob job;
+    job.kind = MenuJob::Kind::Rename;
+    job.paths.push_back(std::move(shell_id));
+    job.text = std::move(new_name);
+    {
+        std::scoped_lock lock(mutex_, menu_mutex_);
+        if (update_preparing_ || !menu_running_) return false;
+        menu_queue_.push_back(std::move(job));
+    }
+    menu_cv_.notify_one();
+    return true;
+}
+
+std::wstring OpsManager::TakeShellVerbError() {
+    std::lock_guard<std::mutex> lock(menu_mutex_);
+    return std::exchange(shell_verb_error_, std::wstring());
+}
+
 bool OpsManager::ConsumeCtxQueryDone(uint32_t id) {
     ShellMenuCallback cb;
     uint32_t token = 0;
@@ -2517,6 +2593,27 @@ void OpsManager::DispatchMenuJob(const MenuJob& job) {
         client.CloseContextMenu(session);
         break;
     }
+    case MenuJob::Kind::Verb:
+    case MenuJob::Kind::Rename: {
+        const bool refresh = job.kind == MenuJob::Kind::Rename || _wcsicmp(job.verb.c_str(), L"delete") == 0 ||
+                             _wcsicmp(job.verb.c_str(), L"paste") == 0 ||
+                             _wcsnicmp(job.verb.c_str(), L"drop:", 5) == 0;
+        const auto accepted = [this, refresh](uint32_t request) {
+            std::lock_guard<std::mutex> lock(menu_mutex_);
+            shell_verb_ids_[request] = refresh;
+        };
+        const uint32_t id = job.kind == MenuJob::Kind::Verb
+            ? client.ShellVerb(job.paths, job.owner_hwnd, job.background, job.verb, accepted)
+            : client.Rename(job.paths.front(), job.text, accepted);
+        if (id == 0) {
+            {
+                std::lock_guard<std::mutex> lock(menu_mutex_);
+                shell_verb_error_ = l10n::Get(l10n::StringId::TheFileOperationServiceIsNotRunning).c_str();
+            }
+            if (notify_) notify_();
+        }
+        break;
+    }
     }
 }
 
@@ -2539,7 +2636,584 @@ void OpsManager::MenuThread() {
     }
 }
 
+namespace {
+
+// System.FileName / System.Size / System.DateModified (propkey.h), kept in
+// this file: the many targets built from it need no propsys import.
+constexpr PROPERTYKEY kKeyFileName{{0x41CF5AE0, 0xF75A, 0x4806, {0xBD, 0x87, 0x59, 0xC7, 0xD9, 0x24, 0x8E, 0xB9}}, 100};
+constexpr PROPERTYKEY kKeySize{{0xB725F130, 0x47EF, 0x101A, {0xA5, 0xF1, 0x02, 0x60, 0x8C, 0x9E, 0xEB, 0xAC}}, 12};
+constexpr PROPERTYKEY kKeyDateModified{{0xB725F130, 0x47EF, 0x101A, {0xA5, 0xF1, 0x02, 0x60, 0x8C, 0x9E, 0xEB, 0xAC}}, 14};
+
+// ---------------------------------------------------------------------------
+// Phone operations (IsShellTransferRequest): what Pulse reads itself before
+// handing the transfer to the shell host. The worker thread is an STA, as
+// the WPD shell folders want; every call here may wait on the device.
+// ---------------------------------------------------------------------------
+struct ShellEntry {
+    std::wstring name;        // leaf name with its extension (System.FileName)
+    bool directory = false;
+    uint64_t bytes = 0;
+    FILETIME modified{};
+};
+
+class ShellItemRef {
+public:
+    ShellItemRef() = default;
+    ShellItemRef(const ShellItemRef&) = delete;
+    ShellItemRef& operator=(const ShellItemRef&) = delete;
+    ~ShellItemRef() { if (item_) item_->Release(); }
+    IShellItem* get() const { return item_; }
+    IShellItem** put() { if (item_) { item_->Release(); item_ = nullptr; } return &item_; }
+private:
+    IShellItem* item_ = nullptr;
+};
+
+std::wstring ShellParsingName(const std::wstring& path) {
+    return IsShellItemId(path) ? path : pulse::path::StripExtendedPathPrefix(path);
+}
+
+HRESULT OpenShellItem(const std::wstring& path, ShellItemRef& out) {
+    return shell_id::CreateItem(ShellParsingName(path), IID_PPV_ARGS(out.put()));
+}
+
+std::wstring ShellItemName(IShellItem* item, SIGDN form) {
+    PWSTR raw = nullptr;
+    if (FAILED(item->GetDisplayName(form, &raw)) || !raw) return {};
+    std::wstring text(raw);
+    CoTaskMemFree(raw);
+    return text;
+}
+
+ShellEntry ReadShellEntry(IShellItem* item) {
+    ShellEntry entry;
+    SFGAOF attrs = 0;
+    item->GetAttributes(SFGAO_FOLDER | SFGAO_STREAM, &attrs);
+    entry.directory = (attrs & SFGAO_FOLDER) && !(attrs & SFGAO_STREAM);
+    IShellItem2* item2 = nullptr;
+    if (SUCCEEDED(item->QueryInterface(IID_PPV_ARGS(&item2))) && item2) {
+        PWSTR raw = nullptr;
+        if (SUCCEEDED(item2->GetString(kKeyFileName, &raw)) && raw) {
+            entry.name = raw;
+            CoTaskMemFree(raw);
+        }
+        ULONGLONG size = 0;
+        if (!entry.directory && SUCCEEDED(item2->GetUInt64(kKeySize, &size))) entry.bytes = size;
+        item2->GetFileTime(kKeyDateModified, &entry.modified);
+        item2->Release();
+    }
+    if (entry.name.empty()) entry.name = ShellItemName(item, SIGDN_PARENTRELATIVEEDITING);
+    if (entry.name.empty()) entry.name = ShellItemName(item, SIGDN_NORMALDISPLAY);
+    return entry;
+}
+
+std::wstring LowerName(std::wstring text) {
+    for (auto& c : text) c = static_cast<wchar_t>(std::towlower(c));
+    return text;
+}
+
+// The children of a phone folder by lower-case name: what a copy into it
+// would collide with.
+std::unordered_map<std::wstring, ShellEntry> ListShellChildren(IShellItem* folder,
+                                                               const std::atomic<bool>& cancel) {
+    std::unordered_map<std::wstring, ShellEntry> out;
+    IEnumShellItems* children = nullptr;
+    if (FAILED(folder->BindToHandler(nullptr, BHID_EnumItems, IID_PPV_ARGS(&children))) || !children)
+        return out;
+    for (;;) {
+        if (cancel.load()) break;
+        IShellItem* child = nullptr;
+        if (children->Next(1, &child, nullptr) != S_OK || !child) break;
+        ShellEntry entry = ReadShellEntry(child);
+        child->Release();
+        if (!entry.name.empty()) out.emplace(LowerName(entry.name), std::move(entry));
+    }
+    children->Release();
+    return out;
+}
+
+// Whether `item` sits right in `folder`. Compared as shell items: a phone
+// item's id is its ID list, with no path to cut a parent from.
+bool ShellItemInFolder(IShellItem* item, IShellItem* folder) {
+    if (!item || !folder) return false;
+    IShellItem* parent = nullptr;
+    if (FAILED(item->GetParent(&parent)) || !parent) return false;
+    int order = 1;
+    const bool same = SUCCEEDED(parent->Compare(folder, SICHINT_CANONICAL, &order)) && order == 0;
+    parent->Release();
+    return same;
+}
+
+// 保留两者 in a phone folder: the name File Explorer would give the copy
+// (\"a - 副本.jpg\", \"a - 副本 (2).jpg\"), checked against the folder's names.
+std::wstring KeepBothShellName(const std::wstring& name, bool directory,
+                               const std::function<bool(const std::wstring&)>& taken) {
+    std::wstring stem = name;
+    std::wstring extension;
+    if (!directory) {
+        const size_t dot = name.find_last_of(L'.');
+        if (dot != std::wstring::npos && dot > 0) {
+            stem = name.substr(0, dot);
+            extension = name.substr(dot);
+        }
+    }
+    // The name the shell gives a kept copy (FOF_RENAMEONCOLLISION), as in
+    // Explorer's 保留两个文件: "a (2).jpg", "a (3).jpg"...
+    for (unsigned index = 2; index < 10000; ++index) {
+        std::wstring candidate = stem + L" (" + std::to_wstring(index) + L")" + extension;
+        if (!taken(candidate)) return candidate;
+    }
+    return stem + L" (" + std::to_wstring(GetTickCount64()) + L")" + extension;
+}
+
+} // namespace
+
+void OpsManager::CompleteShellRequest(const OpRequest& req, uint64_t task_id,
+                                      std::vector<std::wstring> destinations) {
+    CompletedOperation completed;
+    completed.task_id = task_id;
+    completed.type = req.type;
+    // Local targets of a copy off the phone are real paths: the arrivals are
+    // selected like any paste. Shell ids are never remapped as paths.
+    completed.refresh_only = destinations.empty();
+    if (!completed.refresh_only) {
+        for (const auto& source : req.sources) completed.sources.push_back(source);
+        completed.destinations = std::move(destinations);
+    }
+    completed.refresh_directories = req.refresh_directories;
+    if (!IsShellItemId(req.dest_dir) && !req.dest_dir.empty())
+        completed.refresh_directories.push_back(req.dest_dir);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        completions_.push_back(std::move(completed));
+    }
+    // The pane on the phone folder re-lists itself (like a phone verb).
+    ctx_invoke_done_.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void OpsManager::RunShellTransfer(const OpRequest& req, uint64_t task_id) {
+    {
+        std::scoped_lock lock(mutex_, transfer_control_mutex_);
+        const auto* item = active_item_ && active_item_->seq == task_id ? &*active_item_ : nullptr;
+        transfer_cancel_.store(item && item->transfer_cancelled);
+        transfer_pause_.store(false);
+        pending_conflict_.reset();
+        resolved_conflict_token_ = 0;
+        transfer_active_.store(true);
+        shell_cancel_requested_ = item && item->cancel_requested;
+    }
+    shell_activity_tick_ = GetTickCount64();
+    SetStatus([&](OpStatus& st) {
+        st.active = true;
+        st.can_pause = false;  // the shell's copy cannot pause
+        st.pause_requested = false;
+        st.authorization = AuthorizationState::None;
+        st.can_skip_authorization = false;
+        st.type = req.type;
+        st.task_id = task_id;
+        st.phase = OpPhase::Scanning;
+        st.percent = -1.0f;
+        st.failures.clear();
+        st.failed_items = 0;
+        st.summary = l10n::IsChinese()
+            ? std::wstring(l10n::Cn(L"正在准备")) + OpVerb(req.type) + L"…"
+            : std::wstring(OpGerund(req.type)) + L" \u2014 preparing\u2026";
+        st.last_error.clear();
+        st.locked_path.clear();
+        st.lock_owners.clear();
+        st.source_label.clear();
+        st.destination_label.clear();
+        st.destination_dir = IsShellItemId(req.dest_dir) ? std::wstring() : req.dest_dir;
+        st.current_item.clear();
+        st.total_bytes = st.transferred_bytes = 0;
+        st.total_items = st.completed_items = 0;
+        st.bytes_per_second = st.peak_bytes_per_second = 0.0;
+        st.items_per_second = st.peak_items_per_second = 0.0;
+        st.speed_basis = OpSpeedBasis::Bytes;
+        st.eta_seconds = 0;
+    });
+    const auto stop_requested = [&] {
+        return transfer_cancel_.load() || shell_cancel_requested_.load() || stopping_.load();
+    };
+    OpRequest shown = req;  // names instead of shell ids, for the summaries
+    const auto finish = [&](OpPhase phase, std::wstring error) {
+        SetStatus([&](OpStatus& st) {
+            st.active = false;
+            st.pause_requested = false;
+            st.completed_ops++;
+            st.bytes_per_second = 0.0;
+            st.eta_seconds = 0;
+            st.phase = phase;
+            if (phase == OpPhase::Completed) {
+                st.percent = 100.0f;
+                st.transferred_bytes = st.total_bytes;
+                st.completed_items = (std::max)(st.completed_items, st.total_items);
+                st.summary = Describe(shown) + l10n::Get(l10n::StringId::Completed).c_str();
+                st.last_error.clear();
+            } else if (error.empty()) {
+                st.last_error = l10n::Get(l10n::StringId::Canceled).c_str();
+                st.summary = std::wstring(OpVerb(req.type)) + l10n::Get(l10n::StringId::Canceled_2).c_str();
+            } else {
+                st.last_error = std::move(error);
+                st.summary = std::wstring(OpVerb(req.type)) + l10n::Get(l10n::StringId::Failed).c_str();
+            }
+        });
+        {
+            std::lock_guard<std::mutex> lock(transfer_control_mutex_);
+            pending_conflict_.reset();
+        }
+        transfer_active_.store(false);
+        current_req_id_.store(0);
+        shell_cancel_requested_ = false;
+    };
+
+    ShellItemRef dest;
+    const bool dest_shell = IsShellItemId(req.dest_dir);
+    HRESULT hr = req.dest_dir.empty() ? E_INVALIDARG : OpenShellItem(req.dest_dir, dest);
+    if (FAILED(hr)) {
+        finish(OpPhase::Failed, Win32Message(static_cast<DWORD>(HRESULT_CODE(hr))));
+        return;
+    }
+    shown.dest_dir = dest_shell ? ShellItemName(dest.get(), SIGDN_DESKTOPABSOLUTEEDITING) : req.dest_dir;
+    if (shown.dest_dir.empty()) shown.dest_dir = ShellItemName(dest.get(), SIGDN_NORMALDISPLAY);
+    std::unordered_map<std::wstring, ShellEntry> dest_children;
+    if (dest_shell) dest_children = ListShellChildren(dest.get(), transfer_cancel_);
+    const auto dest_entry = [&](const std::wstring& name, ShellEntry* out) {
+        if (dest_shell) {
+            const auto found = dest_children.find(LowerName(name));
+            if (found == dest_children.end()) return false;
+            if (out) *out = found->second;
+            return true;
+        }
+        const std::wstring path = JoinPath(req.dest_dir, name);
+        bool directory = false;
+        if (!PathExists(path, &directory)) return false;
+        if (out) {
+            TransferEntry metadata;
+            out->name = name;
+            out->directory = directory;
+            if (ReadEntryMetadata(path, metadata)) {
+                out->bytes = metadata.bytes;
+                out->modified = metadata.modified;
+            }
+        }
+        return true;
+    };
+
+    struct Planned {
+        std::wstring source;
+        ShellEntry entry;
+        std::wstring display;      // where the dialog says it comes from
+        bool conflict = false;
+        bool self_copy = false;    // copied into its own folder: \"a - 副本\"
+        bool keep_both = false;    // 保留两者: the shell names it \"a (2)\"
+        std::wstring new_name;     // the name it is expected to get
+    };
+    std::vector<Planned> planned;
+    planned.reserve(req.sources.size());
+    for (const auto& source : req.sources) {
+        if (stop_requested()) break;
+        ShellItemRef item;
+        hr = OpenShellItem(source, item);
+        if (FAILED(hr)) {
+            finish(OpPhase::Failed, Win32Message(static_cast<DWORD>(HRESULT_CODE(hr))) + L" | " +
+                                        (IsShellItemId(source) ? std::wstring() : source));
+            return;
+        }
+        Planned p;
+        p.source = source;
+        p.entry = ReadShellEntry(item.get());
+        p.display = IsShellItemId(source) ? ShellItemName(item.get(), SIGDN_DESKTOPABSOLUTEEDITING) : source;
+        if (p.display.empty()) p.display = p.entry.name;
+        const bool same_folder = ShellItemInFolder(item.get(), dest.get());
+        if (same_folder) {
+            if (req.type == OpType::Move) continue;  // already there
+            p.self_copy = true;
+        } else {
+            p.conflict = dest_entry(p.entry.name, nullptr);
+        }
+        planned.push_back(std::move(p));
+    }
+    if (stop_requested()) {
+        finish(OpPhase::Failed, {});
+        return;
+    }
+    shown.sources.clear();
+    for (const auto& p : planned) shown.sources.push_back(p.entry.name);
+    if (shown.sources.empty() && !req.sources.empty()) shown.sources.push_back(FileName(req.sources.front()));
+    SetStatus([&](OpStatus& st) {
+        st.source_label = shown.sources.empty() ? std::wstring() : shown.sources.front();
+        st.destination_label = FileName(shown.dest_dir);
+        if (st.destination_label.empty()) st.destination_label = shown.dest_dir;
+    });
+
+    // Pulse's own conflict dialog, one item at a time (全部应用 repeats it).
+    size_t conflicts_left = static_cast<size_t>(std::count_if(planned.begin(), planned.end(),
+        [](const Planned& p) { return p.conflict; }));
+    size_t conflicts_asked = 0;
+    bool apply_all = false;
+    ConflictChoice repeated = ConflictChoice::Replace;
+    bool cancelled = false;
+    std::vector<Planned> run;
+    run.reserve(planned.size());
+    for (auto& p : planned) {
+        if (!p.conflict) {
+            run.push_back(std::move(p));
+            continue;
+        }
+        ConflictChoice choice = repeated;
+        if (!apply_all) {
+            ConflictItemInfo info;
+            info.task_id = task_id;
+            info.source = p.display;
+            info.destination = JoinPath(shown.dest_dir, p.entry.name);
+            info.source_size = p.entry.bytes;
+            info.source_modified = p.entry.modified;
+            info.source_is_directory = p.entry.directory;
+            ShellEntry existing;
+            if (dest_entry(p.entry.name, &existing)) {
+                info.destination_size = existing.bytes;
+                info.destination_modified = existing.modified;
+                info.destination_is_directory = existing.directory;
+            }
+            info.remaining = conflicts_left;
+            info.ordinal = ++conflicts_asked;
+            info.type = req.type;
+            info.keep_both_name = KeepBothShellName(p.entry.name, p.entry.directory,
+                [&](const std::wstring& name) { return dest_entry(name, nullptr); });
+            {
+                std::lock_guard<std::mutex> lock(transfer_control_mutex_);
+                info.token = next_conflict_token_++;
+                pending_conflict_ = info;
+                resolved_conflict_token_ = 0;
+            }
+            SetStatus([&](OpStatus& st) {
+                st.phase = OpPhase::WaitingForConflict;
+                st.current_item = p.entry.name;
+                st.summary = l10n::Get(l10n::StringId::WaitingForFileConflictsToBeResolved).c_str();
+            });
+            bool selected_apply_all = false;
+            {
+                std::unique_lock<std::mutex> lock(transfer_control_mutex_);
+                transfer_control_cv_.wait(lock, [&] {
+                    return transfer_cancel_.load() || stopping_.load() || resolved_conflict_token_ == info.token;
+                });
+                if (transfer_cancel_.load() || stopping_.load()) {
+                    pending_conflict_.reset();
+                    cancelled = true;
+                    break;
+                }
+                choice = resolved_conflict_choice_;
+                selected_apply_all = resolved_conflict_apply_all_;
+                pending_conflict_.reset();
+            }
+            if (choice == ConflictChoice::Cancel) {
+                cancelled = true;
+                transfer_cancel_.store(true);
+                break;
+            }
+            if (selected_apply_all) {
+                apply_all = true;
+                repeated = choice;
+            }
+        }
+        --conflicts_left;
+        if (choice == ConflictChoice::Skip) continue;
+        if (choice == ConflictChoice::KeepBoth) {
+            p.keep_both = true;
+            p.new_name = KeepBothShellName(p.entry.name, p.entry.directory,
+                [&](const std::wstring& name) {
+                    if (dest_entry(name, nullptr)) return true;
+                    return std::any_of(run.begin(), run.end(), [&](const Planned& other) {
+                        return _wcsicmp(other.new_name.c_str(), name.c_str()) == 0;
+                    });
+                });
+        }
+        run.push_back(std::move(p));
+    }
+    if (cancelled || stop_requested()) {
+        finish(OpPhase::Failed, {});
+        return;
+    }
+    if (run.empty()) {
+        finish(OpPhase::Completed, {});
+        return;
+    }
+
+    uint64_t total_bytes = 0;
+    bool has_directory = false;
+    for (const auto& p : run) {
+        total_bytes += p.entry.bytes;
+        has_directory = has_directory || p.entry.directory;
+    }
+    SetStatus([&](OpStatus& st) {
+        st.phase = OpPhase::Running;
+        st.percent = 0.0f;
+        st.total_items = run.size();
+        st.completed_items = 0;
+        // A folder's size is not known without walking the phone: count
+        // items then; plain files show bytes, speed and the time left.
+        st.speed_basis = has_directory || total_bytes == 0 ? OpSpeedBasis::Items : OpSpeedBasis::Bytes;
+        st.total_bytes = st.speed_basis == OpSpeedBasis::Bytes ? total_bytes : 0;
+        st.summary = ProgressSummary(req.type, run.size());
+        st.current_item = run.front().entry.name;
+    });
+
+    // Plain, replaced and kept (保留两者) items go in one operation: a kept
+    // one is given its \"a (2)\" name, which the shell also picks itself where
+    // the original name is taken (Explorer's 保留两个文件). Copies into their
+    // own folder go in a second with FOF_RENAMEONCOLLISION: \"a - 副本\", as a
+    // paste in the same folder in Explorer.
+    auto& client = ipc::ShellClient::Instance();
+    const uint32_t op = req.type == OpType::Move ? ipc::STO_MOVE : ipc::STO_COPY;
+    std::wstring failure;
+    bool any_done = false;
+    for (int pass = 0; pass < 2 && failure.empty() && !cancelled; ++pass) {
+        std::vector<std::wstring> sources;
+        std::vector<std::wstring> names;
+        for (const auto& p : run) {
+            if (p.self_copy != (pass == 1)) continue;
+            sources.push_back(ShellParsingName(p.source));
+            names.push_back(p.keep_both ? p.new_name : std::wstring());
+        }
+        if (sources.empty()) continue;
+        const uint32_t id = client.ShellTransfer(op, pass == 1 ? ipc::STF_RENAME_ON_COLLISION : 0u,
+            ShellParsingName(req.dest_dir), sources, names,
+            [this](uint32_t request) { RegisterShellRequest(request); });
+        if (id == 0) {
+            failure = l10n::Get(l10n::StringId::TheFileOperationServiceIsNotRunning).c_str();
+            break;
+        }
+        if (stop_requested()) client.Cancel(id);
+        uint32_t result = 0;
+        bool request_cancelled = false;
+        std::wstring error;
+        if (!WaitShellDone(id, result, request_cancelled, error)) {
+            // WaitShellDone published the interruption; end the task with it.
+            transfer_active_.store(false);
+            return;
+        }
+        diagnostics::runtime::Event("file_operation_shell_transfer", {{"task", task_id},
+            {"request", id}, {"hresult", result}, {"cancelled", request_cancelled},
+            {"items", sources.size()}});
+        if (request_cancelled) cancelled = true;
+        else if (FAILED(static_cast<HRESULT>(result)))
+            failure = error.empty() ? l10n::Get(l10n::StringId::OpFailed).c_str() : error;
+        else any_done = true;
+    }
+    if (any_done || cancelled || !failure.empty()) {
+        // Even a cancelled or failed copy may have written part of it.
+        std::vector<std::wstring> destinations;
+        if (any_done && !dest_shell && failure.empty() && !cancelled)
+            for (const auto& p : run)
+                if (!p.self_copy) destinations.push_back(JoinPath(req.dest_dir, p.new_name.empty() ? p.entry.name : p.new_name));
+        CompleteShellRequest(req, task_id, std::move(destinations));
+    }
+    if (cancelled) finish(OpPhase::Failed, {});
+    else if (!failure.empty()) finish(OpPhase::Failed, failure);
+    else finish(OpPhase::Completed, {});
+}
+
+void OpsManager::RunShellItemOp(const OpRequest& req, uint64_t task_id) {
+    const bool create = req.type == OpType::CreateFolder || req.type == OpType::CreateTextFile;
+    {
+        std::lock_guard lock(mutex_);
+        shell_cancel_requested_ = active_item_ && active_item_->seq == task_id && active_item_->cancel_requested;
+    }
+    shell_activity_tick_ = GetTickCount64();
+    OpRequest shown = req;
+    if (create) {
+        shown.sources = {req.new_name};
+    } else {
+        // The summary names the first item, not its shell id.
+        shown.sources.clear();
+        for (size_t i = 0; i < req.sources.size(); ++i) {
+            std::wstring name;
+            if (i == 0) {
+                ShellItemRef item;
+                if (SUCCEEDED(OpenShellItem(req.sources[i], item))) name = ReadShellEntry(item.get()).name;
+            }
+            shown.sources.push_back(name.empty() ? FileName(req.sources[i]) : name);
+        }
+    }
+    SetStatus([&](OpStatus& st) {
+        st.active = true;
+        st.can_pause = false;
+        st.authorization = AuthorizationState::None;
+        st.can_skip_authorization = false;
+        st.type = req.type;
+        st.task_id = task_id;
+        st.phase = OpPhase::Running;
+        st.percent = 0.0f;
+        st.summary = Describe(shown);
+        st.last_error.clear();
+        st.failures.clear();
+        st.failed_items = 0;
+        st.locked_path.clear();
+        st.lock_owners.clear();
+        st.source_label = shown.sources.empty() ? L"" : shown.sources.front();
+        st.destination_label.clear();
+        st.current_item = st.source_label;
+        st.total_bytes = st.transferred_bytes = 0;
+        st.total_items = create ? 1 : req.sources.size();
+        st.completed_items = 0;
+        st.bytes_per_second = st.peak_bytes_per_second = 0.0;
+        st.items_per_second = st.peak_items_per_second = 0.0;
+        st.speed_basis = create ? OpSpeedBasis::None : OpSpeedBasis::Items;
+        st.eta_seconds = 0;
+    });
+    const uint32_t op = req.type == OpType::CreateFolder ? ipc::STO_NEW_FOLDER
+                      : req.type == OpType::CreateTextFile ? ipc::STO_NEW_FILE
+                      : ipc::STO_DELETE;
+    std::vector<std::wstring> sources;
+    if (!create)
+        for (const auto& source : req.sources) sources.push_back(ShellParsingName(source));
+    const uint32_t id = shell_cancel_requested_.load() || stopping_.load() ? 0u
+        : ipc::ShellClient::Instance().ShellTransfer(op, 0u, create ? ShellParsingName(req.dest_dir) : std::wstring(),
+              sources, create ? std::vector<std::wstring>{req.new_name} : std::vector<std::wstring>{},
+              [this](uint32_t request) { RegisterShellRequest(request); });
+    uint32_t hr = 0;
+    bool cancelled = shell_cancel_requested_.load() || stopping_.load();
+    std::wstring error;
+    if (id != 0) {
+        if (shell_cancel_requested_.load()) ipc::ShellClient::Instance().Cancel(id);
+        if (!WaitShellDone(id, hr, cancelled, error)) return;
+    } else if (!cancelled) {
+        hr = static_cast<uint32_t>(E_FAIL);
+        error = l10n::Get(l10n::StringId::TheFileOperationServiceIsNotRunning).c_str();
+    }
+    const bool ok = id != 0 && SUCCEEDED(static_cast<HRESULT>(hr)) && !cancelled;
+    // A new folder is named by its Pulse path (the phone folder's, plus the
+    // leaf), so the rename-in-place intent finds the row once it is listed.
+    std::vector<std::wstring> destinations;
+    if (create && ok && !req.refresh_directories.empty())
+        destinations.push_back(JoinPath(req.refresh_directories.front(), req.new_name));
+    if (id != 0) CompleteShellRequest(req, task_id, std::move(destinations));
+    current_req_id_.store(0);
+    shell_cancel_requested_ = false;
+    SetStatus([&](OpStatus& st) {
+        st.active = false;
+        st.percent = -1.0f;
+        st.completed_ops++;
+        if (ok) {
+            st.phase = OpPhase::Completed;
+            st.completed_items = st.total_items;
+            st.summary = Describe(shown) + l10n::Get(l10n::StringId::Completed).c_str();
+        } else if (cancelled) {
+            st.phase = OpPhase::Failed;
+            st.last_error = l10n::Get(l10n::StringId::Canceled).c_str();
+        } else {
+            st.phase = OpPhase::Failed;
+            st.last_error = error.empty() ? l10n::Get(l10n::StringId::OpFailed).c_str() : error;
+        }
+    });
+}
+
 void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
+    // A phone's items have no path for Pulse's engine: Explorer's does it.
+    if (IsShellTransferRequest(req)) {
+        RunShellTransfer(req, task_id);
+        return;
+    }
 #ifdef PULSE_ELEVATED_TEST_CLIENT
     ObserveTransferStartForReview(*this, task_id);
 #endif
@@ -3838,6 +4512,11 @@ void OpsManager::RunTransfer(const OpRequest& req, uint64_t task_id) {
 }
 
 void OpsManager::RunShellOp(const OpRequest& req, uint64_t task_id) {
+    if ((req.type == OpType::CreateFolder || req.type == OpType::CreateTextFile ||
+         req.type == OpType::RealDelete) && IsShellTransferRequest(req)) {
+        RunShellItemOp(req, task_id);
+        return;
+    }
     {
         std::lock_guard lock(mutex_);
         shell_cancel_requested_ = active_item_ && active_item_->seq == task_id && active_item_->cancel_requested;

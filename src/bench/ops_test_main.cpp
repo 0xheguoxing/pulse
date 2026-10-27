@@ -11,9 +11,11 @@
 #include "../ipc/shell_client.h"
 #include "../common/localization.h"
 #include "../common/current_user_security.h"
+#include "../common/shell_id.h"
 #include "../ops/recycle_empty.h"
 #include <windows.h>
 #include <oleidl.h>
+#include <shlobj.h>
 #include <winioctl.h>
 #include <chrono>
 #include <cstdio>
@@ -335,6 +337,175 @@ int wmain(int argc, wchar_t** argv) {
     // English forms are checked separately.
     l10n::SetLanguage(L"zh-CN");
     fprintf(stderr, "[test] start\n");
+
+    // Which requests Explorer's engine runs (a phone's items: shell ids).
+    {
+        const std::wstring phone = L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\\\?\\usb#vid_04e8&pid_6860#x#{6ac27878-a6fa-4155-ba85-f98f491d4f33}\\SID-{10001,,1}\\{A}";
+        Check(ops::IsShellItemId(phone) && !ops::IsShellItemId(L"C:\\x") && !ops::IsShellItemId(L"::") &&
+                  !ops::IsShellItemId(L"pulse:device:k\\s"),
+              L"shell routing: only a parsing name starting with :: is a shell item");
+        Check(ops::IsShellTransferRequest(SimpleOp(ops::OpType::Copy, {L"C:\\a.txt"}, phone.c_str())) &&
+                  ops::IsShellTransferRequest(SimpleOp(ops::OpType::Move, {phone.c_str()}, L"C:\\dest")) &&
+                  ops::IsShellTransferRequest(SimpleOp(ops::OpType::CreateFolder, {}, phone.c_str(), L"x")) &&
+                  !ops::IsShellTransferRequest(SimpleOp(ops::OpType::Copy, {L"C:\\a.txt"}, L"D:\\dest")) &&
+                  !ops::IsShellTransferRequest(SimpleOp(ops::OpType::CreateFolder, {L"C:\\new"})),
+              L"shell routing: a shell id on either side picks the shell engine, paths never do");
+    }
+
+    // A phone item's id is its ID list ("::pidl:<hex>"): its parsing name does
+    // not parse back below the device (SHParseDisplayName: E_INVALIDARG).
+    {
+        const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        wchar_t windows_dir[MAX_PATH] = {};
+        GetWindowsDirectoryW(windows_dir, MAX_PATH);
+        PIDLIST_ABSOLUTE original = nullptr;
+        PIDLIST_ABSOLUTE decoded = nullptr;
+        std::wstring id;
+        if (SUCCEEDED(SHParseDisplayName(windows_dir, nullptr, &original, 0, nullptr)) && original)
+            id = pulse::shell_id::EncodePidl(original);
+        Check(pulse::shell_id::IsPidlId(id) && ops::IsShellItemId(id) &&
+                  id.find_first_of(L"\\/") == std::wstring::npos &&
+                  SUCCEEDED(pulse::shell_id::ParseId(id, &decoded)) && decoded && ILIsEqual(original, decoded),
+              L"shell id: an ID list round-trips through its id, a shell id with no path separators");
+        CoTaskMemFree(decoded);
+        decoded = nullptr;
+        IShellItem* item = nullptr;
+        LPWSTR path = nullptr;
+        bool same_path = false;
+        if (SUCCEEDED(pulse::shell_id::CreateItem(id, IID_PPV_ARGS(&item))) && item &&
+            SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path)
+            same_path = _wcsicmp(path, windows_dir) == 0;
+        Check(same_path && pulse::shell_id::FromItem(item) == id,
+              L"shell id: the item made from an id is the same item, and gives the same id");
+        if (path) CoTaskMemFree(path);
+        if (item) item->Release();
+        CoTaskMemFree(original);
+        bool all_rejected = true;
+        for (const wchar_t* bad : {L"::pidl:0", L"::pidl:00", L"::pidl:0G00", L"::pidl:0400", L"::pidl:030000",
+                                   L"::pidl:01000000", L"::pidl:0000FF"}) {
+            if (pulse::shell_id::ParseId(bad, &decoded) != E_INVALIDARG || decoded) all_rejected = false;
+            CoTaskMemFree(decoded);
+            decoded = nullptr;
+        }
+        Check(all_rejected, L"shell id: a malformed ID list is refused, never read past its end");
+        Check(SUCCEEDED(pulse::shell_id::ParseId(L"::pidl:0000", &decoded)) && decoded && ILIsEmpty(decoded),
+              L"shell id: the empty ID list (the desktop) decodes");
+        CoTaskMemFree(decoded);
+        if (SUCCEEDED(co)) CoUninitialize();
+    }
+
+    if (argc > 1 && std::wstring_view(argv[1]) == L"--shell-transfer") {
+        // A phone's operations without a phone: a local folder named by its
+        // shell parsing name under This PC is a shell id too, so the same
+        // path runs (OpsManager -> REQ_SHELL_TRANSFER -> IFileOperation),
+        // with Pulse's conflict prompts. Sandbox only.
+        const auto root = std::filesystem::path(SandboxRoot()).parent_path() /
+            (L"shell-transfer-" + std::to_wstring(GetCurrentProcessId()));
+        const auto source = root / L"source";
+        const auto target = root / L"target";
+        const auto back = root / L"back";
+        std::filesystem::create_directories(source);
+        std::filesystem::create_directories(target);
+        std::filesystem::create_directories(back);
+        const auto shell_id = [](const std::filesystem::path& path) {
+            return L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\" + path.wstring();
+        };
+        const auto file = source / L"sample.txt";
+        const char content[] = "shell transfer";
+        Check(MakeFile(file.wstring(), content, sizeof(content)), L"shell transfer: fixture");
+        g_ops.Start([] {});
+        g_ops.DrainCompletions();
+        const std::wstring target_id = shell_id(target);
+        auto status = RunOp(SimpleOp(ops::OpType::Copy, {file.c_str()}, target_id.c_str()));
+        Check(status.phase == ops::OpPhase::Completed && Exists((target / L"sample.txt").wstring()) &&
+                  Exists(file.wstring()) && !status.can_pause,
+              L"shell transfer: copy into a shell folder");
+        auto completions = g_ops.DrainCompletions();
+        Check(completions.size() == 1 && completions[0].refresh_only, L"shell transfer: a shell target only re-lists");
+        size_t prompts = 0;
+        status = RunConflictOp(SimpleOp(ops::OpType::Copy, {file.c_str()}, target_id.c_str()),
+                               ops::ConflictChoice::KeepBoth, false, &prompts);
+        Check(status.phase == ops::OpPhase::Completed && prompts == 1 &&
+                  Exists((target / L"sample.txt").wstring()) && Exists((target / L"sample (2).txt").wstring()),
+              L"shell transfer: a name taken asks Pulse's dialog, keep both names it as Explorer does");
+        if (!Exists((target / L"sample (2).txt").wstring())) {
+            fwprintf(stderr, L"[test] keep both: phase=%d prompts=%zu error=%ls\n", static_cast<int>(status.phase),
+                     prompts, status.last_error.c_str());
+            for (const auto& entry : std::filesystem::directory_iterator(target))
+                fwprintf(stderr, L"[test]   target has: %ls\n", entry.path().filename().c_str());
+        }
+        status = RunConflictOp(SimpleOp(ops::OpType::Copy, {file.c_str()}, target_id.c_str()),
+                               ops::ConflictChoice::Skip, false, &prompts);
+        Check(prompts == 1 && !Exists((target / L"sample (3).txt").wstring()),
+              L"shell transfer: skip copies nothing");
+        g_ops.DrainCompletions();
+        const std::wstring item_id = shell_id(target / L"sample.txt");
+        status = RunOp(SimpleOp(ops::OpType::Move, {item_id.c_str()}, back.c_str()));
+        completions = g_ops.DrainCompletions();
+        Check(status.phase == ops::OpPhase::Completed && Exists((back / L"sample.txt").wstring()) &&
+                  !Exists((target / L"sample.txt").wstring()),
+              L"shell transfer: move from a shell folder to a local one");
+        Check(completions.size() == 1 && !completions[0].refresh_only && completions[0].destinations.size() == 1 &&
+                  _wcsicmp(completions[0].destinations[0].c_str(), (back / L"sample.txt").c_str()) == 0,
+              L"shell transfer: a local target names its arrivals");
+        auto create = SimpleOp(ops::OpType::CreateFolder, {}, target_id.c_str(), L"新建文件夹");
+        create.refresh_directories.push_back(L"pulse:device:test\\storage");
+        status = RunOp(std::move(create));
+        completions = g_ops.DrainCompletions();
+        Check(status.phase == ops::OpPhase::Completed && Exists((target / L"新建文件夹").wstring()),
+              L"shell transfer: new folder in a shell folder");
+        Check(completions.size() == 1 && completions[0].destinations.size() == 1 &&
+                  completions[0].destinations[0] == L"pulse:device:test\\storage\\新建文件夹",
+              L"shell transfer: the new folder is named by its Pulse path (rename in place)");
+        const std::wstring folder_id = shell_id(target / L"新建文件夹");
+        status = RunOp(SimpleOp(ops::OpType::RealDelete, {folder_id.c_str()}));
+        Check(status.phase == ops::OpPhase::Completed && !Exists((target / L"新建文件夹").wstring()),
+              L"shell transfer: delete in a shell folder");
+
+        // The same operations with ID-list ids, as a phone's items travel now.
+        {
+            const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+            const auto pidl_id = [](const std::filesystem::path& path) {
+                PIDLIST_ABSOLUTE pidl = nullptr;
+                std::wstring id;
+                if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr)) && pidl)
+                    id = pulse::shell_id::EncodePidl(pidl);
+                CoTaskMemFree(pidl);
+                return id;
+            };
+            const std::wstring target_pidl = pidl_id(target);
+            Check(pulse::shell_id::IsPidlId(target_pidl), L"shell transfer (ID list): fixture id");
+            g_ops.DrainCompletions();
+            status = RunOp(SimpleOp(ops::OpType::Copy, {(back / L"sample.txt").c_str()}, target_pidl.c_str()));
+            Check(status.phase == ops::OpPhase::Completed && Exists((target / L"sample.txt").wstring()),
+                  L"shell transfer (ID list): copy into a folder named by its ID list");
+            const std::wstring sample_pidl = pidl_id(target / L"sample.txt");
+            status = RunOp(SimpleOp(ops::OpType::Copy, {sample_pidl.c_str()}, target_pidl.c_str()));
+            Check(status.phase == ops::OpPhase::Completed && Exists((target / L"sample - 副本.txt").wstring()),
+                  L"shell transfer (ID list): a copy into its own folder is a copy - 副本, as in Explorer");
+            if (!Exists((target / L"sample - 副本.txt").wstring()))
+                fwprintf(stderr, L"[test] pidl self copy: phase=%d error=%ls\n", static_cast<int>(status.phase),
+                         status.last_error.c_str());
+            const std::wstring copy_pidl = pidl_id(target / L"sample - 副本.txt");
+            status = RunOp(SimpleOp(ops::OpType::Move, {copy_pidl.c_str()}, back.c_str()));
+            Check(status.phase == ops::OpPhase::Completed && Exists((back / L"sample - 副本.txt").wstring()) &&
+                      !Exists((target / L"sample - 副本.txt").wstring()),
+                  L"shell transfer (ID list): move out to a local folder");
+            status = RunOp(SimpleOp(ops::OpType::CreateFolder, {}, target_pidl.c_str(), L"列表文件夹"));
+            Check(status.phase == ops::OpPhase::Completed && Exists((target / L"列表文件夹").wstring()),
+                  L"shell transfer (ID list): new folder");
+            const std::wstring new_folder_pidl = pidl_id(target / L"列表文件夹");
+            status = RunOp(SimpleOp(ops::OpType::RealDelete, {new_folder_pidl.c_str()}));
+            Check(status.phase == ops::OpPhase::Completed && !Exists((target / L"列表文件夹").wstring()),
+                  L"shell transfer (ID list): delete");
+            g_ops.DrainCompletions();
+            if (SUCCEEDED(co)) CoUninitialize();
+        }
+        g_ops.Stop();
+        std::error_code ignored;
+        std::filesystem::remove_all(root, ignored);
+        return g_fail ? 1 : 0;
+    }
 
     if (argc > 1 && std::wstring_view(argv[1]) == L"--transfer-routing") {
         const auto root = std::filesystem::path(SandboxRoot()).parent_path() /

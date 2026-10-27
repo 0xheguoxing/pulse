@@ -1,9 +1,11 @@
 // clipboard.cpp — CF_HDROP + CFSTR_PREFERREDDROPEFFECT interop.
 #include "clipboard.h"
 #include "../common/path_utils.h"
+#include "../common/shell_id.h"
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <shobjidl.h>
 #include <cstring>
 
 namespace pulse::ops {
@@ -187,6 +189,107 @@ bool PasteShellClipboard(const std::wstring& dir) {
     }
     data->Release();
     return ok;
+}
+
+namespace {
+
+bool ReadPreferredCut(IDataObject* data) {
+    FORMATETC fmt{ static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT)),
+                   nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+    STGMEDIUM medium{};
+    bool cut = false;
+    if (SUCCEEDED(data->GetData(&fmt, &medium))) {
+        if (const DWORD* preferred = static_cast<const DWORD*>(GlobalLock(medium.hGlobal))) {
+            cut = PreferredEffectIsCut(*preferred);
+            GlobalUnlock(medium.hGlobal);
+        }
+        ReleaseStgMedium(&medium);
+    }
+    return cut;
+}
+
+} // namespace
+
+bool WriteShellItemsClipboard(const std::vector<std::wstring>& shell_ids, bool cut) {
+    if (shell_ids.empty()) return false;
+    std::vector<PIDLIST_ABSOLUTE> pidls;
+    pidls.reserve(shell_ids.size());
+    bool parsed = true;
+    for (const auto& id : shell_ids) {
+        PIDLIST_ABSOLUTE pidl = nullptr;
+        if (FAILED(shell_id::ParseId(id, &pidl)) || !pidl) {
+            parsed = false;
+            break;
+        }
+        pidls.push_back(pidl);
+    }
+    IShellItemArray* items = nullptr;
+    if (parsed)
+        SHCreateShellItemArrayFromIDLists(static_cast<UINT>(pidls.size()),
+                                          const_cast<PCIDLIST_ABSOLUTE_ARRAY>(pidls.data()), &items);
+    for (auto pidl : pidls) CoTaskMemFree(pidl);
+    if (!items) return false;
+    IDataObject* data = nullptr;
+    items->BindToHandler(nullptr, BHID_DataObject, IID_PPV_ARGS(&data));
+    items->Release();
+    if (!data) return false;
+    // Explorer's own copy says COPY | LINK; a cut says MOVE (PreferredEffectIsCut).
+    FORMATETC fmt{ static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT)),
+                   nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+    STGMEDIUM medium{};
+    medium.tymed = TYMED_HGLOBAL;
+    medium.hGlobal = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
+    if (medium.hGlobal) {
+        if (auto* effect = static_cast<DWORD*>(GlobalLock(medium.hGlobal))) {
+            *effect = cut ? DROPEFFECT_MOVE : (DROPEFFECT_COPY | DROPEFFECT_LINK);
+            GlobalUnlock(medium.hGlobal);
+        }
+        if (FAILED(data->SetData(&fmt, &medium, TRUE))) ReleaseStgMedium(&medium);
+    }
+    HRESULT hr = E_FAIL;
+    for (int attempt = 0; attempt < 20; ++attempt) {  // another app may hold the clipboard briefly
+        hr = OleSetClipboard(data);
+        if (hr != CLIPBRD_E_CANT_OPEN) break;
+        Sleep(5);
+    }
+    data->Release();
+    return SUCCEEDED(hr);
+}
+
+bool ReadClipboardShellItems(std::vector<std::wstring>& shell_ids, bool& cut) {
+    shell_ids.clear();
+    cut = false;
+    if (IsClipboardFormatAvailable(CF_HDROP) ||
+        !IsClipboardFormatAvailable(RegisterClipboardFormatW(CFSTR_SHELLIDLIST)))
+        return false;
+    IDataObject* data = nullptr;
+    if (FAILED(OleGetClipboard(&data)) || !data) return false;
+    IShellItemArray* items = nullptr;
+    if (SUCCEEDED(SHCreateShellItemArrayFromDataObject(data, IID_PPV_ARGS(&items))) && items) {
+        DWORD count = 0;
+        items->GetCount(&count);
+        for (DWORD i = 0; i < count; ++i) {
+            IShellItem* item = nullptr;
+            if (FAILED(items->GetItemAt(i, &item)) || !item) continue;
+            PWSTR raw = nullptr;
+            if (SUCCEEDED(item->GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING, &raw)) && raw) {
+                const bool namespace_item = raw[0] == L':' && raw[1] == L':';
+                CoTaskMemFree(raw);
+                // Kept as its ID list: a phone item's parsing name does not parse back.
+                if (namespace_item) {
+                    std::wstring id = shell_id::FromItem(item);
+                    if (!id.empty()) shell_ids.push_back(std::move(id));
+                }
+            }
+            item->Release();
+        }
+        items->Release();
+        // All or nothing: a mixed selection stays with the shell's own paste.
+        if (shell_ids.size() != count) shell_ids.clear();
+    }
+    if (!shell_ids.empty()) cut = ReadPreferredCut(data);
+    data->Release();
+    return !shell_ids.empty();
 }
 
 bool CompleteCutClipboard(uint32_t sequence, const std::vector<std::wstring>& expected_paths) {

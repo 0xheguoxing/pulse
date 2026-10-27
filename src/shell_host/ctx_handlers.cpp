@@ -2,6 +2,7 @@
 #include "packaged_ctx_handlers.h"
 
 #include "../common/path_utils.h"
+#include "../common/shell_id.h"
 #include "../ipc/ctx_menu_util.h"
 
 #include <shlobj.h>
@@ -836,8 +837,7 @@ bool BindCtxSelection(const std::vector<std::wstring>& paths, bool background,
                       CtxBind& out) {
     if (paths.empty()) return false;
     if (background) {
-        if (FAILED(SHParseDisplayName(ToParsingPath(paths.front()).c_str(), nullptr,
-                                      &out.folder, 0, nullptr)) || !out.folder)
+        if (FAILED(pulse::shell_id::ParseId(ToParsingPath(paths.front()), &out.folder)) || !out.folder)
             return false;
         IShellItem* folder = nullptr;
         if (SUCCEEDED(SHCreateItemFromIDList(out.folder, IID_PPV_ARGS(&folder))) && folder) {
@@ -852,8 +852,7 @@ bool BindCtxSelection(const std::vector<std::wstring>& paths, bool background,
     pidls.reserve(paths.size());
     for (const auto& p : paths) {
         PIDLIST_ABSOLUTE pidl = nullptr;
-        if (SUCCEEDED(SHParseDisplayName(ToParsingPath(p).c_str(), nullptr, &pidl, 0,
-                                         nullptr)) && pidl)
+        if (SUCCEEDED(pulse::shell_id::ParseId(ToParsingPath(p), &pidl)) && pidl)
             pidls.push_back(pidl);
     }
     if (pidls.empty()) return false;
@@ -1103,7 +1102,8 @@ void CollectHandlerItems(const CtxHandlerSlot& slot, bool background,
         }
         if (mii.wID < slot.id_first || mii.wID > slot.id_last) continue;
         const std::wstring verb = CtxVerbOf(slot.menu, mii.wID, slot.id_first);
-        if (IsBuiltinContextVerb(verb, background)) continue;
+        if (IsBuiltinContextVerb(verb, background) &&
+            !(slot.shell_namespace && _wcsicmp(verb.c_str(), L"pintohome") == 0)) continue;
         CtxItemOut item;
         item.id = mii.wID;
         // A Send to row without its flyout cannot send anywhere (#77).
@@ -1370,7 +1370,7 @@ bool InvokeTaskbandPin(const std::vector<std::wstring>& paths, HRESULT& result) 
         const ContextSwitch context_switch(static_cast<ICallingProcessInfoLocal*>(&call_context));
         for (const auto& path : paths) {
             PIDLIST_ABSOLUTE pidl = nullptr;
-            HRESULT hr = SHParseDisplayName(ToParsingPath(path).c_str(), nullptr, &pidl, 0, nullptr);
+            HRESULT hr = pulse::shell_id::ParseId(ToParsingPath(path), &pidl);
             if (SUCCEEDED(hr) && !pidl) hr = E_FAIL;
             if (SUCCEEDED(hr)) {
                 hr = manager->PinPidl(pidl, kPinFromContextMenu);

@@ -3,6 +3,8 @@
 // STA thread only.
 #include "device_source.h"
 
+#include "../common/shell_id.h"
+
 #include <windows.h>
 #include <cfgmgr32.h>
 #include <objbase.h>
@@ -122,7 +124,7 @@ public:
                 if (FAILED(storage_item->GetAttributes(SFGAO_FOLDER, &attrs)) || !(attrs & SFGAO_FOLDER))
                     return true;
                 StorageInfo storage;
-                storage.id = DisplayName(storage_item, SIGDN_DESKTOPABSOLUTEPARSING);
+                storage.id = shell_id::FromItem(storage_item);  // parsing names below the device do not parse back
                 storage.name = DisplayName(storage_item, SIGDN_NORMALDISPLAY);
                 storage.total = UInt64Property(storage_item, PKEY_Capacity);
                 storage.free = UInt64Property(storage_item, PKEY_FreeSpace);
@@ -148,6 +150,10 @@ public:
         ComPtr<IShellItem> item;
         const DeviceError resolved = Resolve(folder, &item);
         if (resolved != DeviceError::None) return resolved;
+        // Remembered for ShellId(): the folder just listed is the one the
+        // app asks for next (paste into it, its properties).
+        last_listed_ = FormatDevicePath(folder);
+        last_listed_id_ = shell_id::FromItem(item.Get());
         std::vector<DirEntry> batch;
         batch.reserve(kDeviceBatchSize);
         bool stopped = false;
@@ -156,10 +162,17 @@ public:
             entry.name = ItemName(child);
             if (entry.name.empty()) return true;
             SFGAOF attrs = 0;
-            child->GetAttributes(SFGAO_FOLDER | SFGAO_STREAM | SFGAO_HIDDEN, &attrs);
+            const HRESULT attrs_hr = child->GetAttributes(
+                SFGAO_FOLDER | SFGAO_STREAM | SFGAO_HIDDEN | SFGAO_CANDELETE | SFGAO_CANRENAME, &attrs);
             entry.is_dir = (attrs & SFGAO_FOLDER) && !(attrs & SFGAO_STREAM);
             entry.attrs = entry.is_dir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
             if (attrs & SFGAO_HIDDEN) entry.attrs |= FILE_ATTRIBUTE_HIDDEN;
+            // Read-only = the shell offers neither delete nor rename: the app
+            // then hides both. What the shell grants (an iPhone's photos can
+            // be deleted, as in Explorer) is what Pulse offers.
+            if (SUCCEEDED(attrs_hr) && !(attrs & (SFGAO_CANDELETE | SFGAO_CANRENAME)))
+                entry.attrs |= FILE_ATTRIBUTE_READONLY;
+            entry.shell_id = shell_id::FromItem(child);
             ComPtr<IShellItem2> item2;
             if (SUCCEEDED(child->QueryInterface(IID_PPV_ARGS(&item2)))) {
                 ULONGLONG size = 0;
@@ -188,13 +201,21 @@ public:
         if (path.IsDeviceRoot() || Resolve(path, &item) != DeviceError::None) return caps;
         SFGAOF attrs = 0;
         item->GetAttributes(SFGAO_CANDELETE | SFGAO_CANRENAME | SFGAO_FOLDER | SFGAO_READONLY, &attrs);
-        const bool apple = Lower(DeviceId(path.device)).find(L"vid_05ac") != std::wstring::npos;
         caps.can_copy = true;
-        if (apple) return caps;  // iPhone: read-only
         caps.can_delete = (attrs & SFGAO_CANDELETE) != 0 && !path.IsStorageRoot();
         caps.can_rename = (attrs & SFGAO_CANRENAME) != 0 && !path.IsStorageRoot();
         caps.can_create = (attrs & SFGAO_FOLDER) != 0 && !(attrs & SFGAO_READONLY);
         return caps;
+    }
+
+    std::wstring ShellId(const DevicePath& path) override {
+        if (path.IsDeviceRoot()) return {};
+        const std::wstring formatted = FormatDevicePath(path);
+        if (!last_listed_id_.empty() && _wcsicmp(formatted.c_str(), last_listed_.c_str()) == 0)
+            return last_listed_id_;
+        ComPtr<IShellItem> item;
+        if (Resolve(path, &item) != DeviceError::None) return {};
+        return shell_id::FromItem(item.Get());
     }
 
     HRESULT ShellItem(const DevicePath& path, IShellItem** out) override {
@@ -249,6 +270,8 @@ private:
     }
 
     std::unordered_map<std::wstring, std::wstring> parsing_by_key_;
+    std::wstring last_listed_;     // pulse:device: path of the last Enumerate
+    std::wstring last_listed_id_;  // and its shell id (ID list)
 };
 
 } // namespace

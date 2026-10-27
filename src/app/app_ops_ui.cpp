@@ -33,6 +33,7 @@
 #include "../ops/clipboard.h"
 #include "../ops/elevated_delete.h"
 #include "../ipc/ctx_menu_util.h"
+#include "device_registry.h"
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -344,6 +345,27 @@ void HandleTrayMessage(AppState& s, UINT message) {
 // (pulse_tray_redesign.html); Ctrl+C no longer stages.
 void PasteIntoCurrent(AppState& s) {
     app::Tab* tab = ActiveTab(s);
+    if (IsDeviceTab(tab)) {
+        // A phone folder: files or another phone's items go in as a Pulse
+        // task (Explorer's engine, Pulse's progress and conflict dialog).
+        auto& devices = app::DeviceRegistry::Instance();
+        if (!devices.FolderWritable(tab->current_path) || !ops::ClipboardHasPasteableFiles()) return;
+        ops::ClipboardData files;
+        std::vector<std::wstring> shell_ids;
+        bool shell_cut = false;
+        if (ops::ReadClipboard(files)) {
+            if (SubmitDeviceTransfer(s, files.paths, tab->current_path, files.cut)) {
+                if (files.cut) TrackCutClipboard(s, files);  // as a local paste: the cut ends with the move
+                return;
+            }
+        } else if (ops::ReadClipboardShellItems(shell_ids, shell_cut)) {
+            if (SubmitDeviceTransfer(s, std::move(shell_ids), tab->current_path, shell_cut)) return;
+        }
+        // Anything else (a zip's files, an attachment): the shell's own paste.
+        const std::wstring folder_id = devices.FolderShellId(tab->current_path);
+        if (!folder_id.empty()) RunDeviceVerb(s, {folder_id}, L"paste", true);
+        return;
+    }
     if (!tab || tab->current_path.empty() || fs::IsVirtualPath(tab->current_path) || tab->net_readonly ||
         app::IsUncServerRoot(tab->current_path))
         return;
@@ -352,6 +374,16 @@ void PasteIntoCurrent(AppState& s) {
     // Virtual files (Remote Desktop, a zip, Outlook) are a newer copy too and
     // beat the tray batch like any other clipboard files (#109).
     const bool shell_files = !clipboard_files && ops::ClipboardHasShellFiles();
+    std::vector<std::wstring> shell_ids;
+    bool shell_cut = false;
+    if (shell_files && ops::ReadClipboardShellItems(shell_ids, shell_cut)) {
+        // A phone's items: a Pulse task like any paste, selected on arrival.
+        uint64_t task = 0;
+        if (SubmitDeviceTransfer(s, std::move(shell_ids), tab->current_path, shell_cut, &task)) {
+            ArmArrivalSelection(s, nullptr, task, 0);
+            return;
+        }
+    }
     if (clipboard_files) {
         ops::OpRequest req;
         req.type = cb.cut ? ops::OpType::Move : ops::OpType::Copy;
@@ -363,9 +395,12 @@ void PasteIntoCurrent(AppState& s) {
             if (cb.cut) TrackCutClipboard(s, cb);
         }
     } else if (shell_files) {
-        // Virtual files: the shell writes them with no task to follow.
+        // Virtual files (a zip's, an attachment): the shell writes them with
+        // no task to follow. The shell host runs the drop so a long copy
+        // never holds this thread; in process only if it is not there.
         ArmArrivalSelection(s, nullptr, 0, 8000);
-        ops::PasteShellClipboard(tab->current_path);
+        if (!s.ops.RunShellVerb({ClipboardPath(tab->current_path)}, L"paste", true, s.hwnd))
+            ops::PasteShellClipboard(tab->current_path);
     }
 }
 
@@ -384,6 +419,8 @@ ui::ConfirmDialogSpec BuildRecycleDeleteConfirm(const std::vector<std::wstring>&
     confirm.confirm_text = l10n::Get(l10n::StringId::Delete);
     return confirm;
 }
+
+static void DeleteDeviceSelection(AppState& s, const app::Tab& tab);
 
 void DeleteSelected(AppState& s, bool permanent) {
     if(DeferContentSelection(s,[=](AppState& v){DeleteSelected(v,permanent);})) return;
@@ -427,6 +464,10 @@ void DeleteSelected(AppState& s, bool permanent) {
         return;
     }
     if (!caps.del) return;
+    if (caps.kind == app::SelectionKind::Device) {
+        DeleteDeviceSelection(s, *tab);
+        return;
+    }
     std::vector<std::wstring> paths = SelectedFullPaths(*tab);
     DeletePaths(s, std::move(paths), permanent);
 }
@@ -471,6 +512,26 @@ static void MarkLeavingRows(AppState& s, const std::vector<std::wstring>& paths,
     s.leavingDoneAt = 0;
     s.leavingTask = task;
     if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+// A phone has no Recycle Bin: Pulse asks as Explorer does ("permanently
+// delete?", this location has no Recycle Bin), then Explorer's engine deletes.
+static void DeleteDeviceSelection(AppState& s, const app::Tab& tab) {
+    std::vector<std::wstring> ids = SelectedShellIds(tab);
+    if (ids.empty()) return;
+    const std::vector<std::wstring> rows = SelectedFullPaths(tab);
+    std::vector<std::wstring> shown;
+    shown.reserve(rows.size());
+    for (const auto& path : rows) shown.push_back(DeviceFriendlyPath(path));
+    if (ConfirmPermanentDelete(s, shown, true, false, ui::PermanentDeleteInfo::NoBinReason::Location) !=
+        ui::PermanentDeleteChoice::Delete)
+        return;
+    ops::OpRequest req;
+    req.type = ops::OpType::RealDelete;
+    req.sources = std::move(ids);
+    req.refresh_directories.push_back(tab.current_path);
+    const uint64_t task = s.ops.Submit(std::move(req));
+    MarkLeavingRows(s, rows, task);
 }
 
 void NoteDeleteFinished(AppState& s, const ops::FinishedTask& done) {
@@ -658,6 +719,22 @@ void CollectToTray(AppState& s, bool move_intent) {
     // A drive or a share is not copied as a whole by Ctrl+C / Ctrl+X.
     const app::SelectionCaps caps = SelectionCapsOf(s);
     if (!(move_intent ? caps.cut : caps.copy)) return;
+    if (caps.kind == app::SelectionKind::Device) {
+        // Phone items: the shell's own data object for them, owned by Pulse
+        // (it outlives the shell host), so Pulse, Explorer and the desktop
+        // can all paste them. The host's copy verb only if that fails.
+        const std::vector<std::wstring> ids = SelectedShellIds(*tab);
+        if (ids.empty()) return;
+        if (!ops::WriteShellItemsClipboard(ids, move_intent) &&
+            !RunDeviceVerb(s, ids, move_intent ? L"cut" : L"copy"))
+            return;
+        s.cutPaths = move_intent ? SelectedFullPaths(*tab) : std::vector<std::wstring>{};
+        s.trayClipboardBatchId = 0;
+        s.trayClipboardSequence = 0;
+        s.trayClip = {};
+        if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+        return;
+    }
     std::vector<std::wstring> paths = SelectedFullPaths(*tab);
     CollectPathsToTray(s, paths, move_intent);
 }
@@ -734,7 +811,9 @@ void StageSelection(AppState& s) {
     app::Tab* tab = ActiveTab(s);
     std::vector<std::wstring> paths;
     // Same reach as Ctrl+C: drives and shares are not staged as a whole.
-    if (tab && tab->snapshot && !IsRecycleTab(tab) && SelectionCapsOf(s).copy) paths = SelectedFullPaths(*tab);
+    // Phone items are not staged: the tray releases through Pulse's own copy.
+    if (tab && tab->snapshot && !IsRecycleTab(tab) && !IsDeviceTab(tab) && SelectionCapsOf(s).copy)
+        paths = SelectedFullPaths(*tab);
     if (paths.empty()) {
         if (s.hwnd)
             s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Suggest, l10n::Get(l10n::StringId::TraySelectFirst),

@@ -126,7 +126,10 @@ bool FillStaticVerbFromKey(HKEY root, const std::wstring& verb_key, const std::w
     out.display = StripMnemonics(display);
     out.mnemonic = ipc::MenuMnemonic(display);
     out.app_path.clear();
-    out.command = command;
+    // Delegated verbs may register an inert command fallback (Windows'
+    // wallpaper verb points at Explorer.exe); ShellExecute must invoke
+    // the registered handler rather than launch that fallback on the file.
+    out.command = ipc::UseStaticVerbCommand(flags) ? command : std::wstring();
     out.icon = RegReadString(root, verb_key, L"Icon");
     out.children.clear();
     if (allow_cascade)
@@ -552,8 +555,10 @@ bool GetW(const uint8_t*& p, const uint8_t* end, std::wstring& s) {
 // but changes the content (shell-resolved ProgID, * / AllFilesystemObjects /
 // PerceivedType verbs), so older files are discarded and reseeded.
 // v5: drive verbs from Drive + Folder only; no 打开方式 for programs.
-constexpr uint32_t kStaticVerbCacheVersion = 5;
-constexpr uint32_t kStaticVerbCacheMinVersion = 5;
+// v6: a DelegateExecute verb keeps no command (setdesktopwallpaper's
+// placeholder Explorer.exe), so v5 files with that command are discarded.
+constexpr uint32_t kStaticVerbCacheVersion = 6;
+constexpr uint32_t kStaticVerbCacheMinVersion = 6;
 
 void PutVerb(std::vector<uint8_t>& buf, const StaticVerb& v, int depth) {
     PutW(buf, v.verb);

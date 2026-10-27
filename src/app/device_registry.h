@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <string>
 #include <mutex>
@@ -52,6 +53,13 @@ public:
     // Name and storage-level skip of a device seen in this session (it may
     // be gone now), for the breadcrumb and titles. False if never seen.
     bool Describe(const std::wstring& key, std::wstring* name, bool* skips_storage) const;
+    // Any thread: the shell parsing name of a storage or folder listed this
+    // connection (the shell host pastes into it, shows its properties).
+    // Empty if it has not been listed.
+    std::wstring FolderShellId(const std::wstring& path) const;
+    // A device folder that takes pastes: below a storage, on a phone that
+    // is connected and not read-only (an iPhone, a read-only storage).
+    bool FolderWritable(const std::wstring& path) const;
 
 private:
     DeviceRegistry();
@@ -59,6 +67,8 @@ private:
     void ScheduleRefresh(uint32_t delay_ms);
     void RefreshOnWorker();
     void Publish(std::vector<fs::DeviceInfo> devices);
+    void RememberFolderIds(const std::wstring& folder, const std::wstring& folder_id,
+                           const std::vector<fs::DirEntry>& rows);
 
     mutable std::mutex mutex_;
     HWND notify_ = nullptr;
@@ -70,6 +80,8 @@ private:
     std::vector<fs::DeviceInfo> devices_;
     struct Known { std::wstring name; bool skips_storage = false; };
     std::map<std::wstring, Known> known_;  // every device listed this session, by key
+    // Lower-cased pulse:device: folder path -> shell parsing name (mutex_).
+    std::unordered_map<std::wstring, std::wstring> folder_ids_;
     uint64_t revision_ = 0;
     uint32_t locked_checks_ = 0;
     std::unique_ptr<fs::DeviceSource> source_;  // device thread only

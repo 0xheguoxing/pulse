@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <optional>
 #include <cstdio>
+#include <cwctype>
 #include <string>
 
 namespace pulse::app {
@@ -165,6 +166,7 @@ void DeviceRegistry::Publish(std::vector<fs::DeviceInfo> devices) {
         if (changed) {
             devices_ = devices;
             ++revision_;
+            folder_ids_.clear();  // ids belong to one connection
             for (const auto& device : devices_)
                 known_[device.key] = Known{device.name, fs::SkipsStorageLevel(device)};
         }
@@ -205,8 +207,10 @@ fs::DeviceError DeviceRegistry::ListFolder(const std::wstring& path, std::vector
             e.full_path = fs::FormatDevicePath(fs::DeviceChild(*folder, storage.name));
             e.is_dir = true;
             e.attrs = FILE_ATTRIBUTE_DIRECTORY | (storage.read_only ? FILE_ATTRIBUTE_READONLY : 0);
+            e.shell_id = storage.id;
             out.push_back(std::move(e));
         }
+        RememberFolderIds(path, L"", out);
         return fs::DeviceError::None;
     }
     // Below a storage: the device thread lists it. The result comes back
@@ -223,13 +227,16 @@ fs::DeviceError DeviceRegistry::ListFolder(const std::wstring& path, std::vector
     worker_.Post(
         [this, job, where = *folder] {
             std::vector<fs::DirEntry> rows;
-            const fs::DeviceError error = SourceOnWorker()->Enumerate(
+            fs::DeviceSource* source = SourceOnWorker();
+            const fs::DeviceError error = source->Enumerate(
                 where,
                 [&](std::vector<fs::DirEntry>&& batch) {
                     for (auto& e : batch) rows.push_back(std::move(e));
                     return !job->cancel.load();
                 },
                 job->cancel);
+            if (error == fs::DeviceError::None)
+                RememberFolderIds(fs::FormatDevicePath(where), source->ShellId(where), rows);
             std::lock_guard<std::mutex> lock(job->mutex);
             if (job->done) return;
             job->done = true;
@@ -261,6 +268,55 @@ fs::DeviceError DeviceRegistry::ListFolder(const std::wstring& path, std::vector
     }
     if (job->error == fs::DeviceError::None) out = std::move(job->rows);
     return job->error;
+}
+
+namespace {
+std::wstring FolderIdKey(std::wstring path) {
+    while (path.size() > 1 && path.back() == L'\\') path.pop_back();
+    for (auto& c : path) c = static_cast<wchar_t>(towlower(c));
+    return path;
+}
+} // namespace
+
+void DeviceRegistry::RememberFolderIds(const std::wstring& folder, const std::wstring& folder_id,
+                                       const std::vector<fs::DirEntry>& rows) {
+    constexpr size_t kMaxFolderIds = 20000;  // a phone's folder tree, seen this session
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (folder_ids_.size() > kMaxFolderIds) folder_ids_.clear();
+    if (!folder_id.empty()) folder_ids_[FolderIdKey(folder)] = folder_id;
+    for (const auto& e : rows) {
+        if (!e.is_dir || e.shell_id.empty() || e.full_path.empty()) continue;
+        folder_ids_[FolderIdKey(e.full_path)] = e.shell_id;
+    }
+}
+
+std::wstring DeviceRegistry::FolderShellId(const std::wstring& path) const {
+    const auto where = fs::ParseDevicePath(path);
+    if (!where || where->IsDeviceRoot()) return {};
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (const auto it = folder_ids_.find(FolderIdKey(fs::FormatDevicePath(*where))); it != folder_ids_.end())
+        return it->second;
+    if (where->IsStorageRoot()) {
+        for (const auto& device : devices_) {
+            if (device.key != where->device) continue;
+            for (const auto& storage : device.storages)
+                if (_wcsicmp(storage.name.c_str(), where->storage.c_str()) == 0) return storage.id;
+        }
+    }
+    return {};
+}
+
+bool DeviceRegistry::FolderWritable(const std::wstring& path) const {
+    const auto where = fs::ParseDevicePath(path);
+    if (!where || where->IsDeviceRoot() || where->storage.empty()) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& device : devices_) {
+        if (device.key != where->device) continue;
+        if (device.locked || device.kind == fs::DeviceKind::IPhone) return false;
+        for (const auto& storage : device.storages)
+            if (_wcsicmp(storage.name.c_str(), where->storage.c_str()) == 0) return !storage.read_only;
+    }
+    return false;
 }
 
 bool DeviceRegistry::Describe(const std::wstring& key, std::wstring* name, bool* skips_storage) const {

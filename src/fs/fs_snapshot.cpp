@@ -48,6 +48,7 @@ size_t SnapshotStore::SnapshotBytes(const SnapshotPtr& snapshot) {
         bytes += entry.full_path.capacity() * sizeof(wchar_t);
         bytes += entry.link_target.capacity() * sizeof(wchar_t);
         bytes += entry.link_destination.capacity() * sizeof(wchar_t);
+        bytes += entry.shell_id.capacity() * sizeof(wchar_t);
     }
     return bytes;
 }

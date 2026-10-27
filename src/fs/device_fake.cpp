@@ -140,6 +140,7 @@ public:
         Hang(ini);
         const uint64_t delay = Number(ini, L"delay_ms");
         const uint64_t disconnect_after = Number(ini, L"disconnect_after");
+        const bool read_only = ReadOnlyStorage(folder, ini);
         WIN32_FIND_DATAW data{};
         HANDLE find = FindFirstFileExW((local + L"\\*").c_str(), FindExInfoBasic, &data, FindExSearchNameMatch,
                                        nullptr, FIND_FIRST_EX_LARGE_FETCH);
@@ -168,7 +169,9 @@ public:
             entry.size = entry.is_dir ? 0 : (static_cast<uint64_t>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
             entry.mtime = data.ftLastWriteTime;
             entry.ctime = data.ftCreationTime;
+            if (read_only) entry.attrs |= FILE_ATTRIBUTE_READONLY;
             entry.full_path = FormatDevicePath(DeviceChild(folder, entry.name));
+            entry.shell_id = local + L"\\" + entry.name;  // a fake phone is a local folder
             batch.push_back(std::move(entry));
             ++rows;
             if (batch.size() >= kDeviceBatchSize && !flush()) {
@@ -189,16 +192,19 @@ public:
         Ini ini;
         if (path.IsDeviceRoot() || Resolve(path, &local, &ini) != DeviceError::None) return caps;
         caps.can_copy = true;
-        const std::wstring storage_dir = root_ + L"\\" + folder_by_key_[path.device] + L"\\" + path.storage;
-        const Ini sini = ReadIni(storage_dir + L"\\storage.ini");
-        const bool read_only = Flag(sini, L"read_only") ||
-            (ini.contains(L"kind") && _wcsicmp(ini.at(L"kind").c_str(), L"iphone") == 0);
-        if (read_only) return caps;
+        if (ReadOnlyStorage(path, ini)) return caps;
         const DWORD attrs = GetFileAttributesW(local.c_str());
         caps.can_delete = !path.IsStorageRoot();
         caps.can_rename = !path.IsStorageRoot();
         caps.can_create = attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY);
         return caps;
+    }
+
+    std::wstring ShellId(const DevicePath& path) override {
+        std::wstring local;
+        Ini ini;
+        if (path.IsDeviceRoot() || Resolve(path, &local, &ini) != DeviceError::None) return {};
+        return local;
     }
 
     HRESULT ShellItem(const DevicePath& path, IShellItem** out) override {
@@ -213,6 +219,13 @@ public:
     }
 
 private:
+    bool ReadOnlyStorage(const DevicePath& path, const Ini& device_ini) {
+        const std::wstring storage_dir = root_ + L"\\" + folder_by_key_[path.device] + L"\\" + path.storage;
+        const Ini sini = ReadIni(storage_dir + L"\\storage.ini");
+        return Flag(sini, L"read_only") ||
+            (device_ini.contains(L"kind") && _wcsicmp(device_ini.at(L"kind").c_str(), L"iphone") == 0);
+    }
+
     static void Hang(const Ini& ini) {
         if (const uint64_t hang = Number(ini, L"hang_ms"))
             std::this_thread::sleep_for(std::chrono::milliseconds(hang));

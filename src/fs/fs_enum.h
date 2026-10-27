@@ -33,6 +33,7 @@ struct DirEntryExtra {
     FILETIME link_target_mtime{};
     uint64_t drive_total = 0;
     uint64_t drive_free = 0;
+    std::wstring shell_id;
 };
 
 inline const DirEntryExtra kNoDirEntryExtra{};
@@ -126,6 +127,9 @@ struct DirEntry {
     // (no media). Read on the worker thread with the rest of the listing.
     PULSE_DIR_ENTRY_EXTRA(uint64_t, drive_total)
     PULSE_DIR_ENTRY_EXTRA(uint64_t, drive_free)
+    // Phone rows (pulse:device:): the item's shell parsing name, so the
+    // shell host can run Explorer's own verbs on it. Empty elsewhere.
+    PULSE_DIR_ENTRY_EXTRA(std::wstring, shell_id)
 };
 
 #undef PULSE_DIR_ENTRY_EXTRA

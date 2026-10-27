@@ -2219,6 +2219,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_TIMER: {
+        if (s && wParam == 0x4457) {  // kTimerDeviceWatch (app_runtime.cpp)
+            FireDeviceFolderWatch(*s);
+            return 0;
+        }
         if (s && wParam == kTimerDeviceHelpTest) {
             KillTimer(hwnd, kTimerDeviceHelpTest);
             ShowDeviceHelp(*s);
@@ -2753,6 +2757,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 ScheduleRecycleRefresh(*s);
                 RefreshRecycleViews(*s, false);
             }
+            // A phone verb the shell could not run (device gone, no app for
+            // the type): say so instead of doing nothing.
+            if (std::wstring error = s->ops.TakeShellVerbError(); !error.empty())
+                s->notification_toast.ShowSnack(hwnd, ui::SnackIcon::Suggest, std::move(error), {}, {}, {}, 4000);
             // Take terminal IDs first: a success queued between these drains
             // must still be applied before its matching intent is released.
             const auto finished_tasks = s->ops.DrainFinishedTasks();
@@ -3005,6 +3013,13 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (s && s->dropTarget) RegisterDragDrop(hwnd, s->dropTarget);
         return 0;
 
+    case WM_DEVICE_WATCH_READY:
+        if (s) OnDeviceWatchReady(*s, wParam, lParam);
+        else CoTaskMemFree(reinterpret_cast<void*>(lParam));
+        return 0;
+    case WM_DEVICE_FOLDER_CHANGED:
+        if (s) OnDeviceFolderChanged(*s, wParam, lParam);
+        return 0;
     case WM_ASSOC_CHANGED:
         // Another program (or Settings > Default apps) took over a file type:
         // resolve the thumbnail badges again. Bursts only bump an epoch.
@@ -3275,6 +3290,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         break;
 
     case WM_DESTROY: {
+        ReleaseDeviceFolderWatch(hwnd);
         // Closing one of several windows (M3f) tears down what the window
         // owns; services, saved state and the shared caches go with the last.
         const bool last_window = !s || s->core.windows.IsLastWindow(hwnd);
