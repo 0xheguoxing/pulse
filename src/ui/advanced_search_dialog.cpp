@@ -1006,6 +1006,39 @@ private:
         return kHitNone;
     }
 
+#ifdef PULSE_WITH_SELFTEST
+    // Selftests click targets by id instead of hard-coded coordinates: the
+    // centre of hit `id` in client px, or of a field (1000 keyword, 1001
+    // extensions, 1002 exclude, 1003 name); with 0x10000 set, a point in the
+    // left padding instead. -1 when it is not laid out.
+    LRESULT TestHitCenter(WPARAM request) const {
+        const int id = static_cast<int>(request & 0xFFFF);
+        D2D1_RECT_F r{};
+        switch (id) {
+        case kHitClose: r = CloseRect(); break;
+        case kHitSearch: r = search_rect_; break;
+        case kHitCancel: r = cancel_rect_; break;
+        case kHitClear: r = clear_rect_; break;
+        case kHitMore: r = more_rect_; break;
+        case kHitWholeWord: r = ww_rect_; break;
+        case kHitMatchCase: r = mc_rect_; break;
+        case kHitMode: case kHitMode + 1: r = mode_rect_[id - kHitMode]; break;
+        case 1000: r = kw_edit_rect_; break;
+        case 1001: r = ext_rect_; break;
+        case 1002: r = exclude_rect_; break;
+        case 1003: r = name_also_rect_; break;
+        default:
+            for (const auto& pill : pills_)
+                if (pill.id == id && pill.enabled) r = pill.bounds;
+            break;
+        }
+        if (!Visible(r)) return -1;
+        const float x = (request & 0x10000) ? r.left + 3.0f : (r.left + r.right) * 0.5f;
+        return MAKELRESULT(static_cast<int>(x),
+                           static_cast<int>((r.top + r.bottom) * 0.5f));
+    }
+#endif
+
     // ---- painting ------------------------------------------------------------------
 
     void EnsureFormats() {
@@ -1352,6 +1385,10 @@ private:
     }
 
     LRESULT Handle(UINT message, WPARAM wparam, LPARAM lparam) {
+#ifdef PULSE_WITH_SELFTEST
+        static const UINT test_hit_center = RegisterWindowMessageW(L"Pulse.Test.AdvancedHitCenter");
+        if (message == test_hit_center) return TestHitCenter(wparam);
+#endif
         switch (message) {
         case WM_CREATE: {
             edits_ready_ = false;

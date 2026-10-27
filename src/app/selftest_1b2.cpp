@@ -1823,6 +1823,21 @@ HWND FindAdvancedTestWindow(const wchar_t* class_name) {
     return context.window;
 }
 
+// Hit ids from advanced_search_dialog.cpp (kHit*); fields answer 1000+.
+constexpr int kAdvHitWholeWord = 11, kAdvHitClear = 13, kAdvHitMore = 20, kAdvHitMode = 40,
+              kAdvHitNameHow = 500, kAdvFieldExts = 1001, kAdvFieldExclude = 1002;
+constexpr int kAdvPadding = 0x10000;
+
+// Where the dialog lays out target `id` (client px), via its selftest hook.
+bool AdvancedHitPoint(HWND dialog, int id, POINT* point) {
+    static const UINT message = RegisterWindowMessageW(L"Pulse.Test.AdvancedHitCenter");
+    const LRESULT at = SendMessageW(dialog, message, static_cast<WPARAM>(id), 0);
+    if (at == -1 || at == 0) return false;
+    point->x = static_cast<short>(LOWORD(static_cast<DWORD_PTR>(at)));
+    point->y = static_cast<short>(HIWORD(static_cast<DWORD_PTR>(at)));
+    return true;
+}
+
 void CALLBACK AdvancedTestTimer(HWND, UINT, UINT_PTR timer, DWORD) {
     if (++advanced_test_ticks > 150) {
         if (advanced_test_window) PostMessageW(advanced_test_window, WM_CLOSE, 0, 0);
@@ -1831,13 +1846,13 @@ void CALLBACK AdvancedTestTimer(HWND, UINT, UINT_PTR timer, DWORD) {
     }
     HWND dialog = FindAdvancedTestWindow(L"PulseAdvancedSearchWindow");
     if (!dialog) return;
-    RECT rect{};
-    GetClientRect(dialog, &rect);
-    const float scale = rect.right / 560.0f;
-    auto click = [&](float x, float y) {
-        const LPARAM pt = MAKELPARAM(static_cast<int>(x * scale), static_cast<int>(y * scale));
+    auto click = [&](int id) {
+        POINT at{};
+        if (!AdvancedHitPoint(dialog, id, &at)) return false;
+        const LPARAM pt = MAKELPARAM(at.x, at.y);
         PostMessageW(dialog, WM_LBUTTONDOWN, MK_LBUTTON, pt);
         PostMessageW(dialog, WM_LBUTTONUP, 0, pt);
+        return true;
     };
     if (advanced_test_stage == 0) {
         advanced_test_window = dialog;
@@ -1860,27 +1875,22 @@ void CALLBACK AdvancedTestTimer(HWND, UINT, UINT_PTR timer, DWORD) {
             PostMessageW(dialog, WM_CLOSE, 0, 0);
             KillTimer(nullptr, timer);
         } else if (advanced_test_mode == 1) {
-            advanced_test_stage = 2;
-            click(450, 84);
-        } else {
-            click(70, 468);
-            advanced_test_stage = 4;
+            if (click(kAdvHitMore)) advanced_test_stage = 2;
+        } else if (advanced_test_mode == 2) {
+            if (click(kAdvHitClear)) advanced_test_stage = 4;
+        } else if (click(kAdvHitMode + 1)) {
+            advanced_test_stage = 3;
         }
         return;
     }
     if (advanced_test_stage == 2) {
-        HWND menu = FindAdvancedTestWindow(L"PulseFluentMenu");
-        if (!menu || !IsWindowVisible(menu)) return;
-        PostMessageW(menu, WM_KEYDOWN, VK_DOWN, 0);
-        PostMessageW(menu, WM_KEYDOWN, VK_RETURN, 0);
-        advanced_test_stage = 3;
+        // 更多选项 is open: "starts with".
+        if (click(kAdvHitNameHow + 1)) advanced_test_stage = 4;
         return;
     }
     if (advanced_test_stage == 3) {
-        HWND menu = FindAdvancedTestWindow(L"PulseFluentMenu");
-        if (menu && IsWindowVisible(menu)) return;
-        click(80, 368);
-        advanced_test_stage = 4;
+        // Content mode carries 全字 inside the keyword box.
+        if (click(kAdvHitWholeWord)) advanced_test_stage = 4;
         return;
     }
     PostMessageW(dialog, WM_COMMAND, IDOK, 0);
@@ -1889,7 +1899,7 @@ void CALLBACK AdvancedTestTimer(HWND, UINT, UINT_PTR timer, DWORD) {
 
 void TestAdvancedSearchDialog() {
     const auto language = l10n::preference();
-    for (int mode = 0; mode < 3; ++mode) {
+    for (int mode = 0; mode < 4; ++mode) {
         l10n::SetLanguage(mode == 2 ? L"en-US" : l10n::LanguageId(language));
         advanced_test_mode = mode;
         advanced_test_ticks = advanced_test_stage = 0;
@@ -1904,31 +1914,53 @@ void TestAdvancedSearchDialog() {
         const auto result = ui::ShowAdvancedSearchDialog(nullptr, spec, mode != 2, D2D1::ColorF(0x0078d4));
         KillTimer(nullptr, timer);
         Check(advanced_hidden_on_destroy, L"advanced search: cold and repeat close hide before surface teardown");
+        const auto parsed = ParseSearchQuery(result.query);
         if (mode == 0) Check(!result.accepted, L"advanced search: close cancels without executing");
         else if (mode == 1) {
-            const auto parsed = ParseSearchQuery(result.query);
-            Check(result.accepted && parsed.whole_word && result.query.find(L"show*") != std::wstring::npos,
-                  L"advanced search: dropdown selection and checkbox compile into search");
-        } else Check(result.accepted && result.query.empty(), L"advanced search: clear all resets conditions");
+            Check(result.accepted && result.query.find(L"show*") != std::wstring::npos && !parsed.whole_word,
+                  L"advanced search: starts-with pill compiles into search");
+        } else if (mode == 2) {
+            // 清空 keeps the folder the dialog was opened for.
+            Check(result.accepted && result.query.find(L"show") == std::wstring::npos &&
+                      result.query.find(L"path:") != std::wstring::npos,
+                  L"advanced search: clear all resets conditions but keeps the current folder");
+        } else {
+            Check(result.accepted && parsed.whole_word && result.query.find(L"show") != std::wstring::npos,
+                  L"advanced search: content mode and whole word compile into search");
+        }
     }
     l10n::SetLanguage(l10n::LanguageId(language));
 }
+
+int advanced_edit_stage = 0;
 
 // No image capture: exercise the actual dialog's mouse target and editing path.
 void CALLBACK AdvancedEditClickTimer(HWND, UINT, UINT_PTR timer, DWORD) {
     HWND dialog = FindAdvancedTestWindow(L"PulseAdvancedSearchWindow");
     if (!dialog) return;
+    if (advanced_edit_stage == 0) {
+        // The extension and exclude fields live under 更多选项.
+        POINT more{};
+        if (!AdvancedHitPoint(dialog, kAdvHitMore, &more)) return;
+        PostMessageW(dialog, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(more.x, more.y));
+        PostMessageW(dialog, WM_LBUTTONUP, 0, MAKELPARAM(more.x, more.y));
+        advanced_edit_stage = 1;
+        return;
+    }
+    POINT probe{};
+    if (!AdvancedHitPoint(dialog, kAdvFieldExclude, &probe)) return;
     KillTimer(nullptr, timer);
-    RECT rc{};
-    GetClientRect(dialog, &rc);
-    const float scale = rc.right / 560.0f;
-    for (float y : {264.0f, 324.0f}) {
-        for (float x : {140.0f, 22.0f}) {
-            POINT point{static_cast<int>(x * scale), static_cast<int>(y * scale)};
+    for (int field : {kAdvFieldExts, kAdvFieldExclude}) {
+        for (int where : {0, kAdvPadding}) {
+            POINT point{};
+            const bool laid_out = AdvancedHitPoint(dialog, field | where, &point);
+            Check(laid_out, L"advanced edit: field is laid out under more options");
+            if (!laid_out) continue;
+            const LONG y = point.y;
             // Query this dialog's child tree without depending on other apps' Z order.
             HWND target = ChildWindowFromPointEx(dialog, point,
                 CWP_SKIPINVISIBLE | CWP_SKIPDISABLED | CWP_SKIPTRANSPARENT);
-            if (x == 140.0f) Check(IsChild(dialog, target),
+            if (where == 0) Check(IsChild(dialog, target),
                 L"advanced edit: empty unfocused field has a hittable child surface");
             Check(target == dialog || IsChild(dialog, target), L"advanced edit: click targets dialog or its child");
             if (target != dialog && !IsChild(dialog, target)) continue;
@@ -1942,8 +1974,8 @@ void CALLBACK AdvancedEditClickTimer(HWND, UINT, UINT_PTR timer, DWORD) {
             RECT bounds{};
             GetWindowRect(edit, &bounds);
             MapWindowPoints(nullptr, dialog, reinterpret_cast<POINT*>(&bounds), 2);
-            Check(bounds.top < y * scale && bounds.bottom > y * scale,
-                  L"advanced edit: correct content or exclusion field receives focus");
+            Check(bounds.top < y && bounds.bottom > y,
+                  L"advanced edit: correct extension or exclusion field receives focus");
             SendMessageW(edit, WM_LBUTTONUP, 0, 0);
             SendMessageW(edit, WM_CHAR, L'中', 0);
             Check(GetWindowTextLengthW(edit) > 0, L"advanced edit: clicked field accepts Unicode input");
@@ -1957,6 +1989,7 @@ void TestAdvancedEditClicks() {
     for (bool dark : {true, false}) {
         AdvancedSearchSpec spec;
         spec.name = L"showbox";
+        advanced_edit_stage = 0;
         const UINT_PTR timer = SetTimer(nullptr, 0, 150, AdvancedEditClickTimer);
         Check(timer != 0, L"advanced edit: create click fixture");
         if (!timer) return;
@@ -5527,8 +5560,8 @@ void TestSplitLayout() {
         D2D1_RECT_F active_rc{}, other_rc{};
         Check(chrome.TabItemRect(vm, crowd_w, 30, &active_rc) && chrome.TabItemRect(vm, crowd_w, 29, &other_rc) &&
               std::abs((active_rc.right - active_rc.left) - 120.0f) < 0.01f &&
-              std::abs((other_rc.right - other_rc.left) - 40.0f) < 0.01f,
-              L"chrome: crowded tabs shrink to icons while the active tab keeps its title");
+              std::abs((other_rc.right - other_rc.left) - 96.0f) < 0.01f,
+              L"chrome: crowded tabs stop at the minimum width while the active tab keeps room for close");
         const float mid_y = (active_rc.top + active_rc.bottom) * 0.5f;
         const auto active_hit = chrome.HitTest(vm, crowd_rect, (active_rc.left + active_rc.right) * 0.5f, mid_y);
         Check(active_hit.region == ui::HitTestResult::Tab && active_hit.index == 30,
@@ -5550,7 +5583,13 @@ void TestSplitLayout() {
               L"chrome: a strip that fits ignores the wheel");
     }
     {
-        auto vm = crowded(10, 9);
+        // Tabs below the maximum width, where a close would otherwise reflow them.
+        int count = 4;
+        for (D2D1_RECT_F probe{}; count < 30; ++count) {
+            chrome.TabItemRect(crowded(count, count - 1), 1400.0f, 0, &probe);
+            if (probe.right - probe.left < 239.0f) break;
+        }
+        auto vm = crowded(count, count - 1);
         D2D1_RECT_F before{}, frozen{}, released{};
         chrome.TabItemRect(vm, 1400.0f, 0, &before);
         chrome.FreezeTabWidths(vm, 1400.0f);
