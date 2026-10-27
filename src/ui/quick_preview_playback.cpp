@@ -10,6 +10,7 @@
 #include <shellapi.h>
 #include <algorithm>
 #include <cmath>
+#include <cwctype>
 
 namespace pulse::ui {
 namespace {
