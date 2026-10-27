@@ -249,7 +249,8 @@ private:
         }
         if (!compositor_.Dc()) return;
         const bool high_contrast = IsHighContrast();
-        const Theme theme = high_contrast ? MakeHighContrastTheme() : MakeTheme(dark_, accent_);
+        Theme theme = high_contrast ? MakeHighContrastTheme() : MakeTheme(dark_, accent_);
+        if (!high_contrast && backdrop_enabled_ && IsAcrylicBackdrop(hwnd_)) ApplyGlass(theme, dark_);
         const bool moving = StepMotion();
         BeginSurface(compositor_, painter_, theme, dark_, high_contrast, backdrop_enabled_,
                      scale_);

@@ -92,7 +92,7 @@ COLORREF Ref(D2D1_COLOR_F c) {
 
 struct Pal {
     D2D1_COLOR_F accent, accent_h, accent_soft, accent_tint, on_accent;
-    D2D1_COLOR_F bg, pane, card, line, line2, text, text2, text3, hover, field, field_line;
+    D2D1_COLOR_F bg, pane, card, glass, glass_pane, glass_sheet, line, line2, text, text2, text3, hover, field, field_line;
     D2D1_COLOR_F amber, amber_bg, amber_line, ok, del, del_bg, ins, ins_bg, ai, ai_bg, bad;
     D2D1_COLOR_F c_img, s_img, c_doc, s_doc, c_vid, s_vid;
 };
@@ -121,6 +121,9 @@ Pal MakePal(bool dark, D2D1_COLOR_F accent) {
         p.c_vid = Hex(0xee86a6); p.s_vid = Hex(0x43262f);
         p.on_accent = Hex(0x10201a);
     }
+    p.glass = p.card;
+    p.glass_pane = p.pane;
+    p.glass_sheet = Hex(0x000000, 0.0f);
     p.accent = accent;
     p.accent_h = dark ? Mix(accent, Hex(0xffffff), 0.12f) : Mix(accent, Hex(0x000000), 0.14f);
     p.accent_soft = Mix(p.card, accent, dark ? 0.20f : 0.13f);
@@ -1297,6 +1300,14 @@ private:
         fields_.clear();
     }
 
+    // Over acrylic the panes, cards and chips let the frost through (效果图 ④);
+    // fields, the AI bar, dropdowns and menus stay solid.
+    void GlassPal() {
+        if (!glass_) return;
+        pal_.glass = pulse::ui::GlassCard(dark_);
+        pal_.glass_pane = pulse::ui::GlassSheet(dark_);
+        pal_.glass_sheet = pal_.glass_pane;
+    }
     D2D1_COLOR_F FieldBack(const Field& f) const { return f.step_id == kAiField ? pal_.card : pal_.field; }
     IDWriteTextFormat* FieldFormat(const Field& f) const { return f.step_id == kAiField ? F(Fmt::T14) : F(Fmt::T13); }
 
@@ -1620,7 +1631,8 @@ private:
         const bool high_contrast = IsHighContrast();
         const Theme theme = high_contrast ? MakeHighContrastTheme() : MakeTheme(dark_, accent_);
         pal_ = MakePal(dark_, theme.accent);
-        pulse::ui::BeginSurface(compositor_, painter_, theme, dark_, high_contrast, false, scale_);
+        GlassPal();
+        pulse::ui::BeginSurface(compositor_, painter_, theme, dark_, high_contrast, glass_, scale_);
         dc_ = compositor_.Dc();
         if (FAILED(dc_->CreateSolidColorBrush(pal_.text, &brush_))) { pulse::ui::EndSurface(compositor_); return; }
         hits_.clear();
@@ -1633,7 +1645,7 @@ private:
 
         W_ = static_cast<float>(compositor_.Width());
         H_ = static_cast<float>(compositor_.Height());
-        Fill(D2D1::RectF(0, 0, W_, H_), 0.0f, pal_.card);
+        if (!glass_) Fill(D2D1::RectF(0, 0, W_, H_), 0.0f, pal_.card);
         Stroke(D2D1::RectF(0, 0, W_, H_), X(12), Alpha(pal_.text, 0.09f));
 
         DrawTitle();
@@ -1784,7 +1796,7 @@ private:
             const float w = Measure(label, Fmt::T125) + X(22);
             if (x + w > W_ - X(18)) break;
             const D2D1_RECT_F chip = R(x, y, w, X(26));
-            Fill(chip, X(13), Hov({H::Example, i}) ? pal_.hover : pal_.card);
+            Fill(chip, X(13), Hov({H::Example, i}) ? pal_.hover : pal_.glass);
             Stroke(chip, X(13), pal_.line);
             Text(label, Fmt::T125, chip, pal_.text2, DWRITE_TEXT_ALIGNMENT_CENTER);
             Reg(chip, {H::Example, i});
@@ -1831,7 +1843,7 @@ private:
     void DrawSteps() {
         const float top = X(kBodyTop), bottom = H_ - X(kFootH);
         const D2D1_RECT_F pane = D2D1::RectF(0, top, X(kStepsW), bottom);
-        Fill(pane, 0, pal_.pane);
+        Fill(pane, 0, pal_.glass_pane);
         Fill(D2D1::RectF(0, top, W_, top + X(1)), 0, pal_.line2);
         Fill(D2D1::RectF(pane.right - X(1), top, pane.right, bottom), 0, pal_.line2);
         Reg(pane, {H::StepsArea});
@@ -1980,7 +1992,7 @@ private:
             for (const QaChip& c : chips) {
                 const D2D1_RECT_F r = R(box.left + c.x, box.top + c.y, c.w, X(28));
                 const bool hov = Hov({H::AddItem, static_cast<int>(c.type)});
-                Fill(r, X(7), hov ? pal_.hover : pal_.card);
+                Fill(r, X(7), hov ? pal_.hover : pal_.glass);
                 Stroke(r, X(7), hov ? pal_.line : pal_.line2);
                 Ico(StepIcon(c.type), r.left + X(10), r.top + X(7), X(14), hov ? pal_.text : pal_.text2);
                 Text(c.label, Fmt::T12, D2D1::RectF(r.left + X(29), r.top, r.right, r.bottom), hov ? pal_.text : pal_.text2);
@@ -2112,7 +2124,7 @@ private:
     void DrawContentPane() {
         const float top = X(kBodyTop), bottom = H_ - X(kFootH);
         const D2D1_RECT_F pane = D2D1::RectF(0, top, X(kStepsW), bottom);
-        Fill(pane, 0, pal_.pane);
+        Fill(pane, 0, pal_.glass_pane);
         Fill(D2D1::RectF(0, top, W_, top + X(1)), 0, pal_.line2);
         Fill(D2D1::RectF(pane.right - X(1), top, pane.right, bottom), 0, pal_.line2);
         Reg(pane, {H::StepsArea});
@@ -2145,7 +2157,7 @@ private:
             const D2D1_RECT_F card = R(l, y, w, X(32));
             const bool on = c_format_ == k;
             const bool hov = !busy && !on && Hov({H::CFormat, k});
-            Fill(card, X(9), on ? Mix(pal_.card, pal_.accent_tint, 0.6f) : hov ? Mix(pal_.card, pal_.hover, 0.5f) : pal_.card);
+            Fill(card, X(9), on ? Mix(pal_.glass, pal_.accent_tint, 0.6f) : hov ? Mix(pal_.glass, pal_.hover, 0.5f) : pal_.glass);
             Stroke(card, X(9), on ? pal_.accent : pal_.line, on ? X(1.5f) : X(1.0f));
             const float cx = card.left + X(10 + 8), cy = (card.top + card.bottom) * 0.5f;
             if (on) Ring(cx, cy, X(5.5f), pal_.accent, X(5.0f));
@@ -2275,8 +2287,8 @@ private:
         const float saved_fade = fade_;
         fade_ = enter;
         if (lifted) Shadow(card, X(10), X(16), X(6), Hex(0x000000, dark_ ? 0.5f : 0.16f));
-        Shadow(card, X(10), X(2), X(1), Hex(0x000000, 0.04f));
-        Fill(card, X(10), pal_.card);
+        if (lifted || !glass_) Shadow(card, X(10), X(2), X(1), Hex(0x000000, 0.04f));
+        Fill(card, X(10), lifted ? pal_.card : pal_.glass);
         const bool focused = focus_step_ == ui.id || lifted;
         if (focused) Stroke(D2D1::RectF(card.left - X(0.75f), card.top - X(0.75f), card.right + X(0.75f), card.bottom + X(0.75f)),
                             X(10.75f), pal_.accent, X(1.5f));
@@ -2352,7 +2364,7 @@ private:
             const D2D1_RECT_F r = R(cx, cy, w, X(24));
             if (on_) Fill(r, X(6), pal_.accent_soft);
             else {
-                Fill(r, X(6), Hov(hit) ? pal_.hover : pal_.card);
+                Fill(r, X(6), Hov(hit) ? pal_.hover : pal_.glass);
                 if (token) DashedStroke(r, X(6), Alpha(pal_.ai, 0.7f));
                 else Stroke(r, X(6), pal_.line);
             }
@@ -2643,7 +2655,7 @@ private:
         }
         if (show_note && !vis.empty()) {
             const D2D1_RECT_F note = D2D1::RectF(left + X(16), y + X(10) - X(4), W_ - X(16), y + note_h - X(4));
-            Fill(note, X(10), pal_.pane);
+            Fill(note, X(10), pal_.glass_pane);
             Stroke(note, X(10), pal_.line2);
             Ico(kShield, note.left + X(14), note.top + X(14), X(15), pal_.accent);
             Para(S(StringId::BrIssNote), Fmt::T125, Fmt::T125b, D2D1::RectF(note.left + X(39), note.top + X(12), note.right - X(14), note.bottom),
@@ -2961,6 +2973,7 @@ private:
 
     void DrawFooter() {
         const float top = H_ - X(kFootH);
+        if (pal_.glass_sheet.a > 0) Fill(D2D1::RectF(0, top, W_, H_), 0, pal_.glass_sheet);
         Fill(D2D1::RectF(0, top, W_, top + X(1)), 0, pal_.line2);
         if (executing_ || result_.executed) {
             // .prog: 2 px accent line on the footer's top edge, width .2 s linear.
@@ -3426,13 +3439,14 @@ private:
 #if defined(PULSE_TEST_BATCH_RENAME_PRESENT)
             scale_ = BatchRenameScaleForTest();
 #endif
-            pulse::ui::ApplyBackdrop(hwnd_, dark_);
+            glass_ = pulse::ui::ApplyBackdrop(hwnd_, dark_) && pulse::ui::IsAcrylicBackdrop(hwnd_);
             if (!compositor_.Init(hwnd_)) return -1;
             compositor_.RecreateTextFormats(scale_);
             painter_.SetCompositor(&compositor_);
             painter_.SetScale(scale_);
             CreateFormats();
             pal_ = MakePal(dark_, accent_);
+            GlassPal();
             font_ = typography::CreateEditFont(scale_, 13.0f);
             font_ai_ = typography::CreateEditFont(scale_, 14.0f);
             brush_field_ = CreateSolidBrush(Ref(pal_.field));
@@ -3721,6 +3735,7 @@ private:
     float c_scroll_ = 0, c_content_h_ = 0;
     bool pending_row_focus_ = false;
     bool dark_ = false;
+    bool glass_ = false;
     bool done_ = false;
     // Running (scene 5): the renames go through while the dialog shows them.
     bool executing_ = false;

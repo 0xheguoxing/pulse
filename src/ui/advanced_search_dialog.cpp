@@ -173,13 +173,13 @@ D2D1_COLOR_F Mix(D2D1_COLOR_F a, D2D1_COLOR_F b, float t) {
 D2D1_COLOR_F Alpha(D2D1_COLOR_F c, float a) { c.a *= a; return c; }
 
 struct Pal {
-    D2D1_COLOR_F accent, accent_soft, accent_line, card, sheet, line, line2, text, text2, text3, hover, danger;
+    D2D1_COLOR_F accent, accent_soft, accent_line, card, solid, sheet, line, line2, text, text2, text3, hover, danger;
 };
 
-Pal MakePal(bool dark, bool high_contrast, const Theme& theme) {
+Pal MakePal(bool dark, bool high_contrast, const Theme& theme, bool glass) {
     Pal p{};
     if (high_contrast) {
-        p.card = p.sheet = theme.bg;
+        p.card = p.solid = p.sheet = theme.bg;
         p.line = p.line2 = theme.text;
         p.text = p.text2 = p.text3 = theme.text;
         p.hover = Alpha(theme.text, 0.15f);
@@ -201,6 +201,12 @@ Pal MakePal(bool dark, bool high_contrast, const Theme& theme) {
     p.accent_soft = Mix(p.card, p.accent, dark ? 0.20f : 0.13f);
     p.accent_line = Alpha(p.accent, 0.35f);
     p.danger = theme.danger;
+    p.solid = p.card;
+    if (glass) {
+        // Over acrylic the cards and footer let the frost through (效果图 ④).
+        p.card = GlassCard(dark);
+        p.sheet = GlassSheet(dark);
+    }
     return p;
 }
 
@@ -1208,7 +1214,7 @@ private:
         BeginSurface(compositor_, painter_, theme, dark_, IsHighContrast(), backdrop_, scale_);
 
         EnsureFormats();
-        pal_ = MakePal(dark_, IsHighContrast(), theme);
+        pal_ = MakePal(dark_, IsHighContrast(), theme, backdrop_ && IsAcrylicBackdrop(hwnd_));
         ID2D1DeviceContext* dc = compositor_.Dc();
         if (FAILED(dc->CreateSolidColorBrush(pal_.text, &brush_))) brush_ = nullptr;
         if (brush_) {
@@ -1228,7 +1234,7 @@ private:
             Fill(seg_rect_, X(9), pal_.hover);
             const D2D1_RECT_F on = mode_rect_[content_mode_ ? 1 : 0];
             Fill(D2D1::RectF(on.left, on.top + X(1), on.right, on.bottom + X(1)), X(7), Hex(0x000000, dark_ ? 0.25f : 0.08f));
-            Fill(on, X(7), pal_.card);
+            Fill(on, X(7), pal_.solid);
             Stroke(on, X(7), Alpha(pal_.text, 0.06f));
             const I mode_labels[2] = {I::AdvModeName, I::AdvModeContent};
             for (int i = 0; i < 2; ++i) {

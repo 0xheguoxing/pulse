@@ -26,6 +26,23 @@
 namespace pulse::ui {
 namespace {
 
+// Wells and footer bands: faint shading over Mica or solid, see-through white
+// cards over acrylic (对话框亚克力 ④).
+D2D1_COLOR_F OpWell(HWND hwnd, bool backdrop, bool dark, bool hovered = false) {
+    if (backdrop && IsAcrylicBackdrop(hwnd)) {
+        D2D1_COLOR_F glass = GlassCard(dark);
+        if (hovered) glass.a = dark ? 0.085f : 0.82f;
+        return glass;
+    }
+    if (dark) return HexColor(0xFFFFFF, hovered ? 0.085f : 0.045f);
+    return HexColor(0x000000, hovered ? 0.07f : 0.035f);
+}
+
+D2D1_COLOR_F OpFooter(HWND hwnd, bool backdrop, bool dark) {
+    if (backdrop && IsAcrylicBackdrop(hwnd)) return GlassSheet(dark);
+    return dark ? HexColor(0x000000, 0.16f) : HexColor(0x000000, 0.03f);
+}
+
 constexpr wchar_t kTransferClass[] = L"PulseFileOperationWindow";
 constexpr wchar_t kConflictClass[] = L"PulseFileConflictWindow";
 constexpr wchar_t kDeleteClass[] = L"PulsePermanentDeleteWindow";
@@ -642,7 +659,7 @@ private:
         const D2D1_COLOR_F sky = dark_ ? HexColor(0x38BDF8) : HexColor(0x0284C7);
         const D2D1_COLOR_F violet = dark_ ? HexColor(0xA78BFA) : HexColor(0x7C5CE6);
         const D2D1_COLOR_F red = dark_ ? HexColor(0xF0625B) : HexColor(0xD93D36);
-        const D2D1_COLOR_F well = dark_ ? HexColor(0xFFFFFF, 0.045f) : HexColor(0x000000, 0.035f);
+        const D2D1_COLOR_F well = OpWell(hwnd_, backdrop_enabled_, dark_);
         const D2D1_COLOR_F line = dark_ ? HexColor(0xFFFFFF, 0.07f) : HexColor(0x000000, 0.07f);
         const auto card = Rect(s, cx, y, kCardW, kCompareH);
         painter_.FillRoundedRect(card, ScaleDip(s, 11.0f), well);
@@ -772,8 +789,7 @@ private:
         const bool hovered = hover_ == index + 1;
         const bool pressed = pressed_ == index + 1;
         const bool focused = keyboard_focus_ && focus_ == index;
-        const D2D1_COLOR_F well = dark_ ? HexColor(0xFFFFFF, hovered ? 0.085f : 0.045f)
-                                        : HexColor(0x000000, hovered ? 0.07f : 0.035f);
+        const D2D1_COLOR_F well = OpWell(hwnd_, backdrop_enabled_, dark_, hovered);
         D2D1_RECT_F box = bounds;
         if (pressed) {
             const float inset = ScaleDip(s, 1.5f);
@@ -896,7 +912,7 @@ private:
         const float width = static_cast<float>(client.right);
         const float height = static_cast<float>(client.bottom);
         painter_.FillRoundedRect(D2D1::RectF(0, footer_top, width, height), 0,
-                                 dark_ ? HexColor(0x000000, 0.16f) : HexColor(0x000000, 0.03f));
+                                 OpFooter(hwnd_, backdrop_enabled_, dark_));
         painter_.FillRoundedRect(D2D1::RectF(0, footer_top, width, footer_top + 1.0f), 0, theme.stroke_divider);
         painter_.DrawText(l10n::Get(l10n::StringId::OpHoverPreviewHint),
                           Rect(s, 20, HeightDip() - kFooterH, 300, kFooterH), meta_format_.get(), faint);
@@ -1495,7 +1511,7 @@ private:
         GetClientRect(hwnd_, &client);
         const float footer = kFooterTop * s;
         painter_.FillRoundedRect(D2D1::RectF(0, footer, static_cast<float>(client.right), static_cast<float>(client.bottom)), 0,
-                                 dark_ ? HexColor(0x000000, 0.16f) : HexColor(0x000000, 0.03f));
+                                 OpFooter(hwnd_, backdrop_enabled_, dark_));
         painter_.FillRoundedRect(D2D1::RectF(0, footer, static_cast<float>(client.right), footer + 1.0f), 0, theme.stroke_divider);
         const int focus_target = keyboard_focus_ || focus_ == FocusCount() - 1 ? FocusTarget(focus_) : -1;
         if (info_.offer_recycle)
@@ -2028,7 +2044,7 @@ private:
 
         // Programs.
         const auto box = Rect(s, 20, kProcsTop, kW - 40, ProcsH());
-        painter_.FillRoundedRect(box, ScaleDip(s, 11.0f), dark_ ? HexColor(0xFFFFFF, 0.045f) : HexColor(0x000000, 0.035f));
+        painter_.FillRoundedRect(box, ScaleDip(s, 11.0f), OpWell(hwnd_, backdrop_enabled_, dark_));
         for (size_t i = 0; i < Rows(); ++i) {
             const ops::LockOwner& owner = info_.owners[i];
             const float y = kProcsTop + i * kRowH;
@@ -2113,7 +2129,7 @@ private:
         GetClientRect(hwnd_, &client);
         const float footer = FooterTop() * s;
         painter_.FillRoundedRect(D2D1::RectF(0, footer, static_cast<float>(client.right), static_cast<float>(client.bottom)), 0,
-                                 dark_ ? HexColor(0x000000, 0.16f) : HexColor(0x000000, 0.03f));
+                                 OpFooter(hwnd_, backdrop_enabled_, dark_));
         painter_.FillRoundedRect(D2D1::RectF(0, footer, static_cast<float>(client.right), footer + 1.0f), 0, theme.stroke_divider);
         const int focus_target = FocusTarget(focus_);
         if (info_.can_skip)
@@ -2856,7 +2872,7 @@ void FileOperationWindow::Render() {
     else if ((authorization || paused) && !high_contrast) tone = amber;
     else if (waiting && !high_contrast) tone = violet;
     const D2D1_COLOR_F faint = WithAlpha(theme.text, dark_ ? 0.42f : 0.45f);
-    const D2D1_COLOR_F well = dark_ ? HexColor(0xFFFFFF, 0.045f) : HexColor(0x000000, 0.035f);
+    const D2D1_COLOR_F well = OpWell(hwnd_, backdrop_enabled_, dark_);
     const D2D1_COLOR_F well_line = dark_ ? HexColor(0xFFFFFF, 0.06f) : HexColor(0x000000, 0.06f);
     const float fraction = status_.percent < 0.0f ? 0.0f
         : std::clamp(status_.percent / 100.0f, 0.0f, 1.0f);
@@ -3374,7 +3390,7 @@ void FileOperationWindow::Render() {
     // --- Footer -----------------------------------------------------------
     const float footer_top = height - ScaleDip(s, kFooterH);
     painter_.FillRoundedRect(D2D1::RectF(0, footer_top, width, height), 0,
-        dark_ ? HexColor(0x000000, 0.16f) : HexColor(0x000000, 0.03f));
+        OpFooter(hwnd_, backdrop_enabled_, dark_));
     painter_.FillRoundedRect(D2D1::RectF(0, footer_top, width, footer_top + 1.0f), 0, theme.stroke_divider);
 
     fluent::ControlState detail_state{};

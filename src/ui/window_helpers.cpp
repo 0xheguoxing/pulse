@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <vector>
+#include <commctrl.h>
 #include <dwmapi.h>
 #include <uxtheme.h>
 #include <windowsx.h>
@@ -49,22 +50,86 @@ LRESULT BorderlessHitTest(HWND hwnd, LPARAM lparam, float title_height,
     return HTCLIENT;
 }
 
+namespace {
+
+constexpr wchar_t kAcrylicProp[] = L"Pulse.DialogAcrylic";
+constexpr UINT_PTR kKeepFrostedId = 0x50414352;
+
+// Settings > Personalization > Colors > Transparency effects.
+bool SystemTransparencyEnabled() {
+    DWORD value = 1;
+    DWORD size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER,
+                     L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                     L"EnableTransparency", RRF_RT_REG_DWORD, nullptr, &value, &size) != ERROR_SUCCESS) {
+        return true;
+    }
+    return value != 0;
+}
+
+// DWM flattens acrylic to a solid colour once the window is inactive; telling
+// it the frame is still active keeps the dialog frosted behind other windows.
+LRESULT CALLBACK KeepFrostedProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
+                                 UINT_PTR id, DWORD_PTR) {
+    if (message == WM_NCACTIVATE) return DefSubclassProc(hwnd, message, TRUE, lparam);
+    if (message == WM_NCDESTROY) {
+        RemoveWindowSubclass(hwnd, KeepFrostedProc, id);
+        RemovePropW(hwnd, kAcrylicProp);
+    }
+    return DefSubclassProc(hwnd, message, wparam, lparam);
+}
+
+} // namespace
+
 bool ApplyBackdrop(HWND hwnd, bool dark) {
     UpdateWindowTheme(hwnd, dark);
     const DWORD corner = DWMWCP_ROUND;
     DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
-    const bool high_contrast = IsHighContrast();
-    DWORD backdrop = high_contrast ? DWMSBT_NONE : DWMSBT_TABBEDWINDOW;
-    HRESULT result = DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE,
-                                            &backdrop, sizeof(backdrop));
-    if (FAILED(result) && backdrop == DWMSBT_TABBEDWINDOW) {
-        backdrop = DWMSBT_MAINWINDOW;
-        result = DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE,
-                                       &backdrop, sizeof(backdrop));
+    const bool solid = IsHighContrast() || !SystemTransparencyEnabled();
+    HRESULT result = E_FAIL;
+    DWORD backdrop = DWMSBT_NONE;
+    if (solid) {
+        result = DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+    } else {
+        // Acrylic like the context menus; Mica Alt / Mica where it is missing.
+        for (const DWORD type : {DWORD{DWMSBT_TRANSIENTWINDOW}, DWORD{DWMSBT_TABBEDWINDOW},
+                                 DWORD{DWMSBT_MAINWINDOW}}) {
+            backdrop = type;
+            result = DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+            if (SUCCEEDED(result)) break;
+        }
+    }
+    const bool acrylic = !solid && SUCCEEDED(result) && backdrop == DWMSBT_TRANSIENTWINDOW;
+    if (acrylic) {
+        SetPropW(hwnd, kAcrylicProp, reinterpret_cast<HANDLE>(1));
+        SetWindowSubclass(hwnd, KeepFrostedProc, kKeepFrostedId, 0);
+        if (GetForegroundWindow() != hwnd) SendMessageW(hwnd, WM_NCACTIVATE, TRUE, 0);
+    } else {
+        RemovePropW(hwnd, kAcrylicProp);
+        RemoveWindowSubclass(hwnd, KeepFrostedProc, kKeepFrostedId);
     }
     MARGINS margins{ -1 };
     DwmExtendFrameIntoClientArea(hwnd, &margins);
-    return !high_contrast && SUCCEEDED(result);
+    return !solid && SUCCEEDED(result);
+}
+
+bool IsAcrylicBackdrop(HWND hwnd) {
+    return hwnd && GetPropW(hwnd, kAcrylicProp) != nullptr;
+}
+
+D2D1_COLOR_F GlassCard(bool dark) {
+    return dark ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f)
+                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.62f);
+}
+
+D2D1_COLOR_F GlassSheet(bool dark) {
+    return dark ? D2D1::ColorF(24.0f / 255.0f, 26.0f / 255.0f, 25.0f / 255.0f, 0.55f)
+                : D2D1::ColorF(236.0f / 255.0f, 238.0f / 255.0f, 233.0f / 255.0f, 0.38f);
+}
+
+void ApplyGlass(Theme& theme, bool dark) {
+    theme.surface_card = GlassCard(dark);
+    theme.surface_sheet = GlassSheet(dark);
 }
 
 std::wstring FitTextEnd(const std::wstring& text, float width,
@@ -160,7 +225,11 @@ void BeginSurface(Compositor& compositor, fluent::Painter& painter,
     dc->Clear(D2D1::ColorF(0, 0.0f));
     painter.BeginFrame(theme, high_contrast);
     D2D1_COLOR_F tint = theme.bg;
-    tint.a = high_contrast || !backdrop_enabled ? 1.0f : (dark ? 0.76f : 0.82f);
+    // Acrylic carries its own frost, so the tint stays thin (效果图 ④); Mica
+    // needs more to read as a dialog rather than the wallpaper.
+    tint.a = high_contrast || !backdrop_enabled ? 1.0f
+           : IsAcrylicBackdrop(compositor.Hwnd()) ? 0.42f
+           : (dark ? 0.76f : 0.82f);
     const float width = static_cast<float>(compositor.Width());
     const float height = static_cast<float>(compositor.Height());
     painter.FillRoundedRect(D2D1::RectF(0, 0, width, height), 0, tint);
