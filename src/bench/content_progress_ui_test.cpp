@@ -328,11 +328,11 @@ int main(int argc, char** argv) {
             float undo_x = -1, open_x = -1;
             int plain = 0;
             for (float x = rect.right * 0.48f; x < rect.right; x += 1.0f) {
-                const auto hit = s.renderer.HitTest(done, rect, x, y);
-                if (hit.region != ui::HitTestResult::StatusBarTask) continue;
-                if (hit.sub_index == 0 && undo_x < 0) undo_x = x;
-                else if (hit.sub_index == 1 && open_x < 0) open_x = x;
-                else if (hit.sub_index < 0) ++plain;
+                const auto area = s.renderer.HitTest(done, rect, x, y);
+                if (area.region != ui::HitTestResult::StatusBarTask) continue;
+                if (area.sub_index == 0 && undo_x < 0) undo_x = x;
+                else if (area.sub_index == 1 && open_x < 0) open_x = x;
+                else if (area.sub_index < 0) ++plain;
             }
             check(undo_x > 0 && open_x > undo_x && plain > 0,
                   "finished pill: undo and open have their own targets, the rest opens details");
@@ -359,8 +359,8 @@ int main(int argc, char** argv) {
             frame(bad, L"partial");
             int bad_actions = 0, bad_task = 0;
             for (float x = rect.right * 0.48f; x < rect.right; x += 1.0f) {
-                const auto hit = s.renderer.HitTest(bad, rect, x, y);
-                if (hit.region == ui::HitTestResult::StatusBarTask) { ++bad_task; if (hit.sub_index >= 0) ++bad_actions; }
+                const auto area = s.renderer.HitTest(bad, rect, x, y);
+                if (area.region == ui::HitTestResult::StatusBarTask) { ++bad_task; if (area.sub_index >= 0) ++bad_actions; }
             }
             check(bad_task > 0 && bad_actions == 0, "partial-failure pill opens the list, no actions");
             frame(running, nullptr);   // reset the finish edge for the next theme
