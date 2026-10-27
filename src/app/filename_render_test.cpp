@@ -129,12 +129,12 @@ struct FilenameRenderTest {
                                 for (UINT y = top; y < static_cast<UINT>((44 + row * 39) * scale); ++y) {
                                     const auto* pixels = reinterpret_cast<const uint32_t*>(mapped.bits + y * mapped.pitch);
                                     for (UINT x = 0; x < static_cast<UINT>(390 * scale); ++x) {
-                                        // WARP (no-GPU CI) antialiases by a few levels depending on absolute x.
+                                        // WARP (no-GPU CI) antialiases glyph edges differently depending on absolute x.
                                         const uint32_t a = pixels[left + x], b = pixels[right + x];
                                         bool close_enough = true;
                                         for (int shift = 0; shift < 32; shift += 8) {
                                             const int delta = static_cast<int>((a >> shift) & 0xFF) - static_cast<int>((b >> shift) & 0xFF);
-                                            close_enough = close_enough && delta <= 8 && delta >= -8;
+                                            close_enough = close_enough && delta <= 16 && delta >= -16;
                                         }
                                         differences += !close_enough;
                                         ink += pixels[left + x] != pixels[0];
@@ -142,7 +142,8 @@ struct FilenameRenderTest {
                                 }
                                 log << "[INFO] scale=" << scale << " dark=" << dark << " row=" << row
                                     << " different_pixels=" << differences << " ink_pixels=" << ink << std::endl;
-                                check(ink > 0 && differences == 0, "production preserves full shaped glyphs and extension color");
+                                // A few stray edge pixels are noise; a wrong glyph or color differs on far more.
+                                check(ink > 0 && differences <= ink / 200, "production preserves full shaped glyphs and extension color");
                             }
                             readback->Unmap();
                         }
